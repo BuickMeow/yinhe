@@ -7,165 +7,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
-/// Rust 桥（libyinhe_flutter.so）：触摸走 dart:ffi 同步直连，低开销。
-final ffi.DynamicLibrary _bridge =
-    ffi.DynamicLibrary.open('libyinhe_flutter.so');
-
-typedef _TouchNative = ffi.Void Function(
-    ffi.Int32, ffi.Float, ffi.Float, ffi.Int32);
-typedef _TouchDart = void Function(int, double, double, int);
-
-final _TouchDart _touch =
-    _bridge.lookupFunction<_TouchNative, _TouchDart>('yinhe_touch');
-
-typedef _VoidNative = ffi.Void Function();
-typedef _VoidDart = void Function();
-
-final _VoidDart _demoLoad =
-    _bridge.lookupFunction<_VoidNative, _VoidDart>('yinhe_demo_load');
-
-typedef _IntVoidNative = ffi.Void Function(ffi.Int32);
-typedef _IntVoidDart = void Function(int);
-
-final _IntVoidDart _setViewMode =
-    _bridge.lookupFunction<_IntVoidNative, _IntVoidDart>('yinhe_set_view_mode');
-final _IntVoidDart _transport =
-    _bridge.lookupFunction<_IntVoidNative, _IntVoidDart>('yinhe_transport');
-
-typedef _IntNative = ffi.Int32 Function();
-typedef _IntDart = int Function();
-
-final _IntDart _isPlaying =
-    _bridge.lookupFunction<_IntNative, _IntDart>('yinhe_is_playing');
-
-typedef _DoubleNative = ffi.Double Function();
-typedef _DoubleDart = double Function();
-
-final _DoubleDart _playbackSeconds =
-    _bridge.lookupFunction<_DoubleNative, _DoubleDart>(
-        'yinhe_playback_seconds');
-
-typedef _FloatNative = ffi.Float Function();
-typedef _FloatDart = double Function();
-
-/// 播放光标 x（Rust 返回 f32，必须按 Float 读）。
-final _FloatDart _playheadX =
-    _bridge.lookupFunction<_FloatNative, _FloatDart>('yinhe_playhead_x');
-
-typedef _SnapNative = ffi.Int32 Function(ffi.Pointer<ffi.Float>);
-typedef _SnapDart = int Function(ffi.Pointer<ffi.Float>);
-
-final _SnapDart _viewSnapshot =
-    _bridge.lookupFunction<_SnapNative, _SnapDart>('yinhe_view_snapshot');
-
-typedef _CStrNative = ffi.Pointer<Utf8> Function();
-typedef _CStrDart = ffi.Pointer<Utf8> Function();
-
-final _CStrDart _recentJson =
-    _bridge.lookupFunction<_CStrNative, _CStrDart>('yinhe_recent_json');
-final _CStrDart _tracksJson =
-    _bridge.lookupFunction<_CStrNative, _CStrDart>('yinhe_tracks_json');
-
-typedef _FreeNative = ffi.Void Function(ffi.Pointer<Utf8>);
-typedef _FreeDart = void Function(ffi.Pointer<Utf8>);
-
-final _FreeDart _freeString =
-    _bridge.lookupFunction<_FreeNative, _FreeDart>('yinhe_free_string');
-
-typedef _OpenPathNative = ffi.Void Function(ffi.Pointer<Utf8>);
-typedef _OpenPathDart = void Function(ffi.Pointer<Utf8>);
-
-final _OpenPathDart _openPath =
-    _bridge.lookupFunction<_OpenPathNative, _OpenPathDart>('yinhe_open_path');
+import 'ffi.dart' as rust;
+import 'home_view.dart';
+import 'models.dart';
+import 'painters.dart';
+import 'theme.dart';
 
 /// 视图模式（与 Rust 侧约定一致：0=AR 走带，1=PR 卷帘）。
 const int kViewArrangement = 0;
 const int kViewPianoroll = 1;
-
-// ── LIGHT 主题（与 yinhe-theme::base::BaseColors::LIGHT 同步）──
-
-class YinheTheme {
-  static const bg = Color(0xFFF0F0F4);
-  static const text = Color(0xFF1E1E22);
-  static const accent = Color(0xFF1E6EDC);
-  static const danger = Color(0xFFE81123);
-  static const warning = Color(0xFFF0C83C);
-
-  static const _black = Color(0xFF000000);
-
-  static Color get controlBg => Color.lerp(bg, _black, 0.03) ?? bg;
-  static Color get controlSelectedBg => Color.lerp(bg, _black, 0.08) ?? bg;
-  static Color get btnBg => Color.lerp(bg, _black, 0.05) ?? bg;
-  static Color get lineFg => Color.lerp(bg, _black, 0.07) ?? bg;
-  static Color get stripeBg => Color.lerp(bg, _black, 0.06) ?? bg;
-  static Color get textSecondary => Color.lerp(text, bg, 0.14) ?? text;
-  static Color get textMuted => Color.lerp(text, bg, 0.22) ?? text;
-  static Color get textLabel => Color.lerp(text, bg, 0.36) ?? text;
-  static Color get textDisabled => Color.lerp(text, bg, 0.66) ?? text;
-  static Color get textFaint => Color.lerp(text, bg, 0.9) ?? text;
-  static Color get selectedBg => Color.lerp(bg, accent, 0.30) ?? bg;
-  static Color get primaryButtonBg => Color.lerp(accent, Colors.white, 0.72) ?? accent;
-
-  static ThemeData data() {
-    final scheme = ColorScheme.fromSeed(
-      seedColor: accent,
-      brightness: Brightness.light,
-    ).copyWith(
-      primary: accent,
-      surface: bg,
-    );
-    return ThemeData(
-      useMaterial3: true,
-      colorScheme: scheme,
-      scaffoldBackgroundColor: bg,
-      splashFactory: InkSparkle.splashFactory,
-    );
-  }
-}
-
-// ── 数据类 ──
-
-class TrackRow {
-  const TrackRow({
-    required this.name,
-    required this.port,
-    required this.channel,
-    required this.muted,
-    required this.soloed,
-  });
-
-  final String name;
-  final int port;
-  final int channel;
-  final bool muted;
-  final bool soloed;
-
-  static TrackRow fromJson(Map<String, dynamic> json) {
-    return TrackRow(
-      name: json['name'] as String? ?? '',
-      port: (json['port'] as num?)?.toInt() ?? 0,
-      channel: (json['channel'] as num?)?.toInt() ?? 0,
-      muted: json['muted'] as bool? ?? false,
-      soloed: json['soloed'] as bool? ?? false,
-    );
-  }
-}
-
-class RecentItem {
-  const RecentItem({required this.name, required this.path, required this.time});
-
-  final String name;
-  final String path;
-  final int time;
-
-  static RecentItem fromJson(Map<String, dynamic> json) {
-    return RecentItem(
-      name: json['name'] as String? ?? '',
-      path: json['path'] as String? ?? '',
-      time: (json['time'] as num?)?.toInt() ?? 0,
-    );
-  }
-}
 
 void main() {
   runApp(const YinheApp());
@@ -184,7 +34,7 @@ class YinheApp extends StatelessWidget {
   }
 }
 
-/// 工作台壳：画布常驻，主页为覆盖浮层，顶部切换 AR/PR，底部走带。
+/// 工作台壳：画布常驻，主页为覆盖浮层，上侧栏为走带控制。
 class StudioShell extends StatefulWidget {
   const StudioShell({super.key});
 
@@ -204,20 +54,35 @@ class _StudioShellState extends State<StudioShell>
   String? _fileName;
   String? _soundFontName;
 
+  /// AR 中点击进入 PR 的轨道（自动化栏/聚焦用）。
+  int? _activeTrack;
+
   bool _playing = false;
   double _seconds = 0;
+  double _tick = 0;
+
+  /// 时间码显示模式：false=秒数（默认），true=小节.拍.tick。
+  bool _timecodeBar = false;
 
   List<RecentItem> _recent = const [];
+
+  /// 自动化栏数据（当前轨道，仅 PB/CC/RPN）。
+  List<AutomationLaneData> _autoLanes = const [];
+  int _autoIndex = 0;
 
   final ValueNotifier<double> _playhead = ValueNotifier<double>(-1);
   final ValueNotifier<List<double>> _snap =
       ValueNotifier<List<double>>(List<double>.filled(12, 0.0));
   final ValueNotifier<List<TrackRow>> _tracks =
       ValueNotifier<List<TrackRow>>(const []);
+  final ValueNotifier<int> _dragFrom = ValueNotifier<int>(-1);
+  final ValueNotifier<int> _dragTo = ValueNotifier<int>(-1);
 
   late final Ticker _ticker;
   Timer? _transportTimer;
   late final ffi.Pointer<ffi.Float> _snapPtr;
+
+  bool _dragging = false;
 
   @override
   void initState() {
@@ -226,7 +91,7 @@ class _StudioShellState extends State<StudioShell>
     _channel.setMethodCallHandler(_onNativeCall);
     _init();
     _ticker = createTicker((_) {
-      _playhead.value = _playheadX();
+      _playhead.value = rust.playheadX();
       _snap.value = _readSnapshot();
     })..start();
     _transportTimer = Timer.periodic(
@@ -243,50 +108,52 @@ class _StudioShellState extends State<StudioShell>
     _playhead.dispose();
     _snap.dispose();
     _tracks.dispose();
+    _dragFrom.dispose();
+    _dragTo.dispose();
     calloc.free(_snapPtr);
     super.dispose();
   }
 
+  // ── 数据读取 ──
+
   List<double> _readSnapshot() {
-    if (_viewSnapshot(_snapPtr) == 0) {
+    if (rust.viewSnapshot(_snapPtr) == 0) {
       return _snap.value;
     }
     return List<double>.generate(12, (i) => _snapPtr[i]);
   }
 
   List<RecentItem> _readRecent() {
-    final ptr = _recentJson();
+    final ptr = rust.recentJson();
     if (ptr == ffi.nullptr) {
       return const [];
     }
     try {
-      final text = ptr.toDartString();
-      final list = jsonDecode(text) as List<dynamic>;
+      final list = jsonDecode(ptr.toDartString()) as List<dynamic>;
       return [
         for (final e in list) RecentItem.fromJson(e as Map<String, dynamic>),
       ];
     } catch (_) {
       return const [];
     } finally {
-      _freeString(ptr);
+      rust.freeString(ptr);
     }
   }
 
   List<TrackRow> _readTracks() {
-    final ptr = _tracksJson();
+    final ptr = rust.tracksJson();
     if (ptr == ffi.nullptr) {
       return const [];
     }
     try {
-      final text = ptr.toDartString();
-      final list = jsonDecode(text) as List<dynamic>;
+      final list = jsonDecode(ptr.toDartString()) as List<dynamic>;
       return [
         for (final e in list) TrackRow.fromJson(e as Map<String, dynamic>),
       ];
     } catch (_) {
       return const [];
     } finally {
-      _freeString(ptr);
+      rust.freeString(ptr);
     }
   }
 
@@ -299,6 +166,7 @@ class _StudioShellState extends State<StudioShell>
       _recent = _readRecent();
       _tracks.value = _readTracks();
     });
+    _loadAutomation();
   }
 
   Future<void> _onNativeCall(MethodCall call) async {
@@ -312,8 +180,9 @@ class _StudioShellState extends State<StudioShell>
           _fileName = path.split('/').last;
           _showHome = false;
           _viewMode = kViewArrangement;
+          _activeTrack = null;
         });
-        _setViewMode(kViewArrangement);
+        rust.setViewMode(kViewArrangement);
         Future.delayed(const Duration(milliseconds: 800), _refreshDocumentMeta);
       case 'onSoundFontPicked':
         setState(() => _soundFontName = path.split('/').last);
@@ -337,13 +206,15 @@ class _StudioShellState extends State<StudioShell>
   }
 
   void _openDemo() {
-    _demoLoad();
-    _setViewMode(kViewArrangement);
+    rust.demoLoad();
+    rust.setViewMode(kViewArrangement);
     setState(() {
       _fileName = '演示文档';
       _showHome = false;
       _viewMode = kViewArrangement;
+      _activeTrack = null;
       _seconds = 0;
+      _tick = 0;
       _playing = false;
     });
     Future.delayed(const Duration(milliseconds: 600), _refreshDocumentMeta);
@@ -352,7 +223,7 @@ class _StudioShellState extends State<StudioShell>
   void _openRecent(RecentItem item) {
     final p = item.path.toNativeUtf8();
     try {
-      _openPath(p);
+      rust.openPath(p);
     } finally {
       calloc.free(p);
     }
@@ -360,34 +231,137 @@ class _StudioShellState extends State<StudioShell>
       _fileName = item.name;
       _showHome = false;
       _viewMode = kViewArrangement;
+      _activeTrack = null;
     });
-    _setViewMode(kViewArrangement);
+    rust.setViewMode(kViewArrangement);
     Future.delayed(const Duration(milliseconds: 800), _refreshDocumentMeta);
   }
 
-  void _sendTouch(int kind, Offset p, int pointer) {
-    _touch(kind, p.dx, p.dy, pointer);
+  void _openSettings() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('设置页尚未实现')),
+    );
   }
 
-  void _setView(int mode) {
-    if (_viewMode == mode) {
+  /// 读取当前轨道的自动化 lane（仅 PB/CC/RPN）。
+  void _loadAutomation() {
+    final rows = _tracks.value;
+    if (rows.isEmpty) {
+      setState(() {
+        _autoLanes = const [];
+        _autoIndex = 0;
+      });
       return;
     }
-    _setViewMode(mode);
-    setState(() => _viewMode = mode);
+    final track = (_activeTrack ?? 0).clamp(0, rows.length - 1);
+    final ptr = rust.automationJson(track);
+    var lanes = const <AutomationLaneData>[];
+    if (ptr != ffi.nullptr) {
+      try {
+        final list = jsonDecode(ptr.toDartString()) as List<dynamic>;
+        lanes = [
+          for (final e in list)
+            AutomationLaneData.fromJson(e as Map<String, dynamic>),
+        ];
+      } catch (_) {
+        lanes = const [];
+      } finally {
+        rust.freeString(ptr);
+      }
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _autoLanes = lanes;
+      _autoIndex = 0;
+    });
   }
+
+  Color _activeTrackColor() {
+    final rows = _tracks.value;
+    if (rows.isEmpty) {
+      return YinheTheme.accent;
+    }
+    final i = (_activeTrack ?? 0).clamp(0, rows.length - 1);
+    return rows[i].color;
+  }
+
+  /// PR 底部自动化栏（高 80 + 1px 分隔线；combo 列 60 宽）。
+  Widget _buildAutomationPanel() {
+    final lane = _autoLanes.isEmpty
+        ? null
+        : _autoLanes[_autoIndex.clamp(0, _autoLanes.length - 1).toInt()];
+    final color = _activeTrackColor();
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      child: Container(
+        height: 81,
+        decoration: BoxDecoration(
+          color: YinheTheme.bg,
+          border: Border(top: BorderSide(color: YinheTheme.lineFg)),
+        ),
+        child: Row(
+          children: [
+            SizedBox(
+              width: AutomationPainter.comboWidth,
+              child: PopupMenuButton<int>(
+                tooltip: '自动化类型',
+                padding: EdgeInsets.zero,
+                itemBuilder: (_) => [
+                  for (var i = 0; i < _autoLanes.length; i++)
+                    PopupMenuItem(value: i, child: Text(_autoLanes[i].name)),
+                ],
+                onSelected: (i) => setState(() => _autoIndex = i),
+                child: Center(
+                  child: Text(
+                    lane?.name ?? '无自动化',
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: lane == null
+                          ? YinheTheme.textDisabled
+                          : YinheTheme.textLabel,
+                      fontSize: 10,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Expanded(
+              child: SizedBox.expand(
+                child: CustomPaint(
+                  painter: AutomationPainter(
+                    lane: lane,
+                    color: color,
+                    snap: _snap,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── 走带 ──
 
   void _togglePlay() {
     final next = !_playing;
     setState(() => _playing = next);
-    _transport(next ? 0 : 1);
+    rust.transport(next ? 0 : 1);
   }
 
   void _stopPlayback() {
-    _transport(2);
+    rust.transport(2);
     setState(() {
       _playing = false;
       _seconds = 0;
+      _tick = 0;
     });
   }
 
@@ -395,23 +369,152 @@ class _StudioShellState extends State<StudioShell>
     if (!mounted || _showHome) {
       return;
     }
-    final playing = _isPlaying() == 1;
-    final seconds = _playbackSeconds();
-    if (playing != _playing || (seconds - _seconds).abs() > 0.02) {
+    final playing = rust.isPlaying() == 1;
+    final seconds = rust.playbackSeconds();
+    final tick = rust.playheadTick();
+    if (playing != _playing ||
+        (seconds - _seconds).abs() > 0.02 ||
+        (tick - _tick).abs() > 0.5) {
       setState(() {
         _playing = playing;
         _seconds = seconds;
+        _tick = tick;
       });
     }
   }
 
+  /// 秒数（`m:ss.mmm`）。
   String _fmtTime(double seconds) {
     final total = seconds.floor();
     final m = total ~/ 60;
     final s = total % 60;
-    final tenth = ((seconds - total) * 10).floor();
-    return '$m:${s.toString().padLeft(2, '0')}.$tenth';
+    final ms = ((seconds - total) * 1000).floor();
+    return '$m:${s.toString().padLeft(2, '0')}.${ms.toString().padLeft(3, '0')}';
   }
+
+  /// 小节.拍.tick（1.0.000 风格：bar 1 起、beat 0 起；4/4 定拍）。
+  String _fmtBarBeat(double tick, double ppq) {
+    if (ppq <= 0) {
+      return '1.0.000';
+    }
+    final ticksPerBar = ppq * 4;
+    final bar = (tick / ticksPerBar).floor() + 1;
+    final beat = ((tick % ticksPerBar) / ppq).floor();
+    final inBeat = (tick % ppq).floor();
+    return '$bar.$beat.${inBeat.toString().padLeft(3, '0')}';
+  }
+
+  double get _ppq {
+    final v = _snap.value[8];
+    return v > 0 ? v : 480;
+  }
+
+  // ── 触摸 / 手势 ──
+
+  void _sendTouch(int kind, Offset p, int pointer) {
+    if (_dragging) {
+      return;
+    }
+    rust.touch(kind, p.dx, p.dy, pointer);
+  }
+
+  int? _rowAt(Offset p) {
+    final s = _snap.value;
+    final panel = s[5];
+    final laneH = s[6];
+    final scrollY = s[3];
+    if (laneH <= 0 || p.dx >= panel) {
+      return null;
+    }
+    final idx = ((p.dy + scrollY) / laneH).floor();
+    final rows = _tracks.value;
+    if (idx < 0 || idx >= rows.length) {
+      return null;
+    }
+    return idx;
+  }
+
+  bool _inMsZone(Offset p) {
+    final s = _snap.value;
+    final panel = s[5];
+    final laneH = s[6];
+    if (laneH < 34) {
+      return false;
+    }
+    final btn = (laneH * 0.44).clamp(18.0, 26.0).toDouble();
+    final zoneLeft = panel - 6.0 - btn * 2 - 4.0 - 4.0;
+    return p.dx >= zoneLeft;
+  }
+
+  /// AR：点击轨道面板（M/S 之外）进入 PR。
+  void _handleCanvasTap(Offset p) {
+    if (_viewMode != kViewArrangement) {
+      return;
+    }
+    if (_inMsZone(p)) {
+      return;
+    }
+    final idx = _rowAt(p);
+    if (idx == null) {
+      return;
+    }
+    _activeTrack = idx;
+    _loadAutomation();
+    _setView(kViewPianoroll);
+  }
+
+  /// AR：长按拖动轨道排序。
+  void _handleLongPressStart(Offset p) {
+    if (_viewMode != kViewArrangement) {
+      return;
+    }
+    final idx = _rowAt(p);
+    if (idx == null) {
+      return;
+    }
+    setState(() {
+      _dragFrom.value = idx;
+      _dragTo.value = idx;
+      _dragging = true;
+    });
+  }
+
+  void _handleLongPressMove(Offset p) {
+    if (_dragFrom.value < 0) {
+      return;
+    }
+    final idx = _rowAt(p);
+    if (idx != null && idx != _dragTo.value) {
+      setState(() => _dragTo.value = idx);
+    }
+  }
+
+  void _handleLongPressEnd() {
+    final from = _dragFrom.value;
+    final to = _dragTo.value;
+    setState(() {
+      _dragFrom.value = -1;
+      _dragTo.value = -1;
+      _dragging = false;
+    });
+    if (from < 0 || to < 0 || from == to) {
+      return;
+    }
+    final ok = rust.moveTrack(from, to);
+    if (ok == 1) {
+      Future.delayed(const Duration(milliseconds: 250), _refreshDocumentMeta);
+    }
+  }
+
+  void _setView(int mode) {
+    if (_viewMode == mode) {
+      return;
+    }
+    rust.setViewMode(mode);
+    setState(() => _viewMode = mode);
+  }
+
+  // ── 布局 ──
 
   @override
   Widget build(BuildContext context) {
@@ -443,26 +546,39 @@ class _StudioShellState extends State<StudioShell>
             }
             return Stack(
               children: [
-                // 画布常驻：切页/开合浮层都不销毁，surface 生命周期稳定。
                 Positioned.fill(
-                  child: Listener(
-                    behavior: HitTestBehavior.opaque,
-                    onPointerDown: (e) =>
-                        _sendTouch(0, e.localPosition, e.pointer),
-                    onPointerMove: (e) =>
-                        _sendTouch(1, e.localPosition, e.pointer),
-                    onPointerUp: (e) =>
-                        _sendTouch(2, e.localPosition, e.pointer),
-                    onPointerCancel: (e) =>
-                        _sendTouch(2, e.localPosition, e.pointer),
-                    child: Texture(textureId: id),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTapUp: (d) => _handleCanvasTap(d.localPosition),
+                    onLongPressStart: (d) =>
+                        _handleLongPressStart(d.localPosition),
+                    onLongPressMoveUpdate: (d) =>
+                        _handleLongPressMove(d.localPosition),
+                    onLongPressEnd: (_) => _handleLongPressEnd(),
+                    child: Listener(
+                      behavior: HitTestBehavior.opaque,
+                      onPointerDown: (e) =>
+                          _sendTouch(0, e.localPosition, e.pointer),
+                      onPointerMove: (e) =>
+                          _sendTouch(1, e.localPosition, e.pointer),
+                      onPointerUp: (e) =>
+                          _sendTouch(2, e.localPosition, e.pointer),
+                      onPointerCancel: (e) =>
+                          _sendTouch(2, e.localPosition, e.pointer),
+                      child: Texture(textureId: id),
+                    ),
                   ),
                 ),
                 if (!_showHome)
                   Positioned.fill(
                     child: IgnorePointer(
                       child: CustomPaint(
-                        painter: _LabelsPainter(_snap, _tracks),
+                        painter: LabelsPainter(
+                          _snap,
+                          _tracks,
+                          _dragFrom,
+                          _dragTo,
+                        ),
                       ),
                     ),
                   ),
@@ -470,13 +586,24 @@ class _StudioShellState extends State<StudioShell>
                   Positioned.fill(
                     child: IgnorePointer(
                       child: CustomPaint(
-                        painter: _PlayheadPainter(_playhead),
+                        painter: PlayheadPainter(_playhead),
                       ),
                     ),
                   ),
                 if (!_showHome) _buildTopBar(),
-                if (!_showHome) _buildTransport(),
-                if (_showHome) _buildHome(),
+                if (!_showHome && _viewMode == kViewPianoroll)
+                  _buildAutomationPanel(),
+                if (_showHome)
+                  HomeView(
+                    soundFontName: _soundFontName,
+                    recent: _recent,
+                    onPickMidi: _pickMidi,
+                    onPickSoundFont: _pickSoundFont,
+                    onOpenDemo: _openDemo,
+                    onOpenRecent: _openRecent,
+                    onOpenSettings: _openSettings,
+                    onBack: () => setState(() => _showHome = false),
+                  ),
               ],
             );
           },
@@ -485,200 +612,7 @@ class _StudioShellState extends State<StudioShell>
     );
   }
 
-  // ── 主页（仿桌面：按钮列 + 最近文件 + 银字水印 + 版本号 + 返回）──
-
-  Widget _buildHome() {
-    return Positioned.fill(
-      child: ColoredBox(
-        color: YinheTheme.bg,
-        child: Stack(
-          children: [
-            // 左下角水印。
-            Positioned(
-              left: 18,
-              bottom: -30,
-              child: IgnorePointer(
-                child: Text(
-                  '银',
-                  style: TextStyle(
-                    fontSize: 300,
-                    height: 1,
-                    fontWeight: FontWeight.w700,
-                    color: YinheTheme.textFaint,
-                  ),
-                ),
-              ),
-            ),
-            // 右下角版本号。
-            const Positioned(
-              right: 16,
-              bottom: 12,
-              child: Text(
-                '0.1.0',
-                style: TextStyle(color: Color(0xFF9A9AA2), fontSize: 12),
-              ),
-            ),
-            // 左上角返回。
-            Positioned(
-              left: 4,
-              top: 4,
-              child: IconButton(
-                tooltip: '返回工作区',
-                icon: const Icon(Icons.arrow_back),
-                color: YinheTheme.textSecondary,
-                onPressed: () => setState(() => _showHome = false),
-              ),
-            ),
-            // 主体：左按钮列 + 右最近文件。
-            Positioned.fill(
-              child: Padding(
-                padding: const EdgeInsets.only(left: 48, right: 40, top: 28),
-                child: Row(
-                  children: [
-                    SizedBox(width: 300, child: _homeActions()),
-                    const SizedBox(width: 56),
-                    Expanded(child: _recentPanel()),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _homeActions() {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        FilledButton.icon(
-          onPressed: _pickMidi,
-          icon: const Icon(Icons.note_add, size: 18),
-          label: const Text('打开 MIDI 文件'),
-          style: FilledButton.styleFrom(
-            backgroundColor: YinheTheme.primaryButtonBg,
-            foregroundColor: YinheTheme.text,
-            minimumSize: const Size.fromHeight(52),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(6),
-            ),
-          ),
-        ),
-        const SizedBox(height: 14),
-        _secondaryButton('打开演示文档', Icons.folder_open, _openDemo),
-        const SizedBox(height: 14),
-        _secondaryButton(
-          _soundFontName == null
-              ? '选择音色库…'
-              : '音色库：$_soundFontName',
-          Icons.piano,
-          _pickSoundFont,
-        ),
-      ],
-    );
-  }
-
-  Widget _secondaryButton(String label, IconData icon, VoidCallback onTap) {
-    return TextButton.icon(
-      onPressed: onTap,
-      icon: Icon(icon, size: 18),
-      label: Text(label, overflow: TextOverflow.ellipsis),
-      style: TextButton.styleFrom(
-        backgroundColor: YinheTheme.controlBg,
-        foregroundColor: YinheTheme.text,
-        minimumSize: const Size.fromHeight(52),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(6),
-        ),
-      ),
-    );
-  }
-
-  Widget _recentPanel() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Text(
-          '最近修改的文件',
-          style: TextStyle(color: YinheTheme.textLabel, fontSize: 14),
-        ),
-        const SizedBox(height: 8),
-        Expanded(
-          child: _recent.isEmpty
-              ? Align(
-                  alignment: Alignment.topLeft,
-                  child: Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                      '暂无最近文件',
-                      style: TextStyle(
-                        color: YinheTheme.textDisabled,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ),
-                )
-              : ListView.builder(
-                  padding: EdgeInsets.zero,
-                  itemCount: _recent.length,
-                  itemBuilder: (context, i) {
-                    final item = _recent[i];
-                    return InkWell(
-                      onTap: () => _openRecent(item),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 7),
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.audio_file,
-                              size: 18,
-                              color: YinheTheme.textLabel,
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                item.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: YinheTheme.text,
-                                  fontSize: 14,
-                                ),
-                              ),
-                            ),
-                            Text(
-                              _fmtDate(item.time),
-                              style: TextStyle(
-                                color: YinheTheme.textDisabled,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-        ),
-      ],
-    );
-  }
-
-  String _fmtDate(int epochSeconds) {
-    if (epochSeconds <= 0) {
-      return '';
-    }
-    final dt = DateTime.fromMillisecondsSinceEpoch(epochSeconds * 1000);
-    String two(int v) => v.toString().padLeft(2, '0');
-    return '${dt.year}-${two(dt.month)}-${two(dt.day)} '
-        '${two(dt.hour)}:${two(dt.minute)}';
-  }
-
-  // ── 顶部条 / 底部走带 ──
-
+  /// 上侧栏：播放/暂停、停止、时间码；右上角主页（PR 时另有走带入口）。
   Widget _buildTopBar() {
     return Positioned(
       left: 0,
@@ -687,48 +621,7 @@ class _StudioShellState extends State<StudioShell>
       child: Container(
         height: 42,
         color: Color.lerp(YinheTheme.bg, Colors.black, 0.04),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        child: Row(
-          children: [
-            _ViewTab(
-              label: '走带 AR',
-              selected: _viewMode == kViewArrangement,
-              onTap: () => _setView(kViewArrangement),
-            ),
-            const SizedBox(width: 6),
-            _ViewTab(
-              label: '卷帘 PR',
-              selected: _viewMode == kViewPianoroll,
-              onTap: () => _setView(kViewPianoroll),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Text(
-                _fileName ?? '',
-                style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            _ViewTab(
-              label: '主页',
-              selected: false,
-              onTap: () => setState(() => _showHome = true),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTransport() {
-    return Positioned(
-      left: 0,
-      right: 0,
-      bottom: 0,
-      child: Container(
-        height: 48,
-        color: Color.lerp(YinheTheme.bg, Colors.black, 0.04),
-        padding: const EdgeInsets.symmetric(horizontal: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 6),
         child: Row(
           children: [
             IconButton(
@@ -736,23 +629,50 @@ class _StudioShellState extends State<StudioShell>
               icon: Icon(_playing ? Icons.pause : Icons.play_arrow),
               color: YinheTheme.text,
               tooltip: _playing ? '暂停' : '播放',
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
             ),
             IconButton(
               onPressed: _stopPlayback,
               icon: const Icon(Icons.stop),
               color: YinheTheme.textSecondary,
               tooltip: '停止',
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
             ),
-            const SizedBox(width: 8),
-            Text(
-              _fmtTime(_seconds),
-              style: TextStyle(
-                color: YinheTheme.textLabel,
-                fontSize: 13,
-                fontFamily: 'monospace',
+            const SizedBox(width: 4),
+            // 时间码（无外框）：点击切换 秒数 ↔ 小节.拍.tick。
+            InkWell(
+              borderRadius: BorderRadius.circular(4),
+              onTap: () => setState(() => _timecodeBar = !_timecodeBar),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                child: Text(
+                  _timecodeBar ? _fmtBarBeat(_tick, _ppq) : _fmtTime(_seconds),
+                  style: TextStyle(
+                    color: YinheTheme.textLabel,
+                    fontSize: 14,
+                    fontFamily: 'monospace',
+                  ),
+                ),
               ),
             ),
             const Spacer(),
+            if (_viewMode == kViewPianoroll) ...[
+              _ViewTab(
+                label: '走带',
+                selected: false,
+                onTap: () => _setView(kViewArrangement),
+              ),
+              const SizedBox(width: 6),
+            ],
+            _ViewTab(
+              label: '主页',
+              selected: false,
+              onTap: () => setState(() => _showHome = true),
+            ),
           ],
         ),
       ),
@@ -792,203 +712,4 @@ class _ViewTab extends StatelessWidget {
       ),
     );
   }
-}
-
-/// 播放光标：竖线，x 由 Rust 按当前视口换算（逻辑像素）。
-class _PlayheadPainter extends CustomPainter {
-  _PlayheadPainter(this.x) : super(repaint: x);
-
-  final ValueNotifier<double> x;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final px = x.value;
-    if (px < 0 || px > size.width) {
-      return;
-    }
-    final paint = Paint()
-      ..color = YinheTheme.danger
-      ..strokeWidth = 1.5;
-    canvas.drawLine(Offset(px, 0), Offset(px, size.height), paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _PlayheadPainter oldDelegate) => false;
-}
-
-/// 文本浮层：AR 轨道面板文字/编号/M-S，PR 键盘 C 音名。
-class _LabelsPainter extends CustomPainter {
-  _LabelsPainter(this.snap, this.tracks)
-      : super(repaint: Listenable.merge([snap, tracks]));
-
-  final ValueNotifier<List<double>> snap;
-  final ValueNotifier<List<TrackRow>> tracks;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final s = snap.value;
-    if (s.length < 12) {
-      return;
-    }
-    if (s[0] == 0.0) {
-      _paintArrangement(canvas, size, s, tracks.value);
-    } else {
-      _paintKeyboardLabels(canvas, size, s);
-    }
-  }
-
-  void _paintArrangement(
-    Canvas canvas,
-    Size size,
-    List<double> s,
-    List<TrackRow> rows,
-  ) {
-    if (rows.isEmpty) {
-      return;
-    }
-    final laneH = s[6];
-    final scrollY = s[3];
-    final panelW = s[5];
-    if (laneH <= 0 || panelW <= 0) {
-      return;
-    }
-    final first =
-        (scrollY / laneH).floor().clamp(0, rows.length).toInt();
-    final last =
-        ((scrollY + size.height) / laneH).ceil().clamp(0, rows.length).toInt();
-    for (var idx = first; idx < last; idx++) {
-      final row = rows[idx];
-      final y = idx * laneH - scrollY;
-      final port = row.port >= 0 && row.port < 4
-          ? 'ABCD'[row.port]
-          : '?';
-      final code =
-          '${idx.toString().padLeft(3, '0')}  $port${(row.channel + 1).toString().padLeft(2, '0')}';
-      final font = (laneH * 0.24).clamp(9.0, 13.0).toDouble();
-      _text(
-        canvas,
-        code,
-        Offset(10, y + laneH * 0.30),
-        font,
-        YinheTheme.text,
-        vCenter: true,
-      );
-      final small = (laneH * 0.2).clamp(8.0, 11.0).toDouble();
-      _text(
-        canvas,
-        row.name,
-        Offset(10, y + laneH * 0.68),
-        small,
-        YinheTheme.textLabel,
-        vCenter: true,
-      );
-      if (laneH >= 34) {
-        final btn = (laneH * 0.44).clamp(18.0, 26.0).toDouble();
-        const gap = 4.0;
-        final right = panelW - 6.0;
-        final cy = y + laneH / 2;
-        _msButton(
-          canvas,
-          Rect.fromLTWH(right - btn, cy - btn / 2, btn, btn),
-          'M',
-          row.muted,
-          true,
-        );
-        _msButton(
-          canvas,
-          Rect.fromLTWH(right - btn * 2 - gap, cy - btn / 2, btn, btn),
-          'S',
-          row.soloed,
-          false,
-        );
-      }
-    }
-  }
-
-  void _paintKeyboardLabels(Canvas canvas, Size size, List<double> s) {
-    final kh = s[4];
-    final kbW = s[5];
-    final key0Y = s[9];
-    if (kh < 10 || kbW <= 0) {
-      return;
-    }
-    final font = (kh * 0.5).clamp(7.0, 11.0).toDouble();
-    for (var key = 0; key <= 127; key += 12) {
-      final y = key0Y - key * kh;
-      if (y + kh < 0 || y > size.height) {
-        continue;
-      }
-      final name = 'C${key ~/ 12 - 1}';
-      _text(
-        canvas,
-        name,
-        Offset(kbW - 6, y + kh / 2),
-        font,
-        YinheTheme.textMuted,
-        vCenter: true,
-        rightAlign: true,
-      );
-    }
-  }
-
-  void _msButton(
-    Canvas canvas,
-    Rect rect,
-    String label,
-    bool active,
-    bool isMute,
-  ) {
-    final bg = active
-        ? (isMute ? YinheTheme.warning : YinheTheme.danger)
-        : YinheTheme.btnBg;
-    final fg = active ? Colors.white : YinheTheme.textMuted;
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(rect, const Radius.circular(4)),
-      Paint()..color = bg,
-    );
-    _text(
-      canvas,
-      label,
-      rect.center,
-      10,
-      fg,
-      vCenter: true,
-      hCenter: true,
-    );
-  }
-
-  void _text(
-    Canvas canvas,
-    String text,
-    Offset pos,
-    double fontSize,
-    Color color, {
-    bool vCenter = false,
-    bool hCenter = false,
-    bool rightAlign = false,
-  }) {
-    if (text.isEmpty) {
-      return;
-    }
-    final tp = TextPainter(
-      text: TextSpan(
-        text: text,
-        style: TextStyle(fontSize: fontSize, color: color),
-      ),
-      maxLines: 1,
-      ellipsis: '…',
-      textDirection: TextDirection.ltr,
-    )..layout();
-    var dx = pos.dx;
-    if (rightAlign) {
-      dx -= tp.width;
-    } else if (hCenter) {
-      dx -= tp.width / 2;
-    }
-    final dy = vCenter ? pos.dy - tp.height / 2 : pos.dy;
-    tp.paint(canvas, Offset(dx, dy));
-  }
-
-  @override
-  bool shouldRepaint(covariant _LabelsPainter oldDelegate) => false;
 }
