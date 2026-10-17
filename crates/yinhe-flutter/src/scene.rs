@@ -6,6 +6,7 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use yinhe_core::{NoteEvent, YinModel};
+use yinhe_types::NoteSource;
 use yinhe_editor_core::Document;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::{ArrangementView, PianoRollView, TimelineViewBase};
@@ -546,6 +547,93 @@ pub fn automation_json(track: usize) -> String {
     }
     out.push(']');
     out
+}
+
+/// 力度条数据（当前轨道，按 tick 聚合取最大力度），JSON：`[[tick, velocity01], ...]`
+pub fn velocity_json(track: usize) -> String {
+    let Ok(s) = scene().lock() else {
+        return "[]".into();
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return "[]".into();
+    };
+    let model = &doc.data.model;
+    if model.tracks.get(track).is_none() {
+        return "[]".into();
+    }
+    let mut points: Vec<(u32, u8)> = Vec::new();
+    for key in 0..=yinhe_types::MAX_KEY {
+        for note in model.key_notes(key).iter() {
+            if note.track as usize == track {
+                points.push((note.start_tick, note.velocity));
+            }
+        }
+    }
+    points.sort_unstable_by_key(|p| p.0);
+    let mut out = String::from("[");
+    let mut first = true;
+    let mut i = 0;
+    while i < points.len() {
+        let tick = points[i].0;
+        let mut vel = points[i].1;
+        i += 1;
+        while i < points.len() && points[i].0 == tick {
+            vel = vel.max(points[i].1);
+            i += 1;
+        }
+        if !first {
+            out.push(',');
+        }
+        first = false;
+        out.push_str(&format!("[{tick},{}]", f32::from(vel) / 127.0));
+    }
+    out.push(']');
+    out
+}
+
+/// 编辑自动化锚点（仅 PB/CC/RPN，离散）：把指定 lane 的 tick 值设为 value。
+///
+/// `lane_index` 为 1-based（与 `automation_json` 的输出顺序一致）。成功返回 1。
+pub fn set_automation_value(track: usize, lane_index: usize, tick: u32, value: f32) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let model = std::sync::Arc::make_mut(&mut doc.data.model);
+    let Some(t) = model.tracks.get_mut(track) else {
+        return 0;
+    };
+    let t = std::sync::Arc::make_mut(t);
+    let mut seen = 0usize;
+    let mut target = None;
+    for lane in t.automation_lanes.iter_mut() {
+        if lane_kind(&lane.target).is_some() {
+            seen += 1;
+            if seen == lane_index {
+                target = Some(lane);
+                break;
+            }
+        }
+    }
+    let Some(lane) = target else {
+        return 0;
+    };
+    use yinhe_types::automation::{AutomationEvent, SegmentShape};
+    lane.upsert(AutomationEvent {
+        id: 0,
+        tick,
+        value: value.clamp(0.0, 1.0),
+        shape: SegmentShape::Step,
+    });
+    let model = doc.data.model.clone();
+    refresh_snapshot(&mut s);
+    drop(s);
+    // 力度/CC 变化会影响发声：demo 阶段整模型重载。
+    crate::audio::on_model_loaded(model);
+    log::info!("自动化编辑: track={track} lane={lane_index} tick={tick} value={value:.3}");
+    1
 }
 
 /// 自动化类型：0=PB、1=CC、2=RPN；其它（Nrpn/Tempo/插件参数）不展示。

@@ -501,6 +501,26 @@ pub extern "C" fn yinhe_automation_json(track: i32) -> *mut std::ffi::c_char {
     to_c_string(scene::automation_json(track.max(0) as usize))
 }
 
+/// 力度条数据 JSON（堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_velocity_json(track: i32) -> *mut std::ffi::c_char {
+    to_c_string(scene::velocity_json(track.max(0) as usize))
+}
+
+/// 编辑自动化锚点：track / lane_index(1-based) / tick / value(0..1)。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_automation_value(
+    track: i32,
+    lane_index: i32,
+    tick: u32,
+    value: f32,
+) -> i32 {
+    if track < 0 || lane_index <= 0 {
+        return 0;
+    }
+    scene::set_automation_value(track as usize, lane_index as usize, tick, value)
+}
+
 /// 释放本库返回的堆字符串。
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
