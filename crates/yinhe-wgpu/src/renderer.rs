@@ -21,7 +21,9 @@ use crate::cull::CullState;
 use crate::layer::{AnyLayer, LayerKind};
 use crate::pipeline::RenderPipelineState;
 use crate::resource::TrackedBuffer;
-use crate::vertex::{CurveInstance, NoteInstance, SelectionUniform, Uniforms, VelocityBarInstance};
+use crate::vertex::{
+    CurveInstance, DrawInstance, NoteInstance, SelectionUniform, Uniforms, VelocityBarInstance,
+};
 
 /// Per-frame timing breakdown returned by `prepare`.
 #[derive(Clone, Copy, Debug, Default)]
@@ -310,6 +312,7 @@ impl InstanceRenderer {
     }
 
     impl_upload_layer!(upload_note_layer, Note, Note, NoteInstance);
+    impl_upload_layer!(upload_decor_layer, Decor, Decor, DrawInstance);
     impl_upload_layer!(upload_curve_layer, Curve, Curve, CurveInstance);
     impl_upload_layer!(
         upload_curve_overlay_layer,
