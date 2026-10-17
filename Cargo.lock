@@ -7855,6 +7855,7 @@ dependencies = [
  "dirs",
  "jni 0.22.4",
  "ndk-context",
+ "rayon",
  "serde",
  "serde_json",
  "tracing",
