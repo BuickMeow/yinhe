@@ -6,9 +6,9 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use yinhe_core::{NoteEvent, YinModel};
-use yinhe_types::NoteSource;
 use yinhe_editor_core::Document;
 use yinhe_editor_core::quantize::QuantizePreset;
+use yinhe_types::NoteSource;
 use yinhe_types::{ArrangementView, PianoRollView, TimelineViewBase};
 
 /// 视图模式（与 Dart 约定一致：0=AR 走带，1=PR 卷帘）。
@@ -337,12 +337,41 @@ fn files_dir_slot() -> &'static Mutex<Option<String>> {
     FILES_DIR.get_or_init(|| Mutex::new(None))
 }
 
-/// Kotlin 侧传入私有目录（用于最近文件持久化）。
+/// Kotlin 侧传入私有目录（用于最近文件/设置持久化）。
 pub fn set_files_dir(dir: String) {
     if let Ok(mut g) = files_dir_slot().lock() {
         *g = Some(dir);
     }
     load_recent();
+    load_settings();
+}
+
+/// 设置文件写入（音色库路径持久化）。
+pub fn save_soundfont_setting(path: &str) {
+    let Some(dir) = files_dir_slot().lock().ok().and_then(|g| g.clone()) else {
+        return;
+    };
+    if let Err(e) = std::fs::write(format!("{dir}/settings.txt"), format!("soundfont={path}\n")) {
+        log::error!("设置写入失败: {e}");
+    }
+}
+
+/// 读取并应用持久化设置（启动时由 `set_files_dir` 触发）。
+fn load_settings() {
+    let Some(dir) = files_dir_slot().lock().ok().and_then(|g| g.clone()) else {
+        return;
+    };
+    let Ok(text) = std::fs::read_to_string(format!("{dir}/settings.txt")) else {
+        return;
+    };
+    for line in text.lines() {
+        if let Some(path) = line.strip_prefix("soundfont=")
+            && !path.is_empty()
+        {
+            log::info!("恢复音色库设置: {path}");
+            crate::audio::set_soundfont(path.to_string());
+        }
+    }
 }
 
 fn recent_file_path() -> Option<String> {

@@ -95,6 +95,15 @@ fn send_soundfonts(handle: &CpalAudioHandle, path: &str) {
     });
 }
 
+/// 当前音色库路径（可能尚未应用，仅记录）。无则空串。
+pub fn soundfont_path() -> String {
+    soundfont_slot()
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .unwrap_or_default()
+}
+
 /// 设置音色库路径（Kotlin 已复制到私有目录）。音频就绪时立即应用。
 pub fn set_soundfont(path: String) {
     if let Ok(mut g) = soundfont_slot().lock() {

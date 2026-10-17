@@ -330,7 +330,8 @@ pub extern "system" fn Java_com_jieneng_yinhe_1flutter_MainActivity_onSoundFontP
     match read_jstring(&mut env, &path) {
         Some(p) if !p.is_empty() => {
             log::info!("收到音色库: {p}");
-            audio::set_soundfont(p);
+            audio::set_soundfont(p.clone());
+            scene::save_soundfont_setting(&p);
         }
         Some(_) => {}
         None => log::error!("onSoundFontPicked: 读取路径失败"),
@@ -519,6 +520,12 @@ pub extern "C" fn yinhe_set_automation_value(
         return 0;
     }
     scene::set_automation_value(track as usize, lane_index as usize, tick, value)
+}
+
+/// 当前音色库路径（未选择则空串，堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_soundfont_path() -> *mut std::ffi::c_char {
+    to_c_string(audio::soundfont_path())
 }
 
 /// 释放本库返回的堆字符串。
