@@ -63,6 +63,11 @@ typedef SetAutoDart = int Function(int, int, int, double);
 final SetAutoDart setAutomationValue = bridge
     .lookupFunction<SetAutoNative, SetAutoDart>('yinhe_set_automation_value');
 
+/// 当前音色库路径（空串 = 未选择）。
+final CStrDart soundfontPath = bridge.lookupFunction<CStrNative, CStrDart>(
+  'yinhe_soundfont_path',
+);
+
 typedef FreeNative = ffi.Void Function(ffi.Pointer<Utf8>);
 typedef FreeDart = void Function(ffi.Pointer<Utf8>);
 

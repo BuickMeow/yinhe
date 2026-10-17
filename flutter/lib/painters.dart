@@ -19,13 +19,117 @@ class PlayheadPainter extends CustomPainter {
       Offset(px, 0),
       Offset(px, size.height),
       Paint()
-        ..color = YinheTheme.danger
+        ..color = YinheTheme.accent
         ..strokeWidth = 1.5,
     );
   }
 
   @override
   bool shouldRepaint(covariant PlayheadPainter oldDelegate) => false;
+}
+
+/// 时间标尺：顶部小节号 + 拍刻度（合并规则与桌面 time_ruler 一致）。
+class RulerPainter extends CustomPainter {
+  RulerPainter(this.snap) : super(repaint: snap);
+
+  final ValueNotifier<List<double>> snap;
+
+  static const double height = 30.0;
+  static const double minLabelSpacing = 38.0;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = snap.value;
+    if (s.length < 12 || size.width <= 0) {
+      return;
+    }
+    final ppu = s[1];
+    final scrollX = s[2];
+    final kbW = s[5];
+    final ppq = s[8] > 0 ? s[8] : 480.0;
+    if (ppu <= 0) {
+      return;
+    }
+    final measureTicks = ppq * 4;
+    var divisor = 1.0;
+    while (measureTicks * ppu * divisor < minLabelSpacing && divisor < 64) {
+      divisor *= 2;
+    }
+    final barStep = measureTicks * divisor;
+
+    // 背景 + 底线：只覆盖时间区（左侧轨道面板不遮挡）。
+    canvas.drawRect(
+      Rect.fromLTWH(kbW, 0, size.width - kbW, size.height),
+      Paint()..color = YinheTheme.bg,
+    );
+    canvas.drawLine(
+      Offset(kbW, size.height - 0.5),
+      Offset(size.width, size.height - 0.5),
+      Paint()
+        ..color = YinheTheme.lineFg
+        ..strokeWidth = 1,
+    );
+
+    double xOfTick(double tick) => tick * ppu - scrollX + kbW;
+    final startTick = ((-kbW + scrollX) / ppu).clamp(0.0, double.infinity);
+    final endTick = ((size.width - kbW + scrollX) / ppu).clamp(
+      0.0,
+      double.infinity,
+    );
+
+    final barPaint = Paint()
+      ..color = YinheTheme.textMuted
+      ..strokeWidth = 1;
+    final beatPaint = Paint()
+      ..color = YinheTheme.lineFg
+      ..strokeWidth = 1;
+
+    // 拍线（仅在未合并小节标签时）。
+    if (divisor == 1.0) {
+      var t = (startTick / ppq).floor() * ppq;
+      while (t <= endTick + ppq) {
+        final x = xOfTick(t);
+        if (x >= kbW && x <= size.width && (t % measureTicks != 0)) {
+          canvas.drawLine(
+            Offset(x, size.height - 7),
+            Offset(x, size.height),
+            beatPaint,
+          );
+        }
+        t += ppq;
+      }
+    }
+
+    // 小节刻度 + 小节号。
+    var tick = (startTick / barStep).floor() * barStep;
+    while (tick <= endTick + barStep) {
+      final x = xOfTick(tick);
+      if (x >= kbW && x <= size.width) {
+        canvas.drawLine(
+          Offset(x, size.height - 13),
+          Offset(x, size.height),
+          barPaint,
+        );
+        final bar = (tick / measureTicks).floor() + 1;
+        _label(canvas, '$bar', Offset(x + 3, 2));
+      }
+      tick += barStep;
+    }
+  }
+
+  void _label(Canvas canvas, String text, Offset pos) {
+    final tp = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(fontSize: 10, color: YinheTheme.textLabel),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, pos);
+  }
+
+  @override
+  bool shouldRepaint(covariant RulerPainter oldDelegate) => true;
 }
 
 /// 文本浮层：AR 轨道面板文字/编号/M-S、拖动排序指示，PR 键盘 C 音名。

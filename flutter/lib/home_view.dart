@@ -8,20 +8,16 @@ import 'theme.dart';
 class HomeView extends StatelessWidget {
   const HomeView({
     super.key,
-    required this.soundFontName,
     required this.recent,
     required this.onPickMidi,
-    required this.onPickSoundFont,
     required this.onOpenDemo,
     required this.onOpenRecent,
     required this.onOpenSettings,
     required this.onBack,
   });
 
-  final String? soundFontName;
   final List<RecentItem> recent;
   final VoidCallback onPickMidi;
-  final VoidCallback onPickSoundFont;
   final VoidCallback onOpenDemo;
   final ValueChanged<RecentItem> onOpenRecent;
   final VoidCallback onOpenSettings;
@@ -106,12 +102,6 @@ class HomeView extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         _secondary('打开演示文档', Icons.folder_open, onOpenDemo),
-        const SizedBox(height: 14),
-        _secondary(
-          soundFontName == null ? '选择音色库…' : '音色库：$soundFontName',
-          Icons.piano,
-          onPickSoundFont,
-        ),
         const SizedBox(height: 14),
         _secondary('设置', Icons.settings, onOpenSettings),
       ],

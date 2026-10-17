@@ -11,6 +11,7 @@ import 'ffi.dart' as rust;
 import 'home_view.dart';
 import 'models.dart';
 import 'painters.dart';
+import 'settings_view.dart';
 import 'theme.dart';
 
 /// 视图模式（与 Rust 侧约定一致：0=AR 走带，1=PR 卷帘）。
@@ -18,6 +19,15 @@ const int kViewArrangement = 0;
 const int kViewPianoroll = 1;
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  // 沉浸式全屏：隐藏顶部状态栏与底部小白条（滑动可临时唤出）。
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      systemNavigationBarColor: Colors.transparent,
+    ),
+  );
   runApp(const YinheApp());
 }
 
@@ -43,7 +53,7 @@ class StudioShell extends StatefulWidget {
 }
 
 class _StudioShellState extends State<StudioShell>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   static const MethodChannel _channel = MethodChannel('yinhe/surface');
 
   int? _textureId;
@@ -58,11 +68,15 @@ class _StudioShellState extends State<StudioShell>
   int? _activeTrack;
 
   bool _playing = false;
-  double _seconds = 0;
-  double _tick = 0;
 
   /// 时间码显示模式：false=秒数（默认），true=小节.拍.tick。
   bool _timecodeBar = false;
+
+  /// 时间码文本（每帧刷新，只重建文本本身）。
+  final ValueNotifier<String> _timecodeText = ValueNotifier('0:00.000');
+
+  /// 设置页浮层（从主页进入）。
+  bool _showSettings = false;
 
   List<RecentItem> _recent = const [];
 
@@ -93,7 +107,6 @@ class _StudioShellState extends State<StudioShell>
   final ValueNotifier<int> _dragTo = ValueNotifier<int>(-1);
 
   late final Ticker _ticker;
-  Timer? _transportTimer;
   late final ffi.Pointer<ffi.Float> _snapPtr;
 
   bool _dragging = false;
@@ -101,24 +114,23 @@ class _StudioShellState extends State<StudioShell>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _snapPtr = calloc<ffi.Float>(12);
     _channel.setMethodCallHandler(_onNativeCall);
     _init();
     _ticker = createTicker((_) {
       _playhead.value = rust.playheadX();
       _snap.value = _readSnapshot();
+      _updateTimecode();
     })..start();
-    _transportTimer = Timer.periodic(
-      const Duration(milliseconds: 250),
-      (_) => _refreshTransport(),
-    );
     _recent = _readRecent();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _ticker.dispose();
-    _transportTimer?.cancel();
+    _timecodeText.dispose();
     _playhead.dispose();
     _snap.dispose();
     _tracks.dispose();
@@ -127,6 +139,14 @@ class _StudioShellState extends State<StudioShell>
     _autoPreview.dispose();
     calloc.free(_snapPtr);
     super.dispose();
+  }
+
+  /// 从桌面/后台返回：重新应用沉浸式全屏（系统可能已重置）。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    }
   }
 
   // ── 数据读取 ──
@@ -211,6 +231,24 @@ class _StudioShellState extends State<StudioShell>
       return;
     }
     setState(() => _textureId = id);
+    _loadSoundFontName();
+  }
+
+  /// 启动时同步已持久化的音色库名（Rust 侧已自动恢复音色库）。
+  void _loadSoundFontName() {
+    final ptr = rust.soundfontPath();
+    if (ptr == ffi.nullptr) {
+      return;
+    }
+    try {
+      final path = ptr.toDartString();
+      if (path.isEmpty || !mounted) {
+        return;
+      }
+      setState(() => _soundFontName = path.split('/').last);
+    } finally {
+      rust.freeString(ptr);
+    }
   }
 
   Future<void> _pickMidi() async {
@@ -229,10 +267,9 @@ class _StudioShellState extends State<StudioShell>
       _showHome = false;
       _viewMode = kViewArrangement;
       _activeTrack = null;
-      _seconds = 0;
-      _tick = 0;
       _playing = false;
     });
+    _updateTimecode();
     Future.delayed(const Duration(milliseconds: 600), _refreshDocumentMeta);
   }
 
@@ -254,8 +291,7 @@ class _StudioShellState extends State<StudioShell>
   }
 
   void _openSettings() {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('设置页尚未实现')));
+    setState(() => _showSettings = true);
   }
 
   /// 读取当前轨道的自动化 lane（仅 PB/CC/RPN）。
@@ -518,32 +554,29 @@ class _StudioShellState extends State<StudioShell>
     final next = !_playing;
     setState(() => _playing = next);
     rust.transport(next ? 0 : 1);
+    _updateTimecode();
   }
 
   void _stopPlayback() {
     rust.transport(2);
-    setState(() {
-      _playing = false;
-      _seconds = 0;
-      _tick = 0;
-    });
+    _updateTimecode();
+    setState(() => _playing = false);
   }
 
-  void _refreshTransport() {
-    if (!mounted || _showHome) {
+  /// 每帧刷新时间码文本（只触发文本重建，不动整棵布局）。
+  void _updateTimecode() {
+    if (!mounted) {
       return;
     }
+    final text = _timecodeBar
+        ? _fmtBarBeat(rust.playheadTick(), _ppq)
+        : _fmtTime(rust.playbackSeconds());
+    if (_timecodeText.value != text) {
+      _timecodeText.value = text;
+    }
     final playing = rust.isPlaying() == 1;
-    final seconds = rust.playbackSeconds();
-    final tick = rust.playheadTick();
-    if (playing != _playing ||
-        (seconds - _seconds).abs() > 0.02 ||
-        (tick - _tick).abs() > 0.5) {
-      setState(() {
-        _playing = playing;
-        _seconds = seconds;
-        _tick = tick;
-      });
+    if (playing != _playing) {
+      setState(() => _playing = playing);
     }
   }
 
@@ -580,8 +613,9 @@ class _StudioShellState extends State<StudioShell>
       return;
     }
     rust.touch(kind, p.dx, p.dy, pointer);
-    // 视图快照同步刷新：缓解 Flutter 浮层与 wgpu 纹理的相位差。
+    // 视图快照与演奏指示线同步刷新：缓解 Flutter 浮层与 wgpu 纹理的相位差。
     _snap.value = _readSnapshot();
+    _playhead.value = rust.playheadX();
   }
 
   int? _rowAt(Offset p) {
@@ -749,6 +783,15 @@ class _StudioShellState extends State<StudioShell>
                               ),
                             ),
                           ),
+                          // 层级：音符（Texture）→ 演奏指示线 → 音轨面板 → 时间标尺 → 自动化栏。
+                          if (!_showHome)
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                child: CustomPaint(
+                                  painter: PlayheadPainter(_playhead),
+                                ),
+                              ),
+                            ),
                           if (!_showHome)
                             Positioned.fill(
                               child: IgnorePointer(
@@ -763,10 +806,14 @@ class _StudioShellState extends State<StudioShell>
                               ),
                             ),
                           if (!_showHome)
-                            Positioned.fill(
+                            Positioned(
+                              left: 0,
+                              right: 0,
+                              top: 0,
+                              height: RulerPainter.height,
                               child: IgnorePointer(
                                 child: CustomPaint(
-                                  painter: PlayheadPainter(_playhead),
+                                  painter: RulerPainter(_snap),
                                 ),
                               ),
                             ),
@@ -784,14 +831,18 @@ class _StudioShellState extends State<StudioShell>
             ),
             if (_showHome)
               HomeView(
-                soundFontName: _soundFontName,
                 recent: _recent,
                 onPickMidi: _pickMidi,
-                onPickSoundFont: _pickSoundFont,
                 onOpenDemo: _openDemo,
                 onOpenRecent: _openRecent,
                 onOpenSettings: _openSettings,
                 onBack: () => setState(() => _showHome = false),
+              ),
+            if (_showSettings)
+              SettingsView(
+                soundFontName: _soundFontName,
+                onPickSoundFont: _pickSoundFont,
+                onBack: () => setState(() => _showSettings = false),
               ),
           ],
         ),
@@ -826,23 +877,42 @@ class _StudioShellState extends State<StudioShell>
             constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
           ),
           const SizedBox(width: 4),
-          // 时间码（无外框）：点击切换 秒数 ↔ 小节.拍.tick。
+          // 时间码（无外框、非等宽）：点击切换 秒数 ↔ 小节.拍.tick。
           InkWell(
             borderRadius: BorderRadius.circular(4),
-            onTap: () => setState(() => _timecodeBar = !_timecodeBar),
+            onTap: () {
+              setState(() => _timecodeBar = !_timecodeBar);
+              _updateTimecode();
+            },
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              child: Text(
-                _timecodeBar ? _fmtBarBeat(_tick, _ppq) : _fmtTime(_seconds),
-                style: TextStyle(
-                  color: YinheTheme.textLabel,
-                  fontSize: 14,
-                  fontFamily: 'monospace',
+              child: ValueListenableBuilder<String>(
+                valueListenable: _timecodeText,
+                builder: (context, text, _) => Text(
+                  text,
+                  style: TextStyle(color: YinheTheme.textLabel, fontSize: 14),
                 ),
               ),
             ),
           ),
-          const Spacer(),
+          // 当前文件（标题栏位置）。
+          if (_fileName != null)
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Text(
+                  _fileName!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: YinheTheme.textDisabled,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            )
+          else
+            const Spacer(),
           if (_viewMode == kViewPianoroll) ...[
             _ViewTab(
               label: '走带',
