@@ -27,6 +27,8 @@ pub struct ScaleDialogState {
     override_on: bool,
     /// 使用工程事件（未覆盖时读工程调号事件）。
     use_events: bool,
+    /// 插入菜单模式：Some(tick) = 确认后返回插入动作（不写覆盖、隐藏开关）。
+    insert_tick: Option<u32>,
 }
 
 impl Default for ScaleDialogState {
@@ -38,6 +40,7 @@ impl Default for ScaleDialogState {
             scale: ScaleType::Major,
             override_on: true,
             use_events: true,
+            insert_tick: None,
         }
     }
 }
@@ -49,6 +52,12 @@ pub enum ScaleAction {
     Confirm {
         r#override: Option<(u8, ScaleType)>,
         use_events: bool,
+    },
+    /// 插入菜单模式确认：在 tick 处插入调号事件。
+    InsertEvent {
+        tick: u32,
+        root: u8,
+        scale: ScaleType,
     },
     /// 取消 / 关窗。
     Cancel,
@@ -69,6 +78,17 @@ impl ScaleDialogState {
         self.scale = scale;
         self.override_on = override_on;
         self.use_events = use_events;
+        self.insert_tick = None;
+    }
+
+    /// 插入菜单模式：确认后返回 [`ScaleAction::InsertEvent`]（不写覆盖、隐藏开关）。
+    pub fn open_for_insert(&mut self, tick: u32, current: Option<(u8, ScaleType)>) {
+        self.open = true;
+        self.just_opened = true;
+        let (root, scale) = current.unwrap_or((0, ScaleType::Major));
+        self.root = root % 12;
+        self.scale = scale;
+        self.insert_tick = Some(tick);
     }
 
     pub fn show_viewport(&mut self, ctx: &egui::Context) -> ScaleAction {
@@ -139,9 +159,16 @@ impl ScaleDialogState {
         let mut action = ScaleAction::None;
         match clicked {
             Some(1) => {
-                action = ScaleAction::Confirm {
-                    r#override: self.override_on.then_some((self.root, self.scale)),
-                    use_events: self.use_events,
+                action = match self.insert_tick {
+                    Some(tick) => ScaleAction::InsertEvent {
+                        tick,
+                        root: self.root,
+                        scale: self.scale,
+                    },
+                    None => ScaleAction::Confirm {
+                        r#override: self.override_on.then_some((self.root, self.scale)),
+                        use_events: self.use_events,
+                    },
                 };
             }
             Some(0) => action = ScaleAction::Cancel,
@@ -256,8 +283,11 @@ impl ScaleDialogState {
                 self.scale.english_name()
             ),
         );
-        ui.add_space(crate::scaling::scaled_font(&ctx, 6.0));
-        ui.checkbox(&mut self.override_on, t!("timecode.override"));
-        ui.checkbox(&mut self.use_events, t!("timecode.use_events"));
+        // 插入模式只选调式，不涉及「覆盖显示 / 使用工程事件」。
+        if self.insert_tick.is_none() {
+            ui.add_space(crate::scaling::scaled_font(&ctx, 6.0));
+            ui.checkbox(&mut self.override_on, t!("timecode.override"));
+            ui.checkbox(&mut self.use_events, t!("timecode.use_events"));
+        }
     }
 }

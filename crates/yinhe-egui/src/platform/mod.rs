@@ -49,8 +49,8 @@ pub enum MenuAction {
     FlipVertical,
     /// 编辑菜单「网格切割」：按当前量化切分选框内音符。
     GridSplit,
-    /// 编辑菜单「插入标签」（在光标处插入 MIDI marker）。
-    InsertMarker,
+    /// 插入菜单动作（透传；含弹窗类）。
+    Insert(crate::chrome::insert_actions::InsertAction),
     /// 播放菜单「播放/暂停」（Space）。
     TogglePlay,
     /// 播放菜单「停止」（Esc）。

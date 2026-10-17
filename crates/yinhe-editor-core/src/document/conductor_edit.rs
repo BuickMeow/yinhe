@@ -123,30 +123,26 @@ impl Document {
 
     // ── 插入新事件（默认值）──
 
-    /// 插入一个 TimeSig 事件（默认 4/4）。
-    pub fn insert_time_sig_event(&mut self, tick: u32) {
+    /// 插入一个 TimeSig 事件（调用方提供分子/分母）。
+    pub fn insert_time_sig_event(&mut self, tick: u32, numerator: u8, denominator: u8) {
         conductor_insert_event!(
             rebuild tempo_map;
             self,
             time_sig,
             yinhe_types::TimeSigEvent {
                 tick,
-                numerator: 4,
-                denominator: 4,
+                numerator,
+                denominator,
             }
         );
     }
 
-    /// 插入一个 KeySig 事件（默认 C 大调）。
-    pub fn insert_key_sig_event(&mut self, tick: u32) {
+    /// 插入一个 KeySig 事件（调用方提供主音/音阶）。
+    pub fn insert_key_sig_event(&mut self, tick: u32, root: u8, scale: yinhe_types::ScaleType) {
         conductor_insert_event!(
             self,
             key_sig,
-            yinhe_types::KeySigEvent {
-                tick,
-                root: 0,
-                scale: yinhe_types::ScaleType::Major,
-            }
+            yinhe_types::KeySigEvent { tick, root, scale }
         );
     }
 

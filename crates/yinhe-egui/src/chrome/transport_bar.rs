@@ -5,13 +5,13 @@ use rust_i18n::t;
 use crate::widgets::action_menu::pinned_action_buttons;
 use crate::widgets::timecode::show_timecode_display;
 
-use super::transport_bar_actions::{PlayActions, PlayMenuAction};
-use super::transport_bar_menus::{show_edit_menu, show_file_menu, show_play_menu, show_view_menu};
-use super::transport_bar_pr;
-
+use super::insert_actions::show_insert_menu;
 pub use super::transport_bar_actions::{
     EDIT_GROUPS, EditAction, FILE_GROUPS, FileAction, TransportContext, TransportResponse,
 };
+use super::transport_bar_actions::{PlayActions, PlayMenuAction};
+use super::transport_bar_menus::{show_edit_menu, show_file_menu, show_play_menu, show_view_menu};
+use super::transport_bar_pr;
 pub use super::transport_bar_pr::PrBarData;
 pub(crate) use super::transport_bar_recent::recent_display_name;
 pub use crate::widgets::action_menu::PopupRow;
@@ -26,6 +26,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
     let mut play_actions = PlayActions::default();
     let mut pending_file_action = None;
     let mut pending_edit_action = None;
+    let mut pending_insert_action = None;
     let mut pending_open_path = None;
     let mut set_orientation = None;
     let mut set_automation_panels = None;
@@ -117,6 +118,16 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     &mut set_orientation,
                     &mut set_automation_panels,
                 );
+
+                let insert_btn = menu_button(ui, "insert_menu", ICON_ADD_CIRCLE, btn_size);
+                if insert_btn.hovered() {
+                    hovered_hint = Some(t!("hint.insert_menu").to_string());
+                }
+                if let Some(action) =
+                    show_insert_menu(&insert_btn, has_active, &ctx.settings.keybindings)
+                {
+                    pending_insert_action = Some(action);
+                }
 
                 let is_playing = ctx
                     .doc
@@ -365,6 +376,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
         selection_action,
         pending_file_action,
         pending_edit_action,
+        pending_insert_action,
         pending_open_path,
     }
 }

@@ -853,7 +853,6 @@ impl App {
             A::GridSplit => self.handle_selection_action(S::GridConfirm),
             A::DedupWithinTrack => self.dedup_overlapping_notes(false),
             A::DedupAcrossTracks => self.dedup_overlapping_notes(true),
-            A::InsertMarker => self.insert_marker_at_cursor(),
         }
     }
 

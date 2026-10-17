@@ -2,7 +2,7 @@ use egui_material_icons::icons::*;
 use rust_i18n::t;
 use yinhe_editor_core::shortcuts;
 
-use crate::widgets::action_menu::PopupRow;
+use crate::widgets::action_menu::{MenuGroup, PopupRow};
 
 /// 文件菜单动作
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -164,8 +164,6 @@ pub enum EditAction {
     FillGaps,
     /// 合并：把框选内首尾严格相接的同 key 音符合并成一个。
     MergeNotes,
-    /// 在光标位置插入一个标签（MIDI marker），默认名 = 小节.拍.tick。
-    InsertMarker,
     /// 变速：选中音符时值 ×2。
     LengthDouble,
     /// 变速：选中音符时值 ÷2。
@@ -179,7 +177,7 @@ pub enum EditAction {
 }
 
 impl EditAction {
-    pub const ALL: [EditAction; 25] = [
+    pub const ALL: [EditAction; 24] = [
         EditAction::Undo,
         EditAction::Redo,
         EditAction::Cut,
@@ -199,7 +197,6 @@ impl EditAction {
         EditAction::Humanize,
         EditAction::FillGaps,
         EditAction::MergeNotes,
-        EditAction::InsertMarker,
         EditAction::LengthDouble,
         EditAction::LengthHalf,
         EditAction::FlipHorizontal,
@@ -225,16 +222,14 @@ impl EditAction {
             EditAction::TransposeDown => 13,
             EditAction::DedupWithinTrack => 14,
             EditAction::DedupAcrossTracks => 15,
-            // InsertMarker 保持既有索引（不可 pin）；新增项一律追加末尾。
-            EditAction::InsertMarker => 16,
-            EditAction::Humanize => 17,
-            EditAction::FillGaps => 18,
-            EditAction::MergeNotes => 19,
-            EditAction::LengthDouble => 20,
-            EditAction::LengthHalf => 21,
-            EditAction::FlipHorizontal => 22,
-            EditAction::FlipVertical => 23,
-            EditAction::GridSplit => 24,
+            EditAction::Humanize => 16,
+            EditAction::FillGaps => 17,
+            EditAction::MergeNotes => 18,
+            EditAction::LengthDouble => 19,
+            EditAction::LengthHalf => 20,
+            EditAction::FlipHorizontal => 21,
+            EditAction::FlipVertical => 22,
+            EditAction::GridSplit => 23,
         }
     }
 
@@ -264,7 +259,6 @@ impl EditAction {
             EditAction::FlipHorizontal => shortcuts::ACTION_FLIP_HORIZONTAL,
             EditAction::FlipVertical => shortcuts::ACTION_FLIP_VERTICAL,
             EditAction::GridSplit => shortcuts::ACTION_GRID_SPLIT,
-            EditAction::InsertMarker => "",
         }
     }
 
@@ -289,7 +283,6 @@ impl EditAction {
             EditAction::Humanize => ICON_PERSON,
             EditAction::FillGaps => ICON_COMPARE_ARROWS,
             EditAction::MergeNotes => ICON_LINE_STYLE,
-            EditAction::InsertMarker => ICON_BOOKMARK,
             EditAction::LengthDouble => ICON_EXPAND,
             EditAction::LengthHalf => ICON_COMPRESS,
             EditAction::FlipHorizontal => ICON_FLIP,
@@ -299,10 +292,7 @@ impl EditAction {
     }
 
     pub fn label_key(self) -> &'static str {
-        match self {
-            EditAction::InsertMarker => "menu.insert_marker",
-            _ => crate::shortcuts::action_label_key(self.action_id()),
-        }
+        crate::shortcuts::action_label_key(self.action_id())
     }
 
     fn is_enabled(self, has_active: bool) -> bool {
@@ -322,9 +312,6 @@ impl PopupRow for EditAction {
     }
     fn label_key(self) -> &'static str {
         self.label_key()
-    }
-    fn has_pin(self) -> bool {
-        !matches!(self, EditAction::InsertMarker)
     }
     /// 需要存在选择（框选/自动化锚点）才可执行的动作。
     fn needs_selection(self) -> bool {
@@ -573,62 +560,63 @@ pub struct TransportResponse {
     pub selection_action: Option<crate::widgets::selection_actions::SelectionAction>,
     pub pending_file_action: Option<FileAction>,
     pub pending_edit_action: Option<EditAction>,
+    /// 插入菜单点击（None = 未点击）。
+    pub pending_insert_action: Option<super::insert_actions::InsertAction>,
     pub pending_open_path: Option<String>,
 }
 
 /// 文件/编辑分组常量
-pub const FILE_GROUPS: [&[FileAction]; 5] = [
-    &[
+pub const FILE_GROUPS: [MenuGroup<'static, FileAction>; 5] = [
+    MenuGroup::plain(&[
         FileAction::NewProject,
         FileAction::Open,
         FileAction::ImportAudio,
         FileAction::Welcome,
-    ],
-    &[
+    ]),
+    MenuGroup::plain(&[
         FileAction::Save,
         FileAction::SaveAs,
         FileAction::CloseDocument,
-    ],
-    &[FileAction::ProjectSettings],
-    &[FileAction::ExportAudio, FileAction::ExportMidi],
+    ]),
+    MenuGroup::plain(&[FileAction::ProjectSettings]),
+    MenuGroup::plain(&[FileAction::ExportAudio, FileAction::ExportMidi]),
     // 组 5 不进 macOS 文件菜单（设置/退出在 App 菜单），About 也随之只在应用内菜单出现。
-    &[FileAction::Settings, FileAction::About, FileAction::Exit],
+    MenuGroup::plain(&[FileAction::Settings, FileAction::About, FileAction::Exit]),
 ];
 
-/// 编辑菜单分组：撤销｜剪贴板｜选择｜插入（无选择操作）｜
-/// 基础编辑｜变换（音高/时值/方向）｜清理与改造——后三组均作用于选区。
-pub const EDIT_GROUPS: [&[EditAction]; 7] = [
-    &[EditAction::Undo, EditAction::Redo],
-    &[
+/// 编辑菜单分组：撤销｜剪贴板｜选择｜基础编辑｜变换（音高/时值/方向）｜清理与改造。
+/// 插入类动作已迁至「插入」菜单（见 `insert_actions`）。
+pub const EDIT_GROUPS: [MenuGroup<'static, EditAction>; 6] = [
+    MenuGroup::plain(&[EditAction::Undo, EditAction::Redo]),
+    MenuGroup::plain(&[
         EditAction::Cut,
         EditAction::Copy,
         EditAction::Paste,
         EditAction::PasteAtOriginal,
         EditAction::PasteFlipped,
-    ],
-    &[
+    ]),
+    MenuGroup::plain(&[
         EditAction::SelectAll,
         EditAction::SelectNotesOnly,
         EditAction::FilterSelection,
-    ],
-    &[EditAction::InsertMarker],
-    &[EditAction::Delete, EditAction::Duplicate],
-    &[
+    ]),
+    MenuGroup::plain(&[EditAction::Delete, EditAction::Duplicate]),
+    MenuGroup::plain(&[
         EditAction::TransposeUp,
         EditAction::TransposeDown,
         EditAction::LengthHalf,
         EditAction::LengthDouble,
         EditAction::FlipHorizontal,
         EditAction::FlipVertical,
-    ],
-    &[
+    ]),
+    MenuGroup::plain(&[
         EditAction::Humanize,
         EditAction::FillGaps,
         EditAction::MergeNotes,
         EditAction::GridSplit,
         EditAction::DedupWithinTrack,
         EditAction::DedupAcrossTracks,
-    ],
+    ]),
 ];
 
 pub fn tool_hint(tool: crate::widgets::tools_panel::Tool) -> String {

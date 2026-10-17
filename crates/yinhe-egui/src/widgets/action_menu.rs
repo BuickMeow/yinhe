@@ -37,6 +37,22 @@ pub struct PopupRowSpec<'a> {
     pub chevron: bool,
 }
 
+/// 一个菜单分组：可选的副标题 + 条目列表。
+///
+/// 有副标题的组在菜单里以小号灰字标题开头、不画分隔线；
+/// 无副标题的组沿用分隔线（历史行为）。
+pub struct MenuGroup<'a, T> {
+    pub title: Option<String>,
+    pub items: &'a [T],
+}
+
+impl<'a, T> MenuGroup<'a, T> {
+    /// 无标题组（名称沿用常量的旧语义）。
+    pub const fn plain(items: &'a [T]) -> Self {
+        Self { title: None, items }
+    }
+}
+
 pub const PIN_W: f32 = 26.0;
 pub const MAIN_PIN_GAP: f32 = 2.0;
 
@@ -135,7 +151,7 @@ pub fn popup_menu_row(
 
 pub fn measure_menu_width<T: PopupRow>(
     ctx: &egui::Context,
-    groups: &[&[T]],
+    groups: &[MenuGroup<'_, T>],
     keybindings: &yinhe_editor_core::shortcuts::Keybindings,
 ) -> f32 {
     let spacing = &ctx.style_of(ctx.theme()).spacing;
@@ -143,7 +159,7 @@ pub fn measure_menu_width<T: PopupRow>(
     let shortcut_gap = spacing.item_spacing.x;
     let mut max_content = 0.0f32;
     for group in groups {
-        for &action in *group {
+        for &action in group.items {
             let label = t!(action.label_key());
             let shortcut = keybindings
                 .get(action.action_id())
@@ -174,7 +190,7 @@ pub fn measure_menu_width<T: PopupRow>(
             max_content = max_content.max(content_w + pad_x + shortcut_gap);
         }
     }
-    let has_pin = groups.iter().copied().flatten().any(|a| a.has_pin());
+    let has_pin = groups.iter().flat_map(|g| g.items).any(|a| a.has_pin());
     max_content + if has_pin { PIN_W + MAIN_PIN_GAP } else { 0.0 }
 }
 
@@ -192,7 +208,7 @@ pub struct ActionMenuExtra<'a> {
 #[allow(clippy::too_many_arguments)]
 pub fn show_action_menu<T: PopupRow>(
     button: &egui::Response,
-    groups: &[&[T]],
+    groups: &[MenuGroup<'_, T>],
     has_active: bool,
     selection_available: bool,
     loading: bool,
@@ -219,10 +235,13 @@ pub fn show_action_menu<T: PopupRow>(
             let mut any_row_hovered = false;
             let mut extra = extra;
             for (gi, group) in groups.iter().enumerate() {
-                if gi > 0 {
+                if gi > 0 && group.title.is_none() {
                     ui.separator();
                 }
-                for &action in *group {
+                if let Some(title) = &group.title {
+                    show_group_title(ui, title);
+                }
+                for &action in group.items {
                     let enabled = action.is_enabled(has_active, loading)
                         && (!action.needs_selection() || selection_available);
                     let is_pinned = pinned
@@ -282,6 +301,19 @@ pub fn show_action_menu<T: PopupRow>(
         pinned_changed,
         popup_open: popup_response.is_some(),
     }
+}
+
+/// 分组副标题行：小号灰字、左缩进对齐条目文字（插入菜单等按类别分组的菜单用）。
+fn show_group_title(ui: &mut egui::Ui, title: &str) {
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 22.0), egui::Sense::hover());
+    ui.painter().text(
+        egui::pos2(rect.min.x + 10.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        title,
+        egui::FontId::proportional(crate::theme::FILE_MENU_FONT - 1.0),
+        crate::theme::text_disabled(),
+    );
 }
 
 #[allow(clippy::too_many_arguments)]

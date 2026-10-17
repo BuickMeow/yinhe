@@ -123,8 +123,13 @@ impl MenuActionFrom for crate::chrome::transport_bar::EditAction {
             EditAction::FlipHorizontal => MenuAction::FlipHorizontal,
             EditAction::FlipVertical => MenuAction::FlipVertical,
             EditAction::GridSplit => MenuAction::GridSplit,
-            EditAction::InsertMarker => MenuAction::InsertMarker,
         }
+    }
+}
+
+impl MenuActionFrom for crate::chrome::insert_actions::InsertAction {
+    fn to_menu_action(self) -> MenuAction {
+        MenuAction::Insert(self)
     }
 }
 
@@ -132,7 +137,7 @@ pub(super) fn build_action_submenu<A>(
     map: &mut HashMap<muda::MenuId, MenuAction>,
     items: &mut Vec<(&'static str, Box<dyn MenuText>)>,
     title_key: &'static str,
-    groups: &[&[A]],
+    groups: &[crate::widgets::action_menu::MenuGroup<'_, A>],
     default_kb: &Keybindings,
 ) -> muda::Result<Submenu>
 where
@@ -143,7 +148,7 @@ where
         if gi > 0 {
             rows.push((title_key, Box::new(PredefinedMenuItem::separator())));
         }
-        for &action in *group {
+        for &action in group.items {
             let accel = default_kb
                 .get(action.action_id())
                 .first()
@@ -225,6 +230,15 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
         &mut items,
         "menu.edit",
         &crate::chrome::transport_bar::EDIT_GROUPS,
+        &default_kb,
+    )?;
+
+    // 插入菜单（3 组：音轨 / 全局事件 / 音轨事件；无快捷键）。
+    let insert_menu = build_action_submenu(
+        &mut map,
+        &mut items,
+        "menu.insert",
+        &crate::chrome::insert_actions::INSERT_GROUPS,
         &default_kb,
     )?;
 
@@ -335,6 +349,7 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
         &file_menu,
         &edit_menu,
         &view_menu,
+        &insert_menu,
         &play_menu,
         &tools_menu,
     ];
@@ -355,6 +370,7 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
     items.push(("menu.file", Box::new(file_menu)));
     items.push(("menu.edit", Box::new(edit_menu)));
     items.push(("menu.view", Box::new(view_menu)));
+    items.push(("menu.insert", Box::new(insert_menu)));
     items.push(("menu.playback", Box::new(play_menu)));
     items.push(("menu.tools", Box::new(tools_menu)));
     items.push(("menu.app", Box::new(app_menu)));

@@ -12,6 +12,7 @@ pub(crate) mod clipboard_sync;
 pub(crate) mod dialog_dispatch;
 pub(crate) mod export_state;
 pub(crate) mod floating;
+pub(crate) mod insert;
 pub(crate) mod jobs;
 pub(crate) mod layout;
 pub(crate) mod main_loop;
@@ -249,6 +250,11 @@ pub struct App {
     pub(crate) filter_dialog: crate::dialogs::filter::FilterDialogState,
     pub(crate) scale_dialog: crate::dialogs::scale::ScaleDialogState,
 
+    // ── 插入参数窗口（插入菜单触发）──
+    pub(crate) insert_bpm: crate::dialogs::insert_event::InsertBpmState,
+    pub(crate) insert_timesig: crate::dialogs::insert_event::InsertTimeSigState,
+    pub(crate) insert_pc: crate::dialogs::insert_event::InsertPcState,
+
     // ── macOS platform integrations ──
     pub(crate) menu_bar: crate::platform::MenuBar,
     /// Tracks the last `is_dirty` state to avoid redundant `setDocumentEdited` calls.
@@ -363,6 +369,9 @@ impl App {
             tap_tempo_dialog: crate::dialogs::tap_tempo::TapTempoDialogState::default(),
             filter_dialog: crate::dialogs::filter::FilterDialogState::default(),
             scale_dialog: crate::dialogs::scale::ScaleDialogState::default(),
+            insert_bpm: crate::dialogs::insert_event::InsertBpmState::default(),
+            insert_timesig: crate::dialogs::insert_event::InsertTimeSigState::default(),
+            insert_pc: crate::dialogs::insert_event::InsertPcState::default(),
 
             view_mode: ViewMode::Arrange,
             view_focus: ViewFocus::Arrange,

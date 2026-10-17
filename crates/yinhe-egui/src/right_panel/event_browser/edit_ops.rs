@@ -126,7 +126,7 @@ pub fn apply_timesig_ops(
             delete: Box::new(|doc, ticks| {
                 doc.delete_time_sig_events(ticks);
             }),
-            insert: Box::new(|doc, tick| doc.insert_time_sig_event(tick)),
+            insert: Box::new(|doc, tick| doc.insert_time_sig_event(tick, 4, 4)),
             delete_label: "undo.delete_timesig_event",
             insert_label: "undo.insert_timesig_event",
             first_label: "undo.create_timesig_event",
@@ -162,7 +162,9 @@ pub fn apply_keysig_ops(
             delete: Box::new(|doc, ticks| {
                 doc.delete_key_sig_events(ticks);
             }),
-            insert: Box::new(|doc, tick| doc.insert_key_sig_event(tick)),
+            insert: Box::new(|doc, tick| {
+                doc.insert_key_sig_event(tick, 0, yinhe_types::ScaleType::Major)
+            }),
             delete_label: "undo.delete_keysig_event",
             insert_label: "undo.insert_keysig_event",
             first_label: "undo.create_keysig_event",
@@ -387,7 +389,7 @@ pub fn apply_pc_ops(
             delete: Box::new(move |doc, ticks| {
                 doc.delete_program_change_events(track, ticks);
             }),
-            insert: Box::new(move |doc, tick| doc.insert_program_change_event(track, tick)),
+            insert: Box::new(move |doc, tick| doc.insert_program_change_event(track, tick, 0)),
             delete_label: "undo.delete_pc_event",
             insert_label: "undo.insert_pc_event",
             first_label: "undo.create_pc_event",

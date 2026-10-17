@@ -1,6 +1,7 @@
 pub mod dialog;
 pub mod dialog_buttons;
 pub mod dock_bar;
+pub mod insert_actions;
 pub mod mode_bar;
 pub mod title_bar;
 pub mod tool_bar;

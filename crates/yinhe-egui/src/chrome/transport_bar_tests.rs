@@ -3,7 +3,7 @@ use crate::audio_settings::AudioSettings;
 use crate::chrome::transport_bar_actions::ViewAction;
 use crate::file_loader::FileLoader;
 use crate::view_interaction::FollowMode;
-use crate::widgets::action_menu::{PopupRowSpec, measure_menu_width, popup_menu_row};
+use crate::widgets::action_menu::{MenuGroup, PopupRowSpec, measure_menu_width, popup_menu_row};
 use yinhe_editor_core::document::Document;
 
 /// 为测试文档构造 PR 控制组数据（与 main_loop 组装一致）。
@@ -35,28 +35,33 @@ fn menu_widths_are_content_aware() {
     let kbs = &settings.keybindings;
     let w_file = measure_menu_width(&ctx, &FILE_GROUPS, kbs);
     let w_edit = measure_menu_width(&ctx, &EDIT_GROUPS, kbs);
-    let play: [&[PlayMenuAction]; 1] = [&[
+    let w_insert = measure_menu_width(&ctx, &crate::chrome::insert_actions::INSERT_GROUPS, kbs);
+    let play_items = [
         PlayMenuAction::PlayPause { playing: false },
         PlayMenuAction::Stop,
         PlayMenuAction::Record { recording: false },
         PlayMenuAction::StepInput { active: false },
-    ]];
+    ];
+    let play = [MenuGroup::plain(&play_items)];
     let w_play = measure_menu_width(&ctx, &play, kbs);
     // 视图菜单：跟随（视图组）+ 方向/面板（PR 控制组）。
-    let view: [&[ViewAction]; 2] = [
-        &[ViewAction::Follow(FollowMode::None, true)],
-        &[
-            ViewAction::Orientation(yinhe_types::Orientation::Horizontal, true),
-            ViewAction::AutomationPanels {
-                show: false,
-                enabled: true,
-            },
-        ],
+    let follow_items = [ViewAction::Follow(FollowMode::None, true)];
+    let control_items = [
+        ViewAction::Orientation(yinhe_types::Orientation::Horizontal, true),
+        ViewAction::AutomationPanels {
+            show: false,
+            enabled: true,
+        },
+    ];
+    let view = [
+        MenuGroup::plain(&follow_items),
+        MenuGroup::plain(&control_items),
     ];
     let w_view = measure_menu_width(&ctx, &view, kbs);
     for (name, w) in [
         ("file", w_file),
         ("edit", w_edit),
+        ("insert", w_insert),
         ("play", w_play),
         ("view", w_view),
     ] {

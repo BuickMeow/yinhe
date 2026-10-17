@@ -87,15 +87,15 @@ impl Document {
         );
     }
 
-    /// 插入一个 Program Change 事件（默认 program=0, bank_msb=0, bank_lsb=0）。
-    pub fn insert_program_change_event(&mut self, track: u16, tick: u32) {
+    /// 插入一个 Program Change 事件（调用方提供 program；bank 默认 0）。
+    pub fn insert_program_change_event(&mut self, track: u16, tick: u32, program: u8) {
         track_insert_event!(
             self,
             track,
             program_change,
             yinhe_types::PcEvent {
                 tick,
-                program: 0,
+                program,
                 bank_msb: 0,
                 bank_lsb: 0,
             }

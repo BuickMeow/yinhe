@@ -1,6 +1,6 @@
 use crate::audio_settings::AudioSettings;
 use crate::file_loader::FileLoader;
-use crate::widgets::action_menu::{ActionMenuExtra, show_action_menu};
+use crate::widgets::action_menu::{ActionMenuExtra, MenuGroup, show_action_menu};
 use eframe::egui;
 
 use super::transport_bar_actions::{
@@ -88,7 +88,7 @@ pub fn show_play_menu(
 ) {
     let has_active = ctx.doc.is_some();
     let settings = &mut ctx.settings;
-    let groups: [&[PlayMenuAction]; 1] = [&[
+    let play_items = [
         PlayMenuAction::PlayPause {
             playing: is_playing,
         },
@@ -103,7 +103,8 @@ pub fn show_play_menu(
         PlayMenuAction::AutomationWrite {
             enabled: settings.automation_write,
         },
-    ]];
+    ];
+    let groups = [MenuGroup::plain(&play_items)];
     let mut pending = None;
     let mut pinned = [
         settings.pinned_play_pause,
@@ -181,16 +182,17 @@ pub fn show_view_menu(
             **follow_mode == FollowMode::Continuous,
         ),
     ];
-    let groups: [&[ViewAction]; 2] = [
-        &follow_items,
-        &[
-            V::Orientation(Orientation::Horizontal, !vertical),
-            V::Orientation(Orientation::Vertical, vertical),
-            V::AutomationPanels {
-                show: panels.unwrap_or(false),
-                enabled: panels_enabled,
-            },
-        ],
+    let control_items = [
+        V::Orientation(Orientation::Horizontal, !vertical),
+        V::Orientation(Orientation::Vertical, vertical),
+        V::AutomationPanels {
+            show: panels.unwrap_or(false),
+            enabled: panels_enabled,
+        },
+    ];
+    let groups = [
+        MenuGroup::plain(&follow_items),
+        MenuGroup::plain(&control_items),
     ];
 
     let mut pending: Option<ViewAction> = None;

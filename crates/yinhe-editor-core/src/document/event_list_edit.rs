@@ -155,7 +155,7 @@ mod tests {
         assert!(doc.event_list_edit_with_undo(
             EventListTarget::TimeSig,
             "undo.insert_timesig_event",
-            |d| d.insert_time_sig_event(480),
+            |d| d.insert_time_sig_event(480, 4, 4),
         ));
         assert_eq!(
             doc.event_list_snapshot(&EventListTarget::TimeSig).len(),
@@ -227,8 +227,8 @@ mod tests {
     #[test]
     fn snapshot_follows_sorted_order() {
         let mut doc = Document::empty();
-        doc.insert_program_change_event(0, 960);
-        doc.insert_program_change_event(0, 0);
+        doc.insert_program_change_event(0, 960, 0);
+        doc.insert_program_change_event(0, 0, 0);
         let list = doc.event_list_snapshot(&EventListTarget::ProgramChange { track: 0 });
         let ticks: Vec<u32> = list
             .iter()

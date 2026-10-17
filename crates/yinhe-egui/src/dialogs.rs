@@ -6,6 +6,7 @@ pub mod autosave_recovery;
 pub mod export;
 pub mod filter;
 pub mod gpu_device_lost;
+pub mod insert_event;
 pub mod memory_breakdown;
 pub mod new_track;
 pub mod project_info;

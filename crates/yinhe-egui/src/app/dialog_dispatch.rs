@@ -374,6 +374,9 @@ impl App {
         // ── 调式（音阶）对话框 ──
         self.show_scale_dialog(&ctx);
 
+        // ── 插入参数窗口（BPM / 拍号 / 音色）──
+        self.show_insert_dialogs(&ctx);
+
         // ── 插件参数自动化选择窗口 ──
         self.show_automation_picker(&ctx);
 
@@ -506,15 +509,34 @@ impl App {
     /// 自动化属于设备：XSynth 设备列内置参数（CC/PB/RPN + 自定义 CC）；
     /// 插件设备列插件参数（数千个走窗口虚拟滚动）。
     pub(in crate::app) fn open_automation_picker(&mut self, ctx: &egui::Context, track_idx: usize) {
-        use crate::dialogs::automation_picker::AutomationEntry;
-        let Some(idx) = self.workspace.active_doc else {
+        let Some((title, device_name, entries, _)) = self.automation_picker_entries(track_idx)
+        else {
             return;
         };
+        self.automation_picker
+            .open(track_idx, title, device_name, entries);
+        crate::chrome::dialog::raise_viewport(
+            ctx,
+            egui::ViewportId::from_hash_of("automation_picker"),
+        );
+    }
+
+    /// 收集自动化选择窗口的条目（按该轨的乐器设备）。
+    /// 返回 `(轨道名, 设备名, 条目, 通道)`；无活动文档 / 无该轨 = None。
+    pub(in crate::app) fn automation_picker_entries(
+        &mut self,
+        track_idx: usize,
+    ) -> Option<(
+        String,
+        String,
+        Vec<crate::dialogs::automation_picker::AutomationEntry>,
+        u8,
+    )> {
+        use crate::dialogs::automation_picker::AutomationEntry;
+        let idx = self.workspace.active_doc?;
         let (title, device_name, mut entries, channel) = {
             let doc = &self.workspace.documents[idx];
-            let Some(track) = doc.data.model.tracks.get(track_idx) else {
-                return;
-            };
+            let track = doc.data.model.tracks.get(track_idx)?;
             let track_name = track.name.clone();
             let ch = track.global_channel();
             // 该通道的乐器链（可多个）：空 = 内置 XSynth。
@@ -589,12 +611,7 @@ impl App {
                 target: pb,
             },
         );
-        self.automation_picker
-            .open(track_idx, title, device_name, entries);
-        crate::chrome::dialog::raise_viewport(
-            ctx,
-            egui::ViewportId::from_hash_of("automation_picker"),
-        );
+        Some((title, device_name, entries, channel))
     }
 
     /// 「添加自动化」窗口：每帧渲染；点条目添加/移除 AM lane。
@@ -621,6 +638,11 @@ impl App {
                     let _ = self.apply_automation_toggle(idx, track_idx, &target, add);
                 }
             }
+            A::Insert {
+                tick,
+                tracks,
+                target,
+            } => self.apply_automation_insert(tick, &tracks, &target),
             A::Close => self.automation_picker.open = false,
         }
     }
@@ -684,18 +706,134 @@ impl App {
             );
         }
         let action = self.scale_dialog.show_viewport(ctx);
-        let Some(idx) = self.workspace.active_doc else {
+        match action {
+            ScaleAction::InsertEvent { tick, root, scale } => {
+                self.confirm_insert_key_sig(tick, root, scale);
+            }
+            ScaleAction::Confirm {
+                r#override,
+                use_events,
+            } => {
+                let Some(idx) = self.workspace.active_doc else {
+                    return;
+                };
+                let edit = &mut self.workspace.documents[idx].edit;
+                edit.key_sig_override = r#override;
+                edit.key_sig_use_events = use_events;
+            }
+            ScaleAction::None | ScaleAction::Cancel => {}
+        }
+    }
+
+    /// 插入菜单参数窗口（BPM / 拍号 / 音色）：每帧渲染与落地。
+    fn show_insert_dialogs(&mut self, ctx: &egui::Context) {
+        use crate::dialogs::insert_event::{InsertBpmAction, InsertPcAction, InsertTimeSigAction};
+        if self.insert_bpm.open {
+            if self.insert_bpm.just_opened {
+                self.insert_bpm.just_opened = false;
+                crate::chrome::dialog::raise_viewport(
+                    ctx,
+                    egui::ViewportId::from_hash_of("insert_bpm_dialog"),
+                );
+            }
+            match self.insert_bpm.show(ctx) {
+                InsertBpmAction::Confirm { tick, bpm } => {
+                    self.insert_bpm.open = false;
+                    self.confirm_insert_bpm(tick, bpm);
+                }
+                InsertBpmAction::Cancel => self.insert_bpm.open = false,
+                InsertBpmAction::None => {}
+            }
+        }
+        if self.insert_timesig.open {
+            if self.insert_timesig.just_opened {
+                self.insert_timesig.just_opened = false;
+                crate::chrome::dialog::raise_viewport(
+                    ctx,
+                    egui::ViewportId::from_hash_of("insert_timesig_dialog"),
+                );
+            }
+            match self.insert_timesig.show(ctx) {
+                InsertTimeSigAction::Confirm {
+                    tick,
+                    numerator,
+                    denominator,
+                } => {
+                    self.insert_timesig.open = false;
+                    self.confirm_insert_timesig(tick, numerator, denominator);
+                }
+                InsertTimeSigAction::Cancel => self.insert_timesig.open = false,
+                InsertTimeSigAction::None => {}
+            }
+        }
+        if self.insert_pc.open {
+            if self.insert_pc.just_opened {
+                self.insert_pc.just_opened = false;
+                crate::chrome::dialog::raise_viewport(
+                    ctx,
+                    egui::ViewportId::from_hash_of("insert_pc_dialog"),
+                );
+            }
+            match self.insert_pc.show(ctx) {
+                InsertPcAction::Confirm { tick, program } => {
+                    self.insert_pc.open = false;
+                    self.confirm_insert_pc(tick, program);
+                }
+                InsertPcAction::Cancel => self.insert_pc.open = false,
+                InsertPcAction::None => {}
+            }
+        }
+    }
+
+    /// 「插入 BPM」确认：在 tick 处插入 tempo 事件（进 undo）。
+    fn confirm_insert_bpm(&mut self, tick: u32, bpm: f64) {
+        let Some(doc_idx) = self.workspace.active_doc else {
             return;
         };
-        if let ScaleAction::Confirm {
-            r#override,
-            use_events,
-        } = action
+        let doc = &mut self.workspace.documents[doc_idx];
+        let before = doc.capture_snapshot();
+        let event = yinhe_types::AutomationEvent {
+            id: 0,
+            tick,
+            value: bpm as f32,
+            shape: yinhe_types::SegmentShape::Step,
+        };
+        if let Some((_, _, action)) =
+            doc.add_automation_event(0, yinhe_types::AutomationTarget::Tempo, event)
         {
-            let edit = &mut self.workspace.documents[idx].edit;
-            edit.key_sig_override = r#override;
-            edit.key_sig_use_events = use_events;
+            doc.push_undo(action, "undo.insert_bpm", before);
         }
+    }
+
+    /// 「插入拍号」确认：在 tick 处插入拍号事件（进 undo）。
+    fn confirm_insert_timesig(&mut self, tick: u32, numerator: u8, denominator: u8) {
+        let Some(doc_idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[doc_idx];
+        doc.event_list_edit_with_undo(
+            yinhe_editor_core::history::EventListTarget::TimeSig,
+            "undo.insert_timesig_event",
+            |d| d.insert_time_sig_event(tick, numerator, denominator),
+        );
+    }
+
+    /// 「插入音色（PC）」确认：向打开时锁定的轨道批量插入 PC 事件（一次 undo）。
+    fn confirm_insert_pc(&mut self, tick: u32, program: u8) {
+        let tracks = std::mem::take(&mut self.insert_pc.tracks);
+        if tracks.is_empty() {
+            return;
+        }
+        let Some(doc_idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[doc_idx];
+        doc.track_events_batch_with_undo(
+            &tracks,
+            "undo.insert_pc_event",
+            move |d, t| d.insert_program_change_event(t, tick, program),
+            |t| yinhe_editor_core::history::EventListTarget::ProgramChange { track: t },
+        );
     }
 
     /// 渲染音轨属性 / 工程设置浮动面板（独立视口子窗口）。

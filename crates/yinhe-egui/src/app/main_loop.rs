@@ -315,10 +315,6 @@ impl eframe::App for App {
                     self.handle_edit_action(transport_bar::EditAction::MergeNotes);
                     continue;
                 }
-                MenuAction::InsertMarker => {
-                    self.handle_edit_action(transport_bar::EditAction::InsertMarker);
-                    continue;
-                }
                 MenuAction::LengthDouble => {
                     self.handle_edit_action(transport_bar::EditAction::LengthDouble);
                     continue;
@@ -337,6 +333,10 @@ impl eframe::App for App {
                 }
                 MenuAction::GridSplit => {
                     self.handle_edit_action(transport_bar::EditAction::GridSplit);
+                    continue;
+                }
+                MenuAction::Insert(action) => {
+                    self.handle_insert_action(action, ui.ctx());
                     continue;
                 }
                 MenuAction::TogglePlay => {
@@ -824,6 +824,11 @@ impl eframe::App for App {
         // ── Handle 选择动作（传输栏选择按钮）──
         if let Some(action) = transport_response.selection_action {
             self.handle_selection_action(action);
+        }
+
+        // ── Handle 插入菜单（传输栏插入 popup / macOS 原生菜单）──
+        if let Some(action) = transport_response.pending_insert_action {
+            self.handle_insert_action(action, ui.ctx());
         }
 
         // ── Handle file menu actions ──

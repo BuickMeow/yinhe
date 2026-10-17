@@ -29,14 +29,26 @@ pub(crate) struct AutomationEntry {
     pub label: String,
 }
 
+/// 窗口用途：添加 AM lane（现状）或「插入菜单」在指示线插入事件。
+#[derive(Clone, Debug, Default)]
+pub(crate) enum AutomationPickerMode {
+    /// 添加 AM lane（点「添加」建 lane）。
+    #[default]
+    AddLane,
+    /// 插入菜单：点「插入」在指示线插入事件（多轨批量）。
+    InsertEvent { tick: u32, tracks: Vec<u16> },
+}
+
 /// 窗口状态（挂在 App 上，跨帧保留；打开时重置）。
 #[derive(Default)]
 pub(crate) struct AutomationPickerState {
     pub open: bool,
     /// 打开后首帧把窗口提到最前。
     pub just_opened: bool,
-    /// 目标轨道（lane 建在该轨上）。
+    /// 目标轨道（lane 建在该轨上；插入模式不使用）。
     pub track_idx: usize,
+    /// 窗口用途（添加 lane / 插入事件）。
+    pub(crate) mode: AutomationPickerMode,
     /// 窗口标题里的轨道名。
     title: String,
     /// 设备名（XSynth / Serum 2）。
@@ -64,11 +76,17 @@ pub(crate) enum AutomationPickerAction {
         target: AutomationTarget,
         add: bool,
     },
+    /// 插入菜单模式：在 `tick` 处向 `tracks` 插入该 target 的事件。
+    Insert {
+        tick: u32,
+        tracks: Vec<u16>,
+        target: AutomationTarget,
+    },
     Close,
 }
 
 impl AutomationPickerState {
-    /// 打开窗口并填入条目。
+    /// 打开窗口并填入条目（添加 AM lane 模式）。
     pub(crate) fn open(
         &mut self,
         track_idx: usize,
@@ -76,9 +94,38 @@ impl AutomationPickerState {
         device_name: String,
         entries: Vec<AutomationEntry>,
     ) {
+        self.open_with_mode(title, device_name, entries, AutomationPickerMode::AddLane);
+        self.track_idx = track_idx;
+    }
+
+    /// 打开窗口（插入菜单模式：确认后在 `tick` 处向 `tracks` 插入事件）。
+    pub(crate) fn open_for_insert(
+        &mut self,
+        tick: u32,
+        tracks: Vec<u16>,
+        title: String,
+        device_name: String,
+        entries: Vec<AutomationEntry>,
+    ) {
+        self.open_with_mode(
+            title,
+            device_name,
+            entries,
+            AutomationPickerMode::InsertEvent { tick, tracks },
+        );
+    }
+
+    fn open_with_mode(
+        &mut self,
+        title: String,
+        device_name: String,
+        entries: Vec<AutomationEntry>,
+        mode: AutomationPickerMode,
+    ) {
         self.open = true;
         self.just_opened = true;
-        self.track_idx = track_idx;
+        self.track_idx = 0;
+        self.mode = mode;
         self.title = title;
         self.device_name = device_name;
         self.entries = entries;
@@ -124,7 +171,18 @@ pub(crate) fn show_viewport(
     state: &mut AutomationPickerState,
 ) -> AutomationPickerAction {
     let viewport_id = egui::ViewportId::from_hash_of("automation_picker");
-    let title = t!("dialog.automation.title", ch = state.title.as_str());
+    // 插入模式标题区分「添加 lane」；标题里的轨道名用收集条目时的上下文轨。
+    let title = match &state.mode {
+        AutomationPickerMode::AddLane => t!("dialog.automation.title", ch = state.title.as_str()),
+        AutomationPickerMode::InsertEvent { .. } => {
+            t!("dialog.automation.insert_title", ch = state.title.as_str())
+        }
+    };
+    // 主按钮文案（按模式）：添加 / 插入。
+    let primary_label = match &state.mode {
+        AutomationPickerMode::AddLane => t!("dialog.automation.add").to_string(),
+        AutomationPickerMode::InsertEvent { .. } => t!("dialog.automation.insert").to_string(),
+    };
     let mut action = AutomationPickerAction::None;
     let mut closed = false;
 
@@ -173,17 +231,29 @@ pub(crate) fn show_viewport(
                                     ui,
                                     &[
                                         DialogButton::secondary(t!("common.cancel").as_ref()),
-                                        DialogButton::primary(t!("dialog.automation.add").as_ref()),
+                                        DialogButton::primary(primary_label.as_ref()),
                                     ],
                                 );
                                 match clicked {
                                     Some(0) => close = true,
                                     Some(1) => {
                                         if let Some(target) = state.selected_target() {
-                                            action = AutomationPickerAction::Toggle {
-                                                track_idx: state.track_idx,
-                                                target,
-                                                add: true,
+                                            action = match &state.mode {
+                                                AutomationPickerMode::AddLane => {
+                                                    AutomationPickerAction::Toggle {
+                                                        track_idx: state.track_idx,
+                                                        target,
+                                                        add: true,
+                                                    }
+                                                }
+                                                AutomationPickerMode::InsertEvent {
+                                                    tick,
+                                                    tracks,
+                                                } => AutomationPickerAction::Insert {
+                                                    tick: *tick,
+                                                    tracks: tracks.clone(),
+                                                    target,
+                                                },
                                             };
                                         }
                                         close = true;
