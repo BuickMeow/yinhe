@@ -10,10 +10,13 @@ crate-type = ["cdylib"]
 
 [dependencies]
 wgpu = { workspace = true }
-bytemuck = { workspace = true }
 pollster = { workspace = true }
 log = "0.4"
 jni = "0.22"
+yinhe-types = { path = "../yinhe-types" }
+yinhe-core = { path = "../yinhe-core" }
+yinhe-editor-core = { path = "../yinhe-editor-core" }
+yinhe-wgpu = { path = "../yinhe-wgpu" }
 
 [target.'cfg(target_os = "android")'.dependencies]
 # 安卓上 stdout 不可见，日志必须走 logcat。

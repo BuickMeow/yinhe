@@ -7901,11 +7901,14 @@ name = "yinhe-flutter"
 version = "0.1.0"
 dependencies = [
  "android_logger",
- "bytemuck",
  "jni 0.22.4",
  "log",
  "pollster 1.0.1",
  "wgpu",
+ "yinhe-core",
+ "yinhe-editor-core",
+ "yinhe-types",
+ "yinhe-wgpu",
 ]
 
 [[package]]
