@@ -454,6 +454,21 @@ pub extern "C" fn yinhe_playhead_x() -> f32 {
     scene::playhead_x()
 }
 
+/// 播放位置（tick，时间码显示用）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_playhead_tick() -> f64 {
+    audio::playback_tick()
+}
+
+/// AR 长按排序：把 `from` 轨移动到 `to` 位置，成功返回 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_move_track(from: i32, to: i32) -> i32 {
+    if from < 0 || to < 0 {
+        return 0;
+    }
+    scene::move_track(from as usize, to as usize)
+}
+
 /// 视图快照（Dart 文本浮层用）：写入 12 个 f32，成功返回 1。
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
@@ -478,6 +493,12 @@ pub extern "C" fn yinhe_recent_json() -> *mut std::ffi::c_char {
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_tracks_json() -> *mut std::ffi::c_char {
     to_c_string(scene::tracks_json())
+}
+
+/// PR 自动化栏数据（仅 PB/CC/RPN）JSON（堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_automation_json(track: i32) -> *mut std::ffi::c_char {
+    to_c_string(scene::automation_json(track.max(0) as usize))
 }
 
 /// 释放本库返回的堆字符串。

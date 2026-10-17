@@ -54,6 +54,8 @@ pub struct RenderScene {
     pub tracks: Vec<TrackInfoLite>,
     /// 每拍 tick 数（网格对齐用）。
     pub ppq: u32,
+    /// 文档本体（编辑操作：轨道排序等）。
+    pub document: Option<Document>,
 }
 
 impl Default for RenderScene {
@@ -69,6 +71,7 @@ impl Default for RenderScene {
             num_tracks: 0,
             tracks: Vec::new(),
             ppq: 480,
+            document: None,
         }
     }
 }
@@ -90,7 +93,7 @@ pub fn load_demo() {
     // 轨道颜色/显隐（conductor 色用中性浅灰，与主题无关的演示值）。
     doc.sync_track_caches_with_conductor_color([0.85, 0.85, 0.88, 1.0]);
 
-    apply_document(&doc, f64::from(gen_max));
+    apply_document(doc, f64::from(gen_max));
 }
 
 /// 后台加载用户选择的 MIDI 文件并替换当前场景。
@@ -99,7 +102,7 @@ pub fn open_midi(path: String) {
         .name("yinhe-midi-load".into())
         .stack_size(32 * 1024 * 1024)
         .spawn(move || match load_document(&path) {
-            Ok(doc) => apply_document(&doc, 0.0),
+            Ok(doc) => apply_document(doc, 0.0),
             Err(e) => log::error!("MIDI 加载失败（{path}）: {e}"),
         });
     if let Err(e) = spawn {
@@ -138,9 +141,8 @@ fn load_document(path: &str) -> Result<Document, String> {
 /// 把文档写入场景快照（演示与文件加载共用）。
 ///
 /// `min_ticks`：演示内容生成时模型 tick_length 尚未刷新，用它兜底总长。
-fn apply_document(doc: &Document, min_ticks: f64) {
-    let model = doc.data.model.clone();
-    let total_ticks = (model.tick_length as f64).max(min_ticks).max(1.0);
+fn apply_document(doc: Document, min_ticks: f64) {
+    let total_ticks = (doc.data.model.tick_length as f64).max(min_ticks).max(1.0);
 
     let mut pr_view = PianoRollView::default();
     // 初始缩放：全曲约 2 屏宽（沿用旧安卓壳 set_model 的算法）。
@@ -160,12 +162,38 @@ fn apply_document(doc: &Document, min_ticks: f64) {
     };
     let arr_view = ArrangementView::with_base(arr_base);
 
-    let colors = doc.edit.track_cache.colors.clone();
-    let visible = doc.edit.pr_visible();
-    let num_tracks = model.tracks.len();
+    let model = doc.data.model.clone();
     let note_count = model.note_count;
-    let ppq = model.meta.ppq;
-    let tracks: Vec<TrackInfoLite> = model
+
+    let Ok(mut s) = scene().lock() else {
+        return;
+    };
+    s.document = Some(doc);
+    s.pr_view = pr_view;
+    s.arr_view = arr_view;
+    s.view_mode = ViewMode::Arrangement;
+    s.total_ticks = total_ticks;
+    refresh_snapshot(&mut s);
+    let num_tracks = s.num_tracks;
+    drop(s);
+
+    log::info!("文档就绪: {note_count} 音符, {total_ticks:.0} tick, {num_tracks} 轨");
+    crate::audio::on_model_loaded(model);
+}
+
+/// 从文档重算轨道快照（模型/颜色/显隐/轨道面板信息/ppq）。
+fn refresh_snapshot(s: &mut RenderScene) {
+    let Some(doc) = s.document.as_ref() else {
+        return;
+    };
+    let model = doc.data.model.clone();
+    let colors = doc.edit.track_cache.colors.clone();
+    s.model = Some(model.clone());
+    s.track_colors = colors.clone();
+    s.track_visible = doc.edit.pr_visible();
+    s.num_tracks = model.tracks.len();
+    s.ppq = model.meta.ppq;
+    s.tracks = model
         .tracks
         .iter()
         .enumerate()
@@ -188,24 +216,30 @@ fn apply_document(doc: &Document, min_ticks: f64) {
                 .unwrap_or(false),
         })
         .collect();
+}
 
+/// AR 长按拖动排序：把 `from` 轨移动到 `to` 位置。成功返回 1。
+pub fn move_track(from: usize, to: usize) -> i32 {
     let Ok(mut s) = scene().lock() else {
-        return;
+        return 0;
     };
-    s.model = Some(model.clone());
-    s.pr_view = pr_view;
-    s.arr_view = arr_view;
-    s.view_mode = ViewMode::Arrangement;
-    s.track_colors = colors;
-    s.track_visible = visible;
-    s.total_ticks = total_ticks;
-    s.num_tracks = num_tracks;
-    s.tracks = tracks;
-    s.ppq = ppq;
+    {
+        let Some(doc) = s.document.as_mut() else {
+            return 0;
+        };
+        if doc.move_track(from, to).is_none() {
+            return 0;
+        }
+    }
+    refresh_snapshot(&mut s);
+    let model = s.model.clone();
     drop(s);
-
-    log::info!("文档就绪: {note_count} 音符, {total_ticks:.0} tick, {num_tracks} 轨");
-    crate::audio::on_model_loaded(model);
+    // 音轨顺序变化后重载音频（demo 阶段整模型重载）。
+    if let Some(model) = model {
+        crate::audio::on_model_loaded(model);
+    }
+    log::info!("轨道已移动: {from} -> {to}");
+    1
 }
 
 /// 播放光标在当前视图下的 x（逻辑像素；-1 = 无文档）。
@@ -472,6 +506,67 @@ pub fn view_snapshot() -> [f32; 12] {
             4.0,
             4.0,
         ],
+    }
+}
+
+/// PR 自动化栏数据（仅 PB/CC/RPN 三类），JSON：
+/// `[{"kind":0,"name":"Pitch Bend","points":[[tick,value],...]}, ...]`
+pub fn automation_json(track: usize) -> String {
+    let Ok(s) = scene().lock() else {
+        return "[]".into();
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return "[]".into();
+    };
+    let Some(t) = doc.data.model.tracks.get(track) else {
+        return "[]".into();
+    };
+    let mut out = String::from("[");
+    let mut first = true;
+    for lane in &t.automation_lanes {
+        let Some(kind) = lane_kind(&lane.target) else {
+            continue;
+        };
+        if !first {
+            out.push(',');
+        }
+        first = false;
+        out.push_str(&format!(
+            "{{\"kind\":{},\"name\":\"{}\",\"points\":[",
+            kind,
+            json_escape(&lane.target.display_name())
+        ));
+        for (i, e) in lane.events.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push_str(&format!("[{},{}]", e.tick, e.value));
+        }
+        out.push_str("]}");
+    }
+    out.push(']');
+    out
+}
+
+/// 自动化类型：0=PB、1=CC、2=RPN；其它（Nrpn/Tempo/插件参数）不展示。
+fn lane_kind(target: &yinhe_types::automation::AutomationTarget) -> Option<u8> {
+    use yinhe_types::automation::{AutomationTarget, ParamDevice, xsynth_param};
+    match target {
+        AutomationTarget::PitchBend => Some(0),
+        AutomationTarget::CC { .. } => Some(1),
+        AutomationTarget::Rpn { .. } => Some(2),
+        AutomationTarget::Param {
+            device: ParamDevice::ChannelInstrument { .. },
+            id,
+            ..
+        } => match *id {
+            xsynth_param::PITCH_BEND => Some(0),
+            xsynth_param::PB_SENSITIVITY | xsynth_param::FINE_TUNE | xsynth_param::COARSE_TUNE => {
+                Some(2)
+            }
+            _ => None,
+        },
+        _ => None,
     }
 }
 
