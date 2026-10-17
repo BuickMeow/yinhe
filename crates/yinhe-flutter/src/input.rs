@@ -45,6 +45,13 @@ pub fn on_touch(kind: i32, x: f32, y: f32, pointer: i32) {
             // 同一 pointer id 重复 down：以新位置为准。
             g.pointers.retain(|p| p.id != pointer);
             g.pointers.push(Pointer { id: pointer, x, y });
+            if g.pointers.len() == 1 {
+                // 单指：按当前工具尝试开始编辑拖拽（手形/未命中则退回平移）。
+                crate::edit::begin(x, y);
+            } else {
+                // 多指：取消编辑拖拽，进入缩放/平移。
+                crate::edit::cancel();
+            }
             reset_baseline(&mut g);
         }
         1 => {
@@ -53,10 +60,20 @@ pub fn on_touch(kind: i32, x: f32, y: f32, pointer: i32) {
             };
             p.x = x;
             p.y = y;
+            if g.pointers.len() == 1 && crate::edit::is_active() {
+                crate::edit::update(x, y);
+                reset_baseline(&mut g);
+                return;
+            }
             apply(&mut g);
         }
         _ => {
             g.pointers.retain(|p| p.id != pointer);
+            if g.pointers.is_empty() {
+                crate::edit::end(x, y);
+            } else if crate::edit::is_active() {
+                crate::edit::cancel();
+            }
             reset_baseline(&mut g);
         }
     }

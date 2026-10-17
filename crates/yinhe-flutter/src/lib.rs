@@ -8,6 +8,7 @@
 //!   （surface buffer 为物理像素，两者分别用于 view 与交换链）
 
 mod audio;
+mod edit;
 mod input;
 mod render;
 mod scene;
@@ -74,12 +75,22 @@ static CMD_TX: OnceLock<Sender<Cmd>> = OnceLock::new();
 
 static LOGICAL_W_BITS: AtomicU32 = AtomicU32::new(0);
 static LOGICAL_H_BITS: AtomicU32 = AtomicU32::new(0);
+static PIXEL_W: AtomicU32 = AtomicU32::new(0);
+static PIXEL_H: AtomicU32 = AtomicU32::new(0);
 
 /// 画布逻辑尺寸（视图/手势坐标系；未收到 `nativeSetViewport` 前为 0）。
 pub(crate) fn logical_size() -> (f32, f32) {
     (
         f32::from_bits(LOGICAL_W_BITS.load(Ordering::Relaxed)),
         f32::from_bits(LOGICAL_H_BITS.load(Ordering::Relaxed)),
+    )
+}
+
+/// surface 像素尺寸（Kotlin `nativeSetSize` 上报）。
+pub(crate) fn pixel_size() -> (u32, u32) {
+    (
+        PIXEL_W.load(Ordering::Relaxed),
+        PIXEL_H.load(Ordering::Relaxed),
     )
 }
 
@@ -229,6 +240,14 @@ fn render_thread_main(rx: Receiver<Cmd>) {
 fn apply_cmd(gpu: &mut Option<Gpu>, target: &mut Option<render::Target>, cmd: Cmd) {
     match cmd {
         Cmd::SetSurface(window) => {
+            // 同一 ANativeWindow 重复设置：忽略（对同一窗口再建 Vulkan surface
+            // 会触发 VK_ERROR_NATIVE_WINDOW_IN_USE_KHR 使渲染线程 panic）。
+            if let Some(t) = target.as_ref()
+                && t.window_ptr() == window.0 as usize
+            {
+                log::info!("忽略重复 surface（同一窗口）");
+                return;
+            }
             // 先释放旧 target（surface 先于窗口销毁）。
             *target = None;
             input::reset();
@@ -287,6 +306,18 @@ pub extern "system" fn Java_com_jieneng_yinhe_1flutter_MainActivity_nativeClearS
     if cmd_tx().send(Cmd::ClearSurface).is_err() {
         log::error!("渲染线程不可用，忽略 ClearSurface");
     }
+}
+
+/// `MainActivity.nativeSetSize(w, h)`：surface 像素尺寸（resize 只重配置交换链）。
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_jieneng_yinhe_1flutter_MainActivity_nativeSetSize(
+    _env: *mut jni::sys::JNIEnv,
+    _this: jni::sys::jobject,
+    width: jni::sys::jint,
+    height: jni::sys::jint,
+) {
+    PIXEL_W.store(width.max(1) as u32, Ordering::Relaxed);
+    PIXEL_H.store(height.max(1) as u32, Ordering::Relaxed);
 }
 
 /// `MainActivity.nativeSetViewport(w, h)`：画布逻辑尺寸（Flutter 逻辑像素）。
@@ -405,13 +436,6 @@ pub extern "system" fn Java_com_jieneng_yinhe_1flutter_MainActivity_nativeInitCo
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_touch(kind: i32, x: f32, y: f32, pointer: i32) {
     input::on_touch(kind, x, y, pointer);
-}
-
-/// 载入内置演示文档（阶段 B 临时入口；SAF 打开文件接入后移除）。
-#[unsafe(no_mangle)]
-pub extern "C" fn yinhe_demo_load() {
-    init_logging();
-    scene::load_demo();
 }
 
 /// 切换视图：0=AR 走带，1=PR 卷帘。
@@ -550,6 +574,105 @@ pub extern "C" fn yinhe_undo() -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_redo() -> i32 {
     scene::redo()
+}
+
+/// 设置当前工具（0=选框 1=手形 2=铅笔 3=橡皮 4=刷子）。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_tool(tool: i32) -> i32 {
+    scene::set_tool(tool)
+}
+
+/// 设置量化吸附档位：kind 0=Off 1=Auto 2=Fraction(num/den) 3=Absolute(ticks)。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_quantize(kind: i32, num: u32, den: u32) -> i32 {
+    scene::set_quantize(kind, num, den)
+}
+
+/// 设置当前编辑轨（-1 = 无）。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_active_track(track: i32) -> i32 {
+    scene::set_active_track(track)
+}
+
+/// 覆盖层修订号（Dart 仅在变化时重取 JSON）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_overlay_revision() -> u32 {
+    scene::overlay_revision()
+}
+
+/// 覆盖层 JSON（选框/预览，堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_overlay_json() -> *mut std::ffi::c_char {
+    to_c_string(scene::overlay_json())
+}
+
+/// 新建空工程。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_new_project() -> i32 {
+    init_logging();
+    scene::new_project()
+}
+
+/// 工程元数据编辑（歌名/艺术家/简介/PPQ）。成功 1。
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // JNI/dart:ffi 入口，指针有效性由调用方保证
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_project_meta(
+    name: *const std::ffi::c_char,
+    artist: *const std::ffi::c_char,
+    description: *const std::ffi::c_char,
+    ppq: u32,
+) -> i32 {
+    let read = |p: *const std::ffi::c_char| -> String {
+        if p.is_null() {
+            return String::new();
+        }
+        // 安全性：调用方保证指针为有效 NUL 结尾字符串（dart:ffi 分配）。
+        unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
+    };
+    scene::set_project_meta(read(name), read(artist), read(description), ppq)
+}
+
+/// 工程元数据 JSON（堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_project_meta_json() -> *mut std::ffi::c_char {
+    to_c_string(scene::project_meta_json())
+}
+
+/// 导出 `.ying` 工程到指定路径。成功 1。
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_save_ying(path: *const std::ffi::c_char) -> i32 {
+    if path.is_null() {
+        return 0;
+    }
+    // 安全性：同上，调用方保证指针有效。
+    let p = unsafe { CStr::from_ptr(path) }
+        .to_string_lossy()
+        .into_owned();
+    scene::save_ying(p)
+}
+
+/// 保存完成后标记工程状态（清除 dirty）。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_mark_saved() -> i32 {
+    scene::mark_saved()
+}
+
+/// 工程状态写入 `out`：`[can_undo, can_redo, dirty]`。成功 1。
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_doc_state(out: *mut i32) -> i32 {
+    if out.is_null() {
+        return 0;
+    }
+    let st = scene::doc_state();
+    // 安全性：调用方保证 out 至少可写 3 个 i32（dart:ffi 分配）。
+    unsafe {
+        *out = st[0];
+        *out.add(1) = st[1];
+        *out.add(2) = st[2];
+    }
+    1
 }
 
 /// Flutter 帧驱动：请求渲染一帧并等待完成（纹理与浮层同帧产出）。成功 1。

@@ -5,7 +5,7 @@
 
 use std::sync::{Arc, Mutex, OnceLock};
 
-use yinhe_core::{NoteEvent, YinModel};
+use yinhe_core::YinModel;
 use yinhe_editor_core::Document;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::NoteSource;
@@ -57,8 +57,26 @@ pub struct RenderScene {
     pub ppq: u32,
     /// “显示轨道”过滤：Some = 只画该轨（曲名框选择）。
     pub display_track: Option<usize>,
+    /// 当前工具（PR：5 种；AR 只用选框/手形）。
+    pub tool: Tool,
+    /// 当前编辑轨（AR 进入 PR 的轨；工具写入目标）。
+    pub active_track: Option<usize>,
+    /// 覆盖层（选框/预览）修订号与内容（画布内容逻辑坐标）。
+    pub overlay_rev: u32,
+    pub overlay_box: Option<[f32; 4]>,
+    pub overlay_cells: Vec<[f32; 4]>,
     /// 文档本体（编辑操作：轨道排序等）。
     pub document: Option<Document>,
+}
+
+/// 工具（移动端子集：与桌面 `tools_panel::Tool` 的编号对齐）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tool {
+    Select = 0,
+    Pan = 1,
+    Pencil = 2,
+    Eraser = 3,
+    Brush = 4,
 }
 
 impl Default for RenderScene {
@@ -75,6 +93,11 @@ impl Default for RenderScene {
             tracks: Vec::new(),
             ppq: 480,
             display_track: None,
+            tool: Tool::Select,
+            active_track: None,
+            overlay_rev: 0,
+            overlay_box: None,
+            overlay_cells: Vec::new(),
             document: None,
         }
     }
@@ -87,35 +110,26 @@ pub fn scene() -> &'static Mutex<RenderScene> {
     SCENE.get_or_init(|| Mutex::new(RenderScene::default()))
 }
 
-/// 生成演示文档并替换当前场景（无文件时的内容源）。
-pub fn load_demo() {
-    let mut doc = Document::empty();
-    // 黑乐谱演示内容必然含重叠音符。
-    doc.edit.allow_overlapping_notes = true;
-    let gen_max = add_demo_notes(&mut doc);
-
-    // 轨道颜色/显隐（conductor 色用中性浅灰，与主题无关的演示值）。
-    doc.sync_track_caches_with_conductor_color([0.85, 0.85, 0.88, 1.0]);
-
-    apply_document(doc, f64::from(gen_max));
-}
-
-/// 后台加载用户选择的 MIDI 文件并替换当前场景。
+/// 后台加载用户选择的文件（.mid / .ying）并替换当前场景。
 pub fn open_midi(path: String) {
     let spawn = std::thread::Builder::new()
         .name("yinhe-midi-load".into())
         .stack_size(32 * 1024 * 1024)
         .spawn(move || match load_document(&path) {
             Ok(doc) => apply_document(doc, 0.0),
-            Err(e) => log::error!("MIDI 加载失败（{path}）: {e}"),
+            Err(e) => log::error!("文件加载失败（{path}）: {e}"),
         });
     if let Err(e) = spawn {
         log::error!("加载线程创建失败: {e}");
     }
 }
 
-/// 解析 MIDI 文件并组装为可渲染/可播放的文档。
+/// 按扩展名解析文件并组装为可渲染/可播放的文档（.ying 工程 / MIDI）。
 fn load_document(path: &str) -> Result<Document, String> {
+    let lower = path.to_ascii_lowercase();
+    if lower.ends_with(".ying") {
+        return load_ying_document(path);
+    }
     let started = std::time::Instant::now();
     let model = yinhe_midi::parse_path(path).map_err(|e| format!("解析失败: {e}"))?;
     log::info!(
@@ -140,6 +154,300 @@ fn load_document(path: &str) -> Result<Document, String> {
     doc.sync_track_caches_with_conductor_color([0.85, 0.85, 0.88, 1.0]);
     push_recent(path);
     Ok(doc)
+}
+
+/// 解析 `.ying` 工程文件（ying = 移动端工程归档，容器与 .yin 兼容）。
+fn load_ying_document(path: &str) -> Result<Document, String> {
+    let started = std::time::Instant::now();
+    let (model, _sf, _mapping, _mixer) =
+        yinhe_yin::load_yin_with_sf(path).map_err(|e| format!("工程解析失败: {e}"))?;
+    log::info!(
+        "工程解析完成: {} 音符，用时 {:?}",
+        model.note_count,
+        started.elapsed()
+    );
+    let project_file = yinhe_yin::ProjectFile::from_meta(&model.meta);
+    let mapping_file = yinhe_yin::MappingFile::default();
+    let mut doc = Document::from_model(
+        path,
+        model,
+        QuantizePreset::Fraction(1, 4),
+        QuantizePreset::Fraction(1, 16),
+        project_file,
+        mapping_file,
+        None,
+    )?;
+    // 打开既有工程视为已保存（dirty 起点干净）。
+    doc.mark_saved();
+    doc.file_path = Some(path.to_string());
+    doc.sync_track_caches_with_conductor_color([0.85, 0.85, 0.88, 1.0]);
+    push_recent(path);
+    Ok(doc)
+}
+
+/// 新建空工程（17 轨、120BPM、4/4；等同桌面 `Document::empty()`）。
+pub fn new_project() -> i32 {
+    let doc = Document::empty();
+    // 空工程给 4 小节的初始时间轴长度，避免除零缩放。
+    apply_document(doc, 1920.0);
+    1
+}
+
+/// 保存为 `.ying` 工程归档（写到给定路径，签名与桌面 .yin 容器一致）。
+pub fn save_ying(path: String) -> i32 {
+    let Ok(s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return 0;
+    };
+    match yinhe_yin::save_yin(&doc.data.model, &path) {
+        Ok(()) => {
+            log::info!("工程已导出: {path}");
+            1
+        }
+        Err(e) => {
+            log::error!("工程导出失败: {e}");
+            0
+        }
+    }
+}
+
+/// 保存完成后标记工程状态（清除 dirty）。
+pub fn mark_saved() -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    doc.mark_saved();
+    1
+}
+
+/// 工程状态：`[can_undo, can_redo, dirty]`。
+pub fn doc_state() -> [i32; 3] {
+    let Ok(s) = scene().lock() else {
+        return [0, 0, 0];
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return [0, 0, 0];
+    };
+    [
+        i32::from(doc.undo_past_len() > 0),
+        i32::from(!doc.redo_labels().is_empty()),
+        i32::from(doc.is_dirty()),
+    ]
+}
+
+/// 设置当前工具（0=选框 1=手形 2=铅笔 3=橡皮 4=刷子）。
+pub fn set_tool(tool: i32) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    s.tool = match tool {
+        1 => Tool::Pan,
+        2 => Tool::Pencil,
+        3 => Tool::Eraser,
+        4 => Tool::Brush,
+        _ => Tool::Select,
+    };
+    1
+}
+
+/// 设置量化吸附档位：kind 0=Off 1=Auto 2=Fraction(num/den) 3=Absolute(ticks)。
+pub fn set_quantize(kind: i32, num: u32, den: u32) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let preset = match kind {
+        0 => QuantizePreset::Off,
+        2 => QuantizePreset::Fraction(num.max(1), den.max(1)),
+        3 => QuantizePreset::Absolute(num.max(1)),
+        _ => QuantizePreset::Auto,
+    };
+    doc.edit.quantize_pianoroll = preset;
+    doc.edit.quantize_arrange = preset;
+    1
+}
+
+/// 设置当前编辑轨（-1 = 无）。
+pub fn set_active_track(track: i32) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    s.active_track = if track < 0 {
+        None
+    } else {
+        Some(track as usize)
+    };
+    log::info!("当前编辑轨: {track}");
+    1
+}
+
+/// 覆盖层修订号（Dart 仅在变化时重取 JSON）。
+pub fn overlay_revision() -> u32 {
+    scene().lock().map(|s| s.overlay_rev).unwrap_or(0)
+}
+
+/// 覆盖层 JSON：`{"box":[x0,y0,x1,y1]|null,"cells":[...],"sel":[...]}`。
+///
+/// 坐标均为画布内容逻辑坐标（Flutter 侧直接绘制）。
+pub fn overlay_json() -> String {
+    let Ok(s) = scene().lock() else {
+        return "{}".into();
+    };
+    let mut out = String::from("{\"box\":");
+    match s.overlay_box {
+        Some(b) => out.push_str(&format!("[{},{},{},{}]", b[0], b[1], b[2], b[3])),
+        None => out.push_str("null"),
+    }
+    out.push_str(",\"cells\":[");
+    for (i, c) in s.overlay_cells.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!("[{},{},{},{}]", c[0], c[1], c[2], c[3]));
+    }
+    out.push_str("],\"sel\":[");
+    let mut first = true;
+    if let Some(doc) = s.document.as_ref() {
+        match s.view_mode {
+            ViewMode::Pianoroll => {
+                let view = &s.pr_view;
+                for (t0, t1, klo, khi) in doc.edit.sel_rect.effective_rects() {
+                    if !first {
+                        out.push(',');
+                    }
+                    first = false;
+                    let x0 = view.tick_to_x(t0);
+                    let x1 = view.tick_to_x(t1);
+                    let y0 = view.key_to_y(khi);
+                    let y1 = view.key_to_y(klo) + view.key_height;
+                    out.push_str(&format!("[{x0},{y0},{x1},{y1}]"));
+                }
+            }
+            ViewMode::Arrangement => {
+                let view = &s.arr_view;
+                let lane_h = view.lane_height();
+                for (t0, t1, tr_lo, tr_hi) in &doc.edit.arr_sel_rect {
+                    if !first {
+                        out.push(',');
+                    }
+                    first = false;
+                    let x0 = view.base.tick_to_x(*t0);
+                    let x1 = view.base.tick_to_x(*t1);
+                    let y0 = *tr_lo as f32 * lane_h - view.base.scroll_y;
+                    let y1 = (*tr_hi as f32 + 1.0) * lane_h - view.base.scroll_y;
+                    out.push_str(&format!("[{x0},{y0},{x1},{y1}]"));
+                }
+            }
+        }
+    }
+    out.push_str("]}");
+    out
+}
+
+/// 工程元数据 JSON（工程设置对话框回显）。
+pub fn project_meta_json() -> String {
+    let Ok(s) = scene().lock() else {
+        return "{}".into();
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return "{}".into();
+    };
+    let m = &doc.data.model.meta;
+    format!(
+        "{{\"name\":\"{}\",\"artist\":\"{}\",\"description\":\"{}\",\"ppq\":{}}}",
+        json_escape(&m.name),
+        json_escape(&m.artist),
+        json_escape(&m.description),
+        m.ppq
+    )
+}
+
+/// 工程元数据编辑（歌名/艺术家/简介/PPQ），差异字段合并为一条 undo。
+pub fn set_project_meta(name: String, artist: String, description: String, ppq: u32) -> i32 {
+    use yinhe_editor_core::history::UndoAction;
+
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let before = doc.capture_snapshot();
+    let mut actions: Vec<UndoAction> = Vec::new();
+    let mut ppq_change: Option<(u32, u32)> = None;
+    {
+        let model = std::sync::Arc::make_mut(&mut doc.data.model);
+        let has_notes = model.note_count > 0;
+        if model.meta.name != name {
+            actions.push(UndoAction::ProjectName {
+                old: model.meta.name.clone(),
+                new: name.clone(),
+            });
+            model.meta.name = name.clone();
+            // 与桌面 apply 同规则：歌曲名同步到 track 0 名称。
+            if let Some(t) = model.tracks.get_mut(0) {
+                std::sync::Arc::make_mut(t).name = name.clone();
+            }
+        }
+        if model.meta.artist != artist {
+            actions.push(UndoAction::ProjectArtist {
+                old: model.meta.artist.clone(),
+                new: artist.clone(),
+            });
+            model.meta.artist = artist;
+        }
+        if model.meta.description != description {
+            actions.push(UndoAction::ProjectDescription {
+                old: model.meta.description.clone(),
+                new: description.clone(),
+            });
+            model.meta.description = description;
+        }
+        let old_ppq = model.meta.ppq;
+        if old_ppq != ppq && ppq > 0 {
+            if has_notes {
+                // 有音符：缩放全部 tick 字段（与桌面一致）。
+                model.rescale_ppq(ppq);
+            } else {
+                model.meta.ppq = ppq;
+                model.commit_automation(&yinhe_types::automation::AutomationTarget::Tempo);
+            }
+            ppq_change = Some((old_ppq, ppq));
+        }
+    }
+    if let Some((old, new)) = ppq_change {
+        let has_notes = doc.data.model.note_count > 0;
+        actions.push(UndoAction::ProjectPpq {
+            old,
+            new,
+            rescale: has_notes,
+        });
+    }
+    if actions.is_empty() {
+        return 0;
+    }
+    let action = if actions.len() == 1 {
+        actions.pop().unwrap_or(UndoAction::ProjectName {
+            old: String::new(),
+            new: String::new(),
+        })
+    } else {
+        UndoAction::Composite(actions)
+    };
+    doc.push_undo(action, "Edit project meta", before);
+    let model = doc.data.model.clone();
+    refresh_snapshot(&mut s);
+    drop(s);
+    crate::audio::on_model_loaded(model);
+    log::info!("工程元数据已更新");
+    1
 }
 
 /// 把文档写入场景快照（演示与文件加载共用）。
@@ -186,7 +494,13 @@ fn apply_document(doc: Document, min_ticks: f64) {
 }
 
 /// 从文档重算轨道快照（模型/颜色/显隐/轨道面板信息/ppq）。
-fn refresh_snapshot(s: &mut RenderScene) {
+pub(crate) fn refresh_snapshot(s: &mut RenderScene) {
+    // 覆盖层（选框/预览）随快照变化一起失效（undo/编辑/加载后重取）。
+    s.overlay_rev = s.overlay_rev.wrapping_add(1);
+    // 文档修订号：编辑后（视图未变）也必须让音符层缓存失效。
+    if let Some(doc) = s.document.as_mut() {
+        doc.data.bump_revision();
+    }
     let Some(doc) = s.document.as_ref() else {
         return;
     };
@@ -261,65 +575,6 @@ pub fn playhead_x() -> f32 {
         ViewMode::Pianoroll => s.pr_view.tick_to_x(tick),
         ViewMode::Arrangement => s.arr_view.base.tick_to_x(tick),
     }
-}
-
-/// 生成演示音符（确定性伪随机 + 手工乐段），返回生成内容的最大 tick。
-fn add_demo_notes(doc: &mut Document) -> u32 {
-    let ppq = doc.data.model.meta.ppq.max(1);
-    // 无 rand 依赖的确定性 LCG：唯一样本可复现。
-    let mut seed = 0x9E37_79B9_7F4A_7C15u64;
-    let mut rnd = move || {
-        seed = seed
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        (seed >> 33) as u32
-    };
-
-    let bar = ppq * 4;
-    let mut max_tick = 0u32;
-    // 轨道 1..=6（0 号是 Conductor，add_note 会拒绝）。
-    let mut add = |key: u8, t: u32, len: u32, vel: u8, track: u16, max: &mut u32| {
-        let _ = doc.add_note(
-            track,
-            NoteEvent {
-                id: 0,
-                key,
-                start_tick: t,
-                end_tick: t + len,
-                velocity: vel,
-            },
-        );
-        *max = (*max).max(t + len);
-    };
-
-    // 琶音旋律：不同音域、长度/力度有变化。
-    for track in 1..=6u16 {
-        let base_key = 36 + (track - 1) as u8 * 8;
-        let mut t = track as u32 * ppq / 2;
-        for i in 0..400u32 {
-            let key = base_key + (i % 16) as u8;
-            let len = ppq / 4 * (1 + rnd() % 3);
-            let vel = (72 + rnd() % 56) as u8;
-            add(key, t, len, vel, track, &mut max_tick);
-            t += ppq / 4 + rnd() % (ppq / 2);
-        }
-    }
-
-    // 黑乐谱密度段：每 1/16 拍一排 60 键的柱状簇。
-    let cluster_start = bar * 64;
-    for i in 0..3600u32 {
-        let key = 30 + (i % 60) as u8;
-        let t = cluster_start + (i / 60) * (ppq / 16);
-        add(key, t, ppq / 8, 80, (i % 6) as u16 + 1, &mut max_tick);
-    }
-
-    // 高音区长音铺底。
-    for i in 0..16u32 {
-        let t = bar * (i + 1);
-        add(84, t, bar, 64, 7, &mut max_tick);
-    }
-
-    max_tick
 }
 
 // ── 最近文件（主页列表，持久化到私有目录 recent.txt）──

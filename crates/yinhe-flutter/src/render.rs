@@ -41,7 +41,14 @@ pub struct Target {
     fps_start: Instant,
     frames: u32,
     /// 仅为保活持有（尺寸在创建时已读取）。
-    _window: OwnedWindow,
+    window: OwnedWindow,
+}
+
+impl Target {
+    /// 生产端窗口指针（用于忽略重复 SetSurface）。
+    pub fn window_ptr(&self) -> usize {
+        self.window.0 as usize
+    }
 }
 
 /// 用生产端 `ANativeWindow` 建立 wgpu surface 与渲染器。
@@ -105,7 +112,7 @@ pub fn create_target(gpu: &Gpu, window: OwnedWindow) -> Option<Target> {
         notes_buf: Vec::new(),
         fps_start: Instant::now(),
         frames: 0,
-        _window: window,
+        window,
     })
 }
 
@@ -114,6 +121,16 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
     let (w, h) = crate::logical_size();
     if w < 1.0 || h < 1.0 {
         return;
+    }
+    // resize：只重配置交换链（对同一 ANativeWindow 重建 surface 会触发
+    // VK_ERROR_NATIVE_WINDOW_IN_USE_KHR）。
+    let pw = crate::pixel_size().0.max(1);
+    let ph = crate::pixel_size().1.max(1);
+    if t.config.width != pw || t.config.height != ph {
+        t.config.width = pw;
+        t.config.height = ph;
+        t.surface.configure(&gpu.device, &t.config);
+        log::info!("交换链重配置: {pw}x{ph}");
     }
 
     // ── 场景快照（锁内按视图 clamp + 取只读数据）──
@@ -137,6 +154,15 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
             s.num_tracks,
             s.ppq,
             s.display_track,
+            s.document
+                .as_ref()
+                .map(|d| d.edit.selected.clone())
+                .unwrap_or_default(),
+            s.document
+                .as_ref()
+                .map(|d| d.edit.track_selected.clone())
+                .unwrap_or_default(),
+            s.document.as_ref().map(|d| d.data.revision).unwrap_or(0),
         )
     };
     let (
@@ -149,6 +175,9 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
         num_tracks,
         ppq,
         display_track,
+        selection,
+        track_selected,
+        revision,
     ) = snapshot;
 
     // ── 取帧纹理 ──
@@ -182,6 +211,9 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
                 &track_colors,
                 &track_visible,
                 display_track,
+                &selection,
+                &track_selected,
+                revision,
                 ppq,
                 w,
                 h,
@@ -194,6 +226,7 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
                 &track_visible,
                 display_track,
                 num_tracks,
+                revision,
                 ppq,
                 w,
                 h,
@@ -262,21 +295,16 @@ fn upload_pianoroll(
     track_colors: &[[f32; 4]],
     track_visible: &[bool],
     display_track: Option<usize>,
+    selection: &Selection,
+    track_selected: &HashSet<u16>,
+    revision: u64,
     ppq: u32,
     w: f32,
     h: f32,
 ) {
     let visible = effective_visible(track_visible, display_track);
     upload_pianoroll_decor(t, view, ppq, w, h);
-    let job = build_render_job(
-        w as u32,
-        h as u32,
-        view,
-        &Selection::default(),
-        track_colors,
-        0.0,
-        true,
-    );
+    let job = build_render_job(w as u32, h as u32, view, selection, track_colors, 0.0, true);
     t.renderer.upload_uniforms(job.uniforms);
     t.renderer.upload_track_colors(&job.track_colors);
     t.renderer.upload_selection(&job.selection);
@@ -286,10 +314,18 @@ fn upload_pianoroll(
     key ^= (w.to_bits() as u64) << 17;
     key ^= (h.to_bits() as u64) << 29;
     key ^= (lod.map_or(0u64, |l| l as u64 + 1)) << 41;
+    key ^= selection.state_hash().rotate_left(7);
+    // 文档修订号 + 音符数：编辑后（视图未变）也必须重建音符层。
+    key ^= revision.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    key ^= model.note_count.rotate_left(11);
+    key ^= model.note_count.rotate_left(11);
     for (i, vis) in visible.iter().enumerate() {
         if *vis {
             key ^= 0x9E37_79B9_7F4A_7C15u64.wrapping_mul(i as u64 + 1);
         }
+    }
+    for t_sel in track_selected {
+        key ^= 0x2545_F491_4F6C_DD1Du64.wrapping_mul(u64::from(*t_sel) + 1);
     }
     let key = yinhe_wgpu::layer_cache_key(&[key, VIEW_TAG_PIANOROLL]);
     if key != t.notes_cache_key {
@@ -307,7 +343,6 @@ fn upload_pianoroll(
                 SUMMARY_BLOCK_TICKS[level],
             ),
             None => {
-                let track_sel = HashSet::new();
                 build_notes(
                     &mut t.notes_buf,
                     w,
@@ -316,11 +351,18 @@ fn upload_pianoroll(
                     view,
                     &hidden,
                     &visible,
-                    &track_sel,
-                    None,
+                    track_selected,
+                    Some(selection),
                 );
             }
         }
+        log::info!(
+            "PR 音符层重建: {} 实例 rev={} sel={} vis0={:?}",
+            t.notes_buf.len(),
+            revision,
+            selection.len(),
+            visible.first()
+        );
         t.notes_cache_key = key;
     }
     t.renderer.ensure_layers(2);
@@ -339,6 +381,7 @@ fn upload_arrangement(
     track_visible: &[bool],
     display_track: Option<usize>,
     num_tracks: usize,
+    revision: u64,
     ppq: u32,
     w: f32,
     h: f32,
@@ -386,6 +429,8 @@ fn upload_arrangement(
     let mut key = view.render_hash();
     key ^= (w.to_bits() as u64) << 17;
     key ^= (h.to_bits() as u64) << 29;
+    key ^= revision.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    key ^= model.note_count.rotate_left(11);
     for (i, vis) in visible.iter().enumerate() {
         if *vis {
             key ^= 0x9E37_79B9_7F4A_7C15u64.wrapping_mul(i as u64 + 1);
