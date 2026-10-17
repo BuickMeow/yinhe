@@ -48,7 +48,7 @@ class MainActivity : FlutterActivity() {
     private external fun nativeSetViewport(width: Float, height: Float)
 
     /** cpal/AAudio 需要的 NDK context（JavaVM + Application Context）。 */
-    private external fun nativeInitContext(context: android.content.Context)
+    private external fun nativeInitContext(context: android.content.Context, filesDir: String)
 
     /** Rust 回调：所选文件已复制到私有目录，path 为绝对路径。 */
     private external fun onFilePicked(path: String)
@@ -59,8 +59,9 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        // cpal/AAudio 需要 NDK context（JavaVM + Application Context）。
-        nativeInitContext(applicationContext)
+        // cpal/AAudio 需要 NDK context（JavaVM + Application Context）；
+        // filesDir 供 Rust 持久化最近文件。
+        nativeInitContext(applicationContext, filesDir.absolutePath)
 
         val p = flutterEngine.renderer.createSurfaceProducer()
         p.setCallback(

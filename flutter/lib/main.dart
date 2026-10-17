@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ffi' as ffi;
 
+import 'package:ffi/ffi.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -19,18 +21,14 @@ final _TouchDart _touch =
 typedef _VoidNative = ffi.Void Function();
 typedef _VoidDart = void Function();
 
-/// 载入内置演示文档（无文件时的内容源）。
 final _VoidDart _demoLoad =
     _bridge.lookupFunction<_VoidNative, _VoidDart>('yinhe_demo_load');
 
 typedef _IntVoidNative = ffi.Void Function(ffi.Int32);
 typedef _IntVoidDart = void Function(int);
 
-/// 切换视图：0=AR 走带，1=PR 卷帘。
 final _IntVoidDart _setViewMode =
     _bridge.lookupFunction<_IntVoidNative, _IntVoidDart>('yinhe_set_view_mode');
-
-/// 走带控制：0=播放，1=暂停，2=停止。
 final _IntVoidDart _transport =
     _bridge.lookupFunction<_IntVoidNative, _IntVoidDart>('yinhe_transport');
 
@@ -54,9 +52,120 @@ typedef _FloatDart = double Function();
 final _FloatDart _playheadX =
     _bridge.lookupFunction<_FloatNative, _FloatDart>('yinhe_playhead_x');
 
+typedef _SnapNative = ffi.Int32 Function(ffi.Pointer<ffi.Float>);
+typedef _SnapDart = int Function(ffi.Pointer<ffi.Float>);
+
+final _SnapDart _viewSnapshot =
+    _bridge.lookupFunction<_SnapNative, _SnapDart>('yinhe_view_snapshot');
+
+typedef _CStrNative = ffi.Pointer<Utf8> Function();
+typedef _CStrDart = ffi.Pointer<Utf8> Function();
+
+final _CStrDart _recentJson =
+    _bridge.lookupFunction<_CStrNative, _CStrDart>('yinhe_recent_json');
+final _CStrDart _tracksJson =
+    _bridge.lookupFunction<_CStrNative, _CStrDart>('yinhe_tracks_json');
+
+typedef _FreeNative = ffi.Void Function(ffi.Pointer<Utf8>);
+typedef _FreeDart = void Function(ffi.Pointer<Utf8>);
+
+final _FreeDart _freeString =
+    _bridge.lookupFunction<_FreeNative, _FreeDart>('yinhe_free_string');
+
+typedef _OpenPathNative = ffi.Void Function(ffi.Pointer<Utf8>);
+typedef _OpenPathDart = void Function(ffi.Pointer<Utf8>);
+
+final _OpenPathDart _openPath =
+    _bridge.lookupFunction<_OpenPathNative, _OpenPathDart>('yinhe_open_path');
+
 /// 视图模式（与 Rust 侧约定一致：0=AR 走带，1=PR 卷帘）。
 const int kViewArrangement = 0;
 const int kViewPianoroll = 1;
+
+// ── LIGHT 主题（与 yinhe-theme::base::BaseColors::LIGHT 同步）──
+
+class YinheTheme {
+  static const bg = Color(0xFFF0F0F4);
+  static const text = Color(0xFF1E1E22);
+  static const accent = Color(0xFF1E6EDC);
+  static const danger = Color(0xFFE81123);
+  static const warning = Color(0xFFF0C83C);
+
+  static const _black = Color(0xFF000000);
+
+  static Color get controlBg => Color.lerp(bg, _black, 0.03) ?? bg;
+  static Color get controlSelectedBg => Color.lerp(bg, _black, 0.08) ?? bg;
+  static Color get btnBg => Color.lerp(bg, _black, 0.05) ?? bg;
+  static Color get lineFg => Color.lerp(bg, _black, 0.07) ?? bg;
+  static Color get stripeBg => Color.lerp(bg, _black, 0.06) ?? bg;
+  static Color get textSecondary => Color.lerp(text, bg, 0.14) ?? text;
+  static Color get textMuted => Color.lerp(text, bg, 0.22) ?? text;
+  static Color get textLabel => Color.lerp(text, bg, 0.36) ?? text;
+  static Color get textDisabled => Color.lerp(text, bg, 0.66) ?? text;
+  static Color get textFaint => Color.lerp(text, bg, 0.9) ?? text;
+  static Color get selectedBg => Color.lerp(bg, accent, 0.30) ?? bg;
+  static Color get primaryButtonBg => Color.lerp(accent, Colors.white, 0.72) ?? accent;
+
+  static ThemeData data() {
+    final scheme = ColorScheme.fromSeed(
+      seedColor: accent,
+      brightness: Brightness.light,
+    ).copyWith(
+      primary: accent,
+      surface: bg,
+    );
+    return ThemeData(
+      useMaterial3: true,
+      colorScheme: scheme,
+      scaffoldBackgroundColor: bg,
+      splashFactory: InkSparkle.splashFactory,
+    );
+  }
+}
+
+// ── 数据类 ──
+
+class TrackRow {
+  const TrackRow({
+    required this.name,
+    required this.port,
+    required this.channel,
+    required this.muted,
+    required this.soloed,
+  });
+
+  final String name;
+  final int port;
+  final int channel;
+  final bool muted;
+  final bool soloed;
+
+  static TrackRow fromJson(Map<String, dynamic> json) {
+    return TrackRow(
+      name: json['name'] as String? ?? '',
+      port: (json['port'] as num?)?.toInt() ?? 0,
+      channel: (json['channel'] as num?)?.toInt() ?? 0,
+      muted: json['muted'] as bool? ?? false,
+      soloed: json['soloed'] as bool? ?? false,
+    );
+  }
+}
+
+class RecentItem {
+  const RecentItem({required this.name, required this.path, required this.time});
+
+  final String name;
+  final String path;
+  final int time;
+
+  static RecentItem fromJson(Map<String, dynamic> json) {
+    return RecentItem(
+      name: json['name'] as String? ?? '',
+      path: json['path'] as String? ?? '',
+      time: (json['time'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
 
 void main() {
   runApp(const YinheApp());
@@ -67,15 +176,15 @@ class YinheApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: StudioShell(),
+      theme: YinheTheme.data(),
+      home: const StudioShell(),
     );
   }
 }
 
-/// 工作台壳：画布常驻（Texture 永不销毁），Home 为覆盖浮层，
-/// 顶部条切换 AR/PR 视图，底部为走带控制。
+/// 工作台壳：画布常驻，主页为覆盖浮层，顶部切换 AR/PR，底部走带。
 class StudioShell extends StatefulWidget {
   const StudioShell({super.key});
 
@@ -88,8 +197,6 @@ class _StudioShellState extends State<StudioShell>
   static const MethodChannel _channel = MethodChannel('yinhe/surface');
 
   int? _textureId;
-
-  /// 最近一次上报的物理像素尺寸（避免 build 里重复调用）。
   Size? _reportedPixelSize;
 
   bool _showHome = true;
@@ -100,21 +207,33 @@ class _StudioShellState extends State<StudioShell>
   bool _playing = false;
   double _seconds = 0;
 
-  /// 播放光标 x（逻辑像素，-1 = 不显示）；Ticker 每帧更新，只重绘光标层。
+  List<RecentItem> _recent = const [];
+
   final ValueNotifier<double> _playhead = ValueNotifier<double>(-1);
+  final ValueNotifier<List<double>> _snap =
+      ValueNotifier<List<double>>(List<double>.filled(12, 0.0));
+  final ValueNotifier<List<TrackRow>> _tracks =
+      ValueNotifier<List<TrackRow>>(const []);
+
   late final Ticker _ticker;
   Timer? _transportTimer;
+  late final ffi.Pointer<ffi.Float> _snapPtr;
 
   @override
   void initState() {
     super.initState();
+    _snapPtr = calloc<ffi.Float>(12);
     _channel.setMethodCallHandler(_onNativeCall);
     _init();
-    _ticker = createTicker((_) => _playhead.value = _playheadX())..start();
+    _ticker = createTicker((_) {
+      _playhead.value = _playheadX();
+      _snap.value = _readSnapshot();
+    })..start();
     _transportTimer = Timer.periodic(
       const Duration(milliseconds: 250),
       (_) => _refreshTransport(),
     );
+    _recent = _readRecent();
   }
 
   @override
@@ -122,25 +241,66 @@ class _StudioShellState extends State<StudioShell>
     _ticker.dispose();
     _transportTimer?.cancel();
     _playhead.dispose();
+    _snap.dispose();
+    _tracks.dispose();
+    calloc.free(_snapPtr);
     super.dispose();
   }
 
-  /// 低频同步播放状态/时间（播放按键与时间文本）。
-  void _refreshTransport() {
-    if (!mounted || _showHome) {
-      return;
+  List<double> _readSnapshot() {
+    if (_viewSnapshot(_snapPtr) == 0) {
+      return _snap.value;
     }
-    final playing = _isPlaying() == 1;
-    final seconds = _playbackSeconds();
-    if (playing != _playing || (seconds - _seconds).abs() > 0.02) {
-      setState(() {
-        _playing = playing;
-        _seconds = seconds;
-      });
+    return List<double>.generate(12, (i) => _snapPtr[i]);
+  }
+
+  List<RecentItem> _readRecent() {
+    final ptr = _recentJson();
+    if (ptr == ffi.nullptr) {
+      return const [];
+    }
+    try {
+      final text = ptr.toDartString();
+      final list = jsonDecode(text) as List<dynamic>;
+      return [
+        for (final e in list) RecentItem.fromJson(e as Map<String, dynamic>),
+      ];
+    } catch (_) {
+      return const [];
+    } finally {
+      _freeString(ptr);
     }
   }
 
-  /// Kotlin → Dart 事件（文件/音色选择完成）。
+  List<TrackRow> _readTracks() {
+    final ptr = _tracksJson();
+    if (ptr == ffi.nullptr) {
+      return const [];
+    }
+    try {
+      final text = ptr.toDartString();
+      final list = jsonDecode(text) as List<dynamic>;
+      return [
+        for (final e in list) TrackRow.fromJson(e as Map<String, dynamic>),
+      ];
+    } catch (_) {
+      return const [];
+    } finally {
+      _freeString(ptr);
+    }
+  }
+
+  /// 文档加载是后台线程：延迟刷新轨道/最近列表。
+  void _refreshDocumentMeta() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _recent = _readRecent();
+      _tracks.value = _readTracks();
+    });
+  }
+
   Future<void> _onNativeCall(MethodCall call) async {
     final path = call.arguments as String?;
     if (!mounted || path == null) {
@@ -154,6 +314,7 @@ class _StudioShellState extends State<StudioShell>
           _viewMode = kViewArrangement;
         });
         _setViewMode(kViewArrangement);
+        Future.delayed(const Duration(milliseconds: 800), _refreshDocumentMeta);
       case 'onSoundFontPicked':
         setState(() => _soundFontName = path.split('/').last);
     }
@@ -185,9 +346,25 @@ class _StudioShellState extends State<StudioShell>
       _seconds = 0;
       _playing = false;
     });
+    Future.delayed(const Duration(milliseconds: 600), _refreshDocumentMeta);
   }
 
-  /// 触摸事件：坐标为本控件逻辑像素（与 Rust 视图坐标系一致）。
+  void _openRecent(RecentItem item) {
+    final p = item.path.toNativeUtf8();
+    try {
+      _openPath(p);
+    } finally {
+      calloc.free(p);
+    }
+    setState(() {
+      _fileName = item.name;
+      _showHome = false;
+      _viewMode = kViewArrangement;
+    });
+    _setViewMode(kViewArrangement);
+    Future.delayed(const Duration(milliseconds: 800), _refreshDocumentMeta);
+  }
+
   void _sendTouch(int kind, Offset p, int pointer) {
     _touch(kind, p.dx, p.dy, pointer);
   }
@@ -214,6 +391,20 @@ class _StudioShellState extends State<StudioShell>
     });
   }
 
+  void _refreshTransport() {
+    if (!mounted || _showHome) {
+      return;
+    }
+    final playing = _isPlaying() == 1;
+    final seconds = _playbackSeconds();
+    if (playing != _playing || (seconds - _seconds).abs() > 0.02) {
+      setState(() {
+        _playing = playing;
+        _seconds = seconds;
+      });
+    }
+  }
+
   String _fmtTime(double seconds) {
     final total = seconds.floor();
     final m = total ~/ 60;
@@ -227,12 +418,12 @@ class _StudioShellState extends State<StudioShell>
     final id = _textureId;
     if (id == null) {
       return const Scaffold(
-        backgroundColor: Color(0xFF14141A),
+        backgroundColor: Color(0xFFF0F0F4),
         body: Center(child: CircularProgressIndicator()),
       );
     }
     return Scaffold(
-      backgroundColor: const Color(0xFF14141A),
+      backgroundColor: YinheTheme.bg,
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
@@ -271,20 +462,21 @@ class _StudioShellState extends State<StudioShell>
                   Positioned.fill(
                     child: IgnorePointer(
                       child: CustomPaint(
+                        painter: _LabelsPainter(_snap, _tracks),
+                      ),
+                    ),
+                  ),
+                if (!_showHome)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: CustomPaint(
                         painter: _PlayheadPainter(_playhead),
                       ),
                     ),
                   ),
                 if (!_showHome) _buildTopBar(),
                 if (!_showHome) _buildTransport(),
-                if (_showHome)
-                  _HomeOverlay(
-                    fileName: _fileName,
-                    soundFontName: _soundFontName,
-                    onPickMidi: _pickMidi,
-                    onPickSoundFont: _pickSoundFont,
-                    onOpenDemo: _openDemo,
-                  ),
+                if (_showHome) _buildHome(),
               ],
             );
           },
@@ -293,7 +485,200 @@ class _StudioShellState extends State<StudioShell>
     );
   }
 
-  /// 顶部条：AR/PR 切换 + 文件名 + 回主页。
+  // ── 主页（仿桌面：按钮列 + 最近文件 + 银字水印 + 版本号 + 返回）──
+
+  Widget _buildHome() {
+    return Positioned.fill(
+      child: ColoredBox(
+        color: YinheTheme.bg,
+        child: Stack(
+          children: [
+            // 左下角水印。
+            Positioned(
+              left: 18,
+              bottom: -30,
+              child: IgnorePointer(
+                child: Text(
+                  '银',
+                  style: TextStyle(
+                    fontSize: 300,
+                    height: 1,
+                    fontWeight: FontWeight.w700,
+                    color: YinheTheme.textFaint,
+                  ),
+                ),
+              ),
+            ),
+            // 右下角版本号。
+            const Positioned(
+              right: 16,
+              bottom: 12,
+              child: Text(
+                '0.1.0',
+                style: TextStyle(color: Color(0xFF9A9AA2), fontSize: 12),
+              ),
+            ),
+            // 左上角返回。
+            Positioned(
+              left: 4,
+              top: 4,
+              child: IconButton(
+                tooltip: '返回工作区',
+                icon: const Icon(Icons.arrow_back),
+                color: YinheTheme.textSecondary,
+                onPressed: () => setState(() => _showHome = false),
+              ),
+            ),
+            // 主体：左按钮列 + 右最近文件。
+            Positioned.fill(
+              child: Padding(
+                padding: const EdgeInsets.only(left: 48, right: 40, top: 28),
+                child: Row(
+                  children: [
+                    SizedBox(width: 300, child: _homeActions()),
+                    const SizedBox(width: 56),
+                    Expanded(child: _recentPanel()),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _homeActions() {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        FilledButton.icon(
+          onPressed: _pickMidi,
+          icon: const Icon(Icons.note_add, size: 18),
+          label: const Text('打开 MIDI 文件'),
+          style: FilledButton.styleFrom(
+            backgroundColor: YinheTheme.primaryButtonBg,
+            foregroundColor: YinheTheme.text,
+            minimumSize: const Size.fromHeight(52),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(6),
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        _secondaryButton('打开演示文档', Icons.folder_open, _openDemo),
+        const SizedBox(height: 14),
+        _secondaryButton(
+          _soundFontName == null
+              ? '选择音色库…'
+              : '音色库：$_soundFontName',
+          Icons.piano,
+          _pickSoundFont,
+        ),
+      ],
+    );
+  }
+
+  Widget _secondaryButton(String label, IconData icon, VoidCallback onTap) {
+    return TextButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon, size: 18),
+      label: Text(label, overflow: TextOverflow.ellipsis),
+      style: TextButton.styleFrom(
+        backgroundColor: YinheTheme.controlBg,
+        foregroundColor: YinheTheme.text,
+        minimumSize: const Size.fromHeight(52),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(6),
+        ),
+      ),
+    );
+  }
+
+  Widget _recentPanel() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Text(
+          '最近修改的文件',
+          style: TextStyle(color: YinheTheme.textLabel, fontSize: 14),
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: _recent.isEmpty
+              ? Align(
+                  alignment: Alignment.topLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      '暂无最近文件',
+                      style: TextStyle(
+                        color: YinheTheme.textDisabled,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                )
+              : ListView.builder(
+                  padding: EdgeInsets.zero,
+                  itemCount: _recent.length,
+                  itemBuilder: (context, i) {
+                    final item = _recent[i];
+                    return InkWell(
+                      onTap: () => _openRecent(item),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 7),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.audio_file,
+                              size: 18,
+                              color: YinheTheme.textLabel,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                item.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: YinheTheme.text,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ),
+                            Text(
+                              _fmtDate(item.time),
+                              style: TextStyle(
+                                color: YinheTheme.textDisabled,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  String _fmtDate(int epochSeconds) {
+    if (epochSeconds <= 0) {
+      return '';
+    }
+    final dt = DateTime.fromMillisecondsSinceEpoch(epochSeconds * 1000);
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${dt.year}-${two(dt.month)}-${two(dt.day)} '
+        '${two(dt.hour)}:${two(dt.minute)}';
+  }
+
+  // ── 顶部条 / 底部走带 ──
+
   Widget _buildTopBar() {
     return Positioned(
       left: 0,
@@ -301,7 +686,7 @@ class _StudioShellState extends State<StudioShell>
       top: 0,
       child: Container(
         height: 42,
-        color: const Color(0xE6101016),
+        color: Color.lerp(YinheTheme.bg, Colors.black, 0.04),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         child: Row(
           children: [
@@ -320,7 +705,7 @@ class _StudioShellState extends State<StudioShell>
             Expanded(
               child: Text(
                 _fileName ?? '',
-                style: const TextStyle(color: Colors.white70, fontSize: 13),
+                style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -335,7 +720,6 @@ class _StudioShellState extends State<StudioShell>
     );
   }
 
-  /// 底部走带条：播放/暂停、停止、时间、音色状态。
   Widget _buildTransport() {
     return Positioned(
       left: 0,
@@ -343,44 +727,32 @@ class _StudioShellState extends State<StudioShell>
       bottom: 0,
       child: Container(
         height: 48,
-        color: const Color(0xE6101016),
+        color: Color.lerp(YinheTheme.bg, Colors.black, 0.04),
         padding: const EdgeInsets.symmetric(horizontal: 8),
         child: Row(
           children: [
             IconButton(
               onPressed: _togglePlay,
               icon: Icon(_playing ? Icons.pause : Icons.play_arrow),
-              color: Colors.white,
+              color: YinheTheme.text,
               tooltip: _playing ? '暂停' : '播放',
             ),
             IconButton(
               onPressed: _stopPlayback,
               icon: const Icon(Icons.stop),
-              color: Colors.white70,
+              color: YinheTheme.textSecondary,
               tooltip: '停止',
             ),
             const SizedBox(width: 8),
             Text(
               _fmtTime(_seconds),
-              style: const TextStyle(
-                color: Colors.white70,
+              style: TextStyle(
+                color: YinheTheme.textLabel,
                 fontSize: 13,
                 fontFamily: 'monospace',
               ),
             ),
             const Spacer(),
-            Text(
-              _soundFontName == null
-                  ? '未选择音色库（静音播放）'
-                  : '音色：$_soundFontName',
-              style: TextStyle(
-                color: _soundFontName == null
-                    ? Colors.orangeAccent
-                    : Colors.white38,
-                fontSize: 11,
-              ),
-            ),
-            const SizedBox(width: 8),
           ],
         ),
       ),
@@ -402,7 +774,7 @@ class _ViewTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: selected ? const Color(0xFF3A6EA5) : const Color(0xFF23232C),
+      color: selected ? YinheTheme.accent : YinheTheme.controlBg,
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
@@ -412,7 +784,7 @@ class _ViewTab extends StatelessWidget {
           child: Text(
             label,
             style: TextStyle(
-              color: selected ? Colors.white : Colors.white60,
+              color: selected ? Colors.white : YinheTheme.textSecondary,
               fontSize: 13,
             ),
           ),
@@ -435,7 +807,7 @@ class _PlayheadPainter extends CustomPainter {
       return;
     }
     final paint = Paint()
-      ..color = const Color(0xFFFF5A5A)
+      ..color = YinheTheme.danger
       ..strokeWidth = 1.5;
     canvas.drawLine(Offset(px, 0), Offset(px, size.height), paint);
   }
@@ -444,99 +816,179 @@ class _PlayheadPainter extends CustomPainter {
   bool shouldRepaint(covariant _PlayheadPainter oldDelegate) => false;
 }
 
-/// 主页浮层：打开 MIDI / 演示文档 / 选择音色库。
-class _HomeOverlay extends StatelessWidget {
-  const _HomeOverlay({
-    required this.fileName,
-    required this.soundFontName,
-    required this.onPickMidi,
-    required this.onPickSoundFont,
-    required this.onOpenDemo,
-  });
+/// 文本浮层：AR 轨道面板文字/编号/M-S，PR 键盘 C 音名。
+class _LabelsPainter extends CustomPainter {
+  _LabelsPainter(this.snap, this.tracks)
+      : super(repaint: Listenable.merge([snap, tracks]));
 
-  final String? fileName;
-  final String? soundFontName;
-  final VoidCallback onPickMidi;
-  final VoidCallback onPickSoundFont;
-  final VoidCallback onOpenDemo;
+  final ValueNotifier<List<double>> snap;
+  final ValueNotifier<List<TrackRow>> tracks;
 
   @override
-  Widget build(BuildContext context) {
-    return Positioned.fill(
-      child: ColoredBox(
-        color: const Color(0xF214141A),
-        child: Center(
-          child: Container(
-            width: 440,
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1C1C24),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                const Text(
-                  '银河 Yinhe',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 24,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                const Text(
-                  '黑乐谱 MIDI 编辑器',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white38, fontSize: 13),
-                ),
-                if (fileName != null) ...[
-                  const SizedBox(height: 10),
-                  Text(
-                    '当前：$fileName',
-                    textAlign: TextAlign.center,
-                    style:
-                        const TextStyle(color: Colors.white54, fontSize: 12),
-                  ),
-                ],
-                const SizedBox(height: 22),
-                FilledButton.icon(
-                  onPressed: onPickMidi,
-                  icon: const Icon(Icons.folder_open),
-                  label: const Text('打开 MIDI 文件'),
-                ),
-                const SizedBox(height: 10),
-                OutlinedButton.icon(
-                  onPressed: onOpenDemo,
-                  icon: const Icon(Icons.music_note),
-                  label: const Text('打开演示文档'),
-                ),
-                const SizedBox(height: 10),
-                OutlinedButton.icon(
-                  onPressed: onPickSoundFont,
-                  icon: const Icon(Icons.piano),
-                  label: Text(
-                    soundFontName == null
-                        ? '选择音色库（SF2）'
-                        : '音色：$soundFontName',
-                  ),
-                ),
-                const SizedBox(height: 14),
-                const Text(
-                  '音色库可选：未选择时播放无声（时钟/光标正常）。\n'
-                  '打开后进入走带视图，可切换卷帘；单指拖动 / 双指缩放。',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white30, fontSize: 11),
-                ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
+  void paint(Canvas canvas, Size size) {
+    final s = snap.value;
+    if (s.length < 12) {
+      return;
+    }
+    if (s[0] == 0.0) {
+      _paintArrangement(canvas, size, s, tracks.value);
+    } else {
+      _paintKeyboardLabels(canvas, size, s);
+    }
+  }
+
+  void _paintArrangement(
+    Canvas canvas,
+    Size size,
+    List<double> s,
+    List<TrackRow> rows,
+  ) {
+    if (rows.isEmpty) {
+      return;
+    }
+    final laneH = s[6];
+    final scrollY = s[3];
+    final panelW = s[5];
+    if (laneH <= 0 || panelW <= 0) {
+      return;
+    }
+    final first =
+        (scrollY / laneH).floor().clamp(0, rows.length).toInt();
+    final last =
+        ((scrollY + size.height) / laneH).ceil().clamp(0, rows.length).toInt();
+    for (var idx = first; idx < last; idx++) {
+      final row = rows[idx];
+      final y = idx * laneH - scrollY;
+      final port = row.port >= 0 && row.port < 4
+          ? 'ABCD'[row.port]
+          : '?';
+      final code =
+          '${idx.toString().padLeft(3, '0')}  $port${(row.channel + 1).toString().padLeft(2, '0')}';
+      final font = (laneH * 0.24).clamp(9.0, 13.0).toDouble();
+      _text(
+        canvas,
+        code,
+        Offset(10, y + laneH * 0.30),
+        font,
+        YinheTheme.text,
+        vCenter: true,
+      );
+      final small = (laneH * 0.2).clamp(8.0, 11.0).toDouble();
+      _text(
+        canvas,
+        row.name,
+        Offset(10, y + laneH * 0.68),
+        small,
+        YinheTheme.textLabel,
+        vCenter: true,
+      );
+      if (laneH >= 34) {
+        final btn = (laneH * 0.44).clamp(18.0, 26.0).toDouble();
+        const gap = 4.0;
+        final right = panelW - 6.0;
+        final cy = y + laneH / 2;
+        _msButton(
+          canvas,
+          Rect.fromLTWH(right - btn, cy - btn / 2, btn, btn),
+          'M',
+          row.muted,
+          true,
+        );
+        _msButton(
+          canvas,
+          Rect.fromLTWH(right - btn * 2 - gap, cy - btn / 2, btn, btn),
+          'S',
+          row.soloed,
+          false,
+        );
+      }
+    }
+  }
+
+  void _paintKeyboardLabels(Canvas canvas, Size size, List<double> s) {
+    final kh = s[4];
+    final kbW = s[5];
+    final key0Y = s[9];
+    if (kh < 10 || kbW <= 0) {
+      return;
+    }
+    final font = (kh * 0.5).clamp(7.0, 11.0).toDouble();
+    for (var key = 0; key <= 127; key += 12) {
+      final y = key0Y - key * kh;
+      if (y + kh < 0 || y > size.height) {
+        continue;
+      }
+      final name = 'C${key ~/ 12 - 1}';
+      _text(
+        canvas,
+        name,
+        Offset(kbW - 6, y + kh / 2),
+        font,
+        YinheTheme.textMuted,
+        vCenter: true,
+        rightAlign: true,
+      );
+    }
+  }
+
+  void _msButton(
+    Canvas canvas,
+    Rect rect,
+    String label,
+    bool active,
+    bool isMute,
+  ) {
+    final bg = active
+        ? (isMute ? YinheTheme.warning : YinheTheme.danger)
+        : YinheTheme.btnBg;
+    final fg = active ? Colors.white : YinheTheme.textMuted;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, const Radius.circular(4)),
+      Paint()..color = bg,
+    );
+    _text(
+      canvas,
+      label,
+      rect.center,
+      10,
+      fg,
+      vCenter: true,
+      hCenter: true,
     );
   }
+
+  void _text(
+    Canvas canvas,
+    String text,
+    Offset pos,
+    double fontSize,
+    Color color, {
+    bool vCenter = false,
+    bool hCenter = false,
+    bool rightAlign = false,
+  }) {
+    if (text.isEmpty) {
+      return;
+    }
+    final tp = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(fontSize: fontSize, color: color),
+      ),
+      maxLines: 1,
+      ellipsis: '…',
+      textDirection: TextDirection.ltr,
+    )..layout();
+    var dx = pos.dx;
+    if (rightAlign) {
+      dx -= tp.width;
+    } else if (hCenter) {
+      dx -= tp.width / 2;
+    }
+    final dy = vCenter ? pos.dy - tp.height / 2 : pos.dy;
+    tp.paint(canvas, Offset(dx, dy));
+  }
+
+  @override
+  bool shouldRepaint(covariant _LabelsPainter oldDelegate) => false;
 }
