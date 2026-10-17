@@ -377,6 +377,7 @@ class AutomationPainter extends CustomPainter {
   AutomationPainter({
     required this.lane,
     required this.velocity,
+    required this.trackColors,
     required this.color,
     required this.snap,
     required this.preview,
@@ -385,8 +386,11 @@ class AutomationPainter extends CustomPainter {
   /// null = 力度模式。
   final AutomationLaneData? lane;
 
-  /// 力度条（每音符一条）：(tick, length, velocity01)。
-  final List<(double, double, double)> velocity;
+  /// 力度条（每音符/每摘要一条）：(tick, length, velocity01, track)。
+  final List<(double, double, double, int)> velocity;
+
+  /// 轨道颜色（力度条按音符所属轨道着色）。
+  final List<Color> trackColors;
   final Color color;
   final ValueNotifier<List<double>> snap;
 
@@ -417,12 +421,11 @@ class AutomationPainter extends CustomPainter {
     final l = lane;
     if (l == null) {
       // 力度条（与桌面 wgpu 一致）：每音符一条空心描边柱，
-      // 宽度 = gate × ppu（最小 2px），高度 ∝ (velocity-1)/126。
+      // 宽度 = gate × ppu（最小 2px），高度 ∝ (velocity-1)/126；按轨道着色。
       final paint = Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.0
-        ..color = color;
-      for (final (tick, len, vel01) in velocity) {
+        ..strokeWidth = 1.0;
+      for (final (tick, len, vel01, track) in velocity) {
         final rawLeft = xOf(tick);
         final rawRight = xOf(tick + len);
         if (rawRight < -4) {
@@ -441,6 +444,9 @@ class AutomationPainter extends CustomPainter {
         if (height < 1.0) {
           height = 1.0;
         }
+        paint.color = (track >= 0 && track < trackColors.length)
+            ? trackColors[track]
+            : color;
         canvas.drawRect(Rect.fromLTWH(left, top, width, height), paint);
       }
       return;

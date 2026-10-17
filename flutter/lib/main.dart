@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:ffi' as ffi;
 
 import 'package:ffi/ffi.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -86,8 +87,8 @@ class _StudioShellState extends State<StudioShell>
   /// combo 索引：0 = Velocity（默认），1..=N = 自动化 lane。
   int _autoIndex = 0;
 
-  /// 力度条数据：(tick, length, velocity01)。
-  List<(double, double, double)> _velocityBars = const [];
+  /// 力度条数据：(tick, length, velocity01, track)。
+  List<(double, double, double, int)> _velocityBars = const [];
 
   /// 收起自动化栏（最大化画布）。
   bool _autoCollapsed = false;
@@ -131,6 +132,9 @@ class _StudioShellState extends State<StudioShell>
   late final ffi.Pointer<ffi.Float> _snapPtr;
 
   bool _dragging = false;
+
+  /// 触控板捏合的上一次累计缩放（用于换算增量）。
+  double _panZoomScale = 1.0;
 
   @override
   void initState() {
@@ -553,9 +557,8 @@ class _StudioShellState extends State<StudioShell>
       setState(() => _velocityBars = const []);
       return;
     }
-    final track = (_activeTrack ?? 0).clamp(0, rows.length - 1);
-    final ptr = rust.velocityJson(track);
-    var bars = const <(double, double, double)>[];
+    final ptr = rust.velocityJson();
+    var bars = const <(double, double, double, int)>[];
     if (ptr != ffi.nullptr) {
       try {
         final list = jsonDecode(ptr.toDartString()) as List<dynamic>;
@@ -565,6 +568,7 @@ class _StudioShellState extends State<StudioShell>
               ((e as List<dynamic>)[0] as num).toDouble(),
               (e[1] as num).toDouble(),
               (e[2] as num).toDouble(),
+              (e[3] as num).toInt(),
             ),
         ];
       } catch (_) {
@@ -744,6 +748,7 @@ class _StudioShellState extends State<StudioShell>
                     painter: AutomationPainter(
                       lane: lane,
                       velocity: _velocityBars,
+                      trackColors: [for (final t in _tracks.value) t.color],
                       color: color,
                       snap: _snap,
                       preview: _autoPreview,
@@ -849,6 +854,38 @@ class _StudioShellState extends State<StudioShell>
     }
     // 只写入事件；纹理与浮层统一在下一帧同步刷新（帧驱动，输入侧已就地 clamp）。
     rust.touch(kind, p.dx, p.dy, pointer);
+  }
+
+  /// 鼠标滚轮 / 触控板滚动：Ctrl（或 Cmd）+ 滚轮缩放（键盘区缩放音高轴，
+  /// 其余缩放时间轴），普通滚轮平移时间轴。
+  void _handlePointerSignal(PointerSignalEvent e) {
+    if (e is! PointerScrollEvent) {
+      return;
+    }
+    final ctrl =
+        HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isMetaPressed;
+    rust.scrollAt(
+      e.localPosition.dx,
+      e.localPosition.dy,
+      e.scrollDelta.dx,
+      e.scrollDelta.dy,
+      ctrl ? 1 : 0,
+    );
+  }
+
+  /// 触控板捏合：按累计缩放的增量缩放（键盘区 → 音高轴）。
+  void _handlePanZoomUpdate(PointerPanZoomUpdateEvent e) {
+    final next = e.scale;
+    final last = _panZoomScale;
+    _panZoomScale = next;
+    if (last <= 0 || next <= 0) {
+      return;
+    }
+    final factor = next / last;
+    if ((factor - 1.0).abs() > 0.002) {
+      rust.zoomAt(e.localPosition.dx, e.localPosition.dy, factor);
+    }
   }
 
   int? _rowAt(Offset p) {
@@ -1021,6 +1058,11 @@ class _StudioShellState extends State<StudioShell>
                                     _sendTouch(2, e.localPosition, e.pointer),
                                 onPointerCancel: (e) =>
                                     _sendTouch(2, e.localPosition, e.pointer),
+                                onPointerSignal: _handlePointerSignal,
+                                onPointerPanZoomStart: (_) =>
+                                    _panZoomScale = 1.0,
+                                onPointerPanZoomUpdate: _handlePanZoomUpdate,
+                                onPointerPanZoomEnd: (_) => _panZoomScale = 1.0,
                                 child: Texture(textureId: id),
                               ),
                             ),
