@@ -207,6 +207,25 @@ pub fn is_playing() -> bool {
         .is_some_and(|st| st.handle.handle.is_playing())
 }
 
+/// 跳转播放光标（tick）。播放中立即 seek 音频；停止时只移动光标。
+pub fn seek(tick: f64) -> bool {
+    let tick = tick.max(0.0);
+    let seconds = model_seconds(tick);
+    let Some(mut guard) = lock_audio() else {
+        return false;
+    };
+    let Some(st) = guard.as_mut() else {
+        return false;
+    };
+    st.cursor_tick = tick;
+    if st.handle.handle.is_playing() {
+        let sample = (seconds * st.handle.sample_rate as f64) as u64;
+        st.handle.handle.send(AudioCommand::Seek { sample });
+        log::info!("跳转播放位置: tick={tick:.0}");
+    }
+    true
+}
+
 /// 当前播放位置（tick）。播放中按采样位置换算，否则返回光标值。
 pub fn playback_tick() -> f64 {
     let model = current_model();

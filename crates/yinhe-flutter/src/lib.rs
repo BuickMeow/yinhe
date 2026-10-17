@@ -456,7 +456,10 @@ pub extern "C" fn yinhe_transport(cmd: i32) {
     match cmd {
         0 => audio::play(),
         1 => audio::pause(),
-        2 => audio::stop(),
+        2 => {
+            audio::stop();
+            scene::reset_cursor();
+        }
         _ => {}
     }
 }
@@ -526,10 +529,22 @@ pub extern "C" fn yinhe_automation_json(track: i32) -> *mut std::ffi::c_char {
     to_c_string(scene::automation_json(track.max(0) as usize))
 }
 
-/// 力度条数据 JSON（堆分配）。
+/// 力度条数据 JSON（所有可见轨，堆分配）。
 #[unsafe(no_mangle)]
-pub extern "C" fn yinhe_velocity_json(track: i32) -> *mut std::ffi::c_char {
-    to_c_string(scene::velocity_json(track.max(0) as usize))
+pub extern "C" fn yinhe_velocity_json() -> *mut std::ffi::c_char {
+    to_c_string(scene::velocity_json())
+}
+
+/// 滚轮/触控板：ctrl=1 缩放（键盘/面板区副轴，其余主轴），否则平移。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_scroll_at(x: f32, y: f32, dx: f32, dy: f32, ctrl: i32) -> i32 {
+    scene::scroll_at(x, y, dx, dy, ctrl != 0)
+}
+
+/// 触控板捏合缩放（factor > 1 放大）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_zoom_at(x: f32, y: f32, factor: f32) -> i32 {
+    scene::zoom_at(x, y, factor)
 }
 
 /// 编辑自动化锚点：track / lane_index(1-based) / tick / value(0..1)。成功 1。

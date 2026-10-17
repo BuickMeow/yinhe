@@ -290,9 +290,10 @@ pub fn end(x: f32, y: f32) {
         return;
     };
     let moved = ((x - d.x0).powi(2) + (y - d.y0).powi(2)).sqrt() >= DRAG_THRESHOLD;
+    let mut click_tick: Option<f64> = None;
     let edited = match k {
         kind::MARQUEE => {
-            commit_marquee(&mut s, &d, x, y, moved);
+            click_tick = commit_marquee(&mut s, &d, x, y, moved);
             None
         }
         kind::MOVE_BOX => commit_move(&mut s, &d, x, y, moved),
@@ -309,7 +310,10 @@ pub fn end(x: f32, y: f32) {
     bump(&mut s);
     drop(s);
     drop(d);
-    // 解锁后再重载音频（首次可能初始化音频设备，耗时较长）。
+    // 解锁后再设置播放光标 / 重载音频（锁内二次加锁会死锁）。
+    if let Some(tick) = click_tick {
+        scene::set_play_cursor(tick);
+    }
     if let Some(m) = edited {
         crate::audio::on_model_loaded(m);
     }
@@ -500,7 +504,9 @@ fn snap_round(q: &QuantizePreset, tick: f64, ppq: u32) -> f64 {
 // ── 提交 ──
 
 /// PR/AR 框选提交；`moved < 阈值` 视为点击（清空选择）。
-fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: bool) {
+///
+/// 返回点击位置（tick，需在**解锁后**由调用方设置播放光标——锁内二次加锁会死锁）。
+fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: bool) -> Option<f64> {
     let view_mode = s.view_mode;
     let num_tracks = s.num_tracks;
     let q = quantize_of(s);
@@ -510,13 +516,17 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
     let geom_pr = PrGeom::new(&s.pr_view);
     let geom_ar = ArGeom::new(&s.arr_view);
     let Some(doc) = s.document.as_mut() else {
-        return;
+        return None;
     };
+    let mut click_tick: Option<f64> = None;
+    let mut click_row: Option<usize> = None;
     match view_mode {
         ViewMode::Pianoroll => {
             if !moved {
                 doc.edit.selected.clear();
                 doc.edit.sel_rect.clear();
+                // 点击空白：移动播放光标（与桌面一致）。
+                click_tick = Some(geom_pr.x_to_tick(x));
             } else {
                 let ta = snap_round(&q, geom_pr.x_to_tick(d.x0.min(x)), ppq) as u32;
                 let mut tb = snap_round(&q, geom_pr.x_to_tick(d.x0.max(x)), ppq) as u32;
@@ -543,6 +553,9 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
             if !moved {
                 doc.edit.selected.clear();
                 doc.edit.arr_sel_rect.clear();
+                // 点击空白：移动播放光标并聚焦该轨（与桌面一致）。
+                click_tick = Some(geom_ar.x_to_tick(x));
+                click_row = Some(geom_ar.y_to_row(y));
             } else {
                 let ta = snap_round(&q, geom_ar.x_to_tick(d.x0.min(x)), ppq) as u32;
                 let mut tb = snap_round(&q, geom_ar.x_to_tick(d.x0.max(x)), ppq) as u32;
@@ -569,7 +582,11 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
             }
         }
     }
+    if let Some(row) = click_row {
+        s.active_track = Some(row.min(s.num_tracks.saturating_sub(1)));
+    }
     after_selection_change(s);
+    click_tick
 }
 
 /// 已选框整体移动提交。

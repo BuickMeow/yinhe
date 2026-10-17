@@ -61,6 +61,8 @@ pub struct RenderScene {
     pub tool: Tool,
     /// 当前编辑轨（AR 进入 PR 的轨；工具写入目标）。
     pub active_track: Option<usize>,
+    /// 非播放态的播放光标位置（点击跳转用，tick）。
+    pub cursor_tick: f64,
     /// 覆盖层（选框/预览）修订号与内容（画布内容逻辑坐标）。
     pub overlay_rev: u32,
     pub overlay_box: Option<[f32; 4]>,
@@ -95,6 +97,7 @@ impl Default for RenderScene {
             display_track: None,
             tool: Tool::Select,
             active_track: None,
+            cursor_tick: 0.0,
             overlay_rev: 0,
             overlay_box: None,
             overlay_cells: Vec::new(),
@@ -564,16 +567,56 @@ pub fn move_track(from: usize, to: usize) -> i32 {
 ///
 /// 坐标原点与画布一致（含键盘列/轨道面板偏移），Dart 直接画竖线。
 pub fn playhead_x() -> f32 {
-    let tick = crate::audio::playback_tick();
+    let playing = crate::audio::is_playing();
     let Ok(s) = scene().lock() else {
         return -1.0;
     };
     if s.model.is_none() {
         return -1.0;
     }
+    // 播放中跟随音频；停止/暂停时停在点击设置的光标位置。
+    let tick = if playing {
+        crate::audio::playback_tick()
+    } else {
+        s.cursor_tick
+    };
     match s.view_mode {
         ViewMode::Pianoroll => s.pr_view.tick_to_x(tick),
         ViewMode::Arrangement => s.arr_view.base.tick_to_x(tick),
+    }
+}
+
+/// 设置播放光标（点击跳转）：吸附到量化网格并 seek 音频。
+pub fn set_play_cursor(tick: f64) {
+    let snapped = {
+        let Ok(s) = scene().lock() else {
+            return;
+        };
+        let Some(doc) = s.document.as_ref() else {
+            return;
+        };
+        let q = match s.view_mode {
+            ViewMode::Pianoroll => doc.edit.quantize_pianoroll,
+            ViewMode::Arrangement => doc.edit.quantize_arrange,
+        };
+        let ppu = match s.view_mode {
+            ViewMode::Pianoroll => s.pr_view.base.pixels_per_tick,
+            ViewMode::Arrangement => s.arr_view.base.pixels_per_tick,
+        };
+        q.resolved(ppu, s.ppq)
+            .snap_tick(tick.max(0.0), s.ppq)
+            .clamp(0.0, (s.total_ticks - 1.0).max(0.0))
+    };
+    if let Ok(mut s) = scene().lock() {
+        s.cursor_tick = snapped;
+    }
+    crate::audio::seek(snapped);
+}
+
+/// 停止播放时把光标归零（与走带行为一致）。
+pub fn reset_cursor() {
+    if let Ok(mut s) = scene().lock() {
+        s.cursor_tick = 0.0;
     }
 }
 
@@ -836,11 +879,11 @@ pub fn automation_json(track: usize) -> String {
     out
 }
 
-/// 力度条数据（当前轨道，每个音符一条），JSON：`[[tick, length, velocity01], ...]`。
+/// 力度条数据（所有可见轨），JSON：`[[tick, length, velocity01, track], ...]`。
 ///
-/// `velocity01` = (velocity-1)/126（与桌面 wgpu 的 126 级映射一致）；
-/// 与桌面同规则过滤 velocity <= 1 的音符。
-pub fn velocity_json(track: usize) -> String {
+/// 与桌面一致：velocity <= 1 过滤；ppu 较小时按 `SUMMARY_BLOCK_TICKS`
+/// 对每个 (块, 轨道) 取 gate 最长的代表音符（LOD 摘要）。
+pub fn velocity_json() -> String {
     let Ok(s) = scene().lock() else {
         return "[]".into();
     };
@@ -848,32 +891,149 @@ pub fn velocity_json(track: usize) -> String {
         return "[]".into();
     };
     let model = &doc.data.model;
-    if model.tracks.get(track).is_none() {
-        return "[]".into();
-    }
-    let mut bars: Vec<(u32, u32, u8)> = Vec::new();
-    for key in 0..=yinhe_types::MAX_KEY {
-        for note in model.key_notes(key).iter() {
-            if note.track as usize == track && note.velocity > 1 {
-                bars.push((
-                    note.start_tick,
-                    note.end_tick.saturating_sub(note.start_tick),
-                    note.velocity,
-                ));
+    let visible = doc.edit.pr_visible();
+    let ppu = s.pr_view.base.pixels_per_tick;
+    let block = yinhe_wgpu::pianoroll::select_summary_level(ppu)
+        .map(|l| yinhe_wgpu::pianoroll::SUMMARY_BLOCK_TICKS[l]);
+
+    let mut bars: Vec<(u32, u32, u8, u16)> = Vec::new();
+    match block {
+        None => {
+            for key in 0..=yinhe_types::MAX_KEY {
+                for note in model.key_notes(key).iter() {
+                    if note.velocity <= 1 {
+                        continue;
+                    }
+                    let t = note.track as usize;
+                    if !visible.get(t).copied().unwrap_or(true) {
+                        continue;
+                    }
+                    bars.push((
+                        note.start_tick,
+                        note.end_tick.saturating_sub(note.start_tick),
+                        note.velocity,
+                        note.track,
+                    ));
+                }
             }
         }
+        Some(block) => {
+            use std::collections::HashMap;
+            // (块序号, 轨道) → (tick, gate, velocity) 代表音符。
+            let mut map: HashMap<(u32, u16), (u32, u32, u8)> = HashMap::new();
+            for key in 0..=yinhe_types::MAX_KEY {
+                for note in model.key_notes(key).iter() {
+                    if note.velocity <= 1 {
+                        continue;
+                    }
+                    let t = note.track as usize;
+                    if !visible.get(t).copied().unwrap_or(true) {
+                        continue;
+                    }
+                    let len = note.end_tick.saturating_sub(note.start_tick);
+                    let entry = map.entry((note.start_tick / block, note.track)).or_insert((
+                        note.start_tick,
+                        len,
+                        note.velocity,
+                    ));
+                    if len > entry.1 || (len == entry.1 && note.velocity > entry.2) {
+                        *entry = (note.start_tick, len, note.velocity);
+                    }
+                }
+            }
+            bars.extend(
+                map.into_iter()
+                    .map(|((_, track), (tick, len, vel))| (tick, len, vel, track)),
+            );
+        }
     }
-    bars.sort_unstable_by_key(|b| b.0);
-    let mut out = String::from("[");
-    for (i, (tick, len, vel)) in bars.iter().enumerate() {
+    bars.sort_unstable_by_key(|b| (b.0, b.3));
+    let mut out = String::with_capacity(bars.len() * 24 + 2);
+    out.push('[');
+    for (i, (tick, len, vel, track)) in bars.iter().enumerate() {
         if i > 0 {
             out.push(',');
         }
         let value01 = (f32::from(*vel) - 1.0) / 126.0;
-        out.push_str(&format!("[{tick},{len},{value01:.4}]"));
+        out.push_str(&format!("[{tick},{len},{value01:.4},{track}]"));
     }
     out.push(']');
     out
+}
+
+/// 滚轮/触控板：`ctrl=true` 缩放（键盘/面板区 → 副轴，其余 → 主轴），否则平移。
+pub fn scroll_at(x: f32, y: f32, dx: f32, dy: f32, ctrl: bool) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let (lw, lh) = crate::logical_size();
+    let total = s.total_ticks;
+    let num_tracks = s.num_tracks;
+    match s.view_mode {
+        ViewMode::Pianoroll => {
+            let view = &mut s.pr_view;
+            if ctrl {
+                let factor = (-dy * 0.0025).exp();
+                if x < view.keyboard_width() {
+                    let cross = view.cross_axis_len(lw, lh);
+                    view.zoom_cross_around(y, factor, cross);
+                } else {
+                    view.zoom_main_around(x - view.keyboard_width(), factor);
+                }
+            } else {
+                *view.main_scroll() -= dx + dy;
+            }
+            s.pr_view.clamp_scroll(lw, lh, total);
+        }
+        ViewMode::Arrangement => {
+            let view = &mut s.arr_view;
+            if ctrl {
+                let factor = (-dy * 0.0025).exp();
+                if x < view.base.left_panel_width {
+                    view.zoom_lane_height(y, factor);
+                } else {
+                    view.base.zoom_around_x(x, factor);
+                }
+            } else {
+                view.base.scroll_x -= dx + dy;
+            }
+            s.arr_view.clamp_scroll(lw, lh, total, num_tracks);
+        }
+    }
+    1
+}
+
+/// 触控板捏合缩放：`factor > 1` 放大（键盘/面板区 → 副轴，其余 → 主轴）。
+pub fn zoom_at(x: f32, y: f32, factor: f32) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let (lw, lh) = crate::logical_size();
+    let total = s.total_ticks;
+    let num_tracks = s.num_tracks;
+    let factor = factor.clamp(0.5, 2.0);
+    match s.view_mode {
+        ViewMode::Pianoroll => {
+            let view = &mut s.pr_view;
+            if x < view.keyboard_width() {
+                let cross = view.cross_axis_len(lw, lh);
+                view.zoom_cross_around(y, factor, cross);
+            } else {
+                view.zoom_main_around(x - view.keyboard_width(), factor);
+            }
+            s.pr_view.clamp_scroll(lw, lh, total);
+        }
+        ViewMode::Arrangement => {
+            let view = &mut s.arr_view;
+            if x < view.base.left_panel_width {
+                view.zoom_lane_height(y, factor);
+            } else {
+                view.base.zoom_around_x(x, factor);
+            }
+            s.arr_view.clamp_scroll(lw, lh, total, num_tracks);
+        }
+    }
+    1
 }
 
 /// 编辑自动化锚点（仅 PB/CC/RPN，离散）：把指定 lane 的 tick 值设为 value。
