@@ -1,5 +1,43 @@
 import 'package:flutter/material.dart';
 
+/// 覆盖层数据（选框/预览，画布内容逻辑坐标）。
+class OverlayData {
+  const OverlayData({this.box, this.cells = const [], this.sel = const []});
+
+  final Rect? box;
+  final List<Rect> cells;
+  final List<Rect> sel;
+
+  static const empty = OverlayData();
+
+  static OverlayData fromJson(Map<String, dynamic> json) {
+    Rect? fromList(dynamic v) {
+      if (v is! List || v.length != 4) {
+        return null;
+      }
+      return Rect.fromLTRB(
+        (v[0] as num).toDouble(),
+        (v[1] as num).toDouble(),
+        (v[2] as num).toDouble(),
+        (v[3] as num).toDouble(),
+      );
+    }
+
+    List<Rect> many(dynamic v) {
+      if (v is! List) {
+        return const [];
+      }
+      return [for (final e in v) ?fromList(e)];
+    }
+
+    return OverlayData(
+      box: fromList(json['box']),
+      cells: many(json['cells']),
+      sel: many(json['sel']),
+    );
+  }
+}
+
 /// 轨道面板行数据（Rust tracks_json）。
 class TrackRow {
   const TrackRow({

@@ -3,6 +3,41 @@ import 'package:flutter/material.dart';
 import 'models.dart';
 import 'theme.dart';
 
+/// 选框/预览浮层：持久选框 + 拖动框 + 刷子格（画布内容坐标）。
+class OverlayPainter extends CustomPainter {
+  OverlayPainter(this.overlay) : super(repaint: overlay);
+
+  final ValueNotifier<OverlayData> overlay;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final o = overlay.value;
+    final fill = Paint()..color = YinheTheme.text.withValues(alpha: 0.10);
+    final stroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1
+      ..color = YinheTheme.text.withValues(alpha: 0.45);
+    void rect(Rect r) {
+      canvas.drawRect(r, fill);
+      canvas.drawRect(r, stroke);
+    }
+
+    for (final r in o.sel) {
+      rect(r);
+    }
+    for (final r in o.cells) {
+      rect(r);
+    }
+    final b = o.box;
+    if (b != null) {
+      rect(b);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant OverlayPainter oldDelegate) => true;
+}
+
 /// 播放光标：竖线，x 由 Rust 按当前视口换算（逻辑像素）。
 class PlayheadPainter extends CustomPainter {
   PlayheadPainter(this.x) : super(repaint: x);

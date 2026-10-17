@@ -21,14 +21,7 @@ final TouchDart touch = bridge.lookupFunction<TouchNative, TouchDart>(
   'yinhe_touch',
 );
 
-// ── 文档 / 演示 ──
-
-typedef VoidNative = ffi.Void Function();
-typedef VoidDart = void Function();
-
-final VoidDart demoLoad = bridge.lookupFunction<VoidNative, VoidDart>(
-  'yinhe_demo_load',
-);
+// ── 文档 / 工程 ──
 
 typedef CStrNative = ffi.Pointer<Utf8> Function();
 typedef CStrDart = ffi.Pointer<Utf8> Function();
@@ -92,6 +85,84 @@ final ActionDart undo = bridge.lookupFunction<ActionNative, ActionDart>(
 final ActionDart redo = bridge.lookupFunction<ActionNative, ActionDart>(
   'yinhe_redo',
 );
+
+/// 设置当前工具（0=选框 1=手形 2=铅笔 3=橡皮 4=刷子）。
+final IntArgDart setTool = bridge.lookupFunction<IntArgNative, IntArgDart>(
+  'yinhe_set_tool',
+);
+
+/// 设置当前编辑轨（-1 = 无）。
+final IntArgDart setActiveTrack = bridge
+    .lookupFunction<IntArgNative, IntArgDart>('yinhe_set_active_track');
+
+typedef SetQuantizeNative = ffi.Int32 Function(
+  ffi.Int32,
+  ffi.Uint32,
+  ffi.Uint32,
+);
+typedef SetQuantizeDart = int Function(int, int, int);
+
+/// 设置量化吸附档位：kind 0=Off 1=Auto 2=Fraction 3=Absolute。
+final SetQuantizeDart setQuantize = bridge
+    .lookupFunction<SetQuantizeNative, SetQuantizeDart>('yinhe_set_quantize');
+
+/// 覆盖层修订号（变化时重取 JSON）。
+typedef OverlayRevNative = ffi.Uint32 Function();
+typedef OverlayRevDart = int Function();
+
+final OverlayRevDart overlayRevision = bridge
+    .lookupFunction<OverlayRevNative, OverlayRevDart>('yinhe_overlay_revision');
+
+/// 覆盖层 JSON（选框/预览）。
+final CStrDart overlayJson = bridge.lookupFunction<CStrNative, CStrDart>(
+  'yinhe_overlay_json',
+);
+
+/// 新建空工程。
+final ActionDart newProject = bridge.lookupFunction<ActionNative, ActionDart>(
+  'yinhe_new_project',
+);
+
+typedef SetMetaNative = ffi.Int32 Function(
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Uint32,
+);
+typedef SetMetaDart = int Function(
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  int,
+);
+
+/// 工程元数据编辑（歌名/艺术家/简介/PPQ）。
+final SetMetaDart setProjectMeta = bridge
+    .lookupFunction<SetMetaNative, SetMetaDart>('yinhe_set_project_meta');
+
+/// 工程元数据 JSON（回显）。
+final CStrDart projectMetaJson = bridge.lookupFunction<CStrNative, CStrDart>(
+  'yinhe_project_meta_json',
+);
+
+typedef SaveYingNative = ffi.Int32 Function(ffi.Pointer<Utf8>);
+typedef SaveYingDart = int Function(ffi.Pointer<Utf8>);
+
+/// 导出 `.ying` 工程到指定路径。
+final SaveYingDart saveYing = bridge
+    .lookupFunction<SaveYingNative, SaveYingDart>('yinhe_save_ying');
+
+/// 保存完成后标记工程状态（清除 dirty）。
+final ActionDart markSaved = bridge.lookupFunction<ActionNative, ActionDart>(
+  'yinhe_mark_saved',
+);
+
+typedef DocStateNative = ffi.Int32 Function(ffi.Pointer<ffi.Int32>);
+typedef DocStateDart = int Function(ffi.Pointer<ffi.Int32>);
+
+/// 工程状态写入 out：[can_undo, can_redo, dirty]。
+final DocStateDart docState = bridge
+    .lookupFunction<DocStateNative, DocStateDart>('yinhe_doc_state');
 
 typedef RenderFrameNative = ffi.Int32 Function();
 typedef RenderFrameDart = int Function();

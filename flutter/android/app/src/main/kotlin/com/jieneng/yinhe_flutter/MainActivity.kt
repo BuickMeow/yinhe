@@ -31,6 +31,12 @@ class MainActivity : FlutterActivity() {
         /** SAF 音色库选择请求码。 */
         private const val REQ_OPEN_SF = 1002
 
+        /** SAF 保存工程请求码。 */
+        private const val REQ_SAVE_FILE = 1003
+
+        /** 导出工程的临时文件（Rust 写入，Kotlin 复制到用户选择的位置）。 */
+        private const val EXPORT_TMP = "export.ying"
+
         init {
             System.loadLibrary("yinhe_flutter")
         }
@@ -38,12 +44,17 @@ class MainActivity : FlutterActivity() {
 
     private var producer: TextureRegistry.SurfaceProducer? = null
 
+    /** 本代 surface 是否已发送给 Rust（同一窗口重复设置会触发 IN_USE）。 */
+    private var surfaceSent = false
+
     /** 与 Dart 的桥（双向：Dart 请求 + 文件选择结果回传）。 */
     private var methodChannel: MethodChannel? = null
 
     private external fun nativeSetSurface(surface: Surface)
 
     private external fun nativeClearSurface()
+
+    private external fun nativeSetSize(width: Int, height: Int)
 
     private external fun nativeSetViewport(width: Float, height: Float)
 
@@ -91,6 +102,8 @@ class MainActivity : FlutterActivity() {
             },
         )
         producer = p
+        // 尽力而为：若 surface 已惰性创建则立即发送（回调在部分引擎版本不触发）。
+        surfaceReady(p)
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "yinhe/surface")
             .also { methodChannel = it }
@@ -107,9 +120,12 @@ class MainActivity : FlutterActivity() {
                         } else {
                             Log.i(TAG, "setSize $w x $h (logical $lw x $lh)")
                             p.setSize(w, h)
-                            // resize 后 buffer 尺寸已变，重发 surface 让 Rust 重建交换链。
-                            nativeSetSurface(p.getSurface())
+                            // resize 只重配置交换链：对同一 ANativeWindow 重建
+                            // surface 会触发 VK_ERROR_NATIVE_WINDOW_IN_USE_KHR。
+                            nativeSetSize(w, h)
                             nativeSetViewport(lw.toFloat(), lh.toFloat())
+                            // 引擎在 setSize 时 surface 必已创建：确保已发送。
+                            surfaceReady(p)
                             result.success(null)
                         }
                     }
@@ -121,28 +137,51 @@ class MainActivity : FlutterActivity() {
                         openSoundFontPicker()
                         result.success(null)
                     }
+                    "ensureSurface" -> {
+                        (producer)?.let { surfaceReady(it) }
+                        result.success(null)
+                    }
+                    "exportTempPath" -> {
+                        result.success(File(filesDir, EXPORT_TMP).absolutePath)
+                    }
+                    "openSavePicker" -> {
+                        val name = call.argument<String>("name") ?: "Untitled"
+                        openSavePicker(name)
+                        result.success(null)
+                    }
                     else -> result.notImplemented()
                 }
             }
     }
 
-    /** surface 可用/重建：`getSurface()` 不缓存，每次重新获取。 */
+    /** surface 可用/重建：每代只发送一次（created/available 可能都回调）。 */
     private fun surfaceReady(p: TextureRegistry.SurfaceProducer) {
-        p.getSurface()?.let { nativeSetSurface(it) }
+        if (surfaceSent) {
+            return
+        }
+        val s = p.getSurface() ?: return
+        surfaceSent = true
+        nativeSetSurface(s)
     }
 
     private fun onSurfaceGone() {
+        surfaceSent = false
         nativeClearSurface()
     }
 
-    /** Dart 侧「打开 MIDI」：拉系统文件选择器（ACTION_OPEN_DOCUMENT，免权限）。 */
+    /** Dart 侧「打开文件」：MIDI 与 .ying 工程（未知扩展名走 octet-stream）。 */
     private fun openFilePicker() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "*/*"
             putExtra(
                 Intent.EXTRA_MIME_TYPES,
-                arrayOf("audio/midi", "audio/x-midi", "audio/mid"),
+                arrayOf(
+                    "audio/midi",
+                    "audio/x-midi",
+                    "audio/mid",
+                    "application/octet-stream",
+                ),
             )
         }
         startActivityForResult(intent, REQ_OPEN_FILE)
@@ -155,6 +194,42 @@ class MainActivity : FlutterActivity() {
             type = "*/*"
         }
         startActivityForResult(intent, REQ_OPEN_SF)
+    }
+
+    /** Dart 侧「保存工程」：先由 Rust 写好临时文件，这里复制到用户选择的位置。 */
+    private fun openSavePicker(name: String) {
+        val safe = name.replace(Regex("[/\\\\:*?\"<>|]"), "_").trim()
+        val base = if (safe.isEmpty()) "Untitled" else safe
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/octet-stream"
+            putExtra(Intent.EXTRA_TITLE, "$base.ying")
+        }
+        startActivityForResult(intent, REQ_SAVE_FILE)
+    }
+
+    /** 把导出的临时工程复制到用户选择的 uri。 */
+    private fun copyExportTo(uri: android.net.Uri?): Boolean {
+        if (uri == null) {
+            return false
+        }
+        val src = File(filesDir, EXPORT_TMP)
+        if (!src.exists()) {
+            Log.e(TAG, "导出临时文件不存在: ${src.absolutePath}")
+            return false
+        }
+        return try {
+            val output = contentResolver.openOutputStream(uri)
+            if (output == null) {
+                Log.e(TAG, "打开目标位置失败: $uri")
+                return false
+            }
+            output.use { dst -> src.inputStream().use { it.copyTo(dst) } }
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "复制工程失败: $e")
+            false
+        }
     }
 
     @Deprecated("Deprecated in Java")
@@ -173,6 +248,11 @@ class MainActivity : FlutterActivity() {
                 val path = copyPicked(data?.data) ?: return
                 onSoundFontPicked(path)
                 methodChannel?.invokeMethod("onSoundFontPicked", path)
+            }
+            REQ_SAVE_FILE -> {
+                if (copyExportTo(data?.data)) {
+                    methodChannel?.invokeMethod("onProjectSaved", "ok")
+                }
             }
             else -> {}
         }

@@ -96,8 +96,9 @@ class _StudioShellState extends State<StudioShell>
   final ValueNotifier<(double, double)?> _autoPreview = ValueNotifier(null);
   bool _draggingAnchor = false;
 
-  /// 当前工具（PR 工具选择；索引对应 `_toolDefs`）。
-  int _tool = 0;
+  /// 当前工具（PR 5 种；AR 2 种；索引对应 `_toolDefs`）。
+  int _toolPr = 0;
+  int _toolAr = 0;
 
   /// 量化档位显示（桌面：每文档瞬态，默认自动）。
   String _quantizeLabel = '自动';
@@ -107,6 +108,14 @@ class _StudioShellState extends State<StudioShell>
 
   /// 歌曲标题（meta.name；空 = 未设置）。
   String _songTitle = '';
+
+  /// 覆盖层（选框/预览）与修订号。
+  final ValueNotifier<OverlayData> _overlay = ValueNotifier(OverlayData.empty);
+  int _overlayRev = 0;
+
+  /// 工程状态位：bit0=可撤销，bit1=可重做，bit2=未保存。
+  final ValueNotifier<int> _docState = ValueNotifier(0);
+  late final ffi.Pointer<ffi.Int32> _statePtr;
 
   final ValueNotifier<double> _playhead = ValueNotifier<double>(-1);
   final ValueNotifier<List<double>> _snap = ValueNotifier<List<double>>(
@@ -128,6 +137,7 @@ class _StudioShellState extends State<StudioShell>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _snapPtr = calloc<ffi.Float>(12);
+    _statePtr = calloc<ffi.Int32>(3);
     _channel.setMethodCallHandler(_onNativeCall);
     _init();
     _ticker = createTicker((_) {
@@ -141,9 +151,12 @@ class _StudioShellState extends State<StudioShell>
       if (!_sameSnapshot(snap)) {
         _snap.value = snap;
       }
+      _readOverlay();
+      _readDocState();
       _updateTimecode();
     })..start();
     _recent = _readRecent();
+    rust.setQuantize(1, 1, 1); // 默认自动（与桌面一致）
   }
 
   @override
@@ -157,7 +170,10 @@ class _StudioShellState extends State<StudioShell>
     _dragFrom.dispose();
     _dragTo.dispose();
     _autoPreview.dispose();
+    _overlay.dispose();
+    _docState.dispose();
     calloc.free(_snapPtr);
+    calloc.free(_statePtr);
     super.dispose();
   }
 
@@ -190,6 +206,166 @@ class _StudioShellState extends State<StudioShell>
       }
     }
     return true;
+  }
+
+  /// 覆盖层：仅在修订号变化时重取 JSON。
+  void _readOverlay() {
+    final rev = rust.overlayRevision();
+    if (rev == _overlayRev) {
+      return;
+    }
+    _overlayRev = rev;
+    final ptr = rust.overlayJson();
+    if (ptr == ffi.nullptr) {
+      return;
+    }
+    try {
+      final json = jsonDecode(ptr.toDartString()) as Map<String, dynamic>;
+      _overlay.value = OverlayData.fromJson(json);
+    } catch (_) {
+      _overlay.value = OverlayData.empty;
+    } finally {
+      rust.freeString(ptr);
+    }
+  }
+
+  /// 工程状态（撤销/重做可用性、未保存标记）。
+  void _readDocState() {
+    if (rust.docState(_statePtr) != 1) {
+      return;
+    }
+    final bits =
+        (_statePtr[0] & 1) |
+        ((_statePtr[1] & 1) << 1) |
+        ((_statePtr[2] & 1) << 2);
+    if (_docState.value != bits) {
+      _docState.value = bits;
+    }
+  }
+
+  /// 当前视图允许的工具。
+  static const List<int> _toolPrAllowed = [0, 1, 2, 3, 4];
+  static const List<int> _toolArAllowed = [0, 1];
+
+  int get _tool => _viewMode == kViewPianoroll ? _toolPr : _toolAr;
+
+  /// 把当前视图的工具同步给 Rust。
+  void _pushTool() {
+    final list = _viewMode == kViewPianoroll ? _toolPrAllowed : _toolArAllowed;
+    final t = list.contains(_tool) ? _tool : list.first;
+    rust.setTool(t);
+  }
+
+  void _selectTool(int tool) {
+    setState(() {
+      if (_viewMode == kViewPianoroll) {
+        _toolPr = tool;
+      } else {
+        _toolAr = tool;
+      }
+    });
+    _pushTool();
+  }
+
+  /// 量化档位同步给 Rust（工具吸附用）。
+  void _pushQuantize(String label) {
+    if (label == '关闭') {
+      rust.setQuantize(0, 1, 1);
+    } else if (label.startsWith('1/')) {
+      final den = int.tryParse(label.substring(2)) ?? 4;
+      rust.setQuantize(2, 1, den);
+    } else {
+      rust.setQuantize(1, 1, 1);
+    }
+  }
+
+  /// 新建空工程并进入工作区。
+  void _newProject() {
+    rust.newProject();
+    rust.setViewMode(kViewArrangement);
+    rust.setDisplayTrack(-1);
+    rust.setActiveTrack(-1);
+    rust.setTool(_toolArAllowed.first);
+    setState(() {
+      _fileName = 'Untitled';
+      _showHome = false;
+      _viewMode = kViewArrangement;
+      _activeTrack = null;
+      _displayTrack = -1;
+      _toolAr = 0;
+      _songTitle = '';
+      _playing = false;
+    });
+    _updateTimecode();
+    _ensureSurface();
+    Future.delayed(const Duration(milliseconds: 400), _refreshDocumentMeta);
+  }
+
+  /// 打开工程设置对话框（歌名/艺术家/PPQ/简介）。
+  void _openProjectSettings() {
+    final ptr = rust.projectMetaJson();
+    Map<String, dynamic> meta = const {};
+    if (ptr != ffi.nullptr) {
+      try {
+        meta = jsonDecode(ptr.toDartString()) as Map<String, dynamic>;
+      } catch (_) {
+        meta = const {};
+      } finally {
+        rust.freeString(ptr);
+      }
+    }
+    if (meta.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('请先打开 MIDI 或新建工程')));
+      return;
+    }
+    showDialog<void>(
+      context: context,
+      builder: (_) => _ProjectDialog(
+        initialName: meta['name'] as String? ?? '',
+        initialArtist: meta['artist'] as String? ?? '',
+        initialDescription: meta['description'] as String? ?? '',
+        initialPpq: (meta['ppq'] as num?)?.toInt() ?? 480,
+        onSave: (name, artist, desc, ppq) {
+          final n = name.toNativeUtf8();
+          final a = artist.toNativeUtf8();
+          final d = desc.toNativeUtf8();
+          try {
+            if (rust.setProjectMeta(n, a, d, ppq) == 1) {
+              _refreshDocumentMeta();
+            }
+          } finally {
+            calloc.free(n);
+            calloc.free(a);
+            calloc.free(d);
+          }
+        },
+      ),
+    );
+  }
+
+  /// 导出 .ying 工程：Rust 写临时文件 → Kotlin 复制到用户选择的位置。
+  Future<void> _saveProject() async {
+    final name = _songTitle.isNotEmpty ? _songTitle : (_fileName ?? 'Untitled');
+    final tmp = await _channel.invokeMethod<String>('exportTempPath');
+    if (tmp == null || !mounted) {
+      return;
+    }
+    final p = tmp.toNativeUtf8();
+    var ok = 0;
+    try {
+      ok = rust.saveYing(p);
+    } finally {
+      calloc.free(p);
+    }
+    if (ok != 1) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('工程导出失败')));
+      }
+      return;
+    }
+    await _channel.invokeMethod<void>('openSavePicker', {'name': name});
   }
 
   List<RecentItem> _readRecent() {
@@ -256,9 +432,16 @@ class _StudioShellState extends State<StudioShell>
         });
         rust.setViewMode(kViewArrangement);
         rust.setDisplayTrack(-1);
+        rust.setActiveTrack(-1);
+        rust.setTool(_toolArAllowed.first);
+        _ensureSurface();
         Future.delayed(const Duration(milliseconds: 800), _refreshDocumentMeta);
       case 'onSoundFontPicked':
         setState(() => _soundFontName = path.split('/').last);
+      case 'onProjectSaved':
+        rust.markSaved();
+        _loadSongTitle();
+        _readDocState();
     }
   }
 
@@ -269,6 +452,12 @@ class _StudioShellState extends State<StudioShell>
     }
     setState(() => _textureId = id);
     _loadSoundFontName();
+    await _ensureSurface();
+  }
+
+  /// 确保 Rust 已拿到生产端 surface（部分引擎版本不触发 SurfaceProducer 回调）。
+  Future<void> _ensureSurface() async {
+    await _channel.invokeMethod<void>('ensureSurface');
   }
 
   /// 启动时同步已持久化的音色库名（Rust 侧已自动恢复音色库）。
@@ -296,22 +485,6 @@ class _StudioShellState extends State<StudioShell>
     await _channel.invokeMethod<void>('openSoundFontPicker');
   }
 
-  void _openDemo() {
-    rust.demoLoad();
-    rust.setViewMode(kViewArrangement);
-    setState(() {
-      _fileName = '演示文档';
-      _showHome = false;
-      _viewMode = kViewArrangement;
-      _activeTrack = null;
-      _displayTrack = -1;
-      _playing = false;
-    });
-    _updateTimecode();
-    rust.setDisplayTrack(-1);
-    Future.delayed(const Duration(milliseconds: 600), _refreshDocumentMeta);
-  }
-
   void _openRecent(RecentItem item) {
     final p = item.path.toNativeUtf8();
     try {
@@ -328,6 +501,9 @@ class _StudioShellState extends State<StudioShell>
     });
     rust.setViewMode(kViewArrangement);
     rust.setDisplayTrack(-1);
+    rust.setActiveTrack(-1);
+    rust.setTool(_toolArAllowed.first);
+    _ensureSurface();
     Future.delayed(const Duration(milliseconds: 800), _refreshDocumentMeta);
   }
 
@@ -716,6 +892,7 @@ class _StudioShellState extends State<StudioShell>
       return;
     }
     _activeTrack = idx;
+    rust.setActiveTrack(idx);
     _loadAutomation();
     _loadVelocity();
     _setView(kViewPianoroll);
@@ -770,6 +947,7 @@ class _StudioShellState extends State<StudioShell>
     }
     rust.setViewMode(mode);
     setState(() => _viewMode = mode);
+    _pushTool();
   }
 
   // ── 布局 ──
@@ -877,6 +1055,18 @@ class _StudioShellState extends State<StudioShell>
                             Positioned(
                               left: 0,
                               right: 0,
+                              top: RulerPainter.height,
+                              bottom: 0,
+                              child: IgnorePointer(
+                                child: CustomPaint(
+                                  painter: OverlayPainter(_overlay),
+                                ),
+                              ),
+                            ),
+                          if (!_showHome)
+                            Positioned(
+                              left: 0,
+                              right: 0,
                               top: 0,
                               height: RulerPainter.height,
                               child: IgnorePointer(
@@ -901,7 +1091,8 @@ class _StudioShellState extends State<StudioShell>
               HomeView(
                 recent: _recent,
                 onPickMidi: _pickMidi,
-                onOpenDemo: _openDemo,
+                onNewProject: _newProject,
+                onProjectSettings: _openProjectSettings,
                 onOpenRecent: _openRecent,
                 onOpenSettings: _openSettings,
                 onBack: () => setState(() => _showHome = false),
@@ -979,20 +1170,27 @@ class _StudioShellState extends State<StudioShell>
           ),
           const Spacer(),
           _buildQuantizeButton(),
-          if (isPr) _buildToolButton(),
-          _iconAction(Icons.undo, '撤销', _undo),
-          _iconAction(Icons.redo, '重做', _redo),
+          _buildToolButton(),
+          ValueListenableBuilder<int>(
+            valueListenable: _docState,
+            builder: (context, st, _) => Row(
+              children: [
+                _iconAction(Icons.undo, '撤销', (st & 1) != 0 ? _undo : null),
+                _iconAction(Icons.redo, '重做', (st & 2) != 0 ? _redo : null),
+              ],
+            ),
+          ),
           _buildSongBox(),
         ],
       ),
     );
   }
 
-  Widget _iconAction(IconData icon, String tooltip, VoidCallback onTap) {
+  Widget _iconAction(IconData icon, String tooltip, VoidCallback? onTap) {
     return IconButton(
       onPressed: onTap,
       icon: Icon(icon),
-      color: YinheTheme.textSecondary,
+      color: onTap == null ? YinheTheme.textDisabled : YinheTheme.textSecondary,
       tooltip: tooltip,
       visualDensity: VisualDensity.compact,
       padding: EdgeInsets.zero,
@@ -1005,7 +1203,10 @@ class _StudioShellState extends State<StudioShell>
     return PopupMenuButton<String>(
       tooltip: '量化（吸附档位）',
       padding: EdgeInsets.zero,
-      onSelected: (v) => setState(() => _quantizeLabel = v),
+      onSelected: (v) {
+        setState(() => _quantizeLabel = v);
+        _pushQuantize(v);
+      },
       itemBuilder: (_) => [
         const PopupMenuItem(value: '关闭', child: Text('关闭吸附')),
         const PopupMenuItem(value: '自动', child: Text('自动（随缩放）')),
@@ -1050,14 +1251,17 @@ class _StudioShellState extends State<StudioShell>
     return out;
   }
 
-  /// 工具选择按钮（仅 PR，与桌面 `tools_panel::ALL_TOOLS` 同序）。
+  /// 工具选择按钮（PR 5 种；AR 2 种，与 Rust 编号对齐）。
   Widget _buildToolButton() {
+    final list = _viewMode == kViewPianoroll ? _toolPrAllowed : _toolArAllowed;
+    final current = _tool;
+    final shown = list.contains(current) ? current : list.first;
     return PopupMenuButton<int>(
       tooltip: '工具',
       padding: EdgeInsets.zero,
-      onSelected: (v) => setState(() => _tool = v),
+      onSelected: _selectTool,
       itemBuilder: (_) => [
-        for (var i = 0; i < _toolDefs.length; i++)
+        for (final i in list)
           PopupMenuItem(
             value: i,
             child: Row(
@@ -1065,7 +1269,7 @@ class _StudioShellState extends State<StudioShell>
                 Icon(
                   _toolDefs[i].$1,
                   size: 18,
-                  color: i == _tool
+                  color: i == shown
                       ? YinheTheme.accent
                       : YinheTheme.textSecondary,
                 ),
@@ -1078,7 +1282,7 @@ class _StudioShellState extends State<StudioShell>
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         child: Icon(
-          _toolDefs[_tool].$1,
+          _toolDefs[shown].$1,
           size: 18,
           color: YinheTheme.textSecondary,
         ),
@@ -1086,18 +1290,26 @@ class _StudioShellState extends State<StudioShell>
     );
   }
 
-  /// 曲名框：显示歌曲标题（或当前过滤轨道）；点击更改“显示哪条音符”。
+  /// 曲名框：显示歌曲标题（或当前过滤轨道）；点击更改“显示哪条音符”/导出工程。
   Widget _buildSongBox() {
     final rows = _tracks.value;
     final filtering = _displayTrack >= 0 && _displayTrack < rows.length;
-    final text = filtering
+    final base = filtering
         ? rows[_displayTrack].name
         : (_songTitle.isNotEmpty ? _songTitle : (_fileName ?? '未命名'));
     return PopupMenuButton<int>(
-      tooltip: '显示轨道',
+      tooltip: '显示轨道 / 保存工程',
       padding: EdgeInsets.zero,
-      onSelected: _selectDisplayTrack,
+      onSelected: (v) {
+        if (v == -2) {
+          _saveProject();
+        } else {
+          _selectDisplayTrack(v);
+        }
+      },
       itemBuilder: (_) => [
+        const PopupMenuItem(value: -2, child: Text('保存为工程（.ying）…')),
+        const PopupMenuDivider(),
         const PopupMenuItem(value: -1, child: Text('全部轨道')),
         for (var i = 0; i < rows.length; i++)
           PopupMenuItem(
@@ -1114,13 +1326,16 @@ class _StudioShellState extends State<StudioShell>
           color: YinheTheme.controlBg,
           borderRadius: BorderRadius.circular(6),
         ),
-        child: Text(
-          text,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: filtering ? YinheTheme.accent : YinheTheme.text,
-            fontSize: 12,
+        child: ValueListenableBuilder<int>(
+          valueListenable: _docState,
+          builder: (context, st, _) => Text(
+            (st & 4) != 0 ? '• $base' : base,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: filtering ? YinheTheme.accent : YinheTheme.text,
+              fontSize: 12,
+            ),
           ),
         ),
       ),
@@ -1136,6 +1351,7 @@ class _StudioShellState extends State<StudioShell>
       }
     });
     rust.setDisplayTrack(track);
+    rust.setActiveTrack(track);
     _loadAutomation();
     _loadVelocity();
   }
@@ -1154,15 +1370,135 @@ class _StudioShellState extends State<StudioShell>
     }
   }
 
-  /// PR 工具定义（图标 + 名称，与桌面顺序一致）。
+  /// 工具定义（图标 + 名称；索引与 Rust 编号对齐：0 选框 1 手形 2 铅笔 3 橡皮 4 刷子）。
   static const List<(IconData, String)> _toolDefs = [
     (Icons.highlight_alt, '选择'),
-    (Icons.select_all, '垂直选择'),
     (Icons.pan_tool, '手形'),
     (Icons.edit, '铅笔'),
-    (Icons.content_cut, '剪刀'),
     (Icons.auto_fix_normal, '橡皮擦'),
-    (Icons.pentagon, '钢笔'),
     (Icons.brush, '刷子'),
   ];
+}
+
+/// 工程设置对话框（歌名/艺术家/PPQ/简介）。
+class _ProjectDialog extends StatefulWidget {
+  const _ProjectDialog({
+    required this.initialName,
+    required this.initialArtist,
+    required this.initialDescription,
+    required this.initialPpq,
+    required this.onSave,
+  });
+
+  final String initialName;
+  final String initialArtist;
+  final String initialDescription;
+  final int initialPpq;
+  final void Function(String name, String artist, String desc, int ppq) onSave;
+
+  @override
+  State<_ProjectDialog> createState() => _ProjectDialogState();
+}
+
+class _ProjectDialogState extends State<_ProjectDialog> {
+  late final TextEditingController _name = TextEditingController(
+    text: widget.initialName,
+  );
+  late final TextEditingController _artist = TextEditingController(
+    text: widget.initialArtist,
+  );
+  late final TextEditingController _desc = TextEditingController(
+    text: widget.initialDescription,
+  );
+  late final TextEditingController _ppq = TextEditingController(
+    text: '${widget.initialPpq}',
+  );
+  String? _error;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _artist.dispose();
+    _desc.dispose();
+    _ppq.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final ppq = int.tryParse(_ppq.text.trim());
+    if (ppq == null || ppq < 1 || ppq > 32767) {
+      setState(() => _error = 'PPQ 需为 1..32767 的整数');
+      return;
+    }
+    widget.onSave(
+      _name.text.trim(),
+      _artist.text.trim(),
+      _desc.text.trim(),
+      ppq,
+    );
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: YinheTheme.bg,
+      title: const Text('工程设置', style: TextStyle(fontSize: 18)),
+      content: SizedBox(
+        width: 420,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _field(_name, '歌名'),
+              const SizedBox(height: 12),
+              _field(_artist, '艺术家'),
+              const SizedBox(height: 12),
+              _field(
+                _ppq,
+                'PPQ（已加载音符时修改会缩放全部时间）',
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 12),
+              _field(_desc, '简介', maxLines: 3),
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Text(
+                    _error!,
+                    style: TextStyle(color: YinheTheme.danger, fontSize: 12),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _save, child: const Text('保存')),
+      ],
+    );
+  }
+
+  Widget _field(
+    TextEditingController c,
+    String label, {
+    int maxLines = 1,
+    TextInputType? keyboardType,
+  }) {
+    return TextField(
+      controller: c,
+      maxLines: maxLines,
+      keyboardType: keyboardType,
+      style: const TextStyle(fontSize: 14),
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+        isDense: true,
+      ),
+    );
+  }
 }
