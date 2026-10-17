@@ -68,13 +68,27 @@ class _StudioShellState extends State<StudioShell>
 
   /// 自动化栏数据（当前轨道，仅 PB/CC/RPN）。
   List<AutomationLaneData> _autoLanes = const [];
+
+  /// combo 索引：0 = Velocity（默认），1..=N = 自动化 lane。
   int _autoIndex = 0;
 
+  /// 力度条数据（tick, velocity01）。
+  List<Offset> _velocityBars = const [];
+
+  /// 收起自动化栏（最大化画布）。
+  bool _autoCollapsed = false;
+
+  /// 拖动中的锚点预览（tick, value）。
+  final ValueNotifier<(double, double)?> _autoPreview = ValueNotifier(null);
+  bool _draggingAnchor = false;
+
   final ValueNotifier<double> _playhead = ValueNotifier<double>(-1);
-  final ValueNotifier<List<double>> _snap =
-      ValueNotifier<List<double>>(List<double>.filled(12, 0.0));
-  final ValueNotifier<List<TrackRow>> _tracks =
-      ValueNotifier<List<TrackRow>>(const []);
+  final ValueNotifier<List<double>> _snap = ValueNotifier<List<double>>(
+    List<double>.filled(12, 0.0),
+  );
+  final ValueNotifier<List<TrackRow>> _tracks = ValueNotifier<List<TrackRow>>(
+    const [],
+  );
   final ValueNotifier<int> _dragFrom = ValueNotifier<int>(-1);
   final ValueNotifier<int> _dragTo = ValueNotifier<int>(-1);
 
@@ -110,6 +124,7 @@ class _StudioShellState extends State<StudioShell>
     _tracks.dispose();
     _dragFrom.dispose();
     _dragTo.dispose();
+    _autoPreview.dispose();
     calloc.free(_snapPtr);
     super.dispose();
   }
@@ -167,6 +182,7 @@ class _StudioShellState extends State<StudioShell>
       _tracks.value = _readTracks();
     });
     _loadAutomation();
+    _loadVelocity();
   }
 
   Future<void> _onNativeCall(MethodCall call) async {
@@ -238,9 +254,8 @@ class _StudioShellState extends State<StudioShell>
   }
 
   void _openSettings() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('设置页尚未实现')),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('设置页尚未实现')));
   }
 
   /// 读取当前轨道的自动化 lane（仅 PB/CC/RPN）。
@@ -278,6 +293,103 @@ class _StudioShellState extends State<StudioShell>
     });
   }
 
+  /// 读取当前轨道的力度条数据（按 tick 聚合）。
+  void _loadVelocity() {
+    final rows = _tracks.value;
+    if (rows.isEmpty) {
+      setState(() => _velocityBars = const []);
+      return;
+    }
+    final track = (_activeTrack ?? 0).clamp(0, rows.length - 1);
+    final ptr = rust.velocityJson(track);
+    var bars = const <Offset>[];
+    if (ptr != ffi.nullptr) {
+      try {
+        final list = jsonDecode(ptr.toDartString()) as List<dynamic>;
+        bars = [
+          for (final e in list)
+            Offset(
+              ((e as List<dynamic>)[0] as num).toDouble(),
+              (e[1] as num).toDouble(),
+            ),
+        ];
+      } catch (_) {
+        bars = const [];
+      } finally {
+        rust.freeString(ptr);
+      }
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() => _velocityBars = bars);
+  }
+
+  void _setAutoCollapsed(bool collapsed) {
+    setState(() => _autoCollapsed = collapsed);
+  }
+
+  /// 锚点拖动：按屏幕 x 找最近锚点（离散 lane 的 tick 不变，仅改 value）。
+  void _handleAnchorPanStart(DragStartDetails d) {
+    if (_autoIndex < 1 || _autoIndex > _autoLanes.length) {
+      return;
+    }
+    final s = _snap.value;
+    final ppu = s[1];
+    if (ppu <= 0) {
+      return;
+    }
+    final scrollX = s[2];
+    final kbW = s[5];
+    final localX = d.localPosition.dx;
+    double? nearest;
+    var bestDist = 10.0;
+    for (final p in _autoLanes[_autoIndex - 1].points) {
+      final x = p.dx * ppu - scrollX + kbW - AutomationPainter.comboWidth;
+      final dist = (x - localX).abs();
+      if (dist < bestDist) {
+        bestDist = dist;
+        nearest = p.dx;
+      }
+    }
+    final tick = nearest;
+    if (tick == null) {
+      return;
+    }
+    final value = 1.0 - ((d.localPosition.dy - 1) / 80.0);
+    setState(() {
+      _draggingAnchor = true;
+      _autoPreview.value = (tick, value.clamp(0.0, 1.0));
+    });
+  }
+
+  void _handleAnchorPanUpdate(DragUpdateDetails d) {
+    final pv = _autoPreview.value;
+    if (!_draggingAnchor || pv == null) {
+      return;
+    }
+    final value = 1.0 - ((d.localPosition.dy - 1) / 80.0);
+    setState(() => _autoPreview.value = (pv.$1, value.clamp(0.0, 1.0)));
+  }
+
+  void _handleAnchorPanEnd() {
+    final pv = _autoPreview.value;
+    final wasDragging = _draggingAnchor;
+    setState(() {
+      _draggingAnchor = false;
+      _autoPreview.value = null;
+    });
+    if (!wasDragging || pv == null || _autoIndex < 1) {
+      return;
+    }
+    final rows = _tracks.value;
+    final track = (_activeTrack ?? 0).clamp(0, rows.length - 1);
+    final ok = rust.setAutomationValue(track, _autoIndex, pv.$1.round(), pv.$2);
+    if (ok == 1) {
+      Future.delayed(const Duration(milliseconds: 250), _loadAutomation);
+    }
+  }
+
   Color _activeTrackColor() {
     final rows = _tracks.value;
     if (rows.isEmpty) {
@@ -287,11 +399,13 @@ class _StudioShellState extends State<StudioShell>
     return rows[i].color;
   }
 
-  /// PR 底部自动化栏（高 80 + 1px 分隔线；combo 列 60 宽）。
+  /// PR 底部自动化栏（高 80 + 1px 分隔线；combo 列 60 宽，含收起按钮）。
   Widget _buildAutomationPanel() {
-    final lane = _autoLanes.isEmpty
-        ? null
-        : _autoLanes[_autoIndex.clamp(0, _autoLanes.length - 1).toInt()];
+    final names = ['Velocity', for (final l in _autoLanes) l.name];
+    final index = _autoIndex.clamp(0, names.length - 1).toInt();
+    final lane = index >= 1 && index <= _autoLanes.length
+        ? _autoLanes[index - 1]
+        : null;
     final color = _activeTrackColor();
     return Positioned(
       left: 0,
@@ -307,42 +421,92 @@ class _StudioShellState extends State<StudioShell>
           children: [
             SizedBox(
               width: AutomationPainter.comboWidth,
-              child: PopupMenuButton<int>(
-                tooltip: '自动化类型',
-                padding: EdgeInsets.zero,
-                itemBuilder: (_) => [
-                  for (var i = 0; i < _autoLanes.length; i++)
-                    PopupMenuItem(value: i, child: Text(_autoLanes[i].name)),
+              child: Column(
+                children: [
+                  // 收起（最大化画布；左下角有升起按钮）。
+                  InkWell(
+                    onTap: () => _setAutoCollapsed(true),
+                    child: SizedBox(
+                      height: 22,
+                      width: double.infinity,
+                      child: Icon(
+                        Icons.keyboard_arrow_down,
+                        size: 16,
+                        color: YinheTheme.textMuted,
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: PopupMenuButton<int>(
+                      tooltip: '自动化类型',
+                      padding: EdgeInsets.zero,
+                      itemBuilder: (_) => [
+                        for (var i = 0; i < names.length; i++)
+                          PopupMenuItem(value: i, child: Text(names[i])),
+                      ],
+                      onSelected: (i) => setState(() => _autoIndex = i),
+                      child: Center(
+                        child: Text(
+                          names[index],
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: YinheTheme.textLabel,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
-                onSelected: (i) => setState(() => _autoIndex = i),
-                child: Center(
-                  child: Text(
-                    lane?.name ?? '无自动化',
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: lane == null
-                          ? YinheTheme.textDisabled
-                          : YinheTheme.textLabel,
-                      fontSize: 10,
+              ),
+            ),
+            Expanded(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onPanStart: _handleAnchorPanStart,
+                onPanUpdate: _handleAnchorPanUpdate,
+                onPanEnd: (_) => _handleAnchorPanEnd(),
+                child: SizedBox.expand(
+                  child: CustomPaint(
+                    painter: AutomationPainter(
+                      lane: lane,
+                      velocity: _velocityBars,
+                      color: color,
+                      snap: _snap,
+                      preview: _autoPreview,
                     ),
                   ),
                 ),
               ),
             ),
-            Expanded(
-              child: SizedBox.expand(
-                child: CustomPaint(
-                  painter: AutomationPainter(
-                    lane: lane,
-                    color: color,
-                    snap: _snap,
-                  ),
-                ),
-              ),
-            ),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// 收起状态的升起按钮（屏幕左下角）。
+  Widget _buildAutoExpandButton() {
+    return Positioned(
+      left: 8,
+      bottom: 8,
+      child: Material(
+        color: YinheTheme.controlBg,
+        borderRadius: BorderRadius.circular(6),
+        elevation: 1,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(6),
+          onTap: () => _setAutoCollapsed(false),
+          child: Padding(
+            padding: const EdgeInsets.all(5),
+            child: Icon(
+              Icons.keyboard_arrow_up,
+              size: 18,
+              color: YinheTheme.textSecondary,
+            ),
+          ),
         ),
       ),
     );
@@ -412,10 +576,12 @@ class _StudioShellState extends State<StudioShell>
   // ── 触摸 / 手势 ──
 
   void _sendTouch(int kind, Offset p, int pointer) {
-    if (_dragging) {
+    if (_dragging || _draggingAnchor) {
       return;
     }
     rust.touch(kind, p.dx, p.dy, pointer);
+    // 视图快照同步刷新：缓解 Flutter 浮层与 wgpu 纹理的相位差。
+    _snap.value = _readSnapshot();
   }
 
   int? _rowAt(Offset p) {
@@ -460,6 +626,7 @@ class _StudioShellState extends State<StudioShell>
     }
     _activeTrack = idx;
     _loadAutomation();
+    _loadVelocity();
     _setView(kViewPianoroll);
   }
 
@@ -528,85 +695,105 @@ class _StudioShellState extends State<StudioShell>
     return Scaffold(
       backgroundColor: YinheTheme.bg,
       body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final size = constraints.biggest;
-            final dpr = MediaQuery.devicePixelRatioOf(context);
-            final pixelW = (size.width * dpr).round();
-            final pixelH = (size.height * dpr).round();
-            if (_reportedPixelSize?.width != pixelW ||
-                _reportedPixelSize?.height != pixelH) {
-              _reportedPixelSize = Size(pixelW.toDouble(), pixelH.toDouble());
-              _channel.invokeMethod<void>('setSize', {
-                'w': pixelW,
-                'h': pixelH,
-                'lw': size.width,
-                'lh': size.height,
-              });
-            }
-            return Stack(
+        child: Stack(
+          children: [
+            Column(
               children: [
-                Positioned.fill(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.translucent,
-                    onTapUp: (d) => _handleCanvasTap(d.localPosition),
-                    onLongPressStart: (d) =>
-                        _handleLongPressStart(d.localPosition),
-                    onLongPressMoveUpdate: (d) =>
-                        _handleLongPressMove(d.localPosition),
-                    onLongPressEnd: (_) => _handleLongPressEnd(),
-                    child: Listener(
-                      behavior: HitTestBehavior.opaque,
-                      onPointerDown: (e) =>
-                          _sendTouch(0, e.localPosition, e.pointer),
-                      onPointerMove: (e) =>
-                          _sendTouch(1, e.localPosition, e.pointer),
-                      onPointerUp: (e) =>
-                          _sendTouch(2, e.localPosition, e.pointer),
-                      onPointerCancel: (e) =>
-                          _sendTouch(2, e.localPosition, e.pointer),
-                      child: Texture(textureId: id),
-                    ),
+                // 顶部栏真实占位（主页时留空，画布尺寸恒定）。
+                SizedBox(
+                  height: 42,
+                  child: _showHome ? const SizedBox.shrink() : _buildTopBar(),
+                ),
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final size = constraints.biggest;
+                      final dpr = MediaQuery.devicePixelRatioOf(context);
+                      final pixelW = (size.width * dpr).round();
+                      final pixelH = (size.height * dpr).round();
+                      if (_reportedPixelSize?.width != pixelW ||
+                          _reportedPixelSize?.height != pixelH) {
+                        _reportedPixelSize = Size(
+                          pixelW.toDouble(),
+                          pixelH.toDouble(),
+                        );
+                        _channel.invokeMethod<void>('setSize', {
+                          'w': pixelW,
+                          'h': pixelH,
+                          'lw': size.width,
+                          'lh': size.height,
+                        });
+                      }
+                      return Stack(
+                        children: [
+                          Positioned.fill(
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.translucent,
+                              onTapUp: (d) => _handleCanvasTap(d.localPosition),
+                              onLongPressStart: (d) =>
+                                  _handleLongPressStart(d.localPosition),
+                              onLongPressMoveUpdate: (d) =>
+                                  _handleLongPressMove(d.localPosition),
+                              onLongPressEnd: (_) => _handleLongPressEnd(),
+                              child: Listener(
+                                behavior: HitTestBehavior.opaque,
+                                onPointerDown: (e) =>
+                                    _sendTouch(0, e.localPosition, e.pointer),
+                                onPointerMove: (e) =>
+                                    _sendTouch(1, e.localPosition, e.pointer),
+                                onPointerUp: (e) =>
+                                    _sendTouch(2, e.localPosition, e.pointer),
+                                onPointerCancel: (e) =>
+                                    _sendTouch(2, e.localPosition, e.pointer),
+                                child: Texture(textureId: id),
+                              ),
+                            ),
+                          ),
+                          if (!_showHome)
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                child: CustomPaint(
+                                  painter: LabelsPainter(
+                                    _snap,
+                                    _tracks,
+                                    _dragFrom,
+                                    _dragTo,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          if (!_showHome)
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                child: CustomPaint(
+                                  painter: PlayheadPainter(_playhead),
+                                ),
+                              ),
+                            ),
+                          if (!_showHome && _viewMode == kViewPianoroll)
+                            if (!_autoCollapsed)
+                              _buildAutomationPanel()
+                            else
+                              _buildAutoExpandButton(),
+                        ],
+                      );
+                    },
                   ),
                 ),
-                if (!_showHome)
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: CustomPaint(
-                        painter: LabelsPainter(
-                          _snap,
-                          _tracks,
-                          _dragFrom,
-                          _dragTo,
-                        ),
-                      ),
-                    ),
-                  ),
-                if (!_showHome)
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: CustomPaint(
-                        painter: PlayheadPainter(_playhead),
-                      ),
-                    ),
-                  ),
-                if (!_showHome) _buildTopBar(),
-                if (!_showHome && _viewMode == kViewPianoroll)
-                  _buildAutomationPanel(),
-                if (_showHome)
-                  HomeView(
-                    soundFontName: _soundFontName,
-                    recent: _recent,
-                    onPickMidi: _pickMidi,
-                    onPickSoundFont: _pickSoundFont,
-                    onOpenDemo: _openDemo,
-                    onOpenRecent: _openRecent,
-                    onOpenSettings: _openSettings,
-                    onBack: () => setState(() => _showHome = false),
-                  ),
               ],
-            );
-          },
+            ),
+            if (_showHome)
+              HomeView(
+                soundFontName: _soundFontName,
+                recent: _recent,
+                onPickMidi: _pickMidi,
+                onPickSoundFont: _pickSoundFont,
+                onOpenDemo: _openDemo,
+                onOpenRecent: _openRecent,
+                onOpenSettings: _openSettings,
+                onBack: () => setState(() => _showHome = false),
+              ),
+          ],
         ),
       ),
     );
@@ -614,67 +801,62 @@ class _StudioShellState extends State<StudioShell>
 
   /// 上侧栏：播放/暂停、停止、时间码；右上角主页（PR 时另有走带入口）。
   Widget _buildTopBar() {
-    return Positioned(
-      left: 0,
-      right: 0,
-      top: 0,
-      child: Container(
-        height: 42,
-        color: Color.lerp(YinheTheme.bg, Colors.black, 0.04),
-        padding: const EdgeInsets.symmetric(horizontal: 6),
-        child: Row(
-          children: [
-            IconButton(
-              onPressed: _togglePlay,
-              icon: Icon(_playing ? Icons.pause : Icons.play_arrow),
-              color: YinheTheme.text,
-              tooltip: _playing ? '暂停' : '播放',
-              visualDensity: VisualDensity.compact,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-            ),
-            IconButton(
-              onPressed: _stopPlayback,
-              icon: const Icon(Icons.stop),
-              color: YinheTheme.textSecondary,
-              tooltip: '停止',
-              visualDensity: VisualDensity.compact,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-            ),
-            const SizedBox(width: 4),
-            // 时间码（无外框）：点击切换 秒数 ↔ 小节.拍.tick。
-            InkWell(
-              borderRadius: BorderRadius.circular(4),
-              onTap: () => setState(() => _timecodeBar = !_timecodeBar),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                child: Text(
-                  _timecodeBar ? _fmtBarBeat(_tick, _ppq) : _fmtTime(_seconds),
-                  style: TextStyle(
-                    color: YinheTheme.textLabel,
-                    fontSize: 14,
-                    fontFamily: 'monospace',
-                  ),
+    return Container(
+      height: 42,
+      color: Color.lerp(YinheTheme.bg, Colors.black, 0.04),
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: _togglePlay,
+            icon: Icon(_playing ? Icons.pause : Icons.play_arrow),
+            color: YinheTheme.text,
+            tooltip: _playing ? '暂停' : '播放',
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+          ),
+          IconButton(
+            onPressed: _stopPlayback,
+            icon: const Icon(Icons.stop),
+            color: YinheTheme.textSecondary,
+            tooltip: '停止',
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+          ),
+          const SizedBox(width: 4),
+          // 时间码（无外框）：点击切换 秒数 ↔ 小节.拍.tick。
+          InkWell(
+            borderRadius: BorderRadius.circular(4),
+            onTap: () => setState(() => _timecodeBar = !_timecodeBar),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Text(
+                _timecodeBar ? _fmtBarBeat(_tick, _ppq) : _fmtTime(_seconds),
+                style: TextStyle(
+                  color: YinheTheme.textLabel,
+                  fontSize: 14,
+                  fontFamily: 'monospace',
                 ),
               ),
             ),
-            const Spacer(),
-            if (_viewMode == kViewPianoroll) ...[
-              _ViewTab(
-                label: '走带',
-                selected: false,
-                onTap: () => _setView(kViewArrangement),
-              ),
-              const SizedBox(width: 6),
-            ],
+          ),
+          const Spacer(),
+          if (_viewMode == kViewPianoroll) ...[
             _ViewTab(
-              label: '主页',
+              label: '走带',
               selected: false,
-              onTap: () => setState(() => _showHome = true),
+              onTap: () => _setView(kViewArrangement),
             ),
+            const SizedBox(width: 6),
           ],
-        ),
+          _ViewTab(
+            label: '主页',
+            selected: false,
+            onTap: () => setState(() => _showHome = true),
+          ),
+        ],
       ),
     );
   }

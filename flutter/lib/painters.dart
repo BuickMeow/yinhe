@@ -31,7 +31,7 @@ class PlayheadPainter extends CustomPainter {
 /// 文本浮层：AR 轨道面板文字/编号/M-S、拖动排序指示，PR 键盘 C 音名。
 class LabelsPainter extends CustomPainter {
   LabelsPainter(this.snap, this.tracks, this.dragFrom, this.dragTo)
-      : super(repaint: Listenable.merge([snap, tracks, dragFrom, dragTo]));
+    : super(repaint: Listenable.merge([snap, tracks, dragFrom, dragTo]));
 
   final ValueNotifier<List<double>> snap;
   final ValueNotifier<List<TrackRow>> tracks;
@@ -68,8 +68,10 @@ class LabelsPainter extends CustomPainter {
       return;
     }
     final first = (scrollY / laneH).floor().clamp(0, rows.length).toInt();
-    final last =
-        ((scrollY + size.height) / laneH).ceil().clamp(0, rows.length).toInt();
+    final last = ((scrollY + size.height) / laneH)
+        .ceil()
+        .clamp(0, rows.length)
+        .toInt();
     for (var idx = first; idx < last; idx++) {
       final row = rows[idx];
       final y = idx * laneH - scrollY;
@@ -182,15 +184,7 @@ class LabelsPainter extends CustomPainter {
       RRect.fromRectAndRadius(rect, const Radius.circular(4)),
       Paint()..color = bg,
     );
-    _text(
-      canvas,
-      label,
-      rect.center,
-      10,
-      fg,
-      vCenter: true,
-      hCenter: true,
-    );
+    _text(canvas, label, rect.center, 10, fg, vCenter: true, hCenter: true);
   }
 
   void _text(
@@ -230,24 +224,32 @@ class LabelsPainter extends CustomPainter {
 }
 
 /// PR 自动化栏曲线（Flutter 自绘：x=tick 变换，y=归一化值 0..1）。
+
+/// PR 自动化栏绘制：力度条或离散（Step）自动化曲线，支持拖动锚点预览。
 class AutomationPainter extends CustomPainter {
   AutomationPainter({
     required this.lane,
+    required this.velocity,
     required this.color,
     required this.snap,
-  }) : super(repaint: snap);
+    required this.preview,
+  }) : super(repaint: Listenable.merge([snap, preview]));
 
+  /// null = 力度模式。
   final AutomationLaneData? lane;
+  final List<Offset> velocity;
   final Color color;
   final ValueNotifier<List<double>> snap;
+
+  /// 拖动中的锚点预览（tick, value）。
+  final ValueNotifier<(double, double)?> preview;
 
   /// 左侧 combo 列宽（与 main.dart 的 SizedBox 保持一致）。
   static const double comboWidth = 60.0;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final l = lane;
-    if (l == null || l.points.isEmpty || size.width <= 0 || size.height <= 0) {
+    if (size.width <= 0 || size.height <= 0) {
       return;
     }
     final s = snap.value;
@@ -260,10 +262,31 @@ class AutomationPainter extends CustomPainter {
     if (ppu <= 0) {
       return;
     }
-    // painter 原点 = combo 列右侧（画布 x = comboWidth），曲线区左界 = 键盘列右缘。
     double xOf(double tick) => tick * ppu - scrollX + (kbW - comboWidth);
     double yOf(double value) => size.height * (1.0 - value.clamp(0.0, 1.0));
 
+    final l = lane;
+    if (l == null) {
+      // 力度条：每个 tick 一根 3px 竖条（底部对齐）。
+      final paint = Paint()..color = color;
+      for (final p in velocity) {
+        final x = xOf(p.dx);
+        if (x < -4) {
+          continue;
+        }
+        if (x > size.width + 4) {
+          break;
+        }
+        final top = yOf(p.dy);
+        canvas.drawRect(
+          Rect.fromLTWH(x - 1.5, top, 3, size.height - top),
+          paint,
+        );
+      }
+      return;
+    }
+
+    final points = l.points;
     // PB 中心线（归一化 0.5）。
     if (l.kind == 0) {
       final y = size.height * 0.5;
@@ -273,38 +296,45 @@ class AutomationPainter extends CustomPainter {
         Paint()..color = YinheTheme.lineFg.withValues(alpha: 0.6),
       );
     }
+    if (points.isEmpty) {
+      return;
+    }
 
+    // 离散（Step）显示：横向保持到下一 tick，再竖直跳变。
+    final line = Paint()
+      ..color = color.withValues(alpha: 0.85)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
     final path = Path();
     var started = false;
-    for (final p in l.points) {
+    var lastY = 0.0;
+    for (final p in points) {
       final x = xOf(p.dx);
+      final y = yOf(p.dy);
       if (x < -40) {
+        lastY = y;
         continue;
       }
       if (x > size.width + 40) {
         break;
       }
-      final y = yOf(p.dy);
       if (!started) {
         path.moveTo(x, y);
         started = true;
       } else {
+        path.lineTo(x, lastY);
         path.lineTo(x, y);
       }
+      lastY = y;
     }
-    if (!started) {
-      return;
+    if (started) {
+      path.lineTo(size.width, lastY);
+      canvas.drawPath(path, line);
     }
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = color.withValues(alpha: 0.85)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5,
-    );
 
+    // 锚点
     final anchor = Paint()..color = color;
-    for (final p in l.points) {
+    for (final p in points) {
       final x = xOf(p.dx);
       if (x < 0 || x > size.width) {
         continue;
@@ -312,6 +342,29 @@ class AutomationPainter extends CustomPainter {
       canvas.drawRect(
         Rect.fromCenter(center: Offset(x, yOf(p.dy)), width: 5, height: 5),
         anchor,
+      );
+    }
+
+    // 拖动预览
+    final pv = preview.value;
+    if (pv != null) {
+      final x = xOf(pv.$1);
+      final y = yOf(pv.$2);
+      canvas.drawLine(
+        Offset(x, 0),
+        Offset(x, size.height),
+        Paint()
+          ..color = YinheTheme.accent.withValues(alpha: 0.5)
+          ..strokeWidth = 1,
+      );
+      canvas.drawCircle(
+        Offset(x, y),
+        6,
+        Paint()..color = YinheTheme.accent.withValues(alpha: 0.35),
+      );
+      canvas.drawRect(
+        Rect.fromCenter(center: Offset(x, y), width: 7, height: 7),
+        Paint()..color = Colors.white,
       );
     }
   }

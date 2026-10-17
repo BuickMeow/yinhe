@@ -39,7 +39,8 @@ class TrackRow {
 }
 
 /// 最近文件项（Rust recent_json）。
-class RecentItem {  const RecentItem({
+class RecentItem {
+  const RecentItem({
     required this.name,
     required this.path,
     required this.time,

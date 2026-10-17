@@ -127,9 +127,7 @@ class HomeView extends StatelessWidget {
         backgroundColor: YinheTheme.controlBg,
         foregroundColor: YinheTheme.text,
         minimumSize: const Size.fromHeight(52),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(6),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
       ),
     );
   }
