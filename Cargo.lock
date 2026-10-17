@@ -233,7 +233,6 @@ dependencies = [
  "ndk-context",
  "ndk-sys",
  "num_enum",
- "simd_cesu8",
  "thiserror 2.0.18",
 ]
 
@@ -7754,30 +7753,6 @@ dependencies = [
  "dlib",
  "once_cell",
  "pkg-config",
-]
-
-[[package]]
-name = "yinhe-android"
-version = "0.1.0"
-dependencies = [
- "android_logger",
- "cpal",
- "eframe",
- "egui",
- "egui_material_icons",
- "jni 0.22.4",
- "log",
- "tracing-log",
- "wgpu",
- "winit",
- "yinhe-audio",
- "yinhe-core",
- "yinhe-editor-core",
- "yinhe-midi",
- "yinhe-theme",
- "yinhe-types",
- "yinhe-wgpu",
- "yinhe-yin",
 ]
 
 [[package]]

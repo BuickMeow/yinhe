@@ -13,7 +13,6 @@ members = [
     "crates/yinhe-dsp",
     "crates/yinhe-editor-core",
     "crates/yinhe-egui",
-    "crates/yinhe-android",
     "crates/yinhe-flutter",
     "crates/yinhe-clap",
     "crates/yinhe-mixer",

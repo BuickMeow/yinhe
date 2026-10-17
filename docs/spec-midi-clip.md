@@ -371,7 +371,7 @@ pub struct RepeatGroup {
 
 - GPU cull 按实例化（省显存；当前全量 cull buffer 仍按展开音符占用）；
 - 音频调度按实例迭代（省事件表内存）；
-- Android 跟随（`crates/yinhe-android/src/pr_view.rs` / `ar_view.rs`）；
+- Android 跟随（Flutter 壳，待实现）；
 - 定义编辑模式（同步所有实例）；
 - 识别结果预览 UI。
 
