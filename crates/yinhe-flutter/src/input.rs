@@ -100,9 +100,18 @@ fn apply(g: &mut GestureState) {
         return;
     };
     let (lw, lh) = crate::logical_size();
+    let total_ticks = s.total_ticks;
+    let num_tracks = s.num_tracks;
     match s.view_mode {
-        ViewMode::Pianoroll => apply_pianoroll(&mut s, g, base, lw, lh),
-        ViewMode::Arrangement => apply_arrangement(&mut s, g, base),
+        ViewMode::Pianoroll => {
+            apply_pianoroll(&mut s, g, base, lw, lh);
+            // 写入即收口：否则未 clamp 的中间位移会被快照读取，浮层闪一帧再归位。
+            s.pr_view.clamp_scroll(lw, lh, total_ticks);
+        }
+        ViewMode::Arrangement => {
+            apply_arrangement(&mut s, g, base);
+            s.arr_view.clamp_scroll(lw, lh, total_ticks, num_tracks);
+        }
     }
     drop(s);
 

@@ -55,6 +55,8 @@ pub struct RenderScene {
     pub tracks: Vec<TrackInfoLite>,
     /// 每拍 tick 数（网格对齐用）。
     pub ppq: u32,
+    /// “显示轨道”过滤：Some = 只画该轨（曲名框选择）。
+    pub display_track: Option<usize>,
     /// 文档本体（编辑操作：轨道排序等）。
     pub document: Option<Document>,
 }
@@ -72,6 +74,7 @@ impl Default for RenderScene {
             num_tracks: 0,
             tracks: Vec::new(),
             ppq: 480,
+            display_track: None,
             document: None,
         }
     }
@@ -578,7 +581,10 @@ pub fn automation_json(track: usize) -> String {
     out
 }
 
-/// 力度条数据（当前轨道，按 tick 聚合取最大力度），JSON：`[[tick, velocity01], ...]`
+/// 力度条数据（当前轨道，每个音符一条），JSON：`[[tick, length, velocity01], ...]`。
+///
+/// `velocity01` = (velocity-1)/126（与桌面 wgpu 的 126 级映射一致）；
+/// 与桌面同规则过滤 velocity <= 1 的音符。
 pub fn velocity_json(track: usize) -> String {
     let Ok(s) = scene().lock() else {
         return "[]".into();
@@ -590,31 +596,26 @@ pub fn velocity_json(track: usize) -> String {
     if model.tracks.get(track).is_none() {
         return "[]".into();
     }
-    let mut points: Vec<(u32, u8)> = Vec::new();
+    let mut bars: Vec<(u32, u32, u8)> = Vec::new();
     for key in 0..=yinhe_types::MAX_KEY {
         for note in model.key_notes(key).iter() {
-            if note.track as usize == track {
-                points.push((note.start_tick, note.velocity));
+            if note.track as usize == track && note.velocity > 1 {
+                bars.push((
+                    note.start_tick,
+                    note.end_tick.saturating_sub(note.start_tick),
+                    note.velocity,
+                ));
             }
         }
     }
-    points.sort_unstable_by_key(|p| p.0);
+    bars.sort_unstable_by_key(|b| b.0);
     let mut out = String::from("[");
-    let mut first = true;
-    let mut i = 0;
-    while i < points.len() {
-        let tick = points[i].0;
-        let mut vel = points[i].1;
-        i += 1;
-        while i < points.len() && points[i].0 == tick {
-            vel = vel.max(points[i].1);
-            i += 1;
-        }
-        if !first {
+    for (i, (tick, len, vel)) in bars.iter().enumerate() {
+        if i > 0 {
             out.push(',');
         }
-        first = false;
-        out.push_str(&format!("[{tick},{}]", f32::from(vel) / 127.0));
+        let value01 = (f32::from(*vel) - 1.0) / 126.0;
+        out.push_str(&format!("[{tick},{len},{value01:.4}]"));
     }
     out.push(']');
     out
@@ -624,23 +625,29 @@ pub fn velocity_json(track: usize) -> String {
 ///
 /// `lane_index` 为 1-based（与 `automation_json` 的输出顺序一致）。成功返回 1。
 pub fn set_automation_value(track: usize, lane_index: usize, tick: u32, value: f32) -> i32 {
+    use yinhe_types::automation::{AutomationEvent, SegmentShape};
+
     let Ok(mut s) = scene().lock() else {
         return 0;
     };
     let Some(doc) = s.document.as_mut() else {
         return 0;
     };
+    // 编辑前快照（undo 恢复界面状态）。
+    let before_snapshot = doc.capture_snapshot();
     let model = std::sync::Arc::make_mut(&mut doc.data.model);
     let Some(t) = model.tracks.get_mut(track) else {
         return 0;
     };
     let t = std::sync::Arc::make_mut(t);
     let mut seen = 0usize;
+    let mut raw_idx = 0usize;
     let mut target = None;
-    for lane in t.automation_lanes.iter_mut() {
+    for (i, lane) in t.automation_lanes.iter_mut().enumerate() {
         if lane_kind(&lane.target).is_some() {
             seen += 1;
             if seen == lane_index {
+                raw_idx = i;
                 target = Some(lane);
                 break;
             }
@@ -649,13 +656,29 @@ pub fn set_automation_value(track: usize, lane_index: usize, tick: u32, value: f
     let Some(lane) = target else {
         return 0;
     };
-    use yinhe_types::automation::{AutomationEvent, SegmentShape};
-    lane.upsert(AutomationEvent {
+    let new_event = AutomationEvent {
         id: 0,
         tick,
         value: value.clamp(0.0, 1.0),
         shape: SegmentShape::Step,
-    });
+    };
+    let before = lane.events.iter().find(|e| e.tick == tick).copied();
+    let target_clone = lane.target.clone();
+    lane.upsert(new_event);
+    // 历史：单事件 upsert = 移除旧 tick 事件 + 插入新事件（一步可撤销）。
+    doc.push_undo(
+        yinhe_editor_core::history::UndoAction::Automation(
+            yinhe_editor_core::history::AutomationDelta {
+                track_idx: track,
+                lane_idx: raw_idx,
+                target: target_clone,
+                before: before.into_iter().collect(),
+                after: vec![new_event],
+            },
+        ),
+        "Edit automation",
+        before_snapshot,
+    );
     let model = doc.data.model.clone();
     refresh_snapshot(&mut s);
     drop(s);
@@ -663,6 +686,58 @@ pub fn set_automation_value(track: usize, lane_index: usize, tick: u32, value: f
     crate::audio::on_model_loaded(model);
     log::info!("自动化编辑: track={track} lane={lane_index} tick={tick} value={value:.3}");
     1
+}
+
+/// 撤销一步（含音频与快照刷新）。成功 1。
+pub fn undo() -> i32 {
+    history_step(|doc| doc.undo())
+}
+
+/// 重做一步（含音频与快照刷新）。成功 1。
+pub fn redo() -> i32 {
+    history_step(|doc| doc.redo())
+}
+
+fn history_step(step: impl FnOnce(&mut Document) -> bool) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    if !step(doc) {
+        return 0;
+    }
+    let model = doc.data.model.clone();
+    refresh_snapshot(&mut s);
+    drop(s);
+    crate::audio::on_model_loaded(model);
+    1
+}
+
+/// 设置“显示轨道”过滤（-1 = 全部）。PR/AR 音符只画该轨。成功 1。
+pub fn set_display_track(track: i32) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    s.display_track = if track < 0 {
+        None
+    } else {
+        Some(track as usize)
+    };
+    log::info!("显示轨道: {track}");
+    1
+}
+
+/// 歌曲标题（meta.name；空串 = 未设置）。
+pub fn song_title() -> String {
+    let Ok(s) = scene().lock() else {
+        return String::new();
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return String::new();
+    };
+    doc.data.model.meta.name.clone()
 }
 
 /// 自动化类型：0=PB、1=CC、2=RPN；其它（Nrpn/Tempo/插件参数）不展示。

@@ -64,6 +64,8 @@ enum Cmd {
     SetSurface(OwnedWindow),
     /// surface 销毁（`onSurfaceCleanup`）。
     ClearSurface,
+    /// Flutter 帧驱动：渲染一帧，完成后通过 ack 回信。
+    RenderNow(std::sync::mpsc::SyncSender<()>),
 }
 
 static CMD_TX: OnceLock<Sender<Cmd>> = OnceLock::new();
@@ -198,32 +200,27 @@ fn render_thread_main(rx: Receiver<Cmd>) {
     let mut gpu: Option<Gpu> = None;
     let mut target: Option<render::Target> = None;
 
-    loop {
-        // 1) 处理所有积压命令（渲染期间可能到达多条，取最终态）。
-        let mut disconnected = false;
-        loop {
-            match rx.try_recv() {
-                Ok(cmd) => apply_cmd(&mut gpu, &mut target, cmd),
-                Err(std::sync::mpsc::TryRecvError::Empty) => break,
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    disconnected = true;
-                    break;
-                }
+    // 帧驱动：由 Flutter 每帧请求渲染并同步等待，纹理与浮层同帧产出。
+    while let Ok(first) = rx.recv() {
+        // 1) 处理积压命令（取最终态）；渲染请求记下来统一应答。
+        let mut pending: Vec<std::sync::mpsc::SyncSender<()>> = Vec::new();
+        let mut cmd = Some(first);
+        while let Some(c) = cmd {
+            match c {
+                Cmd::RenderNow(ack) => pending.push(ack),
+                other => apply_cmd(&mut gpu, &mut target, other),
             }
-        }
-        if disconnected {
-            break;
+            cmd = rx.try_recv().ok();
         }
 
-        // 2) 有目标则渲染一帧（Fifo present 自带节流）；
-        //    无目标则阻塞等待命令，避免空转。
-        //    TODO：视口/内容无变化的空闲时段可跳过 present 进入阻塞（省电）。
-        match (&gpu, &mut target) {
-            (Some(g), Some(t)) => render::render_frame(g, t),
-            _ => match rx.recv() {
-                Ok(cmd) => apply_cmd(&mut gpu, &mut target, cmd),
-                Err(_) => break,
-            },
+        // 2) 有请求则渲染一帧（含 present），随后应答（Flutter 侧解除等待）。
+        if !pending.is_empty() {
+            if let (Some(g), Some(t)) = (&gpu, &mut target) {
+                render::render_frame(g, t);
+            }
+            for ack in pending {
+                let _ = ack.send(());
+            }
         }
     }
     log::info!("渲染线程退出");
@@ -245,6 +242,9 @@ fn apply_cmd(gpu: &mut Option<Gpu>, target: &mut Option<render::Target>, cmd: Cm
         Cmd::ClearSurface => {
             *target = None;
             input::reset();
+        }
+        Cmd::RenderNow(_) => {
+            // 渲染请求由渲染循环统一处理与应答（这里不应到达）。
         }
     }
 }
@@ -526,6 +526,43 @@ pub extern "C" fn yinhe_set_automation_value(
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_soundfont_path() -> *mut std::ffi::c_char {
     to_c_string(audio::soundfont_path())
+}
+
+/// 歌曲标题（空串 = 未设置，堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_song_title() -> *mut std::ffi::c_char {
+    to_c_string(scene::song_title())
+}
+
+/// 设置“显示轨道”过滤（-1 = 全部轨道）。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_display_track(track: i32) -> i32 {
+    scene::set_display_track(track)
+}
+
+/// 撤销一步；成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_undo() -> i32 {
+    scene::undo()
+}
+
+/// 重做一步；成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_redo() -> i32 {
+    scene::redo()
+}
+
+/// Flutter 帧驱动：请求渲染一帧并等待完成（纹理与浮层同帧产出）。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_render_frame() -> i32 {
+    let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel::<()>(1);
+    if cmd_tx().send(Cmd::RenderNow(ack_tx)).is_err() {
+        return 0;
+    }
+    if ack_rx.recv().is_err() {
+        return 0;
+    }
+    1
 }
 
 /// 释放本库返回的堆字符串。

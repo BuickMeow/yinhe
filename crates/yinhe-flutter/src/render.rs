@@ -136,10 +136,20 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
             s.track_visible.clone(),
             s.num_tracks,
             s.ppq,
+            s.display_track,
         )
     };
-    let (view_mode, model, pr_view, arr_view, track_colors, track_visible, num_tracks, ppq) =
-        snapshot;
+    let (
+        view_mode,
+        model,
+        pr_view,
+        arr_view,
+        track_colors,
+        track_visible,
+        num_tracks,
+        ppq,
+        display_track,
+    ) = snapshot;
 
     // ── 取帧纹理 ──
     let frame = match t.surface.get_current_texture() {
@@ -165,15 +175,24 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
 
     if let Some(model) = &model {
         match view_mode {
-            ViewMode::Pianoroll => {
-                upload_pianoroll(t, model, &pr_view, &track_colors, &track_visible, ppq, w, h)
-            }
+            ViewMode::Pianoroll => upload_pianoroll(
+                t,
+                model,
+                &pr_view,
+                &track_colors,
+                &track_visible,
+                display_track,
+                ppq,
+                w,
+                h,
+            ),
             ViewMode::Arrangement => upload_arrangement(
                 t,
                 model,
                 &arr_view,
                 &track_colors,
                 &track_visible,
+                display_track,
                 num_tracks,
                 ppq,
                 w,
@@ -224,6 +243,16 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
     }
 }
 
+/// “显示轨道”过滤后的可见掩码（None = 原样）。
+fn effective_visible(track_visible: &[bool], display_track: Option<usize>) -> Vec<bool> {
+    match display_track {
+        None => track_visible.to_vec(),
+        Some(t) => (0..track_visible.len())
+            .map(|i| i == t && track_visible[i])
+            .collect(),
+    }
+}
+
 /// PR 视图：uniforms + 音符层（含 LOD 摘要）上传。
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn upload_pianoroll(
@@ -232,10 +261,12 @@ fn upload_pianoroll(
     view: &PianoRollView,
     track_colors: &[[f32; 4]],
     track_visible: &[bool],
+    display_track: Option<usize>,
     ppq: u32,
     w: f32,
     h: f32,
 ) {
+    let visible = effective_visible(track_visible, display_track);
     upload_pianoroll_decor(t, view, ppq, w, h);
     let job = build_render_job(
         w as u32,
@@ -255,7 +286,7 @@ fn upload_pianoroll(
     key ^= (w.to_bits() as u64) << 17;
     key ^= (h.to_bits() as u64) << 29;
     key ^= (lod.map_or(0u64, |l| l as u64 + 1)) << 41;
-    for (i, vis) in track_visible.iter().enumerate() {
+    for (i, vis) in visible.iter().enumerate() {
         if *vis {
             key ^= 0x9E37_79B9_7F4A_7C15u64.wrapping_mul(i as u64 + 1);
         }
@@ -272,7 +303,7 @@ fn upload_pianoroll(
                 model,
                 view,
                 &hidden,
-                track_visible,
+                &visible,
                 SUMMARY_BLOCK_TICKS[level],
             ),
             None => {
@@ -284,7 +315,7 @@ fn upload_pianoroll(
                     model,
                     view,
                     &hidden,
-                    track_visible,
+                    &visible,
                     &track_sel,
                     None,
                 );
@@ -306,6 +337,7 @@ fn upload_arrangement(
     view: &ArrangementView,
     track_colors: &[[f32; 4]],
     track_visible: &[bool],
+    display_track: Option<usize>,
     num_tracks: usize,
     ppq: u32,
     w: f32,
@@ -315,6 +347,7 @@ fn upload_arrangement(
     if num_tracks == 0 {
         return;
     }
+    let visible = effective_visible(track_visible, display_track);
     upload_arrangement_decor(t, view, track_colors, num_tracks, ppq, w, h);
     let lane_h = view.lane_height();
     let offsets: Vec<f32> = (0..num_tracks).map(|i| i as f32 * lane_h).collect();
@@ -353,6 +386,11 @@ fn upload_arrangement(
     let mut key = view.render_hash();
     key ^= (w.to_bits() as u64) << 17;
     key ^= (h.to_bits() as u64) << 29;
+    for (i, vis) in visible.iter().enumerate() {
+        if *vis {
+            key ^= 0x9E37_79B9_7F4A_7C15u64.wrapping_mul(i as u64 + 1);
+        }
+    }
     let key = yinhe_wgpu::layer_cache_key(&[key, VIEW_TAG_ARRANGEMENT]);
     if key != t.notes_cache_key {
         t.notes_buf.clear();
@@ -364,7 +402,7 @@ fn upload_arrangement(
             model,
             view,
             (0, num_tracks),
-            track_visible,
+            &visible,
             &hidden,
         );
         t.notes_cache_key = key;
@@ -381,7 +419,7 @@ fn upload_arrangement(
 fn upload_pianoroll_decor(t: &mut Target, view: &PianoRollView, ppq: u32, w: f32, h: f32) {
     let kb_w = view.keyboard_width();
     let kh = view.key_height;
-    let mut items: Vec<DrawInstance> = Vec::with_capacity(320);
+    let mut items: Vec<DrawInstance> = Vec::with_capacity(560);
     // 底层背景（surface 清屏透明，统一在 decor 里铺浅色底）。
     items.push(DrawInstance::solid_rect(0.0, 0.0, w, h, tc::BG));
     if kh > 0.0 {
@@ -390,12 +428,33 @@ fn upload_pianoroll_decor(t: &mut Target, view: &PianoRollView, ppq: u32, w: f32
             if y + kh < 0.0 || y > h {
                 continue;
             }
-            let color = if yinhe_types::is_black_key(key) {
-                tc::KEY_BLACK
-            } else {
-                tc::KEY_WHITE
-            };
+            let black = yinhe_types::is_black_key(key);
+            let color = if black { tc::KEY_BLACK } else { tc::KEY_WHITE };
             items.push(DrawInstance::solid_rect(0.0, y, kb_w, kh, color));
+            // 内容区：黑键行整行铺深色条（与桌面 `bg.rs` 的 stripe_bg 一致）。
+            if black {
+                items.push(DrawInstance::solid_rect(
+                    kb_w,
+                    y,
+                    w - kb_w,
+                    kh,
+                    tc::STRIPE_BG,
+                ));
+            }
+        }
+        // 八度线：每个 C 的键行顶部 1px（与桌面 `paint_octave_lines` 一致）。
+        for key in (0..=127u8).step_by(12) {
+            let y = view.key_to_y(key);
+            if y + kh < 0.0 || y > h {
+                continue;
+            }
+            items.push(DrawInstance::solid_rect(
+                kb_w,
+                y,
+                w - kb_w,
+                1.0,
+                tc::LINE_FG,
+            ));
         }
         // 键盘右缘分隔线。
         items.push(DrawInstance::solid_rect(
@@ -436,14 +495,9 @@ fn upload_arrangement_decor(
         );
         for idx in first..last {
             let y = yinhe_types::ArrangementView::lane_y_static(idx, view.base.scroll_y, lane_h);
+            // 隔行深浅：偶数行整行（面板 + 内容区）铺条纹底（与桌面一致）。
             if idx % 2 == 0 {
-                items.push(DrawInstance::solid_rect(
-                    0.0,
-                    y,
-                    panel,
-                    lane_h,
-                    tc::STRIPE_BG,
-                ));
+                items.push(DrawInstance::solid_rect(0.0, y, w, lane_h, tc::STRIPE_BG));
             }
             let color = track_colors
                 .get(idx)
