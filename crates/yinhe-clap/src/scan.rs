@@ -39,6 +39,11 @@ pub fn default_plugin_dirs() -> Vec<PathBuf> {
             }
             v
         }
+        #[cfg(target_os = "android")]
+        {
+            // Android 无桌面插件生态：不搜索任何目录。
+            Vec::new()
+        }
     };
     candidates.into_iter().filter(|p| p.is_dir()).collect()
 }
