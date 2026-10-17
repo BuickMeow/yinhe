@@ -7,6 +7,7 @@
 //! - 触摸坐标：dart:ffi 传画布逻辑像素；画布逻辑尺寸：`nativeSetViewport` 传入
 //!   （surface buffer 为物理像素，两者分别用于 view 与交换链）
 
+mod audio;
 mod input;
 mod render;
 mod scene;
@@ -299,6 +300,96 @@ pub extern "system" fn Java_com_jieneng_yinhe_1flutter_MainActivity_nativeSetVie
     set_logical_size(width, height);
 }
 
+/// `MainActivity.onFilePicked(path)`：SAF 选择结果（已复制到私有目录）。
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_jieneng_yinhe_1flutter_MainActivity_onFilePicked<'local>(
+    mut env: jni::EnvUnowned<'local>,
+    _this: jni::objects::JObject<'local>,
+    path: jni::objects::JString<'local>,
+) {
+    init_logging();
+    match read_jstring(&mut env, &path) {
+        Some(p) if !p.is_empty() => {
+            log::info!("收到 MIDI 文件: {p}");
+            scene::open_midi(p);
+        }
+        Some(_) => {}
+        None => log::error!("onFilePicked: 读取路径失败"),
+    }
+}
+
+/// `MainActivity.onSoundFontPicked(path)`：音色库（SF2/SF3）已复制到私有目录。
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_jieneng_yinhe_1flutter_MainActivity_onSoundFontPicked<'local>(
+    mut env: jni::EnvUnowned<'local>,
+    _this: jni::objects::JObject<'local>,
+    path: jni::objects::JString<'local>,
+) {
+    init_logging();
+    match read_jstring(&mut env, &path) {
+        Some(p) if !p.is_empty() => {
+            log::info!("收到音色库: {p}");
+            audio::set_soundfont(p);
+        }
+        Some(_) => {}
+        None => log::error!("onSoundFontPicked: 读取路径失败"),
+    }
+}
+
+/// 从 JNI 字符串读取 Rust String（失败返回 None）。
+fn read_jstring(env: &mut jni::EnvUnowned<'_>, s: &jni::objects::JString<'_>) -> Option<String> {
+    use jni::Outcome;
+    let outcome =
+        env.with_env(|env| -> jni::errors::Result<String> { Ok(s.mutf8_chars(env)?.to_string()) });
+    match outcome.into_outcome() {
+        Outcome::Ok(text) => Some(text),
+        Outcome::Err(e) => {
+            log::error!("JNI 字符串读取失败: {e}");
+            None
+        }
+        Outcome::Panic(p) => {
+            log::error!("JNI 字符串读取 panic: {p:?}");
+            None
+        }
+    }
+}
+
+/// `MainActivity.nativeInitContext(context)`：初始化 `ndk-context`。
+///
+/// cpal 的 Android 后端（AAudio）需要 JavaVM + `android.content.Context`；
+/// 传入 `applicationContext`（Application 单例由系统持有，无需额外全局引用）。
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_jieneng_yinhe_1flutter_MainActivity_nativeInitContext<'local>(
+    mut env: jni::EnvUnowned<'local>,
+    _this: jni::objects::JObject<'local>,
+    context: jni::objects::JObject<'local>,
+) {
+    init_logging();
+    use jni::Outcome;
+    let outcome = env.with_env(|env| -> jni::errors::Result<usize> {
+        Ok(env.get_java_vm()?.get_raw() as usize)
+    });
+    match outcome.into_outcome() {
+        Outcome::Ok(vm_ptr) => {
+            let ctx_ptr = context.as_raw() as usize;
+            static INIT: std::sync::Once = std::sync::Once::new();
+            INIT.call_once(|| {
+                // 安全性：vm/context 由 JVM 提供；applicationContext 在进程
+                // 生命周期内常驻，不会被子 GC 回收。
+                unsafe {
+                    ndk_context::initialize_android_context(
+                        vm_ptr as *mut std::ffi::c_void,
+                        ctx_ptr as *mut std::ffi::c_void,
+                    );
+                }
+                log::info!("ndk-context 已初始化");
+            });
+        }
+        Outcome::Err(e) => log::error!("ndk-context 初始化失败: {e}"),
+        Outcome::Panic(p) => log::error!("ndk-context 初始化 panic: {p:?}"),
+    }
+}
+
 // ── dart:ffi 入口（Dart → Rust）──
 
 /// 触摸事件：`kind` 0=down 1=move 2=up，`x`/`y` 为画布逻辑像素。
@@ -312,4 +403,45 @@ pub extern "C" fn yinhe_touch(kind: i32, x: f32, y: f32, pointer: i32) {
 pub extern "C" fn yinhe_demo_load() {
     init_logging();
     scene::load_demo();
+}
+
+/// 切换视图：0=AR 走带，1=PR 卷帘。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_view_mode(mode: i32) {
+    if let Ok(mut s) = scene::scene().lock() {
+        s.view_mode = if mode == 0 {
+            scene::ViewMode::Arrangement
+        } else {
+            scene::ViewMode::Pianoroll
+        };
+    }
+}
+
+/// 走带控制：0=播放，1=暂停，2=停止。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_transport(cmd: i32) {
+    match cmd {
+        0 => audio::play(),
+        1 => audio::pause(),
+        2 => audio::stop(),
+        _ => {}
+    }
+}
+
+/// 是否正在播放（0/1）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_is_playing() -> i32 {
+    i32::from(audio::is_playing())
+}
+
+/// 当前播放位置（秒，UI 时间显示用）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_playback_seconds() -> f64 {
+    audio::playback_seconds()
+}
+
+/// 播放光标在当前视图下的 x（逻辑像素；-1 = 无文档）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_playhead_x() -> f32 {
+    scene::playhead_x()
 }

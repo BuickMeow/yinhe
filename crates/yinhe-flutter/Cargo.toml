@@ -13,10 +13,15 @@ wgpu = { workspace = true }
 pollster = { workspace = true }
 log = "0.4"
 jni = "0.22"
+ndk-context = "0.1"
+cpal = { workspace = true }
 yinhe-types = { path = "../yinhe-types" }
 yinhe-core = { path = "../yinhe-core" }
 yinhe-editor-core = { path = "../yinhe-editor-core" }
 yinhe-wgpu = { path = "../yinhe-wgpu" }
+yinhe-audio = { path = "../yinhe-audio" }
+yinhe-midi = { path = "../yinhe-midi" }
+yinhe-yin = { path = "../yinhe-yin" }
 
 [target.'cfg(target_os = "android")'.dependencies]
 # 安卓上 stdout 不可见，日志必须走 logcat。

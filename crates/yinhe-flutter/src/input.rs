@@ -1,15 +1,16 @@
-//! 触摸手势 → 视口更新。
+//! 触摸手势 → 视口更新（PR/AR 双视图）。
 //!
 //! - 单指拖动：平移（抓手语义，内容跟随手指）。
-//! - 双指捏合：内容区缩放时间轴（`zoom_main_around`），键盘列缩放音高轴
-//!   （`zoom_cross_around`）；中点移动即平移。
+//! - 双指捏合：
+//!   - PR：内容区缩放时间轴（`zoom_main_around`），键盘列缩放音高轴；
+//!   - AR：内容区缩放时间轴（`zoom_around_x`），轨道面板区缩放行高档位。
+//! - 双指中点移动即平移。
 //!
-//! 坐标为画布逻辑像素（全宽坐标系，含左侧键盘列）。
-//! clamp 由渲染线程每帧统一收口（`render.rs`），这里只写原始位移。
+//! 坐标为画布逻辑像素（全宽坐标系）。clamp 由渲染线程每帧统一收口，这里只写原始位移。
 
 use std::sync::Mutex;
 
-use crate::scene;
+use crate::scene::{self, RenderScene, ViewMode};
 
 /// 活跃触点。
 #[derive(Clone, Copy)]
@@ -88,7 +89,7 @@ fn two_finger_baseline(pts: &[Pointer]) -> Baseline {
     }
 }
 
-/// 依据当前触点与基线的差值更新视口。
+/// 依据当前触点与基线的差值更新当前视图。
 fn apply(g: &mut GestureState) {
     let Some(base) = g.baseline else {
         reset_baseline(g);
@@ -98,44 +99,84 @@ fn apply(g: &mut GestureState) {
     let Ok(mut s) = scene::scene().lock() else {
         return;
     };
+    let (lw, lh) = crate::logical_size();
+    match s.view_mode {
+        ViewMode::Pianoroll => apply_pianoroll(&mut s, g, base, lw, lh),
+        ViewMode::Arrangement => apply_arrangement(&mut s, g, base),
+    }
+    drop(s);
 
+    reset_baseline(g);
+}
+
+fn apply_pianoroll(s: &mut RenderScene, g: &GestureState, base: Baseline, lw: f32, lh: f32) {
+    let view = &mut s.pr_view;
     match g.pointers.len() {
         1 => {
             let p = g.pointers[0];
             let (dx, dy) = (p.x - base.mid.0, p.y - base.mid.1);
             if dx != 0.0 || dy != 0.0 {
-                *s.view.main_scroll() -= dx;
-                *s.view.cross_scroll() -= dy;
+                *view.main_scroll() -= dx;
+                *view.cross_scroll() -= dy;
             }
         }
         2 => {
             let now = two_finger_baseline(&g.pointers);
-            // 缩放：距离比例（锚点 = 双指中点）。
             if now.dist > 1.0 && base.dist > 1.0 {
                 let factor = now.dist / base.dist;
                 if (factor - 1.0).abs() > 0.001 {
-                    let kb_w = s.view.keyboard_width();
+                    let kb_w = view.keyboard_width();
                     if now.mid.0 < kb_w {
                         // 键盘列：音高缩放（锚点 y）。
-                        let (lw, lh) = crate::logical_size();
-                        let cross = s.view.cross_axis_len(lw, lh);
-                        s.view.zoom_cross_around(now.mid.1, factor, cross);
+                        let cross = view.cross_axis_len(lw, lh);
+                        view.zoom_cross_around(now.mid.1, factor, cross);
                     } else {
                         // 内容区：时间缩放（坐标系原点在键盘列右缘）。
-                        s.view.zoom_main_around(now.mid.0 - kb_w, factor);
+                        view.zoom_main_around(now.mid.0 - kb_w, factor);
                     }
                 }
             }
-            // 平移：中点位移。
             let (mdx, mdy) = (now.mid.0 - base.mid.0, now.mid.1 - base.mid.1);
             if mdx != 0.0 || mdy != 0.0 {
-                *s.view.main_scroll() -= mdx;
-                *s.view.cross_scroll() -= mdy;
+                *view.main_scroll() -= mdx;
+                *view.cross_scroll() -= mdy;
             }
         }
         _ => {}
     }
-    drop(s);
+}
 
-    reset_baseline(g);
+fn apply_arrangement(s: &mut RenderScene, g: &GestureState, base: Baseline) {
+    let view = &mut s.arr_view;
+    match g.pointers.len() {
+        1 => {
+            let p = g.pointers[0];
+            let (dx, dy) = (p.x - base.mid.0, p.y - base.mid.1);
+            if dx != 0.0 || dy != 0.0 {
+                view.base.scroll_x -= dx;
+                view.base.scroll_y -= dy;
+            }
+        }
+        2 => {
+            let now = two_finger_baseline(&g.pointers);
+            if now.dist > 1.0 && base.dist > 1.0 {
+                let factor = now.dist / base.dist;
+                if (factor - 1.0).abs() > 0.001 {
+                    if now.mid.0 < view.base.left_panel_width {
+                        // 轨道面板区：行高离散缩放（锚点 y）。
+                        view.zoom_lane_height(now.mid.1, factor);
+                    } else {
+                        // 内容区：时间缩放。
+                        view.base.zoom_around_x(now.mid.0, factor);
+                    }
+                }
+            }
+            let (mdx, mdy) = (now.mid.0 - base.mid.0, now.mid.1 - base.mid.1);
+            if mdx != 0.0 || mdy != 0.0 {
+                view.base.scroll_x -= mdx;
+                view.base.scroll_y -= mdy;
+            }
+        }
+        _ => {}
+    }
 }
