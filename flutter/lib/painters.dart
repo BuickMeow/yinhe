@@ -425,7 +425,20 @@ class AutomationPainter extends CustomPainter {
       final paint = Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.0;
-      for (final (tick, len, vel01, track) in velocity) {
+      // 数据按 tick 升序：二分定位第一个进入视口的条，避免每帧全量扫描。
+      var lo = 0;
+      var hi = velocity.length;
+      while (lo < hi) {
+        final mid = (lo + hi) >> 1;
+        final p = velocity[mid];
+        if (xOf(p.$1 + p.$2) < -4) {
+          lo = mid + 1;
+        } else {
+          hi = mid;
+        }
+      }
+      for (var i = lo; i < velocity.length; i++) {
+        final (tick, len, vel01, track) = velocity[i];
         final rawLeft = xOf(tick);
         final rawRight = xOf(tick + len);
         if (rawRight < -4) {

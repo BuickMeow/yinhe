@@ -136,6 +136,9 @@ class _StudioShellState extends State<StudioShell>
   /// 触控板捏合的上一次累计缩放（用于换算增量）。
   double _panZoomScale = 1.0;
 
+  /// 帧计数（时间码/工程状态降频）。
+  int _frameCounter = 0;
+
   @override
   void initState() {
     super.initState();
@@ -156,8 +159,12 @@ class _StudioShellState extends State<StudioShell>
         _snap.value = snap;
       }
       _readOverlay();
-      _readDocState();
-      _updateTimecode();
+      // 工程状态/时间码降频（每 ~66ms）：减少音频锁与历史栈分配开销。
+      _frameCounter++;
+      if (_frameCounter % 4 == 0) {
+        _readDocState();
+        _updateTimecode();
+      }
     })..start();
     _recent = _readRecent();
     rust.setQuantize(1, 1, 1); // 默认自动（与桌面一致）
