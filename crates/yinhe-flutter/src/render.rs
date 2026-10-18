@@ -553,7 +553,7 @@ fn upload_arrangement_decor(
                 .get(idx)
                 .copied()
                 .unwrap_or([0.5, 0.5, 0.5, 1.0]);
-            items.push(DrawInstance::solid_rect(0.0, y, 6.0, lane_h, color));
+            items.push(DrawInstance::solid_rect(0.0, y, 14.0, lane_h, color));
         }
         items.push(DrawInstance::solid_rect(
             panel - 1.0,

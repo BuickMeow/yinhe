@@ -290,17 +290,16 @@ pub fn tick_scroll() -> i32 {
     let num_tracks = s.num_tracks;
     let moved = match s.view_mode {
         ViewMode::Pianoroll => {
-            // 水平：只在键盘列右侧的真实内容区判定。
+            // 水平：以内容区左缘（键盘右缘）为判定基准；指针拖到键盘列
+            // 甚至更左（区域外）也继续视为向左移动。
             let kbw = s.pr_view.keyboard_width();
+            let left = kbw + ZONE;
             let mut vx = 0.0f32;
-            if px >= kbw {
-                let left = kbw + ZONE;
-                if px < left {
-                    vx = (left - px) * 0.9;
-                }
-                if px > lw - ZONE {
-                    vx = -((px - (lw - ZONE)) * 0.9);
-                }
+            if px < left {
+                vx = ((left - px) * 0.9).min(30.0);
+            }
+            if px > lw - ZONE {
+                vx = -((px - (lw - ZONE)) * 0.9).min(30.0);
             }
             let mut changed = false;
             if vx != 0.0 {
@@ -317,17 +316,15 @@ pub fn tick_scroll() -> i32 {
             changed
         }
         ViewMode::Arrangement => {
-            // 水平：只在轨道面板右侧的内容区判定。
+            // 水平：以轨道面板右缘为判定基准；拖到面板上（区域外）也继续滚。
             let panel = s.arr_view.base.left_panel_width;
+            let left = panel + ZONE;
             let mut vx = 0.0f32;
-            if px >= panel {
-                let left = panel + ZONE;
-                if px < left {
-                    vx = (left - px) * 0.9;
-                }
-                if px > lw - ZONE {
-                    vx = -((px - (lw - ZONE)) * 0.9);
-                }
+            if px < left {
+                vx = ((left - px) * 0.9).min(30.0);
+            }
+            if px > lw - ZONE {
+                vx = -((px - (lw - ZONE)) * 0.9).min(30.0);
             }
             let mut changed = false;
             if vx != 0.0 {
@@ -349,6 +346,13 @@ pub fn tick_scroll() -> i32 {
     }
     refresh_preview(&mut d, &mut s);
     1
+}
+
+/// 当前是否处于选框待定态（长按未完成）。
+pub fn is_pending() -> bool {
+    DRAG.lock()
+        .map(|d| d.kind == kind::PENDING)
+        .unwrap_or(false)
 }
 
 /// 长按完成：待定选框转为移动态（框变虚线由 Flutter 绘制）。成功 1。

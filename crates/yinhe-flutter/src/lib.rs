@@ -543,6 +543,12 @@ pub extern "C" fn yinhe_velocity_json() -> *mut std::ffi::c_char {
     to_c_string(scene::velocity_json())
 }
 
+/// 当前是否处于选框待定态（长按未完成）。1 = 是。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_selection_pending() -> i32 {
+    i32::from(edit::is_pending())
+}
+
 /// 长按完成：待定选框转移动态。成功 1。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_begin_move_selection() -> i32 {
