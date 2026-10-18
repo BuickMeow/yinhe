@@ -17,6 +17,19 @@ class SelectionLongPressPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    if (moving.value) {
+      // 移动态：选框边框改虚线（优先于圆环）。
+      final o = overlay.value;
+      final rects = <Rect>[...o.sel, if (o.box != null) o.box!];
+      final paint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..color = YinheTheme.accent;
+      for (final r in rects) {
+        _dashedRect(canvas, r, paint);
+      }
+      return;
+    }
     final p = pos.value;
     final v = progress.value;
     if (p != null && v > 0 && v < 1) {
@@ -42,19 +55,6 @@ class SelectionLongPressPainter extends CustomPainter {
           ..color = YinheTheme.accent,
       );
       return;
-    }
-    if (!moving.value) {
-      return;
-    }
-    // 移动态：选框边框改虚线。
-    final o = overlay.value;
-    final rects = <Rect>[...o.sel, if (o.box != null) o.box!];
-    final paint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5
-      ..color = YinheTheme.accent;
-    for (final r in rects) {
-      _dashedRect(canvas, r, paint);
     }
   }
 
@@ -366,6 +366,14 @@ class LabelsPainter extends CustomPainter {
         .ceil()
         .clamp(0, rows.length)
         .toInt();
+    // 色带（sRGB 直绘保持饱和，与桌面 egui badge 一致；wgpu decor 不再画）。
+    for (var idx = first; idx < last; idx++) {
+      final y = idx * laneH - scrollY;
+      canvas.drawRect(
+        Rect.fromLTWH(0, y, 6, laneH),
+        Paint()..color = rows[idx].color,
+      );
+    }
     for (var idx = first; idx < last; idx++) {
       final row = rows[idx];
       final y = idx * laneH - scrollY;

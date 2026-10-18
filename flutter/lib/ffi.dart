@@ -98,9 +98,9 @@ final IntArgDart setDisplayTrack = bridge
 typedef ActionNative = ffi.Int32 Function();
 typedef ActionDart = int Function();
 
-/// 当前是否处于选框待定态（长按未完成）。1 = 是。
-final ActionDart selectionPending = bridge
-    .lookupFunction<ActionNative, ActionDart>('yinhe_selection_pending');
+/// 选框拖拽状态：0=无、1=待定（长按中）、2=移动态。
+final ActionDart selectionState = bridge
+    .lookupFunction<ActionNative, ActionDart>('yinhe_selection_state');
 
 /// 长按完成：待定选框转移动态。成功 1。
 final ActionDart beginMoveSelection = bridge

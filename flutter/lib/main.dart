@@ -139,8 +139,6 @@ class _StudioShellState extends State<StudioShell>
   /// PR 选框长按：圆环进度（500ms）；完成后进入移动态，未移动则弹菜单。
   Offset? _lpPos;
   DateTime? _lpStartTime;
-  Timer? _lpTimer;
-  bool _lpDone = false;
   bool _lpMoved = false;
   final ValueNotifier<double> _lpProgress = ValueNotifier(0);
   final ValueNotifier<Offset?> _lpPosNotifier = ValueNotifier(null);
@@ -174,8 +172,17 @@ class _StudioShellState extends State<StudioShell>
         _snap.value = snap;
       }
       _readOverlay();
-      // 选框长按圆环进度（完成由 500ms 定时器兜底，不依赖帧）。
-      if (_lpStartTime != null && !_lpDone) {
+      // 选框状态驱动（Rust 计时）：移动态画虚线；长按中更新圆环进度。
+      final selState = rust.selectionState();
+      if (_moveDashed.value != (selState == 2)) {
+        _moveDashed.value = selState == 2;
+      }
+      if (selState == 2) {
+        // 已转移动态：清掉圆环（虚线由 moving 分支绘制）。
+        if (_lpProgress.value != 0) {
+          _lpProgress.value = 0;
+        }
+      } else if (_lpStartTime != null && selState == 1) {
         final ms = DateTime.now().difference(_lpStartTime!).inMilliseconds;
         _lpProgress.value = (ms / 500).clamp(0.0, 1.0);
       }
@@ -205,7 +212,6 @@ class _StudioShellState extends State<StudioShell>
     _dragFrom.dispose();
     _dragTo.dispose();
     _autoPreview.dispose();
-    _lpTimer?.cancel();
     _lpProgress.dispose();
     _lpPosNotifier.dispose();
     _moveDashed.dispose();
@@ -927,16 +933,21 @@ class _StudioShellState extends State<StudioShell>
       return;
     }
     // 只写入事件；纹理与浮层统一在下一帧同步刷新（帧驱动，输入侧已就地 clamp）。
-    rust.touch(kind, p.dx, p.dy, pointer);
-    if (kind == 0) {
-      // 选框内按下由 Rust 进入 PENDING；这里启动长按计时/圆环。
-      if (_viewMode == kViewPianoroll && rust.selectionPending() == 1) {
-        _beginLongPressWatch(p);
+    if (kind == 2) {
+      // up 前读取状态（Rust 在 up 时会清理 drag）。
+      final state = rust.selectionState();
+      rust.touch(kind, p.dx, p.dy, pointer);
+      _finishLongPressWatch(state);
+    } else {
+      rust.touch(kind, p.dx, p.dy, pointer);
+      if (kind == 0) {
+        // 选框内按下由 Rust 进入 PENDING（500ms 后 Rust 自己转移动态）。
+        if (_viewMode == kViewPianoroll && rust.selectionState() == 1) {
+          _beginLongPressWatch(p);
+        }
+      } else if (kind == 1) {
+        _updateLongPressWatch(p);
       }
-    } else if (kind == 1) {
-      _updateLongPressWatch(p);
-    } else if (kind == 2) {
-      _finishLongPressWatch();
     }
     // 触摸期间确保有下一帧（拖拽边缘自动滚动/预览依赖帧驱动）。
     SchedulerBinding.instance.scheduleFrame();
@@ -947,42 +958,31 @@ class _StudioShellState extends State<StudioShell>
   /// 判定由 Rust 的 PENDING 状态给出（与选框命中一致）；500ms 用定时器兜底，
   /// 不依赖渲染帧。
   void _beginLongPressWatch(Offset p) {
-    _lpTimer?.cancel();
     _lpPos = p;
     _lpPosNotifier.value = p;
     _lpStartTime = DateTime.now();
-    _lpDone = false;
     _lpMoved = false;
     _lpProgress.value = 0;
     _moveDashed.value = false;
-    _lpTimer = Timer(const Duration(milliseconds: 500), _completeLongPress);
-  }
-
-  void _completeLongPress() {
-    if (_lpStartTime == null || _lpDone) {
-      return;
-    }
-    _lpDone = true;
-    _lpProgress.value = 1.0;
-    _moveDashed.value = true;
-    rust.beginMoveSelection();
   }
 
   void _updateLongPressWatch(Offset p) {
     if (_lpStartTime == null) {
       return;
     }
-    if (!_lpDone) {
+    final state = rust.selectionState();
+    if (state == 1) {
+      // 长按未完成就移动：取消（避免误拖）。
       if ((p - _lpPos!).distance > 12) {
         _cancelLongPressWatch();
       }
-      return;
+    } else if (state == 2) {
+      // 已进入移动态：记录发生了移动（松手不弹菜单）。
+      _lpMoved = true;
     }
-    _lpMoved = true;
   }
 
   void _cancelLongPressWatch() {
-    _lpTimer?.cancel();
     if (_lpStartTime == null) {
       return;
     }
@@ -991,25 +991,22 @@ class _StudioShellState extends State<StudioShell>
     _lpPosNotifier.value = null;
     _lpProgress.value = 0;
     _moveDashed.value = false;
-    _lpDone = false;
+    _lpMoved = false;
     rust.cancelSelectionPending();
   }
 
-  void _finishLongPressWatch() {
-    _lpTimer?.cancel();
+  void _finishLongPressWatch(int state) {
     if (_lpStartTime == null) {
       return;
     }
-    final done = _lpDone;
     final moved = _lpMoved;
     _lpStartTime = null;
     _lpPos = null;
     _lpPosNotifier.value = null;
     _lpProgress.value = 0;
-    _moveDashed.value = false;
-    _lpDone = false;
     _lpMoved = false;
-    if (done && !moved) {
+    // 虚线由 Ticker 依 state 关闭（up 后 state=0）。
+    if (state == 2 && !moved) {
       _showSelectionMenu();
     }
   }
@@ -1206,6 +1203,7 @@ class _StudioShellState extends State<StudioShell>
       return;
     }
     final controller = TextEditingController(text: rows[track].name);
+    // 对话框关闭动画期间 TextField 仍持有 controller：延迟到完全关闭后释放。
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1222,17 +1220,13 @@ class _StudioShellState extends State<StudioShell>
         ),
         actions: [
           TextButton(
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              controller.dispose();
-            },
+            onPressed: () => Navigator.of(ctx).pop(),
             child: const Text('取消'),
           ),
           FilledButton(
             onPressed: () {
               final name = controller.text.trim();
               Navigator.of(ctx).pop();
-              controller.dispose();
               final p = name.toNativeUtf8();
               var ok = 0;
               try {
@@ -1248,7 +1242,12 @@ class _StudioShellState extends State<StudioShell>
           ),
         ],
       ),
-    );
+    ).whenComplete(() {
+      Future<void>.delayed(
+        const Duration(milliseconds: 300),
+        controller.dispose,
+      );
+    });
   }
 
   void _setView(int mode) {
