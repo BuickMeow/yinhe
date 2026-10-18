@@ -98,6 +98,27 @@ final IntArgDart setDisplayTrack = bridge
 typedef ActionNative = ffi.Int32 Function();
 typedef ActionDart = int Function();
 
+/// 长按完成：待定选框转移动态。成功 1。
+final ActionDart beginMoveSelection = bridge
+    .lookupFunction<ActionNative, ActionDart>('yinhe_begin_move_selection');
+
+/// 取消待定选框（未完成长按）。
+final ActionDart cancelSelectionPending = bridge
+    .lookupFunction<ActionNative, ActionDart>('yinhe_cancel_selection_pending');
+
+/// 复制选中内容到右侧一格。
+final ActionDart duplicateSelection = bridge
+    .lookupFunction<ActionNative, ActionDart>('yinhe_duplicate_selection');
+
+typedef SetTrackNameNative = ffi.Int32 Function(ffi.Int32, ffi.Pointer<Utf8>);
+typedef SetTrackNameDart = int Function(int, ffi.Pointer<Utf8>);
+
+/// 重命名音轨。
+final SetTrackNameDart setTrackName = bridge
+    .lookupFunction<SetTrackNameNative, SetTrackNameDart>(
+      'yinhe_set_track_name',
+    );
+
 /// 拖拽边缘自动滚动（每帧调用）。返回 1 = 已滚动。
 final ActionDart dragTick = bridge.lookupFunction<ActionNative, ActionDart>(
   'yinhe_drag_tick',

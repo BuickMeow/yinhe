@@ -136,6 +136,15 @@ class _StudioShellState extends State<StudioShell>
 
   bool _dragging = false;
 
+  /// PR 选框长按：圆环进度（500ms）；完成后进入移动态，未移动则弹菜单。
+  Offset? _lpPos;
+  DateTime? _lpStartTime;
+  bool _lpDone = false;
+  bool _lpMoved = false;
+  final ValueNotifier<double> _lpProgress = ValueNotifier(0);
+  final ValueNotifier<Offset?> _lpPosNotifier = ValueNotifier(null);
+  final ValueNotifier<bool> _moveDashed = ValueNotifier(false);
+
   /// 触控板捏合的上一次累计缩放（用于换算增量）。
   double _panZoomScale = 1.0;
 
@@ -164,6 +173,17 @@ class _StudioShellState extends State<StudioShell>
         _snap.value = snap;
       }
       _readOverlay();
+      // 选框长按进度（500ms 圆环；完成后进入移动态）。
+      if (_lpStartTime != null && !_lpDone) {
+        final ms = DateTime.now().difference(_lpStartTime!).inMilliseconds;
+        final v = (ms / 500).clamp(0.0, 1.0);
+        _lpProgress.value = v;
+        if (v >= 1.0) {
+          _lpDone = true;
+          _moveDashed.value = true;
+          rust.beginMoveSelection();
+        }
+      }
       // 工程状态/时间码降频（每 ~66ms）：减少音频锁与历史栈分配开销。
       _frameCounter++;
       if (_frameCounter % 4 == 0) {
@@ -190,6 +210,9 @@ class _StudioShellState extends State<StudioShell>
     _dragFrom.dispose();
     _dragTo.dispose();
     _autoPreview.dispose();
+    _lpProgress.dispose();
+    _lpPosNotifier.dispose();
+    _moveDashed.dispose();
     _overlay.dispose();
     _docState.dispose();
     calloc.free(_snapPtr);
@@ -907,10 +930,110 @@ class _StudioShellState extends State<StudioShell>
     if (_dragging || _draggingAnchor) {
       return;
     }
+    if (kind == 0) {
+      _startLongPressWatch(p);
+    } else if (kind == 1) {
+      _updateLongPressWatch(p);
+    }
     // 只写入事件；纹理与浮层统一在下一帧同步刷新（帧驱动，输入侧已就地 clamp）。
     rust.touch(kind, p.dx, p.dy, pointer);
+    if (kind == 2) {
+      _finishLongPressWatch();
+    }
     // 触摸期间确保有下一帧（拖拽边缘自动滚动/预览依赖帧驱动）。
     SchedulerBinding.instance.scheduleFrame();
+  }
+
+  /// PR 选框内按下：开始长按计时（圆环转满后进入移动态）。
+  void _startLongPressWatch(Offset p) {
+    if (_viewMode != kViewPianoroll || _tool != 0) {
+      return;
+    }
+    final inSel = _overlay.value.sel.any((r) => r.contains(p));
+    if (!inSel) {
+      return;
+    }
+    _lpPos = p;
+    _lpPosNotifier.value = p;
+    _lpStartTime = DateTime.now();
+    _lpDone = false;
+    _lpMoved = false;
+    _lpProgress.value = 0;
+    _moveDashed.value = false;
+  }
+
+  void _updateLongPressWatch(Offset p) {
+    if (_lpStartTime == null) {
+      return;
+    }
+    if (!_lpDone) {
+      if ((p - _lpPos!).distance > 8) {
+        _cancelLongPressWatch();
+      }
+      return;
+    }
+    _lpMoved = true;
+  }
+
+  void _cancelLongPressWatch() {
+    if (_lpStartTime == null) {
+      return;
+    }
+    _lpStartTime = null;
+    _lpPos = null;
+    _lpPosNotifier.value = null;
+    _lpProgress.value = 0;
+    _moveDashed.value = false;
+    _lpDone = false;
+    rust.cancelSelectionPending();
+  }
+
+  void _finishLongPressWatch() {
+    if (_lpStartTime == null) {
+      return;
+    }
+    final done = _lpDone;
+    final moved = _lpMoved;
+    _lpStartTime = null;
+    _lpPos = null;
+    _lpPosNotifier.value = null;
+    _lpProgress.value = 0;
+    _moveDashed.value = false;
+    _lpDone = false;
+    _lpMoved = false;
+    if (done && !moved) {
+      _showSelectionMenu();
+    }
+  }
+
+  /// 长按完成但未移动：选区操作菜单。
+  void _showSelectionMenu() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: YinheTheme.bg,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.copy),
+              title: const Text('复制到右侧一格'),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                if (rust.duplicateSelection() == 1) {
+                  _refreshDocumentMeta();
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.close),
+              title: const Text('取消'),
+              onTap: () => Navigator.of(ctx).pop(),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// 鼠标滚轮 / 触控板滚动：Ctrl（或 Cmd）+ 滚轮缩放（键盘区缩放音高轴，
@@ -1026,13 +1149,98 @@ class _StudioShellState extends State<StudioShell>
       _dragTo.value = -1;
       _dragging = false;
     });
-    if (from < 0 || to < 0 || from == to) {
+    if (from < 0) {
+      return;
+    }
+    if (to < 0 || from == to) {
+      // 长按未拖动：弹出音轨信息菜单。
+      _showTrackMenu(from);
       return;
     }
     final ok = rust.moveTrack(from, to);
     if (ok == 1) {
       Future.delayed(const Duration(milliseconds: 250), _refreshDocumentMeta);
     }
+  }
+
+  /// AR 长按音轨（未拖动）：音轨信息菜单。
+  void _showTrackMenu(int track) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: YinheTheme.bg,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.edit),
+              title: const Text('编辑音轨信息'),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _renameTrack(track);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.close),
+              title: const Text('取消'),
+              onTap: () => Navigator.of(ctx).pop(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 重命名音轨。
+  void _renameTrack(int track) {
+    final rows = _tracks.value;
+    if (track < 0 || track >= rows.length) {
+      return;
+    }
+    final controller = TextEditingController(text: rows[track].name);
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: YinheTheme.bg,
+        title: const Text('编辑音轨信息', style: TextStyle(fontSize: 17)),
+        content: TextField(
+          controller: controller,
+          style: const TextStyle(fontSize: 14),
+          decoration: const InputDecoration(
+            labelText: '音轨名称',
+            border: OutlineInputBorder(),
+            isDense: true,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              controller.dispose();
+            },
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final name = controller.text.trim();
+              Navigator.of(ctx).pop();
+              controller.dispose();
+              final p = name.toNativeUtf8();
+              var ok = 0;
+              try {
+                ok = rust.setTrackName(track, p);
+              } finally {
+                calloc.free(p);
+              }
+              if (ok == 1) {
+                _refreshDocumentMeta();
+              }
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _setView(int mode) {
@@ -1062,11 +1270,8 @@ class _StudioShellState extends State<StudioShell>
           children: [
             Column(
               children: [
-                // 顶部栏真实占位（主页时留空，画布尺寸恒定）。
-                SizedBox(
-                  height: 42,
-                  child: _showHome ? const SizedBox.shrink() : _buildTopBar(),
-                ),
+                // 顶部栏占位（栏本体在外层 Stack 顶层，保证绘制优先级最高）。
+                const SizedBox(height: 42),
                 Expanded(
                   child: LayoutBuilder(
                     builder: (context, constraints) {
@@ -1167,6 +1372,23 @@ class _StudioShellState extends State<StudioShell>
                             Positioned(
                               left: 0,
                               right: 0,
+                              top: RulerPainter.height,
+                              bottom: 0,
+                              child: IgnorePointer(
+                                child: CustomPaint(
+                                  painter: SelectionLongPressPainter(
+                                    _lpProgress,
+                                    _lpPosNotifier,
+                                    _moveDashed,
+                                    _overlay,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          if (!_showHome)
+                            Positioned(
+                              left: 0,
+                              right: 0,
                               top: 0,
                               height: RulerPainter.height,
                               child: IgnorePointer(
@@ -1187,6 +1409,14 @@ class _StudioShellState extends State<StudioShell>
                 ),
               ],
             ),
+            if (!_showHome)
+              Positioned(
+                left: 0,
+                right: 0,
+                top: 0,
+                height: 42,
+                child: _buildTopBar(),
+              ),
             if (_showHome)
               HomeView(
                 recent: _recent,
