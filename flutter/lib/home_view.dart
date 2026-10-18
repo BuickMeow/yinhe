@@ -12,6 +12,8 @@ class HomeView extends StatelessWidget {
     required this.onPickMidi,
     required this.onNewProject,
     required this.onProjectSettings,
+    required this.onSaveProject,
+    required this.onSaveProjectAs,
     required this.onOpenRecent,
     required this.onOpenSettings,
     required this.onBack,
@@ -21,6 +23,8 @@ class HomeView extends StatelessWidget {
   final VoidCallback onPickMidi;
   final VoidCallback onNewProject;
   final VoidCallback onProjectSettings;
+  final VoidCallback onSaveProject;
+  final VoidCallback onSaveProjectAs;
   final ValueChanged<RecentItem> onOpenRecent;
   final VoidCallback onOpenSettings;
   final VoidCallback onBack;
@@ -92,7 +96,7 @@ class HomeView extends StatelessWidget {
         FilledButton.icon(
           onPressed: onPickMidi,
           icon: const Icon(Icons.note_add, size: 18),
-          label: const Text('打开文件（MIDI / .ying）'),
+          label: const Text('打开文件'),
           style: FilledButton.styleFrom(
             backgroundColor: YinheTheme.primaryButtonBg,
             foregroundColor: YinheTheme.text,
@@ -101,6 +105,18 @@ class HomeView extends StatelessWidget {
               borderRadius: BorderRadius.circular(6),
             ),
           ),
+        ),
+        const SizedBox(height: 14),
+        Row(
+          children: [
+            Expanded(
+              child: _secondary('保存工程', Icons.save_outlined, onSaveProject),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _secondary('另存为', Icons.save_as_outlined, onSaveProjectAs),
+            ),
+          ],
         ),
         const SizedBox(height: 14),
         _secondary('新建工程', Icons.add_box_outlined, onNewProject),

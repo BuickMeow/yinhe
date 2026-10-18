@@ -98,6 +98,11 @@ final IntArgDart setDisplayTrack = bridge
 typedef ActionNative = ffi.Int32 Function();
 typedef ActionDart = int Function();
 
+/// 拖拽边缘自动滚动（每帧调用）。返回 1 = 已滚动。
+final ActionDart dragTick = bridge.lookupFunction<ActionNative, ActionDart>(
+  'yinhe_drag_tick',
+);
+
 /// 撤销一步。
 final ActionDart undo = bridge.lookupFunction<ActionNative, ActionDart>(
   'yinhe_undo',
@@ -161,6 +166,24 @@ typedef SetMetaDart = int Function(
 /// 工程元数据编辑（歌名/艺术家/简介/PPQ）。
 final SetMetaDart setProjectMeta = bridge
     .lookupFunction<SetMetaNative, SetMetaDart>('yinhe_set_project_meta');
+
+/// 音频设置 JSON。
+final CStrDart audioSettingsJson = bridge.lookupFunction<CStrNative, CStrDart>(
+  'yinhe_audio_settings_json',
+);
+
+typedef SetAudioSettingsNative = ffi.Int32 Function(
+  ffi.Uint32,
+  ffi.Uint32,
+  ffi.Uint32,
+);
+typedef SetAudioSettingsDart = int Function(int, int, int);
+
+/// 设置音频参数（max_voices=0 自动；buffer_size=0 设备默认）。
+final SetAudioSettingsDart setAudioSettings = bridge
+    .lookupFunction<SetAudioSettingsNative, SetAudioSettingsDart>(
+      'yinhe_set_audio_settings',
+    );
 
 /// 工程元数据 JSON（回显）。
 final CStrDart projectMetaJson = bridge.lookupFunction<CStrNative, CStrDart>(

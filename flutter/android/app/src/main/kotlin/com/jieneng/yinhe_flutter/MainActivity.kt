@@ -47,6 +47,22 @@ class MainActivity : FlutterActivity() {
     /** 本代 surface 是否已发送给 Rust（同一窗口重复设置会触发 IN_USE）。 */
     private var surfaceSent = false
 
+    /** 当前工程的 SAF uri（“保存工程”直接覆盖；另存为/打开时更新）。 */
+    private var lastProjectUri: android.net.Uri? = null
+
+    /** 持久化的工程 uri（按文件名），供最近列表打开后直接覆盖保存。 */
+    private val prefs by lazy { getSharedPreferences("yinhe", MODE_PRIVATE) }
+
+    private fun rememberUri(name: String, uri: android.net.Uri) {
+        lastProjectUri = uri
+        prefs.edit().putString("uri:$name", uri.toString()).apply()
+    }
+
+    private fun restoreUri(name: String) {
+        val saved = prefs.getString("uri:$name", null) ?: return
+        lastProjectUri = runCatching { android.net.Uri.parse(saved) }.getOrNull()
+    }
+
     /** 与 Dart 的桥（双向：Dart 请求 + 文件选择结果回传）。 */
     private var methodChannel: MethodChannel? = null
 
@@ -149,6 +165,28 @@ class MainActivity : FlutterActivity() {
                         openSavePicker(name)
                         result.success(null)
                     }
+                    "rememberProject" -> {
+                        val name = call.argument<String>("name")
+                        if (name != null) restoreUri(name)
+                        result.success(null)
+                    }
+                    "saveProject" -> {
+                        val saveAs = call.argument<Boolean>("saveAs") ?: false
+                        val name = call.argument<String>("name") ?: "Untitled"
+                        val uri = lastProjectUri
+                        if (!saveAs && uri != null) {
+                            // 覆盖当前工程文件；失败则退回另存为。
+                            if (copyExportTo(uri)) {
+                                methodChannel?.invokeMethod("onProjectSaved", "ok")
+                            } else {
+                                lastProjectUri = null
+                                openSavePicker(name)
+                            }
+                        } else {
+                            openSavePicker(name)
+                        }
+                        result.success(null)
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -174,6 +212,11 @@ class MainActivity : FlutterActivity() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "*/*"
+            addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
+            )
             putExtra(
                 Intent.EXTRA_MIME_TYPES,
                 arrayOf(
@@ -200,10 +243,11 @@ class MainActivity : FlutterActivity() {
     private fun openSavePicker(name: String) {
         val safe = name.replace(Regex("[/\\\\:*?\"<>|]"), "_").trim()
         val base = if (safe.isEmpty()) "Untitled" else safe
+        val title = if (base.endsWith(".ying", ignoreCase = true)) base else "$base.ying"
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "application/octet-stream"
-            putExtra(Intent.EXTRA_TITLE, "$base.ying")
+            putExtra(Intent.EXTRA_TITLE, title)
         }
         startActivityForResult(intent, REQ_SAVE_FILE)
     }
@@ -240,7 +284,19 @@ class MainActivity : FlutterActivity() {
         }
         when (requestCode) {
             REQ_OPEN_FILE -> {
-                val path = copyPicked(data?.data) ?: return
+                val uri = data?.data
+                val path = copyPicked(uri) ?: return
+                // .ying 工程记住原 uri（含持久权限），供“保存工程”直接覆盖。
+                if (path.lowercase().endsWith(".ying") && uri != null) {
+                    runCatching {
+                        contentResolver.takePersistableUriPermission(
+                            uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                        )
+                    }
+                    rememberUri(path.substringAfterLast('/'), uri)
+                }
                 onFilePicked(path)
                 methodChannel?.invokeMethod("onFilePicked", path)
             }
@@ -250,7 +306,19 @@ class MainActivity : FlutterActivity() {
                 methodChannel?.invokeMethod("onSoundFontPicked", path)
             }
             REQ_SAVE_FILE -> {
-                if (copyExportTo(data?.data)) {
+                val uri = data?.data
+                if (copyExportTo(uri)) {
+                    if (uri != null) {
+                        val name = displayName(uri) ?: "Untitled.ying"
+                        rememberUri(name, uri)
+                        runCatching {
+                            contentResolver.takePersistableUriPermission(
+                                uri,
+                                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                            )
+                        }
+                    }
                     methodChannel?.invokeMethod("onProjectSaved", "ok")
                 }
             }

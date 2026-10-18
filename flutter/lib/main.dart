@@ -151,6 +151,8 @@ class _StudioShellState extends State<StudioShell>
       // 帧驱动同步：先让 wgpu 渲染当前状态的一帧（同步等待完成），再用同一状态
       // 刷新浮层，保证纹理与 Flutter 浮层出自同一份场景数据、同一帧合成。
       if (!_showHome) {
+        // 拖拽边缘自动滚动：先滚动视图，再渲染这一帧。
+        rust.dragTick();
         rust.renderFrame();
       }
       _playhead.value = rust.playheadX();
@@ -164,6 +166,10 @@ class _StudioShellState extends State<StudioShell>
       if (_frameCounter % 4 == 0) {
         _readDocState();
         _updateTimecode();
+      }
+      // 保持连续帧：Rust 侧拖拽/边缘滚动/渲染都由帧驱动（手指静止时也要跑）。
+      if (!_showHome) {
+        SchedulerBinding.instance.scheduleFrame();
       }
     })..start();
     _recent = _readRecent();
@@ -356,7 +362,12 @@ class _StudioShellState extends State<StudioShell>
   }
 
   /// 导出 .ying 工程：Rust 写临时文件 → Kotlin 复制到用户选择的位置。
-  Future<void> _saveProject() async {
+  Future<void> _saveProject({bool saveAs = false}) async {
+    if (_tracks.value.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('请先打开 MIDI 或新建工程')));
+      return;
+    }
     final name = _songTitle.isNotEmpty ? _songTitle : (_fileName ?? 'Untitled');
     final tmp = await _channel.invokeMethod<String>('exportTempPath');
     if (tmp == null || !mounted) {
@@ -376,7 +387,10 @@ class _StudioShellState extends State<StudioShell>
       }
       return;
     }
-    await _channel.invokeMethod<void>('openSavePicker', {'name': name});
+    await _channel.invokeMethod<void>('saveProject', {
+      'name': name,
+      'saveAs': saveAs,
+    });
   }
 
   List<RecentItem> _readRecent() {
@@ -446,6 +460,7 @@ class _StudioShellState extends State<StudioShell>
         rust.setActiveTrack(-1);
         rust.setTool(_toolArAllowed.first);
         _ensureSurface();
+        _rememberProject(path.split('/').last);
         Future.delayed(const Duration(milliseconds: 800), _refreshDocumentMeta);
       case 'onSoundFontPicked':
         setState(() => _soundFontName = path.split('/').last);
@@ -515,7 +530,13 @@ class _StudioShellState extends State<StudioShell>
     rust.setActiveTrack(-1);
     rust.setTool(_toolArAllowed.first);
     _ensureSurface();
+    _rememberProject(item.name);
     Future.delayed(const Duration(milliseconds: 800), _refreshDocumentMeta);
+  }
+
+  /// 按文件名恢复工程 SAF uri（最近列表打开 .ying 后可直接覆盖保存）。
+  void _rememberProject(String name) {
+    _channel.invokeMethod<void>('rememberProject', {'name': name});
   }
 
   void _openSettings() {
@@ -861,6 +882,8 @@ class _StudioShellState extends State<StudioShell>
     }
     // 只写入事件；纹理与浮层统一在下一帧同步刷新（帧驱动，输入侧已就地 clamp）。
     rust.touch(kind, p.dx, p.dy, pointer);
+    // 触摸期间确保有下一帧（拖拽边缘自动滚动/预览依赖帧驱动）。
+    SchedulerBinding.instance.scheduleFrame();
   }
 
   /// 鼠标滚轮 / 触控板滚动：Ctrl（或 Cmd）+ 滚轮缩放（键盘区缩放音高轴，
@@ -1142,6 +1165,8 @@ class _StudioShellState extends State<StudioShell>
                 onPickMidi: _pickMidi,
                 onNewProject: _newProject,
                 onProjectSettings: _openProjectSettings,
+                onSaveProject: () => _saveProject(),
+                onSaveProjectAs: () => _saveProject(saveAs: true),
                 onOpenRecent: _openRecent,
                 onOpenSettings: _openSettings,
                 onBack: () => setState(() => _showHome = false),
@@ -1351,7 +1376,7 @@ class _StudioShellState extends State<StudioShell>
       padding: EdgeInsets.zero,
       onSelected: (v) {
         if (v == -2) {
-          _saveProject();
+          _saveProject(saveAs: true);
         } else {
           _selectDisplayTrack(v);
         }
