@@ -432,6 +432,12 @@ pub extern "system" fn Java_com_jieneng_yinhe_1flutter_MainActivity_nativeInitCo
 
 // ── dart:ffi 入口（Dart → Rust）──
 
+/// 拖拽边缘自动滚动（Flutter 每帧调用）。返回 1 = 已滚动。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_drag_tick() -> i32 {
+    edit::tick_scroll()
+}
+
 /// 触摸事件：`kind` 0=down 1=move 2=up，`x`/`y` 为画布逻辑像素。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_touch(kind: i32, x: f32, y: f32, pointer: i32) {
@@ -645,6 +651,24 @@ pub extern "C" fn yinhe_set_project_meta(
         unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
     };
     scene::set_project_meta(read(name), read(artist), read(description), ppq)
+}
+
+/// 音频设置 JSON：`{"max_voices":..,"buffer_size":..,"ignore_velocity":..}`。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_audio_settings_json() -> *mut std::ffi::c_char {
+    to_c_string(audio::settings_json())
+}
+
+/// 设置音频参数（max_voices=0 自动；buffer_size=0 设备默认，下次初始化生效）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_audio_settings(
+    max_voices: u32,
+    buffer_size: u32,
+    ignore_velocity: u32,
+) -> i32 {
+    audio::set_settings(max_voices, buffer_size, ignore_velocity.min(127) as u8);
+    scene::save_audio_settings();
+    1
 }
 
 /// 工程元数据 JSON（堆分配）。

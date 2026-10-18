@@ -24,6 +24,76 @@ struct AudioState {
     sf_sent: Option<String>,
 }
 
+/// 音频参数（设置页可调；max_voices=0 自动，buffer_size=0 设备默认）。
+#[derive(Clone, Copy)]
+pub struct AudioSettings {
+    pub max_voices: u32,
+    pub buffer_size: u32,
+    pub ignore_velocity: u8,
+}
+
+impl Default for AudioSettings {
+    fn default() -> Self {
+        Self {
+            max_voices: 1024,
+            buffer_size: 2048,
+            ignore_velocity: 1,
+        }
+    }
+}
+
+static AUDIO_SETTINGS: OnceLock<Mutex<AudioSettings>> = OnceLock::new();
+
+fn settings_slot() -> &'static Mutex<AudioSettings> {
+    AUDIO_SETTINGS.get_or_init(|| Mutex::new(AudioSettings::default()))
+}
+
+/// 当前音频设置。
+pub fn settings() -> AudioSettings {
+    settings_slot().lock().map(|g| *g).unwrap_or_default()
+}
+
+/// 应用音频设置：复音/忽略力度立即下发；buffer_size 下次音频初始化生效。
+pub fn set_settings(max_voices: u32, buffer_size: u32, ignore_velocity: u8) {
+    if let Ok(mut g) = settings_slot().lock() {
+        *g = AudioSettings {
+            max_voices,
+            buffer_size,
+            ignore_velocity,
+        };
+    }
+    let Some(mut guard) = lock_audio() else {
+        return;
+    };
+    let Some(st) = guard.as_mut() else {
+        return;
+    };
+    apply_runtime_settings(st);
+}
+
+/// 音频设置 JSON（设置页回显）。
+pub fn settings_json() -> String {
+    let s = settings();
+    format!(
+        "{{\"max_voices\":{},\"buffer_size\":{},\"ignore_velocity\":{}}}",
+        s.max_voices, s.buffer_size, s.ignore_velocity
+    )
+}
+
+fn apply_runtime_settings(st: &AudioState) {
+    let cfg = settings();
+    st.handle.handle.send(AudioCommand::SetMaxVoices {
+        max: if cfg.max_voices == 0 {
+            None
+        } else {
+            Some(cfg.max_voices as usize)
+        },
+    });
+    st.handle.handle.send(AudioCommand::SetIgnoreVelocity {
+        threshold: cfg.ignore_velocity,
+    });
+}
+
 static AUDIO: OnceLock<Mutex<Option<AudioState>>> = OnceLock::new();
 static SOUNDFONT: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
@@ -52,12 +122,18 @@ fn ensure_audio() -> bool {
     }
     use yinhe_audio::channel_layout::ChannelLayout;
     let layout = ChannelLayout::from_mask(vec![true; 16]);
-    // 固定 2048 帧缓冲：AAudio 动态调优在部分机型上收敛慢，固定值更稳
+    let cfg = settings();
+    // 缓冲默认 2048 帧：AAudio 动态调优在部分机型上收敛慢，固定值更稳
     // （cpal Fixed(n) 实际 capacity 为 2n；蓝牙 A2DP 路径需要更大缓冲）。
+    let buffer = if cfg.buffer_size == 0 {
+        cpal::BufferSize::Default
+    } else {
+        cpal::BufferSize::Fixed(cfg.buffer_size)
+    };
     let spawned = yinhe_audio::spawn_cpal_audio(
         48_000,
         layout,
-        cpal::BufferSize::Fixed(2048),
+        buffer,
         None,
         SynthEngine::YinheCpu,
         Interpolation::default(),
@@ -76,14 +152,9 @@ fn ensure_audio() -> bool {
                 send_soundfonts(&st.handle, path);
                 st.sf_sent = Some(path.clone());
             }
-            // 移动端音频适配：
-            // - 力度 ≤1 不发声（与桌面默认 ignore_velocity=1 一致）；
-            // - 复音上限从引擎默认 14336 降到 1024：黑乐谱密集段同 tick 数百
-            //   音符，voice 无限增长会让合成线程超时（听感断续/爆音）。
-            st.handle.handle.send(AudioCommand::SetIgnoreVelocity { threshold: 1 });
-            st.handle
-                .handle
-                .send(AudioCommand::SetMaxVoices { max: Some(1024) });
+            // 应用设置页配置（默认 ignore_velocity=1、max_voices=1024：
+            // 桌面级复音 14336 在黑乐谱密集段会让合成线程超时）。
+            apply_runtime_settings(&st);
             *guard = Some(st);
             true
         }

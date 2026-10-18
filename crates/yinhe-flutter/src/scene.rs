@@ -651,12 +651,31 @@ pub fn set_files_dir(dir: String) {
     load_settings();
 }
 
-/// 设置文件写入（音色库路径持久化）。
-pub fn save_soundfont_setting(path: &str) {
+/// 设置文件写入（音色库 + 音频参数持久化）。
+pub fn save_soundfont_setting(_path: &str) {
+    write_settings();
+}
+
+/// 音频设置变更后持久化（设置页调用）。
+pub fn save_audio_settings() {
+    write_settings();
+}
+
+fn write_settings() {
     let Some(dir) = files_dir_slot().lock().ok().and_then(|g| g.clone()) else {
         return;
     };
-    if let Err(e) = std::fs::write(format!("{dir}/settings.txt"), format!("soundfont={path}\n")) {
+    let sf = crate::audio::soundfont_path();
+    let a = crate::audio::settings();
+    let mut text = String::new();
+    if !sf.is_empty() {
+        text.push_str(&format!("soundfont={sf}\n"));
+    }
+    text.push_str(&format!(
+        "max_voices={}\nbuffer_size={}\nignore_velocity={}\n",
+        a.max_voices, a.buffer_size, a.ignore_velocity
+    ));
+    if let Err(e) = std::fs::write(format!("{dir}/settings.txt"), text) {
         log::error!("设置写入失败: {e}");
     }
 }
@@ -669,14 +688,24 @@ fn load_settings() {
     let Ok(text) = std::fs::read_to_string(format!("{dir}/settings.txt")) else {
         return;
     };
+    let mut max_voices = crate::audio::AudioSettings::default().max_voices;
+    let mut buffer_size = crate::audio::AudioSettings::default().buffer_size;
+    let mut ignore_velocity = crate::audio::AudioSettings::default().ignore_velocity;
     for line in text.lines() {
         if let Some(path) = line.strip_prefix("soundfont=")
             && !path.is_empty()
         {
             log::info!("恢复音色库设置: {path}");
             crate::audio::set_soundfont(path.to_string());
+        } else if let Some(v) = line.strip_prefix("max_voices=") {
+            max_voices = v.trim().parse().unwrap_or(max_voices);
+        } else if let Some(v) = line.strip_prefix("buffer_size=") {
+            buffer_size = v.trim().parse().unwrap_or(buffer_size);
+        } else if let Some(v) = line.strip_prefix("ignore_velocity=") {
+            ignore_velocity = v.trim().parse().unwrap_or(ignore_velocity);
         }
     }
+    crate::audio::set_settings(max_voices, buffer_size, ignore_velocity);
 }
 
 fn recent_file_path() -> Option<String> {
