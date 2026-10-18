@@ -18,13 +18,13 @@ class SelectionLongPressPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (moving.value) {
-      // 移动态：选框边框改虚线（优先于圆环）。
+      // 移动态：沿用选框原本的字体色描边，只把它变成虚线（不额外加强调色）。
       final o = overlay.value;
       final rects = <Rect>[...o.sel, if (o.box != null) o.box!];
       final paint = Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5
-        ..color = YinheTheme.accent;
+        ..strokeWidth = 1
+        ..color = YinheTheme.text.withValues(alpha: 0.45);
       for (final r in rects) {
         _dashedRect(canvas, r, paint);
       }
@@ -76,9 +76,13 @@ class SelectionLongPressPainter extends CustomPainter {
 
 /// 选框/预览浮层：持久选框 + 拖动框 + 刷子格（画布内容坐标）。
 class OverlayPainter extends CustomPainter {
-  OverlayPainter(this.overlay) : super(repaint: overlay);
+  OverlayPainter(this.overlay, this.moving)
+    : super(repaint: Listenable.merge([overlay, moving]));
 
   final ValueNotifier<OverlayData> overlay;
+
+  /// 移动态由 SelectionLongPressPainter 画虚线，这里只保留填充。
+  final ValueNotifier<bool> moving;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -90,7 +94,9 @@ class OverlayPainter extends CustomPainter {
       ..color = YinheTheme.text.withValues(alpha: 0.45);
     void rect(Rect r) {
       canvas.drawRect(r, fill);
-      canvas.drawRect(r, stroke);
+      if (!moving.value) {
+        canvas.drawRect(r, stroke);
+      }
     }
 
     for (final r in o.sel) {

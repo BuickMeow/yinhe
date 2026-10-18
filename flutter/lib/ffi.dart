@@ -105,7 +105,7 @@ typedef VoidActionDart = void Function();
 final VoidActionDart resetTouch = bridge
     .lookupFunction<VoidActionNative, VoidActionDart>('yinhe_reset_touch');
 
-/// 选框拖拽状态：0=无、1=待定（长按中）、2=移动态。
+/// 选框拖拽状态：0=无、1=待定（长按中）、2=移动态、3=空白处长按完成（待粘贴）。
 final ActionDart selectionState = bridge
     .lookupFunction<ActionNative, ActionDart>('yinhe_selection_state');
 
@@ -113,9 +113,20 @@ final ActionDart selectionState = bridge
 final ActionDart cancelSelectionPending = bridge
     .lookupFunction<ActionNative, ActionDart>('yinhe_cancel_selection_pending');
 
-/// 复制选中内容到右侧一格。
-final ActionDart duplicateSelection = bridge
-    .lookupFunction<ActionNative, ActionDart>('yinhe_duplicate_selection');
+/// 复制当前选中音符到应用内剪贴板。
+final ActionDart copySelection = bridge
+    .lookupFunction<ActionNative, ActionDart>('yinhe_copy_selection');
+
+/// 剪贴板是否为空：1 = 空。
+final ActionDart clipboardEmpty = bridge
+    .lookupFunction<ActionNative, ActionDart>('yinhe_clipboard_empty');
+
+typedef FloatArgNative = ffi.Int32 Function(ffi.Float);
+typedef FloatArgDart = int Function(double);
+
+/// 在长按位置（画布逻辑 x）粘贴剪贴板。
+final FloatArgDart pasteSelection = bridge
+    .lookupFunction<FloatArgNative, FloatArgDart>('yinhe_paste_selection');
 
 typedef SetTrackNameNative = ffi.Int32 Function(ffi.Int32, ffi.Pointer<Utf8>);
 typedef SetTrackNameDart = int Function(int, ffi.Pointer<Utf8>);

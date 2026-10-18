@@ -136,6 +136,9 @@ class _StudioShellState extends State<StudioShell>
 
   bool _dragging = false;
 
+  /// 鼠标中键拖拽的 pointer id（无论当前工具，都按手形平移）。
+  int? _middlePanPointer;
+
   /// PR 选框长按：圆环进度（500ms）；完成后进入移动态，未移动则弹菜单。
   Offset? _lpPos;
   DateTime? _lpStartTime;
@@ -177,8 +180,8 @@ class _StudioShellState extends State<StudioShell>
       if (_moveDashed.value != (selState == 2)) {
         _moveDashed.value = selState == 2;
       }
-      if (selState == 2) {
-        // 已转移动态：清掉圆环（虚线由 moving 分支绘制）。
+      if (selState == 2 || selState == 3) {
+        // 已转移动态/长按完成：清掉圆环（移动态虚线由 moving 分支绘制）。
         if (_lpProgress.value != 0) {
           _lpProgress.value = 0;
         }
@@ -932,6 +935,23 @@ class _StudioShellState extends State<StudioShell>
 
   // ── 触摸 / 手势 ──
 
+  bool _isMiddleMouse(PointerEvent e) =>
+      e.kind == PointerDeviceKind.mouse &&
+      (e.buttons & kMiddleMouseButton) != 0;
+
+  /// 中键按下：取消长按/编辑拖拽，强制进入平移（手形语义）。
+  void _beginMiddlePan(PointerDownEvent e) {
+    _middlePanPointer = e.pointer;
+    _cancelLongPressWatch();
+    _sendPanTouch(3, e.localPosition, e.pointer);
+  }
+
+  /// 中键平移事件（3=down 4=move 5=up）。
+  void _sendPanTouch(int kind, Offset p, int pointer) {
+    rust.touch(kind, p.dx, p.dy, pointer);
+    SchedulerBinding.instance.scheduleFrame();
+  }
+
   void _sendTouch(int kind, Offset p, int pointer) {
     // AR 长按拖动音轨/自动化锚点时无需转发 move（避免误平移），但 up/cancel
     // 必须转发：否则 Rust 触点表永久残留这根手指，下一次单指会被判成双指。
@@ -947,8 +967,8 @@ class _StudioShellState extends State<StudioShell>
     } else {
       rust.touch(kind, p.dx, p.dy, pointer);
       if (kind == 0) {
-        // 选框内按下由 Rust 进入 PENDING（500ms 后 Rust 自己转移动态）。
-        if (_viewMode == kViewPianoroll && rust.selectionState() == 1) {
+        // 选框内/空白处按下由 Rust 进入 PENDING（500ms 后自行转移动态或粘贴态）。
+        if (rust.selectionState() == 1) {
           _beginLongPressWatch(p);
         }
       } else if (kind == 1) {
@@ -959,10 +979,9 @@ class _StudioShellState extends State<StudioShell>
     SchedulerBinding.instance.scheduleFrame();
   }
 
-  /// PR 选框内按下：开始长按计时（圆环转满后进入移动态）。
+  /// 按下：开始长按计时（圆环转满后进入移动态或粘贴态）。
   ///
-  /// 判定由 Rust 的 PENDING 状态给出（与选框命中一致）；500ms 用定时器兜底，
-  /// 不依赖渲染帧。
+  /// 判定由 Rust 的 PENDING 状态给出；500ms 计时也在 Rust 帧循环里推进。
   void _beginLongPressWatch(Offset p) {
     _lpPos = p;
     _lpPosNotifier.value = p;
@@ -983,21 +1002,31 @@ class _StudioShellState extends State<StudioShell>
         _cancelLongPressWatch();
       }
     } else if (state == 2) {
-      // 已进入移动态：记录发生了移动（松手不弹菜单）。
-      _lpMoved = true;
+      // 已进入移动态：超过手指抖动阈值才算真的移动（否则松手仍弹复制菜单）。
+      if (_lpPos != null && (p - _lpPos!).distance > 12) {
+        _lpMoved = true;
+      }
+    } else if (state == 0) {
+      // Rust 已把空白长按转成普通框选：只收掉长按 UI，不取消框选。
+      _clearLongPressUi();
     }
+  }
+
+  /// 清理长按 UI 状态（不改 Rust 拖拽状态）。
+  void _clearLongPressUi() {
+    _lpStartTime = null;
+    _lpPos = null;
+    _lpPosNotifier.value = null;
+    _lpProgress.value = 0;
+    _lpMoved = false;
   }
 
   void _cancelLongPressWatch() {
     if (_lpStartTime == null) {
       return;
     }
-    _lpStartTime = null;
-    _lpPos = null;
-    _lpPosNotifier.value = null;
-    _lpProgress.value = 0;
+    _clearLongPressUi();
     _moveDashed.value = false;
-    _lpMoved = false;
     rust.cancelSelectionPending();
   }
 
@@ -1006,14 +1035,13 @@ class _StudioShellState extends State<StudioShell>
       return;
     }
     final moved = _lpMoved;
-    _lpStartTime = null;
-    _lpPos = null;
-    _lpPosNotifier.value = null;
-    _lpProgress.value = 0;
-    _lpMoved = false;
+    final pos = _lpPos;
+    _clearLongPressUi();
     // 虚线由 Ticker 依 state 关闭（up 后 state=0）。
     if (state == 2 && !moved) {
       _showSelectionMenu();
+    } else if (state == 3) {
+      _showPasteMenu(pos);
     }
   }
 
@@ -1030,10 +1058,51 @@ class _StudioShellState extends State<StudioShell>
           children: [
             ListTile(
               leading: const Icon(Icons.copy),
-              title: const Text('复制到右侧一格'),
+              title: const Text('复制'),
               onTap: () {
                 Navigator.of(ctx).pop();
-                if (rust.duplicateSelection() == 1) {
+                if (rust.copySelection() == 1) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('已复制'),
+                      duration: Duration(seconds: 1),
+                    ),
+                  );
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.close),
+              title: const Text('取消'),
+              onTap: () => Navigator.of(ctx).pop(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 空白处长按完成：粘贴菜单（粘贴到长按位置）。
+  void _showPasteMenu(Offset? pos) {
+    if (pos == null) {
+      return;
+    }
+    rust.resetTouch();
+    final empty = rust.clipboardEmpty() == 1;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: YinheTheme.bg,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              enabled: !empty,
+              leading: const Icon(Icons.paste),
+              title: const Text('粘贴'),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                if (rust.pasteSelection(pos.dx) == 1) {
                   _refreshDocumentMeta();
                 }
               },
@@ -1330,14 +1399,48 @@ class _StudioShellState extends State<StudioShell>
                               onLongPressEnd: (_) => _handleLongPressEnd(),
                               child: Listener(
                                 behavior: HitTestBehavior.opaque,
-                                onPointerDown: (e) =>
-                                    _sendTouch(0, e.localPosition, e.pointer),
-                                onPointerMove: (e) =>
-                                    _sendTouch(1, e.localPosition, e.pointer),
-                                onPointerUp: (e) =>
-                                    _sendTouch(2, e.localPosition, e.pointer),
-                                onPointerCancel: (e) =>
-                                    _sendTouch(2, e.localPosition, e.pointer),
+                                onPointerDown: (e) {
+                                  if (_isMiddleMouse(e)) {
+                                    _beginMiddlePan(e);
+                                  } else {
+                                    _sendTouch(0, e.localPosition, e.pointer);
+                                  }
+                                },
+                                onPointerMove: (e) {
+                                  if (_middlePanPointer == e.pointer) {
+                                    _sendPanTouch(
+                                      4,
+                                      e.localPosition,
+                                      e.pointer,
+                                    );
+                                  } else {
+                                    _sendTouch(1, e.localPosition, e.pointer);
+                                  }
+                                },
+                                onPointerUp: (e) {
+                                  if (_middlePanPointer == e.pointer) {
+                                    _middlePanPointer = null;
+                                    _sendPanTouch(
+                                      5,
+                                      e.localPosition,
+                                      e.pointer,
+                                    );
+                                  } else {
+                                    _sendTouch(2, e.localPosition, e.pointer);
+                                  }
+                                },
+                                onPointerCancel: (e) {
+                                  if (_middlePanPointer == e.pointer) {
+                                    _middlePanPointer = null;
+                                    _sendPanTouch(
+                                      5,
+                                      e.localPosition,
+                                      e.pointer,
+                                    );
+                                  } else {
+                                    _sendTouch(2, e.localPosition, e.pointer);
+                                  }
+                                },
                                 onPointerSignal: _handlePointerSignal,
                                 onPointerPanZoomStart: (_) =>
                                     _panZoomScale = 1.0,
@@ -1382,7 +1485,10 @@ class _StudioShellState extends State<StudioShell>
                               bottom: 0,
                               child: IgnorePointer(
                                 child: CustomPaint(
-                                  painter: OverlayPainter(_overlay),
+                                  painter: OverlayPainter(
+                                    _overlay,
+                                    _moveDashed,
+                                  ),
                                 ),
                               ),
                             ),
