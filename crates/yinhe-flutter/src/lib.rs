@@ -561,10 +561,22 @@ pub extern "C" fn yinhe_cancel_selection_pending() -> i32 {
     edit::cancel_pending()
 }
 
-/// 复制选中内容到右侧一个量化格。成功 1。
+/// 复制当前选中音符到应用内剪贴板。成功 1。
 #[unsafe(no_mangle)]
-pub extern "C" fn yinhe_duplicate_selection() -> i32 {
-    scene::duplicate_selection()
+pub extern "C" fn yinhe_copy_selection() -> i32 {
+    scene::copy_selection()
+}
+
+/// 剪贴板是否为空：1 = 空。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_clipboard_empty() -> i32 {
+    i32::from(scene::clipboard_empty())
+}
+
+/// 在长按位置（画布逻辑 x）粘贴剪贴板。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_paste_selection(x: f32) -> i32 {
+    scene::paste_selection(x)
 }
 
 /// 重命名音轨。成功 1。

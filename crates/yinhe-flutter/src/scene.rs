@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use yinhe_core::YinModel;
 use yinhe_editor_core::Document;
+use yinhe_editor_core::clipboard::{NotesClipboard, PasteMode};
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::NoteSource;
 use yinhe_types::{ArrangementView, PianoRollView, TimelineViewBase};
@@ -634,6 +635,9 @@ struct RecentEntry {
 static RECENT: OnceLock<Mutex<Vec<RecentEntry>>> = OnceLock::new();
 static FILES_DIR: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
+/// 应用内音符剪贴板（复制快照 + 选区，O(1) 结构共享）。
+static CLIPBOARD: Mutex<Option<NotesClipboard>> = Mutex::new(None);
+
 fn recent_slot() -> &'static Mutex<Vec<RecentEntry>> {
     RECENT.get_or_init(|| Mutex::new(Vec::new()))
 }
@@ -994,50 +998,106 @@ pub fn velocity_json() -> String {
     out
 }
 
-/// 复制当前选中内容到右侧一个量化格（长按菜单“复制”）。成功 1。
-pub fn duplicate_selection() -> i32 {
+/// 复制当前选中音符到应用内剪贴板（快照 O(1)）。成功 1。
+pub fn copy_selection() -> i32 {
+    let Ok(s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return 0;
+    };
+    if doc.edit.selected.is_empty() {
+        return 0;
+    }
+    let clipboard =
+        NotesClipboard::from_snapshot(doc.data.model.clone(), doc.edit.selected.clone());
+    drop(s);
+    let Ok(mut slot) = CLIPBOARD.lock() else {
+        return 0;
+    };
+    *slot = Some(clipboard);
+    1
+}
+
+/// 剪贴板是否为空（Dart 菜单置灰用）。
+pub fn clipboard_empty() -> bool {
+    let Ok(slot) = CLIPBOARD.lock() else {
+        return true;
+    };
+    match slot.as_ref() {
+        Some(clipboard) => clipboard.is_empty(),
+        None => true,
+    }
+}
+
+/// 在长按位置粘贴剪贴板（按当前量化吸附）。成功 1。
+pub fn paste_selection(x: f32) -> i32 {
+    let Some(clipboard) = CLIPBOARD.lock().ok().and_then(|slot| slot.clone()) else {
+        return 0;
+    };
+    if clipboard.is_empty() {
+        return 0;
+    }
     let Ok(mut s) = scene().lock() else {
         return 0;
     };
-    let view_mode = s.view_mode;
-    let ppq = s.ppq;
-    let (model, empty, interval) = {
+    // 先按当前视口算出长按位置对应的 tick，并用当前量化档吸附。
+    let tick = {
         let Some(doc) = s.document.as_ref() else {
             return 0;
         };
-        let q = match view_mode {
+        let (ppu, scroll_x, origin) = match s.view_mode {
+            ViewMode::Pianoroll => (
+                s.pr_view.base.pixels_per_tick,
+                s.pr_view.base.scroll_x,
+                s.pr_view.keyboard_width(),
+            ),
+            ViewMode::Arrangement => (
+                s.arr_view.base.pixels_per_tick,
+                s.arr_view.base.scroll_x,
+                s.arr_view.base.left_panel_width,
+            ),
+        };
+        let raw = f64::from((x - origin + scroll_x) / ppu.max(0.0001)).max(0.0);
+        let q = match s.view_mode {
             ViewMode::Pianoroll => doc.edit.quantize_pianoroll,
             ViewMode::Arrangement => doc.edit.quantize_arrange,
         };
-        let ppu = match view_mode {
-            ViewMode::Pianoroll => s.pr_view.base.pixels_per_tick,
-            ViewMode::Arrangement => s.arr_view.base.pixels_per_tick,
-        };
-        (
-            doc.data.model.clone(),
-            doc.edit.selected.is_empty(),
-            q.resolved(ppu, ppq).tick_interval(ppq).max(1),
-        )
+        q.resolved(ppu, s.ppq)
+            .snap_tick(raw, s.ppq)
+            .clamp(0.0, (s.total_ticks - 1.0).max(0.0))
     };
-    if empty {
-        return 0;
-    }
+
     let Some(doc) = s.document.as_mut() else {
         return 0;
     };
+    let track_selected = doc.edit.track_selected.clone();
     let before = doc.capture_snapshot();
-    let action = match view_mode {
-        ViewMode::Pianoroll => doc.duplicate_selected_to(i64::from(interval), 0),
-        ViewMode::Arrangement => doc.duplicate_selected_arrange(i64::from(interval), 0),
-    };
-    let Some(action) = action else {
+    let Some((action, _span)) =
+        doc.paste_notes(&clipboard, tick, &track_selected, PasteMode::AtCursor)
+    else {
         return 0;
     };
-    doc.push_undo(action, "undo.duplicate_move", before);
+    doc.push_undo(action, "undo.paste", before);
+
+    // paste_notes 只更新成员集；这里同步 PR/AR 选框，粘贴后可直接再次长按复制。
+    let rects = doc.edit.selected.rects.clone();
+    doc.edit.sel_rect.clear();
+    doc.edit.arr_sel_rect.clear();
+    for (t0, t1, klo, khi, trlo, trhi) in rects {
+        doc.edit
+            .sel_rect
+            .push_rect((f64::from(t0), f64::from(t1), klo, khi), false);
+        doc.edit
+            .arr_sel_rect
+            .push((f64::from(t0), f64::from(t1), trlo as usize, trhi as usize));
+    }
+    let model = doc.data.model.clone();
     refresh_snapshot(&mut s);
     drop(s);
     crate::audio::reload_notes(model);
-    log::info!("已复制选中内容");
+    set_play_cursor(tick);
+    log::info!("已粘贴剪贴板到 tick {tick:.0}");
     1
 }
 

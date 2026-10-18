@@ -28,6 +28,10 @@ mod kind {
     pub const ERASE: u8 = 7;
     /// 选框内按下、长按未完成（等待圆环转满）。
     pub const PENDING: u8 = 8;
+    /// 空白处按下、长按未完成（等待圆环转满后弹出粘贴菜单）。
+    pub const PENDING_PASTE: u8 = 9;
+    /// 空白处长按完成：松手时弹出粘贴菜单。
+    pub const PASTE_READY: u8 = 10;
 }
 
 #[derive(Clone)]
@@ -259,6 +263,14 @@ pub fn update(x: f32, y: f32) {
     }
     d.px = x;
     d.py = y;
+    // 空白处长按未完成时开始拖动：转为普通框选，不能把长按当成粘贴。
+    if d.kind == kind::PENDING_PASTE {
+        let moved = ((x - d.x0).powi(2) + (y - d.y0).powi(2)).sqrt();
+        if moved >= DRAG_THRESHOLD {
+            d.kind = kind::MARQUEE;
+            d.pending_at = None;
+        }
+    }
     let Ok(mut s) = scene::scene().lock() else {
         return;
     };
@@ -273,7 +285,7 @@ pub fn tick_scroll() -> i32 {
     if d.kind == kind::NONE {
         return 0;
     }
-    if d.kind == kind::PENDING {
+    if d.kind == kind::PENDING || d.kind == kind::PENDING_PASTE {
         let elapsed = d
             .pending_at
             .map(|t| t.elapsed())
@@ -281,12 +293,24 @@ pub fn tick_scroll() -> i32 {
         if elapsed < std::time::Duration::from_millis(500) {
             return 0;
         }
-        // 长按完成：转移动态（不依赖 Flutter 定时器）。
-        d.kind = kind::MOVE_BOX;
+        // 长按完成：选框内 → 移动态；空白处 → 等待松手弹粘贴菜单。
+        let pending_paste = d.kind == kind::PENDING_PASTE;
+        d.kind = if pending_paste {
+            kind::PASTE_READY
+        } else {
+            kind::MOVE_BOX
+        };
         d.pending_at = None;
         if let Ok(mut s) = scene::scene().lock() {
             bump(&mut s);
         }
+        if pending_paste {
+            // 粘贴态不参与边缘自动滚动。
+            return 0;
+        }
+    }
+    if d.kind == kind::PASTE_READY {
+        return 0;
     }
     let Ok(mut s) = scene::scene().lock() else {
         return 0;
@@ -367,12 +391,13 @@ pub fn tick_scroll() -> i32 {
     1
 }
 
-/// 选框拖拽状态：0=无、1=待定（长按中）、2=移动态。
+/// 选框拖拽状态：0=无、1=待定（长按中）、2=移动态、3=空白处长按完成（待粘贴）。
 pub fn selection_state() -> i32 {
     DRAG.lock()
         .map(|d| match d.kind {
-            kind::PENDING => 1,
+            kind::PENDING | kind::PENDING_PASTE => 1,
             kind::MOVE_BOX => 2,
+            kind::PASTE_READY => 3,
             _ => 0,
         })
         .unwrap_or(0)
@@ -383,10 +408,11 @@ pub fn cancel_pending() -> i32 {
     let Ok(mut d) = DRAG.lock() else {
         return 0;
     };
-    if d.kind != kind::PENDING {
+    if d.kind != kind::PENDING && d.kind != kind::PENDING_PASTE {
         return 0;
     }
     d.kind = kind::NONE;
+    d.pending_at = None;
     if let Ok(mut s) = scene::scene().lock() {
         s.overlay_box = None;
         bump(&mut s);
@@ -546,6 +572,13 @@ pub fn end(x: f32, y: f32) {
         kind::PENCIL => commit_pencil(&mut s, &d),
         kind::BRUSH => commit_brush(&mut s, &d),
         kind::ERASE => commit_erase(&mut s, &d, x, y, moved),
+        // 空白处长按未完成就松手：按普通点击处理（清空选择/移动光标）。
+        kind::PENDING_PASTE => {
+            click_tick = commit_marquee(&mut s, &d, x, y, false);
+            None
+        }
+        // 长按完成：什么都不改，松手后由 Flutter 弹粘贴菜单。
+        kind::PASTE_READY => None,
         _ => None,
     };
     d.kind = kind::NONE;
@@ -615,14 +648,11 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
                 d.pending_at = Some(std::time::Instant::now());
                 return;
             }
-            d.kind = kind::MARQUEE;
-            let x0 = geom.tick_to_x(anchor_tick).max(geom.kbw);
-            s.overlay_box = Some([
-                x0,
-                geom.key_to_y(anchor_key),
-                x0 + 1.0,
-                geom.key_to_y(anchor_key) + geom.kh,
-            ]);
+            // 空白处：先进入长按待定。拖动超过阈值会转成普通框选；
+            // 按住 500ms 松手则弹出粘贴菜单。
+            d.kind = kind::PENDING_PASTE;
+            d.pending_at = Some(std::time::Instant::now());
+            s.overlay_box = None;
             bump(s);
         }
         Tool::Pencil => {
@@ -675,14 +705,10 @@ fn begin_arr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
         d.pending_at = Some(std::time::Instant::now());
         return;
     }
-    d.kind = kind::MARQUEE;
-    let x0 = x.max(geom.panel_w);
-    s.overlay_box = Some([
-        x0,
-        geom.row_to_y(anchor_row),
-        x0 + 1.0,
-        geom.row_to_y(anchor_row + 1),
-    ]);
+    // 空白处：长按待定（同上），拖动后转框选。
+    d.kind = kind::PENDING_PASTE;
+    d.pending_at = Some(std::time::Instant::now());
+    s.overlay_box = None;
     bump(s);
 }
 
