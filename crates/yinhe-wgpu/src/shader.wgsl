@@ -8,6 +8,26 @@ const MAX_FILL_FADE: f32 = 0.5;
 // 选中填充：向「与背景对比最强的一极」混合的比例（暗色偏白、亮色偏黑）。
 const SELECTED_CONTRAST: f32 = 0.7;
 
+// 目标附着是否为 sRGB（pipeline override：1=是）。项目内所有颜色（调色板、
+// 主题、打包的装饰色）都以 sRGB 分量表示；写入 sRGB 附着前必须先转线性，
+// 否则硬件会再编码一次，整体变淡。
+override SRGB_TARGET: u32 = 0u;
+
+/// sRGB 分量转线性（逐通道；alpha 不变）。
+fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+    let lo = c / 12.92;
+    let hi = pow((c + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
+    return select(lo, hi, c > vec3<f32>(0.04045));
+}
+
+/// 按目标附着做颜色空间转换（仅在 sRGB 附着时生效）。
+fn to_target_space(c: vec4<f32>) -> vec4<f32> {
+    if SRGB_TARGET == 1u {
+        return vec4<f32>(srgb_to_linear(c.rgb), c.a);
+    }
+    return c;
+}
+
 struct Uniforms {
     width: f32,
     height: f32,
@@ -277,6 +297,7 @@ fn vs_main(
         base_color.b = f32((rgba >> 16u) & 0xFFu) / 255.0;
         base_color.a = f32((rgba >> 24u) & 0xFFu) / 255.0;
     }
+    base_color = to_target_space(base_color);
     out.color = base_color;
     out.fill_color = base_color.rgb; // 非音符管线不做选中/力度着色
 
@@ -423,6 +444,7 @@ fn note_geometry(
     } else {
         base_color = vec4<f32>(0.5, 0.5, 0.5, 1.0);
     }
+    base_color = to_target_space(base_color);
     out.color = base_color;
 
     // 填充色：仅 PR（mode==1）按选中/力度变化；AR 等其它模式保持原色。
@@ -544,6 +566,7 @@ fn vs_main_velocity(
     } else {
         base_color = vec4<f32>(0.5, 0.5, 0.5, 1.0);
     }
+    base_color = to_target_space(base_color);
     out.color = base_color;
     out.fill_color = base_color.rgb; // 力度条不做选中/力度着色
 
@@ -719,12 +742,12 @@ fn vs_main_curve(
     out.shape = instance.shape;
 
     let rgba = instance.rgba;
-    out.color = vec4<f32>(
+    out.color = to_target_space(vec4<f32>(
         f32((rgba >> 0u)  & 0xFFu) / 255.0,
         f32((rgba >> 8u)  & 0xFFu) / 255.0,
         f32((rgba >> 16u) & 0xFFu) / 255.0,
         f32((rgba >> 24u) & 0xFFu) / 255.0,
-    );
+    ));
     return out;
 }
 

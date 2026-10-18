@@ -62,6 +62,14 @@ impl RenderPipelineState {
         render_shader: &ShaderModule,
         all_bind_group_layout: &BindGroupLayout,
     ) -> Self {
+        // 目标附着为 sRGB 时，着色器把 sRGB 颜色分量转为线性再输出，
+        // 避免硬件二次编码导致整体变淡（与 egui/调色板显示值一致）。
+        let srgb_constants = [("SRGB_TARGET", if format.is_srgb() { 1.0 } else { 0.0 })];
+        let compilation_options = || PipelineCompilationOptions {
+            constants: &srgb_constants,
+            ..PipelineCompilationOptions::default()
+        };
+
         // Main uniforms buffer
         let uniform_size = std::mem::size_of::<Uniforms>() as u64;
         let uniform_buffer = TrackedBuffer::new(
@@ -287,7 +295,7 @@ impl RenderPipelineState {
                         1 => Uint32x4,
                     ],
                 })],
-                compilation_options: PipelineCompilationOptions::default(),
+                compilation_options: compilation_options(),
             },
             fragment: Some(FragmentState {
                 module: render_shader,
@@ -297,7 +305,7 @@ impl RenderPipelineState {
                     blend: Some(BlendState::ALPHA_BLENDING),
                     write_mask: ColorWrites::ALL,
                 })],
-                compilation_options: PipelineCompilationOptions::default(),
+                compilation_options: compilation_options(),
             }),
             primitive: PrimitiveState {
                 topology: PrimitiveTopology::TriangleList,
@@ -323,7 +331,7 @@ impl RenderPipelineState {
                     step_mode: VertexStepMode::Instance,
                     attributes: &vertex_attr_array![0 => Uint32],
                 })],
-                compilation_options: PipelineCompilationOptions::default(),
+                compilation_options: compilation_options(),
             },
             fragment: Some(FragmentState {
                 module: render_shader,
@@ -333,7 +341,7 @@ impl RenderPipelineState {
                     blend: None,
                     write_mask: ColorWrites::ALL,
                 })],
-                compilation_options: PipelineCompilationOptions::default(),
+                compilation_options: compilation_options(),
             }),
             primitive: PrimitiveState {
                 topology: PrimitiveTopology::TriangleList,
@@ -360,7 +368,7 @@ impl RenderPipelineState {
                         0 => Uint32x3,
                     ],
                 })],
-                compilation_options: PipelineCompilationOptions::default(),
+                compilation_options: compilation_options(),
             },
             fragment: Some(FragmentState {
                 module: render_shader,
@@ -370,7 +378,7 @@ impl RenderPipelineState {
                     blend: None,
                     write_mask: ColorWrites::ALL,
                 })],
-                compilation_options: PipelineCompilationOptions::default(),
+                compilation_options: compilation_options(),
             }),
             primitive: PrimitiveState {
                 topology: PrimitiveTopology::TriangleList,
@@ -401,7 +409,7 @@ impl RenderPipelineState {
                         3 => Uint32,     // shape @ offset 24
                     ],
                 })],
-                compilation_options: PipelineCompilationOptions::default(),
+                compilation_options: compilation_options(),
             },
             fragment: Some(FragmentState {
                 module: render_shader,
@@ -411,7 +419,7 @@ impl RenderPipelineState {
                     blend: Some(BlendState::ALPHA_BLENDING),
                     write_mask: ColorWrites::ALL,
                 })],
-                compilation_options: PipelineCompilationOptions::default(),
+                compilation_options: compilation_options(),
             }),
             primitive: PrimitiveState {
                 topology: PrimitiveTopology::TriangleList,
@@ -443,7 +451,7 @@ impl RenderPipelineState {
                         3 => Uint32,
                     ],
                 })],
-                compilation_options: PipelineCompilationOptions::default(),
+                compilation_options: compilation_options(),
             },
             fragment: Some(FragmentState {
                 module: render_shader,
@@ -464,7 +472,7 @@ impl RenderPipelineState {
                     }),
                     write_mask: ColorWrites::ALL,
                 })],
-                compilation_options: PipelineCompilationOptions::default(),
+                compilation_options: compilation_options(),
             }),
             primitive: PrimitiveState {
                 topology: PrimitiveTopology::TriangleList,
@@ -491,7 +499,7 @@ impl RenderPipelineState {
                         0 => Uint32x4,
                     ],
                 })],
-                compilation_options: PipelineCompilationOptions::default(),
+                compilation_options: compilation_options(),
             },
             fragment: Some(FragmentState {
                 module: render_shader,
@@ -501,7 +509,7 @@ impl RenderPipelineState {
                     blend: None,
                     write_mask: ColorWrites::ALL,
                 })],
-                compilation_options: PipelineCompilationOptions::default(),
+                compilation_options: compilation_options(),
             }),
             primitive: PrimitiveState {
                 topology: PrimitiveTopology::TriangleList,

@@ -146,6 +146,9 @@ impl InstanceRenderer {
     }
 
     /// Upload track colors to the GPU.  Skips the write when the value is unchanged.
+    ///
+    /// 颜色以 sRGB 分量传入（调色板/主题即显示值）；写入 sRGB 附着时的
+    /// sRGB→线性转换由着色器按 pipeline override `SRGB_TARGET` 统一完成。
     pub fn upload_track_colors(&mut self, colors: &[[f32; 4]]) {
         self.ensure_track_colors_capacity(colors.len());
         if self.cached_track_colors.as_deref() != Some(colors) {
