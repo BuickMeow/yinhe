@@ -110,6 +110,9 @@ class _StudioShellState extends State<StudioShell>
   /// 歌曲标题（meta.name；空 = 未设置）。
   String _songTitle = '';
 
+  /// AR 折叠态自动化竖线。
+  List<ArAutomationLane> _arAutomation = const [];
+
   /// 覆盖层（选框/预览）与修订号。
   final ValueNotifier<OverlayData> _overlay = ValueNotifier(OverlayData.empty);
   int _overlayRev = 0;
@@ -439,6 +442,7 @@ class _StudioShellState extends State<StudioShell>
     _loadAutomation();
     _loadVelocity();
     _loadSongTitle();
+    _loadArAutomation();
   }
 
   Future<void> _onNativeCall(MethodCall call) async {
@@ -609,6 +613,29 @@ class _StudioShellState extends State<StudioShell>
       return;
     }
     setState(() => _velocityBars = bars);
+  }
+
+  /// 读取 AR 折叠态自动化竖线（所有可见轨）。
+  void _loadArAutomation() {
+    final ptr = rust.arAutomationJson();
+    var lanes = const <ArAutomationLane>[];
+    if (ptr != ffi.nullptr) {
+      try {
+        final list = jsonDecode(ptr.toDartString()) as List<dynamic>;
+        lanes = [
+          for (final e in list)
+            ArAutomationLane.fromJson(e as Map<String, dynamic>),
+        ];
+      } catch (_) {
+        lanes = const [];
+      } finally {
+        rust.freeString(ptr);
+      }
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() => _arAutomation = lanes);
   }
 
   /// 读取歌曲标题（meta.name）。
@@ -1115,10 +1142,11 @@ class _StudioShellState extends State<StudioShell>
                               child: IgnorePointer(
                                 child: CustomPaint(
                                   painter: LabelsPainter(
-                                    _snap,
-                                    _tracks,
-                                    _dragFrom,
-                                    _dragTo,
+                                    snap: _snap,
+                                    tracks: _tracks,
+                                    dragFrom: _dragFrom,
+                                    dragTo: _dragTo,
+                                    arAutomation: _arAutomation,
                                   ),
                                 ),
                               ),

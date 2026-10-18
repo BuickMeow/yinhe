@@ -38,6 +38,32 @@ class OverlayData {
   }
 }
 
+/// AR 折叠态自动化竖线（轨道索引 + 基线 + (tick, value) 点）。
+class ArAutomationLane {
+  const ArAutomationLane({
+    required this.track,
+    required this.baseline,
+    required this.points,
+  });
+
+  final int track;
+  final double baseline;
+  final List<Offset> points;
+
+  static ArAutomationLane fromJson(Map<String, dynamic> json) {
+    final raw = (json['p'] as List<dynamic>?) ?? const [];
+    return ArAutomationLane(
+      track: (json['t'] as num?)?.toInt() ?? 0,
+      baseline: (json['b'] as num?)?.toDouble() ?? 0.0,
+      points: [
+        for (final e in raw)
+          if (e is List && e.length >= 2)
+            Offset((e[0] as num).toDouble(), (e[1] as num).toDouble()),
+      ],
+    );
+  }
+}
+
 /// 轨道面板行数据（Rust tracks_json）。
 class TrackRow {
   const TrackRow({
