@@ -378,28 +378,6 @@ pub fn selection_state() -> i32 {
         .unwrap_or(0)
 }
 
-/// 当前是否处于选框待定态（长按未完成）。
-pub fn is_pending() -> bool {
-    DRAG.lock()
-        .map(|d| d.kind == kind::PENDING)
-        .unwrap_or(false)
-}
-
-/// 长按完成：待定选框转为移动态（框变虚线由 Flutter 绘制）。成功 1。
-pub fn begin_move_selection() -> i32 {
-    let Ok(mut d) = DRAG.lock() else {
-        return 0;
-    };
-    if d.kind != kind::PENDING {
-        return 0;
-    }
-    d.kind = kind::MOVE_BOX;
-    if let Ok(mut s) = scene::scene().lock() {
-        bump(&mut s);
-    }
-    1
-}
-
 /// 取消待定（未完成长按就移动/取消）。成功 1。
 pub fn cancel_pending() -> i32 {
     let Ok(mut d) = DRAG.lock() else {

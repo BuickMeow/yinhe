@@ -1179,6 +1179,8 @@ pub fn scroll_at(x: f32, y: f32, dx: f32, dy: f32, ctrl: bool) -> i32 {
             s.arr_view.clamp_scroll(lw, lh, total, num_tracks);
         }
     }
+    // 视图变化后选框需按内容坐标重算屏幕位置（与桌面逐帧换算一致）。
+    s.overlay_rev = s.overlay_rev.wrapping_add(1);
     1
 }
 
@@ -1212,6 +1214,8 @@ pub fn zoom_at(x: f32, y: f32, factor: f32) -> i32 {
             s.arr_view.clamp_scroll(lw, lh, total, num_tracks);
         }
     }
+    // 同上：缩放后选框随内容移动。
+    s.overlay_rev = s.overlay_rev.wrapping_add(1);
     1
 }
 

@@ -444,6 +444,12 @@ pub extern "C" fn yinhe_touch(kind: i32, x: f32, y: f32, pointer: i32) {
     input::on_touch(kind, x, y, pointer);
 }
 
+/// 清空触摸状态并取消编辑（模态窗口打开/App 切后台时调用）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_reset_touch() {
+    input::reset_all();
+}
+
 /// 切换视图：0=AR 走带，1=PR 卷帘。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_set_view_mode(mode: i32) {
@@ -547,12 +553,6 @@ pub extern "C" fn yinhe_velocity_json() -> *mut std::ffi::c_char {
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_selection_state() -> i32 {
     edit::selection_state()
-}
-
-/// 长按完成：待定选框转移动态。成功 1。
-#[unsafe(no_mangle)]
-pub extern "C" fn yinhe_begin_move_selection() -> i32 {
-    edit::begin_move_selection()
 }
 
 /// 取消待定选框（未完成长按）。成功 1。

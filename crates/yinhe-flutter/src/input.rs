@@ -87,6 +87,15 @@ pub fn reset() {
     }
 }
 
+/// 丢弃手势并取消编辑：模态窗口打开/App 切后台时调用。
+///
+/// Flutter 在路由切换或生命周期变化时可能收不到某个触点的 up，
+/// 残留触点会让下一次单指被误判为双指（平移/缩放）。
+pub fn reset_all() {
+    reset();
+    crate::edit::cancel();
+}
+
 fn reset_baseline(g: &mut GestureState) {
     g.baseline = match g.pointers.len() {
         1 => Some(Baseline {
@@ -130,6 +139,9 @@ fn apply(g: &mut GestureState) {
             s.arr_view.clamp_scroll(lw, lh, total_ticks, num_tracks);
         }
     }
+    // 视口变了：覆盖层里的选框是按内容坐标换算的屏幕矩形，必须失效重算，
+    // 否则 Flutter 会继续画旧矩形，选框看起来钉在屏幕上（桌面每帧重算）。
+    s.overlay_rev = s.overlay_rev.wrapping_add(1);
     drop(s);
 
     reset_baseline(g);
