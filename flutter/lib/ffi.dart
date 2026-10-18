@@ -121,6 +121,15 @@ final ActionDart copySelection = bridge
 final ActionDart clipboardEmpty = bridge
     .lookupFunction<ActionNative, ActionDart>('yinhe_clipboard_empty');
 
+typedef GenerationNative = ffi.Uint32 Function();
+typedef GenerationDart = int Function();
+
+/// 文档/选区世代号（变化时刷新轨道/自动化浮层）。
+final GenerationDart documentGeneration = bridge
+    .lookupFunction<GenerationNative, GenerationDart>(
+      'yinhe_document_generation',
+    );
+
 typedef FloatArgNative = ffi.Int32 Function(ffi.Float);
 typedef FloatArgDart = int Function(double);
 
