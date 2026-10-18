@@ -139,6 +139,7 @@ class _StudioShellState extends State<StudioShell>
   /// PR 选框长按：圆环进度（500ms）；完成后进入移动态，未移动则弹菜单。
   Offset? _lpPos;
   DateTime? _lpStartTime;
+  Timer? _lpTimer;
   bool _lpDone = false;
   bool _lpMoved = false;
   final ValueNotifier<double> _lpProgress = ValueNotifier(0);
@@ -173,16 +174,10 @@ class _StudioShellState extends State<StudioShell>
         _snap.value = snap;
       }
       _readOverlay();
-      // 选框长按进度（500ms 圆环；完成后进入移动态）。
+      // 选框长按圆环进度（完成由 500ms 定时器兜底，不依赖帧）。
       if (_lpStartTime != null && !_lpDone) {
         final ms = DateTime.now().difference(_lpStartTime!).inMilliseconds;
-        final v = (ms / 500).clamp(0.0, 1.0);
-        _lpProgress.value = v;
-        if (v >= 1.0) {
-          _lpDone = true;
-          _moveDashed.value = true;
-          rust.beginMoveSelection();
-        }
+        _lpProgress.value = (ms / 500).clamp(0.0, 1.0);
       }
       // 工程状态/时间码降频（每 ~66ms）：减少音频锁与历史栈分配开销。
       _frameCounter++;
@@ -210,6 +205,7 @@ class _StudioShellState extends State<StudioShell>
     _dragFrom.dispose();
     _dragTo.dispose();
     _autoPreview.dispose();
+    _lpTimer?.cancel();
     _lpProgress.dispose();
     _lpPosNotifier.dispose();
     _moveDashed.dispose();
@@ -930,14 +926,16 @@ class _StudioShellState extends State<StudioShell>
     if (_dragging || _draggingAnchor) {
       return;
     }
-    if (kind == 0) {
-      _startLongPressWatch(p);
-    } else if (kind == 1) {
-      _updateLongPressWatch(p);
-    }
     // 只写入事件；纹理与浮层统一在下一帧同步刷新（帧驱动，输入侧已就地 clamp）。
     rust.touch(kind, p.dx, p.dy, pointer);
-    if (kind == 2) {
+    if (kind == 0) {
+      // 选框内按下由 Rust 进入 PENDING；这里启动长按计时/圆环。
+      if (_viewMode == kViewPianoroll && rust.selectionPending() == 1) {
+        _beginLongPressWatch(p);
+      }
+    } else if (kind == 1) {
+      _updateLongPressWatch(p);
+    } else if (kind == 2) {
       _finishLongPressWatch();
     }
     // 触摸期间确保有下一帧（拖拽边缘自动滚动/预览依赖帧驱动）。
@@ -945,14 +943,11 @@ class _StudioShellState extends State<StudioShell>
   }
 
   /// PR 选框内按下：开始长按计时（圆环转满后进入移动态）。
-  void _startLongPressWatch(Offset p) {
-    if (_viewMode != kViewPianoroll || _tool != 0) {
-      return;
-    }
-    final inSel = _overlay.value.sel.any((r) => r.contains(p));
-    if (!inSel) {
-      return;
-    }
+  ///
+  /// 判定由 Rust 的 PENDING 状态给出（与选框命中一致）；500ms 用定时器兜底，
+  /// 不依赖渲染帧。
+  void _beginLongPressWatch(Offset p) {
+    _lpTimer?.cancel();
     _lpPos = p;
     _lpPosNotifier.value = p;
     _lpStartTime = DateTime.now();
@@ -960,6 +955,17 @@ class _StudioShellState extends State<StudioShell>
     _lpMoved = false;
     _lpProgress.value = 0;
     _moveDashed.value = false;
+    _lpTimer = Timer(const Duration(milliseconds: 500), _completeLongPress);
+  }
+
+  void _completeLongPress() {
+    if (_lpStartTime == null || _lpDone) {
+      return;
+    }
+    _lpDone = true;
+    _lpProgress.value = 1.0;
+    _moveDashed.value = true;
+    rust.beginMoveSelection();
   }
 
   void _updateLongPressWatch(Offset p) {
@@ -967,7 +973,7 @@ class _StudioShellState extends State<StudioShell>
       return;
     }
     if (!_lpDone) {
-      if ((p - _lpPos!).distance > 8) {
+      if ((p - _lpPos!).distance > 12) {
         _cancelLongPressWatch();
       }
       return;
@@ -976,6 +982,7 @@ class _StudioShellState extends State<StudioShell>
   }
 
   void _cancelLongPressWatch() {
+    _lpTimer?.cancel();
     if (_lpStartTime == null) {
       return;
     }
@@ -989,6 +996,7 @@ class _StudioShellState extends State<StudioShell>
   }
 
   void _finishLongPressWatch() {
+    _lpTimer?.cancel();
     if (_lpStartTime == null) {
       return;
     }
