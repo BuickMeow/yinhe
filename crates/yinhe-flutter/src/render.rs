@@ -549,11 +549,7 @@ fn upload_arrangement_decor(
             if idx % 2 == 0 {
                 items.push(DrawInstance::solid_rect(0.0, y, w, lane_h, tc::STRIPE_BG));
             }
-            let color = track_colors
-                .get(idx)
-                .copied()
-                .unwrap_or([0.5, 0.5, 0.5, 1.0]);
-            items.push(DrawInstance::solid_rect(0.0, y, 14.0, lane_h, color));
+            // 色带由 Flutter 绘制（sRGB 直绘保持饱和；与桌面 egui badge 一致）。
         }
         items.push(DrawInstance::solid_rect(
             panel - 1.0,

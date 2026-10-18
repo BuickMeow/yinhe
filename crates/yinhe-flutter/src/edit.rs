@@ -45,6 +45,8 @@ struct DragState {
     /// 已选框的内容坐标范围（PR: tick/key，AR: tick/row）。
     box_ticks: Option<(f64, f64, u8, u8)>,
     box_rows: Option<(f64, f64, usize, usize)>,
+    /// PENDING 起始时间（500ms 后自动转移动态）。
+    pending_at: Option<std::time::Instant>,
     /// 单音符拖动：目标音符。
     track: u16,
     start_tick: u32,
@@ -71,6 +73,7 @@ impl Default for DragState {
             anchor_row: 0,
             box_ticks: None,
             box_rows: None,
+            pending_at: None,
             track: 0,
             start_tick: 0,
             key: 0,
@@ -94,6 +97,7 @@ static DRAG: std::sync::Mutex<DragState> = std::sync::Mutex::new(DragState {
     anchor_row: 0,
     box_ticks: None,
     box_rows: None,
+    pending_at: None,
     track: 0,
     start_tick: 0,
     key: 0,
@@ -266,8 +270,23 @@ pub fn tick_scroll() -> i32 {
     let Ok(mut d) = DRAG.lock() else {
         return 0;
     };
-    if d.kind == kind::NONE || d.kind == kind::PENDING {
+    if d.kind == kind::NONE {
         return 0;
+    }
+    if d.kind == kind::PENDING {
+        let elapsed = d
+            .pending_at
+            .map(|t| t.elapsed())
+            .unwrap_or(std::time::Duration::ZERO);
+        if elapsed < std::time::Duration::from_millis(500) {
+            return 0;
+        }
+        // 长按完成：转移动态（不依赖 Flutter 定时器）。
+        d.kind = kind::MOVE_BOX;
+        d.pending_at = None;
+        if let Ok(mut s) = scene::scene().lock() {
+            bump(&mut s);
+        }
     }
     let Ok(mut s) = scene::scene().lock() else {
         return 0;
@@ -346,6 +365,17 @@ pub fn tick_scroll() -> i32 {
     }
     refresh_preview(&mut d, &mut s);
     1
+}
+
+/// 选框拖拽状态：0=无、1=待定（长按中）、2=移动态。
+pub fn selection_state() -> i32 {
+    DRAG.lock()
+        .map(|d| match d.kind {
+            kind::PENDING => 1,
+            kind::MOVE_BOX => 2,
+            _ => 0,
+        })
+        .unwrap_or(0)
 }
 
 /// 当前是否处于选框待定态（长按未完成）。
@@ -601,9 +631,10 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
                 return;
             }
             if let Some(rect) = pr_box_at(s, x, y) {
-                // 长按 500ms 后才进入移动（Flutter 侧圆环），避免误拖。
+                // 长按 500ms 后才进入移动（Rust 每帧计时，Flutter 只画圆环）。
                 d.kind = kind::PENDING;
                 d.box_ticks = Some(rect);
+                d.pending_at = Some(std::time::Instant::now());
                 return;
             }
             d.kind = kind::MARQUEE;
@@ -663,6 +694,7 @@ fn begin_arr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
     if let Some(rect) = arr_box_at(s, &geom, x, y) {
         d.kind = kind::PENDING;
         d.box_rows = Some(rect);
+        d.pending_at = Some(std::time::Instant::now());
         return;
     }
     d.kind = kind::MARQUEE;
