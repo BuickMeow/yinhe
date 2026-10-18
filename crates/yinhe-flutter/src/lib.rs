@@ -541,6 +541,12 @@ pub extern "C" fn yinhe_velocity_json() -> *mut std::ffi::c_char {
     to_c_string(scene::velocity_json())
 }
 
+/// AR 折叠态自动化竖线 JSON（堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_ar_automation_json() -> *mut std::ffi::c_char {
+    to_c_string(scene::ar_automation_json())
+}
+
 /// 滚轮/触控板：ctrl=1 缩放（键盘/面板区副轴，其余主轴），否则平移。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_scroll_at(x: f32, y: f32, dx: f32, dy: f32, ctrl: i32) -> i32 {

@@ -36,8 +36,13 @@ struct DragState {
     /// 最后指针位置（内容逻辑坐标；自动滚动时用于重算预览）。
     px: f32,
     py: f32,
-    /// 已选框拖动时的起始框（内容逻辑坐标）。
-    box0: Option<[f32; 4]>,
+    /// 内容锚点（拖动开始时吸附后的 tick/key/row；视图滚动后仍固定）。
+    anchor_tick: f64,
+    anchor_key: u8,
+    anchor_row: usize,
+    /// 已选框的内容坐标范围（PR: tick/key，AR: tick/row）。
+    box_ticks: Option<(f64, f64, u8, u8)>,
+    box_rows: Option<(f64, f64, usize, usize)>,
     /// 单音符拖动：目标音符。
     track: u16,
     start_tick: u32,
@@ -59,7 +64,11 @@ impl Default for DragState {
             y0: 0.0,
             px: 0.0,
             py: 0.0,
-            box0: None,
+            anchor_tick: 0.0,
+            anchor_key: 0,
+            anchor_row: 0,
+            box_ticks: None,
+            box_rows: None,
             track: 0,
             start_tick: 0,
             key: 0,
@@ -78,7 +87,11 @@ static DRAG: std::sync::Mutex<DragState> = std::sync::Mutex::new(DragState {
     y0: 0.0,
     px: 0.0,
     py: 0.0,
-    box0: None,
+    anchor_tick: 0.0,
+    anchor_key: 0,
+    anchor_row: 0,
+    box_ticks: None,
+    box_rows: None,
     track: 0,
     start_tick: 0,
     key: 0,
@@ -281,9 +294,8 @@ pub fn tick_scroll() -> i32 {
     let num_tracks = s.num_tracks;
     let moved = match s.view_mode {
         ViewMode::Pianoroll => {
-            let kbw = s.pr_view.keyboard_width();
             let mut changed = false;
-            if px >= kbw && vx != 0.0 {
+            if vx != 0.0 {
                 *s.pr_view.main_scroll() -= vx;
                 changed = true;
             }
@@ -297,9 +309,8 @@ pub fn tick_scroll() -> i32 {
             changed
         }
         ViewMode::Arrangement => {
-            let panel = s.arr_view.base.left_panel_width;
             let mut changed = false;
-            if px >= panel && vx != 0.0 {
+            if vx != 0.0 {
                 s.arr_view.base.scroll_x -= vx;
                 changed = true;
             }
@@ -330,34 +341,35 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                     let geom = PrGeom::new(&s.pr_view);
                     let q = quantize_of(s);
                     let interval = f64::from(q.tick_interval(s.ppq).max(1));
-                    let ta = snap_round(&q, geom.x_to_tick(d.x0.min(x)), s.ppq);
-                    let mut tb = snap_round(&q, geom.x_to_tick(d.x0.max(x)), s.ppq);
+                    let cur = snap_round(&q, geom.x_to_tick(x), s.ppq);
+                    let ta = d.anchor_tick.min(cur).max(0.0);
+                    let mut tb = d.anchor_tick.max(cur).max(0.0);
                     if tb <= ta {
                         tb = ta + interval;
                     }
-                    let ka = geom.y_to_key(d.y0.max(y));
-                    let kb = geom.y_to_key(d.y0.min(y));
+                    let k_cur = geom.y_to_key(y);
+                    let (klo, khi) = (d.anchor_key.min(k_cur), d.anchor_key.max(k_cur));
                     [
-                        geom.tick_to_x(ta),
-                        geom.key_to_y(kb),
+                        geom.tick_to_x(ta).max(geom.kbw),
+                        geom.key_to_y(khi),
                         geom.tick_to_x(tb),
-                        geom.key_to_y(ka) + geom.kh,
+                        geom.key_to_y(klo) + geom.kh,
                     ]
                 }
                 ViewMode::Arrangement => {
                     let geom = ArGeom::new(&s.arr_view);
                     let q = quantize_of(s);
                     let interval = f64::from(q.tick_interval(s.ppq).max(1));
-                    let ta = snap_round(&q, geom.x_to_tick(d.x0.min(x)), s.ppq);
-                    let mut tb = snap_round(&q, geom.x_to_tick(d.x0.max(x)), s.ppq);
+                    let cur = snap_round(&q, geom.x_to_tick(x), s.ppq);
+                    let ta = d.anchor_tick.min(cur).max(0.0);
+                    let mut tb = d.anchor_tick.max(cur).max(0.0);
                     if tb <= ta {
                         tb = ta + interval;
                     }
-                    let ra = geom.y_to_row(d.y0.min(y));
-                    let rb = geom.y_to_row(d.y0.max(y));
-                    let (rlo, rhi) = (ra.min(rb), ra.max(rb));
+                    let r_cur = geom.y_to_row(y);
+                    let (rlo, rhi) = (d.anchor_row.min(r_cur), d.anchor_row.max(r_cur));
                     [
-                        geom.tick_to_x(ta),
+                        geom.tick_to_x(ta).max(geom.panel_w),
                         geom.row_to_y(rlo),
                         geom.tick_to_x(tb),
                         geom.row_to_y(rhi + 1),
@@ -368,34 +380,51 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
             bump(s);
         }
         kind::MOVE_BOX => {
-            if let Some(b) = d.box0 {
-                let b2 = match s.view_mode {
-                    ViewMode::Pianoroll => {
-                        let geom = PrGeom::new(&s.pr_view);
-                        let q = quantize_of(s);
-                        let dt = (snap_round(&q, geom.x_to_tick(x), s.ppq)
-                            - snap_round(&q, geom.x_to_tick(d.x0), s.ppq))
-                            as f32;
-                        let dk = f32::from(geom.y_to_key(y)) - f32::from(geom.y_to_key(d.y0));
-                        let dx = dt * geom.ppu;
-                        let dy = -dk * geom.kh;
-                        [b[0] + dx, b[1] + dy, b[2] + dx, b[3] + dy]
+            let b2 = match s.view_mode {
+                ViewMode::Pianoroll => {
+                    let Some((t0, t1, klo, khi)) = d.box_ticks else {
+                        return;
+                    };
+                    let geom = PrGeom::new(&s.pr_view);
+                    let q = quantize_of(s);
+                    let mut dt = snap_round(&q, geom.x_to_tick(x), s.ppq) - d.anchor_tick;
+                    if t0 + dt < 0.0 {
+                        dt = -t0;
                     }
-                    ViewMode::Arrangement => {
-                        let geom = ArGeom::new(&s.arr_view);
-                        let q = quantize_of(s);
-                        let dt = (snap_round(&q, geom.x_to_tick(x), s.ppq)
-                            - snap_round(&q, geom.x_to_tick(d.x0), s.ppq))
-                            as f32;
-                        let dtr = geom.y_to_row(y) as f32 - geom.y_to_row(d.y0) as f32;
-                        let dx = dt * geom.ppu;
-                        let dy = dtr * geom.lane_h;
-                        [b[0] + dx, b[1] + dy, b[2] + dx, b[3] + dy]
+                    let dk = i32::from(geom.y_to_key(y)) - i32::from(d.anchor_key);
+                    let klo2 = (i32::from(klo) + dk).clamp(0, 127) as u8;
+                    let khi2 = (i32::from(khi) + dk).clamp(0, 127) as u8;
+                    [
+                        geom.tick_to_x(t0 + dt).max(geom.kbw),
+                        geom.key_to_y(khi2),
+                        geom.tick_to_x(t1 + dt),
+                        geom.key_to_y(klo2) + geom.kh,
+                    ]
+                }
+                ViewMode::Arrangement => {
+                    let Some((t0, t1, rlo, rhi)) = d.box_rows else {
+                        return;
+                    };
+                    let geom = ArGeom::new(&s.arr_view);
+                    let q = quantize_of(s);
+                    let mut dt = snap_round(&q, geom.x_to_tick(x), s.ppq) - d.anchor_tick;
+                    if t0 + dt < 0.0 {
+                        dt = -t0;
                     }
-                };
-                s.overlay_box = Some(b2);
-                bump(s);
-            }
+                    let dtr = geom.y_to_row(y) as i32 - d.anchor_row as i32;
+                    let max_row = s.num_tracks.saturating_sub(1) as i32;
+                    let rlo2 = (rlo as i32 + dtr).clamp(0, max_row) as usize;
+                    let rhi2 = (rhi as i32 + dtr).clamp(0, max_row) as usize;
+                    [
+                        geom.tick_to_x(t0 + dt).max(geom.panel_w),
+                        geom.row_to_y(rlo2),
+                        geom.tick_to_x(t1 + dt),
+                        geom.row_to_y(rhi2 + 1),
+                    ]
+                }
+            };
+            s.overlay_box = Some(b2);
+            bump(s);
         }
         kind::PENCIL => {
             let geom = PrGeom::new(&s.pr_view);
@@ -496,8 +525,14 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
     if x < geom.kbw {
         return; // 键盘区不响应编辑
     }
+    let q = quantize_of(s);
+    // 内容锚点：吸附后的 tick（滚动视图后仍固定，不随视图漂移）。
+    let anchor_tick = snap_round(&q, geom.x_to_tick(x), s.ppq);
+    let anchor_key = geom.y_to_key(y);
     match s.tool {
         Tool::Select => {
+            d.anchor_tick = anchor_tick;
+            d.anchor_key = anchor_key;
             if let Some((track, start_tick, key, side)) = hit_note(s, &geom, x, y) {
                 d.kind = if side == 0 {
                     kind::NOTE_MOVE
@@ -510,38 +545,48 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
                 d.side = side;
                 return;
             }
-            if let Some(b) = pr_box_at(s, x, y) {
+            if let Some(rect) = pr_box_at(s, x, y) {
                 d.kind = kind::MOVE_BOX;
-                d.box0 = Some(b);
-                s.overlay_box = Some(b);
+                d.box_ticks = Some(rect);
+                s.overlay_box = Some([
+                    geom.tick_to_x(rect.0).max(geom.kbw),
+                    geom.key_to_y(rect.3),
+                    geom.tick_to_x(rect.1),
+                    geom.key_to_y(rect.2) + geom.kh,
+                ]);
                 bump(s);
                 return;
             }
             d.kind = kind::MARQUEE;
-            s.overlay_box = Some([x, y, x, y]);
+            let x0 = geom.tick_to_x(anchor_tick).max(geom.kbw);
+            s.overlay_box = Some([
+                x0,
+                geom.key_to_y(anchor_key),
+                x0 + 1.0,
+                geom.key_to_y(anchor_key) + geom.kh,
+            ]);
             bump(s);
         }
         Tool::Pencil => {
-            let q = quantize_of(s);
-            let tick = snap_round(&q, geom.x_to_tick(x), s.ppq);
-            let key = geom.y_to_key(y);
             let gate = f64::from(q.tick_interval(s.ppq).max(1));
             d.kind = kind::PENCIL;
-            d.start_f = tick;
-            d.cur_end = tick + gate;
-            d.key = key;
+            d.start_f = anchor_tick;
+            d.cur_end = anchor_tick + gate;
+            d.key = anchor_key;
+            d.anchor_tick = anchor_tick;
+            d.anchor_key = anchor_key;
             pencil_box(s, d, &geom);
         }
         Tool::Eraser => {
             d.kind = kind::ERASE;
+            d.anchor_tick = anchor_tick;
+            d.anchor_key = anchor_key;
             s.overlay_box = Some([x, y, x, y]);
             bump(s);
         }
         Tool::Brush => {
-            let q = quantize_of(s);
             let interval = u64::from(q.tick_interval(s.ppq).max(1));
-            let tick = snap_round(&q, geom.x_to_tick(x), s.ppq);
-            let cell = ((tick as u64 / interval) as u32, geom.y_to_key(y));
+            let cell = ((anchor_tick as u64 / interval) as u32, anchor_key);
             d.kind = kind::BRUSH;
             d.last_cell = cell;
             d.cells.clear();
@@ -561,15 +606,31 @@ fn begin_arr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
     if s.tool != Tool::Select {
         return; // AR 只开放选框与手形
     }
-    if let Some(b) = arr_box_at(s, &geom, x, y) {
+    let q = quantize_of(s);
+    let anchor_tick = snap_round(&q, geom.x_to_tick(x), s.ppq);
+    let anchor_row = geom.y_to_row(y);
+    d.anchor_tick = anchor_tick;
+    d.anchor_row = anchor_row;
+    if let Some(rect) = arr_box_at(s, &geom, x, y) {
         d.kind = kind::MOVE_BOX;
-        d.box0 = Some(b);
-        s.overlay_box = Some(b);
+        d.box_rows = Some(rect);
+        s.overlay_box = Some([
+            geom.tick_to_x(rect.0).max(geom.panel_w),
+            geom.row_to_y(rect.2),
+            geom.tick_to_x(rect.1),
+            geom.row_to_y(rect.3 + 1),
+        ]);
         bump(s);
         return;
     }
     d.kind = kind::MARQUEE;
-    s.overlay_box = Some([x, y, x, y]);
+    let x0 = x.max(geom.panel_w);
+    s.overlay_box = Some([
+        x0,
+        geom.row_to_y(anchor_row),
+        x0 + 1.0,
+        geom.row_to_y(anchor_row + 1),
+    ]);
     bump(s);
 }
 
@@ -616,7 +677,7 @@ fn hit_note(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option<(u16, u32,
 }
 
 /// PR 已选框命中（像素坐标，取第一个）。
-fn pr_box_at(s: &RenderScene, x: f32, y: f32) -> Option<[f32; 4]> {
+fn pr_box_at(s: &RenderScene, x: f32, y: f32) -> Option<(f64, f64, u8, u8)> {
     let doc = s.document.as_ref()?;
     let view = &s.pr_view;
     for (t0, t1, klo, khi) in doc.edit.sel_rect.effective_rects() {
@@ -627,14 +688,14 @@ fn pr_box_at(s: &RenderScene, x: f32, y: f32) -> Option<[f32; 4]> {
             view.key_to_y(klo) + view.key_height,
         ];
         if x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3] {
-            return Some(b);
+            return Some((t0, t1, klo, khi));
         }
     }
     None
 }
 
 /// AR 已选框命中。
-fn arr_box_at(s: &RenderScene, geom: &ArGeom, x: f32, y: f32) -> Option<[f32; 4]> {
+fn arr_box_at(s: &RenderScene, geom: &ArGeom, x: f32, y: f32) -> Option<(f64, f64, usize, usize)> {
     let doc = s.document.as_ref()?;
     for (t0, t1, tr_lo, tr_hi) in &doc.edit.arr_sel_rect {
         let b = [
@@ -644,7 +705,7 @@ fn arr_box_at(s: &RenderScene, geom: &ArGeom, x: f32, y: f32) -> Option<[f32; 4]
             geom.row_to_y(tr_hi + 1),
         ];
         if x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3] {
-            return Some(b);
+            return Some((*t0, *t1, *tr_lo, *tr_hi));
         }
     }
     None
@@ -679,14 +740,14 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
                 // 点击空白：移动播放光标（与桌面一致）。
                 click_tick = Some(geom_pr.x_to_tick(x));
             } else {
-                let ta = snap_round(&q, geom_pr.x_to_tick(d.x0.min(x)), ppq) as u32;
-                let mut tb = snap_round(&q, geom_pr.x_to_tick(d.x0.max(x)), ppq) as u32;
+                let cur = snap_round(&q, geom_pr.x_to_tick(x), ppq);
+                let ta = d.anchor_tick.min(cur).max(0.0) as u32;
+                let mut tb = d.anchor_tick.max(cur).max(0.0) as u32;
                 if tb <= ta {
                     tb = ta + interval;
                 }
-                let ka = geom_pr.y_to_key(d.y0.max(y));
-                let kb = geom_pr.y_to_key(d.y0.min(y));
-                let (klo, khi) = (ka.min(kb), ka.max(kb));
+                let k_cur = geom_pr.y_to_key(y);
+                let (klo, khi) = (d.anchor_key.min(k_cur), d.anchor_key.max(k_cur));
                 let (tr_lo, tr_hi) = match write {
                     Some(t) => (t as u16, t as u16),
                     None => (0, num_tracks.saturating_sub(1) as u16),
@@ -708,14 +769,15 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
                 click_tick = Some(geom_ar.x_to_tick(x));
                 click_row = Some(geom_ar.y_to_row(y));
             } else {
-                let ta = snap_round(&q, geom_ar.x_to_tick(d.x0.min(x)), ppq) as u32;
-                let mut tb = snap_round(&q, geom_ar.x_to_tick(d.x0.max(x)), ppq) as u32;
+                let cur = snap_round(&q, geom_ar.x_to_tick(x), ppq);
+                let ta = d.anchor_tick.min(cur).max(0.0) as u32;
+                let mut tb = d.anchor_tick.max(cur).max(0.0) as u32;
                 if tb <= ta {
                     tb = ta + interval;
                 }
-                let ra = geom_ar.y_to_row(d.y0.min(y));
-                let rb = geom_ar.y_to_row(d.y0.max(y));
-                let (tr_lo, tr_hi) = (ra.min(rb), ra.max(rb).min(num_tracks.saturating_sub(1)));
+                let r_cur = geom_ar.y_to_row(y);
+                let (rlo, rhi) = (d.anchor_row.min(r_cur), d.anchor_row.max(r_cur));
+                let (tr_lo, tr_hi) = (rlo, rhi.min(num_tracks.saturating_sub(1)));
                 let Document { edit, data, .. } = doc;
                 edit.selected.clear();
                 edit.arr_sel_rect.clear();
@@ -751,15 +813,17 @@ fn commit_move(
     if !moved {
         return None;
     }
-    let num_tracks = s.num_tracks;
     match s.view_mode {
         ViewMode::Pianoroll => {
             let geom = PrGeom::new(&s.pr_view);
             let q = quantize_of(s);
-            let dt = (q.snap_tick(geom.x_to_tick(x), s.ppq)
-                - q.snap_tick(geom.x_to_tick(d.x0), s.ppq))
-            .round() as i64;
-            let dk = i32::from(geom.y_to_key(y)) - i32::from(geom.y_to_key(d.y0));
+            let t0 = d.box_ticks.map(|b| b.0).unwrap_or(0.0);
+            let mut dt = snap_round(&q, geom.x_to_tick(x), s.ppq) - d.anchor_tick;
+            if t0 + dt < 0.0 {
+                dt = -t0;
+            }
+            let dt = dt.round() as i64;
+            let dk = i32::from(geom.y_to_key(y)) - i32::from(d.anchor_key);
             if dt == 0 && dk == 0 {
                 return None;
             }
@@ -783,13 +847,17 @@ fn commit_move(
         ViewMode::Arrangement => {
             let geom = ArGeom::new(&s.arr_view);
             let q = quantize_of(s);
-            let dt = (q.snap_tick(geom.x_to_tick(x), s.ppq)
-                - q.snap_tick(geom.x_to_tick(d.x0), s.ppq))
-            .round() as i64;
-            let dtr = geom.y_to_row(y) as i32 - geom.y_to_row(d.y0) as i32;
+            let t0 = d.box_rows.map(|b| b.0).unwrap_or(0.0);
+            let mut dt = snap_round(&q, geom.x_to_tick(x), s.ppq) - d.anchor_tick;
+            if t0 + dt < 0.0 {
+                dt = -t0;
+            }
+            let dt = dt.round() as i64;
+            let dtr = geom.y_to_row(y) as i32 - d.anchor_row as i32;
             if dt == 0 && dtr == 0 {
                 return None;
             }
+            let num_tracks = s.num_tracks;
             let doc = s.document.as_mut()?;
             let before = doc.capture_snapshot();
             if let Some(action) = doc.move_selected_arrange(dt, dtr) {
@@ -822,9 +890,8 @@ fn commit_note_move(
     }
     let geom = PrGeom::new(&s.pr_view);
     let q = quantize_of(s);
-    let dt = (q.snap_tick(geom.x_to_tick(x), s.ppq) - q.snap_tick(geom.x_to_tick(d.x0), s.ppq))
-        .round() as i64;
-    let dk = i32::from(geom.y_to_key(y)) - i32::from(geom.y_to_key(d.y0));
+    let dt = (snap_round(&q, geom.x_to_tick(x), s.ppq) - d.anchor_tick).round() as i64;
+    let dk = i32::from(geom.y_to_key(y)) - i32::from(d.anchor_key);
     if dt == 0 && dk == 0 {
         return None;
     }
