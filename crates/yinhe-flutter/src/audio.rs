@@ -124,6 +124,28 @@ pub fn set_soundfont(path: String) {
     log::info!("音色库已应用: {path}");
 }
 
+/// 音符编辑（移动/增删/改长度）：只重建 audible_notes，不中断播放。
+pub fn update_notes(model: Arc<YinModel>) {
+    let Some(mut guard) = lock_audio() else {
+        return;
+    };
+    let Some(st) = guard.as_mut() else {
+        return;
+    };
+    st.handle.handle.send(AudioCommand::UpdateNotes { model });
+}
+
+/// 自动化/轨道/撤销重做等结构性编辑：重建 CC + audible_notes，不中断播放。
+pub fn reload_notes(model: Arc<YinModel>) {
+    let Some(mut guard) = lock_audio() else {
+        return;
+    };
+    let Some(st) = guard.as_mut() else {
+        return;
+    };
+    st.handle.handle.send(AudioCommand::ReloadNotes { model });
+}
+
 /// 文档加载完成：把模型交给音频引擎，并补发音色库（若已选）。
 pub fn on_model_loaded(model: Arc<YinModel>) {
     if !ensure_audio() {

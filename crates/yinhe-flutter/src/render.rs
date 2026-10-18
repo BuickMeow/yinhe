@@ -511,9 +511,14 @@ fn upload_pianoroll_decor(t: &mut Target, view: &PianoRollView, ppq: u32, w: f32
         ));
     }
     push_time_grid(&mut items, &view.base, ppq, w, h, kb_w, true);
-    // 装饰数量小且随视口变化：每帧重建（cache_key=0 强制）。
+    // 缓存键：视图/尺寸/ppq 不变时跳过重建（播放静止时省 CPU）。
+    let mut key = view.render_hash();
+    key ^= (w.to_bits() as u64) << 17;
+    key ^= (h.to_bits() as u64) << 29;
+    key ^= u64::from(ppq).rotate_left(5);
+    let key = yinhe_wgpu::layer_cache_key(&[key, VIEW_TAG_PIANOROLL ^ 0xD1CE]);
     t.renderer
-        .upload_decor_layer(0, 0, |out| out.extend_from_slice(&items));
+        .upload_decor_layer(0, key, |out| out.extend_from_slice(&items));
 }
 
 /// AR 装饰：轨道行背景/色条 + 时间轴网格。
@@ -559,8 +564,19 @@ fn upload_arrangement_decor(
         ));
     }
     push_time_grid(&mut items, &view.base, ppq, w, h, panel, false);
+    // 缓存键：视图/尺寸/ppq/轨道色不变时跳过重建。
+    let mut key = view.render_hash();
+    key ^= (w.to_bits() as u64) << 17;
+    key ^= (h.to_bits() as u64) << 29;
+    key ^= u64::from(ppq).rotate_left(5);
+    for c in track_colors.iter().take(64) {
+        for v in c {
+            key ^= u64::from(v.to_bits()).rotate_left(9);
+        }
+    }
+    let key = yinhe_wgpu::layer_cache_key(&[key, VIEW_TAG_ARRANGEMENT ^ 0xD1CE]);
     t.renderer
-        .upload_decor_layer(0, 0, |out| out.extend_from_slice(&items));
+        .upload_decor_layer(0, key, |out| out.extend_from_slice(&items));
 }
 
 /// 时间轴网格线（与桌面 `paint_grid_lines` 同规则；默认 4/4 定拍）。

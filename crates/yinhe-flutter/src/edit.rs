@@ -315,7 +315,8 @@ pub fn end(x: f32, y: f32) {
         scene::set_play_cursor(tick);
     }
     if let Some(m) = edited {
-        crate::audio::on_model_loaded(m);
+        // 纯音符编辑：增量更新，不停止播放。
+        crate::audio::update_notes(m);
     }
 }
 

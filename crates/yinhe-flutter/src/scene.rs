@@ -567,19 +567,23 @@ pub fn move_track(from: usize, to: usize) -> i32 {
 ///
 /// 坐标原点与画布一致（含键盘列/轨道面板偏移），Dart 直接画竖线。
 pub fn playhead_x() -> f32 {
+    // 注意锁顺序：playback_tick 内部会锁 scene，必须先算 tick 再锁 scene
+    // （持 scene 锁调用 audio 会自锁死）。
     let playing = crate::audio::is_playing();
+    let tick = if playing {
+        crate::audio::playback_tick()
+    } else {
+        let Ok(s) = scene().lock() else {
+            return -1.0;
+        };
+        s.cursor_tick
+    };
     let Ok(s) = scene().lock() else {
         return -1.0;
     };
     if s.model.is_none() {
         return -1.0;
     }
-    // 播放中跟随音频；停止/暂停时停在点击设置的光标位置。
-    let tick = if playing {
-        crate::audio::playback_tick()
-    } else {
-        s.cursor_tick
-    };
     match s.view_mode {
         ViewMode::Pianoroll => s.pr_view.tick_to_x(tick),
         ViewMode::Arrangement => s.arr_view.base.tick_to_x(tick),
@@ -1097,8 +1101,8 @@ pub fn set_automation_value(track: usize, lane_index: usize, tick: u32, value: f
     let model = doc.data.model.clone();
     refresh_snapshot(&mut s);
     drop(s);
-    // 力度/CC 变化会影响发声：demo 阶段整模型重载。
-    crate::audio::on_model_loaded(model);
+    // 自动化变化：重建 CC（不中断播放）。
+    crate::audio::reload_notes(model);
     log::info!("自动化编辑: track={track} lane={lane_index} tick={tick} value={value:.3}");
     1
 }
@@ -1126,7 +1130,8 @@ fn history_step(step: impl FnOnce(&mut Document) -> bool) -> i32 {
     let model = doc.data.model.clone();
     refresh_snapshot(&mut s);
     drop(s);
-    crate::audio::on_model_loaded(model);
+    // 撤销/重做可能改动音符或自动化：重载 CC（不中断播放）。
+    crate::audio::reload_notes(model);
     1
 }
 
