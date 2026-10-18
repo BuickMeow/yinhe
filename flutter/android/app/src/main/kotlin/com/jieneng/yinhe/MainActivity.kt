@@ -3,6 +3,8 @@ package com.jieneng.yinhe
 import android.content.Intent
 import android.provider.OpenableColumns
 import android.util.Log
+import android.view.InputDevice
+import android.view.MotionEvent
 import android.view.Surface
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -46,6 +48,9 @@ class MainActivity : FlutterActivity() {
 
     /** 延迟到 Dart 请求纹理时才创建 SurfaceProducer（see ensureProducer）。 */
     private var engine: FlutterEngine? = null
+
+    /** 原生层已拦截的鼠标中键拖拽（避免 Flutter 把中键当左键）。 */
+    private var middlePanActive = false
 
     /** 本代 surface 是否已发送给 Rust（同一窗口重复设置会触发 IN_USE）。 */
     private var surfaceSent = false
@@ -216,6 +221,65 @@ class MainActivity : FlutterActivity() {
         // 若 surface 已惰性创建则立即发送（回调在部分引擎版本不触发）。
         surfaceReady(p)
         return p
+    }
+
+    // ── 鼠标中键平移 ──────────────────────────────────────────────
+    // 一些 Android 设备/模拟器会把中键映射成左键，Flutter 的 PointerEvent
+    // buttons 就不可靠。这里在原生 MotionEvent 层直接识别 BUTTON_TERTIARY，
+    // 消费事件并通过 MethodChannel 交给 Dart 走手形平移。
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (handleMiddlePan(ev)) {
+            return true
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    override fun dispatchGenericMotionEvent(ev: MotionEvent): Boolean {
+        if (handleMiddlePan(ev)) {
+            return true
+        }
+        return super.dispatchGenericMotionEvent(ev)
+    }
+
+    private fun handleMiddlePan(ev: MotionEvent): Boolean {
+        if (ev.source and InputDevice.SOURCE_MOUSE != InputDevice.SOURCE_MOUSE) {
+            return false
+        }
+        val middle =
+            (ev.buttonState and MotionEvent.BUTTON_TERTIARY) != 0 ||
+                ev.actionButton == MotionEvent.BUTTON_TERTIARY
+        val action = ev.actionMasked
+        if (action == MotionEvent.ACTION_DOWN) {
+            Log.i(TAG, "mouse down buttons=${ev.buttonState} actionButton=${ev.actionButton}")
+            if (!middle) {
+                return false
+            }
+            middlePanActive = true
+            sendMiddlePan(0, ev)
+            return true
+        }
+        if (!middlePanActive) {
+            return false
+        }
+        if (action == MotionEvent.ACTION_MOVE) {
+            sendMiddlePan(1, ev)
+            return true
+        }
+        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            middlePanActive = false
+            sendMiddlePan(2, ev)
+            return true
+        }
+        return false
+    }
+
+    /** 原生像素坐标交给 Dart，由 Dart 换算成画布逻辑坐标。 */
+    private fun sendMiddlePan(kind: Int, ev: MotionEvent) {
+        methodChannel?.invokeMethod(
+            "middlePan",
+            mapOf("kind" to kind, "x" to ev.x.toDouble(), "y" to ev.y.toDouble()),
+        )
     }
 
     /** surface 可用/重建：每代只发送一次（created/available 可能都回调）。 */
