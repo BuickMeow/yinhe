@@ -227,6 +227,9 @@ class _StudioShellState extends State<StudioShell>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    } else {
+      // 切后台/失去焦点时触点 up 可能收不到：清空，避免残留成“幽灵手指”。
+      rust.resetTouch();
     }
   }
 
@@ -364,6 +367,7 @@ class _StudioShellState extends State<StudioShell>
           .showSnackBar(const SnackBar(content: Text('请先打开 MIDI 或新建工程')));
       return;
     }
+    rust.resetTouch();
     showDialog<void>(
       context: context,
       builder: (_) => _ProjectDialog(
@@ -929,7 +933,9 @@ class _StudioShellState extends State<StudioShell>
   // ── 触摸 / 手势 ──
 
   void _sendTouch(int kind, Offset p, int pointer) {
-    if (_dragging || _draggingAnchor) {
+    // AR 长按拖动音轨/自动化锚点时无需转发 move（避免误平移），但 up/cancel
+    // 必须转发：否则 Rust 触点表永久残留这根手指，下一次单指会被判成双指。
+    if ((_dragging || _draggingAnchor) && kind != 2) {
       return;
     }
     // 只写入事件；纹理与浮层统一在下一帧同步刷新（帧驱动，输入侧已就地 clamp）。
@@ -1013,6 +1019,8 @@ class _StudioShellState extends State<StudioShell>
 
   /// 长按完成但未移动：选区操作菜单。
   void _showSelectionMenu() {
+    // 打开模态层前清空触摸状态（路由切换时 up 可能丢失）。
+    rust.resetTouch();
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: YinheTheme.bg,
@@ -1170,6 +1178,8 @@ class _StudioShellState extends State<StudioShell>
 
   /// AR 长按音轨（未拖动）：音轨信息菜单。
   void _showTrackMenu(int track) {
+    // 打开模态层前清空触摸状态（长按排序的 up 可能晚于弹层）。
+    rust.resetTouch();
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: YinheTheme.bg,
@@ -1202,6 +1212,7 @@ class _StudioShellState extends State<StudioShell>
     if (track < 0 || track >= rows.length) {
       return;
     }
+    rust.resetTouch();
     final controller = TextEditingController(text: rows[track].name);
     // 对话框关闭动画期间 TextField 仍持有 controller：延迟到完全关闭后释放。
     showDialog<void>(

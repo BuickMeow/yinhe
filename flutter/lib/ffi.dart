@@ -98,13 +98,16 @@ final IntArgDart setDisplayTrack = bridge
 typedef ActionNative = ffi.Int32 Function();
 typedef ActionDart = int Function();
 
+typedef VoidActionNative = ffi.Void Function();
+typedef VoidActionDart = void Function();
+
+/// 清空 Rust 触摸状态（模态窗口/后台切换后调用，避免残留触点）。
+final VoidActionDart resetTouch = bridge
+    .lookupFunction<VoidActionNative, VoidActionDart>('yinhe_reset_touch');
+
 /// 选框拖拽状态：0=无、1=待定（长按中）、2=移动态。
 final ActionDart selectionState = bridge
     .lookupFunction<ActionNative, ActionDart>('yinhe_selection_state');
-
-/// 长按完成：待定选框转移动态。成功 1。
-final ActionDart beginMoveSelection = bridge
-    .lookupFunction<ActionNative, ActionDart>('yinhe_begin_move_selection');
 
 /// 取消待定选框（未完成长按）。
 final ActionDart cancelSelectionPending = bridge
