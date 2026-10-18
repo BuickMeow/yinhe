@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 /// 项目专用 AVD（与日常测试一致）。
 const DEFAULT_AVD: &str = "yinhe-dev";
 const DEFAULT_TIMEOUT_SECS: u64 = 240;
-const PACKAGE: &str = "com.jieneng.yinhe_flutter";
-const ACTIVITY: &str = "com.jieneng.yinhe_flutter/.MainActivity";
+const PACKAGE: &str = "com.jieneng.yinhe";
+const ACTIVITY: &str = "com.jieneng.yinhe/.MainActivity";
 const RELEASE_APK: &str = "flutter/build/app/outputs/flutter-apk/app-release.apk";
 const DEBUG_APK: &str = "flutter/build/app/outputs/flutter-apk/app-debug.apk";
 

@@ -274,7 +274,7 @@ fn apply_cmd(gpu: &mut Option<Gpu>, target: &mut Option<render::Target>, cmd: Cm
 // JVM 保证 env/surface 句柄有效；JNI 导出函数无法用 Rust 安全类型表达入参。
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_jieneng_yinhe_1flutter_MainActivity_nativeSetSurface(
+pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeSetSurface(
     env: *mut jni::sys::JNIEnv,
     _this: jni::sys::jobject,
     surface: jni::sys::jobject,
@@ -298,7 +298,7 @@ pub extern "system" fn Java_com_jieneng_yinhe_1flutter_MainActivity_nativeSetSur
 
 /// `MainActivity.nativeClearSurface()`：surface 销毁。
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_jieneng_yinhe_1flutter_MainActivity_nativeClearSurface(
+pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeClearSurface(
     _env: *mut jni::sys::JNIEnv,
     _this: jni::sys::jobject,
 ) {
@@ -310,7 +310,7 @@ pub extern "system" fn Java_com_jieneng_yinhe_1flutter_MainActivity_nativeClearS
 
 /// `MainActivity.nativeSetSize(w, h)`：surface 像素尺寸（resize 只重配置交换链）。
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_jieneng_yinhe_1flutter_MainActivity_nativeSetSize(
+pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeSetSize(
     _env: *mut jni::sys::JNIEnv,
     _this: jni::sys::jobject,
     width: jni::sys::jint,
@@ -322,7 +322,7 @@ pub extern "system" fn Java_com_jieneng_yinhe_1flutter_MainActivity_nativeSetSiz
 
 /// `MainActivity.nativeSetViewport(w, h)`：画布逻辑尺寸（Flutter 逻辑像素）。
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_jieneng_yinhe_1flutter_MainActivity_nativeSetViewport(
+pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeSetViewport(
     _env: *mut jni::sys::JNIEnv,
     _this: jni::sys::jobject,
     width: jni::sys::jfloat,
@@ -334,7 +334,7 @@ pub extern "system" fn Java_com_jieneng_yinhe_1flutter_MainActivity_nativeSetVie
 
 /// `MainActivity.onFilePicked(path)`：SAF 选择结果（已复制到私有目录）。
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_jieneng_yinhe_1flutter_MainActivity_onFilePicked<'local>(
+pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_onFilePicked<'local>(
     mut env: jni::EnvUnowned<'local>,
     _this: jni::objects::JObject<'local>,
     path: jni::objects::JString<'local>,
@@ -352,7 +352,7 @@ pub extern "system" fn Java_com_jieneng_yinhe_1flutter_MainActivity_onFilePicked
 
 /// `MainActivity.onSoundFontPicked(path)`：音色库（SF2/SF3）已复制到私有目录。
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_jieneng_yinhe_1flutter_MainActivity_onSoundFontPicked<'local>(
+pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_onSoundFontPicked<'local>(
     mut env: jni::EnvUnowned<'local>,
     _this: jni::objects::JObject<'local>,
     path: jni::objects::JString<'local>,
@@ -392,7 +392,7 @@ fn read_jstring(env: &mut jni::EnvUnowned<'_>, s: &jni::objects::JString<'_>) ->
 /// cpal 的 Android 后端（AAudio）需要 JavaVM + `android.content.Context`；
 /// 传入 `applicationContext`（Application 单例由系统持有，无需额外全局引用）。
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_jieneng_yinhe_1flutter_MainActivity_nativeInitContext<'local>(
+pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeInitContext<'local>(
     mut env: jni::EnvUnowned<'local>,
     _this: jni::objects::JObject<'local>,
     context: jni::objects::JObject<'local>,

@@ -1,4 +1,4 @@
-package com.jieneng.yinhe_flutter
+package com.jieneng.yinhe
 
 import android.content.Intent
 import android.provider.OpenableColumns
@@ -43,6 +43,9 @@ class MainActivity : FlutterActivity() {
     }
 
     private var producer: TextureRegistry.SurfaceProducer? = null
+
+    /** 延迟到 Dart 请求纹理时才创建 SurfaceProducer（see ensureProducer）。 */
+    private var engine: FlutterEngine? = null
 
     /** 本代 surface 是否已发送给 Rust（同一窗口重复设置会触发 IN_USE）。 */
     private var surfaceSent = false
@@ -89,50 +92,30 @@ class MainActivity : FlutterActivity() {
         // cpal/AAudio 需要 NDK context（JavaVM + Application Context）；
         // filesDir 供 Rust 持久化最近文件。
         nativeInitContext(applicationContext, filesDir.absolutePath)
-
-        val p = flutterEngine.renderer.createSurfaceProducer()
-        p.setCallback(
-            object : TextureRegistry.SurfaceProducer.Callback {
-                // 引擎（3.47）调用旧入口 onSurfaceCreated/onSurfaceDestroyed；
-                // 新入口 onSurfaceAvailable/onSurfaceCleanup 是给未来版本的。
-                // 两个都接：引擎只会调用其中一个，经同一 helper 幂等处理。
-                override fun onSurfaceCreated() {
-                    Log.i(TAG, "onSurfaceCreated")
-                    surfaceReady(p)
-                }
-
-                override fun onSurfaceAvailable() {
-                    Log.i(TAG, "onSurfaceAvailable")
-                    surfaceReady(p)
-                }
-
-                override fun onSurfaceDestroyed() {
-                    Log.i(TAG, "onSurfaceDestroyed")
-                    onSurfaceGone()
-                }
-
-                override fun onSurfaceCleanup() {
-                    Log.i(TAG, "onSurfaceCleanup")
-                    onSurfaceGone()
-                }
-            },
-        )
-        producer = p
-        // 尽力而为：若 surface 已惰性创建则立即发送（回调在部分引擎版本不触发）。
-        surfaceReady(p)
+        engine = flutterEngine
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "yinhe/surface")
             .also { methodChannel = it }
             .setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "getTextureId" -> result.success(p.id())
+                    "getTextureId" -> {
+                        val p = ensureProducer()
+                        if (p == null) {
+                            result.error("no_engine", "FlutterEngine 未就绪", null)
+                        } else {
+                            result.success(p.id())
+                        }
+                    }
                     "setSize" -> {
                         val w = call.argument<Int>("w")
                         val h = call.argument<Int>("h")
                         val lw = call.argument<Double>("lw")
                         val lh = call.argument<Double>("lh")
+                        val p = ensureProducer()
                         if (w == null || h == null || lw == null || lh == null) {
                             result.error("bad_args", "缺少 w/h/lw/lh", null)
+                        } else if (p == null) {
+                            result.error("no_engine", "FlutterEngine 未就绪", null)
                         } else {
                             Log.i(TAG, "setSize $w x $h (logical $lw x $lh)")
                             p.setSize(w, h)
@@ -154,7 +137,7 @@ class MainActivity : FlutterActivity() {
                         result.success(null)
                     }
                     "ensureSurface" -> {
-                        (producer)?.let { surfaceReady(it) }
+                        ensureProducer()?.let { surfaceReady(it) }
                         result.success(null)
                     }
                     "exportTempPath" -> {
@@ -190,6 +173,49 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    /**
+     * 惰性创建 SurfaceProducer。
+     *
+     * 不能在 configureFlutterEngine 里创建：release 包此时 FlutterView 尚未挂载，
+     * getSurface() 会走 FlutterJNI.registerImageTexture 并触发引擎断言闪退。
+     * Dart 初始化后通过 getTextureId/ensureSurface 调用本方法，此时视图已就绪。
+     */
+    private fun ensureProducer(): TextureRegistry.SurfaceProducer? {
+        producer?.let { return it }
+        val flutterEngine = engine ?: return null
+        val p = flutterEngine.renderer.createSurfaceProducer()
+        p.setCallback(
+            object : TextureRegistry.SurfaceProducer.Callback {
+                // 引擎（3.47）调用旧入口 onSurfaceCreated/onSurfaceDestroyed；
+                // 新入口 onSurfaceAvailable/onSurfaceCleanup 是给未来版本的。
+                // 两个都接：引擎只会调用其中一个，经同一 helper 幂等处理。
+                override fun onSurfaceCreated() {
+                    Log.i(TAG, "onSurfaceCreated")
+                    surfaceReady(p)
+                }
+
+                override fun onSurfaceAvailable() {
+                    Log.i(TAG, "onSurfaceAvailable")
+                    surfaceReady(p)
+                }
+
+                override fun onSurfaceDestroyed() {
+                    Log.i(TAG, "onSurfaceDestroyed")
+                    onSurfaceGone()
+                }
+
+                override fun onSurfaceCleanup() {
+                    Log.i(TAG, "onSurfaceCleanup")
+                    onSurfaceGone()
+                }
+            },
+        )
+        producer = p
+        // 若 surface 已惰性创建则立即发送（回调在部分引擎版本不触发）。
+        surfaceReady(p)
+        return p
     }
 
     /** surface 可用/重建：每代只发送一次（created/available 可能都回调）。 */
