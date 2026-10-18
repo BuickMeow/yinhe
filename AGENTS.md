@@ -53,6 +53,7 @@
 2. /Users/jieneng/Music/MIDIs 是我们常见的MIDI测试用例目录。/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz 是我们常用的音色库。如果需要进行实际测试，一般使用这两个目录。
 3. 如果要查找库，请优先查找本地。其次是网络。
 4. 跨平台打包等重复流程已收编为 xtask（`cargo xtask help` 看用法）：`bundle-macos` 打包 macOS .app+.dmg；`verify [crate..]` 跑 fmt --check + clippy + test + release。Windows/Linux 的打包各只有一行原生命令，保留在 CI 里，不要用老的 shell 脚本。
+5. 安卓模拟器启动/连接用 `cargo xtask emulator`（`--install` 安装并打开最新 release APK，`--install-debug` 用 debug 包，`--cold` 冷启动）。已连接的模拟器会复用；启动日志在系统临时目录 `yinhe-emulator.log`。
 
 ## 七、协作与工作方式
 
