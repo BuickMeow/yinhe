@@ -26,6 +26,8 @@ mod kind {
     pub const PENCIL: u8 = 5;
     pub const BRUSH: u8 = 6;
     pub const ERASE: u8 = 7;
+    /// 选框内按下、长按未完成（等待圆环转满）。
+    pub const PENDING: u8 = 8;
 }
 
 #[derive(Clone)]
@@ -264,7 +266,7 @@ pub fn tick_scroll() -> i32 {
     let Ok(mut d) = DRAG.lock() else {
         return 0;
     };
-    if d.kind == kind::NONE {
+    if d.kind == kind::NONE || d.kind == kind::PENDING {
         return 0;
     }
     let Ok(mut s) = scene::scene().lock() else {
@@ -276,13 +278,7 @@ pub fn tick_scroll() -> i32 {
         return 0;
     }
     const ZONE: f32 = 28.0;
-    let mut vx = 0.0f32;
-    if px < ZONE {
-        vx = (ZONE - px) * 0.9;
-    }
-    if px > lw - ZONE {
-        vx = -((px - (lw - ZONE)) * 0.9);
-    }
+    // 垂直：内容区顶部/底部边缘。
     let mut vy = 0.0f32;
     if py < ZONE {
         vy = (ZONE - py) * 0.9;
@@ -294,6 +290,18 @@ pub fn tick_scroll() -> i32 {
     let num_tracks = s.num_tracks;
     let moved = match s.view_mode {
         ViewMode::Pianoroll => {
+            // 水平：只在键盘列右侧的真实内容区判定。
+            let kbw = s.pr_view.keyboard_width();
+            let mut vx = 0.0f32;
+            if px >= kbw {
+                let left = kbw + ZONE;
+                if px < left {
+                    vx = (left - px) * 0.9;
+                }
+                if px > lw - ZONE {
+                    vx = -((px - (lw - ZONE)) * 0.9);
+                }
+            }
             let mut changed = false;
             if vx != 0.0 {
                 *s.pr_view.main_scroll() -= vx;
@@ -309,6 +317,18 @@ pub fn tick_scroll() -> i32 {
             changed
         }
         ViewMode::Arrangement => {
+            // 水平：只在轨道面板右侧的内容区判定。
+            let panel = s.arr_view.base.left_panel_width;
+            let mut vx = 0.0f32;
+            if px >= panel {
+                let left = panel + ZONE;
+                if px < left {
+                    vx = (left - px) * 0.9;
+                }
+                if px > lw - ZONE {
+                    vx = -((px - (lw - ZONE)) * 0.9);
+                }
+            }
             let mut changed = false;
             if vx != 0.0 {
                 s.arr_view.base.scroll_x -= vx;
@@ -328,6 +348,37 @@ pub fn tick_scroll() -> i32 {
         return 0;
     }
     refresh_preview(&mut d, &mut s);
+    1
+}
+
+/// 长按完成：待定选框转为移动态（框变虚线由 Flutter 绘制）。成功 1。
+pub fn begin_move_selection() -> i32 {
+    let Ok(mut d) = DRAG.lock() else {
+        return 0;
+    };
+    if d.kind != kind::PENDING {
+        return 0;
+    }
+    d.kind = kind::MOVE_BOX;
+    if let Ok(mut s) = scene::scene().lock() {
+        bump(&mut s);
+    }
+    1
+}
+
+/// 取消待定（未完成长按就移动/取消）。成功 1。
+pub fn cancel_pending() -> i32 {
+    let Ok(mut d) = DRAG.lock() else {
+        return 0;
+    };
+    if d.kind != kind::PENDING {
+        return 0;
+    }
+    d.kind = kind::NONE;
+    if let Ok(mut s) = scene::scene().lock() {
+        s.overlay_box = None;
+        bump(&mut s);
+    }
     1
 }
 
@@ -546,15 +597,9 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
                 return;
             }
             if let Some(rect) = pr_box_at(s, x, y) {
-                d.kind = kind::MOVE_BOX;
+                // 长按 500ms 后才进入移动（Flutter 侧圆环），避免误拖。
+                d.kind = kind::PENDING;
                 d.box_ticks = Some(rect);
-                s.overlay_box = Some([
-                    geom.tick_to_x(rect.0).max(geom.kbw),
-                    geom.key_to_y(rect.3),
-                    geom.tick_to_x(rect.1),
-                    geom.key_to_y(rect.2) + geom.kh,
-                ]);
-                bump(s);
                 return;
             }
             d.kind = kind::MARQUEE;
@@ -612,15 +657,8 @@ fn begin_arr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
     d.anchor_tick = anchor_tick;
     d.anchor_row = anchor_row;
     if let Some(rect) = arr_box_at(s, &geom, x, y) {
-        d.kind = kind::MOVE_BOX;
+        d.kind = kind::PENDING;
         d.box_rows = Some(rect);
-        s.overlay_box = Some([
-            geom.tick_to_x(rect.0).max(geom.panel_w),
-            geom.row_to_y(rect.2),
-            geom.tick_to_x(rect.1),
-            geom.row_to_y(rect.3 + 1),
-        ]);
-        bump(s);
         return;
     }
     d.kind = kind::MARQUEE;

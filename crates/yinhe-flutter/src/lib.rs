@@ -453,6 +453,8 @@ pub extern "C" fn yinhe_set_view_mode(mode: i32) {
         } else {
             scene::ViewMode::Pianoroll
         };
+        // 切视图后选框数据换了一套：强制 Flutter 重取覆盖层（避免残留）。
+        s.overlay_rev = s.overlay_rev.wrapping_add(1);
     }
 }
 
@@ -539,6 +541,37 @@ pub extern "C" fn yinhe_automation_json(track: i32) -> *mut std::ffi::c_char {
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_velocity_json() -> *mut std::ffi::c_char {
     to_c_string(scene::velocity_json())
+}
+
+/// 长按完成：待定选框转移动态。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_begin_move_selection() -> i32 {
+    edit::begin_move_selection()
+}
+
+/// 取消待定选框（未完成长按）。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_cancel_selection_pending() -> i32 {
+    edit::cancel_pending()
+}
+
+/// 复制选中内容到右侧一个量化格。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_duplicate_selection() -> i32 {
+    scene::duplicate_selection()
+}
+
+/// 重命名音轨。成功 1。
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_track_name(track: i32, name: *const std::ffi::c_char) -> i32 {
+    if track < 0 || name.is_null() {
+        return 0;
+    }
+    let name = unsafe { CStr::from_ptr(name) }
+        .to_string_lossy()
+        .into_owned();
+    scene::set_track_name(track as usize, name)
 }
 
 /// AR 折叠态自动化竖线 JSON（堆分配）。

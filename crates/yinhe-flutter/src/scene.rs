@@ -994,6 +994,100 @@ pub fn velocity_json() -> String {
     out
 }
 
+/// 复制当前选中内容到右侧一个量化格（长按菜单“复制”）。成功 1。
+pub fn duplicate_selection() -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let view_mode = s.view_mode;
+    let ppq = s.ppq;
+    let (model, empty, interval) = {
+        let Some(doc) = s.document.as_ref() else {
+            return 0;
+        };
+        let q = match view_mode {
+            ViewMode::Pianoroll => doc.edit.quantize_pianoroll,
+            ViewMode::Arrangement => doc.edit.quantize_arrange,
+        };
+        let ppu = match view_mode {
+            ViewMode::Pianoroll => s.pr_view.base.pixels_per_tick,
+            ViewMode::Arrangement => s.arr_view.base.pixels_per_tick,
+        };
+        (
+            doc.data.model.clone(),
+            doc.edit.selected.is_empty(),
+            q.resolved(ppu, ppq).tick_interval(ppq).max(1),
+        )
+    };
+    if empty {
+        return 0;
+    }
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let before = doc.capture_snapshot();
+    let action = match view_mode {
+        ViewMode::Pianoroll => doc.duplicate_selected_to(i64::from(interval), 0),
+        ViewMode::Arrangement => doc.duplicate_selected_arrange(i64::from(interval), 0),
+    };
+    let Some(action) = action else {
+        return 0;
+    };
+    doc.push_undo(action, "undo.duplicate_move", before);
+    refresh_snapshot(&mut s);
+    drop(s);
+    crate::audio::reload_notes(model);
+    log::info!("已复制选中内容");
+    1
+}
+
+/// 重命名音轨（AR 长按轨道菜单）。成功 1。
+pub fn set_track_name(track: usize, name: String) -> i32 {
+    use yinhe_editor_core::history::UndoAction;
+
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let old = {
+        let Some(doc) = s.document.as_ref() else {
+            return 0;
+        };
+        let Some(t) = doc.data.model.tracks.get(track) else {
+            return 0;
+        };
+        t.name.clone()
+    };
+    if old == name {
+        return 0;
+    }
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let before = doc.capture_snapshot();
+    {
+        let model = std::sync::Arc::make_mut(&mut doc.data.model);
+        if let Some(t) = model.tracks.get_mut(track) {
+            std::sync::Arc::make_mut(t).name = name.clone();
+        }
+        // track 0 name = 歌曲标题（与桌面 apply 一致）。
+        if track == 0 {
+            model.meta.name = name.clone();
+        }
+    }
+    doc.push_undo(
+        UndoAction::TrackName {
+            track_idx: track,
+            old,
+            new: name,
+        },
+        "undo.track_name",
+        before,
+    );
+    refresh_snapshot(&mut s);
+    log::info!("音轨已重命名: track={track}");
+    1
+}
+
 /// AR 折叠态自动化竖线：`[{"t":track,"b":baseline,"p":[[tick,value],...]},...]`
 ///
 /// 与桌面 `collect_folded_previews` 同语义：每条未展开 lane 以整行高竖线预览；
