@@ -76,6 +76,14 @@ fn ensure_audio() -> bool {
                 send_soundfonts(&st.handle, path);
                 st.sf_sent = Some(path.clone());
             }
+            // 移动端音频适配：
+            // - 力度 ≤1 不发声（与桌面默认 ignore_velocity=1 一致）；
+            // - 复音上限从引擎默认 14336 降到 1024：黑乐谱密集段同 tick 数百
+            //   音符，voice 无限增长会让合成线程超时（听感断续/爆音）。
+            st.handle.handle.send(AudioCommand::SetIgnoreVelocity { threshold: 1 });
+            st.handle
+                .handle
+                .send(AudioCommand::SetMaxVoices { max: Some(1024) });
             *guard = Some(st);
             true
         }
