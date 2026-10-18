@@ -264,16 +264,27 @@ pub fn update(x: f32, y: f32) {
     d.px = x;
     d.py = y;
     // 空白处长按未完成时开始拖动：转为普通框选，不能把长按当成粘贴。
+    let mut started_marquee = false;
     if d.kind == kind::PENDING_PASTE {
         let moved = ((x - d.x0).powi(2) + (y - d.y0).powi(2)).sqrt();
         if moved >= DRAG_THRESHOLD {
             d.kind = kind::MARQUEE;
             d.pending_at = None;
+            started_marquee = true;
         }
     }
     let Ok(mut s) = scene::scene().lock() else {
         return;
     };
+    if started_marquee {
+        // 新框选一开始就清掉旧选框/旧成员，而不是等拖拽结束才清。
+        if let Some(doc) = s.document.as_mut() {
+            doc.edit.selected.clear();
+            doc.edit.sel_rect.clear();
+            doc.edit.arr_sel_rect.clear();
+        }
+        bump(&mut s);
+    }
     refresh_preview(&mut d, &mut s);
 }
 
@@ -870,6 +881,9 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
                     tr_hi as u16,
                 );
                 edit.selected.materialize_pending(&*data.model);
+                // AR 框选同时物化自动化事件（按 id），拖动时音符与锚点一起走。
+                edit.selected
+                    .materialize_automation_pending(&data.model.tracks);
             }
         }
     }

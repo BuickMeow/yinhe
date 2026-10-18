@@ -444,6 +444,12 @@ pub extern "C" fn yinhe_touch(kind: i32, x: f32, y: f32, pointer: i32) {
     input::on_touch(kind, x, y, pointer);
 }
 
+/// 文档/选区世代号（变化时 Dart 刷新轨道/自动化元数据）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_document_generation() -> u32 {
+    scene::document_generation()
+}
+
 /// 清空触摸状态并取消编辑（模态窗口打开/App 切后台时调用）。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_reset_touch() {

@@ -70,6 +70,8 @@ pub struct RenderScene {
     pub overlay_cells: Vec<[f32; 4]>,
     /// 文档本体（编辑操作：轨道排序等）。
     pub document: Option<Document>,
+    /// 文档/选区世代号：每次 refresh_snapshot 自增，Dart 据此刷新轨道/自动化浮层。
+    pub doc_generation: u32,
 }
 
 /// 工具（移动端子集：与桌面 `tools_panel::Tool` 的编号对齐）。
@@ -103,6 +105,7 @@ impl Default for RenderScene {
             overlay_box: None,
             overlay_cells: Vec::new(),
             document: None,
+            doc_generation: 0,
         }
     }
 }
@@ -290,6 +293,11 @@ pub fn set_active_track(track: i32) -> i32 {
     };
     log::info!("当前编辑轨: {track}");
     1
+}
+
+/// 文档/选区世代号（Dart 在变化时刷新轨道/自动化元数据）。
+pub fn document_generation() -> u32 {
+    scene().lock().map(|s| s.doc_generation).unwrap_or(0)
 }
 
 /// 覆盖层修订号（Dart 仅在变化时重取 JSON）。
@@ -499,6 +507,7 @@ fn apply_document(doc: Document, min_ticks: f64) {
 
 /// 从文档重算轨道快照（模型/颜色/显隐/轨道面板信息/ppq）。
 pub(crate) fn refresh_snapshot(s: &mut RenderScene) {
+    s.doc_generation = s.doc_generation.wrapping_add(1);
     // 覆盖层（选框/预览）随快照变化一起失效（undo/编辑/加载后重取）。
     s.overlay_rev = s.overlay_rev.wrapping_add(1);
     // 文档修订号：编辑后（视图未变）也必须让音符层缓存失效。
