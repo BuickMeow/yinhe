@@ -48,7 +48,8 @@ fn save_yin_bytes_inner(
         Some(sf) => ProjectFile::from_meta_with_sf(&model.meta, sf.overrides.clone()),
         None => ProjectFile::from_meta(&model.meta),
     };
-    let mapping = MappingFile::from_tracks(&model.tracks);
+    let mut mapping = MappingFile::from_tracks(&model.tracks);
+    mapping.channel_instruments = model.channel_instruments;
     save_yin_bytes_with_files_inner(model, &project, &mapping, None, on_progress)
 }
 
@@ -232,6 +233,7 @@ fn load_yin_bytes_inner(
 
     let mut model = YinModel {
         conductor: Arc::new(model_data.conductor),
+        channel_instruments: mapping.channel_instruments,
         tracks,
         meta: ProjectMeta {
             name: project.name.clone(),

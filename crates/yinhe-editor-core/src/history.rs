@@ -126,6 +126,20 @@ pub enum UndoAction {
         old: [f32; 4],
         new: [f32; 4],
     },
+    /// 音轨信息（名称/端口/通道 + 所属通道的默认乐器）整体编辑。
+    TrackInfo {
+        track_idx: usize,
+        old_name: String,
+        new_name: String,
+        old_port: u8,
+        new_port: u8,
+        old_channel: u8,
+        new_channel: u8,
+        /// Some(ch) = 通道 `ch` 的默认乐器有改动（None = 未改）。
+        instrument_channel: Option<u8>,
+        instrument_before: Option<yinhe_core::ChannelInstrument>,
+        instrument_after: Option<yinhe_core::ChannelInstrument>,
+    },
     /// Project metadata was edited.
     ProjectName {
         old: String,
@@ -277,6 +291,35 @@ impl UndoAction {
                     track_idx,
                     old,
                     new,
+                }
+            }
+            UndoAction::TrackInfo {
+                track_idx,
+                mut old_name,
+                mut new_name,
+                mut old_port,
+                mut new_port,
+                mut old_channel,
+                mut new_channel,
+                instrument_channel,
+                mut instrument_before,
+                mut instrument_after,
+            } => {
+                std::mem::swap(&mut old_name, &mut new_name);
+                std::mem::swap(&mut old_port, &mut new_port);
+                std::mem::swap(&mut old_channel, &mut new_channel);
+                std::mem::swap(&mut instrument_before, &mut instrument_after);
+                UndoAction::TrackInfo {
+                    track_idx,
+                    old_name,
+                    new_name,
+                    old_port,
+                    new_port,
+                    old_channel,
+                    new_channel,
+                    instrument_channel,
+                    instrument_before,
+                    instrument_after,
                 }
             }
             UndoAction::ProjectName { mut old, mut new } => {

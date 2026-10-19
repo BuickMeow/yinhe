@@ -919,3 +919,33 @@ fn no_audio_sources_writes_no_trailing_sections() {
     }
     assert_eq!(pos, bytes.len(), "无混音/音频素材时不应写尾部段");
 }
+
+#[test]
+fn channel_instruments_roundtrip() {
+    let mut m = build_complex_model();
+    m.channel_instruments[3] = Some(yinhe_core::ChannelInstrument {
+        bank_msb: 0,
+        program: 42,
+    });
+    m.channel_instruments[9] = Some(yinhe_core::ChannelInstrument {
+        bank_msb: 128,
+        program: 0,
+    });
+    let bytes = save_yin_bytes(&m).unwrap();
+    let loaded = load_yin_bytes(&bytes).unwrap();
+    assert_eq!(
+        loaded.channel_instruments[3],
+        Some(yinhe_core::ChannelInstrument {
+            bank_msb: 0,
+            program: 42
+        })
+    );
+    assert_eq!(
+        loaded.channel_instruments[9],
+        Some(yinhe_core::ChannelInstrument {
+            bank_msb: 128,
+            program: 0
+        })
+    );
+    assert_eq!(loaded.channel_instruments[0], None);
+}

@@ -91,6 +91,23 @@ impl UndoAction {
                 }
                 doc.data.bump_revision();
             }
+            UndoAction::TrackInfo {
+                track_idx,
+                new_name,
+                new_port,
+                new_channel,
+                instrument_channel,
+                instrument_after,
+                ..
+            } => apply_track_info(
+                doc,
+                *track_idx,
+                new_name,
+                *new_port,
+                *new_channel,
+                *instrument_channel,
+                *instrument_after,
+            ),
             UndoAction::ProjectName { old: _, new } => {
                 let model = Arc::make_mut(&mut doc.data.model);
                 model.meta.name = new.clone();
@@ -588,6 +605,43 @@ fn apply_event_list_delta(doc: &mut Document, delta: &super::EventListDelta) {
     }
     if needs_tempo_rebuild {
         doc.data.rebuild_tempo_map();
+    }
+    doc.data.bump_revision();
+}
+
+/// 应用音轨信息（名称/端口/通道 + 通道默认乐器）；undo/redo 共用。
+#[allow(clippy::too_many_arguments)] // 与 UndoAction 字段一一对应
+fn apply_track_info(
+    doc: &mut Document,
+    track_idx: usize,
+    name: &str,
+    port: u8,
+    channel: u8,
+    instrument_channel: Option<u8>,
+    instrument: Option<yinhe_core::ChannelInstrument>,
+) {
+    let model = Arc::make_mut(&mut doc.data.model);
+    if let Some(t) = model.tracks.get_mut(track_idx) {
+        let is_master = t.kind == yinhe_core::TrackKind::Master;
+        let t = Arc::make_mut(t);
+        t.name = name.to_string();
+        if !is_master {
+            t.port = port;
+            t.channel = channel;
+        }
+    }
+    if let Some(ch) = instrument_channel
+        && let Some(slot) = model.channel_instruments.get_mut(ch as usize)
+    {
+        *slot = instrument;
+    }
+    if track_idx == 0 {
+        model.meta.name = name.to_string();
+    }
+    if let Some(info) = doc.edit.track_cache.info.get_mut(track_idx) {
+        info.name = name.to_string();
+        info.port = port;
+        info.channel = channel;
     }
     doc.data.bump_revision();
 }

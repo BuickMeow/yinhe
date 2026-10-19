@@ -289,12 +289,24 @@ impl Default for ProjectMeta {
 /// Tracks are held in `Arc<TrackData>` for cheap clone-on-write editing
 /// (C1 mode). The conductor is also Arc to avoid copying it when only
 /// a track changes. tempo_map is derived from conductor.
+/// 通道级默认乐器：没有 MIDI PC 时生效的全局 PC。
+/// 同一 MIDI 通道的所有音轨共享；任一 PC 事件都会覆盖它。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelInstrument {
+    /// 音色库 bank MSB（0 = 旋律，128 = 鼓组）。
+    pub bank_msb: u8,
+    pub program: u8,
+}
+
 #[derive(Clone, Debug)]
 pub struct YinModel {
     pub conductor: Arc<ConductorData>,
     pub tracks: Vec<Arc<TrackData>>,
     pub tempo_map: Arc<TempoMap>,
     pub meta: ProjectMeta,
+
+    /// 16 个 MIDI 通道的默认乐器（None = 不覆盖，按 MIDI 内 PC / program 0）。
+    pub channel_instruments: [Option<ChannelInstrument>; 16],
 
     /// Single authoritative note store: `notes[key]` = all notes at that key,
     /// sorted by start_tick (chunked, 65536 notes/chunk). Each note carries
@@ -366,6 +378,7 @@ impl Default for YinModel {
             tracks: Vec::new(),
             tempo_map: Arc::new(TempoMap::default()),
             meta: ProjectMeta::default(),
+            channel_instruments: [None; 16],
             notes: Box::new(core::array::from_fn(|_| Arc::new(NoteBucket::default()))),
             note_count: 0,
             tick_length: 0,

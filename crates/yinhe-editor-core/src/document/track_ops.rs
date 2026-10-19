@@ -589,3 +589,83 @@ mod tests {
         assert!(doc.edit.track_locked[2], "锁定未跟随音轨");
     }
 }
+
+impl Document {
+    /// 编辑音轨信息：名称 / 端口 / 通道 + 通道级默认乐器（None = 清除）。
+    ///
+    /// - Master（Conductor）轨只允许改名（同步到歌曲标题）；端口/通道/乐器忽略。
+    /// - 乐器是通道级设置：同一通道的所有音轨共享，MIDI 内 PC 优先。
+    /// - 无实际变化时返回 None（不产生 undo）。
+    pub fn set_track_info(
+        &mut self,
+        track_idx: usize,
+        name: String,
+        port: u8,
+        channel: u8,
+        instrument: Option<yinhe_core::ChannelInstrument>,
+    ) -> Option<UndoAction> {
+        let model = Arc::make_mut(&mut self.data.model);
+        let track = model.tracks.get(track_idx)?;
+        let is_master = track.kind == yinhe_core::TrackKind::Master || track_idx == 0;
+        let old_name = track.name.clone();
+        let old_port = track.port;
+        let old_channel = track.channel;
+        let (new_name, new_port, new_channel) = if is_master {
+            (name, old_port, old_channel)
+        } else {
+            (name, port.min(15), channel.min(15))
+        };
+        let instrument_channel = (!is_master).then_some(new_channel);
+        let instrument_before = instrument_channel.and_then(|ch| {
+            model
+                .channel_instruments
+                .get(ch as usize)
+                .copied()
+                .flatten()
+        });
+        let instrument_after = if is_master {
+            instrument_before
+        } else {
+            instrument
+        };
+        if old_name == new_name
+            && old_port == new_port
+            && old_channel == new_channel
+            && instrument_before == instrument_after
+        {
+            return None;
+        }
+        {
+            let track = Arc::make_mut(model.tracks.get_mut(track_idx)?);
+            track.name = new_name.clone();
+            if !is_master {
+                track.port = new_port;
+                track.channel = new_channel;
+            }
+        }
+        if let Some(ch) = instrument_channel {
+            model.channel_instruments[ch as usize] = instrument_after;
+        }
+        if is_master {
+            model.meta.name = new_name.clone();
+        }
+        if let Some(info) = self.edit.track_cache.info.get_mut(track_idx) {
+            info.name = new_name.clone();
+            info.port = new_port;
+            info.channel = new_channel;
+        }
+        self.data.bump_revision();
+        Some(UndoAction::TrackInfo {
+            track_idx,
+            old_name,
+            new_name,
+            old_port,
+            new_port,
+            old_channel,
+            new_channel,
+            instrument_channel,
+            instrument_before,
+            instrument_after,
+        })
+    }
+}

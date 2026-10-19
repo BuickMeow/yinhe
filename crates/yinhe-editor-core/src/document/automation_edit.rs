@@ -59,6 +59,46 @@ impl Document {
         ))
     }
 
+    /// 插入或更新单个 automation 事件（同 tick 覆盖，不产生重复锚点）。
+    ///
+    /// 用于 UI 的"在当前位置插入事件"：lane 不存在时懒创建（Tempo 恒存在）。
+    /// 返回 `(result_track, lane_idx, UndoAction)`；Tempo 的 result_track 恒为 0。
+    pub fn upsert_automation_event(
+        &mut self,
+        track_idx: usize,
+        target: yinhe_types::AutomationTarget,
+        mut event: yinhe_types::AutomationEvent,
+    ) -> Option<(usize, usize, UndoAction)> {
+        if event.id == 0 {
+            event.id = Arc::make_mut(&mut self.data.model).alloc_automation_id();
+        }
+        let is_tempo = matches!(target, yinhe_types::AutomationTarget::Tempo);
+        let result_track = if is_tempo { 0 } else { track_idx };
+        let model = Arc::make_mut(&mut self.data.model);
+        let (lane, lane_idx) = model.ensure_automation_lane_mut(track_idx, target.clone())?;
+        let before: Vec<AutomationEvent> = lane
+            .events
+            .iter()
+            .find(|e| e.tick == event.tick)
+            .copied()
+            .into_iter()
+            .collect();
+        lane.upsert(event);
+        model.commit_automation(&target);
+        self.data.bump_revision();
+        Some((
+            result_track,
+            lane_idx,
+            UndoAction::Automation(AutomationDelta {
+                track_idx: result_track,
+                lane_idx,
+                target,
+                before,
+                after: vec![event],
+            }),
+        ))
+    }
+
     /// 创建空的 automation lane（同 target 已存在时返回 None）。
     /// 返回 (lane_idx, UndoAction)。lane 插入到该轨 lanes 末尾。
     ///

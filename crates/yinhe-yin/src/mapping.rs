@@ -16,6 +16,10 @@ pub struct MappingFile {
     /// track-creation order; the same order is used in `data.bin` so the
     /// two stay aligned by index.
     pub ports: Vec<PortMap>,
+    /// 通道级默认乐器（16 通道；None = 不设置）。旧存档缺省为空。
+    /// 无 MIDI PC 时生效；任一 PC 事件覆盖它。
+    #[serde(default)]
+    pub channel_instruments: [Option<yinhe_core::ChannelInstrument>; 16],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,7 +107,11 @@ impl MappingFile {
             });
         }
 
-        Self { version: 2, ports }
+        Self {
+            version: 2,
+            ports,
+            ..Default::default()
+        }
     }
 
     /// Flat ordered list of (port, channel, TrackMap) — ports and

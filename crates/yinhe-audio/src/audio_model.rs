@@ -475,6 +475,20 @@ pub(crate) fn flatten_automation_to_cc_events(
     let density = density.max(1);
     let mut cc_events = Vec::new();
 
+    // 通道级默认乐器：先于所有 MIDI 事件下发（tick 0），任一 MIDI PC 覆盖它。
+    // track 用 u16::MAX：通道级配置不被任何单轨的 skip_track 过滤。
+    for (ch, inst) in model.channel_instruments.iter().enumerate() {
+        if let Some(inst) = inst {
+            let pc = yinhe_types::PcEvent {
+                tick: 0,
+                program: inst.program,
+                bank_msb: inst.bank_msb,
+                bank_lsb: 0,
+            };
+            push_program_change(&pc, ch as u32, u16::MAX, &mut cc_events);
+        }
+    }
+
     for (track_idx, track) in model.tracks.iter().enumerate() {
         let track_idx_u16 = track_idx as u16;
         let channel = track.global_channel() as u32;
@@ -980,6 +994,43 @@ mod tests {
         }
         assert_eq!(events[0].plugin_param.map(|p| p.value), Some(0.25));
         assert_eq!(events[1].plugin_param.map(|p| p.value), Some(1.0));
+    }
+
+    /// 通道级默认乐器：tick 0 先下发默认 PC，MIDI 内 PC 同日生效时在其后覆盖。
+    #[test]
+    fn channel_instrument_default_pc_before_midi_pc() {
+        let mut model = model_with_lanes(vec![]);
+        Arc::make_mut(&mut model.tracks[0]).program_change = vec![yinhe_types::PcEvent {
+            tick: 0,
+            program: 9,
+            bank_msb: 0,
+            bank_lsb: 0xFF,
+        }];
+        model.channel_instruments[0] = Some(yinhe_core::ChannelInstrument {
+            bank_msb: 0,
+            program: 42,
+        });
+        let events = flatten_automation_to_cc_events(&model, 1);
+        let pcs: Vec<u8> = events
+            .iter()
+            .filter_map(|e| match &e.event {
+                AudioEvent::ProgramChange(p) => Some(*p),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pcs, vec![42, 9], "默认 PC 先发，MIDI PC 覆盖它");
+
+        // 没有 MIDI PC 时只剩默认。
+        Arc::make_mut(&mut model.tracks[0]).program_change.clear();
+        let events = flatten_automation_to_cc_events(&model, 1);
+        let pcs: Vec<u8> = events
+            .iter()
+            .filter_map(|e| match &e.event {
+                AudioEvent::ProgramChange(p) => Some(*p),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pcs, vec![42]);
     }
 
     /// 低层 CC：归一化值在 flatten 边界还原成原始值域（CC7 = 100，f32 不量化）。
