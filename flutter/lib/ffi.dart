@@ -264,6 +264,10 @@ final CStrDart markersJson = bridge.lookupFunction<CStrNative, CStrDart>(
   'yinhe_markers_json',
 );
 
+/// 拍号分段 JSON：`[[tick,num,den_pow], ...]`（标尺按分段排版）。
+final CStrDart timeSigSegmentsJson = bridge
+    .lookupFunction<CStrNative, CStrDart>('yinhe_time_sig_segments_json');
+
 typedef TickAtXNative = ffi.Double Function(ffi.Float);
 typedef TickAtXDart = double Function(double);
 

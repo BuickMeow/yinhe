@@ -1,13 +1,18 @@
 import 'package:flutter/material.dart';
 
+import 'bar_beat.dart';
 import 'theme.dart';
 
 /// 时间标尺（与桌面 `time_ruler` 一致）：只有小节/拍/子拍/tick 文本标签，
 /// 无刻度线；背景铺 `track_bg`（含左侧面板/键盘上方留白）。
+///
+/// 拍号按分段排版：拍号变化时各段用各自的 measure/beat 长，小节号跨段连续。
 class RulerPainter extends CustomPainter {
-  RulerPainter(this.snap) : super(repaint: snap);
+  RulerPainter(this.snap, this.grid)
+    : super(repaint: Listenable.merge([snap, grid]));
 
   final ValueNotifier<List<double>> snap;
+  final ValueNotifier<BarBeatGrid?> grid;
 
   /// 标尺高度（逻辑像素，与桌面 `RULER_H` 一致）。
   static const double height = 30.0;
@@ -22,35 +27,16 @@ class RulerPainter extends CustomPainter {
       Paint()..color = YinheTheme.trackBg,
     );
     final s = snap.value;
-    if (s.length < 12 || size.width <= 0) {
+    final g = grid.value;
+    if (s.length < 12 || size.width <= 0 || g == null) {
       return;
     }
     final ppu = s[1];
     final scrollX = s[2];
     final kbW = s[5];
-    final ppq = s[8] > 0 ? s[8] : 480.0;
     if (ppu <= 0) {
       return;
     }
-    // 拍号（快照 10/11：分子 + 分母 2 次幂；原生事件优先，否则工程默认）。
-    final sigNum = s[10] > 0 ? s[10].round() : 4;
-    final sigDenPow = s[11] >= 0 ? s[11].round() : 2;
-    final tpb = ppq.round().clamp(1, 1 << 24);
-    final den = 1 << sigDenPow.clamp(0, 8);
-    final measure = (tpb * sigNum * 4 ~/ den).clamp(1, 1 << 30);
-    final beatTicks = (measure ~/ sigNum).clamp(1, measure);
-    final measurePx = measure * ppu;
-    var divisor = 1;
-    while (measurePx * divisor < minLabelSpacing && divisor < 64) {
-      divisor *= 2;
-    }
-    final barStep = measure * divisor;
-
-    final showBeat = beatTicks * ppu >= minLabelSpacing;
-    final subTicks = (beatTicks ~/ subBeatDiv).clamp(1, measure);
-    final showSub = subTicks * ppu >= minLabelSpacing;
-    final showTick = ppu >= minLabelSpacing;
-
     final startTick = ((-kbW + scrollX) / ppu).clamp(0.0, double.infinity);
     final endTick = ((size.width - kbW + scrollX) / ppu).clamp(
       0.0,
@@ -59,49 +45,61 @@ class RulerPainter extends CustomPainter {
     double xOf(int tick) => tick * ppu - scrollX + kbW;
     // 桌面：文本带中心在标尺高度 0.72 处、左对齐 +2px。
     final yCenter = size.height * 0.72;
+    final endI = endTick.floor();
 
-    final step = showTick
-        ? 1
-        : showSub
-        ? subTicks
-        : showBeat
-        ? beatTicks
-        : barStep;
-    var tick = (startTick.toInt() ~/ step) * step;
-    final endI = endTick.toInt();
-    while (tick <= endI + step) {
-      final x = xOf(tick);
-      if (x >= kbW && x <= size.width + 40) {
-        final isMeasure = tick % barStep == 0;
-        final isBeat = !isMeasure && tick % beatTicks == 0;
-        String? label;
-        Color? color;
-        if (isMeasure) {
-          label = '${tick ~/ measure + 1}';
-          color = YinheTheme.measureLabel;
-        } else if (isBeat && showBeat) {
-          final bar = tick ~/ measure + 1;
-          final beat = (tick % measure) ~/ beatTicks + 1;
-          label = '$bar.$beat';
-          color = YinheTheme.textLabel;
-        } else if (showSub) {
-          final bar = tick ~/ measure + 1;
-          final beat = (tick % measure) ~/ beatTicks + 1;
-          if (showTick) {
-            label =
-                '$bar.$beat.${(tick % beatTicks).toString().padLeft(3, '0')}';
-            color = YinheTheme.tickLabel;
-          } else {
-            final sub = (tick % beatTicks) ~/ subTicks;
-            label = '$bar.$beat.$sub';
-            color = YinheTheme.textDisabled;
+    for (var i = 0; i < g.segments.length; i++) {
+      final (segStart, num, denPow) = g.segments[i];
+      final segEnd = i + 1 < g.segments.length ? g.segments[i + 1].$1 : 1 << 31;
+      if (segStart > endTick) {
+        break;
+      }
+      final (mticks, bticks) = g.ticksOfSegment(i);
+      final subTicks = (bticks ~/ subBeatDiv).clamp(1, mticks);
+      final divisor = BarBeatGrid.measureDivisor(mticks * ppu, minLabelSpacing);
+      final mergedTicks = mticks * divisor;
+      final showBeat = bticks * ppu >= minLabelSpacing;
+      final showSub = subTicks * ppu >= minLabelSpacing;
+      final showTick = ppu >= minLabelSpacing;
+      // 主循环步长：显示 beat/sub 时用 subTicks，否则用合并小节步长。
+      final step = showBeat || showSub ? subTicks : mergedTicks;
+      // 对齐到段内网格：变拍子段的 segStart 通常不在全局步长网格上。
+      final firstTick = segStart > startTick ? segStart : startTick.floor();
+      var tick = segStart + ((firstTick - segStart) ~/ step) * step;
+      while (tick <= endI && tick < segEnd) {
+        final x = xOf(tick);
+        if (x >= kbW && x <= size.width + 40) {
+          final local = tick - segStart;
+          final isMeasure = local % mergedTicks == 0;
+          final isBeat = !isMeasure && (local % mticks) % bticks == 0;
+          String? label;
+          Color? color;
+          if (isMeasure) {
+            label = '${g.barOffsets[i] + local ~/ mticks + 1}';
+            color = YinheTheme.measureLabel;
+          } else if (isBeat && showBeat) {
+            final bar = g.barOffsets[i] + local ~/ mticks + 1;
+            final beat = (local % mticks) ~/ bticks + 1;
+            label = '$bar.$beat';
+            color = YinheTheme.textLabel;
+          } else if (showSub) {
+            final bar = g.barOffsets[i] + local ~/ mticks + 1;
+            final beat = (local % mticks) ~/ bticks + 1;
+            if (showTick) {
+              final inBeat = local % bticks;
+              label = '$bar.$beat.${inBeat.toString().padLeft(3, '0')}';
+              color = YinheTheme.tickLabel;
+            } else {
+              final sub = (local % bticks) ~/ subTicks;
+              label = '$bar.$beat.$sub';
+              color = YinheTheme.textDisabled;
+            }
+          }
+          if (label != null) {
+            _label(canvas, label, Offset(x + 2, yCenter), color!);
           }
         }
-        if (label != null) {
-          _label(canvas, label, Offset(x + 2, yCenter), color!);
-        }
+        tick += step;
       }
-      tick += step;
     }
   }
 

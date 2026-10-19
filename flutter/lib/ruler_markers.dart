@@ -1,6 +1,7 @@
 import 'package:ffi/ffi.dart';
 import 'package:flutter/material.dart';
 
+import 'bar_beat.dart';
 import 'ffi.dart' as rust;
 import 'models.dart';
 import 'painters.dart';
@@ -14,11 +15,13 @@ class MarkerLayer extends StatefulWidget {
   const MarkerLayer({
     super.key,
     required this.snap,
+    required this.grid,
     required this.markers,
     required this.onChanged,
   });
 
   final ValueNotifier<List<double>> snap;
+  final ValueNotifier<BarBeatGrid?> grid;
   final List<RulerMarker> markers;
   final VoidCallback onChanged;
 
@@ -31,23 +34,13 @@ class _MarkerLayerState extends State<MarkerLayer> {
   int? _dragTick;
   double? _dragX;
 
-  /// 小节.拍.tick（1.0.000 风格；按当前生效拍号 = 原生事件优先，否则工程默认）。
+  /// 小节.拍.tick（1.0.000 风格；按拍号分段 = 原生事件优先，否则工程默认）。
   String _formatTick(double tick, double ppq) {
-    if (ppq <= 0) {
-      return '${tick.round()}';
+    final grid = widget.grid.value;
+    if (grid != null) {
+      return grid.format(tick);
     }
-    final s = widget.snap.value;
-    final sigNum = s.length > 10 && s[10] > 0 ? s[10].round() : 4;
-    final sigDenPow = s.length > 11 && s[11] >= 0 ? s[11].round() : 2;
-    final ticksPerBar = ppq * sigNum / (1 << sigDenPow.clamp(0, 8)) * 4;
-    if (ticksPerBar <= 0) {
-      return '${tick.round()}';
-    }
-    final ticksPerBeat = ticksPerBar / sigNum;
-    final bar = (tick / ticksPerBar).floor() + 1;
-    final beat = ((tick % ticksPerBar) / ticksPerBeat).floor();
-    final inBeat = (tick % ticksPerBeat).floor();
-    return '$bar.$beat.${inBeat.toString().padLeft(3, '0')}';
+    return '${tick.round()}';
   }
 
   Future<void> _showMarkerMenu(RulerMarker m) async {

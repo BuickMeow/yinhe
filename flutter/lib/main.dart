@@ -17,6 +17,7 @@ import 'insert_flow.dart';
 import 'long_press_indicator_painter.dart';
 import 'models.dart';
 import 'ruler_markers.dart';
+import 'bar_beat.dart';
 import 'project_defaults_dialog.dart';
 import 'project_dialog.dart';
 import 'painters.dart';
@@ -88,6 +89,13 @@ class _StudioShellState extends State<StudioShell>
 
   /// 全曲音符数（顶栏标题展示）。
   int _noteCount = 0;
+
+  /// 拍号分段（标尺/模板行/时间码按分段排版；随文档刷新）。
+  final ValueNotifier<BarBeatGrid?> _grid = ValueNotifier(null);
+
+  /// 顶栏实时 BPM / 拍号文本（跟随播放位置，原生事件优先）。
+  String _liveBpmText = '120';
+  String _liveSigText = '4/4';
 
   /// 本工程默认 BPM / 拍号（无原生事件时的回退）。
   double _projectBpm = 120;
@@ -181,7 +189,7 @@ class _StudioShellState extends State<StudioShell>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _snapPtr = calloc<ffi.Float>(12);
+    _snapPtr = calloc<ffi.Float>(13);
     _statePtr = calloc<ffi.Int32>(3);
     _channel.setMethodCallHandler(_onNativeCall);
     _init();
@@ -265,6 +273,7 @@ class _StudioShellState extends State<StudioShell>
     _lpIndicator.dispose();
     _overlay.dispose();
     _sfRevision.dispose();
+    _grid.dispose();
     _docState.dispose();
     calloc.free(_snapPtr);
     calloc.free(_statePtr);
@@ -288,7 +297,7 @@ class _StudioShellState extends State<StudioShell>
     if (rust.viewSnapshot(_snapPtr) == 0) {
       return _snap.value;
     }
-    return List<double>.generate(12, (i) => _snapPtr[i]);
+    return List<double>.generate(13, (i) => _snapPtr[i]);
   }
 
   /// 视图快照是否与当前一致（避免无变化时触发整层重绘）。
@@ -536,6 +545,7 @@ class _StudioShellState extends State<StudioShell>
     _loadVelocity();
     _loadSongTitle();
     _loadProjectDefaults();
+    _loadTimeSigSegments();
     _loadArAutomation();
   }
 
@@ -862,6 +872,20 @@ class _StudioShellState extends State<StudioShell>
     if (_timecodeText.value != text) {
       _timecodeText.value = text;
     }
+    // 顶栏 BPM / 拍号：跟随播放位置的实时值（快照 10/11/12）。
+    final s = _snap.value;
+    if (s.length > 12) {
+      final bpmText = _fmtBpm(s[12]);
+      final sigNum = s[10] > 0 ? s[10].round() : 4;
+      final sigDen = 1 << (s[11] >= 0 ? s[11].round().clamp(0, 8) : 2);
+      final sigText = '$sigNum/$sigDen';
+      if (bpmText != _liveBpmText || sigText != _liveSigText) {
+        setState(() {
+          _liveBpmText = bpmText;
+          _liveSigText = sigText;
+        });
+      }
+    }
     final playing = rust.isPlaying() == 1;
     if (playing != _playing) {
       setState(() => _playing = playing);
@@ -879,23 +903,41 @@ class _StudioShellState extends State<StudioShell>
 
   /// 小节.拍.tick（1.0.000 风格：bar 1 起、beat 0 起）。
   ///
-  /// 用当前生效拍号（快照 10/11：原生拍号事件优先，否则工程默认）。
+  /// 用拍号分段换算（拍号变化时 bar 连续计数；原生事件优先）。
   String _fmtBarBeat(double tick, double ppq) {
+    final grid = _grid.value;
+    if (grid != null) {
+      return grid.format(tick);
+    }
     if (ppq <= 0) {
       return '1.0.000';
     }
-    final s = _snap.value;
-    final sigNum = s.length > 10 && s[10] > 0 ? s[10].round() : 4;
-    final sigDenPow = s.length > 11 && s[11] >= 0 ? s[11].round() : 2;
-    final ticksPerBar = ppq * sigNum / (1 << sigDenPow.clamp(0, 8)) * 4;
-    if (ticksPerBar <= 0) {
-      return '1.0.000';
+    return '1.0.000';
+  }
+
+  /// 读取拍号分段（文档变化时刷新）。
+  void _loadTimeSigSegments() {
+    final ptr = rust.timeSigSegmentsJson();
+    if (ptr == ffi.nullptr) {
+      return;
     }
-    final ticksPerBeat = ticksPerBar / sigNum;
-    final bar = (tick / ticksPerBar).floor() + 1;
-    final beat = ((tick % ticksPerBar) / ticksPerBeat).floor();
-    final inBeat = (tick % ticksPerBeat).floor();
-    return '$bar.$beat.${inBeat.toString().padLeft(3, '0')}';
+    try {
+      final list = jsonDecode(ptr.toDartString()) as List<dynamic>;
+      final flat = <double>[];
+      for (final seg in list) {
+        if (seg is List && seg.length >= 3) {
+          flat
+            ..add((seg[0] as num).toDouble())
+            ..add((seg[1] as num).toDouble())
+            ..add((seg[2] as num).toDouble());
+        }
+      }
+      _grid.value = BarBeatGrid.fromFlat(_ppq, flat);
+    } catch (_) {
+      // 保持旧分段。
+    } finally {
+      rust.freeString(ptr);
+    }
   }
 
   double get _ppq {
@@ -1583,7 +1625,7 @@ class _StudioShellState extends State<StudioShell>
                               height: RulerPainter.height,
                               child: IgnorePointer(
                                 child: CustomPaint(
-                                  painter: RulerPainter(_snap),
+                                  painter: RulerPainter(_snap, _grid),
                                 ),
                               ),
                             ),
@@ -1595,6 +1637,7 @@ class _StudioShellState extends State<StudioShell>
                               height: RulerPainter.height,
                               child: MarkerLayer(
                                 snap: _snap,
+                                grid: _grid,
                                 markers: _markers,
                                 onChanged: _refreshDocumentMeta,
                               ),
@@ -1686,8 +1729,8 @@ class _StudioShellState extends State<StudioShell>
       onRedo: _redo,
       onSelectDisplayTrack: _selectDisplayTrack,
       noteCount: _noteCount,
-      bpmText: _fmtBpm(_projectBpm),
-      sigText: '$_projectSigNum/$_projectSigDen',
+      bpmText: _liveBpmText,
+      sigText: _liveSigText,
       onEditBpm: _editDefaultBpm,
       onEditSig: _editDefaultTimeSig,
     );
