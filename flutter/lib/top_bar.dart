@@ -32,8 +32,8 @@ class TopBar extends StatelessWidget {
     required this.onRedo,
     required this.onSelectDisplayTrack,
     required this.onProjectSettings,
-    required this.onSaveProject,
-    required this.onSaveProjectAs,
+    required this.onSave,
+    required this.saveDone,
     required this.noteCount,
     required this.bpmText,
     required this.sigText,
@@ -63,8 +63,12 @@ class TopBar extends StatelessWidget {
   final VoidCallback onRedo;
   final ValueChanged<int> onSelectDisplayTrack;
   final VoidCallback onProjectSettings;
-  final VoidCallback onSaveProject;
-  final VoidCallback onSaveProjectAs;
+
+  /// 保存工程（无改动时按钮置灰不可点）。
+  final VoidCallback onSave;
+
+  /// 刚保存成功：2 秒内把保存按钮显示为对勾。
+  final bool saveDone;
 
   /// 全曲音符数（AR 歌名弹窗内显示）。
   final int noteCount;
@@ -156,16 +160,31 @@ class TopBar extends StatelessWidget {
                       '重做',
                       (st & 2) != 0 ? onRedo : null,
                     ),
+                    // 保存：从右向左第一个；无改动时置灰不可点；
+                    // 保存成功后 2 秒内显示对勾。
+                    if (saveDone)
+                      _iconAction(
+                        Icons.check,
+                        '已保存',
+                        null,
+                        color: YinheTheme.accent,
+                      )
+                    else
+                      _iconAction(
+                        Icons.save_outlined,
+                        '保存工程',
+                        (st & 4) != 0 ? onSave : null,
+                      ),
                   ],
                 ),
               ),
             ],
           ),
-          // 中央：PR = 显示轨道长按钮；AR = 歌名按钮（工程设置/保存/另存为）。
+          // 中央：PR = 显示轨道长按钮；AR = 歌名按钮（直接打开工程设置）。
           Positioned.fill(
             child: Align(
               alignment: Alignment.center,
-              child: isPr ? _buildSongBox() : _buildProjectMenu(),
+              child: isPr ? _buildSongBox() : _titleButton(),
             ),
           ),
         ],
@@ -196,11 +215,20 @@ class TopBar extends StatelessWidget {
     return songTitle.isNotEmpty ? songTitle : (fileName ?? '未命名');
   }
 
-  Widget _iconAction(IconData icon, String tooltip, VoidCallback? onTap) {
+  Widget _iconAction(
+    IconData icon,
+    String tooltip,
+    VoidCallback? onTap, {
+    Color? color,
+  }) {
+    // 颜色显式给到 Icon：IconButton 在禁用态会用主题 disabledColor 覆盖 color。
+    final c =
+        color ??
+        (onTap == null ? YinheTheme.textDisabled : YinheTheme.textSecondary);
     return IconButton(
       onPressed: onTap,
-      icon: Icon(icon),
-      color: onTap == null ? YinheTheme.textDisabled : YinheTheme.textSecondary,
+      icon: Icon(icon, color: c),
+      color: c,
       tooltip: tooltip,
       visualDensity: VisualDensity.compact,
       padding: EdgeInsets.zero,
@@ -294,44 +322,23 @@ class TopBar extends StatelessWidget {
     );
   }
 
-  /// AR：歌名按钮（点击弹工程菜单；音符数在菜单内部）。
-  Widget _buildProjectMenu() {
-    return PopupMenuButton<int>(
-      tooltip: '工程',
-      padding: EdgeInsets.zero,
-      onSelected: (v) {
-        switch (v) {
-          case 0:
-            onProjectSettings();
-          case 1:
-            onSaveProject();
-          case 2:
-            onSaveProjectAs();
-        }
-      },
-      itemBuilder: (_) => [
-        PopupMenuItem<int>(
-          enabled: false,
-          height: 34,
-          child: Text(
-            '$noteCount 音符',
-            style: TextStyle(color: YinheTheme.textLabel, fontSize: 12),
-          ),
-        ),
-        const PopupMenuDivider(height: 1),
-        const PopupMenuItem(value: 0, child: Text('工程设置…')),
-        const PopupMenuItem(value: 1, child: Text('保存工程')),
-        const PopupMenuItem(value: 2, child: Text('另存为…')),
-      ],
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 260),
-        child: ValueListenableBuilder<int>(
-          valueListenable: docState,
-          builder: (context, st, _) => Text(
-            (st & 4) != 0 ? '• ${_titled()}' : _titled(),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
+  /// AR：歌名按钮（点击直接打开工程设置大窗口；音符数在窗口内部）。
+  Widget _titleButton() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(6),
+      onTap: onProjectSettings,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 260),
+          child: ValueListenableBuilder<int>(
+            valueListenable: docState,
+            builder: (context, st, _) => Text(
+              (st & 4) != 0 ? '• ${_titled()}' : _titled(),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
+            ),
           ),
         ),
       ),

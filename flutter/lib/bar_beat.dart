@@ -103,7 +103,8 @@ class BarBeatGrid {
     final (mticks, bticks) = ticksOfSegment(idx);
     final bar = barOffsets[idx] + local ~/ mticks + 1;
     final beat = (local % mticks) ~/ bticks;
-    final inBeat = t % ppq;
+    // tick 字段是"拍内 tick"：以本段实际拍长取模（分母 ≠ 4 时拍长 ≠ ppq）。
+    final inBeat = local % bticks;
     return '$bar.$beat.${inBeat.toString().padLeft(3, '0')}';
   }
 }

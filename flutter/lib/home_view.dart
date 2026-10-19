@@ -11,6 +11,7 @@ class HomeView extends StatelessWidget {
     required this.recent,
     required this.onPickMidi,
     required this.onNewProject,
+    required this.onSaveProjectAs,
     required this.onOpenRecent,
     required this.onOpenSettings,
     required this.onBack,
@@ -19,6 +20,7 @@ class HomeView extends StatelessWidget {
   final List<RecentItem> recent;
   final VoidCallback onPickMidi;
   final VoidCallback onNewProject;
+  final VoidCallback onSaveProjectAs;
   final ValueChanged<RecentItem> onOpenRecent;
   final VoidCallback onOpenSettings;
   final VoidCallback onBack;
@@ -105,6 +107,8 @@ class HomeView extends StatelessWidget {
             ),
           ),
         ),
+        const SizedBox(height: 14),
+        _secondary('另存为', Icons.save_as_outlined, onSaveProjectAs),
         const SizedBox(height: 14),
         _secondary('新建工程', Icons.add_box_outlined, onNewProject),
         const SizedBox(height: 14),

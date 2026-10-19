@@ -6,6 +6,7 @@ import 'theme.dart';
 class ProjectDialog extends StatefulWidget {
   const ProjectDialog({
     super.key,
+    required this.noteCount,
     required this.initialName,
     required this.initialArtist,
     required this.initialDescription,
@@ -13,6 +14,8 @@ class ProjectDialog extends StatefulWidget {
     required this.onSave,
   });
 
+  /// 全曲音符数（窗口内展示）。
+  final int noteCount;
   final String initialName;
   final String initialArtist;
   final String initialDescription;
@@ -66,7 +69,16 @@ class _ProjectDialogState extends State<ProjectDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       backgroundColor: YinheTheme.bg,
-      title: const Text('工程设置', style: TextStyle(fontSize: 18)),
+      title: Row(
+        children: [
+          const Text('工程设置', style: TextStyle(fontSize: 18)),
+          const Spacer(),
+          Text(
+            '${widget.noteCount} 音符',
+            style: TextStyle(color: YinheTheme.textLabel, fontSize: 12),
+          ),
+        ],
+      ),
       content: SizedBox(
         width: 420,
         child: SingleChildScrollView(

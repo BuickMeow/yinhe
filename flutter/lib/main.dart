@@ -181,6 +181,10 @@ class _StudioShellState extends State<StudioShell>
 
   /// 长按微调中的落点 tick（顶部时间码临时跟随手指）。
   double? _lpPreviewTick;
+
+  /// 刚保存成功：顶栏保存按钮临时显示对勾（2 秒）。
+  bool _saveDone = false;
+  Timer? _saveDoneTimer;
   final ValueNotifier<double> _lpProgress = ValueNotifier(0);
   final ValueNotifier<Offset?> _lpPosNotifier = ValueNotifier(null);
   final ValueNotifier<bool> _moveDashed = ValueNotifier(false);
@@ -282,6 +286,7 @@ class _StudioShellState extends State<StudioShell>
     _overlay.dispose();
     _sfRevision.dispose();
     _grid.dispose();
+    _saveDoneTimer?.cancel();
     _docState.dispose();
     calloc.free(_snapPtr);
     calloc.free(_statePtr);
@@ -433,6 +438,7 @@ class _StudioShellState extends State<StudioShell>
     showDialog<void>(
       context: context,
       builder: (_) => ProjectDialog(
+        noteCount: _noteCount,
         initialName: meta['name'] as String? ?? '',
         initialArtist: meta['artist'] as String? ?? '',
         initialDescription: meta['description'] as String? ?? '',
@@ -456,6 +462,18 @@ class _StudioShellState extends State<StudioShell>
   }
 
   /// 导出 .ying 工程：Rust 写临时文件 → Kotlin 复制到用户选择的位置。
+  /// 保存成功后 2 秒内把顶栏保存按钮显示为对勾。
+  void _flashSaved() {
+    _saveDoneTimer?.cancel();
+    setState(() => _saveDone = true);
+    _saveDoneTimer = Timer(const Duration(seconds: 2), () {
+      _saveDoneTimer = null;
+      if (mounted) {
+        setState(() => _saveDone = false);
+      }
+    });
+  }
+
   Future<void> _saveProject({bool saveAs = false}) async {
     if (_tracks.value.isEmpty) {
       ScaffoldMessenger.of(context)
@@ -591,6 +609,7 @@ class _StudioShellState extends State<StudioShell>
         rust.markSaved();
         _loadSongTitle();
         _readDocState();
+        _flashSaved();
     }
   }
 
@@ -1744,6 +1763,7 @@ class _StudioShellState extends State<StudioShell>
                 recent: _recent,
                 onPickMidi: _pickMidi,
                 onNewProject: _newProject,
+                onSaveProjectAs: () => _saveProject(saveAs: true),
                 onOpenRecent: _openRecent,
                 onOpenSettings: _openSettings,
                 onBack: () => setState(() => _showHome = false),
@@ -1791,8 +1811,8 @@ class _StudioShellState extends State<StudioShell>
       onRedo: _redo,
       onSelectDisplayTrack: _selectDisplayTrack,
       onProjectSettings: _openProjectSettings,
-      onSaveProject: () => _saveProject(),
-      onSaveProjectAs: () => _saveProject(saveAs: true),
+      onSave: () => _saveProject(),
+      saveDone: _saveDone,
       noteCount: _noteCount,
       bpmText: _liveBpmText,
       sigText: _liveSigText,
