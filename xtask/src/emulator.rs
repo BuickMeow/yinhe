@@ -196,7 +196,7 @@ fn find_tool(name: &str) -> Option<PathBuf> {
     })
 }
 
-fn sdk_root() -> Option<PathBuf> {
+pub(crate) fn sdk_root() -> Option<PathBuf> {
     for key in ["ANDROID_HOME", "ANDROID_SDK_ROOT"] {
         if let Some(value) = env::var_os(key) {
             let path = PathBuf::from(value);

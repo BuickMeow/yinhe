@@ -9,6 +9,7 @@
 //! Windows/Linux 的打包各只有一行原生命令（Compress-Archive / tar），
 //! 逻辑简单、又无法在 macOS 本地验证，故保留在 CI 的 YAML 里，不进 xtask。
 
+mod android;
 mod bundle_macos;
 mod cmd;
 mod emulator;
@@ -21,6 +22,7 @@ fn main() -> ExitCode {
     let cmd = args.first().map(String::as_str);
 
     match cmd {
+        Some("android") => android::run(&args[1..]),
         Some("bundle-macos") => bundle_macos::run(),
         Some("emulator") => emulator::run(&args[1..]),
         Some("verify") => verify::run(&args[1..]),
@@ -42,6 +44,7 @@ fn print_help() {
          用法:\n  \
          cargo xtask bundle-macos       打包 macOS .app 并生成 .dmg\n  \
          cargo xtask verify [crate..]   fmt --check + clippy + test + release\n  \
+         cargo xtask android [选项]      构建 Android APK（--debug/--install）\n  \
          cargo xtask emulator [选项]     启动/连接 Android 模拟器（--help 看选项）\n\n\
          未指定 crate 时 verify 默认检查 default-members（crates/yinhe-egui）。"
     );
