@@ -190,3 +190,29 @@ class AutomationLaneData {
     );
   }
 }
+
+/// 标尺标签（MIDI marker）。
+class RulerMarker {
+  const RulerMarker({required this.tick, required this.text});
+
+  final int tick;
+  final String text;
+
+  static RulerMarker fromJson(Map<String, dynamic> json) => RulerMarker(
+    tick: (json['tick'] as num?)?.toInt() ?? 0,
+    text: json['text'] as String? ?? '',
+  );
+}
+
+/// 长按空白处的位置指示（插入/粘贴落点）。
+class LongPressIndicator {
+  const LongPressIndicator({
+    required this.tick,
+    required this.track,
+    required this.pr,
+  });
+
+  final double tick;
+  final int track;
+  final bool pr;
+}

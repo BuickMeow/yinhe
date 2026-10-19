@@ -12,7 +12,10 @@ import 'ffi.dart' as rust;
 import 'automation_panel.dart';
 import 'canvas_menus.dart';
 import 'home_view.dart';
+import 'insert_flow.dart';
+import 'long_press_indicator_painter.dart';
 import 'models.dart';
+import 'ruler_markers.dart';
 import 'project_dialog.dart';
 import 'painters.dart';
 import 'settings_view.dart';
@@ -119,6 +122,13 @@ class _StudioShellState extends State<StudioShell>
   /// 文档/选区世代号：变化时重新读取轨道/自动化/力度数据。
   int _docGeneration = 0;
 
+  /// 标尺标签（marker）。
+  List<RulerMarker> _markers = const [];
+
+  /// 长按落点竖线（插入/粘贴位置）。
+  final ValueNotifier<LongPressIndicator?> _lpIndicator = ValueNotifier(null);
+  int _lpToken = 0;
+
   /// 工程状态位：bit0=可撤销，bit1=可重做，bit2=未保存。
   final ValueNotifier<int> _docState = ValueNotifier(0);
   late final ffi.Pointer<ffi.Int32> _statePtr;
@@ -222,6 +232,7 @@ class _StudioShellState extends State<StudioShell>
     _lpProgress.dispose();
     _lpPosNotifier.dispose();
     _moveDashed.dispose();
+    _lpIndicator.dispose();
     _overlay.dispose();
     _docState.dispose();
     calloc.free(_snapPtr);
@@ -462,6 +473,24 @@ class _StudioShellState extends State<StudioShell>
     }
   }
 
+  /// 标尺标签列表（marker_json）。
+  List<RulerMarker> _readMarkers() {
+    final ptr = rust.markersJson();
+    if (ptr == ffi.nullptr) {
+      return const [];
+    }
+    try {
+      final list = jsonDecode(ptr.toDartString()) as List<dynamic>;
+      return [
+        for (final e in list) RulerMarker.fromJson(e as Map<String, dynamic>),
+      ];
+    } catch (_) {
+      return const [];
+    } finally {
+      rust.freeString(ptr);
+    }
+  }
+
   /// 文档加载是后台线程：延迟刷新轨道/最近列表。
   void _refreshDocumentMeta() {
     if (!mounted) {
@@ -470,6 +499,7 @@ class _StudioShellState extends State<StudioShell>
     setState(() {
       _recent = _readRecent();
       _tracks.value = _readTracks();
+      _markers = _readMarkers();
     });
     _loadAutomation();
     _loadVelocity();
@@ -879,6 +909,10 @@ class _StudioShellState extends State<StudioShell>
       return;
     }
     rust.resetTouch();
+    final token = ++_lpToken;
+    _lpIndicator.value = ctx == null
+        ? null
+        : LongPressIndicator(tick: ctx.tick, track: ctx.track, pr: ctx.pr);
     showEmptyLongPressMenu(
       context,
       canPaste: rust.clipboardEmpty() == 0,
@@ -887,21 +921,75 @@ class _StudioShellState extends State<StudioShell>
           _refreshDocumentMeta();
         }
       },
-      onInsert: ctx == null ? null : () => _showInsertMenu(ctx),
-    );
+      onInsert: ctx == null ? null : () => _runInsertFlow(ctx),
+    ).whenComplete(() {
+      if (token == _lpToken) {
+        _lpIndicator.value = null;
+      }
+    });
   }
 
-  /// 长按"插入"：Master 轨给全局事件，普通轨给通道事件。
-  void _showInsertMenu(LongPressContext ctx) {
-    showInsertMenu(
-      context,
-      conductor: ctx.conductor,
-      onPick: (kind) {
-        if (rust.insertAutomation(kind, ctx.tick, ctx.track) == 1) {
-          _refreshDocumentMeta();
+  /// 长按"插入"完整流程：选目标 →（自定义号）→ 值输入 → 插入。
+  Future<void> _runInsertFlow(LongPressContext ctx) async {
+    _lpToken++;
+    try {
+      final choice = await showInsertMenu(context, conductor: ctx.conductor);
+      if (!mounted || choice == null) {
+        return;
+      }
+      var kind = choice.kind;
+      var number = choice.number;
+      if (choice.custom) {
+        final n = await showInsertNumberDialog(
+          context,
+          title: kind == 2 ? '自定义 CC 号' : '自定义 RPN 号',
+          min: 0,
+          max: kind == 2 ? 127 : 16383,
+          initial: kind == 2 ? 1 : 3,
+        );
+        if (!mounted || n == null) {
+          return;
         }
-      },
-    );
+        number = n;
+      }
+      final maxValue = insertDisplayMax(kind, number);
+      final minValue = kind == 0 ? 1 : 0;
+      final current = rust.automationDisplayValue(
+        kind,
+        number,
+        ctx.tick,
+        ctx.track,
+      );
+      final initial = current.isNaN
+          ? insertDefaultValue(kind, number).clamp(minValue, maxValue)
+          : current.round().clamp(minValue, maxValue);
+      final quick = kind == 2 && number == 64
+          ? const [('关闭', 0), ('开启', 127)]
+          : const <(String, int)>[];
+      final v = await showInsertValueDialog(
+        context,
+        title: insertValueTitle(kind, number),
+        min: minValue,
+        max: maxValue,
+        initial: initial,
+        quick: quick,
+      );
+      if (!mounted || v == null) {
+        return;
+      }
+      if (rust.insertAutomation(
+            kind,
+            number,
+            ctx.tick,
+            ctx.track,
+            v.toDouble(),
+          ) ==
+          1) {
+        _refreshDocumentMeta();
+      }
+    } finally {
+      _lpIndicator.value = null;
+    }
   }
 
   /// 鼠标滚轮 / 触控板滚动：Ctrl（或 Cmd）+ 滚轮缩放（键盘区缩放音高轴，
@@ -1249,12 +1337,39 @@ class _StudioShellState extends State<StudioShell>
                             Positioned(
                               left: 0,
                               right: 0,
+                              top: RulerPainter.height,
+                              bottom: 0,
+                              child: IgnorePointer(
+                                child: CustomPaint(
+                                  painter: LongPressIndicatorPainter(
+                                    _snap,
+                                    _lpIndicator,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          if (!_showHome)
+                            Positioned(
+                              left: 0,
+                              right: 0,
                               top: 0,
                               height: RulerPainter.height,
                               child: IgnorePointer(
                                 child: CustomPaint(
                                   painter: RulerPainter(_snap),
                                 ),
+                              ),
+                            ),
+                          if (!_showHome)
+                            Positioned(
+                              left: 0,
+                              right: 0,
+                              top: 0,
+                              height: RulerPainter.height,
+                              child: MarkerLayer(
+                                snap: _snap,
+                                markers: _markers,
+                                onChanged: _refreshDocumentMeta,
                               ),
                             ),
                           if (!_showHome && _viewMode == kViewPianoroll)

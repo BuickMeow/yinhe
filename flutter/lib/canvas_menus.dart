@@ -78,58 +78,6 @@ Future<void> showEmptyLongPressMenu(
   );
 }
 
-/// 插入事件类型：kind 与 Rust `yinhe_insert_automation` 一致。
-Future<void> showInsertMenu(
-  BuildContext context, {
-  required bool conductor,
-  required ValueChanged<int> onPick,
-}) {
-  // (kind, 图标, 名称)
-  final items = conductor
-      ? const <(int, IconData, String)>[(0, Icons.speed, '速度（Tempo）')]
-      : const <(int, IconData, String)>[
-          (1, Icons.swap_vert, 'Pitch Bend'),
-          (2, Icons.tune, 'CC1 调制轮'),
-          (3, Icons.volume_up, 'CC7 音量'),
-          (4, Icons.balance, 'CC10 声像'),
-          (5, Icons.emoji_emotions_outlined, 'CC11 表情'),
-          (6, Icons.piano, 'CC64 延音'),
-        ];
-  return showModalBottomSheet<void>(
-    context: context,
-    backgroundColor: YinheTheme.bg,
-    isScrollControlled: true,
-    builder: (ctx) => SafeArea(
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(ctx).height * 0.7,
-        ),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final (kind, icon, label) in items)
-                ListTile(
-                  leading: Icon(icon),
-                  title: Text(label),
-                  onTap: () {
-                    Navigator.of(ctx).pop();
-                    onPick(kind);
-                  },
-                ),
-              ListTile(
-                leading: const Icon(Icons.close),
-                title: const Text('取消'),
-                onTap: () => Navigator.of(ctx).pop(),
-              ),
-            ],
-          ),
-        ),
-      ),
-    ),
-  );
-}
-
 /// AR 长按音轨（未拖动）：音轨信息菜单。
 Future<void> showTrackMenu(
   BuildContext context, {

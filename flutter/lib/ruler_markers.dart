@@ -1,0 +1,261 @@
+import 'package:ffi/ffi.dart';
+import 'package:flutter/material.dart';
+
+import 'ffi.dart' as rust;
+import 'models.dart';
+import 'theme.dart';
+
+/// 时间标尺上的标签（marker）层：pill 显示 + 点击跳转 / 长按菜单 / 拖动移动。
+///
+/// 与桌面 `time_ruler` 的标签行为对齐（桌面：点击跳转、双击改名、右键删除、
+/// 拖动移动；移动端映射为点击跳转、长按菜单、水平拖动）。
+class MarkerLayer extends StatefulWidget {
+  const MarkerLayer({
+    super.key,
+    required this.snap,
+    required this.markers,
+    required this.onChanged,
+  });
+
+  final ValueNotifier<List<double>> snap;
+  final List<RulerMarker> markers;
+  final VoidCallback onChanged;
+
+  @override
+  State<MarkerLayer> createState() => _MarkerLayerState();
+}
+
+class _MarkerLayerState extends State<MarkerLayer> {
+  /// 拖动预览：原 tick + 当前 x（画布逻辑像素）。
+  int? _dragTick;
+  double? _dragX;
+
+  String _formatTick(double tick, double ppq) {
+    if (ppq <= 0) {
+      return '${tick.round()}';
+    }
+    final ticksPerBar = ppq * 4;
+    final bar = (tick / ticksPerBar).floor() + 1;
+    final beat = ((tick % ticksPerBar) / ppq).floor();
+    final inBeat = (tick % ppq).floor();
+    return '$bar.$beat.${inBeat.toString().padLeft(3, '0')}';
+  }
+
+  Future<void> _showMarkerMenu(RulerMarker m) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: YinheTheme.bg,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.edit),
+              title: const Text('重命名标签'),
+              onTap: () => Navigator.of(ctx).pop('rename'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('删除标签'),
+              onTap: () => Navigator.of(ctx).pop('delete'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.close),
+              title: const Text('取消'),
+              onTap: () => Navigator.of(ctx).pop(),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || action == null) {
+      return;
+    }
+    if (action == 'delete') {
+      if (rust.markerDelete(m.tick.toDouble()) == 1) {
+        widget.onChanged();
+      }
+      return;
+    }
+    final controller = TextEditingController(text: m.text);
+    final text = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: YinheTheme.bg,
+        title: const Text('重命名标签', style: TextStyle(fontSize: 17)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          style: const TextStyle(fontSize: 14),
+          decoration: const InputDecoration(
+            labelText: '标签文本',
+            border: OutlineInputBorder(),
+            isDense: true,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    Future<void>.delayed(const Duration(milliseconds: 300), controller.dispose);
+    if (!mounted || text == null) {
+      return;
+    }
+    final p = text.toNativeUtf8();
+    var ok = 0;
+    try {
+      ok = rust.markerRename(m.tick.toDouble(), p);
+    } finally {
+      calloc.free(p);
+    }
+    if (ok == 1) {
+      widget.onChanged();
+    }
+  }
+
+  /// 空白标尺长按：在该位置添加标签（文本可留空 = 显示小节位置）。
+  Future<void> _addMarkerAt(double x) async {
+    final tick = rust.tickAtX(x);
+    final controller = TextEditingController();
+    final text = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: YinheTheme.bg,
+        title: const Text('添加标签', style: TextStyle(fontSize: 17)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          style: const TextStyle(fontSize: 14),
+          decoration: const InputDecoration(
+            labelText: '标签文本（可留空）',
+            border: OutlineInputBorder(),
+            isDense: true,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            child: const Text('添加'),
+          ),
+        ],
+      ),
+    );
+    Future<void>.delayed(const Duration(milliseconds: 300), controller.dispose);
+    if (!mounted || text == null) {
+      return;
+    }
+    final p = text.toNativeUtf8();
+    var ok = 0;
+    try {
+      ok = rust.markerInsert(tick, p);
+    } finally {
+      calloc.free(p);
+    }
+    if (ok == 1) {
+      widget.onChanged();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<List<double>>(
+      valueListenable: widget.snap,
+      builder: (context, s, _) {
+        if (s.length < 12) {
+          return const SizedBox.shrink();
+        }
+        final ppu = s[1];
+        final scrollX = s[2];
+        final origin = s[5];
+        final ppq = s[8] > 0 ? s[8] : 480.0;
+        if (ppu <= 0) {
+          return const SizedBox.shrink();
+        }
+        final width = MediaQuery.sizeOf(context).width;
+        double xOf(int tick) => tick * ppu - scrollX + origin;
+        final sorted = [...widget.markers]..sort((a, b) => a.tick - b.tick);
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapUp: (d) => rust.jumpToTick(rust.tickAtX(d.localPosition.dx)),
+          onLongPressStart: (d) => _addMarkerAt(d.localPosition.dx),
+          child: Stack(
+            children: [
+              for (final m in sorted)
+                if (_visible(xOf(m.tick), width))
+                  _pill(
+                    m,
+                    _dragTick == m.tick && _dragX != null
+                        ? _dragX!
+                        : xOf(m.tick),
+                    width,
+                    ppq,
+                  ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  bool _visible(double x, double width) => x >= -60 && x <= width + 60;
+
+  Widget _pill(RulerMarker m, double x, double width, double ppq) {
+    final text = m.text.isNotEmpty
+        ? m.text
+        : _formatTick(m.tick.toDouble(), ppq);
+    return Positioned(
+      left: x + 1,
+      top: 0,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => rust.jumpToTick(m.tick.toDouble()),
+        onLongPress: () => _showMarkerMenu(m),
+        onHorizontalDragStart: (_) => setState(() {
+          _dragTick = m.tick;
+          _dragX = x;
+        }),
+        onHorizontalDragUpdate: (d) => setState(() {
+          _dragX = (_dragX! + d.delta.dx).clamp(0.0, width);
+        }),
+        onHorizontalDragEnd: (_) {
+          final to = _dragX;
+          setState(() {
+            _dragTick = null;
+            _dragX = null;
+          });
+          if (to != null && (to - x).abs() > 1.0) {
+            if (rust.markerMove(m.tick.toDouble(), to) == 1) {
+              widget.onChanged();
+            }
+          }
+        },
+        child: Container(
+          margin: const EdgeInsets.only(top: 1, bottom: 1),
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFAFAFA),
+            borderRadius: BorderRadius.circular(3),
+            border: Border.all(color: YinheTheme.lineFg),
+          ),
+          child: Text(
+            text,
+            maxLines: 1,
+            style: TextStyle(color: YinheTheme.text, fontSize: 10),
+          ),
+        ),
+      ),
+    );
+  }
+}

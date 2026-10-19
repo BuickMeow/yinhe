@@ -172,16 +172,84 @@ final SetTrackInfoDart setTrackInfo = bridge
 
 typedef InsertAutomationNative = ffi.Int32 Function(
   ffi.Int32,
+  ffi.Int32,
   ffi.Double,
   ffi.Int32,
+  ffi.Double,
 );
-typedef InsertAutomationDart = int Function(int, double, int);
+typedef InsertAutomationDart = int Function(int, int, double, int, double);
 
-/// 长按"插入"自动化事件。
+/// 长按"插入"自动化事件（value 为显示值：PB/CC/RPN 原始值域，Tempo 为 BPM）。
 final InsertAutomationDart insertAutomation = bridge
     .lookupFunction<InsertAutomationNative, InsertAutomationDart>(
       'yinhe_insert_automation',
     );
+
+typedef DisplayValueNative = ffi.Double Function(
+  ffi.Int32,
+  ffi.Int32,
+  ffi.Double,
+  ffi.Int32,
+);
+typedef DisplayValueDart = double Function(int, int, double, int);
+
+/// 该位置当前显示值（无历史值返回 NaN）。
+final DisplayValueDart automationDisplayValue = bridge
+    .lookupFunction<DisplayValueNative, DisplayValueDart>(
+      'yinhe_automation_display_value',
+    );
+
+/// 标尺标签（marker）JSON。
+final CStrDart markersJson = bridge.lookupFunction<CStrNative, CStrDart>(
+  'yinhe_markers_json',
+);
+
+typedef TickAtXNative = ffi.Double Function(ffi.Float);
+typedef TickAtXDart = double Function(double);
+
+/// 画布逻辑 x → 当前视图 tick（量化吸附；标尺交互用）。
+final TickAtXDart tickAtX = bridge.lookupFunction<TickAtXNative, TickAtXDart>(
+  'yinhe_tick_at_x',
+);
+
+typedef MarkerInsertNative = ffi.Int32 Function(ffi.Double, ffi.Pointer<Utf8>);
+typedef MarkerInsertDart = int Function(double, ffi.Pointer<Utf8>);
+
+/// 在 tick 处插入标签。
+final MarkerInsertDart markerInsert = bridge
+    .lookupFunction<MarkerInsertNative, MarkerInsertDart>(
+      'yinhe_marker_insert',
+    );
+
+typedef MarkerRenameNative = ffi.Int32 Function(ffi.Double, ffi.Pointer<Utf8>);
+typedef MarkerRenameDart = int Function(double, ffi.Pointer<Utf8>);
+
+/// 重命名标签。
+final MarkerRenameDart markerRename = bridge
+    .lookupFunction<MarkerRenameNative, MarkerRenameDart>(
+      'yinhe_marker_rename',
+    );
+
+typedef DoubleArgNative = ffi.Int32 Function(ffi.Double);
+typedef DoubleArgDart = int Function(double);
+
+/// 删除标签。
+final DoubleArgDart markerDelete = bridge
+    .lookupFunction<DoubleArgNative, DoubleArgDart>('yinhe_marker_delete');
+
+typedef MarkerMoveNative = ffi.Int32 Function(ffi.Double, ffi.Float);
+typedef MarkerMoveDart = int Function(double, double);
+
+/// 移动标签（第二参数为画布逻辑 x）。
+final MarkerMoveDart markerMove = bridge
+    .lookupFunction<MarkerMoveNative, MarkerMoveDart>('yinhe_marker_move');
+
+typedef DoubleVoidNative = ffi.Void Function(ffi.Double);
+typedef DoubleVoidDart = void Function(double);
+
+/// 播放光标跳到 tick。
+final DoubleVoidDart jumpToTick = bridge
+    .lookupFunction<DoubleVoidNative, DoubleVoidDart>('yinhe_jump_to_tick');
 
 typedef SetTrackNameNative = ffi.Int32 Function(ffi.Int32, ffi.Pointer<Utf8>);
 typedef SetTrackNameDart = int Function(int, ffi.Pointer<Utf8>);
