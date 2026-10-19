@@ -21,6 +21,17 @@ pub fn alloc_channels_from(start: u16, count: usize) -> Vec<(u8, u8)> {
         .collect()
 }
 
+/// 单 port 内循环分配：从 `start_channel`（0 起）开始，channel+1..16、1..，
+/// 到 16 后回到 1（**不跨 port**，与 `alloc_channels_from` 的跨 port 进位不同）。
+/// `count` 可超过 16（重复循环）。
+pub fn alloc_channels_in_port(port: u8, start_channel: u8, count: usize) -> Vec<(u8, u8)> {
+    let port = port & 0x0F;
+    let start = usize::from(start_channel & 0x0F);
+    (0..count)
+        .map(|i| (port, ((start + i) % 16) as u8))
+        .collect()
+}
+
 /// MIDI 轨自动分配起点（global channel，0 起）：
 /// 取现有 MIDI 轨的最大 global channel + 1——无论前面是否有空洞都不回填
 /// （已有 A11 就从 A12 开始；A16 已有则从 B1 继续）。没有 MIDI 轨时从 A1 = 0 开始。
@@ -116,5 +127,35 @@ mod tests {
     fn auto_midi_start_ignores_audio_tracks() {
         let tracks = vec![audio_track(3), midi_track(0, 4)]; // A5
         assert_eq!(auto_midi_channel_start(&tracks), Some(5)); // A6
+    }
+}
+
+#[cfg(test)]
+mod in_port_tests {
+    use super::alloc_channels_in_port;
+
+    /// B3 起循环：B3..B16 后回到 B1（不跨到 C1）。
+    #[test]
+    fn in_port_wraps_within_same_port() {
+        let alloc = alloc_channels_in_port(1, 2, 16);
+        assert_eq!(alloc[0], (1, 2)); // B3
+        assert_eq!(alloc[13], (1, 15)); // B16
+        assert_eq!(alloc[14], (1, 0)); // B1（回到本 port 开头）
+        assert_eq!(alloc[15], (1, 1)); // B2
+    }
+
+    /// 超过 16 条继续循环（重复通道）。
+    #[test]
+    fn in_port_repeats_after_wrap() {
+        let alloc = alloc_channels_in_port(0, 0, 18);
+        assert_eq!(alloc[16], (0, 0));
+        assert_eq!(alloc[17], (0, 1));
+    }
+
+    /// 常规循环（count=3, 起点 A5）：A5、A6、A7。
+    #[test]
+    fn in_port_sequence() {
+        let alloc = alloc_channels_in_port(0, 4, 3);
+        assert_eq!(alloc, vec![(0, 4), (0, 5), (0, 6)]);
     }
 }
