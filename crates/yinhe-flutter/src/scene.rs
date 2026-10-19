@@ -1061,6 +1061,33 @@ pub fn clipboard_empty() -> bool {
     }
 }
 
+/// 画布逻辑 x → 当前视图 tick（按当前量化档吸附，与点击跳转同规则）。
+pub fn tick_at_x(s: &RenderScene, x: f32) -> f64 {
+    let (ppu, scroll_x, origin) = match s.view_mode {
+        ViewMode::Pianoroll => (
+            s.pr_view.base.pixels_per_tick,
+            s.pr_view.base.scroll_x,
+            s.pr_view.keyboard_width(),
+        ),
+        ViewMode::Arrangement => (
+            s.arr_view.base.pixels_per_tick,
+            s.arr_view.base.scroll_x,
+            s.arr_view.base.left_panel_width,
+        ),
+    };
+    let raw = f64::from((x - origin + scroll_x) / ppu.max(0.0001)).max(0.0);
+    let Some(doc) = s.document.as_ref() else {
+        return raw;
+    };
+    let q = match s.view_mode {
+        ViewMode::Pianoroll => doc.edit.quantize_pianoroll,
+        ViewMode::Arrangement => doc.edit.quantize_arrange,
+    };
+    q.resolved(ppu, s.ppq)
+        .snap_tick(raw, s.ppq)
+        .clamp(0.0, (s.total_ticks - 1.0).max(0.0))
+}
+
 /// 在长按位置粘贴剪贴板（按当前量化吸附）。成功 1。
 pub fn paste_selection(x: f32) -> i32 {
     let Some(clipboard) = CLIPBOARD.lock().ok().and_then(|slot| slot.clone()) else {
@@ -1073,31 +1100,7 @@ pub fn paste_selection(x: f32) -> i32 {
         return 0;
     };
     // 先按当前视口算出长按位置对应的 tick，并用当前量化档吸附。
-    let tick = {
-        let Some(doc) = s.document.as_ref() else {
-            return 0;
-        };
-        let (ppu, scroll_x, origin) = match s.view_mode {
-            ViewMode::Pianoroll => (
-                s.pr_view.base.pixels_per_tick,
-                s.pr_view.base.scroll_x,
-                s.pr_view.keyboard_width(),
-            ),
-            ViewMode::Arrangement => (
-                s.arr_view.base.pixels_per_tick,
-                s.arr_view.base.scroll_x,
-                s.arr_view.base.left_panel_width,
-            ),
-        };
-        let raw = f64::from((x - origin + scroll_x) / ppu.max(0.0001)).max(0.0);
-        let q = match s.view_mode {
-            ViewMode::Pianoroll => doc.edit.quantize_pianoroll,
-            ViewMode::Arrangement => doc.edit.quantize_arrange,
-        };
-        q.resolved(ppu, s.ppq)
-            .snap_tick(raw, s.ppq)
-            .clamp(0.0, (s.total_ticks - 1.0).max(0.0))
-    };
+    let tick = tick_at_x(&s, x);
 
     let Some(doc) = s.document.as_mut() else {
         return 0;
@@ -1188,34 +1191,43 @@ pub fn set_track_info(
     1
 }
 
-/// 长按"插入"：kind 0=速度(Tempo)、1=PB、2=CC1、3=CC7、4=CC10、5=CC11、6=CC64。
-///
-/// 值取该位置当前值（不改变听感）；没有历史值时用目标默认值。
-/// 成功 1。
-pub fn insert_automation(kind: i32, tick: f64, track: i32) -> i32 {
-    use yinhe_types::automation::{AutomationEvent, AutomationTarget, SegmentShape};
+/// 插入目标：kind 0=Tempo、1=PB、2=CC、3=RPN；number 为 CC 号/RPN 号。
+fn insert_target(kind: i32, number: i32) -> Option<yinhe_types::automation::AutomationTarget> {
+    use yinhe_types::automation::AutomationTarget;
+    match kind {
+        0 => Some(AutomationTarget::Tempo),
+        1 => Some(AutomationTarget::PitchBend),
+        2 => Some(AutomationTarget::CC {
+            controller: number.clamp(0, 127) as u8,
+        }),
+        3 => Some(AutomationTarget::Rpn {
+            parameter: number.clamp(0, 16383) as u16,
+        }),
+        _ => None,
+    }
+}
 
-    let Ok(mut s) = scene().lock() else {
+/// 长按"插入"：`value` 为显示值（PB/CC/RPN 按各自值域，Tempo 为 BPM）。
+/// 成功 1。
+pub fn insert_automation(kind: i32, number: i32, tick: f64, track: i32, value: f64) -> i32 {
+    use yinhe_types::automation::{AutomationEvent, AutomationTarget};
+
+    let Some(target) = insert_target(kind, number) else {
         return 0;
-    };
-    let Some(doc) = s.document.as_mut() else {
-        return 0;
-    };
-    let target = match kind {
-        0 => AutomationTarget::Tempo,
-        1 => AutomationTarget::PitchBend,
-        2 => AutomationTarget::CC { controller: 1 },
-        3 => AutomationTarget::CC { controller: 7 },
-        4 => AutomationTarget::CC { controller: 10 },
-        5 => AutomationTarget::CC { controller: 11 },
-        6 => AutomationTarget::CC { controller: 64 },
-        _ => return 0,
     };
     let is_tempo = matches!(target, AutomationTarget::Tempo);
     let track_idx = if is_tempo {
         0usize
     } else {
         track.max(0) as usize
+    };
+    let at_tick = tick.max(0.0).round() as u32;
+
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
     };
     if !is_tempo {
         let Some(t) = doc.data.model.tracks.get(track_idx) else {
@@ -1225,43 +1237,18 @@ pub fn insert_automation(kind: i32, tick: f64, track: i32) -> i32 {
             return 0;
         }
     }
-    let at_tick = tick.max(0.0).round() as u32;
-    // 该位置当前值（避免插入瞬间改变听感）。
-    let current = if is_tempo {
-        doc.data
-            .model
-            .conductor
-            .tempo
-            .value_at(at_tick)
-            .map(|(v, _)| v)
+    let display = value as f32;
+    let mut normalized = target.from_display_value(display);
+    if is_tempo {
+        normalized = normalized.clamp(1.0, 999.0);
     } else {
-        doc.data
-            .model
-            .tracks
-            .get(track_idx)
-            .and_then(|t| t.automation_lanes.iter().find(|l| l.target == target))
-            .and_then(|l| l.value_at(at_tick))
-            .map(|(v, _)| v)
-    };
-    let default_value = match kind {
-        0 => 120.0,
-        1 => 0.5,
-        2 => 0.0,
-        3 => 1.0,
-        4 => 0.5,
-        5 => 1.0,
-        6 => 0.0,
-        _ => 0.5,
-    };
-    let mut value = current.unwrap_or(default_value);
-    if !is_tempo {
-        value = value.clamp(0.0, 1.0);
+        normalized = normalized.clamp(0.0, 1.0);
     }
     let event = AutomationEvent {
         id: 0,
         tick: at_tick,
-        value,
-        shape: SegmentShape::Step,
+        value: normalized,
+        shape: target.default_shape(),
     };
     let before = doc.capture_snapshot();
     let Some((_, _, action)) = doc.upsert_automation_event(track_idx, target, event) else {
@@ -1272,11 +1259,147 @@ pub fn insert_automation(kind: i32, tick: f64, track: i32) -> i32 {
     refresh_snapshot(&mut s);
     drop(s);
     crate::audio::reload_notes(model);
-    log::info!("插入自动化事件: kind={kind} tick={at_tick} track={track_idx}");
+    log::info!(
+        "插入自动化事件: kind={kind} number={number} tick={at_tick} track={track_idx} display={display:.1}"
+    );
     1
 }
 
-/// 重命名音轨（AR 长按轨道菜单）。成功 1。
+/// 查询该位置当前显示值（PB/CC/RPN 原始值域；Tempo = BPM）。
+/// 无历史值时返回 NaN，Dart 用目标默认值。
+pub fn automation_display_value(kind: i32, number: i32, tick: f64, track: i32) -> f64 {
+    use yinhe_types::automation::AutomationTarget;
+
+    let Some(target) = insert_target(kind, number) else {
+        return f64::NAN;
+    };
+    let Ok(s) = scene().lock() else {
+        return f64::NAN;
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return f64::NAN;
+    };
+    let at_tick = tick.max(0.0).round() as u32;
+    let normalized = if matches!(target, AutomationTarget::Tempo) {
+        doc.data
+            .model
+            .conductor
+            .tempo
+            .value_at(at_tick)
+            .map(|(v, _)| v)
+    } else {
+        doc.data
+            .model
+            .tracks
+            .get(track.max(0) as usize)
+            .and_then(|t| t.automation_lanes.iter().find(|l| l.target == target))
+            .and_then(|l| l.value_at(at_tick))
+            .map(|(v, _)| v)
+    };
+    match normalized {
+        Some(v) => f64::from(target.to_display_value(v)),
+        None => f64::NAN,
+    }
+}
+
+/// 标尺标签（marker）JSON：`[{"tick":..,"text":".."}]`。
+pub fn markers_json() -> String {
+    let Ok(s) = scene().lock() else {
+        return "[]".into();
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return "[]".into();
+    };
+    let mut out = String::from("[");
+    for (i, m) in doc.data.model.conductor.markers.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!(
+            "{{\"tick\":{},\"text\":\"{}\"}}",
+            m.tick,
+            json_escape(&m.text)
+        ));
+    }
+    out.push(']');
+    out
+}
+
+/// 在 tick 处插入一个标签（空文本 = 显示小节位置）。成功 1。
+pub fn marker_insert(tick: f64, text: String) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let t = tick.max(0.0).round() as u32;
+    if !doc.insert_marker_with_undo(t, text, "undo.insert_marker_event") {
+        return 0;
+    }
+    refresh_snapshot(&mut s);
+    1
+}
+
+/// 重命名标签。成功 1。
+pub fn marker_rename(tick: f64, text: String) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let t = tick.max(0.0).round() as u32;
+    if !doc.set_marker_with_undo(t, t, text, "undo.rename_marker_event") {
+        return 0;
+    }
+    refresh_snapshot(&mut s);
+    1
+}
+
+/// 删除标签。成功 1。
+pub fn marker_delete(tick: f64) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let t = tick.max(0.0).round() as u32;
+    if !doc.delete_marker_with_undo(t, "undo.delete_marker_event") {
+        return 0;
+    }
+    refresh_snapshot(&mut s);
+    1
+}
+
+/// 移动标签：画布逻辑 x 决定目标 tick（按当前量化吸附）。成功 1。
+pub fn marker_move(from: f64, x: f32) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let to_tick = tick_at_x(&s, x).round() as u32;
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let from_tick = from.max(0.0).round() as u32;
+    let text = doc
+        .data
+        .model
+        .conductor
+        .markers
+        .iter()
+        .find(|m| m.tick == from_tick)
+        .map(|m| m.text.clone())
+        .unwrap_or_default();
+    if !doc.set_marker_with_undo(from_tick, to_tick, text, "undo.move_marker_event") {
+        return 0;
+    }
+    refresh_snapshot(&mut s);
+    1
+}
+
+/// 重命名音轨（AR 长按轨道菜单）。成功 1。/// 重命名音轨（AR 长按轨道菜单）。成功 1。
 pub fn set_track_name(track: usize, name: String) -> i32 {
     use yinhe_editor_core::history::UndoAction;
 

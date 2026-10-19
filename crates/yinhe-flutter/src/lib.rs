@@ -626,10 +626,87 @@ pub extern "C" fn yinhe_long_press_context_json() -> *mut std::ffi::c_char {
     to_c_string(edit::long_press_context_json())
 }
 
-/// 长按"插入"事件：kind 0=速度、1=PB、2=CC1、3=CC7、4=CC10、5=CC11、6=CC64。
+/// 长按"插入"事件：kind 0=Tempo、1=PB、2=CC、3=RPN；
+/// `number` = CC 号/RPN 号，`value` = 显示值（PB/CC/RPN 原始值域，Tempo 为 BPM）。
 #[unsafe(no_mangle)]
-pub extern "C" fn yinhe_insert_automation(kind: i32, tick: f64, track: i32) -> i32 {
-    scene::insert_automation(kind, tick, track)
+pub extern "C" fn yinhe_insert_automation(
+    kind: i32,
+    number: i32,
+    tick: f64,
+    track: i32,
+    value: f64,
+) -> i32 {
+    scene::insert_automation(kind, number, tick, track, value)
+}
+
+/// 该位置当前显示值（无历史值返回 NaN）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_automation_display_value(
+    kind: i32,
+    number: i32,
+    tick: f64,
+    track: i32,
+) -> f64 {
+    scene::automation_display_value(kind, number, tick, track)
+}
+
+/// 标尺标签（marker）JSON（堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_markers_json() -> *mut std::ffi::c_char {
+    to_c_string(scene::markers_json())
+}
+
+/// 画布逻辑 x → 当前视图 tick（量化吸附；标尺交互用）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_tick_at_x(x: f32) -> f64 {
+    match scene::scene().lock() {
+        Ok(s) => scene::tick_at_x(&s, x),
+        Err(_) => 0.0,
+    }
+}
+
+/// 在 tick 处插入标签。成功 1。
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_marker_insert(tick: f64, text: *const std::ffi::c_char) -> i32 {
+    if text.is_null() {
+        return 0;
+    }
+    let text = unsafe { CStr::from_ptr(text) }
+        .to_string_lossy()
+        .into_owned();
+    scene::marker_insert(tick, text)
+}
+
+/// 重命名标签。成功 1。
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_marker_rename(tick: f64, text: *const std::ffi::c_char) -> i32 {
+    if text.is_null() {
+        return 0;
+    }
+    let text = unsafe { CStr::from_ptr(text) }
+        .to_string_lossy()
+        .into_owned();
+    scene::marker_rename(tick, text)
+}
+
+/// 删除标签。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_marker_delete(tick: f64) -> i32 {
+    scene::marker_delete(tick)
+}
+
+/// 移动标签（画布逻辑 x 决定目标 tick）。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_marker_move(from: f64, x: f32) -> i32 {
+    scene::marker_move(from, x)
+}
+
+/// 播放光标跳到 tick（标尺标签点击）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_jump_to_tick(tick: f64) {
+    scene::set_play_cursor(tick);
 }
 
 /// 重命名音轨。成功 1。
