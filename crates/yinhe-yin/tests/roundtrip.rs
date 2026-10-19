@@ -208,6 +208,7 @@ fn build_complex_model() -> YinModel {
         description: "Test project".to_string(),
         ppq: 480,
         compression_level: 3,
+        ..Default::default()
     };
 
     let mut model = YinModel {

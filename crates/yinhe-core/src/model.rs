@@ -6,9 +6,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::events::NoteEvent;
-use crate::tempo_map::{
-    DEFAULT_MPQ, TempoMap, TempoSegment, mpq_from_bpm, recompute_tempo_start_times,
-};
+use crate::tempo_map::{TempoMap, TempoSegment, mpq_from_bpm, recompute_tempo_start_times};
 use yinhe_types::{AutomationLane, AutomationTarget, KEY_COUNT, NoteBucket, PcEvent};
 
 // =========================================================
@@ -262,6 +260,22 @@ pub struct ProjectMeta {
     pub description: String,
     pub ppq: u32,
     pub compression_level: i32,
+    /// 本工程默认 BPM：conductor 没有原生 Tempo 事件时的回退值
+    /// （原生事件优先级更高，可以完全代替它）。
+    #[serde(default = "default_project_bpm")]
+    pub default_bpm: f32,
+    /// 本工程默认拍号 `(分子, 分母的 2 次幂)`，如 4/4 = `(4, 2)`：
+    /// conductor 没有原生拍号事件时的回退值（原生事件优先级更高）。
+    #[serde(default = "default_project_time_sig")]
+    pub default_time_sig: (u8, u8),
+}
+
+fn default_project_bpm() -> f32 {
+    120.0
+}
+
+fn default_project_time_sig() -> (u8, u8) {
+    (4, 2)
 }
 
 impl Default for ProjectMeta {
@@ -272,6 +286,8 @@ impl Default for ProjectMeta {
             description: String::new(),
             ppq: 480,
             compression_level: 3,
+            default_bpm: default_project_bpm(),
+            default_time_sig: default_project_time_sig(),
         }
     }
 }
@@ -406,27 +422,9 @@ impl YinModel {
     /// 调用者拿到模型后自行决定是否 `rebuild()`（首次构造不需要，
     /// 因为没有音符；但 `Document::empty()` 仍会调用以初始化 tempo_map）。
     pub fn new_empty_with_16_tracks() -> Self {
-        let conductor = Arc::new(ConductorData {
-            tempo: AutomationLane {
-                target: AutomationTarget::Tempo,
-                track: 0,
-                events: vec![yinhe_types::AutomationEvent {
-                    id: 1,
-                    tick: 0,
-                    value: 120.0,
-                    shape: yinhe_types::SegmentShape::Step,
-                }],
-            },
-            time_sig: vec![yinhe_types::TimeSigEvent {
-                tick: 0,
-                numerator: 4,
-                denominator: 2,
-            }],
-            key_sig: Vec::new(),
-            markers: Vec::new(),
-            lyrics: Vec::new(),
-            chord: Vec::new(),
-        });
+        // 新工程不写原生 Tempo/拍号事件：走 `ProjectMeta` 的默认值
+        // （120 BPM + 4/4），原生事件优先级更高，用户插入事件即覆盖。
+        let conductor = Arc::new(ConductorData::default());
 
         let mut tracks: Vec<Arc<TrackData>> = Vec::with_capacity(17);
         let mut t = TrackData::new(0, 0);
@@ -444,21 +442,24 @@ impl YinModel {
         Self {
             conductor,
             tracks,
-            next_automation_id: 2,
             ..Default::default()
         }
     }
 
     /// Build TempoMap from conductor.tempo / conductor.time_sig.
+    ///
+    /// 没有原生事件时用 `meta.default_bpm` / `meta.default_time_sig` 兜底
+    /// （原生事件优先级更高）。
     pub(crate) fn build_tempo_map(&self) -> TempoMap {
         let ppq = self.meta.ppq;
+        let default_mpq = mpq_from_bpm(self.meta.default_bpm);
 
         // Convert AutomationEvent -> TempoSegment, sorted by tick.
         let mut segments: Vec<TempoSegment> = if self.conductor.tempo.events.is_empty() {
             vec![TempoSegment {
                 start_tick: 0,
                 start_time: 0.0,
-                micros_per_quarter: DEFAULT_MPQ,
+                micros_per_quarter: default_mpq,
             }]
         } else {
             let mut segs: Vec<TempoSegment> = self
@@ -474,14 +475,14 @@ impl YinModel {
                 .collect();
             segs.sort_by_key(|s| s.start_tick);
             // Ensure a segment exists at tick 0 so lookups before the first
-            // tempo event have something to find.
+            // tempo event have something to find（用工程默认 BPM）。
             if segs[0].start_tick != 0 {
                 segs.insert(
                     0,
                     TempoSegment {
                         start_tick: 0,
                         start_time: 0.0,
-                        micros_per_quarter: DEFAULT_MPQ,
+                        micros_per_quarter: default_mpq,
                     },
                 );
             }
@@ -495,7 +496,7 @@ impl YinModel {
         let time_sig_default = ts_events
             .first()
             .map(|e| (e.numerator, e.denominator))
-            .unwrap_or((4, 2));
+            .unwrap_or(self.meta.default_time_sig);
 
         TempoMap {
             ticks_per_beat: ppq,
@@ -1438,13 +1439,14 @@ mod tests {
         // Track 1 在 ch 0, Track 16 在 ch 15
         assert_eq!(m.tracks[1].channel, 0);
         assert_eq!(m.tracks[16].channel, 15);
-        // 120 BPM + 4/4 拍号
-        assert_eq!(m.conductor.tempo.events.len(), 1);
-        assert_eq!(m.conductor.tempo.events[0].value, 120.0);
-        assert_eq!(m.conductor.time_sig.len(), 1);
-        assert_eq!(m.conductor.time_sig[0].numerator, 4);
-        // tempo_map 应被 rebuild 出来
+        // 新工程不写原生事件：默认 120 BPM + 4/4 由 ProjectMeta 兜底。
+        assert!(m.conductor.tempo.events.is_empty());
+        assert!(m.conductor.time_sig.is_empty());
+        assert_eq!(m.meta.default_bpm, 120.0);
+        assert_eq!(m.meta.default_time_sig, (4, 2));
+        // tempo_map 应被 rebuild 出来（默认值生效）
         assert_eq!(m.tempo_map.tempo_segments.len(), 1);
+        assert_eq!(m.tempo_map.tempo_segments[0].micros_per_quarter, 500_000);
         assert_eq!(m.tempo_map.time_sig_default, (4, 2));
     }
 }

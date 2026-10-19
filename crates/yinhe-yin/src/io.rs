@@ -241,6 +241,8 @@ fn load_yin_bytes_inner(
             description: project.description.clone(),
             ppq: project.ppq,
             compression_level: project.compression_level,
+            default_bpm: project.default_bpm,
+            default_time_sig: project.default_time_sig,
         },
         audio_sources,
         ..Default::default()

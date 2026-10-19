@@ -27,7 +27,7 @@ pub struct SfChannelOverride {
     pub entries: Vec<SfEntryJson>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectFile {
     /// Schema version of project.json itself.
     pub version: u16,
@@ -37,10 +37,42 @@ pub struct ProjectFile {
     pub ppq: u32,
     pub compression_level: i32,
 
+    // ── 工程默认（无原生事件时的回退） ──
+    /// 本工程默认 BPM（conductor 无 Tempo 事件时生效）。
+    #[serde(default = "default_bpm")]
+    pub default_bpm: f32,
+    /// 本工程默认拍号 `(分子, 分母 2 次幂)`（conductor 无拍号事件时生效）。
+    #[serde(default = "default_time_sig")]
+    pub default_time_sig: (u8, u8),
+
     // ── SoundFont state ──
     /// 每源通道（0..=255，共 256 条）的音色库覆盖；未列出的通道用全局音色库。
     #[serde(default)]
     pub sf_channel_overrides: Vec<SfChannelOverride>,
+}
+
+fn default_bpm() -> f32 {
+    120.0
+}
+
+fn default_time_sig() -> (u8, u8) {
+    (4, 2)
+}
+
+impl Default for ProjectFile {
+    fn default() -> Self {
+        Self {
+            version: 0,
+            name: String::new(),
+            artist: String::new(),
+            description: String::new(),
+            ppq: 480,
+            compression_level: 3,
+            default_bpm: default_bpm(),
+            default_time_sig: default_time_sig(),
+            sf_channel_overrides: Vec::new(),
+        }
+    }
 }
 
 impl ProjectFile {
@@ -53,6 +85,8 @@ impl ProjectFile {
             description: meta.description.clone(),
             ppq: meta.ppq,
             compression_level: meta.compression_level,
+            default_bpm: meta.default_bpm,
+            default_time_sig: meta.default_time_sig,
             sf_channel_overrides: Vec::new(),
         }
     }
@@ -69,6 +103,8 @@ impl ProjectFile {
             description: meta.description.clone(),
             ppq: meta.ppq,
             compression_level: meta.compression_level,
+            default_bpm: meta.default_bpm,
+            default_time_sig: meta.default_time_sig,
             sf_channel_overrides,
         }
     }
