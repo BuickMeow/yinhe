@@ -137,6 +137,52 @@ typedef FloatArgDart = int Function(double);
 final FloatArgDart pasteSelection = bridge
     .lookupFunction<FloatArgNative, FloatArgDart>('yinhe_paste_selection');
 
+/// 长按空白处上下文 JSON（插入事件用）。
+final CStrDart longPressContextJson = bridge
+    .lookupFunction<CStrNative, CStrDart>('yinhe_long_press_context_json');
+
+/// 通道级默认乐器 JSON（16 项：`[bank, program]` 或 null）。
+final CStrDart channelInstrumentsJson = bridge
+    .lookupFunction<CStrNative, CStrDart>('yinhe_channel_instruments_json');
+
+typedef SetTrackInfoNative = ffi.Int32 Function(
+  ffi.Int32,
+  ffi.Pointer<Utf8>,
+  ffi.Int32,
+  ffi.Int32,
+  ffi.Int32,
+  ffi.Int32,
+  ffi.Int32,
+);
+typedef SetTrackInfoDart = int Function(
+  int,
+  ffi.Pointer<Utf8>,
+  int,
+  int,
+  int,
+  int,
+  int,
+);
+
+/// 编辑音轨信息（名称/端口/通道 + 通道默认乐器）。
+final SetTrackInfoDart setTrackInfo = bridge
+    .lookupFunction<SetTrackInfoNative, SetTrackInfoDart>(
+      'yinhe_set_track_info',
+    );
+
+typedef InsertAutomationNative = ffi.Int32 Function(
+  ffi.Int32,
+  ffi.Double,
+  ffi.Int32,
+);
+typedef InsertAutomationDart = int Function(int, double, int);
+
+/// 长按"插入"自动化事件。
+final InsertAutomationDart insertAutomation = bridge
+    .lookupFunction<InsertAutomationNative, InsertAutomationDart>(
+      'yinhe_insert_automation',
+    );
+
 typedef SetTrackNameNative = ffi.Int32 Function(ffi.Int32, ffi.Pointer<Utf8>);
 typedef SetTrackNameDart = int Function(int, ffi.Pointer<Utf8>);
 

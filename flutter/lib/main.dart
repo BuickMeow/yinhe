@@ -18,6 +18,7 @@ import 'painters.dart';
 import 'settings_view.dart';
 import 'theme.dart';
 import 'tools.dart';
+import 'track_info_dialog.dart';
 import 'top_bar.dart';
 
 /// 视图模式（与 Rust 侧约定一致：0=AR 走带，1=PR 卷帘）。
@@ -137,9 +138,6 @@ class _StudioShellState extends State<StudioShell>
 
   bool _dragging = false;
 
-  /// 鼠标中键拖拽的 pointer id（无论当前工具，都按手形平移）。
-  int? _middlePanPointer;
-
   /// PR 选框长按：圆环进度（500ms）；完成后进入移动态，未移动则弹菜单。
   Offset? _lpPos;
   DateTime? _lpStartTime;
@@ -187,8 +185,9 @@ class _StudioShellState extends State<StudioShell>
           _lpProgress.value = 0;
         }
       } else if (_lpStartTime != null && selState == 1) {
+        // 前 200ms 不显示圆环（防普通点击遮挡内容），总时长仍为 500ms。
         final ms = DateTime.now().difference(_lpStartTime!).inMilliseconds;
-        _lpProgress.value = (ms / 500).clamp(0.0, 1.0);
+        _lpProgress.value = ms <= 200 ? 0 : ((ms - 200) / 300).clamp(0.0, 1.0);
       }
       // 工程状态/时间码降频（每 ~66ms）：减少音频锁与历史栈分配开销。
       _frameCounter++;
@@ -482,10 +481,6 @@ class _StudioShellState extends State<StudioShell>
     if (!mounted) {
       return;
     }
-    if (call.method == 'middlePan') {
-      _onNativeMiddlePan(call.arguments as Map?);
-      return;
-    }
     final path = call.arguments as String?;
     if (path == null) {
       return;
@@ -512,26 +507,6 @@ class _StudioShellState extends State<StudioShell>
         _loadSongTitle();
         _readDocState();
     }
-  }
-
-  /// 原生层识别到的鼠标中键（已消费，不会再走 Flutter 左键手势）。
-  void _onNativeMiddlePan(Map? args) {
-    if (_showHome || _showSettings || args == null) {
-      return;
-    }
-    final kind = (args['kind'] as num?)?.toInt() ?? 2;
-    final dpr = MediaQuery.devicePixelRatioOf(context);
-    final padding = MediaQuery.paddingOf(context);
-    final x = (args['x'] as num).toDouble() / dpr - padding.left;
-    final y =
-        (args['y'] as num).toDouble() / dpr -
-        padding.top -
-        42 -
-        RulerPainter.height;
-    if (kind == 0) {
-      _cancelLongPressWatch();
-    }
-    _sendPanTouch(kind == 0 ? 3 : (kind == 1 ? 4 : 5), Offset(x, y), -2);
   }
 
   Future<void> _init() async {
@@ -771,23 +746,6 @@ class _StudioShellState extends State<StudioShell>
 
   // ── 触摸 / 手势 ──
 
-  bool _isMiddleMouse(PointerEvent e) =>
-      e.kind == PointerDeviceKind.mouse &&
-      (e.buttons & kMiddleMouseButton) != 0;
-
-  /// 中键按下：取消长按/编辑拖拽，强制进入平移（手形语义）。
-  void _beginMiddlePan(PointerDownEvent e) {
-    _middlePanPointer = e.pointer;
-    _cancelLongPressWatch();
-    _sendPanTouch(3, e.localPosition, e.pointer);
-  }
-
-  /// 中键平移事件（3=down 4=move 5=up）。
-  void _sendPanTouch(int kind, Offset p, int pointer) {
-    rust.touch(kind, p.dx, p.dy, pointer);
-    SchedulerBinding.instance.scheduleFrame();
-  }
-
   void _sendTouch(int kind, Offset p, int pointer) {
     // AR 长按拖动音轨/自动化锚点时无需转发 move（避免误平移），但 up/cancel
     // 必须转发：否则 Rust 触点表永久残留这根手指，下一次单指会被判成双指。
@@ -796,10 +754,26 @@ class _StudioShellState extends State<StudioShell>
     }
     // 只写入事件；纹理与浮层统一在下一帧同步刷新（帧驱动，输入侧已就地 clamp）。
     if (kind == 2) {
-      // up 前读取状态（Rust 在 up 时会清理 drag）。
+      // up 前读取状态与长按上下文（Rust 在 up 时会清理）。
       final state = rust.selectionState();
+      LongPressContext? ctx;
+      if (state == 3) {
+        final ptr = rust.longPressContextJson();
+        if (ptr != ffi.nullptr) {
+          try {
+            final decoded = jsonDecode(ptr.toDartString());
+            if (decoded is Map<String, dynamic>) {
+              ctx = LongPressContext.fromJson(decoded);
+            }
+          } catch (_) {
+            ctx = null;
+          } finally {
+            rust.freeString(ptr);
+          }
+        }
+      }
       rust.touch(kind, p.dx, p.dy, pointer);
-      _finishLongPressWatch(state);
+      _finishLongPressWatch(state, ctx);
     } else {
       rust.touch(kind, p.dx, p.dy, pointer);
       if (kind == 0) {
@@ -866,7 +840,7 @@ class _StudioShellState extends State<StudioShell>
     rust.cancelSelectionPending();
   }
 
-  void _finishLongPressWatch(int state) {
+  void _finishLongPressWatch(int state, LongPressContext? ctx) {
     if (_lpStartTime == null) {
       return;
     }
@@ -877,7 +851,7 @@ class _StudioShellState extends State<StudioShell>
     if (state == 2 && !moved) {
       _showSelectionMenu();
     } else if (state == 3) {
-      _showPasteMenu(pos);
+      _showPasteMenu(pos, ctx);
     }
   }
 
@@ -899,17 +873,31 @@ class _StudioShellState extends State<StudioShell>
     );
   }
 
-  /// 空白处长按完成：粘贴菜单（粘贴到长按位置）。
-  void _showPasteMenu(Offset? pos) {
+  /// 空白处长按完成：粘贴/插入菜单（都在长按位置操作）。
+  void _showPasteMenu(Offset? pos, LongPressContext? ctx) {
     if (pos == null) {
       return;
     }
     rust.resetTouch();
-    showPasteMenu(
+    showEmptyLongPressMenu(
       context,
-      enabled: rust.clipboardEmpty() == 0,
+      canPaste: rust.clipboardEmpty() == 0,
       onPaste: () {
         if (rust.pasteSelection(pos.dx) == 1) {
+          _refreshDocumentMeta();
+        }
+      },
+      onInsert: ctx == null ? null : () => _showInsertMenu(ctx),
+    );
+  }
+
+  /// 长按"插入"：Master 轨给全局事件，普通轨给通道事件。
+  void _showInsertMenu(LongPressContext ctx) {
+    showInsertMenu(
+      context,
+      conductor: ctx.conductor,
+      onPick: (kind) {
+        if (rust.insertAutomation(kind, ctx.tick, ctx.track) == 1) {
           _refreshDocumentMeta();
         }
       },
@@ -1012,7 +1000,8 @@ class _StudioShellState extends State<StudioShell>
   }
 
   void _handleLongPressMove(Offset p) {
-    if (_dragFrom.value < 0) {
+    // Master（Conductor）固定在 0 号位，拖动不改目标。
+    if (_dragFrom.value <= 0) {
       return;
     }
     final idx = _rowAt(p);
@@ -1032,6 +1021,11 @@ class _StudioShellState extends State<StudioShell>
     if (from < 0) {
       return;
     }
+    if (from == 0) {
+      // Master 轨只弹信息菜单，不参与排序。
+      _showTrackMenu(0);
+      return;
+    }
     if (to < 0 || from == to) {
       // 长按未拖动：弹出音轨信息菜单。
       _showTrackMenu(from);
@@ -1043,31 +1037,66 @@ class _StudioShellState extends State<StudioShell>
   /// AR 长按音轨（未拖动）：音轨信息菜单。
   void _showTrackMenu(int track) {
     rust.resetTouch();
-    showTrackMenu(context, onEdit: () => _renameTrack(track));
+    showTrackMenu(context, onEdit: () => _editTrackInfo(track));
   }
 
-  /// 重命名音轨。
-  void _renameTrack(int track) {
+  /// 编辑音轨信息（名称/端口/通道/本通道乐器）。
+  void _editTrackInfo(int track) {
     final rows = _tracks.value;
     if (track < 0 || track >= rows.length) {
       return;
     }
     rust.resetTouch();
-    showRenameTrackDialog(
-      context,
-      initialName: rows[track].name,
-      onSave: (name) {
-        final p = name.toNativeUtf8();
-        var ok = 0;
-        try {
-          ok = rust.setTrackName(track, p);
-        } finally {
-          calloc.free(p);
-        }
-        if (ok == 1) {
-          _refreshDocumentMeta();
-        }
-      },
+    final row = rows[track];
+    var instruments = const <(int, int)?>[];
+    final instPtr = rust.channelInstrumentsJson();
+    if (instPtr != ffi.nullptr) {
+      try {
+        final list = jsonDecode(instPtr.toDartString()) as List<dynamic>;
+        instruments = [
+          for (final e in list)
+            e == null
+                ? null
+                : (
+                    ((e as List<dynamic>)[0] as num).toInt(),
+                    (e[1] as num).toInt(),
+                  ),
+        ];
+      } catch (_) {
+        instruments = const [];
+      } finally {
+        rust.freeString(instPtr);
+      }
+    }
+    showDialog<void>(
+      context: context,
+      builder: (_) => TrackInfoDialog(
+        initialName: row.name,
+        initialPort: row.port,
+        initialChannel: row.channel,
+        isMaster: row.master,
+        channelInstruments: instruments,
+        onSave: (name, port, channel, bank, program) {
+          final p = name.toNativeUtf8();
+          var ok = 0;
+          try {
+            ok = rust.setTrackInfo(
+              track,
+              p,
+              port,
+              channel,
+              bank ?? 0,
+              program ?? 0,
+              bank != null ? 1 : 0,
+            );
+          } finally {
+            calloc.free(p);
+          }
+          if (ok == 1) {
+            _refreshDocumentMeta();
+          }
+        },
+      ),
     );
   }
 
@@ -1140,48 +1169,14 @@ class _StudioShellState extends State<StudioShell>
                               onLongPressEnd: (_) => _handleLongPressEnd(),
                               child: Listener(
                                 behavior: HitTestBehavior.opaque,
-                                onPointerDown: (e) {
-                                  if (_isMiddleMouse(e)) {
-                                    _beginMiddlePan(e);
-                                  } else {
-                                    _sendTouch(0, e.localPosition, e.pointer);
-                                  }
-                                },
-                                onPointerMove: (e) {
-                                  if (_middlePanPointer == e.pointer) {
-                                    _sendPanTouch(
-                                      4,
-                                      e.localPosition,
-                                      e.pointer,
-                                    );
-                                  } else {
-                                    _sendTouch(1, e.localPosition, e.pointer);
-                                  }
-                                },
-                                onPointerUp: (e) {
-                                  if (_middlePanPointer == e.pointer) {
-                                    _middlePanPointer = null;
-                                    _sendPanTouch(
-                                      5,
-                                      e.localPosition,
-                                      e.pointer,
-                                    );
-                                  } else {
-                                    _sendTouch(2, e.localPosition, e.pointer);
-                                  }
-                                },
-                                onPointerCancel: (e) {
-                                  if (_middlePanPointer == e.pointer) {
-                                    _middlePanPointer = null;
-                                    _sendPanTouch(
-                                      5,
-                                      e.localPosition,
-                                      e.pointer,
-                                    );
-                                  } else {
-                                    _sendTouch(2, e.localPosition, e.pointer);
-                                  }
-                                },
+                                onPointerDown: (e) =>
+                                    _sendTouch(0, e.localPosition, e.pointer),
+                                onPointerMove: (e) =>
+                                    _sendTouch(1, e.localPosition, e.pointer),
+                                onPointerUp: (e) =>
+                                    _sendTouch(2, e.localPosition, e.pointer),
+                                onPointerCancel: (e) =>
+                                    _sendTouch(2, e.localPosition, e.pointer),
                                 onPointerSignal: _handlePointerSignal,
                                 onPointerPanZoomStart: (_) =>
                                     _panZoomScale = 1.0,

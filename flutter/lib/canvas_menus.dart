@@ -33,11 +33,12 @@ Future<void> showSelectionMenu(
   );
 }
 
-/// 空白处长按完成：粘贴菜单（剪贴板空时置灰）。
-Future<void> showPasteMenu(
+/// 空白处长按完成：粘贴 / 插入 菜单。
+Future<void> showEmptyLongPressMenu(
   BuildContext context, {
-  required bool enabled,
+  required bool canPaste,
   required VoidCallback onPaste,
+  required VoidCallback? onInsert,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -47,7 +48,7 @@ Future<void> showPasteMenu(
         mainAxisSize: MainAxisSize.min,
         children: [
           ListTile(
-            enabled: enabled,
+            enabled: canPaste,
             leading: const Icon(Icons.paste),
             title: const Text('粘贴'),
             onTap: () {
@@ -56,11 +57,74 @@ Future<void> showPasteMenu(
             },
           ),
           ListTile(
+            enabled: onInsert != null,
+            leading: const Icon(Icons.add_circle_outline),
+            title: const Text('插入…'),
+            onTap: onInsert == null
+                ? null
+                : () {
+                    Navigator.of(ctx).pop();
+                    onInsert();
+                  },
+          ),
+          ListTile(
             leading: const Icon(Icons.close),
             title: const Text('取消'),
             onTap: () => Navigator.of(ctx).pop(),
           ),
         ],
+      ),
+    ),
+  );
+}
+
+/// 插入事件类型：kind 与 Rust `yinhe_insert_automation` 一致。
+Future<void> showInsertMenu(
+  BuildContext context, {
+  required bool conductor,
+  required ValueChanged<int> onPick,
+}) {
+  // (kind, 图标, 名称)
+  final items = conductor
+      ? const <(int, IconData, String)>[(0, Icons.speed, '速度（Tempo）')]
+      : const <(int, IconData, String)>[
+          (1, Icons.swap_vert, 'Pitch Bend'),
+          (2, Icons.tune, 'CC1 调制轮'),
+          (3, Icons.volume_up, 'CC7 音量'),
+          (4, Icons.balance, 'CC10 声像'),
+          (5, Icons.emoji_emotions_outlined, 'CC11 表情'),
+          (6, Icons.piano, 'CC64 延音'),
+        ];
+  return showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: YinheTheme.bg,
+    isScrollControlled: true,
+    builder: (ctx) => SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(ctx).height * 0.7,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final (kind, icon, label) in items)
+                ListTile(
+                  leading: Icon(icon),
+                  title: Text(label),
+                  onTap: () {
+                    Navigator.of(ctx).pop();
+                    onPick(kind);
+                  },
+                ),
+              ListTile(
+                leading: const Icon(Icons.close),
+                title: const Text('取消'),
+                onTap: () => Navigator.of(ctx).pop(),
+              ),
+            ],
+          ),
+        ),
       ),
     ),
   );
@@ -95,46 +159,4 @@ Future<void> showTrackMenu(
       ),
     ),
   );
-}
-
-/// 重命名音轨对话框。
-Future<void> showRenameTrackDialog(
-  BuildContext context, {
-  required String initialName,
-  required ValueChanged<String> onSave,
-}) {
-  final controller = TextEditingController(text: initialName);
-  // 对话框关闭动画期间 TextField 仍持有 controller：延迟到完全关闭后释放。
-  return showDialog<void>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      backgroundColor: YinheTheme.bg,
-      title: const Text('编辑音轨信息', style: TextStyle(fontSize: 17)),
-      content: TextField(
-        controller: controller,
-        style: const TextStyle(fontSize: 14),
-        decoration: const InputDecoration(
-          labelText: '音轨名称',
-          border: OutlineInputBorder(),
-          isDense: true,
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(ctx).pop(),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: () {
-            final name = controller.text.trim();
-            Navigator.of(ctx).pop();
-            onSave(name);
-          },
-          child: const Text('保存'),
-        ),
-      ],
-    ),
-  ).whenComplete(() {
-    Future<void>.delayed(const Duration(milliseconds: 300), controller.dispose);
-  });
 }

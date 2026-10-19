@@ -73,6 +73,9 @@ class TrackRow {
     required this.muted,
     required this.soloed,
     required this.color,
+    this.instrumentBank = -1,
+    this.instrumentProgram = -1,
+    this.master = false,
   });
 
   final String name;
@@ -81,6 +84,13 @@ class TrackRow {
   final bool muted;
   final bool soloed;
   final Color color;
+
+  /// 所属通道的默认乐器（-1 = 未设置）。
+  final int instrumentBank;
+  final int instrumentProgram;
+
+  /// Master（Conductor）轨：不能有音符，只承载全局事件。
+  final bool master;
 
   static TrackRow fromJson(Map<String, dynamic> json) {
     final c = (json['color'] as List<dynamic>?) ?? const [];
@@ -98,6 +108,36 @@ class TrackRow {
         (ch(2, 0.5) * 255).round(),
         ch(3, 1.0),
       ),
+      instrumentBank: (json['ib'] as num?)?.toInt() ?? -1,
+      instrumentProgram: (json['ip'] as num?)?.toInt() ?? -1,
+      master: json['master'] as bool? ?? false,
+    );
+  }
+}
+
+/// 长按空白处的上下文（插入事件用）。
+class LongPressContext {
+  const LongPressContext({
+    required this.tick,
+    required this.track,
+    required this.conductor,
+    required this.pr,
+  });
+
+  final double tick;
+  final int track;
+  final bool conductor;
+  final bool pr;
+
+  static LongPressContext? fromJson(Map<String, dynamic> json) {
+    if (!json.containsKey('tick')) {
+      return null;
+    }
+    return LongPressContext(
+      tick: (json['tick'] as num?)?.toDouble() ?? 0,
+      track: (json['track'] as num?)?.toInt() ?? -1,
+      conductor: json['conductor'] as bool? ?? false,
+      pr: json['pr'] as bool? ?? false,
     );
   }
 }

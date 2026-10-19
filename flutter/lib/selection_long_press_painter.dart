@@ -41,7 +41,7 @@ class SelectionLongPressPainter extends CustomPainter {
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2
-          ..color = YinheTheme.text.withValues(alpha: 0.2),
+          ..color = YinheTheme.accent.withValues(alpha: 0.2),
       );
       canvas.drawArc(
         Rect.fromCircle(center: p, radius: r),
