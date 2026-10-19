@@ -276,6 +276,11 @@ pub fn update(x: f32, y: f32) {
     let Ok(mut s) = scene::scene().lock() else {
         return;
     };
+    if d.kind == kind::PASTE_READY {
+        // 长按完成后仍可移动手指微调落点（指示线跟随）。
+        update_paste_ready(&mut d, &s, x, y);
+        return;
+    }
     if started_marquee {
         // 新框选一开始就清掉旧选框/旧成员，而不是等拖拽结束才清。
         if let Some(doc) = s.document.as_mut() {
@@ -400,6 +405,41 @@ pub fn tick_scroll() -> i32 {
     }
     refresh_preview(&mut d, &mut s);
     1
+}
+
+/// PASTE_READY 期间按当前指针位置刷新落点（量化吸附）。
+fn update_paste_ready(d: &mut DragState, s: &RenderScene, x: f32, y: f32) {
+    let q = quantize_of(s);
+    match s.view_mode {
+        ViewMode::Pianoroll => {
+            let geom = PrGeom::new(&s.pr_view);
+            d.anchor_tick = snap_round(&q, geom.x_to_tick(x), s.ppq);
+        }
+        ViewMode::Arrangement => {
+            let geom = ArGeom::new(&s.arr_view);
+            d.anchor_tick = snap_round(&q, geom.x_to_tick(x), s.ppq);
+            d.anchor_row = geom.y_to_row(y).min(s.num_tracks.saturating_sub(1));
+        }
+    }
+}
+
+/// 长按落点 tick（Dart 每帧更新指示线用；非长按态返回当前记录值）。
+pub fn long_press_tick() -> f64 {
+    DRAG.lock().map(|d| d.anchor_tick).unwrap_or(0.0)
+}
+
+/// 长按落点轨道（AR = 行；PR = 当前写入轨；-1 = 无）。
+pub fn long_press_track() -> i32 {
+    let Ok(d) = DRAG.lock() else {
+        return -1;
+    };
+    let Ok(s) = scene::scene().lock() else {
+        return -1;
+    };
+    match s.view_mode {
+        ViewMode::Arrangement => d.anchor_row as i32,
+        ViewMode::Pianoroll => write_track(&s).map(|t| t as i32).unwrap_or(-1),
+    }
 }
 
 /// 长按空白处的上下文（插入事件用）：

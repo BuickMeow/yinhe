@@ -480,8 +480,8 @@ fn apply_document(doc: Document, min_ticks: f64) {
         .max(1.0);
 
     let mut pr_view = PianoRollView::default();
-    // 初始缩放：全曲约 2 屏宽（沿用旧安卓壳 set_model 的算法）。
-    pr_view.base.pixels_per_tick = (1280.0 * 2.0 / content_ticks as f32).clamp(0.001, 10.0);
+    // 初始缩放：全曲约 2 屏宽，再放大 1.3 倍（进入钢琴卷帘更舒适）。
+    pr_view.base.pixels_per_tick = (1280.0 * 2.0 / content_ticks as f32 * 1.3).clamp(0.001, 10.0);
 
     let arr_base = TimelineViewBase {
         pixels_per_tick: (1280.0 * 2.0 / content_ticks as f32).clamp(0.0005, 8.0),
@@ -1236,7 +1236,7 @@ pub fn add_tracks(count: usize, port: u8, start_channel: u8, cycle: bool) -> i32
     use yinhe_editor_core::NewTrackSpec;
     use yinhe_editor_core::channel_alloc;
 
-    let count = count.clamp(1, 64);
+    let count = count.clamp(1, 256);
     let alloc = if cycle {
         channel_alloc::alloc_channels_in_port(port, start_channel, count)
     } else {

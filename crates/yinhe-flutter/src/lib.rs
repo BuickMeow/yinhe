@@ -649,6 +649,18 @@ pub extern "C" fn yinhe_set_track_info(
     )
 }
 
+/// 长按落点 tick（每帧更新指示线用）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_long_press_tick() -> f64 {
+    edit::long_press_tick()
+}
+
+/// 长按落点轨道（-1 = 无）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_long_press_track() -> i32 {
+    edit::long_press_track()
+}
+
 /// 长按空白处上下文 JSON（插入事件用，堆分配）。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_long_press_context_json() -> *mut std::ffi::c_char {
