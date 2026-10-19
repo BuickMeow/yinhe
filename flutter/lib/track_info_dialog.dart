@@ -162,8 +162,8 @@ class _TrackInfoDialogState extends State<TrackInfoDialog> {
                     Expanded(
                       child: Text(
                         inst == null
-                            ? '本通道乐器：跟随 MIDI PC'
-                            : '本通道乐器：${gmProgramLabel(inst.$1, inst.$2)}'
+                            ? '本通道默认乐器：跟随 MIDI PC'
+                            : '本通道默认乐器：${gmProgramLabel(inst.$1, inst.$2)}'
                                   '（Bank ${inst.$1} / Program ${inst.$2}）',
                         style: TextStyle(
                           color: YinheTheme.textLabel,
@@ -232,7 +232,7 @@ class _InstrumentPickerDialogState extends State<_InstrumentPickerDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       backgroundColor: YinheTheme.bg,
-      title: const Text('选择本通道乐器', style: TextStyle(fontSize: 17)),
+      title: const Text('选择本通道默认乐器', style: TextStyle(fontSize: 17)),
       content: SizedBox(
         width: 420,
         height: 460,

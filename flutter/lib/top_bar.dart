@@ -31,6 +31,11 @@ class TopBar extends StatelessWidget {
     required this.onUndo,
     required this.onRedo,
     required this.onSelectDisplayTrack,
+    required this.noteCount,
+    required this.bpmText,
+    required this.sigText,
+    required this.onEditBpm,
+    required this.onEditSig,
   });
 
   final bool isPr;
@@ -54,6 +59,15 @@ class TopBar extends StatelessWidget {
   final VoidCallback onUndo;
   final VoidCallback onRedo;
   final ValueChanged<int> onSelectDisplayTrack;
+
+  /// 全曲音符数（跟歌曲标题一起显示）。
+  final int noteCount;
+
+  /// 本工程默认 BPM / 拍号文本（点击可改；原生事件优先于它们）。
+  final String bpmText;
+  final String sigText;
+  final VoidCallback onEditBpm;
+  final VoidCallback onEditSig;
 
   @override
   Widget build(BuildContext context) {
@@ -117,6 +131,8 @@ class TopBar extends StatelessWidget {
                   ),
                 ),
               ),
+              _metaText(bpmText, '本工程默认 BPM', onEditBpm),
+              _metaText(sigText, '本工程默认拍号', onEditSig),
               const Spacer(),
               _buildQuantizeButton(context),
               _buildToolButton(),
@@ -149,6 +165,30 @@ class TopBar extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// 顶栏只读信息（与时间码同色）：BPM / 拍号，点击编辑工程默认值。
+  Widget _metaText(String text, String tooltip, VoidCallback onTap) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(4),
+      onTap: onTap,
+      child: Tooltip(
+        message: tooltip,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+          child: Text(
+            text,
+            style: TextStyle(color: YinheTheme.textLabel, fontSize: 14),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 标题 + 全曲音符数。
+  String _titled() {
+    final base = songTitle.isNotEmpty ? songTitle : (fileName ?? '未命名');
+    return '$base · $noteCount音符';
   }
 
   Widget _iconAction(IconData icon, String tooltip, VoidCallback? onTap) {
@@ -249,15 +289,14 @@ class TopBar extends StatelessWidget {
     );
   }
 
-  /// AR：只读歌曲标题（不可点，不提供显示轨道/保存入口）。
+  /// AR：只读歌曲标题 + 音符数（不可点，不提供显示轨道/保存入口）。
   Widget _titleText() {
-    final base = songTitle.isNotEmpty ? songTitle : (fileName ?? '未命名');
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 260),
       child: ValueListenableBuilder<int>(
         valueListenable: docState,
         builder: (context, st, _) => Text(
-          (st & 4) != 0 ? '• $base' : base,
+          (st & 4) != 0 ? '• ${_titled()}' : _titled(),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
@@ -269,9 +308,7 @@ class TopBar extends StatelessWidget {
   /// PR：显示轨道长按钮（顶部正中央；保存工程只在主页）。
   Widget _buildSongBox() {
     final filtering = displayTrack >= 0 && displayTrack < tracks.length;
-    final base = filtering
-        ? tracks[displayTrack].name
-        : (songTitle.isNotEmpty ? songTitle : (fileName ?? '未命名'));
+    final base = filtering ? tracks[displayTrack].name : _titled();
     return PopupMenuButton<int>(
       tooltip: '显示轨道',
       padding: EdgeInsets.zero,

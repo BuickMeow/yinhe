@@ -17,6 +17,7 @@ import 'insert_flow.dart';
 import 'long_press_indicator_painter.dart';
 import 'models.dart';
 import 'ruler_markers.dart';
+import 'project_defaults_dialog.dart';
 import 'project_dialog.dart';
 import 'painters.dart';
 import 'settings_view.dart';
@@ -73,15 +74,25 @@ class _StudioShellState extends State<StudioShell>
   bool _showHome = true;
   int _viewMode = kViewArrangement;
   String? _fileName;
-  String? _soundFontName;
 
   /// AR 中点击进入 PR 的轨道（自动化栏/聚焦用）。
   int? _activeTrack;
 
   bool _playing = false;
 
-  /// 时间码显示模式：false=秒数（默认），true=小节.拍.tick。
-  bool _timecodeBar = false;
+  /// 时间码显示模式：false=秒数，true=小节.拍.tick（默认小节格式）。
+  bool _timecodeBar = true;
+
+  /// 音色库表修订号（设置页监听：选择/增删后重读列表）。
+  final ValueNotifier<int> _sfRevision = ValueNotifier(0);
+
+  /// 全曲音符数（顶栏标题展示）。
+  int _noteCount = 0;
+
+  /// 本工程默认 BPM / 拍号（无原生事件时的回退）。
+  double _projectBpm = 120;
+  int _projectSigNum = 4;
+  int _projectSigDen = 4;
 
   /// 时间码文本（每帧刷新，只重建文本本身）。
   final ValueNotifier<String> _timecodeText = ValueNotifier('0:00.000');
@@ -253,6 +264,7 @@ class _StudioShellState extends State<StudioShell>
     _moveDashed.dispose();
     _lpIndicator.dispose();
     _overlay.dispose();
+    _sfRevision.dispose();
     _docState.dispose();
     calloc.free(_snapPtr);
     calloc.free(_statePtr);
@@ -523,6 +535,7 @@ class _StudioShellState extends State<StudioShell>
     _loadAutomation();
     _loadVelocity();
     _loadSongTitle();
+    _loadProjectDefaults();
     _loadArAutomation();
   }
 
@@ -554,7 +567,8 @@ class _StudioShellState extends State<StudioShell>
         _ensureSurface();
         _rememberProject(path.split('/').last);
       case 'onSoundFontPicked':
-        setState(() => _soundFontName = path.split('/').last);
+        // Rust 已由 JNI 入口直接入表并持久化，这里只通知设置页刷新。
+        _sfRevision.value++;
       case 'onProjectSaved':
         rust.markSaved();
         _loadSongTitle();
@@ -588,30 +602,12 @@ class _StudioShellState extends State<StudioShell>
       return;
     }
     setState(() => _textureId = id);
-    _loadSoundFontName();
     await _ensureSurface();
   }
 
   /// 确保 Rust 已拿到生产端 surface（部分引擎版本不触发 SurfaceProducer 回调）。
   Future<void> _ensureSurface() async {
     await _channel.invokeMethod<void>('ensureSurface');
-  }
-
-  /// 启动时同步已持久化的音色库名（Rust 侧已自动恢复音色库）。
-  void _loadSoundFontName() {
-    final ptr = rust.soundfontPath();
-    if (ptr == ffi.nullptr) {
-      return;
-    }
-    try {
-      final path = ptr.toDartString();
-      if (path.isEmpty || !mounted) {
-        return;
-      }
-      setState(() => _soundFontName = path.split('/').last);
-    } finally {
-      rust.freeString(ptr);
-    }
   }
 
   Future<void> _pickMidi() async {
@@ -755,6 +751,87 @@ class _StudioShellState extends State<StudioShell>
     }
   }
 
+  /// 同步全曲音符数与本工程默认 BPM / 拍号（顶栏展示）。
+  void _loadProjectDefaults() {
+    if (!mounted) {
+      return;
+    }
+    final count = rust.noteCount();
+    final ptr = rust.projectDefaultsJson();
+    var bpm = _projectBpm;
+    var sigNum = _projectSigNum;
+    var sigDen = _projectSigDen;
+    if (ptr != ffi.nullptr) {
+      try {
+        final json = jsonDecode(ptr.toDartString()) as Map<String, dynamic>;
+        bpm = (json['bpm'] as num?)?.toDouble() ?? bpm;
+        sigNum = (json['num'] as num?)?.toInt() ?? sigNum;
+        sigDen = (json['den'] as num?)?.toInt() ?? sigDen;
+      } catch (_) {
+        // 保持旧值。
+      } finally {
+        rust.freeString(ptr);
+      }
+    }
+    setState(() {
+      _noteCount = count;
+      _projectBpm = bpm;
+      _projectSigNum = sigNum;
+      _projectSigDen = sigDen;
+    });
+  }
+
+  static String _fmtBpm(double v) =>
+      v == v.roundToDouble() ? '${v.round()}' : v.toStringAsFixed(1);
+
+  /// 编辑本工程默认 BPM（无原生 Tempo 事件时生效）。
+  Future<void> _editDefaultBpm() async {
+    if (_tracks.value.isEmpty) {
+      return;
+    }
+    rust.resetTouch();
+    final bpm = await showDefaultBpmDialog(context, _projectBpm);
+    if (bpm == null) {
+      return;
+    }
+    if (rust.setProjectDefaults(bpm, _projectSigNum, _denPow(_projectSigDen)) ==
+        1) {
+      _loadProjectDefaults();
+      _updateTimecode();
+    }
+  }
+
+  /// 编辑本工程默认拍号（无原生拍号事件时生效）。
+  Future<void> _editDefaultTimeSig() async {
+    if (_tracks.value.isEmpty) {
+      return;
+    }
+    rust.resetTouch();
+    final sig = await showDefaultTimeSigDialog(
+      context,
+      _projectSigNum,
+      _projectSigDen,
+    );
+    if (sig == null) {
+      return;
+    }
+    if (rust.setProjectDefaults(_projectBpm, sig.$1, _denPow(sig.$2)) == 1) {
+      _loadProjectDefaults();
+      _updateTimecode();
+    }
+  }
+
+  /// 分母 → 2 次幂（4 → 2）。
+  static int _denPow(int den) {
+    var pow = 0;
+    var v = den;
+    while (v > 1 && pow < 8) {
+      v >>= 1;
+      pow++;
+    }
+    return pow;
+  }
+
   void _setAutoCollapsed(bool collapsed) {
     setState(() => _autoCollapsed = collapsed);
   }
@@ -800,15 +877,24 @@ class _StudioShellState extends State<StudioShell>
     return '$m:${s.toString().padLeft(2, '0')}.${ms.toString().padLeft(3, '0')}';
   }
 
-  /// 小节.拍.tick（1.0.000 风格：bar 1 起、beat 0 起；4/4 定拍）。
+  /// 小节.拍.tick（1.0.000 风格：bar 1 起、beat 0 起）。
+  ///
+  /// 用当前生效拍号（快照 10/11：原生拍号事件优先，否则工程默认）。
   String _fmtBarBeat(double tick, double ppq) {
     if (ppq <= 0) {
       return '1.0.000';
     }
-    final ticksPerBar = ppq * 4;
+    final s = _snap.value;
+    final sigNum = s.length > 10 && s[10] > 0 ? s[10].round() : 4;
+    final sigDenPow = s.length > 11 && s[11] >= 0 ? s[11].round() : 2;
+    final ticksPerBar = ppq * sigNum / (1 << sigDenPow.clamp(0, 8)) * 4;
+    if (ticksPerBar <= 0) {
+      return '1.0.000';
+    }
+    final ticksPerBeat = ticksPerBar / sigNum;
     final bar = (tick / ticksPerBar).floor() + 1;
-    final beat = ((tick % ticksPerBar) / ppq).floor();
-    final inBeat = (tick % ppq).floor();
+    final beat = ((tick % ticksPerBar) / ticksPerBeat).floor();
+    final inBeat = (tick % ticksPerBeat).floor();
     return '$bar.$beat.${inBeat.toString().padLeft(3, '0')}';
   }
 
@@ -1559,7 +1645,7 @@ class _StudioShellState extends State<StudioShell>
               ),
             if (_showSettings)
               SettingsView(
-                soundFontName: _soundFontName,
+                revision: _sfRevision,
                 onPickSoundFont: _pickSoundFont,
                 onBack: () => setState(() => _showSettings = false),
               ),
@@ -1599,6 +1685,11 @@ class _StudioShellState extends State<StudioShell>
       onUndo: _undo,
       onRedo: _redo,
       onSelectDisplayTrack: _selectDisplayTrack,
+      noteCount: _noteCount,
+      bpmText: _fmtBpm(_projectBpm),
+      sigText: '$_projectSigNum/$_projectSigDen',
+      onEditBpm: _editDefaultBpm,
+      onEditSig: _editDefaultTimeSig,
     );
   }
 

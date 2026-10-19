@@ -32,8 +32,13 @@ class RulerPainter extends CustomPainter {
     if (ppu <= 0) {
       return;
     }
+    // 拍号（快照 10/11：分子 + 分母 2 次幂；原生事件优先，否则工程默认）。
+    final sigNum = s[10] > 0 ? s[10].round() : 4;
+    final sigDenPow = s[11] >= 0 ? s[11].round() : 2;
     final tpb = ppq.round().clamp(1, 1 << 24);
-    final measure = tpb * 4;
+    final den = 1 << sigDenPow.clamp(0, 8);
+    final measure = (tpb * sigNum * 4 ~/ den).clamp(1, 1 << 30);
+    final beatTicks = (measure ~/ sigNum).clamp(1, measure);
     final measurePx = measure * ppu;
     var divisor = 1;
     while (measurePx * divisor < minLabelSpacing && divisor < 64) {
@@ -41,8 +46,8 @@ class RulerPainter extends CustomPainter {
     }
     final barStep = measure * divisor;
 
-    final showBeat = tpb * ppu >= minLabelSpacing;
-    final subTicks = (tpb ~/ subBeatDiv).clamp(1, measure);
+    final showBeat = beatTicks * ppu >= minLabelSpacing;
+    final subTicks = (beatTicks ~/ subBeatDiv).clamp(1, measure);
     final showSub = subTicks * ppu >= minLabelSpacing;
     final showTick = ppu >= minLabelSpacing;
 
@@ -60,7 +65,7 @@ class RulerPainter extends CustomPainter {
         : showSub
         ? subTicks
         : showBeat
-        ? tpb
+        ? beatTicks
         : barStep;
     var tick = (startTick.toInt() ~/ step) * step;
     final endI = endTick.toInt();
@@ -68,7 +73,7 @@ class RulerPainter extends CustomPainter {
       final x = xOf(tick);
       if (x >= kbW && x <= size.width + 40) {
         final isMeasure = tick % barStep == 0;
-        final isBeat = !isMeasure && tick % tpb == 0;
+        final isBeat = !isMeasure && tick % beatTicks == 0;
         String? label;
         Color? color;
         if (isMeasure) {
@@ -76,17 +81,18 @@ class RulerPainter extends CustomPainter {
           color = YinheTheme.measureLabel;
         } else if (isBeat && showBeat) {
           final bar = tick ~/ measure + 1;
-          final beat = (tick % measure) ~/ tpb + 1;
+          final beat = (tick % measure) ~/ beatTicks + 1;
           label = '$bar.$beat';
           color = YinheTheme.textLabel;
         } else if (showSub) {
           final bar = tick ~/ measure + 1;
-          final beat = (tick % measure) ~/ tpb + 1;
+          final beat = (tick % measure) ~/ beatTicks + 1;
           if (showTick) {
-            label = '$bar.$beat.${(tick % tpb).toString().padLeft(3, '0')}';
+            label =
+                '$bar.$beat.${(tick % beatTicks).toString().padLeft(3, '0')}';
             color = YinheTheme.tickLabel;
           } else {
-            final sub = (tick % tpb) ~/ subTicks;
+            final sub = (tick % beatTicks) ~/ subTicks;
             label = '$bar.$beat.$sub';
             color = YinheTheme.textDisabled;
           }

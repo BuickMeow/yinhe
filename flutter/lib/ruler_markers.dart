@@ -31,14 +31,22 @@ class _MarkerLayerState extends State<MarkerLayer> {
   int? _dragTick;
   double? _dragX;
 
+  /// 小节.拍.tick（1.0.000 风格；按当前生效拍号 = 原生事件优先，否则工程默认）。
   String _formatTick(double tick, double ppq) {
     if (ppq <= 0) {
       return '${tick.round()}';
     }
-    final ticksPerBar = ppq * 4;
+    final s = widget.snap.value;
+    final sigNum = s.length > 10 && s[10] > 0 ? s[10].round() : 4;
+    final sigDenPow = s.length > 11 && s[11] >= 0 ? s[11].round() : 2;
+    final ticksPerBar = ppq * sigNum / (1 << sigDenPow.clamp(0, 8)) * 4;
+    if (ticksPerBar <= 0) {
+      return '${tick.round()}';
+    }
+    final ticksPerBeat = ticksPerBar / sigNum;
     final bar = (tick / ticksPerBar).floor() + 1;
-    final beat = ((tick % ticksPerBar) / ppq).floor();
-    final inBeat = (tick % ppq).floor();
+    final beat = ((tick % ticksPerBar) / ticksPerBeat).floor();
+    final inBeat = (tick % ticksPerBeat).floor();
     return '$bar.$beat.${inBeat.toString().padLeft(3, '0')}';
   }
 

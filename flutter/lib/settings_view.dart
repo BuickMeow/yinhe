@@ -2,21 +2,26 @@ import 'dart:convert';
 import 'dart:ffi' as ffi;
 
 import 'package:ffi/ffi.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'ffi.dart' as rust;
 import 'theme.dart';
 
-/// 设置页（全屏浮层）：分页显示（音色库 / 音频）。
+/// 设置页（全屏浮层）：左侧栏切页（音色库 / 音频）+ 右内容两栏。
+///
+/// 无上边栏；返回按钮与工作区顶栏的主页/返回按钮同 xy、同尺寸。
+/// 音色库为多库表：可拖动排序（顶部覆盖底部）、可启用/关闭。
 class SettingsView extends StatefulWidget {
   const SettingsView({
     super.key,
-    required this.soundFontName,
+    required this.revision,
     required this.onPickSoundFont,
     required this.onBack,
   });
 
-  final String? soundFontName;
+  /// 音色库表修订号（原生选择完成后 +1，重新读取列表）。
+  final ValueListenable<int> revision;
   final VoidCallback onPickSoundFont;
   final VoidCallback onBack;
 
@@ -24,8 +29,18 @@ class SettingsView extends StatefulWidget {
   State<SettingsView> createState() => _SettingsViewState();
 }
 
+/// 一行音色库。
+class _SfItem {
+  _SfItem({required this.path, required this.name, required this.enabled});
+
+  final String path;
+  final String name;
+  bool enabled;
+}
+
 class _SettingsViewState extends State<SettingsView> {
   int _page = 0;
+  List<_SfItem> _fonts = const [];
 
   /// 音频设置（与 Rust 同步；默认值同桌面/引擎回退）。
   int _maxVoices = 1024;
@@ -36,7 +51,78 @@ class _SettingsViewState extends State<SettingsView> {
   void initState() {
     super.initState();
     _loadAudioSettings();
+    _loadFonts();
+    widget.revision.addListener(_loadFonts);
   }
+
+  @override
+  void dispose() {
+    widget.revision.removeListener(_loadFonts);
+    super.dispose();
+  }
+
+  // ── 音色库 ──
+
+  void _loadFonts() {
+    final ptr = rust.soundfontsJson();
+    if (ptr == ffi.nullptr) {
+      return;
+    }
+    try {
+      final list = jsonDecode(ptr.toDartString()) as List<dynamic>;
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _fonts = [
+          for (final it in list)
+            if (it is Map<String, dynamic>)
+              _SfItem(
+                path: it['path'] as String? ?? '',
+                name: it['name'] as String? ?? '',
+                enabled: it['enabled'] as bool? ?? true,
+              ),
+        ];
+      });
+    } catch (_) {
+      // 解析失败保持旧列表。
+    } finally {
+      rust.freeString(ptr);
+    }
+  }
+
+  /// 把当前列表（顺序 = 优先级）写回 Rust 并持久化。
+  void _applyFonts() {
+    final json = jsonEncode([
+      for (final e in _fonts) {'path': e.path, 'enabled': e.enabled},
+    ]);
+    final p = json.toNativeUtf8();
+    try {
+      rust.setSoundfonts(p);
+    } finally {
+      calloc.free(p);
+    }
+  }
+
+  void _reorderFonts(int oldIndex, int newIndex) {
+    setState(() {
+      final e = _fonts.removeAt(oldIndex);
+      _fonts.insert(newIndex, e);
+    });
+    _applyFonts();
+  }
+
+  void _toggleFont(int index, bool enabled) {
+    setState(() => _fonts[index].enabled = enabled);
+    _applyFonts();
+  }
+
+  void _removeFont(int index) {
+    setState(() => _fonts.removeAt(index));
+    _applyFonts();
+  }
+
+  // ── 音频设置 ──
 
   void _loadAudioSettings() {
     final ptr = rust.audioSettingsJson();
@@ -64,61 +150,41 @@ class _SettingsViewState extends State<SettingsView> {
       _bufferSize = bufferSize ?? _bufferSize;
       _ignoreVelocity = ignoreVelocity ?? _ignoreVelocity;
     });
-    final changedBuffer = bufferSize != null;
     rust.setAudioSettings(_maxVoices, _bufferSize, _ignoreVelocity);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(changedBuffer ? '音频设置已保存（缓冲下次启动生效）' : '音频设置已保存'),
-        duration: const Duration(milliseconds: 1200),
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
     return ColoredBox(
       color: YinheTheme.bg,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: Stack(
         children: [
-          // 页头
-          Container(
-            height: 42,
-            color: Color.lerp(YinheTheme.bg, Colors.black, 0.04),
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: Row(
-              children: [
-                IconButton(
-                  tooltip: '返回',
-                  icon: const Icon(Icons.arrow_back),
-                  color: YinheTheme.textSecondary,
-                  visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
-                  onPressed: widget.onBack,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(width: 150, child: _sidebar()),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 16, 24, 16),
+                  child: _page == 0 ? _soundFontPage() : _audioPage(),
                 ),
-                const SizedBox(width: 4),
-                Text(
-                  '设置',
-                  style: TextStyle(color: YinheTheme.text, fontSize: 15),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-          // 分页标签
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 14, 24, 0),
-            child: Row(
-              children: [
-                _tab('音色库', 0),
-                const SizedBox(width: 8),
-                _tab('音频', 1),
-              ],
-            ),
-          ),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: _page == 0 ? _soundFontPage() : _audioPage(),
+          // 左上角返回：与工作区顶栏返回/主页按钮同 xy、同尺寸。
+          Positioned(
+            left: 6,
+            top: 1,
+            width: 40,
+            height: 40,
+            child: IconButton(
+              tooltip: '返回',
+              icon: const Icon(Icons.arrow_back),
+              color: YinheTheme.text,
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+              onPressed: widget.onBack,
             ),
           ),
         ],
@@ -126,22 +192,34 @@ class _SettingsViewState extends State<SettingsView> {
     );
   }
 
-  Widget _tab(String label, int index) {
+  /// 左侧栏：标签页（顶部留出返回按钮的空间）。
+  Widget _sidebar() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 52),
+        _sideItem('音色库', 0),
+        _sideItem('音频', 1),
+      ],
+    );
+  }
+
+  Widget _sideItem(String label, int index) {
     final selected = _page == index;
     return InkWell(
-      borderRadius: BorderRadius.circular(6),
       onTap: () => setState(() => _page = index),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
         decoration: BoxDecoration(
-          color: selected ? YinheTheme.accent : YinheTheme.controlBg,
+          color: selected ? YinheTheme.controlBg : Colors.transparent,
           borderRadius: BorderRadius.circular(6),
         ),
         child: Text(
           label,
           style: TextStyle(
-            color: selected ? Colors.white : YinheTheme.text,
-            fontSize: 13,
+            color: selected ? YinheTheme.accent : YinheTheme.text,
+            fontSize: 14,
           ),
         ),
       ),
@@ -149,58 +227,89 @@ class _SettingsViewState extends State<SettingsView> {
   }
 
   Widget _soundFontPage() {
-    final name = widget.soundFontName;
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          '音色库',
-          style: TextStyle(
-            color: YinheTheme.text,
-            fontSize: 15,
-            fontWeight: FontWeight.w600,
-          ),
+        Row(
+          children: [
+            Text(
+              '音色库',
+              style: TextStyle(
+                color: YinheTheme.text,
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const Spacer(),
+            IconButton(
+              tooltip: '添加音色库',
+              icon: const Icon(Icons.add),
+              color: YinheTheme.textSecondary,
+              visualDensity: VisualDensity.compact,
+              onPressed: widget.onPickSoundFont,
+            ),
+          ],
         ),
-        const SizedBox(height: 12),
-        Text(
-          '已加载',
-          style: TextStyle(color: YinheTheme.textLabel, fontSize: 12),
-        ),
-        const SizedBox(height: 6),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            color: YinheTheme.controlBg,
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Row(
-            children: [
-              Icon(Icons.piano, size: 18, color: YinheTheme.textLabel),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  name ?? '未选择音色库（播放无声）',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: name == null
-                        ? YinheTheme.textDisabled
-                        : YinheTheme.text,
-                    fontSize: 13,
-                  ),
+        const SizedBox(height: 4),
+        Expanded(
+          child: ReorderableListView.builder(
+            buildDefaultDragHandles: false,
+            itemCount: _fonts.length,
+            onReorderItem: _reorderFonts,
+            itemBuilder: (context, i) {
+              final e = _fonts[i];
+              return Container(
+                key: ValueKey(e.path),
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                decoration: BoxDecoration(
+                  color: YinheTheme.controlBg,
+                  borderRadius: BorderRadius.circular(6),
                 ),
-              ),
-              TextButton(
-                onPressed: widget.onPickSoundFont,
-                child: const Text('选择…'),
-              ),
-            ],
+                child: Row(
+                  children: [
+                    ReorderableDragStartListener(
+                      index: i,
+                      child: Icon(
+                        Icons.drag_indicator,
+                        size: 18,
+                        color: YinheTheme.textDisabled,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        e.name.isNotEmpty ? e.name : e.path,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: e.enabled
+                              ? YinheTheme.text
+                              : YinheTheme.textDisabled,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                    Transform.scale(
+                      scale: 0.8,
+                      child: Switch(
+                        value: e.enabled,
+                        onChanged: (v) => _toggleFont(i, v),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: '移除',
+                      icon: const Icon(Icons.delete_outline),
+                      iconSize: 18,
+                      color: YinheTheme.textSecondary,
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => _removeFont(i),
+                    ),
+                  ],
+                ),
+              );
+            },
           ),
-        ),
-        const SizedBox(height: 16),
-        Text(
-          '音色库选择后会持久保存，下次启动自动恢复。',
-          style: TextStyle(color: YinheTheme.textDisabled, fontSize: 11),
         ),
       ],
     );
@@ -212,7 +321,6 @@ class _SettingsViewState extends State<SettingsView> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _sectionTitle('复音上限'),
-          _hint('超限时优先淘汰较旧的音符。0 = 自动（桌面默认不限制）。'),
           const SizedBox(height: 8),
           _options(
             const [0, 256, 512, 1024, 2048, 4096],
@@ -222,7 +330,6 @@ class _SettingsViewState extends State<SettingsView> {
           ),
           const SizedBox(height: 22),
           _sectionTitle('音频缓冲'),
-          _hint('数值越大越抗卡顿，但延迟更高（帧 @48kHz）。0 = 设备默认。修改后下次启动生效。'),
           const SizedBox(height: 8),
           _options(
             const [0, 512, 1024, 2048, 4096],
@@ -232,18 +339,12 @@ class _SettingsViewState extends State<SettingsView> {
           ),
           const SizedBox(height: 22),
           _sectionTitle('忽略力度'),
-          _hint('力度不超过该值的音符不发声（桌面默认 1）。'),
           const SizedBox(height: 8),
           _options(
             const [0, 1, 2, 4, 8, 16],
             _ignoreVelocity,
             (v) => '$v',
             (v) => _applyAudio(ignoreVelocity: v),
-          ),
-          const SizedBox(height: 24),
-          Text(
-            '以上设置会持久保存（settings.txt），下次启动自动恢复。',
-            style: TextStyle(color: YinheTheme.textDisabled, fontSize: 11),
           ),
         ],
       ),
@@ -257,16 +358,6 @@ class _SettingsViewState extends State<SettingsView> {
         color: YinheTheme.text,
         fontSize: 14,
         fontWeight: FontWeight.w600,
-      ),
-    );
-  }
-
-  Widget _hint(String text) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 4),
-      child: Text(
-        text,
-        style: TextStyle(color: YinheTheme.textDisabled, fontSize: 11),
       ),
     );
   }
