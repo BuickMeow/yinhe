@@ -895,17 +895,22 @@ pub fn tracks_json() -> String {
 /// 视图快照（Dart 文本浮层用），固定 12 个 f32：
 /// `[mode, ppu, scroll_x, scroll_y, key_height, left_panel_w, lane_height,
 ///   total_ticks, ppq, key0_y, time_sig_num, time_sig_den]`
-pub fn view_snapshot() -> [f32; 12] {
+pub fn view_snapshot() -> [f32; 13] {
     let Ok(s) = scene().lock() else {
-        return [0.0; 12];
+        return [0.0; 13];
     };
     let ppq = s.ppq as f32;
-    // 标尺拍号：原生拍号事件优先（tempo_map.time_sig_default），否则工程默认。
-    let (sig_num, sig_den) = s
-        .model
-        .as_ref()
-        .map(|m| m.tempo_map.time_sig_default)
-        .unwrap_or((4, 2));
+    // 顶栏 BPM/拍号 = 播放光标处的实时值（原生事件优先，否则工程默认），
+    // 与桌面时间码 `bpm_at_time` / `time_sig_at_tick` 同规则。
+    let (sig_num, sig_den, bpm) = match s.document.as_ref() {
+        Some(doc) => {
+            let model = &doc.data.model;
+            let tick = crate::audio::playback_tick_for(model).max(0.0);
+            let (num, den) = model.tempo_map.time_sig_at_tick(tick as u32);
+            (num, den, model.tempo_map.bpm_at_tick(tick as u64))
+        }
+        None => (4, 2, 120.0),
+    };
     match s.view_mode {
         ViewMode::Pianoroll => [
             1.0,
@@ -920,6 +925,7 @@ pub fn view_snapshot() -> [f32; 12] {
             s.pr_view.key_to_y(0),
             f32::from(sig_num),
             f32::from(sig_den),
+            bpm,
         ],
         ViewMode::Arrangement => [
             0.0,
@@ -934,8 +940,35 @@ pub fn view_snapshot() -> [f32; 12] {
             0.0,
             f32::from(sig_num),
             f32::from(sig_den),
+            bpm,
         ],
     }
+}
+
+/// 拍号分段 JSON：`[[tick,num,den_pow], ...]`（首段从 0 开始）。
+///
+/// 标尺/网格线按分段画（拍号变化时各段用各自的 measure 长）。
+pub fn time_sig_segments_json() -> String {
+    use yinhe_types::time_format::build_time_sig_segments;
+    let Ok(s) = scene().lock() else {
+        return "[]".into();
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return "[]".into();
+    };
+    let tm = &doc.data.model.tempo_map;
+    let (def_num, def_den) = tm.time_sig_default;
+    let segments = build_time_sig_segments(&tm.time_sig_events, def_num, def_den);
+    let mut out = String::with_capacity(segments.len() * 16 + 2);
+    out.push('[');
+    for (i, (tick, num, den_pow)) in segments.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!("[{tick},{num},{den_pow}]"));
+    }
+    out.push(']');
+    out
 }
 
 /// PR 自动化栏数据（仅 PB/CC/RPN 三类），JSON：

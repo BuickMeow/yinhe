@@ -420,6 +420,13 @@ pub fn playback_tick() -> f64 {
     let Some(model) = model else {
         return 0.0;
     };
+    playback_tick_for(&model)
+}
+
+/// 当前播放位置（tick），模型由调用方提供。
+///
+/// 供已持有 scene 锁的调用方使用（锁顺序 scene → audio，避免二次加锁死锁）。
+pub fn playback_tick_for(model: &YinModel) -> f64 {
     let Some(mut guard) = lock_audio() else {
         return 0.0;
     };
@@ -428,7 +435,7 @@ pub fn playback_tick() -> f64 {
     };
     if st.handle.handle.is_playing() {
         let seconds = st.handle.handle.sample_position() as f64 / st.handle.sample_rate as f64;
-        seconds_to_tick(&model, seconds)
+        seconds_to_tick(model, seconds)
     } else {
         st.cursor_tick
     }

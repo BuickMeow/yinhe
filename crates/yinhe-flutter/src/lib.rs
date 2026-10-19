@@ -824,6 +824,12 @@ pub extern "C" fn yinhe_song_title() -> *mut std::ffi::c_char {
     to_c_string(scene::song_title())
 }
 
+/// 拍号分段 JSON（标尺/网格线按分段画；堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_time_sig_segments_json() -> *mut std::ffi::c_char {
+    to_c_string(scene::time_sig_segments_json())
+}
+
 /// 全曲音符数（顶栏标题展示用）。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_note_count() -> i64 {

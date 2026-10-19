@@ -140,6 +140,17 @@ impl TempoMap {
         bpm_from_mpq(seg.micros_per_quarter) as f32
     }
 
+    /// Get BPM at a given tick（原生 tempo 事件优先，无事件时用兜底段）。
+    pub fn bpm_at_tick(&self, tick: u64) -> f32 {
+        let count = self
+            .tempo_segments
+            .partition_point(|s| (s.start_tick as u64) <= tick);
+        if count == 0 {
+            return DEFAULT_BPM as f32;
+        }
+        bpm_from_mpq(self.tempo_segments[count - 1].micros_per_quarter) as f32
+    }
+
     /// Convert absolute tick to seconds (considering tempo changes).
     pub fn tick_to_seconds(&self, tick: u64) -> f64 {
         let count = self
@@ -254,6 +265,30 @@ mod tests {
             ..Default::default()
         };
         assert!((tm.bpm_at_time(0.5) - 240.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn bpm_at_tick_picks_segment() {
+        let tm = TempoMap {
+            ticks_per_beat: 480,
+            tempo_segments: vec![
+                TempoSegment {
+                    start_tick: 0,
+                    start_time: 0.0,
+                    micros_per_quarter: DEFAULT_MPQ,
+                },
+                TempoSegment {
+                    start_tick: 480,
+                    start_time: 0.5,
+                    micros_per_quarter: 250_000,
+                },
+            ],
+            ..Default::default()
+        };
+        assert!((tm.bpm_at_tick(0) - 120.0).abs() < 0.01);
+        assert!((tm.bpm_at_tick(479) - 120.0).abs() < 0.01);
+        assert!((tm.bpm_at_tick(480) - 240.0).abs() < 0.01);
+        assert!((tm.bpm_at_tick(48_000) - 240.0).abs() < 0.01);
     }
 
     #[test]
