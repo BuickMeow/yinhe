@@ -118,6 +118,32 @@ class LabelsPainter extends CustomPainter {
     if (laneH <= 0 || panelW <= 0) {
       return;
     }
+    // 不透明面板底：盖住演奏指示线/选框等画布元素（面板在它们之上）。
+    // 隔行条纹与 wgpu decor（偶数行 STRIPE_BG）保持一致。
+    final bgFirst = (scrollY / laneH).floor().clamp(0, rows.length + 1).toInt();
+    final bgLast = ((scrollY + size.height) / laneH)
+        .ceil()
+        .clamp(0, rows.length + 1)
+        .toInt();
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, panelW, size.height),
+      Paint()..color = YinheTheme.bg,
+    );
+    for (var idx = bgFirst; idx < bgLast; idx++) {
+      if (idx.isEven) {
+        final y = idx * laneH - scrollY;
+        canvas.drawRect(
+          Rect.fromLTWH(0, y, panelW, laneH),
+          Paint()..color = YinheTheme.stripeBg,
+        );
+      }
+    }
+    // 面板右缘分隔线（原由 wgpu decor 绘制，面板底色会盖住，这里补回）。
+    canvas.drawRect(
+      Rect.fromLTWH(panelW - 1, 0, 1, size.height),
+      Paint()..color = YinheTheme.lineFg,
+    );
+
     final first = (scrollY / laneH).floor().clamp(0, rows.length).toInt();
     final last = ((scrollY + size.height) / laneH)
         .ceil()
@@ -155,26 +181,48 @@ class LabelsPainter extends CustomPainter {
         YinheTheme.textLabel,
         vCenter: true,
       );
-      if (laneH >= 34) {
+      // Master（Conductor）轨没有 M/S。
+      if (laneH >= 34 && !row.master) {
         final btn = (laneH * 0.44).clamp(18.0, 26.0).toDouble();
         const gap = 4.0;
         final right = panelW - 6.0;
         final cy = y + laneH / 2;
+        // 与桌面一致：M 在左（警告色），S 在右（危险色）。
         _msButton(
           canvas,
-          Rect.fromLTWH(right - btn, cy - btn / 2, btn, btn),
+          Rect.fromLTWH(right - btn * 2 - gap, cy - btn / 2, btn, btn),
           'M',
           row.muted,
           true,
         );
         _msButton(
           canvas,
-          Rect.fromLTWH(right - btn * 2 - gap, cy - btn / 2, btn, btn),
+          Rect.fromLTWH(right - btn, cy - btn / 2, btn, btn),
           'S',
           row.soloed,
           false,
         );
       }
+    }
+    // 列表末尾：添加音轨占位行（只有一个加号）。
+    final addIdx = rows.length;
+    final addY = addIdx * laneH - scrollY;
+    if (addY + laneH > 0 && addY < size.height) {
+      if (addIdx.isEven) {
+        canvas.drawRect(
+          Rect.fromLTWH(0, addY, panelW, laneH),
+          Paint()..color = YinheTheme.stripeBg,
+        );
+      }
+      _text(
+        canvas,
+        '+',
+        Offset(panelW / 2, addY + laneH / 2),
+        (laneH * 0.5).clamp(18.0, 34.0).toDouble(),
+        YinheTheme.textSecondary,
+        vCenter: true,
+        hCenter: true,
+      );
     }
   }
 

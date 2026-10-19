@@ -164,6 +164,26 @@ typedef SetTrackInfoDart = int Function(
   int,
 );
 
+/// 切换轨道 mute。
+final IntArgDart toggleTrackMute = bridge
+    .lookupFunction<IntArgNative, IntArgDart>('yinhe_toggle_track_mute');
+
+/// 切换轨道 solo。
+final IntArgDart toggleTrackSolo = bridge
+    .lookupFunction<IntArgNative, IntArgDart>('yinhe_toggle_track_solo');
+
+typedef AddTracksNative = ffi.Int32 Function(
+  ffi.Int32,
+  ffi.Int32,
+  ffi.Int32,
+  ffi.Int32,
+);
+typedef AddTracksDart = int Function(int, int, int, int);
+
+/// 新建 MIDI 轨（cycle=1：同 port 内循环通道）。
+final AddTracksDart addTracks = bridge
+    .lookupFunction<AddTracksNative, AddTracksDart>('yinhe_add_tracks');
+
 /// 编辑音轨信息（名称/端口/通道 + 通道默认乐器）。
 final SetTrackInfoDart setTrackInfo = bridge
     .lookupFunction<SetTrackInfoNative, SetTrackInfoDart>(

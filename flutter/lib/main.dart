@@ -9,6 +9,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import 'ffi.dart' as rust;
+import 'add_tracks_dialog.dart';
 import 'automation_panel.dart';
 import 'canvas_menus.dart';
 import 'home_view.dart';
@@ -147,6 +148,9 @@ class _StudioShellState extends State<StudioShell>
   late final ffi.Pointer<ffi.Float> _snapPtr;
 
   bool _dragging = false;
+
+  /// 鼠标右键拖拽的 pointer id（无论当前工具，都按手形平移）。
+  int? _panPointer;
 
   /// PR 选框长按：圆环进度（500ms）；完成后进入移动态，未移动则弹菜单。
   Offset? _lpPos;
@@ -511,6 +515,10 @@ class _StudioShellState extends State<StudioShell>
     if (!mounted) {
       return;
     }
+    if (call.method == 'rightPan') {
+      _onNativeRightPan(call.arguments as Map?);
+      return;
+    }
     final path = call.arguments as String?;
     if (path == null) {
       return;
@@ -537,6 +545,26 @@ class _StudioShellState extends State<StudioShell>
         _loadSongTitle();
         _readDocState();
     }
+  }
+
+  /// 原生层识别到的鼠标右键（已消费，不会再走 Flutter 左键手势）。
+  void _onNativeRightPan(Map? args) {
+    if (_showHome || _showSettings || args == null) {
+      return;
+    }
+    final kind = (args['kind'] as num?)?.toInt() ?? 2;
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final padding = MediaQuery.paddingOf(context);
+    final x = (args['x'] as num).toDouble() / dpr - padding.left;
+    final y =
+        (args['y'] as num).toDouble() / dpr -
+        padding.top -
+        42 -
+        RulerPainter.height;
+    if (kind == 0) {
+      _cancelLongPressWatch();
+    }
+    _sendPanTouch(kind == 0 ? 3 : (kind == 1 ? 4 : 5), Offset(x, y), -3);
   }
 
   Future<void> _init() async {
@@ -775,6 +803,23 @@ class _StudioShellState extends State<StudioShell>
   }
 
   // ── 触摸 / 手势 ──
+
+  bool _isRightMouse(PointerEvent e) =>
+      e.kind == PointerDeviceKind.mouse &&
+      (e.buttons & kSecondaryMouseButton) != 0;
+
+  /// 右键按下：取消长按/编辑拖拽，强制进入平移（手形语义）。
+  void _beginRightPan(PointerDownEvent e) {
+    _panPointer = e.pointer;
+    _cancelLongPressWatch();
+    _sendPanTouch(3, e.localPosition, e.pointer);
+  }
+
+  /// 右键平移事件（3=down 4=move 5=up）。
+  void _sendPanTouch(int kind, Offset p, int pointer) {
+    rust.touch(kind, p.dx, p.dy, pointer);
+    SchedulerBinding.instance.scheduleFrame();
+  }
 
   void _sendTouch(int kind, Offset p, int pointer) {
     // AR 长按拖动音轨/自动化锚点时无需转发 move（避免误平移），但 up/cancel
@@ -1034,7 +1079,8 @@ class _StudioShellState extends State<StudioShell>
     }
     final idx = ((p.dy + scrollY) / laneH).floor();
     final rows = _tracks.value;
-    if (idx < 0 || idx >= rows.length) {
+    // idx == rows.length 是列表末尾的"添加音轨"占位行。
+    if (idx < 0 || idx > rows.length) {
       return null;
     }
     return idx;
@@ -1052,16 +1098,22 @@ class _StudioShellState extends State<StudioShell>
     return p.dx >= zoneLeft;
   }
 
-  /// AR：点击轨道面板（M/S 之外）进入 PR。
+  /// AR：点击轨道面板。M/S 按钮切换；末行 + 打开添加音轨；其余进入 PR。
   void _handleCanvasTap(Offset p) {
     if (_viewMode != kViewArrangement) {
       return;
     }
-    if (_inMsZone(p)) {
-      return;
-    }
     final idx = _rowAt(p);
     if (idx == null) {
+      return;
+    }
+    final rows = _tracks.value;
+    if (idx == rows.length) {
+      _showAddTrackDialog();
+      return;
+    }
+    if (!rows[idx].master && _inMsZone(p)) {
+      _toggleMs(p, idx);
       return;
     }
     _activeTrack = idx;
@@ -1071,13 +1123,53 @@ class _StudioShellState extends State<StudioShell>
     _setView(kViewPianoroll);
   }
 
+  /// 命中 M/S 按钮：M 在左（警告色），S 在右（危险色）。
+  void _toggleMs(Offset p, int idx) {
+    final s = _snap.value;
+    final laneH = s[6];
+    final panelW = s[5];
+    final btn = (laneH * 0.44).clamp(18.0, 26.0).toDouble();
+    const gap = 4.0;
+    final right = panelW - 6.0;
+    final mLeft = right - btn * 2 - gap;
+    final sLeft = right - btn;
+    if (p.dx >= mLeft && p.dx <= mLeft + btn) {
+      if (rust.toggleTrackMute(idx) == 1) {
+        _refreshDocumentMeta();
+      }
+    } else if (p.dx >= sLeft && p.dx <= sLeft + btn) {
+      if (rust.toggleTrackSolo(idx) == 1) {
+        _refreshDocumentMeta();
+      }
+    }
+  }
+
+  /// 列表末尾占位行：添加音轨。
+  void _showAddTrackDialog() {
+    final rows = _tracks.value;
+    final last = rows.isNotEmpty ? rows.last : null;
+    rust.resetTouch();
+    showDialog<void>(
+      context: context,
+      builder: (_) => AddTracksDialog(
+        initialPort: last?.port ?? 0,
+        initialChannel: last?.channel ?? 0,
+        onConfirm: (count, port, channel, cycle) {
+          if (rust.addTracks(count, port, channel, cycle ? 1 : 0) == 1) {
+            _refreshDocumentMeta();
+          }
+        },
+      ),
+    );
+  }
+
   /// AR：长按拖动轨道排序。
   void _handleLongPressStart(Offset p) {
     if (_viewMode != kViewArrangement) {
       return;
     }
     final idx = _rowAt(p);
-    if (idx == null) {
+    if (idx == null || idx >= _tracks.value.length) {
       return;
     }
     setState(() {
@@ -1257,14 +1349,48 @@ class _StudioShellState extends State<StudioShell>
                               onLongPressEnd: (_) => _handleLongPressEnd(),
                               child: Listener(
                                 behavior: HitTestBehavior.opaque,
-                                onPointerDown: (e) =>
-                                    _sendTouch(0, e.localPosition, e.pointer),
-                                onPointerMove: (e) =>
-                                    _sendTouch(1, e.localPosition, e.pointer),
-                                onPointerUp: (e) =>
-                                    _sendTouch(2, e.localPosition, e.pointer),
-                                onPointerCancel: (e) =>
-                                    _sendTouch(2, e.localPosition, e.pointer),
+                                onPointerDown: (e) {
+                                  if (_isRightMouse(e)) {
+                                    _beginRightPan(e);
+                                  } else {
+                                    _sendTouch(0, e.localPosition, e.pointer);
+                                  }
+                                },
+                                onPointerMove: (e) {
+                                  if (_panPointer == e.pointer) {
+                                    _sendPanTouch(
+                                      4,
+                                      e.localPosition,
+                                      e.pointer,
+                                    );
+                                  } else {
+                                    _sendTouch(1, e.localPosition, e.pointer);
+                                  }
+                                },
+                                onPointerUp: (e) {
+                                  if (_panPointer == e.pointer) {
+                                    _panPointer = null;
+                                    _sendPanTouch(
+                                      5,
+                                      e.localPosition,
+                                      e.pointer,
+                                    );
+                                  } else {
+                                    _sendTouch(2, e.localPosition, e.pointer);
+                                  }
+                                },
+                                onPointerCancel: (e) {
+                                  if (_panPointer == e.pointer) {
+                                    _panPointer = null;
+                                    _sendPanTouch(
+                                      5,
+                                      e.localPosition,
+                                      e.pointer,
+                                    );
+                                  } else {
+                                    _sendTouch(2, e.localPosition, e.pointer);
+                                  }
+                                },
                                 onPointerSignal: _handlePointerSignal,
                                 onPointerPanZoomStart: (_) =>
                                     _panZoomScale = 1.0,

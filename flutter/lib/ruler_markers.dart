@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'ffi.dart' as rust;
 import 'models.dart';
+import 'painters.dart';
 import 'theme.dart';
 
 /// 时间标尺上的标签（marker）层：pill 显示 + 点击跳转 / 长按菜单 / 拖动移动。
@@ -202,6 +203,23 @@ class _MarkerLayerState extends State<MarkerLayer> {
                     width,
                     ppq,
                   ),
+              // AR：面板上方的占位矩形（与时间标尺夹着），盖住跨入面板区域的
+              // 标签 pill。只画在 AR（快照 mode 0）。
+              if (s[0] == 0.0 && origin > 0)
+                Positioned(
+                  left: 0,
+                  top: 0,
+                  child: Container(
+                    width: origin,
+                    height: RulerPainter.height,
+                    decoration: BoxDecoration(
+                      color: YinheTheme.trackBg,
+                      border: Border(
+                        bottom: BorderSide(color: YinheTheme.lineFg),
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
         );
