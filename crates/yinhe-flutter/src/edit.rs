@@ -390,7 +390,7 @@ pub fn tick_scroll() -> i32 {
                 changed = true;
             }
             if changed {
-                s.arr_view.clamp_scroll(lw, lh, total, num_tracks);
+                s.arr_view.clamp_scroll(lw, lh, total, num_tracks + 1);
             }
             changed
         }

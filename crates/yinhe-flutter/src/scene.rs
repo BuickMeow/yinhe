@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use yinhe_core::YinModel;
 use yinhe_editor_core::Document;
 use yinhe_editor_core::clipboard::{NotesClipboard, PasteMode};
+use yinhe_editor_core::follow::total_ticks_padded;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::NoteSource;
 use yinhe_types::{ArrangementView, PianoRollView, TimelineViewBase};
@@ -471,14 +472,19 @@ pub fn set_project_meta(name: String, artist: String, description: String, ppq: 
 ///
 /// `min_ticks`：演示内容生成时模型 tick_length 尚未刷新，用它兜底总长。
 fn apply_document(doc: Document, min_ticks: f64) {
-    let total_ticks = (doc.data.model.tick_length as f64).max(min_ticks).max(1.0);
+    // 初始缩放只看实际内容（不含尾部 64 小节，避免打开时音符变小）；
+    // 可视总长额外预留 64 小节（与桌面 follow::total_ticks_padded 一致）。
+    let content_ticks = (doc.data.model.tick_length as f64).max(min_ticks).max(1.0);
+    let total_ticks = total_ticks_padded(doc.data.model.tick_length, doc.data.model.meta.ppq)
+        .max(min_ticks)
+        .max(1.0);
 
     let mut pr_view = PianoRollView::default();
     // 初始缩放：全曲约 2 屏宽（沿用旧安卓壳 set_model 的算法）。
-    pr_view.base.pixels_per_tick = (1280.0 * 2.0 / total_ticks as f32).clamp(0.001, 10.0);
+    pr_view.base.pixels_per_tick = (1280.0 * 2.0 / content_ticks as f32).clamp(0.001, 10.0);
 
     let arr_base = TimelineViewBase {
-        pixels_per_tick: (1280.0 * 2.0 / total_ticks as f32).clamp(0.0005, 8.0),
+        pixels_per_tick: (1280.0 * 2.0 / content_ticks as f32).clamp(0.0005, 8.0),
         scroll_x: 0.0,
         scroll_y: 0.0,
         left_panel_width: AR_TRACK_PANEL_W,
@@ -524,6 +530,8 @@ pub(crate) fn refresh_snapshot(s: &mut RenderScene) {
     };
     let model = doc.data.model.clone();
     let colors = doc.edit.track_cache.colors.clone();
+    // 内容结束后实时保留 64 小节空余（编辑后立即可滚动/点击）。
+    s.total_ticks = total_ticks_padded(model.tick_length, model.meta.ppq).max(1.0);
     s.model = Some(model.clone());
     s.track_colors = colors.clone();
     s.track_visible = doc.edit.pr_visible();
@@ -1157,6 +1165,113 @@ pub fn channel_instruments_json() -> String {
     out
 }
 
+/// 轨道音频 skip 掩码：mute + solo（有任意 solo 时只放行 solo 轨）+ 空音频轨。
+fn skip_mask(s: &RenderScene) -> Vec<bool> {
+    let Some(doc) = s.document.as_ref() else {
+        return Vec::new();
+    };
+    let any_solo = doc
+        .edit
+        .track_overrides
+        .iter()
+        .enumerate()
+        .any(|(i, o)| o.soloed && i < doc.data.model.tracks.len());
+    doc.data
+        .model
+        .tracks
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let o = doc.edit.track_overrides.get(i);
+            let muted = o.map(|o| o.muted).unwrap_or(false);
+            let soloed = o.map(|o| o.soloed).unwrap_or(false);
+            (t.kind == yinhe_core::TrackKind::Audio && t.audio_clips.is_empty())
+                || muted
+                || (any_solo && !soloed)
+        })
+        .collect()
+}
+
+fn toggle_override(track: usize, mute: bool) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    if track >= doc.data.model.tracks.len() {
+        return 0;
+    }
+    while doc.edit.track_overrides.len() <= track {
+        doc.edit.track_overrides.push(Default::default());
+    }
+    {
+        let o = &mut doc.edit.track_overrides[track];
+        if mute {
+            o.muted = !o.muted;
+        } else {
+            o.soloed = !o.soloed;
+        }
+    }
+    let mask = skip_mask(&s);
+    refresh_snapshot(&mut s);
+    drop(s);
+    crate::audio::set_skip_mask(mask);
+    1
+}
+
+/// 切换轨道 mute（不参与 undo，与桌面一致）。成功 1。
+pub fn toggle_track_mute(track: usize) -> i32 {
+    toggle_override(track, true)
+}
+
+/// 切换轨道 solo（不参与 undo，与桌面一致）。成功 1。
+pub fn toggle_track_solo(track: usize) -> i32 {
+    toggle_override(track, false)
+}
+
+/// 新建 MIDI 轨：`cycle=true` 时在同一 port 内循环通道（B3→B16→B1），
+/// 否则全部使用同一通道。成功 1。
+pub fn add_tracks(count: usize, port: u8, start_channel: u8, cycle: bool) -> i32 {
+    use yinhe_editor_core::NewTrackSpec;
+    use yinhe_editor_core::channel_alloc;
+
+    let count = count.clamp(1, 64);
+    let alloc = if cycle {
+        channel_alloc::alloc_channels_in_port(port, start_channel, count)
+    } else {
+        vec![(port & 0x0F, start_channel & 0x0F); count]
+    };
+    let specs: Vec<NewTrackSpec> = alloc
+        .into_iter()
+        .map(|(p, c)| NewTrackSpec {
+            kind: yinhe_core::TrackKind::Midi,
+            port: p,
+            channel: c,
+            audio_channel: None,
+        })
+        .collect();
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let before = doc.capture_snapshot();
+    let Some(action) = doc.add_tracks_batch(&specs) else {
+        return 0;
+    };
+    doc.push_undo(action, "新建音轨", before);
+    let model = doc.data.model.clone();
+    let mask = skip_mask(&s);
+    refresh_snapshot(&mut s);
+    drop(s);
+    crate::audio::reload_notes(model);
+    crate::audio::set_skip_mask(mask);
+    log::info!("新建音轨: {count} 条, port={port}, start={start_channel}, cycle={cycle}");
+    1
+}
+
 /// 编辑音轨信息（名称/端口/通道 + 通道默认乐器）。成功 1。
 #[allow(clippy::too_many_arguments)] // 对话框字段一一透传
 pub fn set_track_info(
@@ -1534,7 +1649,7 @@ pub fn scroll_at(x: f32, y: f32, dx: f32, dy: f32, ctrl: bool) -> i32 {
             } else {
                 view.base.scroll_x -= dx + dy;
             }
-            s.arr_view.clamp_scroll(lw, lh, total, num_tracks);
+            s.arr_view.clamp_scroll(lw, lh, total, num_tracks + 1);
         }
     }
     // 视图变化后选框需按内容坐标重算屏幕位置（与桌面逐帧换算一致）。
@@ -1569,7 +1684,7 @@ pub fn zoom_at(x: f32, y: f32, factor: f32) -> i32 {
             } else {
                 view.base.zoom_around_x(x, factor);
             }
-            s.arr_view.clamp_scroll(lw, lh, total, num_tracks);
+            s.arr_view.clamp_scroll(lw, lh, total, num_tracks + 1);
         }
     }
     // 同上：缩放后选框随内容移动。

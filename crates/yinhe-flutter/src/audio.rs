@@ -174,6 +174,17 @@ fn send_soundfonts(handle: &CpalAudioHandle, path: &str) {
     });
 }
 
+/// 轨道 mute/solo 掩码（与桌面 SkipTracks 同机制，超时/丢命令时保留最新值）。
+pub fn set_skip_mask(skip: Vec<bool>) {
+    let Some(mut guard) = lock_audio() else {
+        return;
+    };
+    let Some(st) = guard.as_mut() else {
+        return;
+    };
+    st.handle.handle.send(AudioCommand::SkipTracks { skip });
+}
+
 /// 当前音色库路径（可能尚未应用，仅记录）。无则空串。
 pub fn soundfont_path() -> String {
     soundfont_slot()

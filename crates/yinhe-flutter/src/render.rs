@@ -142,7 +142,10 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
         let num_tracks = s.num_tracks;
         match s.view_mode {
             ViewMode::Pianoroll => s.pr_view.clamp_scroll(w, h, total_ticks),
-            ViewMode::Arrangement => s.arr_view.clamp_scroll(w, h, total_ticks, num_tracks),
+            ViewMode::Arrangement => {
+                // +1 = AR 列表末尾的"添加音轨"占位行，允许滚动到它。
+                s.arr_view.clamp_scroll(w, h, total_ticks, num_tracks + 1)
+            }
         }
         (
             s.view_mode,

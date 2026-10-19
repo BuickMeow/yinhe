@@ -591,6 +591,35 @@ pub extern "C" fn yinhe_channel_instruments_json() -> *mut std::ffi::c_char {
     to_c_string(scene::channel_instruments_json())
 }
 
+/// 切换轨道 mute。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_toggle_track_mute(track: i32) -> i32 {
+    if track < 0 {
+        return 0;
+    }
+    scene::toggle_track_mute(track as usize)
+}
+
+/// 切换轨道 solo。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_toggle_track_solo(track: i32) -> i32 {
+    if track < 0 {
+        return 0;
+    }
+    scene::toggle_track_solo(track as usize)
+}
+
+/// 新建 MIDI 轨：count / port / start_channel / cycle(1=同 port 内循环)。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_add_tracks(count: i32, port: i32, channel: i32, cycle: i32) -> i32 {
+    scene::add_tracks(
+        count.max(1) as usize,
+        port.clamp(0, 15) as u8,
+        channel.clamp(0, 15) as u8,
+        cycle != 0,
+    )
+}
+
 /// 编辑音轨信息：名称/端口/通道 + 通道默认乐器。成功 1。
 #[allow(clippy::not_unsafe_ptr_arg_deref, clippy::too_many_arguments)]
 #[unsafe(no_mangle)]
