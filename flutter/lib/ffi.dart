@@ -78,15 +78,47 @@ typedef SetAutoDart = int Function(int, int, int, double);
 final SetAutoDart setAutomationValue = bridge
     .lookupFunction<SetAutoNative, SetAutoDart>('yinhe_set_automation_value');
 
-/// 当前音色库路径（空串 = 未选择）。
-final CStrDart soundfontPath = bridge.lookupFunction<CStrNative, CStrDart>(
-  'yinhe_soundfont_path',
+/// 音色库表 JSON（顺序 = 优先级：靠前的库覆盖靠后的）。
+final CStrDart soundfontsJson = bridge.lookupFunction<CStrNative, CStrDart>(
+  'yinhe_soundfonts_json',
 );
+
+typedef CStrArgNative = ffi.Int32 Function(ffi.Pointer<Utf8>);
+typedef CStrArgDart = int Function(ffi.Pointer<Utf8>);
+
+/// 设置音色库表（设置页排序/启停/删除后调用）。
+final CStrArgDart setSoundfonts = bridge
+    .lookupFunction<CStrArgNative, CStrArgDart>('yinhe_set_soundfonts');
 
 /// 歌曲标题（空串 = 未设置）。
 final CStrDart songTitle = bridge.lookupFunction<CStrNative, CStrDart>(
   'yinhe_song_title',
 );
+
+typedef Int64Native = ffi.Int64 Function();
+typedef Int64Dart = int Function();
+
+/// 全曲音符数。
+final Int64Dart noteCount = bridge.lookupFunction<Int64Native, Int64Dart>(
+  'yinhe_note_count',
+);
+
+/// 本工程默认 BPM / 拍号 JSON：`{"bpm":120,"num":4,"den":4}`。
+final CStrDart projectDefaultsJson = bridge
+    .lookupFunction<CStrNative, CStrDart>('yinhe_project_defaults_json');
+
+typedef SetProjectDefaultsNative = ffi.Int32 Function(
+  ffi.Float,
+  ffi.Int32,
+  ffi.Int32,
+);
+typedef SetProjectDefaultsDart = int Function(double, int, int);
+
+/// 设置本工程默认 BPM / 拍号（分子 + 分母 2 次幂）。
+final SetProjectDefaultsDart setProjectDefaults = bridge
+    .lookupFunction<SetProjectDefaultsNative, SetProjectDefaultsDart>(
+      'yinhe_set_project_defaults',
+    );
 
 typedef IntArgNative = ffi.Int32 Function(ffi.Int32);
 typedef IntArgDart = int Function(int);
@@ -137,10 +169,9 @@ typedef FloatArgDart = int Function(double);
 final FloatArgDart pasteSelection = bridge
     .lookupFunction<FloatArgNative, FloatArgDart>('yinhe_paste_selection');
 
-/// 长按落点 tick（每帧更新指示线用）。
-final FloatDart longPressTick = bridge.lookupFunction<FloatNative, FloatDart>(
-  'yinhe_long_press_tick',
-);
+/// 长按落点 tick（每帧更新指示线用；Rust 返回 f64）。
+final DoubleDart longPressTick = bridge
+    .lookupFunction<DoubleNative, DoubleDart>('yinhe_long_press_tick');
 
 /// 长按落点轨道（-1 = 无）。
 final ActionDart longPressTrack = bridge
