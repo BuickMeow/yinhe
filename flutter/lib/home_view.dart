@@ -59,14 +59,19 @@ class HomeView extends StatelessWidget {
               style: TextStyle(color: Color(0xFF9A9AA2), fontSize: 12),
             ),
           ),
-          // 左上角返回。
+          // 左上角返回：与工作区顶部栏的返回/主页按钮同 xy、同尺寸。
           Positioned(
-            left: 4,
-            top: 4,
+            left: 6,
+            top: 1,
+            width: 40,
+            height: 40,
             child: IconButton(
               tooltip: '返回工作区',
               icon: const Icon(Icons.arrow_back),
-              color: YinheTheme.textSecondary,
+              color: YinheTheme.text,
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
               onPressed: onBack,
             ),
           ),

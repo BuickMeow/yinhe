@@ -73,6 +73,7 @@ class _ProjectDialogState extends State<ProjectDialog> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              const SizedBox(height: 10),
               _field(_name, '歌名'),
               const SizedBox(height: 12),
               _field(_artist, '艺术家'),

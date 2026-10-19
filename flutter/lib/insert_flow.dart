@@ -292,6 +292,7 @@ class _NumberDialogState extends State<_NumberDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            const SizedBox(height: 10),
             TextField(
               controller: _controller,
               autofocus: true,

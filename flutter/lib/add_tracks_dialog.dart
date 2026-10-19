@@ -36,23 +36,10 @@ class _AddTracksDialogState extends State<AddTracksDialog> {
 
   int get _parsedCount => int.tryParse(_count.text.trim()) ?? 0;
 
-  String _channelCode(int channel) =>
-      '${String.fromCharCode(0x41 + _port)}${channel + 1}';
-
-  String _preview(int count) {
-    final n = count.clamp(1, 16);
-    final list = <String>[
-      for (var i = 0; i < n; i++)
-        _channelCode(_cycle ? (_channel + i) % 16 : _channel),
-    ];
-    final text = list.join('、');
-    return count > n ? '$text …（共 $count 条）' : text;
-  }
-
   void _save() {
     final count = _parsedCount;
-    if (count < 1 || count > 64) {
-      setState(() => _error = '数量需为 1–64');
+    if (count < 1 || count > 256) {
+      setState(() => _error = '数量需为 1–256');
       return;
     }
     widget.onConfirm(count, _port, _channel, _cycle);
@@ -61,7 +48,6 @@ class _AddTracksDialogState extends State<AddTracksDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final count = _parsedCount.clamp(1, 64);
     return AlertDialog(
       backgroundColor: YinheTheme.bg,
       title: const Text('添加音轨', style: TextStyle(fontSize: 17)),
@@ -72,12 +58,14 @@ class _AddTracksDialogState extends State<AddTracksDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // 顶部留白：浮动 label 会超出输入框上缘，避免被裁掉一半。
+              const SizedBox(height: 10),
               TextField(
                 controller: _count,
                 keyboardType: TextInputType.number,
                 style: const TextStyle(fontSize: 14),
                 decoration: InputDecoration(
-                  labelText: '轨道数量（1–64）',
+                  labelText: '轨道数量（1–256）',
                   border: const OutlineInputBorder(),
                   isDense: true,
                   errorText: _error,
@@ -132,18 +120,6 @@ class _AddTracksDialogState extends State<AddTracksDialog> {
                     ),
                   ),
                 ],
-              ),
-              const SizedBox(height: 10),
-              Text(
-                '将新建 $count 条：${_preview(count)}',
-                style: TextStyle(color: YinheTheme.textLabel, fontSize: 12),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                _cycle
-                    ? '循环只在本端口内进行：到 16 后回到 1，不会跨到下一个端口。'
-                    : '所有新音轨使用同一个端口和通道。',
-                style: TextStyle(color: YinheTheme.textMuted, fontSize: 11),
               ),
             ],
           ),

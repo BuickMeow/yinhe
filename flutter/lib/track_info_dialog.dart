@@ -90,6 +90,7 @@ class _TrackInfoDialogState extends State<TrackInfoDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              const SizedBox(height: 10),
               TextField(
                 controller: _name,
                 style: const TextStyle(fontSize: 14),

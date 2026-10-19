@@ -84,14 +84,17 @@ class _MarkerLayerState extends State<MarkerLayer> {
       builder: (ctx) => AlertDialog(
         backgroundColor: YinheTheme.bg,
         title: const Text('重命名标签', style: TextStyle(fontSize: 17)),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          style: const TextStyle(fontSize: 14),
-          decoration: const InputDecoration(
-            labelText: '标签文本',
-            border: OutlineInputBorder(),
-            isDense: true,
+        content: Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: TextField(
+            controller: controller,
+            autofocus: true,
+            style: const TextStyle(fontSize: 14),
+            decoration: const InputDecoration(
+              labelText: '标签文本',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
           ),
         ),
         actions: [

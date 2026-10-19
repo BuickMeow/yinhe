@@ -137,6 +137,15 @@ typedef FloatArgDart = int Function(double);
 final FloatArgDart pasteSelection = bridge
     .lookupFunction<FloatArgNative, FloatArgDart>('yinhe_paste_selection');
 
+/// 长按落点 tick（每帧更新指示线用）。
+final FloatDart longPressTick = bridge.lookupFunction<FloatNative, FloatDart>(
+  'yinhe_long_press_tick',
+);
+
+/// 长按落点轨道（-1 = 无）。
+final ActionDart longPressTrack = bridge
+    .lookupFunction<ActionNative, ActionDart>('yinhe_long_press_track');
+
 /// 长按空白处上下文 JSON（插入事件用）。
 final CStrDart longPressContextJson = bridge
     .lookupFunction<CStrNative, CStrDart>('yinhe_long_press_context_json');

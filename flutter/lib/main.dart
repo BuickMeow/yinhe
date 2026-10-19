@@ -193,8 +193,23 @@ class _StudioShellState extends State<StudioShell>
       if (_moveDashed.value != (selState == 2)) {
         _moveDashed.value = selState == 2;
       }
-      if (selState == 2 || selState == 3) {
-        // 已转移动态/长按完成：清掉圆环（移动态虚线由 moving 分支绘制）。
+      if (selState == 3) {
+        // 长按完成：指示线出现并跟随手指微调（松手前可移动位置）。
+        if (_lpProgress.value != 0) {
+          _lpProgress.value = 0;
+        }
+        final tick = rust.longPressTick();
+        final track = rust.longPressTrack();
+        final cur = _lpIndicator.value;
+        if (cur == null || cur.tick != tick || cur.track != track) {
+          _lpIndicator.value = LongPressIndicator(
+            tick: tick,
+            track: track,
+            pr: _viewMode == kViewPianoroll,
+          );
+        }
+      } else if (selState == 2) {
+        // 已转移动态：清掉圆环（虚线由 moving 分支绘制）。
         if (_lpProgress.value != 0) {
           _lpProgress.value = 0;
         }
@@ -1583,7 +1598,6 @@ class _StudioShellState extends State<StudioShell>
       onTool: _selectTool,
       onUndo: _undo,
       onRedo: _redo,
-      onSaveAs: () => _saveProject(saveAs: true),
       onSelectDisplayTrack: _selectDisplayTrack,
     );
   }

@@ -5,7 +5,8 @@ import 'models.dart';
 import 'theme.dart';
 import 'tools.dart';
 
-/// 顶部栏：左侧视图入口 + 走带，右侧量化/工具/撤销重做/曲名框。
+/// 顶部栏：左侧视图入口 + 走带，右侧量化/工具/撤销重做；
+/// 中央在 PR 显示"显示轨道"长按钮，在 AR 显示歌曲标题（只读）。
 class TopBar extends StatelessWidget {
   const TopBar({
     super.key,
@@ -29,7 +30,6 @@ class TopBar extends StatelessWidget {
     required this.onTool,
     required this.onUndo,
     required this.onRedo,
-    required this.onSaveAs,
     required this.onSelectDisplayTrack,
   });
 
@@ -53,72 +53,99 @@ class TopBar extends StatelessWidget {
   final ValueChanged<int> onTool;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
-  final VoidCallback onSaveAs;
   final ValueChanged<int> onSelectDisplayTrack;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       height: 42,
-      color: Color.lerp(YinheTheme.bg, Colors.black, 0.04),
       padding: const EdgeInsets.symmetric(horizontal: 6),
-      child: Row(
+      decoration: BoxDecoration(
+        // 主题 token（与桌面 app_bg/line_fg 同色系）。
+        color: YinheTheme.controlBg,
+        border: Border(bottom: BorderSide(color: YinheTheme.lineFg)),
+      ),
+      child: Stack(
         children: [
-          IconButton(
-            onPressed: isPr ? onBack : onHome,
-            icon: Icon(isPr ? Icons.arrow_back : Icons.home),
-            color: YinheTheme.text,
-            tooltip: isPr ? '返回走带' : '主页',
-            visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-          ),
-          IconButton(
-            onPressed: onTogglePlay,
-            icon: Icon(playing ? Icons.pause : Icons.play_arrow),
-            color: YinheTheme.text,
-            tooltip: playing ? '暂停' : '播放',
-            visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-          ),
-          IconButton(
-            onPressed: onStop,
-            icon: const Icon(Icons.stop),
-            color: YinheTheme.textSecondary,
-            tooltip: '停止',
-            visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-          ),
-          const SizedBox(width: 4),
-          InkWell(
-            borderRadius: BorderRadius.circular(4),
-            onTap: onToggleTimecode,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              child: ValueListenableBuilder<String>(
-                valueListenable: timecodeText,
-                builder: (context, text, _) => Text(
-                  text,
-                  style: TextStyle(color: YinheTheme.textLabel, fontSize: 14),
+          Row(
+            children: [
+              IconButton(
+                onPressed: isPr ? onBack : onHome,
+                icon: Icon(isPr ? Icons.arrow_back : Icons.home),
+                color: YinheTheme.text,
+                tooltip: isPr ? '返回走带' : '主页',
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+              ),
+              IconButton(
+                onPressed: onTogglePlay,
+                icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+                color: YinheTheme.text,
+                tooltip: playing ? '暂停' : '播放',
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+              ),
+              IconButton(
+                onPressed: onStop,
+                icon: const Icon(Icons.stop),
+                color: YinheTheme.textSecondary,
+                tooltip: '停止',
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+              ),
+              const SizedBox(width: 4),
+              InkWell(
+                borderRadius: BorderRadius.circular(4),
+                onTap: onToggleTimecode,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 6,
+                  ),
+                  child: ValueListenableBuilder<String>(
+                    valueListenable: timecodeText,
+                    builder: (context, text, _) => Text(
+                      text,
+                      style: TextStyle(
+                        color: YinheTheme.textLabel,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
                 ),
               ),
+              const Spacer(),
+              _buildQuantizeButton(context),
+              _buildToolButton(),
+              ValueListenableBuilder<int>(
+                valueListenable: docState,
+                builder: (context, st, _) => Row(
+                  children: [
+                    _iconAction(
+                      Icons.undo,
+                      '撤销',
+                      (st & 1) != 0 ? onUndo : null,
+                    ),
+                    _iconAction(
+                      Icons.redo,
+                      '重做',
+                      (st & 2) != 0 ? onRedo : null,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          // 中央：PR = 显示轨道长按钮；AR = 只读歌曲标题（主页已有保存等入口）。
+          Positioned.fill(
+            child: Align(
+              alignment: Alignment.center,
+              child: isPr ? _buildSongBox() : _titleText(),
             ),
           ),
-          const Spacer(),
-          _buildQuantizeButton(context),
-          _buildToolButton(),
-          ValueListenableBuilder<int>(
-            valueListenable: docState,
-            builder: (context, st, _) => Row(
-              children: [
-                _iconAction(Icons.undo, '撤销', (st & 1) != 0 ? onUndo : null),
-                _iconAction(Icons.redo, '重做', (st & 2) != 0 ? onRedo : null),
-              ],
-            ),
-          ),
-          _buildSongBox(),
         ],
       ),
     );
@@ -222,24 +249,34 @@ class TopBar extends StatelessWidget {
     );
   }
 
+  /// AR：只读歌曲标题（不可点，不提供显示轨道/保存入口）。
+  Widget _titleText() {
+    final base = songTitle.isNotEmpty ? songTitle : (fileName ?? '未命名');
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 260),
+      child: ValueListenableBuilder<int>(
+        valueListenable: docState,
+        builder: (context, st, _) => Text(
+          (st & 4) != 0 ? '• $base' : base,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
+        ),
+      ),
+    );
+  }
+
+  /// PR：显示轨道长按钮（顶部正中央；保存工程只在主页）。
   Widget _buildSongBox() {
     final filtering = displayTrack >= 0 && displayTrack < tracks.length;
     final base = filtering
         ? tracks[displayTrack].name
         : (songTitle.isNotEmpty ? songTitle : (fileName ?? '未命名'));
     return PopupMenuButton<int>(
-      tooltip: '显示轨道 / 保存工程',
+      tooltip: '显示轨道',
       padding: EdgeInsets.zero,
-      onSelected: (v) {
-        if (v == -2) {
-          onSaveAs();
-        } else {
-          onSelectDisplayTrack(v);
-        }
-      },
+      onSelected: onSelectDisplayTrack,
       itemBuilder: (_) => [
-        const PopupMenuItem(value: -2, child: Text('保存为工程（.ying）…')),
-        const PopupMenuDivider(),
         const PopupMenuItem(value: -1, child: Text('全部轨道')),
         for (var i = 0; i < tracks.length; i++)
           PopupMenuItem(
@@ -250,10 +287,11 @@ class TopBar extends StatelessWidget {
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 7),
         padding: const EdgeInsets.symmetric(horizontal: 10),
-        constraints: const BoxConstraints(maxWidth: 190),
+        constraints: const BoxConstraints(maxWidth: 220),
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: YinheTheme.controlBg,
+          // 比顶栏底（controlBg）稍深一档，长按钮才可见。
+          color: YinheTheme.btnBg,
           borderRadius: BorderRadius.circular(6),
         ),
         child: ValueListenableBuilder<int>(
