@@ -585,6 +585,53 @@ pub extern "C" fn yinhe_paste_selection(x: f32) -> i32 {
     scene::paste_selection(x)
 }
 
+/// 通道级默认乐器 JSON（16 项：`[bank, program]` 或 null，堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_channel_instruments_json() -> *mut std::ffi::c_char {
+    to_c_string(scene::channel_instruments_json())
+}
+
+/// 编辑音轨信息：名称/端口/通道 + 通道默认乐器。成功 1。
+#[allow(clippy::not_unsafe_ptr_arg_deref, clippy::too_many_arguments)]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_track_info(
+    track: i32,
+    name: *const std::ffi::c_char,
+    port: i32,
+    channel: i32,
+    bank: i32,
+    program: i32,
+    use_instrument: i32,
+) -> i32 {
+    if track < 0 || name.is_null() {
+        return 0;
+    }
+    let name = unsafe { CStr::from_ptr(name) }
+        .to_string_lossy()
+        .into_owned();
+    scene::set_track_info(
+        track as usize,
+        name,
+        port.clamp(0, 15) as u8,
+        channel.clamp(0, 15) as u8,
+        bank.clamp(0, 128) as u8,
+        program.clamp(0, 127) as u8,
+        use_instrument != 0,
+    )
+}
+
+/// 长按空白处上下文 JSON（插入事件用，堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_long_press_context_json() -> *mut std::ffi::c_char {
+    to_c_string(edit::long_press_context_json())
+}
+
+/// 长按"插入"事件：kind 0=速度、1=PB、2=CC1、3=CC7、4=CC10、5=CC11、6=CC64。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_insert_automation(kind: i32, tick: f64, track: i32) -> i32 {
+    scene::insert_automation(kind, tick, track)
+}
+
 /// 重命名音轨。成功 1。
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]

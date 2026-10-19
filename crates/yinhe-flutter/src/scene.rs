@@ -32,6 +32,11 @@ pub struct TrackInfoLite {
     pub color: [f32; 4],
     pub muted: bool,
     pub soloed: bool,
+    /// 所属通道的默认乐器（-1 = 未设置）。
+    pub instrument_bank: i32,
+    pub instrument_program: i32,
+    /// 是否 Master（Conductor）轨。
+    pub master: bool,
 }
 
 /// 渲染线程与触摸手势共享的场景数据。
@@ -528,29 +533,43 @@ pub(crate) fn refresh_snapshot(s: &mut RenderScene) {
         .tracks
         .iter()
         .enumerate()
-        .map(|(i, t)| TrackInfoLite {
-            name: t.name.to_string(),
-            port: t.port,
-            channel: t.channel,
-            color: colors.get(i).copied().unwrap_or([0.5, 0.5, 0.5, 1.0]),
-            muted: doc
-                .edit
-                .track_overrides
-                .get(i)
-                .map(|o| o.muted)
-                .unwrap_or(false),
-            soloed: doc
-                .edit
-                .track_overrides
-                .get(i)
-                .map(|o| o.soloed)
-                .unwrap_or(false),
+        .map(|(i, t)| {
+            let inst = model
+                .channel_instruments
+                .get(t.channel as usize)
+                .copied()
+                .flatten();
+            TrackInfoLite {
+                name: t.name.to_string(),
+                port: t.port,
+                channel: t.channel,
+                instrument_bank: inst.map_or(-1, |v| i32::from(v.bank_msb)),
+                instrument_program: inst.map_or(-1, |v| i32::from(v.program)),
+                master: t.kind == yinhe_core::TrackKind::Master || i == 0,
+                color: colors.get(i).copied().unwrap_or([0.5, 0.5, 0.5, 1.0]),
+                muted: doc
+                    .edit
+                    .track_overrides
+                    .get(i)
+                    .map(|o| o.muted)
+                    .unwrap_or(false),
+                soloed: doc
+                    .edit
+                    .track_overrides
+                    .get(i)
+                    .map(|o| o.soloed)
+                    .unwrap_or(false),
+            }
         })
         .collect();
 }
 
 /// AR 长按拖动排序：把 `from` 轨移动到 `to` 位置。成功返回 1。
 pub fn move_track(from: usize, to: usize) -> i32 {
+    // Conductor（Master）固定在 0 号位，不参与排序。
+    if from == 0 || to == 0 {
+        return 0;
+    }
     let Ok(mut s) = scene().lock() else {
         return 0;
     };
@@ -829,7 +848,7 @@ pub fn tracks_json() -> String {
             out.push(',');
         }
         out.push_str(&format!(
-            "{{\"index\":{},\"name\":\"{}\",\"port\":{},\"channel\":{},\"color\":[{},{},{},{}],\"muted\":{},\"soloed\":{}}}",
+            "{{\"index\":{},\"name\":\"{}\",\"port\":{},\"channel\":{},\"color\":[{},{},{},{}],\"muted\":{},\"soloed\":{},\"ib\":{},\"ip\":{},\"master\":{}}}",
             i,
             json_escape(&t.name),
             t.port,
@@ -839,7 +858,10 @@ pub fn tracks_json() -> String {
             t.color[2],
             t.color[3],
             t.muted,
-            t.soloed
+            t.soloed,
+            t.instrument_bank,
+            t.instrument_program,
+            t.master
         ));
     }
     out.push(']');
@@ -1107,6 +1129,150 @@ pub fn paste_selection(x: f32) -> i32 {
     crate::audio::reload_notes(model);
     set_play_cursor(tick);
     log::info!("已粘贴剪贴板到 tick {tick:.0}");
+    1
+}
+
+/// 通道级默认乐器 JSON：16 项，`[bank, program]` 或 null。
+pub fn channel_instruments_json() -> String {
+    let Ok(s) = scene().lock() else {
+        return "[]".into();
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return "[]".into();
+    };
+    let mut out = String::from("[");
+    for (i, inst) in doc.data.model.channel_instruments.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        match inst {
+            Some(v) => out.push_str(&format!("[{},{}]", v.bank_msb, v.program)),
+            None => out.push_str("null"),
+        }
+    }
+    out.push(']');
+    out
+}
+
+/// 编辑音轨信息（名称/端口/通道 + 通道默认乐器）。成功 1。
+#[allow(clippy::too_many_arguments)] // 对话框字段一一透传
+pub fn set_track_info(
+    track: usize,
+    name: String,
+    port: u8,
+    channel: u8,
+    bank: u8,
+    program: u8,
+    use_instrument: bool,
+) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let instrument = use_instrument.then_some(yinhe_core::ChannelInstrument {
+        bank_msb: bank,
+        program,
+    });
+    let before = doc.capture_snapshot();
+    let Some(action) = doc.set_track_info(track, name, port, channel, instrument) else {
+        return 0;
+    };
+    doc.push_undo(action, "编辑音轨信息", before);
+    let model = doc.data.model.clone();
+    refresh_snapshot(&mut s);
+    drop(s);
+    crate::audio::reload_notes(model);
+    log::info!("音轨信息已更新: track={track}");
+    1
+}
+
+/// 长按"插入"：kind 0=速度(Tempo)、1=PB、2=CC1、3=CC7、4=CC10、5=CC11、6=CC64。
+///
+/// 值取该位置当前值（不改变听感）；没有历史值时用目标默认值。
+/// 成功 1。
+pub fn insert_automation(kind: i32, tick: f64, track: i32) -> i32 {
+    use yinhe_types::automation::{AutomationEvent, AutomationTarget, SegmentShape};
+
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let target = match kind {
+        0 => AutomationTarget::Tempo,
+        1 => AutomationTarget::PitchBend,
+        2 => AutomationTarget::CC { controller: 1 },
+        3 => AutomationTarget::CC { controller: 7 },
+        4 => AutomationTarget::CC { controller: 10 },
+        5 => AutomationTarget::CC { controller: 11 },
+        6 => AutomationTarget::CC { controller: 64 },
+        _ => return 0,
+    };
+    let is_tempo = matches!(target, AutomationTarget::Tempo);
+    let track_idx = if is_tempo {
+        0usize
+    } else {
+        track.max(0) as usize
+    };
+    if !is_tempo {
+        let Some(t) = doc.data.model.tracks.get(track_idx) else {
+            return 0;
+        };
+        if t.kind == yinhe_core::TrackKind::Master {
+            return 0;
+        }
+    }
+    let at_tick = tick.max(0.0).round() as u32;
+    // 该位置当前值（避免插入瞬间改变听感）。
+    let current = if is_tempo {
+        doc.data
+            .model
+            .conductor
+            .tempo
+            .value_at(at_tick)
+            .map(|(v, _)| v)
+    } else {
+        doc.data
+            .model
+            .tracks
+            .get(track_idx)
+            .and_then(|t| t.automation_lanes.iter().find(|l| l.target == target))
+            .and_then(|l| l.value_at(at_tick))
+            .map(|(v, _)| v)
+    };
+    let default_value = match kind {
+        0 => 120.0,
+        1 => 0.5,
+        2 => 0.0,
+        3 => 1.0,
+        4 => 0.5,
+        5 => 1.0,
+        6 => 0.0,
+        _ => 0.5,
+    };
+    let mut value = current.unwrap_or(default_value);
+    if !is_tempo {
+        value = value.clamp(0.0, 1.0);
+    }
+    let event = AutomationEvent {
+        id: 0,
+        tick: at_tick,
+        value,
+        shape: SegmentShape::Step,
+    };
+    let before = doc.capture_snapshot();
+    let Some((_, _, action)) = doc.upsert_automation_event(track_idx, target, event) else {
+        return 0;
+    };
+    doc.push_undo(action, "插入自动化事件", before);
+    let model = doc.data.model.clone();
+    refresh_snapshot(&mut s);
+    drop(s);
+    crate::audio::reload_notes(model);
+    log::info!("插入自动化事件: kind={kind} tick={at_tick} track={track_idx}");
     1
 }
 

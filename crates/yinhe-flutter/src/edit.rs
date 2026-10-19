@@ -402,6 +402,41 @@ pub fn tick_scroll() -> i32 {
     1
 }
 
+/// 长按空白处的上下文（插入事件用）：
+/// `{"tick":..,"track":..,"conductor":..,"pr":..}`；无上下文时为 `{}`。
+pub fn long_press_context_json() -> String {
+    let Ok(d) = DRAG.lock() else {
+        return "{}".into();
+    };
+    if d.kind != kind::PASTE_READY && d.kind != kind::PENDING_PASTE {
+        return "{}".into();
+    }
+    let Ok(s) = scene::scene().lock() else {
+        return "{}".into();
+    };
+    let (track, is_pr) = match s.view_mode {
+        ViewMode::Arrangement => (d.anchor_row, false),
+        ViewMode::Pianoroll => match write_track(&s) {
+            Some(t) => (t, true),
+            None => (usize::MAX, true),
+        },
+    };
+    let conductor = track == 0
+        || s.model
+            .as_ref()
+            .and_then(|m| m.tracks.get(track))
+            .is_some_and(|t| t.kind == yinhe_core::TrackKind::Master);
+    let track_out: i64 = if track == usize::MAX {
+        -1
+    } else {
+        track as i64
+    };
+    format!(
+        "{{\"tick\":{},\"track\":{},\"conductor\":{},\"pr\":{}}}",
+        d.anchor_tick, track_out, conductor, is_pr
+    )
+}
+
 /// 选框拖拽状态：0=无、1=待定（长按中）、2=移动态、3=空白处长按完成（待粘贴）。
 pub fn selection_state() -> i32 {
     DRAG.lock()
