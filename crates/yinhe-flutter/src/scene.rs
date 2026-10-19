@@ -176,8 +176,210 @@ pub fn scene() -> &'static Mutex<RenderScene> {
     SCENE.get_or_init(|| Mutex::new(RenderScene::default()))
 }
 
-/// 后台加载用户选择的文件（.mid / .ying）并替换当前场景。
+/// 压缩包扩展名（与桌面 `file_loading::load_path` 同一份列表）。
+const ARCHIVE_EXTS: &[&str] = &[
+    "zip", "7z", "rar", "lzh", "lha", "tar", "gz", "xz", "tgz", "txz", "tbz", "bz2",
+];
+
+/// 路径是否压缩包（按扩展名判断，与桌面一致）。
+pub fn is_archive_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    ARCHIVE_EXTS
+        .iter()
+        .any(|e| lower.ends_with(&format!(".{e}")))
+}
+
+/// 压缩包会话：打开后只收集 MIDI 条目元数据（懒解压）。
+struct ArchiveSession {
+    path: String,
+    archive: Option<yinhe_archive::Archive>,
+    entries: Vec<yinhe_archive::ArchiveEntry>,
+    /// 0=打开中 1=就绪 2=需要密码 3=失败
+    status: u8,
+    error: String,
+}
+
+static ARCHIVE: OnceLock<Mutex<Option<ArchiveSession>>> = OnceLock::new();
+
+fn archive_slot() -> &'static Mutex<Option<ArchiveSession>> {
+    ARCHIVE.get_or_init(|| Mutex::new(None))
+}
+
+/// 压缩包状态：0=无 1=打开中 2=就绪 3=需要密码 4=失败。
+pub fn archive_status() -> i32 {
+    match archive_slot()
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|s| s.status))
+    {
+        None => 0,
+        Some(0) => 1,
+        Some(1) => 2,
+        Some(2) => 3,
+        Some(_) => 4,
+    }
+}
+
+/// 压缩包信息 JSON：`{"path":..,"error":..,"entries":[{"name":..,"size":..}]}`。
+pub fn archive_json() -> String {
+    let Ok(slot) = archive_slot().lock() else {
+        return "{}".into();
+    };
+    let Some(session) = slot.as_ref() else {
+        return "{}".into();
+    };
+    let mut out = String::with_capacity(64 + session.entries.len() * 48);
+    out.push_str("{\"path\":\"");
+    out.push_str(&json_escape(&session.path));
+    out.push_str("\",\"error\":\"");
+    out.push_str(&json_escape(&session.error));
+    out.push_str("\",\"entries\":[");
+    for (i, e) in session.entries.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!(
+            "{{\"name\":\"{}\",\"size\":{}}}",
+            json_escape(&e.name),
+            e.size
+        ));
+    }
+    out.push_str("]}");
+    out
+}
+
+/// 打开压缩包（后台线程，只列 MIDI 条目）。Dart 轮询 `archive_status`。
+pub fn open_archive(path: String, password: Option<String>) -> i32 {
+    if let Ok(mut slot) = archive_slot().lock() {
+        *slot = Some(ArchiveSession {
+            path: path.clone(),
+            archive: None,
+            entries: Vec::new(),
+            status: 0,
+            error: String::new(),
+        });
+    }
+    let path_for_thread = path.clone();
+    let spawn = std::thread::Builder::new()
+        .name("yinhe-archive-open".into())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            let result = match password.as_deref() {
+                Some(pw) => yinhe_archive::Archive::open_with_password(&path_for_thread, Some(pw)),
+                None => yinhe_archive::Archive::open(&path_for_thread),
+            };
+            let Ok(mut slot) = archive_slot().lock() else {
+                return;
+            };
+            let Some(session) = slot.as_mut() else {
+                return;
+            };
+            match result {
+                Ok(archive) => {
+                    session.entries = archive.list_midi_files();
+                    session.archive = Some(archive);
+                    session.status = 1;
+                    log::info!(
+                        "压缩包已打开: {path_for_thread}（{} 个 MIDI）",
+                        session.entries.len()
+                    );
+                }
+                Err(yinhe_archive::ArchiveError::PasswordRequired) => {
+                    session.status = 2;
+                    log::info!("压缩包需要密码: {path_for_thread}");
+                }
+                Err(e) => {
+                    session.error = e.to_string();
+                    session.status = 3;
+                    log::error!("压缩包打开失败（{path_for_thread}）: {e}");
+                }
+            }
+        });
+    if let Err(e) = spawn {
+        log::error!("压缩包加载线程创建失败: {e}");
+        return 0;
+    }
+    1
+}
+
+/// 打开压缩包内第 `index` 个 MIDI 条目（后台解析并替换场景）。
+pub fn open_archive_entry(index: usize) -> i32 {
+    let (archive, entry_name) = {
+        let Ok(slot) = archive_slot().lock() else {
+            return 0;
+        };
+        let Some(session) = slot.as_ref() else {
+            return 0;
+        };
+        if session.status != 1 {
+            return 0;
+        }
+        let Some(entry) = session.entries.get(index) else {
+            return 0;
+        };
+        let Some(archive) = session.archive.clone() else {
+            return 0;
+        };
+        (archive, entry.name.clone())
+    };
+    let spawn = std::thread::Builder::new()
+        .name("yinhe-archive-entry".into())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let data = match archive.read_file(&entry_name) {
+                Ok(d) => d,
+                Err(e) => {
+                    log::error!("压缩包条目解压失败（{entry_name}）: {e}");
+                    return;
+                }
+            };
+            let display = format!("{}#{entry_name}", archive.path().display());
+            match load_midi_bytes_document(&data, &display) {
+                Ok(doc) => {
+                    push_recent(&archive.path().display().to_string());
+                    apply_document(doc, 0.0);
+                }
+                Err(e) => log::error!("压缩包条目解析失败（{entry_name}）: {e}"),
+            }
+        });
+    if let Err(e) = spawn {
+        log::error!("压缩包条目加载线程创建失败: {e}");
+        return 0;
+    }
+    1
+}
+
+/// 从 MIDI 字节构建文档（压缩包条目用；`path` 只用于显示/最近记录）。
+fn load_midi_bytes_document(data: &[u8], path: &str) -> Result<Document, String> {
+    let started = std::time::Instant::now();
+    let model = yinhe_midi::parse_bytes(data).map_err(|e| format!("解析失败: {e}"))?;
+    log::info!(
+        "MIDI 解析完成（压缩包条目）: {} 音符，用时 {:?}",
+        model.note_count,
+        started.elapsed()
+    );
+    let project_file = yinhe_yin::ProjectFile::from_meta(&model.meta);
+    let mapping_file = yinhe_yin::MappingFile::default();
+    let mut doc = Document::from_model(
+        path,
+        model,
+        QuantizePreset::Fraction(1, 4),
+        QuantizePreset::Fraction(1, 16),
+        project_file,
+        mapping_file,
+        None,
+    )?;
+    doc.mark_loaded();
+    doc.sync_track_caches_with_conductor_color([0.85, 0.85, 0.88, 1.0]);
+    Ok(doc)
+}
+
+/// 后台加载用户选择的文件（.mid / .ying / 压缩包）并替换当前场景。
 pub fn open_midi(path: String) {
+    if is_archive_path(&path) {
+        open_archive(path, None);
+        return;
+    }
     let spawn = std::thread::Builder::new()
         .name("yinhe-midi-load".into())
         .stack_size(32 * 1024 * 1024)

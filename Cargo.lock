@@ -7908,6 +7908,7 @@ dependencies = [
  "pollster 1.0.1",
  "serde_json",
  "wgpu",
+ "yinhe-archive",
  "yinhe-audio",
  "yinhe-core",
  "yinhe-editor-core",

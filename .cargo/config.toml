@@ -1,2 +1,7 @@
 [alias]
 xtask = "run --package xtask --"
+
+# 安卓：压缩包支持（unarc-rs）带 C++ 代码，显式依赖 NDK 的 libc++_shared.so；
+# 否则 libyinhe_flutter.so 的 std::length_error 等符号在运行时无法解析。
+[target.aarch64-linux-android]
+rustflags = ["-C", "link-arg=-lc++_shared"]

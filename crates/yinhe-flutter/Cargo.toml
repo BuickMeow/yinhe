@@ -23,6 +23,7 @@ yinhe-wgpu = { path = "../yinhe-wgpu" }
 yinhe-audio = { path = "../yinhe-audio" }
 yinhe-midi = { path = "../yinhe-midi" }
 yinhe-yin = { path = "../yinhe-yin" }
+yinhe-archive = { path = "../yinhe-archive" }
 
 [target.'cfg(target_os = "android")'.dependencies]
 # 安卓上 stdout 不可见，日志必须走 logcat。

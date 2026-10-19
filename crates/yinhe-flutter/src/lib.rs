@@ -831,6 +831,56 @@ pub extern "C" fn yinhe_time_sig_segments_json() -> *mut std::ffi::c_char {
     to_c_string(scene::time_sig_segments_json())
 }
 
+/// 压缩包状态：0=无 1=打开中 2=就绪 3=需要密码 4=失败。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_archive_status() -> i32 {
+    scene::archive_status()
+}
+
+/// 压缩包信息 JSON（条目列表；堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_archive_json() -> *mut std::ffi::c_char {
+    to_c_string(scene::archive_json())
+}
+
+/// 打开压缩包（无密码）；后台线程，Dart 轮询 yinhe_archive_status。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
+pub extern "C" fn yinhe_archive_open(path: *const std::ffi::c_char) -> i32 {
+    if path.is_null() {
+        return 0;
+    }
+    let path = unsafe { CStr::from_ptr(path) }
+        .to_string_lossy()
+        .into_owned();
+    scene::open_archive(path, None)
+}
+
+/// 带密码打开压缩包。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
+pub extern "C" fn yinhe_archive_open_password(
+    path: *const std::ffi::c_char,
+    password: *const std::ffi::c_char,
+) -> i32 {
+    if path.is_null() || password.is_null() {
+        return 0;
+    }
+    let path = unsafe { CStr::from_ptr(path) }
+        .to_string_lossy()
+        .into_owned();
+    let password = unsafe { CStr::from_ptr(password) }
+        .to_string_lossy()
+        .into_owned();
+    scene::open_archive(path, Some(password))
+}
+
+/// 打开压缩包内第 `index` 个 MIDI 条目。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_archive_open_entry(index: i32) -> i32 {
+    scene::open_archive_entry(index.max(0) as usize)
+}
+
 /// tick → 秒（时间码预显示用）。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_seconds_at_tick(tick: f64) -> f64 {

@@ -35,6 +35,8 @@ struct GestureState {
     vel: (f32, f32),
     /// 上一次移动采样时间。
     last_move: Option<Instant>,
+    /// 已应用缩放时的双指距离（下一段缩放以此为参考，避免抖动触发缩放）。
+    zoom_ref: f32,
 }
 
 static GESTURE: Mutex<GestureState> = Mutex::new(GestureState {
@@ -42,6 +44,7 @@ static GESTURE: Mutex<GestureState> = Mutex::new(GestureState {
     baseline: None,
     vel: (0.0, 0.0),
     last_move: None,
+    zoom_ref: 0.0,
 });
 
 /// 松手惯性状态（逻辑像素/秒；每帧指数衰减滚动视图）。
@@ -187,7 +190,11 @@ fn reset_baseline(g: &mut GestureState) {
             dist: 0.0,
             mid: (g.pointers[0].x, g.pointers[0].y),
         }),
-        2 => Some(two_finger_baseline(&g.pointers)),
+        2 => {
+            let b = two_finger_baseline(&g.pointers);
+            g.zoom_ref = b.dist;
+            Some(b)
+        }
         _ => None,
     };
 }
@@ -258,7 +265,7 @@ fn apply(g: &mut GestureState) {
     reset_baseline(g);
 }
 
-fn apply_pianoroll(s: &mut RenderScene, g: &GestureState, base: Baseline, lw: f32, lh: f32) {
+fn apply_pianoroll(s: &mut RenderScene, g: &mut GestureState, base: Baseline, lw: f32, lh: f32) {
     let view = &mut s.pr_view;
     match g.pointers.len() {
         1 => {
@@ -271,9 +278,14 @@ fn apply_pianoroll(s: &mut RenderScene, g: &GestureState, base: Baseline, lw: f3
         }
         2 => {
             let now = two_finger_baseline(&g.pointers);
-            if now.dist > 1.0 && base.dist > 1.0 {
-                let factor = now.dist / base.dist;
-                if (factor - 1.0).abs() > 0.001 {
+            // 缩放参考距离：两指平行移动时的距离抖动不触发缩放（缩放要累计
+            // 变化超过 ~2% 才应用），否则双指平移会像单指那样抖动缩放。
+            if g.zoom_ref <= 1.0 {
+                g.zoom_ref = now.dist;
+            }
+            if now.dist > 1.0 && g.zoom_ref > 1.0 {
+                let factor = now.dist / g.zoom_ref;
+                if (factor - 1.0).abs() > 0.02 {
                     let kb_w = view.keyboard_width();
                     if now.mid.0 < kb_w {
                         // 键盘列：音高缩放（锚点 y）。
@@ -283,6 +295,7 @@ fn apply_pianoroll(s: &mut RenderScene, g: &GestureState, base: Baseline, lw: f3
                         // 内容区：时间缩放（坐标系原点在键盘列右缘）。
                         view.zoom_main_around(now.mid.0 - kb_w, factor);
                     }
+                    g.zoom_ref = now.dist;
                 }
             }
             let (mdx, mdy) = (now.mid.0 - base.mid.0, now.mid.1 - base.mid.1);
@@ -342,7 +355,7 @@ pub fn tick_inertia() -> i32 {
     1
 }
 
-fn apply_arrangement(s: &mut RenderScene, g: &GestureState, base: Baseline) {
+fn apply_arrangement(s: &mut RenderScene, g: &mut GestureState, base: Baseline) {
     let view = &mut s.arr_view;
     match g.pointers.len() {
         1 => {
@@ -355,9 +368,12 @@ fn apply_arrangement(s: &mut RenderScene, g: &GestureState, base: Baseline) {
         }
         2 => {
             let now = two_finger_baseline(&g.pointers);
-            if now.dist > 1.0 && base.dist > 1.0 {
-                let factor = now.dist / base.dist;
-                if (factor - 1.0).abs() > 0.001 {
+            if g.zoom_ref <= 1.0 {
+                g.zoom_ref = now.dist;
+            }
+            if now.dist > 1.0 && g.zoom_ref > 1.0 {
+                let factor = now.dist / g.zoom_ref;
+                if (factor - 1.0).abs() > 0.02 {
                     if now.mid.0 < view.base.left_panel_width {
                         // 轨道面板区：行高离散缩放（锚点 y）。
                         view.zoom_lane_height(now.mid.1, factor);
@@ -365,6 +381,7 @@ fn apply_arrangement(s: &mut RenderScene, g: &GestureState, base: Baseline) {
                         // 内容区：时间缩放。
                         view.base.zoom_around_x(now.mid.0, factor);
                     }
+                    g.zoom_ref = now.dist;
                 }
             }
             let (mdx, mdy) = (now.mid.0 - base.mid.0, now.mid.1 - base.mid.1);
