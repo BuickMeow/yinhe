@@ -261,14 +261,16 @@ pub fn new_project() -> i32 {
 
 /// 保存为 `.ying` 工程归档（写到给定路径，签名与桌面 .yin 容器一致）。
 pub fn save_ying(path: String) -> i32 {
-    let Ok(s) = scene().lock() else {
+    let Ok(mut s) = scene().lock() else {
         return 0;
     };
-    let Some(doc) = s.document.as_ref() else {
+    let Some(doc) = s.document.as_mut() else {
         return 0;
     };
     match yinhe_yin::save_yin(&doc.data.model, &path) {
         Ok(()) => {
+            // 记录落盘路径：`is_dirty()` 用它判断"尚未落盘"。
+            doc.file_path = Some(path.clone());
             log::info!("工程已导出: {path}");
             1
         }

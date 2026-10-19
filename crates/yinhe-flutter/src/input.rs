@@ -133,8 +133,8 @@ pub fn on_touch(kind: i32, x: f32, y: f32, pointer: i32) {
             apply(&mut g);
         }
         _ => {
-            // 单指平移松手：按最近速度启动惯性（编辑拖拽/多指不触发）。
-            let single = g.pointers.len() == 1;
+            // 平移松手：按最近速度启动惯性（编辑拖拽不触发；双指同样有惯性）。
+            let count = g.pointers.len();
             let editing = crate::edit::is_active();
             g.pointers.retain(|p| p.id != pointer);
             if g.pointers.is_empty() {
@@ -147,8 +147,8 @@ pub fn on_touch(kind: i32, x: f32, y: f32, pointer: i32) {
                 .map(|t| t.elapsed().as_secs_f32())
                 .unwrap_or(f32::MAX);
             let speed = (g.vel.0 * g.vel.0 + g.vel.1 * g.vel.1).sqrt();
-            if single
-                && !editing
+            let pan_ok = (count == 1 && !editing) || count == 2;
+            if pan_ok
                 && idle < 0.1
                 && speed >= FLING_MIN_SPEED
                 && let Ok(mut st) = INERTIA.lock()
@@ -207,10 +207,17 @@ fn apply(g: &mut GestureState) {
         return;
     };
 
-    // 单指平移速度（指数平滑）：内容跟随手指，视图速度 = 手指速度。
-    if g.pointers.len() == 1 {
-        let p = g.pointers[0];
-        let (dx, dy) = (p.x - base.mid.0, p.y - base.mid.1);
+    // 单指/双指平移速度（指数平滑）：内容跟随手指，视图速度 = 手指速度。
+    let mid = match g.pointers.len() {
+        1 => Some((g.pointers[0].x, g.pointers[0].y)),
+        2 => {
+            let (a, b) = (&g.pointers[0], &g.pointers[1]);
+            Some(((a.x + b.x) * 0.5, (a.y + b.y) * 0.5))
+        }
+        _ => None,
+    };
+    if let Some((mx, my)) = mid {
+        let (dx, dy) = (mx - base.mid.0, my - base.mid.1);
         let now = Instant::now();
         if let Some(t0) = g.last_move {
             let dt = now.duration_since(t0).as_secs_f32();

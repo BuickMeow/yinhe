@@ -105,7 +105,8 @@ pub fn format_tick_bar_beat_with_time_sig(
     let ticks_per_beat = (ticks_per_measure / num as u32).max(1);
     let bar = bar_offsets[seg_idx] + (local / ticks_per_measure) + 1;
     let beat = ((local % ticks_per_measure) / ticks_per_beat) + 1;
-    let tick_in_beat = tick as u32 % ppq;
+    // tick 字段是"拍内 tick"，必须以本段实际拍长取模（分母 ≠ 4 时拍长 ≠ ppq）。
+    let tick_in_beat = local % ticks_per_beat;
 
     format!("{}.{}.{:03}", bar, beat, tick_in_beat)
 }
@@ -285,6 +286,28 @@ mod tests {
     #[test]
     fn test_format_time_sig_6_8() {
         assert_eq!(format_time_sig(6, 3), "6/8");
+    }
+
+    #[test]
+    fn test_format_tick_bar_beat_with_time_sig_den_not_four() {
+        // 1/8（ppq=960 → 小节 480、拍 480）：小节线处拍内 tick 必须是 0。
+        let ev = [TimeSigEvent {
+            tick: 0,
+            numerator: 1,
+            denominator: 3,
+        }];
+        assert_eq!(
+            format_tick_bar_beat_with_time_sig(0.0, 960, &ev, 4, 2),
+            "1.1.000"
+        );
+        assert_eq!(
+            format_tick_bar_beat_with_time_sig(480.0, 960, &ev, 4, 2),
+            "2.1.000"
+        );
+        assert_eq!(
+            format_tick_bar_beat_with_time_sig(720.0, 960, &ev, 4, 2),
+            "2.1.240"
+        );
     }
 
     #[test]

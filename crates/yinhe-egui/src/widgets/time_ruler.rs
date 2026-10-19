@@ -760,7 +760,7 @@ fn paint_labels(
                     let bar = bar_offset + (local / ticks_per_measure) + 1;
                     let beat = (local % ticks_per_measure) / ticks_per_beat + 1;
                     if show_tick {
-                        let tick_in_beat = (tick as f64 % tpb as f64) as u32;
+                        let tick_in_beat = local % ticks_per_beat;
                         (
                             format!("{}.{}.{:03}", bar, beat, tick_in_beat),
                             theme::tick_label(),
@@ -810,7 +810,7 @@ fn paint_labels(
                     if main_px >= 0.0 && main_px <= main_size {
                         let bar = bar_offset + (local / ticks_per_measure) + 1;
                         let beat = (local % ticks_per_measure) / ticks_per_beat + 1;
-                        let tick_in_beat = (ft as f64 % tpb as f64) as u32;
+                        let tick_in_beat = local % ticks_per_beat;
                         let label = format!("{}.{}.{:03}", bar, beat, tick_in_beat);
                         let label_pos = match orientation {
                             Orientation::Horizontal => {
