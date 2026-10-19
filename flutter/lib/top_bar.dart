@@ -31,6 +31,9 @@ class TopBar extends StatelessWidget {
     required this.onUndo,
     required this.onRedo,
     required this.onSelectDisplayTrack,
+    required this.onProjectSettings,
+    required this.onSaveProject,
+    required this.onSaveProjectAs,
     required this.noteCount,
     required this.bpmText,
     required this.sigText,
@@ -59,8 +62,11 @@ class TopBar extends StatelessWidget {
   final VoidCallback onUndo;
   final VoidCallback onRedo;
   final ValueChanged<int> onSelectDisplayTrack;
+  final VoidCallback onProjectSettings;
+  final VoidCallback onSaveProject;
+  final VoidCallback onSaveProjectAs;
 
-  /// 全曲音符数（跟歌曲标题一起显示）。
+  /// 全曲音符数（AR 歌名弹窗内显示）。
   final int noteCount;
 
   /// 本工程默认 BPM / 拍号文本（点击可改；原生事件优先于它们）。
@@ -155,11 +161,11 @@ class TopBar extends StatelessWidget {
               ),
             ],
           ),
-          // 中央：PR = 显示轨道长按钮；AR = 只读歌曲标题（主页已有保存等入口）。
+          // 中央：PR = 显示轨道长按钮；AR = 歌名按钮（工程设置/保存/另存为）。
           Positioned.fill(
             child: Align(
               alignment: Alignment.center,
-              child: isPr ? _buildSongBox() : _titleText(),
+              child: isPr ? _buildSongBox() : _buildProjectMenu(),
             ),
           ),
         ],
@@ -185,10 +191,9 @@ class TopBar extends StatelessWidget {
     );
   }
 
-  /// 标题 + 全曲音符数。
+  /// 歌曲标题（音符数在 AR 歌名弹窗内部）。
   String _titled() {
-    final base = songTitle.isNotEmpty ? songTitle : (fileName ?? '未命名');
-    return '$base · $noteCount音符';
+    return songTitle.isNotEmpty ? songTitle : (fileName ?? '未命名');
   }
 
   Widget _iconAction(IconData icon, String tooltip, VoidCallback? onTap) {
@@ -289,17 +294,45 @@ class TopBar extends StatelessWidget {
     );
   }
 
-  /// AR：只读歌曲标题 + 音符数（不可点，不提供显示轨道/保存入口）。
-  Widget _titleText() {
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 260),
-      child: ValueListenableBuilder<int>(
-        valueListenable: docState,
-        builder: (context, st, _) => Text(
-          (st & 4) != 0 ? '• ${_titled()}' : _titled(),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
+  /// AR：歌名按钮（点击弹工程菜单；音符数在菜单内部）。
+  Widget _buildProjectMenu() {
+    return PopupMenuButton<int>(
+      tooltip: '工程',
+      padding: EdgeInsets.zero,
+      onSelected: (v) {
+        switch (v) {
+          case 0:
+            onProjectSettings();
+          case 1:
+            onSaveProject();
+          case 2:
+            onSaveProjectAs();
+        }
+      },
+      itemBuilder: (_) => [
+        PopupMenuItem<int>(
+          enabled: false,
+          height: 34,
+          child: Text(
+            '$noteCount 音符',
+            style: TextStyle(color: YinheTheme.textLabel, fontSize: 12),
+          ),
+        ),
+        const PopupMenuDivider(height: 1),
+        const PopupMenuItem(value: 0, child: Text('工程设置…')),
+        const PopupMenuItem(value: 1, child: Text('保存工程')),
+        const PopupMenuItem(value: 2, child: Text('另存为…')),
+      ],
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 260),
+        child: ValueListenableBuilder<int>(
+          valueListenable: docState,
+          builder: (context, st, _) => Text(
+            (st & 4) != 0 ? '• ${_titled()}' : _titled(),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
+          ),
         ),
       ),
     );

@@ -82,6 +82,7 @@ Future<void> showEmptyLongPressMenu(
 Future<void> showTrackMenu(
   BuildContext context, {
   required VoidCallback onEdit,
+  VoidCallback? onDelete,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -98,6 +99,15 @@ Future<void> showTrackMenu(
               onEdit();
             },
           ),
+          if (onDelete != null)
+            ListTile(
+              leading: Icon(Icons.delete_outline, color: YinheTheme.danger),
+              title: Text('删除音轨', style: TextStyle(color: YinheTheme.danger)),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                onDelete();
+              },
+            ),
           ListTile(
             leading: const Icon(Icons.close),
             title: const Text('取消'),

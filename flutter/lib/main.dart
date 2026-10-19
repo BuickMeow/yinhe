@@ -168,6 +168,9 @@ class _StudioShellState extends State<StudioShell>
 
   bool _dragging = false;
 
+  /// AR 长按音轨期间手指是否离开过起始行（移动过又放回原位时不弹菜单）。
+  bool _trackDragMoved = false;
+
   /// 鼠标右键拖拽的 pointer id（无论当前工具，都按手形平移）。
   int? _panPointer;
 
@@ -175,6 +178,9 @@ class _StudioShellState extends State<StudioShell>
   Offset? _lpPos;
   DateTime? _lpStartTime;
   bool _lpMoved = false;
+
+  /// 长按微调中的落点 tick（顶部时间码临时跟随手指）。
+  double? _lpPreviewTick;
   final ValueNotifier<double> _lpProgress = ValueNotifier(0);
   final ValueNotifier<Offset?> _lpPosNotifier = ValueNotifier(null);
   final ValueNotifier<bool> _moveDashed = ValueNotifier(false);
@@ -219,6 +225,7 @@ class _StudioShellState extends State<StudioShell>
         }
         final tick = rust.longPressTick();
         final track = rust.longPressTrack();
+        _lpPreviewTick = tick;
         final cur = _lpIndicator.value;
         if (cur == null || cur.tick != tick || cur.track != track) {
           _lpIndicator.value = LongPressIndicator(
@@ -229,6 +236,7 @@ class _StudioShellState extends State<StudioShell>
         }
       } else if (selState == 2) {
         // 已转移动态：清掉圆环（虚线由 moving 分支绘制）。
+        _lpPreviewTick = null;
         if (_lpProgress.value != 0) {
           _lpProgress.value = 0;
         }
@@ -866,9 +874,15 @@ class _StudioShellState extends State<StudioShell>
     if (!mounted) {
       return;
     }
+    // 长按微调时时间码临时显示手指位置（松手/取消后恢复播放光标）。
+    final preview = _lpPreviewTick;
     final text = _timecodeBar
-        ? _fmtBarBeat(rust.playheadTick(), _ppq)
-        : _fmtTime(rust.playbackSeconds());
+        ? _fmtBarBeat(preview ?? rust.playheadTick(), _ppq)
+        : _fmtTime(
+            preview != null
+                ? rust.secondsAtTick(preview)
+                : rust.playbackSeconds(),
+          );
     if (_timecodeText.value != text) {
       _timecodeText.value = text;
     }
@@ -1047,6 +1061,7 @@ class _StudioShellState extends State<StudioShell>
     _lpPosNotifier.value = null;
     _lpProgress.value = 0;
     _lpMoved = false;
+    _lpPreviewTick = null;
   }
 
   void _cancelLongPressWatch() {
@@ -1315,6 +1330,7 @@ class _StudioShellState extends State<StudioShell>
     if (idx == null || idx >= _tracks.value.length) {
       return;
     }
+    _trackDragMoved = false;
     setState(() {
       _dragFrom.value = idx;
       _dragTo.value = idx;
@@ -1328,7 +1344,14 @@ class _StudioShellState extends State<StudioShell>
       return;
     }
     final idx = _rowAt(p);
-    if (idx != null && idx != _dragTo.value) {
+    if (idx == null) {
+      return;
+    }
+    // 手指到过别的行就算"移动过"（即使最后回到原位，也不弹菜单）。
+    if (idx != _dragFrom.value) {
+      _trackDragMoved = true;
+    }
+    if (idx != _dragTo.value) {
       setState(() => _dragTo.value = idx);
     }
   }
@@ -1349,18 +1372,59 @@ class _StudioShellState extends State<StudioShell>
       _showTrackMenu(0);
       return;
     }
-    if (to < 0 || from == to) {
+    if (to < 0 || (from == to && !_trackDragMoved)) {
       // 长按未拖动：弹出音轨信息菜单。
       _showTrackMenu(from);
       return;
     }
-    rust.moveTrack(from, to);
+    if (from == to) {
+      // 移动过又放回原位：不排序、不弹菜单。
+      return;
+    }
+    if (rust.moveTrack(from, to) == 1) {
+      _refreshDocumentMeta();
+    }
   }
 
-  /// AR 长按音轨（未拖动）：音轨信息菜单。
+  /// AR 长按音轨（未拖动）：音轨信息菜单（含删除）。
   void _showTrackMenu(int track) {
+    final rows = _tracks.value;
+    final master = track < 0 || track >= rows.length || rows[track].master;
     rust.resetTouch();
-    showTrackMenu(context, onEdit: () => _editTrackInfo(track));
+    showTrackMenu(
+      context,
+      onEdit: () => _editTrackInfo(track),
+      onDelete: master ? null : () => _deleteTrack(track),
+    );
+  }
+
+  /// 删除音轨（连同音符；一步一 undo）。
+  void _deleteTrack(int track) {
+    if (rust.deleteTrack(track) != 1) {
+      return;
+    }
+    setState(() {
+      final active = _activeTrack;
+      if (active != null) {
+        if (active == track) {
+          _activeTrack = null;
+        } else if (active > track) {
+          _activeTrack = active - 1;
+        }
+      }
+      if (_displayTrack == track) {
+        _displayTrack = -1;
+      } else if (_displayTrack > track) {
+        _displayTrack -= 1;
+      }
+      _dragFrom.value = -1;
+      _dragTo.value = -1;
+    });
+    rust.setActiveTrack(_activeTrack ?? -1);
+    rust.setDisplayTrack(_displayTrack);
+    _refreshDocumentMeta();
+    _loadAutomation();
+    _loadVelocity();
   }
 
   /// 编辑音轨信息（名称/端口/通道/本通道乐器）。
@@ -1589,38 +1653,6 @@ class _StudioShellState extends State<StudioShell>
                             Positioned(
                               left: 0,
                               right: 0,
-                              top: RulerPainter.height,
-                              bottom: 0,
-                              child: IgnorePointer(
-                                child: CustomPaint(
-                                  painter: SelectionLongPressPainter(
-                                    _lpProgress,
-                                    _lpPosNotifier,
-                                    _moveDashed,
-                                    _overlay,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          if (!_showHome)
-                            Positioned(
-                              left: 0,
-                              right: 0,
-                              top: RulerPainter.height,
-                              bottom: 0,
-                              child: IgnorePointer(
-                                child: CustomPaint(
-                                  painter: LongPressIndicatorPainter(
-                                    _snap,
-                                    _lpIndicator,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          if (!_showHome)
-                            Positioned(
-                              left: 0,
-                              right: 0,
                               top: 0,
                               height: RulerPainter.height,
                               child: IgnorePointer(
@@ -1659,6 +1691,39 @@ class _StudioShellState extends State<StudioShell>
                               AutoExpandButton(
                                 onTap: () => _setAutoCollapsed(false),
                               ),
+                          // 长按圆环/落点竖线最后画：盖在音轨面板与自动化栏之上。
+                          if (!_showHome)
+                            Positioned(
+                              left: 0,
+                              right: 0,
+                              top: RulerPainter.height,
+                              bottom: 0,
+                              child: IgnorePointer(
+                                child: CustomPaint(
+                                  painter: SelectionLongPressPainter(
+                                    _lpProgress,
+                                    _lpPosNotifier,
+                                    _moveDashed,
+                                    _overlay,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          if (!_showHome)
+                            Positioned(
+                              left: 0,
+                              right: 0,
+                              top: RulerPainter.height,
+                              bottom: 0,
+                              child: IgnorePointer(
+                                child: CustomPaint(
+                                  painter: LongPressIndicatorPainter(
+                                    _snap,
+                                    _lpIndicator,
+                                  ),
+                                ),
+                              ),
+                            ),
                         ],
                       );
                     },
@@ -1679,9 +1744,6 @@ class _StudioShellState extends State<StudioShell>
                 recent: _recent,
                 onPickMidi: _pickMidi,
                 onNewProject: _newProject,
-                onProjectSettings: _openProjectSettings,
-                onSaveProject: () => _saveProject(),
-                onSaveProjectAs: () => _saveProject(saveAs: true),
                 onOpenRecent: _openRecent,
                 onOpenSettings: _openSettings,
                 onBack: () => setState(() => _showHome = false),
@@ -1728,6 +1790,9 @@ class _StudioShellState extends State<StudioShell>
       onUndo: _undo,
       onRedo: _redo,
       onSelectDisplayTrack: _selectDisplayTrack,
+      onProjectSettings: _openProjectSettings,
+      onSaveProject: () => _saveProject(),
+      onSaveProjectAs: () => _saveProject(saveAs: true),
       noteCount: _noteCount,
       bpmText: _liveBpmText,
       sigText: _liveSigText,

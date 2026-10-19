@@ -268,6 +268,20 @@ final CStrDart markersJson = bridge.lookupFunction<CStrNative, CStrDart>(
 final CStrDart timeSigSegmentsJson = bridge
     .lookupFunction<CStrNative, CStrDart>('yinhe_time_sig_segments_json');
 
+/// 删除音轨（连同其音符；一步一 undo）。
+final IntArgDart deleteTrack = bridge.lookupFunction<IntArgNative, IntArgDart>(
+  'yinhe_delete_track',
+);
+
+typedef TickToSecondsNative = ffi.Double Function(ffi.Double);
+typedef TickToSecondsDart = double Function(double);
+
+/// tick → 秒（长按微调时时间码预显示用）。
+final TickToSecondsDart secondsAtTick = bridge
+    .lookupFunction<TickToSecondsNative, TickToSecondsDart>(
+      'yinhe_seconds_at_tick',
+    );
+
 typedef TickAtXNative = ffi.Double Function(ffi.Float);
 typedef TickAtXDart = double Function(double);
 
