@@ -692,7 +692,7 @@ pub fn set_files_dir(dir: String) {
 }
 
 /// 设置文件写入（音色库 + 音频参数持久化）。
-pub fn save_soundfont_setting(_path: &str) {
+pub fn save_soundfont_settings() {
     write_settings();
 }
 
@@ -705,12 +705,16 @@ fn write_settings() {
     let Some(dir) = files_dir_slot().lock().ok().and_then(|g| g.clone()) else {
         return;
     };
-    let sf = crate::audio::soundfont_path();
-    let a = crate::audio::settings();
     let mut text = String::new();
-    if !sf.is_empty() {
-        text.push_str(&format!("soundfont={sf}\n"));
+    // 音色库表：每行一个 `soundfont=<0|1>|<path>`（0/1 = 停用/启用）。
+    for e in crate::audio::soundfonts() {
+        text.push_str(&format!(
+            "soundfont={}|{}\n",
+            if e.enabled { 1 } else { 0 },
+            e.path
+        ));
     }
+    let a = crate::audio::settings();
     text.push_str(&format!(
         "max_voices={}\nbuffer_size={}\nignore_velocity={}\n",
         a.max_voices, a.buffer_size, a.ignore_velocity
@@ -731,12 +735,20 @@ fn load_settings() {
     let mut max_voices = crate::audio::AudioSettings::default().max_voices;
     let mut buffer_size = crate::audio::AudioSettings::default().buffer_size;
     let mut ignore_velocity = crate::audio::AudioSettings::default().ignore_velocity;
+    let mut soundfonts: Vec<crate::audio::SoundfontEntry> = Vec::new();
     for line in text.lines() {
-        if let Some(path) = line.strip_prefix("soundfont=")
-            && !path.is_empty()
-        {
-            log::info!("恢复音色库设置: {path}");
-            crate::audio::set_soundfont(path.to_string());
+        if let Some(v) = line.strip_prefix("soundfont=") {
+            // 新格式 `1|path`；旧格式 `path`（视为启用）。
+            let (enabled, path) = match v.split_once('|') {
+                Some((flag, path)) => (flag != "0", path),
+                None => (true, v),
+            };
+            if !path.is_empty() {
+                soundfonts.push(crate::audio::SoundfontEntry {
+                    path: path.to_string(),
+                    enabled,
+                });
+            }
         } else if let Some(v) = line.strip_prefix("max_voices=") {
             max_voices = v.trim().parse().unwrap_or(max_voices);
         } else if let Some(v) = line.strip_prefix("buffer_size=") {
@@ -744,6 +756,10 @@ fn load_settings() {
         } else if let Some(v) = line.strip_prefix("ignore_velocity=") {
             ignore_velocity = v.trim().parse().unwrap_or(ignore_velocity);
         }
+    }
+    if !soundfonts.is_empty() {
+        log::info!("恢复音色库设置: {} 个", soundfonts.len());
+        crate::audio::set_soundfonts(soundfonts);
     }
     crate::audio::set_settings(max_voices, buffer_size, ignore_velocity);
 }
@@ -884,6 +900,12 @@ pub fn view_snapshot() -> [f32; 12] {
         return [0.0; 12];
     };
     let ppq = s.ppq as f32;
+    // 标尺拍号：原生拍号事件优先（tempo_map.time_sig_default），否则工程默认。
+    let (sig_num, sig_den) = s
+        .model
+        .as_ref()
+        .map(|m| m.tempo_map.time_sig_default)
+        .unwrap_or((4, 2));
     match s.view_mode {
         ViewMode::Pianoroll => [
             1.0,
@@ -896,8 +918,8 @@ pub fn view_snapshot() -> [f32; 12] {
             s.total_ticks as f32,
             ppq,
             s.pr_view.key_to_y(0),
-            4.0,
-            4.0,
+            f32::from(sig_num),
+            f32::from(sig_den),
         ],
         ViewMode::Arrangement => [
             0.0,
@@ -910,8 +932,8 @@ pub fn view_snapshot() -> [f32; 12] {
             s.total_ticks as f32,
             ppq,
             0.0,
-            4.0,
-            4.0,
+            f32::from(sig_num),
+            f32::from(sig_den),
         ],
     }
 }
@@ -1810,6 +1832,68 @@ pub fn song_title() -> String {
         return String::new();
     };
     doc.data.model.meta.name.clone()
+}
+
+/// 全曲音符数（顶栏标题展示用）。
+pub fn note_count() -> i64 {
+    scene()
+        .lock()
+        .ok()
+        .and_then(|s| s.model.clone())
+        .map(|m| m.note_count as i64)
+        .unwrap_or(0)
+}
+
+/// 本工程默认 BPM / 拍号 JSON：`{"bpm":120,"num":4,"den":4}`（den = 实际分母）。
+///
+/// 这两个值只在 conductor 没有原生 Tempo/拍号事件时生效
+/// （原生事件优先级更高，可完全代替它们）。
+pub fn project_defaults_json() -> String {
+    let (bpm, num, den_pow) = scene()
+        .lock()
+        .ok()
+        .and_then(|s| s.model.clone())
+        .map(|m| {
+            (
+                m.meta.default_bpm,
+                m.meta.default_time_sig.0,
+                m.meta.default_time_sig.1,
+            )
+        })
+        .unwrap_or((120.0, 4, 2));
+    let den = 1u32 << den_pow.min(8);
+    format!("{{\"bpm\":{bpm},\"num\":{num},\"den\":{den}}}")
+}
+
+/// 设置本工程默认 BPM / 拍号（无原生事件时的回退）。成功 1。
+pub fn set_project_defaults(bpm: f32, num: u8, den_pow: u8) -> i32 {
+    let bpm = if bpm.is_finite() {
+        bpm.clamp(20.0, 999.0)
+    } else {
+        120.0
+    };
+    let num = num.clamp(1, 32);
+    let den_pow = den_pow.min(6);
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let model = std::sync::Arc::make_mut(&mut doc.data.model);
+    if model.meta.default_bpm == bpm && model.meta.default_time_sig == (num, den_pow) {
+        return 0;
+    }
+    model.meta.default_bpm = bpm;
+    model.meta.default_time_sig = (num, den_pow);
+    model.rebuild_tempo_map();
+    let model = doc.data.model.clone();
+    refresh_snapshot(&mut s);
+    drop(s);
+    // tempo_map 变了：重算音符/CC 的采样时间（与 tempo 自动化编辑同机制）。
+    crate::audio::reload_notes(model);
+    log::info!("工程默认 BPM/拍号: {bpm:.2} BPM, {num}/{}", 1u32 << den_pow);
+    1
 }
 
 /// 自动化类型：0=PB、1=CC、2=RPN；其它（Nrpn/Tempo/插件参数）不展示。

@@ -12,6 +12,7 @@ crate-type = ["cdylib"]
 wgpu = { workspace = true }
 pollster = { workspace = true }
 log = "0.4"
+serde_json = { workspace = true }
 jni = "0.22"
 ndk-context = "0.1"
 cpal = { workspace = true }

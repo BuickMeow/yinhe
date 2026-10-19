@@ -350,7 +350,7 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_onFilePicked<'local>(
     }
 }
 
-/// `MainActivity.onSoundFontPicked(path)`：音色库（SF2/SF3）已复制到私有目录。
+/// `MainActivity.onSoundFontPicked(path)`：音色库（SF2/SF3/SFZ）已复制到私有目录。
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_onSoundFontPicked<'local>(
     mut env: jni::EnvUnowned<'local>,
@@ -361,8 +361,8 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_onSoundFontPicked<'lo
     match read_jstring(&mut env, &path) {
         Some(p) if !p.is_empty() => {
             log::info!("收到音色库: {p}");
-            audio::set_soundfont(p.clone());
-            scene::save_soundfont_setting(&p);
+            audio::add_soundfont(p);
+            scene::save_soundfont_settings();
         }
         Some(_) => {}
         None => log::error!("onSoundFontPicked: 读取路径失败"),
@@ -795,16 +795,51 @@ pub extern "C" fn yinhe_set_automation_value(
     scene::set_automation_value(track as usize, lane_index as usize, tick, value)
 }
 
-/// 当前音色库路径（未选择则空串，堆分配）。
+/// 当前音色库表 JSON（顺序 = 优先级，堆分配）。
 #[unsafe(no_mangle)]
-pub extern "C" fn yinhe_soundfont_path() -> *mut std::ffi::c_char {
-    to_c_string(audio::soundfont_path())
+pub extern "C" fn yinhe_soundfonts_json() -> *mut std::ffi::c_char {
+    to_c_string(audio::soundfonts_json())
+}
+
+/// 设置音色库表 JSON（设置页排序/启停/删除后调用）并持久化。成功 1。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
+pub extern "C" fn yinhe_set_soundfonts(json: *const std::ffi::c_char) -> i32 {
+    if json.is_null() {
+        return 0;
+    }
+    let json = unsafe { CStr::from_ptr(json) }
+        .to_string_lossy()
+        .into_owned();
+    let ok = audio::set_soundfonts_json(&json);
+    if ok == 1 {
+        scene::save_soundfont_settings();
+    }
+    ok
 }
 
 /// 歌曲标题（空串 = 未设置，堆分配）。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_song_title() -> *mut std::ffi::c_char {
     to_c_string(scene::song_title())
+}
+
+/// 全曲音符数（顶栏标题展示用）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_note_count() -> i64 {
+    scene::note_count()
+}
+
+/// 本工程默认 BPM / 拍号 JSON（堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_project_defaults_json() -> *mut std::ffi::c_char {
+    to_c_string(scene::project_defaults_json())
+}
+
+/// 设置本工程默认 BPM（f32）/ 拍号（分子 + 分母 2 次幂）。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_project_defaults(bpm: f32, num: i32, den_pow: i32) -> i32 {
+    scene::set_project_defaults(bpm, num.clamp(1, 32) as u8, den_pow.clamp(0, 6) as u8)
 }
 
 /// 设置“显示轨道”过滤（-1 = 全部轨道）。成功 1。

@@ -18,10 +18,18 @@ struct AudioState {
     handle: CpalAudioHandle,
     /// 暂停/停止时的光标 tick（播放中由 sample_position 换算）。
     cursor_tick: f64,
-    /// 当前音色库路径。
-    soundfont: Option<String>,
-    /// 最近一次已真正下发的音色库路径（避免重复解析）。
-    sf_sent: Option<String>,
+    /// 最近一次已真正下发的音色库路径列表（避免重复解析）。
+    sf_sent: Option<Vec<String>>,
+}
+
+/// 全局音色库条目：设置页可拖动排序 / 启用停用。
+///
+/// 顺序即优先级：列表靠前的库先被查询，命中即覆盖靠后的库
+/// （xsynth `ChannelSoundfont` 按 `soundfonts` 顺序找第一个非空 spawner）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SoundfontEntry {
+    pub path: String,
+    pub enabled: bool,
 }
 
 /// 音频参数（设置页可调；max_voices=0 自动，buffer_size=0 设备默认）。
@@ -95,14 +103,73 @@ fn apply_runtime_settings(st: &AudioState) {
 }
 
 static AUDIO: OnceLock<Mutex<Option<AudioState>>> = OnceLock::new();
-static SOUNDFONT: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+static SOUNDFONTS: OnceLock<Mutex<Vec<SoundfontEntry>>> = OnceLock::new();
 
 fn state_slot() -> &'static Mutex<Option<AudioState>> {
     AUDIO.get_or_init(|| Mutex::new(None))
 }
 
-fn soundfont_slot() -> &'static Mutex<Option<String>> {
-    SOUNDFONT.get_or_init(|| Mutex::new(None))
+fn soundfonts_slot() -> &'static Mutex<Vec<SoundfontEntry>> {
+    SOUNDFONTS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// 当前全局音色库表（顺序 = 优先级）。
+pub fn soundfonts() -> Vec<SoundfontEntry> {
+    soundfonts_slot()
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default()
+}
+
+/// 已启用音色库路径（按表顺序；未启用不参与播放）。
+pub fn enabled_soundfonts() -> Vec<String> {
+    soundfonts()
+        .into_iter()
+        .filter(|e| e.enabled)
+        .map(|e| e.path)
+        .collect()
+}
+
+/// 整体替换音色库表（设置页排序/启停/删除后调用），立即应用。
+pub fn set_soundfonts(entries: Vec<SoundfontEntry>) {
+    if let Ok(mut g) = soundfonts_slot().lock() {
+        *g = entries;
+    }
+    let Some(mut guard) = lock_audio() else {
+        return;
+    };
+    let Some(st) = guard.as_mut() else {
+        return;
+    };
+    apply_soundfonts(st);
+}
+
+/// 追加一个音色库（已存在则启用并移到最前），立即应用。
+pub fn add_soundfont(path: String) {
+    if let Ok(mut g) = soundfonts_slot().lock() {
+        match g.iter().position(|e| e.path == path) {
+            Some(i) => {
+                g[i].enabled = true;
+                let e = g.remove(i);
+                g.insert(0, e);
+            }
+            None => g.insert(
+                0,
+                SoundfontEntry {
+                    path: path.clone(),
+                    enabled: true,
+                },
+            ),
+        }
+    }
+    let Some(mut guard) = lock_audio() else {
+        return;
+    };
+    let Some(st) = guard.as_mut() else {
+        return;
+    };
+    apply_soundfonts(st);
+    log::info!("音色库已加入: {path}");
 }
 
 fn lock_audio() -> Option<std::sync::MutexGuard<'static, Option<AudioState>>> {
@@ -141,17 +208,12 @@ fn ensure_audio() -> bool {
     match spawned {
         Ok(handle) => {
             log::info!("音频初始化完成: {} Hz", handle.sample_rate);
-            let sf = soundfont_slot().lock().ok().and_then(|g| g.clone());
             let mut st = AudioState {
                 handle,
                 cursor_tick: 0.0,
-                soundfont: sf.clone(),
                 sf_sent: None,
             };
-            if let Some(path) = &sf {
-                send_soundfonts(&st.handle, path);
-                st.sf_sent = Some(path.clone());
-            }
+            apply_soundfonts(&mut st);
             // 应用设置页配置（默认 ignore_velocity=1、max_voices=1024：
             // 桌面级复音 14336 在黑乐谱密集段会让合成线程超时）。
             apply_runtime_settings(&st);
@@ -165,13 +227,23 @@ fn ensure_audio() -> bool {
     }
 }
 
-fn send_soundfonts(handle: &CpalAudioHandle, path: &str) {
-    // 0..16 = port0 的 16 个源通道共用同一音色库（与旧壳一致；多 port 后续扩展）。
-    let configs: Vec<(u8, Vec<String>)> =
-        (0u8..16).map(|ch| (ch, vec![path.to_string()])).collect();
+fn send_soundfonts(handle: &CpalAudioHandle, paths: &[String]) {
+    // 0..16 = port0 的 16 个源通道共用同一份音色库表
+    // （顺序 = 优先级，靠前者覆盖靠后者；多 port 后续扩展）。
+    let configs: Vec<(u8, Vec<String>)> = (0u8..16).map(|ch| (ch, paths.to_vec())).collect();
     handle.handle.send(AudioCommand::SetSoundFonts {
         configs: Box::new(configs),
     });
+}
+
+/// 把当前启用的音色库表下发给引擎（与上次相同则跳过）。
+fn apply_soundfonts(st: &mut AudioState) {
+    let paths = enabled_soundfonts();
+    if st.sf_sent.as_ref() == Some(&paths) {
+        return;
+    }
+    send_soundfonts(&st.handle, &paths);
+    st.sf_sent = Some(paths);
 }
 
 /// 轨道 mute/solo 掩码（与桌面 SkipTracks 同机制，超时/丢命令时保留最新值）。
@@ -185,33 +257,42 @@ pub fn set_skip_mask(skip: Vec<bool>) {
     st.handle.handle.send(AudioCommand::SkipTracks { skip });
 }
 
-/// 当前音色库路径（可能尚未应用，仅记录）。无则空串。
-pub fn soundfont_path() -> String {
-    soundfont_slot()
-        .lock()
-        .ok()
-        .and_then(|g| g.clone())
-        .unwrap_or_default()
+/// 音色库表 JSON（设置页用）：`[{"path":..,"name":..,"enabled":..}, ...]`。
+pub fn soundfonts_json() -> String {
+    let items: Vec<serde_json::Value> = soundfonts()
+        .into_iter()
+        .map(|e| {
+            let name = std::path::Path::new(&e.path)
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            serde_json::json!({"path": e.path, "name": name, "enabled": e.enabled})
+        })
+        .collect();
+    serde_json::Value::Array(items).to_string()
 }
 
-/// 设置音色库路径（Kotlin 已复制到私有目录）。音频就绪时立即应用。
-pub fn set_soundfont(path: String) {
-    if let Ok(mut g) = soundfont_slot().lock() {
-        *g = Some(path.clone());
-    }
-    let Some(mut guard) = lock_audio() else {
-        return;
+/// 解析并应用设置页传来的音色库表 JSON（顺序即优先级）。成功 1。
+pub fn set_soundfonts_json(json: &str) -> i32 {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
+        return 0;
     };
-    let Some(st) = guard.as_mut() else {
-        // 音频尚未初始化：路径已记录，初始化时应用。
-        return;
+    let Some(items) = value.as_array() else {
+        return 0;
     };
-    if st.sf_sent.as_deref() != Some(path.as_str()) {
-        send_soundfonts(&st.handle, &path);
-        st.sf_sent = Some(path.clone());
-    }
-    st.soundfont = Some(path.clone());
-    log::info!("音色库已应用: {path}");
+    let entries: Vec<SoundfontEntry> = items
+        .iter()
+        .filter_map(|it| {
+            let path = it.get("path")?.as_str()?.to_string();
+            let enabled = it
+                .get("enabled")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(true);
+            Some(SoundfontEntry { path, enabled })
+        })
+        .collect();
+    set_soundfonts(entries);
+    1
 }
 
 /// 音符编辑（移动/增删/改长度）：只重建 audible_notes，不中断播放。
@@ -236,7 +317,7 @@ pub fn reload_notes(model: Arc<YinModel>) {
     st.handle.handle.send(AudioCommand::ReloadNotes { model });
 }
 
-/// 文档加载完成：把模型交给音频引擎，并补发音色库（若已选）。
+/// 文档加载完成：把模型交给音频引擎，并确保音色库已下发。
 pub fn on_model_loaded(model: Arc<YinModel>) {
     if !ensure_audio() {
         return;
@@ -247,12 +328,7 @@ pub fn on_model_loaded(model: Arc<YinModel>) {
     let Some(st) = guard.as_mut() else {
         return;
     };
-    if let Some(sf) = st.soundfont.clone()
-        && st.sf_sent.as_deref() != Some(sf.as_str())
-    {
-        send_soundfonts(&st.handle, &sf);
-        st.sf_sent = Some(sf.clone());
-    }
+    apply_soundfonts(st);
     st.handle.handle.send(AudioCommand::LoadModel { model });
     st.cursor_tick = 0.0;
     log::info!("音频模型已加载");
