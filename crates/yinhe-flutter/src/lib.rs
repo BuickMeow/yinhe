@@ -435,7 +435,8 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeInitContext<'lo
 /// 拖拽边缘自动滚动（Flutter 每帧调用）。返回 1 = 已滚动。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_drag_tick() -> i32 {
-    edit::tick_scroll()
+    // 编辑边缘自动滚动 + 松手惯性（两者都由帧驱动）。
+    edit::tick_scroll() | input::tick_inertia()
 }
 
 /// 触摸事件：`kind` 0=down 1=move 2=up，`x`/`y` 为画布逻辑像素。
@@ -828,6 +829,18 @@ pub extern "C" fn yinhe_song_title() -> *mut std::ffi::c_char {
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_time_sig_segments_json() -> *mut std::ffi::c_char {
     to_c_string(scene::time_sig_segments_json())
+}
+
+/// tick → 秒（时间码预显示用）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_seconds_at_tick(tick: f64) -> f64 {
+    scene::seconds_at_tick(tick)
+}
+
+/// 删除音轨（连同其音符；一步一 undo）。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_delete_track(idx: i32) -> i32 {
+    scene::delete_track(idx.max(0) as usize)
 }
 
 /// 全曲音符数（顶栏标题展示用）。

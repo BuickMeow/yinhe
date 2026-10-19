@@ -419,6 +419,39 @@ mod tests {
     }
 
     #[test]
+    fn snap_uses_measure_start_after_time_sig_change() {
+        // 开头 1/8，tick 360 起变 4/4（段起点不在 240 的全局网格上）。
+        let events = vec![
+            TimeSigEvent {
+                tick: 0,
+                numerator: 1,
+                denominator: 3,
+            },
+            TimeSigEvent {
+                tick: 360,
+                numerator: 4,
+                denominator: 2,
+            },
+        ];
+        let data = Some((480u32, 1u8, 3u8, events.as_slice()));
+        // 相对新段小节线（360）吸附，而不是全局 240 网格。
+        assert_eq!(
+            snap_tick(400.0, QuantizePreset::Fraction(1, 8), 480, data),
+            360.0
+        );
+        // 段内下一格 = 360 + 240 = 600。
+        assert_eq!(
+            snap_tick(520.0, QuantizePreset::Fraction(1, 8), 480, data),
+            600.0
+        );
+        // 段之前的小节线仍是 0/240。
+        assert_eq!(
+            snap_tick(230.0, QuantizePreset::Fraction(1, 8), 480, data),
+            240.0
+        );
+    }
+
+    #[test]
     fn test_default_is_quarter() {
         assert_eq!(QuantizePreset::default(), QuantizePreset::Fraction(1, 4));
     }

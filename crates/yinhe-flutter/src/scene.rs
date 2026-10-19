@@ -20,6 +20,59 @@ pub enum ViewMode {
     Pianoroll = 1,
 }
 
+/// 小节线感知吸附上下文：网格相对当前小节起点对齐，拍号变化段不会错位
+/// （与桌面 `yinhe_editor_core::quantize::snap_tick*` 同规则）。
+#[derive(Clone)]
+pub struct SnapCtx {
+    ppq: u32,
+    num: u8,
+    den_pow: u8,
+    events: Vec<yinhe_types::TimeSigEvent>,
+}
+
+impl SnapCtx {
+    pub fn new(s: &RenderScene) -> Self {
+        match s.model.as_ref() {
+            Some(m) => Self {
+                ppq: s.ppq.max(1),
+                num: m.tempo_map.time_sig_default.0,
+                den_pow: m.tempo_map.time_sig_default.1,
+                events: m.tempo_map.time_sig_events.clone(),
+            },
+            None => Self {
+                ppq: s.ppq.max(1),
+                num: 4,
+                den_pow: 2,
+                events: Vec::new(),
+            },
+        }
+    }
+
+    fn args(&self) -> (u32, u8, u8, &[yinhe_types::TimeSigEvent]) {
+        (self.ppq, self.num, self.den_pow, &self.events)
+    }
+
+    /// 就近吸附（round）。
+    pub fn round(&self, q: QuantizePreset, tick: f64) -> f64 {
+        let (tpb, num, den, ev) = self.args();
+        yinhe_editor_core::quantize::snap_tick(tick, q, tpb, Some((tpb, num, den, ev))).max(0.0)
+    }
+
+    /// 向上吸附（ceil）。
+    pub fn ceil(&self, q: QuantizePreset, tick: f64) -> f64 {
+        let (tpb, num, den, ev) = self.args();
+        yinhe_editor_core::quantize::snap_tick_ceil(tick, q, tpb, Some((tpb, num, den, ev)))
+            .max(0.0)
+    }
+
+    /// 向下吸附（floor）。
+    pub fn floor(&self, q: QuantizePreset, tick: f64) -> f64 {
+        let (tpb, num, den, ev) = self.args();
+        yinhe_editor_core::quantize::snap_tick_floor(tick, q, tpb, Some((tpb, num, den, ev)))
+            .max(0.0)
+    }
+}
+
 /// AR 轨道面板宽度（逻辑像素，与旧安卓壳 PANEL_W 一致）。
 pub const AR_TRACK_PANEL_W: f32 = 168.0;
 /// AR 行高（逻辑像素，触屏友好的旧壳值）。
@@ -572,7 +625,7 @@ pub(crate) fn refresh_snapshot(s: &mut RenderScene) {
         .collect();
 }
 
-/// AR 长按拖动排序：把 `from` 轨移动到 `to` 位置。成功返回 1。
+/// AR 长按拖动排序：把 `from` 轨移动到 `to` 位置（一步一 undo）。成功返回 1。
 pub fn move_track(from: usize, to: usize) -> i32 {
     // Conductor（Master）固定在 0 号位，不参与排序。
     if from == 0 || to == 0 {
@@ -585,19 +638,87 @@ pub fn move_track(from: usize, to: usize) -> i32 {
         let Some(doc) = s.document.as_mut() else {
             return 0;
         };
-        if doc.move_track(from, to).is_none() {
+        let before = doc.capture_snapshot();
+        let Some(action) = doc.move_track(from, to) else {
             return 0;
-        }
+        };
+        doc.push_undo(action, "undo.move_track", before);
     }
+    // 面板索引随轨道顺序变化：活动/过滤轨同步 remap。
+    remap_scene_track_index(&mut s, from, to);
+    let mask = skip_mask(&s);
     refresh_snapshot(&mut s);
     let model = s.model.clone();
     drop(s);
-    // 音轨顺序变化后重载音频（demo 阶段整模型重载）。
     if let Some(model) = model {
-        crate::audio::on_model_loaded(model);
+        crate::audio::reload_notes(model);
     }
+    crate::audio::set_skip_mask(mask);
     log::info!("轨道已移动: {from} -> {to}");
     1
+}
+
+/// 删除音轨（连同其音符；一步一 undo）。成功返回 1。
+pub fn delete_track(idx: usize) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    {
+        let Some(doc) = s.document.as_mut() else {
+            return 0;
+        };
+        let before = doc.capture_snapshot();
+        let Some(action) = doc.remove_track(idx) else {
+            return 0;
+        };
+        doc.push_undo(action, "undo.delete_track", before);
+    }
+    let num = s
+        .document
+        .as_ref()
+        .map(|d| d.data.model.tracks.len())
+        .unwrap_or(0);
+    // 活动/过滤轨越界或指向被删轨时收敛。
+    let remap = |slot: &mut Option<usize>| {
+        if let Some(t) = *slot {
+            if t == idx {
+                *slot = None;
+            } else if t > idx {
+                *slot = Some(t - 1);
+            } else if t >= num {
+                *slot = None;
+            }
+        }
+    };
+    remap(&mut s.active_track);
+    remap(&mut s.display_track);
+    let mask = skip_mask(&s);
+    refresh_snapshot(&mut s);
+    let model = s.model.clone();
+    drop(s);
+    if let Some(model) = model {
+        crate::audio::reload_notes(model);
+    }
+    crate::audio::set_skip_mask(mask);
+    log::info!("音轨已删除: {idx}");
+    1
+}
+
+/// 轨道移动后把场景里的活动轨/过滤轨索引按同一规则 remap。
+fn remap_scene_track_index(s: &mut RenderScene, from: usize, to: usize) {
+    let map = |t: usize| -> usize {
+        if t == from {
+            to
+        } else if from < to && t > from && t <= to {
+            t - 1
+        } else if from > to && t >= to && t < from {
+            t + 1
+        } else {
+            t
+        }
+    };
+    s.active_track = s.active_track.map(map);
+    s.display_track = s.display_track.map(map);
 }
 
 /// 播放光标在当前视图下的 x（逻辑像素；-1 = 无文档）。
@@ -644,8 +765,9 @@ pub fn set_play_cursor(tick: f64) {
             ViewMode::Pianoroll => s.pr_view.base.pixels_per_tick,
             ViewMode::Arrangement => s.arr_view.base.pixels_per_tick,
         };
-        q.resolved(ppu, s.ppq)
-            .snap_tick(tick.max(0.0), s.ppq)
+        let q = q.resolved(ppu, s.ppq);
+        SnapCtx::new(&s)
+            .round(q, tick.max(0.0))
             .clamp(0.0, (s.total_ticks - 1.0).max(0.0))
     };
     if let Ok(mut s) = scene().lock() {
@@ -1146,8 +1268,9 @@ pub fn tick_at_x(s: &RenderScene, x: f32) -> f64 {
         ViewMode::Pianoroll => doc.edit.quantize_pianoroll,
         ViewMode::Arrangement => doc.edit.quantize_arrange,
     };
-    q.resolved(ppu, s.ppq)
-        .snap_tick(raw, s.ppq)
+    let q = q.resolved(ppu, s.ppq);
+    SnapCtx::new(s)
+        .round(q, raw)
         .clamp(0.0, (s.total_ticks - 1.0).max(0.0))
 }
 
@@ -1865,6 +1988,16 @@ pub fn song_title() -> String {
         return String::new();
     };
     doc.data.model.meta.name.clone()
+}
+
+/// tick → 秒（时间码预显示用；tempo 事件优先）。
+pub fn seconds_at_tick(tick: f64) -> f64 {
+    scene()
+        .lock()
+        .ok()
+        .and_then(|s| s.model.clone())
+        .map(|m| m.tempo_map.tick_to_seconds(tick.max(0.0) as u64))
+        .unwrap_or(0.0)
 }
 
 /// 全曲音符数（顶栏标题展示用）。

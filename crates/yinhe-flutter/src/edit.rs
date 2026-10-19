@@ -410,14 +410,15 @@ pub fn tick_scroll() -> i32 {
 /// PASTE_READY 期间按当前指针位置刷新落点（量化吸附）。
 fn update_paste_ready(d: &mut DragState, s: &RenderScene, x: f32, y: f32) {
     let q = quantize_of(s);
+    let snap = scene::SnapCtx::new(s);
     match s.view_mode {
         ViewMode::Pianoroll => {
             let geom = PrGeom::new(&s.pr_view);
-            d.anchor_tick = snap_round(&q, geom.x_to_tick(x), s.ppq);
+            d.anchor_tick = snap.round(q, geom.x_to_tick(x));
         }
         ViewMode::Arrangement => {
             let geom = ArGeom::new(&s.arr_view);
-            d.anchor_tick = snap_round(&q, geom.x_to_tick(x), s.ppq);
+            d.anchor_tick = snap.round(q, geom.x_to_tick(x));
             d.anchor_row = geom.y_to_row(y).min(s.num_tracks.saturating_sub(1));
         }
     }
@@ -509,6 +510,7 @@ pub fn cancel_pending() -> i32 {
 /// 按最新指针位置与视图刷新拖拽预览（选框/移动框实时吸附量化网格）。
 fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
     let (x, y) = (d.px, d.py);
+    let snap = scene::SnapCtx::new(s);
     match d.kind {
         kind::MARQUEE | kind::ERASE => {
             let b = match s.view_mode {
@@ -516,7 +518,7 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                     let geom = PrGeom::new(&s.pr_view);
                     let q = quantize_of(s);
                     let interval = f64::from(q.tick_interval(s.ppq).max(1));
-                    let cur = snap_round(&q, geom.x_to_tick(x), s.ppq);
+                    let cur = snap.round(q, geom.x_to_tick(x));
                     let ta = d.anchor_tick.min(cur).max(0.0);
                     let mut tb = d.anchor_tick.max(cur).max(0.0);
                     if tb <= ta {
@@ -535,7 +537,7 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                     let geom = ArGeom::new(&s.arr_view);
                     let q = quantize_of(s);
                     let interval = f64::from(q.tick_interval(s.ppq).max(1));
-                    let cur = snap_round(&q, geom.x_to_tick(x), s.ppq);
+                    let cur = snap.round(q, geom.x_to_tick(x));
                     let ta = d.anchor_tick.min(cur).max(0.0);
                     let mut tb = d.anchor_tick.max(cur).max(0.0);
                     if tb <= ta {
@@ -562,7 +564,7 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                     };
                     let geom = PrGeom::new(&s.pr_view);
                     let q = quantize_of(s);
-                    let mut dt = snap_round(&q, geom.x_to_tick(x), s.ppq) - d.anchor_tick;
+                    let mut dt = snap.round(q, geom.x_to_tick(x)) - d.anchor_tick;
                     if t0 + dt < 0.0 {
                         dt = -t0;
                     }
@@ -582,7 +584,7 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                     };
                     let geom = ArGeom::new(&s.arr_view);
                     let q = quantize_of(s);
-                    let mut dt = snap_round(&q, geom.x_to_tick(x), s.ppq) - d.anchor_tick;
+                    let mut dt = snap.round(q, geom.x_to_tick(x)) - d.anchor_tick;
                     if t0 + dt < 0.0 {
                         dt = -t0;
                     }
@@ -604,7 +606,7 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
         kind::PENCIL => {
             let geom = PrGeom::new(&s.pr_view);
             let q = quantize_of(s);
-            let end = q.snap_tick_ceil(geom.x_to_tick(x).max(0.0), s.ppq);
+            let end = snap.ceil(q, geom.x_to_tick(x).max(0.0));
             let gate = f64::from(q.tick_interval(s.ppq).max(1));
             d.cur_end = end.max(d.start_f + gate);
             pencil_box(s, d, &geom);
@@ -613,7 +615,7 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
             let geom = PrGeom::new(&s.pr_view);
             let q = quantize_of(s);
             let interval = u64::from(q.tick_interval(s.ppq).max(1));
-            let tick = q.snap_tick(geom.x_to_tick(x).max(0.0), s.ppq).max(0.0);
+            let tick = snap.round(q, geom.x_to_tick(x).max(0.0)).max(0.0);
             let cell = ((tick as u64 / interval) as u32, geom.y_to_key(y));
             if cell != d.last_cell {
                 let last = d.last_cell;
@@ -708,8 +710,9 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
         return; // 键盘区不响应编辑
     }
     let q = quantize_of(s);
+    let snap = scene::SnapCtx::new(s);
     // 内容锚点：吸附后的 tick（滚动视图后仍固定，不随视图漂移）。
-    let anchor_tick = snap_round(&q, geom.x_to_tick(x), s.ppq);
+    let anchor_tick = snap.round(q, geom.x_to_tick(x));
     let anchor_key = geom.y_to_key(y);
     match s.tool {
         Tool::Select => {
@@ -781,7 +784,8 @@ fn begin_arr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
         return; // AR 只开放选框与手形
     }
     let q = quantize_of(s);
-    let anchor_tick = snap_round(&q, geom.x_to_tick(x), s.ppq);
+    let snap = scene::SnapCtx::new(s);
+    let anchor_tick = snap.round(q, geom.x_to_tick(x));
     let anchor_row = geom.y_to_row(y);
     d.anchor_tick = anchor_tick;
     d.anchor_row = anchor_row;
@@ -875,10 +879,6 @@ fn arr_box_at(s: &RenderScene, geom: &ArGeom, x: f32, y: f32) -> Option<(f64, f6
     None
 }
 
-fn snap_round(q: &QuantizePreset, tick: f64, ppq: u32) -> f64 {
-    q.snap_tick(tick, ppq).max(0.0)
-}
-
 // ── 提交 ──
 
 /// PR/AR 框选提交；`moved < 阈值` 视为点击（清空选择）。
@@ -893,6 +893,7 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
     let write = write_track(s);
     let geom_pr = PrGeom::new(&s.pr_view);
     let geom_ar = ArGeom::new(&s.arr_view);
+    let snap = scene::SnapCtx::new(s);
     let doc = s.document.as_mut()?;
     let mut click_tick: Option<f64> = None;
     let mut click_row: Option<usize> = None;
@@ -904,7 +905,7 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
                 // 点击空白：移动播放光标（与桌面一致）。
                 click_tick = Some(geom_pr.x_to_tick(x));
             } else {
-                let cur = snap_round(&q, geom_pr.x_to_tick(x), ppq);
+                let cur = snap.round(q, geom_pr.x_to_tick(x));
                 let ta = d.anchor_tick.min(cur).max(0.0) as u32;
                 let mut tb = d.anchor_tick.max(cur).max(0.0) as u32;
                 if tb <= ta {
@@ -933,7 +934,7 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
                 click_tick = Some(geom_ar.x_to_tick(x));
                 click_row = Some(geom_ar.y_to_row(y));
             } else {
-                let cur = snap_round(&q, geom_ar.x_to_tick(x), ppq);
+                let cur = snap.round(q, geom_ar.x_to_tick(x));
                 let ta = d.anchor_tick.min(cur).max(0.0) as u32;
                 let mut tb = d.anchor_tick.max(cur).max(0.0) as u32;
                 if tb <= ta {
@@ -984,8 +985,9 @@ fn commit_move(
         ViewMode::Pianoroll => {
             let geom = PrGeom::new(&s.pr_view);
             let q = quantize_of(s);
+            let snap = scene::SnapCtx::new(s);
             let t0 = d.box_ticks.map(|b| b.0).unwrap_or(0.0);
-            let mut dt = snap_round(&q, geom.x_to_tick(x), s.ppq) - d.anchor_tick;
+            let mut dt = snap.round(q, geom.x_to_tick(x)) - d.anchor_tick;
             if t0 + dt < 0.0 {
                 dt = -t0;
             }
@@ -1014,8 +1016,9 @@ fn commit_move(
         ViewMode::Arrangement => {
             let geom = ArGeom::new(&s.arr_view);
             let q = quantize_of(s);
+            let snap = scene::SnapCtx::new(s);
             let t0 = d.box_rows.map(|b| b.0).unwrap_or(0.0);
-            let mut dt = snap_round(&q, geom.x_to_tick(x), s.ppq) - d.anchor_tick;
+            let mut dt = snap.round(q, geom.x_to_tick(x)) - d.anchor_tick;
             if t0 + dt < 0.0 {
                 dt = -t0;
             }
@@ -1057,7 +1060,8 @@ fn commit_note_move(
     }
     let geom = PrGeom::new(&s.pr_view);
     let q = quantize_of(s);
-    let dt = (snap_round(&q, geom.x_to_tick(x), s.ppq) - d.anchor_tick).round() as i64;
+    let snap = scene::SnapCtx::new(s);
+    let dt = (snap.round(q, geom.x_to_tick(x)) - d.anchor_tick).round() as i64;
     let dk = i32::from(geom.y_to_key(y)) - i32::from(d.anchor_key);
     if dt == 0 && dk == 0 {
         return None;
@@ -1091,10 +1095,11 @@ fn commit_note_resize(
     }
     let geom = PrGeom::new(&s.pr_view);
     let q = quantize_of(s);
+    let snap = scene::SnapCtx::new(s);
     let doc = s.document.as_mut()?;
     let before = doc.capture_snapshot();
     let drag = if d.side == 1 {
-        let new_start = q.snap_tick_floor(geom.x_to_tick(x), s.ppq).max(0.0) as u32;
+        let new_start = snap.floor(q, geom.x_to_tick(x)) as u32;
         yinhe_types::PencilNoteDrag::ResizeLeft {
             track: d.track,
             start_tick: d.start_tick,
@@ -1102,7 +1107,7 @@ fn commit_note_resize(
             new_start_tick: new_start,
         }
     } else {
-        let new_end = q.snap_tick_ceil(geom.x_to_tick(x), s.ppq).max(1.0) as u32;
+        let new_end = snap.ceil(q, geom.x_to_tick(x)).max(1.0) as u32;
         yinhe_types::PencilNoteDrag::ResizeRight {
             track: d.track,
             start_tick: d.start_tick,
@@ -1194,10 +1199,11 @@ fn commit_erase(
     let write = write_track(s);
     let geom_pr = PrGeom::new(&s.pr_view);
     let geom_ar = ArGeom::new(&s.arr_view);
+    let snap = scene::SnapCtx::new(s);
     match view_mode {
         ViewMode::Pianoroll => {
-            let ta = snap_round(&q, geom_pr.x_to_tick(d.x0.min(x)), ppq) as u32;
-            let mut tb = snap_round(&q, geom_pr.x_to_tick(d.x0.max(x)), ppq) as u32;
+            let ta = snap.round(q, geom_pr.x_to_tick(d.x0.min(x))) as u32;
+            let mut tb = snap.round(q, geom_pr.x_to_tick(d.x0.max(x))) as u32;
             if tb <= ta {
                 tb = ta + interval;
             }
@@ -1223,8 +1229,8 @@ fn commit_erase(
             None
         }
         ViewMode::Arrangement => {
-            let ta = snap_round(&q, geom_ar.x_to_tick(d.x0.min(x)), ppq) as u32;
-            let mut tb = snap_round(&q, geom_ar.x_to_tick(d.x0.max(x)), ppq) as u32;
+            let ta = snap.round(q, geom_ar.x_to_tick(d.x0.min(x))) as u32;
+            let mut tb = snap.round(q, geom_ar.x_to_tick(d.x0.max(x))) as u32;
             if tb <= ta {
                 tb = ta + interval;
             }
