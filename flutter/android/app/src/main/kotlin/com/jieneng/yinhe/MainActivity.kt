@@ -3,6 +3,8 @@ package com.jieneng.yinhe
 import android.content.Intent
 import android.provider.OpenableColumns
 import android.util.Log
+import android.view.InputDevice
+import android.view.MotionEvent
 import android.view.Surface
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -46,6 +48,9 @@ class MainActivity : FlutterActivity() {
 
     /** 延迟到 Dart 请求纹理时才创建 SurfaceProducer（see ensureProducer）。 */
     private var engine: FlutterEngine? = null
+
+    /** 原生层已拦截的鼠标右键拖拽（避免 Android 把右键当 BACK）。 */
+    private var rightPanActive = false
 
     /** 本代 surface 是否已发送给 Rust（同一窗口重复设置会触发 IN_USE）。 */
     private var surfaceSent = false
@@ -216,6 +221,64 @@ class MainActivity : FlutterActivity() {
         // 若 surface 已惰性创建则立即发送（回调在部分引擎版本不触发）。
         surfaceReady(p)
         return p
+    }
+
+    // ── 鼠标右键平移 ──────────────────────────────────────────────
+    // 左键选框的同时用右键移动：原生层直接识别 BUTTON_SECONDARY 并消费，
+    // 通过 MethodChannel 交给 Dart 走手形平移（同时避免触发系统 BACK）。
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (handleRightPan(ev)) {
+            return true
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    override fun dispatchGenericMotionEvent(ev: MotionEvent): Boolean {
+        if (handleRightPan(ev)) {
+            return true
+        }
+        return super.dispatchGenericMotionEvent(ev)
+    }
+
+    private fun handleRightPan(ev: MotionEvent): Boolean {
+        if (ev.source and InputDevice.SOURCE_MOUSE != InputDevice.SOURCE_MOUSE) {
+            return false
+        }
+        val secondary =
+            (ev.buttonState and MotionEvent.BUTTON_SECONDARY) != 0 ||
+                ev.actionButton == MotionEvent.BUTTON_SECONDARY
+        val action = ev.actionMasked
+        if (action == MotionEvent.ACTION_DOWN) {
+            Log.i(TAG, "mouse down buttons=${ev.buttonState} actionButton=${ev.actionButton}")
+            if (!secondary) {
+                return false
+            }
+            rightPanActive = true
+            sendRightPan(0, ev)
+            return true
+        }
+        if (!rightPanActive) {
+            return false
+        }
+        if (action == MotionEvent.ACTION_MOVE) {
+            sendRightPan(1, ev)
+            return true
+        }
+        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            rightPanActive = false
+            sendRightPan(2, ev)
+            return true
+        }
+        return false
+    }
+
+    /** 原生像素坐标交给 Dart，由 Dart 换算成画布逻辑坐标。 */
+    private fun sendRightPan(kind: Int, ev: MotionEvent) {
+        methodChannel?.invokeMethod(
+            "rightPan",
+            mapOf("kind" to kind, "x" to ev.x.toDouble(), "y" to ev.y.toDouble()),
+        )
     }
 
     /** surface 可用/重建：每代只发送一次（created/available 可能都回调）。 */
