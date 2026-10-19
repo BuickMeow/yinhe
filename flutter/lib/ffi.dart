@@ -276,6 +276,38 @@ final IntArgDart deleteTrack = bridge.lookupFunction<IntArgNative, IntArgDart>(
 typedef TickToSecondsNative = ffi.Double Function(ffi.Double);
 typedef TickToSecondsDart = double Function(double);
 
+typedef StrToIntNative = ffi.Int32 Function(ffi.Pointer<Utf8>);
+typedef StrToIntDart = int Function(ffi.Pointer<Utf8>);
+
+typedef IntCStrCStrNative = ffi.Int32 Function(
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+);
+typedef IntCStrCStrDart = int Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>);
+
+/// 压缩包状态：0=无 1=打开中 2=就绪 3=需要密码 4=失败。
+final ActionDart archiveStatus = bridge
+    .lookupFunction<ActionNative, ActionDart>('yinhe_archive_status');
+
+/// 压缩包信息 JSON（条目列表）。
+final CStrDart archiveJson = bridge.lookupFunction<CStrNative, CStrDart>(
+  'yinhe_archive_json',
+);
+
+/// 打开压缩包（后台，轮询 archiveStatus）。
+final StrToIntDart archiveOpen = bridge
+    .lookupFunction<StrToIntNative, StrToIntDart>('yinhe_archive_open');
+
+/// 带密码打开压缩包。
+final IntCStrCStrDart archiveOpenPassword = bridge
+    .lookupFunction<IntCStrCStrNative, IntCStrCStrDart>(
+      'yinhe_archive_open_password',
+    );
+
+/// 打开压缩包内第 index 个 MIDI 条目。
+final IntArgDart archiveOpenEntry = bridge
+    .lookupFunction<IntArgNative, IntArgDart>('yinhe_archive_open_entry');
+
 /// tick → 秒（长按微调时时间码预显示用）。
 final TickToSecondsDart secondsAtTick = bridge
     .lookupFunction<TickToSecondsNative, TickToSecondsDart>(

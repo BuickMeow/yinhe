@@ -40,6 +40,9 @@ class MainActivity : FlutterActivity() {
         private const val EXPORT_TMP = "export.ying"
 
         init {
+            // 压缩包支持（unarc-rs）带 C++ 代码：先加载 NDK 的 C++ 运行时，
+            // 否则 libyinhe_flutter.so 里的 std::length_error 等符号无法解析。
+            System.loadLibrary("c++_shared")
             System.loadLibrary("yinhe_flutter")
         }
     }
@@ -306,15 +309,8 @@ class MainActivity : FlutterActivity() {
                     Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
                     Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
             )
-            putExtra(
-                Intent.EXTRA_MIME_TYPES,
-                arrayOf(
-                    "audio/midi",
-                    "audio/x-midi",
-                    "audio/mid",
-                    "application/octet-stream",
-                ),
-            )
+            // 不加 EXTRA_MIME_TYPES：部分机型（如 MIUI）会把 .mid 归到
+            // 其它 MIME 而置灰；这里放开为全部文件，压缩包（zip/7z…）也要能选。
         }
         startActivityForResult(intent, REQ_OPEN_FILE)
     }

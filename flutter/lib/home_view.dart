@@ -94,6 +94,8 @@ class HomeView extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        _secondary('新建工程', Icons.add_box_outlined, onNewProject),
+        const SizedBox(height: 14),
         FilledButton.icon(
           onPressed: onPickMidi,
           icon: const Icon(Icons.note_add, size: 18),
@@ -109,8 +111,6 @@ class HomeView extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         _secondary('另存为', Icons.save_as_outlined, onSaveProjectAs),
-        const SizedBox(height: 14),
-        _secondary('新建工程', Icons.add_box_outlined, onNewProject),
         const SizedBox(height: 14),
         _secondary('设置', Icons.settings, onOpenSettings),
       ],

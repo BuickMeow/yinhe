@@ -17,6 +17,7 @@ import 'insert_flow.dart';
 import 'long_press_indicator_painter.dart';
 import 'models.dart';
 import 'ruler_markers.dart';
+import 'archive_dialogs.dart';
 import 'bar_beat.dart';
 import 'project_defaults_dialog.dart';
 import 'project_dialog.dart';
@@ -185,6 +186,14 @@ class _StudioShellState extends State<StudioShell>
   /// 刚保存成功：顶栏保存按钮临时显示对勾（2 秒）。
   bool _saveDone = false;
   Timer? _saveDoneTimer;
+
+  /// 保存进行中：顶栏保存按钮显示加载圆环。
+  bool _saving = false;
+  Timer? _savingTimer;
+
+  /// 正在等待压缩包打开结果（轮询 Rust 状态）。
+  bool _archivePolling = false;
+  bool _archiveBusy = false;
   final ValueNotifier<double> _lpProgress = ValueNotifier(0);
   final ValueNotifier<Offset?> _lpPosNotifier = ValueNotifier(null);
   final ValueNotifier<bool> _moveDashed = ValueNotifier(false);
@@ -259,6 +268,7 @@ class _StudioShellState extends State<StudioShell>
         }
         _readDocState();
         _updateTimecode();
+        _pollArchive();
       }
       // 保持连续帧：Rust 侧拖拽/边缘滚动/渲染都由帧驱动（手指静止时也要跑）。
       if (!_showHome) {
@@ -287,6 +297,7 @@ class _StudioShellState extends State<StudioShell>
     _sfRevision.dispose();
     _grid.dispose();
     _saveDoneTimer?.cancel();
+    _savingTimer?.cancel();
     _docState.dispose();
     calloc.free(_snapPtr);
     calloc.free(_statePtr);
@@ -298,6 +309,11 @@ class _StudioShellState extends State<StudioShell>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      // 从 SAF 选择器返回：保存流程要么已完成（onProjectSaved 会给对勾），
+      // 要么被取消 —— 这里清掉"保存中"圆环，避免一直转。
+      if (_saving) {
+        setState(() => _saving = false);
+      }
     } else {
       // 切后台/失去焦点时触点 up 可能收不到：清空，避免残留成“幽灵手指”。
       rust.resetTouch();
@@ -462,10 +478,147 @@ class _StudioShellState extends State<StudioShell>
   }
 
   /// 导出 .ying 工程：Rust 写临时文件 → Kotlin 复制到用户选择的位置。
+  /// 是否压缩包扩展名（与 Rust/桌面同一份列表）。
+  static bool _isArchivePath(String path) {
+    final lower = path.toLowerCase();
+    const exts = [
+      '.zip',
+      '.7z',
+      '.rar',
+      '.lzh',
+      '.lha',
+      '.tar',
+      '.gz',
+      '.xz',
+      '.tgz',
+      '.txz',
+      '.tbz',
+      '.bz2',
+    ];
+    return exts.any(lower.endsWith);
+  }
+
+  /// 轮询压缩包状态：1=打开中（显示转圈）2=就绪（选条目）3=需要密码 4=失败。
+  void _pollArchive() {
+    if (!_archivePolling || !mounted) {
+      return;
+    }
+    switch (rust.archiveStatus()) {
+      case 1:
+        if (!_archiveBusy) {
+          _archiveBusy = true;
+          showDialog<void>(
+            context: context,
+            barrierDismissible: false,
+            builder: (_) => const Center(child: CircularProgressIndicator()),
+          ).whenComplete(() => _archiveBusy = false);
+        }
+      case 2:
+        _archiveBusy = false;
+        _archivePolling = false;
+        _closeArchiveBusy();
+        _showArchiveEntries();
+      case 3:
+        _archiveBusy = false;
+        _closeArchiveBusy();
+        _askArchivePassword();
+      case 4:
+        _archiveBusy = false;
+        _archivePolling = false;
+        _closeArchiveBusy();
+        final err = _readArchiveError();
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(err.isEmpty ? '压缩包打开失败' : err)));
+      default:
+        break;
+    }
+  }
+
+  void _closeArchiveBusy() {
+    if (_archiveBusy && mounted) {
+      _archiveBusy = false;
+      Navigator.of(context, rootNavigator: true).pop();
+    }
+  }
+
+  Map<String, dynamic> _readArchiveJson() {
+    final ptr = rust.archiveJson();
+    if (ptr == ffi.nullptr) {
+      return const {};
+    }
+    try {
+      return jsonDecode(ptr.toDartString()) as Map<String, dynamic>;
+    } catch (_) {
+      return const {};
+    } finally {
+      rust.freeString(ptr);
+    }
+  }
+
+  String _readArchiveError() {
+    final json = _readArchiveJson();
+    return json['error'] as String? ?? '';
+  }
+
+  Future<void> _showArchiveEntries() async {
+    final json = _readArchiveJson();
+    final entries = parseArchiveEntries(json);
+    if (entries.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('压缩包里没有 MIDI 文件')));
+      return;
+    }
+    final path = json['path'] as String? ?? '';
+    final index = await showArchiveEntriesDialog(
+      context,
+      path: path,
+      entries: entries,
+    );
+    if (index == null || !mounted) {
+      return;
+    }
+    if (rust.archiveOpenEntry(index) == 1) {
+      setState(() => _fileName = entries[index].name);
+      rust.setViewMode(kViewArrangement);
+      rust.setDisplayTrack(-1);
+      rust.setActiveTrack(-1);
+      setState(() {
+        _showHome = false;
+        _viewMode = kViewArrangement;
+        _activeTrack = null;
+        _displayTrack = -1;
+      });
+    }
+  }
+
+  Future<void> _askArchivePassword() async {
+    final json = _readArchiveJson();
+    final path = json['path'] as String? ?? '';
+    final password = await showArchivePasswordDialog(context, path);
+    if (password == null || !mounted) {
+      return;
+    }
+    final p = path.toNativeUtf8();
+    final w = password.toNativeUtf8();
+    try {
+      rust.archiveOpenPassword(p, w);
+    } finally {
+      calloc.free(p);
+      calloc.free(w);
+    }
+    _archivePolling = true;
+  }
+
   /// 保存成功后 2 秒内把顶栏保存按钮显示为对勾。
   void _flashSaved() {
     _saveDoneTimer?.cancel();
-    setState(() => _saveDone = true);
+    _savingTimer?.cancel();
+    _savingTimer = null;
+    setState(() {
+      _saveDone = true;
+      _saving = false;
+    });
     _saveDoneTimer = Timer(const Duration(seconds: 2), () {
       _saveDoneTimer = null;
       if (mounted) {
@@ -480,6 +633,18 @@ class _StudioShellState extends State<StudioShell>
           .showSnackBar(const SnackBar(content: Text('请先打开 MIDI 或新建工程')));
       return;
     }
+    // 顶栏保存按钮转圈；导出+写盘期间保持，完成/取消后由超时兜底复位。
+    _savingTimer?.cancel();
+    setState(() {
+      _saving = true;
+      _saveDone = false;
+    });
+    _savingTimer = Timer(const Duration(seconds: 20), () {
+      _savingTimer = null;
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    });
     final name = _songTitle.isNotEmpty ? _songTitle : (_fileName ?? 'Untitled');
     final tmp = await _channel.invokeMethod<String>('exportTempPath');
     if (tmp == null || !mounted) {
@@ -493,7 +658,10 @@ class _StudioShellState extends State<StudioShell>
       calloc.free(p);
     }
     if (ok != 1) {
+      _savingTimer?.cancel();
+      _savingTimer = null;
       if (mounted) {
+        setState(() => _saving = false);
         ScaffoldMessenger.of(context)
             .showSnackBar(const SnackBar(content: Text('工程导出失败')));
       }
@@ -589,6 +757,7 @@ class _StudioShellState extends State<StudioShell>
     }
     switch (call.method) {
       case 'onFilePicked':
+        _archivePolling = _isArchivePath(path);
         setState(() {
           _fileName = path.split('/').last;
           _showHome = false;
@@ -656,6 +825,7 @@ class _StudioShellState extends State<StudioShell>
   }
 
   void _openRecent(RecentItem item) {
+    _archivePolling = _isArchivePath(item.path);
     final p = item.path.toNativeUtf8();
     try {
       rust.openPath(p);
@@ -1813,6 +1983,7 @@ class _StudioShellState extends State<StudioShell>
       onProjectSettings: _openProjectSettings,
       onSave: () => _saveProject(),
       saveDone: _saveDone,
+      saving: _saving,
       noteCount: _noteCount,
       bpmText: _liveBpmText,
       sigText: _liveSigText,

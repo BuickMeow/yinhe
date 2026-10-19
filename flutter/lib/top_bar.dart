@@ -34,6 +34,7 @@ class TopBar extends StatelessWidget {
     required this.onProjectSettings,
     required this.onSave,
     required this.saveDone,
+    required this.saving,
     required this.noteCount,
     required this.bpmText,
     required this.sigText,
@@ -69,6 +70,9 @@ class TopBar extends StatelessWidget {
 
   /// 刚保存成功：2 秒内把保存按钮显示为对勾。
   final bool saveDone;
+
+  /// 保存进行中：保存按钮位置显示加载圆环。
+  final bool saving;
 
   /// 全曲音符数（AR 歌名弹窗内显示）。
   final int noteCount;
@@ -161,13 +165,25 @@ class TopBar extends StatelessWidget {
                       (st & 2) != 0 ? onRedo : null,
                     ),
                     // 保存：从右向左第一个；无改动时置灰不可点；
-                    // 保存成功后 2 秒内显示对勾。
-                    if (saveDone)
+                    // 保存中显示圆环；保存成功后 2 秒显示对勾（普通字体色）。
+                    if (saving)
+                      const SizedBox(
+                        width: 40,
+                        height: 40,
+                        child: Center(
+                          child: SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        ),
+                      )
+                    else if (saveDone)
                       _iconAction(
                         Icons.check,
                         '已保存',
                         null,
-                        color: YinheTheme.accent,
+                        color: YinheTheme.text,
                       )
                     else
                       _iconAction(
