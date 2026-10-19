@@ -37,33 +37,10 @@ static GESTURE: Mutex<GestureState> = Mutex::new(GestureState {
     baseline: None,
 });
 
-/// 触摸/鼠标事件：0=down 1=move 2=up/cancel，3/4/5=鼠标中键按下/移动/松开。
-///
-/// 中键走独立的强制平移通道：不触发当前工具，取消进行中的编辑拖拽，
-/// 语义等同于临时切换到手形工具。
+/// 触摸事件：`kind` 0=down 1=move 2=up/cancel，`x`/`y` 为画布逻辑像素。
 pub fn on_touch(kind: i32, x: f32, y: f32, pointer: i32) {
     let Ok(mut g) = GESTURE.lock() else { return };
     match kind {
-        3 => {
-            // 中键按下：取消编辑拖拽后按单指平移处理。
-            g.pointers.retain(|p| p.id != pointer);
-            g.pointers.push(Pointer { id: pointer, x, y });
-            crate::edit::cancel();
-            reset_baseline(&mut g);
-        }
-        4 => {
-            let Some(p) = g.pointers.iter_mut().find(|p| p.id == pointer) else {
-                return;
-            };
-            p.x = x;
-            p.y = y;
-            apply(&mut g);
-        }
-        5 => {
-            // 中键松开：只移除触点，不提交编辑（本来就没有编辑拖拽）。
-            g.pointers.retain(|p| p.id != pointer);
-            reset_baseline(&mut g);
-        }
         0 => {
             // 同一 pointer id 重复 down：以新位置为准。
             g.pointers.retain(|p| p.id != pointer);
