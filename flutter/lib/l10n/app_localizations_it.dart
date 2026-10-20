@@ -455,4 +455,10 @@ class AppLocalizationsIt extends AppLocalizations {
 
   @override
   String get exportFailedShort => 'Esportazione non riuscita';
+
+  @override
+  String get prevPage => 'Pagina precedente';
+
+  @override
+  String get nextPage => 'Pagina successiva';
 }

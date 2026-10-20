@@ -455,4 +455,10 @@ class AppLocalizationsCs extends AppLocalizations {
 
   @override
   String get exportFailedShort => 'Export se nezdařil';
+
+  @override
+  String get prevPage => 'Předchozí stránka';
+
+  @override
+  String get nextPage => 'Další stránka';
 }

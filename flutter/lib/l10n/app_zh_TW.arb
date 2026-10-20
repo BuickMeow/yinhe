@@ -150,5 +150,7 @@
   "exportDone": "匯出完成",
   "bitDepth": "位元深度",
   "cancelling": "正在取消…",
-  "exportFailedShort": "匯出失敗"
+  "exportFailedShort": "匯出失敗",
+  "prevPage": "上一頁",
+  "nextPage": "下一頁"
 }

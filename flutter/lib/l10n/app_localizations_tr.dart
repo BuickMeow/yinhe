@@ -455,4 +455,10 @@ class AppLocalizationsTr extends AppLocalizations {
 
   @override
   String get exportFailedShort => 'Dışa aktarma başarısız';
+
+  @override
+  String get prevPage => 'Önceki sayfa';
+
+  @override
+  String get nextPage => 'Sonraki sayfa';
 }

@@ -453,4 +453,10 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get exportFailedShort => '내보내기 실패';
+
+  @override
+  String get prevPage => '이전 페이지';
+
+  @override
+  String get nextPage => '다음 페이지';
 }

@@ -455,4 +455,10 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get exportFailedShort => 'Ошибка экспорта';
+
+  @override
+  String get prevPage => 'Предыдущая страница';
+
+  @override
+  String get nextPage => 'Следующая страница';
 }

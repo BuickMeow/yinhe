@@ -150,5 +150,7 @@
   "exportDone": "書き出し完了",
   "bitDepth": "ビット深度",
   "cancelling": "キャンセル中…",
-  "exportFailedShort": "書き出し失敗"
+  "exportFailedShort": "書き出し失敗",
+  "prevPage": "前のページ",
+  "nextPage": "次のページ"
 }

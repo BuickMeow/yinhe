@@ -453,4 +453,10 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get exportFailedShort => '書き出し失敗';
+
+  @override
+  String get prevPage => '前のページ';
+
+  @override
+  String get nextPage => '次のページ';
 }

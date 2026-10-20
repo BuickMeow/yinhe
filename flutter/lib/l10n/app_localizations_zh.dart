@@ -451,6 +451,12 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get exportFailedShort => '导出失败';
+
+  @override
+  String get prevPage => '上一页';
+
+  @override
+  String get nextPage => '下一页';
 }
 
 /// The translations for Chinese, as used in Hong Kong (`zh_HK`).
@@ -899,6 +905,12 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
 
   @override
   String get exportFailedShort => '匯出失敗';
+
+  @override
+  String get prevPage => '上一頁';
+
+  @override
+  String get nextPage => '下一頁';
 }
 
 /// The translations for Chinese, as used in Taiwan (`zh_TW`).
@@ -1347,4 +1359,10 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get exportFailedShort => '匯出失敗';
+
+  @override
+  String get prevPage => '上一頁';
+
+  @override
+  String get nextPage => '下一頁';
 }

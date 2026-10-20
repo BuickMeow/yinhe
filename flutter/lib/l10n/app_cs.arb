@@ -150,5 +150,7 @@
   "exportDone": "Export dokončen",
   "bitDepth": "Bitová hloubka",
   "cancelling": "Ruší se…",
-  "exportFailedShort": "Export se nezdařil"
+  "exportFailedShort": "Export se nezdařil",
+  "prevPage": "Předchozí stránka",
+  "nextPage": "Další stránka"
 }

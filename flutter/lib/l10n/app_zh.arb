@@ -150,5 +150,7 @@
   "exportDone": "导出完成",
   "bitDepth": "位深",
   "cancelling": "正在取消…",
-  "exportFailedShort": "导出失败"
+  "exportFailedShort": "导出失败",
+  "prevPage": "上一页",
+  "nextPage": "下一页"
 }

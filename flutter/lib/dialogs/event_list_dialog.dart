@@ -72,6 +72,8 @@ class _EventListDialogState extends State<EventListDialog> {
   double _fromTick = 0;
   bool _loading = false;
   bool _done = false;
+  int _page = 1;
+  int _pageCount = 1;
   Map<String, dynamic>? _copied;
 
   /// 当前筛选轨；-1 = 全部轨道。
@@ -83,11 +85,7 @@ class _EventListDialogState extends State<EventListDialog> {
   @override
   void initState() {
     super.initState();
-    _scroll.addListener(() {
-      if (_scroll.position.pixels >= _scroll.position.maxScrollExtent - 240) {
-        _loadMore();
-      }
-    });
+    _scroll.addListener(_updatePageInfo);
     _loadMore();
   }
 
@@ -153,7 +151,71 @@ class _EventListDialogState extends State<EventListDialog> {
     } finally {
       if (mounted) {
         setState(() => _loading = false);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _updatePageInfo();
+          }
+        });
       }
+    }
+  }
+
+  void _updatePageInfo() {
+    if (!_scroll.hasClients) {
+      return;
+    }
+    final viewport = _scroll.position.viewportDimension;
+    if (viewport <= 0) {
+      return;
+    }
+    final pages = (_scroll.position.maxScrollExtent / viewport).ceil() + 1;
+    final page = (_scroll.position.pixels / viewport).floor() + 1;
+    if (mounted && (page != _page || pages != _pageCount)) {
+      setState(() {
+        _page = page;
+        _pageCount = pages;
+      });
+    }
+  }
+
+  void _scrollToPage(int page) {
+    if (!_scroll.hasClients) {
+      return;
+    }
+    final viewport = _scroll.position.viewportDimension;
+    final target = ((page - 1) * viewport).clamp(
+      0.0,
+      _scroll.position.maxScrollExtent,
+    );
+    _scroll.animateTo(
+      target,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+    );
+  }
+
+  void _prevPage() {
+    if (_page > 1) {
+      _scrollToPage(_page - 1);
+    }
+  }
+
+  void _nextPage() {
+    if (_page < _pageCount) {
+      _scrollToPage(_page + 1);
+      return;
+    }
+    if (!_done && !_loading) {
+      _loadMore().then((_) {
+        if (mounted) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              _updatePageInfo();
+              _scrollToPage(_page + 1);
+            }
+          });
+        }
+      });
     }
   }
 
@@ -597,6 +659,33 @@ class _EventListDialogState extends State<EventListDialog> {
                         );
                       },
                     ),
+            ),
+            Container(
+              height: 44,
+              color: YinheTheme.controlBg,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    tooltip: l.prevPage,
+                    icon: const Icon(Icons.chevron_left),
+                    color: YinheTheme.textSecondary,
+                    onPressed: _page > 1 ? _prevPage : null,
+                  ),
+                  Text(
+                    '$_page / $_pageCount',
+                    style: TextStyle(color: YinheTheme.textLabel, fontSize: 12),
+                  ),
+                  IconButton(
+                    tooltip: l.nextPage,
+                    icon: const Icon(Icons.chevron_right),
+                    color: YinheTheme.textSecondary,
+                    onPressed: (_page < _pageCount || !_done)
+                        ? _nextPage
+                        : null,
+                  ),
+                ],
+              ),
             ),
           ],
         ),

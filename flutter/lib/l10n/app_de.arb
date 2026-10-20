@@ -150,5 +150,7 @@
   "exportDone": "Export abgeschlossen",
   "bitDepth": "Bittiefe",
   "cancelling": "Wird abgebrochen…",
-  "exportFailedShort": "Export fehlgeschlagen"
+  "exportFailedShort": "Export fehlgeschlagen",
+  "prevPage": "Vorherige Seite",
+  "nextPage": "Nächste Seite"
 }

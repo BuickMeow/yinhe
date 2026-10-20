@@ -150,5 +150,7 @@
   "exportDone": "내보내기 완료",
   "bitDepth": "비트 심도",
   "cancelling": "취소 중…",
-  "exportFailedShort": "내보내기 실패"
+  "exportFailedShort": "내보내기 실패",
+  "prevPage": "이전 페이지",
+  "nextPage": "다음 페이지"
 }

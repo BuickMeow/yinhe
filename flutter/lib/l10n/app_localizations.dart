@@ -985,6 +985,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Export failed'**
   String get exportFailedShort;
+
+  /// No description provided for @prevPage.
+  ///
+  /// In en, this message translates to:
+  /// **'Previous page'**
+  String get prevPage;
+
+  /// No description provided for @nextPage.
+  ///
+  /// In en, this message translates to:
+  /// **'Next page'**
+  String get nextPage;
 }
 
 class _AppLocalizationsDelegate

@@ -150,5 +150,7 @@
   "exportDone": "Dışa aktarma tamamlandı",
   "bitDepth": "Bit derinliği",
   "cancelling": "İptal ediliyor…",
-  "exportFailedShort": "Dışa aktarma başarısız"
+  "exportFailedShort": "Dışa aktarma başarısız",
+  "prevPage": "Önceki sayfa",
+  "nextPage": "Sonraki sayfa"
 }

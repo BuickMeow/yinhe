@@ -150,5 +150,7 @@
   "exportDone": "Экспорт завершён",
   "bitDepth": "Разрядность",
   "cancelling": "Отмена…",
-  "exportFailedShort": "Ошибка экспорта"
+  "exportFailedShort": "Ошибка экспорта",
+  "prevPage": "Предыдущая страница",
+  "nextPage": "Следующая страница"
 }
