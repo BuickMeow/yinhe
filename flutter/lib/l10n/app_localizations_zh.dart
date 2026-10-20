@@ -457,6 +457,12 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get nextPage => '下一页';
+
+  @override
+  String get addSfzFolder => '导入 SFZ 文件夹';
+
+  @override
+  String get sfzFolderEmpty => '未找到 SFZ 文件';
 }
 
 /// The translations for Chinese, as used in Hong Kong (`zh_HK`).
@@ -911,6 +917,12 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
 
   @override
   String get nextPage => '下一頁';
+
+  @override
+  String get addSfzFolder => '匯入 SFZ 資料夾';
+
+  @override
+  String get sfzFolderEmpty => '找不到 SFZ 檔案';
 }
 
 /// The translations for Chinese, as used in Taiwan (`zh_TW`).
@@ -1365,4 +1377,10 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get nextPage => '下一頁';
+
+  @override
+  String get addSfzFolder => '匯入 SFZ 資料夾';
+
+  @override
+  String get sfzFolderEmpty => '找不到 SFZ 檔案';
 }

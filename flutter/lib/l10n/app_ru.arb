@@ -152,5 +152,7 @@
   "cancelling": "Отмена…",
   "exportFailedShort": "Ошибка экспорта",
   "prevPage": "Предыдущая страница",
-  "nextPage": "Следующая страница"
+  "nextPage": "Следующая страница",
+  "addSfzFolder": "Импорт папки SFZ",
+  "sfzFolderEmpty": "Файлы SFZ не найдены"
 }

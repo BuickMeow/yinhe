@@ -461,4 +461,10 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get nextPage => 'Page suivante';
+
+  @override
+  String get addSfzFolder => 'Importer un dossier SFZ';
+
+  @override
+  String get sfzFolderEmpty => 'Aucun fichier SFZ trouvé';
 }

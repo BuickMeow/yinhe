@@ -152,5 +152,7 @@
   "cancelling": "Wird abgebrochen…",
   "exportFailedShort": "Export fehlgeschlagen",
   "prevPage": "Vorherige Seite",
-  "nextPage": "Nächste Seite"
+  "nextPage": "Nächste Seite",
+  "addSfzFolder": "SFZ-Ordner importieren",
+  "sfzFolderEmpty": "Keine SFZ-Dateien gefunden"
 }

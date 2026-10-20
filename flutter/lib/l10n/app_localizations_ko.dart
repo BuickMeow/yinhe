@@ -459,4 +459,10 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get nextPage => '다음 페이지';
+
+  @override
+  String get addSfzFolder => 'SFZ 폴더 가져오기';
+
+  @override
+  String get sfzFolderEmpty => 'SFZ 파일을 찾지 못했습니다';
 }

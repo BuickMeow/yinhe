@@ -152,5 +152,7 @@
   "cancelling": "Ruší se…",
   "exportFailedShort": "Export se nezdařil",
   "prevPage": "Předchozí stránka",
-  "nextPage": "Další stránka"
+  "nextPage": "Další stránka",
+  "addSfzFolder": "Importovat složku SFZ",
+  "sfzFolderEmpty": "Nebyly nalezeny žádné soubory SFZ"
 }

@@ -461,4 +461,10 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get nextPage => 'Следующая страница';
+
+  @override
+  String get addSfzFolder => 'Импорт папки SFZ';
+
+  @override
+  String get sfzFolderEmpty => 'Файлы SFZ не найдены';
 }

@@ -461,4 +461,10 @@ class AppLocalizationsCs extends AppLocalizations {
 
   @override
   String get nextPage => 'Další stránka';
+
+  @override
+  String get addSfzFolder => 'Importovat složku SFZ';
+
+  @override
+  String get sfzFolderEmpty => 'Nebyly nalezeny žádné soubory SFZ';
 }

@@ -19,12 +19,14 @@ class SettingsView extends StatefulWidget {
     super.key,
     required this.revision,
     required this.onPickSoundFont,
+    required this.onPickSfzFolder,
     required this.onBack,
   });
 
   /// 音色库表修订号（原生选择完成后 +1，重新读取列表）。
   final ValueListenable<int> revision;
   final VoidCallback onPickSoundFont;
+  final VoidCallback onPickSfzFolder;
   final VoidCallback onBack;
 
   @override
@@ -335,6 +337,13 @@ class _SettingsViewState extends State<SettingsView> {
               ),
             ),
             const Spacer(),
+            IconButton(
+              tooltip: l.addSfzFolder,
+              icon: const Icon(Icons.folder_open),
+              color: YinheTheme.textSecondary,
+              visualDensity: VisualDensity.compact,
+              onPressed: widget.onPickSfzFolder,
+            ),
             IconButton(
               tooltip: l.addSoundfont,
               icon: const Icon(Icons.add),

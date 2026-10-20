@@ -459,4 +459,10 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get nextPage => '次のページ';
+
+  @override
+  String get addSfzFolder => 'SFZ フォルダーを読み込む';
+
+  @override
+  String get sfzFolderEmpty => 'SFZ ファイルが見つかりません';
 }

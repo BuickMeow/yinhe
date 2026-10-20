@@ -461,4 +461,10 @@ class AppLocalizationsTr extends AppLocalizations {
 
   @override
   String get nextPage => 'Sonraki sayfa';
+
+  @override
+  String get addSfzFolder => 'SFZ klasörünü içe aktar';
+
+  @override
+  String get sfzFolderEmpty => 'SFZ dosyası bulunamadı';
 }

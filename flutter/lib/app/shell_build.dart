@@ -262,6 +262,7 @@ mixin _ShellBuild on _ShellBase {
               SettingsView(
                 revision: _sfRevision,
                 onPickSoundFont: _pickSoundFont,
+                onPickSfzFolder: _pickSfzFolder,
                 onBack: () => setState(() => _showSettings = false),
               ),
           ],

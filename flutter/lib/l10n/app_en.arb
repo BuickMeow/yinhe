@@ -204,5 +204,7 @@
   "cancelling": "Cancelling…",
   "exportFailedShort": "Export failed",
   "prevPage": "Previous page",
-  "nextPage": "Next page"
+  "nextPage": "Next page",
+  "addSfzFolder": "Import SFZ folder",
+  "sfzFolderEmpty": "No SFZ files found"
 }

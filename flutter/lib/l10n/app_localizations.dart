@@ -997,6 +997,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Next page'**
   String get nextPage;
+
+  /// No description provided for @addSfzFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Import SFZ folder'**
+  String get addSfzFolder;
+
+  /// No description provided for @sfzFolderEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No SFZ files found'**
+  String get sfzFolderEmpty;
 }
 
 class _AppLocalizationsDelegate

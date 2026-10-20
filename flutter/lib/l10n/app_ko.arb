@@ -152,5 +152,7 @@
   "cancelling": "취소 중…",
   "exportFailedShort": "내보내기 실패",
   "prevPage": "이전 페이지",
-  "nextPage": "다음 페이지"
+  "nextPage": "다음 페이지",
+  "addSfzFolder": "SFZ 폴더 가져오기",
+  "sfzFolderEmpty": "SFZ 파일을 찾지 못했습니다"
 }

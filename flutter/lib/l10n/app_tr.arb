@@ -152,5 +152,7 @@
   "cancelling": "İptal ediliyor…",
   "exportFailedShort": "Dışa aktarma başarısız",
   "prevPage": "Önceki sayfa",
-  "nextPage": "Sonraki sayfa"
+  "nextPage": "Sonraki sayfa",
+  "addSfzFolder": "SFZ klasörünü içe aktar",
+  "sfzFolderEmpty": "SFZ dosyası bulunamadı"
 }

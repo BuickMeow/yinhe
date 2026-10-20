@@ -152,5 +152,7 @@
   "cancelling": "キャンセル中…",
   "exportFailedShort": "書き出し失敗",
   "prevPage": "前のページ",
-  "nextPage": "次のページ"
+  "nextPage": "次のページ",
+  "addSfzFolder": "SFZ フォルダーを読み込む",
+  "sfzFolderEmpty": "SFZ ファイルが見つかりません"
 }
