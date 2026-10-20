@@ -45,8 +45,16 @@ void main() {
         }
         final value = entry.value;
         expect(value, isA<String>(), reason: '${f.path}: ${entry.key}');
-        expect((value as String).trim(), isNotEmpty, reason: '${f.path}: ${entry.key}');
-        expect(value.contains('??'), isFalse, reason: '${f.path}: ${entry.key}');
+        expect(
+          (value as String).trim(),
+          isNotEmpty,
+          reason: '${f.path}: ${entry.key}',
+        );
+        expect(
+          value.contains('??'),
+          isFalse,
+          reason: '${f.path}: ${entry.key}',
+        );
       }
     }
   });

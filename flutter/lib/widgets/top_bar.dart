@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../core/models.dart';
+import '../core/quantize_presets.dart';
 import '../core/theme.dart';
 import '../l10n/app_localizations.dart';
 import '../core/tools.dart';
@@ -280,7 +281,7 @@ class TopBar extends StatelessWidget {
       itemBuilder: (_) => [
         PopupMenuItem(value: '关闭', child: Text(l.quantizeOff)),
         PopupMenuItem(value: '自动', child: Text(l.quantizeAuto)),
-        for (final (label, ticks) in _quantizePresets(ppq))
+        for (final (label, ticks) in quantizePresetsForPpq(ppq))
           PopupMenuItem(value: label, child: Text('$label（$ticks tick）')),
       ],
       child: Padding(
@@ -303,23 +304,6 @@ class TopBar extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  /// 常用量化档位（与桌面 `presets_for_ppq` 同规则）。
-  static List<(String, int)> _quantizePresets(double ppq) {
-    final whole = ppq.round().clamp(1, 1 << 24) * 4;
-    final out = <(String, int)>[];
-    void chain(int start) {
-      var den = start;
-      while (den <= whole && whole % den == 0) {
-        out.add(('1/$den', whole ~/ den));
-        den *= 2;
-      }
-    }
-
-    chain(1);
-    chain(6);
-    return out;
   }
 
   Widget _buildToolButton(AppLocalizations l) {

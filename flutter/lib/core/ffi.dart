@@ -5,6 +5,7 @@ import 'package:ffi/ffi.dart';
 part 'ffi/input.dart';
 part 'ffi/document.dart';
 part 'ffi/edit.dart';
+part 'ffi/names.dart';
 part 'ffi/view.dart';
 
 /// Rust 桥（libyinhe_flutter.so）。

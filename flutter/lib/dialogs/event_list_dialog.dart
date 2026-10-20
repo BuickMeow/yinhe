@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../core/bar_beat.dart';
 import '../core/ffi.dart' as rust;
+import '../core/midi_names.dart';
 import '../core/snack.dart';
 import 'inputs.dart';
 import 'insert_flow.dart';
@@ -154,22 +155,7 @@ class _EventListDialogState extends State<EventListDialog> {
     return grid?.format(tick.toDouble()) ?? '$tick';
   }
 
-  static const _noteNames = [
-    'C',
-    'C#',
-    'D',
-    'D#',
-    'E',
-    'F',
-    'F#',
-    'G',
-    'G#',
-    'A',
-    'A#',
-    'B',
-  ];
-
-  String _noteName(int key) => '${_noteNames[key % 12]}${key ~/ 12 - 1}';
+  String _noteName(int key) => MidiNames.instance.noteName(key);
 
   String _ccName(int cc) => ccInsertLabel(cc);
 

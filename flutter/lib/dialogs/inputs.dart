@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/midi_names.dart';
 import '../l10n/app_localizations.dart';
 import 'frame.dart';
 
@@ -447,26 +448,13 @@ class _KeySigInputDialog extends StatefulWidget {
 }
 
 class _KeySigInputDialogState extends State<_KeySigInputDialog> {
-  static const _roots = [
-    'C',
-    'C#',
-    'D',
-    'D#',
-    'E',
-    'F',
-    'F#',
-    'G',
-    'G#',
-    'A',
-    'A#',
-    'B',
-  ];
   int _root = 0;
   int _scale = 0;
 
   @override
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
+    final roots = MidiNames.instance.notes;
     return YinheDialog(
       title: widget.title,
       width: 380,
@@ -488,8 +476,8 @@ class _KeySigInputDialogState extends State<_KeySigInputDialog> {
             initialValue: _root,
             decoration: dialogInputDecoration(widget.rootLabel),
             items: [
-              for (var i = 0; i < _roots.length; i++)
-                DropdownMenuItem(value: i, child: Text(_roots[i])),
+              for (var i = 0; i < roots.length; i++)
+                DropdownMenuItem(value: i, child: Text(roots[i])),
             ],
             onChanged: (v) => setState(() => _root = v ?? _root),
           ),

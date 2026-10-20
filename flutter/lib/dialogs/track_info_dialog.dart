@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../data/gm_programs.dart';
+import '../core/midi_names.dart';
 import '../l10n/app_localizations.dart';
 import '../core/theme.dart';
 import 'frame.dart';
@@ -167,7 +167,7 @@ class _TrackInfoDialogState extends State<TrackInfoDialog> {
                     inst == null
                         ? l.defaultInstrumentFollowPc
                         : l.channelInstrumentValue(
-                            gmProgramLabel(inst.$1, inst.$2),
+                            MidiNames.instance.gmProgramLabel(inst.$1, inst.$2),
                             inst.$1,
                             inst.$2,
                           ),
@@ -248,7 +248,7 @@ class _InstrumentPickerDialogState extends State<_InstrumentPickerDialog> {
                     dense: true,
                     selected: selected,
                     title: Text(
-                      '$i  ${gmProgramLabel(_bank, i)}',
+                      '$i  ${MidiNames.instance.gmProgramLabel(_bank, i)}',
                       style: TextStyle(
                         fontSize: 13,
                         color: selected ? YinheTheme.accent : YinheTheme.text,
