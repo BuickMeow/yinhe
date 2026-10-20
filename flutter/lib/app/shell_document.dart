@@ -62,6 +62,9 @@ mixin _ShellDocument on _ShellBase {
       showSnack(context, l.openFirst);
       return;
     }
+    if (_playing) {
+      _stopPlayback();
+    }
     final depth = await showAudioExportOptions(context);
     if (!mounted || depth == null) {
       return;
@@ -105,6 +108,9 @@ mixin _ShellDocument on _ShellBase {
     if (_tracks.value.isEmpty) {
       showSnack(context, l.openFirst);
       return;
+    }
+    if (_playing) {
+      _stopPlayback();
     }
     final tmp = await _exportTempPath('mid');
     if (!mounted || tmp == null) {

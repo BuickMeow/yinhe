@@ -83,7 +83,17 @@ class HomeView extends StatelessWidget {
               padding: const EdgeInsets.only(left: 48, right: 40, top: 28),
               child: Row(
                 children: [
-                  SizedBox(width: 300, child: _actions(context)),
+                  SizedBox(
+                    width: 300,
+                    child: LayoutBuilder(
+                      builder: (context, c) => SingleChildScrollView(
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(minHeight: c.maxHeight),
+                          child: _actions(context),
+                        ),
+                      ),
+                    ),
+                  ),
                   const SizedBox(width: 56),
                   Expanded(child: _recentPanel(context)),
                 ],
