@@ -130,6 +130,9 @@ class _StudioShellState extends State<StudioShell>
   /// “显示轨道”过滤（-1 = 全部轨道）。
   int _displayTrack = -1;
 
+  /// PR 顶部「全部轨道」开关：开 = 不按当前编辑轨过滤（只影响 PR）。
+  bool _showAllTracks = true;
+
   /// 歌曲标题（meta.name；空 = 未设置）。
   String _songTitle = '';
 
@@ -424,6 +427,7 @@ class _StudioShellState extends State<StudioShell>
       _viewMode = kViewArrangement;
       _activeTrack = null;
       _displayTrack = -1;
+      _showAllTracks = true;
       _toolAr = 0;
       _songTitle = '';
       _playing = false;
@@ -588,6 +592,7 @@ class _StudioShellState extends State<StudioShell>
         _viewMode = kViewArrangement;
         _activeTrack = null;
         _displayTrack = -1;
+        _showAllTracks = true;
       });
     }
   }
@@ -764,6 +769,7 @@ class _StudioShellState extends State<StudioShell>
           _viewMode = kViewArrangement;
           _activeTrack = null;
           _displayTrack = -1;
+          _showAllTracks = true;
         });
         rust.setViewMode(kViewArrangement);
         rust.setDisplayTrack(-1);
@@ -838,6 +844,7 @@ class _StudioShellState extends State<StudioShell>
       _viewMode = kViewArrangement;
       _activeTrack = null;
       _displayTrack = -1;
+      _showAllTracks = true;
     });
     rust.setViewMode(kViewArrangement);
     rust.setDisplayTrack(-1);
@@ -1463,10 +1470,9 @@ class _StudioShellState extends State<StudioShell>
       _toggleMs(p, idx);
       return;
     }
-    _activeTrack = idx;
-    rust.setActiveTrack(idx);
-    _loadAutomation();
-    _loadVelocity();
+    // 进入 PR：AR 点的那条轨就是当前编辑轨；「全部轨道」默认关闭。
+    _showAllTracks = false;
+    _selectEditTrack(idx);
     _setView(kViewPianoroll);
   }
 
@@ -1602,7 +1608,7 @@ class _StudioShellState extends State<StudioShell>
         }
       }
       if (_displayTrack == track) {
-        _displayTrack = -1;
+        _displayTrack = _showAllTracks ? -1 : _activeTrack ?? -1;
       } else if (_displayTrack > track) {
         _displayTrack -= 1;
       }
@@ -1960,7 +1966,8 @@ class _StudioShellState extends State<StudioShell>
       ppq: _ppq,
       tool: _tool,
       tracks: _tracks.value,
-      displayTrack: _displayTrack,
+      activeTrack: _activeTrack ?? -1,
+      showAllTracks: _showAllTracks,
       songTitle: _songTitle,
       fileName: _fileName,
       docState: _docState,
@@ -1979,7 +1986,8 @@ class _StudioShellState extends State<StudioShell>
       onTool: _selectTool,
       onUndo: _undo,
       onRedo: _redo,
-      onSelectDisplayTrack: _selectDisplayTrack,
+      onSelectTrack: _selectEditTrack,
+      onToggleAllTracks: _toggleAllTracks,
       onProjectSettings: _openProjectSettings,
       onSave: () => _saveProject(),
       saveDone: _saveDone,
@@ -1992,18 +2000,29 @@ class _StudioShellState extends State<StudioShell>
     );
   }
 
-  /// 选择“显示轨道”（-1 = 全部）；同步自动化/力度条跟随。
-  void _selectDisplayTrack(int track) {
+  /// 选择当前编辑音轨：PR 顶部显示它；「全部轨道」关闭时只绘制该轨。
+  void _selectEditTrack(int track) {
     setState(() {
-      _displayTrack = track;
-      if (track >= 0) {
-        _activeTrack = track;
+      _activeTrack = track;
+      if (!_showAllTracks) {
+        _displayTrack = track;
       }
     });
-    rust.setDisplayTrack(track);
     rust.setActiveTrack(track);
+    if (!_showAllTracks) {
+      rust.setDisplayTrack(track);
+    }
     _loadAutomation();
     _loadVelocity();
+  }
+
+  /// 「全部轨道」开关（仅影响 PR 绘制；AR 始终按自身显隐）。
+  void _toggleAllTracks() {
+    setState(() {
+      _showAllTracks = !_showAllTracks;
+      _displayTrack = _showAllTracks ? -1 : (_activeTrack ?? -1);
+    });
+    rust.setDisplayTrack(_displayTrack);
   }
 
   /// 撤销一步（含快照/音频刷新）。

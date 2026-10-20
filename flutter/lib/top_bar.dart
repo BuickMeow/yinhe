@@ -17,7 +17,8 @@ class TopBar extends StatelessWidget {
     required this.ppq,
     required this.tool,
     required this.tracks,
-    required this.displayTrack,
+    required this.activeTrack,
+    required this.showAllTracks,
     required this.songTitle,
     required this.fileName,
     required this.docState,
@@ -30,7 +31,8 @@ class TopBar extends StatelessWidget {
     required this.onTool,
     required this.onUndo,
     required this.onRedo,
-    required this.onSelectDisplayTrack,
+    required this.onSelectTrack,
+    required this.onToggleAllTracks,
     required this.onProjectSettings,
     required this.onSave,
     required this.saveDone,
@@ -49,7 +51,12 @@ class TopBar extends StatelessWidget {
   final double ppq;
   final int tool;
   final List<TrackRow> tracks;
-  final int displayTrack;
+
+  /// 当前编辑音轨（PR 顶部显示它；-1 = 无）。
+  final int activeTrack;
+
+  /// PR「全部轨道」开关：开 = 不按当前编辑轨过滤。
+  final bool showAllTracks;
   final String songTitle;
   final String? fileName;
   final ValueListenable<int> docState;
@@ -62,7 +69,8 @@ class TopBar extends StatelessWidget {
   final ValueChanged<int> onTool;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
-  final ValueChanged<int> onSelectDisplayTrack;
+  final ValueChanged<int> onSelectTrack;
+  final VoidCallback onToggleAllTracks;
   final VoidCallback onProjectSettings;
 
   /// 保存工程（无改动时按钮置灰不可点）。
@@ -361,21 +369,41 @@ class TopBar extends StatelessWidget {
     );
   }
 
-  /// PR：显示轨道长按钮（顶部正中央；保存工程只在主页）。
+  /// PR：当前编辑音轨长按钮（顶部正中央）+「全部轨道」开关。
   Widget _buildSongBox() {
-    final filtering = displayTrack >= 0 && displayTrack < tracks.length;
-    final base = filtering ? tracks[displayTrack].name : _titled();
+    final active = activeTrack >= 0 && activeTrack < tracks.length;
+    final base = active ? tracks[activeTrack].name : _titled();
     return PopupMenuButton<int>(
-      tooltip: '显示轨道',
+      tooltip: '当前编辑音轨',
       padding: EdgeInsets.zero,
-      onSelected: onSelectDisplayTrack,
+      onSelected: (v) {
+        if (v >= tracks.length) {
+          onToggleAllTracks();
+        } else {
+          onSelectTrack(v);
+        }
+      },
       itemBuilder: (_) => [
-        const PopupMenuItem(value: -1, child: Text('全部轨道')),
+        PopupMenuItem<int>(
+          enabled: false,
+          height: 30,
+          child: Text(
+            '当前编辑音轨',
+            style: TextStyle(color: YinheTheme.textLabel, fontSize: 11),
+          ),
+        ),
         for (var i = 0; i < tracks.length; i++)
-          PopupMenuItem(
+          CheckedPopupMenuItem<int>(
             value: i,
+            checked: i == activeTrack,
             child: Text('${i.toString().padLeft(3, '0')}  ${tracks[i].name}'),
           ),
+        const PopupMenuDivider(height: 1),
+        CheckedPopupMenuItem<int>(
+          value: tracks.length,
+          checked: showAllTracks,
+          child: const Text('全部轨道'),
+        ),
       ],
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 7),
@@ -394,7 +422,7 @@ class TopBar extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: filtering ? YinheTheme.accent : YinheTheme.text,
+              color: showAllTracks ? YinheTheme.text : YinheTheme.accent,
               fontSize: 12,
             ),
           ),
