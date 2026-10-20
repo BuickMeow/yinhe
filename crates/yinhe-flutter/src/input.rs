@@ -66,8 +66,6 @@ const FLING_MIN_SPEED: f32 = 250.0;
 const FLING_STOP_SPEED: f32 = 20.0;
 /// 惯性衰减系数（每秒）：约 0.25s 衰减到 1/e。
 const FLING_DECAY: f32 = 4.0;
-/// 惯性速度上限（逻辑像素/秒）：约 1.5 屏/秒，避免"一滑到头"。
-const FLING_MAX_SPEED: f32 = 6000.0;
 /// 速度估计的最小事件间隔（秒）：双指事件常在同一帧内成对到达（dt≈0），
 /// 不夹住会把瞬时速度放大几十倍，松手惯性直接飞出去。
 const VEL_MIN_DT: f32 = 0.008;
@@ -243,13 +241,6 @@ fn apply(g: &mut GestureState) {
                 let alpha = (dt_c / 0.08).clamp(0.2, 1.0);
                 g.vel.0 = g.vel.0 * (1.0 - alpha) + (dx / dt_c) * alpha;
                 g.vel.1 = g.vel.1 * (1.0 - alpha) + (dy / dt_c) * alpha;
-                // 再夹一次速度上限（保险：异常事件序列也不至于甩飞）。
-                let speed = (g.vel.0 * g.vel.0 + g.vel.1 * g.vel.1).sqrt();
-                if speed > FLING_MAX_SPEED {
-                    let k = FLING_MAX_SPEED / speed;
-                    g.vel.0 *= k;
-                    g.vel.1 *= k;
-                }
             }
         }
         g.last_move = Some(now);
