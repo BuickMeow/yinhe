@@ -390,4 +390,16 @@ class AppLocalizationsPt extends AppLocalizations {
 
   @override
   String get toolBrush => 'Pincel';
+
+  @override
+  String get markerRename => 'Renomear marcador';
+
+  @override
+  String get markerDelete => 'Excluir marcador';
+
+  @override
+  String get markerText => 'Texto do marcador';
+
+  @override
+  String get markerTextOptional => 'Texto do marcador (opcional)';
 }

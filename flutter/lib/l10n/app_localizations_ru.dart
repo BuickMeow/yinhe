@@ -390,4 +390,16 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get toolBrush => 'Кисть';
+
+  @override
+  String get markerRename => 'Переименовать маркер';
+
+  @override
+  String get markerDelete => 'Удалить маркер';
+
+  @override
+  String get markerText => 'Текст маркера';
+
+  @override
+  String get markerTextOptional => 'Текст маркера (необязательно)';
 }

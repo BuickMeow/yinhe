@@ -6,7 +6,10 @@ import 'package:flutter/material.dart';
 
 import '../core/bar_beat.dart';
 import '../core/ffi.dart' as rust;
+import '../core/snack.dart';
+import 'inputs.dart';
 import 'insert_flow.dart';
+import 'sheet.dart';
 import '../core/theme.dart';
 import '../l10n/app_localizations.dart';
 
@@ -233,53 +236,33 @@ class _EventListDialogState extends State<EventListDialog> {
 
   Future<void> _openActions(Map<String, dynamic> row) async {
     final desc = _describe(row);
-    final action = await showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: YinheTheme.bg,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: Icon(desc.icon),
-              title: Text(desc.title),
-              subtitle: Text(desc.subtitle),
-            ),
-            const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.edit),
-              title: Text(l.edit),
-              onTap: () => Navigator.of(ctx).pop('edit'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.copy),
-              title: Text(l.copy),
-              onTap: () => Navigator.of(ctx).pop('copy'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.content_paste),
-              title: Text(l.pasteSameTime),
-              enabled: _copied != null,
-              onTap: () => Navigator.of(ctx).pop('paste'),
-            ),
-            ListTile(
-              leading: Icon(Icons.delete_outline, color: YinheTheme.danger),
-              title: Text(l.delete, style: TextStyle(color: YinheTheme.danger)),
-              onTap: () => Navigator.of(ctx).pop('delete'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.my_location),
-              title: Text(l.goToLocation),
-              onTap: () => Navigator.of(ctx).pop('jump'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.close),
-              title: Text(l.cancel),
-              onTap: () => Navigator.of(ctx).pop(),
-            ),
-          ],
+    final action = await showActionSheet(
+      context,
+      title: desc.title,
+      subtitle: desc.subtitle,
+      headerIcon: desc.icon,
+      cancelLabel: l.cancel,
+      actions: [
+        SheetAction(value: 'edit', label: l.edit, icon: Icons.edit),
+        SheetAction(value: 'copy', label: l.copy, icon: Icons.copy),
+        SheetAction(
+          value: 'paste',
+          label: l.pasteSameTime,
+          icon: Icons.content_paste,
+          enabled: _copied != null,
         ),
-      ),
+        SheetAction(
+          value: 'delete',
+          label: l.delete,
+          icon: Icons.delete_outline,
+          danger: true,
+        ),
+        SheetAction(
+          value: 'jump',
+          label: l.goToLocation,
+          icon: Icons.my_location,
+        ),
+      ],
     );
     if (!mounted || action == null) {
       return;
@@ -290,11 +273,10 @@ class _EventListDialogState extends State<EventListDialog> {
       switch (action) {
         case 'copy':
           _copied = row;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(l.eventCopied),
-              duration: Duration(seconds: 1),
-            ),
+          showSnack(
+            context,
+            l.eventCopied,
+            duration: const Duration(seconds: 1),
           );
         case 'delete':
           if (rust.eventDelete(p) == 1) {
@@ -519,96 +501,14 @@ Future<(int, int)?> showNoteEditDialog(
   required int velocity,
   required int gate,
 }) {
-  return showDialog<(int, int)>(
-    context: context,
-    builder: (_) => _NoteEditDialog(velocity: velocity, gate: gate),
+  final l = AppLocalizations.of(context);
+  return showNoteInputDialog(
+    context,
+    title: l.editNote,
+    velocityLabel: l.velocityRange,
+    lengthLabel: l.lengthTicks,
+    velocity: velocity,
+    gate: gate,
+    confirmText: l.save,
   );
-}
-
-class _NoteEditDialog extends StatefulWidget {
-  const _NoteEditDialog({required this.velocity, required this.gate});
-
-  final int velocity;
-  final int gate;
-
-  @override
-  State<_NoteEditDialog> createState() => _NoteEditDialogState();
-}
-
-class _NoteEditDialogState extends State<_NoteEditDialog> {
-  AppLocalizations get l => AppLocalizations.of(context);
-
-  late final TextEditingController _vel = TextEditingController(
-    text: '${widget.velocity}',
-  );
-  late final TextEditingController _gate = TextEditingController(
-    text: '${widget.gate}',
-  );
-  String? _error;
-
-  @override
-  void dispose() {
-    _vel.dispose();
-    _gate.dispose();
-    super.dispose();
-  }
-
-  void _confirm() {
-    final vel = int.tryParse(_vel.text.trim());
-    final gate = int.tryParse(_gate.text.trim());
-    if (vel == null || vel < 1 || vel > 127 || gate == null || gate < 1) {
-      setState(() => _error = '力度 1–127，长度 ≥ 1 tick');
-      return;
-    }
-    Navigator.of(context).pop((vel, gate));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      backgroundColor: YinheTheme.bg,
-      title: Text(l.editNote, style: TextStyle(fontSize: 16)),
-      content: SizedBox(
-        width: 340,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const SizedBox(height: 10),
-            TextField(
-              controller: _vel,
-              autofocus: true,
-              keyboardType: TextInputType.number,
-              style: const TextStyle(fontSize: 14),
-              decoration: InputDecoration(
-                labelText: l.velocityRange,
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _gate,
-              keyboardType: TextInputType.number,
-              style: const TextStyle(fontSize: 14),
-              decoration: InputDecoration(
-                labelText: l.lengthTicks,
-                border: const OutlineInputBorder(),
-                isDense: true,
-                errorText: _error,
-              ),
-              onSubmitted: (_) => _confirm(),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(l.cancel),
-        ),
-        FilledButton(onPressed: _confirm, child: Text(l.save)),
-      ],
-    );
-  }
 }

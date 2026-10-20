@@ -6,6 +6,9 @@ import '../core/ffi.dart' as rust;
 import '../core/models.dart';
 import '../painters/painters.dart';
 import '../core/theme.dart';
+import '../dialogs/inputs.dart';
+import '../dialogs/sheet.dart';
+import '../l10n/app_localizations.dart';
 
 /// 时间标尺上的标签（marker）层：pill 显示 + 点击跳转 / 长按菜单 / 拖动移动。
 ///
@@ -44,31 +47,19 @@ class _MarkerLayerState extends State<MarkerLayer> {
   }
 
   Future<void> _showMarkerMenu(RulerMarker m) async {
-    final action = await showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: YinheTheme.bg,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.edit),
-              title: const Text('重命名标签'),
-              onTap: () => Navigator.of(ctx).pop('rename'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline),
-              title: const Text('删除标签'),
-              onTap: () => Navigator.of(ctx).pop('delete'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.close),
-              title: const Text('取消'),
-              onTap: () => Navigator.of(ctx).pop(),
-            ),
-          ],
+    final l = AppLocalizations.of(context);
+    final action = await showActionSheet(
+      context,
+      cancelLabel: l.cancel,
+      actions: [
+        SheetAction(value: 'rename', label: l.markerRename, icon: Icons.edit),
+        SheetAction(
+          value: 'delete',
+          label: l.markerDelete,
+          icon: Icons.delete_outline,
+          danger: true,
         ),
-      ),
+      ],
     );
     if (!mounted || action == null) {
       return;
@@ -79,38 +70,13 @@ class _MarkerLayerState extends State<MarkerLayer> {
       }
       return;
     }
-    final controller = TextEditingController(text: m.text);
-    final text = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: YinheTheme.bg,
-        title: const Text('重命名标签', style: TextStyle(fontSize: 17)),
-        content: Padding(
-          padding: const EdgeInsets.only(top: 10),
-          child: TextField(
-            controller: controller,
-            autofocus: true,
-            style: const TextStyle(fontSize: 14),
-            decoration: const InputDecoration(
-              labelText: '标签文本',
-              border: OutlineInputBorder(),
-              isDense: true,
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
-            child: const Text('保存'),
-          ),
-        ],
-      ),
+    final text = await showTextInputDialog(
+      context,
+      title: l.markerRename,
+      label: l.markerText,
+      initial: m.text,
+      confirmText: l.save,
     );
-    Future<void>.delayed(const Duration(milliseconds: 300), controller.dispose);
     if (!mounted || text == null) {
       return;
     }
@@ -128,36 +94,14 @@ class _MarkerLayerState extends State<MarkerLayer> {
 
   /// 空白标尺长按：在该位置添加标签（文本可留空 = 显示小节位置）。
   Future<void> _addMarkerAt(double x) async {
+    final l = AppLocalizations.of(context);
     final tick = rust.tickAtX(x);
-    final controller = TextEditingController();
-    final text = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: YinheTheme.bg,
-        title: const Text('添加标签', style: TextStyle(fontSize: 17)),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          style: const TextStyle(fontSize: 14),
-          decoration: const InputDecoration(
-            labelText: '标签文本（可留空）',
-            border: OutlineInputBorder(),
-            isDense: true,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
-            child: const Text('添加'),
-          ),
-        ],
-      ),
+    final text = await showTextInputDialog(
+      context,
+      title: '${l.add} ${l.markerLabel}',
+      label: l.markerTextOptional,
+      confirmText: l.add,
     );
-    Future<void>.delayed(const Duration(milliseconds: 300), controller.dispose);
     if (!mounted || text == null) {
       return;
     }

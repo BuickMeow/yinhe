@@ -389,4 +389,16 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get toolBrush => 'ブラシ';
+
+  @override
+  String get markerRename => 'ラベルの名前を変更';
+
+  @override
+  String get markerDelete => 'ラベルを削除';
+
+  @override
+  String get markerText => 'ラベルのテキスト';
+
+  @override
+  String get markerTextOptional => 'ラベルのテキスト（空欄可）';
 }

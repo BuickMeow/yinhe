@@ -131,5 +131,9 @@
   "toolHand": "Hand",
   "toolPencil": "Pencil",
   "toolEraser": "Eraser",
-  "toolBrush": "Brush"
+  "toolBrush": "Brush",
+  "markerRename": "Rename marker",
+  "markerDelete": "Delete marker",
+  "markerText": "Marker text",
+  "markerTextOptional": "Marker text (optional)"
 }

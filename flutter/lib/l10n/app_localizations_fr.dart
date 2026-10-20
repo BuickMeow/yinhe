@@ -390,4 +390,16 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get toolBrush => 'Pinceau';
+
+  @override
+  String get markerRename => 'Renommer le marqueur';
+
+  @override
+  String get markerDelete => 'Supprimer le marqueur';
+
+  @override
+  String get markerText => 'Texte du marqueur';
+
+  @override
+  String get markerTextOptional => 'Texte du marqueur (facultatif)';
 }

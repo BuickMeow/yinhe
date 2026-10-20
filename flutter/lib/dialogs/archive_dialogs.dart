@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
 import '../l10n/app_localizations.dart';
+import 'frame.dart';
+import 'inputs.dart';
 
 /// 压缩包内的 MIDI 条目。
 class ArchiveEntryItem {
@@ -50,26 +52,15 @@ Future<int?> showArchiveEntriesDialog(
   final name = path.split('/').last;
   return showDialog<int>(
     context: context,
-    builder: (ctx) => AlertDialog(
-      backgroundColor: YinheTheme.bg,
-      title: Row(
-        children: [
-          Expanded(
-            child: Text(
-              name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 16),
-            ),
-          ),
-          Text(
-            '${entries.length} 个 MIDI',
-            style: TextStyle(color: YinheTheme.textLabel, fontSize: 12),
-          ),
-        ],
+    builder: (ctx) => YinheDialog(
+      title: name,
+      titleTrailing: Text(
+        '${entries.length} MIDI',
+        style: TextStyle(color: YinheTheme.textLabel, fontSize: 12),
       ),
+      width: 460,
+      scroll: false,
       content: SizedBox(
-        width: 460,
         height: 360,
         child: ListView.builder(
           itemCount: entries.length,
@@ -110,44 +101,12 @@ Future<int?> showArchiveEntriesDialog(
 /// 压缩包密码输入对话框；返回密码（取消 = null）。
 Future<String?> showArchivePasswordDialog(BuildContext context, String path) {
   final l = AppLocalizations.of(context);
-  final controller = TextEditingController();
   final name = path.split('/').last;
-  return showDialog<String>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      backgroundColor: YinheTheme.bg,
-      title: Text(
-        '${l.archivePasswordRequired}（$name）',
-        style: const TextStyle(fontSize: 16),
-      ),
-      content: SizedBox(
-        width: 360,
-        child: Padding(
-          padding: const EdgeInsets.only(top: 10),
-          child: TextField(
-            controller: controller,
-            autofocus: true,
-            obscureText: true,
-            style: const TextStyle(fontSize: 14),
-            decoration: InputDecoration(
-              labelText: l.password,
-              border: OutlineInputBorder(),
-              isDense: true,
-            ),
-            onSubmitted: (v) => Navigator.of(ctx).pop(v),
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(ctx).pop(),
-          child: Text(l.cancel),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(ctx).pop(controller.text),
-          child: Text(l.open),
-        ),
-      ],
-    ),
+  return showTextInputDialog(
+    context,
+    title: '${l.archivePasswordRequired}（$name）',
+    label: l.password,
+    obscure: true,
+    confirmText: l.open,
   );
 }

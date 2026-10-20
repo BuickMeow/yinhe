@@ -102,5 +102,9 @@
   "toolHand": "手のひら",
   "toolPencil": "鉛筆",
   "toolEraser": "消しゴム",
-  "toolBrush": "ブラシ"
+  "toolBrush": "ブラシ",
+  "markerRename": "ラベルの名前を変更",
+  "markerDelete": "ラベルを削除",
+  "markerText": "ラベルのテキスト",
+  "markerTextOptional": "ラベルのテキスト（空欄可）"
 }

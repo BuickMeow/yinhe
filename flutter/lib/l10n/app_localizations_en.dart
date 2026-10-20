@@ -389,4 +389,16 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get toolBrush => 'Brush';
+
+  @override
+  String get markerRename => 'Rename marker';
+
+  @override
+  String get markerDelete => 'Delete marker';
+
+  @override
+  String get markerText => 'Marker text';
+
+  @override
+  String get markerTextOptional => 'Marker text (optional)';
 }

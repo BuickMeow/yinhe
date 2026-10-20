@@ -389,4 +389,16 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get toolBrush => '브러시';
+
+  @override
+  String get markerRename => '라벨 이름 변경';
+
+  @override
+  String get markerDelete => '라벨 삭제';
+
+  @override
+  String get markerText => '라벨 텍스트';
+
+  @override
+  String get markerTextOptional => '라벨 텍스트(비워 둘 수 있음)';
 }

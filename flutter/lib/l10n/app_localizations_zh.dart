@@ -386,6 +386,18 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get toolBrush => '刷子';
+
+  @override
+  String get markerRename => '重命名标签';
+
+  @override
+  String get markerDelete => '删除标签';
+
+  @override
+  String get markerText => '标签文本';
+
+  @override
+  String get markerTextOptional => '标签文本（可留空）';
 }
 
 /// The translations for Chinese, as used in Hong Kong (`zh_HK`).
@@ -681,6 +693,18 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
 
   @override
   String get toolBrush => '刷子';
+
+  @override
+  String get markerRename => '重新命名標籤';
+
+  @override
+  String get markerDelete => '刪除標籤';
+
+  @override
+  String get markerText => '標籤文字';
+
+  @override
+  String get markerTextOptional => '標籤文字（可留空）';
 }
 
 /// The translations for Chinese, as used in Taiwan (`zh_TW`).
@@ -976,4 +1000,16 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get toolBrush => '刷子';
+
+  @override
+  String get markerRename => '重新命名標籤';
+
+  @override
+  String get markerDelete => '刪除標籤';
+
+  @override
+  String get markerText => '標籤文字';
+
+  @override
+  String get markerTextOptional => '標籤文字（可留空）';
 }

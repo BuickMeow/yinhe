@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'inputs.dart';
+
 import '../l10n/app_localizations.dart';
 import '../core/theme.dart';
 
@@ -291,10 +293,15 @@ Future<int?> showInsertNumberDialog(
   required int max,
   required int initial,
 }) {
-  return showDialog<int>(
-    context: context,
-    builder: (_) =>
-        _NumberDialog(title: title, min: min, max: max, initial: initial),
+  final l = AppLocalizations.of(context);
+  return showIntInputDialog(
+    context,
+    title: title,
+    label: l.value,
+    min: min,
+    max: max,
+    initial: initial,
+    confirmText: l.insert,
   );
 }
 
@@ -307,111 +314,17 @@ Future<int?> showInsertValueDialog(
   required int initial,
   List<(String, int)> quick = const [],
 }) {
-  return showDialog<int>(
-    context: context,
-    builder: (_) => _NumberDialog(
-      title: title,
-      min: min,
-      max: max,
-      initial: initial,
-      quick: quick,
-    ),
+  final l = AppLocalizations.of(context);
+  return showIntInputDialog(
+    context,
+    title: title,
+    label: l.value,
+    min: min,
+    max: max,
+    initial: initial,
+    quick: quick,
+    confirmText: l.insert,
   );
-}
-
-class _NumberDialog extends StatefulWidget {
-  const _NumberDialog({
-    required this.title,
-    required this.min,
-    required this.max,
-    required this.initial,
-    this.quick = const [],
-  });
-
-  final String title;
-  final int min;
-  final int max;
-  final int initial;
-  final List<(String, int)> quick;
-
-  @override
-  State<_NumberDialog> createState() => _NumberDialogState();
-}
-
-class _NumberDialogState extends State<_NumberDialog> {
-  AppLocalizations get l => AppLocalizations.of(context);
-
-  late final TextEditingController _controller = TextEditingController(
-    text: '${widget.initial}',
-  );
-  String? _error;
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _confirm() {
-    final v = int.tryParse(_controller.text.trim());
-    if (v == null || v < widget.min || v > widget.max) {
-      setState(() => _error = '请输入 ${widget.min}–${widget.max} 之间的整数');
-      return;
-    }
-    Navigator.of(context).pop(v);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      backgroundColor: YinheTheme.bg,
-      title: Text(widget.title, style: const TextStyle(fontSize: 16)),
-      content: SizedBox(
-        width: 360,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const SizedBox(height: 10),
-            TextField(
-              controller: _controller,
-              autofocus: true,
-              keyboardType: TextInputType.number,
-              style: const TextStyle(fontSize: 14),
-              decoration: InputDecoration(
-                labelText: '值（${widget.min}–${widget.max}）',
-                border: const OutlineInputBorder(),
-                isDense: true,
-                errorText: _error,
-              ),
-              onSubmitted: (_) => _confirm(),
-            ),
-            if (widget.quick.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                children: [
-                  for (final (label, value) in widget.quick)
-                    OutlinedButton(
-                      onPressed: () =>
-                          setState(() => _controller.text = '$value'),
-                      child: Text('$label（$value）'),
-                    ),
-                ],
-              ),
-            ],
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        FilledButton(onPressed: _confirm, child: const Text('插入')),
-      ],
-    );
-  }
 }
 
 /// 拍号输入（如 4/4）；返回 `(分子, 分母)`。
@@ -420,184 +333,27 @@ Future<(int, int)?> showInsertTimeSigDialog(
   int numerator = 4,
   int denominator = 4,
 }) {
-  return showDialog<(int, int)>(
-    context: context,
-    builder: (_) =>
-        _TimeSigInputDialog(numerator: numerator, denominator: denominator),
+  final l = AppLocalizations.of(context);
+  return showTimeSigInputDialog(
+    context,
+    title: l.timeSignature,
+    label: l.timeSignature,
+    numerator: numerator,
+    denominator: denominator,
   );
-}
-
-class _TimeSigInputDialog extends StatefulWidget {
-  const _TimeSigInputDialog({
-    required this.numerator,
-    required this.denominator,
-  });
-
-  final int numerator;
-  final int denominator;
-
-  @override
-  State<_TimeSigInputDialog> createState() => _TimeSigInputDialogState();
-}
-
-class _TimeSigInputDialogState extends State<_TimeSigInputDialog> {
-  AppLocalizations get l => AppLocalizations.of(context);
-
-  late final TextEditingController _sig = TextEditingController(
-    text: '${widget.numerator}/${widget.denominator}',
-  );
-  String? _error;
-
-  @override
-  void dispose() {
-    _sig.dispose();
-    super.dispose();
-  }
-
-  void _confirm() {
-    final parts = _sig.text.trim().split('/');
-    final num = parts.length == 2 ? int.tryParse(parts[0].trim()) : null;
-    final den = parts.length == 2 ? int.tryParse(parts[1].trim()) : null;
-    if (num == null ||
-        den == null ||
-        num < 1 ||
-        num > 32 ||
-        den < 1 ||
-        den > 32 ||
-        (den & (den - 1)) != 0) {
-      setState(() => _error = '格式如 4/4、3/4、6/8（分母需为 2 的幂）');
-      return;
-    }
-    Navigator.of(context).pop((num, den));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      backgroundColor: YinheTheme.bg,
-      title: const Text('拍号 Time Signature', style: TextStyle(fontSize: 16)),
-      content: SizedBox(
-        width: 340,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const SizedBox(height: 10),
-            TextField(
-              controller: _sig,
-              autofocus: true,
-              style: const TextStyle(fontSize: 14),
-              decoration: InputDecoration(
-                labelText: '拍号',
-                border: const OutlineInputBorder(),
-                isDense: true,
-                errorText: _error,
-              ),
-              onSubmitted: (_) => _confirm(),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        FilledButton(onPressed: _confirm, child: const Text('插入')),
-      ],
-    );
-  }
 }
 
 /// 调号输入；返回 `(主音 0=C..11=B, 0=大调 1=自然小调)`。
 Future<(int, int)?> showInsertKeySigDialog(BuildContext context) {
-  return showDialog<(int, int)>(
-    context: context,
-    builder: (_) => const _KeySigInputDialog(),
+  final l = AppLocalizations.of(context);
+  return showKeySigInputDialog(
+    context,
+    title: l.keySignature,
+    rootLabel: l.root,
+    scaleLabel: l.scale,
+    majorLabel: l.major,
+    minorLabel: l.minor,
   );
-}
-
-class _KeySigInputDialog extends StatefulWidget {
-  const _KeySigInputDialog();
-
-  @override
-  State<_KeySigInputDialog> createState() => _KeySigInputDialogState();
-}
-
-class _KeySigInputDialogState extends State<_KeySigInputDialog> {
-  AppLocalizations get l => AppLocalizations.of(context);
-
-  static const _roots = [
-    'C',
-    'C#',
-    'D',
-    'D#',
-    'E',
-    'F',
-    'F#',
-    'G',
-    'G#',
-    'A',
-    'A#',
-    'B',
-  ];
-  int _root = 0;
-  int _scale = 0;
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      backgroundColor: YinheTheme.bg,
-      title: const Text('调号 Key Signature', style: TextStyle(fontSize: 16)),
-      content: SizedBox(
-        width: 380,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const SizedBox(height: 10),
-            DropdownButtonFormField<int>(
-              initialValue: _root,
-              decoration: const InputDecoration(
-                labelText: '主音',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-              items: [
-                for (var i = 0; i < _roots.length; i++)
-                  DropdownMenuItem(value: i, child: Text(_roots[i])),
-              ],
-              onChanged: (v) => setState(() => _root = v ?? _root),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<int>(
-              initialValue: _scale,
-              decoration: const InputDecoration(
-                labelText: '调式',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-              items: const [
-                DropdownMenuItem(value: 0, child: Text('大调 Major')),
-                DropdownMenuItem(value: 1, child: Text('自然小调 Minor')),
-              ],
-              onChanged: (v) => setState(() => _scale = v ?? _scale),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop((_root, _scale)),
-          child: const Text('插入'),
-        ),
-      ],
-    );
-  }
 }
 
 /// 单行文本输入（标签名等）。
@@ -606,66 +362,12 @@ Future<String?> showInsertTextDialog(
   required String title,
   String initial = '',
 }) {
-  return showDialog<String>(
-    context: context,
-    builder: (_) => _TextInputDialog(title: title, initial: initial),
+  final l = AppLocalizations.of(context);
+  return showTextInputDialog(
+    context,
+    title: title,
+    label: l.value,
+    initial: initial,
+    confirmText: l.ok,
   );
-}
-
-class _TextInputDialog extends StatefulWidget {
-  const _TextInputDialog({required this.title, required this.initial});
-
-  final String title;
-  final String initial;
-
-  @override
-  State<_TextInputDialog> createState() => _TextInputDialogState();
-}
-
-class _TextInputDialogState extends State<_TextInputDialog> {
-  AppLocalizations get l => AppLocalizations.of(context);
-
-  late final TextEditingController _c = TextEditingController(
-    text: widget.initial,
-  );
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      backgroundColor: YinheTheme.bg,
-      title: Text(widget.title, style: const TextStyle(fontSize: 16)),
-      content: SizedBox(
-        width: 340,
-        child: Padding(
-          padding: const EdgeInsets.only(top: 10),
-          child: TextField(
-            controller: _c,
-            autofocus: true,
-            style: const TextStyle(fontSize: 14),
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              isDense: true,
-            ),
-            onSubmitted: (v) => Navigator.of(context).pop(v),
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(_c.text),
-          child: const Text('确定'),
-        ),
-      ],
-    );
-  }
 }

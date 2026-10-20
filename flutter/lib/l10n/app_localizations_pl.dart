@@ -390,4 +390,16 @@ class AppLocalizationsPl extends AppLocalizations {
 
   @override
   String get toolBrush => 'Pędzel';
+
+  @override
+  String get markerRename => 'Zmień nazwę znacznika';
+
+  @override
+  String get markerDelete => 'Usuń znacznik';
+
+  @override
+  String get markerText => 'Tekst znacznika';
+
+  @override
+  String get markerTextOptional => 'Tekst znacznika (opcjonalnie)';
 }

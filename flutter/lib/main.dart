@@ -9,6 +9,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import 'core/ffi.dart' as rust;
+import 'core/snack.dart';
 import 'dialogs/add_tracks_dialog.dart';
 import 'widgets/automation_panel.dart';
 import 'menus/canvas_menus.dart';
@@ -465,8 +466,7 @@ class _StudioShellState extends State<StudioShell>
       }
     }
     if (meta.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(l.openFirst)));
+      showSnack(context, l.openFirst);
       return;
     }
     rust.resetTouch();
@@ -546,9 +546,7 @@ class _StudioShellState extends State<StudioShell>
         _archivePolling = false;
         _closeArchiveBusy();
         final err = _readArchiveError();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(err.isEmpty ? l.archiveOpenFailed : err)),
-        );
+        showSnack(context, err.isEmpty ? l.archiveOpenFailed : err);
       default:
         break;
     }
@@ -584,8 +582,7 @@ class _StudioShellState extends State<StudioShell>
     final json = _readArchiveJson();
     final entries = parseArchiveEntries(json);
     if (entries.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(l.noMidiInArchive)));
+      showSnack(context, l.noMidiInArchive);
       return;
     }
     final path = json['path'] as String? ?? '';
@@ -649,8 +646,7 @@ class _StudioShellState extends State<StudioShell>
 
   Future<void> _saveProject({bool saveAs = false}) async {
     if (_tracks.value.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(l.openFirst)));
+      showSnack(context, l.openFirst);
       return;
     }
     // 顶栏保存按钮转圈；导出+写盘期间保持，完成/取消后由超时兜底复位。
@@ -682,8 +678,7 @@ class _StudioShellState extends State<StudioShell>
       _savingTimer = null;
       if (mounted) {
         setState(() => _saving = false);
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(l.exportFailed)));
+        showSnack(context, l.exportFailed);
       }
       return;
     }
@@ -1334,9 +1329,7 @@ class _StudioShellState extends State<StudioShell>
       context,
       onCopy: () {
         if (rust.copySelection() == 1) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(l.copied), duration: Duration(seconds: 1)),
-          );
+          showSnack(context, l.copied, duration: const Duration(seconds: 1));
         }
       },
     );

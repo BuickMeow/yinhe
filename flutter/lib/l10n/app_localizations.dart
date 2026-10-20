@@ -871,6 +871,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Brush'**
   String get toolBrush;
+
+  /// No description provided for @markerRename.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename marker'**
+  String get markerRename;
+
+  /// No description provided for @markerDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete marker'**
+  String get markerDelete;
+
+  /// No description provided for @markerText.
+  ///
+  /// In en, this message translates to:
+  /// **'Marker text'**
+  String get markerText;
+
+  /// No description provided for @markerTextOptional.
+  ///
+  /// In en, this message translates to:
+  /// **'Marker text (optional)'**
+  String get markerTextOptional;
 }
 
 class _AppLocalizationsDelegate

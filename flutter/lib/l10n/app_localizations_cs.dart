@@ -390,4 +390,16 @@ class AppLocalizationsCs extends AppLocalizations {
 
   @override
   String get toolBrush => 'Štětec';
+
+  @override
+  String get markerRename => 'Přejmenovat značku';
+
+  @override
+  String get markerDelete => 'Smazat značku';
+
+  @override
+  String get markerText => 'Text značky';
+
+  @override
+  String get markerTextOptional => 'Text značky (volitelné)';
 }

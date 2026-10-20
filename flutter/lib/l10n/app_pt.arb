@@ -102,5 +102,9 @@
   "toolHand": "Panorâmica",
   "toolPencil": "Lápis",
   "toolEraser": "Borracha",
-  "toolBrush": "Pincel"
+  "toolBrush": "Pincel",
+  "markerRename": "Renomear marcador",
+  "markerDelete": "Excluir marcador",
+  "markerText": "Texto do marcador",
+  "markerTextOptional": "Texto do marcador (opcional)"
 }

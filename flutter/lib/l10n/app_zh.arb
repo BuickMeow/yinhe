@@ -131,5 +131,9 @@
   "toolHand": "手形",
   "toolPencil": "铅笔",
   "toolEraser": "橡皮擦",
-  "toolBrush": "刷子"
+  "toolBrush": "刷子",
+  "markerRename": "重命名标签",
+  "markerDelete": "删除标签",
+  "markerText": "标签文本",
+  "markerTextOptional": "标签文本（可留空）"
 }

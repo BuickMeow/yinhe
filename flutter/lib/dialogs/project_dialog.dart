@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
 import '../l10n/app_localizations.dart';
+import 'frame.dart';
 
 /// 工程设置对话框（歌名/艺术家/PPQ/简介）。
 class ProjectDialog extends StatefulWidget {
@@ -70,44 +71,13 @@ class _ProjectDialogState extends State<ProjectDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      backgroundColor: YinheTheme.bg,
-      title: Row(
-        children: [
-          Text(l.projectSettings, style: TextStyle(fontSize: 18)),
-          const Spacer(),
-          Text(
-            l.notesCount(widget.noteCount),
-            style: TextStyle(color: YinheTheme.textLabel, fontSize: 12),
-          ),
-        ],
+    return YinheDialog(
+      title: l.projectSettings,
+      titleTrailing: Text(
+        l.notesCount(widget.noteCount),
+        style: TextStyle(color: YinheTheme.textLabel, fontSize: 12),
       ),
-      content: SizedBox(
-        width: 420,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 10),
-              _field(_name, l.songTitle),
-              const SizedBox(height: 12),
-              _field(_artist, l.artist),
-              const SizedBox(height: 12),
-              _field(_ppq, l.ppq, keyboardType: TextInputType.number),
-              const SizedBox(height: 12),
-              _field(_desc, l.description, maxLines: 3),
-              if (_error != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 10),
-                  child: Text(
-                    _error!,
-                    style: TextStyle(color: YinheTheme.danger, fontSize: 12),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
+      width: 420,
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
@@ -115,6 +85,26 @@ class _ProjectDialogState extends State<ProjectDialog> {
         ),
         FilledButton(onPressed: _save, child: Text(l.save)),
       ],
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _field(_name, l.songTitle),
+          const SizedBox(height: 12),
+          _field(_artist, l.artist),
+          const SizedBox(height: 12),
+          _field(_ppq, l.ppq, keyboardType: TextInputType.number),
+          const SizedBox(height: 12),
+          _field(_desc, l.description, maxLines: 3),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Text(
+                _error!,
+                style: TextStyle(color: YinheTheme.danger, fontSize: 12),
+              ),
+            ),
+        ],
+      ),
     );
   }
 

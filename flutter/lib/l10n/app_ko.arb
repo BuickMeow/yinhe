@@ -102,5 +102,9 @@
   "toolHand": "손바닥",
   "toolPencil": "연필",
   "toolEraser": "지우개",
-  "toolBrush": "브러시"
+  "toolBrush": "브러시",
+  "markerRename": "라벨 이름 변경",
+  "markerDelete": "라벨 삭제",
+  "markerText": "라벨 텍스트",
+  "markerTextOptional": "라벨 텍스트(비워 둘 수 있음)"
 }

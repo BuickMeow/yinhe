@@ -390,4 +390,16 @@ class AppLocalizationsTr extends AppLocalizations {
 
   @override
   String get toolBrush => 'Fırça';
+
+  @override
+  String get markerRename => 'İşaretçiyi yeniden adlandır';
+
+  @override
+  String get markerDelete => 'İşaretçiyi sil';
+
+  @override
+  String get markerText => 'İşaretçi metni';
+
+  @override
+  String get markerTextOptional => 'İşaretçi metni (isteğe bağlı)';
 }

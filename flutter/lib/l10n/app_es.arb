@@ -102,5 +102,9 @@
   "toolHand": "Desplazar",
   "toolPencil": "Lápiz",
   "toolEraser": "Borrador",
-  "toolBrush": "Pincel"
+  "toolBrush": "Pincel",
+  "markerRename": "Cambiar nombre del marcador",
+  "markerDelete": "Eliminar marcador",
+  "markerText": "Texto del marcador",
+  "markerTextOptional": "Texto del marcador (opcional)"
 }
