@@ -8,7 +8,7 @@ import 'bar_beat.dart';
 import 'ffi.dart' as rust;
 import 'insert_flow.dart';
 import 'theme.dart';
-import 'l10n.dart';
+import 'l10n/app_localizations.dart';
 
 /// 事件列表（移动端）：音符 + 自动化 + Tempo/标签穿插，按
 /// 时间 → 音高/值 → 时长排序。
@@ -44,6 +44,8 @@ class EventListDialog extends StatefulWidget {
 }
 
 class _EventListDialogState extends State<EventListDialog> {
+  AppLocalizations get l => AppLocalizations.of(context);
+
   static const int _pageSize = 300;
 
   final List<Map<String, dynamic>> _rows = [];
@@ -246,33 +248,33 @@ class _EventListDialogState extends State<EventListDialog> {
             const Divider(height: 1),
             ListTile(
               leading: const Icon(Icons.edit),
-              title: Text(tr('修改')),
+              title: Text(l.edit),
               onTap: () => Navigator.of(ctx).pop('edit'),
             ),
             ListTile(
               leading: const Icon(Icons.copy),
-              title: Text(tr('复制')),
+              title: Text(l.copy),
               onTap: () => Navigator.of(ctx).pop('copy'),
             ),
             ListTile(
               leading: const Icon(Icons.content_paste),
-              title: Text(tr('粘贴（同时间位置）')),
+              title: Text(l.pasteSameTime),
               enabled: _copied != null,
               onTap: () => Navigator.of(ctx).pop('paste'),
             ),
             ListTile(
               leading: Icon(Icons.delete_outline, color: YinheTheme.danger),
-              title: Text(tr('删除'), style: TextStyle(color: YinheTheme.danger)),
+              title: Text(l.delete, style: TextStyle(color: YinheTheme.danger)),
               onTap: () => Navigator.of(ctx).pop('delete'),
             ),
             ListTile(
               leading: const Icon(Icons.my_location),
-              title: Text(tr('前往该地点')),
+              title: Text(l.goToLocation),
               onTap: () => Navigator.of(ctx).pop('jump'),
             ),
             ListTile(
               leading: const Icon(Icons.close),
-              title: Text(tr('取消')),
+              title: Text(l.cancel),
               onTap: () => Navigator.of(ctx).pop(),
             ),
           ],
@@ -290,7 +292,7 @@ class _EventListDialogState extends State<EventListDialog> {
           _copied = row;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(tr('已复制事件')),
+              content: Text(l.eventCopied),
               duration: Duration(seconds: 1),
             ),
           );
@@ -422,7 +424,7 @@ class _EventListDialogState extends State<EventListDialog> {
                   ),
                   const SizedBox(width: 4),
                   Text(
-                    tr('事件列表'),
+                    l.eventList,
                     style: TextStyle(color: YinheTheme.text, fontSize: 15),
                   ),
                   const Spacer(),
@@ -445,7 +447,7 @@ class _EventListDialogState extends State<EventListDialog> {
                       child: _loading
                           ? const CircularProgressIndicator()
                           : Text(
-                              tr('没有事件'),
+                              l.noEvents,
                               style: TextStyle(
                                 color: YinheTheme.textDisabled,
                                 fontSize: 13,
@@ -470,7 +472,7 @@ class _EventListDialogState extends State<EventListDialog> {
                                     )
                                   : TextButton(
                                       onPressed: _loadMore,
-                                      child: Text(tr('加载更多')),
+                                      child: Text(l.loadMore),
                                     ),
                             ),
                           );
@@ -534,6 +536,8 @@ class _NoteEditDialog extends StatefulWidget {
 }
 
 class _NoteEditDialogState extends State<_NoteEditDialog> {
+  AppLocalizations get l => AppLocalizations.of(context);
+
   late final TextEditingController _vel = TextEditingController(
     text: '${widget.velocity}',
   );
@@ -563,7 +567,7 @@ class _NoteEditDialogState extends State<_NoteEditDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       backgroundColor: YinheTheme.bg,
-      title: Text(tr('修改音符'), style: TextStyle(fontSize: 16)),
+      title: Text(l.editNote, style: TextStyle(fontSize: 16)),
       content: SizedBox(
         width: 340,
         child: Column(
@@ -577,7 +581,7 @@ class _NoteEditDialogState extends State<_NoteEditDialog> {
               keyboardType: TextInputType.number,
               style: const TextStyle(fontSize: 14),
               decoration: InputDecoration(
-                labelText: tr('力度（1–127）'),
+                labelText: l.velocityRange,
                 border: OutlineInputBorder(),
                 isDense: true,
               ),
@@ -588,7 +592,7 @@ class _NoteEditDialogState extends State<_NoteEditDialog> {
               keyboardType: TextInputType.number,
               style: const TextStyle(fontSize: 14),
               decoration: InputDecoration(
-                labelText: tr('长度（tick）'),
+                labelText: l.lengthTicks,
                 border: const OutlineInputBorder(),
                 isDense: true,
                 errorText: _error,
@@ -601,9 +605,9 @@ class _NoteEditDialogState extends State<_NoteEditDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: Text(tr('取消')),
+          child: Text(l.cancel),
         ),
-        FilledButton(onPressed: _confirm, child: Text(tr('保存'))),
+        FilledButton(onPressed: _confirm, child: Text(l.save)),
       ],
     );
   }

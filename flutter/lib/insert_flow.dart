@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'l10n.dart';
+import 'l10n/app_localizations.dart';
 import 'theme.dart';
 
 /// 插入目标描述。
@@ -162,19 +162,36 @@ int insertDefaultValue(int kind, int number) {
 }
 
 /// 值输入标题（含中心提示）。
-String insertValueTitle(int kind, int number) {
+String insertValueTitle(AppLocalizations l, int kind, int number) {
   switch (kind) {
     case 0:
-      return '速度 BPM';
+      return l.tempoValueTitle;
     case 1:
-      return 'Pitch Bend（0–16383，8192 = 中心）';
+      return l.pitchBendValueTitle;
     case 2:
-      return 'CC $number ${ccInsertLabel(number)}（0–127）';
+      return '${ccInsertLabel(number)}（0–127）';
     case 3:
-      return 'RPN $number ${rpnInsertLabel(number)}'
+      return '${rpnInsertLabel(number)}'
           '（${insertDisplayMax(kind, number) == 127 ? '0–127' : '0–16383'}）';
   }
-  return '值';
+  return l.value;
+}
+
+/// 插入项本地化文案（CC/RPN 名称为 MIDI 技术名，不翻译）。
+String _choiceLabel(AppLocalizations l, InsertChoice c) {
+  if (c.custom) {
+    return c.kind == 2 ? l.customCc : l.customRpn;
+  }
+  return switch (c.kind) {
+    0 => l.tempo,
+    1 => l.pitchBend,
+    2 => ccInsertLabel(c.number),
+    3 => rpnInsertLabel(c.number),
+    4 => l.timeSignature,
+    5 => l.keySignature,
+    6 => l.marker,
+    _ => c.label,
+  };
 }
 
 /// 插入菜单：选择要插入的事件。返回 null = 取消。
@@ -182,6 +199,7 @@ Future<InsertChoice?> showInsertMenu(
   BuildContext context, {
   required bool conductor,
 }) {
+  final l = AppLocalizations.of(context);
   final items = conductor
       ? <(IconData, InsertChoice)>[
           // Conductor 可插的全局事件：Tempo / 拍号 / 调号 / 标签。
@@ -249,7 +267,7 @@ Future<InsertChoice?> showInsertMenu(
               for (final (icon, choice) in items)
                 ListTile(
                   leading: Icon(icon),
-                  title: Text(tr(choice.label)),
+                  title: Text(_choiceLabel(l, choice)),
                   onTap: () => Navigator.of(ctx).pop(choice),
                 ),
               ListTile(
@@ -321,6 +339,8 @@ class _NumberDialog extends StatefulWidget {
 }
 
 class _NumberDialogState extends State<_NumberDialog> {
+  AppLocalizations get l => AppLocalizations.of(context);
+
   late final TextEditingController _controller = TextEditingController(
     text: '${widget.initial}',
   );
@@ -421,6 +441,8 @@ class _TimeSigInputDialog extends StatefulWidget {
 }
 
 class _TimeSigInputDialogState extends State<_TimeSigInputDialog> {
+  AppLocalizations get l => AppLocalizations.of(context);
+
   late final TextEditingController _sig = TextEditingController(
     text: '${widget.numerator}/${widget.denominator}',
   );
@@ -503,6 +525,8 @@ class _KeySigInputDialog extends StatefulWidget {
 }
 
 class _KeySigInputDialogState extends State<_KeySigInputDialog> {
+  AppLocalizations get l => AppLocalizations.of(context);
+
   static const _roots = [
     'C',
     'C#',
@@ -599,6 +623,8 @@ class _TextInputDialog extends StatefulWidget {
 }
 
 class _TextInputDialogState extends State<_TextInputDialog> {
+  AppLocalizations get l => AppLocalizations.of(context);
+
   late final TextEditingController _c = TextEditingController(
     text: widget.initial,
   );

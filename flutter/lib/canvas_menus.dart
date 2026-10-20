@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 
 import 'theme.dart';
-import 'l10n.dart';
+import 'l10n/app_localizations.dart';
 
 /// 长按选框未移动：复制菜单。
 Future<void> showSelectionMenu(
   BuildContext context, {
   required VoidCallback onCopy,
 }) {
+  final l = AppLocalizations.of(context);
   return showModalBottomSheet<void>(
     context: context,
     backgroundColor: YinheTheme.bg,
@@ -17,7 +18,7 @@ Future<void> showSelectionMenu(
         children: [
           ListTile(
             leading: const Icon(Icons.copy),
-            title: const Text('复制'),
+            title: Text(l.copy),
             onTap: () {
               Navigator.of(ctx).pop();
               onCopy();
@@ -25,7 +26,7 @@ Future<void> showSelectionMenu(
           ),
           ListTile(
             leading: const Icon(Icons.close),
-            title: Text(tr('取消')),
+            title: Text(l.cancel),
             onTap: () => Navigator.of(ctx).pop(),
           ),
         ],
@@ -41,6 +42,7 @@ Future<void> showEmptyLongPressMenu(
   required VoidCallback onPaste,
   required VoidCallback? onInsert,
 }) {
+  final l = AppLocalizations.of(context);
   return showModalBottomSheet<void>(
     context: context,
     backgroundColor: YinheTheme.bg,
@@ -70,7 +72,7 @@ Future<void> showEmptyLongPressMenu(
           ),
           ListTile(
             leading: const Icon(Icons.close),
-            title: Text(tr('取消')),
+            title: Text(l.cancel),
             onTap: () => Navigator.of(ctx).pop(),
           ),
         ],
@@ -86,6 +88,7 @@ Future<void> showTrackMenu(
   VoidCallback? onDelete,
   VoidCallback? onEvents,
 }) {
+  final l = AppLocalizations.of(context);
   return showModalBottomSheet<void>(
     context: context,
     backgroundColor: YinheTheme.bg,
@@ -95,7 +98,7 @@ Future<void> showTrackMenu(
         children: [
           ListTile(
             leading: const Icon(Icons.edit),
-            title: Text(tr('编辑音轨信息')),
+            title: Text(l.editTrackInfo),
             onTap: () {
               Navigator.of(ctx).pop();
               onEdit();
@@ -104,7 +107,7 @@ Future<void> showTrackMenu(
           if (onEvents != null)
             ListTile(
               leading: const Icon(Icons.format_list_bulleted),
-              title: Text(tr('事件列表')),
+              title: Text(l.eventList),
               onTap: () {
                 Navigator.of(ctx).pop();
                 onEvents();
@@ -114,7 +117,7 @@ Future<void> showTrackMenu(
             ListTile(
               leading: Icon(Icons.delete_outline, color: YinheTheme.danger),
               title: Text(
-                tr('删除音轨'),
+                l.deleteTrack,
                 style: TextStyle(color: YinheTheme.danger),
               ),
               onTap: () {
@@ -124,7 +127,7 @@ Future<void> showTrackMenu(
             ),
           ListTile(
             leading: const Icon(Icons.close),
-            title: Text(tr('取消')),
+            title: Text(l.cancel),
             onTap: () => Navigator.of(ctx).pop(),
           ),
         ],

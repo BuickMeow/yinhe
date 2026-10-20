@@ -5,7 +5,6 @@ import 'dart:ffi' as ffi;
 import 'package:ffi/ffi.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
@@ -16,6 +15,7 @@ import 'canvas_menus.dart';
 import 'home_view.dart';
 import 'insert_flow.dart';
 import 'l10n.dart';
+import 'l10n/app_localizations.dart';
 import 'long_press_indicator_painter.dart';
 import 'models.dart';
 import 'ruler_markers.dart';
@@ -59,20 +59,8 @@ class YinheApp extends StatelessWidget {
         debugShowCheckedModeBanner: false,
         theme: YinheTheme.data(),
         locale: L10n.locale,
-        supportedLocales: [
-          for (final code in L10n.supported)
-            Locale.fromSubtags(
-              languageCode: code.split('-').first,
-              countryCode: code.split('-').length > 1
-                  ? code.split('-')[1]
-                  : null,
-            ),
-        ],
-        localizationsDelegates: const [
-          GlobalMaterialLocalizations.delegate,
-          GlobalWidgetsLocalizations.delegate,
-          GlobalCupertinoLocalizations.delegate,
-        ],
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: const StudioShell(),
       ),
     );
@@ -89,6 +77,8 @@ class StudioShell extends StatefulWidget {
 
 class _StudioShellState extends State<StudioShell>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+  AppLocalizations get l => AppLocalizations.of(context);
+
   static const MethodChannel _channel = MethodChannel('yinhe/surface');
 
   int? _textureId;
@@ -476,7 +466,7 @@ class _StudioShellState extends State<StudioShell>
     }
     if (meta.isEmpty) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(tr('请先打开 MIDI 或新建工程'))));
+          .showSnackBar(SnackBar(content: Text(l.openFirst)));
       return;
     }
     rust.resetTouch();
@@ -557,7 +547,7 @@ class _StudioShellState extends State<StudioShell>
         _closeArchiveBusy();
         final err = _readArchiveError();
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(err.isEmpty ? tr('压缩包打开失败') : err)),
+          SnackBar(content: Text(err.isEmpty ? l.archiveOpenFailed : err)),
         );
       default:
         break;
@@ -595,7 +585,7 @@ class _StudioShellState extends State<StudioShell>
     final entries = parseArchiveEntries(json);
     if (entries.isEmpty) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(tr('压缩包里没有 MIDI 文件'))));
+          .showSnackBar(SnackBar(content: Text(l.noMidiInArchive)));
       return;
     }
     final path = json['path'] as String? ?? '';
@@ -660,7 +650,7 @@ class _StudioShellState extends State<StudioShell>
   Future<void> _saveProject({bool saveAs = false}) async {
     if (_tracks.value.isEmpty) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(tr('请先打开 MIDI 或新建工程'))));
+          .showSnackBar(SnackBar(content: Text(l.openFirst)));
       return;
     }
     // 顶栏保存按钮转圈；导出+写盘期间保持，完成/取消后由超时兜底复位。
@@ -693,7 +683,7 @@ class _StudioShellState extends State<StudioShell>
       if (mounted) {
         setState(() => _saving = false);
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(tr('工程导出失败'))));
+            .showSnackBar(SnackBar(content: Text(l.exportFailed)));
       }
       return;
     }
@@ -1345,7 +1335,7 @@ class _StudioShellState extends State<StudioShell>
       onCopy: () {
         if (rust.copySelection() == 1) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(tr('已复制')), duration: Duration(seconds: 1)),
+            SnackBar(content: Text(l.copied), duration: Duration(seconds: 1)),
           );
         }
       },
@@ -1410,7 +1400,7 @@ class _StudioShellState extends State<StudioShell>
       if (choice.kind == 6) {
         final text = await showInsertTextDialog(
           context,
-          title: tr('标签 Marker'),
+          title: l.marker,
           initial: 'Marker',
         );
         if (!mounted || text == null) {
@@ -1431,7 +1421,7 @@ class _StudioShellState extends State<StudioShell>
       if (choice.custom) {
         final n = await showInsertNumberDialog(
           context,
-          title: kind == 2 ? tr('自定义 CC 号') : tr('自定义 RPN 号'),
+          title: kind == 2 ? l.customCcTitle : l.customRpnTitle,
           min: 0,
           max: kind == 2 ? 127 : 16383,
           initial: kind == 2 ? 1 : 3,
@@ -1457,7 +1447,7 @@ class _StudioShellState extends State<StudioShell>
           : const <(String, int)>[];
       final v = await showInsertValueDialog(
         context,
-        title: insertValueTitle(kind, number),
+        title: insertValueTitle(l, kind, number),
         min: minValue,
         max: maxValue,
         initial: initial,

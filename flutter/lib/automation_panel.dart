@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'ffi.dart' as rust;
 import 'models.dart';
 import 'painters.dart';
-import 'l10n.dart';
+import 'l10n/app_localizations.dart';
 import 'theme.dart';
 
 /// PR 底部自动化栏（高 81）：combo 列 + 自动化/力度绘制 + 锚点拖动。
@@ -32,6 +32,8 @@ class AutomationPanel extends StatefulWidget {
 }
 
 class _AutomationPanelState extends State<AutomationPanel> {
+  AppLocalizations get l => AppLocalizations.of(context);
+
   int _autoIndex = 0;
   final ValueNotifier<(double, double)?> _autoPreview = ValueNotifier(null);
   bool _draggingAnchor = false;
@@ -161,7 +163,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
                   ),
                   Expanded(
                     child: PopupMenuButton<int>(
-                      tooltip: tr('自动化类型'),
+                      tooltip: l.automationType,
                       padding: EdgeInsets.zero,
                       itemBuilder: (_) => [
                         for (var i = 0; i < names.length; i++)

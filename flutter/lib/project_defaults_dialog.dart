@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'theme.dart';
-import 'l10n.dart';
+import 'l10n/app_localizations.dart';
 
 /// 本工程默认 BPM / 拍号编辑对话框。
 ///
@@ -38,6 +38,8 @@ class _BpmDialog extends StatefulWidget {
 }
 
 class _BpmDialogState extends State<_BpmDialog> {
+  AppLocalizations get l => AppLocalizations.of(context);
+
   late final TextEditingController _bpm = TextEditingController(
     text: _fmt(widget.initial),
   );
@@ -55,7 +57,7 @@ class _BpmDialogState extends State<_BpmDialog> {
   void _save() {
     final v = double.tryParse(_bpm.text.trim());
     if (v == null || v < 0 || v > 60000000) {
-      setState(() => _error = tr('BPM 需为 0–60000000'));
+      setState(() => _error = l.bpmError);
       return;
     }
     Navigator.of(context).pop(v);
@@ -65,7 +67,7 @@ class _BpmDialogState extends State<_BpmDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       backgroundColor: YinheTheme.bg,
-      title: Text(tr('本工程默认 BPM'), style: TextStyle(fontSize: 18)),
+      title: Text(l.defaultBpm, style: TextStyle(fontSize: 18)),
       content: SizedBox(
         width: 320,
         child: Column(
@@ -80,7 +82,7 @@ class _BpmDialogState extends State<_BpmDialog> {
               keyboardType: TextInputType.number,
               style: const TextStyle(fontSize: 14),
               decoration: InputDecoration(
-                labelText: tr('BPM（0–60000000）'),
+                labelText: l.bpmField,
                 border: OutlineInputBorder(),
                 isDense: true,
               ),
@@ -100,9 +102,9 @@ class _BpmDialogState extends State<_BpmDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: Text(tr('取消')),
+          child: Text(l.cancel),
         ),
-        FilledButton(onPressed: _save, child: Text(tr('保存'))),
+        FilledButton(onPressed: _save, child: Text(l.save)),
       ],
     );
   }
@@ -119,6 +121,8 @@ class _TimeSigDialog extends StatefulWidget {
 }
 
 class _TimeSigDialogState extends State<_TimeSigDialog> {
+  AppLocalizations get l => AppLocalizations.of(context);
+
   late final TextEditingController _sig = TextEditingController(
     text: '${widget.num}/${widget.den}',
   );
@@ -162,7 +166,7 @@ class _TimeSigDialogState extends State<_TimeSigDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       backgroundColor: YinheTheme.bg,
-      title: Text(tr('本工程默认拍号'), style: TextStyle(fontSize: 18)),
+      title: Text(l.defaultTimeSig, style: TextStyle(fontSize: 18)),
       content: SizedBox(
         width: 320,
         child: Column(
@@ -176,7 +180,7 @@ class _TimeSigDialogState extends State<_TimeSigDialog> {
               keyboardType: TextInputType.text,
               style: const TextStyle(fontSize: 14),
               decoration: InputDecoration(
-                labelText: tr('拍号（如 4/4）'),
+                labelText: l.timeSigField,
                 border: OutlineInputBorder(),
                 isDense: true,
               ),
@@ -196,9 +200,9 @@ class _TimeSigDialogState extends State<_TimeSigDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: Text(tr('取消')),
+          child: Text(l.cancel),
         ),
-        FilledButton(onPressed: _save, child: Text(tr('保存'))),
+        FilledButton(onPressed: _save, child: Text(l.save)),
       ],
     );
   }

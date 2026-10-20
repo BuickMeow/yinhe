@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'theme.dart';
-import 'l10n.dart';
+import 'l10n/app_localizations.dart';
 
 /// 压缩包内的 MIDI 条目。
 class ArchiveEntryItem {
@@ -46,6 +46,7 @@ Future<int?> showArchiveEntriesDialog(
   required String path,
   required List<ArchiveEntryItem> entries,
 }) {
+  final l = AppLocalizations.of(context);
   final name = path.split('/').last;
   return showDialog<int>(
     context: context,
@@ -99,7 +100,7 @@ Future<int?> showArchiveEntriesDialog(
       actions: [
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(),
-          child: Text(tr('取消')),
+          child: Text(l.cancel),
         ),
       ],
     ),
@@ -108,6 +109,7 @@ Future<int?> showArchiveEntriesDialog(
 
 /// 压缩包密码输入对话框；返回密码（取消 = null）。
 Future<String?> showArchivePasswordDialog(BuildContext context, String path) {
+  final l = AppLocalizations.of(context);
   final controller = TextEditingController();
   final name = path.split('/').last;
   return showDialog<String>(
@@ -115,7 +117,7 @@ Future<String?> showArchivePasswordDialog(BuildContext context, String path) {
     builder: (ctx) => AlertDialog(
       backgroundColor: YinheTheme.bg,
       title: Text(
-        '${tr('压缩包需要密码')}（$name）',
+        '${l.archivePasswordRequired}（$name）',
         style: const TextStyle(fontSize: 16),
       ),
       content: SizedBox(
@@ -128,7 +130,7 @@ Future<String?> showArchivePasswordDialog(BuildContext context, String path) {
             obscureText: true,
             style: const TextStyle(fontSize: 14),
             decoration: InputDecoration(
-              labelText: tr('密码'),
+              labelText: l.password,
               border: OutlineInputBorder(),
               isDense: true,
             ),
@@ -139,11 +141,11 @@ Future<String?> showArchivePasswordDialog(BuildContext context, String path) {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(),
-          child: Text(tr('取消')),
+          child: Text(l.cancel),
         ),
         FilledButton(
           onPressed: () => Navigator.of(ctx).pop(controller.text),
-          child: Text(tr('打开')),
+          child: Text(l.open),
         ),
       ],
     ),

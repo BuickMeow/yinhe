@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'models.dart';
 import 'theme.dart';
-import 'l10n.dart';
+import 'l10n/app_localizations.dart';
 import 'tools.dart';
 
 /// 顶部栏：左侧视图入口 + 走带，右侧量化/工具/撤销重做；
@@ -94,6 +94,7 @@ class TopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
     return Container(
       height: 42,
       padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -110,7 +111,7 @@ class TopBar extends StatelessWidget {
                 onPressed: isPr ? onBack : onHome,
                 icon: Icon(isPr ? Icons.arrow_back : Icons.home),
                 color: YinheTheme.text,
-                tooltip: isPr ? tr('返回走带') : tr('主页'),
+                tooltip: isPr ? l.backToArrangement : l.home,
                 visualDensity: VisualDensity.compact,
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
@@ -119,7 +120,7 @@ class TopBar extends StatelessWidget {
                 onPressed: onTogglePlay,
                 icon: Icon(playing ? Icons.pause : Icons.play_arrow),
                 color: YinheTheme.text,
-                tooltip: playing ? tr('暂停') : tr('播放'),
+                tooltip: playing ? l.pause : l.play,
                 visualDensity: VisualDensity.compact,
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
@@ -128,7 +129,7 @@ class TopBar extends StatelessWidget {
                 onPressed: onStop,
                 icon: const Icon(Icons.stop),
                 color: YinheTheme.textSecondary,
-                tooltip: tr('停止'),
+                tooltip: l.stop,
                 visualDensity: VisualDensity.compact,
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
@@ -157,20 +158,20 @@ class TopBar extends StatelessWidget {
               _metaText(bpmText, '本工程默认 BPM', onEditBpm),
               _metaText(sigText, '本工程默认拍号', onEditSig),
               const Spacer(),
-              _buildQuantizeButton(context),
-              _buildToolButton(),
+              _buildQuantizeButton(context, l),
+              _buildToolButton(l),
               ValueListenableBuilder<int>(
                 valueListenable: docState,
                 builder: (context, st, _) => Row(
                   children: [
                     _iconAction(
                       Icons.undo,
-                      tr('撤销'),
+                      l.undo,
                       (st & 1) != 0 ? onUndo : null,
                     ),
                     _iconAction(
                       Icons.redo,
-                      tr('重做'),
+                      l.redo,
                       (st & 2) != 0 ? onRedo : null,
                     ),
                     // 保存：从右向左第一个；无改动时置灰不可点；
@@ -190,14 +191,14 @@ class TopBar extends StatelessWidget {
                     else if (saveDone)
                       _iconAction(
                         Icons.check,
-                        tr('已保存'),
+                        l.saved,
                         null,
                         color: YinheTheme.text,
                       )
                     else
                       _iconAction(
                         Icons.save_outlined,
-                        tr('保存工程'),
+                        l.saveProject,
                         (st & 4) != 0 ? onSave : null,
                       ),
                   ],
@@ -209,7 +210,7 @@ class TopBar extends StatelessWidget {
           Positioned.fill(
             child: Align(
               alignment: Alignment.center,
-              child: isPr ? _buildSongBox() : _titleButton(),
+              child: isPr ? _buildSongBox(l) : _titleButton(l),
             ),
           ),
         ],
@@ -240,6 +241,16 @@ class TopBar extends StatelessWidget {
     return songTitle.isNotEmpty ? songTitle : (fileName ?? '未命名');
   }
 
+  /// 工具名（本地化）。
+  String _toolName(AppLocalizations l, int i) => switch (i) {
+    0 => l.toolSelect,
+    1 => l.toolHand,
+    2 => l.toolPencil,
+    3 => l.toolEraser,
+    4 => l.toolBrush,
+    _ => toolDefs[i].$2,
+  };
+
   Widget _iconAction(
     IconData icon,
     String tooltip,
@@ -261,14 +272,14 @@ class TopBar extends StatelessWidget {
     );
   }
 
-  Widget _buildQuantizeButton(BuildContext context) {
+  Widget _buildQuantizeButton(BuildContext context, AppLocalizations l) {
     return PopupMenuButton<String>(
-      tooltip: tr('量化（吸附档位）'),
+      tooltip: l.quantize,
       padding: EdgeInsets.zero,
       onSelected: onQuantize,
       itemBuilder: (_) => [
-        PopupMenuItem(value: '关闭', child: Text(tr('关闭吸附'))),
-        PopupMenuItem(value: '自动', child: Text(tr('自动（随缩放）'))),
+        PopupMenuItem(value: '关闭', child: Text(l.quantizeOff)),
+        PopupMenuItem(value: '自动', child: Text(l.quantizeAuto)),
         for (final (label, ticks) in _quantizePresets(ppq))
           PopupMenuItem(value: label, child: Text('$label（$ticks tick）')),
       ],
@@ -310,11 +321,11 @@ class TopBar extends StatelessWidget {
     return out;
   }
 
-  Widget _buildToolButton() {
+  Widget _buildToolButton(AppLocalizations l) {
     final list = isPr ? toolPrAllowed : toolArAllowed;
     final shown = list.contains(tool) ? tool : list.first;
     return PopupMenuButton<int>(
-      tooltip: tr('工具'),
+      tooltip: l.tool,
       padding: EdgeInsets.zero,
       onSelected: onTool,
       itemBuilder: (_) => [
@@ -331,7 +342,7 @@ class TopBar extends StatelessWidget {
                       : YinheTheme.textSecondary,
                 ),
                 const SizedBox(width: 8),
-                Text(tr(toolDefs[i].$2)),
+                Text(_toolName(l, i)),
               ],
             ),
           ),
@@ -348,7 +359,7 @@ class TopBar extends StatelessWidget {
   }
 
   /// AR：歌名按钮（点击直接打开工程设置大窗口；音符数在窗口内部）。
-  Widget _titleButton() {
+  Widget _titleButton(AppLocalizations l) {
     return InkWell(
       borderRadius: BorderRadius.circular(6),
       onTap: onProjectSettings,
@@ -371,11 +382,11 @@ class TopBar extends StatelessWidget {
   }
 
   /// PR：当前编辑音轨长按钮（顶部正中央）+「全部轨道」开关。
-  Widget _buildSongBox() {
+  Widget _buildSongBox(AppLocalizations l) {
     final active = activeTrack >= 0 && activeTrack < tracks.length;
     final base = active ? tracks[activeTrack].name : _titled();
     return PopupMenuButton<int>(
-      tooltip: tr('当前编辑音轨'),
+      tooltip: l.currentTrack,
       padding: EdgeInsets.zero,
       onSelected: (v) {
         if (v >= tracks.length) {
@@ -389,7 +400,7 @@ class TopBar extends StatelessWidget {
           enabled: false,
           height: 30,
           child: Text(
-            tr('当前编辑音轨'),
+            l.currentTrack,
             style: TextStyle(color: YinheTheme.textLabel, fontSize: 11),
           ),
         ),
@@ -403,7 +414,7 @@ class TopBar extends StatelessWidget {
         CheckedPopupMenuItem<int>(
           value: tracks.length,
           checked: showAllTracks,
-          child: Text(tr('全部轨道')),
+          child: Text(l.allTracks),
         ),
       ],
       child: Container(

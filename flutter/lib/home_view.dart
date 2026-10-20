@@ -3,7 +3,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 
 import 'models.dart';
 import 'theme.dart';
-import 'l10n.dart';
+import 'l10n/app_localizations.dart';
 
 /// 主页（仿桌面）：返回、按钮列、最近修改的文件、銀字水印、版本号、设置。
 class HomeView extends StatelessWidget {
@@ -28,6 +28,7 @@ class HomeView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
     return ColoredBox(
       color: YinheTheme.bg,
       child: Stack(
@@ -63,7 +64,7 @@ class HomeView extends StatelessWidget {
             width: 40,
             height: 40,
             child: IconButton(
-              tooltip: tr('返回工作区'),
+              tooltip: l.backToWorkspace,
               icon: const Icon(Icons.arrow_back),
               color: YinheTheme.text,
               visualDensity: VisualDensity.compact,
@@ -78,9 +79,9 @@ class HomeView extends StatelessWidget {
               padding: const EdgeInsets.only(left: 48, right: 40, top: 28),
               child: Row(
                 children: [
-                  SizedBox(width: 300, child: _actions()),
+                  SizedBox(width: 300, child: _actions(context)),
                   const SizedBox(width: 56),
-                  Expanded(child: _recentPanel()),
+                  Expanded(child: _recentPanel(context)),
                 ],
               ),
             ),
@@ -90,17 +91,18 @@ class HomeView extends StatelessWidget {
     );
   }
 
-  Widget _actions() {
+  Widget _actions(BuildContext context) {
+    final l = AppLocalizations.of(context);
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _secondary(tr('新建工程'), Icons.add_box_outlined, onNewProject),
+        _secondary(l.newProject, Icons.add_box_outlined, onNewProject),
         const SizedBox(height: 14),
         FilledButton.icon(
           onPressed: onPickMidi,
           icon: const Icon(Icons.note_add, size: 18),
-          label: Text(tr('打开文件')),
+          label: Text(l.openFile),
           style: FilledButton.styleFrom(
             backgroundColor: YinheTheme.primaryButtonBg,
             foregroundColor: YinheTheme.text,
@@ -111,9 +113,9 @@ class HomeView extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 14),
-        _secondary(tr('另存为'), Icons.save_as_outlined, onSaveProjectAs),
+        _secondary(l.saveAs, Icons.save_as_outlined, onSaveProjectAs),
         const SizedBox(height: 14),
-        _secondary(tr('设置'), Icons.settings, onOpenSettings),
+        _secondary(l.settings, Icons.settings, onOpenSettings),
       ],
     );
   }
@@ -132,13 +134,14 @@ class HomeView extends StatelessWidget {
     );
   }
 
-  Widget _recentPanel() {
+  Widget _recentPanel(BuildContext context) {
+    final l = AppLocalizations.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Text(
-          tr('最近修改的文件'),
+          l.recentFiles,
           style: TextStyle(color: YinheTheme.textLabel, fontSize: 14),
         ),
         const SizedBox(height: 8),
@@ -149,7 +152,7 @@ class HomeView extends StatelessWidget {
                   child: Padding(
                     padding: const EdgeInsets.only(top: 8),
                     child: Text(
-                      tr('暂无最近文件'),
+                      l.noRecentFiles,
                       style: TextStyle(
                         color: YinheTheme.textDisabled,
                         fontSize: 13,

@@ -2240,13 +2240,13 @@ pub fn ui_language() -> String {
 pub fn set_ui_language(lang: String) -> i32 {
     /// 桌面端同款 15 种界面语言代码。
     const UI_LANGS: &[&str] = &[
-        "zh-CN", "zh-TW", "zh-HK", "en-US", "ja-JP", "ko-KR", "de-DE", "fr-FR", "es-ES", "it-IT",
-        "pt-BR", "ru-RU", "pl-PL", "cs-CZ", "tr-TR",
+        "zh", "zh-TW", "zh-HK", "en", "ja", "ko", "de", "fr", "es", "it", "pt", "ru", "pl", "cs",
+        "tr",
     ];
     let v = match lang.as_str() {
-        // 兼容旧的两语言设置。
-        "zh" => "zh-CN".to_string(),
-        "en" => "en-US".to_string(),
+        // 兼容旧设置（zh-CN/en-US 及两语言版本）。
+        "zh-CN" => "zh".to_string(),
+        "en-US" => "en".to_string(),
         other if UI_LANGS.contains(&other) => other.to_string(),
         _ => "system".to_string(),
     };

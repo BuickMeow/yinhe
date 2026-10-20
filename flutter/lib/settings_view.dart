@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 
 import 'ffi.dart' as rust;
 import 'l10n.dart';
+import 'l10n/app_localizations.dart';
 import 'theme.dart';
 
 /// 设置页（全屏浮层）：左侧栏切页（音色库 / 音频）+ 右内容两栏。
@@ -40,6 +41,8 @@ class _SfItem {
 }
 
 class _SettingsViewState extends State<SettingsView> {
+  AppLocalizations get l => AppLocalizations.of(context);
+
   int _page = 0;
   List<_SfItem> _fonts = const [];
 
@@ -183,7 +186,7 @@ class _SettingsViewState extends State<SettingsView> {
             width: 40,
             height: 40,
             child: IconButton(
-              tooltip: tr('返回'),
+              tooltip: l.back,
               icon: const Icon(Icons.arrow_back),
               color: YinheTheme.text,
               visualDensity: VisualDensity.compact,
@@ -203,9 +206,9 @@ class _SettingsViewState extends State<SettingsView> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const SizedBox(height: 52),
-        _sideItem(Icons.piano, tr('音色库'), 0),
-        _sideItem(Icons.volume_up, tr('音频'), 1),
-        _sideItem(Icons.language, tr('语言'), 2),
+        _sideItem(Icons.piano, l.soundfonts, 0),
+        _sideItem(Icons.volume_up, l.audio, 1),
+        _sideItem(Icons.language, l.language, 2),
       ],
     );
   }
@@ -246,27 +249,27 @@ class _SettingsViewState extends State<SettingsView> {
   Widget _languagePage() {
     const options = [
       ('system', '跟随系统'),
-      ('zh-CN', '简体中文'),
+      ('zh', '简体中文'),
       ('zh-TW', '繁體中文（台灣）'),
       ('zh-HK', '繁體中文（香港）'),
-      ('en-US', 'English'),
-      ('ja-JP', '日本語'),
-      ('ko-KR', '한국어'),
-      ('de-DE', 'Deutsch'),
-      ('fr-FR', 'Français'),
-      ('es-ES', 'Español'),
-      ('it-IT', 'Italiano'),
-      ('pt-BR', 'Português (Brasil)'),
-      ('ru-RU', 'Русский'),
-      ('pl-PL', 'Polski'),
-      ('cs-CZ', 'Čeština'),
-      ('tr-TR', 'Türkçe'),
+      ('en', 'English'),
+      ('ja', '日本語'),
+      ('ko', '한국어'),
+      ('de', 'Deutsch'),
+      ('fr', 'Français'),
+      ('es', 'Español'),
+      ('it', 'Italiano'),
+      ('pt', 'Português (Brasil)'),
+      ('ru', 'Русский'),
+      ('pl', 'Polski'),
+      ('cs', 'Čeština'),
+      ('tr', 'Türkçe'),
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          tr('语言'),
+          l.language,
           style: TextStyle(
             color: YinheTheme.text,
             fontSize: 15,
@@ -288,7 +291,7 @@ class _SettingsViewState extends State<SettingsView> {
                         : YinheTheme.textSecondary,
                   ),
                   title: Text(
-                    value == 'system' ? tr(label) : label,
+                    value == 'system' ? l.followSystem : label,
                     style: TextStyle(
                       color: L10n.appLanguage.value == value
                           ? YinheTheme.accent
@@ -324,7 +327,7 @@ class _SettingsViewState extends State<SettingsView> {
         Row(
           children: [
             Text(
-              tr('音色库'),
+              l.soundfonts,
               style: TextStyle(
                 color: YinheTheme.text,
                 fontSize: 15,
@@ -333,7 +336,7 @@ class _SettingsViewState extends State<SettingsView> {
             ),
             const Spacer(),
             IconButton(
-              tooltip: tr('添加音色库'),
+              tooltip: l.addSoundfont,
               icon: const Icon(Icons.add),
               color: YinheTheme.textSecondary,
               visualDensity: VisualDensity.compact,
@@ -389,7 +392,7 @@ class _SettingsViewState extends State<SettingsView> {
                       ),
                     ),
                     IconButton(
-                      tooltip: tr('移除'),
+                      tooltip: l.remove,
                       icon: const Icon(Icons.delete_outline),
                       iconSize: 18,
                       color: YinheTheme.textSecondary,
@@ -411,25 +414,26 @@ class _SettingsViewState extends State<SettingsView> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _sectionTitle(tr('复音上限')),
+          _sectionTitle(l.maxVoices),
           const SizedBox(height: 8),
           _options(
             const [0, 256, 512, 1024, 2048, 4096],
             _maxVoices,
-            (v) => v == 0 ? tr('自动') : '$v',
+            (v) => v == 0 ? l.auto : '$v',
             (v) => _applyAudio(maxVoices: v),
           ),
           const SizedBox(height: 22),
-          _sectionTitle(tr('音频缓冲')),
+          _sectionTitle(l.audioBuffer),
           const SizedBox(height: 8),
           _options(
             const [0, 512, 1024, 2048, 4096],
             _bufferSize,
-            (v) => v == 0 ? tr('设备默认') : (L10n.isZh ? '$v 帧' : '$v frames'),
+            (v) =>
+                v == 0 ? l.deviceDefault : (L10n.isZh ? '$v 帧' : '$v frames'),
             (v) => _applyAudio(bufferSize: v),
           ),
           const SizedBox(height: 22),
-          _sectionTitle(tr('忽略力度')),
+          _sectionTitle(l.ignoreVelocity),
           const SizedBox(height: 8),
           _options(
             const [0, 1, 2, 4, 8, 16],
