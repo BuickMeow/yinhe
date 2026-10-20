@@ -28,6 +28,11 @@ class YinheDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 键盘弹出时只移动对话框，不改变它的布局尺寸：
+    // 1. 对对话框子树去掉 viewInsets，AlertDialog 不会收缩/加键盘内边距；
+    // 2. 用 Transform 把整块对话框上移键盘高度的一半（居中于键盘上方），
+    //    Transform 不参与 layout，比每帧改 constraints 便宜得多。
+    final inset = MediaQuery.viewInsetsOf(context).bottom;
     final body = scroll
         ? SingleChildScrollView(
             child: Column(
@@ -37,7 +42,7 @@ class YinheDialog extends StatelessWidget {
             ),
           )
         : Padding(padding: const EdgeInsets.only(top: 10), child: content);
-    return AlertDialog(
+    final dialog = AlertDialog(
       backgroundColor: YinheTheme.bg,
       title: titleTrailing == null
           ? Text(title, style: const TextStyle(fontSize: 16))
@@ -56,6 +61,10 @@ class YinheDialog extends StatelessWidget {
             ),
       content: SizedBox(width: width, child: body),
       actions: actions,
+    );
+    return MediaQuery(
+      data: MediaQuery.of(context).removeViewInsets(removeBottom: true),
+      child: Transform.translate(offset: Offset(0, -inset / 2), child: dialog),
     );
   }
 }
