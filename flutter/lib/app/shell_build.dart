@@ -14,6 +14,8 @@ mixin _ShellBuild on _ShellBase {
     }
     return Scaffold(
       backgroundColor: YinheTheme.bg,
+      // 键盘只移动对话框，不缩放画布/wgpu 纹理（adjustNothing）。
+      resizeToAvoidBottomInset: false,
       body: SafeArea(
         child: Stack(
           children: [
