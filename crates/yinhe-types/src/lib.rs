@@ -4,6 +4,7 @@ pub mod arr_row_layout;
 pub mod arrangement_view;
 pub mod automation;
 pub mod automation_panel_view;
+pub mod gm;
 pub mod hash;
 pub mod metadata;
 mod note;

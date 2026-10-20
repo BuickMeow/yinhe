@@ -547,7 +547,7 @@ fn rpn_max(parameter: u16) -> f32 {
 }
 
 /// 标准 RPN 名称（MIDI 规范 RPN 0/1/2）。未收录的返回空串。
-fn rpn_name(parameter: u16) -> &'static str {
+pub fn rpn_name(parameter: u16) -> &'static str {
     match parameter {
         0 => "PB Sensitivity",
         1 => "Fine Tune",
@@ -558,7 +558,7 @@ fn rpn_name(parameter: u16) -> &'static str {
 
 /// 标准 MIDI CC 名称（GM/GS 约定）。未定义（保留/空白）的返回空串，
 /// 显示时退化为纯 `CC nnn`。CC10 沿用应用内叫法 "Pan"。
-fn cc_name(cc: u8) -> &'static str {
+pub fn cc_name(cc: u8) -> &'static str {
     match cc {
         0 => "Bank Select MSB",
         1 => "Modulation Wheel",

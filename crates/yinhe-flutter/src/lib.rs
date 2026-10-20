@@ -10,6 +10,7 @@
 mod audio;
 mod edit;
 mod input;
+mod midi_names;
 mod render;
 mod scene;
 mod theme_colors;
@@ -530,6 +531,18 @@ pub extern "C" fn yinhe_view_snapshot(out: *mut f32) -> i32 {
         std::ptr::copy_nonoverlapping(snap.as_ptr(), out, snap.len());
     }
     1
+}
+
+/// MIDI 静态名称表 JSON（GM/CC/RPN/音名/插入上限，堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_midi_names_json() -> *mut std::ffi::c_char {
+    to_c_string(midi_names::midi_names_json())
+}
+
+/// 常用量化档位 JSON（按 PPQ 推导，堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_quantize_presets_json(ppq: f64) -> *mut std::ffi::c_char {
+    to_c_string(midi_names::quantize_presets_json(ppq))
 }
 
 /// 最近文件 JSON（堆分配，调用方用 `yinhe_free_string` 释放）。
