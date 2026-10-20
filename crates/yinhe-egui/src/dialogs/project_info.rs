@@ -129,17 +129,12 @@ pub(crate) fn commit_draft(
 
     let has_notes = doc.data.model.note_count > 0;
 
-    // ── Project name（同步写 track 0 name，SMF 语义）──
+    // ── Project name（只改歌名；Conductor 轨名称不联动）──
     if draft.name != doc.data.model.meta.name {
         let old = doc.data.model.meta.name.clone();
         begin_edit(&mut doc.edit.pending_edits, save_id, &old);
         commit_project_name(doc, save_id, &draft.name);
-        let new_name = draft.name.clone();
-        let model = Arc::make_mut(&mut doc.data.model);
-        model.meta.name = new_name.clone();
-        if let Some(track) = model.tracks.get_mut(0) {
-            Arc::make_mut(track).name = new_name;
-        }
+        Arc::make_mut(&mut doc.data.model).meta.name = draft.name.clone();
     }
 
     // ── Artist ──

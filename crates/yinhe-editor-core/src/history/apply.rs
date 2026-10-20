@@ -109,16 +109,9 @@ impl UndoAction {
                 *instrument_after,
             ),
             UndoAction::ProjectName { old: _, new } => {
+                // 只改工程歌名；Conductor 轨名称不被歌名联动。
                 let model = Arc::make_mut(&mut doc.data.model);
                 model.meta.name = new.clone();
-                // SMF 标准：track 0 的 TrackName = song title。
-                // 编辑 project name 时同步到 track 0 name，保持一致。
-                if let Some(track) = model.tracks.get_mut(0) {
-                    Arc::make_mut(track).name = new.clone();
-                    if let Some(ti) = doc.edit.track_cache.info.get_mut(0) {
-                        ti.name = new.clone();
-                    }
-                }
             }
             UndoAction::ProjectArtist { old: _, new } => {
                 let model = Arc::make_mut(&mut doc.data.model);
