@@ -185,17 +185,19 @@ mixin _ShellMenus on _ShellBase {
     showEventListDialog(
       context,
       grid: _grid,
+      tracks: _tracks.value,
+      initialTrack: track,
       onJump: _jumpToEvent,
       onChanged: _refreshDocumentMeta,
     );
   }
 
-  /// 事件列表「前往该地点」：选中该轨、光标跳到 tick、进入 PR。
+  /// 事件列表「跳转」：选中该轨、进入 PR、光标与视口中心落在事件起点。
   void _jumpToEvent(int track, double tick) {
     _showAllTracks = false;
     _selectEditTrack(track);
-    rust.jumpToTick(tick);
     _setView(kViewPianoroll);
+    rust.jumpToEvent(tick);
   }
 
   /// 删除音轨（连同音符；一步一 undo）。

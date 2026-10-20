@@ -764,6 +764,12 @@ pub extern "C" fn yinhe_jump_to_tick(tick: f64) {
     scene::set_play_cursor(tick);
 }
 
+/// 事件列表跳转：光标精确落点 + PR 视口居中。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_jump_to_event(tick: f64) {
+    scene::jump_to_event(tick);
+}
+
 /// 重命名音轨。成功 1。
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]

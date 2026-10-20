@@ -111,7 +111,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get quantizeOff => 'オフ（スナップなし）';
 
   @override
-  String get quantizeAuto => '自動（ズーム連動）';
+  String get quantizeAuto => '自動';
 
   @override
   String get tool => 'ツール';
@@ -429,4 +429,7 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get centerHint => '8192 = 中央';
+
+  @override
+  String get jumpTo => 'ジャンプ';
 }

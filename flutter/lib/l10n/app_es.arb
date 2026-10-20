@@ -36,7 +36,7 @@
   "stop": "Detener",
   "quantize": "Cuantización",
   "quantizeOff": "Desactivado (sin ajuste)",
-  "quantizeAuto": "Auto (adaptativo)",
+  "quantizeAuto": "Auto",
   "tool": "Herramientas",
   "undo": "Deshacer",
   "redo": "Rehacer",
@@ -142,5 +142,6 @@
   "eventNoteTitle": "Nota {name}",
   "eventNoteDetail": "{time} · {track} · velocidad {velocity} · duración {length}",
   "eventValueDetail": "{time} · {track} · {value} (0–{max})",
-  "centerHint": "8192 = centro"
+  "centerHint": "8192 = centro",
+  "jumpTo": "Ir a"
 }

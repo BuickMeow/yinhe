@@ -111,7 +111,7 @@ class AppLocalizationsRu extends AppLocalizations {
   String get quantizeOff => 'Выкл. (без привязки)';
 
   @override
-  String get quantizeAuto => 'Авто (адаптивно)';
+  String get quantizeAuto => 'Авто';
 
   @override
   String get tool => 'Инструменты';
@@ -431,4 +431,7 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get centerHint => '8192 = центр';
+
+  @override
+  String get jumpTo => 'Перейти';
 }

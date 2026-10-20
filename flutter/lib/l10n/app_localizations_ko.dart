@@ -111,7 +111,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get quantizeOff => '끄기(스냅 없음)';
 
   @override
-  String get quantizeAuto => '자동(줌 연동)';
+  String get quantizeAuto => '자동';
 
   @override
   String get tool => '도구';
@@ -429,4 +429,7 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get centerHint => '8192 = 중앙';
+
+  @override
+  String get jumpTo => '이동';
 }

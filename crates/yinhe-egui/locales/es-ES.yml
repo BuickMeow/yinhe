@@ -615,7 +615,7 @@ pencil.tick: "Tick %{n}"
 pencil.gate: "Duración %{n}"
 
 # ── Quantize ──
-quantize.auto: "Auto (adaptativo)"
+quantize.auto: "Auto"
 quantize.off: "Desactivado (sin ajuste)"
 quantize.absolute: "%{n} tick"
 quantize.custom_tick: "Tick personalizado"

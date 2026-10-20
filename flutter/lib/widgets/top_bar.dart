@@ -377,6 +377,10 @@ class TopBar extends StatelessWidget {
         if (v >= tracks.length) {
           onToggleAllTracks();
         } else {
+          // 直接选轨 = 只看该轨；先关掉「全部轨道」再切换当前编辑轨。
+          if (showAllTracks) {
+            onToggleAllTracks();
+          }
           onSelectTrack(v);
         }
       },
@@ -389,18 +393,18 @@ class TopBar extends StatelessWidget {
             style: TextStyle(color: YinheTheme.textLabel, fontSize: 11),
           ),
         ),
+        CheckedPopupMenuItem<int>(
+          value: tracks.length,
+          checked: showAllTracks,
+          child: Text(l.allTracks),
+        ),
+        const PopupMenuDivider(height: 1),
         for (var i = 0; i < tracks.length; i++)
           CheckedPopupMenuItem<int>(
             value: i,
             checked: i == activeTrack,
             child: Text('${i.toString().padLeft(3, '0')}  ${tracks[i].name}'),
           ),
-        const PopupMenuDivider(height: 1),
-        CheckedPopupMenuItem<int>(
-          value: tracks.length,
-          checked: showAllTracks,
-          child: Text(l.allTracks),
-        ),
       ],
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 7),

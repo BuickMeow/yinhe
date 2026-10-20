@@ -36,7 +36,7 @@
   "stop": "停止",
   "quantize": "クオンタイズ",
   "quantizeOff": "オフ（スナップなし）",
-  "quantizeAuto": "自動（ズーム連動）",
+  "quantizeAuto": "自動",
   "tool": "ツール",
   "undo": "元に戻す",
   "redo": "やり直し",
@@ -142,5 +142,6 @@
   "eventNoteTitle": "音符 {name}",
   "eventNoteDetail": "{time} · {track} · ベロシティ {velocity} · 長さ {length}",
   "eventValueDetail": "{time} · {track} · {value}（0–{max}）",
-  "centerHint": "8192 = 中央"
+  "centerHint": "8192 = 中央",
+  "jumpTo": "ジャンプ"
 }

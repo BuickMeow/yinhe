@@ -615,7 +615,7 @@ pencil.tick: "tick %{n}"
 pencil.gate: "时值 %{n}"
 
 # ── 量化 ──
-quantize.auto: "自动（随缩放）"
+quantize.auto: "自动"
 quantize.off: "关闭吸附"
 quantize.absolute: "%{n} tick"
 quantize.custom_tick: "自定义 tick"

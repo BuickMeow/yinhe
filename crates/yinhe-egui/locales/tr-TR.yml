@@ -615,7 +615,7 @@ pencil.tick: "Tik %{n}"
 pencil.gate: "Gate %{n}"
 
 # ── Quantize ──
-quantize.auto: "Otomatik (uyarlanabilir)"
+quantize.auto: "Otomatik"
 quantize.off: "Kapalı (hizalama yok)"
 quantize.absolute: "%{n} tik"
 quantize.custom_tick: "Özel tik"

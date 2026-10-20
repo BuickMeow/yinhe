@@ -34,39 +34,58 @@ Future<String?> showActionSheet(
   return showModalBottomSheet<String>(
     context: context,
     backgroundColor: YinheTheme.bg,
+    isScrollControlled: true,
     builder: (ctx) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (hasHeader)
-            ListTile(
-              leading: headerIcon == null ? null : Icon(headerIcon),
-              title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-              subtitle: subtitle == null
-                  ? null
-                  : Text(
-                      subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-            ),
-          if (hasHeader) const Divider(height: 1),
-          for (final a in actions)
-            ListTile(
-              enabled: a.enabled,
-              leading: Icon(a.icon, color: a.danger ? YinheTheme.danger : null),
-              title: Text(
-                a.label,
-                style: a.danger ? TextStyle(color: YinheTheme.danger) : null,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(ctx).height * 0.85,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (hasHeader)
+                ListTile(
+                  leading: headerIcon == null ? null : Icon(headerIcon),
+                  title: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: subtitle == null
+                      ? null
+                      : Text(
+                          subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                ),
+              if (hasHeader) const Divider(height: 1),
+              for (final a in actions)
+                ListTile(
+                  enabled: a.enabled,
+                  leading: Icon(
+                    a.icon,
+                    color: a.danger ? YinheTheme.danger : null,
+                  ),
+                  title: Text(
+                    a.label,
+                    style: a.danger
+                        ? TextStyle(color: YinheTheme.danger)
+                        : null,
+                  ),
+                  onTap: a.enabled
+                      ? () => Navigator.of(ctx).pop(a.value)
+                      : null,
+                ),
+              ListTile(
+                leading: const Icon(Icons.close),
+                title: Text(cancelLabel),
+                onTap: () => Navigator.of(ctx).pop(),
               ),
-              onTap: a.enabled ? () => Navigator.of(ctx).pop(a.value) : null,
-            ),
-          ListTile(
-            leading: const Icon(Icons.close),
-            title: Text(cancelLabel),
-            onTap: () => Navigator.of(ctx).pop(),
+            ],
           ),
-        ],
+        ),
       ),
     ),
   );

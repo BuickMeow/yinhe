@@ -111,7 +111,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get quantizeOff => 'Snap off';
 
   @override
-  String get quantizeAuto => 'Auto (by zoom)';
+  String get quantizeAuto => 'Auto';
 
   @override
   String get tool => 'Tool';
@@ -430,4 +430,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get centerHint => '8192 = center';
+
+  @override
+  String get jumpTo => 'Jump';
 }

@@ -36,7 +36,7 @@
   "stop": "Stopp",
   "quantize": "Quantisierung",
   "quantizeOff": "Aus (ohne Einrasten)",
-  "quantizeAuto": "Automatisch (adaptiv)",
+  "quantizeAuto": "Automatisch",
   "tool": "Werkzeuge",
   "undo": "Rückgängig",
   "redo": "Wiederholen",
@@ -142,5 +142,6 @@
   "eventNoteTitle": "Note {name}",
   "eventNoteDetail": "{time} · {track} · Anschlag {velocity} · Länge {length}",
   "eventValueDetail": "{time} · {track} · {value} (0–{max})",
-  "centerHint": "8192 = Mitte"
+  "centerHint": "8192 = Mitte",
+  "jumpTo": "Springen"
 }

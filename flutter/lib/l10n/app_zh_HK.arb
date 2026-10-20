@@ -36,7 +36,7 @@
   "stop": "停止",
   "quantize": "量化（吸附檔位）",
   "quantizeOff": "關閉吸附",
-  "quantizeAuto": "自動（隨縮放）",
+  "quantizeAuto": "自動",
   "tool": "工具",
   "undo": "還原",
   "redo": "重做",
@@ -142,5 +142,6 @@
   "eventNoteTitle": "音符 {name}",
   "eventNoteDetail": "{time} · {track} · 力度 {velocity} · 長度 {length}",
   "eventValueDetail": "{time} · {track} · {value}（0–{max}）",
-  "centerHint": "8192 = 中心"
+  "centerHint": "8192 = 中心",
+  "jumpTo": "跳轉"
 }

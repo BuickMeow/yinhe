@@ -36,7 +36,7 @@
   "stop": "Stop",
   "quantize": "Kwantyzacja",
   "quantizeOff": "Wyłączone (bez przyciągania)",
-  "quantizeAuto": "Auto (adaptacyjne)",
+  "quantizeAuto": "Auto",
   "tool": "Narzędzia",
   "undo": "Cofnij",
   "redo": "Ponów",
@@ -142,5 +142,6 @@
   "eventNoteTitle": "Nuta {name}",
   "eventNoteDetail": "{time} · {track} · siła {velocity} · długość {length}",
   "eventValueDetail": "{time} · {track} · {value} (0–{max})",
-  "centerHint": "8192 = środek"
+  "centerHint": "8192 = środek",
+  "jumpTo": "Przejdź"
 }

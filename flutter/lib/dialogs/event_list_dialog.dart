@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../core/bar_beat.dart';
 import '../core/ffi.dart' as rust;
 import '../core/midi_names.dart';
+import '../core/models.dart';
 import '../core/snack.dart';
 import 'inputs.dart';
 import 'insert_flow.dart';
@@ -17,17 +18,24 @@ import '../l10n/app_localizations.dart';
 /// 事件列表（移动端）：音符 + 自动化 + Tempo/标签穿插，按
 /// 时间 → 音高/值 → 时长排序。
 ///
-/// 长按一行：修改 / 删除 / 复制 / 粘贴（同时间位置）/ 前往该地点。
+/// 长按一行：修改 / 删除 / 复制 / 粘贴（同时间位置）/ 跳转。
 Future<void> showEventListDialog(
   BuildContext context, {
   required ValueNotifier<BarBeatGrid?> grid,
+  required List<TrackRow> tracks,
+  required int initialTrack,
   required void Function(int track, double tick) onJump,
   required VoidCallback onChanged,
 }) {
   return showDialog<void>(
     context: context,
-    builder: (_) =>
-        EventListDialog(grid: grid, onJump: onJump, onChanged: onChanged),
+    builder: (_) => EventListDialog(
+      grid: grid,
+      tracks: tracks,
+      initialTrack: initialTrack,
+      onJump: onJump,
+      onChanged: onChanged,
+    ),
   );
 }
 
@@ -35,11 +43,17 @@ class EventListDialog extends StatefulWidget {
   const EventListDialog({
     super.key,
     required this.grid,
+    required this.tracks,
+    required this.initialTrack,
     required this.onJump,
     required this.onChanged,
   });
 
   final ValueNotifier<BarBeatGrid?> grid;
+  final List<TrackRow> tracks;
+
+  /// 进入时的音轨；-1 = 全部轨道。
+  final int initialTrack;
   final void Function(int track, double tick) onJump;
   final VoidCallback onChanged;
 
@@ -59,6 +73,12 @@ class _EventListDialogState extends State<EventListDialog> {
   bool _loading = false;
   bool _done = false;
   Map<String, dynamic>? _copied;
+
+  /// 当前筛选轨；-1 = 全部轨道。
+  late int _track =
+      widget.initialTrack >= 0 && widget.initialTrack < widget.tracks.length
+      ? widget.initialTrack
+      : -1;
 
   @override
   void initState() {
@@ -87,45 +107,45 @@ class _EventListDialogState extends State<EventListDialog> {
       return;
     }
     setState(() => _loading = true);
-    final before = _rows.length;
     try {
-      final ptr = rust.eventsJson(_fromTick, _pageSize);
-      if (ptr == ffi.nullptr) {
-        return;
-      }
-      Map<String, dynamic> decoded;
-      try {
-        decoded = jsonDecode(ptr.toDartString()) as Map<String, dynamic>;
-      } finally {
-        rust.freeString(ptr);
-      }
-      final list = decoded['rows'];
-      if (list is! List) {
-        _done = true;
-        return;
-      }
-      var added = 0;
-      for (final it in list) {
-        if (it is! Map<String, dynamic>) {
-          continue;
+      // 事件列表按时间分页；选中单轨时在客户端过滤，避免 Rust 为稀疏轨
+      // 扫描整首曲子。一次最多取 4 页，防止长时间占用 UI 线程。
+      var pages = 0;
+      while (!_done && pages < 4) {
+        pages++;
+        final list = _fetchPage();
+        if (list == null || list.isEmpty) {
+          _done = true;
+          break;
         }
-        final key = _keyOf(it);
-        if (_seen.add(key)) {
-          _rows.add(it);
-          added++;
+        var cursorMoved = false;
+        for (final it in list) {
+          if (it is! Map<String, dynamic>) {
+            continue;
+          }
+          final key = _keyOf(it);
+          if (!_seen.add(key)) {
+            continue;
+          }
+          cursorMoved = true;
+          if (_track < 0 || (it['tr'] as num?)?.toInt() == _track) {
+            _rows.add(it);
+          }
         }
-      }
-      if (list.isEmpty) {
-        _done = true;
-      } else {
         final lastTick = (list.last['t'] as num?)?.toDouble() ?? _fromTick;
         // 有新行：从同一 tick 继续取（同 tick 的剩余事件）；没有新行说明
         // 该 tick 已经取完，前进 1 tick 避免卡住。
-        final next = added > 0 ? lastTick : lastTick + 1;
-        if (next == _fromTick && added == 0) {
+        final next = cursorMoved ? lastTick : lastTick + 1;
+        if (next == _fromTick && !cursorMoved) {
           _done = true;
         } else {
           _fromTick = next;
+        }
+        if (list.length < _pageSize) {
+          _done = true;
+        }
+        if (_rows.length >= _pageSize) {
+          break;
         }
       }
     } catch (_) {
@@ -135,8 +155,19 @@ class _EventListDialogState extends State<EventListDialog> {
         setState(() => _loading = false);
       }
     }
-    if (mounted && _rows.length != before) {
-      // 滚动位置不变，列表自然增长。
+  }
+
+  List<dynamic>? _fetchPage() {
+    final ptr = rust.eventsJson(_fromTick, _pageSize);
+    if (ptr == ffi.nullptr) {
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(ptr.toDartString()) as Map<String, dynamic>;
+      final list = decoded['rows'];
+      return list is List ? list : null;
+    } finally {
+      rust.freeString(ptr);
     }
   }
 
@@ -147,6 +178,9 @@ class _EventListDialogState extends State<EventListDialog> {
       _fromTick = 0;
       _done = false;
     });
+    if (_scroll.hasClients) {
+      _scroll.jumpTo(0);
+    }
     _loadMore();
   }
 
@@ -251,11 +285,7 @@ class _EventListDialogState extends State<EventListDialog> {
           icon: Icons.delete_outline,
           danger: true,
         ),
-        SheetAction(
-          value: 'jump',
-          label: l.goToLocation,
-          icon: Icons.my_location,
-        ),
+        SheetAction(value: 'jump', label: l.jumpTo, icon: Icons.my_location),
       ],
     );
     if (!mounted || action == null) {
@@ -378,6 +408,79 @@ class _EventListDialogState extends State<EventListDialog> {
     }
   }
 
+  /// 顶部音轨筛选：全部轨道在第一项（与 PR 下拉一致）。
+  Widget _trackButton() {
+    final label = _track < 0
+        ? l.allTracks
+        : '${_track.toString().padLeft(3, '0')}  ${widget.tracks[_track].name}';
+    return PopupMenuButton<int>(
+      tooltip: l.currentTrack,
+      padding: EdgeInsets.zero,
+      onSelected: (v) {
+        if (v == _track) {
+          return;
+        }
+        setState(() => _track = v);
+        _reload();
+      },
+      itemBuilder: (_) => [
+        PopupMenuItem<int>(
+          enabled: false,
+          height: 30,
+          child: Text(
+            l.currentTrack,
+            style: TextStyle(color: YinheTheme.textLabel, fontSize: 11),
+          ),
+        ),
+        CheckedPopupMenuItem<int>(
+          value: -1,
+          checked: _track < 0,
+          child: Text(l.allTracks),
+        ),
+        const PopupMenuDivider(height: 1),
+        for (var i = 0; i < widget.tracks.length; i++)
+          CheckedPopupMenuItem<int>(
+            value: i,
+            checked: _track == i,
+            child: Text(
+              '${i.toString().padLeft(3, '0')}  ${widget.tracks[i].name}',
+            ),
+          ),
+      ],
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        constraints: const BoxConstraints(maxWidth: 180),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: YinheTheme.btnBg,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: _track < 0 ? YinheTheme.text : YinheTheme.accent,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+            Icon(
+              Icons.arrow_drop_down,
+              size: 18,
+              color: YinheTheme.textSecondary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Dialog.fullscreen(
@@ -403,14 +506,22 @@ class _EventListDialogState extends State<EventListDialog> {
                     l.eventList,
                     style: TextStyle(color: YinheTheme.text, fontSize: 15),
                   ),
-                  const Spacer(),
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: Text(
-                      l.sortHint,
-                      style: TextStyle(
-                        color: YinheTheme.textDisabled,
-                        fontSize: 11,
+                  const SizedBox(width: 8),
+                  _trackButton(),
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: Text(
+                          l.sortHint,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: YinheTheme.textDisabled,
+                            fontSize: 11,
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -422,12 +533,17 @@ class _EventListDialogState extends State<EventListDialog> {
                   ? Center(
                       child: _loading
                           ? const CircularProgressIndicator()
-                          : Text(
+                          : _done
+                          ? Text(
                               l.noEvents,
                               style: TextStyle(
                                 color: YinheTheme.textDisabled,
                                 fontSize: 13,
                               ),
+                            )
+                          : TextButton(
+                              onPressed: _loadMore,
+                              child: Text(l.loadMore),
                             ),
                     )
                   : ListView.builder(

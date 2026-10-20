@@ -49,9 +49,13 @@ final MarkerMoveDart markerMove = bridge
 typedef DoubleVoidNative = ffi.Void Function(ffi.Double);
 typedef DoubleVoidDart = void Function(double);
 
-/// 播放光标跳到 tick。
+/// 播放光标跳到 tick（标尺点击，会吸附到量化格）。
 final DoubleVoidDart jumpToTick = bridge
     .lookupFunction<DoubleVoidNative, DoubleVoidDart>('yinhe_jump_to_tick');
+
+/// 事件列表跳转：光标精确落点 + PR 视口居中。
+final DoubleVoidDart jumpToEvent = bridge
+    .lookupFunction<DoubleVoidNative, DoubleVoidDart>('yinhe_jump_to_event');
 
 typedef SetTrackNameNative = ffi.Int32 Function(ffi.Int32, ffi.Pointer<Utf8>);
 typedef SetTrackNameDart = int Function(int, ffi.Pointer<Utf8>);

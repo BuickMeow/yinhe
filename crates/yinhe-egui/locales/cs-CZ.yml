@@ -615,7 +615,7 @@ pencil.tick: "Tick %{n}"
 pencil.gate: "Délka noty %{n}"
 
 # ── Quantize ──
-quantize.auto: "Automaticky (adaptivní)"
+quantize.auto: "Automaticky"
 quantize.off: "Vypnuto (bez přichytávání)"
 quantize.absolute: "%{n} tick"
 quantize.custom_tick: "Vlastní tick"

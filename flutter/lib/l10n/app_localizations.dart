@@ -323,7 +323,7 @@ abstract class AppLocalizations {
   /// No description provided for @quantizeAuto.
   ///
   /// In en, this message translates to:
-  /// **'Auto (by zoom)'**
+  /// **'Auto'**
   String get quantizeAuto;
 
   /// No description provided for @tool.
@@ -937,6 +937,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'8192 = center'**
   String get centerHint;
+
+  /// No description provided for @jumpTo.
+  ///
+  /// In en, this message translates to:
+  /// **'Jump'**
+  String get jumpTo;
 }
 
 class _AppLocalizationsDelegate

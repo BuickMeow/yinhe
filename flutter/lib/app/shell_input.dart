@@ -262,12 +262,13 @@ mixin _ShellInput on _ShellBase {
     if (_viewMode != kViewArrangement) {
       return;
     }
-    // 长按成立：圆环完成，收起长按 UI（后续由轨道拖动/松手菜单接管）。
-    _clearLongPressUi();
     final idx = _rowAt(p);
     if (idx == null || idx >= _tracks.value.length) {
+      // 空白处：保留长按 UI，松手时由 _finishLongPressWatch 弹插入菜单。
       return;
     }
+    // 长按成立：圆环完成，收起长按 UI（后续由轨道拖动/松手菜单接管）。
+    _clearLongPressUi();
     _trackDragMoved = false;
     setState(() {
       _dragFrom.value = idx;

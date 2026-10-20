@@ -111,7 +111,7 @@ class AppLocalizationsTr extends AppLocalizations {
   String get quantizeOff => 'Kapalı (hizalama yok)';
 
   @override
-  String get quantizeAuto => 'Otomatik (uyarlanabilir)';
+  String get quantizeAuto => 'Otomatik';
 
   @override
   String get tool => 'Araçlar';
@@ -431,4 +431,7 @@ class AppLocalizationsTr extends AppLocalizations {
 
   @override
   String get centerHint => '8192 = merkez';
+
+  @override
+  String get jumpTo => 'Git';
 }

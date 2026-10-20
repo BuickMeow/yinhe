@@ -982,6 +982,30 @@ pub fn set_play_cursor(tick: f64) {
     crate::audio::seek(snapped);
 }
 
+/// 事件列表跳转：光标精确落在 tick（不吸附），并把 PR 视口水平居中。
+///
+/// 与标尺点击的 `set_play_cursor` 不同：事件跳转必须落在事件本身的 tick，
+/// 不能被量化档位吸走。
+pub fn jump_to_event(tick: f64) {
+    let (lw, lh) = crate::logical_size();
+    let mut seek_to = tick.max(0.0);
+    if let Ok(mut s) = scene().lock() {
+        let max_tick = (s.total_ticks - 1.0).max(0.0);
+        seek_to = seek_to.min(max_tick);
+        s.cursor_tick = seek_to;
+        let total_ticks = s.total_ticks;
+        let view = &mut s.pr_view;
+        let main_size = view.main_axis_len(lw, lh);
+        let ppt = view.base.pixels_per_tick.max(0.001);
+        *view.main_scroll() = seek_to as f32 * ppt - main_size * 0.5;
+        view.clamp_main_scroll(main_size, total_ticks);
+        view.base.follow_target = None;
+        view.base.dirty = true;
+        s.overlay_rev = s.overlay_rev.wrapping_add(1);
+    }
+    crate::audio::seek(seek_to);
+}
+
 /// 停止播放时把光标归零（与走带行为一致）。
 pub fn reset_cursor() {
     if let Ok(mut s) = scene().lock() {

@@ -36,7 +36,7 @@
   "stop": "정지",
   "quantize": "양자화",
   "quantizeOff": "끄기(스냅 없음)",
-  "quantizeAuto": "자동(줌 연동)",
+  "quantizeAuto": "자동",
   "tool": "도구",
   "undo": "실행 취소",
   "redo": "다시 실행",
@@ -142,5 +142,6 @@
   "eventNoteTitle": "음표 {name}",
   "eventNoteDetail": "{time} · {track} · 벨로시티 {velocity} · 길이 {length}",
   "eventValueDetail": "{time} · {track} · {value} (0–{max})",
-  "centerHint": "8192 = 중앙"
+  "centerHint": "8192 = 중앙",
+  "jumpTo": "이동"
 }

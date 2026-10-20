@@ -111,7 +111,7 @@ class AppLocalizationsPl extends AppLocalizations {
   String get quantizeOff => 'Wyłączone (bez przyciągania)';
 
   @override
-  String get quantizeAuto => 'Auto (adaptacyjne)';
+  String get quantizeAuto => 'Auto';
 
   @override
   String get tool => 'Narzędzia';
@@ -431,4 +431,7 @@ class AppLocalizationsPl extends AppLocalizations {
 
   @override
   String get centerHint => '8192 = środek';
+
+  @override
+  String get jumpTo => 'Przejdź';
 }

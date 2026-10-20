@@ -111,7 +111,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get quantizeOff => '关闭吸附';
 
   @override
-  String get quantizeAuto => '自动（随缩放）';
+  String get quantizeAuto => '自动';
 
   @override
   String get tool => '工具';
@@ -427,6 +427,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get centerHint => '8192 = 中心';
+
+  @override
+  String get jumpTo => '跳转';
 }
 
 /// The translations for Chinese, as used in Hong Kong (`zh_HK`).
@@ -535,7 +538,7 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get quantizeOff => '關閉吸附';
 
   @override
-  String get quantizeAuto => '自動（隨縮放）';
+  String get quantizeAuto => '自動';
 
   @override
   String get tool => '工具';
@@ -851,6 +854,9 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
 
   @override
   String get centerHint => '8192 = 中心';
+
+  @override
+  String get jumpTo => '跳轉';
 }
 
 /// The translations for Chinese, as used in Taiwan (`zh_TW`).
@@ -959,7 +965,7 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
   String get quantizeOff => '關閉吸附';
 
   @override
-  String get quantizeAuto => '自動（隨縮放）';
+  String get quantizeAuto => '自動';
 
   @override
   String get tool => '工具';
@@ -1275,4 +1281,7 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get centerHint => '8192 = 中心';
+
+  @override
+  String get jumpTo => '跳轉';
 }

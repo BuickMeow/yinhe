@@ -36,7 +36,7 @@
   "stop": "Стоп",
   "quantize": "Квантование",
   "quantizeOff": "Выкл. (без привязки)",
-  "quantizeAuto": "Авто (адаптивно)",
+  "quantizeAuto": "Авто",
   "tool": "Инструменты",
   "undo": "Отменить",
   "redo": "Повторить",
@@ -142,5 +142,6 @@
   "eventNoteTitle": "Нота {name}",
   "eventNoteDetail": "{time} · {track} · сила {velocity} · длина {length}",
   "eventValueDetail": "{time} · {track} · {value} (0–{max})",
-  "centerHint": "8192 = центр"
+  "centerHint": "8192 = центр",
+  "jumpTo": "Перейти"
 }

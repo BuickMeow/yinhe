@@ -536,7 +536,7 @@ pencil.tick: "틱 %{n}"
 pencil.gate: "게이트 %{n}"
 
 # ── 퀀타이즈 ──
-quantize.auto: "자동(줌 연동)"
+quantize.auto: "자동"
 quantize.off: "끄기(스냅 없음)"
 quantize.absolute: "%{n} tick"
 quantize.custom_tick: "사용자 정의 tick"

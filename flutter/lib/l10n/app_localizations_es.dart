@@ -111,7 +111,7 @@ class AppLocalizationsEs extends AppLocalizations {
   String get quantizeOff => 'Desactivado (sin ajuste)';
 
   @override
-  String get quantizeAuto => 'Auto (adaptativo)';
+  String get quantizeAuto => 'Auto';
 
   @override
   String get tool => 'Herramientas';
@@ -431,4 +431,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get centerHint => '8192 = centro';
+
+  @override
+  String get jumpTo => 'Ir a';
 }

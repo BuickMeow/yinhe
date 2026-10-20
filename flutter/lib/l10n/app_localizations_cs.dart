@@ -111,7 +111,7 @@ class AppLocalizationsCs extends AppLocalizations {
   String get quantizeOff => 'Vypnuto (bez přichytávání)';
 
   @override
-  String get quantizeAuto => 'Automaticky (adaptivní)';
+  String get quantizeAuto => 'Automaticky';
 
   @override
   String get tool => 'Nástroje';
@@ -431,4 +431,7 @@ class AppLocalizationsCs extends AppLocalizations {
 
   @override
   String get centerHint => '8192 = střed';
+
+  @override
+  String get jumpTo => 'Přejít';
 }

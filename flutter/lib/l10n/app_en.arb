@@ -40,7 +40,7 @@
   "stop": "Stop",
   "quantize": "Quantize",
   "quantizeOff": "Snap off",
-  "quantizeAuto": "Auto (by zoom)",
+  "quantizeAuto": "Auto",
   "tool": "Tool",
   "undo": "Undo",
   "redo": "Redo",
@@ -194,5 +194,6 @@
         "type": "int"
       }
     }
-  }
+  },
+  "jumpTo": "Jump"
 }

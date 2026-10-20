@@ -36,7 +36,7 @@
   "stop": "Zastavit",
   "quantize": "Kvantizace",
   "quantizeOff": "Vypnuto (bez přichytávání)",
-  "quantizeAuto": "Automaticky (adaptivní)",
+  "quantizeAuto": "Automaticky",
   "tool": "Nástroje",
   "undo": "Zpět",
   "redo": "Znovu",
@@ -142,5 +142,6 @@
   "eventNoteTitle": "Nota {name}",
   "eventNoteDetail": "{time} · {track} · síla {velocity} · délka {length}",
   "eventValueDetail": "{time} · {track} · {value} (0–{max})",
-  "centerHint": "8192 = střed"
+  "centerHint": "8192 = střed",
+  "jumpTo": "Přejít"
 }
