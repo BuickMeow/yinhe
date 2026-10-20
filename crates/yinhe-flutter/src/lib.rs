@@ -831,6 +831,115 @@ pub extern "C" fn yinhe_time_sig_segments_json() -> *mut std::ffi::c_char {
     to_c_string(scene::time_sig_segments_json())
 }
 
+/// 在 conductor 指定 tick 插入拍号（分子 + 分母 2 次幂）。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_insert_time_sig(tick: f64, numerator: i32, denominator_power: i32) -> i32 {
+    scene::insert_time_sig(
+        tick,
+        numerator.clamp(1, 32) as u8,
+        denominator_power.clamp(0, 6) as u8,
+    )
+}
+
+/// 在 conductor 指定 tick 插入调号（root 0=C..11=B；scale 0=大调 1=自然小调 …）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_insert_key_sig(tick: f64, root: i32, scale: i32) -> i32 {
+    scene::insert_key_sig(tick, root.clamp(0, 11) as u8, scale)
+}
+
+/// 界面语言设置（`system` / `zh` / `en`，堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_ui_language() -> *mut std::ffi::c_char {
+    to_c_string(scene::ui_language())
+}
+
+/// 设置界面语言（`system` / `zh` / `en`）并持久化。成功 1。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
+pub extern "C" fn yinhe_set_ui_language(lang: *const std::ffi::c_char) -> i32 {
+    if lang.is_null() {
+        return 0;
+    }
+    let lang = unsafe { CStr::from_ptr(lang) }
+        .to_string_lossy()
+        .into_owned();
+    let ok = scene::set_ui_language(lang);
+    if ok == 1 {
+        scene::save_audio_settings();
+    }
+    ok
+}
+
+/// 事件列表 JSON（从 from_tick 起，最多 limit 条）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_events_json(from_tick: f64, limit: i32) -> *mut std::ffi::c_char {
+    to_c_string(scene::events_json(from_tick, limit))
+}
+
+/// 删除事件行（JSON）。成功 1。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
+pub extern "C" fn yinhe_event_delete(json: *const std::ffi::c_char) -> i32 {
+    if json.is_null() {
+        return 0;
+    }
+    let json = unsafe { CStr::from_ptr(json) }
+        .to_string_lossy()
+        .into_owned();
+    scene::event_delete(&json)
+}
+
+/// 修改事件行：音符 = (力度, 结束 tick)；自动化 = 显示值。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
+pub extern "C" fn yinhe_event_update(json: *const std::ffi::c_char, value: f64, gate: f64) -> i32 {
+    if json.is_null() {
+        return 0;
+    }
+    let json = unsafe { CStr::from_ptr(json) }
+        .to_string_lossy()
+        .into_owned();
+    scene::event_update(&json, value, gate)
+}
+
+/// 修改标签文本。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
+pub extern "C" fn yinhe_event_set_text(
+    json: *const std::ffi::c_char,
+    text: *const std::ffi::c_char,
+) -> i32 {
+    if json.is_null() || text.is_null() {
+        return 0;
+    }
+    let json = unsafe { CStr::from_ptr(json) }
+        .to_string_lossy()
+        .into_owned();
+    let text = unsafe { CStr::from_ptr(text) }
+        .to_string_lossy()
+        .into_owned();
+    scene::event_set_text(&json, text)
+}
+
+/// 粘贴事件行：source 的内容粘贴到 target 的时间位置/音轨。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
+pub extern "C" fn yinhe_event_paste(
+    source: *const std::ffi::c_char,
+    target: *const std::ffi::c_char,
+) -> i32 {
+    if source.is_null() || target.is_null() {
+        return 0;
+    }
+    let source = unsafe { CStr::from_ptr(source) }
+        .to_string_lossy()
+        .into_owned();
+    let target = unsafe { CStr::from_ptr(target) }
+        .to_string_lossy()
+        .into_owned();
+    scene::event_paste(&source, &target)
+}
+
 /// 压缩包状态：0=无 1=打开中 2=就绪 3=需要密码 4=失败。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_archive_status() -> i32 {

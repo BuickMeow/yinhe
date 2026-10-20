@@ -737,7 +737,8 @@ fn apply_document(doc: Document, min_ticks: f64) {
 
     let mut pr_view = PianoRollView::default();
     // 初始缩放：全曲约 2 屏宽，再放大 1.3 倍（进入钢琴卷帘更舒适）。
-    pr_view.base.pixels_per_tick = (1280.0 * 2.0 / content_ticks as f32 * 1.3).clamp(0.001, 10.0);
+    // 初始缩放：每 tick 1 像素（直接、可预期；不再按屏宽拟合）。
+    pr_view.base.pixels_per_tick = 1.0;
 
     let arr_base = TimelineViewBase {
         pixels_per_tick: (1280.0 * 2.0 / content_ticks as f32).clamp(0.0005, 8.0),
@@ -1041,6 +1042,7 @@ fn write_settings() {
             e.path
         ));
     }
+    text.push_str(&format!("ui_language={}\n", ui_language()));
     let a = crate::audio::settings();
     text.push_str(&format!(
         "max_voices={}\nbuffer_size={}\nignore_velocity={}\n",
@@ -1063,6 +1065,7 @@ fn load_settings() {
     let mut buffer_size = crate::audio::AudioSettings::default().buffer_size;
     let mut ignore_velocity = crate::audio::AudioSettings::default().ignore_velocity;
     let mut soundfonts: Vec<crate::audio::SoundfontEntry> = Vec::new();
+    let mut language = String::new();
     for line in text.lines() {
         if let Some(v) = line.strip_prefix("soundfont=") {
             // 新格式 `1|path`；旧格式 `path`（视为启用）。
@@ -1076,6 +1079,8 @@ fn load_settings() {
                     enabled,
                 });
             }
+        } else if let Some(v) = line.strip_prefix("ui_language=") {
+            language = v.trim().to_string();
         } else if let Some(v) = line.strip_prefix("max_voices=") {
             max_voices = v.trim().parse().unwrap_or(max_voices);
         } else if let Some(v) = line.strip_prefix("buffer_size=") {
@@ -1083,6 +1088,9 @@ fn load_settings() {
         } else if let Some(v) = line.strip_prefix("ignore_velocity=") {
             ignore_velocity = v.trim().parse().unwrap_or(ignore_velocity);
         }
+    }
+    if !language.is_empty() {
+        set_ui_language(language);
     }
     if !soundfonts.is_empty() {
         log::info!("恢复音色库设置: {} 个", soundfonts.len());
@@ -1746,7 +1754,7 @@ pub fn insert_automation(kind: i32, number: i32, tick: f64, track: i32, value: f
     let display = value as f32;
     let mut normalized = target.from_display_value(display);
     if is_tempo {
-        normalized = normalized.clamp(1.0, 999.0);
+        normalized = normalized.clamp(0.0, 60_000_000.0);
     } else {
         normalized = normalized.clamp(0.0, 1.0);
     }
@@ -2214,6 +2222,41 @@ pub fn seconds_at_tick(tick: f64) -> f64 {
         .unwrap_or(0.0)
 }
 
+static UI_LANGUAGE: OnceLock<Mutex<String>> = OnceLock::new();
+
+fn language_slot() -> &'static Mutex<String> {
+    UI_LANGUAGE.get_or_init(|| Mutex::new("system".to_string()))
+}
+
+/// 界面语言设置：`system` / `zh` / `en`。
+pub fn ui_language() -> String {
+    language_slot()
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_else(|_| "system".into())
+}
+
+/// 写入界面语言（可选值 system/zh/en，其它忽略）。
+pub fn set_ui_language(lang: String) -> i32 {
+    /// 桌面端同款 15 种界面语言代码。
+    const UI_LANGS: &[&str] = &[
+        "zh-CN", "zh-TW", "zh-HK", "en-US", "ja-JP", "ko-KR", "de-DE", "fr-FR", "es-ES", "it-IT",
+        "pt-BR", "ru-RU", "pl-PL", "cs-CZ", "tr-TR",
+    ];
+    let v = match lang.as_str() {
+        // 兼容旧的两语言设置。
+        "zh" => "zh-CN".to_string(),
+        "en" => "en-US".to_string(),
+        other if UI_LANGS.contains(&other) => other.to_string(),
+        _ => "system".to_string(),
+    };
+    if let Ok(mut g) = language_slot().lock() {
+        *g = v.clone();
+    }
+    log::info!("界面语言: {v}");
+    1
+}
+
 /// 全曲音符数（顶栏标题展示用）。
 pub fn note_count() -> i64 {
     scene()
@@ -2222,6 +2265,568 @@ pub fn note_count() -> i64 {
         .and_then(|s| s.model.clone())
         .map(|m| m.note_count as i64)
         .unwrap_or(0)
+}
+
+/// 在 conductor 指定 tick 插入拍号事件（一步一 undo）。成功 1。
+pub fn insert_time_sig(tick: f64, numerator: u8, denominator_power: u8) -> i32 {
+    use yinhe_editor_core::history::{EventListDelta, EventListItem, EventListTarget, UndoAction};
+    let tick = tick.max(0.0) as u32;
+    let numerator = numerator.clamp(1, 32);
+    let denominator_power = denominator_power.min(6);
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let before = doc.data.model.conductor.time_sig.clone();
+    let snapshot = doc.capture_snapshot();
+    doc.insert_time_sig_event(tick, numerator, denominator_power);
+    let after = doc.data.model.conductor.time_sig.clone();
+    doc.push_undo(
+        UndoAction::EventList(EventListDelta {
+            target: EventListTarget::TimeSig,
+            old: before.into_iter().map(EventListItem::TimeSig).collect(),
+            new: after.into_iter().map(EventListItem::TimeSig).collect(),
+        }),
+        "插入拍号",
+        snapshot,
+    );
+    let model = doc.data.model.clone();
+    refresh_snapshot(&mut s);
+    drop(s);
+    crate::audio::reload_notes(model);
+    log::info!(
+        "插入拍号: tick={tick} {numerator}/{}",
+        1u32 << denominator_power
+    );
+    1
+}
+
+/// 在 conductor 指定 tick 插入调号事件（一步一 undo）。成功 1。
+pub fn insert_key_sig(tick: f64, root: u8, scale: i32) -> i32 {
+    use yinhe_editor_core::history::{EventListDelta, EventListItem, EventListTarget, UndoAction};
+    use yinhe_types::ScaleType;
+    let tick = tick.max(0.0) as u32;
+    let root = root.min(11);
+    let scale = match scale {
+        1 => ScaleType::NaturalMinor,
+        2 => ScaleType::HarmonicMinor,
+        3 => ScaleType::MelodicMinor,
+        _ => ScaleType::Major,
+    };
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let before = doc.data.model.conductor.key_sig.clone();
+    let snapshot = doc.capture_snapshot();
+    doc.insert_key_sig_event(tick, root, scale);
+    let after = doc.data.model.conductor.key_sig.clone();
+    doc.push_undo(
+        UndoAction::EventList(EventListDelta {
+            target: EventListTarget::KeySig,
+            old: before.into_iter().map(EventListItem::KeySig).collect(),
+            new: after.into_iter().map(EventListItem::KeySig).collect(),
+        }),
+        "插入调号",
+        snapshot,
+    );
+    refresh_snapshot(&mut s);
+    log::info!("插入调号: tick={tick} root={root} scale={scale:?}");
+    1
+}
+
+// =========================================================
+//  事件列表（移动端：音符 + 自动化 + 全局事件穿插）
+// =========================================================
+
+/// 事件行（收集阶段只存字段，排序后再生成 JSON）。
+enum EventRow {
+    Note {
+        track: u16,
+        tick: u32,
+        key: u8,
+        vel: u8,
+        end: u32,
+        id: u32,
+    },
+    Auto {
+        track: u16,
+        tick: u32,
+        lane: usize,
+        /// 与插入菜单一致：1=PB 2=CC 3=RPN（0 留给 Tempo）。
+        kind: u8,
+        number: i32,
+        display: f32,
+        max: f32,
+    },
+    Tempo {
+        tick: u32,
+        bpm: f32,
+    },
+    Marker {
+        tick: u32,
+        text: String,
+    },
+}
+
+impl EventRow {
+    fn tick(&self) -> u32 {
+        match self {
+            EventRow::Note { tick, .. }
+            | EventRow::Auto { tick, .. }
+            | EventRow::Tempo { tick, .. }
+            | EventRow::Marker { tick, .. } => *tick,
+        }
+    }
+
+    /// 次级排序键：音符按音高、自动化按显示值、全局事件最后。
+    fn secondary(&self) -> f32 {
+        match self {
+            EventRow::Note { key, .. } => f32::from(*key),
+            EventRow::Auto { display, .. } => 128.0 + display,
+            _ => 400.0,
+        }
+    }
+
+    /// 三级排序键：音符时长；其它 0。
+    fn duration(&self) -> u32 {
+        match self {
+            EventRow::Note { tick, end, .. } => end.saturating_sub(*tick),
+            _ => 0,
+        }
+    }
+}
+
+/// 事件列表：从 `from_tick` 起跨所有音轨收集（音符/自动化/Tempo/标签），
+/// 按 (tick, 音高或值, 时长) 排序后取前 `limit` 条。
+///
+/// JSON：`{"rows":[ ... ]}`；行字段见 `event_row_json`。
+pub fn events_json(from_tick: f64, limit: i32) -> String {
+    use yinhe_types::automation::AutomationTarget;
+
+    let from = from_tick.max(0.0) as u32;
+    let limit = limit.clamp(50, 2000) as usize;
+    let Ok(s) = scene().lock() else {
+        return r#"{"rows":[]}"#.into();
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return r#"{"rows":[]}"#.into();
+    };
+    let model = &doc.data.model;
+    let mut rows: Vec<EventRow> = Vec::new();
+
+    // 音符：每个 key 取 from 之后的前 limit 个（区间迭代，块内二分）。
+    for key in 0..=yinhe_types::MAX_KEY {
+        for n in model.key_notes(key).range(from, u32::MAX).take(limit) {
+            rows.push(EventRow::Note {
+                track: n.track,
+                tick: n.start_tick,
+                key,
+                vel: n.velocity,
+                end: n.end_tick,
+                id: n.id,
+            });
+        }
+    }
+
+    // 普通轨自动化（PB/CC/RPN）。
+    for (ti, t) in model.tracks.iter().enumerate() {
+        for (li, lane) in t.automation_lanes.iter().enumerate() {
+            let kind = match &lane.target {
+                AutomationTarget::PitchBend => 1u8,
+                AutomationTarget::CC { .. } => 2,
+                AutomationTarget::Rpn { .. } => 3,
+                _ => continue,
+            };
+            let number = match &lane.target {
+                AutomationTarget::CC { controller } => i32::from(*controller),
+                AutomationTarget::Rpn { parameter } => i32::from(*parameter),
+                _ => 0,
+            };
+            let start = lane.events.partition_point(|e| e.tick < from);
+            let max = lane.target.to_display_value(1.0);
+            for e in lane.events[start..].iter().take(limit) {
+                rows.push(EventRow::Auto {
+                    track: ti as u16,
+                    tick: e.tick,
+                    lane: li,
+                    kind,
+                    number,
+                    display: lane.target.to_display_value(e.value),
+                    max,
+                });
+            }
+        }
+    }
+
+    // Conductor：Tempo + 标签。
+    {
+        let lane = &model.conductor.tempo;
+        let start = lane.events.partition_point(|e| e.tick < from);
+        for e in lane.events[start..].iter().take(limit) {
+            rows.push(EventRow::Tempo {
+                tick: e.tick,
+                bpm: e.value,
+            });
+        }
+        for m in model
+            .conductor
+            .markers
+            .iter()
+            .filter(|m| m.tick >= from)
+            .take(limit)
+        {
+            rows.push(EventRow::Marker {
+                tick: m.tick,
+                text: m.text.clone(),
+            });
+        }
+    }
+
+    rows.sort_by(|a, b| {
+        a.tick()
+            .cmp(&b.tick())
+            .then(a.secondary().total_cmp(&b.secondary()))
+            .then(a.duration().cmp(&b.duration()))
+    });
+    rows.truncate(limit);
+
+    let mut out = String::from("{\"rows\":[");
+    for (i, row) in rows.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&event_row_json(row, model));
+    }
+    out.push_str("]}");
+    out
+}
+
+/// 单行 JSON：`k`=note/cc/pb/rpn/tempo/marker；`t`=tick；`tr`=轨号；`tn`=轨名。
+fn event_row_json(row: &EventRow, model: &YinModel) -> String {
+    let track_name = |track: u16| {
+        model
+            .tracks
+            .get(track as usize)
+            .map(|t| t.name.clone())
+            .unwrap_or_default()
+    };
+    match row {
+        EventRow::Note {
+            track,
+            tick,
+            key,
+            vel,
+            end,
+            id,
+        } => format!(
+            "{{\"k\":\"note\",\"t\":{tick},\"tr\":{track},\"tn\":\"{}\",\"key\":{key},\"vel\":{vel},\"end\":{end},\"id\":{id}}}",
+            json_escape(&track_name(*track))
+        ),
+        EventRow::Auto {
+            track,
+            tick,
+            lane,
+            kind,
+            number,
+            display,
+            max,
+            ..
+        } => {
+            let k = match kind {
+                1 => "pb",
+                2 => "cc",
+                _ => "rpn",
+            };
+            format!(
+                "{{\"k\":\"{k}\",\"t\":{tick},\"tr\":{track},\"tn\":\"{}\",\"lane\":{lane},\"kind\":{kind},\"num\":{number},\"val\":{display:.3},\"max\":{max:.3}}}",
+                json_escape(&track_name(*track))
+            )
+        }
+        EventRow::Tempo { tick, bpm } => format!(
+            "{{\"k\":\"tempo\",\"t\":{tick},\"tr\":0,\"tn\":\"Conductor\",\"val\":{bpm:.3},\"max\":60000000}}"
+        ),
+        EventRow::Marker { tick, text } => format!(
+            "{{\"k\":\"marker\",\"t\":{tick},\"tr\":0,\"tn\":\"Conductor\",\"text\":\"{}\"}}",
+            json_escape(text)
+        ),
+    }
+}
+
+/// 解析事件行 JSON 的公共字段。
+fn event_field<'a>(v: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+    v.get(key)
+}
+
+/// 删除事件行。成功 1。
+pub fn event_delete(json: &str) -> i32 {
+    use yinhe_types::automation::AutomationTarget;
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return 0;
+    };
+    let Some(kind) = event_field(&v, "k").and_then(|x| x.as_str()) else {
+        return 0;
+    };
+    let tick = event_field(&v, "t").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+    let track = event_field(&v, "tr").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let before = doc.capture_snapshot();
+    let action = match kind {
+        "note" => {
+            let key = event_field(&v, "key").and_then(|x| x.as_u64()).unwrap_or(0) as u8;
+            doc.delete_notes(&[(track as u16, tick, key)])
+        }
+        "cc" | "pb" | "rpn" => {
+            let lane = event_field(&v, "lane")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(0) as usize;
+            let num = event_field(&v, "num").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+            let kind = event_field(&v, "kind")
+                .and_then(|x| x.as_i64())
+                .unwrap_or(0) as i32;
+            let Some(target) = insert_target(kind, num) else {
+                return 0;
+            };
+            doc.delete_automation_event(track, lane, &target, tick)
+        }
+        "tempo" => doc.delete_automation_event(0, 0, &AutomationTarget::Tempo, tick),
+        "marker" => {
+            let ok = doc.delete_marker_with_undo(tick, "删除标签");
+            let model = doc.data.model.clone();
+            refresh_snapshot(&mut s);
+            drop(s);
+            crate::audio::reload_notes(model);
+            return i32::from(ok);
+        }
+        _ => None,
+    };
+    let Some(action) = action else {
+        return 0;
+    };
+    doc.push_undo(action, "事件列表删除", before);
+    let model = doc.data.model.clone();
+    refresh_snapshot(&mut s);
+    drop(s);
+    crate::audio::reload_notes(model);
+    log::info!("事件列表删除: {kind} tick={tick} track={track}");
+    1
+}
+
+/// 修改事件：音符 = (力度, 结束 tick)；自动化 = 显示值；标签走 `event_set_text`。
+pub fn event_update(json: &str, value: f64, gate: f64) -> i32 {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return 0;
+    };
+    let Some(kind) = event_field(&v, "k").and_then(|x| x.as_str()) else {
+        return 0;
+    };
+    let tick = event_field(&v, "t").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+    let track = event_field(&v, "tr").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let before = doc.capture_snapshot();
+    let mut actions: Vec<yinhe_editor_core::history::UndoAction> = Vec::new();
+    match kind {
+        "note" => {
+            let key = event_field(&v, "key").and_then(|x| x.as_u64()).unwrap_or(0) as u8;
+            let id = event_field(&v, "id").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+            let vel = value.round().clamp(1.0, 127.0) as u8;
+            let end = gate.round().max(1.0) as u32;
+            if let Some(a) = doc.set_note_velocity(track as u16, tick, key, vel) {
+                actions.push(a);
+            }
+            if let Some(a) = doc.set_note_end_tick(key, id, end) {
+                actions.push(a);
+            }
+        }
+        "cc" | "pb" | "rpn" => {
+            let num = event_field(&v, "num").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+            let kind = event_field(&v, "kind")
+                .and_then(|x| x.as_i64())
+                .unwrap_or(0) as i32;
+            let Some(target) = insert_target(kind, num) else {
+                return 0;
+            };
+            let normalized = target.from_display_value(value as f32);
+            let event = yinhe_types::automation::AutomationEvent {
+                id: 0,
+                tick,
+                value: normalized.clamp(0.0, 1.0),
+                shape: target.default_shape(),
+            };
+            let Some((_, _, a)) = doc.upsert_automation_event(track, target, event) else {
+                return 0;
+            };
+            actions.push(a);
+        }
+        "tempo" => {
+            let event = yinhe_types::automation::AutomationEvent {
+                id: 0,
+                tick,
+                value: (value as f32).clamp(0.0, 60_000_000.0),
+                shape: yinhe_types::SegmentShape::Step,
+            };
+            let Some((_, _, a)) = doc.upsert_automation_event(
+                0,
+                yinhe_types::automation::AutomationTarget::Tempo,
+                event,
+            ) else {
+                return 0;
+            };
+            actions.push(a);
+        }
+        _ => return 0,
+    }
+    if actions.is_empty() {
+        return 0;
+    }
+    let action = if actions.len() == 1 {
+        actions.pop().unwrap()
+    } else {
+        yinhe_editor_core::history::UndoAction::Composite(actions)
+    };
+    doc.push_undo(action, "事件列表修改", before);
+    let model = doc.data.model.clone();
+    refresh_snapshot(&mut s);
+    drop(s);
+    crate::audio::reload_notes(model);
+    1
+}
+
+/// 修改标签文本。成功 1。
+pub fn event_set_text(json: &str, text: String) -> i32 {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return 0;
+    };
+    let tick = event_field(&v, "t").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    if !doc.set_marker_with_undo(tick, tick, text, "修改标签") {
+        return 0;
+    }
+    refresh_snapshot(&mut s);
+    1
+}
+
+/// 把 `source` 行复制到 `target` 行的时间位置 / 音轨（粘贴）。
+pub fn event_paste(source: &str, target: &str) -> i32 {
+    use yinhe_types::automation::AutomationEvent;
+
+    let (Ok(src), Ok(dst)) = (
+        serde_json::from_str::<serde_json::Value>(source),
+        serde_json::from_str::<serde_json::Value>(target),
+    ) else {
+        return 0;
+    };
+    let Some(sk) = event_field(&src, "k").and_then(|x| x.as_str()) else {
+        return 0;
+    };
+    let target_tick = event_field(&dst, "t").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+    let target_track = event_field(&dst, "tr")
+        .and_then(|x| x.as_u64())
+        .unwrap_or(0) as usize;
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let before = doc.capture_snapshot();
+    let action = match sk {
+        "note" => {
+            let key = event_field(&src, "key")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(0) as u8;
+            let vel = event_field(&src, "vel")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(100) as u8;
+            let src_tick = event_field(&src, "t").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+            let end = event_field(&src, "end")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(0) as u32;
+            let len = end.saturating_sub(src_tick).max(1);
+            let note = yinhe_core::NoteEvent {
+                id: 0,
+                key,
+                start_tick: target_tick,
+                end_tick: target_tick.saturating_add(len),
+                velocity: vel,
+            };
+            doc.add_note(target_track as u16, note)
+        }
+        "cc" | "pb" | "rpn" | "tempo" => {
+            let kind = if sk == "tempo" {
+                0
+            } else {
+                event_field(&src, "kind")
+                    .and_then(|x| x.as_i64())
+                    .unwrap_or(0) as i32
+            };
+            let num = event_field(&src, "num")
+                .and_then(|x| x.as_i64())
+                .unwrap_or(0) as i32;
+            let Some(target_ev) = insert_target(kind, num) else {
+                return 0;
+            };
+            let display = event_field(&src, "val")
+                .and_then(|x| x.as_f64())
+                .unwrap_or(0.0) as f32;
+            let value = if kind == 0 {
+                display.clamp(0.0, 60_000_000.0)
+            } else {
+                target_ev.from_display_value(display).clamp(0.0, 1.0)
+            };
+            let event = AutomationEvent {
+                id: 0,
+                tick: target_tick,
+                value,
+                shape: target_ev.default_shape(),
+            };
+            let track_idx = if kind == 0 { 0 } else { target_track };
+            doc.upsert_automation_event(track_idx, target_ev, event)
+                .map(|(_, _, a)| a)
+        }
+        "marker" => {
+            let text = event_field(&src, "text")
+                .and_then(|x| x.as_str())
+                .unwrap_or("");
+            if doc.insert_marker_with_undo(target_tick, text.to_string(), "粘贴标签") {
+                let model = doc.data.model.clone();
+                refresh_snapshot(&mut s);
+                drop(s);
+                crate::audio::reload_notes(model);
+                return 1;
+            }
+            None
+        }
+        _ => None,
+    };
+    let Some(action) = action else {
+        return 0;
+    };
+    doc.push_undo(action, "事件列表粘贴", before);
+    let model = doc.data.model.clone();
+    refresh_snapshot(&mut s);
+    drop(s);
+    crate::audio::reload_notes(model);
+    1
 }
 
 /// 本工程默认 BPM / 拍号 JSON：`{"bpm":120,"num":4,"den":4}`（den = 实际分母）。
@@ -2248,7 +2853,7 @@ pub fn project_defaults_json() -> String {
 /// 设置本工程默认 BPM / 拍号（无原生事件时的回退）。成功 1。
 pub fn set_project_defaults(bpm: f32, num: u8, den_pow: u8) -> i32 {
     let bpm = if bpm.is_finite() {
-        bpm.clamp(20.0, 999.0)
+        bpm.clamp(0.0, 60_000_000.0)
     } else {
         120.0
     };
