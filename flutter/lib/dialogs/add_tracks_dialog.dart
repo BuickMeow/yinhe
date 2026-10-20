@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'theme.dart';
-import 'l10n/app_localizations.dart';
+import '../core/theme.dart';
+import '../l10n/app_localizations.dart';
 
 /// 新建音轨对话框：数量 + 通道分配方式（相同通道 / 在所选 port 内循环）。
 class AddTracksDialog extends StatefulWidget {

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'models.dart';
-import 'theme.dart';
+import '../core/models.dart';
+import '../core/theme.dart';
 
 /// 文本浮层：AR 轨道面板文字/编号/M-S、拖动排序指示，PR 键盘 C 音名。
 class LabelsPainter extends CustomPainter {

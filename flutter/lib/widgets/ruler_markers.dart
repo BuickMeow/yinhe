@@ -1,11 +1,11 @@
 import 'package:ffi/ffi.dart';
 import 'package:flutter/material.dart';
 
-import 'bar_beat.dart';
-import 'ffi.dart' as rust;
-import 'models.dart';
-import 'painters.dart';
-import 'theme.dart';
+import '../core/bar_beat.dart';
+import '../core/ffi.dart' as rust;
+import '../core/models.dart';
+import '../painters/painters.dart';
+import '../core/theme.dart';
 
 /// 时间标尺上的标签（marker）层：pill 显示 + 点击跳转 / 长按菜单 / 拖动移动。
 ///

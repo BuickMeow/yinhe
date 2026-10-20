@@ -2,8 +2,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import 'models.dart';
-import 'theme.dart';
+import '../core/models.dart';
+import '../core/theme.dart';
 
 /// 长按圆环进度 + 移动中的虚线选框。
 class SelectionLongPressPainter extends CustomPainter {

@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
-import 'gm_programs.dart';
-import 'l10n/app_localizations.dart';
-import 'theme.dart';
+import '../data/gm_programs.dart';
+import '../l10n/app_localizations.dart';
+import '../core/theme.dart';
 
 /// 音轨信息对话框：名称 / 端口 / 通道 / 通道级默认乐器。
 ///

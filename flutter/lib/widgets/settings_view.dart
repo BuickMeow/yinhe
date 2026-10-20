@@ -5,10 +5,10 @@ import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import 'ffi.dart' as rust;
-import 'l10n.dart';
-import 'l10n/app_localizations.dart';
-import 'theme.dart';
+import '../core/ffi.dart' as rust;
+import '../l10n.dart';
+import '../l10n/app_localizations.dart';
+import '../core/theme.dart';
 
 /// 设置页（全屏浮层）：左侧栏切页（音色库 / 音频）+ 右内容两栏。
 ///

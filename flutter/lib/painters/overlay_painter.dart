@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'models.dart';
-import 'theme.dart';
+import '../core/models.dart';
+import '../core/theme.dart';
 
 /// 选框/预览浮层：持久选框 + 拖动框 + 刷子格（画布内容坐标）。
 class OverlayPainter extends CustomPainter {

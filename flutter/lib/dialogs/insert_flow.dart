@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'l10n/app_localizations.dart';
-import 'theme.dart';
+import '../l10n/app_localizations.dart';
+import '../core/theme.dart';
 
 /// 插入目标描述。
 class InsertChoice {

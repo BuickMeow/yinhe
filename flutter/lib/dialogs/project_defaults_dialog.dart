@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'theme.dart';
-import 'l10n/app_localizations.dart';
+import '../core/theme.dart';
+import '../l10n/app_localizations.dart';
 
 /// 本工程默认 BPM / 拍号编辑对话框。
 ///

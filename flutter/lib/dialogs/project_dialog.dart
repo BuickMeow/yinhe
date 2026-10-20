@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'theme.dart';
-import 'l10n/app_localizations.dart';
+import '../core/theme.dart';
+import '../l10n/app_localizations.dart';
 
 /// 工程设置对话框（歌名/艺术家/PPQ/简介）。
 class ProjectDialog extends StatefulWidget {

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'models.dart';
-import 'theme.dart';
+import '../core/models.dart';
+import '../core/theme.dart';
 
 /// 长按空白处时显示的落点竖线：
 /// - AR：只覆盖长按所在轨道行（高度 = 一个轨道）；

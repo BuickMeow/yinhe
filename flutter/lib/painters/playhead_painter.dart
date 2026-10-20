@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'theme.dart';
+import '../core/theme.dart';
 
 /// 播放光标：竖线，x 由 Rust 按当前视口换算（逻辑像素）。
 class PlayheadPainter extends CustomPainter {

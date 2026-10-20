@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'theme.dart';
-import 'l10n/app_localizations.dart';
+import '../core/theme.dart';
+import '../l10n/app_localizations.dart';
 
 /// 压缩包内的 MIDI 条目。
 class ArchiveEntryItem {

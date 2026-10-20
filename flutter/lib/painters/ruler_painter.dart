@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'bar_beat.dart';
-import 'theme.dart';
+import '../core/bar_beat.dart';
+import '../core/theme.dart';
 
 /// 时间标尺（与桌面 `time_ruler` 一致）：只有小节/拍/子拍/tick 文本标签，
 /// 无刻度线；背景铺 `track_bg`（含左侧面板/键盘上方留白）。

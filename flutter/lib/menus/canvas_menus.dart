@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'theme.dart';
-import 'l10n/app_localizations.dart';
+import '../core/theme.dart';
+import '../l10n/app_localizations.dart';
 
 /// 长按选框未移动：复制菜单。
 Future<void> showSelectionMenu(

@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
-import 'models.dart';
-import 'theme.dart';
-import 'l10n/app_localizations.dart';
+import '../core/models.dart';
+import '../core/theme.dart';
+import '../l10n/app_localizations.dart';
 
 /// 主页（仿桌面）：返回、按钮列、最近修改的文件、銀字水印、版本号、设置。
 class HomeView extends StatelessWidget {

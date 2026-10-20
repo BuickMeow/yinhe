@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'models.dart';
-import 'theme.dart';
+import '../core/models.dart';
+import '../core/theme.dart';
 
 /// PR 自动化栏绘制：力度条或离散（Step）自动化曲线，支持拖动锚点预览。
 class AutomationPainter extends CustomPainter {

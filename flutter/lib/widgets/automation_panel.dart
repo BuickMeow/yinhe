@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 
-import 'ffi.dart' as rust;
-import 'models.dart';
-import 'painters.dart';
-import 'l10n/app_localizations.dart';
-import 'theme.dart';
+import '../core/ffi.dart' as rust;
+import '../core/models.dart';
+import '../painters/painters.dart';
+import '../l10n/app_localizations.dart';
+import '../core/theme.dart';
 
 /// PR 底部自动化栏（高 81）：combo 列 + 自动化/力度绘制 + 锚点拖动。
 class AutomationPanel extends StatefulWidget {

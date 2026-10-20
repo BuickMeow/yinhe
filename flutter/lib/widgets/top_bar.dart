@@ -1,10 +1,10 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import 'models.dart';
-import 'theme.dart';
-import 'l10n/app_localizations.dart';
-import 'tools.dart';
+import '../core/models.dart';
+import '../core/theme.dart';
+import '../l10n/app_localizations.dart';
+import '../core/tools.dart';
 
 /// 顶部栏：左侧视图入口 + 走带，右侧量化/工具/撤销重做；
 /// 中央在 PR 显示"显示轨道"长按钮，在 AR 显示歌曲标题（只读）。

@@ -4,11 +4,11 @@ import 'dart:ffi' as ffi;
 import 'package:ffi/ffi.dart';
 import 'package:flutter/material.dart';
 
-import 'bar_beat.dart';
-import 'ffi.dart' as rust;
+import '../core/bar_beat.dart';
+import '../core/ffi.dart' as rust;
 import 'insert_flow.dart';
-import 'theme.dart';
-import 'l10n/app_localizations.dart';
+import '../core/theme.dart';
+import '../l10n/app_localizations.dart';
 
 /// 事件列表（移动端）：音符 + 自动化 + Tempo/标签穿插，按
 /// 时间 → 音高/值 → 时长排序。
