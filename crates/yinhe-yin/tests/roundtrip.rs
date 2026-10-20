@@ -950,3 +950,66 @@ fn channel_instruments_roundtrip() {
     );
     assert_eq!(loaded.channel_instruments[0], None);
 }
+
+#[test]
+fn zero_bpm_jump_marker_roundtrips() {
+    let conductor = ConductorData {
+        tempo: AutomationLane {
+            target: AutomationTarget::Tempo,
+            track: 0,
+            events: vec![
+                AutomationEvent {
+                    id: 0,
+                    tick: 0,
+                    value: 120.0,
+                    shape: SegmentShape::Step,
+                },
+                AutomationEvent {
+                    id: 0,
+                    tick: 480,
+                    value: 0.0,
+                    shape: SegmentShape::Step,
+                },
+                AutomationEvent {
+                    id: 0,
+                    tick: 960,
+                    value: 60.0,
+                    shape: SegmentShape::Step,
+                },
+            ],
+        },
+        time_sig: Vec::new(),
+        key_sig: Vec::new(),
+        markers: Vec::new(),
+        lyrics: Vec::new(),
+        chord: Vec::new(),
+    };
+    let mut model = YinModel {
+        conductor: Arc::new(conductor),
+        tracks: vec![Arc::new(TrackData::new(0, 0))],
+        meta: ProjectMeta {
+            ppq: 480,
+            ..ProjectMeta::default()
+        },
+        ..Default::default()
+    };
+    model.load_track_notes(vec![vec![NoteEvent {
+        id: 0,
+        start_tick: 0,
+        end_tick: 1920,
+        key: 60,
+        velocity: 100,
+    }]]);
+    model.rebuild();
+
+    let loaded = load_yin_bytes(&save_yin_bytes(&model).unwrap()).unwrap();
+    let values: Vec<f32> = loaded
+        .conductor
+        .tempo
+        .events
+        .iter()
+        .map(|e| e.value)
+        .collect();
+    assert_eq!(values, vec![120.0, 0.0, 60.0]);
+    assert_eq!(loaded.tempo_map.skip_ranges, vec![(480, 960)]);
+}
