@@ -105,8 +105,10 @@ pub struct RenderScene {
     pub view_mode: ViewMode,
     /// 轨道颜色（RGBA per track）。
     pub track_colors: Vec<[f32; 4]>,
-    /// 可见轨（演示阶段统一用 `EditState::pr_visible()` 的超集）。
+    /// AR 可见轨（`EditState::track_visible`，不受 PR 显示过滤影响）。
     pub track_visible: Vec<bool>,
+    /// PR 可见轨（`EditState::pr_visible()`：PR 专属显隐 ∪ 主音轨）。
+    pub pr_track_visible: Vec<bool>,
     /// 总 tick 数（视口 clamp 用）。
     pub total_ticks: f64,
     /// 轨道数（AR 布局/vendor 层构建用）。
@@ -152,6 +154,7 @@ impl Default for RenderScene {
             view_mode: ViewMode::Pianoroll,
             track_colors: Vec::new(),
             track_visible: Vec::new(),
+            pr_track_visible: Vec::new(),
             total_ticks: 0.0,
             num_tracks: 0,
             tracks: Vec::new(),
@@ -666,10 +669,6 @@ pub fn set_project_meta(name: String, artist: String, description: String, ppq: 
                 new: name.clone(),
             });
             model.meta.name = name.clone();
-            // 与桌面 apply 同规则：歌曲名同步到 track 0 名称。
-            if let Some(t) = model.tracks.get_mut(0) {
-                std::sync::Arc::make_mut(t).name = name.clone();
-            }
         }
         if model.meta.artist != artist {
             actions.push(UndoAction::ProjectArtist {
@@ -791,7 +790,9 @@ pub(crate) fn refresh_snapshot(s: &mut RenderScene) {
     s.total_ticks = total_ticks_padded(model.tick_length, model.meta.ppq).max(1.0);
     s.model = Some(model.clone());
     s.track_colors = colors.clone();
-    s.track_visible = doc.edit.pr_visible();
+    // AR / PR 各自一套显隐：PR 的「显示轨道」过滤不能影响 AR。
+    s.track_visible = doc.edit.track_visible.clone();
+    s.pr_track_visible = doc.edit.pr_visible();
     s.num_tracks = model.tracks.len();
     s.ppq = model.meta.ppq;
     s.tracks = model
@@ -1349,6 +1350,8 @@ pub fn velocity_json() -> String {
     };
     let model = &doc.data.model;
     let visible = doc.edit.pr_visible();
+    // 与音符层一致：PR「当前编辑音轨」过滤也作用于力度条。
+    let only_track = s.display_track;
     let ppu = s.pr_view.base.pixels_per_tick;
     let block = yinhe_wgpu::pianoroll::select_summary_level(ppu)
         .map(|l| yinhe_wgpu::pianoroll::SUMMARY_BLOCK_TICKS[l]);
@@ -1363,6 +1366,9 @@ pub fn velocity_json() -> String {
                     }
                     let t = note.track as usize;
                     if !visible.get(t).copied().unwrap_or(true) {
+                        continue;
+                    }
+                    if only_track.is_some_and(|only| only != t) {
                         continue;
                     }
                     bars.push((
@@ -1385,6 +1391,9 @@ pub fn velocity_json() -> String {
                     }
                     let t = note.track as usize;
                     if !visible.get(t).copied().unwrap_or(true) {
+                        continue;
+                    }
+                    if only_track.is_some_and(|only| only != t) {
                         continue;
                     }
                     let len = note.end_tick.saturating_sub(note.start_tick);
@@ -1955,7 +1964,8 @@ pub fn ar_automation_json() -> String {
         return "[]".into();
     };
     let model = &doc.data.model;
-    let visible = doc.edit.pr_visible();
+    // AR 的折叠自动化预览用 AR 显隐（PR 的显示过滤不影响 AR）。
+    let visible = doc.edit.track_visible.clone();
     let mut out = String::from("[");
     let mut first = true;
     for (ti, t) in model.tracks.iter().enumerate() {
