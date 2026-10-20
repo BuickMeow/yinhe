@@ -135,5 +135,12 @@
   "sameChannel": "Stesso canale per tutti",
   "sortHint": "Tempo → altezza/valore → durata",
   "startChannel": "Canale iniziale",
-  "tempoValueTitle": "BPM del tempo"
+  "tempoValueTitle": "BPM del tempo",
+  "untitled": "Senza titolo",
+  "ppqError": "Il PPQ deve essere un intero 1–32767",
+  "channelInstrumentValue": "Strumento predefinito del canale: {name} (Bank {bank} / Program {program})",
+  "eventNoteTitle": "Nota {name}",
+  "eventNoteDetail": "{time} · {track} · velocity {velocity} · durata {length}",
+  "eventValueDetail": "{time} · {track} · {value} (0–{max})",
+  "centerHint": "8192 = centro"
 }

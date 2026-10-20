@@ -117,7 +117,7 @@ mixin _ShellMenus on _ShellBase {
           ? insertDefaultValue(kind, number).clamp(minValue, maxValue)
           : current.round().clamp(minValue, maxValue);
       final quick = kind == 2 && number == 64
-          ? const [('关闭', 0), ('开启', 127)]
+          ? [(l.off, 0), (l.on, 127)]
           : const <(String, int)>[];
       final v = await showInsertValueDialog(
         context,

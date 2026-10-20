@@ -208,15 +208,15 @@ Future<InsertChoice?> showInsertMenu(
           (Icons.speed, const InsertChoice(kind: 0, number: 0, label: 'Tempo')),
           (
             Icons.schedule,
-            const InsertChoice(kind: 4, number: 0, label: '拍号 Time Signature'),
+            InsertChoice(kind: 4, number: 0, label: l.timeSignature),
           ),
           (
             Icons.music_note,
-            const InsertChoice(kind: 5, number: 0, label: '调号 Key Signature'),
+            InsertChoice(kind: 5, number: 0, label: l.keySignature),
           ),
           (
             Icons.bookmark_add_outlined,
-            const InsertChoice(kind: 6, number: 0, label: '标签 Marker'),
+            InsertChoice(kind: 6, number: 0, label: l.marker),
           ),
         ]
       : <(IconData, InsertChoice)>[
@@ -236,19 +236,19 @@ Future<InsertChoice?> showInsertMenu(
             ),
           (
             Icons.tag,
-            const InsertChoice(
+            InsertChoice(
               kind: 2,
               number: 0,
-              label: '自定义 CC 号…',
+              label: '${l.customCcTitle}…',
               custom: true,
             ),
           ),
           (
             Icons.tag,
-            const InsertChoice(
+            InsertChoice(
               kind: 3,
               number: 0,
-              label: '自定义 RPN 号…',
+              label: '${l.customRpnTitle}…',
               custom: true,
             ),
           ),
@@ -274,7 +274,7 @@ Future<InsertChoice?> showInsertMenu(
                 ),
               ListTile(
                 leading: const Icon(Icons.close),
-                title: const Text('取消'),
+                title: Text(l.cancel),
                 onTap: () => Navigator.of(ctx).pop(),
               ),
             ],

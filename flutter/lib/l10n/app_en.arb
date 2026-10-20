@@ -135,5 +135,64 @@
   "markerRename": "Rename marker",
   "markerDelete": "Delete marker",
   "markerText": "Marker text",
-  "markerTextOptional": "Marker text (optional)"
+  "markerTextOptional": "Marker text (optional)",
+  "untitled": "Untitled",
+  "ppqError": "PPQ must be an integer 1–32767",
+  "channelInstrumentValue": "Channel default instrument: {name} (Bank {bank} / Program {program})",
+  "eventNoteTitle": "Note {name}",
+  "eventNoteDetail": "{time} · {track} · vel {velocity} · len {length}",
+  "eventValueDetail": "{time} · {track} · {value} (0–{max})",
+  "centerHint": "8192 = center",
+  "@channelInstrumentValue": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "bank": {
+        "type": "int"
+      },
+      "program": {
+        "type": "int"
+      }
+    }
+  },
+  "@eventNoteTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "@eventNoteDetail": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      },
+      "track": {
+        "type": "String"
+      },
+      "velocity": {
+        "type": "int"
+      },
+      "length": {
+        "type": "int"
+      }
+    }
+  },
+  "@eventValueDetail": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      },
+      "track": {
+        "type": "String"
+      },
+      "value": {
+        "type": "int"
+      },
+      "max": {
+        "type": "int"
+      }
+    }
+  }
 }

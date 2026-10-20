@@ -402,4 +402,33 @@ class AppLocalizationsTr extends AppLocalizations {
 
   @override
   String get markerTextOptional => 'İşaretçi metni (isteğe bağlı)';
+
+  @override
+  String get untitled => 'Adsız';
+
+  @override
+  String get ppqError => 'PPQ 1–32767 arasında bir tam sayı olmalı';
+
+  @override
+  String channelInstrumentValue(String name, int bank, int program) {
+    return 'Kanalın varsayılan enstrümanı: $name (Bank $bank / Program $program)';
+  }
+
+  @override
+  String eventNoteTitle(String name) {
+    return 'Nota $name';
+  }
+
+  @override
+  String eventNoteDetail(String time, String track, int velocity, int length) {
+    return '$time · $track · hız $velocity · uzunluk $length';
+  }
+
+  @override
+  String eventValueDetail(String time, String track, int value, int max) {
+    return '$time · $track · $value (0–$max)';
+  }
+
+  @override
+  String get centerHint => '8192 = merkez';
 }

@@ -402,4 +402,33 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get markerTextOptional => 'Markertext (optional)';
+
+  @override
+  String get untitled => 'Unbenannt';
+
+  @override
+  String get ppqError => 'PPQ muss eine ganze Zahl von 1–32767 sein';
+
+  @override
+  String channelInstrumentValue(String name, int bank, int program) {
+    return 'Standardinstrument des Kanals: $name (Bank $bank / Program $program)';
+  }
+
+  @override
+  String eventNoteTitle(String name) {
+    return 'Note $name';
+  }
+
+  @override
+  String eventNoteDetail(String time, String track, int velocity, int length) {
+    return '$time · $track · Anschlag $velocity · Länge $length';
+  }
+
+  @override
+  String eventValueDetail(String time, String track, int value, int max) {
+    return '$time · $track · $value (0–$max)';
+  }
+
+  @override
+  String get centerHint => '8192 = Mitte';
 }

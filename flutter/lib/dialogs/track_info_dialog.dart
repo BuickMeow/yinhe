@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/gm_programs.dart';
 import '../l10n/app_localizations.dart';
 import '../core/theme.dart';
+import 'frame.dart';
 
 /// 音轨信息对话框：名称 / 端口 / 通道 / 通道级默认乐器。
 ///
@@ -80,128 +81,9 @@ class _TrackInfoDialogState extends State<TrackInfoDialog> {
   @override
   Widget build(BuildContext context) {
     final inst = _instrument;
-    return AlertDialog(
-      backgroundColor: YinheTheme.bg,
-      title: Text(
-        widget.isMaster ? '编辑 Master 轨信息' : '编辑音轨信息',
-        style: const TextStyle(fontSize: 17),
-      ),
-      content: SizedBox(
-        width: 460,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const SizedBox(height: 10),
-              TextField(
-                controller: _name,
-                style: const TextStyle(fontSize: 14),
-                decoration: InputDecoration(
-                  labelText: widget.isMaster ? l.songTitleField : l.trackName,
-                  border: const OutlineInputBorder(),
-                  isDense: true,
-                ),
-              ),
-              if (widget.isMaster) ...[
-                const SizedBox(height: 12),
-                Text(
-                  l.masterTrackHint,
-                  style: TextStyle(color: YinheTheme.textMuted, fontSize: 12),
-                ),
-              ] else ...[
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<int>(
-                        initialValue: _port,
-                        decoration: InputDecoration(
-                          labelText: l.port,
-                          border: OutlineInputBorder(),
-                          isDense: true,
-                        ),
-                        items: [
-                          for (var i = 0; i < 16; i++)
-                            DropdownMenuItem(
-                              value: i,
-                              child: Text(String.fromCharCode(0x41 + i)),
-                            ),
-                        ],
-                        onChanged: (v) => setState(() => _port = v ?? _port),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: DropdownButtonFormField<int>(
-                        initialValue: _channel,
-                        decoration: InputDecoration(
-                          labelText: l.channel,
-                          border: OutlineInputBorder(),
-                          isDense: true,
-                        ),
-                        items: [
-                          for (var i = 0; i < 16; i++)
-                            DropdownMenuItem(value: i, child: Text('${i + 1}')),
-                        ],
-                        onChanged: (v) {
-                          if (v == null) {
-                            return;
-                          }
-                          // 通道级设置：切换通道时显示目标通道当前的默认乐器。
-                          setState(() {
-                            _channel = v;
-                            _instrument = _instrumentOf(v);
-                          });
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        inst == null
-                            ? l.defaultInstrumentFollowPc
-                            : '本通道默认乐器：${gmProgramLabel(inst.$1, inst.$2)}'
-                                  '（Bank ${inst.$1} / Program ${inst.$2}）',
-                        style: TextStyle(
-                          color: YinheTheme.textLabel,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: _pickInstrument,
-                      child: Text(l.select),
-                    ),
-                    if (inst != null)
-                      TextButton(
-                        onPressed: () => setState(() => _instrument = null),
-                        child: Text(l.clear),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  l.channelInstrumentHint,
-                  style: TextStyle(color: YinheTheme.textMuted, fontSize: 11),
-                ),
-                if (_port != 0)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(
-                      l.mobilePortHint,
-                      style: TextStyle(color: YinheTheme.warning, fontSize: 11),
-                    ),
-                  ),
-              ],
-            ],
-          ),
-        ),
-      ),
+    return YinheDialog(
+      title: widget.isMaster ? l.masterTrack : l.editTrackInfo,
+      width: 460,
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
@@ -209,6 +91,113 @@ class _TrackInfoDialogState extends State<TrackInfoDialog> {
         ),
         FilledButton(onPressed: _save, child: Text(l.save)),
       ],
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _name,
+            style: const TextStyle(fontSize: 14),
+            decoration: InputDecoration(
+              labelText: widget.isMaster ? l.songTitleField : l.trackName,
+              border: const OutlineInputBorder(),
+              isDense: true,
+            ),
+          ),
+          if (widget.isMaster) ...[
+            const SizedBox(height: 12),
+            Text(
+              l.masterTrackHint,
+              style: TextStyle(color: YinheTheme.textMuted, fontSize: 12),
+            ),
+          ] else ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<int>(
+                    initialValue: _port,
+                    decoration: InputDecoration(
+                      labelText: l.port,
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: [
+                      for (var i = 0; i < 16; i++)
+                        DropdownMenuItem(
+                          value: i,
+                          child: Text(String.fromCharCode(0x41 + i)),
+                        ),
+                    ],
+                    onChanged: (v) => setState(() => _port = v ?? _port),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: DropdownButtonFormField<int>(
+                    initialValue: _channel,
+                    decoration: InputDecoration(
+                      labelText: l.channel,
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: [
+                      for (var i = 0; i < 16; i++)
+                        DropdownMenuItem(value: i, child: Text('${i + 1}')),
+                    ],
+                    onChanged: (v) {
+                      if (v == null) {
+                        return;
+                      }
+                      // 通道级设置：切换通道时显示目标通道当前的默认乐器。
+                      setState(() {
+                        _channel = v;
+                        _instrument = _instrumentOf(v);
+                      });
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    inst == null
+                        ? l.defaultInstrumentFollowPc
+                        : l.channelInstrumentValue(
+                            gmProgramLabel(inst.$1, inst.$2),
+                            inst.$1,
+                            inst.$2,
+                          ),
+                    style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
+                  ),
+                ),
+                TextButton(onPressed: _pickInstrument, child: Text(l.select)),
+                if (inst != null)
+                  TextButton(
+                    onPressed: () => setState(() => _instrument = null),
+                    child: Text(l.clear),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              l.channelInstrumentHint,
+              style: TextStyle(color: YinheTheme.textMuted, fontSize: 11),
+            ),
+            if (_port != 0)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  l.mobilePortHint,
+                  style: TextStyle(color: YinheTheme.warning, fontSize: 11),
+                ),
+              ),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -232,11 +221,11 @@ class _InstrumentPickerDialogState extends State<_InstrumentPickerDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      backgroundColor: YinheTheme.bg,
-      title: Text(l.selectChannelInstrument, style: TextStyle(fontSize: 17)),
+    return YinheDialog(
+      title: l.selectChannelInstrument,
+      width: 420,
+      scroll: false,
       content: SizedBox(
-        width: 420,
         height: 460,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,

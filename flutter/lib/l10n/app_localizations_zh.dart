@@ -398,6 +398,35 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get markerTextOptional => '标签文本（可留空）';
+
+  @override
+  String get untitled => '未命名';
+
+  @override
+  String get ppqError => 'PPQ 需为 1–32767 的整数';
+
+  @override
+  String channelInstrumentValue(String name, int bank, int program) {
+    return '本通道默认乐器：$name（Bank $bank / Program $program）';
+  }
+
+  @override
+  String eventNoteTitle(String name) {
+    return '音符 $name';
+  }
+
+  @override
+  String eventNoteDetail(String time, String track, int velocity, int length) {
+    return '$time · $track · 力度 $velocity · 长度 $length';
+  }
+
+  @override
+  String eventValueDetail(String time, String track, int value, int max) {
+    return '$time · $track · $value（0–$max）';
+  }
+
+  @override
+  String get centerHint => '8192 = 中心';
 }
 
 /// The translations for Chinese, as used in Hong Kong (`zh_HK`).
@@ -793,6 +822,35 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
 
   @override
   String get markerTextOptional => '標籤文字（可留空）';
+
+  @override
+  String get untitled => '未命名';
+
+  @override
+  String get ppqError => 'PPQ 需為 1–32767 的整數';
+
+  @override
+  String channelInstrumentValue(String name, int bank, int program) {
+    return '本通道預設樂器：$name（Bank $bank / Program $program）';
+  }
+
+  @override
+  String eventNoteTitle(String name) {
+    return '音符 $name';
+  }
+
+  @override
+  String eventNoteDetail(String time, String track, int velocity, int length) {
+    return '$time · $track · 力度 $velocity · 長度 $length';
+  }
+
+  @override
+  String eventValueDetail(String time, String track, int value, int max) {
+    return '$time · $track · $value（0–$max）';
+  }
+
+  @override
+  String get centerHint => '8192 = 中心';
 }
 
 /// The translations for Chinese, as used in Taiwan (`zh_TW`).
@@ -1188,4 +1246,33 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get markerTextOptional => '標籤文字（可留空）';
+
+  @override
+  String get untitled => '未命名';
+
+  @override
+  String get ppqError => 'PPQ 需為 1–32767 的整數';
+
+  @override
+  String channelInstrumentValue(String name, int bank, int program) {
+    return '本通道預設樂器：$name（Bank $bank / Program $program）';
+  }
+
+  @override
+  String eventNoteTitle(String name) {
+    return '音符 $name';
+  }
+
+  @override
+  String eventNoteDetail(String time, String track, int velocity, int length) {
+    return '$time · $track · 力度 $velocity · 長度 $length';
+  }
+
+  @override
+  String eventValueDetail(String time, String track, int value, int max) {
+    return '$time · $track · $value（0–$max）';
+  }
+
+  @override
+  String get centerHint => '8192 = 中心';
 }

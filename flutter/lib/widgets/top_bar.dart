@@ -155,8 +155,8 @@ class TopBar extends StatelessWidget {
                   ),
                 ),
               ),
-              _metaText(bpmText, '本工程默认 BPM', onEditBpm),
-              _metaText(sigText, '本工程默认拍号', onEditSig),
+              _metaText(bpmText, l.defaultBpm, onEditBpm),
+              _metaText(sigText, l.defaultTimeSig, onEditSig),
               const Spacer(),
               _buildQuantizeButton(context, l),
               _buildToolButton(l),
@@ -237,8 +237,8 @@ class TopBar extends StatelessWidget {
   }
 
   /// 歌曲标题（音符数在 AR 歌名弹窗内部）。
-  String _titled() {
-    return songTitle.isNotEmpty ? songTitle : (fileName ?? '未命名');
+  String _titled(AppLocalizations l) {
+    return songTitle.isNotEmpty ? songTitle : (fileName ?? l.untitled);
   }
 
   /// 工具名（本地化）。
@@ -294,10 +294,11 @@ class TopBar extends StatelessWidget {
               color: YinheTheme.textSecondary,
             ),
             const SizedBox(width: 4),
-            Text(
-              quantizeLabel,
-              style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
-            ),
+            Text(switch (quantizeLabel) {
+              '关闭' => l.quantizeOff,
+              '自动' => l.quantizeAuto,
+              _ => quantizeLabel,
+            }, style: TextStyle(color: YinheTheme.textLabel, fontSize: 13)),
           ],
         ),
       ),
@@ -370,7 +371,7 @@ class TopBar extends StatelessWidget {
           child: ValueListenableBuilder<int>(
             valueListenable: docState,
             builder: (context, st, _) => Text(
-              (st & 4) != 0 ? '• ${_titled()}' : _titled(),
+              (st & 4) != 0 ? '• ${_titled(l)}' : _titled(l),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
@@ -384,7 +385,7 @@ class TopBar extends StatelessWidget {
   /// PR：当前编辑音轨长按钮（顶部正中央）+「全部轨道」开关。
   Widget _buildSongBox(AppLocalizations l) {
     final active = activeTrack >= 0 && activeTrack < tracks.length;
-    final base = active ? tracks[activeTrack].name : _titled();
+    final base = active ? tracks[activeTrack].name : _titled(l);
     return PopupMenuButton<int>(
       tooltip: l.currentTrack,
       padding: EdgeInsets.zero,

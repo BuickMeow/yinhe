@@ -895,6 +895,48 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Marker text (optional)'**
   String get markerTextOptional;
+
+  /// No description provided for @untitled.
+  ///
+  /// In en, this message translates to:
+  /// **'Untitled'**
+  String get untitled;
+
+  /// No description provided for @ppqError.
+  ///
+  /// In en, this message translates to:
+  /// **'PPQ must be an integer 1–32767'**
+  String get ppqError;
+
+  /// No description provided for @channelInstrumentValue.
+  ///
+  /// In en, this message translates to:
+  /// **'Channel default instrument: {name} (Bank {bank} / Program {program})'**
+  String channelInstrumentValue(String name, int bank, int program);
+
+  /// No description provided for @eventNoteTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Note {name}'**
+  String eventNoteTitle(String name);
+
+  /// No description provided for @eventNoteDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'{time} · {track} · vel {velocity} · len {length}'**
+  String eventNoteDetail(String time, String track, int velocity, int length);
+
+  /// No description provided for @eventValueDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'{time} · {track} · {value} (0–{max})'**
+  String eventValueDetail(String time, String track, int value, int max);
+
+  /// No description provided for @centerHint.
+  ///
+  /// In en, this message translates to:
+  /// **'8192 = center'**
+  String get centerHint;
 }
 
 class _AppLocalizationsDelegate

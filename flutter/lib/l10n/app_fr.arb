@@ -63,7 +63,7 @@
   "auto": "Auto",
   "deviceDefault": "Par défaut de l'appareil",
   "addSoundfont": "Ajouter une SoundFont",
-  "frames": "images",
+  "frames": "frames",
   "editTrackInfo": "Édition",
   "eventList": "Événements",
   "deleteTrack": "Supprimer",
@@ -135,5 +135,12 @@
   "sameChannel": "Même canal pour tous",
   "sortHint": "Temps → hauteur/valeur → durée",
   "startChannel": "Canal de départ",
-  "tempoValueTitle": "BPM du tempo"
+  "tempoValueTitle": "BPM du tempo",
+  "untitled": "Sans titre",
+  "ppqError": "Le PPQ doit être un entier entre 1 et 32767",
+  "channelInstrumentValue": "Instrument par défaut du canal : {name} (Banque {bank} / Programme {program})",
+  "eventNoteTitle": "Note {name}",
+  "eventNoteDetail": "{time} · {track} · vélocité {velocity} · durée {length}",
+  "eventValueDetail": "{time} · {track} · {value} (0–{max})",
+  "centerHint": "8192 = centre"
 }

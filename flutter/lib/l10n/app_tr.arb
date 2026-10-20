@@ -135,5 +135,12 @@
   "sameChannel": "Tümü aynı kanal",
   "sortHint": "Zaman → perde/değer → uzunluk",
   "startChannel": "Başlangıç kanalı",
-  "tempoValueTitle": "Tempo BPM"
+  "tempoValueTitle": "Tempo BPM",
+  "untitled": "Adsız",
+  "ppqError": "PPQ 1–32767 arasında bir tam sayı olmalı",
+  "channelInstrumentValue": "Kanalın varsayılan enstrümanı: {name} (Bank {bank} / Program {program})",
+  "eventNoteTitle": "Nota {name}",
+  "eventNoteDetail": "{time} · {track} · hız {velocity} · uzunluk {length}",
+  "eventValueDetail": "{time} · {track} · {value} (0–{max})",
+  "centerHint": "8192 = merkez"
 }

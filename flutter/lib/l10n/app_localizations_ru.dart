@@ -199,7 +199,7 @@ class AppLocalizationsRu extends AppLocalizations {
   String get addSoundfont => 'Добавить SoundFont';
 
   @override
-  String get frames => 'кадров';
+  String get frames => 'фреймов';
 
   @override
   String get editTrackInfo => 'Правка';
@@ -402,4 +402,33 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get markerTextOptional => 'Текст маркера (необязательно)';
+
+  @override
+  String get untitled => 'Без названия';
+
+  @override
+  String get ppqError => 'PPQ должен быть целым числом 1–32767';
+
+  @override
+  String channelInstrumentValue(String name, int bank, int program) {
+    return 'Инструмент канала по умолчанию: $name (банк $bank / программа $program)';
+  }
+
+  @override
+  String eventNoteTitle(String name) {
+    return 'Нота $name';
+  }
+
+  @override
+  String eventNoteDetail(String time, String track, int velocity, int length) {
+    return '$time · $track · сила $velocity · длина $length';
+  }
+
+  @override
+  String eventValueDetail(String time, String track, int value, int max) {
+    return '$time · $track · $value (0–$max)';
+  }
+
+  @override
+  String get centerHint => '8192 = центр';
 }

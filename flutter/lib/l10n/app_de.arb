@@ -135,5 +135,12 @@
   "sameChannel": "Gleicher Kanal für alle",
   "sortHint": "Zeit → Tonhöhe/Wert → Länge",
   "startChannel": "Startkanal",
-  "tempoValueTitle": "Tempo-BPM"
+  "tempoValueTitle": "Tempo-BPM",
+  "untitled": "Unbenannt",
+  "ppqError": "PPQ muss eine ganze Zahl von 1–32767 sein",
+  "channelInstrumentValue": "Standardinstrument des Kanals: {name} (Bank {bank} / Program {program})",
+  "eventNoteTitle": "Note {name}",
+  "eventNoteDetail": "{time} · {track} · Anschlag {velocity} · Länge {length}",
+  "eventValueDetail": "{time} · {track} · {value} (0–{max})",
+  "centerHint": "8192 = Mitte"
 }

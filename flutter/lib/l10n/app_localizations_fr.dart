@@ -199,7 +199,7 @@ class AppLocalizationsFr extends AppLocalizations {
   String get addSoundfont => 'Ajouter une SoundFont';
 
   @override
-  String get frames => 'images';
+  String get frames => 'frames';
 
   @override
   String get editTrackInfo => 'Édition';
@@ -402,4 +402,33 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get markerTextOptional => 'Texte du marqueur (facultatif)';
+
+  @override
+  String get untitled => 'Sans titre';
+
+  @override
+  String get ppqError => 'Le PPQ doit être un entier entre 1 et 32767';
+
+  @override
+  String channelInstrumentValue(String name, int bank, int program) {
+    return 'Instrument par défaut du canal : $name (Banque $bank / Programme $program)';
+  }
+
+  @override
+  String eventNoteTitle(String name) {
+    return 'Note $name';
+  }
+
+  @override
+  String eventNoteDetail(String time, String track, int velocity, int length) {
+    return '$time · $track · vélocité $velocity · durée $length';
+  }
+
+  @override
+  String eventValueDetail(String time, String track, int value, int max) {
+    return '$time · $track · $value (0–$max)';
+  }
+
+  @override
+  String get centerHint => '8192 = centre';
 }

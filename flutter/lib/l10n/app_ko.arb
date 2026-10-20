@@ -135,5 +135,12 @@
   "sameChannel": "모두 같은 채널",
   "sortHint": "시간 → 음높이/값 → 길이",
   "startChannel": "시작 채널",
-  "tempoValueTitle": "템포 BPM"
+  "tempoValueTitle": "템포 BPM",
+  "untitled": "제목 없음",
+  "ppqError": "PPQ는 1–32767의 정수여야 합니다",
+  "channelInstrumentValue": "이 채널 기본 악기: {name} (Bank {bank} / Program {program})",
+  "eventNoteTitle": "음표 {name}",
+  "eventNoteDetail": "{time} · {track} · 벨로시티 {velocity} · 길이 {length}",
+  "eventValueDetail": "{time} · {track} · {value} (0–{max})",
+  "centerHint": "8192 = 중앙"
 }

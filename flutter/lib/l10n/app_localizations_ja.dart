@@ -400,4 +400,33 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get markerTextOptional => 'ラベルのテキスト（空欄可）';
+
+  @override
+  String get untitled => '無題';
+
+  @override
+  String get ppqError => 'PPQ は 1–32767 の整数で指定してください';
+
+  @override
+  String channelInstrumentValue(String name, int bank, int program) {
+    return 'このチャンネルの既定音色：$name（Bank $bank / Program $program）';
+  }
+
+  @override
+  String eventNoteTitle(String name) {
+    return '音符 $name';
+  }
+
+  @override
+  String eventNoteDetail(String time, String track, int velocity, int length) {
+    return '$time · $track · ベロシティ $velocity · 長さ $length';
+  }
+
+  @override
+  String eventValueDetail(String time, String track, int value, int max) {
+    return '$time · $track · $value（0–$max）';
+  }
+
+  @override
+  String get centerHint => '8192 = 中央';
 }

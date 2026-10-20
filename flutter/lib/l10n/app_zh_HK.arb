@@ -135,5 +135,12 @@
   "sameChannel": "全部相同通道",
   "sortHint": "時間 → 音高/值 → 長度",
   "startChannel": "起始通道",
-  "tempoValueTitle": "速度 BPM"
+  "tempoValueTitle": "速度 BPM",
+  "untitled": "未命名",
+  "ppqError": "PPQ 需為 1–32767 的整數",
+  "channelInstrumentValue": "本通道預設樂器：{name}（Bank {bank} / Program {program}）",
+  "eventNoteTitle": "音符 {name}",
+  "eventNoteDetail": "{time} · {track} · 力度 {velocity} · 長度 {length}",
+  "eventValueDetail": "{time} · {track} · {value}（0–{max}）",
+  "centerHint": "8192 = 中心"
 }

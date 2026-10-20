@@ -63,7 +63,7 @@
   "auto": "Авто",
   "deviceDefault": "По умолчанию устройства",
   "addSoundfont": "Добавить SoundFont",
-  "frames": "кадров",
+  "frames": "фреймов",
   "editTrackInfo": "Правка",
   "eventList": "События",
   "deleteTrack": "Удалить",
@@ -135,5 +135,12 @@
   "sameChannel": "Один канал для всех",
   "sortHint": "Время → высота/значение → длительность",
   "startChannel": "Начальный канал",
-  "tempoValueTitle": "BPM темпа"
+  "tempoValueTitle": "BPM темпа",
+  "untitled": "Без названия",
+  "ppqError": "PPQ должен быть целым числом 1–32767",
+  "channelInstrumentValue": "Инструмент канала по умолчанию: {name} (банк {bank} / программа {program})",
+  "eventNoteTitle": "Нота {name}",
+  "eventNoteDetail": "{time} · {track} · сила {velocity} · длина {length}",
+  "eventValueDetail": "{time} · {track} · {value} (0–{max})",
+  "centerHint": "8192 = центр"
 }

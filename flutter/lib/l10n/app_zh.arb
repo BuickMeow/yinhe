@@ -135,5 +135,12 @@
   "markerRename": "重命名标签",
   "markerDelete": "删除标签",
   "markerText": "标签文本",
-  "markerTextOptional": "标签文本（可留空）"
+  "markerTextOptional": "标签文本（可留空）",
+  "untitled": "未命名",
+  "ppqError": "PPQ 需为 1–32767 的整数",
+  "channelInstrumentValue": "本通道默认乐器：{name}（Bank {bank} / Program {program}）",
+  "eventNoteTitle": "音符 {name}",
+  "eventNoteDetail": "{time} · {track} · 力度 {velocity} · 长度 {length}",
+  "eventValueDetail": "{time} · {track} · {value}（0–{max}）",
+  "centerHint": "8192 = 中心"
 }

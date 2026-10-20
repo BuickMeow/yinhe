@@ -135,5 +135,12 @@
   "sameChannel": "すべて同じチャンネル",
   "sortHint": "時間 → 音高/値 → 長さ",
   "startChannel": "開始チャンネル",
-  "tempoValueTitle": "テンポ BPM"
+  "tempoValueTitle": "テンポ BPM",
+  "untitled": "無題",
+  "ppqError": "PPQ は 1–32767 の整数で指定してください",
+  "channelInstrumentValue": "このチャンネルの既定音色：{name}（Bank {bank} / Program {program}）",
+  "eventNoteTitle": "音符 {name}",
+  "eventNoteDetail": "{time} · {track} · ベロシティ {velocity} · 長さ {length}",
+  "eventValueDetail": "{time} · {track} · {value}（0–{max}）",
+  "centerHint": "8192 = 中央"
 }

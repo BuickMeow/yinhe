@@ -186,8 +186,8 @@ class _EventListDialogState extends State<EventListDialog> {
         final vel = (r['vel'] as num?)?.toInt() ?? 0;
         final end = (r['end'] as num?)?.toInt() ?? tick;
         return (
-          title: '音符 ${_noteName(key)}',
-          subtitle: '$time · $track · 力度 $vel · 长度 ${end - tick}',
+          title: l.eventNoteTitle(_noteName(key)),
+          subtitle: l.eventNoteDetail(time, track, vel, end - tick),
           icon: Icons.music_note,
         );
       case 'cc':
@@ -195,15 +195,19 @@ class _EventListDialogState extends State<EventListDialog> {
         final val = (r['val'] as num?)?.toDouble() ?? 0;
         return (
           title: _ccName(number),
-          subtitle:
-              '$time · $track · ${val.round()}（0–${(r['max'] as num?)?.round() ?? 127}）',
+          subtitle: l.eventValueDetail(
+            time,
+            track,
+            val.round(),
+            (r['max'] as num?)?.round() ?? 127,
+          ),
           icon: Icons.tune,
         );
       case 'pb':
         final val = (r['val'] as num?)?.toDouble() ?? 0;
         return (
           title: 'Pitch Bend',
-          subtitle: '$time · $track · ${val.round()}（8192 = 中心）',
+          subtitle: '$time · $track · ${val.round()}（${l.centerHint}）',
           icon: Icons.swap_vert,
         );
       case 'rpn':
@@ -211,8 +215,12 @@ class _EventListDialogState extends State<EventListDialog> {
         final val = (r['val'] as num?)?.toDouble() ?? 0;
         return (
           title: rpnInsertLabel(number),
-          subtitle:
-              '$time · $track · ${val.round()}（0–${(r['max'] as num?)?.round() ?? 127}）',
+          subtitle: l.eventValueDetail(
+            time,
+            track,
+            val.round(),
+            (r['max'] as num?)?.round() ?? 127,
+          ),
           icon: Icons.straighten,
         );
       case 'tempo':
@@ -225,8 +233,8 @@ class _EventListDialogState extends State<EventListDialog> {
       case 'marker':
         final text = r['text'] as String? ?? '';
         return (
-          title: text.isEmpty ? '标签' : text,
-          subtitle: '$time · 标签',
+          title: text.isEmpty ? l.markerLabel : text,
+          subtitle: '$time · ${l.markerLabel}',
           icon: Icons.bookmark,
         );
       default:
@@ -318,7 +326,7 @@ class _EventListDialogState extends State<EventListDialog> {
     if (kind == 'marker') {
       final text = await showInsertTextDialog(
         context,
-        title: '标签',
+        title: l.markerLabel,
         initial: row['text'] as String? ?? '',
       );
       if (text == null || !mounted) {
@@ -399,7 +407,7 @@ class _EventListDialogState extends State<EventListDialog> {
               child: Row(
                 children: [
                   IconButton(
-                    tooltip: '关闭',
+                    tooltip: l.close,
                     icon: const Icon(Icons.close),
                     color: YinheTheme.text,
                     onPressed: () => Navigator.of(context).pop(),
@@ -413,7 +421,7 @@ class _EventListDialogState extends State<EventListDialog> {
                   Padding(
                     padding: const EdgeInsets.only(right: 8),
                     child: Text(
-                      '时间 → 音高/值 → 时长',
+                      l.sortHint,
                       style: TextStyle(
                         color: YinheTheme.textDisabled,
                         fontSize: 11,

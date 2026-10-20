@@ -247,8 +247,8 @@ class _SettingsViewState extends State<SettingsView> {
 
   /// 语言页：跟随系统 + 桌面端同款 15 种语言（原生名称）。
   Widget _languagePage() {
-    const options = [
-      ('system', '跟随系统'),
+    final options = [
+      ('system', l.followSystem),
       ('zh', '简体中文'),
       ('zh-TW', '繁體中文（台灣）'),
       ('zh-HK', '繁體中文（香港）'),
@@ -428,8 +428,9 @@ class _SettingsViewState extends State<SettingsView> {
           _options(
             const [0, 512, 1024, 2048, 4096],
             _bufferSize,
-            (v) =>
-                v == 0 ? l.deviceDefault : (L10n.isZh ? '$v 帧' : '$v frames'),
+            (v) => v == 0
+                ? l.deviceDefault
+                : (L10n.isZh ? '$v ${l.frames}' : '$v frames'),
             (v) => _applyAudio(bufferSize: v),
           ),
           const SizedBox(height: 22),

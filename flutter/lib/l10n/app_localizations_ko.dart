@@ -400,4 +400,33 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get markerTextOptional => '라벨 텍스트(비워 둘 수 있음)';
+
+  @override
+  String get untitled => '제목 없음';
+
+  @override
+  String get ppqError => 'PPQ는 1–32767의 정수여야 합니다';
+
+  @override
+  String channelInstrumentValue(String name, int bank, int program) {
+    return '이 채널 기본 악기: $name (Bank $bank / Program $program)';
+  }
+
+  @override
+  String eventNoteTitle(String name) {
+    return '음표 $name';
+  }
+
+  @override
+  String eventNoteDetail(String time, String track, int velocity, int length) {
+    return '$time · $track · 벨로시티 $velocity · 길이 $length';
+  }
+
+  @override
+  String eventValueDetail(String time, String track, int value, int max) {
+    return '$time · $track · $value (0–$max)';
+  }
+
+  @override
+  String get centerHint => '8192 = 중앙';
 }

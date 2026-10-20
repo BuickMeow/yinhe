@@ -63,7 +63,7 @@
   "auto": "Automaticky",
   "deviceDefault": "Výchozí zařízení",
   "addSoundfont": "Přidat SoundFont",
-  "frames": "snímků",
+  "frames": "rámců",
   "editTrackInfo": "Úpravy",
   "eventList": "Události",
   "deleteTrack": "Smazat",
@@ -135,5 +135,12 @@
   "sameChannel": "Stejný kanál pro všechny",
   "sortHint": "Čas → výška/hodnota → délka",
   "startChannel": "Počáteční kanál",
-  "tempoValueTitle": "BPM tempa"
+  "tempoValueTitle": "BPM tempa",
+  "untitled": "Bez názvu",
+  "ppqError": "PPQ musí být celé číslo 1–32767",
+  "channelInstrumentValue": "Výchozí nástroj kanálu: {name} (banka {bank} / program {program})",
+  "eventNoteTitle": "Nota {name}",
+  "eventNoteDetail": "{time} · {track} · síla {velocity} · délka {length}",
+  "eventValueDetail": "{time} · {track} · {value} (0–{max})",
+  "centerHint": "8192 = střed"
 }

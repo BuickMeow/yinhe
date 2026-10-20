@@ -199,7 +199,7 @@ class AppLocalizationsCs extends AppLocalizations {
   String get addSoundfont => 'Přidat SoundFont';
 
   @override
-  String get frames => 'snímků';
+  String get frames => 'rámců';
 
   @override
   String get editTrackInfo => 'Úpravy';
@@ -402,4 +402,33 @@ class AppLocalizationsCs extends AppLocalizations {
 
   @override
   String get markerTextOptional => 'Text značky (volitelné)';
+
+  @override
+  String get untitled => 'Bez názvu';
+
+  @override
+  String get ppqError => 'PPQ musí být celé číslo 1–32767';
+
+  @override
+  String channelInstrumentValue(String name, int bank, int program) {
+    return 'Výchozí nástroj kanálu: $name (banka $bank / program $program)';
+  }
+
+  @override
+  String eventNoteTitle(String name) {
+    return 'Nota $name';
+  }
+
+  @override
+  String eventNoteDetail(String time, String track, int velocity, int length) {
+    return '$time · $track · síla $velocity · délka $length';
+  }
+
+  @override
+  String eventValueDetail(String time, String track, int value, int max) {
+    return '$time · $track · $value (0–$max)';
+  }
+
+  @override
+  String get centerHint => '8192 = střed';
 }

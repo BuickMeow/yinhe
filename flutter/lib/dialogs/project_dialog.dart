@@ -57,7 +57,7 @@ class _ProjectDialogState extends State<ProjectDialog> {
   void _save() {
     final ppq = int.tryParse(_ppq.text.trim());
     if (ppq == null || ppq < 1 || ppq > 32767) {
-      setState(() => _error = 'PPQ 需为 1..32767 的整数');
+      setState(() => _error = l.ppqError);
       return;
     }
     widget.onSave(
