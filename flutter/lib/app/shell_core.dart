@@ -174,6 +174,8 @@ mixin _ShellCore on _ShellBase {
         _loadSongTitle();
         _readDocState();
         _flashSaved();
+      case 'onExportSaved':
+        showSnack(context, '${l.exportDone}：$path');
     }
   }
 

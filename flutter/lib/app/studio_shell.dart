@@ -22,6 +22,7 @@ import '../core/models.dart';
 import '../widgets/ruler_markers.dart';
 import '../dialogs/archive_dialogs.dart';
 import '../dialogs/event_list_dialog.dart';
+import '../dialogs/export_dialogs.dart';
 import '../core/bar_beat.dart';
 import '../dialogs/project_defaults_dialog.dart';
 import '../dialogs/project_dialog.dart';
@@ -203,6 +204,8 @@ abstract class _ShellBase extends State<StudioShell>
   Future<void> _editDefaultBpm();
   Future<void> _editDefaultTimeSig();
   Future<void> _ensureSurface();
+  Future<void> _exportAudio();
+  Future<void> _exportMidi();
   void _flashSaved();
   String _fmtBpm(double v);
   void _handleCanvasTap(Offset p);

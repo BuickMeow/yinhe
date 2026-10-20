@@ -252,6 +252,8 @@ mixin _ShellBuild on _ShellBase {
                 onSaveProjectAs: () => _saveProject(saveAs: true),
                 onOpenRecent: _openRecent,
                 onOpenSettings: _openSettings,
+                onExportAudio: _exportAudio,
+                onExportMidi: _exportMidi,
                 onBack: () => setState(() => _showHome = false),
               ),
             if (_showSettings)

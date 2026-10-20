@@ -35,6 +35,7 @@ class MainActivity : FlutterActivity() {
 
         /** SAF 保存工程请求码。 */
         private const val REQ_SAVE_FILE = 1003
+        private const val REQ_SAVE_EXPORT = 1004
 
         /** 导出工程的临时文件（Rust 写入，Kotlin 复制到用户选择的位置）。 */
         private const val EXPORT_TMP = "export.ying"
@@ -60,6 +61,9 @@ class MainActivity : FlutterActivity() {
 
     /** 当前工程的 SAF uri（“保存工程”直接覆盖；另存为/打开时更新）。 */
     private var lastProjectUri: android.net.Uri? = null
+
+    /** 主页导出：当前等待保存的临时文件扩展名（wav/mid）。 */
+    private var pendingExportExt: String = ""
 
     /** 持久化的工程 uri（按文件名），供最近列表打开后直接覆盖保存。 */
     private val prefs by lazy { getSharedPreferences("yinhe", MODE_PRIVATE) }
@@ -149,7 +153,13 @@ class MainActivity : FlutterActivity() {
                         result.success(null)
                     }
                     "exportTempPath" -> {
-                        result.success(File(filesDir, EXPORT_TMP).absolutePath)
+                        val ext = call.argument<String>("ext")
+                        val file = if (ext.isNullOrBlank()) {
+                            File(filesDir, EXPORT_TMP)
+                        } else {
+                            File(filesDir, "export_tmp.$ext")
+                        }
+                        result.success(file.absolutePath)
                     }
                     "openSavePicker" -> {
                         val name = call.argument<String>("name") ?: "Untitled"
@@ -176,6 +186,15 @@ class MainActivity : FlutterActivity() {
                         } else {
                             openSavePicker(name)
                         }
+                        result.success(null)
+                    }
+                    "saveExport" -> {
+                        val name = call.argument<String>("name") ?: "export"
+                        val mime = call.argument<String>("mime")
+                            ?: "application/octet-stream"
+                        val ext = call.argument<String>("ext") ?: ""
+                        pendingExportExt = ext
+                        openExportPicker(name, mime)
                         result.success(null)
                     }
                     else -> result.notImplemented()
@@ -337,6 +356,43 @@ class MainActivity : FlutterActivity() {
         startActivityForResult(intent, REQ_SAVE_FILE)
     }
 
+    /** 主页导出（WAV/MIDI）：选择保存位置。 */
+    private fun openExportPicker(name: String, mime: String) {
+        val safe = name.replace(Regex("[/\\:*?\"<>|]"), "_").trim()
+        val base = if (safe.isEmpty()) "export" else safe
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = mime
+            putExtra(Intent.EXTRA_TITLE, base)
+        }
+        startActivityForResult(intent, REQ_SAVE_EXPORT)
+    }
+
+    /** 把指定扩展名的导出临时文件复制到用户选择的 uri。 */
+    private fun copyTempTo(uri: android.net.Uri?, ext: String): Boolean {
+        if (uri == null) {
+            return false
+        }
+        val fileName = if (ext.isBlank()) EXPORT_TMP else "export_tmp.$ext"
+        val src = File(filesDir, fileName)
+        if (!src.exists()) {
+            Log.e(TAG, "导出临时文件不存在: ${src.absolutePath}")
+            return false
+        }
+        return try {
+            val output = contentResolver.openOutputStream(uri)
+            if (output == null) {
+                Log.e(TAG, "打开目标位置失败: $uri")
+                return false
+            }
+            output.use { dst -> src.inputStream().use { it.copyTo(dst) } }
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "复制导出文件失败: $e")
+            false
+        }
+    }
+
     /** 把导出的临时工程复制到用户选择的 uri。 */
     private fun copyExportTo(uri: android.net.Uri?): Boolean {
         if (uri == null) {
@@ -405,6 +461,13 @@ class MainActivity : FlutterActivity() {
                         }
                     }
                     methodChannel?.invokeMethod("onProjectSaved", "ok")
+                }
+            }
+            REQ_SAVE_EXPORT -> {
+                val uri = data?.data
+                if (copyTempTo(uri, pendingExportExt)) {
+                    val name = uri?.let { displayName(it) } ?: "export"
+                    methodChannel?.invokeMethod("onExportSaved", name)
                 }
             }
             else -> {}

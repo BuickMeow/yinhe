@@ -195,5 +195,12 @@
       }
     }
   },
-  "jumpTo": "Jump"
+  "jumpTo": "Jump",
+  "exportAudio": "Export audio",
+  "exportMidi": "Export MIDI",
+  "exporting": "Exporting…",
+  "exportDone": "Export complete",
+  "bitDepth": "Bit depth",
+  "cancelling": "Cancelling…",
+  "exportFailedShort": "Export failed"
 }

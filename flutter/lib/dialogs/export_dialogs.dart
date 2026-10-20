@@ -1,0 +1,228 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+
+import '../core/theme.dart';
+import '../l10n/app_localizations.dart';
+import 'frame.dart';
+
+/// 音频导出选项：位深。返回 null = 取消。
+Future<int?> showAudioExportOptions(BuildContext context) {
+  final l = AppLocalizations.of(context);
+  return showDialog<int>(
+    context: context,
+    builder: (_) => _AudioExportDialog(l: l),
+  );
+}
+
+class _AudioExportDialog extends StatefulWidget {
+  const _AudioExportDialog({required this.l});
+
+  final AppLocalizations l;
+
+  @override
+  State<_AudioExportDialog> createState() => _AudioExportDialogState();
+}
+
+class _AudioExportDialogState extends State<_AudioExportDialog> {
+  int _depth = 16;
+
+  @override
+  Widget build(BuildContext context) {
+    final l = widget.l;
+    return YinheDialog(
+      title: l.exportAudio,
+      width: 420,
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l.cancel),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_depth),
+          child: Text(l.exportAudio),
+        ),
+      ],
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            l.bitDepth,
+            style: TextStyle(color: YinheTheme.textLabel, fontSize: 12),
+          ),
+          const SizedBox(height: 8),
+          SegmentedButton<int>(
+            segments: const [
+              ButtonSegment(value: 16, label: Text('16-bit')),
+              ButtonSegment(value: 24, label: Text('24-bit')),
+              ButtonSegment(value: 32, label: Text('32-bit float')),
+            ],
+            selected: {_depth},
+            onSelectionChanged: (s) => setState(() => _depth = s.first),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 导出进度/状态对话框；成功返回 true。
+Future<bool?> showExportProgressDialog(
+  BuildContext context, {
+  required String Function() poll,
+  VoidCallback? onCancel,
+  bool determinate = true,
+}) {
+  return showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => _ExportProgressDialog(
+      poll: poll,
+      onCancel: onCancel,
+      determinate: determinate,
+    ),
+  );
+}
+
+class _ExportProgressDialog extends StatefulWidget {
+  const _ExportProgressDialog({
+    required this.poll,
+    required this.onCancel,
+    required this.determinate,
+  });
+
+  final String Function() poll;
+  final VoidCallback? onCancel;
+  final bool determinate;
+
+  @override
+  State<_ExportProgressDialog> createState() => _ExportProgressDialogState();
+}
+
+class _ExportProgressDialogState extends State<_ExportProgressDialog> {
+  AppLocalizations get l => AppLocalizations.of(context);
+
+  Timer? _timer;
+  double _progress = 0;
+  String _status = '';
+  String _error = '';
+  bool _cancelling = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _poll();
+    _timer = Timer.periodic(const Duration(milliseconds: 200), (_) => _poll());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _poll() {
+    final raw = widget.poll();
+    if (raw.isEmpty) {
+      return;
+    }
+    try {
+      final map = jsonDecode(raw) as Map<String, dynamic>;
+      final state = (map['state'] as num?)?.toInt() ?? 0;
+      if (state == 2) {
+        _timer?.cancel();
+        if (mounted) {
+          Navigator.of(context).pop(!_cancelling);
+        }
+        return;
+      }
+      if (state == 3) {
+        _timer?.cancel();
+        if (mounted) {
+          setState(() {
+            _error = (map['error'] as String?)?.trim() ?? '';
+            if (_error.isEmpty) {
+              _error = l.exportFailedShort;
+            }
+          });
+        }
+        return;
+      }
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _progress = ((map['progress'] as num?)?.toDouble() ?? 0).clamp(
+          0.0,
+          1.0,
+        );
+        final status = (map['status'] as String?)?.trim() ?? '';
+        if (!_cancelling && status.isNotEmpty) {
+          _status = status;
+        }
+      });
+    } catch (_) {
+      // 轮询期间 JSON 不完整/为空时忽略，下一轮再读。
+    }
+  }
+
+  void _cancel() {
+    final cancel = widget.onCancel;
+    if (_cancelling || cancel == null) {
+      return;
+    }
+    _cancelling = true;
+    setState(() => _status = l.cancelling);
+    cancel();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final failed = _error.isNotEmpty;
+    return YinheDialog(
+      title: failed ? l.exportFailedShort : l.exporting,
+      width: 400,
+      actions: failed
+          ? [
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: Text(l.ok),
+              ),
+            ]
+          : widget.onCancel == null
+          ? const <Widget>[]
+          : [
+              TextButton(
+                onPressed: _cancelling ? null : _cancel,
+                child: Text(l.cancel),
+              ),
+            ],
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          LinearProgressIndicator(
+            value: widget.determinate && !failed ? _progress : null,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            failed ? _error : (_status.isEmpty ? l.exporting : _status),
+            style: TextStyle(
+              color: failed ? YinheTheme.danger : YinheTheme.textSecondary,
+              fontSize: 13,
+            ),
+          ),
+          if (widget.determinate && !failed) ...[
+            const SizedBox(height: 4),
+            Text(
+              '${(_progress * 100).round()}%',
+              style: TextStyle(color: YinheTheme.textLabel, fontSize: 12),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}

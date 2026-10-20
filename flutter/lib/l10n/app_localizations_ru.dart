@@ -434,4 +434,25 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get jumpTo => 'Перейти';
+
+  @override
+  String get exportAudio => 'Экспорт аудио';
+
+  @override
+  String get exportMidi => 'Экспорт MIDI';
+
+  @override
+  String get exporting => 'Экспорт…';
+
+  @override
+  String get exportDone => 'Экспорт завершён';
+
+  @override
+  String get bitDepth => 'Разрядность';
+
+  @override
+  String get cancelling => 'Отмена…';
+
+  @override
+  String get exportFailedShort => 'Ошибка экспорта';
 }

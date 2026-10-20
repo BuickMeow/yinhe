@@ -143,5 +143,12 @@
   "eventNoteDetail": "{time} · {track} · 벨로시티 {velocity} · 길이 {length}",
   "eventValueDetail": "{time} · {track} · {value} (0–{max})",
   "centerHint": "8192 = 중앙",
-  "jumpTo": "이동"
+  "jumpTo": "이동",
+  "exportAudio": "오디오 내보내기",
+  "exportMidi": "MIDI 내보내기",
+  "exporting": "내보내는 중…",
+  "exportDone": "내보내기 완료",
+  "bitDepth": "비트 심도",
+  "cancelling": "취소 중…",
+  "exportFailedShort": "내보내기 실패"
 }

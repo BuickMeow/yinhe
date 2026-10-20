@@ -143,5 +143,12 @@
   "eventNoteDetail": "{time} · {track} · 力度 {velocity} · 长度 {length}",
   "eventValueDetail": "{time} · {track} · {value}（0–{max}）",
   "centerHint": "8192 = 中心",
-  "jumpTo": "跳转"
+  "jumpTo": "跳转",
+  "exportAudio": "导出音频",
+  "exportMidi": "导出 MIDI",
+  "exporting": "正在导出…",
+  "exportDone": "导出完成",
+  "bitDepth": "位深",
+  "cancelling": "正在取消…",
+  "exportFailedShort": "导出失败"
 }

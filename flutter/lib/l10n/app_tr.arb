@@ -143,5 +143,12 @@
   "eventNoteDetail": "{time} · {track} · hız {velocity} · uzunluk {length}",
   "eventValueDetail": "{time} · {track} · {value} (0–{max})",
   "centerHint": "8192 = merkez",
-  "jumpTo": "Git"
+  "jumpTo": "Git",
+  "exportAudio": "Ses dışa aktar",
+  "exportMidi": "MIDI dışa aktar",
+  "exporting": "Dışa aktarılıyor…",
+  "exportDone": "Dışa aktarma tamamlandı",
+  "bitDepth": "Bit derinliği",
+  "cancelling": "İptal ediliyor…",
+  "exportFailedShort": "Dışa aktarma başarısız"
 }

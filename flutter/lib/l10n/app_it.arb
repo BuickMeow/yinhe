@@ -143,5 +143,12 @@
   "eventNoteDetail": "{time} · {track} · velocity {velocity} · durata {length}",
   "eventValueDetail": "{time} · {track} · {value} (0–{max})",
   "centerHint": "8192 = centro",
-  "jumpTo": "Vai a"
+  "jumpTo": "Vai a",
+  "exportAudio": "Esporta audio",
+  "exportMidi": "Esporta MIDI",
+  "exporting": "Esportazione…",
+  "exportDone": "Esportazione completata",
+  "bitDepth": "Profondità di bit",
+  "cancelling": "Annullamento…",
+  "exportFailedShort": "Esportazione non riuscita"
 }

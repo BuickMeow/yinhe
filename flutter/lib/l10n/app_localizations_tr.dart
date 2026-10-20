@@ -434,4 +434,25 @@ class AppLocalizationsTr extends AppLocalizations {
 
   @override
   String get jumpTo => 'Git';
+
+  @override
+  String get exportAudio => 'Ses dışa aktar';
+
+  @override
+  String get exportMidi => 'MIDI dışa aktar';
+
+  @override
+  String get exporting => 'Dışa aktarılıyor…';
+
+  @override
+  String get exportDone => 'Dışa aktarma tamamlandı';
+
+  @override
+  String get bitDepth => 'Bit derinliği';
+
+  @override
+  String get cancelling => 'İptal ediliyor…';
+
+  @override
+  String get exportFailedShort => 'Dışa aktarma başarısız';
 }

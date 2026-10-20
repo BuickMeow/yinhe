@@ -6,8 +6,11 @@
 //! - 位置回读：`sample_position() / sample_rate` 秒数 → tick（tempo_map 二分）。
 //! - 锁顺序约定：`scene` → `audio`（本模块内不反向嵌套）。
 
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use yinhe_audio::export::{ExportProgress, WavBitDepth};
 use yinhe_audio::{AudioCommand, CpalAudioHandle, SynthEngine};
 use yinhe_core::YinModel;
 use yinhe_types::Interpolation;
@@ -54,6 +57,101 @@ static AUDIO_SETTINGS: OnceLock<Mutex<AudioSettings>> = OnceLock::new();
 
 fn settings_slot() -> &'static Mutex<AudioSettings> {
     AUDIO_SETTINGS.get_or_init(|| Mutex::new(AudioSettings::default()))
+}
+
+/// 后台 WAV 导出会话：渲染线程写 `path`，Flutter 轮询进度/取消。
+struct ExportSession {
+    progress: Arc<Mutex<ExportProgress>>,
+    cancel: Arc<AtomicBool>,
+}
+
+static EXPORT_SESSION: OnceLock<Mutex<Option<ExportSession>>> = OnceLock::new();
+
+fn export_slot() -> &'static Mutex<Option<ExportSession>> {
+    EXPORT_SESSION.get_or_init(|| Mutex::new(None))
+}
+
+/// 开始导出 WAV；返回 1 = 已开始，0 = 无工程/音频不可用/正在导出。
+pub fn start_export(path: &str, bit_depth: i32) -> i32 {
+    if !ensure_audio() {
+        return 0;
+    }
+    let Ok(mut slot) = export_slot().lock() else {
+        return 0;
+    };
+    if slot
+        .as_ref()
+        .is_some_and(|s| s.progress.lock().map(|p| !p.finished).unwrap_or(false))
+    {
+        return 0;
+    }
+    let progress = ExportProgress::new();
+    if let Ok(mut p) = progress.lock() {
+        p.reset();
+    }
+    let cancel = Arc::new(AtomicBool::new(false));
+    let bit_depth = match bit_depth {
+        24 => WavBitDepth::Bit24,
+        32 => WavBitDepth::Bit32Float,
+        _ => WavBitDepth::Bit16,
+    };
+    let Some(mut guard) = lock_audio() else {
+        return 0;
+    };
+    let Some(st) = guard.as_mut() else {
+        return 0;
+    };
+    // 采样率固定为当前设备采样率（插件按设备采样率激活）。
+    st.handle.handle.send(AudioCommand::ExportStart {
+        path: PathBuf::from(path),
+        bit_depth,
+        layer_count: None,
+        restore_layer_count: None,
+        progress: Arc::clone(&progress),
+        cancel: Arc::clone(&cancel),
+        pause: Arc::new(AtomicBool::new(false)),
+    });
+    *slot = Some(ExportSession { progress, cancel });
+    1
+}
+
+fn json_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', " ")
+}
+
+/// 导出进度 JSON：state 0=无会话、1=导出中、2=完成、3=失败。
+pub fn export_progress_json() -> String {
+    let Ok(slot) = export_slot().lock() else {
+        return "{\"state\":0}".into();
+    };
+    let Some(session) = slot.as_ref() else {
+        return "{\"state\":0}".into();
+    };
+    let Ok(p) = session.progress.lock() else {
+        return "{\"state\":0}".into();
+    };
+    let state = if p.finished {
+        if p.error.is_some() { 3 } else { 2 }
+    } else {
+        1
+    };
+    format!(
+        "{{\"state\":{},\"progress\":{:.4},\"status\":\"{}\",\"error\":\"{}\"}}",
+        state,
+        p.progress.clamp(0.0, 1.0),
+        json_escape(&p.status),
+        json_escape(p.error.as_deref().unwrap_or(""))
+    )
+}
+
+pub fn cancel_export() {
+    if let Ok(slot) = export_slot().lock()
+        && let Some(session) = slot.as_ref()
+    {
+        session.cancel.store(true, Ordering::Relaxed);
+    }
 }
 
 /// 当前音频设置。

@@ -434,4 +434,25 @@ class AppLocalizationsIt extends AppLocalizations {
 
   @override
   String get jumpTo => 'Vai a';
+
+  @override
+  String get exportAudio => 'Esporta audio';
+
+  @override
+  String get exportMidi => 'Esporta MIDI';
+
+  @override
+  String get exporting => 'Esportazione…';
+
+  @override
+  String get exportDone => 'Esportazione completata';
+
+  @override
+  String get bitDepth => 'Profondità di bit';
+
+  @override
+  String get cancelling => 'Annullamento…';
+
+  @override
+  String get exportFailedShort => 'Esportazione non riuscita';
 }

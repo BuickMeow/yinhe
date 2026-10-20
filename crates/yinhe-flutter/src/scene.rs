@@ -1198,6 +1198,14 @@ fn push_recent(path: &str) {
     save_recent();
 }
 
+/// 当前文档模型（导出用；无文档返回 None）。
+pub fn model_arc() -> Option<Arc<YinModel>> {
+    scene()
+        .lock()
+        .ok()
+        .and_then(|s| s.document.as_ref().map(|d| Arc::clone(&d.data.model)))
+}
+
 /// 最近文件 JSON（Dart 解析）：`[{"name","path","time"}]`。
 pub fn recent_json() -> String {
     let Ok(list) = recent_slot().lock() else {

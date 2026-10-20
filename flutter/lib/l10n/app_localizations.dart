@@ -943,6 +943,48 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Jump'**
   String get jumpTo;
+
+  /// No description provided for @exportAudio.
+  ///
+  /// In en, this message translates to:
+  /// **'Export audio'**
+  String get exportAudio;
+
+  /// No description provided for @exportMidi.
+  ///
+  /// In en, this message translates to:
+  /// **'Export MIDI'**
+  String get exportMidi;
+
+  /// No description provided for @exporting.
+  ///
+  /// In en, this message translates to:
+  /// **'Exporting…'**
+  String get exporting;
+
+  /// No description provided for @exportDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Export complete'**
+  String get exportDone;
+
+  /// No description provided for @bitDepth.
+  ///
+  /// In en, this message translates to:
+  /// **'Bit depth'**
+  String get bitDepth;
+
+  /// No description provided for @cancelling.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancelling…'**
+  String get cancelling;
+
+  /// No description provided for @exportFailedShort.
+  ///
+  /// In en, this message translates to:
+  /// **'Export failed'**
+  String get exportFailedShort;
 }
 
 class _AppLocalizationsDelegate

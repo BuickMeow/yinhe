@@ -143,5 +143,12 @@
   "eventNoteDetail": "{time} · {track} · ベロシティ {velocity} · 長さ {length}",
   "eventValueDetail": "{time} · {track} · {value}（0–{max}）",
   "centerHint": "8192 = 中央",
-  "jumpTo": "ジャンプ"
+  "jumpTo": "ジャンプ",
+  "exportAudio": "音声を書き出す",
+  "exportMidi": "MIDI を書き出す",
+  "exporting": "書き出し中…",
+  "exportDone": "書き出し完了",
+  "bitDepth": "ビット深度",
+  "cancelling": "キャンセル中…",
+  "exportFailedShort": "書き出し失敗"
 }

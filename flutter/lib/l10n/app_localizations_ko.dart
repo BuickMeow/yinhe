@@ -432,4 +432,25 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get jumpTo => '이동';
+
+  @override
+  String get exportAudio => '오디오 내보내기';
+
+  @override
+  String get exportMidi => 'MIDI 내보내기';
+
+  @override
+  String get exporting => '내보내는 중…';
+
+  @override
+  String get exportDone => '내보내기 완료';
+
+  @override
+  String get bitDepth => '비트 심도';
+
+  @override
+  String get cancelling => '취소 중…';
+
+  @override
+  String get exportFailedShort => '내보내기 실패';
 }

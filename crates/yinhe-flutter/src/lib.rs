@@ -10,6 +10,7 @@
 mod audio;
 mod edit;
 mod input;
+mod midi_export;
 mod midi_names;
 mod render;
 mod scene;
@@ -531,6 +532,60 @@ pub extern "C" fn yinhe_view_snapshot(out: *mut f32) -> i32 {
         std::ptr::copy_nonoverlapping(snap.as_ptr(), out, snap.len());
     }
     1
+}
+
+/// 开始导出 WAV（路径 + 16/24/32 位深）。成功 1。
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_export_audio_start(path: *const std::ffi::c_char, bit_depth: i32) -> i32 {
+    if path.is_null() {
+        return 0;
+    }
+    let path = unsafe { CStr::from_ptr(path) }
+        .to_string_lossy()
+        .into_owned();
+    audio::start_export(&path, bit_depth)
+}
+
+/// 音频导出进度 JSON（堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_export_audio_progress_json() -> *mut std::ffi::c_char {
+    to_c_string(audio::export_progress_json())
+}
+
+/// 取消音频导出。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_export_audio_cancel() {
+    audio::cancel_export();
+}
+
+/// 开始导出 MIDI（路径 + 选项 JSON）。成功 1。
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_export_midi_start(
+    path: *const std::ffi::c_char,
+    opts: *const std::ffi::c_char,
+) -> i32 {
+    if path.is_null() {
+        return 0;
+    }
+    let path = unsafe { CStr::from_ptr(path) }
+        .to_string_lossy()
+        .into_owned();
+    let opts = if opts.is_null() {
+        "{}".to_string()
+    } else {
+        unsafe { CStr::from_ptr(opts) }
+            .to_string_lossy()
+            .into_owned()
+    };
+    midi_export::start(path, &opts)
+}
+
+/// MIDI 导出状态 JSON（堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_export_midi_status_json() -> *mut std::ffi::c_char {
+    to_c_string(midi_export::status_json())
 }
 
 /// MIDI 静态名称表 JSON（GM/CC/RPN/音名/插入上限，堆分配）。

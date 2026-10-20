@@ -434,4 +434,25 @@ class AppLocalizationsCs extends AppLocalizations {
 
   @override
   String get jumpTo => 'Přejít';
+
+  @override
+  String get exportAudio => 'Exportovat zvuk';
+
+  @override
+  String get exportMidi => 'Exportovat MIDI';
+
+  @override
+  String get exporting => 'Exportuje se…';
+
+  @override
+  String get exportDone => 'Export dokončen';
+
+  @override
+  String get bitDepth => 'Bitová hloubka';
+
+  @override
+  String get cancelling => 'Ruší se…';
+
+  @override
+  String get exportFailedShort => 'Export se nezdařil';
 }

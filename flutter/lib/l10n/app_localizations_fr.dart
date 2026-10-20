@@ -434,4 +434,25 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get jumpTo => 'Aller à';
+
+  @override
+  String get exportAudio => 'Exporter l\'audio';
+
+  @override
+  String get exportMidi => 'Exporter le MIDI';
+
+  @override
+  String get exporting => 'Export en cours…';
+
+  @override
+  String get exportDone => 'Export terminé';
+
+  @override
+  String get bitDepth => 'Profondeur de bits';
+
+  @override
+  String get cancelling => 'Annulation…';
+
+  @override
+  String get exportFailedShort => 'Échec de l\'export';
 }

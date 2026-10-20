@@ -430,6 +430,27 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get jumpTo => '跳转';
+
+  @override
+  String get exportAudio => '导出音频';
+
+  @override
+  String get exportMidi => '导出 MIDI';
+
+  @override
+  String get exporting => '正在导出…';
+
+  @override
+  String get exportDone => '导出完成';
+
+  @override
+  String get bitDepth => '位深';
+
+  @override
+  String get cancelling => '正在取消…';
+
+  @override
+  String get exportFailedShort => '导出失败';
 }
 
 /// The translations for Chinese, as used in Hong Kong (`zh_HK`).
@@ -857,6 +878,27 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
 
   @override
   String get jumpTo => '跳轉';
+
+  @override
+  String get exportAudio => '匯出音訊';
+
+  @override
+  String get exportMidi => '匯出 MIDI';
+
+  @override
+  String get exporting => '正在匯出…';
+
+  @override
+  String get exportDone => '匯出完成';
+
+  @override
+  String get bitDepth => '位元深度';
+
+  @override
+  String get cancelling => '正在取消…';
+
+  @override
+  String get exportFailedShort => '匯出失敗';
 }
 
 /// The translations for Chinese, as used in Taiwan (`zh_TW`).
@@ -1284,4 +1326,25 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get jumpTo => '跳轉';
+
+  @override
+  String get exportAudio => '匯出音訊';
+
+  @override
+  String get exportMidi => '匯出 MIDI';
+
+  @override
+  String get exporting => '正在匯出…';
+
+  @override
+  String get exportDone => '匯出完成';
+
+  @override
+  String get bitDepth => '位元深度';
+
+  @override
+  String get cancelling => '正在取消…';
+
+  @override
+  String get exportFailedShort => '匯出失敗';
 }

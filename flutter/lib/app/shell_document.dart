@@ -46,6 +46,104 @@ mixin _ShellDocument on _ShellBase {
     );
   }
 
+  String _exportBaseName() {
+    final raw = _songTitle.isNotEmpty ? _songTitle : (_fileName ?? 'Untitled');
+    return raw.replaceAll(RegExp(r'\.[^.]+$'), '');
+  }
+
+  Future<String?> _exportTempPath(String ext) {
+    return _channel.invokeMethod<String>('exportTempPath', {'ext': ext});
+  }
+
+  /// 主页：导出 WAV（位深可选；采样率跟随设备）。
+  @override
+  Future<void> _exportAudio() async {
+    if (_tracks.value.isEmpty) {
+      showSnack(context, l.openFirst);
+      return;
+    }
+    final depth = await showAudioExportOptions(context);
+    if (!mounted || depth == null) {
+      return;
+    }
+    final tmp = await _exportTempPath('wav');
+    if (!mounted || tmp == null) {
+      return;
+    }
+    final p = tmp.toNativeUtf8();
+    var ok = 0;
+    try {
+      ok = rust.exportAudioStart(p, depth);
+    } finally {
+      calloc.free(p);
+    }
+    if (!mounted) {
+      return;
+    }
+    if (ok != 1) {
+      showSnack(context, l.exportFailedShort);
+      return;
+    }
+    final done = await showExportProgressDialog(
+      context,
+      poll: () => rust.takeString(rust.exportAudioProgressJson()),
+      onCancel: rust.exportAudioCancel,
+    );
+    if (!mounted || done != true) {
+      return;
+    }
+    await _channel.invokeMethod<void>('saveExport', {
+      'name': '${_exportBaseName()}.wav',
+      'mime': 'audio/wav',
+      'ext': 'wav',
+    });
+  }
+
+  /// 主页：导出 MIDI（保留 0 BPM 跳转标记与完整时间轴）。
+  @override
+  Future<void> _exportMidi() async {
+    if (_tracks.value.isEmpty) {
+      showSnack(context, l.openFirst);
+      return;
+    }
+    final tmp = await _exportTempPath('mid');
+    if (!mounted || tmp == null) {
+      return;
+    }
+    const opts =
+        '{"encoding":"utf8","rpn_full":true,"curve_interpolate":false,'
+        '"strip_empty_tracks":true,"dedup_overlaps":false}';
+    final p = tmp.toNativeUtf8();
+    final o = opts.toNativeUtf8();
+    var ok = 0;
+    try {
+      ok = rust.exportMidiStart(p, o);
+    } finally {
+      calloc.free(p);
+      calloc.free(o);
+    }
+    if (!mounted) {
+      return;
+    }
+    if (ok != 1) {
+      showSnack(context, l.exportFailedShort);
+      return;
+    }
+    final done = await showExportProgressDialog(
+      context,
+      poll: () => rust.takeString(rust.exportMidiStatusJson()),
+      determinate: false,
+    );
+    if (!mounted || done != true) {
+      return;
+    }
+    await _channel.invokeMethod<void>('saveExport', {
+      'name': '${_exportBaseName()}.mid',
+      'mime': 'audio/midi',
+      'ext': 'mid',
+    });
+  }
+
   /// 导出 .ying 工程：Rust 写临时文件 → Kotlin 复制到用户选择的位置。
   /// 是否压缩包扩展名（与 Rust/桌面同一份列表）。
   @override

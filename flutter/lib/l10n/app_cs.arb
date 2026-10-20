@@ -143,5 +143,12 @@
   "eventNoteDetail": "{time} · {track} · síla {velocity} · délka {length}",
   "eventValueDetail": "{time} · {track} · {value} (0–{max})",
   "centerHint": "8192 = střed",
-  "jumpTo": "Přejít"
+  "jumpTo": "Přejít",
+  "exportAudio": "Exportovat zvuk",
+  "exportMidi": "Exportovat MIDI",
+  "exporting": "Exportuje se…",
+  "exportDone": "Export dokončen",
+  "bitDepth": "Bitová hloubka",
+  "cancelling": "Ruší se…",
+  "exportFailedShort": "Export se nezdařil"
 }

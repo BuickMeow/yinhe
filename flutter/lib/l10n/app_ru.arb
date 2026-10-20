@@ -143,5 +143,12 @@
   "eventNoteDetail": "{time} · {track} · сила {velocity} · длина {length}",
   "eventValueDetail": "{time} · {track} · {value} (0–{max})",
   "centerHint": "8192 = центр",
-  "jumpTo": "Перейти"
+  "jumpTo": "Перейти",
+  "exportAudio": "Экспорт аудио",
+  "exportMidi": "Экспорт MIDI",
+  "exporting": "Экспорт…",
+  "exportDone": "Экспорт завершён",
+  "bitDepth": "Разрядность",
+  "cancelling": "Отмена…",
+  "exportFailedShort": "Ошибка экспорта"
 }

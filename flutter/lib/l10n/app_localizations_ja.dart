@@ -432,4 +432,25 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get jumpTo => 'ジャンプ';
+
+  @override
+  String get exportAudio => '音声を書き出す';
+
+  @override
+  String get exportMidi => 'MIDI を書き出す';
+
+  @override
+  String get exporting => '書き出し中…';
+
+  @override
+  String get exportDone => '書き出し完了';
+
+  @override
+  String get bitDepth => 'ビット深度';
+
+  @override
+  String get cancelling => 'キャンセル中…';
+
+  @override
+  String get exportFailedShort => '書き出し失敗';
 }

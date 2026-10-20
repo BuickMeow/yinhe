@@ -15,6 +15,8 @@ class HomeView extends StatelessWidget {
     required this.onSaveProjectAs,
     required this.onOpenRecent,
     required this.onOpenSettings,
+    required this.onExportAudio,
+    required this.onExportMidi,
     required this.onBack,
   });
 
@@ -24,6 +26,8 @@ class HomeView extends StatelessWidget {
   final VoidCallback onSaveProjectAs;
   final ValueChanged<RecentItem> onOpenRecent;
   final VoidCallback onOpenSettings;
+  final VoidCallback onExportAudio;
+  final VoidCallback onExportMidi;
   final VoidCallback onBack;
 
   @override
@@ -114,6 +118,10 @@ class HomeView extends StatelessWidget {
         ),
         const SizedBox(height: 14),
         _secondary(l.saveAs, Icons.save_as_outlined, onSaveProjectAs),
+        const SizedBox(height: 14),
+        _secondary(l.exportAudio, Icons.audio_file_outlined, onExportAudio),
+        const SizedBox(height: 14),
+        _secondary(l.exportMidi, Icons.file_download_outlined, onExportMidi),
         const SizedBox(height: 14),
         _secondary(l.settings, Icons.settings, onOpenSettings),
       ],
