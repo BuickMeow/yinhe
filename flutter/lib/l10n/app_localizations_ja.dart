@@ -28,7 +28,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get edit => '編集';
 
   @override
-  String get copy => 'Copy';
+  String get copy => 'コピー';
 
   @override
   String get paste => 'ペースト';
@@ -55,13 +55,13 @@ class AppLocalizationsJa extends AppLocalizations {
   String get value => '値';
 
   @override
-  String get on => 'On';
+  String get on => 'オン';
 
   @override
-  String get off => 'Off';
+  String get off => 'オフ';
 
   @override
-  String get loadMore => 'Load more';
+  String get loadMore => 'さらに読み込む';
 
   @override
   String notesCount(int count) {
@@ -159,10 +159,10 @@ class AppLocalizationsJa extends AppLocalizations {
   String get defaultTimeSig => 'プロジェクト既定拍子';
 
   @override
-  String get bpmField => 'BPM (0–60000000)';
+  String get bpmField => 'BPM（0–60000000）';
 
   @override
-  String get bpmError => 'BPM must be 0–60000000';
+  String get bpmError => 'BPM は 0–60000000 の範囲で指定してください';
 
   @override
   String get timeSigField => '拍子記号…';
@@ -222,32 +222,31 @@ class AppLocalizationsJa extends AppLocalizations {
   String get channel => 'チャネル';
 
   @override
-  String get defaultInstrumentFollowPc =>
-      'Channel default instrument: follows MIDI PC';
+  String get defaultInstrumentFollowPc => 'このチャンネルの既定音色：MIDI PC に従う';
 
   @override
   String get selectChannelInstrument => '選択';
 
   @override
-  String get melodicBank => 'Melodic Bank 0';
+  String get melodicBank => 'メロディ Bank 0';
 
   @override
-  String get drumBank => 'Drum Bank 128';
+  String get drumBank => 'ドラム Bank 128';
 
   @override
   String get masterTrack => '編集';
 
   @override
   String get masterTrackHint =>
-      'The master (Conductor) track holds tempo/time-signature events; it has no notes and no port/channel.';
+      'マスター（Conductor）トラックはテンポ/拍子などのグローバルイベントを保持します。音符は置けず、ポート/チャンネル設定もありません。';
 
   @override
   String get channelInstrumentHint =>
-      'Channel default instrument is shared by all tracks on that channel; MIDI PC events take priority.';
+      'チャンネルの既定音色：同じチャンネルの全トラックで共有されます。MIDI の PC イベントが優先されます。';
 
   @override
   String get mobilePortHint =>
-      'Only port A is audible on mobile; other ports are saved for the desktop app.';
+      'モバイルではポート A のみ再生されます。他のポートは保存され、デスクトップ版で使用されます。';
 
   @override
   String get tempo => 'テンポ:';
@@ -262,16 +261,16 @@ class AppLocalizationsJa extends AppLocalizations {
   String get marker => 'マーカーを挿入';
 
   @override
-  String get pitchBend => 'Pitch Bend';
+  String get pitchBend => 'ピッチベンド';
 
   @override
   String get customCc => 'カスタムCC';
 
   @override
-  String get customCcTitle => 'Custom CC number';
+  String get customCcTitle => 'カスタム CC 番号';
 
   @override
-  String get customRpnTitle => 'Custom RPN number';
+  String get customRpnTitle => 'カスタム RPN 番号';
 
   @override
   String get customRpn => 'カスタム RPN';
@@ -292,10 +291,10 @@ class AppLocalizationsJa extends AppLocalizations {
   String get automationType => 'オートメーション…';
 
   @override
-  String get tempoValueTitle => 'Tempo BPM';
+  String get tempoValueTitle => 'テンポ BPM';
 
   @override
-  String get pitchBendValueTitle => 'Pitch Bend (0–16383, 8192 = center)';
+  String get pitchBendValueTitle => 'ピッチベンド（0–16383、8192 = 中央）';
 
   @override
   String get archivePasswordRequired => 'パスワードが必要です';
@@ -307,10 +306,10 @@ class AppLocalizationsJa extends AppLocalizations {
   String get open => '開く';
 
   @override
-  String get noMidiInArchive => 'No MIDI files in archive';
+  String get noMidiInArchive => '圧縮ファイルに MIDI ファイルがありません';
 
   @override
-  String get archiveOpenFailed => 'Failed to open archive';
+  String get archiveOpenFailed => '圧縮ファイルを開けませんでした';
 
   @override
   String get addTracks => 'トラックを追加';
@@ -319,28 +318,28 @@ class AppLocalizationsJa extends AppLocalizations {
   String get trackCount => '数量';
 
   @override
-  String get countError => 'Count must be 1–256';
+  String get countError => '数量は 1–256 で指定してください';
 
   @override
-  String get cycleChannels => 'Cycle from channel';
+  String get cycleChannels => 'チャンネルから順に割り当て';
 
   @override
-  String get sameChannel => 'Same channel for all';
+  String get sameChannel => 'すべて同じチャンネル';
 
   @override
-  String get startChannel => 'Start channel';
+  String get startChannel => '開始チャンネル';
 
   @override
   String get pasteSameTime => 'ペースト';
 
   @override
-  String get goToLocation => 'Go to location';
+  String get goToLocation => '位置へ移動';
 
   @override
-  String get eventCopied => 'Event copied';
+  String get eventCopied => 'イベントをコピーしました';
 
   @override
-  String get noEvents => 'No events';
+  String get noEvents => 'イベントなし';
 
   @override
   String get velocity => 'ベロシティ';
@@ -358,7 +357,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get editNote => 'ノート';
 
   @override
-  String get sortHint => 'Time → pitch/value → length';
+  String get sortHint => '時間 → 音高/値 → 長さ';
 
   @override
   String get noteLabel => 'ノート';
@@ -367,13 +366,13 @@ class AppLocalizationsJa extends AppLocalizations {
   String get markerLabel => 'マーカーを挿入';
 
   @override
-  String get openFirst => 'Open a MIDI or create a project first';
+  String get openFirst => '先に MIDI を開くか、プロジェクトを作成してください';
 
   @override
   String get exportFailed => '書き出しに失敗しました';
 
   @override
-  String get copied => 'Copied';
+  String get copied => 'コピーしました';
 
   @override
   String get toolSelect => '選択';

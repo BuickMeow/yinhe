@@ -28,7 +28,7 @@ class AppLocalizationsPt extends AppLocalizations {
   String get edit => 'Editar';
 
   @override
-  String get copy => 'Copy';
+  String get copy => 'Copiar';
 
   @override
   String get paste => 'Colar';
@@ -55,13 +55,13 @@ class AppLocalizationsPt extends AppLocalizations {
   String get value => 'Valor';
 
   @override
-  String get on => 'On';
+  String get on => 'Ativado';
 
   @override
-  String get off => 'Off';
+  String get off => 'Desativado';
 
   @override
-  String get loadMore => 'Load more';
+  String get loadMore => 'Carregar mais';
 
   @override
   String notesCount(int count) {
@@ -163,7 +163,7 @@ class AppLocalizationsPt extends AppLocalizations {
   String get bpmField => 'BPM (0–60000000)';
 
   @override
-  String get bpmError => 'BPM must be 0–60000000';
+  String get bpmError => 'O BPM deve ser 0–60000000';
 
   @override
   String get timeSigField => 'Fórmula de compasso…';
@@ -224,31 +224,31 @@ class AppLocalizationsPt extends AppLocalizations {
 
   @override
   String get defaultInstrumentFollowPc =>
-      'Channel default instrument: follows MIDI PC';
+      'Instrumento padrão deste canal: segue o PC MIDI';
 
   @override
   String get selectChannelInstrument => 'Selecionar';
 
   @override
-  String get melodicBank => 'Melodic Bank 0';
+  String get melodicBank => 'Banco melódico 0';
 
   @override
-  String get drumBank => 'Drum Bank 128';
+  String get drumBank => 'Banco de bateria 128';
 
   @override
   String get masterTrack => 'Editar';
 
   @override
   String get masterTrackHint =>
-      'The master (Conductor) track holds tempo/time-signature events; it has no notes and no port/channel.';
+      'A faixa Master (Conductor) contém eventos globais de tempo/compasso; não tem notas nem ajustes de porta/canal.';
 
   @override
   String get channelInstrumentHint =>
-      'Channel default instrument is shared by all tracks on that channel; MIDI PC events take priority.';
+      'Instrumento padrão do canal: compartilhado por todas as faixas desse canal; eventos PC MIDI têm prioridade.';
 
   @override
   String get mobilePortHint =>
-      'Only port A is audible on mobile; other ports are saved for the desktop app.';
+      'No celular, apenas a porta A é audível; as outras portas são salvas para o app de desktop.';
 
   @override
   String get tempo => 'Tempo:';
@@ -269,10 +269,10 @@ class AppLocalizationsPt extends AppLocalizations {
   String get customCc => 'CC Personalizado';
 
   @override
-  String get customCcTitle => 'Custom CC number';
+  String get customCcTitle => 'Número CC personalizado';
 
   @override
-  String get customRpnTitle => 'Custom RPN number';
+  String get customRpnTitle => 'Número RPN personalizado';
 
   @override
   String get customRpn => 'RPN personalizado';
@@ -293,10 +293,10 @@ class AppLocalizationsPt extends AppLocalizations {
   String get automationType => 'Automação…';
 
   @override
-  String get tempoValueTitle => 'Tempo BPM';
+  String get tempoValueTitle => 'BPM do tempo';
 
   @override
-  String get pitchBendValueTitle => 'Pitch Bend (0–16383, 8192 = center)';
+  String get pitchBendValueTitle => 'Pitch Bend (0–16383, 8192 = centro)';
 
   @override
   String get archivePasswordRequired => 'Senha necessária';
@@ -308,10 +308,10 @@ class AppLocalizationsPt extends AppLocalizations {
   String get open => 'Abrir';
 
   @override
-  String get noMidiInArchive => 'No MIDI files in archive';
+  String get noMidiInArchive => 'Nenhum arquivo MIDI no pacote';
 
   @override
-  String get archiveOpenFailed => 'Failed to open archive';
+  String get archiveOpenFailed => 'Falha ao abrir o arquivo compactado';
 
   @override
   String get addTracks => 'Adicionar faixa';
@@ -320,28 +320,28 @@ class AppLocalizationsPt extends AppLocalizations {
   String get trackCount => 'Quantidade';
 
   @override
-  String get countError => 'Count must be 1–256';
+  String get countError => 'A quantidade deve ser 1–256';
 
   @override
-  String get cycleChannels => 'Cycle from channel';
+  String get cycleChannels => 'Percorrer a partir do canal';
 
   @override
-  String get sameChannel => 'Same channel for all';
+  String get sameChannel => 'Mesmo canal para todos';
 
   @override
-  String get startChannel => 'Start channel';
+  String get startChannel => 'Canal inicial';
 
   @override
   String get pasteSameTime => 'Colar';
 
   @override
-  String get goToLocation => 'Go to location';
+  String get goToLocation => 'Ir para o local';
 
   @override
-  String get eventCopied => 'Event copied';
+  String get eventCopied => 'Evento copiado';
 
   @override
-  String get noEvents => 'No events';
+  String get noEvents => 'Nenhum evento';
 
   @override
   String get velocity => 'Velocidade';
@@ -359,7 +359,7 @@ class AppLocalizationsPt extends AppLocalizations {
   String get editNote => 'Notas';
 
   @override
-  String get sortHint => 'Time → pitch/value → length';
+  String get sortHint => 'Tempo → altura/valor → duração';
 
   @override
   String get noteLabel => 'Notas';
@@ -368,13 +368,13 @@ class AppLocalizationsPt extends AppLocalizations {
   String get markerLabel => 'Inserir marcador';
 
   @override
-  String get openFirst => 'Open a MIDI or create a project first';
+  String get openFirst => 'Abra um MIDI ou crie um projeto primeiro';
 
   @override
   String get exportFailed => 'Falha na Exportação';
 
   @override
-  String get copied => 'Copied';
+  String get copied => 'Copiado';
 
   @override
   String get toolSelect => 'Selecionar';

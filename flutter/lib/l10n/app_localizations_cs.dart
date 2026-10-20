@@ -28,7 +28,7 @@ class AppLocalizationsCs extends AppLocalizations {
   String get edit => 'Úpravy';
 
   @override
-  String get copy => 'Copy';
+  String get copy => 'Kopírovat';
 
   @override
   String get paste => 'Vložit';
@@ -55,13 +55,13 @@ class AppLocalizationsCs extends AppLocalizations {
   String get value => 'Hodnota';
 
   @override
-  String get on => 'On';
+  String get on => 'Zapnuto';
 
   @override
-  String get off => 'Off';
+  String get off => 'Vypnuto';
 
   @override
-  String get loadMore => 'Load more';
+  String get loadMore => 'Načíst další';
 
   @override
   String notesCount(int count) {
@@ -163,7 +163,7 @@ class AppLocalizationsCs extends AppLocalizations {
   String get bpmField => 'BPM (0–60000000)';
 
   @override
-  String get bpmError => 'BPM must be 0–60000000';
+  String get bpmError => 'BPM musí být v rozsahu 0–60000000';
 
   @override
   String get timeSigField => 'Taktové označení…';
@@ -224,31 +224,31 @@ class AppLocalizationsCs extends AppLocalizations {
 
   @override
   String get defaultInstrumentFollowPc =>
-      'Channel default instrument: follows MIDI PC';
+      'Výchozí nástroj tohoto kanálu: podle MIDI PC';
 
   @override
   String get selectChannelInstrument => 'Výběr';
 
   @override
-  String get melodicBank => 'Melodic Bank 0';
+  String get melodicBank => 'Melodická banka 0';
 
   @override
-  String get drumBank => 'Drum Bank 128';
+  String get drumBank => 'Bicí banka 128';
 
   @override
   String get masterTrack => 'Úpravy';
 
   @override
   String get masterTrackHint =>
-      'The master (Conductor) track holds tempo/time-signature events; it has no notes and no port/channel.';
+      'Stopa Master (Conductor) obsahuje globální události tempa/taktu; nemá noty ani nastavení portu/kanálu.';
 
   @override
   String get channelInstrumentHint =>
-      'Channel default instrument is shared by all tracks on that channel; MIDI PC events take priority.';
+      'Výchozí nástroj kanálu: sdílený všemi stopami v kanálu; události PC z MIDI mají přednost.';
 
   @override
   String get mobilePortHint =>
-      'Only port A is audible on mobile; other ports are saved for the desktop app.';
+      'Na mobilu je slyšet jen port A; ostatní porty se ukládají pro desktopovou aplikaci.';
 
   @override
   String get tempo => 'Tempo:';
@@ -269,10 +269,10 @@ class AppLocalizationsCs extends AppLocalizations {
   String get customCc => 'Vlastní CC';
 
   @override
-  String get customCcTitle => 'Custom CC number';
+  String get customCcTitle => 'Vlastní číslo CC';
 
   @override
-  String get customRpnTitle => 'Custom RPN number';
+  String get customRpnTitle => 'Vlastní číslo RPN';
 
   @override
   String get customRpn => 'Vlastní RPN';
@@ -293,10 +293,10 @@ class AppLocalizationsCs extends AppLocalizations {
   String get automationType => 'Automatizace…';
 
   @override
-  String get tempoValueTitle => 'Tempo BPM';
+  String get tempoValueTitle => 'BPM tempa';
 
   @override
-  String get pitchBendValueTitle => 'Pitch Bend (0–16383, 8192 = center)';
+  String get pitchBendValueTitle => 'Pitch Bend (0–16383, 8192 = střed)';
 
   @override
   String get archivePasswordRequired => 'Vyžadováno heslo';
@@ -308,10 +308,10 @@ class AppLocalizationsCs extends AppLocalizations {
   String get open => 'Otevřít';
 
   @override
-  String get noMidiInArchive => 'No MIDI files in archive';
+  String get noMidiInArchive => 'V archivu nejsou žádné MIDI soubory';
 
   @override
-  String get archiveOpenFailed => 'Failed to open archive';
+  String get archiveOpenFailed => 'Archiv se nepodařilo otevřít';
 
   @override
   String get addTracks => 'Přidat stopu';
@@ -320,28 +320,28 @@ class AppLocalizationsCs extends AppLocalizations {
   String get trackCount => 'Počet';
 
   @override
-  String get countError => 'Count must be 1–256';
+  String get countError => 'Počet musí být 1–256';
 
   @override
-  String get cycleChannels => 'Cycle from channel';
+  String get cycleChannels => 'Procházet od kanálu';
 
   @override
-  String get sameChannel => 'Same channel for all';
+  String get sameChannel => 'Stejný kanál pro všechny';
 
   @override
-  String get startChannel => 'Start channel';
+  String get startChannel => 'Počáteční kanál';
 
   @override
   String get pasteSameTime => 'Vložit';
 
   @override
-  String get goToLocation => 'Go to location';
+  String get goToLocation => 'Přejít na místo';
 
   @override
-  String get eventCopied => 'Event copied';
+  String get eventCopied => 'Událost zkopírována';
 
   @override
-  String get noEvents => 'No events';
+  String get noEvents => 'Žádné události';
 
   @override
   String get velocity => 'Dynamika';
@@ -359,7 +359,7 @@ class AppLocalizationsCs extends AppLocalizations {
   String get editNote => 'Noty';
 
   @override
-  String get sortHint => 'Time → pitch/value → length';
+  String get sortHint => 'Čas → výška/hodnota → délka';
 
   @override
   String get noteLabel => 'Noty';
@@ -368,13 +368,13 @@ class AppLocalizationsCs extends AppLocalizations {
   String get markerLabel => 'Vložit značku';
 
   @override
-  String get openFirst => 'Open a MIDI or create a project first';
+  String get openFirst => 'Nejprve otevřete MIDI nebo vytvořte projekt';
 
   @override
   String get exportFailed => 'Export selhal';
 
   @override
-  String get copied => 'Copied';
+  String get copied => 'Zkopírováno';
 
   @override
   String get toolSelect => 'Výběr';

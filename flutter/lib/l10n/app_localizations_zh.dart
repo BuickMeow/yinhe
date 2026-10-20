@@ -423,6 +423,9 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get edit => '編輯';
 
   @override
+  String get copy => '複製';
+
+  @override
   String get paste => '貼上';
 
   @override
@@ -445,6 +448,15 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
 
   @override
   String get value => '數值';
+
+  @override
+  String get on => '開啟';
+
+  @override
+  String get off => '關閉';
+
+  @override
+  String get loadMore => '載入更多';
 
   @override
   String notesCount(int count) {
@@ -542,6 +554,12 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get defaultTimeSig => '本工程預設拍號';
 
   @override
+  String get bpmField => 'BPM（0–60000000）';
+
+  @override
+  String get bpmError => 'BPM 需為 0–60000000';
+
+  @override
   String get timeSigField => '拍號…';
 
   @override
@@ -599,10 +617,29 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get channel => 'Channel';
 
   @override
+  String get defaultInstrumentFollowPc => '本通道預設樂器：跟隨 MIDI PC';
+
+  @override
   String get selectChannelInstrument => '選取';
 
   @override
+  String get melodicBank => '旋律 Bank 0';
+
+  @override
+  String get drumBank => '鼓組 Bank 128';
+
+  @override
   String get masterTrack => '編輯';
+
+  @override
+  String get masterTrackHint =>
+      'Master（Conductor）軌承載速度/拍號等全域事件，不能放置音符，也沒有連接埠/通道設定。';
+
+  @override
+  String get channelInstrumentHint => '通道級預設樂器：同一通道的所有音軌共用；MIDI 內的 PC 事件優先於它。';
+
+  @override
+  String get mobilePortHint => '行動端目前僅連接埠 A 參與播放；其他連接埠會儲存，供桌面端使用。';
 
   @override
   String get tempo => 'Tempo:';
@@ -617,7 +654,16 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get marker => '插入標籤';
 
   @override
+  String get pitchBend => 'Pitch Bend';
+
+  @override
   String get customCc => '自訂 CC';
+
+  @override
+  String get customCcTitle => '自訂 CC 號';
+
+  @override
+  String get customRpnTitle => '自訂 RPN 號';
 
   @override
   String get customRpn => '自訂 RPN';
@@ -638,6 +684,12 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get automationType => '自動化…';
 
   @override
+  String get tempoValueTitle => '速度 BPM';
+
+  @override
+  String get pitchBendValueTitle => 'Pitch Bend（0–16383，8192 = 中心）';
+
+  @override
   String get archivePasswordRequired => '壓縮檔需要密碼';
 
   @override
@@ -647,13 +699,40 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get open => '開啟';
 
   @override
+  String get noMidiInArchive => '壓縮檔裡沒有 MIDI 檔案';
+
+  @override
+  String get archiveOpenFailed => '壓縮檔開啟失敗';
+
+  @override
   String get addTracks => '新增音軌';
 
   @override
   String get trackCount => '數量';
 
   @override
+  String get countError => '數量需為 1–256';
+
+  @override
+  String get cycleChannels => '從通道開始循環';
+
+  @override
+  String get sameChannel => '全部相同通道';
+
+  @override
+  String get startChannel => '起始通道';
+
+  @override
   String get pasteSameTime => '貼上';
+
+  @override
+  String get goToLocation => '前往該地點';
+
+  @override
+  String get eventCopied => '已複製事件';
+
+  @override
+  String get noEvents => '沒有事件';
 
   @override
   String get velocity => '力度';
@@ -671,13 +750,22 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get editNote => '音符';
 
   @override
+  String get sortHint => '時間 → 音高/值 → 長度';
+
+  @override
   String get noteLabel => '音符';
 
   @override
   String get markerLabel => '插入標籤';
 
   @override
+  String get openFirst => '請先開啟 MIDI 或新建專案';
+
+  @override
   String get exportFailed => '匯出失敗';
+
+  @override
+  String get copied => '已複製';
 
   @override
   String get toolSelect => '選取';
@@ -730,6 +818,9 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
   String get edit => '編輯';
 
   @override
+  String get copy => '複製';
+
+  @override
   String get paste => '貼上';
 
   @override
@@ -752,6 +843,15 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get value => '數值';
+
+  @override
+  String get on => '開啟';
+
+  @override
+  String get off => '關閉';
+
+  @override
+  String get loadMore => '載入更多';
 
   @override
   String notesCount(int count) {
@@ -849,6 +949,12 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
   String get defaultTimeSig => '本工程預設拍號';
 
   @override
+  String get bpmField => 'BPM（0–60000000）';
+
+  @override
+  String get bpmError => 'BPM 需為 0–60000000';
+
+  @override
   String get timeSigField => '拍號…';
 
   @override
@@ -906,10 +1012,29 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
   String get channel => '通道';
 
   @override
+  String get defaultInstrumentFollowPc => '本通道預設樂器：跟隨 MIDI PC';
+
+  @override
   String get selectChannelInstrument => '選取';
 
   @override
+  String get melodicBank => '旋律 Bank 0';
+
+  @override
+  String get drumBank => '鼓組 Bank 128';
+
+  @override
   String get masterTrack => '編輯';
+
+  @override
+  String get masterTrackHint =>
+      'Master（Conductor）軌承載速度/拍號等全域事件，不能放置音符，也沒有連接埠/通道設定。';
+
+  @override
+  String get channelInstrumentHint => '通道級預設樂器：同一通道的所有音軌共用；MIDI 內的 PC 事件優先於它。';
+
+  @override
+  String get mobilePortHint => '行動端目前僅連接埠 A 參與播放；其他連接埠會儲存，供桌面端使用。';
 
   @override
   String get tempo => 'Tempo:';
@@ -924,7 +1049,16 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
   String get marker => '插入標籤';
 
   @override
+  String get pitchBend => 'Pitch Bend';
+
+  @override
   String get customCc => '自訂 CC';
+
+  @override
+  String get customCcTitle => '自訂 CC 號';
+
+  @override
+  String get customRpnTitle => '自訂 RPN 號';
 
   @override
   String get customRpn => '自訂 RPN';
@@ -945,6 +1079,12 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
   String get automationType => '自動化…';
 
   @override
+  String get tempoValueTitle => '速度 BPM';
+
+  @override
+  String get pitchBendValueTitle => 'Pitch Bend（0–16383，8192 = 中心）';
+
+  @override
   String get archivePasswordRequired => '壓縮檔需要密碼';
 
   @override
@@ -954,13 +1094,40 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
   String get open => '開啟';
 
   @override
+  String get noMidiInArchive => '壓縮檔裡沒有 MIDI 檔案';
+
+  @override
+  String get archiveOpenFailed => '壓縮檔開啟失敗';
+
+  @override
   String get addTracks => '新增音軌';
 
   @override
   String get trackCount => '數量';
 
   @override
+  String get countError => '數量需為 1–256';
+
+  @override
+  String get cycleChannels => '從通道開始循環';
+
+  @override
+  String get sameChannel => '全部相同通道';
+
+  @override
+  String get startChannel => '起始通道';
+
+  @override
   String get pasteSameTime => '貼上';
+
+  @override
+  String get goToLocation => '前往該地點';
+
+  @override
+  String get eventCopied => '已複製事件';
+
+  @override
+  String get noEvents => '沒有事件';
 
   @override
   String get velocity => '力度';
@@ -978,13 +1145,22 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
   String get editNote => '音符';
 
   @override
+  String get sortHint => '時間 → 音高/值 → 長度';
+
+  @override
   String get noteLabel => '音符';
 
   @override
   String get markerLabel => '插入標籤';
 
   @override
+  String get openFirst => '請先開啟 MIDI 或新建專案';
+
+  @override
   String get exportFailed => '匯出失敗';
+
+  @override
+  String get copied => '已複製';
 
   @override
   String get toolSelect => '選取';

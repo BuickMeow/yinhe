@@ -28,7 +28,7 @@ class AppLocalizationsTr extends AppLocalizations {
   String get edit => 'Düzen';
 
   @override
-  String get copy => 'Copy';
+  String get copy => 'Kopyala';
 
   @override
   String get paste => 'Yapıştır';
@@ -55,13 +55,13 @@ class AppLocalizationsTr extends AppLocalizations {
   String get value => 'Değer';
 
   @override
-  String get on => 'On';
+  String get on => 'Açık';
 
   @override
-  String get off => 'Off';
+  String get off => 'Kapalı';
 
   @override
-  String get loadMore => 'Load more';
+  String get loadMore => 'Daha fazla yükle';
 
   @override
   String notesCount(int count) {
@@ -163,7 +163,7 @@ class AppLocalizationsTr extends AppLocalizations {
   String get bpmField => 'BPM (0–60000000)';
 
   @override
-  String get bpmError => 'BPM must be 0–60000000';
+  String get bpmError => 'BPM 0–60000000 arasında olmalı';
 
   @override
   String get timeSigField => 'Zaman Ölçüsü…';
@@ -224,31 +224,31 @@ class AppLocalizationsTr extends AppLocalizations {
 
   @override
   String get defaultInstrumentFollowPc =>
-      'Channel default instrument: follows MIDI PC';
+      'Bu kanalın varsayılan enstrümanı: MIDI PC\'yi izler';
 
   @override
   String get selectChannelInstrument => 'Seç';
 
   @override
-  String get melodicBank => 'Melodic Bank 0';
+  String get melodicBank => 'Melodik Bank 0';
 
   @override
-  String get drumBank => 'Drum Bank 128';
+  String get drumBank => 'Davul Bank 128';
 
   @override
   String get masterTrack => 'Düzen';
 
   @override
   String get masterTrackHint =>
-      'The master (Conductor) track holds tempo/time-signature events; it has no notes and no port/channel.';
+      'Master (Conductor) izi tempo/ölçü gibi genel olayları taşır; notası ve port/kanal ayarı yoktur.';
 
   @override
   String get channelInstrumentHint =>
-      'Channel default instrument is shared by all tracks on that channel; MIDI PC events take priority.';
+      'Kanalın varsayılan enstrümanı: o kanaldaki tüm izler paylaşır; MIDI PC olayları önceliklidir.';
 
   @override
   String get mobilePortHint =>
-      'Only port A is audible on mobile; other ports are saved for the desktop app.';
+      'Mobilde yalnızca A portu duyulur; diğer portlar masaüstü uygulaması için kaydedilir.';
 
   @override
   String get tempo => 'Tempo:';
@@ -269,10 +269,10 @@ class AppLocalizationsTr extends AppLocalizations {
   String get customCc => 'Özel CC';
 
   @override
-  String get customCcTitle => 'Custom CC number';
+  String get customCcTitle => 'Özel CC numarası';
 
   @override
-  String get customRpnTitle => 'Custom RPN number';
+  String get customRpnTitle => 'Özel RPN numarası';
 
   @override
   String get customRpn => 'Özel RPN';
@@ -296,7 +296,7 @@ class AppLocalizationsTr extends AppLocalizations {
   String get tempoValueTitle => 'Tempo BPM';
 
   @override
-  String get pitchBendValueTitle => 'Pitch Bend (0–16383, 8192 = center)';
+  String get pitchBendValueTitle => 'Pitch Bend (0–16383, 8192 = merkez)';
 
   @override
   String get archivePasswordRequired => 'Parola gerekli';
@@ -308,10 +308,10 @@ class AppLocalizationsTr extends AppLocalizations {
   String get open => 'Aç';
 
   @override
-  String get noMidiInArchive => 'No MIDI files in archive';
+  String get noMidiInArchive => 'Arşivde MIDI dosyası yok';
 
   @override
-  String get archiveOpenFailed => 'Failed to open archive';
+  String get archiveOpenFailed => 'Arşiv açılamadı';
 
   @override
   String get addTracks => 'Parça ekle';
@@ -320,28 +320,28 @@ class AppLocalizationsTr extends AppLocalizations {
   String get trackCount => 'Sayı';
 
   @override
-  String get countError => 'Count must be 1–256';
+  String get countError => 'Adet 1–256 olmalı';
 
   @override
-  String get cycleChannels => 'Cycle from channel';
+  String get cycleChannels => 'Kanaldan itibaren döngü';
 
   @override
-  String get sameChannel => 'Same channel for all';
+  String get sameChannel => 'Tümü aynı kanal';
 
   @override
-  String get startChannel => 'Start channel';
+  String get startChannel => 'Başlangıç kanalı';
 
   @override
   String get pasteSameTime => 'Yapıştır';
 
   @override
-  String get goToLocation => 'Go to location';
+  String get goToLocation => 'Konuma git';
 
   @override
-  String get eventCopied => 'Event copied';
+  String get eventCopied => 'Olay kopyalandı';
 
   @override
-  String get noEvents => 'No events';
+  String get noEvents => 'Olay yok';
 
   @override
   String get velocity => 'Vuruş Hızı';
@@ -359,7 +359,7 @@ class AppLocalizationsTr extends AppLocalizations {
   String get editNote => 'Notalar';
 
   @override
-  String get sortHint => 'Time → pitch/value → length';
+  String get sortHint => 'Zaman → perde/değer → uzunluk';
 
   @override
   String get noteLabel => 'Notalar';
@@ -368,13 +368,13 @@ class AppLocalizationsTr extends AppLocalizations {
   String get markerLabel => 'İşaret ekle';
 
   @override
-  String get openFirst => 'Open a MIDI or create a project first';
+  String get openFirst => 'Önce bir MIDI açın veya proje oluşturun';
 
   @override
   String get exportFailed => 'Dışa Aktarma Başarısız';
 
   @override
-  String get copied => 'Copied';
+  String get copied => 'Kopyalandı';
 
   @override
   String get toolSelect => 'Seç';

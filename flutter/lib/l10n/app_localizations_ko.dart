@@ -28,7 +28,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get edit => '편집';
 
   @override
-  String get copy => 'Copy';
+  String get copy => '복사';
 
   @override
   String get paste => '붙여넣기';
@@ -55,13 +55,13 @@ class AppLocalizationsKo extends AppLocalizations {
   String get value => '값';
 
   @override
-  String get on => 'On';
+  String get on => '켬';
 
   @override
-  String get off => 'Off';
+  String get off => '끔';
 
   @override
-  String get loadMore => 'Load more';
+  String get loadMore => '더 불러오기';
 
   @override
   String notesCount(int count) {
@@ -162,7 +162,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get bpmField => 'BPM (0–60000000)';
 
   @override
-  String get bpmError => 'BPM must be 0–60000000';
+  String get bpmError => 'BPM은 0–60000000이어야 합니다';
 
   @override
   String get timeSigField => '박자표…';
@@ -222,32 +222,31 @@ class AppLocalizationsKo extends AppLocalizations {
   String get channel => '채널';
 
   @override
-  String get defaultInstrumentFollowPc =>
-      'Channel default instrument: follows MIDI PC';
+  String get defaultInstrumentFollowPc => '이 채널 기본 악기: MIDI PC 따름';
 
   @override
   String get selectChannelInstrument => '선택';
 
   @override
-  String get melodicBank => 'Melodic Bank 0';
+  String get melodicBank => '멜로디 Bank 0';
 
   @override
-  String get drumBank => 'Drum Bank 128';
+  String get drumBank => '드럼 Bank 128';
 
   @override
   String get masterTrack => '편집';
 
   @override
   String get masterTrackHint =>
-      'The master (Conductor) track holds tempo/time-signature events; it has no notes and no port/channel.';
+      '마스터(Conductor) 트랙은 템포/박자 등 전역 이벤트를 담당하며, 음표를 놓을 수 없고 포트/채널 설정도 없습니다.';
 
   @override
   String get channelInstrumentHint =>
-      'Channel default instrument is shared by all tracks on that channel; MIDI PC events take priority.';
+      '채널 기본 악기: 같은 채널의 모든 트랙이 공유합니다. MIDI PC 이벤트가 우선합니다.';
 
   @override
   String get mobilePortHint =>
-      'Only port A is audible on mobile; other ports are saved for the desktop app.';
+      '모바일에서는 포트 A만 재생됩니다. 다른 포트는 저장되어 데스크톱 앱에서 사용됩니다.';
 
   @override
   String get tempo => '템포:';
@@ -262,16 +261,16 @@ class AppLocalizationsKo extends AppLocalizations {
   String get marker => '마커 삽입';
 
   @override
-  String get pitchBend => 'Pitch Bend';
+  String get pitchBend => '피치 벤드';
 
   @override
   String get customCc => '사용자 지정 CC';
 
   @override
-  String get customCcTitle => 'Custom CC number';
+  String get customCcTitle => '사용자 지정 CC 번호';
 
   @override
-  String get customRpnTitle => 'Custom RPN number';
+  String get customRpnTitle => '사용자 지정 RPN 번호';
 
   @override
   String get customRpn => '사용자 RPN';
@@ -292,10 +291,10 @@ class AppLocalizationsKo extends AppLocalizations {
   String get automationType => '자동화…';
 
   @override
-  String get tempoValueTitle => 'Tempo BPM';
+  String get tempoValueTitle => '템포 BPM';
 
   @override
-  String get pitchBendValueTitle => 'Pitch Bend (0–16383, 8192 = center)';
+  String get pitchBendValueTitle => '피치 벤드 (0–16383, 8192 = 중앙)';
 
   @override
   String get archivePasswordRequired => '암호가 필요합니다';
@@ -307,10 +306,10 @@ class AppLocalizationsKo extends AppLocalizations {
   String get open => '열기';
 
   @override
-  String get noMidiInArchive => 'No MIDI files in archive';
+  String get noMidiInArchive => '압축 파일에 MIDI 파일이 없습니다';
 
   @override
-  String get archiveOpenFailed => 'Failed to open archive';
+  String get archiveOpenFailed => '압축 파일을 열지 못했습니다';
 
   @override
   String get addTracks => '트랙 추가';
@@ -319,28 +318,28 @@ class AppLocalizationsKo extends AppLocalizations {
   String get trackCount => '개수';
 
   @override
-  String get countError => 'Count must be 1–256';
+  String get countError => '개수는 1–256이어야 합니다';
 
   @override
-  String get cycleChannels => 'Cycle from channel';
+  String get cycleChannels => '채널부터 순환';
 
   @override
-  String get sameChannel => 'Same channel for all';
+  String get sameChannel => '모두 같은 채널';
 
   @override
-  String get startChannel => 'Start channel';
+  String get startChannel => '시작 채널';
 
   @override
   String get pasteSameTime => '붙여넣기';
 
   @override
-  String get goToLocation => 'Go to location';
+  String get goToLocation => '위치로 이동';
 
   @override
-  String get eventCopied => 'Event copied';
+  String get eventCopied => '이벤트 복사됨';
 
   @override
-  String get noEvents => 'No events';
+  String get noEvents => '이벤트 없음';
 
   @override
   String get velocity => '벨로시티';
@@ -358,7 +357,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get editNote => '노트';
 
   @override
-  String get sortHint => 'Time → pitch/value → length';
+  String get sortHint => '시간 → 음높이/값 → 길이';
 
   @override
   String get noteLabel => '노트';
@@ -367,13 +366,13 @@ class AppLocalizationsKo extends AppLocalizations {
   String get markerLabel => '마커 삽입';
 
   @override
-  String get openFirst => 'Open a MIDI or create a project first';
+  String get openFirst => '먼저 MIDI를 열거나 프로젝트를 만드세요';
 
   @override
   String get exportFailed => '내보내기 실패';
 
   @override
-  String get copied => 'Copied';
+  String get copied => '복사됨';
 
   @override
   String get toolSelect => '선택';
