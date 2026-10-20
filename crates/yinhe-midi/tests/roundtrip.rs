@@ -810,3 +810,76 @@ fn title_artist_roundtrip_via_smf() {
     assert_eq!(model2.meta.name, "Round Song");
     assert_eq!(model2.meta.artist, "Round Artist");
 }
+
+fn cut_note(start: u32, end: u32, key: u8) -> NoteEvent {
+    NoteEvent {
+        id: 0,
+        start_tick: start,
+        end_tick: end,
+        key,
+        velocity: 100,
+    }
+}
+
+#[test]
+fn export_zero_bpm_as_min_tempo_keeps_timeline() {
+    let mut conductor = empty_conductor();
+    conductor.tempo.events = vec![
+        AutomationEvent {
+            id: 0,
+            tick: 0,
+            value: 120.0,
+            shape: SegmentShape::Step,
+        },
+        AutomationEvent {
+            id: 0,
+            tick: 480,
+            value: 0.0,
+            shape: SegmentShape::Step,
+        },
+        AutomationEvent {
+            id: 0,
+            tick: 960,
+            value: 60.0,
+            shape: SegmentShape::Step,
+        },
+    ];
+    let mut track = TrackData::new(0, 0);
+    track.name = "Cut".to_string();
+    let mut model = YinModel {
+        conductor: Arc::new(conductor),
+        tracks: vec![Arc::new(track)],
+        meta: ProjectMeta {
+            ppq: 480,
+            ..ProjectMeta::default()
+        },
+        ..Default::default()
+    };
+    model.load_track_notes(vec![vec![
+        cut_note(0, 1000, 60),
+        cut_note(600, 700, 61),
+        cut_note(960, 1200, 62),
+    ]]);
+    model.rebuild();
+
+    let bytes = write_to_bytes(&model).unwrap();
+    let out = parse_bytes(&bytes).unwrap();
+
+    // MIDI 导出保留完整时间轴和 0 BPM 事件（写成 24-bit 最大 MPQ）；
+    // 重新导入时最大 MPQ 还原为模型内的 0 BPM。
+    assert_eq!(out.notes[60].len(), 1);
+    assert_eq!(out.notes[60][0].end_tick, 1000);
+    assert_eq!(out.notes[61].len(), 1);
+    assert_eq!(out.notes[61][0].start_tick, 600);
+    assert_eq!(out.notes[62].len(), 1);
+    assert_eq!(out.notes[62][0].start_tick, 960);
+
+    let tempos = &out.conductor.tempo.events;
+    assert_eq!(tempos.len(), 3);
+    assert_eq!(tempos[0].tick, 0);
+    assert!((tempos[0].value - 120.0).abs() < 0.5);
+    assert_eq!(tempos[1].tick, 480);
+    assert_eq!(tempos[1].value, 0.0);
+    assert_eq!(tempos[2].tick, 960);
+    assert!((tempos[2].value - 60.0).abs() < 0.5);
+}

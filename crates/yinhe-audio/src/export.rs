@@ -425,6 +425,66 @@ mod job_tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// 0 BPM 剪切：导出时长按剪切后的时间轴计算（跳过 480..960）。
+    #[test]
+    fn duration_skips_zero_bpm_cut() {
+        let conductor = ConductorData {
+            tempo: AutomationLane {
+                target: AutomationTarget::Tempo,
+                track: 0,
+                events: vec![
+                    AutomationEvent {
+                        id: 0,
+                        tick: 0,
+                        value: 120.0,
+                        shape: SegmentShape::Step,
+                    },
+                    AutomationEvent {
+                        id: 0,
+                        tick: 480,
+                        value: 0.0,
+                        shape: SegmentShape::Step,
+                    },
+                    AutomationEvent {
+                        id: 0,
+                        tick: 960,
+                        value: 60.0,
+                        shape: SegmentShape::Step,
+                    },
+                ],
+            },
+            time_sig: Vec::new(),
+            key_sig: Vec::new(),
+            markers: Vec::new(),
+            lyrics: Vec::new(),
+            chord: Vec::new(),
+        };
+        let mut model = YinModel {
+            conductor: Arc::new(conductor),
+            tracks: vec![Arc::new(TrackData::new(0, 0))],
+            meta: ProjectMeta {
+                ppq: 480,
+                ..ProjectMeta::default()
+            },
+            ..Default::default()
+        };
+        model.load_track_notes(vec![vec![NoteEvent {
+            start_tick: 0,
+            end_tick: 1920,
+            key: 60,
+            velocity: 100,
+            id: 0,
+        }]]);
+        model.rebuild();
+        let model = Arc::new(model);
+
+        let layout = ChannelLayout::from_model(&model);
+        let mut engine = AudioEngine::new(48000, layout);
+        engine.handle_command(crate::spawn::AudioCommand::LoadModel { model });
+        // 0..480 @120 = 0.5s；剪切 480..960；960..1920 @60 = 2s；共 2.5s。
+        assert_eq!(engine.duration_samples(), 120_000);
+    }
+
     /// 取消后不再推进（step 上层会看到 cancelled 标志）。
     #[test]
     fn export_job_reports_cancel_flag() {

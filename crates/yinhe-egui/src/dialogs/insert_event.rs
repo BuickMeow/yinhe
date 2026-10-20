@@ -112,7 +112,7 @@ impl InsertBpmState {
         self.open = true;
         self.just_opened = true;
         self.tick = tick;
-        self.bpm = current_bpm.clamp(1.0, 1000.0);
+        self.bpm = current_bpm.clamp(0.0, 60_000_000.0);
         self.position = position;
     }
 
@@ -139,7 +139,7 @@ impl InsertBpmState {
                     ui.label(t!("menu.insert.bpm"));
                     ui.add(
                         egui::DragValue::new(&mut bpm)
-                            .range(1.0..=1000.0)
+                            .range(0.0..=60_000_000.0)
                             .speed(0.5)
                             .max_decimals(2),
                     );

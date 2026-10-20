@@ -194,8 +194,12 @@ fn collect_conductor(
             match ev.kind {
                 midly::TrackEventKind::Meta(midly::MetaMessage::Tempo(us)) => {
                     let mpq = us.as_int() as u64;
+                    // 24-bit 最大 MPQ = MIDI 的最低可行 BPM：约定为 0 BPM
+                    //“跳转”标记，模型内部用 0 表示。
                     let bpm = if mpq == 0 {
                         120.0
+                    } else if mpq == 0x00FF_FFFF {
+                        0.0
                     } else {
                         60_000_000.0 / mpq as f64
                     };

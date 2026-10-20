@@ -94,8 +94,11 @@ fn targets_label(doc: &yinhe_editor_core::document::Document, tracks: &[u16]) ->
     }
 }
 
-/// 当前 tick 处的 BPM（取 tempo lane 上前一个事件值；无事件 = 120）。
+/// 当前 tick 处的 BPM（取 tempo lane 上前一个事件值；剪切段内显示 0）。
 fn bpm_at_tick(doc: &yinhe_editor_core::document::Document, tick: u32) -> f64 {
+    if doc.data.model.tempo_map.is_skipped(tick) {
+        return 0.0;
+    }
     let events = &doc.data.model.conductor.tempo.events;
     events
         .iter()

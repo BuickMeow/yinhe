@@ -486,5 +486,13 @@ fn seconds_to_tick(model: &YinModel, seconds: f64) -> f64 {
             hi = mid;
         }
     }
-    hi.round()
+    let tick = hi.round();
+    // 0 BPM 剪切段内 tick_to_seconds 是常量：二分会落在剪切起点，
+    // 这里直接推进到区间末端（跳转目标），否则播放头会停在剪切起点。
+    for &(start, end) in &model.tempo_map.skip_ranges {
+        if tick >= start as f64 && tick < end as f64 {
+            return end as f64;
+        }
+    }
+    tick
 }

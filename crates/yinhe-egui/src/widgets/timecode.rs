@@ -398,7 +398,7 @@ pub fn show_timecode_display(
 /// 上限用 `u32::MAX`（不能用 `tick_length`：空工程/光标超出工程末尾时
 /// tick_length 会截断跳转结果）。
 fn seconds_to_tick(tempo_map: &yinhe_core::TempoMap, seconds: f64) -> f64 {
-    if seconds <= 0.0 {
+    if seconds < 0.0 {
         return 0.0;
     }
     let max_tick = u32::MAX as u64;
@@ -414,7 +414,14 @@ fn seconds_to_tick(tempo_map: &yinhe_core::TempoMap, seconds: f64) -> f64 {
             hi = mid;
         }
     }
-    hi.round()
+    let tick = hi.round();
+    // 0 BPM 剪切段时间恒定：二分落在剪切起点时直接推进到区间末端。
+    for &(start, end) in &tempo_map.skip_ranges {
+        if tick >= start as f64 && tick < end as f64 {
+            return end as f64;
+        }
+    }
+    tick
 }
 
 #[cfg(test)]
@@ -432,5 +439,37 @@ mod tests {
         assert_eq!(seconds_to_tick(&model.tempo_map, 1.0), 960.0);
         assert_eq!(seconds_to_tick(&model.tempo_map, 0.5), 480.0);
         assert_eq!(seconds_to_tick(&model.tempo_map, 0.0), 0.0);
+    }
+
+    #[test]
+    fn seconds_to_tick_jumps_over_zero_bpm_cut() {
+        let tm = yinhe_core::TempoMap {
+            ticks_per_beat: 480,
+            tempo_segments: vec![
+                yinhe_core::TempoSegment {
+                    start_tick: 0,
+                    start_time: 0.0,
+                    micros_per_quarter: 500_000,
+                },
+                // 0 BPM 剪切段：mpq=0，时间恒定在 0.5s。
+                yinhe_core::TempoSegment {
+                    start_tick: 480,
+                    start_time: 0.5,
+                    micros_per_quarter: 0,
+                },
+                yinhe_core::TempoSegment {
+                    start_tick: 960,
+                    start_time: 0.5,
+                    micros_per_quarter: 1_000_000,
+                },
+            ],
+            skip_ranges: vec![(480, 960)],
+            ..Default::default()
+        };
+        assert_eq!(seconds_to_tick(&tm, 0.0), 0.0);
+        assert_eq!(seconds_to_tick(&tm, 0.25), 240.0);
+        // 0.5s 落在剪切平台上 → 直接跳到 960，而不是停在 480。
+        assert_eq!(seconds_to_tick(&tm, 0.5), 960.0);
+        assert_eq!(seconds_to_tick(&tm, 1.0), 1200.0);
     }
 }

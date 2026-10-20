@@ -9,10 +9,22 @@ use crate::audio_model::{
 
 /// 全曲时长（秒）：MIDI/自动化末尾与音频片段末尾取大者。
 pub(crate) fn model_duration_seconds(model: &YinModel) -> f64 {
+    // 音频片段按秒存储，0 BPM 剪切后需要跟着左移/截断。
+    let audio_end = model
+        .tracks
+        .iter()
+        .flat_map(|t| t.audio_clips.iter())
+        .filter_map(|c| {
+            model
+                .tempo_map
+                .cut_clip_times(c.start_seconds, c.end_seconds())
+        })
+        .map(|(_, end)| end)
+        .fold(0.0, f64::max);
     model
         .tempo_map
         .tick_to_seconds(model.tick_length)
-        .max(model.audio_end_seconds())
+        .max(audio_end)
 }
 
 /// Build `PreparedModel` on a worker thread (no `&mut AudioEngine` needed).
@@ -78,9 +90,13 @@ fn build_bucket(model: &YinModel, key: usize, ignore_velocity: u8) -> Vec<Audibl
         if n.velocity <= ignore_velocity {
             continue;
         }
+        // 0 BPM 剪切：落在剪切区间的音符不发声；跨过剪切起点的音符在起点截断。
+        let Some(end_tick) = model.tempo_map.playable_note_end(n.start_tick, n.end_tick) else {
+            continue;
+        };
         dst.push(AudibleNote {
             start_tick: n.start_tick,
-            end_tick: n.end_tick,
+            end_tick,
             track: n.track,
             velocity: n.velocity,
         });
@@ -100,4 +116,58 @@ pub(crate) fn build_audible_notes(
         buckets[key] = build_bucket(model, key, ignore_velocity);
     }
     buckets
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use yinhe_core::{ConductorData, NoteEvent, YinModel};
+    use yinhe_types::{AutomationEvent, SegmentShape};
+
+    use super::build_bucket;
+
+    fn note(start: u32, end: u32, key: u8) -> NoteEvent {
+        NoteEvent {
+            id: 0,
+            start_tick: start,
+            end_tick: end,
+            key,
+            velocity: 100,
+        }
+    }
+
+    #[test]
+    fn zero_bpm_cut_filters_and_clamps_notes() {
+        let mut conductor = ConductorData::default();
+        for (tick, bpm) in [(0u32, 120.0f32), (480, 0.0), (960, 60.0)] {
+            conductor.tempo.events.push(AutomationEvent {
+                id: 0,
+                tick,
+                value: bpm,
+                shape: SegmentShape::Step,
+            });
+        }
+        let mut m = YinModel {
+            conductor: Arc::new(conductor),
+            ..Default::default()
+        };
+        m.load_track_notes(vec![vec![
+            note(0, 1000, 60),   // 跨剪切起点 → 截断到 480
+            note(600, 700, 61),  // 剪切内 → 不发声
+            note(960, 1440, 62), // 剪切后 → 保留
+        ]]);
+        m.rebuild();
+
+        let cross = build_bucket(&m, 60, 0);
+        assert_eq!(cross.len(), 1);
+        assert_eq!(cross[0].start_tick, 0);
+        assert_eq!(cross[0].end_tick, 480);
+
+        assert!(build_bucket(&m, 61, 0).is_empty());
+
+        let after = build_bucket(&m, 62, 0);
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].end_tick, 1440);
+    }
 }

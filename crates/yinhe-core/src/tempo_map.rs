@@ -95,6 +95,18 @@ pub struct TempoMap {
     pub time_sig_events: Vec<TimeSigEvent>,
     pub time_sig_default: (u8, u8),
     pub tick_length: u64,
+    /// 0 BPM 剪切段 `[start, end)`：播放/音频导出直接跳过。
+    ///
+    /// `tempo_segments` 里对应的 `start` 处有一个 `micros_per_quarter == 0`
+    /// 的“跳转段”，让 tick→时间映射在剪切区间内保持常量。
+    #[serde(default)]
+    pub skip_ranges: Vec<(u32, u32)>,
+    /// 剪切段在**原始时间轴**上的秒区间（音频片段/音频导出用）。
+    ///
+    /// `(start, end)` 的 `end - start` 是被剪掉的墙钟时长；`end` 之后
+    /// 的音频时间要整体左移这个时长。
+    #[serde(default)]
+    pub skip_time_ranges: Vec<(f64, f64)>,
 }
 
 impl Default for TempoMap {
@@ -105,6 +117,8 @@ impl Default for TempoMap {
             time_sig_events: Vec::new(),
             time_sig_default: (4, 2),
             tick_length: 0,
+            skip_ranges: Vec::new(),
+            skip_time_ranges: Vec::new(),
         }
     }
 }
@@ -134,6 +148,14 @@ impl TempoMap {
 
     /// Get BPM at a given time (seconds).
     pub fn bpm_at_time(&self, time: f64) -> f32 {
+        // 0 BPM 剪切时间区间内显示 0（事件本身的值）。
+        if self
+            .skip_time_ranges
+            .iter()
+            .any(|&(start, end)| time >= start && time < end)
+        {
+            return 0.0;
+        }
         let Some(seg) = self.find_segment_at_time(time) else {
             return DEFAULT_BPM as f32;
         };
@@ -142,13 +164,20 @@ impl TempoMap {
 
     /// Get BPM at a given tick（原生 tempo 事件优先，无事件时用兜底段）。
     pub fn bpm_at_tick(&self, tick: u64) -> f32 {
+        // 0 BPM 剪切段内显示 0（事件本身的值），而不是前一个有效速度。
+        if self.is_skipped(tick.min(u32::MAX as u64) as u32) {
+            return 0.0;
+        }
         let count = self
             .tempo_segments
             .partition_point(|s| (s.start_tick as u64) <= tick);
-        if count == 0 {
-            return DEFAULT_BPM as f32;
-        }
-        bpm_from_mpq(self.tempo_segments[count - 1].micros_per_quarter) as f32
+        // 0 BPM 剪切段用 mpq=0 标记，不是有效速度；回退到最近的正常段。
+        self.tempo_segments[..count]
+            .iter()
+            .rev()
+            .find(|s| s.micros_per_quarter > 0)
+            .map(|s| bpm_from_mpq(s.micros_per_quarter) as f32)
+            .unwrap_or(DEFAULT_BPM as f32)
     }
 
     /// Convert absolute tick to seconds (considering tempo changes).
@@ -195,6 +224,57 @@ impl TempoMap {
     /// Total duration in seconds.
     pub fn duration_seconds(&self) -> f64 {
         self.tick_to_seconds(self.tick_length)
+    }
+
+    /// tick 是否落在 0 BPM 剪切段内。
+    pub fn is_skipped(&self, tick: u32) -> bool {
+        self.skip_ranges
+            .iter()
+            .any(|&(start, end)| tick >= start && tick < end)
+    }
+
+    /// 音频片段（秒）经过 0 BPM 剪切后的可播放区间：
+    /// - 起点在剪切段内 → `None`（整段丢弃）；
+    /// - 跨过下一个剪切起点 → 在剪切起点截断；
+    /// - 剪切之后的片段整体左移。
+    pub fn cut_clip_times(&self, start: f64, end: f64) -> Option<(f64, f64)> {
+        let start = start.max(0.0);
+        if self
+            .skip_time_ranges
+            .iter()
+            .any(|&(a, b)| start >= a && start < b)
+        {
+            return None;
+        }
+        let mut end = end.max(start);
+        if let Some(&(cut, _)) = self.skip_time_ranges.iter().find(|&&(cut, _)| cut > start)
+            && cut < end
+        {
+            end = cut;
+        }
+        let shift: f64 = self
+            .skip_time_ranges
+            .iter()
+            .filter(|&&(_, b)| b <= start)
+            .map(|&(a, b)| b - a)
+            .sum();
+        Some(((start - shift).max(0.0), (end - shift).max(0.0)))
+    }
+
+    /// 音符可播放的结束 tick：
+    /// - 起点在剪切段内 → `None`（整个音符不发声）；
+    /// - 结束跨过下一个剪切起点 → 截断到剪切起点。
+    pub fn playable_note_end(&self, start: u32, end: u32) -> Option<u32> {
+        if self.is_skipped(start) {
+            return None;
+        }
+        let mut out = end.max(start.saturating_add(1));
+        if let Some(&(cut, _)) = self.skip_ranges.iter().find(|&&(cut, _)| cut > start)
+            && cut < out
+        {
+            out = cut;
+        }
+        Some(out)
     }
 }
 

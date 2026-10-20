@@ -327,8 +327,20 @@ impl AudioEngine {
                 if pcm.frames == 0 || clip.duration_seconds <= 0.0 {
                     continue;
                 }
-                let clip_start = (clip.start_seconds * sr).round() as i64;
-                let clip_end = (clip.end_seconds() * sr).round() as i64;
+                // 0 BPM 剪切：片段起点在剪切内 → 丢弃；跨剪切起点 → 截断；
+                // 剪切之后的片段整体左移，与 tick/音符使用同一时间轴。
+                let Some((adj_start, adj_end)) = model
+                    .tempo_map
+                    .cut_clip_times(clip.start_seconds, clip.end_seconds())
+                else {
+                    continue;
+                };
+                let adj_duration = adj_end - adj_start;
+                if adj_duration <= 0.0 {
+                    continue;
+                }
+                let clip_start = (adj_start * sr).round() as i64;
+                let clip_end = (adj_end * sr).round() as i64;
                 let from = clip_start.max(block_start);
                 let to = clip_end.min(block_end);
                 if to <= from {
@@ -351,17 +363,17 @@ impl AudioEngine {
                         break;
                     }
                     // 片段内已播时长（秒）；淡入淡出与素材偏移都以它为准。
-                    let p = g as f64 / sr - clip.start_seconds;
+                    let p = g as f64 / sr - adj_start;
                     let mut gain = clip.gain;
                     if fade_in > 0.0 && p < fade_in {
                         gain *= (p / fade_in).clamp(0.0, 1.0) as f32;
                     }
-                    let remain = clip.duration_seconds - p;
+                    let remain = adj_duration - p;
                     if fade_out > 0.0 && remain < fade_out {
                         gain *= (remain / fade_out).clamp(0.0, 1.0) as f32;
                     }
                     let src_sec = if clip.reversed {
-                        clip.offset_seconds + (clip.duration_seconds - p)
+                        clip.offset_seconds + (adj_duration - p)
                     } else {
                         clip.offset_seconds + p
                     };

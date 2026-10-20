@@ -453,42 +453,127 @@ impl YinModel {
     pub(crate) fn build_tempo_map(&self) -> TempoMap {
         let ppq = self.meta.ppq;
         let default_mpq = mpq_from_bpm(self.meta.default_bpm);
+        let tick_length = self.tick_length;
 
-        // Convert AutomationEvent -> TempoSegment, sorted by tick.
-        let mut segments: Vec<TempoSegment> = if self.conductor.tempo.events.is_empty() {
-            vec![TempoSegment {
+        // 排序 + 同 tick 去重（保留最后一个，与 MIDI 导入一致）。
+        let mut sorted: Vec<(u32, f32)> = self
+            .conductor
+            .tempo
+            .events
+            .iter()
+            .map(|e| (e.tick, e.value))
+            .collect();
+        sorted.sort_by_key(|e| e.0);
+        let mut tempo_events: Vec<(u32, f32)> = Vec::with_capacity(sorted.len());
+        for e in sorted {
+            if tempo_events.last().is_some_and(|prev| prev.0 == e.0) {
+                tempo_events.pop();
+            }
+            tempo_events.push(e);
+        }
+
+        // 0 BPM = 剪切点：从第一个 0 直接跳到下一个有效 BPM（连续 0 继续跳），
+        // 没有有效 BPM 则跳到曲末。`[start, end)` 区间不播放。
+        let max_tick = u32::try_from(tick_length).unwrap_or(u32::MAX);
+        let mut skip_ranges: Vec<(u32, u32)> = Vec::new();
+        let mut i = 0;
+        while i < tempo_events.len() {
+            if tempo_events[i].1 > 0.0 {
+                i += 1;
+                continue;
+            }
+            let start = tempo_events[i].0;
+            let mut j = i;
+            while j < tempo_events.len() && tempo_events[j].1 <= 0.0 {
+                j += 1;
+            }
+            let end = if j < tempo_events.len() {
+                tempo_events[j].0
+            } else {
+                max_tick
+            };
+            if end > start {
+                skip_ranges.push((start, end));
+            }
+            i = j;
+        }
+
+        // 有效 tempo 段：0 BPM 只作为剪切标记，不产生速度段。
+        let mut segments: Vec<TempoSegment> = Vec::new();
+        if tempo_events.first().is_none_or(|e| e.0 != 0) {
+            segments.push(TempoSegment {
                 start_tick: 0,
                 start_time: 0.0,
                 micros_per_quarter: default_mpq,
-            }]
-        } else {
-            let mut segs: Vec<TempoSegment> = self
-                .conductor
-                .tempo
-                .events
-                .iter()
-                .map(|t| TempoSegment {
-                    start_tick: t.tick,
+            });
+        }
+        for &(tick, bpm) in &tempo_events {
+            if bpm > 0.0 {
+                segments.push(TempoSegment {
+                    start_tick: tick,
                     start_time: 0.0,
-                    micros_per_quarter: mpq_from_bpm(t.value),
-                })
-                .collect();
-            segs.sort_by_key(|s| s.start_tick);
-            // Ensure a segment exists at tick 0 so lookups before the first
-            // tempo event have something to find（用工程默认 BPM）。
-            if segs[0].start_tick != 0 {
-                segs.insert(
-                    0,
+                    micros_per_quarter: mpq_from_bpm(bpm),
+                });
+            }
+        }
+        if segments.is_empty() {
+            segments.push(TempoSegment {
+                start_tick: 0,
+                start_time: 0.0,
+                micros_per_quarter: default_mpq,
+            });
+        }
+
+        // 每个剪切段插入一个 mpq=0 的“跳转段”：tick→时间在区间内保持常量；
+        // `recompute_tempo_start_times` 会让后续段的 start_time 与跳转点相同。
+        for &(start, end) in &skip_ranges {
+            let pos = segments.partition_point(|s| s.start_tick <= start);
+            segments.insert(
+                pos,
+                TempoSegment {
+                    start_tick: start,
+                    start_time: 0.0,
+                    micros_per_quarter: 0,
+                },
+            );
+            // 末尾剪切没有下一个 BPM：补一个曲末段，让 tick_at_time 在跳转点
+            // 直接返回曲末（否则播放头会停在剪切起点）。
+            if end == max_tick && !tempo_events.iter().any(|&(t, bpm)| t == end && bpm > 0.0) {
+                let mpq = segments
+                    .iter()
+                    .rev()
+                    .find(|s| s.micros_per_quarter > 0)
+                    .map_or(default_mpq, |s| s.micros_per_quarter);
+                let pos_end = segments.partition_point(|s| s.start_tick <= end);
+                segments.insert(
+                    pos_end,
                     TempoSegment {
-                        start_tick: 0,
+                        start_tick: end,
                         start_time: 0.0,
-                        micros_per_quarter: default_mpq,
+                        micros_per_quarter: mpq,
                     },
                 );
             }
-            segs
-        };
+        }
         recompute_tempo_start_times(&mut segments, ppq);
+
+        // 剪切段在原始时间轴上的秒区间（音频片段用）：跳转点时间 + 被剪
+        // tick 在剪切前速度下的时长。
+        let mut skip_time_ranges: Vec<(f64, f64)> = Vec::with_capacity(skip_ranges.len());
+        for &(start, end) in &skip_ranges {
+            let jump_time = segments
+                .iter()
+                .rev()
+                .find(|s| s.start_tick == start && s.micros_per_quarter == 0)
+                .map_or(0.0, |s| s.start_time);
+            let prev_mpq = segments
+                .iter()
+                .rev()
+                .find(|s| s.start_tick <= start && s.micros_per_quarter > 0)
+                .map_or(default_mpq, |s| s.micros_per_quarter);
+            let dur = crate::ticks_to_seconds((end - start) as u64, ppq, prev_mpq);
+            skip_time_ranges.push((jump_time, jump_time + dur));
+        }
 
         let mut ts_events = self.conductor.time_sig.clone();
         ts_events.sort_by_key(|e| e.tick);
@@ -503,7 +588,9 @@ impl YinModel {
             tempo_segments: segments,
             time_sig_events: ts_events,
             time_sig_default,
-            tick_length: self.tick_length,
+            tick_length,
+            skip_ranges,
+            skip_time_ranges,
         }
     }
 
@@ -1090,6 +1177,147 @@ mod tests {
         m.rebuild();
         assert_eq!(m.tempo_map.tempo_segments.len(), 2);
         assert_eq!(m.tempo_map.tempo_segments[0].start_tick, 0);
+    }
+
+    fn set_tempo_events(conductor: &mut ConductorData, events: &[(u32, f32)]) {
+        for &(tick, value) in events {
+            conductor.tempo.events.push(yinhe_types::AutomationEvent {
+                id: 0,
+                tick,
+                value,
+                shape: yinhe_types::SegmentShape::Step,
+            });
+        }
+    }
+
+    #[test]
+    fn zero_bpm_jumps_to_next_tempo_event() {
+        let mut conductor = ConductorData::default();
+        set_tempo_events(&mut conductor, &[(0, 120.0), (480, 0.0), (960, 60.0)]);
+        let mut m = YinModel {
+            conductor: Arc::new(conductor),
+            tick_length: 1920,
+            ..Default::default()
+        };
+        m.rebuild_tempo_map();
+        let tm = &m.tempo_map;
+
+        assert_eq!(tm.skip_ranges, vec![(480, 960)]);
+        // 剪切区间内时间恒定，等于 480 tick 处（0.5s）。
+        assert!((tm.tick_to_seconds(480) - 0.5).abs() < 1e-9);
+        assert!((tm.tick_to_seconds(700) - 0.5).abs() < 1e-9);
+        assert!((tm.tick_to_seconds(960) - 0.5).abs() < 1e-9);
+        // 960 起 60 BPM：480 tick = 1s。
+        assert!((tm.tick_to_seconds(1440) - 1.5).abs() < 1e-9);
+        // 时间 0.499s 还在剪切前；0.5s 直接跳到 960。
+        assert!((tm.tick_at_time(0.499) - 479.04).abs() < 0.1);
+        assert!((tm.tick_at_time(0.5) - 960.0).abs() < 1e-6);
+        assert!((tm.tick_at_time(1.0) - 1200.0).abs() < 1e-6);
+        // 剪切段内 BPM 显示 0；目标处恢复 60。
+        assert_eq!(tm.bpm_at_tick(700), 0.0);
+        assert!((tm.bpm_at_tick(960) - 60.0).abs() < 0.01);
+
+        // 音频片段（秒）：剪切段在原始时间轴上占 0.5s..1.0s。
+        assert_eq!(tm.skip_time_ranges.len(), 1);
+        assert!((tm.skip_time_ranges[0].0 - 0.5).abs() < 1e-9);
+        assert!((tm.skip_time_ranges[0].1 - 1.0).abs() < 1e-9);
+        // 跨剪切起点 → 截断。
+        let (s, e) = tm.cut_clip_times(0.2, 2.0).unwrap();
+        assert!((s - 0.2).abs() < 1e-9);
+        assert!((e - 0.5).abs() < 1e-9);
+        // 剪切之后 → 左移 0.5s。
+        let (s, e) = tm.cut_clip_times(1.2, 2.0).unwrap();
+        assert!((s - 0.7).abs() < 1e-9);
+        assert!((e - 1.5).abs() < 1e-9);
+        // 剪切段内 → 丢弃。
+        assert!(tm.cut_clip_times(0.6, 0.9).is_none());
+        // 正好结束在剪切起点 → 保留。
+        let (s, e) = tm.cut_clip_times(0.4, 0.5).unwrap();
+        assert!((s - 0.4).abs() < 1e-9);
+        assert!((e - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn zero_bpm_skips_consecutive_zeros() {
+        let mut conductor = ConductorData::default();
+        set_tempo_events(
+            &mut conductor,
+            &[(0, 120.0), (480, 0.0), (960, 0.0), (1440, 60.0)],
+        );
+        let mut m = YinModel {
+            conductor: Arc::new(conductor),
+            tick_length: 1920,
+            ..Default::default()
+        };
+        m.rebuild_tempo_map();
+        let tm = &m.tempo_map;
+
+        // 两个 0 合并为一段 [480, 1440)，直接跳到 1440。
+        assert_eq!(tm.skip_ranges, vec![(480, 1440)]);
+        assert!((tm.tick_to_seconds(700) - 0.5).abs() < 1e-9);
+        assert!((tm.tick_to_seconds(1440) - 0.5).abs() < 1e-9);
+        assert!((tm.tick_at_time(0.5) - 1440.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn zero_bpm_at_start_jumps_to_first_valid_tempo() {
+        let mut conductor = ConductorData::default();
+        set_tempo_events(&mut conductor, &[(0, 0.0), (960, 60.0)]);
+        let mut m = YinModel {
+            conductor: Arc::new(conductor),
+            tick_length: 1920,
+            ..Default::default()
+        };
+        m.rebuild_tempo_map();
+        let tm = &m.tempo_map;
+
+        assert_eq!(tm.skip_ranges, vec![(0, 960)]);
+        assert!((tm.tick_to_seconds(0) - 0.0).abs() < 1e-9);
+        assert!((tm.tick_to_seconds(500) - 0.0).abs() < 1e-9);
+        assert!((tm.tick_to_seconds(960) - 0.0).abs() < 1e-9);
+        assert!((tm.tick_to_seconds(1440) - 1.0).abs() < 1e-9);
+        assert!((tm.tick_at_time(0.0) - 960.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn trailing_zero_bpm_jumps_to_song_end() {
+        let mut conductor = ConductorData::default();
+        set_tempo_events(&mut conductor, &[(0, 120.0), (960, 0.0)]);
+        let mut m = YinModel {
+            conductor: Arc::new(conductor),
+            tick_length: 1920,
+            ..Default::default()
+        };
+        m.rebuild_tempo_map();
+        let tm = &m.tempo_map;
+
+        assert_eq!(tm.skip_ranges, vec![(960, 1920)]);
+        assert!((tm.tick_to_seconds(960) - 1.0).abs() < 1e-9);
+        assert!((tm.tick_to_seconds(1920) - 1.0).abs() < 1e-9);
+        assert!((tm.duration_seconds() - 1.0).abs() < 1e-9);
+        assert!((tm.tick_at_time(1.0) - 1920.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn zero_bpm_playable_note_end_clamps_crossing_notes() {
+        let mut conductor = ConductorData::default();
+        set_tempo_events(&mut conductor, &[(0, 120.0), (480, 0.0), (960, 60.0)]);
+        let mut m = YinModel {
+            conductor: Arc::new(conductor),
+            tick_length: 1920,
+            ..Default::default()
+        };
+        m.rebuild_tempo_map();
+        let tm = &m.tempo_map;
+
+        // 在剪切段内开始 → 不发声。
+        assert_eq!(tm.playable_note_end(600, 700), None);
+        // 跨过剪切起点 → 在 480 截断。
+        assert_eq!(tm.playable_note_end(0, 1000), Some(480));
+        // 结束正好在剪切起点 → 保持。
+        assert_eq!(tm.playable_note_end(0, 480), Some(480));
+        // 剪切之后 → 原样。
+        assert_eq!(tm.playable_note_end(960, 1440), Some(1440));
     }
 
     #[test]

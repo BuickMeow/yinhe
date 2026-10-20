@@ -163,11 +163,12 @@ fn build_conductor_track_with_encoding<'a>(
     let mut events: Vec<(u32, TrackEventKind<'a>)> = Vec::new();
 
     for ev in &model.conductor.tempo.events {
-        let bpm = ev.value as f64;
-        let mpq = if bpm > 0.0 {
-            (60_000_000.0 / bpm).round() as u32
+        // 0 BPM 是“跳转”标记；MIDI 无法表示 BPM 0，写成 24-bit 最大 MPQ
+        //（= 最低可行 BPM，约 3.576）。保留事件和原始时间轴，不展平。
+        let mpq = if ev.value > 0.0 {
+            (60_000_000.0 / ev.value as f64).round() as u32
         } else {
-            500_000
+            0x00FF_FFFF
         };
         events.push((
             ev.tick,
