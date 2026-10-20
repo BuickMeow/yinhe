@@ -1,0 +1,205 @@
+part of 'studio_shell.dart';
+
+mixin _ShellTransport on _ShellBase {
+  /// 读取当前轨道的自动化 lane（仅 PB/CC/RPN）。
+  @override
+  void _loadAutomation() {
+    final rows = _tracks.value;
+    if (rows.isEmpty) {
+      setState(() => _autoLanes = const []);
+      return;
+    }
+    final track = (_activeTrack ?? 0).clamp(0, rows.length - 1);
+    final ptr = rust.automationJson(track);
+    var lanes = const <AutomationLaneData>[];
+    if (ptr != ffi.nullptr) {
+      try {
+        final list = jsonDecode(ptr.toDartString()) as List<dynamic>;
+        lanes = [
+          for (final e in list)
+            AutomationLaneData.fromJson(e as Map<String, dynamic>),
+        ];
+      } catch (_) {
+        lanes = const [];
+      } finally {
+        rust.freeString(ptr);
+      }
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() => _autoLanes = lanes);
+  }
+
+  /// 读取当前轨道的力度条数据（每音符一条）。
+  @override
+  void _loadVelocity() {
+    final rows = _tracks.value;
+    if (rows.isEmpty) {
+      setState(() => _velocityBars = const []);
+      return;
+    }
+    final ptr = rust.velocityJson();
+    var bars = const <(double, double, double, int)>[];
+    if (ptr != ffi.nullptr) {
+      try {
+        final list = jsonDecode(ptr.toDartString()) as List<dynamic>;
+        bars = [
+          for (final e in list)
+            (
+              ((e as List<dynamic>)[0] as num).toDouble(),
+              (e[1] as num).toDouble(),
+              (e[2] as num).toDouble(),
+              (e[3] as num).toInt(),
+            ),
+        ];
+      } catch (_) {
+        bars = const [];
+      } finally {
+        rust.freeString(ptr);
+      }
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() => _velocityBars = bars);
+  }
+
+  /// 读取 AR 折叠态自动化竖线（所有可见轨）。
+  @override
+  void _loadArAutomation() {
+    final ptr = rust.arAutomationJson();
+    var lanes = const <ArAutomationLane>[];
+    if (ptr != ffi.nullptr) {
+      try {
+        final list = jsonDecode(ptr.toDartString()) as List<dynamic>;
+        lanes = [
+          for (final e in list)
+            ArAutomationLane.fromJson(e as Map<String, dynamic>),
+        ];
+      } catch (_) {
+        lanes = const [];
+      } finally {
+        rust.freeString(ptr);
+      }
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() => _arAutomation = lanes);
+  }
+
+  @override
+  void _setAutoCollapsed(bool collapsed) {
+    setState(() => _autoCollapsed = collapsed);
+  }
+  // ── 走带 ──
+
+  @override
+  void _togglePlay() {
+    final next = !_playing;
+    setState(() => _playing = next);
+    rust.transport(next ? 0 : 1);
+    _updateTimecode();
+  }
+
+  @override
+  void _stopPlayback() {
+    rust.transport(2);
+    _updateTimecode();
+    setState(() => _playing = false);
+  }
+
+  /// 每帧刷新时间码文本（只触发文本重建，不动整棵布局）。
+  @override
+  void _updateTimecode() {
+    if (!mounted) {
+      return;
+    }
+    // 长按微调时时间码临时显示手指位置（松手/取消后恢复播放光标）。
+    final preview = _lpPreviewTick;
+    final text = _timecodeBar
+        ? _fmtBarBeat(preview ?? rust.playheadTick(), _ppq)
+        : _fmtTime(
+            preview != null
+                ? rust.secondsAtTick(preview)
+                : rust.playbackSeconds(),
+          );
+    if (_timecodeText.value != text) {
+      _timecodeText.value = text;
+    }
+    // 顶栏 BPM / 拍号：跟随播放位置的实时值（快照 10/11/12）。
+    final s = _snap.value;
+    if (s.length > 12) {
+      final bpmText = _fmtBpm(s[12]);
+      final sigNum = s[10] > 0 ? s[10].round() : 4;
+      final sigDen = 1 << (s[11] >= 0 ? s[11].round().clamp(0, 8) : 2);
+      final sigText = '$sigNum/$sigDen';
+      if (bpmText != _liveBpmText || sigText != _liveSigText) {
+        setState(() {
+          _liveBpmText = bpmText;
+          _liveSigText = sigText;
+        });
+      }
+    }
+    final playing = rust.isPlaying() == 1;
+    if (playing != _playing) {
+      setState(() => _playing = playing);
+    }
+  }
+
+  /// 秒数（`m:ss.mmm`）。
+  String _fmtTime(double seconds) {
+    final total = seconds.floor();
+    final m = total ~/ 60;
+    final s = total % 60;
+    final ms = ((seconds - total) * 1000).floor();
+    return '$m:${s.toString().padLeft(2, '0')}.${ms.toString().padLeft(3, '0')}';
+  }
+
+  /// 小节.拍.tick（1.0.000 风格：bar 1 起、beat 0 起）。
+  ///
+  /// 用拍号分段换算（拍号变化时 bar 连续计数；原生事件优先）。
+  String _fmtBarBeat(double tick, double ppq) {
+    final grid = _grid.value;
+    if (grid != null) {
+      return grid.format(tick);
+    }
+    if (ppq <= 0) {
+      return '1.0.000';
+    }
+    return '1.0.000';
+  }
+
+  /// 读取拍号分段（文档变化时刷新）。
+  @override
+  void _loadTimeSigSegments() {
+    final ptr = rust.timeSigSegmentsJson();
+    if (ptr == ffi.nullptr) {
+      return;
+    }
+    try {
+      final list = jsonDecode(ptr.toDartString()) as List<dynamic>;
+      final flat = <double>[];
+      for (final seg in list) {
+        if (seg is List && seg.length >= 3) {
+          flat
+            ..add((seg[0] as num).toDouble())
+            ..add((seg[1] as num).toDouble())
+            ..add((seg[2] as num).toDouble());
+        }
+      }
+      _grid.value = BarBeatGrid.fromFlat(_ppq, flat);
+    } catch (_) {
+      // 保持旧分段。
+    } finally {
+      rust.freeString(ptr);
+    }
+  }
+
+  @override
+  double get _ppq {
+    final v = _snap.value[8];
+    return v > 0 ? v : 480;
+  }
+}
