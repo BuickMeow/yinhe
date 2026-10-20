@@ -5,6 +5,7 @@ import 'dart:ffi' as ffi;
 import 'package:ffi/ffi.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
@@ -14,10 +15,12 @@ import 'automation_panel.dart';
 import 'canvas_menus.dart';
 import 'home_view.dart';
 import 'insert_flow.dart';
+import 'l10n.dart';
 import 'long_press_indicator_painter.dart';
 import 'models.dart';
 import 'ruler_markers.dart';
 import 'archive_dialogs.dart';
+import 'event_list_dialog.dart';
 import 'bar_beat.dart';
 import 'project_defaults_dialog.dart';
 import 'project_dialog.dart';
@@ -50,10 +53,28 @@ class YinheApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      theme: YinheTheme.data(),
-      home: const StudioShell(),
+    return ValueListenableBuilder<String>(
+      valueListenable: L10n.appLanguage,
+      builder: (context, _, _) => MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: YinheTheme.data(),
+        locale: L10n.locale,
+        supportedLocales: [
+          for (final code in L10n.supported)
+            Locale.fromSubtags(
+              languageCode: code.split('-').first,
+              countryCode: code.split('-').length > 1
+                  ? code.split('-')[1]
+                  : null,
+            ),
+        ],
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        home: const StudioShell(),
+      ),
     );
   }
 }
@@ -186,6 +207,9 @@ class _StudioShellState extends State<StudioShell>
   /// 长按微调中的落点 tick（顶部时间码临时跟随手指）。
   double? _lpPreviewTick;
 
+  /// 本次长按是 AR 音轨面板（Rust 不进入 PENDING，圆环由 Dart 自行计时）。
+  bool _lpPanelRing = false;
+
   /// 刚保存成功：顶栏保存按钮临时显示对勾（2 秒）。
   bool _saveDone = false;
   Timer? _saveDoneTimer;
@@ -256,7 +280,7 @@ class _StudioShellState extends State<StudioShell>
         if (_lpProgress.value != 0) {
           _lpProgress.value = 0;
         }
-      } else if (_lpStartTime != null && selState == 1) {
+      } else if (_lpStartTime != null && (selState == 1 || _lpPanelRing)) {
         // 前 200ms 不显示圆环（防普通点击遮挡内容），总时长仍为 500ms。
         final ms = DateTime.now().difference(_lpStartTime!).inMilliseconds;
         _lpProgress.value = ms <= 200 ? 0 : ((ms - 200) / 300).clamp(0.0, 1.0);
@@ -279,6 +303,7 @@ class _StudioShellState extends State<StudioShell>
       }
     })..start();
     _recent = _readRecent();
+    _loadLanguage();
     rust.setQuantize(1, 1, 1); // 默认自动（与桌面一致）
   }
 
@@ -451,7 +476,7 @@ class _StudioShellState extends State<StudioShell>
     }
     if (meta.isEmpty) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('请先打开 MIDI 或新建工程')));
+          .showSnackBar(SnackBar(content: Text(tr('请先打开 MIDI 或新建工程'))));
       return;
     }
     rust.resetTouch();
@@ -531,9 +556,9 @@ class _StudioShellState extends State<StudioShell>
         _archivePolling = false;
         _closeArchiveBusy();
         final err = _readArchiveError();
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(err.isEmpty ? '压缩包打开失败' : err)));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(err.isEmpty ? tr('压缩包打开失败') : err)),
+        );
       default:
         break;
     }
@@ -570,7 +595,7 @@ class _StudioShellState extends State<StudioShell>
     final entries = parseArchiveEntries(json);
     if (entries.isEmpty) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('压缩包里没有 MIDI 文件')));
+          .showSnackBar(SnackBar(content: Text(tr('压缩包里没有 MIDI 文件'))));
       return;
     }
     final path = json['path'] as String? ?? '';
@@ -635,7 +660,7 @@ class _StudioShellState extends State<StudioShell>
   Future<void> _saveProject({bool saveAs = false}) async {
     if (_tracks.value.isEmpty) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('请先打开 MIDI 或新建工程')));
+          .showSnackBar(SnackBar(content: Text(tr('请先打开 MIDI 或新建工程'))));
       return;
     }
     // 顶栏保存按钮转圈；导出+写盘期间保持，完成/取消后由超时兜底复位。
@@ -668,7 +693,7 @@ class _StudioShellState extends State<StudioShell>
       if (mounted) {
         setState(() => _saving = false);
         ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('工程导出失败')));
+            .showSnackBar(SnackBar(content: Text(tr('工程导出失败'))));
       }
       return;
     }
@@ -965,6 +990,22 @@ class _StudioShellState extends State<StudioShell>
     }
   }
 
+  /// 读取持久化的界面语言（system/zh/en）。
+  void _loadLanguage() {
+    final ptr = rust.uiLanguage();
+    if (ptr == ffi.nullptr) {
+      return;
+    }
+    try {
+      final lang = ptr.toDartString();
+      if (lang.isNotEmpty) {
+        L10n.appLanguage.value = lang;
+      }
+    } finally {
+      rust.freeString(ptr);
+    }
+  }
+
   /// 同步全曲音符数与本工程默认 BPM / 拍号（顶栏展示）。
   void _loadProjectDefaults() {
     if (!mounted) {
@@ -1208,6 +1249,9 @@ class _StudioShellState extends State<StudioShell>
         // 选框内/空白处按下由 Rust 进入 PENDING（500ms 后自行转移动态或粘贴态）。
         if (rust.selectionState() == 1) {
           _beginLongPressWatch(p);
+        } else if (_viewMode == kViewArrangement && _rowAt(p) != null) {
+          // AR 音轨面板长按：Rust 不进入 PENDING，圆环由 Dart 计时。
+          _beginLongPressWatch(p, panel: true);
         }
       } else if (kind == 1) {
         _updateLongPressWatch(p);
@@ -1220,17 +1264,25 @@ class _StudioShellState extends State<StudioShell>
   /// 按下：开始长按计时（圆环转满后进入移动态或粘贴态）。
   ///
   /// 判定由 Rust 的 PENDING 状态给出；500ms 计时也在 Rust 帧循环里推进。
-  void _beginLongPressWatch(Offset p) {
+  void _beginLongPressWatch(Offset p, {bool panel = false}) {
     _lpPos = p;
     _lpPosNotifier.value = p;
     _lpStartTime = DateTime.now();
     _lpMoved = false;
+    _lpPanelRing = panel;
     _lpProgress.value = 0;
     _moveDashed.value = false;
   }
 
   void _updateLongPressWatch(Offset p) {
     if (_lpStartTime == null) {
+      return;
+    }
+    if (_lpPanelRing) {
+      // 面板长按：超过抖动阈值视为拖动（Flutter 长按手势会自行取消）。
+      if (_lpPos != null && (p - _lpPos!).distance > 12) {
+        _clearLongPressUi();
+      }
       return;
     }
     final state = rust.selectionState();
@@ -1257,6 +1309,7 @@ class _StudioShellState extends State<StudioShell>
     _lpPosNotifier.value = null;
     _lpProgress.value = 0;
     _lpMoved = false;
+    _lpPanelRing = false;
     _lpPreviewTick = null;
   }
 
@@ -1292,10 +1345,7 @@ class _StudioShellState extends State<StudioShell>
       onCopy: () {
         if (rust.copySelection() == 1) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('已复制'),
-              duration: Duration(seconds: 1),
-            ),
+            SnackBar(content: Text(tr('已复制')), duration: Duration(seconds: 1)),
           );
         }
       },
@@ -1336,12 +1386,52 @@ class _StudioShellState extends State<StudioShell>
       if (!mounted || choice == null) {
         return;
       }
+      // Conductor 全局事件：拍号 / 调号 / 标签。
+      if (choice.kind == 4) {
+        final sig = await showInsertTimeSigDialog(context);
+        if (!mounted || sig == null) {
+          return;
+        }
+        if (rust.insertTimeSig(ctx.tick, sig.$1, _denPow(sig.$2)) == 1) {
+          _refreshDocumentMeta();
+        }
+        return;
+      }
+      if (choice.kind == 5) {
+        final key = await showInsertKeySigDialog(context);
+        if (!mounted || key == null) {
+          return;
+        }
+        if (rust.insertKeySig(ctx.tick, key.$1, key.$2) == 1) {
+          _refreshDocumentMeta();
+        }
+        return;
+      }
+      if (choice.kind == 6) {
+        final text = await showInsertTextDialog(
+          context,
+          title: tr('标签 Marker'),
+          initial: 'Marker',
+        );
+        if (!mounted || text == null) {
+          return;
+        }
+        final t = text.trim().toNativeUtf8();
+        try {
+          if (rust.markerInsert(ctx.tick, t) == 1) {
+            _refreshDocumentMeta();
+          }
+        } finally {
+          calloc.free(t);
+        }
+        return;
+      }
       var kind = choice.kind;
       var number = choice.number;
       if (choice.custom) {
         final n = await showInsertNumberDialog(
           context,
-          title: kind == 2 ? '自定义 CC 号' : '自定义 RPN 号',
+          title: kind == 2 ? tr('自定义 CC 号') : tr('自定义 RPN 号'),
           min: 0,
           max: kind == 2 ? 127 : 16383,
           initial: kind == 2 ? 1 : 3,
@@ -1521,6 +1611,8 @@ class _StudioShellState extends State<StudioShell>
     if (_viewMode != kViewArrangement) {
       return;
     }
+    // 长按成立：圆环完成，收起长按 UI（后续由轨道拖动/松手菜单接管）。
+    _clearLongPressUi();
     final idx = _rowAt(p);
     if (idx == null || idx >= _tracks.value.length) {
       return;
@@ -1590,7 +1682,27 @@ class _StudioShellState extends State<StudioShell>
       context,
       onEdit: () => _editTrackInfo(track),
       onDelete: master ? null : () => _deleteTrack(track),
+      onEvents: () => _showEventList(track),
     );
+  }
+
+  /// 打开事件列表（音符/自动化/全局事件穿插）。
+  void _showEventList(int track) {
+    rust.resetTouch();
+    showEventListDialog(
+      context,
+      grid: _grid,
+      onJump: _jumpToEvent,
+      onChanged: _refreshDocumentMeta,
+    );
+  }
+
+  /// 事件列表「前往该地点」：选中该轨、光标跳到 tick、进入 PR。
+  void _jumpToEvent(int track, double tick) {
+    _showAllTracks = false;
+    _selectEditTrack(track);
+    rust.jumpToTick(tick);
+    _setView(kViewPianoroll);
   }
 
   /// 删除音轨（连同音符；一步一 undo）。

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'theme.dart';
+import 'l10n.dart';
 
 /// 工程设置对话框（歌名/艺术家/PPQ/简介）。
 class ProjectDialog extends StatefulWidget {
@@ -71,10 +72,10 @@ class _ProjectDialogState extends State<ProjectDialog> {
       backgroundColor: YinheTheme.bg,
       title: Row(
         children: [
-          const Text('工程设置', style: TextStyle(fontSize: 18)),
+          Text(tr('工程设置'), style: TextStyle(fontSize: 18)),
           const Spacer(),
           Text(
-            '${widget.noteCount} 音符',
+            '${widget.noteCount} ${tr('音符')}',
             style: TextStyle(color: YinheTheme.textLabel, fontSize: 12),
           ),
         ],
@@ -86,17 +87,17 @@ class _ProjectDialogState extends State<ProjectDialog> {
             mainAxisSize: MainAxisSize.min,
             children: [
               const SizedBox(height: 10),
-              _field(_name, '歌名'),
+              _field(_name, tr('歌名')),
               const SizedBox(height: 12),
-              _field(_artist, '艺术家'),
+              _field(_artist, tr('艺术家')),
               const SizedBox(height: 12),
               _field(
                 _ppq,
-                'PPQ（已加载音符时修改会缩放全部时间）',
+                tr('PPQ（已加载音符时修改会缩放全部时间）'),
                 keyboardType: TextInputType.number,
               ),
               const SizedBox(height: 12),
-              _field(_desc, '简介', maxLines: 3),
+              _field(_desc, tr('简介'), maxLines: 3),
               if (_error != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 10),
@@ -112,9 +113,9 @@ class _ProjectDialogState extends State<ProjectDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(tr('取消')),
         ),
-        FilledButton(onPressed: _save, child: const Text('保存')),
+        FilledButton(onPressed: _save, child: Text(tr('保存'))),
       ],
     );
   }

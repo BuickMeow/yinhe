@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'theme.dart';
+import 'l10n.dart';
 
 /// 长按选框未移动：复制菜单。
 Future<void> showSelectionMenu(
@@ -24,7 +25,7 @@ Future<void> showSelectionMenu(
           ),
           ListTile(
             leading: const Icon(Icons.close),
-            title: const Text('取消'),
+            title: Text(tr('取消')),
             onTap: () => Navigator.of(ctx).pop(),
           ),
         ],
@@ -69,7 +70,7 @@ Future<void> showEmptyLongPressMenu(
           ),
           ListTile(
             leading: const Icon(Icons.close),
-            title: const Text('取消'),
+            title: Text(tr('取消')),
             onTap: () => Navigator.of(ctx).pop(),
           ),
         ],
@@ -83,6 +84,7 @@ Future<void> showTrackMenu(
   BuildContext context, {
   required VoidCallback onEdit,
   VoidCallback? onDelete,
+  VoidCallback? onEvents,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -93,16 +95,28 @@ Future<void> showTrackMenu(
         children: [
           ListTile(
             leading: const Icon(Icons.edit),
-            title: const Text('编辑音轨信息'),
+            title: Text(tr('编辑音轨信息')),
             onTap: () {
               Navigator.of(ctx).pop();
               onEdit();
             },
           ),
+          if (onEvents != null)
+            ListTile(
+              leading: const Icon(Icons.format_list_bulleted),
+              title: Text(tr('事件列表')),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                onEvents();
+              },
+            ),
           if (onDelete != null)
             ListTile(
               leading: Icon(Icons.delete_outline, color: YinheTheme.danger),
-              title: Text('删除音轨', style: TextStyle(color: YinheTheme.danger)),
+              title: Text(
+                tr('删除音轨'),
+                style: TextStyle(color: YinheTheme.danger),
+              ),
               onTap: () {
                 Navigator.of(ctx).pop();
                 onDelete();
@@ -110,7 +124,7 @@ Future<void> showTrackMenu(
             ),
           ListTile(
             leading: const Icon(Icons.close),
-            title: const Text('取消'),
+            title: Text(tr('取消')),
             onTap: () => Navigator.of(ctx).pop(),
           ),
         ],

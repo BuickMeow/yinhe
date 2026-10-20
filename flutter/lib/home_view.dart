@@ -3,6 +3,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 
 import 'models.dart';
 import 'theme.dart';
+import 'l10n.dart';
 
 /// 主页（仿桌面）：返回、按钮列、最近修改的文件、銀字水印、版本号、设置。
 class HomeView extends StatelessWidget {
@@ -62,7 +63,7 @@ class HomeView extends StatelessWidget {
             width: 40,
             height: 40,
             child: IconButton(
-              tooltip: '返回工作区',
+              tooltip: tr('返回工作区'),
               icon: const Icon(Icons.arrow_back),
               color: YinheTheme.text,
               visualDensity: VisualDensity.compact,
@@ -94,12 +95,12 @@ class HomeView extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _secondary('新建工程', Icons.add_box_outlined, onNewProject),
+        _secondary(tr('新建工程'), Icons.add_box_outlined, onNewProject),
         const SizedBox(height: 14),
         FilledButton.icon(
           onPressed: onPickMidi,
           icon: const Icon(Icons.note_add, size: 18),
-          label: const Text('打开文件'),
+          label: Text(tr('打开文件')),
           style: FilledButton.styleFrom(
             backgroundColor: YinheTheme.primaryButtonBg,
             foregroundColor: YinheTheme.text,
@@ -110,9 +111,9 @@ class HomeView extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 14),
-        _secondary('另存为', Icons.save_as_outlined, onSaveProjectAs),
+        _secondary(tr('另存为'), Icons.save_as_outlined, onSaveProjectAs),
         const SizedBox(height: 14),
-        _secondary('设置', Icons.settings, onOpenSettings),
+        _secondary(tr('设置'), Icons.settings, onOpenSettings),
       ],
     );
   }
@@ -137,7 +138,7 @@ class HomeView extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Text(
-          '最近修改的文件',
+          tr('最近修改的文件'),
           style: TextStyle(color: YinheTheme.textLabel, fontSize: 14),
         ),
         const SizedBox(height: 8),
@@ -148,7 +149,7 @@ class HomeView extends StatelessWidget {
                   child: Padding(
                     padding: const EdgeInsets.only(top: 8),
                     child: Text(
-                      '暂无最近文件',
+                      tr('暂无最近文件'),
                       style: TextStyle(
                         color: YinheTheme.textDisabled,
                         fontSize: 13,

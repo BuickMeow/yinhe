@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'l10n.dart';
 import 'theme.dart';
 
 /// 插入目标描述。
@@ -58,15 +59,61 @@ const Map<int, String> _rpnNames = {
   2: 'Coarse Tune',
 };
 
-String ccInsertLabel(int cc) => _ccNames[cc] ?? 'CC $cc';
-String rpnInsertLabel(int rpn) => _rpnNames[rpn] ?? 'RPN $rpn';
+/// 与自动化面板一致：`CC 11 Expression`（自定义号没有名字时只显示号）。
+String ccInsertLabel(int cc) {
+  final name = _ccNames[cc];
+  return name == null ? 'CC $cc' : 'CC $cc $name';
+}
+
+/// `RPN 0 Pitch Bend Sensitivity`
+String rpnInsertLabel(int rpn) {
+  final name = _rpnNames[rpn];
+  return name == null ? 'RPN $rpn' : 'RPN $rpn $name';
+}
+
+/// 每种自动化的图标（与语义对应）。
+IconData _ccIcon(int cc) {
+  switch (cc) {
+    case 7:
+      return Icons.volume_up;
+    case 10:
+      return Icons.balance;
+    case 11:
+      return Icons.graphic_eq;
+    case 64:
+      return Icons.piano;
+    case 71:
+      return Icons.tune;
+    case 72:
+      return Icons.timer_outlined;
+    case 73:
+      return Icons.bolt;
+    case 74:
+      return Icons.brightness_high;
+    default:
+      return Icons.tune;
+  }
+}
+
+IconData _rpnIcon(int rpn) {
+  switch (rpn) {
+    case 0:
+      return Icons.straighten;
+    case 1:
+      return Icons.tune;
+    case 2:
+      return Icons.tune;
+    default:
+      return Icons.tune;
+  }
+}
 
 /// 显示值上限（与 Rust `AutomationTarget::display_max` 同规则）：
-/// PB/RPN(1 及自定义) = 16383，CC/RPN 0/2 = 127，Tempo = 999 (BPM)。
+/// PB/RPN(1 及自定义) = 16383，CC/RPN 0/2 = 127，Tempo = 60000000 (BPM)。
 int insertDisplayMax(int kind, int number) {
   switch (kind) {
     case 0:
-      return 999;
+      return 60000000;
     case 1:
       return 16383;
     case 2:
@@ -136,8 +183,21 @@ Future<InsertChoice?> showInsertMenu(
   required bool conductor,
 }) {
   final items = conductor
-      ? const <(IconData, InsertChoice)>[
-          (Icons.speed, InsertChoice(kind: 0, number: 0, label: '速度（Tempo）')),
+      ? <(IconData, InsertChoice)>[
+          // Conductor 可插的全局事件：Tempo / 拍号 / 调号 / 标签。
+          (Icons.speed, const InsertChoice(kind: 0, number: 0, label: 'Tempo')),
+          (
+            Icons.schedule,
+            const InsertChoice(kind: 4, number: 0, label: '拍号 Time Signature'),
+          ),
+          (
+            Icons.music_note,
+            const InsertChoice(kind: 5, number: 0, label: '调号 Key Signature'),
+          ),
+          (
+            Icons.bookmark_add_outlined,
+            const InsertChoice(kind: 6, number: 0, label: '标签 Marker'),
+          ),
         ]
       : <(IconData, InsertChoice)>[
           (
@@ -146,12 +206,12 @@ Future<InsertChoice?> showInsertMenu(
           ),
           for (final cc in const [7, 10, 11, 64, 71, 72, 73, 74])
             (
-              cc == 64 ? Icons.piano : Icons.tune,
+              _ccIcon(cc),
               InsertChoice(kind: 2, number: cc, label: ccInsertLabel(cc)),
             ),
           for (final rpn in const [0, 1, 2])
             (
-              Icons.tune,
+              _rpnIcon(rpn),
               InsertChoice(kind: 3, number: rpn, label: rpnInsertLabel(rpn)),
             ),
           (
@@ -189,7 +249,7 @@ Future<InsertChoice?> showInsertMenu(
               for (final (icon, choice) in items)
                 ListTile(
                   leading: Icon(icon),
-                  title: Text(choice.label),
+                  title: Text(tr(choice.label)),
                   onTap: () => Navigator.of(ctx).pop(choice),
                 ),
               ListTile(
@@ -329,6 +389,256 @@ class _NumberDialogState extends State<_NumberDialog> {
           child: const Text('取消'),
         ),
         FilledButton(onPressed: _confirm, child: const Text('插入')),
+      ],
+    );
+  }
+}
+
+/// 拍号输入（如 4/4）；返回 `(分子, 分母)`。
+Future<(int, int)?> showInsertTimeSigDialog(
+  BuildContext context, {
+  int numerator = 4,
+  int denominator = 4,
+}) {
+  return showDialog<(int, int)>(
+    context: context,
+    builder: (_) =>
+        _TimeSigInputDialog(numerator: numerator, denominator: denominator),
+  );
+}
+
+class _TimeSigInputDialog extends StatefulWidget {
+  const _TimeSigInputDialog({
+    required this.numerator,
+    required this.denominator,
+  });
+
+  final int numerator;
+  final int denominator;
+
+  @override
+  State<_TimeSigInputDialog> createState() => _TimeSigInputDialogState();
+}
+
+class _TimeSigInputDialogState extends State<_TimeSigInputDialog> {
+  late final TextEditingController _sig = TextEditingController(
+    text: '${widget.numerator}/${widget.denominator}',
+  );
+  String? _error;
+
+  @override
+  void dispose() {
+    _sig.dispose();
+    super.dispose();
+  }
+
+  void _confirm() {
+    final parts = _sig.text.trim().split('/');
+    final num = parts.length == 2 ? int.tryParse(parts[0].trim()) : null;
+    final den = parts.length == 2 ? int.tryParse(parts[1].trim()) : null;
+    if (num == null ||
+        den == null ||
+        num < 1 ||
+        num > 32 ||
+        den < 1 ||
+        den > 32 ||
+        (den & (den - 1)) != 0) {
+      setState(() => _error = '格式如 4/4、3/4、6/8（分母需为 2 的幂）');
+      return;
+    }
+    Navigator.of(context).pop((num, den));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: YinheTheme.bg,
+      title: const Text('拍号 Time Signature', style: TextStyle(fontSize: 16)),
+      content: SizedBox(
+        width: 340,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SizedBox(height: 10),
+            TextField(
+              controller: _sig,
+              autofocus: true,
+              style: const TextStyle(fontSize: 14),
+              decoration: InputDecoration(
+                labelText: '拍号',
+                border: const OutlineInputBorder(),
+                isDense: true,
+                errorText: _error,
+              ),
+              onSubmitted: (_) => _confirm(),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _confirm, child: const Text('插入')),
+      ],
+    );
+  }
+}
+
+/// 调号输入；返回 `(主音 0=C..11=B, 0=大调 1=自然小调)`。
+Future<(int, int)?> showInsertKeySigDialog(BuildContext context) {
+  return showDialog<(int, int)>(
+    context: context,
+    builder: (_) => const _KeySigInputDialog(),
+  );
+}
+
+class _KeySigInputDialog extends StatefulWidget {
+  const _KeySigInputDialog();
+
+  @override
+  State<_KeySigInputDialog> createState() => _KeySigInputDialogState();
+}
+
+class _KeySigInputDialogState extends State<_KeySigInputDialog> {
+  static const _roots = [
+    'C',
+    'C#',
+    'D',
+    'D#',
+    'E',
+    'F',
+    'F#',
+    'G',
+    'G#',
+    'A',
+    'A#',
+    'B',
+  ];
+  int _root = 0;
+  int _scale = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: YinheTheme.bg,
+      title: const Text('调号 Key Signature', style: TextStyle(fontSize: 16)),
+      content: SizedBox(
+        width: 380,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SizedBox(height: 10),
+            DropdownButtonFormField<int>(
+              initialValue: _root,
+              decoration: const InputDecoration(
+                labelText: '主音',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              items: [
+                for (var i = 0; i < _roots.length; i++)
+                  DropdownMenuItem(value: i, child: Text(_roots[i])),
+              ],
+              onChanged: (v) => setState(() => _root = v ?? _root),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<int>(
+              initialValue: _scale,
+              decoration: const InputDecoration(
+                labelText: '调式',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              items: const [
+                DropdownMenuItem(value: 0, child: Text('大调 Major')),
+                DropdownMenuItem(value: 1, child: Text('自然小调 Minor')),
+              ],
+              onChanged: (v) => setState(() => _scale = v ?? _scale),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop((_root, _scale)),
+          child: const Text('插入'),
+        ),
+      ],
+    );
+  }
+}
+
+/// 单行文本输入（标签名等）。
+Future<String?> showInsertTextDialog(
+  BuildContext context, {
+  required String title,
+  String initial = '',
+}) {
+  return showDialog<String>(
+    context: context,
+    builder: (_) => _TextInputDialog(title: title, initial: initial),
+  );
+}
+
+class _TextInputDialog extends StatefulWidget {
+  const _TextInputDialog({required this.title, required this.initial});
+
+  final String title;
+  final String initial;
+
+  @override
+  State<_TextInputDialog> createState() => _TextInputDialogState();
+}
+
+class _TextInputDialogState extends State<_TextInputDialog> {
+  late final TextEditingController _c = TextEditingController(
+    text: widget.initial,
+  );
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: YinheTheme.bg,
+      title: Text(widget.title, style: const TextStyle(fontSize: 16)),
+      content: SizedBox(
+        width: 340,
+        child: Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: TextField(
+            controller: _c,
+            autofocus: true,
+            style: const TextStyle(fontSize: 14),
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+            onSubmitted: (v) => Navigator.of(context).pop(v),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_c.text),
+          child: const Text('确定'),
+        ),
       ],
     );
   }

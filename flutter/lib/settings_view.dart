@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'ffi.dart' as rust;
+import 'l10n.dart';
 import 'theme.dart';
 
 /// 设置页（全屏浮层）：左侧栏切页（音色库 / 音频）+ 右内容两栏。
@@ -162,11 +163,15 @@ class _SettingsViewState extends State<SettingsView> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SizedBox(width: 150, child: _sidebar()),
+              SizedBox(width: 170, child: _sidebar()),
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(8, 16, 24, 16),
-                  child: _page == 0 ? _soundFontPage() : _audioPage(),
+                  child: switch (_page) {
+                    0 => _soundFontPage(),
+                    1 => _audioPage(),
+                    _ => _languagePage(),
+                  },
                 ),
               ),
             ],
@@ -178,7 +183,7 @@ class _SettingsViewState extends State<SettingsView> {
             width: 40,
             height: 40,
             child: IconButton(
-              tooltip: '返回',
+              tooltip: tr('返回'),
               icon: const Icon(Icons.arrow_back),
               color: YinheTheme.text,
               visualDensity: VisualDensity.compact,
@@ -192,19 +197,20 @@ class _SettingsViewState extends State<SettingsView> {
     );
   }
 
-  /// 左侧栏：标签页（顶部留出返回按钮的空间）。
+  /// 左侧栏：标签页（顶部留出返回按钮的空间），每项带图标。
   Widget _sidebar() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const SizedBox(height: 52),
-        _sideItem('音色库', 0),
-        _sideItem('音频', 1),
+        _sideItem(Icons.piano, tr('音色库'), 0),
+        _sideItem(Icons.volume_up, tr('音频'), 1),
+        _sideItem(Icons.language, tr('语言'), 2),
       ],
     );
   }
 
-  Widget _sideItem(String label, int index) {
+  Widget _sideItem(IconData icon, String label, int index) {
     final selected = _page == index;
     return InkWell(
       onTap: () => setState(() => _page = index),
@@ -215,14 +221,99 @@ class _SettingsViewState extends State<SettingsView> {
           color: selected ? YinheTheme.controlBg : Colors.transparent,
           borderRadius: BorderRadius.circular(6),
         ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: selected ? YinheTheme.accent : YinheTheme.text,
-            fontSize: 14,
-          ),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              size: 18,
+              color: selected ? YinheTheme.accent : YinheTheme.textSecondary,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: TextStyle(
+                color: selected ? YinheTheme.accent : YinheTheme.text,
+                fontSize: 14,
+              ),
+            ),
+          ],
         ),
       ),
+    );
+  }
+
+  /// 语言页：跟随系统 + 桌面端同款 15 种语言（原生名称）。
+  Widget _languagePage() {
+    const options = [
+      ('system', '跟随系统'),
+      ('zh-CN', '简体中文'),
+      ('zh-TW', '繁體中文（台灣）'),
+      ('zh-HK', '繁體中文（香港）'),
+      ('en-US', 'English'),
+      ('ja-JP', '日本語'),
+      ('ko-KR', '한국어'),
+      ('de-DE', 'Deutsch'),
+      ('fr-FR', 'Français'),
+      ('es-ES', 'Español'),
+      ('it-IT', 'Italiano'),
+      ('pt-BR', 'Português (Brasil)'),
+      ('ru-RU', 'Русский'),
+      ('pl-PL', 'Polski'),
+      ('cs-CZ', 'Čeština'),
+      ('tr-TR', 'Türkçe'),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          tr('语言'),
+          style: TextStyle(
+            color: YinheTheme.text,
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: ListView(
+            children: [
+              for (final (value, label) in options)
+                ListTile(
+                  dense: true,
+                  leading: Icon(
+                    value == 'system' ? Icons.settings_suggest : Icons.language,
+                    size: 18,
+                    color: L10n.appLanguage.value == value
+                        ? YinheTheme.accent
+                        : YinheTheme.textSecondary,
+                  ),
+                  title: Text(
+                    value == 'system' ? tr(label) : label,
+                    style: TextStyle(
+                      color: L10n.appLanguage.value == value
+                          ? YinheTheme.accent
+                          : YinheTheme.text,
+                      fontSize: 14,
+                    ),
+                  ),
+                  trailing: L10n.appLanguage.value == value
+                      ? Icon(Icons.check, size: 18, color: YinheTheme.accent)
+                      : null,
+                  onTap: () {
+                    L10n.appLanguage.value = value;
+                    final p = value.toNativeUtf8();
+                    try {
+                      rust.setUiLanguage(p);
+                    } finally {
+                      calloc.free(p);
+                    }
+                    setState(() {});
+                  },
+                ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -233,7 +324,7 @@ class _SettingsViewState extends State<SettingsView> {
         Row(
           children: [
             Text(
-              '音色库',
+              tr('音色库'),
               style: TextStyle(
                 color: YinheTheme.text,
                 fontSize: 15,
@@ -242,7 +333,7 @@ class _SettingsViewState extends State<SettingsView> {
             ),
             const Spacer(),
             IconButton(
-              tooltip: '添加音色库',
+              tooltip: tr('添加音色库'),
               icon: const Icon(Icons.add),
               color: YinheTheme.textSecondary,
               visualDensity: VisualDensity.compact,
@@ -298,7 +389,7 @@ class _SettingsViewState extends State<SettingsView> {
                       ),
                     ),
                     IconButton(
-                      tooltip: '移除',
+                      tooltip: tr('移除'),
                       icon: const Icon(Icons.delete_outline),
                       iconSize: 18,
                       color: YinheTheme.textSecondary,
@@ -320,25 +411,25 @@ class _SettingsViewState extends State<SettingsView> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _sectionTitle('复音上限'),
+          _sectionTitle(tr('复音上限')),
           const SizedBox(height: 8),
           _options(
             const [0, 256, 512, 1024, 2048, 4096],
             _maxVoices,
-            (v) => v == 0 ? '自动' : '$v',
+            (v) => v == 0 ? tr('自动') : '$v',
             (v) => _applyAudio(maxVoices: v),
           ),
           const SizedBox(height: 22),
-          _sectionTitle('音频缓冲'),
+          _sectionTitle(tr('音频缓冲')),
           const SizedBox(height: 8),
           _options(
             const [0, 512, 1024, 2048, 4096],
             _bufferSize,
-            (v) => v == 0 ? '设备默认' : '$v 帧',
+            (v) => v == 0 ? tr('设备默认') : (L10n.isZh ? '$v 帧' : '$v frames'),
             (v) => _applyAudio(bufferSize: v),
           ),
           const SizedBox(height: 22),
-          _sectionTitle('忽略力度'),
+          _sectionTitle(tr('忽略力度')),
           const SizedBox(height: 8),
           _options(
             const [0, 1, 2, 4, 8, 16],

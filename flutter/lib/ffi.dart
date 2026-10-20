@@ -268,6 +268,17 @@ final CStrDart markersJson = bridge.lookupFunction<CStrNative, CStrDart>(
 final CStrDart timeSigSegmentsJson = bridge
     .lookupFunction<CStrNative, CStrDart>('yinhe_time_sig_segments_json');
 
+typedef InsertSigNative = ffi.Int32 Function(ffi.Double, ffi.Int32, ffi.Int32);
+typedef InsertSigDart = int Function(double, int, int);
+
+/// 在 conductor 指定 tick 插入拍号（分子 + 分母 2 次幂）。
+final InsertSigDart insertTimeSig = bridge
+    .lookupFunction<InsertSigNative, InsertSigDart>('yinhe_insert_time_sig');
+
+/// 在 conductor 指定 tick 插入调号（主音 0=C..11=B；scale 0=大调 1=小调）。
+final InsertSigDart insertKeySig = bridge
+    .lookupFunction<InsertSigNative, InsertSigDart>('yinhe_insert_key_sig');
+
 /// 删除音轨（连同其音符；一步一 undo）。
 final IntArgDart deleteTrack = bridge.lookupFunction<IntArgNative, IntArgDart>(
   'yinhe_delete_track',
@@ -284,6 +295,45 @@ typedef IntCStrCStrNative = ffi.Int32 Function(
   ffi.Pointer<Utf8>,
 );
 typedef IntCStrCStrDart = int Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>);
+
+typedef EventsJsonNative = ffi.Pointer<Utf8> Function(ffi.Double, ffi.Int32);
+typedef EventsJsonDart = ffi.Pointer<Utf8> Function(double, int);
+
+/// 界面语言设置（system/zh/en）。
+final CStrDart uiLanguage = bridge.lookupFunction<CStrNative, CStrDart>(
+  'yinhe_ui_language',
+);
+
+/// 设置界面语言并持久化。
+final CStrArgDart setUiLanguage = bridge
+    .lookupFunction<CStrArgNative, CStrArgDart>('yinhe_set_ui_language');
+
+/// 事件列表 JSON（从 from_tick 起，最多 limit 条）。
+final EventsJsonDart eventsJson = bridge
+    .lookupFunction<EventsJsonNative, EventsJsonDart>('yinhe_events_json');
+
+/// 删除事件行（JSON）。
+final CStrArgDart eventDelete = bridge
+    .lookupFunction<CStrArgNative, CStrArgDart>('yinhe_event_delete');
+
+typedef EventUpdateNative = ffi.Int32 Function(
+  ffi.Pointer<Utf8>,
+  ffi.Double,
+  ffi.Double,
+);
+typedef EventUpdateDart = int Function(ffi.Pointer<Utf8>, double, double);
+
+/// 修改事件行：音符 = (力度, 结束 tick)；自动化 = 显示值。
+final EventUpdateDart eventUpdate = bridge
+    .lookupFunction<EventUpdateNative, EventUpdateDart>('yinhe_event_update');
+
+/// 修改标签文本。
+final IntCStrCStrDart eventSetText = bridge
+    .lookupFunction<IntCStrCStrNative, IntCStrCStrDart>('yinhe_event_set_text');
+
+/// 粘贴事件行（source → target 的时间位置/音轨）。
+final IntCStrCStrDart eventPaste = bridge
+    .lookupFunction<IntCStrCStrNative, IntCStrCStrDart>('yinhe_event_paste');
 
 /// 压缩包状态：0=无 1=打开中 2=就绪 3=需要密码 4=失败。
 final ActionDart archiveStatus = bridge

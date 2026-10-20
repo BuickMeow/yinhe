@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'ffi.dart' as rust;
 import 'models.dart';
 import 'painters.dart';
+import 'l10n.dart';
 import 'theme.dart';
 
 /// PR 底部自动化栏（高 81）：combo 列 + 自动化/力度绘制 + 锚点拖动。
@@ -160,7 +161,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
                   ),
                   Expanded(
                     child: PopupMenuButton<int>(
-                      tooltip: '自动化类型',
+                      tooltip: tr('自动化类型'),
                       padding: EdgeInsets.zero,
                       itemBuilder: (_) => [
                         for (var i = 0; i < names.length; i++)

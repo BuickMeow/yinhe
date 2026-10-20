@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'theme.dart';
+import 'l10n.dart';
 
 /// 新建音轨对话框：数量 + 通道分配方式（相同通道 / 在所选 port 内循环）。
 class AddTracksDialog extends StatefulWidget {
@@ -39,7 +40,7 @@ class _AddTracksDialogState extends State<AddTracksDialog> {
   void _save() {
     final count = _parsedCount;
     if (count < 1 || count > 256) {
-      setState(() => _error = '数量需为 1–256');
+      setState(() => _error = tr('数量需为 1–256'));
       return;
     }
     widget.onConfirm(count, _port, _channel, _cycle);
@@ -65,7 +66,7 @@ class _AddTracksDialogState extends State<AddTracksDialog> {
                 keyboardType: TextInputType.number,
                 style: const TextStyle(fontSize: 14),
                 decoration: InputDecoration(
-                  labelText: '轨道数量（1–256）',
+                  labelText: tr('轨道数量（1–256）'),
                   border: const OutlineInputBorder(),
                   isDense: true,
                   errorText: _error,
@@ -74,9 +75,9 @@ class _AddTracksDialogState extends State<AddTracksDialog> {
               ),
               const SizedBox(height: 12),
               SegmentedButton<bool>(
-                segments: const [
-                  ButtonSegment(value: true, label: Text('从通道开始循环')),
-                  ButtonSegment(value: false, label: Text('全部相同通道')),
+                segments: [
+                  ButtonSegment(value: true, label: Text(tr('从通道开始循环'))),
+                  ButtonSegment(value: false, label: Text(tr('全部相同通道'))),
                 ],
                 selected: {_cycle},
                 onSelectionChanged: (s) => setState(() => _cycle = s.first),
@@ -87,8 +88,8 @@ class _AddTracksDialogState extends State<AddTracksDialog> {
                   Expanded(
                     child: DropdownButtonFormField<int>(
                       initialValue: _port,
-                      decoration: const InputDecoration(
-                        labelText: '端口',
+                      decoration: InputDecoration(
+                        labelText: tr('端口'),
                         border: OutlineInputBorder(),
                         isDense: true,
                       ),
@@ -106,8 +107,8 @@ class _AddTracksDialogState extends State<AddTracksDialog> {
                   Expanded(
                     child: DropdownButtonFormField<int>(
                       initialValue: _channel,
-                      decoration: const InputDecoration(
-                        labelText: '起始通道',
+                      decoration: InputDecoration(
+                        labelText: tr('起始通道'),
                         border: OutlineInputBorder(),
                         isDense: true,
                       ),
@@ -128,9 +129,9 @@ class _AddTracksDialogState extends State<AddTracksDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(tr('取消')),
         ),
-        FilledButton(onPressed: _save, child: const Text('添加')),
+        FilledButton(onPressed: _save, child: Text(tr('添加'))),
       ],
     );
   }

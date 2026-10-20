@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'theme.dart';
+import 'l10n.dart';
 
 /// 本工程默认 BPM / 拍号编辑对话框。
 ///
@@ -53,8 +54,8 @@ class _BpmDialogState extends State<_BpmDialog> {
 
   void _save() {
     final v = double.tryParse(_bpm.text.trim());
-    if (v == null || v < 20 || v > 999) {
-      setState(() => _error = 'BPM 需为 20–999');
+    if (v == null || v < 0 || v > 60000000) {
+      setState(() => _error = tr('BPM 需为 0–60000000'));
       return;
     }
     Navigator.of(context).pop(v);
@@ -64,7 +65,7 @@ class _BpmDialogState extends State<_BpmDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       backgroundColor: YinheTheme.bg,
-      title: const Text('本工程默认 BPM', style: TextStyle(fontSize: 18)),
+      title: Text(tr('本工程默认 BPM'), style: TextStyle(fontSize: 18)),
       content: SizedBox(
         width: 320,
         child: Column(
@@ -78,8 +79,8 @@ class _BpmDialogState extends State<_BpmDialog> {
               autofocus: true,
               keyboardType: TextInputType.number,
               style: const TextStyle(fontSize: 14),
-              decoration: const InputDecoration(
-                labelText: 'BPM（20–999）',
+              decoration: InputDecoration(
+                labelText: tr('BPM（0–60000000）'),
                 border: OutlineInputBorder(),
                 isDense: true,
               ),
@@ -99,9 +100,9 @@ class _BpmDialogState extends State<_BpmDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(tr('取消')),
         ),
-        FilledButton(onPressed: _save, child: const Text('保存')),
+        FilledButton(onPressed: _save, child: Text(tr('保存'))),
       ],
     );
   }
@@ -161,7 +162,7 @@ class _TimeSigDialogState extends State<_TimeSigDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       backgroundColor: YinheTheme.bg,
-      title: const Text('本工程默认拍号', style: TextStyle(fontSize: 18)),
+      title: Text(tr('本工程默认拍号'), style: TextStyle(fontSize: 18)),
       content: SizedBox(
         width: 320,
         child: Column(
@@ -174,8 +175,8 @@ class _TimeSigDialogState extends State<_TimeSigDialog> {
               autofocus: true,
               keyboardType: TextInputType.text,
               style: const TextStyle(fontSize: 14),
-              decoration: const InputDecoration(
-                labelText: '拍号（如 4/4）',
+              decoration: InputDecoration(
+                labelText: tr('拍号（如 4/4）'),
                 border: OutlineInputBorder(),
                 isDense: true,
               ),
@@ -195,9 +196,9 @@ class _TimeSigDialogState extends State<_TimeSigDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(tr('取消')),
         ),
-        FilledButton(onPressed: _save, child: const Text('保存')),
+        FilledButton(onPressed: _save, child: Text(tr('保存'))),
       ],
     );
   }

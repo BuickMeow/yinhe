@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'theme.dart';
+import 'l10n.dart';
 
 /// 压缩包内的 MIDI 条目。
 class ArchiveEntryItem {
@@ -98,7 +99,7 @@ Future<int?> showArchiveEntriesDialog(
       actions: [
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(),
-          child: const Text('取消'),
+          child: Text(tr('取消')),
         ),
       ],
     ),
@@ -113,7 +114,10 @@ Future<String?> showArchivePasswordDialog(BuildContext context, String path) {
     context: context,
     builder: (ctx) => AlertDialog(
       backgroundColor: YinheTheme.bg,
-      title: Text('压缩包需要密码（$name）', style: const TextStyle(fontSize: 16)),
+      title: Text(
+        '${tr('压缩包需要密码')}（$name）',
+        style: const TextStyle(fontSize: 16),
+      ),
       content: SizedBox(
         width: 360,
         child: Padding(
@@ -123,8 +127,8 @@ Future<String?> showArchivePasswordDialog(BuildContext context, String path) {
             autofocus: true,
             obscureText: true,
             style: const TextStyle(fontSize: 14),
-            decoration: const InputDecoration(
-              labelText: '密码',
+            decoration: InputDecoration(
+              labelText: tr('密码'),
               border: OutlineInputBorder(),
               isDense: true,
             ),
@@ -135,11 +139,11 @@ Future<String?> showArchivePasswordDialog(BuildContext context, String path) {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(),
-          child: const Text('取消'),
+          child: Text(tr('取消')),
         ),
         FilledButton(
           onPressed: () => Navigator.of(ctx).pop(controller.text),
-          child: const Text('打开'),
+          child: Text(tr('打开')),
         ),
       ],
     ),

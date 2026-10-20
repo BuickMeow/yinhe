@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'gm_programs.dart';
+import 'l10n.dart';
 import 'theme.dart';
 
 /// 音轨信息对话框：名称 / 端口 / 通道 / 通道级默认乐器。
@@ -95,7 +96,7 @@ class _TrackInfoDialogState extends State<TrackInfoDialog> {
                 controller: _name,
                 style: const TextStyle(fontSize: 14),
                 decoration: InputDecoration(
-                  labelText: widget.isMaster ? '歌曲标题' : '音轨名称',
+                  labelText: tr(widget.isMaster ? '歌曲标题' : '音轨名称'),
                   border: const OutlineInputBorder(),
                   isDense: true,
                 ),
@@ -103,8 +104,7 @@ class _TrackInfoDialogState extends State<TrackInfoDialog> {
               if (widget.isMaster) ...[
                 const SizedBox(height: 12),
                 Text(
-                  'Master（Conductor）轨承载速度/拍号等全局事件，'
-                  '不能放置音符，也没有端口/通道设置。',
+                  tr('Master（Conductor）轨承载速度/拍号等全局事件，不能放置音符，也没有端口/通道设置。'),
                   style: TextStyle(color: YinheTheme.textMuted, fontSize: 12),
                 ),
               ] else ...[
@@ -114,8 +114,8 @@ class _TrackInfoDialogState extends State<TrackInfoDialog> {
                     Expanded(
                       child: DropdownButtonFormField<int>(
                         initialValue: _port,
-                        decoration: const InputDecoration(
-                          labelText: '端口',
+                        decoration: InputDecoration(
+                          labelText: tr('端口'),
                           border: OutlineInputBorder(),
                           isDense: true,
                         ),
@@ -133,8 +133,8 @@ class _TrackInfoDialogState extends State<TrackInfoDialog> {
                     Expanded(
                       child: DropdownButtonFormField<int>(
                         initialValue: _channel,
-                        decoration: const InputDecoration(
-                          labelText: '通道',
+                        decoration: InputDecoration(
+                          labelText: tr('通道'),
                           border: OutlineInputBorder(),
                           isDense: true,
                         ),
@@ -162,7 +162,7 @@ class _TrackInfoDialogState extends State<TrackInfoDialog> {
                     Expanded(
                       child: Text(
                         inst == null
-                            ? '本通道默认乐器：跟随 MIDI PC'
+                            ? tr('本通道默认乐器：跟随 MIDI PC')
                             : '本通道默认乐器：${gmProgramLabel(inst.$1, inst.$2)}'
                                   '（Bank ${inst.$1} / Program ${inst.$2}）',
                         style: TextStyle(
@@ -173,27 +173,25 @@ class _TrackInfoDialogState extends State<TrackInfoDialog> {
                     ),
                     TextButton(
                       onPressed: _pickInstrument,
-                      child: const Text('选择'),
+                      child: Text(tr('选择')),
                     ),
                     if (inst != null)
                       TextButton(
                         onPressed: () => setState(() => _instrument = null),
-                        child: const Text('清除'),
+                        child: Text(tr('清除')),
                       ),
                   ],
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '通道级默认乐器：同一通道的所有音轨共享；'
-                  'MIDI 内的 PC 事件优先于它。',
+                  tr('通道级默认乐器：同一通道的所有音轨共享；MIDI 内的 PC 事件优先于它。'),
                   style: TextStyle(color: YinheTheme.textMuted, fontSize: 11),
                 ),
                 if (_port != 0)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Text(
-                      '移动端目前仅端口 A 参与播放；其他端口会保存，'
-                      '供桌面端使用。',
+                      tr('移动端目前仅端口 A 参与播放；其他端口会保存，供桌面端使用。'),
                       style: TextStyle(color: YinheTheme.warning, fontSize: 11),
                     ),
                   ),
@@ -205,9 +203,9 @@ class _TrackInfoDialogState extends State<TrackInfoDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(tr('取消')),
         ),
-        FilledButton(onPressed: _save, child: const Text('保存')),
+        FilledButton(onPressed: _save, child: Text(tr('保存'))),
       ],
     );
   }
@@ -232,7 +230,7 @@ class _InstrumentPickerDialogState extends State<_InstrumentPickerDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       backgroundColor: YinheTheme.bg,
-      title: const Text('选择本通道默认乐器', style: TextStyle(fontSize: 17)),
+      title: Text(tr('选择本通道默认乐器'), style: TextStyle(fontSize: 17)),
       content: SizedBox(
         width: 420,
         height: 460,
@@ -240,9 +238,9 @@ class _InstrumentPickerDialogState extends State<_InstrumentPickerDialog> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             SegmentedButton<int>(
-              segments: const [
-                ButtonSegment(value: 0, label: Text('旋律 Bank 0')),
-                ButtonSegment(value: 128, label: Text('鼓组 Bank 128')),
+              segments: [
+                ButtonSegment(value: 0, label: Text(tr('旋律 Bank 0'))),
+                ButtonSegment(value: 128, label: Text(tr('鼓组 Bank 128'))),
               ],
               selected: {_bank},
               onSelectionChanged: (s) => setState(() => _bank = s.first),
@@ -274,11 +272,11 @@ class _InstrumentPickerDialogState extends State<_InstrumentPickerDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(tr('取消')),
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop((_bank, _program)),
-          child: const Text('确定'),
+          child: Text(tr('确定')),
         ),
       ],
     );

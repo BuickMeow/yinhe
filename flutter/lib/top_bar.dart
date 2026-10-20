@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'models.dart';
 import 'theme.dart';
+import 'l10n.dart';
 import 'tools.dart';
 
 /// 顶部栏：左侧视图入口 + 走带，右侧量化/工具/撤销重做；
@@ -109,7 +110,7 @@ class TopBar extends StatelessWidget {
                 onPressed: isPr ? onBack : onHome,
                 icon: Icon(isPr ? Icons.arrow_back : Icons.home),
                 color: YinheTheme.text,
-                tooltip: isPr ? '返回走带' : '主页',
+                tooltip: isPr ? tr('返回走带') : tr('主页'),
                 visualDensity: VisualDensity.compact,
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
@@ -118,7 +119,7 @@ class TopBar extends StatelessWidget {
                 onPressed: onTogglePlay,
                 icon: Icon(playing ? Icons.pause : Icons.play_arrow),
                 color: YinheTheme.text,
-                tooltip: playing ? '暂停' : '播放',
+                tooltip: playing ? tr('暂停') : tr('播放'),
                 visualDensity: VisualDensity.compact,
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
@@ -127,7 +128,7 @@ class TopBar extends StatelessWidget {
                 onPressed: onStop,
                 icon: const Icon(Icons.stop),
                 color: YinheTheme.textSecondary,
-                tooltip: '停止',
+                tooltip: tr('停止'),
                 visualDensity: VisualDensity.compact,
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
@@ -164,12 +165,12 @@ class TopBar extends StatelessWidget {
                   children: [
                     _iconAction(
                       Icons.undo,
-                      '撤销',
+                      tr('撤销'),
                       (st & 1) != 0 ? onUndo : null,
                     ),
                     _iconAction(
                       Icons.redo,
-                      '重做',
+                      tr('重做'),
                       (st & 2) != 0 ? onRedo : null,
                     ),
                     // 保存：从右向左第一个；无改动时置灰不可点；
@@ -189,14 +190,14 @@ class TopBar extends StatelessWidget {
                     else if (saveDone)
                       _iconAction(
                         Icons.check,
-                        '已保存',
+                        tr('已保存'),
                         null,
                         color: YinheTheme.text,
                       )
                     else
                       _iconAction(
                         Icons.save_outlined,
-                        '保存工程',
+                        tr('保存工程'),
                         (st & 4) != 0 ? onSave : null,
                       ),
                   ],
@@ -262,12 +263,12 @@ class TopBar extends StatelessWidget {
 
   Widget _buildQuantizeButton(BuildContext context) {
     return PopupMenuButton<String>(
-      tooltip: '量化（吸附档位）',
+      tooltip: tr('量化（吸附档位）'),
       padding: EdgeInsets.zero,
       onSelected: onQuantize,
       itemBuilder: (_) => [
-        const PopupMenuItem(value: '关闭', child: Text('关闭吸附')),
-        const PopupMenuItem(value: '自动', child: Text('自动（随缩放）')),
+        PopupMenuItem(value: '关闭', child: Text(tr('关闭吸附'))),
+        PopupMenuItem(value: '自动', child: Text(tr('自动（随缩放）'))),
         for (final (label, ticks) in _quantizePresets(ppq))
           PopupMenuItem(value: label, child: Text('$label（$ticks tick）')),
       ],
@@ -313,7 +314,7 @@ class TopBar extends StatelessWidget {
     final list = isPr ? toolPrAllowed : toolArAllowed;
     final shown = list.contains(tool) ? tool : list.first;
     return PopupMenuButton<int>(
-      tooltip: '工具',
+      tooltip: tr('工具'),
       padding: EdgeInsets.zero,
       onSelected: onTool,
       itemBuilder: (_) => [
@@ -330,7 +331,7 @@ class TopBar extends StatelessWidget {
                       : YinheTheme.textSecondary,
                 ),
                 const SizedBox(width: 8),
-                Text(toolDefs[i].$2),
+                Text(tr(toolDefs[i].$2)),
               ],
             ),
           ),
@@ -374,7 +375,7 @@ class TopBar extends StatelessWidget {
     final active = activeTrack >= 0 && activeTrack < tracks.length;
     final base = active ? tracks[activeTrack].name : _titled();
     return PopupMenuButton<int>(
-      tooltip: '当前编辑音轨',
+      tooltip: tr('当前编辑音轨'),
       padding: EdgeInsets.zero,
       onSelected: (v) {
         if (v >= tracks.length) {
@@ -388,7 +389,7 @@ class TopBar extends StatelessWidget {
           enabled: false,
           height: 30,
           child: Text(
-            '当前编辑音轨',
+            tr('当前编辑音轨'),
             style: TextStyle(color: YinheTheme.textLabel, fontSize: 11),
           ),
         ),
@@ -402,7 +403,7 @@ class TopBar extends StatelessWidget {
         CheckedPopupMenuItem<int>(
           value: tracks.length,
           checked: showAllTracks,
-          child: const Text('全部轨道'),
+          child: Text(tr('全部轨道')),
         ),
       ],
       child: Container(
