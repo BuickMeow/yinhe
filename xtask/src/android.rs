@@ -102,7 +102,15 @@ fn build(debug: bool, install: bool) -> Result<(), ExitCode> {
 
     // 3) Flutter APK。
     let mut f = cmd::cmd("flutter");
-    f.args(["build", "apk", if debug { "--debug" } else { "--release" }]);
+    // 只打 arm64：Rust 侧也只构建了 arm64；universal APK 里的
+    // armeabi-v7a/x86_64 Flutter 库没有对应 Rust 库，纯属死重量。
+    f.args([
+        "build",
+        "apk",
+        if debug { "--debug" } else { "--release" },
+        "--target-platform",
+        "android-arm64",
+    ]);
     f.current_dir(root.join("flutter"));
     cmd::status(&mut f)?;
 
