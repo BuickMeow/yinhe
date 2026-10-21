@@ -120,6 +120,10 @@ abstract class _ShellBase extends State<StudioShell>
   /// 初始备用工具：PR 铅笔、AR 手型；主槽位都是选框。
   int _quickToolPr = quickToolsPr.last;
   int _quickToolAr = quickToolsAr.last;
+  /// 当前高亮的是快捷槽还是主槽。仅最近一次操作的槽位高亮；
+  /// 即使两个槽位工具相同，也只有一个按钮是强调色。
+  bool _quickSlotActivePr = false;
+  bool _quickSlotActiveAr = false;
 
   /// 量化档位显示（桌面：每文档瞬态，默认自动）。
   String _quantizeLabel = '自动';
@@ -264,6 +268,7 @@ abstract class _ShellBase extends State<StudioShell>
   void _selectQuickTool(int tool);
   int get _mainTool;
   int get _quickTool;
+  bool get _quickSlotActive;
   void _setAutoCollapsed(bool collapsed);
   void _setView(int mode);
   void _showAddTrackDialog();
@@ -272,7 +277,6 @@ abstract class _ShellBase extends State<StudioShell>
   void _showTrackMenu(int track);
   void _stopPlayback();
   void _togglePlay();
-  int get _tool;
   void _updateTimecode();
 }
 

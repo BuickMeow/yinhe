@@ -63,7 +63,6 @@ mixin _ShellCore on _ShellBase {
   }
 
   /// 当前视图允许的工具。
-  @override
   int get _tool => _viewMode == kViewPianoroll ? _toolPr : _toolAr;
 
   /// 主工具按钮当前记住的工具。
@@ -75,6 +74,11 @@ mixin _ShellCore on _ShellBase {
   @override
   int get _quickTool =>
       _viewMode == kViewPianoroll ? _quickToolPr : _quickToolAr;
+
+  /// 最近一次操作的是否为快捷槽位；决定哪个按钮高亮。
+  @override
+  bool get _quickSlotActive =>
+      _viewMode == kViewPianoroll ? _quickSlotActivePr : _quickSlotActiveAr;
 
   /// 把当前视图的工具同步给 Rust。
   void _pushTool() {
@@ -89,9 +93,11 @@ mixin _ShellCore on _ShellBase {
       if (_viewMode == kViewPianoroll) {
         _mainToolPr = tool;
         _toolPr = tool;
+        _quickSlotActivePr = false;
       } else {
         _mainToolAr = tool;
         _toolAr = tool;
+        _quickSlotActiveAr = false;
       }
     });
     _pushTool();
@@ -105,9 +111,11 @@ mixin _ShellCore on _ShellBase {
       if (_viewMode == kViewPianoroll) {
         _quickToolPr = tool;
         _toolPr = tool;
+        _quickSlotActivePr = true;
       } else {
         _quickToolAr = tool;
         _toolAr = tool;
+        _quickSlotActiveAr = true;
       }
     });
     _pushTool();
@@ -154,6 +162,7 @@ mixin _ShellCore on _ShellBase {
       _toolAr = 0;
       _mainToolAr = 0;
       _quickToolAr = quickToolsAr.last;
+      _quickSlotActiveAr = false;
       _songTitle = '';
       _playing = false;
     });

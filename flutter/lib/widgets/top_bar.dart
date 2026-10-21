@@ -17,9 +17,9 @@ class TopBar extends StatelessWidget {
     required this.timecodeText,
     required this.quantizeLabel,
     required this.ppq,
-    required this.tool,
     required this.mainTool,
     required this.quickTool,
+    required this.quickSlotActive,
     required this.tracks,
     required this.activeTrack,
     required this.showAllTracks,
@@ -54,13 +54,15 @@ class TopBar extends StatelessWidget {
   final ValueListenable<String> timecodeText;
   final String quantizeLabel;
   final double ppq;
-  final int tool;
 
   /// 主工具按钮自己记住的工具。
   final int mainTool;
 
   /// 快捷工具组自己记住的工具；不随主工具 popup 改变。
   final int quickTool;
+
+  /// 最近一次操作的是否为快捷槽；决定哪个按钮高亮。
+  final bool quickSlotActive;
   final List<TrackRow> tracks;
 
   /// 当前编辑音轨（PR 顶部显示它；-1 = 无）。
@@ -324,28 +326,31 @@ class TopBar extends StatelessWidget {
   Widget _buildQuickToolButton(AppLocalizations l) {
     final group = isPr ? quickToolsPr : quickToolsAr;
     final shown = group.contains(quickTool) ? quickTool : group.first;
-    final active = tool == shown;
+    final active = quickSlotActive;
     final tip = group.map((i) => _toolName(l, i)).join(' / ');
     return Builder(
       builder: (context) {
         var anchor = Offset.zero;
-        return InkWell(
-          borderRadius: BorderRadius.circular(4),
-          onTapDown: (d) => anchor = d.globalPosition,
-          onTap: () {
-            if (!active) {
-              onQuickTool(shown);
-              return;
-            }
-            _showQuickToolMenu(context, group, shown, anchor);
-          },
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            child: Icon(
-              toolDefs[shown].$1,
-              size: 18,
-              color: active ? YinheTheme.accent : YinheTheme.textSecondary,
-              semanticLabel: tip,
+        return Tooltip(
+          message: tip,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(4),
+            onTapDown: (d) => anchor = d.globalPosition,
+            onTap: () {
+              if (!active) {
+                onQuickTool(shown);
+                return;
+              }
+              _showToolMenu(context, group, shown, anchor, onQuickTool);
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Icon(
+                toolDefs[shown].$1,
+                size: 18,
+                color: active ? YinheTheme.accent : YinheTheme.textSecondary,
+                semanticLabel: tip,
+              ),
             ),
           ),
         );
@@ -353,11 +358,12 @@ class TopBar extends StatelessWidget {
     );
   }
 
-  Future<void> _showQuickToolMenu(
+  Future<void> _showToolMenu(
     BuildContext context,
     List<int> group,
     int shown,
     Offset anchor,
+    ValueChanged<int> onSelected,
   ) async {
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
     if (overlay == null) {
@@ -394,45 +400,41 @@ class TopBar extends StatelessWidget {
       ],
     );
     if (selected != null) {
-      onQuickTool(selected);
+      onSelected(selected);
     }
   }
 
   Widget _buildToolButton(AppLocalizations l) {
     final list = isPr ? toolPrAllowed : toolArAllowed;
     final shown = list.contains(mainTool) ? mainTool : list.first;
-    final active = tool == shown;
-    return PopupMenuButton<int>(
-      tooltip: l.tool,
-      padding: EdgeInsets.zero,
-      onSelected: onTool,
-      itemBuilder: (_) => [
-        for (final i in list)
-          PopupMenuItem(
-            value: i,
-            child: Row(
-              children: [
-                Icon(
-                  toolDefs[i].$1,
-                  size: 18,
-                  color: i == shown
-                      ? YinheTheme.accent
-                      : YinheTheme.textSecondary,
-                ),
-                const SizedBox(width: 8),
-                Text(_toolName(l, i)),
-              ],
+    final active = !quickSlotActive;
+    return Builder(
+      builder: (context) {
+        var anchor = Offset.zero;
+        return Tooltip(
+          message: l.tool,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(4),
+            onTapDown: (d) => anchor = d.globalPosition,
+            onTap: () {
+              if (!active) {
+                onTool(shown);
+                return;
+              }
+              _showToolMenu(context, list, shown, anchor, onTool);
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Icon(
+                toolDefs[shown].$1,
+                size: 18,
+                color: active ? YinheTheme.accent : YinheTheme.textSecondary,
+                semanticLabel: _toolName(l, shown),
+              ),
             ),
           ),
-      ],
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Icon(
-          toolDefs[shown].$1,
-          size: 18,
-          color: active ? YinheTheme.accent : YinheTheme.textSecondary,
-        ),
-      ),
+        );
+      },
     );
   }
 

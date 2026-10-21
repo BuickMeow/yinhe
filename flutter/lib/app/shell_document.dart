@@ -354,6 +354,7 @@ mixin _ShellDocument on _ShellBase {
       _toolAr = 0;
       _mainToolAr = 0;
       _quickToolAr = quickToolsAr.last;
+      _quickSlotActiveAr = false;
     });
     rust.setViewMode(kViewArrangement);
     rust.setDisplayTrack(-1);
