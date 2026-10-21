@@ -211,6 +211,12 @@ fn cmd_tx() -> &'static Sender<Cmd> {
 
 fn render_thread_main(rx: Receiver<Cmd>) {
     log::info!("渲染线程启动");
+    // Flutter 壳目前固定 LIGHT。必须同步给 `yinhe-wgpu` 的共享 GPU 主题；
+    // 否则 `build_render_job` 会读 `GpuTheme::default()` 的 DARK，导致亮色
+    // 主题下选中/ghost 音符按暗色方向渲染（选中偏白、力度向黑淡化）。
+    yinhe_theme::set_current_gpu_theme(yinhe_theme::GpuTheme::from_base(
+        yinhe_theme::base::BaseColors::LIGHT,
+    ));
     let mut gpu: Option<Gpu> = None;
     let mut target: Option<render::Target> = None;
 
