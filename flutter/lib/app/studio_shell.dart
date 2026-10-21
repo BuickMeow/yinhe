@@ -117,8 +117,9 @@ abstract class _ShellBase extends State<StudioShell>
   /// 但不会改写另一个槽位，因此两个工具按钮互相独立。
   int _mainToolPr = 0;
   int _mainToolAr = 0;
-  int _quickToolPr = 0;
-  int _quickToolAr = 0;
+  /// 初始备用工具：PR 铅笔、AR 手型；主槽位都是选框。
+  int _quickToolPr = quickToolsPr.last;
+  int _quickToolAr = quickToolsAr.last;
 
   /// 量化档位显示（桌面：每文档瞬态，默认自动）。
   String _quantizeLabel = '自动';

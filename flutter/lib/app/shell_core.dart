@@ -153,7 +153,7 @@ mixin _ShellCore on _ShellBase {
       _showAllTracks = true;
       _toolAr = 0;
       _mainToolAr = 0;
-      _quickToolAr = 0;
+      _quickToolAr = quickToolsAr.last;
       _songTitle = '';
       _playing = false;
     });
