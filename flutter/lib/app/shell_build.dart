@@ -81,6 +81,23 @@ mixin _ShellBuild on _ShellBase {
                                 ),
                               ),
                             ),
+                          // 选框必须在音轨面板/键盘下方：面板不透明底会盖住越界部分。
+                          if (!_showHome)
+                            Positioned(
+                              left: 0,
+                              right: 0,
+                              top: RulerPainter.height,
+                              bottom: 0,
+                              child: IgnorePointer(
+                                child: CustomPaint(
+                                  painter: OverlayPainter(
+                                    _overlay,
+                                    _moveDashed,
+                                    _snap,
+                                  ),
+                                ),
+                              ),
+                            ),
                           if (!_showHome)
                             Positioned(
                               left: 0,
@@ -95,21 +112,6 @@ mixin _ShellBuild on _ShellBase {
                                     dragFrom: _dragFrom,
                                     dragTo: _dragTo,
                                     arAutomation: _arAutomation,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          if (!_showHome)
-                            Positioned(
-                              left: 0,
-                              right: 0,
-                              top: RulerPainter.height,
-                              bottom: 0,
-                              child: IgnorePointer(
-                                child: CustomPaint(
-                                  painter: OverlayPainter(
-                                    _overlay,
-                                    _moveDashed,
                                   ),
                                 ),
                               ),
@@ -170,6 +172,7 @@ mixin _ShellBuild on _ShellBase {
                                     _lpPosNotifier,
                                     _moveDashed,
                                     _overlay,
+                                    _snap,
                                   ),
                                 ),
                               ),

@@ -7,13 +7,21 @@ import '../core/theme.dart';
 
 /// 长按圆环进度 + 移动中的虚线选框。
 class SelectionLongPressPainter extends CustomPainter {
-  SelectionLongPressPainter(this.progress, this.pos, this.moving, this.overlay)
-    : super(repaint: Listenable.merge([progress, pos, moving, overlay]));
+  SelectionLongPressPainter(
+    this.progress,
+    this.pos,
+    this.moving,
+    this.overlay,
+    this.snap,
+  ) : super(repaint: Listenable.merge([progress, pos, moving, overlay, snap]));
 
   final ValueNotifier<double> progress;
   final ValueNotifier<Offset?> pos;
   final ValueNotifier<bool> moving;
   final ValueNotifier<OverlayData> overlay;
+
+  /// 视口快照：`[5]` = 音轨面板/键盘宽度。虚线选框同样只画在内容区。
+  final ValueNotifier<List<double>> snap;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -25,9 +33,17 @@ class SelectionLongPressPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1
         ..color = YinheTheme.text.withValues(alpha: 0.45);
+      final s = snap.value;
+      final panelW = s.length > 5 ? s[5] : 0.0;
+      final contentW = size.width - panelW;
+      canvas.save();
+      if (panelW > 0 && contentW > 0) {
+        canvas.clipRect(Rect.fromLTWH(panelW, 0, contentW, size.height));
+      }
       for (final r in rects) {
         _dashedRect(canvas, r, paint);
       }
+      canvas.restore();
       return;
     }
     final p = pos.value;
