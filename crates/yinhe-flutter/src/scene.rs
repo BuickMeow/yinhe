@@ -1,6 +1,6 @@
 //! 渲染场景：文档快照（模型 + PR/AR 双视口 + 颜色）与演示内容生成。
 //!
-//! 渲染线程只读快照；触摸手势（`input.rs`）与首帧初始化写视口。
+//! 渲染线程只读快照；Flutter 手势（经 FFI 下发）与首帧初始化写视口。
 //! 不跨线程借用 `Document`，避免把 editor-core 的内部可变性带进渲染线程。
 
 use std::sync::{Arc, Mutex, OnceLock};
@@ -93,7 +93,7 @@ pub struct TrackInfoLite {
     pub master: bool,
 }
 
-/// 渲染线程与触摸手势共享的场景数据。
+/// 渲染线程与 Flutter 视口手势共享的场景数据。
 pub struct RenderScene {
     /// 当前文档模型（None = 无文档，渲染清屏）。
     pub model: Option<Arc<YinModel>>,
@@ -178,7 +178,7 @@ impl Default for RenderScene {
 
 static SCENE: OnceLock<Mutex<RenderScene>> = OnceLock::new();
 
-/// 全局场景（渲染线程每帧取快照；触摸手势直接写视口）。
+/// 全局场景（渲染线程每帧取快照；Flutter 手势直接写视口）。
 pub fn scene() -> &'static Mutex<RenderScene> {
     SCENE.get_or_init(|| Mutex::new(RenderScene::default()))
 }
@@ -2356,39 +2356,82 @@ pub fn scroll_at(x: f32, y: f32, dx: f32, dy: f32, ctrl: bool) -> i32 {
     1
 }
 
-/// 触控板捏合缩放：`factor > 1` 放大（键盘/面板区 → 副轴，其余 → 主轴）。
-pub fn zoom_at(x: f32, y: f32, factor: f32) -> i32 {
+/// Flutter 视口手势模式。
+pub const GESTURE_PAN: i32 = 0;
+pub const GESTURE_PR_TIME: i32 = 1;
+pub const GESTURE_PR_PITCH: i32 = 2;
+pub const GESTURE_AR_TIME: i32 = 3;
+pub const GESTURE_AR_LANE: i32 = 4;
+
+/// 应用一次 Flutter 视口手势：先平移，再围绕当前焦点缩放，最后统一 clamp。
+///
+/// `pan_x/pan_y` 为逻辑像素；`scale` 为本次增量倍率（1=不缩放）。
+/// PR/AR 的轴向由 Flutter 在起手时锁定，这里不再按当前中点切换。
+pub fn viewport_gesture(
+    mode: i32,
+    pan_x: f32,
+    pan_y: f32,
+    scale: f32,
+    focus_x: f32,
+    focus_y: f32,
+) -> i32 {
     let Ok(mut s) = scene().lock() else {
         return 0;
     };
     let (lw, lh) = crate::logical_size();
     let total = s.total_ticks;
     let num_tracks = s.num_tracks;
-    let factor = factor.clamp(0.5, 2.0);
+    let do_pan = (pan_x != 0.0 || pan_y != 0.0) && pan_x.is_finite() && pan_y.is_finite();
+    let do_zoom = scale.is_finite()
+        && scale > 0.0
+        && (scale - 1.0).abs() > 1e-6
+        && focus_x.is_finite()
+        && focus_y.is_finite();
     match s.view_mode {
         ViewMode::Pianoroll => {
             let view = &mut s.pr_view;
-            if x < view.keyboard_width() {
-                let cross = view.cross_axis_len(lw, lh);
-                view.zoom_cross_around(y, factor, cross);
-            } else {
-                view.zoom_main_around(x - view.keyboard_width(), factor);
+            if do_pan {
+                *view.main_scroll() -= pan_x;
+                *view.cross_scroll() -= pan_y;
             }
-            s.pr_view.clamp_scroll(lw, lh, total);
+            if do_zoom {
+                match mode {
+                    GESTURE_PR_TIME => {
+                        let kb_w = view.keyboard_width();
+                        view.zoom_main_around(focus_x - kb_w, scale);
+                    }
+                    GESTURE_PR_PITCH => {
+                        let cross = view.cross_axis_len(lw, lh);
+                        view.zoom_cross_around(focus_y, scale, cross);
+                    }
+                    _ => {}
+                }
+            }
+            view.clamp_scroll(lw, lh, total);
         }
         ViewMode::Arrangement => {
             let view = &mut s.arr_view;
-            if x < view.base.left_panel_width {
-                view.zoom_lane_height(y, factor);
-            } else {
-                view.base.zoom_around_x(x, factor);
+            if do_pan {
+                view.base.scroll_x -= pan_x;
+                view.base.scroll_y -= pan_y;
             }
-            s.arr_view.clamp_scroll(lw, lh, total, num_tracks + 1);
+            if do_zoom {
+                match mode {
+                    GESTURE_AR_TIME => view.base.zoom_around_x(focus_x, scale),
+                    GESTURE_AR_LANE => view.zoom_lane_height(focus_y, scale),
+                    _ => {}
+                }
+            }
+            view.clamp_scroll(lw, lh, total, num_tracks + 1);
         }
     }
-    // 同上：缩放后选框随内容移动。
     s.overlay_rev = s.overlay_rev.wrapping_add(1);
     1
+}
+
+/// 按逻辑像素平移视口（鼠标右键拖拽等）。
+pub fn pan_by(dx: f32, dy: f32) -> i32 {
+    viewport_gesture(GESTURE_PAN, dx, dy, 1.0, 0.0, 0.0)
 }
 
 /// 编辑自动化锚点（仅 PB/CC/RPN，离散）：把指定 lane 的 tick 值设为 value。

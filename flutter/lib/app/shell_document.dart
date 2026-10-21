@@ -19,7 +19,7 @@ mixin _ShellDocument on _ShellBase {
       showSnack(context, l.openFirst);
       return;
     }
-    rust.resetTouch();
+    _resetInteraction();
     showDialog<void>(
       context: context,
       builder: (_) => ProjectDialog(
@@ -584,7 +584,7 @@ mixin _ShellDocument on _ShellBase {
     if (_tracks.value.isEmpty) {
       return;
     }
-    rust.resetTouch();
+    _resetInteraction();
     final bpm = await showDefaultBpmDialog(context, _projectBpm);
     if (bpm == null) {
       return;
@@ -602,7 +602,7 @@ mixin _ShellDocument on _ShellBase {
     if (_tracks.value.isEmpty) {
       return;
     }
-    rust.resetTouch();
+    _resetInteraction();
     final sig = await showDefaultTimeSigDialog(
       context,
       _projectSigNum,

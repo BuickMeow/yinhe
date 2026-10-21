@@ -3,13 +3,13 @@
 //! 链路：Kotlin `SurfaceProducer` → JNI `nativeSetSurface` → `ANativeWindow`
 //! → 渲染线程（wgpu / `yinhe-wgpu` 钢琴卷帘）→ present → Flutter `Texture` 合成。
 //!
-//! - 场景：`scene.rs`（文档快照 + 演示内容）；触摸：`input.rs`；渲染：`render.rs`
-//! - 触摸坐标：dart:ffi 传画布逻辑像素；画布逻辑尺寸：`nativeSetViewport` 传入
+//! - 场景：`scene.rs`（文档快照 + 演示内容）；惯性：`inertia.rs`；渲染：`render.rs`
+//! - 手势坐标：Flutter 传画布逻辑像素；画布逻辑尺寸：`nativeSetViewport` 传入
 //!   （surface buffer 为物理像素，两者分别用于 view 与交换链）
 
 mod audio;
 mod edit;
-mod input;
+mod inertia;
 mod midi_export;
 mod midi_names;
 mod render;
@@ -253,7 +253,8 @@ fn apply_cmd(gpu: &mut Option<Gpu>, target: &mut Option<render::Target>, cmd: Cm
             }
             // 先释放旧 target（surface 先于窗口销毁）。
             *target = None;
-            input::reset();
+            inertia::stop();
+            crate::edit::cancel();
             if gpu.is_none() {
                 *gpu = create_gpu();
             }
@@ -263,7 +264,8 @@ fn apply_cmd(gpu: &mut Option<Gpu>, target: &mut Option<render::Target>, cmd: Cm
         }
         Cmd::ClearSurface => {
             *target = None;
-            input::reset();
+            inertia::stop();
+            crate::edit::cancel();
         }
         Cmd::RenderNow(_) => {
             // 渲染请求由渲染循环统一处理与应答（这里不应到达）。
@@ -421,13 +423,71 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeInitContext<'lo
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_drag_tick() -> i32 {
     // 编辑边缘自动滚动 + 松手惯性（两者都由帧驱动）。
-    edit::tick_scroll() | input::tick_inertia()
+    edit::tick_scroll() | inertia::tick()
 }
 
-/// 触摸事件：`kind` 0=down 1=move 2=up，`x`/`y` 为画布逻辑像素。
+/// 单指按下：按当前工具开始编辑。返回 1 = 进入编辑，0 = 交给平移。
 #[unsafe(no_mangle)]
-pub extern "C" fn yinhe_touch(kind: i32, x: f32, y: f32, pointer: i32) {
-    input::on_touch(kind, x, y, pointer);
+pub extern "C" fn yinhe_edit_begin(x: f32, y: f32) -> i32 {
+    edit::begin(x, y)
+}
+
+/// 单指移动：更新编辑拖拽。返回 1 = 仍在编辑，0 = 已取消（应转为平移）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_edit_update(x: f32, y: f32) -> i32 {
+    edit::update(x, y)
+}
+
+/// 单指释放：提交编辑。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_edit_end(x: f32, y: f32) {
+    edit::end(x, y);
+}
+
+/// 取消当前编辑拖拽（双指介入/模态窗口/切后台）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_edit_cancel() -> i32 {
+    edit::cancel();
+    1
+}
+
+/// Flutter 长按识别完成：把待定选框/空白态推进到移动态/粘贴态。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_edit_long_press() -> i32 {
+    edit::long_press()
+}
+
+/// Flutter 手势应用：先平移，再围绕当前焦点缩放，最后统一 clamp。
+///
+/// `mode`：0=只平移 1=PR 时间轴 2=PR 音高轴 3=AR 时间轴 4=AR 行高。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_viewport_gesture(
+    mode: i32,
+    pan_x: f32,
+    pan_y: f32,
+    scale: f32,
+    focus_x: f32,
+    focus_y: f32,
+) -> i32 {
+    scene::viewport_gesture(mode, pan_x, pan_y, scale, focus_x, focus_y)
+}
+
+/// 按逻辑像素平移视口（鼠标右键拖拽等）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_pan_by(dx: f32, dy: f32) -> i32 {
+    scene::pan_by(dx, dy)
+}
+
+/// 以 Flutter 手势结束速度启动物理惯性（逻辑像素/秒）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_start_fling(vx: f32, vy: f32) {
+    inertia::start(vx, vy);
+}
+
+/// 停止惯性。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_stop_fling() {
+    inertia::stop();
 }
 
 /// 文档/选区世代号（变化时 Dart 刷新轨道/自动化元数据）。
@@ -436,10 +496,11 @@ pub extern "C" fn yinhe_document_generation() -> u32 {
     scene::document_generation()
 }
 
-/// 清空触摸状态并取消编辑（模态窗口打开/App 切后台时调用）。
+/// 取消编辑并停止惯性（模态窗口打开/App 切后台时调用）。
 #[unsafe(no_mangle)]
-pub extern "C" fn yinhe_reset_touch() {
-    input::reset_all();
+pub extern "C" fn yinhe_reset_interaction() {
+    edit::cancel();
+    inertia::stop();
 }
 
 /// 切换视图：0=AR 走带，1=PR 卷帘。
@@ -607,16 +668,10 @@ pub extern "C" fn yinhe_velocity_json() -> *mut std::ffi::c_char {
     to_c_string(scene::velocity_json())
 }
 
-/// 选框拖拽状态：0=无、1=待定（长按中）、2=移动态。
+/// 选框拖拽状态：0=无、1=待定（长按中）、2=移动态、3=空白处长按完成。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_selection_state() -> i32 {
     edit::selection_state()
-}
-
-/// 取消待定选框（未完成长按）。成功 1。
-#[unsafe(no_mangle)]
-pub extern "C" fn yinhe_cancel_selection_pending() -> i32 {
-    edit::cancel_pending()
 }
 
 /// 复制当前选中音符到应用内剪贴板。成功 1。
@@ -831,12 +886,6 @@ pub extern "C" fn yinhe_ar_automation_json() -> *mut std::ffi::c_char {
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_scroll_at(x: f32, y: f32, dx: f32, dy: f32, ctrl: i32) -> i32 {
     scene::scroll_at(x, y, dx, dy, ctrl != 0)
-}
-
-/// 触控板捏合缩放（factor > 1 放大）。
-#[unsafe(no_mangle)]
-pub extern "C" fn yinhe_zoom_at(x: f32, y: f32, factor: f32) -> i32 {
-    scene::zoom_at(x, y, factor)
 }
 
 /// 编辑自动化锚点：track / lane_index(1-based) / tick / value(0..1)。成功 1。

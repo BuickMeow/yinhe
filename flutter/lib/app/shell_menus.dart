@@ -4,7 +4,7 @@ mixin _ShellMenus on _ShellBase {
   /// 长按完成但未移动：选区操作菜单。
   @override
   void _showSelectionMenu() {
-    rust.resetTouch();
+    _resetInteraction();
     showSelectionMenu(
       context,
       onCopy: () {
@@ -21,7 +21,7 @@ mixin _ShellMenus on _ShellBase {
     if (pos == null) {
       return;
     }
-    rust.resetTouch();
+    _resetInteraction();
     final token = ++_lpToken;
     _lpIndicator.value = ctx == null
         ? null
@@ -150,7 +150,7 @@ mixin _ShellMenus on _ShellBase {
   void _showAddTrackDialog() {
     final rows = _tracks.value;
     final last = rows.isNotEmpty ? rows.last : null;
-    rust.resetTouch();
+    _resetInteraction();
     showDialog<void>(
       context: context,
       builder: (_) => AddTracksDialog(
@@ -170,7 +170,7 @@ mixin _ShellMenus on _ShellBase {
   void _showTrackMenu(int track) {
     final rows = _tracks.value;
     final master = track < 0 || track >= rows.length || rows[track].master;
-    rust.resetTouch();
+    _resetInteraction();
     showTrackMenu(
       context,
       onEdit: () => _editTrackInfo(track),
@@ -181,7 +181,7 @@ mixin _ShellMenus on _ShellBase {
 
   /// 打开事件列表（音符/自动化/全局事件穿插）。
   void _showEventList(int track) {
-    rust.resetTouch();
+    _resetInteraction();
     showEventListDialog(
       context,
       grid: _grid,
@@ -235,7 +235,7 @@ mixin _ShellMenus on _ShellBase {
     if (track < 0 || track >= rows.length) {
       return;
     }
-    rust.resetTouch();
+    _resetInteraction();
     final row = rows[track];
     var instruments = const <(int, int)?>[];
     final instPtr = rust.channelInstrumentsJson();

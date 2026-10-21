@@ -164,9 +164,6 @@ abstract class _ShellBase extends State<StudioShell>
   /// AR 长按音轨期间手指是否离开过起始行（移动过又放回原位时不弹菜单）。
   bool _trackDragMoved = false;
 
-  /// 鼠标右键拖拽的 pointer id（无论当前工具，都按手形平移）。
-  int? _panPointer;
-
   /// PR 选框长按：圆环进度（500ms）；完成后进入移动态，未移动则弹菜单。
   Offset? _lpPos;
   DateTime? _lpStartTime;
@@ -200,9 +197,6 @@ abstract class _ShellBase extends State<StudioShell>
   final ValueNotifier<Offset?> _lpPosNotifier = ValueNotifier(null);
   final ValueNotifier<bool> _moveDashed = ValueNotifier(false);
 
-  /// 触控板捏合的上一次累计缩放（用于换算增量）。
-  double _panZoomScale = 1.0;
-
   /// 帧计数（时间码/工程状态降频）。
   int _frameCounter = 0;
 
@@ -216,8 +210,6 @@ abstract class _ShellBase extends State<StudioShell>
   }
 
   // ── 跨模块方法（由各 mixin 实现） ──
-  void _beginRightPan(PointerDownEvent e);
-  void _cancelLongPressWatch();
   int _denPow(int den);
   Future<void> _editDefaultBpm();
   Future<void> _editDefaultTimeSig();
@@ -226,13 +218,17 @@ abstract class _ShellBase extends State<StudioShell>
   Future<void> _exportMidi();
   void _flashSaved();
   String _fmtBpm(double v);
-  void _handleCanvasTap(Offset p);
-  void _handleLongPressEnd();
-  void _handleLongPressMove(Offset p);
-  void _handleLongPressStart(Offset p);
-  void _handlePanZoomUpdate(PointerPanZoomUpdateEvent e);
+  void _handlePointerDown(PointerDownEvent e);
+  void _handlePointerUp(PointerUpEvent e);
+  void _handlePointerCancel(PointerCancelEvent e);
   void _handlePointerSignal(PointerSignalEvent e);
-  bool _isRightMouse(PointerEvent e);
+  void _handleTapUp(TapUpDetails d);
+  void _handleScaleStart(ScaleStartDetails d);
+  void _handleScaleUpdate(ScaleUpdateDetails d);
+  void _handleScaleEnd(ScaleEndDetails d);
+  void _handleLongPressStart(LongPressStartDetails d);
+  void _handleLongPressMove(LongPressMoveUpdateDetails d);
+  void _handleLongPressEnd(LongPressEndDetails d);
   void _loadArAutomation();
   void _loadAutomation();
   void _loadProjectDefaults();
@@ -250,14 +246,13 @@ abstract class _ShellBase extends State<StudioShell>
   void _pushQuantize(String label);
   void _readDocState();
   void _refreshDocumentMeta();
+  void _resetInteraction();
   Future<bool> _saveProject({bool saveAs});
   Future<void> _showLoadProgress();
   Future<bool> _confirmReplace();
   Future<void> _handlePickedFile(String path);
   void _selectEditTrack(int track);
   void _selectTool(int tool);
-  void _sendPanTouch(int kind, Offset p, int pointer);
-  void _sendTouch(int kind, Offset p, int pointer);
   void _setAutoCollapsed(bool collapsed);
   void _setView(int mode);
   void _showAddTrackDialog();
@@ -300,7 +295,7 @@ class _StudioShellState extends _ShellBase
         _snap.value = snap;
       }
       _readOverlay();
-      // 选框状态驱动（Rust 计时）：移动态画虚线；长按中更新圆环进度。
+      // 选框状态驱动：移动态画虚线；长按中更新圆环进度（Flutter long press 推进状态）。
       final selState = rust.selectionState();
       if (_moveDashed.value != (selState == 2)) {
         _moveDashed.value = selState == 2;
@@ -401,7 +396,7 @@ class _StudioShellState extends _ShellBase
       }
     } else {
       // 切后台/失去焦点时触点 up 可能收不到：清空，避免残留成“幽灵手指”。
-      rust.resetTouch();
+      _resetInteraction();
     }
   }
 }

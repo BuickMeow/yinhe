@@ -70,6 +70,30 @@ fn zoom_around_x_preserves_tick() {
     );
 }
 
+/// 双指手势的正确顺序：先把内容按焦点位移平移，再围绕当前焦点缩放。
+/// 这样起手焦点下的 tick 会跟着手指移动到当前焦点，而不是多漂移一段。
+#[test]
+fn pan_then_zoom_keeps_initial_focal_content_under_moved_focal() {
+    let mut base = make_base();
+    base.scroll_x = 123.0;
+    let m0 = 300.0;
+    let tick = base.x_to_tick(m0);
+    let dm = 37.0;
+    let m1 = m0 + dm;
+    let factor = 1.7;
+
+    // 内容跟随手指：先平移。
+    base.scroll_x -= dm;
+    // 再围绕当前焦点缩放。
+    base.zoom_around_x(m1, factor);
+
+    let x_after = base.tick_to_x(tick);
+    assert!(
+        (x_after - m1).abs() < 0.01,
+        "initial focal content should land under moved focal {m1}, got {x_after}"
+    );
+}
+
 #[test]
 fn clamp_scroll_x() {
     let mut base = make_base();

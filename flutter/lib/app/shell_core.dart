@@ -1,6 +1,8 @@
 part of 'studio_shell.dart';
 
 mixin _ShellCore on _ShellBase {
+  Offset? _rightPanLast;
+
   // ── 数据读取 ──
 
   List<double> _readSnapshot() {
@@ -267,10 +269,20 @@ mixin _ShellCore on _ShellBase {
         padding.top -
         42 -
         RulerPainter.height;
+    final p = Offset(x, y);
     if (kind == 0) {
-      _cancelLongPressWatch();
+      // 右键按下：取消编辑/长按，强制进入手形平移。
+      _resetInteraction();
+      _rightPanLast = p;
+    } else if (kind == 1) {
+      final last = _rightPanLast;
+      _rightPanLast = p;
+      if (last != null) {
+        rust.panBy(p.dx - last.dx, p.dy - last.dy);
+      }
+    } else {
+      _rightPanLast = null;
     }
-    _sendPanTouch(kind == 0 ? 3 : (kind == 1 ? 4 : 5), Offset(x, y), -3);
   }
 
   Future<void> _init() async {

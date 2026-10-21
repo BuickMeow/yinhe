@@ -55,17 +55,15 @@ typedef ActionDart = int Function();
 typedef VoidActionNative = ffi.Void Function();
 typedef VoidActionDart = void Function();
 
-/// 清空 Rust 触摸状态（模态窗口/后台切换后调用，避免残留触点）。
-final VoidActionDart resetTouch = bridge
-    .lookupFunction<VoidActionNative, VoidActionDart>('yinhe_reset_touch');
+/// 取消编辑并停止惯性（模态窗口/后台切换后调用）。
+final VoidActionDart resetInteraction = bridge
+    .lookupFunction<VoidActionNative, VoidActionDart>(
+      'yinhe_reset_interaction',
+    );
 
 /// 选框拖拽状态：0=无、1=待定（长按中）、2=移动态、3=空白处长按完成（待粘贴）。
 final ActionDart selectionState = bridge
     .lookupFunction<ActionNative, ActionDart>('yinhe_selection_state');
-
-/// 取消待定选框（未完成长按）。
-final ActionDart cancelSelectionPending = bridge
-    .lookupFunction<ActionNative, ActionDart>('yinhe_cancel_selection_pending');
 
 /// 复制当前选中音符到应用内剪贴板。
 final ActionDart copySelection = bridge

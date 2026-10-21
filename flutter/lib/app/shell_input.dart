@@ -1,78 +1,386 @@
 part of 'studio_shell.dart';
 
+// 视口手势模式（Rust `yinhe_viewport_gesture` 的 mode）。
+const int _gesturePan = 0;
+const int _gesturePrTime = 1;
+const int _gesturePrPitch = 2;
+const int _gestureArTime = 3;
+const int _gestureArLane = 4;
+
 mixin _ShellInput on _ShellBase {
   // ── 触摸 / 手势 ──
 
-  @override
+  final Set<int> _activePointers = <int>{};
+  Offset? _gestureStart;
+  Offset _lastFocal = Offset.zero;
+  double _lastScale = 1.0;
+  bool _gestureEditing = false;
+  bool _gestureWasEditing = false;
+  bool _gestureZoomed = false;
+  bool _gestureMoved = false;
+  bool _pinchModeLocked = false;
+  int _gestureMode = _gesturePan;
+
   bool _isRightMouse(PointerEvent e) =>
       e.kind == PointerDeviceKind.mouse &&
       (e.buttons & kSecondaryMouseButton) != 0;
 
-  /// 右键按下：取消长按/编辑拖拽，强制进入平移（手形语义）。
+  /// 第一根手指按下时立即 begin，保证铅笔/选框没有 100ms 点击延迟。
+  /// 后续的 tap / long press / scale 全部交给 Flutter gesture arena。
   @override
-  void _beginRightPan(PointerDownEvent e) {
-    _panPointer = e.pointer;
-    _cancelLongPressWatch();
-    _sendPanTouch(3, e.localPosition, e.pointer);
-  }
-
-  /// 右键平移事件（3=down 4=move 5=up）。
-  @override
-  void _sendPanTouch(int kind, Offset p, int pointer) {
-    rust.touch(kind, p.dx, p.dy, pointer);
-    SchedulerBinding.instance.scheduleFrame();
-  }
-
-  @override
-  void _sendTouch(int kind, Offset p, int pointer) {
-    // AR 长按拖动音轨/自动化锚点时无需转发 move（避免误平移），但 up/cancel
-    // 必须转发：否则 Rust 触点表永久残留这根手指，下一次单指会被判成双指。
-    if (_dragging && kind != 2) {
+  void _handlePointerDown(PointerDownEvent e) {
+    if (_isRightMouse(e)) {
+      return; // 右键由原生侧走独立平移通道
+    }
+    final emptyBefore = _activePointers.isEmpty;
+    _activePointers.add(e.pointer);
+    if (!emptyBefore) {
+      // 第二根手指：取消正在进行的编辑，交给 Flutter 双指手势。
+      rust.editCancel();
+      _gestureEditing = false;
+      _gestureZoomed = false;
+      _pinchModeLocked = false;
+      _clearLongPressUi();
       return;
     }
-    // 只写入事件；纹理与浮层统一在下一帧同步刷新（帧驱动，输入侧已就地 clamp）。
-    if (kind == 2) {
-      // up 前读取状态与长按上下文（Rust 在 up 时会清理）。
-      final state = rust.selectionState();
-      LongPressContext? ctx;
-      if (state == 3) {
-        final ptr = rust.longPressContextJson();
-        if (ptr != ffi.nullptr) {
-          try {
-            final decoded = jsonDecode(ptr.toDartString());
-            if (decoded is Map<String, dynamic>) {
-              ctx = LongPressContext.fromJson(decoded);
-            }
-          } catch (_) {
-            ctx = null;
-          } finally {
-            rust.freeString(ptr);
-          }
-        }
-      }
-      rust.touch(kind, p.dx, p.dy, pointer);
-      _finishLongPressWatch(state, ctx);
-    } else {
-      rust.touch(kind, p.dx, p.dy, pointer);
-      if (kind == 0) {
-        // 选框内/空白处按下由 Rust 进入 PENDING（500ms 后自行转移动态或粘贴态）。
-        if (rust.selectionState() == 1) {
-          _beginLongPressWatch(p);
-        } else if (_viewMode == kViewArrangement && _rowAt(p) != null) {
-          // AR 音轨面板长按：Rust 不进入 PENDING，圆环由 Dart 计时。
-          _beginLongPressWatch(p, panel: true);
-        }
-      } else if (kind == 1) {
-        _updateLongPressWatch(p);
-      }
+
+    _gestureStart = e.localPosition;
+    _lastFocal = e.localPosition;
+    _lastScale = 1.0;
+    _gestureEditing = false;
+    _gestureWasEditing = false;
+    _gestureZoomed = false;
+    _gestureMoved = false;
+    _pinchModeLocked = false;
+    _gestureMode = _gesturePan;
+    rust.stopFling();
+    _gestureEditing =
+        rust.editBegin(e.localPosition.dx, e.localPosition.dy) == 1;
+    _gestureWasEditing = _gestureEditing;
+    if (rust.selectionState() == 1) {
+      _beginLongPressWatch(e.localPosition);
+    } else if (_viewMode == kViewArrangement &&
+        _rowAt(e.localPosition) != null) {
+      _beginLongPressWatch(e.localPosition, panel: true);
     }
-    // 触摸期间确保有下一帧（拖拽边缘自动滚动/预览依赖帧驱动）。
-    SchedulerBinding.instance.scheduleFrame();
   }
 
-  /// 按下：开始长按计时（圆环转满后进入移动态或粘贴态）。
-  ///
-  /// 判定由 Rust 的 PENDING 状态给出；500ms 计时也在 Rust 帧循环里推进。
+  @override
+  void _handlePointerUp(PointerUpEvent e) {
+    _activePointers.remove(e.pointer);
+    if (_activePointers.isNotEmpty) {
+      return;
+    }
+    _lastFocal = e.localPosition;
+    _pinchModeLocked = false;
+    // PointerUp 带精确落点；编辑在最后一根手指离开时立即提交，避免只靠
+    // ScaleEnd 的“最后一次 move”导致笔尖/音符结束位置偏几像素。
+    if (_gestureEditing) {
+      _finishEditGesture(e.localPosition, moved: _gestureMoved || _lpMoved);
+    }
+  }
+
+  @override
+  void _handlePointerCancel(PointerCancelEvent e) {
+    _activePointers.remove(e.pointer);
+    if (_activePointers.isNotEmpty) {
+      return;
+    }
+    rust.editCancel();
+    _gestureEditing = false;
+    _gestureWasEditing = false;
+    _gestureZoomed = false;
+    _gestureMoved = false;
+    _pinchModeLocked = false;
+    _clearLongPressUi();
+  }
+
+  @override
+  void _handleTapUp(TapUpDetails d) {
+    final p = d.localPosition;
+    if (_gestureEditing) {
+      _finishEditGesture(p, moved: _gestureMoved);
+    } else {
+      _handleCanvasTap(p);
+    }
+    _gestureWasEditing = false;
+    _clearLongPressUi();
+  }
+
+  // ── 双指 / 单指平移缩放 ──
+
+  /// 起手锁定缩放轴：内容区只缩放时间轴；PR 键盘列锁音高，AR 面板锁行高。
+  int _modeAt(Offset p) {
+    final panel = _snap.value.length > 5 ? _snap.value[5] : 0.0;
+    if (_viewMode == kViewPianoroll) {
+      return p.dx < panel ? _gesturePrPitch : _gesturePrTime;
+    }
+    return p.dx < panel ? _gestureArLane : _gestureArTime;
+  }
+
+  void _lockPinch(Offset p) {
+    _pinchModeLocked = true;
+    _gestureMode = _modeAt(p);
+    rust.editCancel();
+    _gestureEditing = false;
+    _gestureZoomed = false;
+    _clearLongPressUi();
+  }
+
+  @override
+  void _handleScaleStart(ScaleStartDetails d) {
+    rust.stopFling();
+    _clearLongPressUi();
+    _lastFocal = d.localFocalPoint;
+    _lastScale = 1.0;
+    _gestureZoomed = false;
+    _gestureMoved = false;
+    _gestureStart = d.localFocalPoint;
+    if (d.pointerCount >= 2) {
+      _lockPinch(d.localFocalPoint);
+    } else {
+      _pinchModeLocked = false;
+      _gestureMode = _gesturePan;
+    }
+  }
+
+  @override
+  void _handleScaleUpdate(ScaleUpdateDetails d) {
+    final focal = d.localFocalPoint;
+    final pinch = d.pointerCount >= 2 || (d.scale - 1.0).abs() > 0.0001;
+    if (pinch) {
+      if (_gestureEditing) {
+        rust.editCancel();
+        _gestureEditing = false;
+      }
+      if (!_pinchModeLocked) {
+        // 从单指平移过渡到双指：以当前焦点为基准重新起手，避免第一帧跳变。
+        _pinchModeLocked = true;
+        _gestureMode = _modeAt(focal);
+        _lastFocal = focal;
+        _lastScale = d.scale;
+        return;
+      }
+      final pan = focal - _lastFocal;
+      final last = _lastScale <= 0.0 ? 1.0 : _lastScale;
+      final scaleDelta = d.scale / last;
+      rust.viewportGesture(
+        _gestureMode,
+        pan.dx,
+        pan.dy,
+        scaleDelta,
+        focal.dx,
+        focal.dy,
+      );
+      if ((scaleDelta - 1.0).abs() > 0.0001) {
+        _gestureZoomed = true;
+      }
+      _lastFocal = focal;
+      _lastScale = d.scale;
+      return;
+    }
+
+    final pan = focal - _lastFocal;
+    if (_gestureEditing) {
+      final active = rust.editUpdate(focal.dx, focal.dy) == 1;
+      if (!active) {
+        // 已选框长按待定被拖动取消：从这次位移开始转为平移。
+        _gestureEditing = false;
+        rust.viewportGesture(
+          _gesturePan,
+          pan.dx,
+          pan.dy,
+          1.0,
+          focal.dx,
+          focal.dy,
+        );
+      }
+    } else {
+      rust.viewportGesture(
+        _gesturePan,
+        pan.dx,
+        pan.dy,
+        1.0,
+        focal.dx,
+        focal.dy,
+      );
+    }
+    if (_gestureStart != null && (focal - _gestureStart!).distance > 3.0) {
+      _gestureMoved = true;
+    }
+    _lastFocal = focal;
+    _lastScale = d.scale;
+  }
+
+  @override
+  void _handleScaleEnd(ScaleEndDetails d) {
+    final wasEditing = _gestureEditing || _gestureWasEditing;
+    if (_gestureEditing) {
+      _finishEditGesture(_lastFocal, moved: _gestureMoved || _lpMoved);
+    } else if (!_gestureZoomed && !wasEditing) {
+      final v = d.velocity.pixelsPerSecond;
+      if (v.distance > 0) {
+        rust.startFling(v.dx, v.dy);
+      }
+    }
+    _gestureEditing = false;
+    _gestureWasEditing = false;
+    _gestureZoomed = false;
+    _gestureMoved = false;
+    _pinchModeLocked = false;
+    _gestureMode = _gesturePan;
+    _clearLongPressUi();
+  }
+
+  // ── 长按（Flutter LongPressGestureRecognizer）──
+
+  @override
+  void _handleLongPressStart(LongPressStartDetails d) {
+    final p = d.localPosition;
+    if (_viewMode == kViewArrangement) {
+      final idx = _rowAt(p);
+      if (idx != null && idx < _tracks.value.length) {
+        // AR 音轨面板：长按拖动排序。
+        _clearLongPressUi();
+        _trackDragMoved = false;
+        setState(() {
+          _dragFrom.value = idx;
+          _dragTo.value = idx;
+          _dragging = true;
+        });
+        return;
+      }
+      if (idx != null && idx >= _tracks.value.length) {
+        // 列表末尾是“添加音轨”占位行，由普通 tap 处理。
+        _clearLongPressUi();
+        return;
+      }
+    }
+    if (!_gestureEditing) {
+      _clearLongPressUi();
+      return;
+    }
+    _markLongPressRecognized();
+    _lpMoved = false;
+    rust.editLongPress();
+  }
+
+  void _markLongPressRecognized() {
+    _lpStartTime = null;
+    _lpProgress.value = 0;
+    // 保留 _lpPos：空白处长按松手时用它定位粘贴菜单。
+  }
+
+  @override
+  void _handleLongPressMove(LongPressMoveUpdateDetails d) {
+    final p = d.localPosition;
+    if (_dragging) {
+      // Master（Conductor）固定在 0 号位，拖动不改目标。
+      if (_dragFrom.value <= 0) {
+        return;
+      }
+      final idx = _rowAt(p);
+      if (idx == null) {
+        return;
+      }
+      if (idx != _dragFrom.value) {
+        _trackDragMoved = true;
+      }
+      if (idx != _dragTo.value) {
+        setState(() => _dragTo.value = idx);
+      }
+      return;
+    }
+    if (!_gestureEditing) {
+      return;
+    }
+    final active = rust.editUpdate(p.dx, p.dy) == 1;
+    if (!active) {
+      _gestureEditing = false;
+      return;
+    }
+    if (_lpPos != null && (p - _lpPos!).distance > 12.0) {
+      _lpMoved = true;
+    }
+    if (_gestureStart != null && (p - _gestureStart!).distance > 3.0) {
+      _gestureMoved = true;
+    }
+  }
+
+  @override
+  void _handleLongPressEnd(LongPressEndDetails d) {
+    if (_dragging) {
+      _finishTrackDrag();
+      return;
+    }
+    if (_gestureEditing) {
+      _finishEditGesture(d.localPosition, moved: _lpMoved);
+    } else {
+      _clearLongPressUi();
+    }
+  }
+
+  void _finishTrackDrag() {
+    final from = _dragFrom.value;
+    final to = _dragTo.value;
+    setState(() {
+      _dragFrom.value = -1;
+      _dragTo.value = -1;
+      _dragging = false;
+    });
+    if (from < 0) {
+      return;
+    }
+    if (from == 0) {
+      // Master 轨只弹信息菜单，不参与排序。
+      _showTrackMenu(0);
+      return;
+    }
+    if (to < 0 || (from == to && !_trackDragMoved)) {
+      // 长按未拖动：弹出音轨信息菜单。
+      _showTrackMenu(from);
+      return;
+    }
+    if (from == to) {
+      // 移动过又放回原位：不排序、不弹菜单。
+      return;
+    }
+    if (rust.moveTrack(from, to) == 1) {
+      _refreshDocumentMeta();
+    }
+  }
+
+  /// 统一的编辑收尾：提交 Rust 编辑，再按长按时的状态弹选区/粘贴菜单。
+  void _finishEditGesture(Offset p, {required bool moved}) {
+    final state = rust.selectionState();
+    LongPressContext? ctx;
+    if (state == 3) {
+      final ptr = rust.longPressContextJson();
+      if (ptr != ffi.nullptr) {
+        try {
+          final decoded = jsonDecode(ptr.toDartString());
+          if (decoded is Map<String, dynamic>) {
+            ctx = LongPressContext.fromJson(decoded);
+          }
+        } catch (_) {
+          ctx = null;
+        } finally {
+          rust.freeString(ptr);
+        }
+      }
+    }
+    final pos = _lpPos ?? p;
+    rust.editEnd(p.dx, p.dy);
+    _gestureEditing = false;
+    _clearLongPressUi();
+    if (state == 2 && !moved) {
+      _showSelectionMenu();
+    } else if (state == 3) {
+      _showPasteMenu(pos, ctx);
+    }
+  }
+
+  /// 按下：开始长按计时（圆环转满后由 Flutter long press 接手）。
   void _beginLongPressWatch(Offset p, {bool panel = false}) {
     _lpPos = p;
     _lpPosNotifier.value = p;
@@ -81,34 +389,6 @@ mixin _ShellInput on _ShellBase {
     _lpPanelRing = panel;
     _lpProgress.value = 0;
     _moveDashed.value = false;
-  }
-
-  void _updateLongPressWatch(Offset p) {
-    if (_lpStartTime == null) {
-      return;
-    }
-    if (_lpPanelRing) {
-      // 面板长按：超过抖动阈值视为拖动（Flutter 长按手势会自行取消）。
-      if (_lpPos != null && (p - _lpPos!).distance > 12) {
-        _clearLongPressUi();
-      }
-      return;
-    }
-    final state = rust.selectionState();
-    if (state == 1) {
-      // 长按未完成就移动：取消（避免误拖）。
-      if ((p - _lpPos!).distance > 12) {
-        _cancelLongPressWatch();
-      }
-    } else if (state == 2) {
-      // 已进入移动态：超过手指抖动阈值才算真的移动（否则松手仍弹复制菜单）。
-      if (_lpPos != null && (p - _lpPos!).distance > 12) {
-        _lpMoved = true;
-      }
-    } else if (state == 0) {
-      // Rust 已把空白长按转成普通框选：只收掉长按 UI，不取消框选。
-      _clearLongPressUi();
-    }
   }
 
   /// 清理长按 UI 状态（不改 Rust 拖拽状态）。
@@ -122,29 +402,18 @@ mixin _ShellInput on _ShellBase {
     _lpPreviewTick = null;
   }
 
+  /// 全量清空 Flutter 手势状态，并让 Rust 取消编辑/惯性。
   @override
-  void _cancelLongPressWatch() {
-    if (_lpStartTime == null) {
-      return;
-    }
+  void _resetInteraction() {
+    rust.resetInteraction();
+    _activePointers.clear();
+    _gestureEditing = false;
+    _gestureWasEditing = false;
+    _gestureZoomed = false;
+    _gestureMoved = false;
+    _pinchModeLocked = false;
+    _gestureMode = _gesturePan;
     _clearLongPressUi();
-    _moveDashed.value = false;
-    rust.cancelSelectionPending();
-  }
-
-  void _finishLongPressWatch(int state, LongPressContext? ctx) {
-    if (_lpStartTime == null) {
-      return;
-    }
-    final moved = _lpMoved;
-    final pos = _lpPos;
-    _clearLongPressUi();
-    // 虚线由 Ticker 依 state 关闭（up 后 state=0）。
-    if (state == 2 && !moved) {
-      _showSelectionMenu();
-    } else if (state == 3) {
-      _showPasteMenu(pos, ctx);
-    }
   }
 
   /// 鼠标滚轮 / 触控板滚动：Ctrl（或 Cmd）+ 滚轮缩放（键盘区缩放音高轴，
@@ -164,21 +433,6 @@ mixin _ShellInput on _ShellBase {
       e.scrollDelta.dy,
       ctrl ? 1 : 0,
     );
-  }
-
-  /// 触控板捏合：按累计缩放的增量缩放（键盘区 → 音高轴）。
-  @override
-  void _handlePanZoomUpdate(PointerPanZoomUpdateEvent e) {
-    final next = e.scale;
-    final last = _panZoomScale;
-    _panZoomScale = next;
-    if (last <= 0 || next <= 0) {
-      return;
-    }
-    final factor = next / last;
-    if ((factor - 1.0).abs() > 0.002) {
-      rust.zoomAt(e.localPosition.dx, e.localPosition.dy, factor);
-    }
   }
 
   int? _rowAt(Offset p) {
@@ -211,7 +465,6 @@ mixin _ShellInput on _ShellBase {
   }
 
   /// AR：点击轨道面板。M/S 按钮切换；末行 + 打开添加音轨；其余进入 PR。
-  @override
   void _handleCanvasTap(Offset p) {
     if (_viewMode != kViewArrangement) {
       return;
@@ -253,77 +506,6 @@ mixin _ShellInput on _ShellBase {
       if (rust.toggleTrackSolo(idx) == 1) {
         _refreshDocumentMeta();
       }
-    }
-  }
-
-  /// AR：长按拖动轨道排序。
-  @override
-  void _handleLongPressStart(Offset p) {
-    if (_viewMode != kViewArrangement) {
-      return;
-    }
-    final idx = _rowAt(p);
-    if (idx == null || idx >= _tracks.value.length) {
-      // 空白处：保留长按 UI，松手时由 _finishLongPressWatch 弹插入菜单。
-      return;
-    }
-    // 长按成立：圆环完成，收起长按 UI（后续由轨道拖动/松手菜单接管）。
-    _clearLongPressUi();
-    _trackDragMoved = false;
-    setState(() {
-      _dragFrom.value = idx;
-      _dragTo.value = idx;
-      _dragging = true;
-    });
-  }
-
-  @override
-  void _handleLongPressMove(Offset p) {
-    // Master（Conductor）固定在 0 号位，拖动不改目标。
-    if (_dragFrom.value <= 0) {
-      return;
-    }
-    final idx = _rowAt(p);
-    if (idx == null) {
-      return;
-    }
-    // 手指到过别的行就算"移动过"（即使最后回到原位，也不弹菜单）。
-    if (idx != _dragFrom.value) {
-      _trackDragMoved = true;
-    }
-    if (idx != _dragTo.value) {
-      setState(() => _dragTo.value = idx);
-    }
-  }
-
-  @override
-  void _handleLongPressEnd() {
-    final from = _dragFrom.value;
-    final to = _dragTo.value;
-    setState(() {
-      _dragFrom.value = -1;
-      _dragTo.value = -1;
-      _dragging = false;
-    });
-    if (from < 0) {
-      return;
-    }
-    if (from == 0) {
-      // Master 轨只弹信息菜单，不参与排序。
-      _showTrackMenu(0);
-      return;
-    }
-    if (to < 0 || (from == to && !_trackDragMoved)) {
-      // 长按未拖动：弹出音轨信息菜单。
-      _showTrackMenu(from);
-      return;
-    }
-    if (from == to) {
-      // 移动过又放回原位：不排序、不弹菜单。
-      return;
-    }
-    if (rust.moveTrack(from, to) == 1) {
-      _refreshDocumentMeta();
     }
   }
 }

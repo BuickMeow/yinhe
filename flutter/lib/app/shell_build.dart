@@ -54,62 +54,20 @@ mixin _ShellBuild on _ShellBase {
                             top: RulerPainter.height,
                             bottom: 0,
                             child: GestureDetector(
-                              behavior: HitTestBehavior.translucent,
-                              onTapUp: (d) => _handleCanvasTap(d.localPosition),
-                              onLongPressStart: (d) =>
-                                  _handleLongPressStart(d.localPosition),
-                              onLongPressMoveUpdate: (d) =>
-                                  _handleLongPressMove(d.localPosition),
-                              onLongPressEnd: (_) => _handleLongPressEnd(),
+                              behavior: HitTestBehavior.opaque,
+                              onTapUp: _handleTapUp,
+                              onLongPressStart: _handleLongPressStart,
+                              onLongPressMoveUpdate: _handleLongPressMove,
+                              onLongPressEnd: _handleLongPressEnd,
+                              onScaleStart: _handleScaleStart,
+                              onScaleUpdate: _handleScaleUpdate,
+                              onScaleEnd: _handleScaleEnd,
                               child: Listener(
                                 behavior: HitTestBehavior.opaque,
-                                onPointerDown: (e) {
-                                  if (_isRightMouse(e)) {
-                                    _beginRightPan(e);
-                                  } else {
-                                    _sendTouch(0, e.localPosition, e.pointer);
-                                  }
-                                },
-                                onPointerMove: (e) {
-                                  if (_panPointer == e.pointer) {
-                                    _sendPanTouch(
-                                      4,
-                                      e.localPosition,
-                                      e.pointer,
-                                    );
-                                  } else {
-                                    _sendTouch(1, e.localPosition, e.pointer);
-                                  }
-                                },
-                                onPointerUp: (e) {
-                                  if (_panPointer == e.pointer) {
-                                    _panPointer = null;
-                                    _sendPanTouch(
-                                      5,
-                                      e.localPosition,
-                                      e.pointer,
-                                    );
-                                  } else {
-                                    _sendTouch(2, e.localPosition, e.pointer);
-                                  }
-                                },
-                                onPointerCancel: (e) {
-                                  if (_panPointer == e.pointer) {
-                                    _panPointer = null;
-                                    _sendPanTouch(
-                                      5,
-                                      e.localPosition,
-                                      e.pointer,
-                                    );
-                                  } else {
-                                    _sendTouch(2, e.localPosition, e.pointer);
-                                  }
-                                },
+                                onPointerDown: _handlePointerDown,
+                                onPointerUp: _handlePointerUp,
+                                onPointerCancel: _handlePointerCancel,
                                 onPointerSignal: _handlePointerSignal,
-                                onPointerPanZoomStart: (_) =>
-                                    _panZoomScale = 1.0,
-                                onPointerPanZoomUpdate: _handlePanZoomUpdate,
-                                onPointerPanZoomEnd: (_) => _panZoomScale = 1.0,
                                 child: Texture(textureId: id),
                               ),
                             ),

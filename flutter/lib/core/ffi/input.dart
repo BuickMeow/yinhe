@@ -1,18 +1,68 @@
 part of '../ffi.dart';
 
-// ── 触摸 ──
+// ── 手势 / 编辑 ──
 
-typedef TouchNative = ffi.Void Function(
+typedef Float2IntNative = ffi.Int32 Function(ffi.Float, ffi.Float);
+typedef Float2IntDart = int Function(double, double);
+
+/// 单指按下：返回 1 = 进入编辑，0 = 交给平移。
+final Float2IntDart editBegin = bridge
+    .lookupFunction<Float2IntNative, Float2IntDart>('yinhe_edit_begin');
+
+/// 单指移动：返回 1 = 仍在编辑，0 = 已取消（转平移）。
+final Float2IntDart editUpdate = bridge
+    .lookupFunction<Float2IntNative, Float2IntDart>('yinhe_edit_update');
+
+typedef Float2VoidNative = ffi.Void Function(ffi.Float, ffi.Float);
+typedef Float2VoidDart = void Function(double, double);
+
+/// 单指释放：提交编辑。
+final Float2VoidDart editEnd = bridge
+    .lookupFunction<Float2VoidNative, Float2VoidDart>('yinhe_edit_end');
+
+/// 取消编辑拖拽。
+final ActionDart editCancel = bridge.lookupFunction<ActionNative, ActionDart>(
+  'yinhe_edit_cancel',
+);
+
+/// Flutter 长按完成：待定选框/空白态推进。
+final ActionDart editLongPress = bridge
+    .lookupFunction<ActionNative, ActionDart>('yinhe_edit_long_press');
+
+typedef ViewportGestureNative = ffi.Int32 Function(
   ffi.Int32,
   ffi.Float,
   ffi.Float,
-  ffi.Int32,
+  ffi.Float,
+  ffi.Float,
+  ffi.Float,
 );
-typedef TouchDart = void Function(int, double, double, int);
+typedef ViewportGestureDart = int Function(
+  int,
+  double,
+  double,
+  double,
+  double,
+  double,
+);
 
-final TouchDart touch = bridge.lookupFunction<TouchNative, TouchDart>(
-  'yinhe_touch',
-);
+/// 应用一次视口手势：mode / panX / panY / scale / focusX / focusY。
+final ViewportGestureDart viewportGesture = bridge
+    .lookupFunction<ViewportGestureNative, ViewportGestureDart>(
+      'yinhe_viewport_gesture',
+    );
+
+/// 按逻辑像素平移视口（鼠标右键）。
+final Float2IntDart panBy = bridge
+    .lookupFunction<Float2IntNative, Float2IntDart>('yinhe_pan_by');
+
+/// 手势结束速度（逻辑像素/秒）启动惯性。
+final Float2VoidDart startFling = bridge
+    .lookupFunction<Float2VoidNative, Float2VoidDart>('yinhe_start_fling');
+
+/// 停止惯性。
+final VoidActionDart stopFling = bridge
+    .lookupFunction<VoidActionNative, VoidActionDart>('yinhe_stop_fling');
 
 // ── 文档 / 工程 ──
 
@@ -50,14 +100,6 @@ typedef ScrollAtDart = int Function(double, double, double, double, int);
 /// 滚轮/触控板：ctrl=1 缩放（键盘区副轴，其余主轴），否则平移。
 final ScrollAtDart scrollAt = bridge
     .lookupFunction<ScrollAtNative, ScrollAtDart>('yinhe_scroll_at');
-
-typedef ZoomAtNative = ffi.Int32 Function(ffi.Float, ffi.Float, ffi.Float);
-typedef ZoomAtDart = int Function(double, double, double);
-
-/// 触控板捏合缩放（factor > 1 放大）。
-final ZoomAtDart zoomAt = bridge.lookupFunction<ZoomAtNative, ZoomAtDart>(
-  'yinhe_zoom_at',
-);
 
 typedef SetAutoNative = ffi.Int32 Function(
   ffi.Int32,

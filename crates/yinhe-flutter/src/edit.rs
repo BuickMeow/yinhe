@@ -1,7 +1,7 @@
 //! 工具手势（移动端子集）：PR 选框/铅笔/橡皮/刷子，AR 选框。
 //!
-//! 手形（平移）由 `input.rs` 的通用手势处理；本模块只处理"编辑类"工具。
-//! 单指手势 → 编辑；双指 → 由 `input.rs` 取消本模块拖拽后进入缩放/平移。
+//! 手形/平移由 Flutter 视口手势处理；本模块只处理"编辑类"工具。
+//! 单指按下 → 编辑；双指 → Flutter 取消本模块拖拽后进入缩放/平移。
 //! 所有提交都在释放时进行一次（一步一 undo），拖拽期间只更新覆盖层预览。
 
 use yinhe_editor_core::quantize::QuantizePreset;
@@ -11,6 +11,8 @@ use crate::scene::{self, RenderScene, Tool, ViewMode};
 
 /// 框选/拖动判定阈值（逻辑像素，与桌面一致）。
 const DRAG_THRESHOLD: f32 = 3.0;
+/// 已选框长按待定时，移动超过此距离就取消待定并转平移。
+const PENDING_CANCEL: f32 = 12.0;
 /// 音符边缘判定（逻辑像素，与桌面一致）。
 const EDGE: f32 = 6.0;
 /// 新音符默认力度（桌面无记忆时回退 100）。
@@ -49,8 +51,6 @@ struct DragState {
     /// 已选框的内容坐标范围（PR: tick/key，AR: tick/row）。
     box_ticks: Option<(f64, f64, u8, u8)>,
     box_rows: Option<(f64, f64, usize, usize)>,
-    /// PENDING 起始时间（500ms 后自动转移动态）。
-    pending_at: Option<std::time::Instant>,
     /// 单音符拖动：目标音符。
     track: u16,
     start_tick: u32,
@@ -77,7 +77,6 @@ impl Default for DragState {
             anchor_row: 0,
             box_ticks: None,
             box_rows: None,
-            pending_at: None,
             track: 0,
             start_tick: 0,
             key: 0,
@@ -101,7 +100,6 @@ static DRAG: std::sync::Mutex<DragState> = std::sync::Mutex::new(DragState {
     anchor_row: 0,
     box_ticks: None,
     box_rows: None,
-    pending_at: None,
     track: 0,
     start_tick: 0,
     key: 0,
@@ -111,11 +109,6 @@ static DRAG: std::sync::Mutex<DragState> = std::sync::Mutex::new(DragState {
     cells: Vec::new(),
     last_cell: (0, 0),
 });
-
-/// 是否有编辑拖拽进行中（`input.rs` 据此决定是否走平移）。
-pub fn is_active() -> bool {
-    DRAG.lock().map(|d| d.kind != kind::NONE).unwrap_or(false)
-}
 
 // ── 几何 ──
 
@@ -225,10 +218,12 @@ fn bump(s: &mut RenderScene) {
 
 // ── 拖拽生命周期 ──
 
-/// 单指按下：按当前工具开始编辑拖拽（不启动则退回平移）。
-pub fn begin(x: f32, y: f32) {
+/// 单指按下：按当前工具开始编辑拖拽。
+///
+/// 返回 1 = 进入编辑；0 = 此处不响应编辑，Flutter 应把它当平移/点击处理。
+pub fn begin(x: f32, y: f32) -> i32 {
     let Ok(mut d) = DRAG.lock() else {
-        return;
+        return 0;
     };
     *d = DragState {
         x0: x,
@@ -238,48 +233,59 @@ pub fn begin(x: f32, y: f32) {
         ..Default::default()
     };
     let Ok(mut s) = scene::scene().lock() else {
-        return;
+        return 0;
     };
     if s.document.is_none() {
-        return;
+        return 0;
     }
     let tool = s.tool;
     if tool == Tool::Pan {
-        return; // 手形：平移交给 input.rs
+        return 0; // 手形：平移交给 Flutter 视口手势
     }
     match s.view_mode {
         ViewMode::Pianoroll => begin_pr(&mut d, &mut s, x, y),
         ViewMode::Arrangement => begin_arr(&mut d, &mut s, x, y),
     }
+    i32::from(d.kind != kind::NONE)
 }
 
 /// 单指移动更新拖拽。
-pub fn update(x: f32, y: f32) {
+///
+/// 返回 1 = 仍在编辑；0 = 已选框待定被移动取消，后续应转平移。
+pub fn update(x: f32, y: f32) -> i32 {
     let Ok(mut d) = DRAG.lock() else {
-        return;
+        return 0;
     };
     if d.kind == kind::NONE {
-        return;
+        return 0;
     }
     d.px = x;
     d.py = y;
+    // 已选框长按未完成就移动：取消待定，交给 Flutter 平移。
+    if d.kind == kind::PENDING {
+        let moved = ((x - d.x0).powi(2) + (y - d.y0).powi(2)).sqrt();
+        if moved >= PENDING_CANCEL {
+            d.kind = kind::NONE;
+            return 0;
+        }
+        return 1;
+    }
     // 空白处长按未完成时开始拖动：转为普通框选，不能把长按当成粘贴。
     let mut started_marquee = false;
     if d.kind == kind::PENDING_PASTE {
         let moved = ((x - d.x0).powi(2) + (y - d.y0).powi(2)).sqrt();
         if moved >= DRAG_THRESHOLD {
             d.kind = kind::MARQUEE;
-            d.pending_at = None;
             started_marquee = true;
         }
     }
     let Ok(mut s) = scene::scene().lock() else {
-        return;
+        return 1;
     };
     if d.kind == kind::PASTE_READY {
         // 长按完成后仍可移动手指微调落点（指示线跟随）。
         update_paste_ready(&mut d, &s, x, y);
-        return;
+        return 1;
     }
     if started_marquee {
         // 新框选一开始就清掉旧选框/旧成员，而不是等拖拽结束才清。
@@ -291,6 +297,7 @@ pub fn update(x: f32, y: f32) {
         bump(&mut s);
     }
     refresh_preview(&mut d, &mut s);
+    1
 }
 
 /// 边缘自动滚动（Flutter 每帧调用）：指针贴近视口边缘时持续滚动视图。
@@ -301,31 +308,11 @@ pub fn tick_scroll() -> i32 {
     if d.kind == kind::NONE {
         return 0;
     }
-    if d.kind == kind::PENDING || d.kind == kind::PENDING_PASTE {
-        let elapsed = d
-            .pending_at
-            .map(|t| t.elapsed())
-            .unwrap_or(std::time::Duration::ZERO);
-        if elapsed < std::time::Duration::from_millis(500) {
-            return 0;
-        }
-        // 长按完成：选框内 → 移动态；空白处 → 等待松手弹粘贴菜单。
-        let pending_paste = d.kind == kind::PENDING_PASTE;
-        d.kind = if pending_paste {
-            kind::PASTE_READY
-        } else {
-            kind::MOVE_BOX
-        };
-        d.pending_at = None;
-        if let Ok(mut s) = scene::scene().lock() {
-            bump(&mut s);
-        }
-        if pending_paste {
-            // 粘贴态不参与边缘自动滚动。
-            return 0;
-        }
-    }
-    if d.kind == kind::PASTE_READY {
+    // 长按待定/粘贴态不自动滚动；长按由 Flutter recognizer 推进。
+    if matches!(
+        d.kind,
+        kind::PENDING | kind::PENDING_PASTE | kind::PASTE_READY
+    ) {
         return 0;
     }
     let Ok(mut s) = scene::scene().lock() else {
@@ -490,21 +477,27 @@ pub fn selection_state() -> i32 {
         .unwrap_or(0)
 }
 
-/// 取消待定（未完成长按就移动/取消）。成功 1。
-pub fn cancel_pending() -> i32 {
+/// Flutter 长按识别完成：待定选框进入移动态，空白处进入粘贴态。成功 1。
+pub fn long_press() -> i32 {
     let Ok(mut d) = DRAG.lock() else {
         return 0;
     };
-    if d.kind != kind::PENDING && d.kind != kind::PENDING_PASTE {
+    let Ok(mut s) = scene::scene().lock() else {
         return 0;
+    };
+    match d.kind {
+        kind::PENDING => {
+            d.kind = kind::MOVE_BOX;
+            bump(&mut s);
+            1
+        }
+        kind::PENDING_PASTE => {
+            d.kind = kind::PASTE_READY;
+            bump(&mut s);
+            1
+        }
+        _ => 0,
     }
-    d.kind = kind::NONE;
-    d.pending_at = None;
-    if let Ok(mut s) = scene::scene().lock() {
-        s.overlay_box = None;
-        bump(&mut s);
-    }
-    1
 }
 
 /// 按最新指针位置与视图刷新拖拽预览（选框/移动框实时吸附量化网格）。
@@ -731,16 +724,14 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
                 return;
             }
             if let Some(rect) = pr_box_at(s, x, y) {
-                // 长按 500ms 后才进入移动（Rust 每帧计时，Flutter 只画圆环）。
+                // 进入长按待定；500ms 后由 Flutter long press 推进到移动态。
                 d.kind = kind::PENDING;
                 d.box_ticks = Some(rect);
-                d.pending_at = Some(std::time::Instant::now());
                 return;
             }
             // 空白处：先进入长按待定。拖动超过阈值会转成普通框选；
             // 按住 500ms 松手则弹出粘贴菜单。
             d.kind = kind::PENDING_PASTE;
-            d.pending_at = Some(std::time::Instant::now());
             s.overlay_box = None;
             bump(s);
         }
@@ -792,12 +783,10 @@ fn begin_arr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
     if let Some(rect) = arr_box_at(s, &geom, x, y) {
         d.kind = kind::PENDING;
         d.box_rows = Some(rect);
-        d.pending_at = Some(std::time::Instant::now());
         return;
     }
     // 空白处：长按待定（同上），拖动后转框选。
     d.kind = kind::PENDING_PASTE;
-    d.pending_at = Some(std::time::Instant::now());
     s.overlay_box = None;
     bump(s);
 }
