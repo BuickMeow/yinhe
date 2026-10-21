@@ -55,6 +55,8 @@ pub struct App {
     // ── Pianoroll (shared GPU resources；视口状态在 Document.edit 内，每文档独立) ──
     pub(crate) render_ctx: RenderContext,
     pub(crate) pianoroll: yinhe_wgpu::InstanceRenderer,
+    /// PR 可见窗口 + key 分桶缓存（与 Flutter 共用 NoteLayerCache）。
+    pub(crate) pr_note_cache: yinhe_wgpu::NoteLayerCache,
     pub(crate) render_thread: Option<yinhe_wgpu::RenderThreadHandle>,
     pub(crate) last_cull_revision: u64, // revision ^ hidden_hash
     pub(crate) last_cull_revision_only: u64, // last revision (for incremental detection)
@@ -335,6 +337,7 @@ impl App {
         let mut app = Self {
             render_ctx,
             pianoroll: yinhe_wgpu::InstanceRenderer::new(device.clone(), queue.clone(), format),
+            pr_note_cache: yinhe_wgpu::NoteLayerCache::new(2),
             render_thread: None,
             last_cull_revision: 0,
             last_cull_revision_only: 0,
@@ -543,6 +546,7 @@ impl App {
         self.float_arr_renderer.clear_cull();
         // 丢弃进行中的后台重建（旧文档数据不得上传到新文档；
         // 后台线程 send 失败自动退出）。
+        self.pr_note_cache = yinhe_wgpu::NoteLayerCache::new(2);
         self.cull_rebuild = None;
         self.last_cull_revision = 0;
         self.last_cull_revision_only = 0;

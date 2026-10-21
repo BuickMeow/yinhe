@@ -700,6 +700,7 @@ impl App {
                     ui,
                     ui.available_size(),
                     &mut self.pianoroll,
+                    &mut self.pr_note_cache,
                     &mut self.render_ctx,
                     self.render_thread.as_ref(),
                     &mut doc.edit.pianoroll_view,

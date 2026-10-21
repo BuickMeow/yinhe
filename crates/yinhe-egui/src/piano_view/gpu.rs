@@ -29,6 +29,7 @@ pub(crate) struct GpuOutput {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn upload_and_prepare(
     pianoroll: &mut yinhe_wgpu::InstanceRenderer,
+    note_cache: &mut yinhe_wgpu::NoteLayerCache,
     // 兼容任务要求的 `render_ctx` 形参（本段不直接使用，仅透传占位）。
     _render_ctx: &mut crate::render_context::RenderContext,
     render_thread: Option<&yinhe_wgpu::RenderThreadHandle>,
@@ -169,45 +170,30 @@ pub(crate) fn upload_and_prepare(
         job.uniforms.exclude_mask = exclude_mask;
         job.exclude_table = exclude_table.to_vec();
         let mut notes_instances = Vec::new();
-        // LOD：缩小到摘要档时复用摘要聚合（与 GPU cull 同一档位公式 / 聚合函数），
-        // 只上传可见摘要段，避免全量音符实例的构建 / 带宽 / 绘制开销。
-        let lod_block = if lod_enabled {
-            yinhe_wgpu::select_summary_level(view.base.pixels_per_tick)
-                .map(|level| yinhe_wgpu::SUMMARY_BLOCK_TICKS[level])
-        } else {
-            None
-        };
-        if let Some(midi) = midi {
-            match lod_block {
-                Some(block) => yinhe_wgpu::build_summary_notes(
-                    &mut notes_instances,
-                    w as f32,
-                    h as f32,
-                    midi,
-                    view,
-                    hidden_notes,
-                    track_visible,
-                    block,
-                ),
-                None => yinhe_wgpu::build_notes(
-                    &mut notes_instances,
-                    w as f32,
-                    h as f32,
-                    midi,
-                    view,
-                    hidden_notes,
-                    track_visible,
-                    track_selected,
-                    Some(selected),
-                ),
+        let notes_cache_key = if let Some(midi) = midi {
+            let source_tag = midi_arc
+                .map(|a| std::sync::Arc::as_ptr(a) as usize as u64)
+                .unwrap_or(0);
+            let changed = note_cache.update(&yinhe_wgpu::NoteCacheParams {
+                midi,
+                view,
+                width: w as f32,
+                height: h as f32,
+                track_visible,
+                track_selected,
+                hidden_notes,
+                hidden_hash: yinhe_wgpu::hash_hidden(hidden_notes),
+                selection: Some(selected),
+                note_revisions,
+                lod_enabled,
+                source_tag,
+            });
+            if changed {
+                notes_instances.extend_from_slice(note_cache.instances());
             }
-        }
-        // 摘要档的选中高亮由 shader 用矩形选区 uniform 实时补位，实例不随选区变化，
-        // 故摘要档不把选区指纹计入缓存 key（避免选区变化导致整层重传）。
-        let sel_hash = if lod_block.is_some() {
-            0
+            note_cache.cache_key()
         } else {
-            selected.state_hash()
+            1
         };
         let mut ghost_instances = Vec::new();
         for &(start_tick, end_tick, key, track) in ghost_notes {
@@ -233,24 +219,6 @@ pub(crate) fn upload_and_prepare(
                 &theme,
             );
         }
-        let (tick_start, tick_end) =
-            view.visible_main_range(view.main_axis_len(w as f32, h as f32));
-        let (key_lo, key_hi) = view.visible_cross_range(view.cross_axis_len(w as f32, h as f32));
-        let hidden_hash = yinhe_wgpu::hash_hidden(hidden_notes);
-        let notes_cache_key = yinhe_wgpu::layer_cache_key(&[
-            tick_start.to_bits(),
-            tick_end.to_bits(),
-            key_lo as u64,
-            key_hi as u64,
-            tv_hash,
-            revision,
-            hidden_hash,
-            // 摘要档位（tick 块宽）决定聚合格，必须进 key，否则换档时不重建。
-            lod_block.unwrap_or(0) as u64,
-            // 选中状态影响原始实例的选中位（填充黑），必须进缓存 key，
-            // 否则框选/清空后 GPU 层因 key 相同跳过后上传。
-            sel_hash,
-        ]);
         let note_layers = vec![
             yinhe_wgpu::NoteLayerData {
                 instances: notes_instances,

@@ -71,6 +71,8 @@ pub struct NoteCacheParams<'a> {
     /// `None` = 不做选中位/选中排序。
     pub selection: Option<&'a Selection>,
     pub note_revisions: &'a [u64; KEY_COUNT],
+    /// 是否允许 LOD 摘要层（桌面设置可关闭；Flutter 固定 true）。
+    pub lod_enabled: bool,
     /// 模型身份：换文档时必须变化，避免新旧模型 revision 恰好相同导致复用旧实例。
     /// Flutter 传模型 Arc 地址；桌面可传 Arc 地址或文档 epoch。
     pub source_tag: u64,
@@ -139,7 +141,11 @@ impl NoteLayerCache {
             self.source_tag = p.source_tag;
         }
         let window = plan_window(p.view, p.width, p.height);
-        let summary_level = select_summary_level(p.view.base.pixels_per_tick);
+        let summary_level = if p.lod_enabled {
+            select_summary_level(p.view.base.pixels_per_tick)
+        } else {
+            None
+        };
         let summary_block = summary_level.map(|i| SUMMARY_BLOCK_TICKS[i]);
         let tv_hash = crate::hash_bools(p.track_visible);
         let hidden_hash = p.hidden_hash;
@@ -315,6 +321,7 @@ mod tests {
             hidden_hash: crate::hash_hidden(hidden),
             selection: Some(selection),
             note_revisions: revisions,
+            lod_enabled: true,
             source_tag: 7,
         })
     }

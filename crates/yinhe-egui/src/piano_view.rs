@@ -51,6 +51,7 @@ pub fn show(
     ui: &mut egui::Ui,
     available: egui::Vec2,
     pianoroll: &mut yinhe_wgpu::InstanceRenderer,
+    note_cache: &mut yinhe_wgpu::NoteLayerCache,
     render_ctx: &mut super::render_context::RenderContext,
     render_thread: Option<&yinhe_wgpu::RenderThreadHandle>,
     view: &mut yinhe_types::PianoRollView,
@@ -285,6 +286,7 @@ pub fn show(
     let mut t_prepare_end = None;
     let (cull_ready, theme) = gpu::upload_and_prepare(
         pianoroll,
+        note_cache,
         render_ctx,
         render_thread,
         view,
