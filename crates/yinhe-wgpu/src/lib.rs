@@ -3,6 +3,7 @@ pub mod automation;
 mod cull;
 pub mod layer;
 pub mod note_buffer_key;
+pub mod note_cache;
 pub mod pianoroll;
 pub mod pipeline;
 pub mod render_thread;
@@ -16,6 +17,7 @@ mod shader_tests;
 
 pub use layer::{LayerSlot, layer_cache_key};
 pub use note_buffer_key::{NoteBufferKey, hash_hidden};
+pub use note_cache::{NoteCacheParams, NoteLayerCache, NoteWindow, plan_window};
 pub use render_thread::{NoteLayerData, RenderJob, RenderThreadHandle};
 pub use renderer::{InstanceRenderer, PrepareTimings};
 pub use util::{hash_bools, hash_f32s, hash_f64s, hash_time_sigs};
@@ -36,6 +38,6 @@ pub use automation::{
 };
 pub use pianoroll::{
     PianorollRenderJob, SUMMARY_BLOCK_TICKS, SUMMARY_MAX_PX, build_all_notes, build_ghost_note,
-    build_key_notes, build_key_summary, build_notes, build_render_job, build_summaries,
-    build_summary, build_summary_notes, select_summary_level,
+    build_key_notes, build_key_notes_in_range, build_key_summary, build_notes, build_render_job,
+    build_summaries, build_summary, build_summary_notes, select_summary_level,
 };

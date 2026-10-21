@@ -7913,6 +7913,7 @@ dependencies = [
  "yinhe-core",
  "yinhe-editor-core",
  "yinhe-midi",
+ "yinhe-theme",
  "yinhe-types",
  "yinhe-wgpu",
  "yinhe-yin",

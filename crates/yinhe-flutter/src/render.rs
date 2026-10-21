@@ -14,9 +14,7 @@ use wgpu::rwh::{AndroidDisplayHandle, AndroidNdkWindowHandle, RawDisplayHandle, 
 use yinhe_core::{Selection, YinModel};
 use yinhe_types::{ArrangementView, PianoRollView};
 use yinhe_wgpu::InstanceRenderer;
-use yinhe_wgpu::pianoroll::{
-    SUMMARY_BLOCK_TICKS, build_notes, build_render_job, build_summary_notes, select_summary_level,
-};
+use yinhe_wgpu::pianoroll::build_render_job;
 use yinhe_wgpu::vertex::{DrawInstance, NoteInstance};
 
 use crate::Gpu;
@@ -35,9 +33,12 @@ pub struct Target {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
     renderer: InstanceRenderer,
-    /// 音符层缓存键：与上次相同则跳过实例重建。
+    /// AR 音符层缓存键：与上次相同则跳过实例重建。
     notes_cache_key: u64,
+    /// AR 音符实例缓冲。
     notes_buf: Vec<NoteInstance>,
+    /// PR 可见窗口 + key 分桶缓存；滚动在 padding 内只改 uniform。
+    pr_note_cache: yinhe_wgpu::NoteLayerCache,
     fps_start: Instant,
     frames: u32,
     /// 仅为保活持有（尺寸在创建时已读取）。
@@ -110,6 +111,7 @@ pub fn create_target(gpu: &Gpu, window: OwnedWindow) -> Option<Target> {
         renderer,
         notes_cache_key: 0,
         notes_buf: Vec::new(),
+        pr_note_cache: yinhe_wgpu::NoteLayerCache::new(VIEW_TAG_PIANOROLL),
         fps_start: Instant::now(),
         frames: 0,
         window,
@@ -167,6 +169,7 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
                 .map(|d| d.edit.track_selected.clone())
                 .unwrap_or_default(),
             s.document.as_ref().map(|d| d.data.revision).unwrap_or(0),
+            s.model_epoch,
         )
     };
     let (
@@ -183,6 +186,7 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
         selection,
         track_selected,
         revision,
+        model_epoch,
     ) = snapshot;
 
     // ── 取帧纹理 ──
@@ -218,7 +222,7 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
                 display_track,
                 &selection,
                 &track_selected,
-                revision,
+                model_epoch,
                 ppq,
                 w,
                 h,
@@ -233,6 +237,7 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
                 None,
                 num_tracks,
                 revision,
+                model_epoch,
                 ppq,
                 w,
                 h,
@@ -303,7 +308,7 @@ fn upload_pianoroll(
     display_track: Option<usize>,
     selection: &Selection,
     track_selected: &HashSet<u16>,
-    revision: u64,
+    model_epoch: u64,
     ppq: u32,
     w: f32,
     h: f32,
@@ -315,66 +320,33 @@ fn upload_pianoroll(
     t.renderer.upload_track_colors(&job.track_colors);
     t.renderer.upload_selection(&job.selection);
 
-    let lod = select_summary_level(view.base.pixels_per_tick);
-    let mut key = view.render_hash();
-    key ^= (w.to_bits() as u64) << 17;
-    key ^= (h.to_bits() as u64) << 29;
-    key ^= (lod.map_or(0u64, |l| l as u64 + 1)) << 41;
-    key ^= selection.state_hash().rotate_left(7);
-    // 文档修订号 + 音符数：编辑后（视图未变）也必须重建音符层。
-    key ^= revision.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    key ^= model.note_count.rotate_left(11);
-    key ^= model.note_count.rotate_left(11);
-    for (i, vis) in visible.iter().enumerate() {
-        if *vis {
-            key ^= 0x9E37_79B9_7F4A_7C15u64.wrapping_mul(i as u64 + 1);
-        }
-    }
-    for t_sel in track_selected {
-        key ^= 0x2545_F491_4F6C_DD1Du64.wrapping_mul(u64::from(*t_sel) + 1);
-    }
-    let key = yinhe_wgpu::layer_cache_key(&[key, VIEW_TAG_PIANOROLL]);
-    if key != t.notes_cache_key {
-        t.notes_buf.clear();
-        let hidden = HashSet::new();
-        match lod {
-            Some(level) => build_summary_notes(
-                &mut t.notes_buf,
-                w,
-                h,
-                model,
-                view,
-                &hidden,
-                &visible,
-                SUMMARY_BLOCK_TICKS[level],
-            ),
-            None => {
-                build_notes(
-                    &mut t.notes_buf,
-                    w,
-                    h,
-                    model,
-                    view,
-                    &hidden,
-                    &visible,
-                    track_selected,
-                    Some(selection),
-                );
-            }
-        }
+    let hidden = HashSet::new();
+    let changed = t.pr_note_cache.update(&yinhe_wgpu::NoteCacheParams {
+        midi: model,
+        view,
+        width: w,
+        height: h,
+        track_visible: &visible,
+        track_selected,
+        hidden_notes: &hidden,
+        selection: Some(selection),
+        note_revisions: &model.note_revisions,
+        source_tag: model_epoch,
+    });
+    let key = t.pr_note_cache.cache_key();
+    if changed {
         log::info!(
-            "PR 音符层重建: {} 实例 rev={} sel={} vis0={:?}",
-            t.notes_buf.len(),
-            revision,
+            "PR 音符窗口更新: {} 实例 sel={} epoch={}",
+            t.pr_note_cache.instances().len(),
             selection.len(),
-            visible.first()
+            model_epoch
         );
-        t.notes_cache_key = key;
     }
     t.renderer.ensure_layers(2);
-    let notes_buf = &t.notes_buf;
-    t.renderer
-        .upload_note_layer(1, key, |out| out.extend_from_slice(notes_buf));
+    let cache = &t.pr_note_cache;
+    t.renderer.upload_note_layer(1, key, |out| {
+        out.extend_from_slice(cache.instances());
+    });
 }
 
 /// AR 视图：uniforms + 轨道布局（offsets/行高）+ 音符层上传。
@@ -388,6 +360,7 @@ fn upload_arrangement(
     display_track: Option<usize>,
     num_tracks: usize,
     revision: u64,
+    model_epoch: u64,
     ppq: u32,
     w: f32,
     h: f32,
@@ -445,6 +418,7 @@ fn upload_arrangement(
     key ^= (w.to_bits() as u64) << 17;
     key ^= (h.to_bits() as u64) << 29;
     key ^= revision.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    key ^= model_epoch.wrapping_mul(0xD6E8_FEB8_6659_FD93);
     key ^= model.note_count.rotate_left(11);
     for (i, vis) in visible.iter().enumerate() {
         if *vis {

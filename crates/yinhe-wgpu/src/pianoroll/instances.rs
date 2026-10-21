@@ -359,6 +359,39 @@ pub fn build_all_notes(
     (all, offsets)
 }
 
+/// Build note instances for one key within a tick window.
+///
+/// This is the bucket primitive for the mobile/desktop visible-note cache:
+/// the caller keeps one `Vec<NoteInstance>` per key and only rebuilds the keys
+/// whose window/dependency hash changed.
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+pub fn build_key_notes_in_range(
+    midi: &dyn NoteSource,
+    key: u8,
+    tick_start: u32,
+    tick_end: u32,
+    hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
+    track_visible: &[bool],
+    selected: Option<&Selection>,
+    track_selected: Option<&std::collections::HashSet<u16>>,
+) -> Vec<NoteInstance> {
+    let mut out = Vec::new();
+    if tick_end <= tick_start {
+        return out;
+    }
+    build_key_instances(
+        &mut out,
+        midi,
+        key,
+        track_visible,
+        hidden_notes,
+        Some((f64::from(tick_start), f64::from(tick_end))),
+        selected,
+        track_selected,
+    );
+    out
+}
+
 /// Build note instances for a single key bucket (for incremental upload).
 /// Same filtering logic as `build_all_notes` but scoped to one key.
 pub fn build_key_notes(

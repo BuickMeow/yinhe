@@ -136,6 +136,9 @@ pub struct RenderScene {
     pub source_path: Option<String>,
     /// 文档/选区世代号：每次 refresh_snapshot 自增，Dart 据此刷新轨道/自动化浮层。
     pub doc_generation: u32,
+    /// 文档模型身份：只在替换文档（打开/新建）时自增，编辑不变。
+    /// 供音符层缓存判断“这是不是一个全新的模型”，避免 revision 重置后复用旧实例。
+    pub model_epoch: u64,
 }
 
 /// 工具（移动端子集：与桌面 `tools_panel::Tool` 的编号对齐）。
@@ -172,6 +175,7 @@ impl Default for RenderScene {
             document: None,
             source_path: None,
             doc_generation: 0,
+            model_epoch: 0,
         }
     }
 }
@@ -1022,6 +1026,7 @@ fn apply_document(doc: Document, min_ticks: f64) {
     };
     s.document = Some(doc);
     s.source_path = source_path;
+    s.model_epoch = s.model_epoch.wrapping_add(1);
     s.pr_view = pr_view;
     s.arr_view = arr_view;
     s.view_mode = ViewMode::Arrangement;

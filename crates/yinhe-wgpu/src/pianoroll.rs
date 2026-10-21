@@ -3,7 +3,8 @@ mod prepare;
 pub mod summary;
 
 pub use instances::{
-    build_all_notes, build_ghost_note, build_key_notes, build_notes, build_summary_notes,
+    build_all_notes, build_ghost_note, build_key_notes, build_key_notes_in_range, build_notes,
+    build_summary_notes,
 };
 pub use prepare::{PianorollRenderJob, build_render_job};
 pub use summary::{
