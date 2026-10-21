@@ -17,6 +17,11 @@ const PENDING_CANCEL: f32 = 12.0;
 const EDGE: f32 = 6.0;
 /// 新音符默认力度（桌面无记忆时回退 100）。
 const DEFAULT_VELOCITY: u8 = 100;
+/// 铅笔“单音符精调选择 → 二次拖动移动”功能开关。
+///
+/// 交互与实现先保留（[`kind::PENCIL_PICK`]），当前暂时关闭：铅笔压在已有音符上
+/// 仍按原行为新建音符。后续要启用时只改这里。
+const PENCIL_PICK_ENABLED: bool = false;
 
 /// 拖拽类型。
 mod kind {
@@ -1210,7 +1215,10 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
             d.anchor_key = anchor_key;
             // 铅笔压在已有音符上：不新建。未选中 → 进入精调选择（松手选中）；
             // 已选中 → 直接进入单音符移动，再松手提交。
-            if let Some((track, start, end, key, _)) = hit_note(s, &geom, x, y) {
+            // 当前功能暂时关闭，但交互实现保留在下方分支。
+            if PENCIL_PICK_ENABLED
+                && let Some((track, start, end, key, _)) = hit_note(s, &geom, x, y)
+            {
                 if note_is_selected(s, track, start, end, key) {
                     d.kind = kind::NOTE_MOVE;
                     d.track = track;
@@ -1637,7 +1645,7 @@ fn commit_note_move(
     };
     if moved_note.is_some() {
         // 铅笔移动后选区跟随新位置，下一笔仍可直接拖这个音符。
-        if matches!(s.tool, Tool::Pencil) {
+        if PENCIL_PICK_ENABLED && matches!(s.tool, Tool::Pencil) {
             let new_key = (i32::from(d.key) + dk).clamp(0, 127) as u8;
             let new_start = (i64::from(d.start_tick) + dt).max(0) as u32;
             let new_end = new_start.saturating_add(d.end_tick.saturating_sub(d.start_tick));
