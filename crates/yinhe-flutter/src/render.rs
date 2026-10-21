@@ -170,6 +170,7 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
                 .unwrap_or_default(),
             s.document.as_ref().map(|d| d.data.revision).unwrap_or(0),
             s.model_epoch,
+            s.preview.clone(),
         )
     };
     let (
@@ -187,6 +188,7 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
         track_selected,
         revision,
         model_epoch,
+        preview,
     ) = snapshot;
 
     // ── 取帧纹理 ──
@@ -226,6 +228,7 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
                 ppq,
                 w,
                 h,
+                &preview,
             ),
             ViewMode::Arrangement => upload_arrangement(
                 t,
@@ -312,6 +315,7 @@ fn upload_pianoroll(
     ppq: u32,
     w: f32,
     h: f32,
+    preview: &crate::scene::DragPreview,
 ) {
     let visible = effective_visible(track_visible, display_track);
     upload_pianoroll_decor(t, view, &model.tempo_map, ppq, w, h);
@@ -320,7 +324,6 @@ fn upload_pianoroll(
     t.renderer.upload_track_colors(&job.track_colors);
     t.renderer.upload_selection(&job.selection);
 
-    let hidden = HashSet::new();
     let changed = t.pr_note_cache.update(&yinhe_wgpu::NoteCacheParams {
         midi: model,
         view,
@@ -328,7 +331,8 @@ fn upload_pianoroll(
         height: h,
         track_visible: &visible,
         track_selected,
-        hidden_notes: &hidden,
+        hidden_notes: preview.hidden.as_ref(),
+        hidden_hash: preview.hidden_hash,
         selection: Some(selection),
         note_revisions: &model.note_revisions,
         source_tag: model_epoch,
@@ -342,10 +346,26 @@ fn upload_pianoroll(
             model_epoch
         );
     }
-    t.renderer.ensure_layers(2);
+    t.renderer.ensure_layers(3);
     let cache = &t.pr_note_cache;
     t.renderer.upload_note_layer(1, key, |out| {
         out.extend_from_slice(cache.instances());
+    });
+
+    // ghost 层：独立强制更新键（preview.revision 每次 ghost 变化自增）。
+    // 结束时即使 ghost 为空也会上传一次空层，清掉上一帧预览。
+    let ghost_key = yinhe_wgpu::layer_cache_key(&[
+        VIEW_TAG_PIANOROLL ^ 0xA5A5_5A5A,
+        preview.revision,
+        u64::from(preview.selected),
+        model_epoch,
+    ])
+    .max(1);
+    let theme = yinhe_theme::current_gpu_theme();
+    t.renderer.upload_note_layer(2, ghost_key, |out| {
+        for &(start, end, key, track) in preview.ghost.iter() {
+            yinhe_wgpu::build_ghost_note(out, start, end, key, track, preview.selected, &theme);
+        }
     });
 }
 
@@ -441,10 +461,14 @@ fn upload_arrangement(
         );
         t.notes_cache_key = key;
     }
-    t.renderer.ensure_layers(2);
+    t.renderer.ensure_layers(3);
     let notes_buf = &t.notes_buf;
     t.renderer
         .upload_note_layer(1, key, |out| out.extend_from_slice(notes_buf));
+    // AR 没有 PR ghost；切回 AR 时清掉上一视图的 ghost 层，避免残留。
+    let empty_ghost_key =
+        yinhe_wgpu::layer_cache_key(&[VIEW_TAG_ARRANGEMENT ^ 0xA5A5_5A5A, model_epoch]).max(1);
+    t.renderer.upload_note_layer(2, empty_ghost_key, |_| {});
 }
 
 // ── 装饰层（wgpu decor，画在音符下层，像素级对齐桌面视觉）──

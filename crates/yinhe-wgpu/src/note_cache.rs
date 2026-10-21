@@ -66,6 +66,8 @@ pub struct NoteCacheParams<'a> {
     pub track_visible: &'a [bool],
     pub track_selected: &'a HashSet<u16>,
     pub hidden_notes: &'a HashSet<(u16, u32, u8)>,
+    /// `hidden_notes` 的预计算 hash；避免每帧重扫大选区隐藏集合。
+    pub hidden_hash: u64,
     /// `None` = 不做选中位/选中排序。
     pub selection: Option<&'a Selection>,
     pub note_revisions: &'a [u64; KEY_COUNT],
@@ -140,7 +142,7 @@ impl NoteLayerCache {
         let summary_level = select_summary_level(p.view.base.pixels_per_tick);
         let summary_block = summary_level.map(|i| SUMMARY_BLOCK_TICKS[i]);
         let tv_hash = crate::hash_bools(p.track_visible);
-        let hidden_hash = crate::hash_hidden(p.hidden_notes);
+        let hidden_hash = p.hidden_hash;
         // 摘要层不带选中位，也不做选中轨道排序；selection/track_selected
         // 变化只需要改 uniform，不应让整层摘要重建。
         let selection_hash = if summary_block.is_none() {
@@ -310,6 +312,7 @@ mod tests {
             track_visible: visible,
             track_selected: tracks,
             hidden_notes: hidden,
+            hidden_hash: crate::hash_hidden(hidden),
             selection: Some(selection),
             note_revisions: revisions,
             source_tag: 7,

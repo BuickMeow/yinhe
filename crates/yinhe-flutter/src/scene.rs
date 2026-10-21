@@ -3,6 +3,7 @@
 //! 渲染线程只读快照；Flutter 手势（经 FFI 下发）与首帧初始化写视口。
 //! 不跨线程借用 `Document`，避免把 editor-core 的内部可变性带进渲染线程。
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use yinhe_core::YinModel;
@@ -94,6 +95,62 @@ pub struct TrackInfoLite {
 }
 
 /// 渲染线程与 Flutter 视口手势共享的场景数据。
+/// PR 拖拽预览：ghost 音符 + 原位置隐藏集合。
+///
+/// `Arc` 让渲染线程快照只做引用计数，不逐帧深拷贝（大选区时尤其重要）。
+#[derive(Clone, Default)]
+pub struct DragPreview {
+    pub ghost: Arc<Vec<(u32, u32, u8, u16)>>,
+    pub hidden: Arc<HashSet<(u16, u32, u8)>>,
+    /// hidden 集合的稳定 hash；只在 hidden 真正变化时重算。
+    pub hidden_hash: u64,
+    /// ghost 每次变化自增，供 ghost 层缓存键使用。
+    pub revision: u64,
+    /// ghost 使用选中态配色（选择工具拖动）还是原色（铅笔/刷子）。
+    pub selected: bool,
+}
+
+impl DragPreview {
+    pub fn set_ghost(&mut self, ghost: Vec<(u32, u32, u8, u16)>, selected: bool) {
+        self.ghost = Arc::new(ghost);
+        self.selected = selected;
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    pub fn set_hidden_arc(&mut self, hidden: Arc<HashSet<(u16, u32, u8)>>) {
+        if Arc::ptr_eq(&self.hidden, &hidden) {
+            return;
+        }
+        let hash = yinhe_wgpu::hash_hidden(hidden.as_ref());
+        if hash == self.hidden_hash && hidden.len() == self.hidden.len() {
+            return;
+        }
+        self.hidden = hidden;
+        self.hidden_hash = hash;
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    pub fn clear_hidden(&mut self) {
+        if self.hidden.is_empty() && self.hidden_hash == 0 {
+            return;
+        }
+        self.hidden = Arc::new(HashSet::new());
+        self.hidden_hash = 0;
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    pub fn clear(&mut self) {
+        let had = !self.ghost.is_empty() || !self.hidden.is_empty() || self.selected;
+        self.ghost = Arc::new(Vec::new());
+        self.hidden = Arc::new(HashSet::new());
+        self.hidden_hash = 0;
+        self.selected = false;
+        if had {
+            self.revision = self.revision.wrapping_add(1);
+        }
+    }
+}
+
 pub struct RenderScene {
     /// 当前文档模型（None = 无文档，渲染清屏）。
     pub model: Option<Arc<YinModel>>,
@@ -123,6 +180,8 @@ pub struct RenderScene {
     pub tool: Tool,
     /// 当前编辑轨（AR 进入 PR 的轨；工具写入目标）。
     pub active_track: Option<usize>,
+    /// PR 拖拽 ghost/hidden 预览。
+    pub preview: DragPreview,
     /// 非播放态的播放光标位置（点击跳转用，tick）。
     pub cursor_tick: f64,
     /// 覆盖层（选框/预览）修订号与内容（画布内容逻辑坐标）。
@@ -168,6 +227,7 @@ impl Default for RenderScene {
             display_track: None,
             tool: Tool::Select,
             active_track: None,
+            preview: DragPreview::default(),
             cursor_tick: 0.0,
             overlay_rev: 0,
             overlay_box: None,
