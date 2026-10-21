@@ -1281,6 +1281,13 @@ pub extern "C" fn yinhe_set_audio_settings(
     1
 }
 
+/// 是否允许新音符/移动后的音符与其他音符重叠。关闭后复用桌面端拦截策略。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_allow_overlapping_notes(allow: i32) -> i32 {
+    scene::set_allow_overlapping_notes(allow != 0);
+    1
+}
+
 /// 工程元数据 JSON（堆分配）。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_project_meta_json() -> *mut std::ffi::c_char {

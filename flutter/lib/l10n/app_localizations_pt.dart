@@ -28,6 +28,9 @@ class AppLocalizationsPt extends AppLocalizations {
   String get edit => 'Editar';
 
   @override
+  String get allowOverlappingNotes => 'Permitir notas sobrepostas';
+
+  @override
   String get copy => 'Copiar';
 
   @override

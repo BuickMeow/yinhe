@@ -1050,7 +1050,11 @@ pub fn set_project_meta(name: String, artist: String, description: String, ppq: 
 /// 把文档写入场景快照（演示与文件加载共用）。
 ///
 /// `min_ticks`：演示内容生成时模型 tick_length 尚未刷新，用它兜底总长。
-fn apply_document(doc: Document, min_ticks: f64) {
+fn apply_document(mut doc: Document, min_ticks: f64) {
+    // 移动端编辑设置与桌面同名配置对齐（当前只有重叠开关）。
+    doc.edit.allow_overlapping_notes = crate::audio::settings().allow_overlapping_notes;
+    doc.edit.overlap_blocked_behavior =
+        yinhe_editor_core::audio_settings::OverlapBlockedBehavior::ReplaceTarget;
     // 初始缩放只看实际内容（不含尾部 64 小节，避免打开时音符变小）；
     // 可视总长额外预留 64 小节（与桌面 follow::total_ticks_padded 一致）。
     let content_ticks = (doc.data.model.tick_length as f64).max(min_ticks).max(1.0);
@@ -1384,6 +1388,20 @@ pub fn save_audio_settings() {
     write_settings();
 }
 
+/// 音符重叠设置（复用桌面 `allow_overlapping_notes`）：立即应用到当前文档，
+/// 新建工程/打开工程时由 [`apply_document`] 再次同步。
+pub fn set_allow_overlapping_notes(allow: bool) {
+    crate::audio::set_allow_overlapping_notes(allow);
+    if let Ok(mut s) = scene().lock()
+        && let Some(doc) = s.document.as_mut()
+    {
+        doc.edit.allow_overlapping_notes = allow;
+        doc.edit.overlap_blocked_behavior =
+            yinhe_editor_core::audio_settings::OverlapBlockedBehavior::ReplaceTarget;
+    }
+    save_audio_settings();
+}
+
 fn write_settings() {
     let Some(dir) = files_dir_slot().lock().ok().and_then(|g| g.clone()) else {
         return;
@@ -1400,8 +1418,11 @@ fn write_settings() {
     text.push_str(&format!("ui_language={}\n", ui_language()));
     let a = crate::audio::settings();
     text.push_str(&format!(
-        "max_voices={}\nbuffer_size={}\nignore_velocity={}\n",
-        a.max_voices, a.buffer_size, a.ignore_velocity
+        "max_voices={}\nbuffer_size={}\nignore_velocity={}\nallow_overlapping_notes={}\n",
+        a.max_voices,
+        a.buffer_size,
+        a.ignore_velocity,
+        if a.allow_overlapping_notes { 1 } else { 0 }
     ));
     if let Err(e) = std::fs::write(format!("{dir}/settings.txt"), text) {
         log::error!("设置写入失败: {e}");
@@ -1416,9 +1437,11 @@ fn load_settings() {
     let Ok(text) = std::fs::read_to_string(format!("{dir}/settings.txt")) else {
         return;
     };
-    let mut max_voices = crate::audio::AudioSettings::default().max_voices;
-    let mut buffer_size = crate::audio::AudioSettings::default().buffer_size;
-    let mut ignore_velocity = crate::audio::AudioSettings::default().ignore_velocity;
+    let defaults = crate::audio::AudioSettings::default();
+    let mut max_voices = defaults.max_voices;
+    let mut buffer_size = defaults.buffer_size;
+    let mut ignore_velocity = defaults.ignore_velocity;
+    let mut allow_overlapping_notes = defaults.allow_overlapping_notes;
     let mut soundfonts: Vec<crate::audio::SoundfontEntry> = Vec::new();
     let mut language = String::new();
     for line in text.lines() {
@@ -1442,6 +1465,8 @@ fn load_settings() {
             buffer_size = v.trim().parse().unwrap_or(buffer_size);
         } else if let Some(v) = line.strip_prefix("ignore_velocity=") {
             ignore_velocity = v.trim().parse().unwrap_or(ignore_velocity);
+        } else if let Some(v) = line.strip_prefix("allow_overlapping_notes=") {
+            allow_overlapping_notes = v.trim() != "0";
         }
     }
     if !language.is_empty() {
@@ -1452,6 +1477,7 @@ fn load_settings() {
         crate::audio::set_soundfonts(soundfonts);
     }
     crate::audio::set_settings(max_voices, buffer_size, ignore_velocity);
+    crate::audio::set_allow_overlapping_notes(allow_overlapping_notes);
     crate::soundfont_archive::cleanup();
 }
 

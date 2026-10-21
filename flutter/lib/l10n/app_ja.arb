@@ -6,6 +6,7 @@
   "back": "戻る",
   "delete": "削除",
   "edit": "編集",
+  "allowOverlappingNotes": "音符の重なりを許可",
   "paste": "ペースト",
   "close": "閉じる",
   "add": "追加",

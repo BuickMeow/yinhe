@@ -28,6 +28,9 @@ class AppLocalizationsTr extends AppLocalizations {
   String get edit => 'Düzen';
 
   @override
+  String get allowOverlappingNotes => 'Notların üst üste gelmesine izin ver';
+
+  @override
   String get copy => 'Kopyala';
 
   @override

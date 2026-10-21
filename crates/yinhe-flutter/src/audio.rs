@@ -41,6 +41,8 @@ pub struct AudioSettings {
     pub max_voices: u32,
     pub buffer_size: u32,
     pub ignore_velocity: u8,
+    /// 允许新音符/移动后的音符与其他音符重叠（关闭后复用桌面端拦截策略）。
+    pub allow_overlapping_notes: bool,
 }
 
 /// “自动复音”的平台默认值。
@@ -62,6 +64,7 @@ impl Default for AudioSettings {
             max_voices: 512,
             buffer_size: 2048,
             ignore_velocity: 1,
+            allow_overlapping_notes: true,
         }
     }
 }
@@ -175,10 +178,12 @@ pub fn settings() -> AudioSettings {
 /// 应用音频设置：复音/忽略力度立即下发；buffer_size 下次音频初始化生效。
 pub fn set_settings(max_voices: u32, buffer_size: u32, ignore_velocity: u8) {
     if let Ok(mut g) = settings_slot().lock() {
+        let allow_overlapping_notes = g.allow_overlapping_notes;
         *g = AudioSettings {
             max_voices,
             buffer_size,
             ignore_velocity,
+            allow_overlapping_notes,
         };
     }
     let Some(mut guard) = lock_audio() else {
@@ -190,12 +195,19 @@ pub fn set_settings(max_voices: u32, buffer_size: u32, ignore_velocity: u8) {
     apply_runtime_settings(st);
 }
 
+/// 音符编辑设置（设置页回显；与音频参数共用 settings 快照）。
+pub fn set_allow_overlapping_notes(allow: bool) {
+    if let Ok(mut g) = settings_slot().lock() {
+        g.allow_overlapping_notes = allow;
+    }
+}
+
 /// 音频设置 JSON（设置页回显）。
 pub fn settings_json() -> String {
     let s = settings();
     format!(
-        "{{\"max_voices\":{},\"buffer_size\":{},\"ignore_velocity\":{}}}",
-        s.max_voices, s.buffer_size, s.ignore_velocity
+        "{{\"max_voices\":{},\"buffer_size\":{},\"ignore_velocity\":{},\"allow_overlapping_notes\":{}}}",
+        s.max_voices, s.buffer_size, s.ignore_velocity, s.allow_overlapping_notes
     )
 }
 

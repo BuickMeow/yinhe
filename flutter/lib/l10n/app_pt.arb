@@ -6,6 +6,7 @@
   "back": "Voltar",
   "delete": "Excluir",
   "edit": "Editar",
+  "allowOverlappingNotes": "Permitir notas sobrepostas",
   "paste": "Colar",
   "close": "Fechar",
   "add": "Adicionar",

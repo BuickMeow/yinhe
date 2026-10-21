@@ -28,6 +28,9 @@ class AppLocalizationsJa extends AppLocalizations {
   String get edit => '編集';
 
   @override
+  String get allowOverlappingNotes => '音符の重なりを許可';
+
+  @override
   String get copy => 'コピー';
 
   @override

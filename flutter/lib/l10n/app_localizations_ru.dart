@@ -28,6 +28,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get edit => 'Правка';
 
   @override
+  String get allowOverlappingNotes => 'Разрешить перекрытие нот';
+
+  @override
   String get copy => 'Копировать';
 
   @override

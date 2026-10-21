@@ -158,6 +158,15 @@ final SetAudioSettingsDart setAudioSettings = bridge
       'yinhe_set_audio_settings',
     );
 
+typedef SetAllowOverlapNative = ffi.Int32 Function(ffi.Int32);
+typedef SetAllowOverlapDart = int Function(int);
+
+/// 是否允许新音符/移动后的音符与其他音符重叠（桌面同款设置）。
+final SetAllowOverlapDart setAllowOverlappingNotes = bridge
+    .lookupFunction<SetAllowOverlapNative, SetAllowOverlapDart>(
+      'yinhe_set_allow_overlapping_notes',
+    );
+
 /// 工程元数据 JSON（回显）。
 final CStrDart projectMetaJson = bridge.lookupFunction<CStrNative, CStrDart>(
   'yinhe_project_meta_json',

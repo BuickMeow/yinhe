@@ -158,6 +158,12 @@ abstract class AppLocalizations {
   /// **'Edit'**
   String get edit;
 
+  /// No description provided for @allowOverlappingNotes.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow overlapping notes'**
+  String get allowOverlappingNotes;
+
   /// No description provided for @copy.
   ///
   /// In en, this message translates to:

@@ -6,6 +6,7 @@
   "back": "Geri",
   "delete": "Sil",
   "edit": "Düzen",
+  "allowOverlappingNotes": "Notların üst üste gelmesine izin ver",
   "paste": "Yapıştır",
   "close": "Kapat",
   "add": "Ekle",

@@ -50,6 +50,7 @@ class _SettingsViewState extends State<SettingsView> {
   int _maxVoices = 512;
   int _bufferSize = 2048;
   int _ignoreVelocity = 1;
+  bool _allowOverlappingNotes = true;
 
   @override
   void initState() {
@@ -140,6 +141,8 @@ class _SettingsViewState extends State<SettingsView> {
         _bufferSize = (json['buffer_size'] as num?)?.toInt() ?? _bufferSize;
         _ignoreVelocity =
             (json['ignore_velocity'] as num?)?.toInt() ?? _ignoreVelocity;
+        _allowOverlappingNotes =
+            json['allow_overlapping_notes'] as bool? ?? _allowOverlappingNotes;
       });
     } catch (_) {
       // 回退默认值。
@@ -155,6 +158,11 @@ class _SettingsViewState extends State<SettingsView> {
       _ignoreVelocity = ignoreVelocity ?? _ignoreVelocity;
     });
     rust.setAudioSettings(_maxVoices, _bufferSize, _ignoreVelocity);
+  }
+
+  void _setAllowOverlappingNotes(bool value) {
+    setState(() => _allowOverlappingNotes = value);
+    rust.setAllowOverlappingNotes(value ? 1 : 0);
   }
 
   @override
@@ -173,6 +181,7 @@ class _SettingsViewState extends State<SettingsView> {
                   child: switch (_page) {
                     0 => _soundFontPage(),
                     1 => _audioPage(),
+                    2 => _editingPage(),
                     _ => _languagePage(),
                   },
                 ),
@@ -208,7 +217,8 @@ class _SettingsViewState extends State<SettingsView> {
         const SizedBox(height: 52),
         _sideItem(Icons.piano, l.soundfonts, 0),
         _sideItem(Icons.volume_up, l.audio, 1),
-        _sideItem(Icons.language, l.language, 2),
+        _sideItem(Icons.edit, l.edit, 2),
+        _sideItem(Icons.language, l.language, 3),
       ],
     );
   }
@@ -242,6 +252,49 @@ class _SettingsViewState extends State<SettingsView> {
           ],
         ),
       ),
+    );
+  }
+
+  /// 编辑页：当前只复用桌面的“允许重叠音符”开关。
+  Widget _editingPage() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          l.edit,
+          style: TextStyle(
+            color: YinheTheme.text,
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          decoration: BoxDecoration(
+            color: YinheTheme.controlBg,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: SwitchListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+            title: Text(
+              l.allowOverlappingNotes,
+              style: TextStyle(color: YinheTheme.text, fontSize: 14),
+            ),
+            subtitle: Text(
+              L10n.isZh
+                  ? '关闭后，新建或移动的音符不能与已有音符重叠'
+                  : 'When off, new or moved notes cannot overlap existing notes',
+              style: TextStyle(
+                color: YinheTheme.textSecondary,
+                fontSize: 12,
+              ),
+            ),
+            value: _allowOverlappingNotes,
+            activeThumbColor: YinheTheme.accent,
+            onChanged: _setAllowOverlappingNotes,
+          ),
+        ),
+      ],
     );
   }
 

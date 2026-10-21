@@ -28,6 +28,9 @@ class AppLocalizationsCs extends AppLocalizations {
   String get edit => 'Úpravy';
 
   @override
+  String get allowOverlappingNotes => 'Povolit překrývání not';
+
+  @override
   String get copy => 'Kopírovat';
 
   @override

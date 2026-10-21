@@ -6,6 +6,7 @@
   "back": "뒤로",
   "delete": "삭제",
   "edit": "편집",
+  "allowOverlappingNotes": "음표 겹침 허용",
   "paste": "붙여넣기",
   "close": "닫기",
   "add": "추가",

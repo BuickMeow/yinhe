@@ -6,6 +6,7 @@
   "back": "Retour",
   "delete": "Supprimer",
   "edit": "Édition",
+  "allowOverlappingNotes": "Autoriser le chevauchement des notes",
   "paste": "Coller",
   "close": "Fermer",
   "add": "Ajouter",

@@ -28,6 +28,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get edit => '修改';
 
   @override
+  String get allowOverlappingNotes => '允许重叠音符';
+
+  @override
   String get copy => '复制';
 
   @override
@@ -512,6 +515,9 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get edit => '編輯';
 
   @override
+  String get allowOverlappingNotes => '允許重疊音符';
+
+  @override
   String get copy => '複製';
 
   @override
@@ -994,6 +1000,9 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get edit => '編輯';
+
+  @override
+  String get allowOverlappingNotes => '允許重疊音符';
 
   @override
   String get copy => '複製';

@@ -28,6 +28,9 @@ class AppLocalizationsIt extends AppLocalizations {
   String get edit => 'Modifica';
 
   @override
+  String get allowOverlappingNotes => 'Consenti note sovrapposte';
+
+  @override
   String get copy => 'Copia';
 
   @override

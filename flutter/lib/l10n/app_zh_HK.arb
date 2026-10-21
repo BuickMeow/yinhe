@@ -6,6 +6,7 @@
   "back": "返回",
   "delete": "刪除",
   "edit": "編輯",
+  "allowOverlappingNotes": "允許重疊音符",
   "paste": "貼上",
   "close": "關閉",
   "add": "新增",

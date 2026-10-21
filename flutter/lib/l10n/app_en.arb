@@ -6,6 +6,7 @@
   "back": "Back",
   "delete": "Delete",
   "edit": "Edit",
+  "allowOverlappingNotes": "Allow overlapping notes",
   "copy": "Copy",
   "paste": "Paste",
   "close": "Close",

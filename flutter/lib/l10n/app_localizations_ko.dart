@@ -28,6 +28,9 @@ class AppLocalizationsKo extends AppLocalizations {
   String get edit => '편집';
 
   @override
+  String get allowOverlappingNotes => '음표 겹침 허용';
+
+  @override
   String get copy => '복사';
 
   @override

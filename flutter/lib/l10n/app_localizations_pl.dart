@@ -28,6 +28,9 @@ class AppLocalizationsPl extends AppLocalizations {
   String get edit => 'Edycja';
 
   @override
+  String get allowOverlappingNotes => 'Zezwalaj na nakładające się nuty';
+
+  @override
   String get copy => 'Kopiuj';
 
   @override

@@ -28,6 +28,9 @@ class AppLocalizationsFr extends AppLocalizations {
   String get edit => 'Édition';
 
   @override
+  String get allowOverlappingNotes => 'Autoriser le chevauchement des notes';
+
+  @override
   String get copy => 'Copier';
 
   @override

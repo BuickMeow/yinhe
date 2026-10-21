@@ -6,6 +6,7 @@
   "back": "Indietro",
   "delete": "Elimina",
   "edit": "Modifica",
+  "allowOverlappingNotes": "Consenti note sovrapposte",
   "paste": "Incolla",
   "close": "Chiudi",
   "add": "Aggiungi",
