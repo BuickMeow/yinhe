@@ -141,6 +141,9 @@ mixin _ShellCore on _ShellBase {
   /// 避免小文件一闪而过。返回的 state：0=无 1=加载中 2=完成 3=失败。
   @override
   Future<void> _showLoadProgress() async {
+    // 先占住“UI 未就绪”，避免加载恰好在 120ms 延迟内完成时，
+    // generation 刷新已经跑过、标志却没置位，导致对话框永不关闭。
+    _loadUiSettled = false;
     await Future<void>.delayed(const Duration(milliseconds: 120));
     if (!mounted) {
       return;
@@ -153,15 +156,38 @@ mixin _ShellCore on _ShellBase {
       state = 0;
     }
     if (state != 1 && state != 3) {
+      _loadUiSettled = true;
       return;
+    }
+    if (state == 3) {
+      // 失败直接显示错误，不需要再等 UI 刷新。
+      _loadUiSettled = true;
     }
     await showTaskProgressDialog(
       context,
-      poll: () => rust.takeString(rust.loadStatusJson()),
+      poll: _loadProgressJson,
       determinate: true,
       title: l.loadingFile,
       failureTitle: l.loadFailed,
     );
+  }
+
+  /// 加载状态轮询：Rust 已到 2（完成）但 Flutter 还没刷新完时，暂时伪装成
+  /// 仍在加载，避免进度框先关、画布后出现。
+  String _loadProgressJson() {
+    final raw = rust.takeString(rust.loadStatusJson());
+    if (_loadUiSettled) {
+      return raw;
+    }
+    try {
+      final map = jsonDecode(raw) as Map<String, dynamic>;
+      if ((map['state'] as num?)?.toInt() == 2) {
+        return '{"state":1,"progress":1,"error":""}';
+      }
+    } catch (_) {
+      // 保持原始 JSON，让对话框按错误/完成处理。
+    }
+    return raw;
   }
 
   Future<void> _onNativeCall(MethodCall call) async {

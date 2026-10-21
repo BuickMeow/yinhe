@@ -49,9 +49,20 @@ pub fn run(args: &[String]) -> ExitCode {
 
 fn build(debug: bool, install: bool) -> Result<(), ExitCode> {
     let root = workspace_root();
-    let jni = root.join("flutter/android/app/src/main/jniLibs/arm64-v8a");
+    let jni_libs = root.join("flutter/android/app/src/main/jniLibs");
+    let jni = jni_libs.join("arm64-v8a");
+
+    // 清掉上次构建的 .so：避免 cargo-ndk 旧输出（以及历史遗留的
+    // jniLibs/arm64-v8a/arm64-v8a 嵌套目录）被 Gradle 合并进 APK。
+    if jni.exists() {
+        std::fs::remove_dir_all(&jni).map_err(|e| {
+            eprintln!("清理 jniLibs 失败: {e}");
+            ExitCode::FAILURE
+        })?;
+    }
 
     // 1) Rust 核心库（cargo-ndk）。
+    // 注意 -o 必须传 jniLibs 根目录：cargo-ndk 会自己追加 ABI 子目录。
     let mut c = cmd::cargo();
     c.args([
         "ndk",
@@ -60,7 +71,8 @@ fn build(debug: bool, install: bool) -> Result<(), ExitCode> {
         "-P",
         "35",
         "-o",
-        jni.to_str()
+        jni_libs
+            .to_str()
             .unwrap_or("flutter/android/app/src/main/jniLibs"),
         "build",
     ]);

@@ -188,6 +188,10 @@ abstract class _ShellBase extends State<StudioShell>
   /// 正在等待压缩包打开结果（轮询 Rust 状态）。
   bool _archivePolling = false;
   bool _archiveBusy = false;
+
+  /// 加载进度框是否已等到 Flutter 首次刷新/首帧渲染；未完成时先不关闭，
+  /// 避免“进度条消失后画布还空白、轨道/自动化逐个出现”。
+  bool _loadUiSettled = true;
   final ValueNotifier<double> _lpProgress = ValueNotifier(0);
   final ValueNotifier<Offset?> _lpPosNotifier = ValueNotifier(null);
   final ValueNotifier<bool> _moveDashed = ValueNotifier(false);
@@ -321,6 +325,14 @@ class _StudioShellState extends _ShellBase
         if (generation != _docGeneration) {
           _docGeneration = generation;
           _refreshDocumentMeta();
+          if (!_loadUiSettled) {
+            // 先让这一帧把轨道/自动化/纹理画出来，再放进度框关闭。
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                _loadUiSettled = true;
+              }
+            });
+          }
         }
         _readDocState();
         _updateTimecode();
