@@ -406,6 +406,49 @@ pub fn set_soundfonts_json(json: &str) -> i32 {
     1
 }
 
+/// 提交一组音符听觉预览（PR 点击/拖动/铅笔）。
+///
+/// 预览走音频引擎内独立的 PreviewEngine：不占主引擎 voice、不移动播放位置。
+/// 力度阈值在这里统一过滤，和真正播放的 `ignore_velocity` 一致。
+pub fn preview_notes(notes: Vec<yinhe_audio::PreviewNoteParams>, exclusive: bool) {
+    let threshold = settings().ignore_velocity;
+    let notes: Vec<yinhe_audio::PreviewNoteParams> = notes
+        .into_iter()
+        .filter(|n| n.velocity > threshold)
+        .collect();
+    if notes.is_empty() {
+        stop_preview();
+        return;
+    }
+    if !ensure_audio() {
+        return;
+    }
+    let Some(mut guard) = lock_audio() else {
+        return;
+    };
+    let Some(st) = guard.as_mut() else {
+        return;
+    };
+    // 新组提交前清掉“松手 Stop”标志，避免渲染线程把新组当成旧组丢掉。
+    st.handle.handle.clear_preview_stop();
+    st.handle
+        .handle
+        .send(AudioCommand::PreviewNotes { notes, exclusive });
+}
+
+/// 停止全部音符预览（松手、取消拖拽、双指介入）。
+pub fn stop_preview() {
+    let Some(mut guard) = lock_audio() else {
+        return;
+    };
+    let Some(st) = guard.as_mut() else {
+        return;
+    };
+    // 快速路径：即使普通命令通道满，松手也能立即停止。
+    st.handle.handle.request_preview_stop();
+    st.handle.handle.send(AudioCommand::PreviewStop);
+}
+
 /// 音符编辑（移动/增删/改长度）：只重建 audible_notes，不中断播放。
 pub fn update_notes(model: Arc<YinModel>) {
     let Some(mut guard) = lock_audio() else {

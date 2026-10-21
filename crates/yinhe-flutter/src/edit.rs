@@ -36,8 +36,8 @@ mod kind {
     pub const PASTE_READY: u8 = 10;
 }
 
-/// 整体拖动音符：`(track, start_tick, end_tick)`（key 由外层桶给出）。
-type DragNote = (u16, u32, u32);
+/// 整体拖动音符：`(track, start_tick, end_tick, velocity)`（key 由外层桶给出）。
+type DragNote = (u16, u32, u32, u8);
 /// 整体拖动音符按 key 分桶。
 type DragByKey = Vec<Vec<DragNote>>;
 /// 原位置隐藏键：`(track, start_tick, key)`。
@@ -70,6 +70,8 @@ struct DragState {
     drag_hidden: Option<std::sync::Arc<std::collections::HashSet<HiddenKey>>>,
     /// 整体拖动上一次 ghost 的 `(dt, dk, 视图 hash)`；未变化时跳过重建。
     last_ghost: Option<(i64, i32, u64)>,
+    /// 预览音上次播放时的 key 偏移，避免同一位置重复触发。
+    preview_last_dk: i32,
     /// 铅笔：吸附后起点与当前终点。
     start_f: f64,
     cur_end: f64,
@@ -99,6 +101,7 @@ impl Default for DragState {
             drag_by_key: Vec::new(),
             drag_hidden: None,
             last_ghost: None,
+            preview_last_dk: 0,
             start_f: 0.0,
             cur_end: 0.0,
             cells: Vec::new(),
@@ -126,6 +129,7 @@ static DRAG: std::sync::Mutex<DragState> = std::sync::Mutex::new(DragState {
     drag_by_key: Vec::new(),
     drag_hidden: None,
     last_ghost: None,
+    preview_last_dk: 0,
     start_f: 0.0,
     cur_end: 0.0,
     cells: Vec::new(),
@@ -254,6 +258,7 @@ pub fn begin(x: f32, y: f32) -> i32 {
         py: y,
         ..Default::default()
     };
+    crate::audio::stop_preview();
     let Ok(mut s) = scene::scene().lock() else {
         return 0;
     };
@@ -290,6 +295,7 @@ pub fn update(x: f32, y: f32) -> i32 {
         let moved = ((x - d.x0).powi(2) + (y - d.y0).powi(2)).sqrt();
         if moved >= PENDING_CANCEL {
             d.kind = kind::NONE;
+            crate::audio::stop_preview();
             return 0;
         }
         return 1;
@@ -588,6 +594,87 @@ fn build_erase_preview(s: &mut RenderScene, d: &DragState, x: f32, y: f32) {
     apply_preview(s, d, ghost, true);
 }
 
+/// 播放单个音符预览（`duration=0` = 持续到 stop）。
+fn preview_note(
+    s: &RenderScene,
+    track: u16,
+    key: u8,
+    velocity: u8,
+    target_tick: u32,
+    duration_ticks: u32,
+) {
+    let Some(doc) = s.document.as_ref() else {
+        return;
+    };
+    let Some(t) = doc.data.model.tracks.get(track as usize) else {
+        return;
+    };
+    crate::audio::preview_notes(
+        vec![yinhe_audio::PreviewNoteParams {
+            channel: t.global_channel(),
+            key,
+            velocity,
+            target_tick,
+            duration_ticks,
+        }],
+        true,
+    );
+}
+
+fn note_velocity(s: &RenderScene, track: u16, start_tick: u32, key: u8) -> Option<u8> {
+    let doc = s.document.as_ref()?;
+    doc.data
+        .model
+        .key_notes(key)
+        .iter()
+        .find(|n| n.track == track && n.start_tick == start_tick)
+        .map(|n| n.velocity)
+}
+
+/// 选区整体移动的听觉预览：只取当前视口内目标音符，避免超大选区全量送进音频线程。
+fn preview_group(s: &RenderScene, d: &DragState, dt: i64, dk: i32) {
+    if s.view_mode != ViewMode::Pianoroll {
+        return;
+    }
+    let (lw, lh) = crate::logical_size();
+    let (tick_lo, tick_hi) = s
+        .pr_view
+        .visible_main_range(s.pr_view.main_axis_len(lw, lh));
+    let (key_lo, key_hi) = s
+        .pr_view
+        .visible_cross_range(s.pr_view.cross_axis_len(lw, lh));
+    let Some(doc) = s.document.as_ref() else {
+        return;
+    };
+    let src_lo = (i32::from(key_lo) - dk).clamp(0, 127) as usize;
+    let src_hi = (i32::from(key_hi) - dk).clamp(0, 127) as usize;
+    let mut notes = Vec::new();
+    for src_key in src_lo..=src_hi {
+        let new_key = (src_key as i32 + dk).clamp(0, 127) as u8;
+        if new_key < key_lo || new_key > key_hi {
+            continue;
+        }
+        for &(track, start, end, velocity) in &d.drag_by_key[src_key] {
+            let new_start = (i64::from(start) + dt).max(0) as u32;
+            let new_end = new_start.saturating_add(end.saturating_sub(start));
+            if f64::from(new_start) >= tick_hi || f64::from(new_end) <= tick_lo {
+                continue;
+            }
+            let Some(t) = doc.data.model.tracks.get(track as usize) else {
+                continue;
+            };
+            notes.push(yinhe_audio::PreviewNoteParams {
+                channel: t.global_channel(),
+                key: new_key,
+                velocity,
+                target_tick: new_start,
+                duration_ticks: end.saturating_sub(start),
+            });
+        }
+    }
+    crate::audio::preview_notes(notes, true);
+}
+
 fn apply_preview(
     s: &mut RenderScene,
     d: &DragState,
@@ -728,7 +815,7 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                     let src_hi = (i32::from(key_hi) - dk).clamp(0, 127) as usize;
                     for src_key in src_lo..=src_hi {
                         let new_key = (src_key as i32 + dk).clamp(0, 127) as u8;
-                        for &(track, start, end) in &d.drag_by_key[src_key] {
+                        for &(track, start, end, _vel) in &d.drag_by_key[src_key] {
                             let new_start = (i64::from(start) + dt).max(0) as u32;
                             let new_end = new_start.saturating_add(end.saturating_sub(start));
                             if f64::from(new_start) >= tick_hi || f64::from(new_end) <= tick_lo {
@@ -738,6 +825,10 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                         }
                     }
                     apply_preview(s, d, std::mem::take(&mut ghost), true);
+                    if dk != d.preview_last_dk {
+                        d.preview_last_dk = dk;
+                        preview_group(s, d, dt, dk);
+                    }
                 }
             } else {
                 let Some((t0, _, _, _)) = d.box_rows else {
@@ -765,7 +856,7 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                     let max_row = s.num_tracks.saturating_sub(1) as i32;
                     let mut ghost = Vec::new();
                     for (key, bucket) in d.drag_by_key.iter().enumerate() {
-                        for &(track, start, end) in bucket {
+                        for &(track, start, end, _vel) in bucket {
                             let new_start = (i64::from(start) + dt).max(0) as u32;
                             let new_end = new_start.saturating_add(end.saturating_sub(start));
                             let new_track = (i32::from(track) + dtr).clamp(0, max_row) as u16;
@@ -847,6 +938,12 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                 vec![(new_start, new_start + len, new_key, d.track)],
                 true,
             );
+            if dk != d.preview_last_dk {
+                d.preview_last_dk = dk;
+                if let Some(velocity) = note_velocity(s, d.track, d.start_tick, d.key) {
+                    preview_note(s, d.track, new_key, velocity, new_start, len);
+                }
+            }
         }
         kind::NOTE_RESIZE => {
             let geom = PrGeom::new(&s.pr_view);
@@ -908,6 +1005,7 @@ pub fn end(x: f32, y: f32) {
     bump(&mut s);
     drop(s);
     drop(d);
+    crate::audio::stop_preview();
     // 解锁后再设置播放光标 / 重载音频（锁内二次加锁会死锁）。
     if let Some(tick) = click_tick {
         scene::set_play_cursor(tick);
@@ -934,6 +1032,7 @@ pub fn cancel() {
         s.overlay_cells.clear();
         bump(&mut s);
     }
+    crate::audio::stop_preview();
 }
 
 // ── PR 起始分发 ──
@@ -966,6 +1065,16 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
                 d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::from([(
                     track, start_tick, key,
                 )])));
+                if let Some(velocity) = note_velocity(s, track, start_tick, key) {
+                    preview_note(
+                        s,
+                        track,
+                        key,
+                        velocity,
+                        start_tick,
+                        end_tick.saturating_sub(start_tick),
+                    );
+                }
                 return;
             }
             if let Some(rect) = pr_box_at(s, x, y) {
@@ -976,6 +1085,8 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
                 let (by_key, hidden) = collect_selected_notes(s);
                 d.drag_by_key = by_key;
                 d.drag_hidden = Some(std::sync::Arc::new(hidden));
+                d.preview_last_dk = 0;
+                preview_group(s, d, 0, 0);
                 return;
             }
             // 空白处：先进入长按待定。拖动超过阈值会转成普通框选；
@@ -994,6 +1105,21 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
             d.anchor_tick = anchor_tick;
             d.anchor_key = anchor_key;
             pencil_box(s, d, &geom);
+            if let Some(track) = write_track(s) {
+                let velocity = s
+                    .document
+                    .as_ref()
+                    .map(|doc| doc.edit.default_velocity(track as u16))
+                    .unwrap_or(DEFAULT_VELOCITY);
+                preview_note(
+                    s,
+                    track as u16,
+                    d.key,
+                    velocity,
+                    d.start_f.max(0.0) as u32,
+                    0,
+                );
+            }
         }
         Tool::Eraser => {
             d.kind = kind::ERASE;
@@ -1113,7 +1239,7 @@ fn collect_selected_notes(s: &RenderScene) -> (DragByKey, std::collections::Hash
                     continue;
                 }
                 if seen.insert((n.track, n.start_tick, key)) {
-                    by_key[key as usize].push((n.track, n.start_tick, n.end_tick));
+                    by_key[key as usize].push((n.track, n.start_tick, n.end_tick, n.velocity));
                     hidden.insert((n.track, n.start_tick, key));
                 }
             }
