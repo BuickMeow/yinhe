@@ -977,6 +977,8 @@ pub fn end(x: f32, y: f32) {
         return;
     };
     let moved = ((x - d.x0).powi(2) + (y - d.y0).powi(2)).sqrt() >= DRAG_THRESHOLD;
+    // 单击音符/选区时保留一次 gate 预览，不立刻 Stop（移动端音频启动有延迟）。
+    let keep_gate = !moved && matches!(k, kind::NOTE_MOVE | kind::NOTE_RESIZE | kind::PENDING);
     let mut click_tick: Option<f64> = None;
     let edited = match k {
         kind::MARQUEE => {
@@ -998,6 +1000,26 @@ pub fn end(x: f32, y: f32) {
         kind::PASTE_READY => None,
         _ => None,
     };
+    // 铅笔释放：先停持续音，提交后补一次目标 gate，确保快速点放也能听到声音。
+    let mut pencil_preview: Option<yinhe_audio::PreviewNoteParams> = None;
+    if k == kind::PENCIL
+        && edited.is_some()
+        && let Some(track) = write_track(&s)
+    {
+        let start = d.start_f.round().max(0.0) as u32;
+        let end = d.cur_end.round().max(d.start_f + 1.0) as u32;
+        if let Some(doc) = s.document.as_ref()
+            && let Some(t) = doc.data.model.tracks.get(track)
+        {
+            pencil_preview = Some(yinhe_audio::PreviewNoteParams {
+                channel: t.global_channel(),
+                key: d.key,
+                velocity: DEFAULT_VELOCITY,
+                target_tick: start,
+                duration_ticks: end.saturating_sub(start),
+            });
+        }
+    }
     d.kind = kind::NONE;
     s.preview.clear();
     s.overlay_box = None;
@@ -1005,7 +1027,12 @@ pub fn end(x: f32, y: f32) {
     bump(&mut s);
     drop(s);
     drop(d);
-    crate::audio::stop_preview();
+    if !keep_gate {
+        crate::audio::stop_preview();
+    }
+    if let Some(note) = pencil_preview {
+        crate::audio::preview_notes(vec![note], true);
+    }
     // 解锁后再设置播放光标 / 重载音频（锁内二次加锁会死锁）。
     if let Some(tick) = click_tick {
         scene::set_play_cursor(tick);
@@ -1106,16 +1133,12 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
             d.anchor_key = anchor_key;
             pencil_box(s, d, &geom);
             if let Some(track) = write_track(s) {
-                let velocity = s
-                    .document
-                    .as_ref()
-                    .map(|doc| doc.edit.default_velocity(track as u16))
-                    .unwrap_or(DEFAULT_VELOCITY);
+                // 与 commit_pencil 的默认力度保持一致，避免试听和落音符力度不同。
                 preview_note(
                     s,
                     track as u16,
                     d.key,
-                    velocity,
+                    DEFAULT_VELOCITY,
                     d.start_f.max(0.0) as u32,
                     0,
                 );
