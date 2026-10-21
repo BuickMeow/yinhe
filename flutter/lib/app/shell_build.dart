@@ -237,6 +237,8 @@ mixin _ShellBuild on _ShellBase {
       quantizeLabel: _quantizeLabel,
       ppq: _ppq,
       tool: _tool,
+      mainTool: _mainTool,
+      quickTool: _quickTool,
       tracks: _tracks.value,
       activeTrack: _activeTrack ?? -1,
       showAllTracks: _showAllTracks,
@@ -256,6 +258,7 @@ mixin _ShellBuild on _ShellBase {
         _pushQuantize(v);
       },
       onTool: _selectTool,
+      onQuickTool: _selectQuickTool,
       onUndo: _undo,
       onRedo: _redo,
       onSelectTrack: _selectEditTrack,

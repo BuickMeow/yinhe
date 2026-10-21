@@ -113,6 +113,13 @@ abstract class _ShellBase extends State<StudioShell>
   int _toolPr = 0;
   int _toolAr = 0;
 
+  /// 两个工具按钮各自记住的槽位工具。点击某个槽位会把它设为当前工具，
+  /// 但不会改写另一个槽位，因此两个工具按钮互相独立。
+  int _mainToolPr = 0;
+  int _mainToolAr = 0;
+  int _quickToolPr = 0;
+  int _quickToolAr = 0;
+
   /// 量化档位显示（桌面：每文档瞬态，默认自动）。
   String _quantizeLabel = '自动';
 
@@ -253,6 +260,9 @@ abstract class _ShellBase extends State<StudioShell>
   Future<void> _handlePickedFile(String path);
   void _selectEditTrack(int track);
   void _selectTool(int tool);
+  void _selectQuickTool(int tool);
+  int get _mainTool;
+  int get _quickTool;
   void _setAutoCollapsed(bool collapsed);
   void _setView(int mode);
   void _showAddTrackDialog();

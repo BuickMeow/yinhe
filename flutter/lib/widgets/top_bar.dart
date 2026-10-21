@@ -18,6 +18,8 @@ class TopBar extends StatelessWidget {
     required this.quantizeLabel,
     required this.ppq,
     required this.tool,
+    required this.mainTool,
+    required this.quickTool,
     required this.tracks,
     required this.activeTrack,
     required this.showAllTracks,
@@ -31,6 +33,7 @@ class TopBar extends StatelessWidget {
     required this.onToggleTimecode,
     required this.onQuantize,
     required this.onTool,
+    required this.onQuickTool,
     required this.onUndo,
     required this.onRedo,
     required this.onSelectTrack,
@@ -52,6 +55,12 @@ class TopBar extends StatelessWidget {
   final String quantizeLabel;
   final double ppq;
   final int tool;
+
+  /// 主工具按钮自己记住的工具。
+  final int mainTool;
+
+  /// 快捷工具组自己记住的工具；不随主工具 popup 改变。
+  final int quickTool;
   final List<TrackRow> tracks;
 
   /// 当前编辑音轨（PR 顶部显示它；-1 = 无）。
@@ -69,6 +78,7 @@ class TopBar extends StatelessWidget {
   final VoidCallback onToggleTimecode;
   final ValueChanged<String> onQuantize;
   final ValueChanged<int> onTool;
+  final ValueChanged<int> onQuickTool;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
   final ValueChanged<int> onSelectTrack;
@@ -309,12 +319,12 @@ class TopBar extends StatelessWidget {
 
   /// 快捷工具组：PR 选框/铅笔，AR 选框/手形。
   ///
-  /// 当前工具不在组内时，第一次点击先选中组内默认工具（选框）；
-  /// 组内工具已选中时，再点打开 popup 切换组内另一个工具。
+  /// 它记住自己槽位里的工具，与主工具 popup 解耦。当前工具不是槽位工具时，
+  /// 第一次点击选中槽位工具；已经是槽位工具时再点打开 popup 切换组内工具。
   Widget _buildQuickToolButton(AppLocalizations l) {
     final group = isPr ? quickToolsPr : quickToolsAr;
-    final active = group.contains(tool);
-    final shown = active ? tool : group.first;
+    final shown = group.contains(quickTool) ? quickTool : group.first;
+    final active = tool == shown;
     final tip = group.map((i) => _toolName(l, i)).join(' / ');
     return Builder(
       builder: (context) {
@@ -324,7 +334,7 @@ class TopBar extends StatelessWidget {
           onTapDown: (d) => anchor = d.globalPosition,
           onTap: () {
             if (!active) {
-              onTool(group.first);
+              onQuickTool(shown);
               return;
             }
             _showQuickToolMenu(context, group, shown, anchor);
@@ -384,13 +394,14 @@ class TopBar extends StatelessWidget {
       ],
     );
     if (selected != null) {
-      onTool(selected);
+      onQuickTool(selected);
     }
   }
 
   Widget _buildToolButton(AppLocalizations l) {
     final list = isPr ? toolPrAllowed : toolArAllowed;
-    final shown = list.contains(tool) ? tool : list.first;
+    final shown = list.contains(mainTool) ? mainTool : list.first;
+    final active = tool == shown;
     return PopupMenuButton<int>(
       tooltip: l.tool,
       padding: EdgeInsets.zero,
@@ -419,7 +430,7 @@ class TopBar extends StatelessWidget {
         child: Icon(
           toolDefs[shown].$1,
           size: 18,
-          color: YinheTheme.textSecondary,
+          color: active ? YinheTheme.accent : YinheTheme.textSecondary,
         ),
       ),
     );

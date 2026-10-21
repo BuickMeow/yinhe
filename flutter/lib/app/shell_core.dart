@@ -66,6 +66,16 @@ mixin _ShellCore on _ShellBase {
   @override
   int get _tool => _viewMode == kViewPianoroll ? _toolPr : _toolAr;
 
+  /// 主工具按钮当前记住的工具。
+  @override
+  int get _mainTool =>
+      _viewMode == kViewPianoroll ? _mainToolPr : _mainToolAr;
+
+  /// 快捷工具组当前记住的工具（与主工具按钮解耦）。
+  @override
+  int get _quickTool =>
+      _viewMode == kViewPianoroll ? _quickToolPr : _quickToolAr;
+
   /// 把当前视图的工具同步给 Rust。
   void _pushTool() {
     final list = _viewMode == kViewPianoroll ? toolPrAllowed : toolArAllowed;
@@ -77,8 +87,26 @@ mixin _ShellCore on _ShellBase {
   void _selectTool(int tool) {
     setState(() {
       if (_viewMode == kViewPianoroll) {
+        _mainToolPr = tool;
         _toolPr = tool;
       } else {
+        _mainToolAr = tool;
+        _toolAr = tool;
+      }
+    });
+    _pushTool();
+  }
+
+  /// 快捷工具组只更新自己的槽位，同时把该工具设为当前工具；
+  /// 主工具 popup 改工具时不会回写快捷槽位，两个按钮因此互相独立。
+  @override
+  void _selectQuickTool(int tool) {
+    setState(() {
+      if (_viewMode == kViewPianoroll) {
+        _quickToolPr = tool;
+        _toolPr = tool;
+      } else {
+        _quickToolAr = tool;
         _toolAr = tool;
       }
     });
@@ -124,6 +152,8 @@ mixin _ShellCore on _ShellBase {
       _displayTrack = -1;
       _showAllTracks = true;
       _toolAr = 0;
+      _mainToolAr = 0;
+      _quickToolAr = 0;
       _songTitle = '';
       _playing = false;
     });
