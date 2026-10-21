@@ -47,7 +47,7 @@ class _SettingsViewState extends State<SettingsView> {
   List<_SfItem> _fonts = const [];
 
   /// 音频设置（与 Rust 同步；默认值同桌面/引擎回退）。
-  int _maxVoices = 1024;
+  int _maxVoices = 512;
   int _bufferSize = 2048;
   int _ignoreVelocity = 1;
 

@@ -43,10 +43,23 @@ pub struct AudioSettings {
     pub ignore_velocity: u8,
 }
 
+/// “自动复音”的平台默认值。
+///
+/// 引擎的 `DEFAULT_MAX_VOICES=14336` 是桌面级上限；移动端黑乐谱峰值段
+/// 即使 1024 也可能让合成线程超过 512 帧的实时预算，因此 Android 自动档
+/// 收敛到 512，给调度留余量。用户仍可在设置里手动选 256/512/1024。
+fn auto_max_voices() -> usize {
+    if cfg!(target_os = "android") {
+        512
+    } else {
+        yinhe_audio::DEFAULT_MAX_VOICES
+    }
+}
+
 impl Default for AudioSettings {
     fn default() -> Self {
         Self {
-            max_voices: 1024,
+            max_voices: 512,
             buffer_size: 2048,
             ignore_velocity: 1,
         }
@@ -189,11 +202,11 @@ pub fn settings_json() -> String {
 fn apply_runtime_settings(st: &AudioState) {
     let cfg = settings();
     st.handle.handle.send(AudioCommand::SetMaxVoices {
-        max: if cfg.max_voices == 0 {
-            None
+        max: Some(if cfg.max_voices == 0 {
+            auto_max_voices()
         } else {
-            Some(cfg.max_voices as usize)
-        },
+            cfg.max_voices as usize
+        }),
     });
     st.handle.handle.send(AudioCommand::SetIgnoreVelocity {
         threshold: cfg.ignore_velocity,
@@ -312,8 +325,8 @@ fn ensure_audio() -> bool {
                 sf_sent: None,
             };
             apply_soundfonts(&mut st);
-            // 应用设置页配置（默认 ignore_velocity=1、max_voices=1024：
-            // 桌面级复音 14336 在黑乐谱密集段会让合成线程超时）。
+            // 应用设置页配置（默认 ignore_velocity=1、max_voices=512：
+            // 1024 在 tau 峰值段仍可能超过 512 帧的实时预算）。
             apply_runtime_settings(&st);
             *guard = Some(st);
             true
