@@ -23,6 +23,7 @@ import '../widgets/ruler_markers.dart';
 import '../dialogs/archive_dialogs.dart';
 import '../dialogs/event_list_dialog.dart';
 import '../dialogs/export_dialogs.dart';
+import '../dialogs/unsaved_dialog.dart';
 import '../dialogs/progress_dialog.dart';
 import '../core/bar_beat.dart';
 import '../dialogs/project_defaults_dialog.dart';
@@ -185,6 +186,9 @@ abstract class _ShellBase extends State<StudioShell>
   bool _saving = false;
   Timer? _savingTimer;
 
+  /// “保存并继续”等待 SAF/复制完成；普通保存为 null。
+  Completer<bool>? _saveCompleter;
+
   /// 正在等待压缩包打开结果（轮询 Rust 状态）。
   bool _archivePolling = false;
   bool _archiveBusy = false;
@@ -201,6 +205,15 @@ abstract class _ShellBase extends State<StudioShell>
 
   /// 帧计数（时间码/工程状态降频）。
   int _frameCounter = 0;
+
+  /// 完成/取消正在等待的保存（“保存并继续”流程）。
+  void _finishSaveWait(bool ok) {
+    final c = _saveCompleter;
+    _saveCompleter = null;
+    if (c != null && !c.isCompleted) {
+      c.complete(ok);
+    }
+  }
 
   // ── 跨模块方法（由各 mixin 实现） ──
   void _beginRightPan(PointerDownEvent e);
@@ -219,7 +232,6 @@ abstract class _ShellBase extends State<StudioShell>
   void _handleLongPressStart(Offset p);
   void _handlePanZoomUpdate(PointerPanZoomUpdateEvent e);
   void _handlePointerSignal(PointerSignalEvent e);
-  bool _isArchivePath(String path);
   bool _isRightMouse(PointerEvent e);
   void _loadArAutomation();
   void _loadAutomation();
@@ -236,10 +248,12 @@ abstract class _ShellBase extends State<StudioShell>
   Future<void> _openSoundfontArchive(String path);
   double get _ppq;
   void _pushQuantize(String label);
+  void _readDocState();
   void _refreshDocumentMeta();
-  void _rememberProject(String name);
-  Future<void> _saveProject({bool saveAs});
+  Future<bool> _saveProject({bool saveAs});
   Future<void> _showLoadProgress();
+  Future<bool> _confirmReplace();
+  Future<void> _handlePickedFile(String path);
   void _selectEditTrack(int track);
   void _selectTool(int tool);
   void _sendPanTouch(int kind, Offset p, int pointer);

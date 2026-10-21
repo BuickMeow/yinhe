@@ -482,4 +482,14 @@ class AppLocalizationsIt extends AppLocalizations {
 
   @override
   String get saveFailed => 'Salvataggio non riuscito';
+
+  @override
+  String get unsavedChanges => 'Modifiche non salvate';
+
+  @override
+  String get unsavedChangesPrompt =>
+      'Continuando le modifiche attuali andranno perse. Salvare prima?';
+
+  @override
+  String get dontSave => 'Non salvare';
 }

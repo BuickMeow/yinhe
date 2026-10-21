@@ -335,24 +335,6 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeSetViewport(
     set_logical_size(width, height);
 }
 
-/// `MainActivity.onFilePicked(path)`：SAF 选择结果（已复制到私有目录）。
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_onFilePicked<'local>(
-    mut env: jni::EnvUnowned<'local>,
-    _this: jni::objects::JObject<'local>,
-    path: jni::objects::JString<'local>,
-) {
-    init_logging();
-    match read_jstring(&mut env, &path) {
-        Some(p) if !p.is_empty() => {
-            log::info!("收到 MIDI 文件: {p}");
-            scene::open_midi(p);
-        }
-        Some(_) => {}
-        None => log::error!("onFilePicked: 读取路径失败"),
-    }
-}
-
 /// `MainActivity.onSoundFontPicked(path)`：音色库（SF2/SF3/SFZ）已复制到私有目录。
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_onSoundFontPicked<'local>(
@@ -1336,6 +1318,12 @@ pub extern "C" fn yinhe_open_path(path: *const std::ffi::c_char) {
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_load_status_json() -> *mut std::ffi::c_char {
     to_c_string(scene::load_status_json())
+}
+
+/// 当前文档来源路径（无文档时为空串，堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_current_path() -> *mut std::ffi::c_char {
+    to_c_string(scene::current_path())
 }
 
 fn to_c_string(s: String) -> *mut std::ffi::c_char {

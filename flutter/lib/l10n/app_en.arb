@@ -211,5 +211,8 @@
   "loadingFile": "Loading…",
   "loadFailed": "Load failed",
   "savingProject": "Saving project…",
-  "saveFailed": "Save failed"
+  "saveFailed": "Save failed",
+  "unsavedChanges": "Unsaved changes",
+  "unsavedChangesPrompt": "Continuing will discard the current changes. Save first?",
+  "dontSave": "Don't save"
 }

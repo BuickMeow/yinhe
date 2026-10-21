@@ -212,6 +212,11 @@ final CStrDart loadStatusJson = bridge.lookupFunction<CStrNative, CStrDart>(
   'yinhe_load_status_json',
 );
 
+/// 当前文档来源路径（无文档时为空串）。
+final CStrDart currentPath = bridge.lookupFunction<CStrNative, CStrDart>(
+  'yinhe_current_path',
+);
+
 // ── 视图 / 走带 ──
 
 typedef IntVoidNative = ffi.Void Function(ffi.Int32);

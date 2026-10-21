@@ -480,4 +480,13 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get saveFailed => '저장 실패';
+
+  @override
+  String get unsavedChanges => '저장하지 않은 변경 사항';
+
+  @override
+  String get unsavedChangesPrompt => '계속하면 현재 변경 사항이 사라집니다. 먼저 저장할까요?';
+
+  @override
+  String get dontSave => '저장 안 함';
 }

@@ -159,5 +159,8 @@
   "loadingFile": "正在載入…",
   "loadFailed": "載入失敗",
   "savingProject": "正在儲存工程…",
-  "saveFailed": "儲存失敗"
+  "saveFailed": "儲存失敗",
+  "unsavedChanges": "有未儲存的修改",
+  "unsavedChangesPrompt": "繼續會捨棄目前的修改。要先儲存嗎？",
+  "dontSave": "不儲存"
 }

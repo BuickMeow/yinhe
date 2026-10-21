@@ -481,4 +481,14 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get saveFailed => 'Save failed';
+
+  @override
+  String get unsavedChanges => 'Unsaved changes';
+
+  @override
+  String get unsavedChangesPrompt =>
+      'Continuing will discard the current changes. Save first?';
+
+  @override
+  String get dontSave => 'Don\'t save';
 }

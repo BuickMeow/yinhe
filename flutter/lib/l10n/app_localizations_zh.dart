@@ -478,6 +478,15 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get saveFailed => '保存失败';
+
+  @override
+  String get unsavedChanges => '有未保存的修改';
+
+  @override
+  String get unsavedChangesPrompt => '继续会丢弃当前修改。要先保存吗？';
+
+  @override
+  String get dontSave => '不保存';
 }
 
 /// The translations for Chinese, as used in Hong Kong (`zh_HK`).
@@ -953,6 +962,15 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
 
   @override
   String get saveFailed => '儲存失敗';
+
+  @override
+  String get unsavedChanges => '有未儲存的修改';
+
+  @override
+  String get unsavedChangesPrompt => '繼續會捨棄目前的修改。要先儲存嗎？';
+
+  @override
+  String get dontSave => '不儲存';
 }
 
 /// The translations for Chinese, as used in Taiwan (`zh_TW`).
@@ -1428,4 +1446,13 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get saveFailed => '儲存失敗';
+
+  @override
+  String get unsavedChanges => '有未儲存的修改';
+
+  @override
+  String get unsavedChangesPrompt => '繼續會捨棄目前的修改。要先儲存嗎？';
+
+  @override
+  String get dontSave => '不儲存';
 }

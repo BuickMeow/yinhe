@@ -482,4 +482,14 @@ class AppLocalizationsPl extends AppLocalizations {
 
   @override
   String get saveFailed => 'Nie udało się zapisać';
+
+  @override
+  String get unsavedChanges => 'Niezapisane zmiany';
+
+  @override
+  String get unsavedChangesPrompt =>
+      'Kontynuowanie odrzuci bieżące zmiany. Najpierw zapisać?';
+
+  @override
+  String get dontSave => 'Nie zapisuj';
 }

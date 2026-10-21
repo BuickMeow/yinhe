@@ -159,5 +159,8 @@
   "loadingFile": "Chargement…",
   "loadFailed": "Échec du chargement",
   "savingProject": "Enregistrement du projet…",
-  "saveFailed": "Échec de l’enregistrement"
+  "saveFailed": "Échec de l’enregistrement",
+  "unsavedChanges": "Modifications non enregistrées",
+  "unsavedChangesPrompt": "Continuer effacera les modifications actuelles. Enregistrer d’abord ?",
+  "dontSave": "Ne pas enregistrer"
 }

@@ -482,4 +482,14 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get saveFailed => 'Error al guardar';
+
+  @override
+  String get unsavedChanges => 'Cambios sin guardar';
+
+  @override
+  String get unsavedChangesPrompt =>
+      'Continuar descartará los cambios actuales. ¿Guardar primero?';
+
+  @override
+  String get dontSave => 'No guardar';
 }

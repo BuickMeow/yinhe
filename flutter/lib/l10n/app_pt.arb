@@ -159,5 +159,8 @@
   "loadingFile": "Carregando…",
   "loadFailed": "Falha ao carregar",
   "savingProject": "Salvando projeto…",
-  "saveFailed": "Falha ao salvar"
+  "saveFailed": "Falha ao salvar",
+  "unsavedChanges": "Alterações não salvas",
+  "unsavedChangesPrompt": "Continuar descartará as alterações atuais. Salvar primeiro?",
+  "dontSave": "Não salvar"
 }

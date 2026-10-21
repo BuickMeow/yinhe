@@ -1039,6 +1039,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Save failed'**
   String get saveFailed;
+
+  /// No description provided for @unsavedChanges.
+  ///
+  /// In en, this message translates to:
+  /// **'Unsaved changes'**
+  String get unsavedChanges;
+
+  /// No description provided for @unsavedChangesPrompt.
+  ///
+  /// In en, this message translates to:
+  /// **'Continuing will discard the current changes. Save first?'**
+  String get unsavedChangesPrompt;
+
+  /// No description provided for @dontSave.
+  ///
+  /// In en, this message translates to:
+  /// **'Don\'t save'**
+  String get dontSave;
 }
 
 class _AppLocalizationsDelegate

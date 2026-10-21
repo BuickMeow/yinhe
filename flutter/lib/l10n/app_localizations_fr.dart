@@ -482,4 +482,14 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get saveFailed => 'Échec de l’enregistrement';
+
+  @override
+  String get unsavedChanges => 'Modifications non enregistrées';
+
+  @override
+  String get unsavedChangesPrompt =>
+      'Continuer effacera les modifications actuelles. Enregistrer d’abord ?';
+
+  @override
+  String get dontSave => 'Ne pas enregistrer';
 }

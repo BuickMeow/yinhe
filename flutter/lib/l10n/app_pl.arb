@@ -159,5 +159,8 @@
   "loadingFile": "Ładowanie…",
   "loadFailed": "Nie udało się wczytać",
   "savingProject": "Zapisywanie projektu…",
-  "saveFailed": "Nie udało się zapisać"
+  "saveFailed": "Nie udało się zapisać",
+  "unsavedChanges": "Niezapisane zmiany",
+  "unsavedChangesPrompt": "Kontynuowanie odrzuci bieżące zmiany. Najpierw zapisać?",
+  "dontSave": "Nie zapisuj"
 }

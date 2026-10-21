@@ -159,5 +159,8 @@
   "loadingFile": "Wird geladen…",
   "loadFailed": "Laden fehlgeschlagen",
   "savingProject": "Projekt wird gespeichert…",
-  "saveFailed": "Speichern fehlgeschlagen"
+  "saveFailed": "Speichern fehlgeschlagen",
+  "unsavedChanges": "Ungespeicherte Änderungen",
+  "unsavedChangesPrompt": "Fortfahren verwirft die aktuellen Änderungen. Zuerst speichern?",
+  "dontSave": "Nicht speichern"
 }

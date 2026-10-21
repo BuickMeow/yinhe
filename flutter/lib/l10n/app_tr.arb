@@ -159,5 +159,8 @@
   "loadingFile": "Yükleniyor…",
   "loadFailed": "Yükleme başarısız",
   "savingProject": "Proje kaydediliyor…",
-  "saveFailed": "Kaydetme başarısız"
+  "saveFailed": "Kaydetme başarısız",
+  "unsavedChanges": "Kaydedilmemiş değişiklikler",
+  "unsavedChangesPrompt": "Devam etmek mevcut değişiklikleri siler. Önce kaydedilsin mi?",
+  "dontSave": "Kaydetme"
 }

@@ -482,4 +482,14 @@ class AppLocalizationsCs extends AppLocalizations {
 
   @override
   String get saveFailed => 'Uložení se nezdařilo';
+
+  @override
+  String get unsavedChanges => 'Neuložené změny';
+
+  @override
+  String get unsavedChangesPrompt =>
+      'Pokračování zahodí aktuální změny. Nejprve uložit?';
+
+  @override
+  String get dontSave => 'Neukládat';
 }

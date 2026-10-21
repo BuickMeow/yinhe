@@ -159,5 +159,8 @@
   "loadingFile": "불러오는 중…",
   "loadFailed": "불러오기 실패",
   "savingProject": "프로젝트 저장 중…",
-  "saveFailed": "저장 실패"
+  "saveFailed": "저장 실패",
+  "unsavedChanges": "저장하지 않은 변경 사항",
+  "unsavedChangesPrompt": "계속하면 현재 변경 사항이 사라집니다. 먼저 저장할까요?",
+  "dontSave": "저장 안 함"
 }

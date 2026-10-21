@@ -480,4 +480,13 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get saveFailed => '保存に失敗しました';
+
+  @override
+  String get unsavedChanges => '未保存の変更があります';
+
+  @override
+  String get unsavedChangesPrompt => '続行すると現在の変更は破棄されます。先に保存しますか？';
+
+  @override
+  String get dontSave => '保存しない';
 }

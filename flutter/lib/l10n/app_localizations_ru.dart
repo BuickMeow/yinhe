@@ -482,4 +482,14 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get saveFailed => 'Не удалось сохранить';
+
+  @override
+  String get unsavedChanges => 'Несохранённые изменения';
+
+  @override
+  String get unsavedChangesPrompt =>
+      'Продолжение удалит текущие изменения. Сначала сохранить?';
+
+  @override
+  String get dontSave => 'Не сохранять';
 }

@@ -131,6 +131,9 @@ pub struct RenderScene {
     pub overlay_cells: Vec<[f32; 4]>,
     /// 文档本体（编辑操作：轨道排序等）。
     pub document: Option<Document>,
+    /// 当前文档的“来源路径”（加载时记录；保存后不改成临时文件路径）。
+    /// 用于主页再次选择同一文件时直接回到工作区，不重新解析。
+    pub source_path: Option<String>,
     /// 文档/选区世代号：每次 refresh_snapshot 自增，Dart 据此刷新轨道/自动化浮层。
     pub doc_generation: u32,
 }
@@ -167,6 +170,7 @@ impl Default for RenderScene {
             overlay_box: None,
             overlay_cells: Vec::new(),
             document: None,
+            source_path: None,
             doc_generation: 0,
         }
     }
@@ -395,6 +399,7 @@ fn load_midi_bytes_document(data: &[u8], path: &str, token: u64) -> Result<Docum
     )?;
     doc.mark_loaded();
     doc.sync_track_caches_with_conductor_color([0.85, 0.85, 0.88, 1.0]);
+    doc.file_path = Some(path.to_string());
     Ok(doc)
 }
 
@@ -592,10 +597,34 @@ pub fn save_ying_start(path: String) -> i32 {
     1
 }
 
+/// 当前文档来源路径（无文档时返回空串）。
+pub fn current_path() -> String {
+    scene()
+        .lock()
+        .ok()
+        .and_then(|s| s.source_path.clone())
+        .unwrap_or_default()
+}
+
+/// 同一文件已经在当前文档中：把加载状态标记为完成（Dart 不弹进度框）。
+fn mark_load_done() {
+    if let Ok(mut st) = load_slot().lock() {
+        st.token = st.token.wrapping_add(1);
+        st.state = 2;
+        st.progress = 1.0;
+        st.error.clear();
+    }
+}
+
 /// 后台加载用户选择的文件（.mid / .ying / 压缩包）并替换当前场景。
 pub fn open_midi(path: String) {
     if is_archive_path(&path) {
         open_archive(path, None);
+        return;
+    }
+    if current_path() == path {
+        log::info!("同一文件已加载，跳过重复解析: {path}");
+        mark_load_done();
         return;
     }
     let token = begin_load(&path);
@@ -663,6 +692,9 @@ fn load_document(path: &str, token: u64) -> Result<Document, String> {
     doc.mark_loaded();
     // 与演示文档一致的 conductor 色（保证两台机器/两种来源配色相同）。
     doc.sync_track_caches_with_conductor_color([0.85, 0.85, 0.88, 1.0]);
+    // 记录来源：加载完成即视为“已落盘来源”，dirty 从干净状态起步；
+    // 同时供主页重复选择同一文件时跳过解析。
+    doc.file_path = Some(path.to_string());
     push_recent(path);
     Ok(doc)
 }
@@ -983,11 +1015,13 @@ fn apply_document(doc: Document, min_ticks: f64) {
 
     let model = doc.data.model.clone();
     let note_count = model.note_count;
+    let source_path = doc.file_path.clone();
 
     let Ok(mut s) = scene().lock() else {
         return;
     };
     s.document = Some(doc);
+    s.source_path = source_path;
     s.pr_view = pr_view;
     s.arr_view = arr_view;
     s.view_mode = ViewMode::Arrangement;

@@ -482,4 +482,14 @@ class AppLocalizationsTr extends AppLocalizations {
 
   @override
   String get saveFailed => 'Kaydetme başarısız';
+
+  @override
+  String get unsavedChanges => 'Kaydedilmemiş değişiklikler';
+
+  @override
+  String get unsavedChangesPrompt =>
+      'Devam etmek mevcut değişiklikleri siler. Önce kaydedilsin mi?';
+
+  @override
+  String get dontSave => 'Kaydetme';
 }

@@ -93,9 +93,6 @@ class MainActivity : FlutterActivity() {
     /** cpal/AAudio 需要的 NDK context（JavaVM + Application Context）。 */
     private external fun nativeInitContext(context: android.content.Context, filesDir: String)
 
-    /** Rust 回调：所选文件已复制到私有目录，path 为绝对路径。 */
-    private external fun onFilePicked(path: String)
-
     /** Rust 回调：所选音色库（SF2/SF3）已复制到私有目录。 */
     private external fun onSoundFontPicked(path: String)
 
@@ -431,6 +428,9 @@ class MainActivity : FlutterActivity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (resultCode != RESULT_OK) {
+            if (requestCode == REQ_SAVE_FILE) {
+                methodChannel?.invokeMethod("onProjectSaveCancelled", "cancel")
+            }
             return
         }
         when (requestCode) {
@@ -448,7 +448,8 @@ class MainActivity : FlutterActivity() {
                     }
                     rememberUri(path.substringAfterLast('/'), uri)
                 }
-                onFilePicked(path)
+                // 不在这里直接加载：Dart 先检查“未保存修改/同一文件”，
+                // 再通过 FFI 发起加载，避免覆盖当前工程时没有确认。
                 methodChannel?.invokeMethod("onFilePicked", path)
             }
             REQ_OPEN_SF -> {
@@ -476,6 +477,8 @@ class MainActivity : FlutterActivity() {
                         }
                     }
                     methodChannel?.invokeMethod("onProjectSaved", "ok")
+                } else {
+                    methodChannel?.invokeMethod("onProjectSaveFailed", "copy failed")
                 }
             }
             REQ_SAVE_EXPORT -> {

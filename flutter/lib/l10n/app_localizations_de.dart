@@ -482,4 +482,14 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get saveFailed => 'Speichern fehlgeschlagen';
+
+  @override
+  String get unsavedChanges => 'Ungespeicherte Änderungen';
+
+  @override
+  String get unsavedChangesPrompt =>
+      'Fortfahren verwirft die aktuellen Änderungen. Zuerst speichern?';
+
+  @override
+  String get dontSave => 'Nicht speichern';
 }

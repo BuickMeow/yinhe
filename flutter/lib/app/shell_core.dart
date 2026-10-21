@@ -46,6 +46,7 @@ mixin _ShellCore on _ShellBase {
   }
 
   /// 工程状态（撤销/重做可用性、未保存标记）。
+  @override
   void _readDocState() {
     if (rust.docState(_statePtr) != 1) {
       return;
@@ -95,9 +96,19 @@ mixin _ShellCore on _ShellBase {
     }
   }
 
-  /// 新建空工程并进入工作区。
+  /// 新建空工程并进入工作区（先确认未保存修改）。
   @override
   void _newProject() {
+    unawaited(_newProjectAfterConfirm());
+  }
+
+  Future<void> _newProjectAfterConfirm() async {
+    if (!await _confirmReplace()) {
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
     rust.newProject();
     rust.setViewMode(kViewArrangement);
     rust.setDisplayTrack(-1);
@@ -198,6 +209,25 @@ mixin _ShellCore on _ShellBase {
       _onNativeRightPan(call.arguments as Map?);
       return;
     }
+    if (call.method == 'onProjectSaveCancelled') {
+      _savingTimer?.cancel();
+      _savingTimer = null;
+      if (_saving) {
+        setState(() => _saving = false);
+      }
+      _finishSaveWait(false);
+      return;
+    }
+    if (call.method == 'onProjectSaveFailed') {
+      _savingTimer?.cancel();
+      _savingTimer = null;
+      if (_saving) {
+        setState(() => _saving = false);
+      }
+      _finishSaveWait(false);
+      showSnack(context, l.saveFailed);
+      return;
+    }
     final path = call.arguments as String?;
     if (path == null) {
       return;
@@ -208,24 +238,7 @@ mixin _ShellCore on _ShellBase {
     }
     switch (call.method) {
       case 'onFilePicked':
-        _archivePolling = _isArchivePath(path);
-        setState(() {
-          _fileName = path.split('/').last;
-          _showHome = false;
-          _viewMode = kViewArrangement;
-          _activeTrack = null;
-          _displayTrack = -1;
-          _showAllTracks = true;
-        });
-        rust.setViewMode(kViewArrangement);
-        rust.setDisplayTrack(-1);
-        rust.setActiveTrack(-1);
-        rust.setTool(toolArAllowed.first);
-        _ensureSurface();
-        _rememberProject(path.split('/').last);
-        if (!_archivePolling) {
-          unawaited(_showLoadProgress());
-        }
+        await _handlePickedFile(path);
       case 'onSoundFontPicked':
         // Rust 已由 JNI 入口直接入表并持久化，这里只通知设置页刷新。
         _sfRevision.value++;
@@ -234,6 +247,7 @@ mixin _ShellCore on _ShellBase {
         _loadSongTitle();
         _readDocState();
         _flashSaved();
+        _finishSaveWait(true);
       case 'onExportSaved':
         showSnack(context, '${l.exportDone}：$path');
     }

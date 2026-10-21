@@ -159,5 +159,8 @@
   "loadingFile": "Načítání…",
   "loadFailed": "Načtení se nezdařilo",
   "savingProject": "Ukládání projektu…",
-  "saveFailed": "Uložení se nezdařilo"
+  "saveFailed": "Uložení se nezdařilo",
+  "unsavedChanges": "Neuložené změny",
+  "unsavedChangesPrompt": "Pokračování zahodí aktuální změny. Nejprve uložit?",
+  "dontSave": "Neukládat"
 }

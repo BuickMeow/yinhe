@@ -159,5 +159,8 @@
   "loadingFile": "正在加载…",
   "loadFailed": "加载失败",
   "savingProject": "正在保存工程…",
-  "saveFailed": "保存失败"
+  "saveFailed": "保存失败",
+  "unsavedChanges": "有未保存的修改",
+  "unsavedChangesPrompt": "继续会丢弃当前修改。要先保存吗？",
+  "dontSave": "不保存"
 }

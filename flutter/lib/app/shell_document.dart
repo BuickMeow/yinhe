@@ -152,7 +152,6 @@ mixin _ShellDocument on _ShellBase {
 
   /// 导出 .ying 工程：Rust 写临时文件 → Kotlin 复制到用户选择的位置。
   /// 是否压缩包扩展名（与 Rust/桌面同一份列表）。
-  @override
   bool _isArchivePath(String path) {
     final lower = path.toLowerCase();
     const exts = [
@@ -249,6 +248,17 @@ mixin _ShellDocument on _ShellBase {
     if (index == null || !mounted) {
       return;
     }
+    final target = '${json['path'] ?? ''}#${entries[index].name}';
+    if (rust.takeString(rust.currentPath()) == target) {
+      _returnToWorkspace();
+      return;
+    }
+    if (!await _confirmReplace()) {
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
     if (rust.archiveOpenEntry(index) == 1) {
       unawaited(_showLoadProgress());
       setState(() => _fileName = entries[index].name);
@@ -301,80 +311,41 @@ mixin _ShellDocument on _ShellBase {
     });
   }
 
+  /// 替换当前文档前确认未保存修改。返回 true = 可以继续。
   @override
-  Future<void> _saveProject({bool saveAs = false}) async {
-    if (_tracks.value.isEmpty) {
-      showSnack(context, l.openFirst);
-      return;
+  Future<bool> _confirmReplace() async {
+    _readDocState();
+    if ((_docState.value & 4) == 0) {
+      return true;
     }
-    _savingTimer?.cancel();
-    setState(() {
-      _saving = true;
-      _saveDone = false;
-    });
-    final name = _songTitle.isNotEmpty ? _songTitle : (_fileName ?? 'Untitled');
-    final tmp = await _channel.invokeMethod<String>('exportTempPath');
+    final action = await showUnsavedChangesDialog(context);
     if (!mounted) {
-      return;
+      return false;
     }
-    if (tmp == null) {
-      setState(() => _saving = false);
-      return;
+    switch (action) {
+      case UnsavedAction.cancel:
+        return false;
+      case UnsavedAction.discard:
+        return true;
+      case UnsavedAction.save:
+        return _saveProjectAndWait();
     }
-    final p = tmp.toNativeUtf8();
-    var ok = 0;
-    try {
-      ok = rust.saveYingStart(p);
-    } finally {
-      calloc.free(p);
-    }
-    if (!mounted) {
-      return;
-    }
-    if (ok != 1) {
-      setState(() => _saving = false);
-      showSnack(context, l.saveFailed);
-      return;
-    }
-    final done = await showTaskProgressDialog(
-      context,
-      poll: () => rust.takeString(rust.saveYingStatusJson()),
-      determinate: true,
-      title: l.savingProject,
-      failureTitle: l.saveFailed,
-    );
-    if (!mounted) {
-      return;
-    }
-    if (done != true) {
-      setState(() => _saving = false);
-      return;
-    }
-    // Rust 写临时文件完成；接下来交给 SAF 选择位置并复制。
-    _savingTimer = Timer(const Duration(seconds: 20), () {
-      _savingTimer = null;
-      if (mounted) {
-        setState(() => _saving = false);
-      }
-    });
-    await _channel.invokeMethod<void>('saveProject', {
-      'name': name,
-      'saveAs': saveAs,
-    });
   }
 
-  @override
-  void _openRecent(RecentItem item) {
-    final isArchive = _isArchivePath(item.path);
-    _archivePolling = isArchive;
-    final p = item.path.toNativeUtf8();
-    try {
-      rust.openPath(p);
-    } finally {
-      calloc.free(p);
+  /// 主页重新打开同一文件：文档还在内存里，直接回工作区，不重新解析。
+  void _returnToWorkspace() {
+    if (!mounted) {
+      return;
     }
+    setState(() => _showHome = false);
+    _ensureSurface();
+  }
+
+  /// 真正开始替换文档（调用方已完成未保存确认）。
+  void _startOpenPath(String path) {
+    _archivePolling = _isArchivePath(path);
     setState(() {
-      _fileName = item.name;
+      _fileName = path.split('/').last;
       _showHome = false;
       _viewMode = kViewArrangement;
       _activeTrack = null;
@@ -385,15 +356,155 @@ mixin _ShellDocument on _ShellBase {
     rust.setDisplayTrack(-1);
     rust.setActiveTrack(-1);
     rust.setTool(toolArAllowed.first);
+    final p = path.toNativeUtf8();
+    try {
+      rust.openPath(p);
+    } finally {
+      calloc.free(p);
+    }
     _ensureSurface();
-    _rememberProject(item.name);
-    if (!isArchive) {
+    _rememberProject(path.split('/').last);
+    if (!_archivePolling) {
       unawaited(_showLoadProgress());
     }
   }
 
-  /// 按文件名恢复工程 SAF uri（最近列表打开 .ying 后可直接覆盖保存）。
+  /// 文件选择回调：先判同一文件/未保存，再让 Rust 开始加载。
   @override
+  Future<void> _handlePickedFile(String path) async {
+    final current = rust.takeString(rust.currentPath());
+    if (current.isNotEmpty && current == path) {
+      _returnToWorkspace();
+      return;
+    }
+    // 压缩包只是打开会话、不替换文档；等选中条目时再确认未保存。
+    if (!_isArchivePath(path) && !await _confirmReplace()) {
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    _startOpenPath(path);
+  }
+
+  @override
+  Future<bool> _saveProject({bool saveAs = false}) {
+    return _saveProjectImpl(saveAs: saveAs);
+  }
+
+  Future<bool> _saveProjectAndWait() {
+    return _saveProjectImpl(waitForCompletion: true);
+  }
+
+  Future<bool> _saveProjectImpl({
+    bool saveAs = false,
+    bool waitForCompletion = false,
+  }) async {
+    if (_tracks.value.isEmpty) {
+      showSnack(context, l.openFirst);
+      return false;
+    }
+    if (_saveCompleter != null) {
+      return false;
+    }
+    _savingTimer?.cancel();
+    setState(() {
+      _saving = true;
+      _saveDone = false;
+    });
+    final name = _songTitle.isNotEmpty ? _songTitle : (_fileName ?? 'Untitled');
+    final tmp = await _channel.invokeMethod<String>('exportTempPath');
+    if (!mounted) {
+      return false;
+    }
+    if (tmp == null) {
+      setState(() => _saving = false);
+      return false;
+    }
+    final p = tmp.toNativeUtf8();
+    var ok = 0;
+    try {
+      ok = rust.saveYingStart(p);
+    } finally {
+      calloc.free(p);
+    }
+    if (!mounted) {
+      return false;
+    }
+    if (ok != 1) {
+      setState(() => _saving = false);
+      showSnack(context, l.saveFailed);
+      return false;
+    }
+    final done = await showTaskProgressDialog(
+      context,
+      poll: () => rust.takeString(rust.saveYingStatusJson()),
+      determinate: true,
+      title: l.savingProject,
+      failureTitle: l.saveFailed,
+    );
+    if (!mounted) {
+      return false;
+    }
+    if (done != true) {
+      setState(() => _saving = false);
+      return false;
+    }
+    // Rust 写临时文件完成；接下来交给 SAF 选择位置并复制。
+    _savingTimer = Timer(const Duration(seconds: 20), () {
+      _savingTimer = null;
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    });
+    Completer<bool>? completer;
+    if (waitForCompletion) {
+      completer = Completer<bool>();
+      _saveCompleter = completer;
+    }
+    try {
+      await _channel.invokeMethod<void>('saveProject', {
+        'name': name,
+        'saveAs': saveAs,
+      });
+    } catch (_) {
+      _savingTimer?.cancel();
+      _savingTimer = null;
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+      _finishSaveWait(false);
+      return false;
+    }
+    if (completer == null) {
+      return true;
+    }
+    return completer.future;
+  }
+
+  @override
+  void _openRecent(RecentItem item) {
+    unawaited(_openRecentAsync(item));
+  }
+
+  Future<void> _openRecentAsync(RecentItem item) async {
+    final current = rust.takeString(rust.currentPath());
+    if (current.isNotEmpty && current == item.path) {
+      _returnToWorkspace();
+      return;
+    }
+    if (!_isArchivePath(item.path)) {
+      if (!await _confirmReplace()) {
+        return;
+      }
+    }
+    if (!mounted) {
+      return;
+    }
+    _startOpenPath(item.path);
+  }
+
+  /// 按文件名恢复工程 SAF uri（最近列表打开 .ying 后可直接覆盖保存）。
   void _rememberProject(String name) {
     _channel.invokeMethod<void>('rememberProject', {'name': name});
   }
