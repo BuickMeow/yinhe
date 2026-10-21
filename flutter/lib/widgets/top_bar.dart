@@ -160,6 +160,7 @@ class TopBar extends StatelessWidget {
               _metaText(sigText, l.defaultTimeSig, onEditSig),
               const Spacer(),
               _buildQuantizeButton(context, l),
+              _buildQuickToolButton(l),
               _buildToolButton(l),
               ValueListenableBuilder<int>(
                 valueListenable: docState,
@@ -304,6 +305,87 @@ class TopBar extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  /// 快捷工具组：PR 选框/铅笔，AR 选框/手形。
+  ///
+  /// 当前工具不在组内时，第一次点击先选中组内默认工具（选框）；
+  /// 组内工具已选中时，再点打开 popup 切换组内另一个工具。
+  Widget _buildQuickToolButton(AppLocalizations l) {
+    final group = isPr ? quickToolsPr : quickToolsAr;
+    final active = group.contains(tool);
+    final shown = active ? tool : group.first;
+    final tip = group.map((i) => _toolName(l, i)).join(' / ');
+    return Builder(
+      builder: (context) {
+        var anchor = Offset.zero;
+        return InkWell(
+          borderRadius: BorderRadius.circular(4),
+          onTapDown: (d) => anchor = d.globalPosition,
+          onTap: () {
+            if (!active) {
+              onTool(group.first);
+              return;
+            }
+            _showQuickToolMenu(context, group, shown, anchor);
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Icon(
+              toolDefs[shown].$1,
+              size: 18,
+              color: active ? YinheTheme.accent : YinheTheme.textSecondary,
+              semanticLabel: tip,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showQuickToolMenu(
+    BuildContext context,
+    List<int> group,
+    int shown,
+    Offset anchor,
+  ) async {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (overlay == null) {
+      return;
+    }
+    final local = overlay.globalToLocal(anchor);
+    final l = AppLocalizations.of(context);
+    final selected = await showMenu<int>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        local.dx,
+        local.dy,
+        overlay.size.width - local.dx,
+        overlay.size.height - local.dy,
+      ),
+      items: [
+        for (final i in group)
+          PopupMenuItem(
+            value: i,
+            child: Row(
+              children: [
+                Icon(
+                  toolDefs[i].$1,
+                  size: 18,
+                  color: i == shown
+                      ? YinheTheme.accent
+                      : YinheTheme.textSecondary,
+                ),
+                const SizedBox(width: 8),
+                Text(_toolName(l, i)),
+              ],
+            ),
+          ),
+      ],
+    );
+    if (selected != null) {
+      onTool(selected);
+    }
   }
 
   Widget _buildToolButton(AppLocalizations l) {
