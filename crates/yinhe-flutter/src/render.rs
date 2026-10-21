@@ -244,6 +244,7 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
                 ppq,
                 w,
                 h,
+                &preview,
             ),
         }
         t.renderer
@@ -335,6 +336,7 @@ fn upload_pianoroll(
         hidden_hash: preview.hidden_hash,
         selection: Some(selection),
         note_revisions: &model.note_revisions,
+        lod_enabled: true,
         source_tag: model_epoch,
     });
     let key = t.pr_note_cache.cache_key();
@@ -384,6 +386,7 @@ fn upload_arrangement(
     ppq: u32,
     w: f32,
     h: f32,
+    preview: &crate::scene::DragPreview,
 ) {
     let num_tracks = num_tracks.min(yinhe_wgpu::MAX_TRACKS);
     if num_tracks == 0 {
@@ -440,6 +443,7 @@ fn upload_arrangement(
     key ^= revision.wrapping_mul(0x9E37_79B9_7F4A_7C15);
     key ^= model_epoch.wrapping_mul(0xD6E8_FEB8_6659_FD93);
     key ^= model.note_count.rotate_left(11);
+    key ^= preview.hidden_hash.wrapping_mul(0x94D0_49BB_1331_11EB);
     for (i, vis) in visible.iter().enumerate() {
         if *vis {
             key ^= 0x9E37_79B9_7F4A_7C15u64.wrapping_mul(i as u64 + 1);
@@ -448,7 +452,6 @@ fn upload_arrangement(
     let key = yinhe_wgpu::layer_cache_key(&[key, VIEW_TAG_ARRANGEMENT]);
     if key != t.notes_cache_key {
         t.notes_buf.clear();
-        let hidden = HashSet::new();
         // demo 阶段构建全部轨道（可见性裁剪留给后续优化）。
         yinhe_wgpu::build_arr_notes(
             &mut t.notes_buf,
@@ -457,7 +460,7 @@ fn upload_arrangement(
             view,
             (0, num_tracks),
             &visible,
-            &hidden,
+            preview.hidden.as_ref(),
         );
         t.notes_cache_key = key;
     }
@@ -465,10 +468,24 @@ fn upload_arrangement(
     let notes_buf = &t.notes_buf;
     t.renderer
         .upload_note_layer(1, key, |out| out.extend_from_slice(notes_buf));
-    // AR 没有 PR ghost；切回 AR 时清掉上一视图的 ghost 层，避免残留。
-    let empty_ghost_key =
-        yinhe_wgpu::layer_cache_key(&[VIEW_TAG_ARRANGEMENT ^ 0xA5A5_5A5A, model_epoch]).max(1);
-    t.renderer.upload_note_layer(2, empty_ghost_key, |_| {});
+    // AR ghost：与 PR 共用 DragPreview；无 ghost 时上传空层清掉上一帧。
+    let ghost_key = yinhe_wgpu::layer_cache_key(&[
+        VIEW_TAG_ARRANGEMENT ^ 0xA5A5_5A5A,
+        preview.revision,
+        model_epoch,
+    ])
+    .max(1);
+    let mut ghost = preview.ghost.as_ref().clone();
+    t.renderer.upload_note_layer(2, ghost_key, |out| {
+        yinhe_wgpu::build_ghost_notes(
+            out,
+            ghost.as_mut_slice(),
+            w,
+            view,
+            (0, num_tracks),
+            &visible,
+        );
+    });
 }
 
 // ── 装饰层（wgpu decor，画在音符下层，像素级对齐桌面视觉）──
