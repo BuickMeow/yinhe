@@ -6109,3 +6109,98 @@ fn test_preview_chase_same_tick_takes_max() {
     assert_eq!(states[0].pan, 80, "不同语义键互不干扰");
     assert_eq!(states[1].volume, 10, "更晚的同键事件照常生效");
 }
+
+/// 画像（本地 tau + SoundFont，ignored）：复音上限 / layer 对实时倍率的影响。
+///
+/// 移动端默认 `max_voices=1024`、`layer=4`；tau 峰值段的实际 voice 数远超
+/// 这个值。这里用固定 512 帧块测“1 秒音频需要多少墙钟”，定位默认值是否
+/// 足以留出调度余量（实时倍率 > 1 才可能稳定）。
+#[test]
+#[ignore = "需要本地 tau + SoundFont"]
+fn prof_tau_voice_caps() {
+    use std::sync::Arc;
+    use std::time::Instant;
+    use yinhe_types::NoteSource;
+
+    let midi = "/Users/jieneng/Music/MIDIs/tau2.5.9.mid";
+    let sfz = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
+    let sr = 48_000u32;
+    let model = Arc::new(yinhe_midi::parse_path(midi).expect("parse tau"));
+    let ppq = model.meta.ppq;
+    let mut per_beat: BTreeMap<u32, usize> = Default::default();
+    for key in 0..KEY_COUNT {
+        for n in model.key_notes(key as u8).iter() {
+            *per_beat.entry(n.start_tick / ppq).or_default() += 1;
+        }
+    }
+    let (peak_beat, peak_count) = per_beat
+        .iter()
+        .max_by_key(|(_, v)| **v)
+        .map(|(b, c)| (*b, *c))
+        .expect("tau has notes");
+    let layout = crate::spawn::channels_for_model(&model);
+    let active: Vec<u8> = (0..16u8)
+        .filter(|c| layout.is_active(*c as usize))
+        .collect();
+    let start_sample = {
+        let mut probe = AudioEngine::new(sr, layout.clone());
+        probe.handle_command(AudioCommand::LoadModel {
+            model: Arc::clone(&model),
+        });
+        probe.tick_to_sample(peak_beat.saturating_mul(ppq).saturating_sub(ppq * 2))
+    };
+    eprintln!(
+        "=== tau voice caps: peak_beat={peak_beat} count={peak_count} start_sample={start_sample}"
+    );
+
+    for (cap, layer) in [
+        (Some(1024usize), Some(4usize)),
+        (Some(512), Some(4)),
+        (Some(256), Some(4)),
+        (Some(1024), Some(2)),
+        (Some(1024), Some(1)),
+    ] {
+        let mut engine = AudioEngine::new(sr, layout.clone());
+        engine.handle_command(AudioCommand::LoadModel {
+            model: Arc::clone(&model),
+        });
+        let mut cs = yinhe_synth::CpuSynth::new(sr);
+        for c in &active {
+            cs.load_dense_soundfonts(*c as u32, &[std::path::PathBuf::from(sfz)])
+                .expect("cpu sf");
+        }
+        if let Some(cap) = cap {
+            cs.set_max_voices(cap);
+        }
+        cs.set_layer_count(layer);
+        engine.cpu_synth = Some(cs);
+        engine.set_max_voices(cap);
+        engine.set_layer_count(layer);
+        engine.handle_command(AudioCommand::Play {
+            from_sample: start_sample,
+        });
+
+        let frames = 512usize;
+        let mut buf = vec![0.0f32; frames * 2];
+        let target = sr as u64 / 2; // 0.5s
+        let mut rendered = 0u64;
+        let mut peak_voice = 0u64;
+        let mut max_chunk = 0.0f64;
+        let t0 = Instant::now();
+        while rendered < target {
+            let tc = Instant::now();
+            engine.render(&mut buf);
+            let dt = tc.elapsed().as_secs_f64() * 1000.0;
+            rendered += frames as u64;
+            peak_voice = peak_voice.max(engine.voice_count());
+            if rendered > sr as u64 / 8 {
+                max_chunk = max_chunk.max(dt);
+            }
+        }
+        let elapsed = t0.elapsed().as_secs_f64();
+        eprintln!(
+            "  cap={cap:?} layer={layer:?} 0.5s音频={elapsed:.2}s ({:.2}x) peak_voice={peak_voice} max_chunk={max_chunk:.1}ms",
+            0.5 / elapsed.max(1e-9)
+        );
+    }
+}
