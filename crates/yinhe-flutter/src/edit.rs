@@ -34,6 +34,8 @@ mod kind {
     pub const PENDING_PASTE: u8 = 9;
     /// 空白处长按完成：松手时弹出粘贴菜单。
     pub const PASTE_READY: u8 = 10;
+    /// 铅笔精调选择：手指在音符上滑动，松手选中最后命中的音符。
+    pub const PENCIL_PICK: u8 = 11;
 }
 
 /// 整体拖动音符：`(track, start_tick, end_tick, velocity)`（key 由外层桶给出）。
@@ -631,6 +633,55 @@ fn note_velocity(s: &RenderScene, track: u16, start_tick: u32, key: u8) -> Optio
         .map(|n| n.velocity)
 }
 
+/// 精确匹配 `(track, start, end, key)` 的音符。
+fn note_at_bounds(
+    s: &RenderScene,
+    track: u16,
+    start_tick: u32,
+    end_tick: u32,
+    key: u8,
+) -> Option<yinhe_types::Note> {
+    let doc = s.document.as_ref()?;
+    doc.data
+        .model
+        .key_notes(key)
+        .iter()
+        .find(|n| n.track == track && n.start_tick == start_tick && n.end_tick == end_tick)
+        .copied()
+}
+
+/// 该音符当前是否已在选区内（铅笔第二次按下时直接进入移动）。
+fn note_is_selected(s: &RenderScene, track: u16, start_tick: u32, end_tick: u32, key: u8) -> bool {
+    let Some(note) = note_at_bounds(s, track, start_tick, end_tick, key) else {
+        return false;
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return false;
+    };
+    doc.edit.selected.accepts_note(&note, key)
+}
+
+/// 把单个音符设为唯一选中：选区矩形覆盖该音符，但成员位图只含它的 id，
+/// 避免 gate 内其他起点被矩形顺带选中。
+fn select_note(s: &mut RenderScene, track: u16, start_tick: u32, end_tick: u32, key: u8) {
+    let Some(note) = note_at_bounds(s, track, start_tick, end_tick, key) else {
+        return;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return;
+    };
+    let end = end_tick.max(start_tick.saturating_add(1));
+    doc.edit.selected.clear();
+    doc.edit.sel_rect.clear();
+    doc.edit
+        .sel_rect
+        .push_rect((f64::from(start_tick), f64::from(end), key, key), false);
+    doc.edit
+        .selected
+        .add_rect_track(start_tick, end, key, key, track, track);
+    doc.edit.selected.set_members([note.id]);
+}
+
 /// 选区整体移动的听觉预览：只取当前视口内目标音符，避免超大选区全量送进音频线程。
 fn preview_group(s: &RenderScene, d: &DragState, dt: i64, dk: i32) {
     if s.view_mode != ViewMode::Pianoroll {
@@ -891,6 +942,30 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                 s.preview.clear();
             }
         }
+        kind::PENCIL_PICK => {
+            let geom = PrGeom::new(&s.pr_view);
+            if let Some((track, start, end, key, _)) = hit_note(s, &geom, x, y) {
+                let changed =
+                    d.track != track || d.start_tick != start || d.end_tick != end || d.key != key;
+                if changed {
+                    d.track = track;
+                    d.start_tick = start;
+                    d.end_tick = end;
+                    d.key = key;
+                    d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::from([(
+                        track, start, key,
+                    )])));
+                    if let Some(velocity) = note_velocity(s, track, start, key) {
+                        preview_note(s, track, key, velocity, start, end.saturating_sub(start));
+                    }
+                }
+                apply_preview(s, d, vec![(start, end, key, track)], true);
+            } else {
+                // 只有真正压在音符上才算候选；空白处不吸附到最近行。
+                d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::new()));
+                s.preview.clear();
+            }
+        }
         kind::BRUSH => {
             let geom = PrGeom::new(&s.pr_view);
             let q = quantize_of(s);
@@ -978,7 +1053,11 @@ pub fn end(x: f32, y: f32) {
     };
     let moved = ((x - d.x0).powi(2) + (y - d.y0).powi(2)).sqrt() >= DRAG_THRESHOLD;
     // 单击音符/选区时保留一次 gate 预览，不立刻 Stop（移动端音频启动有延迟）。
-    let keep_gate = !moved && matches!(k, kind::NOTE_MOVE | kind::NOTE_RESIZE | kind::PENDING);
+    let keep_gate = !moved
+        && matches!(
+            k,
+            kind::NOTE_MOVE | kind::NOTE_RESIZE | kind::PENDING | kind::PENCIL_PICK
+        );
     let mut click_tick: Option<f64> = None;
     let edited = match k {
         kind::MARQUEE => {
@@ -988,6 +1067,10 @@ pub fn end(x: f32, y: f32) {
         kind::MOVE_BOX => commit_move(&mut s, &d, x, y, moved),
         kind::NOTE_MOVE => commit_note_move(&mut s, &d, x, y, moved),
         kind::NOTE_RESIZE => commit_note_resize(&mut s, &d, x, y, moved),
+        kind::PENCIL_PICK => {
+            commit_pick(&mut s, x, y);
+            None
+        }
         kind::PENCIL => commit_pencil(&mut s, &d),
         kind::BRUSH => commit_brush(&mut s, &d),
         kind::ERASE => commit_erase(&mut s, &d, x, y, moved),
@@ -1123,14 +1206,48 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
             bump(s);
         }
         Tool::Pencil => {
+            d.anchor_tick = anchor_tick;
+            d.anchor_key = anchor_key;
+            // 铅笔压在已有音符上：不新建。未选中 → 进入精调选择（松手选中）；
+            // 已选中 → 直接进入单音符移动，再松手提交。
+            if let Some((track, start, end, key, _)) = hit_note(s, &geom, x, y) {
+                if note_is_selected(s, track, start, end, key) {
+                    d.kind = kind::NOTE_MOVE;
+                    d.track = track;
+                    d.start_tick = start;
+                    d.end_tick = end;
+                    d.key = key;
+                    d.side = 0;
+                    d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::from([(
+                        track, start, key,
+                    )])));
+                    d.preview_last_dk = 0;
+                    if let Some(velocity) = note_velocity(s, track, start, key) {
+                        preview_note(s, track, key, velocity, start, end.saturating_sub(start));
+                    }
+                } else {
+                    d.kind = kind::PENCIL_PICK;
+                    d.track = track;
+                    d.start_tick = start;
+                    d.end_tick = end;
+                    d.key = key;
+                    d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::from([(
+                        track, start, key,
+                    )])));
+                    apply_preview(s, d, vec![(start, end, key, track)], true);
+                    if let Some(velocity) = note_velocity(s, track, start, key) {
+                        preview_note(s, track, key, velocity, start, end.saturating_sub(start));
+                    }
+                }
+                return;
+            }
+            // 空白处：保持原有铅笔新建。
             let gate = f64::from(q.tick_interval(s.ppq).max(1));
             d.kind = kind::PENCIL;
             d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::new()));
             d.start_f = anchor_tick;
             d.cur_end = anchor_tick + gate;
             d.key = anchor_key;
-            d.anchor_tick = anchor_tick;
-            d.anchor_key = anchor_key;
             pencil_box(s, d, &geom);
             if let Some(track) = write_track(s) {
                 // 与 commit_pencil 的默认力度保持一致，避免试听和落音符力度不同。
@@ -1474,6 +1591,17 @@ fn commit_move(
     }
 }
 
+/// 铅笔精调选择提交：松手时以最后一次真实命中的音符为准。
+fn commit_pick(s: &mut RenderScene, x: f32, y: f32) -> bool {
+    let geom = PrGeom::new(&s.pr_view);
+    let Some((track, start, end, key, _)) = hit_note(s, &geom, x, y) else {
+        return false;
+    };
+    select_note(s, track, start, end, key);
+    after_selection_change(s);
+    true
+}
+
 /// 单音符移动提交（铅笔/选框共用入口，桌面 `pencil_drag_note`）。
 fn commit_note_move(
     s: &mut RenderScene,
@@ -1493,8 +1621,6 @@ fn commit_note_move(
     if dt == 0 && dk == 0 {
         return None;
     }
-    let doc = s.document.as_mut()?;
-    let before = doc.capture_snapshot();
     let drag = yinhe_types::PencilNoteDrag::Move {
         track: d.track,
         start_tick: d.start_tick,
@@ -1502,8 +1628,21 @@ fn commit_note_move(
         delta_ticks: dt,
         delta_keys: dk,
     };
-    if let Some(action) = doc.pencil_drag_note(&drag) {
-        doc.push_undo(action, "undo.move_note", before);
+    let moved_note = {
+        let doc = s.document.as_mut()?;
+        let before = doc.capture_snapshot();
+        doc.pencil_drag_note(&drag).map(|action| {
+            doc.push_undo(action, "undo.move_note", before);
+        })
+    };
+    if moved_note.is_some() {
+        // 铅笔移动后选区跟随新位置，下一笔仍可直接拖这个音符。
+        if matches!(s.tool, Tool::Pencil) {
+            let new_key = (i32::from(d.key) + dk).clamp(0, 127) as u8;
+            let new_start = (i64::from(d.start_tick) + dt).max(0) as u32;
+            let new_end = new_start.saturating_add(d.end_tick.saturating_sub(d.start_tick));
+            select_note(s, d.track, new_start, new_end, new_key);
+        }
         return after_edit(s);
     }
     None
