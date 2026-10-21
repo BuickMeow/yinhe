@@ -459,10 +459,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get nextPage => '下一页';
 
   @override
-  String get addSfzFolder => '导入 SFZ 文件夹';
+  String get importingSoundfont => '正在导入音色库…';
 
   @override
-  String get sfzFolderEmpty => '未找到 SFZ 文件';
+  String get importSoundfontDone => '音色库导入完成';
+
+  @override
+  String get noSoundfontInArchive => '压缩包里没有音色库';
 }
 
 /// The translations for Chinese, as used in Hong Kong (`zh_HK`).
@@ -919,10 +922,13 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get nextPage => '下一頁';
 
   @override
-  String get addSfzFolder => '匯入 SFZ 資料夾';
+  String get importingSoundfont => '正在匯入音色庫…';
 
   @override
-  String get sfzFolderEmpty => '找不到 SFZ 檔案';
+  String get importSoundfontDone => '音色庫匯入完成';
+
+  @override
+  String get noSoundfontInArchive => '壓縮檔裡沒有音色庫';
 }
 
 /// The translations for Chinese, as used in Taiwan (`zh_TW`).
@@ -1379,8 +1385,11 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
   String get nextPage => '下一頁';
 
   @override
-  String get addSfzFolder => '匯入 SFZ 資料夾';
+  String get importingSoundfont => '正在匯入音色庫…';
 
   @override
-  String get sfzFolderEmpty => '找不到 SFZ 檔案';
+  String get importSoundfontDone => '音色庫匯入完成';
+
+  @override
+  String get noSoundfontInArchive => '壓縮檔裡沒有音色庫';
 }

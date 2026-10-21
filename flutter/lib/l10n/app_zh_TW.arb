@@ -153,6 +153,7 @@
   "exportFailedShort": "匯出失敗",
   "prevPage": "上一頁",
   "nextPage": "下一頁",
-  "addSfzFolder": "匯入 SFZ 資料夾",
-  "sfzFolderEmpty": "找不到 SFZ 檔案"
+  "importingSoundfont": "正在匯入音色庫…",
+  "importSoundfontDone": "音色庫匯入完成",
+  "noSoundfontInArchive": "壓縮檔裡沒有音色庫"
 }

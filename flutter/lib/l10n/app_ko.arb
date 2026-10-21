@@ -153,6 +153,7 @@
   "exportFailedShort": "내보내기 실패",
   "prevPage": "이전 페이지",
   "nextPage": "다음 페이지",
-  "addSfzFolder": "SFZ 폴더 가져오기",
-  "sfzFolderEmpty": "SFZ 파일을 찾지 못했습니다"
+  "importingSoundfont": "사운드폰트 가져오는 중…",
+  "importSoundfontDone": "사운드폰트를 가져왔습니다",
+  "noSoundfontInArchive": "압축 파일에 사운드폰트가 없습니다"
 }

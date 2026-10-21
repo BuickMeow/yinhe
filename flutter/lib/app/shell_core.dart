@@ -145,17 +145,12 @@ mixin _ShellCore on _ShellBase {
       _onNativeRightPan(call.arguments as Map?);
       return;
     }
-    if (call.method == 'onSoundFontFolderDone') {
-      final count = (call.arguments as num?)?.toInt() ?? 0;
-      if (count <= 0) {
-        showSnack(context, l.sfzFolderEmpty);
-      } else {
-        _sfRevision.value++;
-      }
-      return;
-    }
     final path = call.arguments as String?;
     if (path == null) {
+      return;
+    }
+    if (call.method == 'onSoundFontArchivePicked') {
+      _openSoundfontArchive(path);
       return;
     }
     switch (call.method) {
@@ -231,12 +226,6 @@ mixin _ShellCore on _ShellBase {
   @override
   Future<void> _pickSoundFont() async {
     await _channel.invokeMethod<void>('openSoundFontPicker');
-  }
-
-  /// 导入 SFZ 所在目录（连同采样文件一起复制）。
-  @override
-  Future<void> _pickSfzFolder() async {
-    await _channel.invokeMethod<void>('openSoundFontFolder');
   }
 
   @override

@@ -495,4 +495,108 @@ mixin _ShellDocument on _ShellBase {
     }
     return pow;
   }
+
+  Future<int> _waitSoundfontArchiveStatus() async {
+    for (var i = 0; i < 300; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      if (!mounted) {
+        return 4;
+      }
+      final st = rust.soundfontArchiveStatus();
+      if (st != 1) {
+        return st;
+      }
+    }
+    return 4;
+  }
+
+  /// 音色库压缩包：列 SF2/SF3/SFZ → 选择 → 后台整包解压/import。
+  @override
+  Future<void> _openSoundfontArchive(String path) async {
+    String? password;
+    var opened = false;
+    for (var attempt = 0; attempt < 5; attempt++) {
+      final p = path.toNativeUtf8();
+      var ok = 0;
+      try {
+        if (password == null) {
+          ok = rust.soundfontArchiveOpen(p);
+        } else {
+          final pw = password.toNativeUtf8();
+          try {
+            ok = rust.soundfontArchiveOpenPassword(p, pw);
+          } finally {
+            calloc.free(pw);
+          }
+        }
+      } finally {
+        calloc.free(p);
+      }
+      if (ok != 1) {
+        if (mounted) {
+          showSnack(context, l.exportFailedShort);
+        }
+        return;
+      }
+      final status = await _waitSoundfontArchiveStatus();
+      if (!mounted) {
+        return;
+      }
+      if (status == 2) {
+        opened = true;
+        break;
+      }
+      if (status == 3) {
+        final pw = await showArchivePasswordDialog(context, path);
+        if (!mounted || pw == null) {
+          return;
+        }
+        password = pw;
+        continue;
+      }
+      showSnack(context, l.exportFailedShort);
+      return;
+    }
+    if (!opened || !mounted) {
+      return;
+    }
+    Map<String, dynamic> archiveJson = const {};
+    try {
+      archiveJson = jsonDecode(
+        rust.takeString(rust.soundfontArchiveJson()),
+      ) as Map<String, dynamic>;
+    } catch (_) {
+      archiveJson = const {};
+    }
+    final entries = parseArchiveEntries(archiveJson);
+    if (entries.isEmpty) {
+      showSnack(context, l.noSoundfontInArchive);
+      return;
+    }
+    final index = await showArchiveEntriesDialog(
+      context,
+      path: path,
+      entries: entries,
+      countLabel: l.soundfonts,
+    );
+    if (!mounted || index == null) {
+      return;
+    }
+    if (rust.soundfontArchiveImport(index) != 1) {
+      showSnack(context, l.exportFailedShort);
+      return;
+    }
+    final done = await showExportProgressDialog(
+      context,
+      poll: () => rust.takeString(rust.soundfontArchiveImportJson()),
+      determinate: true,
+      title: l.importingSoundfont,
+      failureTitle: l.exportFailedShort,
+    );
+    if (!mounted || done != true) {
+      return;
+    }
+    _sfRevision.value++;
+    showSnack(context, l.importSoundfontDone);
+  }
 }

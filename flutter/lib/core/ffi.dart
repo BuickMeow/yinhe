@@ -6,6 +6,7 @@ part 'ffi/input.dart';
 part 'ffi/document.dart';
 part 'ffi/edit.dart';
 part 'ffi/export.dart';
+part 'ffi/soundfont_archive.dart';
 part 'ffi/names.dart';
 part 'ffi/view.dart';
 

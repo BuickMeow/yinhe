@@ -14,6 +14,7 @@ mod midi_export;
 mod midi_names;
 mod render;
 mod scene;
+mod soundfont_archive;
 mod theme_colors;
 
 use std::ffi::{CStr, CString, c_void};
@@ -889,8 +890,65 @@ pub extern "C" fn yinhe_set_soundfonts(json: *const std::ffi::c_char) -> i32 {
     let ok = audio::set_soundfonts_json(&json);
     if ok == 1 {
         scene::save_soundfont_settings();
+        soundfont_archive::cleanup();
     }
     ok
+}
+
+/// 打开音色库压缩包（无密码）。后台线程，Dart 轮询 yinhe_soundfont_archive_status。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn yinhe_soundfont_archive_open(path: *const std::ffi::c_char) -> i32 {
+    if path.is_null() {
+        return 0;
+    }
+    let path = unsafe { CStr::from_ptr(path) }
+        .to_string_lossy()
+        .into_owned();
+    soundfont_archive::open(path, None)
+}
+
+/// 带密码打开音色库压缩包。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn yinhe_soundfont_archive_open_password(
+    path: *const std::ffi::c_char,
+    password: *const std::ffi::c_char,
+) -> i32 {
+    if path.is_null() || password.is_null() {
+        return 0;
+    }
+    let path = unsafe { CStr::from_ptr(path) }
+        .to_string_lossy()
+        .into_owned();
+    let password = unsafe { CStr::from_ptr(password) }
+        .to_string_lossy()
+        .into_owned();
+    soundfont_archive::open(path, Some(password))
+}
+
+/// 音色库压缩包状态：0=无 1=打开中 2=就绪 3=需要密码 4=失败。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_soundfont_archive_status() -> i32 {
+    soundfont_archive::status()
+}
+
+/// 音色库压缩包条目 JSON（堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_soundfont_archive_json() -> *mut std::ffi::c_char {
+    to_c_string(soundfont_archive::json())
+}
+
+/// 导入第 index 个音色库条目（后台解压）。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_soundfont_archive_import(index: i32) -> i32 {
+    soundfont_archive::import(index.max(0) as usize)
+}
+
+/// 音色库导入进度 JSON（堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_soundfont_archive_import_json() -> *mut std::ffi::c_char {
+    to_c_string(soundfont_archive::import_json())
 }
 
 /// 歌曲标题（空串 = 未设置，堆分配）。

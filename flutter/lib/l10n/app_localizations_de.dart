@@ -463,8 +463,11 @@ class AppLocalizationsDe extends AppLocalizations {
   String get nextPage => 'Nächste Seite';
 
   @override
-  String get addSfzFolder => 'SFZ-Ordner importieren';
+  String get importingSoundfont => 'Soundfont wird importiert…';
 
   @override
-  String get sfzFolderEmpty => 'Keine SFZ-Dateien gefunden';
+  String get importSoundfontDone => 'Soundfont importiert';
+
+  @override
+  String get noSoundfontInArchive => 'Keine Soundfonts im Archiv';
 }

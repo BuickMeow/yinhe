@@ -461,8 +461,11 @@ class AppLocalizationsJa extends AppLocalizations {
   String get nextPage => '次のページ';
 
   @override
-  String get addSfzFolder => 'SFZ フォルダーを読み込む';
+  String get importingSoundfont => '音色ライブラリを読み込み中…';
 
   @override
-  String get sfzFolderEmpty => 'SFZ ファイルが見つかりません';
+  String get importSoundfontDone => '音色ライブラリを読み込みました';
+
+  @override
+  String get noSoundfontInArchive => '圧縮ファイルに音色ライブラリがありません';
 }

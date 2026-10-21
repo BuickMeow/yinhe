@@ -463,8 +463,11 @@ class AppLocalizationsCs extends AppLocalizations {
   String get nextPage => 'Další stránka';
 
   @override
-  String get addSfzFolder => 'Importovat složku SFZ';
+  String get importingSoundfont => 'Import soundfontu…';
 
   @override
-  String get sfzFolderEmpty => 'Nebyly nalezeny žádné soubory SFZ';
+  String get importSoundfontDone => 'Soundfont importován';
+
+  @override
+  String get noSoundfontInArchive => 'V archivu nejsou žádné soundfonty';
 }

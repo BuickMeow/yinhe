@@ -44,11 +44,6 @@ kotlin {
     }
 }
 
-dependencies {
-    // SAF 目录树遍历（SFZ 音色库需要连同采样文件一起导入）。
-    implementation("androidx.documentfile:documentfile:1.0.1")
-}
-
 flutter {
     source = "../.."
 }

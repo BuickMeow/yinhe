@@ -153,6 +153,7 @@
   "exportFailedShort": "Échec de l'export",
   "prevPage": "Page précédente",
   "nextPage": "Page suivante",
-  "addSfzFolder": "Importer un dossier SFZ",
-  "sfzFolderEmpty": "Aucun fichier SFZ trouvé"
+  "importingSoundfont": "Import du soundfont…",
+  "importSoundfontDone": "Soundfont importé",
+  "noSoundfontInArchive": "Aucun soundfont dans l'archive"
 }

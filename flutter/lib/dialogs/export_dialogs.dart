@@ -74,6 +74,8 @@ Future<bool?> showExportProgressDialog(
   required String Function() poll,
   VoidCallback? onCancel,
   bool determinate = true,
+  String? title,
+  String? failureTitle,
 }) {
   return showDialog<bool>(
     context: context,
@@ -82,6 +84,8 @@ Future<bool?> showExportProgressDialog(
       poll: poll,
       onCancel: onCancel,
       determinate: determinate,
+      title: title,
+      failureTitle: failureTitle,
     ),
   );
 }
@@ -91,11 +95,15 @@ class _ExportProgressDialog extends StatefulWidget {
     required this.poll,
     required this.onCancel,
     required this.determinate,
+    this.title,
+    this.failureTitle,
   });
 
   final String Function() poll;
   final VoidCallback? onCancel;
   final bool determinate;
+  final String? title;
+  final String? failureTitle;
 
   @override
   State<_ExportProgressDialog> createState() => _ExportProgressDialogState();
@@ -144,7 +152,7 @@ class _ExportProgressDialogState extends State<_ExportProgressDialog> {
           setState(() {
             _error = (map['error'] as String?)?.trim() ?? '';
             if (_error.isEmpty) {
-              _error = l.exportFailedShort;
+              _error = widget.failureTitle ?? l.exportFailedShort;
             }
           });
         }
@@ -182,7 +190,9 @@ class _ExportProgressDialogState extends State<_ExportProgressDialog> {
   Widget build(BuildContext context) {
     final failed = _error.isNotEmpty;
     return YinheDialog(
-      title: failed ? l.exportFailedShort : l.exporting,
+      title: failed
+          ? (widget.failureTitle ?? l.exportFailedShort)
+          : (widget.title ?? l.exporting),
       width: 400,
       actions: failed
           ? [

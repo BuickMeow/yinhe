@@ -998,17 +998,23 @@ abstract class AppLocalizations {
   /// **'Next page'**
   String get nextPage;
 
-  /// No description provided for @addSfzFolder.
+  /// No description provided for @importingSoundfont.
   ///
   /// In en, this message translates to:
-  /// **'Import SFZ folder'**
-  String get addSfzFolder;
+  /// **'Importing soundfont…'**
+  String get importingSoundfont;
 
-  /// No description provided for @sfzFolderEmpty.
+  /// No description provided for @importSoundfontDone.
   ///
   /// In en, this message translates to:
-  /// **'No SFZ files found'**
-  String get sfzFolderEmpty;
+  /// **'Soundfont imported'**
+  String get importSoundfontDone;
+
+  /// No description provided for @noSoundfontInArchive.
+  ///
+  /// In en, this message translates to:
+  /// **'No soundfonts in archive'**
+  String get noSoundfontInArchive;
 }
 
 class _AppLocalizationsDelegate

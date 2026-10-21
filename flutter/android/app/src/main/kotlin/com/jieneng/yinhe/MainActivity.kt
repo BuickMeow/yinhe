@@ -9,7 +9,6 @@ import android.view.Surface
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
-import androidx.documentfile.provider.DocumentFile
 import io.flutter.view.TextureRegistry
 import java.io.File
 
@@ -39,8 +38,6 @@ class MainActivity : FlutterActivity() {
         private const val REQ_SAVE_EXPORT = 1004
 
         /** SAF 目录选择（SFZ 音色库连同采样一起导入）。 */
-        private const val REQ_OPEN_SF_FOLDER = 1005
-
         /** 导出工程的临时文件（Rust 写入，Kotlin 复制到用户选择的位置）。 */
         private const val EXPORT_TMP = "export.ying"
 
@@ -150,10 +147,6 @@ class MainActivity : FlutterActivity() {
                     }
                     "openSoundFontPicker" -> {
                         openSoundFontPicker()
-                        result.success(null)
-                    }
-                    "openSoundFontFolder" -> {
-                        openSoundFontFolderPicker()
                         result.success(null)
                     }
                     "ensureSurface" -> {
@@ -351,45 +344,13 @@ class MainActivity : FlutterActivity() {
         startActivityForResult(intent, REQ_OPEN_SF)
     }
 
-    /** 选择 SFZ 所在目录（连同 Samples 等相对路径一起复制）。 */
-    private fun openSoundFontFolderPicker() {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-        }
-        startActivityForResult(intent, REQ_OPEN_SF_FOLDER)
-    }
-
-    /** 递归复制 SAF 目录树；返回其中所有 .sfz 的私有路径。 */
-    private fun copySfzTree(uri: android.net.Uri): List<String>? {
-        val root = DocumentFile.fromTreeUri(this, uri) ?: return null
-        val base = (root.name ?: "sfz").replace(Regex("[/\\:*?\"<>|]"), "_")
-        val destRoot = File(filesDir, "soundfonts/$base")
-        val sfz = mutableListOf<String>()
-        fun copy(dir: DocumentFile, out: File) {
-            out.mkdirs()
-            for (doc in dir.listFiles()) {
-                val name = doc.name ?: continue
-                if (doc.isDirectory) {
-                    copy(doc, File(out, name))
-                } else {
-                    val dest = File(out, name)
-                    try {
-                        contentResolver.openInputStream(doc.uri)?.use { input ->
-                            dest.outputStream().use { output -> input.copyTo(output) }
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "复制 SFZ 资源失败: ${doc.uri}", e)
-                        continue
-                    }
-                    if (name.endsWith(".sfz", ignoreCase = true)) {
-                        sfz.add(dest.absolutePath)
-                    }
-                }
-            }
-        }
-        copy(root, destRoot)
-        return sfz
+    /** 与 Rust/Dart 保持一致的压缩包扩展名。 */
+    private fun isArchivePath(path: String): Boolean {
+        val lower = path.lowercase()
+        return listOf(
+            ".zip", ".7z", ".rar", ".lzh", ".lha", ".tar",
+            ".gz", ".xz", ".tgz", ".txz", ".tbz", ".bz2",
+        ).any { lower.endsWith(it) }
     }
 
     /** Dart 侧「保存工程」：先由 Rust 写好临时文件，这里复制到用户选择的位置。 */
@@ -492,34 +453,13 @@ class MainActivity : FlutterActivity() {
             }
             REQ_OPEN_SF -> {
                 val path = copyPicked(data?.data) ?: return
-                onSoundFontPicked(path)
-                methodChannel?.invokeMethod("onSoundFontPicked", path)
-            }
-            REQ_OPEN_SF_FOLDER -> {
-                val uri = data?.data ?: return
-                runCatching {
-                    contentResolver.takePersistableUriPermission(
-                        uri,
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                    )
+                if (isArchivePath(path)) {
+                    // 压缩包交给 Dart/Rust 列 SF2/SFZ，避免把 zip 当音色库直接加载。
+                    methodChannel?.invokeMethod("onSoundFontArchivePicked", path)
+                } else {
+                    onSoundFontPicked(path)
+                    methodChannel?.invokeMethod("onSoundFontPicked", path)
                 }
-                // 采样目录可能很大，复制放到后台线程。
-                Thread {
-                    val paths = copySfzTree(uri)
-                    runOnUiThread {
-                        if (paths == null || paths.isEmpty()) {
-                            methodChannel?.invokeMethod("onSoundFontFolderDone", 0)
-                        } else {
-                            for (p in paths) {
-                                onSoundFontPicked(p)
-                            }
-                            methodChannel?.invokeMethod(
-                                "onSoundFontFolderDone",
-                                paths.size,
-                            )
-                        }
-                    }
-                }.start()
             }
             REQ_SAVE_FILE -> {
                 val uri = data?.data

@@ -1034,6 +1034,11 @@ fn files_dir_slot() -> &'static Mutex<Option<String>> {
     FILES_DIR.get_or_init(|| Mutex::new(None))
 }
 
+/// 应用私有目录（音色库压缩包解压/manifest 用）。
+pub fn files_dir() -> Option<String> {
+    files_dir_slot().lock().ok().and_then(|g| g.clone())
+}
+
 /// Kotlin 侧传入私有目录（用于最近文件/设置持久化）。
 pub fn set_files_dir(dir: String) {
     if let Ok(mut g) = files_dir_slot().lock() {
@@ -1121,6 +1126,7 @@ fn load_settings() {
         crate::audio::set_soundfonts(soundfonts);
     }
     crate::audio::set_settings(max_voices, buffer_size, ignore_velocity);
+    crate::soundfont_archive::cleanup();
 }
 
 fn recent_file_path() -> Option<String> {

@@ -228,7 +228,7 @@ abstract class _ShellBase extends State<StudioShell>
   void _openSettings();
   Future<void> _pickMidi();
   Future<void> _pickSoundFont();
-  Future<void> _pickSfzFolder();
+  Future<void> _openSoundfontArchive(String path);
   double get _ppq;
   void _pushQuantize(String label);
   void _refreshDocumentMeta();

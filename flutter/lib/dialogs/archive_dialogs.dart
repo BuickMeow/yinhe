@@ -47,6 +47,7 @@ Future<int?> showArchiveEntriesDialog(
   BuildContext context, {
   required String path,
   required List<ArchiveEntryItem> entries,
+  String countLabel = 'MIDI',
 }) {
   final l = AppLocalizations.of(context);
   final name = path.split('/').last;
@@ -55,7 +56,7 @@ Future<int?> showArchiveEntriesDialog(
     builder: (ctx) => YinheDialog(
       title: name,
       titleTrailing: Text(
-        '${entries.length} MIDI',
+        '${entries.length} $countLabel',
         style: TextStyle(color: YinheTheme.textLabel, fontSize: 12),
       ),
       width: 460,

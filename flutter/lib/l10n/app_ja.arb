@@ -153,6 +153,7 @@
   "exportFailedShort": "書き出し失敗",
   "prevPage": "前のページ",
   "nextPage": "次のページ",
-  "addSfzFolder": "SFZ フォルダーを読み込む",
-  "sfzFolderEmpty": "SFZ ファイルが見つかりません"
+  "importingSoundfont": "音色ライブラリを読み込み中…",
+  "importSoundfontDone": "音色ライブラリを読み込みました",
+  "noSoundfontInArchive": "圧縮ファイルに音色ライブラリがありません"
 }

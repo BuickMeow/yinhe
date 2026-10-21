@@ -463,8 +463,11 @@ class AppLocalizationsRu extends AppLocalizations {
   String get nextPage => 'Следующая страница';
 
   @override
-  String get addSfzFolder => 'Импорт папки SFZ';
+  String get importingSoundfont => 'Импорт сэмплера…';
 
   @override
-  String get sfzFolderEmpty => 'Файлы SFZ не найдены';
+  String get importSoundfontDone => 'Сэмплер импортирован';
+
+  @override
+  String get noSoundfontInArchive => 'В архиве нет сэмплеров';
 }

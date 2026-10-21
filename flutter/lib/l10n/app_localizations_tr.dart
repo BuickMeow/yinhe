@@ -463,8 +463,11 @@ class AppLocalizationsTr extends AppLocalizations {
   String get nextPage => 'Sonraki sayfa';
 
   @override
-  String get addSfzFolder => 'SFZ klasörünü içe aktar';
+  String get importingSoundfont => 'Soundfont içe aktarılıyor…';
 
   @override
-  String get sfzFolderEmpty => 'SFZ dosyası bulunamadı';
+  String get importSoundfontDone => 'Soundfont içe aktarıldı';
+
+  @override
+  String get noSoundfontInArchive => 'Arşivde soundfont yok';
 }

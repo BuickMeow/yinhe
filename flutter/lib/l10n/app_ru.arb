@@ -153,6 +153,7 @@
   "exportFailedShort": "Ошибка экспорта",
   "prevPage": "Предыдущая страница",
   "nextPage": "Следующая страница",
-  "addSfzFolder": "Импорт папки SFZ",
-  "sfzFolderEmpty": "Файлы SFZ не найдены"
+  "importingSoundfont": "Импорт сэмплера…",
+  "importSoundfontDone": "Сэмплер импортирован",
+  "noSoundfontInArchive": "В архиве нет сэмплеров"
 }

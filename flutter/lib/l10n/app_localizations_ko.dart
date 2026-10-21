@@ -461,8 +461,11 @@ class AppLocalizationsKo extends AppLocalizations {
   String get nextPage => '다음 페이지';
 
   @override
-  String get addSfzFolder => 'SFZ 폴더 가져오기';
+  String get importingSoundfont => '사운드폰트 가져오는 중…';
 
   @override
-  String get sfzFolderEmpty => 'SFZ 파일을 찾지 못했습니다';
+  String get importSoundfontDone => '사운드폰트를 가져왔습니다';
+
+  @override
+  String get noSoundfontInArchive => '압축 파일에 사운드폰트가 없습니다';
 }
