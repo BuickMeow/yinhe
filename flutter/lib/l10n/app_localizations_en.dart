@@ -469,4 +469,16 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get noSoundfontInArchive => 'No soundfonts in archive';
+
+  @override
+  String get loadingFile => 'Loading…';
+
+  @override
+  String get loadFailed => 'Load failed';
+
+  @override
+  String get savingProject => 'Saving project…';
+
+  @override
+  String get saveFailed => 'Save failed';
 }

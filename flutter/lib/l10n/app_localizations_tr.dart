@@ -470,4 +470,16 @@ class AppLocalizationsTr extends AppLocalizations {
 
   @override
   String get noSoundfontInArchive => 'Arşivde soundfont yok';
+
+  @override
+  String get loadingFile => 'Yükleniyor…';
+
+  @override
+  String get loadFailed => 'Yükleme başarısız';
+
+  @override
+  String get savingProject => 'Proje kaydediliyor…';
+
+  @override
+  String get saveFailed => 'Kaydetme başarısız';
 }

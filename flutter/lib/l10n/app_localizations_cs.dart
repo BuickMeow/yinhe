@@ -470,4 +470,16 @@ class AppLocalizationsCs extends AppLocalizations {
 
   @override
   String get noSoundfontInArchive => 'V archivu nejsou žádné soundfonty';
+
+  @override
+  String get loadingFile => 'Načítání…';
+
+  @override
+  String get loadFailed => 'Načtení se nezdařilo';
+
+  @override
+  String get savingProject => 'Ukládání projektu…';
+
+  @override
+  String get saveFailed => 'Uložení se nezdařilo';
 }

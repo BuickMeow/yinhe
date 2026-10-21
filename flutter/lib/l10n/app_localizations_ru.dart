@@ -470,4 +470,16 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get noSoundfontInArchive => 'В архиве нет сэмплеров';
+
+  @override
+  String get loadingFile => 'Загрузка…';
+
+  @override
+  String get loadFailed => 'Не удалось загрузить';
+
+  @override
+  String get savingProject => 'Сохранение проекта…';
+
+  @override
+  String get saveFailed => 'Не удалось сохранить';
 }

@@ -155,5 +155,9 @@
   "nextPage": "Nächste Seite",
   "importingSoundfont": "Soundfont wird importiert…",
   "importSoundfontDone": "Soundfont importiert",
-  "noSoundfontInArchive": "Keine Soundfonts im Archiv"
+  "noSoundfontInArchive": "Keine Soundfonts im Archiv",
+  "loadingFile": "Wird geladen…",
+  "loadFailed": "Laden fehlgeschlagen",
+  "savingProject": "Projekt wird gespeichert…",
+  "saveFailed": "Speichern fehlgeschlagen"
 }

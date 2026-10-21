@@ -1250,10 +1250,10 @@ pub extern "C" fn yinhe_project_meta_json() -> *mut std::ffi::c_char {
     to_c_string(scene::project_meta_json())
 }
 
-/// 导出 `.ying` 工程到指定路径。成功 1。
+/// 开始后台保存 `.ying` 工程到指定路径。成功 1。
 #[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
 #[unsafe(no_mangle)]
-pub extern "C" fn yinhe_save_ying(path: *const std::ffi::c_char) -> i32 {
+pub extern "C" fn yinhe_save_ying_start(path: *const std::ffi::c_char) -> i32 {
     if path.is_null() {
         return 0;
     }
@@ -1261,7 +1261,13 @@ pub extern "C" fn yinhe_save_ying(path: *const std::ffi::c_char) -> i32 {
     let p = unsafe { CStr::from_ptr(path) }
         .to_string_lossy()
         .into_owned();
-    scene::save_ying(p)
+    scene::save_ying_start(p)
+}
+
+/// 工程保存进度 JSON（堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_save_ying_status_json() -> *mut std::ffi::c_char {
+    to_c_string(scene::save_status_json())
 }
 
 /// 保存完成后标记工程状态（清除 dirty）。成功 1。
@@ -1324,6 +1330,12 @@ pub extern "C" fn yinhe_open_path(path: *const std::ffi::c_char) {
         Ok(p) => scene::open_midi(p.to_string()),
         Err(e) => log::error!("打开路径无效: {e}"),
     }
+}
+
+/// 文件加载状态 JSON（堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_load_status_json() -> *mut std::ffi::c_char {
+    to_c_string(scene::load_status_json())
 }
 
 fn to_c_string(s: String) -> *mut std::ffi::c_char {

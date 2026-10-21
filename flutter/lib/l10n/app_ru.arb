@@ -155,5 +155,9 @@
   "nextPage": "Следующая страница",
   "importingSoundfont": "Импорт сэмплера…",
   "importSoundfontDone": "Сэмплер импортирован",
-  "noSoundfontInArchive": "В архиве нет сэмплеров"
+  "noSoundfontInArchive": "В архиве нет сэмплеров",
+  "loadingFile": "Загрузка…",
+  "loadFailed": "Не удалось загрузить",
+  "savingProject": "Сохранение проекта…",
+  "saveFailed": "Не удалось сохранить"
 }

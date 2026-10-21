@@ -166,9 +166,14 @@ final CStrDart projectMetaJson = bridge.lookupFunction<CStrNative, CStrDart>(
 typedef SaveYingNative = ffi.Int32 Function(ffi.Pointer<Utf8>);
 typedef SaveYingDart = int Function(ffi.Pointer<Utf8>);
 
-/// 导出 `.ying` 工程到指定路径。
-final SaveYingDart saveYing = bridge
-    .lookupFunction<SaveYingNative, SaveYingDart>('yinhe_save_ying');
+/// 开始后台保存 `.ying` 工程到指定路径。
+final SaveYingDart saveYingStart = bridge
+    .lookupFunction<SaveYingNative, SaveYingDart>('yinhe_save_ying_start');
+
+/// 工程保存进度 JSON。
+final CStrDart saveYingStatusJson = bridge.lookupFunction<CStrNative, CStrDart>(
+  'yinhe_save_ying_status_json',
+);
 
 /// 保存完成后标记工程状态（清除 dirty）。
 final ActionDart markSaved = bridge.lookupFunction<ActionNative, ActionDart>(
@@ -201,6 +206,11 @@ typedef OpenPathDart = void Function(ffi.Pointer<Utf8>);
 
 final OpenPathDart openPath = bridge
     .lookupFunction<OpenPathNative, OpenPathDart>('yinhe_open_path');
+
+/// 文件加载状态 JSON。
+final CStrDart loadStatusJson = bridge.lookupFunction<CStrNative, CStrDart>(
+  'yinhe_load_status_json',
+);
 
 // ── 视图 / 走带 ──
 

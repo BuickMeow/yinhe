@@ -468,4 +468,16 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get noSoundfontInArchive => '圧縮ファイルに音色ライブラリがありません';
+
+  @override
+  String get loadingFile => '読み込み中…';
+
+  @override
+  String get loadFailed => '読み込みに失敗しました';
+
+  @override
+  String get savingProject => 'プロジェクトを保存中…';
+
+  @override
+  String get saveFailed => '保存に失敗しました';
 }

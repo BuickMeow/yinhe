@@ -325,6 +325,8 @@ pub fn open_archive_entry(index: usize) -> i32 {
         };
         (archive, entry.name.clone())
     };
+    let display = format!("{}#{entry_name}", archive.path().display());
+    let token = begin_load(&display);
     let spawn = std::thread::Builder::new()
         .name("yinhe-archive-entry".into())
         .stack_size(32 * 1024 * 1024)
@@ -333,29 +335,48 @@ pub fn open_archive_entry(index: usize) -> i32 {
                 Ok(d) => d,
                 Err(e) => {
                     log::error!("压缩包条目解压失败（{entry_name}）: {e}");
+                    finish_load(token, Err(format!("解压失败: {e}")));
                     return;
                 }
             };
-            let display = format!("{}#{entry_name}", archive.path().display());
-            match load_midi_bytes_document(&data, &display) {
+            set_load_progress(token, 0.10);
+            match load_midi_bytes_document(&data, &display, token) {
                 Ok(doc) => {
+                    if !load_current(token) {
+                        return;
+                    }
                     push_recent(&archive.path().display().to_string());
                     apply_document(doc, 0.0);
+                    finish_load(token, Ok(()));
                 }
-                Err(e) => log::error!("压缩包条目解析失败（{entry_name}）: {e}"),
+                Err(e) => {
+                    log::error!("压缩包条目解析失败（{entry_name}）: {e}");
+                    finish_load(token, Err(e));
+                }
             }
         });
     if let Err(e) = spawn {
         log::error!("压缩包条目加载线程创建失败: {e}");
+        finish_load(token, Err(format!("加载线程创建失败: {e}")));
         return 0;
     }
     1
 }
 
 /// 从 MIDI 字节构建文档（压缩包条目用；`path` 只用于显示/最近记录）。
-fn load_midi_bytes_document(data: &[u8], path: &str) -> Result<Document, String> {
+fn load_midi_bytes_document(data: &[u8], path: &str, token: u64) -> Result<Document, String> {
     let started = std::time::Instant::now();
-    let model = yinhe_midi::parse_bytes(data).map_err(|e| format!("解析失败: {e}"))?;
+    let model =
+        yinhe_midi::parse_bytes_with_encoding(data, yinhe_midi::MidiImportEncoding::Utf8, |p| {
+            let frac = if p.total_tracks > 0 {
+                p.current_track as f32 / p.total_tracks as f32
+            } else {
+                0.0
+            };
+            set_load_progress(token, 0.10 + frac * 0.78);
+        })
+        .map_err(|e| format!("解析失败: {e}"))?;
+    set_load_progress(token, 0.90);
     log::info!(
         "MIDI 解析完成（压缩包条目）: {} 音符，用时 {:?}",
         model.note_count,
@@ -377,32 +398,251 @@ fn load_midi_bytes_document(data: &[u8], path: &str) -> Result<Document, String>
     Ok(doc)
 }
 
+/// 文件加载进度（Flutter 轮询）：0=空闲 1=加载中 2=完成 3=失败。
+struct LoadStatus {
+    state: u8,
+    error: String,
+    token: u64,
+    progress: f32,
+}
+
+static LOAD_STATUS: OnceLock<Mutex<LoadStatus>> = OnceLock::new();
+
+fn load_slot() -> &'static Mutex<LoadStatus> {
+    LOAD_STATUS.get_or_init(|| {
+        Mutex::new(LoadStatus {
+            state: 0,
+            error: String::new(),
+            token: 0,
+            progress: 0.0,
+        })
+    })
+}
+
+fn begin_load(path: &str) -> u64 {
+    let Ok(mut st) = load_slot().lock() else {
+        return 0;
+    };
+    st.token = st.token.wrapping_add(1);
+    st.state = 1;
+    st.error.clear();
+    st.progress = 0.0;
+    log::info!("开始加载: {path}");
+    st.token
+}
+
+fn set_load_progress(token: u64, progress: f32) {
+    if let Ok(mut st) = load_slot().lock()
+        && st.token == token
+        && st.state == 1
+    {
+        let p = progress.clamp(0.0, 1.0);
+        if p > st.progress {
+            st.progress = p;
+        }
+    }
+}
+
+fn load_current(token: u64) -> bool {
+    load_slot()
+        .lock()
+        .map(|st| st.token == token && st.state == 1)
+        .unwrap_or(false)
+}
+
+fn finish_load(token: u64, result: Result<(), String>) {
+    let Ok(mut st) = load_slot().lock() else {
+        return;
+    };
+    if st.token != token {
+        return;
+    }
+    match result {
+        Ok(()) => {
+            st.state = 2;
+            st.progress = 1.0;
+            st.error.clear();
+        }
+        Err(e) => {
+            st.state = 3;
+            st.error = e;
+        }
+    }
+}
+
+/// `{"state":1,"error":"","progress":0.42}`
+pub fn load_status_json() -> String {
+    let Ok(st) = load_slot().lock() else {
+        return "{\"state\":0,\"error\":\"\",\"progress\":0}".into();
+    };
+    format!(
+        "{{\"state\":{},\"error\":\"{}\",\"progress\":{:.4}}}",
+        st.state,
+        json_escape(&st.error),
+        st.progress.clamp(0.0, 1.0)
+    )
+}
+
+/// 保存进度：0=空闲 1=保存中 2=完成 3=失败。
+struct SaveStatus {
+    state: u8,
+    progress: f32,
+    error: String,
+}
+
+static SAVE_STATUS: OnceLock<Mutex<SaveStatus>> = OnceLock::new();
+
+fn save_slot() -> &'static Mutex<SaveStatus> {
+    SAVE_STATUS.get_or_init(|| {
+        Mutex::new(SaveStatus {
+            state: 0,
+            progress: 0.0,
+            error: String::new(),
+        })
+    })
+}
+
+/// 工程保存进度 JSON（Dart 轮询）。
+pub fn save_status_json() -> String {
+    let Ok(st) = save_slot().lock() else {
+        return "{\"state\":0,\"progress\":0,\"error\":\"\"}".into();
+    };
+    format!(
+        "{{\"state\":{},\"progress\":{:.4},\"error\":\"{}\"}}",
+        st.state,
+        st.progress.clamp(0.0, 1.0),
+        json_escape(&st.error)
+    )
+}
+
+/// 后台保存 `.ying`（带进度）。返回 1 = 已开始。
+pub fn save_ying_start(path: String) -> i32 {
+    let Some(model) = model_arc() else {
+        return 0;
+    };
+    {
+        let Ok(mut st) = save_slot().lock() else {
+            return 0;
+        };
+        if st.state == 1 {
+            return 0;
+        }
+        st.state = 1;
+        st.progress = 0.0;
+        st.error.clear();
+    }
+    let path_for_thread = path.clone();
+    let spawn = std::thread::Builder::new()
+        .name("yinhe-save-ying".into())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let project = yinhe_yin::ProjectFile::from_meta(&model.meta);
+            let mut mapping = yinhe_yin::MappingFile::from_tracks(&model.tracks);
+            mapping.channel_instruments = model.channel_instruments;
+            let result = yinhe_yin::save_yin_with_files_progress(
+                &model,
+                &path_for_thread,
+                &project,
+                &mapping,
+                None,
+                |p| {
+                    let (start, end) = match p.stage {
+                        yinhe_yin::YinProgressStage::Collect => (0.0, 0.05),
+                        yinhe_yin::YinProgressStage::Sort => (0.05, 0.65),
+                        yinhe_yin::YinProgressStage::Compress => (0.65, 1.0),
+                        _ => (0.0, 1.0),
+                    };
+                    let next = start + (end - start) * p.fraction.clamp(0.0, 1.0);
+                    if let Ok(mut st) = save_slot().lock()
+                        && next > st.progress
+                    {
+                        st.progress = next;
+                    }
+                },
+            );
+            let Ok(mut st) = save_slot().lock() else {
+                return;
+            };
+            match result {
+                Ok(()) => {
+                    if let Ok(mut s) = scene().lock()
+                        && let Some(doc) = s.document.as_mut()
+                    {
+                        doc.file_path = Some(path_for_thread.clone());
+                    }
+                    st.state = 2;
+                    st.progress = 1.0;
+                    st.error.clear();
+                    log::info!("工程已导出: {path_for_thread}");
+                }
+                Err(e) => {
+                    st.state = 3;
+                    st.error = e.to_string();
+                    log::error!("工程导出失败: {e}");
+                }
+            }
+        });
+    if let Err(e) = spawn {
+        if let Ok(mut st) = save_slot().lock() {
+            st.state = 3;
+            st.error = format!("保存线程创建失败: {e}");
+        }
+        return 0;
+    }
+    1
+}
+
 /// 后台加载用户选择的文件（.mid / .ying / 压缩包）并替换当前场景。
 pub fn open_midi(path: String) {
     if is_archive_path(&path) {
         open_archive(path, None);
         return;
     }
+    let token = begin_load(&path);
+    let path_for_thread = path.clone();
     let spawn = std::thread::Builder::new()
         .name("yinhe-midi-load".into())
         .stack_size(32 * 1024 * 1024)
-        .spawn(move || match load_document(&path) {
-            Ok(doc) => apply_document(doc, 0.0),
-            Err(e) => log::error!("文件加载失败（{path}）: {e}"),
+        .spawn(move || match load_document(&path_for_thread, token) {
+            Ok(doc) => {
+                if !load_current(token) {
+                    return;
+                }
+                apply_document(doc, 0.0);
+                finish_load(token, Ok(()));
+            }
+            Err(e) => {
+                log::error!("文件加载失败（{path_for_thread}）: {e}");
+                finish_load(token, Err(e));
+            }
         });
     if let Err(e) = spawn {
         log::error!("加载线程创建失败: {e}");
+        finish_load(token, Err(format!("加载线程创建失败: {e}")));
     }
 }
 
 /// 按扩展名解析文件并组装为可渲染/可播放的文档（.ying 工程 / MIDI）。
-fn load_document(path: &str) -> Result<Document, String> {
+fn load_document(path: &str, token: u64) -> Result<Document, String> {
     let lower = path.to_ascii_lowercase();
     if lower.ends_with(".ying") {
-        return load_ying_document(path);
+        return load_ying_document(path, token);
     }
     let started = std::time::Instant::now();
-    let model = yinhe_midi::parse_path(path).map_err(|e| format!("解析失败: {e}"))?;
+    set_load_progress(token, 0.02);
+    let data = std::fs::read(path).map_err(|e| format!("读取失败: {e}"))?;
+    set_load_progress(token, 0.05);
+    let model =
+        yinhe_midi::parse_bytes_with_encoding(&data, yinhe_midi::MidiImportEncoding::Utf8, |p| {
+            let frac = if p.total_tracks > 0 {
+                p.current_track as f32 / p.total_tracks as f32
+            } else {
+                0.0
+            };
+            set_load_progress(token, 0.05 + frac * 0.75);
+        })
+        .map_err(|e| format!("解析失败: {e}"))?;
+    set_load_progress(token, 0.82);
     log::info!(
         "MIDI 解析完成: {} 音符，用时 {:?}",
         model.note_count,
@@ -428,10 +668,19 @@ fn load_document(path: &str) -> Result<Document, String> {
 }
 
 /// 解析 `.ying` 工程文件（ying = 移动端工程归档，容器与 .yin 兼容）。
-fn load_ying_document(path: &str) -> Result<Document, String> {
+fn load_ying_document(path: &str, token: u64) -> Result<Document, String> {
     let started = std::time::Instant::now();
-    let (model, _sf, _mapping, _mixer) =
-        yinhe_yin::load_yin_with_sf(path).map_err(|e| format!("工程解析失败: {e}"))?;
+    set_load_progress(token, 0.02);
+    let (model, _sf, _mapping, _mixer) = yinhe_yin::load_yin_with_sf_progress(path, |p| {
+        let frac = match p.stage {
+            yinhe_yin::YinProgressStage::Decompress => p.fraction * 0.55,
+            yinhe_yin::YinProgressStage::Rebuild => 0.55 + p.fraction * 0.25,
+            yinhe_yin::YinProgressStage::Resort => 0.80 + p.fraction * 0.10,
+            _ => p.fraction * 0.90,
+        };
+        set_load_progress(token, 0.02 + frac * 0.88);
+    })
+    .map_err(|e| format!("工程解析失败: {e}"))?;
     log::info!(
         "工程解析完成: {} 音符，用时 {:?}",
         model.note_count,
@@ -462,28 +711,6 @@ pub fn new_project() -> i32 {
     // 空工程给 4 小节的初始时间轴长度，避免除零缩放。
     apply_document(doc, 1920.0);
     1
-}
-
-/// 保存为 `.ying` 工程归档（写到给定路径，签名与桌面 .yin 容器一致）。
-pub fn save_ying(path: String) -> i32 {
-    let Ok(mut s) = scene().lock() else {
-        return 0;
-    };
-    let Some(doc) = s.document.as_mut() else {
-        return 0;
-    };
-    match yinhe_yin::save_yin(&doc.data.model, &path) {
-        Ok(()) => {
-            // 记录落盘路径：`is_dirty()` 用它判断"尚未落盘"。
-            doc.file_path = Some(path.clone());
-            log::info!("工程已导出: {path}");
-            1
-        }
-        Err(e) => {
-            log::error!("工程导出失败: {e}");
-            0
-        }
-    }
 }
 
 /// 保存完成后标记工程状态（清除 dirty）。

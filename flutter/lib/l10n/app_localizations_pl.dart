@@ -470,4 +470,16 @@ class AppLocalizationsPl extends AppLocalizations {
 
   @override
   String get noSoundfontInArchive => 'Brak soundfontów w archiwum';
+
+  @override
+  String get loadingFile => 'Ładowanie…';
+
+  @override
+  String get loadFailed => 'Nie udało się wczytać';
+
+  @override
+  String get savingProject => 'Zapisywanie projektu…';
+
+  @override
+  String get saveFailed => 'Nie udało się zapisać';
 }

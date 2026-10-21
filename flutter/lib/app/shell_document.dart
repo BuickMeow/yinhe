@@ -87,7 +87,7 @@ mixin _ShellDocument on _ShellBase {
       showSnack(context, l.exportFailedShort);
       return;
     }
-    final done = await showExportProgressDialog(
+    final done = await showTaskProgressDialog(
       context,
       poll: () => rust.takeString(rust.exportAudioProgressJson()),
       onCancel: rust.exportAudioCancel,
@@ -135,7 +135,7 @@ mixin _ShellDocument on _ShellBase {
       showSnack(context, l.exportFailedShort);
       return;
     }
-    final done = await showExportProgressDialog(
+    final done = await showTaskProgressDialog(
       context,
       poll: () => rust.takeString(rust.exportMidiStatusJson()),
       determinate: false,
@@ -250,6 +250,7 @@ mixin _ShellDocument on _ShellBase {
       return;
     }
     if (rust.archiveOpenEntry(index) == 1) {
+      unawaited(_showLoadProgress());
       setState(() => _fileName = entries[index].name);
       rust.setViewMode(kViewArrangement);
       rust.setDisplayTrack(-1);
@@ -306,39 +307,56 @@ mixin _ShellDocument on _ShellBase {
       showSnack(context, l.openFirst);
       return;
     }
-    // 顶栏保存按钮转圈；导出+写盘期间保持，完成/取消后由超时兜底复位。
     _savingTimer?.cancel();
     setState(() {
       _saving = true;
       _saveDone = false;
     });
+    final name = _songTitle.isNotEmpty ? _songTitle : (_fileName ?? 'Untitled');
+    final tmp = await _channel.invokeMethod<String>('exportTempPath');
+    if (!mounted) {
+      return;
+    }
+    if (tmp == null) {
+      setState(() => _saving = false);
+      return;
+    }
+    final p = tmp.toNativeUtf8();
+    var ok = 0;
+    try {
+      ok = rust.saveYingStart(p);
+    } finally {
+      calloc.free(p);
+    }
+    if (!mounted) {
+      return;
+    }
+    if (ok != 1) {
+      setState(() => _saving = false);
+      showSnack(context, l.saveFailed);
+      return;
+    }
+    final done = await showTaskProgressDialog(
+      context,
+      poll: () => rust.takeString(rust.saveYingStatusJson()),
+      determinate: true,
+      title: l.savingProject,
+      failureTitle: l.saveFailed,
+    );
+    if (!mounted) {
+      return;
+    }
+    if (done != true) {
+      setState(() => _saving = false);
+      return;
+    }
+    // Rust 写临时文件完成；接下来交给 SAF 选择位置并复制。
     _savingTimer = Timer(const Duration(seconds: 20), () {
       _savingTimer = null;
       if (mounted) {
         setState(() => _saving = false);
       }
     });
-    final name = _songTitle.isNotEmpty ? _songTitle : (_fileName ?? 'Untitled');
-    final tmp = await _channel.invokeMethod<String>('exportTempPath');
-    if (tmp == null || !mounted) {
-      return;
-    }
-    final p = tmp.toNativeUtf8();
-    var ok = 0;
-    try {
-      ok = rust.saveYing(p);
-    } finally {
-      calloc.free(p);
-    }
-    if (ok != 1) {
-      _savingTimer?.cancel();
-      _savingTimer = null;
-      if (mounted) {
-        setState(() => _saving = false);
-        showSnack(context, l.exportFailed);
-      }
-      return;
-    }
     await _channel.invokeMethod<void>('saveProject', {
       'name': name,
       'saveAs': saveAs,
@@ -347,7 +365,8 @@ mixin _ShellDocument on _ShellBase {
 
   @override
   void _openRecent(RecentItem item) {
-    _archivePolling = _isArchivePath(item.path);
+    final isArchive = _isArchivePath(item.path);
+    _archivePolling = isArchive;
     final p = item.path.toNativeUtf8();
     try {
       rust.openPath(p);
@@ -368,6 +387,9 @@ mixin _ShellDocument on _ShellBase {
     rust.setTool(toolArAllowed.first);
     _ensureSurface();
     _rememberProject(item.name);
+    if (!isArchive) {
+      unawaited(_showLoadProgress());
+    }
   }
 
   /// 按文件名恢复工程 SAF uri（最近列表打开 .ying 后可直接覆盖保存）。
@@ -586,7 +608,7 @@ mixin _ShellDocument on _ShellBase {
       showSnack(context, l.exportFailedShort);
       return;
     }
-    final done = await showExportProgressDialog(
+    final done = await showTaskProgressDialog(
       context,
       poll: () => rust.takeString(rust.soundfontArchiveImportJson()),
       determinate: true,

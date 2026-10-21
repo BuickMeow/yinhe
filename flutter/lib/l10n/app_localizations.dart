@@ -1015,6 +1015,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No soundfonts in archive'**
   String get noSoundfontInArchive;
+
+  /// No description provided for @loadingFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading…'**
+  String get loadingFile;
+
+  /// No description provided for @loadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Load failed'**
+  String get loadFailed;
+
+  /// No description provided for @savingProject.
+  ///
+  /// In en, this message translates to:
+  /// **'Saving project…'**
+  String get savingProject;
+
+  /// No description provided for @saveFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Save failed'**
+  String get saveFailed;
 }
 
 class _AppLocalizationsDelegate

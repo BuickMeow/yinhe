@@ -23,6 +23,7 @@ import '../widgets/ruler_markers.dart';
 import '../dialogs/archive_dialogs.dart';
 import '../dialogs/event_list_dialog.dart';
 import '../dialogs/export_dialogs.dart';
+import '../dialogs/progress_dialog.dart';
 import '../core/bar_beat.dart';
 import '../dialogs/project_defaults_dialog.dart';
 import '../dialogs/project_dialog.dart';
@@ -234,6 +235,7 @@ abstract class _ShellBase extends State<StudioShell>
   void _refreshDocumentMeta();
   void _rememberProject(String name);
   Future<void> _saveProject({bool saveAs});
+  Future<void> _showLoadProgress();
   void _selectEditTrack(int track);
   void _selectTool(int tool);
   void _sendPanTouch(int kind, Offset p, int pointer);
@@ -367,6 +369,8 @@ class _StudioShellState extends _ShellBase
       // 从 SAF 选择器返回：保存流程要么已完成（onProjectSaved 会给对勾），
       // 要么被取消 —— 这里清掉"保存中"圆环，避免一直转。
       if (_saving) {
+        _savingTimer?.cancel();
+        _savingTimer = null;
         setState(() => _saving = false);
       }
     } else {

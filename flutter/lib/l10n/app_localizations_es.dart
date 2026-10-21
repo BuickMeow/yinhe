@@ -470,4 +470,16 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get noSoundfontInArchive => 'No hay soundfonts en el archivo';
+
+  @override
+  String get loadingFile => 'Cargando…';
+
+  @override
+  String get loadFailed => 'Error al cargar';
+
+  @override
+  String get savingProject => 'Guardando proyecto…';
+
+  @override
+  String get saveFailed => 'Error al guardar';
 }

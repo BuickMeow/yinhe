@@ -155,5 +155,9 @@
   "nextPage": "下一頁",
   "importingSoundfont": "正在匯入音色庫…",
   "importSoundfontDone": "音色庫匯入完成",
-  "noSoundfontInArchive": "壓縮檔裡沒有音色庫"
+  "noSoundfontInArchive": "壓縮檔裡沒有音色庫",
+  "loadingFile": "正在載入…",
+  "loadFailed": "載入失敗",
+  "savingProject": "正在儲存工程…",
+  "saveFailed": "儲存失敗"
 }

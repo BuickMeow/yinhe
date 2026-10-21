@@ -155,5 +155,9 @@
   "nextPage": "다음 페이지",
   "importingSoundfont": "사운드폰트 가져오는 중…",
   "importSoundfontDone": "사운드폰트를 가져왔습니다",
-  "noSoundfontInArchive": "압축 파일에 사운드폰트가 없습니다"
+  "noSoundfontInArchive": "압축 파일에 사운드폰트가 없습니다",
+  "loadingFile": "불러오는 중…",
+  "loadFailed": "불러오기 실패",
+  "savingProject": "프로젝트 저장 중…",
+  "saveFailed": "저장 실패"
 }

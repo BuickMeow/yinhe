@@ -155,5 +155,9 @@
   "nextPage": "Další stránka",
   "importingSoundfont": "Import soundfontu…",
   "importSoundfontDone": "Soundfont importován",
-  "noSoundfontInArchive": "V archivu nejsou žádné soundfonty"
+  "noSoundfontInArchive": "V archivu nejsou žádné soundfonty",
+  "loadingFile": "Načítání…",
+  "loadFailed": "Načtení se nezdařilo",
+  "savingProject": "Ukládání projektu…",
+  "saveFailed": "Uložení se nezdařilo"
 }

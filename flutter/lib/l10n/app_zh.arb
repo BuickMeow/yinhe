@@ -155,5 +155,9 @@
   "nextPage": "下一页",
   "importingSoundfont": "正在导入音色库…",
   "importSoundfontDone": "音色库导入完成",
-  "noSoundfontInArchive": "压缩包里没有音色库"
+  "noSoundfontInArchive": "压缩包里没有音色库",
+  "loadingFile": "正在加载…",
+  "loadFailed": "加载失败",
+  "savingProject": "正在保存工程…",
+  "saveFailed": "保存失败"
 }

@@ -155,5 +155,9 @@
   "nextPage": "Sonraki sayfa",
   "importingSoundfont": "Soundfont içe aktarılıyor…",
   "importSoundfontDone": "Soundfont içe aktarıldı",
-  "noSoundfontInArchive": "Arşivde soundfont yok"
+  "noSoundfontInArchive": "Arşivde soundfont yok",
+  "loadingFile": "Yükleniyor…",
+  "loadFailed": "Yükleme başarısız",
+  "savingProject": "Proje kaydediliyor…",
+  "saveFailed": "Kaydetme başarısız"
 }

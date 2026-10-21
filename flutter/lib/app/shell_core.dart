@@ -137,6 +137,33 @@ mixin _ShellCore on _ShellBase {
     _loadArAutomation();
   }
 
+  /// 加载 MIDI/工程：Rust 后台解析，Dart 延迟 120ms 再决定是否弹进度框，
+  /// 避免小文件一闪而过。返回的 state：0=无 1=加载中 2=完成 3=失败。
+  @override
+  Future<void> _showLoadProgress() async {
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    if (!mounted) {
+      return;
+    }
+    var state = 0;
+    try {
+      final raw = rust.takeString(rust.loadStatusJson());
+      state = (jsonDecode(raw)['state'] as num?)?.toInt() ?? 0;
+    } catch (_) {
+      state = 0;
+    }
+    if (state != 1 && state != 3) {
+      return;
+    }
+    await showTaskProgressDialog(
+      context,
+      poll: () => rust.takeString(rust.loadStatusJson()),
+      determinate: true,
+      title: l.loadingFile,
+      failureTitle: l.loadFailed,
+    );
+  }
+
   Future<void> _onNativeCall(MethodCall call) async {
     if (!mounted) {
       return;
@@ -170,6 +197,9 @@ mixin _ShellCore on _ShellBase {
         rust.setTool(toolArAllowed.first);
         _ensureSurface();
         _rememberProject(path.split('/').last);
+        if (!_archivePolling) {
+          unawaited(_showLoadProgress());
+        }
       case 'onSoundFontPicked':
         // Rust 已由 JNI 入口直接入表并持久化，这里只通知设置页刷新。
         _sfRevision.value++;

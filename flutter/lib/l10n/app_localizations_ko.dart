@@ -468,4 +468,16 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get noSoundfontInArchive => '압축 파일에 사운드폰트가 없습니다';
+
+  @override
+  String get loadingFile => '불러오는 중…';
+
+  @override
+  String get loadFailed => '불러오기 실패';
+
+  @override
+  String get savingProject => '프로젝트 저장 중…';
+
+  @override
+  String get saveFailed => '저장 실패';
 }

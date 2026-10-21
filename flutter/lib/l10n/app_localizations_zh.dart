@@ -466,6 +466,18 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get noSoundfontInArchive => '压缩包里没有音色库';
+
+  @override
+  String get loadingFile => '正在加载…';
+
+  @override
+  String get loadFailed => '加载失败';
+
+  @override
+  String get savingProject => '正在保存工程…';
+
+  @override
+  String get saveFailed => '保存失败';
 }
 
 /// The translations for Chinese, as used in Hong Kong (`zh_HK`).
@@ -929,6 +941,18 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
 
   @override
   String get noSoundfontInArchive => '壓縮檔裡沒有音色庫';
+
+  @override
+  String get loadingFile => '正在載入…';
+
+  @override
+  String get loadFailed => '載入失敗';
+
+  @override
+  String get savingProject => '正在儲存工程…';
+
+  @override
+  String get saveFailed => '儲存失敗';
 }
 
 /// The translations for Chinese, as used in Taiwan (`zh_TW`).
@@ -1392,4 +1416,16 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get noSoundfontInArchive => '壓縮檔裡沒有音色庫';
+
+  @override
+  String get loadingFile => '正在載入…';
+
+  @override
+  String get loadFailed => '載入失敗';
+
+  @override
+  String get savingProject => '正在儲存工程…';
+
+  @override
+  String get saveFailed => '儲存失敗';
 }
