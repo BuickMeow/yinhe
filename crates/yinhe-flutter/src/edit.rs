@@ -2013,6 +2013,7 @@ fn commit_riff(
     }
     let (t0, t1, _, _) = d.box_ticks?;
     let width = (t1 - t0).max(1.0).round() as i64;
+    let started = std::time::Instant::now();
     let changed = {
         let doc = s.document.as_mut()?;
         if doc.edit.selected.is_empty() {
@@ -2023,7 +2024,18 @@ fn commit_riff(
         doc.push_undo(action, "重复 Riff", before);
         true
     };
-    if changed { after_edit(s) } else { None }
+    if changed {
+        let repeated = started.elapsed();
+        let refresh = std::time::Instant::now();
+        let model = after_edit(s);
+        log::info!(
+            "重复 Riff 完成: count={count}, width={width}, repeat={repeated:?}, refresh={:?}",
+            refresh.elapsed()
+        );
+        model
+    } else {
+        None
+    }
 }
 
 /// 单音符移动提交（铅笔/选框共用入口，桌面 `pencil_drag_note`）。

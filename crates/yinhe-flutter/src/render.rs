@@ -325,6 +325,7 @@ fn upload_pianoroll(
     t.renderer.upload_track_colors(&job.track_colors);
     t.renderer.upload_selection(&job.selection);
 
+    let update_started = Instant::now();
     let changed = t.pr_note_cache.update(&yinhe_wgpu::NoteCacheParams {
         midi: model,
         view,
@@ -342,10 +343,11 @@ fn upload_pianoroll(
     let key = t.pr_note_cache.cache_key();
     if changed {
         log::info!(
-            "PR 音符窗口更新: {} 实例 sel={} epoch={}",
+            "PR 音符窗口更新: {} 实例 sel={} epoch={} cost={:?}",
             t.pr_note_cache.instances().len(),
             selection.len(),
-            model_epoch
+            model_epoch,
+            update_started.elapsed()
         );
     }
     t.renderer.ensure_layers(3);
@@ -459,6 +461,7 @@ fn upload_arrangement(
             view.lane_height(),
             num_tracks,
         );
+        let build_started = Instant::now();
         yinhe_wgpu::build_arr_notes(
             &mut t.notes_buf,
             w,
@@ -467,6 +470,13 @@ fn upload_arrangement(
             (trk_first, trk_last),
             &visible,
             preview.hidden.as_ref(),
+        );
+        log::info!(
+            "AR 音符层重建: {} 实例, 可见轨道 {}..{}, cost={:?}",
+            t.notes_buf.len(),
+            trk_first,
+            trk_last,
+            build_started.elapsed()
         );
         t.notes_cache_key = key;
     }

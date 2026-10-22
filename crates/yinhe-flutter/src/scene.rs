@@ -2625,17 +2625,25 @@ fn history_step(step: impl FnOnce(&mut Document) -> bool) -> i32 {
         return 0;
     };
     crate::selection_materializer::invalidate();
+    let started = std::time::Instant::now();
     let Some(doc) = s.document.as_mut() else {
         return 0;
     };
     if !step(doc) {
         return 0;
     }
+    let undone = started.elapsed();
     let model = doc.data.model.clone();
+    let refresh = std::time::Instant::now();
     refresh_snapshot(&mut s);
+    let refreshed = refresh.elapsed();
     drop(s);
     // 撤销/重做可能改动音符或自动化：重载 CC（不中断播放）。
     crate::audio::reload_notes(model);
+    log::info!(
+        "历史步骤完成: action={undone:?}, refresh={refreshed:?}, total={:?}",
+        started.elapsed()
+    );
     1
 }
 
