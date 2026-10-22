@@ -2011,8 +2011,9 @@ fn commit_riff(
     if count == 0 {
         return None;
     }
-    let (t0, t1, _, _) = d.box_ticks?;
+    let (t0, t1, k0, k1) = d.box_ticks?;
     let width = (t1 - t0).max(1.0).round() as i64;
+    let view_mode = s.view_mode;
     let started = std::time::Instant::now();
     let changed = {
         let doc = s.document.as_mut()?;
@@ -2021,6 +2022,43 @@ fn commit_riff(
         }
         let before = doc.capture_snapshot();
         let action = doc.repeat_selected(width, count)?;
+
+        // Riff 完成后把选框扩到“原选区 + 所有重复段”，并将新范围设为
+        // 唯一矩形选区；副本和原音符都会落在这个范围内。
+        let width_f = width as f64;
+        let (new_t0, new_t1) = if count > 0 {
+            (t0, t1 + width_f * count as f64)
+        } else {
+            ((t0 + width_f * count as f64).max(0.0), t1)
+        };
+        match view_mode {
+            ViewMode::Pianoroll => {
+                doc.edit.sel_rect.clear();
+                doc.edit.sel_rect.push_rect((new_t0, new_t1, k0, k1), false);
+                doc.edit.selected.clear_rects();
+                doc.edit.selected.add_rect_track(
+                    new_t0.max(0.0) as u32,
+                    new_t1.max(new_t0 + 1.0) as u32,
+                    k0,
+                    k1,
+                    d.sel_tr_lo,
+                    d.sel_tr_hi,
+                );
+            }
+            ViewMode::Arrangement => {
+                let (_, _, r0, r1) = d.box_rows.unwrap_or((t0, t1, 0, 0));
+                doc.edit.arr_sel_rect = vec![(new_t0, new_t1, r0, r1)];
+                doc.edit.selected.clear_rects();
+                doc.edit.selected.add_rect_track(
+                    new_t0.max(0.0) as u32,
+                    new_t1.max(new_t0 + 1.0) as u32,
+                    0,
+                    yinhe_types::MAX_KEY,
+                    r0 as u16,
+                    r1 as u16,
+                );
+            }
+        }
         doc.push_undo(action, "重复 Riff", before);
         true
     };
@@ -2028,6 +2066,7 @@ fn commit_riff(
         let repeated = started.elapsed();
         let refresh = std::time::Instant::now();
         let model = after_edit(s);
+        crate::selection_materializer::schedule(s);
         log::info!(
             "重复 Riff 完成: count={count}, width={width}, repeat={repeated:?}, refresh={:?}",
             refresh.elapsed()

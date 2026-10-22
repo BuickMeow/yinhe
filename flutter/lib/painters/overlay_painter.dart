@@ -54,14 +54,13 @@ class OverlayPainter extends CustomPainter {
     if (b != null && !moving.value) {
       rect(b);
     }
-    canvas.restore();
-
     if (showHandles &&
         !moving.value &&
         o.box == null &&
         o.sel.length == 1) {
       _paintHandles(canvas, o.sel.first, stroke);
     }
+    canvas.restore();
   }
 
   /// 四个边中点圆形控制点 + 右下角方形 Riff 控制点。
@@ -78,10 +77,10 @@ class OverlayPainter extends CustomPainter {
       Offset(r.right, r.center.dy),
     ];
     for (final c in centers) {
-      canvas.drawCircle(c, 4.5, fill);
-      canvas.drawCircle(c, 4.5, handle);
+      canvas.drawCircle(c, 4.0, fill);
+      canvas.drawCircle(c, 4.0, handle);
     }
-    final riff = Rect.fromCenter(center: r.bottomRight, width: 9, height: 9);
+    final riff = Rect.fromCenter(center: r.bottomRight, width: 8, height: 8);
     canvas.drawRect(riff, fill);
     canvas.drawRect(riff, handle);
   }
