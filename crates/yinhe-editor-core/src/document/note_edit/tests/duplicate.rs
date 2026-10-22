@@ -13,6 +13,30 @@ fn overlapping_rects_duplicate_once() {
 }
 
 #[test]
+fn repeat_selected_creates_all_steps_in_one_action() {
+    let mut doc = make_doc_with_note();
+    let action = doc.repeat_selected(100, 2).expect("重复应产生 undo");
+    let total: usize = (0..yinhe_types::KEY_COUNT)
+        .map(|k| doc.data.model.notes[k].len())
+        .sum();
+    assert_eq!(total, 3, "原件 + 两个重复段");
+    assert_eq!(doc.data.model.notes[60].len(), 3);
+    assert_eq!(doc.data.model.notes[60][1].start_tick, 200);
+    assert_eq!(doc.data.model.notes[60][2].start_tick, 300);
+    // 选区保持原位置，方便继续拖动 Riff 方块。
+    assert_eq!(doc.edit.selected.rects.len(), 1);
+    assert_eq!(doc.edit.selected.rects[0].0, 100);
+    assert_eq!(doc.edit.selected.rects[0].1, 201);
+    match action {
+        UndoAction::Notes(delta) => {
+            assert!(delta.before.is_empty());
+            assert_eq!(delta.after.len(), 2);
+        }
+        _ => panic!("期望 UndoAction::Notes"),
+    }
+}
+
+#[test]
 fn duplicate_selected_to_preserves_original_and_offsets_copy() {
     let mut doc = make_doc_with_note();
     let action = doc

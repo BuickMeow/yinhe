@@ -382,8 +382,7 @@ fn begin_sel_handle(d: &mut DragState, s: &mut RenderScene, h: SelHandle) {
     d.sel_tr_lo = h.tr_lo;
     d.sel_tr_hi = h.tr_hi;
     if h.edge == 4 {
-        let (by_key, _) = collect_selected_notes(s);
-        d.drag_by_key = by_key;
+        // Riff 预览只画重复选框，不预先扫描/物化选中音符。
         d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::new()));
     }
     bump(s);
@@ -972,55 +971,68 @@ fn update_riff_fill(d: &mut DragState, s: &mut RenderScene, x: f32) {
     let count = riff_count(d, s, x);
     if count == 0 {
         d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::new()));
+        s.overlay_cells.clear();
         s.preview.clear();
+        bump(s);
         return;
     }
-    let Some((t0, t1, _, _)) = d.box_ticks else {
+    let Some((t0, t1, k0, k1)) = d.box_ticks else {
         return;
     };
     let width = (t1 - t0).max(1.0);
     let (lw, lh) = crate::logical_size();
-    let (tick_lo, tick_hi, key_lo, key_hi) = match s.view_mode {
+    let tick_lo = match s.view_mode {
         ViewMode::Pianoroll => {
-            let (a, b) = s
-                .pr_view
-                .visible_main_range(s.pr_view.main_axis_len(lw, lh));
-            let (c, d) = s
-                .pr_view
-                .visible_cross_range(s.pr_view.cross_axis_len(lw, lh));
-            (a, b, c, d)
+            s.pr_view
+                .visible_main_range(s.pr_view.main_axis_len(lw, lh))
+                .0
         }
-        ViewMode::Arrangement => {
-            let (a, b) = s.arr_view.visible_tick_range(lw);
-            (a, b, 0, yinhe_types::MAX_KEY)
+        ViewMode::Arrangement => s.arr_view.visible_tick_range(lw).0,
+    };
+    let tick_hi = match s.view_mode {
+        ViewMode::Pianoroll => {
+            s.pr_view
+                .visible_main_range(s.pr_view.main_axis_len(lw, lh))
+                .1
         }
+        ViewMode::Arrangement => s.arr_view.visible_tick_range(lw).1,
     };
     let sign = if count > 0 { 1.0 } else { -1.0 };
     let steps = count.unsigned_abs() as i64;
-    let mut ghost = Vec::new();
-    for step in 1..=steps {
-        let offset = sign * width * step as f64;
-        let copy_lo = t0 + offset;
-        let copy_hi = t1 + offset;
-        if copy_hi <= tick_lo || copy_lo >= tick_hi {
-            continue;
-        }
-        for (key, bucket) in d.drag_by_key.iter().enumerate() {
-            let key = key as u8;
-            if s.view_mode == ViewMode::Pianoroll && (key < key_lo || key > key_hi) {
-                continue;
-            }
-            for &(track, start, end, _) in bucket {
-                let new_start = (f64::from(start) + offset).max(0.0) as u32;
-                let new_end = new_start.saturating_add(end.saturating_sub(start));
-                if f64::from(new_start) >= tick_hi || f64::from(new_end) <= tick_lo {
+    let mut rects = Vec::new();
+    match s.view_mode {
+        ViewMode::Pianoroll => {
+            let geom = PrGeom::new(&s.pr_view);
+            let y0 = geom.key_to_y(k1);
+            let y1 = geom.key_to_y(k0) + geom.kh;
+            for step in 1..=steps {
+                let offset = sign * width * step as f64;
+                let copy_lo = t0 + offset;
+                let copy_hi = t1 + offset;
+                if copy_hi <= tick_lo || copy_lo >= tick_hi {
                     continue;
                 }
-                ghost.push((new_start, new_end, key, track));
+                rects.push([geom.tick_to_x(copy_lo), y0, geom.tick_to_x(copy_hi), y1]);
+            }
+        }
+        ViewMode::Arrangement => {
+            let geom = ArGeom::new(&s.arr_view);
+            let (_, _, r0, r1) = d.box_rows.unwrap_or((t0, t1, 0, 0));
+            let y0 = geom.row_to_y(r0);
+            let y1 = geom.row_to_y(r1 + 1);
+            for step in 1..=steps {
+                let offset = sign * width * step as f64;
+                let copy_lo = t0 + offset;
+                let copy_hi = t1 + offset;
+                if copy_hi <= tick_lo || copy_lo >= tick_hi {
+                    continue;
+                }
+                rects.push([geom.tick_to_x(copy_lo), y0, geom.tick_to_x(copy_hi), y1]);
             }
         }
     }
-    apply_preview(s, d, ghost, false);
+    s.overlay_cells = rects;
+    s.preview.clear();
     bump(s);
 }
 
@@ -2000,36 +2012,18 @@ fn commit_riff(
         return None;
     }
     let (t0, t1, _, _) = d.box_ticks?;
-    let width = (t1 - t0).max(1.0);
-    let sign = if count > 0 { 1.0 } else { -1.0 };
-    let steps = count.unsigned_abs() as i64;
-    let actions = {
+    let width = (t1 - t0).max(1.0).round() as i64;
+    let changed = {
         let doc = s.document.as_mut()?;
-        let original = doc.edit.selected.clone();
-        if original.is_empty() {
+        if doc.edit.selected.is_empty() {
             return None;
         }
         let before = doc.capture_snapshot();
-        let mut actions = Vec::new();
-        for step in 1..=steps {
-            doc.edit.selected = original.clone();
-            let delta = (sign * width * step as f64).round() as i64;
-            if let Some(action) = doc.duplicate_selected_to(delta, 0) {
-                actions.push(action);
-            }
-        }
-        doc.edit.selected = original;
-        if actions.is_empty() {
-            return None;
-        }
-        doc.push_undo(
-            yinhe_editor_core::history::UndoAction::Composite(actions),
-            "重复 Riff",
-            before,
-        );
+        let action = doc.repeat_selected(width, count)?;
+        doc.push_undo(action, "重复 Riff", before);
         true
     };
-    if actions { after_edit(s) } else { None }
+    if changed { after_edit(s) } else { None }
 }
 
 /// 单音符移动提交（铅笔/选框共用入口，桌面 `pencil_drag_note`）。

@@ -24,6 +24,70 @@ impl Document {
         self.duplicate_impl(delta_ticks, delta_keys, false)
     }
 
+    /// 按选区宽度重复：`steps` 为正向右、为负向左；选区本身保持不变。
+    ///
+    /// 一次流式扫描选区并在同一批次插入所有副本，避免对每个重复段重新扫描
+    /// 全选区；返回一个合并的 NoteDelta，只占一步 undo。
+    pub fn repeat_selected(&mut self, width_ticks: i64, steps: i64) -> Option<UndoAction> {
+        if width_ticks <= 0 || steps == 0 || self.edit.selected.is_empty() {
+            return None;
+        }
+        let allow_overlap = self.edit.allow_overlapping_notes;
+        let after = {
+            let model = &self.data.model;
+            let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
+                std::collections::HashMap::new();
+            let sign = if steps > 0 { 1 } else { -1 };
+            batch_ops::for_each_selected(model, &self.edit.selected, |note, old_key| {
+                for step in 1..=steps.unsigned_abs() as i64 {
+                    let delta = sign * width_ticks * step;
+                    let new_start = (note.start_tick as i64 + delta).max(0) as u32;
+                    let length = note.end_tick - note.start_tick;
+                    if !allow_overlap
+                        && batch_ops::has_overlapping_note(
+                            model,
+                            note.track,
+                            old_key,
+                            new_start,
+                            new_start + length,
+                        )
+                    {
+                        continue;
+                    }
+                    new_by_key
+                        .entry(old_key)
+                        .or_default()
+                        .push(yinhe_types::Note {
+                            id: 0,
+                            start_tick: new_start,
+                            end_tick: new_start + length,
+                            velocity: note.velocity,
+                            track: note.track,
+                        });
+                }
+            });
+            if new_by_key.is_empty() {
+                return None;
+            }
+            let model = Arc::make_mut(&mut self.data.model);
+            let mut after = Vec::new();
+            for (key, notes) in new_by_key.iter_mut() {
+                for n in notes.iter_mut() {
+                    n.id = model.alloc_note_id();
+                    after.push((*n, *key));
+                }
+            }
+            batch_ops::insert_batch(model, new_by_key);
+            after
+        };
+        self.data.rebuild_model_dirty();
+        self.data.bump_revision();
+        Some(UndoAction::Notes(NoteDelta {
+            before: vec![],
+            after,
+        }))
+    }
+
     /// 复制的公共实现（`duplicate_selected` / `duplicate_selected_to`）。
     ///
     /// 流式两遍（不物化 `collect_selected`）：`auto_span` 时先求选区跨度作偏移，
