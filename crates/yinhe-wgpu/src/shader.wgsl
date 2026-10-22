@@ -247,8 +247,8 @@ fn vs_main(
         pixel_x = x_offset + start_tick * ppu;
         // 视口左边界 = keyboard_width（见 note_geometry 同注释）。
         pixel_x = max(pixel_x, u.keyboard_width);
-        // AR 暂不设 2px 最小宽度；按真实 gate 宽度绘制。
-        pixel_w = max(x_offset + end_tick * ppu - pixel_x, 0.0);
+        // AR 保留 1px 可视下限：短音符不消失，但不会像 2px 那样明显拉长。
+        pixel_w = max(x_offset + end_tick * ppu - pixel_x, 1.0);
     }
 
     var pos = array<vec2<f32>, 6>(
@@ -389,9 +389,8 @@ fn note_geometry(
         // 视口左边界 = keyboard_width（键盘列/轨道面板列由 egui 层绘制，
         // 音符左端 clamp 到其右缘，长音符从左侧进入时显示为被左列"切"掉）。
         pixel_x = max(pixel_x, u.keyboard_width);
-        // AR 暂时取消 2px 可视下限：按真实 gate 宽度绘制，零宽不显示。
-        // PR 仍保留 2px，避免短音符在钢琴卷帘里消失。
-        pixel_w = max(right - pixel_x, 0.0);
+        // AR 保留 1px 可视下限；PR 仍保留 2px，避免短音符消失。
+        pixel_w = max(right - pixel_x, 1.0);
         if u.mode == 1u {
             pixel_w = max(pixel_w, 2.0);
         }
