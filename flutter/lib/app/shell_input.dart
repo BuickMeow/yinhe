@@ -11,9 +11,19 @@ mixin _ShellInput on _ShellBase {
   // ── 触摸 / 手势 ──
 
   final Set<int> _activePointers = <int>{};
+  final Map<int, Offset> _pointerPositions = <int, Offset>{};
   Offset? _gestureStart;
   Offset _lastFocal = Offset.zero;
   double _lastScale = 1.0;
+
+  /// 双指 span（到焦点的平均距离，与 Flutter ScaleGestureRecognizer 同义）。
+  ///
+  /// 双指平移时手指间距会有亚像素噪声，不能直接把 `ScaleUpdateDetails.scale`
+  /// 当成缩放。先在 span 噪声带内只平移，超过 Flutter 同款 scale slop 后才
+  /// 进入缩放，避免画面在双指移动时“呼吸”。
+  double _pinchStartSpan = 0.0;
+  double _pinchLastSpan = 0.0;
+  bool _pinchZoomEngaged = false;
   bool _gestureEditing = false;
   bool _gestureWasEditing = false;
   bool _gestureZoomed = false;
@@ -25,6 +35,30 @@ mixin _ShellInput on _ShellBase {
       e.kind == PointerDeviceKind.mouse &&
       (e.buttons & kSecondaryMouseButton) != 0;
 
+  /// 双指 span：两指距离的一半，和 Flutter `_ScaleGestureRecognizer._currentSpan`
+  /// 对双指的定义一致。
+  double _pinchSpan() {
+    final points = _pointerPositions.values.toList(growable: false);
+    if (points.length < 2) {
+      return 0.0;
+    }
+    return (points[0] - points[1]).distance * 0.5;
+  }
+
+  void _resetPinchSpan() {
+    _pinchStartSpan = 0.0;
+    _pinchLastSpan = 0.0;
+    _pinchZoomEngaged = false;
+  }
+
+  /// 以当前两指位置重新取缩放基准（指针数量变化、或指针下落不完整时）。
+  void _rebasePinchSpan() {
+    final span = _pinchSpan();
+    _pinchStartSpan = span;
+    _pinchLastSpan = span;
+    _pinchZoomEngaged = false;
+  }
+
   /// 第一根手指按下时立即 begin，保证铅笔/选框没有 100ms 点击延迟。
   /// 后续的 tap / long press / scale 全部交给 Flutter gesture arena。
   @override
@@ -34,8 +68,11 @@ mixin _ShellInput on _ShellBase {
     }
     final emptyBefore = _activePointers.isEmpty;
     _activePointers.add(e.pointer);
+    _pointerPositions[e.pointer] = e.localPosition;
     if (!emptyBefore) {
       // 第二根手指：取消正在进行的编辑，交给 Flutter 双指手势。
+      // 以两指刚落下时的 span 为噪声基准；手势被 arena 接受后再开始累计。
+      _rebasePinchSpan();
       rust.editCancel();
       _gestureEditing = false;
       _gestureZoomed = false;
@@ -66,13 +103,28 @@ mixin _ShellInput on _ShellBase {
   }
 
   @override
+  void _handlePointerMove(PointerMoveEvent e) {
+    if (_pointerPositions.containsKey(e.pointer)) {
+      _pointerPositions[e.pointer] = e.localPosition;
+    }
+  }
+
+  @override
   void _handlePointerUp(PointerUpEvent e) {
     _activePointers.remove(e.pointer);
+    _pointerPositions.remove(e.pointer);
     if (_activePointers.isNotEmpty) {
+      // 三指变两指：重新取基准；两指变单指：等下一段 ScaleStart 接管平移。
+      if (_pointerPositions.length >= 2) {
+        _rebasePinchSpan();
+      } else {
+        _resetPinchSpan();
+      }
       return;
     }
     _lastFocal = e.localPosition;
     _pinchModeLocked = false;
+    _resetPinchSpan();
     // PointerUp 带精确落点；编辑在最后一根手指离开时立即提交，避免只靠
     // ScaleEnd 的“最后一次 move”导致笔尖/音符结束位置偏几像素。
     if (_gestureEditing) {
@@ -83,7 +135,13 @@ mixin _ShellInput on _ShellBase {
   @override
   void _handlePointerCancel(PointerCancelEvent e) {
     _activePointers.remove(e.pointer);
+    _pointerPositions.remove(e.pointer);
     if (_activePointers.isNotEmpty) {
+      if (_pointerPositions.length >= 2) {
+        _rebasePinchSpan();
+      } else {
+        _resetPinchSpan();
+      }
       return;
     }
     rust.editCancel();
@@ -92,6 +150,7 @@ mixin _ShellInput on _ShellBase {
     _gestureZoomed = false;
     _gestureMoved = false;
     _pinchModeLocked = false;
+    _resetPinchSpan();
     _clearLongPressUi();
   }
 
@@ -137,8 +196,12 @@ mixin _ShellInput on _ShellBase {
     _gestureMoved = false;
     _gestureStart = d.localFocalPoint;
     if (d.pointerCount >= 2) {
+      if (_pinchStartSpan <= 0.0) {
+        _rebasePinchSpan();
+      }
       _lockPinch(d.localFocalPoint);
     } else {
+      _resetPinchSpan();
       _pinchModeLocked = false;
       _gestureMode = _gesturePan;
     }
@@ -157,13 +220,38 @@ mixin _ShellInput on _ShellBase {
         // 从单指平移过渡到双指：以当前焦点为基准重新起手，避免第一帧跳变。
         _pinchModeLocked = true;
         _gestureMode = _modeAt(focal);
+        if (_pinchStartSpan <= 0.0) {
+          _rebasePinchSpan();
+        }
         _lastFocal = focal;
         _lastScale = d.scale;
         return;
       }
       final pan = focal - _lastFocal;
-      final last = _lastScale <= 0.0 ? 1.0 : _lastScale;
-      final scaleDelta = d.scale / last;
+      final span = _pinchSpan();
+      double scaleDelta;
+      if (span > 0.0 && _pinchStartSpan > 0.0) {
+        if (!_pinchZoomEngaged) {
+          // 双指平移的 span 噪声带：还没超过 Flutter 同款 scale slop 时只平移。
+          if ((span - _pinchStartSpan).abs() < kScaleSlop) {
+            scaleDelta = 1.0;
+          } else {
+            // 第一次确认是缩放：把门限前累积的 span 一次应用，避免起缩跳变。
+            scaleDelta = span / _pinchStartSpan;
+            _pinchZoomEngaged = true;
+            _pinchLastSpan = span;
+          }
+        } else {
+          final last = _pinchLastSpan > 0.0 ? _pinchLastSpan : span;
+          scaleDelta = span / last;
+          _pinchLastSpan = span;
+        }
+      } else {
+        // 触控板等没有逐指位置的回退路径：沿用累计 scale。
+        final last = _lastScale <= 0.0 ? 1.0 : _lastScale;
+        scaleDelta = d.scale / last;
+        _lastScale = d.scale;
+      }
       rust.viewportGesture(
         _gestureMode,
         pan.dx,
@@ -180,6 +268,9 @@ mixin _ShellInput on _ShellBase {
       return;
     }
 
+    if (_pointerPositions.length < 2) {
+      _resetPinchSpan();
+    }
     final pan = focal - _lastFocal;
     if (_gestureEditing) {
       final active = rust.editUpdate(focal.dx, focal.dy) == 1;
@@ -229,6 +320,9 @@ mixin _ShellInput on _ShellBase {
     _gestureMoved = false;
     _pinchModeLocked = false;
     _gestureMode = _gesturePan;
+    if (_pointerPositions.length < 2) {
+      _resetPinchSpan();
+    }
     _clearLongPressUi();
   }
 
@@ -409,6 +503,8 @@ mixin _ShellInput on _ShellBase {
   void _resetInteraction() {
     rust.resetInteraction();
     _activePointers.clear();
+    _pointerPositions.clear();
+    _resetPinchSpan();
     _gestureEditing = false;
     _gestureWasEditing = false;
     _gestureZoomed = false;

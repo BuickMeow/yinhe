@@ -245,6 +245,7 @@ abstract class _ShellBase extends State<StudioShell>
   void _flashSaved();
   String _fmtBpm(double v);
   void _handlePointerDown(PointerDownEvent e);
+  void _handlePointerMove(PointerMoveEvent e);
   void _handlePointerUp(PointerUpEvent e);
   void _handlePointerCancel(PointerCancelEvent e);
   void _handlePointerSignal(PointerSignalEvent e);

@@ -65,6 +65,7 @@ mixin _ShellBuild on _ShellBase {
                               child: Listener(
                                 behavior: HitTestBehavior.opaque,
                                 onPointerDown: _handlePointerDown,
+                                onPointerMove: _handlePointerMove,
                                 onPointerUp: _handlePointerUp,
                                 onPointerCancel: _handlePointerCancel,
                                 onPointerSignal: _handlePointerSignal,
