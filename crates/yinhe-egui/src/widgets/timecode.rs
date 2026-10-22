@@ -199,6 +199,11 @@ pub fn show_timecode_display(
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(TIMECODE_WIDTH, RECT_H), egui::Sense::hover());
 
+    // 时间码内部输入框按半行高布局；父级 transport bar 的 interact_size.y=32
+    // 不能让 TextEdit 继承，否则每个输入框会被撑到 32 高并溢出时间码块。
+    let prev_interact_y = ui.spacing().interact_size.y;
+    ui.spacing_mut().interact_size.y = ROW_H;
+
     // 背景（外框与内容同宽：内容紧贴外框边缘）+ 列分隔线。
     ui.painter()
         .rect_filled(rect, egui::CornerRadius::same(8), crate::theme::track_bg());
@@ -408,6 +413,7 @@ pub fn show_timecode_display(
         crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.master_meter"));
     }
 
+    ui.spacing_mut().interact_size.y = prev_interact_y;
     ui.data_mut(|d| d.insert_temp(buf_id, bufs));
     (rect, events)
 }

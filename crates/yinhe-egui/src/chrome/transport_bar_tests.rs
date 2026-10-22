@@ -4,6 +4,7 @@ use crate::chrome::transport_bar_actions::ViewAction;
 use crate::file_loader::FileLoader;
 use crate::view_interaction::FollowMode;
 use crate::widgets::action_menu::{MenuGroup, PopupRowSpec, measure_menu_width, popup_menu_row};
+use egui_kittest::kittest::Queryable;
 use yinhe_editor_core::document::Document;
 
 /// 为测试文档构造 PR 控制组数据（与 main_loop 组装一致）。
@@ -382,6 +383,32 @@ fn transport_icon_buttons_are_square() {
             "{name} 图标按钮不是正方形: {s:?}（期望 {target}×{target}）"
         );
     }
+}
+
+/// 回归测试：时间码输入框高度必须贴合半行高，不能继承 transport bar 的
+/// `interact_size.y=32`，否则 0.37 下会溢出时间码块并撑高整条走带栏。
+#[test]
+fn timecode_inputs_do_not_overflow_rows() {
+    let doc = yinhe_test_helpers::make_test_document();
+    let mut h = make_transport_harness(Some(&doc));
+    h.step();
+    h.step();
+
+    let bpm = h.get_by_label(t!("hint.timecode.bpm").as_ref()).rect();
+    let timesig = h.get_by_label(t!("hint.timecode.timesig").as_ref()).rect();
+    let position = h.get_by_label(t!("hint.timecode.position").as_ref()).rect();
+
+    for (name, rect) in [("BPM", bpm), ("拍号", timesig), ("位置", position)] {
+        assert!(
+            rect.height() <= 20.5,
+            "{name} 输入框高度 {}，应贴合半行高 18",
+            rect.height()
+        );
+    }
+    assert!(
+        bpm.bottom() <= timesig.top() + 0.5,
+        "BPM 与拍号输入框重叠：{bpm:?} / {timesig:?}"
+    );
 }
 
 /// 回归测试：双击 transport bar 真空白区域应发送最大化命令。
