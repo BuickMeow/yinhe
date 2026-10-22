@@ -452,13 +452,19 @@ fn upload_arrangement(
     let key = yinhe_wgpu::layer_cache_key(&[key, VIEW_TAG_ARRANGEMENT]);
     if key != t.notes_cache_key {
         t.notes_buf.clear();
-        // demo 阶段构建全部轨道（可见性裁剪留给后续优化）。
+        // 只构建当前可见轨道行：undo/Riff 后 AR 层重建不再扫全工程所有轨。
+        let (trk_first, trk_last) = ArrangementView::visible_track_range_static(
+            view.base.scroll_y,
+            h,
+            view.lane_height(),
+            num_tracks,
+        );
         yinhe_wgpu::build_arr_notes(
             &mut t.notes_buf,
             w,
             model,
             view,
-            (0, num_tracks),
+            (trk_first, trk_last),
             &visible,
             preview.hidden.as_ref(),
         );

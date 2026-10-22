@@ -2624,6 +2624,7 @@ fn history_step(step: impl FnOnce(&mut Document) -> bool) -> i32 {
     let Ok(mut s) = scene().lock() else {
         return 0;
     };
+    crate::selection_materializer::invalidate();
     let Some(doc) = s.document.as_mut() else {
         return 0;
     };

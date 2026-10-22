@@ -25,6 +25,11 @@ fn result_slot() -> &'static Mutex<Option<Pending>> {
     RESULT.get_or_init(|| Mutex::new(None))
 }
 
+/// 历史操作（undo/redo）前作废尚未应用的选区结果，避免旧位图覆盖新选区。
+pub fn invalidate() {
+    GENERATION.fetch_add(1, Ordering::Relaxed);
+}
+
 /// 安排异步物化当前矩形选区。重复调用会让旧任务的结果作废。
 pub fn schedule(s: &RenderScene) {
     let Some(doc) = s.document.as_ref() else {
