@@ -277,6 +277,7 @@ abstract class _ShellBase extends State<StudioShell>
   void _showTrackMenu(int track);
   void _stopPlayback();
   void _togglePlay();
+  int get _tool;
   void _updateTimecode();
 }
 

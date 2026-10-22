@@ -63,6 +63,7 @@ mixin _ShellCore on _ShellBase {
   }
 
   /// 当前视图允许的工具。
+  @override
   int get _tool => _viewMode == kViewPianoroll ? _toolPr : _toolAr;
 
   /// 主工具按钮当前记住的工具。

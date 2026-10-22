@@ -27,6 +27,8 @@ const PENCIL_PICK_ENABLED: bool = false;
 /// 手机端直接按在音符上拖动太容易误触，当前关闭；保留选框长按后的整体移动。
 /// 后续要恢复桌面式单音符拖拽时只改这里。
 const DIRECT_NOTE_DRAG_ENABLED: bool = false;
+/// 选框控制点命中半径（逻辑像素）。
+const SEL_HANDLE_R: f32 = 14.0;
 
 /// 拖拽类型。
 mod kind {
@@ -46,6 +48,10 @@ mod kind {
     pub const PASTE_READY: u8 = 10;
     /// 铅笔精调选择：手指在音符上滑动，松手选中最后命中的音符。
     pub const PENCIL_PICK: u8 = 11;
+    /// 拖动选框四边控制点，微调选区范围。
+    pub const SEL_RESIZE: u8 = 12;
+    /// 拖动选框右下角方块，按选区宽度重复 Riff。
+    pub const RIFF_FILL: u8 = 13;
 }
 
 /// 整体拖动音符：`(track, start_tick, end_tick, velocity)`（key 由外层桶给出）。
@@ -84,6 +90,11 @@ struct DragState {
     last_ghost: Option<(i64, i32, u64)>,
     /// 预览音上次播放时的 key 偏移，避免同一位置重复触发。
     preview_last_dk: i32,
+    /// 选框控制点：0=上、1=下、2=左、3=右、4=右下角 Riff。
+    sel_edge: u8,
+    /// PR 选框控制点拖动时保留的轨道范围。
+    sel_tr_lo: u16,
+    sel_tr_hi: u16,
     /// 铅笔：吸附后起点与当前终点。
     start_f: f64,
     cur_end: f64,
@@ -114,6 +125,9 @@ impl Default for DragState {
             drag_hidden: None,
             last_ghost: None,
             preview_last_dk: 0,
+            sel_edge: 0,
+            sel_tr_lo: 0,
+            sel_tr_hi: 0,
             start_f: 0.0,
             cur_end: 0.0,
             cells: Vec::new(),
@@ -142,6 +156,9 @@ static DRAG: std::sync::Mutex<DragState> = std::sync::Mutex::new(DragState {
     drag_hidden: None,
     last_ghost: None,
     preview_last_dk: 0,
+    sel_edge: 0,
+    sel_tr_lo: 0,
+    sel_tr_hi: 0,
     start_f: 0.0,
     cur_end: 0.0,
     cells: Vec::new(),
@@ -219,6 +236,103 @@ impl ArGeom {
     }
 }
 
+#[derive(Clone, Copy)]
+struct SelHandle {
+    edge: u8,
+    t0: f64,
+    t1: f64,
+    k0: u8,
+    k1: u8,
+    tr_lo: u16,
+    tr_hi: u16,
+    r0: usize,
+    r1: usize,
+}
+
+/// 控制点命中：四边中点圆形，右下角方形。
+fn handle_hit(x0: f32, y0: f32, x1: f32, y1: f32, x: f32, y: f32) -> Option<u8> {
+    let (x0, x1) = (x0.min(x1), x0.max(x1));
+    let (y0, y1) = (y0.min(y1), y0.max(y1));
+    let cx = (x0 + x1) * 0.5;
+    let cy = (y0 + y1) * 0.5;
+    let near = |hx: f32, hy: f32| {
+        let dx = x - hx;
+        let dy = y - hy;
+        dx * dx + dy * dy <= SEL_HANDLE_R * SEL_HANDLE_R
+    };
+    if (x - x1).abs() <= 10.0 && (y - y1).abs() <= 10.0 {
+        return Some(4);
+    }
+    if near(cx, y0) {
+        return Some(0);
+    }
+    if near(cx, y1) {
+        return Some(1);
+    }
+    if near(x0, cy) {
+        return Some(2);
+    }
+    if near(x1, cy) {
+        return Some(3);
+    }
+    None
+}
+
+fn pr_selection_handle(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option<SelHandle> {
+    let doc = s.document.as_ref()?;
+    if doc.edit.sel_rect.rects.len() != 1 {
+        return None;
+    }
+    let (t0, t1, k0, k1) = doc.edit.sel_rect.rects[0];
+    let (tr_lo, tr_hi) = doc
+        .edit
+        .selected
+        .rects
+        .first()
+        .map(|r| (r.4, r.5))
+        .unwrap_or((0, s.num_tracks.saturating_sub(1) as u16));
+    let x0 = geom.tick_to_x(t0);
+    let x1 = geom.tick_to_x(t1);
+    let y0 = geom.key_to_y(k1);
+    let y1 = geom.key_to_y(k0) + geom.kh;
+    let edge = handle_hit(x0, y0, x1, y1, x, y)?;
+    Some(SelHandle {
+        edge,
+        t0,
+        t1,
+        k0,
+        k1,
+        tr_lo,
+        tr_hi,
+        r0: 0,
+        r1: 0,
+    })
+}
+
+fn ar_selection_handle(s: &RenderScene, geom: &ArGeom, x: f32, y: f32) -> Option<SelHandle> {
+    let doc = s.document.as_ref()?;
+    if doc.edit.arr_sel_rect.len() != 1 {
+        return None;
+    }
+    let (t0, t1, r0, r1) = doc.edit.arr_sel_rect[0];
+    let x0 = geom.tick_to_x(t0);
+    let x1 = geom.tick_to_x(t1);
+    let y0 = geom.row_to_y(r0);
+    let y1 = geom.row_to_y(r1 + 1);
+    let edge = handle_hit(x0, y0, x1, y1, x, y)?;
+    Some(SelHandle {
+        edge,
+        t0,
+        t1,
+        k0: 0,
+        k1: yinhe_types::MAX_KEY,
+        tr_lo: r0 as u16,
+        tr_hi: r1 as u16,
+        r0,
+        r1,
+    })
+}
+
 /// 工具写入目标轨：显示过滤轨 → 当前编辑轨 → 第一条非 conductor 轨。
 fn write_track(s: &RenderScene) -> Option<usize> {
     let n = s.num_tracks;
@@ -255,6 +369,25 @@ fn bump(s: &mut RenderScene) {
 }
 
 // ── 拖拽生命周期 ──
+
+fn begin_sel_handle(d: &mut DragState, s: &mut RenderScene, h: SelHandle) {
+    d.kind = if h.edge == 4 {
+        kind::RIFF_FILL
+    } else {
+        kind::SEL_RESIZE
+    };
+    d.sel_edge = h.edge;
+    d.box_ticks = Some((h.t0, h.t1, h.k0, h.k1));
+    d.box_rows = Some((h.t0, h.t1, h.r0, h.r1));
+    d.sel_tr_lo = h.tr_lo;
+    d.sel_tr_hi = h.tr_hi;
+    if h.edge == 4 {
+        let (by_key, _) = collect_selected_notes(s);
+        d.drag_by_key = by_key;
+        d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::new()));
+    }
+    bump(s);
+}
 
 /// 单指按下：按当前工具开始编辑拖拽。
 ///
@@ -750,6 +883,147 @@ fn apply_preview(
     s.preview.set_ghost(ghost, selected);
 }
 
+fn view_tick_at(s: &RenderScene, x: f32) -> f64 {
+    let q = quantize_of(s);
+    let snap = scene::SnapCtx::new(s);
+    match s.view_mode {
+        ViewMode::Pianoroll => {
+            let geom = PrGeom::new(&s.pr_view);
+            snap.round(q, geom.x_to_tick(x)).max(0.0)
+        }
+        ViewMode::Arrangement => {
+            let geom = ArGeom::new(&s.arr_view);
+            snap.round(q, geom.x_to_tick(x)).max(0.0)
+        }
+    }
+}
+
+fn update_sel_resize(d: &DragState, s: &mut RenderScene, x: f32, y: f32) {
+    let Some((t0, t1, k0, k1)) = d.box_ticks else {
+        return;
+    };
+    let cur_tick = view_tick_at(s, x);
+    match s.view_mode {
+        ViewMode::Pianoroll => {
+            let geom = PrGeom::new(&s.pr_view);
+            let cur_key = geom.y_to_key(y);
+            let (mut nt0, mut nt1, mut nk0, mut nk1) = (t0, t1, k0, k1);
+            match d.sel_edge {
+                0 => nk1 = cur_key.max(nk0),
+                1 => nk0 = cur_key.min(nk1),
+                2 => nt0 = cur_tick.min(nt1 - 1.0).max(0.0),
+                3 => nt1 = cur_tick.max(nt0 + 1.0),
+                _ => return,
+            }
+            nt0 = nt0.max(0.0);
+            nt1 = nt1.max(nt0 + 1.0);
+            if let Some(doc) = s.document.as_mut()
+                && let Some(rect) = doc.edit.sel_rect.rects.first_mut()
+            {
+                *rect = (nt0, nt1, nk0, nk1);
+            }
+            bump(s);
+        }
+        ViewMode::Arrangement => {
+            let geom = ArGeom::new(&s.arr_view);
+            let cur_row = geom.y_to_row(y).min(s.num_tracks.saturating_sub(1));
+            let (mut nt0, mut nt1, mut nr0, mut nr1) = (
+                t0,
+                t1,
+                d.box_rows.map_or(0, |r| r.2),
+                d.box_rows.map_or(0, |r| r.3),
+            );
+            match d.sel_edge {
+                0 => nr1 = cur_row.max(nr0),
+                1 => nr0 = cur_row.min(nr1),
+                2 => nt0 = cur_tick.min(nt1 - 1.0).max(0.0),
+                3 => nt1 = cur_tick.max(nt0 + 1.0),
+                _ => return,
+            }
+            nt0 = nt0.max(0.0);
+            nt1 = nt1.max(nt0 + 1.0);
+            if let Some(doc) = s.document.as_mut()
+                && let Some(rect) = doc.edit.arr_sel_rect.first_mut()
+            {
+                *rect = (nt0, nt1, nr0, nr1);
+            }
+            bump(s);
+        }
+    }
+}
+
+fn riff_count(d: &DragState, s: &RenderScene, x: f32) -> i64 {
+    let Some((t0, t1, _, _)) = d.box_ticks else {
+        return 0;
+    };
+    let width = (t1 - t0).max(1.0);
+    let cur = view_tick_at(s, x);
+    if cur > t1 {
+        ((cur - t1) / width).ceil() as i64
+    } else if cur < t0 {
+        let max_left = (t0 / width).floor() as i64;
+        (-(((t0 - cur) / width).ceil() as i64)).max(-max_left)
+    } else {
+        0
+    }
+}
+
+fn update_riff_fill(d: &mut DragState, s: &mut RenderScene, x: f32) {
+    let count = riff_count(d, s, x);
+    if count == 0 {
+        d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::new()));
+        s.preview.clear();
+        return;
+    }
+    let Some((t0, t1, _, _)) = d.box_ticks else {
+        return;
+    };
+    let width = (t1 - t0).max(1.0);
+    let (lw, lh) = crate::logical_size();
+    let (tick_lo, tick_hi, key_lo, key_hi) = match s.view_mode {
+        ViewMode::Pianoroll => {
+            let (a, b) = s
+                .pr_view
+                .visible_main_range(s.pr_view.main_axis_len(lw, lh));
+            let (c, d) = s
+                .pr_view
+                .visible_cross_range(s.pr_view.cross_axis_len(lw, lh));
+            (a, b, c, d)
+        }
+        ViewMode::Arrangement => {
+            let (a, b) = s.arr_view.visible_tick_range(lw);
+            (a, b, 0, yinhe_types::MAX_KEY)
+        }
+    };
+    let sign = if count > 0 { 1.0 } else { -1.0 };
+    let steps = count.unsigned_abs() as i64;
+    let mut ghost = Vec::new();
+    for step in 1..=steps {
+        let offset = sign * width * step as f64;
+        let copy_lo = t0 + offset;
+        let copy_hi = t1 + offset;
+        if copy_hi <= tick_lo || copy_lo >= tick_hi {
+            continue;
+        }
+        for (key, bucket) in d.drag_by_key.iter().enumerate() {
+            let key = key as u8;
+            if s.view_mode == ViewMode::Pianoroll && (key < key_lo || key > key_hi) {
+                continue;
+            }
+            for &(track, start, end, _) in bucket {
+                let new_start = (f64::from(start) + offset).max(0.0) as u32;
+                let new_end = new_start.saturating_add(end.saturating_sub(start));
+                if f64::from(new_start) >= tick_hi || f64::from(new_end) <= tick_lo {
+                    continue;
+                }
+                ghost.push((new_start, new_end, key, track));
+            }
+        }
+    }
+    apply_preview(s, d, ghost, false);
+    bump(s);
+}
+
 /// 按最新指针位置与视图刷新拖拽预览（选框/移动框实时吸附量化网格）。
 fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
     let (x, y) = (d.px, d.py);
@@ -1042,6 +1316,8 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
             };
             apply_preview(s, d, vec![ghost], true);
         }
+        kind::SEL_RESIZE => update_sel_resize(d, s, x, y),
+        kind::RIFF_FILL => update_riff_fill(d, s, x),
         _ => {
             s.preview.clear();
         }
@@ -1077,6 +1353,11 @@ pub fn end(x: f32, y: f32) {
         kind::MOVE_BOX => commit_move(&mut s, &d, x, y, moved),
         kind::NOTE_MOVE => commit_note_move(&mut s, &d, x, y, moved),
         kind::NOTE_RESIZE => commit_note_resize(&mut s, &d, x, y, moved),
+        kind::SEL_RESIZE => {
+            commit_selection_resize(&mut s, &d);
+            None
+        }
+        kind::RIFF_FILL => commit_riff(&mut s, &d, x),
         kind::PENCIL_PICK => {
             commit_pick(&mut s, x, y);
             None
@@ -1144,9 +1425,32 @@ pub fn cancel() {
     if d.kind == kind::NONE {
         return;
     }
+    let resize = d.kind == kind::SEL_RESIZE;
+    let orig_ticks = d.box_ticks;
+    let orig_rows = d.box_rows;
     d.kind = kind::NONE;
     drop(d);
     if let Ok(mut s) = scene::scene().lock() {
+        if resize {
+            match s.view_mode {
+                ViewMode::Pianoroll => {
+                    if let Some((t0, t1, k0, k1)) = orig_ticks
+                        && let Some(doc) = s.document.as_mut()
+                        && let Some(rect) = doc.edit.sel_rect.rects.first_mut()
+                    {
+                        *rect = (t0, t1, k0, k1);
+                    }
+                }
+                ViewMode::Arrangement => {
+                    if let Some((t0, t1, r0, r1)) = orig_rows
+                        && let Some(doc) = s.document.as_mut()
+                        && let Some(rect) = doc.edit.arr_sel_rect.first_mut()
+                    {
+                        *rect = (t0, t1, r0, r1);
+                    }
+                }
+            }
+        }
         s.preview.clear();
         s.overlay_box = None;
         s.overlay_cells.clear();
@@ -1167,6 +1471,13 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
     // 内容锚点：吸附后的 tick（滚动视图后仍固定，不随视图漂移）。
     let anchor_tick = snap.round(q, geom.x_to_tick(x));
     let anchor_key = geom.y_to_key(y);
+    // 选框工具：先命中四边圆形控制点 / 右下角 Riff 方块。
+    if s.tool == Tool::Select
+        && let Some(h) = pr_selection_handle(s, &geom, x, y)
+    {
+        begin_sel_handle(d, s, h);
+        return;
+    }
     match s.tool {
         Tool::Select => {
             d.anchor_tick = anchor_tick;
@@ -1315,6 +1626,10 @@ fn begin_arr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
     let anchor_row = geom.y_to_row(y);
     d.anchor_tick = anchor_tick;
     d.anchor_row = anchor_row;
+    if let Some(h) = ar_selection_handle(s, &geom, x, y) {
+        begin_sel_handle(d, s, h);
+        return;
+    }
     if let Some(rect) = arr_box_at(s, &geom, x, y) {
         d.kind = kind::PENDING;
         d.box_rows = Some(rect);
@@ -1617,6 +1932,104 @@ fn commit_pick(s: &mut RenderScene, x: f32, y: f32) -> bool {
     select_note(s, track, start, end, key);
     after_selection_change(s);
     true
+}
+
+/// 选框边缘控制点释放：按新矩形重新物化选中的音符。
+fn commit_selection_resize(s: &mut RenderScene, d: &DragState) {
+    match s.view_mode {
+        ViewMode::Pianoroll => {
+            let Some((t0, t1, k0, k1)) = s
+                .document
+                .as_ref()
+                .and_then(|doc| doc.edit.sel_rect.rects.first().copied())
+            else {
+                return;
+            };
+            let Some(doc) = s.document.as_mut() else {
+                return;
+            };
+            let Document { edit, data, .. } = doc;
+            edit.selected.clear_rects();
+            edit.selected.add_rect_track(
+                t0.max(0.0) as u32,
+                t1.max(t0 + 1.0) as u32,
+                k0,
+                k1,
+                d.sel_tr_lo,
+                d.sel_tr_hi,
+            );
+            edit.selected.materialize_pending(&*data.model);
+        }
+        ViewMode::Arrangement => {
+            let Some((t0, t1, r0, r1)) = s
+                .document
+                .as_ref()
+                .and_then(|doc| doc.edit.arr_sel_rect.first().copied())
+            else {
+                return;
+            };
+            let Some(doc) = s.document.as_mut() else {
+                return;
+            };
+            let Document { edit, data, .. } = doc;
+            edit.selected.clear_rects();
+            edit.selected.add_rect_track(
+                t0.max(0.0) as u32,
+                t1.max(t0 + 1.0) as u32,
+                0,
+                yinhe_types::MAX_KEY,
+                r0 as u16,
+                r1 as u16,
+            );
+            edit.selected.materialize_pending(&*data.model);
+            edit.selected
+                .materialize_automation_pending(&data.model.tracks);
+        }
+    }
+    after_selection_change(s);
+}
+
+/// 右下角 Riff 方块释放：按选区宽度向左右重复，一步 undo。
+fn commit_riff(
+    s: &mut RenderScene,
+    d: &DragState,
+    x: f32,
+) -> Option<std::sync::Arc<yinhe_core::YinModel>> {
+    let count = riff_count(d, s, x);
+    if count == 0 {
+        return None;
+    }
+    let (t0, t1, _, _) = d.box_ticks?;
+    let width = (t1 - t0).max(1.0);
+    let sign = if count > 0 { 1.0 } else { -1.0 };
+    let steps = count.unsigned_abs() as i64;
+    let actions = {
+        let doc = s.document.as_mut()?;
+        let original = doc.edit.selected.clone();
+        if original.is_empty() {
+            return None;
+        }
+        let before = doc.capture_snapshot();
+        let mut actions = Vec::new();
+        for step in 1..=steps {
+            doc.edit.selected = original.clone();
+            let delta = (sign * width * step as f64).round() as i64;
+            if let Some(action) = doc.duplicate_selected_to(delta, 0) {
+                actions.push(action);
+            }
+        }
+        doc.edit.selected = original;
+        if actions.is_empty() {
+            return None;
+        }
+        doc.push_undo(
+            yinhe_editor_core::history::UndoAction::Composite(actions),
+            "重复 Riff",
+            before,
+        );
+        true
+    };
+    if actions { after_edit(s) } else { None }
 }
 
 /// 单音符移动提交（铅笔/选框共用入口，桌面 `pencil_drag_note`）。

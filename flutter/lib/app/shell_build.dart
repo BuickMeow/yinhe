@@ -94,6 +94,7 @@ mixin _ShellBuild on _ShellBase {
                                     _overlay,
                                     _moveDashed,
                                     _snap,
+                                    _tool == 0,
                                   ),
                                 ),
                               ),

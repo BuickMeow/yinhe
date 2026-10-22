@@ -26,9 +26,9 @@ class SelectionLongPressPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (moving.value) {
-      // 移动态：沿用选框原本的字体色描边，只把它变成虚线（不额外加强调色）。
+      // 移动态只画跟随手指的活动框；原选框已隐藏，避免重复虚线。
       final o = overlay.value;
-      final rects = <Rect>[...o.sel, if (o.box != null) o.box!];
+      final rects = <Rect>[if (o.box != null) o.box!];
       final paint = Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1
