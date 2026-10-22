@@ -792,11 +792,12 @@ fn curve_coverage(in: CurveOutput) -> f32 {
         d = sd_line(p, in.p0, in.p3);
     }
 
-    // 1px anti-aliased stroke.
-    // shape 0（曲线/线段）: d 是到曲线的 unsigned 距离（≥0），AA 在 [thickness-1, thickness+1]。
-    // shape 1/2/3（圆/方/环）: d 是 signed distance（d=0 在几何边界），AA 在 [-1, +1]。
-    //   否则 ANCHOR_RADIUS=3 的圆会渲染成半径≈thickness+1 的实心圆盘，像素化后看起来像方形。
-    let aa = 1.0;
+    // 约 1 个物理像素的抗锯齿。`in.local` / uniforms 使用逻辑坐标，
+    // fwidth(d) 会随 DPR 自动换算；固定 1.0 在高 DPI 上会把小圆环糊得过宽。
+    let fw = max(fwidth(d), 0.0001);
+    let aa = fw * 0.5;
+    // shape 0（曲线/线段）: d 是到曲线的 unsigned 距离（≥0）。
+    // shape 1/2/3（圆/方/环）: d 是 signed distance（d=0 在几何边界）。
     if (in.shape == 0u) {
         return 1.0 - smoothstep(in.thickness - aa, in.thickness + aa, d);
     }
