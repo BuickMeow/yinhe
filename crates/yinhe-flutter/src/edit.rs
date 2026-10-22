@@ -2014,7 +2014,6 @@ fn commit_riff(
     let (t0, t1, k0, k1) = d.box_ticks?;
     let width = (t1 - t0).max(1.0).round() as i64;
     let view_mode = s.view_mode;
-    let started = std::time::Instant::now();
     let changed = {
         let doc = s.document.as_mut()?;
         if doc.edit.selected.is_empty() {
@@ -2063,14 +2062,8 @@ fn commit_riff(
         true
     };
     if changed {
-        let repeated = started.elapsed();
-        let refresh = std::time::Instant::now();
         let model = after_edit(s);
         crate::selection_materializer::schedule(s);
-        log::info!(
-            "重复 Riff 完成: count={count}, width={width}, repeat={repeated:?}, refresh={:?}",
-            refresh.elapsed()
-        );
         model
     } else {
         None

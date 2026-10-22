@@ -413,17 +413,7 @@ pub fn prepare_folded_automation(
         crate::hash_f32s(&background) ^ crate::hash_f32s(&stripe_background).rotate_left(17);
     let folded_key = layer_cache_key(&[cache_key, tc_hash, bg_hash, lane_set_hash(lanes)]);
     let theme = renderer.theme();
-    let (tick_lo, tick_hi) = base.visible_tick_range(width);
-    let visible_events: usize = lanes
-        .iter()
-        .map(|l| {
-            l.lane
-                .events_in_range(tick_lo.max(0.0) as u32, tick_hi.max(0.0) as u32)
-                .len()
-        })
-        .sum();
-    let mut instances = 0usize;
-    let rebuilt = renderer.upload_curve_layer(3, folded_key, |out| {
+    renderer.upload_curve_layer(3, folded_key, |out| {
         for l in lanes {
             let start = out.len();
             build_lane_data(
@@ -455,14 +445,7 @@ pub fn prepare_folded_automation(
                 );
             }
         }
-        instances = out.len();
     });
-    if rebuilt {
-        log::info!(
-            "折叠自动化层: lanes={}, visible_events={visible_events}, instances={instances}, tick={tick_lo:.0}..{tick_hi:.0}, key={folded_key}",
-            lanes.len()
-        );
-    }
 }
 
 /// Prepare AR 展开自动化 lane 的曲线渲染（画在 AR 共享走带纹理上）。

@@ -44,14 +44,11 @@ pub fn schedule(s: &RenderScene) {
     let model = doc.data.model.clone();
     let generation = GENERATION.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
     std::thread::spawn(move || {
-        let started = std::time::Instant::now();
         let mut materialized = selection;
         materialized.materialize_pending(&*model);
-        let members = materialized.explicit_member_count().unwrap_or(0);
         if GENERATION.load(Ordering::Relaxed) != generation {
             return;
         }
-        log::info!("选区成员物化: {members} 音符, cost={:?}", started.elapsed());
         if let Ok(mut slot) = result_slot().lock() {
             *slot = Some(Pending {
                 generation,
