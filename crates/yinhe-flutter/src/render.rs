@@ -426,7 +426,7 @@ fn upload_pianoroll(
         }
     });
 
-    // PR 不显示 AR 折叠自动化；上传空 layer 4 清掉 AR 切过来时的残留。
+    // PR 不显示 AR 折叠自动化；上传空 layer 3 清掉 AR 切过来时的残留。
     let am_key = yinhe_wgpu::layer_cache_key(&[
         VIEW_TAG_PIANOROLL ^ 0x51_51_51_51,
         u64::from(w.to_bits()),
@@ -440,6 +440,8 @@ fn upload_pianoroll(
         &[],
         &visible,
         track_colors,
+        tc::BG,
+        tc::STRIPE_BG,
         am_key,
     );
 }
@@ -574,7 +576,7 @@ fn upload_arrangement(
         );
     });
 
-    // 折叠自动化竖线：只给可见轨道、只生成可见 tick 的事件，画在 layer 4。
+    // 折叠自动化竖线：只给可见轨道、只生成可见 tick 的事件，画在 layer 3。
     let lanes = folded_automation_lanes(model, view, &visible, h);
     let mut am_key = view.render_hash();
     am_key ^= (w.to_bits() as u64) << 17;
@@ -589,6 +591,8 @@ fn upload_arrangement(
         &lanes,
         &visible,
         track_colors,
+        tc::BG,
+        tc::STRIPE_BG,
         yinhe_wgpu::layer_cache_key(&[am_key, VIEW_TAG_ARRANGEMENT]),
     );
 }

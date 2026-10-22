@@ -396,6 +396,8 @@ pub fn prepare_folded_automation(
     lanes: &[ArrAutomationLane<'_>],
     track_visible: &[bool],
     track_colors: &[[f32; 4]],
+    background: [f32; 4],
+    stripe_background: [f32; 4],
     cache_key: u64,
 ) {
     let tc_hash = {
@@ -407,7 +409,9 @@ pub fn prepare_folded_automation(
         }
         h
     };
-    let folded_key = layer_cache_key(&[cache_key, tc_hash, lane_set_hash(lanes)]);
+    let bg_hash =
+        crate::hash_f32s(&background) ^ crate::hash_f32s(&stripe_background).rotate_left(17);
+    let folded_key = layer_cache_key(&[cache_key, tc_hash, bg_hash, lane_set_hash(lanes)]);
     let theme = renderer.theme();
     let (tick_lo, tick_hi) = base.visible_tick_range(width);
     let visible_events: usize = lanes
@@ -421,6 +425,7 @@ pub fn prepare_folded_automation(
     let mut instances = 0usize;
     let rebuilt = renderer.upload_curve_layer(3, folded_key, |out| {
         for l in lanes {
+            let start = out.len();
             build_lane_data(
                 out,
                 l,
@@ -433,6 +438,22 @@ pub fn prepare_folded_automation(
                 data_lines::FOLDED_ALPHA,
                 &theme,
             );
+            // 预乘到行背景并输出不透明颜色：AA/搭接像素不会重复叠加变深，
+            // 视觉上等价于“整层统一 alpha”，同时避免 Max 混合被背景吃掉。
+            let bg = if l.lane.track % 2 == 0 {
+                stripe_background
+            } else {
+                background
+            };
+            for inst in &mut out[start..] {
+                let (r, g, b, a) = crate::vertex::unpack_rgba(inst.rgba_packed);
+                inst.rgba_packed = crate::vertex::pack_rgba(
+                    r * a + bg[0] * (1.0 - a),
+                    g * a + bg[1] * (1.0 - a),
+                    b * a + bg[2] * (1.0 - a),
+                    1.0,
+                );
+            }
         }
         instances = out.len();
     });
