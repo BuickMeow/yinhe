@@ -382,10 +382,11 @@ fn build_lane_data(
     }
 }
 
-/// 只准备 AR 折叠自动化竖线叠加层（layer 4）。
+/// 只准备 AR 折叠自动化竖线层（layer 3，普通 alpha 混合）。
 ///
-/// 与 [`prepare_arr_automation`] 的 folded 分支相同，但不占用 layer 2/3，
-/// 供移动端在已有 note/ghost 层上直接叠加折叠自动化。
+/// 与 [`prepare_arr_automation`] 的 folded 分支相同，但移动端 AR 背景是不透明
+/// 的，不能使用 layer 4 的 Max 预乘 alpha（会被浅色背景吃掉）；这里改用普通
+/// alpha 的 Curve 层。
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn prepare_folded_automation(
     renderer: &mut InstanceRenderer,
@@ -408,7 +409,17 @@ pub fn prepare_folded_automation(
     };
     let folded_key = layer_cache_key(&[cache_key, tc_hash, lane_set_hash(lanes)]);
     let theme = renderer.theme();
-    renderer.upload_curve_overlay_layer(4, folded_key, |out| {
+    let (tick_lo, tick_hi) = base.visible_tick_range(width);
+    let visible_events: usize = lanes
+        .iter()
+        .map(|l| {
+            l.lane
+                .events_in_range(tick_lo.max(0.0) as u32, tick_hi.max(0.0) as u32)
+                .len()
+        })
+        .sum();
+    let mut instances = 0usize;
+    let rebuilt = renderer.upload_curve_layer(3, folded_key, |out| {
         for l in lanes {
             build_lane_data(
                 out,
@@ -423,7 +434,14 @@ pub fn prepare_folded_automation(
                 &theme,
             );
         }
+        instances = out.len();
     });
+    if rebuilt {
+        log::info!(
+            "折叠自动化层: lanes={}, visible_events={visible_events}, instances={instances}, tick={tick_lo:.0}..{tick_hi:.0}, key={folded_key}",
+            lanes.len()
+        );
+    }
 }
 
 /// Prepare AR 展开自动化 lane 的曲线渲染（画在 AR 共享走带纹理上）。

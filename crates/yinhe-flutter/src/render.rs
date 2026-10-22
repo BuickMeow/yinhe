@@ -346,6 +346,12 @@ fn folded_automation_lanes<'a>(
             });
         }
     }
+    static LAST_LANES: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(usize::MAX);
+    let n = lanes.len();
+    if LAST_LANES.swap(n, std::sync::atomic::Ordering::Relaxed) != n {
+        log::info!("AR 折叠自动化 lanes={n}, visible_tracks={first}..{last}");
+    }
     lanes
 }
 
