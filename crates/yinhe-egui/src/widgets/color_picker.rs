@@ -16,16 +16,19 @@ pub(crate) fn color_edit_button(
     ui: &mut egui::Ui,
     color: &mut egui::Color32,
     size: egui::Vec2,
+    accessible_name: &str,
 ) -> egui::Response {
     let popup_id = ui.auto_id_with("color_picker_popup");
 
-    let mut btn = ui.add(
-        egui::Button::new("  ")
-            .fill(*color)
-            .stroke(Stroke::new(1.0, egui::Color32::from_gray(100)))
-            .min_size(size)
-            .corner_radius(3.0),
-    );
+    let mut btn = ui
+        .add(
+            egui::Button::new("  ")
+                .fill(*color)
+                .stroke(Stroke::new(1.0, egui::Color32::from_gray(100)))
+                .min_size(size)
+                .corner_radius(3.0),
+        )
+        .accessible_name(accessible_name);
 
     egui::Popup::from_toggle_button_response(&btn)
         .id(popup_id)

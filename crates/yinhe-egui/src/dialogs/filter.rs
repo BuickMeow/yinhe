@@ -291,7 +291,9 @@ fn bound_row(
     add_range: impl FnOnce(&mut egui::Ui),
 ) {
     ui.horizontal(|ui| {
-        crate::widgets::switch::switch(ui, enabled);
+        ui.name_inputs(title, |ui| {
+            crate::widgets::switch::switch(ui, enabled);
+        });
         ui.add_space(4.0);
         ui.label(
             egui::RichText::new(title)
@@ -387,7 +389,9 @@ fn show_note_section(ui: &mut egui::Ui, state: &mut FilterDialogState, num_track
         },
     );
     ui.horizontal(|ui| {
-        crate::widgets::switch::switch(ui, &mut state.invert);
+        ui.name_inputs(t!("dialog.filter.invert"), |ui| {
+            crate::widgets::switch::switch(ui, &mut state.invert);
+        });
         ui.add_space(4.0);
         ui.label(
             egui::RichText::new(t!("dialog.filter.invert").as_ref())

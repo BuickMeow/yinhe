@@ -33,6 +33,7 @@ pub(crate) fn paint_radio(
 pub(crate) fn radio(ui: &mut egui::Ui, selected: bool) -> egui::Response {
     let r = radius(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(r * 2.0, r * 2.0), egui::Sense::click());
+    super::a11y::unnamed_selected(&resp, egui::Role::RadioButton, selected);
     paint_radio(ui.painter(), rect.center(), r, selected, resp.hovered());
     resp
 }
@@ -45,8 +46,18 @@ pub(crate) fn radio_value<T: PartialEq>(
     text: impl Into<egui::WidgetText>,
 ) -> egui::Response {
     let selected = *current == value;
+    let text: egui::WidgetText = text.into();
+    let name = text.text().to_owned();
     ui.horizontal(|ui| {
         let dot = radio(ui, selected);
+        dot.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::Role::RadioButton,
+                ui.is_enabled(),
+                selected,
+                name.clone(),
+            )
+        });
         let label = ui.label(text);
         let mut resp = dot.union(label);
         if resp.clicked() {

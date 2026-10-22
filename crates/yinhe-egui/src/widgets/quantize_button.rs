@@ -13,6 +13,7 @@ use egui_material_icons::MaterialIcon;
 use egui_material_icons::icons::{
     ICON_MOTION_PHOTOS_AUTO, ICON_MOTION_PHOTOS_OFF, ICON_MOTION_PHOTOS_ON,
 };
+use rust_i18n::t;
 use yinhe_editor_core::quantize::QuantizePreset;
 
 /// 按钮宽度（正方形，与传输栏其它按钮一致）。
@@ -57,6 +58,7 @@ fn button_state(quantize: QuantizePreset) -> (MaterialIcon, Option<ValueDisplay>
 /// 绘制量化按钮，返回响应。
 pub(crate) fn quantize_button(ui: &mut egui::Ui, quantize: QuantizePreset) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(WIDTH, HEIGHT), egui::Sense::click());
+    super::a11y::name_button(&resp, t!("hint.timecode.quantize"));
     if ui.is_rect_visible(rect) {
         draw(ui, rect, &resp, quantize);
     }

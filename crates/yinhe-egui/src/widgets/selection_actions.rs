@@ -175,6 +175,7 @@ pub fn show_transport_buttons(
                 crate::theme::text_label(),
                 false,
                 enabled,
+                action_hint(action).as_str(),
             )
         } else {
             crate::widgets::hover::hover_button_enabled_rotated(
@@ -185,6 +186,7 @@ pub fn show_transport_buttons(
                 false,
                 angle,
                 enabled,
+                action_hint(action).as_str(),
             )
         };
         if enabled && resp.clicked() {

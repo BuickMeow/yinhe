@@ -1,6 +1,8 @@
 use eframe::egui;
 #[cfg(not(target_os = "macos"))]
 use egui_material_icons::icons::*;
+#[cfg(not(target_os = "macos"))]
+use rust_i18n::t;
 
 /// Bring a child viewport to the front if it already exists.
 ///
@@ -158,14 +160,19 @@ pub(crate) fn title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool, allow_
             egui::pos2(bar_rect.max.x - height, bar_rect.min.y),
             egui::vec2(height, height),
         );
-        let close_hover =
-            close_rect.contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default());
-        let close_pressed =
-            close_hover && ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
-        paint_close_button(&ui.painter(), close_rect, close_hover, close_pressed);
-        if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary))
-            && close_rect.contains(ui.input(|i| i.pointer.interact_pos()).unwrap_or_default())
-        {
+        let close_resp = ui.interact(
+            close_rect,
+            ui.scope_id().with("dialog_close"),
+            egui::Sense::click(),
+        );
+        crate::widgets::a11y::name_button(&close_resp, t!("hint.title_bar.close"));
+        paint_close_button(
+            &ui.painter(),
+            close_rect,
+            close_resp.hovered(),
+            close_resp.is_pointer_button_down_on(),
+        );
+        if close_resp.clicked() {
             *close = true;
         }
     }

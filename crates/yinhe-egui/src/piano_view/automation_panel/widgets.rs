@@ -62,6 +62,7 @@ pub(crate) fn show_target_combo(
                 egui::FontId::new(crate::theme::ICON_FONT, ICON_TIMELINE.font_family()),
                 crate::theme::text_label(),
                 false,
+                t!("hint.pr.target_combo").as_ref(),
             );
             crate::widgets::hint::hover(ui.ctx(), &target_resp, t!("hint.pr.target_combo"));
             let popup_id = ui.scope_id().with("auto_target_popup");

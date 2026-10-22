@@ -140,7 +140,9 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
             let sw_changed = ui
                 .push_id(("sf_sw", i), |ui| {
                     ui.scope_builder(egui::UiBuilder::new().max_rect(sw_rect), |ui| {
-                        crate::widgets::switch::switch(ui, &mut entries[i].enabled)
+                        ui.name_inputs(entries[i].name.clone(), |ui| {
+                            crate::widgets::switch::switch(ui, &mut entries[i].enabled)
+                        })
                     })
                     .inner
                 })
@@ -393,7 +395,6 @@ mod click_tests {
         let mut first = true;
         let mut harness = Harness::builder()
             .allow_missing_glyphs()
-            .with_accessibility_check(false)
             .with_size(egui::vec2(300.0, 200.0))
             .build_ui_state(
                 move |ui, entries: &mut Vec<SfEntry>| {

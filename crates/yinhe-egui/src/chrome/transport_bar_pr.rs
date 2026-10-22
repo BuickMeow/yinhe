@@ -56,6 +56,7 @@ pub(crate) fn show_right_group(
             crate::theme::text_label(),
             false,
             angle,
+            t!("hint.orientation.toggle").as_ref(),
         );
         if resp.clicked() {
             *set_orientation = Some(if vertical {

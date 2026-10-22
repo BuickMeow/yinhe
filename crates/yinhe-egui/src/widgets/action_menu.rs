@@ -119,6 +119,7 @@ pub fn popup_menu_row(
             ui.scope_id().with("pin")
         };
         let resp = ui.interact(pin_rect, pin_id, egui::Sense::click());
+        crate::widgets::a11y::name_button(&resp, t!("hint.menu.pin"));
         crate::widgets::hint::hover_popup(ui.ctx(), &resp, t!("hint.menu.pin"));
         let pin_color = if is_pinned {
             crate::theme::accent_active()
@@ -366,6 +367,7 @@ pub fn pinned_action_buttons<T: PopupRow>(
                 )
             })
             .inner;
+        crate::widgets::a11y::name_button(&resp, t!(action.label_key()));
         if resp.clicked() {
             *pending = Some(action);
         }

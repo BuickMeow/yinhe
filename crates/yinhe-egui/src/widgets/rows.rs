@@ -114,7 +114,7 @@ fn row_impl(
                         .size(scaled_font(ui.ctx(), theme::SUB_TITLE_FONT)),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    add_control(ui);
+                    ui.name_inputs(title, add_control);
                 });
             },
         );
@@ -134,7 +134,7 @@ fn row_impl(
                 );
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                add_control(ui);
+                ui.name_inputs(title, add_control);
             });
         });
     }

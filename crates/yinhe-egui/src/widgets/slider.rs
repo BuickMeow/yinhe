@@ -33,6 +33,7 @@ pub fn control_slider<Num: egui::emath::Numeric>(
         egui::vec2(width, control::h(&ctx)),
         egui::Sense::click_and_drag(),
     );
+    super::a11y::unnamed_input(&resp, egui::Role::Slider);
     let track = egui::Rect::from_min_size(
         egui::pos2(rect.min.x, rect.center().y - track_h * 0.5),
         egui::vec2(width, track_h),

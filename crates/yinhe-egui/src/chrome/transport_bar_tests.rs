@@ -151,7 +151,6 @@ fn make_transport_harness<'a>(doc: Option<&'a Document>) -> Harness<'a, ()> {
     let mut first_frame = true;
     Harness::builder()
         .allow_missing_glyphs()
-        .with_accessibility_check(false)
         .with_size(egui::vec2(1200.0, 60.0))
         .build_ui_state(
             move |ui, _| {
@@ -194,7 +193,6 @@ fn make_harness_with_hidden_button<'a>(doc: Option<&'a Document>) -> Harness<'a,
     let mut first_frame = true;
     Harness::builder()
         .allow_missing_glyphs()
-        .with_accessibility_check(false)
         .with_size(egui::vec2(1200.0, 60.0))
         .build_ui_state(
             move |ui, state| {
@@ -220,10 +218,12 @@ fn make_harness_with_hidden_button<'a>(doc: Option<&'a Document>) -> Harness<'a,
                 };
                 show(ui, &mut ctx);
                 // 透明隐藏按钮：位于 x 1150..1174、y 8..32
-                let hidden_btn = ui.put(
-                    egui::Rect::from_min_size(egui::pos2(1150.0, 8.0), egui::vec2(24.0, 24.0)),
-                    egui::Button::new("").frame(false),
-                );
+                let hidden_btn = ui
+                    .put(
+                        egui::Rect::from_min_size(egui::pos2(1150.0, 8.0), egui::vec2(24.0, 24.0)),
+                        egui::Button::new("").frame(false),
+                    )
+                    .accessible_name("hidden test button");
                 if hidden_btn.clicked() {
                     state.hidden_clicked = true;
                 }

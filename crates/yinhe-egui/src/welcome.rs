@@ -356,7 +356,6 @@ mod tests {
         let mut first_frame = true;
         Harness::builder()
             .allow_missing_glyphs()
-            .with_accessibility_check(false)
             .with_size(egui::vec2(620.0, 560.0))
             .build_ui_state(
                 move |ui, st| {

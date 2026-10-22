@@ -248,10 +248,12 @@ pub fn show_timecode_display(
 
     // ── BPM（列 0 上）──
     let bpm_id = ui.scope_id().with("tc_bpm");
-    let resp = ui.put(
-        cell(0, 0),
-        text_edit(bpm_id, &mut bufs.bpm, COL_WIDTHS[0] - 8.0, ROW_H),
-    );
+    let resp = ui
+        .put(
+            cell(0, 0),
+            text_edit(bpm_id, &mut bufs.bpm, COL_WIDTHS[0] - 8.0, ROW_H),
+        )
+        .accessible_name(t!("hint.timecode.bpm"));
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.bpm"));
     select_all_on_focus(ui, &resp, bpm_id, &bufs.bpm);
     if resp.lost_focus()
@@ -271,10 +273,12 @@ pub fn show_timecode_display(
         egui::vec2(sig_cell.width() - sig_w, sig_cell.height()),
     );
     let sig_id = ui.scope_id().with("tc_time_sig");
-    let resp = ui.put(
-        sig_rect,
-        text_edit(sig_id, &mut bufs.time_sig, sig_w - 4.0, ROW_H),
-    );
+    let resp = ui
+        .put(
+            sig_rect,
+            text_edit(sig_id, &mut bufs.time_sig, sig_w - 4.0, ROW_H),
+        )
+        .accessible_name(t!("hint.timecode.timesig"));
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.timesig"));
     select_all_on_focus(ui, &resp, sig_id, &bufs.time_sig);
     if resp.lost_focus()
@@ -286,10 +290,12 @@ pub fn show_timecode_display(
         });
     }
     let ppq_id = ui.scope_id().with("tc_ppq");
-    let resp = ui.put(
-        ppq_rect,
-        text_edit(ppq_id, &mut bufs.ppq, ppq_rect.width() - 4.0, ROW_H),
-    );
+    let resp = ui
+        .put(
+            ppq_rect,
+            text_edit(ppq_id, &mut bufs.ppq, ppq_rect.width() - 4.0, ROW_H),
+        )
+        .accessible_name(t!("hint.timecode.ppq"));
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.ppq"));
     select_all_on_focus(ui, &resp, ppq_id, &bufs.ppq);
     if resp.lost_focus()
@@ -304,10 +310,12 @@ pub fn show_timecode_display(
 
     // ── 位置（列 1 上）──
     let pos_id = ui.scope_id().with("tc_pos");
-    let resp = ui.put(
-        cell(1, 0),
-        text_edit(pos_id, &mut bufs.pos, COL_WIDTHS[1] - 8.0, ROW_H),
-    );
+    let resp = ui
+        .put(
+            cell(1, 0),
+            text_edit(pos_id, &mut bufs.pos, COL_WIDTHS[1] - 8.0, ROW_H),
+        )
+        .accessible_name(t!("hint.timecode.position"));
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.position"));
     select_all_on_focus(ui, &resp, pos_id, &bufs.pos);
     if resp.lost_focus() {
@@ -332,10 +340,12 @@ pub fn show_timecode_display(
 
     // ── 秒数（列 1 下）──
     let time_id = ui.scope_id().with("tc_time");
-    let resp = ui.put(
-        cell(1, 1),
-        text_edit(time_id, &mut bufs.time, COL_WIDTHS[1] - 8.0, ROW_H),
-    );
+    let resp = ui
+        .put(
+            cell(1, 1),
+            text_edit(time_id, &mut bufs.time, COL_WIDTHS[1] - 8.0, ROW_H),
+        )
+        .accessible_name(t!("hint.timecode.seconds"));
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.seconds"));
     select_all_on_focus(ui, &resp, time_id, &bufs.time);
     if resp.lost_focus()
@@ -357,6 +367,13 @@ pub fn show_timecode_display(
                 |ui| {
                     // 过长的调式名用负字距压缩到格宽内（留 4px 边距）。
                     let resp = fit_hover_text(ui, &text, cell_rect.width() - 4.0);
+                    resp.widget_info(|| {
+                        egui::WidgetInfo::labeled(
+                            egui::Role::Button,
+                            ui.is_enabled(),
+                            t!("hint.timecode.keysig"),
+                        )
+                    });
                     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.keysig"));
                     if resp.clicked() {
                         events.push(TimecodeEvent::OpenScaleDialog);
@@ -385,6 +402,9 @@ pub fn show_timecode_display(
             ui.scope_id().with("tc_master_meter"),
             egui::Sense::hover(),
         );
+        resp.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::Meter, true, t!("hint.timecode.master_meter"))
+        });
         crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.master_meter"));
     }
 

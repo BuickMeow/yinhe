@@ -363,3 +363,75 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod a11y_tests {
+    use super::*;
+
+    /// 设置页每个分类的可交互控件都必须有 AccessKit 名称。
+    /// kittest 默认会在有输入控件缺少名称时 panic。
+    #[test]
+    #[allow(clippy::type_complexity)] // 测试里的函数指针表
+    fn settings_tabs_have_accessible_inputs() {
+        let tabs: &[(&str, fn(&mut egui::Ui, &mut AudioSettings) -> bool)] = &[
+            ("general", show_general_tab),
+            ("editing", show_editing_tab),
+            ("render", show_render_tab),
+            ("midi_export", show_midi_export_tab),
+            ("notification", show_notification_tab),
+            ("saving", show_saving_tab),
+            ("language", show_language_tab),
+            ("shortcuts", show_shortcuts_tab),
+            ("soundfont", show_soundfont_tab),
+        ];
+        for (name, tab) in tabs {
+            let settings = AudioSettings::default();
+            let mut harness = egui_kittest::Harness::builder()
+                .allow_missing_glyphs()
+                .with_size(egui::vec2(1000.0, 800.0))
+                .build_ui_state(
+                    move |ui, settings: &mut AudioSettings| {
+                        tab(ui, settings);
+                    },
+                    settings,
+                );
+            harness.step();
+            harness.step();
+            println!("{name} a11y ok");
+        }
+    }
+
+    #[test]
+    fn appearance_tab_has_accessible_inputs() {
+        let settings = AudioSettings::default();
+        let mut harness = egui_kittest::Harness::builder()
+            .allow_missing_glyphs()
+            .with_size(egui::vec2(1000.0, 800.0))
+            .build_ui_state(
+                move |ui, settings: &mut AudioSettings| {
+                    let ctx = ui.ctx().clone();
+                    show_appearance_tab(ui, settings, &ctx);
+                },
+                settings,
+            );
+        harness.step();
+        harness.step();
+    }
+
+    #[test]
+    fn theme_tab_has_accessible_inputs() {
+        let settings = AudioSettings::default();
+        let mut harness = egui_kittest::Harness::builder()
+            .allow_missing_glyphs()
+            .with_size(egui::vec2(1000.0, 800.0))
+            .build_ui_state(
+                move |ui, settings: &mut AudioSettings| {
+                    let ctx = ui.ctx().clone();
+                    show_theme_tab(ui, settings, &ctx);
+                },
+                settings,
+            );
+        harness.step();
+        harness.step();
+    }
+}

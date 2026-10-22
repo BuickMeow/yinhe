@@ -104,6 +104,8 @@ impl<Num: egui::emath::Numeric> Stepper<'_, Num> {
 
         let minus = ui.interact(minus_rect, id.with("minus"), egui::Sense::click());
         let plus = ui.interact(plus_rect, id.with("plus"), egui::Sense::click());
+        super::a11y::name_button(&minus, "-");
+        super::a11y::name_button(&plus, "+");
 
         let enabled = ui.is_enabled();
         let mut changed = false;

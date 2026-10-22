@@ -95,6 +95,7 @@ fn mode_button(
         egui::FontId::proportional(crate::theme::MODE_LABEL_FONT),
         crate::theme::mode_bar_text(),
         is_selected,
+        label,
     );
     if resp.clicked() {
         on_click();
@@ -106,6 +107,7 @@ fn right_icon_button(
     ui: &mut egui::Ui,
     icon: egui_material_icons::MaterialIcon,
     is_active: bool,
+    accessible_name: &str,
     on_click: impl FnOnce(),
 ) -> bool {
     let resp = crate::widgets::hover::hover_button(
@@ -114,6 +116,7 @@ fn right_icon_button(
         egui::FontId::new(crate::theme::ICON_FONT, icon.font_family()),
         crate::theme::mode_bar_text(),
         is_active,
+        accessible_name,
     );
     if resp.clicked() {
         on_click();
@@ -281,6 +284,7 @@ pub fn show(
                             egui::FontId::new(crate::theme::ICON_FONT, ICON_PIANO.font_family()),
                             crate::theme::mode_bar_text(),
                             *show_pianoroll_in_arrange || *float_pianoroll,
+                            t!("hint.pr_toggle").as_ref(),
                         );
                         if piano_resp.clicked() {
                             if *float_pianoroll {
@@ -325,6 +329,7 @@ pub fn show(
                             egui::FontId::new(crate::theme::ICON_FONT, dock_icon.font_family()),
                             crate::theme::mode_bar_text(),
                             *show_bottom_dock || *float_bottom_dock,
+                            t!("hint.dock_toggle").as_ref(),
                         );
                         if dock_resp.clicked() {
                             if *float_bottom_dock {
@@ -366,6 +371,7 @@ pub fn show(
                             crate::theme::mode_bar_text(),
                             *show_mixer_panel || *float_mixer,
                             -std::f32::consts::FRAC_PI_2,
+                            t!("hint.mixer_toggle").as_ref(),
                         );
                         if mixer_resp.clicked() {
                             if *float_mixer {
@@ -420,12 +426,18 @@ pub fn show(
                                     ICON_NOTIFICATIONS
                                 };
                                 let was_open = notifications.center_open;
-                                if right_icon_button(ui, icon, was_open, || {
-                                    notifications.center_open = !was_open;
-                                    if notifications.center_open {
-                                        notifications.mark_all_read();
-                                    }
-                                }) {
+                                if right_icon_button(
+                                    ui,
+                                    icon,
+                                    was_open,
+                                    t!("hint.notifications").as_ref(),
+                                    || {
+                                        notifications.center_open = !was_open;
+                                        if notifications.center_open {
+                                            notifications.mark_all_read();
+                                        }
+                                    },
+                                ) {
                                     icon_hint = Some(t!("hint.notifications").to_string());
                                 }
                                 ui.add_space(4.0);
@@ -435,6 +447,7 @@ pub fn show(
                                 ui,
                                 ICON_INFO,
                                 *right_tab == Some(RightTab::Info),
+                                t!("hint.right_info").as_ref(),
                                 || {
                                     *right_tab = if *right_tab == Some(RightTab::Info) {
                                         None

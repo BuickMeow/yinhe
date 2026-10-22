@@ -14,8 +14,18 @@ pub(crate) fn hover_button(
     font_id: egui::FontId,
     inactive_color: egui::Color32,
     is_active: bool,
+    accessible_name: &str,
 ) -> egui::Response {
-    hover_button_impl(ui, text, font_id, inactive_color, is_active, 0.0, true)
+    hover_button_impl(
+        ui,
+        text,
+        font_id,
+        inactive_color,
+        is_active,
+        0.0,
+        true,
+        accessible_name,
+    )
 }
 
 /// 与 `hover_button` 相同，但文字/图标绕按钮中心旋转 `angle` 弧度。
@@ -27,8 +37,18 @@ pub(crate) fn hover_button_rotated(
     inactive_color: egui::Color32,
     is_active: bool,
     angle: f32,
+    accessible_name: &str,
 ) -> egui::Response {
-    hover_button_impl(ui, text, font_id, inactive_color, is_active, angle, true)
+    hover_button_impl(
+        ui,
+        text,
+        font_id,
+        inactive_color,
+        is_active,
+        angle,
+        true,
+        accessible_name,
+    )
 }
 
 /// 支持禁用态的 `hover_button`：`enabled == false` 时用 `text_disabled` 灰显、
@@ -40,11 +60,22 @@ pub(crate) fn hover_button_enabled(
     inactive_color: egui::Color32,
     is_active: bool,
     enabled: bool,
+    accessible_name: &str,
 ) -> egui::Response {
-    hover_button_impl(ui, text, font_id, inactive_color, is_active, 0.0, enabled)
+    hover_button_impl(
+        ui,
+        text,
+        font_id,
+        inactive_color,
+        is_active,
+        0.0,
+        enabled,
+        accessible_name,
+    )
 }
 
 /// 禁用态 + 旋转（见 [`hover_button_enabled`] / [`hover_button_rotated`]）。
+#[allow(clippy::too_many_arguments)] // 自绘按钮参数透传
 pub(crate) fn hover_button_enabled_rotated(
     ui: &mut egui::Ui,
     text: &str,
@@ -53,8 +84,18 @@ pub(crate) fn hover_button_enabled_rotated(
     is_active: bool,
     angle: f32,
     enabled: bool,
+    accessible_name: &str,
 ) -> egui::Response {
-    hover_button_impl(ui, text, font_id, inactive_color, is_active, angle, enabled)
+    hover_button_impl(
+        ui,
+        text,
+        font_id,
+        inactive_color,
+        is_active,
+        angle,
+        enabled,
+        accessible_name,
+    )
 }
 
 /// hover 类控件的统一四态配色：active = accent_active；按下/悬停按暗色/亮色分支；
@@ -84,6 +125,7 @@ pub(crate) fn hover_button_color(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // 自绘按钮参数透传
 fn hover_button_impl(
     ui: &mut egui::Ui,
     text: &str,
@@ -92,6 +134,7 @@ fn hover_button_impl(
     is_active: bool,
     angle: f32,
     enabled: bool,
+    accessible_name: &str,
 ) -> egui::Response {
     // 用 PLACEHOLDER 排版：glyph 不带固定色，绘制时由 TextShape 的 fallback
     // 颜色统一着色（旋转分支与自绘组合按钮复用该 galley 时不会残留白色）。
@@ -104,6 +147,7 @@ fn hover_button_impl(
         egui::Sense::hover()
     };
     let (rect, resp) = ui.allocate_exact_size(galley.size(), sense);
+    super::a11y::name_button(&resp, accessible_name);
     let color = if enabled {
         hover_button_color(&resp, inactive_color, is_active)
     } else {

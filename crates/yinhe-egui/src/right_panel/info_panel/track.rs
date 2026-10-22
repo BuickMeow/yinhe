@@ -226,6 +226,7 @@ fn show_color_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
                 36.0,
                 crate::scaling::scaled_font(ui.ctx(), crate::theme::ROW_H_COMPACT),
             ),
+            t!("hint.info.color").as_ref(),
         );
         crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.info.color"));
         let changed = resp.changed();

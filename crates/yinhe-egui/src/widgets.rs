@@ -1,3 +1,4 @@
+pub(crate) mod a11y;
 pub mod action_menu;
 pub(crate) mod auto_scroll;
 pub(crate) mod checkbox;

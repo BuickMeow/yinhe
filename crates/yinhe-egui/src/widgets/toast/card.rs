@@ -232,6 +232,7 @@ pub(crate) fn draw_card(
                             ),
                             crate::theme::text_muted(),
                             false,
+                            rust_i18n::t!("hint.toast.dismiss").as_ref(),
                         );
                         crate::widgets::hint::hover(
                             ui.ctx(),
@@ -259,6 +260,7 @@ pub(crate) fn draw_card(
                             egui::FontId::new(crate::theme::ICON_FONT_SM, ICON_STOP.font_family()),
                             stop_col,
                             false,
+                            rust_i18n::t!("hint.toast.cancel").as_ref(),
                         );
                         crate::widgets::hint::hover(
                             ui.ctx(),
@@ -291,6 +293,7 @@ pub(crate) fn draw_card(
                             egui::FontId::new(crate::theme::ICON_FONT_SM, icon.font_family()),
                             crate::theme::text_muted(),
                             false,
+                            rust_i18n::t!("hint.toast.pause").as_ref(),
                         );
                         crate::widgets::hint::hover(
                             ui.ctx(),
@@ -313,6 +316,7 @@ pub(crate) fn draw_card(
                                 egui::FontId::new(crate::theme::ICON_FONT_SM, icon.font_family()),
                                 crate::theme::text_muted(),
                                 false,
+                                a.label.as_str(),
                             );
                             crate::widgets::hint::hover(ui.ctx(), &resp3, &a.label);
                             if resp3.clicked() {

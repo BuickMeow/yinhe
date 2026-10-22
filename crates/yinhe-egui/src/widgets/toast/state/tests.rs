@@ -814,7 +814,6 @@ fn debug_snapshot_center() {
     let mut first = true;
     let mut harness = Harness::builder()
         .allow_missing_glyphs()
-        .with_accessibility_check(false)
         .with_size(egui::vec2(800.0, 600.0))
         .wgpu()
         .build_ui_state(
