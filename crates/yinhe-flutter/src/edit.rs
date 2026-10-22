@@ -933,8 +933,9 @@ fn update_sel_resize(d: &DragState, s: &mut RenderScene, x: f32, y: f32) {
                 d.box_rows.map_or(0, |r| r.3),
             );
             match d.sel_edge {
-                0 => nr1 = cur_row.max(nr0),
-                1 => nr0 = cur_row.min(nr1),
+                // AR 行号向下增大：上控制点改 r0，下控制点改 r1。
+                0 => nr0 = cur_row.min(nr1),
+                1 => nr1 = cur_row.max(nr0),
                 2 => nt0 = cur_tick.min(nt1 - 1.0).max(0.0),
                 3 => nt1 = cur_tick.max(nt0 + 1.0),
                 _ => return,
@@ -1805,13 +1806,12 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
                     Some(t) => (t as u16, t as u16),
                     None => (0, num_tracks.saturating_sub(1) as u16),
                 };
-                let Document { edit, data, .. } = doc;
+                let Document { edit, .. } = doc;
                 edit.selected.clear();
                 edit.sel_rect.clear();
                 edit.sel_rect
                     .push_rect((f64::from(ta), f64::from(tb), klo, khi), false);
                 edit.selected.add_rect_track(ta, tb, klo, khi, tr_lo, tr_hi);
-                edit.selected.materialize_pending(&*data.model);
             }
         }
         ViewMode::Arrangement => {
@@ -1831,7 +1831,7 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
                 let r_cur = geom_ar.y_to_row(y);
                 let (rlo, rhi) = (d.anchor_row.min(r_cur), d.anchor_row.max(r_cur));
                 let (tr_lo, tr_hi) = (rlo, rhi.min(num_tracks.saturating_sub(1)));
-                let Document { edit, data, .. } = doc;
+                let Document { edit, .. } = doc;
                 edit.selected.clear();
                 edit.arr_sel_rect.clear();
                 edit.arr_sel_rect
@@ -1844,10 +1844,6 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
                     tr_lo as u16,
                     tr_hi as u16,
                 );
-                edit.selected.materialize_pending(&*data.model);
-                // AR 框选同时物化自动化事件（按 id），拖动时音符与锚点一起走。
-                edit.selected
-                    .materialize_automation_pending(&data.model.tracks);
             }
         }
     }
@@ -1946,7 +1942,10 @@ fn commit_pick(s: &mut RenderScene, x: f32, y: f32) -> bool {
     true
 }
 
-/// 选框边缘控制点释放：按新矩形重新物化选中的音符。
+/// 选框边缘控制点释放：按新矩形更新选区。
+///
+/// 保持矩形选区模式，不在这里全量物化音符位图；选中判定按矩形惰性完成，
+/// 避免大选区松手时扫描整片区域导致卡顿。
 fn commit_selection_resize(s: &mut RenderScene, d: &DragState) {
     match s.view_mode {
         ViewMode::Pianoroll => {
@@ -1960,7 +1959,7 @@ fn commit_selection_resize(s: &mut RenderScene, d: &DragState) {
             let Some(doc) = s.document.as_mut() else {
                 return;
             };
-            let Document { edit, data, .. } = doc;
+            let Document { edit, .. } = doc;
             edit.selected.clear_rects();
             edit.selected.add_rect_track(
                 t0.max(0.0) as u32,
@@ -1970,7 +1969,6 @@ fn commit_selection_resize(s: &mut RenderScene, d: &DragState) {
                 d.sel_tr_lo,
                 d.sel_tr_hi,
             );
-            edit.selected.materialize_pending(&*data.model);
         }
         ViewMode::Arrangement => {
             let Some((t0, t1, r0, r1)) = s
@@ -1983,7 +1981,7 @@ fn commit_selection_resize(s: &mut RenderScene, d: &DragState) {
             let Some(doc) = s.document.as_mut() else {
                 return;
             };
-            let Document { edit, data, .. } = doc;
+            let Document { edit, .. } = doc;
             edit.selected.clear_rects();
             edit.selected.add_rect_track(
                 t0.max(0.0) as u32,
@@ -1993,9 +1991,6 @@ fn commit_selection_resize(s: &mut RenderScene, d: &DragState) {
                 r0 as u16,
                 r1 as u16,
             );
-            edit.selected.materialize_pending(&*data.model);
-            edit.selected
-                .materialize_automation_pending(&data.model.tracks);
         }
     }
     after_selection_change(s);
