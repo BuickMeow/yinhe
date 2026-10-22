@@ -295,7 +295,14 @@ class TopBar extends StatelessWidget {
         PopupMenuItem(value: '关闭', child: Text(l.quantizeOff)),
         PopupMenuItem(value: '自动', child: Text(l.quantizeAuto)),
         for (final (label, ticks) in quantizePresetsForPpq(ppq))
-          PopupMenuItem(value: label, child: Text('$label（$ticks tick）')),
+          PopupMenuItem(
+            value: label,
+            child: Text(
+              label == '1 tick'
+                  ? '1 tick（1/${(ppq * 4).round()} 音符）'
+                  : '$label（$ticks tick）',
+            ),
+          ),
       ],
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),

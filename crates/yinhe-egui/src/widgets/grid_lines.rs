@@ -106,6 +106,10 @@ pub fn paint_grid_lines(
     };
 
     let ticks_per_sub = (tpb / SUB_BEAT_DIV).max(1);
+    // 1/16 以下沿同一套惯性继续细分：1/32、1/64…直到 1 tick。
+    let fine_step = yinhe_editor_core::quantize::fine_grid_preset(ppu, tpb)
+        .tick_interval(tpb)
+        .max(1);
     let segments = build_time_sig_segments(time_sig_events, default_num, default_den);
 
     // 网格线 = 标签的下一级（与 time_ruler 的标签级别严格错开）：
@@ -153,7 +157,7 @@ pub fn paint_grid_lines(
         let step = if show_tick {
             1u32
         } else if show_sub {
-            ticks_per_sub
+            fine_step.min(ticks_per_sub).max(1)
         } else if show_beat {
             ticks_per_beat
         } else {
@@ -225,6 +229,19 @@ pub fn paint_grid_lines(
                         1.0,
                         colors.tick.unwrap(),
                     );
+                } else if show_sub {
+                    // 1/16 以下的惯性细分线（1/32、1/64…），用 tick 色。
+                    if let Some(tick_color) = colors.tick {
+                        paint_line(
+                            painter,
+                            orientation,
+                            main_pos,
+                            cross_start,
+                            cross_end,
+                            1.0,
+                            tick_color,
+                        );
+                    }
                 }
             }
             tick += step;

@@ -149,6 +149,8 @@ mixin _ShellCore on _ShellBase {
     } else if (label.startsWith('1/')) {
       final den = int.tryParse(label.substring(2)) ?? 4;
       rust.setQuantize(2, 1, den);
+    } else if (label.startsWith('1 tick')) {
+      rust.setQuantize(3, 1, 1);
     } else {
       rust.setQuantize(1, 1, 1);
     }

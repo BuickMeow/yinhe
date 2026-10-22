@@ -361,7 +361,7 @@ fn quantize_of(s: &RenderScene) -> QuantizePreset {
         ViewMode::Pianoroll => s.pr_view.base.pixels_per_tick,
         ViewMode::Arrangement => s.arr_view.base.pixels_per_tick,
     };
-    raw.resolved(ppu, s.ppq)
+    raw.resolved_with_detail(ppu, s.ppq, matches!(s.view_mode, ViewMode::Pianoroll))
 }
 
 fn bump(s: &mut RenderScene) {

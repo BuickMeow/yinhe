@@ -733,7 +733,11 @@ impl eframe::App for App {
                             d.edit.arrange_view.base.pixels_per_tick
                         };
                         // Auto 会解析成的网格（弹窗内显示用，与当前档位无关）。
-                        yinhe_editor_core::quantize::auto_preset(ppu, d.data.model.meta.ppq)
+                        yinhe_editor_core::quantize::auto_preset_with_detail(
+                            ppu,
+                            d.data.model.meta.ppq,
+                            false,
+                        )
                     })
                     .unwrap_or_default(),
                 pr: pr_bar,

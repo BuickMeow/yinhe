@@ -172,10 +172,11 @@ pub(crate) fn show(
         let sig_events = model.tempo_map.time_sig_events.as_slice();
         let markers = model.conductor.markers.as_slice();
         // 量化档位解析：Auto（自适应）按当前通道 AR 缩放出具体网格。
-        let ca_quantize = doc
-            .edit
-            .quantize_arrange
-            .resolved(doc.edit.chan_ar_view.base.pixels_per_tick, tpb);
+        let ca_quantize = doc.edit.quantize_arrange.resolved_with_detail(
+            doc.edit.chan_ar_view.base.pixels_per_tick,
+            tpb,
+            false,
+        );
         let outcome = crate::widgets::time_ruler::interactive_ruler(
             ui,
             ruler_rect,
@@ -281,10 +282,11 @@ pub(crate) fn show(
             track_visible: &doc.edit.track_visible,
             track_colors: &doc.edit.track_cache.colors,
             track_info: &doc.edit.track_cache.info,
-            quantize: doc
-                .edit
-                .quantize_arrange
-                .resolved(doc.edit.chan_ar_view.base.pixels_per_tick, model.meta.ppq),
+            quantize: doc.edit.quantize_arrange.resolved_with_detail(
+                doc.edit.chan_ar_view.base.pixels_per_tick,
+                model.meta.ppq,
+                false,
+            ),
             ppq: model.meta.ppq,
             bar_line_data: Some((
                 model.meta.ppq,

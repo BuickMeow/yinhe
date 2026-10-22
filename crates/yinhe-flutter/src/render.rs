@@ -731,6 +731,10 @@ fn push_time_grid(
     let segments = build_time_sig_segments(&tempo_map.time_sig_events, def_num, def_den);
     let sub_div = 4u32;
     let ticks_per_sub = (tpb / sub_div).max(1);
+    // 1/16 以下沿同一套惯性继续细分：1/32、1/64…直到 1 tick。
+    let fine_step = yinhe_editor_core::quantize::fine_grid_preset(ppu, tpb)
+        .tick_interval(tpb)
+        .max(1);
     let (tick_start, tick_end) = base.visible_tick_range(w);
     let tick_start = tick_start.max(0.0);
 
@@ -763,7 +767,7 @@ fn push_time_grid(
         let step: u32 = if show_tick {
             1
         } else if show_sub {
-            ticks_per_sub
+            fine_step.min(ticks_per_sub).max(1)
         } else if show_beat {
             ticks_per_beat
         } else {
@@ -793,6 +797,9 @@ fn push_time_grid(
                 } else if show_sub && is_sub {
                     tc::GRID_SUB
                 } else if show_tick {
+                    tc::GRID_TICK
+                } else if show_sub {
+                    // 1/16 以下的惯性细分线（1/32、1/64…），用 tick 色。
                     tc::GRID_TICK
                 } else {
                     tick = tick.saturating_add(step.max(1));

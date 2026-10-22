@@ -40,6 +40,7 @@ impl QuantizePreset {
         QuantizePreset::Fraction(1, 12), // Eighth triplet   (was 1/8T)
         QuantizePreset::Fraction(1, 24), // 1/16 triplet     (was 1/16T)
         QuantizePreset::Fraction(1, 48), // 1/32 triplet     (was 1/32T)
+        QuantizePreset::Absolute(1),     // 最终 tick 档
     ];
 
     /// Human-readable label (used in the button and dropdown).
@@ -83,8 +84,21 @@ impl QuantizePreset {
     ///
     /// `pixels_per_tick` 为视图水平缩放（px / tick）。
     pub fn resolved(self, pixels_per_tick: f32, ppq: u32) -> QuantizePreset {
+        self.resolved_with_detail(pixels_per_tick, ppq, true)
+    }
+
+    /// 按视图是否有 1/16 以下网格解析 Auto。
+    ///
+    /// PR 有 sub/tick 层，`allow_sub_tick = true`；AR 只画小节/拍线，
+    /// 传 false，避免 Auto 吸到画面上不存在的细分。
+    pub fn resolved_with_detail(
+        self,
+        pixels_per_tick: f32,
+        ppq: u32,
+        allow_sub_tick: bool,
+    ) -> QuantizePreset {
         match self {
-            QuantizePreset::Auto => auto_preset(pixels_per_tick, ppq),
+            QuantizePreset::Auto => auto_preset_with_detail(pixels_per_tick, ppq, allow_sub_tick),
             other => other,
         }
     }
@@ -125,7 +139,12 @@ impl QuantizePreset {
                 format!("{}  ({} tick)", self.label(), ticks)
             }
             QuantizePreset::Absolute(n) => {
-                format!("{} tick", n)
+                if *n == 1 {
+                    // 1 tick 的时值 = 1 / (PPQ × 4) 全音符。
+                    format!("{} tick  (1/{})", n, ppq.max(1).saturating_mul(4))
+                } else {
+                    format!("{} tick", n)
+                }
             }
             QuantizePreset::Auto | QuantizePreset::Off => self.label(),
         }
@@ -140,11 +159,22 @@ impl QuantizePreset {
 ///
 /// 列表显示仍用分数（`display_item` 附带折算出的 tick 数），
 /// 随 PPQ 灵活伸缩（1920 PPQ 到 15 tick，480 PPQ 到 15 tick，96 PPQ 到 3 tick）。
+/// 最后追加精确的 1 tick 档；若链尾本身已是 1 tick 则不重复。
 pub fn presets_for_ppq(ppq: u32) -> Vec<QuantizePreset> {
-    let whole = ppq.max(1).saturating_mul(4); // 全音符的 tick 数
+    let ppq = ppq.max(1);
+    let whole = ppq.saturating_mul(4); // 全音符的 tick 数
     let mut out = Vec::new();
     push_dyadic_chain(&mut out, whole, 1); // 2 分频链
     push_dyadic_chain(&mut out, whole, 6); // 三连音链（分母 3 × 2^k）
+    // 1 tick 必须是最后一档；若三连音链尾恰好也是 1 tick，用绝对 tick 档替换，
+    // 避免同一间隔出现两个选项。
+    if out
+        .last()
+        .is_some_and(|preset| preset.tick_interval(ppq) == 1)
+    {
+        out.pop();
+    }
+    out.push(QuantizePreset::Absolute(1));
     out
 }
 
@@ -169,6 +199,12 @@ impl Default for QuantizePreset {
 
 /// 自适应网格的目标屏幕格宽（像素）：解析时选格宽最接近该值的档位。
 pub const AUTO_TARGET_PX: f32 = 13.0;
+
+/// 与移动端/桌面网格的 `GRID_MIN_SPACING` 保持一致。
+const AUTO_GRID_MIN_SPACING: f32 = 38.0;
+
+/// 最大缩放时强制显示/使用 1 tick（与网格的 tick 层一致）。
+const AUTO_MAX_TICK_PPU: f32 = 10.0;
 
 /// 自适应网格的候选档位（由粗到细，**不含三连音**）：
 /// - 2 分频链：`1/1, 1/2, 1/4, …` 到该 PPQ 下最后一个整数 tick 档；
@@ -198,19 +234,20 @@ fn auto_candidates(ppq: u32) -> Vec<QuantizePreset> {
     out
 }
 
-/// 自适应网格解析：在 [`auto_candidates`] 里选"屏幕格宽最接近
-/// [`AUTO_TARGET_PX`]"的那一档（对数距离）。
-///
-/// - 网格间距随 `pixels_per_tick` 变小而变粗、变大而变细；
-/// - 放大到最大缩放时解析为 1 tick（序列末端），可写 tick 级音符。
-pub fn auto_preset(pixels_per_tick: f32, ppq: u32) -> QuantizePreset {
+/// 在 [`auto_candidates`] 中，从不超过 `max_interval` 的档位里选屏幕格宽
+/// 最接近 [`AUTO_TARGET_PX`] 的一档（对数距离）。
+fn choose_auto_candidate(
+    pixels_per_tick: f32,
+    ppq: u32,
+    max_interval: u32,
+) -> Option<QuantizePreset> {
     let ppu = pixels_per_tick.max(0.001);
     let mut best: Option<(QuantizePreset, f32)> = None;
     let mut last_interval = u32::MAX;
-    for cand in auto_candidates(ppq) {
+    for cand in auto_candidates(ppq.max(1)) {
         let interval = cand.tick_interval(ppq);
-        // 防御：interval 为 0 或非单调（不应出现）的候选跳过。
-        if interval == 0 || interval >= last_interval {
+        // 防御：interval 为 0、超出上限或非单调（不应出现）的候选跳过。
+        if interval == 0 || interval > max_interval || interval >= last_interval {
             continue;
         }
         last_interval = interval;
@@ -220,7 +257,85 @@ pub fn auto_preset(pixels_per_tick: f32, ppq: u32) -> QuantizePreset {
             best = Some((cand, err));
         }
     }
-    best.map_or(QuantizePreset::Fraction(1, 1), |(cand, _)| cand)
+    best.map(|(cand, _)| cand)
+}
+
+/// 中高缩放的惯性细分：从 1/16 往下继续按 2 分频到 1 tick。
+///
+/// 只允许返回 `≤ PPQ/4` 的档位；低缩放的基础网格由 [`grid_base_interval`]
+/// 决定，不会被 Auto 擅自跳过。
+pub fn fine_grid_preset(pixels_per_tick: f32, ppq: u32) -> QuantizePreset {
+    let ppq = ppq.max(1);
+    let sub = (ppq / 4).max(1);
+    choose_auto_candidate(pixels_per_tick, ppq, sub).unwrap_or(QuantizePreset::Absolute(1))
+}
+
+/// 当前缩放下的“基础网格”间隔，和 `push_time_grid` / `paint_grid_lines`
+/// 的 measure → beat → 1/16 → tick 判定保持一致（按 4/4 的默认拍号推导）。
+///
+/// 中高缩放时返回 1/16 或 1 tick；低缩放返回合并小节/小节/拍。
+/// AR 没有 sub/tick 层（`allow_sub_tick = false`），最高只到拍线。
+fn grid_base_interval(pixels_per_tick: f32, ppq: u32, allow_sub_tick: bool) -> u32 {
+    let ppq = ppq.max(1);
+    let ppu = pixels_per_tick.max(0.001);
+    let whole = ppq.saturating_mul(4);
+    let beat = ppq;
+    let sub = (ppq / 4).max(1);
+
+    let measure_divisor =
+        yinhe_types::compute_measure_divisor(whole as f32 * ppu, AUTO_GRID_MIN_SPACING);
+    if measure_divisor > 1 {
+        return (whole.saturating_mul(measure_divisor) / 2).max(1);
+    }
+    if !allow_sub_tick {
+        return beat;
+    }
+    if ppu >= AUTO_MAX_TICK_PPU {
+        return 1;
+    }
+    if (beat as f32 * ppu) >= AUTO_GRID_MIN_SPACING {
+        return sub;
+    }
+    beat
+}
+
+/// 把 tick 间隔转成最自然的量化档位：能整除全音符时用分数，否则用绝对 tick。
+fn preset_for_interval(interval: u32, ppq: u32) -> QuantizePreset {
+    let interval = interval.max(1);
+    let whole = ppq.max(1).saturating_mul(4);
+    if whole.is_multiple_of(interval) {
+        QuantizePreset::Fraction(1, whole / interval)
+    } else {
+        QuantizePreset::Absolute(interval)
+    }
+}
+
+/// 自适应网格解析：
+/// 1. 先用和可见网格相同的层级决定基础间隔（低缩放跟随小节/拍）；
+/// 2. 基础间隔已经到 1/16 时，再沿 2 分频惯性继续细分到 1 tick；
+/// 3. 最大缩放直接解析为 1 tick。
+pub fn auto_preset(pixels_per_tick: f32, ppq: u32) -> QuantizePreset {
+    auto_preset_with_detail(pixels_per_tick, ppq, true)
+}
+
+/// [`auto_preset`] 的视图感知版本。
+///
+/// AR 不画 1/16 以下的网格时传 `false`，Auto 只解析到拍/小节。
+pub fn auto_preset_with_detail(
+    pixels_per_tick: f32,
+    ppq: u32,
+    allow_sub_tick: bool,
+) -> QuantizePreset {
+    let ppq = ppq.max(1);
+    let base = grid_base_interval(pixels_per_tick, ppq, allow_sub_tick);
+    let sub = (ppq / 4).max(1);
+    if base > sub {
+        return preset_for_interval(base, ppq);
+    }
+    if base <= 1 {
+        return QuantizePreset::Absolute(1);
+    }
+    fine_grid_preset(pixels_per_tick, ppq)
 }
 
 // ── 小节感知的 snap（原 yinhe-egui/src/view_interaction.rs，下沉至此） ──
@@ -527,14 +642,23 @@ mod tests {
 
     #[test]
     fn auto_resolves_by_zoom() {
-        // 480 PPQ 候选按格宽降序（tick）：1920, 960, 480, 240, 120, 60, 30, 15,
+        // 低缩放跟随可见网格（拍/小节）；到 1/16 后按 2 分频惯性继续细分。
+        // 480 PPQ 候选（tick）：1920, 960, 480, 240, 120, 60, 30, 15,
         // 8, 4, 2, 1（纯 2 分频，不含三连音）。
-        // 默认视图（0.15 px/tick）→ 1/16（120t = 18px，最接近 13px）；
-        // 最大缩放（10 px/tick）→ 1 tick。
         assert_eq!(auto_preset(0.15, 480), QuantizePreset::Fraction(1, 16));
-        assert_eq!(auto_preset(10.0, 480), QuantizePreset::Absolute(1));
+        assert_eq!(auto_preset(0.2, 480), QuantizePreset::Fraction(1, 32));
         assert_eq!(auto_preset(1.0, 480), QuantizePreset::Fraction(1, 128));
-        assert_eq!(auto_preset(0.001, 480), QuantizePreset::Fraction(1, 1));
+        assert_eq!(auto_preset(5.0, 480), QuantizePreset::Absolute(2));
+        assert_eq!(auto_preset(10.0, 480), QuantizePreset::Absolute(1));
+        // 低缩放：1/4 拍线；再缩小到合并小节。
+        assert_eq!(auto_preset(0.05, 480), QuantizePreset::Fraction(1, 4));
+        assert_eq!(auto_preset(0.01, 480), QuantizePreset::Fraction(1, 1));
+        assert_eq!(auto_preset(0.001, 480), QuantizePreset::Absolute(30720));
+        // AR 没有 sub/tick 网格：即使放大也停在拍线。
+        assert_eq!(
+            auto_preset_with_detail(5.0, 480, false),
+            QuantizePreset::Fraction(1, 4)
+        );
     }
 
     #[test]
@@ -560,6 +684,10 @@ mod tests {
         let p = auto_preset(10.0, 96);
         assert_eq!(p.tick_interval(96), 1);
         assert_eq!(p, QuantizePreset::Absolute(1));
+        assert_eq!(
+            presets_for_ppq(96).last(),
+            Some(&QuantizePreset::Absolute(1))
+        );
     }
 
     #[test]
@@ -614,6 +742,12 @@ mod tests {
         assert_eq!(QuantizePreset::Fraction(1, 384).tick_interval(480), 5);
         assert!(!list.contains(&QuantizePreset::Fraction(1, 256))); // 7.5 非整
         assert!(!list.contains(&QuantizePreset::Fraction(1, 768))); // 2.5 非整
+        // 最后一档固定为精确 1 tick，并显示全音符分数。
+        assert_eq!(list.last(), Some(&QuantizePreset::Absolute(1)));
+        assert_eq!(
+            QuantizePreset::Absolute(1).display_item(480),
+            "1 tick  (1/1920)"
+        );
     }
 
     #[test]

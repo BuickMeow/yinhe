@@ -736,7 +736,7 @@ impl App {
             let ppq = doc.data.model.meta.ppq;
             doc.edit
                 .quantize_arrange
-                .resolved(doc.edit.arrange_view.base.pixels_per_tick, ppq)
+                .resolved_with_detail(doc.edit.arrange_view.base.pixels_per_tick, ppq, false)
                 .tick_interval(ppq)
                 .max(1) as i64
         } else {
