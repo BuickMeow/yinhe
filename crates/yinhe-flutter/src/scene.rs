@@ -809,6 +809,18 @@ pub fn new_project() -> i32 {
     1
 }
 
+/// 没有工程时的工作区占位文档：只保留 Conductor，AR 末尾的加号用于建轨。
+///
+/// 时间轴按新工程规则预留 64 小节；已有文档时不做任何事。
+pub fn ensure_starter_document() -> i32 {
+    if scene().lock().map(|s| s.document.is_some()).unwrap_or(true) {
+        return 0;
+    }
+    apply_document(Document::empty_conductor_only(), 1920.0);
+    log::info!("空白工作区：已创建 Conductor 占位文档");
+    1
+}
+
 /// 保存完成后标记工程状态（清除 dirty）。
 pub fn mark_saved() -> i32 {
     let Ok(mut s) = scene().lock() else {
@@ -1376,6 +1388,7 @@ pub fn set_files_dir(dir: String) {
     }
     load_recent();
     load_settings();
+    ensure_starter_document();
 }
 
 /// 设置文件写入（音色库 + 音频参数持久化）。

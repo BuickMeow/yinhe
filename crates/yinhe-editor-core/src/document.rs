@@ -153,7 +153,17 @@ impl Document {
     }
 
     pub fn empty() -> Self {
+        Self::from_empty_model(YinModel::new_empty_with_16_tracks())
+    }
+
+    /// 手机端空白工作区：只保留 Conductor，其余音轨由 AR 末尾的加号创建。
+    pub fn empty_conductor_only() -> Self {
         let mut model = YinModel::new_empty_with_16_tracks();
+        model.tracks.truncate(1);
+        Self::from_empty_model(model)
+    }
+
+    fn from_empty_model(mut model: YinModel) -> Self {
         model.rebuild();
 
         let num_tracks = model.tracks.len();
@@ -643,6 +653,18 @@ mod tests {
         // Conductor track channels: Track 1 on ch0, Track 16 on ch15
         assert_eq!(doc.model().tracks[1].channel, 0);
         assert_eq!(doc.model().tracks[16].channel, 15);
+    }
+
+    #[test]
+    fn empty_conductor_only_has_single_master_track() {
+        let doc = Document::empty_conductor_only();
+        assert_eq!(doc.model().tracks.len(), 1);
+        assert_eq!(doc.model().tracks[0].name, "Conductor");
+        assert!(doc.model().tracks[0].kind == yinhe_core::TrackKind::Master);
+        assert_eq!(doc.edit.track_cache.conductor_idx, Some(0));
+        assert_eq!(doc.edit.track_visible.len(), 1);
+        assert_eq!(doc.edit.track_pianoroll_visible.len(), 1);
+        assert_eq!(doc.model().note_count, 0);
     }
 
     /// 回归测试：每个新文档的初始 revision 必须全局唯一。
