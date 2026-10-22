@@ -27,9 +27,17 @@ mixin _ShellCore on _ShellBase {
   }
 
   /// 覆盖层：仅在修订号变化时重取 JSON。
+  ///
+  /// 新数据先留在 `_overlayNext` 一帧；即使下一帧修订号不变，也必须把
+  /// pending 数据刷出去，否则选框会一直停在旧状态，直到用户再点一下。
   void _readOverlay() {
     final rev = rust.overlayRevision();
     if (rev == _overlayRev) {
+      final pending = _overlayNext;
+      if (pending != null) {
+        _overlayNext = null;
+        _overlay.value = pending;
+      }
       return;
     }
     _overlayRev = rev;
@@ -42,9 +50,10 @@ mixin _ShellCore on _ShellBase {
       final next = OverlayData.fromJson(json);
       final prev = _overlayNext;
       _overlayNext = next;
-      // 与 snapshot 一样延迟一帧，避免选框先于 Texture 移动。
+      // 第一份数据直接显示；之后延迟一帧，避免选框先于 Texture 移动。
       _overlay.value = prev ?? next;
     } catch (_) {
+      _overlayNext = null;
       _overlay.value = OverlayData.empty;
     } finally {
       rust.freeString(ptr);

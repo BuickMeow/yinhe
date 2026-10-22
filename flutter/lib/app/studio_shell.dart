@@ -311,8 +311,8 @@ class _StudioShellState extends _ShellBase
     _channel.setMethodCallHandler(_onNativeCall);
     _init();
     _ticker = createTicker((_) {
-      // 帧驱动同步：先让 wgpu 渲染当前状态的一帧（同步等待完成），再用同一状态
-      // 刷新浮层，保证纹理与 Flutter 浮层出自同一份场景数据、同一帧合成。
+      // 帧驱动同步：wgpu 纹理先呈现当前帧；Flutter 浮层延迟一帧显示，
+      // 以抵消 Android Texture 比 Flutter 图层晚一帧的呈现延迟。
       if (!_showHome) {
         // 拖拽边缘自动滚动：先滚动视图，再渲染这一帧。
         rust.dragTick();
