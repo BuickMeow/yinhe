@@ -77,7 +77,7 @@ mixin _ShellBuild on _ShellBase {
                             Positioned.fill(
                               child: IgnorePointer(
                                 child: CustomPaint(
-                                  painter: PlayheadPainter(_playhead),
+                                  painter: PlayheadPainter(_playhead, _snap),
                                 ),
                               ),
                             ),
