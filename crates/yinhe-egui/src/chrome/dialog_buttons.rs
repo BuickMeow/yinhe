@@ -83,7 +83,7 @@ pub(crate) fn dialog_button_row(ui: &mut egui::Ui, buttons: &[DialogButton<'_>])
     let mut clicked = None;
     let gap = crate::scaling::scaled_font(ui.ctx(), BTN_GAP);
     let h = crate::scaling::scaled_font(ui.ctx(), BTN_H);
-    // 行高必须按按钮高分配：`ui.horizontal` 默认按 `interact_size.y`(≈18) 开行，
+    // 行高必须按按钮高分配：`ui.horizontal` 默认按 `interact_size.y`（0.37 为 20）开行，
     // 30 高的按钮会溢出到行下方 12px；在 `bottom_up` 的底部按钮区里就会顶穿框的
     // 内底边，使下边距≈0（而右边距正常）。这里显式按 BTN_H 分配。
     ui.allocate_ui_with_layout(
