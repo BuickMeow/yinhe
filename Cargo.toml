@@ -49,7 +49,7 @@ egui_material_icons = { version = "0.9", features = ["outline"] }
 image = "0.25"
 tempfile = "3"
 chrono = "0.4"
-font-kit = "0.14"
+fontique = { version = "0.11.1", default-features = false, features = ["system", "fontconfig-dlopen"] }
 
 # 跨 crate 共享依赖
 serde = { version = "1", features = ["derive", "rc"] }

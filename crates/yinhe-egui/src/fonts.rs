@@ -1,8 +1,8 @@
 //! 界面字体注入：按语言选择的系统字体 + Material 图标。
 //!
-//! 必须一次性通过 `set_fonts` 注入：egui 0.36 的 `add_font` 与 `set_fonts` 走两个
-//! 独立队列，切换语言时再次 `set_fonts` 会把之前 `add_font` 的 Material 图标覆盖掉，
-//! 导致所有图标变成方框。这里把两者合进同一份 `FontDefinitions`。
+//! 必须一次性通过 `set_fonts` 注入：`add_font` 与 `set_fonts` 走不同队列，
+//! 切换语言时再次 `set_fonts` 会重建 `FontDefinitions`，之前 `add_font` 的
+//! Material 图标会丢失，导致所有图标变成方框。这里把两者合进同一份定义。
 
 use std::sync::Arc;
 

@@ -4,8 +4,10 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
-egui = { workspace = true }
-font-kit = { workspace = true }
+# default_fonts：保留 Ubuntu-Light / Hack / egui-icons 作为兜底，主字体由本 crate 插到最前。
+egui = { workspace = true, features = ["default_fonts"] }
+# 与 eframe 0.37 的 egui_system_font_provider 共用同一版本和特性，避免重复编译。
+fontique = { workspace = true }
 
 [dev-dependencies]
-ab_glyph = "0.2"
+skrifa = "0.44"
