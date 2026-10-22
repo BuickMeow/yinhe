@@ -5,9 +5,9 @@
 //! 仍使用显式 id 集合，不会把移动后才进入矩形的音符误带进来。
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 
-use yinhe_core::{Selection, YinModel};
+use yinhe_core::Selection;
 
 use crate::scene::RenderScene;
 
@@ -15,7 +15,6 @@ struct Pending {
     generation: u64,
     rects: Vec<(u32, u32, u8, u8, u16, u16)>,
     filter: yinhe_core::SelectionFilter,
-    model: Arc<YinModel>,
     selection: Selection,
 }
 
@@ -50,7 +49,6 @@ pub fn schedule(s: &RenderScene) {
                 generation,
                 rects,
                 filter,
-                model,
                 selection: materialized,
             });
         }
@@ -68,10 +66,9 @@ pub fn apply_pending(s: &mut RenderScene) {
     let Some(doc) = s.document.as_mut() else {
         return;
     };
-    if doc.edit.selected.rects != pending.rects
-        || doc.edit.selected.filter != pending.filter
-        || !Arc::ptr_eq(&doc.data.model, &pending.model)
-    {
+    // 只比较选区矩形和筛选条件。模型可能因无关编辑已经换代，但成员位图
+    // 里记录的是选区建立时的 note id，正是桌面端“不把后来音符带进来”的语义。
+    if doc.edit.selected.rects != pending.rects || doc.edit.selected.filter != pending.filter {
         return;
     }
     doc.edit.selected = pending.selection;
