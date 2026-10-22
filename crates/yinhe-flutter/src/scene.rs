@@ -1115,6 +1115,11 @@ fn apply_document(mut doc: Document, min_ticks: f64) {
     crate::audio::on_model_loaded(model);
 }
 
+/// 纯选区变化：只刷新覆盖层，不重建音符层/轨道快照。
+pub(crate) fn selection_changed(s: &mut RenderScene) {
+    s.overlay_rev = s.overlay_rev.wrapping_add(1);
+}
+
 /// 从文档重算轨道快照（模型/颜色/显隐/轨道面板信息/ppq）。
 pub(crate) fn refresh_snapshot(s: &mut RenderScene) {
     s.doc_generation = s.doc_generation.wrapping_add(1);
@@ -1633,9 +1638,10 @@ pub fn tracks_json() -> String {
 /// `[mode, ppu, scroll_x, scroll_y, key_height, left_panel_w, lane_height,
 ///   total_ticks, ppq, key0_y, time_sig_num, time_sig_den]`
 pub fn view_snapshot() -> [f32; 13] {
-    let Ok(s) = scene().lock() else {
+    let Ok(mut s) = scene().lock() else {
         return [0.0; 13];
     };
+    crate::selection_materializer::apply_pending(&mut s);
     let ppq = s.ppq as f32;
     // 顶栏 BPM/拍号 = 播放光标处的实时值（原生事件优先，否则工程默认），
     // 与桌面时间码 `bpm_at_time` / `time_sig_at_tick` 同规则。

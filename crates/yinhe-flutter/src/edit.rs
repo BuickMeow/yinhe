@@ -406,6 +406,7 @@ pub fn begin(x: f32, y: f32) -> i32 {
     let Ok(mut s) = scene::scene().lock() else {
         return 0;
     };
+    crate::selection_materializer::apply_pending(&mut s);
     if s.document.is_none() {
         return 0;
     }
@@ -1851,6 +1852,9 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
         s.active_track = Some(row.min(s.num_tracks.saturating_sub(1)));
     }
     after_selection_change(s);
+    if moved {
+        crate::selection_materializer::schedule(s);
+    }
     click_tick
 }
 
@@ -1994,6 +1998,7 @@ fn commit_selection_resize(s: &mut RenderScene, d: &DragState) {
         }
     }
     after_selection_change(s);
+    crate::selection_materializer::schedule(s);
 }
 
 /// 右下角 Riff 方块释放：按选区宽度向左右重复，一步 undo。
@@ -2300,9 +2305,9 @@ fn walk_line(from: (u32, u8), to: (u32, u8), add: &mut impl FnMut(u32, u8)) {
 
 // ── 收尾刷新 ──
 
-/// 纯选择变化：刷新快照（无需重载音频）。
+/// 纯选择变化：只刷新覆盖层，不重建音符层（无需重载音频）。
 fn after_selection_change(s: &mut RenderScene) {
-    scene::refresh_snapshot(s);
+    scene::selection_changed(s);
 }
 
 /// 内容编辑：刷新快照；返回模型供调用方在**解锁后**重载音频。

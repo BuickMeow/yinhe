@@ -14,6 +14,7 @@ mod midi_export;
 mod midi_names;
 mod render;
 mod scene;
+mod selection_materializer;
 mod soundfont_archive;
 mod theme_colors;
 
