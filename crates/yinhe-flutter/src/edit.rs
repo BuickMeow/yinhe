@@ -22,6 +22,11 @@ const DEFAULT_VELOCITY: u8 = 100;
 /// 交互与实现先保留（[`kind::PENCIL_PICK`]），当前暂时关闭：铅笔压在已有音符上
 /// 仍按原行为新建音符。后续要启用时只改这里。
 const PENCIL_PICK_ENABLED: bool = false;
+/// 单音符直接拖拽/边缘伸缩开关。
+///
+/// 手机端直接按在音符上拖动太容易误触，当前关闭；保留选框长按后的整体移动。
+/// 后续要恢复桌面式单音符拖拽时只改这里。
+const DIRECT_NOTE_DRAG_ENABLED: bool = false;
 
 /// 拖拽类型。
 mod kind {
@@ -1166,7 +1171,11 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
         Tool::Select => {
             d.anchor_tick = anchor_tick;
             d.anchor_key = anchor_key;
-            if let Some((track, start_tick, end_tick, key, side)) = hit_note(s, &geom, x, y) {
+            // 手机端默认关闭单音符直接拖拽/伸缩，避免按在音符上滑动就误改；
+            // 选框长按后的整体移动仍保留。
+            if DIRECT_NOTE_DRAG_ENABLED
+                && let Some((track, start_tick, end_tick, key, side)) = hit_note(s, &geom, x, y)
+            {
                 d.kind = if side == 0 {
                     kind::NOTE_MOVE
                 } else {
