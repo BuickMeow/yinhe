@@ -89,10 +89,17 @@ impl Document {
     /// 返回副本制 undo（before = 原音符，after = 各段）。
     pub fn split_selection_by_grid(&mut self) -> Option<UndoAction> {
         let ppq = self.data.model.meta.ppq;
+        let (sig_num, sig_den) = self.data.model.tempo_map.time_sig_default;
         let interval = self
             .edit
             .quantize_pianoroll
-            .resolved(self.edit.pianoroll_view.base.pixels_per_tick, ppq)
+            .resolved_with_time_sig(
+                self.edit.pianoroll_view.base.pixels_per_tick,
+                ppq,
+                sig_num,
+                sig_den,
+                true,
+            )
             .tick_interval(ppq);
         if interval == 0 || self.edit.sel_rect.rects.is_empty() {
             return None;
@@ -240,11 +247,15 @@ impl Document {
             return None;
         }
         let ppq = self.data.model.meta.ppq;
+        let (sig_num, sig_den) = self.data.model.tempo_map.time_sig_default;
         // Auto 先按 PR 缩放出具体网格（与直线工具预览一致）；Off 无网格不生成。
-        let quantize = self
-            .edit
-            .quantize_pianoroll
-            .resolved(self.edit.pianoroll_view.base.pixels_per_tick, ppq);
+        let quantize = self.edit.quantize_pianoroll.resolved_with_time_sig(
+            self.edit.pianoroll_view.base.pixels_per_tick,
+            ppq,
+            sig_num,
+            sig_den,
+            true,
+        );
         let (tpb, num, den, events) = pr_bar_line_data(&self.data.model);
         let bar = Some((tpb, num, den, events.as_slice()));
         let velocity = self.edit.default_velocity(track);
@@ -265,11 +276,15 @@ impl Document {
     pub fn split_scissors_line(&mut self) -> Option<UndoAction> {
         let line = self.edit.scissors_line?;
         let ppq = self.data.model.meta.ppq;
+        let (sig_num, sig_den) = self.data.model.tempo_map.time_sig_default;
         // Auto 先按 PR 缩放出具体网格（与剪刀预览一致）；Off 无网格不吸附。
-        let quantize = self
-            .edit
-            .quantize_pianoroll
-            .resolved(self.edit.pianoroll_view.base.pixels_per_tick, ppq);
+        let quantize = self.edit.quantize_pianoroll.resolved_with_time_sig(
+            self.edit.pianoroll_view.base.pixels_per_tick,
+            ppq,
+            sig_num,
+            sig_den,
+            true,
+        );
         let (tpb, num, den, events) = pr_bar_line_data(&self.data.model);
         let bar = Some((tpb, num, den, events.as_slice()));
         let cuts = crate::quantize::line_cuts(line.start, line.end, quantize, ppq, bar);

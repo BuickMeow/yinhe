@@ -338,10 +338,14 @@ impl App {
             return;
         }
         let ppq = doc.data.model.meta.ppq;
-        let quantize = doc
-            .edit
-            .quantize_pianoroll
-            .resolved(doc.edit.pianoroll_view.base.pixels_per_tick, ppq);
+        let (sig_num, sig_den) = doc.data.model.tempo_map.time_sig_default;
+        let quantize = doc.edit.quantize_pianoroll.resolved_with_time_sig(
+            doc.edit.pianoroll_view.base.pixels_per_tick,
+            ppq,
+            sig_num,
+            sig_den,
+            true,
+        );
 
         // 每个 ctx 生成副本（偏移 = 该 ctx 选区跨度，单锚点时用量化间隔）。
         let mut edits = Vec::new();
@@ -734,9 +738,16 @@ impl App {
         let span = (t1 - t0) as i64;
         let delta = if span <= 0 {
             let ppq = doc.data.model.meta.ppq;
+            let (sig_num, sig_den) = doc.data.model.tempo_map.time_sig_default;
             doc.edit
                 .quantize_arrange
-                .resolved_with_detail(doc.edit.arrange_view.base.pixels_per_tick, ppq, false)
+                .resolved_with_time_sig(
+                    doc.edit.arrange_view.base.pixels_per_tick,
+                    ppq,
+                    sig_num,
+                    sig_den,
+                    false,
+                )
                 .tick_interval(ppq)
                 .max(1) as i64
         } else {

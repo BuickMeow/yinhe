@@ -1318,7 +1318,18 @@ pub fn set_play_cursor(tick: f64) {
             ViewMode::Pianoroll => s.pr_view.base.pixels_per_tick,
             ViewMode::Arrangement => s.arr_view.base.pixels_per_tick,
         };
-        let q = q.resolved_with_detail(ppu, s.ppq, matches!(s.view_mode, ViewMode::Pianoroll));
+        let (num, den_pow) = doc
+            .data
+            .model
+            .tempo_map
+            .time_sig_at_tick(tick.max(0.0) as u32);
+        let q = q.resolved_with_time_sig(
+            ppu,
+            s.ppq,
+            num,
+            den_pow,
+            matches!(s.view_mode, ViewMode::Pianoroll),
+        );
         SnapCtx::new(&s)
             .round(q, tick.max(0.0))
             .clamp(0.0, (s.total_ticks - 1.0).max(0.0))
@@ -1910,7 +1921,14 @@ pub fn tick_at_x(s: &RenderScene, x: f32) -> f64 {
         ViewMode::Pianoroll => doc.edit.quantize_pianoroll,
         ViewMode::Arrangement => doc.edit.quantize_arrange,
     };
-    let q = q.resolved_with_detail(ppu, s.ppq, matches!(s.view_mode, ViewMode::Pianoroll));
+    let (num, den_pow) = doc.data.model.tempo_map.time_sig_at_tick(raw as u32);
+    let q = q.resolved_with_time_sig(
+        ppu,
+        s.ppq,
+        num,
+        den_pow,
+        matches!(s.view_mode, ViewMode::Pianoroll),
+    );
     SnapCtx::new(s)
         .round(q, raw)
         .clamp(0.0, (s.total_ticks - 1.0).max(0.0))

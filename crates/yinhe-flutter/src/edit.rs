@@ -361,7 +361,23 @@ fn quantize_of(s: &RenderScene) -> QuantizePreset {
         ViewMode::Pianoroll => s.pr_view.base.pixels_per_tick,
         ViewMode::Arrangement => s.arr_view.base.pixels_per_tick,
     };
-    raw.resolved_with_detail(ppu, s.ppq, matches!(s.view_mode, ViewMode::Pianoroll))
+    let (num, den_pow) = s
+        .document
+        .as_ref()
+        .map(|d| {
+            d.data
+                .model
+                .tempo_map
+                .time_sig_at_tick(s.cursor_tick.max(0.0) as u32)
+        })
+        .unwrap_or((4, 2));
+    raw.resolved_with_time_sig(
+        ppu,
+        s.ppq,
+        num,
+        den_pow,
+        matches!(s.view_mode, ViewMode::Pianoroll),
+    )
 }
 
 fn bump(s: &mut RenderScene) {

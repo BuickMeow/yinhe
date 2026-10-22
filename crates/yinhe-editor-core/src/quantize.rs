@@ -97,8 +97,24 @@ impl QuantizePreset {
         ppq: u32,
         allow_sub_tick: bool,
     ) -> QuantizePreset {
+        self.resolved_with_time_sig(pixels_per_tick, ppq, 4, 2, allow_sub_tick)
+    }
+
+    /// 按实际拍号解析 Auto。
+    ///
+    /// `num` / `den_pow` 与工程 `time_sig_default` 同语义（如 1/8 = `(1, 3)`）。
+    pub fn resolved_with_time_sig(
+        self,
+        pixels_per_tick: f32,
+        ppq: u32,
+        num: u8,
+        den_pow: u8,
+        allow_sub_tick: bool,
+    ) -> QuantizePreset {
         match self {
-            QuantizePreset::Auto => auto_preset_with_detail(pixels_per_tick, ppq, allow_sub_tick),
+            QuantizePreset::Auto => {
+                auto_preset_with_time_sig(pixels_per_tick, ppq, num, den_pow, allow_sub_tick)
+            }
             other => other,
         }
     }
@@ -275,17 +291,23 @@ pub fn fine_grid_preset(pixels_per_tick: f32, ppq: u32) -> QuantizePreset {
 ///
 /// 中高缩放时返回 1/16 或 1 tick；低缩放返回合并小节/小节/拍。
 /// AR 没有 sub/tick 层（`allow_sub_tick = false`），最高只到拍线。
-fn grid_base_interval(pixels_per_tick: f32, ppq: u32, allow_sub_tick: bool) -> u32 {
+fn grid_base_interval(
+    pixels_per_tick: f32,
+    ppq: u32,
+    num: u8,
+    den_pow: u8,
+    allow_sub_tick: bool,
+) -> u32 {
     let ppq = ppq.max(1);
     let ppu = pixels_per_tick.max(0.001);
-    let whole = ppq.saturating_mul(4);
-    let beat = ppq;
+    let measure = yinhe_types::measure_ticks(ppq, num, den_pow).max(1);
+    let beat = (measure / u32::from(num.max(1))).max(1);
     let sub = (ppq / 4).max(1);
 
     let measure_divisor =
-        yinhe_types::compute_measure_divisor(whole as f32 * ppu, AUTO_GRID_MIN_SPACING);
+        yinhe_types::compute_measure_divisor(measure as f32 * ppu, AUTO_GRID_MIN_SPACING);
     if measure_divisor > 1 {
-        return (whole.saturating_mul(measure_divisor) / 2).max(1);
+        return (measure.saturating_mul(measure_divisor) / 2).max(1);
     }
     if !allow_sub_tick {
         return beat;
@@ -326,8 +348,21 @@ pub fn auto_preset_with_detail(
     ppq: u32,
     allow_sub_tick: bool,
 ) -> QuantizePreset {
+    auto_preset_with_time_sig(pixels_per_tick, ppq, 4, 2, allow_sub_tick)
+}
+
+/// 按实际拍号解析 Auto 网格。
+///
+/// 低缩放的小节/拍线随拍号变化；中高缩放的 1/16 以下细分与拍号无关。
+pub fn auto_preset_with_time_sig(
+    pixels_per_tick: f32,
+    ppq: u32,
+    num: u8,
+    den_pow: u8,
+    allow_sub_tick: bool,
+) -> QuantizePreset {
     let ppq = ppq.max(1);
-    let base = grid_base_interval(pixels_per_tick, ppq, allow_sub_tick);
+    let base = grid_base_interval(pixels_per_tick, ppq, num, den_pow, allow_sub_tick);
     let sub = (ppq / 4).max(1);
     if base > sub {
         return preset_for_interval(base, ppq);
@@ -658,6 +693,11 @@ mod tests {
         assert_eq!(
             auto_preset_with_detail(5.0, 480, false),
             QuantizePreset::Fraction(1, 4)
+        );
+        // 1/8 拍号（num=1, den_pow=3）：基础网格是 1/8，不是 4/4 的 1/4。
+        assert_eq!(
+            auto_preset_with_time_sig(0.08, 480, 1, 3, false),
+            QuantizePreset::Fraction(1, 8)
         );
     }
 

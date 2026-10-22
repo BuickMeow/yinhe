@@ -692,11 +692,15 @@ impl eframe::App for App {
                 &doc.edit.track_overrides,
                 doc.edit.track_cache.conductor_idx,
             );
+            let (sig_num, sig_den) = doc.data.model.tempo_map.time_sig_default;
             transport_bar::PrBarData {
                 quantize: doc.edit.quantize_pianoroll,
-                quantize_auto_resolved: yinhe_editor_core::quantize::auto_preset(
+                quantize_auto_resolved: yinhe_editor_core::quantize::auto_preset_with_time_sig(
                     doc.edit.pianoroll_view.base.pixels_per_tick,
                     doc.data.model.meta.ppq,
+                    sig_num,
+                    sig_den,
+                    true,
                 ),
                 chord,
             }
@@ -733,9 +737,12 @@ impl eframe::App for App {
                             d.edit.arrange_view.base.pixels_per_tick
                         };
                         // Auto 会解析成的网格（弹窗内显示用，与当前档位无关）。
-                        yinhe_editor_core::quantize::auto_preset_with_detail(
+                        let (sig_num, sig_den) = d.data.model.tempo_map.time_sig_default;
+                        yinhe_editor_core::quantize::auto_preset_with_time_sig(
                             ppu,
                             d.data.model.meta.ppq,
+                            sig_num,
+                            sig_den,
                             false,
                         )
                     })

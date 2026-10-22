@@ -659,10 +659,14 @@ impl App {
                 // 新建音符默认长度：该轨 gate 记忆，无记忆回退量化间隔。
                 // 量化档位先解析：Auto（自适应）按当前 PR 缩放出具体网格；
                 // Off（关闭吸附）没有网格，默认长度回退 1/16 音符间隔。
-                let pr_quantize = doc
-                    .edit
-                    .quantize_pianoroll
-                    .resolved(doc.edit.pianoroll_view.base.pixels_per_tick, tpb);
+                let (sig_num, sig_den) = doc.data.model.tempo_map.time_sig_default;
+                let pr_quantize = doc.edit.quantize_pianoroll.resolved_with_time_sig(
+                    doc.edit.pianoroll_view.base.pixels_per_tick,
+                    tpb,
+                    sig_num,
+                    sig_den,
+                    true,
+                );
                 let default_gate = write_track.map(|t| {
                     let fallback = if pr_quantize == QuantizePreset::Off {
                         QuantizePreset::Fraction(1, 16).tick_interval(tpb)

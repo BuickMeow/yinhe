@@ -460,9 +460,16 @@ impl App {
         };
         let doc = &self.workspace.documents[idx];
         let ppq = doc.data.model.meta.ppq;
+        let (sig_num, sig_den) = doc.data.model.tempo_map.time_sig_default;
         doc.edit
             .quantize_pianoroll
-            .resolved(doc.edit.pianoroll_view.base.pixels_per_tick, ppq)
+            .resolved_with_time_sig(
+                doc.edit.pianoroll_view.base.pixels_per_tick,
+                ppq,
+                sig_num,
+                sig_den,
+                true,
+            )
             .tick_interval(ppq)
             .max(1)
     }
