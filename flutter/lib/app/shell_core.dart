@@ -420,6 +420,8 @@ mixin _ShellCore on _ShellBase {
     rust.setViewMode(mode);
     setState(() => _viewMode = mode);
     _pushTool();
+    _velocityViewPpu = null;
+    _velocityViewScroll = null;
     if (mode == kViewPianoroll) {
       _loadAutomation();
       _loadVelocity();

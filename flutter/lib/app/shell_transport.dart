@@ -31,6 +31,38 @@ mixin _ShellTransport on _ShellBase {
     setState(() => _autoLanes = lanes);
   }
 
+  /// 可见窗口变化后延迟重载力度条，避免滚动时每帧扫音符。
+  void _scheduleVelocityReload() {
+    if (_viewMode != kViewPianoroll || _showHome || _autoCollapsed) {
+      return;
+    }
+    final s = _snap.value;
+    if (s.length < 3) {
+      return;
+    }
+    final ppu = s[1];
+    final scroll = s[2];
+    if (_velocityViewPpu == ppu && _velocityViewScroll == scroll) {
+      return;
+    }
+    _velocityViewPpu = ppu;
+    _velocityViewScroll = scroll;
+    // 节流而不是防抖：持续滚动时也保持力度条更新，但最多约 12Hz。
+    if (_velocityReloadTimer != null) {
+      return;
+    }
+    _velocityReloadTimer = Timer(const Duration(milliseconds: 80), () {
+      _velocityReloadTimer = null;
+      if (!mounted ||
+          _viewMode != kViewPianoroll ||
+          _showHome ||
+          _autoCollapsed) {
+        return;
+      }
+      _loadVelocity();
+    });
+  }
+
   /// 读取当前轨道的力度条数据（每音符一条）。
   @override
   void _loadVelocity() {
@@ -39,28 +71,28 @@ mixin _ShellTransport on _ShellBase {
       setState(() => _velocityBars = const []);
       return;
     }
-    final ptr = rust.velocityJson();
+    final lenPtr = calloc<ffi.Uint32>();
     var bars = const <(double, double, double, int)>[];
-    if (ptr != ffi.nullptr) {
-      try {
-        final list = jsonDecode(ptr.toDartString()) as List<dynamic>;
+    try {
+      final ptr = rust.velocityBars(lenPtr);
+      final len = lenPtr.value;
+      if (ptr != ffi.nullptr && len >= 4) {
+        final data = ptr.asTypedList(len);
         bars = [
-          for (final e in list)
-            (
-              ((e as List<dynamic>)[0] as num).toDouble(),
-              (e[1] as num).toDouble(),
-              (e[2] as num).toDouble(),
-              (e[3] as num).toInt(),
-            ),
+          for (var i = 0; i + 3 < len; i += 4)
+            (data[i], data[i + 1], data[i + 2], data[i + 3].toInt()),
         ];
-      } catch (_) {
-        bars = const [];
-      } finally {
-        rust.freeString(ptr);
       }
+    } finally {
+      calloc.free(lenPtr);
     }
     if (!mounted) {
       return;
+    }
+    final s = _snap.value;
+    if (s.length > 2) {
+      _velocityViewPpu = s[1];
+      _velocityViewScroll = s[2];
     }
     setState(() => _velocityBars = bars);
   }
@@ -92,6 +124,9 @@ mixin _ShellTransport on _ShellBase {
   @override
   void _setAutoCollapsed(bool collapsed) {
     setState(() => _autoCollapsed = collapsed);
+    if (!collapsed && _viewMode == kViewPianoroll) {
+      _loadVelocity();
+    }
   }
   // ── 走带 ──
 

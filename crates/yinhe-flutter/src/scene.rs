@@ -1753,31 +1753,44 @@ pub fn automation_json(track: usize) -> String {
     out
 }
 
-/// 力度条数据（所有可见轨），JSON：`[[tick, length, velocity01, track], ...]`。
+/// PR 力度条数据（当前可见 tick 范围 + 可见轨）。
 ///
+/// 扁平的 `[tick, length, velocity01, track, ...]` f64 数组，不再经过 JSON。
 /// 与桌面一致：velocity <= 1 过滤；ppu 较小时按 `SUMMARY_BLOCK_TICKS`
 /// 对每个 (块, 轨道) 取 gate 最长的代表音符（LOD 摘要）。
-pub fn velocity_json() -> String {
+pub fn velocity_bars() -> Vec<f64> {
     let Ok(s) = scene().lock() else {
-        return "[]".into();
+        return Vec::new();
     };
     let Some(doc) = s.document.as_ref() else {
-        return "[]".into();
+        return Vec::new();
     };
     let model = &doc.data.model;
     let visible = doc.edit.pr_visible();
-    // 与音符层一致：PR「当前编辑音轨」过滤也作用于力度条。
     let only_track = s.display_track;
     let ppu = s.pr_view.base.pixels_per_tick;
     let block = yinhe_wgpu::pianoroll::select_summary_level(ppu)
         .map(|l| yinhe_wgpu::pianoroll::SUMMARY_BLOCK_TICKS[l]);
+    let (lw, lh) = crate::logical_size();
+    let (scan_lo, scan_hi) = if lw > 0.0 {
+        s.pr_view
+            .visible_main_range(s.pr_view.main_axis_len(lw, lh))
+    } else {
+        (0.0, s.total_ticks.max(1.0))
+    };
+    let scan_lo_tick = scan_lo.max(0.0).floor() as u32;
+    let scan_hi_tick = scan_hi.max(scan_lo + 1.0).ceil().min(u32::MAX as f64) as u32;
 
     let mut bars: Vec<(u32, u32, u8, u16)> = Vec::new();
     match block {
         None => {
             for key in 0..=yinhe_types::MAX_KEY {
-                for note in model.key_notes(key).iter() {
+                for note in model.key_notes_in_range(key, scan_lo_tick, scan_hi_tick) {
                     if note.velocity <= 1 {
+                        continue;
+                    }
+                    if f64::from(note.end_tick) <= scan_lo || f64::from(note.start_tick) >= scan_hi
+                    {
                         continue;
                     }
                     let t = note.track as usize;
@@ -1798,11 +1811,14 @@ pub fn velocity_json() -> String {
         }
         Some(block) => {
             use std::collections::HashMap;
-            // (块序号, 轨道) → (tick, gate, velocity) 代表音符。
             let mut map: HashMap<(u32, u16), (u32, u32, u8)> = HashMap::new();
             for key in 0..=yinhe_types::MAX_KEY {
-                for note in model.key_notes(key).iter() {
+                for note in model.key_notes_in_range(key, scan_lo_tick, scan_hi_tick) {
                     if note.velocity <= 1 {
+                        continue;
+                    }
+                    if f64::from(note.end_tick) <= scan_lo || f64::from(note.start_tick) >= scan_hi
+                    {
                         continue;
                     }
                     let t = note.track as usize;
@@ -1830,16 +1846,13 @@ pub fn velocity_json() -> String {
         }
     }
     bars.sort_unstable_by_key(|b| (b.0, b.3));
-    let mut out = String::with_capacity(bars.len() * 24 + 2);
-    out.push('[');
-    for (i, (tick, len, vel, track)) in bars.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        let value01 = (f32::from(*vel) - 1.0) / 126.0;
-        out.push_str(&format!("[{tick},{len},{value01:.4},{track}]"));
+    let mut out = Vec::with_capacity(bars.len() * 4);
+    for (tick, len, vel, track) in bars {
+        out.push(f64::from(tick));
+        out.push(f64::from(len));
+        out.push((f64::from(vel) - 1.0) / 126.0);
+        out.push(f64::from(track));
     }
-    out.push(']');
     out
 }
 

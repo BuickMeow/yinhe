@@ -19,9 +19,9 @@ mod soundfont_archive;
 mod theme_colors;
 
 use std::ffi::{CStr, CString, c_void};
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Mutex, OnceLock};
 
 // ── ANativeWindow 最小 C 接口 ──
 // 不用 `ndk` crate：只需要这四个函数，直接声明可避免 jni/ndk 的版本纠缠。
@@ -672,10 +672,34 @@ pub extern "C" fn yinhe_automation_json(track: i32) -> *mut std::ffi::c_char {
     to_c_string(scene::automation_json(track.max(0) as usize))
 }
 
-/// 力度条数据 JSON（所有可见轨，堆分配）。
+/// PR 力度条二进制数据：`[tick, length, velocity01, track, ...]`，f64。
+///
+/// 写入 `out_len`（f64 元素数）并返回内部缓冲区指针；Flutter 必须在下一次
+/// 调用前复制数据。
 #[unsafe(no_mangle)]
-pub extern "C" fn yinhe_velocity_json() -> *mut std::ffi::c_char {
-    to_c_string(scene::velocity_json())
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
+pub extern "C" fn yinhe_velocity_bars(out_len: *mut u32) -> *const f64 {
+    if out_len.is_null() {
+        return std::ptr::null();
+    }
+    static BUFFER: OnceLock<Mutex<Vec<f64>>> = OnceLock::new();
+    let bars = scene::velocity_bars();
+    let Ok(mut slot) = BUFFER.get_or_init(|| Mutex::new(Vec::new())).lock() else {
+        unsafe {
+            *out_len = 0;
+        }
+        return std::ptr::null();
+    };
+    *slot = bars;
+    let len = slot.len();
+    unsafe {
+        *out_len = len as u32;
+    }
+    if len == 0 {
+        std::ptr::null()
+    } else {
+        slot.as_ptr()
+    }
 }
 
 /// 选框拖拽状态：0=无、1=待定（长按中）、2=移动态、3=空白处长按完成。

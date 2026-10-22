@@ -191,6 +191,11 @@ abstract class _ShellBase extends State<StudioShell>
   bool _saveDone = false;
   Timer? _saveDoneTimer;
 
+  /// PR 力度条可见窗口重载：滚动/缩放后延迟一次，避免逐帧扫音符。
+  Timer? _velocityReloadTimer;
+  double? _velocityViewPpu;
+  double? _velocityViewScroll;
+
   /// 保存进行中：顶栏保存按钮显示加载圆环。
   bool _saving = false;
   Timer? _savingTimer;
@@ -310,6 +315,7 @@ class _StudioShellState extends _ShellBase
       if (!_sameSnapshot(snap)) {
         _snap.value = snap;
       }
+      _scheduleVelocityReload();
       _readOverlay();
       // 选框状态驱动：移动态画虚线；长按中更新圆环进度（Flutter long press 推进状态）。
       final selState = rust.selectionState();
@@ -392,6 +398,7 @@ class _StudioShellState extends _ShellBase
     _grid.dispose();
     _saveDoneTimer?.cancel();
     _savingTimer?.cancel();
+    _velocityReloadTimer?.cancel();
     _docState.dispose();
     calloc.free(_snapPtr);
     calloc.free(_statePtr);

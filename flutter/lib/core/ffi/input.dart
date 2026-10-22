@@ -83,10 +83,19 @@ typedef IntCStrDart = ffi.Pointer<Utf8> Function(int);
 final IntCStrDart automationJson = bridge
     .lookupFunction<IntCStrNative, IntCStrDart>('yinhe_automation_json');
 
-/// 力度条数据 JSON（所有可见轨）。
-final CStrDart velocityJson = bridge.lookupFunction<CStrNative, CStrDart>(
-  'yinhe_velocity_json',
+typedef VelocityBarsNative = ffi.Pointer<ffi.Double> Function(
+  ffi.Pointer<ffi.Uint32>,
 );
+typedef VelocityBarsDart = ffi.Pointer<ffi.Double> Function(
+  ffi.Pointer<ffi.Uint32>,
+);
+
+/// PR 力度条二进制数据：`[tick, length, velocity01, track, ...]`。
+/// 返回内部缓冲区指针，下一次调用前必须复制。
+final VelocityBarsDart velocityBars = bridge
+    .lookupFunction<VelocityBarsNative, VelocityBarsDart>(
+      'yinhe_velocity_bars',
+    );
 
 typedef ScrollAtNative = ffi.Int32 Function(
   ffi.Float,
