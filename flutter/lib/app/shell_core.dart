@@ -182,12 +182,17 @@ mixin _ShellCore on _ShellBase {
       _tracks.value = _readTracks();
       _markers = _readMarkers();
     });
-    _loadAutomation();
-    _loadVelocity();
+    // PR 专属面板（力度条/自动化条）不参与 AR 绘制。AR 下每次音符编辑
+    // 都重扫全曲力度会卡住主线程，这里只在 PR 视图加载。
+    if (_viewMode == kViewPianoroll) {
+      _loadAutomation();
+      _loadVelocity();
+    } else {
+      _loadArAutomation();
+    }
     _loadSongTitle();
     _loadProjectDefaults();
     _loadTimeSigSegments();
-    _loadArAutomation();
   }
 
   /// 加载 MIDI/工程：Rust 后台解析，Dart 延迟 120ms 再决定是否弹进度框，
@@ -415,5 +420,11 @@ mixin _ShellCore on _ShellBase {
     rust.setViewMode(mode);
     setState(() => _viewMode = mode);
     _pushTool();
+    if (mode == kViewPianoroll) {
+      _loadAutomation();
+      _loadVelocity();
+    } else {
+      _loadArAutomation();
+    }
   }
 }
