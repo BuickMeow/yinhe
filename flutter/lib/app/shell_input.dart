@@ -21,6 +21,58 @@ mixin _ShellInput on _ShellBase {
   bool _pinchModeLocked = false;
   int _gestureMode = _gesturePan;
 
+  /// 视口输入统一延迟一帧再提交：本帧 wgpu 纹理和 Flutter 浮层都读旧状态，
+  /// 下一帧一起前进，避免面板/内容各领先一帧。代价是相机跟手延迟 1 帧。
+  bool _hasPendingViewport = false;
+  int _pendingViewportMode = _gesturePan;
+  double _pendingPanX = 0.0;
+  double _pendingPanY = 0.0;
+  double _pendingScale = 1.0;
+  double _pendingFocusX = 0.0;
+  double _pendingFocusY = 0.0;
+
+  void _queueViewportGesture(
+    int mode,
+    double dx,
+    double dy,
+    double scale,
+    double focusX,
+    double focusY,
+  ) {
+    _pendingViewportMode = mode;
+    _pendingPanX += dx;
+    _pendingPanY += dy;
+    _pendingScale *= scale;
+    _pendingFocusX = focusX;
+    _pendingFocusY = focusY;
+    _hasPendingViewport = true;
+  }
+
+  /// 在 wgpu 渲染和 Flutter 快照读取之后调用：只把下一帧的相机状态写进 Rust。
+  void _applyPendingViewportGesture() {
+    if (!_hasPendingViewport) {
+      return;
+    }
+    final mode = _pendingViewportMode;
+    final dx = _pendingPanX;
+    final dy = _pendingPanY;
+    final scale = _pendingScale;
+    final fx = _pendingFocusX;
+    final fy = _pendingFocusY;
+    _hasPendingViewport = false;
+    _pendingPanX = 0.0;
+    _pendingPanY = 0.0;
+    _pendingScale = 1.0;
+    rust.viewportGesture(mode, dx, dy, scale, fx, fy);
+  }
+
+  void _cancelPendingViewport() {
+    _hasPendingViewport = false;
+    _pendingPanX = 0.0;
+    _pendingPanY = 0.0;
+    _pendingScale = 1.0;
+  }
+
   bool _isRightMouse(PointerEvent e) =>
       e.kind == PointerDeviceKind.mouse &&
       (e.buttons & kSecondaryMouseButton) != 0;
@@ -87,6 +139,7 @@ mixin _ShellInput on _ShellBase {
       return;
     }
     rust.editCancel();
+    _cancelPendingViewport();
     _gestureEditing = false;
     _gestureWasEditing = false;
     _gestureZoomed = false;
@@ -164,7 +217,7 @@ mixin _ShellInput on _ShellBase {
       final pan = focal - _lastFocal;
       final last = _lastScale <= 0.0 ? 1.0 : _lastScale;
       final scaleDelta = d.scale / last;
-      rust.viewportGesture(
+      _queueViewportGesture(
         _gestureMode,
         pan.dx,
         pan.dy,
@@ -186,7 +239,7 @@ mixin _ShellInput on _ShellBase {
       if (!active) {
         // 已选框长按待定被拖动取消：从这次位移开始转为平移。
         _gestureEditing = false;
-        rust.viewportGesture(
+        _queueViewportGesture(
           _gesturePan,
           pan.dx,
           pan.dy,
@@ -196,7 +249,7 @@ mixin _ShellInput on _ShellBase {
         );
       }
     } else {
-      rust.viewportGesture(
+      _queueViewportGesture(
         _gesturePan,
         pan.dx,
         pan.dy,
@@ -218,6 +271,7 @@ mixin _ShellInput on _ShellBase {
     if (_gestureEditing) {
       _finishEditGesture(_lastFocal, moved: _gestureMoved || _lpMoved);
     } else if (!_gestureZoomed && !wasEditing) {
+      _applyPendingViewportGesture();
       final v = d.velocity.pixelsPerSecond;
       if (v.distance > 0) {
         rust.startFling(v.dx, v.dy);
@@ -408,6 +462,7 @@ mixin _ShellInput on _ShellBase {
   @override
   void _resetInteraction() {
     rust.resetInteraction();
+    _cancelPendingViewport();
     _activePointers.clear();
     _gestureEditing = false;
     _gestureWasEditing = false;

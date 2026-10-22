@@ -315,6 +315,8 @@ class _StudioShellState extends _ShellBase
       }
       _scheduleVelocityReload();
       _readOverlay();
+      // 相机输入统一在纹理/浮层快照之后提交，下一帧两者一起前进（1 帧延迟）。
+      _applyPendingViewportGesture();
       // 选框状态驱动：移动态画虚线；长按中更新圆环进度（Flutter long press 推进状态）。
       final selState = rust.selectionState();
       if (_moveDashed.value != (selState == 2)) {
