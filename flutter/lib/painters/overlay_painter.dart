@@ -77,10 +77,10 @@ class OverlayPainter extends CustomPainter {
       Offset(r.right, r.center.dy),
     ];
     for (final c in centers) {
-      canvas.drawCircle(c, 4.0, fill);
-      canvas.drawCircle(c, 4.0, handle);
+      canvas.drawCircle(c, 3.0, fill);
+      canvas.drawCircle(c, 3.0, handle);
     }
-    final riff = Rect.fromCenter(center: r.bottomRight, width: 8, height: 8);
+    final riff = Rect.fromCenter(center: r.bottomRight, width: 6, height: 6);
     canvas.drawRect(riff, fill);
     canvas.drawRect(riff, handle);
   }
