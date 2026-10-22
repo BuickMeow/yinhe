@@ -1388,7 +1388,6 @@ pub fn set_files_dir(dir: String) {
     }
     load_recent();
     load_settings();
-    ensure_starter_document();
 }
 
 /// 设置文件写入（音色库 + 音频参数持久化）。

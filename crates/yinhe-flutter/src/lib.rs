@@ -417,6 +417,9 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeInitContext<'lo
                 }
                 log::info!("ndk-context 已初始化");
             });
+            // 必须等 AAudio 依赖的 ndk-context 就绪后再创建占位文档：
+            // apply_document 会初始化音频引擎，提前调用会触发 ndk-context panic。
+            scene::ensure_starter_document();
         }
         Outcome::Err(e) => log::error!("ndk-context 初始化失败: {e}"),
         Outcome::Panic(p) => log::error!("ndk-context 初始化 panic: {p:?}"),
