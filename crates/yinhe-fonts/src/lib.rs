@@ -76,10 +76,39 @@ fn query_primary(
     cache: &mut SourceCache,
     weight: u16,
 ) -> Option<Picked> {
+    #[cfg(target_os = "macos")]
+    if let Some(picked) =
+        query_primary_family(collection, cache, QueryFamily::Named("SF Pro Text"), weight)
+    {
+        return Some(picked);
+    }
+
+    query_primary_family(
+        collection,
+        cache,
+        QueryFamily::Generic(GenericFamily::SystemUi),
+        weight,
+    )
+    .or_else(|| {
+        query_primary_family(
+            collection,
+            cache,
+            QueryFamily::Generic(GenericFamily::SansSerif),
+            weight,
+        )
+    })
+}
+
+fn query_primary_family(
+    collection: &mut Collection,
+    cache: &mut SourceCache,
+    family: QueryFamily<'static>,
+    weight: u16,
+) -> Option<Picked> {
     let mut candidates = Vec::new();
     {
         let mut query = collection.query(cache);
-        query.set_families(primary_families());
+        query.set_families([family]);
         query.set_attributes(attributes(weight));
         query.matches_with(|font| {
             candidates.push((
@@ -152,17 +181,6 @@ fn query_cjk(
         index,
         coords: coords(synthesis),
     })
-}
-
-fn primary_families() -> [QueryFamily<'static>; 1] {
-    #[cfg(target_os = "macos")]
-    {
-        [QueryFamily::Named("SF Pro Text")]
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        [QueryFamily::Generic(GenericFamily::SystemUi)]
-    }
 }
 
 fn attributes(weight: u16) -> Attributes {
