@@ -2381,59 +2381,6 @@ pub fn set_track_name(track: usize, name: String) -> i32 {
     1
 }
 
-/// AR 折叠态自动化竖线：`[{"t":track,"b":baseline,"p":[[tick,value],...]},...]`
-///
-/// 与桌面 `collect_folded_previews` 同语义：每条未展开 lane 以整行高竖线预览；
-/// 每 lane 抽样至多 300 点（桌面按可见范围裁剪，移动端一次性下发 + 绘制时二分）。
-pub fn ar_automation_json() -> String {
-    let Ok(s) = scene().lock() else {
-        return "[]".into();
-    };
-    let Some(doc) = s.document.as_ref() else {
-        return "[]".into();
-    };
-    let model = &doc.data.model;
-    // AR 的折叠自动化预览用 AR 显隐（PR 的显示过滤不影响 AR）。
-    let visible = doc.edit.track_visible.clone();
-    let mut out = String::from("[");
-    let mut first = true;
-    for (ti, t) in model.tracks.iter().enumerate() {
-        if !visible.get(ti).copied().unwrap_or(true) {
-            continue;
-        }
-        for lane in &t.automation_lanes {
-            let Some(kind) = lane_kind(&lane.target) else {
-                continue;
-            };
-            let n = lane.events.len();
-            if n == 0 {
-                continue;
-            }
-            if !first {
-                out.push(',');
-            }
-            first = false;
-            let baseline = if kind == 0 { 0.5 } else { 0.0 };
-            out.push_str(&format!("{{\"t\":{ti},\"b\":{baseline},\"p\":["));
-            let step = (n / 300).max(1);
-            let mut firstp = true;
-            for (i, e) in lane.events.iter().enumerate() {
-                if i % step != 0 && i + 1 != n {
-                    continue;
-                }
-                if !firstp {
-                    out.push(',');
-                }
-                firstp = false;
-                out.push_str(&format!("[{},{}]", e.tick, e.value));
-            }
-            out.push_str("]}");
-        }
-    }
-    out.push(']');
-    out
-}
-
 /// 滚轮/触控板：`ctrl=true` 缩放（键盘/面板区 → 副轴，其余 → 主轴），否则平移。
 pub fn scroll_at(x: f32, y: f32, dx: f32, dy: f32, ctrl: bool) -> i32 {
     let Ok(mut s) = scene().lock() else {

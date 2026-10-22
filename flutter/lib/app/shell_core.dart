@@ -187,8 +187,6 @@ mixin _ShellCore on _ShellBase {
     if (_viewMode == kViewPianoroll) {
       _loadAutomation();
       _loadVelocity();
-    } else {
-      _loadArAutomation();
     }
     _loadSongTitle();
     _loadProjectDefaults();
@@ -425,8 +423,6 @@ mixin _ShellCore on _ShellBase {
     if (mode == kViewPianoroll) {
       _loadAutomation();
       _loadVelocity();
-    } else {
-      _loadArAutomation();
     }
   }
 }

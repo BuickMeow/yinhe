@@ -97,30 +97,6 @@ mixin _ShellTransport on _ShellBase {
     setState(() => _velocityBars = bars);
   }
 
-  /// 读取 AR 折叠态自动化竖线（所有可见轨）。
-  @override
-  void _loadArAutomation() {
-    final ptr = rust.arAutomationJson();
-    var lanes = const <ArAutomationLane>[];
-    if (ptr != ffi.nullptr) {
-      try {
-        final list = jsonDecode(ptr.toDartString()) as List<dynamic>;
-        lanes = [
-          for (final e in list)
-            ArAutomationLane.fromJson(e as Map<String, dynamic>),
-        ];
-      } catch (_) {
-        lanes = const [];
-      } finally {
-        rust.freeString(ptr);
-      }
-    }
-    if (!mounted) {
-      return;
-    }
-    setState(() => _arAutomation = lanes);
-  }
-
   @override
   void _setAutoCollapsed(bool collapsed) {
     setState(() => _autoCollapsed = collapsed);

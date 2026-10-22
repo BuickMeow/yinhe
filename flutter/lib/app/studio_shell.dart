@@ -138,7 +138,6 @@ abstract class _ShellBase extends State<StudioShell>
   String _songTitle = '';
 
   /// AR 折叠态自动化竖线。
-  List<ArAutomationLane> _arAutomation = const [];
 
   /// 覆盖层（选框/预览）与修订号。
   final ValueNotifier<OverlayData> _overlay = ValueNotifier(OverlayData.empty);
@@ -246,7 +245,6 @@ abstract class _ShellBase extends State<StudioShell>
   void _handleLongPressStart(LongPressStartDetails d);
   void _handleLongPressMove(LongPressMoveUpdateDetails d);
   void _handleLongPressEnd(LongPressEndDetails d);
-  void _loadArAutomation();
   void _loadAutomation();
   void _loadProjectDefaults();
   void _loadSongTitle();

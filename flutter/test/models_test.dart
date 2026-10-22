@@ -76,20 +76,6 @@ void main() {
       expect(lane.points, const [Offset(0, 0.5), Offset(480, 1.0)]);
     });
 
-    test('ArAutomationLane 解析基线与点', () {
-      final lane = ArAutomationLane.fromJson({
-        't': 3,
-        'b': 0.5,
-        'p': [
-          [10, 0.2],
-          [20, 0.8],
-        ],
-      });
-      expect(lane.track, 3);
-      expect(lane.baseline, 0.5);
-      expect(lane.points, const [Offset(10, 0.2), Offset(20, 0.8)]);
-    });
-
     test('RulerMarker 缺省值', () {
       final marker = RulerMarker.fromJson(const {});
       expect(marker.tick, 0);

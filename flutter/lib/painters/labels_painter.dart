@@ -10,16 +10,12 @@ class LabelsPainter extends CustomPainter {
     required this.tracks,
     required this.dragFrom,
     required this.dragTo,
-    required this.arAutomation,
   }) : super(repaint: Listenable.merge([snap, tracks, dragFrom, dragTo]));
 
   final ValueNotifier<List<double>> snap;
   final ValueNotifier<List<TrackRow>> tracks;
   final ValueNotifier<int> dragFrom;
   final ValueNotifier<int> dragTo;
-
-  /// AR 折叠态自动化竖线（与桌面 collect_folded_previews 同语义）。
-  final List<ArAutomationLane> arAutomation;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -35,73 +31,6 @@ class LabelsPainter extends CustomPainter {
     }
   }
 
-  /// AR 折叠态自动化竖线：整层 alpha 0.35（与桌面一致），重叠不加深。
-  void _paintArAutomation(
-    Canvas canvas,
-    Size size,
-    List<double> s,
-    List<TrackRow> rows,
-  ) {
-    if (arAutomation.isEmpty) {
-      return;
-    }
-    final ppu = s[1];
-    final scrollX = s[2];
-    final scrollY = s[3];
-    final laneH = s[6];
-    final panelW = s[5];
-    if (ppu <= 0 || laneH <= 0 || panelW < 0) {
-      return;
-    }
-    // 整层 0.35 合成：同轨多 lane / 重叠竖线不叠加变深（桌面用 Max 混合）。
-    canvas.saveLayer(
-      Rect.fromLTWH(panelW, 0, size.width - panelW, size.height),
-      Paint()..color = Colors.white.withValues(alpha: 0.35),
-    );
-    final startTick = scrollX / ppu;
-    for (final lane in arAutomation) {
-      if (lane.track >= rows.length) {
-        continue;
-      }
-      final rowY = lane.track * laneH - scrollY;
-      if (rowY + laneH < 0 || rowY > size.height) {
-        continue;
-      }
-      final pts = lane.points;
-      if (pts.isEmpty) {
-        continue;
-      }
-      final paint = Paint()
-        ..color = rows[lane.track].color
-        ..strokeWidth = 1;
-      final baseY = rowY + (1 - lane.baseline) * laneH;
-      // 二分定位第一个可见事件。
-      var lo = 0;
-      var hi = pts.length;
-      while (lo < hi) {
-        final mid = (lo + hi) >> 1;
-        if (pts[mid].dx < startTick) {
-          lo = mid + 1;
-        } else {
-          hi = mid;
-        }
-      }
-      for (var i = lo; i < pts.length; i++) {
-        final p = pts[i];
-        final x = p.dx * ppu - scrollX + panelW;
-        if (x < panelW) {
-          continue;
-        }
-        if (x > size.width) {
-          break;
-        }
-        final y = rowY + (1 - p.dy) * laneH;
-        canvas.drawLine(Offset(x, baseY), Offset(x, y), paint);
-      }
-    }
-    canvas.restore();
-  }
-
   void _paintArrangement(
     Canvas canvas,
     Size size,
@@ -111,7 +40,6 @@ class LabelsPainter extends CustomPainter {
     if (rows.isEmpty) {
       return;
     }
-    _paintArAutomation(canvas, size, s, rows);
     final laneH = s[6];
     final scrollY = s[3];
     final panelW = s[5];
@@ -327,8 +255,7 @@ class LabelsPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant LabelsPainter oldDelegate) =>
-      oldDelegate.arAutomation != arAutomation;
+  bool shouldRepaint(covariant LabelsPainter oldDelegate) => true;
 }
 
 /// PR 自动化栏曲线（Flutter 自绘：x=tick 变换，y=归一化值 0..1）。

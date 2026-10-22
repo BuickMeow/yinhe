@@ -112,7 +112,6 @@ mixin _ShellBuild on _ShellBase {
                                     tracks: _tracks,
                                     dragFrom: _dragFrom,
                                     dragTo: _dragTo,
-                                    arAutomation: _arAutomation,
                                   ),
                                 ),
                               ),

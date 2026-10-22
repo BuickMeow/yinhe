@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 
 use wgpu::rwh::{AndroidDisplayHandle, AndroidNdkWindowHandle, RawDisplayHandle, RawWindowHandle};
 
-use yinhe_core::{Selection, YinModel};
-use yinhe_types::{ArrangementView, PianoRollView};
+use yinhe_core::{Selection, TrackKind, YinModel};
+use yinhe_types::{ArrangementView, AutomationTarget, PianoRollView};
 use yinhe_wgpu::InstanceRenderer;
 use yinhe_wgpu::pianoroll::build_render_job;
 use yinhe_wgpu::vertex::{DrawInstance, NoteInstance};
@@ -301,6 +301,54 @@ fn effective_visible(track_visible: &[bool], display_track: Option<usize>) -> Ve
     }
 }
 
+/// AR 折叠自动化 lane：只收集可见轨道行的非 conductor lane。
+fn folded_automation_lanes<'a>(
+    model: &'a YinModel,
+    view: &ArrangementView,
+    visible: &[bool],
+    height: f32,
+) -> Vec<yinhe_wgpu::ArrAutomationLane<'a>> {
+    let num_tracks = model.tracks.len();
+    if num_tracks == 0 {
+        return Vec::new();
+    }
+    let (first, last) = ArrangementView::visible_track_range_static(
+        view.base.scroll_y,
+        height,
+        view.lane_height(),
+        num_tracks,
+    );
+    let lane_h = view.lane_height();
+    let mut lanes = Vec::new();
+    for i in first..last.min(num_tracks) {
+        let track = &model.tracks[i];
+        if track.kind == TrackKind::Master || !visible.get(i).copied().unwrap_or(true) {
+            continue;
+        }
+        for lane in &track.automation_lanes {
+            let max_val = if lane.target == AutomationTarget::Tempo {
+                lane.events
+                    .iter()
+                    .map(|e| e.value)
+                    .fold(0.0_f32, f32::max)
+                    .max(1.0)
+            } else {
+                1.0
+            };
+            lanes.push(yinhe_wgpu::ArrAutomationLane {
+                lane,
+                y_top: i as f32 * lane_h - view.base.scroll_y,
+                height: lane_h,
+                max_val,
+                highlight_ticks: &[],
+                show_anchors: false,
+                translucent: true,
+            });
+        }
+    }
+    lanes
+}
+
 /// PR 视图：uniforms + 音符层（含 LOD 摘要）上传。
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn upload_pianoroll(
@@ -371,6 +419,23 @@ fn upload_pianoroll(
             yinhe_wgpu::build_ghost_note(out, start, end, key, track, preview.selected, &theme);
         }
     });
+
+    // PR 不显示 AR 折叠自动化；上传空 layer 4 清掉 AR 切过来时的残留。
+    let am_key = yinhe_wgpu::layer_cache_key(&[
+        VIEW_TAG_PIANOROLL ^ 0x51_51_51_51,
+        u64::from(w.to_bits()),
+        u64::from(h.to_bits()),
+    ]);
+    yinhe_wgpu::prepare_folded_automation(
+        &mut t.renderer,
+        w,
+        h,
+        &view.base,
+        &[],
+        &visible,
+        track_colors,
+        am_key,
+    );
 }
 
 /// AR 视图：uniforms + 轨道布局（offsets/行高）+ 音符层上传。
@@ -502,6 +567,24 @@ fn upload_arrangement(
             &visible,
         );
     });
+
+    // 折叠自动化竖线：只给可见轨道、只生成可见 tick 的事件，画在 layer 4。
+    let lanes = folded_automation_lanes(model, view, &visible, h);
+    let mut am_key = view.render_hash();
+    am_key ^= (w.to_bits() as u64) << 17;
+    am_key ^= (h.to_bits() as u64) << 29;
+    am_key ^= revision.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    am_key ^= model_epoch.wrapping_mul(0xD6E8_FEB8_6659_FD93);
+    yinhe_wgpu::prepare_folded_automation(
+        &mut t.renderer,
+        w,
+        h,
+        &view.base,
+        &lanes,
+        &visible,
+        track_colors,
+        yinhe_wgpu::layer_cache_key(&[am_key, VIEW_TAG_ARRANGEMENT]),
+    );
 }
 
 // ── 装饰层（wgpu decor，画在音符下层，像素级对齐桌面视觉）──

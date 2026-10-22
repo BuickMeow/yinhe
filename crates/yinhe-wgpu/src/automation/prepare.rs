@@ -382,6 +382,50 @@ fn build_lane_data(
     }
 }
 
+/// 只准备 AR 折叠自动化竖线叠加层（layer 4）。
+///
+/// 与 [`prepare_arr_automation`] 的 folded 分支相同，但不占用 layer 2/3，
+/// 供移动端在已有 note/ghost 层上直接叠加折叠自动化。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+pub fn prepare_folded_automation(
+    renderer: &mut InstanceRenderer,
+    width: f32,
+    height: f32,
+    base: &TimelineViewBase,
+    lanes: &[ArrAutomationLane<'_>],
+    track_visible: &[bool],
+    track_colors: &[[f32; 4]],
+    cache_key: u64,
+) {
+    let tc_hash = {
+        let mut h: u64 = 0;
+        for c in track_colors {
+            h = h
+                .wrapping_mul(0x9e3779b97f4a7c15)
+                .wrapping_add(crate::hash_f32s(c));
+        }
+        h
+    };
+    let folded_key = layer_cache_key(&[cache_key, tc_hash, lane_set_hash(lanes)]);
+    let theme = renderer.theme();
+    renderer.upload_curve_overlay_layer(4, folded_key, |out| {
+        for l in lanes {
+            build_lane_data(
+                out,
+                l,
+                base,
+                width,
+                height,
+                track_visible,
+                track_colors,
+                None,
+                data_lines::FOLDED_ALPHA,
+                &theme,
+            );
+        }
+    });
+}
+
 /// Prepare AR 展开自动化 lane 的曲线渲染（画在 AR 共享走带纹理上）。
 ///
 /// Layers:

@@ -135,11 +135,6 @@ typedef SetMetaDart = int Function(
 final SetMetaDart setProjectMeta = bridge
     .lookupFunction<SetMetaNative, SetMetaDart>('yinhe_set_project_meta');
 
-/// AR 折叠态自动化竖线 JSON。
-final CStrDart arAutomationJson = bridge.lookupFunction<CStrNative, CStrDart>(
-  'yinhe_ar_automation_json',
-);
-
 /// 音频设置 JSON。
 final CStrDart audioSettingsJson = bridge.lookupFunction<CStrNative, CStrDart>(
   'yinhe_audio_settings_json',
