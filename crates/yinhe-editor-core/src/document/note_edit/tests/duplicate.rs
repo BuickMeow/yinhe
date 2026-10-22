@@ -31,6 +31,16 @@ fn repeat_selected_creates_all_steps_in_one_action() {
         UndoAction::Notes(delta) => {
             assert!(delta.before.is_empty());
             assert_eq!(delta.after.len(), 2);
+            let before = doc.capture_snapshot();
+            doc.push_undo(UndoAction::Notes(delta), "repeat", before);
+            assert!(doc.undo(), "重复 Riff 必须进入 undo 栈");
+            assert_eq!(
+                (0..yinhe_types::KEY_COUNT)
+                    .map(|k| doc.data.model.notes[k].len())
+                    .sum::<usize>(),
+                1,
+                "undo 后应只剩原音符"
+            );
         }
         _ => panic!("期望 UndoAction::Notes"),
     }

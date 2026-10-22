@@ -372,6 +372,8 @@ mixin _ShellInput on _ShellBase {
     final pos = _lpPos ?? p;
     rust.editEnd(p.dx, p.dy);
     _gestureEditing = false;
+    // 编辑提交后立刻刷新撤销/重做图标，不等下一次 66ms 状态轮询。
+    _readDocState();
     _clearLongPressUi();
     if (state == 2 && !moved) {
       _showSelectionMenu();
