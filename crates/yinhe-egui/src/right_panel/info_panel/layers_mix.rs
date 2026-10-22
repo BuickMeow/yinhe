@@ -145,7 +145,7 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) -> bool {
             if lock_hover {
                 let lock_resp = ui.interact(
                     lock_rect,
-                    ui.id().with(("layer_mix_lock", group.channel)),
+                    ui.scope_id().with(("layer_mix_lock", group.channel)),
                     egui::Sense::click(),
                 );
                 crate::widgets::hint::hover(ui.ctx(), &lock_resp, t!("hint.info.layer_lock"));
@@ -188,7 +188,7 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) -> bool {
             if vis_hover {
                 let vis_resp = ui.interact(
                     vis_rect,
-                    ui.id().with(("layer_mix_vis", group.channel)),
+                    ui.scope_id().with(("layer_mix_vis", group.channel)),
                     egui::Sense::click(),
                 );
                 crate::widgets::hint::hover(ui.ctx(), &vis_resp, t!("hint.info.layer_visible"));

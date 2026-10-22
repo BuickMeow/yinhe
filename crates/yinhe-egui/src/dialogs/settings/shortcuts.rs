@@ -11,7 +11,7 @@ use crate::audio_settings::AudioSettings;
 pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     let mut changed = false;
 
-    let rec_id = egui::Id::new("kb_recording_action");
+    let rec_id = egui::Id::unique("kb_recording_action");
     // 录制目标：(动作 id, 快捷键索引)；索引 == 列表长度表示追加新快捷键
     let recording: Option<(String, usize)> = ui.data(|d| d.get_temp(rec_id));
 

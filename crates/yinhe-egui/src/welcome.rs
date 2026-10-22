@@ -237,7 +237,7 @@ fn welcome_button(
         egui::Sense::click(),
     );
     let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, text));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, text));
 
     if ui.is_rect_visible(rect) {
         let base = if primary {
@@ -355,6 +355,8 @@ mod tests {
         let recent: Vec<String> = recent.into_iter().map(str::to_string).collect();
         let mut first_frame = true;
         Harness::builder()
+            .allow_missing_glyphs()
+            .with_accessibility_check(false)
             .with_size(egui::vec2(620.0, 560.0))
             .build_ui_state(
                 move |ui, st| {

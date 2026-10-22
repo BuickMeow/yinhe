@@ -31,7 +31,7 @@ pub(super) struct PopupState {
 
 /// popup 状态在 egui data 中的固定 Id（主窗口标题栏唯一）。
 pub(super) fn state_id() -> egui::Id {
-    egui::Id::new("title_bar_doc_popup")
+    egui::Id::unique("title_bar_doc_popup")
 }
 
 /// 最多显示多少整行（超出滚动）。
@@ -232,7 +232,7 @@ fn row(ui: &mut egui::Ui, row_h: f32, spec: RowSpec<'_>) -> RowOutcome {
     let row_w = ui.available_width();
     let (row_rect, resp) = ui.allocate_exact_size(egui::vec2(row_w, row_h), egui::Sense::click());
     resp.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::SelectableLabel, ui.is_enabled(), label)
+        egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), check_mark, label)
     });
     // 行悬停用指针位置手动判定：指针移到右侧图标上时 egui 的前景交互目标变成图标，
     // `resp.hovered()` 会翻假 → 图标随行 hover 一起消失（自循环闪烁）。手动判定
@@ -335,7 +335,7 @@ fn icon_button(
     close_style: bool,
     hint: &str,
 ) -> egui::Response {
-    let resp = ui.interact(rect, ui.id().with(id_salt), egui::Sense::click());
+    let resp = ui.interact(rect, ui.scope_id().with(id_salt), egui::Sense::click());
     if close_style {
         crate::chrome::dialog::paint_close_button(
             ui.painter(),
@@ -355,7 +355,7 @@ fn icon_button(
         );
     }
     crate::widgets::hint::hover_popup(ui.ctx(), &resp, hint);
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, hint));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, hint));
     resp
 }
 

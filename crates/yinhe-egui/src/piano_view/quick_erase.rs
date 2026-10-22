@@ -64,7 +64,7 @@ pub(crate) fn frame(
     // （epaint RwLock「write after 10s」）。
     let over_popup = crate::view_interaction::pointer_over_popup(ui.ctx());
 
-    let id = ui.id().with("quick_erase_stroke");
+    let id = ui.scope_id().with("quick_erase_stroke");
     let mut preview = Vec::new();
     let mut commit = None;
     // 就地借用状态，避免每帧 clone 整笔命中集合（黑乐谱里右键划一下可能命中海量音符）。

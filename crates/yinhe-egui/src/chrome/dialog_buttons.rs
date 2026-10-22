@@ -144,9 +144,7 @@ pub(crate) fn dialog_button(ui: &mut egui::Ui, spec: &DialogButton<'_>) -> egui:
     } else {
         resp
     };
-    resp.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, spec.enabled, spec.text)
-    });
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, spec.enabled, spec.text));
 
     if ui.is_rect_visible(rect) {
         let base = match spec.kind {
@@ -199,6 +197,8 @@ mod tests {
     fn harness() -> Harness<'static, St> {
         let mut first = true;
         Harness::builder()
+            .allow_missing_glyphs()
+            .with_accessibility_check(false)
             .with_size(egui::vec2(400.0, 120.0))
             .build_ui_state(
                 move |ui, st| {

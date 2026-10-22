@@ -6,7 +6,7 @@
 //!    导致 cell 内的 widget 拿不到 `secondary_clicked()`，右键编辑 popup 无法触发。
 //! 2. cell 点击范围是**整个单元格**（用 `ui.interact(ui.max_rect(), ...)`），
 //!    而不是 Label 的 rect。这样一位数和多位数的点击面积相同。
-//! 3. 右键编辑请求统一存到全局 `egui::Id::new((id_salt, "edit"))`，
+//! 3. 右键编辑请求统一存到全局 `egui::Id::unique((id_salt, "edit"))`，
 //!    用 `EditRequest` 枚举区分类型，由 `apply_edit_popups` 取出分派。
 
 use eframe::egui;
@@ -43,7 +43,7 @@ pub(super) fn build_table<F>(
 ) where
     F: FnMut(usize, &mut TableRow, egui::Id),
 {
-    let click_key = ui.id().with(("row_click", id_salt));
+    let click_key = ui.scope_id().with(("row_click", id_salt));
     let row_h = crate::scaling::scaled_font(ui.ctx(), crate::theme::ROW_H_COMPACT);
     let mut tb = TableBuilder::new(ui)
         .id_salt(id_salt)
@@ -75,7 +75,7 @@ pub(super) fn build_table<F>(
     });
     // 列边界拖拽：TableBuilder 未直接暴露 resize Response，从其内部 id
     // 读取本帧响应，指针命中列边界时补讲解行。
-    let state_id = ui.id().with(id_salt);
+    let state_id = ui.scope_id().with(id_salt);
     for i in 0..headers.len() {
         if let Some(resp) = ui
             .ctx()
@@ -88,7 +88,7 @@ pub(super) fn build_table<F>(
 
 /// 取出 `build_table` 写入 memory 的行点击索引（若存在）。
 pub(super) fn take_row_click(ui: &egui::Ui, id_salt: &str) -> Option<usize> {
-    let key = ui.id().with(("row_click", id_salt));
+    let key = ui.scope_id().with(("row_click", id_salt));
     let v = ui.memory(|m| m.data.get_temp::<usize>(key));
     if v.is_some() {
         ui.memory_mut(|m| m.data.remove::<usize>(key));
@@ -118,7 +118,7 @@ pub(super) fn cell_text(
         );
         // 整个 cell 加交互
         let cell_rect = ui.max_rect();
-        let id = ui.id().with("cell").with(row_idx);
+        let id = ui.scope_id().with("cell").with(row_idx);
         let resp = ui.interact(cell_rect, id, egui::Sense::click());
         if resp.clicked() {
             ui.ctx()
@@ -149,7 +149,7 @@ pub(super) fn cell_position(
             .selectable(false),
         );
         let cell_rect = ui.max_rect();
-        let id = ui.id().with("poscell").with(row_idx);
+        let id = ui.scope_id().with("poscell").with(row_idx);
         let resp = ui.interact(cell_rect, id, egui::Sense::click());
         crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.eb.cell_position"));
         if resp.clicked() {
@@ -159,7 +159,7 @@ pub(super) fn cell_position(
         if resp.secondary_clicked() {
             ui.ctx().memory_mut(|m| {
                 m.data.insert_temp(
-                    egui::Id::new((id_salt, "edit_pos")),
+                    egui::Id::unique((id_salt, "edit_pos")),
                     tick_edit_request(tick),
                 );
             });
@@ -204,7 +204,7 @@ pub(super) fn cell_row_header(
             .selectable(false),
         );
         let cell_rect = ui.max_rect();
-        let id = ui.id().with("rowhdr").with(row_idx);
+        let id = ui.scope_id().with("rowhdr").with(row_idx);
         let resp = ui.interact(cell_rect, id, egui::Sense::click());
         // 选中行提示 Delete 删除，未选中提示多选/右键编辑。
         let row_hint = if is_selected {
@@ -226,7 +226,7 @@ pub(super) fn cell_row_header(
         if resp.secondary_clicked() && !state.selected_ticks.contains(&tick) {
             handle_row_click(state, tick, all_ticks, egui::Modifiers::NONE);
         }
-        let edit_key = egui::Id::new((id_salt, "edit"));
+        let edit_key = egui::Id::unique((id_salt, "edit"));
         resp.context_menu(|ui| {
             ui.set_min_width(160.0);
             ui.set_max_width(160.0);
@@ -365,7 +365,7 @@ pub(super) fn empty_state_add_button(ui: &mut egui::Ui, id_salt: &str) -> bool {
         );
     });
     if clicked {
-        let edit_key = egui::Id::new((id_salt, "edit"));
+        let edit_key = egui::Id::unique((id_salt, "edit"));
         ui.ctx()
             .memory_mut(|m| m.data.insert_temp(edit_key, EditRequest::InsertFirst));
     }
@@ -385,7 +385,7 @@ pub(super) fn handle_delete_key(ui: &egui::Ui, id_salt: &str, has_selection: boo
         .ctx()
         .input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace));
     if delete_pressed {
-        let edit_key = egui::Id::new((id_salt, "edit"));
+        let edit_key = egui::Id::unique((id_salt, "edit"));
         ui.ctx()
             .memory_mut(|m| m.data.insert_temp(edit_key, EditRequest::DeleteSelected));
         true
@@ -396,9 +396,9 @@ pub(super) fn handle_delete_key(ui: &egui::Ui, id_salt: &str, has_selection: boo
 
 /// 渲染可编辑文本单元格：左键跳转，右键写入 `EditRequest` 到 memory 触发 popup。
 ///
-/// **关键**：edit key 用 `egui::Id::new((id_salt, "edit"))` 全局 id，**不**用 `ui.id()`。
-/// 原因：cell 内的 `ui.id()` 与 `apply_edit_popups` 调用处的 `ui.id()` 不同
-/// （cell 是 child ui），用 `ui.id()` 会导致 write/read key 不匹配，popup 永远不触发。
+/// **关键**：edit key 用 `egui::Id::unique((id_salt, "edit"))` 全局 id，**不**用 `ui.scope_id()`。
+/// 原因：cell 内的 `ui.scope_id()` 与 `apply_edit_popups` 调用处的 `ui.scope_id()` 不同
+/// （cell 是 child ui），用 `ui.scope_id()` 会导致 write/read key 不匹配，popup 永远不触发。
 pub(super) fn cell_editable(
     row: &mut TableRow,
     id_salt: &str,
@@ -417,7 +417,7 @@ pub(super) fn cell_editable(
             .selectable(false),
         );
         let cell_rect = ui.max_rect();
-        let id = ui.id().with("cell").with(row_idx);
+        let id = ui.scope_id().with("cell").with(row_idx);
         let resp = ui.interact(cell_rect, id, egui::Sense::click());
         crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.eb.cell_editable"));
         if resp.clicked() {
@@ -428,7 +428,7 @@ pub(super) fn cell_editable(
             // 全局 key：与 apply_edit_popups 的 Id::new((id_salt, "edit")) 对齐
             ui.ctx().memory_mut(|m| {
                 m.data
-                    .insert_temp(egui::Id::new((id_salt, "edit")), edit_request);
+                    .insert_temp(egui::Id::unique((id_salt, "edit")), edit_request);
             });
         }
     });
@@ -439,25 +439,25 @@ pub(super) fn cell_editable(
 /// `apply_*_popups` 每帧调用此函数，popup 显示期间 `EditRequest` 一直在 memory 里，
 /// 直到 `remove_edit_request` 关闭时清除。
 pub(super) fn peek_edit_request(ui: &egui::Ui, id_salt: &str) -> Option<EditRequest> {
-    let key = egui::Id::new((id_salt, "edit"));
+    let key = egui::Id::unique((id_salt, "edit"));
     ui.memory(|m| m.data.get_temp::<EditRequest>(key))
 }
 
 /// 清除 `EditRequest`（popup 关闭时调用）。
 pub(super) fn remove_edit_request(ui: &egui::Ui, id_salt: &str) {
-    let key = egui::Id::new((id_salt, "edit"));
+    let key = egui::Id::unique((id_salt, "edit"));
     ui.memory_mut(|m| m.data.remove::<EditRequest>(key));
 }
 
 /// 查看位置 cell 写入的 `EditRequest`（不删除）。与 `peek_edit_request` 平行。
 pub(super) fn peek_pos_edit_request(ui: &egui::Ui, id_salt: &str) -> Option<EditRequest> {
-    let key = egui::Id::new((id_salt, "edit_pos"));
+    let key = egui::Id::unique((id_salt, "edit_pos"));
     ui.memory(|m| m.data.get_temp::<EditRequest>(key))
 }
 
 /// 清除位置编辑请求（位置 popup 关闭时调用）。
 pub(super) fn remove_pos_edit_request(ui: &egui::Ui, id_salt: &str) {
-    let key = egui::Id::new((id_salt, "edit_pos"));
+    let key = egui::Id::unique((id_salt, "edit_pos"));
     ui.memory_mut(|m| m.data.remove::<EditRequest>(key));
 }
 
@@ -521,7 +521,7 @@ pub(super) fn paginate<'a, T>(
 /// 渲染翻页控件（右对齐），返回 `Some(新页码)` 如果用户改变了页码（0-based）。
 pub(super) fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -> Option<usize> {
     let mut new_page = None;
-    let mem_key = ui.id().with("eb_page_input");
+    let mem_key = ui.scope_id().with("eb_page_input");
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let next_enabled = page + 1 < total_pages;
         let next_resp = ui.add_enabled(
@@ -562,7 +562,7 @@ pub(super) fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -
                     ui.ctx(),
                     crate::theme::SMALL_FONT,
                 )))
-                .horizontal_align(egui::Align::Center),
+                .align(egui::Align2::CENTER_TOP),
         );
         crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.eb.pager"));
         let edited_buf = buf.clone();

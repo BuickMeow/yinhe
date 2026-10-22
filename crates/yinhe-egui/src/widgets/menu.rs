@@ -79,9 +79,10 @@ impl egui::Widget for MenuItemButton {
         let desired_size = egui::vec2(self.width, height);
         let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
         response.widget_info(|| {
-            egui::WidgetInfo::labeled(
-                egui::WidgetType::SelectableLabel,
+            egui::WidgetInfo::selected(
+                egui::Role::Button,
                 ui.is_enabled(),
+                self.selected,
                 self.text.text(),
             )
         });

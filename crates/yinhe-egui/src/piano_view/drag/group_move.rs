@@ -113,7 +113,10 @@ pub(crate) fn note_drag_frame(
                     })
                     .collect();
                 ui.data_mut(|d| {
-                    d.insert_persisted(ui.id().with("note_drag_preview_dk"), state.preview_last_dk)
+                    d.insert_persisted(
+                        ui.scope_id().with("note_drag_preview_dk"),
+                        state.preview_last_dk,
+                    )
                 });
             }
 

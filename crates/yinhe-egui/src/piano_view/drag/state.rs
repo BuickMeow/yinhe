@@ -39,7 +39,7 @@ pub(crate) struct SelDragFrameState {
 /// 鼠标一旦移出音符原位，hover 命中失败就会被误判为"悬停空白"，
 /// 临时切成铅笔工具、中断本次拖拽。
 pub(crate) fn sel_drag_in_progress(ui: &egui::Ui) -> bool {
-    let id = ui.id();
+    let id = ui.scope_id();
     ui.data_mut(|d| {
         d.get_persisted::<Option<(f64, f64, bool)>>(id.with("note_drag_origin"))
             .is_some_and(|v| v.is_some())
@@ -61,28 +61,28 @@ impl SelDragFrameState {
     pub(crate) fn load(ui: &mut egui::Ui) -> Self {
         Self {
             note_drag_origin: ui
-                .data_mut(|d| d.get_persisted(ui.id().with("note_drag_origin")))
+                .data_mut(|d| d.get_persisted(ui.scope_id().with("note_drag_origin")))
                 .unwrap_or(None),
             drag_notes: ui
-                .data_mut(|d| d.get_persisted(ui.id().with("drag_notes")))
+                .data_mut(|d| d.get_persisted(ui.scope_id().with("drag_notes")))
                 .unwrap_or(None),
             preview_last_dk: ui
-                .data_mut(|d| d.get_persisted(ui.id().with("note_drag_preview_dk")))
+                .data_mut(|d| d.get_persisted(ui.scope_id().with("note_drag_preview_dk")))
                 .unwrap_or(0),
             note_drag_had_moved: ui
-                .data_mut(|d| d.get_persisted(ui.id().with("note_drag_had_moved")))
+                .data_mut(|d| d.get_persisted(ui.scope_id().with("note_drag_had_moved")))
                 .unwrap_or(false),
             sel_resize_state: ui
-                .data_mut(|d| d.get_persisted(ui.id().with("sel_resize_state")))
+                .data_mut(|d| d.get_persisted(ui.scope_id().with("sel_resize_state")))
                 .unwrap_or(None),
             sel_note_resize: ui
-                .data_mut(|d| d.get_persisted(ui.id().with("sel_note_resize_state")))
+                .data_mut(|d| d.get_persisted(ui.scope_id().with("sel_note_resize_state")))
                 .unwrap_or(None),
             sel_note_move: ui
-                .data_mut(|d| d.get_persisted(ui.id().with("sel_note_move_state")))
+                .data_mut(|d| d.get_persisted(ui.scope_id().with("sel_note_move_state")))
                 .unwrap_or(None),
             single_note_had_moved: ui
-                .data_mut(|d| d.get_persisted(ui.id().with("single_note_had_moved")))
+                .data_mut(|d| d.get_persisted(ui.scope_id().with("single_note_had_moved")))
                 .unwrap_or(false),
             ghost_notes: Vec::new(),
             hidden_notes: Vec::new(),
@@ -104,27 +104,39 @@ impl SelDragFrameState {
             ..
         } = self;
         ui.data_mut(|d| {
-            d.insert_persisted(ui.id().with("note_drag_origin"), note_drag_origin.take())
+            d.insert_persisted(
+                ui.scope_id().with("note_drag_origin"),
+                note_drag_origin.take(),
+            )
         });
-        ui.data_mut(|d| d.insert_persisted(ui.id().with("drag_notes"), drag_notes.take()));
+        ui.data_mut(|d| d.insert_persisted(ui.scope_id().with("drag_notes"), drag_notes.take()));
         ui.data_mut(|d| {
-            d.insert_persisted(ui.id().with("note_drag_had_moved"), *note_drag_had_moved)
-        });
-        ui.data_mut(|d| {
-            d.insert_persisted(ui.id().with("sel_resize_state"), sel_resize_state.take())
+            d.insert_persisted(
+                ui.scope_id().with("note_drag_had_moved"),
+                *note_drag_had_moved,
+            )
         });
         ui.data_mut(|d| {
             d.insert_persisted(
-                ui.id().with("sel_note_resize_state"),
+                ui.scope_id().with("sel_resize_state"),
+                sel_resize_state.take(),
+            )
+        });
+        ui.data_mut(|d| {
+            d.insert_persisted(
+                ui.scope_id().with("sel_note_resize_state"),
                 sel_note_resize.take(),
             )
         });
         ui.data_mut(|d| {
-            d.insert_persisted(ui.id().with("sel_note_move_state"), sel_note_move.take())
+            d.insert_persisted(
+                ui.scope_id().with("sel_note_move_state"),
+                sel_note_move.take(),
+            )
         });
         ui.data_mut(|d| {
             d.insert_persisted(
-                ui.id().with("single_note_had_moved"),
+                ui.scope_id().with("single_note_had_moved"),
                 *single_note_had_moved,
             )
         });

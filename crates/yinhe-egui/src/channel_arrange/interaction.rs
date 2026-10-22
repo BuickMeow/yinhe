@@ -150,28 +150,28 @@ pub(crate) fn sel_drag_frame(
     };
 
     let num_tracks = data.tracks.len() as u16;
-    let sel_id = ui.id().with("ca_sel_drag");
+    let sel_id = ui.scope_id().with("ca_sel_drag");
     let mut drag: Option<((f64, f32), egui::Pos2)> =
         ui.data_mut(|d| d.get_persisted(sel_id)).unwrap_or(None);
     type CaMoveDrag = ((f64, f32), (f64, f32), bool);
-    let move_drag_id = ui.id().with("ca_move_drag");
+    let move_drag_id = ui.scope_id().with("ca_move_drag");
     let mut move_drag: Option<CaMoveDrag> = ui
         .data_mut(|d| d.get_persisted(move_drag_id))
         .unwrap_or(None);
-    let move_orig_id = ui.id().with("ca_move_orig_sel");
+    let move_orig_id = ui.scope_id().with("ca_move_orig_sel");
     let mut move_orig_sel: Vec<ChanSelRect> = ui
         .data_mut(|d| d.get_persisted(move_orig_id))
         .unwrap_or_default();
-    let move_had_moved_id = ui.id().with("ca_move_had_moved");
+    let move_had_moved_id = ui.scope_id().with("ca_move_had_moved");
     let mut move_had_moved: bool = ui
         .data_mut(|d| d.get_persisted(move_had_moved_id))
         .unwrap_or(false);
     type CaMoveNotes = Arc<Vec<crate::selection::drag::CollectedNote>>;
-    let move_notes_id = ui.id().with("ca_move_notes");
+    let move_notes_id = ui.scope_id().with("ca_move_notes");
     let mut move_notes: Option<CaMoveNotes> = ui
         .data_mut(|d| d.get_persisted(move_notes_id))
         .unwrap_or(None);
-    let move_min_tick_id = ui.id().with("ca_move_min_tick");
+    let move_min_tick_id = ui.scope_id().with("ca_move_min_tick");
     let mut move_min_tick: f64 = ui
         .data_mut(|d| d.get_persisted(move_min_tick_id))
         .unwrap_or(f64::INFINITY);

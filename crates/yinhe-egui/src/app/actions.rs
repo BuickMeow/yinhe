@@ -645,7 +645,7 @@ impl App {
             // 异步 rescale：meta.ppq 保持 old 作子线程基准，完成后 poll 里 commit。
             ctx.data_mut(|d| {
                 d.insert_temp(
-                    egui::Id::new(crate::app::rescale_state::RESCALE_REQUEST_ID),
+                    egui::Id::unique(crate::app::rescale_state::RESCALE_REQUEST_ID),
                     crate::app::rescale_state::RescaleRequest {
                         old_ppq: old,
                         new_ppq: value,

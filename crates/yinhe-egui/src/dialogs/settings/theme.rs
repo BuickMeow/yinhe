@@ -102,7 +102,9 @@ fn theme_card(
         egui::pos2(card_rect.max.x - 6.0, card_rect.min.y + 23.0),
     );
     // 用随机 id 避免与卡片 id 冲突，基于 display_name+base
-    let star_id = ui.id().with(format!("star_{display_name}_{}", base.bg.r));
+    let star_id = ui
+        .scope_id()
+        .with(format!("star_{display_name}_{}", base.bg.r));
     let star_resp = ui.interact(star_rect, star_id, egui::Sense::click());
     if ui.is_rect_visible(star_rect) {
         let painter = ui.painter_at(star_rect);
@@ -121,7 +123,7 @@ fn theme_card(
             )
         } else {
             (
-                egui_material_icons::icons::ICON_STAR_BORDER,
+                egui_material_icons::icons::ICON_STAR.outlined(),
                 derive_theme(base).text_secondary.gamma_multiply(0.55),
             )
         };
@@ -457,7 +459,7 @@ pub fn show_theme_tab(
                     egui::pos2(card_rect.max.x - 24.0, card_rect.min.y + 5.0),
                     egui::pos2(card_rect.max.x - 6.0, card_rect.min.y + 23.0),
                 );
-                let star_id = ui.id().with(format!("star_{}", item.id_str));
+                let star_id = ui.scope_id().with(format!("star_{}", item.id_str));
                 let star_resp = ui.interact(star_rect, star_id, egui::Sense::click());
                 if ui.is_rect_visible(star_rect) {
                     let painter = ui.painter_at(star_rect);
@@ -475,7 +477,7 @@ pub fn show_theme_tab(
                         )
                     } else {
                         (
-                            egui_material_icons::icons::ICON_STAR_BORDER,
+                            egui_material_icons::icons::ICON_STAR.outlined(),
                             preview.text_secondary.gamma_multiply(0.55),
                         )
                     };
@@ -499,7 +501,7 @@ pub fn show_theme_tab(
                         card_rect.min + egui::vec2(6.0, 3.0),
                         egui::pos2(card_rect.max.x - 28.0, card_rect.min.y + 24.0),
                     );
-                    let title_id = ui.id().with(format!("rename_{}", item.id_str));
+                    let title_id = ui.scope_id().with(format!("rename_{}", item.id_str));
                     let mut buf = settings.ui_session.rename_buffer.clone();
                     let resp = ui.put(
                         title_rect,

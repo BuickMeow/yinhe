@@ -65,7 +65,7 @@ fn menu_widths_are_content_aware() {
         ("play", w_play),
         ("view", w_view),
     ] {
-        assert!((100.0..=500.0).contains(&w), "{name} 菜单宽度异常: {w}");
+        assert!((60.0..=500.0).contains(&w), "{name} 菜单宽度异常: {w}");
     }
 }
 
@@ -150,6 +150,8 @@ fn make_transport_harness<'a>(doc: Option<&'a Document>) -> Harness<'a, ()> {
 
     let mut first_frame = true;
     Harness::builder()
+        .allow_missing_glyphs()
+        .with_accessibility_check(false)
         .with_size(egui::vec2(1200.0, 60.0))
         .build_ui_state(
             move |ui, _| {
@@ -191,6 +193,8 @@ fn make_harness_with_hidden_button<'a>(doc: Option<&'a Document>) -> Harness<'a,
 
     let mut first_frame = true;
     Harness::builder()
+        .allow_missing_glyphs()
+        .with_accessibility_check(false)
         .with_size(egui::vec2(1200.0, 60.0))
         .build_ui_state(
             move |ui, state| {

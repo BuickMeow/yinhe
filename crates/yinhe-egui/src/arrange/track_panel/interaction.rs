@@ -121,7 +121,7 @@ pub fn handle_interactions(
     }
 
     // 右键：选中并记录菜单索引
-    let ctx_menu_idx_id = egui::Id::new("track_ctx_menu_idx");
+    let ctx_menu_idx_id = egui::Id::unique("track_ctx_menu_idx");
     if resp.secondary_clicked()
         && let Some(pos) = resp.interact_pointer_pos()
         && let Some(row_hit) = row_layout.hit_at_music_y(pos.y - panel_rect.min.y + *scroll_y, lh)

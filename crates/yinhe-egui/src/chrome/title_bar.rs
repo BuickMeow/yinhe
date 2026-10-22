@@ -105,8 +105,8 @@ pub(crate) fn show(
                 crate::widgets::hint::set_region(ui.ctx(), t!("hint.panel.title_bar"));
             }
             // 拖拽中不响应滚轮（避免插入位置跳动）
-            let drag_id = ui.id().with("title_bar_drag");
-            let press_id = ui.id().with("title_bar_press");
+            let drag_id = ui.scope_id().with("title_bar_drag");
+            let press_id = ui.scope_id().with("title_bar_press");
             let mut drag: Option<TitleDrag> = ui.data_mut(|d| d.get_temp(drag_id));
             let mut press: Option<TitlePress> = ui.data_mut(|d| d.get_temp(press_id));
             if pointer_in_bar && drag.is_none() {
@@ -388,7 +388,7 @@ pub(crate) fn show(
 
             // Double-click blank area to toggle maximize/restore
             const DOUBLE_CLICK_MS: f64 = 400.0;
-            let dbl_id = ui.id().with("title_bar_dbl_click");
+            let dbl_id = ui.scope_id().with("title_bar_dbl_click");
             if drag.is_none()
                 && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary))
                 && let Some(pos) = pointer_pos
@@ -496,6 +496,8 @@ mod tests {
     fn make_harness<'a>(documents: &'a [Document], recent: &'a [String]) -> Harness<'a, TbState> {
         let mut first_frame = true;
         Harness::builder()
+            .allow_missing_glyphs()
+            .with_accessibility_check(false)
             .with_size(egui::vec2(1200.0, 600.0))
             .build_ui_state(
                 move |ui, st| {

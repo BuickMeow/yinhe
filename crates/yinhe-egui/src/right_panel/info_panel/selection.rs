@@ -428,7 +428,7 @@ fn field_row(
 ) {
     let label = label.into();
     crate::widgets::rows::panel_row(ui, &label, |ui| {
-        let id = ui.id().with(key);
+        let id = ui.scope_id().with(key);
         let buf_id = id.with("buf");
         let is_editing = ui.ctx().memory(|m| m.has_focus(id));
         let mut text: String = ui.ctx().data(|d| d.get_temp(buf_id).unwrap_or_default());
@@ -581,7 +581,7 @@ fn tempo_field(
     let label = label.into();
     let mut result = None;
     crate::widgets::rows::panel_row(ui, &label, |ui| {
-        let id = ui.id().with(key);
+        let id = ui.scope_id().with(key);
         let buf_id = id.with("buf");
         let is_editing = ui.ctx().memory(|m| m.has_focus(id));
         let mut text: String = ui.ctx().data(|d| d.get_temp(buf_id).unwrap_or_default());

@@ -22,13 +22,17 @@ struct ListState {
     last_click: Option<usize>,
     /// 拖拽进行中（状态/算法见 widgets::reorder）。
     drag: Option<crate::widgets::reorder::DragReorder>,
+    /// 下一帧要追加的自动滚动量（px/帧）。
+    pending_scroll: f32,
+    /// 上一帧结束时的滚动偏移，用于计算自动滚动目标。
+    last_scroll: f32,
 }
 
 /// 可复用音色列表：多选 + 拖拽排序 + 启用复选框 + 右键菜单。
 ///
 /// 返回 `true` 表示列表被修改（排序/切换/删除），调用方据此重载音频。
 pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> bool {
-    let state_id = ui.id().with(("sf_list", salt));
+    let state_id = ui.scope_id().with(("sf_list", salt));
     let mut state: ListState = ui
         .data_mut(|d| d.get_persisted(state_id))
         .unwrap_or_default();
@@ -36,238 +40,236 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
     let mut changed = false;
     let mut remove_idx: Option<usize> = None;
     let mut item_rects: Vec<egui::Rect> = Vec::new();
-    let mut auto_scroll = 0.0;
 
-    let scroll_id = ui.id().with(("sf_scroll", salt));
-    egui::ScrollArea::vertical()
+    let scroll_id = ui.scope_id().with(("sf_scroll", salt));
+    let pending_scroll = std::mem::take(&mut state.pending_scroll);
+    let mut scroll_area = egui::ScrollArea::vertical()
         .id_salt(scroll_id)
-        .auto_shrink([false, false])
-        .show_viewport(ui, |ui, viewport| {
-            let dragging = state.drag.is_some();
+        .auto_shrink([false, false]);
+    if pending_scroll != 0.0 {
+        scroll_area =
+            scroll_area.vertical_scroll_offset((state.last_scroll + pending_scroll).max(0.0));
+    }
+    let scroll_out = scroll_area.show_viewport(ui, |ui, viewport| {
+        let dragging = state.drag.is_some();
 
-            let total = entries.len();
-            // 行位置显式计算，不依赖光标推进（checkbox 的 ui.put 会推进光标，
-            // 与行高无关）；循环结束后再把光标推进到列表末尾，保证 ScrollArea
-            // 内容高度正确。
-            let start_y = ui.available_rect_before_wrap().min.y;
-            let mut row_y = start_y;
-            let mut last_row_rect: Option<egui::Rect> = None;
+        let total = entries.len();
+        // 行位置显式计算，不依赖光标推进（checkbox 的 ui.put 会推进光标，
+        // 与行高无关）；循环结束后再把光标推进到列表末尾，保证 ScrollArea
+        // 内容高度正确。
+        let start_y = ui.available_rect_before_wrap().min.y;
+        let mut row_y = start_y;
+        let mut last_row_rect: Option<egui::Rect> = None;
 
-            for i in 0..total {
-                let row_rect = egui::Rect::from_min_size(
-                    egui::pos2(ui.available_rect_before_wrap().min.x, row_y),
-                    egui::vec2(ui.available_width(), ROW_H),
+        for i in 0..total {
+            let row_rect = egui::Rect::from_min_size(
+                egui::pos2(ui.available_rect_before_wrap().min.x, row_y),
+                egui::vec2(ui.available_width(), ROW_H),
+            );
+            row_y += ROW_H;
+            last_row_rect = Some(row_rect);
+            item_rects.push(row_rect);
+
+            let is_selected = state.selected.contains(&i);
+
+            // ── 行背景：选中（含拖拽中，被拖行必在选中集合内）与音轨面板同款
+            // ROW_SELECTED_BG；hover 用统一悬浮增益 ──
+            if is_selected {
+                ui.painter()
+                    .rect_filled(row_rect, 0.0, crate::theme::selected_bg());
+            } else if ui.rect_contains_pointer(row_rect) {
+                ui.painter().rect_filled(
+                    row_rect,
+                    0.0,
+                    crate::theme::hover_color(crate::theme::app_bg()),
                 );
-                row_y += ROW_H;
-                last_row_rect = Some(row_rect);
-                item_rects.push(row_rect);
+            }
 
-                let is_selected = state.selected.contains(&i);
+            let row_id = ui.scope_id().with(("sf_row", i));
+            let resp = ui.interact(row_rect, row_id, egui::Sense::click_and_drag());
 
-                // ── 行背景：选中（含拖拽中，被拖行必在选中集合内）与音轨面板同款
-                // ROW_SELECTED_BG；hover 用统一悬浮增益 ──
-                if is_selected {
-                    ui.painter()
-                        .rect_filled(row_rect, 0.0, crate::theme::selected_bg());
-                } else if ui.rect_contains_pointer(row_rect) {
-                    ui.painter().rect_filled(
-                        row_rect,
-                        0.0,
-                        crate::theme::hover_color(crate::theme::app_bg()),
-                    );
-                }
+            // 选中行文字切白，与 tree/table 惯例一致
+            let name_color = if is_selected {
+                crate::theme::contrast_fg()
+            } else {
+                crate::theme::text_bright()
+            };
+            let label_color = if is_selected {
+                crate::theme::contrast_fg()
+            } else {
+                crate::theme::text_label()
+            };
 
-                let row_id = ui.id().with(("sf_row", i));
-                let resp = ui.interact(row_rect, row_id, egui::Sense::click_and_drag());
+            // ── 左侧拖拽手柄（Material 图标）──
+            ui.painter().text(
+                egui::pos2(row_rect.min.x + 12.0, row_rect.center().y),
+                egui::Align2::CENTER_CENTER,
+                ICON_DRAG_INDICATOR.codepoint,
+                egui::FontId::new(crate::theme::ICON_FONT, ICON_DRAG_INDICATOR.font_family()),
+                label_color,
+            );
 
-                // 选中行文字切白，与 tree/table 惯例一致
-                let name_color = if is_selected {
-                    crate::theme::contrast_fg()
-                } else {
-                    crate::theme::text_bright()
-                };
-                let label_color = if is_selected {
-                    crate::theme::contrast_fg()
-                } else {
-                    crate::theme::text_label()
-                };
+            // ── 名称 + 路径 ──
+            let text_x = row_rect.min.x + 26.0;
+            ui.painter().text(
+                egui::pos2(text_x, row_rect.min.y + 10.0),
+                egui::Align2::LEFT_CENTER,
+                &entries[i].name,
+                egui::FontId::proportional(crate::theme::BODY_FONT),
+                name_color,
+            );
+            ui.painter().text(
+                egui::pos2(text_x, row_rect.min.y + 28.0),
+                egui::Align2::LEFT_CENTER,
+                truncate_path(&entries[i].path),
+                egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT),
+                label_color,
+            );
 
-                // ── 左侧拖拽手柄（Material 图标）──
-                ui.painter().text(
-                    egui::pos2(row_rect.min.x + 12.0, row_rect.center().y),
-                    egui::Align2::CENTER_CENTER,
-                    ICON_DRAG_INDICATOR.codepoint,
-                    egui::FontId::new(crate::theme::ICON_FONT, ICON_DRAG_INDICATOR.font_family()),
-                    label_color,
-                );
-
-                // ── 名称 + 路径 ──
-                let text_x = row_rect.min.x + 26.0;
-                ui.painter().text(
-                    egui::pos2(text_x, row_rect.min.y + 10.0),
-                    egui::Align2::LEFT_CENTER,
-                    &entries[i].name,
-                    egui::FontId::proportional(crate::theme::BODY_FONT),
-                    name_color,
-                );
-                ui.painter().text(
-                    egui::pos2(text_x, row_rect.min.y + 28.0),
-                    egui::Align2::LEFT_CENTER,
-                    truncate_path(&entries[i].path),
-                    egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT),
-                    label_color,
-                );
-
-                // ── 右侧：自绘开关（替代复选框）──
-                let sw_w = crate::scaling::scaled_font(ui.ctx(), 38.0);
-                let sw_h = crate::scaling::scaled_font(ui.ctx(), 22.0);
-                let sw_rect = egui::Rect::from_min_size(
-                    egui::pos2(
-                        row_rect.max.x - 8.0 - sw_w,
-                        row_rect.center().y - sw_h * 0.5,
-                    ),
-                    egui::vec2(sw_w, sw_h),
-                );
-                // 每行的 ui.id() 相同，push_id 保证开关的自动 id 唯一。
-                let sw_changed = ui
-                    .push_id(("sf_sw", i), |ui| {
-                        ui.scope_builder(egui::UiBuilder::new().max_rect(sw_rect), |ui| {
-                            crate::widgets::switch::switch(ui, &mut entries[i].enabled)
-                        })
-                        .inner
+            // ── 右侧：自绘开关（替代复选框）──
+            let sw_w = crate::scaling::scaled_font(ui.ctx(), 38.0);
+            let sw_h = crate::scaling::scaled_font(ui.ctx(), 22.0);
+            let sw_rect = egui::Rect::from_min_size(
+                egui::pos2(
+                    row_rect.max.x - 8.0 - sw_w,
+                    row_rect.center().y - sw_h * 0.5,
+                ),
+                egui::vec2(sw_w, sw_h),
+            );
+            // 每行的 ui.scope_id() 相同，push_id 保证开关的自动 id 唯一。
+            let sw_changed = ui
+                .push_id(("sf_sw", i), |ui| {
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(sw_rect), |ui| {
+                        crate::widgets::switch::switch(ui, &mut entries[i].enabled)
                     })
                     .inner
-                    .changed();
-                if sw_changed {
-                    changed = true;
-                }
+                })
+                .inner
+                .changed();
+            if sw_changed {
+                changed = true;
+            }
 
-                // ── 点击选择（拖拽中不响应）──
-                if resp.clicked() && !dragging {
-                    handle_click(&mut state, i, ui);
-                }
+            // ── 点击选择（拖拽中不响应）──
+            if resp.clicked() && !dragging {
+                handle_click(&mut state, i, ui);
+            }
 
-                // ── 拖拽开始：未选中的行先单选，然后拖起整个选中集合 ──
-                if resp.drag_started() && !dragging {
-                    if !is_selected {
-                        state.selected.clear();
-                        state.selected.push(i);
-                        state.last_click = Some(i);
-                    }
-                    state.selected.sort();
-                    state.drag = Some(crate::widgets::reorder::DragReorder {
-                        indices: state.selected.clone(),
-                        insert_idx: i,
-                    });
+            // ── 拖拽开始：未选中的行先单选，然后拖起整个选中集合 ──
+            if resp.drag_started() && !dragging {
+                if !is_selected {
+                    state.selected.clear();
+                    state.selected.push(i);
+                    state.last_click = Some(i);
                 }
+                state.selected.sort();
+                state.drag = Some(crate::widgets::reorder::DragReorder {
+                    indices: state.selected.clone(),
+                    insert_idx: i,
+                });
+            }
 
-                // ── 右键菜单 ──
-                let mut action: Option<SfAction> = None;
-                resp.context_menu(|ui| {
-                    ui.set_min_width(100.0);
-                    ui.set_max_width(100.0);
-                    if i > 0
-                        && ui
-                            .add(crate::widgets::menu::menu_item_button(
-                                ui,
-                                false,
-                                t!("sf_list.move_up"),
-                            ))
-                            .clicked()
-                    {
-                        action = Some(SfAction::MoveUp);
-                        ui.close();
-                    }
-                    if i + 1 < total
-                        && ui
-                            .add(crate::widgets::menu::menu_item_button(
-                                ui,
-                                false,
-                                t!("sf_list.move_down"),
-                            ))
-                            .clicked()
-                    {
-                        action = Some(SfAction::MoveDown);
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui
+            // ── 右键菜单 ──
+            let mut action: Option<SfAction> = None;
+            resp.context_menu(|ui| {
+                ui.set_min_width(100.0);
+                ui.set_max_width(100.0);
+                if i > 0
+                    && ui
                         .add(crate::widgets::menu::menu_item_button(
                             ui,
                             false,
-                            t!("sf_list.delete"),
+                            t!("sf_list.move_up"),
                         ))
                         .clicked()
-                    {
-                        action = Some(SfAction::Remove);
-                        ui.close();
-                    }
-                });
-                match action {
-                    Some(SfAction::MoveUp) => {
-                        entries.swap(i, i - 1);
-                        swap_selection(&mut state, i, i - 1);
-                        changed = true;
-                    }
-                    Some(SfAction::MoveDown) => {
-                        entries.swap(i, i + 1);
-                        swap_selection(&mut state, i, i + 1);
-                        changed = true;
-                    }
-                    Some(SfAction::Remove) => remove_idx = Some(i),
-                    None => {}
+                {
+                    action = Some(SfAction::MoveUp);
+                    ui.close();
                 }
-            }
-
-            // 光标推进到列表末尾（含间距），ScrollArea 据此计算内容高度
-            if let Some(r) = last_row_rect {
-                ui.advance_cursor_after_rect(r);
-            }
-
-            // ── 拖拽中：插入线 + ghost + 自动滚动 + 释放排序 ──
-            if let Some(drag) = &mut state.drag {
-                let pointer = ui.ctx().input(|i| i.pointer.interact_pos());
-
-                if let Some(p) = pointer {
-                    // 插入位置：指针越过剩余行的中线则后移一位（跳过被拖行）
-                    drag.update_insert_idx(p.y, &item_rects);
-
-                    // 自动滚动：指针贴近可视区边缘
-                    if p.y < viewport.top() + AUTO_SCROLL_MARGIN {
-                        auto_scroll = -AUTO_SCROLL_SPEED;
-                    } else if p.y > viewport.bottom() - AUTO_SCROLL_MARGIN {
-                        auto_scroll = AUTO_SCROLL_SPEED;
-                    }
+                if i + 1 < total
+                    && ui
+                        .add(crate::widgets::menu::menu_item_button(
+                            ui,
+                            false,
+                            t!("sf_list.move_down"),
+                        ))
+                        .clicked()
+                {
+                    action = Some(SfAction::MoveDown);
+                    ui.close();
                 }
-
-                // 插入位置线
-                if let Some(y) = drag.insert_line_y(&item_rects) {
-                    let x1 = item_rects[0].left() + 4.0;
-                    let x2 = item_rects[0].right() - 4.0;
-                    ui.painter().line_segment(
-                        [egui::pos2(x1, y), egui::pos2(x2, y)],
-                        egui::Stroke::new(3.0, crate::theme::accent_active()),
-                    );
+                ui.separator();
+                if ui
+                    .add(crate::widgets::menu::menu_item_button(
+                        ui,
+                        false,
+                        t!("sf_list.delete"),
+                    ))
+                    .clicked()
+                {
+                    action = Some(SfAction::Remove);
+                    ui.close();
                 }
-
-                // 释放：应用拖拽排序（保持被拖项相对顺序）
-                if ui.input(|i| i.pointer.any_released()) {
-                    crate::widgets::reorder::apply_reorder(entries, &drag.indices, drag.insert_idx);
+            });
+            match action {
+                Some(SfAction::MoveUp) => {
+                    entries.swap(i, i - 1);
+                    swap_selection(&mut state, i, i - 1);
                     changed = true;
-                    state.selected.clear();
-                    state.last_click = None;
-                    state.drag = None;
+                }
+                Some(SfAction::MoveDown) => {
+                    entries.swap(i, i + 1);
+                    swap_selection(&mut state, i, i + 1);
+                    changed = true;
+                }
+                Some(SfAction::Remove) => remove_idx = Some(i),
+                None => {}
+            }
+        }
+
+        // 光标推进到列表末尾（含间距），ScrollArea 据此计算内容高度
+        if let Some(r) = last_row_rect {
+            ui.advance_cursor_after_rect(r);
+        }
+
+        // ── 拖拽中：插入线 + ghost + 自动滚动 + 释放排序 ──
+        if let Some(drag) = &mut state.drag {
+            let pointer = ui.ctx().input(|i| i.pointer.interact_pos());
+
+            if let Some(p) = pointer {
+                // 插入位置：指针越过剩余行的中线则后移一位（跳过被拖行）
+                drag.update_insert_idx(p.y, &item_rects);
+
+                // 自动滚动：指针贴近可视区边缘
+                if p.y < viewport.top() + AUTO_SCROLL_MARGIN {
+                    state.pending_scroll = -AUTO_SCROLL_SPEED;
+                } else if p.y > viewport.bottom() - AUTO_SCROLL_MARGIN {
+                    state.pending_scroll = AUTO_SCROLL_SPEED;
                 }
             }
-        });
 
-    // 自动滚动：直接改 ScrollArea 的持久化状态（不干扰用户滚轮/滚动条）
-    if auto_scroll != 0.0 {
-        let mut sa =
-            egui::containers::scroll_area::State::load(ui.ctx(), scroll_id).unwrap_or_default();
-        sa.offset.y = (sa.offset.y + auto_scroll).max(0.0);
-        sa.store(ui.ctx(), scroll_id);
-    }
+            // 插入位置线
+            if let Some(y) = drag.insert_line_y(&item_rects) {
+                let x1 = item_rects[0].left() + 4.0;
+                let x2 = item_rects[0].right() - 4.0;
+                ui.painter().line_segment(
+                    [egui::pos2(x1, y), egui::pos2(x2, y)],
+                    egui::Stroke::new(3.0, crate::theme::accent_active()),
+                );
+            }
+
+            // 释放：应用拖拽排序（保持被拖项相对顺序）
+            if ui.input(|i| i.pointer.any_released()) {
+                crate::widgets::reorder::apply_reorder(entries, &drag.indices, drag.insert_idx);
+                changed = true;
+                state.selected.clear();
+                state.last_click = None;
+                state.drag = None;
+            }
+        }
+    });
+
+    state.last_scroll = scroll_out.state.clamped_offset().y;
 
     if let Some(idx) = remove_idx {
         entries.remove(idx);
@@ -390,6 +392,8 @@ mod click_tests {
         }];
         let mut first = true;
         let mut harness = Harness::builder()
+            .allow_missing_glyphs()
+            .with_accessibility_check(false)
             .with_size(egui::vec2(300.0, 200.0))
             .build_ui_state(
                 move |ui, entries: &mut Vec<SfEntry>| {

@@ -239,7 +239,7 @@ fn flat_button_ex(
         resp
     };
     resp.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, galley.text().to_owned())
+        egui::WidgetInfo::labeled(egui::Role::Button, enabled, galley.text().to_owned())
     });
     if ui.is_rect_visible(rect) {
         let base = base_bg.unwrap_or_else(crate::theme::btn_bg);

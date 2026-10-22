@@ -181,7 +181,7 @@ fn show_auto_shape_popup(
     shape: SegmentShape,
     ctx: &AutoCtx,
 ) {
-    let popup_id = ui.id().with((salt, "popup"));
+    let popup_id = ui.scope_id().with((salt, "popup"));
     let work_id = popup_id.with("work");
     let work_shape: SegmentShape = ui.memory(|m| m.data.get_temp(work_id).unwrap_or(shape));
     let mut open = true;

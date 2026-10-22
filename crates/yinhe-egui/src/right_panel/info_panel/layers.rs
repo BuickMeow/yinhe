@@ -38,7 +38,7 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) -> bool {
     let icon_gap = scaled_font(ui.ctx(), 6.0);
 
     // 拖拽排序跨帧状态（算法见 widgets::reorder，与 AR 音轨面板同源）。
-    let drag_id = egui::Id::new("layers_drag");
+    let drag_id = egui::Id::unique("layers_drag");
     let mut drag: Option<crate::widgets::reorder::DragReorder> = ui
         .ctx()
         .data_mut(|d| d.get_temp(drag_id))
@@ -138,7 +138,7 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) -> bool {
                 if lock_hover {
                     let lock_resp = ui.interact(
                         lock_rect,
-                        ui.id().with(("layer_lock", i)),
+                        ui.scope_id().with(("layer_lock", i)),
                         egui::Sense::click(),
                     );
                     crate::widgets::hint::hover(
@@ -183,7 +183,7 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) -> bool {
                 if vis_hover {
                     let vis_resp = ui.interact(
                         vis_rect,
-                        ui.id().with(("layer_vis", i)),
+                        ui.scope_id().with(("layer_vis", i)),
                         egui::Sense::click(),
                     );
                     crate::widgets::hint::hover(

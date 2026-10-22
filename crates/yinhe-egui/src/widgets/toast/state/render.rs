@@ -114,7 +114,7 @@ impl Notifications {
             let cancel_flag = self.items[idx].cancel_flag();
             let action_opt = self.items[idx].action.clone();
             let mut outcome = super::super::model::CardOutcome::default();
-            let area_id = egui::Id::new(("yinhe_notif", tid));
+            let area_id = egui::Id::unique(("yinhe_notif", tid));
             let area_resp = egui::Area::new(area_id)
                 .anchor(
                     egui::Align2::RIGHT_BOTTOM,
@@ -210,7 +210,7 @@ impl Notifications {
         // 打开边沿：首帧把滚动定位到最新（底部），不依赖 stick 状态
         let scroll_bottom = self.center_bottom_pending;
         self.center_bottom_pending = false;
-        egui::Area::new(egui::Id::new("yinhe_notif_center"))
+        egui::Area::new(egui::Id::unique("yinhe_notif_center"))
             .anchor(
                 egui::Align2::RIGHT_BOTTOM,
                 egui::vec2(-RIGHT_PAD + x_off, -bottom_gap),

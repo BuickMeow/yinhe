@@ -102,7 +102,7 @@ pub fn switch(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
         toggled = true;
     }
     resp.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *checked, "")
+        egui::WidgetInfo::selected(egui::Role::CheckBox, ui.is_enabled(), *checked, "")
     });
 
     if ui.is_rect_visible(rect) {
@@ -224,7 +224,7 @@ mod tests {
     #[test]
     fn non_interactive_value_change_skips_animation() {
         let ctx = egui::Context::default();
-        let id = egui::Id::new("test_switch_anim");
+        let id = egui::Id::unique("test_switch_anim");
         ctx.begin_pass(egui::RawInput::default());
         // 首次出现：直接显示目标值
         assert_eq!(animate_switch(&ctx, id, true, false), 1.0);

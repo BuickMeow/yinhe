@@ -445,7 +445,7 @@ impl App {
     /// 同 arrange.rs 里 add_track 的方案 A，下一帧 rebuild_audio_if_needed 重建）。
     fn show_new_track_dialog(&mut self, ctx: &egui::Context) {
         let open_req = ctx.data_mut(|d| {
-            let id = egui::Id::new(crate::dialogs::new_track::OPEN_REQUEST_ID);
+            let id = egui::Id::unique(crate::dialogs::new_track::OPEN_REQUEST_ID);
             let v = d.get_temp::<bool>(id).unwrap_or(false);
             d.remove::<bool>(id);
             v

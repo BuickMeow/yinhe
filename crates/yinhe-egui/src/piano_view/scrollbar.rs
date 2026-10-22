@@ -52,7 +52,7 @@ pub(crate) fn show_scrollbars(
     {
         let resp = ui.interact(
             corner_rect,
-            ui.id().with("pr_corner_zoom"),
+            ui.scope_id().with("pr_corner_zoom"),
             egui::Sense::click_and_drag(),
         );
         let press_on = ui

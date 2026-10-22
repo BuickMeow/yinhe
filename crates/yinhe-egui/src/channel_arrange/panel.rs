@@ -212,7 +212,7 @@ pub(crate) fn show(
 
         let resp = ui.interact(
             row_rect,
-            egui::Id::new(("ca_panel_row", row)),
+            egui::Id::unique(("ca_panel_row", row)),
             egui::Sense::click(),
         );
         let hovered = pointer_pos.is_some_and(|p| row_rect.contains(p)) && !over_popup;
@@ -357,7 +357,7 @@ pub(crate) fn show(
                         "M",
                         muted,
                         crate::theme::mute_active(),
-                        egui::Id::new(("ca_chan_m", ch)),
+                        egui::Id::unique(("ca_chan_m", ch)),
                     );
                     let s_resp = draw_inline_button(
                         ui,
@@ -366,7 +366,7 @@ pub(crate) fn show(
                         "S",
                         soloed,
                         crate::theme::solo_active(),
-                        egui::Id::new(("ca_chan_s", ch)),
+                        egui::Id::unique(("ca_chan_s", ch)),
                     );
                     crate::widgets::hint::hover(ui.ctx(), &m_resp, t!("hint.mix.mute"));
                     crate::widgets::hint::hover(ui.ctx(), &s_resp, t!("hint.mix.solo"));
@@ -515,7 +515,7 @@ pub(crate) fn show(
                         "M",
                         muted,
                         crate::theme::mute_active(),
-                        egui::Id::new(("ca_track_m", t)),
+                        egui::Id::unique(("ca_track_m", t)),
                     );
                     let s_resp = draw_inline_button(
                         ui,
@@ -524,7 +524,7 @@ pub(crate) fn show(
                         "S",
                         soloed,
                         crate::theme::solo_active(),
-                        egui::Id::new(("ca_track_s", t)),
+                        egui::Id::unique(("ca_track_s", t)),
                     );
                     crate::widgets::hint::hover(ui.ctx(), &m_resp, t!("hint.arrange.track_mute"));
                     crate::widgets::hint::hover(ui.ctx(), &s_resp, t!("hint.arrange.track_solo"));
@@ -645,7 +645,7 @@ pub(crate) fn show(
                         "M",
                         st.mute,
                         crate::theme::mute_active(),
-                        egui::Id::new(("ca_am_m", track, sub)),
+                        egui::Id::unique(("ca_am_m", track, sub)),
                     );
                     let s_resp = draw_inline_button(
                         ui,
@@ -654,7 +654,7 @@ pub(crate) fn show(
                         "S",
                         st.solo,
                         crate::theme::solo_active(),
-                        egui::Id::new(("ca_am_s", track, sub)),
+                        egui::Id::unique(("ca_am_s", track, sub)),
                     );
                     crate::widgets::hint::hover(ui.ctx(), &m_resp, t!("hint.arrange.am_mute"));
                     crate::widgets::hint::hover(ui.ctx(), &s_resp, t!("hint.arrange.am_solo"));

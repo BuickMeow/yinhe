@@ -42,7 +42,7 @@ pub(crate) fn marquee_drag_frame(
     id_suffix: &'static str,
     on_bar: bool,
 ) -> Option<MarqueeDragResult> {
-    let sel_id = ui.id().with(id_suffix);
+    let sel_id = ui.scope_id().with(id_suffix);
     // drag = (start_music, press_pos, current_pos)
     // - start_music: (snapped_tick, content_y) — 量化后的起始音乐坐标，用于计算选区 bounds
     // - press_pos: 按下时的原始像素位置 — 用于 3px 阈值检查（不受量化偏移影响）
@@ -186,7 +186,7 @@ pub(crate) fn draw_marquee_box(
     stroke_color: egui::Color32,
     vertical: bool,
 ) {
-    let drag_id = ui.id().with(id_suffix);
+    let drag_id = ui.scope_id().with(id_suffix);
     let drag: Option<((f64, f32), egui::Pos2, egui::Pos2)> =
         ui.data_mut(|d| d.get_persisted(drag_id)).unwrap_or(None);
 

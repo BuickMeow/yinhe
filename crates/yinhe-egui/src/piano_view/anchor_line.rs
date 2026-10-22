@@ -100,7 +100,7 @@ pub(crate) fn frame(
     total_ticks: f64,
     id_suffix: &'static str,
 ) {
-    let state_id = ui.id().with(id_suffix);
+    let state_id = ui.scope_id().with(id_suffix);
     let mut drag: Option<AnchorDrag> = ui.data_mut(|d| d.get_persisted(state_id)).unwrap_or(None);
 
     if crate::view_interaction::pointer_over_popup(ui.ctx()) {

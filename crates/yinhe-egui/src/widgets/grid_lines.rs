@@ -287,7 +287,7 @@ mod tests {
         let ctx = egui::Context::default();
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Background,
-            egui::Id::new("grid_test"),
+            egui::Id::unique("grid_test"),
         ));
         paint_grid_lines(
             &painter,
@@ -489,7 +489,7 @@ mod tests {
         let ctx = egui::Context::default();
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Background,
-            egui::Id::new("grid_vertical_test"),
+            egui::Id::unique("grid_vertical_test"),
         ));
         paint_grid_lines(
             &painter,

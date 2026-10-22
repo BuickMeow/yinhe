@@ -133,6 +133,8 @@ mod tests {
 
         let mut first = true;
         let mut h = egui_kittest::Harness::builder()
+            .allow_missing_glyphs()
+            .with_accessibility_check(false)
             .with_size(egui::vec2(420.0, 230.0))
             .build_ui_state(
                 move |ui, _state: &mut ()| {

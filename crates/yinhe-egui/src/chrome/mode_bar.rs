@@ -702,7 +702,7 @@ fn float_bubble(
     float_mixer: &mut bool,
     float_arrange: &mut bool,
 ) {
-    let state_id = egui::Id::new("mode_bar_float_bubble");
+    let state_id = egui::Id::unique("mode_bar_float_bubble");
     let mut st: FloatBubbleState = ctx.data_mut(|d| d.get_temp(state_id)).unwrap_or_default();
     let now = ctx.input(|i| i.time);
     let pointer = ctx.input(|i| i.pointer.hover_pos());
@@ -828,7 +828,11 @@ fn float_bubble(
                     ICON_OPEN_IN_NEW
                 };
                 let icon_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(24.0, 24.0));
-                let resp = ui.interact(icon_rect, ui.id().with("float_icon"), egui::Sense::click());
+                let resp = ui.interact(
+                    icon_rect,
+                    ui.scope_id().with("float_icon"),
+                    egui::Sense::click(),
+                );
                 let color = crate::widgets::hover::hover_button_color(
                     &resp,
                     crate::theme::text_primary(),
@@ -981,7 +985,7 @@ mod tests {
             .drop_without_applying_deltas();
         };
         let state = |ctx: &egui::Context| -> FloatBubbleState {
-            ctx.data_mut(|d| d.get_temp(egui::Id::new("mode_bar_float_bubble")))
+            ctx.data_mut(|d| d.get_temp(egui::Id::unique("mode_bar_float_bubble")))
                 .unwrap_or_default()
         };
 
@@ -1076,7 +1080,7 @@ mod tests {
         run(0.0);
         run(0.3); // 越过悬停延迟 → 气泡弹出
         let area = ctx
-            .memory(|m| m.area_rect(egui::Id::new("mode_bar_float_bubble").with("area")))
+            .memory(|m| m.area_rect(egui::Id::unique("mode_bar_float_bubble").with("area")))
             .expect("停留 0.3s 后气泡应已显示");
         assert!(
             (area.center().x - btn_rect.center().x).abs() <= 2.0,
@@ -1201,7 +1205,7 @@ mod tests {
         run(0.0);
         run(0.3);
         let area = ctx
-            .memory(|m| m.area_rect(egui::Id::new("mode_bar_float_bubble").with("area")))
+            .memory(|m| m.area_rect(egui::Id::unique("mode_bar_float_bubble").with("area")))
             .expect("停留 0.3s 后气泡应已显示");
         assert!(
             (area.center().x - piano_rect.center().x).abs() <= 2.0,

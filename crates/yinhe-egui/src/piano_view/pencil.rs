@@ -94,7 +94,7 @@ pub(crate) fn pencil_frame(
     quick_delete_mode: QuickDeleteMode,
     default_gate: Option<u32>,
 ) -> PencilFrameOut {
-    let pencil_id = ui.id().with("pencil_drag");
+    let pencil_id = ui.scope_id().with("pencil_drag");
     let mut drag_state: Option<PencilDrag> =
         ui.data_mut(|d| d.get_persisted(pencil_id)).unwrap_or(None);
 

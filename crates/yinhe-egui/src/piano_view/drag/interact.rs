@@ -93,7 +93,7 @@ pub(crate) fn handle_sel_marquee(
         || state.sel_note_resize.is_some()
         || state.sel_note_move.is_some()
     {
-        let sel_id = ui.id().with("sel_drag");
+        let sel_id = ui.scope_id().with("sel_drag");
         ui.data_mut(|d| {
             d.insert_persisted(sel_id, Option::<((f64, f32), egui::Pos2, egui::Pos2)>::None)
         });

@@ -1,8 +1,8 @@
 //! 右键编辑 popup：在表格的单元格上右键时弹出编辑器。
 //!
 //! 设计（pending + 关闭时一次性 apply）：
-//! - cell 右键时把 `EditRequest` 写到 `egui::Id::new((salt, "edit"))`（全局 key，
-//!   不用 `ui.id()`，因为 cell 是 child ui，`ui.id()` 与本函数调用处不同）
+//! - cell 右键时把 `EditRequest` 写到 `egui::Id::unique((salt, "edit"))`（全局 key，
+//!   不用 `ui.scope_id()`，因为 cell 是 child ui，`ui.scope_id()` 与本函数调用处不同）
 //! - `apply_*_popups` 每帧 `peek_edit_request` 检查是否有请求，有就显示 popup
 //! - popup 打开期间**不修改 Document**：DragValue 状态只写到 egui memory
 //!   中的 pending 状态，每帧读出以保持拖动时数字同步
@@ -71,12 +71,12 @@ struct PopupConfig<'a> {
 
 /// 渲染数字编辑 popup（Area + DragValue + confirm/cancel）。
 ///
-/// DragValue 状态持久化到 `egui::Id::new((salt, "state"))`，每帧从 memory 读出，
+/// DragValue 状态持久化到 `egui::Id::unique((salt, "state"))`，每帧从 memory 读出，
 /// 拖动时实时更新（不修改 Document）。关闭时返回 `Closed(state)` 携带 pending 值，
 /// 或 `Cancelled`（取消按钮）。caller 负责把 pending 应用到 Document。
 fn show_number_popup(ui: &mut egui::Ui, cfg: PopupConfig) -> PopupAction {
-    let state_id = egui::Id::new((cfg.salt, "state"));
-    let popup_id = ui.id().with((cfg.salt, "popup"));
+    let state_id = egui::Id::unique((cfg.salt, "state"));
+    let popup_id = ui.scope_id().with((cfg.salt, "popup"));
 
     let mut state = ui.memory(|m| m.data.get_temp::<f64>(state_id).unwrap_or(cfg.initial));
     let mut open = true;
@@ -141,7 +141,7 @@ pub(super) enum ChoicePopupAction<T> {
 
 /// 渲染下拉选择 popup（Area + ComboBox + confirm/cancel）。
 ///
-/// 选项状态持久化到 `egui::Id::new((salt, "choice"))`，每帧从 memory 读出。
+/// 选项状态持久化到 `egui::Id::unique((salt, "choice"))`，每帧从 memory 读出。
 /// 关闭时返回 `Closed(state)` 携带 pending 选项，或 `Cancelled`。
 fn show_choice_popup<T: Copy + PartialEq + Send + Sync + 'static>(
     ui: &mut egui::Ui,
@@ -151,8 +151,8 @@ fn show_choice_popup<T: Copy + PartialEq + Send + Sync + 'static>(
     options: &[T],
     label_of: impl Fn(&T) -> String,
 ) -> ChoicePopupAction<T> {
-    let state_id = egui::Id::new((salt, "choice"));
-    let popup_id = ui.id().with((salt, "choice_popup"));
+    let state_id = egui::Id::unique((salt, "choice"));
+    let popup_id = ui.scope_id().with((salt, "choice_popup"));
 
     let mut state = ui.memory(|m| m.data.get_temp::<T>(state_id).unwrap_or(initial));
     let mut open = true;
@@ -262,8 +262,8 @@ pub(super) fn show_position_popup(
     current_tick: u32,
     min_tick: u32,
 ) -> PopupAction {
-    let state_id = egui::Id::new((salt, "pos_state"));
-    let popup_id = ui.id().with((salt, "pos_popup"));
+    let state_id = egui::Id::unique((salt, "pos_state"));
+    let popup_id = ui.scope_id().with((salt, "pos_popup"));
 
     let mut tick_f = ui.memory(|m| {
         m.data

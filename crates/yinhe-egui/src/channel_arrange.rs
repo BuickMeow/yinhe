@@ -365,7 +365,7 @@ pub(crate) fn show(
         let corner_rect = egui::Rect::from_min_max(gpu_rect.max, arr_rect.max);
         let resp = ui.interact(
             corner_rect,
-            ui.id().with("ca_corner_zoom"),
+            ui.scope_id().with("ca_corner_zoom"),
             egui::Sense::click_and_drag(),
         );
         let press_on = ui

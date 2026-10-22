@@ -202,7 +202,7 @@ pub fn show_transport_buttons(
             ui.add_space(TRANSPORT_GAP);
         }
     }
-    ui.data_mut(|d| d.insert_temp(egui::Id::new(GRID_PREVIEW_HOVER_ID), grid_hovered));
+    ui.data_mut(|d| d.insert_temp(egui::Id::unique(GRID_PREVIEW_HOVER_ID), grid_hovered));
     clicked
 }
 
@@ -251,7 +251,7 @@ pub fn show(
 
     // 记录按下时所在的按钮：只有 press 和 release 落在同一个按钮上才算点击。
     // 否则从音乐区拖拽到工具条上释放会误触发按钮动作（事件穿透的反向）。
-    let press_btn_id = ui.id().with("sel_bar_press_btn");
+    let press_btn_id = ui.scope_id().with("sel_bar_press_btn");
     let mut press_btn: Option<usize> = ui
         .data_mut(|d| d.get_persisted(press_btn_id))
         .unwrap_or(None);

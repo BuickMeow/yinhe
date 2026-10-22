@@ -41,11 +41,11 @@ struct Hint {
 }
 
 fn slot_id() -> egui::Id {
-    egui::Id::new("status_hint_slot")
+    egui::Id::unique("status_hint_slot")
 }
 
 fn shown_id() -> egui::Id {
-    egui::Id::new("status_hint_shown")
+    egui::Id::unique("status_hint_shown")
 }
 
 fn write(ctx: &egui::Context, text: impl Into<String>, priority: u8) {

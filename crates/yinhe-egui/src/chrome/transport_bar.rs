@@ -283,7 +283,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
             bar_rect = ui.max_rect();
 
             const DOUBLE_CLICK_MS: f64 = 400.0;
-            let dbl_id = ui.id().with("transport_bar_dbl_click");
+            let dbl_id = ui.scope_id().with("transport_bar_dbl_click");
             if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary))
                 && let Some(pos) = ui.input(|i| i.pointer.interact_pos())
             {
@@ -308,8 +308,8 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
             }
 
             let bar_rect = ui.max_rect();
-            let drag_id = ui.id().with("tb_drag_started");
-            let blank_id = ui.id().with("tb_drag_blank");
+            let drag_id = ui.scope_id().with("tb_drag_started");
+            let blank_id = ui.scope_id().with("tb_drag_blank");
             let mut drag_started: bool = ui.data_mut(|d| d.get_temp(drag_id)).unwrap_or(false);
 
             if ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary))

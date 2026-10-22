@@ -123,8 +123,7 @@ fn text_edit<'a>(id: egui::Id, buf: &'a mut String, width: f32, height: f32) -> 
         .frame(egui::Frame::NONE)
         .font(egui::FontId::proportional(crate::theme::TIMECODE_FONT))
         .text_color(crate::theme::accent_active())
-        .horizontal_align(egui::Align::Center)
-        .vertical_align(egui::Align::Center)
+        .align(egui::Align2::CENTER_CENTER)
         .margin(egui::Margin::symmetric(2, 0))
         .min_size(egui::vec2(width, height))
         .desired_width(width)
@@ -225,12 +224,12 @@ pub fn show_timecode_display(
         )
     };
 
-    let buf_id = ui.id().with("timecode_buffers");
+    let buf_id = ui.scope_id().with("timecode_buffers");
     let mut bufs: Buffers = ui.data_mut(|d| d.get_temp(buf_id)).unwrap_or_default();
     let mut events: Vec<TimecodeEvent> = Vec::new();
 
     // 非编辑态刷新缓冲为当前值（编辑中保留用户输入）
-    let focused = |ui: &egui::Ui, salt: &str| ui.memory(|m| m.has_focus(ui.id().with(salt)));
+    let focused = |ui: &egui::Ui, salt: &str| ui.memory(|m| m.has_focus(ui.scope_id().with(salt)));
     if !focused(ui, "tc_bpm") {
         bufs.bpm = bpm_str;
     }
@@ -248,7 +247,7 @@ pub fn show_timecode_display(
     }
 
     // ── BPM（列 0 上）──
-    let bpm_id = ui.id().with("tc_bpm");
+    let bpm_id = ui.scope_id().with("tc_bpm");
     let resp = ui.put(
         cell(0, 0),
         text_edit(bpm_id, &mut bufs.bpm, COL_WIDTHS[0] - 8.0, ROW_H),
@@ -271,7 +270,7 @@ pub fn show_timecode_display(
         egui::pos2(sig_cell.min.x + sig_w, sig_cell.min.y),
         egui::vec2(sig_cell.width() - sig_w, sig_cell.height()),
     );
-    let sig_id = ui.id().with("tc_time_sig");
+    let sig_id = ui.scope_id().with("tc_time_sig");
     let resp = ui.put(
         sig_rect,
         text_edit(sig_id, &mut bufs.time_sig, sig_w - 4.0, ROW_H),
@@ -286,7 +285,7 @@ pub fn show_timecode_display(
             denominator_power,
         });
     }
-    let ppq_id = ui.id().with("tc_ppq");
+    let ppq_id = ui.scope_id().with("tc_ppq");
     let resp = ui.put(
         ppq_rect,
         text_edit(ppq_id, &mut bufs.ppq, ppq_rect.width() - 4.0, ROW_H),
@@ -304,7 +303,7 @@ pub fn show_timecode_display(
     }
 
     // ── 位置（列 1 上）──
-    let pos_id = ui.id().with("tc_pos");
+    let pos_id = ui.scope_id().with("tc_pos");
     let resp = ui.put(
         cell(1, 0),
         text_edit(pos_id, &mut bufs.pos, COL_WIDTHS[1] - 8.0, ROW_H),
@@ -332,7 +331,7 @@ pub fn show_timecode_display(
     }
 
     // ── 秒数（列 1 下）──
-    let time_id = ui.id().with("tc_time");
+    let time_id = ui.scope_id().with("tc_time");
     let resp = ui.put(
         cell(1, 1),
         text_edit(time_id, &mut bufs.time, COL_WIDTHS[1] - 8.0, ROW_H),
@@ -383,7 +382,7 @@ pub fn show_timecode_display(
         );
         let resp = ui.interact(
             meter_rect,
-            ui.id().with("tc_master_meter"),
+            ui.scope_id().with("tc_master_meter"),
             egui::Sense::hover(),
         );
         crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.master_meter"));

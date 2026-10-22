@@ -25,31 +25,31 @@ pub(crate) fn sel_drag_frame_arrange(
     let mut ghost_notes: Vec<GhostNote> = Vec::new();
     let mut hidden_notes: HashSet<HiddenNote> = HashSet::new();
     let mut drag_rect: Option<egui::Rect> = None;
-    let sel_id = ui.id().with("sel_drag_arr");
+    let sel_id = ui.scope_id().with("sel_drag_arr");
     let mut drag: Option<((f64, f32), egui::Pos2)> =
         ui.data_mut(|d| d.get_persisted(sel_id)).unwrap_or(None);
     type ArrMoveDrag = ((f64, f32), (f64, f32), bool);
-    let move_drag_id = ui.id().with("arr_move_drag");
+    let move_drag_id = ui.scope_id().with("arr_move_drag");
     let mut move_drag: Option<ArrMoveDrag> = ui
         .data_mut(|d| d.get_persisted(move_drag_id))
         .unwrap_or(None);
-    let move_orig_id = ui.id().with("arr_move_orig_sel");
+    let move_orig_id = ui.scope_id().with("arr_move_orig_sel");
     let mut move_orig_sel: Vec<(f64, f64, usize, usize)> = ui
         .data_mut(|d| d.get_persisted(move_orig_id))
         .unwrap_or_default();
-    let move_had_moved_id = ui.id().with("arr_move_had_moved");
+    let move_had_moved_id = ui.scope_id().with("arr_move_had_moved");
     let mut move_had_moved: bool = ui
         .data_mut(|d| d.get_persisted(move_had_moved_id))
         .unwrap_or(false);
     // 拖拽启动时收集一次的选中音符（每帧只做视口裁剪，避免全选区重扫）。
     type ArrMoveNotes = std::sync::Arc<Vec<crate::selection::drag::CollectedNote>>;
-    let move_notes_id = ui.id().with("arr_move_notes");
+    let move_notes_id = ui.scope_id().with("arr_move_notes");
     let mut move_notes: Option<ArrMoveNotes> = ui
         .data_mut(|d| d.get_persisted(move_notes_id))
         .unwrap_or(None);
     // 选区内容的最左 tick（音符 / 选框 / 自动化事件的下界）；拖拽时据此把
     // delta 截断，使内容不能越过 tick 0。启动时算一次，避免每帧全选区重扫。
-    let move_min_tick_id = ui.id().with("arr_move_min_tick");
+    let move_min_tick_id = ui.scope_id().with("arr_move_min_tick");
     let mut move_min_tick: f64 = ui
         .data_mut(|d| d.get_persisted(move_min_tick_id))
         .unwrap_or(f64::INFINITY);
@@ -382,7 +382,7 @@ pub(crate) fn eraser_drag_frame_arrange(
     data: &crate::arrange::ArrangeData<'_>,
     edit: &mut crate::arrange::ArrangeEdit<'_>,
 ) {
-    let drag_id = ui.id().with("eraser_drag_arr");
+    let drag_id = ui.scope_id().with("eraser_drag_arr");
     let mut drag: Option<((f64, f32), egui::Pos2)> =
         ui.data_mut(|d| d.get_persisted(drag_id)).unwrap_or(None);
     let pointer = ui.input(|i| i.pointer.clone());

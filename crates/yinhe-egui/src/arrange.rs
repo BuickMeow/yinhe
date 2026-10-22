@@ -582,7 +582,7 @@ pub fn show(
         {
             let resp = ui.interact(
                 corner_rect,
-                ui.id().with("arr_corner_zoom"),
+                ui.scope_id().with("arr_corner_zoom"),
                 egui::Sense::click_and_drag(),
             );
             let press_on = ui
@@ -756,7 +756,7 @@ pub fn show(
             egui::Rect::from_center_size(corner_rect.center(), egui::vec2(btn_size, btn_size));
         let btn_resp = ui.interact(
             btn_rect,
-            egui::Id::new("arr_add_track_btn"),
+            egui::Id::unique("arr_add_track_btn"),
             egui::Sense::click(),
         );
         crate::widgets::hint::hover(ui.ctx(), &btn_resp, t!("hint.arrange.add_track"));
@@ -782,7 +782,7 @@ pub fn show(
             // （方案 A 同原 add_track 路径，在 dialog_dispatch 内完成）。
             ui.ctx().data_mut(|d| {
                 d.insert_temp(
-                    egui::Id::new(crate::dialogs::new_track::OPEN_REQUEST_ID),
+                    egui::Id::unique(crate::dialogs::new_track::OPEN_REQUEST_ID),
                     true,
                 )
             });

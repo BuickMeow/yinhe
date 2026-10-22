@@ -79,7 +79,7 @@ pub fn show(
     };
     // 旧入口（右键/快捷键 focus Info/EventBrowser）→ 仅在切换的那一帧定位选项卡，
     // 避免每帧重置用户手动选择的选项卡。
-    let focus_id = ui.id().with("rpanel_focus_hint");
+    let focus_id = ui.scope_id().with("rpanel_focus_hint");
     let last: Option<RightTab> = ui.data_mut(|d| d.get_temp(focus_id));
     if last != Some(tab) {
         match tab {

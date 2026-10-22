@@ -528,7 +528,7 @@ pub(crate) fn bus_strip(
     );
     let del_resp = ui.interact(
         del_rect,
-        ui.id().with(("mix_bus_remove", bus)),
+        ui.scope_id().with(("mix_bus_remove", bus)),
         egui::Sense::click(),
     );
     let del_color = if del_resp.hovered() {
@@ -625,7 +625,7 @@ fn header_double_click_opens_dock(
     id_salt: impl std::hash::Hash + std::fmt::Debug,
 ) {
     let header = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), HEADER_H));
-    let resp = ui.interact(header, ui.id().with(id_salt), egui::Sense::click());
+    let resp = ui.interact(header, ui.scope_id().with(id_salt), egui::Sense::click());
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.header_double_click"));
     if !resp.double_clicked() {
         return;
@@ -773,7 +773,7 @@ fn instrument_swap_button(
     );
     let resp = ui.interact(
         swap_rect,
-        ui.id().with(("mix_swap_instr", channel, row_salt)),
+        ui.scope_id().with(("mix_swap_instr", channel, row_salt)),
         egui::Sense::click(),
     );
     let icon = egui_material_icons::icons::ICON_SWAP_HORIZ;
@@ -915,7 +915,7 @@ fn effect_row(
     let dot_hit = egui::Rect::from_center_size(dot_center, egui::vec2(15.0, DEVICE_ROW_H));
     let dot_resp = ui.interact(
         dot_hit,
-        ui.id().with(("mix_dev_bypass", target, slot)),
+        ui.scope_id().with(("mix_dev_bypass", target, slot)),
         egui::Sense::click(),
     );
     if dot_resp.clicked() {
@@ -955,7 +955,7 @@ fn effect_row(
     );
     let params_resp = ui.interact(
         btn_rect,
-        ui.id().with(("mix_dev_params", target, slot)),
+        ui.scope_id().with(("mix_dev_params", target, slot)),
         egui::Sense::click(),
     );
     let icon_color = if params_resp.hovered() {

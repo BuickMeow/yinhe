@@ -58,7 +58,7 @@ pub(crate) fn begin_frame(
     let orig_heights: Vec<f32> = panels.iter().map(|p| p.panel_height).collect();
     let panels_natural_h: f32 = orig_heights.iter().sum::<f32>() + (panels.len() as f32 * SPLIT_H);
     let max_scroll = (panels_natural_h - layout.panels_visible_h).max(0.0);
-    let scroll_id = ui.id().with("auto_panel_scroll_y");
+    let scroll_id = ui.scope_id().with("auto_panel_scroll_y");
     let mut scroll_y: f32 = ui.data_mut(|d| d.get_persisted(scroll_id)).unwrap_or(0.0);
     scroll_y = scroll_y.clamp(0.0, max_scroll);
     let panels_area_rect = egui::Rect::from_min_max(

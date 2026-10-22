@@ -92,8 +92,8 @@ pub struct NoteRef {
 
 /// 右键编辑请求：cell 上右键时写入 egui memory，由 `apply_edit_popups` 取出分派。
 ///
-/// 一个全局 key `egui::Id::new((salt, "edit"))` 存 `EditRequest`，**不**用 `ui.id()`
-/// （cell 是 child ui，`ui.id()` 与 popup 调用处不同）。
+/// 一个全局 key `egui::Id::unique((salt, "edit"))` 存 `EditRequest`，**不**用 `ui.scope_id()`
+/// （cell 是 child ui，`ui.scope_id()` 与 popup 调用处不同）。
 #[derive(Clone, Debug, PartialEq)]
 pub enum EditRequest {
     /// Automation 的 tick 编辑（位置移动）

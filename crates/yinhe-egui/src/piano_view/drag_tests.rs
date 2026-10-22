@@ -1182,7 +1182,7 @@ fn sel_drag_in_progress_reflects_persisted_state() {
     run(raw.clone(), &mut |ui| {
         ui.data_mut(|d| {
             d.insert_persisted(
-                ui.id().with("sel_note_move_state"),
+                ui.scope_id().with("sel_note_move_state"),
                 Some((0u16, 300u32, 90u8, 330u32, 300.0f64, 0i32, true)),
             )
         });
@@ -1196,11 +1196,11 @@ fn sel_drag_in_progress_reflects_persisted_state() {
     run(raw.clone(), &mut |ui| {
         ui.data_mut(|d| {
             d.insert_persisted(
-                ui.id().with("sel_note_move_state"),
+                ui.scope_id().with("sel_note_move_state"),
                 Option::<(u16, u32, u8, u32, f64, i32, bool)>::None,
             );
             d.insert_persisted(
-                ui.id().with("note_drag_origin"),
+                ui.scope_id().with("note_drag_origin"),
                 Some((300.0f64, 90.0f64, true)),
             );
         });
@@ -1794,11 +1794,11 @@ fn note_drag_ghost_survives_viewport_cull() {
                 // 绕开 press 分支细节，聚焦被测点——拖动帧的 ghost 视口裁剪。
                 ui.data_mut(|d| {
                     d.insert_persisted(
-                        ui.id().with("note_drag_origin"),
+                        ui.scope_id().with("note_drag_origin"),
                         Some((1100.0f64, 70.0f64, false)),
                     );
                     d.insert_persisted(
-                        ui.id().with("drag_notes"),
+                        ui.scope_id().with("drag_notes"),
                         Some(std::sync::Arc::new(vec![
                             crate::selection::drag::CollectedNote {
                                 track: 0,

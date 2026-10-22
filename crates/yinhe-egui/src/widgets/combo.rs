@@ -41,13 +41,9 @@ pub fn combo_box(
     // 自绘按钮（替代 egui ComboBox 的原生按钮，才能用 Material unfold_more）。
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(width, control::h(&ctx)), egui::Sense::hover());
-    let resp = ui.interact(rect, ui.id().with(id), egui::Sense::click());
+    let resp = ui.interact(rect, ui.scope_id().with(id), egui::Sense::click());
     resp.widget_info(|| {
-        egui::WidgetInfo::labeled(
-            egui::WidgetType::ComboBox,
-            ui.is_enabled(),
-            selected_text.text(),
-        )
+        egui::WidgetInfo::labeled(egui::Role::ComboBox, ui.is_enabled(), selected_text.text())
     });
 
     if ui.is_rect_visible(rect) {
@@ -296,7 +292,7 @@ mod tests {
             let btn_c = btn_center.clone();
             let mut out = ctx.run_ui(raw, |ui| {
                 // 定点 Area：按钮位置逐帧稳定，click 坐标可用第 0 帧实测值。
-                egui::Area::new(egui::Id::new("combo_half_row_reg"))
+                egui::Area::new(egui::Id::unique("combo_half_row_reg"))
                     .fixed_pos(egui::pos2(60.0, 80.0))
                     .show(ui.ctx(), |ui| {
                         // 与设置页一致的行距：复现默认 200px 高度切出半截行的条件。

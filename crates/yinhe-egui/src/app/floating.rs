@@ -344,7 +344,7 @@ fn sync_window_rect(
     stored: &mut Option<egui::Rect>,
     needs_save: &mut bool,
 ) {
-    let key = egui::Id::new(("float_window_rect_last", id));
+    let key = egui::Id::unique(("float_window_rect_last", id));
     let last: Option<egui::Rect> = ctx
         .data_mut(|d| d.get_temp::<Option<egui::Rect>>(key))
         .flatten();

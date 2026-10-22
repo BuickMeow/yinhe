@@ -244,7 +244,7 @@ pub(crate) fn interactive_ruler(
 
     let ruler_resp = ui.interact(
         ruler_rect,
-        ui.id().with(id_salt),
+        ui.scope_id().with(id_salt),
         egui::Sense::click_and_drag(),
     );
 
@@ -256,7 +256,7 @@ pub(crate) fn interactive_ruler(
     for label in &labels {
         let resp = ui.interact(
             label.rect,
-            ui.id().with((id_salt, "marker", label.tick)),
+            ui.scope_id().with((id_salt, "marker", label.tick)),
             egui::Sense::click_and_drag(),
         );
         let tick = label.tick;
@@ -416,19 +416,21 @@ fn cross_bands(rect: egui::Rect, orientation: Orientation) -> (f32, f32) {
 fn marker_drag_preview(ui: &egui::Ui, id_salt: &str) -> Option<(u32, u32)> {
     ui.memory(|m| {
         m.data
-            .get_temp(egui::Id::new((id_salt, "marker_drag_preview")))
+            .get_temp(egui::Id::unique((id_salt, "marker_drag_preview")))
     })
 }
 
 fn set_marker_drag_preview(ui: &egui::Ui, id_salt: &str, from: u32, to: u32) {
     ui.memory_mut(|m| {
-        m.data
-            .insert_temp(egui::Id::new((id_salt, "marker_drag_preview")), (from, to))
+        m.data.insert_temp(
+            egui::Id::unique((id_salt, "marker_drag_preview")),
+            (from, to),
+        )
     });
 }
 
 fn take_marker_drag_preview(ui: &egui::Ui, id_salt: &str) -> Option<(u32, u32)> {
-    let id = egui::Id::new((id_salt, "marker_drag_preview"));
+    let id = egui::Id::unique((id_salt, "marker_drag_preview"));
     let v = ui.memory(|m| m.data.get_temp(id));
     ui.memory_mut(|m| {
         m.data.remove::<(u32, u32)>(id);
@@ -444,22 +446,22 @@ fn start_marker_rename(ui: &egui::Ui, id_salt: &str, tick: u32, markers: &[Marke
         .unwrap_or_default();
     ui.memory_mut(|m| {
         m.data
-            .insert_temp(egui::Id::new((id_salt, "marker_rename_tick")), tick);
+            .insert_temp(egui::Id::unique((id_salt, "marker_rename_tick")), tick);
         m.data
-            .insert_temp(egui::Id::new((id_salt, "marker_rename_buf")), text);
+            .insert_temp(egui::Id::unique((id_salt, "marker_rename_buf")), text);
         m.data
-            .insert_temp(egui::Id::new((id_salt, "marker_rename_focus")), true);
+            .insert_temp(egui::Id::unique((id_salt, "marker_rename_focus")), true);
     });
 }
 
 fn clear_marker_rename(ui: &egui::Ui, id_salt: &str) {
     ui.memory_mut(|m| {
         m.data
-            .remove::<u32>(egui::Id::new((id_salt, "marker_rename_tick")));
+            .remove::<u32>(egui::Id::unique((id_salt, "marker_rename_tick")));
         m.data
-            .remove::<String>(egui::Id::new((id_salt, "marker_rename_buf")));
+            .remove::<String>(egui::Id::unique((id_salt, "marker_rename_buf")));
         m.data
-            .remove::<bool>(egui::Id::new((id_salt, "marker_rename_focus")));
+            .remove::<bool>(egui::Id::unique((id_salt, "marker_rename_focus")));
     });
 }
 
@@ -470,16 +472,16 @@ fn marker_rename_ui(
     labels: &[MarkerLabel],
     markers: &[MarkerEvent],
 ) -> Option<MarkerEdit> {
-    let tick_id = egui::Id::new((id_salt, "marker_rename_tick"));
+    let tick_id = egui::Id::unique((id_salt, "marker_rename_tick"));
     let tick: u32 = ui.memory(|m| m.data.get_temp(tick_id))?;
     let Some(label) = labels.iter().find(|l| l.tick == tick) else {
         // 目标不在可视范围：取消。
         clear_marker_rename(ui, id_salt);
         return None;
     };
-    let buf_id = egui::Id::new((id_salt, "marker_rename_buf"));
+    let buf_id = egui::Id::unique((id_salt, "marker_rename_buf"));
     let mut buf: String = ui.memory(|m| m.data.get_temp(buf_id).unwrap_or_default());
-    let edit_id = egui::Id::new((id_salt, "marker_rename_edit"));
+    let edit_id = egui::Id::unique((id_salt, "marker_rename_edit"));
     let rect = label
         .rect
         .expand2(egui::vec2(2.0, 0.0))
@@ -497,7 +499,7 @@ fn marker_rename_ui(
             ))
             .desired_width(rect.width()),
     );
-    let focus_id = egui::Id::new((id_salt, "marker_rename_focus"));
+    let focus_id = egui::Id::unique((id_salt, "marker_rename_focus"));
     if ui.memory(|m| m.data.get_temp::<bool>(focus_id).unwrap_or(false)) {
         resp.request_focus();
         ui.memory_mut(|m| m.data.insert_temp(focus_id, false));
@@ -962,7 +964,7 @@ mod tests {
         ctx.begin_pass(egui::RawInput::default()); // 初始化字体系统（测试环境）
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Background,
-            egui::Id::new("ruler_test"),
+            egui::Id::unique("ruler_test"),
         ));
         let events = vec![TimeSigEvent {
             tick: 1000,
@@ -1055,7 +1057,7 @@ mod tests {
         ctx.begin_pass(egui::RawInput::default());
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Background,
-            egui::Id::new("ruler_marker_test"),
+            egui::Id::unique("ruler_marker_test"),
         ));
         let labels_center = rect.min.y + rect.height() * 0.28;
 

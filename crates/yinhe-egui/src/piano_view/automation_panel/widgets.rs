@@ -64,7 +64,7 @@ pub(crate) fn show_target_combo(
                 false,
             );
             crate::widgets::hint::hover(ui.ctx(), &target_resp, t!("hint.pr.target_combo"));
-            let popup_id = ui.id().with("auto_target_popup");
+            let popup_id = ui.scope_id().with("auto_target_popup");
             let is_open = ui
                 .data_mut(|d| d.get_persisted::<bool>(popup_id))
                 .unwrap_or(false);
@@ -221,7 +221,7 @@ pub(crate) fn apply_right_click_anchor(
     right_tab: &mut Option<RightTab>,
 ) {
     for i in 0..panel_count {
-        let right_click_id = ui.id().with("auto_right_click").with(i);
+        let right_click_id = ui.scope_id().with("auto_right_click").with(i);
         if let Some(anchor) = ui
             .ctx()
             .data(|d| d.get_temp::<interaction::RightClickAnchor>(right_click_id))
@@ -238,9 +238,9 @@ pub(crate) fn apply_right_click_anchor(
                 target: anchor.target.clone(),
             });
             *right_tab = Some(RightTab::Info);
-            let edit_tick_id = ui.id().with("auto_right_tick").with(i);
-            let edit_value_id = ui.id().with("auto_right_value").with(i);
-            let was_open_id = ui.id().with("auto_right_was_open").with(i);
+            let edit_tick_id = ui.scope_id().with("auto_right_tick").with(i);
+            let edit_value_id = ui.scope_id().with("auto_right_value").with(i);
+            let was_open_id = ui.scope_id().with("auto_right_was_open").with(i);
             ui.ctx().data_mut(|d| {
                 d.remove::<interaction::RightClickAnchor>(right_click_id);
                 d.remove::<f64>(edit_tick_id);
@@ -261,7 +261,7 @@ pub(crate) fn show_panel_close(ui: &mut egui::Ui, combo_rect: egui::Rect, index:
     let btn_rect = egui::Rect::from_center_size(center, egui::vec2(BTN, BTN));
     let resp = ui.interact(
         btn_rect,
-        ui.id().with(("auto_panel_close", index)),
+        ui.scope_id().with(("auto_panel_close", index)),
         egui::Sense::click(),
     );
     let color = crate::widgets::hover::hover_button_color(&resp, theme::text_label(), false);

@@ -265,7 +265,7 @@ pub fn show(
     // 选中高亮排除表（成员态精确高亮）：按 (revision, 选区指纹) 缓存，
     // 拖动中选区不变 → 命中缓存，不重复遍历。
     let (exclude_table, exclude_mask) = {
-        let cache_id = ui.id().with("sel_exclude_cache");
+        let cache_id = ui.scope_id().with("sel_exclude_cache");
         let cached = ui.data_mut(|d| d.get_persisted::<(u64, u64, Vec<[u32; 2]>, u32)>(cache_id));
         let sel_hash = selected.state_hash();
         match cached {

@@ -248,7 +248,7 @@ pub(super) fn paint_tabs(
 
         // 悬停且名称超宽（静态显示会被截断）→ 跑马灯横向滚动完整名称：
         // 文字尾部留 MARQUEE_GAP 间隔后接开头，无限循环。被拖拽的标签不滚动。
-        let marquee_id = ui.id().with(("tab_marquee_start", i));
+        let marquee_id = ui.scope_id().with(("tab_marquee_start", i));
         if is_hovered && full_w > text_max_w_cur {
             // 先取 time 再进 data_mut（在 data_mut 闭包里调用 ui.input 会死锁）
             let time = ui.input(|i| i.time);

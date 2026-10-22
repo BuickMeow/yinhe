@@ -339,9 +339,9 @@ impl LaneUndoGuard {
         target: &AutomationTarget,
     ) -> Self {
         Self {
-            focus_id: ui.id().with(key).with("focus"),
-            before_id: ui.id().with(key).with("before"),
-            snapshot_id: ui.id().with(key).with("snap"),
+            focus_id: ui.scope_id().with(key).with("focus"),
+            before_id: ui.scope_id().with(key).with("before"),
+            snapshot_id: ui.scope_id().with(key).with("snap"),
             track_idx,
             lane_idx,
             target: target.clone(),

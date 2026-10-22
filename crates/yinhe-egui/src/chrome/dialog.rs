@@ -26,7 +26,7 @@ pub(crate) fn raise_viewport(ctx: &egui::Context, id: egui::ViewportId) {
 /// `show_viewport_immediate` 每帧重建窗口、状态不保留，用 `ctx.data`
 /// 记录"上帧是否打开"来检测打开瞬间；关闭时用 [`mark_viewport_closed`] 复位。
 pub(crate) fn raise_on_open(ctx: &egui::Context, id: egui::ViewportId) {
-    let key = egui::Id::new(("viewport_was_open", id));
+    let key = egui::Id::unique(("viewport_was_open", id));
     let was = ctx.data_mut(|d| d.get_temp::<bool>(key).unwrap_or(false));
     if !was {
         raise_viewport(ctx, id);
@@ -37,7 +37,7 @@ pub(crate) fn raise_on_open(ctx: &egui::Context, id: egui::ViewportId) {
 /// 复位的"上帧已打开"标记（窗口关闭时调用）。
 pub(crate) fn mark_viewport_closed(ctx: &egui::Context, id: egui::ViewportId) {
     ctx.data_mut(|d| {
-        d.insert_temp(egui::Id::new(("viewport_was_open", id)), false);
+        d.insert_temp(egui::Id::unique(("viewport_was_open", id)), false);
     });
 }
 
@@ -193,7 +193,7 @@ pub(crate) fn title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool, allow_
     );
     let drag_resp = ui.interact(
         drag_rect,
-        ui.id().with("dialog_title_drag"),
+        ui.scope_id().with("dialog_title_drag"),
         egui::Sense::click_and_drag(),
     );
     if drag_resp.dragged_by(egui::PointerButton::Primary) {
@@ -215,7 +215,7 @@ pub(crate) fn title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool, allow_
     }
     // 双击标题栏切换最大化/还原（仅允许最大化的窗口；400ms 内两次单击空白区）
     const DOUBLE_CLICK_MS: f64 = 400.0;
-    let dbl_id = ui.id().with("dialog_title_dbl_click");
+    let dbl_id = ui.scope_id().with("dialog_title_dbl_click");
     if allow_maximize && drag_resp.clicked_by(egui::PointerButton::Primary) {
         // 关闭按钮上的单击不计入双击
         #[cfg(not(target_os = "macos"))]

@@ -133,7 +133,7 @@ pub(crate) fn handle_input(
     let vertical = view.orientation() == yinhe_types::Orientation::Vertical;
     let content_resp = ui.interact(
         hit_rect,
-        ui.id().with("__content_drag__"),
+        ui.scope_id().with("__content_drag__"),
         egui::Sense::click_and_drag(),
     );
     let content_resp = &content_resp;
@@ -417,6 +417,7 @@ mod tests {
                 unit: egui::MouseWheelUnit::Point,
                 delta: egui::vec2(0.0, -120.0),
                 phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
                 modifiers: egui::Modifiers::NONE,
             }],
             &mut view,
@@ -432,6 +433,7 @@ mod tests {
                 unit: egui::MouseWheelUnit::Point,
                 delta: egui::vec2(120.0, 0.0),
                 phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
                 modifiers: egui::Modifiers::NONE,
             }],
             &mut view,
@@ -529,7 +531,7 @@ mod tests {
         // 前两帧：在 Foreground 层注册一块"弹窗"区域（层矩形与可见性下一帧生效）。
         for _ in 0..2 {
             ctx.run_ui(Default::default(), |ui| {
-                egui::Area::new(egui::Id::new("overlay_test_popup"))
+                egui::Area::new(egui::Id::unique("overlay_test_popup"))
                     .order(egui::Order::Foreground)
                     .fixed_pos(egui::pos2(100.0, 100.0))
                     .show(ui.ctx(), |ui| {

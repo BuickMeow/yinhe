@@ -248,7 +248,7 @@ pub(crate) fn draw_overlays(
     let grid_interval = quantize.tick_interval(ppq);
     let grid_preview = grid_interval > 0
         && ui.data_mut(|d| {
-            d.get_temp::<bool>(egui::Id::new(
+            d.get_temp::<bool>(egui::Id::unique(
                 crate::widgets::selection_actions::GRID_PREVIEW_HOVER_ID,
             ))
             .unwrap_or(false)

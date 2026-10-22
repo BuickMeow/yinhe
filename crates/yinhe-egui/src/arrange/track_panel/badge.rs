@@ -14,7 +14,7 @@ pub fn badge_icon_button(
     let rect = egui::Rect::from_center_size(center, egui::vec2(12.0, 16.0));
     let resp = ui.interact(
         rect,
-        egui::Id::new(("badge_icon_btn", id_salt)),
+        egui::Id::unique(("badge_icon_btn", id_salt)),
         egui::Sense::click(),
     );
     ui.painter().text(

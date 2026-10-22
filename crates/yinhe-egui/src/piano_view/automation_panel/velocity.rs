@@ -149,7 +149,7 @@ pub(crate) fn handle_velocity_interaction(
     Option<VelocityPreview>,
     Option<VelocityHover>,
 ) {
-    let stroke_id = ui.id().with("velocity_stroke").with(panel_index);
+    let stroke_id = ui.scope_id().with("velocity_stroke").with(panel_index);
 
     let pos = ui.input(|i| i.pointer.hover_pos());
     let pressed = ui.input(|i| i.pointer.primary_pressed());

@@ -116,8 +116,8 @@ pub(crate) fn handle_automation_interaction(
 
     let ppu = panel.base.pixels_per_tick;
     let scroll_x = panel.base.scroll_x;
-    let drag_id = ui.id().with("auto_drag").with(id_base);
-    let move_offset_id = ui.id().with("auto_move_offset").with(id_base);
+    let drag_id = ui.scope_id().with("auto_drag").with(id_base);
+    let move_offset_id = ui.scope_id().with("auto_move_offset").with(id_base);
     let track_color4 = track_colors
         .get(track_idx as usize)
         .copied()
@@ -211,8 +211,8 @@ pub(crate) fn handle_automation_interaction(
         };
         r.contains(tick, value)
     });
-    let hover_anchor_id = ui.id().with("auto_hover_anchor").with(id_base);
-    let hover_ctrl_id = ui.id().with("auto_hover_ctrl").with(id_base);
+    let hover_anchor_id = ui.scope_id().with("auto_hover_anchor").with(id_base);
+    let hover_ctrl_id = ui.scope_id().with("auto_hover_ctrl").with(id_base);
 
     // 空白单击（无拖动、未命中锚点/控制点）→ 输出点击 tick（AR 移动播放光标用）。
     // 各工具在空白处的原有语义不受影响：Pencil 新建锚点、Select 清空锚点选框照旧。
@@ -332,7 +332,7 @@ pub(crate) fn handle_automation_interaction(
     }
 
     // 右键点击锚点 → 记录编辑信息
-    let right_click_id = ui.id().with("auto_right_click").with(id_base);
+    let right_click_id = ui.scope_id().with("auto_right_click").with(id_base);
     if ictx.pointer_secondary_clicked
         && ictx.in_grid
         && let Some((_, tick)) = ictx.hit_anchor
@@ -340,9 +340,9 @@ pub(crate) fn handle_automation_interaction(
         && let Some(l) = ictx.lane
         && l.events.iter().find(|e| e.tick == tick).is_some()
     {
-        let edit_tick_id = ui.id().with("auto_right_tick").with(id_base);
-        let edit_value_id = ui.id().with("auto_right_value").with(id_base);
-        let was_open_id = ui.id().with("auto_right_was_open").with(id_base);
+        let edit_tick_id = ui.scope_id().with("auto_right_tick").with(id_base);
+        let edit_value_id = ui.scope_id().with("auto_right_value").with(id_base);
+        let was_open_id = ui.scope_id().with("auto_right_was_open").with(id_base);
         egui_ctx.data_mut(|d| {
             d.remove::<f64>(edit_tick_id);
             d.remove::<f64>(edit_value_id);

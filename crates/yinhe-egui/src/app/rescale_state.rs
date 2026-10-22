@@ -124,10 +124,10 @@ impl App {
             return;
         }
         let req: Option<RescaleRequest> =
-            ctx.data(|d| d.get_temp(egui::Id::new(RESCALE_REQUEST_ID)));
+            ctx.data(|d| d.get_temp(egui::Id::unique(RESCALE_REQUEST_ID)));
         let Some(req) = req else { return };
         // 取出请求后立即清除，避免下帧重复启动。
-        ctx.data_mut(|d| d.remove::<RescaleRequest>(egui::Id::new(RESCALE_REQUEST_ID)));
+        ctx.data_mut(|d| d.remove::<RescaleRequest>(egui::Id::unique(RESCALE_REQUEST_ID)));
 
         let Some(doc_idx) = self.workspace.active_doc else {
             return;

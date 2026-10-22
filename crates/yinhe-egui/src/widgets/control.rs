@@ -17,7 +17,7 @@ pub const CONTROL_PAD_X: f32 = 8.0;
 
 /// 控件高度覆盖值的作用域 key。
 fn height_override_id() -> egui::Id {
-    egui::Id::new("control_height_override")
+    egui::Id::unique("control_height_override")
 }
 
 /// 随字体缩放的标准控件高度（DPI 由 egui zoom 全局处理）。

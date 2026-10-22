@@ -76,7 +76,7 @@ pub(crate) fn brush_frame(
     ppq: u32,
     total_ticks: f64,
 ) -> (Vec<super::drag::GhostNote>, Option<PianoViewEvent>) {
-    let state_id = ui.id().with("brush_stroke");
+    let state_id = ui.scope_id().with("brush_stroke");
     let mut stroke: Option<BrushStroke> =
         ui.data_mut(|d| d.get_persisted(state_id)).unwrap_or(None);
 

@@ -47,7 +47,7 @@ pub fn show_file_menu(
     if !outcome.popup_open {
         button
             .ctx
-            .data_mut(|d| d.remove::<bool>(egui::Id::new(RECENT_SUBMENU_OPEN_ID)));
+            .data_mut(|d| d.remove::<bool>(egui::Id::unique(RECENT_SUBMENU_OPEN_ID)));
     }
     if outcome.pinned_changed {
         settings.save();

@@ -167,9 +167,9 @@ pub(crate) fn show(
         (rect_right - EDGE_WIDTH).max(rect_left),
     );
 
-    let edge_id_left = ui.id().with("__sb_left__");
-    let edge_id_right = ui.id().with("__sb_right__");
-    let middle_id = ui.id().with("__sb_mid__");
+    let edge_id_left = ui.scope_id().with("__sb_left__");
+    let edge_id_right = ui.scope_id().with("__sb_right__");
+    let middle_id = ui.scope_id().with("__sb_mid__");
 
     let left_resp = ui.interact(left_edge_rect, edge_id_left, egui::Sense::click_and_drag());
     let right_resp = ui.interact(
@@ -356,7 +356,7 @@ fn draw_density_image(
     } else {
         (sb_w.ceil().max(1.0) as usize, px_rows)
     };
-    let id = ui.id().with("__sb_density_tex__");
+    let id = ui.scope_id().with("__sb_density_tex__");
     let need_rebuild = ui.ctx().data_mut(|data| {
         let cache = data.get_persisted_mut_or(id, DensityTextureCache::default());
         if cache.version != d.version
@@ -618,9 +618,9 @@ pub(crate) fn show_vertical(
         (rect_bottom - EDGE_WIDTH).max(rect_top),
     );
 
-    let edge_id_start = ui.id().with("__vsb_start__");
-    let edge_id_end = ui.id().with("__vsb_end__");
-    let middle_id = ui.id().with("__vsb_mid__");
+    let edge_id_start = ui.scope_id().with("__vsb_start__");
+    let edge_id_end = ui.scope_id().with("__vsb_end__");
+    let middle_id = ui.scope_id().with("__vsb_mid__");
 
     let start_resp = ui.interact(
         start_edge_rect,
@@ -803,9 +803,9 @@ pub(crate) fn show_vertical_value(
         egui::pos2(rect_rect.max.x, bottom_edge_rect.min.y),
     );
 
-    let edge_id_top = ui.id().with("__vsb_v_top__");
-    let edge_id_bottom = ui.id().with("__vsb_v_bottom__");
-    let middle_id = ui.id().with("__vsb_v_mid__");
+    let edge_id_top = ui.scope_id().with("__vsb_v_top__");
+    let edge_id_bottom = ui.scope_id().with("__vsb_v_bottom__");
+    let middle_id = ui.scope_id().with("__vsb_v_mid__");
 
     let top_resp = ui.interact(top_edge_rect, edge_id_top, egui::Sense::click_and_drag());
     let bottom_resp = ui.interact(

@@ -154,7 +154,7 @@ pub(crate) fn sel_press(
                     state.note_drag_had_moved = false;
                     ui.data_mut(|d| {
                         d.insert_persisted(
-                            ui.id().with("note_drag_preview_dk"),
+                            ui.scope_id().with("note_drag_preview_dk"),
                             state.preview_last_dk,
                         )
                     });

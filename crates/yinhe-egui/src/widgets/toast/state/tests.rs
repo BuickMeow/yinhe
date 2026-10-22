@@ -813,6 +813,8 @@ fn debug_snapshot_center() {
     n.center_open = true;
     let mut first = true;
     let mut harness = Harness::builder()
+        .allow_missing_glyphs()
+        .with_accessibility_check(false)
         .with_size(egui::vec2(800.0, 600.0))
         .wgpu()
         .build_ui_state(
@@ -865,7 +867,7 @@ fn center_area_top_matches_content_top() {
         });
         out.textures_delta.clear();
     }
-    let st = egui::AreaState::load(&ctx, egui::Id::new("yinhe_notif_center"));
+    let st = egui::AreaState::load(&ctx, egui::Id::unique("yinhe_notif_center"));
     let Some(st) = st else {
         panic!("notif center area missing");
     };

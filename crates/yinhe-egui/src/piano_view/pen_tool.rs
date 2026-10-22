@@ -237,7 +237,7 @@ pub(crate) fn pixel_bbox(view: &PianoRollView, path: &PenPath) -> egui::Rect {
 
 /// 当前是否处于连续绘制状态（供渲染层画橡皮筋）。
 pub(crate) fn is_drawing(ui: &egui::Ui) -> bool {
-    let mem_id = ui.id().with("pen_tool");
+    let mem_id = ui.scope_id().with("pen_tool");
     ui.data_mut(|d| d.get_persisted::<PenMemory>(mem_id))
         .map(|m| m.drawing)
         .unwrap_or(false)
@@ -257,7 +257,7 @@ pub(crate) fn frame(
     total_ticks: f64,
     write_track: Option<u16>,
 ) -> Vec<(u32, u32, u8, u16)> {
-    let mem_id = ui.id().with("pen_tool");
+    let mem_id = ui.scope_id().with("pen_tool");
     let mut mem: PenMemory = ui.data_mut(|d| d.get_persisted(mem_id)).unwrap_or_default();
 
     if crate::view_interaction::pointer_over_popup(ui.ctx()) {

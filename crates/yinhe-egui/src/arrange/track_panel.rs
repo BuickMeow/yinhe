@@ -94,7 +94,7 @@ pub(crate) fn show(
     }
 
     // ── 拖拽排序跨帧状态（算法见 widgets::reorder） ──
-    let drag_id = ui.id().with("track_panel_drag");
+    let drag_id = ui.scope_id().with("track_panel_drag");
     let mut drag: Option<crate::widgets::reorder::DragReorder> =
         ui.data_mut(|d| d.get_temp(drag_id)).unwrap_or_default();
 
@@ -111,7 +111,7 @@ pub(crate) fn show(
     // 按全局行号奇偶（AM 子行也参与）：展开奇数条 lane 会错位后续音轨的斑纹。
     let lane_even = crate::theme::stripe_bg();
 
-    let interact_id = egui::Id::new("track_panel_area");
+    let interact_id = egui::Id::unique("track_panel_area");
     let resp = ui.interact(panel_rect, interact_id, egui::Sense::click_and_drag());
 
     let btn_size = egui::vec2(18.0, 18.0);
@@ -228,7 +228,7 @@ pub(crate) fn show(
                     "M",
                     st.mute,
                     crate::theme::mute_active(),
-                    egui::Id::new(("am_btn_m", track, sub)),
+                    egui::Id::unique(("am_btn_m", track, sub)),
                 );
                 let s_resp = draw::draw_inline_button(
                     ui,
@@ -237,7 +237,7 @@ pub(crate) fn show(
                     "S",
                     st.solo,
                     crate::theme::solo_active(),
-                    egui::Id::new(("am_btn_s", track, sub)),
+                    egui::Id::unique(("am_btn_s", track, sub)),
                 );
                 crate::widgets::hint::hover(ui.ctx(), &m_resp, t!("hint.arrange.am_mute"));
                 crate::widgets::hint::hover(ui.ctx(), &s_resp, t!("hint.arrange.am_solo"));
@@ -366,7 +366,7 @@ pub(crate) fn show(
                 );
                 let chev_resp = ui.interact(
                     icon_rect,
-                    egui::Id::new(("am_chevron", idx)),
+                    egui::Id::unique(("am_chevron", idx)),
                     egui::Sense::click(),
                 );
                 crate::widgets::hint::hover(ui.ctx(), &chev_resp, t!("hint.arrange.am_expand"));
@@ -462,7 +462,7 @@ pub(crate) fn show(
                     "M",
                     muted,
                     crate::theme::mute_active(),
-                    egui::Id::new(("track_btn_m", idx)),
+                    egui::Id::unique(("track_btn_m", idx)),
                 );
                 let s_resp = draw::draw_inline_button(
                     ui,
@@ -471,7 +471,7 @@ pub(crate) fn show(
                     "S",
                     soloed,
                     crate::theme::solo_active(),
-                    egui::Id::new(("track_btn_s", idx)),
+                    egui::Id::unique(("track_btn_s", idx)),
                 );
 
                 crate::widgets::hint::hover(ui.ctx(), &m_resp, t!("hint.arrange.track_mute"));

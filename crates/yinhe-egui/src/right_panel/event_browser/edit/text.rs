@@ -143,8 +143,8 @@ fn show_text_edit_popup(
     title: &str,
     initial: String,
 ) -> TextPopupAction {
-    let state_id = egui::Id::new((salt, "state"));
-    let popup_id = ui.id().with((salt, "popup"));
+    let state_id = egui::Id::unique((salt, "state"));
+    let popup_id = ui.scope_id().with((salt, "popup"));
 
     let mut state: String = ui.memory(|m| {
         m.data

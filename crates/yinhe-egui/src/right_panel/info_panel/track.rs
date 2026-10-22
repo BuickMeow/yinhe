@@ -137,7 +137,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
         let ch_options: Vec<(usize, String)> =
             (0..16).map(|c| (c, format!("{:02}", c + 1))).collect();
         let mut ch_sel = ti.channel as usize;
-        let ch_id = ui.id().with("track_channel");
+        let ch_id = ui.scope_id().with("track_channel");
         if crate::widgets::combo::combo_select(ui, "track_channel", &mut ch_sel, 60.0, &ch_options)
         {
             new_ch = ch_sel as u8;
@@ -151,7 +151,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
             .map(|p| (p, format!("Port {}", (b'A' + p as u8) as char)))
             .collect();
         let mut port_sel = ti.port as usize;
-        let port_id = ui.id().with("track_port");
+        let port_id = ui.scope_id().with("track_port");
         if crate::widgets::combo::combo_select(
             ui,
             "track_port",
@@ -192,7 +192,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
 /// 颜色行：色块（点击直接弹出取色器）+ 重置按钮。
 fn show_color_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
     let mut undo_color: Option<([f32; 4], [f32; 4])> = None;
-    let edit_id = ui.id().with("track_color_edit");
+    let edit_id = ui.scope_id().with("track_color_edit");
     let was_editing = ui.data(|d| d.get_temp::<bool>(edit_id)).unwrap_or(false);
 
     crate::widgets::rows::panel_row(ui, t!("track.color").as_ref(), |ui| {

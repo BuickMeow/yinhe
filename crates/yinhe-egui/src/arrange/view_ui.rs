@@ -365,7 +365,7 @@ pub fn show(
         );
     }
     if *cfg.active_tool == Tool::Eraser {
-        let drag_id = ui.id().with("eraser_drag_arr");
+        let drag_id = ui.scope_id().with("eraser_drag_arr");
         let drag: Option<((f64, f32), egui::Pos2)> =
             ui.data_mut(|d| d.get_persisted(drag_id)).unwrap_or(None);
         if let Some((start_music, end)) = drag {

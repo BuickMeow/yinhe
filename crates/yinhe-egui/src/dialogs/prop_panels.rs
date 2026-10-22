@@ -26,7 +26,7 @@ pub(crate) fn show_project_settings_viewport(
     let open_rc = Rc::new(RefCell::new(true));
     let open_out = Rc::clone(&open_rc);
     let ctx_clone = ctx.clone();
-    let draft_key = egui::Id::new("project_settings_draft");
+    let draft_key = egui::Id::unique("project_settings_draft");
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
@@ -112,7 +112,7 @@ pub(crate) fn show_project_settings_viewport(
             vctx.data_mut(|d| d.insert_temp(draft_key, draft.clone()));
 
             if save {
-                let save_id = egui::Id::new("project_settings_save").value();
+                let save_id = egui::Id::unique("project_settings_save").value();
                 crate::dialogs::project_info::commit_draft(vctx, doc, &draft, save_id);
                 vctx.data_mut(|d| d.remove::<ProjectSettingsDraft>(draft_key));
                 *open_rc.borrow_mut() = false;

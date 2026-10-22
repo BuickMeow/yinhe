@@ -43,7 +43,7 @@ fn control_text_input_impl(
     let rect = ui
         .allocate_exact_size(egui::vec2(width, control::h(&ctx)), egui::Sense::hover())
         .0;
-    let te_id = ui.id().with(&id_salt);
+    let te_id = ui.scope_id().with(&id_salt);
     let focused = ui.memory(|m| m.has_focus(te_id));
     control::paint_bg(
         ui.painter(),
@@ -72,7 +72,7 @@ fn control_text_input_impl(
     let mut te = egui::TextEdit::singleline(text)
         .frame(egui::Frame::NONE)
         // TextEdit 默认 LEFT_TOP（贴顶），这里垂直居中，与外框居中对齐。
-        .vertical_align(egui::Align::Center)
+        .align(egui::Align2::LEFT_CENTER)
         .id(te_id);
     if let Some(h) = hint {
         te = te.hint_text(h);
@@ -133,7 +133,7 @@ pub fn control_text_input_multiline(
         egui::pos2(rect.min.x + pad_x, rect.min.y + pad_y),
         egui::pos2(rect.max.x - pad_x, rect.max.y - pad_y),
     );
-    let te_id = ui.id().with(&id_salt);
+    let te_id = ui.scope_id().with(&id_salt);
     let focused = ui.memory(|m| m.has_focus(te_id));
     control::paint_bg(
         ui.painter(),

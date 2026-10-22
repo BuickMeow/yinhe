@@ -22,7 +22,11 @@ pub fn horizontal(
     rect: egui::Rect,
 ) -> egui::Response {
     let hit = rect.expand2(egui::vec2(0.0, HIT_PAD));
-    let resp = ui.interact(hit, ui.id().with(id_salt), egui::Sense::click_and_drag());
+    let resp = ui.interact(
+        hit,
+        ui.scope_id().with(id_salt),
+        egui::Sense::click_and_drag(),
+    );
     let on_rect = ui
         .input(|i| i.pointer.interact_pos())
         .is_some_and(|p| hit.contains(p));
@@ -59,7 +63,11 @@ pub fn vertical(
     rect: egui::Rect,
 ) -> egui::Response {
     let hit = rect.expand2(egui::vec2(HIT_PAD, 0.0));
-    let resp = ui.interact(hit, ui.id().with(id_salt), egui::Sense::click_and_drag());
+    let resp = ui.interact(
+        hit,
+        ui.scope_id().with(id_salt),
+        egui::Sense::click_and_drag(),
+    );
     let on_rect = ui
         .input(|i| i.pointer.interact_pos())
         .is_some_and(|p| hit.contains(p));

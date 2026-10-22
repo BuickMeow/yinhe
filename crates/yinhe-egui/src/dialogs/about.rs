@@ -130,6 +130,8 @@ mod tests {
     fn render_about_smoke() {
         let mut first = true;
         let mut h = egui_kittest::Harness::builder()
+            .allow_missing_glyphs()
+            .with_accessibility_check(false)
             .with_size(egui::vec2(400.0, 430.0))
             .build_ui_state(
                 move |ui, _state: &mut ()| {

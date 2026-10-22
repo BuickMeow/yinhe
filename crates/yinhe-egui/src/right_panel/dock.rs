@@ -123,7 +123,7 @@ pub(crate) fn show(
     let geoms = compute_geoms(content_rect, n, &weights);
 
     // 拖动状态。
-    let drag_id = ui.id().with("rpanel_drag_tab");
+    let drag_id = ui.scope_id().with("rpanel_drag_tab");
     let mut drag: Option<DragTab> = ui.data_mut(|d| d.get_persisted(drag_id)).unwrap_or(None);
     let pointer = ui.input(|i| i.pointer.clone());
     let pointer_pos = pointer.hover_pos();
@@ -278,7 +278,7 @@ fn paint_header(
         let selected = ti == col.active;
         let resp = ui.interact(
             tab_rect,
-            ui.id().with(("rpanel_tab", ci, ti)),
+            ui.scope_id().with(("rpanel_tab", ci, ti)),
             egui::Sense::click_and_drag(),
         );
         let hovered = resp.hovered();

@@ -114,9 +114,9 @@ pub fn popup_menu_row(
         );
         // 无背景，仅前景四态（与 mode_bar hover_button 一致），用 pin_index 固定 Id 避免错位
         let pin_id = if let Some(idx) = spec.pin_index {
-            ui.id().with(("pin", idx))
+            ui.scope_id().with(("pin", idx))
         } else {
-            ui.id().with("pin")
+            ui.scope_id().with("pin")
         };
         let resp = ui.interact(pin_rect, pin_id, egui::Sense::click());
         crate::widgets::hint::hover_popup(ui.ctx(), &resp, t!("hint.menu.pin"));

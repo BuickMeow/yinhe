@@ -79,7 +79,7 @@ pub fn recent_files_section(
     any_row_hovered: bool,
     pending_open_path: &mut Option<String>,
 ) {
-    let open_id = egui::Id::new(RECENT_SUBMENU_OPEN_ID);
+    let open_id = egui::Id::unique(RECENT_SUBMENU_OPEN_ID);
     let mut open: bool = ui.ctx().data_mut(|d| d.get_temp(open_id)).unwrap_or(false);
     if any_row_hovered {
         open = false;
@@ -114,7 +114,7 @@ pub fn recent_files_section(
 
     let sub_w = measure_recent_submenu_width(ui.ctx(), recent);
     egui::Popup::from_response(&row_resp)
-        .id(egui::Id::new("recent_files_submenu"))
+        .id(egui::Id::unique("recent_files_submenu"))
         .open(true)
         .align(egui::RectAlign::RIGHT_START)
         .layout(egui::Layout::top_down_justified(egui::Align::Min))

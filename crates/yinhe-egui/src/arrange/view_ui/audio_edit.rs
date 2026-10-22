@@ -141,7 +141,7 @@ enum HitZone {
 }
 
 fn drag_id() -> egui::Id {
-    egui::Id::new("arr_audio_clip_drag")
+    egui::Id::unique("arr_audio_clip_drag")
 }
 
 /// 处理一帧音频片段交互。返回 true = 本帧音频交互消费了指针事件
@@ -182,7 +182,7 @@ pub(crate) fn frame(
         && let Some((track, clip)) = hit_test(view, geom, data, pos, rect)
     {
         crate::widgets::hint::set(ui.ctx(), rust_i18n::t!("hint.arrange.audio_clip"));
-        let id = egui::Id::new(("arr_audio_ctx", track, clip.id));
+        let id = egui::Id::unique(("arr_audio_ctx", track, clip.id));
         let resp = ui.interact(rect, id, egui::Sense::click());
         let selected_ids = selected_ids_for(edit, track, clip.id);
         resp.context_menu(|ui| {

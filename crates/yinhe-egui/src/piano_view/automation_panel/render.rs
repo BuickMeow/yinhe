@@ -172,7 +172,7 @@ pub(crate) fn draw_panel_overlay(
     if overlay.marquee_rect.is_none() {
         let x_offset = grid_area.min.x - panel.base.scroll_x;
         let ppu = panel.base.pixels_per_tick;
-        let move_offset_id = ui.id().with("auto_move_offset").with(panel_idx);
+        let move_offset_id = ui.scope_id().with("auto_move_offset").with(panel_idx);
         let (d_tick, d_value) = ui
             .ctx()
             .data(|d| d.get_temp::<(i64, f32)>(move_offset_id))
