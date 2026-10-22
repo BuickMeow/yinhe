@@ -28,8 +28,9 @@ mixin _ShellCore on _ShellBase {
 
   /// 覆盖层：仅在修订号变化时重取 JSON。
   ///
-  /// 新数据先留在 `_overlayNext` 一帧；即使下一帧修订号不变，也必须把
+  /// AR 的新数据先留在 `_overlayNext` 一帧；即使下一帧修订号不变，也必须把
   /// pending 数据刷出去，否则选框会一直停在旧状态，直到用户再点一下。
+  /// PR 的纹理同帧可见，直接刷新，不能再延迟。
   void _readOverlay() {
     final rev = rust.overlayRevision();
     if (rev == _overlayRev) {
@@ -48,10 +49,15 @@ mixin _ShellCore on _ShellBase {
     try {
       final json = jsonDecode(ptr.toDartString()) as Map<String, dynamic>;
       final next = OverlayData.fromJson(json);
-      final prev = _overlayNext;
-      _overlayNext = next;
-      // 第一份数据直接显示；之后延迟一帧，避免选框先于 Texture 移动。
-      _overlay.value = prev ?? next;
+      if (_overlayFrameDelay == 0) {
+        _overlayNext = null;
+        _overlay.value = next;
+      } else {
+        final prev = _overlayNext;
+        _overlayNext = next;
+        // 第一份数据直接显示；之后延迟一帧，避免选框先于 Texture 移动。
+        _overlay.value = prev ?? next;
+      }
     } catch (_) {
       _overlayNext = null;
       _overlay.value = OverlayData.empty;
