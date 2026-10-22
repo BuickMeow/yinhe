@@ -39,7 +39,11 @@ mixin _ShellCore on _ShellBase {
     }
     try {
       final json = jsonDecode(ptr.toDartString()) as Map<String, dynamic>;
-      _overlay.value = OverlayData.fromJson(json);
+      final next = OverlayData.fromJson(json);
+      final prev = _overlayNext;
+      _overlayNext = next;
+      // 与 snapshot 一样延迟一帧，避免选框先于 Texture 移动。
+      _overlay.value = prev ?? next;
     } catch (_) {
       _overlay.value = OverlayData.empty;
     } finally {
@@ -420,6 +424,9 @@ mixin _ShellCore on _ShellBase {
     _pushTool();
     _velocityViewPpu = null;
     _velocityViewScroll = null;
+    _snapDelay.clear();
+    _playheadDelay.clear();
+    _overlayNext = null;
     if (mode == kViewPianoroll) {
       _loadAutomation();
       _loadVelocity();

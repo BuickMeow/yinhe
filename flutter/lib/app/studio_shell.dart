@@ -195,6 +195,16 @@ abstract class _ShellBase extends State<StudioShell>
   double? _velocityViewPpu;
   double? _velocityViewScroll;
 
+  /// Flutter 浮层比 wgpu Texture 晚一帧显示。
+  ///
+  /// Android Texture 的实际呈现通常比 Flutter 浮层晚一帧；这里把 ticker 读到的
+  /// snapshot / overlay / playhead 排队延迟一帧，保证面板、标尺和文本框与
+  /// wgpu 纹理使用同一帧相机状态。
+  static const int _overlayFrameDelay = 1;
+  final List<List<double>> _snapDelay = <List<double>>[];
+  final List<double> _playheadDelay = <double>[];
+  OverlayData? _overlayNext;
+
   /// 保存进行中：顶栏保存按钮显示加载圆环。
   bool _saving = false;
   Timer? _savingTimer;
@@ -308,15 +318,22 @@ class _StudioShellState extends _ShellBase
         rust.dragTick();
         rust.renderFrame();
       }
-      _playhead.value = rust.playheadX();
+      final px = rust.playheadX();
+      _playheadDelay.add(px);
+      final shownPlayhead = _playheadDelay.length > _ShellBase._overlayFrameDelay
+          ? _playheadDelay.removeAt(0)
+          : px;
+      _playhead.value = shownPlayhead;
       final snap = _readSnapshot();
-      if (!_sameSnapshot(snap)) {
-        _snap.value = snap;
+      _snapDelay.add(snap);
+      final shownSnap = _snapDelay.length > _ShellBase._overlayFrameDelay
+          ? _snapDelay.removeAt(0)
+          : snap;
+      if (!_sameSnapshot(shownSnap)) {
+        _snap.value = shownSnap;
       }
       _scheduleVelocityReload();
       _readOverlay();
-      // 相机输入统一在纹理/浮层快照之后提交，下一帧两者一起前进（1 帧延迟）。
-      _applyPendingViewportGesture();
       // 选框状态驱动：移动态画虚线；长按中更新圆环进度（Flutter long press 推进状态）。
       final selState = rust.selectionState();
       if (_moveDashed.value != (selState == 2)) {
