@@ -12,7 +12,8 @@ class AutomationPainter extends CustomPainter {
     required this.color,
     required this.snap,
     required this.preview,
-  }) : super(repaint: Listenable.merge([snap, preview]));
+    required this.velocityPreview,
+  }) : super(repaint: Listenable.merge([snap, preview, velocityPreview]));
 
   /// null = 力度模式。
   final AutomationLaneData? lane;
@@ -27,6 +28,9 @@ class AutomationPainter extends CustomPainter {
 
   /// 拖动中的锚点预览（tick, value）。
   final ValueNotifier<(double, double)?> preview;
+
+  /// 力度笔划预览：(tick, length, velocity01, track)。
+  final ValueNotifier<List<(double, double, double, int)>> velocityPreview;
 
   /// 左侧 combo 列宽（与 main.dart 的 SizedBox 保持一致）。
   static const double comboWidth = 60.0;
@@ -92,6 +96,28 @@ class AutomationPainter extends CustomPainter {
             ? trackColors[track]
             : color;
         canvas.drawRect(Rect.fromLTWH(left, top, width, height), paint);
+      }
+      // 笔划预览：用较粗描边显示松手后将写入的高度，原力度条保留作参照。
+      final previewPaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.0;
+      for (final (tick, len, vel01, track) in velocityPreview.value) {
+        final left = xOf(tick);
+        final right = xOf(tick + len);
+        if (right < -4 || left > size.width + 4) {
+          continue;
+        }
+        final w = (right - left).clamp(2.0, double.infinity).toDouble();
+        final top = yOf(vel01);
+        previewPaint.color =
+            ((track >= 0 && track < trackColors.length)
+                    ? trackColors[track]
+                    : color)
+                .withValues(alpha: 0.85);
+        canvas.drawRect(
+          Rect.fromLTWH(left, top, w, size.height - top),
+          previewPaint,
+        );
       }
       return;
     }

@@ -118,7 +118,7 @@ abstract class _ShellBase extends State<StudioShell>
   int _mainToolPr = 0;
   int _mainToolAr = 0;
   /// 初始备用工具：PR 铅笔、AR 手型；主槽位都是选框。
-  int _quickToolPr = quickToolsPr.last;
+  int _quickToolPr = defaultQuickToolPr;
   int _quickToolAr = quickToolsAr.last;
   /// 当前高亮的是快捷槽还是主槽。仅最近一次操作的槽位高亮；
   /// 即使两个槽位工具相同，也只有一个按钮是强调色。
@@ -261,6 +261,7 @@ abstract class _ShellBase extends State<StudioShell>
   void _loadSongTitle();
   void _loadTimeSigSegments();
   void _loadVelocity();
+  void _commitVelocityStroke(List<(double, double)> points);
   void _newProject();
   void _openProjectSettings();
   void _openRecent(RecentItem item);

@@ -702,6 +702,25 @@ pub extern "C" fn yinhe_velocity_bars(out_len: *mut u32) -> *const f64 {
     }
 }
 
+/// PR 力度笔划：`points` 为 `(tick, velocity)` 对，长度必须为偶数。
+///
+/// 一笔只产生一个 undo；成功返回 1。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
+pub extern "C" fn yinhe_velocity_stroke(points: *const f64, len: u32) -> i32 {
+    if points.is_null() || len < 2 || !len.is_multiple_of(2) {
+        return 0;
+    }
+    let flat = unsafe { std::slice::from_raw_parts(points, len as usize) };
+    let mut stroke = Vec::with_capacity(flat.len() / 2);
+    for i in (0..flat.len()).step_by(2) {
+        if flat[i].is_finite() && flat[i + 1].is_finite() {
+            stroke.push((flat[i], flat[i + 1] as f32));
+        }
+    }
+    scene::velocity_stroke(&stroke)
+}
+
 /// 选框拖拽状态：0=无、1=待定（长按中）、2=移动态、3=空白处长按完成。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_selection_state() -> i32 {

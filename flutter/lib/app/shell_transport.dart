@@ -97,6 +97,29 @@ mixin _ShellTransport on _ShellBase {
     setState(() => _velocityBars = bars);
   }
 
+  /// 提交 PR 力度笔划：Rust 侧按原音符重算并合成一个 undo。
+  @override
+  void _commitVelocityStroke(List<(double, double)> points) {
+    if (points.isEmpty) {
+      return;
+    }
+    final ptr = calloc<ffi.Double>(points.length * 2);
+    var changed = 0;
+    try {
+      for (var i = 0; i < points.length; i++) {
+        ptr[i * 2] = points[i].$1;
+        ptr[i * 2 + 1] = points[i].$2;
+      }
+      changed = rust.velocityStroke(ptr, points.length);
+    } finally {
+      calloc.free(ptr);
+    }
+    if (changed == 1) {
+      _readDocState();
+      _loadVelocity();
+    }
+  }
+
   @override
   void _setAutoCollapsed(bool collapsed) {
     setState(() => _autoCollapsed = collapsed);

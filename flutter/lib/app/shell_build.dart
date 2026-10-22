@@ -154,6 +154,8 @@ mixin _ShellBuild on _ShellBase {
                                 activeTrack: _activeTrack ?? 0,
                                 onCollapsed: _setAutoCollapsed,
                                 onReload: _loadAutomation,
+                                onVelocityCommit: _commitVelocityStroke,
+                                velocityDrawEnabled: _tool == 2,
                               )
                             else
                               AutoExpandButton(

@@ -16,6 +16,9 @@ const List<int> toolPrAllowed = [0, 1, 2, 3, 4];
 /// AR 允许的工具。
 const List<int> toolArAllowed = [0, 1];
 
-/// 顶部栏快捷工具组：PR 选框/铅笔，AR 选框/手形。
-const List<int> quickToolsPr = [0, 2];
-const List<int> quickToolsAr = [0, 1];
+/// 顶部栏两个工具下拉框共用同一套工具；快捷槽只记住自己最近选的那一个。
+const List<int> quickToolsPr = toolPrAllowed;
+const List<int> quickToolsAr = toolArAllowed;
+
+/// PR 快捷槽初始工具：铅笔（旧默认）。
+const int defaultQuickToolPr = 2;

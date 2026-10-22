@@ -17,6 +17,8 @@ class AutomationPanel extends StatefulWidget {
     required this.activeTrack,
     required this.onCollapsed,
     required this.onReload,
+    required this.onVelocityCommit,
+    required this.velocityDrawEnabled,
   });
 
   final ValueNotifier<List<double>> snap;
@@ -27,6 +29,15 @@ class AutomationPanel extends StatefulWidget {
   final ValueChanged<bool> onCollapsed;
   final VoidCallback onReload;
 
+  /// 提交一笔力度绘制点 `(tick, velocity 1..127)`。
+  final void Function(List<(double, double)> points) onVelocityCommit;
+
+  /// 铅笔工具下才允许在力度栏落笔，避免手形/刷子误改力度。
+  final bool velocityDrawEnabled;
+
+  /// 面板高度（与 painter 的坐标换算一致）。
+  static const double height = 81.0;
+
   @override
   State<AutomationPanel> createState() => _AutomationPanelState();
 }
@@ -36,13 +47,19 @@ class _AutomationPanelState extends State<AutomationPanel> {
 
   int _autoIndex = 0;
   final ValueNotifier<(double, double)?> _autoPreview = ValueNotifier(null);
+  final ValueNotifier<List<(double, double, double, int)>> _velocityPreview =
+      ValueNotifier(const []);
   bool _draggingAnchor = false;
+  bool _velocityStrokeActive = false;
+  final List<(double, double)> _velocityPoints = [];
+  final Map<(int, int), (double, double, double, int)> _velocityTouched = {};
 
   @override
   void didUpdateWidget(covariant AutomationPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.activeTrack != widget.activeTrack) {
       _autoIndex = 0;
+      _clearVelocityStroke();
     } else if (_autoIndex > widget.lanes.length) {
       _autoIndex = 0;
     }
@@ -51,11 +68,129 @@ class _AutomationPanelState extends State<AutomationPanel> {
   @override
   void dispose() {
     _autoPreview.dispose();
+    _velocityPreview.dispose();
     super.dispose();
+  }
+
+  void _clearVelocityStroke() {
+    _velocityStrokeActive = false;
+    _velocityPoints.clear();
+    _velocityTouched.clear();
+    _velocityPreview.value = const [];
+  }
+
+  double _tickAt(double x) {
+    final s = widget.snap.value;
+    final ppu = s[1];
+    final scrollX = s[2];
+    final kbW = s[5];
+    if (ppu <= 0) {
+      return 0.0;
+    }
+    final px = x - (kbW - AutomationPainter.comboWidth);
+    final tick = (px + scrollX) / ppu;
+    return tick < 0.0 ? 0.0 : tick;
+  }
+
+  double _velocityAt(double y) {
+    final v = 1.0 + 126.0 * (1.0 - (y / AutomationPanel.height).clamp(0.0, 1.0));
+    return v.clamp(1.0, 127.0);
+  }
+
+  int _velocityLowerBound(double tick) {
+    var lo = 0;
+    var hi = widget.velocity.length;
+    while (lo < hi) {
+      final mid = (lo + hi) >> 1;
+      if (widget.velocity[mid].$1 < tick) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    return lo;
+  }
+
+  /// 把一个线段扫过的力度条写入预览。正式修改由 Rust 在松手时按原音符重算。
+  void _hitVelocitySegment((double, double) a, (double, double) b) {
+    final s = widget.snap.value;
+    final ppu = s[1];
+    if (ppu <= 0 || widget.activeTrack < 0) {
+      return;
+    }
+    final hit = 2.0 / ppu;
+    final lo = (a.$1 < b.$1 ? a.$1 : b.$1) - hit;
+    final hi = (a.$1 > b.$1 ? a.$1 : b.$1) + hit;
+    final denom = b.$1 - a.$1;
+    for (var i = _velocityLowerBound(lo); i < widget.velocity.length; i++) {
+      final (tick, len, _, track) = widget.velocity[i];
+      if (tick > hi) {
+        break;
+      }
+      if (tick < lo || track != widget.activeTrack) {
+        continue;
+      }
+      final f = denom.abs() < 1e-9 ? 0.0 : (tick - a.$1) / denom;
+      final velocity = (a.$2 + (b.$2 - a.$2) * f).clamp(1.0, 127.0);
+      _velocityTouched[(tick.round(), track)] = (
+        tick,
+        len,
+        (velocity - 1.0) / 126.0,
+        track,
+      );
+    }
+    _velocityPreview.value = _velocityTouched.values.toList(growable: false);
+  }
+
+  bool _startVelocityStroke(Offset p) {
+    if (!widget.velocityDrawEnabled || _autoIndex != 0) {
+      return false;
+    }
+    final point = (_tickAt(p.dx), _velocityAt(p.dy));
+    _velocityStrokeActive = true;
+    _velocityPoints
+      ..clear()
+      ..add(point);
+    _velocityTouched.clear();
+    _hitVelocitySegment(point, point);
+    return true;
+  }
+
+  void _handleVelocityTap(Offset p) {
+    if (!widget.velocityDrawEnabled || _autoIndex != 0) {
+      return;
+    }
+    final point = (_tickAt(p.dx), _velocityAt(p.dy));
+    widget.onVelocityCommit([point]);
+  }
+
+  void _handleVelocityUpdate(Offset p) {
+    if (!_velocityStrokeActive) {
+      return;
+    }
+    final point = (_tickAt(p.dx), _velocityAt(p.dy));
+    final last = _velocityPoints.last;
+    _velocityPoints.add(point);
+    _hitVelocitySegment(last, point);
+  }
+
+  void _finishVelocityStroke() {
+    if (!_velocityStrokeActive) {
+      return;
+    }
+    final points = List<(double, double)>.unmodifiable(_velocityPoints);
+    _clearVelocityStroke();
+    if (points.isNotEmpty) {
+      widget.onVelocityCommit(points);
+    }
   }
 
   /// 锚点拖动：按屏幕 x 找最近锚点（离散 lane 的 tick 不变，仅改 value）。
   void _handlePanStart(DragStartDetails d) {
+    if (_autoIndex == 0) {
+      _startVelocityStroke(d.localPosition);
+      return;
+    }
     if (_autoIndex < 1 || _autoIndex > widget.lanes.length) {
       return;
     }
@@ -89,6 +224,10 @@ class _AutomationPanelState extends State<AutomationPanel> {
   }
 
   void _handlePanUpdate(DragUpdateDetails d) {
+    if (_velocityStrokeActive) {
+      _handleVelocityUpdate(d.localPosition);
+      return;
+    }
     final pv = _autoPreview.value;
     if (!_draggingAnchor || pv == null) {
       return;
@@ -98,6 +237,10 @@ class _AutomationPanelState extends State<AutomationPanel> {
   }
 
   void _handlePanEnd() {
+    if (_velocityStrokeActive) {
+      _finishVelocityStroke();
+      return;
+    }
     final pv = _autoPreview.value;
     final wasDragging = _draggingAnchor;
     setState(() {
@@ -116,6 +259,14 @@ class _AutomationPanelState extends State<AutomationPanel> {
     if (ok == 1) {
       Future<void>.delayed(const Duration(milliseconds: 250), widget.onReload);
     }
+  }
+
+  void _handlePanCancel() {
+    if (_velocityStrokeActive) {
+      _clearVelocityStroke();
+    }
+    _draggingAnchor = false;
+    _autoPreview.value = null;
   }
 
   Color get _trackColor {
@@ -138,7 +289,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
       right: 0,
       bottom: 0,
       child: Container(
-        height: 81,
+        height: AutomationPanel.height,
         decoration: BoxDecoration(
           color: YinheTheme.bg,
           border: Border(top: BorderSide(color: YinheTheme.lineFg)),
@@ -169,7 +320,10 @@ class _AutomationPanelState extends State<AutomationPanel> {
                         for (var i = 0; i < names.length; i++)
                           PopupMenuItem(value: i, child: Text(names[i])),
                       ],
-                      onSelected: (i) => setState(() => _autoIndex = i),
+                      onSelected: (i) {
+                        _clearVelocityStroke();
+                        setState(() => _autoIndex = i);
+                      },
                       child: Center(
                         child: Text(
                           names[index],
@@ -190,9 +344,13 @@ class _AutomationPanelState extends State<AutomationPanel> {
             Expanded(
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
+                onTapUp: widget.velocityDrawEnabled && _autoIndex == 0
+                    ? (d) => _handleVelocityTap(d.localPosition)
+                    : null,
                 onPanStart: _handlePanStart,
                 onPanUpdate: _handlePanUpdate,
                 onPanEnd: (_) => _handlePanEnd(),
+                onPanCancel: _handlePanCancel,
                 child: SizedBox.expand(
                   child: CustomPaint(
                     painter: AutomationPainter(
@@ -202,6 +360,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
                       color: _trackColor,
                       snap: widget.snap,
                       preview: _autoPreview,
+                      velocityPreview: _velocityPreview,
                     ),
                   ),
                 ),

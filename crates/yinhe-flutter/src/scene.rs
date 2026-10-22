@@ -1867,6 +1867,108 @@ pub fn velocity_bars() -> Vec<f64> {
     out
 }
 
+/// PR 力度栏笔划：按 `(tick, velocity)` 折线命中的音符力度批量修改。
+///
+/// 与桌面 automation 面板的 velocity 笔划同规则：只改当前编辑轨；有 PR 选框时
+/// 只改选框内音符；一笔只产生一个 undo。返回 1 表示有实际修改。
+pub fn velocity_stroke(points: &[(f64, f32)]) -> i32 {
+    if points.is_empty() {
+        return 0;
+    }
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return 0;
+    };
+    let Some(track) = s.active_track.and_then(|t| u16::try_from(t).ok()) else {
+        return 0;
+    };
+    if doc.edit.track_cache.conductor_idx == Some(track) {
+        return 0;
+    }
+
+    let ppu = s.pr_view.base.pixels_per_tick.max(0.001);
+    let hit_ticks = (2.0 / ppu) as f64;
+    let model = &doc.data.model;
+    let sel_rects = doc.edit.sel_rect.effective_rects();
+    if !sel_rects.is_empty()
+        && !doc.edit.track_selected.is_empty()
+        && !doc.edit.track_selected.contains(&track)
+    {
+        return 0;
+    }
+    let has_sel = !sel_rects.is_empty();
+
+    // (key, start_tick) → 新力度；同一力度条被笔划反复经过时以后经过的值为准。
+    let mut touched: std::collections::HashMap<(u8, u32), u8> = std::collections::HashMap::new();
+    let mut apply_segment = |a: (f64, f32), b: (f64, f32)| {
+        let lo = a.0.min(b.0) - hit_ticks;
+        let hi = a.0.max(b.0) + hit_ticks;
+        let lo_u = lo.max(0.0).floor() as u32;
+        let hi_u = hi.max(0.0).ceil() as u32;
+        for key in 0..=yinhe_types::MAX_KEY {
+            for note in model.key_notes_in_range(key, lo_u, hi_u.saturating_add(1)) {
+                if note.track != track || note.start_tick < lo_u || note.start_tick > hi_u {
+                    continue;
+                }
+                if has_sel {
+                    let st = f64::from(note.start_tick);
+                    let inside = sel_rects
+                        .iter()
+                        .any(|&(ts, te, kl, kh)| st >= ts && st < te && key >= kl && key <= kh);
+                    if !inside {
+                        continue;
+                    }
+                }
+                let denom = b.0 - a.0;
+                let f = if denom.abs() < f64::EPSILON {
+                    0.0
+                } else {
+                    ((f64::from(note.start_tick) - a.0) / denom) as f32
+                };
+                let velocity = (a.1 + (b.1 - a.1) * f).round().clamp(1.0, 127.0) as u8;
+                touched.insert((key, note.start_tick), velocity);
+            }
+        }
+    };
+
+    if points.len() == 1 {
+        apply_segment(points[0], points[0]);
+    } else {
+        for pair in points.windows(2) {
+            apply_segment(pair[0], pair[1]);
+        }
+    }
+    if touched.is_empty() {
+        return 0;
+    }
+
+    let edits: Vec<yinhe_types::VelocityEdit> = touched
+        .into_iter()
+        .map(|((key, start_tick), velocity)| yinhe_types::VelocityEdit {
+            track,
+            start_tick,
+            key,
+            velocity,
+        })
+        .collect();
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let before = doc.capture_snapshot();
+    let Some(action) = doc.set_notes_velocity(&edits) else {
+        return 0;
+    };
+    doc.push_undo(action, "力度绘制", before);
+    doc.edit.pianoroll_view.base.dirty = true;
+    let model = doc.data.model.clone();
+    refresh_snapshot(&mut s);
+    drop(s);
+    crate::audio::reload_notes(model);
+    1
+}
+
 /// 复制当前选中音符到应用内剪贴板（快照 O(1)）。成功 1。
 pub fn copy_selection() -> i32 {
     let Ok(s) = scene().lock() else {

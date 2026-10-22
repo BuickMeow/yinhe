@@ -97,6 +97,18 @@ final VelocityBarsDart velocityBars = bridge
       'yinhe_velocity_bars',
     );
 
+typedef VelocityStrokeNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Double>,
+  ffi.Uint32,
+);
+typedef VelocityStrokeDart = int Function(ffi.Pointer<ffi.Double>, int);
+
+/// 提交一笔力度绘制：扁平 `[tick, velocity, ...]`，一笔一个 undo。
+final VelocityStrokeDart velocityStroke = bridge
+    .lookupFunction<VelocityStrokeNative, VelocityStrokeDart>(
+      'yinhe_velocity_stroke',
+    );
+
 typedef ScrollAtNative = ffi.Int32 Function(
   ffi.Float,
   ffi.Float,
