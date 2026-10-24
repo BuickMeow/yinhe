@@ -106,7 +106,6 @@ pub(crate) fn welcome_content(
     let left_w = scale(LEFT_COL_W);
     let col_gap = scale(COL_GAP);
     let total_w = (rect.width() - 48.0).clamp(left_w + col_gap + 200.0, TOTAL_COL_MAX_W);
-    let right_w = total_w - left_w - col_gap;
 
     let list_h = recent_list_height(ui.ctx(), recent.len());
     let right_h = scale(18.0) + scale(6.0) + list_h;
@@ -121,12 +120,9 @@ pub(crate) fn welcome_content(
     let mut action = None;
     ui.scope_builder(egui::UiBuilder::new().max_rect(col_rect), |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-        ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-
-            // ── 左栏：三个垂直叠放的按钮 ──
-            ui.vertical(|ui| {
-                ui.set_width(left_w);
+        crate::widgets::grid::two_columns(ui, col_gap, left_w, |cells| {
+            cells.cell(|ui| {
+                // ── 左栏：三个垂直叠放的按钮 ──
                 if welcome_button(
                     ui,
                     t!("file.new_project").as_ref(),
@@ -166,12 +162,8 @@ pub(crate) fn welcome_content(
                     action = Some(WelcomeAction::OpenSettings);
                 }
             });
-
-            ui.add_space(col_gap);
-
-            // ── 右栏：最近使用列表 ──
-            ui.vertical(|ui| {
-                ui.set_width(right_w);
+            cells.cell(|ui| {
+                // ── 右栏：最近使用列表 ──
                 ui.label(
                     egui::RichText::new(t!("menu.recent_files").to_string())
                         .size(scale(crate::theme::SMALL_FONT))

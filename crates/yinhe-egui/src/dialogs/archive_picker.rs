@@ -157,127 +157,136 @@ pub(crate) fn show(
             ui.add_space(4.0);
 
             let row_height = 24.0;
-            let available_height =
-                crate::widgets::scroll::snap_rows(ui.available_height() - 40.0, row_height, None);
-            eframe::egui::ScrollArea::vertical()
-                .max_height(available_height)
-                .show_rows(ui, row_height, picker.filtered.len(), |ui, row_range| {
-                    for row_idx in row_range {
-                        let &entry_idx = &picker.filtered[row_idx];
-                        let entry = &picker.entries[entry_idx];
-                        let is_selected = picker.selected_idx == Some(entry_idx);
+            let footer_h = crate::widgets::control::h(ui.ctx()) + 2.0 * crate::theme::GAP_SM + 1.0;
+            crate::widgets::grid::content_footer(ui, 0.0, footer_h, |cells| {
+                cells.cell(|ui| {
+                    eframe::egui::ScrollArea::vertical()
+                        .auto_shrink([false; 2])
+                        .show_rows(ui, row_height, picker.filtered.len(), |ui, row_range| {
+                            for row_idx in row_range {
+                                let &entry_idx = &picker.filtered[row_idx];
+                                let entry = &picker.entries[entry_idx];
+                                let is_selected = picker.selected_idx == Some(entry_idx);
 
-                        let bg = if is_selected {
-                            crate::theme::selected_bg()
-                        } else {
-                            eframe::egui::Color32::TRANSPARENT
-                        };
+                                let bg = if is_selected {
+                                    crate::theme::selected_bg()
+                                } else {
+                                    eframe::egui::Color32::TRANSPARENT
+                                };
 
-                        let response = ui.add_sized(
-                            [ui.available_width(), row_height],
-                            eframe::egui::Button::new("")
-                                .fill(bg)
-                                .stroke(eframe::egui::Stroke::NONE)
-                                .corner_radius(eframe::egui::CornerRadius::ZERO),
-                        );
+                                let response = ui.add_sized(
+                                    [ui.available_width(), row_height],
+                                    eframe::egui::Button::new("")
+                                        .fill(bg)
+                                        .stroke(eframe::egui::Stroke::NONE)
+                                        .corner_radius(eframe::egui::CornerRadius::ZERO),
+                                );
 
-                        // hover 用白色 3% 提亮（与主界面列表行一致），选中保持 ROW_SELECTED_BG
-                        if response.hovered() && !is_selected {
-                            let rect = response.rect;
-                            ui.painter().rect_filled(
-                                rect,
-                                0.0,
-                                crate::theme::hover_color(crate::theme::app_bg()),
-                            );
-                        }
+                                // hover 用白色 3% 提亮（与主界面列表行一致），选中保持 ROW_SELECTED_BG
+                                if response.hovered() && !is_selected {
+                                    let rect = response.rect;
+                                    ui.painter().rect_filled(
+                                        rect,
+                                        0.0,
+                                        crate::theme::hover_color(crate::theme::app_bg()),
+                                    );
+                                }
 
-                        if response.clicked() {
-                            picker.selected_idx = Some(entry_idx);
-                        }
-                        if response.double_clicked() {
-                            let entry = picker.entries[entry_idx].clone();
-                            action = ArchivePickerAction::LoadFile {
-                                archive: picker.archive.clone(),
-                                entry,
-                            };
-                            return;
-                        }
+                                if response.clicked() {
+                                    picker.selected_idx = Some(entry_idx);
+                                }
+                                if response.double_clicked() {
+                                    let entry = picker.entries[entry_idx].clone();
+                                    action = ArchivePickerAction::LoadFile {
+                                        archive: picker.archive.clone(),
+                                        entry,
+                                    };
+                                    return;
+                                }
 
-                        let response_rect = response.rect;
-                        let prefix = if is_selected { "▶ " } else { "  " };
-                        let display_name = truncate_name(&entry.name, 55);
-                        let text = format!("{}{}", prefix, display_name);
-                        let size_text = format_size(entry.size);
+                                let response_rect = response.rect;
+                                let prefix = if is_selected { "▶ " } else { "  " };
+                                let display_name = truncate_name(&entry.name, 55);
+                                let text = format!("{}{}", prefix, display_name);
+                                let size_text = format_size(entry.size);
 
-                        ui.painter().text(
-                            response_rect.left_center() + eframe::egui::vec2(8.0, 0.0),
-                            eframe::egui::Align2::LEFT_CENTER,
-                            &text,
-                            eframe::egui::FontId::proportional(crate::theme::SUB_TITLE_FONT),
-                            ui.visuals().text_color(),
-                        );
+                                ui.painter().text(
+                                    response_rect.left_center() + eframe::egui::vec2(8.0, 0.0),
+                                    eframe::egui::Align2::LEFT_CENTER,
+                                    &text,
+                                    eframe::egui::FontId::proportional(
+                                        crate::theme::SUB_TITLE_FONT,
+                                    ),
+                                    ui.visuals().text_color(),
+                                );
 
-                        if display_name.len() != entry.name.len() {
-                            let name_rect = eframe::egui::Rect::from_min_size(
-                                response_rect.left_center() + eframe::egui::vec2(8.0, 0.0),
-                                eframe::egui::vec2(
-                                    response_rect.width() * 0.75,
-                                    response_rect.height(),
-                                ),
-                            );
-                            let name_resp = ui.interact(
-                                name_rect,
-                                ui.next_auto_id(),
-                                eframe::egui::Sense::hover(),
-                            );
-                            name_resp.on_hover_text(&entry.name);
-                        }
-                        ui.painter().text(
-                            response_rect.right_center() + eframe::egui::vec2(-8.0, 0.0),
-                            eframe::egui::Align2::RIGHT_CENTER,
-                            &size_text,
-                            eframe::egui::FontId::proportional(crate::theme::SMALL_FONT),
-                            crate::theme::text_label(),
-                        );
-                    }
+                                if display_name.len() != entry.name.len() {
+                                    let name_rect = eframe::egui::Rect::from_min_size(
+                                        response_rect.left_center() + eframe::egui::vec2(8.0, 0.0),
+                                        eframe::egui::vec2(
+                                            response_rect.width() * 0.75,
+                                            response_rect.height(),
+                                        ),
+                                    );
+                                    let name_resp = ui.interact(
+                                        name_rect,
+                                        ui.next_auto_id(),
+                                        eframe::egui::Sense::hover(),
+                                    );
+                                    name_resp.on_hover_text(&entry.name);
+                                }
+                                ui.painter().text(
+                                    response_rect.right_center() + eframe::egui::vec2(-8.0, 0.0),
+                                    eframe::egui::Align2::RIGHT_CENTER,
+                                    &size_text,
+                                    eframe::egui::FontId::proportional(crate::theme::SMALL_FONT),
+                                    crate::theme::text_label(),
+                                );
+                            }
+                        });
                 });
-
-            ui.add_space(4.0);
-            ui.separator();
-            crate::widgets::rows::inline_row(ui, |ui| {
-                ui.label(
-                    eframe::egui::RichText::new(
-                        t!("dialog.archive.file_count", n = picker.filtered.len()).as_ref(),
-                    )
-                    .size(crate::theme::BODY_FONT)
-                    .color(crate::theme::text_label()),
-                );
-                ui.with_layout(
-                    eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
-                    |ui| {
-                        use crate::chrome::dialog_buttons::{DialogButton, dialog_button};
-                        let cancel = t!("common.cancel");
-                        let confirm = t!("common.confirm");
-                        let confirm_enabled = picker.selected_idx.is_some();
-                        if dialog_button(
-                            ui,
-                            &DialogButton::primary(confirm.as_ref()).enabled(confirm_enabled),
-                        )
-                        .clicked()
-                            && let Some(idx) = picker.selected_idx
-                        {
-                            let entry = picker.entries[idx].clone();
-                            action = ArchivePickerAction::LoadFile {
-                                archive: picker.archive.clone(),
-                                entry,
-                            };
-                        }
-                        ui.add_space(8.0);
-                        if dialog_button(ui, &DialogButton::secondary(cancel.as_ref())).clicked() {
-                            action = ArchivePickerAction::Cancel;
-                        }
-                    },
-                );
+                cells.cell(|ui| {
+                    ui.add_space(4.0);
+                    ui.separator();
+                    crate::widgets::rows::inline_row(ui, |ui| {
+                        ui.label(
+                            eframe::egui::RichText::new(
+                                t!("dialog.archive.file_count", n = picker.filtered.len()).as_ref(),
+                            )
+                            .size(crate::theme::BODY_FONT)
+                            .color(crate::theme::text_label()),
+                        );
+                        ui.with_layout(
+                            eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
+                            |ui| {
+                                use crate::chrome::dialog_buttons::{DialogButton, dialog_button};
+                                let cancel = t!("common.cancel");
+                                let confirm = t!("common.confirm");
+                                let confirm_enabled = picker.selected_idx.is_some();
+                                if dialog_button(
+                                    ui,
+                                    &DialogButton::primary(confirm.as_ref())
+                                        .enabled(confirm_enabled),
+                                )
+                                .clicked()
+                                    && let Some(idx) = picker.selected_idx
+                                {
+                                    let entry = picker.entries[idx].clone();
+                                    action = ArchivePickerAction::LoadFile {
+                                        archive: picker.archive.clone(),
+                                        entry,
+                                    };
+                                }
+                                ui.add_space(8.0);
+                                if dialog_button(ui, &DialogButton::secondary(cancel.as_ref()))
+                                    .clicked()
+                                {
+                                    action = ArchivePickerAction::Cancel;
+                                }
+                            },
+                        );
+                    });
+                });
             });
 
             if ui.input(|i| i.key_pressed(eframe::egui::Key::Escape)) {

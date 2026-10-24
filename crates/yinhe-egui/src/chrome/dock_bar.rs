@@ -529,89 +529,77 @@ fn draw_dock(ui: &mut egui::Ui, state: &DockState, search: &mut String) -> Vec<D
     });
 
     // ── 主体：最左乐器大卡片（固定不随选中变化）+ 每个效果器一张大卡片 + 「+」──
-    let avail = ui.available_size();
-    ui.horizontal_top(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
-        const CARD_W: f32 = 208.0;
-        const ADD_W: f32 = 44.0;
+    let mut inst_area = egui::Rect::NOTHING;
+    let mut fx_area = egui::Rect::NOTHING;
+    const CARD_W: f32 = 208.0;
+    const ADD_W: f32 = 44.0;
 
+    crate::widgets::grid::three_columns(ui, 6.0, CARD_W, ADD_W, |cells| {
         // 乐器大卡片：永远在最左，固定显示乐器（XSynth 旋钮 / 插件入口）。
-        let inst_area = ui
-            .allocate_ui_with_layout(
-                egui::vec2(CARD_W, avail.y),
-                egui::Layout::top_down(egui::Align::LEFT),
-                |ui| {
-                    instrument_card(
-                        ui,
-                        state.context,
-                        state.instrument_plugin.as_deref(),
-                        &state.lane_current,
-                        search,
-                        state.inst_powered,
-                        &mut knob_actions,
-                        &mut open_params,
-                        &mut toggle_instrument,
-                        &mut open_gui,
-                        &mut open_instrument_picker,
-                        state.midi_channel,
-                    );
-                },
-            )
-            .response
-            .rect;
+        cells.cell(|ui| {
+            inst_area = ui
+                .allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), ui.available_height()),
+                    egui::Layout::top_down(egui::Align::LEFT),
+                    |ui| {
+                        instrument_card(
+                            ui,
+                            state.context,
+                            state.instrument_plugin.as_deref(),
+                            &state.lane_current,
+                            search,
+                            state.inst_powered,
+                            &mut knob_actions,
+                            &mut open_params,
+                            &mut toggle_instrument,
+                            &mut open_gui,
+                            &mut open_instrument_picker,
+                            state.midi_channel,
+                        );
+                    },
+                )
+                .response
+                .rect;
+        });
 
         // 效果器大卡片（横向滚动）：插件效果器显示参数面板/原生界面入口。
-        let fx_width = (avail.x - CARD_W - ADD_W - 20.0).max(120.0);
-        let fx_area = ui
-            .allocate_ui_with_layout(
-                egui::vec2(fx_width, avail.y),
-                egui::Layout::left_to_right(egui::Align::TOP),
-                |ui| {
-                    egui::ScrollArea::horizontal()
-                        .id_salt("dock_fx_scroll")
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            ui.horizontal_top(|ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
-                                for (slot, ins) in state.inserts.iter().enumerate() {
-                                    ui.allocate_ui_with_layout(
-                                        egui::vec2(CARD_W, avail.y),
-                                        egui::Layout::top_down(egui::Align::LEFT),
-                                        |ui| {
-                                            if effect_card(
-                                                ui,
-                                                slot,
-                                                ins,
-                                                selected,
-                                                &mut open_params,
-                                                &mut toggle_bypass,
-                                                &mut open_gui,
-                                            ) {
-                                                selected = Some(DockDevice::Insert(slot));
-                                            }
-                                        },
-                                    );
-                                }
-                            });
-                        });
-                },
-            )
-            .response
-            .rect;
+        cells.cell(|ui| {
+            fx_area = ui.max_rect();
+            egui::ScrollArea::horizontal()
+                .id_salt("dock_fx_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        for (slot, ins) in state.inserts.iter().enumerate() {
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(CARD_W, ui.available_height()),
+                                egui::Layout::top_down(egui::Align::LEFT),
+                                |ui| {
+                                    if effect_card(
+                                        ui,
+                                        slot,
+                                        ins,
+                                        selected,
+                                        &mut open_params,
+                                        &mut toggle_bypass,
+                                        &mut open_gui,
+                                    ) {
+                                        selected = Some(DockDevice::Insert(slot));
+                                    }
+                                },
+                            );
+                        }
+                    });
+                });
+        });
 
         // 「+」竖条：撑满高度，点击添加效果器。
-        if add_column(ui, avail.y).clicked() {
-            open_picker = true;
-        }
-
-        // 区域提示（低优先级）：乐器卡片 / 效果器链。
-        if let Some(p) = ui.input(|i| i.pointer.hover_pos()) {
-            if inst_area.contains(p) {
-                crate::widgets::hint::set_region(ui.ctx(), t!("hint.panel.dock_instrument"));
-            } else if fx_area.contains(p) {
-                crate::widgets::hint::set_region(ui.ctx(), t!("hint.panel.dock_inserts"));
+        cells.cell(|ui| {
+            if add_column(ui, ui.available_height()).clicked() {
+                open_picker = true;
             }
-        }
+        });
     });
 
     actions.push(DockAction::SetSelected(selected));

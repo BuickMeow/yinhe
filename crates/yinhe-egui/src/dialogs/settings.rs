@@ -1,5 +1,4 @@
 use eframe::egui;
-use egui_extras::{Size, StripBuilder};
 use rust_i18n::t;
 
 use crate::audio_settings::AudioSettings;
@@ -78,17 +77,13 @@ pub fn show_content(
             .inner_margin(egui::Margin::same(crate::theme::GAP as i8))
     };
 
-    // StripBuilder 的列间距取 item_spacing.x；临时收紧到卡片间距。
-    let prev_spacing_x = ui.spacing().item_spacing.x;
-    ui.spacing_mut().item_spacing.x = crate::theme::GAP;
-
-    StripBuilder::new(ui)
-        .size(Size::exact(nav_w + 2.0 * crate::theme::GAP))
-        .size(Size::remainder())
-        .cell_layout(egui::Layout::top_down(egui::Align::Min))
-        .horizontal(|mut strip| {
-            // ── 左侧：搜索框 + 分类导航（窄，独立滚动，撑满窗口高度） ──
-            strip.cell(|ui| {
+    crate::widgets::grid::two_columns(
+        ui,
+        crate::theme::GAP,
+        nav_w + 2.0 * crate::theme::GAP,
+        |cells| {
+            cells.cell(|ui| {
+                // ── 左侧：搜索框 + 分类导航（窄，独立滚动，撑满窗口高度） ──
                 card_frame().show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.set_height(card_inner_h);
@@ -135,9 +130,8 @@ pub fn show_content(
                     );
                 });
             });
-
-            // ── 右侧：搜索结果（搜索中）或当前分类内容（宽，独立滚动，撑满窗口高度） ──
-            strip.cell(|ui| {
+            cells.cell(|ui| {
+                // ── 右侧：搜索结果（搜索中）或当前分类内容（宽，独立滚动，撑满窗口高度） ──
                 card_frame().show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.set_height(card_inner_h);
@@ -159,9 +153,8 @@ pub fn show_content(
                         });
                 });
             });
-        });
-
-    ui.spacing_mut().item_spacing.x = prev_spacing_x;
+        },
+    );
     changed
 }
 

@@ -1731,144 +1731,129 @@ fn picker_list(
     actions: &mut Vec<MixAction>,
     close: &mut bool,
 ) {
-    let info_w = 190.0;
-    let list_w = (ui.available_width() - info_w - 8.0).max(180.0);
-    ui.allocate_ui_with_layout(
-        egui::vec2(list_w, ui.available_height()),
-        egui::Layout::top_down(egui::Align::LEFT),
-        |ui| {
-            // 搜索行：自绘输入框 + 星标筛选开关（点亮 = 只看收藏）。
-            ui.horizontal(|ui| {
-                let star_w = 26.0;
-                let input_w = (ui.available_width() - star_w - 6.0).max(80.0);
-                let search_resp = crate::widgets::text_input::control_text_input(
+    // 列宽由外部 three_columns 分配，这里直接使用当前 cell。
+    // 搜索行：自绘输入框 + 星标筛选开关（点亮 = 只看收藏）。
+    ui.horizontal(|ui| {
+        let star_w = 26.0;
+        let input_w = (ui.available_width() - star_w - 6.0).max(80.0);
+        let search_resp = crate::widgets::text_input::control_text_input(
+            ui,
+            &mut app.mix.picker_filter,
+            input_w,
+            "mix_picker_search",
+            Some(&t!("mix.search")),
+        );
+        search_resp.on_hover_text(t!("hint.mix.picker_search"));
+        let fav_only = app.mix.picker_fav_only;
+        let (icon, color) = if fav_only {
+            (
+                egui_material_icons::icons::ICON_STAR,
+                crate::theme::warning_gold(),
+            )
+        } else {
+            (
+                egui_material_icons::icons::ICON_STAR.outlined(),
+                crate::theme::text_muted(),
+            )
+        };
+        let star_resp = crate::widgets::flat::flat_button_filled_ghost(
+            ui,
+            icon.rich_text().size(crate::theme::ICON_FONT).color(color),
+            egui::vec2(star_w, crate::widgets::control::h(ui.ctx())),
+            None,
+            true,
+        )
+        .on_hover_text(t!("hint.mix.picker_fav_filter"));
+        if star_resp.clicked() {
+            app.mix.picker_fav_only = !fav_only;
+        }
+    });
+    ui.separator();
+    let filter = app.mix.picker_filter.to_lowercase();
+    let favorites = app.audio_settings.favorite_plugins.clone();
+    let fav_only = app.mix.picker_fav_only;
+    let tab = app.mix.picker_tab;
+    let mut clicked: Option<String> = None;
+    let mut activated: Option<String> = None;
+    egui::ScrollArea::vertical()
+        .id_salt("mix_plugin_picker_list")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let mut any = false;
+            // 内置 XSynth：全部/乐器分类（选择 = 清除插件挂载）；
+            // 星标筛选（只看收藏）时隐藏（XSynth 不是插件、不可收藏）。
+            if tab.shows_xsynth() && !fav_only && (filter.is_empty() || "xsynth".contains(&filter))
+            {
+                any = true;
+                let selected = app.mix.picker_selected.as_deref() == Some(XS_SELECTED_ID);
+                let resp = plugin_row(
                     ui,
-                    &mut app.mix.picker_filter,
-                    input_w,
-                    "mix_picker_search",
-                    Some(&t!("mix.search")),
-                );
-                search_resp.on_hover_text(t!("hint.mix.picker_search"));
-                let fav_only = app.mix.picker_fav_only;
-                let (icon, color) = if fav_only {
-                    (
-                        egui_material_icons::icons::ICON_STAR,
-                        crate::theme::warning_gold(),
-                    )
-                } else {
-                    (
-                        egui_material_icons::icons::ICON_STAR.outlined(),
-                        crate::theme::text_muted(),
-                    )
-                };
-                let star_resp = crate::widgets::flat::flat_button_filled_ghost(
-                    ui,
-                    icon.rich_text().size(crate::theme::ICON_FONT).color(color),
-                    egui::vec2(star_w, crate::widgets::control::h(ui.ctx())),
-                    None,
+                    "XSynth",
+                    yinhe_mixer::PluginFormat::Builtin,
                     true,
+                    selected,
                 )
-                .on_hover_text(t!("hint.mix.picker_fav_filter"));
-                if star_resp.clicked() {
-                    app.mix.picker_fav_only = !fav_only;
+                .on_hover_text(t!("hint.mix.picker_xsynth"));
+                if resp.clicked() {
+                    clicked = Some(XS_SELECTED_ID.to_string());
                 }
-            });
-            ui.separator();
-            let filter = app.mix.picker_filter.to_lowercase();
-            let favorites = app.audio_settings.favorite_plugins.clone();
-            let fav_only = app.mix.picker_fav_only;
-            let tab = app.mix.picker_tab;
-            let mut clicked: Option<String> = None;
-            let mut activated: Option<String> = None;
-            egui::ScrollArea::vertical()
-                .id_salt("mix_plugin_picker_list")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    let mut any = false;
-                    // 内置 XSynth：全部/乐器分类（选择 = 清除插件挂载）；
-                    // 星标筛选（只看收藏）时隐藏（XSynth 不是插件、不可收藏）。
-                    if tab.shows_xsynth()
-                        && !fav_only
-                        && (filter.is_empty() || "xsynth".contains(&filter))
-                    {
-                        any = true;
-                        let selected = app.mix.picker_selected.as_deref() == Some(XS_SELECTED_ID);
-                        let resp = plugin_row(
-                            ui,
-                            "XSynth",
-                            yinhe_mixer::PluginFormat::Builtin,
-                            true,
-                            selected,
-                        )
-                        .on_hover_text(t!("hint.mix.picker_xsynth"));
-                        if resp.clicked() {
-                            clicked = Some(XS_SELECTED_ID.to_string());
-                        }
-                        if resp.double_clicked() {
-                            activated = Some(XS_SELECTED_ID.to_string());
-                        }
-                    }
-                    if let Some(plugins) = app.mix.scanned.as_ref() {
-                        // 过滤（分类 + 星标筛选 + 搜索）后**按厂家分组**，
-                        // 组内按名称排序；组头仅在厂家非空时绘制。
-                        let mut list: Vec<&PluginEntry> = plugins
-                            .iter()
-                            .filter(|p| tab.matches(p))
-                            .filter(|p| !fav_only || favorites.iter().any(|f| f == &p.id))
-                            .filter(|p| {
-                                filter.is_empty() || p.name.to_lowercase().contains(&filter)
-                            })
-                            .collect();
-                        list.sort_by(|a, b| {
-                            a.vendor.cmp(&b.vendor).then_with(|| a.name.cmp(&b.name))
-                        });
-                        let mut last_vendor: Option<&str> = None;
-                        for p in list {
-                            if !p.vendor.is_empty() && last_vendor != Some(p.vendor.as_str()) {
-                                vendor_header(ui, &p.vendor);
-                                last_vendor = Some(p.vendor.as_str());
-                            }
-                            any = true;
-                            let enabled = p.error.is_none() && kind.can_pick(p);
-                            let selected =
-                                app.mix.picker_selected.as_deref() == Some(p.id.as_str());
-                            let resp =
-                                plugin_row(ui, &p.display_name(), p.format, enabled, selected);
-                            if let Some(err) = &p.error {
-                                // 加载失败的插件：灰色不可选，hover 显示原因。
-                                resp.on_hover_text(err);
-                                continue;
-                            }
-                            if !kind.can_pick(p) {
-                                resp.on_hover_text(t!("mix.picker_not_applicable"));
-                                continue;
-                            }
-                            let resp = resp.on_hover_text(t!("hint.mix.picker_plugin"));
-                            if resp.clicked() {
-                                clicked = Some(p.id.clone());
-                            }
-                            if resp.double_clicked() {
-                                activated = Some(p.id.clone());
-                            }
-                        }
-                    }
-                    if !any {
-                        ui.label(
-                            egui::RichText::new(t!("mix.picker_empty").to_string())
-                                .color(crate::theme::text_muted()),
-                        );
-                    }
-                });
-            if let Some(sel) = clicked {
-                app.mix.picker_selected = Some(sel);
+                if resp.double_clicked() {
+                    activated = Some(XS_SELECTED_ID.to_string());
+                }
             }
-            if let Some(sel) = activated {
-                app.mix.picker_selected = Some(sel);
-                pick_selected(app, kind, actions);
-                *close = true;
+            if let Some(plugins) = app.mix.scanned.as_ref() {
+                // 过滤（分类 + 星标筛选 + 搜索）后**按厂家分组**，
+                // 组内按名称排序；组头仅在厂家非空时绘制。
+                let mut list: Vec<&PluginEntry> = plugins
+                    .iter()
+                    .filter(|p| tab.matches(p))
+                    .filter(|p| !fav_only || favorites.iter().any(|f| f == &p.id))
+                    .filter(|p| filter.is_empty() || p.name.to_lowercase().contains(&filter))
+                    .collect();
+                list.sort_by(|a, b| a.vendor.cmp(&b.vendor).then_with(|| a.name.cmp(&b.name)));
+                let mut last_vendor: Option<&str> = None;
+                for p in list {
+                    if !p.vendor.is_empty() && last_vendor != Some(p.vendor.as_str()) {
+                        vendor_header(ui, &p.vendor);
+                        last_vendor = Some(p.vendor.as_str());
+                    }
+                    any = true;
+                    let enabled = p.error.is_none() && kind.can_pick(p);
+                    let selected = app.mix.picker_selected.as_deref() == Some(p.id.as_str());
+                    let resp = plugin_row(ui, &p.display_name(), p.format, enabled, selected);
+                    if let Some(err) = &p.error {
+                        // 加载失败的插件：灰色不可选，hover 显示原因。
+                        resp.on_hover_text(err);
+                        continue;
+                    }
+                    if !kind.can_pick(p) {
+                        resp.on_hover_text(t!("mix.picker_not_applicable"));
+                        continue;
+                    }
+                    let resp = resp.on_hover_text(t!("hint.mix.picker_plugin"));
+                    if resp.clicked() {
+                        clicked = Some(p.id.clone());
+                    }
+                    if resp.double_clicked() {
+                        activated = Some(p.id.clone());
+                    }
+                }
             }
-        },
-    );
+            if !any {
+                ui.label(
+                    egui::RichText::new(t!("mix.picker_empty").to_string())
+                        .color(crate::theme::text_muted()),
+                );
+            }
+        });
+    if let Some(sel) = clicked {
+        app.mix.picker_selected = Some(sel);
+    }
+    if let Some(sel) = activated {
+        app.mix.picker_selected = Some(sel);
+        pick_selected(app, kind, actions);
+        *close = true;
+    }
 }
 
 /// 右侧信息面板：选中插件的名称/厂商/格式/路径 + 收藏 star 开关。
@@ -2022,49 +2007,65 @@ fn picker_window(
                             bottom: 12,
                         })
                         .show(ui, |ui| {
-                            // 主体（左栏 + 列表 + 信息）占满按钮行以上。
+                            // 主体（左栏 + 列表 + 信息）占满按钮行以上；底部按钮固定行高。
                             let btn_zone = crate::chrome::dialog_buttons::btn_zone_h(ui.ctx());
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(
-                                    ui.available_width(),
-                                    (ui.available_height() - btn_zone).max(0.0),
-                                ),
-                                egui::Layout::left_to_right(egui::Align::TOP),
-                                |ui| {
-                                    picker_tab_bar(app, ui);
-                                    // 左栏贴边后，列表与左栏之间的间距。
-                                    ui.add_space(12.0);
-                                    picker_list(app, ui, kind, actions, &mut close);
-                                    picker_info(app, ui);
+                            crate::widgets::grid::content_footer(
+                                ui,
+                                0.0,
+                                btn_zone,
+                                |cells| {
+                                    cells.cell(|ui| {
+                                        crate::widgets::grid::three_columns(
+                                            ui,
+                                            12.0,
+                                            crate::theme::TOOL_BAR_W,
+                                            190.0,
+                                            |cells| {
+                                                cells.cell(|ui| picker_tab_bar(app, ui));
+                                                cells.cell(|ui| {
+                                                    picker_list(app, ui, kind, actions, &mut close)
+                                                });
+                                                cells.cell(|ui| picker_info(app, ui));
+                                            },
+                                        );
+                                    });
+                                    cells.cell(|ui| {
+                                        // 底部按钮贴底（bottom_up）：下边距与右边距一致。
+                                        ui.with_layout(
+                                            egui::Layout::bottom_up(egui::Align::Center),
+                                            |ui| {
+                                                let ok_text = t!("mix.picker_ok");
+                                                let cancel_text = t!("mix.picker_cancel");
+                                                let ok_enabled =
+                                                    app.mix.picker_selected.is_some();
+                                                if let Some(idx) =
+                                                    crate::chrome::dialog_buttons::dialog_button_row(
+                                                        ui,
+                                                        &[
+                                                            crate::chrome::dialog_buttons::DialogButton::secondary(
+                                                                cancel_text.as_ref(),
+                                                            ),
+                                                            crate::chrome::dialog_buttons::DialogButton::primary(
+                                                                ok_text.as_ref(),
+                                                            )
+                                                            .enabled(ok_enabled),
+                                                        ],
+                                                    )
+                                                {
+                                                    match idx {
+                                                        0 => close = true,
+                                                        1 => {
+                                                            pick_selected(app, kind, actions);
+                                                            close = true;
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                }
+                                            },
+                                        );
+                                    });
                                 },
                             );
-                            // 底部按钮贴底（bottom_up）：下边距与右边距一致。
-                            ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                                let ok_text = t!("mix.picker_ok");
-                                let cancel_text = t!("mix.picker_cancel");
-                                let ok_enabled = app.mix.picker_selected.is_some();
-                                if let Some(idx) = crate::chrome::dialog_buttons::dialog_button_row(
-                                    ui,
-                                    &[
-                                        crate::chrome::dialog_buttons::DialogButton::secondary(
-                                            cancel_text.as_ref(),
-                                        ),
-                                        crate::chrome::dialog_buttons::DialogButton::primary(
-                                            ok_text.as_ref(),
-                                        )
-                                        .enabled(ok_enabled),
-                                    ],
-                                ) {
-                                    match idx {
-                                        0 => close = true,
-                                        1 => {
-                                            pick_selected(app, kind, actions);
-                                            close = true;
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                            });
                         });
                 });
             if closed {
