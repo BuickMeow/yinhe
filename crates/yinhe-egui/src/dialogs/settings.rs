@@ -1,4 +1,5 @@
 use eframe::egui;
+use egui_extras::{Size, StripBuilder};
 use rust_i18n::t;
 
 use crate::audio_settings::AudioSettings;
@@ -60,83 +61,107 @@ pub fn show_content(
 ) -> bool {
     let mut changed = false;
 
-    // 左右侧栏等高，以整个窗口高度为基准
+    // WPF 风格两列：左导航固定宽，右内容吃掉剩余空间。
+    // 卡片圆角/描边负责视觉分区，不再用分隔线。
+    let ctx = ui.ctx().clone();
     let full_height = ui.available_height();
-    ui.horizontal(|ui| {
-        // ── 左侧：搜索框 + 分类导航（窄，独立滚动，撑满窗口高度） ──
-        ui.vertical(|ui| {
-            ui.set_width(132.0);
-            ui.set_height(full_height);
-            ui.spacing_mut().interact_size.y = 24.0;
-            ui.spacing_mut().item_spacing.y = 4.0;
-            let nav_row_h = crate::widgets::control::h(ui.ctx());
-            crate::widgets::scroll::rows_scroll(
-                ui,
-                "settings_left_scroll",
-                nav_row_h,
-                None,
-                |ui| {
-                    ui.spacing_mut().interact_size.y = 24.0;
-                    ui.spacing_mut().item_spacing.y = 4.0;
-                    crate::widgets::text_input::control_text_input_clearable(
+    let nav_w = crate::scaling::scaled_font(&ctx, 148.0);
+    let card_inner_h = (full_height - 2.0 * crate::theme::GAP).max(0.0);
+    let card_frame = || {
+        egui::Frame::new()
+            .fill(crate::theme::stripe_bg())
+            .stroke(egui::Stroke::new(
+                1.0,
+                crate::theme::line_fg().gamma_multiply(0.35),
+            ))
+            .corner_radius(egui::CornerRadius::same(8))
+            .inner_margin(egui::Margin::same(crate::theme::GAP as i8))
+    };
+
+    // StripBuilder 的列间距取 item_spacing.x；临时收紧到卡片间距。
+    let prev_spacing_x = ui.spacing().item_spacing.x;
+    ui.spacing_mut().item_spacing.x = crate::theme::GAP;
+
+    StripBuilder::new(ui)
+        .size(Size::exact(nav_w + 2.0 * crate::theme::GAP))
+        .size(Size::remainder())
+        .cell_layout(egui::Layout::top_down(egui::Align::Min))
+        .horizontal(|mut strip| {
+            // ── 左侧：搜索框 + 分类导航（窄，独立滚动，撑满窗口高度） ──
+            strip.cell(|ui| {
+                card_frame().show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.set_height(card_inner_h);
+                    ui.spacing_mut().interact_size.y = crate::widgets::control::h(ui.ctx());
+                    ui.spacing_mut().item_spacing.y = crate::theme::GAP_SM;
+                    let nav_row_h = crate::widgets::control::h(ui.ctx());
+                    crate::widgets::scroll::rows_scroll(
                         ui,
-                        &mut settings.ui_session.settings_search,
-                        132.0,
-                        "settings_search",
-                        Some(t!("settings.search_hint").as_ref()),
-                    );
-                    // 搜索框与分类列表之间留出间距（自绘输入框自身无外边距）。
-                    ui.add_space(6.0);
-
-                    for (i, key) in CATEGORY_KEYS.iter().enumerate() {
-                        let selected = settings.ui_session.settings_tab == i;
-                        if ui
-                            .add(crate::widgets::menu::menu_item_button(
+                        "settings_left_scroll",
+                        nav_row_h,
+                        None,
+                        |ui| {
+                            ui.spacing_mut().interact_size.y = crate::widgets::control::h(ui.ctx());
+                            ui.spacing_mut().item_spacing.y = crate::theme::GAP_SM;
+                            crate::widgets::text_input::control_text_input_clearable(
                                 ui,
-                                selected,
-                                egui::RichText::new(t!(*key).as_ref()).size(
-                                    crate::scaling::scaled_font(
-                                        ui.ctx(),
-                                        crate::theme::FILE_MENU_FONT,
-                                    ),
-                                ),
-                            ))
-                            .clicked()
-                        {
-                            settings.ui_session.settings_tab = i;
-                        }
-                    }
-                },
-            );
-        });
+                                &mut settings.ui_session.settings_search,
+                                ui.available_width(),
+                                "settings_search",
+                                Some(t!("settings.search_hint").as_ref()),
+                            );
+                            // 搜索框与分类列表之间留出间距（自绘输入框自身无外边距）。
+                            ui.add_space(crate::theme::GAP);
 
-        ui.add_space(4.0);
-        ui.separator();
-        ui.add_space(8.0);
-
-        // ── 右侧：搜索结果（搜索中）或当前分类内容（宽，独立滚动，撑满窗口高度） ──
-        ui.vertical(|ui| {
-            ui.set_width(ui.available_width());
-            ui.set_height(full_height);
-            // 右侧所有控件（按钮/输入框/滑块/combo/拖动值）统一 24 高 4 间隙
-            ui.spacing_mut().interact_size.y = 24.0;
-            ui.spacing_mut().item_spacing.y = 4.0;
-            ui.spacing_mut().item_spacing.x = 4.0;
-            egui::ScrollArea::vertical()
-                .id_salt("settings_right_scroll")
-                .auto_shrink([false; 2])
-                .show(ui, |ui| {
-                    // ScrollArea 内需再设一次（ScrollArea 会重置 spacing）
-                    ui.spacing_mut().interact_size.y = 24.0;
-                    ui.spacing_mut().item_spacing.y = 4.0;
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    changed |= show_search_results(ui, settings, main_ctx);
-                    // 变高内容无法按行对齐，底部留白避免最后一项贴边。
-                    ui.add_space(8.0);
+                            for (i, key) in CATEGORY_KEYS.iter().enumerate() {
+                                let selected = settings.ui_session.settings_tab == i;
+                                if ui
+                                    .add(crate::widgets::menu::menu_item_button(
+                                        ui,
+                                        selected,
+                                        egui::RichText::new(t!(*key).as_ref()).size(
+                                            crate::scaling::scaled_font(
+                                                ui.ctx(),
+                                                crate::theme::FILE_MENU_FONT,
+                                            ),
+                                        ),
+                                    ))
+                                    .clicked()
+                                {
+                                    settings.ui_session.settings_tab = i;
+                                }
+                            }
+                        },
+                    );
                 });
-        });
-    });
+            });
 
+            // ── 右侧：搜索结果（搜索中）或当前分类内容（宽，独立滚动，撑满窗口高度） ──
+            strip.cell(|ui| {
+                card_frame().show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.set_height(card_inner_h);
+                    // 右侧所有控件（按钮/输入框/滑块/combo/拖动值）统一控件高 + 小间隙
+                    ui.spacing_mut().interact_size.y = crate::widgets::control::h(ui.ctx());
+                    ui.spacing_mut().item_spacing.y = crate::theme::GAP_SM;
+                    ui.spacing_mut().item_spacing.x = crate::theme::GAP_SM;
+                    egui::ScrollArea::vertical()
+                        .id_salt("settings_right_scroll")
+                        .auto_shrink([false; 2])
+                        .show(ui, |ui| {
+                            // ScrollArea 内需再设一次（ScrollArea 会重置 spacing）
+                            ui.spacing_mut().interact_size.y = crate::widgets::control::h(ui.ctx());
+                            ui.spacing_mut().item_spacing.y = crate::theme::GAP_SM;
+                            ui.spacing_mut().item_spacing.x = crate::theme::GAP_SM;
+                            changed |= show_search_results(ui, settings, main_ctx);
+                            // 变高内容无法按行对齐，底部留白避免最后一项贴边。
+                            ui.add_space(crate::theme::GAP);
+                        });
+                });
+            });
+        });
+
+    ui.spacing_mut().item_spacing.x = prev_spacing_x;
     changed
 }
 

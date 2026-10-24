@@ -373,17 +373,15 @@ pub fn show_theme_tab(
     let mut to_delete: Option<u64> = None;
     let mut to_rename: Option<u64> = None;
 
-    // 按实际可用宽度自适应列数：卡片 158 + 间距 12
+    // 按实际可用宽度自适应列数，并把剩余宽度均分给卡片，避免最右列留白。
+    // 最小卡片宽 158 决定列数；卡片实际宽度 = (可用宽 - 列间距) / 列数。
     let avail_w = ui.available_width();
-    let card_w = 158.0;
     let spacing_x = 12.0;
-    let mut cols = ((avail_w + spacing_x) / (card_w + spacing_x)).floor() as usize;
-    if cols < 2 {
-        cols = if avail_w < card_w { 1 } else { 2 };
-    }
-    if cols > 6 {
-        cols = 6;
-    }
+    let min_card_w = 158.0;
+    let cols = (((avail_w + spacing_x) / (min_card_w + spacing_x)).floor() as usize).clamp(1, 6);
+    let card_w = ((avail_w - spacing_x * (cols.saturating_sub(1)) as f32) / cols as f32)
+        .max(min_card_w.min(avail_w));
+    let card_h = 96.0;
     egui::Grid::new("theme_cards_grid")
         .num_columns(cols)
         .spacing([12.0, 12.0])
@@ -399,7 +397,7 @@ pub fn show_theme_tab(
                     settings.theme_preset == item.id_str && settings.theme_base == eff_base;
                 let is_fav = settings.favorite_themes.contains(&item.id_str);
                 // 渲染卡片（带星标）——按全局明暗统一显示
-                let card_size = egui::vec2(158.0, 96.0);
+                let card_size = egui::vec2(card_w, card_h);
                 let (card_rect, card_resp) =
                     ui.allocate_exact_size(card_size, egui::Sense::click());
                 let preview = derive_theme(eff_base);
@@ -441,19 +439,21 @@ pub fn show_theme_tab(
                         card_rect.max - egui::vec2(8.0, 8.0),
                     );
                     painter.rect_filled(mock_rect, egui::CornerRadius::same(4), preview.control_bg);
-                    let r1 = egui::Rect::from_min_max(
+                    // 预览条按卡片实际宽度取相对比例，卡片变宽时不会缩在左侧。
+                    let bar_w = mock_rect.width() - 12.0;
+                    let r1 = egui::Rect::from_min_size(
                         mock_rect.min + egui::vec2(6.0, 6.0),
-                        egui::pos2(mock_rect.min.x + 42.0, mock_rect.min.y + 10.0),
+                        egui::vec2(bar_w * 0.26, 4.0),
                     );
                     painter.rect_filled(r1, egui::CornerRadius::same(2), preview.text_primary);
-                    let r2 = egui::Rect::from_min_max(
-                        egui::pos2(mock_rect.min.x + 6.0, mock_rect.min.y + 14.0),
-                        egui::pos2(mock_rect.min.x + 68.0, mock_rect.min.y + 18.0),
+                    let r2 = egui::Rect::from_min_size(
+                        mock_rect.min + egui::vec2(6.0, 14.0),
+                        egui::vec2(bar_w * 0.46, 4.0),
                     );
                     painter.rect_filled(r2, egui::CornerRadius::same(2), preview.text_secondary);
-                    let r3 = egui::Rect::from_min_max(
-                        egui::pos2(mock_rect.min.x + 6.0, mock_rect.min.y + 24.0),
-                        egui::pos2(mock_rect.min.x + 26.0, mock_rect.min.y + 28.0),
+                    let r3 = egui::Rect::from_min_size(
+                        mock_rect.min + egui::vec2(6.0, 24.0),
+                        egui::vec2(bar_w * 0.16, 4.0),
                     );
                     painter.rect_filled(r3, egui::CornerRadius::same(2), preview.accent_active);
                     let line_y = mock_rect.min.y + 36.0;
