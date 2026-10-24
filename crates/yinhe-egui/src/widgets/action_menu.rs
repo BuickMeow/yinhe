@@ -39,17 +39,20 @@ pub struct PopupRowSpec<'a> {
 
 /// 一个菜单分组：可选的副标题 + 条目列表。
 ///
-/// 有副标题的组在菜单里以小号灰字标题开头、不画分隔线；
-/// 无副标题的组沿用分隔线（历史行为）。
+/// 副标题存 i18n key（渲染时翻译），这样分组常量可以保持 `const`。
+/// 组间统一画分割线；有标题的组在条目上方显示小号灰字标题。
 pub struct MenuGroup<'a, T> {
-    pub title: Option<String>,
+    pub title: Option<&'static str>,
     pub items: &'a [T],
 }
 
 impl<'a, T> MenuGroup<'a, T> {
-    /// 无标题组（名称沿用常量的旧语义）。
-    pub const fn plain(items: &'a [T]) -> Self {
-        Self { title: None, items }
+    /// 带小标题的组（`title` 为 i18n key）。
+    pub const fn titled(title: &'static str, items: &'a [T]) -> Self {
+        Self {
+            title: Some(title),
+            items,
+        }
     }
 }
 
@@ -236,11 +239,13 @@ pub fn show_action_menu<T: PopupRow>(
             let mut any_row_hovered = false;
             let mut extra = extra;
             for (gi, group) in groups.iter().enumerate() {
-                if gi > 0 && group.title.is_none() {
+                // 组间统一分割线：有标题的组也画，避免菜单里一部分只有标题、
+                // 一部分只有线的割裂感。
+                if gi > 0 {
                     ui.separator();
                 }
-                if let Some(title) = &group.title {
-                    show_group_title(ui, title);
+                if let Some(title) = group.title {
+                    show_group_title(ui, t!(title).as_ref());
                 }
                 for &action in group.items {
                     let enabled = action.is_enabled(has_active, loading)

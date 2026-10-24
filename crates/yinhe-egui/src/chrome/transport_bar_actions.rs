@@ -565,58 +565,115 @@ pub struct TransportResponse {
     pub pending_open_path: Option<String>,
 }
 
-/// 文件/编辑分组常量
+/// 文件菜单分组（每组都有小标题；桌面 popup 显示标题，macOS 原生菜单只用分割线）。
 pub const FILE_GROUPS: [MenuGroup<'static, FileAction>; 5] = [
-    MenuGroup::plain(&[
-        FileAction::NewProject,
-        FileAction::Open,
-        FileAction::ImportAudio,
-        FileAction::Welcome,
-    ]),
-    MenuGroup::plain(&[
-        FileAction::Save,
-        FileAction::SaveAs,
-        FileAction::CloseDocument,
-    ]),
-    MenuGroup::plain(&[FileAction::ProjectSettings]),
-    MenuGroup::plain(&[FileAction::ExportAudio, FileAction::ExportMidi]),
+    MenuGroup::titled(
+        "menu.file.group.project",
+        &[
+            FileAction::NewProject,
+            FileAction::Open,
+            FileAction::ImportAudio,
+            FileAction::Welcome,
+        ],
+    ),
+    MenuGroup::titled(
+        "menu.file.group.file",
+        &[
+            FileAction::Save,
+            FileAction::SaveAs,
+            FileAction::CloseDocument,
+        ],
+    ),
+    MenuGroup::titled(
+        "menu.file.group.project_settings",
+        &[FileAction::ProjectSettings],
+    ),
+    MenuGroup::titled(
+        "menu.file.group.export",
+        &[FileAction::ExportAudio, FileAction::ExportMidi],
+    ),
     // 组 5 不进 macOS 文件菜单（设置/退出在 App 菜单），About 也随之只在应用内菜单出现。
-    MenuGroup::plain(&[FileAction::Settings, FileAction::About, FileAction::Exit]),
+    MenuGroup::titled(
+        "menu.file.group.app",
+        &[FileAction::Settings, FileAction::About, FileAction::Exit],
+    ),
 ];
 
-/// 编辑菜单分组：撤销｜剪贴板｜选择｜基础编辑｜变换（音高/时值/方向）｜清理与改造。
-/// 插入类动作已迁至「插入」菜单（见 `insert_actions`）。
-pub const EDIT_GROUPS: [MenuGroup<'static, EditAction>; 6] = [
-    MenuGroup::plain(&[EditAction::Undo, EditAction::Redo]),
-    MenuGroup::plain(&[
-        EditAction::Cut,
-        EditAction::Copy,
-        EditAction::Paste,
-        EditAction::PasteAtOriginal,
-        EditAction::PasteFlipped,
-    ]),
-    MenuGroup::plain(&[
-        EditAction::SelectAll,
-        EditAction::SelectNotesOnly,
-        EditAction::FilterSelection,
-    ]),
-    MenuGroup::plain(&[EditAction::Delete, EditAction::Duplicate]),
-    MenuGroup::plain(&[
-        EditAction::TransposeUp,
-        EditAction::TransposeDown,
-        EditAction::LengthHalf,
-        EditAction::LengthDouble,
-        EditAction::FlipHorizontal,
-        EditAction::FlipVertical,
-    ]),
-    MenuGroup::plain(&[
-        EditAction::Humanize,
-        EditAction::FillGaps,
-        EditAction::MergeNotes,
-        EditAction::GridSplit,
-        EditAction::DedupWithinTrack,
-        EditAction::DedupAcrossTracks,
-    ]),
+/// 编辑菜单分组：历史｜剪贴板｜选择。
+/// 框选后的批量修改动作已迁至「操作」菜单（见 [`OPERATION_GROUPS`]）。
+pub const EDIT_GROUPS: [MenuGroup<'static, EditAction>; 3] = [
+    MenuGroup::titled(
+        "menu.edit.group.history",
+        &[EditAction::Undo, EditAction::Redo],
+    ),
+    MenuGroup::titled(
+        "menu.edit.group.clipboard",
+        &[
+            EditAction::Cut,
+            EditAction::Copy,
+            EditAction::Paste,
+            EditAction::PasteAtOriginal,
+            EditAction::PasteFlipped,
+        ],
+    ),
+    MenuGroup::titled(
+        "menu.edit.group.select",
+        &[
+            EditAction::SelectAll,
+            EditAction::SelectNotesOnly,
+            EditAction::FilterSelection,
+        ],
+    ),
+];
+
+/// 操作菜单动作（框选后可批量使用），顺序即 transport bar 图钉按钮顺序。
+pub const OPERATION_ACTIONS: [EditAction; 14] = [
+    EditAction::Delete,
+    EditAction::Duplicate,
+    EditAction::TransposeUp,
+    EditAction::TransposeDown,
+    EditAction::LengthHalf,
+    EditAction::LengthDouble,
+    EditAction::FlipHorizontal,
+    EditAction::FlipVertical,
+    EditAction::Humanize,
+    EditAction::FillGaps,
+    EditAction::MergeNotes,
+    EditAction::GridSplit,
+    EditAction::DedupWithinTrack,
+    EditAction::DedupAcrossTracks,
+];
+
+/// 操作菜单分组：基础｜变换｜清理｜去重。
+pub const OPERATION_GROUPS: [MenuGroup<'static, EditAction>; 4] = [
+    MenuGroup::titled(
+        "menu.operation.group.basic",
+        &[EditAction::Delete, EditAction::Duplicate],
+    ),
+    MenuGroup::titled(
+        "menu.operation.group.transform",
+        &[
+            EditAction::TransposeUp,
+            EditAction::TransposeDown,
+            EditAction::LengthHalf,
+            EditAction::LengthDouble,
+            EditAction::FlipHorizontal,
+            EditAction::FlipVertical,
+        ],
+    ),
+    MenuGroup::titled(
+        "menu.operation.group.cleanup",
+        &[
+            EditAction::Humanize,
+            EditAction::FillGaps,
+            EditAction::MergeNotes,
+            EditAction::GridSplit,
+        ],
+    ),
+    MenuGroup::titled(
+        "menu.operation.group.dedup",
+        &[EditAction::DedupWithinTrack, EditAction::DedupAcrossTracks],
+    ),
 ];
 
 pub fn tool_hint(tool: crate::widgets::tools_panel::Tool) -> String {
@@ -654,6 +711,18 @@ mod tests {
             "pinned_edit_actions({}) < EditAction::ALL({})",
             s.pinned_edit_actions.len(),
             EditAction::ALL.len()
+        );
+        assert!(
+            s.pinned_insert_actions.len() >= crate::chrome::insert_actions::InsertAction::ALL.len(),
+            "pinned_insert_actions({}) < InsertAction::ALL({})",
+            s.pinned_insert_actions.len(),
+            crate::chrome::insert_actions::InsertAction::ALL.len()
+        );
+        assert!(
+            s.pinned_operation_actions.len() >= OPERATION_ACTIONS.len(),
+            "pinned_operation_actions({}) < OPERATION_ACTIONS({})",
+            s.pinned_operation_actions.len(),
+            OPERATION_ACTIONS.len()
         );
     }
 }

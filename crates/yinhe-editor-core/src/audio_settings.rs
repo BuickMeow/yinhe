@@ -24,6 +24,10 @@ pub const RECENT_FILES_LIMIT: usize = 10;
 pub const PINNED_FILE_ACTIONS_LEN: usize = 13;
 /// 编辑菜单图钉数组长度：必须与 `EditAction::ALL.len()` 保持一致。
 pub const PINNED_EDIT_ACTIONS_LEN: usize = 24;
+/// 插入菜单图钉数组长度：必须与 `InsertAction::ALL.len()` 保持一致。
+pub const PINNED_INSERT_ACTIONS_LEN: usize = 9;
+/// 操作菜单图钉数组长度：复用 `EditAction::pinned_index()` 的全量索引。
+pub const PINNED_OPERATION_ACTIONS_LEN: usize = 24;
 
 fn default_toast_collapse_secs() -> f32 {
     5.0
@@ -153,6 +157,12 @@ pub struct AudioSettings {
     pub keybindings: Keybindings,
     pub pinned_file_actions: Vec<bool>,
     pub pinned_edit_actions: Vec<bool>,
+    /// 插入菜单图钉（transport bar 上显示被 pin 的插入动作）。
+    #[serde(default)]
+    pub pinned_insert_actions: Vec<bool>,
+    /// 操作菜单图钉（框选后的批量操作，transport bar 上显示被 pin 的动作）。
+    #[serde(default)]
+    pub pinned_operation_actions: Vec<bool>,
     pub pinned_play_pause: bool,
     pub pinned_stop: bool,
     pub pinned_record: bool,
@@ -226,6 +236,8 @@ impl Default for AudioSettings {
             keybindings: Keybindings::default(),
             pinned_file_actions: vec![false; PINNED_FILE_ACTIONS_LEN],
             pinned_edit_actions: vec![false; PINNED_EDIT_ACTIONS_LEN],
+            pinned_insert_actions: vec![false; PINNED_INSERT_ACTIONS_LEN],
+            pinned_operation_actions: vec![false; PINNED_OPERATION_ACTIONS_LEN],
             pinned_play_pause: false,
             pinned_stop: false,
             pinned_record: false,

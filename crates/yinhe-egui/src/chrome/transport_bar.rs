@@ -5,12 +5,15 @@ use rust_i18n::t;
 use crate::widgets::action_menu::pinned_action_buttons;
 use crate::widgets::timecode::show_timecode_display;
 
-use super::insert_actions::show_insert_menu;
+use super::insert_actions::{InsertAction, show_insert_menu};
 pub use super::transport_bar_actions::{
-    EDIT_GROUPS, EditAction, FILE_GROUPS, FileAction, TransportContext, TransportResponse,
+    EDIT_GROUPS, EditAction, FILE_GROUPS, FileAction, OPERATION_ACTIONS, OPERATION_GROUPS,
+    TransportContext, TransportResponse,
 };
 use super::transport_bar_actions::{PlayActions, PlayMenuAction};
-use super::transport_bar_menus::{show_edit_menu, show_file_menu, show_play_menu, show_view_menu};
+use super::transport_bar_menus::{
+    show_edit_menu, show_file_menu, show_operation_menu, show_play_menu, show_view_menu,
+};
 use super::transport_bar_pr;
 pub use super::transport_bar_pr::PrBarData;
 pub(crate) use super::transport_bar_recent::recent_display_name;
@@ -22,6 +25,7 @@ mod tests;
 
 pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportResponse {
     let has_active = ctx.doc.is_some();
+    let selection_available = ctx.selection_available;
 
     let mut play_actions = PlayActions::default();
     let mut pending_file_action = None;
@@ -93,7 +97,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 show_edit_menu(
                     &edit_btn,
                     has_active,
-                    ctx.selection_available,
+                    selection_available,
                     ctx.settings,
                     &mut pending_edit_action,
                 );
@@ -104,7 +108,32 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     &EditAction::ALL,
                     &ctx.settings.pinned_edit_actions,
                     has_active,
-                    ctx.selection_available,
+                    selection_available,
+                    false,
+                    &mut hovered_hint,
+                    &mut pending_edit_action,
+                );
+
+                // ── 操作菜单：框选后的批量修改动作（从编辑菜单分离） ──
+                let operation_btn = menu_button(ui, "operation_menu", ICON_AUTO_FIX_HIGH, btn_size)
+                    .accessible_name(t!("hint.operation_menu"));
+                if operation_btn.hovered() {
+                    hovered_hint = Some(t!("hint.operation_menu").to_string());
+                }
+                show_operation_menu(
+                    &operation_btn,
+                    has_active,
+                    selection_available,
+                    ctx.settings,
+                    &mut pending_edit_action,
+                );
+                pinned_action_buttons(
+                    ui,
+                    "pinned_operation",
+                    &OPERATION_ACTIONS,
+                    &ctx.settings.pinned_operation_actions,
+                    has_active,
+                    selection_available,
                     false,
                     &mut hovered_hint,
                     &mut pending_edit_action,
@@ -127,11 +156,20 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 if insert_btn.hovered() {
                     hovered_hint = Some(t!("hint.insert_menu").to_string());
                 }
-                if let Some(action) =
-                    show_insert_menu(&insert_btn, has_active, &ctx.settings.keybindings)
-                {
+                if let Some(action) = show_insert_menu(&insert_btn, has_active, ctx.settings) {
                     pending_insert_action = Some(action);
                 }
+                pinned_action_buttons(
+                    ui,
+                    "pinned_insert",
+                    &InsertAction::ALL,
+                    &ctx.settings.pinned_insert_actions,
+                    has_active,
+                    false,
+                    false,
+                    &mut hovered_hint,
+                    &mut pending_insert_action,
+                );
 
                 let is_playing = ctx
                     .doc

@@ -4,7 +4,7 @@ use crate::widgets::action_menu::{ActionMenuExtra, MenuGroup, show_action_menu};
 use eframe::egui;
 
 use super::transport_bar_actions::{
-    EDIT_GROUPS, EditAction, FILE_GROUPS, FileAction, PlayActions, PlayMenuAction,
+    EDIT_GROUPS, EditAction, FILE_GROUPS, FileAction, OPERATION_GROUPS, PlayActions, PlayMenuAction,
 };
 use super::transport_bar_recent::{recent_files_section, recent_parent_width};
 use crate::view_interaction::FollowMode;
@@ -80,6 +80,33 @@ pub fn show_edit_menu(
     }
 }
 
+/// 操作菜单：框选后可批量执行的修改动作（删除/复制/移调/变速/翻转/清理/去重）。
+pub fn show_operation_menu(
+    button: &egui::Response,
+    has_active: bool,
+    selection_available: bool,
+    settings: &mut AudioSettings,
+    pending_action: &mut Option<EditAction>,
+) {
+    let outcome = {
+        let pinned = &mut settings.pinned_operation_actions;
+        show_action_menu(
+            button,
+            &OPERATION_GROUPS,
+            has_active,
+            selection_available,
+            false,
+            &settings.keybindings,
+            Some(pinned),
+            pending_action,
+            None,
+        )
+    };
+    if outcome.pinned_changed {
+        settings.save();
+    }
+}
+
 pub fn show_play_menu(
     button: &egui::Response,
     ctx: &mut super::transport_bar_actions::TransportContext<'_>,
@@ -104,7 +131,7 @@ pub fn show_play_menu(
             enabled: settings.automation_write,
         },
     ];
-    let groups = [MenuGroup::plain(&play_items)];
+    let groups = [MenuGroup::titled("menu.play.group.control", &play_items)];
     let mut pending = None;
     let mut pinned = [
         settings.pinned_play_pause,
@@ -191,8 +218,8 @@ pub fn show_view_menu(
         },
     ];
     let groups = [
-        MenuGroup::plain(&follow_items),
-        MenuGroup::plain(&control_items),
+        MenuGroup::titled("menu.view.group.follow", &follow_items),
+        MenuGroup::titled("menu.view.group.display", &control_items),
     ];
 
     let mut pending: Option<ViewAction> = None;

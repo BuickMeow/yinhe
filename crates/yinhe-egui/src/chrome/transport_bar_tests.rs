@@ -43,7 +43,7 @@ fn menu_widths_are_content_aware() {
         PlayMenuAction::Record { recording: false },
         PlayMenuAction::StepInput { active: false },
     ];
-    let play = [MenuGroup::plain(&play_items)];
+    let play = [MenuGroup::titled("menu.play.group.control", &play_items)];
     let w_play = measure_menu_width(&ctx, &play, kbs);
     // 视图菜单：跟随（视图组）+ 方向/面板（PR 控制组）。
     let follow_items = [ViewAction::Follow(FollowMode::None, true)];
@@ -55,8 +55,8 @@ fn menu_widths_are_content_aware() {
         },
     ];
     let view = [
-        MenuGroup::plain(&follow_items),
-        MenuGroup::plain(&control_items),
+        MenuGroup::titled("menu.view.group.follow", &follow_items),
+        MenuGroup::titled("menu.view.group.display", &control_items),
     ];
     let w_view = measure_menu_width(&ctx, &view, kbs);
     for (name, w) in [

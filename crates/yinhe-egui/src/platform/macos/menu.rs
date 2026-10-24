@@ -233,6 +233,15 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
         &default_kb,
     )?;
 
+    // 操作菜单：框选后的批量修改动作（从编辑菜单分离）。
+    let operation_menu = build_action_submenu(
+        &mut map,
+        &mut items,
+        "menu.operation",
+        &crate::chrome::transport_bar::OPERATION_GROUPS,
+        &default_kb,
+    )?;
+
     // 插入菜单（3 组：音轨 / 全局事件 / 音轨事件；无快捷键）。
     let insert_menu = build_action_submenu(
         &mut map,
@@ -348,6 +357,7 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
         &app_menu,
         &file_menu,
         &edit_menu,
+        &operation_menu,
         &view_menu,
         &insert_menu,
         &play_menu,
@@ -369,6 +379,7 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
     items.push(("menu.quit", quit_item));
     items.push(("menu.file", Box::new(file_menu)));
     items.push(("menu.edit", Box::new(edit_menu)));
+    items.push(("menu.operation", Box::new(operation_menu)));
     items.push(("menu.view", Box::new(view_menu)));
     items.push(("menu.insert", Box::new(insert_menu)));
     items.push(("menu.playback", Box::new(play_menu)));

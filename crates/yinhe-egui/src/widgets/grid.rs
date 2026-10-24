@@ -81,6 +81,35 @@ pub(crate) fn three_columns(
     );
 }
 
+/// 按权重分配列宽（WPF 的 `1*` / `2*` / `4*`）。
+///
+/// 先扣掉列间距，再按权重比例分配，避免 `Size::relative` 的总和与 gap 冲突。
+/// 权重必须为正数；全为 0 时退化为等分。
+/// 目前没有 1:2:4 的现成布局，先作为容器原语保留。
+#[allow(dead_code)]
+pub(crate) fn weighted_columns(
+    ui: &mut egui::Ui,
+    gap: f32,
+    weights: &[f32],
+    add: impl for<'a, 'b> FnOnce(&mut Cells<'a, 'b>),
+) {
+    if weights.is_empty() {
+        return;
+    }
+    let total: f32 = weights.iter().map(|w| w.max(0.0)).sum();
+    let usable = (ui.available_width() - gap * weights.len().saturating_sub(1) as f32).max(0.0);
+    let unit = if total > 0.0 {
+        usable / total
+    } else {
+        usable / weights.len() as f32
+    };
+    let sizes: Vec<Size> = weights
+        .iter()
+        .map(|w| Size::exact(unit * w.max(0.0)))
+        .collect();
+    horizontal(ui, gap, &sizes, add);
+}
+
 /// 内容 + 底栏：内容占剩余高度，底栏固定高。
 pub(crate) fn content_footer(
     ui: &mut egui::Ui,

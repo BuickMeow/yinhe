@@ -35,6 +35,14 @@ impl AudioSettings {
                             s.pinned_edit_actions
                                 .resize(super::PINNED_EDIT_ACTIONS_LEN, false);
                         }
+                        if s.pinned_insert_actions.len() < super::PINNED_INSERT_ACTIONS_LEN {
+                            s.pinned_insert_actions
+                                .resize(super::PINNED_INSERT_ACTIONS_LEN, false);
+                        }
+                        if s.pinned_operation_actions.len() < super::PINNED_OPERATION_ACTIONS_LEN {
+                            s.pinned_operation_actions
+                                .resize(super::PINNED_OPERATION_ACTIONS_LEN, false);
+                        }
                         let before_len = s.recent_files.len();
                         s.recent_files
                             .retain(|p| std::path::Path::new(p).is_absolute());

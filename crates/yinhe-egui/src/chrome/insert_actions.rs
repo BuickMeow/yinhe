@@ -7,8 +7,8 @@
 //! - 歌词/和弦自动分流：选中普通轨 → 轨内版；否则（含仅选中 Conductor）→ 全局版。
 
 use egui_material_icons::icons::*;
-use rust_i18n::t;
 
+use crate::audio_settings::AudioSettings;
 use crate::widgets::action_menu::{MenuGroup, PopupRow, show_action_menu};
 
 /// 插入菜单动作。
@@ -34,13 +34,42 @@ pub enum InsertAction {
     Automation,
 }
 
+impl InsertAction {
+    /// 图钉数组索引：与菜单顺序一致，新增项追加在末尾。
+    pub const fn pinned_index(self) -> usize {
+        match self {
+            InsertAction::Track => 0,
+            InsertAction::Marker => 1,
+            InsertAction::Bpm => 2,
+            InsertAction::TimeSig => 3,
+            InsertAction::KeySig => 4,
+            InsertAction::Lyrics => 5,
+            InsertAction::Chord => 6,
+            InsertAction::ProgramChange => 7,
+            InsertAction::Automation => 8,
+        }
+    }
+
+    pub const ALL: [InsertAction; 9] = [
+        InsertAction::Track,
+        InsertAction::Marker,
+        InsertAction::Bpm,
+        InsertAction::TimeSig,
+        InsertAction::KeySig,
+        InsertAction::Lyrics,
+        InsertAction::Chord,
+        InsertAction::ProgramChange,
+        InsertAction::Automation,
+    ];
+}
+
 impl PopupRow for InsertAction {
     fn pinned_index(self) -> usize {
-        0
+        self.pinned_index()
     }
 
     fn has_pin(self) -> bool {
-        false
+        true
     }
 
     fn action_id(self) -> &'static str {
@@ -82,55 +111,51 @@ impl PopupRow for InsertAction {
 }
 
 /// 插入菜单分组：音轨（结构）｜全局事件｜音轨事件。
-/// 桌面 popup 用 [`INSERT_GROUP_TITLES`] 做副标题；macOS 原生菜单用分隔线。
+/// 桌面 popup 显示小标题；macOS 原生菜单只用分组间的分割线。
 pub const INSERT_GROUPS: [MenuGroup<'static, InsertAction>; 3] = [
-    MenuGroup::plain(&[InsertAction::Track]),
-    MenuGroup::plain(&[
-        InsertAction::Marker,
-        InsertAction::Bpm,
-        InsertAction::TimeSig,
-        InsertAction::KeySig,
-        InsertAction::Lyrics,
-        InsertAction::Chord,
-    ]),
-    MenuGroup::plain(&[InsertAction::ProgramChange, InsertAction::Automation]),
-];
-
-/// 各分组副标题的 i18n key（与 [`INSERT_GROUPS`] 一一对应）。
-pub const INSERT_GROUP_TITLES: [&str; 3] = [
-    "menu.insert.group.structure",
-    "menu.insert.group.global",
-    "menu.insert.group.track_events",
+    MenuGroup::titled("menu.insert.group.structure", &[InsertAction::Track]),
+    MenuGroup::titled(
+        "menu.insert.group.global",
+        &[
+            InsertAction::Marker,
+            InsertAction::Bpm,
+            InsertAction::TimeSig,
+            InsertAction::KeySig,
+            InsertAction::Lyrics,
+            InsertAction::Chord,
+        ],
+    ),
+    MenuGroup::titled(
+        "menu.insert.group.track_events",
+        &[InsertAction::ProgramChange, InsertAction::Automation],
+    ),
 ];
 
 /// 渲染插入菜单（按钮 toggle popup）。返回本帧被点击的动作。
 pub fn show_insert_menu(
     button: &egui::Response,
     has_active: bool,
-    keybindings: &yinhe_editor_core::shortcuts::Keybindings,
+    settings: &mut AudioSettings,
 ) -> Option<InsertAction> {
-    // 带副标题的分组（与 macOS 用的分组常量同源）。
-    let titled: Vec<MenuGroup<'_, InsertAction>> = INSERT_GROUPS
-        .iter()
-        .enumerate()
-        .map(|(i, group)| MenuGroup {
-            title: Some(t!(INSERT_GROUP_TITLES[i]).to_string()),
-            items: group.items,
-        })
-        .collect();
     let mut pending = None;
-    show_action_menu(
-        button,
-        &titled,
-        has_active,
-        // 插入不需要既有选择：无选中时音轨类项回退到最后一条普通轨。
-        false,
-        false,
-        keybindings,
-        None,
-        &mut pending,
-        None,
-    );
+    let outcome = {
+        let pinned = &mut settings.pinned_insert_actions;
+        show_action_menu(
+            button,
+            &INSERT_GROUPS,
+            has_active,
+            // 插入不需要既有选择：无选中时音轨类项回退到最后一条普通轨。
+            false,
+            false,
+            &settings.keybindings,
+            Some(pinned),
+            &mut pending,
+            None,
+        )
+    };
+    if outcome.pinned_changed {
+        settings.save();
+    }
     pending
 }
 
