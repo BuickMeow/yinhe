@@ -358,13 +358,16 @@ class _AutomationPanelState extends State<AutomationPanel> {
     final lane = widget.lanes[laneIdx];
     final dt = _snapTickAt(d.localPosition.dx) - _dragStartSnapTick!;
     final dv = _valueAtY(d.localPosition.dy) - _dragStartValue!;
+    // 批量移动保持统一位移：最左锚点碰到 0 就整体停住，读数与实际落点一致。
+    final minSel = _selectedTicks.isEmpty ? 0 : _selectedTicks.reduce(math.min);
+    final effectiveDt = math.max(dt, -minSel.toDouble());
     final preview = <int, (int, double)>{};
     for (final p in lane.points) {
       final oldTick = p.dx.round();
       if (!_selectedTicks.contains(oldTick)) {
         continue;
       }
-      final newTick = math.max(0, (p.dx + dt).round());
+      final newTick = math.max(0, (p.dx + effectiveDt).round());
       final newValue = _singleSelection ? (p.dy + dv).clamp(0.0, 1.0) : p.dy;
       preview[oldTick] = (newTick, newValue);
     }
@@ -378,7 +381,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
         );
       }
     } else {
-      final dti = dt.round();
+      final dti = effectiveDt.round();
       widget.status.value = EditStatus(
         primary: 'Δt${dti >= 0 ? '+' : ''}$dti',
         secondary: '×${_selectedTicks.length}',
