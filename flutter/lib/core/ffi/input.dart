@@ -103,7 +103,7 @@ typedef VelocityStrokeNative = ffi.Int32 Function(
 );
 typedef VelocityStrokeDart = int Function(ffi.Pointer<ffi.Double>, int);
 
-/// 提交一笔力度绘制：扁平 `[tick, velocity, ...]`，一笔一个 undo。
+/// 提交一笔力度绘制：扁平 `[tick, velocity, ...]`，第二参数是 f64 元素数（点数 × 2）。
 final VelocityStrokeDart velocityStroke = bridge
     .lookupFunction<VelocityStrokeNative, VelocityStrokeDart>(
       'yinhe_velocity_stroke',

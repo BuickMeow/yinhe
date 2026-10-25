@@ -110,7 +110,8 @@ mixin _ShellTransport on _ShellBase {
         ptr[i * 2] = points[i].$1;
         ptr[i * 2 + 1] = points[i].$2;
       }
-      changed = rust.velocityStroke(ptr, points.length);
+      // FFI 的 len 是扁平 f64 元素数（tick/velocity 各一个），不是点对数。
+      changed = rust.velocityStroke(ptr, points.length * 2);
     } finally {
       calloc.free(ptr);
     }

@@ -702,7 +702,8 @@ pub extern "C" fn yinhe_velocity_bars(out_len: *mut u32) -> *const f64 {
     }
 }
 
-/// PR 力度笔划：`points` 为 `(tick, velocity)` 对，长度必须为偶数。
+/// PR 力度笔划：`points` 为扁平的 `[tick, velocity, ...]`（`len` 是 f64 元素数，
+/// 不是点对数），长度必须为偶数。
 ///
 /// 一笔只产生一个 undo；成功返回 1。
 #[unsafe(no_mangle)]
@@ -712,13 +713,17 @@ pub extern "C" fn yinhe_velocity_stroke(points: *const f64, len: u32) -> i32 {
         return 0;
     }
     let flat = unsafe { std::slice::from_raw_parts(points, len as usize) };
-    let mut stroke = Vec::with_capacity(flat.len() / 2);
-    for i in (0..flat.len()).step_by(2) {
-        if flat[i].is_finite() && flat[i + 1].is_finite() {
-            stroke.push((flat[i], flat[i + 1] as f32));
-        }
-    }
-    scene::velocity_stroke(&stroke)
+    scene::velocity_stroke(&parse_velocity_stroke(flat))
+}
+
+/// 把扁平 `[tick, velocity, ...]` 解析为点对；非有限值丢弃。
+fn parse_velocity_stroke(flat: &[f64]) -> Vec<(f64, f32)> {
+    flat.as_chunks::<2>()
+        .0
+        .iter()
+        .filter(|p| p[0].is_finite() && p[1].is_finite())
+        .map(|p| (p[0], p[1] as f32))
+        .collect()
 }
 
 /// 选框拖拽状态：0=无、1=待定（长按中）、2=移动态、3=空白处长按完成。
@@ -1433,5 +1438,28 @@ fn to_c_string(s: String) -> *mut std::ffi::c_char {
     match CString::new(s) {
         Ok(c) => c.into_raw(),
         Err(_) => std::ptr::null_mut(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_velocity_stroke;
+
+    /// 扁平数组按 f64 元素数解释：`[tick, vel]` 两两成对，不能把点数当长度。
+    #[test]
+    fn parse_velocity_stroke_uses_flat_len() {
+        // 两个点 = 4 个 f64；若误把 2（点数）当长度，只会得到 1 个点。
+        let flat = [100.0, 64.0, 200.0, 100.0];
+        let points = parse_velocity_stroke(&flat);
+        assert_eq!(points.len(), 2);
+        assert_eq!(points[0], (100.0, 64.0));
+        assert_eq!(points[1], (200.0, 100.0));
+    }
+
+    #[test]
+    fn parse_velocity_stroke_drops_non_finite() {
+        let flat = [10.0, f64::NAN, 20.0, 30.0, f64::INFINITY, 40.0];
+        let points = parse_velocity_stroke(&flat);
+        assert_eq!(points, vec![(20.0, 30.0)]);
     }
 }
