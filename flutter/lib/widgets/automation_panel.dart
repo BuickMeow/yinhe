@@ -6,10 +6,14 @@ import '../painters/painters.dart';
 import '../l10n/app_localizations.dart';
 import '../core/theme.dart';
 
-/// PR 底部自动化栏（高 81）：combo 列 + 自动化/力度绘制 + 锚点拖动。
+/// PR 底部自动化栏：combo 列 + 自动化/力度绘制 + 锚点拖动。
+///
+/// 面板高度由外部控制（[height]），顶部有一条拖拽手柄；展开时 PR 视口会
+/// 同步缩短，两者上下排列、互不覆盖。
 class AutomationPanel extends StatefulWidget {
   const AutomationPanel({
     super.key,
+    required this.height,
     required this.snap,
     required this.lanes,
     required this.velocity,
@@ -19,8 +23,11 @@ class AutomationPanel extends StatefulWidget {
     required this.onReload,
     required this.onVelocityCommit,
     required this.velocityDrawEnabled,
+    required this.onResize,
+    required this.onResetHeight,
   });
 
+  final double height;
   final ValueNotifier<List<double>> snap;
   final List<AutomationLaneData> lanes;
   final List<(double, double, double, int)> velocity;
@@ -35,8 +42,24 @@ class AutomationPanel extends StatefulWidget {
   /// 铅笔工具下才允许在力度栏落笔，避免手形/刷子误改力度。
   final bool velocityDrawEnabled;
 
-  /// 面板高度（与 painter 的坐标换算一致）。
-  static const double height = 81.0;
+  /// 拖动顶部手柄：`dy` 为本次垂直位移（向上为负 = 变高）。
+  final ValueChanged<double> onResize;
+
+  /// 双击顶部手柄恢复默认高度。
+  final VoidCallback onResetHeight;
+
+  /// 最小高度：保留旧版 81px 绘制区 + 顶部手柄。
+  static const double minHeight = 97.0;
+
+  /// 首次展开的默认高度：120px 绘制区，比旧版高一些方便手指绘制。
+  static const double defaultHeight = 136.0;
+
+  /// 顶部拖拽手柄占用的高度。
+  static const double handleHeight = 16.0;
+
+  /// 绘制区实际可用高度（面板高度扣除拖拽手柄）。
+  double get canvasHeight =>
+      (height - handleHeight).clamp(1.0, double.infinity);
 
   @override
   State<AutomationPanel> createState() => _AutomationPanelState();
@@ -93,7 +116,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
   }
 
   double _velocityAt(double y) {
-    final v = 1.0 + 126.0 * (1.0 - (y / AutomationPanel.height).clamp(0.0, 1.0));
+    final v = 1.0 + 126.0 * (1.0 - (y / widget.canvasHeight).clamp(0.0, 1.0));
     return v.clamp(1.0, 127.0);
   }
 
@@ -216,7 +239,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
     if (tick == null) {
       return;
     }
-    final value = 1.0 - ((d.localPosition.dy - 1) / 80.0);
+    final value = 1.0 - (d.localPosition.dy / widget.canvasHeight);
     setState(() {
       _draggingAnchor = true;
       _autoPreview.value = (tick, value.clamp(0.0, 1.0));
@@ -232,7 +255,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
     if (!_draggingAnchor || pv == null) {
       return;
     }
-    final value = 1.0 - ((d.localPosition.dy - 1) / 80.0);
+    final value = 1.0 - (d.localPosition.dy / widget.canvasHeight);
     setState(() => _autoPreview.value = (pv.$1, value.clamp(0.0, 1.0)));
   }
 
@@ -284,90 +307,111 @@ class _AutomationPanelState extends State<AutomationPanel> {
     final lane = index >= 1 && index <= widget.lanes.length
         ? widget.lanes[index - 1]
         : null;
-    return Positioned(
-      left: 0,
-      right: 0,
-      bottom: 0,
-      child: Container(
-        height: AutomationPanel.height,
-        decoration: BoxDecoration(
-          color: YinheTheme.bg,
-          border: Border(top: BorderSide(color: YinheTheme.lineFg)),
-        ),
-        child: Row(
-          children: [
-            SizedBox(
-              width: AutomationPainter.comboWidth,
-              child: Column(
-                children: [
-                  InkWell(
-                    onTap: () => widget.onCollapsed(true),
-                    child: SizedBox(
-                      height: 22,
-                      width: double.infinity,
-                      child: Icon(
-                        Icons.keyboard_arrow_down,
-                        size: 16,
-                        color: YinheTheme.textMuted,
-                      ),
-                    ),
-                  ),
-                  Expanded(
-                    child: PopupMenuButton<int>(
-                      tooltip: l.automationType,
-                      padding: EdgeInsets.zero,
-                      itemBuilder: (_) => [
-                        for (var i = 0; i < names.length; i++)
-                          PopupMenuItem(value: i, child: Text(names[i])),
-                      ],
-                      onSelected: (i) {
-                        _clearVelocityStroke();
-                        setState(() => _autoIndex = i);
-                      },
-                      child: Center(
-                        child: Text(
-                          names[index],
-                          textAlign: TextAlign.center,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: YinheTheme.textLabel,
-                            fontSize: 10,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTapUp: widget.velocityDrawEnabled && _autoIndex == 0
-                    ? (d) => _handleVelocityTap(d.localPosition)
-                    : null,
-                onPanStart: _handlePanStart,
-                onPanUpdate: _handlePanUpdate,
-                onPanEnd: (_) => _handlePanEnd(),
-                onPanCancel: _handlePanCancel,
-                child: SizedBox.expand(
-                  child: CustomPaint(
-                    painter: AutomationPainter(
-                      lane: lane,
-                      velocity: widget.velocity,
-                      trackColors: widget.trackColors,
-                      color: _trackColor,
-                      snap: widget.snap,
-                      preview: _autoPreview,
-                      velocityPreview: _velocityPreview,
-                    ),
+    return Container(
+      height: widget.height,
+      decoration: BoxDecoration(
+        color: YinheTheme.bg,
+        border: Border(top: BorderSide(color: YinheTheme.lineFg)),
+      ),
+      child: Column(
+        children: [
+          // 顶部拖拽手柄：向上拖变高、向上拖到极限后 PR 只会被压缩不会覆盖。
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onVerticalDragUpdate: (d) => widget.onResize(d.delta.dy),
+            onDoubleTap: widget.onResetHeight,
+            child: SizedBox(
+              height: AutomationPanel.handleHeight,
+              width: double.infinity,
+              child: Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: YinheTheme.textMuted.withValues(alpha: 0.55),
+                    borderRadius: BorderRadius.circular(2),
                   ),
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+          Expanded(
+            child: Row(
+              children: [
+                SizedBox(
+                  width: AutomationPainter.comboWidth,
+                  child: Column(
+                    children: [
+                      InkWell(
+                        onTap: () => widget.onCollapsed(true),
+                        child: SizedBox(
+                          height: 22,
+                          width: double.infinity,
+                          child: Icon(
+                            Icons.keyboard_arrow_down,
+                            size: 16,
+                            color: YinheTheme.textMuted,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: PopupMenuButton<int>(
+                          tooltip: l.automationType,
+                          padding: EdgeInsets.zero,
+                          itemBuilder: (_) => [
+                            for (var i = 0; i < names.length; i++)
+                              PopupMenuItem(value: i, child: Text(names[i])),
+                          ],
+                          onSelected: (i) {
+                            _clearVelocityStroke();
+                            setState(() => _autoIndex = i);
+                          },
+                          child: Center(
+                            child: Text(
+                              names[index],
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: YinheTheme.textLabel,
+                                fontSize: 10,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapUp: widget.velocityDrawEnabled && _autoIndex == 0
+                        ? (d) => _handleVelocityTap(d.localPosition)
+                        : null,
+                    onPanStart: _handlePanStart,
+                    onPanUpdate: _handlePanUpdate,
+                    onPanEnd: (_) => _handlePanEnd(),
+                    onPanCancel: _handlePanCancel,
+                    child: SizedBox.expand(
+                      child: CustomPaint(
+                        painter: AutomationPainter(
+                          lane: lane,
+                          velocity: widget.velocity,
+                          trackColors: widget.trackColors,
+                          color: _trackColor,
+                          snap: widget.snap,
+                          preview: _autoPreview,
+                          velocityPreview: _velocityPreview,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

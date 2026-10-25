@@ -27,9 +27,29 @@ mixin _ShellBuild on _ShellBase {
                   child: LayoutBuilder(
                     builder: (context, constraints) {
                       final size = constraints.biggest;
+                      // AM 面板可见时压缩画布高度：PR 与 AM 上下排列、互不覆盖。
+                      final amVisible =
+                          !_showHome &&
+                          _viewMode == kViewPianoroll &&
+                          !_autoCollapsed;
+                      final maxAmH = ((size.height - RulerPainter.height) * 0.6)
+                          .clamp(AutomationPanel.minHeight, double.infinity);
+                      _autoPanelMaxHeight = maxAmH;
+                      final amH = amVisible
+                          ? _autoPanelHeight.clamp(
+                              AutomationPanel.minHeight,
+                              maxAmH,
+                            )
+                          : 0.0;
+                      final canvasH = (size.height - amH).clamp(
+                        1.0,
+                        double.infinity,
+                      );
                       // 内容画布 = 画布区减去顶部标尺条（Rust 坐标系从标尺下方开始）。
-                      final contentH = (size.height - RulerPainter.height)
-                          .clamp(1.0, double.infinity);
+                      final contentH = (canvasH - RulerPainter.height).clamp(
+                        1.0,
+                        double.infinity,
+                      );
                       final dpr = MediaQuery.devicePixelRatioOf(context);
                       final pixelW = (size.width * dpr).round();
                       final pixelH = (contentH * dpr).round();
@@ -51,100 +71,152 @@ mixin _ShellBuild on _ShellBase {
                           Positioned(
                             left: 0,
                             right: 0,
-                            top: RulerPainter.height,
-                            bottom: 0,
-                            child: GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onTapUp: _handleTapUp,
-                              onLongPressStart: _handleLongPressStart,
-                              onLongPressMoveUpdate: _handleLongPressMove,
-                              onLongPressEnd: _handleLongPressEnd,
-                              onScaleStart: _handleScaleStart,
-                              onScaleUpdate: _handleScaleUpdate,
-                              onScaleEnd: _handleScaleEnd,
-                              child: Listener(
-                                behavior: HitTestBehavior.opaque,
-                                onPointerDown: _handlePointerDown,
-                                onPointerMove: _handlePointerMove,
-                                onPointerUp: _handlePointerUp,
-                                onPointerCancel: _handlePointerCancel,
-                                onPointerSignal: _handlePointerSignal,
-                                child: Texture(textureId: id),
-                              ),
+                            top: 0,
+                            height: canvasH,
+                            child: Stack(
+                              children: [
+                                Positioned(
+                                  left: 0,
+                                  right: 0,
+                                  top: RulerPainter.height,
+                                  bottom: 0,
+                                  child: GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onTapUp: _handleTapUp,
+                                    onLongPressStart: _handleLongPressStart,
+                                    onLongPressMoveUpdate: _handleLongPressMove,
+                                    onLongPressEnd: _handleLongPressEnd,
+                                    onScaleStart: _handleScaleStart,
+                                    onScaleUpdate: _handleScaleUpdate,
+                                    onScaleEnd: _handleScaleEnd,
+                                    child: Listener(
+                                      behavior: HitTestBehavior.opaque,
+                                      onPointerDown: _handlePointerDown,
+                                      onPointerMove: _handlePointerMove,
+                                      onPointerUp: _handlePointerUp,
+                                      onPointerCancel: _handlePointerCancel,
+                                      onPointerSignal: _handlePointerSignal,
+                                      child: Texture(textureId: id),
+                                    ),
+                                  ),
+                                ),
+                                // 层级：音符（Texture）→ 演奏指示线 → 音轨面板 → 时间标尺 → 自动化栏。
+                                if (!_showHome)
+                                  Positioned.fill(
+                                    child: IgnorePointer(
+                                      child: CustomPaint(
+                                        painter: PlayheadPainter(
+                                          _playhead,
+                                          _snap,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                // 选框必须在音轨面板/键盘下方：面板不透明底会盖住越界部分。
+                                if (!_showHome)
+                                  Positioned(
+                                    left: 0,
+                                    right: 0,
+                                    top: RulerPainter.height,
+                                    bottom: 0,
+                                    child: IgnorePointer(
+                                      child: CustomPaint(
+                                        painter: OverlayPainter(
+                                          _overlay,
+                                          _moveDashed,
+                                          _snap,
+                                          _tool == 0,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                if (!_showHome)
+                                  Positioned(
+                                    left: 0,
+                                    right: 0,
+                                    top: RulerPainter.height,
+                                    bottom: 0,
+                                    child: IgnorePointer(
+                                      child: CustomPaint(
+                                        painter: LabelsPainter(
+                                          snap: _snap,
+                                          tracks: _tracks,
+                                          dragFrom: _dragFrom,
+                                          dragTo: _dragTo,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                if (!_showHome)
+                                  Positioned(
+                                    left: 0,
+                                    right: 0,
+                                    top: 0,
+                                    height: RulerPainter.height,
+                                    child: IgnorePointer(
+                                      child: CustomPaint(
+                                        painter: RulerPainter(_snap, _grid),
+                                      ),
+                                    ),
+                                  ),
+                                if (!_showHome)
+                                  Positioned(
+                                    left: 0,
+                                    right: 0,
+                                    top: 0,
+                                    height: RulerPainter.height,
+                                    child: MarkerLayer(
+                                      snap: _snap,
+                                      grid: _grid,
+                                      markers: _markers,
+                                      onChanged: _refreshDocumentMeta,
+                                    ),
+                                  ),
+                                // 长按圆环/落点竖线最后画：盖在音轨面板与自动化栏之上。
+                                if (!_showHome)
+                                  Positioned(
+                                    left: 0,
+                                    right: 0,
+                                    top: RulerPainter.height,
+                                    bottom: 0,
+                                    child: IgnorePointer(
+                                      child: CustomPaint(
+                                        painter: SelectionLongPressPainter(
+                                          _lpProgress,
+                                          _lpPosNotifier,
+                                          _moveDashed,
+                                          _overlay,
+                                          _snap,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                if (!_showHome)
+                                  Positioned(
+                                    left: 0,
+                                    right: 0,
+                                    top: RulerPainter.height,
+                                    bottom: 0,
+                                    child: IgnorePointer(
+                                      child: CustomPaint(
+                                        painter: LongPressIndicatorPainter(
+                                          _snap,
+                                          _lpIndicator,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
                           ),
-                          // 层级：音符（Texture）→ 演奏指示线 → 音轨面板 → 时间标尺 → 自动化栏。
-                          if (!_showHome)
-                            Positioned.fill(
-                              child: IgnorePointer(
-                                child: CustomPaint(
-                                  painter: PlayheadPainter(_playhead, _snap),
-                                ),
-                              ),
-                            ),
-                          // 选框必须在音轨面板/键盘下方：面板不透明底会盖住越界部分。
-                          if (!_showHome)
+                          if (amVisible)
                             Positioned(
                               left: 0,
                               right: 0,
-                              top: RulerPainter.height,
                               bottom: 0,
-                              child: IgnorePointer(
-                                child: CustomPaint(
-                                  painter: OverlayPainter(
-                                    _overlay,
-                                    _moveDashed,
-                                    _snap,
-                                    _tool == 0,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          if (!_showHome)
-                            Positioned(
-                              left: 0,
-                              right: 0,
-                              top: RulerPainter.height,
-                              bottom: 0,
-                              child: IgnorePointer(
-                                child: CustomPaint(
-                                  painter: LabelsPainter(
-                                    snap: _snap,
-                                    tracks: _tracks,
-                                    dragFrom: _dragFrom,
-                                    dragTo: _dragTo,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          if (!_showHome)
-                            Positioned(
-                              left: 0,
-                              right: 0,
-                              top: 0,
-                              height: RulerPainter.height,
-                              child: IgnorePointer(
-                                child: CustomPaint(
-                                  painter: RulerPainter(_snap, _grid),
-                                ),
-                              ),
-                            ),
-                          if (!_showHome)
-                            Positioned(
-                              left: 0,
-                              right: 0,
-                              top: 0,
-                              height: RulerPainter.height,
-                              child: MarkerLayer(
-                                snap: _snap,
-                                grid: _grid,
-                                markers: _markers,
-                                onChanged: _refreshDocumentMeta,
-                              ),
-                            ),
-                          if (!_showHome && _viewMode == kViewPianoroll)
-                            if (!_autoCollapsed)
-                              AutomationPanel(
+                              height: amH,
+                              child: AutomationPanel(
+                                height: amH,
                                 snap: _snap,
                                 lanes: _autoLanes,
                                 velocity: _velocityBars,
@@ -156,44 +228,15 @@ mixin _ShellBuild on _ShellBase {
                                 onReload: _loadAutomation,
                                 onVelocityCommit: _commitVelocityStroke,
                                 velocityDrawEnabled: _tool == 2,
-                              )
-                            else
-                              AutoExpandButton(
-                                onTap: () => _setAutoCollapsed(false),
-                              ),
-                          // 长按圆环/落点竖线最后画：盖在音轨面板与自动化栏之上。
-                          if (!_showHome)
-                            Positioned(
-                              left: 0,
-                              right: 0,
-                              top: RulerPainter.height,
-                              bottom: 0,
-                              child: IgnorePointer(
-                                child: CustomPaint(
-                                  painter: SelectionLongPressPainter(
-                                    _lpProgress,
-                                    _lpPosNotifier,
-                                    _moveDashed,
-                                    _overlay,
-                                    _snap,
-                                  ),
-                                ),
+                                onResize: _resizeAutoPanel,
+                                onResetHeight: _resetAutoPanelHeight,
                               ),
                             ),
-                          if (!_showHome)
-                            Positioned(
-                              left: 0,
-                              right: 0,
-                              top: RulerPainter.height,
-                              bottom: 0,
-                              child: IgnorePointer(
-                                child: CustomPaint(
-                                  painter: LongPressIndicatorPainter(
-                                    _snap,
-                                    _lpIndicator,
-                                  ),
-                                ),
-                              ),
+                          if (!_showHome &&
+                              _viewMode == kViewPianoroll &&
+                              _autoCollapsed)
+                            AutoExpandButton(
+                              onTap: () => _setAutoCollapsed(false),
                             ),
                         ],
                       );

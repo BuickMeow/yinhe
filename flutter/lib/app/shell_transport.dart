@@ -127,6 +127,27 @@ mixin _ShellTransport on _ShellBase {
       _loadVelocity();
     }
   }
+
+  /// 拖动 AM 栏顶部手柄：向上（dy < 0）变高，最大占画布 60%。
+  @override
+  void _resizeAutoPanel(double dy) {
+    if (_autoCollapsed) {
+      return;
+    }
+    final maxH = _autoPanelMaxHeight;
+    setState(() {
+      _autoPanelHeight = (_autoPanelHeight - dy).clamp(
+        AutomationPanel.minHeight,
+        maxH < AutomationPanel.minHeight ? AutomationPanel.minHeight : maxH,
+      );
+    });
+  }
+
+  /// 双击手柄恢复默认高度。
+  @override
+  void _resetAutoPanelHeight() {
+    setState(() => _autoPanelHeight = AutomationPanel.defaultHeight);
+  }
   // ── 走带 ──
 
   @override

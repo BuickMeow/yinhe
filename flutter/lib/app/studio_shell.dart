@@ -109,6 +109,12 @@ abstract class _ShellBase extends State<StudioShell>
   /// 收起自动化栏（最大化画布）。
   bool _autoCollapsed = false;
 
+  /// 自动化栏高度（含顶部拖拽手柄）。
+  double _autoPanelHeight = AutomationPanel.defaultHeight;
+
+  /// 当前允许的最大高度（由 LayoutBuilder 每帧写入，避免溢出屏幕）。
+  double _autoPanelMaxHeight = AutomationPanel.defaultHeight;
+
   /// 当前工具（PR 5 种；AR 2 种；索引对应 `toolDefs`）。
   int _toolPr = 0;
   int _toolAr = 0;
@@ -117,9 +123,11 @@ abstract class _ShellBase extends State<StudioShell>
   /// 但不会改写另一个槽位，因此两个工具按钮互相独立。
   int _mainToolPr = 0;
   int _mainToolAr = 0;
+
   /// 初始备用工具：PR 铅笔、AR 手型；主槽位都是选框。
   int _quickToolPr = defaultQuickToolPr;
   int _quickToolAr = quickToolsAr.last;
+
   /// 当前高亮的是快捷槽还是主槽。仅最近一次操作的槽位高亮；
   /// 即使两个槽位工具相同，也只有一个按钮是强调色。
   bool _quickSlotActivePr = false;
@@ -285,6 +293,8 @@ abstract class _ShellBase extends State<StudioShell>
   int get _quickTool;
   bool get _quickSlotActive;
   void _setAutoCollapsed(bool collapsed);
+  void _resizeAutoPanel(double dy);
+  void _resetAutoPanelHeight();
   void _setView(int mode);
   void _showAddTrackDialog();
   void _showPasteMenu(Offset? pos, LongPressContext? ctx);
