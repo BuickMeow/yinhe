@@ -1726,7 +1726,7 @@ pub fn time_sig_segments_json() -> String {
 }
 
 /// PR 自动化栏数据（仅 PB/CC/RPN 三类），JSON：
-/// `[{"kind":0,"num":-1,"max":16383,"name":"Pitch Bend","points":[[tick,value],...]}, ...]`
+/// `[{"kind":0,"max":16383,"name":"Pitch Bend","points":[[tick,value],...]}, ...]`
 pub fn automation_json(track: usize) -> String {
     let Ok(s) = scene().lock() else {
         return "[]".into();
@@ -1743,15 +1743,14 @@ pub fn automation_json(track: usize) -> String {
         let Some(kind) = lane_kind(&lane.target) else {
             continue;
         };
-        let (num, max) = lane_display_range(&lane.target);
+        let max = lane_display_max(&lane.target);
         if !first {
             out.push(',');
         }
         first = false;
         out.push_str(&format!(
-            "{{\"kind\":{},\"num\":{},\"max\":{},\"name\":\"{}\",\"points\":[",
+            "{{\"kind\":{},\"max\":{},\"name\":\"{}\",\"points\":[",
             kind,
-            num,
             max,
             json_escape(&lane.target.display_name())
         ));
@@ -3412,17 +3411,9 @@ fn lane_kind(target: &yinhe_types::automation::AutomationTarget) -> Option<u8> {
     }
 }
 
-/// 可见 lane 的显示编号与上限：CC 号 / RPN 号，以及归一化值还原上限。
-fn lane_display_range(target: &yinhe_types::automation::AutomationTarget) -> (i32, f32) {
-    use yinhe_types::automation::AutomationTarget;
-    let num = match target {
-        AutomationTarget::CC { controller } => i32::from(*controller),
-        AutomationTarget::Rpn { parameter } | AutomationTarget::Nrpn { parameter } => {
-            i32::from(*parameter)
-        }
-        _ => -1,
-    };
-    (num, target.display_max().unwrap_or(1.0))
+/// 可见 lane 的归一化值还原上限（CC=127、PB=16383 等）。
+fn lane_display_max(target: &yinhe_types::automation::AutomationTarget) -> f32 {
+    target.display_max().unwrap_or(1.0)
 }
 
 /// 按 `automation_json` 的过滤顺序（1-based）查可见 lane 的原始下标与 target。
