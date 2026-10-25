@@ -227,6 +227,15 @@ mixin _ShellTransport on _ShellBase {
     return '1.0.000';
   }
 
+  /// 顶部栏临时读数的位置文本：跟随时间码当前的小节/秒模式。
+  @override
+  String _formatEditTick(double tick) {
+    if (_timecodeBar) {
+      return _fmtBarBeat(tick, _ppq);
+    }
+    return _fmtTime(rust.secondsAtTick(tick));
+  }
+
   /// 读取拍号分段（文档变化时刷新）。
   @override
   void _loadTimeSigSegments() {

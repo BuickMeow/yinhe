@@ -109,6 +109,21 @@ final VelocityStrokeDart velocityStroke = bridge
       'yinhe_velocity_stroke',
     );
 
+typedef DragDeltaNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Int64>,
+  ffi.Pointer<ffi.Int32>,
+  ffi.Pointer<ffi.Int32>,
+);
+typedef DragDeltaDart = int Function(
+  ffi.Pointer<ffi.Int64>,
+  ffi.Pointer<ffi.Int32>,
+  ffi.Pointer<ffi.Int32>,
+);
+
+/// 选框整体移动增量：dt(tick) / dk(半音) / dtr(轨道)，返回 1 = 移动态。
+final DragDeltaDart dragDelta = bridge
+    .lookupFunction<DragDeltaNative, DragDeltaDart>('yinhe_drag_delta');
+
 typedef ScrollAtNative = ffi.Int32 Function(
   ffi.Float,
   ffi.Float,
@@ -121,15 +136,3 @@ typedef ScrollAtDart = int Function(double, double, double, double, int);
 /// 滚轮/触控板：ctrl=1 缩放（键盘区副轴，其余主轴），否则平移。
 final ScrollAtDart scrollAt = bridge
     .lookupFunction<ScrollAtNative, ScrollAtDart>('yinhe_scroll_at');
-
-typedef SetAutoNative = ffi.Int32 Function(
-  ffi.Int32,
-  ffi.Int32,
-  ffi.Uint32,
-  ffi.Float,
-);
-typedef SetAutoDart = int Function(int, int, int, double);
-
-/// 编辑自动化锚点：track / lane_index(1-based) / tick / value(0..1)。
-final SetAutoDart setAutomationValue = bridge
-    .lookupFunction<SetAutoNative, SetAutoDart>('yinhe_set_automation_value');

@@ -15,9 +15,11 @@ class AutomationPainter extends CustomPainter {
     required this.color,
     required this.snap,
     required this.grid,
-    required this.preview,
+    required this.selectedTicks,
+    required this.movePreview,
+    required this.marquee,
     required this.velocityPreview,
-  }) : super(repaint: Listenable.merge([snap, grid, preview, velocityPreview]));
+  }) : super(repaint: Listenable.merge([snap, grid, velocityPreview]));
 
   /// null = 力度模式。
   final AutomationLaneData? lane;
@@ -33,8 +35,14 @@ class AutomationPainter extends CustomPainter {
   /// 拍号分段（与 PR 共用，保证小节/拍网格对齐）。
   final ValueNotifier<BarBeatGrid?> grid;
 
-  /// 拖动中的锚点预览（tick, value）。
-  final ValueNotifier<(double, double)?> preview;
+  /// 已选锚点（tick）。
+  final Set<int> selectedTicks;
+
+  /// old tick → (new tick, new value)：拖动中的移动预览。
+  final Map<int, (int, double)> movePreview;
+
+  /// 框选矩形（绘制区局部坐标，全高）。
+  final Rect? marquee;
 
   /// 力度笔划预览：(tick, length, velocity01, track)。
   final ValueNotifier<List<(double, double, double, int)>> velocityPreview;
@@ -134,12 +142,44 @@ class AutomationPainter extends CustomPainter {
 
     final points = l.points;
     if (points.isEmpty) {
+      _paintMarquee(canvas);
       return;
     }
 
-    // 离散（Step）显示：横向保持到下一 tick，再竖直跳变。
+    if (movePreview.isEmpty) {
+      _paintLane(canvas, size, points, color, 1.0, selectedTicks, xOf, yOf);
+    } else {
+      // 原曲线淡化作参照，移动后的曲线/锚点用原色。
+      _paintLane(canvas, size, points, color, 0.22, const {}, xOf, yOf);
+      final moved = <Offset>[
+        for (final p in points)
+          if (movePreview[p.dx.round()] case (final int tick, final double v))
+            Offset(tick.toDouble(), v)
+          else
+            p,
+      ]..sort((a, b) => a.dx.compareTo(b.dx));
+      final movedSelected = <int>{
+        for (final e in movePreview.entries)
+          if (selectedTicks.contains(e.key)) e.value.$1,
+      };
+      _paintLane(canvas, size, moved, color, 1.0, movedSelected, xOf, yOf);
+    }
+    _paintMarquee(canvas);
+  }
+
+  /// 离散（Step）曲线 + 锚点；`alpha < 1` 时作为拖动参照层。
+  void _paintLane(
+    Canvas canvas,
+    Size size,
+    List<Offset> points,
+    Color color,
+    double alpha,
+    Set<int> selected,
+    double Function(double) xOf,
+    double Function(double) yOf,
+  ) {
     final line = Paint()
-      ..color = color.withValues(alpha: 0.85)
+      ..color = color.withValues(alpha: 0.85 * alpha)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
     final path = Path();
@@ -169,41 +209,49 @@ class AutomationPainter extends CustomPainter {
       canvas.drawPath(path, line);
     }
 
-    // 锚点
-    final anchor = Paint()..color = color;
+    final anchor = Paint()..color = color.withValues(alpha: alpha);
+    final selectedPaint = Paint()
+      ..color = YinheTheme.accent.withValues(alpha: alpha);
+    final selectedEdge = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1
+      ..color = Colors.white.withValues(alpha: alpha);
     for (final p in points) {
       final x = xOf(p.dx);
       if (x < 0 || x > size.width) {
         continue;
       }
-      canvas.drawRect(
-        Rect.fromCenter(center: Offset(x, yOf(p.dy)), width: 5, height: 5),
-        anchor,
-      );
+      final y = yOf(p.dy);
+      if (selected.contains(p.dx.round())) {
+        final r = Rect.fromCenter(center: Offset(x, y), width: 7, height: 7);
+        canvas.drawRect(r, selectedPaint);
+        canvas.drawRect(r, selectedEdge);
+      } else {
+        canvas.drawRect(
+          Rect.fromCenter(center: Offset(x, y), width: 5, height: 5),
+          anchor,
+        );
+      }
     }
+  }
 
-    // 拖动预览
-    final pv = preview.value;
-    if (pv != null) {
-      final x = xOf(pv.$1);
-      final y = yOf(pv.$2);
-      canvas.drawLine(
-        Offset(x, 0),
-        Offset(x, size.height),
-        Paint()
-          ..color = YinheTheme.accent.withValues(alpha: 0.5)
-          ..strokeWidth = 1,
-      );
-      canvas.drawCircle(
-        Offset(x, y),
-        6,
-        Paint()..color = YinheTheme.accent.withValues(alpha: 0.35),
-      );
-      canvas.drawRect(
-        Rect.fromCenter(center: Offset(x, y), width: 7, height: 7),
-        Paint()..color = Colors.white,
-      );
+  /// 框选：全高竖向色带。
+  void _paintMarquee(Canvas canvas) {
+    final m = marquee;
+    if (m == null) {
+      return;
     }
+    canvas.drawRect(
+      m,
+      Paint()..color = YinheTheme.accent.withValues(alpha: 0.08),
+    );
+    canvas.drawRect(
+      m,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1
+        ..color = YinheTheme.accent.withValues(alpha: 0.5),
+    );
   }
 
   /// PR 网格最小间距（与 Rust `GRID_MIN_SPACING` 一致）。

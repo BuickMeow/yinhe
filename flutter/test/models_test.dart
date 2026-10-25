@@ -65,6 +65,8 @@ void main() {
     test('AutomationLaneData 解析点', () {
       final lane = AutomationLaneData.fromJson({
         'kind': 2,
+        'num': 11,
+        'max': 127,
         'name': 'CC 11 Expression',
         'points': [
           [0, 0.5],
@@ -72,8 +74,19 @@ void main() {
         ],
       });
       expect(lane.kind, 2);
+      expect(lane.number, 11);
+      expect(lane.max, 127);
       expect(lane.name, 'CC 11 Expression');
       expect(lane.points, const [Offset(0, 0.5), Offset(480, 1.0)]);
+      // 顶部栏值显示：归一化 0.5 → CC 原始值 64。
+      expect(lane.formatValue(0.5), '64');
+    });
+
+    test('AutomationLaneData 缺省 num/max', () {
+      final lane = AutomationLaneData.fromJson(const {});
+      expect(lane.number, -1);
+      expect(lane.max, 1.0);
+      expect(lane.formatValue(0.25), '0');
     });
 
     test('RulerMarker 缺省值', () {

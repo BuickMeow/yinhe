@@ -656,6 +656,37 @@ pub fn long_press_context_json() -> String {
     )
 }
 
+/// 选区整体移动的当前增量：PR 返回 `(tick 差, dk, 0)`，AR 返回 `(tick 差, 0, dtr)`。
+///
+/// tick 差保留未取整值（选框矩形预览用），ghost/提交再 round；已按选框
+/// 左边界 clamp 到 >= 0。预览、提交、顶部栏读数共用这一份换算，避免漂移。
+fn move_box_delta(s: &RenderScene, d: &DragState, x: f32, y: f32) -> Option<(f64, i32, i32)> {
+    let q = quantize_of(s);
+    let snap = scene::SnapCtx::new(s);
+    match s.view_mode {
+        ViewMode::Pianoroll => {
+            let (t0, _, _, _) = d.box_ticks?;
+            let geom = PrGeom::new(&s.pr_view);
+            let mut dt = snap.round(q, geom.x_to_tick(x)) - d.anchor_tick;
+            if t0 + dt < 0.0 {
+                dt = -t0;
+            }
+            let dk = i32::from(geom.y_to_key(y)) - i32::from(d.anchor_key);
+            Some((dt, dk, 0))
+        }
+        ViewMode::Arrangement => {
+            let (t0, _, _, _) = d.box_rows?;
+            let geom = ArGeom::new(&s.arr_view);
+            let mut dt = snap.round(q, geom.x_to_tick(x)) - d.anchor_tick;
+            if t0 + dt < 0.0 {
+                dt = -t0;
+            }
+            let dtr = geom.y_to_row(y) as i32 - d.anchor_row as i32;
+            Some((dt, 0, dtr))
+        }
+    }
+}
+
 /// 选框拖拽状态：0=无、1=待定（长按中）、2=移动态、3=空白处长按完成（待粘贴）。
 pub fn selection_state() -> i32 {
     DRAG.lock()
@@ -666,6 +697,38 @@ pub fn selection_state() -> i32 {
             _ => 0,
         })
         .unwrap_or(0)
+}
+
+/// 当前选框整体移动增量（顶部栏读数用）。返回 1 = 正在 MOVE_BOX。
+///
+/// 与 `refresh_preview` / `commit_move` 共用 [`move_box_delta`]，读数与实际
+/// 落点一致（包含量化吸附和左边界 clamp）。
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
+pub fn drag_delta(out_dt: *mut i64, out_dk: *mut i32, out_dtr: *mut i32) -> i32 {
+    let Ok(d) = DRAG.lock() else {
+        return 0;
+    };
+    if d.kind != kind::MOVE_BOX {
+        return 0;
+    }
+    let Ok(s) = scene::scene().lock() else {
+        return 0;
+    };
+    let Some((dt, dk, dtr)) = move_box_delta(&s, &d, d.px, d.py) else {
+        return 0;
+    };
+    unsafe {
+        if !out_dt.is_null() {
+            *out_dt = dt.round() as i64;
+        }
+        if !out_dk.is_null() {
+            *out_dk = dk;
+        }
+        if !out_dtr.is_null() {
+            *out_dtr = dtr;
+        }
+    }
+    1
 }
 
 /// Flutter 长按识别完成：待定选框进入移动态，空白处进入粘贴态。成功 1。
@@ -1110,133 +1173,99 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
             bump(s);
         }
         kind::MOVE_BOX => {
-            let b2 = match s.view_mode {
+            let Some((dt_f, dk, dtr)) = move_box_delta(s, d, x, y) else {
+                return;
+            };
+            let dt = dt_f.round() as i64;
+            match s.view_mode {
                 ViewMode::Pianoroll => {
                     let Some((t0, t1, klo, khi)) = d.box_ticks else {
                         return;
                     };
                     let geom = PrGeom::new(&s.pr_view);
-                    let q = quantize_of(s);
-                    let mut dt = snap.round(q, geom.x_to_tick(x)) - d.anchor_tick;
-                    if t0 + dt < 0.0 {
-                        dt = -t0;
-                    }
-                    let dk = i32::from(geom.y_to_key(y)) - i32::from(d.anchor_key);
                     let klo2 = (i32::from(klo) + dk).clamp(0, 127) as u8;
                     let khi2 = (i32::from(khi) + dk).clamp(0, 127) as u8;
-                    [
-                        geom.tick_to_x(t0 + dt).max(geom.kbw),
+                    s.overlay_box = Some([
+                        geom.tick_to_x(t0 + dt_f).max(geom.kbw),
                         geom.key_to_y(khi2),
-                        geom.tick_to_x(t1 + dt),
+                        geom.tick_to_x(t1 + dt_f),
                         geom.key_to_y(klo2) + geom.kh,
-                    ]
+                    ]);
+                    let stamp = (dt, dk, s.pr_view.render_hash());
+                    if d.last_ghost != Some(stamp) {
+                        d.last_ghost = Some(stamp);
+                        let (tick_lo, tick_hi) = s
+                            .pr_view
+                            .visible_main_range(s.pr_view.main_axis_len(lw, lh));
+                        let (key_lo, key_hi) = s
+                            .pr_view
+                            .visible_cross_range(s.pr_view.cross_axis_len(lw, lh));
+                        let mut ghost = Vec::new();
+                        let src_lo = (i32::from(key_lo) - dk).clamp(0, 127) as usize;
+                        let src_hi = (i32::from(key_hi) - dk).clamp(0, 127) as usize;
+                        for src_key in src_lo..=src_hi {
+                            let new_key = (src_key as i32 + dk).clamp(0, 127) as u8;
+                            for &(track, start, end, _vel) in &d.drag_by_key[src_key] {
+                                let new_start = (i64::from(start) + dt).max(0) as u32;
+                                let new_end = new_start.saturating_add(end.saturating_sub(start));
+                                if f64::from(new_start) >= tick_hi || f64::from(new_end) <= tick_lo
+                                {
+                                    continue;
+                                }
+                                ghost.push((new_start, new_end, new_key, track));
+                            }
+                        }
+                        apply_preview(s, d, std::mem::take(&mut ghost), true);
+                        if dk != d.preview_last_dk {
+                            d.preview_last_dk = dk;
+                            preview_group(s, d, dt, dk);
+                        }
+                    }
                 }
                 ViewMode::Arrangement => {
                     let Some((t0, t1, rlo, rhi)) = d.box_rows else {
                         return;
                     };
                     let geom = ArGeom::new(&s.arr_view);
-                    let q = quantize_of(s);
-                    let mut dt = snap.round(q, geom.x_to_tick(x)) - d.anchor_tick;
-                    if t0 + dt < 0.0 {
-                        dt = -t0;
-                    }
-                    let dtr = geom.y_to_row(y) as i32 - d.anchor_row as i32;
                     let max_row = s.num_tracks.saturating_sub(1) as i32;
                     let rlo2 = (rlo as i32 + dtr).clamp(0, max_row) as usize;
                     let rhi2 = (rhi as i32 + dtr).clamp(0, max_row) as usize;
-                    [
-                        geom.tick_to_x(t0 + dt).max(geom.panel_w),
+                    s.overlay_box = Some([
+                        geom.tick_to_x(t0 + dt_f).max(geom.panel_w),
                         geom.row_to_y(rlo2),
-                        geom.tick_to_x(t1 + dt),
+                        geom.tick_to_x(t1 + dt_f),
                         geom.row_to_y(rhi2 + 1),
-                    ]
-                }
-            };
-            s.overlay_box = Some(b2);
-            if s.view_mode == ViewMode::Pianoroll {
-                let Some((t0, _, _, _)) = d.box_ticks else {
-                    return;
-                };
-                let geom = PrGeom::new(&s.pr_view);
-                let q = quantize_of(s);
-                let mut dt = snap.round(q, geom.x_to_tick(x)) - d.anchor_tick;
-                if t0 + dt < 0.0 {
-                    dt = -t0;
-                }
-                let dt = dt.round() as i64;
-                let dk = i32::from(geom.y_to_key(y)) - i32::from(d.anchor_key);
-                let stamp = (dt, dk, s.pr_view.render_hash());
-                if d.last_ghost != Some(stamp) {
-                    d.last_ghost = Some(stamp);
-                    let (tick_lo, tick_hi) = s
-                        .pr_view
-                        .visible_main_range(s.pr_view.main_axis_len(lw, lh));
-                    let (key_lo, key_hi) = s
-                        .pr_view
-                        .visible_cross_range(s.pr_view.cross_axis_len(lw, lh));
-                    let mut ghost = Vec::new();
-                    let src_lo = (i32::from(key_lo) - dk).clamp(0, 127) as usize;
-                    let src_hi = (i32::from(key_hi) - dk).clamp(0, 127) as usize;
-                    for src_key in src_lo..=src_hi {
-                        let new_key = (src_key as i32 + dk).clamp(0, 127) as u8;
-                        for &(track, start, end, _vel) in &d.drag_by_key[src_key] {
-                            let new_start = (i64::from(start) + dt).max(0) as u32;
-                            let new_end = new_start.saturating_add(end.saturating_sub(start));
-                            if f64::from(new_start) >= tick_hi || f64::from(new_end) <= tick_lo {
-                                continue;
+                    ]);
+                    let stamp = (dt, dtr, s.arr_view.render_hash());
+                    if d.last_ghost != Some(stamp) {
+                        d.last_ghost = Some(stamp);
+                        let (tick_lo, tick_hi) = s.arr_view.visible_tick_range(lw);
+                        let (first_row, last_row) =
+                            yinhe_types::ArrangementView::visible_track_range_static(
+                                s.arr_view.base.scroll_y,
+                                lh,
+                                s.arr_view.lane_height(),
+                                s.num_tracks,
+                            );
+                        let mut ghost = Vec::new();
+                        for (key, bucket) in d.drag_by_key.iter().enumerate() {
+                            for &(track, start, end, _vel) in bucket {
+                                let new_start = (i64::from(start) + dt).max(0) as u32;
+                                let new_end = new_start.saturating_add(end.saturating_sub(start));
+                                let new_track = (i32::from(track) + dtr).clamp(0, max_row) as u16;
+                                let row = new_track as usize;
+                                if row < first_row
+                                    || row >= last_row
+                                    || f64::from(new_start) >= tick_hi
+                                    || f64::from(new_end) <= tick_lo
+                                {
+                                    continue;
+                                }
+                                ghost.push((new_start, new_end, key as u8, new_track));
                             }
-                            ghost.push((new_start, new_end, new_key, track));
                         }
+                        apply_preview(s, d, std::mem::take(&mut ghost), false);
                     }
-                    apply_preview(s, d, std::mem::take(&mut ghost), true);
-                    if dk != d.preview_last_dk {
-                        d.preview_last_dk = dk;
-                        preview_group(s, d, dt, dk);
-                    }
-                }
-            } else {
-                let Some((t0, _, _, _)) = d.box_rows else {
-                    return;
-                };
-                let geom = ArGeom::new(&s.arr_view);
-                let q = quantize_of(s);
-                let mut dt = snap.round(q, geom.x_to_tick(x)) - d.anchor_tick;
-                if t0 + dt < 0.0 {
-                    dt = -t0;
-                }
-                let dt = dt.round() as i64;
-                let dtr = geom.y_to_row(y) as i32 - d.anchor_row as i32;
-                let stamp = (dt, dtr, s.arr_view.render_hash());
-                if d.last_ghost != Some(stamp) {
-                    d.last_ghost = Some(stamp);
-                    let (tick_lo, tick_hi) = s.arr_view.visible_tick_range(lw);
-                    let (first_row, last_row) =
-                        yinhe_types::ArrangementView::visible_track_range_static(
-                            s.arr_view.base.scroll_y,
-                            lh,
-                            s.arr_view.lane_height(),
-                            s.num_tracks,
-                        );
-                    let max_row = s.num_tracks.saturating_sub(1) as i32;
-                    let mut ghost = Vec::new();
-                    for (key, bucket) in d.drag_by_key.iter().enumerate() {
-                        for &(track, start, end, _vel) in bucket {
-                            let new_start = (i64::from(start) + dt).max(0) as u32;
-                            let new_end = new_start.saturating_add(end.saturating_sub(start));
-                            let new_track = (i32::from(track) + dtr).clamp(0, max_row) as u16;
-                            let row = new_track as usize;
-                            if row < first_row
-                                || row >= last_row
-                                || f64::from(new_start) >= tick_hi
-                                || f64::from(new_end) <= tick_lo
-                            {
-                                continue;
-                            }
-                            ghost.push((new_start, new_end, key as u8, new_track));
-                        }
-                    }
-                    apply_preview(s, d, std::mem::take(&mut ghost), false);
                 }
             }
             bump(s);
@@ -1887,16 +1916,8 @@ fn commit_move(
     }
     match s.view_mode {
         ViewMode::Pianoroll => {
-            let geom = PrGeom::new(&s.pr_view);
-            let q = quantize_of(s);
-            let snap = scene::SnapCtx::new(s);
-            let t0 = d.box_ticks.map(|b| b.0).unwrap_or(0.0);
-            let mut dt = snap.round(q, geom.x_to_tick(x)) - d.anchor_tick;
-            if t0 + dt < 0.0 {
-                dt = -t0;
-            }
-            let dt = dt.round() as i64;
-            let dk = i32::from(geom.y_to_key(y)) - i32::from(d.anchor_key);
+            let (dt_f, dk, _) = move_box_delta(s, d, x, y)?;
+            let dt = dt_f.round() as i64;
             if dt == 0 && dk == 0 {
                 return None;
             }
@@ -1918,16 +1939,8 @@ fn commit_move(
             None
         }
         ViewMode::Arrangement => {
-            let geom = ArGeom::new(&s.arr_view);
-            let q = quantize_of(s);
-            let snap = scene::SnapCtx::new(s);
-            let t0 = d.box_rows.map(|b| b.0).unwrap_or(0.0);
-            let mut dt = snap.round(q, geom.x_to_tick(x)) - d.anchor_tick;
-            if t0 + dt < 0.0 {
-                dt = -t0;
-            }
-            let dt = dt.round() as i64;
-            let dtr = geom.y_to_row(y) as i32 - d.anchor_row as i32;
+            let (dt_f, _, dtr) = move_box_delta(s, d, x, y)?;
+            let dt = dt_f.round() as i64;
             if dt == 0 && dtr == 0 {
                 return None;
             }

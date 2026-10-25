@@ -47,6 +47,46 @@ final DisplayValueDart automationDisplayValue = bridge
       'yinhe_automation_display_value',
     );
 
+typedef MoveAutomationAnchorsNative = ffi.Int32 Function(
+  ffi.Int32,
+  ffi.Int32,
+  ffi.Pointer<ffi.Double>,
+  ffi.Uint32,
+);
+typedef MoveAutomationAnchorsDart = int Function(
+  int,
+  int,
+  ffi.Pointer<ffi.Double>,
+  int,
+);
+
+final MoveAutomationAnchorsDart _moveAutomationAnchors = bridge
+    .lookupFunction<MoveAutomationAnchorsNative, MoveAutomationAnchorsDart>(
+      'yinhe_move_automation_anchors',
+    );
+
+/// 批量移动自动化锚点：`moves = (oldTick, newTick, 归一化值)`，一笔一个 undo。
+int moveAutomationAnchors(
+  int track,
+  int laneIndex,
+  List<(int, int, double)> moves,
+) {
+  if (moves.isEmpty) {
+    return 0;
+  }
+  final ptr = calloc<ffi.Double>(moves.length * 3);
+  try {
+    for (var i = 0; i < moves.length; i++) {
+      ptr[i * 3] = moves[i].$1.toDouble();
+      ptr[i * 3 + 1] = moves[i].$2.toDouble();
+      ptr[i * 3 + 2] = moves[i].$3;
+    }
+    return _moveAutomationAnchors(track, laneIndex, ptr, moves.length * 3);
+  } finally {
+    calloc.free(ptr);
+  }
+}
+
 /// 标尺标签（marker）JSON。
 final CStrDart markersJson = bridge.lookupFunction<CStrNative, CStrDart>(
   'yinhe_markers_json',

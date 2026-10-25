@@ -1,6 +1,9 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../core/bar_beat.dart';
+import '../core/edit_status.dart';
 import '../core/ffi.dart' as rust;
 import '../core/models.dart';
 import '../painters/painters.dart';
@@ -21,6 +24,8 @@ class AutomationPanel extends StatefulWidget {
     required this.velocity,
     required this.trackColors,
     required this.activeTrack,
+    required this.status,
+    required this.formatTick,
     required this.onCollapsed,
     required this.onReload,
     required this.onVelocityCommit,
@@ -38,6 +43,12 @@ class AutomationPanel extends StatefulWidget {
   final List<(double, double, double, int)> velocity;
   final List<Color> trackColors;
   final int activeTrack;
+
+  /// 顶部栏临时读数（力度 / 自动化 / 框选）。
+  final ValueNotifier<EditStatus?> status;
+
+  /// tick → 顶部栏位置文本（跟随时间码的小节/秒模式）。
+  final String Function(double tick) formatTick;
   final ValueChanged<bool> onCollapsed;
   final VoidCallback onReload;
 
@@ -74,13 +85,28 @@ class _AutomationPanelState extends State<AutomationPanel> {
   AppLocalizations get l => AppLocalizations.of(context);
 
   int _autoIndex = 0;
-  final ValueNotifier<(double, double)?> _autoPreview = ValueNotifier(null);
   final ValueNotifier<List<(double, double, double, int)>> _velocityPreview =
       ValueNotifier(const []);
-  bool _draggingAnchor = false;
   bool _velocityStrokeActive = false;
   final List<(double, double)> _velocityPoints = [];
   final Map<(int, int), (double, double, double, int)> _velocityTouched = {};
+
+  /// AM 锚点选择（按 tick）。
+  final Set<int> _selectedTicks = {};
+
+  /// 单个锚点点选：可同时改 tick + value；否则批量只改 tick。
+  bool _singleSelection = false;
+
+  /// 拖动/框选状态（绘制区局部坐标）。
+  double? _dragAnchorTick;
+  double? _dragStartSnapTick;
+  double? _dragStartValue;
+  bool _marqueeActive = false;
+  Offset? _marqueeStart;
+  Offset? _marqueeCurrent;
+
+  /// old tick -> (new tick, new value)，拖动中的预览。
+  Map<int, (int, double)> _movePreview = {};
 
   @override
   void didUpdateWidget(covariant AutomationPanel oldWidget) {
@@ -88,14 +114,15 @@ class _AutomationPanelState extends State<AutomationPanel> {
     if (oldWidget.activeTrack != widget.activeTrack) {
       _autoIndex = 0;
       _clearVelocityStroke();
+      _clearSelection();
     } else if (_autoIndex > widget.lanes.length) {
       _autoIndex = 0;
+      _clearSelection();
     }
   }
 
   @override
   void dispose() {
-    _autoPreview.dispose();
     _velocityPreview.dispose();
     super.dispose();
   }
@@ -105,6 +132,16 @@ class _AutomationPanelState extends State<AutomationPanel> {
     _velocityPoints.clear();
     _velocityTouched.clear();
     _velocityPreview.value = const [];
+  }
+
+  void _clearSelection() {
+    _selectedTicks.clear();
+    _singleSelection = false;
+    _dragAnchorTick = null;
+    _movePreview = {};
+    _marqueeActive = false;
+    _marqueeStart = null;
+    _marqueeCurrent = null;
   }
 
   double _tickAt(double x) {
@@ -120,9 +157,40 @@ class _AutomationPanelState extends State<AutomationPanel> {
     return tick < 0.0 ? 0.0 : tick;
   }
 
+  /// 与 PR 共用量化档位：`tickAtX` 需要画布内容坐标（AM 的 combo 列宽即键盘宽）。
+  double _snapTickAt(double localX) =>
+      rust.tickAtX(localX + AutomationPainter.comboWidth);
+
+  double _xOfTick(double tick) {
+    final s = widget.snap.value;
+    return tick * s[1] - s[2] + (s[5] - AutomationPainter.comboWidth);
+  }
+
+  double _yOfValue(double value) =>
+      widget.canvasHeight * (1.0 - value.clamp(0.0, 1.0));
+
+  double _valueAtY(double y) =>
+      (1.0 - (y / widget.canvasHeight)).clamp(0.0, 1.0);
+
   double _velocityAt(double y) {
     final v = 1.0 + 126.0 * (1.0 - (y / widget.canvasHeight).clamp(0.0, 1.0));
     return v.clamp(1.0, 127.0);
+  }
+
+  /// 命中锚点（屏幕欧氏距离 16px 内）。
+  double? _hitAnchor(AutomationLaneData lane, Offset p) {
+    double? best;
+    var bestDist = 16.0 * 16.0;
+    for (final q in lane.points) {
+      final dx = _xOfTick(q.dx) - p.dx;
+      final dy = _yOfValue(q.dy) - p.dy;
+      final dist = dx * dx + dy * dy;
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = q.dx;
+      }
+    }
+    return best;
   }
 
   int _velocityLowerBound(double tick) {
@@ -170,6 +238,13 @@ class _AutomationPanelState extends State<AutomationPanel> {
     _velocityPreview.value = _velocityTouched.values.toList(growable: false);
   }
 
+  void _setVelocityStatus((double, double) p) {
+    widget.status.value = EditStatus(
+      position: widget.formatTick(p.$1),
+      primary: p.$2.round().toString(),
+    );
+  }
+
   bool _startVelocityStroke(Offset p) {
     if (!widget.velocityDrawEnabled || _autoIndex != 0) {
       return false;
@@ -181,6 +256,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
       ..add(point);
     _velocityTouched.clear();
     _hitVelocitySegment(point, point);
+    _setVelocityStatus(point);
     return true;
   }
 
@@ -189,7 +265,9 @@ class _AutomationPanelState extends State<AutomationPanel> {
       return;
     }
     final point = (_tickAt(p.dx), _velocityAt(p.dy));
+    _setVelocityStatus(point);
     widget.onVelocityCommit([point]);
+    widget.status.value = null;
   }
 
   void _handleVelocityUpdate(Offset p) {
@@ -200,6 +278,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
     final last = _velocityPoints.last;
     _velocityPoints.add(point);
     _hitVelocitySegment(last, point);
+    _setVelocityStatus(point);
   }
 
   void _finishVelocityStroke() {
@@ -208,47 +287,54 @@ class _AutomationPanelState extends State<AutomationPanel> {
     }
     final points = List<(double, double)>.unmodifiable(_velocityPoints);
     _clearVelocityStroke();
+    widget.status.value = null;
     if (points.isNotEmpty) {
       widget.onVelocityCommit(points);
     }
   }
 
-  /// 锚点拖动：按屏幕 x 找最近锚点（离散 lane 的 tick 不变，仅改 value）。
+  /// 单点锚点编辑 / 框选：
+  /// - 按在锚点上：选中（未选中则替换选择），拖动可改 tick+value；
+  /// - 按在空白：拉时间框选（全高），多选拖动只改 tick。
   void _handlePanStart(DragStartDetails d) {
     if (_autoIndex == 0) {
       _startVelocityStroke(d.localPosition);
       return;
     }
-    if (_autoIndex < 1 || _autoIndex > widget.lanes.length) {
+    final laneIdx = _autoIndex - 1;
+    if (laneIdx < 0 || laneIdx >= widget.lanes.length) {
       return;
     }
     final s = widget.snap.value;
-    final ppu = s[1];
-    if (ppu <= 0) {
+    if (s[1] <= 0) {
       return;
     }
-    final scrollX = s[2];
-    final kbW = s[5];
-    final localX = d.localPosition.dx;
-    double? nearest;
-    var bestDist = 10.0;
-    for (final p in widget.lanes[_autoIndex - 1].points) {
-      final x = p.dx * ppu - scrollX + kbW - AutomationPainter.comboWidth;
-      final dist = (x - localX).abs();
-      if (dist < bestDist) {
-        bestDist = dist;
-        nearest = p.dx;
+    final lane = widget.lanes[laneIdx];
+    widget.status.value = null;
+    final hit = _hitAnchor(lane, d.localPosition);
+    if (hit != null) {
+      final hitTick = hit.round();
+      if (!_selectedTicks.contains(hitTick)) {
+        _selectedTicks
+          ..clear()
+          ..add(hitTick);
       }
-    }
-    final tick = nearest;
-    if (tick == null) {
+      _singleSelection = _selectedTicks.length == 1;
+      _dragAnchorTick = hit;
+      _dragStartSnapTick = _snapTickAt(d.localPosition.dx);
+      _dragStartValue = _valueAtY(d.localPosition.dy);
+      _movePreview = {};
+      setState(() {});
       return;
     }
-    final value = 1.0 - (d.localPosition.dy / widget.canvasHeight);
-    setState(() {
-      _draggingAnchor = true;
-      _autoPreview.value = (tick, value.clamp(0.0, 1.0));
-    });
+    _selectedTicks.clear();
+    _singleSelection = false;
+    _dragAnchorTick = null;
+    _movePreview = {};
+    _marqueeActive = true;
+    _marqueeStart = d.localPosition;
+    _marqueeCurrent = d.localPosition;
+    setState(() {});
   }
 
   void _handlePanUpdate(DragUpdateDetails d) {
@@ -256,12 +342,48 @@ class _AutomationPanelState extends State<AutomationPanel> {
       _handleVelocityUpdate(d.localPosition);
       return;
     }
-    final pv = _autoPreview.value;
-    if (!_draggingAnchor || pv == null) {
+    if (_marqueeActive) {
+      setState(() => _marqueeCurrent = d.localPosition);
       return;
     }
-    final value = 1.0 - (d.localPosition.dy / widget.canvasHeight);
-    setState(() => _autoPreview.value = (pv.$1, value.clamp(0.0, 1.0)));
+    if (_dragAnchorTick == null ||
+        _dragStartSnapTick == null ||
+        _dragStartValue == null) {
+      return;
+    }
+    final laneIdx = _autoIndex - 1;
+    if (laneIdx < 0 || laneIdx >= widget.lanes.length) {
+      return;
+    }
+    final lane = widget.lanes[laneIdx];
+    final dt = _snapTickAt(d.localPosition.dx) - _dragStartSnapTick!;
+    final dv = _valueAtY(d.localPosition.dy) - _dragStartValue!;
+    final preview = <int, (int, double)>{};
+    for (final p in lane.points) {
+      final oldTick = p.dx.round();
+      if (!_selectedTicks.contains(oldTick)) {
+        continue;
+      }
+      final newTick = math.max(0, (p.dx + dt).round());
+      final newValue = _singleSelection ? (p.dy + dv).clamp(0.0, 1.0) : p.dy;
+      preview[oldTick] = (newTick, newValue);
+    }
+    setState(() => _movePreview = preview);
+    if (_singleSelection) {
+      final moved = preview[_dragAnchorTick!.round()];
+      if (moved != null) {
+        widget.status.value = EditStatus(
+          position: widget.formatTick(moved.$1.toDouble()),
+          primary: lane.formatValue(moved.$2),
+        );
+      }
+    } else {
+      final dti = dt.round();
+      widget.status.value = EditStatus(
+        primary: 'Δt${dti >= 0 ? '+' : ''}$dti',
+        secondary: '×${_selectedTicks.length}',
+      );
+    }
   }
 
   void _handlePanEnd() {
@@ -269,32 +391,117 @@ class _AutomationPanelState extends State<AutomationPanel> {
       _finishVelocityStroke();
       return;
     }
-    final pv = _autoPreview.value;
-    final wasDragging = _draggingAnchor;
-    setState(() {
-      _draggingAnchor = false;
-      _autoPreview.value = null;
-    });
-    if (!wasDragging || pv == null || _autoIndex < 1) {
+    if (_marqueeActive) {
+      _finishMarquee();
       return;
     }
-    final ok = rust.setAutomationValue(
+    final laneIdx = _autoIndex - 1;
+    final moves = <(int, int, double)>[];
+    if (laneIdx >= 0 && laneIdx < widget.lanes.length) {
+      for (final p in widget.lanes[laneIdx].points) {
+        final oldTick = p.dx.round();
+        final moved = _movePreview[oldTick];
+        if (moved == null) {
+          continue;
+        }
+        if (moved.$1 == oldTick && (moved.$2 - p.dy).abs() < 1e-6) {
+          continue;
+        }
+        moves.add((oldTick, moved.$1, moved.$2));
+      }
+    }
+    final oldSelected = Set<int>.from(_selectedTicks);
+    final wasSingle = _singleSelection;
+    _dragAnchorTick = null;
+    _dragStartSnapTick = null;
+    _dragStartValue = null;
+    _movePreview = {};
+    widget.status.value = null;
+    setState(() {});
+    if (moves.isEmpty) {
+      return;
+    }
+    final ok = rust.moveAutomationAnchors(
       widget.activeTrack,
       _autoIndex,
-      pv.$1.round(),
-      pv.$2,
+      moves,
     );
-    if (ok == 1) {
-      Future<void>.delayed(const Duration(milliseconds: 250), widget.onReload);
+    if (ok != 1) {
+      _selectedTicks
+        ..clear()
+        ..addAll(oldSelected);
+      _singleSelection = wasSingle;
+      setState(() {});
+      return;
     }
+    _selectedTicks
+      ..clear()
+      ..addAll(moves.map((m) => m.$2));
+    _singleSelection = wasSingle;
+    // 立即回读：旧实现延迟 250ms 会让锚点先弹回旧位置再跳回。
+    widget.onReload();
+    setState(() {});
+  }
+
+  void _finishMarquee() {
+    final start = _marqueeStart;
+    final end = _marqueeCurrent;
+    final laneIdx = _autoIndex - 1;
+    _marqueeActive = false;
+    _marqueeStart = null;
+    _marqueeCurrent = null;
+    _selectedTicks.clear();
+    _singleSelection = false;
+    if (start != null &&
+        end != null &&
+        (end.dx - start.dx).abs() >= 3 &&
+        laneIdx >= 0 &&
+        laneIdx < widget.lanes.length) {
+      final lo = math.min(start.dx, end.dx);
+      final hi = math.max(start.dx, end.dx);
+      for (final p in widget.lanes[laneIdx].points) {
+        final x = _xOfTick(p.dx);
+        if (x >= lo && x <= hi) {
+          _selectedTicks.add(p.dx.round());
+        }
+      }
+    }
+    setState(() {});
+  }
+
+  void _handleLaneTap(Offset p) {
+    final laneIdx = _autoIndex - 1;
+    if (laneIdx < 0 || laneIdx >= widget.lanes.length) {
+      return;
+    }
+    final hit = _hitAnchor(widget.lanes[laneIdx], p);
+    _selectedTicks.clear();
+    _singleSelection = false;
+    if (hit != null) {
+      _selectedTicks.add(hit.round());
+      _singleSelection = true;
+    }
+    widget.status.value = null;
+    setState(() {});
   }
 
   void _handlePanCancel() {
     if (_velocityStrokeActive) {
       _clearVelocityStroke();
     }
-    _draggingAnchor = false;
-    _autoPreview.value = null;
+    if (_marqueeActive) {
+      _selectedTicks.clear();
+      _singleSelection = false;
+    }
+    _marqueeActive = false;
+    _marqueeStart = null;
+    _marqueeCurrent = null;
+    _dragAnchorTick = null;
+    _dragStartSnapTick = null;
+    _dragStartValue = null;
+    _movePreview = {};
+    widget.status.value = null;
+    setState(() {});
   }
 
   Color get _trackColor {
@@ -312,6 +519,17 @@ class _AutomationPanelState extends State<AutomationPanel> {
     final lane = index >= 1 && index <= widget.lanes.length
         ? widget.lanes[index - 1]
         : null;
+    Rect? marquee;
+    if (_marqueeActive && _marqueeStart != null && _marqueeCurrent != null) {
+      final a = _marqueeStart!;
+      final b = _marqueeCurrent!;
+      marquee = Rect.fromLTRB(
+        math.min(a.dx, b.dx),
+        0,
+        math.max(a.dx, b.dx),
+        widget.canvasHeight,
+      );
+    }
     return Container(
       height: widget.height,
       decoration: BoxDecoration(
@@ -369,6 +587,8 @@ class _AutomationPanelState extends State<AutomationPanel> {
                           ],
                           onSelected: (i) {
                             _clearVelocityStroke();
+                            _clearSelection();
+                            widget.status.value = null;
                             setState(() => _autoIndex = i);
                           },
                           child: Center(
@@ -391,9 +611,11 @@ class _AutomationPanelState extends State<AutomationPanel> {
                 Expanded(
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
-                    onTapUp: widget.velocityDrawEnabled && _autoIndex == 0
-                        ? (d) => _handleVelocityTap(d.localPosition)
-                        : null,
+                    onTapUp: _autoIndex == 0
+                        ? (widget.velocityDrawEnabled
+                              ? (d) => _handleVelocityTap(d.localPosition)
+                              : null)
+                        : (d) => _handleLaneTap(d.localPosition),
                     onPanStart: _handlePanStart,
                     onPanUpdate: _handlePanUpdate,
                     onPanEnd: (_) => _handlePanEnd(),
@@ -407,7 +629,9 @@ class _AutomationPanelState extends State<AutomationPanel> {
                           color: _trackColor,
                           snap: widget.snap,
                           grid: widget.grid,
-                          preview: _autoPreview,
+                          selectedTicks: _selectedTicks,
+                          movePreview: _movePreview,
+                          marquee: marquee,
                           velocityPreview: _velocityPreview,
                         ),
                       ),

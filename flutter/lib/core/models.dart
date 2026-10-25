@@ -141,18 +141,32 @@ class RecentItem {
 class AutomationLaneData {
   const AutomationLaneData({
     required this.kind,
+    required this.number,
+    required this.max,
     required this.name,
     required this.points,
   });
 
   final int kind;
+
+  /// CC / RPN 编号（PB 等无编号时为 -1）。
+  final int number;
+
+  /// 归一化值还原上限（CC=127、PB=16383 等）。
+  final double max;
   final String name;
   final List<Offset> points;
+
+  /// 归一化值 → 顶部栏显示的原始值文本。
+  String formatValue(double value) =>
+      '${(value.clamp(0.0, 1.0) * max).round()}';
 
   static AutomationLaneData fromJson(Map<String, dynamic> json) {
     final raw = (json['points'] as List<dynamic>?) ?? const [];
     return AutomationLaneData(
       kind: (json['kind'] as num?)?.toInt() ?? 1,
+      number: (json['num'] as num?)?.toInt() ?? -1,
+      max: (json['max'] as num?)?.toDouble() ?? 1.0,
       name: json['name'] as String? ?? '',
       points: [
         for (final p in raw)

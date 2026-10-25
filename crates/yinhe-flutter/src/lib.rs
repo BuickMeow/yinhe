@@ -726,6 +726,14 @@ fn parse_velocity_stroke(flat: &[f64]) -> Vec<(f64, f32)> {
         .collect()
 }
 
+/// 选框整体移动增量：`out_dt` tick 差、`out_dk` 半音差、`out_dtr` 轨道差。
+/// 返回 1 = 正在移动态。PR 用 dt/dk，AR 用 dt/dtr。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
+pub extern "C" fn yinhe_drag_delta(out_dt: *mut i64, out_dk: *mut i32, out_dtr: *mut i32) -> i32 {
+    edit::drag_delta(out_dt, out_dk, out_dtr)
+}
+
 /// 选框拖拽状态：0=无、1=待定（长按中）、2=移动态、3=空白处长按完成。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_selection_state() -> i32 {
@@ -940,18 +948,38 @@ pub extern "C" fn yinhe_scroll_at(x: f32, y: f32, dx: f32, dy: f32, ctrl: i32) -
     scene::scroll_at(x, y, dx, dy, ctrl != 0)
 }
 
-/// 编辑自动化锚点：track / lane_index(1-based) / tick / value(0..1)。成功 1。
+/// 批量移动自动化锚点：`moves` 为扁平 `[old_tick, new_tick, value, ...]`
+/// （`len` 是 f64 元素数，必须能被 3 整除），一笔一个 undo。成功 1。
 #[unsafe(no_mangle)]
-pub extern "C" fn yinhe_set_automation_value(
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
+pub extern "C" fn yinhe_move_automation_anchors(
     track: i32,
     lane_index: i32,
-    tick: u32,
-    value: f32,
+    moves: *const f64,
+    len: u32,
 ) -> i32 {
-    if track < 0 || lane_index <= 0 {
+    if track < 0 || lane_index <= 0 || moves.is_null() || len < 3 || !len.is_multiple_of(3) {
         return 0;
     }
-    scene::set_automation_value(track as usize, lane_index as usize, tick, value)
+    let flat = unsafe { std::slice::from_raw_parts(moves, len as usize) };
+    let parsed = parse_automation_moves(flat);
+    scene::move_automation_anchors(track as usize, lane_index as usize, &parsed)
+}
+
+/// 解析扁平 `[old_tick, new_tick, value, ...]`；非有限值丢弃。
+fn parse_automation_moves(flat: &[f64]) -> Vec<(u32, u32, f32)> {
+    flat.as_chunks::<3>()
+        .0
+        .iter()
+        .filter(|p| p.iter().all(|v| v.is_finite()))
+        .map(|p| {
+            (
+                p[0].max(0.0).round() as u32,
+                p[1].max(0.0).round() as u32,
+                (p[2] as f32).clamp(0.0, 1.0),
+            )
+        })
+        .collect()
 }
 
 /// 当前音色库表 JSON（顺序 = 优先级，堆分配）。
@@ -1461,5 +1489,13 @@ mod tests {
         let flat = [10.0, f64::NAN, 20.0, 30.0, f64::INFINITY, 40.0];
         let points = parse_velocity_stroke(&flat);
         assert_eq!(points, vec![(20.0, 30.0)]);
+    }
+
+    /// 自动化移动按 3 个 f64 一组解析：old_tick / new_tick / value。
+    #[test]
+    fn parse_automation_moves_uses_triples() {
+        let flat = [100.0, 148.0, 0.5, 200.0, 200.0, 2.0];
+        let moves = super::parse_automation_moves(&flat);
+        assert_eq!(moves, vec![(100, 148, 0.5), (200, 200, 1.0)]);
     }
 }

@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 
 import '../core/ffi.dart' as rust;
 import '../core/snack.dart';
+import '../core/edit_status.dart';
 import '../dialogs/add_tracks_dialog.dart';
 import '../widgets/automation_panel.dart';
 import '../menus/canvas_menus.dart';
@@ -95,6 +96,12 @@ abstract class _ShellBase extends State<StudioShell>
   /// 时间码文本（每帧刷新，只重建文本本身）。
   final ValueNotifier<String> _timecodeText = ValueNotifier('0:00.000');
 
+  /// 顶部栏临时读数（力度/自动化/选框拖动）；null = 常规显示。
+  final ValueNotifier<EditStatus?> _editStatus = ValueNotifier(null);
+
+  /// 目前顶部栏读数是否由 PR/AR 选框移动驱动。
+  bool _selectionStatusActive = false;
+
   /// 设置页浮层（从主页进入）。
   bool _showSettings = false;
 
@@ -177,6 +184,9 @@ abstract class _ShellBase extends State<StudioShell>
 
   late final Ticker _ticker;
   late final ffi.Pointer<ffi.Float> _snapPtr;
+  late final ffi.Pointer<ffi.Int64> _dragDtPtr;
+  late final ffi.Pointer<ffi.Int32> _dragDkPtr;
+  late final ffi.Pointer<ffi.Int32> _dragDtrPtr;
 
   bool _dragging = false;
 
@@ -252,6 +262,7 @@ abstract class _ShellBase extends State<StudioShell>
   Future<void> _exportMidi();
   void _flashSaved();
   String _fmtBpm(double v);
+  String _formatEditTick(double tick);
   void _handlePointerDown(PointerDownEvent e);
   void _handlePointerMove(PointerMoveEvent e);
   void _handlePointerUp(PointerUpEvent e);
@@ -320,6 +331,9 @@ class _StudioShellState extends _ShellBase
     WidgetsBinding.instance.addObserver(this);
     _snapPtr = calloc<ffi.Float>(13);
     _statePtr = calloc<ffi.Int32>(3);
+    _dragDtPtr = calloc<ffi.Int64>();
+    _dragDkPtr = calloc<ffi.Int32>();
+    _dragDtrPtr = calloc<ffi.Int32>();
     _channel.setMethodCallHandler(_onNativeCall);
     _init();
     _ticker = createTicker((_) {
@@ -369,15 +383,20 @@ class _StudioShellState extends _ShellBase
           );
         }
       } else if (selState == 2) {
-        // 已转移动态：清掉圆环（虚线由 moving 分支绘制）。
+        // 已转移动态：清掉圆环（虚线由 moving 分支绘制），顶部栏显示相对增量。
         _lpPreviewTick = null;
         if (_lpProgress.value != 0) {
           _lpProgress.value = 0;
         }
+        _updateSelectionStatus();
       } else if (_lpStartTime != null && (selState == 1 || _lpPanelRing)) {
         // 前 200ms 不显示圆环（防普通点击遮挡内容），总时长仍为 500ms。
         final ms = DateTime.now().difference(_lpStartTime!).inMilliseconds;
         _lpProgress.value = ms <= 200 ? 0 : ((ms - 200) / 300).clamp(0.0, 1.0);
+      }
+      if (selState != 2 && _selectionStatusActive) {
+        _selectionStatusActive = false;
+        _editStatus.value = null;
       }
       // 工程状态/时间码降频（每 ~66ms）：减少音频锁与历史栈分配开销。
       _frameCounter++;
@@ -430,9 +449,35 @@ class _StudioShellState extends _ShellBase
     _savingTimer?.cancel();
     _velocityReloadTimer?.cancel();
     _docState.dispose();
+    _editStatus.dispose();
     calloc.free(_snapPtr);
     calloc.free(_statePtr);
+    calloc.free(_dragDtPtr);
+    calloc.free(_dragDkPtr);
+    calloc.free(_dragDtrPtr);
     super.dispose();
+  }
+
+  /// PR/AR 选框移动态：顶部栏显示相对 tick / key 或轨道差。
+  void _updateSelectionStatus() {
+    if (rust.dragDelta(_dragDtPtr, _dragDkPtr, _dragDtrPtr) != 1) {
+      if (_selectionStatusActive) {
+        _selectionStatusActive = false;
+        _editStatus.value = null;
+      }
+      return;
+    }
+    final dt = _dragDtPtr.value;
+    final dk = _dragDkPtr.value;
+    final dtr = _dragDtrPtr.value;
+    final dtText = 'Δt${dt >= 0 ? '+' : ''}$dt';
+    _editStatus.value = EditStatus(
+      primary: dtText,
+      secondary: _viewMode == kViewPianoroll
+          ? 'Δk${dk >= 0 ? '+' : ''}$dk'
+          : 'Δtr${dtr >= 0 ? '+' : ''}$dtr',
+    );
+    _selectionStatusActive = true;
   }
 
   /// 从桌面/后台返回：重新应用沉浸式全屏（系统可能已重置）。

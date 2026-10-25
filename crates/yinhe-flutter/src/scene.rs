@@ -1726,7 +1726,7 @@ pub fn time_sig_segments_json() -> String {
 }
 
 /// PR 自动化栏数据（仅 PB/CC/RPN 三类），JSON：
-/// `[{"kind":0,"name":"Pitch Bend","points":[[tick,value],...]}, ...]`
+/// `[{"kind":0,"num":-1,"max":16383,"name":"Pitch Bend","points":[[tick,value],...]}, ...]`
 pub fn automation_json(track: usize) -> String {
     let Ok(s) = scene().lock() else {
         return "[]".into();
@@ -1743,13 +1743,16 @@ pub fn automation_json(track: usize) -> String {
         let Some(kind) = lane_kind(&lane.target) else {
             continue;
         };
+        let (num, max) = lane_display_range(&lane.target);
         if !first {
             out.push(',');
         }
         first = false;
         out.push_str(&format!(
-            "{{\"kind\":{},\"name\":\"{}\",\"points\":[",
+            "{{\"kind\":{},\"num\":{},\"max\":{},\"name\":\"{}\",\"points\":[",
             kind,
+            num,
+            max,
             json_escape(&lane.target.display_name())
         ));
         for (i, e) in lane.events.iter().enumerate() {
@@ -2623,70 +2626,44 @@ pub fn pan_by(dx: f32, dy: f32) -> i32 {
     viewport_gesture(GESTURE_PAN, dx, dy, 1.0, 0.0, 0.0)
 }
 
-/// 编辑自动化锚点（仅 PB/CC/RPN，离散）：把指定 lane 的 tick 值设为 value。
+/// 批量移动自动化锚点：`moves = [(old_tick, new_tick, value)]`。
 ///
-/// `lane_index` 为 1-based（与 `automation_json` 的输出顺序一致）。成功返回 1。
-pub fn set_automation_value(track: usize, lane_index: usize, tick: u32, value: f32) -> i32 {
-    use yinhe_types::automation::{AutomationEvent, SegmentShape};
-
+/// `lane_index` 为 1-based（与 `automation_json` 输出顺序一致）；保留每个事件
+/// 的 id / shape，一笔只产生一个 undo。成功返回 1。
+pub fn move_automation_anchors(track: usize, lane_index: usize, moves: &[(u32, u32, f32)]) -> i32 {
+    if moves.is_empty() {
+        return 0;
+    }
     let Ok(mut s) = scene().lock() else {
         return 0;
     };
     let Some(doc) = s.document.as_mut() else {
         return 0;
     };
-    // 编辑前快照（undo 恢复界面状态）。
+    let Some((raw_idx, target)) = doc
+        .data
+        .model
+        .tracks
+        .get(track)
+        .and_then(|t| visible_lane(t, lane_index))
+    else {
+        return 0;
+    };
     let before_snapshot = doc.capture_snapshot();
-    let model = std::sync::Arc::make_mut(&mut doc.data.model);
-    let Some(t) = model.tracks.get_mut(track) else {
+    let Some(action) = doc.move_automation_events_batch(track, raw_idx, &target, moves) else {
         return 0;
     };
-    let t = std::sync::Arc::make_mut(t);
-    let mut seen = 0usize;
-    let mut raw_idx = 0usize;
-    let mut target = None;
-    for (i, lane) in t.automation_lanes.iter_mut().enumerate() {
-        if lane_kind(&lane.target).is_some() {
-            seen += 1;
-            if seen == lane_index {
-                raw_idx = i;
-                target = Some(lane);
-                break;
-            }
-        }
-    }
-    let Some(lane) = target else {
-        return 0;
-    };
-    let new_event = AutomationEvent {
-        id: 0,
-        tick,
-        value: value.clamp(0.0, 1.0),
-        shape: SegmentShape::Step,
-    };
-    let before = lane.events.iter().find(|e| e.tick == tick).copied();
-    let target_clone = lane.target.clone();
-    lane.upsert(new_event);
-    // 历史：单事件 upsert = 移除旧 tick 事件 + 插入新事件（一步可撤销）。
-    doc.push_undo(
-        yinhe_editor_core::history::UndoAction::Automation(
-            yinhe_editor_core::history::AutomationDelta {
-                track_idx: track,
-                lane_idx: raw_idx,
-                target: target_clone,
-                before: before.into_iter().collect(),
-                after: vec![new_event],
-            },
-        ),
-        "Edit automation",
-        before_snapshot,
-    );
+    doc.push_undo(action, "移动自动化锚点", before_snapshot);
+    doc.edit.pianoroll_view.base.dirty = true;
     let model = doc.data.model.clone();
     refresh_snapshot(&mut s);
     drop(s);
     // 自动化变化：重建 CC（不中断播放）。
     crate::audio::reload_notes(model);
-    log::info!("自动化编辑: track={track} lane={lane_index} tick={tick} value={value:.3}");
+    log::info!(
+        "移动自动化锚点: track={track} lane={lane_index} count={}",
+        moves.len()
+    );
     1
 }
 
@@ -3433,6 +3410,39 @@ fn lane_kind(target: &yinhe_types::automation::AutomationTarget) -> Option<u8> {
         },
         _ => None,
     }
+}
+
+/// 可见 lane 的显示编号与上限：CC 号 / RPN 号，以及归一化值还原上限。
+fn lane_display_range(target: &yinhe_types::automation::AutomationTarget) -> (i32, f32) {
+    use yinhe_types::automation::AutomationTarget;
+    let num = match target {
+        AutomationTarget::CC { controller } => i32::from(*controller),
+        AutomationTarget::Rpn { parameter } | AutomationTarget::Nrpn { parameter } => {
+            i32::from(*parameter)
+        }
+        _ => -1,
+    };
+    (num, target.display_max().unwrap_or(1.0))
+}
+
+/// 按 `automation_json` 的过滤顺序（1-based）查可见 lane 的原始下标与 target。
+fn visible_lane(
+    track: &yinhe_core::TrackData,
+    lane_index: usize,
+) -> Option<(usize, yinhe_types::automation::AutomationTarget)> {
+    if lane_index == 0 {
+        return None;
+    }
+    let mut seen = 0usize;
+    for (i, lane) in track.automation_lanes.iter().enumerate() {
+        if lane_kind(&lane.target).is_some() {
+            seen += 1;
+            if seen == lane_index {
+                return Some((i, lane.target.clone()));
+            }
+        }
+    }
+    None
 }
 
 /// 极简 JSON 字符串转义（双引号/反斜杠/控制字符）。

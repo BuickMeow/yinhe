@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../core/edit_status.dart';
 import '../core/models.dart';
 import '../core/quantize_presets.dart';
 import '../core/theme.dart';
@@ -15,6 +16,7 @@ class TopBar extends StatelessWidget {
     required this.isPr,
     required this.playing,
     required this.timecodeText,
+    required this.editStatus,
     required this.quantizeLabel,
     required this.ppq,
     required this.mainTool,
@@ -52,6 +54,9 @@ class TopBar extends StatelessWidget {
   final bool isPr;
   final bool playing;
   final ValueListenable<String> timecodeText;
+
+  /// 拖动时的临时读数（力度/自动化/选框）；null = 常规显示。
+  final ValueListenable<EditStatus?> editStatus;
   final String quantizeLabel;
   final double ppq;
 
@@ -148,28 +153,48 @@ class TopBar extends StatelessWidget {
                 constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
               ),
               const SizedBox(width: 4),
-              InkWell(
-                borderRadius: BorderRadius.circular(4),
-                onTap: onToggleTimecode,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 6,
-                  ),
-                  child: ValueListenableBuilder<String>(
-                    valueListenable: timecodeText,
-                    builder: (context, text, _) => Text(
-                      text,
-                      style: TextStyle(
-                        color: YinheTheme.textLabel,
-                        fontSize: 14,
+              ValueListenableBuilder<EditStatus?>(
+                valueListenable: editStatus,
+                builder: (context, status, _) {
+                  final active = status != null;
+                  return Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      InkWell(
+                        borderRadius: BorderRadius.circular(4),
+                        onTap: active ? null : onToggleTimecode,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 6,
+                          ),
+                          child: ValueListenableBuilder<String>(
+                            valueListenable: timecodeText,
+                            builder: (context, text, _) => Text(
+                              status?.position ?? text,
+                              style: TextStyle(
+                                color: active
+                                    ? YinheTheme.accent
+                                    : YinheTheme.textLabel,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                ),
+                      if (status == null) ...[
+                        _metaText(bpmText, l.defaultBpm, onEditBpm),
+                        _metaText(sigText, l.defaultTimeSig, onEditSig),
+                      ] else ...[
+                        if (status.primary != null)
+                          _metaText(status.primary!, '', null, active: true),
+                        if (status.secondary != null)
+                          _metaText(status.secondary!, '', null, active: true),
+                      ],
+                    ],
+                  );
+                },
               ),
-              _metaText(bpmText, l.defaultBpm, onEditBpm),
-              _metaText(sigText, l.defaultTimeSig, onEditSig),
               const Spacer(),
               _buildQuantizeButton(context, l),
               _buildQuickToolButton(l),
@@ -232,21 +257,30 @@ class TopBar extends StatelessWidget {
     );
   }
 
-  /// 顶栏只读信息（与时间码同色）：BPM / 拍号，点击编辑工程默认值。
-  Widget _metaText(String text, String tooltip, VoidCallback onTap) {
+  /// 顶栏信息文本：BPM / 拍号可点击编辑；拖动读数（active）用强调色且不可点。
+  Widget _metaText(
+    String text,
+    String tooltip,
+    VoidCallback? onTap, {
+    bool active = false,
+  }) {
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: active ? YinheTheme.accent : YinheTheme.textLabel,
+          fontSize: 14,
+        ),
+      ),
+    );
+    if (onTap == null) {
+      return Tooltip(message: tooltip, child: content);
+    }
     return InkWell(
       borderRadius: BorderRadius.circular(4),
       onTap: onTap,
-      child: Tooltip(
-        message: tooltip,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-          child: Text(
-            text,
-            style: TextStyle(color: YinheTheme.textLabel, fontSize: 14),
-          ),
-        ),
-      ),
+      child: Tooltip(message: tooltip, child: content),
     );
   }
 
@@ -372,7 +406,8 @@ class TopBar extends StatelessWidget {
     Offset anchor,
     ValueChanged<int> onSelected,
   ) async {
-    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
     if (overlay == null) {
       return;
     }
