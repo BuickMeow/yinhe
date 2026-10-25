@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/bar_beat.dart';
 import '../core/ffi.dart' as rust;
 import '../core/models.dart';
 import '../painters/painters.dart';
@@ -15,6 +16,7 @@ class AutomationPanel extends StatefulWidget {
     super.key,
     required this.height,
     required this.snap,
+    required this.grid,
     required this.lanes,
     required this.velocity,
     required this.trackColors,
@@ -29,6 +31,9 @@ class AutomationPanel extends StatefulWidget {
 
   final double height;
   final ValueNotifier<List<double>> snap;
+
+  /// 拍号分段（与 PR 共用，保证小节/拍网格对齐）。
+  final ValueNotifier<BarBeatGrid?> grid;
   final List<AutomationLaneData> lanes;
   final List<(double, double, double, int)> velocity;
   final List<Color> trackColors;
@@ -401,6 +406,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
                           trackColors: widget.trackColors,
                           color: _trackColor,
                           snap: widget.snap,
+                          grid: widget.grid,
                           preview: _autoPreview,
                           velocityPreview: _velocityPreview,
                         ),

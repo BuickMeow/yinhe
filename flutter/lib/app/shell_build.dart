@@ -218,6 +218,7 @@ mixin _ShellBuild on _ShellBase {
                               child: AutomationPanel(
                                 height: amH,
                                 snap: _snap,
+                                grid: _grid,
                                 lanes: _autoLanes,
                                 velocity: _velocityBars,
                                 trackColors: [
