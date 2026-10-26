@@ -316,7 +316,7 @@ class MainActivity : FlutterActivity() {
         nativeClearSurface()
     }
 
-    /** Dart 侧「打开文件」：MIDI、`.yin` 工程（旧 `.ying` 兼容）与压缩包。 */
+    /** Dart 侧「打开文件」：MIDI、`.yin` 工程与压缩包。 */
     private fun openFilePicker() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -354,11 +354,7 @@ class MainActivity : FlutterActivity() {
     private fun openSavePicker(name: String) {
         val safe = name.replace(Regex("[/\\\\:*?\"<>|]"), "_").trim()
         val base = if (safe.isEmpty()) "Untitled" else safe
-        val title = when {
-            base.endsWith(".yin", ignoreCase = true) -> base
-            base.endsWith(".ying", ignoreCase = true) -> base.dropLast(".ying".length) + ".yin"
-            else -> "$base.yin"
-        }
+        val title = if (base.endsWith(".yin", ignoreCase = true)) base else "$base.yin"
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "application/octet-stream"
@@ -441,10 +437,8 @@ class MainActivity : FlutterActivity() {
             REQ_OPEN_FILE -> {
                 val uri = data?.data
                 val path = copyPicked(uri) ?: return
-                // .yin/.ying 工程记住原 uri（含持久权限），供“保存工程”直接覆盖。
-                val isProject = path.lowercase().endsWith(".yin") ||
-                    path.lowercase().endsWith(".ying")
-                if (isProject && uri != null) {
+                // .yin 工程记住原 uri（含持久权限），供“保存工程”直接覆盖。
+                if (path.lowercase().endsWith(".yin") && uri != null) {
                     runCatching {
                         contentResolver.takePersistableUriPermission(
                             uri,

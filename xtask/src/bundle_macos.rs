@@ -37,9 +37,8 @@ const DOCUMENT_TYPES_JSON: &str = r#"[
   }
 ]"#;
 
-/// 导出工程的 UTI 声明（压缩容器，conformsTo public.data），
-/// 让 LaunchServices 把 `.yin`（以及旧移动端 `.ying`）关联到
-/// com.jieneng.yinhe.project。
+/// 导出 `.yin` 的 UTI 声明（压缩容器，conformsTo public.data），
+/// 让 LaunchServices 把 `.yin` 扩展名关联到 com.jieneng.yinhe.project。
 const UTI_DECLARATIONS_JSON: &str = r#"[
   {
     "UTTypeIdentifier": "com.jieneng.yinhe.project",
@@ -47,7 +46,7 @@ const UTI_DECLARATIONS_JSON: &str = r#"[
     "UTTypeIconFile": "yinhe",
     "UTTypeConformsTo": ["public.data"],
     "UTTypeTagSpecification": {
-      "public.filename-extension": ["yin", "ying"]
+      "public.filename-extension": ["yin"]
     }
   }
 ]"#;

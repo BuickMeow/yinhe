@@ -705,7 +705,7 @@ fn mark_load_done() {
     }
 }
 
-/// 后台加载用户选择的文件（.mid / .yin / .ying / 压缩包）并替换当前场景。
+/// 后台加载用户选择的文件（.mid / .yin / 压缩包）并替换当前场景。
 pub fn open_midi(path: String) {
     if is_archive_path(&path) {
         open_archive(path, None);
@@ -787,7 +787,7 @@ fn load_document(path: &str, token: u64) -> Result<Document, String> {
     Ok(doc)
 }
 
-/// 解析工程文件（`.yin` 主格式，兼容旧移动端 `.ying`）。
+/// 解析 `.yin` 工程文件。
 ///
 /// 移动端没有混音台/每通道音色库 UI，但会把文件里的 `mixer` 段和
 /// `sf_channel_overrides` 原样装进 Document，保存时再写回：桌面工程

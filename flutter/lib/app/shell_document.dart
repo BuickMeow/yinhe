@@ -508,7 +508,7 @@ mixin _ShellDocument on _ShellBase {
     _startOpenPath(item.path);
   }
 
-  /// 按文件名恢复工程 SAF uri（最近列表打开 .yin/.ying 后可直接覆盖保存）。
+  /// 按文件名恢复工程 SAF uri（最近列表打开 .yin 后可直接覆盖保存）。
   void _rememberProject(String name) {
     _channel.invokeMethod<void>('rememberProject', {'name': name});
   }

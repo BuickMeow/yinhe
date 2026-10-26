@@ -15,7 +15,7 @@ pub(crate) fn recent_display_name(path: &str) -> &str {
 }
 
 /// 最近文件的类型图标（欢迎页列表与文件菜单共用）：
-/// MIDI → 音频文件图标，工程（.yin/.ying）→ auto awesome，其余（压缩包等）→ 通用文档。
+/// MIDI → 音频文件图标，.yin → auto awesome，其余（压缩包等）→ 通用文档。
 pub(crate) fn recent_file_icon(path: &str) -> egui_material_icons::MaterialIcon {
     let ext = std::path::Path::new(path)
         .extension()
@@ -23,7 +23,7 @@ pub(crate) fn recent_file_icon(path: &str) -> egui_material_icons::MaterialIcon 
         .map(|e| e.to_ascii_lowercase());
     match ext.as_deref() {
         Some("mid" | "midi") => ICON_AUDIO_FILE,
-        Some("yin" | "ying") => ICON_AUTO_AWESOME,
+        Some("yin") => ICON_AUTO_AWESOME,
         _ => ICON_DESCRIPTION,
     }
 }
