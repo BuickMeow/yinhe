@@ -2212,31 +2212,22 @@ pub fn channel_instruments_json() -> String {
     out
 }
 
-/// 轨道音频 skip 掩码：mute + solo（有任意 solo 时只放行 solo 轨）+ 空音频轨。
+/// 轨道音频 skip 掩码：桌面同一份 mute/solo 规则（Solo 优先）+ 空音频轨。
 fn skip_mask(s: &RenderScene) -> Vec<bool> {
     let Some(doc) = s.document.as_ref() else {
         return Vec::new();
     };
-    let any_solo = doc
-        .edit
-        .track_overrides
-        .iter()
-        .enumerate()
-        .any(|(i, o)| o.soloed && i < doc.data.model.tracks.len());
-    doc.data
-        .model
-        .tracks
-        .iter()
-        .enumerate()
-        .map(|(i, t)| {
-            let o = doc.edit.track_overrides.get(i);
-            let muted = o.map(|o| o.muted).unwrap_or(false);
-            let soloed = o.map(|o| o.soloed).unwrap_or(false);
-            (t.kind == yinhe_core::TrackKind::Audio && t.audio_clips.is_empty())
-                || muted
-                || (any_solo && !soloed)
-        })
-        .collect()
+    // 与桌面 Document::compute_skip_mask 完全同源：有任意 solo 时忽略 mute，
+    // 只放行 solo 轨；无 solo 时才按 muted 过滤。移动端只额外叠加空音频轨。
+    let tracks = &doc.data.model.tracks;
+    let mut mask = doc.compute_skip_mask();
+    mask.resize(tracks.len(), false);
+    for (i, t) in tracks.iter().enumerate() {
+        if t.kind == yinhe_core::TrackKind::Audio && t.audio_clips.is_empty() {
+            mask[i] = true;
+        }
+    }
+    mask
 }
 
 fn toggle_override(track: usize, mute: bool) -> i32 {

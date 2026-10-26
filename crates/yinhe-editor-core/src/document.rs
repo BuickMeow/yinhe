@@ -697,6 +697,24 @@ mod tests {
     }
 
     #[test]
+    fn skip_mask_is_solo_priority() {
+        let mut doc = Document::empty();
+        // A 轨同时 M+S，B 轨普通：A 应该放行（Solo 优先于 Mute），B 静音。
+        doc.edit.track_overrides[1].muted = true;
+        doc.edit.track_overrides[1].soloed = true;
+        let mask = doc.compute_skip_mask();
+        assert!(!mask[1], "Solo 必须压过自身的 Mute");
+        assert!(mask[2], "无 solo 命中时普通轨应被静音");
+
+        // 再加 B 轨 Solo：A、B 都放行，C 静音。
+        doc.edit.track_overrides[2].soloed = true;
+        let mask = doc.compute_skip_mask();
+        assert!(!mask[1]);
+        assert!(!mask[2]);
+        assert!(mask[3]);
+    }
+
+    #[test]
     fn empty_conductor_only_has_single_master_track() {
         let doc = Document::empty_conductor_only();
         assert_eq!(doc.model().tracks.len(), 1);
