@@ -27,18 +27,9 @@ mixin _ShellCore on _ShellBase {
   }
 
   /// 覆盖层：仅在修订号变化时重取 JSON。
-  ///
-  /// AR 的新数据先留在 `_overlayNext` 一帧；即使下一帧修订号不变，也必须把
-  /// pending 数据刷出去，否则选框会一直停在旧状态，直到用户再点一下。
-  /// PR 的纹理同帧可见，直接刷新，不能再延迟。
   void _readOverlay() {
     final rev = rust.overlayRevision();
     if (rev == _overlayRev) {
-      final pending = _overlayNext;
-      if (pending != null) {
-        _overlayNext = null;
-        _overlay.value = pending;
-      }
       return;
     }
     _overlayRev = rev;
@@ -48,18 +39,8 @@ mixin _ShellCore on _ShellBase {
     }
     try {
       final json = jsonDecode(ptr.toDartString()) as Map<String, dynamic>;
-      final next = OverlayData.fromJson(json);
-      if (_overlayFrameDelay == 0) {
-        _overlayNext = null;
-        _overlay.value = next;
-      } else {
-        final prev = _overlayNext;
-        _overlayNext = next;
-        // 第一份数据直接显示；之后延迟一帧，避免选框先于 Texture 移动。
-        _overlay.value = prev ?? next;
-      }
+      _overlay.value = OverlayData.fromJson(json);
     } catch (_) {
-      _overlayNext = null;
       _overlay.value = OverlayData.empty;
     } finally {
       rust.freeString(ptr);
@@ -87,8 +68,7 @@ mixin _ShellCore on _ShellBase {
 
   /// 主工具按钮当前记住的工具。
   @override
-  int get _mainTool =>
-      _viewMode == kViewPianoroll ? _mainToolPr : _mainToolAr;
+  int get _mainTool => _viewMode == kViewPianoroll ? _mainToolPr : _mainToolAr;
 
   /// 快捷工具组当前记住的工具（与主工具按钮解耦）。
   @override
@@ -441,9 +421,6 @@ mixin _ShellCore on _ShellBase {
     _pushTool();
     _velocityViewPpu = null;
     _velocityViewScroll = null;
-    _snapDelay.clear();
-    _playheadDelay.clear();
-    _overlayNext = null;
     if (mode == kViewPianoroll) {
       _loadAutomation();
       _loadVelocity();

@@ -240,16 +240,6 @@ abstract class _ShellBase extends State<StudioShell>
   double? _velocityViewPpu;
   double? _velocityViewScroll;
 
-  /// Flutter 浮层相对 wgpu Texture 的延迟帧数。
-  ///
-  /// AR 的 wgpu 合成比 Flutter 浮层晚一帧，需要把 snapshot / overlay /
-  /// playhead 延迟一帧；PR 的纹理在同一 Flutter 帧已经可见，再延迟反而会让
-  /// 标尺、键盘标签、选框和播放头整体慢一帧。
-  int get _overlayFrameDelay => _viewMode == kViewPianoroll ? 0 : 1;
-  final List<List<double>> _snapDelay = <List<double>>[];
-  final List<double> _playheadDelay = <double>[];
-  OverlayData? _overlayNext;
-
   /// 保存进行中：顶栏保存按钮显示加载圆环。
   bool _saving = false;
   Timer? _savingTimer;
@@ -368,27 +358,17 @@ class _StudioShellState extends _ShellBase
     _channel.setMethodCallHandler(_onNativeCall);
     _init();
     _ticker = createTicker((_) {
-      // 帧驱动同步：wgpu 先呈现当前帧。AR 的 Texture 比 Flutter 浮层晚一帧，
-      // 所以 AR 浮层延迟一帧；PR 同帧可见，浮层直接刷新。
+      // 帧驱动同步：wgpu 先呈现当前帧。Mailbox 下 Texture 与 Flutter 浮层
+      // 同帧可见，浮层直接刷新。
       if (!_showHome) {
         // 拖拽边缘自动滚动：先滚动视图，再渲染这一帧。
         rust.dragTick();
         rust.renderFrame();
       }
-      final delay = _overlayFrameDelay;
-      final px = rust.playheadX();
-      _playheadDelay.add(px);
-      final shownPlayhead = _playheadDelay.length > delay
-          ? _playheadDelay.removeAt(0)
-          : px;
-      _playhead.value = shownPlayhead;
+      _playhead.value = rust.playheadX();
       final snap = _readSnapshot();
-      _snapDelay.add(snap);
-      final shownSnap = _snapDelay.length > delay
-          ? _snapDelay.removeAt(0)
-          : snap;
-      if (!_sameSnapshot(shownSnap)) {
-        _snap.value = shownSnap;
+      if (!_sameSnapshot(snap)) {
+        _snap.value = snap;
       }
       _scheduleVelocityReload();
       _readOverlay();
