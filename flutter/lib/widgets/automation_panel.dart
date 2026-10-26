@@ -30,6 +30,7 @@ class AutomationPanel extends StatefulWidget {
     required this.onCollapsed,
     required this.onReload,
     required this.textureId,
+    required this.pencilActive,
     required this.onVelocityCommit,
     required this.velocityDrawEnabled,
     required this.onResize,
@@ -56,6 +57,9 @@ class AutomationPanel extends StatefulWidget {
 
   /// AM wgpu 独立纹理 ID；null = 尚未创建（退回 Flutter 绘制）。
   final int? textureId;
+
+  /// 铅笔工具：只有铅笔显示锚点并允许直接拖锚点。
+  final bool pencilActive;
 
   /// 提交一笔力度绘制点 `(tick, velocity 1..127)`。
   final void Function(List<(double, double)> points) onVelocityCommit;
@@ -117,12 +121,17 @@ class _AutomationPanelState extends State<AutomationPanel> {
   /// 离网锚点第一次拖动只吸附到网格，不额外移动。
   bool _awaitSnapBreak = false;
 
+  /// 拖动基准：old tick -> 本次拖动开始时的 tick（离网锚点已吸附）。
+  /// 不能每帧用 _movePreview 当基准，否则会把上一帧位移重复叠加，越拖越快。
+  final Map<int, int> _dragBaseTicks = <int, int>{};
+
   /// AM wgpu 状态去重缓存。
   double _amW = 0;
   double _amH = 0;
   int _amTrack = -1;
   int _amLane = -2;
   bool _amVisible = false;
+  bool _amAnchors = false;
 
   @override
   void didUpdateWidget(covariant AutomationPanel oldWidget) {
@@ -159,11 +168,13 @@ class _AutomationPanelState extends State<AutomationPanel> {
     final h = _amH;
     final track = widget.activeTrack;
     final lane = _laneIdx ?? -1;
+    final showAnchors = widget.pencilActive;
     if (_amVisible == visible &&
         _amW == w &&
         _amH == h &&
         _amTrack == track &&
-        _amLane == lane) {
+        _amLane == lane &&
+        _amAnchors == showAnchors) {
       return;
     }
     _amVisible = visible;
@@ -171,7 +182,22 @@ class _AutomationPanelState extends State<AutomationPanel> {
     _amH = h;
     _amTrack = track;
     _amLane = lane;
-    rust.setAutomationPanel(w, h, visible ? 1 : 0, track, lane);
+    _amAnchors = showAnchors;
+    rust.setAutomationPanel(
+      w,
+      h,
+      visible ? 1 : 0,
+      track,
+      lane,
+      showAnchors ? 1 : 0,
+    );
+  }
+
+  /// 把拖动预览推给 wgpu ghost 层；空 map 清除 ghost。
+  void _syncGhost() {
+    rust.pushAutomationGhost([
+      for (final e in _movePreview.entries) (e.key, e.value.$1, e.value.$2),
+    ]);
   }
 
   /// 绘制区布局：同步逻辑尺寸给 Rust；物理尺寸由外层 LayoutBuilder 上报。
@@ -221,7 +247,8 @@ class _AutomationPanelState extends State<AutomationPanel> {
 
   @override
   void dispose() {
-    rust.setAutomationPanel(0, 0, 0, widget.activeTrack, _laneIdx ?? -1);
+    rust.setAutomationPanel(0, 0, 0, widget.activeTrack, _laneIdx ?? -1, 0);
+    rust.pushAutomationGhost(const []);
     _velocityPreview.dispose();
     super.dispose();
   }
@@ -242,6 +269,8 @@ class _AutomationPanelState extends State<AutomationPanel> {
     _marqueeStart = null;
     _marqueeCurrent = null;
     _awaitSnapBreak = false;
+    _dragBaseTicks.clear();
+    _syncGhost();
   }
 
   double _tickAt(double x) {
@@ -397,12 +426,14 @@ class _AutomationPanelState extends State<AutomationPanel> {
   /// 返回是否进入“等待跨过量化线”的状态。
   bool _snapSelectionToGrid(AutomationLaneData lane) {
     final preview = <int, (int, double)>{};
+    _dragBaseTicks.clear();
     for (final p in lane.points) {
       final oldTick = p.dx.round();
       if (!_selectedTicks.contains(oldTick)) {
         continue;
       }
       final snapped = _snapTickAt(_xOfTick(p.dx)).round();
+      _dragBaseTicks[oldTick] = snapped;
       if (snapped != oldTick) {
         preview[oldTick] = (snapped, p.dy);
       }
@@ -432,7 +463,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
     }
     final lane = widget.lanes[laneIdx];
     widget.status.value = null;
-    final hit = _hitAnchor(lane, d.localPosition);
+    final hit = widget.pencilActive ? _hitAnchor(lane, d.localPosition) : null;
     if (hit != null) {
       final hitTick = hit.round();
       if (!_selectedTicks.contains(hitTick)) {
@@ -456,6 +487,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
           );
         }
       }
+      _syncGhost();
       setState(() {});
       return;
     }
@@ -510,12 +542,13 @@ class _AutomationPanelState extends State<AutomationPanel> {
       if (!_selectedTicks.contains(oldTick)) {
         continue;
       }
-      final baseTick = _movePreview[oldTick]?.$1 ?? p.dx.round();
+      final baseTick = _dragBaseTicks[oldTick] ?? p.dx.round();
       final newTick = math.max(0, (baseTick + effectiveDt).round());
       final newValue = _singleSelection ? (p.dy + dv).clamp(0.0, 1.0) : p.dy;
       preview[oldTick] = (newTick, newValue);
     }
     setState(() => _movePreview = preview);
+    _syncGhost();
     if (_singleSelection) {
       final moved = preview[_dragAnchorTick!.round()];
       if (moved != null) {
@@ -565,6 +598,8 @@ class _AutomationPanelState extends State<AutomationPanel> {
     _dragStartValue = null;
     _movePreview = {};
     _awaitSnapBreak = false;
+    _dragBaseTicks.clear();
+    _syncGhost();
     widget.status.value = null;
     setState(() {});
     if (moves.isEmpty) {
@@ -633,6 +668,8 @@ class _AutomationPanelState extends State<AutomationPanel> {
     _dragStartValue = null;
     _movePreview = {};
     _awaitSnapBreak = false;
+    _dragBaseTicks.clear();
+    _syncGhost();
     widget.status.value = null;
     setState(() {});
   }

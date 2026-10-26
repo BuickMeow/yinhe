@@ -1524,6 +1524,7 @@ pub extern "C" fn yinhe_set_automation_panel(
     visible: i32,
     active_track: i32,
     lane: i32,
+    show_anchors: i32,
 ) {
     scene::set_automation_panel(
         w,
@@ -1531,7 +1532,20 @@ pub extern "C" fn yinhe_set_automation_panel(
         visible != 0,
         active_track.max(0) as usize,
         if lane < 0 { None } else { Some(lane as usize) },
+        show_anchors != 0,
     );
+}
+
+/// 自动化拖动 ghost：扁平 `[old_tick, new_tick, new_value, ...]`，len=0 清除。
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_automation_ghost(flat: *const f64, len: u32) {
+    if flat.is_null() || len == 0 {
+        scene::set_automation_ghost(&[]);
+        return;
+    }
+    let slice = unsafe { std::slice::from_raw_parts(flat, len as usize) };
+    scene::set_automation_ghost(slice);
 }
 
 /// Flutter 帧驱动：请求渲染一帧并等待完成（纹理与浮层同帧产出）。成功 1。

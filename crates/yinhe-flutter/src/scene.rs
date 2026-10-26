@@ -152,7 +152,7 @@ impl DragPreview {
 }
 
 /// PR 底部 AM 面板在主纹理中的绘制状态（Dart 布局后写入）。
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct AutomationPanelState {
     pub visible: bool,
     /// 绘制区逻辑尺寸（独立 AM 纹理，不含 combo 列和顶部手柄）。
@@ -161,6 +161,10 @@ pub struct AutomationPanelState {
     pub active_track: usize,
     /// `None` = Velocity；`Some(i)` = 当前轨第 i 条可绘制自动化 lane。
     pub lane: Option<usize>,
+    /// 铅笔工具下才在 wgpu 画锚点。
+    pub show_anchors: bool,
+    /// 拖动预览：old tick -> new tick/value（wgpu ghost 层）。
+    pub ghost: Vec<(u32, u32, f32)>,
 }
 
 impl Default for AutomationPanelState {
@@ -171,6 +175,8 @@ impl Default for AutomationPanelState {
             h: 0.0,
             active_track: 0,
             lane: None,
+            show_anchors: false,
+            ghost: Vec::new(),
         }
     }
 }
@@ -1848,6 +1854,7 @@ pub fn set_automation_panel(
     visible: bool,
     active_track: usize,
     lane: Option<usize>,
+    show_anchors: bool,
 ) {
     let Ok(mut s) = scene().lock() else {
         return;
@@ -1859,7 +1866,9 @@ pub fn set_automation_panel(
         && p.h == h
         && p.active_track == active_track
         && p.lane == lane
+        && p.show_anchors == show_anchors
     {
+        p.show_anchors = show_anchors;
         return;
     }
     *p = AutomationPanelState {
@@ -1868,7 +1877,23 @@ pub fn set_automation_panel(
         h,
         active_track,
         lane,
+        show_anchors,
+        ghost: Vec::new(),
     };
+}
+
+/// 拖动预览：扁平 `[old_tick, new_tick, new_value, ...]`；空数组清除。
+pub fn set_automation_ghost(flat: &[f64]) {
+    let Ok(mut s) = scene().lock() else {
+        return;
+    };
+    let mut ghost = Vec::with_capacity(flat.len() / 3);
+    for c in flat.chunks(3) {
+        if c.len() == 3 && c.iter().all(|v| v.is_finite()) {
+            ghost.push((c[0].max(0.0) as u32, c[1].max(0.0) as u32, c[2] as f32));
+        }
+    }
+    s.automation_panel.ghost = ghost;
 }
 
 /// PR 力度条数据（当前可见 tick 范围 + 可见轨）。

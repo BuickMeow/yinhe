@@ -205,16 +205,55 @@ typedef SetAutomationPanelNative = ffi.Void Function(
   ffi.Int32,
   ffi.Int32,
   ffi.Int32,
+  ffi.Int32,
 );
-typedef SetAutomationPanelDart = void Function(double, double, int, int, int);
+typedef SetAutomationPanelDart = void Function(
+  double,
+  double,
+  int,
+  int,
+  int,
+  int,
+);
 
-/// 同步 AM 面板逻辑尺寸、可见性和当前 lane。
+/// 同步 AM 面板逻辑尺寸、可见性、当前 lane 和锚点显示。
 ///
 /// `lane < 0` 表示力度模式；AM 使用独立 Surface/Texture。
 final SetAutomationPanelDart setAutomationPanel = bridge
     .lookupFunction<SetAutomationPanelNative, SetAutomationPanelDart>(
       'yinhe_set_automation_panel',
     );
+
+typedef SetAutomationGhostNative = ffi.Void Function(
+  ffi.Pointer<ffi.Double>,
+  ffi.Uint32,
+);
+typedef SetAutomationGhostDart = void Function(ffi.Pointer<ffi.Double>, int);
+
+final SetAutomationGhostDart _setAutomationGhost = bridge
+    .lookupFunction<SetAutomationGhostNative, SetAutomationGhostDart>(
+      'yinhe_set_automation_ghost',
+    );
+
+/// 推送 AM 拖动 ghost：`(oldTick, newTick, value)`；空 = 清除。
+void pushAutomationGhost(List<(int, int, double)> moves) {
+  if (moves.isEmpty) {
+    _setAutomationGhost(ffi.nullptr, 0);
+    return;
+  }
+  final ptr = calloc<ffi.Double>(moves.length * 3);
+  try {
+    for (var i = 0; i < moves.length; i++) {
+      final (oldTick, newTick, value) = moves[i];
+      ptr[i * 3] = oldTick.toDouble();
+      ptr[i * 3 + 1] = newTick.toDouble();
+      ptr[i * 3 + 2] = value;
+    }
+    _setAutomationGhost(ptr, moves.length * 3);
+  } finally {
+    calloc.free(ptr);
+  }
+}
 
 typedef FreeNative = ffi.Void Function(ffi.Pointer<Utf8>);
 typedef FreeDart = void Function(ffi.Pointer<Utf8>);

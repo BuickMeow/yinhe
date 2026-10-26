@@ -17,9 +17,9 @@ use yinhe_types::{
     ArrangementView, AutomationLane, AutomationPanelView, AutomationTarget, PianoRollView,
     TimelineViewBase,
 };
-use yinhe_wgpu::InstanceRenderer;
 use yinhe_wgpu::pianoroll::build_render_job;
 use yinhe_wgpu::vertex::{DrawInstance, NoteInstance};
+use yinhe_wgpu::{AutomationGhost, InstanceRenderer};
 
 use crate::Gpu;
 use crate::OwnedWindow;
@@ -574,7 +574,7 @@ pub fn render_automation_frame(
         let Ok(s) = crate::scene::scene().lock() else {
             return;
         };
-        let state = s.automation_panel;
+        let state = s.automation_panel.clone();
         if !state.visible || state.w < 1.0 || state.h < 1.0 {
             return;
         }
@@ -620,6 +620,19 @@ pub fn render_automation_frame(
         })
     });
     let lanes: Vec<&AutomationLane> = lane.into_iter().collect();
+    let ghost = lanes.first().and_then(|lane| {
+        if state.ghost.is_empty() {
+            return None;
+        }
+        let color = track_colors
+            .get(state.active_track)
+            .map(|c| [c[0], c[1], c[2]])
+            .unwrap_or([0.5, 0.5, 0.5]);
+        Some(AutomationGhost::Move {
+            lane: yinhe_wgpu::build_lane_multi_move(lane, &state.ghost),
+            color,
+        })
+    });
 
     let view = AutomationPanelView {
         base: TimelineViewBase {
@@ -683,10 +696,9 @@ pub fn render_automation_frame(
             &track_selected,
             &track_colors,
             1.0,
-            // 锚点由 Flutter 叠在 Texture 上方绘制，保证与命中测试同坐标。
-            false,
+            state.show_anchors,
             if is_velocity { 127.0 } else { 1.0 },
-            None,
+            ghost,
             revision,
             &[],
         );

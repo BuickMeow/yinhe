@@ -269,6 +269,7 @@ mixin _ShellBuild on _ShellBase {
                                   onCollapsed: _setAutoCollapsed,
                                   onReload: _loadAutomation,
                                   textureId: _amTextureId,
+                                  pencilActive: _tool == 2,
                                   onVelocityCommit: _commitVelocityStroke,
                                   velocityDrawEnabled: _tool == 2,
                                   onResize: _resizeAutoPanel,

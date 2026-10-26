@@ -167,22 +167,7 @@ class AutomationPainter extends CustomPainter {
     }
 
     if (!paintBaseData) {
-      if (movePreview.isNotEmpty) {
-        final moved = <Offset>[
-          for (final p in points)
-            if (movePreview[p.dx.round()] case (final int tick, final double v))
-              Offset(tick.toDouble(), v)
-            else
-              p,
-        ]..sort((a, b) => a.dx.compareTo(b.dx));
-        final movedSelected = <int>{
-          for (final e in movePreview.entries)
-            if (selectedTicks.contains(e.key)) e.value.$1,
-        };
-        _paintLane(canvas, size, moved, color, 1.0, movedSelected, xOf, yOf);
-      } else {
-        _paintAnchors(canvas, size, points, xOf, yOf);
-      }
+      // 曲线/锚点/拖动 ghost 全部由 wgpu 画，Flutter 只保留选框。
     } else if (movePreview.isEmpty) {
       _paintLane(canvas, size, points, color, 1.0, selectedTicks, xOf, yOf);
     } else {
@@ -263,40 +248,6 @@ class AutomationPainter extends CustomPainter {
         final r = Rect.fromCenter(center: Offset(x, y), width: 7, height: 7);
         canvas.drawRect(r, selectedPaint);
         canvas.drawRect(r, selectedEdge);
-      } else {
-        canvas.drawRect(
-          Rect.fromCenter(center: Offset(x, y), width: 5, height: 5),
-          anchor,
-        );
-      }
-    }
-  }
-
-  /// wgpu 只画曲线，锚点由 Flutter 画在 Texture 上方，保证可见锚点就是
-  /// 命中测试所用的锚点（避免两边坐标略有偏差时铅笔点不中）。
-  void _paintAnchors(
-    Canvas canvas,
-    Size size,
-    List<Offset> points,
-    double Function(double) xOf,
-    double Function(double) yOf,
-  ) {
-    final anchor = Paint()..color = color;
-    final fill = Paint()..color = YinheTheme.accent;
-    final edge = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1
-      ..color = Colors.white;
-    for (final p in points) {
-      final x = xOf(p.dx);
-      if (x < 0 || x > size.width) {
-        continue;
-      }
-      final y = yOf(p.dy);
-      if (selectedTicks.contains(p.dx.round())) {
-        final r = Rect.fromCenter(center: Offset(x, y), width: 7, height: 7);
-        canvas.drawRect(r, fill);
-        canvas.drawRect(r, edge);
       } else {
         canvas.drawRect(
           Rect.fromCenter(center: Offset(x, y), width: 5, height: 5),
