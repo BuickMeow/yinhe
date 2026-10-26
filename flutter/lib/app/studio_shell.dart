@@ -242,10 +242,9 @@ abstract class _ShellBase extends State<StudioShell>
 
   /// Flutter 浮层相对 wgpu Texture 的延迟帧数。
   ///
-  /// AR 的 wgpu 合成比 Flutter 浮层晚一帧，需要把 snapshot / overlay /
-  /// playhead 延迟一帧；PR 的纹理在同一 Flutter 帧已经可见，再延迟反而会让
-  /// 标尺、键盘标签、选框和播放头整体慢一帧。
-  int get _overlayFrameDelay => _viewMode == kViewPianoroll ? 0 : 1;
+  /// 所有视图统一延迟一帧：纹理先呈现当前帧，snapshot / overlay / playhead
+  /// 晚一帧刷新，保证标尺、键盘标签、选框和播放头与纹理同帧。
+  int get _overlayFrameDelay => 1;
   final List<List<double>> _snapDelay = <List<double>>[];
   final List<double> _playheadDelay = <double>[];
   OverlayData? _overlayNext;
@@ -368,8 +367,7 @@ class _StudioShellState extends _ShellBase
     _channel.setMethodCallHandler(_onNativeCall);
     _init();
     _ticker = createTicker((_) {
-      // 帧驱动同步：wgpu 先呈现当前帧。AR 的 Texture 比 Flutter 浮层晚一帧，
-      // 所以 AR 浮层延迟一帧；PR 同帧可见，浮层直接刷新。
+      // 帧驱动同步：wgpu 先呈现当前帧，所有视图的 Flutter 浮层统一延迟一帧。
       if (!_showHome) {
         // 拖拽边缘自动滚动：先滚动视图，再渲染这一帧。
         rust.dragTick();
