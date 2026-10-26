@@ -77,6 +77,7 @@ pub(crate) fn render_panel_content(
     }
     let gpu_dirty = prepare_automation(
         renderer,
+        0,
         gw,
         gh,
         panel,

@@ -111,6 +111,8 @@ fn hash_lane(lane: &AutomationLane) -> u64 {
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn prepare(
     renderer: &mut InstanceRenderer,
+    // 数据层起始下标；桌面面板用 0，Flutter AM 叠加层用 1（0 留给背景）。
+    layer_base: usize,
     width: u32,
     height: u32,
     view: &AutomationPanelView,
@@ -159,7 +161,7 @@ pub fn prepare(
     renderer.upload_track_colors(&tc_colors);
     // Grid 已迁移到 egui（automation 面板不补 grid，共享 pianoroll 顶部 ruler），
     // wgpu 只剩 data + ghost 两层。
-    renderer.ensure_layers(2);
+    renderer.ensure_layers(layer_base + 2);
 
     let vh = view.render_hash();
     let wh = crate::hash_f32s(&[w, h]);
@@ -225,7 +227,7 @@ pub fn prepare(
         if let Some(midi) = midi {
             // LOD 摘要（Arc clone，不借用 renderer，闭包内可安全使用）。
             let summary = renderer.velocity_summary();
-            renderer.upload_velocity_layer(0, bars_key, |out| {
+            renderer.upload_velocity_layer(layer_base, bars_key, |out| {
                 velocity_bars::build_velocity_bars(
                     out,
                     w,
@@ -242,7 +244,7 @@ pub fn prepare(
     } else {
         // Data lines + anchors via curve pipeline (CurveInstance)
         // Tempo 与 CC/PB/RPN 共用此路径；max_val 由调用方传入。
-        renderer.upload_curve_layer(0, bars_key, |out| {
+        renderer.upload_curve_layer(layer_base, bars_key, |out| {
             let skip_lane = match ghost_for_layer0 {
                 Some(AutomationGhost::Move { ref lane, .. }) => Some(lane),
                 _ => None,
@@ -276,7 +278,7 @@ pub fn prepare(
     // 用固定的非零 key，首次清空后即命中缓存不再上传（否则会永远强制上传，
     // 让 prepare 的返回值恒真、离屏重画省不下来）。
     let ghost_rebuilt = renderer.upload_curve_layer(
-        1,
+        layer_base + 1,
         if ghost.is_some() { 0 } else { EMPTY_GHOST_KEY },
         |out| {
             if let Some(g) = ghost {

@@ -586,6 +586,62 @@ impl InstanceRenderer {
         }
     }
 
+    /// Draw uploaded static layers (decor / velocity / curve) into a sub-region
+    /// of an existing render target, preserving everything outside the region.
+    ///
+    /// Used by the Flutter AM panel: the automation layers are rendered into the
+    /// bottom part of the main pianoroll texture in a second pass with
+    /// `LoadOp::Load`. Viewport/scissor are in physical pixels.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_region(
+        &mut self,
+        encoder: &mut CommandEncoder,
+        target: &TextureView,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        target_width: u32,
+        target_height: u32,
+    ) {
+        let max_w = target_width as f32;
+        let max_h = target_height as f32;
+        let vx = x.clamp(0.0, max_w);
+        let vy = y.clamp(0.0, max_h);
+        let vw = width.min(max_w - vx);
+        let vh = height.min(max_h - vy);
+        if vw < 1.0 || vh < 1.0 {
+            return;
+        }
+        let sx = vx.floor() as u32;
+        let sy = vy.floor() as u32;
+        let sw = (vw.ceil() as u32).min(target_width.saturating_sub(sx));
+        let sh = (vh.ceil() as u32).min(target_height.saturating_sub(sy));
+        if sw == 0 || sh == 0 {
+            return;
+        }
+        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("automation_region"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: target,
+                resolve_target: None,
+                depth_slice: None,
+                ops: Operations {
+                    load: LoadOp::Load,
+                    store: StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_viewport(vx, vy, vw, vh, 0.0, 1.0);
+        pass.set_scissor_rect(sx, sy, sw, sh);
+        pass.set_bind_group(0, &self.render.bind_group, &[]);
+        self.draw_static_layers(&mut pass);
+    }
+
     /// Draw decor → velocity → curve layers (shared by both draw paths).
     /// Notes are handled separately by each path (legacy: CPU-built note layers;
     /// cull: GPU compute culled notes + ghost layer).
