@@ -181,7 +181,7 @@ class AutomationPainter extends CustomPainter {
         };
         _paintLane(canvas, size, moved, color, 1.0, movedSelected, xOf, yOf);
       } else {
-        _paintSelectedAnchors(canvas, size, points, xOf, yOf);
+        _paintAnchors(canvas, size, points, xOf, yOf);
       }
     } else if (movePreview.isEmpty) {
       _paintLane(canvas, size, points, color, 1.0, selectedTicks, xOf, yOf);
@@ -272,37 +272,37 @@ class AutomationPainter extends CustomPainter {
     }
   }
 
-  /// wgpu 已画基础曲线/锚点，Flutter 只补选中锚点的高亮。
-  void _paintSelectedAnchors(
+  /// wgpu 只画曲线，锚点由 Flutter 画在 Texture 上方，保证可见锚点就是
+  /// 命中测试所用的锚点（避免两边坐标略有偏差时铅笔点不中）。
+  void _paintAnchors(
     Canvas canvas,
     Size size,
     List<Offset> points,
     double Function(double) xOf,
     double Function(double) yOf,
   ) {
-    if (selectedTicks.isEmpty) {
-      return;
-    }
+    final anchor = Paint()..color = color;
     final fill = Paint()..color = YinheTheme.accent;
     final edge = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1
       ..color = Colors.white;
     for (final p in points) {
-      if (!selectedTicks.contains(p.dx.round())) {
-        continue;
-      }
       final x = xOf(p.dx);
       if (x < 0 || x > size.width) {
         continue;
       }
-      final r = Rect.fromCenter(
-        center: Offset(x, yOf(p.dy)),
-        width: 7,
-        height: 7,
-      );
-      canvas.drawRect(r, fill);
-      canvas.drawRect(r, edge);
+      final y = yOf(p.dy);
+      if (selectedTicks.contains(p.dx.round())) {
+        final r = Rect.fromCenter(center: Offset(x, y), width: 7, height: 7);
+        canvas.drawRect(r, fill);
+        canvas.drawRect(r, edge);
+      } else {
+        canvas.drawRect(
+          Rect.fromCenter(center: Offset(x, y), width: 5, height: 5),
+          anchor,
+        );
+      }
     }
   }
 
@@ -312,16 +312,17 @@ class AutomationPainter extends CustomPainter {
     if (m == null) {
       return;
     }
+    // 与 PR/AR 选框同色：灰色填充 + 灰色描边，不用强调色。
     canvas.drawRect(
       m,
-      Paint()..color = YinheTheme.accent.withValues(alpha: 0.08),
+      Paint()..color = YinheTheme.text.withValues(alpha: 0.10),
     );
     canvas.drawRect(
       m,
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1
-        ..color = YinheTheme.accent.withValues(alpha: 0.5),
+        ..color = YinheTheme.text.withValues(alpha: 0.45),
     );
   }
 

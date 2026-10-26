@@ -683,7 +683,8 @@ pub fn render_automation_frame(
             &track_selected,
             &track_colors,
             1.0,
-            true,
+            // 锚点由 Flutter 叠在 Texture 上方绘制，保证与命中测试同坐标。
+            false,
             if is_velocity { 127.0 } else { 1.0 },
             None,
             revision,

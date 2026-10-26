@@ -3521,21 +3521,22 @@ pub fn set_project_defaults(bpm: f32, num: u8, den_pow: u8) -> i32 {
     1
 }
 
-/// 自动化类型：0=PB、1=CC、2=RPN；其它（Nrpn/Tempo/插件参数）不展示。
+/// 自动化类型（与 Flutter/插入自动化编码一致）：1=PB、2=CC、3=RPN。
+/// 注意不是 0/1/2；0 是 Tempo（AM 列表不展示 Tempo）。
 pub(crate) fn lane_kind(target: &yinhe_types::automation::AutomationTarget) -> Option<u8> {
     use yinhe_types::automation::{AutomationTarget, ParamDevice, xsynth_param};
     match target {
-        AutomationTarget::PitchBend => Some(0),
-        AutomationTarget::CC { .. } => Some(1),
-        AutomationTarget::Rpn { .. } => Some(2),
+        AutomationTarget::PitchBend => Some(1),
+        AutomationTarget::CC { .. } => Some(2),
+        AutomationTarget::Rpn { .. } => Some(3),
         AutomationTarget::Param {
             device: ParamDevice::ChannelInstrument { .. },
             id,
             ..
         } => match *id {
-            xsynth_param::PITCH_BEND => Some(0),
+            xsynth_param::PITCH_BEND => Some(1),
             xsynth_param::PB_SENSITIVITY | xsynth_param::FINE_TUNE | xsynth_param::COARSE_TUNE => {
-                Some(2)
+                Some(3)
             }
             _ => None,
         },

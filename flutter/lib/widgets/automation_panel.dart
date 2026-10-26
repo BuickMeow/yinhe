@@ -209,7 +209,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
       return true;
     }
     // 导入的 RPN 可能是 Param lane（number=-1），按名称兜底匹配。
-    if (kind == 2 && lane.number < 0) {
+    if (kind == 3 && lane.number < 0) {
       final name = MidiNames.instance.rpn[number];
       return name != null && name.isNotEmpty && lane.name.contains(name);
     }
@@ -628,10 +628,10 @@ class _AutomationPanelState extends State<AutomationPanel> {
   ];
 
   String _laneLabel(AutomationLaneData lane) {
-    if (lane.kind == 1 && lane.number >= 0) {
+    if (lane.kind == 2 && lane.number >= 0) {
       return MidiNames.instance.ccLabel(lane.number);
     }
-    if (lane.kind == 2 && lane.number >= 0) {
+    if (lane.kind == 3 && lane.number >= 0) {
       return MidiNames.instance.rpnLabel(lane.number);
     }
     return lane.name;
@@ -822,36 +822,38 @@ class _AutomationPanelState extends State<AutomationPanel> {
                           paintGrid: grid,
                           paintOverlay: overlay,
                         );
-                        return Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            // 背景和网格在 wgpu 纹理下方；纹理透明，数据盖在网格上。
-                            const ColoredBox(color: YinheTheme.bg),
-                            if (gpu) ...[
-                              CustomPaint(
-                                painter: painter(
-                                  grid: true,
-                                  overlay: false,
-                                  base: false,
+                        return ClipRect(
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              // 背景和网格在 wgpu 纹理下方；纹理透明，数据盖在网格上。
+                              const ColoredBox(color: YinheTheme.bg),
+                              if (gpu) ...[
+                                CustomPaint(
+                                  painter: painter(
+                                    grid: true,
+                                    overlay: false,
+                                    base: false,
+                                  ),
                                 ),
-                              ),
-                              Texture(textureId: widget.textureId!),
-                              CustomPaint(
-                                painter: painter(
-                                  grid: false,
-                                  overlay: true,
-                                  base: false,
+                                Texture(textureId: widget.textureId!),
+                                CustomPaint(
+                                  painter: painter(
+                                    grid: false,
+                                    overlay: true,
+                                    base: false,
+                                  ),
                                 ),
-                              ),
-                            ] else
-                              CustomPaint(
-                                painter: painter(
-                                  grid: true,
-                                  overlay: true,
-                                  base: true,
+                              ] else
+                                CustomPaint(
+                                  painter: painter(
+                                    grid: true,
+                                    overlay: true,
+                                    base: true,
+                                  ),
                                 ),
-                              ),
-                          ],
+                            ],
+                          ),
                         );
                       },
                     ),
