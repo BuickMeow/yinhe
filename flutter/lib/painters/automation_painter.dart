@@ -19,6 +19,7 @@ class AutomationPainter extends CustomPainter {
     required this.movePreview,
     required this.marquee,
     required this.velocityPreview,
+    required this.paintBaseData,
   }) : super(repaint: Listenable.merge([snap, grid, velocityPreview]));
 
   /// null = 力度模式。
@@ -46,6 +47,10 @@ class AutomationPainter extends CustomPainter {
 
   /// 力度笔划预览：(tick, length, velocity01, track)。
   final ValueNotifier<List<(double, double, double, int)>> velocityPreview;
+
+  /// 基础力度条/曲线是否仍由 Flutter 绘制。
+  /// false = 已由 wgpu 画进主纹理，Flutter 只补网格、选框和拖动预览。
+  final bool paintBaseData;
 
   /// 左侧 combo 列宽（与 main.dart 的 SizedBox 保持一致）。
   static const double comboWidth = 60.0;
@@ -75,45 +80,47 @@ class AutomationPainter extends CustomPainter {
     if (l == null) {
       // 力度条（与桌面 wgpu 一致）：每音符一条空心描边柱，
       // 宽度 = gate × ppu（最小 2px），高度 ∝ (velocity-1)/126；按轨道着色。
-      final paint = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.0;
-      // 数据按 tick 升序：二分定位第一个进入视口的条，避免每帧全量扫描。
-      var lo = 0;
-      var hi = velocity.length;
-      while (lo < hi) {
-        final mid = (lo + hi) >> 1;
-        final p = velocity[mid];
-        if (xOf(p.$1 + p.$2) < -4) {
-          lo = mid + 1;
-        } else {
-          hi = mid;
+      if (paintBaseData) {
+        final paint = Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.0;
+        // 数据按 tick 升序：二分定位第一个进入视口的条，避免每帧全量扫描。
+        var lo = 0;
+        var hi = velocity.length;
+        while (lo < hi) {
+          final mid = (lo + hi) >> 1;
+          final p = velocity[mid];
+          if (xOf(p.$1 + p.$2) < -4) {
+            lo = mid + 1;
+          } else {
+            hi = mid;
+          }
         }
-      }
-      for (var i = lo; i < velocity.length; i++) {
-        final (tick, len, vel01, track) = velocity[i];
-        final rawLeft = xOf(tick);
-        final rawRight = xOf(tick + len);
-        if (rawRight < -4) {
-          continue;
+        for (var i = lo; i < velocity.length; i++) {
+          final (tick, len, vel01, track) = velocity[i];
+          final rawLeft = xOf(tick);
+          final rawRight = xOf(tick + len);
+          if (rawRight < -4) {
+            continue;
+          }
+          if (rawLeft > size.width + 4) {
+            break;
+          }
+          final left = rawLeft.clamp(0.0, size.width);
+          var width = rawRight - left;
+          if (width < 2.0) {
+            width = 2.0;
+          }
+          final top = yOf(vel01);
+          var height = size.height - top;
+          if (height < 1.0) {
+            height = 1.0;
+          }
+          paint.color = (track >= 0 && track < trackColors.length)
+              ? trackColors[track]
+              : color;
+          canvas.drawRect(Rect.fromLTWH(left, top, width, height), paint);
         }
-        if (rawLeft > size.width + 4) {
-          break;
-        }
-        final left = rawLeft.clamp(0.0, size.width);
-        var width = rawRight - left;
-        if (width < 2.0) {
-          width = 2.0;
-        }
-        final top = yOf(vel01);
-        var height = size.height - top;
-        if (height < 1.0) {
-          height = 1.0;
-        }
-        paint.color = (track >= 0 && track < trackColors.length)
-            ? trackColors[track]
-            : color;
-        canvas.drawRect(Rect.fromLTWH(left, top, width, height), paint);
       }
       // 笔划预览：用较粗描边显示松手后将写入的高度，原力度条保留作参照。
       final previewPaint = Paint()
@@ -146,7 +153,24 @@ class AutomationPainter extends CustomPainter {
       return;
     }
 
-    if (movePreview.isEmpty) {
+    if (!paintBaseData) {
+      if (movePreview.isNotEmpty) {
+        final moved = <Offset>[
+          for (final p in points)
+            if (movePreview[p.dx.round()] case (final int tick, final double v))
+              Offset(tick.toDouble(), v)
+            else
+              p,
+        ]..sort((a, b) => a.dx.compareTo(b.dx));
+        final movedSelected = <int>{
+          for (final e in movePreview.entries)
+            if (selectedTicks.contains(e.key)) e.value.$1,
+        };
+        _paintLane(canvas, size, moved, color, 1.0, movedSelected, xOf, yOf);
+      } else {
+        _paintSelectedAnchors(canvas, size, points, xOf, yOf);
+      }
+    } else if (movePreview.isEmpty) {
       _paintLane(canvas, size, points, color, 1.0, selectedTicks, xOf, yOf);
     } else {
       // 原曲线淡化作参照，移动后的曲线/锚点用原色。
@@ -232,6 +256,40 @@ class AutomationPainter extends CustomPainter {
           anchor,
         );
       }
+    }
+  }
+
+  /// wgpu 已画基础曲线/锚点，Flutter 只补选中锚点的高亮。
+  void _paintSelectedAnchors(
+    Canvas canvas,
+    Size size,
+    List<Offset> points,
+    double Function(double) xOf,
+    double Function(double) yOf,
+  ) {
+    if (selectedTicks.isEmpty) {
+      return;
+    }
+    final fill = Paint()..color = YinheTheme.accent;
+    final edge = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1
+      ..color = Colors.white;
+    for (final p in points) {
+      if (!selectedTicks.contains(p.dx.round())) {
+        continue;
+      }
+      final x = xOf(p.dx);
+      if (x < 0 || x > size.width) {
+        continue;
+      }
+      final r = Rect.fromCenter(
+        center: Offset(x, yOf(p.dy)),
+        width: 7,
+        height: 7,
+      );
+      canvas.drawRect(r, fill);
+      canvas.drawRect(r, edge);
     }
   }
 

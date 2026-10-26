@@ -134,7 +134,7 @@ mixin _ShellBuild on _ShellBase {
                                       left: 0,
                                       right: 0,
                                       top: RulerPainter.height,
-                                      bottom: 0,
+                                      bottom: amVisible ? amH : 0,
                                       child: IgnorePointer(
                                         child: CustomPaint(
                                           painter: OverlayPainter(
@@ -151,7 +151,7 @@ mixin _ShellBuild on _ShellBase {
                                       left: 0,
                                       right: 0,
                                       top: RulerPainter.height,
-                                      bottom: 0,
+                                      bottom: amVisible ? amH : 0,
                                       child: IgnorePointer(
                                         child: CustomPaint(
                                           painter: LabelsPainter(
@@ -194,7 +194,7 @@ mixin _ShellBuild on _ShellBase {
                                       left: 0,
                                       right: 0,
                                       top: RulerPainter.height,
-                                      bottom: 0,
+                                      bottom: amVisible ? amH : 0,
                                       child: IgnorePointer(
                                         child: CustomPaint(
                                           painter: SelectionLongPressPainter(
@@ -212,7 +212,7 @@ mixin _ShellBuild on _ShellBase {
                                       left: 0,
                                       right: 0,
                                       top: RulerPainter.height,
-                                      bottom: 0,
+                                      bottom: amVisible ? amH : 0,
                                       child: IgnorePointer(
                                         child: CustomPaint(
                                           painter: LongPressIndicatorPainter(
@@ -245,6 +245,19 @@ mixin _ShellBuild on _ShellBase {
                                   formatTick: _formatEditTick,
                                   onCollapsed: _setAutoCollapsed,
                                   onReload: _loadAutomation,
+                                  textureId: _amTextureId,
+                                  onPlotSize: (w, h) {
+                                    final dpr = MediaQuery.devicePixelRatioOf(
+                                      context,
+                                    );
+                                    _channel.invokeMethod<void>(
+                                      'setAutomationSize',
+                                      {
+                                        'w': (w * dpr).round(),
+                                        'h': (h * dpr).round(),
+                                      },
+                                    );
+                                  },
                                   onVelocityCommit: _commitVelocityStroke,
                                   velocityDrawEnabled: _tool == 2,
                                   onResize: _resizeAutoPanel,

@@ -7,6 +7,7 @@
 
 use std::collections::HashSet;
 use std::ptr::NonNull;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use wgpu::rwh::{AndroidDisplayHandle, AndroidNdkWindowHandle, RawDisplayHandle, RawWindowHandle};
@@ -22,15 +23,13 @@ use yinhe_wgpu::vertex::{DrawInstance, NoteInstance};
 
 use crate::Gpu;
 use crate::OwnedWindow;
-use crate::scene::{AutomationPanelState, ViewMode};
+use crate::scene::ViewMode;
 use crate::theme_colors as tc;
 
 /// 音符层缓存键里的视图标签（防止 PR/AR 切换时缓存串层）。
 const VIEW_TAG_PIANOROLL: u64 = 1;
 const VIEW_TAG_ARRANGEMENT: u64 = 2;
 
-/// AM 面板左侧 combo 列宽（与 Flutter `AutomationPainter.comboWidth` 一致）。
-const AM_COMBO_WIDTH: f32 = 60.0;
 /// AM 背景层缓存标签。
 const AM_BG_TAG: u64 = 0x0041_4D5F_4247; // "AM_BG"
 
@@ -41,8 +40,6 @@ pub struct Target {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
     renderer: InstanceRenderer,
-    /// AM 面板专用渲染器：独立 uniforms/layers，叠加到主纹理底部区域。
-    am_renderer: InstanceRenderer,
     /// AR 音符层缓存键：与上次相同则跳过实例重建。
     notes_cache_key: u64,
     /// AR 音符实例缓冲。
@@ -59,6 +56,11 @@ impl Target {
     /// 生产端窗口指针（用于忽略重复 SetSurface）。
     pub fn window_ptr(&self) -> usize {
         self.window.0 as usize
+    }
+
+    /// 供 AM renderer 共享的力度条 LOD 摘要。
+    pub fn velocity_summary(&self) -> Option<Arc<yinhe_wgpu::VelocitySummary>> {
+        self.renderer.velocity_summary()
     }
 }
 
@@ -118,7 +120,6 @@ pub fn create_target(gpu: &Gpu, window: OwnedWindow) -> Option<Target> {
     surface.configure(&gpu.device, &config);
 
     let renderer = InstanceRenderer::new(gpu.device.clone(), gpu.queue.clone(), format);
-    let am_renderer = InstanceRenderer::new(gpu.device.clone(), gpu.queue.clone(), format);
     log::info!(
         "surface 就绪: {}x{} {format:?} {present_mode:?}",
         config.width,
@@ -128,7 +129,6 @@ pub fn create_target(gpu: &Gpu, window: OwnedWindow) -> Option<Target> {
         surface,
         config,
         renderer,
-        am_renderer,
         notes_cache_key: 0,
         notes_buf: Vec::new(),
         pr_note_cache: yinhe_wgpu::NoteLayerCache::new(VIEW_TAG_PIANOROLL),
@@ -308,27 +308,6 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
         });
     }
 
-    if let Some(model) = &model
-        && view_mode == ViewMode::Pianoroll
-        && am_panel.visible
-    {
-        render_automation(
-            t,
-            &mut encoder,
-            &target_view,
-            model,
-            &pr_view,
-            am_panel,
-            &track_colors,
-            &pr_track_visible,
-            display_track,
-            &track_selected,
-            revision,
-            w,
-            h,
-        );
-    }
-
     gpu.queue.submit([encoder.finish()]);
     gpu.queue.present(frame);
 
@@ -486,28 +465,137 @@ fn upload_pianoroll(
     );
 }
 
-/// 把 AM 力度条/自动化曲线叠加到主纹理的底部区域。
+/// AM 面板专用 wgpu 目标（独立 Surface/交换链/renderer）。
+pub struct AmTarget {
+    surface: wgpu::Surface<'static>,
+    config: wgpu::SurfaceConfiguration,
+    renderer: InstanceRenderer,
+    window: OwnedWindow,
+}
+
+impl AmTarget {
+    pub fn window_ptr(&self) -> usize {
+        self.window.0 as usize
+    }
+}
+
+/// 用 AM `SurfaceProducer` 的 `ANativeWindow` 建立独立 surface 与 renderer。
+pub fn create_automation_target(gpu: &Gpu, window: OwnedWindow) -> Option<AmTarget> {
+    let handle = AndroidNdkWindowHandle::new(NonNull::new(window.0)?);
+    let surface = match unsafe {
+        gpu.instance
+            .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+                raw_display_handle: Some(RawDisplayHandle::Android(AndroidDisplayHandle::new())),
+                raw_window_handle: RawWindowHandle::AndroidNdk(handle),
+            })
+    } {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("创建 AM surface 失败: {e}");
+            return None;
+        }
+    };
+    let caps = surface.get_capabilities(&gpu.adapter);
+    let Some(format) = caps
+        .formats
+        .iter()
+        .copied()
+        .find(|f| f.is_srgb())
+        .or_else(|| caps.formats.first().copied())
+    else {
+        log::error!("AM surface 无可用格式");
+        return None;
+    };
+    let present_mode = if caps.present_modes.contains(&wgpu::PresentMode::Mailbox) {
+        wgpu::PresentMode::Mailbox
+    } else {
+        wgpu::PresentMode::Fifo
+    };
+    let config = wgpu::SurfaceConfiguration {
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        format,
+        color_space: wgpu::SurfaceColorSpace::Auto,
+        width: window.width(),
+        height: window.height(),
+        present_mode,
+        desired_maximum_frame_latency: 2,
+        alpha_mode: caps
+            .alpha_modes
+            .first()
+            .copied()
+            .unwrap_or(wgpu::CompositeAlphaMode::Auto),
+        view_formats: vec![],
+    };
+    surface.configure(&gpu.device, &config);
+    let renderer = InstanceRenderer::new(gpu.device.clone(), gpu.queue.clone(), format);
+    log::info!(
+        "AM surface 就绪: {}x{} {format:?} {present_mode:?}",
+        config.width,
+        config.height
+    );
+    Some(AmTarget {
+        surface,
+        config,
+        renderer,
+        window,
+    })
+}
+
+/// 渲染一帧 AM 面板：力度条/自动化曲线直接画进独立纹理。
 ///
-/// 复用桌面端 `prepare_automation`：独立 AM renderer 负责 uniforms/layers，
-/// 主纹理只做一次 `LoadOp::Load` 的区域绘制，不新开 Surface/Texture。
-#[allow(clippy::too_many_arguments)]
-fn render_automation(
-    t: &mut Target,
-    encoder: &mut wgpu::CommandEncoder,
-    target_view: &wgpu::TextureView,
-    model: &YinModel,
-    pr_view: &PianoRollView,
-    state: AutomationPanelState,
-    track_colors: &[[f32; 4]],
-    pr_track_visible: &[bool],
-    display_track: Option<usize>,
-    track_selected: &HashSet<u16>,
-    revision: u64,
-    logical_w: f32,
-    logical_h: f32,
+/// 主 renderer 的力度条摘要由调用方传入（只读共享），AM renderer 不重建。
+pub fn render_automation_frame(
+    gpu: &Gpu,
+    t: &mut AmTarget,
+    summary: Option<Arc<yinhe_wgpu::VelocitySummary>>,
 ) {
-    let panel_w = state.w.max(1.0).round();
-    let panel_h = state.h.max(1.0).round();
+    let pw = t.window.width().max(1);
+    let ph = t.window.height().max(1);
+    if t.config.width != pw || t.config.height != ph {
+        t.config.width = pw;
+        t.config.height = ph;
+        t.surface.configure(&gpu.device, &t.config);
+    }
+
+    let snapshot = {
+        let Ok(s) = crate::scene::scene().lock() else {
+            return;
+        };
+        let state = s.automation_panel;
+        if !state.visible || state.w < 1.0 || state.h < 1.0 {
+            return;
+        }
+        let Some(model) = s.model.clone() else {
+            return;
+        };
+        let visible = {
+            let raw = s
+                .document
+                .as_ref()
+                .map(|d| d.edit.pr_visible())
+                .unwrap_or_default();
+            effective_visible(&raw, s.display_track)
+        };
+        let track_colors = s.track_colors.clone();
+        let track_selected = s
+            .document
+            .as_ref()
+            .map(|d| d.edit.track_selected.clone())
+            .unwrap_or_default();
+        let revision = s.document.as_ref().map(|d| d.data.revision).unwrap_or(0);
+        let pr_view = s.pr_view.clone();
+        (
+            state,
+            model,
+            visible,
+            track_colors,
+            track_selected,
+            revision,
+            pr_view,
+        )
+    };
+    let (state, model, visible, track_colors, track_selected, revision, pr_view) = snapshot;
+
     let is_velocity = state.lane.is_none();
     let lane = state.lane.and_then(|idx| {
         model.tracks.get(state.active_track).and_then(|track| {
@@ -519,14 +607,14 @@ fn render_automation(
         })
     });
     let lanes: Vec<&AutomationLane> = lane.into_iter().collect();
-    let visible = effective_visible(pr_track_visible, display_track);
 
     let view = AutomationPanelView {
         base: TimelineViewBase {
             pixels_per_tick: pr_view.base.pixels_per_tick,
             scroll_x: pr_view.base.scroll_x,
             scroll_y: 0.0,
-            left_panel_width: (pr_view.keyboard_width() - AM_COMBO_WIDTH).max(0.0),
+            // 纹理从 combo 列右侧开始，局部 x=0 就是网格左缘。
+            left_panel_width: 0.0,
             dirty: false,
             track_panel_row_height: 0.0,
             track_panel_scroll_y: 0.0,
@@ -534,7 +622,7 @@ fn render_automation(
             follow_anim_start: 0.0,
             follow_anim_elapsed: 0.0,
         },
-        panel_height: panel_h,
+        panel_height: state.h,
         selected_target: lanes
             .first()
             .map(|l| l.target.clone())
@@ -543,35 +631,52 @@ fn render_automation(
         ..Default::default()
     };
 
-    // 背景层固定占 layer 0；AM 数据/ghost 从 layer 1 开始，避免和主 PR 层冲突。
+    let frame = match t.surface.get_current_texture() {
+        wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
+        wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+            t.surface.configure(&gpu.device, &t.config);
+            return;
+        }
+        wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return,
+        wgpu::CurrentSurfaceTexture::Validation => {
+            log::error!("AM 获取帧纹理时发生校验错误");
+            return;
+        }
+    };
+    let target_view = frame
+        .texture
+        .create_view(&wgpu::TextureViewDescriptor::default());
+    let mut encoder = gpu
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("yinhe_automation_frame"),
+        });
+
+    t.renderer.set_velocity_summary_shared(summary);
     let bg_key = yinhe_wgpu::layer_cache_key(&[
         AM_BG_TAG,
-        panel_w.to_bits() as u64,
-        panel_h.to_bits() as u64,
+        state.w.to_bits() as u64,
+        state.h.to_bits() as u64,
     ]);
-    t.am_renderer.upload_decor_layer(0, bg_key, |out| {
-        out.push(DrawInstance::solid_rect(0.0, 0.0, panel_w, panel_h, tc::BG));
+    t.renderer.upload_decor_layer(0, bg_key, |out| {
+        out.push(DrawInstance::solid_rect(0.0, 0.0, state.w, state.h, tc::BG));
     });
 
     if !is_velocity && lanes.is_empty() {
-        // lane 已失效（切轨/重载中）：清掉上一帧数据，避免残留别的 target。
-        t.am_renderer.upload_curve_layer(1, 0, |_| {});
-        t.am_renderer.upload_curve_layer(2, 0, |_| {});
+        t.renderer.upload_curve_layer(1, 0, |_| {});
+        t.renderer.upload_curve_layer(2, 0, |_| {});
     } else {
-        // 主 renderer 后台构建的力度条摘要只读共享，AM renderer 不重建。
-        let summary = t.renderer.velocity_summary();
-        t.am_renderer.set_velocity_summary_shared(summary);
         yinhe_wgpu::prepare_automation(
-            &mut t.am_renderer,
+            &mut t.renderer,
             1,
-            panel_w as u32,
-            panel_h as u32,
+            state.w as u32,
+            state.h as u32,
             &view,
             &lanes,
-            Some(model),
+            Some(model.as_ref()),
             &visible,
-            track_selected,
-            track_colors,
+            &track_selected,
+            &track_colors,
             1.0,
             true,
             if is_velocity { 127.0 } else { 1.0 },
@@ -581,21 +686,10 @@ fn render_automation(
         );
     }
 
-    // 逻辑坐标 → 物理像素；draw_region 会做视口/裁剪并 Load 保留主 PR 内容。
-    let full_w = t.config.width.max(1) as f32;
-    let full_h = t.config.height.max(1) as f32;
-    let sx = full_w / logical_w.max(1.0);
-    let sy = full_h / logical_h.max(1.0);
-    t.am_renderer.draw_region(
-        encoder,
-        target_view,
-        state.x * sx,
-        state.y * sy,
-        panel_w * sx,
-        panel_h * sy,
-        t.config.width,
-        t.config.height,
-    );
+    t.renderer
+        .draw(&mut encoder, &target_view, t.config.width, t.config.height);
+    gpu.queue.submit([encoder.finish()]);
+    gpu.queue.present(frame);
 }
 
 /// AR 视图：uniforms + 轨道布局（offsets/行高）+ 音符层上传。

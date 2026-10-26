@@ -155,9 +155,7 @@ impl DragPreview {
 #[derive(Clone, Copy, Debug)]
 pub struct AutomationPanelState {
     pub visible: bool,
-    /// 绘制区在主纹理中的逻辑坐标/尺寸（不含左侧 combo 列和顶部手柄）。
-    pub x: f32,
-    pub y: f32,
+    /// 绘制区逻辑尺寸（独立 AM 纹理，不含 combo 列和顶部手柄）。
     pub w: f32,
     pub h: f32,
     pub active_track: usize,
@@ -169,8 +167,6 @@ impl Default for AutomationPanelState {
     fn default() -> Self {
         Self {
             visible: false,
-            x: 0.0,
-            y: 0.0,
             w: 0.0,
             h: 0.0,
             active_track: 0,
@@ -1847,8 +1843,6 @@ pub fn automation_json(track: usize) -> String {
 /// Dart 布局后写入 AM 面板在主纹理中的绘制区域与当前 lane。
 #[allow(clippy::too_many_arguments)]
 pub fn set_automation_panel(
-    x: f32,
-    y: f32,
     w: f32,
     h: f32,
     visible: bool,
@@ -1861,8 +1855,6 @@ pub fn set_automation_panel(
     let visible = visible && w >= 1.0 && h >= 1.0;
     let p = &mut s.automation_panel;
     if p.visible == visible
-        && p.x == x
-        && p.y == y
         && p.w == w
         && p.h == h
         && p.active_track == active_track
@@ -1872,13 +1864,16 @@ pub fn set_automation_panel(
     }
     *p = AutomationPanelState {
         visible,
-        x,
-        y,
         w,
         h,
         active_track,
         lane,
     };
+    log::info!(
+        "AM 面板状态: visible={visible} {}x{} track={active_track} lane={lane:?}",
+        w,
+        h
+    );
 }
 
 /// PR 力度条数据（当前可见 tick 范围 + 可见轨）。

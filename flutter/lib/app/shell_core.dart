@@ -344,10 +344,14 @@ mixin _ShellCore on _ShellBase {
 
   Future<void> _init() async {
     final id = await _channel.invokeMethod<int>('getTextureId');
+    final amId = await _channel.invokeMethod<int>('getAutomationTextureId');
     if (!mounted) {
       return;
     }
-    setState(() => _textureId = id);
+    setState(() {
+      _textureId = id;
+      _amTextureId = amId;
+    });
     await _ensureSurface();
   }
 

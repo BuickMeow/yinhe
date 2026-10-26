@@ -62,6 +62,9 @@ abstract class _ShellBase extends State<StudioShell>
   AppLocalizations get l => AppLocalizations.of(context);
 
   int? _textureId;
+
+  /// AM 面板独立 wgpu 纹理。
+  int? _amTextureId;
   Size? _reportedPixelSize;
 
   bool _showHome = true;

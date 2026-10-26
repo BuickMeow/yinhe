@@ -69,6 +69,9 @@ enum Cmd {
     SetSurface(OwnedWindow),
     /// surface 销毁（`onSurfaceCleanup`）。
     ClearSurface,
+    /// AM 面板独立 surface。
+    SetAutomationSurface(OwnedWindow),
+    ClearAutomationSurface,
     /// Flutter 帧驱动：渲染一帧，完成后通过 ack 回信。
     RenderNow(std::sync::mpsc::SyncSender<()>),
 }
@@ -220,6 +223,7 @@ fn render_thread_main(rx: Receiver<Cmd>) {
     ));
     let mut gpu: Option<Gpu> = None;
     let mut target: Option<render::Target> = None;
+    let mut am_target: Option<render::AmTarget> = None;
 
     // 帧驱动：由 Flutter 每帧请求渲染并同步等待，纹理与浮层同帧产出。
     while let Ok(first) = rx.recv() {
@@ -229,7 +233,7 @@ fn render_thread_main(rx: Receiver<Cmd>) {
         while let Some(c) = cmd {
             match c {
                 Cmd::RenderNow(ack) => pending.push(ack),
-                other => apply_cmd(&mut gpu, &mut target, other),
+                other => apply_cmd(&mut gpu, &mut target, &mut am_target, other),
             }
             cmd = rx.try_recv().ok();
         }
@@ -239,6 +243,10 @@ fn render_thread_main(rx: Receiver<Cmd>) {
             if let (Some(g), Some(t)) = (&gpu, &mut target) {
                 render::render_frame(g, t);
             }
+            let summary = target.as_ref().and_then(|t| t.velocity_summary());
+            if let (Some(g), Some(am)) = (&gpu, &mut am_target) {
+                render::render_automation_frame(g, am, summary);
+            }
             for ack in pending {
                 let _ = ack.send(());
             }
@@ -247,7 +255,12 @@ fn render_thread_main(rx: Receiver<Cmd>) {
     log::info!("渲染线程退出");
 }
 
-fn apply_cmd(gpu: &mut Option<Gpu>, target: &mut Option<render::Target>, cmd: Cmd) {
+fn apply_cmd(
+    gpu: &mut Option<Gpu>,
+    target: &mut Option<render::Target>,
+    am_target: &mut Option<render::AmTarget>,
+    cmd: Cmd,
+) {
     match cmd {
         Cmd::SetSurface(window) => {
             // 同一 ANativeWindow 重复设置：忽略（对同一窗口再建 Vulkan surface
@@ -273,6 +286,24 @@ fn apply_cmd(gpu: &mut Option<Gpu>, target: &mut Option<render::Target>, cmd: Cm
             *target = None;
             inertia::stop();
             crate::edit::cancel();
+        }
+        Cmd::SetAutomationSurface(window) => {
+            if let Some(t) = am_target.as_ref()
+                && t.window_ptr() == window.0 as usize
+            {
+                log::info!("忽略重复 AM surface（同一窗口）");
+                return;
+            }
+            *am_target = None;
+            if gpu.is_none() {
+                *gpu = create_gpu();
+            }
+            if let Some(g) = gpu.as_ref() {
+                *am_target = render::create_automation_target(g, window);
+            }
+        }
+        Cmd::ClearAutomationSurface => {
+            *am_target = None;
         }
         Cmd::RenderNow(_) => {
             // 渲染请求由渲染循环统一处理与应答（这里不应到达）。
@@ -317,6 +348,46 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeClearSurface(
     init_logging();
     if cmd_tx().send(Cmd::ClearSurface).is_err() {
         log::error!("渲染线程不可用，忽略 ClearSurface");
+    }
+}
+
+/// `MainActivity.nativeSetAutomationSurface(surface)`：AM 面板独立 surface。
+// JVM 保证 env/surface 句柄有效；JNI 导出函数无法用 Rust 安全类型表达入参。
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeSetAutomationSurface(
+    env: *mut jni::sys::JNIEnv,
+    _this: jni::sys::jobject,
+    surface: jni::sys::jobject,
+) {
+    init_logging();
+    if surface.is_null() {
+        log::warn!("nativeSetAutomationSurface 收到空 surface");
+        return;
+    }
+    // 安全性：本函数只由 JVM 调用，env/surface 句柄有效；空指针已检查。
+    let raw = unsafe { ANativeWindow_fromSurface(env, surface) };
+    if raw.is_null() {
+        log::error!("AM ANativeWindow_fromSurface 返回空指针");
+        return;
+    }
+    if cmd_tx()
+        .send(Cmd::SetAutomationSurface(OwnedWindow(raw)))
+        .is_err()
+    {
+        log::error!("渲染线程不可用，丢弃 AM surface");
+    }
+}
+
+/// `MainActivity.nativeClearAutomationSurface()`：AM surface 销毁。
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeClearAutomationSurface(
+    _env: *mut jni::sys::JNIEnv,
+    _this: jni::sys::jobject,
+) {
+    init_logging();
+    if cmd_tx().send(Cmd::ClearAutomationSurface).is_err() {
+        log::error!("渲染线程不可用，忽略 ClearAutomationSurface");
     }
 }
 
@@ -1426,8 +1497,6 @@ pub extern "C" fn yinhe_doc_state(out: *mut i32) -> i32 {
 /// Dart 布局后同步 AM 面板在主纹理中的绘制区域与当前 lane。`lane < 0` = 力度。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_set_automation_panel(
-    x: f32,
-    y: f32,
     w: f32,
     h: f32,
     visible: i32,
@@ -1435,8 +1504,6 @@ pub extern "C" fn yinhe_set_automation_panel(
     lane: i32,
 ) {
     scene::set_automation_panel(
-        x,
-        y,
         w,
         h,
         visible != 0,

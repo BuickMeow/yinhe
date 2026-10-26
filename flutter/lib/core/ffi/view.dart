@@ -199,6 +199,23 @@ typedef RenderFrameDart = int Function();
 final RenderFrameDart renderFrame = bridge
     .lookupFunction<RenderFrameNative, RenderFrameDart>('yinhe_render_frame');
 
+typedef SetAutomationPanelNative = ffi.Void Function(
+  ffi.Float,
+  ffi.Float,
+  ffi.Int32,
+  ffi.Int32,
+  ffi.Int32,
+);
+typedef SetAutomationPanelDart = void Function(double, double, int, int, int);
+
+/// 同步 AM 面板逻辑尺寸、可见性和当前 lane。
+///
+/// `lane < 0` 表示力度模式；AM 使用独立 Surface/Texture。
+final SetAutomationPanelDart setAutomationPanel = bridge
+    .lookupFunction<SetAutomationPanelNative, SetAutomationPanelDart>(
+      'yinhe_set_automation_panel',
+    );
+
 typedef FreeNative = ffi.Void Function(ffi.Pointer<Utf8>);
 typedef FreeDart = void Function(ffi.Pointer<Utf8>);
 

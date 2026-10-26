@@ -29,6 +29,8 @@ class AutomationPanel extends StatefulWidget {
     required this.formatTick,
     required this.onCollapsed,
     required this.onReload,
+    required this.textureId,
+    required this.onPlotSize,
     required this.onVelocityCommit,
     required this.velocityDrawEnabled,
     required this.onResize,
@@ -52,6 +54,12 @@ class AutomationPanel extends StatefulWidget {
   final String Function(double tick) formatTick;
   final ValueChanged<bool> onCollapsed;
   final VoidCallback onReload;
+
+  /// AM wgpu 独立纹理 ID；null = 尚未创建（退回 Flutter 绘制）。
+  final int? textureId;
+
+  /// 绘制区逻辑尺寸变化（父层用来设置 TextureProducer 物理尺寸）。
+  final void Function(double w, double h) onPlotSize;
 
   /// 提交一笔力度绘制点 `(tick, velocity 1..127)`。
   final void Function(List<(double, double)> points) onVelocityCommit;
@@ -110,6 +118,13 @@ class _AutomationPanelState extends State<AutomationPanel> {
   /// old tick -> (new tick, new value)，拖动中的预览。
   Map<int, (int, double)> _movePreview = {};
 
+  /// AM wgpu 状态去重缓存。
+  double _amW = 0;
+  double _amH = 0;
+  int _amTrack = -1;
+  int _amLane = -2;
+  bool _amVisible = false;
+
   @override
   void didUpdateWidget(covariant AutomationPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -136,6 +151,42 @@ class _AutomationPanelState extends State<AutomationPanel> {
         _pendingTarget = null;
       }
     }
+    _sendAmState();
+  }
+
+  /// 同步 AM wgpu 状态（独立纹理）。
+  void _sendAmState({bool visible = true}) {
+    final w = _amW;
+    final h = _amH;
+    final track = widget.activeTrack;
+    final lane = _laneIdx ?? -1;
+    if (_amVisible == visible &&
+        _amW == w &&
+        _amH == h &&
+        _amTrack == track &&
+        _amLane == lane) {
+      return;
+    }
+    _amVisible = visible;
+    _amW = w;
+    _amH = h;
+    _amTrack = track;
+    _amLane = lane;
+    rust.setAutomationPanel(w, h, visible ? 1 : 0, track, lane);
+  }
+
+  /// 绘制区布局：更新纹理物理尺寸，并同步 Rust。
+  void _onPlotLayout(Size size) {
+    debugPrint('AM layout ${size.width}x${size.height}');
+    if (size.width < 1 || size.height < 1) {
+      return;
+    }
+    if (size.width != _amW || size.height != _amH) {
+      _amW = size.width;
+      _amH = size.height;
+      widget.onPlotSize(size.width, size.height);
+    }
+    _sendAmState();
   }
 
   /// 当前选中的 lane 下标（null = 力度）。
@@ -175,6 +226,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
 
   @override
   void dispose() {
+    rust.setAutomationPanel(0, 0, 0, widget.activeTrack, _laneIdx ?? -1);
     _velocityPreview.dispose();
     super.dispose();
   }
@@ -643,7 +695,6 @@ class _AutomationPanelState extends State<AutomationPanel> {
     return Container(
       height: widget.height,
       decoration: BoxDecoration(
-        color: YinheTheme.bg,
         border: Border(top: BorderSide(color: YinheTheme.lineFg)),
       ),
       child: Column(
@@ -653,16 +704,19 @@ class _AutomationPanelState extends State<AutomationPanel> {
             behavior: HitTestBehavior.opaque,
             onVerticalDragUpdate: (d) => widget.onResize(d.delta.dy),
             onDoubleTap: widget.onResetHeight,
-            child: SizedBox(
-              height: AutomationPanel.handleHeight,
-              width: double.infinity,
-              child: Center(
-                child: Container(
-                  width: 36,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: YinheTheme.textMuted.withValues(alpha: 0.55),
-                    borderRadius: BorderRadius.circular(2),
+            child: ColoredBox(
+              color: YinheTheme.bg,
+              child: SizedBox(
+                height: AutomationPanel.handleHeight,
+                width: double.infinity,
+                child: Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: YinheTheme.textMuted.withValues(alpha: 0.55),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
                 ),
               ),
@@ -671,70 +725,74 @@ class _AutomationPanelState extends State<AutomationPanel> {
           Expanded(
             child: Row(
               children: [
-                SizedBox(
-                  width: AutomationPainter.comboWidth,
-                  child: Column(
-                    children: [
-                      InkWell(
-                        onTap: () => widget.onCollapsed(true),
-                        child: SizedBox(
-                          height: 22,
-                          width: double.infinity,
-                          child: Icon(
-                            Icons.keyboard_arrow_down,
-                            size: 16,
-                            color: YinheTheme.textMuted,
+                ColoredBox(
+                  color: YinheTheme.bg,
+                  child: SizedBox(
+                    width: AutomationPainter.comboWidth,
+                    child: Column(
+                      children: [
+                        InkWell(
+                          onTap: () => widget.onCollapsed(true),
+                          child: SizedBox(
+                            height: 22,
+                            width: double.infinity,
+                            child: Icon(
+                              Icons.keyboard_arrow_down,
+                              size: 16,
+                              color: YinheTheme.textMuted,
+                            ),
                           ),
                         ),
-                      ),
-                      Expanded(
-                        child: PopupMenuButton<int>(
-                          tooltip: l.automationType,
-                          padding: EdgeInsets.zero,
-                          itemBuilder: (_) => [
-                            for (final (label, value) in entries)
-                              PopupMenuItem(value: value, child: Text(label)),
-                          ],
-                          onSelected: (v) {
-                            _clearVelocityStroke();
-                            _clearSelection();
-                            widget.status.value = null;
-                            if (v >= 0) {
-                              setState(
-                                () => _selectedLane = v == 0 ? null : v - 1,
-                              );
-                              return;
-                            }
-                            final code = -v - 1;
-                            final kind = code ~/ 100000;
-                            final number = code % 100000;
-                            if (rust.ensureAutomationLane(
-                                  widget.activeTrack,
-                                  kind,
-                                  number,
-                                ) ==
-                                1) {
-                              _pendingTarget = (kind, number);
-                              widget.onReload();
-                            }
-                          },
-                          child: Center(
-                            child: Text(
-                              lane == null
-                                  ? 'Velocity'
-                                  : _canonicalLabel(lane) ?? _laneLabel(lane),
-                              textAlign: TextAlign.center,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: YinheTheme.textLabel,
-                                fontSize: 10,
+                        Expanded(
+                          child: PopupMenuButton<int>(
+                            tooltip: l.automationType,
+                            padding: EdgeInsets.zero,
+                            itemBuilder: (_) => [
+                              for (final (label, value) in entries)
+                                PopupMenuItem(value: value, child: Text(label)),
+                            ],
+                            onSelected: (v) {
+                              _clearVelocityStroke();
+                              _clearSelection();
+                              widget.status.value = null;
+                              if (v >= 0) {
+                                setState(
+                                  () => _selectedLane = v == 0 ? null : v - 1,
+                                );
+                                _sendAmState();
+                                return;
+                              }
+                              final code = -v - 1;
+                              final kind = code ~/ 100000;
+                              final number = code % 100000;
+                              if (rust.ensureAutomationLane(
+                                    widget.activeTrack,
+                                    kind,
+                                    number,
+                                  ) ==
+                                  1) {
+                                _pendingTarget = (kind, number);
+                                widget.onReload();
+                              }
+                            },
+                            child: Center(
+                              child: Text(
+                                lane == null
+                                    ? 'Velocity'
+                                    : _canonicalLabel(lane) ?? _laneLabel(lane),
+                                textAlign: TextAlign.center,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: YinheTheme.textLabel,
+                                  fontSize: 10,
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
                 Expanded(
@@ -749,21 +807,32 @@ class _AutomationPanelState extends State<AutomationPanel> {
                     onPanUpdate: _handlePanUpdate,
                     onPanEnd: (_) => _handlePanEnd(),
                     onPanCancel: _handlePanCancel,
-                    child: SizedBox.expand(
-                      child: CustomPaint(
-                        painter: AutomationPainter(
-                          lane: lane,
-                          velocity: widget.velocity,
-                          trackColors: widget.trackColors,
-                          color: _trackColor,
-                          snap: widget.snap,
-                          grid: widget.grid,
-                          selectedTicks: _selectedTicks,
-                          movePreview: _movePreview,
-                          marquee: marquee,
-                          velocityPreview: _velocityPreview,
-                        ),
-                      ),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        _onPlotLayout(constraints.biggest);
+                        final gpu = widget.textureId != null;
+                        return Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            if (gpu) Texture(textureId: widget.textureId!),
+                            CustomPaint(
+                              painter: AutomationPainter(
+                                lane: lane,
+                                velocity: widget.velocity,
+                                trackColors: widget.trackColors,
+                                color: _trackColor,
+                                snap: widget.snap,
+                                grid: widget.grid,
+                                selectedTicks: _selectedTicks,
+                                movePreview: _movePreview,
+                                marquee: marquee,
+                                velocityPreview: _velocityPreview,
+                                paintBaseData: !gpu,
+                              ),
+                            ),
+                          ],
+                        );
+                      },
                     ),
                   ),
                 ),

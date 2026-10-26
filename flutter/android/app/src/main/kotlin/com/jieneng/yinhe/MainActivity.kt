@@ -51,6 +51,10 @@ class MainActivity : FlutterActivity() {
 
     private var producer: TextureRegistry.SurfaceProducer? = null
 
+    /** AM 面板独立纹理（力度条/自动化曲线）。 */
+    private var amProducer: TextureRegistry.SurfaceProducer? = null
+    private var amSurfaceSent = false
+
     /** 延迟到 Dart 请求纹理时才创建 SurfaceProducer（see ensureProducer）。 */
     private var engine: FlutterEngine? = null
 
@@ -86,6 +90,10 @@ class MainActivity : FlutterActivity() {
 
     private external fun nativeClearSurface()
 
+    private external fun nativeSetAutomationSurface(surface: Surface)
+
+    private external fun nativeClearAutomationSurface()
+
     private external fun nativeSetSize(width: Int, height: Int)
 
     private external fun nativeSetViewport(width: Float, height: Float)
@@ -115,6 +123,33 @@ class MainActivity : FlutterActivity() {
                         } else {
                             result.success(p.id())
                         }
+                    }
+                    "getAutomationTextureId" -> {
+                        val p = ensureAutomationProducer()
+                        if (p == null) {
+                            result.error("no_engine", "FlutterEngine 未就绪", null)
+                        } else {
+                            result.success(p.id())
+                        }
+                    }
+                    "setAutomationSize" -> {
+                        val w = call.argument<Int>("w")
+                        val h = call.argument<Int>("h")
+                        val p = ensureAutomationProducer()
+                        if (w == null || h == null) {
+                            result.error("bad_args", "缺少 AM w/h", null)
+                        } else if (p == null) {
+                            result.error("no_engine", "FlutterEngine 未就绪", null)
+                        } else {
+                            Log.i(TAG, "setAutomationSize $w x $h")
+                            p.setSize(w, h)
+                            automationSurfaceReady(p)
+                            result.success(null)
+                        }
+                    }
+                    "ensureAutomationSurface" -> {
+                        ensureAutomationProducer()?.let { automationSurfaceReady(it) }
+                        result.success(null)
                     }
                     "setSize" -> {
                         val w = call.argument<Int>("w")
@@ -243,6 +278,39 @@ class MainActivity : FlutterActivity() {
         return p
     }
 
+    /** AM 面板独立 SurfaceProducer（与主画布同生命周期策略）。 */
+    private fun ensureAutomationProducer(): TextureRegistry.SurfaceProducer? {
+        amProducer?.let { return it }
+        val flutterEngine = engine ?: return null
+        val p = flutterEngine.renderer.createSurfaceProducer()
+        p.setCallback(
+            object : TextureRegistry.SurfaceProducer.Callback {
+                override fun onSurfaceCreated() {
+                    Log.i(TAG, "AM onSurfaceCreated")
+                    automationSurfaceReady(p)
+                }
+
+                override fun onSurfaceAvailable() {
+                    Log.i(TAG, "AM onSurfaceAvailable")
+                    automationSurfaceReady(p)
+                }
+
+                override fun onSurfaceDestroyed() {
+                    Log.i(TAG, "AM onSurfaceDestroyed")
+                    onAutomationSurfaceGone()
+                }
+
+                override fun onSurfaceCleanup() {
+                    Log.i(TAG, "AM onSurfaceCleanup")
+                    onAutomationSurfaceGone()
+                }
+            },
+        )
+        amProducer = p
+        automationSurfaceReady(p)
+        return p
+    }
+
     // ── 鼠标右键平移 ──────────────────────────────────────────────
     // 左键选框的同时用右键移动：原生层直接识别 BUTTON_SECONDARY 并消费，
     // 通过 MethodChannel 交给 Dart 走手形平移（同时避免触发系统 BACK）。
@@ -314,6 +382,21 @@ class MainActivity : FlutterActivity() {
     private fun onSurfaceGone() {
         surfaceSent = false
         nativeClearSurface()
+    }
+
+    /** AM surface 可用/重建。 */
+    private fun automationSurfaceReady(p: TextureRegistry.SurfaceProducer) {
+        if (amSurfaceSent) {
+            return
+        }
+        val s = p.getSurface() ?: return
+        amSurfaceSent = true
+        nativeSetAutomationSurface(s)
+    }
+
+    private fun onAutomationSurfaceGone() {
+        amSurfaceSent = false
+        nativeClearAutomationSurface()
     }
 
     /** Dart 侧「打开文件」：MIDI、`.yin` 工程与压缩包。 */
