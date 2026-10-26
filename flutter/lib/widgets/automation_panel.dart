@@ -118,9 +118,15 @@ class _AutomationPanelState extends State<AutomationPanel> {
       _pendingTarget = null;
       _clearVelocityStroke();
       _clearSelection();
-    } else if (_selectedLane != null && _selectedLane! >= widget.lanes.length) {
-      _selectedLane = null;
-      _clearSelection();
+    } else if (_selectedLane != null) {
+      if (_selectedLane! >= widget.lanes.length) {
+        _selectedLane = null;
+        _clearSelection();
+      } else if (_canonicalLabel(widget.lanes[_selectedLane!]) == null) {
+        // 旧列表里不支持的 CC（如 CC1/CC91）不再出现在 AM 下拉中。
+        _selectedLane = null;
+        _clearSelection();
+      }
     }
     final pending = _pendingTarget;
     if (pending != null) {
@@ -586,6 +592,16 @@ class _AutomationPanelState extends State<AutomationPanel> {
     return lane.name;
   }
 
+  /// 规范化 lane 对应的插入菜单文案；非 AM 支持项返回 null。
+  String? _canonicalLabel(AutomationLaneData lane) {
+    for (final (kind, number) in _amTargets) {
+      if (_matchesTarget(lane, kind, number)) {
+        return _targetLabel(kind, number);
+      }
+    }
+    return null;
+  }
+
   String _targetLabel(int kind, int number) {
     if (kind == 1) {
       return 'Pitch Bend';
@@ -599,27 +615,17 @@ class _AutomationPanelState extends State<AutomationPanel> {
   @override
   Widget build(BuildContext context) {
     final lane = _laneIdx == null ? null : widget.lanes[_laneIdx!];
+    // 只列「插入自动化」支持的标准目标；旧的任意 CC（CC1/CC91…）不再展示。
     final entries = <(String, int)>[('Velocity', 0)];
-    final used = <int>{};
-    // 先按「插入自动化」的 target 顺序列出（缺失项显示为可添加）。
     for (final (kind, number) in _amTargets) {
       final idx = widget.lanes.indexWhere(
         (ln) => _matchesTarget(ln, kind, number),
       );
+      final label = _targetLabel(kind, number);
       if (idx >= 0) {
-        used.add(idx);
-        entries.add((_laneLabel(widget.lanes[idx]), idx + 1));
+        entries.add((label, idx + 1));
       } else {
-        entries.add((
-          '＋ ${_targetLabel(kind, number)}',
-          -(kind * 100000 + number + 1),
-        ));
-      }
-    }
-    // 其余导入/自定义 lane 附在后面，不隐藏已有数据。
-    for (var i = 0; i < widget.lanes.length; i++) {
-      if (!used.contains(i)) {
-        entries.add((_laneLabel(widget.lanes[i]), i + 1));
+        entries.add((label, -(kind * 100000 + number + 1)));
       }
     }
     Rect? marquee;
@@ -713,7 +719,9 @@ class _AutomationPanelState extends State<AutomationPanel> {
                           },
                           child: Center(
                             child: Text(
-                              lane == null ? 'Velocity' : _laneLabel(lane),
+                              lane == null
+                                  ? 'Velocity'
+                                  : _canonicalLabel(lane) ?? _laneLabel(lane),
                               textAlign: TextAlign.center,
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
