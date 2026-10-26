@@ -1,6 +1,6 @@
 /// 拍号分段与 `bar.beat.tick` 换算（与 Rust `yinhe_types::time_format` 对齐）。
 ///
-/// 拍号随 MIDI/ying 里的原生事件变化时，小节号要跨段连续计数，
+/// 拍号随 MIDI/.yin 里的原生事件变化时，小节号要跨段连续计数，
 /// 且各段用各自的 measure/beat 长度（tau 这类一直变拍子的曲目）。
 class BarBeatGrid {
   BarBeatGrid._(this.ppq, this.segments, this.barOffsets);

@@ -167,17 +167,18 @@ final CStrDart projectMetaJson = bridge.lookupFunction<CStrNative, CStrDart>(
   'yinhe_project_meta_json',
 );
 
-typedef SaveYingNative = ffi.Int32 Function(ffi.Pointer<Utf8>);
-typedef SaveYingDart = int Function(ffi.Pointer<Utf8>);
+typedef SaveProjectNative = ffi.Int32 Function(ffi.Pointer<Utf8>);
+typedef SaveProjectDart = int Function(ffi.Pointer<Utf8>);
 
-/// 开始后台保存 `.ying` 工程到指定路径。
-final SaveYingDart saveYingStart = bridge
-    .lookupFunction<SaveYingNative, SaveYingDart>('yinhe_save_ying_start');
+/// 开始后台保存 `.yin` 工程到指定路径。
+final SaveProjectDart saveProjectStart = bridge
+    .lookupFunction<SaveProjectNative, SaveProjectDart>(
+      'yinhe_save_project_start',
+    );
 
 /// 工程保存进度 JSON。
-final CStrDart saveYingStatusJson = bridge.lookupFunction<CStrNative, CStrDart>(
-  'yinhe_save_ying_status_json',
-);
+final CStrDart saveProjectStatusJson = bridge
+    .lookupFunction<CStrNative, CStrDart>('yinhe_save_project_status_json');
 
 /// 保存完成后标记工程状态（清除 dirty）。
 final ActionDart markSaved = bridge.lookupFunction<ActionNative, ActionDart>(

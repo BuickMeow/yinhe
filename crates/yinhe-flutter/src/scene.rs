@@ -584,11 +584,39 @@ pub fn save_status_json() -> String {
     )
 }
 
-/// 后台保存 `.ying`（带进度）。返回 1 = 已开始。
-pub fn save_ying_start(path: String) -> i32 {
-    let Some(model) = model_arc() else {
-        return 0;
+/// 后台保存 `.yin`（带进度）。返回 1 = 已开始。
+pub fn save_project_start(path: String) -> i32 {
+    {
+        let Ok(st) = save_slot().lock() else {
+            return 0;
+        };
+        if st.state == 1 {
+            return 0;
+        }
+    }
+
+    // 保存前在 UI 线程生成快照：把编辑态（静音/独奏、每通道音色库覆盖、
+    // 映射）同步回持久化结构；移动端不编辑混音台，但会原样保留从桌面
+    // 工程读到的 mixer 段，避免跨端另存时丢失。
+    let (model, project_file, mapping_file, mixer) = {
+        let Ok(mut s) = scene().lock() else {
+            return 0;
+        };
+        let Some(doc) = s.document.as_mut() else {
+            return 0;
+        };
+        doc.sync_overrides_to_model();
+        doc.data.sync_project_file();
+        doc.data.sync_mapping_file();
+        doc.sync_sf_overrides_to_project_file();
+        (
+            Arc::clone(&doc.data.model),
+            doc.data.project_file.clone(),
+            doc.data.mapping_file.clone(),
+            doc.mixer.clone(),
+        )
     };
+
     {
         let Ok(mut st) = save_slot().lock() else {
             return 0;
@@ -602,18 +630,15 @@ pub fn save_ying_start(path: String) -> i32 {
     }
     let path_for_thread = path.clone();
     let spawn = std::thread::Builder::new()
-        .name("yinhe-save-ying".into())
+        .name("yinhe-save-project".into())
         .stack_size(32 * 1024 * 1024)
         .spawn(move || {
-            let project = yinhe_yin::ProjectFile::from_meta(&model.meta);
-            let mut mapping = yinhe_yin::MappingFile::from_tracks(&model.tracks);
-            mapping.channel_instruments = model.channel_instruments;
             let result = yinhe_yin::save_yin_with_files_progress(
                 &model,
                 &path_for_thread,
-                &project,
-                &mapping,
-                None,
+                &project_file,
+                &mapping_file,
+                Some(&mixer),
                 |p| {
                     let (start, end) = match p.stage {
                         yinhe_yin::YinProgressStage::Collect => (0.0, 0.05),
@@ -680,7 +705,7 @@ fn mark_load_done() {
     }
 }
 
-/// 后台加载用户选择的文件（.mid / .ying / 压缩包）并替换当前场景。
+/// 后台加载用户选择的文件（.mid / .yin / .ying / 压缩包）并替换当前场景。
 pub fn open_midi(path: String) {
     if is_archive_path(&path) {
         open_archive(path, None);
@@ -715,11 +740,10 @@ pub fn open_midi(path: String) {
     }
 }
 
-/// 按扩展名解析文件并组装为可渲染/可播放的文档（.ying 工程 / MIDI）。
+/// 按扩展名解析文件并组装为可渲染/可播放的文档（工程 / MIDI）。
 fn load_document(path: &str, token: u64) -> Result<Document, String> {
-    let lower = path.to_ascii_lowercase();
-    if lower.ends_with(".ying") {
-        return load_ying_document(path, token);
+    if yinhe_yin::is_project_path(path) {
+        return load_project_document(path, token);
     }
     let started = std::time::Instant::now();
     set_load_progress(token, 0.02);
@@ -763,11 +787,15 @@ fn load_document(path: &str, token: u64) -> Result<Document, String> {
     Ok(doc)
 }
 
-/// 解析 `.ying` 工程文件（ying = 移动端工程归档，容器与 .yin 兼容）。
-fn load_ying_document(path: &str, token: u64) -> Result<Document, String> {
+/// 解析工程文件（`.yin` 主格式，兼容旧移动端 `.ying`）。
+///
+/// 移动端没有混音台/每通道音色库 UI，但会把文件里的 `mixer` 段和
+/// `sf_channel_overrides` 原样装进 Document，保存时再写回：桌面工程
+/// 在手机上另存不会丢混音台或音色库覆盖。
+fn load_project_document(path: &str, token: u64) -> Result<Document, String> {
     let started = std::time::Instant::now();
     set_load_progress(token, 0.02);
-    let (model, _sf, _mapping, _mixer) = yinhe_yin::load_yin_with_sf_progress(path, |p| {
+    let (model, sf, mapping, mixer) = yinhe_yin::load_yin_with_sf_progress(path, |p| {
         let frac = match p.stage {
             yinhe_yin::YinProgressStage::Decompress => p.fraction * 0.55,
             yinhe_yin::YinProgressStage::Rebuild => 0.55 + p.fraction * 0.25,
@@ -783,16 +811,17 @@ fn load_ying_document(path: &str, token: u64) -> Result<Document, String> {
         started.elapsed()
     );
     let project_file = yinhe_yin::ProjectFile::from_meta(&model.meta);
-    let mapping_file = yinhe_yin::MappingFile::default();
     let mut doc = Document::from_model(
         path,
         model,
         QuantizePreset::Fraction(1, 4),
         QuantizePreset::Fraction(1, 16),
         project_file,
-        mapping_file,
-        None,
+        mapping,
+        mixer,
     )?;
+    doc.apply_sf_overrides(&sf.overrides);
+    doc.sync_sf_overrides_to_project_file();
     // 打开既有工程视为已保存（dirty 起点干净）。
     doc.mark_saved();
     doc.file_path = Some(path.to_string());

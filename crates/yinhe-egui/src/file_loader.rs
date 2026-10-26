@@ -85,12 +85,15 @@ impl FileLoader {
             .add_filter(
                 t!("file_dialog.all_supported").as_ref(),
                 &[
-                    "mid", "midi", "yin", "zip", "7z", "rar", "lzh", "lha", "tar", "gz", "xz",
-                    "tgz", "txz", "tbz", "bz2",
+                    "mid", "midi", "yin", "ying", "zip", "7z", "rar", "lzh", "lha", "tar", "gz",
+                    "xz", "tgz", "txz", "tbz", "bz2",
                 ],
             )
             .add_filter(t!("file_dialog.midi").as_ref(), &["mid", "midi"])
-            .add_filter(t!("file_dialog.yinhe_project").as_ref(), &["yin"])
+            .add_filter(
+                t!("file_dialog.yinhe_project").as_ref(),
+                yinhe_yin::PROJECT_EXTENSIONS,
+            )
             .add_filter(
                 t!("file_dialog.archive").as_ref(),
                 &[

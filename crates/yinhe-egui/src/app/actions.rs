@@ -1182,25 +1182,7 @@ impl App {
         doc.sync_overrides_to_model();
         doc.data.sync_project_file();
         doc.data.sync_mapping_file();
-
-        // Sync SF state into project_file（每源通道覆盖；空 = 全部用全局）。
-        doc.data.project_file.sf_channel_overrides = doc
-            .edit
-            .project_sf
-            .overrides
-            .iter()
-            .map(|(channel, entries)| yinhe_yin::SfChannelOverride {
-                channel: *channel,
-                entries: entries
-                    .iter()
-                    .map(|e| yinhe_yin::SfEntryJson {
-                        path: e.path.clone(),
-                        name: e.name.clone(),
-                        enabled: e.enabled,
-                    })
-                    .collect(),
-            })
-            .collect();
+        doc.sync_sf_overrides_to_project_file();
 
         // 混音台插件：保存前把实例的 CLAP state 写回 InsertRef（旁通标志同步）。
         if let Some(rack) = self.mixer_racks.get_mut(idx) {

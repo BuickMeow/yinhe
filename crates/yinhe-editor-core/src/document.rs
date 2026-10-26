@@ -310,8 +310,7 @@ impl Document {
                 yinhe_yin::YinError::Io(io) => io,
                 other => std::io::Error::new(std::io::ErrorKind::InvalidData, other.to_string()),
             })?;
-        let project_file =
-            yinhe_yin::ProjectFile::from_meta_with_sf(&model.meta, sf.overrides.clone());
+        let project_file = yinhe_yin::ProjectFile::from_meta(&model.meta);
         let mut doc = Self::from_model(
             path,
             model,
@@ -322,9 +321,15 @@ impl Document {
             mixer,
         )
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        // 工程内每通道音色库覆盖（源通道 → SfEntry）。
-        doc.edit.project_sf.overrides = sf
-            .overrides
+        doc.apply_sf_overrides(&sf.overrides);
+        doc.sync_sf_overrides_to_project_file();
+        doc.file_path = Some(path.to_string());
+        Ok(doc)
+    }
+
+    /// 把工程内的每通道音色库覆盖装入编辑态（加载工程后调用）。
+    pub fn apply_sf_overrides(&mut self, overrides: &[yinhe_yin::SfChannelOverride]) {
+        self.edit.project_sf.overrides = overrides
             .iter()
             .map(|co| {
                 let entries = co
@@ -339,8 +344,27 @@ impl Document {
                 (co.channel, entries)
             })
             .collect();
-        doc.file_path = Some(path.to_string());
-        Ok(doc)
+    }
+
+    /// 把编辑态的每通道音色库覆盖写回 `project_file`（保存前调用）。
+    pub fn sync_sf_overrides_to_project_file(&mut self) {
+        self.data.project_file.sf_channel_overrides = self
+            .edit
+            .project_sf
+            .overrides
+            .iter()
+            .map(|(channel, entries)| yinhe_yin::SfChannelOverride {
+                channel: *channel,
+                entries: entries
+                    .iter()
+                    .map(|e| yinhe_yin::SfEntryJson {
+                        path: e.path.clone(),
+                        name: e.name.clone(),
+                        enabled: e.enabled,
+                    })
+                    .collect(),
+            })
+            .collect();
     }
 
     pub fn recode_track_names(&mut self, _encoding: yinhe_midi::MidiImportEncoding) {
@@ -553,9 +577,26 @@ impl Document {
     ///
     /// `TrackData` 是 `Arc`，用 `Arc::make_mut` 做 copy-on-write，
     /// 不影响 undo/redo 快照持有的旧 Arc。
+    ///
+    /// 只复制真正有变化的轨道：保存大工程时渲染线程通常持有同一份
+    /// `Arc`，无条件 `make_mut` 会为每个轨道复制整条 `TrackData`。
     pub fn sync_overrides_to_model(&mut self) {
+        let changed: Vec<usize> = self
+            .edit
+            .track_overrides
+            .iter()
+            .enumerate()
+            .filter_map(|(i, ov)| {
+                let td = self.data.model.tracks.get(i)?;
+                (td.muted != ov.muted || td.soloed != ov.soloed).then_some(i)
+            })
+            .collect();
+        if changed.is_empty() {
+            return;
+        }
         let model = Arc::make_mut(&mut self.data.model);
-        for (i, ov) in self.edit.track_overrides.iter().enumerate() {
+        for i in changed {
+            let ov = &self.edit.track_overrides[i];
             if let Some(td) = model.tracks.get_mut(i) {
                 let td = Arc::make_mut(td);
                 td.muted = ov.muted;

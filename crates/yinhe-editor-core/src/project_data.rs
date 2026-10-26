@@ -128,8 +128,13 @@ impl ProjectData {
     }
 
     /// Rebuild `mapping_file` from current model tracks.
+    ///
+    /// `channel_instruments` 不在轨道里，`MappingFile::from_tracks` 无法
+    /// 从轨道重建；保存前必须从 model 补回，否则通道默认乐器会被清空。
     pub fn sync_mapping_file(&mut self) {
+        let channel_instruments = self.model.channel_instruments;
         self.mapping_file = MappingFile::from_tracks(&self.model.tracks);
+        self.mapping_file.channel_instruments = channel_instruments;
     }
 
     /// Construct a `ProjectData` with a given model and file structures.
@@ -143,5 +148,30 @@ impl ProjectData {
             mapping_file,
             revision: NEXT_DOC_REVISION.fetch_add(1, Ordering::Relaxed),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yinhe_core::ChannelInstrument;
+
+    #[test]
+    fn sync_mapping_file_keeps_channel_instruments() {
+        let inst = ChannelInstrument {
+            bank_msb: 0,
+            program: 24,
+        };
+        let mut model = YinModel::default();
+        model.channel_instruments[3] = Some(inst);
+        let mut data = ProjectData::new(
+            Arc::new(model),
+            ProjectFile::default(),
+            MappingFile::default(),
+        );
+
+        data.sync_mapping_file();
+
+        assert_eq!(data.mapping_file.channel_instruments[3], Some(inst));
     }
 }

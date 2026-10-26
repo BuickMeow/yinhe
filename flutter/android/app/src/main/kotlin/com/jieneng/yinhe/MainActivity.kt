@@ -39,7 +39,7 @@ class MainActivity : FlutterActivity() {
 
         /** SAF 目录选择（SFZ 音色库连同采样一起导入）。 */
         /** 导出工程的临时文件（Rust 写入，Kotlin 复制到用户选择的位置）。 */
-        private const val EXPORT_TMP = "export.ying"
+        private const val EXPORT_TMP = "export.yin"
 
         init {
             // 压缩包支持（unarc-rs）带 C++ 代码：先加载 NDK 的 C++ 运行时，
@@ -316,7 +316,7 @@ class MainActivity : FlutterActivity() {
         nativeClearSurface()
     }
 
-    /** Dart 侧「打开文件」：MIDI 与 .ying 工程（未知扩展名走 octet-stream）。 */
+    /** Dart 侧「打开文件」：MIDI、`.yin` 工程（旧 `.ying` 兼容）与压缩包。 */
     private fun openFilePicker() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -354,7 +354,11 @@ class MainActivity : FlutterActivity() {
     private fun openSavePicker(name: String) {
         val safe = name.replace(Regex("[/\\\\:*?\"<>|]"), "_").trim()
         val base = if (safe.isEmpty()) "Untitled" else safe
-        val title = if (base.endsWith(".ying", ignoreCase = true)) base else "$base.ying"
+        val title = when {
+            base.endsWith(".yin", ignoreCase = true) -> base
+            base.endsWith(".ying", ignoreCase = true) -> base.dropLast(".ying".length) + ".yin"
+            else -> "$base.yin"
+        }
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "application/octet-stream"
@@ -437,8 +441,10 @@ class MainActivity : FlutterActivity() {
             REQ_OPEN_FILE -> {
                 val uri = data?.data
                 val path = copyPicked(uri) ?: return
-                // .ying 工程记住原 uri（含持久权限），供“保存工程”直接覆盖。
-                if (path.lowercase().endsWith(".ying") && uri != null) {
+                // .yin/.ying 工程记住原 uri（含持久权限），供“保存工程”直接覆盖。
+                val isProject = path.lowercase().endsWith(".yin") ||
+                    path.lowercase().endsWith(".ying")
+                if (isProject && uri != null) {
                     runCatching {
                         contentResolver.takePersistableUriPermission(
                             uri,
@@ -466,7 +472,7 @@ class MainActivity : FlutterActivity() {
                 val uri = data?.data
                 if (copyExportTo(uri)) {
                     if (uri != null) {
-                        val name = displayName(uri) ?: "Untitled.ying"
+                        val name = displayName(uri) ?: "Untitled.yin"
                         rememberUri(name, uri)
                         runCatching {
                             contentResolver.takePersistableUriPermission(

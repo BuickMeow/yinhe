@@ -178,7 +178,8 @@ impl FileLoader {
     }
 
     /// 加载指定路径的文件（文件对话框 / Finder 打开方式共用）。
-    /// 按扩展名分发到 MIDI / yin 工程 / 压缩包加载器。
+    /// 按扩展名分发到 MIDI / 工程 / 压缩包加载器。
+    /// `.yin` 是统一后缀；`.ying` 是旧移动端后缀，保留读取兼容。
     pub fn load_path(&mut self, path_str: String, encoding: MidiImportEncoding) {
         if self.is_loading() {
             return;
@@ -194,7 +195,7 @@ impl FileLoader {
         self.started_at = Some(Instant::now());
 
         match ext.as_str() {
-            "yin" => self.start_yin(path_str),
+            "yin" | "ying" => self.start_yin(path_str),
             "zip" | "7z" | "rar" | "lzh" | "lha" | "tar" | "gz" | "xz" | "tgz" | "txz" | "tbz"
             | "bz2" => self.start_archive(path_str, None),
             _ => self.start_midi(path_str, encoding),

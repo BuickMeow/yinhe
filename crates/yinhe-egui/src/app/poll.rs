@@ -103,8 +103,7 @@ impl App {
                     .and_then(|idx| self.workspace.documents.get(idx))
                     .map(|doc| (doc.edit.quantize_arrange, doc.edit.quantize_pianoroll))
                     .unwrap_or((QuantizePreset::Auto, QuantizePreset::Auto));
-                let project_file =
-                    yinhe_yin::ProjectFile::from_meta_with_sf(&model.meta, sf.overrides.clone());
+                let project_file = yinhe_yin::ProjectFile::from_meta(&model.meta);
                 let result = Document::from_model(
                     &path,
                     *model,
@@ -127,23 +126,8 @@ impl App {
                     d.mark_loaded(); // Loaded from file, not a fresh empty doc
                     d.edit.allow_overlapping_notes = self.audio_settings.allow_overlapping_notes;
                     d.edit.overlap_blocked_behavior = self.audio_settings.overlap_blocked_behavior;
-
-                    d.edit.project_sf.overrides = sf
-                        .overrides
-                        .iter()
-                        .map(|co| {
-                            let entries = co
-                                .entries
-                                .iter()
-                                .map(|e| yinhe_editor_core::SfEntry {
-                                    path: e.path.clone(),
-                                    name: e.name.clone(),
-                                    enabled: e.enabled,
-                                })
-                                .collect();
-                            (co.channel, entries)
-                        })
-                        .collect();
+                    d.apply_sf_overrides(&sf.overrides);
+                    d.sync_sf_overrides_to_project_file();
 
                     d
                 });

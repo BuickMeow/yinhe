@@ -70,3 +70,28 @@ pub use project_meta::{ProjectFile, SfChannelOverride, SfEntryJson};
 
 pub const MAGIC: &[u8; 4] = b"YINH";
 pub const VERSION: u16 = 9;
+
+/// 工程文件扩展名。`.yin` 是桌面端与移动端统一的新后缀；
+/// `.ying` 是移动端旧后缀，容器格式完全相同，仅保留读取兼容。
+pub const PROJECT_EXTENSIONS: &[&str] = &["yin", "ying"];
+
+/// 路径是否是工程文件（按扩展名，大小写不敏感）。
+pub fn is_project_path(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("yin") || e.eq_ignore_ascii_case("ying"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_project_path;
+
+    #[test]
+    fn project_path_accepts_both_extensions() {
+        assert!(is_project_path("/tmp/a.yin"));
+        assert!(is_project_path("/tmp/a.YING"));
+        assert!(!is_project_path("/tmp/a.mid"));
+        assert!(!is_project_path("/tmp/a.yin.bak"));
+    }
+}

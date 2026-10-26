@@ -150,7 +150,7 @@ mixin _ShellDocument on _ShellBase {
     });
   }
 
-  /// 导出 .ying 工程：Rust 写临时文件 → Kotlin 复制到用户选择的位置。
+  /// 导出 .yin 工程：Rust 写临时文件 → Kotlin 复制到用户选择的位置。
   /// 是否压缩包扩展名（与 Rust/桌面同一份列表）。
   bool _isArchivePath(String path) {
     final lower = path.toLowerCase();
@@ -428,7 +428,7 @@ mixin _ShellDocument on _ShellBase {
     final p = tmp.toNativeUtf8();
     var ok = 0;
     try {
-      ok = rust.saveYingStart(p);
+      ok = rust.saveProjectStart(p);
     } finally {
       calloc.free(p);
     }
@@ -442,7 +442,7 @@ mixin _ShellDocument on _ShellBase {
     }
     final done = await showTaskProgressDialog(
       context,
-      poll: () => rust.takeString(rust.saveYingStatusJson()),
+      poll: () => rust.takeString(rust.saveProjectStatusJson()),
       determinate: true,
       title: l.savingProject,
       failureTitle: l.saveFailed,
@@ -508,7 +508,7 @@ mixin _ShellDocument on _ShellBase {
     _startOpenPath(item.path);
   }
 
-  /// 按文件名恢复工程 SAF uri（最近列表打开 .ying 后可直接覆盖保存）。
+  /// 按文件名恢复工程 SAF uri（最近列表打开 .yin/.ying 后可直接覆盖保存）。
   void _rememberProject(String name) {
     _channel.invokeMethod<void>('rememberProject', {'name': name});
   }
