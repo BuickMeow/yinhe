@@ -37,6 +37,12 @@ class YinheTheme {
       colorScheme: scheme,
       scaffoldBackgroundColor: bg,
       splashFactory: InkSparkle.splashFactory,
+      // 弹出菜单强制不透明底色：避免首帧只看到文字、背景晚一帧才出现的观感。
+      popupMenuTheme: PopupMenuThemeData(
+        color: bg,
+        surfaceTintColor: Colors.transparent,
+        elevation: 2,
+      ),
     );
   }
 }

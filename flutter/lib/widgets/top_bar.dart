@@ -332,6 +332,7 @@ class TopBar extends StatelessWidget {
 
   Widget _buildQuantizeButton(BuildContext context, AppLocalizations l) {
     return PopupMenuButton<String>(
+      color: YinheTheme.bg,
       tooltip: l.quantize,
       padding: EdgeInsets.zero,
       onSelected: onQuantize,
@@ -425,6 +426,7 @@ class TopBar extends StatelessWidget {
     final l = AppLocalizations.of(context);
     final selected = await showMenu<int>(
       context: context,
+      color: YinheTheme.bg,
       position: RelativeRect.fromLTRB(
         local.dx,
         local.dy,
@@ -518,6 +520,7 @@ class TopBar extends StatelessWidget {
     final active = activeTrack >= 0 && activeTrack < tracks.length;
     final base = active ? tracks[activeTrack].name : _titled(l);
     return PopupMenuButton<int>(
+      color: YinheTheme.bg,
       tooltip: l.currentTrack,
       padding: EdgeInsets.zero,
       onSelected: (v) {
