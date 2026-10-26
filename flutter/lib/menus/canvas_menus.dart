@@ -71,50 +71,57 @@ List<SheetAction> selectionActionItems(
       icon: Icons.content_cut,
       enabled: noteOnly(),
     ),
-    SheetAction(
-      value: '11',
-      label: l.delete,
-      icon: Icons.delete_outline,
-      danger: true,
-    ),
-    SheetAction(value: '10', label: l.opDuplicate, icon: Icons.copy_all),
+    SheetAction(value: '11', label: l.delete, icon: Icons.delete, danger: true),
+    SheetAction(value: '10', label: l.opDuplicate, icon: Icons.content_copy),
     SheetAction(
       value: '12',
       label: l.opOctaveUp,
-      icon: Icons.keyboard_double_arrow_up,
+      icon: Icons.download,
+      quarterTurns: 2,
       enabled: noteOnly(),
     ),
     SheetAction(
       value: '13',
       label: l.opOctaveDown,
-      icon: Icons.keyboard_double_arrow_down,
+      icon: Icons.download,
       enabled: noteOnly(),
     ),
-    SheetAction(value: '20', label: l.opLengthHalf, icon: Icons.compress),
-    SheetAction(value: '19', label: l.opLengthDouble, icon: Icons.expand),
+    SheetAction(
+      value: '20',
+      label: l.opLengthHalf,
+      icon: Icons.download,
+      quarterTurns: 1,
+    ),
+    SheetAction(
+      value: '19',
+      label: l.opLengthDouble,
+      icon: Icons.upload,
+      quarterTurns: 1,
+    ),
     SheetAction(value: '21', label: l.opFlipHorizontal, icon: Icons.flip),
     SheetAction(
       value: '22',
       label: l.opFlipVertical,
-      icon: Icons.swap_vert,
+      icon: Icons.flip,
+      quarterTurns: 1,
       enabled: noteOnly(),
     ),
     SheetAction(
       value: '16',
       label: l.opHumanize,
-      icon: Icons.shuffle,
+      icon: Icons.person,
       enabled: noteOnly(),
     ),
     SheetAction(
       value: '17',
       label: l.opFillGaps,
-      icon: Icons.linear_scale,
+      icon: Icons.compare_arrows,
       enabled: noteOnly(),
     ),
     SheetAction(
       value: '18',
       label: l.opMergeNotes,
-      icon: Icons.merge_type,
+      icon: Icons.line_style,
       enabled: noteOnly(),
     ),
     SheetAction(
@@ -216,6 +223,13 @@ class _SelectionGridCell extends StatelessWidget {
         : action.danger
         ? YinheTheme.danger
         : YinheTheme.textLabel;
+    Widget icon = Icon(action.icon, size: 22, color: color);
+    if (action.quarterTurns != 0) {
+      icon = RotatedBox(quarterTurns: action.quarterTurns, child: icon);
+    }
+    if (action.flipX) {
+      icon = Transform.flip(flipX: true, child: icon);
+    }
     return InkWell(
       borderRadius: BorderRadius.circular(8),
       onTap: onTap,
@@ -224,7 +238,7 @@ class _SelectionGridCell extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(action.icon, size: 22, color: color),
+            icon,
             const SizedBox(height: 4),
             Text(
               action.label,
