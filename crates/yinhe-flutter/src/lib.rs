@@ -532,7 +532,10 @@ pub extern "C" fn yinhe_set_view_mode(mode: i32) {
 pub extern "C" fn yinhe_transport(cmd: i32) {
     match cmd {
         0 => audio::play(),
-        1 => audio::pause(),
+        1 => {
+            let tick = audio::pause();
+            scene::set_cursor_exact(tick);
+        }
         2 => {
             audio::stop();
             scene::reset_cursor();

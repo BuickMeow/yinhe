@@ -1107,6 +1107,8 @@ fn apply_document(mut doc: Document, min_ticks: f64) {
     s.arr_view = arr_view;
     s.view_mode = ViewMode::Arrangement;
     s.total_ticks = total_ticks;
+    // 新文档从 0 开始：清掉上一个工程残留的非播放态光标。
+    s.cursor_tick = 0.0;
     refresh_snapshot(&mut s);
     let num_tracks = s.num_tracks;
     drop(s);
@@ -1368,6 +1370,18 @@ pub fn jump_to_event(tick: f64) {
 pub fn reset_cursor() {
     if let Ok(mut s) = scene().lock() {
         s.cursor_tick = 0.0;
+    }
+}
+
+/// 原样写入非播放态光标（暂停时把音频侧暂停点同步给绘制端）。
+///
+/// 不吸附、不触发 seek：暂停点就是用户听到的位置。
+pub fn set_cursor_exact(tick: f64) {
+    if !tick.is_finite() {
+        return;
+    }
+    if let Ok(mut s) = scene().lock() {
+        s.cursor_tick = tick.max(0.0);
     }
 }
 

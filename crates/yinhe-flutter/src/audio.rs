@@ -500,7 +500,7 @@ pub fn on_model_loaded(model: Arc<YinModel>) {
     log::info!("音频模型已加载");
 }
 
-/// 播放（从暂停位置开始）。
+/// 播放（从暂停位置开始；与暂停点接近时直接 Resume，避免 ring 回退）。
 pub fn play() {
     if !ensure_audio() {
         return;
@@ -520,24 +520,35 @@ pub fn play() {
     };
     if let Some(st) = guard.as_mut() {
         let from = (seconds * st.handle.sample_rate as f64) as u64;
-        st.handle
-            .handle
-            .send(AudioCommand::Play { from_sample: from });
-        log::info!("播放: tick={tick:.0} sample={from}");
+        // 暂停后引擎位置与光标相差不到 100ms：直接 Resume，保留已排空的
+        // ring 尾巴，避免每次继续都回退约 85ms（与桌面端同规则）。
+        let engine = st.handle.handle.sample_position();
+        let resume = from.abs_diff(engine) < st.handle.sample_rate as u64 / 10;
+        if resume {
+            st.handle.handle.send(AudioCommand::Resume);
+            log::info!("继续: tick={tick:.0} sample={engine}");
+        } else {
+            st.handle
+                .handle
+                .send(AudioCommand::Play { from_sample: from });
+            log::info!("播放: tick={tick:.0} sample={from}");
+        }
     }
 }
 
-/// 暂停（记录当前光标位置）。
-pub fn pause() {
+/// 暂停（记录当前光标位置）。返回暂停点 tick；无音频时返回 NaN。
+pub fn pause() -> f64 {
     let tick = playback_tick();
     let Some(mut guard) = lock_audio() else {
-        return;
+        return f64::NAN;
     };
-    if let Some(st) = guard.as_mut() {
-        st.handle.handle.send(AudioCommand::Pause);
-        st.cursor_tick = tick;
-        log::info!("暂停: tick={tick:.0}");
-    }
+    let Some(st) = guard.as_mut() else {
+        return f64::NAN;
+    };
+    st.handle.handle.send(AudioCommand::Pause);
+    st.cursor_tick = tick;
+    log::info!("暂停: tick={tick:.0}");
+    tick
 }
 
 /// 停止（光标归零）。
