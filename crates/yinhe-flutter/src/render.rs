@@ -82,13 +82,21 @@ pub fn create_target(gpu: &Gpu, window: OwnedWindow) -> Option<Target> {
         log::error!("surface 无可用格式");
         return None;
     };
+    // Mailbox 不排队旧帧：新帧直接替换待呈现帧，降低 wgpu 层延迟；
+    // 设备不支持时退回 Fifo，避免创建 surface 失败。
+    let present_mode = if caps.present_modes.contains(&wgpu::PresentMode::Mailbox) {
+        wgpu::PresentMode::Mailbox
+    } else {
+        log::warn!("设备不支持 Mailbox，回退 Fifo");
+        wgpu::PresentMode::Fifo
+    };
     let config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format,
         color_space: wgpu::SurfaceColorSpace::Auto,
         width: window.width(),
         height: window.height(),
-        present_mode: wgpu::PresentMode::Fifo,
+        present_mode,
         desired_maximum_frame_latency: 2,
         alpha_mode: caps
             .alpha_modes
@@ -101,7 +109,7 @@ pub fn create_target(gpu: &Gpu, window: OwnedWindow) -> Option<Target> {
 
     let renderer = InstanceRenderer::new(gpu.device.clone(), gpu.queue.clone(), format);
     log::info!(
-        "surface 就绪: {}x{} {format:?}",
+        "surface 就绪: {}x{} {format:?} {present_mode:?}",
         config.width,
         config.height
     );
