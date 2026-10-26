@@ -1903,6 +1903,70 @@ pub fn set_automation_selection(ticks: &[u32]) {
     s.automation_panel.selected_ticks = ticks;
 }
 
+/// 全选。`scope`: 0 = PR，1 = AR；`track < 0` = 该视图的全工程。
+///
+/// PR 单轨：选中该轨全部音符，选框覆盖 0→曲末、全音高。
+/// AR 单轨：同上，并写 AR 选框，让 AR 视图画出整轨框。
+pub fn select_all(scope: i32, track: i32) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let arrange = scope == 1;
+    let changed = match track {
+        t if t >= 0 => select_track_all(doc, t as u16, arrange),
+        _ if arrange => {
+            doc.select_all_ar();
+            true
+        }
+        _ => {
+            doc.select_all_pr();
+            true
+        }
+    };
+    if !changed {
+        return 0;
+    }
+    doc.edit.pianoroll_view.base.dirty = true;
+    refresh_snapshot(&mut s);
+    1
+}
+
+/// 单轨全选（PR/AR 共用成员集，仅选框类型不同）。
+fn select_track_all(doc: &mut Document, track: u16, arrange: bool) -> bool {
+    use yinhe_types::MAX_KEY;
+    let conductor = doc.edit.track_cache.conductor_idx;
+    if Some(track) == conductor || doc.data.model.tracks.get(track as usize).is_none() {
+        return false;
+    }
+    let max_end = doc.data.model.tick_length as u32;
+    if max_end == 0 {
+        return false;
+    }
+    doc.edit.track_selected.clear();
+    doc.edit.track_selected.insert(track);
+    doc.edit.selected.clear();
+    doc.edit
+        .selected
+        .add_rect_track(0, max_end + 1, 0, MAX_KEY, track, track);
+    doc.edit.sel_rect.rects = vec![(0.0, max_end as f64 + 1.0, 0, MAX_KEY)];
+    doc.edit.sel_rect.auto_vertical = vec![false];
+    if arrange {
+        doc.edit.arr_sel_rect = vec![(0.0, (max_end + 1) as f64, track as usize, track as usize)];
+        doc.edit.chan_ar_sel = vec![yinhe_editor_core::edit_state::ChanSelRect {
+            t_start: 0.0,
+            t_end: (max_end + 1) as f64,
+            tracks: vec![track],
+        }];
+    } else {
+        doc.edit.arr_sel_rect.clear();
+        doc.edit.chan_ar_sel.clear();
+    }
+    true
+}
+
 /// 框选批量操作（编号与桌面 transport bar「操作」菜单一致）。
 ///
 /// `scope`: 0 = 音符（PR/AR 共用 `edit.selected`），1 = 当前 AM lane 的锚点。

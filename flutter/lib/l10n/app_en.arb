@@ -2,6 +2,8 @@
   "@@locale": "en",
   "cancel": "Cancel",
   "selectionActions": "Selection actions",
+  "selectAll": "Select all",
+  "selectAllTrack": "Select this track",
   "opDuplicate": "Duplicate",
   "opOctaveUp": "Octave up",
   "opOctaveDown": "Octave down",

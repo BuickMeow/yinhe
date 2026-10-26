@@ -16,6 +16,12 @@ class AppLocalizationsTr extends AppLocalizations {
   String get selectionActions => 'Seçim işlemleri';
 
   @override
+  String get selectAll => 'Tümünü seç';
+
+  @override
+  String get selectAllTrack => 'Bu kanalı seç';
+
+  @override
   String get opDuplicate => 'Çoğalt';
 
   @override

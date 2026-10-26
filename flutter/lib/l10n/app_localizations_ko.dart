@@ -16,6 +16,12 @@ class AppLocalizationsKo extends AppLocalizations {
   String get selectionActions => '선택 항목 작업';
 
   @override
+  String get selectAll => '모두 선택';
+
+  @override
+  String get selectAllTrack => '이 트랙 모두 선택';
+
+  @override
   String get opDuplicate => '복제';
 
   @override

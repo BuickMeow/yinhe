@@ -57,6 +57,17 @@ mixin _ShellMenus on _ShellBase {
     showEmptyLongPressMenu(
       context,
       canPaste: rust.clipboardEmpty() == 0,
+      onSelectAll: () {
+        if (_viewMode == kViewPianoroll) {
+          final track =
+              ctx?.track ??
+              (_displayTrack >= 0 ? _displayTrack : (_activeTrack ?? -1));
+          _selectAll(0, track);
+        } else {
+          // AR 空白长按：全工程所有轨道、所有长度。
+          _selectAll(1, -1);
+        }
+      },
       onPaste: () {
         if (rust.pasteSelection(pos.dx) == 1) {
           _refreshDocumentMeta();
@@ -211,10 +222,18 @@ mixin _ShellMenus on _ShellBase {
     _resetInteraction();
     showTrackMenu(
       context,
+      onSelectAll: () => _selectAll(1, track),
       onEdit: () => _editTrackInfo(track),
       onDelete: master ? null : () => _deleteTrack(track),
       onEvents: () => _showEventList(track),
     );
+  }
+
+  /// 全选：`scope` 0 = PR，1 = AR；`track < 0` = 全工程。
+  void _selectAll(int scope, int track) {
+    if (rust.selectAll(scope, track) == 1) {
+      _refreshDocumentMeta();
+    }
   }
 
   /// 打开事件列表（音符/自动化/全局事件穿插）。

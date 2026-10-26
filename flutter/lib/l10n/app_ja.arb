@@ -1,6 +1,8 @@
 {
   "@@locale": "ja",
   "cancel": "キャンセル",
+  "selectAll": "すべて選択",
+  "selectAllTrack": "このトラックをすべて選択",
   "cut": "切り取り",
   "selectionActions": "選択範囲の操作",
   "opDuplicate": "複製",

@@ -16,6 +16,12 @@ class AppLocalizationsPl extends AppLocalizations {
   String get selectionActions => 'Akcje zaznaczenia';
 
   @override
+  String get selectAll => 'Zaznacz wszystko';
+
+  @override
+  String get selectAllTrack => 'Zaznacz tę ścieżkę';
+
+  @override
   String get opDuplicate => 'Duplikuj';
 
   @override

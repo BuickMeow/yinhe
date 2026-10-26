@@ -16,6 +16,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get selectionActions => '选区操作';
 
   @override
+  String get selectAll => '全选';
+
+  @override
+  String get selectAllTrack => '全选该轨道';
+
+  @override
   String get opDuplicate => '重复';
 
   @override
@@ -545,6 +551,12 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get selectionActions => '選取操作';
 
   @override
+  String get selectAll => '全選';
+
+  @override
+  String get selectAllTrack => '全選該軌道';
+
+  @override
   String get opDuplicate => '重複';
 
   @override
@@ -1072,6 +1084,12 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get selectionActions => '選取操作';
+
+  @override
+  String get selectAll => '全選';
+
+  @override
+  String get selectAllTrack => '全選該軌道';
 
   @override
   String get opDuplicate => '重複';

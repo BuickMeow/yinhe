@@ -209,3 +209,10 @@ final SelectionActionDart selectionAction = bridge
     .lookupFunction<SelectionActionNative, SelectionActionDart>(
       'yinhe_selection_action',
     );
+
+typedef SelectAllNative = ffi.Int32 Function(ffi.Int32, ffi.Int32);
+typedef SelectAllDart = int Function(int, int);
+
+/// 全选：`scope` 0 = PR，1 = AR；`track < 0` = 全工程。
+final SelectAllDart selectAll = bridge
+    .lookupFunction<SelectAllNative, SelectAllDart>('yinhe_select_all');

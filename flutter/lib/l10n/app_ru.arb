@@ -1,6 +1,8 @@
 {
   "@@locale": "ru",
   "cancel": "Отмена",
+  "selectAll": "Выбрать всё",
+  "selectAllTrack": "Выбрать эту дорожку",
   "cut": "Вырезать",
   "selectionActions": "Действия с выделением",
   "opDuplicate": "Дублировать",

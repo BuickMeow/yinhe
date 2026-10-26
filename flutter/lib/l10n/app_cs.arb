@@ -1,6 +1,8 @@
 {
   "@@locale": "cs",
   "cancel": "Zrušit",
+  "selectAll": "Vybrat vše",
+  "selectAllTrack": "Vybrat tuto stopu",
   "cut": "Vyjmout",
   "selectionActions": "Akce výběru",
   "opDuplicate": "Duplikovat",

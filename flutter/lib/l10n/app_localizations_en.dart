@@ -16,6 +16,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get selectionActions => 'Selection actions';
 
   @override
+  String get selectAll => 'Select all';
+
+  @override
+  String get selectAllTrack => 'Select this track';
+
+  @override
   String get opDuplicate => 'Duplicate';
 
   @override

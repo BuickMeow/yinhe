@@ -1,6 +1,8 @@
 {
   "@@locale": "it",
   "cancel": "Annulla",
+  "selectAll": "Seleziona tutto",
+  "selectAllTrack": "Seleziona questa traccia",
   "cut": "Taglia",
   "selectionActions": "Azioni selezione",
   "opDuplicate": "Duplica",

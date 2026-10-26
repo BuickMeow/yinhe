@@ -1,6 +1,8 @@
 {
   "@@locale": "pt",
   "cancel": "Cancelar",
+  "selectAll": "Selecionar tudo",
+  "selectAllTrack": "Selecionar esta faixa",
   "cut": "Recortar",
   "selectionActions": "Ações da seleção",
   "opDuplicate": "Duplicar",

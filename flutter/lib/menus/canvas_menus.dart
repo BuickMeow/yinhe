@@ -251,18 +251,24 @@ class _SelectionGridCell extends StatelessWidget {
   }
 }
 
-/// 空白处长按完成：粘贴 / 插入 菜单。
+/// 空白处长按完成：粘贴 / 插入 / 全选 菜单。
 Future<void> showEmptyLongPressMenu(
   BuildContext context, {
   required bool canPaste,
   required VoidCallback onPaste,
   required VoidCallback? onInsert,
+  required VoidCallback onSelectAll,
 }) async {
   final l = AppLocalizations.of(context);
   final action = await showActionSheet(
     context,
     cancelLabel: l.cancel,
     actions: [
+      SheetAction(
+        value: 'select_all',
+        label: l.selectAll,
+        icon: Icons.select_all,
+      ),
       SheetAction(
         value: 'paste',
         label: l.paste,
@@ -277,10 +283,13 @@ Future<void> showEmptyLongPressMenu(
         ),
     ],
   );
-  if (action == 'paste') {
-    onPaste();
-  } else if (action == 'insert') {
-    onInsert?.call();
+  switch (action) {
+    case 'select_all':
+      onSelectAll();
+    case 'paste':
+      onPaste();
+    case 'insert':
+      onInsert?.call();
   }
 }
 
@@ -288,6 +297,7 @@ Future<void> showEmptyLongPressMenu(
 Future<void> showTrackMenu(
   BuildContext context, {
   required VoidCallback onEdit,
+  required VoidCallback onSelectAll,
   VoidCallback? onDelete,
   VoidCallback? onEvents,
 }) async {
@@ -296,6 +306,11 @@ Future<void> showTrackMenu(
     context,
     cancelLabel: l.cancel,
     actions: [
+      SheetAction(
+        value: 'select_all',
+        label: l.selectAllTrack,
+        icon: Icons.select_all,
+      ),
       SheetAction(value: 'edit', label: l.editTrackInfo, icon: Icons.edit),
       if (onEvents != null)
         SheetAction(
@@ -313,6 +328,8 @@ Future<void> showTrackMenu(
     ],
   );
   switch (action) {
+    case 'select_all':
+      onSelectAll();
     case 'edit':
       onEdit();
     case 'events':

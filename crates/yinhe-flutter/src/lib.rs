@@ -1573,6 +1573,12 @@ pub extern "C" fn yinhe_selection_action(scope: i32, action: i32) -> i32 {
     scene::selection_action(scope, action)
 }
 
+/// 全选。`scope`: 0 = PR，1 = AR；`track < 0` = 全工程。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_select_all(scope: i32, track: i32) -> i32 {
+    scene::select_all(scope, track)
+}
+
 /// Flutter 帧驱动：请求渲染一帧并等待完成（纹理与浮层同帧产出）。成功 1。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_render_frame() -> i32 {

@@ -2,6 +2,8 @@
   "@@locale": "zh",
   "cancel": "取消",
   "selectionActions": "选区操作",
+  "selectAll": "全选",
+  "selectAllTrack": "全选该轨道",
   "opDuplicate": "重复",
   "opOctaveUp": "升八度",
   "opOctaveDown": "降八度",

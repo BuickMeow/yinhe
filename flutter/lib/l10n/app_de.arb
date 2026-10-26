@@ -1,6 +1,8 @@
 {
   "@@locale": "de",
   "cancel": "Abbrechen",
+  "selectAll": "Alles auswählen",
+  "selectAllTrack": "Diese Spur auswählen",
   "cut": "Ausschneiden",
   "selectionActions": "Auswahlaktionen",
   "opDuplicate": "Duplizieren",

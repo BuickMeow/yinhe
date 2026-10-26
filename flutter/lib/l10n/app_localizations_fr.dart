@@ -16,6 +16,12 @@ class AppLocalizationsFr extends AppLocalizations {
   String get selectionActions => 'Actions de sélection';
 
   @override
+  String get selectAll => 'Tout sélectionner';
+
+  @override
+  String get selectAllTrack => 'Sélectionner cette piste';
+
+  @override
   String get opDuplicate => 'Dupliquer';
 
   @override

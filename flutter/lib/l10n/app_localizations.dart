@@ -134,6 +134,18 @@ abstract class AppLocalizations {
   /// **'Selection actions'**
   String get selectionActions;
 
+  /// No description provided for @selectAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Select all'**
+  String get selectAll;
+
+  /// No description provided for @selectAllTrack.
+  ///
+  /// In en, this message translates to:
+  /// **'Select this track'**
+  String get selectAllTrack;
+
   /// No description provided for @opDuplicate.
   ///
   /// In en, this message translates to:

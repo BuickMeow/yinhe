@@ -16,6 +16,12 @@ class AppLocalizationsCs extends AppLocalizations {
   String get selectionActions => 'Akce výběru';
 
   @override
+  String get selectAll => 'Vybrat vše';
+
+  @override
+  String get selectAllTrack => 'Vybrat tuto stopu';
+
+  @override
   String get opDuplicate => 'Duplikovat';
 
   @override

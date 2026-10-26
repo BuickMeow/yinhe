@@ -1,6 +1,8 @@
 {
   "@@locale": "tr",
   "cancel": "İptal",
+  "selectAll": "Tümünü seç",
+  "selectAllTrack": "Bu kanalı seç",
   "cut": "Kes",
   "selectionActions": "Seçim işlemleri",
   "opDuplicate": "Çoğalt",

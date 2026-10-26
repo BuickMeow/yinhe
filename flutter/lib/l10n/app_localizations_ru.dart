@@ -16,6 +16,12 @@ class AppLocalizationsRu extends AppLocalizations {
   String get selectionActions => 'Действия с выделением';
 
   @override
+  String get selectAll => 'Выбрать всё';
+
+  @override
+  String get selectAllTrack => 'Выбрать эту дорожку';
+
+  @override
   String get opDuplicate => 'Дублировать';
 
   @override
