@@ -114,6 +114,9 @@ class _AutomationPanelState extends State<AutomationPanel> {
   /// old tick -> (new tick, new value)，拖动中的预览。
   Map<int, (int, double)> _movePreview = {};
 
+  /// 离网锚点第一次拖动只吸附到网格，不额外移动。
+  bool _awaitSnapBreak = false;
+
   /// AM wgpu 状态去重缓存。
   double _amW = 0;
   double _amH = 0;
@@ -238,6 +241,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
     _marqueeActive = false;
     _marqueeStart = null;
     _marqueeCurrent = null;
+    _awaitSnapBreak = false;
   }
 
   double _tickAt(double x) {
@@ -273,10 +277,10 @@ class _AutomationPanelState extends State<AutomationPanel> {
     return v.clamp(1.0, 127.0);
   }
 
-  /// 命中锚点（屏幕欧氏距离 16px 内）。
+  /// 命中锚点（屏幕欧氏距离 24px 内，触摸目标更大）。
   double? _hitAnchor(AutomationLaneData lane, Offset p) {
     double? best;
-    var bestDist = 16.0 * 16.0;
+    var bestDist = 24.0 * 24.0;
     for (final q in lane.points) {
       final dx = _xOfTick(q.dx) - p.dx;
       final dy = _yOfValue(q.dy) - p.dy;
@@ -389,6 +393,27 @@ class _AutomationPanelState extends State<AutomationPanel> {
     }
   }
 
+  /// 选中集合里若有离网锚点，先把它们吸附到最近网格；第一次拖动不额外位移。
+  /// 返回是否进入“等待跨过量化线”的状态。
+  bool _snapSelectionToGrid(AutomationLaneData lane) {
+    final preview = <int, (int, double)>{};
+    for (final p in lane.points) {
+      final oldTick = p.dx.round();
+      if (!_selectedTicks.contains(oldTick)) {
+        continue;
+      }
+      final snapped = _snapTickAt(_xOfTick(p.dx)).round();
+      if (snapped != oldTick) {
+        preview[oldTick] = (snapped, p.dy);
+      }
+    }
+    if (preview.isEmpty) {
+      return false;
+    }
+    _movePreview = preview;
+    return true;
+  }
+
   /// 单点锚点编辑 / 框选：
   /// - 按在锚点上：选中（未选中则替换选择），拖动可改 tick+value；
   /// - 按在空白：拉时间框选（全高），多选拖动只改 tick。
@@ -420,6 +445,17 @@ class _AutomationPanelState extends State<AutomationPanel> {
       _dragStartSnapTick = _snapTickAt(d.localPosition.dx);
       _dragStartValue = _valueAtY(d.localPosition.dy);
       _movePreview = {};
+      _awaitSnapBreak = _snapSelectionToGrid(lane);
+      if (_awaitSnapBreak) {
+        // 第一次按下就吸附：193 -> 240；在指针跨过下一条量化线前不再移动。
+        final moved = _movePreview[_dragAnchorTick!.round()];
+        if (moved != null) {
+          widget.status.value = EditStatus(
+            position: widget.formatTick(moved.$1.toDouble()),
+            primary: lane.formatValue(moved.$2),
+          );
+        }
+      }
       setState(() {});
       return;
     }
@@ -447,6 +483,17 @@ class _AutomationPanelState extends State<AutomationPanel> {
         _dragStartValue == null) {
       return;
     }
+    if (_awaitSnapBreak) {
+      final now = _snapTickAt(d.localPosition.dx);
+      if (now == _dragStartSnapTick) {
+        return;
+      }
+      // 第一次跨过量化线：保持“只吸附”的结果，把位移基准重置到当前位置。
+      _dragStartSnapTick = now;
+      _dragStartValue = _valueAtY(d.localPosition.dy);
+      _awaitSnapBreak = false;
+      return;
+    }
     final laneIdx = _laneIdx;
     if (laneIdx == null || laneIdx >= widget.lanes.length) {
       return;
@@ -463,7 +510,8 @@ class _AutomationPanelState extends State<AutomationPanel> {
       if (!_selectedTicks.contains(oldTick)) {
         continue;
       }
-      final newTick = math.max(0, (p.dx + effectiveDt).round());
+      final baseTick = _movePreview[oldTick]?.$1 ?? p.dx.round();
+      final newTick = math.max(0, (baseTick + effectiveDt).round());
       final newValue = _singleSelection ? (p.dy + dv).clamp(0.0, 1.0) : p.dy;
       preview[oldTick] = (newTick, newValue);
     }
@@ -516,6 +564,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
     _dragStartSnapTick = null;
     _dragStartValue = null;
     _movePreview = {};
+    _awaitSnapBreak = false;
     widget.status.value = null;
     setState(() {});
     if (moves.isEmpty) {
@@ -568,22 +617,6 @@ class _AutomationPanelState extends State<AutomationPanel> {
     setState(() {});
   }
 
-  void _handleLaneTap(Offset p) {
-    final laneIdx = _laneIdx;
-    if (laneIdx == null || laneIdx >= widget.lanes.length) {
-      return;
-    }
-    final hit = _hitAnchor(widget.lanes[laneIdx], p);
-    _selectedTicks.clear();
-    _singleSelection = false;
-    if (hit != null) {
-      _selectedTicks.add(hit.round());
-      _singleSelection = true;
-    }
-    widget.status.value = null;
-    setState(() {});
-  }
-
   void _handlePanCancel() {
     if (_velocityStrokeActive) {
       _clearVelocityStroke();
@@ -599,6 +632,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
     _dragStartSnapTick = null;
     _dragStartValue = null;
     _movePreview = {};
+    _awaitSnapBreak = false;
     widget.status.value = null;
     setState(() {});
   }
@@ -790,11 +824,10 @@ class _AutomationPanelState extends State<AutomationPanel> {
                 Expanded(
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
-                    onTapUp: _laneIdx == null
-                        ? (widget.velocityDrawEnabled
-                              ? (d) => _handleVelocityTap(d.localPosition)
-                              : null)
-                        : (d) => _handleLaneTap(d.localPosition),
+                    // 锚点单击不选中；只有拖动才进入编辑，避免误触。
+                    onTapUp: _laneIdx == null && widget.velocityDrawEnabled
+                        ? (d) => _handleVelocityTap(d.localPosition)
+                        : null,
                     onPanStart: _handlePanStart,
                     onPanUpdate: _handlePanUpdate,
                     onPanEnd: (_) => _handlePanEnd(),
