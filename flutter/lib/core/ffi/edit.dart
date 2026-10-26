@@ -216,3 +216,12 @@ typedef SelectAllDart = int Function(int, int);
 /// 全选：`scope` 0 = PR，1 = AR；`track < 0` = 全工程。
 final SelectAllDart selectAll = bridge
     .lookupFunction<SelectAllNative, SelectAllDart>('yinhe_select_all');
+
+typedef ClearSelectionNative = ffi.Int32 Function();
+typedef ClearSelectionDart = int Function();
+
+/// 清空音符/AR 选区；返回 1 = 原本有选区。
+final ClearSelectionDart clearSelection = bridge
+    .lookupFunction<ClearSelectionNative, ClearSelectionDart>(
+      'yinhe_clear_selection',
+    );

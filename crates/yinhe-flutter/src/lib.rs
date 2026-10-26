@@ -1579,6 +1579,12 @@ pub extern "C" fn yinhe_select_all(scope: i32, track: i32) -> i32 {
     scene::select_all(scope, track)
 }
 
+/// 清空音符/AR 选区。返回 1 = 原本有选区。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_clear_selection() -> i32 {
+    scene::clear_selection()
+}
+
 /// Flutter 帧驱动：请求渲染一帧并等待完成（纹理与浮层同帧产出）。成功 1。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_render_frame() -> i32 {

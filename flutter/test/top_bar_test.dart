@@ -56,6 +56,7 @@ void main() {
               sigText: '4/4',
               onEditBpm: () {},
               onEditSig: () {},
+              onDeselect: () {},
             ),
           ),
         ),

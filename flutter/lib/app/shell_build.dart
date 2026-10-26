@@ -367,6 +367,11 @@ mixin _ShellBuild on _ShellBase {
       sigText: _liveSigText,
       onEditBpm: _editDefaultBpm,
       onEditSig: _editDefaultTimeSig,
+      onDeselect: () {
+        if (rust.clearSelection() == 1) {
+          _refreshDocumentMeta();
+        }
+      },
     );
   }
 

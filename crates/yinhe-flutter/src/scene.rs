@@ -1934,6 +1934,30 @@ pub fn select_all(scope: i32, track: i32) -> i32 {
     1
 }
 
+/// 清空当前音符/AR 选区（顶栏空白点击）。返回 1 = 原本有选区。
+pub fn clear_selection() -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    if doc.edit.selected.is_empty()
+        && doc.edit.sel_rect.rects.is_empty()
+        && doc.edit.arr_sel_rect.is_empty()
+        && doc.edit.chan_ar_sel.is_empty()
+    {
+        return 0;
+    }
+    doc.edit.selected.clear();
+    doc.edit.sel_rect.clear();
+    doc.edit.arr_sel_rect.clear();
+    doc.edit.chan_ar_sel.clear();
+    doc.edit.pianoroll_view.base.dirty = true;
+    refresh_snapshot(&mut s);
+    1
+}
+
 /// 单轨全选（PR/AR 共用成员集，仅选框类型不同）。
 fn select_track_all(doc: &mut Document, track: u16, arrange: bool) -> bool {
     use yinhe_types::MAX_KEY;
