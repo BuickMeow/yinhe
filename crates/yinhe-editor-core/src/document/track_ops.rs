@@ -216,15 +216,6 @@ impl Document {
         let tracks_before: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
 
         let model = Arc::make_mut(&mut self.data.model);
-        // 冻结被删轨之后各轨的调色板颜色：删除会让索引前移，若不冻结，
-        // 剩余音轨（以及自动化条）的颜色会整体换一组。
-        let conductor_idx = self.edit.track_cache.conductor_idx;
-        for i in (idx + 1)..model.tracks.len() {
-            let track = Arc::make_mut(&mut model.tracks[i]);
-            if track.color == yinhe_core::DEFAULT_TRACK_COLOR {
-                track.color = super::track_color(track, i, conductor_idx);
-            }
-        }
         model.tracks.remove(idx);
 
         // Remap: track < idx stays, track == idx is deleted (u16::MAX), track > idx gets -1
@@ -389,23 +380,8 @@ impl Document {
 }
 
 #[cfg(test)]
-#[allow(clippy::items_after_test_module)] // 历史文件：测试模块后还有 impl 块
 mod tests {
     use super::{Document, NewTrackSpec};
-
-    /// 删除音轨后，后续音轨的调色板颜色必须保持不变（不能因为索引前移换色）。
-    #[test]
-    fn remove_track_keeps_remaining_track_colors() {
-        let mut doc = Document::empty();
-        let conductor_idx = doc.edit.track_cache.conductor_idx;
-        // 记录删除前 Track 2 / Track 3 的显示色。
-        let color_2 = super::super::track_color(&doc.data.model.tracks[2], 2, conductor_idx);
-        let color_3 = super::super::track_color(&doc.data.model.tracks[3], 3, conductor_idx);
-        assert!(doc.remove_track(1).is_some(), "删除 Track 1");
-        // 原 Track 2 / Track 3 前移到 1 / 2，颜色应分别是原来的 color_2 / color_3。
-        assert_eq!(doc.data.model.tracks[1].color, color_2);
-        assert_eq!(doc.data.model.tracks[2].color, color_3);
-    }
 
     /// 新音轨编号 = 已有音轨数 + 1，而不是插入位置：
     /// 在 16 条音轨的工程里于 Track 2 下方插入，新音轨应为 Track 17（而非 Track 3），
