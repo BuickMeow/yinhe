@@ -124,149 +124,185 @@ class TopBar extends StatelessWidget {
           color: YinheTheme.controlBg,
           border: Border(bottom: BorderSide(color: YinheTheme.lineFg)),
         ),
-        child: Row(
-          children: [
-            IconButton(
-              onPressed: isPr ? onBack : onHome,
-              icon: Icon(isPr ? Icons.arrow_back : Icons.home),
-              color: YinheTheme.text,
-              tooltip: isPr ? l.backToArrangement : l.home,
-              visualDensity: VisualDensity.compact,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-            ),
-            IconButton(
-              onPressed: onTogglePlay,
-              icon: Icon(playing ? Icons.pause : Icons.play_arrow),
-              color: YinheTheme.text,
-              tooltip: playing ? l.pause : l.play,
-              visualDensity: VisualDensity.compact,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-            ),
-            IconButton(
-              onPressed: onStop,
-              icon: const Icon(Icons.stop),
-              color: YinheTheme.textSecondary,
-              tooltip: l.stop,
-              visualDensity: VisualDensity.compact,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-            ),
-            const SizedBox(width: 4),
-            ValueListenableBuilder<EditStatus?>(
-              valueListenable: editStatus,
-              builder: (context, status, _) {
-                final active = status != null;
-                final hasMeta =
-                    status != null &&
-                    (status.primary != null || status.secondary != null);
-                final showPosition = !(status?.hidePosition ?? false);
-                return Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (showPosition)
-                      InkWell(
-                        borderRadius: BorderRadius.circular(4),
-                        onTap: active ? null : onToggleTimecode,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 6,
-                          ),
-                          child: ValueListenableBuilder<String>(
-                            valueListenable: timecodeText,
-                            builder: (context, text, _) => Text(
-                              status?.position ?? text,
-                              style: TextStyle(
-                                color: active
-                                    ? YinheTheme.accent
-                                    : YinheTheme.textLabel,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final showCenter = constraints.maxWidth >= 600;
+            return CustomMultiChildLayout(
+              delegate: _TopBarLayoutDelegate(
+                centerMax: isPr ? 220.0 : 260.0,
+                gap: 8.0,
+              ),
+              children: [
+                LayoutId(
+                  id: _TopBarSlot.left,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        onPressed: isPr ? onBack : onHome,
+                        icon: Icon(isPr ? Icons.arrow_back : Icons.home),
+                        color: YinheTheme.text,
+                        tooltip: isPr ? l.backToArrangement : l.home,
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 40,
+                          minHeight: 40,
                         ),
                       ),
-                    if (!hasMeta) ...[
-                      _metaText(bpmText, l.defaultBpm, onEditBpm),
-                      _metaText(sigText, l.defaultTimeSig, onEditSig),
-                    ] else ...[
-                      if (status.primary != null)
-                        _metaText(status.primary!, '', null, active: true),
-                      if (status.secondary != null)
-                        _metaText(status.secondary!, '', null, active: true),
+                      IconButton(
+                        onPressed: onTogglePlay,
+                        icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+                        color: YinheTheme.text,
+                        tooltip: playing ? l.pause : l.play,
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 40,
+                          minHeight: 40,
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: onStop,
+                        icon: const Icon(Icons.stop),
+                        color: YinheTheme.textSecondary,
+                        tooltip: l.stop,
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 40,
+                          minHeight: 40,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      ValueListenableBuilder<EditStatus?>(
+                        valueListenable: editStatus,
+                        builder: (context, status, _) {
+                          final active = status != null;
+                          final hasMeta =
+                              status != null &&
+                              (status.primary != null ||
+                                  status.secondary != null);
+                          final showPosition = !(status?.hidePosition ?? false);
+                          return Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (showPosition)
+                                InkWell(
+                                  borderRadius: BorderRadius.circular(4),
+                                  onTap: active ? null : onToggleTimecode,
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 6,
+                                    ),
+                                    child: ValueListenableBuilder<String>(
+                                      valueListenable: timecodeText,
+                                      builder: (context, text, _) => Text(
+                                        status?.position ?? text,
+                                        style: TextStyle(
+                                          color: active
+                                              ? YinheTheme.accent
+                                              : YinheTheme.textLabel,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              if (!hasMeta) ...[
+                                _metaText(bpmText, l.defaultBpm, onEditBpm),
+                                _metaText(sigText, l.defaultTimeSig, onEditSig),
+                              ] else ...[
+                                if (status.primary != null)
+                                  _metaText(
+                                    status.primary!,
+                                    '',
+                                    null,
+                                    active: true,
+                                  ),
+                                if (status.secondary != null)
+                                  _metaText(
+                                    status.secondary!,
+                                    '',
+                                    null,
+                                    active: true,
+                                  ),
+                              ],
+                            ],
+                          );
+                        },
+                      ),
                     ],
-                  ],
-                );
-              },
-            ),
-            Expanded(
-              child: LayoutBuilder(
-                builder: (context, c) {
-                  // 中央标题只占左右控件之外的空隙；窄屏直接隐藏，绝不盖住按钮。
-                  if (c.maxWidth < 72) {
-                    return const SizedBox.shrink();
-                  }
-                  return Center(
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxWidth: (isPr ? 220.0 : 260.0).clamp(0.0, c.maxWidth),
-                      ),
-                      child: isPr ? _buildSongBox(l) : _titleButton(l),
-                    ),
-                  );
-                },
-              ),
-            ),
-            _buildQuantizeButton(context, l),
-            _buildQuickToolButton(l),
-            _buildToolButton(l),
-            ValueListenableBuilder<int>(
-              valueListenable: docState,
-              builder: (context, st, _) => Row(
-                children: [
-                  _iconAction(
-                    Icons.undo,
-                    l.undo,
-                    (st & 1) != 0 ? onUndo : null,
                   ),
-                  _iconAction(
-                    Icons.redo,
-                    l.redo,
-                    (st & 2) != 0 ? onRedo : null,
-                  ),
-                  // 保存：从右向左第一个；无改动时置灰不可点；
-                  // 保存中显示圆环；保存成功后 2 秒显示对勾（普通字体色）。
-                  if (saving)
-                    const SizedBox(
-                      width: 40,
-                      height: 40,
-                      child: Center(
-                        child: SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                LayoutId(
+                  id: _TopBarSlot.center,
+                  child: showCenter
+                      ? (isPr ? _buildSongBox(l) : _titleButton(l))
+                      : const SizedBox.shrink(),
+                ),
+                LayoutId(
+                  id: _TopBarSlot.right,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildQuantizeButton(context, l),
+                      _buildQuickToolButton(l),
+                      _buildToolButton(l),
+                      ValueListenableBuilder<int>(
+                        valueListenable: docState,
+                        builder: (context, st, _) => Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _iconAction(
+                              Icons.undo,
+                              l.undo,
+                              (st & 1) != 0 ? onUndo : null,
+                            ),
+                            _iconAction(
+                              Icons.redo,
+                              l.redo,
+                              (st & 2) != 0 ? onRedo : null,
+                            ),
+                            // 保存：从右向左第一个；无改动时置灰不可点；
+                            // 保存中显示圆环；保存成功后 2 秒显示对勾（普通字体色）。
+                            if (saving)
+                              const SizedBox(
+                                width: 40,
+                                height: 40,
+                                child: Center(
+                                  child: SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                ),
+                              )
+                            else if (saveDone)
+                              _iconAction(
+                                Icons.check,
+                                l.saved,
+                                null,
+                                color: YinheTheme.text,
+                              )
+                            else
+                              _iconAction(
+                                Icons.save_outlined,
+                                l.saveProject,
+                                (st & 4) != 0 ? onSave : null,
+                              ),
+                          ],
                         ),
                       ),
-                    )
-                  else if (saveDone)
-                    _iconAction(
-                      Icons.check,
-                      l.saved,
-                      null,
-                      color: YinheTheme.text,
-                    )
-                  else
-                    _iconAction(
-                      Icons.save_outlined,
-                      l.saveProject,
-                      (st & 4) != 0 ? onSave : null,
-                    ),
-                ],
-              ),
-            ),
-          ],
+                    ],
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -589,4 +625,42 @@ class TopBar extends StatelessWidget {
       ),
     );
   }
+}
+
+enum _TopBarSlot { left, center, right }
+
+/// 左/中/右三段布局：中央永远位于顶栏几何中心，宽度只受两侧剩余空间限制。
+class _TopBarLayoutDelegate extends MultiChildLayoutDelegate {
+  _TopBarLayoutDelegate({required this.centerMax, required this.gap});
+
+  final double centerMax;
+  final double gap;
+
+  @override
+  void performLayout(Size size) {
+    final left = layoutChild(_TopBarSlot.left, BoxConstraints.loose(size));
+    final right = layoutChild(_TopBarSlot.right, BoxConstraints.loose(size));
+    positionChild(_TopBarSlot.left, Offset(0, (size.height - left.height) / 2));
+    positionChild(
+      _TopBarSlot.right,
+      Offset(size.width - right.width, (size.height - right.height) / 2),
+    );
+    final freeWidth = size.width - left.width - right.width - 2 * gap;
+    final centerWidth = freeWidth.clamp(0.0, centerMax).toDouble();
+    final center = layoutChild(
+      _TopBarSlot.center,
+      BoxConstraints(maxWidth: centerWidth, maxHeight: size.height),
+    );
+    positionChild(
+      _TopBarSlot.center,
+      Offset(
+        (size.width - center.width) / 2,
+        (size.height - center.height) / 2,
+      ),
+    );
+  }
+
+  @override
+  bool shouldRelayout(_TopBarLayoutDelegate oldDelegate) =>
+      oldDelegate.centerMax != centerMax || oldDelegate.gap != gap;
 }

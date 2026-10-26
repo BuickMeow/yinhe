@@ -504,10 +504,10 @@ class _StudioShellState extends _ShellBase
     final dtr = _dragDtrPtr.value;
     _editStatus.value = EditStatus(
       hidePosition: true,
-      primary: '${dt >= 0 ? '+' : ''}$dt',
+      primary: '${dt >= 0 ? '+' : ''}$dt tick',
       secondary: _viewMode == kViewPianoroll
-          ? '${dk >= 0 ? '+' : ''}$dk'
-          : '${dtr >= 0 ? '+' : ''}$dtr',
+          ? '${dk >= 0 ? '+' : ''}$dk key'
+          : '${dtr >= 0 ? '+' : ''}$dtr track',
     );
     _selectionStatusActive = true;
   }
