@@ -94,6 +94,8 @@ class MainActivity : FlutterActivity() {
 
     private external fun nativeClearAutomationSurface()
 
+    private external fun nativeSetAutomationSize(width: Int, height: Int)
+
     private external fun nativeSetSize(width: Int, height: Int)
 
     private external fun nativeSetViewport(width: Float, height: Float)
@@ -141,8 +143,8 @@ class MainActivity : FlutterActivity() {
                         } else if (p == null) {
                             result.error("no_engine", "FlutterEngine 未就绪", null)
                         } else {
-                            Log.i(TAG, "setAutomationSize $w x $h")
                             p.setSize(w, h)
+                            nativeSetAutomationSize(w, h)
                             automationSurfaceReady(p)
                             result.success(null)
                         }

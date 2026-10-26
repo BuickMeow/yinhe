@@ -84,6 +84,8 @@ static LOGICAL_W_BITS: AtomicU32 = AtomicU32::new(0);
 static LOGICAL_H_BITS: AtomicU32 = AtomicU32::new(0);
 static PIXEL_W: AtomicU32 = AtomicU32::new(0);
 static PIXEL_H: AtomicU32 = AtomicU32::new(0);
+static AM_PIXEL_W: AtomicU32 = AtomicU32::new(0);
+static AM_PIXEL_H: AtomicU32 = AtomicU32::new(0);
 
 /// 画布逻辑尺寸（视图/手势坐标系；未收到 `nativeSetViewport` 前为 0）。
 pub(crate) fn logical_size() -> (f32, f32) {
@@ -98,6 +100,14 @@ pub(crate) fn pixel_size() -> (u32, u32) {
     (
         PIXEL_W.load(Ordering::Relaxed),
         PIXEL_H.load(Ordering::Relaxed),
+    )
+}
+
+/// AM 独立 surface 的像素尺寸（Kotlin `nativeSetAutomationSize` 上报）。
+pub(crate) fn automation_pixel_size() -> (u32, u32) {
+    (
+        AM_PIXEL_W.load(Ordering::Relaxed),
+        AM_PIXEL_H.load(Ordering::Relaxed),
     )
 }
 
@@ -401,6 +411,18 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeSetSize(
 ) {
     PIXEL_W.store(width.max(1) as u32, Ordering::Relaxed);
     PIXEL_H.store(height.max(1) as u32, Ordering::Relaxed);
+}
+
+/// `MainActivity.nativeSetAutomationSize(w, h)`：AM surface 像素尺寸。
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeSetAutomationSize(
+    _env: *mut jni::sys::JNIEnv,
+    _this: jni::sys::jobject,
+    width: jni::sys::jint,
+    height: jni::sys::jint,
+) {
+    AM_PIXEL_W.store(width.max(1) as u32, Ordering::Relaxed);
+    AM_PIXEL_H.store(height.max(1) as u32, Ordering::Relaxed);
 }
 
 /// `MainActivity.nativeSetViewport(w, h)`：画布逻辑尺寸（Flutter 逻辑像素）。

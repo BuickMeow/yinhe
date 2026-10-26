@@ -549,13 +549,14 @@ pub fn render_automation_frame(
     t: &mut AmTarget,
     summary: Option<Arc<yinhe_wgpu::VelocitySummary>>,
 ) {
-    let pw = t.window.width().max(1);
-    let ph = t.window.height().max(1);
+    let (pw, ph) = match crate::automation_pixel_size() {
+        (w, h) if w > 0 && h > 0 => (w, h),
+        _ => (t.window.width().max(1), t.window.height().max(1)),
+    };
     if t.config.width != pw || t.config.height != ph {
         t.config.width = pw;
         t.config.height = ph;
         t.surface.configure(&gpu.device, &t.config);
-        log::info!("AM 交换链重配置: {pw}x{ph}");
     }
 
     let snapshot = {

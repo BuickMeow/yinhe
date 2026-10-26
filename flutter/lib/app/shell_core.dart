@@ -353,6 +353,12 @@ mixin _ShellCore on _ShellBase {
       _amTextureId = amId;
     });
     await _ensureSurface();
+    // TEMP: 自动化测试时直接打开一个 MIDI，验证 AM 纹理尺寸。提交前删除。
+    if (const bool.fromEnvironment('AM_AUTO_OPEN', defaultValue: true)) {
+      unawaited(
+        _handlePickedFile('/data/user/0/com.jieneng.yinhe/files/tau2.5.9.mid'),
+      );
+    }
   }
 
   /// 确保 Rust 已拿到生产端 surface（部分引擎版本不触发 SurfaceProducer 回调）。
