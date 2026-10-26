@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import '../core/ffi.dart' as rust;
 import '../core/snack.dart';
 import '../core/edit_status.dart';
+import '../core/multi_finger_gesture.dart';
 import '../dialogs/add_tracks_dialog.dart';
 import '../widgets/automation_panel.dart';
 import '../menus/canvas_menus.dart';
@@ -293,6 +294,10 @@ abstract class _ShellBase extends State<StudioShell>
   void _readDocState();
   void _refreshDocumentMeta();
   void _resetInteraction();
+  void _undo();
+  void _redo();
+  void _undoFromGesture();
+  void _redoFromGesture();
   Future<bool> _saveProject({bool saveAs});
   Future<void> _showLoadProgress();
   Future<bool> _confirmReplace();

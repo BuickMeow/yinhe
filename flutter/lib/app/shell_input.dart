@@ -12,6 +12,10 @@ mixin _ShellInput on _ShellBase {
 
   final Set<int> _activePointers = <int>{};
   final Map<int, Offset> _pointerPositions = <int, Offset>{};
+
+  /// 本手势序列出现过的最大手指数（sticky 到下一次第一根手指按下）。
+  /// 用于在多指轻点/长按时压掉单指 Tap/LongPress 的副作用。
+  int _maxActivePointers = 0;
   Offset? _gestureStart;
   Offset _lastFocal = Offset.zero;
   double _lastScale = 1.0;
@@ -69,6 +73,11 @@ mixin _ShellInput on _ShellBase {
     final emptyBefore = _activePointers.isEmpty;
     _activePointers.add(e.pointer);
     _pointerPositions[e.pointer] = e.localPosition;
+    if (emptyBefore) {
+      _maxActivePointers = 1;
+    } else if (_activePointers.length > _maxActivePointers) {
+      _maxActivePointers = _activePointers.length;
+    }
     if (!emptyBefore) {
       // 第二根手指：取消正在进行的编辑，交给 Flutter 双指手势。
       // 以两指刚落下时的 span 为噪声基准；手势被 arena 接受后再开始累计。
@@ -156,6 +165,13 @@ mixin _ShellInput on _ShellBase {
 
   @override
   void _handleTapUp(TapUpDetails d) {
+    // 多指轻点由 MultiFingerGestureRecognizer 处理，不能再走单指画布点击
+    // （双指 Tap 会在第一根手指抬起时触发一次 onTapUp）。
+    if (_maxActivePointers >= 2) {
+      _gestureWasEditing = false;
+      _clearLongPressUi();
+      return;
+    }
     final p = d.localPosition;
     if (_gestureEditing) {
       _finishEditGesture(p, moved: _gestureMoved);
@@ -330,6 +346,11 @@ mixin _ShellInput on _ShellBase {
 
   @override
   void _handleLongPressStart(LongPressStartDetails d) {
+    // 多指按住不应触发 AR 拖轨/选区菜单等单指长按行为。
+    if (_maxActivePointers >= 2) {
+      _clearLongPressUi();
+      return;
+    }
     final p = d.localPosition;
     if (_viewMode == kViewArrangement) {
       final idx = _rowAt(p);
@@ -512,6 +533,34 @@ mixin _ShellInput on _ShellBase {
     _pinchModeLocked = false;
     _gestureMode = _gesturePan;
     _clearLongPressUi();
+  }
+
+  /// 多指手势：双指轻点撤销。
+  @override
+  void _undoFromGesture() => _runHistoryGesture(_undo);
+
+  /// 多指手势：三指轻点/右滑重做。
+  @override
+  void _redoFromGesture() => _runHistoryGesture(_redo);
+
+  /// 手势触发撤销/重做前先丢弃未提交编辑与惯性，避免和 Rust 拖拽状态打架。
+  /// 不清 `_activePointers`：动作在最后一根手指抬起后触发，指针集合由 up 自己维护。
+  void _runHistoryGesture(void Function() action) {
+    if (!mounted) {
+      return;
+    }
+    rust.editCancel();
+    rust.stopFling();
+    _gestureEditing = false;
+    _gestureWasEditing = false;
+    _gestureZoomed = false;
+    _gestureMoved = false;
+    _pinchModeLocked = false;
+    _gestureMode = _gesturePan;
+    _resetPinchSpan();
+    _clearLongPressUi();
+    action();
+    _readDocState();
   }
 
   /// 鼠标滚轮 / 触控板滚动：Ctrl（或 Cmd）+ 滚轮缩放（键盘区缩放音高轴，
