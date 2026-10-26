@@ -7,7 +7,6 @@
 
 use std::collections::HashSet;
 use std::ptr::NonNull;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use wgpu::rwh::{AndroidDisplayHandle, AndroidNdkWindowHandle, RawDisplayHandle, RawWindowHandle};
@@ -20,28 +19,12 @@ use yinhe_wgpu::vertex::{DrawInstance, NoteInstance};
 
 use crate::Gpu;
 use crate::OwnedWindow;
-use crate::scene::{DragPreview, ViewMode};
+use crate::scene::ViewMode;
 use crate::theme_colors as tc;
 
 /// 音符层缓存键里的视图标签（防止 PR/AR 切换时缓存串层）。
 const VIEW_TAG_PIANOROLL: u64 = 1;
 const VIEW_TAG_ARRANGEMENT: u64 = 2;
-
-/// 一帧的视口/选区快照。
-///
-/// 故意不持有 `Arc<YinModel>`：模型是 COW 的，持有上一帧 Arc 会让下一次编辑
-/// 触发全量深拷贝（1 亿音符不可接受）。模型/轨道结构用当前帧，只延迟相机
-/// 与选区/预览这些轻量状态。
-struct FrameView {
-    view_mode: ViewMode,
-    model_epoch: u64,
-    revision: u64,
-    pr_view: PianoRollView,
-    arr_view: ArrangementView,
-    selection: Selection,
-    track_selected: HashSet<u16>,
-    preview: DragPreview,
-}
 
 /// surface 级资源（随 `SetSurface`/`ClearSurface` 创建与销毁）。
 pub struct Target {
@@ -56,8 +39,6 @@ pub struct Target {
     notes_buf: Vec<NoteInstance>,
     /// PR 可见窗口 + key 分桶缓存；滚动在 padding 内只改 uniform。
     pr_note_cache: yinhe_wgpu::NoteLayerCache,
-    /// 上一帧视口/选区快照：Mailbox 下纹理比浮层快一帧，渲染它来对齐。
-    delayed_view: Option<Arc<FrameView>>,
     fps_start: Instant,
     frames: u32,
     /// 仅为保活持有（尺寸在创建时已读取）。
@@ -139,7 +120,6 @@ pub fn create_target(gpu: &Gpu, window: OwnedWindow) -> Option<Target> {
         notes_cache_key: 0,
         notes_buf: Vec::new(),
         pr_note_cache: yinhe_wgpu::NoteLayerCache::new(VIEW_TAG_PIANOROLL),
-        delayed_view: None,
         fps_start: Instant::now(),
         frames: 0,
         window,
@@ -164,20 +144,7 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
     }
 
     // ── 场景快照（锁内按视图 clamp + 取只读数据）──
-    // 模型/轨道结构取当前帧；相机、选区、预览取上一帧（Mailbox 下纹理
-    // 可能比浮层快一帧，延迟它们才能对齐）。
-    let (
-        model,
-        track_colors,
-        track_visible,
-        pr_track_visible,
-        num_tracks,
-        ppq,
-        display_track,
-        revision,
-        model_epoch,
-        current_view,
-    ) = {
+    let snapshot = {
         let Ok(mut s) = crate::scene::scene().lock() else {
             return;
         };
@@ -190,51 +157,47 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
                 s.arr_view.clamp_scroll(w, h, total_ticks, num_tracks + 1)
             }
         }
-        let revision = s.document.as_ref().map(|d| d.data.revision).unwrap_or(0);
         (
+            s.view_mode,
             s.model.clone(),
+            s.pr_view.clone(),
+            s.arr_view.clone(),
             s.track_colors.clone(),
             s.track_visible.clone(),
             s.pr_track_visible.clone(),
             s.num_tracks,
             s.ppq,
             s.display_track,
-            revision,
+            s.document
+                .as_ref()
+                .map(|d| d.edit.selected.clone())
+                .unwrap_or_default(),
+            s.document
+                .as_ref()
+                .map(|d| d.edit.track_selected.clone())
+                .unwrap_or_default(),
+            s.document.as_ref().map(|d| d.data.revision).unwrap_or(0),
             s.model_epoch,
-            Arc::new(FrameView {
-                view_mode: s.view_mode,
-                model_epoch: s.model_epoch,
-                revision,
-                pr_view: s.pr_view.clone(),
-                arr_view: s.arr_view.clone(),
-                selection: s
-                    .document
-                    .as_ref()
-                    .map(|d| d.edit.selected.clone())
-                    .unwrap_or_default(),
-                track_selected: s
-                    .document
-                    .as_ref()
-                    .map(|d| d.edit.track_selected.clone())
-                    .unwrap_or_default(),
-                preview: s.preview.clone(),
-            }),
+            s.preview.clone(),
         )
     };
-
-    // Mailbox 下 Flutter raster 可能采到 render 线程下一帧刚写入的纹理，
-    // 使 wgpu 比浮层快一帧。用上一帧的相机/选区渲染，正好与浮层当前帧对齐。
-    // 换视图/换文档/模型编辑时立即用当前帧，避免闪旧内容或选区引用过期轨道。
-    let render_view = match t.delayed_view.as_ref() {
-        Some(prev)
-            if prev.view_mode == current_view.view_mode
-                && prev.model_epoch == current_view.model_epoch
-                && prev.revision == current_view.revision =>
-        {
-            Arc::clone(prev)
-        }
-        _ => Arc::clone(&current_view),
-    };
+    let (
+        view_mode,
+        model,
+        pr_view,
+        arr_view,
+        track_colors,
+        track_visible,
+        pr_track_visible,
+        num_tracks,
+        ppq,
+        display_track,
+        selection,
+        track_selected,
+        revision,
+        model_epoch,
+        preview,
+    ) = snapshot;
 
     // ── 取帧纹理 ──
     let frame = match t.surface.get_current_texture() {
@@ -249,8 +212,6 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
             return;
         }
     };
-    // 成功取到纹理后才推进延迟队列；失败/超时保留上一帧，下一帧再试。
-    t.delayed_view = Some(current_view);
     let target_view = frame
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
@@ -261,26 +222,26 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
         });
 
     if let Some(model) = &model {
-        match render_view.view_mode {
+        match view_mode {
             ViewMode::Pianoroll => upload_pianoroll(
                 t,
                 model,
-                &render_view.pr_view,
+                &pr_view,
                 &track_colors,
                 &pr_track_visible,
                 display_track,
-                &render_view.selection,
-                &render_view.track_selected,
+                &selection,
+                &track_selected,
                 model_epoch,
                 ppq,
                 w,
                 h,
-                &render_view.preview,
+                &preview,
             ),
             ViewMode::Arrangement => upload_arrangement(
                 t,
                 model,
-                &render_view.arr_view,
+                &arr_view,
                 &track_colors,
                 &track_visible,
                 // AR 不参与 PR 的「显示轨道」过滤：始终按 AR 自身显隐绘制。
@@ -291,7 +252,7 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
                 ppq,
                 w,
                 h,
-                &render_view.preview,
+                &preview,
             ),
         }
         t.renderer
