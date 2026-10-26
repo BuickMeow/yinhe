@@ -30,9 +30,6 @@ use crate::theme_colors as tc;
 const VIEW_TAG_PIANOROLL: u64 = 1;
 const VIEW_TAG_ARRANGEMENT: u64 = 2;
 
-/// AM 背景层缓存标签。
-const AM_BG_TAG: u64 = 0x0041_4D5F_4247; // "AM_BG"
-
 /// surface 级资源（随 `SetSurface`/`ClearSurface` 创建与销毁）。
 pub struct Target {
     /// 注意 drop 顺序：`surface` 必须在 `_window` 之前销毁
@@ -521,17 +518,27 @@ pub fn create_automation_target(gpu: &Gpu, window: OwnedWindow) -> Option<AmTarg
         desired_maximum_frame_latency: 2,
         alpha_mode: caps
             .alpha_modes
-            .first()
+            .iter()
             .copied()
+            .find(|m| {
+                matches!(
+                    m,
+                    wgpu::CompositeAlphaMode::PreMultiplied
+                        | wgpu::CompositeAlphaMode::PostMultiplied
+                        | wgpu::CompositeAlphaMode::Inherit
+                )
+            })
+            .or_else(|| caps.alpha_modes.first().copied())
             .unwrap_or(wgpu::CompositeAlphaMode::Auto),
         view_formats: vec![],
     };
     surface.configure(&gpu.device, &config);
     let renderer = InstanceRenderer::new(gpu.device.clone(), gpu.queue.clone(), format);
     log::info!(
-        "AM surface 就绪: {}x{} {format:?} {present_mode:?}",
+        "AM surface 就绪: {}x{} {format:?} {present_mode:?} alpha={:?}",
         config.width,
-        config.height
+        config.height,
+        config.alpha_mode
     );
     Some(AmTarget {
         surface,
@@ -655,14 +662,6 @@ pub fn render_automation_frame(
         });
 
     t.renderer.set_velocity_summary_shared(summary);
-    let bg_key = yinhe_wgpu::layer_cache_key(&[
-        AM_BG_TAG,
-        state.w.to_bits() as u64,
-        state.h.to_bits() as u64,
-    ]);
-    t.renderer.upload_decor_layer(0, bg_key, |out| {
-        out.push(DrawInstance::solid_rect(0.0, 0.0, state.w, state.h, tc::BG));
-    });
 
     if !is_velocity && lanes.is_empty() {
         t.renderer.upload_curve_layer(1, 0, |_| {});

@@ -803,25 +803,54 @@ class _AutomationPanelState extends State<AutomationPanel> {
                       builder: (context, constraints) {
                         _onPlotLayout(constraints.biggest);
                         final gpu = widget.textureId != null;
+                        AutomationPainter painter({
+                          required bool grid,
+                          required bool overlay,
+                          required bool base,
+                        }) => AutomationPainter(
+                          lane: lane,
+                          velocity: widget.velocity,
+                          trackColors: widget.trackColors,
+                          color: _trackColor,
+                          snap: widget.snap,
+                          grid: widget.grid,
+                          selectedTicks: _selectedTicks,
+                          movePreview: _movePreview,
+                          marquee: marquee,
+                          velocityPreview: _velocityPreview,
+                          paintBaseData: base,
+                          paintGrid: grid,
+                          paintOverlay: overlay,
+                        );
                         return Stack(
                           fit: StackFit.expand,
                           children: [
-                            if (gpu) Texture(textureId: widget.textureId!),
-                            CustomPaint(
-                              painter: AutomationPainter(
-                                lane: lane,
-                                velocity: widget.velocity,
-                                trackColors: widget.trackColors,
-                                color: _trackColor,
-                                snap: widget.snap,
-                                grid: widget.grid,
-                                selectedTicks: _selectedTicks,
-                                movePreview: _movePreview,
-                                marquee: marquee,
-                                velocityPreview: _velocityPreview,
-                                paintBaseData: !gpu,
+                            // 背景和网格在 wgpu 纹理下方；纹理透明，数据盖在网格上。
+                            const ColoredBox(color: YinheTheme.bg),
+                            if (gpu) ...[
+                              CustomPaint(
+                                painter: painter(
+                                  grid: true,
+                                  overlay: false,
+                                  base: false,
+                                ),
                               ),
-                            ),
+                              Texture(textureId: widget.textureId!),
+                              CustomPaint(
+                                painter: painter(
+                                  grid: false,
+                                  overlay: true,
+                                  base: false,
+                                ),
+                              ),
+                            ] else
+                              CustomPaint(
+                                painter: painter(
+                                  grid: true,
+                                  overlay: true,
+                                  base: true,
+                                ),
+                              ),
                           ],
                         );
                       },

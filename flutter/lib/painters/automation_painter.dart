@@ -20,6 +20,8 @@ class AutomationPainter extends CustomPainter {
     required this.marquee,
     required this.velocityPreview,
     required this.paintBaseData,
+    this.paintGrid = true,
+    this.paintOverlay = true,
   }) : super(repaint: Listenable.merge([snap, grid, velocityPreview]));
 
   /// null = 力度模式。
@@ -52,6 +54,12 @@ class AutomationPainter extends CustomPainter {
   /// false = 已由 wgpu 画进主纹理，Flutter 只补网格、选框和拖动预览。
   final bool paintBaseData;
 
+  /// 是否绘制网格。网格可以单独放在 wgpu 纹理下方。
+  final bool paintGrid;
+
+  /// 是否绘制选框/锚点高亮/拖动预览等交互层。
+  final bool paintOverlay;
+
   /// 左侧 combo 列宽（与 main.dart 的 SizedBox 保持一致）。
   static const double comboWidth = 60.0;
 
@@ -72,7 +80,12 @@ class AutomationPainter extends CustomPainter {
     }
     double xOf(double tick) => tick * ppu - scrollX + (kbW - comboWidth);
 
-    _paintGrid(canvas, size, ppu, scrollX, kbW);
+    if (paintGrid) {
+      _paintGrid(canvas, size, ppu, scrollX, kbW);
+    }
+    if (!paintOverlay) {
+      return;
+    }
 
     double yOf(double value) => size.height * (1.0 - value.clamp(0.0, 1.0));
 
