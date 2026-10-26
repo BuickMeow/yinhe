@@ -113,146 +113,156 @@ class TopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
-    return Container(
-      height: 42,
-      padding: const EdgeInsets.symmetric(horizontal: 6),
-      decoration: BoxDecoration(
-        // 主题 token（与桌面 app_bg/line_fg 同色系）。
-        color: YinheTheme.controlBg,
-        border: Border(bottom: BorderSide(color: YinheTheme.lineFg)),
-      ),
-      child: Stack(
-        children: [
-          Row(
-            children: [
-              IconButton(
-                onPressed: isPr ? onBack : onHome,
-                icon: Icon(isPr ? Icons.arrow_back : Icons.home),
-                color: YinheTheme.text,
-                tooltip: isPr ? l.backToArrangement : l.home,
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-              ),
-              IconButton(
-                onPressed: onTogglePlay,
-                icon: Icon(playing ? Icons.pause : Icons.play_arrow),
-                color: YinheTheme.text,
-                tooltip: playing ? l.pause : l.play,
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-              ),
-              IconButton(
-                onPressed: onStop,
-                icon: const Icon(Icons.stop),
-                color: YinheTheme.textSecondary,
-                tooltip: l.stop,
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-              ),
-              const SizedBox(width: 4),
-              ValueListenableBuilder<EditStatus?>(
-                valueListenable: editStatus,
-                builder: (context, status, _) {
-                  final active = status != null;
-                  return Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      InkWell(
-                        borderRadius: BorderRadius.circular(4),
-                        onTap: active ? null : onToggleTimecode,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 6,
-                          ),
-                          child: ValueListenableBuilder<String>(
-                            valueListenable: timecodeText,
-                            builder: (context, text, _) => Text(
-                              status?.position ?? text,
-                              style: TextStyle(
-                                color: active
-                                    ? YinheTheme.accent
-                                    : YinheTheme.textLabel,
-                                fontSize: 14,
-                              ),
+    // 顶栏是密集工具栏：限制系统字体放大，避免长歌名/大字号把按钮挤出屏幕。
+    return MediaQuery.withClampedTextScaling(
+      maxScaleFactor: 1.2,
+      child: Container(
+        height: 42,
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        decoration: BoxDecoration(
+          // 主题 token（与桌面 app_bg/line_fg 同色系）。
+          color: YinheTheme.controlBg,
+          border: Border(bottom: BorderSide(color: YinheTheme.lineFg)),
+        ),
+        child: Row(
+          children: [
+            IconButton(
+              onPressed: isPr ? onBack : onHome,
+              icon: Icon(isPr ? Icons.arrow_back : Icons.home),
+              color: YinheTheme.text,
+              tooltip: isPr ? l.backToArrangement : l.home,
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+            ),
+            IconButton(
+              onPressed: onTogglePlay,
+              icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+              color: YinheTheme.text,
+              tooltip: playing ? l.pause : l.play,
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+            ),
+            IconButton(
+              onPressed: onStop,
+              icon: const Icon(Icons.stop),
+              color: YinheTheme.textSecondary,
+              tooltip: l.stop,
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+            ),
+            const SizedBox(width: 4),
+            ValueListenableBuilder<EditStatus?>(
+              valueListenable: editStatus,
+              builder: (context, status, _) {
+                final active = status != null;
+                return Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    InkWell(
+                      borderRadius: BorderRadius.circular(4),
+                      onTap: active ? null : onToggleTimecode,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 6,
+                        ),
+                        child: ValueListenableBuilder<String>(
+                          valueListenable: timecodeText,
+                          builder: (context, text, _) => Text(
+                            status?.position ?? text,
+                            style: TextStyle(
+                              color: active
+                                  ? YinheTheme.accent
+                                  : YinheTheme.textLabel,
+                              fontSize: 14,
                             ),
                           ),
                         ),
                       ),
-                      if (status == null) ...[
-                        _metaText(bpmText, l.defaultBpm, onEditBpm),
-                        _metaText(sigText, l.defaultTimeSig, onEditSig),
-                      ] else ...[
-                        if (status.primary != null)
-                          _metaText(status.primary!, '', null, active: true),
-                        if (status.secondary != null)
-                          _metaText(status.secondary!, '', null, active: true),
-                      ],
+                    ),
+                    if (status == null) ...[
+                      _metaText(bpmText, l.defaultBpm, onEditBpm),
+                      _metaText(sigText, l.defaultTimeSig, onEditSig),
+                    ] else ...[
+                      if (status.primary != null)
+                        _metaText(status.primary!, '', null, active: true),
+                      if (status.secondary != null)
+                        _metaText(status.secondary!, '', null, active: true),
                     ],
+                  ],
+                );
+              },
+            ),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, c) {
+                  // 中央标题只占左右控件之外的空隙；窄屏直接隐藏，绝不盖住按钮。
+                  if (c.maxWidth < 72) {
+                    return const SizedBox.shrink();
+                  }
+                  return Center(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: (isPr ? 220.0 : 260.0).clamp(0.0, c.maxWidth),
+                      ),
+                      child: isPr ? _buildSongBox(l) : _titleButton(l),
+                    ),
                   );
                 },
               ),
-              const Spacer(),
-              _buildQuantizeButton(context, l),
-              _buildQuickToolButton(l),
-              _buildToolButton(l),
-              ValueListenableBuilder<int>(
-                valueListenable: docState,
-                builder: (context, st, _) => Row(
-                  children: [
-                    _iconAction(
-                      Icons.undo,
-                      l.undo,
-                      (st & 1) != 0 ? onUndo : null,
-                    ),
-                    _iconAction(
-                      Icons.redo,
-                      l.redo,
-                      (st & 2) != 0 ? onRedo : null,
-                    ),
-                    // 保存：从右向左第一个；无改动时置灰不可点；
-                    // 保存中显示圆环；保存成功后 2 秒显示对勾（普通字体色）。
-                    if (saving)
-                      const SizedBox(
-                        width: 40,
-                        height: 40,
-                        child: Center(
-                          child: SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        ),
-                      )
-                    else if (saveDone)
-                      _iconAction(
-                        Icons.check,
-                        l.saved,
-                        null,
-                        color: YinheTheme.text,
-                      )
-                    else
-                      _iconAction(
-                        Icons.save_outlined,
-                        l.saveProject,
-                        (st & 4) != 0 ? onSave : null,
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          // 中央：PR = 显示轨道长按钮；AR = 歌名按钮（直接打开工程设置）。
-          Positioned.fill(
-            child: Align(
-              alignment: Alignment.center,
-              child: isPr ? _buildSongBox(l) : _titleButton(l),
             ),
-          ),
-        ],
+            _buildQuantizeButton(context, l),
+            _buildQuickToolButton(l),
+            _buildToolButton(l),
+            ValueListenableBuilder<int>(
+              valueListenable: docState,
+              builder: (context, st, _) => Row(
+                children: [
+                  _iconAction(
+                    Icons.undo,
+                    l.undo,
+                    (st & 1) != 0 ? onUndo : null,
+                  ),
+                  _iconAction(
+                    Icons.redo,
+                    l.redo,
+                    (st & 2) != 0 ? onRedo : null,
+                  ),
+                  // 保存：从右向左第一个；无改动时置灰不可点；
+                  // 保存中显示圆环；保存成功后 2 秒显示对勾（普通字体色）。
+                  if (saving)
+                    const SizedBox(
+                      width: 40,
+                      height: 40,
+                      child: Center(
+                        child: SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                    )
+                  else if (saveDone)
+                    _iconAction(
+                      Icons.check,
+                      l.saved,
+                      null,
+                      color: YinheTheme.text,
+                    )
+                  else
+                    _iconAction(
+                      Icons.save_outlined,
+                      l.saveProject,
+                      (st & 4) != 0 ? onSave : null,
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
