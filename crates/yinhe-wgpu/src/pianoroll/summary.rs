@@ -17,22 +17,16 @@ use yinhe_types::KEY_COUNT;
 use crate::vertex::NoteInstance;
 /// 摘要档位（tick 块宽），由大到小，取 2 的幂，最细 16。
 ///
-/// 档位间隔 4 倍（1024/256/64/16）：每档覆盖的 X（1px 覆盖的 tick）区间
-/// 宽 4 倍，块宽落在 (1, 4] px。相比 2 倍间隔的 7 档，省去约 1/3 显存
-/// （1.64 亿音符曲目约 670MB → 450MB），代价是部分缩放区间块宽由 ≤2px
-/// 放宽到 ≤4px（音符略粗，仍远细于原始层）。
+/// 档位间隔 4 倍（262144/65536/16384/4096/1024/256/64/16）：块宽落在
+/// (1, 4] px，缩放时在相邻档之间切换。
 ///
 /// 范围依据：
-/// - 最粗 1024：ppu 最小值 0.001（view 缩放 clamp）下选择条件
-///   `block × ppu ≤ SUMMARY_MAX_PX` 推出可达最大 block = 4000，1024 已够；
+/// - 最粗 262144：ppu 最小值 0.00001（view 缩放 clamp）下
+///   `262144 × 0.00001 ≈ 2.62px`，满足 `block × ppu ≤ SUMMARY_MAX_PX`；
 /// - 最细 16：更细的档段数会趋近音符数（摘要退化成原始数据），
 ///   且它们生效的缩放区间原始层本来只有几十万可见音符（几 ms），
 ///   收益为零还吃显存，因此删除。
-///
-/// 不设段数上限：段数超限的档会被静默跳过，导致缩放时「细档凭空消失」
-/// （32 直接跳原始层）。显存安全由 `GpuBudget` 兜底（上传失败即清空该档
-/// 并回退到更粗档/原始层）。
-pub const SUMMARY_BLOCK_TICKS: [u32; 4] = [1024, 256, 64, 16];
+pub const SUMMARY_BLOCK_TICKS: [u32; 8] = [262144, 65536, 16384, 4096, 1024, 256, 64, 16];
 /// 摘要块在屏幕上的最大像素宽。块内空隙 ≤ 该宽度时被合并不可见。
 pub const SUMMARY_MAX_PX: f32 = 4.0;
 
@@ -154,22 +148,22 @@ mod tests {
 
     #[test]
     fn select_level_by_pixels() {
-        // 档位间隔 4 倍：block 生效 X ∈ [block/4, ...)，块宽 ∈ (1, 4] px。
-        assert_eq!(select_summary_level(1.0 / 1024.0), Some(0));
-        assert_eq!(select_summary_level(1.0 / 300.0), Some(0));
-        assert_eq!(select_summary_level(1.0 / 256.0), Some(0)); // 边界：1024/X = 4
-        assert_eq!(select_summary_level(1.0 / 200.0), Some(1)); // 256 档
-        assert_eq!(select_summary_level(1.0 / 64.0), Some(1)); // 边界：256/X = 4
-        assert_eq!(select_summary_level(1.0 / 50.0), Some(2)); // 64 档
-        assert_eq!(select_summary_level(1.0 / 16.0), Some(2)); // 边界：64/X = 4
-        assert_eq!(select_summary_level(1.0 / 10.0), Some(3)); // 16 档
-        assert_eq!(select_summary_level(1.0 / 4.0), Some(3)); // 边界：16/X = 4
+        // 每档在 (1, 4] px 生效；按实际 block 断言，避免档位增减导致索引脆断。
+        let block = |ppu: f32| select_summary_level(ppu).map(|i| SUMMARY_BLOCK_TICKS[i]);
+        assert_eq!(block(0.00001), Some(262144));
+        assert_eq!(block(0.00002), Some(65536));
+        assert_eq!(block(0.0001), Some(16384));
+        assert_eq!(block(0.0004), Some(4096));
+        assert_eq!(block(0.001), Some(1024));
+        assert_eq!(block(0.004), Some(256));
+        assert_eq!(block(0.02), Some(64));
+        assert_eq!(block(0.1), Some(16));
         // 16 块 > 4px（X < 4）→ 原始层（此时视口内可见音符不多）。
-        assert_eq!(select_summary_level(0.3), None);
-        assert_eq!(select_summary_level(0.5), None);
-        assert_eq!(select_summary_level(1.0), None);
-        assert_eq!(select_summary_level(2.5), None);
-        assert_eq!(select_summary_level(0.0), None);
+        assert_eq!(block(0.3), None);
+        assert_eq!(block(0.5), None);
+        assert_eq!(block(1.0), None);
+        assert_eq!(block(2.5), None);
+        assert_eq!(block(0.0), None);
     }
 
     #[test]

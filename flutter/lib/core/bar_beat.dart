@@ -31,7 +31,7 @@ class BarBeatGrid {
     var divisor = 1;
     while (pixelsPerMeasure * divisor < minPx) {
       divisor *= 2;
-      if (divisor >= 64) {
+      if (divisor >= 65536) {
         break;
       }
     }

@@ -1,4 +1,4 @@
-use crate::TimelineViewBase;
+use crate::{PIXELS_PER_TICK_MAX, PIXELS_PER_TICK_MIN, TimelineViewBase};
 
 /// AR 垂直缩放（行高）的最小档：16px（与改造前的最小值一致）。
 pub const LANE_HEIGHT_MIN: f32 = 16.0;
@@ -172,7 +172,8 @@ impl ArrangementView {
     /// 时间轴 fit：全曲 tick 范围铺满视口宽度。
     pub fn fit_time(&mut self, width: f32, total_ticks: f64) {
         if total_ticks > 0.0 && width > 0.0 {
-            self.base.pixels_per_tick = (width / total_ticks as f32).clamp(0.001, 10.0);
+            self.base.pixels_per_tick =
+                (width / total_ticks as f32).clamp(PIXELS_PER_TICK_MIN, PIXELS_PER_TICK_MAX);
             self.base.scroll_x = 0.0;
             self.base.dirty = true;
         }

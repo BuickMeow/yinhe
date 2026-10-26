@@ -553,7 +553,7 @@ fn paint_marker_labels(
 ) -> Vec<MarkerLabel> {
     let orientation = view.orientation();
     let ppu = view.pixels_per_tick();
-    if ppu <= 0.001 {
+    if !ppu.is_finite() || ppu <= 0.0 {
         return Vec::new();
     }
     let main_size = match orientation {
@@ -657,7 +657,7 @@ fn paint_labels(
 ) {
     let orientation = view.orientation();
     let ppu = view.pixels_per_tick();
-    if ppu <= 0.001 {
+    if !ppu.is_finite() || ppu <= 0.0 {
         return;
     }
 

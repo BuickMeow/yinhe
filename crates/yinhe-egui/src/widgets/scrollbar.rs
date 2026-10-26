@@ -25,8 +25,8 @@ fn colors() -> (egui::Color32, egui::Color32, egui::Color32, egui::Color32) {
 }
 
 /// Pixel-range allowed for `pixels_per_tick`.
-const PPT_MIN: f32 = 0.001;
-const PPT_MAX: f32 = 10.0;
+const PPT_MIN: f32 = yinhe_types::PIXELS_PER_TICK_MIN;
+const PPT_MAX: f32 = yinhe_types::PIXELS_PER_TICK_MAX;
 
 /// 指针是否在 `rect` 内双击（Primary）。只读输入、不注册交互，
 /// 避免与滚动条内部已有的 `interact` 冲突。调用方用它做「双击 fit」。

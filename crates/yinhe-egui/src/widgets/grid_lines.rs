@@ -68,7 +68,7 @@ pub fn paint_grid_lines(
     orientation: Orientation,
 ) {
     let ppu = base.pixels_per_tick;
-    if ppu <= 0.001 {
+    if !ppu.is_finite() || ppu <= 0.0 {
         return;
     }
 
@@ -460,10 +460,9 @@ mod tests {
     /// 验证零 ppu 时函数提前返回（不 panic）。
     #[test]
     fn test_grid_zero_ppu_no_panic() {
-        // paint_grid_lines 在 ppu<=0.001 时直接 return，无法直接测 painter 输出，
-        // 这里通过验证 ppu<=0.001 的分支逻辑来保证。
+        // paint_grid_lines 在 ppu<=0（非正/非有限）时直接 return。
         let base = make_base(0.0);
-        assert!(base.pixels_per_tick <= 0.001);
+        assert!(base.pixels_per_tick <= 0.0);
     }
 
     /// 验证 GridColors 配色档位：同色相四档透明度，整体加深。

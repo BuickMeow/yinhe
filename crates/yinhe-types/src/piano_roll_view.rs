@@ -1,4 +1,4 @@
-use crate::TimelineViewBase;
+use crate::{PIXELS_PER_TICK_MAX, PIXELS_PER_TICK_MIN, TimelineViewBase};
 
 /// 钢琴卷帘时间轴方向（横向 / 纵向瀑布流，二选一）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -208,7 +208,8 @@ impl PianoRollView {
     /// 主轴上围绕 `px` 缩放（时间轴缩放）。
     pub fn zoom_main_around(&mut self, px: f32, factor: f32) {
         let old = self.base.pixels_per_tick;
-        self.base.pixels_per_tick = (self.base.pixels_per_tick * factor).clamp(0.001, 10.0);
+        self.base.pixels_per_tick =
+            (self.base.pixels_per_tick * factor).clamp(PIXELS_PER_TICK_MIN, PIXELS_PER_TICK_MAX);
         // 锚点对应的「未滚动」主轴坐标：纵向镜像后取 main_size - px。
         let base = if self.is_vertical() {
             self.main_size - px
@@ -413,7 +414,8 @@ impl PianoRollView {
     /// 时间轴 fit：让全曲 tick 范围铺满主轴视口。
     pub fn fit_time(&mut self, main_size: f32, total_ticks: f64) {
         if total_ticks > 0.0 && main_size > 0.0 {
-            self.base.pixels_per_tick = (main_size / total_ticks as f32).clamp(0.001, 10.0);
+            self.base.pixels_per_tick =
+                (main_size / total_ticks as f32).clamp(PIXELS_PER_TICK_MIN, PIXELS_PER_TICK_MAX);
             *self.main_scroll() = 0.0;
             self.base.dirty = true;
         }

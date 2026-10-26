@@ -723,7 +723,7 @@ fn push_time_grid(
     };
 
     let ppu = base.pixels_per_tick;
-    if ppu <= 0.001 {
+    if !ppu.is_finite() || ppu <= 0.0 {
         return;
     }
     let tpb = ppq.max(1);

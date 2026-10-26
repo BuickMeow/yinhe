@@ -74,7 +74,7 @@ void main() {
       expect(BarBeatGrid.measureDivisor(120, 24), 1);
       expect(BarBeatGrid.measureDivisor(12, 24), 2);
       expect(BarBeatGrid.measureDivisor(3, 24), 8);
-      expect(BarBeatGrid.measureDivisor(0.1, 24), 64);
+      expect(BarBeatGrid.measureDivisor(0.1, 24), 256);
     });
   });
 }

@@ -1,3 +1,9 @@
+/// 时间轴缩放下限（px/tick）。0.001 → 0.00001：同样屏宽能看 100 倍长度；
+/// 网格/LOD 已按此下限同步扩容。
+pub const PIXELS_PER_TICK_MIN: f32 = 0.00001;
+/// 时间轴缩放上限（px/tick）。
+pub const PIXELS_PER_TICK_MAX: f32 = 10.0;
+
 /// Shared horizontal timeline state used by both PianoRollView and ArrangementView.
 ///
 /// Encapsulates the fields and methods that are identical between the two views:
@@ -55,7 +61,8 @@ impl TimelineViewBase {
     /// Zoom around a pointer position (horizontal).
     pub fn zoom_around_x(&mut self, pointer_x: f32, zoom_factor: f32) {
         let old = self.pixels_per_tick;
-        self.pixels_per_tick = (self.pixels_per_tick * zoom_factor).clamp(0.001, 10.0);
+        self.pixels_per_tick =
+            (self.pixels_per_tick * zoom_factor).clamp(PIXELS_PER_TICK_MIN, PIXELS_PER_TICK_MAX);
 
         // Keep the tick under the pointer stationary
         let tick = (pointer_x - self.left_panel_width + self.scroll_x) / old;

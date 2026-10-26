@@ -1080,7 +1080,10 @@ fn apply_document(mut doc: Document, min_ticks: f64) {
     pr_view.base.pixels_per_tick = 1.0;
 
     let arr_base = TimelineViewBase {
-        pixels_per_tick: (1280.0 * 2.0 / content_ticks as f32).clamp(0.0005, 8.0),
+        pixels_per_tick: (1280.0 * 2.0 / content_ticks as f32).clamp(
+            yinhe_types::PIXELS_PER_TICK_MIN,
+            yinhe_types::PIXELS_PER_TICK_MAX,
+        ),
         scroll_x: 0.0,
         scroll_y: 0.0,
         left_panel_width: AR_TRACK_PANEL_W,

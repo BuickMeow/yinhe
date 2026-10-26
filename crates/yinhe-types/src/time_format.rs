@@ -162,7 +162,7 @@ pub fn measure_ticks(tpb: u32, numerator: u8, denominator_power: u8) -> u32 {
 }
 
 /// 多小节合并的步长倍数上限，避免无限翻倍。
-const MAX_MEASURE_DIVISOR: u32 = 64;
+const MAX_MEASURE_DIVISOR: u32 = 65_536;
 
 /// 计算多小节合并的步长倍数。
 ///

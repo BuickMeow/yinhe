@@ -41,7 +41,7 @@ pub use synth::{Interpolation, SynthEngine};
 pub use time_format::{
     build_time_sig_segments, compute_measure_divisor, measure_bounds_at_tick, measure_ticks,
 };
-pub use view_base::TimelineViewBase;
+pub use view_base::{PIXELS_PER_TICK_MAX, PIXELS_PER_TICK_MIN, TimelineViewBase};
 
 /// 内部音高空间的 key 总数（桶数）。标准 MIDI 只有 128 键（0-127），
 /// yinhe 内部支持 256 键（0-255）：128-255 是扩展音域，数据无损保存，
