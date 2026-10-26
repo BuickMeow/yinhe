@@ -331,68 +331,14 @@ class TopBar extends StatelessWidget {
   }
 
   Widget _buildQuantizeButton(BuildContext context, AppLocalizations l) {
-    return Builder(
-      builder: (context) {
-        var anchor = Offset.zero;
-        return Tooltip(
-          message: l.quantize,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(4),
-            onTapDown: (d) => anchor = d.globalPosition,
-            onTap: () => _showQuantizeMenu(context, anchor, l),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.motion_photos_on,
-                    size: 16,
-                    color: YinheTheme.textSecondary,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    switch (quantizeLabel) {
-                      '关闭' => l.quantizeOff,
-                      '自动' => l.quantizeAuto,
-                      _ => quantizeLabel,
-                    },
-                    style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  /// 与工具菜单同一套 showMenu 路径；PopupMenuButton 在部分设备上会先出字后出背景。
-  Future<void> _showQuantizeMenu(
-    BuildContext context,
-    Offset anchor,
-    AppLocalizations l,
-  ) async {
-    final overlay =
-        Overlay.of(context).context.findRenderObject() as RenderBox?;
-    if (overlay == null) {
-      return;
-    }
-    final local = overlay.globalToLocal(anchor);
-    final selected = await showMenu<String>(
-      context: context,
+    return PopupMenuButton<String>(
       color: YinheTheme.bg,
-      // 保留展开动画，但把内容裁剪在 Material 当前尺寸内：
-      // 否则背景还在从 0 放大时，菜单文字会先画到背景外面。
+      // 保留原展开动画，但裁剪内容：否则背景还在放大时文字会先画到背景外。
       clipBehavior: Clip.antiAlias,
-      position: RelativeRect.fromLTRB(
-        local.dx,
-        local.dy,
-        overlay.size.width - local.dx,
-        overlay.size.height - local.dy,
-      ),
-      items: [
+      tooltip: l.quantize,
+      padding: EdgeInsets.zero,
+      onSelected: onQuantize,
+      itemBuilder: (_) => [
         PopupMenuItem(value: '关闭', child: Text(l.quantizeOff)),
         PopupMenuItem(value: '自动', child: Text(l.quantizeAuto)),
         for (final (label, ticks) in quantizePresetsForPpq(ppq))
@@ -405,10 +351,26 @@ class TopBar extends StatelessWidget {
             ),
           ),
       ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.motion_photos_on,
+              size: 16,
+              color: YinheTheme.textSecondary,
+            ),
+            const SizedBox(width: 4),
+            Text(switch (quantizeLabel) {
+              '关闭' => l.quantizeOff,
+              '自动' => l.quantizeAuto,
+              _ => quantizeLabel,
+            }, style: TextStyle(color: YinheTheme.textLabel, fontSize: 13)),
+          ],
+        ),
+      ),
     );
-    if (selected != null) {
-      onQuantize(selected);
-    }
   }
 
   /// 快捷工具组：与主工具下拉框使用同一套工具。
@@ -559,66 +521,23 @@ class TopBar extends StatelessWidget {
   Widget _buildSongBox(AppLocalizations l) {
     final active = activeTrack >= 0 && activeTrack < tracks.length;
     final base = active ? tracks[activeTrack].name : _titled(l);
-    return Builder(
-      builder: (context) {
-        var anchor = Offset.zero;
-        return Tooltip(
-          message: l.currentTrack,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(6),
-            onTapDown: (d) => anchor = d.globalPosition,
-            onTap: () => _showTrackSelectorMenu(context, anchor, l),
-            child: Container(
-              margin: const EdgeInsets.symmetric(vertical: 7),
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              constraints: const BoxConstraints(maxWidth: 220),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                // 比顶栏底（controlBg）稍深一档，长按钮才可见。
-                color: YinheTheme.btnBg,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: ValueListenableBuilder<int>(
-                valueListenable: docState,
-                builder: (context, st, _) => Text(
-                  (st & 4) != 0 ? '• $base' : base,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: showAllTracks ? YinheTheme.text : YinheTheme.accent,
-                    fontSize: 12,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Future<void> _showTrackSelectorMenu(
-    BuildContext context,
-    Offset anchor,
-    AppLocalizations l,
-  ) async {
-    final overlay =
-        Overlay.of(context).context.findRenderObject() as RenderBox?;
-    if (overlay == null) {
-      return;
-    }
-    final local = overlay.globalToLocal(anchor);
-    final selected = await showMenu<int>(
-      context: context,
+    return PopupMenuButton<int>(
       color: YinheTheme.bg,
       clipBehavior: Clip.antiAlias,
-      position: RelativeRect.fromLTRB(
-        local.dx,
-        local.dy,
-        overlay.size.width - local.dx,
-        overlay.size.height - local.dy,
-      ),
-      items: [
+      tooltip: l.currentTrack,
+      padding: EdgeInsets.zero,
+      onSelected: (v) {
+        if (v >= tracks.length) {
+          onToggleAllTracks();
+        } else {
+          // 直接选轨 = 只看该轨；先关掉「全部轨道」再切换当前编辑轨。
+          if (showAllTracks) {
+            onToggleAllTracks();
+          }
+          onSelectTrack(v);
+        }
+      },
+      itemBuilder: (_) => [
         PopupMenuItem<int>(
           enabled: false,
           height: 30,
@@ -640,17 +559,29 @@ class TopBar extends StatelessWidget {
             child: Text('${i.toString().padLeft(3, '0')}  ${tracks[i].name}'),
           ),
       ],
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        constraints: const BoxConstraints(maxWidth: 220),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          // 比顶栏底（controlBg）稍深一档，长按钮才可见。
+          color: YinheTheme.btnBg,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: ValueListenableBuilder<int>(
+          valueListenable: docState,
+          builder: (context, st, _) => Text(
+            (st & 4) != 0 ? '• $base' : base,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: showAllTracks ? YinheTheme.text : YinheTheme.accent,
+              fontSize: 12,
+            ),
+          ),
+        ),
+      ),
     );
-    if (selected == null) {
-      return;
-    }
-    if (selected >= tracks.length) {
-      onToggleAllTracks();
-    } else {
-      if (showAllTracks) {
-        onToggleAllTracks();
-      }
-      onSelectTrack(selected);
-    }
   }
 }
