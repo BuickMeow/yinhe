@@ -383,6 +383,9 @@ class TopBar extends StatelessWidget {
     final selected = await showMenu<String>(
       context: context,
       color: YinheTheme.bg,
+      // 保留展开动画，但把内容裁剪在 Material 当前尺寸内：
+      // 否则背景还在从 0 放大时，菜单文字会先画到背景外面。
+      clipBehavior: Clip.antiAlias,
       position: RelativeRect.fromLTRB(
         local.dx,
         local.dy,
@@ -608,6 +611,7 @@ class TopBar extends StatelessWidget {
     final selected = await showMenu<int>(
       context: context,
       color: YinheTheme.bg,
+      clipBehavior: Clip.antiAlias,
       position: RelativeRect.fromLTRB(
         local.dx,
         local.dy,
