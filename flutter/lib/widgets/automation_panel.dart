@@ -138,18 +138,33 @@ class _AutomationPanelState extends State<AutomationPanel> {
       ? _selectedLane
       : null;
 
-  /// 按插入自动化的 target 语义查找 lane（PB 兼容 Param 映射）。
+  /// 按插入自动化的 target 语义查找 lane（PB/RPN 兼容 MIDI 导入的 Param 映射）。
   int _findLane(int kind, int number) {
     for (var i = 0; i < widget.lanes.length; i++) {
-      final l = widget.lanes[i];
-      if (l.kind != kind) {
-        continue;
-      }
-      if (kind == 1 || l.number == number) {
+      if (_matchesTarget(widget.lanes[i], kind, number)) {
         return i;
       }
     }
     return -1;
+  }
+
+  bool _matchesTarget(AutomationLaneData lane, int kind, int number) {
+    if (lane.kind != kind) {
+      return false;
+    }
+    // PB：Param{ChannelInstrument, PITCH_BEND} 也映射为 kind 0。
+    if (kind == 1) {
+      return true;
+    }
+    if (lane.number == number) {
+      return true;
+    }
+    // 导入的 RPN 可能是 Param lane（number=-1），按名称兜底匹配。
+    if (kind == 2 && lane.number < 0) {
+      final name = MidiNames.instance.rpn[number];
+      return name != null && name.isNotEmpty && lane.name.contains(name);
+    }
+    return false;
   }
 
   @override
@@ -589,7 +604,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
     // 先按「插入自动化」的 target 顺序列出（缺失项显示为可添加）。
     for (final (kind, number) in _amTargets) {
       final idx = widget.lanes.indexWhere(
-        (ln) => ln.kind == kind && (kind == 1 || ln.number == number),
+        (ln) => _matchesTarget(ln, kind, number),
       );
       if (idx >= 0) {
         used.add(idx);
