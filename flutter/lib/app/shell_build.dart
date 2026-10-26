@@ -66,6 +66,29 @@ mixin _ShellBuild on _ShellBase {
                           'lh': contentH,
                         });
                       }
+                      // AM 与 PR 一样在布局层确认视口：物理尺寸才决定
+                      // SurfaceProducer 的交换链大小，不能等子组件回调。
+                      if (amVisible) {
+                        final amW = (size.width - AutomationPainter.comboWidth)
+                            .clamp(1.0, double.infinity);
+                        final amH2 = (amH - AutomationPanel.handleHeight).clamp(
+                          1.0,
+                          double.infinity,
+                        );
+                        final amPw = (amW * dpr).round();
+                        final amPh = (amH2 * dpr).round();
+                        if (_reportedAmSize?.width != amPw ||
+                            _reportedAmSize?.height != amPh) {
+                          _reportedAmSize = Size(
+                            amPw.toDouble(),
+                            amPh.toDouble(),
+                          );
+                          _channel.invokeMethod<void>('setAutomationSize', {
+                            'w': amPw,
+                            'h': amPh,
+                          });
+                        }
+                      }
                       return RawGestureDetector(
                         behavior: HitTestBehavior.translucent,
                         gestures: <Type, GestureRecognizerFactory>{
@@ -246,18 +269,6 @@ mixin _ShellBuild on _ShellBase {
                                   onCollapsed: _setAutoCollapsed,
                                   onReload: _loadAutomation,
                                   textureId: _amTextureId,
-                                  onPlotSize: (w, h) async {
-                                    final dpr = MediaQuery.devicePixelRatioOf(
-                                      context,
-                                    );
-                                    await _channel.invokeMethod<void>(
-                                      'setAutomationSize',
-                                      {
-                                        'w': (w * dpr).round(),
-                                        'h': (h * dpr).round(),
-                                      },
-                                    );
-                                  },
                                   onVelocityCommit: _commitVelocityStroke,
                                   velocityDrawEnabled: _tool == 2,
                                   onResize: _resizeAutoPanel,

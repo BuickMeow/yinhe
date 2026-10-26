@@ -67,6 +67,9 @@ abstract class _ShellBase extends State<StudioShell>
   int? _amTextureId;
   Size? _reportedPixelSize;
 
+  /// AM 独立纹理的物理尺寸（布局层上报，和 PR 的 setSize 同一策略）。
+  Size? _reportedAmSize;
+
   bool _showHome = true;
   int _viewMode = kViewArrangement;
   String? _fileName;

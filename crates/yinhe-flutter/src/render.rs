@@ -555,6 +555,7 @@ pub fn render_automation_frame(
         t.config.width = pw;
         t.config.height = ph;
         t.surface.configure(&gpu.device, &t.config);
+        log::info!("AM 交换链重配置: {pw}x{ph}");
     }
 
     let snapshot = {

@@ -30,7 +30,6 @@ class AutomationPanel extends StatefulWidget {
     required this.onCollapsed,
     required this.onReload,
     required this.textureId,
-    required this.onPlotSize,
     required this.onVelocityCommit,
     required this.velocityDrawEnabled,
     required this.onResize,
@@ -57,10 +56,6 @@ class AutomationPanel extends StatefulWidget {
 
   /// AM wgpu 独立纹理 ID；null = 尚未创建（退回 Flutter 绘制）。
   final int? textureId;
-
-  /// 绘制区逻辑尺寸变化（父层用来设置 TextureProducer 物理尺寸）。
-  /// 返回的 Future 成功后才认为尺寸已生效；失败会在下一帧重试。
-  final Future<void> Function(double w, double h) onPlotSize;
 
   /// 提交一笔力度绘制点 `(tick, velocity 1..127)`。
   final void Function(List<(double, double)> points) onVelocityCommit;
@@ -119,28 +114,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
   /// old tick -> (new tick, new value)，拖动中的预览。
   Map<int, (int, double)> _movePreview = {};
 
-  @override
-  void initState() {
-    super.initState();
-    // 布局回调之前先给 SurfaceProducer 一个初始尺寸，避免 AM 纹理停留在
-    // 1x1：1x1 被拉伸后，视口变化时会在「全满/全空」之间跳。
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
-        return;
-      }
-      final w = MediaQuery.sizeOf(context).width - AutomationPainter.comboWidth;
-      final h = widget.canvasHeight;
-      if (w > 0 && h > 0) {
-        _amW = w;
-        _amH = h;
-        _pushPlotSize(w, h);
-        _sendAmState();
-      }
-    });
-  }
-
   /// AM wgpu 状态去重缓存。
-  bool _amSizeOk = false;
   double _amW = 0;
   double _amH = 0;
   int _amTrack = -1;
@@ -197,33 +171,13 @@ class _AutomationPanelState extends State<AutomationPanel> {
     rust.setAutomationPanel(w, h, visible ? 1 : 0, track, lane);
   }
 
-  /// 把逻辑尺寸推给 Android SurfaceProducer；失败时下一帧继续重试。
-  void _pushPlotSize(double w, double h) {
-    _amSizeOk = false;
-    widget
-        .onPlotSize(w, h)
-        .then((_) {
-          _amSizeOk = true;
-        })
-        .catchError((_) {
-          _amSizeOk = false;
-        });
-  }
-
-  /// 绘制区布局：更新纹理物理尺寸，并同步 Rust。
+  /// 绘制区布局：同步逻辑尺寸给 Rust；物理尺寸由外层 LayoutBuilder 上报。
   void _onPlotLayout(Size size) {
     if (size.width < 1 || size.height < 1) {
       return;
     }
-    final changed = size.width != _amW || size.height != _amH;
-    if (changed) {
-      _amW = size.width;
-      _amH = size.height;
-      _amSizeOk = false;
-    }
-    if (changed || !_amSizeOk) {
-      _pushPlotSize(size.width, size.height);
-    }
+    _amW = size.width;
+    _amH = size.height;
     _sendAmState();
   }
 
