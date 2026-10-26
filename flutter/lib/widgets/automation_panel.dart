@@ -435,7 +435,8 @@ class _AutomationPanelState extends State<AutomationPanel> {
     } else {
       final dti = effectiveDt.round();
       widget.status.value = EditStatus(
-        primary: 'Δt${dti >= 0 ? '+' : ''}$dti',
+        hidePosition: true,
+        primary: '${dti >= 0 ? '+' : ''}$dti',
         secondary: '×${_selectedTicks.length}',
       );
     }

@@ -533,6 +533,7 @@ mixin _ShellInput on _ShellBase {
     _pinchModeLocked = false;
     _gestureMode = _gesturePan;
     _clearLongPressUi();
+    _clearInsertStatus();
   }
 
   /// 多指手势：双指轻点撤销。

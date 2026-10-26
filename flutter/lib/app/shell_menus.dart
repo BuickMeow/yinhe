@@ -26,6 +26,11 @@ mixin _ShellMenus on _ShellBase {
     _lpIndicator.value = ctx == null
         ? null
         : LongPressIndicator(tick: ctx.tick, track: ctx.track, pr: ctx.pr);
+    if (ctx != null) {
+      // 菜单/后续插入对话框期间，顶部栏保持蓝色插入位置。
+      _setInsertStatus(ctx.tick);
+    }
+    var inserting = false;
     showEmptyLongPressMenu(
       context,
       canPaste: rust.clipboardEmpty() == 0,
@@ -34,8 +39,16 @@ mixin _ShellMenus on _ShellBase {
           _refreshDocumentMeta();
         }
       },
-      onInsert: ctx == null ? null : () => _runInsertFlow(ctx),
+      onInsert: ctx == null
+          ? null
+          : () {
+              inserting = true;
+              _runInsertFlow(ctx);
+            },
     ).whenComplete(() {
+      if (!inserting) {
+        _clearInsertStatus();
+      }
       if (token == _lpToken) {
         _lpIndicator.value = null;
       }
@@ -142,6 +155,8 @@ mixin _ShellMenus on _ShellBase {
       }
     } finally {
       _lpIndicator.value = null;
+      // 插入流程（含目标/值/自定义号对话框）结束后才恢复普通时间显示。
+      _clearInsertStatus();
     }
   }
 

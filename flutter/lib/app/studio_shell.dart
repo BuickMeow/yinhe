@@ -100,6 +100,32 @@ abstract class _ShellBase extends State<StudioShell>
   /// 顶部栏临时读数（力度/自动化/选框拖动）；null = 常规显示。
   final ValueNotifier<EditStatus?> _editStatus = ValueNotifier(null);
 
+  /// 当前是否显示“插入位置”读数（长按/插入菜单期间保持蓝色）。
+  bool _insertStatusActive = false;
+
+  /// 长按插入点/菜单打开期间：顶部栏位置显示插入 tick，强调色。
+  void _setInsertStatus(double tick) {
+    final pos = _formatEditTick(tick);
+    if (_insertStatusActive && _editStatus.value?.position == pos) {
+      return;
+    }
+    _insertStatusActive = true;
+    _editStatus.value = EditStatus(position: pos);
+  }
+
+  void _clearInsertStatus() {
+    if (!_insertStatusActive) {
+      return;
+    }
+    _insertStatusActive = false;
+    final cur = _editStatus.value;
+    if (cur != null && cur.primary == null && cur.secondary == null) {
+      _editStatus.value = null;
+      // 立即恢复普通时间码，避免状态清掉后还残留插入位置文字。
+      _updateTimecode();
+    }
+  }
+
   /// 目前顶部栏读数是否由 PR/AR 选框移动驱动。
   bool _selectionStatusActive = false;
 
@@ -379,6 +405,7 @@ class _StudioShellState extends _ShellBase
         final tick = rust.longPressTick();
         final track = rust.longPressTrack();
         _lpPreviewTick = tick;
+        _setInsertStatus(tick);
         final cur = _lpIndicator.value;
         if (cur == null || cur.tick != tick || cur.track != track) {
           _lpIndicator.value = LongPressIndicator(
@@ -475,12 +502,12 @@ class _StudioShellState extends _ShellBase
     final dt = _dragDtPtr.value;
     final dk = _dragDkPtr.value;
     final dtr = _dragDtrPtr.value;
-    final dtText = 'Δt${dt >= 0 ? '+' : ''}$dt';
     _editStatus.value = EditStatus(
-      primary: dtText,
+      hidePosition: true,
+      primary: '${dt >= 0 ? '+' : ''}$dt',
       secondary: _viewMode == kViewPianoroll
-          ? 'Δk${dk >= 0 ? '+' : ''}$dk'
-          : 'Δtr${dtr >= 0 ? '+' : ''}$dtr',
+          ? '${dk >= 0 ? '+' : ''}$dk'
+          : '${dtr >= 0 ? '+' : ''}$dtr',
     );
     _selectionStatusActive = true;
   }

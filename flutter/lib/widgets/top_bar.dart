@@ -158,32 +158,37 @@ class TopBar extends StatelessWidget {
               valueListenable: editStatus,
               builder: (context, status, _) {
                 final active = status != null;
+                final hasMeta =
+                    status != null &&
+                    (status.primary != null || status.secondary != null);
+                final showPosition = !(status?.hidePosition ?? false);
                 return Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    InkWell(
-                      borderRadius: BorderRadius.circular(4),
-                      onTap: active ? null : onToggleTimecode,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 6,
-                        ),
-                        child: ValueListenableBuilder<String>(
-                          valueListenable: timecodeText,
-                          builder: (context, text, _) => Text(
-                            status?.position ?? text,
-                            style: TextStyle(
-                              color: active
-                                  ? YinheTheme.accent
-                                  : YinheTheme.textLabel,
-                              fontSize: 14,
+                    if (showPosition)
+                      InkWell(
+                        borderRadius: BorderRadius.circular(4),
+                        onTap: active ? null : onToggleTimecode,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 6,
+                          ),
+                          child: ValueListenableBuilder<String>(
+                            valueListenable: timecodeText,
+                            builder: (context, text, _) => Text(
+                              status?.position ?? text,
+                              style: TextStyle(
+                                color: active
+                                    ? YinheTheme.accent
+                                    : YinheTheme.textLabel,
+                                fontSize: 14,
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                    if (status == null) ...[
+                    if (!hasMeta) ...[
                       _metaText(bpmText, l.defaultBpm, onEditBpm),
                       _metaText(sigText, l.defaultTimeSig, onEditSig),
                     ] else ...[
