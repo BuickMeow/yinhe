@@ -13,6 +13,45 @@ class AppLocalizationsKo extends AppLocalizations {
   String get cancel => '취소';
 
   @override
+  String get selectionActions => '선택 항목 작업';
+
+  @override
+  String get opDuplicate => '복제';
+
+  @override
+  String get opOctaveUp => '한 옥타브 위';
+
+  @override
+  String get opOctaveDown => '한 옥타브 아래';
+
+  @override
+  String get opLengthHalf => '길이 ÷2';
+
+  @override
+  String get opLengthDouble => '길이 ×2';
+
+  @override
+  String get opFlipHorizontal => '가로 뒤집기';
+
+  @override
+  String get opFlipVertical => '세로 뒤집기';
+
+  @override
+  String get opHumanize => '휴머나이즈';
+
+  @override
+  String get opFillGaps => '빈틈 채우기';
+
+  @override
+  String get opMergeNotes => '음표 병합';
+
+  @override
+  String get opGridSplit => '그리드로 분할';
+
+  @override
+  String get deleteSelectionConfirm => '선택한 이벤트를 삭제할까요?';
+
+  @override
   String get save => '저장';
 
   @override
@@ -32,6 +71,9 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get copy => '복사';
+
+  @override
+  String get cut => '잘라내기';
 
   @override
   String get paste => '붙여넣기';

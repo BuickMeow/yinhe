@@ -128,6 +128,84 @@ abstract class AppLocalizations {
   /// **'Cancel'**
   String get cancel;
 
+  /// No description provided for @selectionActions.
+  ///
+  /// In en, this message translates to:
+  /// **'Selection actions'**
+  String get selectionActions;
+
+  /// No description provided for @opDuplicate.
+  ///
+  /// In en, this message translates to:
+  /// **'Duplicate'**
+  String get opDuplicate;
+
+  /// No description provided for @opOctaveUp.
+  ///
+  /// In en, this message translates to:
+  /// **'Octave up'**
+  String get opOctaveUp;
+
+  /// No description provided for @opOctaveDown.
+  ///
+  /// In en, this message translates to:
+  /// **'Octave down'**
+  String get opOctaveDown;
+
+  /// No description provided for @opLengthHalf.
+  ///
+  /// In en, this message translates to:
+  /// **'Length ÷2'**
+  String get opLengthHalf;
+
+  /// No description provided for @opLengthDouble.
+  ///
+  /// In en, this message translates to:
+  /// **'Length ×2'**
+  String get opLengthDouble;
+
+  /// No description provided for @opFlipHorizontal.
+  ///
+  /// In en, this message translates to:
+  /// **'Flip horizontal'**
+  String get opFlipHorizontal;
+
+  /// No description provided for @opFlipVertical.
+  ///
+  /// In en, this message translates to:
+  /// **'Flip vertical'**
+  String get opFlipVertical;
+
+  /// No description provided for @opHumanize.
+  ///
+  /// In en, this message translates to:
+  /// **'Humanize'**
+  String get opHumanize;
+
+  /// No description provided for @opFillGaps.
+  ///
+  /// In en, this message translates to:
+  /// **'Fill gaps'**
+  String get opFillGaps;
+
+  /// No description provided for @opMergeNotes.
+  ///
+  /// In en, this message translates to:
+  /// **'Merge notes'**
+  String get opMergeNotes;
+
+  /// No description provided for @opGridSplit.
+  ///
+  /// In en, this message translates to:
+  /// **'Grid split'**
+  String get opGridSplit;
+
+  /// No description provided for @deleteSelectionConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete selected events?'**
+  String get deleteSelectionConfirm;
+
   /// No description provided for @save.
   ///
   /// In en, this message translates to:
@@ -169,6 +247,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Copy'**
   String get copy;
+
+  /// No description provided for @cut.
+  ///
+  /// In en, this message translates to:
+  /// **'Cut'**
+  String get cut;
 
   /// No description provided for @paste.
   ///

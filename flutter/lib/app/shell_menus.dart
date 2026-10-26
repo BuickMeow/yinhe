@@ -1,18 +1,41 @@
 part of 'studio_shell.dart';
 
 mixin _ShellMenus on _ShellBase {
-  /// 长按完成但未移动：选区操作菜单。
+  /// 长按完成但未移动：选区操作网格（PR/AR 音符）。
   @override
   void _showSelectionMenu() {
     _resetInteraction();
-    showSelectionMenu(
-      context,
-      onCopy: () {
-        if (rust.copySelection() == 1) {
-          showSnack(context, l.copied, duration: const Duration(seconds: 1));
+    unawaited(_applySelectionAction(0));
+  }
+
+  /// 弹选区操作网格并执行；`scope` 0=音符，1=AM 锚点。
+  Future<void> _applySelectionAction(int scope) async {
+    final id = await showSelectionActionPicker(context, automation: scope == 1);
+    if (!mounted || id == null) {
+      return;
+    }
+    // 复制：写入应用内剪贴板，不产生 undo。
+    if (id == 1) {
+      if (rust.copySelection() == 1) {
+        showSnack(context, l.copied, duration: const Duration(seconds: 1));
+      }
+      return;
+    }
+    // 剪切 = 复制 + 删除（删除本身一步 undo）。
+    if (id == 2) {
+      if (rust.copySelection() == 1) {
+        if (rust.selectionAction(scope, 11) == 1) {
+          _refreshDocumentMeta();
         }
-      },
-    );
+      }
+      return;
+    }
+    if (rust.selectionAction(scope, id) == 1) {
+      _refreshDocumentMeta();
+      if (scope == 1) {
+        _loadAutomation();
+      }
+    }
   }
 
   /// 空白处长按完成：粘贴/插入菜单（都在长按位置操作）。

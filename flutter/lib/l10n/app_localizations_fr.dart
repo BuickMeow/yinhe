@@ -13,6 +13,46 @@ class AppLocalizationsFr extends AppLocalizations {
   String get cancel => 'Annuler';
 
   @override
+  String get selectionActions => 'Actions de sélection';
+
+  @override
+  String get opDuplicate => 'Dupliquer';
+
+  @override
+  String get opOctaveUp => 'Octave supérieure';
+
+  @override
+  String get opOctaveDown => 'Octave inférieure';
+
+  @override
+  String get opLengthHalf => 'Durée ÷2';
+
+  @override
+  String get opLengthDouble => 'Durée ×2';
+
+  @override
+  String get opFlipHorizontal => 'Retourner horizontalement';
+
+  @override
+  String get opFlipVertical => 'Retourner verticalement';
+
+  @override
+  String get opHumanize => 'Humaniser';
+
+  @override
+  String get opFillGaps => 'Combler les vides';
+
+  @override
+  String get opMergeNotes => 'Fusionner les notes';
+
+  @override
+  String get opGridSplit => 'Diviser sur la grille';
+
+  @override
+  String get deleteSelectionConfirm =>
+      'Supprimer les événements sélectionnés ?';
+
+  @override
   String get save => 'Enregistrer';
 
   @override
@@ -32,6 +72,9 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get copy => 'Copier';
+
+  @override
+  String get cut => 'Couper';
 
   @override
   String get paste => 'Coller';

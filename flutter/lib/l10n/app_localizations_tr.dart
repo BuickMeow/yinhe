@@ -13,6 +13,45 @@ class AppLocalizationsTr extends AppLocalizations {
   String get cancel => 'İptal';
 
   @override
+  String get selectionActions => 'Seçim işlemleri';
+
+  @override
+  String get opDuplicate => 'Çoğalt';
+
+  @override
+  String get opOctaveUp => 'Oktav yukarı';
+
+  @override
+  String get opOctaveDown => 'Oktav aşağı';
+
+  @override
+  String get opLengthHalf => 'Süre ÷2';
+
+  @override
+  String get opLengthDouble => 'Süre ×2';
+
+  @override
+  String get opFlipHorizontal => 'Yatay çevir';
+
+  @override
+  String get opFlipVertical => 'Dikey çevir';
+
+  @override
+  String get opHumanize => 'İnsancıllaştır';
+
+  @override
+  String get opFillGaps => 'Boşlukları doldur';
+
+  @override
+  String get opMergeNotes => 'Notaları birleştir';
+
+  @override
+  String get opGridSplit => 'Izgaraya göre böl';
+
+  @override
+  String get deleteSelectionConfirm => 'Seçili olaylar silinsin mi?';
+
+  @override
   String get save => 'Kaydet';
 
   @override
@@ -32,6 +71,9 @@ class AppLocalizationsTr extends AppLocalizations {
 
   @override
   String get copy => 'Kopyala';
+
+  @override
+  String get cut => 'Kes';
 
   @override
   String get paste => 'Yapıştır';

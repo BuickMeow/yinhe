@@ -13,6 +13,45 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cancel => '取消';
 
   @override
+  String get selectionActions => '选区操作';
+
+  @override
+  String get opDuplicate => '重复';
+
+  @override
+  String get opOctaveUp => '升八度';
+
+  @override
+  String get opOctaveDown => '降八度';
+
+  @override
+  String get opLengthHalf => '时值 ÷2';
+
+  @override
+  String get opLengthDouble => '时值 ×2';
+
+  @override
+  String get opFlipHorizontal => '水平翻转';
+
+  @override
+  String get opFlipVertical => '垂直翻转';
+
+  @override
+  String get opHumanize => '人性化';
+
+  @override
+  String get opFillGaps => '填缝';
+
+  @override
+  String get opMergeNotes => '合并音符';
+
+  @override
+  String get opGridSplit => '网格切割';
+
+  @override
+  String get deleteSelectionConfirm => '删除选中的事件？';
+
+  @override
   String get save => '保存';
 
   @override
@@ -32,6 +71,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get copy => '复制';
+
+  @override
+  String get cut => '剪切';
 
   @override
   String get paste => '粘贴';
@@ -500,6 +542,45 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get cancel => '取消';
 
   @override
+  String get selectionActions => '選取操作';
+
+  @override
+  String get opDuplicate => '重複';
+
+  @override
+  String get opOctaveUp => '升八度';
+
+  @override
+  String get opOctaveDown => '降八度';
+
+  @override
+  String get opLengthHalf => '時值 ÷2';
+
+  @override
+  String get opLengthDouble => '時值 ×2';
+
+  @override
+  String get opFlipHorizontal => '水平翻轉';
+
+  @override
+  String get opFlipVertical => '垂直翻轉';
+
+  @override
+  String get opHumanize => '人性化';
+
+  @override
+  String get opFillGaps => '填縫';
+
+  @override
+  String get opMergeNotes => '合併音符';
+
+  @override
+  String get opGridSplit => '網格切割';
+
+  @override
+  String get deleteSelectionConfirm => '刪除選取的事件？';
+
+  @override
   String get save => '儲存';
 
   @override
@@ -519,6 +600,9 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
 
   @override
   String get copy => '複製';
+
+  @override
+  String get cut => '剪下';
 
   @override
   String get paste => '貼上';
@@ -987,6 +1071,45 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
   String get cancel => '取消';
 
   @override
+  String get selectionActions => '選取操作';
+
+  @override
+  String get opDuplicate => '重複';
+
+  @override
+  String get opOctaveUp => '升八度';
+
+  @override
+  String get opOctaveDown => '降八度';
+
+  @override
+  String get opLengthHalf => '時值 ÷2';
+
+  @override
+  String get opLengthDouble => '時值 ×2';
+
+  @override
+  String get opFlipHorizontal => '水平翻轉';
+
+  @override
+  String get opFlipVertical => '垂直翻轉';
+
+  @override
+  String get opHumanize => '人性化';
+
+  @override
+  String get opFillGaps => '填縫';
+
+  @override
+  String get opMergeNotes => '合併音符';
+
+  @override
+  String get opGridSplit => '網格切割';
+
+  @override
+  String get deleteSelectionConfirm => '刪除選取的事件？';
+
+  @override
   String get save => '儲存';
 
   @override
@@ -1006,6 +1129,9 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get copy => '複製';
+
+  @override
+  String get cut => '剪下';
 
   @override
   String get paste => '貼上';

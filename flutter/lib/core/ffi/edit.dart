@@ -198,3 +198,14 @@ final IntCStrCStrDart archiveOpenPassword = bridge
 /// 打开压缩包内第 index 个 MIDI 条目。
 final IntArgDart archiveOpenEntry = bridge
     .lookupFunction<IntArgNative, IntArgDart>('yinhe_archive_open_entry');
+
+typedef SelectionActionNative = ffi.Int32 Function(ffi.Int32, ffi.Int32);
+typedef SelectionActionDart = int Function(int, int);
+
+/// 框选批量操作（编号与桌面「操作」菜单一致）。
+///
+/// `scope`: 0 = 音符（PR/AR），1 = AM 当前 lane 的锚点。
+final SelectionActionDart selectionAction = bridge
+    .lookupFunction<SelectionActionNative, SelectionActionDart>(
+      'yinhe_selection_action',
+    );

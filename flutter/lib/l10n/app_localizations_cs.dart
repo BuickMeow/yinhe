@@ -13,6 +13,45 @@ class AppLocalizationsCs extends AppLocalizations {
   String get cancel => 'Zrušit';
 
   @override
+  String get selectionActions => 'Akce výběru';
+
+  @override
+  String get opDuplicate => 'Duplikovat';
+
+  @override
+  String get opOctaveUp => 'O oktávu výš';
+
+  @override
+  String get opOctaveDown => 'O oktávu níž';
+
+  @override
+  String get opLengthHalf => 'Délka ÷2';
+
+  @override
+  String get opLengthDouble => 'Délka ×2';
+
+  @override
+  String get opFlipHorizontal => 'Převrátit vodorovně';
+
+  @override
+  String get opFlipVertical => 'Převrátit svisle';
+
+  @override
+  String get opHumanize => 'Humanizovat';
+
+  @override
+  String get opFillGaps => 'Vyplnit mezery';
+
+  @override
+  String get opMergeNotes => 'Sloučit noty';
+
+  @override
+  String get opGridSplit => 'Rozdělit podle mřížky';
+
+  @override
+  String get deleteSelectionConfirm => 'Smazat vybrané události?';
+
+  @override
   String get save => 'Uložit';
 
   @override
@@ -32,6 +71,9 @@ class AppLocalizationsCs extends AppLocalizations {
 
   @override
   String get copy => 'Kopírovat';
+
+  @override
+  String get cut => 'Vyjmout';
 
   @override
   String get paste => 'Vložit';

@@ -13,6 +13,45 @@ class AppLocalizationsRu extends AppLocalizations {
   String get cancel => 'Отмена';
 
   @override
+  String get selectionActions => 'Действия с выделением';
+
+  @override
+  String get opDuplicate => 'Дублировать';
+
+  @override
+  String get opOctaveUp => 'На октаву выше';
+
+  @override
+  String get opOctaveDown => 'На октаву ниже';
+
+  @override
+  String get opLengthHalf => 'Длительность ÷2';
+
+  @override
+  String get opLengthDouble => 'Длительность ×2';
+
+  @override
+  String get opFlipHorizontal => 'Отразить по горизонтали';
+
+  @override
+  String get opFlipVertical => 'Отразить по вертикали';
+
+  @override
+  String get opHumanize => 'Очеловечить';
+
+  @override
+  String get opFillGaps => 'Заполнить промежутки';
+
+  @override
+  String get opMergeNotes => 'Объединить ноты';
+
+  @override
+  String get opGridSplit => 'Разрезать по сетке';
+
+  @override
+  String get deleteSelectionConfirm => 'Удалить выбранные события?';
+
+  @override
   String get save => 'Сохранить';
 
   @override
@@ -32,6 +71,9 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get copy => 'Копировать';
+
+  @override
+  String get cut => 'Вырезать';
 
   @override
   String get paste => 'Вставить';

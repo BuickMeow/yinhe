@@ -7,6 +7,7 @@ import '../core/edit_status.dart';
 import '../core/ffi.dart' as rust;
 import '../core/midi_names.dart';
 import '../core/models.dart';
+import '../menus/canvas_menus.dart';
 import '../painters/painters.dart';
 import '../l10n/app_localizations.dart';
 import '../core/theme.dart';
@@ -260,6 +261,23 @@ class _AutomationPanelState extends State<AutomationPanel> {
     _velocityPreview.value = const [];
   }
 
+  void _syncSelection() {
+    rust.setAutomationSelection(_selectedTicks);
+  }
+
+  /// 打开 AM 选区操作网格（仅铅笔/框选出的锚点）。
+  Future<void> _openSelectionActions() async {
+    final id = await showSelectionActionPicker(context, automation: true);
+    if (!mounted || id == null) {
+      return;
+    }
+    if (rust.selectionAction(1, id) == 1) {
+      _clearSelection();
+      setState(() {});
+      widget.onReload();
+    }
+  }
+
   void _clearSelection() {
     _selectedTicks.clear();
     _singleSelection = false;
@@ -271,6 +289,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
     _awaitSnapBreak = false;
     _dragBaseTicks.clear();
     _syncGhost();
+    _syncSelection();
   }
 
   double _tickAt(double x) {
@@ -488,6 +507,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
         }
       }
       _syncGhost();
+      _syncSelection();
       setState(() {});
       return;
     }
@@ -498,6 +518,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
     _marqueeActive = true;
     _marqueeStart = d.localPosition;
     _marqueeCurrent = d.localPosition;
+    _syncSelection();
     setState(() {});
   }
 
@@ -615,6 +636,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
         ..clear()
         ..addAll(oldSelected);
       _singleSelection = wasSingle;
+      _syncSelection();
       setState(() {});
       return;
     }
@@ -622,6 +644,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
       ..clear()
       ..addAll(moves.map((m) => m.$2));
     _singleSelection = wasSingle;
+    _syncSelection();
     // 立即回读：旧实现延迟 250ms 会让锚点先弹回旧位置再跳回。
     widget.onReload();
     setState(() {});
@@ -649,6 +672,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
         }
       }
     }
+    _syncSelection();
     setState(() {});
   }
 
@@ -670,6 +694,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
     _awaitSnapBreak = false;
     _dragBaseTicks.clear();
     _syncGhost();
+    _syncSelection();
     widget.status.value = null;
     setState(() {});
   }
@@ -854,6 +879,20 @@ class _AutomationPanelState extends State<AutomationPanel> {
                             ),
                           ),
                         ),
+                        // 有选中锚点时显示：打开选区操作网格。
+                        if (_laneIdx != null && _selectedTicks.isNotEmpty)
+                          InkWell(
+                            onTap: _openSelectionActions,
+                            child: SizedBox(
+                              height: 26,
+                              width: double.infinity,
+                              child: Icon(
+                                Icons.tune,
+                                size: 16,
+                                color: YinheTheme.textLabel,
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                   ),

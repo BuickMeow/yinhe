@@ -255,9 +255,40 @@ void pushAutomationGhost(List<(int, int, double)> moves) {
   }
 }
 
+typedef SetAutomationSelectionNative = ffi.Void Function(
+  ffi.Pointer<ffi.Double>,
+  ffi.Uint32,
+);
+typedef SetAutomationSelectionDart = void Function(
+  ffi.Pointer<ffi.Double>,
+  int,
+);
+
+final SetAutomationSelectionDart _setAutomationSelection = bridge
+    .lookupFunction<SetAutomationSelectionNative, SetAutomationSelectionDart>(
+      'yinhe_set_automation_selection',
+    );
+
+/// 同步 AM 当前 lane 的选中锚点 tick；空集合 = 清除。
+void setAutomationSelection(Iterable<int> ticks) {
+  final list = ticks.where((t) => t >= 0).toList(growable: false);
+  if (list.isEmpty) {
+    _setAutomationSelection(ffi.nullptr, 0);
+    return;
+  }
+  final ptr = calloc<ffi.Double>(list.length);
+  try {
+    for (var i = 0; i < list.length; i++) {
+      ptr[i] = list[i].toDouble();
+    }
+    _setAutomationSelection(ptr, list.length);
+  } finally {
+    calloc.free(ptr);
+  }
+}
+
 typedef FreeNative = ffi.Void Function(ffi.Pointer<Utf8>);
 typedef FreeDart = void Function(ffi.Pointer<Utf8>);
-
 final FreeDart freeString = bridge.lookupFunction<FreeNative, FreeDart>(
   'yinhe_free_string',
 );

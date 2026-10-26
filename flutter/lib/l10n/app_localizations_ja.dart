@@ -13,6 +13,45 @@ class AppLocalizationsJa extends AppLocalizations {
   String get cancel => 'キャンセル';
 
   @override
+  String get selectionActions => '選択範囲の操作';
+
+  @override
+  String get opDuplicate => '複製';
+
+  @override
+  String get opOctaveUp => '1オクターブ上';
+
+  @override
+  String get opOctaveDown => '1オクターブ下';
+
+  @override
+  String get opLengthHalf => '長さ ÷2';
+
+  @override
+  String get opLengthDouble => '長さ ×2';
+
+  @override
+  String get opFlipHorizontal => '左右反転';
+
+  @override
+  String get opFlipVertical => '上下反転';
+
+  @override
+  String get opHumanize => 'ヒューマナイズ';
+
+  @override
+  String get opFillGaps => '隙間を埋める';
+
+  @override
+  String get opMergeNotes => '音符を結合';
+
+  @override
+  String get opGridSplit => 'グリッドで分割';
+
+  @override
+  String get deleteSelectionConfirm => '選択したイベントを削除しますか？';
+
+  @override
   String get save => '保存';
 
   @override
@@ -32,6 +71,9 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get copy => 'コピー';
+
+  @override
+  String get cut => '切り取り';
 
   @override
   String get paste => 'ペースト';
