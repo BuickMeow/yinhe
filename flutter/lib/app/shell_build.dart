@@ -157,7 +157,7 @@ mixin _ShellBuild on _ShellBase {
                                       left: 0,
                                       right: 0,
                                       top: RulerPainter.height,
-                                      bottom: amVisible ? amH : 0,
+                                      bottom: 0,
                                       child: IgnorePointer(
                                         child: CustomPaint(
                                           painter: OverlayPainter(
@@ -174,7 +174,7 @@ mixin _ShellBuild on _ShellBase {
                                       left: 0,
                                       right: 0,
                                       top: RulerPainter.height,
-                                      bottom: amVisible ? amH : 0,
+                                      bottom: 0,
                                       child: IgnorePointer(
                                         child: CustomPaint(
                                           painter: LabelsPainter(
@@ -217,7 +217,7 @@ mixin _ShellBuild on _ShellBase {
                                       left: 0,
                                       right: 0,
                                       top: RulerPainter.height,
-                                      bottom: amVisible ? amH : 0,
+                                      bottom: 0,
                                       child: IgnorePointer(
                                         child: CustomPaint(
                                           painter: SelectionLongPressPainter(
@@ -235,7 +235,7 @@ mixin _ShellBuild on _ShellBase {
                                       left: 0,
                                       right: 0,
                                       top: RulerPainter.height,
-                                      bottom: amVisible ? amH : 0,
+                                      bottom: 0,
                                       child: IgnorePointer(
                                         child: CustomPaint(
                                           painter: LongPressIndicatorPainter(
