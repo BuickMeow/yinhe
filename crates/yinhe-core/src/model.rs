@@ -653,6 +653,18 @@ impl YinModel {
         deleted
     }
 
+    /// 轨道结构变化后，把每条 automation lane 的 `track` 字段同步为所属轨道
+    /// 的当前下标。`lane.track` 用于 AR 自动化曲线取色；插入/删除/移动轨道后
+    /// 若不更新，曲线会沿用旧下标对应的颜色。
+    pub fn sync_automation_lane_tracks(&mut self) {
+        for (i, track) in self.tracks.iter_mut().enumerate() {
+            let track = Arc::make_mut(track);
+            for lane in &mut track.automation_lanes {
+                lane.track = i as u16;
+            }
+        }
+    }
+
     /// 头部是否为 conductor 轨。优先看显式角色标记（`TrackKind::Master`），
     /// 旧存档无标记时回退到启发式（0 号位无音符、无自动化 lane、无 program
     /// change）。空模型返回 false。

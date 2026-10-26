@@ -85,6 +85,7 @@ impl Document {
 
         let model = Arc::make_mut(&mut self.data.model);
         model.tracks.insert(insert_idx, Arc::new(new_track));
+        model.sync_automation_lane_tracks();
 
         // Remap notes: track >= insert_idx gets +1
         let note_remap: Vec<u16> = (0..tracks_before.len())
@@ -217,6 +218,7 @@ impl Document {
 
         let model = Arc::make_mut(&mut self.data.model);
         model.tracks.remove(idx);
+        model.sync_automation_lane_tracks();
 
         // Remap: track < idx stays, track == idx is deleted (u16::MAX), track > idx gets -1
         let note_remap: Vec<u16> = (0..tracks_before.len())
@@ -294,6 +296,7 @@ impl Document {
         let model = Arc::make_mut(&mut self.data.model);
         let track = model.tracks.remove(from_idx);
         model.tracks.insert(to_idx, track);
+        model.sync_automation_lane_tracks();
 
         // Build remap table
         let note_remap: Vec<u16> = (0..tracks_before.len())
@@ -380,8 +383,20 @@ impl Document {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)] // 历史文件：测试模块后还有 impl 块
 mod tests {
     use super::{Document, NewTrackSpec};
+
+    /// 删除音轨后，自动化 lane 的 track 字段必须跟着新下标走，
+    /// 否则 AR 自动化曲线会继续用旧下标取色（删除 001 后 002 应继承 001 的颜色）。
+    #[test]
+    fn remove_track_remaps_automation_lane_track() {
+        let mut doc = Document::empty();
+        let target = yinhe_types::automation::AutomationTarget::CC { controller: 7 };
+        assert!(doc.add_automation_lane(2, target).is_some());
+        assert!(doc.remove_track(1).is_some());
+        assert_eq!(doc.data.model.tracks[1].automation_lanes[0].track, 1);
+    }
 
     /// 新音轨编号 = 已有音轨数 + 1，而不是插入位置：
     /// 在 16 条音轨的工程里于 Track 2 下方插入，新音轨应为 Track 17（而非 Track 3），
