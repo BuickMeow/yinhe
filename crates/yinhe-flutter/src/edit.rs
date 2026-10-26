@@ -872,17 +872,6 @@ fn note_at_bounds(
         .copied()
 }
 
-/// 该音符当前是否已在选区内（铅笔第二次按下时直接进入移动）。
-fn note_is_selected(s: &RenderScene, track: u16, start_tick: u32, end_tick: u32, key: u8) -> bool {
-    let Some(note) = note_at_bounds(s, track, start_tick, end_tick, key) else {
-        return false;
-    };
-    let Some(doc) = s.document.as_ref() else {
-        return false;
-    };
-    doc.edit.selected.accepts_note(&note, key)
-}
-
 /// 把单个音符设为唯一选中：选区矩形覆盖该音符，但成员位图只含它的 id，
 /// 避免 gate 内其他起点被矩形顺带选中。
 fn select_note(s: &mut RenderScene, track: u16, start_tick: u32, end_tick: u32, key: u8) {
@@ -1592,39 +1581,20 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
         Tool::Pencil => {
             d.anchor_tick = anchor_tick;
             d.anchor_key = anchor_key;
-            // 铅笔压在已有音符上：不新建。未选中 → 进入精调选择（松手选中）；
-            // 已选中 → 直接进入单音符移动，再松手提交。
-            // 当前功能暂时关闭，但交互实现保留在下方分支。
-            if PENCIL_PICK_ENABLED
-                && let Some((track, start, end, key, _)) = hit_note(s, &geom, x, y)
-            {
-                if note_is_selected(s, track, start, end, key) {
-                    d.kind = kind::NOTE_MOVE;
-                    d.track = track;
-                    d.start_tick = start;
-                    d.end_tick = end;
-                    d.key = key;
-                    d.side = 0;
-                    d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::from([(
-                        track, start, key,
-                    )])));
-                    d.preview_last_dk = 0;
-                    if let Some(velocity) = note_velocity(s, track, start, key) {
-                        preview_note(s, track, key, velocity, start, end.saturating_sub(start));
-                    }
-                } else {
-                    d.kind = kind::PENCIL_PICK;
-                    d.track = track;
-                    d.start_tick = start;
-                    d.end_tick = end;
-                    d.key = key;
-                    d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::from([(
-                        track, start, key,
-                    )])));
-                    apply_preview(s, d, vec![(start, end, key, track)], true);
-                    if let Some(velocity) = note_velocity(s, track, start, key) {
-                        preview_note(s, track, key, velocity, start, end.saturating_sub(start));
-                    }
+            // 铅笔压在已有音符上：直接拖动该音符；空白处才新建。
+            if let Some((track, start, end, key, _)) = hit_note(s, &geom, x, y) {
+                d.kind = kind::NOTE_MOVE;
+                d.track = track;
+                d.start_tick = start;
+                d.end_tick = end;
+                d.key = key;
+                d.side = 0;
+                d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::from([(
+                    track, start, key,
+                )])));
+                d.preview_last_dk = 0;
+                if let Some(velocity) = note_velocity(s, track, start, key) {
+                    preview_note(s, track, key, velocity, start, end.saturating_sub(start));
                 }
                 return;
             }
@@ -1717,26 +1687,14 @@ fn hit_note(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option<NoteHit> {
     }
     let tick_u = tick.floor() as u32;
     let write = write_track(s);
-    let allowed = |note_track: u16| match write {
-        Some(w) => note_track as usize == w,
-        None => s
-            .track_visible
-            .get(note_track as usize)
-            .copied()
-            .unwrap_or(true),
-    };
-    let side_of = |x0: f32, x1: f32| {
-        if x - x0 <= EDGE {
-            1
-        } else if x1 - x <= EDGE {
-            2
-        } else {
-            0
-        }
-    };
     for note in doc.data.model.key_notes(key).iter() {
         if note.start_tick <= tick_u && tick_u < note.end_tick {
-            if !allowed(note.track) {
+            let t = note.track as usize;
+            let allowed = match write {
+                Some(w) => t == w,
+                None => s.track_visible.get(t).copied().unwrap_or(true),
+            };
+            if !allowed {
                 continue;
             }
             let (x0, x1) = (
@@ -1745,68 +1703,18 @@ fn hit_note(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option<NoteHit> {
             );
             let (y0, y1) = (geom.key_to_y(key), geom.key_to_y(key) + geom.kh);
             if x >= x0 && x <= x1 && y >= y0 && y <= y1 {
-                return Some((
-                    note.track,
-                    note.start_tick,
-                    note.end_tick,
-                    key,
-                    side_of(x0, x1),
-                ));
+                let side = if x - x0 <= EDGE {
+                    1
+                } else if x1 - x <= EDGE {
+                    2
+                } else {
+                    0
+                };
+                return Some((note.track, note.start_tick, note.end_tick, key, side));
             }
         }
     }
-
-    // 精确命中失败时扩大一点触摸范围；只扩当前 key 行，避免并排音符
-    // 互相抢命中。多个候选取离触摸点最近的，而不是取第一个。
-    const PAD: f32 = 6.0;
-    let pad_tick = (PAD / geom.ppu.max(0.0001)).ceil() as u32;
-    let lo = tick_u.saturating_sub(pad_tick);
-    let hi = tick_u.saturating_add(pad_tick);
-    let y0 = geom.key_to_y(key) - PAD;
-    let y1 = geom.key_to_y(key) + geom.kh + PAD;
-    if y < y0 || y > y1 {
-        return None;
-    }
-    let mut best: Option<(f32, NoteHit)> = None;
-    for note in doc.data.model.key_notes_in_range(key, lo, hi) {
-        if !allowed(note.track) {
-            continue;
-        }
-        let x0 = geom.tick_to_x(f64::from(note.start_tick));
-        let x1 = geom.tick_to_x(f64::from(note.end_tick));
-        if x < x0 - PAD || x > x1 + PAD {
-            continue;
-        }
-        // 到音符矩形的距离；落在矩形内时为 0。
-        let dx = if x < x0 {
-            x0 - x
-        } else if x > x1 {
-            x - x1
-        } else {
-            0.0
-        };
-        let dy = if y < geom.key_to_y(key) {
-            geom.key_to_y(key) - y
-        } else if y > geom.key_to_y(key) + geom.kh {
-            y - (geom.key_to_y(key) + geom.kh)
-        } else {
-            0.0
-        };
-        let dist = dx.max(dy);
-        if dist <= PAD && best.as_ref().is_none_or(|(d, _)| dist < *d) {
-            best = Some((
-                dist,
-                (
-                    note.track,
-                    note.start_tick,
-                    note.end_tick,
-                    key,
-                    side_of(x0, x1),
-                ),
-            ));
-        }
-    }
-    best.map(|(_, hit)| hit)
+    None
 }
 
 /// 收集当前选区中的音符，按 key 分桶，供整体拖动 ghost 使用。
