@@ -1760,14 +1760,15 @@ pub fn automation_json(track: usize) -> String {
         let Some(kind) = lane_kind(&lane.target) else {
             continue;
         };
-        let max = lane_display_max(&lane.target);
+        let (num, max) = lane_display_range(&lane.target);
         if !first {
             out.push(',');
         }
         first = false;
         out.push_str(&format!(
-            "{{\"kind\":{},\"max\":{},\"name\":\"{}\",\"points\":[",
+            "{{\"kind\":{},\"num\":{},\"max\":{},\"name\":\"{}\",\"points\":[",
             kind,
+            num,
             max,
             json_escape(&lane.target.display_name())
         ));
@@ -2683,6 +2684,42 @@ pub fn move_automation_anchors(track: usize, lane_index: usize, moves: &[(u32, u
     1
 }
 
+/// 确保指定 target 的自动化 lane 存在（不存在则创建空 lane）。成功 1。
+///
+/// AM 面板下拉用：`kind` 编码与 `insert_automation` 一致
+/// （0=Tempo、1=PB、2=CC、3=RPN）；Tempo 不在轨 lane 里，返回 0。
+pub fn ensure_automation_lane(track: usize, kind: i32, number: i32) -> i32 {
+    let Some(target) = insert_target(kind, number) else {
+        return 0;
+    };
+    if matches!(target, yinhe_types::automation::AutomationTarget::Tempo) {
+        return 0;
+    }
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let Some(t) = doc.data.model.tracks.get(track) else {
+        return 0;
+    };
+    if t.automation_lanes.iter().any(|l| l.target == target) {
+        return 1;
+    }
+    let before = doc.capture_snapshot();
+    let Some((_lane_idx, action)) = doc.add_automation_lane(track, target) else {
+        return 0;
+    };
+    doc.push_undo(action, "添加自动化", before);
+    doc.edit.pianoroll_view.base.dirty = true;
+    let model = doc.data.model.clone();
+    refresh_snapshot(&mut s);
+    drop(s);
+    crate::audio::reload_notes(model);
+    1
+}
+
 /// 撤销一步（含音频与快照刷新）。成功 1。
 pub fn undo() -> i32 {
     history_step(|doc| doc.undo())
@@ -3428,9 +3465,15 @@ fn lane_kind(target: &yinhe_types::automation::AutomationTarget) -> Option<u8> {
     }
 }
 
-/// 可见 lane 的归一化值还原上限（CC=127、PB=16383 等）。
-fn lane_display_max(target: &yinhe_types::automation::AutomationTarget) -> f32 {
-    target.display_max().unwrap_or(1.0)
+/// 可见 lane 的显示编号与上限：CC 号 / RPN 号，以及归一化值还原上限。
+fn lane_display_range(target: &yinhe_types::automation::AutomationTarget) -> (i32, f32) {
+    use yinhe_types::automation::AutomationTarget;
+    let num = match target {
+        AutomationTarget::CC { controller } => i32::from(*controller),
+        AutomationTarget::Rpn { parameter } => i32::from(*parameter),
+        _ => -1,
+    };
+    (num, target.display_max().unwrap_or(1.0))
 }
 
 /// 按 `automation_json` 的过滤顺序（1-based）查可见 lane 的原始下标与 target。

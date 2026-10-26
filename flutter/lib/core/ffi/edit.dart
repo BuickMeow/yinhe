@@ -65,6 +65,19 @@ final MoveAutomationAnchorsDart _moveAutomationAnchors = bridge
       'yinhe_move_automation_anchors',
     );
 
+typedef EnsureAutomationLaneNative = ffi.Int32 Function(
+  ffi.Int32,
+  ffi.Int32,
+  ffi.Int32,
+);
+typedef EnsureAutomationLaneDart = int Function(int, int, int);
+
+/// 确保自动化 lane 存在（kind/number 与插入自动化一致）。
+final EnsureAutomationLaneDart ensureAutomationLane = bridge
+    .lookupFunction<EnsureAutomationLaneNative, EnsureAutomationLaneDart>(
+      'yinhe_ensure_automation_lane',
+    );
+
 /// 批量移动自动化锚点：`moves = (oldTick, newTick, 归一化值)`，一笔一个 undo。
 int moveAutomationAnchors(
   int track,

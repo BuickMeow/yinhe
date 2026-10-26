@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../core/bar_beat.dart';
 import '../core/edit_status.dart';
 import '../core/ffi.dart' as rust;
+import '../core/midi_names.dart';
 import '../core/models.dart';
 import '../painters/painters.dart';
 import '../l10n/app_localizations.dart';
@@ -84,7 +85,8 @@ class AutomationPanel extends StatefulWidget {
 class _AutomationPanelState extends State<AutomationPanel> {
   AppLocalizations get l => AppLocalizations.of(context);
 
-  int _autoIndex = 0;
+  int? _selectedLane; // null = Velocity
+  (int, int)? _pendingTarget; // ensureAutomationLane 后等待 lanes 刷新
   final ValueNotifier<List<(double, double, double, int)>> _velocityPreview =
       ValueNotifier(const []);
   bool _velocityStrokeActive = false;
@@ -112,13 +114,42 @@ class _AutomationPanelState extends State<AutomationPanel> {
   void didUpdateWidget(covariant AutomationPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.activeTrack != widget.activeTrack) {
-      _autoIndex = 0;
+      _selectedLane = null;
+      _pendingTarget = null;
       _clearVelocityStroke();
       _clearSelection();
-    } else if (_autoIndex > widget.lanes.length) {
-      _autoIndex = 0;
+    } else if (_selectedLane != null && _selectedLane! >= widget.lanes.length) {
+      _selectedLane = null;
       _clearSelection();
     }
+    final pending = _pendingTarget;
+    if (pending != null) {
+      final idx = _findLane(pending.$1, pending.$2);
+      if (idx >= 0) {
+        _selectedLane = idx;
+        _pendingTarget = null;
+      }
+    }
+  }
+
+  /// 当前选中的 lane 下标（null = 力度）。
+  int? get _laneIdx =>
+      _selectedLane != null && _selectedLane! < widget.lanes.length
+      ? _selectedLane
+      : null;
+
+  /// 按插入自动化的 target 语义查找 lane（PB 兼容 Param 映射）。
+  int _findLane(int kind, int number) {
+    for (var i = 0; i < widget.lanes.length; i++) {
+      final l = widget.lanes[i];
+      if (l.kind != kind) {
+        continue;
+      }
+      if (kind == 1 || l.number == number) {
+        return i;
+      }
+    }
+    return -1;
   }
 
   @override
@@ -246,7 +277,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
   }
 
   bool _startVelocityStroke(Offset p) {
-    if (!widget.velocityDrawEnabled || _autoIndex != 0) {
+    if (!widget.velocityDrawEnabled || _laneIdx != null) {
       return false;
     }
     final point = (_tickAt(p.dx), _velocityAt(p.dy));
@@ -261,7 +292,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
   }
 
   void _handleVelocityTap(Offset p) {
-    if (!widget.velocityDrawEnabled || _autoIndex != 0) {
+    if (!widget.velocityDrawEnabled || _laneIdx != null) {
       return;
     }
     final point = (_tickAt(p.dx), _velocityAt(p.dy));
@@ -297,12 +328,12 @@ class _AutomationPanelState extends State<AutomationPanel> {
   /// - 按在锚点上：选中（未选中则替换选择），拖动可改 tick+value；
   /// - 按在空白：拉时间框选（全高），多选拖动只改 tick。
   void _handlePanStart(DragStartDetails d) {
-    if (_autoIndex == 0) {
+    if (_laneIdx == null) {
       _startVelocityStroke(d.localPosition);
       return;
     }
-    final laneIdx = _autoIndex - 1;
-    if (laneIdx < 0 || laneIdx >= widget.lanes.length) {
+    final laneIdx = _laneIdx;
+    if (laneIdx == null || laneIdx >= widget.lanes.length) {
       return;
     }
     final s = widget.snap.value;
@@ -351,8 +382,8 @@ class _AutomationPanelState extends State<AutomationPanel> {
         _dragStartValue == null) {
       return;
     }
-    final laneIdx = _autoIndex - 1;
-    if (laneIdx < 0 || laneIdx >= widget.lanes.length) {
+    final laneIdx = _laneIdx;
+    if (laneIdx == null || laneIdx >= widget.lanes.length) {
       return;
     }
     final lane = widget.lanes[laneIdx];
@@ -398,9 +429,9 @@ class _AutomationPanelState extends State<AutomationPanel> {
       _finishMarquee();
       return;
     }
-    final laneIdx = _autoIndex - 1;
+    final laneIdx = _laneIdx;
     final moves = <(int, int, double)>[];
-    if (laneIdx >= 0 && laneIdx < widget.lanes.length) {
+    if (laneIdx != null) {
       for (final p in widget.lanes[laneIdx].points) {
         final oldTick = p.dx.round();
         final moved = _movePreview[oldTick];
@@ -426,7 +457,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
     }
     final ok = rust.moveAutomationAnchors(
       widget.activeTrack,
-      _autoIndex,
+      laneIdx! + 1,
       moves,
     );
     if (ok != 1) {
@@ -449,7 +480,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
   void _finishMarquee() {
     final start = _marqueeStart;
     final end = _marqueeCurrent;
-    final laneIdx = _autoIndex - 1;
+    final laneIdx = _laneIdx;
     _marqueeActive = false;
     _marqueeStart = null;
     _marqueeCurrent = null;
@@ -458,8 +489,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
     if (start != null &&
         end != null &&
         (end.dx - start.dx).abs() >= 3 &&
-        laneIdx >= 0 &&
-        laneIdx < widget.lanes.length) {
+        laneIdx != null) {
       final lo = math.min(start.dx, end.dx);
       final hi = math.max(start.dx, end.dx);
       for (final p in widget.lanes[laneIdx].points) {
@@ -473,8 +503,8 @@ class _AutomationPanelState extends State<AutomationPanel> {
   }
 
   void _handleLaneTap(Offset p) {
-    final laneIdx = _autoIndex - 1;
-    if (laneIdx < 0 || laneIdx >= widget.lanes.length) {
+    final laneIdx = _laneIdx;
+    if (laneIdx == null || laneIdx >= widget.lanes.length) {
       return;
     }
     final hit = _hitAnchor(widget.lanes[laneIdx], p);
@@ -515,13 +545,68 @@ class _AutomationPanelState extends State<AutomationPanel> {
     return widget.trackColors[i];
   }
 
+  /// 与「插入自动化」菜单一致的候选 target（kind, number）。
+  static const List<(int, int)> _amTargets = <(int, int)>[
+    (1, 0), // Pitch Bend
+    (2, 7),
+    (2, 10),
+    (2, 11),
+    (2, 64),
+    (2, 71),
+    (2, 72),
+    (2, 73),
+    (2, 74),
+    (3, 0),
+    (3, 1),
+    (3, 2),
+  ];
+
+  String _laneLabel(AutomationLaneData lane) {
+    if (lane.kind == 1 && lane.number >= 0) {
+      return MidiNames.instance.ccLabel(lane.number);
+    }
+    if (lane.kind == 2 && lane.number >= 0) {
+      return MidiNames.instance.rpnLabel(lane.number);
+    }
+    return lane.name;
+  }
+
+  String _targetLabel(int kind, int number) {
+    if (kind == 1) {
+      return 'Pitch Bend';
+    }
+    if (kind == 2) {
+      return MidiNames.instance.ccLabel(number);
+    }
+    return MidiNames.instance.rpnLabel(number);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final names = ['Velocity', for (final l in widget.lanes) l.name];
-    final index = _autoIndex.clamp(0, names.length - 1).toInt();
-    final lane = index >= 1 && index <= widget.lanes.length
-        ? widget.lanes[index - 1]
-        : null;
+    final lane = _laneIdx == null ? null : widget.lanes[_laneIdx!];
+    final entries = <(String, int)>[('Velocity', 0)];
+    final used = <int>{};
+    // 先按「插入自动化」的 target 顺序列出（缺失项显示为可添加）。
+    for (final (kind, number) in _amTargets) {
+      final idx = widget.lanes.indexWhere(
+        (ln) => ln.kind == kind && (kind == 1 || ln.number == number),
+      );
+      if (idx >= 0) {
+        used.add(idx);
+        entries.add((_laneLabel(widget.lanes[idx]), idx + 1));
+      } else {
+        entries.add((
+          '＋ ${_targetLabel(kind, number)}',
+          -(kind * 100000 + number + 1),
+        ));
+      }
+    }
+    // 其余导入/自定义 lane 附在后面，不隐藏已有数据。
+    for (var i = 0; i < widget.lanes.length; i++) {
+      if (!used.contains(i)) {
+        entries.add((_laneLabel(widget.lanes[i]), i + 1));
+      }
+    }
     Rect? marquee;
     if (_marqueeActive && _marqueeStart != null && _marqueeCurrent != null) {
       final a = _marqueeStart!;
@@ -585,18 +670,35 @@ class _AutomationPanelState extends State<AutomationPanel> {
                           tooltip: l.automationType,
                           padding: EdgeInsets.zero,
                           itemBuilder: (_) => [
-                            for (var i = 0; i < names.length; i++)
-                              PopupMenuItem(value: i, child: Text(names[i])),
+                            for (final (label, value) in entries)
+                              PopupMenuItem(value: value, child: Text(label)),
                           ],
-                          onSelected: (i) {
+                          onSelected: (v) {
                             _clearVelocityStroke();
                             _clearSelection();
                             widget.status.value = null;
-                            setState(() => _autoIndex = i);
+                            if (v >= 0) {
+                              setState(
+                                () => _selectedLane = v == 0 ? null : v - 1,
+                              );
+                              return;
+                            }
+                            final code = -v - 1;
+                            final kind = code ~/ 100000;
+                            final number = code % 100000;
+                            if (rust.ensureAutomationLane(
+                                  widget.activeTrack,
+                                  kind,
+                                  number,
+                                ) ==
+                                1) {
+                              _pendingTarget = (kind, number);
+                              widget.onReload();
+                            }
                           },
                           child: Center(
                             child: Text(
-                              names[index],
+                              lane == null ? 'Velocity' : _laneLabel(lane),
                               textAlign: TextAlign.center,
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
@@ -614,7 +716,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
                 Expanded(
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
-                    onTapUp: _autoIndex == 0
+                    onTapUp: _laneIdx == null
                         ? (widget.velocityDrawEnabled
                               ? (d) => _handleVelocityTap(d.localPosition)
                               : null)

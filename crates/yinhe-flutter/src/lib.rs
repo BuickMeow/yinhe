@@ -969,6 +969,15 @@ pub extern "C" fn yinhe_move_automation_anchors(
     scene::move_automation_anchors(track as usize, lane_index as usize, &parsed)
 }
 
+/// 确保自动化 lane 存在（kind/number 与插入自动化一致），成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_ensure_automation_lane(track: i32, kind: i32, number: i32) -> i32 {
+    if track < 0 {
+        return 0;
+    }
+    scene::ensure_automation_lane(track as usize, kind, number)
+}
+
 /// 解析扁平 `[old_tick, new_tick, value, ...]`；非有限值丢弃。
 fn parse_automation_moves(flat: &[f64]) -> Vec<(u32, u32, f32)> {
     flat.as_chunks::<3>()
