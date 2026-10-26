@@ -11,7 +11,6 @@ class SheetAction {
     this.enabled = true,
     this.danger = false,
     this.quarterTurns = 0,
-    this.flipX = false,
   });
 
   final String value;
@@ -22,9 +21,6 @@ class SheetAction {
 
   /// 图标顺时针旋转 90° 的倍数（与桌面浮动工具条一致）。
   final int quarterTurns;
-
-  /// 水平镜像图标（需要区分左右方向时使用）。
-  final bool flipX;
 }
 
 /// 统一的底部操作表（安全区 / 主题 / 取消项）。

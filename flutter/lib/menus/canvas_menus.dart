@@ -227,9 +227,6 @@ class _SelectionGridCell extends StatelessWidget {
     if (action.quarterTurns != 0) {
       icon = RotatedBox(quarterTurns: action.quarterTurns, child: icon);
     }
-    if (action.flipX) {
-      icon = Transform.flip(flipX: true, child: icon);
-    }
     return InkWell(
       borderRadius: BorderRadius.circular(8),
       onTap: onTap,
