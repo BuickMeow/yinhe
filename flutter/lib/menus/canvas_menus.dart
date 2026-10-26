@@ -12,8 +12,6 @@ Future<int?> showSelectionActionPicker(
   final l = AppLocalizations.of(context);
   final value = await showSelectionActionGrid(
     context,
-    title: l.selectionActions,
-    cancelLabel: l.cancel,
     actions: selectionActionItems(l, automation: automation),
   );
   if (value == null) {
@@ -135,11 +133,9 @@ List<SheetAction> selectionActionItems(
 
 /// 长按选框/AM 选区：两行图标网格操作面板。
 ///
-/// 每格「图标 + 文字」，最多两行；点一格返回其 `value`，点蒙版/关闭返回 null。
+/// 每格「图标 + 文字」；点一格返回其 `value`，点蒙版返回 null。
 Future<String?> showSelectionActionGrid(
   BuildContext context, {
-  required String title,
-  required String cancelLabel,
   required List<SheetAction> actions,
   int columns = 7,
 }) {
@@ -152,55 +148,20 @@ Future<String?> showSelectionActionGrid(
     builder: (ctx) => SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+        padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
+        child: GridView.count(
+          crossAxisCount: columns,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          childAspectRatio: 1.05,
+          mainAxisSpacing: 2,
+          crossAxisSpacing: 2,
           children: [
-            Row(
-              children: [
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: YinheTheme.textLabel,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                SizedBox(
-                  width: 32,
-                  height: 32,
-                  child: IconButton(
-                    padding: EdgeInsets.zero,
-                    iconSize: 18,
-                    tooltip: cancelLabel,
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.of(ctx).pop(),
-                  ),
-                ),
-              ],
-            ),
-            GridView.count(
-              crossAxisCount: columns,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              childAspectRatio: 0.92,
-              mainAxisSpacing: 2,
-              crossAxisSpacing: 2,
-              children: [
-                for (final a in actions)
-                  _SelectionGridCell(
-                    action: a,
-                    onTap: a.enabled
-                        ? () => Navigator.of(ctx).pop(a.value)
-                        : null,
-                  ),
-              ],
-            ),
+            for (final a in actions)
+              _SelectionGridCell(
+                action: a,
+                onTap: a.enabled ? () => Navigator.of(ctx).pop(a.value) : null,
+              ),
           ],
         ),
       ),
@@ -262,7 +223,6 @@ Future<void> showEmptyLongPressMenu(
   final l = AppLocalizations.of(context);
   final action = await showActionSheet(
     context,
-    cancelLabel: l.cancel,
     actions: [
       SheetAction(
         value: 'select_all',
@@ -304,7 +264,6 @@ Future<void> showTrackMenu(
   final l = AppLocalizations.of(context);
   final action = await showActionSheet(
     context,
-    cancelLabel: l.cancel,
     actions: [
       SheetAction(
         value: 'select_all',

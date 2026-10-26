@@ -331,7 +331,6 @@ class _EventListDialogState extends State<EventListDialog> {
       title: desc.title,
       subtitle: desc.subtitle,
       headerIcon: desc.icon,
-      cancelLabel: l.cancel,
       actions: [
         SheetAction(value: 'edit', label: l.edit, icon: Icons.edit),
         SheetAction(value: 'copy', label: l.copy, icon: Icons.copy),

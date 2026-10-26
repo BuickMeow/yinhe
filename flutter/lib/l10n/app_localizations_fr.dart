@@ -13,9 +13,6 @@ class AppLocalizationsFr extends AppLocalizations {
   String get cancel => 'Annuler';
 
   @override
-  String get selectionActions => 'Actions de sélection';
-
-  @override
   String get selectAll => 'Tout sélectionner';
 
   @override

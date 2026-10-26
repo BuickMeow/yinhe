@@ -13,9 +13,6 @@ class AppLocalizationsCs extends AppLocalizations {
   String get cancel => 'Zrušit';
 
   @override
-  String get selectionActions => 'Akce výběru';
-
-  @override
   String get selectAll => 'Vybrat vše';
 
   @override

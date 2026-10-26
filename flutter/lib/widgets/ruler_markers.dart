@@ -50,7 +50,6 @@ class _MarkerLayerState extends State<MarkerLayer> {
     final l = AppLocalizations.of(context);
     final action = await showActionSheet(
       context,
-      cancelLabel: l.cancel,
       actions: [
         SheetAction(value: 'rename', label: l.markerRename, icon: Icons.edit),
         SheetAction(

@@ -13,9 +13,6 @@ class AppLocalizationsRu extends AppLocalizations {
   String get cancel => 'Отмена';
 
   @override
-  String get selectionActions => 'Действия с выделением';
-
-  @override
   String get selectAll => 'Выбрать всё';
 
   @override

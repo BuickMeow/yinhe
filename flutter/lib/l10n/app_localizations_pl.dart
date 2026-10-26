@@ -13,9 +13,6 @@ class AppLocalizationsPl extends AppLocalizations {
   String get cancel => 'Anuluj';
 
   @override
-  String get selectionActions => 'Akcje zaznaczenia';
-
-  @override
   String get selectAll => 'Zaznacz wszystko';
 
   @override

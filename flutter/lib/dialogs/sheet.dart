@@ -23,16 +23,15 @@ class SheetAction {
   final int quarterTurns;
 }
 
-/// 统一的底部操作表（安全区 / 主题 / 取消项）。
+/// 统一的底部操作表（安全区 / 主题）。
 ///
-/// 返回被点项的 `value`；点取消或点外部返回 null。
+/// 返回被点项的 `value`；点蒙版、按返回键或下滑关闭返回 null。
 Future<String?> showActionSheet(
   BuildContext context, {
   String? title,
   String? subtitle,
   IconData? headerIcon,
   required List<SheetAction> actions,
-  required String cancelLabel,
 }) {
   final hasHeader = title != null && title.isNotEmpty;
   return showModalBottomSheet<String>(
@@ -82,11 +81,6 @@ Future<String?> showActionSheet(
                       ? () => Navigator.of(ctx).pop(a.value)
                       : null,
                 ),
-              ListTile(
-                leading: const Icon(Icons.close),
-                title: Text(cancelLabel),
-                onTap: () => Navigator.of(ctx).pop(),
-              ),
             ],
           ),
         ),

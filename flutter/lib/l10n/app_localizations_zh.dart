@@ -13,9 +13,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cancel => '取消';
 
   @override
-  String get selectionActions => '选区操作';
-
-  @override
   String get selectAll => '全选';
 
   @override
@@ -548,9 +545,6 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get cancel => '取消';
 
   @override
-  String get selectionActions => '選取操作';
-
-  @override
   String get selectAll => '全選';
 
   @override
@@ -1081,9 +1075,6 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get cancel => '取消';
-
-  @override
-  String get selectionActions => '選取操作';
 
   @override
   String get selectAll => '全選';

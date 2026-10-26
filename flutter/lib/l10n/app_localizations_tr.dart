@@ -13,9 +13,6 @@ class AppLocalizationsTr extends AppLocalizations {
   String get cancel => 'İptal';
 
   @override
-  String get selectionActions => 'Seçim işlemleri';
-
-  @override
   String get selectAll => 'Tümünü seç';
 
   @override

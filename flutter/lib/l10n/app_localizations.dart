@@ -128,12 +128,6 @@ abstract class AppLocalizations {
   /// **'Cancel'**
   String get cancel;
 
-  /// No description provided for @selectionActions.
-  ///
-  /// In en, this message translates to:
-  /// **'Selection actions'**
-  String get selectionActions;
-
   /// No description provided for @selectAll.
   ///
   /// In en, this message translates to:
