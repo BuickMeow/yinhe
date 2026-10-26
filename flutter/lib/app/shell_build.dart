@@ -270,6 +270,7 @@ mixin _ShellBuild on _ShellBase {
                                   onReload: _loadAutomation,
                                   textureId: _amTextureId,
                                   pencilActive: _tool == 2,
+                                  deselectTick: _amDeselectTick,
                                   onVelocityCommit: _commitVelocityStroke,
                                   velocityDrawEnabled: _tool == 2,
                                   onResize: _resizeAutoPanel,
@@ -368,7 +369,9 @@ mixin _ShellBuild on _ShellBase {
       onEditBpm: _editDefaultBpm,
       onEditSig: _editDefaultTimeSig,
       onDeselect: () {
-        if (rust.clearSelection() == 1) {
+        final had = rust.clearSelection() == 1;
+        setState(() => _amDeselectTick++);
+        if (had) {
           _refreshDocumentMeta();
         }
       },

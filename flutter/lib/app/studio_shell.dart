@@ -74,6 +74,9 @@ abstract class _ShellBase extends State<StudioShell>
   int _viewMode = kViewArrangement;
   String? _fileName;
 
+  /// 顶栏取消选区信号：AM 面板据此清空锚点选择。
+  int _amDeselectTick = 0;
+
   /// AR 中点击进入 PR 的轨道（自动化栏/聚焦用）。
   int? _activeTrack;
 

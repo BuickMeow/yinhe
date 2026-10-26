@@ -32,6 +32,7 @@ class AutomationPanel extends StatefulWidget {
     required this.onReload,
     required this.textureId,
     required this.pencilActive,
+    required this.deselectTick,
     required this.onVelocityCommit,
     required this.velocityDrawEnabled,
     required this.onResize,
@@ -61,6 +62,9 @@ class AutomationPanel extends StatefulWidget {
 
   /// 铅笔工具：只有铅笔显示锚点并允许直接拖锚点。
   final bool pencilActive;
+
+  /// 顶栏取消选区信号：变化时清空锚点选择。
+  final int deselectTick;
 
   /// 提交一笔力度绘制点 `(tick, velocity 1..127)`。
   final void Function(List<(double, double)> points) onVelocityCommit;
@@ -137,6 +141,10 @@ class _AutomationPanelState extends State<AutomationPanel> {
   @override
   void didUpdateWidget(covariant AutomationPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // 顶栏点空白：清空 AM 锚点选择（音符选区由 Rust 同时清掉）。
+    if (oldWidget.deselectTick != widget.deselectTick) {
+      _clearSelection();
+    }
     if (oldWidget.activeTrack != widget.activeTrack) {
       _selectedLane = null;
       _pendingTarget = null;
