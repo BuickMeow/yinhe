@@ -1869,11 +1869,6 @@ pub fn set_automation_panel(
         active_track,
         lane,
     };
-    log::info!(
-        "AM 面板状态: visible={visible} {}x{} track={active_track} lane={lane:?}",
-        w,
-        h
-    );
 }
 
 /// PR 力度条数据（当前可见 tick 范围 + 可见轨）。

@@ -246,11 +246,11 @@ mixin _ShellBuild on _ShellBase {
                                   onCollapsed: _setAutoCollapsed,
                                   onReload: _loadAutomation,
                                   textureId: _amTextureId,
-                                  onPlotSize: (w, h) {
+                                  onPlotSize: (w, h) async {
                                     final dpr = MediaQuery.devicePixelRatioOf(
                                       context,
                                     );
-                                    _channel.invokeMethod<void>(
+                                    await _channel.invokeMethod<void>(
                                       'setAutomationSize',
                                       {
                                         'w': (w * dpr).round(),
