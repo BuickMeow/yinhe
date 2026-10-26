@@ -182,7 +182,8 @@ struct KeyMapEntryInner {
 
 impl KeyMapEntry {
     /// 预展开条目（SFZ：整个文件一个条目，无惰性收益）。
-    pub(crate) fn expanded(bank: u8, preset: u8, map: Vec<Vec<KeyInfo>>) -> Self {
+    pub(crate) fn expanded(bank: u8, preset: u8, mut map: Vec<Vec<KeyInfo>>) -> Self {
+        merge_stereo_pairs(&mut map);
         let map_cell = OnceLock::new();
         let _ = map_cell.set(map);
         Self {
@@ -213,9 +214,13 @@ impl KeyMapEntry {
 
     /// (key, vel) 展开后的参数快照；首次调用触发惰性展开。
     pub fn map(&self) -> &Vec<Vec<KeyInfo>> {
-        self.inner.map.get_or_init(|| match &self.inner.expand {
-            Some(f) => f(),
-            None => Vec::new(),
+        self.inner.map.get_or_init(|| {
+            let mut map = match &self.inner.expand {
+                Some(f) => f(),
+                None => Vec::new(),
+            };
+            merge_stereo_pairs(&mut map);
+            map
         })
     }
 
@@ -328,6 +333,81 @@ pub fn select_key_info(key_map: &[Vec<KeyInfo>], key: u8, velocity: u8) -> Optio
             .unsigned_abs()
             .min((velocity as i16 - info.hivel as i16).unsigned_abs())
     })
+}
+
+/// 把同一 (key, vel) 的硬左/硬右 mono 层合并成一个交错立体声层。
+///
+/// Polyphone 从 SF2 导出的 SFZ 常用两个 mono region 拼左右声道
+/// （`sample=...L.wav pan=-100` + `...R.wav pan=+100`）。每个 (key, vel)
+/// 只播一个 layer 时另一声道会精确为 0（表现为“只响一边”）；这里在加载期
+/// 把成对层合并，播放侧无需感知，也不增加 voice 数量。
+fn merge_stereo_pairs(map: &mut [Vec<KeyInfo>]) {
+    for layers in map {
+        let mut i = 0;
+        while i < layers.len() {
+            if !is_hard_left(&layers[i]) {
+                i += 1;
+                continue;
+            }
+            let Some(j) = (i + 1..layers.len())
+                .find(|&j| is_hard_right(&layers[j]) && same_layer_params(&layers[i], &layers[j]))
+            else {
+                i += 1;
+                continue;
+            };
+            // 先取出两份 mono 数据，再移除右侧层，最后写回合并结果。
+            let left = layers[i].sample_data.clone();
+            let right = layers[j].sample_data.clone();
+            layers.remove(j);
+            let frames = left.len().max(right.len());
+            let mut merged = Vec::with_capacity(frames * 2);
+            for k in 0..frames {
+                merged.push(left.get(k).copied().unwrap_or(0.0));
+                merged.push(right.get(k).copied().unwrap_or(0.0));
+            }
+            let layer = &mut layers[i];
+            layer.sample_data = Arc::from(merged);
+            layer.is_stereo = true;
+            // 采样本身已经是 L/R，不能再叠加声像衰减。
+            layer.pan_l = 1.0;
+            layer.pan_r = 1.0;
+            i += 1;
+        }
+    }
+}
+
+fn is_hard_left(info: &KeyInfo) -> bool {
+    !info.is_stereo && info.pan_l >= 0.999 && info.pan_r <= 0.001
+}
+
+fn is_hard_right(info: &KeyInfo) -> bool {
+    !info.is_stereo && info.pan_l <= 0.001 && info.pan_r >= 0.999
+}
+
+/// 合并前确认两条 layer 除左右声道外参数完全一致（音量/包络/循环/滤波等）。
+fn same_layer_params(a: &KeyInfo, b: &KeyInfo) -> bool {
+    const EPS: f32 = 1e-5;
+    a.lovel == b.lovel
+        && a.hivel == b.hivel
+        && a.interp == b.interp
+        && a.offset == b.offset
+        && a.stop == b.stop
+        && a.loop_mode == b.loop_mode
+        && a.loop_start == b.loop_start
+        && a.loop_end == b.loop_end
+        && filter_type_code(a.filter_type) == filter_type_code(b.filter_type)
+        && a.biquad == b.biquad
+        && (a.speed_mult - b.speed_mult).abs() <= EPS
+        && (a.volume - b.volume).abs() <= EPS
+        && (a.ampeg_start - b.ampeg_start).abs() <= EPS
+        && (a.ampeg_delay - b.ampeg_delay).abs() <= EPS
+        && (a.ampeg_attack - b.ampeg_attack).abs() <= EPS
+        && (a.ampeg_hold - b.ampeg_hold).abs() <= EPS
+        && (a.ampeg_decay - b.ampeg_decay).abs() <= EPS
+        && (a.ampeg_sustain - b.ampeg_sustain).abs() <= EPS
+        && (a.ampeg_release - b.ampeg_release).abs() <= EPS
+        && (a.cutoff - b.cutoff).abs() <= EPS
+        && (a.resonance - b.resonance).abs() <= EPS
 }
 
 // ── SFZ ──
@@ -483,5 +563,63 @@ mod tests {
         let drum = select_key_info_multi(&entries, 128, 9, 38, 100).expect("鼓组兜底 (128,0)");
         assert_eq!(drum.volume, 4.0);
         assert!(select_key_info_multi(&entries, 128, 9, 60, 100).is_none());
+    }
+
+    /// 回归：Polyphone 导出的 SFZ 用 L/R 两个 mono region 拼立体声；
+    /// 加载期应合并成一个交错立体声层，否则每个 (key,vel) 只播一边。
+    #[test]
+    fn merges_hard_left_right_layers_into_stereo() {
+        let mut map = vec![Vec::new(); 128];
+        let left = KeyInfo {
+            lovel: 60,
+            hivel: 60,
+            pan_l: 1.0,
+            pan_r: 0.0,
+            sample_data: Arc::from(vec![0.5f32, 0.6]),
+            ..Default::default()
+        };
+        let right = KeyInfo {
+            lovel: 60,
+            hivel: 60,
+            pan_l: 0.0,
+            pan_r: 1.0,
+            sample_data: Arc::from(vec![0.1f32, 0.2]),
+            ..Default::default()
+        };
+        map[60] = vec![left, right];
+        merge_stereo_pairs(&mut map);
+        assert_eq!(map[60].len(), 1, "L/R 两层应合并为一层");
+        let info = &map[60][0];
+        assert!(info.is_stereo);
+        assert_eq!(&*info.sample_data, &[0.5, 0.1, 0.6, 0.2]);
+        assert_eq!((info.pan_l, info.pan_r), (1.0, 1.0));
+    }
+
+    /// 参数不一致的左右层（不同音量/包络）不能误合并。
+    #[test]
+    fn does_not_merge_layers_with_different_params() {
+        let mut map = vec![Vec::new(); 128];
+        map[60] = vec![
+            KeyInfo {
+                lovel: 60,
+                hivel: 60,
+                pan_l: 1.0,
+                pan_r: 0.0,
+                volume: 1.0,
+                sample_data: Arc::from(vec![0.5f32]),
+                ..Default::default()
+            },
+            KeyInfo {
+                lovel: 60,
+                hivel: 60,
+                pan_l: 0.0,
+                pan_r: 1.0,
+                volume: 0.5,
+                sample_data: Arc::from(vec![0.1f32]),
+                ..Default::default()
+            },
+        ];
+        merge_stereo_pairs(&mut map);
+        assert_eq!(map[60].len(), 2);
     }
 }
