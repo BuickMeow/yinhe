@@ -1548,6 +1548,31 @@ pub extern "C" fn yinhe_set_automation_ghost(flat: *const f64, len: u32) {
     scene::set_automation_ghost(slice);
 }
 
+/// AM 选区同步：扁平 tick 数组（f64），空 = 清除。
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_automation_selection(ticks: *const f64, len: u32) {
+    if ticks.is_null() || len == 0 {
+        scene::set_automation_selection(&[]);
+        return;
+    }
+    let slice = unsafe { std::slice::from_raw_parts(ticks, len as usize) };
+    let ticks: Vec<u32> = slice
+        .iter()
+        .filter(|v| v.is_finite() && **v >= 0.0)
+        .map(|v| v.round() as u32)
+        .collect();
+    scene::set_automation_selection(&ticks);
+}
+
+/// 框选批量操作。`scope`: 0 = 音符（PR/AR），1 = AM 锚点。
+///
+/// `action` 编号与桌面 transport bar「操作」菜单一致。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_selection_action(scope: i32, action: i32) -> i32 {
+    scene::selection_action(scope, action)
+}
+
 /// Flutter 帧驱动：请求渲染一帧并等待完成（纹理与浮层同帧产出）。成功 1。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_render_frame() -> i32 {

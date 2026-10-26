@@ -165,6 +165,8 @@ pub struct AutomationPanelState {
     pub show_anchors: bool,
     /// 拖动预览：old tick -> new tick/value（wgpu ghost 层）。
     pub ghost: Vec<(u32, u32, f32)>,
+    /// AM 选区：当前 lane 上被选中的锚点 tick（Flutter 框选后同步）。
+    pub selected_ticks: Vec<u32>,
 }
 
 impl Default for AutomationPanelState {
@@ -177,6 +179,7 @@ impl Default for AutomationPanelState {
             lane: None,
             show_anchors: false,
             ghost: Vec::new(),
+            selected_ticks: Vec::new(),
         }
     }
 }
@@ -1861,6 +1864,13 @@ pub fn set_automation_panel(
     };
     let visible = visible && w >= 1.0 && h >= 1.0;
     let p = &mut s.automation_panel;
+    // 切轨/切 lane 才清空 AM 选区；尺寸变化（旋转/键盘）保留选中。
+    let lane_changed = p.active_track != active_track || p.lane != lane;
+    let selected = if lane_changed {
+        Vec::new()
+    } else {
+        p.selected_ticks.clone()
+    };
     if p.visible == visible
         && p.w == w
         && p.h == h
@@ -1868,7 +1878,6 @@ pub fn set_automation_panel(
         && p.lane == lane
         && p.show_anchors == show_anchors
     {
-        p.show_anchors = show_anchors;
         return;
     }
     *p = AutomationPanelState {
@@ -1879,7 +1888,249 @@ pub fn set_automation_panel(
         lane,
         show_anchors,
         ghost: Vec::new(),
+        selected_ticks: selected,
     };
+}
+
+/// AM 选区同步：当前 lane 上被选中的锚点 tick（升序去重）。
+pub fn set_automation_selection(ticks: &[u32]) {
+    let Ok(mut s) = scene().lock() else {
+        return;
+    };
+    let mut ticks = ticks.to_vec();
+    ticks.sort_unstable();
+    ticks.dedup();
+    s.automation_panel.selected_ticks = ticks;
+}
+
+/// 框选批量操作（编号与桌面 transport bar「操作」菜单一致）。
+///
+/// `scope`: 0 = 音符（PR/AR 共用 `edit.selected`），1 = 当前 AM lane 的锚点。
+/// 返回 1 = 已执行，0 = 无变化或该操作不适用。
+pub fn selection_action(scope: i32, action: i32) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let panel = s.automation_panel.clone();
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let changed = if scope == 1 {
+        automation_selection_action(doc, &panel, action)
+    } else {
+        note_selection_action(doc, action)
+    };
+    if !changed {
+        return 0;
+    }
+    doc.edit.pianoroll_view.base.dirty = true;
+    let model = doc.data.model.clone();
+    refresh_snapshot(&mut s);
+    drop(s);
+    crate::audio::reload_notes(model);
+    1
+}
+
+/// 音符选区批量操作（PR/AR 共用）。
+fn note_selection_action(doc: &mut Document, action: i32) -> bool {
+    use yinhe_editor_core::{FlipAxis, HumanizeParams};
+    if doc.edit.selected.is_empty() {
+        return false;
+    }
+    let before = doc.capture_snapshot();
+    let (label, undo) = match action {
+        11 => ("删除选区", doc.delete_selected()),
+        10 => ("重复选区", doc.duplicate_selected()),
+        12 => ("升高八度", doc.transpose_selected(12)),
+        13 => ("降低八度", doc.transpose_selected(-12)),
+        19 => ("时值 ×2", doc.scale_selected_span(2, 1)),
+        20 => ("时值 ÷2", doc.scale_selected_span(1, 2)),
+        21 => ("水平翻转", doc.flip_selected_notes(FlipAxis::Horizontal)),
+        22 => ("垂直翻转", doc.flip_selected_notes(FlipAxis::Vertical)),
+        16 => (
+            "人性化",
+            doc.humanize_selected(HumanizeParams {
+                timing: 8,
+                velocity: 8,
+                gate: 8,
+            }),
+        ),
+        17 => ("填缝", doc.fill_gaps_selected()),
+        18 => ("合并音符", doc.merge_adjacent_selected()),
+        23 => ("网格切割", doc.split_selection_by_grid()),
+        _ => return false,
+    };
+    let Some(undo) = undo else {
+        return false;
+    };
+    doc.push_undo(undo, label, before);
+    // 网格切割会清空选框（与桌面一致）。
+    if action == 23 {
+        doc.edit.sel_rect.clear();
+        doc.edit.selected.clear();
+    }
+    true
+}
+
+/// AM 当前 lane 选中锚点的批量操作。
+///
+/// 只支持删除 / 重复 / 时值 ×2÷2 / 水平翻转；移调、垂直翻转、填缝、
+/// 合并、网格切割对自动化锚点没有意义，返回 false。
+fn automation_selection_action(
+    doc: &mut Document,
+    panel: &AutomationPanelState,
+    action: i32,
+) -> bool {
+    use yinhe_types::automation::AutomationEdit;
+    let Some(lane_index) = panel.lane else {
+        return false;
+    };
+    let ticks = &panel.selected_ticks;
+    if ticks.is_empty() {
+        return false;
+    }
+    let track_idx = panel.active_track;
+    let Some((raw_idx, target)) = doc
+        .data
+        .model
+        .tracks
+        .get(track_idx)
+        .and_then(|t| visible_lane(t, lane_index))
+    else {
+        return false;
+    };
+    let Some(lane) = doc
+        .data
+        .model
+        .tracks
+        .get(track_idx)
+        .and_then(|t| t.automation_lanes.get(raw_idx))
+    else {
+        return false;
+    };
+    // 选中事件（按 tick 升序，lane 本身有序）。
+    let selected: Vec<(u32, f32, yinhe_types::SegmentShape)> = lane
+        .events
+        .iter()
+        .filter(|e| ticks.binary_search(&e.tick).is_ok())
+        .map(|e| (e.tick, e.value, e.shape))
+        .collect();
+    if selected.is_empty() {
+        return false;
+    }
+    let t0 = selected[0].0;
+    let t1 = selected[selected.len() - 1].0;
+    let track_u16 = track_idx as u16;
+    let ppq = doc.data.model.meta.ppq;
+    let (num, den) = doc.data.model.tempo_map.time_sig_default;
+    let interval = doc
+        .edit
+        .quantize_pianoroll
+        .resolved_with_time_sig(
+            doc.edit.pianoroll_view.base.pixels_per_tick,
+            ppq,
+            num,
+            den,
+            true,
+        )
+        .tick_interval(ppq)
+        .max(1);
+
+    let mut edits: Vec<AutomationEdit> = Vec::new();
+    match action {
+        11 => {
+            for (tick, _, _) in &selected {
+                edits.push(AutomationEdit::Delete {
+                    track_idx: track_u16,
+                    lane_idx: raw_idx,
+                    target: target.clone(),
+                    tick: *tick,
+                });
+            }
+        }
+        10 => {
+            let delta = if t1 > t0 { t1 - t0 } else { interval };
+            let existing: HashSet<u32> = lane.events.iter().map(|e| e.tick).collect();
+            for (tick, value, shape) in &selected {
+                let new_tick = tick.saturating_add(delta);
+                if existing.contains(&new_tick) {
+                    continue;
+                }
+                edits.push(AutomationEdit::Add {
+                    track_idx: track_u16,
+                    target: target.clone(),
+                    tick: new_tick,
+                    value: *value,
+                    shape: *shape,
+                });
+            }
+        }
+        19 | 20 => {
+            let span = t1.saturating_sub(t0);
+            if span == 0 {
+                return false;
+            }
+            let (num, den) = if action == 19 { (2u64, 1u64) } else { (1, 2) };
+            let new_span = (u64::from(span) * num / den).max(1);
+            let factor = new_span as f64 / f64::from(span);
+            let moves: Vec<(u32, u32, f32)> = selected
+                .iter()
+                .filter_map(|(tick, value, _)| {
+                    let nt = (f64::from(t0) + (f64::from(*tick) - f64::from(t0)) * factor)
+                        .round()
+                        .clamp(0.0, f64::from(u32::MAX)) as u32;
+                    (nt != *tick).then_some((*tick, nt, *value))
+                })
+                .collect();
+            if moves.is_empty() {
+                return false;
+            }
+            edits.push(AutomationEdit::MoveBatch {
+                track_idx: track_u16,
+                lane_idx: raw_idx,
+                target: target.clone(),
+                moves,
+            });
+        }
+        21 => {
+            let moves: Vec<(u32, u32, f32)> = selected
+                .iter()
+                .filter_map(|(tick, value, _)| {
+                    let nt = t0 + t1 - *tick;
+                    (nt != *tick).then_some((*tick, nt, *value))
+                })
+                .collect();
+            if moves.is_empty() {
+                return false;
+            }
+            edits.push(AutomationEdit::MoveBatch {
+                track_idx: track_u16,
+                lane_idx: raw_idx,
+                target: target.clone(),
+                moves,
+            });
+        }
+        _ => return false,
+    }
+    if edits.is_empty() {
+        return false;
+    }
+    let before = doc.capture_snapshot();
+    let actions = doc.apply_automation_edits(edits);
+    if actions.is_empty() {
+        return false;
+    }
+    // 多步编辑合成一次 undo（与桌面 automation_undo 一致）。
+    let undo = match actions.len() {
+        1 => actions.into_iter().next(),
+        _ => Some(yinhe_editor_core::history::UndoAction::Composite(actions)),
+    };
+    if let Some(undo) = undo {
+        doc.push_undo(undo, "自动化选区操作", before);
+    }
+    doc.edit.sel_rect.clear();
+    doc.edit.selected.clear();
+    true
 }
 
 /// 拖动预览：扁平 `[old_tick, new_tick, new_value, ...]`；空数组清除。
