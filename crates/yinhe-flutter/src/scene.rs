@@ -151,6 +151,34 @@ impl DragPreview {
     }
 }
 
+/// PR 底部 AM 面板在主纹理中的绘制状态（Dart 布局后写入）。
+#[derive(Clone, Copy, Debug)]
+pub struct AutomationPanelState {
+    pub visible: bool,
+    /// 绘制区在主纹理中的逻辑坐标/尺寸（不含左侧 combo 列和顶部手柄）。
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub active_track: usize,
+    /// `None` = Velocity；`Some(i)` = 当前轨第 i 条可绘制自动化 lane。
+    pub lane: Option<usize>,
+}
+
+impl Default for AutomationPanelState {
+    fn default() -> Self {
+        Self {
+            visible: false,
+            x: 0.0,
+            y: 0.0,
+            w: 0.0,
+            h: 0.0,
+            active_track: 0,
+            lane: None,
+        }
+    }
+}
+
 pub struct RenderScene {
     /// 当前文档模型（None = 无文档，渲染清屏）。
     pub model: Option<Arc<YinModel>>,
@@ -198,6 +226,8 @@ pub struct RenderScene {
     /// 文档模型身份：只在替换文档（打开/新建）时自增，编辑不变。
     /// 供音符层缓存判断“这是不是一个全新的模型”，避免 revision 重置后复用旧实例。
     pub model_epoch: u64,
+    /// PR 底部 AM 面板的 wgpu 叠加区域。
+    pub automation_panel: AutomationPanelState,
 }
 
 /// 工具（移动端子集：与桌面 `tools_panel::Tool` 的编号对齐）。
@@ -236,6 +266,7 @@ impl Default for RenderScene {
             source_path: None,
             doc_generation: 0,
             model_epoch: 0,
+            automation_panel: AutomationPanelState::default(),
         }
     }
 }
@@ -1811,6 +1842,43 @@ pub fn automation_json(track: usize) -> String {
     }
     out.push(']');
     out
+}
+
+/// Dart 布局后写入 AM 面板在主纹理中的绘制区域与当前 lane。
+#[allow(clippy::too_many_arguments)]
+pub fn set_automation_panel(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    visible: bool,
+    active_track: usize,
+    lane: Option<usize>,
+) {
+    let Ok(mut s) = scene().lock() else {
+        return;
+    };
+    let visible = visible && w >= 1.0 && h >= 1.0;
+    let p = &mut s.automation_panel;
+    if p.visible == visible
+        && p.x == x
+        && p.y == y
+        && p.w == w
+        && p.h == h
+        && p.active_track == active_track
+        && p.lane == lane
+    {
+        return;
+    }
+    *p = AutomationPanelState {
+        visible,
+        x,
+        y,
+        w,
+        h,
+        active_track,
+        lane,
+    };
 }
 
 /// PR 力度条数据（当前可见 tick 范围 + 可见轨）。
@@ -3473,7 +3541,7 @@ pub fn set_project_defaults(bpm: f32, num: u8, den_pow: u8) -> i32 {
 }
 
 /// 自动化类型：0=PB、1=CC、2=RPN；其它（Nrpn/Tempo/插件参数）不展示。
-fn lane_kind(target: &yinhe_types::automation::AutomationTarget) -> Option<u8> {
+pub(crate) fn lane_kind(target: &yinhe_types::automation::AutomationTarget) -> Option<u8> {
     use yinhe_types::automation::{AutomationTarget, ParamDevice, xsynth_param};
     match target {
         AutomationTarget::PitchBend => Some(0),

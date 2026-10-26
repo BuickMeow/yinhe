@@ -1423,6 +1423,28 @@ pub extern "C" fn yinhe_doc_state(out: *mut i32) -> i32 {
     1
 }
 
+/// Dart 布局后同步 AM 面板在主纹理中的绘制区域与当前 lane。`lane < 0` = 力度。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_automation_panel(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    visible: i32,
+    active_track: i32,
+    lane: i32,
+) {
+    scene::set_automation_panel(
+        x,
+        y,
+        w,
+        h,
+        visible != 0,
+        active_track.max(0) as usize,
+        if lane < 0 { None } else { Some(lane as usize) },
+    );
+}
+
 /// Flutter 帧驱动：请求渲染一帧并等待完成（纹理与浮层同帧产出）。成功 1。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_render_frame() -> i32 {
