@@ -43,6 +43,8 @@ pub struct Target {
     notes_buf: Vec<NoteInstance>,
     /// PR 可见窗口 + key 分桶缓存；滚动在 padding 内只改 uniform。
     pr_note_cache: yinhe_wgpu::NoteLayerCache,
+    /// 上一次的文档身份，用于换文档时清掉力度条摘要。
+    last_model_epoch: u64,
     fps_start: Instant,
     frames: u32,
     /// 仅为保活持有（尺寸在创建时已读取）。
@@ -129,6 +131,7 @@ pub fn create_target(gpu: &Gpu, window: OwnedWindow) -> Option<Target> {
         notes_cache_key: 0,
         notes_buf: Vec::new(),
         pr_note_cache: yinhe_wgpu::NoteLayerCache::new(VIEW_TAG_PIANOROLL),
+        last_model_epoch: 0,
         fps_start: Instant::now(),
         frames: 0,
         window,
@@ -188,7 +191,6 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
             s.document.as_ref().map(|d| d.data.revision).unwrap_or(0),
             s.model_epoch,
             s.preview.clone(),
-            s.automation_panel,
         )
     };
     let (
@@ -207,15 +209,17 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
         revision,
         model_epoch,
         preview,
-        am_panel,
     ) = snapshot;
 
-    // AM 力度条摘要：主 renderer 后台构建，AM renderer 只读共享。
-    if view_mode == ViewMode::Pianoroll
-        && am_panel.visible
-        && am_panel.lane.is_none()
-        && let Some(model) = model.as_ref()
-    {
+    // 文档切换：旧摘要不能用于新文档，先清空再预热。
+    if model_epoch != t.last_model_epoch {
+        t.last_model_epoch = model_epoch;
+        t.renderer.clear_velocity_summary();
+    }
+
+    // AM 力度条摘要：不等 AM 展开就后台预热；load 完成后第一帧即开始构建，
+    // 首次打开 AM 时通常已经就绪，避免先走一帧昂贵的原始力度条。
+    if let Some(model) = model.as_ref() {
         let visible = effective_visible(&pr_track_visible, display_track);
         let tv_hash = yinhe_wgpu::hash_bools(&visible);
         t.renderer

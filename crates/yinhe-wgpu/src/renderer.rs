@@ -499,6 +499,14 @@ impl InstanceRenderer {
         self.replace_velocity_summary(summary);
     }
 
+    /// 文档替换时清空力度条摘要与进行中的后台任务。
+    /// 旧文档的摘要不能用于新文档，否则 AM 会闪一帧旧数据。
+    pub fn clear_velocity_summary(&mut self) {
+        self.replace_velocity_summary(None);
+        self.velocity_summary_revision = 0;
+        self.velocity_rebuild = None;
+    }
+
     /// 推进 AM 力度条摘要的后台构建：先收集已完成的结果，再按需启动新任务。
     ///
     /// `vs_key` = revision ^ tv_hash（hash 由调用方算）。编辑或切轨会让摘要
