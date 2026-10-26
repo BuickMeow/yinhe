@@ -200,8 +200,27 @@ mixin _ShellMenus on _ShellBase {
     rust.jumpToEvent(tick);
   }
 
-  /// 删除音轨（连同音符；一步一 undo）。
-  void _deleteTrack(int track) {
+  /// 删除音轨（连同音符；一步一 undo）。已经过二次确认。
+  Future<void> _deleteTrack(int track) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('${l.deleteTrack}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(l.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(l.ok),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) {
+      return;
+    }
     if (rust.deleteTrack(track) != 1) {
       return;
     }
