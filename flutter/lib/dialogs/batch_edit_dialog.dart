@@ -88,61 +88,69 @@ class _HumanizeDialogState extends State<_HumanizeDialog> {
   }
 }
 
-/// 批量处理：一个字段的操作（0=不改 1=设值 2=加 3=减 4=乘 5=除）。
-class BatchFieldSpec {
-  const BatchFieldSpec(this.op, this.value);
-
-  final int op;
-  final double value;
-
-  bool get active => op != 0;
-}
-
+/// 批量处理：每个字段只做“设值”，留空 = 不修改。
 class BatchEditSpec {
   const BatchEditSpec({
-    required this.velocity,
-    required this.gate,
-    required this.key,
-    required this.tick,
-    required this.stretchPercent,
+    this.value,
+    this.gate,
+    this.key,
+    this.tick,
+    this.stretchPercent = 100,
   });
 
-  final BatchFieldSpec velocity;
-  final BatchFieldSpec gate;
-  final BatchFieldSpec key;
-  final BatchFieldSpec tick;
+  /// 音符 = 力度；自动化 = 锚点值。
+  final double? value;
+  final double? gate;
+  final double? key;
+  final double? tick;
   final int stretchPercent;
 }
 
 /// 弹批量处理对话框；取消返回 null。
-Future<BatchEditSpec?> showBatchEditDialog(BuildContext context) {
+///
+/// `automation`：只显示「力度/值」和「位置」两行。
+Future<BatchEditSpec?> showBatchEditDialog(
+  BuildContext context, {
+  required bool automation,
+}) {
   return showDialog<BatchEditSpec>(
     context: context,
-    builder: (_) => const _BatchEditDialog(),
+    builder: (_) => _BatchEditDialog(automation: automation),
   );
 }
 
 class _BatchEditDialog extends StatefulWidget {
-  const _BatchEditDialog();
+  const _BatchEditDialog({required this.automation});
+
+  final bool automation;
 
   @override
   State<_BatchEditDialog> createState() => _BatchEditDialogState();
 }
 
 class _BatchEditDialogState extends State<_BatchEditDialog> {
-  final _velocity = _FieldController();
-  final _gate = _FieldController();
-  final _key = _FieldController();
-  final _tick = _FieldController();
-  double _stretch = 100;
+  final _value = TextEditingController();
+  final _gate = TextEditingController();
+  final _key = TextEditingController();
+  final _tick = TextEditingController();
+  final _stretch = TextEditingController();
 
   @override
   void dispose() {
-    _velocity.dispose();
+    _value.dispose();
     _gate.dispose();
     _key.dispose();
     _tick.dispose();
+    _stretch.dispose();
     super.dispose();
+  }
+
+  double? _parse(TextEditingController c) {
+    final text = c.text.trim();
+    if (text.isEmpty) {
+      return null;
+    }
+    return double.tryParse(text);
   }
 
   @override
@@ -154,36 +162,14 @@ class _BatchEditDialogState extends State<_BatchEditDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _BatchFieldRow(
-              label: l.batchVelocity,
-              controller: _velocity,
-              onChanged: () => setState(() {}),
-            ),
-            _BatchFieldRow(
-              label: l.batchGate,
-              controller: _gate,
-              onChanged: () => setState(() {}),
-            ),
-            _BatchFieldRow(
-              label: l.batchKey,
-              controller: _key,
-              onChanged: () => setState(() {}),
-            ),
-            _BatchFieldRow(
-              label: l.batchTick,
-              controller: _tick,
-              onChanged: () => setState(() {}),
-            ),
-            const SizedBox(height: 12),
-            _LabeledSlider(
-              label: l.batchStretch,
-              value: _stretch,
-              min: 25,
-              max: 400,
-              divisions: 75,
-              suffix: '%',
-              onChanged: (v) => setState(() => _stretch = v),
-            ),
+            _NumRow(label: l.batchVelocity, controller: _value),
+            if (!widget.automation) ...[
+              _NumRow(label: l.batchGate, controller: _gate),
+              _NumRow(label: l.batchKey, controller: _key),
+            ],
+            _NumRow(label: l.batchTick, controller: _tick),
+            if (!widget.automation)
+              _NumRow(label: l.batchStretch, controller: _stretch, suffix: '%'),
           ],
         ),
       ),
@@ -195,11 +181,13 @@ class _BatchEditDialogState extends State<_BatchEditDialog> {
         FilledButton(
           onPressed: () => Navigator.of(context).pop(
             BatchEditSpec(
-              velocity: _velocity.spec(),
-              gate: _gate.spec(),
-              key: _key.spec(),
-              tick: _tick.spec(),
-              stretchPercent: _stretch.round(),
+              value: _parse(_value),
+              gate: widget.automation ? null : _parse(_gate),
+              key: widget.automation ? null : _parse(_key),
+              tick: _parse(_tick),
+              stretchPercent: widget.automation
+                  ? 100
+                  : (_parse(_stretch)?.round() ?? 100),
             ),
           ),
           child: Text(l.ok),
@@ -209,79 +197,46 @@ class _BatchEditDialogState extends State<_BatchEditDialog> {
   }
 }
 
-class _FieldController {
-  int op = 0;
-  final TextEditingController text = TextEditingController();
-
-  void dispose() => text.dispose();
-
-  BatchFieldSpec spec() {
-    final v = double.tryParse(text.text.trim()) ?? 0;
-    return BatchFieldSpec(op == 0 ? 0 : op, v);
-  }
-}
-
-class _BatchFieldRow extends StatelessWidget {
-  const _BatchFieldRow({
+/// 一行：[标签][数值输入]，固定“设值”。
+class _NumRow extends StatelessWidget {
+  const _NumRow({
     required this.label,
     required this.controller,
-    required this.onChanged,
+    this.suffix = '',
   });
 
   final String label;
-  final _FieldController controller;
-  final VoidCallback onChanged;
+  final TextEditingController controller;
+  final String suffix;
 
   @override
   Widget build(BuildContext context) {
-    final l = AppLocalizations.of(context);
-    final active = controller.op != 0;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
           SizedBox(
-            width: 56,
+            width: 72,
             child: Text(
               label,
               style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
             ),
           ),
-          DropdownButtonHideUnderline(
-            child: DropdownButton<int>(
-              value: controller.op,
-              isDense: true,
-              style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
-              items: [
-                DropdownMenuItem(value: 0, child: Text(l.batchOpNone)),
-                DropdownMenuItem(value: 1, child: Text(l.batchOpSet)),
-                DropdownMenuItem(value: 2, child: Text(l.batchOpAdd)),
-                DropdownMenuItem(value: 3, child: Text(l.batchOpSub)),
-                DropdownMenuItem(value: 4, child: Text(l.batchOpMul)),
-                DropdownMenuItem(value: 5, child: Text(l.batchOpDiv)),
-              ],
-              onChanged: (v) {
-                controller.op = v ?? 0;
-                onChanged();
-              },
-            ),
-          ),
-          const SizedBox(width: 8),
           Expanded(
             child: TextField(
-              controller: controller.text,
-              enabled: active,
+              controller: controller,
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
                 signed: true,
               ),
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 isDense: true,
-                border: OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(
+                border: const OutlineInputBorder(),
+                contentPadding: const EdgeInsets.symmetric(
                   horizontal: 8,
                   vertical: 8,
                 ),
+                suffixText: suffix.isEmpty ? null : suffix,
               ),
             ),
           ),
@@ -296,17 +251,13 @@ class _LabeledSlider extends StatelessWidget {
     required this.label,
     required this.value,
     required this.onChanged,
-    this.min = 0,
     this.max = 1,
-    this.divisions,
     this.suffix = '',
   });
 
   final String label;
   final double value;
-  final double min;
   final double max;
-  final int? divisions;
   final String suffix;
   final ValueChanged<double> onChanged;
 
@@ -330,10 +281,9 @@ class _LabeledSlider extends StatelessWidget {
           ],
         ),
         Slider(
-          value: value.clamp(min, max),
-          min: min,
+          value: value.clamp(0, max),
+          min: 0,
           max: max,
-          divisions: divisions,
           onChanged: onChanged,
         ),
       ],

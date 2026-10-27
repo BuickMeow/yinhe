@@ -7,6 +7,7 @@ import '../core/edit_status.dart';
 import '../core/ffi.dart' as rust;
 import '../core/midi_names.dart';
 import '../core/models.dart';
+import '../dialogs/batch_edit_dialog.dart';
 import '../menus/canvas_menus.dart';
 import '../painters/painters.dart';
 import '../l10n/app_localizations.dart';
@@ -277,6 +278,22 @@ class _AutomationPanelState extends State<AutomationPanel> {
   Future<void> _openSelectionActions() async {
     final id = await showSelectionActionPicker(context, automation: true);
     if (!mounted || id == null) {
+      return;
+    }
+    if (id == 24) {
+      final spec = await showBatchEditDialog(context, automation: true);
+      if (!mounted || spec == null) {
+        return;
+      }
+      if (rust.automationBatchEdit(
+            spec.value ?? double.nan,
+            spec.tick ?? double.nan,
+          ) ==
+          1) {
+        _clearSelection();
+        setState(() {});
+        widget.onReload();
+      }
       return;
     }
     if (rust.selectionAction(1, id) == 1) {

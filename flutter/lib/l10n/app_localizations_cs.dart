@@ -64,7 +64,7 @@ class AppLocalizationsCs extends AppLocalizations {
   String get humanizeGate => 'Délka';
 
   @override
-  String get batchVelocity => 'Dynamika';
+  String get batchVelocity => 'Dynamika / Hodnota';
 
   @override
   String get batchGate => 'Délka';
@@ -77,24 +77,6 @@ class AppLocalizationsCs extends AppLocalizations {
 
   @override
   String get batchStretch => 'Roztažení';
-
-  @override
-  String get batchOpNone => 'Neměnit';
-
-  @override
-  String get batchOpSet => 'Nastavit';
-
-  @override
-  String get batchOpAdd => 'Přičíst';
-
-  @override
-  String get batchOpSub => 'Odečíst';
-
-  @override
-  String get batchOpMul => 'Násobit';
-
-  @override
-  String get batchOpDiv => 'Dělit';
 
   @override
   String get deleteSelectionConfirm => 'Smazat vybrané události?';

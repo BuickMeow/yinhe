@@ -64,7 +64,7 @@ class AppLocalizationsPl extends AppLocalizations {
   String get humanizeGate => 'Długość';
 
   @override
-  String get batchVelocity => 'Dynamika';
+  String get batchVelocity => 'Dynamika / Wartość';
 
   @override
   String get batchGate => 'Długość';
@@ -77,24 +77,6 @@ class AppLocalizationsPl extends AppLocalizations {
 
   @override
   String get batchStretch => 'Rozciągnięcie';
-
-  @override
-  String get batchOpNone => 'Bez zmian';
-
-  @override
-  String get batchOpSet => 'Ustaw';
-
-  @override
-  String get batchOpAdd => 'Dodaj';
-
-  @override
-  String get batchOpSub => 'Odejmij';
-
-  @override
-  String get batchOpMul => 'Pomnóż';
-
-  @override
-  String get batchOpDiv => 'Podziel';
 
   @override
   String get deleteSelectionConfirm => 'Usunąć wybrane zdarzenia?';

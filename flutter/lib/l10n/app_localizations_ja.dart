@@ -64,7 +64,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get humanizeGate => '長さ';
 
   @override
-  String get batchVelocity => 'ベロシティ';
+  String get batchVelocity => 'ベロシティ / 値';
 
   @override
   String get batchGate => '長さ';
@@ -77,24 +77,6 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get batchStretch => '伸縮';
-
-  @override
-  String get batchOpNone => '変更なし';
-
-  @override
-  String get batchOpSet => '設定';
-
-  @override
-  String get batchOpAdd => '加算';
-
-  @override
-  String get batchOpSub => '減算';
-
-  @override
-  String get batchOpMul => '乗算';
-
-  @override
-  String get batchOpDiv => '除算';
 
   @override
   String get deleteSelectionConfirm => '選択したイベントを削除しますか？';

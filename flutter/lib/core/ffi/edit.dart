@@ -234,28 +234,23 @@ final HumanizeDart humanize = bridge
     .lookupFunction<HumanizeNative, HumanizeDart>('yinhe_humanize');
 
 typedef BatchEditNative = ffi.Int32 Function(
-  ffi.Int32,
   ffi.Double,
-  ffi.Int32,
   ffi.Double,
-  ffi.Int32,
   ffi.Double,
-  ffi.Int32,
   ffi.Double,
   ffi.Int32,
 );
-typedef BatchEditDart = int Function(
-  int,
-  double,
-  int,
-  double,
-  int,
-  double,
-  int,
-  double,
-  int,
-);
+typedef BatchEditDart = int Function(double, double, double, double, int);
 
-/// 批量处理：字段编辑 + 整体变速（一次 undo）。
+/// 批量处理（音符）：四个字段固定设值，NaN = 跳过。
 final BatchEditDart batchEdit = bridge
     .lookupFunction<BatchEditNative, BatchEditDart>('yinhe_batch_edit');
+
+typedef AutomationBatchEditNative = ffi.Int32 Function(ffi.Double, ffi.Double);
+typedef AutomationBatchEditDart = int Function(double, double);
+
+/// 批量处理（AM 当前 lane）：值/位置固定设值，NaN = 跳过。
+final AutomationBatchEditDart automationBatchEdit = bridge
+    .lookupFunction<AutomationBatchEditNative, AutomationBatchEditDart>(
+      'yinhe_automation_batch_edit',
+    );

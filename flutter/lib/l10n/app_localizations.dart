@@ -233,7 +233,7 @@ abstract class AppLocalizations {
   /// No description provided for @batchVelocity.
   ///
   /// In en, this message translates to:
-  /// **'Velocity'**
+  /// **'Velocity / Value'**
   String get batchVelocity;
 
   /// No description provided for @batchGate.
@@ -259,42 +259,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Stretch'**
   String get batchStretch;
-
-  /// No description provided for @batchOpNone.
-  ///
-  /// In en, this message translates to:
-  /// **'No change'**
-  String get batchOpNone;
-
-  /// No description provided for @batchOpSet.
-  ///
-  /// In en, this message translates to:
-  /// **'Set'**
-  String get batchOpSet;
-
-  /// No description provided for @batchOpAdd.
-  ///
-  /// In en, this message translates to:
-  /// **'Add'**
-  String get batchOpAdd;
-
-  /// No description provided for @batchOpSub.
-  ///
-  /// In en, this message translates to:
-  /// **'Subtract'**
-  String get batchOpSub;
-
-  /// No description provided for @batchOpMul.
-  ///
-  /// In en, this message translates to:
-  /// **'Multiply'**
-  String get batchOpMul;
-
-  /// No description provided for @batchOpDiv.
-  ///
-  /// In en, this message translates to:
-  /// **'Divide'**
-  String get batchOpDiv;
 
   /// No description provided for @deleteSelectionConfirm.
   ///

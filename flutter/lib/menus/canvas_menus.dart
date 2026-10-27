@@ -128,12 +128,7 @@ List<SheetAction> selectionActionItems(
       icon: Icons.grid_on,
       enabled: noteOnly(),
     ),
-    SheetAction(
-      value: '24',
-      label: l.batchProcess,
-      icon: Icons.tune,
-      enabled: noteOnly(),
-    ),
+    SheetAction(value: '24', label: l.batchProcess, icon: Icons.tune),
   ];
 }
 

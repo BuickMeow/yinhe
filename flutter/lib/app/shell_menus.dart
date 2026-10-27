@@ -41,25 +41,30 @@ mixin _ShellMenus on _ShellBase {
       }
       return;
     }
-    // 批量处理：力度/时值/音高/位置 + 整体变速，一次 undo。
+    // 批量处理：音符或 AM 锚点，字段固定设值，一次 undo。
     if (id == 24) {
-      final spec = await showBatchEditDialog(context);
+      final automation = scope == 1;
+      final spec = await showBatchEditDialog(context, automation: automation);
       if (!mounted || spec == null) {
         return;
       }
-      if (rust.batchEdit(
-            spec.velocity.op,
-            spec.velocity.value,
-            spec.gate.op,
-            spec.gate.value,
-            spec.key.op,
-            spec.key.value,
-            spec.tick.op,
-            spec.tick.value,
-            spec.stretchPercent,
-          ) ==
-          1) {
+      final ok = automation
+          ? rust.automationBatchEdit(
+              spec.value ?? double.nan,
+              spec.tick ?? double.nan,
+            )
+          : rust.batchEdit(
+              spec.value ?? double.nan,
+              spec.gate ?? double.nan,
+              spec.key ?? double.nan,
+              spec.tick ?? double.nan,
+              spec.stretchPercent,
+            );
+      if (ok == 1) {
         _refreshDocumentMeta();
+        if (automation) {
+          _loadAutomation();
+        }
       }
       return;
     }

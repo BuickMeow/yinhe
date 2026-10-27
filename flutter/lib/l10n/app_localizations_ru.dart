@@ -64,7 +64,7 @@ class AppLocalizationsRu extends AppLocalizations {
   String get humanizeGate => 'Длительность';
 
   @override
-  String get batchVelocity => 'Скорость';
+  String get batchVelocity => 'Скорость / Значение';
 
   @override
   String get batchGate => 'Длительность';
@@ -77,24 +77,6 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get batchStretch => 'Растяжение';
-
-  @override
-  String get batchOpNone => 'Без изменений';
-
-  @override
-  String get batchOpSet => 'Установить';
-
-  @override
-  String get batchOpAdd => 'Прибавить';
-
-  @override
-  String get batchOpSub => 'Вычесть';
-
-  @override
-  String get batchOpMul => 'Умножить';
-
-  @override
-  String get batchOpDiv => 'Разделить';
 
   @override
   String get deleteSelectionConfirm => 'Удалить выбранные события?';

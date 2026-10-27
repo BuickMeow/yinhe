@@ -64,7 +64,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get humanizeGate => '길이';
 
   @override
-  String get batchVelocity => '벨로시티';
+  String get batchVelocity => '벨로시티 / 값';
 
   @override
   String get batchGate => '길이';
@@ -77,24 +77,6 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get batchStretch => '늘이기';
-
-  @override
-  String get batchOpNone => '변경 없음';
-
-  @override
-  String get batchOpSet => '설정';
-
-  @override
-  String get batchOpAdd => '더하기';
-
-  @override
-  String get batchOpSub => '빼기';
-
-  @override
-  String get batchOpMul => '곱하기';
-
-  @override
-  String get batchOpDiv => '나누기';
 
   @override
   String get deleteSelectionConfirm => '선택한 이벤트를 삭제할까요?';

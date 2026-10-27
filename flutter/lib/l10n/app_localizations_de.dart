@@ -64,7 +64,7 @@ class AppLocalizationsDe extends AppLocalizations {
   String get humanizeGate => 'Länge';
 
   @override
-  String get batchVelocity => 'Anschlag';
+  String get batchVelocity => 'Anschlag / Wert';
 
   @override
   String get batchGate => 'Länge';
@@ -77,24 +77,6 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get batchStretch => 'Dehnen';
-
-  @override
-  String get batchOpNone => 'Keine Änderung';
-
-  @override
-  String get batchOpSet => 'Setzen';
-
-  @override
-  String get batchOpAdd => 'Addieren';
-
-  @override
-  String get batchOpSub => 'Subtrahieren';
-
-  @override
-  String get batchOpMul => 'Multiplizieren';
-
-  @override
-  String get batchOpDiv => 'Dividieren';
 
   @override
   String get deleteSelectionConfirm => 'Ausgewählte Ereignisse löschen?';
