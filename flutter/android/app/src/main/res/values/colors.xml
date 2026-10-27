@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与 YinheTheme.accent 一致（#1E6EDC）。 -->
+    <color name="ic_launcher_background">#1E6EDC</color>
+</resources>
