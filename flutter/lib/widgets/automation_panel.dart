@@ -364,11 +364,49 @@ class _AutomationPanelState extends State<AutomationPanel>
 
   bool _selectionMenuBusy = false;
 
-  /// 有选区/锚点时：复制、粘贴、修改、插入、删除 + 批量处理。
-  Future<void> _showAutomationSelectionMenu({
-    required int tick,
-    int? modifyTick,
-  }) async {
+  /// 选框菜单：只做针对整段选区的操作（复制 / 删除 / 批量处理）。
+  Future<void> _showMarqueeMenu() async {
+    final action = await showActionSheet(
+      context,
+      actions: [
+        SheetAction(
+          value: 'copy',
+          label: l.copy,
+          icon: Icons.content_copy,
+          enabled: _selectedTicks.isNotEmpty,
+        ),
+        SheetAction(
+          value: 'delete',
+          label: l.delete,
+          icon: Icons.delete_outline,
+          danger: true,
+          enabled: _selectedTicks.isNotEmpty,
+        ),
+        SheetAction(
+          value: 'batch',
+          label: l.batchProcess,
+          icon: Icons.tune,
+          enabled: _selectedTicks.isNotEmpty,
+        ),
+      ],
+    );
+    if (!mounted || action == null) {
+      return;
+    }
+    switch (action) {
+      case 'copy':
+        if (rust.automationCopy() == 1) {
+          showSnack(context, l.copied, duration: const Duration(seconds: 1));
+        }
+      case 'delete':
+        await _confirmDeleteSelection();
+      case 'batch':
+        await _runSelectionAction(24);
+    }
+  }
+
+  /// 单个锚点菜单：复制 / 粘贴 / 修改 / 插入 / 删除。
+  Future<void> _showAnchorMenu({required int tick, int? modifyTick}) async {
     final canPaste = rust.automationClipboardEmpty() == 0;
     final action = await showActionSheet(
       context,
@@ -403,12 +441,6 @@ class _AutomationPanelState extends State<AutomationPanel>
           danger: true,
           enabled: _selectedTicks.isNotEmpty,
         ),
-        SheetAction(
-          value: 'batch',
-          label: l.batchProcess,
-          icon: Icons.tune,
-          enabled: _selectedTicks.isNotEmpty,
-        ),
       ],
     );
     if (!mounted || action == null) {
@@ -429,8 +461,6 @@ class _AutomationPanelState extends State<AutomationPanel>
         widget.onInsertAtTick(tick.toDouble());
       case 'delete':
         await _confirmDeleteSelection();
-      case 'batch':
-        await _runSelectionAction(24);
     }
   }
 
@@ -789,7 +819,8 @@ class _AutomationPanelState extends State<AutomationPanel>
 
   /// 长按由手势竞技场赢过拖动，按住不动不会进入 [_handlePanStart]。
   ///
-  /// 命中锚点（铅笔）或在已有选框内 → 选区菜单；否则 → 插入/粘贴菜单。
+  /// 命中锚点（铅笔）→ 单锚点菜单；在已有选框内 → 选框菜单；
+  /// 其余 → 插入/粘贴菜单。三种菜单职责不同，不混用。
   Future<void> _handleLongPressStart(LongPressStartDetails d) async {
     _endLpWatch();
     final laneIdx = _laneIdx;
@@ -816,14 +847,11 @@ class _AutomationPanelState extends State<AutomationPanel>
       _syncGhost();
       _syncSelection();
       setState(() {});
-      await _showAutomationSelectionMenu(tick: tick, modifyTick: hitTick);
+      await _showAnchorMenu(tick: tick, modifyTick: hitTick);
       return;
     }
-    if (inMarquee && _selectedTicks.isNotEmpty) {
-      await _showAutomationSelectionMenu(
-        tick: tick,
-        modifyTick: _selectedTicks.length == 1 ? _selectedTicks.first : null,
-      );
+    if (inMarquee) {
+      await _showMarqueeMenu();
       return;
     }
     await _showAutomationEmptyMenu(tick);
