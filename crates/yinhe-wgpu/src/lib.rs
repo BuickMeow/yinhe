@@ -34,7 +34,7 @@ pub use arrangement::{
 pub use automation::{
     ArrAutomationLane, AutomationGhost, VelocityBlock, VelocitySummary, build_lane_multi_copy,
     build_lane_multi_move, build_lane_override, build_lane_shape_override, prepare_arr_automation,
-    prepare_automation, prepare_folded_automation,
+    prepare_automation, prepare_folded_automation, prepare_folded_automation_ghost,
 };
 pub use pianoroll::{
     PianorollRenderJob, SUMMARY_BLOCK_TICKS, SUMMARY_MAX_PX, build_all_notes, build_ghost_note,

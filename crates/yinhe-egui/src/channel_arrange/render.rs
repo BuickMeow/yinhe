@@ -198,6 +198,7 @@ pub(crate) fn collect_folded_am<'a>(
                     height,
                     max_val: crate::arrange::am_lanes::lane_max_val(lane),
                     highlight_ticks: &[],
+                    skip_ticks: &[],
                     show_anchors: false,
                     translucent: true,
                 });

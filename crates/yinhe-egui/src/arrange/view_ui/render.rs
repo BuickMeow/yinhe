@@ -360,6 +360,7 @@ pub(crate) fn collect_folded_previews<'a>(
                 height: lh,
                 max_val: crate::arrange::am_lanes::lane_max_val(lane),
                 highlight_ticks: &[],
+                skip_ticks: &[],
                 show_anchors: false,
                 translucent: true,
             });
@@ -425,6 +426,7 @@ pub(crate) fn prepare_automation(
             height: r.height,
             max_val: crate::arrange::am_lanes::lane_max_val(lane),
             highlight_ticks: &[],
+            skip_ticks: &[],
             show_anchors,
             translucent: false,
         });

@@ -302,6 +302,8 @@ pub struct ArrAutomationLane<'a> {
     pub max_val: f32,
     /// 需要白色高亮的锚点 tick（选中的锚点）。
     pub highlight_ticks: &'a [u32],
+    /// 折叠竖线需要隐藏的 tick（拖动 ghost 时原位置的选中锚点）。
+    pub skip_ticks: &'a [u32],
     /// 是否绘制锚点/控制点。折叠预览为纯曲线，不画锚点。
     pub show_anchors: bool,
     /// 折叠预览：每个音轨收起时把其全部 lane 以全行高、半透明叠加显示，
@@ -364,6 +366,7 @@ fn build_lane_data(
             track_visible,
             track_colors,
             alpha,
+            l.skip_ticks,
         );
     } else {
         data_lines::build_data_lines(
@@ -446,6 +449,50 @@ pub fn prepare_folded_automation(
                     1.0,
                 );
             }
+        }
+    });
+}
+
+/// 只准备 AR 自动化竖线的拖动 ghost（layer 4，普通 alpha）。
+///
+/// ghost lane 的 `lane.track` 已在调用方改成移动后的目标轨；这里只画事件
+/// 竖线，不画横线/锚点。空列表时上传一次空层，清掉上一帧残影。
+pub fn prepare_folded_automation_ghost(
+    renderer: &mut InstanceRenderer,
+    width: f32,
+    base: &TimelineViewBase,
+    lanes: &[ArrAutomationLane<'_>],
+    track_visible: &[bool],
+    track_colors: &[[f32; 4]],
+) {
+    let key = if lanes.is_empty() {
+        EMPTY_GHOST_KEY
+    } else {
+        0 // 拖动中每帧重建
+    };
+    renderer.upload_curve_layer(4, key, |out| {
+        for l in lanes {
+            let view = AutomationPanelView {
+                base: base.clone(),
+                panel_height: l.height,
+                y_offset: l.y_top,
+                selected_target: l.lane.target.clone(),
+                show_velocity: false,
+                value_zoom: 1.0,
+                value_scroll: 0.0,
+                ..Default::default()
+            };
+            data_lines::build_folded_stems(
+                out,
+                width,
+                &view,
+                l.lane,
+                l.max_val,
+                track_visible,
+                track_colors,
+                data_lines::LINE_ALPHA,
+                &[],
+            );
         }
     });
 }
@@ -691,6 +738,7 @@ mod tests {
             height: 40.0,
             max_val: 1.0,
             highlight_ticks: &[],
+            skip_ticks: &[],
             show_anchors: false,
             translucent: true,
         };

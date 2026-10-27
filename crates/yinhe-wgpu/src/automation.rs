@@ -9,6 +9,6 @@ pub use ghost::{
 };
 pub use prepare::{
     ArrAutomationLane, AutomationGhost, prepare as prepare_automation, prepare_arr_automation,
-    prepare_folded_automation,
+    prepare_folded_automation, prepare_folded_automation_ghost,
 };
 pub use velocity_summary::{VelocityBlock, VelocitySummary};

@@ -364,6 +364,7 @@ pub(crate) fn build_folded_stems(
     track_visible: &[bool],
     track_color: &[[f32; 4]],
     alpha: f32,
+    skip_ticks: &[u32],
 ) {
     if max_val <= 0.0 {
         return;
@@ -390,6 +391,9 @@ pub(crate) fn build_folded_stems(
     let line_color = [color[0], color[1], color[2], alpha];
 
     for evt in lane.events_in_range(pad_start, pad_end) {
+        if skip_ticks.binary_search(&evt.tick).is_ok() {
+            continue;
+        }
         let x = (x_offset + evt.tick as f32 * ppu).clamp(grid_left_x, w);
         let y = view.value_to_y(evt.value, max_val);
         // 与基线几乎重合：零长竖线不画。
@@ -755,6 +759,7 @@ mod tests {
             &[true],
             &colors,
             FOLDED_ALPHA,
+            &[],
         );
         assert_eq!(out.len(), 2, "每个可见事件一条竖线");
         for inst in &out {
@@ -793,6 +798,7 @@ mod tests {
             &[true],
             &colors,
             FOLDED_ALPHA,
+            &[],
         );
         assert_eq!(out.len(), 1);
         let expected_base = view.panel_height * (1.0 - lane.target.default_value());
@@ -802,5 +808,44 @@ mod tests {
             out[0].y1
         );
         assert!((out[0].y2 - 0.0).abs() < 0.01, "值 1.0 → 顶部");
+    }
+
+    /// 拖动 ghost：skip_ticks 中的原位置竖线不画。
+    #[test]
+    fn folded_stems_skip_ticks() {
+        let view = panel_view();
+        let colors = [[1.0, 0.0, 0.0, 1.0]];
+        let lane = AutomationLane {
+            target: AutomationTarget::CC { controller: 7 },
+            track: 0,
+            events: vec![
+                AutomationEvent {
+                    id: 0,
+                    tick: 0,
+                    value: 0.25,
+                    shape: SegmentShape::Step,
+                },
+                AutomationEvent {
+                    id: 1,
+                    tick: 100,
+                    value: 0.75,
+                    shape: SegmentShape::Step,
+                },
+            ],
+        };
+        let mut out = Vec::new();
+        build_folded_stems(
+            &mut out,
+            400.0,
+            &view,
+            &lane,
+            1.0,
+            &[true],
+            &colors,
+            FOLDED_ALPHA,
+            &[0],
+        );
+        assert_eq!(out.len(), 1, "skip_ticks 命中的竖线应隐藏");
+        assert!(out[0].x1 > 0.0, "保留的应是 tick 100 的竖线");
     }
 }

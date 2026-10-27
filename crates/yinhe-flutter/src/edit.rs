@@ -4,8 +4,12 @@
 //! 单指按下 → 编辑；双指 → Flutter 取消本模块拖拽后进入缩放/平移。
 //! 所有提交都在释放时进行一次（一步一 undo），拖拽期间只更新覆盖层预览。
 
+use std::collections::HashMap;
+
+use yinhe_core::TrackKind;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::NoteSource;
+use yinhe_types::automation::{AutomationEvent, AutomationTarget};
 
 use crate::scene::{self, RenderScene, Tool, ViewMode};
 
@@ -1109,6 +1113,114 @@ fn update_riff_fill(d: &mut DragState, s: &mut RenderScene, x: f32) {
 }
 
 /// 按最新指针位置与视图刷新拖拽预览（选框/移动框实时吸附量化网格）。
+/// AR ghost 目标轨道：与 `offset_track_skip_conductor` 同规则。
+fn ghost_track(src: u16, delta: i32, num_tracks: i32, conductor: Option<u16>) -> u16 {
+    if delta == 0 || num_tracks <= 0 {
+        return src;
+    }
+    let raw = (i32::from(src) + delta).clamp(0, num_tracks - 1);
+    if Some(raw as u16) == conductor {
+        if delta < 0 {
+            (raw + 1).min(num_tracks - 1) as u16
+        } else {
+            (raw - 1).max(0) as u16
+        }
+    } else {
+        raw as u16
+    }
+}
+
+type AutoGhostBucket = (f32, Vec<AutomationEvent>, Vec<u32>);
+
+/// 构建 AR 自动化竖线 ghost：选中锚点按 `(dt, dtr)` 移动后的副本。
+fn build_ar_auto_ghost(s: &RenderScene, dt: i64, dtr: i32) -> Vec<scene::AutoGhostLane> {
+    let Some(doc) = s.document.as_ref() else {
+        return Vec::new();
+    };
+    let num_tracks = s.num_tracks as i32;
+    if num_tracks <= 0 {
+        return Vec::new();
+    }
+    let conductor = doc.edit.track_cache.conductor_idx;
+
+    let mut selected_tracks = std::collections::HashSet::new();
+    for &(_t0, _t1, _k0, _k1, tl, th) in &doc.edit.selected.rects {
+        for t in tl..=th {
+            selected_tracks.insert(t as usize);
+        }
+    }
+
+    // key 含源轨：跨轨移动被夹到同一目标轨时仍能分别隐藏各自的原竖线。
+    let mut by_lane: HashMap<(u16, AutomationTarget, u16), AutoGhostBucket> = HashMap::new();
+    for ti in selected_tracks {
+        let Some(track) = doc.data.model.tracks.get(ti) else {
+            continue;
+        };
+        if track.kind == TrackKind::Master {
+            continue;
+        }
+        if !doc.edit.track_visible.get(ti).copied().unwrap_or(true) {
+            continue;
+        }
+        for lane in &track.automation_lanes {
+            let mut events = Vec::new();
+            let mut src_ticks = Vec::new();
+            for ev in &lane.events {
+                if !doc
+                    .edit
+                    .selected
+                    .accepts_automation_event(ti as u16, &lane.target, ev)
+                {
+                    continue;
+                }
+                let tick = (i64::from(ev.tick) + dt).max(0) as u32;
+                events.push(AutomationEvent { tick, ..*ev });
+                src_ticks.push(ev.tick);
+            }
+            if events.is_empty() {
+                continue;
+            }
+            let new_track = ghost_track(ti as u16, dtr, num_tracks, conductor);
+            let max_val = if lane.target == AutomationTarget::Tempo {
+                lane.events
+                    .iter()
+                    .map(|e| e.value)
+                    .fold(0.0_f32, f32::max)
+                    .max(1.0)
+            } else {
+                1.0
+            };
+            by_lane
+                .entry((new_track, lane.target.clone(), ti as u16))
+                .or_insert((max_val, Vec::new(), Vec::new()))
+                .1
+                .extend(events);
+            by_lane
+                .get_mut(&(new_track, lane.target.clone(), ti as u16))
+                .expect("entry inserted above")
+                .2
+                .extend(src_ticks);
+        }
+    }
+
+    by_lane
+        .into_iter()
+        .map(
+            |((track, target, src_track), (max_val, events, mut src_ticks))| {
+                src_ticks.sort_unstable();
+                scene::AutoGhostLane {
+                    track,
+                    target,
+                    max_val,
+                    events,
+                    src_track,
+                    src_ticks,
+                }
+            },
+        )
+        .collect()
+}
+
 fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
     let (x, y) = (d.px, d.py);
     let (lw, lh) = crate::logical_size();
@@ -1256,6 +1368,8 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                             }
                         }
                         apply_preview(s, d, std::mem::take(&mut ghost), false);
+                        let auto_ghost = build_ar_auto_ghost(s, dt, dtr);
+                        s.preview.set_auto_ghost(auto_ghost);
                     }
                 }
             }

@@ -617,6 +617,8 @@ pub extern "C" fn yinhe_set_view_mode(mode: i32) {
         };
         // 切视图后选框数据换了一套：强制 Flutter 重取覆盖层（避免残留）。
         s.overlay_rev = s.overlay_rev.wrapping_add(1);
+        // 清掉上一视图的拖动 ghost（AR 自动化竖线不能残留到 PR）。
+        s.preview.clear();
     }
 }
 

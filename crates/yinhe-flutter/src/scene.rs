@@ -12,6 +12,7 @@ use yinhe_editor_core::clipboard::{NotesClipboard, PasteMode};
 use yinhe_editor_core::follow::total_ticks_padded;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::NoteSource;
+use yinhe_types::automation::{AutomationEvent, AutomationTarget};
 use yinhe_types::{ArrangementView, PianoRollView, TimelineViewBase};
 
 /// 视图模式（与 Dart 约定一致：0=AR 走带，1=PR 卷帘）。
@@ -94,14 +95,32 @@ pub struct TrackInfoLite {
     pub master: bool,
 }
 
+/// AR 拖拽时跟随移动的自动化竖线预览（按 lane 分组）。
+#[derive(Clone, Debug)]
+pub struct AutoGhostLane {
+    /// 移动后的轨道行。
+    pub track: u16,
+    pub target: AutomationTarget,
+    /// 与正常折叠 lane 相同的值域上限（Tempo 用 BPM）。
+    pub max_val: f32,
+    /// 移动后的事件（tick 已加上拖动量）。
+    pub events: Vec<AutomationEvent>,
+    /// 源轨道：用于隐藏原位置的选中竖线。
+    pub src_track: u16,
+    /// 源位置被选中的 tick（已排序）。
+    pub src_ticks: Vec<u32>,
+}
+
 /// 渲染线程与 Flutter 视口手势共享的场景数据。
-/// PR 拖拽预览：ghost 音符 + 原位置隐藏集合。
+/// PR/AR 拖拽预览：ghost 音符 + 原位置隐藏集合 + AR 自动化竖线 ghost。
 ///
 /// `Arc` 让渲染线程快照只做引用计数，不逐帧深拷贝（大选区时尤其重要）。
 #[derive(Clone, Default)]
 pub struct DragPreview {
     pub ghost: Arc<Vec<(u32, u32, u8, u16)>>,
     pub hidden: Arc<HashSet<(u16, u32, u8)>>,
+    /// AR 自动化竖线 ghost（跟随选框移动）。
+    pub auto_ghost: Arc<Vec<AutoGhostLane>>,
     /// hidden 集合的稳定 hash；只在 hidden 真正变化时重算。
     pub hidden_hash: u64,
     /// ghost 每次变化自增，供 ghost 层缓存键使用。
@@ -114,6 +133,14 @@ impl DragPreview {
     pub fn set_ghost(&mut self, ghost: Vec<(u32, u32, u8, u16)>, selected: bool) {
         self.ghost = Arc::new(ghost);
         self.selected = selected;
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    pub fn set_auto_ghost(&mut self, lanes: Vec<AutoGhostLane>) {
+        if lanes.is_empty() && self.auto_ghost.is_empty() {
+            return;
+        }
+        self.auto_ghost = Arc::new(lanes);
         self.revision = self.revision.wrapping_add(1);
     }
 
@@ -140,10 +167,14 @@ impl DragPreview {
     }
 
     pub fn clear(&mut self) {
-        let had = !self.ghost.is_empty() || !self.hidden.is_empty() || self.selected;
+        let had = !self.ghost.is_empty()
+            || !self.hidden.is_empty()
+            || !self.auto_ghost.is_empty()
+            || self.selected;
         self.ghost = Arc::new(Vec::new());
         self.hidden = Arc::new(HashSet::new());
         self.hidden_hash = 0;
+        self.auto_ghost = Arc::new(Vec::new());
         self.selected = false;
         if had {
             self.revision = self.revision.wrapping_add(1);

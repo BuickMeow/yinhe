@@ -342,6 +342,7 @@ fn folded_automation_lanes<'a>(
     view: &ArrangementView,
     visible: &[bool],
     height: f32,
+    auto_ghost: &'a [crate::scene::AutoGhostLane],
 ) -> Vec<yinhe_wgpu::ArrAutomationLane<'a>> {
     let num_tracks = model.tracks.len();
     if num_tracks == 0 {
@@ -370,12 +371,19 @@ fn folded_automation_lanes<'a>(
             } else {
                 1.0
             };
+            // 拖动时隐藏源位置被选中的竖线，由 layer 4 的 ghost 画在目标位置。
+            let skip_ticks = auto_ghost
+                .iter()
+                .find(|g| g.src_track == i as u16 && g.target == lane.target)
+                .map(|g| g.src_ticks.as_slice())
+                .unwrap_or(&[]);
             lanes.push(yinhe_wgpu::ArrAutomationLane {
                 lane,
                 y_top: i as f32 * lane_h - view.base.scroll_y,
                 height: lane_h,
                 max_val,
                 highlight_ticks: &[],
+                skip_ticks,
                 show_anchors: false,
                 translucent: true,
             });
@@ -464,6 +472,8 @@ fn upload_pianoroll(
         tc::STRIPE_BG,
         am_key,
     );
+    // 清掉 AR 拖动留下的自动化竖线 ghost（layer 4）。
+    yinhe_wgpu::prepare_folded_automation_ghost(&mut t.renderer, w, &view.base, &[], &[], &[]);
 }
 
 /// AM 面板专用 wgpu 目标（独立 Surface/交换链/renderer）。
@@ -833,7 +843,7 @@ fn upload_arrangement(
     });
 
     // 折叠自动化竖线：只给可见轨道、只生成可见 tick 的事件，画在 layer 3。
-    let lanes = folded_automation_lanes(model, view, &visible, h);
+    let lanes = folded_automation_lanes(model, view, &visible, h, preview.auto_ghost.as_slice());
     let mut am_key = view.render_hash();
     am_key ^= (w.to_bits() as u64) << 17;
     am_key ^= (h.to_bits() as u64) << 29;
@@ -850,6 +860,38 @@ fn upload_arrangement(
         tc::BG,
         tc::STRIPE_BG,
         yinhe_wgpu::layer_cache_key(&[am_key, VIEW_TAG_ARRANGEMENT]),
+    );
+
+    // 拖动 ghost：选中自动化锚点按拖动量移动后的竖线（layer 4）。
+    let mut ghost_owners: Vec<AutomationLane> = Vec::with_capacity(preview.auto_ghost.len());
+    for g in preview.auto_ghost.iter() {
+        ghost_owners.push(AutomationLane {
+            target: g.target.clone(),
+            track: g.track,
+            events: g.events.clone(),
+        });
+    }
+    let mut ghost_lanes: Vec<yinhe_wgpu::ArrAutomationLane<'_>> =
+        Vec::with_capacity(ghost_owners.len());
+    for (g, lane) in preview.auto_ghost.iter().zip(&ghost_owners) {
+        ghost_lanes.push(yinhe_wgpu::ArrAutomationLane {
+            lane,
+            y_top: f32::from(g.track) * lane_h - view.base.scroll_y,
+            height: lane_h,
+            max_val: g.max_val,
+            highlight_ticks: &[],
+            skip_ticks: &[],
+            show_anchors: false,
+            translucent: true,
+        });
+    }
+    yinhe_wgpu::prepare_folded_automation_ghost(
+        &mut t.renderer,
+        w,
+        &view.base,
+        &ghost_lanes,
+        &visible,
+        track_colors,
     );
 }
 
