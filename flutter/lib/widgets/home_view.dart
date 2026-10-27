@@ -109,44 +109,83 @@ class HomeView extends StatelessWidget {
     final l = AppLocalizations.of(context);
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _secondary(l.newProject, Icons.add_box_outlined, onNewProject),
-        const SizedBox(height: 14),
-        FilledButton.icon(
-          onPressed: onPickMidi,
-          icon: const Icon(Icons.note_add, size: 18),
-          label: Text(l.openFile),
-          style: FilledButton.styleFrom(
-            backgroundColor: YinheTheme.primaryButtonBg,
-            foregroundColor: YinheTheme.text,
-            minimumSize: const Size.fromHeight(52),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(6),
+        Row(
+          children: [
+            Expanded(
+              child: _secondary(
+                l.newProject,
+                Icons.add_box_outlined,
+                onNewProject,
+              ),
             ),
-          ),
+            const SizedBox(width: 10),
+            Expanded(child: _primary(l.openFile, Icons.note_add, onPickMidi)),
+          ],
         ),
-        const SizedBox(height: 14),
-        _secondary(l.saveAs, Icons.save_as_outlined, onSaveProjectAs),
-        const SizedBox(height: 14),
-        _secondary(l.exportAudio, Icons.audio_file_outlined, onExportAudio),
-        const SizedBox(height: 14),
-        _secondary(l.exportMidi, Icons.file_download_outlined, onExportMidi),
-        const SizedBox(height: 14),
-        _secondary(l.settings, Icons.settings, onOpenSettings),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: _secondary(
+                l.saveAs,
+                Icons.save_as_outlined,
+                onSaveProjectAs,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _secondary(
+                l.exportAudio,
+                Icons.audio_file_outlined,
+                onExportAudio,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: _secondary(
+                l.exportMidi,
+                Icons.file_download_outlined,
+                onExportMidi,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _secondary(l.settings, Icons.settings, onOpenSettings),
+            ),
+          ],
+        ),
       ],
+    );
+  }
+
+  Widget _primary(String label, IconData icon, VoidCallback onTap) {
+    return FilledButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon, size: 16),
+      label: Text(label, overflow: TextOverflow.ellipsis),
+      style: FilledButton.styleFrom(
+        backgroundColor: YinheTheme.primaryButtonBg,
+        foregroundColor: YinheTheme.text,
+        minimumSize: const Size.fromHeight(44),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+      ),
     );
   }
 
   Widget _secondary(String label, IconData icon, VoidCallback onTap) {
     return TextButton.icon(
       onPressed: onTap,
-      icon: Icon(icon, size: 18),
+      icon: Icon(icon, size: 16),
       label: Text(label, overflow: TextOverflow.ellipsis),
       style: TextButton.styleFrom(
         backgroundColor: YinheTheme.controlBg,
         foregroundColor: YinheTheme.text,
-        minimumSize: const Size.fromHeight(52),
+        minimumSize: const Size.fromHeight(44),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
       ),
     );
