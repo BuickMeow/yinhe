@@ -137,6 +137,7 @@ mixin _ShellMenus on _ShellBase {
   }
 
   /// 长按"插入"完整流程：选目标 →（自定义号）→ 值输入 → 插入。
+  @override
   Future<void> _runInsertFlow(LongPressContext ctx) async {
     _lpToken++;
     try {

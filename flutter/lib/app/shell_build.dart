@@ -361,6 +361,22 @@ mixin _ShellBuild on _ShellBase {
                                   onVelocityCommit: _commitVelocityStroke,
                                   velocityDrawEnabled: _tool == 2 || _tool == 5,
                                   lineTool: _tool == 5,
+                                  marqueeEnabled: _tool == 0,
+                                  onInsertAtTick: (tick) {
+                                    final track = _activeTrack ?? 0;
+                                    final conductor =
+                                        track >= 0 &&
+                                        track < _tracks.value.length &&
+                                        _tracks.value[track].master;
+                                    _runInsertFlow(
+                                      LongPressContext(
+                                        tick: tick,
+                                        track: track,
+                                        conductor: conductor,
+                                        pr: true,
+                                      ),
+                                    );
+                                  },
                                   onResize: _resizeAutoPanel,
                                   onResetHeight: _resetAutoPanelHeight,
                                 ),

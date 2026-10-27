@@ -371,6 +371,7 @@ abstract class _ShellBase extends State<StudioShell>
   void _showAddTrackDialog();
   void _showPasteMenu(Offset? pos, LongPressContext? ctx);
   void _showSelectionMenu();
+  Future<void> _runInsertFlow(LongPressContext ctx);
   void _showTrackMenu(int track);
   void _stopPlayback();
   void _togglePlay();

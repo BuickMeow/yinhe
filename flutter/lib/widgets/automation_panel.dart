@@ -1,15 +1,17 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../core/bar_beat.dart';
 import '../core/edit_status.dart';
 import '../core/ffi.dart' as rust;
 import '../core/midi_names.dart';
 import '../core/models.dart';
+import '../core/snack.dart';
 import '../dialogs/automation_anchor_dialog.dart';
 import '../dialogs/batch_edit_dialog.dart';
-import '../menus/canvas_menus.dart';
+import '../dialogs/sheet.dart';
 import '../painters/painters.dart';
 import '../l10n/app_localizations.dart';
 import '../core/theme.dart';
@@ -39,6 +41,8 @@ class AutomationPanel extends StatefulWidget {
     required this.onVelocityCommit,
     required this.velocityDrawEnabled,
     required this.lineTool,
+    required this.marqueeEnabled,
+    required this.onInsertAtTick,
     required this.onResize,
     required this.onResetHeight,
   });
@@ -82,6 +86,12 @@ class AutomationPanel extends StatefulWidget {
   /// 直线工具：拖动起止点后一次性写入力度/自动化。
   final bool lineTool;
 
+  /// 仅选框工具允许在 AM 拖出选框；其它工具不误触框选。
+  final bool marqueeEnabled;
+
+  /// 长按"插入"：把插入流程交给壳层（复用 PR/AR 的插入菜单）。
+  final void Function(double tick) onInsertAtTick;
+
   /// 拖动顶部手柄：`dy` 为本次垂直位移（向上为负 = 变高）。
   final ValueChanged<double> onResize;
 
@@ -105,7 +115,8 @@ class AutomationPanel extends StatefulWidget {
   State<AutomationPanel> createState() => _AutomationPanelState();
 }
 
-class _AutomationPanelState extends State<AutomationPanel> {
+class _AutomationPanelState extends State<AutomationPanel>
+    with SingleTickerProviderStateMixin {
   AppLocalizations get l => AppLocalizations.of(context);
 
   int? _selectedLane; // null = Velocity
@@ -129,6 +140,16 @@ class _AutomationPanelState extends State<AutomationPanel> {
   bool _marqueeActive = false;
   Offset? _marqueeStart;
   Offset? _marqueeCurrent;
+
+  /// 已完成的选框：松手后保留，直到点空白/换轨/换 lane/清空选区。
+  /// 只存可见性，矩形每次由选中锚点按当前 tick→像素换算重建（滚动/缩放后仍对齐）。
+  bool _marqueeVisible = false;
+
+  /// 长按蓝色圆环（与主画布 200ms→500ms 的节奏一致）。
+  late final Ticker _lpTicker;
+  DateTime? _lpStart;
+  final ValueNotifier<double> _lpProgress = ValueNotifier(0);
+  final ValueNotifier<Offset?> _lpPos = ValueNotifier(null);
 
   /// old tick -> (new tick, new value)，拖动中的预览。
   Map<int, (int, double)> _movePreview = {};
@@ -154,6 +175,12 @@ class _AutomationPanelState extends State<AutomationPanel> {
   int _amLane = -2;
   bool _amVisible = false;
   bool _amAnchors = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _lpTicker = createTicker(_onLpTick);
+  }
 
   @override
   void didUpdateWidget(covariant AutomationPanel oldWidget) {
@@ -285,8 +312,39 @@ class _AutomationPanelState extends State<AutomationPanel> {
   void dispose() {
     rust.setAutomationPanel(0, 0, 0, widget.activeTrack, _laneIdx ?? -1, 0);
     rust.pushAutomationGhost(const []);
+    _lpTicker.dispose();
+    _lpProgress.dispose();
+    _lpPos.dispose();
     _velocityPreview.dispose();
     super.dispose();
+  }
+
+  void _beginLpWatch(Offset p) {
+    _lpStart = DateTime.now();
+    _lpPos.value = p;
+    _lpProgress.value = 0;
+    if (!_lpTicker.isActive) {
+      _lpTicker.start();
+    }
+  }
+
+  void _onLpTick(Duration _) {
+    final start = _lpStart;
+    if (start == null) {
+      _lpTicker.stop();
+      return;
+    }
+    final ms = DateTime.now().difference(start).inMilliseconds;
+    _lpProgress.value = ms <= 200 ? 0 : ((ms - 200) / 300).clamp(0.0, 1.0);
+  }
+
+  void _endLpWatch() {
+    _lpStart = null;
+    _lpPos.value = null;
+    _lpProgress.value = 0;
+    if (_lpTicker.isActive) {
+      _lpTicker.stop();
+    }
   }
 
   void _clearVelocityStroke() {
@@ -302,15 +360,156 @@ class _AutomationPanelState extends State<AutomationPanel> {
 
   bool _selectionMenuBusy = false;
 
-  /// 打开 AM 选区操作网格（仅铅笔/框选出的锚点）。
-  ///
-  /// 菜单常驻，执行一个操作后不自动关闭；点外侧/返回才退出。
-  Future<void> _openSelectionActions() {
-    return showSelectionActionMenu(
+  /// 有选区/锚点时：复制、粘贴、修改、插入、删除 + 批量处理。
+  Future<void> _showAutomationSelectionMenu({
+    required int tick,
+    int? modifyTick,
+  }) async {
+    final canPaste = rust.automationClipboardEmpty() == 0;
+    final action = await showActionSheet(
       context,
-      automation: true,
-      onAction: _runSelectionAction,
+      actions: [
+        SheetAction(
+          value: 'copy',
+          label: l.copy,
+          icon: Icons.content_copy,
+          enabled: _selectedTicks.isNotEmpty,
+        ),
+        SheetAction(
+          value: 'paste',
+          label: l.paste,
+          icon: Icons.content_paste,
+          enabled: canPaste,
+        ),
+        SheetAction(
+          value: 'modify',
+          label: l.edit,
+          icon: Icons.edit_outlined,
+          enabled: modifyTick != null,
+        ),
+        SheetAction(
+          value: 'insert',
+          label: l.insert,
+          icon: Icons.add_circle_outline,
+        ),
+        SheetAction(
+          value: 'delete',
+          label: l.delete,
+          icon: Icons.delete_outline,
+          danger: true,
+          enabled: _selectedTicks.isNotEmpty,
+        ),
+        SheetAction(
+          value: 'batch',
+          label: l.batchProcess,
+          icon: Icons.tune,
+          enabled: _selectedTicks.isNotEmpty,
+        ),
+      ],
     );
+    if (!mounted || action == null) {
+      return;
+    }
+    switch (action) {
+      case 'copy':
+        if (rust.automationCopy() == 1) {
+          showSnack(context, l.copied, duration: const Duration(seconds: 1));
+        }
+      case 'paste':
+        _pasteAutomationAt(tick);
+      case 'modify':
+        if (modifyTick != null) {
+          await _editAnchorAt(modifyTick);
+        }
+      case 'insert':
+        widget.onInsertAtTick(tick.toDouble());
+      case 'delete':
+        await _confirmDeleteSelection();
+      case 'batch':
+        await _runSelectionAction(24);
+    }
+  }
+
+  /// 没有按到锚点/选框：只给粘贴、插入。
+  Future<void> _showAutomationEmptyMenu(int tick) async {
+    final canPaste = rust.automationClipboardEmpty() == 0;
+    final action = await showActionSheet(
+      context,
+      actions: [
+        SheetAction(
+          value: 'paste',
+          label: l.paste,
+          icon: Icons.content_paste,
+          enabled: canPaste,
+        ),
+        SheetAction(
+          value: 'insert',
+          label: l.insert,
+          icon: Icons.add_circle_outline,
+        ),
+      ],
+    );
+    if (!mounted || action == null) {
+      return;
+    }
+    switch (action) {
+      case 'paste':
+        _pasteAutomationAt(tick);
+      case 'insert':
+        widget.onInsertAtTick(tick.toDouble());
+    }
+  }
+
+  Future<void> _confirmDeleteSelection() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(l.deleteSelectionConfirm),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(l.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(l.delete),
+          ),
+        ],
+      ),
+    );
+    if (ok == true && mounted) {
+      await _runSelectionAction(11);
+    }
+  }
+
+  void _pasteAutomationAt(int tick) {
+    if (rust.automationPaste(tick.toDouble()) == 1) {
+      _clearSelection();
+      setState(() {});
+      widget.onReload();
+    }
+  }
+
+  /// 由当前选中锚点按 tick→像素重建选框；滚动/缩放/拖动后自动跟随。
+  Rect? _marqueeFromSelection() {
+    final laneIdx = _laneIdx;
+    if (laneIdx == null || laneIdx >= widget.lanes.length) {
+      return null;
+    }
+    double? lo;
+    double? hi;
+    for (final p in widget.lanes[laneIdx].points) {
+      if (!_selectedTicks.contains(p.dx.round())) {
+        continue;
+      }
+      final x = _xOfTick(p.dx);
+      lo = lo == null ? x : math.min(lo, x);
+      hi = hi == null ? x : math.max(hi, x);
+    }
+    if (lo == null || hi == null) {
+      return null;
+    }
+    return Rect.fromLTRB(lo, 0, hi, widget.canvasHeight);
   }
 
   Future<void> _runSelectionAction(int id) async {
@@ -350,6 +549,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
     _marqueeActive = false;
     _marqueeStart = null;
     _marqueeCurrent = null;
+    _marqueeVisible = false;
     _awaitSnapBreak = false;
     _dragBaseTicks.clear();
     _syncGhost();
@@ -583,35 +783,60 @@ class _AutomationPanelState extends State<AutomationPanel> {
     }
   }
 
-  /// 长按锚点：弹窗直接编辑所在位置（tick）和值。
-  ///
   /// 长按由手势竞技场赢过拖动，按住不动不会进入 [_handlePanStart]。
-  Future<void> _handleAnchorLongPress(LongPressStartDetails d) async {
+  ///
+  /// 命中锚点（铅笔）或在已有选框内 → 选区菜单；否则 → 插入/粘贴菜单。
+  Future<void> _handleLongPressStart(LongPressStartDetails d) async {
+    _endLpWatch();
     final laneIdx = _laneIdx;
     if (laneIdx == null || laneIdx >= widget.lanes.length) {
       return;
     }
     final lane = widget.lanes[laneIdx];
-    final hit = _hitAnchor(lane, d.localPosition);
-    if (hit == null) {
+    final tick = _snapTickAt(d.localPosition.dx).round();
+    final hit = widget.pencilActive ? _hitAnchor(lane, d.localPosition) : null;
+    final hitTick = hit?.round();
+    final inMarquee =
+        _marqueeVisible &&
+        (_marqueeFromSelection()?.contains(d.localPosition) ?? false);
+    if (hitTick != null) {
+      if (!_selectedTicks.contains(hitTick)) {
+        _selectedTicks
+          ..clear()
+          ..add(hitTick);
+        _marqueeVisible = false;
+      }
+      _singleSelection = _selectedTicks.length == 1;
+      _movePreview = {};
+      _syncGhost();
+      _syncSelection();
+      setState(() {});
+      await _showAutomationSelectionMenu(tick: tick, modifyTick: hitTick);
       return;
     }
-    final tick = hit.round();
+    if (inMarquee && _selectedTicks.isNotEmpty) {
+      await _showAutomationSelectionMenu(
+        tick: tick,
+        modifyTick: _selectedTicks.length == 1 ? _selectedTicks.first : null,
+      );
+      return;
+    }
+    await _showAutomationEmptyMenu(tick);
+  }
+
+  /// 修改单个锚点：tick + value 弹窗。
+  Future<void> _editAnchorAt(int tick) async {
+    final laneIdx = _laneIdx;
+    if (laneIdx == null || laneIdx >= widget.lanes.length) {
+      return;
+    }
+    final lane = widget.lanes[laneIdx];
     final point = lane.points.firstWhere(
       (p) => p.dx.round() == tick,
       orElse: () => Offset(tick.toDouble(), 0),
     );
     final isTempo = lane.kind == 0;
     final max = lane.max > 0 ? lane.max : 1.0;
-    // 先清掉拖动/选择残留，避免弹窗关闭后 ghost 还挂在旧位置。
-    _selectedTicks
-      ..clear()
-      ..add(tick);
-    _singleSelection = true;
-    _movePreview = {};
-    _syncGhost();
-    _syncSelection();
-    setState(() {});
     final result = await showAutomationAnchorDialog(
       context,
       laneName: _canonicalLabel(lane) ?? _laneLabel(lane),
@@ -625,7 +850,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
     }
     final (newTick, rawValue) = result;
     final normalized = (rawValue / max).clamp(0.0, 1.0);
-    final ok = rust.moveAutomationAnchors(widget.activeTrack, laneIdx + 1, [
+    final ok = rust.moveAutomationAnchors(widget.activeTrack, laneIdx, [
       (tick, newTick, normalized),
     ]);
     if (ok != 1) {
@@ -644,6 +869,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
   /// - 按在锚点上：选中（未选中则替换选择），拖动可改 tick+value；
   /// - 按在空白：拉时间框选（全高），多选拖动只改 tick。
   void _handlePanStart(DragStartDetails d) {
+    _endLpWatch();
     if (widget.lineTool) {
       _startLine(d.localPosition);
       return;
@@ -669,6 +895,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
         _selectedTicks
           ..clear()
           ..add(hitTick);
+        _marqueeVisible = false;
       }
       _singleSelection = _selectedTicks.length == 1;
       _dragAnchorTick = hit;
@@ -691,10 +918,15 @@ class _AutomationPanelState extends State<AutomationPanel> {
       setState(() {});
       return;
     }
+    // 只有选框工具能拉框；铅笔/手形等其它工具在空白处拖动不改选区。
+    if (!widget.marqueeEnabled) {
+      return;
+    }
     _selectedTicks.clear();
     _singleSelection = false;
     _dragAnchorTick = null;
     _movePreview = {};
+    _marqueeVisible = false;
     _marqueeActive = true;
     _marqueeStart = d.localPosition;
     _marqueeCurrent = d.localPosition;
@@ -814,11 +1046,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
     if (moves.isEmpty) {
       return;
     }
-    final ok = rust.moveAutomationAnchors(
-      widget.activeTrack,
-      laneIdx! + 1,
-      moves,
-    );
+    final ok = rust.moveAutomationAnchors(widget.activeTrack, laneIdx!, moves);
     if (ok != 1) {
       _selectedTicks
         ..clear()
@@ -859,6 +1087,8 @@ class _AutomationPanelState extends State<AutomationPanel> {
           _selectedTicks.add(p.dx.round());
         }
       }
+      // 松手后选框保留，直到点空白/换轨/换 lane。
+      _marqueeVisible = _selectedTicks.isNotEmpty;
     }
     _syncSelection();
     setState(() {});
@@ -982,6 +1212,9 @@ class _AutomationPanelState extends State<AutomationPanel> {
         math.max(a.dx, b.dx),
         widget.canvasHeight,
       );
+    } else if (_marqueeVisible) {
+      // 松手后的选框常驻；每次按当前 tick→像素重建，滚动/缩放后仍贴合锚点。
+      marquee = _marqueeFromSelection();
     }
     return Container(
       height: widget.height,
@@ -1082,107 +1315,116 @@ class _AutomationPanelState extends State<AutomationPanel> {
                             ),
                           ),
                         ),
-                        // 有选中锚点时显示：打开选区操作网格。
-                        if (_laneIdx != null && _selectedTicks.isNotEmpty)
-                          InkWell(
-                            onTap: _openSelectionActions,
-                            child: SizedBox(
-                              height: 26,
-                              width: double.infinity,
-                              child: Icon(
-                                Icons.tune,
-                                size: 16,
-                                color: YinheTheme.textLabel,
-                              ),
-                            ),
-                          ),
                       ],
                     ),
                   ),
                 ),
                 Expanded(
-                  child: GestureDetector(
+                  child: Listener(
                     behavior: HitTestBehavior.opaque,
-                    // 锚点单击不选中；只有拖动才进入编辑，避免误触。
-                    onTapUp:
-                        _laneIdx == null &&
-                            widget.velocityDrawEnabled &&
-                            !widget.lineTool
-                        ? (d) => _handleVelocityTap(d.localPosition)
-                        : null,
-                    onLongPressStart: _handleAnchorLongPress,
-                    onPanStart: _handlePanStart,
-                    onPanUpdate: _handlePanUpdate,
-                    onPanEnd: (_) => _handlePanEnd(),
-                    onPanCancel: _handlePanCancel,
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        _onPlotLayout(constraints.biggest);
-                        final gpu = widget.textureId != null;
-                        AutomationPainter painter({
-                          required bool grid,
-                          required bool overlay,
-                          required bool base,
-                        }) => AutomationPainter(
-                          lane: lane,
-                          velocity: widget.velocity,
-                          trackColors: widget.trackColors,
-                          color: _trackColor,
-                          snap: widget.snap,
-                          grid: widget.grid,
-                          selectedTicks: _selectedTicks,
-                          movePreview: _movePreview,
-                          marquee: marquee,
-                          velocityPreview: _velocityPreview,
-                          paintBaseData: base,
-                          paintGrid: grid,
-                          paintOverlay: overlay,
-                        );
-                        return ClipRect(
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              // 背景和网格在 wgpu 纹理下方；纹理透明，数据盖在网格上。
-                              const ColoredBox(color: YinheTheme.bg),
-                              if (gpu) ...[
-                                CustomPaint(
-                                  painter: painter(
-                                    grid: true,
-                                    overlay: false,
-                                    base: false,
+                    onPointerDown: (e) => _beginLpWatch(e.localPosition),
+                    onPointerUp: (_) => _endLpWatch(),
+                    onPointerCancel: (_) => _endLpWatch(),
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      // 锚点单击不选中；只有拖动才进入编辑，避免误触。
+                      onTapUp: (d) {
+                        _endLpWatch();
+                        if (_laneIdx == null) {
+                          if (widget.velocityDrawEnabled && !widget.lineTool) {
+                            _handleVelocityTap(d.localPosition);
+                          }
+                          return;
+                        }
+                        // 选框工具下点空白 = 取消选区/隐藏常驻选框。
+                        if (widget.marqueeEnabled) {
+                          _clearSelection();
+                          setState(() {});
+                        }
+                      },
+                      onLongPressStart: _handleLongPressStart,
+                      onPanStart: _handlePanStart,
+                      onPanUpdate: _handlePanUpdate,
+                      onPanEnd: (_) => _handlePanEnd(),
+                      onPanCancel: _handlePanCancel,
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          _onPlotLayout(constraints.biggest);
+                          final gpu = widget.textureId != null;
+                          AutomationPainter painter({
+                            required bool grid,
+                            required bool overlay,
+                            required bool base,
+                          }) => AutomationPainter(
+                            lane: lane,
+                            velocity: widget.velocity,
+                            trackColors: widget.trackColors,
+                            color: _trackColor,
+                            snap: widget.snap,
+                            grid: widget.grid,
+                            selectedTicks: _selectedTicks,
+                            movePreview: _movePreview,
+                            marquee: marquee,
+                            velocityPreview: _velocityPreview,
+                            paintBaseData: base,
+                            paintGrid: grid,
+                            paintOverlay: overlay,
+                          );
+                          return ClipRect(
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                // 背景和网格在 wgpu 纹理下方；纹理透明，数据盖在网格上。
+                                const ColoredBox(color: YinheTheme.bg),
+                                if (gpu) ...[
+                                  CustomPaint(
+                                    painter: painter(
+                                      grid: true,
+                                      overlay: false,
+                                      base: false,
+                                    ),
                                   ),
-                                ),
-                                Texture(textureId: widget.textureId!),
-                                CustomPaint(
-                                  painter: painter(
-                                    grid: false,
-                                    overlay: true,
-                                    base: false,
+                                  Texture(textureId: widget.textureId!),
+                                  CustomPaint(
+                                    painter: painter(
+                                      grid: false,
+                                      overlay: true,
+                                      base: false,
+                                    ),
                                   ),
-                                ),
-                              ] else
-                                CustomPaint(
-                                  painter: painter(
-                                    grid: true,
-                                    overlay: true,
-                                    base: true,
+                                ] else
+                                  CustomPaint(
+                                    painter: painter(
+                                      grid: true,
+                                      overlay: true,
+                                      base: true,
+                                    ),
                                   ),
-                                ),
-                              if (_lineActive &&
-                                  _lineStartPos != null &&
-                                  _lineCurrentPos != null)
+                                if (_lineActive &&
+                                    _lineStartPos != null &&
+                                    _lineCurrentPos != null)
+                                  IgnorePointer(
+                                    child: CustomPaint(
+                                      painter: _LinePreviewPainter(
+                                        start: _lineStartPos!,
+                                        end: _lineCurrentPos!,
+                                      ),
+                                    ),
+                                  ),
+                                // 长按蓝色圆环：AM 也要有与主画布一致的按住反馈。
                                 IgnorePointer(
                                   child: CustomPaint(
-                                    painter: _LinePreviewPainter(
-                                      start: _lineStartPos!,
-                                      end: _lineCurrentPos!,
+                                    painter: _LongPressRingPainter(
+                                      _lpProgress,
+                                      _lpPos,
                                     ),
                                   ),
                                 ),
-                            ],
-                          ),
-                        );
-                      },
+                              ],
+                            ),
+                          );
+                        },
+                      ),
                     ),
                   ),
                 ),
@@ -1225,6 +1467,47 @@ class AutoExpandButton extends StatelessWidget {
       ),
     );
   }
+}
+
+/// AM 长按进度圆环（与主画布 SelectionLongPressPainter 同节奏/同配色）。
+class _LongPressRingPainter extends CustomPainter {
+  _LongPressRingPainter(this.progress, this.pos)
+    : super(repaint: Listenable.merge([progress, pos]));
+
+  final ValueNotifier<double> progress;
+  final ValueNotifier<Offset?> pos;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = pos.value;
+    final v = progress.value;
+    if (p == null || v <= 0 || v >= 1) {
+      return;
+    }
+    const r = 18.0;
+    canvas.drawCircle(
+      p,
+      r,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2
+        ..color = YinheTheme.accent.withValues(alpha: 0.2),
+    );
+    canvas.drawArc(
+      Rect.fromCircle(center: p, radius: r),
+      -math.pi / 2,
+      2 * math.pi * v,
+      false,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3
+        ..strokeCap = StrokeCap.round
+        ..color = YinheTheme.accent,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _LongPressRingPainter oldDelegate) => false;
 }
 
 /// 直线工具的拖动预览：一条线 + 两端圆点。

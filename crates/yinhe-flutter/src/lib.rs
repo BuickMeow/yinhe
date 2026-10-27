@@ -951,6 +951,24 @@ pub extern "C" fn yinhe_insert_automation(
     scene::insert_automation(kind, number, tick, track, value)
 }
 
+/// 复制当前 AM lane 选中的锚点。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_automation_copy() -> i32 {
+    scene::automation_copy()
+}
+
+/// AM 锚点剪贴板是否为空：1 = 空。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_automation_clipboard_empty() -> i32 {
+    i32::from(scene::automation_clipboard_empty())
+}
+
+/// 把 AM 锚点剪贴板粘贴到当前 lane（首个锚点对齐 `tick`）。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_automation_paste(tick: f64) -> i32 {
+    scene::automation_paste(tick)
+}
+
 /// 该位置当前显示值（无历史值返回 NaN）。
 /// AM 直线：按当前 PR 量化在起止点之间插入自动化锚点（一次 undo）。
 /// `v0/v1` 为归一化 0..1（Tempo 按最大 BPM 换算）。成功 1。

@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use yinhe_core::YinModel;
 use yinhe_editor_core::Document;
-use yinhe_editor_core::clipboard::{NotesClipboard, PasteMode};
+use yinhe_editor_core::clipboard::{AutomationClip, NotesClipboard, PasteMode};
 use yinhe_editor_core::follow::total_ticks_padded;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::NoteSource;
@@ -1503,6 +1503,9 @@ static FILES_DIR: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 /// 应用内音符剪贴板（复制快照 + 选区，O(1) 结构共享）。
 static CLIPBOARD: Mutex<Option<NotesClipboard>> = Mutex::new(None);
 
+/// 应用内 AM 锚点剪贴板（物化事件，跨 lane/文档粘贴安全）。
+static AUTOMATION_CLIPBOARD: Mutex<Option<AutomationClip>> = Mutex::new(None);
+
 fn recent_slot() -> &'static Mutex<Vec<RecentEntry>> {
     RECENT.get_or_init(|| Mutex::new(Vec::new()))
 }
@@ -1975,6 +1978,142 @@ pub fn set_automation_selection(ticks: &[u32]) {
     ticks.sort_unstable();
     ticks.dedup();
     s.automation_panel.selected_ticks = ticks;
+}
+
+/// 当前 AM 面板对应的自动化 target（Conductor 固定 Tempo）。
+fn panel_automation_target(
+    doc: &Document,
+    panel: &AutomationPanelState,
+) -> Option<AutomationTarget> {
+    let track = doc.data.model.tracks.get(panel.active_track)?;
+    if track.kind == yinhe_core::TrackKind::Master {
+        return Some(AutomationTarget::Tempo);
+    }
+    let lane_index = panel.lane?;
+    visible_lane(track, lane_index).map(|(_, target)| target)
+}
+
+/// 复制当前 AM lane 选中的锚点到应用内剪贴板。成功 1。
+pub fn automation_copy() -> i32 {
+    let Ok(s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return 0;
+    };
+    let panel = &s.automation_panel;
+    let Some(target) = panel_automation_target(doc, panel) else {
+        return 0;
+    };
+    if panel.selected_ticks.is_empty() {
+        return 0;
+    }
+    let selected = &panel.selected_ticks;
+    let mut events: Vec<(u32, f32, yinhe_types::SegmentShape)> =
+        if matches!(target, AutomationTarget::Tempo) {
+            doc.data
+                .model
+                .conductor
+                .tempo
+                .events
+                .iter()
+                .filter(|e| selected.binary_search(&e.tick).is_ok())
+                .map(|e| (e.tick, e.value, e.shape))
+                .collect()
+        } else {
+            let track = &doc.data.model.tracks[panel.active_track];
+            let Some((raw_idx, _)) = panel.lane.and_then(|i| visible_lane(track, i)) else {
+                return 0;
+            };
+            track.automation_lanes[raw_idx]
+                .events
+                .iter()
+                .filter(|e| selected.binary_search(&e.tick).is_ok())
+                .map(|e| (e.tick, e.value, e.shape))
+                .collect()
+        };
+    if events.is_empty() {
+        return 0;
+    }
+    events.sort_by_key(|(tick, _, _)| *tick);
+    drop(s);
+    let Ok(mut slot) = AUTOMATION_CLIPBOARD.lock() else {
+        return 0;
+    };
+    *slot = Some(AutomationClip { target, events });
+    1
+}
+
+/// AM 剪贴板是否为空（Dart 菜单置灰用）。
+pub fn automation_clipboard_empty() -> bool {
+    AUTOMATION_CLIPBOARD
+        .lock()
+        .map(|slot| slot.as_ref().is_none_or(|clip| clip.events.is_empty()))
+        .unwrap_or(true)
+}
+
+/// 把 AM 剪贴板粘贴到当前 lane：首个锚点对齐 `tick`，一次 undo。成功 1。
+pub fn automation_paste(tick: f64) -> i32 {
+    let Some(clip) = AUTOMATION_CLIPBOARD.lock().ok().and_then(|s| s.clone()) else {
+        return 0;
+    };
+    if clip.events.is_empty() {
+        return 0;
+    }
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let panel = s.automation_panel.clone();
+    let target = {
+        let Some(doc) = s.document.as_ref() else {
+            return 0;
+        };
+        let Some(target) = panel_automation_target(doc, &panel) else {
+            return 0;
+        };
+        target
+    };
+    // 跨 target 的值域不同（Tempo 是 BPM，CC/PB 是归一化值），不做隐式换算。
+    if target != clip.target {
+        return 0;
+    }
+    let base = tick.max(0.0).round() as u32;
+    let min_tick = clip.events.iter().map(|e| e.0).min().unwrap_or(base);
+    let delta = i64::from(base) - i64::from(min_tick);
+    let edits: Vec<yinhe_types::automation::AutomationEdit> = clip
+        .events
+        .iter()
+        .map(
+            |(t, value, shape)| yinhe_types::automation::AutomationEdit::Add {
+                track_idx: panel.active_track as u16,
+                target: target.clone(),
+                tick: (i64::from(*t) + delta).max(0) as u32,
+                value: *value,
+                shape: *shape,
+            },
+        )
+        .collect();
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let before = doc.capture_snapshot();
+    let actions = doc.apply_automation_edits(edits);
+    if actions.is_empty() {
+        return 0;
+    }
+    let undo = match actions.len() {
+        1 => actions.into_iter().next(),
+        _ => Some(yinhe_editor_core::history::UndoAction::Composite(actions)),
+    };
+    if let Some(undo) = undo {
+        doc.push_undo(undo, "粘贴自动化", before);
+    }
+    doc.edit.pianoroll_view.base.dirty = true;
+    let model = doc.data.model.clone();
+    refresh_snapshot(&mut s);
+    drop(s);
+    crate::audio::reload_notes(model);
+    1
 }
 
 /// 全选。`scope`: 0 = PR，1 = AR；`track < 0` = 该视图的全工程。
@@ -4514,16 +4653,15 @@ fn visible_lane(
     track: &yinhe_core::TrackData,
     lane_index: usize,
 ) -> Option<(usize, yinhe_types::automation::AutomationTarget)> {
-    if lane_index == 0 {
-        return None;
-    }
+    // 与 Flutter/渲染层的 `state.lane` 一致：0 = 第一条可绘制自动化 lane
+    //（Velocity 由 `panel.lane == None` 表示，不占下标）。
     let mut seen = 0usize;
     for (i, lane) in track.automation_lanes.iter().enumerate() {
         if lane_kind(&lane.target).is_some() {
-            seen += 1;
             if seen == lane_index {
                 return Some((i, lane.target.clone()));
             }
+            seen += 1;
         }
     }
     None
@@ -4544,4 +4682,33 @@ fn json_escape(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use yinhe_core::TrackData;
+    use yinhe_types::automation::{AutomationLane, AutomationTarget};
+
+    use super::visible_lane;
+
+    fn lane(target: AutomationTarget) -> AutomationLane {
+        AutomationLane {
+            target,
+            track: 0,
+            events: Vec::new(),
+        }
+    }
+
+    /// `panel.lane` 与渲染层一致使用 0 基下标：0 = 第一条可绘制自动化 lane。
+    #[test]
+    fn visible_lane_is_zero_based() {
+        let mut track = TrackData::new(0, 0);
+        track.automation_lanes = vec![
+            lane(AutomationTarget::CC { controller: 7 }),
+            lane(AutomationTarget::CC { controller: 10 }),
+        ];
+        assert_eq!(visible_lane(&track, 0).map(|v| v.0), Some(0));
+        assert_eq!(visible_lane(&track, 1).map(|v| v.0), Some(1));
+        assert!(visible_lane(&track, 2).is_none());
+    }
 }

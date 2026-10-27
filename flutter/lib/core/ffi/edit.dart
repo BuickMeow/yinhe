@@ -33,6 +33,34 @@ final InsertAutomationDart insertAutomation = bridge
       'yinhe_insert_automation',
     );
 
+typedef AutomationCopyNative = ffi.Int32 Function();
+typedef AutomationCopyDart = int Function();
+
+/// 复制当前 AM lane 选中的锚点。
+final AutomationCopyDart automationCopy = bridge
+    .lookupFunction<AutomationCopyNative, AutomationCopyDart>(
+      'yinhe_automation_copy',
+    );
+
+typedef AutomationClipboardEmptyNative = ffi.Int32 Function();
+typedef AutomationClipboardEmptyDart = int Function();
+
+/// AM 锚点剪贴板是否为空（1 = 空）。
+final AutomationClipboardEmptyDart automationClipboardEmpty = bridge
+    .lookupFunction<
+      AutomationClipboardEmptyNative,
+      AutomationClipboardEmptyDart
+    >('yinhe_automation_clipboard_empty');
+
+typedef AutomationPasteNative = ffi.Int32 Function(ffi.Double);
+typedef AutomationPasteDart = int Function(double);
+
+/// 把 AM 锚点剪贴板粘贴到当前 lane（首个锚点对齐 tick）。
+final AutomationPasteDart automationPaste = bridge
+    .lookupFunction<AutomationPasteNative, AutomationPasteDart>(
+      'yinhe_automation_paste',
+    );
+
 typedef DisplayValueNative = ffi.Double Function(
   ffi.Int32,
   ffi.Int32,
