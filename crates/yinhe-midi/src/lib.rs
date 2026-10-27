@@ -10,5 +10,7 @@ mod writer;
 
 pub use encoding::MidiImportEncoding;
 pub use error::MidiError;
-pub use parser::{LoadProgress, parse_bytes, parse_bytes_with_encoding, parse_path};
+pub use parser::{
+    LoadProgress, parse_bytes, parse_bytes_with_encoding, parse_file_with_encoding, parse_path,
+};
 pub use writer::{MidiExportOptions, write_to_bytes, write_with_options};

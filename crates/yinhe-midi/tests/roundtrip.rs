@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
-use yinhe_midi::{parse_bytes, write_to_bytes};
+use yinhe_midi::{MidiImportEncoding, parse_bytes, parse_file_with_encoding, write_to_bytes};
 use yinhe_types::TimeSigEvent;
 use yinhe_types::automation::{ParamDevice, xsynth_param};
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
@@ -233,6 +233,33 @@ fn parse_minimal_midi() {
     assert_eq!(model.note_count, 1);
     assert_eq!(model.tick_length, 320);
     assert_eq!(model.notes[60].len(), 1);
+}
+
+/// mmap 文件路径与直接解析字节结果一致（音符数/ppq/id 不变）。
+#[test]
+fn parse_file_with_encoding_matches_bytes() {
+    let bytes = minimal_midi_bytes();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("minimal.mid");
+    std::fs::write(&path, &bytes).expect("write midi");
+
+    let from_file =
+        parse_file_with_encoding(&path, MidiImportEncoding::Utf8, |_| {}).expect("parse file");
+    let from_bytes = parse_bytes(&bytes).expect("parse bytes");
+
+    assert_eq!(from_file.note_count, from_bytes.note_count);
+    assert_eq!(from_file.meta.ppq, from_bytes.meta.ppq);
+    assert_eq!(from_file.notes[60].len(), 1);
+    assert_eq!(from_file.notes[60][0].id, 1);
+}
+
+/// 空文件走 fallback，返回解析错误而不是 panic。
+#[test]
+fn parse_empty_file_returns_error() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("empty.mid");
+    std::fs::write(&path, b"").expect("write empty file");
+    assert!(parse_file_with_encoding(&path, MidiImportEncoding::Utf8, |_| {}).is_err());
 }
 
 #[test]

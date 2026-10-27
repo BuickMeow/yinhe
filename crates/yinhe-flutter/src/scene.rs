@@ -477,7 +477,7 @@ pub fn open_archive_entry(index: usize) -> i32 {
                 }
             };
             set_load_progress(token, 0.10);
-            match load_midi_bytes_document(&data, &display, token) {
+            match load_midi_bytes_document(data, &display, token) {
                 Ok(doc) => {
                     if !load_current(token) {
                         return;
@@ -501,10 +501,10 @@ pub fn open_archive_entry(index: usize) -> i32 {
 }
 
 /// 从 MIDI 字节构建文档（压缩包条目用；`path` 只用于显示/最近记录）。
-fn load_midi_bytes_document(data: &[u8], path: &str, token: u64) -> Result<Document, String> {
+fn load_midi_bytes_document(data: Vec<u8>, path: &str, token: u64) -> Result<Document, String> {
     let started = std::time::Instant::now();
     let model =
-        yinhe_midi::parse_bytes_with_encoding(data, yinhe_midi::MidiImportEncoding::Utf8, |p| {
+        yinhe_midi::parse_bytes_with_encoding(&data, yinhe_midi::MidiImportEncoding::Utf8, |p| {
             let frac = if p.total_tracks > 0 {
                 p.current_track as f32 / p.total_tracks as f32
             } else {
@@ -513,6 +513,8 @@ fn load_midi_bytes_document(data: &[u8], path: &str, token: u64) -> Result<Docum
             set_load_progress(token, 0.10 + frac * 0.78);
         })
         .map_err(|e| format!("解析失败: {e}"))?;
+    // 解析完立即释放解压出来的原始字节，不要拖到 Document 构建之后。
+    drop(data);
     set_load_progress(token, 0.90);
     log::info!(
         "MIDI 解析完成（压缩包条目）: {} 音符，用时 {:?}",
@@ -816,18 +818,17 @@ fn load_document(path: &str, token: u64) -> Result<Document, String> {
     }
     let started = std::time::Instant::now();
     set_load_progress(token, 0.02);
-    let data = std::fs::read(path).map_err(|e| format!("读取失败: {e}"))?;
-    set_load_progress(token, 0.05);
+    // mmap 直接解析文件，不再先把整份字节读进匿名堆（大 MIDI 省一个文件大小）。
     let model =
-        yinhe_midi::parse_bytes_with_encoding(&data, yinhe_midi::MidiImportEncoding::Utf8, |p| {
+        yinhe_midi::parse_file_with_encoding(path, yinhe_midi::MidiImportEncoding::Utf8, |p| {
             let frac = if p.total_tracks > 0 {
                 p.current_track as f32 / p.total_tracks as f32
             } else {
                 0.0
             };
-            set_load_progress(token, 0.05 + frac * 0.75);
+            set_load_progress(token, 0.02 + frac * 0.78);
         })
-        .map_err(|e| format!("解析失败: {e}"))?;
+        .map_err(|e| format!("加载失败: {e}"))?;
     set_load_progress(token, 0.82);
     log::info!(
         "MIDI 解析完成: {} 音符，用时 {:?}",

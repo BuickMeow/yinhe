@@ -2,7 +2,7 @@
 //!
 //! 与 mode bar 的 MEM 指示器同源：memtrace 开启时 MEM 显示的就是
 //! `yinhe_memtrace::Snapshot::capture().total_mb()`。本程序按 GUI 的
-//! 打开/关闭路径（`parse_bytes_with_encoding` + `Document::from_model` /
+//! 打开/关闭路径（`parse_file_with_encoding` + `Document::from_model` /
 //! drop Document + `purge_free_pages`）复刻一遍，对比基线、打开后、关闭后
 //! 三个时间点的分类堆内存，残留 = 关闭后 − 基线。
 //!
@@ -43,10 +43,9 @@ fn main() {
     let base = Snapshot::capture();
     let base_rss = rss_mb(&mut sys);
 
-    // ── 打开（与 GUI 相同路径）──
-    let data = std::fs::read(&path).expect("read midi");
+    // ── 打开（与 GUI 相同路径：mmap 解析）──
     let model = yinhe_memtrace::with_tag(AllocTag::Midi, || {
-        yinhe_midi::parse_bytes_with_encoding(&data, MidiImportEncoding::Utf8, |_| {})
+        yinhe_midi::parse_file_with_encoding(&path, MidiImportEncoding::Utf8, |_| {})
             .expect("parse midi")
     });
     let doc = Document::from_model(
@@ -59,7 +58,6 @@ fn main() {
         None,
     )
     .expect("build document");
-    drop(data);
 
     let opened = Snapshot::capture();
     let opened_rss = rss_mb(&mut sys);

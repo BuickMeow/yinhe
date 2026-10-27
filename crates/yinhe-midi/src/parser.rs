@@ -38,9 +38,36 @@ const TIMECODE_FALLBACK_TPB: u32 = 480;
 
 /// Parse a .mid file from disk.
 pub fn parse_path(path: impl AsRef<Path>) -> Result<YinModel, MidiError> {
+    parse_file_with_encoding(path, MidiImportEncoding::Utf8, |_| {})
+}
+
+/// Parse a .mid file from disk with a chosen track-name encoding and progress callback.
+///
+/// 用只读 mmap 把文件页直接交给 midly：大 MIDI 不再额外复制一份匿名堆内存，
+/// 文件页在系统内存压力下也可回收。mmap 失败（空文件/特殊文件）回退到
+/// `fs::read`，行为与旧实现一致。
+pub fn parse_file_with_encoding(
+    path: impl AsRef<Path>,
+    encoding: MidiImportEncoding,
+    progress: impl FnMut(LoadProgress) + Send,
+) -> Result<YinModel, MidiError> {
     yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Midi, || {
-        let data = std::fs::read(path.as_ref())?;
-        parse_bytes(&data)
+        let path = path.as_ref();
+        let map = std::fs::File::open(path).and_then(|file| {
+            if file.metadata()?.len() == 0 {
+                return Err(std::io::Error::other("empty file"));
+            }
+            // SAFETY: 只读映射，解析期间不修改文件。
+            unsafe { memmap2::MmapOptions::new().map(&file) }
+        });
+        match map {
+            Ok(map) => parse_bytes_with_encoding(&map, encoding, progress),
+            Err(_) => {
+                // 打开失败时交给 fs::read 报真实错误；空文件则由 midly 统一报格式错误。
+                let data = std::fs::read(path)?;
+                parse_bytes_with_encoding(&data, encoding, progress)
+            }
+        }
     })
 }
 

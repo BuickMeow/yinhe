@@ -8027,9 +8027,11 @@ name = "yinhe-midi"
 version = "0.1.0"
 dependencies = [
  "encoding_rs",
+ "memmap2",
  "midly",
  "rayon",
  "serde",
+ "tempfile",
  "thiserror 2.0.18",
  "uuid",
  "yinhe-core",

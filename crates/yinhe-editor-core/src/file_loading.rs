@@ -276,16 +276,13 @@ impl FileLoader {
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_for_thread = cancel.clone();
         std::thread::spawn(move || {
-            let data = match std::fs::read(&path_for_thread) {
-                Ok(d) => d,
-                Err(e) => {
-                    let _ = tx.send(MidiLoadEvent::Complete(Box::new(Err(
-                        yinhe_midi::MidiError::Io(e),
-                    ))));
-                    return;
-                }
-            };
-            Self::parse_midi_and_report(data, encoding, tx, progress, cancel_for_thread);
+            Self::parse_midi_file_and_report(
+                &path_for_thread,
+                encoding,
+                tx,
+                progress,
+                cancel_for_thread,
+            );
         });
         self.midi_loader = Some(MidiLoader {
             path: path_str,
@@ -294,6 +291,25 @@ impl FileLoader {
             current_progress: None,
             cancel,
         });
+    }
+
+    /// Parse a MIDI file from disk (mmap) in the current thread and report progress/result.
+    fn parse_midi_file_and_report(
+        path: &str,
+        encoding: MidiImportEncoding,
+        tx: mpsc::Sender<MidiLoadEvent>,
+        progress: SharedProgress,
+        cancel: Arc<AtomicBool>,
+    ) {
+        progress::set_stage(&progress, 0, StageStatus::Active);
+        let tx_inner = tx.clone();
+        let result = yinhe_midi::parse_file_with_encoding(path, encoding, |p| {
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
+            let _ = tx_inner.send(MidiLoadEvent::Progress(p));
+        });
+        Self::report_midi_result(result, tx, progress);
     }
 
     /// Parse MIDI bytes in the current thread and report progress/result via channel.
@@ -314,7 +330,15 @@ impl FileLoader {
                 let _ = tx_inner.send(MidiLoadEvent::Progress(p));
             })
         });
-        // stage 0 覆盖整个解析（音轨并行解析 + 模型构建），完成才标 Done。
+        Self::report_midi_result(result, tx, progress);
+    }
+
+    /// stage 0 覆盖整个解析（音轨并行解析 + 模型构建），完成才标 Done。
+    fn report_midi_result(
+        result: Result<YinModel, yinhe_midi::MidiError>,
+        tx: mpsc::Sender<MidiLoadEvent>,
+        progress: SharedProgress,
+    ) {
         progress::set_stage(&progress, 0, StageStatus::Done);
         progress::set_visible(&progress, false);
         let _ = tx.send(MidiLoadEvent::Complete(Box::new(result)));
