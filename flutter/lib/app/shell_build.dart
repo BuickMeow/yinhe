@@ -16,7 +16,13 @@ mixin _ShellBuild on _ShellBase {
       backgroundColor: YinheTheme.bg,
       // 键盘只移动对话框，不缩放画布/wgpu 纹理（adjustNothing）。
       resizeToAvoidBottomInset: false,
+      // 画布不吃 top/bottom 安全区：键盘弹出/收起时 Android 会带着导航栏
+      // 做 inset 动画，MediaQuery.padding.bottom 在过渡期间反复变化；
+      // 若这里消费 padding，LayoutBuilder 会逐帧改尺寸并重配 wgpu 交换链。
+      // 沉浸式全屏下画布本来就铺满窗口，左右仍保留刘海避让。
       body: SafeArea(
+        top: false,
+        bottom: false,
         child: Stack(
           children: [
             Column(
