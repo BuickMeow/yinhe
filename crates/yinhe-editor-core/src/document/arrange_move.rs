@@ -285,8 +285,9 @@ impl Document {
         }
 
         // ── 3. Offset selection rects to follow ──
-        // 同时更新 sel_rect / arr_sel_rect，保证 AR 选框跟随副本。
-        self.edit.offset_sel_ticks(delta_ticks);
+        // 可视选框由各调用方平移：移动端 commit_move / 桌面拖动预览已处理，
+        // 这里只平移选中成员矩形，避免重复偏移。
+        self.edit.selected.offset_ticks(delta_ticks);
         if delta_tracks != 0 {
             self.edit.selected.offset_tracks(delta_tracks);
         }
@@ -489,8 +490,9 @@ impl Document {
         }
 
         // ── 3. Offset selection rects to follow ──
-        // 同时更新 sel_rect / arr_sel_rect，保证 AR 选框跟随副本。
-        self.edit.offset_sel_ticks(delta_ticks);
+        // 可视选框由各调用方平移：移动端 commit_move / 桌面拖动预览已处理，
+        // 这里只平移选中成员矩形，避免重复偏移。
+        self.edit.selected.offset_ticks(delta_ticks);
         if delta_tracks != 0 {
             self.edit.selected.offset_tracks(delta_tracks);
         }
@@ -557,6 +559,22 @@ mod tests {
                 velocity: 100,
             },
         );
+    }
+
+    /// 回归：移动只平移 `selected` 成员矩形，视图选框由调用方（Flutter
+    /// commit_move / 桌面拖动预览）平移一次，不能在 core 里重复偏移。
+    #[test]
+    fn move_arrange_leaves_view_rects_to_caller() {
+        let mut doc = make_doc();
+        add(&mut doc, 100, 200, 60);
+        doc.edit.selected.add_rect_track(100, 201, 60, 60, 0, 0);
+        doc.edit.sel_rect.rects = vec![(100.0, 201.0, 60, 60)];
+        doc.edit.arr_sel_rect = vec![(100.0, 201.0, 0, 0)];
+
+        doc.move_selected_arrange(100, 0).expect("应移动");
+        assert_eq!(doc.edit.selected.rects[0].0, 200, "成员矩形应平移");
+        assert_eq!(doc.edit.sel_rect.rects[0].0, 100.0, "PR 视图框由调用方平移");
+        assert_eq!(doc.edit.arr_sel_rect[0].0, 100.0, "AR 视图框由调用方平移");
     }
 
     /// move_selected_arrange：目标被非移动集合的已有音符占据的音符留在原处，

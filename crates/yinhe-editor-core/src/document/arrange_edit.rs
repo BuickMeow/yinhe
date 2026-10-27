@@ -207,7 +207,12 @@ impl Document {
                     .max(1) as i64
             }
         };
-        self.duplicate_selected_arrange(delta, 0)
+        let action = self.duplicate_selected_arrange(delta, 0);
+        if action.is_some() {
+            // selected.rects 已随副本平移；这里补视图选框，避免 AR 框留在原处。
+            self.edit.offset_view_rects_ticks(delta);
+        }
+        action
     }
 }
 

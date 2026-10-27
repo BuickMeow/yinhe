@@ -24,6 +24,12 @@ impl EditState {
     /// 音符选框整体 tick 平移
     pub fn offset_sel_ticks(&mut self, dt: i64) {
         self.selected.offset_ticks(dt);
+        self.offset_view_rects_ticks(dt);
+    }
+
+    /// 只平移视图选框（`sel_rect` / `arr_sel_rect` / `chan_ar_sel`），
+    /// 不动 `selected` 成员矩形。用于 duplicate 这类内部已平移成员的操作。
+    pub fn offset_view_rects_ticks(&mut self, dt: i64) {
         for r in &mut self.sel_rect.rects {
             r.0 += dt as f64;
             r.1 += dt as f64;

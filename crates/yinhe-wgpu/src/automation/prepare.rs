@@ -318,12 +318,21 @@ pub struct ArrAutomationLane<'a> {
 /// lane 集合与 y_top，否则缓存不失效、曲线不刷新。
 fn lane_set_hash(lanes: &[ArrAutomationLane]) -> u64 {
     lanes.iter().fold(0u64, |acc, l| {
-        acc.wrapping_mul(0x9e3779b97f4a7c15)
+        let mut h = acc
+            .wrapping_mul(0x9e3779b97f4a7c15)
             .wrapping_add(target_hash(&l.lane.target))
             .wrapping_mul(0x9e3779b97f4a7c15)
             .wrapping_add(u64::from(l.lane.track))
             .wrapping_mul(0x9e3779b97f4a7c15)
-            .wrapping_add(l.y_top.to_bits() as u64)
+            .wrapping_add(l.y_top.to_bits() as u64);
+        // 拖动 ghost 时 skip_ticks 从空变为选中 tick；不混入 key 的话
+        // 折叠层命中缓存，原位置竖线不会被隐藏。
+        for &t in l.skip_ticks {
+            h = h
+                .wrapping_mul(0x9e3779b97f4a7c15)
+                .wrapping_add(u64::from(t));
+        }
+        h
     })
 }
 
