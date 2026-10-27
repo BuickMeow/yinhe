@@ -1959,6 +1959,7 @@ pub fn clear_selection() -> i32 {
     doc.edit.sel_rect.clear();
     doc.edit.arr_sel_rect.clear();
     doc.edit.chan_ar_sel.clear();
+    doc.edit.track_selected.clear();
     doc.edit.pianoroll_view.base.dirty = true;
     refresh_snapshot(&mut s);
     1
@@ -1976,14 +1977,13 @@ fn select_track_all(doc: &mut Document, track: u16, arrange: bool) -> bool {
         return false;
     }
     doc.edit.track_selected.clear();
-    doc.edit.track_selected.insert(track);
     doc.edit.selected.clear();
     doc.edit
         .selected
         .add_rect_track(0, max_end + 1, 0, MAX_KEY, track, track);
-    doc.edit.sel_rect.rects = vec![(0.0, max_end as f64 + 1.0, 0, MAX_KEY)];
-    doc.edit.sel_rect.auto_vertical = vec![false];
     if arrange {
+        // AR 只写 AR 选框，避免切回 PR 时残留一个全轨 PR 选框。
+        doc.edit.sel_rect.clear();
         doc.edit.arr_sel_rect = vec![(0.0, (max_end + 1) as f64, track as usize, track as usize)];
         doc.edit.chan_ar_sel = vec![yinhe_editor_core::edit_state::ChanSelRect {
             t_start: 0.0,
@@ -1991,6 +1991,9 @@ fn select_track_all(doc: &mut Document, track: u16, arrange: bool) -> bool {
             tracks: vec![track],
         }];
     } else {
+        doc.edit.track_selected.insert(track);
+        doc.edit.sel_rect.rects = vec![(0.0, max_end as f64 + 1.0, 0, MAX_KEY)];
+        doc.edit.sel_rect.auto_vertical = vec![false];
         doc.edit.arr_sel_rect.clear();
         doc.edit.chan_ar_sel.clear();
     }

@@ -50,6 +50,9 @@ impl Document {
         // 不标记 auto_vertical —— 拖动时仍可上下移动。
         self.edit.sel_rect.rects = vec![(0.0, max_end as f64 + 1.0, 0, MAX_KEY)];
         self.edit.sel_rect.auto_vertical = vec![false];
+        // 选中状态在 PR/AR 间互斥，避免切视图后残留另一套选框。
+        self.edit.arr_sel_rect.clear();
+        self.edit.chan_ar_sel.clear();
     }
 
     /// Select all notes across all tracks for Arrange.
@@ -82,6 +85,8 @@ impl Document {
                 .add_rect_track(0, max_end + 1, 0, MAX_KEY, after, num_tracks - 1);
         }
         // AR 选框：全范围单矩形（含 conductor track），供 AR 视图绘制。
+        self.edit.sel_rect.clear();
+        self.edit.track_selected.clear();
         self.edit.arr_sel_rect = vec![(0.0, (max_end + 1) as f64, 0, num_tracks as usize - 1)];
         // 通道 AR 选框：全范围 + 全部非 Conductor 轨道。
         self.edit.chan_ar_sel = vec![crate::edit_state::ChanSelRect {

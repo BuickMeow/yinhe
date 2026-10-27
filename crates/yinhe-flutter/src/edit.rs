@@ -484,6 +484,8 @@ pub fn update(x: f32, y: f32) -> i32 {
             doc.edit.selected.clear();
             doc.edit.sel_rect.clear();
             doc.edit.arr_sel_rect.clear();
+            doc.edit.chan_ar_sel.clear();
+            doc.edit.track_selected.clear();
         }
         bump(&mut s);
     }
@@ -1809,6 +1811,9 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
             if !moved {
                 doc.edit.selected.clear();
                 doc.edit.sel_rect.clear();
+                doc.edit.arr_sel_rect.clear();
+                doc.edit.chan_ar_sel.clear();
+                doc.edit.track_selected.clear();
                 // 点击空白：移动播放光标（与桌面一致）。
                 click_tick = Some(geom_pr.x_to_tick(x));
             } else {
@@ -1827,6 +1832,8 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
                 let Document { edit, .. } = doc;
                 edit.selected.clear();
                 edit.sel_rect.clear();
+                edit.arr_sel_rect.clear();
+                edit.chan_ar_sel.clear();
                 edit.sel_rect
                     .push_rect((f64::from(ta), f64::from(tb), klo, khi), false);
                 edit.selected.add_rect_track(ta, tb, klo, khi, tr_lo, tr_hi);
@@ -1835,7 +1842,10 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
         ViewMode::Arrangement => {
             if !moved {
                 doc.edit.selected.clear();
+                doc.edit.sel_rect.clear();
                 doc.edit.arr_sel_rect.clear();
+                doc.edit.chan_ar_sel.clear();
+                doc.edit.track_selected.clear();
                 // 点击空白：移动播放光标并聚焦该轨（与桌面一致）。
                 click_tick = Some(geom_ar.x_to_tick(x));
                 click_row = Some(geom_ar.y_to_row(y));
@@ -1851,6 +1861,8 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
                 let (tr_lo, tr_hi) = (rlo, rhi.min(num_tracks.saturating_sub(1)));
                 let Document { edit, .. } = doc;
                 edit.selected.clear();
+                edit.sel_rect.clear();
+                edit.chan_ar_sel.clear();
                 edit.arr_sel_rect.clear();
                 edit.arr_sel_rect
                     .push((f64::from(ta), f64::from(tb), tr_lo, tr_hi));
