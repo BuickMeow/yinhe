@@ -79,6 +79,12 @@ class AppLocalizationsTr extends AppLocalizations {
   String get batchStretch => 'Uzatma';
 
   @override
+  String get batchLength => 'Hedef uzunluk';
+
+  @override
+  String get batchLengthInvalid => 'Geçersiz uzunluk';
+
+  @override
   String get deleteSelectionConfirm => 'Seçili olaylar silinsin mi?';
 
   @override

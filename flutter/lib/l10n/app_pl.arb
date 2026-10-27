@@ -10,6 +10,8 @@
   "batchKey": "Wysokość",
   "batchTick": "Pozycja",
   "batchStretch": "Rozciągnięcie",
+  "batchLength": "Docelowa długość",
+  "batchLengthInvalid": "Nieprawidłowa długość",
   "selectAll": "Zaznacz wszystko",
   "selectAllTrack": "Zaznacz tę ścieżkę",
   "cut": "Wytnij",

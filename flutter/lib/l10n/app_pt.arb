@@ -10,6 +10,8 @@
   "batchKey": "Nota",
   "batchTick": "Posição",
   "batchStretch": "Alongamento",
+  "batchLength": "Comprimento alvo",
+  "batchLengthInvalid": "Comprimento inválido",
   "selectAll": "Selecionar tudo",
   "selectAllTrack": "Selecionar esta faixa",
   "cut": "Recortar",

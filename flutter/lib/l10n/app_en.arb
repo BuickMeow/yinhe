@@ -23,6 +23,8 @@
   "batchKey": "Key",
   "batchTick": "Tick",
   "batchStretch": "Stretch",
+  "batchLength": "Target length",
+  "batchLengthInvalid": "Invalid length",
   "deleteSelectionConfirm": "Delete selected events?",
   "save": "Save",
   "ok": "OK",

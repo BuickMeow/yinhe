@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../core/bar_beat.dart';
 import '../core/theme.dart';
 import '../l10n/app_localizations.dart';
 import 'frame.dart';
@@ -33,34 +35,38 @@ class _HumanizeDialog extends StatefulWidget {
 }
 
 class _HumanizeDialogState extends State<_HumanizeDialog> {
-  double _timing = 8;
-  double _velocity = 8;
-  double _gate = 8;
+  int _timing = 8;
+  int _velocity = 8;
+  int _gate = 8;
 
   @override
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
     return YinheDialog(
-      title: l.opHumanize,
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _LabeledSlider(
+          _NumberStepper(
             label: l.humanizeTiming,
             value: _timing,
+            min: 0,
             max: 120,
             suffix: 'tick',
             onChanged: (v) => setState(() => _timing = v),
           ),
-          _LabeledSlider(
+          const SizedBox(height: 6),
+          _NumberStepper(
             label: l.humanizeVelocity,
             value: _velocity,
+            min: 0,
             max: 64,
             onChanged: (v) => setState(() => _velocity = v),
           ),
-          _LabeledSlider(
+          const SizedBox(height: 6),
+          _NumberStepper(
             label: l.humanizeGate,
             value: _gate,
+            min: 0,
             max: 120,
             suffix: 'tick',
             onChanged: (v) => setState(() => _gate = v),
@@ -74,11 +80,7 @@ class _HumanizeDialogState extends State<_HumanizeDialog> {
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(
-            HumanizeSpec(
-              timing: _timing.round(),
-              velocity: _velocity.round(),
-              gate: _gate.round(),
-            ),
+            HumanizeSpec(timing: _timing, velocity: _velocity, gate: _gate),
           ),
           child: Text(l.ok),
         ),
@@ -114,18 +116,21 @@ class BatchEditSpec {
 ///
 /// `automation`：只显示「力度/值」和「位置」两项。
 /// `selectionRange`：当前选区 tick 范围，用于变速预估显示。
+/// `grid` / `ppq`：把长度显示成 `小节.拍.tick`，并解析用户直接输入的目标长度。
 Future<BatchEditSpec?> showBatchEditDialog(
   BuildContext context, {
   required bool automation,
   (double, double)? selectionRange,
-  String Function(double)? formatTick,
+  BarBeatGrid? grid,
+  int ppq = 480,
 }) {
   return showDialog<BatchEditSpec>(
     context: context,
     builder: (_) => _BatchEditDialog(
       automation: automation,
       selectionRange: selectionRange,
-      formatTick: formatTick,
+      grid: grid,
+      ppq: ppq,
     ),
   );
 }
@@ -134,12 +139,14 @@ class _BatchEditDialog extends StatefulWidget {
   const _BatchEditDialog({
     required this.automation,
     this.selectionRange,
-    this.formatTick,
+    this.grid,
+    this.ppq = 480,
   });
 
   final bool automation;
   final (double, double)? selectionRange;
-  final String Function(double)? formatTick;
+  final BarBeatGrid? grid;
+  final int ppq;
 
   @override
   State<_BatchEditDialog> createState() => _BatchEditDialogState();
@@ -151,6 +158,7 @@ class _BatchEditDialogState extends State<_BatchEditDialog> {
   final _key = TextEditingController();
   final _tick = TextEditingController();
   final _stretch = TextEditingController();
+  final _length = TextEditingController();
 
   @override
   void dispose() {
@@ -159,6 +167,7 @@ class _BatchEditDialogState extends State<_BatchEditDialog> {
     _key.dispose();
     _tick.dispose();
     _stretch.dispose();
+    _length.dispose();
     super.dispose();
   }
 
@@ -186,20 +195,113 @@ class _BatchEditDialogState extends State<_BatchEditDialog> {
     return double.tryParse(s);
   }
 
-  /// 变速预估：`原终点 → 新终点`（起点不变）。
+  double get _selectionStart => widget.selectionRange?.$1 ?? 0;
+
+  /// 选区起点所在段的小节长 / 拍长（tick）。
+  (int, int) _barBeatTicks() {
+    final grid = widget.grid;
+    if (grid != null) {
+      return grid.ticksOfSegment(grid.segmentIndexAt(_selectionStart.round()));
+    }
+    final ppq = widget.ppq > 0 ? widget.ppq : 480;
+    return (ppq * 4, ppq);
+  }
+
+  /// 时长 → `小节.拍.tick`（从 0 开始，不是绝对位置）。
+  String _formatLength(double ticks) {
+    final grid = widget.grid;
+    if (grid != null) {
+      return grid.formatDuration(ticks, atTick: _selectionStart.round());
+    }
+    if (ticks <= 0) {
+      return '0.0.000';
+    }
+    final (measure, beat) = _barBeatTicks();
+    final t = ticks.floor();
+    final bars = t ~/ measure;
+    final rem = t % measure;
+    final beats = rem ~/ beat;
+    final rest = rem % beat;
+    return '$bars.$beats.${rest.toString().padLeft(3, '0')}';
+  }
+
+  /// 解析目标长度：`4`=4 小节，`4.2`=4 小节 2 拍，`4.2.120`=再 120 tick。
+  ///
+  /// 空串返回 null（表示不按长度，改用变速倍率）。
+  int? _targetTicks() {
+    final text = _length.text.trim();
+    if (text.isEmpty) {
+      return null;
+    }
+    final (measure, beat) = _barBeatTicks();
+    final parts = text.split('.');
+    if (parts.length == 1) {
+      final bars = double.tryParse(text);
+      if (bars == null || !bars.isFinite || bars <= 0) {
+        return null;
+      }
+      return (bars * measure).round();
+    }
+    if (parts.length > 3) {
+      return null;
+    }
+    final bars = int.tryParse(parts[0]);
+    final beats = int.tryParse(parts[1]);
+    final ticks = parts.length == 3 ? int.tryParse(parts[2]) : 0;
+    if (bars == null || beats == null || ticks == null) {
+      return null;
+    }
+    if (bars < 0 || beats < 0 || ticks < 0) {
+      return null;
+    }
+    return bars * measure + beats * beat + ticks;
+  }
+
+  bool get _targetInvalid {
+    if (_length.text.trim().isEmpty) {
+      return false;
+    }
+    final target = _targetTicks();
+    return target == null || target <= 0;
+  }
+
+  /// 提交给 Rust 的变速表达式：目标长度优先，否则用倍率输入。
+  String _effectiveStretch() {
+    final target = _targetTicks();
+    final range = widget.selectionRange;
+    if (target != null && target > 0 && range != null) {
+      final current = (range.$2 - range.$1).round();
+      if (current > 0) {
+        return '$target/$current';
+      }
+    }
+    return _stretch.text;
+  }
+
+  /// 变速预估：显示的是**长度**（当前 → 目标），不是结束位置。
   String? _stretchPreview() {
     final range = widget.selectionRange;
-    final format = widget.formatTick;
-    if (range == null || format == null) {
+    if (range == null) {
       return null;
+    }
+    final len = range.$2 - range.$1;
+    if (len <= 0) {
+      return null;
+    }
+    final current = _formatLength(len);
+    final text = _length.text.trim();
+    if (text.isNotEmpty) {
+      final target = _targetTicks();
+      if (target == null || target <= 0) {
+        return current;
+      }
+      return '$current → ${_formatLength(target.toDouble())}';
     }
     final factor = _stretchFactor();
     if (factor == null || !factor.isFinite || factor <= 0) {
-      return null;
+      return current;
     }
-    final (t0, t1) = range;
-    final newEnd = t0 + (t1 - t0) * factor;
-    return '${format(t1)} → ${format(newEnd)}';
+    return '$current → ${_formatLength(len * factor)}';
   }
 
   @override
@@ -239,7 +341,7 @@ class _BatchEditDialogState extends State<_BatchEditDialog> {
                     width: w,
                     child: _ExprField(label: l.batchTick, controller: _tick),
                   ),
-                  if (!widget.automation)
+                  if (!widget.automation) ...[
                     SizedBox(
                       width: w,
                       child: _ExprField(
@@ -248,6 +350,17 @@ class _BatchEditDialogState extends State<_BatchEditDialog> {
                         onChanged: () => setState(() {}),
                       ),
                     ),
+                    SizedBox(
+                      width: w,
+                      child: _ExprField(
+                        label: l.batchLength,
+                        controller: _length,
+                        hintText: '4.0.000',
+                        errorText: _targetInvalid ? l.batchLengthInvalid : null,
+                        onChanged: () => setState(() {}),
+                      ),
+                    ),
+                  ],
                 ],
               ),
               if (preview != null) ...[
@@ -268,15 +381,17 @@ class _BatchEditDialogState extends State<_BatchEditDialog> {
           child: Text(l.cancel),
         ),
         FilledButton(
-          onPressed: () => Navigator.of(context).pop(
-            BatchEditSpec(
-              value: _value.text,
-              gate: widget.automation ? '' : _gate.text,
-              key: widget.automation ? '' : _key.text,
-              tick: _tick.text,
-              stretch: widget.automation ? '' : _stretch.text,
-            ),
-          ),
+          onPressed: (widget.automation || !_targetInvalid)
+              ? () => Navigator.of(context).pop(
+                  BatchEditSpec(
+                    value: _value.text,
+                    gate: widget.automation ? '' : _gate.text,
+                    key: widget.automation ? '' : _key.text,
+                    tick: _tick.text,
+                    stretch: widget.automation ? '' : _effectiveStretch(),
+                  ),
+                )
+              : null,
           child: Text(l.ok),
         ),
       ],
@@ -290,11 +405,15 @@ class _ExprField extends StatelessWidget {
     required this.label,
     required this.controller,
     this.onChanged,
+    this.hintText,
+    this.errorText,
   });
 
   final String label;
   final TextEditingController controller;
   final VoidCallback? onChanged;
+  final String? hintText;
+  final String? errorText;
 
   @override
   Widget build(BuildContext context) {
@@ -315,10 +434,15 @@ class _ExprField extends StatelessWidget {
           keyboardType: TextInputType.text,
           style: const TextStyle(fontSize: 14),
           onChanged: onChanged == null ? null : (_) => onChanged!(),
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             isDense: true,
-            border: OutlineInputBorder(),
-            contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            border: const OutlineInputBorder(),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 8,
+              vertical: 8,
+            ),
+            hintText: hintText,
+            errorText: errorText,
           ),
         ),
       ],
@@ -326,45 +450,124 @@ class _ExprField extends StatelessWidget {
   }
 }
 
-class _LabeledSlider extends StatelessWidget {
-  const _LabeledSlider({
+class _NumberStepper extends StatefulWidget {
+  const _NumberStepper({
     required this.label,
     required this.value,
+    required this.min,
+    required this.max,
     required this.onChanged,
-    this.max = 1,
     this.suffix = '',
   });
 
   final String label;
-  final double value;
-  final double max;
+  final int value;
+  final int min;
+  final int max;
   final String suffix;
-  final ValueChanged<double> onChanged;
+  final ValueChanged<int> onChanged;
+
+  @override
+  State<_NumberStepper> createState() => _NumberStepperState();
+}
+
+class _NumberStepperState extends State<_NumberStepper> {
+  late final TextEditingController _text = TextEditingController(
+    text: '${widget.value}',
+  );
+
+  @override
+  void didUpdateWidget(covariant _NumberStepper oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final next = '${widget.value}';
+    if (widget.value != oldWidget.value && _text.text != next) {
+      _text.text = next;
+    }
+  }
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  void _commitText(String raw) {
+    final parsed = int.tryParse(raw.trim());
+    if (parsed == null) {
+      return;
+    }
+    final value = parsed.clamp(widget.min, widget.max);
+    if (value != widget.value) {
+      widget.onChanged(value);
+    }
+  }
+
+  void _step(int delta) {
+    final next = (widget.value + delta).clamp(widget.min, widget.max);
+    if (next != widget.value) {
+      widget.onChanged(next);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    final canDec = widget.value > widget.min;
+    final canInc = widget.value < widget.max;
+    return Row(
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                label,
-                style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
-              ),
-            ),
-            Text(
-              '${value.round()}$suffix',
-              style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
-            ),
-          ],
+        Expanded(
+          child: Text(
+            widget.label,
+            style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
+          ),
         ),
-        Slider(
-          value: value.clamp(0, max),
-          min: 0,
-          max: max,
-          onChanged: onChanged,
+        IconButton(
+          onPressed: canDec ? () => _step(-1) : null,
+          icon: const Icon(Icons.remove, size: 18),
+          visualDensity: VisualDensity.compact,
+          constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+          padding: EdgeInsets.zero,
+        ),
+        SizedBox(
+          width: 56,
+          child: TextField(
+            controller: _text,
+            textAlign: TextAlign.center,
+            keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            style: const TextStyle(fontSize: 14),
+            decoration: const InputDecoration(
+              isDense: true,
+              border: OutlineInputBorder(),
+              contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            ),
+            onChanged: _commitText,
+            onSubmitted: (raw) {
+              final parsed = int.tryParse(raw.trim());
+              final value = (parsed ?? widget.value).clamp(
+                widget.min,
+                widget.max,
+              );
+              _text.text = '$value';
+              if (value != widget.value) {
+                widget.onChanged(value);
+              }
+            },
+          ),
+        ),
+        IconButton(
+          onPressed: canInc ? () => _step(1) : null,
+          icon: const Icon(Icons.add, size: 18),
+          visualDensity: VisualDensity.compact,
+          constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+          padding: EdgeInsets.zero,
+        ),
+        SizedBox(
+          width: 32,
+          child: Text(
+            widget.suffix,
+            style: TextStyle(color: YinheTheme.textMuted, fontSize: 11),
+          ),
         ),
       ],
     );

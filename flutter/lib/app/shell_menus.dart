@@ -44,11 +44,13 @@ mixin _ShellMenus on _ShellBase {
     // 批量处理：音符或 AM 锚点，字段固定设值，一次 undo。
     if (id == 24) {
       final automation = scope == 1;
+      final range = automation ? null : rust.selectionRange();
       final spec = await showBatchEditDialog(
         context,
         automation: automation,
-        selectionRange: automation ? null : rust.selectionRange(),
-        formatTick: _formatEditTick,
+        selectionRange: range,
+        grid: _grid.value,
+        ppq: _ppq.round(),
       );
       if (!mounted || spec == null) {
         return;

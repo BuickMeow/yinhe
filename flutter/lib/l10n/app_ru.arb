@@ -10,6 +10,8 @@
   "batchKey": "Высота",
   "batchTick": "Позиция",
   "batchStretch": "Растяжение",
+  "batchLength": "Целевая длина",
+  "batchLengthInvalid": "Неверная длина",
   "selectAll": "Выбрать всё",
   "selectAllTrack": "Выбрать эту дорожку",
   "cut": "Вырезать",

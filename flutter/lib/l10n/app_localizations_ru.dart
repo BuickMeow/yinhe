@@ -79,6 +79,12 @@ class AppLocalizationsRu extends AppLocalizations {
   String get batchStretch => 'Растяжение';
 
   @override
+  String get batchLength => 'Целевая длина';
+
+  @override
+  String get batchLengthInvalid => 'Неверная длина';
+
+  @override
   String get deleteSelectionConfirm => 'Удалить выбранные события?';
 
   @override

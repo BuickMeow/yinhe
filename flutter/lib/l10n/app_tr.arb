@@ -10,6 +10,8 @@
   "batchKey": "Perde",
   "batchTick": "Konum",
   "batchStretch": "Uzatma",
+  "batchLength": "Hedef uzunluk",
+  "batchLengthInvalid": "Geçersiz uzunluk",
   "selectAll": "Tümünü seç",
   "selectAllTrack": "Bu kanalı seç",
   "cut": "Kes",

@@ -10,6 +10,8 @@
   "batchKey": "音高",
   "batchTick": "位置",
   "batchStretch": "變速",
+  "batchLength": "目標長度",
+  "batchLengthInvalid": "長度格式無效",
   "selectAll": "全選",
   "selectAllTrack": "全選該軌道",
   "cut": "剪下",

@@ -79,6 +79,12 @@ class AppLocalizationsKo extends AppLocalizations {
   String get batchStretch => '늘이기';
 
   @override
+  String get batchLength => '목표 길이';
+
+  @override
+  String get batchLengthInvalid => '길이 형식이 잘못되었습니다';
+
+  @override
   String get deleteSelectionConfirm => '선택한 이벤트를 삭제할까요?';
 
   @override

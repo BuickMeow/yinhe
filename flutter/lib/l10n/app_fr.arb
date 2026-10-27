@@ -10,6 +10,8 @@
   "batchKey": "Hauteur",
   "batchTick": "Position",
   "batchStretch": "Étirement",
+  "batchLength": "Longueur cible",
+  "batchLengthInvalid": "Longueur non valide",
   "selectAll": "Tout sélectionner",
   "selectAllTrack": "Sélectionner cette piste",
   "cut": "Couper",

@@ -79,6 +79,12 @@ class AppLocalizationsJa extends AppLocalizations {
   String get batchStretch => '伸縮';
 
   @override
+  String get batchLength => '目標の長さ';
+
+  @override
+  String get batchLengthInvalid => '長さの形式が無効です';
+
+  @override
   String get deleteSelectionConfirm => '選択したイベントを削除しますか？';
 
   @override

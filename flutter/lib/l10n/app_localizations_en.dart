@@ -79,6 +79,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get batchStretch => 'Stretch';
 
   @override
+  String get batchLength => 'Target length';
+
+  @override
+  String get batchLengthInvalid => 'Invalid length';
+
+  @override
   String get deleteSelectionConfirm => 'Delete selected events?';
 
   @override

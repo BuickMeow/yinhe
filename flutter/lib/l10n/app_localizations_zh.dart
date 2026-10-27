@@ -79,6 +79,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get batchStretch => '变速';
 
   @override
+  String get batchLength => '目标长度';
+
+  @override
+  String get batchLengthInvalid => '长度格式无效';
+
+  @override
   String get deleteSelectionConfirm => '删除选中的事件？';
 
   @override
@@ -650,6 +656,12 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get batchStretch => '變速';
 
   @override
+  String get batchLength => '目標長度';
+
+  @override
+  String get batchLengthInvalid => '長度格式無效';
+
+  @override
   String get deleteSelectionConfirm => '刪除選取的事件？';
 
   @override
@@ -1219,6 +1231,12 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get batchStretch => '變速';
+
+  @override
+  String get batchLength => '目標長度';
+
+  @override
+  String get batchLengthInvalid => '長度格式無效';
 
   @override
   String get deleteSelectionConfirm => '刪除選取的事件？';

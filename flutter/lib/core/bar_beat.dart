@@ -107,4 +107,21 @@ class BarBeatGrid {
     final inBeat = local % bticks;
     return '$bar.$beat.${inBeat.toString().padLeft(3, '0')}';
   }
+
+  /// 时长格式：与 [format] 同形，但从 0 开始（长度没有 1-based 小节）。
+  ///
+  /// `atTick` 决定用哪一段拍号；跨拍号时长按起点段近似。
+  String formatDuration(double ticks, {int atTick = 0}) {
+    if (ppq <= 0 || ticks <= 0) {
+      return '0.0.000';
+    }
+    final t = ticks.floor();
+    final idx = segmentIndexAt(atTick);
+    final (mticks, bticks) = ticksOfSegment(idx);
+    final bar = t ~/ mticks;
+    final rem = t % mticks;
+    final beat = rem ~/ bticks;
+    final inBeat = rem % bticks;
+    return '$bar.$beat.${inBeat.toString().padLeft(3, '0')}';
+  }
 }

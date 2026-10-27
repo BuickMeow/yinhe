@@ -79,6 +79,12 @@ class AppLocalizationsCs extends AppLocalizations {
   String get batchStretch => 'Roztažení';
 
   @override
+  String get batchLength => 'Cílová délka';
+
+  @override
+  String get batchLengthInvalid => 'Neplatná délka';
+
+  @override
   String get deleteSelectionConfirm => 'Smazat vybrané události?';
 
   @override

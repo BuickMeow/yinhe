@@ -10,6 +10,8 @@
   "batchKey": "音高",
   "batchTick": "位置",
   "batchStretch": "伸縮",
+  "batchLength": "目標の長さ",
+  "batchLengthInvalid": "長さの形式が無効です",
   "selectAll": "すべて選択",
   "selectAllTrack": "このトラックをすべて選択",
   "cut": "切り取り",

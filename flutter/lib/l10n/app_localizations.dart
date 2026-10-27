@@ -260,6 +260,18 @@ abstract class AppLocalizations {
   /// **'Stretch'**
   String get batchStretch;
 
+  /// No description provided for @batchLength.
+  ///
+  /// In en, this message translates to:
+  /// **'Target length'**
+  String get batchLength;
+
+  /// No description provided for @batchLengthInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid length'**
+  String get batchLengthInvalid;
+
   /// No description provided for @deleteSelectionConfirm.
   ///
   /// In en, this message translates to:

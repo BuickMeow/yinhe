@@ -10,6 +10,8 @@
   "batchKey": "Tón",
   "batchTick": "Pozice",
   "batchStretch": "Roztažení",
+  "batchLength": "Cílová délka",
+  "batchLengthInvalid": "Neplatná délka",
   "selectAll": "Vybrat vše",
   "selectAllTrack": "Vybrat tuto stopu",
   "cut": "Vyjmout",

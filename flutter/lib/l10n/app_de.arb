@@ -10,6 +10,8 @@
   "batchKey": "Tonhöhe",
   "batchTick": "Position",
   "batchStretch": "Dehnen",
+  "batchLength": "Ziellänge",
+  "batchLengthInvalid": "Ungültige Länge",
   "selectAll": "Alles auswählen",
   "selectAllTrack": "Diese Spur auswählen",
   "cut": "Ausschneiden",
