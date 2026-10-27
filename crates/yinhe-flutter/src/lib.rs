@@ -1591,39 +1591,42 @@ pub extern "C" fn yinhe_humanize(timing: u32, velocity: u32, gate: u32) -> i32 {
     scene::humanize_selection(timing, velocity, gate)
 }
 
-/// 批量处理（音符）：四个字段各带操作码，NaN = 跳过。
+/// 批量处理（音符）：每个字段一个表达式，空串/无效 = 跳过。
 #[allow(clippy::too_many_arguments)]
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_batch_edit(
-    velocity_op: i32,
-    velocity: f64,
-    gate_op: i32,
-    gate: f64,
-    key_op: i32,
-    key: f64,
-    tick_op: i32,
-    tick: f64,
-    stretch_percent: i32,
+    velocity_expr: *const std::ffi::c_char,
+    gate_expr: *const std::ffi::c_char,
+    key_expr: *const std::ffi::c_char,
+    tick_expr: *const std::ffi::c_char,
+    stretch_expr: *const std::ffi::c_char,
 ) -> i32 {
     scene::batch_edit(
-        (velocity_op, velocity),
-        (gate_op, gate),
-        (key_op, key),
-        (tick_op, tick),
-        stretch_percent,
+        cstr_arg(velocity_expr),
+        cstr_arg(gate_expr),
+        cstr_arg(key_expr),
+        cstr_arg(tick_expr),
+        cstr_arg(stretch_expr),
     )
 }
 
-/// 批量处理（AM 当前 lane）：值与位置各带操作码，NaN = 跳过。
-#[allow(clippy::too_many_arguments)]
+/// 批量处理（AM 当前 lane）：值与位置各一个表达式，空串/无效 = 跳过。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_automation_batch_edit(
-    value_op: i32,
-    value: f64,
-    tick_op: i32,
-    tick: f64,
+    value_expr: *const std::ffi::c_char,
+    tick_expr: *const std::ffi::c_char,
 ) -> i32 {
-    scene::automation_batch_edit((value_op, value), (tick_op, tick))
+    scene::automation_batch_edit(cstr_arg(value_expr), cstr_arg(tick_expr))
+}
+
+/// 读取可空 C 字符串；null/非法 UTF-8 当空串。
+fn cstr_arg<'a>(p: *const std::ffi::c_char) -> &'a str {
+    if p.is_null() {
+        return "";
+    }
+    unsafe { std::ffi::CStr::from_ptr(p) }
+        .to_str()
+        .unwrap_or("")
 }
 
 /// Flutter 帧驱动：请求渲染一帧并等待完成（纹理与浮层同帧产出）。成功 1。

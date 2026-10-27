@@ -2023,29 +2023,25 @@ pub fn humanize_selection(timing: u32, velocity: u32, gate: u32) -> i32 {
     1
 }
 
-/// 批量处理的单字段操作：1=设值 2=加 3=减 4=乘 5=除。
-fn num_op(code: i32, value: f64) -> Option<yinhe_editor_core::num_expr::NumOp> {
-    use yinhe_editor_core::num_expr::NumOp;
-    match code {
-        1 => Some(NumOp::Set(value)),
-        2 => Some(NumOp::Add(value)),
-        3 => Some(NumOp::Add(-value)),
-        4 if value != 0.0 => Some(NumOp::Mul(value)),
-        5 if value != 0.0 => Some(NumOp::Div(value)),
-        _ => None,
+/// 解析批量处理输入框：空串 = 该字段不改；无效表达式 = 不改。
+fn field_ops(expr: &str) -> Option<Vec<yinhe_editor_core::num_expr::NumOp>> {
+    if expr.trim().is_empty() {
+        return None;
     }
+    yinhe_editor_core::num_expr::parse_num_expr(expr)
 }
 
-/// 批量处理（音符）：四个字段各带操作码，`value` 为 NaN = 跳过该字段；
-/// `stretch_percent` 100 = 不变。
+/// 批量处理（音符）：每个字段一个表达式（`100`/`+2`/`x1.5`/`3/7`），
+/// 空串或无效 = 跳过。`stretch_expr` 解析成倍率（`1.5`、`4/3`、`x2`）。
 pub fn batch_edit(
-    velocity: (i32, f64),
-    gate: (i32, f64),
-    key: (i32, f64),
-    tick: (i32, f64),
-    stretch_percent: i32,
+    velocity_expr: &str,
+    gate_expr: &str,
+    key_expr: &str,
+    tick_expr: &str,
+    stretch_expr: &str,
 ) -> i32 {
     use yinhe_editor_core::document::note_edit::NoteField;
+    use yinhe_editor_core::num_expr::apply_ops;
 
     let Ok(mut s) = scene().lock() else {
         return 0;
@@ -2059,25 +2055,28 @@ pub fn batch_edit(
     let before = doc.capture_snapshot();
     let mut actions = Vec::new();
 
-    let pct = stretch_percent.clamp(1, 10_000);
-    if pct != 100
-        && let Some(a) = doc.scale_selected_span(pct as u64, 100)
-    {
-        actions.push(a);
-    }
-    for (field, (code, value)) in [
-        (NoteField::Velocity, velocity),
-        (NoteField::Gate, gate),
-        (NoteField::Key, key),
-        (NoteField::Tick, tick),
-    ] {
-        if value.is_nan() {
-            continue;
+    // 变速：把表达式应用到 1.0 得到倍率，再转成整数比例。
+    let factor = field_ops(stretch_expr)
+        .map(|ops| apply_ops(&ops, 1.0))
+        .unwrap_or(1.0);
+    if factor.is_finite() && factor > 0.0 && (factor - 1.0).abs() > 1e-9 {
+        const DEN: u64 = 1_000_000;
+        let num = (factor * DEN as f64).round().max(1.0) as u64;
+        if let Some(a) = doc.scale_selected_span(num, DEN) {
+            actions.push(a);
         }
-        let Some(op) = num_op(code, value) else {
+    }
+
+    for (field, expr) in [
+        (NoteField::Velocity, velocity_expr),
+        (NoteField::Gate, gate_expr),
+        (NoteField::Key, key_expr),
+        (NoteField::Tick, tick_expr),
+    ] {
+        let Some(ops) = field_ops(expr) else {
             continue;
         };
-        if let Some(a) = doc.apply_note_field_edit(field, &[op]) {
+        if let Some(a) = doc.apply_note_field_edit(field, &ops) {
             actions.push(a);
         }
     }
@@ -2099,10 +2098,10 @@ pub fn batch_edit(
     1
 }
 
-/// 批量处理（AM 当前 lane）：值与位置各带操作码，`value` 为 NaN = 跳过。
-///
-/// `value` 是显示值（CC 0..127、PB 0..16383，按 target.display_max 归一化）。
-pub fn automation_batch_edit(value: (i32, f64), tick: (i32, f64)) -> i32 {
+/// 批量处理（AM 当前 lane）：值与位置各一个表达式（`100`/`+2`/`x0.5`），
+/// 空串或无效 = 跳过。值是显示值（CC 0..127、PB 0..16383）。
+pub fn automation_batch_edit(value_expr: &str, tick_expr: &str) -> i32 {
+    use yinhe_editor_core::num_expr::{apply_ops, apply_ops_round};
     let Ok(mut s) = scene().lock() else {
         return 0;
     };
@@ -2116,6 +2115,11 @@ pub fn automation_batch_edit(value: (i32, f64), tick: (i32, f64)) -> i32 {
     if panel.selected_ticks.is_empty() {
         return 0;
     }
+    let value_ops = field_ops(value_expr);
+    let tick_ops = field_ops(tick_expr);
+    if value_ops.is_none() && tick_ops.is_none() {
+        return 0;
+    }
     let track = panel.active_track;
     let Some((raw_idx, target)) = doc
         .data
@@ -2127,19 +2131,6 @@ pub fn automation_batch_edit(value: (i32, f64), tick: (i32, f64)) -> i32 {
         return 0;
     };
     let display_max = f64::from(target.display_max().unwrap_or(1.0));
-    let value_op = if value.1.is_nan() {
-        None
-    } else {
-        num_op(value.0, value.1)
-    };
-    let tick_op = if tick.1.is_nan() {
-        None
-    } else {
-        num_op(tick.0, tick.1)
-    };
-    if value_op.is_none() && tick_op.is_none() {
-        return 0;
-    }
     let Some(lane) = doc
         .data
         .model
@@ -2161,17 +2152,16 @@ pub fn automation_batch_edit(value: (i32, f64), tick: (i32, f64)) -> i32 {
 
     let mut moves: Vec<(u32, u32, f32)> = Vec::new();
     for (old_tick, old_value) in events {
-        let new_tick = match &tick_op {
-            Some(op) => op
-                .apply(f64::from(old_tick))
-                .round()
-                .clamp(0.0, f64::from(u32::MAX)) as u32,
+        let new_tick = match &tick_ops {
+            Some(ops) => {
+                apply_ops_round(ops, f64::from(old_tick)).clamp(0.0, f64::from(u32::MAX)) as u32
+            }
             None => old_tick,
         };
-        let new_value = match &value_op {
-            Some(op) => {
+        let new_value = match &value_ops {
+            Some(ops) => {
                 let cur = f64::from(target.to_display_value(old_value));
-                let display = op.apply(cur).clamp(0.0, display_max) as f32;
+                let display = apply_ops(ops, cur).clamp(0.0, display_max) as f32;
                 target.from_display_value(display)
             }
             None => old_value,
