@@ -102,6 +102,15 @@ typedef SetQuantizeDart = int Function(int, int, int, int);
 final SetQuantizeDart setQuantize = bridge
     .lookupFunction<SetQuantizeNative, SetQuantizeDart>('yinhe_set_quantize');
 
+typedef QuantizeTickIntervalNative = ffi.Int64 Function();
+typedef QuantizeTickIntervalDart = int Function();
+
+/// 当前视图量化档位的 tick 间隔（AM 选框吸附用）。
+final QuantizeTickIntervalDart quantizeTickInterval = bridge
+    .lookupFunction<QuantizeTickIntervalNative, QuantizeTickIntervalDart>(
+      'yinhe_quantize_tick_interval',
+    );
+
 /// 覆盖层修订号（变化时重取 JSON）。
 typedef OverlayRevNative = ffi.Uint32 Function();
 typedef OverlayRevDart = int Function();

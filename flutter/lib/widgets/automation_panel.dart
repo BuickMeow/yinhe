@@ -141,9 +141,10 @@ class _AutomationPanelState extends State<AutomationPanel>
   Offset? _marqueeStart;
   Offset? _marqueeCurrent;
 
-  /// 已完成的选框：松手后保留，直到点空白/换轨/换 lane/清空选区。
-  /// 只存可见性，矩形每次由选中锚点按当前 tick→像素换算重建（滚动/缩放后仍对齐）。
-  bool _marqueeVisible = false;
+  /// 已完成的选框 tick 区间 `[lo, hi)`（与 PR/AR 选框同语义）。
+  /// 松手后保留，直到点空白/换轨/换 lane；绘制时按当前 tick→像素换算，
+  /// 滚动/缩放后仍贴合网格。
+  (double, double)? _marqueeTicks;
 
   /// 长按蓝色圆环（与主画布 200ms→500ms 的节奏一致）。
   late final Ticker _lpTicker;
@@ -490,26 +491,26 @@ class _AutomationPanelState extends State<AutomationPanel>
     }
   }
 
-  /// 由当前选中锚点按 tick→像素重建选框；滚动/缩放/拖动后自动跟随。
-  Rect? _marqueeFromSelection() {
-    final laneIdx = _laneIdx;
-    if (laneIdx == null || laneIdx >= widget.lanes.length) {
-      return null;
+  /// 起止点按当前量化档吸附成 tick 区间，与 PR/AR 框选完全一致：
+  /// 两端都吸附；区间至少一个量化间隔；命中判定为 `[lo, hi)`。
+  (double, double) _snapMarquee(Offset a, Offset b) {
+    final ta = _snapTickAt(a.dx);
+    final tb = _snapTickAt(b.dx);
+    var lo = math.min(ta, tb);
+    var hi = math.max(ta, tb);
+    if (hi <= lo) {
+      hi = lo + rust.quantizeTickInterval().toDouble();
     }
-    double? lo;
-    double? hi;
-    for (final p in widget.lanes[laneIdx].points) {
-      if (!_selectedTicks.contains(p.dx.round())) {
-        continue;
-      }
-      final x = _xOfTick(p.dx);
-      lo = lo == null ? x : math.min(lo, x);
-      hi = hi == null ? x : math.max(hi, x);
-    }
-    if (lo == null || hi == null) {
-      return null;
-    }
-    return Rect.fromLTRB(lo, 0, hi, widget.canvasHeight);
+    return (lo, hi);
+  }
+
+  Rect? _marqueeRectFromTicks((double, double) range) {
+    return Rect.fromLTRB(
+      _xOfTick(range.$1),
+      0,
+      _xOfTick(range.$2),
+      widget.canvasHeight,
+    );
   }
 
   Future<void> _runSelectionAction(int id) async {
@@ -549,7 +550,7 @@ class _AutomationPanelState extends State<AutomationPanel>
     _marqueeActive = false;
     _marqueeStart = null;
     _marqueeCurrent = null;
-    _marqueeVisible = false;
+    _marqueeTicks = null;
     _awaitSnapBreak = false;
     _dragBaseTicks.clear();
     _syncGhost();
@@ -797,14 +798,15 @@ class _AutomationPanelState extends State<AutomationPanel>
     final hit = widget.pencilActive ? _hitAnchor(lane, d.localPosition) : null;
     final hitTick = hit?.round();
     final inMarquee =
-        _marqueeVisible &&
-        (_marqueeFromSelection()?.contains(d.localPosition) ?? false);
+        _marqueeTicks != null &&
+        (_marqueeRectFromTicks(_marqueeTicks!)?.contains(d.localPosition) ??
+            false);
     if (hitTick != null) {
       if (!_selectedTicks.contains(hitTick)) {
         _selectedTicks
           ..clear()
           ..add(hitTick);
-        _marqueeVisible = false;
+        _marqueeTicks = null;
       }
       _singleSelection = _selectedTicks.length == 1;
       _movePreview = {};
@@ -895,7 +897,7 @@ class _AutomationPanelState extends State<AutomationPanel>
         _selectedTicks
           ..clear()
           ..add(hitTick);
-        _marqueeVisible = false;
+        _marqueeTicks = null;
       }
       _singleSelection = _selectedTicks.length == 1;
       _dragAnchorTick = hit;
@@ -926,7 +928,7 @@ class _AutomationPanelState extends State<AutomationPanel>
     _singleSelection = false;
     _dragAnchorTick = null;
     _movePreview = {};
-    _marqueeVisible = false;
+    _marqueeTicks = null;
     _marqueeActive = true;
     _marqueeStart = d.localPosition;
     _marqueeCurrent = d.localPosition;
@@ -1079,16 +1081,15 @@ class _AutomationPanelState extends State<AutomationPanel>
         end != null &&
         (end.dx - start.dx).abs() >= 3 &&
         laneIdx != null) {
-      final lo = math.min(start.dx, end.dx);
-      final hi = math.max(start.dx, end.dx);
+      // 与 PR/AR 一致：起止点都吸附到当前量化档，选区为 [lo, hi)。
+      final range = _snapMarquee(start, end);
       for (final p in widget.lanes[laneIdx].points) {
-        final x = _xOfTick(p.dx);
-        if (x >= lo && x <= hi) {
+        if (p.dx >= range.$1 && p.dx < range.$2) {
           _selectedTicks.add(p.dx.round());
         }
       }
       // 松手后选框保留，直到点空白/换轨/换 lane。
-      _marqueeVisible = _selectedTicks.isNotEmpty;
+      _marqueeTicks = _selectedTicks.isNotEmpty ? range : null;
     }
     _syncSelection();
     setState(() {});
@@ -1206,15 +1207,10 @@ class _AutomationPanelState extends State<AutomationPanel>
     if (_marqueeActive && _marqueeStart != null && _marqueeCurrent != null) {
       final a = _marqueeStart!;
       final b = _marqueeCurrent!;
-      marquee = Rect.fromLTRB(
-        math.min(a.dx, b.dx),
-        0,
-        math.max(a.dx, b.dx),
-        widget.canvasHeight,
-      );
-    } else if (_marqueeVisible) {
-      // 松手后的选框常驻；每次按当前 tick→像素重建，滚动/缩放后仍贴合锚点。
-      marquee = _marqueeFromSelection();
+      marquee = _marqueeRectFromTicks(_snapMarquee(a, b));
+    } else if (_marqueeTicks != null) {
+      // 松手后的选框常驻；每次按当前 tick→像素重建，滚动/缩放后仍贴合网格。
+      marquee = _marqueeRectFromTicks(_marqueeTicks!);
     }
     return Container(
       height: widget.height,

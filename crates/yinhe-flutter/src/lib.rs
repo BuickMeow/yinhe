@@ -1444,6 +1444,12 @@ pub extern "C" fn yinhe_set_quantize(view: i32, kind: i32, num: u32, den: u32) -
     scene::set_quantize(view, kind, num, den)
 }
 
+/// 当前视图量化档位的 tick 间隔（AM 选框按量化吸附用）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_quantize_tick_interval() -> i64 {
+    i64::from(edit::quantize_tick_interval())
+}
+
 /// 设置当前编辑轨（-1 = 无）。成功 1。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_set_active_track(track: i32) -> i32 {

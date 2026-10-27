@@ -353,6 +353,14 @@ fn write_track(s: &RenderScene) -> Option<usize> {
     }
 }
 
+/// 当前视图量化档位的 tick 间隔（AM 选框按量化吸附用）。
+pub fn quantize_tick_interval() -> u32 {
+    let Ok(s) = scene::scene().lock() else {
+        return 1;
+    };
+    quantize_of(&s).tick_interval(s.ppq).max(1)
+}
+
 /// 当前量化档位（Auto 按视图缩放解析）。
 fn quantize_of(s: &RenderScene) -> QuantizePreset {
     let raw = s
