@@ -1,6 +1,11 @@
 {
   "@@locale": "pl",
   "cancel": "Anuluj",
+  "batchOpSet": "Ustaw",
+  "batchOpAdd": "Dodaj",
+  "batchOpSub": "Odejmij",
+  "batchOpMul": "Pomnóż",
+  "batchOpDiv": "Podziel",
   "batchProcess": "Edycja zbiorcza",
   "humanizeTiming": "Czas",
   "humanizeVelocity": "Dynamika",

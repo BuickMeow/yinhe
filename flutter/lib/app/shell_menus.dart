@@ -50,14 +50,20 @@ mixin _ShellMenus on _ShellBase {
       }
       final ok = automation
           ? rust.automationBatchEdit(
-              spec.value ?? double.nan,
-              spec.tick ?? double.nan,
+              spec.value.op,
+              spec.value.value ?? double.nan,
+              spec.tick.op,
+              spec.tick.value ?? double.nan,
             )
           : rust.batchEdit(
-              spec.value ?? double.nan,
-              spec.gate ?? double.nan,
-              spec.key ?? double.nan,
-              spec.tick ?? double.nan,
+              spec.value.op,
+              spec.value.value ?? double.nan,
+              spec.gate.op,
+              spec.gate.value ?? double.nan,
+              spec.key.op,
+              spec.key.value ?? double.nan,
+              spec.tick.op,
+              spec.tick.value ?? double.nan,
               spec.stretchPercent,
             );
       if (ok == 1) {

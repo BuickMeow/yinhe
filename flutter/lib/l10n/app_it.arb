@@ -1,6 +1,11 @@
 {
   "@@locale": "it",
   "cancel": "Annulla",
+  "batchOpSet": "Imposta",
+  "batchOpAdd": "Aggiungi",
+  "batchOpSub": "Sottrai",
+  "batchOpMul": "Moltiplica",
+  "batchOpDiv": "Dividi",
   "batchProcess": "Modifica in blocco",
   "humanizeTiming": "Timing",
   "humanizeVelocity": "Velocità",

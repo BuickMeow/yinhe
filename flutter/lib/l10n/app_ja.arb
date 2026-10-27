@@ -1,6 +1,11 @@
 {
   "@@locale": "ja",
   "cancel": "キャンセル",
+  "batchOpSet": "設定",
+  "batchOpAdd": "加算",
+  "batchOpSub": "減算",
+  "batchOpMul": "乗算",
+  "batchOpDiv": "除算",
   "batchProcess": "一括処理",
   "humanizeTiming": "タイミング",
   "humanizeVelocity": "ベロシティ",

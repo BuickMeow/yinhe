@@ -286,8 +286,10 @@ class _AutomationPanelState extends State<AutomationPanel> {
         return;
       }
       if (rust.automationBatchEdit(
-            spec.value ?? double.nan,
-            spec.tick ?? double.nan,
+            spec.value.op,
+            spec.value.value ?? double.nan,
+            spec.tick.op,
+            spec.tick.value ?? double.nan,
           ) ==
           1) {
         _clearSelection();

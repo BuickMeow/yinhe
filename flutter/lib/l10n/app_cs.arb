@@ -1,6 +1,11 @@
 {
   "@@locale": "cs",
   "cancel": "Zrušit",
+  "batchOpSet": "Nastavit",
+  "batchOpAdd": "Přičíst",
+  "batchOpSub": "Odečíst",
+  "batchOpMul": "Násobit",
+  "batchOpDiv": "Dělit",
   "batchProcess": "Dávková úprava",
   "humanizeTiming": "Časování",
   "humanizeVelocity": "Dynamika",

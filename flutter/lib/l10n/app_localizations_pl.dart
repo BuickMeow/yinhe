@@ -79,6 +79,21 @@ class AppLocalizationsPl extends AppLocalizations {
   String get batchStretch => 'Rozciągnięcie';
 
   @override
+  String get batchOpSet => 'Ustaw';
+
+  @override
+  String get batchOpAdd => 'Dodaj';
+
+  @override
+  String get batchOpSub => 'Odejmij';
+
+  @override
+  String get batchOpMul => 'Pomnóż';
+
+  @override
+  String get batchOpDiv => 'Podziel';
+
+  @override
   String get deleteSelectionConfirm => 'Usunąć wybrane zdarzenia?';
 
   @override

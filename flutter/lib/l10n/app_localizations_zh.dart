@@ -40,7 +40,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get opFlipVertical => '垂直翻转';
 
   @override
-  String get opHumanize => '人性化';
+  String get opHumanize => '类人化';
 
   @override
   String get opFillGaps => '填缝';
@@ -77,6 +77,21 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get batchStretch => '变速';
+
+  @override
+  String get batchOpSet => '设值';
+
+  @override
+  String get batchOpAdd => '加';
+
+  @override
+  String get batchOpSub => '减';
+
+  @override
+  String get batchOpMul => '乘';
+
+  @override
+  String get batchOpDiv => '除';
 
   @override
   String get deleteSelectionConfirm => '删除选中的事件？';
@@ -599,7 +614,7 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get opFlipVertical => '垂直翻轉';
 
   @override
-  String get opHumanize => '人性化';
+  String get opHumanize => '類人化';
 
   @override
   String get opFillGaps => '填縫';
@@ -636,6 +651,21 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
 
   @override
   String get batchStretch => '變速';
+
+  @override
+  String get batchOpSet => '設值';
+
+  @override
+  String get batchOpAdd => '加';
+
+  @override
+  String get batchOpSub => '減';
+
+  @override
+  String get batchOpMul => '乘';
+
+  @override
+  String get batchOpDiv => '除';
 
   @override
   String get deleteSelectionConfirm => '刪除選取的事件？';
@@ -1158,7 +1188,7 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
   String get opFlipVertical => '垂直翻轉';
 
   @override
-  String get opHumanize => '人性化';
+  String get opHumanize => '類人化';
 
   @override
   String get opFillGaps => '填縫';
@@ -1195,6 +1225,21 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get batchStretch => '變速';
+
+  @override
+  String get batchOpSet => '設值';
+
+  @override
+  String get batchOpAdd => '加';
+
+  @override
+  String get batchOpSub => '減';
+
+  @override
+  String get batchOpMul => '乘';
+
+  @override
+  String get batchOpDiv => '除';
 
   @override
   String get deleteSelectionConfirm => '刪除選取的事件？';

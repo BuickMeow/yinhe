@@ -1,6 +1,11 @@
 {
   "@@locale": "fr",
   "cancel": "Annuler",
+  "batchOpSet": "Définir",
+  "batchOpAdd": "Ajouter",
+  "batchOpSub": "Soustraire",
+  "batchOpMul": "Multiplier",
+  "batchOpDiv": "Diviser",
   "batchProcess": "Traitement par lot",
   "humanizeTiming": "Timing",
   "humanizeVelocity": "Vélocité",

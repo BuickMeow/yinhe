@@ -1,6 +1,11 @@
 {
   "@@locale": "tr",
   "cancel": "İptal",
+  "batchOpSet": "Ayarla",
+  "batchOpAdd": "Ekle",
+  "batchOpSub": "Çıkar",
+  "batchOpMul": "Çarp",
+  "batchOpDiv": "Böl",
   "batchProcess": "Toplu düzenleme",
   "humanizeTiming": "Zamanlama",
   "humanizeVelocity": "Hız",

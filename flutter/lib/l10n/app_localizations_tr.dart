@@ -79,6 +79,21 @@ class AppLocalizationsTr extends AppLocalizations {
   String get batchStretch => 'Uzatma';
 
   @override
+  String get batchOpSet => 'Ayarla';
+
+  @override
+  String get batchOpAdd => 'Ekle';
+
+  @override
+  String get batchOpSub => 'Çıkar';
+
+  @override
+  String get batchOpMul => 'Çarp';
+
+  @override
+  String get batchOpDiv => 'Böl';
+
+  @override
   String get deleteSelectionConfirm => 'Seçili olaylar silinsin mi?';
 
   @override

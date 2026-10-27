@@ -79,6 +79,21 @@ class AppLocalizationsEs extends AppLocalizations {
   String get batchStretch => 'Escala';
 
   @override
+  String get batchOpSet => 'Establecer';
+
+  @override
+  String get batchOpAdd => 'Sumar';
+
+  @override
+  String get batchOpSub => 'Restar';
+
+  @override
+  String get batchOpMul => 'Multiplicar';
+
+  @override
+  String get batchOpDiv => 'Dividir';
+
+  @override
   String get deleteSelectionConfirm => '¿Eliminar los eventos seleccionados?';
 
   @override

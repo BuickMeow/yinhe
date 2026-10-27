@@ -1,6 +1,11 @@
 {
   "@@locale": "ru",
   "cancel": "Отмена",
+  "batchOpSet": "Установить",
+  "batchOpAdd": "Прибавить",
+  "batchOpSub": "Вычесть",
+  "batchOpMul": "Умножить",
+  "batchOpDiv": "Разделить",
   "batchProcess": "Пакетная обработка",
   "humanizeTiming": "Тайминг",
   "humanizeVelocity": "Скорость",

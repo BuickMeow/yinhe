@@ -1,6 +1,11 @@
 {
   "@@locale": "ko",
   "cancel": "취소",
+  "batchOpSet": "설정",
+  "batchOpAdd": "더하기",
+  "batchOpSub": "빼기",
+  "batchOpMul": "곱하기",
+  "batchOpDiv": "나누기",
   "batchProcess": "일괄 처리",
   "humanizeTiming": "타이밍",
   "humanizeVelocity": "벨로시티",

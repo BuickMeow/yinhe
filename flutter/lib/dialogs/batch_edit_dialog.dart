@@ -16,7 +16,7 @@ class HumanizeSpec {
   final int gate;
 }
 
-/// 弹人性化参数对话框；取消返回 null。
+/// 弹类人化参数对话框；取消返回 null。
 Future<HumanizeSpec?> showHumanizeDialog(BuildContext context) {
   return showDialog<HumanizeSpec>(
     context: context,
@@ -88,21 +88,30 @@ class _HumanizeDialogState extends State<_HumanizeDialog> {
   }
 }
 
-/// 批量处理：每个字段只做“设值”，留空 = 不修改。
+/// 批量处理单字段：操作码 + 数值；数值为空 = 不修改。
+///
+/// 操作码：1=设值 2=加 3=减 4=乘 5=除。
+class BatchFieldSpec {
+  const BatchFieldSpec(this.op, this.value);
+
+  final int op;
+  final double? value;
+}
+
 class BatchEditSpec {
   const BatchEditSpec({
-    this.value,
-    this.gate,
-    this.key,
-    this.tick,
-    this.stretchPercent = 100,
+    required this.value,
+    required this.gate,
+    required this.key,
+    required this.tick,
+    required this.stretchPercent,
   });
 
   /// 音符 = 力度；自动化 = 锚点值。
-  final double? value;
-  final double? gate;
-  final double? key;
-  final double? tick;
+  final BatchFieldSpec value;
+  final BatchFieldSpec gate;
+  final BatchFieldSpec key;
+  final BatchFieldSpec tick;
   final int stretchPercent;
 }
 
@@ -129,10 +138,10 @@ class _BatchEditDialog extends StatefulWidget {
 }
 
 class _BatchEditDialogState extends State<_BatchEditDialog> {
-  final _value = TextEditingController();
-  final _gate = TextEditingController();
-  final _key = TextEditingController();
-  final _tick = TextEditingController();
+  final _value = _FieldController();
+  final _gate = _FieldController();
+  final _key = _FieldController();
+  final _tick = _FieldController();
   final _stretch = TextEditingController();
 
   @override
@@ -145,12 +154,12 @@ class _BatchEditDialogState extends State<_BatchEditDialog> {
     super.dispose();
   }
 
-  double? _parse(TextEditingController c) {
-    final text = c.text.trim();
+  int _stretchPercent() {
+    final text = _stretch.text.trim();
     if (text.isEmpty) {
-      return null;
+      return 100;
     }
-    return double.tryParse(text);
+    return (double.tryParse(text) ?? 100).round();
   }
 
   @override
@@ -162,14 +171,34 @@ class _BatchEditDialogState extends State<_BatchEditDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _NumRow(label: l.batchVelocity, controller: _value),
+            _BatchFieldRow(
+              label: l.batchVelocity,
+              controller: _value,
+              onChanged: () => setState(() {}),
+            ),
             if (!widget.automation) ...[
-              _NumRow(label: l.batchGate, controller: _gate),
-              _NumRow(label: l.batchKey, controller: _key),
+              _BatchFieldRow(
+                label: l.batchGate,
+                controller: _gate,
+                onChanged: () => setState(() {}),
+              ),
+              _BatchFieldRow(
+                label: l.batchKey,
+                controller: _key,
+                onChanged: () => setState(() {}),
+              ),
             ],
-            _NumRow(label: l.batchTick, controller: _tick),
+            _BatchFieldRow(
+              label: l.batchTick,
+              controller: _tick,
+              onChanged: () => setState(() {}),
+            ),
             if (!widget.automation)
-              _NumRow(label: l.batchStretch, controller: _stretch, suffix: '%'),
+              _PlainNumRow(
+                label: l.batchStretch,
+                controller: _stretch,
+                suffix: '%',
+              ),
           ],
         ),
       ),
@@ -181,13 +210,15 @@ class _BatchEditDialogState extends State<_BatchEditDialog> {
         FilledButton(
           onPressed: () => Navigator.of(context).pop(
             BatchEditSpec(
-              value: _parse(_value),
-              gate: widget.automation ? null : _parse(_gate),
-              key: widget.automation ? null : _parse(_key),
-              tick: _parse(_tick),
-              stretchPercent: widget.automation
-                  ? 100
-                  : (_parse(_stretch)?.round() ?? 100),
+              value: _value.spec(),
+              gate: widget.automation
+                  ? const BatchFieldSpec(1, null)
+                  : _gate.spec(),
+              key: widget.automation
+                  ? const BatchFieldSpec(1, null)
+                  : _key.spec(),
+              tick: _tick.spec(),
+              stretchPercent: widget.automation ? 100 : _stretchPercent(),
             ),
           ),
           child: Text(l.ok),
@@ -197,9 +228,72 @@ class _BatchEditDialogState extends State<_BatchEditDialog> {
   }
 }
 
-/// 一行：[标签][数值输入]，固定“设值”。
-class _NumRow extends StatelessWidget {
-  const _NumRow({
+class _FieldController {
+  int op = 1;
+  final TextEditingController text = TextEditingController();
+
+  void dispose() => text.dispose();
+
+  BatchFieldSpec spec() {
+    final raw = text.text.trim();
+    return BatchFieldSpec(op, raw.isEmpty ? null : double.tryParse(raw));
+  }
+}
+
+class _BatchFieldRow extends StatelessWidget {
+  const _BatchFieldRow({
+    required this.label,
+    required this.controller,
+    required this.onChanged,
+  });
+
+  final String label;
+  final _FieldController controller;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 64,
+            child: Text(
+              label,
+              style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
+            ),
+          ),
+          DropdownButtonHideUnderline(
+            child: DropdownButton<int>(
+              value: controller.op,
+              isDense: true,
+              style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
+              items: [
+                DropdownMenuItem(value: 1, child: Text(l.batchOpSet)),
+                DropdownMenuItem(value: 2, child: Text(l.batchOpAdd)),
+                DropdownMenuItem(value: 3, child: Text(l.batchOpSub)),
+                DropdownMenuItem(value: 4, child: Text(l.batchOpMul)),
+                DropdownMenuItem(value: 5, child: Text(l.batchOpDiv)),
+              ],
+              onChanged: (v) {
+                controller.op = v ?? 1;
+                onChanged();
+              },
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: _numField(controller.text)),
+        ],
+      ),
+    );
+  }
+}
+
+/// 只有标签 + 数值（变速用）。
+class _PlainNumRow extends StatelessWidget {
+  const _PlainNumRow({
     required this.label,
     required this.controller,
     this.suffix = '',
@@ -216,34 +310,33 @@ class _NumRow extends StatelessWidget {
       child: Row(
         children: [
           SizedBox(
-            width: 72,
+            width: 64,
             child: Text(
               label,
               style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
             ),
           ),
-          Expanded(
-            child: TextField(
-              controller: controller,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-                signed: true,
-              ),
-              decoration: InputDecoration(
-                isDense: true,
-                border: const OutlineInputBorder(),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 8,
-                ),
-                suffixText: suffix.isEmpty ? null : suffix,
-              ),
-            ),
-          ),
+          Expanded(child: _numField(controller, suffix: suffix)),
         ],
       ),
     );
   }
+}
+
+Widget _numField(TextEditingController controller, {String suffix = ''}) {
+  return TextField(
+    controller: controller,
+    keyboardType: const TextInputType.numberWithOptions(
+      decimal: true,
+      signed: true,
+    ),
+    decoration: InputDecoration(
+      isDense: true,
+      border: const OutlineInputBorder(),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      suffixText: suffix.isEmpty ? null : suffix,
+    ),
+  );
 }
 
 class _LabeledSlider extends StatelessWidget {

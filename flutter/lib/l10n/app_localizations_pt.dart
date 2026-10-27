@@ -79,6 +79,21 @@ class AppLocalizationsPt extends AppLocalizations {
   String get batchStretch => 'Alongamento';
 
   @override
+  String get batchOpSet => 'Definir';
+
+  @override
+  String get batchOpAdd => 'Somar';
+
+  @override
+  String get batchOpSub => 'Subtrair';
+
+  @override
+  String get batchOpMul => 'Multiplicar';
+
+  @override
+  String get batchOpDiv => 'Dividir';
+
+  @override
   String get deleteSelectionConfirm => 'Excluir os eventos selecionados?';
 
   @override

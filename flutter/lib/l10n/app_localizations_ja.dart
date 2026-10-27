@@ -79,6 +79,21 @@ class AppLocalizationsJa extends AppLocalizations {
   String get batchStretch => '伸縮';
 
   @override
+  String get batchOpSet => '設定';
+
+  @override
+  String get batchOpAdd => '加算';
+
+  @override
+  String get batchOpSub => '減算';
+
+  @override
+  String get batchOpMul => '乗算';
+
+  @override
+  String get batchOpDiv => '除算';
+
+  @override
   String get deleteSelectionConfirm => '選択したイベントを削除しますか？';
 
   @override

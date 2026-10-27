@@ -260,6 +260,36 @@ abstract class AppLocalizations {
   /// **'Stretch'**
   String get batchStretch;
 
+  /// No description provided for @batchOpSet.
+  ///
+  /// In en, this message translates to:
+  /// **'Set'**
+  String get batchOpSet;
+
+  /// No description provided for @batchOpAdd.
+  ///
+  /// In en, this message translates to:
+  /// **'Add'**
+  String get batchOpAdd;
+
+  /// No description provided for @batchOpSub.
+  ///
+  /// In en, this message translates to:
+  /// **'Subtract'**
+  String get batchOpSub;
+
+  /// No description provided for @batchOpMul.
+  ///
+  /// In en, this message translates to:
+  /// **'Multiply'**
+  String get batchOpMul;
+
+  /// No description provided for @batchOpDiv.
+  ///
+  /// In en, this message translates to:
+  /// **'Divide'**
+  String get batchOpDiv;
+
   /// No description provided for @deleteSelectionConfirm.
   ///
   /// In en, this message translates to:
