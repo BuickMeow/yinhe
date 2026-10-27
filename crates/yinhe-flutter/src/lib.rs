@@ -1585,6 +1585,23 @@ pub extern "C" fn yinhe_clear_selection() -> i32 {
     scene::clear_selection()
 }
 
+/// 当前音符选区 tick 范围；有选区时写入 out 并返回 1。
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_selection_range(start: *mut f64, end: *mut f64) -> i32 {
+    if start.is_null() || end.is_null() {
+        return 0;
+    }
+    let Some((t0, t1)) = scene::selection_tick_range() else {
+        return 0;
+    };
+    unsafe {
+        *start = t0;
+        *end = t1;
+    }
+    1
+}
+
 /// 人性化：时间/力度/时值三路随机偏差幅度。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_humanize(timing: u32, velocity: u32, gate: u32) -> i32 {

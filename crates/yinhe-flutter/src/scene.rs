@@ -2023,6 +2023,22 @@ pub fn humanize_selection(timing: u32, velocity: u32, gate: u32) -> i32 {
     1
 }
 
+/// 当前音符选区的 tick 范围 `(t0, t1)`；无选区返回 None。
+pub fn selection_tick_range() -> Option<(f64, f64)> {
+    let s = scene().lock().ok()?;
+    let doc = s.document.as_ref()?;
+    let (mut t0, mut t1) = (u64::MAX, 0u64);
+    for &(ts, te, _, _, _, _) in &doc.edit.selected.rects {
+        t0 = t0.min(ts as u64);
+        t1 = t1.max(te as u64);
+    }
+    if t1 > t0 {
+        Some((t0 as f64, t1 as f64))
+    } else {
+        None
+    }
+}
+
 /// 解析批量处理输入框：空串 = 该字段不改；无效表达式 = 不改。
 fn field_ops(expr: &str) -> Option<Vec<yinhe_editor_core::num_expr::NumOp>> {
     if expr.trim().is_empty() {
@@ -2055,15 +2071,25 @@ pub fn batch_edit(
     let before = doc.capture_snapshot();
     let mut actions = Vec::new();
 
-    // 变速：把表达式应用到 1.0 得到倍率，再转成整数比例。
+    // 变速：把表达式应用到 1.0 得到倍率，直接用 f64 算新跨度（只舍入一次，
+    // 不再转整数比例，避免 1.3333333333 这类输入多一次误差）。
     let factor = field_ops(stretch_expr)
         .map(|ops| apply_ops(&ops, 1.0))
         .unwrap_or(1.0);
     if factor.is_finite() && factor > 0.0 && (factor - 1.0).abs() > 1e-9 {
-        const DEN: u64 = 1_000_000;
-        let num = (factor * DEN as f64).round().max(1.0) as u64;
-        if let Some(a) = doc.scale_selected_span(num, DEN) {
-            actions.push(a);
+        let (mut t0, mut t1) = (u64::MAX, 0u64);
+        for &(ts, te, _, _, _, _) in &doc.edit.selected.rects {
+            t0 = t0.min(ts as u64);
+            t1 = t1.max(te as u64);
+        }
+        let span = t1.saturating_sub(t0);
+        if span > 0 {
+            let new_span = (span as f64 * factor).round().max(1.0) as u64;
+            if new_span != span
+                && let Some(a) = doc.rescale_selection_span(new_span)
+            {
+                actions.push(a);
+            }
         }
     }
 
