@@ -522,7 +522,7 @@ fn load_midi_bytes_document(data: &[u8], path: &str, token: u64) -> Result<Docum
     let mut doc = Document::from_model(
         path,
         model,
-        QuantizePreset::Fraction(1, 4),
+        QuantizePreset::Fraction(1, 1),
         QuantizePreset::Fraction(1, 16),
         project_file,
         mapping_file,
@@ -838,7 +838,7 @@ fn load_document(path: &str, token: u64) -> Result<Document, String> {
     let mut doc = Document::from_model(
         path,
         model,
-        QuantizePreset::Fraction(1, 4),
+        QuantizePreset::Fraction(1, 1),
         QuantizePreset::Fraction(1, 16),
         project_file,
         mapping_file,
@@ -881,7 +881,7 @@ fn load_project_document(path: &str, token: u64) -> Result<Document, String> {
     let mut doc = Document::from_model(
         path,
         model,
-        QuantizePreset::Fraction(1, 4),
+        QuantizePreset::Fraction(1, 1),
         QuantizePreset::Fraction(1, 16),
         project_file,
         mapping,
@@ -1174,9 +1174,8 @@ fn apply_document(mut doc: Document, min_ticks: f64) {
         .max(1.0);
 
     let mut pr_view = PianoRollView::default();
-    // 初始缩放：全曲约 2 屏宽，再放大 1.3 倍（进入钢琴卷帘更舒适）。
-    // 初始缩放：每 tick 1 像素（直接、可预期；不再按屏宽拟合）。
-    pr_view.base.pixels_per_tick = 1.0;
+    // 初始缩放：每 tick 0.5 像素（直接、可预期；不再按屏宽拟合）。
+    pr_view.base.pixels_per_tick = 0.5;
 
     let arr_base = TimelineViewBase {
         pixels_per_tick: (1280.0 * 2.0 / content_ticks as f32).clamp(

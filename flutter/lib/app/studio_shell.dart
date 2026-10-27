@@ -185,8 +185,8 @@ abstract class _ShellBase extends State<StudioShell>
 
   /// PR/AR 各自的量化档位（'关闭'/'自动'/'1/4'/'1 tick'…）。
   ///
-  /// 默认 AR = 1/4、PR = 1/16；切换视图/加载文档后各自恢复。
-  String _quantizeAr = '1/4';
+  /// 默认 AR = 1/1、PR = 1/16；切换视图/加载文档后各自恢复。
+  String _quantizeAr = '1/1';
   String _quantizePr = '1/16';
 
   String get _quantizeLabel =>
@@ -486,7 +486,7 @@ class _StudioShellState extends _ShellBase
     })..start();
     _recent = _readRecent();
     _loadLanguage();
-    // 默认 AR 1/4、PR 1/16（文档可能是空白占位，先显式下发一次）。
+    // 默认 AR 1/1、PR 1/16（文档可能是空白占位，先显式下发一次）。
     _pushAllQuantizes();
   }
 

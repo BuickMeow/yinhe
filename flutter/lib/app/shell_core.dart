@@ -252,7 +252,7 @@ mixin _ShellCore on _ShellBase {
     if (state != 1 && state != 3) {
       _loadUiSettled = true;
       if (state == 2) {
-        // 新文档的量化默认值（AR 1/4 / PR 1/16）已由 Rust 建好；
+        // 新文档的量化默认值（AR 1/1 / PR 1/16）已由 Rust 建好；
         // 这里把 Flutter 侧记住的两套档位重新下发，避免 UI 与行为不一致。
         _pushAllQuantizes();
       }
