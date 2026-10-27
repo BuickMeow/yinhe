@@ -79,19 +79,7 @@ class AppLocalizationsKo extends AppLocalizations {
   String get batchStretch => '늘이기';
 
   @override
-  String get batchOpSet => '설정';
-
-  @override
-  String get batchOpAdd => '더하기';
-
-  @override
-  String get batchOpSub => '빼기';
-
-  @override
-  String get batchOpMul => '곱하기';
-
-  @override
-  String get batchOpDiv => '나누기';
+  String get batchExprHint => '100, +2, x1.5, 3/7 지원';
 
   @override
   String get deleteSelectionConfirm => '선택한 이벤트를 삭제할까요?';

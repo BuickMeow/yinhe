@@ -49,22 +49,13 @@ mixin _ShellMenus on _ShellBase {
         return;
       }
       final ok = automation
-          ? rust.automationBatchEdit(
-              spec.value.op,
-              spec.value.value ?? double.nan,
-              spec.tick.op,
-              spec.tick.value ?? double.nan,
-            )
+          ? rust.automationBatchEdit(spec.value, spec.tick)
           : rust.batchEdit(
-              spec.value.op,
-              spec.value.value ?? double.nan,
-              spec.gate.op,
-              spec.gate.value ?? double.nan,
-              spec.key.op,
-              spec.key.value ?? double.nan,
-              spec.tick.op,
-              spec.tick.value ?? double.nan,
-              spec.stretchPercent,
+              spec.value,
+              spec.gate,
+              spec.key,
+              spec.tick,
+              spec.stretch,
             );
       if (ok == 1) {
         _refreshDocumentMeta();

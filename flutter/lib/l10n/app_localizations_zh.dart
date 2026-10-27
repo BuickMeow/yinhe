@@ -79,19 +79,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get batchStretch => '变速';
 
   @override
-  String get batchOpSet => '设值';
-
-  @override
-  String get batchOpAdd => '加';
-
-  @override
-  String get batchOpSub => '减';
-
-  @override
-  String get batchOpMul => '乘';
-
-  @override
-  String get batchOpDiv => '除';
+  String get batchExprHint => '支持 100、+2、x1.5、3/7';
 
   @override
   String get deleteSelectionConfirm => '删除选中的事件？';
@@ -653,19 +641,7 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get batchStretch => '變速';
 
   @override
-  String get batchOpSet => '設值';
-
-  @override
-  String get batchOpAdd => '加';
-
-  @override
-  String get batchOpSub => '減';
-
-  @override
-  String get batchOpMul => '乘';
-
-  @override
-  String get batchOpDiv => '除';
+  String get batchExprHint => '支援 100、+2、x1.5、3/7';
 
   @override
   String get deleteSelectionConfirm => '刪除選取的事件？';
@@ -1227,19 +1203,7 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
   String get batchStretch => '變速';
 
   @override
-  String get batchOpSet => '設值';
-
-  @override
-  String get batchOpAdd => '加';
-
-  @override
-  String get batchOpSub => '減';
-
-  @override
-  String get batchOpMul => '乘';
-
-  @override
-  String get batchOpDiv => '除';
+  String get batchExprHint => '支援 100、+2、x1.5、3/7';
 
   @override
   String get deleteSelectionConfirm => '刪除選取的事件？';

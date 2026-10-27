@@ -234,42 +234,69 @@ final HumanizeDart humanize = bridge
     .lookupFunction<HumanizeNative, HumanizeDart>('yinhe_humanize');
 
 typedef BatchEditNative = ffi.Int32 Function(
-  ffi.Int32,
-  ffi.Double,
-  ffi.Int32,
-  ffi.Double,
-  ffi.Int32,
-  ffi.Double,
-  ffi.Int32,
-  ffi.Double,
-  ffi.Int32,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
 );
 typedef BatchEditDart = int Function(
-  int,
-  double,
-  int,
-  double,
-  int,
-  double,
-  int,
-  double,
-  int,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
 );
 
-/// 批量处理（音符）：四个字段各带操作码，NaN = 跳过。
-final BatchEditDart batchEdit = bridge
+final BatchEditDart _batchEdit = bridge
     .lookupFunction<BatchEditNative, BatchEditDart>('yinhe_batch_edit');
 
-typedef AutomationBatchEditNative = ffi.Int32 Function(
-  ffi.Int32,
-  ffi.Double,
-  ffi.Int32,
-  ffi.Double,
-);
-typedef AutomationBatchEditDart = int Function(int, double, int, double);
+/// 批量处理（音符）：每个字段一个表达式（`100` / `+2` / `x1.5` / `3/7`）。
+int batchEdit(
+  String velocity,
+  String gate,
+  String key,
+  String tick,
+  String stretch,
+) {
+  final v = velocity.toNativeUtf8();
+  final g = gate.toNativeUtf8();
+  final k = key.toNativeUtf8();
+  final t = tick.toNativeUtf8();
+  final s = stretch.toNativeUtf8();
+  try {
+    return _batchEdit(v, g, k, t, s);
+  } finally {
+    calloc.free(v);
+    calloc.free(g);
+    calloc.free(k);
+    calloc.free(t);
+    calloc.free(s);
+  }
+}
 
-/// 批量处理（AM 当前 lane）：值与位置各带操作码，NaN = 跳过。
-final AutomationBatchEditDart automationBatchEdit = bridge
+typedef AutomationBatchEditNative = ffi.Int32 Function(
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+);
+typedef AutomationBatchEditDart = int Function(
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+);
+
+final AutomationBatchEditDart _automationBatchEdit = bridge
     .lookupFunction<AutomationBatchEditNative, AutomationBatchEditDart>(
       'yinhe_automation_batch_edit',
     );
+
+/// 批量处理（AM 当前 lane）：值与位置各一个表达式。
+int automationBatchEdit(String value, String tick) {
+  final v = value.toNativeUtf8();
+  final t = tick.toNativeUtf8();
+  try {
+    return _automationBatchEdit(v, t);
+  } finally {
+    calloc.free(v);
+    calloc.free(t);
+  }
+}

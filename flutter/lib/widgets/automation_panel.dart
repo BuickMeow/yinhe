@@ -285,13 +285,7 @@ class _AutomationPanelState extends State<AutomationPanel> {
       if (!mounted || spec == null) {
         return;
       }
-      if (rust.automationBatchEdit(
-            spec.value.op,
-            spec.value.value ?? double.nan,
-            spec.tick.op,
-            spec.tick.value ?? double.nan,
-          ) ==
-          1) {
+      if (rust.automationBatchEdit(spec.value, spec.tick) == 1) {
         _clearSelection();
         setState(() {});
         widget.onReload();

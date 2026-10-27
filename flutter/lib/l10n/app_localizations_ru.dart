@@ -79,19 +79,7 @@ class AppLocalizationsRu extends AppLocalizations {
   String get batchStretch => 'Растяжение';
 
   @override
-  String get batchOpSet => 'Установить';
-
-  @override
-  String get batchOpAdd => 'Прибавить';
-
-  @override
-  String get batchOpSub => 'Вычесть';
-
-  @override
-  String get batchOpMul => 'Умножить';
-
-  @override
-  String get batchOpDiv => 'Разделить';
+  String get batchExprHint => 'Поддерживает 100, +2, x1.5, 3/7';
 
   @override
   String get deleteSelectionConfirm => 'Удалить выбранные события?';
