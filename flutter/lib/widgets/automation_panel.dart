@@ -146,6 +146,9 @@ class _AutomationPanelState extends State<AutomationPanel>
   /// 滚动/缩放后仍贴合网格。
   (double, double)? _marqueeTicks;
 
+  /// 本次框选使用的量化间隔（框选起手时取一次，避免在 build 里调 FFI）。
+  double _marqueeInterval = 1;
+
   /// 长按蓝色圆环（与主画布 200ms→500ms 的节奏一致）。
   late final Ticker _lpTicker;
   DateTime? _lpStart;
@@ -499,7 +502,7 @@ class _AutomationPanelState extends State<AutomationPanel>
     var lo = math.min(ta, tb);
     var hi = math.max(ta, tb);
     if (hi <= lo) {
-      hi = lo + rust.quantizeTickInterval().toDouble();
+      hi = lo + _marqueeInterval;
     }
     return (lo, hi);
   }
@@ -932,6 +935,10 @@ class _AutomationPanelState extends State<AutomationPanel>
     _marqueeActive = true;
     _marqueeStart = d.localPosition;
     _marqueeCurrent = d.localPosition;
+    _marqueeInterval = rust.quantizeTickInterval().toDouble().clamp(
+      1.0,
+      double.infinity,
+    );
     _syncSelection();
     setState(() {});
   }

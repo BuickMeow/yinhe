@@ -93,3 +93,10 @@ tasks.named("cargoNdkBuild") {
 tasks.named("preBuild") {
     dependsOn("cargoNdkBuild")
 }
+
+// AGP 的 native lib 合并任务不保证排在 preBuild 之后；与 cargoNdkBuild
+// 并行时可能把上一次的 libyinhe_flutter.so 打进 APK，导致 Dart 新增的
+// FFI 符号在运行时找不到（AM 会整块变灰）。强制合并前先完成 Rust 拷贝。
+tasks.matching { it.name.matches(Regex("merge.*NativeLibs")) }.configureEach {
+    dependsOn("cargoNdkBuild")
+}
