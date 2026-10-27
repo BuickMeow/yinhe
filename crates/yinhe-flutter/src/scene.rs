@@ -2023,10 +2023,29 @@ pub fn humanize_selection(timing: u32, velocity: u32, gate: u32) -> i32 {
     1
 }
 
-/// 批量处理（音符）：四个字段固定“设值”，NaN = 跳过；`stretch_percent` 100 = 不变。
-pub fn batch_edit(velocity: f64, gate: f64, key: f64, tick: f64, stretch_percent: i32) -> i32 {
-    use yinhe_editor_core::document::note_edit::NoteField;
+/// 批量处理的单字段操作：1=设值 2=加 3=减 4=乘 5=除。
+fn num_op(code: i32, value: f64) -> Option<yinhe_editor_core::num_expr::NumOp> {
     use yinhe_editor_core::num_expr::NumOp;
+    match code {
+        1 => Some(NumOp::Set(value)),
+        2 => Some(NumOp::Add(value)),
+        3 => Some(NumOp::Add(-value)),
+        4 if value != 0.0 => Some(NumOp::Mul(value)),
+        5 if value != 0.0 => Some(NumOp::Div(value)),
+        _ => None,
+    }
+}
+
+/// 批量处理（音符）：四个字段各带操作码，`value` 为 NaN = 跳过该字段；
+/// `stretch_percent` 100 = 不变。
+pub fn batch_edit(
+    velocity: (i32, f64),
+    gate: (i32, f64),
+    key: (i32, f64),
+    tick: (i32, f64),
+    stretch_percent: i32,
+) -> i32 {
+    use yinhe_editor_core::document::note_edit::NoteField;
 
     let Ok(mut s) = scene().lock() else {
         return 0;
@@ -2046,7 +2065,7 @@ pub fn batch_edit(velocity: f64, gate: f64, key: f64, tick: f64, stretch_percent
     {
         actions.push(a);
     }
-    for (field, value) in [
+    for (field, (code, value)) in [
         (NoteField::Velocity, velocity),
         (NoteField::Gate, gate),
         (NoteField::Key, key),
@@ -2055,7 +2074,10 @@ pub fn batch_edit(velocity: f64, gate: f64, key: f64, tick: f64, stretch_percent
         if value.is_nan() {
             continue;
         }
-        if let Some(a) = doc.apply_note_field_edit(field, &[NumOp::Set(value)]) {
+        let Some(op) = num_op(code, value) else {
+            continue;
+        };
+        if let Some(a) = doc.apply_note_field_edit(field, &[op]) {
             actions.push(a);
         }
     }
@@ -2077,10 +2099,10 @@ pub fn batch_edit(velocity: f64, gate: f64, key: f64, tick: f64, stretch_percent
     1
 }
 
-/// 批量处理（AM 当前 lane）：值 / 位置固定“设值”，NaN = 跳过。
+/// 批量处理（AM 当前 lane）：值与位置各带操作码，`value` 为 NaN = 跳过。
 ///
 /// `value` 是显示值（CC 0..127、PB 0..16383，按 target.display_max 归一化）。
-pub fn automation_batch_edit(value: f64, tick: f64) -> i32 {
+pub fn automation_batch_edit(value: (i32, f64), tick: (i32, f64)) -> i32 {
     let Ok(mut s) = scene().lock() else {
         return 0;
     };
@@ -2105,6 +2127,19 @@ pub fn automation_batch_edit(value: f64, tick: f64) -> i32 {
         return 0;
     };
     let display_max = f64::from(target.display_max().unwrap_or(1.0));
+    let value_op = if value.1.is_nan() {
+        None
+    } else {
+        num_op(value.0, value.1)
+    };
+    let tick_op = if tick.1.is_nan() {
+        None
+    } else {
+        num_op(tick.0, tick.1)
+    };
+    if value_op.is_none() && tick_op.is_none() {
+        return 0;
+    }
     let Some(lane) = doc
         .data
         .model
@@ -2126,15 +2161,20 @@ pub fn automation_batch_edit(value: f64, tick: f64) -> i32 {
 
     let mut moves: Vec<(u32, u32, f32)> = Vec::new();
     for (old_tick, old_value) in events {
-        let new_tick = if tick.is_nan() {
-            old_tick
-        } else {
-            tick.round().clamp(0.0, f64::from(u32::MAX)) as u32
+        let new_tick = match &tick_op {
+            Some(op) => op
+                .apply(f64::from(old_tick))
+                .round()
+                .clamp(0.0, f64::from(u32::MAX)) as u32,
+            None => old_tick,
         };
-        let new_value = if value.is_nan() {
-            old_value
-        } else {
-            target.from_display_value(value.clamp(0.0, display_max) as f32)
+        let new_value = match &value_op {
+            Some(op) => {
+                let cur = f64::from(target.to_display_value(old_value));
+                let display = op.apply(cur).clamp(0.0, display_max) as f32;
+                target.from_display_value(display)
+            }
+            None => old_value,
         };
         if new_tick != old_tick || new_value != old_value {
             moves.push((old_tick, new_tick, new_value));
