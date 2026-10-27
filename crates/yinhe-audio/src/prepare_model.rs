@@ -85,7 +85,8 @@ pub(crate) fn prepare_notes_dirty(
 /// 模型桶按 start_tick 排序，tick 天然单调，**无需 sort**（旧 sample 域因
 /// tempo 变速段的局部非单调才需要保险性 sort）。
 fn build_bucket(model: &YinModel, key: usize, ignore_velocity: u8) -> Vec<AudibleNote> {
-    let mut dst: Vec<AudibleNote> = Vec::with_capacity(model.notes[key].len());
+    let mut dst: Vec<AudibleNote> =
+        Vec::with_capacity(audible_capacity(model, key, ignore_velocity));
     for n in model.notes[key].iter() {
         if n.velocity <= ignore_velocity {
             continue;
@@ -102,6 +103,26 @@ fn build_bucket(model: &YinModel, key: usize, ignore_velocity: u8) -> Vec<Audibl
         });
     }
     dst
+}
+
+/// `build_bucket` 的容量上界。
+///
+/// 按全部音符预留时，力度 ≤ 阈值的哑音（黑乐谱常见 vel=1 视觉音符）会白占
+/// 内存。默认阈值 1 直接复用模型已维护的桶内可听统计（O(桶内轨道数)）；
+/// 阈值 0 等价于全部音符；其它阈值逐音符计数。0 BPM 剪切掉的音符会让容量
+/// 略大于实际，仍然是安全上界。
+fn audible_capacity(model: &YinModel, key: usize, ignore_velocity: u8) -> usize {
+    match ignore_velocity {
+        0 => model.notes[key].len(),
+        1 => model.bucket_track_stats[key]
+            .values()
+            .map(|&(_, audible)| audible as usize)
+            .sum(),
+        threshold => model.notes[key]
+            .iter()
+            .filter(|n| n.velocity > threshold)
+            .count(),
+    }
 }
 
 /// 遍历 YinModel KEY_COUNT 个 key 桶，过滤力度 ≤ `ignore_velocity` 的音符
@@ -135,6 +156,43 @@ mod tests {
             key,
             velocity: 100,
         }
+    }
+
+    /// 容量按可听音符数而非全部音符数预留：哑音多的工程不再白占内存。
+    #[test]
+    fn build_bucket_reserves_audible_capacity() {
+        let mut m = YinModel::default();
+        m.load_track_notes(vec![vec![
+            NoteEvent {
+                velocity: 0,
+                ..note(0, 10, 60)
+            },
+            NoteEvent {
+                velocity: 1,
+                ..note(10, 20, 60)
+            },
+            note(20, 30, 60),
+            note(30, 40, 60),
+        ]]);
+        m.rebuild();
+
+        let audible = build_bucket(&m, 60, 1);
+        assert_eq!(audible.len(), 2);
+        assert_eq!(
+            audible.capacity(),
+            2,
+            "容量应等于可听音符数，而不是全部音符数"
+        );
+        assert_eq!(
+            build_bucket(&m, 60, 0).capacity(),
+            4,
+            "阈值 0 = 不忽略，容量为全部音符数"
+        );
+        assert_eq!(
+            build_bucket(&m, 60, 2).capacity(),
+            2,
+            "阈值 > 1 走逐音符计数"
+        );
     }
 
     #[test]
