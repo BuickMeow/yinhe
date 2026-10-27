@@ -49,20 +49,27 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private var producer: TextureRegistry.SurfaceProducer? = null
-
-    /** AM 面板独立纹理（力度条/自动化曲线）。 */
-    private var amProducer: TextureRegistry.SurfaceProducer? = null
-    private var amSurfaceSent = false
-
-    /** 延迟到 Dart 请求纹理时才创建 SurfaceProducer（see ensureProducer）。 */
+    /** 延迟到 Dart 请求纹理时才创建 SurfaceProducer（见 SurfaceSlot.ensure）。 */
     private var engine: FlutterEngine? = null
+
+    /** 主画布 surface：懒创建、尺寸上报与 Rust 回调。 */
+    private val canvasSurface = SurfaceSlot(
+        label = "canvas",
+        setSurface = { nativeSetSurface(it) },
+        clearSurface = { nativeClearSurface() },
+        onSize = { w, h -> nativeSetSize(w, h) },
+    )
+
+    /** AM 面板独立 surface（力度条/自动化曲线）。 */
+    private val automationSurface = SurfaceSlot(
+        label = "AM",
+        setSurface = { nativeSetAutomationSurface(it) },
+        clearSurface = { nativeClearAutomationSurface() },
+        onSize = { w, h -> nativeSetAutomationSize(w, h) },
+    )
 
     /** 原生层已拦截的鼠标右键拖拽（避免 Android 把右键当 BACK）。 */
     private var rightPanActive = false
-
-    /** 本代 surface 是否已发送给 Rust（同一窗口重复设置会触发 IN_USE）。 */
-    private var surfaceSent = false
 
     /** 当前工程的 SAF uri（“保存工程”直接覆盖；另存为/打开时更新）。 */
     private var lastProjectUri: android.net.Uri? = null
@@ -119,7 +126,7 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "getTextureId" -> {
-                        val p = ensureProducer()
+                        val p = canvasSurface.ensure()
                         if (p == null) {
                             result.error("no_engine", "FlutterEngine 未就绪", null)
                         } else {
@@ -127,7 +134,7 @@ class MainActivity : FlutterActivity() {
                         }
                     }
                     "getAutomationTextureId" -> {
-                        val p = ensureAutomationProducer()
+                        val p = automationSurface.ensure()
                         if (p == null) {
                             result.error("no_engine", "FlutterEngine 未就绪", null)
                         } else {
@@ -137,20 +144,16 @@ class MainActivity : FlutterActivity() {
                     "setAutomationSize" -> {
                         val w = call.argument<Int>("w")
                         val h = call.argument<Int>("h")
-                        val p = ensureAutomationProducer()
                         if (w == null || h == null) {
                             result.error("bad_args", "缺少 AM w/h", null)
-                        } else if (p == null) {
+                        } else if (!automationSurface.resize(w, h)) {
                             result.error("no_engine", "FlutterEngine 未就绪", null)
                         } else {
-                            p.setSize(w, h)
-                            nativeSetAutomationSize(w, h)
-                            automationSurfaceReady(p)
                             result.success(null)
                         }
                     }
                     "ensureAutomationSurface" -> {
-                        ensureAutomationProducer()?.let { automationSurfaceReady(it) }
+                        automationSurface.ensure()
                         result.success(null)
                     }
                     "setSize" -> {
@@ -158,20 +161,14 @@ class MainActivity : FlutterActivity() {
                         val h = call.argument<Int>("h")
                         val lw = call.argument<Double>("lw")
                         val lh = call.argument<Double>("lh")
-                        val p = ensureProducer()
                         if (w == null || h == null || lw == null || lh == null) {
                             result.error("bad_args", "缺少 w/h/lw/lh", null)
-                        } else if (p == null) {
+                        } else if (!canvasSurface.resize(w, h)) {
                             result.error("no_engine", "FlutterEngine 未就绪", null)
                         } else {
                             Log.i(TAG, "setSize $w x $h (logical $lw x $lh)")
-                            p.setSize(w, h)
-                            // resize 只重配置交换链：对同一 ANativeWindow 重建
-                            // surface 会触发 VK_ERROR_NATIVE_WINDOW_IN_USE_KHR。
-                            nativeSetSize(w, h)
+                            // 逻辑视口 = Rust 的视图/手势坐标系。
                             nativeSetViewport(lw.toFloat(), lh.toFloat())
-                            // 引擎在 setSize 时 surface 必已创建：确保已发送。
-                            surfaceReady(p)
                             result.success(null)
                         }
                     }
@@ -184,7 +181,7 @@ class MainActivity : FlutterActivity() {
                         result.success(null)
                     }
                     "ensureSurface" -> {
-                        ensureProducer()?.let { surfaceReady(it) }
+                        canvasSurface.ensure()
                         result.success(null)
                     }
                     "exportTempPath" -> {
@@ -235,82 +232,6 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
-    }
-
-    /**
-     * 惰性创建 SurfaceProducer。
-     *
-     * 不能在 configureFlutterEngine 里创建：release 包此时 FlutterView 尚未挂载，
-     * getSurface() 会走 FlutterJNI.registerImageTexture 并触发引擎断言闪退。
-     * Dart 初始化后通过 getTextureId/ensureSurface 调用本方法，此时视图已就绪。
-     */
-    private fun ensureProducer(): TextureRegistry.SurfaceProducer? {
-        producer?.let { return it }
-        val flutterEngine = engine ?: return null
-        val p = flutterEngine.renderer.createSurfaceProducer()
-        p.setCallback(
-            object : TextureRegistry.SurfaceProducer.Callback {
-                // 引擎（3.47）调用旧入口 onSurfaceCreated/onSurfaceDestroyed；
-                // 新入口 onSurfaceAvailable/onSurfaceCleanup 是给未来版本的。
-                // 两个都接：引擎只会调用其中一个，经同一 helper 幂等处理。
-                override fun onSurfaceCreated() {
-                    Log.i(TAG, "onSurfaceCreated")
-                    surfaceReady(p)
-                }
-
-                override fun onSurfaceAvailable() {
-                    Log.i(TAG, "onSurfaceAvailable")
-                    surfaceReady(p)
-                }
-
-                override fun onSurfaceDestroyed() {
-                    Log.i(TAG, "onSurfaceDestroyed")
-                    onSurfaceGone()
-                }
-
-                override fun onSurfaceCleanup() {
-                    Log.i(TAG, "onSurfaceCleanup")
-                    onSurfaceGone()
-                }
-            },
-        )
-        producer = p
-        // 若 surface 已惰性创建则立即发送（回调在部分引擎版本不触发）。
-        surfaceReady(p)
-        return p
-    }
-
-    /** AM 面板独立 SurfaceProducer（与主画布同生命周期策略）。 */
-    private fun ensureAutomationProducer(): TextureRegistry.SurfaceProducer? {
-        amProducer?.let { return it }
-        val flutterEngine = engine ?: return null
-        val p = flutterEngine.renderer.createSurfaceProducer()
-        p.setCallback(
-            object : TextureRegistry.SurfaceProducer.Callback {
-                override fun onSurfaceCreated() {
-                    Log.i(TAG, "AM onSurfaceCreated")
-                    automationSurfaceReady(p)
-                }
-
-                override fun onSurfaceAvailable() {
-                    Log.i(TAG, "AM onSurfaceAvailable")
-                    automationSurfaceReady(p)
-                }
-
-                override fun onSurfaceDestroyed() {
-                    Log.i(TAG, "AM onSurfaceDestroyed")
-                    onAutomationSurfaceGone()
-                }
-
-                override fun onSurfaceCleanup() {
-                    Log.i(TAG, "AM onSurfaceCleanup")
-                    onAutomationSurfaceGone()
-                }
-            },
-        )
-        amProducer = p
-        automationSurfaceReady(p)
-        return p
     }
 
     // ── 鼠标右键平移 ──────────────────────────────────────────────
@@ -371,34 +292,92 @@ class MainActivity : FlutterActivity() {
         )
     }
 
-    /** surface 可用/重建：每代只发送一次（created/available 可能都回调）。 */
-    private fun surfaceReady(p: TextureRegistry.SurfaceProducer) {
-        if (surfaceSent) {
-            return
+    /**
+     * 一个 wgpu 生产端 surface 槽位：惰性创建 SurfaceProducer，处理新旧回调，
+     * 且每代 surface 只向 Rust 发送一次（同一窗口重复设置会触发 IN_USE）。
+     *
+     * 不能在 configureFlutterEngine 里创建：release 包此时 FlutterView 尚未挂载，
+     * getSurface() 会走 FlutterJNI.registerImageTexture 并触发引擎断言闪退。
+     * Dart 初始化后通过 getTextureId/ensureSurface 调用 [ensure]，此时视图已就绪。
+     */
+    private inner class SurfaceSlot(
+        private val label: String,
+        private val setSurface: (Surface) -> Unit,
+        private val clearSurface: () -> Unit,
+        private val onSize: (Int, Int) -> Unit,
+    ) {
+        private var producer: TextureRegistry.SurfaceProducer? = null
+        private var sent = false
+
+        fun ensure(): TextureRegistry.SurfaceProducer? {
+            producer?.let { return it }
+            val flutterEngine = engine ?: return null
+            val p = flutterEngine.renderer.createSurfaceProducer()
+            p.setCallback(
+                object : TextureRegistry.SurfaceProducer.Callback {
+                    // 引擎（3.47）调用旧入口 onSurfaceCreated/onSurfaceDestroyed；
+                    // 新入口 onSurfaceAvailable/onSurfaceCleanup 是给未来版本的。
+                    // 两个都接：引擎只会调用其中一个，经同一 helper 幂等处理。
+                    @Suppress("OVERRIDE_DEPRECATION")
+                    override fun onSurfaceCreated() {
+                        Log.i(TAG, "$label onSurfaceCreated")
+                        ready(p)
+                    }
+
+                    override fun onSurfaceAvailable() {
+                        Log.i(TAG, "$label onSurfaceAvailable")
+                        ready(p)
+                    }
+
+                    @Suppress("OVERRIDE_DEPRECATION")
+                    override fun onSurfaceDestroyed() {
+                        Log.i(TAG, "$label onSurfaceDestroyed")
+                        gone()
+                    }
+
+                    override fun onSurfaceCleanup() {
+                        Log.i(TAG, "$label onSurfaceCleanup")
+                        gone()
+                    }
+                },
+            )
+            producer = p
+            // 若 surface 已惰性创建则立即发送（回调在部分引擎版本不触发）。
+            ready(p)
+            return p
         }
-        val s = p.getSurface() ?: return
-        surfaceSent = true
-        nativeSetSurface(s)
-    }
 
-    private fun onSurfaceGone() {
-        surfaceSent = false
-        nativeClearSurface()
-    }
-
-    /** AM surface 可用/重建。 */
-    private fun automationSurfaceReady(p: TextureRegistry.SurfaceProducer) {
-        if (amSurfaceSent) {
-            return
+        /**
+         * resize 只重配置交换链：对同一 ANativeWindow 重建 surface 会触发
+         * VK_ERROR_NATIVE_WINDOW_IN_USE_KHR。无引擎时返回 false。
+         */
+        fun resize(width: Int, height: Int): Boolean {
+            val p = ensure() ?: return false
+            p.setSize(width, height)
+            onSize(width, height)
+            ready(p)
+            return true
         }
-        val s = p.getSurface() ?: return
-        amSurfaceSent = true
-        nativeSetAutomationSurface(s)
-    }
 
-    private fun onAutomationSurfaceGone() {
-        amSurfaceSent = false
-        nativeClearAutomationSurface()
+        fun release() {
+            producer?.release()
+            producer = null
+            sent = false
+        }
+
+        private fun ready(p: TextureRegistry.SurfaceProducer) {
+            if (sent) {
+                return
+            }
+            val s = p.getSurface() ?: return
+            sent = true
+            setSurface(s)
+        }
+
+        private fun gone() {
+            sent = false
+            clearSurface()
+        }
     }
 
     /** Dart 侧「打开文件」：MIDI、`.yin` 工程与压缩包。 */
@@ -611,8 +590,8 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
-        producer?.release()
-        producer = null
+        canvasSurface.release()
+        automationSurface.release()
         super.onDestroy()
     }
 }
