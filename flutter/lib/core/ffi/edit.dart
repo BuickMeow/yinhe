@@ -137,8 +137,13 @@ typedef IntCStrCStrNative = ffi.Int32 Function(
 );
 typedef IntCStrCStrDart = int Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>);
 
-typedef EventsJsonNative = ffi.Pointer<Utf8> Function(ffi.Double, ffi.Int32);
-typedef EventsJsonDart = ffi.Pointer<Utf8> Function(double, int);
+typedef EventsJsonNative = ffi.Pointer<Utf8> Function(
+  ffi.Double,
+  ffi.Int32,
+  ffi.Int32,
+  ffi.Uint32,
+);
+typedef EventsJsonDart = ffi.Pointer<Utf8> Function(double, int, int, int);
 
 /// 界面语言设置（system/zh/en）。
 final CStrDart uiLanguage = bridge.lookupFunction<CStrNative, CStrDart>(
@@ -149,7 +154,8 @@ final CStrDart uiLanguage = bridge.lookupFunction<CStrNative, CStrDart>(
 final CStrArgDart setUiLanguage = bridge
     .lookupFunction<CStrArgNative, CStrArgDart>('yinhe_set_ui_language');
 
-/// 事件列表 JSON（从 from_tick 起，最多 limit 条）。
+/// 事件列表 JSON（从 from_tick 起，最多 limit 条；track -1 = 全部）。
+/// 返回 `{"total":N,"rows":[...],"next":{tick,skip}|null}`。
 final EventsJsonDart eventsJson = bridge
     .lookupFunction<EventsJsonNative, EventsJsonDart>('yinhe_events_json');
 

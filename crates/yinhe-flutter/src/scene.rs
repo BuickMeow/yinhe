@@ -3645,27 +3645,77 @@ impl EventRow {
     }
 }
 
-/// 事件列表：从 `from_tick` 起跨所有音轨收集（音符/自动化/Tempo/标签），
+/// 事件列表总行数（与 [`events_json`] 的收集/过滤规则一致）。
+///
+/// 音符数用缓存的 `note_count` / `track_note_count`，自动化只数事件条数，
+/// 因此即使用于大工程也只是 O(轨道数 + 自动化事件数)。
+fn events_total_for(model: &yinhe_core::YinModel, track: i32) -> u64 {
+    use yinhe_types::automation::AutomationTarget;
+    let notes = if track < 0 {
+        model.note_count
+    } else {
+        model
+            .track_note_count
+            .get(track as usize)
+            .copied()
+            .unwrap_or(0)
+    };
+    let mut total = notes;
+    for (ti, t) in model.tracks.iter().enumerate() {
+        if track >= 0 && ti as i32 != track {
+            continue;
+        }
+        for lane in &t.automation_lanes {
+            if matches!(
+                lane.target,
+                AutomationTarget::PitchBend
+                    | AutomationTarget::CC { .. }
+                    | AutomationTarget::Rpn { .. }
+            ) {
+                total += lane.events.len() as u64;
+            }
+        }
+    }
+    // Conductor 事件只在“全部轨道”或选中 Conductor（track 0）时显示。
+    if track <= 0 {
+        total += model.conductor.tempo.events.len() as u64;
+        total += model.conductor.markers.len() as u64;
+    }
+    total
+}
+
+/// 事件列表：从 `from_tick` 起收集（音符/自动化/Tempo/标签），
 /// 按 (tick, 音高或值, 时长) 排序后取前 `limit` 条。
 ///
-/// JSON：`{"rows":[ ... ]}`；行字段见 `event_row_json`。
-pub fn events_json(from_tick: f64, limit: i32) -> String {
+/// `track`：-1 = 全部；其它 = 只收该轨（track 0 仍包含 Conductor 事件）。
+/// JSON：`{"total":N,"rows":[ ... ]}`；`total` 是当前筛选下的真实总行数。
+pub fn events_json(from_tick: f64, limit: i32, track: i32, skip: u32) -> String {
     use yinhe_types::automation::AutomationTarget;
 
     let from = from_tick.max(0.0) as u32;
     let limit = limit.clamp(50, 2000) as usize;
+    let skip = skip as usize;
+    // 多取一行用于判断是否还有下一页；skip 只会在同一 tick 内累加，
+    // 因此取 skip+limit+1 足以覆盖当前页及下一页的边界。
+    let take = limit.saturating_add(skip).saturating_add(1);
     let Ok(s) = scene().lock() else {
-        return r#"{"rows":[]}"#.into();
+        return r#"{"total":0,"rows":[]}"#.into();
     };
     let Some(doc) = s.document.as_ref() else {
-        return r#"{"rows":[]}"#.into();
+        return r#"{"total":0,"rows":[]}"#.into();
     };
     let model = &doc.data.model;
+    let total = events_total_for(model, track);
     let mut rows: Vec<EventRow> = Vec::new();
 
     // 音符：每个 key 取 from 之后的前 limit 个（区间迭代，块内二分）。
     for key in 0..=yinhe_types::MAX_KEY {
-        for n in model.key_notes(key).range(from, u32::MAX).take(limit) {
+        for n in model
+            .key_notes(key)
+            .range(from, u32::MAX)
+            .filter(|n| track < 0 || n.track as i32 == track)
+            .take(take)
+        {
             rows.push(EventRow::Note {
                 track: n.track,
                 tick: n.start_tick,
@@ -3679,6 +3729,9 @@ pub fn events_json(from_tick: f64, limit: i32) -> String {
 
     // 普通轨自动化（PB/CC/RPN）。
     for (ti, t) in model.tracks.iter().enumerate() {
+        if track >= 0 && ti as i32 != track {
+            continue;
+        }
         for (li, lane) in t.automation_lanes.iter().enumerate() {
             let kind = match &lane.target {
                 AutomationTarget::PitchBend => 1u8,
@@ -3693,7 +3746,7 @@ pub fn events_json(from_tick: f64, limit: i32) -> String {
             };
             let start = lane.events.partition_point(|e| e.tick < from);
             let max = lane.target.to_display_value(1.0);
-            for e in lane.events[start..].iter().take(limit) {
+            for e in lane.events[start..].iter().take(take) {
                 rows.push(EventRow::Auto {
                     track: ti as u16,
                     tick: e.tick,
@@ -3707,11 +3760,11 @@ pub fn events_json(from_tick: f64, limit: i32) -> String {
         }
     }
 
-    // Conductor：Tempo + 标签。
-    {
+    // Conductor：Tempo + 标签（全部轨道或选中 Conductor 时）。
+    if track <= 0 {
         let lane = &model.conductor.tempo;
         let start = lane.events.partition_point(|e| e.tick < from);
-        for e in lane.events[start..].iter().take(limit) {
+        for e in lane.events[start..].iter().take(take) {
             rows.push(EventRow::Tempo {
                 tick: e.tick,
                 bpm: e.value,
@@ -3722,7 +3775,7 @@ pub fn events_json(from_tick: f64, limit: i32) -> String {
             .markers
             .iter()
             .filter(|m| m.tick >= from)
-            .take(limit)
+            .take(take)
         {
             rows.push(EventRow::Marker {
                 tick: m.tick,
@@ -3737,16 +3790,35 @@ pub fn events_json(from_tick: f64, limit: i32) -> String {
             .then(a.secondary().total_cmp(&b.secondary()))
             .then(a.duration().cmp(&b.duration()))
     });
-    rows.truncate(limit);
+    if rows.len() <= skip {
+        return format!("{{\"total\":{total},\"rows\":[],\"next\":null}}");
+    }
+    let end = (skip + limit).min(rows.len());
+    let page = &rows[skip..end];
+    let next = if rows.len() > end {
+        let next_tick = rows[end].tick();
+        // 下一页从 next_tick 的第 next_skip 个事件开始（跳过本页已消费的同 tick 事件）。
+        let next_skip = rows[..end].iter().filter(|r| r.tick() == next_tick).count();
+        Some((next_tick, next_skip))
+    } else {
+        None
+    };
 
-    let mut out = String::from("{\"rows\":[");
-    for (i, row) in rows.iter().enumerate() {
+    let mut out = format!("{{\"total\":{total},\"rows\":[");
+    for (i, row) in page.iter().enumerate() {
         if i > 0 {
             out.push(',');
         }
         out.push_str(&event_row_json(row, model));
     }
-    out.push_str("]}");
+    out.push_str("],\"next\":");
+    match next {
+        Some((tick, next_skip)) => {
+            out.push_str(&format!("{{\"tick\":{tick},\"skip\":{next_skip}}}"));
+        }
+        None => out.push_str("null"),
+    }
+    out.push('}');
     out
 }
 

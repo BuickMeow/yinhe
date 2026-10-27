@@ -1220,8 +1220,13 @@ pub extern "C" fn yinhe_set_ui_language(lang: *const std::ffi::c_char) -> i32 {
 
 /// 事件列表 JSON（从 from_tick 起，最多 limit 条）。
 #[unsafe(no_mangle)]
-pub extern "C" fn yinhe_events_json(from_tick: f64, limit: i32) -> *mut std::ffi::c_char {
-    to_c_string(scene::events_json(from_tick, limit))
+pub extern "C" fn yinhe_events_json(
+    from_tick: f64,
+    limit: i32,
+    track: i32,
+    skip: u32,
+) -> *mut std::ffi::c_char {
+    to_c_string(scene::events_json(from_tick, limit, track, skip))
 }
 
 /// 删除事件行（JSON）。成功 1。
