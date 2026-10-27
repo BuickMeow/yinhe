@@ -1095,8 +1095,9 @@ class _AutomationPanelState extends State<AutomationPanel>
           _selectedTicks.add(p.dx.round());
         }
       }
-      // 松手后选框保留，直到点空白/换轨/换 lane。
-      _marqueeTicks = _selectedTicks.isNotEmpty ? range : null;
+      // 松手后选框保留（即使没框到锚点），直到点空白/换轨/换 lane。
+      // PR/AR 的选框也不会因为没有命中音符而消失。
+      _marqueeTicks = range;
     }
     _syncSelection();
     setState(() {});
