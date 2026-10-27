@@ -104,7 +104,7 @@ impl Archive {
 
     /// List files with the given extensions (case-insensitive), sorted by name.
     ///
-    /// `exts` 不带点，例如 `&["sf2", "sf3", "sfz"]`。
+    /// `exts` 不带点，例如 `&["sf2", "sfz"]`。
     pub fn list_files(&self, exts: &[&str]) -> Vec<ArchiveEntry> {
         let mut entries: Vec<ArchiveEntry> = self
             .entries

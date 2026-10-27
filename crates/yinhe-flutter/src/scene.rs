@@ -1561,11 +1561,14 @@ fn load_settings() {
                 Some((flag, path)) => (flag != "0", path),
                 None => (true, v),
             };
-            if !path.is_empty() {
+            if !path.is_empty() && crate::audio::is_soundfont_path(path) {
                 soundfonts.push(crate::audio::SoundfontEntry {
                     path: path.to_string(),
                     enabled,
                 });
+            } else if !path.is_empty() {
+                // 旧版本选择器可能把 mid 等文件写进音色库表，读盘时清理掉。
+                log::warn!("忽略无效音色库设置: {path}");
             }
         } else if let Some(v) = line.strip_prefix("ui_language=") {
             language = v.trim().to_string();

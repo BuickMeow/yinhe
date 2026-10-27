@@ -647,7 +647,7 @@ mixin _ShellDocument on _ShellBase {
     return 4;
   }
 
-  /// 音色库压缩包：列 SF2/SF3/SFZ → 选择 → 后台整包解压/import。
+  /// 音色库压缩包：列 SF2/SFZ → 选择 → 后台整包解压/import。
   @override
   Future<void> _openSoundfontArchive(String path) async {
     String? password;

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// A single SoundFont entry — one .sf2/.sf3/.sfz file.
+/// A single SoundFont entry — one .sf2/.sfz file.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SfEntry {
     pub path: String,

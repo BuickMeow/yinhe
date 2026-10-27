@@ -3,7 +3,7 @@ part of '../ffi.dart';
 typedef SfArchiveOpenNative = ffi.Int32 Function(ffi.Pointer<Utf8>);
 typedef SfArchiveOpenDart = int Function(ffi.Pointer<Utf8>);
 
-/// 打开音色库压缩包（后台列 SF2/SF3/SFZ）。
+/// 打开音色库压缩包（后台列 SF2/SFZ）。
 final SfArchiveOpenDart soundfontArchiveOpen = bridge
     .lookupFunction<SfArchiveOpenNative, SfArchiveOpenDart>(
       'yinhe_soundfont_archive_open',

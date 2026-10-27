@@ -24,7 +24,7 @@ pub fn show_soundfont_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
         if crate::widgets::flat::flat_button_filled_auto(ui, t!("soundfont.add").as_ref(), true)
             .clicked()
             && let Some(paths) = rfd::FileDialog::new()
-                .add_filter("SoundFont", &["sf2", "sf3", "sfz"])
+                .add_filter("SoundFont", &["sf2", "sfz"])
                 .pick_files()
         {
             for path in paths {

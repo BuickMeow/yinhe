@@ -1,4 +1,4 @@
-//! 音色库压缩包：列出压缩包内 SF2/SF3/SFZ，整包解压到私有目录并导入。
+//! 音色库压缩包：列出压缩包内 SF2/SFZ，整包解压到私有目录并导入。
 //!
 //! SFZ 的采样是相对路径，单独解压 `.sfz` 会找不到采样，因此 SFZ 走整包解压。
 //! 解压根目录记录在 `soundfonts/manifest.json`，删除音色库时按根目录清理。
@@ -50,7 +50,7 @@ fn json_escape(s: &str) -> String {
         .replace('\n', " ")
 }
 
-/// 打开音色库压缩包（后台线程，只列 SF2/SF3/SFZ）。返回 1 = 已开始。
+/// 打开音色库压缩包（后台线程，只列 SF2/SFZ）。返回 1 = 已开始。
 pub fn open(path: String, password: Option<String>) -> i32 {
     if let Ok(mut slot) = session_slot().lock() {
         *slot = Some(Session {
@@ -78,7 +78,7 @@ pub fn open(path: String, password: Option<String>) -> i32 {
             };
             match result {
                 Ok(archive) => {
-                    session.entries = archive.list_files(&["sf2", "sf3", "sfz"]);
+                    session.entries = archive.list_files(&["sf2", "sfz"]);
                     session.archive = Some(archive);
                     session.status = 1;
                     log::info!(

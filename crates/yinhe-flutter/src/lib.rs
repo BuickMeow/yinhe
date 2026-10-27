@@ -437,7 +437,7 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeSetViewport(
     set_logical_size(width, height);
 }
 
-/// `MainActivity.onSoundFontPicked(path)`：音色库（SF2/SF3/SFZ）已复制到私有目录。
+/// `MainActivity.onSoundFontPicked(path)`：音色库（SF2/SFZ）已复制到私有目录。
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_onSoundFontPicked<'local>(
     mut env: jni::EnvUnowned<'local>,

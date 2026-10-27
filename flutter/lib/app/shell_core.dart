@@ -264,6 +264,15 @@ mixin _ShellCore on _ShellBase {
     if (!mounted) {
       return;
     }
+    if (call.method == 'onFileRejected' ||
+        call.method == 'onSoundfontRejected') {
+      final name = call.arguments as String? ?? '';
+      showSnack(
+        context,
+        name.isEmpty ? l.loadFailed : '${l.loadFailed}: $name',
+      );
+      return;
+    }
     if (call.method == 'rightPan') {
       _onNativeRightPan(call.arguments as Map?);
       return;

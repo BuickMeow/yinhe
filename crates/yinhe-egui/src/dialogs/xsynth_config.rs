@@ -161,7 +161,7 @@ pub(crate) fn show_viewport(app: &mut App, ctx: &egui::Context) -> bool {
                                     )
                                     .clicked()
                                         && let Some(paths) = rfd::FileDialog::new()
-                                            .add_filter("SoundFont", &["sf2", "sf3", "sfz"])
+                                            .add_filter("SoundFont", &["sf2", "sfz"])
                                             .pick_files()
                                     {
                                         for path in paths {

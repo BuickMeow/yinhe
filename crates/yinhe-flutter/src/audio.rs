@@ -267,8 +267,24 @@ pub fn set_soundfonts(entries: Vec<SoundfontEntry>) {
     apply_soundfonts(st);
 }
 
+/// 可加载的音色库路径：裸 SF2，或压缩包整包解压目录下的 SFZ。
+///
+/// SFZ 的采样是相对路径，单独选一个 `.sfz` 找不到采样，所以只有
+/// `soundfonts/` 解压根目录里的 SFZ 才算有效。
+pub(crate) fn is_soundfont_path(path: &str) -> bool {
+    let lower = path.replace('\\', "/").to_ascii_lowercase();
+    if lower.ends_with(".sf2") {
+        return true;
+    }
+    lower.ends_with(".sfz") && lower.contains("/soundfonts/")
+}
+
 /// 追加一个音色库（已存在则启用并移到最前），立即应用。
 pub fn add_soundfont(path: String) {
+    if !is_soundfont_path(&path) {
+        log::warn!("忽略非音色库文件: {path}");
+        return;
+    }
     if let Ok(mut g) = soundfonts_slot().lock() {
         match g.iter().position(|e| e.path == path) {
             Some(i) => {
@@ -407,6 +423,10 @@ pub fn set_soundfonts_json(json: &str) -> i32 {
         .iter()
         .filter_map(|it| {
             let path = it.get("path")?.as_str()?.to_string();
+            if !is_soundfont_path(&path) {
+                log::warn!("忽略非音色库设置项: {path}");
+                return None;
+            }
             let enabled = it
                 .get("enabled")
                 .and_then(serde_json::Value::as_bool)
@@ -672,4 +692,19 @@ fn seconds_to_tick(model: &YinModel, seconds: f64) -> f64 {
         }
     }
     tick
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_soundfont_path;
+
+    #[test]
+    fn soundfont_path_extensions() {
+        assert!(is_soundfont_path("/files/Studio.SF2"));
+        assert!(is_soundfont_path("/files/soundfonts/pack/tone.sfz"));
+        assert!(!is_soundfont_path("/files/song.mid"));
+        assert!(!is_soundfont_path("/files/bare.sfz"));
+        assert!(!is_soundfont_path("/files/font.sf3"));
+        assert!(!is_soundfont_path("/files/no_ext"));
+    }
 }

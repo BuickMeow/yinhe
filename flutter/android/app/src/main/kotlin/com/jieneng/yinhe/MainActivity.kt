@@ -41,6 +41,18 @@ class MainActivity : FlutterActivity() {
         /** 导出工程的临时文件（Rust 写入，Kotlin 复制到用户选择的位置）。 */
         private const val EXPORT_TMP = "export.yin"
 
+        /** 加载工程：MIDI / .yin / 压缩包。 */
+        private val PROJECT_EXTS = setOf("mid", "midi", "yin")
+
+        /** 裸音色库文件只收 SF2；SFZ 的采样只能随压缩包整包导入。 */
+        private val SOUNDFONT_EXTS = setOf("sf2")
+
+        /** 压缩包扩展名（与 Rust/Dart 同一份列表）。 */
+        private val ARCHIVE_EXTS = setOf(
+            "zip", "7z", "rar", "lzh", "lha", "tar",
+            "gz", "xz", "tgz", "txz", "tbz", "bz2",
+        )
+
         init {
             // 压缩包支持（unarc-rs）带 C++ 代码：先加载 NDK 的 C++ 运行时，
             // 否则 libyinhe_flutter.so 里的 std::length_error 等符号无法解析。
@@ -110,7 +122,7 @@ class MainActivity : FlutterActivity() {
     /** cpal/AAudio 需要的 NDK context（JavaVM + Application Context）。 */
     private external fun nativeInitContext(context: android.content.Context, filesDir: String)
 
-    /** Rust 回调：所选音色库（SF2/SF3）已复制到私有目录。 */
+    /** Rust 回调：所选音色库（SF2）已复制到私有目录。 */
     private external fun onSoundFontPicked(path: String)
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -391,12 +403,18 @@ class MainActivity : FlutterActivity() {
                     Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
             )
             // 不加 EXTRA_MIME_TYPES：部分机型（如 MIUI）会把 .mid 归到
-            // 其它 MIME 而置灰；这里放开为全部文件，压缩包（zip/7z…）也要能选。
+            // 其它 MIME 而置灰；这里放开为全部文件，回到 onActivityResult
+            // 再按扩展名校验（只收 mid/midi/yin/压缩包）。
         }
         startActivityForResult(intent, REQ_OPEN_FILE)
     }
 
-    /** Dart 侧「选择音色库」：SF2/SF3 无统一 MIME，交给用户选择。 */
+    /**
+     * Dart 侧「选择音色库」：只接受裸 SF2 或压缩包。
+     *
+     * SAF 没有统一的 SoundFont MIME，仍放开选择，回来按扩展名校验；
+     * 裸 SFZ 单独拷过来找不到采样，因此不允许，SFZ 只能走压缩包整包导入。
+     */
     private fun openSoundFontPicker() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -405,14 +423,30 @@ class MainActivity : FlutterActivity() {
         startActivityForResult(intent, REQ_OPEN_SF)
     }
 
-    /** 与 Rust/Dart 保持一致的压缩包扩展名。 */
-    private fun isArchivePath(path: String): Boolean {
-        val lower = path.lowercase()
-        return listOf(
-            ".zip", ".7z", ".rar", ".lzh", ".lha", ".tar",
-            ".gz", ".xz", ".tgz", ".txz", ".tbz", ".bz2",
-        ).any { lower.endsWith(it) }
+    /** 文件扩展名（小写、不含点；无扩展名返回空串）。 */
+    private fun extensionOf(name: String): String {
+        val dot = name.lastIndexOf('.')
+        return if (dot >= 0 && dot + 1 < name.length) {
+            name.substring(dot + 1).lowercase()
+        } else {
+            ""
+        }
     }
+
+    private fun isArchiveName(name: String): Boolean =
+        extensionOf(name) in ARCHIVE_EXTS
+
+    /** 工程选择：MIDI / .yin / 压缩包。 */
+    private fun isProjectName(name: String): Boolean =
+        extensionOf(name) in PROJECT_EXTS || isArchiveName(name)
+
+    /** 音色库选择：裸 .sf2 或压缩包（包内可含 SF2/SFZ 及采样）。 */
+    private fun isSoundfontName(name: String): Boolean =
+        extensionOf(name) in SOUNDFONT_EXTS || isArchiveName(name)
+
+    /** 与 Rust/Dart 保持一致的压缩包扩展名。 */
+    private fun isArchivePath(path: String): Boolean =
+        isArchiveName(File(path).name)
 
     /** Dart 侧「保存工程」：先由 Rust 写好临时文件，这里复制到用户选择的位置。 */
     private fun openSavePicker(name: String) {
@@ -500,9 +534,14 @@ class MainActivity : FlutterActivity() {
         when (requestCode) {
             REQ_OPEN_FILE -> {
                 val uri = data?.data
+                val name = uri?.let { displayName(it) }
+                if (uri == null || name == null || !isProjectName(name)) {
+                    methodChannel?.invokeMethod("onFileRejected", name ?: "")
+                    return
+                }
                 val path = copyPicked(uri) ?: return
                 // .yin 工程记住原 uri（含持久权限），供“保存工程”直接覆盖。
-                if (path.lowercase().endsWith(".yin") && uri != null) {
+                if (path.lowercase().endsWith(".yin")) {
                     runCatching {
                         contentResolver.takePersistableUriPermission(
                             uri,
@@ -517,7 +556,13 @@ class MainActivity : FlutterActivity() {
                 methodChannel?.invokeMethod("onFilePicked", path)
             }
             REQ_OPEN_SF -> {
-                val path = copyPicked(data?.data) ?: return
+                val uri = data?.data
+                val name = uri?.let { displayName(it) }
+                if (uri == null || name == null || !isSoundfontName(name)) {
+                    methodChannel?.invokeMethod("onSoundfontRejected", name ?: "")
+                    return
+                }
+                val path = copyPicked(uri) ?: return
                 if (isArchivePath(path)) {
                     // 压缩包交给 Dart/Rust 列 SF2/SFZ，避免把 zip 当音色库直接加载。
                     methodChannel?.invokeMethod("onSoundFontArchivePicked", path)
