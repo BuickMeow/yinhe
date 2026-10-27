@@ -71,6 +71,11 @@ abstract class _ShellBase extends State<StudioShell>
   /// AM 独立纹理的物理尺寸（布局层上报，和 PR 的 setSize 同一策略）。
   Size? _reportedAmSize;
 
+  /// 本帧待上报的纹理尺寸：布局阶段只登记，帧末统一发送。
+  ({int w, int h, double lw, double lh})? _pendingCanvasSize;
+  ({int w, int h})? _pendingAmSize;
+  bool _surfaceSizeFlushScheduled = false;
+
   bool _showHome = true;
   int _viewMode = kViewArrangement;
   String? _fileName;

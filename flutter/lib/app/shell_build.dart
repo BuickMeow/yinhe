@@ -1,6 +1,81 @@
 part of 'studio_shell.dart';
 
 mixin _ShellBuild on _ShellBase {
+  // ── 纹理尺寸上报 ──
+
+  /// 布局阶段只登记画布物理尺寸，MethodChannel 上报留到帧末。
+  ///
+  /// 不能直接在 [LayoutBuilder.builder] 里 invokeMethod：那是 layout 阶段的
+  /// 副作用，且一帧内可能多次 layout；帧末只发最终值。
+  void _queueCanvasSize(int w, int h, double lw, double lh) {
+    final pixel = Size(w.toDouble(), h.toDouble());
+    if (_reportedPixelSize == pixel) {
+      // 本帧又变回已上报尺寸：取消可能存在的待发送值。
+      _pendingCanvasSize = null;
+      return;
+    }
+    final next = (w: w, h: h, lw: lw, lh: lh);
+    if (_pendingCanvasSize == next) {
+      return;
+    }
+    _pendingCanvasSize = next;
+    _scheduleSurfaceSizeFlush();
+  }
+
+  /// AM 面板同理：只有物理尺寸，没有逻辑视口。
+  void _queueAutomationSize(int w, int h) {
+    final pixel = Size(w.toDouble(), h.toDouble());
+    if (_reportedAmSize == pixel) {
+      _pendingAmSize = null;
+      return;
+    }
+    final next = (w: w, h: h);
+    if (_pendingAmSize == next) {
+      return;
+    }
+    _pendingAmSize = next;
+    _scheduleSurfaceSizeFlush();
+  }
+
+  void _scheduleSurfaceSizeFlush() {
+    if (_surfaceSizeFlushScheduled) {
+      return;
+    }
+    _surfaceSizeFlushScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _surfaceSizeFlushScheduled = false;
+      if (!mounted) {
+        return;
+      }
+      final canvas = _pendingCanvasSize;
+      _pendingCanvasSize = null;
+      if (canvas != null) {
+        final pixel = Size(canvas.w.toDouble(), canvas.h.toDouble());
+        if (_reportedPixelSize != pixel) {
+          _reportedPixelSize = pixel;
+          _channel.invokeMethod<void>('setSize', {
+            'w': canvas.w,
+            'h': canvas.h,
+            'lw': canvas.lw,
+            'lh': canvas.lh,
+          });
+        }
+      }
+      final am = _pendingAmSize;
+      _pendingAmSize = null;
+      if (am != null) {
+        final pixel = Size(am.w.toDouble(), am.h.toDouble());
+        if (_reportedAmSize != pixel) {
+          _reportedAmSize = pixel;
+          _channel.invokeMethod<void>('setAutomationSize', {
+            'w': am.w,
+            'h': am.h,
+          });
+        }
+      }
+    });
+  }
+
   // ── 布局 ──
 
   @override
@@ -59,19 +134,7 @@ mixin _ShellBuild on _ShellBase {
                       final dpr = MediaQuery.devicePixelRatioOf(context);
                       final pixelW = (size.width * dpr).round();
                       final pixelH = (contentH * dpr).round();
-                      if (_reportedPixelSize?.width != pixelW ||
-                          _reportedPixelSize?.height != pixelH) {
-                        _reportedPixelSize = Size(
-                          pixelW.toDouble(),
-                          pixelH.toDouble(),
-                        );
-                        _channel.invokeMethod<void>('setSize', {
-                          'w': pixelW,
-                          'h': pixelH,
-                          'lw': size.width,
-                          'lh': contentH,
-                        });
-                      }
+                      _queueCanvasSize(pixelW, pixelH, size.width, contentH);
                       // AM 与 PR 一样在布局层确认视口：物理尺寸才决定
                       // SurfaceProducer 的交换链大小，不能等子组件回调。
                       if (amVisible) {
@@ -83,17 +146,7 @@ mixin _ShellBuild on _ShellBase {
                         );
                         final amPw = (amW * dpr).round();
                         final amPh = (amH2 * dpr).round();
-                        if (_reportedAmSize?.width != amPw ||
-                            _reportedAmSize?.height != amPh) {
-                          _reportedAmSize = Size(
-                            amPw.toDouble(),
-                            amPh.toDouble(),
-                          );
-                          _channel.invokeMethod<void>('setAutomationSize', {
-                            'w': amPw,
-                            'h': amPh,
-                          });
-                        }
+                        _queueAutomationSize(amPw, amPh);
                       }
                       return RawGestureDetector(
                         behavior: HitTestBehavior.translucent,
