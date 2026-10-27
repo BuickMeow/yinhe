@@ -72,9 +72,14 @@ class YinheDialog extends StatelessWidget {
 }
 
 /// 统一的输入框样式。
-InputDecoration dialogInputDecoration(String label, {String? errorText}) {
+InputDecoration dialogInputDecoration(
+  String label, {
+  String? errorText,
+  String? hintText,
+}) {
   return InputDecoration(
     labelText: label,
+    hintText: hintText,
     border: const OutlineInputBorder(),
     isDense: true,
     errorText: errorText,

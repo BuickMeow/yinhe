@@ -118,12 +118,10 @@ class _ProjectDialogState extends State<ProjectDialog> {
       controller: c,
       maxLines: maxLines,
       keyboardType: keyboardType,
+      autocorrect: false,
+      enableSuggestions: false,
       style: const TextStyle(fontSize: 14),
-      decoration: InputDecoration(
-        labelText: label,
-        border: const OutlineInputBorder(),
-        isDense: true,
-      ),
+      decoration: dialogInputDecoration(label),
     );
   }
 }

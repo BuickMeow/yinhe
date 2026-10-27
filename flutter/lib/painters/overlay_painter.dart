@@ -51,13 +51,11 @@ class OverlayPainter extends CustomPainter {
       rect(r);
     }
     final b = o.box;
-    if (b != null && !moving.value) {
+    if (b != null) {
+      // 移动态由 SelectionLongPressPainter 画虚线；这里仍画同一填充。
       rect(b);
     }
-    if (showHandles &&
-        !moving.value &&
-        o.box == null &&
-        o.sel.length == 1) {
+    if (showHandles && !moving.value && o.box == null && o.sel.length == 1) {
       _paintHandles(canvas, o.sel.first, stroke);
     }
     canvas.restore();

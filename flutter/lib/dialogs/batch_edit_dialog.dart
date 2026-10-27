@@ -417,35 +417,18 @@ class _ExprField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(color: YinheTheme.textLabel, fontSize: 11),
-        ),
-        const SizedBox(height: 3),
-        TextField(
-          controller: controller,
-          autocorrect: false,
-          enableSuggestions: false,
-          keyboardType: TextInputType.text,
-          style: const TextStyle(fontSize: 14),
-          onChanged: onChanged == null ? null : (_) => onChanged!(),
-          decoration: InputDecoration(
-            isDense: true,
-            border: const OutlineInputBorder(),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 8,
-              vertical: 8,
-            ),
-            hintText: hintText,
-            errorText: errorText,
-          ),
-        ),
-      ],
+    return TextField(
+      controller: controller,
+      autocorrect: false,
+      enableSuggestions: false,
+      keyboardType: TextInputType.text,
+      style: const TextStyle(fontSize: 14),
+      onChanged: onChanged == null ? null : (_) => onChanged!(),
+      decoration: dialogInputDecoration(
+        label,
+        hintText: hintText,
+        errorText: errorText,
+      ),
     );
   }
 }
