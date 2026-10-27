@@ -79,9 +79,6 @@ class AppLocalizationsRu extends AppLocalizations {
   String get batchStretch => 'Растяжение';
 
   @override
-  String get batchExprHint => 'Поддерживает 100, +2, x1.5, 3/7';
-
-  @override
   String get deleteSelectionConfirm => 'Удалить выбранные события?';
 
   @override

@@ -79,9 +79,6 @@ class AppLocalizationsFr extends AppLocalizations {
   String get batchStretch => 'Étirement';
 
   @override
-  String get batchExprHint => 'Prend en charge 100, +2, x1.5, 3/7';
-
-  @override
   String get deleteSelectionConfirm =>
       'Supprimer les événements sélectionnés ?';
 

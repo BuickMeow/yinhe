@@ -79,9 +79,6 @@ class AppLocalizationsCs extends AppLocalizations {
   String get batchStretch => 'Roztažení';
 
   @override
-  String get batchExprHint => 'Podporuje 100, +2, x1.5, 3/7';
-
-  @override
   String get deleteSelectionConfirm => 'Smazat vybrané události?';
 
   @override

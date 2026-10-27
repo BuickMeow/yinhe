@@ -79,9 +79,6 @@ class AppLocalizationsTr extends AppLocalizations {
   String get batchStretch => 'Uzatma';
 
   @override
-  String get batchExprHint => '100, +2, x1.5, 3/7 destekler';
-
-  @override
   String get deleteSelectionConfirm => 'Seçili olaylar silinsin mi?';
 
   @override

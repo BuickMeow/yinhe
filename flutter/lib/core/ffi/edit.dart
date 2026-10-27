@@ -226,6 +226,33 @@ final ClearSelectionDart clearSelection = bridge
       'yinhe_clear_selection',
     );
 
+typedef SelectionRangeNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Double>,
+  ffi.Pointer<ffi.Double>,
+);
+typedef SelectionRangeDart = int Function(
+  ffi.Pointer<ffi.Double>,
+  ffi.Pointer<ffi.Double>,
+);
+
+final SelectionRangeDart _selectionRange = bridge
+    .lookupFunction<SelectionRangeNative, SelectionRangeDart>(
+      'yinhe_selection_range',
+    );
+
+/// 当前音符选区 tick 范围；无选区返回 null。
+(double, double)? selectionRange() {
+  final out = calloc<ffi.Double>(2);
+  try {
+    if (_selectionRange(out, out + 1) != 1) {
+      return null;
+    }
+    return (out[0], out[1]);
+  } finally {
+    calloc.free(out);
+  }
+}
+
 typedef HumanizeNative = ffi.Int32 Function(ffi.Uint32, ffi.Uint32, ffi.Uint32);
 typedef HumanizeDart = int Function(int, int, int);
 

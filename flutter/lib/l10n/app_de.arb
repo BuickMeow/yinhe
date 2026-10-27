@@ -10,7 +10,6 @@
   "batchKey": "Tonhöhe",
   "batchTick": "Position",
   "batchStretch": "Dehnen",
-  "batchExprHint": "Unterstützt 100, +2, x1.5, 3/7",
   "selectAll": "Alles auswählen",
   "selectAllTrack": "Diese Spur auswählen",
   "cut": "Ausschneiden",

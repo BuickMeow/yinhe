@@ -10,7 +10,6 @@
   "batchKey": "Altezza",
   "batchTick": "Posizione",
   "batchStretch": "Estensione",
-  "batchExprHint": "Supporta 100, +2, x1.5, 3/7",
   "selectAll": "Seleziona tutto",
   "selectAllTrack": "Seleziona questa traccia",
   "cut": "Taglia",

@@ -260,12 +260,6 @@ abstract class AppLocalizations {
   /// **'Stretch'**
   String get batchStretch;
 
-  /// No description provided for @batchExprHint.
-  ///
-  /// In en, this message translates to:
-  /// **'Supports 100, +2, x1.5, 3/7'**
-  String get batchExprHint;
-
   /// No description provided for @deleteSelectionConfirm.
   ///
   /// In en, this message translates to:

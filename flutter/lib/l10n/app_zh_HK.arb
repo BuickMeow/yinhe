@@ -10,7 +10,6 @@
   "batchKey": "音高",
   "batchTick": "位置",
   "batchStretch": "變速",
-  "batchExprHint": "支援 100、+2、x1.5、3/7",
   "selectAll": "全選",
   "selectAllTrack": "全選該軌道",
   "cut": "剪下",

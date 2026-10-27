@@ -79,9 +79,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get batchStretch => '变速';
 
   @override
-  String get batchExprHint => '支持 100、+2、x1.5、3/7';
-
-  @override
   String get deleteSelectionConfirm => '删除选中的事件？';
 
   @override
@@ -641,9 +638,6 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get batchStretch => '變速';
 
   @override
-  String get batchExprHint => '支援 100、+2、x1.5、3/7';
-
-  @override
   String get deleteSelectionConfirm => '刪除選取的事件？';
 
   @override
@@ -1201,9 +1195,6 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get batchStretch => '變速';
-
-  @override
-  String get batchExprHint => '支援 100、+2、x1.5、3/7';
 
   @override
   String get deleteSelectionConfirm => '刪除選取的事件？';

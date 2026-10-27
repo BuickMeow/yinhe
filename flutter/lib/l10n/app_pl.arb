@@ -10,7 +10,6 @@
   "batchKey": "Wysokość",
   "batchTick": "Pozycja",
   "batchStretch": "Rozciągnięcie",
-  "batchExprHint": "Obsługuje 100, +2, x1.5, 3/7",
   "selectAll": "Zaznacz wszystko",
   "selectAllTrack": "Zaznacz tę ścieżkę",
   "cut": "Wytnij",

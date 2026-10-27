@@ -10,7 +10,6 @@
   "batchKey": "Nota",
   "batchTick": "Posición",
   "batchStretch": "Escala",
-  "batchExprHint": "Admite 100, +2, x1.5, 3/7",
   "selectAll": "Seleccionar todo",
   "selectAllTrack": "Seleccionar esta pista",
   "cut": "Cortar",

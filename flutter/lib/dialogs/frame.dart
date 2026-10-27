@@ -9,15 +9,15 @@ import '../core/theme.dart';
 class YinheDialog extends StatelessWidget {
   const YinheDialog({
     super.key,
-    required this.title,
     required this.content,
+    this.title,
     this.titleTrailing,
     this.actions = const [],
     this.width = 360,
     this.scroll = true,
   });
 
-  final String title;
+  final String? title;
   final Widget content;
   final Widget? titleTrailing;
   final List<Widget> actions;
@@ -44,13 +44,15 @@ class YinheDialog extends StatelessWidget {
         : Padding(padding: const EdgeInsets.only(top: 10), child: content);
     final dialog = AlertDialog(
       backgroundColor: YinheTheme.bg,
-      title: titleTrailing == null
-          ? Text(title, style: const TextStyle(fontSize: 16))
+      title: title == null
+          ? null
+          : titleTrailing == null
+          ? Text(title!, style: const TextStyle(fontSize: 16))
           : Row(
               children: [
                 Expanded(
                   child: Text(
-                    title,
+                    title!,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 16),

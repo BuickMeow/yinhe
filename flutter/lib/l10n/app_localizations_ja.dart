@@ -79,9 +79,6 @@ class AppLocalizationsJa extends AppLocalizations {
   String get batchStretch => '伸縮';
 
   @override
-  String get batchExprHint => '100、+2、x1.5、3/7 に対応';
-
-  @override
   String get deleteSelectionConfirm => '選択したイベントを削除しますか？';
 
   @override

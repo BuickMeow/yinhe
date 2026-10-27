@@ -79,9 +79,6 @@ class AppLocalizationsEs extends AppLocalizations {
   String get batchStretch => 'Escala';
 
   @override
-  String get batchExprHint => 'Admite 100, +2, x1.5, 3/7';
-
-  @override
   String get deleteSelectionConfirm => '¿Eliminar los eventos seleccionados?';
 
   @override

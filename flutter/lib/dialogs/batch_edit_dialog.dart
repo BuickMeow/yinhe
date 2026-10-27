@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
 import '../l10n/app_localizations.dart';
+import 'frame.dart';
 
 /// 类人化幅度：时间/力度/时值三路独立随机偏差。
 class HumanizeSpec {
@@ -39,34 +40,32 @@ class _HumanizeDialogState extends State<_HumanizeDialog> {
   @override
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
-    return AlertDialog(
-      title: Text(l.opHumanize),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _LabeledSlider(
-              label: l.humanizeTiming,
-              value: _timing,
-              max: 120,
-              suffix: 'tick',
-              onChanged: (v) => setState(() => _timing = v),
-            ),
-            _LabeledSlider(
-              label: l.humanizeVelocity,
-              value: _velocity,
-              max: 64,
-              onChanged: (v) => setState(() => _velocity = v),
-            ),
-            _LabeledSlider(
-              label: l.humanizeGate,
-              value: _gate,
-              max: 120,
-              suffix: 'tick',
-              onChanged: (v) => setState(() => _gate = v),
-            ),
-          ],
-        ),
+    return YinheDialog(
+      title: l.opHumanize,
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _LabeledSlider(
+            label: l.humanizeTiming,
+            value: _timing,
+            max: 120,
+            suffix: 'tick',
+            onChanged: (v) => setState(() => _timing = v),
+          ),
+          _LabeledSlider(
+            label: l.humanizeVelocity,
+            value: _velocity,
+            max: 64,
+            onChanged: (v) => setState(() => _velocity = v),
+          ),
+          _LabeledSlider(
+            label: l.humanizeGate,
+            value: _gate,
+            max: 120,
+            suffix: 'tick',
+            onChanged: (v) => setState(() => _gate = v),
+          ),
+        ],
       ),
       actions: [
         TextButton(
@@ -114,20 +113,33 @@ class BatchEditSpec {
 /// 弹批量处理对话框；取消返回 null。
 ///
 /// `automation`：只显示「力度/值」和「位置」两项。
+/// `selectionRange`：当前选区 tick 范围，用于变速预估显示。
 Future<BatchEditSpec?> showBatchEditDialog(
   BuildContext context, {
   required bool automation,
+  (double, double)? selectionRange,
+  String Function(double)? formatTick,
 }) {
   return showDialog<BatchEditSpec>(
     context: context,
-    builder: (_) => _BatchEditDialog(automation: automation),
+    builder: (_) => _BatchEditDialog(
+      automation: automation,
+      selectionRange: selectionRange,
+      formatTick: formatTick,
+    ),
   );
 }
 
 class _BatchEditDialog extends StatefulWidget {
-  const _BatchEditDialog({required this.automation});
+  const _BatchEditDialog({
+    required this.automation,
+    this.selectionRange,
+    this.formatTick,
+  });
 
   final bool automation;
+  final (double, double)? selectionRange;
+  final String Function(double)? formatTick;
 
   @override
   State<_BatchEditDialog> createState() => _BatchEditDialogState();
@@ -150,11 +162,51 @@ class _BatchEditDialogState extends State<_BatchEditDialog> {
     super.dispose();
   }
 
+  /// 仅用于界面预估：支持纯数字、`x` 前缀和 `a/b`。
+  double? _stretchFactor() {
+    var s = _stretch.text.trim();
+    if (s.isEmpty) {
+      return 1;
+    }
+    if (s.startsWith('x') ||
+        s.startsWith('X') ||
+        s.startsWith('×') ||
+        s.startsWith('*')) {
+      s = s.substring(1);
+    }
+    final parts = s.split('/');
+    if (parts.length == 2) {
+      final a = double.tryParse(parts[0].trim());
+      final b = double.tryParse(parts[1].trim());
+      if (a == null || b == null || b == 0) {
+        return null;
+      }
+      return a / b;
+    }
+    return double.tryParse(s);
+  }
+
+  /// 变速预估：`原终点 → 新终点`（起点不变）。
+  String? _stretchPreview() {
+    final range = widget.selectionRange;
+    final format = widget.formatTick;
+    if (range == null || format == null) {
+      return null;
+    }
+    final factor = _stretchFactor();
+    if (factor == null || !factor.isFinite || factor <= 0) {
+      return null;
+    }
+    final (t0, t1) = range;
+    final newEnd = t0 + (t1 - t0) * factor;
+    return '${format(t1)} → ${format(newEnd)}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
-    return AlertDialog(
-      title: Text(l.batchProcess),
+    final preview = widget.automation ? null : _stretchPreview();
+    return YinheDialog(
       content: LayoutBuilder(
         builder: (context, constraints) {
           final w = (constraints.maxWidth - 12) / 2;
@@ -193,19 +245,23 @@ class _BatchEditDialogState extends State<_BatchEditDialog> {
                       child: _ExprField(
                         label: l.batchStretch,
                         controller: _stretch,
+                        onChanged: () => setState(() {}),
                       ),
                     ),
                 ],
               ),
-              const SizedBox(height: 10),
-              Text(
-                l.batchExprHint,
-                style: TextStyle(color: YinheTheme.textMuted, fontSize: 11),
-              ),
+              if (preview != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  preview,
+                  style: TextStyle(color: YinheTheme.textMuted, fontSize: 11),
+                ),
+              ],
             ],
           );
         },
       ),
+      width: 340,
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
@@ -230,10 +286,15 @@ class _BatchEditDialogState extends State<_BatchEditDialog> {
 
 /// 一列字段：标签在上、表达式输入在下。
 class _ExprField extends StatelessWidget {
-  const _ExprField({required this.label, required this.controller});
+  const _ExprField({
+    required this.label,
+    required this.controller,
+    this.onChanged,
+  });
 
   final String label;
   final TextEditingController controller;
+  final VoidCallback? onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -253,6 +314,7 @@ class _ExprField extends StatelessWidget {
           enableSuggestions: false,
           keyboardType: TextInputType.text,
           style: const TextStyle(fontSize: 14),
+          onChanged: onChanged == null ? null : (_) => onChanged!(),
           decoration: const InputDecoration(
             isDense: true,
             border: OutlineInputBorder(),

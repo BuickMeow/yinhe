@@ -23,7 +23,6 @@
   "batchKey": "音高",
   "batchTick": "位置",
   "batchStretch": "变速",
-  "batchExprHint": "支持 100、+2、x1.5、3/7",
   "deleteSelectionConfirm": "删除选中的事件？",
   "save": "保存",
   "ok": "确定",

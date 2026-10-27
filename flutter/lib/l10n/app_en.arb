@@ -23,7 +23,6 @@
   "batchKey": "Key",
   "batchTick": "Tick",
   "batchStretch": "Stretch",
-  "batchExprHint": "Supports 100, +2, x1.5, 3/7",
   "deleteSelectionConfirm": "Delete selected events?",
   "save": "Save",
   "ok": "OK",
