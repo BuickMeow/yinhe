@@ -189,6 +189,18 @@ class AppLocalizationsZh extends AppLocalizations {
   String get quantizeAuto => '自动';
 
   @override
+  String get quantizeCustom => '自定义…';
+
+  @override
+  String get quantizeNumerator => '分子';
+
+  @override
+  String get quantizeDenominator => '分母';
+
+  @override
+  String get quantizeInvalidFraction => '分子和分母必须是正整数。';
+
+  @override
   String get tool => '工具';
 
   @override
@@ -748,6 +760,18 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get quantizeAuto => '自動';
 
   @override
+  String get quantizeCustom => '自訂…';
+
+  @override
+  String get quantizeNumerator => '分子';
+
+  @override
+  String get quantizeDenominator => '分母';
+
+  @override
+  String get quantizeInvalidFraction => '分子和分母必須是正整數。';
+
+  @override
   String get tool => '工具';
 
   @override
@@ -1305,6 +1329,18 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get quantizeAuto => '自動';
+
+  @override
+  String get quantizeCustom => '自訂…';
+
+  @override
+  String get quantizeNumerator => '分子';
+
+  @override
+  String get quantizeDenominator => '分母';
+
+  @override
+  String get quantizeInvalidFraction => '分子和分母必須是正整數。';
 
   @override
   String get tool => '工具';

@@ -189,6 +189,19 @@ class AppLocalizationsCs extends AppLocalizations {
   String get quantizeAuto => 'Automaticky';
 
   @override
+  String get quantizeCustom => 'Vlastní…';
+
+  @override
+  String get quantizeNumerator => 'Čitatel';
+
+  @override
+  String get quantizeDenominator => 'Jmenovatel';
+
+  @override
+  String get quantizeInvalidFraction =>
+      'Čitatel a jmenovatel musí být kladná celá čísla.';
+
+  @override
   String get tool => 'Nástroje';
 
   @override

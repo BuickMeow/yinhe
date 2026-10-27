@@ -476,6 +476,30 @@ abstract class AppLocalizations {
   /// **'Auto'**
   String get quantizeAuto;
 
+  /// No description provided for @quantizeCustom.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom…'**
+  String get quantizeCustom;
+
+  /// No description provided for @quantizeNumerator.
+  ///
+  /// In en, this message translates to:
+  /// **'Numerator'**
+  String get quantizeNumerator;
+
+  /// No description provided for @quantizeDenominator.
+  ///
+  /// In en, this message translates to:
+  /// **'Denominator'**
+  String get quantizeDenominator;
+
+  /// No description provided for @quantizeInvalidFraction.
+  ///
+  /// In en, this message translates to:
+  /// **'Numerator and denominator must be positive integers.'**
+  String get quantizeInvalidFraction;
+
   /// No description provided for @tool.
   ///
   /// In en, this message translates to:

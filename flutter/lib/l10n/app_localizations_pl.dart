@@ -189,6 +189,19 @@ class AppLocalizationsPl extends AppLocalizations {
   String get quantizeAuto => 'Auto';
 
   @override
+  String get quantizeCustom => 'Niestandardowe…';
+
+  @override
+  String get quantizeNumerator => 'Licznik';
+
+  @override
+  String get quantizeDenominator => 'Mianownik';
+
+  @override
+  String get quantizeInvalidFraction =>
+      'Licznik i mianownik muszą być dodatnimi liczbami całkowitymi.';
+
+  @override
   String get tool => 'Narzędzia';
 
   @override

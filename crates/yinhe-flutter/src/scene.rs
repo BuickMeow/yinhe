@@ -928,8 +928,8 @@ pub fn set_tool(tool: i32) -> i32 {
     1
 }
 
-/// 设置量化吸附档位：kind 0=Off 1=Auto 2=Fraction(num/den) 3=Absolute(ticks)。
-pub fn set_quantize(kind: i32, num: u32, den: u32) -> i32 {
+/// 设置量化吸附档位：view 0=AR 1=PR；kind 0=Off 1=Auto 2=Fraction(num/den) 3=Absolute(ticks)。
+pub fn set_quantize(view: i32, kind: i32, num: u32, den: u32) -> i32 {
     let Ok(mut s) = scene().lock() else {
         return 0;
     };
@@ -942,8 +942,11 @@ pub fn set_quantize(kind: i32, num: u32, den: u32) -> i32 {
         3 => QuantizePreset::Absolute(num.max(1)),
         _ => QuantizePreset::Auto,
     };
-    doc.edit.quantize_pianoroll = preset;
-    doc.edit.quantize_arrange = preset;
+    if view == 1 {
+        doc.edit.quantize_pianoroll = preset;
+    } else {
+        doc.edit.quantize_arrange = preset;
+    }
     1
 }
 

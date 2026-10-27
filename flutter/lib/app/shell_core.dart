@@ -134,19 +134,48 @@ mixin _ShellCore on _ShellBase {
     _pushTool();
   }
 
-  /// 量化档位同步给 Rust（工具吸附用）。
+  /// 解析 'a/b' 形式的量化标签（含自定义档位）；无效返回 null。
+  @override
+  (int, int)? _parseQuantizeFraction(String label) {
+    final m = RegExp(r'^(\d+)/(\d+)$').firstMatch(label);
+    if (m == null) {
+      return null;
+    }
+    final num = int.tryParse(m[1]!);
+    final den = int.tryParse(m[2]!);
+    if (num == null || den == null || num <= 0 || den <= 0) {
+      return null;
+    }
+    return (num, den);
+  }
+
+  /// 量化档位同步给 Rust（只作用于当前视图）。
   @override
   void _pushQuantize(String label) {
+    _applyQuantize(_viewMode, label);
+  }
+
+  /// 两个视图的量化档位都同步给 Rust（启动/加载文档/新建工程后）。
+  void _pushAllQuantizes() {
+    _applyQuantize(kViewArrangement, _quantizeAr);
+    _applyQuantize(kViewPianoroll, _quantizePr);
+  }
+
+  void _applyQuantize(int view, String label) {
     if (label == '关闭') {
-      rust.setQuantize(0, 1, 1);
-    } else if (label.startsWith('1/')) {
-      final den = int.tryParse(label.substring(2)) ?? 4;
-      rust.setQuantize(2, 1, den);
-    } else if (label.startsWith('1 tick')) {
-      rust.setQuantize(3, 1, 1);
-    } else {
-      rust.setQuantize(1, 1, 1);
+      rust.setQuantize(view, 0, 1, 1);
+      return;
     }
+    final fraction = _parseQuantizeFraction(label);
+    if (fraction != null) {
+      rust.setQuantize(view, 2, fraction.$1, fraction.$2);
+      return;
+    }
+    if (label.startsWith('1 tick')) {
+      rust.setQuantize(view, 3, 1, 1);
+      return;
+    }
+    rust.setQuantize(view, 1, 1, 1);
   }
 
   /// 新建空工程并进入工作区（先确认未保存修改）。
@@ -167,6 +196,7 @@ mixin _ShellCore on _ShellBase {
     rust.setDisplayTrack(-1);
     rust.setActiveTrack(-1);
     rust.setTool(toolArAllowed.first);
+    _pushAllQuantizes();
     setState(() {
       _fileName = 'Untitled';
       _showHome = false;
@@ -218,15 +248,14 @@ mixin _ShellCore on _ShellBase {
     if (!mounted) {
       return;
     }
-    var state = 0;
-    try {
-      final raw = rust.takeString(rust.loadStatusJson());
-      state = (jsonDecode(raw)['state'] as num?)?.toInt() ?? 0;
-    } catch (_) {
-      state = 0;
-    }
+    var state = _loadState();
     if (state != 1 && state != 3) {
       _loadUiSettled = true;
+      if (state == 2) {
+        // 新文档的量化默认值（AR 1/4 / PR 1/16）已由 Rust 建好；
+        // 这里把 Flutter 侧记住的两套档位重新下发，避免 UI 与行为不一致。
+        _pushAllQuantizes();
+      }
       return;
     }
     if (state == 3) {
@@ -240,6 +269,22 @@ mixin _ShellCore on _ShellBase {
       title: l.loadingFile,
       failureTitle: l.loadFailed,
     );
+    if (!mounted) {
+      return;
+    }
+    if (_loadState() == 2) {
+      _pushAllQuantizes();
+    }
+  }
+
+  /// 当前加载状态：0=无 1=加载中 2=完成 3=失败。
+  int _loadState() {
+    try {
+      final raw = rust.takeString(rust.loadStatusJson());
+      return (jsonDecode(raw)['state'] as num?)?.toInt() ?? 0;
+    } catch (_) {
+      return 0;
+    }
   }
 
   /// 加载状态轮询：Rust 已到 2（完成）但 Flutter 还没刷新完时，暂时伪装成
@@ -445,6 +490,7 @@ mixin _ShellCore on _ShellBase {
     rust.setViewMode(mode);
     setState(() => _viewMode = mode);
     _pushTool();
+    _pushQuantize(_quantizeLabel);
     _velocityViewPpu = null;
     _velocityViewScroll = null;
     _snapDelay.clear();

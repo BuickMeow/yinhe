@@ -189,6 +189,18 @@ class AppLocalizationsJa extends AppLocalizations {
   String get quantizeAuto => '自動';
 
   @override
+  String get quantizeCustom => 'カスタム…';
+
+  @override
+  String get quantizeNumerator => '分子';
+
+  @override
+  String get quantizeDenominator => '分母';
+
+  @override
+  String get quantizeInvalidFraction => '分子と分母は正の整数である必要があります。';
+
+  @override
   String get tool => 'ツール';
 
   @override

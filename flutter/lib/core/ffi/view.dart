@@ -92,12 +92,13 @@ final IntArgDart setActiveTrack = bridge
 
 typedef SetQuantizeNative = ffi.Int32 Function(
   ffi.Int32,
+  ffi.Int32,
   ffi.Uint32,
   ffi.Uint32,
 );
-typedef SetQuantizeDart = int Function(int, int, int);
+typedef SetQuantizeDart = int Function(int, int, int, int);
 
-/// 设置量化吸附档位：kind 0=Off 1=Auto 2=Fraction 3=Absolute。
+/// 设置量化吸附档位：view 0=AR 1=PR；kind 0=Off 1=Auto 2=Fraction 3=Absolute。
 final SetQuantizeDart setQuantize = bridge
     .lookupFunction<SetQuantizeNative, SetQuantizeDart>('yinhe_set_quantize');
 

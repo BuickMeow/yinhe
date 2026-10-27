@@ -14,6 +14,7 @@ import '../core/edit_status.dart';
 import '../core/multi_finger_gesture.dart';
 import '../dialogs/add_tracks_dialog.dart';
 import '../dialogs/batch_edit_dialog.dart';
+import '../dialogs/inputs.dart';
 import '../widgets/automation_panel.dart';
 import '../menus/canvas_menus.dart';
 import '../widgets/home_view.dart';
@@ -182,8 +183,22 @@ abstract class _ShellBase extends State<StudioShell>
   bool _quickSlotActivePr = false;
   bool _quickSlotActiveAr = false;
 
-  /// 量化档位显示（桌面：每文档瞬态，默认自动）。
-  String _quantizeLabel = '自动';
+  /// PR/AR 各自的量化档位（'关闭'/'自动'/'1/4'/'1 tick'…）。
+  ///
+  /// 默认 AR = 1/4、PR = 1/16；切换视图/加载文档后各自恢复。
+  String _quantizeAr = '1/4';
+  String _quantizePr = '1/16';
+
+  String get _quantizeLabel =>
+      _viewMode == kViewPianoroll ? _quantizePr : _quantizeAr;
+
+  void _setQuantizeLabel(String label) {
+    if (_viewMode == kViewPianoroll) {
+      _quantizePr = label;
+    } else {
+      _quantizeAr = label;
+    }
+  }
 
   /// “显示轨道”过滤（-1 = 全部轨道）。
   int _displayTrack = -1;
@@ -331,6 +346,7 @@ abstract class _ShellBase extends State<StudioShell>
   Future<void> _openSoundfontArchive(String path);
   double get _ppq;
   void _pushQuantize(String label);
+  (int, int)? _parseQuantizeFraction(String label);
   void _readDocState();
   void _refreshDocumentMeta();
   void _resetInteraction();
@@ -470,7 +486,8 @@ class _StudioShellState extends _ShellBase
     })..start();
     _recent = _readRecent();
     _loadLanguage();
-    rust.setQuantize(1, 1, 1); // 默认自动（与桌面一致）
+    // 默认 AR 1/4、PR 1/16（文档可能是空白占位，先显式下发一次）。
+    _pushAllQuantizes();
   }
 
   @override

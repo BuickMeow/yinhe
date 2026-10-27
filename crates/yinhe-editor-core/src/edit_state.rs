@@ -169,8 +169,8 @@ impl Default for EditState {
             selected: yinhe_core::Selection::default(),
             track_selected: HashSet::new(),
             cursor_tick: Some(0.0),
-            quantize_arrange: QuantizePreset::Auto,
-            quantize_pianoroll: QuantizePreset::Auto,
+            quantize_arrange: QuantizePreset::Fraction(1, 4),
+            quantize_pianoroll: QuantizePreset::Fraction(1, 16),
             allow_overlapping_notes: true,
             overlap_blocked_behavior: crate::audio_settings::OverlapBlockedBehavior::default(),
             playback: PlaybackState::default(),
@@ -245,6 +245,13 @@ mod tests {
         let state = EditState::default();
         assert_eq!(state.default_velocity(0), 100);
         assert_eq!(state.default_velocity(5), 100);
+    }
+
+    #[test]
+    fn default_quantize_is_ar_quarter_pr_sixteenth() {
+        let state = EditState::default();
+        assert_eq!(state.quantize_arrange, QuantizePreset::Fraction(1, 4));
+        assert_eq!(state.quantize_pianoroll, QuantizePreset::Fraction(1, 16));
     }
 
     #[test]

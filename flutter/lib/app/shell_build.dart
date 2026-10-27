@@ -78,6 +78,29 @@ mixin _ShellBuild on _ShellBase {
 
   // ── 布局 ──
 
+  /// 量化菜单：'自定义' 打开分子/分母输入，其余直接切换当前视图档位。
+  Future<void> _selectQuantize(String value) async {
+    var label = value;
+    if (value == '自定义') {
+      final parsed = _parseQuantizeFraction(_quantizeLabel);
+      final picked = await showCustomQuantizeDialog(
+        context,
+        ppq: _ppq.round(),
+        numerator: parsed?.$1 ?? 1,
+        denominator: parsed?.$2 ?? (_viewMode == kViewPianoroll ? 16 : 4),
+      );
+      if (picked == null || !mounted) {
+        return;
+      }
+      label = '${picked.$1}/${picked.$2}';
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() => _setQuantizeLabel(label));
+    _pushQuantize(label);
+  }
+
   @override
   Widget build(BuildContext context) {
     final id = _textureId;
@@ -408,10 +431,7 @@ mixin _ShellBuild on _ShellBase {
         setState(() => _timecodeBar = !_timecodeBar);
         _updateTimecode();
       },
-      onQuantize: (v) {
-        setState(() => _quantizeLabel = v);
-        _pushQuantize(v);
-      },
+      onQuantize: (v) => unawaited(_selectQuantize(v)),
       onTool: _selectTool,
       onQuickTool: _selectQuickTool,
       onUndo: _undo,

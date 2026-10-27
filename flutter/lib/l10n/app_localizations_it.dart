@@ -189,6 +189,19 @@ class AppLocalizationsIt extends AppLocalizations {
   String get quantizeAuto => 'Auto';
 
   @override
+  String get quantizeCustom => 'Personalizzato…';
+
+  @override
+  String get quantizeNumerator => 'Numeratore';
+
+  @override
+  String get quantizeDenominator => 'Denominatore';
+
+  @override
+  String get quantizeInvalidFraction =>
+      'Numeratore e denominatore devono essere numeri interi positivi.';
+
+  @override
   String get tool => 'Strumenti';
 
   @override

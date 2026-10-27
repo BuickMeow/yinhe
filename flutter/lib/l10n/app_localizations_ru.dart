@@ -189,6 +189,19 @@ class AppLocalizationsRu extends AppLocalizations {
   String get quantizeAuto => 'Авто';
 
   @override
+  String get quantizeCustom => 'Настраиваемый…';
+
+  @override
+  String get quantizeNumerator => 'Числитель';
+
+  @override
+  String get quantizeDenominator => 'Знаменатель';
+
+  @override
+  String get quantizeInvalidFraction =>
+      'Числитель и знаменатель должны быть положительными целыми числами.';
+
+  @override
   String get tool => 'Инструменты';
 
   @override

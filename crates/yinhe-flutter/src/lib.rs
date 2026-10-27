@@ -1392,10 +1392,10 @@ pub extern "C" fn yinhe_set_tool(tool: i32) -> i32 {
     scene::set_tool(tool)
 }
 
-/// 设置量化吸附档位：kind 0=Off 1=Auto 2=Fraction(num/den) 3=Absolute(ticks)。成功 1。
+/// 设置量化吸附档位：view 0=AR 1=PR；kind 0=Off 1=Auto 2=Fraction(num/den) 3=Absolute(ticks)。成功 1。
 #[unsafe(no_mangle)]
-pub extern "C" fn yinhe_set_quantize(kind: i32, num: u32, den: u32) -> i32 {
-    scene::set_quantize(kind, num, den)
+pub extern "C" fn yinhe_set_quantize(view: i32, kind: i32, num: u32, den: u32) -> i32 {
+    scene::set_quantize(view, kind, num, den)
 }
 
 /// 设置当前编辑轨（-1 = 无）。成功 1。

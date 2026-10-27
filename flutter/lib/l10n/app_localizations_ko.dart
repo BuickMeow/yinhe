@@ -189,6 +189,18 @@ class AppLocalizationsKo extends AppLocalizations {
   String get quantizeAuto => '자동';
 
   @override
+  String get quantizeCustom => '사용자 지정…';
+
+  @override
+  String get quantizeNumerator => '분자';
+
+  @override
+  String get quantizeDenominator => '분모';
+
+  @override
+  String get quantizeInvalidFraction => '분자와 분모는 양의 정수여야 합니다.';
+
+  @override
   String get tool => '도구';
 
   @override

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/midi_names.dart';
+import '../core/theme.dart';
 import '../l10n/app_localizations.dart';
 import 'frame.dart';
 
@@ -52,6 +53,144 @@ Future<double?> showDecimalInputDialog(
       errorText: errorText,
     ),
   );
+}
+
+/// 自定义量化：输入分子/分母，返回 `(分子, 分母)`；取消返回 null。
+Future<(int, int)?> showCustomQuantizeDialog(
+  BuildContext context, {
+  required int ppq,
+  required int numerator,
+  required int denominator,
+}) {
+  return showDialog<(int, int)>(
+    context: context,
+    builder: (_) => _CustomQuantizeDialog(
+      ppq: ppq,
+      numerator: numerator,
+      denominator: denominator,
+    ),
+  );
+}
+
+class _CustomQuantizeDialog extends StatefulWidget {
+  const _CustomQuantizeDialog({
+    required this.ppq,
+    required this.numerator,
+    required this.denominator,
+  });
+
+  final int ppq;
+  final int numerator;
+  final int denominator;
+
+  @override
+  State<_CustomQuantizeDialog> createState() => _CustomQuantizeDialogState();
+}
+
+class _CustomQuantizeDialogState extends State<_CustomQuantizeDialog> {
+  late final TextEditingController _num = TextEditingController(
+    text: '${widget.numerator}',
+  );
+  late final TextEditingController _den = TextEditingController(
+    text: '${widget.denominator}',
+  );
+
+  @override
+  void dispose() {
+    _num.dispose();
+    _den.dispose();
+    super.dispose();
+  }
+
+  (int, int)? get _fraction {
+    final num = int.tryParse(_num.text.trim());
+    final den = int.tryParse(_den.text.trim());
+    if (num == null || den == null || num <= 0 || den <= 0) {
+      return null;
+    }
+    // FFI 侧是 u32；超出范围视为无效，避免静默截断。
+    if (num > 0xFFFFFFFF || den > 0xFFFFFFFF) {
+      return null;
+    }
+    return (num, den);
+  }
+
+  int? get _ticks {
+    final fraction = _fraction;
+    if (fraction == null) {
+      return null;
+    }
+    final whole = widget.ppq * 4;
+    return (whole * fraction.$1 + fraction.$2 - 1) ~/ fraction.$2;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    final fraction = _fraction;
+    final ticks = _ticks;
+    return YinheDialog(
+      title: l.quantize,
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l.cancel),
+        ),
+        FilledButton(
+          onPressed: fraction == null
+              ? null
+              : () => Navigator.of(context).pop(fraction),
+          child: Text(l.ok),
+        ),
+      ],
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _num,
+                  autofocus: true,
+                  keyboardType: TextInputType.number,
+                  style: const TextStyle(fontSize: 14),
+                  decoration: dialogInputDecoration(l.quantizeNumerator),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8),
+                child: Text('/', style: TextStyle(fontSize: 16)),
+              ),
+              Expanded(
+                child: TextField(
+                  controller: _den,
+                  keyboardType: TextInputType.number,
+                  style: const TextStyle(fontSize: 14),
+                  decoration: dialogInputDecoration(l.quantizeDenominator),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              fraction == null ? l.quantizeInvalidFraction : '$ticks tick',
+              style: TextStyle(
+                fontSize: 12,
+                color: fraction == null
+                    ? YinheTheme.danger
+                    : YinheTheme.textSecondary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// 单行文本输入。返回 null = 取消。

@@ -396,6 +396,7 @@ class TopBar extends StatelessWidget {
       itemBuilder: (_) => [
         PopupMenuItem(value: '关闭', child: Text(l.quantizeOff)),
         PopupMenuItem(value: '自动', child: Text(l.quantizeAuto)),
+        PopupMenuItem(value: '自定义', child: Text(l.quantizeCustom)),
         for (final (label, ticks) in quantizePresetsForPpq(ppq))
           PopupMenuItem(
             value: label,

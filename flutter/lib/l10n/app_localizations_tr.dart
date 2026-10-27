@@ -189,6 +189,19 @@ class AppLocalizationsTr extends AppLocalizations {
   String get quantizeAuto => 'Otomatik';
 
   @override
+  String get quantizeCustom => 'Özel…';
+
+  @override
+  String get quantizeNumerator => 'Pay';
+
+  @override
+  String get quantizeDenominator => 'Payda';
+
+  @override
+  String get quantizeInvalidFraction =>
+      'Pay ve payda pozitif tam sayı olmalıdır.';
+
+  @override
   String get tool => 'Araçlar';
 
   @override
