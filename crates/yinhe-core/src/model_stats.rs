@@ -613,6 +613,11 @@ impl NoteLoader {
         model.note_count = self.note_count;
         model.tick_length = self.max_tick;
         model.max_note_len = self.max_len;
+        // `track_count` 在构造 loader 时可能是上界（MIDI 分批解析时最终轨数
+        // 要到解析结束才知道），只保留真实轨道对应的统计槽位。
+        let track_count = model.tracks.len();
+        self.track_counts.truncate(track_count);
+        self.track_audible.truncate(track_count);
         model.track_note_count = self.track_counts;
         model.track_audible_count = self.track_audible;
         for (k, bucket) in model.notes.iter().enumerate() {

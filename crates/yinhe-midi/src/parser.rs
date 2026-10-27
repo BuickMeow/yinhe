@@ -14,11 +14,13 @@ use std::path::Path;
 
 use rayon::prelude::*;
 
-use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
+use yinhe_core::{ConductorData, NoteEvent, NoteLoader, PcEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_types::automation::{
     MidiBinding, ParamDevice, binding_max, xsynth_param, xsynth_param_id_for_midi,
 };
-use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
+use yinhe_types::{
+    AutomationEvent, AutomationLane, AutomationTarget, KEY_COUNT, SegmentShape, TimeSigEvent,
+};
 
 use crate::encoding::MidiImportEncoding;
 use crate::error::MidiError;
@@ -64,7 +66,10 @@ pub fn parse_bytes_with_encoding(
 
         // Pass 1: collect conductor events (tempo + time-sig + key-sig + markers + song title + artist) across ALL tracks.
         // 克隆一个惰性迭代器逐事件扫描，扫完即丢，常驻 O(1)。
-        let (conductor, cond_meta) = collect_conductor(track_iter.clone(), encoding)?;
+        // 同时统计每个 key 的 NoteOn 数，给 NoteLoader 精确预分配（上界：
+        // 未配对的 NoteOn 也计入，容量略大不会影响正确性）。
+        let (conductor, cond_meta, per_key_count) =
+            collect_conductor(track_iter.clone(), encoding)?;
 
         // Pass 2: per-track parse → TrackData, run in parallel across tracks.
         // Each track parses independently (all state in parse_track is local),
@@ -83,36 +88,59 @@ pub fn parse_bytes_with_encoding(
         // FnMut 不能直接跨并行闭包共享，用 Mutex 包一层（每 track 锁一次，无竞争）。
         let done = std::sync::atomic::AtomicUsize::new(0);
         let progress = std::sync::Mutex::new(progress);
-        let parsed: Vec<Option<TrackData>> = track_events
-            .into_par_iter()
-            .enumerate()
-            .map(|(track_idx, events)| {
-                let r = parse_track(events, track_idx, encoding);
-                let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                if let Ok(mut p) = progress.lock() {
-                    p(LoadProgress {
-                        current_track: n,
-                        total_tracks,
-                    });
-                }
-                r
-            })
-            .collect::<Result<Vec<_>, _>>()?;
 
-        // Drop skipped tracks and assign fallback names / final track indices by position.
+        // 音符边解析边写入最终存储：一批 = 一个并行波次（核数条轨道），
+        // 解析完立刻喂 NoteLoader 并释放该轨的 Vec<NoteEvent>。旧实现等全部
+        // 轨道解析完再一次性喂，导致"全部轨道暂存 + 最终存储"两份同时常驻。
+        //
+        // 不按音符数切批：parse_track 的产出单位是整条轨道（为保证 id 顺序，
+        // 每轨要先整体排序再发号），轨内无法拆批。批次大小取设备并行度，
+        // 既是内存下界，也避免引入与硬件无关的魔法数。
+        let mut loader = NoteLoader::new(total_tracks, 1, per_key_count);
         let mut tracks: Vec<TrackData> = Vec::with_capacity(total_tracks);
-        let mut per_track_notes: Vec<Vec<NoteEvent>> = Vec::with_capacity(total_tracks);
-        for mut td in parsed.into_iter().flatten() {
-            if td.name.is_empty() {
-                td.name = format!("Track {}", tracks.len() + 1);
+        let batch_tracks = rayon::current_num_threads().max(1);
+        for (batch_idx, batch) in track_events.chunks(batch_tracks).enumerate() {
+            let base_track = batch_idx * batch_tracks;
+            let parsed: Vec<Option<TrackData>> = batch
+                .to_vec()
+                .into_par_iter()
+                .enumerate()
+                .map(|(i, events)| {
+                    let r = parse_track(events, base_track + i, encoding);
+                    let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    if let Ok(mut p) = progress.lock() {
+                        p(LoadProgress {
+                            current_track: n,
+                            total_tracks,
+                        });
+                    }
+                    r
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+
+            // 保持原轨顺序：最终轨号 = 保留下来的轨道在 tracks 中的位置。
+            for mut td in parsed.into_iter().flatten() {
+                if td.name.is_empty() {
+                    td.name = format!("Track {}", tracks.len() + 1);
+                }
+                // 用最终 model 位置修正 lane.track，避免与后续插入 conductor 后的编号不一致
+                let track_idx = tracks.len() as u16;
+                for lane in td.automation_lanes.iter_mut() {
+                    lane.track = track_idx;
+                }
+                let notes = std::mem::take(&mut td.notes);
+                tracks.push(td);
+                for note in notes {
+                    loader.feed(
+                        note.key,
+                        track_idx,
+                        note.start_tick,
+                        note.end_tick,
+                        note.velocity,
+                        note.id,
+                    );
+                }
             }
-            // 用最终 model 位置修正 lane.track，避免与后续插入 conductor 后的编号不一致
-            for lane in td.automation_lanes.iter_mut() {
-                lane.track = tracks.len() as u16;
-            }
-            per_track_notes.push(td.notes);
-            td.notes = Vec::new(); // notes moved out, clear to avoid confusion
-            tracks.push(td);
         }
 
         let meta = ProjectMeta {
@@ -128,7 +156,7 @@ pub fn parse_bytes_with_encoding(
             meta,
             ..Default::default()
         };
-        model.load_track_notes(per_track_notes);
+        loader.finish(&mut model);
         // 自动化事件 id 不落盘：解析后统一发号（会话内身份，选择集/undo 用）。
         model.renumber_automation_ids();
         model.rebuild();
@@ -176,7 +204,7 @@ struct ConductorMeta {
 fn collect_conductor(
     track_iter: midly::TrackIter,
     encoding: MidiImportEncoding,
-) -> Result<(ConductorData, ConductorMeta), MidiError> {
+) -> Result<(ConductorData, ConductorMeta, [u32; KEY_COUNT]), MidiError> {
     let mut tempo_events: Vec<AutomationEvent> = Vec::new();
     let mut time_sig: Vec<TimeSigEvent> = Vec::new();
     let mut key_sig: Vec<yinhe_types::KeySigEvent> = Vec::new();
@@ -184,6 +212,8 @@ fn collect_conductor(
     let mut lyrics: Vec<yinhe_types::LyricsEvent> = Vec::new();
     let mut song_title: Option<String> = None;
     let mut artist: Option<String> = None;
+    // 每个 key 的 NoteOn 数（含未配对）：NoteLoader 精确预分配容量的上界。
+    let mut per_key_count = [0u32; KEY_COUNT];
 
     for (track_idx, track_result) in track_iter.enumerate() {
         let events = track_result?;
@@ -262,6 +292,13 @@ fn collect_conductor(
                         text: encoding.decode(text),
                     });
                 }
+                // 顺带统计音符数，避免加载时为精确预分配再扫一遍全部事件。
+                midly::TrackEventKind::Midi {
+                    message: midly::MidiMessage::NoteOn { key, vel },
+                    ..
+                } if vel.as_int() > 0 => {
+                    per_key_count[key.as_int() as usize] += 1;
+                }
                 _ => {}
             }
         }
@@ -287,6 +324,7 @@ fn collect_conductor(
             chord: Vec::new(),
         },
         ConductorMeta { song_title, artist },
+        per_key_count,
     ))
 }
 
