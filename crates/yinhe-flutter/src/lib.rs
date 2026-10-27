@@ -1585,6 +1585,35 @@ pub extern "C" fn yinhe_clear_selection() -> i32 {
     scene::clear_selection()
 }
 
+/// 人性化：时间/力度/时值三路随机偏差幅度。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_humanize(timing: u32, velocity: u32, gate: u32) -> i32 {
+    scene::humanize_selection(timing, velocity, gate)
+}
+
+/// 批量处理：字段编辑 + 整体变速，一次 undo。
+#[allow(clippy::too_many_arguments)]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_batch_edit(
+    velocity_op: i32,
+    velocity_value: f64,
+    gate_op: i32,
+    gate_value: f64,
+    key_op: i32,
+    key_value: f64,
+    tick_op: i32,
+    tick_value: f64,
+    stretch_percent: i32,
+) -> i32 {
+    scene::batch_edit(
+        (velocity_op, velocity_value),
+        (gate_op, gate_value),
+        (key_op, key_value),
+        (tick_op, tick_value),
+        stretch_percent,
+    )
+}
+
 /// Flutter 帧驱动：请求渲染一帧并等待完成（纹理与浮层同帧产出）。成功 1。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_render_frame() -> i32 {

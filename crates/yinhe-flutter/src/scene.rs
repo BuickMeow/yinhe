@@ -1991,6 +1991,111 @@ fn select_track_all(doc: &mut Document, track: u16, arrange: bool) -> bool {
     true
 }
 
+/// 人性化（可调幅度）：时间/力度/时值三路独立随机偏差。
+///
+/// 幅度全 0 = 不改。一次操作一个 undo。
+pub fn humanize_selection(timing: u32, velocity: u32, gate: u32) -> i32 {
+    use yinhe_editor_core::HumanizeParams;
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let params = HumanizeParams {
+        timing,
+        velocity: velocity.min(127) as u8,
+        gate,
+    };
+    if params.is_noop() {
+        return 0;
+    }
+    let before = doc.capture_snapshot();
+    let Some(action) = doc.humanize_selected(params) else {
+        return 0;
+    };
+    doc.push_undo(action, "人性化", before);
+    doc.edit.pianoroll_view.base.dirty = true;
+    let model = doc.data.model.clone();
+    refresh_snapshot(&mut s);
+    drop(s);
+    crate::audio::reload_notes(model);
+    1
+}
+
+/// 批量处理：字段编辑 + 整体变速，所有改动合成一次 undo。
+///
+/// 字段编码 `(op, value)`：0=不改、1=设值、2=加、3=减、4=乘、5=除。
+/// `stretch_percent`：100 = 不变，按选框跨度整体缩放。
+pub fn batch_edit(
+    velocity: (i32, f64),
+    gate: (i32, f64),
+    key: (i32, f64),
+    tick: (i32, f64),
+    stretch_percent: i32,
+) -> i32 {
+    use yinhe_editor_core::document::note_edit::NoteField;
+    use yinhe_editor_core::num_expr::NumOp;
+    fn ops(code: i32, value: f64) -> Option<Vec<NumOp>> {
+        match code {
+            1 => Some(vec![NumOp::Set(value)]),
+            2 => Some(vec![NumOp::Add(value)]),
+            3 => Some(vec![NumOp::Add(-value)]),
+            4 if value != 0.0 => Some(vec![NumOp::Mul(value)]),
+            5 if value != 0.0 => Some(vec![NumOp::Div(value)]),
+            _ => None,
+        }
+    }
+
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    if doc.edit.selected.is_empty() {
+        return 0;
+    }
+    let before = doc.capture_snapshot();
+    let mut actions = Vec::new();
+
+    let pct = stretch_percent.clamp(1, 10_000);
+    if pct != 100
+        && let Some(a) = doc.scale_selected_span(pct as u64, 100)
+    {
+        actions.push(a);
+    }
+    for (field, (code, value)) in [
+        (NoteField::Velocity, velocity),
+        (NoteField::Gate, gate),
+        (NoteField::Key, key),
+        (NoteField::Tick, tick),
+    ] {
+        let Some(ops) = ops(code, value) else {
+            continue;
+        };
+        if let Some(a) = doc.apply_note_field_edit(field, &ops) {
+            actions.push(a);
+        }
+    }
+    if actions.is_empty() {
+        return 0;
+    }
+    let undo = match actions.len() {
+        1 => actions.into_iter().next(),
+        _ => Some(yinhe_editor_core::history::UndoAction::Composite(actions)),
+    };
+    if let Some(undo) = undo {
+        doc.push_undo(undo, "批量处理", before);
+    }
+    doc.edit.pianoroll_view.base.dirty = true;
+    let model = doc.data.model.clone();
+    refresh_snapshot(&mut s);
+    drop(s);
+    crate::audio::reload_notes(model);
+    1
+}
+
 /// 框选批量操作（编号与桌面 transport bar「操作」菜单一致）。
 ///
 /// `scope`: 0 = 音符（PR/AR 共用 `edit.selected`），1 = 当前 AM lane 的锚点。
