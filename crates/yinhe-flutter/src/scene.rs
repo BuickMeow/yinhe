@@ -2228,13 +2228,14 @@ pub fn selection_action(scope: i32, action: i32) -> i32 {
         return 0;
     };
     let panel = s.automation_panel.clone();
+    let view_mode = s.view_mode;
     let Some(doc) = s.document.as_mut() else {
         return 0;
     };
     let changed = if scope == 1 {
         automation_selection_action(doc, &panel, action)
     } else {
-        note_selection_action(doc, action)
+        note_selection_action(doc, action, view_mode)
     };
     if !changed {
         return 0;
@@ -2248,7 +2249,7 @@ pub fn selection_action(scope: i32, action: i32) -> i32 {
 }
 
 /// 音符选区批量操作（PR/AR 共用）。
-fn note_selection_action(doc: &mut Document, action: i32) -> bool {
+fn note_selection_action(doc: &mut Document, action: i32, view_mode: ViewMode) -> bool {
     use yinhe_editor_core::{FlipAxis, HumanizeParams};
     if doc.edit.selected.is_empty() {
         return false;
@@ -2273,7 +2274,14 @@ fn note_selection_action(doc: &mut Document, action: i32) -> bool {
         ),
         17 => ("填缝", doc.fill_gaps_selected()),
         18 => ("合并音符", doc.merge_adjacent_selected()),
-        23 => ("网格切割", doc.split_selection_by_grid()),
+        23 => (
+            "网格切割",
+            if view_mode == ViewMode::Arrangement {
+                doc.split_selection_by_grid_arrangement()
+            } else {
+                doc.split_selection_by_grid()
+            },
+        ),
         _ => return false,
     };
     let Some(undo) = undo else {
@@ -2283,6 +2291,7 @@ fn note_selection_action(doc: &mut Document, action: i32) -> bool {
     // 网格切割会清空选框（与桌面一致）。
     if action == 23 {
         doc.edit.sel_rect.clear();
+        doc.edit.arr_sel_rect.clear();
         doc.edit.selected.clear();
     }
     true

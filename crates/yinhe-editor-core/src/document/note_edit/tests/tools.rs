@@ -170,6 +170,34 @@ fn split_selection_by_grid_multi_segments() {
     }
 }
 
+/// AR 网格切割：用 AR 选框（tick × track 行）和 AR 量化，而不是 PR 量化。
+#[test]
+fn split_selection_by_grid_arrangement_uses_ar_quantize() {
+    let mut doc = make_doc_with_note(); // track 0, k60 [100,200)
+    doc.edit.quantize_pianoroll = crate::quantize::QuantizePreset::Absolute(480);
+    doc.edit.quantize_arrange = crate::quantize::QuantizePreset::Absolute(120);
+    doc.add_note(0, ev(0, 480, 62));
+    doc.edit.arr_sel_rect = vec![(0.0, 480.0, 0, 0)];
+
+    doc.split_selection_by_grid_arrangement()
+        .expect("AR 网格切割应生效");
+    // AR 量化 120 → k62 [0,480) 切成 4 段；若误用 PR 的 480 则无内部切点。
+    assert_eq!(doc.data.model.notes[62].len(), 4);
+}
+
+/// AR 网格切割使用 AR 的轨道显隐，而不是 PR 的轨道显隐。
+#[test]
+fn split_selection_by_grid_arrangement_respects_ar_visibility() {
+    let mut doc = make_doc_with_note();
+    doc.edit.quantize_arrange = crate::quantize::QuantizePreset::Absolute(120);
+    doc.edit.arr_sel_rect = vec![(120.0, 480.0, 0, 0)];
+    doc.edit.track_visible = vec![false];
+    assert!(
+        doc.split_selection_by_grid_arrangement().is_none(),
+        "AR 不可见轨不切"
+    );
+}
+
 /// 网格切割：空选框 / 不可见轨 / interval 0 都返回 None。
 #[test]
 fn split_selection_by_grid_returns_none_when_scope_blocks() {

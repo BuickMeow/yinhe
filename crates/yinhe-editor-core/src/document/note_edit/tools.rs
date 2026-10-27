@@ -88,32 +88,78 @@ impl Document {
     ///
     /// 返回副本制 undo（before = 原音符，after = 各段）。
     pub fn split_selection_by_grid(&mut self) -> Option<UndoAction> {
+        self.split_selection_by_grid_in(false)
+    }
+
+    /// AR 网格切割：用 AR 的量化档位与 AR 可见轨/选框（tick × track 行）。
+    pub fn split_selection_by_grid_arrangement(&mut self) -> Option<UndoAction> {
+        self.split_selection_by_grid_in(true)
+    }
+
+    fn split_selection_by_grid_in(&mut self, arrangement: bool) -> Option<UndoAction> {
         let ppq = self.data.model.meta.ppq;
         let (sig_num, sig_den) = self.data.model.tempo_map.time_sig_default;
-        let interval = self
-            .edit
-            .quantize_pianoroll
-            .resolved_with_time_sig(
-                self.edit.pianoroll_view.base.pixels_per_tick,
-                ppq,
-                sig_num,
-                sig_den,
-                true,
-            )
-            .tick_interval(ppq);
-        if interval == 0 || self.edit.sel_rect.rects.is_empty() {
+        // AR 只画小节/拍线，Auto 不解析到 1/16 以下；PR 则有更细的网格。
+        let (interval, rects, visible) = if arrangement {
+            let interval = self
+                .edit
+                .quantize_arrange
+                .resolved_with_time_sig(
+                    self.edit.arrange_view.base.pixels_per_tick,
+                    ppq,
+                    sig_num,
+                    sig_den,
+                    false,
+                )
+                .tick_interval(ppq);
+            let rects: Vec<(f64, f64, u8, u8, u16, u16)> = self
+                .edit
+                .arr_sel_rect
+                .iter()
+                .map(|&(t0, t1, r0, r1)| {
+                    (
+                        t0,
+                        t1,
+                        0,
+                        yinhe_types::MAX_KEY,
+                        r0.min(u16::MAX as usize) as u16,
+                        r1.min(u16::MAX as usize) as u16,
+                    )
+                })
+                .collect();
+            (interval, rects, &self.edit.track_visible)
+        } else {
+            let interval = self
+                .edit
+                .quantize_pianoroll
+                .resolved_with_time_sig(
+                    self.edit.pianoroll_view.base.pixels_per_tick,
+                    ppq,
+                    sig_num,
+                    sig_den,
+                    true,
+                )
+                .tick_interval(ppq);
+            let rects: Vec<(f64, f64, u8, u8, u16, u16)> = self
+                .edit
+                .sel_rect
+                .rects
+                .iter()
+                .map(|&(t0, t1, k0, k1)| (t0, t1, k0, k1, 0, u16::MAX))
+                .collect();
+            (interval, rects, &self.edit.track_pianoroll_visible)
+        };
+        if interval == 0 || rects.is_empty() {
             return None;
         }
-        let rects: Vec<(f64, f64, u8, u8)> = self.edit.sel_rect.rects.clone();
         let interval = interval as u64;
         let mut before: Vec<(yinhe_types::Note, u8)> = Vec::new();
         let mut after: Vec<(yinhe_types::Note, u8)> = Vec::new();
         {
             let selected = &self.edit.track_selected;
-            let visible = &self.edit.track_pianoroll_visible;
             let model = Arc::make_mut(&mut self.data.model);
             let max_len = model.max_note_len;
-            for &(t0f, t1f, key_lo, key_hi) in &rects {
+            for &(t0f, t1f, key_lo, key_hi, track_lo, track_hi) in &rects {
                 let t0 = t0f.max(0.0) as u32;
                 let t1 = t1f.max(0.0) as u32;
                 if t1 <= t0 {
@@ -126,9 +172,14 @@ impl Document {
                             t0.saturating_sub(max_len),
                             t1.saturating_add(1),
                             |n| {
+                                let track = n.track;
                                 n.start_tick < t1
                                     && n.end_tick > t0
-                                    && (selected.is_empty() || selected.contains(&n.track))
+                                    && track >= track_lo
+                                    && track <= track_hi
+                                    && (arrangement
+                                        || selected.is_empty()
+                                        || selected.contains(&n.track))
                                     && visible.get(n.track as usize).copied().unwrap_or(true)
                                     && !grid_cuts_in_note(n, t0, t1, interval).is_empty()
                             },
