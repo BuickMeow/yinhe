@@ -2258,14 +2258,50 @@ fn note_selection_action(doc: &mut Document, action: i32, view_mode: ViewMode) -
         return false;
     }
     let before = doc.capture_snapshot();
+    let arrangement = view_mode == ViewMode::Arrangement;
     let (label, undo) = match action {
-        11 => ("删除选区", doc.delete_selected()),
-        10 => ("重复选区", doc.duplicate_selected()),
+        11 => (
+            "删除选区",
+            if arrangement {
+                doc.delete_selected_with_automation()
+            } else {
+                doc.delete_selected()
+            },
+        ),
+        10 => (
+            "重复选区",
+            if arrangement {
+                doc.duplicate_selected_with_automation()
+            } else {
+                doc.duplicate_selected()
+            },
+        ),
         12 => ("升高八度", doc.transpose_selected(12)),
         13 => ("降低八度", doc.transpose_selected(-12)),
-        19 => ("时值 ×2", doc.scale_selected_span(2, 1)),
-        20 => ("时值 ÷2", doc.scale_selected_span(1, 2)),
-        21 => ("水平翻转", doc.flip_selected_notes(FlipAxis::Horizontal)),
+        19 => (
+            "时值 ×2",
+            if arrangement {
+                doc.scale_selected_span_with_automation(2, 1)
+            } else {
+                doc.scale_selected_span(2, 1)
+            },
+        ),
+        20 => (
+            "时值 ÷2",
+            if arrangement {
+                doc.scale_selected_span_with_automation(1, 2)
+            } else {
+                doc.scale_selected_span(1, 2)
+            },
+        ),
+        21 => (
+            "水平翻转",
+            if arrangement {
+                doc.flip_selected_with_automation(FlipAxis::Horizontal)
+            } else {
+                doc.flip_selected_notes(FlipAxis::Horizontal)
+            },
+        ),
         22 => ("垂直翻转", doc.flip_selected_notes(FlipAxis::Vertical)),
         16 => (
             "人性化",

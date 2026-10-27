@@ -20,6 +20,7 @@ fn next_doc_id() -> u64 {
     NEXT_DOC_ID.fetch_add(1, Ordering::Relaxed)
 }
 
+pub mod arrange_edit;
 pub mod arrange_move;
 pub mod audio_clip_edit;
 pub mod automation_edit;

@@ -285,7 +285,8 @@ impl Document {
         }
 
         // ── 3. Offset selection rects to follow ──
-        self.edit.selected.offset_ticks(delta_ticks);
+        // 同时更新 sel_rect / arr_sel_rect，保证 AR 选框跟随副本。
+        self.edit.offset_sel_ticks(delta_ticks);
         if delta_tracks != 0 {
             self.edit.selected.offset_tracks(delta_tracks);
         }
@@ -488,7 +489,8 @@ impl Document {
         }
 
         // ── 3. Offset selection rects to follow ──
-        self.edit.selected.offset_ticks(delta_ticks);
+        // 同时更新 sel_rect / arr_sel_rect，保证 AR 选框跟随副本。
+        self.edit.offset_sel_ticks(delta_ticks);
         if delta_tracks != 0 {
             self.edit.selected.offset_tracks(delta_tracks);
         }

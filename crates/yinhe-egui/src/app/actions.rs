@@ -202,8 +202,13 @@ impl App {
         if self.delete_selected_audio_clips() {
             return;
         }
+        let is_arrange = self.view_focus == crate::app::ViewFocus::Arrange;
         self.with_undo(t!("undo.delete_notes").as_ref(), |doc| {
-            doc.delete_selected()
+            if is_arrange {
+                doc.delete_selected_with_automation()
+            } else {
+                doc.delete_selected()
+            }
         });
     }
 
@@ -260,8 +265,13 @@ impl App {
     /// Duplicate all selected notes (Ctrl+D / Cmd+D).
     /// New notes are placed after the original selection, offset by the selection duration.
     pub(crate) fn duplicate_selected_notes(&mut self) {
+        let is_arrange = self.view_focus == crate::app::ViewFocus::Arrange;
         self.with_undo(t!("undo.duplicate_notes").as_ref(), |doc| {
-            doc.duplicate_selected()
+            if is_arrange {
+                doc.duplicate_selected_with_automation()
+            } else {
+                doc.duplicate_selected()
+            }
         });
     }
 
@@ -281,20 +291,38 @@ impl App {
             yinhe_editor_core::FlipAxis::Horizontal => t!("undo.flip_horizontal"),
             yinhe_editor_core::FlipAxis::Vertical => t!("undo.flip_vertical"),
         };
-        self.with_undo(label.as_ref(), |doc| doc.flip_selected_notes(axis));
+        let is_arrange = self.view_focus == crate::app::ViewFocus::Arrange;
+        let with_automation = is_arrange && axis == yinhe_editor_core::FlipAxis::Horizontal;
+        self.with_undo(label.as_ref(), |doc| {
+            if with_automation {
+                doc.flip_selected_with_automation(axis)
+            } else {
+                doc.flip_selected_notes(axis)
+            }
+        });
     }
 
     /// 变速：选中跨度 ×2（变慢）。
     pub(crate) fn double_selected_length(&mut self) {
+        let is_arrange = self.view_focus == crate::app::ViewFocus::Arrange;
         self.with_undo(t!("undo.rescale_span").as_ref(), |doc| {
-            doc.scale_selected_span(2, 1)
+            if is_arrange {
+                doc.scale_selected_span_with_automation(2, 1)
+            } else {
+                doc.scale_selected_span(2, 1)
+            }
         });
     }
 
     /// 变速：选中跨度 ÷2（变快）。
     pub(crate) fn half_selected_length(&mut self) {
+        let is_arrange = self.view_focus == crate::app::ViewFocus::Arrange;
         self.with_undo(t!("undo.rescale_span").as_ref(), |doc| {
-            doc.scale_selected_span(1, 2)
+            if is_arrange {
+                doc.scale_selected_span_with_automation(1, 2)
+            } else {
+                doc.scale_selected_span(1, 2)
+            }
         });
     }
 
