@@ -8016,6 +8016,7 @@ dependencies = [
 name = "yinhe-memtrace"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "mimalloc",
  "tikv-jemalloc-ctl",
  "tikv-jemallocator",

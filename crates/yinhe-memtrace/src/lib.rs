@@ -122,7 +122,28 @@ pub fn purge_free_pages() {
 
 #[cfg(target_os = "android")]
 pub fn purge_free_pages() {
-    // Android 用系统分配器（scudo），无手动 purge 接口。
+    use std::sync::OnceLock;
+
+    /// bionic `M_PURGE`（NDK `malloc.h`）：API 28+ 生效，26/27 调用为 no-op。
+    const M_PURGE: i32 = -101;
+    type Mallopt = unsafe extern "C" fn(i32, i32) -> i32;
+
+    static MALLOPT: OnceLock<Option<Mallopt>> = OnceLock::new();
+    let mallopt = MALLOPT.get_or_init(|| {
+        // `mallopt` 自 API 26 才存在，而 minSdk 是 24：必须运行时探测，
+        // 否则 API 24/25 设备加载 .so 时会因未解析符号直接失败。
+        let sym = unsafe { libc::dlsym(libc::RTLD_DEFAULT, b"mallopt\0".as_ptr().cast()) };
+        if sym.is_null() {
+            None
+        } else {
+            // SAFETY: 符号存在时签名与 bionic 的 int mallopt(int, int) 一致。
+            Some(unsafe { std::mem::transmute::<*mut std::ffi::c_void, Mallopt>(sym) })
+        }
+    });
+    if let Some(mallopt) = *mallopt {
+        // SAFETY: 只传常量选项；不支持的版本会自行忽略。
+        unsafe { mallopt(M_PURGE, 0) };
+    }
 }
 
 #[cfg(all(not(target_os = "macos"), not(target_os = "android")))]
