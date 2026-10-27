@@ -4,48 +4,85 @@ import '../core/theme.dart';
 import '../dialogs/sheet.dart';
 import '../l10n/app_localizations.dart';
 
-/// 选区操作选择器：弹网格 → 危险操作二次确认 → 返回动作编号。
-Future<int?> showSelectionActionPicker(
+/// 长按选区操作菜单：网格常驻，点外侧/返回才关闭。
+///
+/// 点某个操作只执行回调，不自动关闭，方便连续多次操作。
+Future<void> showSelectionActionMenu(
   BuildContext context, {
   required bool automation,
-}) async {
-  final l = AppLocalizations.of(context);
-  final value = await showSelectionActionGrid(
-    context,
-    actions: selectionActionItems(l, automation: automation),
+  required Future<void> Function(int id) onAction,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: YinheTheme.bg,
+    barrierColor: Colors.black.withValues(alpha: 0.62),
+    isScrollControlled: true,
+    useSafeArea: false,
+    builder: (ctx) {
+      final l = AppLocalizations.of(ctx);
+      return SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
+          child: GridView.count(
+            crossAxisCount: 8,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            childAspectRatio: 1.05,
+            mainAxisSpacing: 2,
+            crossAxisSpacing: 2,
+            children: [
+              for (final a in selectionActionItems(l, automation: automation))
+                _SelectionGridCell(
+                  action: a,
+                  onTap: a.enabled
+                      ? () => _pickSelectionAction(ctx, a.value, onAction)
+                      : null,
+                ),
+            ],
+          ),
+        ),
+      );
+    },
   );
-  if (value == null) {
-    return null;
-  }
+}
+
+/// 危险操作先二次确认；普通操作直接交给常驻菜单的回调。
+Future<void> _pickSelectionAction(
+  BuildContext ctx,
+  String value,
+  Future<void> Function(int id) onAction,
+) async {
   final id = int.tryParse(value);
   if (id == null) {
-    return null;
+    return;
   }
   if (id == 11) {
-    if (!context.mounted) {
-      return null;
+    if (!ctx.mounted) {
+      return;
     }
+    final l = AppLocalizations.of(ctx);
     final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
+      context: ctx,
+      builder: (dialogCtx) => AlertDialog(
         title: Text(l.deleteSelectionConfirm),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
             child: Text(l.cancel),
           ),
           FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
             child: Text(l.delete),
           ),
         ],
       ),
     );
     if (ok != true) {
-      return null;
+      return;
     }
   }
-  return id;
+  await onAction(id);
 }
 
 /// 14 个选区操作，顺序 = 两行 7 列网格。
@@ -130,44 +167,6 @@ List<SheetAction> selectionActionItems(
     ),
     SheetAction(value: '24', label: l.batchProcess, icon: Icons.tune),
   ];
-}
-
-/// 长按选框/AM 选区：两行图标网格操作面板。
-///
-/// 每格「图标 + 文字」；点一格返回其 `value`，点蒙版返回 null。
-Future<String?> showSelectionActionGrid(
-  BuildContext context, {
-  required List<SheetAction> actions,
-  int columns = 8,
-}) {
-  return showModalBottomSheet<String>(
-    context: context,
-    backgroundColor: YinheTheme.bg,
-    barrierColor: Colors.black.withValues(alpha: 0.62),
-    isScrollControlled: true,
-    useSafeArea: false,
-    builder: (ctx) => SafeArea(
-      top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
-        child: GridView.count(
-          crossAxisCount: columns,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          childAspectRatio: 1.05,
-          mainAxisSpacing: 2,
-          crossAxisSpacing: 2,
-          children: [
-            for (final a in actions)
-              _SelectionGridCell(
-                action: a,
-                onTap: a.enabled ? () => Navigator.of(ctx).pop(a.value) : null,
-              ),
-          ],
-        ),
-      ),
-    ),
-  );
 }
 
 /// 网格里的一格：图标在上、文字在下（最多两行）。

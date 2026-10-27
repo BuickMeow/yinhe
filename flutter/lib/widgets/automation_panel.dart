@@ -274,28 +274,45 @@ class _AutomationPanelState extends State<AutomationPanel> {
     rust.setAutomationSelection(_selectedTicks);
   }
 
+  bool _selectionMenuBusy = false;
+
   /// 打开 AM 选区操作网格（仅铅笔/框选出的锚点）。
-  Future<void> _openSelectionActions() async {
-    final id = await showSelectionActionPicker(context, automation: true);
-    if (!mounted || id == null) {
+  ///
+  /// 菜单常驻，执行一个操作后不自动关闭；点外侧/返回才退出。
+  Future<void> _openSelectionActions() {
+    return showSelectionActionMenu(
+      context,
+      automation: true,
+      onAction: _runSelectionAction,
+    );
+  }
+
+  Future<void> _runSelectionAction(int id) async {
+    if (_selectionMenuBusy) {
       return;
     }
-    if (id == 24) {
-      final spec = await showBatchEditDialog(context, automation: true);
-      if (!mounted || spec == null) {
+    _selectionMenuBusy = true;
+    try {
+      if (id == 24) {
+        final spec = await showBatchEditDialog(context, automation: true);
+        if (!mounted || spec == null) {
+          return;
+        }
+        if (rust.automationBatchEdit(spec.value, spec.tick) == 1) {
+          setState(() {});
+          widget.onReload();
+        }
         return;
       }
-      if (rust.automationBatchEdit(spec.value, spec.tick) == 1) {
-        _clearSelection();
+      if (rust.selectionAction(1, id) == 1) {
+        if (id == 11) {
+          _clearSelection();
+        }
         setState(() {});
         widget.onReload();
       }
-      return;
-    }
-    if (rust.selectionAction(1, id) == 1) {
-      _clearSelection();
-      setState(() {});
-      widget.onReload();
+    } finally {
+      _selectionMenuBusy = false;
     }
   }
 

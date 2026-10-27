@@ -1,82 +1,87 @@
 part of 'studio_shell.dart';
 
 mixin _ShellMenus on _ShellBase {
+  bool _selectionMenuBusy = false;
+
   /// 长按完成但未移动：选区操作网格（PR/AR 音符）。
+  ///
+  /// 菜单常驻，执行一个操作后不自动关闭；点外侧/返回才退出，
+  /// 方便连续做多次操作。
   @override
   void _showSelectionMenu() {
     _resetInteraction();
-    unawaited(_applySelectionAction(0));
+    unawaited(
+      showSelectionActionMenu(
+        context,
+        automation: false,
+        onAction: _runSelectionAction,
+      ),
+    );
   }
 
-  /// 弹选区操作网格并执行；`scope` 0=音符，1=AM 锚点。
-  Future<void> _applySelectionAction(int scope) async {
-    final id = await showSelectionActionPicker(context, automation: scope == 1);
-    if (!mounted || id == null) {
+  /// 执行选区菜单里的一个音符操作；菜单位于其上方，不会自动关闭。
+  Future<void> _runSelectionAction(int id) async {
+    if (_selectionMenuBusy) {
       return;
     }
-    // 复制：写入应用内剪贴板，不产生 undo。
-    if (id == 1) {
-      if (rust.copySelection() == 1) {
-        showSnack(context, l.copied, duration: const Duration(seconds: 1));
+    _selectionMenuBusy = true;
+    try {
+      // 复制：写入应用内剪贴板，不产生 undo。
+      if (id == 1) {
+        if (rust.copySelection() == 1) {
+          showSnack(context, l.copied, duration: const Duration(seconds: 1));
+        }
+        return;
       }
-      return;
-    }
-    // 剪切 = 复制 + 删除（删除本身一步 undo）。
-    if (id == 2) {
-      if (rust.copySelection() == 1) {
-        if (rust.selectionAction(scope, 11) == 1) {
+      // 剪切 = 复制 + 删除（删除本身一步 undo）。
+      if (id == 2) {
+        if (rust.copySelection() == 1) {
+          if (rust.selectionAction(0, 11) == 1) {
+            _refreshDocumentMeta();
+          }
+        }
+        return;
+      }
+      // 人性化：幅度由对话框决定。
+      if (id == 16) {
+        final spec = await showHumanizeDialog(context);
+        if (!mounted || spec == null) {
+          return;
+        }
+        if (rust.humanize(spec.timing, spec.velocity, spec.gate) == 1) {
           _refreshDocumentMeta();
         }
-      }
-      return;
-    }
-    // 人性化：幅度由对话框决定，不再固定 8/8/8。
-    if (id == 16) {
-      final spec = await showHumanizeDialog(context);
-      if (!mounted || spec == null) {
         return;
       }
-      if (rust.humanize(spec.timing, spec.velocity, spec.gate) == 1) {
-        _refreshDocumentMeta();
-      }
-      return;
-    }
-    // 批量处理：音符或 AM 锚点，字段固定设值，一次 undo。
-    if (id == 24) {
-      final automation = scope == 1;
-      final range = automation ? null : rust.selectionRange();
-      final spec = await showBatchEditDialog(
-        context,
-        automation: automation,
-        selectionRange: range,
-        grid: _grid.value,
-        ppq: _ppq.round(),
-      );
-      if (!mounted || spec == null) {
-        return;
-      }
-      final ok = automation
-          ? rust.automationBatchEdit(spec.value, spec.tick)
-          : rust.batchEdit(
+      // 批量处理：音符。
+      if (id == 24) {
+        final spec = await showBatchEditDialog(
+          context,
+          automation: false,
+          selectionRange: rust.selectionRange(),
+          grid: _grid.value,
+          ppq: _ppq.round(),
+        );
+        if (!mounted || spec == null) {
+          return;
+        }
+        if (rust.batchEdit(
               spec.value,
               spec.gate,
               spec.key,
               spec.tick,
               spec.stretch,
-            );
-      if (ok == 1) {
-        _refreshDocumentMeta();
-        if (automation) {
-          _loadAutomation();
+            ) ==
+            1) {
+          _refreshDocumentMeta();
         }
+        return;
       }
-      return;
-    }
-    if (rust.selectionAction(scope, id) == 1) {
-      _refreshDocumentMeta();
-      if (scope == 1) {
-        _loadAutomation();
+      if (rust.selectionAction(0, id) == 1) {
+        _refreshDocumentMeta();
       }
+    } finally {
+      _selectionMenuBusy = false;
     }
   }
 
