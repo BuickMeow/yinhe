@@ -52,6 +52,51 @@ class AppLocalizationsEn extends AppLocalizations {
   String get opGridSplit => 'Grid split';
 
   @override
+  String get batchProcess => 'Batch edit';
+
+  @override
+  String get humanizeTiming => 'Timing';
+
+  @override
+  String get humanizeVelocity => 'Velocity';
+
+  @override
+  String get humanizeGate => 'Gate';
+
+  @override
+  String get batchVelocity => 'Velocity';
+
+  @override
+  String get batchGate => 'Gate';
+
+  @override
+  String get batchKey => 'Key';
+
+  @override
+  String get batchTick => 'Tick';
+
+  @override
+  String get batchStretch => 'Stretch';
+
+  @override
+  String get batchOpNone => 'No change';
+
+  @override
+  String get batchOpSet => 'Set';
+
+  @override
+  String get batchOpAdd => 'Add';
+
+  @override
+  String get batchOpSub => 'Subtract';
+
+  @override
+  String get batchOpMul => 'Multiply';
+
+  @override
+  String get batchOpDiv => 'Divide';
+
+  @override
   String get deleteSelectionConfirm => 'Delete selected events?';
 
   @override

@@ -30,6 +30,39 @@ mixin _ShellMenus on _ShellBase {
       }
       return;
     }
+    // 人性化：幅度由对话框决定，不再固定 8/8/8。
+    if (id == 16) {
+      final spec = await showHumanizeDialog(context);
+      if (!mounted || spec == null) {
+        return;
+      }
+      if (rust.humanize(spec.timing, spec.velocity, spec.gate) == 1) {
+        _refreshDocumentMeta();
+      }
+      return;
+    }
+    // 批量处理：力度/时值/音高/位置 + 整体变速，一次 undo。
+    if (id == 24) {
+      final spec = await showBatchEditDialog(context);
+      if (!mounted || spec == null) {
+        return;
+      }
+      if (rust.batchEdit(
+            spec.velocity.op,
+            spec.velocity.value,
+            spec.gate.op,
+            spec.gate.value,
+            spec.key.op,
+            spec.key.value,
+            spec.tick.op,
+            spec.tick.value,
+            spec.stretchPercent,
+          ) ==
+          1) {
+        _refreshDocumentMeta();
+      }
+      return;
+    }
     if (rust.selectionAction(scope, id) == 1) {
       _refreshDocumentMeta();
       if (scope == 1) {

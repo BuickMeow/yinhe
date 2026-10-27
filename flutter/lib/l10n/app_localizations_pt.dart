@@ -52,6 +52,51 @@ class AppLocalizationsPt extends AppLocalizations {
   String get opGridSplit => 'Dividir pela grade';
 
   @override
+  String get batchProcess => 'Edição em lote';
+
+  @override
+  String get humanizeTiming => 'Tempo';
+
+  @override
+  String get humanizeVelocity => 'Velocidade';
+
+  @override
+  String get humanizeGate => 'Duração';
+
+  @override
+  String get batchVelocity => 'Velocidade';
+
+  @override
+  String get batchGate => 'Duração';
+
+  @override
+  String get batchKey => 'Nota';
+
+  @override
+  String get batchTick => 'Posição';
+
+  @override
+  String get batchStretch => 'Alongamento';
+
+  @override
+  String get batchOpNone => 'Sem alteração';
+
+  @override
+  String get batchOpSet => 'Definir';
+
+  @override
+  String get batchOpAdd => 'Somar';
+
+  @override
+  String get batchOpSub => 'Subtrair';
+
+  @override
+  String get batchOpMul => 'Multiplicar';
+
+  @override
+  String get batchOpDiv => 'Dividir';
+
+  @override
   String get deleteSelectionConfirm => 'Excluir os eventos selecionados?';
 
   @override

@@ -52,6 +52,51 @@ class AppLocalizationsIt extends AppLocalizations {
   String get opGridSplit => 'Dividi sulla griglia';
 
   @override
+  String get batchProcess => 'Modifica in blocco';
+
+  @override
+  String get humanizeTiming => 'Timing';
+
+  @override
+  String get humanizeVelocity => 'Velocità';
+
+  @override
+  String get humanizeGate => 'Durata';
+
+  @override
+  String get batchVelocity => 'Velocità';
+
+  @override
+  String get batchGate => 'Durata';
+
+  @override
+  String get batchKey => 'Altezza';
+
+  @override
+  String get batchTick => 'Posizione';
+
+  @override
+  String get batchStretch => 'Estensione';
+
+  @override
+  String get batchOpNone => 'Nessuna modifica';
+
+  @override
+  String get batchOpSet => 'Imposta';
+
+  @override
+  String get batchOpAdd => 'Aggiungi';
+
+  @override
+  String get batchOpSub => 'Sottrai';
+
+  @override
+  String get batchOpMul => 'Moltiplica';
+
+  @override
+  String get batchOpDiv => 'Dividi';
+
+  @override
   String get deleteSelectionConfirm => 'Eliminare gli eventi selezionati?';
 
   @override

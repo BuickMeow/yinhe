@@ -52,6 +52,51 @@ class AppLocalizationsTr extends AppLocalizations {
   String get opGridSplit => 'Izgaraya göre böl';
 
   @override
+  String get batchProcess => 'Toplu düzenleme';
+
+  @override
+  String get humanizeTiming => 'Zamanlama';
+
+  @override
+  String get humanizeVelocity => 'Hız';
+
+  @override
+  String get humanizeGate => 'Süre';
+
+  @override
+  String get batchVelocity => 'Hız';
+
+  @override
+  String get batchGate => 'Süre';
+
+  @override
+  String get batchKey => 'Perde';
+
+  @override
+  String get batchTick => 'Konum';
+
+  @override
+  String get batchStretch => 'Uzatma';
+
+  @override
+  String get batchOpNone => 'Değişiklik yok';
+
+  @override
+  String get batchOpSet => 'Ayarla';
+
+  @override
+  String get batchOpAdd => 'Ekle';
+
+  @override
+  String get batchOpSub => 'Çıkar';
+
+  @override
+  String get batchOpMul => 'Çarp';
+
+  @override
+  String get batchOpDiv => 'Böl';
+
+  @override
   String get deleteSelectionConfirm => 'Seçili olaylar silinsin mi?';
 
   @override

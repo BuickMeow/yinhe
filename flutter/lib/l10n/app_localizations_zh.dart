@@ -52,6 +52,51 @@ class AppLocalizationsZh extends AppLocalizations {
   String get opGridSplit => '网格切割';
 
   @override
+  String get batchProcess => '批量处理';
+
+  @override
+  String get humanizeTiming => '时间偏移';
+
+  @override
+  String get humanizeVelocity => '力度偏移';
+
+  @override
+  String get humanizeGate => '时值偏移';
+
+  @override
+  String get batchVelocity => '力度';
+
+  @override
+  String get batchGate => '时值';
+
+  @override
+  String get batchKey => '音高';
+
+  @override
+  String get batchTick => '位置';
+
+  @override
+  String get batchStretch => '变速';
+
+  @override
+  String get batchOpNone => '不改';
+
+  @override
+  String get batchOpSet => '设值';
+
+  @override
+  String get batchOpAdd => '加';
+
+  @override
+  String get batchOpSub => '减';
+
+  @override
+  String get batchOpMul => '乘';
+
+  @override
+  String get batchOpDiv => '除';
+
+  @override
   String get deleteSelectionConfirm => '删除选中的事件？';
 
   @override
@@ -584,6 +629,51 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get opGridSplit => '網格切割';
 
   @override
+  String get batchProcess => '批量處理';
+
+  @override
+  String get humanizeTiming => '時間偏移';
+
+  @override
+  String get humanizeVelocity => '力度偏移';
+
+  @override
+  String get humanizeGate => '時值偏移';
+
+  @override
+  String get batchVelocity => '力度';
+
+  @override
+  String get batchGate => '時值';
+
+  @override
+  String get batchKey => '音高';
+
+  @override
+  String get batchTick => '位置';
+
+  @override
+  String get batchStretch => '變速';
+
+  @override
+  String get batchOpNone => '不改';
+
+  @override
+  String get batchOpSet => '設值';
+
+  @override
+  String get batchOpAdd => '加';
+
+  @override
+  String get batchOpSub => '減';
+
+  @override
+  String get batchOpMul => '乘';
+
+  @override
+  String get batchOpDiv => '除';
+
+  @override
   String get deleteSelectionConfirm => '刪除選取的事件？';
 
   @override
@@ -1114,6 +1204,51 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get opGridSplit => '網格切割';
+
+  @override
+  String get batchProcess => '批量處理';
+
+  @override
+  String get humanizeTiming => '時間偏移';
+
+  @override
+  String get humanizeVelocity => '力度偏移';
+
+  @override
+  String get humanizeGate => '時值偏移';
+
+  @override
+  String get batchVelocity => '力度';
+
+  @override
+  String get batchGate => '時值';
+
+  @override
+  String get batchKey => '音高';
+
+  @override
+  String get batchTick => '位置';
+
+  @override
+  String get batchStretch => '變速';
+
+  @override
+  String get batchOpNone => '不改';
+
+  @override
+  String get batchOpSet => '設值';
+
+  @override
+  String get batchOpAdd => '加';
+
+  @override
+  String get batchOpSub => '減';
+
+  @override
+  String get batchOpMul => '乘';
+
+  @override
+  String get batchOpDiv => '除';
 
   @override
   String get deleteSelectionConfirm => '刪除選取的事件？';

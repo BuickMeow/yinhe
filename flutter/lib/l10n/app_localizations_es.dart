@@ -52,6 +52,51 @@ class AppLocalizationsEs extends AppLocalizations {
   String get opGridSplit => 'Dividir por cuadrícula';
 
   @override
+  String get batchProcess => 'Edición por lotes';
+
+  @override
+  String get humanizeTiming => 'Tiempo';
+
+  @override
+  String get humanizeVelocity => 'Velocidad';
+
+  @override
+  String get humanizeGate => 'Duración';
+
+  @override
+  String get batchVelocity => 'Velocidad';
+
+  @override
+  String get batchGate => 'Duración';
+
+  @override
+  String get batchKey => 'Nota';
+
+  @override
+  String get batchTick => 'Posición';
+
+  @override
+  String get batchStretch => 'Escala';
+
+  @override
+  String get batchOpNone => 'Sin cambio';
+
+  @override
+  String get batchOpSet => 'Establecer';
+
+  @override
+  String get batchOpAdd => 'Sumar';
+
+  @override
+  String get batchOpSub => 'Restar';
+
+  @override
+  String get batchOpMul => 'Multiplicar';
+
+  @override
+  String get batchOpDiv => 'Dividir';
+
+  @override
   String get deleteSelectionConfirm => '¿Eliminar los eventos seleccionados?';
 
   @override

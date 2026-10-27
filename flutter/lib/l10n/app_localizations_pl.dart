@@ -52,6 +52,51 @@ class AppLocalizationsPl extends AppLocalizations {
   String get opGridSplit => 'Podziel według siatki';
 
   @override
+  String get batchProcess => 'Edycja zbiorcza';
+
+  @override
+  String get humanizeTiming => 'Czas';
+
+  @override
+  String get humanizeVelocity => 'Dynamika';
+
+  @override
+  String get humanizeGate => 'Długość';
+
+  @override
+  String get batchVelocity => 'Dynamika';
+
+  @override
+  String get batchGate => 'Długość';
+
+  @override
+  String get batchKey => 'Wysokość';
+
+  @override
+  String get batchTick => 'Pozycja';
+
+  @override
+  String get batchStretch => 'Rozciągnięcie';
+
+  @override
+  String get batchOpNone => 'Bez zmian';
+
+  @override
+  String get batchOpSet => 'Ustaw';
+
+  @override
+  String get batchOpAdd => 'Dodaj';
+
+  @override
+  String get batchOpSub => 'Odejmij';
+
+  @override
+  String get batchOpMul => 'Pomnóż';
+
+  @override
+  String get batchOpDiv => 'Podziel';
+
+  @override
   String get deleteSelectionConfirm => 'Usunąć wybrane zdarzenia?';
 
   @override

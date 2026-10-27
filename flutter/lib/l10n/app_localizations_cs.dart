@@ -52,6 +52,51 @@ class AppLocalizationsCs extends AppLocalizations {
   String get opGridSplit => 'Rozdělit podle mřížky';
 
   @override
+  String get batchProcess => 'Dávková úprava';
+
+  @override
+  String get humanizeTiming => 'Časování';
+
+  @override
+  String get humanizeVelocity => 'Dynamika';
+
+  @override
+  String get humanizeGate => 'Délka';
+
+  @override
+  String get batchVelocity => 'Dynamika';
+
+  @override
+  String get batchGate => 'Délka';
+
+  @override
+  String get batchKey => 'Tón';
+
+  @override
+  String get batchTick => 'Pozice';
+
+  @override
+  String get batchStretch => 'Roztažení';
+
+  @override
+  String get batchOpNone => 'Neměnit';
+
+  @override
+  String get batchOpSet => 'Nastavit';
+
+  @override
+  String get batchOpAdd => 'Přičíst';
+
+  @override
+  String get batchOpSub => 'Odečíst';
+
+  @override
+  String get batchOpMul => 'Násobit';
+
+  @override
+  String get batchOpDiv => 'Dělit';
+
+  @override
   String get deleteSelectionConfirm => 'Smazat vybrané události?';
 
   @override

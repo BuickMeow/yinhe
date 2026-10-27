@@ -52,6 +52,51 @@ class AppLocalizationsRu extends AppLocalizations {
   String get opGridSplit => 'Разрезать по сетке';
 
   @override
+  String get batchProcess => 'Пакетная обработка';
+
+  @override
+  String get humanizeTiming => 'Тайминг';
+
+  @override
+  String get humanizeVelocity => 'Скорость';
+
+  @override
+  String get humanizeGate => 'Длительность';
+
+  @override
+  String get batchVelocity => 'Скорость';
+
+  @override
+  String get batchGate => 'Длительность';
+
+  @override
+  String get batchKey => 'Высота';
+
+  @override
+  String get batchTick => 'Позиция';
+
+  @override
+  String get batchStretch => 'Растяжение';
+
+  @override
+  String get batchOpNone => 'Без изменений';
+
+  @override
+  String get batchOpSet => 'Установить';
+
+  @override
+  String get batchOpAdd => 'Прибавить';
+
+  @override
+  String get batchOpSub => 'Вычесть';
+
+  @override
+  String get batchOpMul => 'Умножить';
+
+  @override
+  String get batchOpDiv => 'Разделить';
+
+  @override
   String get deleteSelectionConfirm => 'Удалить выбранные события?';
 
   @override

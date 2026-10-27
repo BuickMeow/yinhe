@@ -13,6 +13,7 @@ import '../core/snack.dart';
 import '../core/edit_status.dart';
 import '../core/multi_finger_gesture.dart';
 import '../dialogs/add_tracks_dialog.dart';
+import '../dialogs/batch_edit_dialog.dart';
 import '../widgets/automation_panel.dart';
 import '../menus/canvas_menus.dart';
 import '../widgets/home_view.dart';

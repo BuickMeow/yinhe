@@ -225,3 +225,37 @@ final ClearSelectionDart clearSelection = bridge
     .lookupFunction<ClearSelectionNative, ClearSelectionDart>(
       'yinhe_clear_selection',
     );
+
+typedef HumanizeNative = ffi.Int32 Function(ffi.Uint32, ffi.Uint32, ffi.Uint32);
+typedef HumanizeDart = int Function(int, int, int);
+
+/// 人性化：时间/力度/时值三路随机偏差幅度。
+final HumanizeDart humanize = bridge
+    .lookupFunction<HumanizeNative, HumanizeDart>('yinhe_humanize');
+
+typedef BatchEditNative = ffi.Int32 Function(
+  ffi.Int32,
+  ffi.Double,
+  ffi.Int32,
+  ffi.Double,
+  ffi.Int32,
+  ffi.Double,
+  ffi.Int32,
+  ffi.Double,
+  ffi.Int32,
+);
+typedef BatchEditDart = int Function(
+  int,
+  double,
+  int,
+  double,
+  int,
+  double,
+  int,
+  double,
+  int,
+);
+
+/// 批量处理：字段编辑 + 整体变速（一次 undo）。
+final BatchEditDart batchEdit = bridge
+    .lookupFunction<BatchEditNative, BatchEditDart>('yinhe_batch_edit');

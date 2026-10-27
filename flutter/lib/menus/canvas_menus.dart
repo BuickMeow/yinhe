@@ -128,6 +128,12 @@ List<SheetAction> selectionActionItems(
       icon: Icons.grid_on,
       enabled: noteOnly(),
     ),
+    SheetAction(
+      value: '24',
+      label: l.batchProcess,
+      icon: Icons.tune,
+      enabled: noteOnly(),
+    ),
   ];
 }
 
@@ -137,7 +143,7 @@ List<SheetAction> selectionActionItems(
 Future<String?> showSelectionActionGrid(
   BuildContext context, {
   required List<SheetAction> actions,
-  int columns = 7,
+  int columns = 8,
 }) {
   return showModalBottomSheet<String>(
     context: context,

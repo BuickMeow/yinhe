@@ -52,6 +52,51 @@ class AppLocalizationsJa extends AppLocalizations {
   String get opGridSplit => 'グリッドで分割';
 
   @override
+  String get batchProcess => '一括処理';
+
+  @override
+  String get humanizeTiming => 'タイミング';
+
+  @override
+  String get humanizeVelocity => 'ベロシティ';
+
+  @override
+  String get humanizeGate => '長さ';
+
+  @override
+  String get batchVelocity => 'ベロシティ';
+
+  @override
+  String get batchGate => '長さ';
+
+  @override
+  String get batchKey => '音高';
+
+  @override
+  String get batchTick => '位置';
+
+  @override
+  String get batchStretch => '伸縮';
+
+  @override
+  String get batchOpNone => '変更なし';
+
+  @override
+  String get batchOpSet => '設定';
+
+  @override
+  String get batchOpAdd => '加算';
+
+  @override
+  String get batchOpSub => '減算';
+
+  @override
+  String get batchOpMul => '乗算';
+
+  @override
+  String get batchOpDiv => '除算';
+
+  @override
   String get deleteSelectionConfirm => '選択したイベントを削除しますか？';
 
   @override

@@ -206,6 +206,96 @@ abstract class AppLocalizations {
   /// **'Grid split'**
   String get opGridSplit;
 
+  /// No description provided for @batchProcess.
+  ///
+  /// In en, this message translates to:
+  /// **'Batch edit'**
+  String get batchProcess;
+
+  /// No description provided for @humanizeTiming.
+  ///
+  /// In en, this message translates to:
+  /// **'Timing'**
+  String get humanizeTiming;
+
+  /// No description provided for @humanizeVelocity.
+  ///
+  /// In en, this message translates to:
+  /// **'Velocity'**
+  String get humanizeVelocity;
+
+  /// No description provided for @humanizeGate.
+  ///
+  /// In en, this message translates to:
+  /// **'Gate'**
+  String get humanizeGate;
+
+  /// No description provided for @batchVelocity.
+  ///
+  /// In en, this message translates to:
+  /// **'Velocity'**
+  String get batchVelocity;
+
+  /// No description provided for @batchGate.
+  ///
+  /// In en, this message translates to:
+  /// **'Gate'**
+  String get batchGate;
+
+  /// No description provided for @batchKey.
+  ///
+  /// In en, this message translates to:
+  /// **'Key'**
+  String get batchKey;
+
+  /// No description provided for @batchTick.
+  ///
+  /// In en, this message translates to:
+  /// **'Tick'**
+  String get batchTick;
+
+  /// No description provided for @batchStretch.
+  ///
+  /// In en, this message translates to:
+  /// **'Stretch'**
+  String get batchStretch;
+
+  /// No description provided for @batchOpNone.
+  ///
+  /// In en, this message translates to:
+  /// **'No change'**
+  String get batchOpNone;
+
+  /// No description provided for @batchOpSet.
+  ///
+  /// In en, this message translates to:
+  /// **'Set'**
+  String get batchOpSet;
+
+  /// No description provided for @batchOpAdd.
+  ///
+  /// In en, this message translates to:
+  /// **'Add'**
+  String get batchOpAdd;
+
+  /// No description provided for @batchOpSub.
+  ///
+  /// In en, this message translates to:
+  /// **'Subtract'**
+  String get batchOpSub;
+
+  /// No description provided for @batchOpMul.
+  ///
+  /// In en, this message translates to:
+  /// **'Multiply'**
+  String get batchOpMul;
+
+  /// No description provided for @batchOpDiv.
+  ///
+  /// In en, this message translates to:
+  /// **'Divide'**
+  String get batchOpDiv;
+
   /// No description provided for @deleteSelectionConfirm.
   ///
   /// In en, this message translates to:
