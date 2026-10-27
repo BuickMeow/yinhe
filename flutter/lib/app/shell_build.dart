@@ -346,15 +346,21 @@ mixin _ShellBuild on _ShellBase {
                                     for (final t in _tracks.value) t.color,
                                   ],
                                   activeTrack: _activeTrack ?? 0,
+                                  isConductor:
+                                      _activeTrack != null &&
+                                      _activeTrack! >= 0 &&
+                                      _activeTrack! < _tracks.value.length &&
+                                      _tracks.value[_activeTrack!].master,
                                   status: _editStatus,
                                   formatTick: _formatEditTick,
                                   onCollapsed: _setAutoCollapsed,
                                   onReload: _loadAutomation,
                                   textureId: _amTextureId,
-                                  pencilActive: _tool == 2,
+                                  pencilActive: _tool == 2 || _tool == 5,
                                   deselectTick: _amDeselectTick,
                                   onVelocityCommit: _commitVelocityStroke,
-                                  velocityDrawEnabled: _tool == 2,
+                                  velocityDrawEnabled: _tool == 2 || _tool == 5,
+                                  lineTool: _tool == 5,
                                   onResize: _resizeAutoPanel,
                                   onResetHeight: _resetAutoPanelHeight,
                                 ),

@@ -65,6 +65,31 @@ final MoveAutomationAnchorsDart _moveAutomationAnchors = bridge
       'yinhe_move_automation_anchors',
     );
 
+typedef AutomationLineNative = ffi.Int32 Function(
+  ffi.Int32,
+  ffi.Int32,
+  ffi.Int32,
+  ffi.Double,
+  ffi.Double,
+  ffi.Double,
+  ffi.Double,
+);
+typedef AutomationLineDart = int Function(
+  int,
+  int,
+  int,
+  double,
+  double,
+  double,
+  double,
+);
+
+/// AM 直线：按 PR 量化在起止点之间插入自动化锚点（值 0..1 归一化）。
+final AutomationLineDart automationLine = bridge
+    .lookupFunction<AutomationLineNative, AutomationLineDart>(
+      'yinhe_automation_line',
+    );
+
 typedef EnsureAutomationLaneNative = ffi.Int32 Function(
   ffi.Int32,
   ffi.Int32,

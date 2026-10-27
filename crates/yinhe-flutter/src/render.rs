@@ -358,7 +358,24 @@ fn folded_automation_lanes<'a>(
     let mut lanes = Vec::new();
     for i in first..last.min(num_tracks) {
         let track = &model.tracks[i];
-        if track.kind == TrackKind::Master || !visible.get(i).copied().unwrap_or(true) {
+        if !visible.get(i).copied().unwrap_or(true) {
+            continue;
+        }
+        if track.kind == TrackKind::Master {
+            // Conductor 行：只显示 Tempo 曲线，值域 = 当前最大 Tempo（满高）。
+            let lane = &model.conductor.tempo;
+            if !lane.events.is_empty() {
+                lanes.push(yinhe_wgpu::ArrAutomationLane {
+                    lane,
+                    y_top: i as f32 * lane_h - view.base.scroll_y,
+                    height: lane_h,
+                    max_val: crate::scene::tempo_max_bpm(model),
+                    highlight_ticks: &[],
+                    skip_ticks: &[],
+                    show_anchors: false,
+                    translucent: true,
+                });
+            }
             continue;
         }
         for lane in &track.automation_lanes {
@@ -620,18 +637,51 @@ pub fn render_automation_frame(
     let (state, model, visible, track_colors, track_selected, revision, pr_view) = snapshot;
 
     let is_velocity = state.lane.is_none();
-    let lane = state.lane.and_then(|idx| {
-        model.tracks.get(state.active_track).and_then(|track| {
-            track
-                .automation_lanes
-                .iter()
-                .filter(|l| crate::scene::lane_kind(&l.target).is_some())
-                .nth(idx)
+    let is_conductor = model
+        .tracks
+        .get(state.active_track)
+        .is_some_and(|t| t.kind == TrackKind::Master);
+    // Conductor 的 AM 只有 Tempo（不在轨 lane 里，直接取 conductor.tempo）。
+    let tempo_lane = if is_conductor {
+        Some(model.conductor.tempo.clone())
+    } else {
+        None
+    };
+    let lane = if is_conductor {
+        if state.lane == Some(0) {
+            tempo_lane.as_ref()
+        } else {
+            None
+        }
+    } else {
+        state.lane.and_then(|idx| {
+            model.tracks.get(state.active_track).and_then(|track| {
+                track
+                    .automation_lanes
+                    .iter()
+                    .filter(|l| crate::scene::lane_kind(&l.target).is_some())
+                    .nth(idx)
+            })
         })
-    });
+    };
     let lanes: Vec<&AutomationLane> = lane.into_iter().collect();
+    let value_max = if is_conductor {
+        crate::scene::tempo_max_bpm(&model)
+    } else {
+        1.0
+    };
+    // Conductor 的拖动 ghost 也传归一化值，绘制前换算成 BPM。
+    let ghost_moves: Vec<(u32, u32, f32)> = if is_conductor {
+        state
+            .ghost
+            .iter()
+            .map(|&(old, new, value)| (old, new, value * value_max))
+            .collect()
+    } else {
+        state.ghost.clone()
+    };
     let ghost = lanes.first().and_then(|lane| {
-        if state.ghost.is_empty() {
+        if ghost_moves.is_empty() {
             return None;
         }
         let color = track_colors
@@ -639,7 +689,7 @@ pub fn render_automation_frame(
             .map(|c| [c[0], c[1], c[2]])
             .unwrap_or([0.5, 0.5, 0.5]);
         Some(AutomationGhost::Move {
-            lane: yinhe_wgpu::build_lane_multi_move(lane, &state.ghost),
+            lane: yinhe_wgpu::build_lane_multi_move(lane, &ghost_moves),
             color,
         })
     });
@@ -707,7 +757,7 @@ pub fn render_automation_frame(
             &track_colors,
             1.0,
             state.show_anchors,
-            if is_velocity { 127.0 } else { 1.0 },
+            if is_velocity { 127.0 } else { value_max },
             ghost,
             revision,
             &[],

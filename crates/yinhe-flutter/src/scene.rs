@@ -274,6 +274,8 @@ pub enum Tool {
     Pencil = 2,
     Eraser = 3,
     Brush = 4,
+    /// 直线工具：拖起止点，按量化列直线插值生成音符。
+    Line = 5,
 }
 
 impl Default for RenderScene {
@@ -529,7 +531,7 @@ fn load_midi_bytes_document(data: &[u8], path: &str, token: u64) -> Result<Docum
         None,
     )?;
     doc.mark_loaded();
-    doc.sync_track_caches_with_conductor_color([0.85, 0.85, 0.88, 1.0]);
+    doc.sync_track_caches_with_conductor_color(crate::theme_colors::TEXT_PRIMARY);
     doc.file_path = Some(path.to_string());
     Ok(doc)
 }
@@ -846,7 +848,7 @@ fn load_document(path: &str, token: u64) -> Result<Document, String> {
     )?;
     doc.mark_loaded();
     // 与演示文档一致的 conductor 色（保证两台机器/两种来源配色相同）。
-    doc.sync_track_caches_with_conductor_color([0.85, 0.85, 0.88, 1.0]);
+    doc.sync_track_caches_with_conductor_color(crate::theme_colors::TEXT_PRIMARY);
     // 记录来源：加载完成即视为“已落盘来源”，dirty 从干净状态起步；
     // 同时供主页重复选择同一文件时跳过解析。
     doc.file_path = Some(path.to_string());
@@ -892,7 +894,7 @@ fn load_project_document(path: &str, token: u64) -> Result<Document, String> {
     // 打开既有工程视为已保存（dirty 起点干净）。
     doc.mark_saved();
     doc.file_path = Some(path.to_string());
-    doc.sync_track_caches_with_conductor_color([0.85, 0.85, 0.88, 1.0]);
+    doc.sync_track_caches_with_conductor_color(crate::theme_colors::TEXT_PRIMARY);
     push_recent(path);
     Ok(doc)
 }
@@ -954,6 +956,7 @@ pub fn set_tool(tool: i32) -> i32 {
         2 => Tool::Pencil,
         3 => Tool::Eraser,
         4 => Tool::Brush,
+        5 => Tool::Line,
         _ => Tool::Select,
     };
     1
@@ -1843,8 +1846,25 @@ pub fn time_sig_segments_json() -> String {
     out
 }
 
-/// PR 自动化栏数据（仅 PB/CC/RPN 三类），JSON：
+/// Tempo 曲线值域上界：当前最大 Tempo 事件（BPM），至少 1。
+///
+/// AM/AR 的 Tempo 曲线都按它归一化：最大值贴着满高，新增更大的 Tempo 后
+/// 所有曲线比例自动重算（读 JSON / 每帧渲染都会重新取）。
+pub(crate) fn tempo_max_bpm(model: &YinModel) -> f32 {
+    model
+        .conductor
+        .tempo
+        .events
+        .iter()
+        .map(|e| e.value)
+        .fold(0.0_f32, f32::max)
+        .max(1.0)
+}
+
+/// PR 自动化栏数据（PB/CC/RPN；Conductor 轨只有 Tempo），JSON：
 /// `[{"kind":0,"max":16383,"name":"Pitch Bend","points":[[tick,value],...]}, ...]`
+///
+/// `points` 的 value 已归一化 0..1（Conductor 的 Tempo 按当前最大 BPM 归一化）。
 pub fn automation_json(track: usize) -> String {
     let Ok(s) = scene().lock() else {
         return "[]".into();
@@ -1855,6 +1875,23 @@ pub fn automation_json(track: usize) -> String {
     let Some(t) = doc.data.model.tracks.get(track) else {
         return "[]".into();
     };
+    if t.kind == yinhe_core::TrackKind::Master {
+        // Conductor：AM 只有 Tempo 一种自动化；值域 = 当前最大 Tempo。
+        let lane = &doc.data.model.conductor.tempo;
+        let max = tempo_max_bpm(&doc.data.model);
+        let mut out = String::from("[");
+        out.push_str(&format!(
+            "{{\"kind\":0,\"num\":-1,\"max\":{max},\"name\":\"Tempo\",\"points\":["
+        ));
+        for (i, e) in lane.events.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push_str(&format!("[{},{}]", e.tick, e.value / max));
+        }
+        out.push_str("]}]");
+        return out;
+    }
     let mut out = String::from("[");
     let mut first = true;
     for lane in &t.automation_lanes {
@@ -3088,6 +3125,154 @@ pub fn insert_automation(kind: i32, number: i32, tick: f64, track: i32, value: f
     1
 }
 
+/// 当前 PR 量化的 tick 间隔（Auto 按当前缩放解析；Off 回退 1）。
+fn pr_quantize_interval(doc: &Document, cursor_tick: f64) -> u32 {
+    let model = &doc.data.model;
+    let ppq = model.meta.ppq;
+    let (num, den_pow) = model
+        .tempo_map
+        .time_sig_at_tick(cursor_tick.max(0.0) as u32);
+    doc.edit
+        .quantize_pianoroll
+        .resolved_with_time_sig(
+            doc.edit.pianoroll_view.base.pixels_per_tick,
+            ppq,
+            num,
+            den_pow,
+            true,
+        )
+        .tick_interval(ppq)
+        .max(1)
+}
+
+/// 直线工具的插值点：`[t0, t1]` 上按量化间隔取 tick（含首尾）。
+fn line_ticks(t0: f64, t1: f64, interval: u32) -> Vec<u32> {
+    let a = t0.max(0.0).round() as u32;
+    let b = t1.max(0.0).round() as u32;
+    let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+    let step = interval.max(1);
+    let base = (lo / step) * step;
+    let mut ticks = Vec::new();
+    let mut t = base;
+    while t <= hi {
+        if t >= lo {
+            ticks.push(t);
+        }
+        t = match t.checked_add(step) {
+            Some(next) => next,
+            None => break,
+        };
+    }
+    if ticks.last().copied() != Some(b) {
+        ticks.push(b);
+    }
+    ticks
+}
+
+/// AM 直线：按当前 PR 量化在起止点之间插入自动化锚点（一次 undo）。
+///
+/// `v0/v1` 为归一化 0..1（Tempo 额外乘当前最大 BPM）。线段形状统一为直线，
+/// 这样 AM 里看到的是一条直斜线而不是台阶。
+pub fn automation_line(
+    kind: i32,
+    number: i32,
+    track: i32,
+    t0: f64,
+    t1: f64,
+    v0: f64,
+    v1: f64,
+) -> i32 {
+    use yinhe_types::automation::{AutomationEvent, AutomationTarget, SegmentShape};
+
+    let Some(target) = insert_target(kind, number) else {
+        return 0;
+    };
+    let is_tempo = matches!(target, AutomationTarget::Tempo);
+    let track_idx = if is_tempo { 0 } else { track.max(0) as usize };
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let cursor_tick = s.cursor_tick;
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    if !is_tempo
+        && doc
+            .data
+            .model
+            .tracks
+            .get(track_idx)
+            .is_none_or(|t| t.kind == yinhe_core::TrackKind::Master)
+    {
+        return 0;
+    }
+    let interval = pr_quantize_interval(doc, cursor_tick);
+    let ticks = line_ticks(t0, t1, interval);
+    if ticks.is_empty() {
+        return 0;
+    }
+    let a = t0.max(0.0).round() as u32;
+    let b = t1.max(0.0).round() as u32;
+    let span = f64::from(b.abs_diff(a)).max(1.0);
+    let tempo_max = if is_tempo {
+        tempo_max_bpm(&doc.data.model)
+    } else {
+        1.0
+    };
+    let events: Vec<AutomationEvent> = ticks
+        .iter()
+        .map(|&tick| {
+            let f = if a == b {
+                0.0
+            } else {
+                (f64::from(tick) - f64::from(a)) / span * if a <= b { 1.0 } else { -1.0 }
+            };
+            let value = (v0 + (v1 - v0) * f.clamp(0.0, 1.0)) as f32;
+            let value = if is_tempo {
+                (value * tempo_max).max(1.0)
+            } else {
+                value.clamp(0.0, 1.0)
+            };
+            AutomationEvent {
+                id: 0,
+                tick,
+                value,
+                shape: SegmentShape::Curve {
+                    x1: 0.0,
+                    y1: 0.0,
+                    x2: 0.0,
+                    y2: 0.0,
+                },
+            }
+        })
+        .collect();
+    let before_snapshot = doc.capture_snapshot();
+    let Some(action) = doc.upsert_automation_events_batch(track_idx, target.clone(), &events)
+    else {
+        return 0;
+    };
+    doc.push_undo(action, "直线绘制自动化", before_snapshot);
+    doc.edit.pianoroll_view.base.dirty = true;
+    let model = doc.data.model.clone();
+    refresh_snapshot(&mut s);
+    drop(s);
+    crate::audio::reload_notes(model);
+    log::info!(
+        "直线绘制自动化: kind={kind} number={number} track={track_idx} points={}",
+        events.len()
+    );
+    1
+}
+
+/// AM 直线力度：把力度条按起止点线性插值（一次 undo）。
+///
+/// 力度条的"插入点"就是已有音符，密度由音符自身决定，不需要按量化补点。
+pub fn velocity_line(t0: f64, v0: f64, t1: f64, v1: f64) -> i32 {
+    let to_vel = |v: f64| (1.0 + 126.0 * v.clamp(0.0, 1.0)) as f32;
+    let points = [(t0, to_vel(v0)), (t1, to_vel(v1))];
+    velocity_stroke(&points)
+}
+
 /// 查询该位置当前显示值（PB/CC/RPN 原始值域；Tempo = BPM）。
 /// 无历史值时返回 NaN，Dart 用目标默认值。
 pub fn automation_display_value(kind: i32, number: i32, tick: f64, track: i32) -> f64 {
@@ -3405,17 +3590,43 @@ pub fn move_automation_anchors(track: usize, lane_index: usize, moves: &[(u32, u
     let Some(doc) = s.document.as_mut() else {
         return 0;
     };
-    let Some((raw_idx, target)) = doc
+    let is_conductor = doc
         .data
         .model
         .tracks
         .get(track)
-        .and_then(|t| visible_lane(t, lane_index))
-    else {
-        return 0;
+        .is_some_and(|t| t.kind == yinhe_core::TrackKind::Master);
+    let (raw_idx, target, value_scale) = if is_conductor {
+        // Conductor 的 AM 只有 Tempo；Dart 传归一化值，存盘时还原成 BPM。
+        (
+            0usize,
+            yinhe_types::automation::AutomationTarget::Tempo,
+            tempo_max_bpm(&doc.data.model),
+        )
+    } else {
+        let Some((raw_idx, target)) = doc
+            .data
+            .model
+            .tracks
+            .get(track)
+            .and_then(|t| visible_lane(t, lane_index))
+        else {
+            return 0;
+        };
+        (raw_idx, target, 1.0)
     };
+    let scaled: Vec<(u32, u32, f32)> = if value_scale == 1.0 {
+        moves.to_vec()
+    } else {
+        moves
+            .iter()
+            .map(|&(old, new, value)| (old, new, value * value_scale))
+            .collect()
+    };
+    let target_track = if is_conductor { 0 } else { track };
     let before_snapshot = doc.capture_snapshot();
-    let Some(action) = doc.move_automation_events_batch(track, raw_idx, &target, moves) else {
+    let Some(action) = doc.move_automation_events_batch(target_track, raw_idx, &target, &scaled)
+    else {
         return 0;
     };
     doc.push_undo(action, "移动自动化锚点", before_snapshot);

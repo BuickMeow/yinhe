@@ -158,8 +158,16 @@ class AutomationLaneData {
   final List<Offset> points;
 
   /// 归一化值 → 顶部栏显示的原始值文本。
-  String formatValue(double value) =>
-      '${(value.clamp(0.0, 1.0) * max).round()}';
+  ///
+  /// Tempo（kind 0）用 BPM，保留最多两位小数；其他 target 取整。
+  String formatValue(double value) {
+    final raw = value.clamp(0.0, 1.0) * max;
+    if (kind == 0) {
+      final text = raw.toStringAsFixed(2);
+      return text.replaceFirst(RegExp(r'\.?0+$'), '');
+    }
+    return '${raw.round()}';
+  }
 
   static AutomationLaneData fromJson(Map<String, dynamic> json) {
     final raw = (json['points'] as List<dynamic>?) ?? const [];

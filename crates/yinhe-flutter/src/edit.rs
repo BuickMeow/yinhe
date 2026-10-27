@@ -56,6 +56,8 @@ mod kind {
     pub const SEL_RESIZE: u8 = 12;
     /// 拖动选框右下角方块，按选区宽度重复 Riff。
     pub const RIFF_FILL: u8 = 13;
+    /// 直线工具：按量化列在起止点之间生成直线音符。
+    pub const LINE: u8 = 14;
 }
 
 /// 整体拖动音符：`(track, start_tick, end_tick, velocity)`（key 由外层桶给出）。
@@ -1221,6 +1223,58 @@ fn build_ar_auto_ghost(s: &RenderScene, dt: i64, dtr: i32) -> Vec<scene::AutoGho
         .collect()
 }
 
+/// 直线工具：起点 → 当前点的量化列插值。
+///
+/// 时间方向每列一个音符（gate = 一个量化间隔），音高沿起止 key 线性插值取整，
+/// 与刷子共用同一套预览/提交路径（`d.cells`）。
+fn line_cells(d: &DragState, s: &RenderScene, x: f32, y: f32) -> Vec<(u32, u8)> {
+    let geom = PrGeom::new(&s.pr_view);
+    let q = quantize_of(s);
+    let snap = scene::SnapCtx::new(s);
+    let interval = q.tick_interval(s.ppq).max(1) as f64;
+    let end_tick = snap.round(q, geom.x_to_tick(x).max(0.0)).max(0.0);
+    let end_key = geom.y_to_key(y);
+    let start_idx = (d.anchor_tick / interval).floor().max(0.0) as i64;
+    let end_idx = (end_tick / interval).floor().max(0.0) as i64;
+    let span = (end_idx - start_idx).abs();
+    let (lo, hi) = if start_idx <= end_idx {
+        (start_idx, end_idx)
+    } else {
+        (end_idx, start_idx)
+    };
+    let k0 = f64::from(d.anchor_key);
+    let k1 = f64::from(end_key);
+    let mut cells = Vec::with_capacity((hi - lo + 1) as usize);
+    for idx in lo..=hi {
+        let f = if span == 0 {
+            0.0
+        } else {
+            (idx - start_idx) as f64 / span as f64
+        };
+        let key = (k0 + (k1 - k0) * f).round().clamp(0.0, 127.0) as u8;
+        cells.push((idx as u32, key));
+    }
+    cells
+}
+
+/// 把直线格子推给 ghost 层（gate = 一个量化间隔）。
+fn preview_line(s: &mut RenderScene, d: &mut DragState) {
+    let interval = quantize_of(s).tick_interval(s.ppq).max(1);
+    if let Some(track) = write_track(s) {
+        let ghost: Vec<(u32, u32, u8, u16)> = d
+            .cells
+            .iter()
+            .map(|&(idx, key)| {
+                let start = idx.saturating_mul(interval);
+                (start, start.saturating_add(interval), key, track as u16)
+            })
+            .collect();
+        apply_preview(s, d, ghost, false);
+    } else {
+        s.preview.clear();
+    }
+}
+
 fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
     let (x, y) = (d.px, d.py);
     let (lw, lh) = crate::logical_size();
@@ -1414,6 +1468,10 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                 s.preview.clear();
             }
         }
+        kind::LINE => {
+            d.cells = line_cells(d, s, x, y);
+            preview_line(s, d);
+        }
         kind::BRUSH => {
             let geom = PrGeom::new(&s.pr_view);
             let q = quantize_of(s);
@@ -1527,7 +1585,7 @@ pub fn end(x: f32, y: f32) {
             None
         }
         kind::PENCIL => commit_pencil(&mut s, &d),
-        kind::BRUSH => commit_brush(&mut s, &d),
+        kind::BRUSH | kind::LINE => commit_brush(&mut s, &d),
         kind::ERASE => commit_erase(&mut s, &d, x, y, moved),
         // 空白处长按未完成就松手：按普通点击处理（清空选择/移动光标）。
         kind::PENDING_PASTE => {
@@ -1751,6 +1809,17 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
             d.cells.clear();
             d.cells.push(cell);
             brush_cells(s, d, &geom, interval as u32);
+        }
+        Tool::Line => {
+            d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::new()));
+            d.kind = kind::LINE;
+            d.anchor_tick = anchor_tick;
+            d.anchor_key = anchor_key;
+            d.cells = vec![(
+                (anchor_tick / f64::from(q.tick_interval(s.ppq).max(1))) as u32,
+                anchor_key,
+            )];
+            preview_line(s, d);
         }
         Tool::Pan => {}
     }

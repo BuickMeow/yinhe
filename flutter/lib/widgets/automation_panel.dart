@@ -7,6 +7,7 @@ import '../core/edit_status.dart';
 import '../core/ffi.dart' as rust;
 import '../core/midi_names.dart';
 import '../core/models.dart';
+import '../dialogs/automation_anchor_dialog.dart';
 import '../dialogs/batch_edit_dialog.dart';
 import '../menus/canvas_menus.dart';
 import '../painters/painters.dart';
@@ -27,6 +28,7 @@ class AutomationPanel extends StatefulWidget {
     required this.velocity,
     required this.trackColors,
     required this.activeTrack,
+    required this.isConductor,
     required this.status,
     required this.formatTick,
     required this.onCollapsed,
@@ -36,6 +38,7 @@ class AutomationPanel extends StatefulWidget {
     required this.deselectTick,
     required this.onVelocityCommit,
     required this.velocityDrawEnabled,
+    required this.lineTool,
     required this.onResize,
     required this.onResetHeight,
   });
@@ -49,6 +52,9 @@ class AutomationPanel extends StatefulWidget {
   final List<(double, double, double, int)> velocity;
   final List<Color> trackColors;
   final int activeTrack;
+
+  /// 当前活动轨是 Conductor：AM 只有 Tempo 一种自动化，没有力度模式。
+  final bool isConductor;
 
   /// 顶部栏临时读数（力度 / 自动化 / 框选）。
   final ValueNotifier<EditStatus?> status;
@@ -72,6 +78,9 @@ class AutomationPanel extends StatefulWidget {
 
   /// 铅笔工具下才允许在力度栏落笔，避免手形/刷子误改力度。
   final bool velocityDrawEnabled;
+
+  /// 直线工具：拖动起止点后一次性写入力度/自动化。
+  final bool lineTool;
 
   /// 拖动顶部手柄：`dy` 为本次垂直位移（向上为负 = 变高）。
   final ValueChanged<double> onResize;
@@ -131,6 +140,13 @@ class _AutomationPanelState extends State<AutomationPanel> {
   /// 不能每帧用 _movePreview 当基准，否则会把上一帧位移重复叠加，越拖越快。
   final Map<int, int> _dragBaseTicks = <int, int>{};
 
+  /// 直线工具拖动状态（绘制区局部坐标）。
+  bool _lineActive = false;
+  Offset? _lineStartPos;
+  Offset? _lineCurrentPos;
+  double? _lineStartTick;
+  double? _lineStartValue;
+
   /// AM wgpu 状态去重缓存。
   double _amW = 0;
   double _amH = 0;
@@ -146,11 +162,17 @@ class _AutomationPanelState extends State<AutomationPanel> {
     if (oldWidget.deselectTick != widget.deselectTick) {
       _clearSelection();
     }
+    if (oldWidget.lineTool != widget.lineTool) {
+      _resetLine();
+    }
     if (oldWidget.activeTrack != widget.activeTrack) {
-      _selectedLane = null;
+      _selectedLane = widget.isConductor ? 0 : null;
       _pendingTarget = null;
       _clearVelocityStroke();
       _clearSelection();
+    } else if (widget.isConductor) {
+      _selectedLane = 0;
+      _pendingTarget = null;
     } else if (_selectedLane != null) {
       if (_selectedLane! >= widget.lanes.length) {
         _selectedLane = null;
@@ -221,10 +243,14 @@ class _AutomationPanelState extends State<AutomationPanel> {
   }
 
   /// 当前选中的 lane 下标（null = 力度）。
-  int? get _laneIdx =>
-      _selectedLane != null && _selectedLane! < widget.lanes.length
-      ? _selectedLane
-      : null;
+  int? get _laneIdx {
+    if (widget.isConductor) {
+      return widget.lanes.isEmpty ? null : 0;
+    }
+    return _selectedLane != null && _selectedLane! < widget.lanes.length
+        ? _selectedLane
+        : null;
+  }
 
   /// 按插入自动化的 target 语义查找 lane（PB/RPN 兼容 MIDI 导入的 Param 映射）。
   int _findLane(int kind, int number) {
@@ -502,10 +528,126 @@ class _AutomationPanelState extends State<AutomationPanel> {
     return true;
   }
 
+  void _resetLine() {
+    _lineActive = false;
+    _lineStartPos = null;
+    _lineCurrentPos = null;
+    _lineStartTick = null;
+    _lineStartValue = null;
+  }
+
+  /// 直线起点：记住吸附 tick 与当前值（力度模式用 velocity01）。
+  void _startLine(Offset pos) {
+    _lineActive = true;
+    _lineStartPos = pos;
+    _lineCurrentPos = pos;
+    _lineStartTick = _snapTickAt(pos.dx);
+    _lineStartValue = _laneIdx == null
+        ? _velocityAt(pos.dy) / 127.0
+        : _valueAtY(pos.dy);
+    _selectedTicks.clear();
+    _movePreview = {};
+    _syncGhost();
+    setState(() {});
+  }
+
+  /// 直线松手：按当前工具写入力度/自动化（Rust 侧按 PR 量化补点、一笔 undo）。
+  void _finishLine() {
+    final startPos = _lineStartPos;
+    final endPos = _lineCurrentPos;
+    final t0 = _lineStartTick;
+    final v0 = _lineStartValue;
+    _resetLine();
+    setState(() {});
+    if (startPos == null || endPos == null || t0 == null || v0 == null) {
+      return;
+    }
+    final t1 = _snapTickAt(endPos.dx);
+    final v1 = _laneIdx == null
+        ? _velocityAt(endPos.dy) / 127.0
+        : _valueAtY(endPos.dy);
+    final laneIdx = _laneIdx;
+    final ok = laneIdx == null
+        ? rust.velocityLine(t0, v0, t1, v1)
+        : rust.automationLine(
+            widget.lanes[laneIdx].kind,
+            widget.lanes[laneIdx].number,
+            widget.activeTrack,
+            t0,
+            v0,
+            t1,
+            v1,
+          );
+    if (ok == 1) {
+      widget.onReload();
+    }
+  }
+
+  /// 长按锚点：弹窗直接编辑所在位置（tick）和值。
+  ///
+  /// 长按由手势竞技场赢过拖动，按住不动不会进入 [_handlePanStart]。
+  Future<void> _handleAnchorLongPress(LongPressStartDetails d) async {
+    final laneIdx = _laneIdx;
+    if (laneIdx == null || laneIdx >= widget.lanes.length) {
+      return;
+    }
+    final lane = widget.lanes[laneIdx];
+    final hit = _hitAnchor(lane, d.localPosition);
+    if (hit == null) {
+      return;
+    }
+    final tick = hit.round();
+    final point = lane.points.firstWhere(
+      (p) => p.dx.round() == tick,
+      orElse: () => Offset(tick.toDouble(), 0),
+    );
+    final isTempo = lane.kind == 0;
+    final max = lane.max > 0 ? lane.max : 1.0;
+    // 先清掉拖动/选择残留，避免弹窗关闭后 ghost 还挂在旧位置。
+    _selectedTicks
+      ..clear()
+      ..add(tick);
+    _singleSelection = true;
+    _movePreview = {};
+    _syncGhost();
+    _syncSelection();
+    setState(() {});
+    final result = await showAutomationAnchorDialog(
+      context,
+      laneName: _canonicalLabel(lane) ?? _laneLabel(lane),
+      tick: tick,
+      value: (point.dy.clamp(0.0, 1.0) * max),
+      max: max,
+      isTempo: isTempo,
+    );
+    if (result == null || !mounted) {
+      return;
+    }
+    final (newTick, rawValue) = result;
+    final normalized = (rawValue / max).clamp(0.0, 1.0);
+    final ok = rust.moveAutomationAnchors(widget.activeTrack, laneIdx + 1, [
+      (tick, newTick, normalized),
+    ]);
+    if (ok != 1) {
+      return;
+    }
+    _selectedTicks
+      ..clear()
+      ..add(newTick);
+    _singleSelection = true;
+    _syncSelection();
+    widget.onReload();
+    setState(() {});
+  }
+
   /// 单点锚点编辑 / 框选：
   /// - 按在锚点上：选中（未选中则替换选择），拖动可改 tick+value；
   /// - 按在空白：拉时间框选（全高），多选拖动只改 tick。
   void _handlePanStart(DragStartDetails d) {
+    if (widget.lineTool) {
+      _startLine(d.localPosition);
+      return;
+    }
     if (_laneIdx == null) {
       _startVelocityStroke(d.localPosition);
       return;
@@ -561,6 +703,10 @@ class _AutomationPanelState extends State<AutomationPanel> {
   }
 
   void _handlePanUpdate(DragUpdateDetails d) {
+    if (_lineActive) {
+      setState(() => _lineCurrentPos = d.localPosition);
+      return;
+    }
     if (_velocityStrokeActive) {
       _handleVelocityUpdate(d.localPosition);
       return;
@@ -627,6 +773,10 @@ class _AutomationPanelState extends State<AutomationPanel> {
   }
 
   void _handlePanEnd() {
+    if (_lineActive) {
+      _finishLine();
+      return;
+    }
     if (_velocityStrokeActive) {
       _finishVelocityStroke();
       return;
@@ -715,6 +865,11 @@ class _AutomationPanelState extends State<AutomationPanel> {
   }
 
   void _handlePanCancel() {
+    if (_lineActive) {
+      _resetLine();
+      setState(() {});
+      return;
+    }
     if (_velocityStrokeActive) {
       _clearVelocityStroke();
     }
@@ -795,8 +950,18 @@ class _AutomationPanelState extends State<AutomationPanel> {
   Widget build(BuildContext context) {
     final lane = _laneIdx == null ? null : widget.lanes[_laneIdx!];
     // 只列「插入自动化」支持的标准目标；旧的任意 CC（CC1/CC91…）不再展示。
-    final entries = <(String, int)>[('Velocity', 0)];
+    // Conductor 没有音符力度，AM 只有 Tempo 一项。
+    final entries = <(String, int)>[];
+    if (widget.isConductor) {
+      final idx = widget.lanes.indexWhere((ln) => ln.kind == 0);
+      entries.add(('Tempo', idx >= 0 ? idx + 1 : 0));
+    } else {
+      entries.add(('Velocity', 0));
+    }
     for (final (kind, number) in _amTargets) {
+      if (widget.isConductor) {
+        break;
+      }
       final idx = widget.lanes.indexWhere(
         (ln) => _matchesTarget(ln, kind, number),
       );
@@ -939,9 +1104,13 @@ class _AutomationPanelState extends State<AutomationPanel> {
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     // 锚点单击不选中；只有拖动才进入编辑，避免误触。
-                    onTapUp: _laneIdx == null && widget.velocityDrawEnabled
+                    onTapUp:
+                        _laneIdx == null &&
+                            widget.velocityDrawEnabled &&
+                            !widget.lineTool
                         ? (d) => _handleVelocityTap(d.localPosition)
                         : null,
+                    onLongPressStart: _handleAnchorLongPress,
                     onPanStart: _handlePanStart,
                     onPanUpdate: _handlePanUpdate,
                     onPanEnd: (_) => _handlePanEnd(),
@@ -999,6 +1168,17 @@ class _AutomationPanelState extends State<AutomationPanel> {
                                     base: true,
                                   ),
                                 ),
+                              if (_lineActive &&
+                                  _lineStartPos != null &&
+                                  _lineCurrentPos != null)
+                                IgnorePointer(
+                                  child: CustomPaint(
+                                    painter: _LinePreviewPainter(
+                                      start: _lineStartPos!,
+                                      end: _lineCurrentPos!,
+                                    ),
+                                  ),
+                                ),
                             ],
                           ),
                         );
@@ -1045,4 +1225,28 @@ class AutoExpandButton extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 直线工具的拖动预览：一条线 + 两端圆点。
+class _LinePreviewPainter extends CustomPainter {
+  const _LinePreviewPainter({required this.start, required this.end});
+
+  final Offset start;
+  final Offset end;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final stroke = Paint()
+      ..color = YinheTheme.accent
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+    canvas.drawLine(start, end, stroke);
+    final dot = Paint()..color = YinheTheme.accent;
+    canvas.drawCircle(start, 4, dot);
+    canvas.drawCircle(end, 4, dot);
+  }
+
+  @override
+  bool shouldRepaint(_LinePreviewPainter old) =>
+      old.start != start || old.end != end;
 }

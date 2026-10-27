@@ -99,6 +99,49 @@ impl Document {
         ))
     }
 
+    /// 批量写入自动化事件（同 tick 覆盖），一次 undo。
+    ///
+    /// 用于 AM 直线工具这类"一次操作插入一串锚点"的场景：所有事件合并成
+    /// 一个 `AutomationDelta`（before = 被覆盖的旧事件，after = 新事件）。
+    pub fn upsert_automation_events_batch(
+        &mut self,
+        track_idx: usize,
+        target: yinhe_types::AutomationTarget,
+        events: &[yinhe_types::AutomationEvent],
+    ) -> Option<UndoAction> {
+        if events.is_empty() {
+            return None;
+        }
+        let is_tempo = matches!(target, yinhe_types::AutomationTarget::Tempo);
+        let result_track = if is_tempo { 0 } else { track_idx };
+        let model = Arc::make_mut(&mut self.data.model);
+        let mut prepared: Vec<yinhe_types::AutomationEvent> = events.to_vec();
+        for ev in &mut prepared {
+            if ev.id == 0 {
+                ev.id = model.alloc_automation_id();
+            }
+        }
+        let (lane, lane_idx) = model.ensure_automation_lane_mut(track_idx, target.clone())?;
+        let mut before: Vec<yinhe_types::AutomationEvent> = Vec::new();
+        let mut after: Vec<yinhe_types::AutomationEvent> = Vec::with_capacity(prepared.len());
+        for event in prepared {
+            if let Some(old) = lane.events.iter().find(|e| e.tick == event.tick) {
+                before.push(*old);
+            }
+            lane.upsert(event);
+            after.push(event);
+        }
+        model.commit_automation(&target);
+        self.data.bump_revision();
+        Some(UndoAction::Automation(AutomationDelta {
+            track_idx: result_track,
+            lane_idx,
+            target,
+            before,
+            after,
+        }))
+    }
+
     /// 创建空的 automation lane（同 target 已存在时返回 None）。
     /// 返回 (lane_idx, UndoAction)。lane 插入到该轨 lanes 末尾。
     ///
@@ -752,6 +795,54 @@ mod tests {
             density: Default::default(),
             density_pr: Default::default(),
         }
+    }
+
+    /// 批量 upsert：同 tick 覆盖，一次 undo 能完整恢复被覆盖的旧事件。
+    #[test]
+    fn upsert_automation_events_batch_undo_restores_overwritten() {
+        let mut doc = make_doc_with_anchor();
+        let target = AutomationTarget::CC { controller: 7 };
+        let linear = SegmentShape::Curve {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 0.0,
+            y2: 0.0,
+        };
+        let events = vec![
+            AutomationEvent {
+                id: 0,
+                tick: 100,
+                value: 0.2,
+                shape: linear,
+            },
+            AutomationEvent {
+                id: 0,
+                tick: 150,
+                value: 0.5,
+                shape: linear,
+            },
+            AutomationEvent {
+                id: 0,
+                tick: 200,
+                value: 0.8,
+                shape: linear,
+            },
+        ];
+        let before = doc.capture_snapshot();
+        let action = doc
+            .upsert_automation_events_batch(0, target.clone(), &events)
+            .expect("应写入");
+        doc.push_undo(action, "test", before);
+        let lane = &doc.data.model.tracks[0].automation_lanes[0];
+        assert_eq!(lane.events.len(), 3);
+        assert!((lane.events[0].value - 0.2).abs() < 1e-6);
+        assert!((lane.events[2].value - 0.8).abs() < 1e-6);
+
+        doc.undo();
+        let lane = &doc.data.model.tracks[0].automation_lanes[0];
+        assert_eq!(lane.events.len(), 2, "undo 只恢复原有两个锚点");
+        assert!((lane.events[0].value - 64.0 / 127.0).abs() < 1e-6);
+        assert!((lane.events[1].value - 96.0 / 127.0).abs() < 1e-6);
     }
 
     #[test]

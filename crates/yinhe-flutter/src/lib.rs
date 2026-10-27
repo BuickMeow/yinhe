@@ -952,6 +952,27 @@ pub extern "C" fn yinhe_insert_automation(
 }
 
 /// 该位置当前显示值（无历史值返回 NaN）。
+/// AM 直线：按当前 PR 量化在起止点之间插入自动化锚点（一次 undo）。
+/// `v0/v1` 为归一化 0..1（Tempo 按最大 BPM 换算）。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_automation_line(
+    kind: i32,
+    number: i32,
+    track: i32,
+    t0: f64,
+    t1: f64,
+    v0: f64,
+    v1: f64,
+) -> i32 {
+    scene::automation_line(kind, number, track, t0, t1, v0, v1)
+}
+
+/// AM 直线力度：按起止点线性插值影响力度条（一次 undo）。`v0/v1` 归一化 0..1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_velocity_line(t0: f64, v0: f64, t1: f64, v1: f64) -> i32 {
+    scene::velocity_line(t0, v0, t1, v1)
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_automation_display_value(
     kind: i32,

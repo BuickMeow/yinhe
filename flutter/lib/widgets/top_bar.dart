@@ -361,6 +361,7 @@ class TopBar extends StatelessWidget {
     2 => l.toolPencil,
     3 => l.toolEraser,
     4 => l.toolBrush,
+    5 => toolDefs[5].$2,
     _ => toolDefs[i].$2,
   };
 

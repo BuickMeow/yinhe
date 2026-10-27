@@ -109,6 +109,20 @@ final VelocityStrokeDart velocityStroke = bridge
       'yinhe_velocity_stroke',
     );
 
+typedef VelocityLineNative = ffi.Int32 Function(
+  ffi.Double,
+  ffi.Double,
+  ffi.Double,
+  ffi.Double,
+);
+typedef VelocityLineDart = int Function(double, double, double, double);
+
+/// AM 直线力度：起止 `(tick, velocity01)`，一笔一个 undo。
+final VelocityLineDart velocityLine = bridge
+    .lookupFunction<VelocityLineNative, VelocityLineDart>(
+      'yinhe_velocity_line',
+    );
+
 typedef DragDeltaNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Int64>,
   ffi.Pointer<ffi.Int32>,
