@@ -1591,27 +1591,23 @@ pub extern "C" fn yinhe_humanize(timing: u32, velocity: u32, gate: u32) -> i32 {
     scene::humanize_selection(timing, velocity, gate)
 }
 
-/// 批量处理：字段编辑 + 整体变速，一次 undo。
+/// 批量处理（音符）：四个字段固定设值，NaN = 跳过。
 #[allow(clippy::too_many_arguments)]
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_batch_edit(
-    velocity_op: i32,
-    velocity_value: f64,
-    gate_op: i32,
-    gate_value: f64,
-    key_op: i32,
-    key_value: f64,
-    tick_op: i32,
-    tick_value: f64,
+    velocity: f64,
+    gate: f64,
+    key: f64,
+    tick: f64,
     stretch_percent: i32,
 ) -> i32 {
-    scene::batch_edit(
-        (velocity_op, velocity_value),
-        (gate_op, gate_value),
-        (key_op, key_value),
-        (tick_op, tick_value),
-        stretch_percent,
-    )
+    scene::batch_edit(velocity, gate, key, tick, stretch_percent)
+}
+
+/// 批量处理（AM 当前 lane）：值/位置固定设值，NaN = 跳过。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_automation_batch_edit(value: f64, tick: f64) -> i32 {
+    scene::automation_batch_edit(value, tick)
 }
 
 /// Flutter 帧驱动：请求渲染一帧并等待完成（纹理与浮层同帧产出）。成功 1。

@@ -2023,29 +2023,10 @@ pub fn humanize_selection(timing: u32, velocity: u32, gate: u32) -> i32 {
     1
 }
 
-/// 批量处理：字段编辑 + 整体变速，所有改动合成一次 undo。
-///
-/// 字段编码 `(op, value)`：0=不改、1=设值、2=加、3=减、4=乘、5=除。
-/// `stretch_percent`：100 = 不变，按选框跨度整体缩放。
-pub fn batch_edit(
-    velocity: (i32, f64),
-    gate: (i32, f64),
-    key: (i32, f64),
-    tick: (i32, f64),
-    stretch_percent: i32,
-) -> i32 {
+/// 批量处理（音符）：四个字段固定“设值”，NaN = 跳过；`stretch_percent` 100 = 不变。
+pub fn batch_edit(velocity: f64, gate: f64, key: f64, tick: f64, stretch_percent: i32) -> i32 {
     use yinhe_editor_core::document::note_edit::NoteField;
     use yinhe_editor_core::num_expr::NumOp;
-    fn ops(code: i32, value: f64) -> Option<Vec<NumOp>> {
-        match code {
-            1 => Some(vec![NumOp::Set(value)]),
-            2 => Some(vec![NumOp::Add(value)]),
-            3 => Some(vec![NumOp::Add(-value)]),
-            4 if value != 0.0 => Some(vec![NumOp::Mul(value)]),
-            5 if value != 0.0 => Some(vec![NumOp::Div(value)]),
-            _ => None,
-        }
-    }
 
     let Ok(mut s) = scene().lock() else {
         return 0;
@@ -2065,16 +2046,16 @@ pub fn batch_edit(
     {
         actions.push(a);
     }
-    for (field, (code, value)) in [
+    for (field, value) in [
         (NoteField::Velocity, velocity),
         (NoteField::Gate, gate),
         (NoteField::Key, key),
         (NoteField::Tick, tick),
     ] {
-        let Some(ops) = ops(code, value) else {
+        if value.is_nan() {
             continue;
-        };
-        if let Some(a) = doc.apply_note_field_edit(field, &ops) {
+        }
+        if let Some(a) = doc.apply_note_field_edit(field, &[NumOp::Set(value)]) {
             actions.push(a);
         }
     }
@@ -2088,6 +2069,86 @@ pub fn batch_edit(
     if let Some(undo) = undo {
         doc.push_undo(undo, "批量处理", before);
     }
+    doc.edit.pianoroll_view.base.dirty = true;
+    let model = doc.data.model.clone();
+    refresh_snapshot(&mut s);
+    drop(s);
+    crate::audio::reload_notes(model);
+    1
+}
+
+/// 批量处理（AM 当前 lane）：值 / 位置固定“设值”，NaN = 跳过。
+///
+/// `value` 是显示值（CC 0..127、PB 0..16383，按 target.display_max 归一化）。
+pub fn automation_batch_edit(value: f64, tick: f64) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let panel = s.automation_panel.clone();
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let Some(lane_index) = panel.lane else {
+        return 0;
+    };
+    if panel.selected_ticks.is_empty() {
+        return 0;
+    }
+    let track = panel.active_track;
+    let Some((raw_idx, target)) = doc
+        .data
+        .model
+        .tracks
+        .get(track)
+        .and_then(|t| visible_lane(t, lane_index))
+    else {
+        return 0;
+    };
+    let display_max = f64::from(target.display_max().unwrap_or(1.0));
+    let Some(lane) = doc
+        .data
+        .model
+        .tracks
+        .get(track)
+        .and_then(|t| t.automation_lanes.get(raw_idx))
+    else {
+        return 0;
+    };
+    let events: Vec<(u32, f32)> = lane
+        .events
+        .iter()
+        .filter(|e| panel.selected_ticks.binary_search(&e.tick).is_ok())
+        .map(|e| (e.tick, e.value))
+        .collect();
+    if events.is_empty() {
+        return 0;
+    }
+
+    let mut moves: Vec<(u32, u32, f32)> = Vec::new();
+    for (old_tick, old_value) in events {
+        let new_tick = if tick.is_nan() {
+            old_tick
+        } else {
+            tick.round().clamp(0.0, f64::from(u32::MAX)) as u32
+        };
+        let new_value = if value.is_nan() {
+            old_value
+        } else {
+            target.from_display_value(value.clamp(0.0, display_max) as f32)
+        };
+        if new_tick != old_tick || new_value != old_value {
+            moves.push((old_tick, new_tick, new_value));
+        }
+    }
+    if moves.is_empty() {
+        return 0;
+    }
+
+    let before = doc.capture_snapshot();
+    let Some(action) = doc.move_automation_events_batch(track, raw_idx, &target, &moves) else {
+        return 0;
+    };
+    doc.push_undo(action, "批量处理", before);
     doc.edit.pianoroll_view.base.dirty = true;
     let model = doc.data.model.clone();
     refresh_snapshot(&mut s);
