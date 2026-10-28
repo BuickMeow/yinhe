@@ -1037,7 +1037,28 @@ fn update_sel_resize(d: &DragState, s: &mut RenderScene, x: f32, y: f32) {
     }
 }
 
-fn riff_count(d: &DragState, s: &RenderScene, x: f32) -> i64 {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct RiffSteps {
+    sx: i64,
+    sy: i64,
+}
+
+impl RiffSteps {
+    fn is_zero(self) -> bool {
+        self.sx == 0 && self.sy == 0
+    }
+}
+
+/// 带符号的 `[0, ±1, .., ±N]`；二维铺满整个矩形，调用方跳过 `(0, 0)`。
+fn riff_step_offsets(steps: i64) -> Vec<i64> {
+    let mut out = vec![0];
+    if steps != 0 {
+        out.extend((1..=steps.unsigned_abs()).map(|i| i as i64 * steps.signum()));
+    }
+    out
+}
+
+fn riff_steps_x(d: &DragState, s: &RenderScene, x: f32) -> i64 {
     let Some((t0, t1, _, _)) = d.box_ticks else {
         return 0;
     };
@@ -1053,9 +1074,60 @@ fn riff_count(d: &DragState, s: &RenderScene, x: f32) -> i64 {
     }
 }
 
-fn update_riff_fill(d: &mut DragState, s: &mut RenderScene, x: f32) {
-    let count = riff_count(d, s, x);
-    if count == 0 {
+/// 纵向步数（轴坐标）：PR 正 = key 增大（屏幕向上），AR 正 = track 增大（屏幕向下）。
+///
+/// 按 key/轨道边界夹住，避免在完全越界的方向上生成预览/复制步。
+fn riff_steps_y(d: &DragState, s: &RenderScene, y: f32) -> i64 {
+    match s.view_mode {
+        ViewMode::Pianoroll => {
+            let Some((_, _, k0, k1)) = d.box_ticks else {
+                return 0;
+            };
+            let span = (i64::from(k1) - i64::from(k0) + 1).max(1);
+            let cur = i64::from(PrGeom::new(&s.pr_view).y_to_key(y));
+            let raw = if cur < i64::from(k0) {
+                -(((i64::from(k0) - cur) as f64 / span as f64).ceil() as i64)
+            } else if cur > i64::from(k1) {
+                ((cur - i64::from(k1)) as f64 / span as f64).ceil() as i64
+            } else {
+                0
+            };
+            let min = -(i64::from(k1) / span);
+            let max = (i64::from(yinhe_types::MAX_KEY) - i64::from(k0)) / span;
+            raw.clamp(min, max)
+        }
+        ViewMode::Arrangement => {
+            let Some((t0, t1, _, _)) = d.box_ticks else {
+                return 0;
+            };
+            let (_, _, r0, r1) = d.box_rows.unwrap_or((t0, t1, 0, 0));
+            let span = (r1 - r0 + 1).max(1) as i64;
+            let cur = ArGeom::new(&s.arr_view).y_to_row(y) as i64;
+            let raw = if cur > r1 as i64 {
+                ((cur - r1 as i64) as f64 / span as f64).ceil() as i64
+            } else if cur < r0 as i64 {
+                -((r0 as i64 - cur) as f64 / span as f64).ceil() as i64
+            } else {
+                0
+            };
+            let last = s.num_tracks.saturating_sub(1) as i64;
+            let min = -(r0 as i64 / span);
+            let max = (last - r1 as i64) / span;
+            raw.clamp(min, max)
+        }
+    }
+}
+
+fn riff_steps(d: &DragState, s: &RenderScene, x: f32, y: f32) -> RiffSteps {
+    RiffSteps {
+        sx: riff_steps_x(d, s, x),
+        sy: riff_steps_y(d, s, y),
+    }
+}
+
+fn update_riff_fill(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
+    let steps = riff_steps(d, s, x, y);
+    if steps.is_zero() {
         d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::new()));
         s.overlay_cells.clear();
         s.preview.clear();
@@ -1083,37 +1155,80 @@ fn update_riff_fill(d: &mut DragState, s: &mut RenderScene, x: f32) {
         }
         ViewMode::Arrangement => s.arr_view.visible_tick_range(lw).1,
     };
-    let sign = if count > 0 { 1.0 } else { -1.0 };
-    let steps = count.unsigned_abs() as i64;
+    let xs = riff_step_offsets(steps.sx);
+    let ys = riff_step_offsets(steps.sy);
     let mut rects = Vec::new();
     match s.view_mode {
         ViewMode::Pianoroll => {
             let geom = PrGeom::new(&s.pr_view);
-            let y0 = geom.key_to_y(k1);
-            let y1 = geom.key_to_y(k0) + geom.kh;
-            for step in 1..=steps {
-                let offset = sign * width * step as f64;
-                let copy_lo = t0 + offset;
-                let copy_hi = t1 + offset;
-                if copy_hi <= tick_lo || copy_lo >= tick_hi {
-                    continue;
+            let span = i64::from(k1) - i64::from(k0) + 1;
+            for &sx in &xs {
+                for &sy in &ys {
+                    if sx == 0 && sy == 0 {
+                        continue;
+                    }
+                    let offset = width * sx as f64;
+                    let copy_lo = t0 + offset;
+                    let copy_hi = t1 + offset;
+                    if copy_hi <= tick_lo || copy_lo >= tick_hi {
+                        continue;
+                    }
+                    let raw_k0 = i64::from(k0) + sy * span;
+                    let raw_k1 = i64::from(k1) + sy * span;
+                    if raw_k1 < 0 || raw_k0 > i64::from(yinhe_types::MAX_KEY) {
+                        continue;
+                    }
+                    let nk0 = raw_k0.max(0) as u8;
+                    let nk1 = raw_k1.min(i64::from(yinhe_types::MAX_KEY)) as u8;
+                    if nk0 > nk1 {
+                        continue;
+                    }
+                    let y0 = geom.key_to_y(nk1);
+                    let y1 = geom.key_to_y(nk0) + geom.kh;
+                    rects.push([geom.tick_to_x(copy_lo), y0, geom.tick_to_x(copy_hi), y1]);
                 }
-                rects.push([geom.tick_to_x(copy_lo), y0, geom.tick_to_x(copy_hi), y1]);
             }
         }
         ViewMode::Arrangement => {
             let geom = ArGeom::new(&s.arr_view);
             let (_, _, r0, r1) = d.box_rows.unwrap_or((t0, t1, 0, 0));
-            let y0 = geom.row_to_y(r0);
-            let y1 = geom.row_to_y(r1 + 1);
-            for step in 1..=steps {
-                let offset = sign * width * step as f64;
-                let copy_lo = t0 + offset;
-                let copy_hi = t1 + offset;
-                if copy_hi <= tick_lo || copy_lo >= tick_hi {
-                    continue;
+            let span = (r1 - r0 + 1) as i64;
+            let last = s.num_tracks.saturating_sub(1) as i64;
+            let conductor = s.document.as_ref().is_some_and(|d| {
+                d.data
+                    .model
+                    .tracks
+                    .first()
+                    .is_some_and(|t| t.kind == yinhe_core::TrackKind::Master)
+            });
+            for &sx in &xs {
+                for &sy in &ys {
+                    if sx == 0 && sy == 0 {
+                        continue;
+                    }
+                    let offset = width * sx as f64;
+                    let copy_lo = t0 + offset;
+                    let copy_hi = t1 + offset;
+                    if copy_hi <= tick_lo || copy_lo >= tick_hi {
+                        continue;
+                    }
+                    let raw_r0 = r0 as i64 + sy * span;
+                    let raw_r1 = r1 as i64 + sy * span;
+                    if raw_r1 < 0 || raw_r0 > last {
+                        continue;
+                    }
+                    let mut nr0 = raw_r0.max(0) as usize;
+                    let nr1 = raw_r1.min(last) as usize;
+                    if conductor {
+                        nr0 = nr0.max(1);
+                    }
+                    if nr0 > nr1 {
+                        continue;
+                    }
+                    let y0 = geom.row_to_y(nr0);
+                    let y1 = geom.row_to_y(nr1 + 1);
+                    rects.push([geom.tick_to_x(copy_lo), y0, geom.tick_to_x(copy_hi), y1]);
                 }
-                rects.push([geom.tick_to_x(copy_lo), y0, geom.tick_to_x(copy_hi), y1]);
             }
         }
     }
@@ -1547,7 +1662,7 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
             apply_preview(s, d, vec![ghost], true);
         }
         kind::SEL_RESIZE => update_sel_resize(d, s, x, y),
-        kind::RIFF_FILL => update_riff_fill(d, s, x),
+        kind::RIFF_FILL => update_riff_fill(d, s, x, y),
         _ => {
             s.preview.clear();
         }
@@ -1587,7 +1702,7 @@ pub fn end(x: f32, y: f32) {
             commit_selection_resize(&mut s, &d);
             None
         }
-        kind::RIFF_FILL => commit_riff(&mut s, &d, x),
+        kind::RIFF_FILL => commit_riff(&mut s, &d, x, y),
         kind::PENCIL_PICK => {
             commit_pick(&mut s, x, y);
             None
@@ -2210,9 +2325,10 @@ fn commit_riff(
     s: &mut RenderScene,
     d: &DragState,
     x: f32,
+    y: f32,
 ) -> Option<std::sync::Arc<yinhe_core::YinModel>> {
-    let count = riff_count(d, s, x);
-    if count == 0 {
+    let steps = riff_steps(d, s, x, y);
+    if steps.is_zero() {
         return None;
     }
     let (t0, t1, k0, k1) = d.box_ticks?;
@@ -2224,45 +2340,69 @@ fn commit_riff(
             return None;
         }
         let before = doc.capture_snapshot();
-        let action = doc.repeat_selected(width, count)?;
-
-        // Riff 完成后把选框扩到“原选区 + 所有重复段”，并将新范围设为
-        // 唯一矩形选区；副本和原音符都会落在这个范围内。
-        let width_f = width as f64;
-        let (new_t0, new_t1) = if count > 0 {
-            (t0, t1 + width_f * count as f64)
-        } else {
-            ((t0 + width_f * count as f64).max(0.0), t1)
-        };
+        let x_off = steps.sx * width;
+        let new_t0 = (t0 + x_off.min(0) as f64).max(0.0);
+        let new_t1 = t1 + x_off.max(0) as f64;
         match view_mode {
             ViewMode::Pianoroll => {
+                let span = (i64::from(k1) - i64::from(k0) + 1) as u16;
+                let action = doc.repeat_selected_keys(width, steps.sx, span, steps.sy)?;
+                let key_off = steps.sy * i64::from(span);
+                let new_k0 = (i64::from(k0) + key_off.min(0))
+                    .clamp(0, i64::from(yinhe_types::MAX_KEY)) as u8;
+                let new_k1 = (i64::from(k1) + key_off.max(0))
+                    .clamp(0, i64::from(yinhe_types::MAX_KEY)) as u8;
+
+                // Riff 完成后把选框扩到“原选区 + 所有重复段”，并将新范围设为
+                // 唯一矩形选区；副本和原音符都会落在这个范围内。
                 doc.edit.sel_rect.clear();
-                doc.edit.sel_rect.push_rect((new_t0, new_t1, k0, k1), false);
+                doc.edit
+                    .sel_rect
+                    .push_rect((new_t0, new_t1, new_k0, new_k1), false);
                 doc.edit.selected.clear_rects();
                 doc.edit.selected.add_rect_track(
-                    new_t0.max(0.0) as u32,
+                    new_t0 as u32,
                     new_t1.max(new_t0 + 1.0) as u32,
-                    k0,
-                    k1,
+                    new_k0,
+                    new_k1,
                     d.sel_tr_lo,
                     d.sel_tr_hi,
                 );
+                doc.push_undo(action, "重复 Riff", before);
             }
             ViewMode::Arrangement => {
                 let (_, _, r0, r1) = d.box_rows.unwrap_or((t0, t1, 0, 0));
-                doc.edit.arr_sel_rect = vec![(new_t0, new_t1, r0, r1)];
+                let span = (r1 - r0 + 1) as u16;
+                let action = doc.repeat_selected_tracks(width, steps.sx, span, steps.sy)?;
+                let row_off = steps.sy * i64::from(span);
+                let last = s.num_tracks.saturating_sub(1) as i64;
+                let mut new_r0 = (r0 as i64 + row_off.min(0)).clamp(0, last) as usize;
+                let new_r1 = (r1 as i64 + row_off.max(0)).clamp(0, last) as usize;
+                // Conductor 不参与 Riff：选框也不要把 0 号轨圈进去。
+                if new_r1 > 0
+                    && doc
+                        .data
+                        .model
+                        .tracks
+                        .first()
+                        .is_some_and(|t| t.kind == yinhe_core::TrackKind::Master)
+                {
+                    new_r0 = new_r0.max(1);
+                }
+
+                doc.edit.arr_sel_rect = vec![(new_t0, new_t1, new_r0, new_r1)];
                 doc.edit.selected.clear_rects();
                 doc.edit.selected.add_rect_track(
-                    new_t0.max(0.0) as u32,
+                    new_t0 as u32,
                     new_t1.max(new_t0 + 1.0) as u32,
                     0,
                     yinhe_types::MAX_KEY,
-                    r0 as u16,
-                    r1 as u16,
+                    new_r0 as u16,
+                    new_r1 as u16,
                 );
+                doc.push_undo(action, "重复 Riff", before);
             }
         }
-        doc.push_undo(action, "重复 Riff", before);
         true
     };
     if changed {
