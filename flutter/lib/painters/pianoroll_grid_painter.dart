@@ -74,6 +74,9 @@ class PianorollGridPainter extends CustomPainter {
     if (g == null || ppu <= 0) {
       return;
     }
+    // 网格只画在视口内容区，不能压到钢琴键盘上。
+    canvas.save();
+    canvas.clipRect(Rect.fromLTWH(kbW, 0, size.width - kbW, size.height));
     paintTimeGrid(
       canvas,
       size: size,
@@ -82,6 +85,7 @@ class PianorollGridPainter extends CustomPainter {
       leftInset: kbW,
       grid: g,
     );
+    canvas.restore();
   }
 
   @override
