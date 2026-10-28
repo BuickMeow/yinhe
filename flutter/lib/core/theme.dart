@@ -23,6 +23,8 @@ class YinheTheme {
   static Color get textFaint => Color.lerp(text, bg, 0.9) ?? text;
   static Color get measureLabel => Color.lerp(text, bg, 0.12) ?? text;
   static Color get tickLabel => Color.lerp(bg, text, 0.22) ?? text;
+  static const keyWhite = Color(0xFFF7F7F7);
+  static const keyBlack = Color(0xFF333333);
   static Color get selectedBg => Color.lerp(bg, accent, 0.30) ?? bg;
   static Color get primaryButtonBg =>
       Color.lerp(accent, Colors.white, 0.72) ?? accent;

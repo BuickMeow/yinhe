@@ -18,7 +18,7 @@ use yinhe_types::{
     TimelineViewBase,
 };
 use yinhe_wgpu::pianoroll::build_render_job;
-use yinhe_wgpu::vertex::{DrawInstance, NoteInstance};
+use yinhe_wgpu::vertex::NoteInstance;
 use yinhe_wgpu::{AutomationGhost, InstanceRenderer};
 
 use crate::Gpu;
@@ -422,7 +422,6 @@ fn upload_pianoroll(
     preview: &crate::scene::DragPreview,
 ) {
     let visible = effective_visible(track_visible, display_track);
-    upload_pianoroll_decor(t, view, h);
     let job = build_render_job(w as u32, h as u32, view, selection, track_colors, 0.0, true);
     t.renderer.upload_uniforms(job.uniforms);
     t.renderer.upload_track_colors(&job.track_colors);
@@ -786,13 +785,6 @@ fn upload_arrangement(
         return;
     }
     let visible = effective_visible(track_visible, display_track);
-    // 背景/条纹/网格由 Flutter 绘制（与选框同帧）；这里清空共享 decor 层，
-    // 避免从 PR 切过来时残留键盘列。
-    t.renderer.upload_decor_layer(
-        0,
-        yinhe_wgpu::layer_cache_key(&[VIEW_TAG_ARRANGEMENT ^ 0xD1CE]),
-        |_| {},
-    );
     let lane_h = view.lane_height();
     let offsets: Vec<f32> = (0..num_tracks).map(|i| i as f32 * lane_h).collect();
     // ★ shader 用 row_heights 计算行高；不传会退化成 1px 高的音符。
@@ -937,37 +929,3 @@ fn upload_arrangement(
 }
 
 // ── 装饰层（wgpu decor，画在音符下层，像素级对齐桌面视觉）──
-
-/// PR 装饰：只保留键盘列（白/黑键 + 右缘分隔线）。
-///
-/// 背景、黑键条纹、八度线和时间网格改由 Flutter 绘制：网格与选框同一帧，
-/// 缩放/平移时不会出现 Texture 与浮层的错位；wgpu 只负责重的、变化的音符层。
-fn upload_pianoroll_decor(t: &mut Target, view: &PianoRollView, h: f32) {
-    let kb_w = view.keyboard_width();
-    let kh = view.key_height;
-    let mut items: Vec<DrawInstance> = Vec::with_capacity(140);
-    if kh > 0.0 {
-        for key in 0..=127u8 {
-            let y = view.key_to_y(key);
-            if y + kh < 0.0 || y > h {
-                continue;
-            }
-            let black = yinhe_types::is_black_key(key);
-            let color = if black { tc::KEY_BLACK } else { tc::KEY_WHITE };
-            items.push(DrawInstance::solid_rect(0.0, y, kb_w, kh, color));
-        }
-        // 键盘右缘分隔线。
-        items.push(DrawInstance::solid_rect(
-            kb_w - 1.0,
-            0.0,
-            1.0,
-            h,
-            tc::TEXT_PRIMARY,
-        ));
-    }
-    let mut key = view.render_hash();
-    key ^= (h.to_bits() as u64) << 29;
-    let key = yinhe_wgpu::layer_cache_key(&[key, VIEW_TAG_PIANOROLL ^ 0xD1CE]);
-    t.renderer
-        .upload_decor_layer(0, key, |out| out.extend_from_slice(&items));
-}

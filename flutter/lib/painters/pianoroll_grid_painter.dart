@@ -42,21 +42,32 @@ class PianorollGridPainter extends CustomPainter {
 
     final stripe = Paint()..color = YinheTheme.stripeBg;
     final octave = Paint()..color = YinheTheme.lineFg;
+    final white = Paint()..color = YinheTheme.keyWhite;
+    final black = Paint()..color = YinheTheme.keyBlack;
+    // 黑键行条纹铺满内容区，再在左列盖上不透明键盘，和 wgpu 之前的层级一致。
     for (var key = 0; key < 128; key++) {
       final y = key0Y - key * kh;
       if (y + kh < 0 || y > size.height) {
         continue;
       }
-      if (isBlackKey(key)) {
+      final isBlack = isBlackKey(key);
+      if (isBlack) {
         canvas.drawRect(Rect.fromLTWH(0, y, size.width, kh), stripe);
       }
+      canvas.drawRect(Rect.fromLTWH(0, y, kbW, kh), isBlack ? black : white);
     }
+    // 键盘右缘分隔线。
+    canvas.drawRect(
+      Rect.fromLTWH(kbW - 1, 0, 1, size.height),
+      Paint()..color = YinheTheme.text,
+    );
+    // 八度线只画内容区（键盘列另有键位边界）。
     for (var key = 0; key < 128; key += 12) {
       final y = key0Y - key * kh;
       if (y + kh < 0 || y > size.height) {
         continue;
       }
-      canvas.drawRect(Rect.fromLTWH(0, y, size.width, 1), octave);
+      canvas.drawRect(Rect.fromLTWH(kbW, y, size.width - kbW, 1), octave);
     }
 
     final g = grid.value;
