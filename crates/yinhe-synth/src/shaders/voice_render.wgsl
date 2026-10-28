@@ -35,7 +35,8 @@ struct RenderParams {
     scatter_count: u32,
     // scatter 项数组在 scatter_items_buf 中的 u32 起始索引（轮转区域）
     scatter_items_base: u32,
-    _pad: u32,
+    // 实际渲染的 MIDI 通道数（pass2 的 ch 超过即跳过）
+    channel_count: u32,
 };
 
 struct VoiceState {
@@ -533,7 +534,7 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
     }
 }
 
-/// Pass 2：每帧一个 workgroup；256 线程 = 32 通道 × 8 槽位，
+/// Pass 2：每 workgroup 处理 8 帧 × 32 通道；dispatch y 维 = ceil(channel_count/32)，
 /// 把 pass1 的 per-voice partial 按通道归约到 channel_mix[ch][frame][2]。
 @compute @workgroup_size(256)
 fn mix_main(@builtin(workgroup_id) wid: vec3<u32>,
@@ -544,7 +545,9 @@ fn mix_main(@builtin(workgroup_id) wid: vec3<u32>,
     let base_fi = wid.x * N;
     let fc = params.frame_count;
     if base_fi >= fc { return; }
-    let ch = lid.x / 8u;
+    // 每 wg 覆盖 32 通道（256 线程 / 8 槽位）；y 维展开到最多 256 通道。
+    let ch = wid.y * 32u + lid.x / 8u;
+    if ch >= params.channel_count { return; }
     let s = lid.x % 8u;
     var sum_l: array<f32, 8>;
     var sum_r: array<f32, 8>;

@@ -196,6 +196,10 @@ pub struct GpuSynth {
     /// 最近一次 harvest 读回 GPU channel_mix 的峰值（0 = pass 产出就是静音）
     pub diag_gpu_mix_peak: f32,
     sample_rate: u32,
+    /// 实际渲染的 MIDI 通道数（由已加载的 dense 通道推导；capacity 上限
+    /// 是 `MAX_CHANNELS`=256）。GPU 的 channel_mix / dispatch 按它分配，
+    /// 16 通道工程不会付 256 通道的内存和拷贝。
+    channel_count: usize,
     /// 采样插值方式（`Interpolation::code()`；加载音色库时写入 KeyInfo）。
     interpolation: u32,
     /// 排序好的事件列表（导出/Seek 用）
@@ -296,6 +300,7 @@ impl GpuSynth {
             diag_ring_short: 0,
             diag_gpu_mix_peak: 0.0,
             sample_rate,
+            channel_count: 1,
             interpolation: 0,
             events: Vec::new(),
             event_cursor: 0,

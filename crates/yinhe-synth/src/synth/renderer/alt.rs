@@ -18,6 +18,9 @@ impl GpuAudioRenderer {
         env_cmds: &[EnvUpdateCmd],
         sample_rate: u32,
     ) -> u32 {
+        // 测试/参考路径固定按容量上限分配 channel_mix（调用方的 mix 长度
+        // 也按 CHANNEL_COUNT 分配）；生产路径走 GpuSynth 的运行时 channel_count。
+        self.set_channel_count(CHANNEL_COUNT);
         let frame_count = (channel_mix.len() / 2 / CHANNEL_COUNT) as u32;
         // 测试/参考路径：全量活跃列表（无通道信息，全部归通道 0）。
         let active: Vec<u32> = (0..voice_count).collect();
@@ -59,6 +62,8 @@ impl GpuAudioRenderer {
         output: &mut [f32],
         sample_rate: u32,
     ) -> u32 {
+        // 测试/参考路径固定按容量上限（见 render_block_single）。
+        self.set_channel_count(CHANNEL_COUNT);
         let frames = output.len() / 2;
         let mut scratch = std::mem::take(&mut self.mix_scratch);
         scratch.resize(CHANNEL_COUNT * frames * 2, 0.0);

@@ -432,7 +432,10 @@ impl CpuSynth {
             .max(1);
         let chunk = self.voices.len().div_ceil(threads).max(1);
         let n_chunks = self.voices.len().div_ceil(chunk);
-        let stride = MAX_CHANNELS * frames * 2;
+        // scratch 按**实际输出通道数**分配（工程用 16 通道就只付 16 通道的内存），
+        // 上限是 MAX_CHANNELS（256 = 16 port 全集）。
+        let channels = buffers.len().min(MAX_CHANNELS);
+        let stride = channels * frames * 2;
         self.par_scratch.clear();
         self.par_scratch.resize(n_chunks * stride, 0.0);
 
@@ -451,6 +454,10 @@ impl CpuSynth {
                     // 块级渲染：每 voice 一次调用（到期释放在 render_block 内按
                     // 包络切片边界应用，无逐帧 O(V×frames) 扫描）。
                     for v in voices.iter_mut() {
+                        if v.channel as usize >= channels {
+                            // 防御：事件通道应 < buffers.len()（调用方按 layout 分配）
+                            continue;
+                        }
                         let damper = damper_flags[v.channel as usize];
                         let ch_base = v.channel as usize * frames * 2;
                         let ch_out = &mut out[ch_base..ch_base + frames * 2];

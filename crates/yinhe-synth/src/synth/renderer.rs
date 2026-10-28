@@ -32,6 +32,9 @@ pub struct GpuAudioRenderer {
     #[cfg(test)]
     pub(crate) sample_upload_count: usize,
     pub(crate) frame_count: u32,
+    /// 实际渲染的 MIDI 通道数（≤ MAX_CHANNELS；channel_mix / active_ranges
+    /// 按它分配，dispatch y 维 = ceil(channel_count/32)）。
+    pub(crate) channel_count: usize,
     /// render_into 的 per-channel 混音临时缓冲（复用，避免每块分配）
     pub(crate) mix_scratch: Vec<f32>,
     /// 每段 release 指令的按帧前缀和（复用，避免每段分配）
@@ -237,6 +240,7 @@ impl GpuAudioRenderer {
             #[cfg(test)]
             sample_upload_count: 0,
             frame_count: 0,
+            channel_count: 1,
             mix_scratch: Vec::new(),
             release_by_frame_scratch: Vec::new(),
             voice_state_mirror: Vec::new(),
@@ -297,6 +301,16 @@ impl GpuAudioRenderer {
         self.buffers = None;
     }
 
+    /// 设置实际渲染的 MIDI 通道数（容量上限 `CHANNEL_COUNT` = 256）。
+    /// 只增不减；变大时丢弃旧 buffer，下一次 `ensure_buffers` 按新尺寸重建。
+    pub fn set_channel_count(&mut self, count: usize) {
+        let count = count.clamp(1, CHANNEL_COUNT);
+        if count > self.channel_count {
+            self.channel_count = count;
+            self.buffers = None;
+        }
+    }
+
     /// 预热 GPU 缓冲与渲染管线（音色库加载完成后调用）：
     /// 1. 按最大 voice 容量与段长分配全部缓冲（播放中不再因 voice 增长重建）；
     /// 2. 跑一次**哑渲染**（1 个零状态 voice + 整块帧数），触发 shader/管线/
@@ -314,16 +328,17 @@ impl GpuAudioRenderer {
             ch_updates_len: 0,
             releases_len: 0,
             env_cmds_len: 0,
+            channel_count: self.channel_count,
         });
         if self.buffers.is_none() {
             return;
         }
-        let mut mix = vec![0.0f32; CHANNEL_COUNT * frames as usize * 2];
+        let mut mix = vec![0.0f32; self.channel_count * frames as usize * 2];
         let mut stage = vec![0u32; 1];
         // 哑渲染只跑一个段长：目的是触发 shader/管线/派发路径的首次执行，
         // 不是跑满整块（少占 GPU，减轻与 UI 渲染的竞争）。
         let dummy_active: [u32; 1] = [0];
-        let mut dummy_ranges = vec![0u32; CHANNEL_COUNT * 2];
+        let mut dummy_ranges = vec![0u32; self.channel_count * 2];
         dummy_ranges[0] = 0;
         dummy_ranges[1] = 1;
         let seg = RenderSegment {

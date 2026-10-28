@@ -43,6 +43,8 @@ pub(crate) struct BufferSpec {
     pub(crate) ch_updates_len: usize,
     pub(crate) releases_len: usize,
     pub(crate) env_cmds_len: usize,
+    /// 实际渲染的 MIDI 通道数（channel_mix / active_ranges 按它分配）
+    pub(crate) channel_count: usize,
 }
 
 /// Persistent GPU state — all buffers allocated once, reused every block.
@@ -90,6 +92,8 @@ pub(crate) struct GpuBuffers {
     /// staging 中全字段 voice states 区的字节偏移（= channel_mix_size）
     pub(crate) staging_full_offset: u64,
     pub(crate) staging_idx: usize,
+    /// 分配 channel_mix / active_ranges 时使用的 MIDI 通道数
+    pub(crate) channel_count: usize,
     /// pass1/pass2 共用的 bind group（曾按 staging 双缓冲存两份，但参数
     /// 完全相同、与 staging 无关，合并为一份）。
     pub(crate) bind_groups: Vec<wgpu::BindGroup>,
@@ -105,7 +109,9 @@ impl GpuAudioRenderer {
             ch_updates_len,
             releases_len,
             env_cmds_len,
+            channel_count,
         } = *spec;
+        let channel_count = channel_count.clamp(1, CHANNEL_COUNT);
         // voice 数超槽位上限：调用方（GpuSynth）负责压缩/淘汰；这里仅防御。
         let voice_count = voice_count.min(MAX_VOICE_SLOTS);
         // 幂增长策略：向上取整到 2 的幂次，避免每个 block 都重建缓冲区
@@ -113,7 +119,7 @@ impl GpuAudioRenderer {
         // 指令/段缓冲按实际需求（块内事件数 × voice 数）分配，与 voice/帧数无关：
         // 密集 CC（每帧多事件 × 每通道多活跃 voice）可远超 voice 数，固定上界会越界。
         let segs_cap = (frame_count as usize + 1).max(segs_len).next_power_of_two();
-        let ch_updates_cap = (frame_count as usize * CHANNEL_COUNT)
+        let ch_updates_cap = (frame_count as usize * channel_count)
             .max(ch_updates_len)
             .next_power_of_two();
         let releases_cap = (rounded_voices as usize)
@@ -134,6 +140,7 @@ impl GpuAudioRenderer {
                         || b.ch_updates_cap < ch_updates_cap
                         || b.releases_cap < releases_cap
                         || b.env_cmds_cap < env_cmds_cap
+                        || b.channel_count < channel_count
                 }
                 None => true,
             }
@@ -293,13 +300,13 @@ impl GpuAudioRenderer {
         });
         let active_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("gpu_active_ids"),
-            size: ((slots + CHANNEL_COUNT * 2) * std::mem::size_of::<u32>()) as u64,
+            size: ((slots + channel_count * 2) * std::mem::size_of::<u32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         // per-channel 混音：32 通道 × frames × 2
         let channel_mix_size =
-            (CHANNEL_COUNT * frame_count.max(1) as usize * 2 * std::mem::size_of::<f32>()) as u64;
+            (channel_count * frame_count.max(1) as usize * 2 * std::mem::size_of::<f32>()) as u64;
         let params_size = std::mem::size_of::<RenderParams>() as u64;
         // 块内段/指令结构：按实际需求容量（幂等增长）分配
         let segs_size = (segs_cap * std::mem::size_of::<SegInfo>()) as u64;
@@ -506,8 +513,10 @@ impl GpuAudioRenderer {
             staging,
             staging_full_offset,
             staging_idx: 0,
+            channel_count,
         });
         self.frame_count = frame_count;
+        self.channel_count = channel_count;
         eprintln!(
             "[gpu] GPU 缓冲重建={:?}（partial={:.0}MB/{}帧，frames={frame_count}）",
             t_create.elapsed(),

@@ -9,7 +9,7 @@ use crate::synth::buffers::PIPELINE_DEPTH;
 impl GpuSynth {
     /// 渲染一块到混音台的 planar 通道缓冲（覆盖写，与 CPU 路径
     /// `ChannelSet::render_segment` 同格式）：GPU 槽位 `ch` 写入 `buffers[ch]`，
-    /// 超出 `MAX_CHANNELS` 的 dense 通道清零（GPU 合成器只支持前 32 个通道）。
+    /// 超出运行时 `channel_count` 的 dense 通道清零（工程未用到的通道不分配）。
     ///
     /// 块内事件（CC 段边界、note on/off、release/env 指令）在 CPU 收集为段结构，
     /// **一次 GPU 提交**渲染整块；voice 状态在 GPU 内逐帧推进（块末全字段读回）。
@@ -24,7 +24,7 @@ impl GpuSynth {
         if frames == 0 {
             return;
         }
-        let per_frame = MAX_CHANNELS * 2;
+        let per_frame = self.channel_count * 2;
         let need = frames * per_frame;
         self.diag_ms = [0.0; 8];
         self.diag_blocks = 0;
@@ -71,7 +71,7 @@ impl GpuSynth {
         };
         for (ch_idx, buf) in buffers.iter_mut().enumerate() {
             let buf = buf.borrow_mut();
-            if ch_idx < MAX_CHANNELS {
+            if ch_idx < self.channel_count {
                 for f in 0..avail {
                     let base = f * per_frame + ch_idx * 2;
                     buf.left[f] = self.ring[base];
@@ -162,7 +162,7 @@ impl GpuSynth {
             let t_active = std::time::Instant::now();
             sb.active.clear();
             sb.active_ranges.clear();
-            sb.active_ranges.resize(MAX_CHANNELS * 2, 0);
+            sb.active_ranges.resize(self.channel_count * 2, 0);
             let mut counts = [0u32; MAX_CHANNELS];
             for v in self.voices.iter() {
                 // kill_pending 的仍需渲染（应用 1ms 淡出，见 Voice::kill_pending）
@@ -171,18 +171,24 @@ impl GpuSynth {
                 }
             }
             let mut acc = 0u32;
-            for (c, &n) in counts.iter().enumerate() {
+            for (c, count) in counts.iter().enumerate().take(self.channel_count) {
                 sb.active_ranges[c * 2] = acc;
-                sb.active_ranges[c * 2 + 1] = n;
-                acc += n;
+                sb.active_ranges[c * 2 + 1] = *count;
+                acc += *count;
             }
-            let mut cursor: [u32; MAX_CHANNELS] = std::array::from_fn(|c| sb.active_ranges[c * 2]);
+            let mut cursor = [0u32; MAX_CHANNELS];
+            for (c, cur) in cursor.iter_mut().enumerate().take(self.channel_count) {
+                *cur = sb.active_ranges[c * 2];
+            }
             sb.active.resize(acc as usize, 0);
             for (i, v) in self.voices.iter().enumerate() {
                 if v.state.env_stage >= 6 && !v.kill_pending {
                     continue;
                 }
                 let c = v.state.channel as usize;
+                if c >= self.channel_count {
+                    continue; // 防御：事件通道应在 layout 范围内
+                }
                 let slot = cursor[c] as usize;
                 cursor[c] += 1;
                 sb.active[slot] = i as u32;
@@ -200,7 +206,8 @@ impl GpuSynth {
         }
         self.diag_ms[7] += t_upload.elapsed().as_secs_f64() * 1000.0;
 
-        self.channel_mix.resize(MAX_CHANNELS * frames * 2, 0.0);
+        self.channel_mix
+            .resize(self.channel_count * frames * 2, 0.0);
         if self.voices.is_empty() {
             // 本块无 voice：输出静音，但提交游标必须前进（时间在流逝，事件可能
             // 在后续块；原实现在无 voice 时也无条件推进 sample_position）。
@@ -254,7 +261,7 @@ impl GpuSynth {
     /// 把一块已收割的 `channel_mix`（**通道优先** `[ch][frame][lr]`）重排为
     /// ring 的**帧优先**布局 `[frame][ch][lr]`（ring 跨块拼接只按帧消费）。
     fn push_block_to_ring(&mut self, frames: usize) {
-        let ch = MAX_CHANNELS;
+        let ch = self.channel_count;
         for f in 0..frames {
             for c in 0..ch {
                 let src = c * frames * 2 + f * 2;

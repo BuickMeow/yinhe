@@ -75,6 +75,7 @@ impl GpuAudioRenderer {
             ch_updates_len: max_ch,
             releases_len: max_rel,
             env_cmds_len: max_env,
+            channel_count: self.channel_count,
         });
         // 未 upload 采样时（音色库为空）直接输出静音，绝不 panic
         self.buffers.as_ref()?;
@@ -84,7 +85,7 @@ impl GpuAudioRenderer {
         let voice_wg_count = voice_count.div_ceil(WORKGROUP_SIZE);
 
         let mix_size =
-            (CHANNEL_COUNT * frame_count as usize * 2 * std::mem::size_of::<f32>()) as u64;
+            (self.channel_count * frame_count as usize * 2 * std::mem::size_of::<f32>()) as u64;
         let full_size = (voice_count as usize * std::mem::size_of::<GpuVoiceState>()) as u64;
         let last = segments.len() - 1;
 
@@ -149,7 +150,7 @@ impl GpuAudioRenderer {
                 ranges_off: crate::synth::buffers::MAX_VOICE_SLOTS,
                 scatter_count,
                 scatter_items_base,
-                _pad: 0,
+                channel_count: self.channel_count as u32,
             };
             self.queue
                 .write_buffer(&buf.active_buf, 0, bytemuck::cast_slice(seg.active_data));
@@ -201,7 +202,11 @@ impl GpuAudioRenderer {
                 });
                 cpass.set_pipeline(&self.mix_pipeline);
                 cpass.set_bind_group(0, &buf.bind_groups[seg_i], &[]);
-                cpass.dispatch_workgroups(seg.frame_length.div_ceil(MIX_FRAMES_PER_WG), 1, 1);
+                cpass.dispatch_workgroups(
+                    seg.frame_length.div_ceil(MIX_FRAMES_PER_WG),
+                    self.channel_count.div_ceil(32) as u32,
+                    1,
+                );
             }
             // 最后一段：读回 channel_mix（整块）+ 全字段 voice states，
             // 由紧随其后的 submit 一并执行（此后不再有段需要该缓冲）。
@@ -316,7 +321,7 @@ impl GpuAudioRenderer {
         segments: &[RenderSegment<'_>],
         sample_rate: u32,
     ) -> u32 {
-        let frame_count = (channel_mix.len() / 2 / CHANNEL_COUNT) as u32;
+        let frame_count = (channel_mix.len() / 2 / self.channel_count) as u32;
         let want_full = readback_states.is_some();
         let Some(pending) =
             self.submit_block(voice_count, frame_count, want_full, segments, sample_rate)

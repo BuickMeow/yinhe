@@ -1044,3 +1044,59 @@ fn layer_limit_keeps_louder_notes() {
     assert_eq!(h[7], 0, "小力度音符应被优先淘汰");
     assert!(h[1] >= 1, "大力度音符应保留");
 }
+
+/// dense 通道 40（第 3 个 MIDI port 起）在 GPU 后端也必须发声：
+/// MAX_CHANNELS 是 256，不能按 2 端口截断（回归：>32 通道静默丢弃）。
+#[test]
+fn channel_above_32_sounds() {
+    let dir = tempfile::tempdir().unwrap();
+    let wav = dir.path().join("tone.wav");
+    let sfz = dir.path().join("one.sfz");
+    let sr = 48_000u32;
+    let mut w = hound::WavWriter::create(
+        &wav,
+        hound::WavSpec {
+            channels: 1,
+            sample_rate: sr,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        },
+    )
+    .unwrap();
+    for i in 0..4800 {
+        let s = (2.0 * std::f32::consts::PI * 440.0 * i as f32 / sr as f32).sin() * 0.5;
+        w.write_sample((s * i16::MAX as f32) as i16).unwrap();
+    }
+    w.finalize().unwrap();
+    std::fs::write(&sfz, "<region>\nsample=tone.wav key=60\n").unwrap();
+
+    let mut synth = match GpuSynth::new_default(sr) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("no GPU, skipping: {e}");
+            return;
+        }
+    };
+    synth
+        .load_dense_soundfonts(40, std::slice::from_ref(&sfz))
+        .unwrap();
+    synth.finish_soundfont_load();
+    synth.load_events(vec![SynthEvent::NoteOn {
+        sample: 0,
+        channel: 40,
+        key: 60,
+        velocity: 100,
+        end_sample: 9600,
+    }]);
+    let mut bufs: Vec<yinhe_mixer::ChannelBuffers> = (0..41)
+        .map(|_| yinhe_mixer::ChannelBuffers {
+            left: vec![0.0; 512],
+            right: vec![0.0; 512],
+        })
+        .collect();
+    synth.render_to_mixer(&mut bufs);
+
+    let energy: f32 = bufs[40].left.iter().map(|v| v.abs()).sum();
+    assert!(energy > 0.0, "通道 40 应有输出");
+    assert!(bufs[0].left.iter().all(|&v| v == 0.0), "通道 0 不应被串音");
+}

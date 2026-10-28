@@ -28,18 +28,26 @@ impl GpuSynth {
     ) -> Result<(), String> {
         let maps = load_key_maps_merged(paths, self.sample_rate, self.interpolation)?;
         let mut any = false;
+        let mut max_slot = 0usize;
         for &dense in denses {
             let slot = dense as usize;
             if slot >= MAX_CHANNELS {
                 continue;
             }
             any = true;
+            max_slot = max_slot.max(slot + 1);
             self.port_key_maps[slot] = Arc::clone(&maps);
             self.channel_port[slot] = slot as u8;
         }
         if any {
             // 每通道只累加一次路径（rebuild_sample_upload 内部去重）
             self.sample_paths.extend(paths.iter().cloned());
+            // 运行时通道数 = 已加载的最大 dense + 1（只增不减）：
+            // channel_mix / active_ranges / pass2 dispatch 按它分配。
+            if max_slot > self.channel_count {
+                self.channel_count = max_slot;
+                self.renderer.set_channel_count(max_slot);
+            }
         }
         Ok(())
     }

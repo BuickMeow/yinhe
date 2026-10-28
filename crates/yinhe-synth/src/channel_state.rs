@@ -5,7 +5,10 @@
 use crate::gpu_synth::ControlEvent;
 
 /// 合成器通道数上限（dense 通道槽位；两条渲染路径一致）。
-pub const MAX_CHANNELS: usize = 32;
+///
+/// 256 = MIDI 源通道全集（16 port × 16 通道）。实际启用的数量由
+/// `ChannelLayout` 压缩后的 dense 通道数决定；这里只是数组容量上限。
+pub const MAX_CHANNELS: usize = 256;
 
 /// 单通道 MIDI 控制状态（仅音源层参数；音量/声像/滤波已迁至 yinhe-dsp）。
 #[derive(Clone, Copy, Debug)]
@@ -159,9 +162,9 @@ impl ChannelState {
 }
 
 /// chase 应用时的跳过信息（与 yinhe-audio `crate::channel::ChaseSkip` 同语义，
-/// 按 dense 通道 % 32 索引）：seek 后已被实时事件处理过的控制器，异步 chase
+/// 按 dense 通道索引）：seek 后已被实时事件处理过的控制器，异步 chase
 /// 到达时跳过，避免 seek 前旧值覆盖 seek 后已生效的新值。
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct ChaseSkip {
     /// 每通道 128 bit：bit cc = 该 Raw CC 已被处理。
     pub cc_mask: [u128; MAX_CHANNELS],
@@ -172,8 +175,21 @@ pub struct ChaseSkip {
     pub program: [bool; MAX_CHANNELS],
 }
 
-/// dense 通道号 → 槽位索引；>= MAX_CHANNELS 返回 None（两个后端都只支持
-/// 32 槽位）。CPU/GPU 共用（此前两份逐字重复）。
+// [T; 256] 不实现 Default（标准库只覆盖 N<=32），手写。
+impl Default for ChaseSkip {
+    fn default() -> Self {
+        Self {
+            cc_mask: [0; MAX_CHANNELS],
+            pitch_bend: [false; MAX_CHANNELS],
+            pbs: [false; MAX_CHANNELS],
+            fine_tune: [false; MAX_CHANNELS],
+            coarse_tune: [false; MAX_CHANNELS],
+            program: [false; MAX_CHANNELS],
+        }
+    }
+}
+
+/// dense 通道号 → 槽位索引；>= MAX_CHANNELS 返回 None（两个后端共用容量上限）。
 pub fn dense_channel(channel: usize) -> Option<usize> {
     (channel < MAX_CHANNELS).then_some(channel)
 }

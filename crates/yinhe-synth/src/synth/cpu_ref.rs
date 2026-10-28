@@ -1,6 +1,8 @@
 //! CPU 参考实现与 release 回归（与 GPU shader 逐帧对应）。
 
 #[cfg(test)]
+use super::types::CHANNEL_COUNT;
+#[cfg(test)]
 use super::types::GpuVoiceState;
 
 #[cfg(test)]
@@ -65,7 +67,7 @@ fn release_cmd_advances_envelope() {
         mode: 5,
         _pad: 0,
     }];
-    let mut mix = vec![0.0f32; 32 * 1024 * 2];
+    let mut mix = vec![0.0f32; CHANNEL_COUNT * 1024 * 2];
     let mut voices = vec![voice];
     let mut stage = vec![0u32; voices.len()];
     renderer.upload_voice_states(&voices);
@@ -168,7 +170,7 @@ fn release_progress_advances_full_block() {
             _pad: 0,
         },
     ];
-    let mut mix = vec![0.0f32; 32 * 1024 * 2];
+    let mut mix = vec![0.0f32; CHANNEL_COUNT * 1024 * 2];
     let mut stage = vec![0u32; voices.len()];
     renderer.upload_voice_states(&voices);
     renderer.render_block_single(

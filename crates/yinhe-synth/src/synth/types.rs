@@ -109,8 +109,8 @@ pub struct RenderParams {
     pub scatter_count: u32,
     /// scatter 项数组在 scatter_items_buf 中的 u32 起始索引（轮转区域）
     pub scatter_items_base: u32,
-    /// 对齐填充（uniform struct 16 字节对齐）
-    pub _pad: u32,
+    /// 实际渲染的 MIDI 通道数（≤ MAX_CHANNELS；pass2 的 ch 超过即跳过）
+    pub channel_count: u32,
 }
 
 /// 一个渲染段：外层块内的帧区间 + 该段的事件结构。

@@ -373,3 +373,50 @@ fn global_evict_kills_whole_layer_group() {
         "全局超限必须整组淘汰，不能只杀一层"
     );
 }
+
+/// dense 通道 40（第 3 个 MIDI port 起）必须能发声：MAX_CHANNELS 是 256，
+/// 不能按 2 端口截断（回归：>32 通道静默丢弃）。
+#[test]
+fn channel_above_32_sounds() {
+    let dir = tempfile::tempdir().unwrap();
+    let wav = dir.path().join("tone.wav");
+    let sfz = dir.path().join("one.sfz");
+    let sr = 48_000u32;
+    let mut w = hound::WavWriter::create(
+        &wav,
+        hound::WavSpec {
+            channels: 1,
+            sample_rate: sr,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        },
+    )
+    .unwrap();
+    for i in 0..4800 {
+        let s = (2.0 * std::f32::consts::PI * 440.0 * i as f32 / sr as f32).sin() * 0.5;
+        w.write_sample((s * i16::MAX as f32) as i16).unwrap();
+    }
+    w.finalize().unwrap();
+    std::fs::write(&sfz, "<region>\nsample=tone.wav key=60\n").unwrap();
+
+    let mut synth = CpuSynth::new(sr);
+    synth.load_dense_soundfonts(40, &[sfz]).unwrap();
+    synth.load_events(vec![SynthEvent::NoteOn {
+        sample: 0,
+        channel: 40,
+        key: 60,
+        velocity: 100,
+        end_sample: 9600,
+    }]);
+    let mut bufs: Vec<ChannelBuffers> = (0..41)
+        .map(|_| ChannelBuffers {
+            left: vec![0.0; 512],
+            right: vec![0.0; 512],
+        })
+        .collect();
+    synth.render_to_mixer(&mut bufs);
+
+    let energy: f32 = bufs[40].left.iter().map(|v| v.abs()).sum();
+    assert!(energy > 0.0, "通道 40 应有输出");
+    assert!(bufs[0].left.iter().all(|&v| v == 0.0), "通道 0 不应被串音");
+}
