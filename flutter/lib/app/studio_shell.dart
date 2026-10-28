@@ -405,68 +405,78 @@ class _StudioShellState extends _ShellBase
       }
     });
     _ticker = createTicker((_) {
-      // 帧驱动同步：wgpu 先呈现当前帧，所有视图的 Flutter 浮层统一延迟一帧。
-      if (!_showHome) {
-        // 拖拽边缘自动滚动：先滚动视图，再渲染这一帧。
-        rust.dragTick();
-        rust.renderFrame();
-      }
-      final delay = _overlayFrameDelay;
-      final px = rust.playheadX();
-      _playheadDelay.add(px);
-      final shownPlayhead = _playheadDelay.length > delay
-          ? _playheadDelay.removeAt(0)
-          : px;
-      _playhead.value = shownPlayhead;
-      final snap = _readSnapshot();
-      _snapDelay.add(snap);
-      final shownSnap = _snapDelay.length > delay
-          ? _snapDelay.removeAt(0)
-          : snap;
-      if (!_sameSnapshot(shownSnap)) {
-        _snap.value = shownSnap;
-      }
-      _scheduleVelocityReload();
-      _readOverlay();
-      // 选框状态驱动：移动态画虚线；长按中更新圆环进度（Flutter long press 推进状态）。
-      final selState = rust.selectionState();
-      if (_moveDashed.value != (selState == 2)) {
-        _moveDashed.value = selState == 2;
-      }
-      if (selState == 3) {
-        // 长按完成：指示线出现并跟随手指微调（松手前可移动位置）。
-        if (_lpProgress.value != 0) {
-          _lpProgress.value = 0;
+      // 模态路由（各类对话框）在上层时编辑器被遮罩：跳过 wgpu 帧提交与视图同步。
+      // `renderFrame` 会同步等待渲染线程完成 present，键盘弹出/收起与对话框
+      // 动画期间继续每帧等待会占住 UI 线程，输入法动画直接掉帧。
+      // 帧循环仍保持，对话框关闭后的下一帧自动恢复。
+      final coveredByRoute = !(ModalRoute.of(context)?.isCurrent ?? true);
+      if (!coveredByRoute) {
+        // 帧驱动同步：wgpu 先呈现当前帧，所有视图的 Flutter 浮层统一延迟一帧。
+        if (!_showHome) {
+          // 拖拽边缘自动滚动：先滚动视图，再渲染这一帧。
+          rust.dragTick();
+          rust.renderFrame();
         }
-        final tick = rust.longPressTick();
-        final track = rust.longPressTrack();
-        _lpPreviewTick = tick;
-        _setInsertStatus(tick);
-        final cur = _lpIndicator.value;
-        if (cur == null || cur.tick != tick || cur.track != track) {
-          _lpIndicator.value = LongPressIndicator(
-            tick: tick,
-            track: track,
-            pr: _viewMode == kViewPianoroll,
-          );
+        final delay = _overlayFrameDelay;
+        final px = rust.playheadX();
+        _playheadDelay.add(px);
+        final shownPlayhead = _playheadDelay.length > delay
+            ? _playheadDelay.removeAt(0)
+            : px;
+        _playhead.value = shownPlayhead;
+        final snap = _readSnapshot();
+        _snapDelay.add(snap);
+        final shownSnap = _snapDelay.length > delay
+            ? _snapDelay.removeAt(0)
+            : snap;
+        if (!_sameSnapshot(shownSnap)) {
+          _snap.value = shownSnap;
         }
-      } else if (selState == 2) {
-        // 已转移动态：清掉圆环（虚线由 moving 分支绘制），顶部栏显示相对增量。
-        _lpPreviewTick = null;
-        if (_lpProgress.value != 0) {
-          _lpProgress.value = 0;
+        _scheduleVelocityReload();
+        _readOverlay();
+        // 选框状态驱动：移动态画虚线；长按中更新圆环进度（Flutter long press 推进状态）。
+        final selState = rust.selectionState();
+        if (_moveDashed.value != (selState == 2)) {
+          _moveDashed.value = selState == 2;
         }
-        _updateSelectionStatus();
-      } else if (_lpStartTime != null && (selState == 1 || _lpPanelRing)) {
-        // 前 200ms 不显示圆环（防普通点击遮挡内容），总时长仍为 500ms。
-        final ms = DateTime.now().difference(_lpStartTime!).inMilliseconds;
-        _lpProgress.value = ms <= 200 ? 0 : ((ms - 200) / 300).clamp(0.0, 1.0);
-      }
-      if (selState != 2 && _selectionStatusActive) {
-        _selectionStatusActive = false;
-        _editStatus.value = null;
+        if (selState == 3) {
+          // 长按完成：指示线出现并跟随手指微调（松手前可移动位置）。
+          if (_lpProgress.value != 0) {
+            _lpProgress.value = 0;
+          }
+          final tick = rust.longPressTick();
+          final track = rust.longPressTrack();
+          _lpPreviewTick = tick;
+          _setInsertStatus(tick);
+          final cur = _lpIndicator.value;
+          if (cur == null || cur.tick != tick || cur.track != track) {
+            _lpIndicator.value = LongPressIndicator(
+              tick: tick,
+              track: track,
+              pr: _viewMode == kViewPianoroll,
+            );
+          }
+        } else if (selState == 2) {
+          // 已转移动态：清掉圆环（虚线由 moving 分支绘制），顶部栏显示相对增量。
+          _lpPreviewTick = null;
+          if (_lpProgress.value != 0) {
+            _lpProgress.value = 0;
+          }
+          _updateSelectionStatus();
+        } else if (_lpStartTime != null && (selState == 1 || _lpPanelRing)) {
+          // 前 200ms 不显示圆环（防普通点击遮挡内容），总时长仍为 500ms。
+          final ms = DateTime.now().difference(_lpStartTime!).inMilliseconds;
+          _lpProgress.value = ms <= 200
+              ? 0
+              : ((ms - 200) / 300).clamp(0.0, 1.0);
+        }
+        if (selState != 2 && _selectionStatusActive) {
+          _selectionStatusActive = false;
+          _editStatus.value = null;
+        }
       }
       // 工程状态/时间码降频（每 ~66ms）：减少音频锁与历史栈分配开销。
+      // 对话框打开时也要跑：_pollArchive 靠它关闭加载进度框。
       _frameCounter++;
       if (_frameCounter % 4 == 0) {
         final generation = rust.documentGeneration();
