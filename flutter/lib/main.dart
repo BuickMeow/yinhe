@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'app/studio_shell.dart';
+import 'app/system_bars.dart';
 import 'core/theme.dart';
 import 'l10n.dart';
 import 'l10n/app_localizations.dart';
@@ -32,6 +33,8 @@ class YinheApp extends StatelessWidget {
         locale: L10n.locale,
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
+        // 竖屏显示系统栏，横屏沉浸式；页面据此给系统栏让位。
+        builder: (context, child) => SystemBarsMode(child: child!),
         home: const StudioShell(),
       ),
     );

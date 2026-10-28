@@ -23,6 +23,7 @@ import '../l10n.dart';
 import '../l10n/app_localizations.dart';
 import '../painters/long_press_indicator_painter.dart';
 import '../core/models.dart';
+import 'system_bars.dart';
 import '../core/ui_settings.dart';
 import '../widgets/ruler_markers.dart';
 import '../dialogs/archive_dialogs.dart';
@@ -559,11 +560,10 @@ class _StudioShellState extends _ShellBase
     _selectionStatusActive = true;
   }
 
-  /// 从桌面/后台返回：重新应用沉浸式全屏（系统可能已重置）。
+  /// 从桌面/后台返回：保存状态复位（系统栏由 [SystemBarsMode] 负责恢复）。
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
       // 从 SAF 选择器返回：保存流程要么已完成（onProjectSaved 会给对勾），
       // 要么被取消 —— 这里清掉"保存中"圆环，避免一直转。
       if (_saving) {
