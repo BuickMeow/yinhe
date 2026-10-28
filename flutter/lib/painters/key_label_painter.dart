@@ -28,8 +28,8 @@ class KeyLabelPainter extends CustomPainter {
     final kh = s[4];
     final keyboardW = s[5];
     final key0Top = s[9];
-    // 与键盘列同一门槛/字号；键盘收起成小提手时不画。
-    if (kh < 10 || keyboardW < 30 || size.height <= 0) {
+    // 与键盘列同一门槛/字号；行高太小时文字会糊成一片。
+    if (kh < 10 || keyboardW <= 0 || size.height <= 0) {
       return;
     }
     final fontSize = (kh * 0.5).clamp(7.0, 11.0);

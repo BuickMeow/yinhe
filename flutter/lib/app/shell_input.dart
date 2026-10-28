@@ -604,8 +604,7 @@ mixin _ShellInput on _ShellBase {
     final s = _snap.value;
     final panel = s[5];
     final laneH = s[6];
-    // 面板缩窄后 M/S 不显示，也不能被误触。
-    if (laneH < 34 || panel < 110) {
+    if (laneH < 34) {
       return false;
     }
     final btn = (laneH * 0.44).clamp(18.0, 26.0).toDouble();

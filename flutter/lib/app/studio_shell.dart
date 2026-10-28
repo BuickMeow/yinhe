@@ -167,14 +167,6 @@ abstract class _ShellBase extends State<StudioShell>
   /// 当前允许的最大高度（由 LayoutBuilder 每帧写入，避免溢出屏幕）。
   double _autoPanelMaxHeight = AutomationPanel.defaultHeight;
 
-  /// PR 键盘列 / AR 轨道面板宽度（拖动小提手切换档位）。
-  double _keyboardWidth = 60;
-  double _arPanelWidth = 134;
-  /// 拖动中的预览宽度；null = 没在拖。
-  double? _resizePreview;
-  double _resizeStartWidth = 0;
-  double _resizeStartX = 0;
-
   /// 当前工具（PR 5 种；AR 2 种；索引对应 `toolDefs`）。
   int _toolPr = 0;
   int _toolAr = 0;

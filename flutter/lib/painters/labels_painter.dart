@@ -85,15 +85,9 @@ class LabelsPainter extends CustomPainter {
         Paint()..color = rows[idx].color,
       );
     }
-    // 轨道面板三档：>=110 显示 M/S；>=64 显示编号/名称；更窄只剩色条+提手。
-    final showText = panelW >= 64;
-    final showMs = panelW >= 110;
     for (var idx = first; idx < last; idx++) {
       final row = rows[idx];
       final y = idx * laneH - scrollY;
-      if (!showText) {
-        continue;
-      }
       final port = row.port >= 0 && row.port < 4 ? 'ABCD'[row.port] : '?';
       final code =
           '${idx.toString().padLeft(3, '0')}  $port${(row.channel + 1).toString().padLeft(2, '0')}';
@@ -116,7 +110,7 @@ class LabelsPainter extends CustomPainter {
         vCenter: true,
       );
       // Master（Conductor）轨没有 M/S。
-      if (showMs && laneH >= 34 && !row.master) {
+      if (laneH >= 34 && !row.master) {
         final btn = (laneH * 0.44).clamp(18.0, 26.0).toDouble();
         const gap = 4.0;
         final right = panelW - 6.0;
@@ -148,17 +142,15 @@ class LabelsPainter extends CustomPainter {
           Paint()..color = YinheTheme.stripeBg,
         );
       }
-      if (panelW >= 40) {
-        _text(
-          canvas,
-          '+',
-          Offset(panelW / 2, addY + laneH / 2),
-          (laneH * 0.5).clamp(18.0, 34.0).toDouble(),
-          YinheTheme.textSecondary,
-          vCenter: true,
-          hCenter: true,
-        );
-      }
+      _text(
+        canvas,
+        '+',
+        Offset(panelW / 2, addY + laneH / 2),
+        (laneH * 0.5).clamp(18.0, 34.0).toDouble(),
+        YinheTheme.textSecondary,
+        vCenter: true,
+        hCenter: true,
+      );
     }
   }
 
@@ -190,8 +182,7 @@ class LabelsPainter extends CustomPainter {
     final kh = s[4];
     final kbW = s[5];
     final key0Y = s[9];
-    // 键盘收起成小提手时不画音名。
-    if (kh < 10 || kbW < 30) {
+    if (kh < 10 || kbW <= 0) {
       return;
     }
     final font = (kh * 0.5).clamp(7.0, 11.0).toDouble();

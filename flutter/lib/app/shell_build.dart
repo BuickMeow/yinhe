@@ -76,73 +76,6 @@ mixin _ShellBuild on _ShellBase {
     });
   }
 
-  // ── 面板宽度拖动 ──
-
-  void _beginPanelResize(double width, double x) {
-    setState(() {
-      _resizeStartWidth = width;
-      _resizeStartX = x;
-      _resizePreview = width;
-    });
-  }
-
-  void _updatePanelResize(double x, {required bool keyboard}) {
-    final max = keyboard ? 90.0 : 200.0;
-    final w = (_resizeStartWidth + (x - _resizeStartX)).clamp(16.0, max);
-    setState(() => _resizePreview = w);
-  }
-
-  void _endPanelResize({required bool keyboard}) {
-    final raw = _resizePreview ?? (keyboard ? _keyboardWidth : _arPanelWidth);
-    if (keyboard) {
-      final target = raw < 38 ? 16.0 : 60.0;
-      _keyboardWidth = target;
-      rust.setPrKeyboardWidth(target);
-    } else {
-      const levels = [16.0, 96.0, 134.0];
-      var target = levels.first;
-      for (final level in levels) {
-        if ((level - raw).abs() < (target - raw).abs()) {
-          target = level;
-        }
-      }
-      _arPanelWidth = target;
-      rust.setArrPanelWidth(target);
-    }
-    setState(() => _resizePreview = null);
-  }
-
-  /// 点一下手柄循环档位（最小档时从屏幕左缘拖动会与系统返回手势冲突）。
-  void _cyclePanelLevel({required bool keyboard}) {
-    if (keyboard) {
-      final target = _keyboardWidth > 30 ? 16.0 : 60.0;
-      setState(() => _keyboardWidth = target);
-      rust.setPrKeyboardWidth(target);
-    } else {
-      const levels = [134.0, 96.0, 16.0];
-      var idx = levels.indexOf(_arPanelWidth);
-      if (idx < 0) {
-        idx = 0;
-      }
-      final target = levels[(idx + 1) % levels.length];
-      setState(() => _arPanelWidth = target);
-      rust.setArrPanelWidth(target);
-    }
-  }
-
-  Widget _resizeGrip() {
-    return Center(
-      child: Container(
-        width: 4,
-        height: 36,
-        decoration: BoxDecoration(
-          color: YinheTheme.textMuted.withValues(alpha: 0.55),
-          borderRadius: BorderRadius.circular(2),
-        ),
-      ),
-    );
-  }
-
   // ── 布局 ──
 
   /// 量化菜单：'自定义' 打开分子/分母输入，其余直接切换当前视图档位。
@@ -243,10 +176,11 @@ mixin _ShellBuild on _ShellBase {
                         // AM 与 PR 一样在布局层确认视口：物理尺寸才决定
                         // SurfaceProducer 的交换链大小，不能等子组件回调。
                         if (amVisible) {
-                          final amW = (size.width - _keyboardWidth).clamp(
-                            1.0,
-                            double.infinity,
-                          );
+                          final amW =
+                              (size.width - AutomationPainter.comboWidth).clamp(
+                                1.0,
+                                double.infinity,
+                              );
                           final amH2 = (amH - AutomationPanel.handleHeight)
                               .clamp(1.0, double.infinity);
                           final amPw = (amW * dpr).round();
@@ -472,7 +406,6 @@ mixin _ShellBuild on _ShellBase {
                                   height: amH,
                                   child: AutomationPanel(
                                     height: amH,
-                                    comboWidth: _keyboardWidth,
                                     snap: _snap,
                                     grid: _grid,
                                     lanes: _autoLanes,
@@ -522,68 +455,6 @@ mixin _ShellBuild on _ShellBase {
                                   _autoCollapsed)
                                 AutoExpandButton(
                                   onTap: () => _setAutoCollapsed(false),
-                                ),
-                              // PR：键盘列拖动提手（AM 可见时只跨 PR 区域）。
-                              if (!_showHome && _viewMode == kViewPianoroll)
-                                Positioned(
-                                  left: _keyboardWidth - 6,
-                                  top: RulerPainter.height,
-                                  bottom: amH,
-                                  width: 12,
-                                  child: GestureDetector(
-                                    behavior: HitTestBehavior.opaque,
-                                    onTap: () =>
-                                        _cyclePanelLevel(keyboard: true),
-                                    onHorizontalDragStart: (d) =>
-                                        _beginPanelResize(
-                                          _keyboardWidth,
-                                          d.globalPosition.dx,
-                                        ),
-                                    onHorizontalDragUpdate: (d) =>
-                                        _updatePanelResize(
-                                          d.globalPosition.dx,
-                                          keyboard: true,
-                                        ),
-                                    onHorizontalDragEnd: (_) =>
-                                        _endPanelResize(keyboard: true),
-                                    child: _resizeGrip(),
-                                  ),
-                                ),
-                              // AR：轨道面板拖动提手。
-                              if (!_showHome && _viewMode == kViewArrangement)
-                                Positioned(
-                                  left: _arPanelWidth - 6,
-                                  top: RulerPainter.height,
-                                  bottom: 0,
-                                  width: 12,
-                                  child: GestureDetector(
-                                    behavior: HitTestBehavior.opaque,
-                                    onTap: () =>
-                                        _cyclePanelLevel(keyboard: false),
-                                    onHorizontalDragStart: (d) =>
-                                        _beginPanelResize(
-                                          _arPanelWidth,
-                                          d.globalPosition.dx,
-                                        ),
-                                    onHorizontalDragUpdate: (d) =>
-                                        _updatePanelResize(
-                                          d.globalPosition.dx,
-                                          keyboard: false,
-                                        ),
-                                    onHorizontalDragEnd: (_) =>
-                                        _endPanelResize(keyboard: false),
-                                    child: _resizeGrip(),
-                                  ),
-                                ),
-                              if (_resizePreview != null)
-                                Positioned(
-                                  left: _resizePreview! - 1,
-                                  top: RulerPainter.height,
-                                  bottom: _viewMode == kViewPianoroll ? amH : 0,
-                                  width: 2,
-                                  child: IgnorePointer(
-                                    child: ColoredBox(color: YinheTheme.accent),
-                                  ),
                                 ),
                             ],
                           ),

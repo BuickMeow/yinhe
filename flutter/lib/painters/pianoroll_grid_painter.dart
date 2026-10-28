@@ -45,8 +45,6 @@ class PianorollGridPainter extends CustomPainter {
     final white = Paint()..color = YinheTheme.keyWhite;
     final black = Paint()..color = YinheTheme.keyBlack;
     // 黑键行条纹铺满内容区，再在左列盖上不透明键盘，和 wgpu 之前的层级一致。
-    // 键盘收起时只剩小提手：不画键位，保留内容区条纹。
-    final showKeys = kbW >= 30;
     for (var key = 0; key < 128; key++) {
       final y = key0Y - key * kh;
       if (y + kh < 0 || y > size.height) {
@@ -56,9 +54,7 @@ class PianorollGridPainter extends CustomPainter {
       if (isBlack) {
         canvas.drawRect(Rect.fromLTWH(0, y, size.width, kh), stripe);
       }
-      if (showKeys) {
-        canvas.drawRect(Rect.fromLTWH(0, y, kbW, kh), isBlack ? black : white);
-      }
+      canvas.drawRect(Rect.fromLTWH(0, y, kbW, kh), isBlack ? black : white);
     }
     // 键盘右缘分隔线。
     canvas.drawRect(

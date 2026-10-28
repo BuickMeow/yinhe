@@ -9,7 +9,6 @@ import 'time_grid.dart';
 class AutomationPainter extends CustomPainter {
   AutomationPainter({
     required this.lane,
-    this.comboWidth = 60.0,
     required this.velocity,
     required this.trackColors,
     required this.color,
@@ -60,8 +59,8 @@ class AutomationPainter extends CustomPainter {
   /// 是否绘制选框/锚点高亮/拖动预览等交互层。
   final bool paintOverlay;
 
-  /// 左侧 combo 列宽（与 PR 键盘列同宽）。
-  final double comboWidth;
+  /// 左侧 combo 列宽（与 main.dart 的 SizedBox 保持一致）。
+  static const double comboWidth = 60.0;
 
   @override
   void paint(Canvas canvas, Size size) {
