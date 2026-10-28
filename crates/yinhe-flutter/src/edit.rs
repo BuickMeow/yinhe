@@ -345,6 +345,11 @@ fn write_track(s: &RenderScene) -> Option<usize> {
     if n == 0 {
         return None;
     }
+    // PR 只显示 Conductor 时没有可编辑音符。以前这里会落到第 1 轨，
+    // 导致框选/落笔改到看不见的轨道上（还会画出别的轨的 ghost）。
+    if s.display_track == Some(0) {
+        return None;
+    }
     let t = s.display_track.or(s.active_track).unwrap_or(1).min(n - 1);
     if t == 0 {
         if n > 1 { Some(1) } else { None }
@@ -2109,6 +2114,8 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
     let geom_pr = PrGeom::new(&s.pr_view);
     let geom_ar = ArGeom::new(&s.arr_view);
     let snap = scene::SnapCtx::new(s);
+    // Conductor 视图没有音符：框选只清空遗留选区，不生成任何成员。
+    let conductor_view = s.display_track == Some(0);
     let doc = s.document.as_mut()?;
     let mut click_tick: Option<f64> = None;
     let mut click_row: Option<usize> = None;
@@ -2140,9 +2147,11 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
                 edit.sel_rect.clear();
                 edit.arr_sel_rect.clear();
                 edit.chan_ar_sel.clear();
-                edit.sel_rect
-                    .push_rect((f64::from(ta), f64::from(tb), klo, khi), false);
-                edit.selected.add_rect_track(ta, tb, klo, khi, tr_lo, tr_hi);
+                if !conductor_view {
+                    edit.sel_rect
+                        .push_rect((f64::from(ta), f64::from(tb), klo, khi), false);
+                    edit.selected.add_rect_track(ta, tb, klo, khi, tr_lo, tr_hi);
+                }
             }
         }
         ViewMode::Arrangement => {
@@ -2710,3 +2719,34 @@ fn after_edit(s: &mut RenderScene) -> Option<std::sync::Arc<yinhe_core::YinModel
 
 // Document 解构辅助（拆借用）。
 use yinhe_editor_core::Document;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scene::RenderScene;
+
+    fn scene(display: Option<usize>, active: Option<usize>, tracks: usize) -> RenderScene {
+        let mut s = RenderScene::default();
+        s.num_tracks = tracks;
+        s.display_track = display;
+        s.active_track = active;
+        s
+    }
+
+    #[test]
+    fn conductor_view_has_no_write_track() {
+        assert_eq!(write_track(&scene(Some(0), Some(0), 3)), None);
+    }
+
+    #[test]
+    fn explicit_track_writes_that_track() {
+        assert_eq!(write_track(&scene(Some(2), Some(0), 3)), Some(2));
+        assert_eq!(write_track(&scene(None, Some(2), 3)), Some(2));
+    }
+
+    #[test]
+    fn all_tracks_falls_back_to_first_note_track() {
+        assert_eq!(write_track(&scene(None, Some(0), 3)), Some(1));
+        assert_eq!(write_track(&scene(None, None, 3)), Some(1));
+    }
+}

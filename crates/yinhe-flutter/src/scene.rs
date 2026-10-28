@@ -3870,11 +3870,24 @@ pub fn set_display_track(track: i32) -> i32 {
     let Ok(mut s) = scene().lock() else {
         return 0;
     };
-    s.display_track = if track < 0 {
+    let next = if track < 0 {
         None
     } else {
         Some(track as usize)
     };
+    // 切换显示轨后旧选区可能落在看不见的轨上（移动/删除会改到隐藏音符）；
+    // 这里直接清空，让用户在新视图里重新框选。
+    if s.display_track != next {
+        s.display_track = next;
+        if let Some(doc) = s.document.as_mut() {
+            doc.edit.selected.clear();
+            doc.edit.sel_rect.clear();
+            doc.edit.arr_sel_rect.clear();
+            doc.edit.chan_ar_sel.clear();
+        }
+        crate::selection_materializer::invalidate();
+        s.overlay_rev = s.overlay_rev.wrapping_add(1);
+    }
     log::info!("显示轨道: {track}");
     1
 }
