@@ -67,6 +67,11 @@ Future<int?> showArchiveEntriesDialog(
           itemCount: entries.length,
           itemBuilder: (context, i) {
             final e = entries[i];
+            // 包内文件往往共用很长的目录前缀，单行省略后完全分不清。
+            // 第一行显示文件名（可换行），第二行显示目录。
+            final parts = e.name.split('/');
+            final base = parts.length > 1 ? parts.removeLast() : e.name;
+            final dir = parts.join('/');
             return ListTile(
               dense: true,
               leading: Icon(
@@ -75,11 +80,22 @@ Future<int?> showArchiveEntriesDialog(
                 color: YinheTheme.textSecondary,
               ),
               title: Text(
-                e.name,
-                maxLines: 1,
+                base,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 14),
               ),
+              subtitle: dir.isEmpty
+                  ? null
+                  : Text(
+                      dir,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: YinheTheme.textSecondary,
+                        fontSize: 11,
+                      ),
+                    ),
               trailing: Text(
                 _fmtSize(e.size),
                 style: TextStyle(color: YinheTheme.textLabel, fontSize: 12),

@@ -626,7 +626,7 @@ class _SettingsViewState extends State<SettingsView> {
           _sectionTitle(
             l.ignoreVelocity,
             hint: L10n.isZh
-                ? '力度不超过该值的音符不发声（黑乐谱隐藏音符）'
+                ? '力度不超过该值的音符不发声（黑乐谱音符画）'
                 : 'Notes at or below this velocity are silent',
           ),
           const SizedBox(height: 8),

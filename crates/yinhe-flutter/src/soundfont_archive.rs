@@ -227,21 +227,27 @@ fn import_entry(archive: &Archive, entry: &ArchiveEntry) -> Result<(), String> {
         .ok_or_else(|| "私有目录未初始化".to_string())
         .map(|d| Path::new(&d).join("soundfonts"))?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let root = unique_root(&dir, archive.path());
+    let root = stable_root(&dir, archive.path());
     let lower = entry.name.to_ascii_lowercase();
     let is_sfz = lower.ends_with(".sfz");
     let result = if is_sfz {
-        archive
-            .extract_all(&root, |done, total| {
-                if let Ok(mut st) = import_slot().lock() {
-                    st.progress = if total > 0 {
-                        done as f32 / total as f32
-                    } else {
-                        0.5
-                    };
-                }
-            })
-            .map_err(|e| e.to_string())?;
+        // 同一个压缩包里的多个 SFZ 共用一份采样：整包只在第一次导入时解压，
+        // 后续只解压选中的 SFZ，避免每导入一个乐器就复制一份采样。
+        let marker = root.join(".yinhe_extracted");
+        if !marker.exists() {
+            archive
+                .extract_all(&root, |done, total| {
+                    if let Ok(mut st) = import_slot().lock() {
+                        st.progress = if total > 0 {
+                            done as f32 / total as f32
+                        } else {
+                            0.5
+                        };
+                    }
+                })
+                .map_err(|e| e.to_string())?;
+            let _ = std::fs::write(&marker, b"1");
+        }
         archive
             .extract_entry(&entry.name, &root)
             .map_err(|e| e.to_string())?
@@ -257,7 +263,8 @@ fn import_entry(archive: &Archive, entry: &ArchiveEntry) -> Result<(), String> {
     Ok(())
 }
 
-fn unique_root(dir: &Path, archive: &Path) -> PathBuf {
+/// 同一个压缩包固定解压到同一个目录（同名压缩包共用，符合“先解压一次”的预期）。
+fn stable_root(dir: &Path, archive: &Path) -> PathBuf {
     let base = archive
         .file_stem()
         .and_then(|s| s.to_str())
@@ -271,13 +278,7 @@ fn unique_root(dir: &Path, archive: &Path) -> PathBuf {
     } else {
         base
     };
-    let mut root = dir.join(&base);
-    let mut n = 2;
-    while root.exists() {
-        root = dir.join(format!("{base}_{n}"));
-        n += 1;
-    }
-    root
+    dir.join(base)
 }
 
 fn manifest_path(dir: &Path) -> PathBuf {
