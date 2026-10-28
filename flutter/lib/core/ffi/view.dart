@@ -206,6 +206,21 @@ final FollowPlayheadDart followPlayhead = bridge
       'yinhe_follow_playhead',
     );
 
+typedef SetPanelWidthNative = ffi.Int32 Function(ffi.Float);
+typedef SetPanelWidthDart = int Function(double);
+
+/// 拖动调整 PR 键盘列宽度。
+final SetPanelWidthDart setPrKeyboardWidth = bridge
+    .lookupFunction<SetPanelWidthNative, SetPanelWidthDart>(
+      'yinhe_set_pr_keyboard_width',
+    );
+
+/// 拖动调整 AR 轨道面板宽度。
+final SetPanelWidthDart setArrPanelWidth = bridge
+    .lookupFunction<SetPanelWidthNative, SetPanelWidthDart>(
+      'yinhe_set_arr_panel_width',
+    );
+
 /// 工程元数据 JSON（回显）。
 final CStrDart projectMetaJson = bridge.lookupFunction<CStrNative, CStrDart>(
   'yinhe_project_meta_json',

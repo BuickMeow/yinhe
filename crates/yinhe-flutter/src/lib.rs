@@ -1543,6 +1543,18 @@ pub extern "C" fn yinhe_follow_playhead() -> i32 {
     i32::from(scene::follow_playhead())
 }
 
+/// 拖动调整 PR 键盘列宽度（逻辑像素）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_pr_keyboard_width(w: f32) -> i32 {
+    scene::set_pr_keyboard_width(w)
+}
+
+/// 拖动调整 AR 轨道面板宽度（逻辑像素）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_arr_panel_width(w: f32) -> i32 {
+    scene::set_arr_panel_width(w)
+}
+
 /// 工程元数据 JSON（堆分配）。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_project_meta_json() -> *mut std::ffi::c_char {

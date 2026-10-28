@@ -24,6 +24,7 @@ class AutomationPanel extends StatefulWidget {
   const AutomationPanel({
     super.key,
     required this.height,
+    required this.comboWidth,
     required this.snap,
     required this.grid,
     required this.lanes,
@@ -48,6 +49,10 @@ class AutomationPanel extends StatefulWidget {
   });
 
   final double height;
+
+  /// 左侧下拉列宽度；与 PR 键盘列同宽，保证时间轴对齐。
+  final double comboWidth;
+
   final ValueNotifier<List<double>> snap;
 
   /// 拍号分段（与 PR 共用，保证小节/拍网格对齐）。
@@ -604,18 +609,17 @@ class _AutomationPanelState extends State<AutomationPanel>
     if (ppu <= 0) {
       return 0.0;
     }
-    final px = x - (kbW - AutomationPainter.comboWidth);
+    final px = x - (kbW - widget.comboWidth);
     final tick = (px + scrollX) / ppu;
     return tick < 0.0 ? 0.0 : tick;
   }
 
   /// 与 PR 共用量化档位：`tickAtX` 需要画布内容坐标（AM 的 combo 列宽即键盘宽）。
-  double _snapTickAt(double localX) =>
-      rust.tickAtX(localX + AutomationPainter.comboWidth);
+  double _snapTickAt(double localX) => rust.tickAtX(localX + widget.comboWidth);
 
   double _xOfTick(double tick) {
     final s = widget.snap.value;
-    return tick * s[1] - s[2] + (s[5] - AutomationPainter.comboWidth);
+    return tick * s[1] - s[2] + (s[5] - widget.comboWidth);
   }
 
   double _yOfValue(double value) =>
@@ -1290,70 +1294,78 @@ class _AutomationPanelState extends State<AutomationPanel>
                 ColoredBox(
                   color: YinheTheme.bg,
                   child: SizedBox(
-                    width: AutomationPainter.comboWidth,
+                    width: widget.comboWidth,
                     child: Column(
-                      children: [
-                        InkWell(
-                          onTap: () => widget.onCollapsed(true),
-                          child: SizedBox(
-                            height: 22,
-                            width: double.infinity,
-                            child: Icon(
-                              Icons.keyboard_arrow_down,
-                              size: 16,
-                              color: YinheTheme.textMuted,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: PopupMenuButton<int>(
-                            tooltip: l.automationType,
-                            padding: EdgeInsets.zero,
-                            itemBuilder: (_) => [
-                              for (final (label, value) in entries)
-                                PopupMenuItem(value: value, child: Text(label)),
-                            ],
-                            onSelected: (v) {
-                              _clearVelocityStroke();
-                              _clearSelection();
-                              widget.status.value = null;
-                              if (v >= 0) {
-                                setState(
-                                  () => _selectedLane = v == 0 ? null : v - 1,
-                                );
-                                _sendAmState();
-                                return;
-                              }
-                              final code = -v - 1;
-                              final kind = code ~/ 100000;
-                              final number = code % 100000;
-                              if (rust.ensureAutomationLane(
-                                    widget.activeTrack,
-                                    kind,
-                                    number,
-                                  ) ==
-                                  1) {
-                                _pendingTarget = (kind, number);
-                                widget.onReload();
-                              }
-                            },
-                            child: Center(
-                              child: Text(
-                                lane == null
-                                    ? 'Velocity'
-                                    : _canonicalLabel(lane) ?? _laneLabel(lane),
-                                textAlign: TextAlign.center,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: YinheTheme.textLabel,
-                                  fontSize: 10,
+                      children: widget.comboWidth >= 40
+                          ? [
+                              InkWell(
+                                onTap: () => widget.onCollapsed(true),
+                                child: SizedBox(
+                                  height: 22,
+                                  width: double.infinity,
+                                  child: Icon(
+                                    Icons.keyboard_arrow_down,
+                                    size: 16,
+                                    color: YinheTheme.textMuted,
+                                  ),
                                 ),
                               ),
-                            ),
-                          ),
-                        ),
-                      ],
+                              Expanded(
+                                child: PopupMenuButton<int>(
+                                  tooltip: l.automationType,
+                                  padding: EdgeInsets.zero,
+                                  itemBuilder: (_) => [
+                                    for (final (label, value) in entries)
+                                      PopupMenuItem(
+                                        value: value,
+                                        child: Text(label),
+                                      ),
+                                  ],
+                                  onSelected: (v) {
+                                    _clearVelocityStroke();
+                                    _clearSelection();
+                                    widget.status.value = null;
+                                    if (v >= 0) {
+                                      setState(
+                                        () => _selectedLane = v == 0
+                                            ? null
+                                            : v - 1,
+                                      );
+                                      _sendAmState();
+                                      return;
+                                    }
+                                    final code = -v - 1;
+                                    final kind = code ~/ 100000;
+                                    final number = code % 100000;
+                                    if (rust.ensureAutomationLane(
+                                          widget.activeTrack,
+                                          kind,
+                                          number,
+                                        ) ==
+                                        1) {
+                                      _pendingTarget = (kind, number);
+                                      widget.onReload();
+                                    }
+                                  },
+                                  child: Center(
+                                    child: Text(
+                                      lane == null
+                                          ? 'Velocity'
+                                          : _canonicalLabel(lane) ??
+                                                _laneLabel(lane),
+                                      textAlign: TextAlign.center,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: YinheTheme.textLabel,
+                                        fontSize: 10,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ]
+                          : const [],
                     ),
                   ),
                 ),
@@ -1395,6 +1407,7 @@ class _AutomationPanelState extends State<AutomationPanel>
                             required bool base,
                           }) => AutomationPainter(
                             lane: lane,
+                            comboWidth: widget.comboWidth,
                             velocity: widget.velocity,
                             trackColors: widget.trackColors,
                             color: _trackColor,

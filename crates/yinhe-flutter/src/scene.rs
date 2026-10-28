@@ -265,6 +265,9 @@ pub struct RenderScene {
     pub model_epoch: u64,
     /// PR 底部 AM 面板的 wgpu 叠加区域。
     pub automation_panel: AutomationPanelState,
+    /// PR 键盘列 / AR 轨道面板当前宽度（拖动调整；打开新文档沿用）。
+    pub pr_keyboard_width: f32,
+    pub arr_panel_width: f32,
     /// 播放跟随：用户手动平移/缩放后暂停，等播放头连续离开视口后恢复。
     pub follow_paused: bool,
     pub follow_out_since: Option<std::time::Instant>,
@@ -312,6 +315,8 @@ impl Default for RenderScene {
             doc_generation: 0,
             model_epoch: 0,
             automation_panel: AutomationPanelState::default(),
+            pr_keyboard_width: 60.0,
+            arr_panel_width: AR_TRACK_PANEL_W,
             follow_paused: false,
             follow_out_since: None,
             follow_last_at: None,
@@ -1221,6 +1226,9 @@ fn apply_document(mut doc: Document, min_ticks: f64) {
     s.model_epoch = s.model_epoch.wrapping_add(1);
     s.pr_view = pr_view;
     s.arr_view = arr_view;
+    // 键盘列/轨道面板宽度是用户拖动出来的，新文档沿用。
+    s.pr_view.base.left_panel_width = s.pr_keyboard_width;
+    s.arr_view.base.left_panel_width = s.arr_panel_width;
     s.view_mode = ViewMode::Arrangement;
     s.total_ticks = total_ticks;
     // 新文档从 0 开始：清掉上一个工程残留的非播放态光标。
@@ -3969,6 +3977,28 @@ fn history_step(step: impl FnOnce(&mut Document) -> bool) -> i32 {
     drop(s);
     // 撤销/重做可能改动音符或自动化：重载 CC（不中断播放）。
     crate::audio::reload_notes(model);
+    1
+}
+
+/// 设置 PR 键盘列宽度（Flutter 拖动小提手时调用）。
+pub fn set_pr_keyboard_width(w: f32) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    s.pr_keyboard_width = w.clamp(8.0, 200.0);
+    s.pr_view.base.left_panel_width = s.pr_keyboard_width;
+    s.overlay_rev = s.overlay_rev.wrapping_add(1);
+    1
+}
+
+/// 设置 AR 轨道面板宽度（Flutter 拖动小提手时调用）。
+pub fn set_arr_panel_width(w: f32) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    s.arr_panel_width = w.clamp(8.0, 240.0);
+    s.arr_view.base.left_panel_width = s.arr_panel_width;
+    s.overlay_rev = s.overlay_rev.wrapping_add(1);
     1
 }
 
