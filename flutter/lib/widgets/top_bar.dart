@@ -349,7 +349,11 @@ class TopBar extends StatelessWidget {
                   alignment: Alignment.centerLeft,
                   child: _buildQuantizeButton(context, l),
                 ),
-                Align(alignment: Alignment.center, child: _titleButton(l)),
+                Align(
+                  alignment: Alignment.center,
+                  // 与宽屏一致：PR 中央显示当前音轨（含全部轨道开关），AR 显示歌名。
+                  child: isPr ? _buildSongBox(l) : _titleButton(l),
+                ),
                 Align(
                   alignment: Alignment.centerRight,
                   child: Row(
