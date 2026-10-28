@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use yinhe_audio::channel_layout::ChannelLayout;
 use yinhe_audio::export::{ExportProgress, WavBitDepth};
 use yinhe_audio::{AudioCommand, CpalAudioHandle, SynthEngine};
 use yinhe_core::YinModel;
@@ -19,6 +20,8 @@ use crate::scene;
 
 struct AudioState {
     handle: CpalAudioHandle,
+    /// 当前音频引擎的通道布局（定型后不可变；不覆盖新 model 时重建引擎）。
+    layout: ChannelLayout,
     /// 暂停/停止时的光标 tick（播放中由 sample_position 换算）。
     cursor_tick: f64,
     /// 最近一次已真正下发的音色库路径列表（避免重复解析）。
@@ -318,16 +321,8 @@ fn lock_audio() -> Option<std::sync::MutexGuard<'static, Option<AudioState>>> {
     }
 }
 
-/// 首次使用时初始化音频；返回 false = 初始化失败。
-fn ensure_audio() -> bool {
-    let Some(mut guard) = lock_audio() else {
-        return false;
-    };
-    if guard.is_some() {
-        return true;
-    }
-    use yinhe_audio::channel_layout::ChannelLayout;
-    let layout = ChannelLayout::from_mask(vec![true; 16]);
+/// 按给定布局创建音频引擎（首次初始化与文档通道扩展共用）。
+fn spawn_audio(layout: ChannelLayout, cursor_tick: f64) -> Option<AudioState> {
     let cfg = settings();
     // 缓冲默认 2048 帧：AAudio 动态调优在部分机型上收敛慢，固定值更稳
     // （cpal Fixed(n) 实际 capacity 为 2n；蓝牙 A2DP 路径需要更大缓冲）。
@@ -336,40 +331,66 @@ fn ensure_audio() -> bool {
     } else {
         cpal::BufferSize::Fixed(cfg.buffer_size)
     };
-    let spawned = yinhe_audio::spawn_cpal_audio(
+    match yinhe_audio::spawn_cpal_audio(
         48_000,
-        layout,
+        layout.clone(),
         buffer,
         None,
         SynthEngine::YinheCpu,
         Interpolation::default(),
-    );
-    match spawned {
+    ) {
         Ok(handle) => {
-            log::info!("音频初始化完成: {} Hz", handle.sample_rate);
+            log::info!(
+                "音频初始化完成: {} Hz（{} 通道）",
+                handle.sample_rate,
+                layout.num_channels()
+            );
             let mut st = AudioState {
                 handle,
-                cursor_tick: 0.0,
+                layout,
+                cursor_tick,
                 sf_sent: None,
             };
             apply_soundfonts(&mut st);
             // 应用设置页配置（默认 ignore_velocity=1、max_voices=512：
             // 1024 在 tau 峰值段仍可能超过 512 帧的实时预算）。
             apply_runtime_settings(&st);
-            *guard = Some(st);
-            true
+            Some(st)
         }
         Err(e) => {
             log::error!("音频初始化失败（播放不可用）: {e}");
-            false
+            None
         }
     }
 }
 
-fn send_soundfonts(handle: &CpalAudioHandle, paths: &[String]) {
-    // 0..16 = port0 的 16 个源通道共用同一份音色库表
-    // （顺序 = 优先级，靠前者覆盖靠后者；多 port 后续扩展）。
-    let configs: Vec<(u8, Vec<String>)> = (0u8..16).map(|ch| (ch, paths.to_vec())).collect();
+/// 首次使用时初始化音频；返回 false = 初始化失败。
+fn ensure_audio() -> bool {
+    let Some(mut guard) = lock_audio() else {
+        return false;
+    };
+    if guard.is_some() {
+        return true;
+    }
+    // 没有文档时的兜底布局：16 通道（正常播放/导出都发生在 LoadModel 之后，
+    // 那时会按 model 的通道需求重建）。
+    let layout = ChannelLayout::from_mask(vec![true; 16]);
+    match spawn_audio(layout, 0.0) {
+        Some(st) => {
+            *guard = Some(st);
+            true
+        }
+        None => false,
+    }
+}
+
+fn send_soundfonts(handle: &CpalAudioHandle, layout: &ChannelLayout, paths: &[String]) {
+    // 按 layout 激活的源通道下发（最多 256 = 16 port × 16 通道）：
+    // 所有通道共用同一份全局音色库表（顺序 = 优先级，靠前者覆盖靠后者）。
+    let configs: Vec<(u8, Vec<String>)> = (0..layout.num_channels())
+        .filter(|&ch| layout.is_active(ch as usize))
+        .map(|ch| (ch as u8, paths.to_vec()))
+        .collect();
     handle.handle.send(AudioCommand::SetSoundFonts {
         configs: Box::new(configs),
     });
@@ -381,7 +402,7 @@ fn apply_soundfonts(st: &mut AudioState) {
     if st.sf_sent.as_ref() == Some(&paths) {
         return;
     }
-    send_soundfonts(&st.handle, &paths);
+    send_soundfonts(&st.handle, &st.layout, &paths);
     st.sf_sent = Some(paths);
 }
 
@@ -505,19 +526,35 @@ pub fn reload_notes(model: Arc<YinModel>) {
 
 /// 文档加载完成：把模型交给音频引擎，并确保音色库已下发。
 pub fn on_model_loaded(model: Arc<YinModel>) {
-    if !ensure_audio() {
-        return;
-    }
+    let layout = ChannelLayout::from_model(&model);
     let Some(mut guard) = lock_audio() else {
         return;
     };
+    // 引擎布局定型后不可变：新文档用到未激活的通道（新 port / 更多通道）时，
+    // 先释放旧流（避免设备占用冲突）再按 model 的实际通道重建。
+    let rebuild = match guard.as_ref() {
+        Some(st) => !st.layout.covers_model(&model),
+        None => true,
+    };
+    if rebuild {
+        // 旧流先同步 pause（立即静音），再丢后台线程 drop（join 渲染线程
+        // 可能数百 ms，不能卡 UI）；新流随后创建，避免双流重叠的"滋"。
+        if let Some(old) = guard.take() {
+            old.handle.pause_stream();
+            std::thread::spawn(move || drop(old));
+        }
+        match spawn_audio(layout, 0.0) {
+            Some(st) => *guard = Some(st),
+            None => return,
+        }
+    }
     let Some(st) = guard.as_mut() else {
         return;
     };
     apply_soundfonts(st);
     st.handle.handle.send(AudioCommand::LoadModel { model });
     st.cursor_tick = 0.0;
-    log::info!("音频模型已加载");
+    log::info!("音频模型已加载（{} 通道）", st.layout.num_channels());
 }
 
 /// 播放（从暂停位置开始；与暂停点接近时直接 Resume，避免 ring 回退）。
