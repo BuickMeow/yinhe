@@ -1,7 +1,12 @@
 package com.jieneng.yinhe
 
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.util.Log
 import android.view.InputDevice
 import android.view.MotionEvent
@@ -11,6 +16,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.view.TextureRegistry
 import java.io.File
+import android.widget.Toast
 
 private const val TAG = "yinhe-bridge"
 
@@ -416,12 +422,31 @@ class MainActivity : FlutterActivity() {
      * 裸 SFZ 单独拷过来找不到采样，因此不允许，SFZ 只能走压缩包整包导入。
      */
     private fun openSoundFontPicker() {
+        // SFZ 需要同目录的采样文件：没有「所有文件访问」时直接跳到系统授权页。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            !Environment.isExternalStorageManager()
+        ) {
+            Toast.makeText(this, "请开启「所有文件访问」后重试", Toast.LENGTH_LONG).show()
+            val intent = Intent(
+                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.parse("package:$packageName"),
+            )
+            runCatching { startActivity(intent) }.onFailure {
+                runCatching {
+                    startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                }
+            }
+            return
+        }
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "*/*"
         }
         startActivityForResult(intent, REQ_OPEN_SF)
     }
+
+    private fun hasAllFilesAccess(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()
 
     /** 文件扩展名（小写、不含点；无扩展名返回空串）。 */
     private fun extensionOf(name: String): String {
@@ -441,8 +466,17 @@ class MainActivity : FlutterActivity() {
         extensionOf(name) in PROJECT_EXTS || isArchiveName(name)
 
     /** 音色库选择：裸 .sf2 或压缩包（包内可含 SF2/SFZ 及采样）。 */
-    private fun isSoundfontName(name: String): Boolean =
-        extensionOf(name) in SOUNDFONT_EXTS || isArchiveName(name)
+    private fun isSoundfontName(name: String): Boolean {
+        val ext = extensionOf(name)
+        if (ext in SOUNDFONT_EXTS) {
+            return true
+        }
+        // 裸 SFZ 只有在拿到「所有文件访问」时才允许（采样在用户目录里原地读取）。
+        if (ext == "sfz" && hasAllFilesAccess()) {
+            return true
+        }
+        return isArchiveName(name)
+    }
 
     /** 与 Rust/Dart 保持一致的压缩包扩展名。 */
     private fun isArchivePath(path: String): Boolean =
@@ -606,6 +640,8 @@ class MainActivity : FlutterActivity() {
         if (uri == null) {
             return null
         }
+        // 有「所有文件访问」时直接用真实路径，不再复制到私有目录。
+        externalStoragePath(uri)?.let { return it }
         val name = displayName(uri) ?: "picked.bin"
         val dest = File(filesDir, name)
         return try {
@@ -622,6 +658,30 @@ class MainActivity : FlutterActivity() {
             Log.e(TAG, "复制所选文件失败: $e")
             null
         }
+    }
+
+    /**
+     * `content://com.android.externalstorage.documents/...` → `/storage/...` 真实路径。
+     * 仅在已授予「所有文件访问」时可用；其他 provider 返回 null 走复制。
+     */
+    private fun externalStoragePath(uri: Uri): String? {
+        if (!hasAllFilesAccess()) {
+            return null
+        }
+        if (uri.authority != "com.android.externalstorage.documents") {
+            return null
+        }
+        val docId = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull() ?: return null
+        val parts = docId.split(':', limit = 2)
+        if (parts.size != 2) {
+            return null
+        }
+        val root = if (parts[0] == "primary") {
+            Environment.getExternalStorageDirectory().absolutePath
+        } else {
+            "/storage/${parts[0]}"
+        }
+        return "$root/${parts[1]}"
     }
 
     private fun displayName(uri: android.net.Uri): String? {

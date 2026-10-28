@@ -347,10 +347,9 @@ pub fn set_soundfonts(entries: Vec<SoundfontEntry>) {
 /// `soundfonts/` 解压根目录里的 SFZ 才算有效。
 pub(crate) fn is_soundfont_path(path: &str) -> bool {
     let lower = path.replace('\\', "/").to_ascii_lowercase();
-    if lower.ends_with(".sf2") {
-        return true;
-    }
-    lower.ends_with(".sfz") && lower.contains("/soundfonts/")
+    // SFZ 现在可以从用户目录原地读取（Android 需「所有文件访问」），
+    // 不再要求路径里必须出现 /soundfonts/。
+    lower.ends_with(".sf2") || lower.ends_with(".sfz")
 }
 
 /// 追加一个音色库（已存在则启用并移到最前），立即应用。
@@ -871,8 +870,9 @@ mod tests {
     fn soundfont_path_extensions() {
         assert!(is_soundfont_path("/files/Studio.SF2"));
         assert!(is_soundfont_path("/files/soundfonts/pack/tone.sfz"));
+        assert!(is_soundfont_path("/storage/emulated/0/Music/tone.sfz"));
         assert!(!is_soundfont_path("/files/song.mid"));
-        assert!(!is_soundfont_path("/files/bare.sfz"));
+        assert!(!is_soundfont_path("/files/bare.sf2x"));
         assert!(!is_soundfont_path("/files/font.sf3"));
         assert!(!is_soundfont_path("/files/no_ext"));
     }
