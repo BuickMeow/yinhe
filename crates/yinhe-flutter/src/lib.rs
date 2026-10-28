@@ -1519,6 +1519,18 @@ pub extern "C" fn yinhe_set_allow_overlapping_notes(allow: i32) -> i32 {
     1
 }
 
+/// 卷帘背景是否显示 C 音名。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_show_keyboard_labels(show: i32) -> i32 {
+    scene::set_show_keyboard_labels(show != 0);
+    1
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_show_keyboard_labels() -> i32 {
+    i32::from(scene::show_keyboard_labels())
+}
+
 /// 工程元数据 JSON（堆分配）。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_project_meta_json() -> *mut std::ffi::c_char {

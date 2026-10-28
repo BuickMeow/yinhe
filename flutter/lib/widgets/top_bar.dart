@@ -153,7 +153,7 @@ class TopBar extends StatelessWidget {
                       children: [
                         LayoutId(
                           id: _TopBarSlot.left,
-                          child: _buildLeftGroup(context, l),
+                          child: _buildLeftGroup(l),
                         ),
                         LayoutId(
                           id: _TopBarSlot.center,
@@ -174,7 +174,7 @@ class TopBar extends StatelessWidget {
     );
   }
 
-  Widget _buildLeftGroup(BuildContext context, AppLocalizations l) {
+  Widget _buildTransport(AppLocalizations l) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -205,54 +205,109 @@ class TopBar extends StatelessWidget {
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
         ),
-        const SizedBox(width: 4),
-        ValueListenableBuilder<EditStatus?>(
-          valueListenable: editStatus,
-          builder: (context, status, _) {
-            final active = status != null;
-            final hasMeta =
-                status != null &&
-                (status.primary != null || status.secondary != null);
-            final showPosition = !(status?.hidePosition ?? false);
-            return Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (showPosition)
-                  InkWell(
-                    borderRadius: BorderRadius.circular(4),
-                    onTap: active ? null : onToggleTimecode,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 6,
-                      ),
-                      child: ValueListenableBuilder<String>(
-                        valueListenable: timecodeText,
-                        builder: (context, text, _) => Text(
-                          status?.position ?? text,
-                          style: TextStyle(
-                            color: active
-                                ? YinheTheme.accent
-                                : YinheTheme.textLabel,
-                            fontSize: 14,
-                          ),
-                        ),
+      ],
+    );
+  }
+
+  Widget _buildMeta(AppLocalizations l) {
+    return ValueListenableBuilder<EditStatus?>(
+      valueListenable: editStatus,
+      builder: (context, status, _) {
+        final active = status != null;
+        final hasMeta =
+            status != null &&
+            (status.primary != null || status.secondary != null);
+        final showPosition = !(status?.hidePosition ?? false);
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (showPosition)
+              InkWell(
+                borderRadius: BorderRadius.circular(4),
+                onTap: active ? null : onToggleTimecode,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 6,
+                  ),
+                  child: ValueListenableBuilder<String>(
+                    valueListenable: timecodeText,
+                    builder: (context, text, _) => Text(
+                      status?.position ?? text,
+                      style: TextStyle(
+                        color: active
+                            ? YinheTheme.accent
+                            : YinheTheme.textLabel,
+                        fontSize: 14,
                       ),
                     ),
                   ),
-                if (!hasMeta) ...[
-                  _metaText(bpmText, l.defaultBpm, onEditBpm),
-                  _metaText(sigText, l.defaultTimeSig, onEditSig),
-                ] else ...[
-                  if (status.primary != null)
-                    _metaText(status.primary!, '', null, active: true),
-                  if (status.secondary != null)
-                    _metaText(status.secondary!, '', null, active: true),
-                ],
-              ],
-            );
-          },
-        ),
+                ),
+              ),
+            if (!hasMeta) ...[
+              _metaText(bpmText, l.defaultBpm, onEditBpm),
+              _metaText(sigText, l.defaultTimeSig, onEditSig),
+            ] else ...[
+              if (status.primary != null)
+                _metaText(status.primary!, '', null, active: true),
+              if (status.secondary != null)
+                _metaText(status.secondary!, '', null, active: true),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildLeftGroup(AppLocalizations l) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [_buildTransport(l), const SizedBox(width: 4), _buildMeta(l)],
+    );
+  }
+
+  Widget _buildHistory(AppLocalizations l) {
+    return ValueListenableBuilder<int>(
+      valueListenable: docState,
+      builder: (context, st, _) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _iconAction(Icons.undo, l.undo, (st & 1) != 0 ? onUndo : null),
+          _iconAction(Icons.redo, l.redo, (st & 2) != 0 ? onRedo : null),
+          // 保存：从右向左第一个；无改动时置灰不可点；
+          // 保存中显示圆环；保存成功后 2 秒显示对勾（普通字体色）。
+          if (saving)
+            const SizedBox(
+              width: 40,
+              height: 40,
+              child: Center(
+                child: SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            )
+          else if (saveDone)
+            _iconAction(Icons.check, l.saved, null, color: YinheTheme.text)
+          else
+            _iconAction(
+              Icons.save_outlined,
+              l.saveProject,
+              (st & 4) != 0 ? onSave : null,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTools(BuildContext context, AppLocalizations l) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildQuantizeButton(context, l),
+        _buildQuickToolButton(l),
+        _buildToolButton(l),
       ],
     );
   }
@@ -260,64 +315,49 @@ class TopBar extends StatelessWidget {
   Widget _buildRightGroup(BuildContext context, AppLocalizations l) {
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [
-        _buildQuantizeButton(context, l),
-        _buildQuickToolButton(l),
-        _buildToolButton(l),
-        ValueListenableBuilder<int>(
-          valueListenable: docState,
-          builder: (context, st, _) => Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _iconAction(Icons.undo, l.undo, (st & 1) != 0 ? onUndo : null),
-              _iconAction(Icons.redo, l.redo, (st & 2) != 0 ? onRedo : null),
-              // 保存：从右向左第一个；无改动时置灰不可点；
-              // 保存中显示圆环；保存成功后 2 秒显示对勾（普通字体色）。
-              if (saving)
-                const SizedBox(
-                  width: 40,
-                  height: 40,
-                  child: Center(
-                    child: SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  ),
-                )
-              else if (saveDone)
-                _iconAction(Icons.check, l.saved, null, color: YinheTheme.text)
-              else
-                _iconAction(
-                  Icons.save_outlined,
-                  l.saveProject,
-                  (st & 4) != 0 ? onSave : null,
-                ),
-            ],
-          ),
-        ),
-      ],
+      children: [_buildTools(context, l), _buildHistory(l)],
     );
   }
 
   Widget _buildCompact(BuildContext context, AppLocalizations l) {
     return Column(
       children: [
+        // 第一行：左 主页/播放/停止；中 时间码/BPM/拍号；右 撤销/重做/保存。
         Expanded(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: _buildLeftGroup(context, l),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Align(alignment: Alignment.centerLeft, child: _buildTransport(l)),
+              Align(
+                alignment: Alignment.center,
+                child: FittedBox(fit: BoxFit.scaleDown, child: _buildMeta(l)),
+              ),
+              Align(alignment: Alignment.centerRight, child: _buildHistory(l)),
+            ],
           ),
         ),
+        // 第二行：左 量化；中 歌曲标题；右 快捷工具 + 主工具。
         Expanded(
           child: DecoratedBox(
             decoration: BoxDecoration(
               border: Border(top: BorderSide(color: YinheTheme.lineFg)),
             ),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              reverse: true,
-              child: _buildRightGroup(context, l),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: _buildQuantizeButton(context, l),
+                ),
+                Align(alignment: Alignment.center, child: _titleButton(l)),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [_buildQuickToolButton(l), _buildToolButton(l)],
+                  ),
+                ),
+              ],
             ),
           ),
         ),

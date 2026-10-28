@@ -172,6 +172,23 @@ final SetAllowOverlapDart setAllowOverlappingNotes = bridge
       'yinhe_set_allow_overlapping_notes',
     );
 
+typedef SetShowKeyboardLabelsNative = ffi.Int32 Function(ffi.Int32);
+typedef SetShowKeyboardLabelsDart = int Function(int);
+
+/// 卷帘背景显示 C 音名开关。
+final SetShowKeyboardLabelsDart setShowKeyboardLabels = bridge
+    .lookupFunction<SetShowKeyboardLabelsNative, SetShowKeyboardLabelsDart>(
+      'yinhe_set_show_keyboard_labels',
+    );
+
+typedef ShowKeyboardLabelsNative = ffi.Int32 Function();
+typedef ShowKeyboardLabelsDart = int Function();
+
+final ShowKeyboardLabelsDart showKeyboardLabels = bridge
+    .lookupFunction<ShowKeyboardLabelsNative, ShowKeyboardLabelsDart>(
+      'yinhe_show_keyboard_labels',
+    );
+
 /// 工程元数据 JSON（回显）。
 final CStrDart projectMetaJson = bridge.lookupFunction<CStrNative, CStrDart>(
   'yinhe_project_meta_json',

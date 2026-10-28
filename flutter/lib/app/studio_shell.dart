@@ -23,6 +23,7 @@ import '../l10n.dart';
 import '../l10n/app_localizations.dart';
 import '../painters/long_press_indicator_painter.dart';
 import '../core/models.dart';
+import '../core/ui_settings.dart';
 import '../widgets/ruler_markers.dart';
 import '../dialogs/archive_dialogs.dart';
 import '../dialogs/event_list_dialog.dart';
@@ -397,6 +398,7 @@ class _StudioShellState extends _ShellBase
     _dragDkPtr = calloc<ffi.Int32>();
     _dragDtrPtr = calloc<ffi.Int32>();
     _channel.setMethodCallHandler(_onNativeCall);
+    showKeyboardLabels.value = rust.showKeyboardLabels() == 1;
     _init();
     _ticker = createTicker((_) {
       // 帧驱动同步：wgpu 先呈现当前帧，所有视图的 Flutter 浮层统一延迟一帧。

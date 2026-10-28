@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../core/ffi.dart' as rust;
+import '../core/ui_settings.dart';
 import '../l10n.dart';
 import '../l10n/app_localizations.dart';
 import '../core/theme.dart';
@@ -51,6 +52,7 @@ class _SettingsViewState extends State<SettingsView> {
   int _bufferSize = 2048;
   int _ignoreVelocity = 1;
   bool _allowOverlappingNotes = true;
+  bool _showKeyboardLabels = showKeyboardLabels.value;
 
   @override
   void initState() {
@@ -163,6 +165,12 @@ class _SettingsViewState extends State<SettingsView> {
   void _setAllowOverlappingNotes(bool value) {
     setState(() => _allowOverlappingNotes = value);
     rust.setAllowOverlappingNotes(value ? 1 : 0);
+  }
+
+  void _setShowKeyboardLabels(bool value) {
+    setState(() => _showKeyboardLabels = value);
+    showKeyboardLabels.value = value;
+    rust.setShowKeyboardLabels(value ? 1 : 0);
   }
 
   @override
@@ -319,6 +327,34 @@ class _SettingsViewState extends State<SettingsView> {
             value: _allowOverlappingNotes,
             activeThumbColor: YinheTheme.accent,
             onChanged: _setAllowOverlappingNotes,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: YinheTheme.controlBg,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: SwitchListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+            secondary: Icon(
+              Icons.piano,
+              size: 20,
+              color: YinheTheme.textSecondary,
+            ),
+            title: Text(
+              L10n.isZh ? '显示键盘' : 'Show keyboard',
+              style: TextStyle(color: YinheTheme.text, fontSize: 14),
+            ),
+            subtitle: Text(
+              L10n.isZh
+                  ? '在卷帘背景显示 C 音名（C3、C4…）'
+                  : 'Show C note names on the piano roll background',
+              style: TextStyle(color: YinheTheme.textSecondary, fontSize: 12),
+            ),
+            value: _showKeyboardLabels,
+            activeThumbColor: YinheTheme.accent,
+            onChanged: _setShowKeyboardLabels,
           ),
         ),
       ],

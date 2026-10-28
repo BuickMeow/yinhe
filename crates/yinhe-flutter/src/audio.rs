@@ -48,6 +48,8 @@ pub struct AudioSettings {
     pub ignore_velocity: u8,
     /// 允许新音符/移动后的音符与其他音符重叠（关闭后复用桌面端拦截策略）。
     pub allow_overlapping_notes: bool,
+    /// 卷帘背景显示 C 音名（C3/C4…）。
+    pub show_keyboard_labels: bool,
 }
 
 /// “自动复音”的平台默认值。
@@ -70,6 +72,7 @@ impl Default for AudioSettings {
             buffer_size: 2048,
             ignore_velocity: 1,
             allow_overlapping_notes: true,
+            show_keyboard_labels: false,
         }
     }
 }
@@ -184,11 +187,13 @@ pub fn settings() -> AudioSettings {
 pub fn set_settings(max_voices: u32, buffer_size: u32, ignore_velocity: u8) {
     if let Ok(mut g) = settings_slot().lock() {
         let allow_overlapping_notes = g.allow_overlapping_notes;
+        let show_keyboard_labels = g.show_keyboard_labels;
         *g = AudioSettings {
             max_voices,
             buffer_size,
             ignore_velocity,
             allow_overlapping_notes,
+            show_keyboard_labels,
         };
     }
     let Some(mut guard) = lock_audio() else {
@@ -207,12 +212,27 @@ pub fn set_allow_overlapping_notes(allow: bool) {
     }
 }
 
+/// 卷帘背景音名开关。
+pub fn set_show_keyboard_labels(show: bool) {
+    if let Ok(mut g) = settings_slot().lock() {
+        g.show_keyboard_labels = show;
+    }
+}
+
+pub fn show_keyboard_labels() -> bool {
+    settings().show_keyboard_labels
+}
+
 /// 音频设置 JSON（设置页回显）。
 pub fn settings_json() -> String {
     let s = settings();
     format!(
-        "{{\"max_voices\":{},\"buffer_size\":{},\"ignore_velocity\":{},\"allow_overlapping_notes\":{}}}",
-        s.max_voices, s.buffer_size, s.ignore_velocity, s.allow_overlapping_notes
+        "{{\"max_voices\":{},\"buffer_size\":{},\"ignore_velocity\":{},\"allow_overlapping_notes\":{},\"show_keyboard_labels\":{}}}",
+        s.max_voices,
+        s.buffer_size,
+        s.ignore_velocity,
+        s.allow_overlapping_notes,
+        s.show_keyboard_labels
     )
 }
 

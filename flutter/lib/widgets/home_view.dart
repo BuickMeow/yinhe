@@ -82,19 +82,29 @@ class HomeView extends StatelessWidget {
           Positioned.fill(
             child: Padding(
               padding: EdgeInsets.only(
-                left: 48,
+                left: compact ? 24 : 48,
                 right: compact ? 24 : 40,
-                top: 28,
+                top: compact ? 48 : 28,
+                bottom: compact ? 24 : 0,
               ),
               child: compact
-                  ? SingleChildScrollView(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          _actions(context),
-                          const SizedBox(height: 24),
-                          SizedBox(height: 320, child: _recentPanel(context)),
-                        ],
+                  ? LayoutBuilder(
+                      builder: (context, c) => SingleChildScrollView(
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(minHeight: c.maxHeight),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _actions(context),
+                              const SizedBox(height: 24),
+                              SizedBox(
+                                height: 320,
+                                child: _recentPanel(context),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     )
                   : Row(

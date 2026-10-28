@@ -236,6 +236,22 @@ mixin _ShellBuild on _ShellBase {
                                         ),
                                       ),
                                     ),
+                                  // 卷帘背景 C 音名：设置「显示键盘」开启时显示。
+                                  if (!_showHome && _viewMode == kViewPianoroll)
+                                    Positioned(
+                                      left: 0,
+                                      right: 0,
+                                      top: RulerPainter.height,
+                                      bottom: 0,
+                                      child: IgnorePointer(
+                                        child: CustomPaint(
+                                          painter: KeyLabelPainter(
+                                            _snap,
+                                            showKeyboardLabels,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
                                   // 选框必须在音轨面板/键盘下方：面板不透明底会盖住越界部分。
                                   if (!_showHome)
                                     Positioned(

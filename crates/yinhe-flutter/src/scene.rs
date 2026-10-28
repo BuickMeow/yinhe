@@ -76,7 +76,8 @@ impl SnapCtx {
 }
 
 /// AR 轨道面板宽度（逻辑像素，与旧安卓壳 PANEL_W 一致）。
-pub const AR_TRACK_PANEL_W: f32 = 168.0;
+/// AR 轨道面板宽度（168 → 134，约 -20%，给内容区更多横向空间）。
+pub const AR_TRACK_PANEL_W: f32 = 134.0;
 /// AR 行高（逻辑像素，触屏友好的旧壳值）。
 pub const AR_LANE_HEIGHT: f32 = 56.0;
 
@@ -1552,6 +1553,16 @@ pub fn set_allow_overlapping_notes(allow: bool) {
     save_audio_settings();
 }
 
+/// 卷帘背景音名开关（设置页）。
+pub fn set_show_keyboard_labels(show: bool) {
+    crate::audio::set_show_keyboard_labels(show);
+    save_audio_settings();
+}
+
+pub fn show_keyboard_labels() -> bool {
+    crate::audio::show_keyboard_labels()
+}
+
 fn write_settings() {
     let Some(dir) = files_dir_slot().lock().ok().and_then(|g| g.clone()) else {
         return;
@@ -1568,11 +1579,13 @@ fn write_settings() {
     text.push_str(&format!("ui_language={}\n", ui_language()));
     let a = crate::audio::settings();
     text.push_str(&format!(
-        "max_voices={}\nbuffer_size={}\nignore_velocity={}\nallow_overlapping_notes={}\n",
+        "max_voices={}\nbuffer_size={}\nignore_velocity={}\nallow_overlapping_notes={}\n\
+         show_keyboard_labels={}\n",
         a.max_voices,
         a.buffer_size,
         a.ignore_velocity,
-        if a.allow_overlapping_notes { 1 } else { 0 }
+        if a.allow_overlapping_notes { 1 } else { 0 },
+        if a.show_keyboard_labels { 1 } else { 0 }
     ));
     if let Err(e) = std::fs::write(format!("{dir}/settings.txt"), text) {
         log::error!("设置写入失败: {e}");
@@ -1592,6 +1605,7 @@ fn load_settings() {
     let mut buffer_size = defaults.buffer_size;
     let mut ignore_velocity = defaults.ignore_velocity;
     let mut allow_overlapping_notes = defaults.allow_overlapping_notes;
+    let mut show_keyboard_labels = defaults.show_keyboard_labels;
     let mut soundfonts: Vec<crate::audio::SoundfontEntry> = Vec::new();
     let mut language = String::new();
     for line in text.lines() {
@@ -1620,6 +1634,8 @@ fn load_settings() {
             ignore_velocity = v.trim().parse().unwrap_or(ignore_velocity);
         } else if let Some(v) = line.strip_prefix("allow_overlapping_notes=") {
             allow_overlapping_notes = v.trim() != "0";
+        } else if let Some(v) = line.strip_prefix("show_keyboard_labels=") {
+            show_keyboard_labels = v.trim() != "0";
         }
     }
     if !language.is_empty() {
@@ -1631,6 +1647,7 @@ fn load_settings() {
     }
     crate::audio::set_settings(max_voices, buffer_size, ignore_velocity);
     crate::audio::set_allow_overlapping_notes(allow_overlapping_notes);
+    crate::audio::set_show_keyboard_labels(show_keyboard_labels);
     crate::soundfont_archive::cleanup();
 }
 

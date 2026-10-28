@@ -112,6 +112,10 @@ void main() {
     expect(find.byIcon(Icons.motion_photos_on), findsOneWidget);
     expect(find.byIcon(Icons.undo), findsOneWidget);
     expect(find.byIcon(Icons.save_outlined), findsOneWidget);
-    expect(find.text('Center Title'), findsNothing, reason: '窄屏隐藏中央标题');
+    final bar = tester.getRect(find.byType(TopBar));
+    final title = tester.getCenter(find.textContaining('Center Title'));
+    expect(title.dx - bar.left, closeTo(bar.width / 2, 1), reason: '竖屏第二行标题居中');
+    final home = tester.getCenter(find.byIcon(Icons.home));
+    expect(home.dx - bar.left, lessThan(30), reason: '主页按钮保持在左上角');
   });
 }
