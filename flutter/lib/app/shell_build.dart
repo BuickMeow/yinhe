@@ -76,6 +76,21 @@ mixin _ShellBuild on _ShellBase {
     });
   }
 
+  /// 打开主页：按设置决定是否暂停播放。
+  void _openHome() {
+    final pause = rust.pauseOnHome() == 1 && rust.isPlaying() == 1;
+    if (pause) {
+      rust.transport(1);
+    }
+    setState(() {
+      _showHome = true;
+      if (pause) {
+        _playing = false;
+      }
+    });
+    _updateTimecode();
+  }
+
   // ── 布局 ──
 
   /// 量化菜单：'自定义' 打开分子/分母输入，其余直接切换当前视图档位。
@@ -520,7 +535,7 @@ mixin _ShellBuild on _ShellBase {
       songTitle: _songTitle,
       fileName: _fileName,
       docState: _docState,
-      onHome: () => setState(() => _showHome = true),
+      onHome: _openHome,
       onBack: () => _setView(kViewArrangement),
       onTogglePlay: _togglePlay,
       onStop: _stopPlayback,

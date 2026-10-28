@@ -206,6 +206,36 @@ final FollowPlayheadDart followPlayhead = bridge
       'yinhe_follow_playhead',
     );
 
+typedef SetPauseOnHomeNative = ffi.Int32 Function(ffi.Int32);
+typedef SetPauseOnHomeDart = int Function(int);
+
+/// 进入主页时暂停播放。
+final SetPauseOnHomeDart setPauseOnHome = bridge
+    .lookupFunction<SetPauseOnHomeNative, SetPauseOnHomeDart>(
+      'yinhe_set_pause_on_home',
+    );
+
+typedef PauseOnHomeNative = ffi.Int32 Function();
+typedef PauseOnHomeDart = int Function();
+
+final PauseOnHomeDart pauseOnHome = bridge
+    .lookupFunction<PauseOnHomeNative, PauseOnHomeDart>('yinhe_pause_on_home');
+
+typedef SetPauseOnExitNative = ffi.Int32 Function(ffi.Int32);
+typedef SetPauseOnExitDart = int Function(int);
+
+/// 退出应用（切后台）时暂停播放。
+final SetPauseOnExitDart setPauseOnExit = bridge
+    .lookupFunction<SetPauseOnExitNative, SetPauseOnExitDart>(
+      'yinhe_set_pause_on_exit',
+    );
+
+typedef PauseOnExitNative = ffi.Int32 Function();
+typedef PauseOnExitDart = int Function();
+
+final PauseOnExitDart pauseOnExit = bridge
+    .lookupFunction<PauseOnExitNative, PauseOnExitDart>('yinhe_pause_on_exit');
+
 /// 工程元数据 JSON（回显）。
 final CStrDart projectMetaJson = bridge.lookupFunction<CStrNative, CStrDart>(
   'yinhe_project_meta_json',

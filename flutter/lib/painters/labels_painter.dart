@@ -92,6 +92,10 @@ class LabelsPainter extends CustomPainter {
       final code =
           '${idx.toString().padLeft(3, '0')}  $port${(row.channel + 1).toString().padLeft(2, '0')}';
       final font = (laneH * 0.24).clamp(9.0, 13.0).toDouble();
+      // 文本可用宽度：面板宽 - 左内边距 - 右内边距；显示 M/S 时再让出按钮区。
+      final btn = (laneH * 0.44).clamp(18.0, 26.0).toDouble();
+      final msReserve = (!row.master && laneH >= 34) ? btn * 2 + 8.0 : 0.0;
+      final textMax = (panelW - 16.0 - msReserve).clamp(8.0, double.infinity);
       _text(
         canvas,
         code,
@@ -99,6 +103,7 @@ class LabelsPainter extends CustomPainter {
         font,
         YinheTheme.text,
         vCenter: true,
+        maxWidth: textMax,
       );
       final small = (laneH * 0.2).clamp(8.0, 11.0).toDouble();
       _text(
@@ -108,6 +113,7 @@ class LabelsPainter extends CustomPainter {
         small,
         YinheTheme.textLabel,
         vCenter: true,
+        maxWidth: textMax,
       );
       // Master（Conductor）轨没有 M/S。
       if (laneH >= 34 && !row.master) {
@@ -231,6 +237,7 @@ class LabelsPainter extends CustomPainter {
     bool vCenter = false,
     bool hCenter = false,
     bool rightAlign = false,
+    double? maxWidth,
   }) {
     if (text.isEmpty) {
       return;
@@ -243,7 +250,7 @@ class LabelsPainter extends CustomPainter {
       maxLines: 1,
       ellipsis: '…',
       textDirection: TextDirection.ltr,
-    )..layout();
+    )..layout(maxWidth: maxWidth ?? double.infinity);
     var dx = pos.dx;
     if (rightAlign) {
       dx -= tp.width;

@@ -1583,6 +1583,25 @@ pub fn follow_playhead() -> bool {
     crate::audio::follow_playhead()
 }
 
+/// 进入主页/退出应用时暂停播放。
+pub fn set_pause_on_home(on: bool) {
+    crate::audio::set_pause_on_home(on);
+    save_audio_settings();
+}
+
+pub fn pause_on_home() -> bool {
+    crate::audio::pause_on_home()
+}
+
+pub fn set_pause_on_exit(on: bool) {
+    crate::audio::set_pause_on_exit(on);
+    save_audio_settings();
+}
+
+pub fn pause_on_exit() -> bool {
+    crate::audio::pause_on_exit()
+}
+
 fn write_settings() {
     let Some(dir) = files_dir_slot().lock().ok().and_then(|g| g.clone()) else {
         return;
@@ -1600,13 +1619,15 @@ fn write_settings() {
     let a = crate::audio::settings();
     text.push_str(&format!(
         "max_voices={}\nbuffer_size={}\nignore_velocity={}\nallow_overlapping_notes={}\n\
-         show_keyboard_labels={}\nfollow_playhead={}\n",
+         show_keyboard_labels={}\nfollow_playhead={}\npause_on_home={}\npause_on_exit={}\n",
         a.max_voices,
         a.buffer_size,
         a.ignore_velocity,
         if a.allow_overlapping_notes { 1 } else { 0 },
         if a.show_keyboard_labels { 1 } else { 0 },
-        if a.follow_playhead { 1 } else { 0 }
+        if a.follow_playhead { 1 } else { 0 },
+        if a.pause_on_home { 1 } else { 0 },
+        if a.pause_on_exit { 1 } else { 0 }
     ));
     if let Err(e) = std::fs::write(format!("{dir}/settings.txt"), text) {
         log::error!("设置写入失败: {e}");
@@ -1628,6 +1649,8 @@ fn load_settings() {
     let mut allow_overlapping_notes = defaults.allow_overlapping_notes;
     let mut show_keyboard_labels = defaults.show_keyboard_labels;
     let mut follow_playhead = defaults.follow_playhead;
+    let mut pause_on_home = defaults.pause_on_home;
+    let mut pause_on_exit = defaults.pause_on_exit;
     let mut soundfonts: Vec<crate::audio::SoundfontEntry> = Vec::new();
     let mut language = String::new();
     for line in text.lines() {
@@ -1660,6 +1683,10 @@ fn load_settings() {
             show_keyboard_labels = v.trim() != "0";
         } else if let Some(v) = line.strip_prefix("follow_playhead=") {
             follow_playhead = v.trim() != "0";
+        } else if let Some(v) = line.strip_prefix("pause_on_home=") {
+            pause_on_home = v.trim() != "0";
+        } else if let Some(v) = line.strip_prefix("pause_on_exit=") {
+            pause_on_exit = v.trim() != "0";
         }
     }
     if !language.is_empty() {
@@ -1673,6 +1700,8 @@ fn load_settings() {
     crate::audio::set_allow_overlapping_notes(allow_overlapping_notes);
     crate::audio::set_show_keyboard_labels(show_keyboard_labels);
     crate::audio::set_follow_playhead(follow_playhead);
+    crate::audio::set_pause_on_home(pause_on_home);
+    crate::audio::set_pause_on_exit(pause_on_exit);
     crate::soundfont_archive::cleanup();
 }
 

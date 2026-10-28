@@ -52,6 +52,10 @@ pub struct AudioSettings {
     pub show_keyboard_labels: bool,
     /// 播放时视口跟随播放头（居中跟随）。
     pub follow_playhead: bool,
+    /// 进入主页时暂停播放。
+    pub pause_on_home: bool,
+    /// 退出应用（切后台）时暂停播放。
+    pub pause_on_exit: bool,
 }
 
 /// “自动复音”的平台默认值。
@@ -76,6 +80,8 @@ impl Default for AudioSettings {
             allow_overlapping_notes: true,
             show_keyboard_labels: true,
             follow_playhead: true,
+            pause_on_home: false,
+            pause_on_exit: false,
         }
     }
 }
@@ -192,6 +198,8 @@ pub fn set_settings(max_voices: u32, buffer_size: u32, ignore_velocity: u8) {
         let allow_overlapping_notes = g.allow_overlapping_notes;
         let show_keyboard_labels = g.show_keyboard_labels;
         let follow_playhead = g.follow_playhead;
+        let pause_on_home = g.pause_on_home;
+        let pause_on_exit = g.pause_on_exit;
         *g = AudioSettings {
             max_voices,
             buffer_size,
@@ -199,6 +207,8 @@ pub fn set_settings(max_voices: u32, buffer_size: u32, ignore_velocity: u8) {
             allow_overlapping_notes,
             show_keyboard_labels,
             follow_playhead,
+            pause_on_home,
+            pause_on_exit,
         };
     }
     let Some(mut guard) = lock_audio() else {
@@ -239,17 +249,39 @@ pub fn follow_playhead() -> bool {
     settings().follow_playhead
 }
 
+pub fn set_pause_on_home(on: bool) {
+    if let Ok(mut g) = settings_slot().lock() {
+        g.pause_on_home = on;
+    }
+}
+
+pub fn pause_on_home() -> bool {
+    settings().pause_on_home
+}
+
+pub fn set_pause_on_exit(on: bool) {
+    if let Ok(mut g) = settings_slot().lock() {
+        g.pause_on_exit = on;
+    }
+}
+
+pub fn pause_on_exit() -> bool {
+    settings().pause_on_exit
+}
+
 /// 音频设置 JSON（设置页回显）。
 pub fn settings_json() -> String {
     let s = settings();
     format!(
-        "{{\"max_voices\":{},\"buffer_size\":{},\"ignore_velocity\":{},\"allow_overlapping_notes\":{},\"show_keyboard_labels\":{},\"follow_playhead\":{}}}",
+        "{{\"max_voices\":{},\"buffer_size\":{},\"ignore_velocity\":{},\"allow_overlapping_notes\":{},\"show_keyboard_labels\":{},\"follow_playhead\":{},\"pause_on_home\":{},\"pause_on_exit\":{}}}",
         s.max_voices,
         s.buffer_size,
         s.ignore_velocity,
         s.allow_overlapping_notes,
         s.show_keyboard_labels,
-        s.follow_playhead
+        s.follow_playhead,
+        s.pause_on_home,
+        s.pause_on_exit
     )
 }
 

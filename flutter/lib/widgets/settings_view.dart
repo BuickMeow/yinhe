@@ -52,6 +52,8 @@ class _SettingsViewState extends State<SettingsView> {
   int _ignoreVelocity = 1;
   bool _allowOverlappingNotes = true;
   bool _followPlayhead = true;
+  bool _pauseOnHome = false;
+  bool _pauseOnExit = false;
 
   @override
   void initState() {
@@ -170,6 +172,16 @@ class _SettingsViewState extends State<SettingsView> {
   void _setFollowPlayhead(bool value) {
     setState(() => _followPlayhead = value);
     rust.setFollowPlayhead(value ? 1 : 0);
+  }
+
+  void _setPauseOnHome(bool value) {
+    setState(() => _pauseOnHome = value);
+    rust.setPauseOnHome(value ? 1 : 0);
+  }
+
+  void _setPauseOnExit(bool value) {
+    setState(() => _pauseOnExit = value);
+    rust.setPauseOnExit(value ? 1 : 0);
   }
 
   @override
@@ -354,6 +366,60 @@ class _SettingsViewState extends State<SettingsView> {
             onChanged: _setFollowPlayhead,
           ),
         ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: YinheTheme.controlBg,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: SwitchListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+            secondary: Icon(
+              Icons.home_outlined,
+              size: 20,
+              color: YinheTheme.textSecondary,
+            ),
+            title: Text(
+              L10n.isZh ? '进入主页时暂停' : 'Pause on home',
+              style: TextStyle(color: YinheTheme.text, fontSize: 14),
+            ),
+            subtitle: Text(
+              L10n.isZh ? '打开主页时停止播放（默认关闭）' : 'Stop playback when opening home',
+              style: TextStyle(color: YinheTheme.textSecondary, fontSize: 12),
+            ),
+            value: _pauseOnHome,
+            activeThumbColor: YinheTheme.accent,
+            onChanged: _setPauseOnHome,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: YinheTheme.controlBg,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: SwitchListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+            secondary: Icon(
+              Icons.exit_to_app,
+              size: 20,
+              color: YinheTheme.textSecondary,
+            ),
+            title: Text(
+              L10n.isZh ? '退出应用时暂停' : 'Pause on exit',
+              style: TextStyle(color: YinheTheme.text, fontSize: 14),
+            ),
+            subtitle: Text(
+              L10n.isZh
+                  ? '切到后台或退出时停止播放（默认关闭）'
+                  : 'Stop playback when leaving the app',
+              style: TextStyle(color: YinheTheme.textSecondary, fontSize: 12),
+            ),
+            value: _pauseOnExit,
+            activeThumbColor: YinheTheme.accent,
+            onChanged: _setPauseOnExit,
+          ),
+        ),
       ],
     );
   }
@@ -527,7 +593,12 @@ class _SettingsViewState extends State<SettingsView> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _sectionTitle(l.maxVoices),
+          _sectionTitle(
+            l.maxVoices,
+            hint: L10n.isZh
+                ? '越高，音色越完整；也越吃性能，可能更卡顿'
+                : 'Higher = fuller sound, but heavier and may stutter',
+          ),
           const SizedBox(height: 8),
           _options(
             const [0, 256, 512, 1024, 2048, 4096],
@@ -536,7 +607,12 @@ class _SettingsViewState extends State<SettingsView> {
             (v) => _applyAudio(maxVoices: v),
           ),
           const SizedBox(height: 22),
-          _sectionTitle(l.audioBuffer),
+          _sectionTitle(
+            l.audioBuffer,
+            hint: L10n.isZh
+                ? '越小延迟越低，但更容易爆音；越大越稳'
+                : 'Smaller = lower latency, but more likely to crackle',
+          ),
           const SizedBox(height: 8),
           _options(
             const [0, 512, 1024, 2048, 4096],
@@ -547,7 +623,12 @@ class _SettingsViewState extends State<SettingsView> {
             (v) => _applyAudio(bufferSize: v),
           ),
           const SizedBox(height: 22),
-          _sectionTitle(l.ignoreVelocity),
+          _sectionTitle(
+            l.ignoreVelocity,
+            hint: L10n.isZh
+                ? '力度不超过该值的音符不发声（黑乐谱隐藏音符）'
+                : 'Notes at or below this velocity are silent',
+          ),
           const SizedBox(height: 8),
           _options(
             const [0, 1, 2, 4, 8, 16],
@@ -560,14 +641,27 @@ class _SettingsViewState extends State<SettingsView> {
     );
   }
 
-  Widget _sectionTitle(String text) {
-    return Text(
-      text,
-      style: TextStyle(
-        color: YinheTheme.text,
-        fontSize: 14,
-        fontWeight: FontWeight.w600,
-      ),
+  Widget _sectionTitle(String text, {String? hint}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          text,
+          style: TextStyle(
+            color: YinheTheme.text,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        if (hint != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 3),
+            child: Text(
+              hint,
+              style: TextStyle(color: YinheTheme.textSecondary, fontSize: 11),
+            ),
+          ),
+      ],
     );
   }
 

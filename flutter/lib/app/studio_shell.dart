@@ -573,6 +573,15 @@ class _StudioShellState extends _ShellBase
         setState(() => _saving = false);
       }
     } else {
+      // 退出应用（切后台）按设置暂停播放。
+      if (state == AppLifecycleState.paused &&
+          rust.pauseOnExit() == 1 &&
+          rust.isPlaying() == 1) {
+        rust.transport(1);
+        if (mounted) {
+          setState(() => _playing = false);
+        }
+      }
       // 切后台/失去焦点时触点 up 可能收不到：清空，避免残留成“幽灵手指”。
       _resetInteraction();
     }

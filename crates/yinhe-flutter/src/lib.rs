@@ -1544,6 +1544,28 @@ pub extern "C" fn yinhe_follow_playhead() -> i32 {
     i32::from(scene::follow_playhead())
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_pause_on_home(on: i32) -> i32 {
+    scene::set_pause_on_home(on != 0);
+    1
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_pause_on_home() -> i32 {
+    i32::from(scene::pause_on_home())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_pause_on_exit(on: i32) -> i32 {
+    scene::set_pause_on_exit(on != 0);
+    1
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_pause_on_exit() -> i32 {
+    i32::from(scene::pause_on_exit())
+}
+
 /// 工程元数据 JSON（堆分配）。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_project_meta_json() -> *mut std::ffi::c_char {
