@@ -277,8 +277,48 @@ pub fn build_key_maps(
 /// 2. 兜底：全部主选落空后，鼓组（bank==128）找 (128, 0)，旋律找 (0, preset)；
 /// 3. 都落空 → 静音（与 xsynth 缺失 preset 静音一致）。
 ///
+/// 返回该 (key, vel) 的**全部** region 层：xsynth 一个 NoteOn 会为每个 spawner
+/// 创建一个 voice，多层叠加是音色本身的一部分（鼓的 L/R 对、叠加强度层）。
+/// 调用方必须为每层创建一个 voice，并用同一组号绑定它们的生命周期。
+///
 /// `entries` 必须按 `(bank, preset)` 升序（`build_key_maps`/`load_key_maps_merged`
 /// 已保证），据此二分定位 program 区间。
+pub fn select_key_infos_multi(
+    entries: &[KeyMapEntry],
+    bank: u8,
+    preset: u8,
+    key: u8,
+    velocity: u8,
+) -> Option<&[KeyInfo]> {
+    if let Some(infos) = select_in_program(entries, bank, preset, key, velocity) {
+        return Some(infos);
+    }
+    let (rb, rp) = if bank == 128 { (128, 0) } else { (0, preset) };
+    select_in_program(entries, rb, rp, key, velocity)
+}
+
+/// 二分定位 `(bank, preset)` 条目区间，返回区间内首个对该 `(key, vel)` 有 region
+/// 的条目的层列表（保持原"首个命中条目胜出"语义；条目内所有层都返回）。
+fn select_in_program(
+    entries: &[KeyMapEntry],
+    bank: u8,
+    preset: u8,
+    key: u8,
+    velocity: u8,
+) -> Option<&[KeyInfo]> {
+    let lo = entries.partition_point(|e| (e.bank, e.preset) < (bank, preset));
+    for e in &entries[lo..] {
+        if e.bank != bank || e.preset != preset {
+            break;
+        }
+        if let Some(infos) = select_key_infos(e.map(), key, velocity) {
+            return Some(infos);
+        }
+    }
+    None
+}
+
+/// `select_key_infos_multi` 的单层便捷版（诊断/测试用：取命中层的第一层）。
 pub fn select_key_info_multi(
     entries: &[KeyMapEntry],
     bank: u8,
@@ -286,61 +326,67 @@ pub fn select_key_info_multi(
     key: u8,
     velocity: u8,
 ) -> Option<&KeyInfo> {
-    if let Some(info) = select_in_program(entries, bank, preset, key, velocity) {
-        return Some(info);
-    }
-    let (rb, rp) = if bank == 128 { (128, 0) } else { (0, preset) };
-    select_in_program(entries, rb, rp, key, velocity)
+    select_key_infos_multi(entries, bank, preset, key, velocity).and_then(|s| s.first())
 }
 
-/// 二分定位 `(bank, preset)` 条目区间，返回区间内首个对该 `(key, vel)` 有 region
-/// 的条目（保持原"首个命中胜出"语义）。
-fn select_in_program(
-    entries: &[KeyMapEntry],
-    bank: u8,
-    preset: u8,
-    key: u8,
-    velocity: u8,
-) -> Option<&KeyInfo> {
-    let lo = entries.partition_point(|e| (e.bank, e.preset) < (bank, preset));
-    for e in &entries[lo..] {
-        if e.bank != bank || e.preset != preset {
-            break;
-        }
-        if let Some(info) = select_key_info(e.map(), key, velocity) {
-            return Some(info);
-        }
-    }
-    None
-}
-
-/// 根据 key 和 velocity 选择对应的 KeyInfo（力度分层）。
-/// 展开后每个 vel 恰好一层，正常情况精确命中；兜底选距离最近的层。
+/// 根据 key 和 velocity 选择对应的全部 KeyInfo 层（力度分层）。
+///
+/// 展开后每个 (key, vel) 的层按 `lovel` 排序且相邻，同一 vel 的叠加层是连续
+/// 区间；正常情况精确命中，兜底选距离最近的 vel 的全部层。
 ///
 /// key ≥ 128（256 键扩展音域）时音色库无对应区域：返回 None（静音），不越界。
-pub fn select_key_info(key_map: &[Vec<KeyInfo>], key: u8, velocity: u8) -> Option<&KeyInfo> {
+pub fn select_key_infos(key_map: &[Vec<KeyInfo>], key: u8, velocity: u8) -> Option<&[KeyInfo]> {
     let layers = key_map.get(key as usize)?;
     if layers.is_empty() {
         return None;
     }
-    for info in layers {
-        if velocity >= info.lovel && velocity <= info.hivel {
-            return Some(info);
-        }
+    if let Some(start) = layers
+        .iter()
+        .position(|info| velocity >= info.lovel && velocity <= info.hivel)
+    {
+        let (lovel, hivel) = (layers[start].lovel, layers[start].hivel);
+        let end = start
+            + layers[start..]
+                .iter()
+                .take_while(|info| info.lovel == lovel && info.hivel == hivel)
+                .count();
+        return Some(&layers[start..end]);
     }
-    layers.iter().min_by_key(|info| {
-        (velocity as i16 - info.lovel as i16)
-            .unsigned_abs()
-            .min((velocity as i16 - info.hivel as i16).unsigned_abs())
-    })
+    // 兜底：最近 vel 区间，返回该区间内的全部层（而不是只取一层）。
+    let (lovel, hivel) = layers
+        .iter()
+        .min_by_key(|info| {
+            (velocity as i16 - info.lovel as i16)
+                .unsigned_abs()
+                .min((velocity as i16 - info.hivel as i16).unsigned_abs())
+        })
+        .map(|info| (info.lovel, info.hivel))?;
+    let start = layers
+        .iter()
+        .position(|info| info.lovel == lovel && info.hivel == hivel)?;
+    let end = start
+        + layers[start..]
+            .iter()
+            .take_while(|info| info.lovel == lovel && info.hivel == hivel)
+            .count();
+    Some(&layers[start..end])
 }
 
-/// 把同一 (key, vel) 的硬左/硬右 mono 层合并成一个交错立体声层。
+/// `select_key_infos` 的单层便捷版（诊断/测试用：取命中层的第一层）。
+pub fn select_key_info(key_map: &[Vec<KeyInfo>], key: u8, velocity: u8) -> Option<&KeyInfo> {
+    select_key_infos(key_map, key, velocity).and_then(|s| s.first())
+}
+
+/// 把同一 (key, vel) 的左/右层合并成一个立体声层。
 ///
-/// Polyphone 从 SF2 导出的 SFZ 常用两个 mono region 拼左右声道
-/// （`sample=...L.wav pan=-100` + `...R.wav pan=+100`）。每个 (key, vel)
-/// 只播一个 layer 时另一声道会精确为 0（表现为“只响一边”）；这里在加载期
-/// 把成对层合并，播放侧无需感知，也不增加 voice 数量。
+/// 两种来源：
+/// - Polyphone 从 SF2 导出的 SFZ 常用两个 mono region 拼左右声道
+///   （`sample=...L.wav pan=-100` + `...R.wav pan=+100`）；
+/// - SF2 立体声 region 被 xsynth-soundfonts 拆成同一样本的两个 pan 极值 zone
+///   （两层引用同一份交错立体声 sample）。
+///
+/// 每个 (key, vel) 只播一层时另一种声道会精确为 0（表现为“只响一边”，
+/// THDrum 这类库整鼓偏左）。这里在加载期合并，播放侧无需感知，也不增加 voice。
 fn merge_stereo_pairs(map: &mut [Vec<KeyInfo>]) {
     for layers in map {
         let mut i = 0;
@@ -355,6 +401,26 @@ fn merge_stereo_pairs(map: &mut [Vec<KeyInfo>]) {
                 i += 1;
                 continue;
             };
+            if layers[i].is_stereo
+                && layers[j].is_stereo
+                && std::ptr::eq(
+                    layers[i].sample_data.as_ptr(),
+                    layers[j].sample_data.as_ptr(),
+                )
+            {
+                // 同一份交错立体声采样的 L/R pan 拆分：原样播一次即可，
+                // 不能按 mono 重组（否则会把 L/R 交叉读错）。
+                layers.remove(j);
+                layers[i].pan_l = 1.0;
+                layers[i].pan_r = 1.0;
+                i += 1;
+                continue;
+            }
+            if layers[i].is_stereo || layers[j].is_stereo {
+                // 混合布局（一份立体声 + 一份 mono）没有安全的合并语义，保留两层。
+                i += 1;
+                continue;
+            }
             // 先取出两份 mono 数据，再移除右侧层，最后写回合并结果。
             let left = layers[i].sample_data.clone();
             let right = layers[j].sample_data.clone();
@@ -377,11 +443,11 @@ fn merge_stereo_pairs(map: &mut [Vec<KeyInfo>]) {
 }
 
 fn is_hard_left(info: &KeyInfo) -> bool {
-    !info.is_stereo && info.pan_l >= 0.999 && info.pan_r <= 0.001
+    info.pan_l >= 0.999 && info.pan_r <= 0.001
 }
 
 fn is_hard_right(info: &KeyInfo) -> bool {
-    !info.is_stereo && info.pan_l <= 0.001 && info.pan_r >= 0.999
+    info.pan_l <= 0.001 && info.pan_r >= 0.999
 }
 
 /// 合并前确认两条 layer 除左右声道外参数完全一致（音量/包络/循环/滤波等）。
@@ -593,6 +659,77 @@ mod tests {
         assert!(info.is_stereo);
         assert_eq!(&*info.sample_data, &[0.5, 0.1, 0.6, 0.2]);
         assert_eq!((info.pan_l, info.pan_r), (1.0, 1.0));
+    }
+
+    /// 同 (key, vel) 的多个 region（叠加强度层 / SF2 的 L/R 拆分）必须全部返回；
+    /// 只取一层会让鼓偏侧、旋律丢泛音（回归：鼓右声道静音）。
+    #[test]
+    fn select_key_infos_returns_all_layers() {
+        let mut map = vec![Vec::new(); 128];
+        map[60] = vec![
+            KeyInfo {
+                lovel: 100,
+                hivel: 100,
+                volume: 1.0,
+                ..Default::default()
+            },
+            KeyInfo {
+                lovel: 100,
+                hivel: 100,
+                volume: 2.0,
+                ..Default::default()
+            },
+            KeyInfo {
+                lovel: 101,
+                hivel: 101,
+                volume: 3.0,
+                ..Default::default()
+            },
+        ];
+        let infos = select_key_infos(&map, 60, 100).expect("精确命中");
+        assert_eq!(infos.len(), 2, "同 vel 的两层都要返回");
+        assert_eq!(infos[0].volume, 1.0);
+        assert_eq!(infos[1].volume, 2.0);
+
+        // 兜底：vel=99 → 最近 vel=100，返回该 vel 的全部层（不是只取一层）
+        let infos = select_key_infos(&map, 60, 99).expect("最近层兜底");
+        assert_eq!(infos.len(), 2);
+        // 单层便捷版仍取首层（诊断/测试用）
+        assert_eq!(select_key_info(&map, 60, 100).map(|i| i.volume), Some(1.0));
+    }
+
+    /// SF2 立体声 region 被拆成同一样本的硬 L/R 两个 zone：合并为一层原样
+    /// 立体声（回归：THDrum 整库鼓声右声道 RMS=0）。
+    #[test]
+    fn merges_stereo_left_right_layers_sharing_sample() {
+        let sample: Arc<[f32]> = Arc::from(vec![0.5, 0.1, 0.6, 0.2]);
+        let mut map = vec![Vec::new(); 128];
+        map[60] = vec![
+            KeyInfo {
+                lovel: 60,
+                hivel: 60,
+                pan_l: 1.0,
+                pan_r: 0.0,
+                is_stereo: true,
+                sample_data: Arc::clone(&sample),
+                ..Default::default()
+            },
+            KeyInfo {
+                lovel: 60,
+                hivel: 60,
+                pan_l: 0.0,
+                pan_r: 1.0,
+                is_stereo: true,
+                sample_data: sample,
+                ..Default::default()
+            },
+        ];
+        merge_stereo_pairs(&mut map);
+        assert_eq!(map[60].len(), 1, "同一样本的 L/R 两个 zone 应合并为一层");
+        let info = &map[60][0];
+        assert!(info.is_stereo);
+        assert_eq!((info.pan_l, info.pan_r), (1.0, 1.0));
+        assert_eq!(&*info.sample_data, &[0.5, 0.1, 0.6, 0.2]);
     }
 
     /// 参数不一致的左右层（不同音量/包络）不能误合并。

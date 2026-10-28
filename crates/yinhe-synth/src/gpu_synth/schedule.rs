@@ -3,6 +3,7 @@
 use crate::sf_parser;
 use crate::synth::buffers::MAX_VOICE_SLOTS;
 use crate::synth::{ChState, EnvUpdateCmd, GpuVoiceState, ReleaseCmd, SegInfo};
+use std::sync::Arc;
 
 use super::{ControlEvent, GpuSynth, MAX_CHANNELS, SynthEvent};
 use crate::channel_state::ChaseSkip;
@@ -33,6 +34,9 @@ fn release_cmd(frame: u32, vid: usize) -> ReleaseCmd {
 pub(super) struct Voice {
     pub(super) state: GpuVoiceState,
     pub(super) key: u8,
+    /// 同一次 NoteOn 展开的层组号：note_off / layer 淘汰按组操作，
+    /// 避免把鼓的 L/R 层或叠加强度层拆散（xsynth `VoiceGroup` 语义）。
+    pub(super) group: u32,
     /// 音符起始（绝对 sample；gate = end_sample - start，淘汰按短优先）
     pub(super) start_sample: u64,
     /// 已发 kill 但 GPU 尚未确认结束：仍需参与渲染让 1ms 淡出真正执行。
@@ -358,6 +362,8 @@ impl GpuSynth {
 
     /// NoteOn（block_frame = 块内起始帧）。
     /// key_map 已按 (key, vel) 展开为最终参数快照，这里零公式计算直接消费。
+    /// 该 (key,vel) 的每个 region 层创建一个 voice，同组号绑定生命周期
+    /// （xsynth 每次 NoteOn 的多层是一个 VoiceGroup）。
     /// 超 voice 上限时淘汰最老的 voice（发 kill 指令，不 remove——索引保持稳定）。
     #[allow(clippy::too_many_arguments)] // 渲染上下文透传，见 AGENTS 约定
     pub fn note_on(
@@ -376,6 +382,59 @@ impl GpuSynth {
         let Some(ch_idx) = dense_channel(channel as usize) else {
             return;
         };
+        let ch = self.channels[ch_idx];
+        // Arc 克隆避免在循环内借住 `port_key_maps`（`spawn_layer` 需要 &mut self）。
+        let maps = Arc::clone(&self.port_key_maps[self.channel_port[ch_idx] as usize]);
+        let Some(infos) = sf_parser::select_key_infos_multi(&maps, ch.bank, ch.program, key, vel)
+        else {
+            // 选不到 region（如 key≥128 的扩展键）：静默，与 CPU 一致
+            return;
+        };
+        let group = self.next_group;
+        self.next_group = self.next_group.wrapping_add(1);
+        // 多层组不参与合批（各层独立命中会让组内层数不一致，note_off 整组
+        // 释放会拆散音色）。
+        let batchable = infos.len() == 1;
+        let mut spawned = false;
+        for info in infos {
+            spawned |= self.spawn_layer(
+                channel,
+                ch_idx,
+                key,
+                vel,
+                end_sample,
+                start_sample,
+                block_frame,
+                seg_base,
+                info,
+                group,
+                batchable,
+            );
+        }
+        // per-key layer 上限：超限时按 xsynth 语义杀最弱的整组（跳过刚加入的组）。
+        if spawned && let Some(max) = self.max_layers {
+            let bucket = channel as usize * 128 + key as usize;
+            self.enforce_key_layers(bucket, max, group, block_frame, releases);
+        }
+    }
+
+    /// 创建单个 region 层的 voice（`note_on` 的内层）。
+    /// 返回是否真正创建了 voice（合批命中 / 容量满 / 采样缺失时为 false）。
+    #[allow(clippy::too_many_arguments)] // 渲染上下文透传，见 AGENTS 约定
+    fn spawn_layer(
+        &mut self,
+        channel: u8,
+        ch_idx: usize,
+        key: u8,
+        vel: u8,
+        end_sample: u64,
+        start_sample: u64,
+        block_frame: u32,
+        seg_base: u32,
+        info: &sf_parser::KeyInfo,
+        group: u32,
+        batchable: bool,
+    ) -> bool {
         // 容量上限：**有空闲槽位（free list）时不算满**——结束的 voice 槽位
         // 由 harvest 即时回收、note_on 复用，不再依赖 compact 清墓碑。
         if self.voices.len() >= MAX_VOICE_SLOTS as usize && self.free_slots.is_empty() {
@@ -387,28 +446,20 @@ impl GpuSynth {
                 _ => &crate::gpu_synth::REJECT_VEL_HI,
             };
             bucket.fetch_add(1, Relaxed);
-            return;
+            return false;
         }
         let ch = self.channels[ch_idx];
-        let entries = &self.port_key_maps[self.channel_port[ch_idx] as usize];
-        let info = match sf_parser::select_key_info_multi(entries, ch.bank, ch.program, key, vel) {
-            Some(i) => i,
-            None => {
-                // 选不到 region（如 key≥128 的扩展键）：静默，与 CPU 一致
-                return;
-            }
-        };
         let (offset, length) = match self
             .sample_offsets
             .get(&(info.sample_data.as_ptr() as usize))
         {
             Some(&v) => v,
             None => {
-                return;
+                return false;
             }
         };
         if length == 0 {
-            return;
+            return false;
         }
 
         // 播放长度（绝对帧语义）：SF2 的 sample_end（xsynth LoopParams.stop）
@@ -429,73 +480,76 @@ impl GpuSynth {
         // 候选只扫本块新建的 voice（分桶），避免全表 O(voices) 扫描的热路径成本。
         let new_sample_offset = offset;
         let bucket = channel as usize * 128 + key as usize;
-        let hit = self.batch_buckets[bucket]
-            .iter()
-            .rev()
-            .find(|&&i| {
-                let v = &self.voices[i as usize];
-                v.velocity == vel
-                    && v.end_sample == end_sample
-                    && !v.kill_pending
-                    && !v.release_pending
-                    && !v.held_by_damper
-                    && v.state.env_stage < 6
-                    && v.state.sample_offset == new_sample_offset
-                    && v.state.sample_length == sample_length
-                    && v.state.speed == p.speed
-                    && v.state.base_speed == p.base_speed
-                    && v.state.start_offset == block_frame + seg_base
-            })
-            .copied();
-        if let Some(i) = hit {
-            let i = i as usize;
-            self.voices[i].state.dup += 1;
-            let st = self.voices[i].state;
-            self.renderer.write_voice_state(i as u32, &st);
-            crate::gpu_synth::BATCH_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            return;
-        }
-        // 诊断：合批失配原因（宽松找同 (vel,end_sample) 的候选，记录第一失配字段）
-        if crate::gpu_synth::PROBE_ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
-            use std::sync::atomic::Ordering::Relaxed;
-            let miss = self.batch_buckets[bucket]
+        if batchable {
+            let hit = self.batch_buckets[bucket]
                 .iter()
                 .rev()
                 .find(|&&i| {
                     let v = &self.voices[i as usize];
-                    v.velocity == vel && v.end_sample == end_sample
+                    v.velocity == vel
+                        && v.end_sample == end_sample
+                        && !v.kill_pending
+                        && !v.release_pending
+                        && !v.held_by_damper
+                        && v.state.env_stage < 6
+                        && v.state.sample_offset == new_sample_offset
+                        && v.state.sample_length == sample_length
+                        && v.state.speed == p.speed
+                        && v.state.base_speed == p.base_speed
+                        && v.state.start_offset == block_frame + seg_base
                 })
-                .map(|&i| {
-                    let v = &self.voices[i as usize];
-                    if v.kill_pending {
-                        0
-                    } else if v.release_pending {
-                        1
-                    } else if v.held_by_damper {
-                        2
-                    } else if v.state.env_stage >= 6 {
-                        3
-                    } else if v.state.sample_offset != new_sample_offset {
-                        4
-                    } else if v.state.sample_length != sample_length {
-                        5
-                    } else if v.state.speed != p.speed {
-                        6
-                    } else if v.state.base_speed != p.base_speed {
-                        7
-                    } else if v.state.start_offset != block_frame + seg_base {
-                        8
-                    } else {
-                        9
-                    }
-                })
-                .unwrap_or(10);
-            crate::gpu_synth::PROBE_BATCH_MISS[miss].fetch_add(1, Relaxed);
+                .copied();
+            if let Some(i) = hit {
+                let i = i as usize;
+                self.voices[i].state.dup += 1;
+                let st = self.voices[i].state;
+                self.renderer.write_voice_state(i as u32, &st);
+                crate::gpu_synth::BATCH_HITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                return false;
+            }
+            // 诊断：合批失配原因（宽松找同 (vel,end_sample) 的候选，记录第一失配字段）
+            if crate::gpu_synth::PROBE_ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
+                use std::sync::atomic::Ordering::Relaxed;
+                let miss = self.batch_buckets[bucket]
+                    .iter()
+                    .rev()
+                    .find(|&&i| {
+                        let v = &self.voices[i as usize];
+                        v.velocity == vel && v.end_sample == end_sample
+                    })
+                    .map(|&i| {
+                        let v = &self.voices[i as usize];
+                        if v.kill_pending {
+                            0
+                        } else if v.release_pending {
+                            1
+                        } else if v.held_by_damper {
+                            2
+                        } else if v.state.env_stage >= 6 {
+                            3
+                        } else if v.state.sample_offset != new_sample_offset {
+                            4
+                        } else if v.state.sample_length != sample_length {
+                            5
+                        } else if v.state.speed != p.speed {
+                            6
+                        } else if v.state.base_speed != p.base_speed {
+                            7
+                        } else if v.state.start_offset != block_frame + seg_base {
+                            8
+                        } else {
+                            9
+                        }
+                    })
+                    .unwrap_or(10);
+                crate::gpu_synth::PROBE_BATCH_MISS[miss].fetch_add(1, Relaxed);
+            }
         }
 
         let voice = Voice {
             key,
             channel,
+            group,
             start_sample,
             kill_pending: false,
             velocity: vel,
@@ -594,32 +648,50 @@ impl GpuSynth {
         // 全扫——黑乐谱密集 NoteOn 下这是 CPU 侧最大热点）；仅超限时才扫描
         // 该 key 的 voice 选 victim。
         self.layer_counts[bucket] += 1;
-        if let Some(max) = self.max_layers {
-            while self.layer_counts[bucket] as usize > max {
-                // "保大力度"：同 key 里最弱的先死（release 尾巴优先，其次
-                // 力度升序，再取触发更早的=保最新）；**候选含刚创建的 voice**
-                // ——新音符若最弱就直接丢弃，宁可不发也不吞更响的旧音符。
-                // 桶内活跃数受 max 约束（≤ max+1），O(1)，替代每音一次
-                // O(全表) 的扫描；失效项顺手清理。
-                let Some(idx) = self.weakest_key_voice(bucket) else {
-                    break;
-                };
-                let v = &mut self.voices[idx];
-                v.state.env_stage = 6;
-                v.kill_pending = true;
-                v.held_by_damper = false;
-                releases.push(kill_cmd(block_frame, idx));
-                self.layer_counts[bucket] -= 1;
-                crate::gpu_synth::LAYER_KILLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        true
+    }
+
+    /// per-key layer 上限（SetLayerCount）：活跃 voice 数超过 `max` 时反复杀
+    /// 最弱的**组**（xsynth `pop_quietest_voice_group` 语义；跳过刚加入的组）。
+    /// 同一次 NoteOn 的多层共享组号，必须整组淘汰，否则鼓的 L/R 层会被拆开。
+    fn enforce_key_layers(
+        &mut self,
+        bucket: usize,
+        max: usize,
+        keep_group: u32,
+        block_frame: u32,
+        releases: &mut Vec<ReleaseCmd>,
+    ) {
+        while self.layer_counts[bucket] as usize > max {
+            let Some(victim_group) = self.weakest_key_group(bucket, keep_group) else {
+                break;
+            };
+            let slots = std::mem::take(&mut self.key_slots[bucket]);
+            let mut killed = 0u64;
+            for &(i, _) in slots.iter() {
+                let v = &mut self.voices[i as usize];
+                if v.group == victim_group && v.state.env_stage < 6 && !v.kill_pending {
+                    v.state.env_stage = 6;
+                    v.kill_pending = true;
+                    v.held_by_damper = false;
+                    releases.push(kill_cmd(block_frame, i as usize));
+                    self.layer_counts[bucket] = self.layer_counts[bucket].saturating_sub(1);
+                    killed += 1;
+                }
             }
+            self.key_slots[bucket] = slots;
+            if killed == 0 {
+                break;
+            }
+            crate::gpu_synth::LAYER_KILLS.fetch_add(killed, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
-    /// 从 per-key 槽位桶选出最弱的活跃 voice（layer 超限的 victim）。
+    /// 从 per-key 槽位桶选出最弱的活跃**组**（layer 超限的 victim）。
     /// 排序：release 尾巴优先 → 力度升序 → 触发更早优先（保最新）。
-    /// **候选包含刚创建的 voice**（新音符若最弱就丢弃它，保大力度不吞响的）；
+    /// **候选包含刚创建的组**（新音符若最弱就丢弃它，保大力度不吞响的）；
     /// 失效项（已回收/淡出中/代际不符）顺手清理。
-    fn weakest_key_voice(&mut self, bucket: usize) -> Option<usize> {
+    fn weakest_key_group(&mut self, bucket: usize, keep_group: u32) -> Option<u32> {
         let slots = std::mem::take(&mut self.key_slots[bucket]);
         let mut kept: Vec<(u32, u32)> = Vec::with_capacity(slots.len());
         let mut best: Option<(u8, u8, u64, u32)> = None;
@@ -629,14 +701,17 @@ impl GpuSynth {
                 continue;
             }
             kept.push((i, sg));
+            if v.group == keep_group {
+                continue;
+            }
             let released = v.release_pending || v.state.env_stage == 5;
-            let cand = (u8::from(!released), v.velocity, v.start_sample, i);
+            let cand = (u8::from(!released), v.velocity, v.start_sample, v.group);
             if best.is_none_or(|b| cand < b) {
                 best = Some(cand);
             }
         }
         self.key_slots[bucket] = kept;
-        best.map(|(_, _, _, i)| i as usize)
+        best.map(|(_, _, _, group)| group)
     }
 
     /// 全局 voice 超限淘汰（**每渲染段一次**）。
@@ -790,27 +865,39 @@ impl GpuSynth {
         let damper = self.channels[ch_idx].damper;
         // 跳过已 held 的 voice（xsynth damper 分支只匹配 "isn't being held" 的
         // voice：否则同 key 多个 off 会重复匹配同一个 held voice，其余 voice 永不释放）
-        let hit = self.voices.iter().position(|v| {
-            v.channel == channel
+        // 最老的未释放 voice 所在层组：同一次 NoteOn 的多层必须整组释放。
+        let group = self.voices.iter().find_map(|v| {
+            (v.channel == channel
                 && v.key == key
                 && v.state.env_stage < 5
                 && !v.held_by_damper
-                && !v.release_pending
+                && !v.release_pending)
+                .then_some(v.group)
         });
-        let Some(i) = hit else {
+        let Some(group) = group else {
             return;
         };
-        let v = &mut self.voices[i];
-        // 合批 voice：每个 NoteOff 只消耗一个引用，归 1 才真正释放（与 CpuSynth 一致）
-        if v.state.dup > 1 {
-            v.state.dup -= 1;
-            let st = v.state;
-            self.renderer.write_voice_state(i as u32, &st);
-        } else if damper {
-            v.held_by_damper = true;
-        } else {
-            v.release_pending = true;
-            releases.push(release_cmd(frame, i));
+        for (i, v) in self.voices.iter_mut().enumerate() {
+            if v.channel != channel
+                || v.key != key
+                || v.group != group
+                || v.state.env_stage >= 5
+                || v.held_by_damper
+                || v.release_pending
+            {
+                continue;
+            }
+            // 合批 voice：每个 NoteOff 只消耗一个引用，归 1 才真正释放（与 CpuSynth 一致）
+            if v.state.dup > 1 {
+                v.state.dup -= 1;
+                let st = v.state;
+                self.renderer.write_voice_state(i as u32, &st);
+            } else if damper {
+                v.held_by_damper = true;
+            } else {
+                v.release_pending = true;
+                releases.push(release_cmd(frame, i));
+            }
         }
     }
 

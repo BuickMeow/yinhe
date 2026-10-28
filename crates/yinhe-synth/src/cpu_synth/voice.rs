@@ -31,6 +31,9 @@ pub(super) struct CpuVoice {
     pub(super) key: u8,
     /// NoteOn 力度（per-key layer 超限时按 xsynth 语义杀最弱 voice）。
     pub(super) velocity: u8,
+    /// 同一次 NoteOn 展开的层组号：note_off / layer 淘汰按组操作，
+    /// 避免把鼓的 L/R 层或叠加强度层拆散（xsynth `VoiceGroup` 语义）。
+    pub(super) group: u32,
     /// 音符结束时间（绝对 sample；到期自释，NoteOn 携带）。
     pub(super) end_sample: u64,
     pub(super) held_by_damper: bool,
@@ -111,6 +114,7 @@ impl CpuVoice {
         channel: u8,
         key: u8,
         velocity: u8,
+        group: u32,
         end_sample: u64,
         start_offset: u32,
         sample_rate: u32,
@@ -129,6 +133,7 @@ impl CpuVoice {
             channel,
             key,
             velocity,
+            group,
             end_sample,
             held_by_damper: false,
             released: false,

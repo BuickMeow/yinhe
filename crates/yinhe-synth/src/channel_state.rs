@@ -178,26 +178,6 @@ pub fn dense_channel(channel: usize) -> Option<usize> {
     (channel < MAX_CHANNELS).then_some(channel)
 }
 
-/// layer 超限时选被杀的 voice：候选为 `(索引, velocity, 是否 release 中, 可杀)`。
-///
-/// 优先级（CPU/GPU 共用）：
-/// 1. **release 中的优先**（尾音被截听感无害；黑乐谱连续同音 + vel 递减时，
-///    只按 velocity 会永远杀刚触发的最新音、放完很久的反而幸存——用户实测
-///    的周期性静音缝隙来源）；
-/// 2. 同组内 velocity 最低；
-/// 3. 并列取最早（创建顺序）。
-///
-/// 已 kill/淡出中的 voice 由调用方在 `可杀` 里排除（不重复杀）。
-pub(crate) fn layer_victim(
-    candidates: impl Iterator<Item = (usize, u8, bool, bool)>,
-    keep: usize,
-) -> Option<usize> {
-    candidates
-        .filter(|(i, _, _, killable)| *i != keep && *killable)
-        .min_by_key(|&(i, v, released, _)| (u8::from(!released), v, i))
-        .map(|(i, _, _, _)| i)
-}
-
 /// 扫描一段事件，得出"哪些通道/控制类型已被 chase 覆盖"的位掩码
 /// （CPU/GPU 共用；此前两份逐字重复）。
 pub fn chase_skip(events: &[crate::SynthEvent]) -> ChaseSkip {

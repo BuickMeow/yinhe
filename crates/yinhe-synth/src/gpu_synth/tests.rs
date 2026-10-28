@@ -545,6 +545,7 @@ fn test_voice(stage: u32) -> Voice {
             ..Default::default()
         },
         key: 60,
+        group: 1,
         channel: 0,
         velocity: 0,
         end_sample: u64::MAX,

@@ -115,6 +115,8 @@ pub struct CpuSynth {
     /// note_on/note_off/enforce 的查找从 O(V) 降为 O(layer)（成本分解实测
     /// note_on+note_off 占 91% 渲染时间）；块末 retain 后重建。
     key_indices: Vec<Vec<u32>>,
+    /// 下一次 NoteOn 的层组号（同一次 NoteOn 展开的所有 voice 共享）。
+    next_group: u32,
     /// CpuSynth 专用 rayon 池（线程数 = 性能核数，见 `render_thread_count`）。
     /// 专用池不影响其他 rayon 使用者；构建失败（资源不足）为 None，回退全局池。
     par_pool: Option<rayon::ThreadPool>,
@@ -138,6 +140,7 @@ impl CpuSynth {
             damper_flags: [false; MAX_CHANNELS],
             par_scratch: Vec::new(),
             key_indices: vec![Vec::new(); MAX_CHANNELS * 128],
+            next_group: 1,
             par_pool: rayon::ThreadPoolBuilder::new()
                 .num_threads(render_thread_count())
                 .thread_name(|i| format!("yinhe-synth-{i}"))

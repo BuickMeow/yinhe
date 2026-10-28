@@ -39,7 +39,7 @@ pub use gpu_synth::{ControlEvent, GpuSynth, SynthEvent, prefetch_key_maps};
 pub use sf_cache::sweep_key_map_cache;
 pub use sf_parser::{
     KeyInfo, KeyMapEntry, LoopMode, build_key_maps, load_wav_as_f32, select_key_info,
-    select_key_info_multi,
+    select_key_info_multi, select_key_infos, select_key_infos_multi,
 };
 pub use synth::{
     GpuAudioRenderer, GpuVoiceState, RENDER_SEGMENT_FRAMES, RenderParams, RenderSegment,

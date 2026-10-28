@@ -254,3 +254,73 @@ fn loading_new_soundfont_replaces_key_map() {
     let pb = synth.port_key_maps[0][0].map()[60][0].sample_data.as_ptr() as usize;
     assert_ne!(pa, pb, "切换音色库后 key map 必须替换为新库的采样");
 }
+
+/// 多层 region（同一 key/vel 有多个 region）：NoteOn 为每层建 voice，
+/// NoteOff 整组释放——不能只播最强一层（鼓偏侧/旋律丢泛音的根因）。
+#[test]
+fn multi_layer_note_on_spawns_one_voice_per_region_and_off_releases_group() {
+    use std::path::Path;
+
+    let dir = tempfile::tempdir().unwrap();
+    let wav = dir.path().join("tone.wav");
+    let sfz = dir.path().join("multi.sfz");
+    let sr = 48_000u32;
+    let mut w = hound::WavWriter::create(
+        &wav,
+        hound::WavSpec {
+            channels: 1,
+            sample_rate: sr,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        },
+    )
+    .unwrap();
+    for i in 0..4800 {
+        let s = (2.0 * std::f32::consts::PI * 440.0 * i as f32 / sr as f32).sin() * 0.5;
+        w.write_sample((s * i16::MAX as f32) as i16).unwrap();
+    }
+    w.finalize().unwrap();
+    // 两层同 key/vel、中心声像、不同音量 → 不会被 merge_stereo_pairs 合并。
+    std::fs::write(
+        &sfz,
+        "<region>\nsample=tone.wav key=60 volume=0\n<region>\nsample=tone.wav key=60 volume=-6\n",
+    )
+    .unwrap();
+    assert!(Path::new(&sfz).exists());
+
+    let mut synth = CpuSynth::new(sr);
+    synth.load_dense_soundfonts_many(&[0], &[sfz]).unwrap();
+    let map = synth.port_key_maps[0][0].map();
+    assert_eq!(
+        crate::sf_parser::select_key_infos(map, 60, 100)
+            .expect("key60")
+            .len(),
+        2,
+        "两个 region 同一 vel 应保留两层"
+    );
+
+    synth.load_events(vec![
+        SynthEvent::NoteOn {
+            sample: 0,
+            channel: 0,
+            key: 60,
+            velocity: 100,
+            end_sample: 9600,
+        },
+        SynthEvent::NoteOff {
+            sample: 2400,
+            channel: 0,
+            key: 60,
+        },
+    ]);
+    // 渲染到 NoteOff 之后（512×5 = 2560 > 2400）
+    let mut bufs = buffers(512);
+    for _ in 0..5 {
+        synth.render_to_mixer(&mut bufs);
+    }
+    assert_eq!(synth.voice_count(), 2, "每个 region 层一个 voice");
+    assert!(
+        synth.voices.iter().all(|v| v.released),
+        "NoteOff 必须整组释放，不能只释放一层"
+    );
+}

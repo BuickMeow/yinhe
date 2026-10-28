@@ -217,6 +217,8 @@ pub struct GpuSynth {
     states_buf: Vec<GpuVoiceState>,
     /// voice 槽位复用代号计数器（harvest 身份校验，见 `Voice::slot_gen`）。
     next_gen: u32,
+    /// 下一次 NoteOn 的层组号（同一次 NoteOn 展开的所有 voice 共享）。
+    next_group: u32,
     /// 本块内创建的 voice 按 (dense 通道 × 128 key) 分桶（合批候选扫描用）。
     /// 跨块 voice 已渲染（参数/包络状态已推进）不可合批，故只需本块新建者；
     /// 每块 collect_block 开头清空。桶内索引 = 槽位索引。
@@ -299,6 +301,7 @@ impl GpuSynth {
             event_cursor: 0,
             cc_scratch: Vec::new(),
             next_gen: 1,
+            next_group: 1,
             batch_buckets: (0..MAX_CHANNELS * 128).map(|_| Vec::new()).collect(),
             seg_scratch: Vec::new(),
             sample_position: 0,
