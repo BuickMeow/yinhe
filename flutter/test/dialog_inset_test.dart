@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yinhe_flutter/dialogs/frame.dart';
 
-/// 键盘弹出时对话框上移到固定位置（输入框中心约在屏幕上 20%），
-/// 不再依赖键盘高度；位移过程是 150ms 平滑动画。
+/// 键盘弹出时对话框要上移到键盘上方，并且用自有曲线平滑运动：
+/// 系统 inset 的上报可能是跳变的"台阶"，直接绑上去会一顿一顿地升。
 void main() {
-  testWidgets('输入框中心落在屏幕上 20%，且与键盘高度无关', (tester) async {
+  testWidgets('键盘弹出时对话框平滑上移，停在键盘上方', (tester) async {
     tester.view.physicalSize = const Size(411, 914);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -21,14 +21,9 @@ void main() {
               data: MediaQuery.of(context)
                   .copyWith(viewInsets: EdgeInsets.only(bottom: value)),
               child: const Scaffold(
-                // 与线上壳一致：窗口不随键盘缩放，弹窗只靠自身移动。
+                // 与线上壳一致：窗口不随键盘缩放，弹窗只靠自身上移。
                 resizeToAvoidBottomInset: false,
-                body: YinheDialog(
-                  title: '标题',
-                  content: TextField(
-                    decoration: InputDecoration(labelText: '歌曲标题'),
-                  ),
-                ),
+                body: YinheDialog(title: '标题', content: Text('内容')),
               ),
             ),
           ),
@@ -37,27 +32,23 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    Offset fieldCenter() => tester.getCenter(find.byType(TextField));
-
-    final closedCenter = fieldCenter();
+    Rect titleRect() => tester.getRect(find.text('标题'));
+    final centered = titleRect();
 
     inset.value = 300;
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
-    final midway = fieldCenter();
-    await tester.pumpAndSettle();
-    final openCenter = fieldCenter();
-    expect(midway.dy, lessThan(closedCenter.dy), reason: '键盘弹出后开始上移');
-    expect(midway.dy, greaterThan(openCenter.dy), reason: '不是瞬移，而是 150ms 平滑动画');
+    final midway = titleRect();
+    expect(midway.top, lessThan(centered.top), reason: '键盘弹出后开始上升');
     expect(
-      openCenter.dy / 914,
-      inInclusiveRange(0.15, 0.25),
-      reason: '输入框中心约在屏幕上 20%',
+      midway.top,
+      greaterThan(centered.top - 150),
+      reason: '不是瞬移，而是 150ms 平滑动画',
     );
 
-    // 换一个键盘高度：位置必须完全一致（没有用键盘高度计算）。
-    inset.value = 200;
     await tester.pumpAndSettle();
-    expect(fieldCenter().dy, closeTo(openCenter.dy, 0.1));
+    final raised = titleRect();
+    expect(raised.top, closeTo(centered.top - 150, 1), reason: '上移键盘高度的一半');
+    expect(raised.bottom, lessThan(914 - 300), reason: '不能被键盘盖住');
   });
 }
