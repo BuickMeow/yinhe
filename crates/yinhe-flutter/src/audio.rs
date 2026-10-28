@@ -609,7 +609,6 @@ fn resume_rebuilt(
     let Some(st) = guard.as_mut() else {
         return;
     };
-    apply_soundfonts(st);
     let sr = st.handle.sample_rate;
     let from = (model.tempo_map.tick_to_seconds(cursor.max(0.0) as u64) * sr as f64) as u64;
     st.cursor_tick = cursor;
