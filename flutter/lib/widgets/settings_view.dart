@@ -145,6 +145,9 @@ class _SettingsViewState extends State<SettingsView> {
             (json['ignore_velocity'] as num?)?.toInt() ?? _ignoreVelocity;
         _allowOverlappingNotes =
             json['allow_overlapping_notes'] as bool? ?? _allowOverlappingNotes;
+        _showKeyboardLabels =
+            json['show_keyboard_labels'] as bool? ?? _showKeyboardLabels;
+        showKeyboardLabels.value = _showKeyboardLabels;
       });
     } catch (_) {
       // 回退默认值。

@@ -399,7 +399,11 @@ class _StudioShellState extends _ShellBase
     _dragDtrPtr = calloc<ffi.Int32>();
     _channel.setMethodCallHandler(_onNativeCall);
     showKeyboardLabels.value = rust.showKeyboardLabels() == 1;
-    _init();
+    _init().then((_) {
+      if (mounted) {
+        showKeyboardLabels.value = rust.showKeyboardLabels() == 1;
+      }
+    });
     _ticker = createTicker((_) {
       // 帧驱动同步：wgpu 先呈现当前帧，所有视图的 Flutter 浮层统一延迟一帧。
       if (!_showHome) {
