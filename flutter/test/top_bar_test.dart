@@ -117,5 +117,12 @@ void main() {
     expect(title.dx - bar.left, closeTo(bar.width / 2, 1), reason: '竖屏第二行标题居中');
     final home = tester.getCenter(find.byIcon(Icons.home));
     expect(home.dx - bar.left, lessThan(30), reason: '主页按钮保持在左上角');
+    final quantizeY = tester.getCenter(find.byIcon(Icons.motion_photos_on)).dy;
+    expect(home.dy, lessThan(quantizeY), reason: '主运输在第一行，量化在第二行');
+    final undoX = tester.getCenter(find.byIcon(Icons.undo)).dx;
+    final redoX = tester.getCenter(find.byIcon(Icons.redo)).dx;
+    final saveX = tester.getCenter(find.byIcon(Icons.save_outlined)).dx;
+    expect(undoX, lessThan(redoX));
+    expect(redoX, lessThan(saveX), reason: '右侧顺序应为 撤销/重做/保存');
   });
 }
