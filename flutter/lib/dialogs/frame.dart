@@ -28,11 +28,13 @@ class YinheDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 键盘弹出时对话框居中上移到键盘上方，但位置不用 viewInsets 直接驱动：
-    // 系统 inset 在输入法动画期间的上报可能是一段段跳变的"台阶"，直接绑上去
-    // 会变成弹窗卡顿/一顿一顿地上升。这里用 150ms 自有曲线平滑跟随目标位置。
-    // Transform 不参与 layout，比每帧改 constraints 便宜得多。
-    final inset = MediaQuery.viewInsetsOf(context).bottom;
+    // 键盘弹出时对话框上移，但不用键盘高度做任何计算：
+    // - 关：居中（t=0）；
+    // - 开：对齐到可用区域上部，输入框中心约落在屏幕上 20%（t=1）。
+    // 只用 150ms 自有曲线在两者之间过渡，键盘 inset 怎么变、动画多长都不影响
+    // 终点；同时避免系统 inset 分段上报时弹窗一顿一顿地上升。
+    // 对对话框子树去掉 viewInsets：AlertDialog 不会自己收缩/加内边距。
+    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
     final body = scroll
         ? SingleChildScrollView(
             child: Column(
@@ -42,37 +44,37 @@ class YinheDialog extends StatelessWidget {
             ),
           )
         : Padding(padding: const EdgeInsets.only(top: 10), child: content);
-    final dialog = AlertDialog(
-      backgroundColor: YinheTheme.bg,
-      title: title == null
-          ? null
-          : titleTrailing == null
-          ? Text(title!, style: const TextStyle(fontSize: 16))
-          : Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    title!,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 16),
-                  ),
-                ),
-                titleTrailing!,
-              ],
-            ),
-      content: SizedBox(width: width, child: body),
-      actions: actions,
-    );
     return MediaQuery(
       data: MediaQuery.of(context).removeViewInsets(removeBottom: true),
       child: TweenAnimationBuilder<double>(
-        tween: Tween<double>(end: -inset / 2),
+        tween: Tween<double>(end: keyboardOpen ? 1 : 0),
         duration: const Duration(milliseconds: 150),
         curve: Curves.easeOutCubic,
-        builder: (context, dy, child) =>
-            Transform.translate(offset: Offset(0, dy), child: child),
-        child: dialog,
+        builder: (context, t, _) => AlertDialog(
+          backgroundColor: YinheTheme.bg,
+          // -0.7 = 顶部留 15% 的剩余空间：单行输入弹窗的输入框中心约在
+          // 屏幕上 20% 处，多字段弹窗也整体落在键盘上方。
+          alignment: Alignment(0, -0.7 * t),
+          title: title == null
+              ? null
+              : titleTrailing == null
+              ? Text(title!, style: const TextStyle(fontSize: 16))
+              : Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 16),
+                      ),
+                    ),
+                    titleTrailing!,
+                  ],
+                ),
+          content: SizedBox(width: width, child: body),
+          actions: actions,
+        ),
       ),
     );
   }
