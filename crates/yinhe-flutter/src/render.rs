@@ -155,11 +155,28 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
         log::info!("交换链重配置: {pw}x{ph}");
     }
 
+    // 播放跟随：先取播放位置（audio 内部会短暂锁 scene），再进场景锁，
+    // 避免在持有场景锁时反向等待音频锁。
+    let follow_tick = if crate::audio::is_playing() && crate::audio::follow_playhead() {
+        Some(crate::audio::playback_tick().max(0.0))
+    } else {
+        None
+    };
+
     // ── 场景快照（锁内按视图 clamp + 取只读数据）──
     let snapshot = {
         let Ok(mut s) = crate::scene::scene().lock() else {
             return;
         };
+        match follow_tick {
+            Some(tick) => crate::scene::apply_follow(&mut s, w, h, tick),
+            None => {
+                s.follow_paused = false;
+                s.follow_out_since = None;
+                s.follow_last_at = None;
+                s.follow_anim_until = None;
+            }
+        }
         let total_ticks = s.total_ticks;
         let num_tracks = s.num_tracks;
         match s.view_mode {

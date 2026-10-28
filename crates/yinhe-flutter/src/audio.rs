@@ -50,6 +50,8 @@ pub struct AudioSettings {
     pub allow_overlapping_notes: bool,
     /// 卷帘背景显示 C 音名（C3/C4…）。
     pub show_keyboard_labels: bool,
+    /// 播放时视口跟随播放头（居中跟随）。
+    pub follow_playhead: bool,
 }
 
 /// “自动复音”的平台默认值。
@@ -72,7 +74,8 @@ impl Default for AudioSettings {
             buffer_size: 2048,
             ignore_velocity: 1,
             allow_overlapping_notes: true,
-            show_keyboard_labels: false,
+            show_keyboard_labels: true,
+            follow_playhead: true,
         }
     }
 }
@@ -188,12 +191,14 @@ pub fn set_settings(max_voices: u32, buffer_size: u32, ignore_velocity: u8) {
     if let Ok(mut g) = settings_slot().lock() {
         let allow_overlapping_notes = g.allow_overlapping_notes;
         let show_keyboard_labels = g.show_keyboard_labels;
+        let follow_playhead = g.follow_playhead;
         *g = AudioSettings {
             max_voices,
             buffer_size,
             ignore_velocity,
             allow_overlapping_notes,
             show_keyboard_labels,
+            follow_playhead,
         };
     }
     let Some(mut guard) = lock_audio() else {
@@ -223,16 +228,28 @@ pub fn show_keyboard_labels() -> bool {
     settings().show_keyboard_labels
 }
 
+/// 播放时视口跟随播放头。
+pub fn set_follow_playhead(on: bool) {
+    if let Ok(mut g) = settings_slot().lock() {
+        g.follow_playhead = on;
+    }
+}
+
+pub fn follow_playhead() -> bool {
+    settings().follow_playhead
+}
+
 /// 音频设置 JSON（设置页回显）。
 pub fn settings_json() -> String {
     let s = settings();
     format!(
-        "{{\"max_voices\":{},\"buffer_size\":{},\"ignore_velocity\":{},\"allow_overlapping_notes\":{},\"show_keyboard_labels\":{}}}",
+        "{{\"max_voices\":{},\"buffer_size\":{},\"ignore_velocity\":{},\"allow_overlapping_notes\":{},\"show_keyboard_labels\":{},\"follow_playhead\":{}}}",
         s.max_voices,
         s.buffer_size,
         s.ignore_velocity,
         s.allow_overlapping_notes,
-        s.show_keyboard_labels
+        s.show_keyboard_labels,
+        s.follow_playhead
     )
 }
 

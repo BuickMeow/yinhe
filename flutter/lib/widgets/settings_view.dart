@@ -6,7 +6,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../core/ffi.dart' as rust;
-import '../core/ui_settings.dart';
 import '../l10n.dart';
 import '../l10n/app_localizations.dart';
 import '../core/theme.dart';
@@ -52,7 +51,7 @@ class _SettingsViewState extends State<SettingsView> {
   int _bufferSize = 2048;
   int _ignoreVelocity = 1;
   bool _allowOverlappingNotes = true;
-  bool _showKeyboardLabels = showKeyboardLabels.value;
+  bool _followPlayhead = true;
 
   @override
   void initState() {
@@ -145,9 +144,7 @@ class _SettingsViewState extends State<SettingsView> {
             (json['ignore_velocity'] as num?)?.toInt() ?? _ignoreVelocity;
         _allowOverlappingNotes =
             json['allow_overlapping_notes'] as bool? ?? _allowOverlappingNotes;
-        _showKeyboardLabels =
-            json['show_keyboard_labels'] as bool? ?? _showKeyboardLabels;
-        showKeyboardLabels.value = _showKeyboardLabels;
+        _followPlayhead = json['follow_playhead'] as bool? ?? _followPlayhead;
       });
     } catch (_) {
       // 回退默认值。
@@ -170,10 +167,9 @@ class _SettingsViewState extends State<SettingsView> {
     rust.setAllowOverlappingNotes(value ? 1 : 0);
   }
 
-  void _setShowKeyboardLabels(bool value) {
-    setState(() => _showKeyboardLabels = value);
-    showKeyboardLabels.value = value;
-    rust.setShowKeyboardLabels(value ? 1 : 0);
+  void _setFollowPlayhead(bool value) {
+    setState(() => _followPlayhead = value);
+    rust.setFollowPlayhead(value ? 1 : 0);
   }
 
   @override
@@ -341,23 +337,21 @@ class _SettingsViewState extends State<SettingsView> {
           child: SwitchListTile(
             contentPadding: const EdgeInsets.symmetric(horizontal: 12),
             secondary: Icon(
-              Icons.piano,
+              Icons.center_focus_strong,
               size: 20,
               color: YinheTheme.textSecondary,
             ),
             title: Text(
-              L10n.isZh ? '显示键盘' : 'Show keyboard',
+              L10n.isZh ? '跟随播放头' : 'Follow playhead',
               style: TextStyle(color: YinheTheme.text, fontSize: 14),
             ),
             subtitle: Text(
-              L10n.isZh
-                  ? '在卷帘背景显示 C 音名（C3、C4…）'
-                  : 'Show C note names on the piano roll background',
+              L10n.isZh ? '播放时卷帘居中跟随；手动拖动后，播放头离开视口 2 秒会恢复' : 'Center the roll on the playhead; resumes 2 s after it leaves the view',
               style: TextStyle(color: YinheTheme.textSecondary, fontSize: 12),
             ),
-            value: _showKeyboardLabels,
+            value: _followPlayhead,
             activeThumbColor: YinheTheme.accent,
-            onChanged: _setShowKeyboardLabels,
+            onChanged: _setFollowPlayhead,
           ),
         ),
       ],

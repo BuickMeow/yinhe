@@ -1531,6 +1531,18 @@ pub extern "C" fn yinhe_show_keyboard_labels() -> i32 {
     i32::from(scene::show_keyboard_labels())
 }
 
+/// 播放时视口跟随播放头（居中）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_follow_playhead(on: i32) -> i32 {
+    scene::set_follow_playhead(on != 0);
+    1
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_follow_playhead() -> i32 {
+    i32::from(scene::follow_playhead())
+}
+
 /// 工程元数据 JSON（堆分配）。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_project_meta_json() -> *mut std::ffi::c_char {

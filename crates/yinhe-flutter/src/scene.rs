@@ -265,6 +265,12 @@ pub struct RenderScene {
     pub model_epoch: u64,
     /// PR 底部 AM 面板的 wgpu 叠加区域。
     pub automation_panel: AutomationPanelState,
+    /// 播放跟随：用户手动平移/缩放后暂停，等播放头连续离开视口后恢复。
+    pub follow_paused: bool,
+    pub follow_out_since: Option<std::time::Instant>,
+    pub follow_last_at: Option<std::time::Instant>,
+    /// 恢复跟随后的一小段平滑动画（到期后改为每帧精确居中）。
+    pub follow_anim_until: Option<std::time::Instant>,
 }
 
 /// 工具（移动端子集：与桌面 `tools_panel::Tool` 的编号对齐）。
@@ -306,6 +312,10 @@ impl Default for RenderScene {
             doc_generation: 0,
             model_epoch: 0,
             automation_panel: AutomationPanelState::default(),
+            follow_paused: false,
+            follow_out_since: None,
+            follow_last_at: None,
+            follow_anim_until: None,
         }
     }
 }
@@ -1563,6 +1573,16 @@ pub fn show_keyboard_labels() -> bool {
     crate::audio::show_keyboard_labels()
 }
 
+/// 播放时视口跟随播放头（居中）。
+pub fn set_follow_playhead(on: bool) {
+    crate::audio::set_follow_playhead(on);
+    save_audio_settings();
+}
+
+pub fn follow_playhead() -> bool {
+    crate::audio::follow_playhead()
+}
+
 fn write_settings() {
     let Some(dir) = files_dir_slot().lock().ok().and_then(|g| g.clone()) else {
         return;
@@ -1580,12 +1600,13 @@ fn write_settings() {
     let a = crate::audio::settings();
     text.push_str(&format!(
         "max_voices={}\nbuffer_size={}\nignore_velocity={}\nallow_overlapping_notes={}\n\
-         show_keyboard_labels={}\n",
+         show_keyboard_labels={}\nfollow_playhead={}\n",
         a.max_voices,
         a.buffer_size,
         a.ignore_velocity,
         if a.allow_overlapping_notes { 1 } else { 0 },
-        if a.show_keyboard_labels { 1 } else { 0 }
+        if a.show_keyboard_labels { 1 } else { 0 },
+        if a.follow_playhead { 1 } else { 0 }
     ));
     if let Err(e) = std::fs::write(format!("{dir}/settings.txt"), text) {
         log::error!("设置写入失败: {e}");
@@ -1606,6 +1627,7 @@ fn load_settings() {
     let mut ignore_velocity = defaults.ignore_velocity;
     let mut allow_overlapping_notes = defaults.allow_overlapping_notes;
     let mut show_keyboard_labels = defaults.show_keyboard_labels;
+    let mut follow_playhead = defaults.follow_playhead;
     let mut soundfonts: Vec<crate::audio::SoundfontEntry> = Vec::new();
     let mut language = String::new();
     for line in text.lines() {
@@ -1636,6 +1658,8 @@ fn load_settings() {
             allow_overlapping_notes = v.trim() != "0";
         } else if let Some(v) = line.strip_prefix("show_keyboard_labels=") {
             show_keyboard_labels = v.trim() != "0";
+        } else if let Some(v) = line.strip_prefix("follow_playhead=") {
+            follow_playhead = v.trim() != "0";
         }
     }
     if !language.is_empty() {
@@ -1648,6 +1672,7 @@ fn load_settings() {
     crate::audio::set_settings(max_voices, buffer_size, ignore_velocity);
     crate::audio::set_allow_overlapping_notes(allow_overlapping_notes);
     crate::audio::set_show_keyboard_labels(show_keyboard_labels);
+    crate::audio::set_follow_playhead(follow_playhead);
     crate::soundfont_archive::cleanup();
 }
 
@@ -3661,6 +3686,88 @@ pub const GESTURE_PR_TIME: i32 = 1;
 pub const GESTURE_PR_PITCH: i32 = 2;
 pub const GESTURE_AR_TIME: i32 = 3;
 pub const GESTURE_AR_LANE: i32 = 4;
+
+/// 播放跟随（当前只做居中模式）。
+///
+/// 不做“边缘轮询再跳”：目标位置来自播放头，随播放匀速前进，视口用帧率无关的
+/// 指数插值跟随，视觉上是连续匀速移动；用户手动平移/缩放后暂停，播放头连续
+/// 离开视口 `FOLLOW_RESUME_SECS` 秒后自动恢复。
+pub(crate) fn apply_follow(s: &mut RenderScene, w: f32, h: f32, tick: f64) {
+    let _ = h;
+    let Some(_doc) = s.document.as_ref() else {
+        return;
+    };
+    let (ppu, left, content_w, scroll) = match s.view_mode {
+        ViewMode::Pianoroll => {
+            let v = &s.pr_view;
+            (
+                v.base.pixels_per_tick,
+                v.keyboard_width(),
+                (w - v.keyboard_width()).max(1.0),
+                v.base.scroll_x,
+            )
+        }
+        ViewMode::Arrangement => {
+            let v = &s.arr_view;
+            (
+                v.base.pixels_per_tick,
+                v.base.left_panel_width,
+                (w - v.base.left_panel_width).max(1.0),
+                v.base.scroll_x,
+            )
+        }
+    };
+    if ppu <= 0.0 || w < 1.0 || content_w < 1.0 {
+        return;
+    }
+    let now = std::time::Instant::now();
+    let dt = s
+        .follow_last_at
+        .map(|t| (now - t).as_secs_f32())
+        .unwrap_or(0.2)
+        .clamp(0.0, 0.1);
+    s.follow_last_at = Some(now);
+
+    let cursor_x = tick as f32 * ppu - scroll + left;
+    let out = cursor_x < left - 1.0 || cursor_x > w + 1.0;
+    if s.follow_paused {
+        if !out {
+            s.follow_out_since = None;
+            return;
+        }
+        let since = *s.follow_out_since.get_or_insert(now);
+        if now.duration_since(since).as_secs_f32() < FOLLOW_RESUME_SECS {
+            return;
+        }
+        s.follow_paused = false;
+        s.follow_out_since = None;
+        s.follow_anim_until = Some(now + FOLLOW_ANIM);
+    }
+    let target = (tick as f32 * ppu - content_w * 0.5).max(0.0);
+    // 起点/大幅跳转（例如切到另一个视图）先做固定 0.3s 平滑吸附；
+    // 稳定跟随时每帧精确居中，避免“平滑系数 + 匀速目标”的速度相关滞后。
+    if s.follow_anim_until.is_none() && (scroll - target).abs() > content_w * 0.5 {
+        s.follow_anim_until = Some(now + FOLLOW_ANIM);
+    }
+    let catching = s.follow_anim_until.is_some_and(|until| now < until);
+    let next = if catching {
+        yinhe_editor_core::follow::follow_interpolate(scroll, target, dt, FOLLOW_SMOOTH_TAU)
+    } else {
+        s.follow_anim_until = None;
+        target
+    };
+    match s.view_mode {
+        ViewMode::Pianoroll => s.pr_view.base.scroll_x = next,
+        ViewMode::Arrangement => s.arr_view.base.scroll_x = next,
+    }
+}
+
+/// 恢复跟随的判定时长：播放头连续离开视口这么久才重新居中。
+const FOLLOW_RESUME_SECS: f32 = 2.0;
+/// 跟随平滑时间常数（秒）；越小越贴近播放头，越大越柔和。
+const FOLLOW_SMOOTH_TAU: f32 = 0.05;
+/// 恢复/起手时的固定吸附时长。
+const FOLLOW_ANIM: std::time::Duration = std::time::Duration::from_millis(300);
 
 /// 应用一次 Flutter 视口手势：先平移，再围绕当前焦点缩放，最后统一 clamp。
 ///

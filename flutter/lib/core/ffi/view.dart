@@ -189,6 +189,23 @@ final ShowKeyboardLabelsDart showKeyboardLabels = bridge
       'yinhe_show_keyboard_labels',
     );
 
+typedef SetFollowPlayheadNative = ffi.Int32 Function(ffi.Int32);
+typedef SetFollowPlayheadDart = int Function(int);
+
+/// 播放时视口跟随播放头（居中）。
+final SetFollowPlayheadDart setFollowPlayhead = bridge
+    .lookupFunction<SetFollowPlayheadNative, SetFollowPlayheadDart>(
+      'yinhe_set_follow_playhead',
+    );
+
+typedef FollowPlayheadNative = ffi.Int32 Function();
+typedef FollowPlayheadDart = int Function();
+
+final FollowPlayheadDart followPlayhead = bridge
+    .lookupFunction<FollowPlayheadNative, FollowPlayheadDart>(
+      'yinhe_follow_playhead',
+    );
+
 /// 工程元数据 JSON（回显）。
 final CStrDart projectMetaJson = bridge.lookupFunction<CStrNative, CStrDart>(
   'yinhe_project_meta_json',
