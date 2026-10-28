@@ -195,31 +195,62 @@ impl CpuSynth {
         }
     }
 
-    /// 全局 voice 超限淘汰（块末调用）：优先 release 中的，不足时按创建顺序
-    /// 杀最老的。立即结束（与 xsynth 的默认 kill 语义一致），块末统一 retain 回收。
+    /// 全局 voice 超限淘汰（块末调用）：按**组**淘汰（同一次 NoteOn 的多层
+    /// 整组消失，避免鼓只剩左声道这类音色突变）。优先 release 中的组，
+    /// 其次 envelope 更低、力度更小、触发更早的组。块末统一 retain 回收。
     pub(super) fn evict_excess(&mut self, excess: usize) {
-        // 与 GPU 同语义：**release 中优先**（envelope 越接近无声越先回收），
-        // 正在演奏的（无论长短力度）最后动；同为演奏中时小力度先牺牲。
-        let mut cands: Vec<(u8, f32, u8, usize)> = Vec::new();
+        if excess == 0 {
+            return;
+        }
+        // 先按组聚合（voice 由 note_on 循环 push，同组相邻；合批 voice 沿用旧组）。
+        // 元组：(组号, 未 release, 组内最小 envelope, 力度, 组首索引)
+        let mut groups: Vec<(u32, u8, f32, u8, usize)> = Vec::new();
         for (i, v) in self.voices.iter().enumerate() {
             if v.finished() || v.is_killed() {
                 continue;
             }
-            cands.push((
-                if v.released { 0u8 } else { 1u8 },
-                v.envelope,
-                v.velocity,
-                i,
-            ));
+            groups.push((v.group, u8::from(!v.released), v.envelope, v.velocity, i));
         }
-        cands.sort_unstable_by(|a, b| {
-            a.0.cmp(&b.0)
-                .then(a.1.total_cmp(&b.1))
-                .then(a.2.cmp(&b.2))
+        groups.sort_unstable_by_key(|g| g.0);
+        // 聚合后：(组号, 未 release, 最小 envelope, 力度, 首索引, voice 数)
+        let mut agg: Vec<(u32, u8, f32, u8, usize, usize)> = Vec::new();
+        for g in groups {
+            if let Some(last) = agg.last_mut()
+                && last.0 == g.0
+            {
+                last.1 = last.1.max(g.1);
+                last.2 = last.2.min(g.2);
+                last.3 = last.3.min(g.3);
+                last.4 = last.4.min(g.4);
+                last.5 += 1;
+            } else {
+                agg.push((g.0, g.1, g.2, g.3, g.4, 1));
+            }
+        }
+        agg.sort_unstable_by(|a, b| {
+            a.1.cmp(&b.1)
+                .then(a.2.total_cmp(&b.2))
                 .then(a.3.cmp(&b.3))
+                .then(a.4.cmp(&b.4))
         });
-        for &(_, _, _, i) in cands.iter().take(excess) {
-            self.voices[i].signal_kill(self.sample_rate);
+        // 选最弱的组，直到覆盖 excess 个 voice（整组淘汰可能多杀几层）。
+        let mut victims: Vec<u32> = Vec::new();
+        let mut killed = 0usize;
+        for &(group, _, _, _, _, count) in agg.iter() {
+            if killed >= excess {
+                break;
+            }
+            victims.push(group);
+            killed += count;
+        }
+        if victims.is_empty() {
+            return;
+        }
+        victims.sort_unstable();
+        for v in self.voices.iter_mut() {
+            if !v.finished() && !v.is_killed() && victims.binary_search(&v.group).is_ok() {
+                v.signal_kill(self.sample_rate);
+            }
         }
     }
 

@@ -324,3 +324,52 @@ fn multi_layer_note_on_spawns_one_voice_per_region_and_off_releases_group() {
         "NoteOff 必须整组释放，不能只释放一层"
     );
 }
+
+/// 全局 voice 超限淘汰必须按层组进行：两层音色只能整组消失，
+/// 不能只杀一层（否则鼓只剩左声道）。
+#[test]
+fn global_evict_kills_whole_layer_group() {
+    let dir = tempfile::tempdir().unwrap();
+    let wav = dir.path().join("tone.wav");
+    let sfz = dir.path().join("multi.sfz");
+    let sr = 48_000u32;
+    let mut w = hound::WavWriter::create(
+        &wav,
+        hound::WavSpec {
+            channels: 1,
+            sample_rate: sr,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        },
+    )
+    .unwrap();
+    for i in 0..4800 {
+        let s = (2.0 * std::f32::consts::PI * 440.0 * i as f32 / sr as f32).sin() * 0.5;
+        w.write_sample((s * i16::MAX as f32) as i16).unwrap();
+    }
+    w.finalize().unwrap();
+    std::fs::write(
+        &sfz,
+        "<region>\nsample=tone.wav key=60 volume=0\n<region>\nsample=tone.wav key=60 volume=-6\n",
+    )
+    .unwrap();
+
+    let mut synth = CpuSynth::new(sr);
+    synth.load_dense_soundfonts_many(&[0], &[sfz]).unwrap();
+    synth.set_max_voices(1);
+    synth.load_events(vec![SynthEvent::NoteOn {
+        sample: 0,
+        channel: 0,
+        key: 60,
+        velocity: 100,
+        end_sample: 9600,
+    }]);
+    let mut bufs = buffers(512);
+    synth.render_to_mixer(&mut bufs);
+
+    assert_eq!(synth.voices.len(), 2, "两层 voice 都应创建");
+    assert!(
+        synth.voices.iter().all(|v| v.is_killed()),
+        "全局超限必须整组淘汰，不能只杀一层"
+    );
+}
