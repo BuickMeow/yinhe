@@ -4,4 +4,6 @@ export 'playhead_painter.dart';
 export 'ruler_painter.dart';
 export 'labels_painter.dart';
 export 'key_label_painter.dart';
+export 'pianoroll_grid_painter.dart';
+export 'arrangement_grid_painter.dart';
 export 'automation_painter.dart';

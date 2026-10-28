@@ -178,7 +178,6 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
             s.track_visible.clone(),
             s.pr_track_visible.clone(),
             s.num_tracks,
-            s.ppq,
             s.display_track,
             s.document
                 .as_ref()
@@ -202,7 +201,6 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
         track_visible,
         pr_track_visible,
         num_tracks,
-        ppq,
         display_track,
         selection,
         track_selected,
@@ -260,7 +258,6 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
                 &selection,
                 &track_selected,
                 model_epoch,
-                ppq,
                 w,
                 h,
                 &preview,
@@ -276,7 +273,6 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
                 num_tracks,
                 revision,
                 model_epoch,
-                ppq,
                 w,
                 h,
                 &preview,
@@ -421,13 +417,12 @@ fn upload_pianoroll(
     selection: &Selection,
     track_selected: &HashSet<u16>,
     model_epoch: u64,
-    ppq: u32,
     w: f32,
     h: f32,
     preview: &crate::scene::DragPreview,
 ) {
     let visible = effective_visible(track_visible, display_track);
-    upload_pianoroll_decor(t, view, &model.tempo_map, ppq, w, h);
+    upload_pianoroll_decor(t, view, h);
     let job = build_render_job(w as u32, h as u32, view, selection, track_colors, 0.0, true);
     t.renderer.upload_uniforms(job.uniforms);
     t.renderer.upload_track_colors(&job.track_colors);
@@ -782,7 +777,6 @@ fn upload_arrangement(
     num_tracks: usize,
     revision: u64,
     model_epoch: u64,
-    ppq: u32,
     w: f32,
     h: f32,
     preview: &crate::scene::DragPreview,
@@ -792,15 +786,12 @@ fn upload_arrangement(
         return;
     }
     let visible = effective_visible(track_visible, display_track);
-    upload_arrangement_decor(
-        t,
-        view,
-        &model.tempo_map,
-        track_colors,
-        num_tracks,
-        ppq,
-        w,
-        h,
+    // 背景/条纹/网格由 Flutter 绘制（与选框同帧）；这里清空共享 decor 层，
+    // 避免从 PR 切过来时残留键盘列。
+    t.renderer.upload_decor_layer(
+        0,
+        yinhe_wgpu::layer_cache_key(&[VIEW_TAG_ARRANGEMENT ^ 0xD1CE]),
+        |_| {},
     );
     let lane_h = view.lane_height();
     let offsets: Vec<f32> = (0..num_tracks).map(|i| i as f32 * lane_h).collect();
@@ -947,20 +938,14 @@ fn upload_arrangement(
 
 // ── 装饰层（wgpu decor，画在音符下层，像素级对齐桌面视觉）──
 
-/// PR 装饰：键盘列 + 时间轴网格。
-fn upload_pianoroll_decor(
-    t: &mut Target,
-    view: &PianoRollView,
-    tempo_map: &yinhe_core::TempoMap,
-    ppq: u32,
-    w: f32,
-    h: f32,
-) {
+/// PR 装饰：只保留键盘列（白/黑键 + 右缘分隔线）。
+///
+/// 背景、黑键条纹、八度线和时间网格改由 Flutter 绘制：网格与选框同一帧，
+/// 缩放/平移时不会出现 Texture 与浮层的错位；wgpu 只负责重的、变化的音符层。
+fn upload_pianoroll_decor(t: &mut Target, view: &PianoRollView, h: f32) {
     let kb_w = view.keyboard_width();
     let kh = view.key_height;
-    let mut items: Vec<DrawInstance> = Vec::with_capacity(560);
-    // 底层背景（surface 清屏透明，统一在 decor 里铺浅色底）。
-    items.push(DrawInstance::solid_rect(0.0, 0.0, w, h, tc::BG));
+    let mut items: Vec<DrawInstance> = Vec::with_capacity(140);
     if kh > 0.0 {
         for key in 0..=127u8 {
             let y = view.key_to_y(key);
@@ -970,30 +955,6 @@ fn upload_pianoroll_decor(
             let black = yinhe_types::is_black_key(key);
             let color = if black { tc::KEY_BLACK } else { tc::KEY_WHITE };
             items.push(DrawInstance::solid_rect(0.0, y, kb_w, kh, color));
-            // 内容区：黑键行整行铺深色条（与桌面 `bg.rs` 的 stripe_bg 一致）。
-            if black {
-                items.push(DrawInstance::solid_rect(
-                    kb_w,
-                    y,
-                    w - kb_w,
-                    kh,
-                    tc::STRIPE_BG,
-                ));
-            }
-        }
-        // 八度线：每个 C 的键行顶部 1px（与桌面 `paint_octave_lines` 一致）。
-        for key in (0..=127u8).step_by(12) {
-            let y = view.key_to_y(key);
-            if y + kh < 0.0 || y > h {
-                continue;
-            }
-            items.push(DrawInstance::solid_rect(
-                kb_w,
-                y,
-                w - kb_w,
-                1.0,
-                tc::LINE_FG,
-            ));
         }
         // 键盘右缘分隔线。
         items.push(DrawInstance::solid_rect(
@@ -1004,193 +965,9 @@ fn upload_pianoroll_decor(
             tc::TEXT_PRIMARY,
         ));
     }
-    push_time_grid(&mut items, &view.base, tempo_map, ppq, w, h, kb_w, true);
-    // 缓存键：视图/尺寸/ppq/拍号不变时跳过重建（播放静止时省 CPU）。
     let mut key = view.render_hash();
-    key ^= (w.to_bits() as u64) << 17;
     key ^= (h.to_bits() as u64) << 29;
-    key ^= u64::from(ppq).rotate_left(5);
-    key ^= time_sig_hash(tempo_map).rotate_left(23);
     let key = yinhe_wgpu::layer_cache_key(&[key, VIEW_TAG_PIANOROLL ^ 0xD1CE]);
     t.renderer
         .upload_decor_layer(0, key, |out| out.extend_from_slice(&items));
-}
-
-/// AR 装饰：轨道行背景/色条 + 时间轴网格。
-#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
-fn upload_arrangement_decor(
-    t: &mut Target,
-    view: &ArrangementView,
-    tempo_map: &yinhe_core::TempoMap,
-    track_colors: &[[f32; 4]],
-    num_tracks: usize,
-    ppq: u32,
-    w: f32,
-    h: f32,
-) {
-    let panel = view.base.left_panel_width;
-    let lane_h = view.lane_height();
-    let mut items: Vec<DrawInstance> = Vec::with_capacity(256);
-    // 底层背景（surface 清屏透明，统一在 decor 里铺浅色底）。
-    items.push(DrawInstance::solid_rect(0.0, 0.0, w, h, tc::BG));
-    if lane_h > 0.0 {
-        let (first, last) = yinhe_types::ArrangementView::visible_track_range_static(
-            view.base.scroll_y,
-            h,
-            lane_h,
-            num_tracks,
-        );
-        for idx in first..last {
-            let y = yinhe_types::ArrangementView::lane_y_static(idx, view.base.scroll_y, lane_h);
-            // 隔行深浅：偶数行整行（面板 + 内容区）铺条纹底（与桌面一致）。
-            if idx % 2 == 0 {
-                items.push(DrawInstance::solid_rect(0.0, y, w, lane_h, tc::STRIPE_BG));
-            }
-            // 色带由 Flutter 绘制（sRGB 直绘保持饱和；与桌面 egui badge 一致）。
-        }
-        items.push(DrawInstance::solid_rect(
-            panel - 1.0,
-            0.0,
-            1.0,
-            h,
-            tc::TEXT_PRIMARY,
-        ));
-    }
-    push_time_grid(&mut items, &view.base, tempo_map, ppq, w, h, panel, false);
-    // 缓存键：视图/尺寸/ppq/拍号/轨道色不变时跳过重建。
-    let mut key = view.render_hash();
-    key ^= (w.to_bits() as u64) << 17;
-    key ^= (h.to_bits() as u64) << 29;
-    key ^= u64::from(ppq).rotate_left(5);
-    key ^= time_sig_hash(tempo_map).rotate_left(23);
-    for c in track_colors.iter().take(64) {
-        for v in c {
-            key ^= u64::from(v.to_bits()).rotate_left(9);
-        }
-    }
-    let key = yinhe_wgpu::layer_cache_key(&[key, VIEW_TAG_ARRANGEMENT ^ 0xD1CE]);
-    t.renderer
-        .upload_decor_layer(0, key, |out| out.extend_from_slice(&items));
-}
-
-/// 时间轴网格线（与桌面 `paint_grid_lines` 同规则，按拍号分段）。
-///
-/// 级别：合并小节线 / 小节线 / 拍线 / 十六分线 / tick 线，
-/// 由 ppu 与 `GRID_MIN_SPACING` 决定（与桌面一致）；拍号变化时各段
-/// 用各自的 measure/beat 长（tau 这类一直变拍子的曲目也能对格）。
-#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
-fn push_time_grid(
-    items: &mut Vec<DrawInstance>,
-    base: &yinhe_types::TimelineViewBase,
-    tempo_map: &yinhe_core::TempoMap,
-    ppq: u32,
-    w: f32,
-    h: f32,
-    start_x: f32,
-    with_sub_tick: bool,
-) {
-    use yinhe_types::time_format::{
-        build_time_sig_segments, compute_measure_divisor, measure_ticks,
-    };
-
-    let ppu = base.pixels_per_tick;
-    if !ppu.is_finite() || ppu <= 0.0 {
-        return;
-    }
-    let tpb = ppq.max(1);
-    let (def_num, def_den) = tempo_map.time_sig_default;
-    let segments = build_time_sig_segments(&tempo_map.time_sig_events, def_num, def_den);
-    let sub_div = 4u32;
-    let ticks_per_sub = (tpb / sub_div).max(1);
-    // 1/16 以下沿同一套惯性继续细分：1/32、1/64…直到 1 tick。
-    let fine_step = yinhe_editor_core::quantize::fine_grid_preset(ppu, tpb)
-        .tick_interval(tpb)
-        .max(1);
-    let (tick_start, tick_end) = base.visible_tick_range(w);
-    let tick_start = tick_start.max(0.0);
-
-    for i in 0..segments.len() {
-        let (seg_start, num, den) = segments[i];
-        let seg_end = segments.get(i + 1).map_or(u32::MAX, |&(t, _, _)| t);
-        let seg_start_f = seg_start as f64;
-        if seg_start_f > tick_end {
-            break;
-        }
-        let ticks_per_measure = measure_ticks(tpb, num, den).max(1);
-        let ticks_per_beat = (ticks_per_measure / u32::from(num.max(1))).max(1);
-
-        // 多小节合并（缩很小时按 2/4/8… 小节合并）。
-        let pixels_per_measure = ticks_per_measure as f32 * ppu;
-        let measure_divisor = compute_measure_divisor(pixels_per_measure, tc::GRID_MIN_SPACING);
-        let merged = measure_divisor > 1;
-        let merged_measure_ticks = ticks_per_measure.saturating_mul(measure_divisor);
-
-        let show_beat = !merged;
-        let show_sub =
-            with_sub_tick && show_beat && (ticks_per_beat as f32 * ppu) >= tc::GRID_MIN_SPACING;
-        let show_tick = with_sub_tick && show_sub && ppu >= 10.0;
-
-        let grid_measure_ticks = if merged {
-            (merged_measure_ticks / 2).max(1)
-        } else {
-            ticks_per_measure
-        };
-        let step: u32 = if show_tick {
-            1
-        } else if show_sub {
-            fine_step.min(ticks_per_sub).max(1)
-        } else if show_beat {
-            ticks_per_beat
-        } else {
-            grid_measure_ticks.max(1)
-        };
-
-        // 对齐到段内网格（变拍子段的 seg_start 通常不在全局 step 网格上）。
-        let first_tick = seg_start_f.max(tick_start);
-        let step_f = f64::from(step);
-        let first = seg_start.saturating_add(
-            (((first_tick - seg_start_f) / step_f).floor() as u32).saturating_mul(step),
-        );
-
-        let mut tick = first;
-        while (tick as f64) <= tick_end && tick < seg_end {
-            let x = base.tick_to_x(tick as f64);
-            if x >= start_x {
-                let local = tick - seg_start;
-                let is_measure = local.is_multiple_of(ticks_per_measure);
-                let beat_local = local % ticks_per_measure;
-                let is_beat = beat_local.is_multiple_of(ticks_per_beat) && beat_local > 0;
-                let is_sub = local.is_multiple_of(ticks_per_sub);
-                let color = if is_measure {
-                    tc::GRID_MEASURE
-                } else if show_beat && is_beat {
-                    tc::GRID_BEAT
-                } else if show_sub && is_sub {
-                    tc::GRID_SUB
-                } else if show_tick {
-                    tc::GRID_TICK
-                } else if show_sub {
-                    // 1/16 以下的惯性细分线（1/32、1/64…），用 tick 色。
-                    tc::GRID_TICK
-                } else {
-                    tick = tick.saturating_add(step.max(1));
-                    continue;
-                };
-                items.push(DrawInstance::solid_rect(x, 0.0, 1.0, h, color));
-            }
-            tick = tick.saturating_add(step.max(1));
-        }
-    }
-}
-
-/// 拍号事件哈希（装饰层缓存键用：改拍号后必须重建网格）。
-fn time_sig_hash(tempo_map: &yinhe_core::TempoMap) -> u64 {
-    let mut h = 0u64;
-    for e in &tempo_map.time_sig_events {
-        h = h.rotate_left(11)
-            ^ (u64::from(e.tick).rotate_left(3)
-                ^ (u64::from(e.numerator) << 1)
-                ^ u64::from(e.denominator));
-    }
-    h ^ (u64::from(tempo_map.time_sig_default.0) << 32) ^ u64::from(tempo_map.time_sig_default.1)
 }

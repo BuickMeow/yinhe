@@ -211,6 +211,41 @@ mixin _ShellBuild on _ShellBase {
                                 height: canvasH,
                                 child: Stack(
                                   children: [
+                                    // PR 背景/网格由 Flutter 画（wgpu 只留音符/键盘）：
+                                    // 与选框同一帧，缩放/平移不会错位。
+                                    if (!_showHome &&
+                                        _viewMode == kViewArrangement)
+                                      Positioned(
+                                        left: 0,
+                                        right: 0,
+                                        top: RulerPainter.height,
+                                        bottom: 0,
+                                        child: IgnorePointer(
+                                          child: CustomPaint(
+                                            painter: ArrangementGridPainter(
+                                              _snap,
+                                              _grid,
+                                              _tracks,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    if (!_showHome &&
+                                        _viewMode == kViewPianoroll)
+                                      Positioned(
+                                        left: 0,
+                                        right: 0,
+                                        top: RulerPainter.height,
+                                        bottom: 0,
+                                        child: IgnorePointer(
+                                          child: CustomPaint(
+                                            painter: PianorollGridPainter(
+                                              _snap,
+                                              _grid,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
                                     Positioned(
                                       left: 0,
                                       right: 0,

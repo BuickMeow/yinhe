@@ -1,10 +1,9 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 
 import '../core/bar_beat.dart';
 import '../core/models.dart';
 import '../core/theme.dart';
+import 'time_grid.dart';
 
 /// PR 自动化栏绘制：力度条或离散（Step）自动化曲线，支持拖动锚点预览。
 class AutomationPainter extends CustomPainter {
@@ -277,9 +276,6 @@ class AutomationPainter extends CustomPainter {
     );
   }
 
-  /// PR 网格最小间距（与 Rust `GRID_MIN_SPACING` 一致）。
-  static const double _gridMinSpacing = 38.0;
-
   /// 网格：横向 0/25/50/75/100% 值参考线 + 与 PR 同规则的小节/拍/细分线。
   void _paintGrid(
     Canvas canvas,
@@ -298,132 +294,18 @@ class AutomationPainter extends CustomPainter {
     }
 
     final g = grid.value;
-    if (g == null || size.width <= 0 || size.height <= 0) {
+    if (g == null) {
       return;
     }
-    final tpb = g.ppq;
-    if (tpb <= 0) {
-      return;
-    }
-    double xOf(double tick) => tick * ppu - scrollX + (kbW - comboWidth);
-    final subTicks = math.max(tpb ~/ 4, 1);
-    final fineStep = _fineGridStep(ppu, tpb);
-    // 可见 tick：AM 绘制区从 combo 列右侧开始，与 PR 共用同一 ppu/scroll。
-    final startTick = ((comboWidth - kbW + scrollX) / ppu).clamp(
-      0.0,
-      double.infinity,
+    // AM 绘制区从 combo 列右侧开始，与 PR 共用同一 ppu/scroll。
+    paintTimeGrid(
+      canvas,
+      size: size,
+      ppu: ppu,
+      scrollX: scrollX,
+      leftInset: kbW - comboWidth,
+      grid: g,
     );
-    final endTick = ((size.width + comboWidth - kbW + scrollX) / ppu).clamp(
-      0.0,
-      double.infinity,
-    );
-    final endI = endTick.floor();
-    final vPaint = Paint()..strokeWidth = 1.0;
-    Color level(int alpha) => line.withValues(alpha: alpha / 255.0);
-
-    for (var i = 0; i < g.segments.length; i++) {
-      final (segStart, _, _) = g.segments[i];
-      final segEnd = i + 1 < g.segments.length ? g.segments[i + 1].$1 : 1 << 31;
-      if (segStart > endTick) {
-        break;
-      }
-      final (measureTicks, beatTicks) = g.ticksOfSegment(i);
-      // 与 wgpu `push_time_grid` 相同的层级选择：合并小节/小节/拍/细分/tick。
-      final divisor = BarBeatGrid.measureDivisor(
-        measureTicks * ppu,
-        _gridMinSpacing,
-      );
-      final merged = divisor > 1;
-      final mergedMeasureTicks = measureTicks * divisor;
-      final showBeat = !merged;
-      final showSub = showBeat && beatTicks * ppu >= _gridMinSpacing;
-      final showTick = showSub && ppu >= 10.0;
-      final gridMeasureTicks = merged
-          ? math.max(mergedMeasureTicks ~/ 2, 1)
-          : measureTicks;
-      final step = showTick
-          ? 1
-          : showSub
-          ? math.max(math.min(fineStep, subTicks), 1)
-          : showBeat
-          ? math.max(beatTicks, 1)
-          : math.max(gridMeasureTicks, 1);
-      final firstTick = math.max(segStart, startTick.floor());
-      var tick = segStart + ((firstTick - segStart) ~/ step) * step;
-      while (tick <= endI && tick < segEnd) {
-        final local = tick - segStart;
-        final isMeasure = local % measureTicks == 0;
-        final beatLocal = local % measureTicks;
-        final isBeat = beatLocal % beatTicks == 0 && beatLocal > 0;
-        final isSub = local % subTicks == 0;
-        int? alpha;
-        if (isMeasure) {
-          alpha = 255;
-        } else if (showBeat && isBeat) {
-          alpha = 140;
-        } else if (showSub && isSub) {
-          alpha = 110;
-        } else if (showTick || showSub) {
-          alpha = 60;
-        }
-        if (alpha != null) {
-          final x = xOf(tick.toDouble());
-          if (x >= 0 && x <= size.width) {
-            vPaint.color = level(alpha);
-            canvas.drawLine(Offset(x, 0), Offset(x, size.height), vPaint);
-          }
-        }
-        tick += step;
-      }
-    }
-  }
-
-  /// 与 Rust `fine_grid_preset` 同规则：在 ≤ ppq/4 的 2 分频候选里，
-  /// 取屏幕格宽最接近 13px 的档位（1/32、1/64… 的惯性细分）。
-  static int _fineGridStep(double ppu, int ppq) {
-    final p = math.max(ppq, 1);
-    final whole = p * 4;
-    final candidates = <int>[];
-    var den = 1;
-    var lastTick = whole;
-    while (den <= whole && whole % den == 0) {
-      lastTick = (whole + den - 1) ~/ den;
-      candidates.add(lastTick);
-      if (den > 1 << 30) {
-        break;
-      }
-      den *= 2;
-    }
-    var t = _nextPowerOfTwo(lastTick) >> 1;
-    while (t >= 1) {
-      candidates.add(t);
-      t >>= 1;
-    }
-    final maxInterval = math.max(p ~/ 4, 1);
-    var best = 1;
-    var bestErr = double.infinity;
-    var last = 1 << 62;
-    for (final interval in candidates) {
-      if (interval == 0 || interval > maxInterval || interval >= last) {
-        continue;
-      }
-      last = interval;
-      final px = interval * ppu;
-      final err = math.log(px / 13.0).abs();
-      if (err < bestErr) {
-        bestErr = err;
-        best = interval;
-      }
-    }
-    return best;
-  }
-
-  static int _nextPowerOfTwo(int v) {
-    var p = 1;
-    while (p < v) {
-      p <<= 1;
-    }
-    return p;
   }
 
   @override
