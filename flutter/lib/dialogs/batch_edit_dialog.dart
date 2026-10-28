@@ -420,7 +420,8 @@ class _ExprField extends StatelessWidget {
     return TextField(
       controller: controller,
       autocorrect: false,
-      enableSuggestions: false,
+      // `enableSuggestions: false` 会被 Flutter 翻成密码输入类型，
+      // 国产输入法会切成安全键盘；表达式输入也不需要这个开关。
       keyboardType: TextInputType.text,
       style: const TextStyle(fontSize: 14),
       onChanged: onChanged == null ? null : (_) => onChanged!(),

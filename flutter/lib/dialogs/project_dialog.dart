@@ -118,8 +118,10 @@ class _ProjectDialogState extends State<ProjectDialog> {
       controller: c,
       maxLines: maxLines,
       keyboardType: keyboardType,
+      // 不要传 `enableSuggestions: false`：Flutter 会把它翻成
+      // TYPE_TEXT_VARIATION_VISIBLE_PASSWORD，小米/搜狗等输入法会切成
+      // "安全键盘"。只关自动纠错即可，联想候选保持正常。
       autocorrect: false,
-      enableSuggestions: false,
       style: const TextStyle(fontSize: 14),
       decoration: dialogInputDecoration(label),
     );

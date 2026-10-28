@@ -28,11 +28,14 @@ class YinheDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 键盘弹出时只移动对话框，不改变它的布局尺寸：
-    // 1. 对对话框子树去掉 viewInsets，AlertDialog 不会收缩/加键盘内边距；
-    // 2. 用 Transform 把整块对话框上移键盘高度的一半（居中于键盘上方），
-    //    Transform 不参与 layout，比每帧改 constraints 便宜得多。
+    // 键盘弹出时的定位：
+    // - 手机（短边 < 600）：对话框直接吸顶，只把可用高度让出键盘部分。
+    //   不再跟随 viewInsets 移动，避免整个弹窗被输入法的慢动画"顶着"上升
+    //   （小米输入法的 inset 动画明显偏长）。
+    // - 宽屏：保持原行为，用 Transform 上移键盘高度的一半。
+    // 两者都对对话框子树去掉 viewInsets，AlertDialog 不会自己收缩/加内边距。
     final inset = MediaQuery.viewInsetsOf(context).bottom;
+    final phone = MediaQuery.sizeOf(context).shortestSide < 600;
     final body = scroll
         ? SingleChildScrollView(
             child: Column(
@@ -44,6 +47,7 @@ class YinheDialog extends StatelessWidget {
         : Padding(padding: const EdgeInsets.only(top: 10), child: content);
     final dialog = AlertDialog(
       backgroundColor: YinheTheme.bg,
+      alignment: phone ? Alignment.topCenter : null,
       title: title == null
           ? null
           : titleTrailing == null
@@ -66,7 +70,16 @@ class YinheDialog extends StatelessWidget {
     );
     return MediaQuery(
       data: MediaQuery.of(context).removeViewInsets(removeBottom: true),
-      child: Transform.translate(offset: Offset(0, -inset / 2), child: dialog),
+      child: Padding(
+        padding: EdgeInsets.only(
+          top: phone ? 12 : 0,
+          bottom: phone ? inset : 0,
+        ),
+        child: Transform.translate(
+          offset: phone ? Offset.zero : Offset(0, -inset / 2),
+          child: dialog,
+        ),
+      ),
     );
   }
 }
