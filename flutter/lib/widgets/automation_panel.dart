@@ -172,9 +172,15 @@ class _AutomationPanelState extends State<AutomationPanel>
   double? _lineStartTick;
   double? _lineStartValue;
 
-  /// AM wgpu 状态去重缓存。
+  /// 当前绘图区逻辑尺寸（每次 layout 更新）。
   double _amW = 0;
   double _amH = 0;
+
+  /// 上一次真正下发给 Rust 的尺寸/状态（用于去重）。
+  /// 尺寸必须单独记录：不能拿“当前尺寸”和它自己比较，否则旋转后
+  /// 布局变了也不会调用 setAutomationPanel，AM 纹理按旧宽高被拉伸。
+  double _sentAmW = 0;
+  double _sentAmH = 0;
   int _amTrack = -1;
   int _amLane = -2;
   bool _amVisible = false;
@@ -233,16 +239,16 @@ class _AutomationPanelState extends State<AutomationPanel>
     final lane = _laneIdx ?? -1;
     final showAnchors = widget.pencilActive;
     if (_amVisible == visible &&
-        _amW == w &&
-        _amH == h &&
+        _sentAmW == w &&
+        _sentAmH == h &&
         _amTrack == track &&
         _amLane == lane &&
         _amAnchors == showAnchors) {
       return;
     }
     _amVisible = visible;
-    _amW = w;
-    _amH = h;
+    _sentAmW = w;
+    _sentAmH = h;
     _amTrack = track;
     _amLane = lane;
     _amAnchors = showAnchors;
