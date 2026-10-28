@@ -33,6 +33,7 @@ class HomeView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
+    final compact = MediaQuery.sizeOf(context).width < 600;
     return ColoredBox(
       color: YinheTheme.bg,
       child: Stack(
@@ -80,24 +81,41 @@ class HomeView extends StatelessWidget {
           // 主体：左按钮列 + 右最近文件。
           Positioned.fill(
             child: Padding(
-              padding: const EdgeInsets.only(left: 48, right: 40, top: 28),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 300,
-                    child: LayoutBuilder(
-                      builder: (context, c) => SingleChildScrollView(
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(minHeight: c.maxHeight),
-                          child: _actions(context),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 56),
-                  Expanded(child: _recentPanel(context)),
-                ],
+              padding: EdgeInsets.only(
+                left: 48,
+                right: compact ? 24 : 40,
+                top: 28,
               ),
+              child: compact
+                  ? SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _actions(context),
+                          const SizedBox(height: 24),
+                          SizedBox(height: 320, child: _recentPanel(context)),
+                        ],
+                      ),
+                    )
+                  : Row(
+                      children: [
+                        SizedBox(
+                          width: 300,
+                          child: LayoutBuilder(
+                            builder: (context, c) => SingleChildScrollView(
+                              child: ConstrainedBox(
+                                constraints: BoxConstraints(
+                                  minHeight: c.maxHeight,
+                                ),
+                                child: _actions(context),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 56),
+                        Expanded(child: _recentPanel(context)),
+                      ],
+                    ),
             ),
           ),
         ],

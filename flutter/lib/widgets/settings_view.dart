@@ -167,27 +167,59 @@ class _SettingsViewState extends State<SettingsView> {
 
   @override
   Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 600;
+    final page = switch (_page) {
+      0 => _soundFontPage(),
+      1 => _audioPage(),
+      2 => _editingPage(),
+      _ => _languagePage(),
+    };
     return ColoredBox(
       color: YinheTheme.bg,
       child: Stack(
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              SizedBox(width: 170, child: _sidebar()),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 16, 24, 16),
-                  child: switch (_page) {
-                    0 => _soundFontPage(),
-                    1 => _audioPage(),
-                    2 => _editingPage(),
-                    _ => _languagePage(),
-                  },
+          if (compact)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(
+                  height: 48,
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 52),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          _sideItem(Icons.piano, l.soundfonts, 0),
+                          _sideItem(Icons.volume_up, l.audio, 1),
+                          _sideItem(Icons.edit, l.edit, 2),
+                          _sideItem(Icons.language, l.language, 3),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-            ],
-          ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+                    child: page,
+                  ),
+                ),
+              ],
+            )
+          else
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(width: 170, child: _sidebar()),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 16, 24, 16),
+                    child: page,
+                  ),
+                ),
+              ],
+            ),
           // 左上角返回：与工作区顶栏返回/主页按钮同 xy、同尺寸。
           Positioned(
             left: 6,
@@ -281,13 +313,8 @@ class _SettingsViewState extends State<SettingsView> {
               style: TextStyle(color: YinheTheme.text, fontSize: 14),
             ),
             subtitle: Text(
-              L10n.isZh
-                  ? '关闭后，新建或移动的音符不能与已有音符重叠'
-                  : 'When off, new or moved notes cannot overlap existing notes',
-              style: TextStyle(
-                color: YinheTheme.textSecondary,
-                fontSize: 12,
-              ),
+              L10n.isZh ? '关闭后，新建或移动的音符不能与已有音符重叠' : 'When off, new or moved notes cannot overlap existing notes',
+              style: TextStyle(color: YinheTheme.textSecondary, fontSize: 12),
             ),
             value: _allowOverlappingNotes,
             activeThumbColor: YinheTheme.accent,

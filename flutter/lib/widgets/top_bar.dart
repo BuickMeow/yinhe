@@ -13,6 +13,8 @@ import '../core/tools.dart';
 class TopBar extends StatelessWidget {
   const TopBar({
     super.key,
+    required this.height,
+    required this.compact,
     required this.isPr,
     required this.playing,
     required this.timecodeText,
@@ -51,6 +53,12 @@ class TopBar extends StatelessWidget {
     required this.onEditSig,
     required this.onDeselect,
   });
+
+  /// 顶栏高度：横屏单行 42，竖屏双行 84。
+  final double height;
+
+  /// 窄屏（竖屏）：拆成上下两行，避免工具栏横向溢出。
+  final bool compact;
 
   final bool isPr;
   final bool playing;
@@ -125,200 +133,195 @@ class TopBar extends StatelessWidget {
         behavior: HitTestBehavior.translucent,
         onTap: onDeselect,
         child: Container(
-          height: 42,
+          height: height,
           padding: const EdgeInsets.symmetric(horizontal: 6),
           decoration: BoxDecoration(
             // 主题 token（与桌面 app_bg/line_fg 同色系）。
             color: YinheTheme.controlBg,
             border: Border(bottom: BorderSide(color: YinheTheme.lineFg)),
           ),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final showCenter = constraints.maxWidth >= 600;
-              return CustomMultiChildLayout(
-                delegate: _TopBarLayoutDelegate(
-                  centerMax: isPr ? 220.0 : 260.0,
-                  gap: 8.0,
+          child: compact
+              ? _buildCompact(context, l)
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    final showCenter = constraints.maxWidth >= 600;
+                    return CustomMultiChildLayout(
+                      delegate: _TopBarLayoutDelegate(
+                        centerMax: isPr ? 220.0 : 260.0,
+                        gap: 8.0,
+                      ),
+                      children: [
+                        LayoutId(
+                          id: _TopBarSlot.left,
+                          child: _buildLeftGroup(context, l),
+                        ),
+                        LayoutId(
+                          id: _TopBarSlot.center,
+                          child: showCenter
+                              ? (isPr ? _buildSongBox(l) : _titleButton(l))
+                              : const SizedBox.shrink(),
+                        ),
+                        LayoutId(
+                          id: _TopBarSlot.right,
+                          child: _buildRightGroup(context, l),
+                        ),
+                      ],
+                    );
+                  },
                 ),
-                children: [
-                  LayoutId(
-                    id: _TopBarSlot.left,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          onPressed: isPr ? onBack : onHome,
-                          icon: Icon(isPr ? Icons.arrow_back : Icons.home),
-                          color: YinheTheme.text,
-                          tooltip: isPr ? l.backToArrangement : l.home,
-                          visualDensity: VisualDensity.compact,
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(
-                            minWidth: 40,
-                            minHeight: 40,
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: onTogglePlay,
-                          icon: Icon(playing ? Icons.pause : Icons.play_arrow),
-                          color: YinheTheme.text,
-                          tooltip: playing ? l.pause : l.play,
-                          visualDensity: VisualDensity.compact,
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(
-                            minWidth: 40,
-                            minHeight: 40,
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: onStop,
-                          icon: const Icon(Icons.stop),
-                          color: YinheTheme.textSecondary,
-                          tooltip: l.stop,
-                          visualDensity: VisualDensity.compact,
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(
-                            minWidth: 40,
-                            minHeight: 40,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        ValueListenableBuilder<EditStatus?>(
-                          valueListenable: editStatus,
-                          builder: (context, status, _) {
-                            final active = status != null;
-                            final hasMeta =
-                                status != null &&
-                                (status.primary != null ||
-                                    status.secondary != null);
-                            final showPosition =
-                                !(status?.hidePosition ?? false);
-                            return Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (showPosition)
-                                  InkWell(
-                                    borderRadius: BorderRadius.circular(4),
-                                    onTap: active ? null : onToggleTimecode,
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                        vertical: 6,
-                                      ),
-                                      child: ValueListenableBuilder<String>(
-                                        valueListenable: timecodeText,
-                                        builder: (context, text, _) => Text(
-                                          status?.position ?? text,
-                                          style: TextStyle(
-                                            color: active
-                                                ? YinheTheme.accent
-                                                : YinheTheme.textLabel,
-                                            fontSize: 14,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                if (!hasMeta) ...[
-                                  _metaText(bpmText, l.defaultBpm, onEditBpm),
-                                  _metaText(
-                                    sigText,
-                                    l.defaultTimeSig,
-                                    onEditSig,
-                                  ),
-                                ] else ...[
-                                  if (status.primary != null)
-                                    _metaText(
-                                      status.primary!,
-                                      '',
-                                      null,
-                                      active: true,
-                                    ),
-                                  if (status.secondary != null)
-                                    _metaText(
-                                      status.secondary!,
-                                      '',
-                                      null,
-                                      active: true,
-                                    ),
-                                ],
-                              ],
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-                  LayoutId(
-                    id: _TopBarSlot.center,
-                    child: showCenter
-                        ? (isPr ? _buildSongBox(l) : _titleButton(l))
-                        : const SizedBox.shrink(),
-                  ),
-                  LayoutId(
-                    id: _TopBarSlot.right,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _buildQuantizeButton(context, l),
-                        _buildQuickToolButton(l),
-                        _buildToolButton(l),
-                        ValueListenableBuilder<int>(
-                          valueListenable: docState,
-                          builder: (context, st, _) => Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              _iconAction(
-                                Icons.undo,
-                                l.undo,
-                                (st & 1) != 0 ? onUndo : null,
-                              ),
-                              _iconAction(
-                                Icons.redo,
-                                l.redo,
-                                (st & 2) != 0 ? onRedo : null,
-                              ),
-                              // 保存：从右向左第一个；无改动时置灰不可点；
-                              // 保存中显示圆环；保存成功后 2 秒显示对勾（普通字体色）。
-                              if (saving)
-                                const SizedBox(
-                                  width: 40,
-                                  height: 40,
-                                  child: Center(
-                                    child: SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    ),
-                                  ),
-                                )
-                              else if (saveDone)
-                                _iconAction(
-                                  Icons.check,
-                                  l.saved,
-                                  null,
-                                  color: YinheTheme.text,
-                                )
-                              else
-                                _iconAction(
-                                  Icons.save_outlined,
-                                  l.saveProject,
-                                  (st & 4) != 0 ? onSave : null,
-                                ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
         ),
       ),
+    );
+  }
+
+  Widget _buildLeftGroup(BuildContext context, AppLocalizations l) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          onPressed: isPr ? onBack : onHome,
+          icon: Icon(isPr ? Icons.arrow_back : Icons.home),
+          color: YinheTheme.text,
+          tooltip: isPr ? l.backToArrangement : l.home,
+          visualDensity: VisualDensity.compact,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+        ),
+        IconButton(
+          onPressed: onTogglePlay,
+          icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+          color: YinheTheme.text,
+          tooltip: playing ? l.pause : l.play,
+          visualDensity: VisualDensity.compact,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+        ),
+        IconButton(
+          onPressed: onStop,
+          icon: const Icon(Icons.stop),
+          color: YinheTheme.textSecondary,
+          tooltip: l.stop,
+          visualDensity: VisualDensity.compact,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+        ),
+        const SizedBox(width: 4),
+        ValueListenableBuilder<EditStatus?>(
+          valueListenable: editStatus,
+          builder: (context, status, _) {
+            final active = status != null;
+            final hasMeta =
+                status != null &&
+                (status.primary != null || status.secondary != null);
+            final showPosition = !(status?.hidePosition ?? false);
+            return Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (showPosition)
+                  InkWell(
+                    borderRadius: BorderRadius.circular(4),
+                    onTap: active ? null : onToggleTimecode,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 6,
+                      ),
+                      child: ValueListenableBuilder<String>(
+                        valueListenable: timecodeText,
+                        builder: (context, text, _) => Text(
+                          status?.position ?? text,
+                          style: TextStyle(
+                            color: active
+                                ? YinheTheme.accent
+                                : YinheTheme.textLabel,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (!hasMeta) ...[
+                  _metaText(bpmText, l.defaultBpm, onEditBpm),
+                  _metaText(sigText, l.defaultTimeSig, onEditSig),
+                ] else ...[
+                  if (status.primary != null)
+                    _metaText(status.primary!, '', null, active: true),
+                  if (status.secondary != null)
+                    _metaText(status.secondary!, '', null, active: true),
+                ],
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRightGroup(BuildContext context, AppLocalizations l) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildQuantizeButton(context, l),
+        _buildQuickToolButton(l),
+        _buildToolButton(l),
+        ValueListenableBuilder<int>(
+          valueListenable: docState,
+          builder: (context, st, _) => Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _iconAction(Icons.undo, l.undo, (st & 1) != 0 ? onUndo : null),
+              _iconAction(Icons.redo, l.redo, (st & 2) != 0 ? onRedo : null),
+              // 保存：从右向左第一个；无改动时置灰不可点；
+              // 保存中显示圆环；保存成功后 2 秒显示对勾（普通字体色）。
+              if (saving)
+                const SizedBox(
+                  width: 40,
+                  height: 40,
+                  child: Center(
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                )
+              else if (saveDone)
+                _iconAction(Icons.check, l.saved, null, color: YinheTheme.text)
+              else
+                _iconAction(
+                  Icons.save_outlined,
+                  l.saveProject,
+                  (st & 4) != 0 ? onSave : null,
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCompact(BuildContext context, AppLocalizations l) {
+    return Column(
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: _buildLeftGroup(context, l),
+          ),
+        ),
+        Expanded(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border(top: BorderSide(color: YinheTheme.lineFg)),
+            ),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              reverse: true,
+              child: _buildRightGroup(context, l),
+            ),
+          ),
+        ),
+      ],
     );
   }
 

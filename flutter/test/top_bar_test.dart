@@ -4,66 +4,79 @@ import 'package:yinhe_flutter/core/edit_status.dart';
 import 'package:yinhe_flutter/l10n/app_localizations.dart';
 import 'package:yinhe_flutter/widgets/top_bar.dart';
 
+Widget _app({
+  required ValueNotifier<EditStatus?> status,
+  required ValueNotifier<String> timecode,
+  required ValueNotifier<int> docState,
+  double width = 800,
+  double height = 42,
+  bool compact = false,
+}) {
+  return MaterialApp(
+    locale: const Locale('zh'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: Scaffold(
+      body: Center(
+        child: SizedBox(
+          width: width,
+          height: height,
+          child: TopBar(
+            height: height,
+            compact: compact,
+            isPr: false,
+            playing: false,
+            timecodeText: timecode,
+            editStatus: status,
+            quantizeLabel: '自动',
+            ppq: 480,
+            mainTool: 0,
+            quickTool: 2,
+            quickSlotActive: false,
+            tracks: const [],
+            activeTrack: -1,
+            showAllTracks: true,
+            songTitle: 'Center Title',
+            fileName: 'song.mid',
+            docState: docState,
+            onHome: () {},
+            onBack: () {},
+            onTogglePlay: () {},
+            onStop: () {},
+            onToggleTimecode: () {},
+            onQuantize: (_) {},
+            onTool: (_) {},
+            onQuickTool: (_) {},
+            onUndo: () {},
+            onRedo: () {},
+            onSelectTrack: (_) {},
+            onToggleAllTracks: () {},
+            onProjectSettings: () {},
+            onSave: () {},
+            saveDone: false,
+            saving: false,
+            noteCount: 0,
+            bpmText: '120',
+            sigText: '4/4',
+            onEditBpm: () {},
+            onEditSig: () {},
+            onDeselect: () {},
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 void main() {
   testWidgets('顶栏标题始终位于屏幕正中央，不受状态数字宽度影响', (tester) async {
     final status = ValueNotifier<EditStatus?>(null);
     final timecode = ValueNotifier<String>('1.0.000');
     final docState = ValueNotifier<int>(0);
 
-    Widget app() => MaterialApp(
-      locale: const Locale('zh'),
-      localizationsDelegates: AppLocalizations.localizationsDelegates,
-      supportedLocales: AppLocalizations.supportedLocales,
-      home: Scaffold(
-        body: Center(
-          child: SizedBox(
-            width: 800,
-            height: 42,
-            child: TopBar(
-              isPr: false,
-              playing: false,
-              timecodeText: timecode,
-              editStatus: status,
-              quantizeLabel: '自动',
-              ppq: 480,
-              mainTool: 0,
-              quickTool: 2,
-              quickSlotActive: false,
-              tracks: const [],
-              activeTrack: -1,
-              showAllTracks: true,
-              songTitle: 'Center Title',
-              fileName: 'song.mid',
-              docState: docState,
-              onHome: () {},
-              onBack: () {},
-              onTogglePlay: () {},
-              onStop: () {},
-              onToggleTimecode: () {},
-              onQuantize: (_) {},
-              onTool: (_) {},
-              onQuickTool: (_) {},
-              onUndo: () {},
-              onRedo: () {},
-              onSelectTrack: (_) {},
-              onToggleAllTracks: () {},
-              onProjectSettings: () {},
-              onSave: () {},
-              saveDone: false,
-              saving: false,
-              noteCount: 0,
-              bpmText: '120',
-              sigText: '4/4',
-              onEditBpm: () {},
-              onEditSig: () {},
-              onDeselect: () {},
-            ),
-          ),
-        ),
-      ),
+    await tester.pumpWidget(
+      _app(status: status, timecode: timecode, docState: docState),
     );
-
-    await tester.pumpWidget(app());
     final before = tester.getCenter(find.text('Center Title'));
     expect(before.dx, closeTo(400, 0.5), reason: '常规状态标题应在正中央');
 
@@ -77,5 +90,28 @@ void main() {
     final after = tester.getCenter(find.text('Center Title'));
     expect(after.dx, closeTo(400, 0.5), reason: '显示相对读数后标题仍应在正中央');
     expect(after.dy, closeTo(before.dy, 0.5));
+  });
+
+  testWidgets('竖屏双行顶栏不溢出，左右两组按钮都在', (tester) async {
+    final status = ValueNotifier<EditStatus?>(null);
+    final timecode = ValueNotifier<String>('1.0.000');
+    final docState = ValueNotifier<int>(4);
+
+    await tester.pumpWidget(
+      _app(
+        status: status,
+        timecode: timecode,
+        docState: docState,
+        width: 400,
+        height: 84,
+        compact: true,
+      ),
+    );
+
+    expect(tester.takeException(), isNull, reason: '竖屏顶栏不应 RenderFlex 溢出');
+    expect(find.byIcon(Icons.motion_photos_on), findsOneWidget);
+    expect(find.byIcon(Icons.undo), findsOneWidget);
+    expect(find.byIcon(Icons.save_outlined), findsOneWidget);
+    expect(find.text('Center Title'), findsNothing, reason: '窄屏隐藏中央标题');
   });
 }

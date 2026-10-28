@@ -110,6 +110,9 @@ mixin _ShellBuild on _ShellBase {
         body: Center(child: CircularProgressIndicator()),
       );
     }
+    // 竖屏顶栏拆两行（42 → 84），横屏保持单行。
+    final compactTop = MediaQuery.sizeOf(context).width < 600;
+    final topBarHeight = compactTop ? 84.0 : 42.0;
     return Scaffold(
       backgroundColor: YinheTheme.bg,
       // 键盘只移动对话框，不缩放画布/wgpu 纹理（adjustNothing）。
@@ -126,7 +129,7 @@ mixin _ShellBuild on _ShellBase {
             Column(
               children: [
                 // 顶部栏占位（栏本体在外层 Stack 顶层，保证绘制优先级最高）。
-                const SizedBox(height: 42),
+                SizedBox(height: topBarHeight),
                 Expanded(
                   child: LayoutBuilder(
                     builder: (context, constraints) {
@@ -400,8 +403,8 @@ mixin _ShellBuild on _ShellBase {
                 left: 0,
                 right: 0,
                 top: 0,
-                height: 42,
-                child: _buildTopBar(),
+                height: topBarHeight,
+                child: _buildTopBar(compact: compactTop, height: topBarHeight),
               ),
             if (_showHome)
               HomeView(
@@ -428,8 +431,10 @@ mixin _ShellBuild on _ShellBase {
   }
 
   /// 上侧栏（实现见 top_bar.dart）。
-  Widget _buildTopBar() {
+  Widget _buildTopBar({required bool compact, required double height}) {
     return TopBar(
+      height: height,
+      compact: compact,
       isPr: _viewMode == kViewPianoroll,
       playing: _playing,
       timecodeText: _timecodeText,
