@@ -19,7 +19,7 @@ mod soundfont_archive;
 mod theme_colors;
 
 use std::ffi::{CStr, CString, c_void};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Mutex, OnceLock};
 
@@ -72,11 +72,14 @@ enum Cmd {
     /// AM 面板独立 surface。
     SetAutomationSurface(OwnedWindow),
     ClearAutomationSurface,
-    /// Flutter 帧驱动：渲染一帧，完成后通过 ack 回信。
-    RenderNow(std::sync::mpsc::SyncSender<()>),
+    /// Flutter 帧驱动：渲染一帧（异步，不等回信）。
+    RenderNow,
 }
 
 static CMD_TX: OnceLock<Sender<Cmd>> = OnceLock::new();
+
+/// 渲染线程是否还有未完成的帧请求：UI 线程用它做非阻塞限流（忙就跳过本帧）。
+static RENDER_PENDING: AtomicBool = AtomicBool::new(false);
 
 // ── 画布逻辑尺寸（Flutter 控件逻辑像素）──
 
@@ -237,19 +240,19 @@ fn render_thread_main(rx: Receiver<Cmd>) {
 
     // 帧驱动：由 Flutter 每帧请求渲染并同步等待，纹理与浮层同帧产出。
     while let Ok(first) = rx.recv() {
-        // 1) 处理积压命令（取最终态）；渲染请求记下来统一应答。
-        let mut pending: Vec<std::sync::mpsc::SyncSender<()>> = Vec::new();
+        // 1) 处理积压命令（取最终态）；合并本轮的渲染请求。
+        let mut need_render = false;
         let mut cmd = Some(first);
         while let Some(c) = cmd {
             match c {
-                Cmd::RenderNow(ack) => pending.push(ack),
+                Cmd::RenderNow => need_render = true,
                 other => apply_cmd(&mut gpu, &mut target, &mut am_target, other),
             }
             cmd = rx.try_recv().ok();
         }
 
-        // 2) 有请求则渲染一帧（含 present），随后应答（Flutter 侧解除等待）。
-        if !pending.is_empty() {
+        // 2) 有请求则渲染一帧（含 present）；完成后解除 UI 线程的限流标志。
+        if need_render {
             if let (Some(g), Some(t)) = (&gpu, &mut target) {
                 render::render_frame(g, t);
             }
@@ -257,9 +260,7 @@ fn render_thread_main(rx: Receiver<Cmd>) {
             if let (Some(g), Some(am)) = (&gpu, &mut am_target) {
                 render::render_automation_frame(g, am, summary);
             }
-            for ack in pending {
-                let _ = ack.send(());
-            }
+            RENDER_PENDING.store(false, Ordering::Release);
         }
     }
     log::info!("渲染线程退出");
@@ -315,8 +316,8 @@ fn apply_cmd(
         Cmd::ClearAutomationSurface => {
             *am_target = None;
         }
-        Cmd::RenderNow(_) => {
-            // 渲染请求由渲染循环统一处理与应答（这里不应到达）。
+        Cmd::RenderNow => {
+            // 渲染请求由渲染循环统一处理（这里不应到达）。
         }
     }
 }
@@ -1725,11 +1726,12 @@ fn cstr_arg<'a>(p: *const std::ffi::c_char) -> &'a str {
 /// Flutter 帧驱动：请求渲染一帧并等待完成（纹理与浮层同帧产出）。成功 1。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_render_frame() -> i32 {
-    let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel::<()>(1);
-    if cmd_tx().send(Cmd::RenderNow(ack_tx)).is_err() {
+    // 非阻塞限流：渲染线程上一帧还没画完就跳过本次请求，UI 线程不再等待 present。
+    if RENDER_PENDING.swap(true, Ordering::AcqRel) {
         return 0;
     }
-    if ack_rx.recv().is_err() {
+    if cmd_tx().send(Cmd::RenderNow).is_err() {
+        RENDER_PENDING.store(false, Ordering::Release);
         return 0;
     }
     1

@@ -476,7 +476,9 @@ class _StudioShellState extends _ShellBase
           _editStatus.value = null;
         }
       }
-      // 工程状态/时间码降频（每 ~66ms）：减少音频锁与历史栈分配开销。
+      // 时间码每帧更新（60Hz），避免毫秒位按 4 帧（~67ms）跳动。
+      _updateTimecode();
+      // 工程状态降频（每 ~66ms）：减少音频锁与历史栈分配开销。
       // 对话框打开时也要跑：_pollArchive 靠它关闭加载进度框。
       _frameCounter++;
       if (_frameCounter % 4 == 0) {
@@ -494,7 +496,6 @@ class _StudioShellState extends _ShellBase
           }
         }
         _readDocState();
-        _updateTimecode();
         _pollArchive();
       }
       // 保持连续帧：Rust 侧拖拽/边缘滚动/渲染都由帧驱动（手指静止时也要跑）。
