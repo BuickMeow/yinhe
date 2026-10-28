@@ -26,6 +26,8 @@ struct AudioState {
     cursor_tick: f64,
     /// 最近一次已真正下发的音色库路径列表（避免重复解析）。
     sf_sent: Option<Vec<String>>,
+    /// 轨道 mute/solo 掩码（重建引擎后重发；空 = 不跳过任何轨道）。
+    skip: Vec<bool>,
 }
 
 /// 全局音色库条目：设置页可拖动排序 / 启用停用。
@@ -321,8 +323,8 @@ fn lock_audio() -> Option<std::sync::MutexGuard<'static, Option<AudioState>>> {
     }
 }
 
-/// 按给定布局创建音频引擎（首次初始化与文档通道扩展共用）。
-fn spawn_audio(layout: ChannelLayout, cursor_tick: f64) -> Option<AudioState> {
+/// 按给定布局创建音频引擎（首次初始化与文档通道变化共用）。
+fn spawn_audio(layout: ChannelLayout, cursor_tick: f64, skip: Vec<bool>) -> Option<AudioState> {
     let cfg = settings();
     // 缓冲默认 2048 帧：AAudio 动态调优在部分机型上收敛慢，固定值更稳
     // （cpal Fixed(n) 实际 capacity 为 2n；蓝牙 A2DP 路径需要更大缓冲）。
@@ -350,8 +352,14 @@ fn spawn_audio(layout: ChannelLayout, cursor_tick: f64) -> Option<AudioState> {
                 layout,
                 cursor_tick,
                 sf_sent: None,
+                skip,
             };
             apply_soundfonts(&mut st);
+            if !st.skip.is_empty() {
+                st.handle.handle.send(AudioCommand::SkipTracks {
+                    skip: st.skip.clone(),
+                });
+            }
             // 应用设置页配置（默认 ignore_velocity=1、max_voices=512：
             // 1024 在 tau 峰值段仍可能超过 512 帧的实时预算）。
             apply_runtime_settings(&st);
@@ -362,6 +370,33 @@ fn spawn_audio(layout: ChannelLayout, cursor_tick: f64) -> Option<AudioState> {
             None
         }
     }
+}
+
+/// 通道集合变化（增删通道）时重建引擎：`layout` 定型后不可变，增删通道
+/// 都必须用新布局重新 spawn。旧流先同步 pause，再后台线程 drop（join
+/// 渲染线程可能数百 ms，不能卡 UI）。
+///
+/// 返回是否触发了重建；调用方据此决定发 `LoadModel` 还是增量命令。
+fn rebuild_for_model(
+    slot: &mut Option<AudioState>,
+    model: &YinModel,
+    cursor_tick: f64,
+    skip: Vec<bool>,
+) -> bool {
+    let needs = match slot.as_ref() {
+        Some(st) => !st.layout.matches_model(model),
+        None => true,
+    };
+    if !needs {
+        return false;
+    }
+    if let Some(old) = slot.take() {
+        old.handle.pause_stream();
+        std::thread::spawn(move || drop(old));
+    }
+    let layout = ChannelLayout::from_model(model);
+    *slot = spawn_audio(layout, cursor_tick, skip);
+    true
 }
 
 /// 首次使用时初始化音频；返回 false = 初始化失败。
@@ -375,7 +410,7 @@ fn ensure_audio() -> bool {
     // 没有文档时的兜底布局：16 通道（正常播放/导出都发生在 LoadModel 之后，
     // 那时会按 model 的通道需求重建）。
     let layout = ChannelLayout::from_mask(vec![true; 16]);
-    match spawn_audio(layout, 0.0) {
+    match spawn_audio(layout, 0.0, Vec::new()) {
         Some(st) => {
             *guard = Some(st);
             true
@@ -414,6 +449,7 @@ pub fn set_skip_mask(skip: Vec<bool>) {
     let Some(st) = guard.as_mut() else {
         return;
     };
+    st.skip = skip.clone();
     st.handle.handle.send(AudioCommand::SkipTracks { skip });
 }
 
@@ -507,6 +543,11 @@ pub fn update_notes(model: Arc<YinModel>) {
     let Some(mut guard) = lock_audio() else {
         return;
     };
+    let (cursor, skip, playing) = snapshot_playback(&mut guard);
+    if rebuild_for_model(&mut guard, &model, cursor, skip) {
+        resume_rebuilt(&mut guard, model, cursor, playing);
+        return;
+    }
     let Some(st) = guard.as_mut() else {
         return;
     };
@@ -518,6 +559,11 @@ pub fn reload_notes(model: Arc<YinModel>) {
     let Some(mut guard) = lock_audio() else {
         return;
     };
+    let (cursor, skip, playing) = snapshot_playback(&mut guard);
+    if rebuild_for_model(&mut guard, &model, cursor, skip) {
+        resume_rebuilt(&mut guard, model, cursor, playing);
+        return;
+    }
     let Some(st) = guard.as_mut() else {
         return;
     };
@@ -526,28 +572,12 @@ pub fn reload_notes(model: Arc<YinModel>) {
 
 /// 文档加载完成：把模型交给音频引擎，并确保音色库已下发。
 pub fn on_model_loaded(model: Arc<YinModel>) {
-    let layout = ChannelLayout::from_model(&model);
     let Some(mut guard) = lock_audio() else {
         return;
     };
-    // 引擎布局定型后不可变：新文档用到未激活的通道（新 port / 更多通道）时，
-    // 先释放旧流（避免设备占用冲突）再按 model 的实际通道重建。
-    let rebuild = match guard.as_ref() {
-        Some(st) => !st.layout.covers_model(&model),
-        None => true,
-    };
-    if rebuild {
-        // 旧流先同步 pause（立即静音），再丢后台线程 drop（join 渲染线程
-        // 可能数百 ms，不能卡 UI）；新流随后创建，避免双流重叠的"滋"。
-        if let Some(old) = guard.take() {
-            old.handle.pause_stream();
-            std::thread::spawn(move || drop(old));
-        }
-        match spawn_audio(layout, 0.0) {
-            Some(st) => *guard = Some(st),
-            None => return,
-        }
-    }
+    // 新文档：丢弃旧 skip；通道集合不同（增删 port/通道）时重建引擎，
+    // 删除通道也在这里释放对应的音色库引用和渲染缓冲。
+    let _ = rebuild_for_model(&mut guard, &model, 0.0, Vec::new());
     let Some(st) = guard.as_mut() else {
         return;
     };
@@ -555,6 +585,40 @@ pub fn on_model_loaded(model: Arc<YinModel>) {
     st.handle.handle.send(AudioCommand::LoadModel { model });
     st.cursor_tick = 0.0;
     log::info!("音频模型已加载（{} 通道）", st.layout.num_channels());
+}
+
+/// 重建前快照：当前光标、轨道 skip 掩码、是否正在播放。
+fn snapshot_playback(guard: &mut Option<AudioState>) -> (f64, Vec<bool>, bool) {
+    match guard.as_mut() {
+        Some(st) => {
+            let cursor = flow_sync_cursor(st);
+            (cursor, st.skip.clone(), st.handle.handle.is_playing())
+        }
+        None => (0.0, Vec::new(), false),
+    }
+}
+
+/// 通道集合变化后重建引擎：新引擎没有 model，必须 `LoadModel`；之前在
+/// 播放则按原 tick 换算 sample 位置继续播放。
+fn resume_rebuilt(
+    guard: &mut Option<AudioState>,
+    model: Arc<YinModel>,
+    cursor: f64,
+    playing: bool,
+) {
+    let Some(st) = guard.as_mut() else {
+        return;
+    };
+    apply_soundfonts(st);
+    let sr = st.handle.sample_rate;
+    let from = (model.tempo_map.tick_to_seconds(cursor.max(0.0) as u64) * sr as f64) as u64;
+    st.cursor_tick = cursor;
+    st.handle.handle.send(AudioCommand::LoadModel { model });
+    if playing {
+        st.handle
+            .handle
+            .send(AudioCommand::Play { from_sample: from });
+    }
 }
 
 /// 播放（从暂停位置开始；与暂停点接近时直接 Resume，避免 ring 回退）。

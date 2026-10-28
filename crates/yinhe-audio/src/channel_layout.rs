@@ -204,6 +204,16 @@ impl ChannelLayout {
         }
         true
     }
+
+    /// 与 model 的通道需求**完全一致**（新增或删除通道都返回 false）。
+    ///
+    /// `covers_model` 允许布局保留多余通道（静默）；需要在通道删除后回收
+    /// 音色库引用/渲染缓冲时，用本方法判断是否重建引擎。
+    pub fn matches_model(&self, model: &YinModel) -> bool {
+        let target = Self::from_model(model);
+        self.active_mask() == target.active_mask()
+            && self.audio_channels() == target.audio_channels()
+    }
 }
 
 #[cfg(test)]
@@ -683,5 +693,46 @@ mod tests {
         removed.tracks.retain(|t| t.kind != TrackKind::Audio);
         removed.rebuild();
         assert!(layout.covers_model(&removed), "音频轨移除仍覆盖");
+    }
+}
+
+#[cfg(test)]
+mod matches_model_tests {
+    use super::*;
+    use std::sync::Arc;
+    use yinhe_core::{ProjectMeta, TrackData};
+
+    fn model_with_channels(channels: &[u8]) -> YinModel {
+        let mut model = YinModel {
+            tracks: channels
+                .iter()
+                .map(|&ch| Arc::new(TrackData::new(0, ch)))
+                .collect(),
+            meta: ProjectMeta {
+                ppq: 480,
+                ..ProjectMeta::default()
+            },
+            ..Default::default()
+        };
+        model.rebuild();
+        model
+    }
+
+    /// 新增或删除通道都必须判为“不完全匹配”（触发引擎重建/资源回收）。
+    #[test]
+    fn matches_model_detects_added_and_removed_channels() {
+        let model = model_with_channels(&[0, 1, 9]);
+        let layout = ChannelLayout::from_model(&model);
+        assert!(layout.matches_model(&model), "同一 model 应完全匹配");
+
+        // 新增未激活通道 → 不匹配
+        let added = model_with_channels(&[0, 1, 9, 40]);
+        assert!(!layout.matches_model(&added), "新增通道必须重建");
+        assert!(!layout.covers_model(&added), "covers 也应为 false");
+
+        // 删除通道（释放资源）→ 不匹配，但 covers 仍成立
+        let removed = model_with_channels(&[0, 1]);
+        assert!(!layout.matches_model(&removed), "删除通道应触发资源回收");
+        assert!(layout.covers_model(&removed), "旧布局仍覆盖缩减后的 model");
     }
 }
