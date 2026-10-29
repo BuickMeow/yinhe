@@ -380,8 +380,14 @@ fn install_and_launch(adb: &Path, serial: &str, apk: &Path, kind: ApkKind) -> Re
             ApkKind::Debug => ("--debug", "debug"),
         };
         return Err(format!(
-            "找不到 APK: {}\n先构建：\n  cargo ndk -t arm64-v8a -P 35 -o flutter/android/app/src/main/jniLibs build {flag} -p yinhe-flutter\n  (cd flutter && flutter build apk {flag})\n（当前为 {build} 包）",
-            apk.display()
+            "找不到 APK: {}\n先构建：\n  cargo xtask android{debug_suffix}\n  （或手工：cargo ndk -t arm64-v8a -P {api} -o flutter/android/app/src/main/jniLibs build {flag} -p yinhe-flutter）\n（当前为 {build} 包）",
+            apk.display(),
+            debug_suffix = if matches!(kind, ApkKind::Debug) {
+                " --debug"
+            } else {
+                ""
+            },
+            api = crate::android::NDK_API,
         ));
     }
     println!("安装 {} ...", apk.display());

@@ -22,7 +22,7 @@ const APK_DEBUG: &str = "flutter/build/app/outputs/flutter-apk/app-debug.apk";
 
 /// 运行时最低 API（与 `flutter/android/app/build.gradle.kts` 的 `ndkApi` 一致）。
 /// AAudio 自 API 26 才有，`libyinhe_flutter.so` 的 DT_NEEDED 直接指向它。
-const NDK_API: &str = "26";
+pub const NDK_API: &str = "26";
 
 pub fn run(args: &[String]) -> ExitCode {
     let mut debug = false;
