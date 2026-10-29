@@ -261,6 +261,9 @@ abstract class _ShellBase extends State<StudioShell>
   /// 长按后还没拖动：一拖就转成选框。
   bool _lpMarqueeArmed = false;
 
+  /// 当前是否临时切到了选框工具（用于恢复手形）。
+  bool _marqueeToolActive = false;
+
   /// 长按微调中的落点 tick（顶部时间码临时跟随手指）。
   double? _lpPreviewTick;
 

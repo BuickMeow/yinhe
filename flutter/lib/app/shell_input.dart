@@ -206,6 +206,11 @@ mixin _ShellInput on _ShellBase {
   @override
   void _handleScaleStart(ScaleStartDetails d) {
     rust.stopFling();
+    if (!_gestureEditing && !_lpMarqueeArmed) {
+      // 普通单指滑动/双指手势：强制手形，避免上一次长按选框把工具留在选框。
+      rust.setTool(1);
+      _marqueeToolActive = false;
+    }
     _clearLongPressUi();
     _lastFocal = d.localFocalPoint;
     _lastScale = 1.0;
@@ -438,8 +443,8 @@ mixin _ShellInput on _ShellBase {
     if (_gestureEditing) {
       // 提交选框；恢复手形。
       rust.editEnd(d.localPosition.dx, d.localPosition.dy);
-      rust.setTool(1);
       _gestureEditing = false;
+      _restoreHandTool();
       _readDocState();
       _clearLongPressUi();
       return;
@@ -460,11 +465,20 @@ mixin _ShellInput on _ShellBase {
   /// 长按拖动开始：临时切到选框工具，从按下点拉框。
   void _startMarquee(Offset press) {
     rust.clearSelection();
+    _marqueeToolActive = true;
     rust.setTool(0);
     _gestureEditing = rust.editBegin(press.dx, press.dy) == 1;
     if (!_gestureEditing) {
-      rust.setTool(1);
+      _restoreHandTool();
     }
+  }
+
+  void _restoreHandTool() {
+    if (!_marqueeToolActive) {
+      return;
+    }
+    _marqueeToolActive = false;
+    rust.setTool(1);
   }
 
   /// 长按未拖动：在手指位置弹浮动菜单（粘贴/插入/全选）。
@@ -560,6 +574,7 @@ mixin _ShellInput on _ShellBase {
 
   /// 清理长按 UI 状态（不改 Rust 拖拽状态）。
   void _clearLongPressUi() {
+    _restoreHandTool();
     _lpStartTime = null;
     _lpPos = null;
     _lpGlobalPos = null;
