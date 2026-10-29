@@ -908,6 +908,10 @@ class _AutomationPanelState extends State<AutomationPanel>
     _endLpWatch();
     final laneIdx = _laneIdx;
     if (laneIdx == null || laneIdx >= widget.lanes.length) {
+      // 力度栏没有锚点菜单，但拖动仍可拉框：长按完成也给可框选提示。
+      if (widget.marqueeEnabled) {
+        _startHint(d.localPosition);
+      }
       return;
     }
     final lane = widget.lanes[laneIdx];
