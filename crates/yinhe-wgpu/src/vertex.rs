@@ -214,6 +214,9 @@ pub struct CurveInstance {
 }
 
 impl CurveInstance {
+    /// shape 的高位：ghost 层标记（顶点着色器据此叠加预览动画偏移）。
+    pub const GHOST_BIT: u32 = 1 << 8;
+
     /// Construct a straight-line segment instance.
     pub fn line(x1: f32, y1: f32, x2: f32, y2: f32, thickness: f32, color: [f32; 4]) -> Self {
         CurveInstance {

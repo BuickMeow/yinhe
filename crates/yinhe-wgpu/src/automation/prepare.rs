@@ -503,6 +503,9 @@ pub fn prepare_folded_automation_ghost(
                 &[],
             );
         }
+        for inst in out.iter_mut() {
+            inst.shape |= crate::vertex::CurveInstance::GHOST_BIT;
+        }
     });
 }
 

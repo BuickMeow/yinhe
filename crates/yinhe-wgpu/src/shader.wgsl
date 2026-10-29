@@ -726,8 +726,10 @@ fn vs_main_curve(
     @builtin(vertex_index) vertex_index: u32,
     instance: CurveInstance,
 ) -> CurveOutput {
-    let p0 = instance.endp.xy;  // P0
-    let p3 = instance.endp.zw;  // P3
+    let is_ghost = (instance.shape & 0x100u) != 0u;
+    let ghost_offset = select(vec2<f32>(0.0), vec2<f32>(u.ghost_dx, u.ghost_dy), is_ghost);
+    let p0 = instance.endp.xy + ghost_offset;  // P0
+    let p3 = instance.endp.zw + ghost_offset;  // P3
 
     // AABB 包含 P0, P3（对 circle/square/hollow，全部重合）
     let pad = instance.thickness + 1.0;
@@ -755,7 +757,7 @@ fn vs_main_curve(
     out.p0 = p0;
     out.p3 = p3;
     out.thickness = instance.thickness;
-    out.shape = instance.shape;
+    out.shape = instance.shape & 0xFFu;
 
     let rgba = instance.rgba;
     out.color = to_target_space(vec4<f32>(

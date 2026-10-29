@@ -697,6 +697,19 @@ pub fn long_press_context_json() -> String {
     )
 }
 
+/// 从选框外音符起手时取消旧选框：专心拖这一颗音符。
+fn clear_selection_for_note_drag(s: &mut RenderScene) {
+    if let Some(doc) = s.document.as_mut() {
+        doc.edit.selected.clear();
+        doc.edit.sel_rect.clear();
+        doc.edit.arr_sel_rect.clear();
+        doc.edit.chan_ar_sel.clear();
+        doc.edit.track_selected.clear();
+    }
+    scene::selection_changed(s);
+    bump(s);
+}
+
 /// 单指从音符右端起手：直接进入 NOTE_RESIZE（仅供 Flutter 在平移前尝试）。
 pub fn begin_note_resize(x: f32, y: f32) -> i32 {
     let Ok(mut d) = DRAG.lock() else {
@@ -727,6 +740,8 @@ pub fn begin_note_resize(x: f32, y: f32) -> i32 {
     if side != 2 {
         return 0; // 只有音符右端可以改长度
     }
+    // 按点不在选框内才会走到这里：取消旧选框，专心改这一颗音符。
+    clear_selection_for_note_drag(&mut s);
     d.kind = kind::NOTE_RESIZE;
     d.track = track;
     d.start_tick = start_tick;
@@ -746,6 +761,98 @@ pub fn begin_note_resize(x: f32, y: f32) -> i32 {
             end_tick.saturating_sub(start_tick),
         );
     }
+    1
+}
+
+/// 直接起手拖动选框控制点（PR/AR 共用）。返回 1 = 命中锚点。
+pub fn begin_selection_handle(x: f32, y: f32) -> i32 {
+    let Ok(mut d) = DRAG.lock() else {
+        return 0;
+    };
+    *d = DragState {
+        x0: x,
+        y0: y,
+        px: x,
+        py: y,
+        ..Default::default()
+    };
+    let Ok(mut s) = scene::scene().lock() else {
+        return 0;
+    };
+    if s.document.is_none() {
+        return 0;
+    }
+    let handle = match s.view_mode {
+        ViewMode::Pianoroll => {
+            let geom = PrGeom::new(&s.pr_view);
+            pr_selection_handle(&s, &geom, x, y)
+        }
+        ViewMode::Arrangement => {
+            let geom = ArGeom::new(&s.arr_view);
+            ar_selection_handle(&s, &geom, x, y)
+        }
+    };
+    log::info!(
+        "begin_selection_handle x={x} y={y} hit={}",
+        handle.is_some()
+    );
+    let Some(h) = handle else {
+        return 0;
+    };
+    s.clear_preview_anim();
+    begin_sel_handle(&mut d, &mut s, h);
+    1
+}
+
+/// 直接起手拖动已有选框（按在选框内任意位置，含选框内音符）。返回 1 = 命中。
+pub fn begin_selection_move(x: f32, y: f32) -> i32 {
+    let Ok(mut d) = DRAG.lock() else {
+        return 0;
+    };
+    *d = DragState {
+        x0: x,
+        y0: y,
+        px: x,
+        py: y,
+        ..Default::default()
+    };
+    let Ok(mut s) = scene::scene().lock() else {
+        return 0;
+    };
+    if s.document.is_none() {
+        return 0;
+    }
+    let q = quantize_of(&s);
+    let snap = scene::SnapCtx::new(&s);
+    match s.view_mode {
+        ViewMode::Pianoroll => {
+            let Some(rect) = pr_box_at(&s, x, y) else {
+                return 0;
+            };
+            let geom = PrGeom::new(&s.pr_view);
+            d.anchor_tick_raw = geom.x_to_tick(x);
+            d.anchor_tick = snap.round(q, d.anchor_tick_raw);
+            d.anchor_key = geom.y_to_key(y);
+            d.box_ticks = Some(rect);
+        }
+        ViewMode::Arrangement => {
+            let geom = ArGeom::new(&s.arr_view);
+            let Some(rect) = arr_box_at(&s, &geom, x, y) else {
+                return 0;
+            };
+            d.anchor_tick_raw = geom.x_to_tick(x);
+            d.anchor_tick = snap.round(q, d.anchor_tick_raw);
+            d.anchor_row = geom.y_to_row(y);
+            d.box_rows = Some(rect);
+        }
+    }
+    s.clear_preview_anim();
+    let (by_key, hidden) = collect_selected_notes(&s);
+    d.drag_by_key = by_key;
+    d.drag_hidden = Some(std::sync::Arc::new(hidden));
+    d.kind = kind::MOVE_BOX;
+    refresh_preview(&mut d, &mut s);
+    bump(&mut s);
     1
 }
 
@@ -781,6 +888,9 @@ pub fn begin_note_move(x: f32, y: f32) -> i32 {
     if side == 2 {
         return 0; // 右端留给改长度
     }
+    // 走到这里说明按点不在选框内（begin_selection_move 已先尝试）：
+    // 按在选框外音符上时取消原选框，专心移动这一颗音符。
+    clear_selection_for_note_drag(&mut s);
     // 移动量按“按下点 → 当前点”计算，锚点必须是按下点本身，不能是音符起点。
     let q = quantize_of(&s);
     let snap = scene::SnapCtx::new(&s);

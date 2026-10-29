@@ -13,6 +13,18 @@ final Float2IntDart editBegin = bridge
 final Float2IntDart beginNoteResize = bridge
     .lookupFunction<Float2IntNative, Float2IntDart>('yinhe_begin_note_resize');
 
+/// 单指落在选框控制点：进入选框缩放，返回 1 表示已接管。
+final Float2IntDart beginSelectionHandle = bridge
+    .lookupFunction<Float2IntNative, Float2IntDart>(
+      'yinhe_begin_selection_handle',
+    );
+
+/// 单指落在已有选框内：直接移动选框，返回 1 表示已接管。
+final Float2IntDart beginSelectionMove = bridge
+    .lookupFunction<Float2IntNative, Float2IntDart>(
+      'yinhe_begin_selection_move',
+    );
+
 /// 单指落在音符中部：进入移动，返回 1 表示已接管。
 final Float2IntDart beginNoteMove = bridge
     .lookupFunction<Float2IntNative, Float2IntDart>('yinhe_begin_note_move');

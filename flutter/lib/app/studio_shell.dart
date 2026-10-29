@@ -270,6 +270,11 @@ abstract class _ShellBase extends State<StudioShell>
   final ValueNotifier<double> _marqueeHint = ValueNotifier(0);
   DateTime? _marqueeHintStart;
 
+  /// 选框锚点出现动画（0=隐藏，1=正常大小，允许轻微回弹）。
+  final ValueNotifier<double> _handlesScale = ValueNotifier(0);
+  bool _handlesShown = false;
+  DateTime? _handlesStart;
+
   /// 刚保存成功：顶栏保存按钮临时显示对勾（2 秒）。
   bool _saveDone = false;
   Timer? _saveDoneTimer;
@@ -493,6 +498,7 @@ class _StudioShellState extends _ShellBase
               : ((ms - 200) / 300).clamp(0.0, 1.0);
         }
         _tickMarqueeHint();
+        _tickHandlesAppear();
         if (selState != 2 && _selectionStatusActive) {
           _selectionStatusActive = false;
           _editStatus.value = null;
@@ -544,6 +550,7 @@ class _StudioShellState extends _ShellBase
     _lpProgress.dispose();
     _marqueeHintPos.dispose();
     _marqueeHint.dispose();
+    _handlesScale.dispose();
     _lpPosNotifier.dispose();
     _moveDashed.dispose();
     _lpIndicator.dispose();

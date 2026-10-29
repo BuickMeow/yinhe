@@ -554,6 +554,18 @@ pub extern "C" fn yinhe_begin_note_move(x: f32, y: f32) -> i32 {
     edit::begin_note_move(x, y)
 }
 
+/// 单指落在选框控制点：进入选框缩放（返回 0 则继续后续命中）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_begin_selection_handle(x: f32, y: f32) -> i32 {
+    edit::begin_selection_handle(x, y)
+}
+
+/// 单指落在已有选框内：直接移动选框（返回 0 则继续后续命中）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_begin_selection_move(x: f32, y: f32) -> i32 {
+    edit::begin_selection_move(x, y)
+}
+
 /// 时间标尺长按：以标尺位置起手插入/粘贴定位。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_begin_ruler_insert(x: f32, y: f32) -> i32 {

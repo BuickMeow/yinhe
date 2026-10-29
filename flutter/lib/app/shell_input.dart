@@ -159,10 +159,12 @@ mixin _ShellInput on _ShellBase {
     _pinchZoom.rebase(_pointerPositions.values.toList(growable: false));
     _gestureEditing = false;
     if (d.pointerCount == 1) {
-      // 从音符上起手：用按下点判定（scale 起手点已经被第一次移动带偏）。
-      // 右端优先改长度，其余位置拖动 = 移动音符；空白处仍交给平移。
+      // 用按下点判定（scale 起手点已经被第一次移动带偏）。
+      // 优先级：选框锚点 → 选框内部 → 音符右端改长度 → 音符移动。
       final hit = downPos ?? d.localFocalPoint;
       _gestureEditing =
+          rust.beginSelectionHandle(hit.dx, hit.dy) == 1 ||
+          rust.beginSelectionMove(hit.dx, hit.dy) == 1 ||
           rust.beginNoteResize(hit.dx, hit.dy) == 1 ||
           rust.beginNoteMove(hit.dx, hit.dy) == 1;
       _gestureWasEditing = _gestureEditing;
@@ -208,7 +210,6 @@ mixin _ShellInput on _ShellBase {
       if ((hDelta - 1.0).abs() > 1e-6 || (vDelta - 1.0).abs() > 1e-6) {
         _gestureZoomed = true;
       }
-      rust.renderFrame();
       return;
     }
 
@@ -237,8 +238,6 @@ mixin _ShellInput on _ShellBase {
         focal.dy,
       );
     }
-    // 输入比下一帧 ticker 更早到达时，立刻踢一帧渲染，少等一个 vsync。
-    rust.renderFrame();
     if (_gestureStart != null && (focal - _gestureStart!).distance > 3.0) {
       _gestureMoved = true;
     }
@@ -358,6 +357,38 @@ mixin _ShellInput on _ShellBase {
 
   // ── 时间标尺长按：插入落点微调 ──
 
+  /// 选框锚点出现：新选区从 0 放大到正式大小。
+  void _tickHandlesAppear() {
+    final o = _overlay.value;
+    // 移动选框时锚点不显示，但让缩放动画继续跑完；松手后不再重新弹一次。
+    final show = _tool == 0 && o.box == null && o.sel.length == 1;
+    if (!show) {
+      if (_handlesShown) {
+        _handlesShown = false;
+        _handlesStart = null;
+        _handlesScale.value = 0;
+      }
+      return;
+    }
+    if (!_handlesShown) {
+      _handlesShown = true;
+      _handlesStart = DateTime.now();
+      _handlesScale.value = 0;
+    }
+    final start = _handlesStart;
+    if (start == null) {
+      return;
+    }
+    final t = (DateTime.now().difference(start).inMilliseconds / 180).clamp(
+      0.0,
+      1.0,
+    );
+    _handlesScale.value = t >= 1 ? 1.0 : Curves.easeOutBack.transform(t);
+    if (t >= 1) {
+      _handlesStart = null;
+    }
+  }
+
   @override
   void _handleRulerInsertStart(Offset local, Offset global) {
     rust.editCancel();
@@ -428,7 +459,6 @@ mixin _ShellInput on _ShellBase {
       _gestureEditing = false;
       return;
     }
-    rust.renderFrame();
     if (_lpPos != null && (p - _lpPos!).distance > 12.0) {
       _lpMoved = true;
     }

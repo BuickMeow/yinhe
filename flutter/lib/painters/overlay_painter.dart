@@ -5,8 +5,13 @@ import '../core/theme.dart';
 
 /// 选框/预览浮层：持久选框 + 拖动框 + 刷子格（画布内容坐标）。
 class OverlayPainter extends CustomPainter {
-  OverlayPainter(this.overlay, this.moving, this.snap, this.showHandles)
-    : super(repaint: Listenable.merge([overlay, moving, snap]));
+  OverlayPainter(
+    this.overlay,
+    this.moving,
+    this.snap,
+    this.showHandles,
+    this.handlesScale,
+  ) : super(repaint: Listenable.merge([overlay, moving, snap, handlesScale]));
 
   final ValueNotifier<OverlayData> overlay;
 
@@ -18,6 +23,9 @@ class OverlayPainter extends CustomPainter {
 
   /// 当前是选框工具且没有拖动时才显示选区控制点。
   final bool showHandles;
+
+  /// 锚点出现动画：0 = 隐藏，1 = 正常大小（可略大于 1 做回弹）。
+  final ValueNotifier<double> handlesScale;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -56,13 +64,16 @@ class OverlayPainter extends CustomPainter {
       rect(b);
     }
     if (showHandles && !moving.value && o.box == null && o.sel.length == 1) {
-      _paintHandles(canvas, o.sel.first, stroke);
+      _paintHandles(canvas, o.sel.first, stroke, handlesScale.value);
     }
     canvas.restore();
   }
 
   /// 四个边中点圆形控制点 + 右下角方形 Riff 控制点。
-  void _paintHandles(Canvas canvas, Rect r, Paint stroke) {
+  void _paintHandles(Canvas canvas, Rect r, Paint stroke, double scale) {
+    if (scale <= 0.01) {
+      return;
+    }
     final fill = Paint()..color = YinheTheme.bg;
     final handle = Paint()
       ..style = PaintingStyle.stroke
@@ -74,11 +85,16 @@ class OverlayPainter extends CustomPainter {
       Offset(r.left, r.center.dy),
       Offset(r.right, r.center.dy),
     ];
+    final radius = 3.0 * scale;
     for (final c in centers) {
-      canvas.drawCircle(c, 3.0, fill);
-      canvas.drawCircle(c, 3.0, handle);
+      canvas.drawCircle(c, radius, fill);
+      canvas.drawCircle(c, radius, handle);
     }
-    final riff = Rect.fromCenter(center: r.bottomRight, width: 6, height: 6);
+    final riff = Rect.fromCenter(
+      center: r.bottomRight,
+      width: 6 * scale,
+      height: 6 * scale,
+    );
     canvas.drawRect(riff, fill);
     canvas.drawRect(riff, handle);
   }

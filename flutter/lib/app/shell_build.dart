@@ -351,6 +351,7 @@ mixin _ShellBuild on _ShellBase {
                                                 _moveDashed,
                                                 _snap,
                                                 _tool == 0,
+                                                _handlesScale,
                                               ),
                                             ),
                                           ),

@@ -112,16 +112,14 @@ class MarqueeHintPainter extends CustomPainter {
     final fadeOut = 1.0 - ((t - 0.18) / 0.82).clamp(0.0, 1.0);
     final alpha = 0.85 * fadeIn * fadeOut;
     final side = 10.0 + 14.0 * Curves.easeOutCubic.transform(t);
-    final rrect = RRect.fromRectAndRadius(
-      Rect.fromCenter(center: p, width: side, height: side),
-      const Radius.circular(3),
-    );
-    canvas.drawRRect(
-      rrect,
+    // 无圆角：和选框锚点一样是方框提示。
+    final rect = Rect.fromCenter(center: p, width: side, height: side);
+    canvas.drawRect(
+      rect,
       Paint()..color = YinheTheme.textSecondary.withValues(alpha: alpha * 0.12),
     );
-    canvas.drawRRect(
-      rrect,
+    canvas.drawRect(
+      rect,
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.5
