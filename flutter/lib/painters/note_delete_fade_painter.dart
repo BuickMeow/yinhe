@@ -9,7 +9,7 @@ class NoteDeleteFade {
   final Color color;
   final DateTime start;
 
-  static const Duration duration = Duration(milliseconds: 180);
+  static const Duration duration = Duration(milliseconds: 110);
 }
 
 class NoteDeleteFadePainter extends CustomPainter {
@@ -31,8 +31,8 @@ class NoteDeleteFadePainter extends CustomPainter {
       if (t >= 1) {
         continue;
       }
-      // 前 22% 保持选中色，之后迅速淡出。
-      const hold = 0.22;
+      // 前 15% 保持选中色，之后迅速淡出。
+      const hold = 0.15;
       final a = t < hold ? 1.0 : 1.0 - (t - hold) / (1 - hold);
       canvas.drawRect(f.rect, Paint()..color = f.color.withValues(alpha: a));
     }

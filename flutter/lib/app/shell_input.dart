@@ -168,6 +168,7 @@ mixin _ShellInput on _ShellBase {
       final hit = downPos ?? d.localFocalPoint;
       _gestureEditing =
           rust.beginSelectionHandle(hit.dx, hit.dy) == 1 ||
+          rust.beginSelectionGate(hit.dx, hit.dy) == 1 ||
           rust.beginSelectionMove(hit.dx, hit.dy) == 1 ||
           rust.beginNoteResize(hit.dx, hit.dy) == 1 ||
           rust.beginNoteMove(hit.dx, hit.dy) == 1;

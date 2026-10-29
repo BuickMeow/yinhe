@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 
 use yinhe_core::TrackKind;
+use yinhe_editor_core::ResizeSide;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::NoteSource;
 use yinhe_types::automation::{AutomationEvent, AutomationTarget};
@@ -54,6 +55,8 @@ mod kind {
     pub const SEL_RESIZE: u8 = 12;
     /// 拖动选框右下角方块，按选区宽度重复 Riff。
     pub const RIFF_FILL: u8 = 13;
+    /// 拖动选框右端的箭头，整体改选中音符的 gate。
+    pub const SEL_GATE: u8 = 15;
     /// 直线工具：按量化列在起止点之间生成直线音符。
     pub const LINE: u8 = 14;
 }
@@ -308,6 +311,20 @@ fn pr_selection_handle(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option
     let x1 = geom.tick_to_x(t1);
     let y0 = geom.key_to_y(k1);
     let y1 = geom.key_to_y(k0) + geom.kh;
+    // 右下角加号（内缩 10px）用自己的命中区，不能按角落控制点算。
+    if x >= x1 - 18.0 && x <= x1 && y >= y1 - 18.0 && y <= y1 {
+        return Some(SelHandle {
+            edge: 4,
+            t0,
+            t1,
+            k0,
+            k1,
+            tr_lo,
+            tr_hi,
+            r0: 0,
+            r1: 0,
+        });
+    }
     let edge = handle_hit(x0, y0, x1, y1, x, y)?;
     Some(SelHandle {
         edge,
@@ -332,6 +349,19 @@ fn ar_selection_handle(s: &RenderScene, geom: &ArGeom, x: f32, y: f32) -> Option
     let x1 = geom.tick_to_x(t1);
     let y0 = geom.row_to_y(r0);
     let y1 = geom.row_to_y(r1 + 1);
+    if x >= x1 - 18.0 && x <= x1 && y >= y1 - 18.0 && y <= y1 {
+        return Some(SelHandle {
+            edge: 4,
+            t0,
+            t1,
+            k0: 0,
+            k1: yinhe_types::MAX_KEY,
+            tr_lo: r0 as u16,
+            tr_hi: r1 as u16,
+            r0,
+            r1,
+        });
+    }
     let edge = handle_hit(x0, y0, x1, y1, x, y)?;
     Some(SelHandle {
         edge,
@@ -816,6 +846,10 @@ pub fn begin_selection_handle(x: f32, y: f32) -> i32 {
     let Some(h) = handle else {
         return 0;
     };
+    // 暂时只保留右下角加号（Riff），四边缩放锚点关闭。
+    if h.edge != 4 {
+        return 0;
+    }
     s.clear_preview_anim();
     begin_sel_handle(&mut d, &mut s, h);
     1
@@ -870,6 +904,62 @@ pub fn begin_selection_move(x: f32, y: f32) -> i32 {
     d.kind = kind::MOVE_BOX;
     refresh_preview(&mut d, &mut s);
     bump(&mut s);
+    1
+}
+
+/// 选框右端：整体拖动选中音符的 gate（x 命中区与音符右端一致，y 为整个选框）。
+pub fn begin_selection_gate(x: f32, y: f32) -> i32 {
+    let Ok(mut d) = DRAG.lock() else {
+        return 0;
+    };
+    *d = DragState {
+        x0: x,
+        y0: y,
+        px: x,
+        py: y,
+        ..Default::default()
+    };
+    let Ok(mut s) = scene::scene().lock() else {
+        return 0;
+    };
+    if s.view_mode != ViewMode::Pianoroll || s.document.is_none() {
+        return 0;
+    }
+    let Some((t0, t1, k0, k1)) = s
+        .document
+        .as_ref()
+        .and_then(|doc| doc.edit.sel_rect.rects.first().copied())
+    else {
+        return 0;
+    };
+    let geom = PrGeom::new(&s.pr_view);
+    let x0 = geom.tick_to_x(t0);
+    let x1 = geom.tick_to_x(t1);
+    let y0 = geom.key_to_y(k1);
+    let y1 = geom.key_to_y(k0) + geom.kh;
+    let edge = EDGE.min((x1 - x0) / 3.0);
+    if x < x1 - edge || x > x1 || y < y0 || y > y1 {
+        return 0;
+    }
+    // 右下角留给加号（Riff）。
+    if ((x - x1).powi(2) + (y - y1).powi(2)).sqrt() < 18.0 {
+        return 0;
+    }
+    let q = quantize_of(&s);
+    let snap = scene::SnapCtx::new(&s);
+    d.anchor_tick_raw = geom.x_to_tick(x);
+    d.anchor_tick = snap.round(q, d.anchor_tick_raw);
+    d.anchor_key = geom.y_to_key(y);
+    d.box_ticks = Some((t0, t1, k0, k1));
+    let (by_key, hidden) = collect_selected_notes(&s);
+    d.drag_by_key = by_key;
+    d.drag_hidden = Some(std::sync::Arc::new(hidden));
+    d.kind = kind::SEL_GATE;
+    s.clear_preview_anim();
+    s.set_sel_target([x0, y0, x1, y1]);
+    s.hold_sel_edge(0);
+    s.hold_sel_edge(1);
+    s.hold_sel_edge(3);
     1
 }
 
@@ -2211,6 +2301,47 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                 s.preview.clear();
             }
         }
+        kind::SEL_GATE => {
+            let geom = PrGeom::new(&s.pr_view);
+            let Some((t0, t1, k0, k1)) = d.box_ticks else {
+                return;
+            };
+            let dt = selection_gate_dt(s, d, x).round() as i64;
+            s.set_sel_target([
+                geom.tick_to_x(t0),
+                geom.key_to_y(k1),
+                geom.tick_to_x(t1 + dt as f64),
+                geom.key_to_y(k0) + geom.kh,
+            ]);
+            s.hold_sel_edge(0);
+            s.hold_sel_edge(1);
+            s.hold_sel_edge(3);
+            let stamp = (dt, 0, s.pr_view.render_hash());
+            if d.last_ghost != Some(stamp) {
+                d.last_ghost = Some(stamp);
+                let (tick_lo, tick_hi) = s
+                    .pr_view
+                    .visible_main_range(s.pr_view.main_axis_len(lw, lh));
+                let (key_lo, key_hi) = s
+                    .pr_view
+                    .visible_cross_range(s.pr_view.cross_axis_len(lw, lh));
+                let mut ghost = Vec::new();
+                for (key, bucket) in d.drag_by_key.iter().enumerate() {
+                    if (key as u8) < key_lo || (key as u8) > key_hi {
+                        continue;
+                    }
+                    for &(track, start, end, _vel) in bucket {
+                        let new_end = (i64::from(end) + dt).max(i64::from(start) + 1) as u32;
+                        if f64::from(start) >= tick_hi || f64::from(new_end) <= tick_lo {
+                            continue;
+                        }
+                        ghost.push((start, new_end, key as u8, track));
+                    }
+                }
+                apply_preview(s, d, std::mem::take(&mut ghost), true);
+            }
+            bump(s);
+        }
         kind::NOTE_MOVE => {
             let geom = PrGeom::new(&s.pr_view);
             let q = quantize_of(s);
@@ -2297,6 +2428,7 @@ pub fn end(x: f32, y: f32) {
         kind::MOVE_BOX => commit_move(&mut s, &d, x, y, moved),
         kind::NOTE_MOVE => commit_note_move(&mut s, &d, x, y, moved),
         kind::NOTE_RESIZE => commit_note_resize(&mut s, &d, x, y, moved),
+        kind::SEL_GATE => commit_selection_gate(&mut s, &d, x, y, moved),
         kind::SEL_RESIZE => {
             commit_selection_resize(&mut s, &d);
             None
@@ -2339,7 +2471,7 @@ pub fn end(x: f32, y: f32) {
         }
     }
     // 锚点缩放松手后让缓动继续跑完，避免最后一下直接跳到目标。
-    let sel_tail = if k == kind::SEL_RESIZE {
+    let sel_tail = if matches!(k, kind::SEL_RESIZE | kind::SEL_GATE) {
         s.sel_target.map(|t| (t, s.sel_anim))
     } else {
         None
@@ -2785,6 +2917,45 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
 }
 
 /// 已选框整体移动提交。
+/// 选框右端整体 gate 拖动：最终 dt（已按量化格对齐并保证选区至少一格）。
+fn selection_gate_dt(s: &RenderScene, d: &DragState, x: f32) -> f64 {
+    let Some((t0, t1, _, _)) = d.box_ticks else {
+        return 0.0;
+    };
+    let geom = PrGeom::new(&s.pr_view);
+    let q = quantize_of(s);
+    let min_ticks = f64::from(q.tick_interval(s.ppq).max(1));
+    let raw = drag_delta_ticks(s, q, d.anchor_tick_raw, geom.x_to_tick(x));
+    (t1 + raw).max(t0 + min_ticks) - t1
+}
+
+/// 选框右端整体 gate 提交：所有选中音符 end + dt，选区右边界同步。
+fn commit_selection_gate(
+    s: &mut RenderScene,
+    d: &DragState,
+    x: f32,
+    _y: f32,
+    moved: bool,
+) -> Option<std::sync::Arc<yinhe_core::YinModel>> {
+    if !moved {
+        return None;
+    }
+    let dt = selection_gate_dt(s, d, x).round() as i64;
+    if dt == 0 {
+        return None;
+    }
+    let doc = s.document.as_mut()?;
+    let before = doc.capture_snapshot();
+    if let Some(action) = doc.resize_selected_notes(ResizeSide::Right, dt) {
+        doc.push_undo(action, "undo.resize_notes", before);
+        if let Some(r) = doc.edit.sel_rect.rects.first_mut() {
+            r.1 = (r.1 + dt as f64).max(r.0 + 1.0);
+        }
+        return after_edit(s);
+    }
+    None
+}
+
 fn commit_move(
     s: &mut RenderScene,
     d: &DragState,

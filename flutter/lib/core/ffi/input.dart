@@ -19,6 +19,12 @@ final Float2IntDart beginSelectionHandle = bridge
       'yinhe_begin_selection_handle',
     );
 
+/// 单指落在选框右端：整体改选中音符 gate，返回 1 表示已接管。
+final Float2IntDart beginSelectionGate = bridge
+    .lookupFunction<Float2IntNative, Float2IntDart>(
+      'yinhe_begin_selection_gate',
+    );
+
 /// 单指落在已有选框内：直接移动选框，返回 1 表示已接管。
 final Float2IntDart beginSelectionMove = bridge
     .lookupFunction<Float2IntNative, Float2IntDart>(

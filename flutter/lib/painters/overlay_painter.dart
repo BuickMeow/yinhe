@@ -69,34 +69,48 @@ class OverlayPainter extends CustomPainter {
     canvas.restore();
   }
 
-  /// 四个边中点圆形控制点 + 右下角方形 Riff 控制点。
+  /// 选区右内侧：左右箭头（整体 gate）；右下角内侧：加号（Riff）。
   void _paintHandles(Canvas canvas, Rect r, Paint stroke, double scale) {
     if (scale <= 0.01) {
       return;
     }
-    final fill = Paint()..color = YinheTheme.bg;
-    final handle = Paint()
+    final paint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5
-      ..color = stroke.color;
-    final centers = <Offset>[
-      Offset(r.center.dx, r.top),
-      Offset(r.center.dx, r.bottom),
-      Offset(r.left, r.center.dy),
-      Offset(r.right, r.center.dy),
-    ];
-    final radius = 3.0 * scale;
-    for (final c in centers) {
-      canvas.drawCircle(c, radius, fill);
-      canvas.drawCircle(c, radius, handle);
-    }
-    final riff = Rect.fromCenter(
-      center: r.bottomRight,
-      width: 6 * scale,
-      height: 6 * scale,
+      ..strokeWidth = 1.4
+      ..strokeCap = StrokeCap.round
+      ..color = YinheTheme.text.withValues(alpha: 0.55);
+    final cy = r.center.dy;
+    final cx = r.right - 12.0;
+    final d = 4.0 * scale;
+    // 左右箭头
+    canvas.drawPath(
+      Path()
+        ..moveTo(cx - 5.0, cy)
+        ..lineTo(cx - 1.0, cy - d)
+        ..moveTo(cx - 5.0, cy)
+        ..lineTo(cx - 1.0, cy + d),
+      paint,
     );
-    canvas.drawRect(riff, fill);
-    canvas.drawRect(riff, handle);
+    canvas.drawPath(
+      Path()
+        ..moveTo(cx + 5.0, cy)
+        ..lineTo(cx + 1.0, cy - d)
+        ..moveTo(cx + 5.0, cy)
+        ..lineTo(cx + 1.0, cy + d),
+      paint,
+    );
+    // 右下角加号（Riff）
+    final px = r.right - 10.0;
+    final py = r.bottom - 10.0;
+    final p = 4.0 * scale;
+    canvas.drawPath(
+      Path()
+        ..moveTo(px - p, py)
+        ..lineTo(px + p, py)
+        ..moveTo(px, py - p)
+        ..lineTo(px, py + p),
+      paint,
+    );
   }
 
   @override

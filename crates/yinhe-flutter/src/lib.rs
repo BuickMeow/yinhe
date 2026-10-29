@@ -566,6 +566,12 @@ pub extern "C" fn yinhe_begin_selection_handle(x: f32, y: f32) -> i32 {
     edit::begin_selection_handle(x, y)
 }
 
+/// 单指落在选框右端：整体改选中音符 gate（返回 0 则继续后续命中）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_begin_selection_gate(x: f32, y: f32) -> i32 {
+    edit::begin_selection_gate(x, y)
+}
+
 /// 单指落在已有选框内：直接移动选框（返回 0 则继续后续命中）。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_begin_selection_move(x: f32, y: f32) -> i32 {
