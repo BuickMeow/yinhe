@@ -419,6 +419,11 @@ fn note_geometry(
         }
     }
 
+    // ghost 动画偏移必须在构造顶点之前叠加。
+    if is_ghost {
+        pixel_x += u.ghost_dx;
+        pixel_y += u.ghost_dy;
+    }
     right = pixel_x + pixel_w;
 
     // 4 顶点 + 共享 index buffer（[0,1,2, 1,3,2]）：0=TL, 1=TR, 2=BL, 3=BR。
@@ -477,11 +482,6 @@ fn note_geometry(
     // AR (mode==2): border = 0.1 * pixel_h (unchanged).
     // 纵向瀑布流：音符高度是时间长度，border 改基于宽度（key_height 方向），
     // 避免长音符的竖直边缘过宽。
-    if is_ghost {
-        pixel_x += u.ghost_dx;
-        pixel_y += u.ghost_dy;
-    }
-
     out.radius = 0.0;
     let border_dim = select(pixel_h, pixel_w, u.orientation == 1u);
     let border_factor = select(0.1, 0.05, u.mode == 1u);
