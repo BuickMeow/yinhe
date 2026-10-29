@@ -20,6 +20,10 @@ use crate::cmd;
 const APK_RELEASE: &str = "flutter/build/app/outputs/flutter-apk/app-release.apk";
 const APK_DEBUG: &str = "flutter/build/app/outputs/flutter-apk/app-debug.apk";
 
+/// 运行时最低 API（与 `flutter/android/app/build.gradle.kts` 的 `ndkApi` 一致）。
+/// AAudio 自 API 26 才有，`libyinhe_flutter.so` 的 DT_NEEDED 直接指向它。
+const NDK_API: &str = "26";
+
 pub fn run(args: &[String]) -> ExitCode {
     let mut debug = false;
     let mut install = false;
@@ -63,13 +67,18 @@ fn build(debug: bool, install: bool) -> Result<(), ExitCode> {
 
     // 1) Rust 核心库（cargo-ndk）。
     // 注意 -o 必须传 jniLibs 根目录：cargo-ndk 会自己追加 ABI 子目录。
+    // -P 26 是运行时最低 API（不是 NDK 版本）：桩库按 26 取，生成物最多
+    // 只要求 LIBC_O(26) 这类符号。用 35 会引入 _Unwind_*@LIBC_R(30)，
+    // 导致安卓 10 / 鸿蒙 4 在 dlopen 阶段直接失败。
+    // （与 flutter/android/app/build.gradle.kts 的 ndkApi 保持一致。）
+    ensure_sysroot_libs(NDK_API)?;
     let mut c = cmd::cargo();
     c.args([
         "ndk",
         "-t",
         "arm64-v8a",
         "-P",
-        "35",
+        NDK_API,
         "-o",
         jni_libs
             .to_str()
@@ -88,13 +97,7 @@ fn build(debug: bool, install: bool) -> Result<(), ExitCode> {
         eprintln!("找不到 Android NDK（设置 ANDROID_NDK_HOME 或安装到 SDK 的 ndk/ 下）");
         ExitCode::FAILURE
     })?;
-    let host = if cfg!(target_os = "macos") {
-        "darwin-x86_64"
-    } else if cfg!(windows) {
-        "windows-x86_64"
-    } else {
-        "linux-x86_64"
-    };
+    let host = ndk_host_dir();
     let cxx = ndk
         .join("toolchains/llvm/prebuilt")
         .join(host)
@@ -146,6 +149,43 @@ fn build(debug: bool, install: bool) -> Result<(), ExitCode> {
         ]);
         cmd::status(&mut s)?;
     }
+    Ok(())
+}
+
+/// NDK 的 `llvm/prebuilt/<host>` 目录名。
+fn ndk_host_dir() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "darwin-x86_64"
+    } else if cfg!(windows) {
+        "windows-x86_64"
+    } else {
+        "linux-x86_64"
+    }
+}
+
+/// bionic 把 pthread 并进了 libc，NDK r29 的 sysroot 顶层没有 libpthread.so，
+/// 而 rustc 的 android 目标固定传 `-lpthread`。补一个指向**目标 API** 的
+/// libc.so 软链；不能指向 35/，否则生成物记录 `LIBC_R`(API 30) 符号版本，
+/// 安卓 10 / 鸿蒙 4 在 dlopen 阶段就失败。
+fn ensure_sysroot_libs(api: &str) -> Result<(), ExitCode> {
+    let ndk = find_ndk().ok_or_else(|| {
+        eprintln!("找不到 Android NDK（设置 ANDROID_NDK_HOME 或安装到 SDK 的 ndk/ 下）");
+        ExitCode::FAILURE
+    })?;
+    let link = ndk
+        .join("toolchains/llvm/prebuilt")
+        .join(ndk_host_dir())
+        .join("sysroot/usr/lib/aarch64-linux-android/libpthread.so");
+    #[cfg(unix)]
+    {
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(format!("{api}/libc.so"), &link).map_err(|e| {
+            eprintln!("创建 libpthread.so 软链失败: {e}");
+            ExitCode::FAILURE
+        })?;
+    }
+    #[cfg(not(unix))]
+    let _ = (&link, api);
     Ok(())
 }
 

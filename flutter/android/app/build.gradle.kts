@@ -19,7 +19,9 @@ android {
         applicationId = "com.jieneng.yinhe"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // AAudio（cpal 的安卓后端）自 API 26 才有，libyinhe_flutter.so 的
+        // DT_NEEDED 直接指向 libaaudio.so：minSdk 低于 26 装上也起不来。
+        minSdk = 26
         targetSdk = flutter.targetSdkVersion
         // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
         // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APK-versions)
@@ -49,10 +51,17 @@ flutter {
 }
 
 // ── cargo-ndk 构建任务：Rust → libyinhe_flutter.so → jniLibs ──
-// 与仓库 android/app/build.gradle.kts 的同类任务保持一致：
-// NDK r29 的 sysroot 主目录只有静态 .a（静态链接的 libc 与部分设备不兼容），
-// 动态库在版本化子目录 35/ 里，链接器搜不到；这里建符号链接让
-// -lc/-lm/-ldl/-llog/-landroid/-laaudio/-lpthread 动态解析到设备侧 libc。
+// `-P` 是**运行时最低 API**，不是编译用的 NDK 版本：链接桩库按该 API 取，
+// 生成的 .so 会记录符号版本需求（如 getrandom@LIBC_P = API 28）。
+// 曾经用 -P 35 且把顶层 libc.so 软链到 35/，导致 .so 需要
+// _Unwind_*@LIBC_R（API 30）→ API 29 及以下（安卓 10 / 鸿蒙 4）加载即失败。
+// NDK r29 的 clang 驱动会自己按 --target 找版本化子目录，不需要软链。
+//
+// 唯一必须补的：rustc 的 android 目标固定传 -lpthread，而 bionic 早已把
+// pthread 并进 libc（sysroot 顶层没有 libpthread.so）。软链到目标 API 的
+// libc.so 即可 —— 不能链到 35/，否则又退回 LIBC_R(30)。
+val ndkApi = "26"
+
 tasks.register<Exec>("ensureSysrootLibs") {
     val ndkRoot = System.getenv("ANDROID_NDK_HOME")
         ?: File(
@@ -65,13 +74,7 @@ tasks.register<Exec>("ensureSysrootLibs") {
             ?: error("NDK prebuilt dir not found in $ndkRoot")
     val libDir = File(prebuilt, "sysroot/usr/lib/aarch64-linux-android")
     workingDir(libDir)
-    commandLine(
-        "sh", "-c",
-        "for lib in libc libm libdl liblog libandroid libaaudio; do " +
-            "ln -sf 35/\$lib.so \$lib.so; " +
-            "rm -f \$lib.a; done; " +
-            "ln -sf 35/libc.so libpthread.so; rm -f libpthread.a"
-    )
+    commandLine("sh", "-c", "ln -sf $ndkApi/libc.so libpthread.so")
 }
 
 tasks.register<Exec>("cargoNdkBuild") {
@@ -80,7 +83,7 @@ tasks.register<Exec>("cargoNdkBuild") {
     val outDir = project.layout.projectDirectory.dir("src/main/jniLibs").asFile.absolutePath
     // NDK 路径由 cargo-ndk 自动探测（ANDROID_HOME/默认 SDK 路径）。
     commandLine(
-        "cargo", "ndk", "-t", "arm64-v8a", "-P", "35",
+        "cargo", "ndk", "-t", "arm64-v8a", "-P", ndkApi,
         "-o", outDir,
         "build", "--release", "-p", "yinhe-flutter"
     )
