@@ -282,6 +282,8 @@ pub struct RenderScene {
     /// ghost 预览的整体像素偏移（只作用于 GHOST_BIT 实例）。
     pub ghost_dx: f32,
     pub ghost_dy: f32,
+    /// PR 离散音高缩放的输入累积器（1.0 = 无累积）。
+    pub pr_key_zoom_accum: f32,
     /// 选框锚点拖动时的视觉偏移（四条边，像素）：和选框预览使用同一套缓动。
     pub sel_anim: [f32; 4],
     pub sel_target: Option<[f32; 4]>,
@@ -336,6 +338,7 @@ impl Default for RenderScene {
             box_target: None,
             ghost_dx: 0.0,
             ghost_dy: 0.0,
+            pr_key_zoom_accum: 1.0,
             sel_anim: [0.0; 4],
             sel_target: None,
             anim_last: None,
@@ -1454,6 +1457,7 @@ fn apply_document(mut doc: Document, min_ticks: f64) {
     s.model_epoch = s.model_epoch.wrapping_add(1);
     s.pr_view = pr_view;
     s.arr_view = arr_view;
+    s.pr_key_zoom_accum = 1.0;
     s.view_mode = ViewMode::Arrangement;
     s.total_ticks = total_ticks;
     // 新文档从 0 开始：清掉上一个工程残留的非播放态光标。
@@ -3903,6 +3907,7 @@ pub fn scroll_at(x: f32, y: f32, dx: f32, dy: f32, ctrl: bool) -> i32 {
     let Ok(mut s) = scene().lock() else {
         return 0;
     };
+    let s = &mut *s;
     let (lw, lh) = crate::logical_size();
     let total = s.total_ticks;
     let num_tracks = s.num_tracks;
@@ -4057,6 +4062,7 @@ pub fn viewport_gesture(
         && focus_y.is_finite();
     match s.view_mode {
         ViewMode::Pianoroll => {
+            let mut key_accum = s.pr_key_zoom_accum;
             let view = &mut s.pr_view;
             if do_pan {
                 *view.main_scroll() -= pan_x;
@@ -4070,12 +4076,13 @@ pub fn viewport_gesture(
                     }
                     GESTURE_PR_PITCH => {
                         let cross = view.cross_axis_len(lw, lh);
-                        view.zoom_cross_around(focus_y, scale, cross);
+                        view.zoom_cross_discrete(focus_y, scale, cross, &mut key_accum);
                     }
                     _ => {}
                 }
             }
             view.clamp_scroll(lw, lh, total);
+            s.pr_key_zoom_accum = key_accum;
         }
         ViewMode::Arrangement => {
             let view = &mut s.arr_view;

@@ -253,6 +253,10 @@ abstract class _ShellBase extends State<StudioShell>
   /// AR 长按音轨期间手指是否离开过起始行（移动过又放回原位时不弹菜单）。
   bool _trackDragMoved = false;
 
+  /// AR 内容区双击进入轨道（不用 GestureDetector 双指识别，避免普通 tap 延迟）。
+  DateTime? _arrLastTap;
+  Offset? _arrLastTapPos;
+
   /// PR 选框长按：圆环进度（500ms）；完成后进入移动态，未移动则弹菜单。
   Offset? _lpPos;
   Offset? _lpGlobalPos;
@@ -276,6 +280,10 @@ abstract class _ShellBase extends State<StudioShell>
   final ValueNotifier<double> _handlesScale = ValueNotifier(0);
   bool _handlesShown = false;
   DateTime? _handlesStart;
+
+  /// 删除音符的残影：立即删除模型，只画一小段选中色淡出。
+  final List<NoteDeleteFade> _noteFades = [];
+  final ValueNotifier<int> _noteFadeTick = ValueNotifier(0);
 
   /// 刚保存成功：顶栏保存按钮临时显示对勾（2 秒）。
   bool _saveDone = false;
@@ -501,6 +509,7 @@ class _StudioShellState extends _ShellBase
         }
         _tickMarqueeHint();
         _tickHandlesAppear();
+        _tickNoteFades();
         if (selState != 2 && _selectionStatusActive) {
           _selectionStatusActive = false;
           _editStatus.value = null;
@@ -553,6 +562,7 @@ class _StudioShellState extends _ShellBase
     _marqueeHintPos.dispose();
     _marqueeHint.dispose();
     _handlesScale.dispose();
+    _noteFadeTick.dispose();
     _lpPosNotifier.dispose();
     _moveDashed.dispose();
     _lpIndicator.dispose();

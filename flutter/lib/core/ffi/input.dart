@@ -59,6 +59,10 @@ final Float2IntDart tapNote = bridge
 typedef Float2PtrNative = ffi.Pointer<Utf8> Function(ffi.Float, ffi.Float);
 typedef Float2PtrDart = ffi.Pointer<Utf8> Function(double, double);
 
+/// 命中音符的像素矩形 JSON（删除淡出动画用）。
+final Float2PtrDart noteRectAt = bridge
+    .lookupFunction<Float2PtrNative, Float2PtrDart>('yinhe_note_rect_at');
+
 /// 长按位置上下文 JSON（只用于弹浮动菜单）。
 final Float2PtrDart longPressContextAt = bridge
     .lookupFunction<Float2PtrNative, Float2PtrDart>(

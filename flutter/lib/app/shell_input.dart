@@ -134,8 +134,12 @@ mixin _ShellInput on _ShellBase {
       // 有选框：这一次点击只负责清除选框，不落音/删除/切轨。
     } else if (_viewMode == kViewPianoroll) {
       // 没有选框才允许写音符：点空白落音、点音符删除。
+      final deleted = _noteRectAt(p);
       if (rust.tapNote(p.dx, p.dy) == 1) {
         _refreshDocumentMeta();
+        if (deleted != null) {
+          _startNoteFade(deleted);
+        }
       }
     } else {
       _handleCanvasTap(p);
@@ -357,6 +361,67 @@ mixin _ShellInput on _ShellBase {
     _marqueeHintFadeStart = null;
     _marqueeHintPos.value = null;
     _marqueeHint.value = 0;
+  }
+
+  /// 读取命中音符的像素矩形；无命中返回 null。
+  (Rect, int)? _noteRectAt(Offset p) {
+    final ptr = rust.noteRectAt(p.dx, p.dy);
+    if (ptr == ffi.nullptr) {
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(ptr.toDartString());
+      if (decoded is Map<String, dynamic>) {
+        final x0 = (decoded['x0'] as num?)?.toDouble();
+        final y0 = (decoded['y0'] as num?)?.toDouble();
+        final x1 = (decoded['x1'] as num?)?.toDouble();
+        final y1 = (decoded['y1'] as num?)?.toDouble();
+        final track = (decoded['track'] as num?)?.toInt();
+        if (x0 == null ||
+            y0 == null ||
+            x1 == null ||
+            y1 == null ||
+            track == null) {
+          return null;
+        }
+        return (Rect.fromLTRB(x0, y0, x1, y1), track);
+      }
+    } catch (_) {
+      return null;
+    } finally {
+      rust.freeString(ptr);
+    }
+    return null;
+  }
+
+  /// 开始一个删除残影：选中色保持一小段后快速淡出。
+  void _startNoteFade((Rect, int)? hit) {
+    if (hit == null) {
+      return;
+    }
+    final (rect, track) = hit;
+    final rows = _tracks.value;
+    final base = track >= 0 && track < rows.length
+        ? rows[track].color
+        : YinheTheme.accent;
+    final target = Theme.of(context).brightness == Brightness.dark
+        ? Colors.white
+        : Colors.black;
+    _noteFades.add(
+      NoteDeleteFade(rect, Color.lerp(base, target, 0.7)!, DateTime.now()),
+    );
+    _noteFadeTick.value++;
+  }
+
+  void _tickNoteFades() {
+    if (_noteFades.isEmpty) {
+      return;
+    }
+    final now = DateTime.now();
+    _noteFades.removeWhere(
+      (f) => now.difference(f.start) >= NoteDeleteFade.duration,
+    );
+    _noteFadeTick.value++;
   }
 
   /// 读取 Rust 长按上下文（插入/粘贴菜单用）。
@@ -721,11 +786,41 @@ mixin _ShellInput on _ShellBase {
     if (_viewMode != kViewArrangement) {
       return;
     }
+    final rows = _tracks.value;
+    final s = _snap.value;
+    final panel = s[5];
+    final laneH = s[6];
+    final scrollY = s[3];
+    // AR 内容区：双击按 y 找行并进入对应轨道（单击不动，避免误进）。
+    if (laneH > 0 && p.dx >= panel) {
+      final idx = ((p.dy + scrollY) / laneH).floor();
+      if (idx < 0 || idx >= rows.length) {
+        return;
+      }
+      final now = DateTime.now();
+      final last = _arrLastTap;
+      final lastPos = _arrLastTapPos;
+      if (last != null &&
+          lastPos != null &&
+          now.difference(last).inMilliseconds <= 300 &&
+          (lastPos - p).distance <= 30) {
+        _arrLastTap = null;
+        _arrLastTapPos = null;
+        _showAllTracks = false;
+        _selectEditTrack(idx);
+        _setView(kViewPianoroll);
+      } else {
+        _arrLastTap = now;
+        _arrLastTapPos = p;
+      }
+      return;
+    }
+    _arrLastTap = null;
+    _arrLastTapPos = null;
     final idx = _rowAt(p);
     if (idx == null) {
       return;
     }
-    final rows = _tracks.value;
     if (idx == rows.length) {
       _showAddTrackDialog();
       return;

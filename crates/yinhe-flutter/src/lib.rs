@@ -554,6 +554,12 @@ pub extern "C" fn yinhe_begin_note_move(x: f32, y: f32) -> i32 {
     edit::begin_note_move(x, y)
 }
 
+/// 命中音符的像素矩形 JSON（删除淡出动画用）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_note_rect_at(x: f32, y: f32) -> *mut std::ffi::c_char {
+    to_c_string(edit::note_rect_at(x, y))
+}
+
 /// 单指落在选框控制点：进入选框缩放（返回 0 则继续后续命中）。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_begin_selection_handle(x: f32, y: f32) -> i32 {

@@ -1,5 +1,18 @@
 use crate::{PIXELS_PER_TICK_MAX, PIXELS_PER_TICK_MIN, TimelineViewBase};
 
+/// PR 纵向缩放的离散档：16px 一档 8px，最大 64px。
+/// 与 AR 行高缩放同思路：累积到 1.1 倍才跳一档，避免触控板/捏合微动连跳。
+pub const KEY_HEIGHT_MIN: f32 = 16.0;
+pub const KEY_HEIGHT_STEP: f32 = 8.0;
+pub const KEY_HEIGHT_MAX: f32 = 64.0;
+pub const KEY_ZOOM_STEP_RATIO: f32 = 1.1;
+
+/// 把任意 key 高度吸附到最近的离散档位。
+pub fn snap_key_height(h: f32) -> f32 {
+    let k = ((h - KEY_HEIGHT_MIN) / KEY_HEIGHT_STEP).round();
+    (KEY_HEIGHT_MIN + k * KEY_HEIGHT_STEP).clamp(KEY_HEIGHT_MIN, KEY_HEIGHT_MAX)
+}
+
 /// 钢琴卷帘时间轴方向（横向 / 纵向瀑布流，二选一）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Orientation {
@@ -323,6 +336,39 @@ impl PianoRollView {
         self.key_height = (self.key_height * factor).clamp(min_kh, max_kh);
         let new_scroll = (*self.cross_scroll() + px) / old * self.key_height - px;
         *self.cross_scroll() = new_scroll;
+        self.base.dirty = true;
+    }
+
+    /// 副轴离散缩放（移动端 PR 音高）：按档位跳变，输入先累积。
+    ///
+    /// `accum` 由调用方持有（移动端放在场景里），1.0 = 无累积。
+    pub fn zoom_cross_discrete(&mut self, px: f32, factor: f32, cross_size: f32, accum: &mut f32) {
+        if factor <= 0.0 || factor == 1.0 {
+            return;
+        }
+        *accum *= factor;
+        let dir = if *accum >= KEY_ZOOM_STEP_RATIO {
+            1.0
+        } else if *accum <= 1.0 / KEY_ZOOM_STEP_RATIO {
+            -1.0
+        } else {
+            return;
+        };
+        *accum = 1.0;
+        let old = self.key_height;
+        let pos = (old - KEY_HEIGHT_MIN) / KEY_HEIGHT_STEP;
+        let new_h = if dir > 0.0 {
+            KEY_HEIGHT_MIN + (pos.floor() + 1.0) * KEY_HEIGHT_STEP
+        } else {
+            KEY_HEIGHT_MIN + (pos.ceil() - 1.0) * KEY_HEIGHT_STEP
+        }
+        .clamp(KEY_HEIGHT_MIN, KEY_HEIGHT_MAX);
+        if new_h == old {
+            return;
+        }
+        self.key_height = new_h;
+        *self.cross_scroll() = (*self.cross_scroll() + px) / old * new_h - px;
+        self.clamp_cross_scroll(cross_size);
         self.base.dirty = true;
     }
 
@@ -654,6 +700,24 @@ mod tests {
         v.zoom_cross_around(px, 2.0, 1040.0);
         let key_after = v.cross_px_to_key(px);
         assert_eq!(key_before, key_after);
+    }
+
+    #[test]
+    fn test_key_height_discrete_zoom_steps() {
+        let mut v = make_view();
+        let mut acc = 1.0;
+        v.key_height = 28.0;
+        // 28 不在档位上：放大取上一个档 32，缩小取 24，方向不会反。
+        v.zoom_cross_discrete(200.0, 1.2, 800.0, &mut acc);
+        assert_eq!(v.key_height, 32.0);
+        v.zoom_cross_discrete(200.0, 1.2, 800.0, &mut acc);
+        assert_eq!(v.key_height, 40.0);
+        v.zoom_cross_discrete(200.0, 0.8, 800.0, &mut acc);
+        assert_eq!(v.key_height, 32.0);
+        // 小于跳档比例的微动不跳。
+        let before = v.key_height;
+        v.zoom_cross_discrete(200.0, 1.05, 800.0, &mut acc);
+        assert_eq!(v.key_height, before);
     }
 
     #[test]

@@ -337,6 +337,22 @@ mixin _ShellBuild on _ShellBase {
                                             ),
                                           ),
                                         ),
+                                      // 删除残影：在音符纹理之上、选框/锚点之下。
+                                      if (!_showHome)
+                                        Positioned(
+                                          left: 0,
+                                          right: 0,
+                                          top: RulerPainter.height,
+                                          bottom: 0,
+                                          child: IgnorePointer(
+                                            child: CustomPaint(
+                                              painter: NoteDeleteFadePainter(
+                                                _noteFadeTick,
+                                                _noteFades,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
                                       // 选框必须在音轨面板/键盘下方：面板不透明底会盖住越界部分。
                                       if (!_showHome)
                                         Positioned(

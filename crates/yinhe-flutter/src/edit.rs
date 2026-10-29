@@ -991,6 +991,25 @@ pub fn selection_box_at(x: f32, y: f32) -> i32 {
     i32::from(hit)
 }
 
+/// 命中音符的像素矩形（删除淡出动画用）；无命中返回 `{}`。
+pub fn note_rect_at(x: f32, y: f32) -> String {
+    let Ok(s) = scene::scene().lock() else {
+        return "{}".into();
+    };
+    if s.view_mode != ViewMode::Pianoroll || s.document.is_none() {
+        return "{}".into();
+    }
+    let geom = PrGeom::new(&s.pr_view);
+    let Some((track, start, end, key, _)) = hit_note(&s, &geom, x, y) else {
+        return "{}".into();
+    };
+    let x0 = geom.tick_to_x(f64::from(start));
+    let x1 = geom.tick_to_x(f64::from(end));
+    let y0 = geom.key_to_y(key);
+    let y1 = y0 + geom.kh;
+    format!("{{\"x0\":{x0},\"y0\":{y0},\"x1\":{x1},\"y1\":{y1},\"track\":{track}}}")
+}
+
 /// PR 单击：命中音符则删除，否则在量化位置插入一个音符。返回 1 = 有改动。
 ///
 /// 只处理内容区（键盘列不响应）；描述符与现有编辑路径共用同一套轨道可见性。
