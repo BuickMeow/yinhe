@@ -393,11 +393,32 @@ mixin _ShellBuild on _ShellBase {
                                           right: 0,
                                           top: 0,
                                           height: RulerPainter.height,
+                                          child: IgnorePointer(
+                                            child: CustomPaint(
+                                              painter:
+                                                  LongPressIndicatorPainter(
+                                                    _snap,
+                                                    _lpIndicator,
+                                                  ),
+                                            ),
+                                          ),
+                                        ),
+                                      if (!_showHome)
+                                        Positioned(
+                                          left: 0,
+                                          right: 0,
+                                          top: 0,
+                                          height: RulerPainter.height,
                                           child: MarkerLayer(
                                             snap: _snap,
                                             grid: _grid,
                                             markers: _markers,
                                             onChanged: _refreshDocumentMeta,
+                                            onInsertStart:
+                                                _handleRulerInsertStart,
+                                            onInsertMove:
+                                                _handleRulerInsertMove,
+                                            onInsertEnd: _handleRulerInsertEnd,
                                           ),
                                         ),
                                       // 长按圆环/落点竖线最后画：盖在音轨面板与自动化栏之上。
@@ -416,22 +437,6 @@ mixin _ShellBuild on _ShellBase {
                                                     _moveDashed,
                                                     _overlay,
                                                     _snap,
-                                                  ),
-                                            ),
-                                          ),
-                                        ),
-                                      if (!_showHome)
-                                        Positioned(
-                                          left: 0,
-                                          right: 0,
-                                          top: RulerPainter.height,
-                                          bottom: 0,
-                                          child: IgnorePointer(
-                                            child: CustomPaint(
-                                              painter:
-                                                  LongPressIndicatorPainter(
-                                                    _snap,
-                                                    _lpIndicator,
                                                   ),
                                             ),
                                           ),

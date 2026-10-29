@@ -21,12 +21,20 @@ class MarkerLayer extends StatefulWidget {
     required this.grid,
     required this.markers,
     required this.onChanged,
+    this.onInsertStart,
+    this.onInsertMove,
+    this.onInsertEnd,
   });
 
   final ValueNotifier<List<double>> snap;
   final ValueNotifier<BarBeatGrid?> grid;
   final List<RulerMarker> markers;
   final VoidCallback onChanged;
+
+  /// 标尺长按：起手插入/粘贴定位（local/global 都是标尺坐标）。
+  final void Function(Offset local, Offset global)? onInsertStart;
+  final ValueChanged<Offset>? onInsertMove;
+  final void Function(Offset local, Offset global)? onInsertEnd;
 
   @override
   State<MarkerLayer> createState() => _MarkerLayerState();
@@ -91,31 +99,6 @@ class _MarkerLayerState extends State<MarkerLayer> {
     }
   }
 
-  /// 空白标尺长按：在该位置添加标签（文本可留空 = 显示小节位置）。
-  Future<void> _addMarkerAt(double x) async {
-    final l = AppLocalizations.of(context);
-    final tick = rust.tickAtX(x);
-    final text = await showTextInputDialog(
-      context,
-      title: '${l.add} ${l.markerLabel}',
-      label: l.markerTextOptional,
-      confirmText: l.add,
-    );
-    if (!mounted || text == null) {
-      return;
-    }
-    final p = text.toNativeUtf8();
-    var ok = 0;
-    try {
-      ok = rust.markerInsert(tick, p);
-    } finally {
-      calloc.free(p);
-    }
-    if (ok == 1) {
-      widget.onChanged();
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<List<double>>(
@@ -134,10 +117,19 @@ class _MarkerLayerState extends State<MarkerLayer> {
         final width = MediaQuery.sizeOf(context).width;
         double xOf(int tick) => tick * ppu - scrollX + origin;
         final sorted = [...widget.markers]..sort((a, b) => a.tick - b.tick);
+        final insertStart = widget.onInsertStart;
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTapUp: (d) => rust.jumpToTick(rust.tickAtX(d.localPosition.dx)),
-          onLongPressStart: (d) => _addMarkerAt(d.localPosition.dx),
+          onLongPressStart: insertStart == null
+              ? null
+              : (d) => insertStart(d.localPosition, d.globalPosition),
+          onLongPressMoveUpdate: widget.onInsertMove == null
+              ? null
+              : (d) => widget.onInsertMove!(d.localPosition),
+          onLongPressEnd: widget.onInsertEnd == null
+              ? null
+              : (d) => widget.onInsertEnd!(d.localPosition, d.globalPosition),
           child: Stack(
             children: [
               for (final m in sorted)
@@ -222,5 +214,33 @@ class _MarkerLayerState extends State<MarkerLayer> {
         ),
       ),
     );
+  }
+}
+
+/// 在 `tick` 处新增标签；文本可留空（显示小节位置）。
+Future<void> addMarkerAtTick(
+  BuildContext context,
+  double tick, {
+  required VoidCallback onChanged,
+}) async {
+  final l = AppLocalizations.of(context);
+  final text = await showTextInputDialog(
+    context,
+    title: '${l.add} ${l.markerLabel}',
+    label: l.markerTextOptional,
+    confirmText: l.add,
+  );
+  if (!context.mounted || text == null) {
+    return;
+  }
+  final p = text.toNativeUtf8();
+  var ok = 0;
+  try {
+    ok = rust.markerInsert(tick, p);
+  } finally {
+    calloc.free(p);
+  }
+  if (ok == 1) {
+    onChanged();
   }
 }

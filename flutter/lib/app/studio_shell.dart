@@ -374,7 +374,15 @@ abstract class _ShellBase extends State<StudioShell>
   void _setView(int mode);
   void _showAddTrackDialog();
   void _showPasteMenu(Offset? pos, LongPressContext? ctx);
-  void _showPasteMenuAt(Offset local, Offset global, LongPressContext? ctx);
+  void _handleRulerInsertStart(Offset local, Offset global);
+  void _handleRulerInsertMove(Offset local);
+  void _handleRulerInsertEnd(Offset local, Offset global);
+  void _showPasteMenuAt(
+    Offset local,
+    Offset global,
+    LongPressContext? ctx, {
+    bool fromRuler = false,
+  });
   void _showSelectionMenu();
   Future<void> _runInsertFlow(LongPressContext ctx);
   void _showTrackMenu(int track);
@@ -452,13 +460,18 @@ class _StudioShellState extends _ShellBase
           final track = rust.longPressTrack();
           _lpPreviewTick = tick;
           _setInsertStatus(tick);
-          final cur = _lpIndicator.value;
-          if (cur == null || cur.tick != tick || cur.track != track) {
-            _lpIndicator.value = LongPressIndicator(
-              tick: tick,
-              track: track,
-              pr: _viewMode == kViewPianoroll,
-            );
+          // 插入竖线只在时间标尺上显示；主视口长按不再画线。
+          if (rust.insertFromRuler() == 1) {
+            final cur = _lpIndicator.value;
+            if (cur == null || cur.tick != tick || cur.track != track) {
+              _lpIndicator.value = LongPressIndicator(
+                tick: tick,
+                track: track,
+                pr: _viewMode == kViewPianoroll,
+              );
+            }
+          } else if (_lpIndicator.value != null) {
+            _lpIndicator.value = null;
           }
         } else if (selState == 2) {
           // 已转移动态：清掉圆环（虚线由 moving 分支绘制），顶部栏显示相对增量。

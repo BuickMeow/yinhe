@@ -548,6 +548,24 @@ pub extern "C" fn yinhe_begin_note_resize(x: f32, y: f32) -> i32 {
     edit::begin_note_resize(x, y)
 }
 
+/// 单指落在音符中部：进入移动（返回 0 则按普通平移处理）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_begin_note_move(x: f32, y: f32) -> i32 {
+    edit::begin_note_move(x, y)
+}
+
+/// 时间标尺长按：以标尺位置起手插入/粘贴定位。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_begin_ruler_insert(x: f32, y: f32) -> i32 {
+    edit::begin_ruler_insert(x, y)
+}
+
+/// 本次长按是否来自时间标尺。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_insert_from_ruler() -> i32 {
+    edit::insert_from_ruler()
+}
+
 /// 长按点是否落在已有选框内。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_selection_box_at(x: f32, y: f32) -> i32 {

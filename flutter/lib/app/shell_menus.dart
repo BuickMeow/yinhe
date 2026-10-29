@@ -85,7 +85,7 @@ mixin _ShellMenus on _ShellBase {
     }
   }
 
-  /// 空白处长按完成：粘贴/插入菜单（都在长按位置操作）。
+  /// 主视口空白处长按完成：只保留粘贴/全选（插入已移到时间标尺）。
   @override
   void _showPasteMenu(Offset? pos, LongPressContext? ctx) {
     if (pos == null) {
@@ -93,14 +93,7 @@ mixin _ShellMenus on _ShellBase {
     }
     _resetInteraction();
     final token = ++_lpToken;
-    _lpIndicator.value = ctx == null
-        ? null
-        : LongPressIndicator(tick: ctx.tick, track: ctx.track, pr: ctx.pr);
-    if (ctx != null) {
-      // 菜单/后续插入对话框期间，顶部栏保持蓝色插入位置。
-      _setInsertStatus(ctx.tick);
-    }
-    var inserting = false;
+    _lpIndicator.value = null;
     showEmptyLongPressMenu(
       context,
       canPaste: rust.clipboardEmpty() == 0,
@@ -120,16 +113,8 @@ mixin _ShellMenus on _ShellBase {
           _refreshDocumentMeta();
         }
       },
-      onInsert: ctx == null
-          ? null
-          : () {
-              inserting = true;
-              _runInsertFlow(ctx);
-            },
     ).whenComplete(() {
-      if (!inserting) {
-        _clearInsertStatus();
-      }
+      _clearInsertStatus();
       if (token == _lpToken) {
         _lpIndicator.value = null;
       }
@@ -138,13 +123,18 @@ mixin _ShellMenus on _ShellBase {
 
   /// 长按未拖动：在手指位置弹浮动菜单（内容同 [_showPasteMenu]）。
   @override
-  void _showPasteMenuAt(Offset local, Offset global, LongPressContext? ctx) {
+  void _showPasteMenuAt(
+    Offset local,
+    Offset global,
+    LongPressContext? ctx, {
+    bool fromRuler = false,
+  }) {
     _resetInteraction();
     final token = ++_lpToken;
-    _lpIndicator.value = ctx == null
+    _lpIndicator.value = ctx == null || !fromRuler
         ? null
         : LongPressIndicator(tick: ctx.tick, track: ctx.track, pr: ctx.pr);
-    if (ctx != null) {
+    if (ctx != null && fromRuler) {
       _setInsertStatus(ctx.tick);
     }
     var inserting = false;
@@ -167,12 +157,19 @@ mixin _ShellMenus on _ShellBase {
           _refreshDocumentMeta();
         }
       },
-      onInsert: ctx == null
+      onInsert: ctx == null || !fromRuler
           ? null
           : () {
               inserting = true;
               _runInsertFlow(ctx);
             },
+      onAddMarker: fromRuler && ctx != null
+          ? () => addMarkerAtTick(
+              context,
+              ctx.tick,
+              onChanged: _refreshDocumentMeta,
+            )
+          : null,
     ).whenComplete(() {
       if (!inserting) {
         _clearInsertStatus();

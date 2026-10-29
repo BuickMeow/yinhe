@@ -13,6 +13,21 @@ final Float2IntDart editBegin = bridge
 final Float2IntDart beginNoteResize = bridge
     .lookupFunction<Float2IntNative, Float2IntDart>('yinhe_begin_note_resize');
 
+/// 单指落在音符中部：进入移动，返回 1 表示已接管。
+final Float2IntDart beginNoteMove = bridge
+    .lookupFunction<Float2IntNative, Float2IntDart>('yinhe_begin_note_move');
+
+/// 时间标尺长按：从标尺位置起手插入/粘贴定位。
+final Float2IntDart beginRulerInsert = bridge
+    .lookupFunction<Float2IntNative, Float2IntDart>('yinhe_begin_ruler_insert');
+
+typedef IntNoArgNative = ffi.Int32 Function();
+typedef IntNoArgDart = int Function();
+
+/// 本次长按是否来自时间标尺（只有标尺插入显示竖线）。
+final IntNoArgDart insertFromRuler = bridge
+    .lookupFunction<IntNoArgNative, IntNoArgDart>('yinhe_insert_from_ruler');
+
 /// 以选框语义起手（不修改全局工具；长按拖选框用）。
 final Float2IntDart beginMarquee = bridge
     .lookupFunction<Float2IntNative, Float2IntDart>('yinhe_begin_marquee');

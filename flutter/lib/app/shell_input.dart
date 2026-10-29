@@ -159,9 +159,12 @@ mixin _ShellInput on _ShellBase {
     _pinchZoom.rebase(_pointerPositions.values.toList(growable: false));
     _gestureEditing = false;
     if (d.pointerCount == 1) {
-      // 从音符右端起手：用按下点判定（scale 起手点已经被第一次移动带偏）。
+      // 从音符上起手：用按下点判定（scale 起手点已经被第一次移动带偏）。
+      // 右端优先改长度，其余位置拖动 = 移动音符；空白处仍交给平移。
       final hit = downPos ?? d.localFocalPoint;
-      _gestureEditing = rust.beginNoteResize(hit.dx, hit.dy) == 1;
+      _gestureEditing =
+          rust.beginNoteResize(hit.dx, hit.dy) == 1 ||
+          rust.beginNoteMove(hit.dx, hit.dy) == 1;
       _gestureWasEditing = _gestureEditing;
     }
   }
@@ -305,6 +308,55 @@ mixin _ShellInput on _ShellBase {
     _lpMoved = false;
   }
 
+  /// 读取 Rust 长按上下文（插入/粘贴菜单用）。
+  LongPressContext? _readLongPressCtx() {
+    final ptr = rust.longPressContextJson();
+    if (ptr == ffi.nullptr) {
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(ptr.toDartString());
+      if (decoded is Map<String, dynamic>) {
+        return LongPressContext.fromJson(decoded);
+      }
+    } catch (_) {
+      return null;
+    } finally {
+      rust.freeString(ptr);
+    }
+    return null;
+  }
+
+  // ── 时间标尺长按：插入落点微调 ──
+
+  @override
+  void _handleRulerInsertStart(Offset local, Offset global) {
+    rust.editCancel();
+    _lpToken++;
+    _clearLongPressUi();
+    if (rust.beginRulerInsert(local.dx, local.dy) != 1) {
+      return;
+    }
+    rust.editLongPress();
+    _lpPos = local;
+    _lpGlobalPos = global;
+  }
+
+  @override
+  void _handleRulerInsertMove(Offset local) {
+    rust.editUpdate(local.dx, local.dy);
+    _lpPos = local;
+  }
+
+  @override
+  void _handleRulerInsertEnd(Offset local, Offset global) {
+    final ctx = _readLongPressCtx();
+    rust.editEnd(local.dx, local.dy);
+    _readDocState();
+    _clearLongPressUi();
+    _showPasteMenuAt(local, global, ctx, fromRuler: true);
+  }
+
   void _markLongPressRecognized() {
     _lpStartTime = null;
     _lpProgress.value = 0;
@@ -385,7 +437,7 @@ mixin _ShellInput on _ShellBase {
     _gestureEditing = rust.beginMarquee(press.dx, press.dy) == 1;
   }
 
-  /// 长按未拖动：在手指位置弹浮动菜单（粘贴/插入/全选）。
+  /// 长按未拖动：在手指位置弹浮动菜单（粘贴/全选）。
   void _showFloatingLongPressMenu(Offset local, Offset global) {
     final ptr = rust.longPressContextAt(local.dx, local.dy);
     LongPressContext? ctx;

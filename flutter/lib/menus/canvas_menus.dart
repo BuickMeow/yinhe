@@ -212,12 +212,13 @@ class _SelectionGridCell extends StatelessWidget {
   }
 }
 
-/// 空白处长按完成：粘贴 / 插入 / 全选 菜单。
+/// 主视口空白处长按完成：粘贴 / 全选 菜单。
+///
+/// 插入位置与插入菜单已移到时间标尺（见 `MarkerLayer` 的长按回调）。
 Future<void> showEmptyLongPressMenu(
   BuildContext context, {
   required bool canPaste,
   required VoidCallback onPaste,
-  required VoidCallback? onInsert,
   required VoidCallback onSelectAll,
 }) async {
   final l = AppLocalizations.of(context);
@@ -235,12 +236,6 @@ Future<void> showEmptyLongPressMenu(
         icon: Icons.content_paste,
         enabled: canPaste,
       ),
-      if (onInsert != null)
-        SheetAction(
-          value: 'insert',
-          label: l.insert,
-          icon: Icons.add_circle_outline,
-        ),
     ],
   );
   switch (action) {
@@ -248,8 +243,6 @@ Future<void> showEmptyLongPressMenu(
       onSelectAll();
     case 'paste':
       onPaste();
-    case 'insert':
-      onInsert?.call();
   }
 }
 
@@ -261,6 +254,7 @@ Future<void> showFloatingEmptyLongPressMenu(
   required VoidCallback onPaste,
   required VoidCallback? onInsert,
   required VoidCallback onSelectAll,
+  VoidCallback? onAddMarker,
 }) async {
   final l = AppLocalizations.of(context);
   final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
@@ -292,6 +286,12 @@ Future<void> showFloatingEmptyLongPressMenu(
           height: 40,
           child: _menuRow(Icons.add_circle_outline, l.insert),
         ),
+      if (onAddMarker != null)
+        PopupMenuItem(
+          value: 'marker',
+          height: 40,
+          child: _menuRow(Icons.bookmark_add_outlined, l.markerLabel),
+        ),
     ],
   );
   switch (action) {
@@ -301,6 +301,8 @@ Future<void> showFloatingEmptyLongPressMenu(
       onPaste();
     case 'insert':
       onInsert?.call();
+    case 'marker':
+      onAddMarker?.call();
   }
 }
 

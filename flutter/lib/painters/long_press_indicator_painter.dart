@@ -3,9 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/models.dart';
 import '../core/theme.dart';
 
-/// 长按空白处时显示的落点竖线：
-/// - AR：只覆盖长按所在轨道行（高度 = 一个轨道）；
-/// - PR：覆盖整个内容区高度（PR 没有行概念）。
+/// 时间标尺上的插入落点竖线：只覆盖标尺自身的高度。
 class LongPressIndicatorPainter extends CustomPainter {
   LongPressIndicatorPainter(this.snap, this.indicator)
     : super(repaint: Listenable.merge([snap, indicator]));
@@ -30,21 +28,11 @@ class LongPressIndicatorPainter extends CustomPainter {
       return;
     }
     final x = ind.tick * ppu - scrollX + origin;
-    double y0 = 0;
-    double y1 = size.height;
-    if (!ind.pr) {
-      final laneH = s[6];
-      final scrollY = s[3];
-      y0 = ind.track * laneH - scrollY;
-      y1 = y0 + laneH;
-    }
-    y0 = y0.clamp(0.0, size.height);
-    y1 = y1.clamp(0.0, size.height);
-    if (y1 <= y0) {
+    if (x < -1 || x > size.width + 1) {
       return;
     }
     canvas.drawRect(
-      Rect.fromLTRB(x - 1, y0, x + 1, y1),
+      Rect.fromLTRB(x - 1, 0, x + 1, size.height),
       Paint()..color = YinheTheme.accent.withValues(alpha: 0.8),
     );
   }

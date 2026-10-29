@@ -29,11 +29,6 @@ const DEFAULT_VELOCITY: u8 = 100;
 /// 交互与实现先保留（[`kind::PENCIL_PICK`]），当前暂时关闭：铅笔压在已有音符上
 /// 仍按原行为新建音符。后续要启用时只改这里。
 const PENCIL_PICK_ENABLED: bool = false;
-/// 单音符直接拖拽/边缘伸缩开关。
-///
-/// 手机端直接按在音符上拖动太容易误触，当前关闭；保留选框长按后的整体移动。
-/// 后续要恢复桌面式单音符拖拽时只改这里。
-const DIRECT_NOTE_DRAG_ENABLED: bool = false;
 /// 选框控制点命中半径（逻辑像素）。
 const SEL_HANDLE_R: f32 = 14.0;
 
@@ -110,6 +105,8 @@ struct DragState {
     /// 刷子：已落格与最后一次格。
     cells: Vec<(u32, u8)>,
     last_cell: (u32, u8),
+    /// 本次长按来自时间标尺（插入落点微调只在标尺上开放）。
+    from_ruler: bool,
 }
 
 impl Default for DragState {
@@ -141,6 +138,7 @@ impl Default for DragState {
             cur_end: 0.0,
             cells: Vec::new(),
             last_cell: (0, 0),
+            from_ruler: false,
         }
     }
 }
@@ -172,6 +170,7 @@ static DRAG: std::sync::Mutex<DragState> = std::sync::Mutex::new(DragState {
     cur_end: 0.0,
     cells: Vec::new(),
     last_cell: (0, 0),
+    from_ruler: false,
 });
 
 // ── 几何 ──
@@ -630,7 +629,10 @@ fn update_paste_ready(d: &mut DragState, s: &RenderScene, x: f32, y: f32) {
         ViewMode::Arrangement => {
             let geom = ArGeom::new(&s.arr_view);
             d.anchor_tick = snap.round(q, geom.x_to_tick(x));
-            d.anchor_row = geom.y_to_row(y).min(s.num_tracks.saturating_sub(1));
+            // 标尺没有行坐标：轨道沿用起手时的活动轨，只微调 tick。
+            if !d.from_ruler {
+                d.anchor_row = geom.y_to_row(y).min(s.num_tracks.saturating_sub(1));
+            }
         }
     }
 }
@@ -738,6 +740,104 @@ pub fn begin_note_resize(x: f32, y: f32) -> i32 {
         );
     }
     1
+}
+
+/// 单指从音符中部起手：直接进入 NOTE_MOVE（仅供 Flutter 在平移前尝试）。
+///
+/// 右端仍由 [`begin_note_resize`] 优先接管；左端和中部都算移动。
+pub fn begin_note_move(x: f32, y: f32) -> i32 {
+    let Ok(mut d) = DRAG.lock() else {
+        return 0;
+    };
+    *d = DragState {
+        x0: x,
+        y0: y,
+        px: x,
+        py: y,
+        ..Default::default()
+    };
+    crate::audio::stop_preview();
+    let Ok(s) = scene::scene().lock() else {
+        return 0;
+    };
+    if s.view_mode != ViewMode::Pianoroll || s.document.is_none() {
+        return 0;
+    }
+    let geom = PrGeom::new(&s.pr_view);
+    if x < geom.kbw {
+        return 0;
+    }
+    let Some((track, start_tick, end_tick, key, side)) = hit_note(&s, &geom, x, y) else {
+        return 0;
+    };
+    if side == 2 {
+        return 0; // 右端留给改长度
+    }
+    // 移动量按“按下点 → 当前点”计算，锚点必须是按下点本身，不能是音符起点。
+    let q = quantize_of(&s);
+    let snap = scene::SnapCtx::new(&s);
+    d.kind = kind::NOTE_MOVE;
+    d.anchor_tick = snap.round(q, geom.x_to_tick(x));
+    d.anchor_key = key;
+    d.track = track;
+    d.start_tick = start_tick;
+    d.end_tick = end_tick;
+    d.key = key;
+    d.side = side;
+    d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::from([(
+        track, start_tick, key,
+    )])));
+    if let Some(velocity) = note_velocity(&s, track, start_tick, key) {
+        preview_note(
+            &s,
+            track,
+            key,
+            velocity,
+            start_tick,
+            end_tick.saturating_sub(start_tick),
+        );
+    }
+    1
+}
+
+/// 时间标尺长按：从标尺位置起手插入/粘贴定位（主视口不再画插入线）。
+///
+/// 返回 1 = 已进入待长按状态；后续由 Flutter 调用 `long_press` 推进。
+pub fn begin_ruler_insert(x: f32, y: f32) -> i32 {
+    let Ok(mut d) = DRAG.lock() else {
+        return 0;
+    };
+    *d = DragState {
+        kind: kind::PENDING_PASTE,
+        x0: x,
+        y0: y,
+        px: x,
+        py: y,
+        from_ruler: true,
+        ..Default::default()
+    };
+    let Ok(s) = scene::scene().lock() else {
+        return 0;
+    };
+    if s.document.is_none() {
+        return 0;
+    }
+    let q = quantize_of(&s);
+    let snap = scene::SnapCtx::new(&s);
+    d.anchor_tick = snap.round(q, scene::tick_at_x(&s, x));
+    d.anchor_row = match s.view_mode {
+        ViewMode::Arrangement => s
+            .active_track
+            .unwrap_or(1)
+            .min(s.num_tracks.saturating_sub(1)),
+        ViewMode::Pianoroll => write_track(&s).unwrap_or(0),
+    };
+    1
+}
+
+/// 本次长按是否来自时间标尺。
+pub fn insert_from_ruler() -> i32 {
+    DRAG.lock().map(|d| i32::from(d.from_ruler)).unwrap_or(0)
 }
 
 /// 长按点是否落在已有选框内（PR/AR）。
@@ -2023,36 +2123,6 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: Tool) 
         Tool::Select => {
             d.anchor_tick = anchor_tick;
             d.anchor_key = anchor_key;
-            // 手机端默认关闭单音符直接拖拽/伸缩，避免按在音符上滑动就误改；
-            // 选框长按后的整体移动仍保留。
-            if DIRECT_NOTE_DRAG_ENABLED
-                && let Some((track, start_tick, end_tick, key, side)) = hit_note(s, &geom, x, y)
-            {
-                d.kind = if side == 0 {
-                    kind::NOTE_MOVE
-                } else {
-                    kind::NOTE_RESIZE
-                };
-                d.track = track;
-                d.start_tick = start_tick;
-                d.end_tick = end_tick;
-                d.key = key;
-                d.side = side;
-                d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::from([(
-                    track, start_tick, key,
-                )])));
-                if let Some(velocity) = note_velocity(s, track, start_tick, key) {
-                    preview_note(
-                        s,
-                        track,
-                        key,
-                        velocity,
-                        start_tick,
-                        end_tick.saturating_sub(start_tick),
-                    );
-                }
-                return;
-            }
             if let Some(rect) = pr_box_at(s, x, y) {
                 // 进入长按待定；500ms 后由 Flutter long press 推进到移动态。
                 d.kind = kind::PENDING;
@@ -2207,11 +2277,12 @@ fn hit_note(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option<NoteHit> {
             );
             let (y0, y1) = (geom.key_to_y(key), geom.key_to_y(key) + geom.kh);
             if x >= x0 && x <= x1 && y >= y0 && y <= y1 {
-                // 右端优先：短音符（宽度 <= 2*EDGE）整块都当右端把手，
-                // 否则左缘判定会先命中，导致短音符永远无法拖长。
-                let side = if x1 - x0 <= EDGE * 2.0 || x1 - x <= EDGE {
+                // 边缘宽度按音符宽度自适应：短音符也要留出中间区域用来移动，
+                // 否则 12px 热区会把整颗短音符吃成“右端把手”。
+                let edge = EDGE.min((x1 - x0) / 3.0);
+                let side = if x1 - x <= edge {
                     2
-                } else if x - x0 <= EDGE {
+                } else if x - x0 <= edge {
                     1
                 } else {
                     0
