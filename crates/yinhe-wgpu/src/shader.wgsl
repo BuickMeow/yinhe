@@ -55,6 +55,10 @@ struct Uniforms {
     filter_flags: u32, // bit0=key, bit1=track, bit2=velocity, bit3=gate, bit4=invert
     exclude_mask: u32, // 排除表掩码（容量-1；0 = 禁用）
     dark_theme: u32, // 1=暗色主题（力度淡化/选中高对比方向翻转）
+    ghost_dx: f32, // ghost 预览动画像素偏移（仅 GHOST_BIT 实例）
+    ghost_dy: f32,
+    ghost_pad0: f32,
+    ghost_pad1: f32,
 }
 
 // Track colors: runtime-sized storage buffer (allocated dynamically to actual
@@ -347,7 +351,9 @@ fn note_geometry(
 ) -> VertexOutput {
     var out: VertexOutput;
 
-    let key = packed & 0xFFu;
+    // bit7 = ghost 标记（key 只有 0..127）；动画偏移只作用于 ghost 实例。
+    let is_ghost = (packed & 0x80u) != 0u;
+    let key = packed & 0x7Fu;
     let track = (packed >> 8u) & 0xFFFFu;
     // vel 字段拆位：bit7 = 选中（填充加深），bit0..7 = MIDI 力度。
     let vel_raw = (packed >> 24u) & 0xFFu;
@@ -471,6 +477,11 @@ fn note_geometry(
     // AR (mode==2): border = 0.1 * pixel_h (unchanged).
     // 纵向瀑布流：音符高度是时间长度，border 改基于宽度（key_height 方向），
     // 避免长音符的竖直边缘过宽。
+    if is_ghost {
+        pixel_x += u.ghost_dx;
+        pixel_y += u.ghost_dy;
+    }
+
     out.radius = 0.0;
     let border_dim = select(pixel_h, pixel_w, u.orientation == 1u);
     let border_factor = select(0.1, 0.05, u.mode == 1u);

@@ -89,3 +89,46 @@ class SelectionLongPressPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant SelectionLongPressPainter oldDelegate) => true;
 }
+
+/// 长按圆环走完后的“可框选”提示：一个灰色小方框，放大并淡出。
+class MarqueeHintPainter extends CustomPainter {
+  MarqueeHintPainter(this.pos, this.progress)
+    : super(repaint: Listenable.merge([pos, progress]));
+
+  final ValueNotifier<Offset?> pos;
+
+  /// 0..1（0 = 刚出现，1 = 完全消失）。
+  final ValueNotifier<double> progress;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = pos.value;
+    final t = progress.value.clamp(0.0, 1.0);
+    if (p == null || t <= 0 || t >= 1) {
+      return;
+    }
+    // 快速淡入（前 18%），随后放大 + 淡出。
+    final fadeIn = (t / 0.18).clamp(0.0, 1.0);
+    final fadeOut = 1.0 - ((t - 0.18) / 0.82).clamp(0.0, 1.0);
+    final alpha = 0.85 * fadeIn * fadeOut;
+    final side = 10.0 + 14.0 * Curves.easeOutCubic.transform(t);
+    final rrect = RRect.fromRectAndRadius(
+      Rect.fromCenter(center: p, width: side, height: side),
+      const Radius.circular(3),
+    );
+    canvas.drawRRect(
+      rrect,
+      Paint()..color = YinheTheme.textSecondary.withValues(alpha: alpha * 0.12),
+    );
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..color = YinheTheme.textSecondary.withValues(alpha: alpha),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant MarqueeHintPainter oldDelegate) => true;
+}

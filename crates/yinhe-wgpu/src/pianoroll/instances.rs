@@ -434,7 +434,7 @@ pub fn build_ghost_note(
     let mut inst = NoteInstance {
         start_tick,
         end_tick,
-        packed: NoteInstance::pack(key, track, 127),
+        packed: NoteInstance::pack(key, track, 127) | NoteInstance::GHOST_BIT,
     };
     inst.set_selected(selected);
     out.push(inst);

@@ -177,6 +177,10 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
                 s.follow_anim_until = None;
             }
         }
+        // 预览缓动每帧推进；选框视觉位置变化时通知 Flutter 重取 overlay。
+        if s.tick_preview_anim() {
+            s.overlay_rev = s.overlay_rev.wrapping_add(1);
+        }
         let total_ticks = s.total_ticks;
         let num_tracks = s.num_tracks;
         // 首次进入 PR：手机默认 32 键/屏，而不是桌面式的 64 键。
@@ -216,6 +220,7 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
             s.document.as_ref().map(|d| d.data.revision).unwrap_or(0),
             s.model_epoch,
             s.preview.clone(),
+            (s.ghost_dx, s.ghost_dy),
         )
     };
     let (
@@ -233,6 +238,7 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
         revision,
         model_epoch,
         preview,
+        preview_offset,
     ) = snapshot;
 
     // 文档切换：旧摘要不能用于新文档，先清空再预热。
@@ -287,6 +293,7 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
                 w,
                 h,
                 &preview,
+                preview_offset,
             ),
             ViewMode::Arrangement => upload_arrangement(
                 t,
@@ -302,6 +309,7 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
                 w,
                 h,
                 &preview,
+                preview_offset,
             ),
         }
         t.renderer
@@ -446,9 +454,12 @@ fn upload_pianoroll(
     w: f32,
     h: f32,
     preview: &crate::scene::DragPreview,
+    preview_offset: (f32, f32),
 ) {
     let visible = effective_visible(track_visible, display_track);
-    let job = build_render_job(w as u32, h as u32, view, selection, track_colors, 0.0, true);
+    let mut job = build_render_job(w as u32, h as u32, view, selection, track_colors, 0.0, true);
+    job.uniforms.ghost_dx = preview_offset.0;
+    job.uniforms.ghost_dy = preview_offset.1;
     t.renderer.upload_uniforms(job.uniforms);
     t.renderer.upload_track_colors(&job.track_colors);
     t.renderer.upload_selection(&job.selection);
@@ -805,6 +816,7 @@ fn upload_arrangement(
     w: f32,
     h: f32,
     preview: &crate::scene::DragPreview,
+    preview_offset: (f32, f32),
 ) {
     let num_tracks = num_tracks.min(yinhe_wgpu::MAX_TRACKS);
     if num_tracks == 0 {
@@ -836,6 +848,8 @@ fn upload_arrangement(
         value_zoom: 0.0,
         value_scroll: 0.0,
         orientation: 0,
+        ghost_dx: preview_offset.0,
+        ghost_dy: preview_offset.1,
         ..Default::default()
     };
     t.renderer.upload_uniforms(uniforms);
@@ -899,6 +913,9 @@ fn upload_arrangement(
             (0, num_tracks),
             &visible,
         );
+        for inst in out.iter_mut() {
+            inst.packed |= yinhe_wgpu::NoteInstance::GHOST_BIT;
+        }
     });
 
     // 折叠自动化竖线：只给可见轨道、只生成可见 tick 的事件，画在 layer 3。

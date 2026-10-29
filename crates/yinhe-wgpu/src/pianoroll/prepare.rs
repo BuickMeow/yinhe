@@ -108,6 +108,8 @@ pub fn build_render_job(
         exclude_mask: 0,
         // 力度淡化/选中高对比方向：随当前主题暗亮翻转（GPU 主题全局同步）。
         dark_theme: u32::from(yinhe_theme::current_gpu_theme().dark_mode),
+        // ghost 动画偏移由移动端渲染前写入（build_render_job 默认 0）。
+        ..Default::default()
     };
 
     // Grid lines 已迁移到 egui（widgets::grid_lines），wgpu 只负责 notes 层。

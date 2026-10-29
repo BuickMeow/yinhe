@@ -40,6 +40,14 @@ pub struct Uniforms {
     /// 当前主题是否暗基底（1=暗色）。PR 音符力度淡化方向与选中高对比方向
     /// 据此翻转：暗色向黑淡化/选中偏白，亮色向白淡化/选中偏黑。
     pub dark_theme: u32,
+
+    // ── ghost 预览动画（只对带 GHOST_BIT 的实例生效）──
+    /// ghost 层整体像素偏移：选区跳跃时从旧位置缓动到量化目标。
+    pub ghost_dx: f32,
+    pub ghost_dy: f32,
+    /// 保持 uniform 结构 16 字节对齐（WGSL 同名字段）。
+    pub ghost_pad0: f32,
+    pub ghost_pad1: f32,
 }
 
 /// Maximum number of tracks supported. Track indices are u16, so 65536 is the
@@ -106,6 +114,8 @@ pub struct NoteInstance {
 impl NoteInstance {
     /// packed 的 bit31（vel 字段最高位）：选中标记。
     pub const SELECTED_BIT: u32 = 1 << 31;
+    /// bit7（key 只有 0..127）：ghost 层标记，顶点着色器据此叠加动画偏移。
+    pub const GHOST_BIT: u32 = 1 << 7;
 
     /// 打包实例。`vel` 只取低 7 位（MIDI 力度语义），bit7 由
     /// [`NoteInstance::set_selected`] 控制。
@@ -420,5 +430,17 @@ mod tests {
         };
         assert!(!inst.is_selected(), "力度入参的高位必须被掩掉");
         assert_eq!(inst.velocity(), 127);
+    }
+}
+
+#[cfg(test)]
+mod uniform_layout_tests {
+    use super::Uniforms;
+
+    /// WGSL `Uniforms` 现有 28 个 4 字节字段；uniform struct 必须 16 字节对齐。
+    /// 改字段时如果忘记同步 shader，这里会先失败。
+    #[test]
+    fn uniform_size_matches_shader() {
+        assert_eq!(std::mem::size_of::<Uniforms>(), 112);
     }
 }

@@ -441,6 +441,21 @@ mixin _ShellBuild on _ShellBase {
                                             ),
                                           ),
                                         ),
+                                      if (!_showHome)
+                                        Positioned(
+                                          left: 0,
+                                          right: 0,
+                                          top: RulerPainter.height,
+                                          bottom: 0,
+                                          child: IgnorePointer(
+                                            child: CustomPaint(
+                                              painter: MarqueeHintPainter(
+                                                _marqueeHintPos,
+                                                _marqueeHint,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
                                     ],
                                   ),
                                 ),

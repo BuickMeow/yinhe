@@ -265,6 +265,11 @@ abstract class _ShellBase extends State<StudioShell>
   /// 长按微调中的落点 tick（顶部时间码临时跟随手指）。
   double? _lpPreviewTick;
 
+  /// 长按圆环走完后的“可框选”小方框提示。
+  final ValueNotifier<Offset?> _marqueeHintPos = ValueNotifier(null);
+  final ValueNotifier<double> _marqueeHint = ValueNotifier(0);
+  DateTime? _marqueeHintStart;
+
   /// 刚保存成功：顶栏保存按钮临时显示对勾（2 秒）。
   bool _saveDone = false;
   Timer? _saveDoneTimer;
@@ -487,6 +492,7 @@ class _StudioShellState extends _ShellBase
               ? 0
               : ((ms - 200) / 300).clamp(0.0, 1.0);
         }
+        _tickMarqueeHint();
         if (selState != 2 && _selectionStatusActive) {
           _selectionStatusActive = false;
           _editStatus.value = null;
@@ -536,6 +542,8 @@ class _StudioShellState extends _ShellBase
     _dragFrom.dispose();
     _dragTo.dispose();
     _lpProgress.dispose();
+    _marqueeHintPos.dispose();
+    _marqueeHint.dispose();
     _lpPosNotifier.dispose();
     _moveDashed.dispose();
     _lpIndicator.dispose();

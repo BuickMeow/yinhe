@@ -453,6 +453,7 @@ fn begin_with_tool(x: f32, y: f32, tool_override: Option<Tool>) -> i32 {
         return 0;
     };
     crate::selection_materializer::apply_pending(&mut s);
+    s.clear_preview_anim();
     if s.document.is_none() {
         return 0;
     }
@@ -704,12 +705,13 @@ pub fn begin_note_resize(x: f32, y: f32) -> i32 {
         ..Default::default()
     };
     crate::audio::stop_preview();
-    let Ok(s) = scene::scene().lock() else {
+    let Ok(mut s) = scene::scene().lock() else {
         return 0;
     };
     if s.view_mode != ViewMode::Pianoroll || s.document.is_none() {
         return 0;
     }
+    s.clear_preview_anim();
     let geom = PrGeom::new(&s.pr_view);
     if x < geom.kbw {
         return 0;
@@ -757,12 +759,13 @@ pub fn begin_note_move(x: f32, y: f32) -> i32 {
         ..Default::default()
     };
     crate::audio::stop_preview();
-    let Ok(s) = scene::scene().lock() else {
+    let Ok(mut s) = scene::scene().lock() else {
         return 0;
     };
     if s.view_mode != ViewMode::Pianoroll || s.document.is_none() {
         return 0;
     }
+    s.clear_preview_anim();
     let geom = PrGeom::new(&s.pr_view);
     if x < geom.kbw {
         return 0;
@@ -1740,7 +1743,7 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                     ]
                 }
             };
-            s.overlay_box = Some(b);
+            s.set_box_target(b);
             if d.kind == kind::ERASE {
                 build_erase_preview(s, d, x, y);
             } else {
@@ -1761,7 +1764,7 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                     let geom = PrGeom::new(&s.pr_view);
                     let klo2 = (i32::from(klo) + dk).clamp(0, 127) as u8;
                     let khi2 = (i32::from(khi) + dk).clamp(0, 127) as u8;
-                    s.overlay_box = Some([
+                    s.set_box_target([
                         geom.tick_to_x(t0 + dt_f).max(geom.kbw),
                         geom.key_to_y(khi2),
                         geom.tick_to_x(t1 + dt_f),
@@ -1769,6 +1772,14 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                     ]);
                     let stamp = (dt, dk, s.pr_view.render_hash());
                     if d.last_ghost != Some(stamp) {
+                        if let Some((old_dt, old_dk, old_hash)) = d.last_ghost
+                            && old_hash == stamp.2
+                        {
+                            s.nudge_ghost(
+                                (old_dt - dt) as f32 * geom.ppu,
+                                (old_dk - dk) as f32 * geom.kh,
+                            );
+                        }
                         d.last_ghost = Some(stamp);
                         let (tick_lo, tick_hi) = s
                             .pr_view
@@ -1806,7 +1817,7 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                     let max_row = s.num_tracks.saturating_sub(1) as i32;
                     let rlo2 = (rlo as i32 + dtr).clamp(0, max_row) as usize;
                     let rhi2 = (rhi as i32 + dtr).clamp(0, max_row) as usize;
-                    s.overlay_box = Some([
+                    s.set_box_target([
                         geom.tick_to_x(t0 + dt_f).max(geom.panel_w),
                         geom.row_to_y(rlo2),
                         geom.tick_to_x(t1 + dt_f),
@@ -1814,6 +1825,14 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                     ]);
                     let stamp = (dt, dtr, s.arr_view.render_hash());
                     if d.last_ghost != Some(stamp) {
+                        if let Some((old_dt, old_dtr, old_hash)) = d.last_ghost
+                            && old_hash == stamp.2
+                        {
+                            s.nudge_ghost(
+                                (old_dt - dt) as f32 * s.arr_view.base.pixels_per_tick,
+                                (old_dtr - dtr) as f32 * s.arr_view.lane_height(),
+                            );
+                        }
                         d.last_ghost = Some(stamp);
                         let (tick_lo, tick_hi) = s.arr_view.visible_tick_range(lw);
                         let (first_row, last_row) =
@@ -1932,12 +1951,27 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
             let new_start = (i64::from(d.start_tick) + dt).max(0) as u32;
             let new_key = (i32::from(d.key) + dk).clamp(0, 127) as u8;
             let len = d.end_tick.saturating_sub(d.start_tick);
-            apply_preview(
-                s,
-                d,
-                vec![(new_start, new_start + len, new_key, d.track)],
-                true,
-            );
+            let stamp = (dt, dk, s.pr_view.render_hash());
+            if d.last_ghost != Some(stamp) {
+                // 首次移动从音符原位置（dt=0）开始缓动，而不是直接跳到第一格。
+                let (old_dt, old_dk, same_view) = match d.last_ghost {
+                    Some((odt, odk, hash)) => (odt, odk, hash == stamp.2),
+                    None => (0, 0, true),
+                };
+                if same_view {
+                    s.nudge_ghost(
+                        (old_dt - dt) as f32 * geom.ppu,
+                        (old_dk - dk) as f32 * geom.kh,
+                    );
+                }
+                d.last_ghost = Some(stamp);
+                apply_preview(
+                    s,
+                    d,
+                    vec![(new_start, new_start + len, new_key, d.track)],
+                    true,
+                );
+            }
             if dk != d.preview_last_dk {
                 d.preview_last_dk = dk;
                 if let Some(velocity) = note_velocity(s, d.track, d.start_tick, d.key) {
@@ -2037,7 +2071,7 @@ pub fn end(x: f32, y: f32) {
     }
     d.kind = kind::NONE;
     s.preview.clear();
-    s.overlay_box = None;
+    s.clear_preview_anim();
     s.overlay_cells.clear();
     bump(&mut s);
     drop(s);
@@ -2093,7 +2127,7 @@ pub fn cancel() {
             }
         }
         s.preview.clear();
-        s.overlay_box = None;
+        s.clear_preview_anim();
         s.overlay_cells.clear();
         bump(&mut s);
     }
@@ -2138,7 +2172,7 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: Tool) 
             // 空白处：先进入长按待定。拖动超过阈值会转成普通框选；
             // 按住 500ms 松手则弹出粘贴菜单。
             d.kind = kind::PENDING_PASTE;
-            s.overlay_box = None;
+            s.clear_preview_anim();
             bump(s);
         }
         Tool::Pencil => {
@@ -2186,7 +2220,7 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: Tool) 
             d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::new()));
             d.anchor_tick = anchor_tick;
             d.anchor_key = anchor_key;
-            s.overlay_box = Some([x, y, x, y]);
+            s.set_box_target([x, y, x, y]);
             bump(s);
         }
         Tool::Brush => {
@@ -2243,7 +2277,7 @@ fn begin_arr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: Tool)
     }
     // 空白处：长按待定（同上），拖动后转框选。
     d.kind = kind::PENDING_PASTE;
-    s.overlay_box = None;
+    s.clear_preview_anim();
     bump(s);
 }
 
@@ -2918,7 +2952,7 @@ fn pencil_box(s: &mut RenderScene, d: &DragState, geom: &PrGeom) {
     let x0 = geom.tick_to_x(d.start_f);
     let x1 = geom.tick_to_x(d.cur_end).max(x0 + 2.0);
     let y = geom.key_to_y(d.key);
-    s.overlay_box = Some([x0, y, x1, y + geom.kh]);
+    s.set_box_static([x0, y, x1, y + geom.kh]);
     bump(s);
 }
 

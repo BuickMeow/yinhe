@@ -275,6 +275,15 @@ pub struct RenderScene {
     pub follow_last_at: Option<std::time::Instant>,
     /// 恢复跟随后的一小段平滑动画（到期后改为每帧精确居中）。
     pub follow_anim_until: Option<std::time::Instant>,
+    /// 选框四边的视觉偏移（像素）：量化跳变时从旧位置缓动到目标。
+    pub box_anim: [f32; 4],
+    /// 选框目标位置（内容像素）；`None` = 当前没有活动选框。
+    pub box_target: Option<[f32; 4]>,
+    /// ghost 预览的整体像素偏移（只作用于 GHOST_BIT 实例）。
+    pub ghost_dx: f32,
+    pub ghost_dy: f32,
+    /// 上一次动画推进时间（指数衰减用）。
+    anim_last: Option<std::time::Instant>,
 }
 
 /// 工具（移动端子集：与桌面 `tools_panel::Tool` 的编号对齐）。
@@ -320,7 +329,128 @@ impl Default for RenderScene {
             follow_out_since: None,
             follow_last_at: None,
             follow_anim_until: None,
+            box_anim: [0.0; 4],
+            box_target: None,
+            ghost_dx: 0.0,
+            ghost_dy: 0.0,
+            anim_last: None,
         }
+    }
+}
+
+/// 预览动画时间常数：约 90ms 衰减到 5%。
+const PREVIEW_ANIM_TAU: f32 = 0.032;
+/// 小于此像素值直接归零，避免无限小尾巴。
+const PREVIEW_ANIM_EPS: f32 = 0.08;
+
+impl RenderScene {
+    /// 设定选框目标；把上一次目标到本次目标的跳变量并入视觉偏移。
+    ///
+    /// 选框每跨过一个量化格都会跳一段，这里让视觉位置从旧格平滑追到新格。
+    pub fn set_box_target(&mut self, target: [f32; 4]) {
+        if self.box_target == Some(target) {
+            return;
+        }
+        if let Some(prev) = self.box_target {
+            for i in 0..4 {
+                self.box_anim[i] += prev[i] - target[i];
+            }
+        }
+        self.box_target = Some(target);
+        self.overlay_box = Some(self.animated_box());
+        self.anim_last = Some(std::time::Instant::now());
+    }
+
+    /// 不参与缓动的选框（铅笔等连续预览）。
+    pub fn set_box_static(&mut self, target: [f32; 4]) {
+        self.box_target = None;
+        self.box_anim = [0.0; 4];
+        self.overlay_box = Some(target);
+    }
+
+    /// ghost 目标发生跳变：把像素差累加到缓动偏移上。
+    pub fn nudge_ghost(&mut self, dx: f32, dy: f32) {
+        if dx == 0.0 && dy == 0.0 {
+            return;
+        }
+        self.ghost_dx += dx;
+        self.ghost_dy += dy;
+        self.anim_last = Some(std::time::Instant::now());
+    }
+
+    /// 清空选框与 ghost 动画状态（提交/取消时调用）。
+    pub fn clear_preview_anim(&mut self) {
+        self.box_target = None;
+        self.box_anim = [0.0; 4];
+        self.overlay_box = None;
+        self.ghost_dx = 0.0;
+        self.ghost_dy = 0.0;
+        self.anim_last = None;
+    }
+
+    fn animated_box(&self) -> [f32; 4] {
+        match self.box_target {
+            Some(t) => [
+                t[0] + self.box_anim[0],
+                t[1] + self.box_anim[1],
+                t[2] + self.box_anim[2],
+                t[3] + self.box_anim[3],
+            ],
+            None => [0.0; 4],
+        }
+    }
+
+    /// 每帧推进预览缓动。返回 true = 选框视觉位置变化（需通知 Flutter 重取）。
+    pub fn tick_preview_anim(&mut self) -> bool {
+        let box_animating =
+            self.box_target.is_some() && self.box_anim.iter().any(|v| v.abs() > PREVIEW_ANIM_EPS);
+        let ghost_animating =
+            self.ghost_dx.abs() > PREVIEW_ANIM_EPS || self.ghost_dy.abs() > PREVIEW_ANIM_EPS;
+        if !box_animating && !ghost_animating {
+            // 收尾：把残留的极小值归零。
+            let had_box = self.box_target.is_some() && self.box_anim != [0.0; 4];
+            self.box_anim = [0.0; 4];
+            self.ghost_dx = 0.0;
+            self.ghost_dy = 0.0;
+            if had_box {
+                self.overlay_box = self.box_target;
+                return true;
+            }
+            return false;
+        }
+        let now = std::time::Instant::now();
+        let dt = self
+            .anim_last
+            .map(|t| (now - t).as_secs_f32())
+            .unwrap_or(1.0 / 60.0)
+            .clamp(0.001, 0.05);
+        self.anim_last = Some(now);
+        let k = (-dt / PREVIEW_ANIM_TAU).exp();
+        for v in &mut self.box_anim {
+            *v = if v.abs() <= PREVIEW_ANIM_EPS {
+                0.0
+            } else {
+                *v * k
+            };
+        }
+        self.ghost_dx = if self.ghost_dx.abs() <= PREVIEW_ANIM_EPS {
+            0.0
+        } else {
+            self.ghost_dx * k
+        };
+        self.ghost_dy = if self.ghost_dy.abs() <= PREVIEW_ANIM_EPS {
+            0.0
+        } else {
+            self.ghost_dy * k
+        };
+        if self.box_target.is_some() {
+            let b = self.animated_box();
+            if self.overlay_box != Some(b) {
+                self.overlay_box = Some(b);
+                return true;
+            }
+        }
+        false
     }
 }
 

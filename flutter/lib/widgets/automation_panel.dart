@@ -116,7 +116,7 @@ class AutomationPanel extends StatefulWidget {
 }
 
 class _AutomationPanelState extends State<AutomationPanel>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   AppLocalizations get l => AppLocalizations.of(context);
 
   int? _selectedLane; // null = Velocity
@@ -155,6 +155,18 @@ class _AutomationPanelState extends State<AutomationPanel>
   final ValueNotifier<double> _lpProgress = ValueNotifier(0);
   final ValueNotifier<Offset?> _lpPos = ValueNotifier(null);
 
+  /// 长按圆环走完后的“可框选”小方框提示。
+  final ValueNotifier<Offset?> _hintPos = ValueNotifier(null);
+  final ValueNotifier<double> _hintProgress = ValueNotifier(0);
+  DateTime? _hintStart;
+
+  /// 选框量化跳变的缓动显示（实际选区仍用 _marqueeTicks）。
+  late final Ticker _marqueeTicker;
+  Rect? _marqueeDisplay;
+  Rect? _marqueeTo;
+  Rect? _marqueeFrom;
+  DateTime? _marqueeAnimStart;
+
   /// old tick -> (new tick, new value)，拖动中的预览。
   Map<int, (int, double)> _movePreview = {};
 
@@ -190,6 +202,7 @@ class _AutomationPanelState extends State<AutomationPanel>
   void initState() {
     super.initState();
     _lpTicker = createTicker(_onLpTick);
+    _marqueeTicker = createTicker(_onMarqueeTick);
   }
 
   @override
@@ -323,8 +336,11 @@ class _AutomationPanelState extends State<AutomationPanel>
     rust.setAutomationPanel(0, 0, 0, widget.activeTrack, _laneIdx ?? -1, 0);
     rust.pushAutomationGhost(const []);
     _lpTicker.dispose();
+    _marqueeTicker.dispose();
     _lpProgress.dispose();
     _lpPos.dispose();
+    _hintPos.dispose();
+    _hintProgress.dispose();
     _velocityPreview.dispose();
     super.dispose();
   }
@@ -340,20 +356,76 @@ class _AutomationPanelState extends State<AutomationPanel>
 
   void _onLpTick(Duration _) {
     final start = _lpStart;
-    if (start == null) {
-      _lpTicker.stop();
-      return;
+    if (start != null) {
+      final ms = DateTime.now().difference(start).inMilliseconds;
+      _lpProgress.value = ms <= 200 ? 0 : ((ms - 200) / 300).clamp(0.0, 1.0);
     }
-    final ms = DateTime.now().difference(start).inMilliseconds;
-    _lpProgress.value = ms <= 200 ? 0 : ((ms - 200) / 300).clamp(0.0, 1.0);
+    final hint = _hintStart;
+    if (hint != null) {
+      final ms = DateTime.now().difference(hint).inMilliseconds;
+      final t = (ms / 420).clamp(0.0, 1.0);
+      _hintProgress.value = t;
+      if (t >= 1) {
+        _hintStart = null;
+        _hintPos.value = null;
+        _hintProgress.value = 0;
+      }
+    }
+    if (_lpStart == null && _hintStart == null && _lpTicker.isActive) {
+      _lpTicker.stop();
+    }
+  }
+
+  void _startHint(Offset p) {
+    _hintPos.value = p;
+    _hintProgress.value = 0;
+    _hintStart = DateTime.now();
+    if (!_lpTicker.isActive) {
+      _lpTicker.start();
+    }
   }
 
   void _endLpWatch() {
     _lpStart = null;
     _lpPos.value = null;
     _lpProgress.value = 0;
-    if (_lpTicker.isActive) {
+    // 提示动画可以继续走完；只有没有提示时才停 ticker。
+    if (_hintStart == null && _lpTicker.isActive) {
       _lpTicker.stop();
+    }
+  }
+
+  void _setMarqueeTarget(Rect target) {
+    final from = _marqueeDisplay ?? target;
+    _marqueeFrom = from;
+    _marqueeTo = target;
+    _marqueeAnimStart = DateTime.now();
+    if (!_marqueeTicker.isActive) {
+      _marqueeTicker.start();
+    }
+  }
+
+  void _onMarqueeTick(Duration _) {
+    final start = _marqueeAnimStart;
+    final from = _marqueeFrom;
+    final to = _marqueeTo;
+    if (start == null || from == null || to == null) {
+      _marqueeTicker.stop();
+      return;
+    }
+    final t = (DateTime.now().difference(start).inMilliseconds / 90).clamp(
+      0.0,
+      1.0,
+    );
+    final display = Rect.lerp(from, to, Curves.easeOutCubic.transform(t));
+    _marqueeDisplay = display;
+    if (t >= 1) {
+      _marqueeDisplay = to;
+      _marqueeAnimStart = null;
+      _marqueeTicker.stop();
+    }
+    if (mounted) {
+      setState(() {});
     }
   }
 
@@ -590,6 +662,11 @@ class _AutomationPanelState extends State<AutomationPanel>
     _marqueeStart = null;
     _marqueeCurrent = null;
     _marqueeTicks = null;
+    _marqueeDisplay = null;
+    _marqueeAnimStart = null;
+    if (_marqueeTicker.isActive) {
+      _marqueeTicker.stop();
+    }
     _awaitSnapBreak = false;
     _dragBaseTicks.clear();
     _syncGhost();
@@ -860,6 +937,7 @@ class _AutomationPanelState extends State<AutomationPanel>
       await _showMarqueeMenu();
       return;
     }
+    _startHint(d.localPosition);
     await _showAutomationEmptyMenu(tick);
   }
 
@@ -973,6 +1051,12 @@ class _AutomationPanelState extends State<AutomationPanel>
       1.0,
       double.infinity,
     );
+    final target = _marqueeRectFromTicks(
+      _snapMarquee(_marqueeStart!, _marqueeCurrent!),
+    );
+    _marqueeDisplay = target;
+    _marqueeTo = target;
+    _marqueeAnimStart = null;
     _syncSelection();
     setState(() {});
   }
@@ -987,7 +1071,17 @@ class _AutomationPanelState extends State<AutomationPanel>
       return;
     }
     if (_marqueeActive) {
-      setState(() => _marqueeCurrent = d.localPosition);
+      _marqueeCurrent = d.localPosition;
+      final start = _marqueeStart;
+      if (start != null) {
+        final target = _marqueeRectFromTicks(
+          _snapMarquee(start, _marqueeCurrent!),
+        );
+        if (target != null && target != _marqueeTo) {
+          _setMarqueeTarget(target);
+        }
+      }
+      setState(() {});
       return;
     }
     if (_dragAnchorTick == null ||
@@ -1116,6 +1210,11 @@ class _AutomationPanelState extends State<AutomationPanel>
     _marqueeActive = false;
     _marqueeStart = null;
     _marqueeCurrent = null;
+    _marqueeDisplay = null;
+    _marqueeAnimStart = null;
+    if (_marqueeTicker.isActive) {
+      _marqueeTicker.stop();
+    }
     _selectedTicks.clear();
     _singleSelection = false;
     if (start != null &&
@@ -1153,6 +1252,11 @@ class _AutomationPanelState extends State<AutomationPanel>
     _marqueeActive = false;
     _marqueeStart = null;
     _marqueeCurrent = null;
+    _marqueeDisplay = null;
+    _marqueeAnimStart = null;
+    if (_marqueeTicker.isActive) {
+      _marqueeTicker.stop();
+    }
     _dragAnchorTick = null;
     _dragStartSnapTick = null;
     _dragStartValue = null;
@@ -1247,9 +1351,9 @@ class _AutomationPanelState extends State<AutomationPanel>
     }
     Rect? marquee;
     if (_marqueeActive && _marqueeStart != null && _marqueeCurrent != null) {
-      final a = _marqueeStart!;
-      final b = _marqueeCurrent!;
-      marquee = _marqueeRectFromTicks(_snapMarquee(a, b));
+      marquee =
+          _marqueeDisplay ??
+          _marqueeRectFromTicks(_snapMarquee(_marqueeStart!, _marqueeCurrent!));
     } else if (_marqueeTicks != null) {
       // 松手后的选框常驻；每次按当前 tick→像素重建，滚动/缩放后仍贴合网格。
       marquee = _marqueeRectFromTicks(_marqueeTicks!);
@@ -1455,6 +1559,14 @@ class _AutomationPanelState extends State<AutomationPanel>
                                     painter: _LongPressRingPainter(
                                       _lpProgress,
                                       _lpPos,
+                                    ),
+                                  ),
+                                ),
+                                IgnorePointer(
+                                  child: CustomPaint(
+                                    painter: MarqueeHintPainter(
+                                      _hintPos,
+                                      _hintProgress,
                                     ),
                                   ),
                                 ),

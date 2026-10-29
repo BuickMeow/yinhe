@@ -306,6 +306,32 @@ mixin _ShellInput on _ShellBase {
     _lpMarqueeArmed = true;
     _markLongPressRecognized();
     _lpMoved = false;
+    _startMarqueeHint(p);
+  }
+
+  void _startMarqueeHint(Offset p) {
+    _marqueeHintPos.value = p;
+    _marqueeHint.value = 0;
+    _marqueeHintStart = DateTime.now();
+  }
+
+  void _tickMarqueeHint() {
+    final start = _marqueeHintStart;
+    if (start == null) {
+      return;
+    }
+    final ms = DateTime.now().difference(start).inMilliseconds;
+    final t = (ms / 420).clamp(0.0, 1.0);
+    _marqueeHint.value = t;
+    if (t >= 1) {
+      _stopMarqueeHint();
+    }
+  }
+
+  void _stopMarqueeHint() {
+    _marqueeHintStart = null;
+    _marqueeHintPos.value = null;
+    _marqueeHint.value = 0;
   }
 
   /// 读取 Rust 长按上下文（插入/粘贴菜单用）。
@@ -433,6 +459,7 @@ mixin _ShellInput on _ShellBase {
 
   /// 长按拖动开始：临时切到选框工具，从按下点拉框。
   void _startMarquee(Offset press) {
+    _stopMarqueeHint();
     rust.clearSelection();
     _gestureEditing = rust.beginMarquee(press.dx, press.dy) == 1;
   }
@@ -530,6 +557,7 @@ mixin _ShellInput on _ShellBase {
 
   /// 清理长按 UI 状态（不改 Rust 拖拽状态）。
   void _clearLongPressUi() {
+    _stopMarqueeHint();
     _lpStartTime = null;
     _lpPos = null;
     _lpGlobalPos = null;
