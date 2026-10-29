@@ -75,6 +75,9 @@ struct DragState {
     py: f32,
     /// 内容锚点（拖动开始时吸附后的 tick/key/row；视图滚动后仍固定）。
     anchor_tick: f64,
+    /// 按下点的**原始** tick（未吸附）：拖动位移用它计算整格步进，
+    /// 避免按在半格上时一移动就跳两格。
+    anchor_tick_raw: f64,
     anchor_key: u8,
     anchor_row: usize,
     /// 已选框的内容坐标范围（PR: tick/key，AR: tick/row）。
@@ -118,6 +121,7 @@ impl Default for DragState {
             px: 0.0,
             py: 0.0,
             anchor_tick: 0.0,
+            anchor_tick_raw: 0.0,
             anchor_key: 0,
             anchor_row: 0,
             box_ticks: None,
@@ -150,6 +154,7 @@ static DRAG: std::sync::Mutex<DragState> = std::sync::Mutex::new(DragState {
     px: 0.0,
     py: 0.0,
     anchor_tick: 0.0,
+    anchor_tick_raw: 0.0,
     anchor_key: 0,
     anchor_row: 0,
     box_ticks: None,
@@ -780,7 +785,8 @@ pub fn begin_note_move(x: f32, y: f32) -> i32 {
     let q = quantize_of(&s);
     let snap = scene::SnapCtx::new(&s);
     d.kind = kind::NOTE_MOVE;
-    d.anchor_tick = snap.round(q, geom.x_to_tick(x));
+    d.anchor_tick_raw = geom.x_to_tick(x);
+    d.anchor_tick = snap.round(q, d.anchor_tick_raw);
     d.anchor_key = key;
     d.track = track;
     d.start_tick = start_tick;
@@ -975,14 +981,27 @@ pub fn context_at(x: f32, y: f32) -> String {
 ///
 /// tick 差保留未取整值（选框矩形预览用），ghost/提交再 round；已按选框
 /// 左边界 clamp 到 >= 0。预览、提交、顶部栏读数共用这一份换算，避免漂移。
+/// 拖动位移按整格量化：指针越过一条网格线才走一格。
+///
+/// 不能用 round：按在半格附近时，指针只动一点就会因为四舍五入跨到下一格，
+/// 在 DAW 里会表现为“刚拖就跳一格”。向右取 floor、向左取 ceil，保持迟滞。
+fn drag_delta_ticks(s: &RenderScene, q: QuantizePreset, anchor_raw: f64, current_raw: f64) -> f64 {
+    let interval = f64::from(q.tick_interval(s.ppq).max(1));
+    let delta = current_raw - anchor_raw;
+    if delta >= 0.0 {
+        (delta / interval).floor() * interval
+    } else {
+        (delta / interval).ceil() * interval
+    }
+}
+
 fn move_box_delta(s: &RenderScene, d: &DragState, x: f32, y: f32) -> Option<(f64, i32, i32)> {
     let q = quantize_of(s);
-    let snap = scene::SnapCtx::new(s);
     match s.view_mode {
         ViewMode::Pianoroll => {
             let (t0, _, _, _) = d.box_ticks?;
             let geom = PrGeom::new(&s.pr_view);
-            let mut dt = snap.round(q, geom.x_to_tick(x)) - d.anchor_tick;
+            let mut dt = drag_delta_ticks(s, q, d.anchor_tick_raw, geom.x_to_tick(x));
             if t0 + dt < 0.0 {
                 dt = -t0;
             }
@@ -992,7 +1011,7 @@ fn move_box_delta(s: &RenderScene, d: &DragState, x: f32, y: f32) -> Option<(f64
         ViewMode::Arrangement => {
             let (t0, _, _, _) = d.box_rows?;
             let geom = ArGeom::new(&s.arr_view);
-            let mut dt = snap.round(q, geom.x_to_tick(x)) - d.anchor_tick;
+            let mut dt = drag_delta_ticks(s, q, d.anchor_tick_raw, geom.x_to_tick(x));
             if t0 + dt < 0.0 {
                 dt = -t0;
             }
@@ -1947,7 +1966,7 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
         kind::NOTE_MOVE => {
             let geom = PrGeom::new(&s.pr_view);
             let q = quantize_of(s);
-            let dt = (snap.round(q, geom.x_to_tick(x)) - d.anchor_tick).round() as i64;
+            let dt = drag_delta_ticks(s, q, d.anchor_tick_raw, geom.x_to_tick(x)).round() as i64;
             let dk = i32::from(geom.y_to_key(y)) - i32::from(d.anchor_key);
             let new_start = (i64::from(d.start_tick) + dt).max(0) as u32;
             let new_key = (i32::from(d.key) + dk).clamp(0, 127) as u8;
@@ -2146,8 +2165,10 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: Tool) 
     let q = quantize_of(s);
     let snap = scene::SnapCtx::new(s);
     // 内容锚点：吸附后的 tick（滚动视图后仍固定，不随视图漂移）。
-    let anchor_tick = snap.round(q, geom.x_to_tick(x));
+    let anchor_raw = geom.x_to_tick(x);
+    let anchor_tick = snap.round(q, anchor_raw);
     let anchor_key = geom.y_to_key(y);
+    d.anchor_tick_raw = anchor_raw;
     // 选框工具：先命中四边圆形控制点 / 右下角 Riff 方块。
     if tool == Tool::Select
         && let Some(h) = pr_selection_handle(s, &geom, x, y)
@@ -2261,8 +2282,10 @@ fn begin_arr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: Tool)
     }
     let q = quantize_of(s);
     let snap = scene::SnapCtx::new(s);
-    let anchor_tick = snap.round(q, geom.x_to_tick(x));
+    let anchor_raw = geom.x_to_tick(x);
+    let anchor_tick = snap.round(q, anchor_raw);
     let anchor_row = geom.y_to_row(y);
+    d.anchor_tick_raw = anchor_raw;
     d.anchor_tick = anchor_tick;
     d.anchor_row = anchor_row;
     if let Some(h) = ar_selection_handle(s, &geom, x, y) {
@@ -2736,8 +2759,7 @@ fn commit_note_move(
     }
     let geom = PrGeom::new(&s.pr_view);
     let q = quantize_of(s);
-    let snap = scene::SnapCtx::new(s);
-    let dt = (snap.round(q, geom.x_to_tick(x)) - d.anchor_tick).round() as i64;
+    let dt = drag_delta_ticks(s, q, d.anchor_tick_raw, geom.x_to_tick(x)).round() as i64;
     let dk = i32::from(geom.y_to_key(y)) - i32::from(d.anchor_key);
     if dt == 0 && dk == 0 {
         return None;
