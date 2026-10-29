@@ -179,8 +179,17 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
         }
         let total_ticks = s.total_ticks;
         let num_tracks = s.num_tracks;
+        // 首次进入 PR：手机默认 32 键/屏，而不是桌面式的 64 键。
+        let first_pr_frame = s.pr_view.viewport_h == 0.0;
         match s.view_mode {
-            ViewMode::Pianoroll => s.pr_view.clamp_scroll(w, h, total_ticks),
+            ViewMode::Pianoroll => {
+                s.pr_view.clamp_scroll(w, h, total_ticks);
+                if first_pr_frame {
+                    let cross = s.pr_view.cross_axis_len(w, h);
+                    s.pr_view
+                        .set_initial_cross_zoom(cross, crate::scene::INITIAL_VISIBLE_KEYS);
+                }
+            }
             ViewMode::Arrangement => {
                 // +1 = AR 列表末尾的"添加音轨"占位行，允许滚动到它。
                 s.arr_view.clamp_scroll(w, h, total_ticks, num_tracks + 1)

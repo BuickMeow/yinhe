@@ -158,8 +158,8 @@ abstract class _ShellBase extends State<StudioShell>
   /// 力度条数据：(tick, length, velocity01, track)。
   List<(double, double, double, int)> _velocityBars = const [];
 
-  /// 收起自动化栏（最大化画布）。
-  bool _autoCollapsed = false;
+  /// 收起自动化栏（最大化画布）。手机默认收起，进入 PR 先看音符。
+  bool _autoCollapsed = true;
 
   /// 自动化栏高度（含顶部拖拽手柄）。
   double _autoPanelHeight = AutomationPanel.defaultHeight;

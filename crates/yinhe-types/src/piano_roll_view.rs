@@ -300,6 +300,20 @@ impl PianoRollView {
         }
     }
 
+    /// 首次进入时的纵向缩放：让副轴一屏显示 `keys` 个键并居中。
+    ///
+    /// 同时写入 `viewport_h`，后续 `clamp_scroll` 会认为视口已初始化，
+    /// 不会再用默认 64 键覆盖；窗口尺寸变化时按键数等比保持。
+    pub fn set_initial_cross_zoom(&mut self, cross_size: f32, keys: f32) {
+        if cross_size <= 0.0 || keys <= 0.0 {
+            return;
+        }
+        self.viewport_h = cross_size;
+        self.key_height = cross_size / keys;
+        *self.cross_scroll() = (self.total_key_height() - cross_size).max(0.0) / 2.0;
+        self.base.dirty = true;
+    }
+
     /// 副轴上围绕 `px` 缩放（音高缩放）。`cross_size` 为副轴视口长度。
     pub fn zoom_cross_around(&mut self, px: f32, factor: f32, cross_size: f32) {
         // 相对缩放：最小 = 128 键一屏（缩小极限），最大 = 12 键一屏（放大极限）。
@@ -640,6 +654,19 @@ mod tests {
         v.zoom_cross_around(px, 2.0, 1040.0);
         let key_after = v.cross_px_to_key(px);
         assert_eq!(key_before, key_after);
+    }
+
+    #[test]
+    fn test_initial_cross_zoom_keeps_key_count() {
+        let mut v = make_view();
+        v.set_initial_cross_zoom(800.0, 32.0);
+        assert!((v.key_height - 25.0).abs() < 0.01);
+        // 同尺寸再 clamp 不应回退到默认 64 键。
+        v.clamp_scroll(1280.0, 800.0, 10000.0);
+        assert!((v.key_height - 25.0).abs() < 0.01);
+        // 视口变大时按键数等比换算（仍是 32 键/屏）。
+        v.clamp_scroll(1280.0, 1600.0, 10000.0);
+        assert!((v.key_height - 50.0).abs() < 0.01);
     }
 
     #[test]

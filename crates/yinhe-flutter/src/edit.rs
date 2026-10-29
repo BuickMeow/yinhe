@@ -17,8 +17,11 @@ use crate::scene::{self, RenderScene, Tool, ViewMode};
 const DRAG_THRESHOLD: f32 = 3.0;
 /// 已选框长按待定时，移动超过此距离就取消待定并转平移。
 const PENDING_CANCEL: f32 = 12.0;
-/// 音符边缘判定（逻辑像素，与桌面一致）。
-const EDGE: f32 = 6.0;
+/// 音符右端改长度的命中宽度（逻辑像素）。
+///
+/// 6px 对手机太窄（约 2mm），成熟移动端编曲软件一般在 10~16dp；
+/// 这里取 12dp，比 44pt 按钮标准小，但足以稳定按住音符末端。
+const EDGE: f32 = 12.0;
 /// 新音符默认力度（桌面无记忆时回退 100）。
 const DEFAULT_VELOCITY: u8 = 100;
 /// 铅笔“单音符精调选择 → 二次拖动移动”功能开关。
@@ -2204,10 +2207,12 @@ fn hit_note(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option<NoteHit> {
             );
             let (y0, y1) = (geom.key_to_y(key), geom.key_to_y(key) + geom.kh);
             if x >= x0 && x <= x1 && y >= y0 && y <= y1 {
-                let side = if x - x0 <= EDGE {
-                    1
-                } else if x1 - x <= EDGE {
+                // 右端优先：短音符（宽度 <= 2*EDGE）整块都当右端把手，
+                // 否则左缘判定会先命中，导致短音符永远无法拖长。
+                let side = if x1 - x0 <= EDGE * 2.0 || x1 - x <= EDGE {
                     2
+                } else if x - x0 <= EDGE {
+                    1
                 } else {
                     0
                 };

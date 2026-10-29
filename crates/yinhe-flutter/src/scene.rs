@@ -80,6 +80,10 @@ impl SnapCtx {
 pub const AR_TRACK_PANEL_W: f32 = 134.0;
 /// AR 行高（逻辑像素，触屏友好的旧壳值）。
 pub const AR_LANE_HEIGHT: f32 = 56.0;
+/// 手机 PR 首次进入时一屏显示的键数：约 2⅔ 个八度。
+///
+/// 桌面默认 64 键，在手机上每行只有 ~14dp，手指很难点准；32 键约为其两倍高。
+pub const INITIAL_VISIBLE_KEYS: f32 = 32.0;
 
 /// 轨道面板用的精简轨道信息（Dart 浮层绘制）。
 pub struct TrackInfoLite {
