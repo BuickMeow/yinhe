@@ -922,21 +922,54 @@ pub fn begin_selection_gate(x: f32, y: f32) -> i32 {
     let Ok(mut s) = scene::scene().lock() else {
         return 0;
     };
-    if s.view_mode != ViewMode::Pianoroll || s.document.is_none() {
+    if s.document.is_none() || !matches!(s.view_mode, ViewMode::Pianoroll | ViewMode::Arrangement) {
         return 0;
     }
-    let Some((t0, t1, k0, k1)) = s
-        .document
-        .as_ref()
-        .and_then(|doc| doc.edit.sel_rect.rects.first().copied())
-    else {
-        return 0;
+    let q = quantize_of(&s);
+    let snap = scene::SnapCtx::new(&s);
+    let (t0, t1, k0, k1, x0, x1, y0, y1) = match s.view_mode {
+        ViewMode::Pianoroll => {
+            let Some((t0, t1, k0, k1)) = s
+                .document
+                .as_ref()
+                .and_then(|doc| doc.edit.sel_rect.rects.first().copied())
+            else {
+                return 0;
+            };
+            let geom = PrGeom::new(&s.pr_view);
+            (
+                t0,
+                t1,
+                k0,
+                k1,
+                geom.tick_to_x(t0),
+                geom.tick_to_x(t1),
+                geom.key_to_y(k1),
+                geom.key_to_y(k0) + geom.kh,
+            )
+        }
+        ViewMode::Arrangement => {
+            let Some((t0, t1, r0, r1)) = s
+                .document
+                .as_ref()
+                .and_then(|doc| doc.edit.arr_sel_rect.first().copied())
+            else {
+                return 0;
+            };
+            let geom = ArGeom::new(&s.arr_view);
+            d.box_rows = Some((t0, t1, r0, r1));
+            (
+                t0,
+                t1,
+                0,
+                yinhe_types::MAX_KEY,
+                geom.tick_to_x(t0),
+                geom.tick_to_x(t1),
+                geom.row_to_y(r0),
+                geom.row_to_y(r1 + 1),
+            )
+        }
     };
-    let geom = PrGeom::new(&s.pr_view);
-    let x0 = geom.tick_to_x(t0);
-    let x1 = geom.tick_to_x(t1);
-    let y0 = geom.key_to_y(k1);
-    let y1 = geom.key_to_y(k0) + geom.kh;
     let edge = EDGE.min((x1 - x0) / 3.0);
     if x < x1 - edge || x > x1 || y < y0 || y > y1 {
         return 0;
@@ -945,11 +978,19 @@ pub fn begin_selection_gate(x: f32, y: f32) -> i32 {
     if ((x - x1).powi(2) + (y - y1).powi(2)).sqrt() < 18.0 {
         return 0;
     }
-    let q = quantize_of(&s);
-    let snap = scene::SnapCtx::new(&s);
-    d.anchor_tick_raw = geom.x_to_tick(x);
+    d.anchor_tick_raw = match s.view_mode {
+        ViewMode::Pianoroll => PrGeom::new(&s.pr_view).x_to_tick(x),
+        ViewMode::Arrangement => ArGeom::new(&s.arr_view).x_to_tick(x),
+    };
     d.anchor_tick = snap.round(q, d.anchor_tick_raw);
-    d.anchor_key = geom.y_to_key(y);
+    d.anchor_key = match s.view_mode {
+        ViewMode::Pianoroll => PrGeom::new(&s.pr_view).y_to_key(y),
+        ViewMode::Arrangement => 0,
+    };
+    d.anchor_row = match s.view_mode {
+        ViewMode::Pianoroll => 0,
+        ViewMode::Arrangement => ArGeom::new(&s.arr_view).y_to_row(y),
+    };
     d.box_ticks = Some((t0, t1, k0, k1));
     let (by_key, hidden) = collect_selected_notes(&s);
     d.drag_by_key = by_key;
@@ -2302,43 +2343,86 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
             }
         }
         kind::SEL_GATE => {
-            let geom = PrGeom::new(&s.pr_view);
             let Some((t0, t1, k0, k1)) = d.box_ticks else {
                 return;
             };
             let dt = selection_gate_dt(s, d, x).round() as i64;
-            s.set_sel_target([
-                geom.tick_to_x(t0),
-                geom.key_to_y(k1),
-                geom.tick_to_x(t1 + dt as f64),
-                geom.key_to_y(k0) + geom.kh,
-            ]);
-            s.hold_sel_edge(0);
-            s.hold_sel_edge(1);
-            s.hold_sel_edge(3);
-            let stamp = (dt, 0, s.pr_view.render_hash());
-            if d.last_ghost != Some(stamp) {
-                d.last_ghost = Some(stamp);
-                let (tick_lo, tick_hi) = s
-                    .pr_view
-                    .visible_main_range(s.pr_view.main_axis_len(lw, lh));
-                let (key_lo, key_hi) = s
-                    .pr_view
-                    .visible_cross_range(s.pr_view.cross_axis_len(lw, lh));
-                let mut ghost = Vec::new();
-                for (key, bucket) in d.drag_by_key.iter().enumerate() {
-                    if (key as u8) < key_lo || (key as u8) > key_hi {
-                        continue;
-                    }
-                    for &(track, start, end, _vel) in bucket {
-                        let new_end = (i64::from(end) + dt).max(i64::from(start) + 1) as u32;
-                        if f64::from(start) >= tick_hi || f64::from(new_end) <= tick_lo {
-                            continue;
+            let stamp = (
+                dt,
+                0,
+                match s.view_mode {
+                    ViewMode::Pianoroll => s.pr_view.render_hash(),
+                    ViewMode::Arrangement => s.arr_view.render_hash(),
+                },
+            );
+            match s.view_mode {
+                ViewMode::Pianoroll => {
+                    let geom = PrGeom::new(&s.pr_view);
+                    s.set_sel_target([
+                        geom.tick_to_x(t0),
+                        geom.key_to_y(k1),
+                        geom.tick_to_x(t1 + dt as f64),
+                        geom.key_to_y(k0) + geom.kh,
+                    ]);
+                    s.hold_sel_edge(0);
+                    s.hold_sel_edge(1);
+                    s.hold_sel_edge(3);
+                    if d.last_ghost != Some(stamp) {
+                        d.last_ghost = Some(stamp);
+                        let (tick_lo, tick_hi) = s
+                            .pr_view
+                            .visible_main_range(s.pr_view.main_axis_len(lw, lh));
+                        let (key_lo, key_hi) = s
+                            .pr_view
+                            .visible_cross_range(s.pr_view.cross_axis_len(lw, lh));
+                        let mut ghost = Vec::new();
+                        for (key, bucket) in d.drag_by_key.iter().enumerate() {
+                            if (key as u8) < key_lo || (key as u8) > key_hi {
+                                continue;
+                            }
+                            for &(track, start, end, _vel) in bucket {
+                                let new_end =
+                                    (i64::from(end) + dt).max(i64::from(start) + 1) as u32;
+                                if f64::from(start) >= tick_hi || f64::from(new_end) <= tick_lo {
+                                    continue;
+                                }
+                                ghost.push((start, new_end, key as u8, track));
+                            }
                         }
-                        ghost.push((start, new_end, key as u8, track));
+                        apply_preview(s, d, std::mem::take(&mut ghost), true);
                     }
                 }
-                apply_preview(s, d, std::mem::take(&mut ghost), true);
+                ViewMode::Arrangement => {
+                    let Some((_, _, r0, r1)) = d.box_rows else {
+                        return;
+                    };
+                    let geom = ArGeom::new(&s.arr_view);
+                    s.set_sel_target([
+                        geom.tick_to_x(t0),
+                        geom.row_to_y(r0),
+                        geom.tick_to_x(t1 + dt as f64),
+                        geom.row_to_y(r1 + 1),
+                    ]);
+                    s.hold_sel_edge(0);
+                    s.hold_sel_edge(1);
+                    s.hold_sel_edge(3);
+                    if d.last_ghost != Some(stamp) {
+                        d.last_ghost = Some(stamp);
+                        let (tick_lo, tick_hi) = s.arr_view.visible_tick_range(lw);
+                        let mut ghost = Vec::new();
+                        for (key, bucket) in d.drag_by_key.iter().enumerate() {
+                            for &(track, start, end, _vel) in bucket {
+                                let new_end =
+                                    (i64::from(end) + dt).max(i64::from(start) + 1) as u32;
+                                if f64::from(start) >= tick_hi || f64::from(new_end) <= tick_lo {
+                                    continue;
+                                }
+                                ghost.push((start, new_end, key as u8, track));
+                            }
+                        }
+                        apply_preview(s, d, std::mem::take(&mut ghost), true);
+                    }
+                }
             }
             bump(s);
         }
@@ -2922,10 +3006,13 @@ fn selection_gate_dt(s: &RenderScene, d: &DragState, x: f32) -> f64 {
     let Some((t0, t1, _, _)) = d.box_ticks else {
         return 0.0;
     };
-    let geom = PrGeom::new(&s.pr_view);
     let q = quantize_of(s);
     let min_ticks = f64::from(q.tick_interval(s.ppq).max(1));
-    let raw = drag_delta_ticks(s, q, d.anchor_tick_raw, geom.x_to_tick(x));
+    let current = match s.view_mode {
+        ViewMode::Pianoroll => PrGeom::new(&s.pr_view).x_to_tick(x),
+        ViewMode::Arrangement => ArGeom::new(&s.arr_view).x_to_tick(x),
+    };
+    let raw = drag_delta_ticks(s, q, d.anchor_tick_raw, current);
     (t1 + raw).max(t0 + min_ticks) - t1
 }
 
@@ -2948,8 +3035,17 @@ fn commit_selection_gate(
     let before = doc.capture_snapshot();
     if let Some(action) = doc.resize_selected_notes(ResizeSide::Right, dt) {
         doc.push_undo(action, "undo.resize_notes", before);
-        if let Some(r) = doc.edit.sel_rect.rects.first_mut() {
-            r.1 = (r.1 + dt as f64).max(r.0 + 1.0);
+        match s.view_mode {
+            ViewMode::Pianoroll => {
+                if let Some(r) = doc.edit.sel_rect.rects.first_mut() {
+                    r.1 = (r.1 + dt as f64).max(r.0 + 1.0);
+                }
+            }
+            ViewMode::Arrangement => {
+                if let Some(r) = doc.edit.arr_sel_rect.first_mut() {
+                    r.1 = (r.1 + dt as f64).max(r.0 + 1.0);
+                }
+            }
         }
         return after_edit(s);
     }
