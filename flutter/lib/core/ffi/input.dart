@@ -9,6 +9,10 @@ typedef Float2IntDart = int Function(double, double);
 final Float2IntDart editBegin = bridge
     .lookupFunction<Float2IntNative, Float2IntDart>('yinhe_edit_begin');
 
+/// 单指落在音符右端：进入改长度，返回 1 表示已接管。
+final Float2IntDart beginNoteResize = bridge
+    .lookupFunction<Float2IntNative, Float2IntDart>('yinhe_begin_note_resize');
+
 /// 以选框语义起手（不修改全局工具；长按拖选框用）。
 final Float2IntDart beginMarquee = bridge
     .lookupFunction<Float2IntNative, Float2IntDart>('yinhe_begin_marquee');

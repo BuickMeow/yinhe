@@ -18,50 +18,21 @@ mixin _ShellInput on _ShellBase {
   int _maxActivePointers = 0;
   Offset? _gestureStart;
   Offset _lastFocal = Offset.zero;
-  double _lastScale = 1.0;
 
-  /// 双指 span（到焦点的平均距离，与 Flutter ScaleGestureRecognizer 同义）。
-  ///
-  /// 双指平移时手指间距会有亚像素噪声，不能直接把 `ScaleUpdateDetails.scale`
-  /// 当成缩放。先在 span 噪声带内只平移，超过 Flutter 同款 scale slop 后才
-  /// 进入缩放，避免画面在双指移动时“呼吸”。
-  double _pinchStartSpan = 0.0;
-  double _pinchLastSpan = 0.0;
-  bool _pinchZoomEngaged = false;
+  /// 双指缩放的分轴基准（Flutter horizontalScale / verticalScale）。
+  double _lastHScale = 1.0;
+  double _lastVScale = 1.0;
+
+  /// 指针数量变化后跳过一帧缩放，避免基准跳变。
+  bool _pinchRebase = false;
   bool _gestureEditing = false;
   bool _gestureWasEditing = false;
   bool _gestureZoomed = false;
   bool _gestureMoved = false;
-  bool _pinchModeLocked = false;
-  int _gestureMode = _gesturePan;
 
   bool _isRightMouse(PointerEvent e) =>
       e.kind == PointerDeviceKind.mouse &&
       (e.buttons & kSecondaryMouseButton) != 0;
-
-  /// 双指 span：两指距离的一半，和 Flutter `_ScaleGestureRecognizer._currentSpan`
-  /// 对双指的定义一致。
-  double _pinchSpan() {
-    final points = _pointerPositions.values.toList(growable: false);
-    if (points.length < 2) {
-      return 0.0;
-    }
-    return (points[0] - points[1]).distance * 0.5;
-  }
-
-  void _resetPinchSpan() {
-    _pinchStartSpan = 0.0;
-    _pinchLastSpan = 0.0;
-    _pinchZoomEngaged = false;
-  }
-
-  /// 以当前两指位置重新取缩放基准（指针数量变化、或指针下落不完整时）。
-  void _rebasePinchSpan() {
-    final span = _pinchSpan();
-    _pinchStartSpan = span;
-    _pinchLastSpan = span;
-    _pinchZoomEngaged = false;
-  }
 
   /// 第一根手指按下时立即 begin，保证铅笔/选框没有 100ms 点击延迟。
   /// 后续的 tap / long press / scale 全部交给 Flutter gesture arena。
@@ -79,26 +50,24 @@ mixin _ShellInput on _ShellBase {
       _maxActivePointers = _activePointers.length;
     }
     if (!emptyBefore) {
-      // 第二根手指：取消正在进行的编辑，交给 Flutter 双指手势。
-      // 以两指刚落下时的 span 为噪声基准；手势被 arena 接受后再开始累计。
-      _rebasePinchSpan();
+      // 第二根手指：取消编辑，交给 Flutter 双指手势；下一帧只平移不缩放。
       rust.editCancel();
       _gestureEditing = false;
       _gestureZoomed = false;
-      _pinchModeLocked = false;
+      _pinchRebase = true;
       _clearLongPressUi();
       return;
     }
 
     _gestureStart = e.localPosition;
     _lastFocal = e.localPosition;
-    _lastScale = 1.0;
+    _lastHScale = 1.0;
+    _lastVScale = 1.0;
+    _pinchRebase = false;
     _gestureEditing = false;
     _gestureWasEditing = false;
     _gestureZoomed = false;
     _gestureMoved = false;
-    _pinchModeLocked = false;
-    _gestureMode = _gesturePan;
     rust.stopFling();
     _gestureEditing =
         rust.editBegin(e.localPosition.dx, e.localPosition.dy) == 1;
@@ -119,17 +88,14 @@ mixin _ShellInput on _ShellBase {
     _activePointers.remove(e.pointer);
     _pointerPositions.remove(e.pointer);
     if (_activePointers.isNotEmpty) {
-      // 三指变两指：重新取基准；两指变单指：等下一段 ScaleStart 接管平移。
-      if (_pointerPositions.length >= 2) {
-        _rebasePinchSpan();
-      } else {
-        _resetPinchSpan();
-      }
+      // 指针数量变化：下一帧只平移不缩放，重新取基准。
+      _pinchRebase = true;
       return;
     }
     _lastFocal = e.localPosition;
-    _pinchModeLocked = false;
-    _resetPinchSpan();
+    _lastHScale = 1.0;
+    _lastVScale = 1.0;
+    _pinchRebase = false;
     // PointerUp 带精确落点；编辑在最后一根手指离开时立即提交，避免只靠
     // ScaleEnd 的“最后一次 move”导致笔尖/音符结束位置偏几像素。
     if (_gestureEditing) {
@@ -142,11 +108,7 @@ mixin _ShellInput on _ShellBase {
     _activePointers.remove(e.pointer);
     _pointerPositions.remove(e.pointer);
     if (_activePointers.isNotEmpty) {
-      if (_pointerPositions.length >= 2) {
-        _rebasePinchSpan();
-      } else {
-        _resetPinchSpan();
-      }
+      _pinchRebase = true;
       return;
     }
     rust.editCancel();
@@ -154,8 +116,9 @@ mixin _ShellInput on _ShellBase {
     _gestureWasEditing = false;
     _gestureZoomed = false;
     _gestureMoved = false;
-    _pinchModeLocked = false;
-    _resetPinchSpan();
+    _pinchRebase = false;
+    _lastHScale = 1.0;
+    _lastVScale = 1.0;
     _clearLongPressUi();
   }
 
@@ -171,14 +134,14 @@ mixin _ShellInput on _ShellBase {
     final p = d.localPosition;
     if (_gestureEditing) {
       _finishEditGesture(p, moved: _gestureMoved);
+    } else if (rust.clearSelection() == 1) {
+      // 有选框：这一次点击只负责清除选框，不落音/删除/切轨。
     } else if (_viewMode == kViewPianoroll) {
-      // 单击先清空选框；再落音/删除。
-      rust.clearSelection();
+      // 没有选框才允许写音符：点空白落音、点音符删除。
       if (rust.tapNote(p.dx, p.dy) == 1) {
         _refreshDocumentMeta();
       }
     } else {
-      rust.clearSelection();
       _handleCanvasTap(p);
     }
     _gestureWasEditing = false;
@@ -187,109 +150,84 @@ mixin _ShellInput on _ShellBase {
 
   // ── 双指 / 单指平移缩放 ──
 
-  /// 起手锁定缩放轴：内容区只缩放时间轴；PR 键盘列锁音高，AR 面板锁行高。
-  int _modeAt(Offset p) {
-    final panel = _snap.value.length > 5 ? _snap.value[5] : 0.0;
-    if (_viewMode == kViewPianoroll) {
-      return p.dx < panel ? _gesturePrPitch : _gesturePrTime;
-    }
-    return p.dx < panel ? _gestureArLane : _gestureArTime;
-  }
-
-  void _lockPinch(Offset p) {
-    _pinchModeLocked = true;
-    _gestureMode = _modeAt(p);
-    rust.editCancel();
-    _gestureEditing = false;
-    _gestureZoomed = false;
-    _clearLongPressUi();
-  }
-
   @override
   void _handleScaleStart(ScaleStartDetails d) {
     rust.stopFling();
     _clearLongPressUi();
     _lastFocal = d.localFocalPoint;
-    _lastScale = 1.0;
     _gestureZoomed = false;
     _gestureMoved = false;
+    final downPos = _gestureStart;
     _gestureStart = d.localFocalPoint;
-    if (d.pointerCount >= 2) {
-      if (_pinchStartSpan <= 0.0) {
-        _rebasePinchSpan();
-      }
-      _lockPinch(d.localFocalPoint);
-    } else {
-      _resetPinchSpan();
-      _pinchModeLocked = false;
-      _gestureMode = _gesturePan;
+    _lastHScale = 1.0;
+    _lastVScale = 1.0;
+    _pinchRebase = false;
+    _gestureEditing = false;
+    if (d.pointerCount == 1) {
+      // 从音符右端起手：用按下点判定（scale 起手点已经被第一次移动带偏）。
+      final hit = downPos ?? d.localFocalPoint;
+      _gestureEditing = rust.beginNoteResize(hit.dx, hit.dy) == 1;
+      _gestureWasEditing = _gestureEditing;
     }
   }
 
   @override
   void _handleScaleUpdate(ScaleUpdateDetails d) {
     final focal = d.localFocalPoint;
-    final pinch = d.pointerCount >= 2 || (d.scale - 1.0).abs() > 0.0001;
+    final pinch =
+        d.pointerCount >= 2 ||
+        (d.horizontalScale - 1.0).abs() > 0.0001 ||
+        (d.verticalScale - 1.0).abs() > 0.0001;
     if (pinch) {
       if (_gestureEditing) {
         rust.editCancel();
         _gestureEditing = false;
       }
-      if (!_pinchModeLocked) {
-        // 从单指平移过渡到双指：以当前焦点为基准重新起手，避免第一帧跳变。
-        _pinchModeLocked = true;
-        _gestureMode = _modeAt(focal);
-        if (_pinchStartSpan <= 0.0) {
-          _rebasePinchSpan();
-        }
-        _lastFocal = focal;
-        _lastScale = d.scale;
+      final pan = focal - _lastFocal;
+      _lastFocal = focal;
+      final hs = d.horizontalScale.isFinite ? d.horizontalScale : 1.0;
+      final vs = d.verticalScale.isFinite ? d.verticalScale : 1.0;
+      if (_pinchRebase) {
+        _pinchRebase = false;
+        _lastHScale = hs;
+        _lastVScale = vs;
         return;
       }
-      final pan = focal - _lastFocal;
-      final span = _pinchSpan();
-      double scaleDelta;
-      if (span > 0.0 && _pinchStartSpan > 0.0) {
-        if (!_pinchZoomEngaged) {
-          // 双指平移的 span 噪声带：还没超过 Flutter 同款 scale slop 时只平移。
-          if ((span - _pinchStartSpan).abs() < kScaleSlop) {
-            scaleDelta = 1.0;
-          } else {
-            // 第一次确认是缩放：把门限前累积的 span 一次应用，避免起缩跳变。
-            scaleDelta = span / _pinchStartSpan;
-            _pinchZoomEngaged = true;
-            _pinchLastSpan = span;
-          }
-        } else {
-          final last = _pinchLastSpan > 0.0 ? _pinchLastSpan : span;
-          scaleDelta = span / last;
-          _pinchLastSpan = span;
-        }
-      } else {
-        // 触控板等没有逐指位置的回退路径：沿用累计 scale。
-        final last = _lastScale <= 0.0 ? 1.0 : _lastScale;
-        scaleDelta = d.scale / last;
-        _lastScale = d.scale;
+      var hDelta = _lastHScale <= 0 ? 1.0 : hs / _lastHScale;
+      var vDelta = _lastVScale <= 0 ? 1.0 : vs / _lastVScale;
+      _lastHScale = hs;
+      _lastVScale = vs;
+      // 双指平移的微小噪声不触发缩放，避免画面“呼吸”。
+      if ((hDelta - 1.0).abs() < 0.01) {
+        hDelta = 1.0;
       }
+      if ((vDelta - 1.0).abs() < 0.01) {
+        vDelta = 1.0;
+      }
+      final timeMode = _viewMode == kViewPianoroll
+          ? _gesturePrTime
+          : _gestureArTime;
+      final crossMode = _viewMode == kViewPianoroll
+          ? _gesturePrPitch
+          : _gestureArLane;
+      // 平移 + 左右缩放；纵向/斜向再叠加副轴缩放。
       rust.viewportGesture(
-        _gestureMode,
+        timeMode,
         pan.dx,
         pan.dy,
-        scaleDelta,
+        hDelta,
         focal.dx,
         focal.dy,
       );
-      if ((scaleDelta - 1.0).abs() > 0.0001) {
+      if ((vDelta - 1.0).abs() > 1e-6) {
+        rust.viewportGesture(crossMode, 0.0, 0.0, vDelta, focal.dx, focal.dy);
+      }
+      if ((hDelta - 1.0).abs() > 1e-6 || (vDelta - 1.0).abs() > 1e-6) {
         _gestureZoomed = true;
       }
-      _lastFocal = focal;
-      _lastScale = d.scale;
       return;
     }
 
-    if (_pointerPositions.length < 2) {
-      _resetPinchSpan();
-    }
     final pan = focal - _lastFocal;
     if (_gestureEditing) {
       final active = rust.editUpdate(focal.dx, focal.dy) == 1;
@@ -319,7 +257,6 @@ mixin _ShellInput on _ShellBase {
       _gestureMoved = true;
     }
     _lastFocal = focal;
-    _lastScale = d.scale;
   }
 
   @override
@@ -337,11 +274,9 @@ mixin _ShellInput on _ShellBase {
     _gestureWasEditing = false;
     _gestureZoomed = false;
     _gestureMoved = false;
-    _pinchModeLocked = false;
-    _gestureMode = _gesturePan;
-    if (_pointerPositions.length < 2) {
-      _resetPinchSpan();
-    }
+    _pinchRebase = false;
+    _lastHScale = 1.0;
+    _lastVScale = 1.0;
     _clearLongPressUi();
   }
 
@@ -580,13 +515,13 @@ mixin _ShellInput on _ShellBase {
     rust.resetInteraction();
     _activePointers.clear();
     _pointerPositions.clear();
-    _resetPinchSpan();
+    _lastHScale = 1.0;
+    _lastVScale = 1.0;
+    _pinchRebase = false;
     _gestureEditing = false;
     _gestureWasEditing = false;
     _gestureZoomed = false;
     _gestureMoved = false;
-    _pinchModeLocked = false;
-    _gestureMode = _gesturePan;
     _clearLongPressUi();
     _clearInsertStatus();
   }
@@ -611,9 +546,9 @@ mixin _ShellInput on _ShellBase {
     _gestureWasEditing = false;
     _gestureZoomed = false;
     _gestureMoved = false;
-    _pinchModeLocked = false;
-    _gestureMode = _gesturePan;
-    _resetPinchSpan();
+    _pinchRebase = false;
+    _lastHScale = 1.0;
+    _lastVScale = 1.0;
     _clearLongPressUi();
     action();
     _readDocState();

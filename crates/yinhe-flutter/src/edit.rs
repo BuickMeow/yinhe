@@ -686,6 +686,57 @@ pub fn long_press_context_json() -> String {
     )
 }
 
+/// 单指从音符右端起手：直接进入 NOTE_RESIZE（仅供 Flutter 在平移前尝试）。
+pub fn begin_note_resize(x: f32, y: f32) -> i32 {
+    let Ok(mut d) = DRAG.lock() else {
+        return 0;
+    };
+    *d = DragState {
+        x0: x,
+        y0: y,
+        px: x,
+        py: y,
+        ..Default::default()
+    };
+    crate::audio::stop_preview();
+    let Ok(s) = scene::scene().lock() else {
+        return 0;
+    };
+    if s.view_mode != ViewMode::Pianoroll || s.document.is_none() {
+        return 0;
+    }
+    let geom = PrGeom::new(&s.pr_view);
+    if x < geom.kbw {
+        return 0;
+    }
+    let Some((track, start_tick, end_tick, key, side)) = hit_note(&s, &geom, x, y) else {
+        return 0;
+    };
+    if side != 2 {
+        return 0; // 只有音符右端可以改长度
+    }
+    d.kind = kind::NOTE_RESIZE;
+    d.track = track;
+    d.start_tick = start_tick;
+    d.end_tick = end_tick;
+    d.key = key;
+    d.side = side;
+    d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::from([(
+        track, start_tick, key,
+    )])));
+    if let Some(velocity) = note_velocity(&s, track, start_tick, key) {
+        preview_note(
+            &s,
+            track,
+            key,
+            velocity,
+            start_tick,
+            end_tick.saturating_sub(start_tick),
+        );
+    }
+    1
+}
+
 /// 长按点是否落在已有选框内（PR/AR）。
 pub fn selection_box_at(x: f32, y: f32) -> i32 {
     let Ok(s) = scene::scene().lock() else {

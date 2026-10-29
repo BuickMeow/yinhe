@@ -542,6 +542,12 @@ pub extern "C" fn yinhe_begin_marquee(x: f32, y: f32) -> i32 {
     edit::begin_marquee(x, y)
 }
 
+/// 单指落在音符右端：进入改长度（返回 0 则按普通平移处理）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_begin_note_resize(x: f32, y: f32) -> i32 {
+    edit::begin_note_resize(x, y)
+}
+
 /// 长按点是否落在已有选框内。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_selection_box_at(x: f32, y: f32) -> i32 {
