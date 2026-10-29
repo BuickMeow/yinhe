@@ -12,6 +12,7 @@ import '../core/ffi.dart' as rust;
 import '../core/snack.dart';
 import '../core/edit_status.dart';
 import '../core/multi_finger_gesture.dart';
+import '../core/pinch_zoom.dart';
 import '../dialogs/add_tracks_dialog.dart';
 import '../dialogs/batch_edit_dialog.dart';
 import '../dialogs/inputs.dart';

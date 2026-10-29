@@ -19,9 +19,8 @@ mixin _ShellInput on _ShellBase {
   Offset? _gestureStart;
   Offset _lastFocal = Offset.zero;
 
-  /// 双指缩放的分轴基准（Flutter horizontalScale / verticalScale）。
-  double _lastHScale = 1.0;
-  double _lastVScale = 1.0;
+  /// 双指分轴缩放：绝对间距起手 + 逐帧跟手。
+  final PinchZoom _pinchZoom = PinchZoom();
 
   /// 指针数量变化后跳过一帧缩放，避免基准跳变。
   bool _pinchRebase = false;
@@ -61,9 +60,8 @@ mixin _ShellInput on _ShellBase {
 
     _gestureStart = e.localPosition;
     _lastFocal = e.localPosition;
-    _lastHScale = 1.0;
-    _lastVScale = 1.0;
     _pinchRebase = false;
+    _pinchZoom.rebase(_pointerPositions.values.toList(growable: false));
     _gestureEditing = false;
     _gestureWasEditing = false;
     _gestureZoomed = false;
@@ -93,9 +91,8 @@ mixin _ShellInput on _ShellBase {
       return;
     }
     _lastFocal = e.localPosition;
-    _lastHScale = 1.0;
-    _lastVScale = 1.0;
     _pinchRebase = false;
+    _pinchZoom.rebase(_pointerPositions.values.toList(growable: false));
     // PointerUp 带精确落点；编辑在最后一根手指离开时立即提交，避免只靠
     // ScaleEnd 的“最后一次 move”导致笔尖/音符结束位置偏几像素。
     if (_gestureEditing) {
@@ -117,8 +114,7 @@ mixin _ShellInput on _ShellBase {
     _gestureZoomed = false;
     _gestureMoved = false;
     _pinchRebase = false;
-    _lastHScale = 1.0;
-    _lastVScale = 1.0;
+    _pinchZoom.rebase(_pointerPositions.values.toList(growable: false));
     _clearLongPressUi();
   }
 
@@ -159,9 +155,8 @@ mixin _ShellInput on _ShellBase {
     _gestureMoved = false;
     final downPos = _gestureStart;
     _gestureStart = d.localFocalPoint;
-    _lastHScale = 1.0;
-    _lastVScale = 1.0;
     _pinchRebase = false;
+    _pinchZoom.rebase(_pointerPositions.values.toList(growable: false));
     _gestureEditing = false;
     if (d.pointerCount == 1) {
       // 从音符右端起手：用按下点判定（scale 起手点已经被第一次移动带偏）。
@@ -174,36 +169,21 @@ mixin _ShellInput on _ShellBase {
   @override
   void _handleScaleUpdate(ScaleUpdateDetails d) {
     final focal = d.localFocalPoint;
-    final pinch =
-        d.pointerCount >= 2 ||
-        (d.horizontalScale - 1.0).abs() > 0.0001 ||
-        (d.verticalScale - 1.0).abs() > 0.0001;
-    if (pinch) {
+    if (d.pointerCount >= 2) {
       if (_gestureEditing) {
         rust.editCancel();
         _gestureEditing = false;
       }
       final pan = focal - _lastFocal;
       _lastFocal = focal;
-      final hs = d.horizontalScale.isFinite ? d.horizontalScale : 1.0;
-      final vs = d.verticalScale.isFinite ? d.verticalScale : 1.0;
       if (_pinchRebase) {
         _pinchRebase = false;
-        _lastHScale = hs;
-        _lastVScale = vs;
+        _pinchZoom.rebase(_pointerPositions.values.toList(growable: false));
         return;
       }
-      var hDelta = _lastHScale <= 0 ? 1.0 : hs / _lastHScale;
-      var vDelta = _lastVScale <= 0 ? 1.0 : vs / _lastVScale;
-      _lastHScale = hs;
-      _lastVScale = vs;
-      // 双指平移的微小噪声不触发缩放，避免画面“呼吸”。
-      if ((hDelta - 1.0).abs() < 0.01) {
-        hDelta = 1.0;
-      }
-      if ((vDelta - 1.0).abs() < 0.01) {
-        vDelta = 1.0;
-      }
+      final (hDelta, vDelta) = _pinchZoom.update(
+        _pointerPositions.values.toList(growable: false),
+      );
       final timeMode = _viewMode == kViewPianoroll
           ? _gesturePrTime
           : _gestureArTime;
@@ -275,8 +255,7 @@ mixin _ShellInput on _ShellBase {
     _gestureZoomed = false;
     _gestureMoved = false;
     _pinchRebase = false;
-    _lastHScale = 1.0;
-    _lastVScale = 1.0;
+    _pinchZoom.rebase(_pointerPositions.values.toList(growable: false));
     _clearLongPressUi();
   }
 
@@ -515,9 +494,8 @@ mixin _ShellInput on _ShellBase {
     rust.resetInteraction();
     _activePointers.clear();
     _pointerPositions.clear();
-    _lastHScale = 1.0;
-    _lastVScale = 1.0;
     _pinchRebase = false;
+    _pinchZoom.rebase(_pointerPositions.values.toList(growable: false));
     _gestureEditing = false;
     _gestureWasEditing = false;
     _gestureZoomed = false;
@@ -547,8 +525,7 @@ mixin _ShellInput on _ShellBase {
     _gestureZoomed = false;
     _gestureMoved = false;
     _pinchRebase = false;
-    _lastHScale = 1.0;
-    _lastVScale = 1.0;
+    _pinchZoom.rebase(_pointerPositions.values.toList(growable: false));
     _clearLongPressUi();
     action();
     _readDocState();
