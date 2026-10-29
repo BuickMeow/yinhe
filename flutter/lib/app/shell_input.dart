@@ -315,23 +315,46 @@ mixin _ShellInput on _ShellBase {
     _marqueeHintPos.value = p;
     _marqueeHint.value = 0;
     _marqueeHintStart = DateTime.now();
+    _marqueeHintFading = false;
+    _marqueeHintFadeStart = null;
   }
 
   void _tickMarqueeHint() {
+    if (_marqueeHintFading) {
+      final start = _marqueeHintFadeStart;
+      if (start == null) {
+        return;
+      }
+      final ms = DateTime.now().difference(start).inMilliseconds;
+      final t = 1.0 + (ms / 120).clamp(0.0, 1.0);
+      _marqueeHint.value = t;
+      if (t >= 2) {
+        _stopMarqueeHint();
+      }
+      return;
+    }
     final start = _marqueeHintStart;
     if (start == null) {
       return;
     }
     final ms = DateTime.now().difference(start).inMilliseconds;
-    final t = (ms / 420).clamp(0.0, 1.0);
-    _marqueeHint.value = t;
-    if (t >= 1) {
-      _stopMarqueeHint();
+    // 先放大，随后保持到松手；开始拖框时才淡出。
+    _marqueeHint.value = (ms / 180).clamp(0.0, 1.0);
+  }
+
+  /// 开始拖框：小方框淡出，真实选框接手。
+  void _fadeOutMarqueeHint() {
+    if (_marqueeHintPos.value == null) {
+      return;
     }
+    _marqueeHintFading = true;
+    _marqueeHintFadeStart = DateTime.now();
   }
 
   void _stopMarqueeHint() {
     _marqueeHintStart = null;
+    _marqueeHintFading = false;
+    _marqueeHintFadeStart = null;
     _marqueeHintPos.value = null;
     _marqueeHint.value = 0;
   }
@@ -493,7 +516,7 @@ mixin _ShellInput on _ShellBase {
 
   /// 长按拖动开始：临时切到选框工具，从按下点拉框。
   void _startMarquee(Offset press) {
-    _stopMarqueeHint();
+    _fadeOutMarqueeHint();
     rust.clearSelection();
     _gestureEditing = rust.beginMarquee(press.dx, press.dy) == 1;
   }

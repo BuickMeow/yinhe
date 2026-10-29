@@ -269,6 +269,8 @@ abstract class _ShellBase extends State<StudioShell>
   final ValueNotifier<Offset?> _marqueeHintPos = ValueNotifier(null);
   final ValueNotifier<double> _marqueeHint = ValueNotifier(0);
   DateTime? _marqueeHintStart;
+  bool _marqueeHintFading = false;
+  DateTime? _marqueeHintFadeStart;
 
   /// 选框锚点出现动画（0=隐藏，1=正常大小，允许轻微回弹）。
   final ValueNotifier<double> _handlesScale = ValueNotifier(0);

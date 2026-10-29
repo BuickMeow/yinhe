@@ -389,6 +389,23 @@ impl RenderScene {
         self.anim_last = Some(std::time::Instant::now());
     }
 
+    /// 固定选框某条边（0=左 1=上 2=右 3=下）：预览时该边不参与缓动。
+    pub fn hold_box_edge(&mut self, edge: usize) {
+        if edge < 4 {
+            self.box_anim[edge] = 0.0;
+            if self.box_target.is_some() {
+                self.overlay_box = Some(self.animated_box());
+            }
+        }
+    }
+
+    /// 固定选区某条边（锚点拖动时对边不动）。
+    pub fn hold_sel_edge(&mut self, edge: usize) {
+        if edge < 4 {
+            self.sel_anim[edge] = 0.0;
+        }
+    }
+
     /// ghost 目标发生跳变：把像素差累加到缓动偏移上。
     pub fn nudge_ghost(&mut self, dx: f32, dy: f32) {
         if dx == 0.0 && dy == 0.0 {

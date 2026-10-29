@@ -97,21 +97,21 @@ class MarqueeHintPainter extends CustomPainter {
 
   final ValueNotifier<Offset?> pos;
 
-  /// 0..1（0 = 刚出现，1 = 完全消失）。
+  /// 0..1 = 放大并保持；1..2 = 开始拖框时淡出。
   final ValueNotifier<double> progress;
 
   @override
   void paint(Canvas canvas, Size size) {
     final p = pos.value;
-    final t = progress.value.clamp(0.0, 1.0);
-    if (p == null || t <= 0 || t >= 1) {
+    final t = progress.value.clamp(0.0, 2.0);
+    if (p == null || t <= 0 || t >= 2) {
       return;
     }
-    // 快速淡入（前 18%），随后放大 + 淡出。
-    final fadeIn = (t / 0.18).clamp(0.0, 1.0);
-    final fadeOut = 1.0 - ((t - 0.18) / 0.82).clamp(0.0, 1.0);
+    final grow = t.clamp(0.0, 1.0);
+    final fadeIn = (grow / 0.18).clamp(0.0, 1.0);
+    final fadeOut = t <= 1 ? 1.0 : 1.0 - (t - 1.0).clamp(0.0, 1.0);
     final alpha = 0.85 * fadeIn * fadeOut;
-    final side = 10.0 + 14.0 * Curves.easeOutCubic.transform(t);
+    final side = 10.0 + 14.0 * Curves.easeOutCubic.transform(grow);
     // 无圆角：和选框锚点一样是方框提示。
     final rect = Rect.fromCenter(center: p, width: side, height: side);
     canvas.drawRect(

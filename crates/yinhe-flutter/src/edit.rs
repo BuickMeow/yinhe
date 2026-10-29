@@ -813,10 +813,6 @@ pub fn begin_selection_handle(x: f32, y: f32) -> i32 {
             ar_selection_handle(&s, &geom, x, y)
         }
     };
-    log::info!(
-        "begin_selection_handle x={x} y={y} hit={}",
-        handle.is_some()
-    );
     let Some(h) = handle else {
         return 0;
     };
@@ -1436,63 +1432,123 @@ fn update_sel_resize(d: &DragState, s: &mut RenderScene, x: f32, y: f32) {
         return;
     };
     let cur_tick = view_tick_at(s, x);
+    // 锚点拖动只动被抓住的那条边；对边固定，可越过固定边翻转。
+    // 排序后写回选区；固定边在视觉上不参与缓动。
+    fn clamp_edge(moving: f64, fixed: f64) -> f64 {
+        if moving >= fixed {
+            moving.max(fixed + 1.0)
+        } else {
+            moving.min(fixed - 1.0).max(0.0)
+        }
+    }
+    let fixed_edge = match d.sel_edge {
+        0 => 3, // 上 → 固定下
+        1 => 1, // 下 → 固定上
+        2 => 2, // 左 → 固定右
+        _ => 0, // 右 → 固定左
+    };
     match s.view_mode {
         ViewMode::Pianoroll => {
             let geom = PrGeom::new(&s.pr_view);
             let cur_key = geom.y_to_key(y);
-            let (mut nt0, mut nt1, mut nk0, mut nk1) = (t0, t1, k0, k1);
+            let (mut nt0, mut nt1) = (t0, t1);
+            let (mut nk0, mut nk1) = (k0, k1);
             match d.sel_edge {
-                0 => nk1 = cur_key.max(nk0),
-                1 => nk0 = cur_key.min(nk1),
-                2 => nt0 = cur_tick.min(nt1 - 1.0).max(0.0),
-                3 => nt1 = cur_tick.max(nt0 + 1.0),
+                0 => nk1 = cur_key,
+                1 => nk0 = cur_key,
+                2 => nt0 = cur_tick.max(0.0),
+                3 => nt1 = cur_tick.max(0.0),
                 _ => return,
             }
-            nt0 = nt0.max(0.0);
-            nt1 = nt1.max(nt0 + 1.0);
+            if d.sel_edge == 2 || d.sel_edge == 3 {
+                let fixed = if d.sel_edge == 2 { t1 } else { t0 };
+                let moving = if d.sel_edge == 2 { nt0 } else { nt1 };
+                let m = clamp_edge(moving, fixed);
+                if d.sel_edge == 2 {
+                    nt0 = m;
+                } else {
+                    nt1 = m;
+                }
+            } else {
+                let fixed = if d.sel_edge == 0 { k0 } else { k1 };
+                let moving = if d.sel_edge == 0 { nk1 } else { nk0 };
+                let m = if moving >= fixed {
+                    moving.max(fixed.saturating_add(1))
+                } else {
+                    moving.min(fixed.saturating_sub(1))
+                };
+                if d.sel_edge == 0 {
+                    nk1 = m;
+                } else {
+                    nk0 = m;
+                }
+            }
+            let (lo_t, hi_t) = (nt0.min(nt1), nt0.max(nt1));
+            let (lo_k, hi_k) = (nk0.min(nk1), nk0.max(nk1));
             if let Some(doc) = s.document.as_mut()
                 && let Some(rect) = doc.edit.sel_rect.rects.first_mut()
             {
-                *rect = (nt0, nt1, nk0, nk1);
+                *rect = (lo_t, hi_t, lo_k, hi_k);
             }
             s.set_sel_target([
-                geom.tick_to_x(nt0),
-                geom.key_to_y(nk1),
-                geom.tick_to_x(nt1),
-                geom.key_to_y(nk0) + geom.kh,
+                geom.tick_to_x(lo_t),
+                geom.key_to_y(hi_k),
+                geom.tick_to_x(hi_t),
+                geom.key_to_y(lo_k) + geom.kh,
             ]);
+            s.hold_sel_edge(fixed_edge);
             bump(s);
         }
         ViewMode::Arrangement => {
             let geom = ArGeom::new(&s.arr_view);
             let cur_row = geom.y_to_row(y).min(s.num_tracks.saturating_sub(1));
-            let (mut nt0, mut nt1, mut nr0, mut nr1) = (
-                t0,
-                t1,
-                d.box_rows.map_or(0, |r| r.2),
-                d.box_rows.map_or(0, |r| r.3),
-            );
+            let (mut nt0, mut nt1) = (t0, t1);
+            let (mut nr0, mut nr1) = (d.box_rows.map_or(0, |r| r.2), d.box_rows.map_or(0, |r| r.3));
             match d.sel_edge {
                 // AR 行号向下增大：上控制点改 r0，下控制点改 r1。
-                0 => nr0 = cur_row.min(nr1),
-                1 => nr1 = cur_row.max(nr0),
-                2 => nt0 = cur_tick.min(nt1 - 1.0).max(0.0),
-                3 => nt1 = cur_tick.max(nt0 + 1.0),
+                0 => nr0 = cur_row,
+                1 => nr1 = cur_row,
+                2 => nt0 = cur_tick.max(0.0),
+                3 => nt1 = cur_tick.max(0.0),
                 _ => return,
             }
-            nt0 = nt0.max(0.0);
-            nt1 = nt1.max(nt0 + 1.0);
+            if d.sel_edge == 0 || d.sel_edge == 1 {
+                let fixed = if d.sel_edge == 0 { nr1 } else { nr0 };
+                let moving = if d.sel_edge == 0 { nr0 } else { nr1 };
+                let m = if moving >= fixed {
+                    moving.max(fixed + 1)
+                } else {
+                    moving.saturating_sub(1)
+                };
+                if d.sel_edge == 0 {
+                    nr0 = m;
+                } else {
+                    nr1 = m;
+                }
+            } else {
+                let fixed = if d.sel_edge == 2 { t1 } else { t0 };
+                let moving = if d.sel_edge == 2 { nt0 } else { nt1 };
+                let m = clamp_edge(moving, fixed);
+                if d.sel_edge == 2 {
+                    nt0 = m;
+                } else {
+                    nt1 = m;
+                }
+            }
+            let (lo_t, hi_t) = (nt0.min(nt1), nt0.max(nt1));
+            let (lo_r, hi_r) = (nr0.min(nr1), nr0.max(nr1));
             if let Some(doc) = s.document.as_mut()
                 && let Some(rect) = doc.edit.arr_sel_rect.first_mut()
             {
-                *rect = (nt0, nt1, nr0, nr1);
+                *rect = (lo_t, hi_t, lo_r, hi_r);
             }
             s.set_sel_target([
-                geom.tick_to_x(nt0),
-                geom.row_to_y(nr0),
-                geom.tick_to_x(nt1),
-                geom.row_to_y(nr1 + 1),
+                geom.tick_to_x(lo_t),
+                geom.row_to_y(lo_r),
+                geom.tick_to_x(hi_t),
+                geom.row_to_y(hi_r + 1),
             ]);
+            s.hold_sel_edge(fixed_edge);
             bump(s);
         }
     }
@@ -1906,6 +1962,34 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                 }
             };
             s.set_box_target(b);
+            // 新建选框：起手那条边固定，只让另一端跟随手指（可越过起点翻转）。
+            if d.kind == kind::MARQUEE {
+                let (cur_tick, y_edge) = match s.view_mode {
+                    ViewMode::Pianoroll => {
+                        let geom = PrGeom::new(&s.pr_view);
+                        let q = quantize_of(s);
+                        let snap = scene::SnapCtx::new(s);
+                        let k_cur = geom.y_to_key(y);
+                        (
+                            snap.round(q, geom.x_to_tick(x)),
+                            if d.anchor_key >= k_cur { 1 } else { 3 },
+                        )
+                    }
+                    ViewMode::Arrangement => {
+                        let geom = ArGeom::new(&s.arr_view);
+                        let q = quantize_of(s);
+                        let snap = scene::SnapCtx::new(s);
+                        let r_cur = geom.y_to_row(y);
+                        (
+                            snap.round(q, geom.x_to_tick(x)),
+                            if r_cur >= d.anchor_row { 1 } else { 3 },
+                        )
+                    }
+                };
+                let x_edge = if cur_tick >= d.anchor_tick { 0 } else { 2 };
+                s.hold_box_edge(x_edge);
+                s.hold_box_edge(y_edge);
+            }
             if d.kind == kind::ERASE {
                 build_erase_preview(s, d, x, y);
             } else {
