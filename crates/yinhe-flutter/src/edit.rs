@@ -1777,7 +1777,8 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                         {
                             s.nudge_ghost(
                                 (old_dt - dt) as f32 * geom.ppu,
-                                (old_dk - dk) as f32 * geom.kh,
+                                // PR 的 key 越大 y 越小，这里要取反，否则动画会从下一格倒着回来。
+                                (dk - old_dk) as f32 * geom.kh,
                             );
                         }
                         d.last_ghost = Some(stamp);
@@ -1961,7 +1962,8 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                 if same_view {
                     s.nudge_ghost(
                         (old_dt - dt) as f32 * geom.ppu,
-                        (old_dk - dk) as f32 * geom.kh,
+                        // 同上：key 增长方向与屏幕 y 相反。
+                        (dk - old_dk) as f32 * geom.kh,
                     );
                 }
                 d.last_ghost = Some(stamp);
