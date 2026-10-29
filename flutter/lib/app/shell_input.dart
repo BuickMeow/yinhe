@@ -208,6 +208,7 @@ mixin _ShellInput on _ShellBase {
       if ((hDelta - 1.0).abs() > 1e-6 || (vDelta - 1.0).abs() > 1e-6) {
         _gestureZoomed = true;
       }
+      rust.renderFrame();
       return;
     }
 
@@ -236,6 +237,8 @@ mixin _ShellInput on _ShellBase {
         focal.dy,
       );
     }
+    // 输入比下一帧 ticker 更早到达时，立刻踢一帧渲染，少等一个 vsync。
+    rust.renderFrame();
     if (_gestureStart != null && (focal - _gestureStart!).distance > 3.0) {
       _gestureMoved = true;
     }
@@ -425,6 +428,7 @@ mixin _ShellInput on _ShellBase {
       _gestureEditing = false;
       return;
     }
+    rust.renderFrame();
     if (_lpPos != null && (p - _lpPos!).distance > 12.0) {
       _lpMoved = true;
     }

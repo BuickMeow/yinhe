@@ -338,8 +338,10 @@ impl Default for RenderScene {
     }
 }
 
-/// 预览动画时间常数：约 90ms 衰减到 5%。
-const PREVIEW_ANIM_TAU: f32 = 0.032;
+/// 预览动画时间常数：约 45ms 衰减到 5%。
+///
+/// 量化跳变本身是离散的，动画只负责抹掉台阶；时间常数过长会明显落后手指。
+const PREVIEW_ANIM_TAU: f32 = 0.016;
 /// 小于此像素值直接归零，避免无限小尾巴。
 const PREVIEW_ANIM_EPS: f32 = 0.08;
 
