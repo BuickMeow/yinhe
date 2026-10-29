@@ -427,6 +427,27 @@ fn begin_sel_handle(d: &mut DragState, s: &mut RenderScene, h: SelHandle) {
         // Riff 预览只画重复选框，不预先扫描/物化选中音符。
         d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::new()));
     }
+    // 锚点拖动沿用选框预览的缓动：先以当前矩形为起点，下一次 update 才有跳变量。
+    match s.view_mode {
+        ViewMode::Pianoroll => {
+            let geom = PrGeom::new(&s.pr_view);
+            s.set_sel_target([
+                geom.tick_to_x(h.t0),
+                geom.key_to_y(h.k1),
+                geom.tick_to_x(h.t1),
+                geom.key_to_y(h.k0) + geom.kh,
+            ]);
+        }
+        ViewMode::Arrangement => {
+            let geom = ArGeom::new(&s.arr_view);
+            s.set_sel_target([
+                geom.tick_to_x(h.t0),
+                geom.row_to_y(h.r0),
+                geom.tick_to_x(h.t1),
+                geom.row_to_y(h.r1 + 1),
+            ]);
+        }
+    }
     bump(s);
 }
 
@@ -1434,6 +1455,12 @@ fn update_sel_resize(d: &DragState, s: &mut RenderScene, x: f32, y: f32) {
             {
                 *rect = (nt0, nt1, nk0, nk1);
             }
+            s.set_sel_target([
+                geom.tick_to_x(nt0),
+                geom.key_to_y(nk1),
+                geom.tick_to_x(nt1),
+                geom.key_to_y(nk0) + geom.kh,
+            ]);
             bump(s);
         }
         ViewMode::Arrangement => {
@@ -1460,6 +1487,12 @@ fn update_sel_resize(d: &DragState, s: &mut RenderScene, x: f32, y: f32) {
             {
                 *rect = (nt0, nt1, nr0, nr1);
             }
+            s.set_sel_target([
+                geom.tick_to_x(nt0),
+                geom.row_to_y(nr0),
+                geom.tick_to_x(nt1),
+                geom.row_to_y(nr1 + 1),
+            ]);
             bump(s);
         }
     }
@@ -2200,9 +2233,20 @@ pub fn end(x: f32, y: f32) {
             });
         }
     }
+    // 锚点缩放松手后让缓动继续跑完，避免最后一下直接跳到目标。
+    let sel_tail = if k == kind::SEL_RESIZE {
+        s.sel_target.map(|t| (t, s.sel_anim))
+    } else {
+        None
+    };
     d.kind = kind::NONE;
     s.preview.clear();
     s.clear_preview_anim();
+    if let Some((target, anim)) = sel_tail {
+        s.sel_target = Some(target);
+        s.sel_anim = anim;
+        s.anim_last = Some(std::time::Instant::now());
+    }
     s.overlay_cells.clear();
     bump(&mut s);
     drop(s);

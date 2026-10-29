@@ -282,8 +282,11 @@ pub struct RenderScene {
     /// ghost 预览的整体像素偏移（只作用于 GHOST_BIT 实例）。
     pub ghost_dx: f32,
     pub ghost_dy: f32,
+    /// 选框锚点拖动时的视觉偏移（四条边，像素）：和选框预览使用同一套缓动。
+    pub sel_anim: [f32; 4],
+    pub sel_target: Option<[f32; 4]>,
     /// 上一次动画推进时间（指数衰减用）。
-    anim_last: Option<std::time::Instant>,
+    pub(crate) anim_last: Option<std::time::Instant>,
 }
 
 /// 工具（移动端子集：与桌面 `tools_panel::Tool` 的编号对齐）。
@@ -333,6 +336,8 @@ impl Default for RenderScene {
             box_target: None,
             ghost_dx: 0.0,
             ghost_dy: 0.0,
+            sel_anim: [0.0; 4],
+            sel_target: None,
             anim_last: None,
         }
     }
@@ -370,6 +375,20 @@ impl RenderScene {
         self.overlay_box = Some(target);
     }
 
+    /// 设定选框锚点拖动的目标矩形（像素），把跳变量并入视觉偏移。
+    pub fn set_sel_target(&mut self, target: [f32; 4]) {
+        if self.sel_target == Some(target) {
+            return;
+        }
+        if let Some(prev) = self.sel_target {
+            for i in 0..4 {
+                self.sel_anim[i] += prev[i] - target[i];
+            }
+        }
+        self.sel_target = Some(target);
+        self.anim_last = Some(std::time::Instant::now());
+    }
+
     /// ghost 目标发生跳变：把像素差累加到缓动偏移上。
     pub fn nudge_ghost(&mut self, dx: f32, dy: f32) {
         if dx == 0.0 && dy == 0.0 {
@@ -387,6 +406,8 @@ impl RenderScene {
         self.overlay_box = None;
         self.ghost_dx = 0.0;
         self.ghost_dy = 0.0;
+        self.sel_anim = [0.0; 4];
+        self.sel_target = None;
         self.anim_last = None;
     }
 
@@ -408,17 +429,24 @@ impl RenderScene {
             self.box_target.is_some() && self.box_anim.iter().any(|v| v.abs() > PREVIEW_ANIM_EPS);
         let ghost_animating =
             self.ghost_dx.abs() > PREVIEW_ANIM_EPS || self.ghost_dy.abs() > PREVIEW_ANIM_EPS;
-        if !box_animating && !ghost_animating {
+        let sel_animating =
+            self.sel_target.is_some() && self.sel_anim.iter().any(|v| v.abs() > PREVIEW_ANIM_EPS);
+        if !box_animating && !ghost_animating && !sel_animating {
             // 收尾：把残留的极小值归零。
             let had_box = self.box_target.is_some() && self.box_anim != [0.0; 4];
             self.box_anim = [0.0; 4];
             self.ghost_dx = 0.0;
             self.ghost_dy = 0.0;
+            let had_sel = self.sel_target.is_some() && self.sel_anim != [0.0; 4];
+            self.sel_anim = [0.0; 4];
+            if self.sel_target.is_some() {
+                self.sel_target = None;
+            }
             if had_box {
                 self.overlay_box = self.box_target;
                 return true;
             }
-            return false;
+            return had_sel;
         }
         let now = std::time::Instant::now();
         let dt = self
@@ -445,6 +473,19 @@ impl RenderScene {
         } else {
             self.ghost_dy * k
         };
+        for v in &mut self.sel_anim {
+            *v = if v.abs() <= PREVIEW_ANIM_EPS {
+                0.0
+            } else {
+                *v * k
+            };
+        }
+        if self.sel_target.is_some() && self.sel_anim == [0.0; 4] {
+            self.sel_target = None;
+        }
+        if self.sel_target.is_some() {
+            return true;
+        }
         if self.box_target.is_some() {
             let b = self.animated_box();
             if self.overlay_box != Some(b) {
@@ -1177,6 +1218,15 @@ pub fn overlay_json() -> String {
     }
     out.push_str("],\"sel\":[");
     let mut first = true;
+    // 锚点拖动中的第一条矩形用视觉缓动位置；其余矩形仍按文档目标绘制。
+    let animated = s.sel_target.map(|t| {
+        [
+            t[0] + s.sel_anim[0],
+            t[1] + s.sel_anim[1],
+            t[2] + s.sel_anim[2],
+            t[3] + s.sel_anim[3],
+        ]
+    });
     if let Some(doc) = s.document.as_ref() {
         match s.view_mode {
             ViewMode::Pianoroll => {
@@ -1185,11 +1235,26 @@ pub fn overlay_json() -> String {
                     if !first {
                         out.push(',');
                     }
+                    let (x0, y0, x1, y1) = if first {
+                        if let Some(a) = animated {
+                            (a[0], a[1], a[2], a[3])
+                        } else {
+                            (
+                                view.tick_to_x(t0),
+                                view.key_to_y(khi),
+                                view.tick_to_x(t1),
+                                view.key_to_y(klo) + view.key_height,
+                            )
+                        }
+                    } else {
+                        (
+                            view.tick_to_x(t0),
+                            view.key_to_y(khi),
+                            view.tick_to_x(t1),
+                            view.key_to_y(klo) + view.key_height,
+                        )
+                    };
                     first = false;
-                    let x0 = view.tick_to_x(t0);
-                    let x1 = view.tick_to_x(t1);
-                    let y0 = view.key_to_y(khi);
-                    let y1 = view.key_to_y(klo) + view.key_height;
                     out.push_str(&format!("[{x0},{y0},{x1},{y1}]"));
                 }
             }
@@ -1200,11 +1265,26 @@ pub fn overlay_json() -> String {
                     if !first {
                         out.push(',');
                     }
+                    let (x0, y0, x1, y1) = if first {
+                        if let Some(a) = animated {
+                            (a[0], a[1], a[2], a[3])
+                        } else {
+                            (
+                                view.base.tick_to_x(*t0),
+                                *tr_lo as f32 * lane_h - view.base.scroll_y,
+                                view.base.tick_to_x(*t1),
+                                (*tr_hi as f32 + 1.0) * lane_h - view.base.scroll_y,
+                            )
+                        }
+                    } else {
+                        (
+                            view.base.tick_to_x(*t0),
+                            *tr_lo as f32 * lane_h - view.base.scroll_y,
+                            view.base.tick_to_x(*t1),
+                            (*tr_hi as f32 + 1.0) * lane_h - view.base.scroll_y,
+                        )
+                    };
                     first = false;
-                    let x0 = view.base.tick_to_x(*t0);
-                    let x1 = view.base.tick_to_x(*t1);
-                    let y0 = *tr_lo as f32 * lane_h - view.base.scroll_y;
-                    let y1 = (*tr_hi as f32 + 1.0) * lane_h - view.base.scroll_y;
                     out.push_str(&format!("[{x0},{y0},{x1},{y1}]"));
                 }
             }
