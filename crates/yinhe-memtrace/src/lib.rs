@@ -6,8 +6,9 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 // ---------------------------------------------------------------------------
 // macOS: jemalloc — its macOS backend aggressively munmaps freed segments,
 //        keeping RSS close to the true live allocation size.
-// Android: system allocator (bionic/scudo) — mimalloc uses initial-exec TLS
-//        which Android's dlopen rejects ("TLS symbol (null) using IE access model").
+// Android / OpenHarmony: system allocator (bionic/scudo, musl) — mimalloc uses
+//        initial-exec TLS which Android's dlopen rejects
+//        ("TLS symbol (null) using IE access model").
 // Other platforms (Linux, Windows): mimalloc — excellent performance and
 //        low fragmentation, with acceptable RSS behaviour on those OSes.
 //
@@ -18,19 +19,27 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 #[cfg(target_os = "macos")]
 pub use tikv_jemallocator::Jemalloc as BackendAlloc;
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_env = "ohos"))]
 pub use std::alloc::System as BackendAlloc;
 
-#[cfg(all(not(target_os = "macos"), not(target_os = "android")))]
+#[cfg(all(
+    not(target_os = "macos"),
+    not(target_os = "android"),
+    not(target_env = "ohos")
+))]
 pub use mimalloc::MiMalloc as BackendAlloc;
 
 #[cfg(target_os = "macos")]
 const BACKEND: BackendAlloc = BackendAlloc;
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_env = "ohos"))]
 const BACKEND: BackendAlloc = BackendAlloc;
 
-#[cfg(all(not(target_os = "macos"), not(target_os = "android")))]
+#[cfg(all(
+    not(target_os = "macos"),
+    not(target_os = "android"),
+    not(target_env = "ohos")
+))]
 const BACKEND: BackendAlloc = BackendAlloc;
 
 pub mod perf_probe;
@@ -120,33 +129,29 @@ pub fn purge_free_pages() {
     }
 }
 
-#[cfg(target_os = "android")]
+/// 让 libc 尽快把空闲页还给系统（`M_PURGE`）。
+///
+/// `mallopt` 自 Android API 26 起存在，minSdk 已提到 26，直接静态调用即可
+/// （旧实现为兼容 API 24/25 用 dlsym 运行时探测，已删除）。
+/// OpenHarmony 用 musl，`mallopt` 存在但通常为空实现，调用无副作用。
+#[cfg(any(target_os = "android", target_env = "ohos"))]
 pub fn purge_free_pages() {
-    use std::sync::OnceLock;
-
-    /// bionic `M_PURGE`（NDK `malloc.h`）：API 28+ 生效，26/27 调用为 no-op。
+    /// bionic / musl 的 `M_PURGE`。
     const M_PURGE: i32 = -101;
-    type Mallopt = unsafe extern "C" fn(i32, i32) -> i32;
-
-    static MALLOPT: OnceLock<Option<Mallopt>> = OnceLock::new();
-    let mallopt = MALLOPT.get_or_init(|| {
-        // `mallopt` 自 API 26 才存在，而 minSdk 是 24：必须运行时探测，
-        // 否则 API 24/25 设备加载 .so 时会因未解析符号直接失败。
-        let sym = unsafe { libc::dlsym(libc::RTLD_DEFAULT, b"mallopt\0".as_ptr().cast()) };
-        if sym.is_null() {
-            None
-        } else {
-            // SAFETY: 符号存在时签名与 bionic 的 int mallopt(int, int) 一致。
-            Some(unsafe { std::mem::transmute::<*mut std::ffi::c_void, Mallopt>(sym) })
-        }
-    });
-    if let Some(mallopt) = *mallopt {
-        // SAFETY: 只传常量选项；不支持的版本会自行忽略。
-        unsafe { mallopt(M_PURGE, 0) };
+    unsafe extern "C" {
+        fn mallopt(param: i32, value: i32) -> i32;
+    }
+    // SAFETY: 只传整数常量，不涉及指针；不支持的实现自行忽略。
+    unsafe {
+        let _ = mallopt(M_PURGE, 0);
     }
 }
 
-#[cfg(all(not(target_os = "macos"), not(target_os = "android")))]
+#[cfg(all(
+    not(target_os = "macos"),
+    not(target_os = "android"),
+    not(target_env = "ohos")
+))]
 pub fn purge_free_pages() {
     unsafe extern "C" {
         fn mi_collect(force: bool);

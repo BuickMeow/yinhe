@@ -2,13 +2,26 @@
 //!
 //! - 桌面端：用户配置目录（`dirs::config_dir()`）。
 //! - 安卓端：应用内部存储 `getFilesDir()`（无需任何存储权限）。
+//! - 鸿蒙端：应用沙箱 `HOME`（appspawn 下发，卸载时一并清除）。
 
 use std::path::PathBuf;
 
 /// 应用配置目录（`<config>/yinhe`，安卓上为 `<files>/yinhe`）。
-#[cfg(not(target_os = "android"))]
+#[cfg(all(not(target_os = "android"), not(target_env = "ohos")))]
 pub fn app_config_dir() -> PathBuf {
     dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("yinhe")
+}
+
+/// 应用配置目录（鸿蒙：`$HOME/yinhe`，即应用沙箱的 files 目录）。
+///
+/// 鸿蒙没有 `getFilesDir()` 这类 JNI 入口，进程环境里的 `HOME` 由 appspawn
+/// 指向应用沙箱（真机核对过再依赖它；取不到时退回当前目录）。
+#[cfg(target_env = "ohos")]
+pub fn app_config_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
         .join("yinhe")
 }

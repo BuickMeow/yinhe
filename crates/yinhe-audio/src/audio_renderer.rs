@@ -39,9 +39,10 @@ const TARGET_BUFFER_FRAMES: usize = 4096;
 /// 安卓：MIUI 等 ROM 对后台线程调度抖动大（线程 sleep 实际延迟可达 10ms+），
 /// 10ms 缓冲极易欠载 → 声音卡顿。放大到 4096 帧（≈85ms）换取稳定性，
 /// 预览延迟增加但不再断音。桌面保持 10ms 低延迟。
-#[cfg(target_os = "android")]
+/// 鸿蒙的 OHAudio 回调线程同样是普通线程，沿用移动端取值。
+#[cfg(any(target_os = "android", target_env = "ohos"))]
 const PREVIEW_TARGET_FRAMES: usize = 4096;
-#[cfg(not(target_os = "android"))]
+#[cfg(all(not(target_os = "android"), not(target_env = "ohos")))]
 const PREVIEW_TARGET_FRAMES: usize = 512;
 const WAKE_SLEEP: Duration = Duration::from_millis(1);
 

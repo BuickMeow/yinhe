@@ -61,10 +61,10 @@ pub struct AudioSettings {
 /// “自动复音”的平台默认值。
 ///
 /// 引擎的 `DEFAULT_MAX_VOICES=14336` 是桌面级上限；移动端黑乐谱峰值段
-/// 即使 1024 也可能让合成线程超过 512 帧的实时预算，因此 Android 自动档
-/// 收敛到 512，给调度留余量。用户仍可在设置里手动选 256/512/1024。
+/// 即使 1024 也可能让合成线程超过 512 帧的实时预算，因此 Android/鸿蒙的
+/// 自动档收敛到 512，给调度留余量。用户仍可在设置里手动选 256/512/1024。
 fn auto_max_voices() -> usize {
-    if cfg!(target_os = "android") {
+    if cfg!(any(target_os = "android", target_env = "ohos")) {
         512
     } else {
         yinhe_audio::DEFAULT_MAX_VOICES
