@@ -536,6 +536,18 @@ pub extern "C" fn yinhe_edit_begin(x: f32, y: f32) -> i32 {
     edit::begin(x, y)
 }
 
+/// 以选框语义起手（不修改全局工具；长按拖选框用）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_begin_marquee(x: f32, y: f32) -> i32 {
+    edit::begin_marquee(x, y)
+}
+
+/// 长按点是否落在已有选框内。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_selection_box_at(x: f32, y: f32) -> i32 {
+    edit::selection_box_at(x, y)
+}
+
 /// 单指移动：更新编辑拖拽。返回 1 = 仍在编辑，0 = 已取消（应转为平移）。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_edit_update(x: f32, y: f32) -> i32 {

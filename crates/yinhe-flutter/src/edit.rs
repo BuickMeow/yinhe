@@ -427,6 +427,15 @@ fn begin_sel_handle(d: &mut DragState, s: &mut RenderScene, h: SelHandle) {
 ///
 /// 返回 1 = 进入编辑；0 = 此处不响应编辑，Flutter 应把它当平移/点击处理。
 pub fn begin(x: f32, y: f32) -> i32 {
+    begin_with_tool(x, y, None)
+}
+
+/// 不修改全局工具状态、直接以选框语义起手（长按拖选框入口）。
+pub fn begin_marquee(x: f32, y: f32) -> i32 {
+    begin_with_tool(x, y, Some(Tool::Select))
+}
+
+fn begin_with_tool(x: f32, y: f32, tool_override: Option<Tool>) -> i32 {
     let Ok(mut d) = DRAG.lock() else {
         return 0;
     };
@@ -447,13 +456,13 @@ pub fn begin(x: f32, y: f32) -> i32 {
     }
     // 新一次按下：先清掉上一次可能残留的 ghost/hidden。
     s.preview.clear();
-    let tool = s.tool;
+    let tool = tool_override.unwrap_or(s.tool);
     if tool == Tool::Pan {
         return 0; // 手形：平移交给 Flutter 视口手势
     }
     match s.view_mode {
-        ViewMode::Pianoroll => begin_pr(&mut d, &mut s, x, y),
-        ViewMode::Arrangement => begin_arr(&mut d, &mut s, x, y),
+        ViewMode::Pianoroll => begin_pr(&mut d, &mut s, x, y, tool),
+        ViewMode::Arrangement => begin_arr(&mut d, &mut s, x, y, tool),
     }
     i32::from(d.kind != kind::NONE)
 }
@@ -675,6 +684,21 @@ pub fn long_press_context_json() -> String {
         "{{\"tick\":{},\"track\":{},\"conductor\":{},\"pr\":{}}}",
         d.anchor_tick, track_out, conductor, is_pr
     )
+}
+
+/// 长按点是否落在已有选框内（PR/AR）。
+pub fn selection_box_at(x: f32, y: f32) -> i32 {
+    let Ok(s) = scene::scene().lock() else {
+        return 0;
+    };
+    let hit = match s.view_mode {
+        ViewMode::Pianoroll => pr_box_at(&s, x, y).is_some(),
+        ViewMode::Arrangement => {
+            let geom = ArGeom::new(&s.arr_view);
+            arr_box_at(&s, &geom, x, y).is_some()
+        }
+    };
+    i32::from(hit)
 }
 
 /// PR 单击：命中音符则删除，否则在量化位置插入一个音符。返回 1 = 有改动。
@@ -1924,7 +1948,7 @@ pub fn cancel() {
 
 // ── PR 起始分发 ──
 
-fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
+fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: Tool) {
     let geom = PrGeom::new(&s.pr_view);
     if x < geom.kbw {
         return; // 键盘区不响应编辑
@@ -1935,13 +1959,13 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
     let anchor_tick = snap.round(q, geom.x_to_tick(x));
     let anchor_key = geom.y_to_key(y);
     // 选框工具：先命中四边圆形控制点 / 右下角 Riff 方块。
-    if s.tool == Tool::Select
+    if tool == Tool::Select
         && let Some(h) = pr_selection_handle(s, &geom, x, y)
     {
         begin_sel_handle(d, s, h);
         return;
     }
-    match s.tool {
+    match tool {
         Tool::Select => {
             d.anchor_tick = anchor_tick;
             d.anchor_key = anchor_key;
@@ -2067,12 +2091,12 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
 }
 
 /// AR 起始分发（面板区交给 Dart：进 PR / 拖动排序）。
-fn begin_arr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
+fn begin_arr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: Tool) {
     let geom = ArGeom::new(&s.arr_view);
     if x < geom.panel_w {
         return;
     }
-    if s.tool != Tool::Select {
+    if tool != Tool::Select {
         return; // AR 只开放选框与手形
     }
     let q = quantize_of(s);

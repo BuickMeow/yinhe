@@ -9,6 +9,14 @@ typedef Float2IntDart = int Function(double, double);
 final Float2IntDart editBegin = bridge
     .lookupFunction<Float2IntNative, Float2IntDart>('yinhe_edit_begin');
 
+/// 以选框语义起手（不修改全局工具；长按拖选框用）。
+final Float2IntDart beginMarquee = bridge
+    .lookupFunction<Float2IntNative, Float2IntDart>('yinhe_begin_marquee');
+
+/// 长按点是否落在已有选框内。
+final Float2IntDart selectionBoxAt = bridge
+    .lookupFunction<Float2IntNative, Float2IntDart>('yinhe_selection_box_at');
+
 /// 单指移动：返回 1 = 仍在编辑，0 = 已取消（转平移）。
 final Float2IntDart editUpdate = bridge
     .lookupFunction<Float2IntNative, Float2IntDart>('yinhe_edit_update');

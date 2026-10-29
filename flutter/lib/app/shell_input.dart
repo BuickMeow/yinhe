@@ -172,11 +172,13 @@ mixin _ShellInput on _ShellBase {
     if (_gestureEditing) {
       _finishEditGesture(p, moved: _gestureMoved);
     } else if (_viewMode == kViewPianoroll) {
-      // 单击空白落一个量化音符；单击已有音符删除。
+      // 单击先清空选框；再落音/删除。
+      rust.clearSelection();
       if (rust.tapNote(p.dx, p.dy) == 1) {
         _refreshDocumentMeta();
       }
     } else {
+      rust.clearSelection();
       _handleCanvasTap(p);
     }
     _gestureWasEditing = false;
@@ -206,11 +208,6 @@ mixin _ShellInput on _ShellBase {
   @override
   void _handleScaleStart(ScaleStartDetails d) {
     rust.stopFling();
-    if (!_gestureEditing && !_lpMarqueeArmed) {
-      // 普通单指滑动/双指手势：强制手形，避免上一次长按选框把工具留在选框。
-      rust.setTool(1);
-      _marqueeToolActive = false;
-    }
     _clearLongPressUi();
     _lastFocal = d.localFocalPoint;
     _lastScale = 1.0;
@@ -377,7 +374,17 @@ mixin _ShellInput on _ShellBase {
         return;
       }
     }
-    // PR/AR 内容：长按后拖动 = 选框；不拖 = 松开时弹浮动菜单。
+    // 长按已有选框：优先进入选框编辑（拖 = 移动、松手 = 选区菜单）。
+    if (rust.selectionBoxAt(p.dx, p.dy) == 1) {
+      _gestureEditing = rust.beginMarquee(p.dx, p.dy) == 1;
+      if (_gestureEditing) {
+        rust.editLongPress();
+        _markLongPressRecognized();
+        _lpMoved = false;
+      }
+      return;
+    }
+    // PR/AR 内容：长按后拖动 = 新建选框；不拖 = 松开时弹浮动菜单。
     _lpGlobalPos = d.globalPosition;
     _lpMarqueeArmed = true;
     _markLongPressRecognized();
@@ -441,12 +448,8 @@ mixin _ShellInput on _ShellBase {
       return;
     }
     if (_gestureEditing) {
-      // 提交选框；恢复手形。
-      rust.editEnd(d.localPosition.dx, d.localPosition.dy);
-      _gestureEditing = false;
-      _restoreHandTool();
-      _readDocState();
-      _clearLongPressUi();
+      // 选框提交；选框编辑未移动时由 _finishEditGesture 弹选区菜单。
+      _finishEditGesture(d.localPosition, moved: _lpMoved);
       return;
     }
     if (_lpMarqueeArmed) {
@@ -465,20 +468,7 @@ mixin _ShellInput on _ShellBase {
   /// 长按拖动开始：临时切到选框工具，从按下点拉框。
   void _startMarquee(Offset press) {
     rust.clearSelection();
-    _marqueeToolActive = true;
-    rust.setTool(0);
-    _gestureEditing = rust.editBegin(press.dx, press.dy) == 1;
-    if (!_gestureEditing) {
-      _restoreHandTool();
-    }
-  }
-
-  void _restoreHandTool() {
-    if (!_marqueeToolActive) {
-      return;
-    }
-    _marqueeToolActive = false;
-    rust.setTool(1);
+    _gestureEditing = rust.beginMarquee(press.dx, press.dy) == 1;
   }
 
   /// 长按未拖动：在手指位置弹浮动菜单（粘贴/插入/全选）。
@@ -574,7 +564,6 @@ mixin _ShellInput on _ShellBase {
 
   /// 清理长按 UI 状态（不改 Rust 拖拽状态）。
   void _clearLongPressUi() {
-    _restoreHandTool();
     _lpStartTime = null;
     _lpPos = null;
     _lpGlobalPos = null;
