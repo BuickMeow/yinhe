@@ -13,6 +13,19 @@ final Float2IntDart editBegin = bridge
 final Float2IntDart editUpdate = bridge
     .lookupFunction<Float2IntNative, Float2IntDart>('yinhe_edit_update');
 
+/// PR 单击：命中音符删除，否则量化位置插入。
+final Float2IntDart tapNote = bridge
+    .lookupFunction<Float2IntNative, Float2IntDart>('yinhe_tap_note');
+
+typedef Float2PtrNative = ffi.Pointer<Utf8> Function(ffi.Float, ffi.Float);
+typedef Float2PtrDart = ffi.Pointer<Utf8> Function(double, double);
+
+/// 长按位置上下文 JSON（只用于弹浮动菜单）。
+final Float2PtrDart longPressContextAt = bridge
+    .lookupFunction<Float2PtrNative, Float2PtrDart>(
+      'yinhe_long_press_context_at',
+    );
+
 typedef Float2VoidNative = ffi.Void Function(ffi.Float, ffi.Float);
 typedef Float2VoidDart = void Function(double, double);
 

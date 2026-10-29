@@ -359,7 +359,7 @@ mixin _ShellDocument on _ShellBase {
     rust.setViewMode(kViewArrangement);
     rust.setDisplayTrack(-1);
     rust.setActiveTrack(-1);
-    rust.setTool(toolArAllowed.first);
+    rust.setTool(1);
     final p = path.toNativeUtf8();
     try {
       rust.openPath(p);

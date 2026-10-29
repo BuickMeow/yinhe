@@ -677,6 +677,119 @@ pub fn long_press_context_json() -> String {
     )
 }
 
+/// PR 单击：命中音符则删除，否则在量化位置插入一个音符。返回 1 = 有改动。
+///
+/// 只处理内容区（键盘列不响应）；描述符与现有编辑路径共用同一套轨道可见性。
+pub fn tap_note(x: f32, y: f32) -> i32 {
+    let Ok(mut s) = scene::scene().lock() else {
+        return 0;
+    };
+    if s.view_mode != ViewMode::Pianoroll {
+        return 0;
+    }
+    let geom = PrGeom::new(&s.pr_view);
+    if x < geom.kbw {
+        return 0;
+    }
+    let tick_f = geom.x_to_tick(x).max(0.0);
+    let tick = tick_f.floor() as u32;
+    let key = geom.y_to_key(y);
+    let q = quantize_of(&s);
+    let snap = scene::SnapCtx::new(&s);
+    let start = snap.round(q, tick_f).max(0.0) as u32;
+    let interval = q.tick_interval(s.ppq).max(1);
+    let write = write_track(&s);
+    let visible = s
+        .document
+        .as_ref()
+        .map(|d| d.edit.pr_visible())
+        .unwrap_or_default();
+    let only = s.display_track;
+    // 命中：同一个 key 上，起点 <= tick < 终点，且轨道可见。
+    let mut hit: Option<(u16, u32)> = None;
+    if let Some(doc) = s.document.as_ref() {
+        for n in doc.data.model.key_notes_in_range(key, tick, tick + 1) {
+            if n.start_tick <= tick
+                && tick < n.end_tick
+                && visible.get(n.track as usize).copied().unwrap_or(true)
+                && only.is_none_or(|o| o == n.track as usize)
+            {
+                hit = Some((n.track, n.start_tick));
+                break;
+            }
+        }
+    }
+    if hit.is_none() && write.is_none() {
+        return 0;
+    }
+    let edited = {
+        let Some(doc) = s.document.as_mut() else {
+            return 0;
+        };
+        let before = doc.capture_snapshot();
+        if let Some((track, note_start)) = hit {
+            doc.delete_notes(&[(track, note_start, key)]).map(|action| {
+                doc.push_undo(action, "undo.delete_note", before);
+            })
+        } else {
+            let Some(track) = write else {
+                return 0;
+            };
+            let note = yinhe_core::NoteEvent {
+                id: 0,
+                key,
+                start_tick: start,
+                end_tick: start.saturating_add(interval),
+                velocity: DEFAULT_VELOCITY,
+            };
+            doc.add_note(track as u16, note).map(|action| {
+                doc.push_undo(action, "undo.add_note", before);
+            })
+        }
+    };
+    if edited.is_none() {
+        return 0;
+    }
+    let model = after_edit(&mut s);
+    drop(s);
+    if let Some(model) = model {
+        crate::audio::update_notes(model);
+    }
+    1
+}
+
+/// 长按位置上下文（不进入拖拽/插入微调状态，只用于弹菜单）。
+pub fn context_at(x: f32, y: f32) -> String {
+    let Ok(s) = scene::scene().lock() else {
+        return "{}".into();
+    };
+    let q = quantize_of(&s);
+    let snap = scene::SnapCtx::new(&s);
+    let (tick, track, pr) = match s.view_mode {
+        ViewMode::Pianoroll => {
+            let geom = PrGeom::new(&s.pr_view);
+            (snap.round(q, geom.x_to_tick(x)), write_track(&s), true)
+        }
+        ViewMode::Arrangement => {
+            let geom = ArGeom::new(&s.arr_view);
+            (
+                snap.round(q, geom.x_to_tick(x)),
+                Some(geom.y_to_row(y)),
+                false,
+            )
+        }
+    };
+    let track_out: i64 = track.map(|t| t as i64).unwrap_or(-1);
+    let conductor = track == Some(0)
+        || track
+            .and_then(|t| s.model.as_ref().and_then(|m| m.tracks.get(t)))
+            .is_some_and(|t| t.kind == yinhe_core::TrackKind::Master);
+    format!(
+        "{{\"tick\":{},\"track\":{},\"conductor\":{},\"pr\":{}}}",
+        tick, track_out, conductor, pr
+    )
+}
+
 /// 选区整体移动的当前增量：PR 返回 `(tick 差, dk, 0)`，AR 返回 `(tick 差, 0, dtr)`。
 ///
 /// tick 差保留未取整值（选框矩形预览用），ghost/提交再 round；已按选框

@@ -6,7 +6,6 @@ import '../core/models.dart';
 import '../core/quantize_presets.dart';
 import '../core/theme.dart';
 import '../l10n/app_localizations.dart';
-import '../core/tools.dart';
 
 /// 顶部栏：左侧视图入口 + 走带，右侧量化/工具/撤销重做；
 /// 中央在 PR 显示"显示轨道"长按钮，在 AR 显示歌曲标题（只读）。
@@ -301,21 +300,10 @@ class TopBar extends StatelessWidget {
     );
   }
 
-  Widget _buildTools(BuildContext context, AppLocalizations l) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _buildQuantizeButton(context, l),
-        _buildQuickToolButton(l),
-        _buildToolButton(l),
-      ],
-    );
-  }
-
   Widget _buildRightGroup(BuildContext context, AppLocalizations l) {
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [_buildTools(context, l), _buildHistory(l)],
+      children: [_buildQuantizeButton(context, l), _buildHistory(l)],
     );
   }
 
@@ -353,13 +341,6 @@ class TopBar extends StatelessWidget {
                   alignment: Alignment.center,
                   // 与宽屏一致：PR 中央显示当前音轨（含全部轨道开关），AR 显示歌名。
                   child: isPr ? _buildSongBox(l) : _titleButton(l),
-                ),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [_buildQuickToolButton(l), _buildToolButton(l)],
-                  ),
                 ),
               ],
             ),
@@ -400,17 +381,6 @@ class TopBar extends StatelessWidget {
   String _titled(AppLocalizations l) {
     return songTitle.isNotEmpty ? songTitle : (fileName ?? l.untitled);
   }
-
-  /// 工具名（本地化）。
-  String _toolName(AppLocalizations l, int i) => switch (i) {
-    0 => l.toolSelect,
-    1 => l.toolHand,
-    2 => l.toolPencil,
-    3 => l.toolEraser,
-    4 => l.toolBrush,
-    5 => toolDefs[5].$2,
-    _ => toolDefs[i].$2,
-  };
 
   Widget _iconAction(
     IconData icon,
@@ -474,127 +444,6 @@ class TopBar extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-
-  /// 快捷工具组：与主工具下拉框使用同一套工具。
-  ///
-  /// 它记住自己槽位里的工具，与主工具 popup 解耦。当前工具不是槽位工具时，
-  /// 第一次点击选中槽位工具；已经是槽位工具时再点打开 popup 切换组内工具。
-  Widget _buildQuickToolButton(AppLocalizations l) {
-    final group = isPr ? quickToolsPr : quickToolsAr;
-    final shown = group.contains(quickTool) ? quickTool : group.first;
-    final active = quickSlotActive;
-    final tip = group.map((i) => _toolName(l, i)).join(' / ');
-    return Builder(
-      builder: (context) {
-        var anchor = Offset.zero;
-        return Tooltip(
-          message: tip,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(4),
-            onTapDown: (d) => anchor = d.globalPosition,
-            onTap: () {
-              if (!active) {
-                onQuickTool(shown);
-                return;
-              }
-              _showToolMenu(context, group, shown, anchor, onQuickTool);
-            },
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              child: Icon(
-                toolDefs[shown].$1,
-                size: 18,
-                color: active ? YinheTheme.accent : YinheTheme.textSecondary,
-                semanticLabel: tip,
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Future<void> _showToolMenu(
-    BuildContext context,
-    List<int> group,
-    int shown,
-    Offset anchor,
-    ValueChanged<int> onSelected,
-  ) async {
-    final overlay =
-        Overlay.of(context).context.findRenderObject() as RenderBox?;
-    if (overlay == null) {
-      return;
-    }
-    final local = overlay.globalToLocal(anchor);
-    final l = AppLocalizations.of(context);
-    final selected = await showMenu<int>(
-      context: context,
-      color: YinheTheme.bg,
-      position: RelativeRect.fromLTRB(
-        local.dx,
-        local.dy,
-        overlay.size.width - local.dx,
-        overlay.size.height - local.dy,
-      ),
-      items: [
-        for (final i in group)
-          PopupMenuItem(
-            value: i,
-            child: Row(
-              children: [
-                Icon(
-                  toolDefs[i].$1,
-                  size: 18,
-                  color: i == shown
-                      ? YinheTheme.accent
-                      : YinheTheme.textSecondary,
-                ),
-                const SizedBox(width: 8),
-                Text(_toolName(l, i)),
-              ],
-            ),
-          ),
-      ],
-    );
-    if (selected != null) {
-      onSelected(selected);
-    }
-  }
-
-  Widget _buildToolButton(AppLocalizations l) {
-    final list = isPr ? toolPrAllowed : toolArAllowed;
-    final shown = list.contains(mainTool) ? mainTool : list.first;
-    final active = !quickSlotActive;
-    return Builder(
-      builder: (context) {
-        var anchor = Offset.zero;
-        return Tooltip(
-          message: l.tool,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(4),
-            onTapDown: (d) => anchor = d.globalPosition,
-            onTap: () {
-              if (!active) {
-                onTool(shown);
-                return;
-              }
-              _showToolMenu(context, list, shown, anchor, onTool);
-            },
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              child: Icon(
-                toolDefs[shown].$1,
-                size: 18,
-                color: active ? YinheTheme.accent : YinheTheme.textSecondary,
-                semanticLabel: _toolName(l, shown),
-              ),
-            ),
-          ),
-        );
-      },
     );
   }
 

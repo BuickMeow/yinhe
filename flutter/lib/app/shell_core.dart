@@ -95,9 +95,8 @@ mixin _ShellCore on _ShellBase {
 
   /// 把当前视图的工具同步给 Rust。
   void _pushTool() {
-    final list = _viewMode == kViewPianoroll ? toolPrAllowed : toolArAllowed;
-    final t = list.contains(_tool) ? _tool : list.first;
-    rust.setTool(t);
+    // 移动端只保留一套手势：Rust 固定手形，单击/长按由 Flutter 统一分发。
+    rust.setTool(1);
   }
 
   @override
@@ -195,7 +194,7 @@ mixin _ShellCore on _ShellBase {
     rust.setViewMode(kViewArrangement);
     rust.setDisplayTrack(-1);
     rust.setActiveTrack(-1);
-    rust.setTool(toolArAllowed.first);
+    rust.setTool(1);
     _pushAllQuantizes();
     setState(() {
       _fileName = 'Untitled';

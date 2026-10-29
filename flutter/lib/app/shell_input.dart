@@ -103,12 +103,8 @@ mixin _ShellInput on _ShellBase {
     _gestureEditing =
         rust.editBegin(e.localPosition.dx, e.localPosition.dy) == 1;
     _gestureWasEditing = _gestureEditing;
-    if (rust.selectionState() == 1) {
-      _beginLongPressWatch(e.localPosition);
-    } else if (_viewMode == kViewArrangement &&
-        _rowAt(e.localPosition) != null) {
-      _beginLongPressWatch(e.localPosition, panel: true);
-    }
+    // 单一交互：任何单指按下都开始长按计时（圆环 200ms 后才显示）。
+    _beginLongPressWatch(e.localPosition);
   }
 
   @override
@@ -175,6 +171,11 @@ mixin _ShellInput on _ShellBase {
     final p = d.localPosition;
     if (_gestureEditing) {
       _finishEditGesture(p, moved: _gestureMoved);
+    } else if (_viewMode == kViewPianoroll) {
+      // 单击空白落一个量化音符；单击已有音符删除。
+      if (rust.tapNote(p.dx, p.dy) == 1) {
+        _refreshDocumentMeta();
+      }
     } else {
       _handleCanvasTap(p);
     }
@@ -371,13 +372,11 @@ mixin _ShellInput on _ShellBase {
         return;
       }
     }
-    if (!_gestureEditing) {
-      _clearLongPressUi();
-      return;
-    }
+    // PR/AR 内容：长按后拖动 = 选框；不拖 = 松开时弹浮动菜单。
+    _lpGlobalPos = d.globalPosition;
+    _lpMarqueeArmed = true;
     _markLongPressRecognized();
     _lpMoved = false;
-    rust.editLongPress();
   }
 
   void _markLongPressRecognized() {
@@ -406,6 +405,14 @@ mixin _ShellInput on _ShellBase {
       }
       return;
     }
+    if (_lpMarqueeArmed) {
+      if (_lpPos != null && (p - _lpPos!).distance > 12.0) {
+        _lpMarqueeArmed = false;
+        _startMarquee(_lpPos!);
+        rust.editUpdate(p.dx, p.dy);
+      }
+      return;
+    }
     if (!_gestureEditing) {
       return;
     }
@@ -429,10 +436,54 @@ mixin _ShellInput on _ShellBase {
       return;
     }
     if (_gestureEditing) {
-      _finishEditGesture(d.localPosition, moved: _lpMoved);
-    } else {
+      // 提交选框；恢复手形。
+      rust.editEnd(d.localPosition.dx, d.localPosition.dy);
+      rust.setTool(1);
+      _gestureEditing = false;
+      _readDocState();
       _clearLongPressUi();
+      return;
     }
+    if (_lpMarqueeArmed) {
+      _lpMarqueeArmed = false;
+      final pos = _lpPos;
+      final global = _lpGlobalPos;
+      _clearLongPressUi();
+      if (pos != null && global != null) {
+        _showFloatingLongPressMenu(pos, global);
+      }
+      return;
+    }
+    _clearLongPressUi();
+  }
+
+  /// 长按拖动开始：临时切到选框工具，从按下点拉框。
+  void _startMarquee(Offset press) {
+    rust.clearSelection();
+    rust.setTool(0);
+    _gestureEditing = rust.editBegin(press.dx, press.dy) == 1;
+    if (!_gestureEditing) {
+      rust.setTool(1);
+    }
+  }
+
+  /// 长按未拖动：在手指位置弹浮动菜单（粘贴/插入/全选）。
+  void _showFloatingLongPressMenu(Offset local, Offset global) {
+    final ptr = rust.longPressContextAt(local.dx, local.dy);
+    LongPressContext? ctx;
+    if (ptr != ffi.nullptr) {
+      try {
+        final decoded = jsonDecode(ptr.toDartString());
+        if (decoded is Map<String, dynamic>) {
+          ctx = LongPressContext.fromJson(decoded);
+        }
+      } catch (_) {
+        ctx = null;
+      } finally {
+        rust.freeString(ptr);
+      }
+    }
+    _showPasteMenuAt(local, global, ctx);
   }
 
   void _finishTrackDrag() {
@@ -498,12 +549,11 @@ mixin _ShellInput on _ShellBase {
   }
 
   /// 按下：开始长按计时（圆环转满后由 Flutter long press 接手）。
-  void _beginLongPressWatch(Offset p, {bool panel = false}) {
+  void _beginLongPressWatch(Offset p) {
     _lpPos = p;
     _lpPosNotifier.value = p;
     _lpStartTime = DateTime.now();
     _lpMoved = false;
-    _lpPanelRing = panel;
     _lpProgress.value = 0;
     _moveDashed.value = false;
   }
@@ -512,10 +562,11 @@ mixin _ShellInput on _ShellBase {
   void _clearLongPressUi() {
     _lpStartTime = null;
     _lpPos = null;
+    _lpGlobalPos = null;
     _lpPosNotifier.value = null;
     _lpProgress.value = 0;
     _lpMoved = false;
-    _lpPanelRing = false;
+    _lpMarqueeArmed = false;
     _lpPreviewTick = null;
   }
 

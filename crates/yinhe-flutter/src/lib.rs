@@ -564,6 +564,18 @@ pub extern "C" fn yinhe_edit_long_press() -> i32 {
 /// Flutter 手势应用：先平移，再围绕当前焦点缩放，最后统一 clamp。
 ///
 /// `mode`：0=只平移 1=PR 时间轴 2=PR 音高轴 3=AR 时间轴 4=AR 行高。
+/// PR 单击：命中音符删除，否则量化位置插入。返回 1 = 有改动。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_tap_note(x: f32, y: f32) -> i32 {
+    edit::tap_note(x, y)
+}
+
+/// 长按位置上下文 JSON（只用于弹菜单，不进入拖拽态）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_long_press_context_at(x: f32, y: f32) -> *mut std::ffi::c_char {
+    to_c_string(edit::context_at(x, y))
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_viewport_gesture(
     mode: i32,

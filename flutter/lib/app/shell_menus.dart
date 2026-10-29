@@ -136,6 +136,53 @@ mixin _ShellMenus on _ShellBase {
     });
   }
 
+  /// 长按未拖动：在手指位置弹浮动菜单（内容同 [_showPasteMenu]）。
+  @override
+  void _showPasteMenuAt(Offset local, Offset global, LongPressContext? ctx) {
+    _resetInteraction();
+    final token = ++_lpToken;
+    _lpIndicator.value = ctx == null
+        ? null
+        : LongPressIndicator(tick: ctx.tick, track: ctx.track, pr: ctx.pr);
+    if (ctx != null) {
+      _setInsertStatus(ctx.tick);
+    }
+    var inserting = false;
+    showFloatingEmptyLongPressMenu(
+      context,
+      globalPosition: global,
+      canPaste: rust.clipboardEmpty() == 0,
+      onSelectAll: () {
+        if (_viewMode == kViewPianoroll) {
+          final track =
+              ctx?.track ??
+              (_displayTrack >= 0 ? _displayTrack : (_activeTrack ?? -1));
+          _selectAll(0, track);
+        } else {
+          _selectAll(1, -1);
+        }
+      },
+      onPaste: () {
+        if (rust.pasteSelection(local.dx) == 1) {
+          _refreshDocumentMeta();
+        }
+      },
+      onInsert: ctx == null
+          ? null
+          : () {
+              inserting = true;
+              _runInsertFlow(ctx);
+            },
+    ).whenComplete(() {
+      if (!inserting) {
+        _clearInsertStatus();
+      }
+      if (token == _lpToken) {
+        _lpIndicator.value = null;
+      }
+    });
+  }
+
   /// 长按"插入"完整流程：选目标 →（自定义号）→ 值输入 → 插入。
   @override
   Future<void> _runInsertFlow(LongPressContext ctx) async {

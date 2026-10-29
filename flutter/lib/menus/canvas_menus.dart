@@ -253,6 +253,68 @@ Future<void> showEmptyLongPressMenu(
   }
 }
 
+/// 长按空白处：在手指位置弹小型浮动菜单（替代底部 sheet，减少手指位移）。
+Future<void> showFloatingEmptyLongPressMenu(
+  BuildContext context, {
+  required Offset globalPosition,
+  required bool canPaste,
+  required VoidCallback onPaste,
+  required VoidCallback? onInsert,
+  required VoidCallback onSelectAll,
+}) async {
+  final l = AppLocalizations.of(context);
+  final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+  final origin = overlay?.globalToLocal(globalPosition) ?? globalPosition;
+  final size = overlay?.size ?? MediaQuery.sizeOf(context);
+  final action = await showMenu<String>(
+    context: context,
+    position: RelativeRect.fromLTRB(
+      origin.dx,
+      origin.dy,
+      (size.width - origin.dx).clamp(0.0, double.infinity),
+      (size.height - origin.dy).clamp(0.0, double.infinity),
+    ),
+    items: [
+      PopupMenuItem(
+        value: 'select_all',
+        height: 40,
+        child: _menuRow(Icons.select_all, l.selectAll),
+      ),
+      PopupMenuItem(
+        value: 'paste',
+        height: 40,
+        enabled: canPaste,
+        child: _menuRow(Icons.content_paste, l.paste),
+      ),
+      if (onInsert != null)
+        PopupMenuItem(
+          value: 'insert',
+          height: 40,
+          child: _menuRow(Icons.add_circle_outline, l.insert),
+        ),
+    ],
+  );
+  switch (action) {
+    case 'select_all':
+      onSelectAll();
+    case 'paste':
+      onPaste();
+    case 'insert':
+      onInsert?.call();
+  }
+}
+
+Widget _menuRow(IconData icon, String label) {
+  return Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Icon(icon, size: 18, color: YinheTheme.textSecondary),
+      const SizedBox(width: 10),
+      Text(label, style: TextStyle(color: YinheTheme.text, fontSize: 14)),
+    ],
+  );
+}
+
 /// AR 长按音轨（未拖动）：音轨信息菜单。
 Future<void> showTrackMenu(
   BuildContext context, {

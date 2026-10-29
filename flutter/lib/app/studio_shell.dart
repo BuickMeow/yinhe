@@ -254,14 +254,15 @@ abstract class _ShellBase extends State<StudioShell>
 
   /// PR 选框长按：圆环进度（500ms）；完成后进入移动态，未移动则弹菜单。
   Offset? _lpPos;
+  Offset? _lpGlobalPos;
   DateTime? _lpStartTime;
   bool _lpMoved = false;
 
+  /// 长按后还没拖动：一拖就转成选框。
+  bool _lpMarqueeArmed = false;
+
   /// 长按微调中的落点 tick（顶部时间码临时跟随手指）。
   double? _lpPreviewTick;
-
-  /// 本次长按是 AR 音轨面板（Rust 不进入 PENDING，圆环由 Dart 自行计时）。
-  bool _lpPanelRing = false;
 
   /// 刚保存成功：顶栏保存按钮临时显示对勾（2 秒）。
   bool _saveDone = false;
@@ -372,6 +373,7 @@ abstract class _ShellBase extends State<StudioShell>
   void _setView(int mode);
   void _showAddTrackDialog();
   void _showPasteMenu(Offset? pos, LongPressContext? ctx);
+  void _showPasteMenuAt(Offset local, Offset global, LongPressContext? ctx);
   void _showSelectionMenu();
   Future<void> _runInsertFlow(LongPressContext ctx);
   void _showTrackMenu(int track);
@@ -464,7 +466,7 @@ class _StudioShellState extends _ShellBase
             _lpProgress.value = 0;
           }
           _updateSelectionStatus();
-        } else if (_lpStartTime != null && (selState == 1 || _lpPanelRing)) {
+        } else if (_lpStartTime != null) {
           // 前 200ms 不显示圆环（防普通点击遮挡内容），总时长仍为 500ms。
           final ms = DateTime.now().difference(_lpStartTime!).inMilliseconds;
           _lpProgress.value = ms <= 200
