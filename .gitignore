@@ -14,3 +14,6 @@
 /android/local.properties
 *.apk
 *.aab
+
+# 鸿蒙构建缓存（hvigor 在工程根目录生成）
+/.hvigor

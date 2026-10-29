@@ -1,0 +1,10 @@
+# 鸿蒙构建产物
+build/
+.hvigor/
+oh_modules/
+node_modules/
+local.properties
+package.json
+package-lock.json
+oh-package-lock.json5
+*.hap
