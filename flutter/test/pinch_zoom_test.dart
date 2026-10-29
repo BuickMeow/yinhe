@@ -45,6 +45,28 @@ void main() {
     expect(z.zoomY, isTrue);
   });
 
+  test('偏 30° 的捏合只缩放主轴', () {
+    final z = PinchZoom();
+    // 两指沿 30° 方向：半间距 (100, 57.7)，放大 1.4 倍后 x 变化 40、y 变化 23。
+    z.rebase(const [Offset(0, 0), Offset(200, 115.4)]);
+    // 第一帧越过 slop：只建立基准。
+    z.update(const [Offset(0, 0), Offset(280, 161.6)]);
+    final (h, v) = z.update(const [Offset(0, 0), Offset(300, 173.1)]);
+    expect(h, greaterThan(1.0));
+    expect(v, 1.0);
+    expect(z.zoomX, isTrue);
+    expect(z.zoomY, isFalse);
+  });
+
+  test('接近 45° 的捏合才双轴缩放', () {
+    final z = PinchZoom();
+    z.rebase(const [Offset(0, 0), Offset(200, 200)]);
+    z.update(const [Offset(0, 0), Offset(260, 260)]);
+    final (h, v) = z.update(const [Offset(0, 0), Offset(280, 280)]);
+    expect(h, greaterThan(1.0));
+    expect(v, closeTo(h, 1e-9));
+  });
+
   test('斜向捏合两轴同时缩放', () {
     final z = PinchZoom();
     z.rebase(const [Offset(0, 0), Offset(200, 200)]);

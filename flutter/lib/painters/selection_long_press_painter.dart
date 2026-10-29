@@ -110,20 +110,20 @@ class MarqueeHintPainter extends CustomPainter {
     final grow = t.clamp(0.0, 1.0);
     final fadeIn = (grow / 0.18).clamp(0.0, 1.0);
     final fadeOut = t <= 1 ? 1.0 : 1.0 - (t - 1.0).clamp(0.0, 1.0);
-    final alpha = 0.85 * fadeIn * fadeOut;
+    final opacity = fadeIn * fadeOut;
     final side = 10.0 + 14.0 * Curves.easeOutCubic.transform(grow);
-    // 无圆角：和选框锚点一样是方框提示。
+    // 无圆角，填充/描边与正式选框完全一致（OverlayPainter 同款）。
     final rect = Rect.fromCenter(center: p, width: side, height: side);
     canvas.drawRect(
       rect,
-      Paint()..color = YinheTheme.textSecondary.withValues(alpha: alpha * 0.12),
+      Paint()..color = YinheTheme.text.withValues(alpha: 0.10 * opacity),
     );
     canvas.drawRect(
       rect,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5
-        ..color = YinheTheme.textSecondary.withValues(alpha: alpha),
+        ..strokeWidth = 1
+        ..color = YinheTheme.text.withValues(alpha: 0.45 * opacity),
     );
   }
 

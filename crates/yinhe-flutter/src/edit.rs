@@ -1432,13 +1432,15 @@ fn update_sel_resize(d: &DragState, s: &mut RenderScene, x: f32, y: f32) {
         return;
     };
     let cur_tick = view_tick_at(s, x);
+    // 时间方向最少保留一个量化格，不能拖成零长度。
+    let min_ticks = f64::from(quantize_of(s).tick_interval(s.ppq).max(1));
     // 锚点拖动只动被抓住的那条边；对边固定，可越过固定边翻转。
     // 排序后写回选区；固定边在视觉上不参与缓动。
-    fn clamp_edge(moving: f64, fixed: f64) -> f64 {
+    fn clamp_edge(moving: f64, fixed: f64, min: f64) -> f64 {
         if moving >= fixed {
-            moving.max(fixed + 1.0)
+            moving.max(fixed + min)
         } else {
-            moving.min(fixed - 1.0).max(0.0)
+            moving.min(fixed - min).max(0.0)
         }
     }
     let fixed_edge = match d.sel_edge {
@@ -1463,7 +1465,7 @@ fn update_sel_resize(d: &DragState, s: &mut RenderScene, x: f32, y: f32) {
             if d.sel_edge == 2 || d.sel_edge == 3 {
                 let fixed = if d.sel_edge == 2 { t1 } else { t0 };
                 let moving = if d.sel_edge == 2 { nt0 } else { nt1 };
-                let m = clamp_edge(moving, fixed);
+                let m = clamp_edge(moving, fixed, min_ticks);
                 if d.sel_edge == 2 {
                     nt0 = m;
                 } else {
@@ -1528,7 +1530,7 @@ fn update_sel_resize(d: &DragState, s: &mut RenderScene, x: f32, y: f32) {
             } else {
                 let fixed = if d.sel_edge == 2 { t1 } else { t0 };
                 let moving = if d.sel_edge == 2 { nt0 } else { nt1 };
-                let m = clamp_edge(moving, fixed);
+                let m = clamp_edge(moving, fixed, min_ticks);
                 if d.sel_edge == 2 {
                     nt0 = m;
                 } else {

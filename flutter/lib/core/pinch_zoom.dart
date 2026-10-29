@@ -15,6 +15,12 @@ class PinchZoom {
   /// 达到门槛的那一帧只建立基准、不缩放，避免突然跳变。
   static const double slop = 16.0;
 
+  /// 副轴要同时缩放时，至少达到主轴位移的比例。
+  ///
+  /// 斜着捏合时，偏 30° 的副轴位移只有主轴的 ~0.58，仍只缩放主轴；
+  /// 接近 45°（副轴 ≥ 主轴的 70%）才认为用户确实想双轴缩放。
+  static const double axisDominance = 0.7;
+
   double _baseX = 0.0;
   double _baseY = 0.0;
   double _lastX = 0.0;
@@ -65,11 +71,18 @@ class PinchZoom {
   /// 返回本帧的 `(横向倍率, 纵向倍率)`；1.0 表示该轴不平移缩放。
   (double, double) update(List<Offset> points) {
     final (sx, sy) = spans(points);
-    if (!_zoomX && (sx - _baseX).abs() > slop) {
+    final adx = (sx - _baseX).abs();
+    final ady = (sy - _baseY).abs();
+    final xOver = adx > slop;
+    final yOver = ady > slop;
+    // 两轴都越过 slop 时看主次：副轴不到主轴的 70% 不参与，避免斜一点就双轴缩放。
+    final xOnly = xOver && yOver && ady < adx * axisDominance;
+    final yOnly = yOver && xOver && adx < ady * axisDominance;
+    if (!_zoomX && xOver && !yOnly) {
       _zoomX = true;
       _lastX = sx;
     }
-    if (!_zoomY && (sy - _baseY).abs() > slop) {
+    if (!_zoomY && yOver && !xOnly) {
       _zoomY = true;
       _lastY = sy;
     }
