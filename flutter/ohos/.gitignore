@@ -11,3 +11,5 @@ oh-package-lock.json5
 entry/libs/
 entry/src/main/resources/rawfile/flutter_assets/
 entry/src/main/resources/rawfile/buildinfo.json5
+.clangd
+.clang-tidy
