@@ -29,17 +29,10 @@ mixin _ShellInput on _ShellBase {
   bool _gestureZoomed = false;
   bool _gestureMoved = false;
 
-  bool _isRightMouse(PointerEvent e) =>
-      e.kind == PointerDeviceKind.mouse &&
-      (e.buttons & kSecondaryMouseButton) != 0;
-
   /// 第一根手指按下时立即 begin，保证铅笔/选框没有 100ms 点击延迟。
   /// 后续的 tap / long press / scale 全部交给 Flutter gesture arena。
   @override
   void _handlePointerDown(PointerDownEvent e) {
-    if (_isRightMouse(e)) {
-      return; // 右键由原生侧走独立平移通道
-    }
     final emptyBefore = _activePointers.isEmpty;
     _activePointers.add(e.pointer);
     _pointerPositions[e.pointer] = e.localPosition;

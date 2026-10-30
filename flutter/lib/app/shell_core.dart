@@ -1,8 +1,6 @@
 part of 'studio_shell.dart';
 
 mixin _ShellCore on _ShellBase {
-  Offset? _rightPanLast;
-
   // ── 数据读取 ──
 
   List<double> _readSnapshot() {
@@ -317,10 +315,6 @@ mixin _ShellCore on _ShellBase {
       );
       return;
     }
-    if (call.method == 'rightPan') {
-      _onNativeRightPan(call.arguments as Map?);
-      return;
-    }
     if (call.method == 'onProjectSaveCancelled') {
       _savingTimer?.cancel();
       _savingTimer = null;
@@ -362,36 +356,6 @@ mixin _ShellCore on _ShellBase {
         _finishSaveWait(true);
       case 'onExportSaved':
         showSnack(context, '${l.exportDone}：$path');
-    }
-  }
-
-  /// 原生层识别到的鼠标右键（已消费，不会再走 Flutter 左键手势）。
-  void _onNativeRightPan(Map? args) {
-    if (_showHome || _showSettings || args == null) {
-      return;
-    }
-    final kind = (args['kind'] as num?)?.toInt() ?? 2;
-    final dpr = MediaQuery.devicePixelRatioOf(context);
-    final padding = MediaQuery.paddingOf(context);
-    final x = (args['x'] as num).toDouble() / dpr - padding.left;
-    final y =
-        (args['y'] as num).toDouble() / dpr -
-        padding.top -
-        42 -
-        RulerPainter.height;
-    final p = Offset(x, y);
-    if (kind == 0) {
-      // 右键按下：取消编辑/长按，强制进入手形平移。
-      _resetInteraction();
-      _rightPanLast = p;
-    } else if (kind == 1) {
-      final last = _rightPanLast;
-      _rightPanLast = p;
-      if (last != null) {
-        rust.panBy(p.dx - last.dx, p.dy - last.dy);
-      }
-    } else {
-      _rightPanLast = null;
     }
   }
 
