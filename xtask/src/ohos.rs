@@ -92,11 +92,16 @@ fn build(release: bool, install: bool) -> Result<(), ExitCode> {
         ExitCode::FAILURE
     })?;
 
+    // Rust 引擎一律 release：Dart 的 debug/release 只影响 Dart 侧，引擎始终要性能。
     let mut c = cmd::cargo();
-    c.args(["build", "--target", TARGET, "-p", "yinhe-flutter"]);
-    if release {
-        c.arg("--release");
-    }
+    c.args([
+        "build",
+        "--release",
+        "--target",
+        TARGET,
+        "-p",
+        "yinhe-flutter",
+    ]);
     c.current_dir(&root)
         .env(
             format!(
@@ -202,7 +207,7 @@ fn install_hap(sdk: &Path, hap: &Path) -> Result<(), ExitCode> {
     let hdc = find_native_dir(sdk)
         .map(|n| n.join("toolchains/hdc"))
         .filter(|p| p.is_file())
-        .or_else(|| find_deveco_hdc())
+        .or_else(find_deveco_hdc)
         .or_else(|| which("hdc"))
         .ok_or_else(|| {
             eprintln!("找不到 hdc（SDK toolchains 或 PATH）");

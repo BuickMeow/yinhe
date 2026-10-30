@@ -90,6 +90,7 @@ cargo xtask ohos --install
   需要华为开发者账号）。
 - **真机未验证**：图形（GLES）、音频（OHAudio）、触摸、横竖屏都没在设备上跑过。
 - **日志**：OHOS 上还没有 hilog 后端（`log` 宏目前丢弃），排查问题前需要补。
-- **文件选择 / 导出**：`YinheSurfacePlugin` 对未实现的方法返回 `unsupported`。
+- **文件选择**：已接 DocumentViewPicker（打开工程/音色库/另存/导出），选中文件会复制进沙箱；
+  真机上需要验证「覆盖保存」的 uri 复用与权限。
 - **性能**：OHOS 走 GLES 后端（Vulkan 需要给 wgpu-hal 补 `VK_OHOS_surface`）；
   黑乐谱的间接绘制策略未在 Mali GPU 上调过。
