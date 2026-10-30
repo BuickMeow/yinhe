@@ -1,4 +1,153 @@
-// ═══ 主体：几何 / 片元（两套变体共用）═══════════════════════════════════
+// ── Rendering constants ───────────────────────────────────────────────────
+const BORDER_DARKEN_FACTOR: f32 = 0.4;
+const MAX_SEL_RECTS: u32 = 32u;
+// 填充色的力度淡化上限：力度 0 → 向背景方向混合 50%，力度 127 → 原色。
+// 方向随主题翻转（暗色向黑、亮色向白），保留色相。仅用于 PR 音符（mode==1）；
+// ghost 层 vel=127 保持原色。
+const MAX_FILL_FADE: f32 = 0.5;
+// 选中填充：向「与背景对比最强的一极」混合的比例（暗色偏白、亮色偏黑）。
+const SELECTED_CONTRAST: f32 = 0.7;
+
+// 目标附着是否为 sRGB（pipeline override：1=是）。项目内所有颜色（调色板、
+// 主题、打包的装饰色）都以 sRGB 分量表示；写入 sRGB 附着前必须先转线性，
+// 否则硬件会再编码一次，整体变淡。
+override SRGB_TARGET: u32 = 0u;
+
+/// sRGB 分量转线性（逐通道；alpha 不变）。
+fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+    let lo = c / 12.92;
+    let hi = pow((c + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
+    return select(lo, hi, c > vec3<f32>(0.04045));
+}
+
+/// 按目标附着做颜色空间转换（仅在 sRGB 附着时生效）。
+fn to_target_space(c: vec4<f32>) -> vec4<f32> {
+    if SRGB_TARGET == 1u {
+        return vec4<f32>(srgb_to_linear(c.rgb), c.a);
+    }
+    return c;
+}
+
+struct Uniforms {
+    width: f32,
+    height: f32,
+    scroll_x: f32,
+    scroll_y: f32,
+    pixels_per_tick: f32,
+    key_height: f32,
+    keyboard_width: f32,
+    mode: u32, // 0=pixel, 1=PR notes(tick→pixel+rounding), 2=AR notes(tick→pixel)
+    min_border_width: f32,
+    track_count: u32, // number of valid tracks in track_colors
+    sel_rect_count: u32, // number of valid selection rects
+    note_outline: u32, // 0=no outline (saves fill rate), 1=on
+    lane_height: f32, // AR: per-track lane height (PR unused)
+    value_zoom: f32, // Automation panel: vertical zoom
+    value_scroll: f32, // Automation panel: vertical scroll in value space
+    orientation: u32, // PR 视图方向：0=横向（时间轴=X，音高=Y），1=纵向瀑布流（时间轴=Y，音高=X）
+
+    // 选区属性筛选（与 Rust `SelectionFilter` 一致；未设置边界 = flags 位为 0）
+    filter_key: u32,
+    filter_track: u32,
+    filter_velocity: u32,
+    filter_gate_lo: u32,
+    filter_gate_hi: u32,
+    filter_flags: u32, // bit0=key, bit1=track, bit2=velocity, bit3=gate, bit4=invert
+    exclude_mask: u32, // 排除表掩码（容量-1；0 = 禁用）
+    dark_theme: u32, // 1=暗色主题（力度淡化/选中高对比方向翻转）
+    ghost_dx: f32, // ghost 预览动画像素偏移（仅 GHOST_BIT 实例）
+    ghost_dy: f32,
+    ghost_pad0: f32,
+    ghost_pad1: f32,
+}
+
+// Track colors: runtime-sized storage buffer (allocated dynamically to actual
+// track count, see pipeline.rs / renderer.rs).
+@group(0) @binding(1)
+var<storage> tc: array<vec4<f32>>;
+
+// Track offsets: AR 模式下每个音轨主行的音乐坐标 y（像素），由展开状态决定；
+// 未展开时等于 track * lane_height。PR 模式下不使用。
+@group(0) @binding(3)
+var<storage, read> track_offsets: array<f32>;
+
+// Row heights（通道 AR）：每个「行 id」的实际行高。轨道 AR 全行 = lane_height，
+// 通道 AR 展开的通道合并行变窄为半高，音符 key 空间随之压缩。PR 不使用。
+@group(0) @binding(5)
+var<storage, read> row_heights: array<f32>;
+
+struct SelectionUniform {
+    rects: array<vec4<u32>, MAX_SEL_RECTS * 2u>, // 2 vec4 per rect: (tick_start, tick_end, key_lo, key_hi) + (track_lo, track_hi, 0, 0)
+}
+
+// 选中矩形（binding 2）：GPU cull 全曲层实例不随选区重传（bit31 恒 0），
+// 由此 uniform 在顶点着色器实时判定补选中位。
+@group(0) @binding(2)
+var<uniform> selection: SelectionUniform;
+
+/// 选区属性筛选（与 CPU `SelectionFilter::accepts_note` 同语义）。
+/// 无任何边界（flags==0）时恒通过（invert 无对象，与 CPU 一致）。
+fn selection_filter_passes(key: u32, track: u32, vel: u32, gate: u32) -> bool {
+    if u.filter_flags == 0u {
+        return true;
+    }
+    var m = true;
+    if (u.filter_flags & 1u) != 0u {
+        m = m && key >= (u.filter_key & 0xFFu) && key <= ((u.filter_key >> 8u) & 0xFFu);
+    }
+    if (u.filter_flags & 2u) != 0u {
+        m = m && track >= (u.filter_track & 0xFFFFu) && track <= (u.filter_track >> 16u);
+    }
+    if (u.filter_flags & 4u) != 0u {
+        m = m && vel >= (u.filter_velocity & 0xFFu) && vel <= ((u.filter_velocity >> 8u) & 0xFFu);
+    }
+    if (u.filter_flags & 8u) != 0u {
+        m = m && gate >= u.filter_gate_lo && gate <= u.filter_gate_hi;
+    }
+    let invert = (u.filter_flags & 16u) != 0u;
+    return m != invert;
+}
+
+// 排除表（binding 4）：成员态下「矩形内但不在成员位图」的音符键
+// （lo = key | track<<8，hi = start_tick），开放寻址、空槽 = u32::MAX。
+// 哈希函数必须与 CPU `exclude_hash` 一致。
+@group(0) @binding(4)
+var<storage, read> exclude_table: array<vec2<u32>>;
+
+fn in_exclude_table(lo: u32, hi: u32) -> bool {
+    if u.exclude_mask == 0u {
+        return false;
+    }
+    // WGSL 整数乘法即 wrapping（与 CPU 的 wrapping_mul 一致）。
+    var slot = ((lo * 2654435761u) ^ (hi * 2246822519u)) & u.exclude_mask;
+    for (var i = 0u; i <= u.exclude_mask; i = i + 1u) {
+        let e = exclude_table[slot];
+        if e.x == 0xFFFFFFFFu {
+            return false; // 空槽（键的 lo 高位恒 0，不可能为 MAX）
+        }
+        if e.x == lo && e.y == hi {
+            return true;
+        }
+        slot = (slot + 1u) & u.exclude_mask;
+    }
+    return false;
+}
+
+/// 矩形选区命中（tick 半开、key/track 闭区间，与 CPU `Selection::contains` 一致）。
+/// GPU 侧为矩形 + 属性筛选判定；成员态另由排除表（CPU 位图差集）修正。
+fn in_selection_rects(start_tick: u32, key: u32, track: u32) -> bool {
+    let n = min(u.sel_rect_count, MAX_SEL_RECTS);
+    for (var i = 0u; i < n; i = i + 1u) {
+        let a = selection.rects[i * 2u];
+        let b = selection.rects[i * 2u + 1u];
+        if start_tick >= a.x && start_tick < a.y
+            && key >= a.z && key <= a.w
+            && track >= b.x && track <= b.y {
+            return true;
+        }
+    }
+    return false;
+}
 
 struct DrawInstance {
     @location(0) xywh: vec4<f32>,
@@ -7,6 +156,14 @@ struct DrawInstance {
 
 struct NoteInstance {
     @location(0) data: vec3<u32>,  // x=start_tick, y=end_tick, z=packed(key|track|vel)
+}
+
+// GPU storage 布局的 NoteInstance（与 cull.wgsl / Rust `NoteInstance` 一致）。
+// all_instances（@group(1)）的元素类型。
+struct NoteData {
+    start_tick: u32,
+    end_tick: u32,
+    packed: u32,
 }
 
 struct VelocityBarInstance {
@@ -42,6 +199,14 @@ struct VertexOutput {
     /// 填充色（描边仍用 color）：PR/AR 音符按选中/力度计算，其余等于 color.rgb。
     @location(5) fill_color: vec3<f32>,
 }
+
+@group(0) @binding(0)
+var<uniform> u: Uniforms;
+
+// binding(1): track colors — declared above as `var<storage> tc: array<vec4<f32>>`.
+
+@group(0) @binding(2)
+var<uniform> sel: SelectionUniform;
 
 @vertex
 fn vs_main(
@@ -114,15 +279,28 @@ fn vs_main(
 
     out.clip_position = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
 
-    // 颜色：PR 音符按轨道号取调色板（tag），其余模式用实例自带 packed rgba。
+    // Color: mode=1 (PR notes) uses track_index from tag, mode=2/0 uses packed rgba
     var base_color: vec4<f32>;
     if u.mode == 1u && vel > 0u {
-        // PR notes: 调色板由变体前缀提供（storage buffer 或数据纹理）；
-        // 轨道号越界时退回实例携带的 packed rgba。
-        base_color = track_color_or(tag, unpack_rgba(instance.packed.x));
+        // PR notes: get color from track_colors uniform via track_index (tag)
+        let track_idx = tag;
+        if track_idx < u.track_count {
+            base_color = tc[track_idx];
+        } else {
+            // Fallback: use packed rgba if track_index out of range
+            let rgba = instance.packed.x;
+            base_color.r = f32((rgba >> 0u) & 0xFFu) / 255.0;
+            base_color.g = f32((rgba >> 8u) & 0xFFu) / 255.0;
+            base_color.b = f32((rgba >> 16u) & 0xFFu) / 255.0;
+            base_color.a = f32((rgba >> 24u) & 0xFFu) / 255.0;
+        }
     } else {
         // AR notes, decor, grid, keyboard: use packed rgba
-        base_color = unpack_rgba(instance.packed.x);
+        let rgba = instance.packed.x;
+        base_color.r = f32((rgba >> 0u) & 0xFFu) / 255.0;
+        base_color.g = f32((rgba >> 8u) & 0xFFu) / 255.0;
+        base_color.b = f32((rgba >> 16u) & 0xFFu) / 255.0;
+        base_color.a = f32((rgba >> 24u) & 0xFFu) / 255.0;
     }
     base_color = to_target_space(base_color);
     out.color = base_color;
@@ -147,6 +325,18 @@ fn vs_main(
 
     return out;
 }
+
+// ── Note pipeline vertex shader ───────────────────────────────────────────
+// Handles PR notes (mode==1) and AR notes (mode==2).
+// CPU only stores semantic data (start_tick, end_tick, key, track);
+// all pixel positions are computed here from uniforms.
+// Color is fetched from track_colors storage buffer.
+// ── Note pipeline vertex shader ───────────────────────────────────────────
+// GPU-cull 路径：vertex buffer 每实例 4B u32 索引，从 per-key 的顶点专用
+// bind group (@group(1)) 的 all_instances 间接读回完整 NoteInstance。
+// visible 槽位从 12B 降到 4B（全曲稀疏槽显存 -67%）。
+@group(1) @binding(0)
+var<storage, read> all_instances: array<NoteData>;
 
 // 共享的几何计算：tick/key/track → 像素矩形 → NDC。
 // 方向分支见 u.orientation：
@@ -218,11 +408,12 @@ fn note_geometry(
             pixel_h = u.key_height;
         } else {
             // AR (mode == 2u): lane_height based vertical layout
-            // 行高 per-row（通道 AR 的窄合并行）：`row_height(track)`；
+            // 行高 per-row（通道 AR 的窄合并行）：`row_heights[track]`；
             // 轨道 AR 由 CPU 上传全 lane_height，行为不变。
-            let lh = row_height(track);
+            let row_idx = min(track, arrayLength(&row_heights) - 1u);
+            let lh = row_heights[row_idx];
             let lh_per_key = lh / 128.0;
-            let track_y = track_offset(track);
+            let track_y = track_offsets[min(track, arrayLength(&track_offsets) - 1u)];
             pixel_y = -u.scroll_y + track_y + lh - (f32(key) + 1.0) * lh_per_key;
             pixel_h = max(lh_per_key, 1.0);
         }
@@ -262,8 +453,13 @@ fn note_geometry(
     }
     out.clip_position = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
 
-    // 颜色：轨道调色板（变体前缀提供），无该轨道时用中性灰。
-    var base_color = track_color_or(track, vec4<f32>(0.5, 0.5, 0.5, 1.0));
+    // Color: from track_colors storage buffer
+    var base_color: vec4<f32>;
+    if track < u.track_count {
+        base_color = tc[track];
+    } else {
+        base_color = vec4<f32>(0.5, 0.5, 0.5, 1.0);
+    }
     base_color = to_target_space(base_color);
     out.color = base_color;
 
@@ -296,6 +492,16 @@ fn note_geometry(
 
     return out;
 }
+
+@vertex
+fn vs_main_note(
+    @builtin(vertex_index) vertex_index: u32,
+    @location(0) idx: u32,
+) -> VertexOutput {
+    let inst = all_instances[idx];
+    return note_geometry(vertex_index, inst.start_tick, inst.end_tick, inst.packed);
+}
+
 // CPU-built note layers (ghost notes / legacy path): full 12B instance data
 // comes straight from the vertex buffer — no index indirection.
 @vertex
@@ -369,8 +575,13 @@ fn vs_main_velocity(
 
     out.clip_position = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
 
-    // 颜色：轨道调色板（变体前缀提供），无该轨道时用中性灰。
-    var base_color = track_color_or(track, vec4<f32>(0.5, 0.5, 0.5, 1.0));
+    // Color: from track_colors storage buffer
+    var base_color: vec4<f32>;
+    if track < u.track_count {
+        base_color = tc[track];
+    } else {
+        base_color = vec4<f32>(0.5, 0.5, 0.5, 1.0);
+    }
     base_color = to_target_space(base_color);
     out.color = base_color;
     out.fill_color = base_color.rgb; // 力度条不做选中/力度着色
@@ -548,7 +759,13 @@ fn vs_main_curve(
     out.thickness = instance.thickness;
     out.shape = instance.shape & 0xFFu;
 
-    out.color = to_target_space(unpack_rgba(instance.rgba));
+    let rgba = instance.rgba;
+    out.color = to_target_space(vec4<f32>(
+        f32((rgba >> 0u)  & 0xFFu) / 255.0,
+        f32((rgba >> 8u)  & 0xFFu) / 255.0,
+        f32((rgba >> 16u) & 0xFFu) / 255.0,
+        f32((rgba >> 24u) & 0xFFu) / 255.0,
+    ));
     return out;
 }
 

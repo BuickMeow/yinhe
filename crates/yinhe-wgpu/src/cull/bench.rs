@@ -176,7 +176,6 @@ fn bench_args_scaling(
     queue.write_buffer(&args_buf, 0, bytemuck::cast_slice(&args_data));
 
     let rs = renderer.render_state();
-    let note_pipeline = rs.note_pipeline.as_ref().expect("bench 设备支持 storage");
     let vis = renderer.cull.per_key_visible_buffers[0]
         .as_ref()
         .expect("key0 visible buffer");
@@ -197,7 +196,7 @@ fn bench_args_scaling(
                     pw,
                     ph,
                 );
-                pass.set_pipeline(note_pipeline);
+                pass.set_pipeline(&rs.note_pipeline);
                 pass.set_bind_group(0, &rs.bind_group, &[]);
                 pass.set_index_buffer(rs.index_buffer.slice(..), IndexFormat::Uint32);
                 pass.set_bind_group(1, bg, &[]);

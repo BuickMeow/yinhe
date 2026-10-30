@@ -174,108 +174,99 @@ impl CullState {
             && device
                 .features()
                 .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE);
-        // 无 storage buffer 的适配器（GLES 3.0）上 cull 完全不可用：
-        // 布局留空占位，管线与绑定组永不创建（渲染恒走 CPU 层）。
-        let cull_supported = crate::util::has_storage_buffers(device);
-        let bind_group_layout = if cull_supported {
-            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-                label: Some("cull_bind_group_layout"),
-                entries: &[
-                    BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: ShaderStages::COMPUTE,
-                        ty: BindingType::Buffer {
-                            ty: BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: ShaderStages::COMPUTE,
-                        ty: BindingType::Buffer {
-                            ty: BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: ShaderStages::COMPUTE,
-                        ty: BindingType::Buffer {
-                            ty: BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: ShaderStages::COMPUTE,
-                        ty: BindingType::Buffer {
-                            ty: BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: ShaderStages::COMPUTE,
-                        ty: BindingType::Buffer {
-                            ty: BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    BindGroupLayoutEntry {
-                        binding: 5,
-                        visibility: ShaderStages::COMPUTE,
-                        ty: BindingType::Buffer {
-                            ty: BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    BindGroupLayoutEntry {
-                        binding: 6,
-                        visibility: ShaderStages::COMPUTE,
-                        ty: BindingType::Buffer {
-                            ty: BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            })
-        } else {
-            empty_layout(device, "cull_bind_group_layout_gles3")
-        };
-        // 顶点阶段专用：单 binding 的 all_instances 只读 layout。
-        // 与 cull bind group 分离，render pass 引用时不会把 exclusive 的
-        // STORAGE_READ_WRITE（visible_indices）带进同一 usage scope。
-        let all_bind_group_layout = if cull_supported {
-            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-                label: Some("all_instances_bind_group_layout"),
-                entries: &[BindGroupLayoutEntry {
+        let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("cull_bind_group_layout"),
+            entries: &[
+                BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: ShaderStages::VERTEX,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: ShaderStages::COMPUTE,
                     ty: BindingType::Buffer {
                         ty: BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
-                }],
-            })
-        } else {
-            empty_layout(device, "all_instances_bind_group_layout_gles3")
-        };
+                },
+                BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        // 顶点阶段专用：单 binding 的 all_instances 只读 layout。
+        // 与 cull bind group 分离，render pass 引用时不会把 exclusive 的
+        // STORAGE_READ_WRITE（visible_indices）带进同一 usage scope。
+        let all_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("all_instances_bind_group_layout"),
+            entries: &[BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::VERTEX,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
         // 计算管线不在此创建：推迟到首次全量上传（`ensure_pipeline`）。
         // 原因：部分环境（如 Android 模拟器的 MoltenVK）编译使用 workgroup
         // 共享内存的 compute shader 会失败并导致 device lost；CPU 渲染路径
@@ -438,7 +429,7 @@ impl CullState {
     /// workgroup 共享内存的 compute shader 会失败并导致 device lost；
     /// CPU 渲染路径从不使用 cull，推迟创建后这些环境可以正常渲染。
     fn ensure_pipeline(&mut self, device: &Device) {
-        if self.pipeline.is_some() || !crate::util::has_storage_buffers(device) {
+        if self.pipeline.is_some() {
             return;
         }
         let shader = device.create_shader_module(ShaderModuleDescriptor {
@@ -1234,12 +1225,4 @@ impl CullState {
             pass.multi_draw_indexed_indirect(args_buf, chunk_total * 20, chunk_count);
         }
     }
-}
-
-/// 空占位布局：无 storage buffer 的设备上替代 cull 布局（不产生校验错误）。
-fn empty_layout(device: &Device, label: &str) -> BindGroupLayout {
-    device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-        label: Some(label),
-        entries: &[],
-    })
 }
