@@ -995,6 +995,16 @@ pub fn open_midi(path: String) {
         mark_load_done();
         return;
     }
+    // 预检可读性：外置存储的路径在分区存储 / 鸿蒙上可能已经失去权限。
+    // 直接给可操作的提示，而不是让用户看到裸的 "os error 13"。
+    if let Err(e) = std::fs::File::open(&path) {
+        if e.kind() == std::io::ErrorKind::PermissionDenied {
+            finish_load(begin_load(&path), Err(
+                "无权读取该文件：请重新用「打开」选择（文件会复制到应用内），或把音色库/工程打成压缩包导入".into(),
+            ));
+            return;
+        }
+    }
     let token = begin_load(&path);
     let path_for_thread = path.clone();
     let spawn = std::thread::Builder::new()

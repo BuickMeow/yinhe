@@ -1,6 +1,8 @@
 package com.jieneng.yinhe
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -38,6 +40,9 @@ class MainActivity : FlutterActivity() {
 
         /** SAF 音色库选择请求码。 */
         private const val REQ_OPEN_SF = 1002
+
+        /** 运行时存储权限（Android 10 及以下）。 */
+        private const val REQ_PERM_STORAGE = 1003
 
         /** SAF 保存工程请求码。 */
         private const val REQ_SAVE_FILE = 1003
@@ -130,6 +135,28 @@ class MainActivity : FlutterActivity() {
 
     /** Rust 回调：所选音色库（SF2）已复制到私有目录。 */
     private external fun onSoundFontPicked(path: String)
+
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        super.onCreate(savedInstanceState)
+        ensureStoragePermission()
+    }
+
+    /**
+     * Android 10 及以下：要读外部真实路径（SFZ 及其采样）就需要这个运行时权限。
+     * 鸿蒙 4 的 Android 兼容层可能直接拒绝 —— 拒绝后所有文件都走"复制进私有目录"，
+     * 功能不受影响，只有裸 SFZ（采样在用户目录里）不能用，需要压缩包导入。
+     */
+    private fun ensureStoragePermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            return
+        }
+        if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), REQ_PERM_STORAGE)
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -446,7 +473,14 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun hasAllFilesAccess(): Boolean =
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            // Android 10 及以下没有"所有文件访问"开关，等价能力是 READ_EXTERNAL_STORAGE；
+            // 旧实现直接返回 true，结果把外部真实路径交给 Rust，鸿蒙上 mmap 就 EACCES。
+            checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) ==
+                PackageManager.PERMISSION_GRANTED
+        }
 
     /** 文件扩展名（小写、不含点；无扩展名返回空串）。 */
     private fun extensionOf(name: String): String {
@@ -640,8 +674,12 @@ class MainActivity : FlutterActivity() {
         if (uri == null) {
             return null
         }
-        // 有「所有文件访问」时直接用真实路径，不再复制到私有目录。
-        externalStoragePath(uri)?.let { return it }
+        // 只有 .sfz 允许原地读取（采样是相对 sfz 的路径，复制单个文件会断链），
+        // 而且必须真的可读；其余（MIDI/工程/压缩包/SF2）一律复制进私有目录，
+        // 避免外部路径在分区存储 / 鸿蒙上被判定为 EACCES。
+        externalStoragePath(uri)
+            ?.takeIf { it.endsWith(".sfz", ignoreCase = true) && File(it).canRead() }
+            ?.let { return it }
         val name = displayName(uri) ?: "picked.bin"
         val dest = File(filesDir, name)
         return try {

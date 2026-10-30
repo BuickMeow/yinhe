@@ -4,6 +4,11 @@
     <uses-permission
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
+    <!-- Android 10 及以下读外部路径（SFZ 采样原地读取）需要；鸿蒙 4 可能拒绝，
+         此时音色库请用压缩包导入（选择器会把文件复制进私有目录）。 -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
     <application
         android:label="yinhe"
         android:name="${applicationName}"
