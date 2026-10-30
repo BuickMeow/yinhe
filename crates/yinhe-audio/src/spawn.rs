@@ -354,6 +354,8 @@ pub struct AudioHandle {
     /// 不能超过实际已渲染的音频（防止"准备播放"期间指示线空跑）。
     producer_sample_position: Arc<AtomicU64>,
     playing: Arc<AtomicBool>,
+    /// 活跃 voice 数（含 release 尾音）：播放到末尾后用它判断何时暂停。
+    voice_count: Arc<AtomicU64>,
     duration_samples: Arc<AtomicU64>,
     /// 由 cpal 流错误回调置位。UI 每帧查询，若为 true 应弹窗提示用户重启。
     stream_error: Arc<AtomicBool>,
@@ -526,6 +528,11 @@ impl AudioHandle {
 
     pub fn is_playing(&self) -> bool {
         self.playing.load(Ordering::Relaxed)
+    }
+
+    /// 当前活跃 voice 数（含 release 尾音；0 = 声音已自然结束）。
+    pub fn voice_count(&self) -> u64 {
+        self.voice_count.load(Ordering::Relaxed)
     }
 
     pub fn duration_samples(&self) -> u64 {
@@ -1338,6 +1345,8 @@ struct RendererStarted {
     handle: std::thread::JoinHandle<()>,
     /// UI 播放指示线的上限：渲染器已推入 ring 的采样位置（producer）。
     producer_sample_position: Arc<AtomicU64>,
+    /// 活跃 voice 数（含 release 尾音）。
+    voice_count: Arc<AtomicU64>,
     /// 已完成加载的音色库 port 数。
     sf_loaded: Arc<AtomicUsize>,
     /// 音频完全就绪（模型 + 音色库 + 采样上传 + 管线预热）。
@@ -1376,6 +1385,7 @@ fn init_renderer(
     let producer_sample_position = Arc::clone(&renderer_state.producer_sample_position);
     let sf_loaded = Arc::clone(&renderer_state.sf_loaded);
     let audio_ready = Arc::clone(&renderer_state.audio_ready);
+    let voice_count = Arc::clone(&renderer_state.voice_count);
     // 监听缓冲：容量上限由输入侧（yinhe-egui 的录音回调）控制，
     // 保证监听延迟不随录音时长增长。
     let monitor: Arc<Mutex<std::collections::VecDeque<f32>>> =
@@ -1420,6 +1430,7 @@ fn init_renderer(
     Ok(RendererStarted {
         handle,
         producer_sample_position,
+        voice_count,
         sf_loaded,
         audio_ready,
         stream_callback,
@@ -1621,6 +1632,7 @@ pub fn spawn_cpal_audio(
     let RendererStarted {
         handle: renderer_handle,
         producer_sample_position,
+        voice_count,
         sf_loaded,
         audio_ready,
         stream_callback,
@@ -1678,6 +1690,7 @@ pub fn spawn_cpal_audio(
             sample_position,
             producer_sample_position,
             playing,
+            voice_count,
             duration_samples,
             stream_error,
             preview_stop_flag,

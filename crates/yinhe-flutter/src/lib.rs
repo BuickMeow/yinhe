@@ -1034,6 +1034,19 @@ pub extern "C" fn yinhe_is_playing() -> i32 {
     i32::from(audio::is_playing())
 }
 
+/// 播放到工程末尾且 release 尾音已结束：暂停在末尾并同步 UI 光标。
+/// 返回 1 表示本次调用触发了暂停。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_auto_pause_at_end() -> i32 {
+    match audio::auto_pause_at_end() {
+        Some(end) => {
+            scene::set_cursor_exact(end);
+            1
+        }
+        None => 0,
+    }
+}
+
 /// 当前播放位置（秒，UI 时间显示用）。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_playback_seconds() -> f64 {

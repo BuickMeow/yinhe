@@ -706,7 +706,7 @@ pub fn play() {
     if !ensure_audio() {
         return;
     }
-    let tick = {
+    let mut tick = {
         let Some(mut guard) = lock_audio() else {
             return;
         };
@@ -715,6 +715,17 @@ pub fn play() {
         };
         flow_sync_cursor(st)
     };
+    // 上次播放停在工程末尾：再按播放从头开始（常规播放器行为）。
+    if let Some(model) = current_model()
+        && tick >= model.tick_length as f64
+    {
+        tick = 0.0;
+        if let Some(mut guard) = lock_audio()
+            && let Some(st) = guard.as_mut()
+        {
+            st.cursor_tick = 0.0;
+        }
+    }
     let seconds = model_seconds(tick);
     let Some(mut guard) = lock_audio() else {
         return;
@@ -790,6 +801,34 @@ pub fn seek(tick: f64) -> bool {
         log::info!("跳转播放位置: tick={tick:.0}");
     }
     true
+}
+
+/// 播放到工程末尾：等 release 尾音自然结束后暂停在末尾（不回开头）。
+///
+/// 返回 `Some(end_tick)` 表示本次调用了暂停，调用方应把 UI 光标设到末尾。
+pub fn auto_pause_at_end() -> Option<f64> {
+    let model = current_model()?;
+    let end_tick = model.tick_length as f64;
+    if end_tick <= 0.0 {
+        return None;
+    }
+    let (playing, voices) = {
+        let guard = lock_audio()?;
+        let st = guard.as_ref()?;
+        (
+            st.handle.handle.is_playing(),
+            st.handle.handle.voice_count(),
+        )
+    };
+    // 还在播、或者 release 尾音还没结束：继续渲染，让最后一个音符自然衰减。
+    if !playing || voices > 0 {
+        return None;
+    }
+    if playback_tick() < end_tick {
+        return None;
+    }
+    pause();
+    Some(end_tick)
 }
 
 /// 当前播放位置（tick）。播放中按采样位置换算，否则返回光标值。

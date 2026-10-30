@@ -113,6 +113,9 @@ pub(crate) struct RendererSharedState {
     /// 欠载累计样本数（立体声交错）：播放中 cpal 回调从 ring 取不到足够样本
     /// 而补零的总量。非零增长 = 渲染跟不上（音频断续/咔哒的客观指标）。
     pub(crate) underrun_samples: Arc<AtomicU64>,
+    /// 活跃 voice 数（渲染线程每块更新）：播放到末尾后据此判断 release 尾音
+    /// 是否已经自然消失，决定何时暂停（不能一到 end_tick 就 Stop）。
+    pub(crate) voice_count: Arc<AtomicU64>,
 }
 
 impl RendererSharedState {
@@ -129,6 +132,7 @@ impl RendererSharedState {
             audio_ready: Arc::new(AtomicBool::new(false)),
             bus_readings: Arc::new(Mutex::new(Vec::new())),
             underrun_samples: Arc::new(AtomicU64::new(0)),
+            voice_count: Arc::new(AtomicU64::new(0)),
         }
     }
 }
@@ -471,6 +475,9 @@ impl AudioRenderer {
         self.state
             .producer_sample_position
             .store(self.engine.sample_position(), Ordering::Release);
+        self.state
+            .voice_count
+            .store(self.engine.voice_count(), Ordering::Relaxed);
         self.state
             .playing
             .store(self.engine.playing(), Ordering::Release);

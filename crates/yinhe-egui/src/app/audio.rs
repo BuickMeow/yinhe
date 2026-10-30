@@ -788,7 +788,13 @@ impl App {
                 self.notifications
                     .error(t!("toast.audio_not_ready").to_string(), String::new());
             } else {
-                let tick = doc.edit.cursor_tick.unwrap_or(0.0);
+                let mut tick = doc.edit.cursor_tick.unwrap_or(0.0);
+                // 上次播放停在了工程末尾：再按播放从头开始（常规播放器行为）。
+                let end_tick = doc.data.model.tick_length as f64;
+                if tick >= end_tick {
+                    tick = 0.0;
+                    doc.edit.cursor_tick = Some(0.0);
+                }
                 let cursor_sample = (doc.data.model.tempo_map.tick_to_seconds(tick as u64)
                     * audio.sample_rate as f64) as u64;
                 let engine_sample = handle.sample_position();
@@ -902,10 +908,15 @@ impl App {
         let tick = doc.data.model.tempo_map.tick_at_time(time);
         let end_tick = doc.data.model.tick_length as f64;
         if tick >= end_tick {
-            handle.send(yinhe_audio::AudioCommand::Stop);
-            doc.edit.cursor_tick = Some(0.0);
-            doc.edit.playback.stop();
-            self.audio_state.playback_anchor = None;
+            // 到工程末尾不要立刻 Stop：最后一个音符的 release 还没播完。
+            // 光标停在末尾继续渲染，等 voice 全部结束（含 release 尾音）
+            // 再 Pause —— 停在末尾，不回开头。
+            doc.edit.cursor_tick = Some(end_tick);
+            if handle.voice_count() == 0 {
+                handle.send(yinhe_audio::AudioCommand::Pause);
+                doc.edit.playback.stop();
+                self.audio_state.playback_anchor = None;
+            }
         } else {
             doc.edit.cursor_tick = Some(tick.max(0.0));
         }

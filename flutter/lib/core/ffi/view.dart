@@ -411,6 +411,11 @@ final IntDart isPlaying = bridge.lookupFunction<IntNative, IntDart>(
   'yinhe_is_playing',
 );
 
+/// 播放到末尾且尾音结束后暂停在末尾（返回 1 表示本次触发）。
+final IntDart autoPauseAtEnd = bridge.lookupFunction<IntNative, IntDart>(
+  'yinhe_auto_pause_at_end',
+);
+
 typedef DoubleNative = ffi.Double Function();
 typedef DoubleDart = double Function();
 

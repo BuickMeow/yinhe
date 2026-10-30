@@ -441,6 +441,8 @@ class _StudioShellState extends _ShellBase
           // 拖拽边缘自动滚动：先滚动视图，再渲染这一帧。
           rust.dragTick();
           rust.renderFrame();
+          // 到工程末尾：等 release 尾音自然结束后暂停在末尾，不回开头。
+          rust.autoPauseAtEnd();
         }
         _playhead.value = rust.playheadX();
         final snap = _readSnapshot();
