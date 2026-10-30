@@ -188,7 +188,70 @@ fn init_logging() {
                 .with_max_level(log::LevelFilter::Info)
                 .with_tag("yinhe_flutter"),
         );
+        #[cfg(target_env = "ohos")]
+        crate::hilog::init();
     });
+}
+
+// ── 鸿蒙 hilog ──
+
+/// 最小 `log` → hilog 适配（`OH_LOG_Print`）。
+#[cfg(target_env = "ohos")]
+mod hilog {
+    use std::ffi::{CString, c_char, c_int, c_uint};
+
+    #[link(name = "hilog_ndk.z")]
+    unsafe extern "C" {
+        fn OH_LOG_Print(
+            log_type: c_int,
+            level: c_int,
+            domain: c_uint,
+            tag: *const c_char,
+            fmt: *const c_char,
+            ...
+        ) -> c_int;
+    }
+
+    /// `LOG_APP`（应用日志域）。
+    const LOG_APP: c_int = 0;
+    const LOG_INFO: c_int = 4;
+    const LOG_ERROR: c_int = 6;
+
+    fn emit(level: c_int, msg: &str) {
+        // hilog 的格式化串需要 `%{public}s`；消息本身先转 C 字符串，避免格式注入。
+        let Ok(msg) = CString::new(msg) else {
+            return;
+        };
+        let tag = c"yinhe";
+        let fmt = c"%{public}s";
+        // SAFETY: 两个 C 字符串在调用期间有效；OH_LOG_Print 是可变参数 C 函数。
+        unsafe {
+            OH_LOG_Print(LOG_APP, level, 0, tag.as_ptr(), fmt.as_ptr(), msg.as_ptr());
+        }
+    }
+
+    struct Logger;
+
+    impl log::Log for Logger {
+        fn enabled(&self, _: &log::Metadata<'_>) -> bool {
+            true
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            let level = match record.level() {
+                log::Level::Error => LOG_ERROR,
+                _ => LOG_INFO,
+            };
+            emit(level, &format!("{}: {}", record.target(), record.args()));
+        }
+
+        fn flush(&self) {}
+    }
+
+    pub(crate) fn init() {
+        let _ = log::set_logger(&Logger);
+        log::set_max_level(log::LevelFilter::Info);
+    }
 }
 
 // ── 设备资源 ──
