@@ -123,7 +123,10 @@ impl ChannelSet {
 
     /// 该 dense 通道当前是否为鼓组模式（bank 128）。
     pub(crate) fn is_percussion(&self, dense: u32) -> bool {
-        self.percussion.get(dense as usize).copied().unwrap_or(false)
+        self.percussion
+            .get(dense as usize)
+            .copied()
+            .unwrap_or(false)
     }
 
     /// 与 `ChannelGroup::send_event` 相同语义：音频事件进缓存（渲染前 flush），
