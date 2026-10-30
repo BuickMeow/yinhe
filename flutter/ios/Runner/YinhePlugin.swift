@@ -33,8 +33,9 @@ final class YinhePlugin: NSObject, FlutterPlugin {
 
     // 宿主回调先登记，再初始化引擎：Rust 建好 wgpu 设备后宿主才能建纹理池。
     yinhe_ios_set_host(yinheAcquireTexture, yinheSubmitTexture)
-    let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-    yinhe_ios_init(dir.path)
+    // Rust 的状态（最近文件/设置/音色库列表）放应用私有目录，
+    // Documents 留给用户可见的导入文件。
+    yinhe_ios_init(YinheFileBridge.stateDirectory.path)
   }
 
   // MARK: - MethodChannel

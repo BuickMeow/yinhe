@@ -196,11 +196,10 @@ export class YinheSurfacePlugin implements MethodCallHandler {
         return;
       }
       const name = baseName(uri);
-      const path = this.copyToSandbox(uri);
       if (!this.isAllowed(exts, name)) {
         this.channel.invokeMethod('onFileRejected', name, null);
       } else {
-        this.channel.invokeMethod('onFilePicked', path, null);
+        this.channel.invokeMethod('onFilePicked', this.copyToSandbox(uri), null);
       }
       result.success(null);
     } catch (e) {
@@ -216,12 +215,11 @@ export class YinheSurfacePlugin implements MethodCallHandler {
         return;
       }
       const name = baseName(uri);
-      const path = this.copyToSandbox(uri);
       if (!this.isAllowed(exts, name)) {
         this.channel.invokeMethod('onSoundfontRejected', name, null);
       } else {
         // 压缩包还是裸音色库、以及入表，都由 Dart 判定/调用。
-        this.channel.invokeMethod('onSoundFontPicked', path, null);
+        this.channel.invokeMethod('onSoundFontPicked', this.copyToSandbox(uri), null);
       }
       result.success(null);
     } catch (e) {

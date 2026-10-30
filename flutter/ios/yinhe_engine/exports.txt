@@ -1,3 +1,4 @@
+_yinhe_add_soundfont
 _yinhe_add_tracks
 _yinhe_archive_json
 _yinhe_archive_open

@@ -52,10 +52,20 @@ iOS 不允许 app 里 dlopen 自己带的 dylib，所以 `yinhe-flutter` 同时�
 同步点：Dart 每帧调 `yinhe_render_frame()` → 渲染线程向宿主 `acquire` 一个槽位 →
 画完 `submit` → 宿主 `textureFrameAvailable`。
 
+## 文件选择与保存
+
+- 打开：`UIDocumentPicker`（不收 asCopy）→ 按 Dart 下发的扩展名白名单校验 →
+  拷进 Documents（如果选的就是应用自己的 Documents，跳过拷贝）→ 回 Dart。
+  `.yin` 会额外存一份 security-scoped bookmark，「保存」时直接覆盖原文件。
+- 保存：先看 bookmark；没有或用户选了「另存为」才弹系统导出页，选完再记住位置。
+  bookmark 存在 UserDefaults（`yinhe.fileBookmarks`，按文件名索引）。
+- Rust 的状态（最近文件/设置/音色库列表）写在 `Library/Application Support`，
+  Documents 只放用户可见的工程/导入文件。
+- 裸 SFZ（采样在同目录）在 iOS 上仍然不可用：选择器只能给单文件，采样会断链。
+  音色库请用 SF2 或压缩包。
+
 ## 已知限制 / 待办
 
-- 文件选择与保存（`openFilePicker` / `saveProject` / `saveExport`）仍是 Phase 2：
-  要接 `UIDocumentPicker` + 沙箱拷贝 + security-scoped bookmark。
 - `AVAudioSession` 还没配置成 `.playback`：真机上拨到静音开关会没声。
 - 模拟器只出 arm64 切片（`EXCLUDED_ARCHS[sdk=iphonesimulator*] = x86_64`），
   Intel Mac 上跑模拟器需要额外编 `x86_64-apple-ios` 并 `lipo` 合并。

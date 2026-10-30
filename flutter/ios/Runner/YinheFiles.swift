@@ -8,8 +8,15 @@ import UniformTypeIdentifiers
 /// bookmark，等价于 Android 的持久化 URI 权限）。文件类型策略不在这里——扩展名
 /// 白名单由 Dart 的 `core/platform_files.dart` 下发。
 final class YinheFileBridge: NSObject, UIDocumentPickerDelegate {
-  /// 应用沙箱 Documents（与 Rust 的 files_dir 一致）。
+  /// 用户可见的 Documents（导入的文件放这里，Files App 里能看到）。
   private let documents: URL
+  /// 应用私有状态目录（最近文件/设置/音色库列表，别让用户看到）。
+  static let stateDirectory: URL = {
+    let fm = FileManager.default
+    let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    try? fm.createDirectory(at: base, withIntermediateDirectories: true)
+    return base
+  }()
   private let channel: FlutterMethodChannel
 
   /// 当前进行中的动作（delegate 回调据此决定回哪个通道消息）。
@@ -102,14 +109,20 @@ final class YinheFileBridge: NSObject, UIDocumentPickerDelegate {
       }
       return
     }
-    // 先改名成用户看到的目标文件名，再交给系统导出（导出页会以它作为默认名）。
+    // 导出页用文件 URL 当默认文件名：拷一份改成目标名再交给系统，
+    // 原临时文件保留（Rust 下次还是写同一个路径，取消保存后不影响重试）。
     let named = file.deletingLastPathComponent().appendingPathComponent(fileName)
     if named != file {
       try? FileManager.default.removeItem(at: named)
-      try? FileManager.default.moveItem(at: file, to: named)
+      do {
+        try FileManager.default.copyItem(at: file, to: named)
+      } catch {
+        NSLog("[yinhe] 准备导出文件失败：\(error)")
+      }
     }
+    let exportURL = FileManager.default.fileExists(atPath: named.path) ? named : file
     self.action = action
-    let picker = UIDocumentPickerViewController(forExporting: [named], asCopy: true)
+    let picker = UIDocumentPickerViewController(forExporting: [exportURL], asCopy: true)
     picker.delegate = self
     present(picker)
   }
@@ -178,7 +191,10 @@ final class YinheFileBridge: NSObject, UIDocumentPickerDelegate {
 
     let dest = documents.appendingPathComponent(name.isEmpty ? "picked.bin" : name)
     do {
-      try copy(from: url, to: dest)
+      if url.standardizedFileURL.path != dest.standardizedFileURL.path {
+        // 用户可能就是从「我的 iPad > yinhe」（本应用 Documents）里选的，同一路径不要再拷。
+        try copy(from: url, to: dest)
+      }
     } catch {
       NSLog("[yinhe] 复制所选文件失败：\(error)")
       channel.invokeMethod(soundfont ? "onSoundfontRejected" : "onFileRejected", arguments: name)
