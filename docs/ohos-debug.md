@@ -28,17 +28,27 @@ hdc shell hilog -r && hdc shell aa start -b com.jieneng.yinhe -a EntryAbility
 
 ## 三、模拟器的已知限制
 
-- 只支持 **OpenGL ES 3.0**（`OpenGL ES 3.0 (4.1 Metal - 91.7)`，ANGLE 之上的华为翻译层），
-  不支持 Vulkan（ICD 存在但枚举到 0 个设备），也不支持 GLES 3.1 的 SSBO/计算着色器；
+官方文档（[模拟器与真机的差异](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/ide-emulator-specification)，
+Windows/macOS 同一份，2026-10 更新）明确写了两条：
+
+> - 模拟器不支持 OpenGL ES 3.1、3.2 接口。
+> - DevEco Studio 6.1.0 Beta2 之前不支持 Vulkan；此后支持除
+>   `vkGetSwapchainGrallocUsageOHOS`、`vkAcquireImageOHOS`、`vkQueueSignalReleaseImageOHOS`
+>   之外的接口（后两个正是外接纹理/原生缓冲相关）。
+
+- 所以模拟器（无论 Windows 还是 macOS 宿主）只给 **OpenGL ES 3.0**
+  （`OpenGL ES 3.0 (4.1 Metal - 91.7)`，华为翻译层之上）；
 - 因此**画布在模拟器上不可能出图**：音符/自动化渲染依赖顶点阶段 storage buffer，
   缺 SSBO 时管线创建直接失败（日志会打一条「设备不支持 shader storage buffer」）。
   真机（Mali/Adreno，ES 3.2）支持，桌面 Metal/Vulkan 同样支持；
+- Vulkan 即便在新版模拟器上可用（我们这台 DevEco 26.0.0 实测枚举到 **0 个设备**），
+  wgpu-hal 也没有实现 `VK_OHOS_surface`，要用得自己给 wgpu 打补丁；
 - 另一条独立阻塞：模拟器的外部纹理生产端不工作——我们的 EGL 交换链
   `eglSwapBuffers` 成功，但 Bufferqueue 计数保持 `Requested: 0 Flushed: 0`，
   引擎每帧报 `OH_NativeImage_AcquireNativeWindowBuffer() failed ... ret=40601000`，
   所以连纯色清屏都显示不出来（与渲染代码无关）；
 - 结论：模拟器只适合验证 UI、文件读写、音频初始化等非画布部分；
-  帧率/内存/正确性一律以真机为准。
+  帧率/内存/正确性一律以真机为准；本地想验渲染请跑桌面版（`cargo run`）。
 
 ## 四、真机 vs 模拟器
 
