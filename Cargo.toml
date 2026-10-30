@@ -61,6 +61,14 @@ cpal = "0.18"
 dirs = "6"
 rust-i18n = "4"
 
+# debug 产物只服务于 AI 的 clippy/test 迭代，不用于手动调试：
+# 自身保留行号（panic backtrace 可读），依赖不生成 DWARF（显著减小 target、编译更快）。
+[profile.dev]
+debug = 1
+
+[profile.dev.package."*"]
+debug = false
+
 [profile.fast-release]
 inherits = "release"                # 基于 release 默认设置
 opt-level = 1                       # 基本优化，编译速度远快于 3
