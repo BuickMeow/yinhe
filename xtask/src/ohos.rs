@@ -175,6 +175,9 @@ fn build(release: bool, install: bool) -> Result<(), ExitCode> {
                 .unwrap_or_default(),
         );
     cmd::status(&mut pubget)?;
+    // flutter 会往 local.properties 写 hwsdk.dir（指向本机 shim）；DevEco 打开工程时
+    // 会把它当成 OpenHarmony SDK 路径并报"SDK 路径不合法"。删掉让 DevEco 用自带 SDK。
+    strip_local_hwsdk(&ohos_dir);
 
     // 4) hvigor：需要 flutter-hvigor-plugin（由 flutter_tools 提供）。
     ensure_hvigor_plugin(&ohos_dir, &flutter_oh)?;
@@ -272,6 +275,22 @@ fn install_hap(sdk: &Path, hap: &Path) -> Result<(), ExitCode> {
         "EntryAbility",
     ]);
     cmd::status(&mut start)
+}
+
+/// 去掉 local.properties 里的 `hwsdk.dir`（Flutter 工具自动写入，DevEco 会误判）。
+fn strip_local_hwsdk(ohos_dir: &Path) {
+    let path = ohos_dir.join("local.properties");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let filtered: String = text
+        .lines()
+        .filter(|line| !line.starts_with("hwsdk.dir="))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    if filtered != text {
+        let _ = std::fs::write(&path, filtered);
+    }
 }
 
 fn ensure_hvigor_plugin(ohos_dir: &Path, flutter_oh: &Path) -> Result<(), ExitCode> {
