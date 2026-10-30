@@ -39,7 +39,7 @@ pub fn default_plugin_dirs() -> Vec<PathBuf> {
             }
             v
         }
-        #[cfg(any(target_os = "android", target_env = "ohos"))]
+        #[cfg(any(target_os = "android", target_os = "ios", target_env = "ohos"))]
         {
             // 移动端无桌面插件生态：不搜索任何目录。
             Vec::new()
