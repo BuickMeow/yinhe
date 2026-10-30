@@ -112,6 +112,7 @@ impl AudioRenderer {
                                 *channel,
                                 *dense,
                                 soundfonts.clone(),
+                                &paths,
                             );
                         }
                     }

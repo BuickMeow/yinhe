@@ -3933,6 +3933,7 @@ fn diag_engine_cpu_vs_gpu() {
             // CPU 路径：xsynth 需要音色库。测试里通过 same-channel soundfont 注入。
             // engine 的 channel_set 由 worker 异步配置，这里直接逐通道加载。
             let sfz_path = std::path::PathBuf::from(sfz);
+            let sfz_paths = vec![sfz_path.to_string_lossy().into_owned()];
             let stream_params = xsynth_core::AudioStreamParams {
                 channels: xsynth_core::ChannelCount::Stereo,
                 sample_rate: sr,
@@ -3951,7 +3952,12 @@ fn diag_engine_cpu_vs_gpu() {
             let base: std::sync::Arc<dyn xsynth_core::soundfont::SoundfontBase> = sf;
             for ch in 0..16u8 {
                 let dense = engine.channel_layout.dense_for(ch as usize);
-                engine.apply_loaded_soundfont_for_channel(ch, dense, vec![Arc::clone(&base)]);
+                engine.apply_loaded_soundfont_for_channel(
+                    ch,
+                    dense,
+                    vec![Arc::clone(&base)],
+                    &sfz_paths,
+                );
             }
             engine.playing = true;
         }

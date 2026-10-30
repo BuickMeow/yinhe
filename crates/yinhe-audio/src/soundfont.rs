@@ -95,7 +95,8 @@ impl SoundFontManager {
         dense: u32,
     ) -> Result<(), String> {
         let soundfonts = self.load_paths(paths)?;
-        self.apply_loaded_for_channel(channel, soundfonts, cg, dense);
+        let sfz = paths.iter().any(|p| is_sfz_path(p));
+        self.apply_loaded_for_channel(channel, soundfonts, cg, dense, sfz);
         Ok(())
     }
 
@@ -115,6 +116,7 @@ impl SoundFontManager {
         soundfonts: Vec<Arc<dyn SoundfontBase>>,
         cg: &mut ChannelSet,
         dense: u32,
+        sfz: bool,
     ) {
         self.channel_sfs[channel as usize] = soundfonts;
         sweep_unused();
@@ -124,5 +126,19 @@ impl SoundFontManager {
             dense,
             ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(sfs)),
         ));
+        // SFZ 没有 bank 128（鼓组）：鼓通道若保持着 percussion 模式，
+        // xsynth 会去查 (128, 0) 然后静音。这里退回普通 bank，
+        // 让 SFZ 在通道 10 上至少能发声（与 yinhe-synth 的 fallback 一致）。
+        if sfz && cg.is_percussion(dense) {
+            cg.send_event(SynthEvent::Channel(
+                dense,
+                ChannelEvent::Config(ChannelConfigEvent::SetPercussionMode(false)),
+            ));
+        }
     }
+}
+
+/// 是否为 SFZ 路径（小写扩展名）。
+fn is_sfz_path(path: &str) -> bool {
+    path.to_ascii_lowercase().ends_with(".sfz")
 }

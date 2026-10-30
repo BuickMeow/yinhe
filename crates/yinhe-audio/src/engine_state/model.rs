@@ -223,11 +223,20 @@ impl AudioEngine {
         channel: u8,
         dense: u32,
         soundfonts: Vec<Arc<dyn SoundfontBase>>,
+        paths: &[String],
     ) {
         if dense == u32::MAX {
             return;
         }
-        self.sf_manager
-            .apply_loaded_for_channel(channel, soundfonts, &mut self.channel_set, dense);
+        let sfz = paths
+            .iter()
+            .any(|p| p.to_ascii_lowercase().ends_with(".sfz"));
+        self.sf_manager.apply_loaded_for_channel(
+            channel,
+            soundfonts,
+            &mut self.channel_set,
+            dense,
+            sfz,
+        );
     }
 }

@@ -11,7 +11,9 @@ use std::sync::Arc;
 
 use rayon::prelude::*;
 use xsynth_core::AudioPipe;
-use xsynth_core::channel::{ChannelAudioEvent, ChannelEvent, ControlEvent, VoiceChannel};
+use xsynth_core::channel::{
+    ChannelAudioEvent, ChannelConfigEvent, ChannelEvent, ControlEvent, VoiceChannel,
+};
 use xsynth_core::channel_group::{ChannelGroupConfig, SynthEvent, SynthFormat, ThreadCount};
 
 use yinhe_mixer::ChannelBuffers;
@@ -37,6 +39,9 @@ pub(crate) struct ChannelSet {
     cached_event_count: u32,
     /// 跨通道并行池（AUTO_PER_CHANNEL 时存在）。
     thread_pool: Option<Arc<rayon::ThreadPool>>,
+    /// 每通道鼓组模式（dense）：`SetPercussionMode` 的记录。
+    /// 加载 SFZ 库时据此把鼓通道回退到普通 bank（SFZ 没有 bank 128）。
+    percussion: Box<[bool]>,
     audio_params: xsynth_core::AudioStreamParams,
 }
 
@@ -106,6 +111,7 @@ impl ChannelSet {
             scratches: scratches.into_boxed_slice(),
             cached_event_count: 0,
             thread_pool: group_pool,
+            percussion: vec![false; channel_count].into_boxed_slice(),
             audio_params: config.audio_params,
         }
     }
@@ -113,6 +119,11 @@ impl ChannelSet {
     /// 通道数（dense）。
     pub(crate) fn channel_count(&self) -> usize {
         self.channels.len()
+    }
+
+    /// 该 dense 通道当前是否为鼓组模式（bank 128）。
+    pub(crate) fn is_percussion(&self, dense: u32) -> bool {
+        self.percussion.get(dense as usize).copied().unwrap_or(false)
     }
 
     /// 与 `ChannelGroup::send_event` 相同语义：音频事件进缓存（渲染前 flush），
@@ -136,9 +147,14 @@ impl ChannelSet {
                         }
                     }
                 }
-                ChannelEvent::Config(_) => {
+                ChannelEvent::Config(config) => {
+                    if let ChannelConfigEvent::SetPercussionMode(on) = &config
+                        && let Some(slot) = self.percussion.get_mut(channel as usize)
+                    {
+                        *slot = *on;
+                    }
                     if let Some(channel) = self.channels.get_mut(channel as usize) {
-                        channel.process_event(event);
+                        channel.process_event(ChannelEvent::Config(config));
                     }
                 }
             },
