@@ -38,6 +38,16 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    packaging {
+        jniLibs {
+            // cargo-ndk 会把**所有** cdylib crate 的产物都拷进 jniLibs，
+            // 于是 sevenz-rust2（crate-type 含 "cdylib"）也带出一份 300KB 的
+            // libsevenz_rust2-<hash>.so。它的代码已经静态链进
+            // libyinhe_flutter.so，没有任何 DT_NEEDED / dlopen 引用它，纯冗余。
+            excludes += "**/libsevenz_rust2-*.so"
+        }
+    }
 }
 
 kotlin {
