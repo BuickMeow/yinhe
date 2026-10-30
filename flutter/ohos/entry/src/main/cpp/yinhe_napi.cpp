@@ -8,6 +8,7 @@
 #include <dlfcn.h>
 #include <napi/native_api.h>
 #include <cstdint>
+#include <cstdio>
 
 namespace {
 
@@ -20,11 +21,19 @@ using SetViewportFn = void (*)(float, float);
 
 void* g_lib = nullptr;
 
+// 应用自己的 libs 目录（由 ArkTS 在 init 时传 bundleCodeDir）。
+char g_lib_path[4096] = {0};
+
 bool EnsureLib() {
   if (g_lib != nullptr) {
     return true;
   }
-  g_lib = dlopen("libyinhe_flutter.so", RTLD_NOW | RTLD_GLOBAL);
+  if (g_lib_path[0] != '\0') {
+    g_lib = dlopen(g_lib_path, RTLD_NOW | RTLD_GLOBAL);
+  }
+  if (g_lib == nullptr) {
+    g_lib = dlopen("libyinhe_flutter.so", RTLD_NOW | RTLD_GLOBAL);
+  }
   return g_lib != nullptr;
 }
 
@@ -39,26 +48,28 @@ napi_value MakeUndefined(napi_env env) {
   return undef;
 }
 
-/// 取第 0 个字符串参数（UTF-8，截断到 4KB：路径不会更长）。
-bool GetStringArg(napi_env env, napi_callback_info info, char* out, size_t cap) {
-  size_t argc = 1;
-  napi_value argv[1] = {nullptr};
+/// 取第 index 个字符串参数（UTF-8，截断到 4KB：路径不会更长）。
+bool GetStringArg(napi_env env, napi_callback_info info, size_t index, char* out, size_t cap) {
+  size_t argc = 2;
+  napi_value argv[2] = {nullptr, nullptr};
   napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
-  if (argc < 1) {
+  if (argc <= index) {
     return false;
   }
   size_t len = 0;
-  if (napi_get_value_string_utf8(env, argv[0], out, cap, &len) != napi_ok) {
-    return false;
-  }
-  return true;
+  return napi_get_value_string_utf8(env, argv[index], out, cap, &len) == napi_ok;
 }
 
 napi_value Init(napi_env env, napi_callback_info info) {
-  char dir[4096] = {0};
-  if (GetStringArg(env, info, dir, sizeof(dir))) {
+  char code_dir[4096] = {0};
+  char files_dir[4096] = {0};
+  // 先记住 codeDir 再触碰 g_lib（Sym() 会触发 dlopen）。
+  if (GetStringArg(env, info, 0, code_dir, sizeof(code_dir))) {
+    snprintf(g_lib_path, sizeof(g_lib_path), "%s/libs/arm64/libyinhe_flutter.so", code_dir);
+  }
+  if (GetStringArg(env, info, 1, files_dir, sizeof(files_dir))) {
     if (auto fn = Sym<InitFn>("yinhe_ohos_init")) {
-      fn(dir);
+      fn(files_dir);
     }
   }
   return MakeUndefined(env);
@@ -66,7 +77,7 @@ napi_value Init(napi_env env, napi_callback_info info) {
 
 napi_value AddSoundFont(napi_env env, napi_callback_info info) {
   char path[4096] = {0};
-  if (GetStringArg(env, info, path, sizeof(path))) {
+  if (GetStringArg(env, info, 0, path, sizeof(path))) {
     if (auto fn = Sym<AddSoundfontFn>("yinhe_ohos_add_soundfont")) {
       fn(path);
     }

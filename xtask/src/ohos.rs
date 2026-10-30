@@ -152,7 +152,31 @@ fn build(release: bool, install: bool) -> Result<(), ExitCode> {
         })?;
     }
 
-    // 3) hvigor：需要 flutter-hvigor-plugin（由 flutter_tools 提供）。
+    // 3) 用 Flutter-OH 重新生成 package_config：官方 Flutter 构建 Android/桌面时
+    // 会把 .dart_tool/package_config.json 指回官方框架，而官方框架不认识 ohos 平台
+    // （WidgetsFlutterBinding 直接抛 "Unknown platform: ohos"）。
+    let mut pubget = Command::new(flutter_oh.join("bin/flutter"));
+    pubget
+        .args(["pub", "get"])
+        .current_dir(root.join("flutter"))
+        .env("PUB_HOSTED_URL", "https://pub.flutter-io.cn")
+        .env("FLUTTER_STORAGE_BASE_URL", "https://storage.flutter-io.cn")
+        .env(
+            "FLUTTER_GIT_URL",
+            "https://atomgit.com/openharmony-tpc/flutter_flutter.git",
+        )
+        .env("OHOS_SDK_HOME", &sdk)
+        // flutter pub get 会检查 HarmonyOS SDK 布局；没有官方 SDK 时用本机 shim。
+        .env(
+            "HOS_SDK_HOME",
+            env::var_os("HOS_SDK_HOME")
+                .map(PathBuf::from)
+                .or_else(|| dirs_candidate("harmony/hmos-sdk"))
+                .unwrap_or_default(),
+        );
+    cmd::status(&mut pubget)?;
+
+    // 4) hvigor：需要 flutter-hvigor-plugin（由 flutter_tools 提供）。
     ensure_hvigor_plugin(&ohos_dir, &flutter_oh)?;
 
     let hvigorw = which("hvigorw").ok_or_else(|| {

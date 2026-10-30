@@ -11,9 +11,26 @@ part 'ffi/names.dart';
 part 'ffi/view.dart';
 
 /// Rust 桥（libyinhe_flutter.so）。
-final ffi.DynamicLibrary bridge = ffi.DynamicLibrary.open(
-  'libyinhe_flutter.so',
-);
+///
+/// OpenHarmony 的链接器命名空间不保证按 soname 搜索应用自己的 libs 目录，
+/// 先按 soname 试，失败再用应用 libs 的绝对路径（鸿蒙布局固定）。
+final ffi.DynamicLibrary bridge = _openBridge();
+
+ffi.DynamicLibrary _openBridge() {
+  const candidates = <String>[
+    'libyinhe_flutter.so',
+    '/data/storage/el1/bundle/libs/arm64/libyinhe_flutter.so',
+  ];
+  Object? lastError;
+  for (final path in candidates) {
+    try {
+      return ffi.DynamicLibrary.open(path);
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw StateError('无法加载 libyinhe_flutter.so: $lastError');
+}
 
 /// 读取并释放 Rust 返回的堆字符串。
 String takeString(ffi.Pointer<Utf8> ptr) {

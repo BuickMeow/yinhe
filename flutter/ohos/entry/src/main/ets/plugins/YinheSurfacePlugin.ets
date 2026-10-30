@@ -59,7 +59,9 @@ export class YinheSurfacePlugin implements MethodCallHandler {
     this.channel = new MethodChannel(engine.getDartExecutor().getBinaryMessenger(), CHANNEL_NAME);
     this.channel.setMethodCallHandler(this);
     // Rust 需要沙箱 files 目录：设置/最近文件/音色库列表都落在这里。
-    yinhe.init(context.filesDir);
+    // codeDir 供 NAPI 拼出 libs/arm64/libyinhe_flutter.so 的绝对路径再 dlopen
+    // （按 soname 在鸿蒙上不保证能找到）；filesDir 供 Rust 落盘。
+    yinhe.init(context.bundleCodeDir, context.filesDir);
   }
 
   onMethodCall(call: MethodCall, result: MethodResult): void {
@@ -167,7 +169,8 @@ export class YinheSurfacePlugin implements MethodCallHandler {
     const entry = this.renderer.registerTexture(id);
     // 接口 `SurfaceTextureEntry` 只暴露已废弃的 getNativeWindowId（number），
     // 真正的 OHNativeWindow* 在 FlutterNapi 上（bigint），这里直接取。
-    yinhe.setSurface(this.engine.getFlutterNapi().getTextureNativeWindowPtr(id));
+    const ptr = this.engine.getFlutterNapi().getTextureNativeWindowPtr(id);
+    yinhe.setSurface(ptr);
     this.mainEntry = entry;
     this.mainTextureId = id;
     return id;

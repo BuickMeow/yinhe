@@ -290,23 +290,11 @@ fn create_gpu() -> Option<Gpu> {
         }
     };
     log::info!("适配器: {:?}", adapter.get_info());
-    // 与桌面/旧安卓壳一致的 limits：GPU cull 需要 16 个 storage buffer/阶段
-    // （默认只有 8，pipeline 会静默创建失败 → 音符不渲染）。
-    let base_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
-        wgpu::Limits::downlevel_webgl2_defaults()
-    } else {
-        wgpu::Limits::default()
-    };
-    // 设备只能申请适配器确实支持的上限：GLES 3.0（鸿蒙模拟器）的 storage buffer 是 0，
-    // 硬要 16 会直接创建设备失败。拿不到 16 时 GPU cull 建不起来，渲染自动退回
-    // `draw_legacy` 的 CPU 路径。
-    let adapter_limits = adapter.limits();
-    let required_limits = wgpu::Limits {
-        max_texture_dimension_2d: 8192.min(adapter_limits.max_texture_dimension_2d),
-        max_storage_buffers_per_shader_stage: 16
-            .min(adapter_limits.max_storage_buffers_per_shader_stage),
-        ..base_limits
-    };
+    // 直接申请适配器自身支持的 limits：GLES 3.0（鸿蒙模拟器）的
+    // max_inter_stage_shader_variables 只有 7，硬套桌面/WebGL2 的下限会直接
+    // 创建设备失败。拿不到 16 个 storage buffer 时 GPU cull 建不起来，
+    // 渲染会自动退回 `draw_legacy` 的 CPU 路径。
+    let required_limits = adapter.limits();
     let (device, queue) =
         match pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("yinhe-flutter"),
@@ -671,6 +659,7 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeInitContext<'lo
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_ohos_init(files_dir: *const std::ffi::c_char) {
     init_logging();
+    log::info!("yinhe_ohos_init: 引擎已加载");
     if !files_dir.is_null() {
         // SAFETY: ArkTS 侧传入以 NUL 结尾的 UTF-8 路径，调用期间有效。
         if let Ok(dir) = unsafe { std::ffi::CStr::from_ptr(files_dir) }.to_str() {
