@@ -65,9 +65,18 @@ Dart: MethodChannel('yinhe/surface').getTextureId()
 
 ## 五、没有真机时怎么跑（模拟器）
 
-1. 下载安装 **DevEco Studio（macOS ARM 版）**，登录刚注册的华为开发者账号；
-2. `Tools > Device Manager` → 下载 **HarmonyOS 6.x 手机镜像** → 创建并启动模拟器
-   （Mac ARM 上模拟器是 arm64，与本项目的产物一致）；
+1. 下载安装 **DevEco Studio（macOS ARM 版）**；
+2. 用 DevEco 自带的 Emulator CLI（不用打开 IDE）：
+
+```sh
+D=/Applications/DevEco-Studio.app/Contents/tools/emulator
+$D/Emulator -license accept
+$D/Emulator -install -deviceType phone -osVersion "HarmonyOS 7.0.0(26.0.0)"   # 约 2.3GB
+$D/Emulator -create yinhe_phone -deviceType phone -osVersion "HarmonyOS 7.0.0(26.0.0)"
+$D/Emulator -start yinhe_phone          # 加 -noWindow 可无界面启动
+$D/Emulator -list -details             # 名字只允许字母/数字/空格/下划线/加号
+```
+
 3. 本机执行：
 
 ```sh
