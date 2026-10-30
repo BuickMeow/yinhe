@@ -1,3 +1,4 @@
+import AVFAudio
 import Flutter
 import UIKit
 
@@ -7,6 +8,11 @@ import UIKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    // cpal 在 iOS 上需要显式把 AVAudioSession 设为 playback 并激活；
+    // 默认 SoloAmbient 在部分设备/模拟器上不出声。
+    let session = AVAudioSession.sharedInstance()
+    try? session.setCategory(.playback, mode: .default)
+    try? session.setActive(true)
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 

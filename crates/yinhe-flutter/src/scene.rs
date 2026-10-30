@@ -2014,6 +2014,33 @@ fn load_settings() {
     crate::soundfont_archive::cleanup();
 }
 
+const DOC_PREFIX: &str = "@doc/";
+
+/// 最近文件持久化：沙箱路径写成相对 Documents 的形式，
+/// 重装/容器 UUID 变化后仍能解析到当前沙箱。
+fn portable_recent_path(path: &str) -> String {
+    if let Some(dir) = files_dir()
+        && let Ok(rel) = std::path::Path::new(path).strip_prefix(&dir)
+    {
+        return format!("{DOC_PREFIX}{}", rel.display());
+    }
+    // 旧版本存的是绝对路径：截取 `/Documents/` 之后的部分。
+    if let Some(idx) = path.find("/Documents/") {
+        return format!("{DOC_PREFIX}{}", &path[idx + "/Documents/".len()..]);
+    }
+    path.to_string()
+}
+
+/// 把 `@doc/...` 还原成当前沙箱的绝对路径。
+fn resolve_recent_path(path: &str) -> String {
+    if let Some(rel) = path.strip_prefix(DOC_PREFIX)
+        && let Some(dir) = files_dir()
+    {
+        return format!("{dir}/{rel}");
+    }
+    path.to_string()
+}
+
 fn recent_file_path() -> Option<String> {
     files_dir_slot()
         .lock()
@@ -2038,10 +2065,15 @@ fn load_recent() {
             continue;
         };
         if !p.is_empty() {
-            list.push(RecentEntry {
-                path: p.to_string(),
-                opened,
-            });
+            let abs = resolve_recent_path(p);
+            // 文件已不存在（旧容器路径/用户删除）就不要留在列表里，
+            // 否则点击会报 `No such file or directory`。
+            if std::path::Path::new(&abs).exists() {
+                list.push(RecentEntry {
+                    path: abs,
+                    opened,
+                });
+            }
         }
     }
     list.truncate(10);
@@ -2059,7 +2091,7 @@ fn save_recent() {
     };
     let mut text = String::new();
     for e in list.iter() {
-        text.push_str(&e.path);
+        text.push_str(&portable_recent_path(&e.path));
         text.push('\t');
         text.push_str(&e.opened.to_string());
         text.push('\n');
@@ -2102,8 +2134,12 @@ pub fn recent_json() -> String {
     let Ok(list) = recent_slot().lock() else {
         return "[]".into();
     };
+    let visible: Vec<&RecentEntry> = list
+        .iter()
+        .filter(|e| std::path::Path::new(&e.path).exists())
+        .collect();
     let mut out = String::from("[");
-    for (i, e) in list.iter().enumerate() {
+    for (i, e) in visible.iter().enumerate() {
         if i > 0 {
             out.push(',');
         }
