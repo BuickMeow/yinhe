@@ -900,7 +900,7 @@ welcome.no_recent: "最近のファイルはありません"
 about.author: "作者：节能降耗"
 about.copyright: "Copyright © 2026 节能降耗"
 about.tech: "Rust と egui で構築"
-about.license: "ライセンス：AGPL-3.0"
+about.license: "ライセンス：MIT OR Apache-2.0"
 
 # PR コントロールバー
 pr_bar.allow_overlap_on: "新しい重複ノートを許可：オン（クリックでオフ）"

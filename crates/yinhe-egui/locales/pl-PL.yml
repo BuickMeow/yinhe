@@ -836,7 +836,7 @@ welcome.no_recent: "Brak ostatnich plików"
 about.author: "Autor: 节能降耗"
 about.copyright: "Copyright © 2026 节能降耗"
 about.tech: "Zbudowane z Rust i egui"
-about.license: "Licencja: AGPL-3.0"
+about.license: "Licencja: MIT OR Apache-2.0"
 
 # ── PR control bar (topmost, above the time ruler) ──
 pr_bar.allow_overlap_on: "Zezwalaj na nakładające się nuty: WŁ. (kliknij, aby wyłączyć)"

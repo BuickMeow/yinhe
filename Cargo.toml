@@ -29,6 +29,7 @@ resolver = "2"
 [workspace.package]
 # 唯一基准版本：所有 crate 继承；快照发布 <version>-beta.N 也以它为准。
 version = "0.1.0"
+license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 wgpu = "30"

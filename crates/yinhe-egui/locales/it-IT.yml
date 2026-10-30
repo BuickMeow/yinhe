@@ -836,7 +836,7 @@ welcome.no_recent: "Nessun file recente"
 about.author: "Autore: 节能降耗"
 about.copyright: "Copyright © 2026 节能降耗"
 about.tech: "Realizzato con Rust ed egui"
-about.license: "Licenza: AGPL-3.0"
+about.license: "Licenza: MIT OR Apache-2.0"
 
 # ── PR control bar (topmost, above the time ruler) ──
 pr_bar.allow_overlap_on: "Consenti note sovrapposte: ON (clicca per disabilitare)"

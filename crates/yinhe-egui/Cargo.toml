@@ -1,6 +1,7 @@
 [package]
 name = "yinhe-egui"
 version.workspace = true
+license.workspace = true
 edition = "2024"
 
 [features]
@@ -68,7 +69,7 @@ muda = "0.19"
 
 [package.metadata.bundle]
 name = "Yinhe"
-license = "AGPL-3.0"
+license = "MIT OR Apache-2.0"
 identifier = "com.jieneng.yinhe"
 icon = ["assets/yinhe.icns"]
 resources = []

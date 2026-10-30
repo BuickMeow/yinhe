@@ -880,7 +880,7 @@ welcome.no_recent: "暫無最近檔案"
 about.author: "作者：節能降耗"
 about.copyright: "版權 © 2026 節能降耗"
 about.tech: "使用 Rust 與 egui 構建"
-about.license: "授權條款：AGPL-3.0"
+about.license: "授權條款：MIT OR Apache-2.0"
 
 # ── PR 控制栏（最顶部，时间标尺上方）──
 pr_bar.allow_overlap_on: "允許新重疊音符：開（點擊關閉）"

@@ -853,7 +853,7 @@ welcome.no_recent: "暂无最近文件"
 about.author: "作者：节能降耗"
 about.copyright: "版权 © 2026 节能降耗"
 about.tech: "使用 Rust 与 egui 构建"
-about.license: "许可证：AGPL-3.0"
+about.license: "许可证：MIT OR Apache-2.0"
 
 # ── PR 控制栏（最顶部，时间标尺上方）──
 pr_bar.allow_overlap_on: "允许新重叠音符：开（点击关闭）"
