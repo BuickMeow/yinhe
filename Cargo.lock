@@ -7925,6 +7925,8 @@ dependencies = [
  "jni 0.22.4",
  "log",
  "ndk-context",
+ "objc2 0.6.4",
+ "objc2-metal 0.3.2",
  "pollster 1.0.1",
  "serde_json",
  "wgpu",

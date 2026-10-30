@@ -13,6 +13,7 @@ mod android;
 mod bundle_macos;
 mod cmd;
 mod emulator;
+mod ios;
 mod ohos;
 mod verify;
 
@@ -26,6 +27,7 @@ fn main() -> ExitCode {
         Some("android") => android::run(&args[1..]),
         Some("bundle-macos") => bundle_macos::run(),
         Some("emulator") => emulator::run(&args[1..]),
+        Some("ios") => ios::run(&args[1..]),
         Some("ohos") => ohos::run(&args[1..]),
         Some("verify") => verify::run(&args[1..]),
         Some("help") | Some("-h") | Some("--help") | None => {
@@ -48,6 +50,7 @@ fn print_help() {
          cargo xtask verify [crate..]   fmt --check + clippy + test + release\n  \
          cargo xtask android [选项]      构建 Android APK（--debug/--install）\n  \
          cargo xtask emulator [选项]     启动/连接 Android 模拟器（--help 看选项）\n  \
+         cargo xtask ios [选项]          构建 iOS App（--release/--device/--install）\n  \
          cargo xtask ohos [选项]         构建鸿蒙 HAP（--release）\n\n\
          未指定 crate 时 verify 默认检查 default-members（crates/yinhe-egui）。"
     );

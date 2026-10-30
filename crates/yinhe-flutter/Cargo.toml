@@ -2,19 +2,18 @@
 name = "yinhe-flutter"
 version.workspace = true
 edition = "2024"
-description = "Yinhe Flutter(Android) 纹理桥：wgpu 渲染结果直接送入 Flutter Texture"
+description = "Yinhe Flutter 纹理桥：wgpu 渲染结果直接送入 Flutter Texture"
 
 [lib]
-# 仅作为 Android cdylib 加载：libyinhe_flutter.so
-crate-type = ["cdylib"]
+# Android/OpenHarmony：cdylib（dlopen 加载）；iOS：staticlib（链进 Runner，
+# Dart 侧用 DynamicLibrary.process() 查符号）。
+crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 wgpu = { workspace = true }
 pollster = { workspace = true }
 log = "0.4"
 serde_json = { workspace = true }
-jni = "0.22"
-ndk-context = "0.1"
 yinhe-types = { path = "../yinhe-types" }
 yinhe-core = { path = "../yinhe-core" }
 yinhe-editor-core = { path = "../yinhe-editor-core" }
@@ -28,3 +27,11 @@ yinhe-archive = { path = "../yinhe-archive" }
 [target.'cfg(target_os = "android")'.dependencies]
 # 安卓上 stdout 不可见，日志必须走 logcat。
 android_logger = "0.14"
+jni = "0.22"
+ndk-context = "0.1"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+# 把 CVPixelBuffer 的 MTLTexture 包成 wgpu 纹理（wgpu-hal 的 metal 后端同样
+# 用 objc2，版本与它保持一致避免两份 runtime 桥）。
+objc2 = "0.6.4"
+objc2-metal = "0.3.2"

@@ -15,6 +15,8 @@
 mod audio;
 mod edit;
 mod inertia;
+#[cfg(target_os = "ios")]
+mod ios;
 mod midi_export;
 mod midi_names;
 mod render;
@@ -123,6 +125,9 @@ enum Cmd {
     /// AM 面板独立 surface。
     SetAutomationSurface(OwnedWindow),
     ClearAutomationSurface,
+    /// iOS：登记一个外部纹理呈现端（0 = 主画布，1 = AM 面板）。
+    #[cfg(target_os = "ios")]
+    EnsureExternal(i32),
     /// Flutter 帧驱动：渲染一帧（异步，不等回信）。
     RenderNow,
 }
@@ -190,6 +195,8 @@ fn init_logging() {
         );
         #[cfg(target_env = "ohos")]
         crate::hilog::init();
+        #[cfg(target_os = "ios")]
+        crate::ios::init_logging();
     });
 }
 
@@ -262,6 +269,8 @@ pub(crate) struct Gpu {
     pub(crate) adapter: wgpu::Adapter,
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
+    /// 设备能力（iOS 模拟器不支持间接绘制，渲染要退回 CPU 回读）。
+    pub(crate) caps: yinhe_wgpu::GpuCaps,
 }
 
 fn create_gpu() -> Option<Gpu> {
@@ -275,7 +284,14 @@ fn create_gpu() -> Option<Gpu> {
         desc.backends = wgpu::Backends::GL;
         wgpu::Instance::new(desc)
     };
-    #[cfg(not(target_env = "ohos"))]
+    // Apple（iOS）：只有 Metal 一个后端，显式限定避免多余的后端探测。
+    #[cfg(all(not(target_env = "ohos"), target_vendor = "apple"))]
+    let instance = {
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = wgpu::Backends::METAL;
+        wgpu::Instance::new(desc)
+    };
+    #[cfg(all(not(target_env = "ohos"), not(target_vendor = "apple")))]
     let instance = wgpu::Instance::default();
     let adapter = match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
@@ -294,6 +310,13 @@ fn create_gpu() -> Option<Gpu> {
     // max_inter_stage_shader_variables 只有 7，硬套桌面/WebGL2 的下限会直接
     // 创建设备失败。拿不到 16 个 storage buffer 时 GPU cull 建不起来，
     // 渲染会自动退回 `draw_legacy` 的 CPU 路径。
+    // 间接绘制能力：iOS 模拟器等软件 GPU 没有 INDIRECT_EXECUTION。
+    let caps = yinhe_wgpu::GpuCaps {
+        indirect_execution: adapter
+            .get_downlevel_capabilities()
+            .flags
+            .contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION),
+    };
     let required_limits = adapter.limits();
     let (device, queue) =
         match pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -317,11 +340,22 @@ fn create_gpu() -> Option<Gpu> {
     device.set_device_lost_callback(|reason, msg| {
         log::error!("wgpu device lost: {reason:?} msg={msg}");
     });
+    // iOS：宿主的 CVPixelBuffer 要建 `CVMetalTextureCache`，必须与 wgpu 用同一
+    // 个 MTLDevice，这里把裸指针交给它。
+    #[cfg(target_os = "ios")]
+    unsafe {
+        use objc2::rc::Retained;
+        if let Some(hal) = device.as_hal::<wgpu::hal::api::Metal>() {
+            let ptr = Retained::as_ptr(hal.raw_device()) as *mut std::ffi::c_void;
+            ios::set_metal_device(ptr);
+        }
+    }
     Some(Gpu {
         instance,
         adapter,
         device,
         queue,
+        caps,
     })
 }
 
@@ -394,7 +428,7 @@ fn apply_cmd(
             // 同一 ANativeWindow 重复设置：忽略（对同一窗口再建 Vulkan surface
             // 会触发 VK_ERROR_NATIVE_WINDOW_IN_USE_KHR 使渲染线程 panic）。
             if let Some(t) = target.as_ref()
-                && t.window_ptr() == window.0 as usize
+                && t.window_ptr() == Some(window.0 as usize)
             {
                 log::info!("忽略重复 surface（同一窗口）");
                 return;
@@ -417,7 +451,7 @@ fn apply_cmd(
         }
         Cmd::SetAutomationSurface(window) => {
             if let Some(t) = am_target.as_ref()
-                && t.window_ptr() == window.0 as usize
+                && t.window_ptr() == Some(window.0 as usize)
             {
                 log::info!("忽略重复 AM surface（同一窗口）");
                 return;
@@ -432,6 +466,22 @@ fn apply_cmd(
         }
         Cmd::ClearAutomationSurface => {
             *am_target = None;
+        }
+        #[cfg(target_os = "ios")]
+        Cmd::EnsureExternal(kind) => {
+            if gpu.is_none() {
+                *gpu = create_gpu();
+            }
+            let Some(g) = gpu.as_ref() else {
+                return;
+            };
+            if kind == 0 {
+                if target.is_none() {
+                    *target = render::create_external_target(g, 0);
+                }
+            } else if am_target.is_none() {
+                *am_target = render::create_external_automation_target(g, 1);
+            }
         }
         Cmd::RenderNow => {
             // 渲染请求由渲染循环统一处理（这里不应到达）。
@@ -583,6 +633,7 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_onSoundFontPicked<'lo
 }
 
 /// 从 JNI 字符串读取 Rust String（失败返回 None）。
+#[cfg(target_os = "android")]
 fn read_jstring(env: &mut jni::EnvUnowned<'_>, s: &jni::objects::JString<'_>) -> Option<String> {
     use jni::Outcome;
     let outcome =
@@ -645,6 +696,59 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeInitContext<'lo
         Outcome::Err(e) => log::error!("ndk-context 初始化失败: {e}"),
         Outcome::Panic(p) => log::error!("ndk-context 初始化 panic: {p:?}"),
     }
+}
+
+// ── iOS 入口（Swift → C ABI）──
+//
+// 与 Android 的 JNI 入口一一对应；宿主回调（acquire/submit）在 `ios.rs`。
+
+/// 初始化日志、私有目录与占位文档（等价于 Android 的 `nativeInitContext`）。
+///
+/// `files_dir` 是应用沙箱的 Documents 目录：最近文件、设置、音色库列表都落在这里。
+#[cfg(target_os = "ios")]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_ios_init(files_dir: *const std::ffi::c_char) {
+    init_logging();
+    log::info!("yinhe_ios_init: 引擎已加载");
+    if !files_dir.is_null() {
+        // SAFETY: Swift 侧传入以 NUL 结尾的 UTF-8 路径，调用期间有效。
+        if let Ok(dir) = unsafe { CStr::from_ptr(files_dir) }.to_str() {
+            scene::set_files_dir(dir.to_string());
+        }
+    }
+    scene::ensure_starter_document();
+}
+
+/// 登记外部纹理呈现端（0 = 主画布，1 = AM 面板）。
+#[cfg(target_os = "ios")]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_ios_ensure(kind: i32) {
+    init_logging();
+    if cmd_tx().send(Cmd::EnsureExternal(kind)).is_err() {
+        log::error!("渲染线程不可用，忽略 EnsureExternal({kind})");
+    }
+}
+
+/// surface 像素尺寸（Swift 侧从 Flutter 纹理池上报）。
+#[cfg(target_os = "ios")]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_ios_set_size(kind: i32, width: i32, height: i32) {
+    let (w, h) = (width.max(1) as u32, height.max(1) as u32);
+    if kind == 0 {
+        PIXEL_W.store(w, Ordering::Relaxed);
+        PIXEL_H.store(h, Ordering::Relaxed);
+    } else {
+        AM_PIXEL_W.store(w, Ordering::Relaxed);
+        AM_PIXEL_H.store(h, Ordering::Relaxed);
+    }
+}
+
+/// 画布逻辑尺寸（Flutter 逻辑像素）：视图/手势坐标系。
+#[cfg(target_os = "ios")]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_ios_set_viewport(width: f32, height: f32) {
+    init_logging();
+    set_logical_size(width, height);
 }
 
 // ── OpenHarmony 入口（ArkTS → NAPI → C ABI）──

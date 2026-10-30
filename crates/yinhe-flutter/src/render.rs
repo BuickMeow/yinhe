@@ -36,37 +36,28 @@ use crate::theme_colors as tc;
 const VIEW_TAG_PIANOROLL: u64 = 1;
 const VIEW_TAG_ARRANGEMENT: u64 = 2;
 
-/// surface 级资源（随 `SetSurface`/`ClearSurface` 创建与销毁）。
-pub struct Target {
-    /// 注意 drop 顺序：`surface` 必须在 `_window` 之前销毁
-    /// （ANativeWindow 需存活到 surface 释放之后；Rust 按声明顺序 drop）。
-    surface: wgpu::Surface<'static>,
-    config: wgpu::SurfaceConfiguration,
-    renderer: InstanceRenderer,
-    /// AR 音符层缓存键：与上次相同则跳过实例重建。
-    notes_cache_key: u64,
-    /// AR 音符实例缓冲。
-    notes_buf: Vec<NoteInstance>,
-    /// PR 可见窗口 + key 分桶缓存；滚动在 padding 内只改 uniform。
-    pr_note_cache: yinhe_wgpu::NoteLayerCache,
-    /// 上一次的文档身份，用于换文档时清掉力度条摘要。
-    last_model_epoch: u64,
-    fps_start: Instant,
-    frames: u32,
-    /// 仅为保活持有（尺寸在创建时已读取）。
-    window: OwnedWindow,
+/// 呈现端：原生窗口 surface（Android/OpenHarmony）或 Flutter 外部纹理（iOS）。
+enum Sink {
+    Surface {
+        /// 注意 drop 顺序：`surface` 必须在 `window` 之前销毁
+        /// （ANativeWindow 需存活到 surface 释放之后；Rust 按声明顺序 drop）。
+        surface: wgpu::Surface<'static>,
+        config: wgpu::SurfaceConfiguration,
+        window: OwnedWindow,
+    },
+    /// iOS：CVPixelBuffer 的槽位由 Swift 宿主管理（见 `ios.rs`）。
+    #[cfg(target_os = "ios")]
+    External(crate::ios::IosPresenter),
 }
 
-impl Target {
-    /// 生产端窗口指针（用于忽略重复 SetSurface）。
-    pub fn window_ptr(&self) -> usize {
-        self.window.0 as usize
-    }
-
-    /// 供 AM renderer 共享的力度条 LOD 摘要。
-    pub fn velocity_summary(&self) -> Option<Arc<yinhe_wgpu::VelocitySummary>> {
-        self.renderer.velocity_summary()
-    }
+/// 一帧的渲染视图，以及画完后如何交还给系统。
+struct Frame {
+    view: wgpu::TextureView,
+    /// surface 帧：画完必须 present；外部纹理为 None。
+    surface: Option<wgpu::SurfaceTexture>,
+    /// 外部纹理槽位（iOS 专用）。
+    #[cfg(target_os = "ios")]
+    slot: i32,
 }
 
 /// 用生产端原生窗口建 wgpu surface。
@@ -75,7 +66,7 @@ impl Target {
 /// OpenHarmony：`OHNativeWindow`（Flutter-OH 外接纹理的 native window），
 /// wgpu 的 GLES 后端已实现 `Rwh::OhosNdk`，Vulkan 暂不支持该 surface。
 fn create_raw_surface(gpu: &Gpu, window: &OwnedWindow) -> Option<wgpu::Surface<'static>> {
-    // 桌面只为 `cargo clippy --workspace` 能编译（本 crate 只产出移动端 cdylib）。
+    // 桌面只为 `cargo clippy --workspace` 能编译（本 crate 只产出移动端库）。
     #[cfg(not(any(target_os = "android", target_env = "ohos")))]
     {
         let _ = (gpu, window);
@@ -111,64 +102,238 @@ fn create_raw_surface(gpu: &Gpu, window: &OwnedWindow) -> Option<wgpu::Surface<'
     }
 }
 
+impl Sink {
+    /// 用生产端原生窗口建 surface 呈现端。
+    ///
+    /// `prefer_alpha` = AM 面板：优先 premultiplied 混合模式（Flutter 按预乘
+    /// alpha 合成外接纹理）。
+    fn surface(gpu: &Gpu, window: OwnedWindow, prefer_alpha: bool) -> Option<Self> {
+        let surface = create_raw_surface(gpu, &window)?;
+
+        let caps = surface.get_capabilities(&gpu.adapter);
+        let Some(format) = caps
+            .formats
+            .iter()
+            .copied()
+            .find(|f| f.is_srgb())
+            .or_else(|| caps.formats.first().copied())
+        else {
+            log::error!("surface 无可用格式");
+            return None;
+        };
+        // Mailbox 不排队旧帧：新帧直接替换待呈现帧，降低 wgpu 层延迟；
+        // 设备不支持时退回 Fifo，避免创建 surface 失败。
+        let present_mode = if caps.present_modes.contains(&wgpu::PresentMode::Mailbox) {
+            wgpu::PresentMode::Mailbox
+        } else {
+            log::warn!("设备不支持 Mailbox，回退 Fifo");
+            wgpu::PresentMode::Fifo
+        };
+        let alpha_mode = if prefer_alpha {
+            caps.alpha_modes
+                .iter()
+                .copied()
+                .find(|m| {
+                    matches!(
+                        m,
+                        wgpu::CompositeAlphaMode::PreMultiplied
+                            | wgpu::CompositeAlphaMode::PostMultiplied
+                            | wgpu::CompositeAlphaMode::Inherit
+                    )
+                })
+                .or_else(|| caps.alpha_modes.first().copied())
+                .unwrap_or(wgpu::CompositeAlphaMode::Auto)
+        } else {
+            caps.alpha_modes
+                .first()
+                .copied()
+                .unwrap_or(wgpu::CompositeAlphaMode::Auto)
+        };
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            color_space: wgpu::SurfaceColorSpace::Auto,
+            width: window.width(),
+            height: window.height(),
+            present_mode,
+            desired_maximum_frame_latency: 2,
+            alpha_mode,
+            view_formats: vec![],
+        };
+        surface.configure(&gpu.device, &config);
+        log::info!(
+            "surface 就绪: {}x{} {format:?} {present_mode:?}",
+            config.width,
+            config.height
+        );
+        Some(Self::Surface {
+            surface,
+            config,
+            window,
+        })
+    }
+
+    /// iOS：外部纹理呈现端（宏尺寸由 `setSize` 上报，槽位由宿主管）。
+    #[cfg(target_os = "ios")]
+    fn external(kind: i32) -> Self {
+        log::info!("外部纹理呈现端就绪: kind={kind}");
+        Self::External(crate::ios::IosPresenter::new(kind))
+    }
+
+    fn size(&self) -> (u32, u32) {
+        match self {
+            Self::Surface { config, .. } => (config.width, config.height),
+            #[cfg(target_os = "ios")]
+            Self::External(p) => p.size(),
+        }
+    }
+
+    fn format(&self) -> wgpu::TextureFormat {
+        match self {
+            Self::Surface { config, .. } => config.format,
+            // 视图按 sRGB 解释（与 Android 的 srgb surface 格式一致）。
+            #[cfg(target_os = "ios")]
+            Self::External(_) => wgpu::TextureFormat::Bgra8UnormSrgb,
+        }
+    }
+
+    fn window_ptr(&self) -> Option<usize> {
+        match self {
+            Self::Surface { window, .. } => Some(window.0 as usize),
+            #[cfg(target_os = "ios")]
+            Self::External(_) => None,
+        }
+    }
+
+    /// 重配交换链（外部纹理的尺寸由宿主池自行重建，这里只记录）。
+    fn resize(&mut self, gpu: &Gpu, w: u32, h: u32) {
+        match self {
+            Self::Surface {
+                surface, config, ..
+            } => {
+                config.width = w;
+                config.height = h;
+                surface.configure(&gpu.device, config);
+                log::info!("交换链重配置: {w}x{h}");
+            }
+            #[cfg(target_os = "ios")]
+            Self::External(p) => p.set_size(w, h),
+        }
+    }
+
+    /// 取一帧的渲染视图。
+    fn acquire(&mut self, gpu: &Gpu) -> Option<Frame> {
+        match self {
+            Self::Surface {
+                surface, config, ..
+            } => {
+                let frame = match surface.get_current_texture() {
+                    wgpu::CurrentSurfaceTexture::Success(f)
+                    | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
+                    wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                        surface.configure(&gpu.device, config);
+                        return None;
+                    }
+                    wgpu::CurrentSurfaceTexture::Timeout
+                    | wgpu::CurrentSurfaceTexture::Occluded => return None,
+                    wgpu::CurrentSurfaceTexture::Validation => {
+                        log::error!("获取帧纹理时发生校验错误");
+                        return None;
+                    }
+                };
+                let view = frame
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
+                Some(Frame {
+                    view,
+                    surface: Some(frame),
+                    #[cfg(target_os = "ios")]
+                    slot: -1,
+                })
+            }
+            #[cfg(target_os = "ios")]
+            Self::External(p) => {
+                let (slot, view) = p.acquire(gpu)?;
+                Some(Frame {
+                    view,
+                    surface: None,
+                    slot,
+                })
+            }
+        }
+    }
+
+    /// 交还这一帧：surface present / 通知宿主有新帧。
+    fn present(&mut self, gpu: &Gpu, frame: Frame) {
+        match self {
+            Self::Surface { .. } => {
+                if let Some(f) = frame.surface {
+                    gpu.queue.present(f);
+                }
+            }
+            #[cfg(target_os = "ios")]
+            Self::External(p) => p.submit(frame.slot),
+        }
+    }
+}
+
+/// surface 级资源（随 `SetSurface`/`ClearSurface` 创建与销毁）。
+pub struct Target {
+    sink: Sink,
+    renderer: InstanceRenderer,
+    /// AR 音符层缓存键：与上次相同则跳过实例重建。
+    notes_cache_key: u64,
+    /// AR 音符实例缓冲。
+    notes_buf: Vec<NoteInstance>,
+    /// PR 可见窗口 + key 分桶缓存；滚动在 padding 内只改 uniform。
+    pr_note_cache: yinhe_wgpu::NoteLayerCache,
+    /// 上一次的文档身份，用于换文档时清掉力度条摘要。
+    last_model_epoch: u64,
+    fps_start: Instant,
+    frames: u32,
+}
+
+impl Target {
+    fn new(gpu: &Gpu, sink: Sink) -> Self {
+        let format = sink.format();
+        Self {
+            sink,
+            renderer: InstanceRenderer::new_with_caps(
+                gpu.device.clone(),
+                gpu.queue.clone(),
+                format,
+                gpu.caps,
+            ),
+            notes_cache_key: 0,
+            notes_buf: Vec::new(),
+            pr_note_cache: yinhe_wgpu::NoteLayerCache::new(VIEW_TAG_PIANOROLL),
+            last_model_epoch: 0,
+            fps_start: Instant::now(),
+            frames: 0,
+        }
+    }
+
+    /// 生产端窗口指针（用于忽略重复 SetSurface）。
+    pub fn window_ptr(&self) -> Option<usize> {
+        self.sink.window_ptr()
+    }
+
+    /// 供 AM renderer 共享的力度条 LOD 摘要。
+    pub fn velocity_summary(&self) -> Option<Arc<yinhe_wgpu::VelocitySummary>> {
+        self.renderer.velocity_summary()
+    }
+}
+
 /// 用生产端原生窗口建立 wgpu surface 与渲染器。
 pub fn create_target(gpu: &Gpu, window: OwnedWindow) -> Option<Target> {
-    let surface = create_raw_surface(gpu, &window)?;
+    let sink = Sink::surface(gpu, window, false)?;
+    Some(Target::new(gpu, sink))
+}
 
-    let caps = surface.get_capabilities(&gpu.adapter);
-    let Some(format) = caps
-        .formats
-        .iter()
-        .copied()
-        .find(|f| f.is_srgb())
-        .or_else(|| caps.formats.first().copied())
-    else {
-        log::error!("surface 无可用格式");
-        return None;
-    };
-    // Mailbox 不排队旧帧：新帧直接替换待呈现帧，降低 wgpu 层延迟；
-    // 设备不支持时退回 Fifo，避免创建 surface 失败。
-    let present_mode = if caps.present_modes.contains(&wgpu::PresentMode::Mailbox) {
-        wgpu::PresentMode::Mailbox
-    } else {
-        log::warn!("设备不支持 Mailbox，回退 Fifo");
-        wgpu::PresentMode::Fifo
-    };
-    let config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format,
-        color_space: wgpu::SurfaceColorSpace::Auto,
-        width: window.width(),
-        height: window.height(),
-        present_mode,
-        desired_maximum_frame_latency: 2,
-        alpha_mode: caps
-            .alpha_modes
-            .first()
-            .copied()
-            .unwrap_or(wgpu::CompositeAlphaMode::Auto),
-        view_formats: vec![],
-    };
-    surface.configure(&gpu.device, &config);
-
-    let renderer = InstanceRenderer::new(gpu.device.clone(), gpu.queue.clone(), format);
-    log::info!(
-        "surface 就绪: {}x{} {format:?} {present_mode:?}",
-        config.width,
-        config.height
-    );
-    Some(Target {
-        surface,
-        config,
-        renderer,
-        notes_cache_key: 0,
-        notes_buf: Vec::new(),
-        pr_note_cache: yinhe_wgpu::NoteLayerCache::new(VIEW_TAG_PIANOROLL),
-        last_model_epoch: 0,
-        fps_start: Instant::now(),
-        frames: 0,
-        window,
-    })
+/// iOS：外部纹理呈现端（主画布）。
+#[cfg(target_os = "ios")]
+pub fn create_external_target(gpu: &Gpu, kind: i32) -> Option<Target> {
+    Some(Target::new(gpu, Sink::external(kind)))
 }
 
 /// 渲染一帧（由渲染线程循环调用；内部自会跳过无效帧）。
@@ -178,15 +343,13 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
         return;
     }
     // resize：只重配置交换链（对同一 ANativeWindow 重建 surface 会触发
-    // VK_ERROR_NATIVE_WINDOW_IN_USE_KHR）。
+    // VK_ERROR_NATIVE_WINDOW_IN_USE_KHR；iOS 则是宿主重建纹理池）。
     let pw = crate::pixel_size().0.max(1);
     let ph = crate::pixel_size().1.max(1);
-    if t.config.width != pw || t.config.height != ph {
-        t.config.width = pw;
-        t.config.height = ph;
-        t.surface.configure(&gpu.device, &t.config);
-        log::info!("交换链重配置: {pw}x{ph}");
+    if t.sink.size() != (pw, ph) {
+        t.sink.resize(gpu, pw, ph);
     }
+    let (fw, fh) = t.sink.size();
 
     // 播放跟随：先取播放位置（audio 内部会短暂锁 scene），再进场景锁，
     // 避免在持有场景锁时反向等待音频锁。
@@ -290,21 +453,10 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
     }
 
     // ── 取帧纹理 ──
-    let frame = match t.surface.get_current_texture() {
-        wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
-        wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-            t.surface.configure(&gpu.device, &t.config);
-            return;
-        }
-        wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return,
-        wgpu::CurrentSurfaceTexture::Validation => {
-            log::error!("获取帧纹理时发生校验错误");
-            return;
-        }
+    let Some(frame) = t.sink.acquire(gpu) else {
+        return;
     };
-    let target_view = frame
-        .texture
-        .create_view(&wgpu::TextureViewDescriptor::default());
+    let target_view = frame.view.clone();
     let mut encoder = gpu
         .device
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -345,8 +497,7 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
                 preview_offset,
             ),
         }
-        t.renderer
-            .draw(&mut encoder, &target_view, t.config.width, t.config.height);
+        t.renderer.draw(&mut encoder, &target_view, fw, fh);
     } else {
         // 无文档：透明清屏（画布底色由 Flutter 侧绘制）。
         let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -373,17 +524,12 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
     }
 
     gpu.queue.submit([encoder.finish()]);
-    gpu.queue.present(frame);
+    t.sink.present(gpu, frame);
 
     // ── FPS 统计（每秒一条）──
     t.frames += 1;
     if t.fps_start.elapsed() >= Duration::from_secs(1) {
-        log::info!(
-            "画布 FPS: {}（{}x{}）",
-            t.frames,
-            t.config.width,
-            t.config.height
-        );
+        log::info!("画布 FPS: {}（{}x{}）", t.frames, fw, fh);
         t.frames = 0;
         t.fps_start = Instant::now();
     }
@@ -557,77 +703,41 @@ fn upload_pianoroll(
     yinhe_wgpu::prepare_folded_automation_ghost(&mut t.renderer, w, &view.base, &[], &[], &[]);
 }
 
-/// AM 面板专用 wgpu 目标（独立 Surface/交换链/renderer）。
+/// AM 面板专用 wgpu 目标（独立呈现端 + renderer）。
 pub struct AmTarget {
-    surface: wgpu::Surface<'static>,
-    config: wgpu::SurfaceConfiguration,
+    sink: Sink,
     renderer: InstanceRenderer,
-    window: OwnedWindow,
 }
 
 impl AmTarget {
-    pub fn window_ptr(&self) -> usize {
-        self.window.0 as usize
+    fn new(gpu: &Gpu, sink: Sink) -> Self {
+        let format = sink.format();
+        Self {
+            sink,
+            renderer: InstanceRenderer::new_with_caps(
+                gpu.device.clone(),
+                gpu.queue.clone(),
+                format,
+                gpu.caps,
+            ),
+        }
+    }
+
+    pub fn window_ptr(&self) -> Option<usize> {
+        self.sink.window_ptr()
     }
 }
 
 /// 用 AM 面（独立 Flutter 纹理）的原生窗口建立独立 surface 与 renderer。
 pub fn create_automation_target(gpu: &Gpu, window: OwnedWindow) -> Option<AmTarget> {
-    let surface = create_raw_surface(gpu, &window)?;
-    let caps = surface.get_capabilities(&gpu.adapter);
-    let Some(format) = caps
-        .formats
-        .iter()
-        .copied()
-        .find(|f| f.is_srgb())
-        .or_else(|| caps.formats.first().copied())
-    else {
-        log::error!("AM surface 无可用格式");
-        return None;
-    };
-    let present_mode = if caps.present_modes.contains(&wgpu::PresentMode::Mailbox) {
-        wgpu::PresentMode::Mailbox
-    } else {
-        wgpu::PresentMode::Fifo
-    };
-    let config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format,
-        color_space: wgpu::SurfaceColorSpace::Auto,
-        width: window.width(),
-        height: window.height(),
-        present_mode,
-        desired_maximum_frame_latency: 2,
-        alpha_mode: caps
-            .alpha_modes
-            .iter()
-            .copied()
-            .find(|m| {
-                matches!(
-                    m,
-                    wgpu::CompositeAlphaMode::PreMultiplied
-                        | wgpu::CompositeAlphaMode::PostMultiplied
-                        | wgpu::CompositeAlphaMode::Inherit
-                )
-            })
-            .or_else(|| caps.alpha_modes.first().copied())
-            .unwrap_or(wgpu::CompositeAlphaMode::Auto),
-        view_formats: vec![],
-    };
-    surface.configure(&gpu.device, &config);
-    let renderer = InstanceRenderer::new(gpu.device.clone(), gpu.queue.clone(), format);
-    log::info!(
-        "AM surface 就绪: {}x{} {format:?} {present_mode:?} alpha={:?}",
-        config.width,
-        config.height,
-        config.alpha_mode
-    );
-    Some(AmTarget {
-        surface,
-        config,
-        renderer,
-        window,
-    })
+    let sink = Sink::surface(gpu, window, true)?;
+    Some(AmTarget::new(gpu, sink))
+}
+
+/// iOS：AM 面板的外部纹理呈现端。
+#[cfg(target_os = "ios")]
+pub fn create_external_automation_target(gpu: &Gpu, kind: i32) -> Option<AmTarget> {
+    Some(AmTarget::new(gpu, Sink::external(kind)))
 }
 
 /// 渲染一帧 AM 面板：力度条/自动化曲线直接画进独立纹理。
@@ -640,13 +750,12 @@ pub fn render_automation_frame(
 ) {
     let (pw, ph) = match crate::automation_pixel_size() {
         (w, h) if w > 0 && h > 0 => (w, h),
-        _ => (t.window.width().max(1), t.window.height().max(1)),
+        _ => t.sink.size(),
     };
-    if t.config.width != pw || t.config.height != ph {
-        t.config.width = pw;
-        t.config.height = ph;
-        t.surface.configure(&gpu.device, &t.config);
+    if t.sink.size() != (pw, ph) {
+        t.sink.resize(gpu, pw, ph);
     }
+    let (fw, fh) = t.sink.size();
 
     let snapshot = {
         let Ok(s) = crate::scene::scene().lock() else {
@@ -768,21 +877,10 @@ pub fn render_automation_frame(
         ..Default::default()
     };
 
-    let frame = match t.surface.get_current_texture() {
-        wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
-        wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-            t.surface.configure(&gpu.device, &t.config);
-            return;
-        }
-        wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return,
-        wgpu::CurrentSurfaceTexture::Validation => {
-            log::error!("AM 获取帧纹理时发生校验错误");
-            return;
-        }
+    let Some(frame) = t.sink.acquire(gpu) else {
+        return;
     };
-    let target_view = frame
-        .texture
-        .create_view(&wgpu::TextureViewDescriptor::default());
+    let target_view = frame.view.clone();
     let mut encoder = gpu
         .device
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -815,10 +913,9 @@ pub fn render_automation_frame(
         );
     }
 
-    t.renderer
-        .draw(&mut encoder, &target_view, t.config.width, t.config.height);
+    t.renderer.draw(&mut encoder, &target_view, fw, fh);
     gpu.queue.submit([encoder.finish()]);
-    gpu.queue.present(frame);
+    t.sink.present(gpu, frame);
 }
 
 /// AR 视图：uniforms + 轨道布局（offsets/行高）+ 音符层上传。
