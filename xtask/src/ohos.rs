@@ -205,6 +205,13 @@ fn build(release: bool, install: bool) -> Result<(), ExitCode> {
         // 只打 arm64：默认还会塞一份 x86_64 引擎（纯模拟器用，白占 ~28MB）。
         "-p",
         "TARGET_PLATFORM=ohos-arm64",
+        // release 的图标字体 tree-shake（项目里没有动态 IconData，只会删未用字形）。
+        "-p",
+        if release {
+            "TREE_SHAKE_ICONS=true"
+        } else {
+            "TREE_SHAKE_ICONS=false"
+        },
         "--no-daemon",
     ])
     .current_dir(&ohos_dir)
