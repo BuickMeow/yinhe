@@ -24,13 +24,13 @@ struct AudioState {
     layout: ChannelLayout,
     /// 暂停/停止时的光标 tick（播放中由 sample_position 换算）。
     cursor_tick: f64,
-    /// 最近一次已真正下发的音色库路径列表（避免重复解析）。
-    sf_sent: Option<Vec<String>>,
+    /// 最近一次已真正下发的音色库（路径 + 通道，避免重复解析）。
+    sf_sent: Option<Vec<(String, i32)>>,
     /// 轨道 mute/solo 掩码（重建引擎后重发；空 = 不跳过任何轨道）。
     skip: Vec<bool>,
 }
 
-/// 全局音色库条目：设置页可拖动排序 / 启用停用。
+/// 全局音色库条目：设置页可拖动排序 / 启用停用 / 指定生效通道。
 ///
 /// 顺序即优先级：列表靠前的库先被查询，命中即覆盖靠后的库
 /// （xsynth `ChannelSoundfont` 按 `soundfonts` 顺序找第一个非空 spawner）。
@@ -38,6 +38,8 @@ struct AudioState {
 pub struct SoundfontEntry {
     pub path: String,
     pub enabled: bool,
+    /// 生效通道：`-1` = 所有通道（GM 库），`0..=15` = 仅该源通道。
+    pub channel: i32,
 }
 
 /// 音频参数（设置页可调；max_voices=0 自动，buffer_size=0 设备默认）。
@@ -318,13 +320,9 @@ pub fn soundfonts() -> Vec<SoundfontEntry> {
         .unwrap_or_default()
 }
 
-/// 已启用音色库路径（按表顺序；未启用不参与播放）。
-pub fn enabled_soundfonts() -> Vec<String> {
-    soundfonts()
-        .into_iter()
-        .filter(|e| e.enabled)
-        .map(|e| e.path)
-        .collect()
+/// 已启用音色库（按表顺序；未启用不参与播放）。
+pub fn enabled_soundfonts() -> Vec<SoundfontEntry> {
+    soundfonts().into_iter().filter(|e| e.enabled).collect()
 }
 
 /// 整体替换音色库表（设置页排序/启停/删除后调用），立即应用。
@@ -370,6 +368,7 @@ pub fn add_soundfont(path: String) {
                 SoundfontEntry {
                     path: path.clone(),
                     enabled: true,
+                    channel: -1,
                 },
             ),
         }
@@ -487,12 +486,20 @@ fn ensure_audio() -> bool {
     }
 }
 
-fn send_soundfonts(handle: &CpalAudioHandle, layout: &ChannelLayout, paths: &[String]) {
-    // 按 layout 激活的源通道下发（最多 256 = 16 port × 16 通道）：
-    // 所有通道共用同一份全局音色库表（顺序 = 优先级，靠前者覆盖靠后者）。
+fn send_soundfonts(handle: &CpalAudioHandle, layout: &ChannelLayout, entries: &[SoundfontEntry]) {
+    // 按 layout 激活的源通道下发（最多 256 = 16 port × 16 通道）。
+    // `channel < 0` 的条目对全部通道生效（GM 库）；其余只进指定通道，
+    // 这样不同通道可以挂不同 SFZ 单乐器库。顺序 = 优先级。
     let configs: Vec<(u8, Vec<String>)> = (0..layout.num_channels())
         .filter(|&ch| layout.is_active(ch as usize))
-        .map(|ch| (ch as u8, paths.to_vec()))
+        .map(|ch| {
+            let paths: Vec<String> = entries
+                .iter()
+                .filter(|e| e.enabled && (e.channel < 0 || e.channel as u32 == ch))
+                .map(|e| e.path.clone())
+                .collect();
+            (ch as u8, paths)
+        })
         .collect();
     handle.handle.send(AudioCommand::SetSoundFonts {
         configs: Box::new(configs),
@@ -501,12 +508,16 @@ fn send_soundfonts(handle: &CpalAudioHandle, layout: &ChannelLayout, paths: &[St
 
 /// 把当前启用的音色库表下发给引擎（与上次相同则跳过）。
 fn apply_soundfonts(st: &mut AudioState) {
-    let paths = enabled_soundfonts();
-    if st.sf_sent.as_ref() == Some(&paths) {
+    let entries = enabled_soundfonts();
+    let signature: Vec<(String, i32)> = entries
+        .iter()
+        .map(|e| (e.path.clone(), e.channel))
+        .collect();
+    if st.sf_sent.as_ref() == Some(&signature) {
         return;
     }
-    send_soundfonts(&st.handle, &st.layout, &paths);
-    st.sf_sent = Some(paths);
+    send_soundfonts(&st.handle, &st.layout, &entries);
+    st.sf_sent = Some(signature);
 }
 
 /// 轨道 mute/solo 掩码（与桌面 SkipTracks 同机制，超时/丢命令时保留最新值）。
@@ -521,7 +532,7 @@ pub fn set_skip_mask(skip: Vec<bool>) {
     st.handle.handle.send(AudioCommand::SkipTracks { skip });
 }
 
-/// 音色库表 JSON（设置页用）：`[{"path":..,"name":..,"enabled":..}, ...]`。
+/// 音色库表 JSON（设置页用）：`[{"path":..,"name":..,"enabled":..,"channel":..}, ...]`。
 pub fn soundfonts_json() -> String {
     let items: Vec<serde_json::Value> = soundfonts()
         .into_iter()
@@ -530,7 +541,12 @@ pub fn soundfonts_json() -> String {
                 .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            serde_json::json!({"path": e.path, "name": name, "enabled": e.enabled})
+            serde_json::json!({
+                "path": e.path,
+                "name": name,
+                "enabled": e.enabled,
+                "channel": e.channel,
+            })
         })
         .collect();
     serde_json::Value::Array(items).to_string()
@@ -556,7 +572,17 @@ pub fn set_soundfonts_json(json: &str) -> i32 {
                 .get("enabled")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(true);
-            Some(SoundfontEntry { path, enabled })
+            // -1 = 全部通道；0..=15 = 指定源通道。越界值回退到"全部"。
+            let channel = it
+                .get("channel")
+                .and_then(serde_json::Value::as_i64)
+                .map(|c| c.clamp(-1, 15) as i32)
+                .unwrap_or(-1);
+            Some(SoundfontEntry {
+                path,
+                enabled,
+                channel,
+            })
         })
         .collect();
     set_soundfonts(entries);

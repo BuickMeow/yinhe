@@ -1856,11 +1856,13 @@ fn write_settings() {
         return;
     };
     let mut text = String::new();
-    // 音色库表：每行一个 `soundfont=<0|1>|<path>`（0/1 = 停用/启用）。
+    // 音色库表：每行一个 `soundfont=<0|1>|<channel>|<path>`
+    // （0/1 = 停用/启用；channel = -1 全部通道，0..15 指定通道）。
     for e in crate::audio::soundfonts() {
         text.push_str(&format!(
-            "soundfont={}|{}\n",
+            "soundfont={}|{}|{}\n",
             if e.enabled { 1 } else { 0 },
+            e.channel,
             e.path
         ));
     }
@@ -1904,15 +1906,19 @@ fn load_settings() {
     let mut language = String::new();
     for line in text.lines() {
         if let Some(v) = line.strip_prefix("soundfont=") {
-            // 新格式 `1|path`；旧格式 `path`（视为启用）。
-            let (enabled, path) = match v.split_once('|') {
-                Some((flag, path)) => (flag != "0", path),
-                None => (true, v),
+            // 新格式 `enabled|channel|path`；次新 `enabled|path`（无通道）；
+            // 旧格式 `path`（视为启用）。
+            let (enabled, channel, path) = match v.splitn(3, '|').collect::<Vec<_>>()[..] {
+                [flag, ch, path] => (flag != "0", ch.parse().unwrap_or(-1), path),
+                [flag, path] => (flag != "0", -1, path),
+                [path] => (true, -1, path),
+                _ => (true, -1, ""),
             };
             if !path.is_empty() && crate::audio::is_soundfont_path(path) {
                 soundfonts.push(crate::audio::SoundfontEntry {
                     path: path.to_string(),
                     enabled,
+                    channel: channel.clamp(-1, 15),
                 });
             } else if !path.is_empty() {
                 // 旧版本选择器可能把 mid 等文件写进音色库表，读盘时清理掉。
