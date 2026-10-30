@@ -1,7 +1,12 @@
-//! Flutter(Android) 纹理桥 + 编辑器渲染宿主。
+//! Flutter(Android/OpenHarmony) 纹理桥 + 编辑器渲染宿主。
 //!
-//! 链路：Kotlin `SurfaceProducer` → JNI `nativeSetSurface` → `ANativeWindow`
+//! 链路（Android）：Kotlin `SurfaceProducer` → JNI `nativeSetSurface` → `ANativeWindow`
+//! 链路（OHOS）：ArkTS 外接纹理 → NAPI → `yinhe_ohos_set_surface` → `OHNativeWindow`
 //! → 渲染线程（wgpu / `yinhe-wgpu` 钢琴卷帘）→ present → Flutter `Texture` 合成。
+
+// 本 crate 只在 Android / OpenHarmony 上产出 cdylib；桌面构建仅用于 workspace 检查，
+// 平台专属入口（JNI / OHOS C ABI）的辅助函数在桌面上必然"未使用"。
+#![cfg_attr(not(any(target_os = "android", target_env = "ohos")), allow(dead_code))]
 //!
 //! - 场景：`scene.rs`（文档快照 + 演示内容）；惯性：`inertia.rs`；渲染：`render.rs`
 //! - 手势坐标：Flutter 传画布逻辑像素；画布逻辑尺寸：`nativeSetViewport` 传入
@@ -18,48 +23,94 @@ mod selection_materializer;
 mod soundfont_archive;
 mod theme_colors;
 
-use std::ffi::{CStr, CString, c_void};
+use std::ffi::{CStr, CString};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Mutex, OnceLock};
 
-// ── ANativeWindow 最小 C 接口 ──
-// 不用 `ndk` crate：只需要这四个函数，直接声明可避免 jni/ndk 的版本纠缠。
+// ── 原生窗口句柄 ──
+// Android：`ANativeWindow`（SurfaceProducer 的 Surface 经 JNI 转换）；
+// OpenHarmony：`OHNativeWindow`（XComponent 的 OnSurfaceCreated 回调直接给 C 指针）。
+// 只需要尺寸 / 释放两件事，不用 `ndk` crate，避免版本纠缠。
 
-type ANativeWindow = c_void;
+#[cfg(target_os = "android")]
+mod native_window {
+    use std::ffi::c_void;
 
-#[link(name = "android")]
-unsafe extern "C" {
-    fn ANativeWindow_fromSurface(
+    type ANativeWindow = c_void;
+
+    #[link(name = "android")]
+    unsafe extern "C" {
+        fn ANativeWindow_fromSurface(
+            env: *mut jni::sys::JNIEnv,
+            surface: jni::sys::jobject,
+        ) -> *mut ANativeWindow;
+        fn ANativeWindow_release(window: *mut ANativeWindow);
+        fn ANativeWindow_getWidth(window: *mut ANativeWindow) -> i32;
+        fn ANativeWindow_getHeight(window: *mut ANativeWindow) -> i32;
+    }
+
+    /// 持有引用的 `ANativeWindow`（`ANativeWindow_fromSurface` 已 +1 引用计数）。
+    pub(crate) struct OwnedWindow(pub(crate) *mut ANativeWindow);
+
+    // ANativeWindow 引用计数是线程安全的，跨线程移交所有权合法。
+    unsafe impl Send for OwnedWindow {}
+
+    impl OwnedWindow {
+        pub(crate) fn width(&self) -> u32 {
+            (unsafe { ANativeWindow_getWidth(self.0) }).max(1) as u32
+        }
+
+        pub(crate) fn height(&self) -> u32 {
+            (unsafe { ANativeWindow_getHeight(self.0) }).max(1) as u32
+        }
+    }
+
+    impl Drop for OwnedWindow {
+        fn drop(&mut self) {
+            unsafe { ANativeWindow_release(self.0) }
+        }
+    }
+
+    /// Surface → `OwnedWindow`（JNI 侧入口用）。
+    pub(crate) fn from_surface(
         env: *mut jni::sys::JNIEnv,
         surface: jni::sys::jobject,
-    ) -> *mut ANativeWindow;
-    fn ANativeWindow_release(window: *mut ANativeWindow);
-    fn ANativeWindow_getWidth(window: *mut ANativeWindow) -> i32;
-    fn ANativeWindow_getHeight(window: *mut ANativeWindow) -> i32;
-}
-
-/// 持有引用的 `ANativeWindow`（`ANativeWindow_fromSurface` 已 +1 引用计数）。
-pub(crate) struct OwnedWindow(pub(crate) *mut ANativeWindow);
-
-// ANativeWindow 引用计数是线程安全的，跨线程移交所有权合法。
-unsafe impl Send for OwnedWindow {}
-
-impl OwnedWindow {
-    fn width(&self) -> u32 {
-        (unsafe { ANativeWindow_getWidth(self.0) }).max(1) as u32
-    }
-
-    fn height(&self) -> u32 {
-        (unsafe { ANativeWindow_getHeight(self.0) }).max(1) as u32
+    ) -> *mut c_void {
+        unsafe { ANativeWindow_fromSurface(env, surface) }
     }
 }
 
-impl Drop for OwnedWindow {
-    fn drop(&mut self) {
-        unsafe { ANativeWindow_release(self.0) }
+#[cfg(not(target_os = "android"))]
+mod native_window {
+    use std::ffi::c_void;
+
+    /// XComponent 回调用 `OH_NativeXComponent_GetNativeWindow` 拿到的窗口指针。
+    pub(crate) struct OwnedWindow(pub(crate) *mut c_void);
+
+    // OHNativeWindow 的所有权由应用持有，跨线程移交合法。
+    unsafe impl Send for OwnedWindow {}
+
+    impl OwnedWindow {
+        // 尺寸由 ArkTS 侧 XComponent 布局决定，原生侧不查询（与 Android 一致走
+        // nativeSetSize 上报），这里给 1 只用于 surface 首次创建前的兜底。
+        pub(crate) fn width(&self) -> u32 {
+            1
+        }
+
+        pub(crate) fn height(&self) -> u32 {
+            1
+        }
+    }
+
+    impl Drop for OwnedWindow {
+        fn drop(&mut self) {
+            // OHNativeWindow 的生命周期由 XComponent 管理，这里不释放。
+        }
     }
 }
+
+pub(crate) use native_window::OwnedWindow;
 
 // ── 渲染线程命令 ──
 
@@ -327,6 +378,7 @@ fn apply_cmd(
 /// `MainActivity.nativeSetSurface(surface)`：替换生产端 surface。
 // JVM 保证 env/surface 句柄有效；JNI 导出函数无法用 Rust 安全类型表达入参。
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeSetSurface(
     env: *mut jni::sys::JNIEnv,
@@ -339,7 +391,7 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeSetSurface(
         return;
     }
     // 安全性：本函数只由 JVM 调用，env/surface 句柄有效；空指针已检查。
-    let raw = unsafe { ANativeWindow_fromSurface(env, surface) };
+    let raw = native_window::from_surface(env, surface);
     if raw.is_null() {
         log::error!("ANativeWindow_fromSurface 返回空指针");
         return;
@@ -351,6 +403,7 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeSetSurface(
 }
 
 /// `MainActivity.nativeClearSurface()`：surface 销毁。
+#[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeClearSurface(
     _env: *mut jni::sys::JNIEnv,
@@ -365,6 +418,7 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeClearSurface(
 /// `MainActivity.nativeSetAutomationSurface(surface)`：AM 面板独立 surface。
 // JVM 保证 env/surface 句柄有效；JNI 导出函数无法用 Rust 安全类型表达入参。
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeSetAutomationSurface(
     env: *mut jni::sys::JNIEnv,
@@ -377,7 +431,7 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeSetAutomationSu
         return;
     }
     // 安全性：本函数只由 JVM 调用，env/surface 句柄有效；空指针已检查。
-    let raw = unsafe { ANativeWindow_fromSurface(env, surface) };
+    let raw = native_window::from_surface(env, surface);
     if raw.is_null() {
         log::error!("AM ANativeWindow_fromSurface 返回空指针");
         return;
@@ -391,6 +445,7 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeSetAutomationSu
 }
 
 /// `MainActivity.nativeClearAutomationSurface()`：AM surface 销毁。
+#[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeClearAutomationSurface(
     _env: *mut jni::sys::JNIEnv,
@@ -403,6 +458,7 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeClearAutomation
 }
 
 /// `MainActivity.nativeSetSize(w, h)`：surface 像素尺寸（resize 只重配置交换链）。
+#[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeSetSize(
     _env: *mut jni::sys::JNIEnv,
@@ -415,6 +471,7 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeSetSize(
 }
 
 /// `MainActivity.nativeSetAutomationSize(w, h)`：AM surface 像素尺寸。
+#[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeSetAutomationSize(
     _env: *mut jni::sys::JNIEnv,
@@ -427,6 +484,7 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeSetAutomationSi
 }
 
 /// `MainActivity.nativeSetViewport(w, h)`：画布逻辑尺寸（Flutter 逻辑像素）。
+#[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeSetViewport(
     _env: *mut jni::sys::JNIEnv,
@@ -439,6 +497,7 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeSetViewport(
 }
 
 /// `MainActivity.onSoundFontPicked(path)`：音色库（SF2/SFZ）已复制到私有目录。
+#[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_onSoundFontPicked<'local>(
     mut env: jni::EnvUnowned<'local>,
@@ -479,6 +538,7 @@ fn read_jstring(env: &mut jni::EnvUnowned<'_>, s: &jni::objects::JString<'_>) ->
 ///
 /// cpal 的 Android 后端（AAudio）需要 JavaVM + `android.content.Context`；
 /// 传入 `applicationContext`（Application 单例由系统持有，无需额外全局引用）。
+#[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeInitContext<'local>(
     mut env: jni::EnvUnowned<'local>,
@@ -519,6 +579,87 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeInitContext<'lo
         Outcome::Err(e) => log::error!("ndk-context 初始化失败: {e}"),
         Outcome::Panic(p) => log::error!("ndk-context 初始化 panic: {p:?}"),
     }
+}
+
+// ── OpenHarmony 入口（ArkTS → NAPI → C ABI）──
+//
+// 与 Android 的 JNI 入口一一对应：ArkTS 侧从 Flutter-OH 的外接纹理拿到
+// `OHNativeWindow*`（bigint），经 NAPI 胶水转成指针传进来。
+
+/// 初始化日志与占位文档（等价于 Android 的 `nativeInitContext`）。
+#[cfg(target_env = "ohos")]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_ohos_init() {
+    init_logging();
+    scene::ensure_starter_document();
+}
+
+/// 设置（或替换）主画布 surface。
+#[cfg(target_env = "ohos")]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_ohos_set_surface(window: *mut std::ffi::c_void) {
+    init_logging();
+    if window.is_null() {
+        log::warn!("yinhe_ohos_set_surface 收到空窗口");
+        return;
+    }
+    if cmd_tx().send(Cmd::SetSurface(OwnedWindow(window))).is_err() {
+        log::error!("渲染线程不可用，丢弃 surface");
+    }
+}
+
+/// 主画布 surface 销毁。
+#[cfg(target_env = "ohos")]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_ohos_clear_surface() {
+    let _ = cmd_tx().send(Cmd::ClearSurface);
+}
+
+/// 设置（或替换）AM 面板 surface。
+#[cfg(target_env = "ohos")]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_ohos_set_automation_surface(window: *mut std::ffi::c_void) {
+    init_logging();
+    if window.is_null() {
+        log::warn!("yinhe_ohos_set_automation_surface 收到空窗口");
+        return;
+    }
+    if cmd_tx()
+        .send(Cmd::SetAutomationSurface(OwnedWindow(window)))
+        .is_err()
+    {
+        log::error!("渲染线程不可用，丢弃 AM surface");
+    }
+}
+
+/// AM 面板 surface 销毁。
+#[cfg(target_env = "ohos")]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_ohos_clear_automation_surface() {
+    let _ = cmd_tx().send(Cmd::ClearAutomationSurface);
+}
+
+/// 主画布像素尺寸。
+#[cfg(target_env = "ohos")]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_ohos_set_size(width: u32, height: u32) {
+    PIXEL_W.store(width.max(1), Ordering::Relaxed);
+    PIXEL_H.store(height.max(1), Ordering::Relaxed);
+}
+
+/// AM 面板像素尺寸。
+#[cfg(target_env = "ohos")]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_ohos_set_automation_size(width: u32, height: u32) {
+    AM_PIXEL_W.store(width.max(1), Ordering::Relaxed);
+    AM_PIXEL_H.store(height.max(1), Ordering::Relaxed);
+}
+
+/// 画布逻辑尺寸（Flutter 逻辑像素 = Rust 的视图/手势坐标系）。
+#[cfg(target_env = "ohos")]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_ohos_set_viewport(width: f32, height: f32) {
+    set_logical_size(width, height);
 }
 
 // ── dart:ffi 入口（Dart → Rust）──

@@ -6,11 +6,17 @@
 //! 3. `InstanceRenderer::draw` + present（Fifo 自带节流）。
 
 use std::collections::HashSet;
+#[cfg(any(target_os = "android", target_env = "ohos"))]
 use std::ptr::NonNull;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use wgpu::rwh::{AndroidDisplayHandle, AndroidNdkWindowHandle, RawDisplayHandle, RawWindowHandle};
+#[cfg(any(target_os = "android", target_env = "ohos"))]
+use wgpu::rwh::RawDisplayHandle;
+#[cfg(target_os = "android")]
+use wgpu::rwh::{AndroidDisplayHandle, AndroidNdkWindowHandle, RawWindowHandle};
+#[cfg(target_env = "ohos")]
+use wgpu::rwh::{OhosDisplayHandle, OhosNdkWindowHandle, RawWindowHandle};
 
 use yinhe_core::{Selection, TrackKind, YinModel};
 use yinhe_types::{
@@ -63,24 +69,51 @@ impl Target {
     }
 }
 
-/// 用生产端 `ANativeWindow` 建立 wgpu surface 与渲染器。
-pub fn create_target(gpu: &Gpu, window: OwnedWindow) -> Option<Target> {
-    let handle = AndroidNdkWindowHandle::new(NonNull::new(window.0)?);
-    let surface = match unsafe {
-        // 安全性：`window`（ANativeWindow 引用）由本结构持有并保证存活到
-        // surface 销毁之后；DisplayHandle 是静态单例语义。
-        gpu.instance
-            .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
-                raw_display_handle: Some(RawDisplayHandle::Android(AndroidDisplayHandle::new())),
-                raw_window_handle: RawWindowHandle::AndroidNdk(handle),
-            })
-    } {
-        Ok(s) => s,
-        Err(e) => {
-            log::error!("创建 surface 失败: {e}");
-            return None;
+/// 用生产端原生窗口建 wgpu surface。
+///
+/// Android：`ANativeWindow`（SurfaceProducer 的 Surface）；
+/// OpenHarmony：`OHNativeWindow`（Flutter-OH 外接纹理的 native window），
+/// wgpu 的 GLES 后端已实现 `Rwh::OhosNdk`，Vulkan 暂不支持该 surface。
+fn create_raw_surface(gpu: &Gpu, window: &OwnedWindow) -> Option<wgpu::Surface<'static>> {
+    // 桌面只为 `cargo clippy --workspace` 能编译（本 crate 只产出移动端 cdylib）。
+    #[cfg(not(any(target_os = "android", target_env = "ohos")))]
+    {
+        let _ = (gpu, window);
+        None
+    }
+    #[cfg(any(target_os = "android", target_env = "ohos"))]
+    {
+        let native = NonNull::new(window.0)?;
+        #[cfg(target_os = "android")]
+        let (display, handle) = (
+            RawDisplayHandle::Android(AndroidDisplayHandle::new()),
+            RawWindowHandle::AndroidNdk(AndroidNdkWindowHandle::new(native)),
+        );
+        #[cfg(target_env = "ohos")]
+        let (display, handle) = (
+            RawDisplayHandle::Ohos(OhosDisplayHandle::new()),
+            RawWindowHandle::OhosNdk(OhosNdkWindowHandle::new(native)),
+        );
+        // SAFETY: `window` 由 Target 持有，保证存活到 surface 销毁之后。
+        match unsafe {
+            gpu.instance
+                .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+                    raw_display_handle: Some(display),
+                    raw_window_handle: handle,
+                })
+        } {
+            Ok(surface) => Some(surface),
+            Err(e) => {
+                log::error!("创建 surface 失败: {e}");
+                None
+            }
         }
-    };
+    }
+}
+
+/// 用生产端原生窗口建立 wgpu surface 与渲染器。
+pub fn create_target(gpu: &Gpu, window: OwnedWindow) -> Option<Target> {
+    let surface = create_raw_surface(gpu, &window)?;
 
     let caps = surface.get_capabilities(&gpu.adapter);
     let Some(format) = caps
@@ -538,22 +571,9 @@ impl AmTarget {
     }
 }
 
-/// 用 AM `SurfaceProducer` 的 `ANativeWindow` 建立独立 surface 与 renderer。
+/// 用 AM 面（独立 Flutter 纹理）的原生窗口建立独立 surface 与 renderer。
 pub fn create_automation_target(gpu: &Gpu, window: OwnedWindow) -> Option<AmTarget> {
-    let handle = AndroidNdkWindowHandle::new(NonNull::new(window.0)?);
-    let surface = match unsafe {
-        gpu.instance
-            .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
-                raw_display_handle: Some(RawDisplayHandle::Android(AndroidDisplayHandle::new())),
-                raw_window_handle: RawWindowHandle::AndroidNdk(handle),
-            })
-    } {
-        Ok(s) => s,
-        Err(e) => {
-            log::error!("创建 AM surface 失败: {e}");
-            return None;
-        }
-    };
+    let surface = create_raw_surface(gpu, &window)?;
     let caps = surface.get_capabilities(&gpu.adapter);
     let Some(format) = caps
         .formats

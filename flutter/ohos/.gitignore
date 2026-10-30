@@ -8,3 +8,4 @@ package.json
 package-lock.json
 oh-package-lock.json5
 *.hap
+entry/libs/
