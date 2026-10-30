@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../core/bar_beat.dart';
 import '../core/models.dart';
 import '../core/theme.dart';
 import 'time_grid.dart';
@@ -9,11 +8,11 @@ import 'time_grid.dart';
 ///
 /// 与 PR/AM 一样是 Flutter 浮层，选框与网格同帧；音符仍由 wgpu 纹理绘制。
 class ArrangementGridPainter extends CustomPainter {
-  ArrangementGridPainter(this.snap, this.grid, this.tracks)
-    : super(repaint: Listenable.merge([snap, grid, tracks]));
+  ArrangementGridPainter(this.snap, this.gridLines, this.tracks)
+    : super(repaint: Listenable.merge([snap, gridLines, tracks]));
 
   final ValueNotifier<List<double>> snap;
-  final ValueNotifier<BarBeatGrid?> grid;
+  final ValueNotifier<List<GridLine>> gridLines;
   final ValueNotifier<List<TrackRow>> tracks;
 
   @override
@@ -49,8 +48,8 @@ class ArrangementGridPainter extends CustomPainter {
       }
     }
 
-    final g = grid.value;
-    if (g == null || ppu <= 0) {
+    final g = gridLines.value;
+    if (ppu <= 0) {
       return;
     }
     paintTimeGrid(
@@ -59,7 +58,7 @@ class ArrangementGridPainter extends CustomPainter {
       ppu: ppu,
       scrollX: scrollX,
       leftInset: panelW,
-      grid: g,
+      lines: g,
       withSubTick: false,
     );
   }

@@ -257,7 +257,7 @@ mixin _ShellBuild on _ShellBase {
                                             child: CustomPaint(
                                               painter: ArrangementGridPainter(
                                                 _snap,
-                                                _grid,
+                                                _gridLines,
                                                 _tracks,
                                               ),
                                             ),
@@ -274,7 +274,7 @@ mixin _ShellBuild on _ShellBase {
                                             child: CustomPaint(
                                               painter: PianorollGridPainter(
                                                 _snap,
-                                                _grid,
+                                                _gridLines,
                                               ),
                                             ),
                                           ),
@@ -484,7 +484,7 @@ mixin _ShellBuild on _ShellBase {
                                     child: AutomationPanel(
                                       height: amH,
                                       snap: _snap,
-                                      grid: _grid,
+                                      gridLines: _gridLines,
                                       lanes: _autoLanes,
                                       velocity: _velocityBars,
                                       trackColors: [

@@ -24,6 +24,11 @@ final CStrDart rulerLabelsJson = bridge.lookupFunction<CStrNative, CStrDart>(
   'yinhe_ruler_labels_json',
 );
 
+/// 时间网格线 JSON：`[{"tick":..,"level":..}]`（Rust 算，Dart 只画）。
+final CStrDart timeGridJson = bridge.lookupFunction<CStrNative, CStrDart>(
+  'yinhe_time_grid_json',
+);
+
 /// 歌曲标题（空串 = 未设置）。
 final CStrDart songTitle = bridge.lookupFunction<CStrNative, CStrDart>(
   'yinhe_song_title',

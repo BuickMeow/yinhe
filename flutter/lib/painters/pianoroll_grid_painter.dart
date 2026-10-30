@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../core/bar_beat.dart';
 import '../core/theme.dart';
 import 'time_grid.dart';
 
@@ -9,11 +8,11 @@ import 'time_grid.dart';
 /// 只画轻量、随视口变化的部分；音符仍由 wgpu 纹理绘制在上层。
 /// 网格与选框现在同为 Flutter 浮层，缩放/平移时保持同一帧。
 class PianorollGridPainter extends CustomPainter {
-  PianorollGridPainter(this.snap, this.grid)
-    : super(repaint: Listenable.merge([snap, grid]));
+  PianorollGridPainter(this.snap, this.gridLines)
+    : super(repaint: Listenable.merge([snap, gridLines]));
 
   final ValueNotifier<List<double>> snap;
-  final ValueNotifier<BarBeatGrid?> grid;
+  final ValueNotifier<List<GridLine>> gridLines;
 
   /// 黑键：每个八度内 C#、D#、F#、G#、A#。
   static bool isBlackKey(int key) {
@@ -70,8 +69,8 @@ class PianorollGridPainter extends CustomPainter {
       canvas.drawRect(Rect.fromLTWH(kbW, y, size.width - kbW, 1), octave);
     }
 
-    final g = grid.value;
-    if (g == null || ppu <= 0) {
+    final g = gridLines.value;
+    if (ppu <= 0) {
       return;
     }
     // 网格只画在视口内容区，不能压到钢琴键盘上。
@@ -83,7 +82,7 @@ class PianorollGridPainter extends CustomPainter {
       ppu: ppu,
       scrollX: scrollX,
       leftInset: kbW,
-      grid: g,
+      lines: g,
     );
     canvas.restore();
   }

@@ -24,6 +24,7 @@ import '../dialogs/insert_flow.dart';
 import '../l10n.dart';
 import '../l10n/app_localizations.dart';
 import '../painters/long_press_indicator_painter.dart';
+import '../painters/time_grid.dart';
 import '../core/models.dart';
 import 'system_bars.dart';
 import '../core/ui_settings.dart';
@@ -240,6 +241,9 @@ abstract class _ShellBase extends State<StudioShell>
 
   /// 标尺标签（Rust 算，Dart 只画）。
   final ValueNotifier<List<RulerLabel>> _rulerLabels = ValueNotifier(const []);
+
+  /// 时间网格线（Rust 算，Dart 只画）。
+  final ValueNotifier<List<GridLine>> _gridLines = ValueNotifier(const []);
   List<double>? _lastRulerKey;
   final ValueNotifier<List<TrackRow>> _tracks = ValueNotifier<List<TrackRow>>(
     const [],
@@ -355,6 +359,27 @@ abstract class _ShellBase extends State<StudioShell>
       // 解析失败保持旧标签。
     } finally {
       rust.freeString(ptr);
+    }
+
+    // 网格线与标尺同一套视图参数，一起刷新。
+    final gridPtr = rust.timeGridJson();
+    if (gridPtr == ffi.nullptr) {
+      return;
+    }
+    try {
+      final list = jsonDecode(gridPtr.toDartString()) as List<dynamic>;
+      _gridLines.value = [
+        for (final it in list)
+          if (it is Map<String, dynamic>)
+            GridLine(
+              (it['tick'] as num?)?.toInt() ?? 0,
+              (it['level'] as num?)?.toInt() ?? 3,
+            ),
+      ];
+    } catch (_) {
+      // 解析失败保持旧网格。
+    } finally {
+      rust.freeString(gridPtr);
     }
   }
 
@@ -598,6 +623,7 @@ class _StudioShellState extends _ShellBase
     _sfRevision.dispose();
     _grid.dispose();
     _rulerLabels.dispose();
+    _gridLines.dispose();
     _saveDoneTimer?.cancel();
     _savingTimer?.cancel();
     _velocityReloadTimer?.cancel();

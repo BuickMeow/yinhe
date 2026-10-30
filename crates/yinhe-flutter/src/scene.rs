@@ -2217,6 +2217,147 @@ pub fn ruler_labels_json() -> String {
     serde_json::Value::Array(labels).to_string()
 }
 
+/// 时间网格线：Dart 只负责画，拍号分段/密度/层级全部在这里算。
+///
+/// 返回 JSON：`[{"tick":..,"level":0..3}]`。level：0=小节、1=拍、2=细分、3=tick。
+/// x 坐标由 Dart 用各自视口的 `ppu/scroll/leftInset` 换算（PR/AR/AM 同一条数据）。
+pub fn time_grid_json() -> String {
+    const MIN_SPACING: f32 = 38.0;
+
+    let Ok(s) = scene().lock() else {
+        return "[]".into();
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return "[]".into();
+    };
+    let model = &doc.data.model;
+    let ppq = model.meta.ppq;
+    let (default_num, default_den) = model.tempo_map.time_sig_default;
+    let segments =
+        build_time_sig_segments(&model.tempo_map.time_sig_events, default_num, default_den);
+
+    let (ppu, scroll_x, left_inset) = match s.view_mode {
+        ViewMode::Pianoroll => (
+            s.pr_view.base.pixels_per_tick,
+            s.pr_view.base.scroll_x,
+            s.pr_view.keyboard_width(),
+        ),
+        ViewMode::Arrangement => (
+            s.arr_view.base.pixels_per_tick,
+            s.arr_view.base.scroll_x,
+            s.arr_view.base.left_panel_width,
+        ),
+    };
+    let width = crate::logical_size().0;
+    if ppu <= 0.0 || width <= 0.0 || ppq == 0 {
+        return "[]".into();
+    }
+
+    let start_tick = (((scroll_x - left_inset) / ppu).max(0.0)) as f64;
+    let end_tick = (((scroll_x - left_inset + width) / ppu).max(0.0)) as f64;
+    let end_i = end_tick.floor() as i64;
+    let sub_ticks = (ppq / 4).max(1);
+    let fine_step = fine_grid_step(ppu, ppq);
+    let mut lines: Vec<serde_json::Value> = Vec::new();
+
+    for (i, &(seg_start, num, den)) in segments.iter().enumerate() {
+        if seg_start as f64 > end_tick {
+            break;
+        }
+        let seg_end = segments.get(i + 1).map_or(u32::MAX, |s| s.0);
+        let mticks = measure_ticks(ppq, num, den);
+        let bticks = (mticks / u32::from(num.max(1))).max(1);
+        let divisor = compute_measure_divisor(mticks as f32 * ppu, MIN_SPACING);
+        let merged = divisor > 1;
+        let merged_mticks = mticks * divisor;
+        let show_beat = !merged;
+        let show_sub = show_beat && bticks as f32 * ppu >= MIN_SPACING;
+        let show_tick = show_sub && ppu >= 10.0;
+        let grid_mticks = if merged {
+            (merged_mticks / 2).max(1)
+        } else {
+            mticks
+        };
+        let step = if show_tick {
+            1
+        } else if show_sub {
+            fine_step.min(sub_ticks).max(1)
+        } else if show_beat {
+            bticks.max(1)
+        } else {
+            grid_mticks.max(1)
+        };
+
+        let first = if seg_start as f64 > start_tick {
+            seg_start as i64
+        } else {
+            start_tick.floor() as i64
+        };
+        let mut tick = seg_start as i64 + ((first - seg_start as i64) / step as i64) * step as i64;
+        while tick <= end_i && tick < seg_end as i64 {
+            let local = (tick - seg_start as i64) as u32;
+            let is_measure = local % mticks == 0;
+            let beat_local = local % mticks;
+            let is_beat = beat_local % bticks == 0 && beat_local > 0;
+            let is_sub = local % sub_ticks == 0;
+            let level = if is_measure {
+                Some(0)
+            } else if show_beat && is_beat {
+                Some(1)
+            } else if show_sub && is_sub {
+                Some(2)
+            } else if show_tick || show_sub {
+                Some(3)
+            } else {
+                None
+            };
+            if let Some(level) = level {
+                lines.push(serde_json::json!({"tick": tick, "level": level}));
+            }
+            tick += step as i64;
+        }
+    }
+    serde_json::Value::Array(lines).to_string()
+}
+
+/// 细分网格档位：与桌面 `fine_grid_preset` 同规则（屏幕格宽最接近 13px）。
+fn fine_grid_step(ppu: f32, ppq: u32) -> u32 {
+    let p = ppq.max(1);
+    let whole = p * 4;
+    let mut candidates = Vec::new();
+    let mut den = 1u32;
+    let mut last = whole;
+    while den <= whole && whole % den == 0 {
+        last = whole.div_ceil(den);
+        candidates.push(last);
+        if den > (1 << 30) {
+            break;
+        }
+        den *= 2;
+    }
+    let mut t = last.next_power_of_two() >> 1;
+    while t >= 1 {
+        candidates.push(t);
+        t >>= 1;
+    }
+    let max_interval = (p / 4).max(1);
+    let mut best = 1u32;
+    let mut best_err = f32::INFINITY;
+    let mut prev = u32::MAX;
+    for interval in candidates {
+        if interval == 0 || interval > max_interval || interval >= prev {
+            continue;
+        }
+        prev = interval;
+        let err = (interval as f32 * ppu / 13.0).ln().abs();
+        if err < best_err {
+            best_err = err;
+            best = interval;
+        }
+    }
+    best
+}
+
 /// 视图快照（Dart 文本浮层用），固定 13 个 f32：
 /// `[mode, ppu, scroll_x, scroll_y, key_height, left_panel_w, lane_height,
 ///   total_ticks, ppq, key0_y, time_sig_num, time_sig_den]`

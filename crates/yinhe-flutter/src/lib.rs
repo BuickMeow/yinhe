@@ -1548,6 +1548,12 @@ pub extern "C" fn yinhe_ruler_labels_json() -> *mut std::ffi::c_char {
     to_c_string(scene::ruler_labels_json())
 }
 
+/// 时间网格线 JSON（Dart 只负责画）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_time_grid_json() -> *mut std::ffi::c_char {
+    to_c_string(scene::time_grid_json())
+}
+
 /// 设置音色库表 JSON（设置页排序/启停/删除后调用）并持久化。成功 1。
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证

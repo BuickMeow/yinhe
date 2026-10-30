@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../core/bar_beat.dart';
 import '../core/models.dart';
 import '../core/theme.dart';
 import 'time_grid.dart';
@@ -13,7 +12,7 @@ class AutomationPainter extends CustomPainter {
     required this.trackColors,
     required this.color,
     required this.snap,
-    required this.grid,
+    required this.gridLines,
     required this.selectedTicks,
     required this.movePreview,
     required this.marquee,
@@ -21,7 +20,7 @@ class AutomationPainter extends CustomPainter {
     required this.paintBaseData,
     this.paintGrid = true,
     this.paintOverlay = true,
-  }) : super(repaint: Listenable.merge([snap, grid, velocityPreview]));
+  }) : super(repaint: Listenable.merge([snap, gridLines, velocityPreview]));
 
   /// null = 力度模式。
   final AutomationLaneData? lane;
@@ -35,7 +34,7 @@ class AutomationPainter extends CustomPainter {
   final ValueNotifier<List<double>> snap;
 
   /// 拍号分段（与 PR 共用，保证小节/拍网格对齐）。
-  final ValueNotifier<BarBeatGrid?> grid;
+  final ValueNotifier<List<GridLine>> gridLines;
 
   /// 已选锚点（tick）。
   final Set<int> selectedTicks;
@@ -293,10 +292,6 @@ class AutomationPainter extends CustomPainter {
       canvas.drawLine(Offset(0, y), Offset(size.width, y), hPaint);
     }
 
-    final g = grid.value;
-    if (g == null) {
-      return;
-    }
     // AM 绘制区从 combo 列右侧开始，与 PR 共用同一 ppu/scroll。
     paintTimeGrid(
       canvas,
@@ -304,7 +299,7 @@ class AutomationPainter extends CustomPainter {
       ppu: ppu,
       scrollX: scrollX,
       leftInset: kbW - comboWidth,
-      grid: g,
+      lines: gridLines.value,
     );
   }
 

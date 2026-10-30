@@ -3,7 +3,6 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
-import '../core/bar_beat.dart';
 import '../core/edit_status.dart';
 import '../core/ffi.dart' as rust;
 import '../core/midi_names.dart';
@@ -13,6 +12,7 @@ import '../dialogs/automation_anchor_dialog.dart';
 import '../dialogs/batch_edit_dialog.dart';
 import '../dialogs/sheet.dart';
 import '../painters/painters.dart';
+import '../painters/time_grid.dart';
 import '../l10n/app_localizations.dart';
 import '../core/theme.dart';
 
@@ -25,7 +25,7 @@ class AutomationPanel extends StatefulWidget {
     super.key,
     required this.height,
     required this.snap,
-    required this.grid,
+    required this.gridLines,
     required this.lanes,
     required this.velocity,
     required this.trackColors,
@@ -50,8 +50,8 @@ class AutomationPanel extends StatefulWidget {
   final double height;
   final ValueNotifier<List<double>> snap;
 
-  /// 拍号分段（与 PR 共用，保证小节/拍网格对齐）。
-  final ValueNotifier<BarBeatGrid?> grid;
+  /// 时间网格线（Rust 算，与 PR/AR 共用同一份）。
+  final ValueNotifier<List<GridLine>> gridLines;
   final List<AutomationLaneData> lanes;
   final List<(double, double, double, int)> velocity;
   final List<Color> trackColors;
@@ -1507,7 +1507,7 @@ class _AutomationPanelState extends State<AutomationPanel>
                             trackColors: widget.trackColors,
                             color: _trackColor,
                             snap: widget.snap,
-                            grid: widget.grid,
+                            gridLines: widget.gridLines,
                             selectedTicks: _selectedTicks,
                             movePreview: _movePreview,
                             marquee: marquee,
