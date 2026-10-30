@@ -295,15 +295,6 @@ abstract class _ShellBase extends State<StudioShell>
   double? _velocityViewPpu;
   double? _velocityViewScroll;
 
-  /// Flutter 浮层相对 wgpu Texture 的延迟帧数。
-  ///
-  /// 所有视图统一延迟一帧：纹理先呈现当前帧，snapshot / overlay / playhead
-  /// 晚一帧刷新，保证标尺、键盘标签、选框和播放头与纹理同帧。
-  int get _overlayFrameDelay => 1;
-  final List<List<double>> _snapDelay = <List<double>>[];
-  final List<double> _playheadDelay = <double>[];
-  OverlayData? _overlayNext;
-
   /// 保存进行中：顶栏保存按钮显示加载圆环。
   bool _saving = false;
   Timer? _savingTimer;
@@ -444,26 +435,17 @@ class _StudioShellState extends _ShellBase
       // 帧循环仍保持，对话框关闭后的下一帧自动恢复。
       final coveredByRoute = !(ModalRoute.of(context)?.isCurrent ?? true);
       if (!coveredByRoute) {
-        // 帧驱动同步：wgpu 先呈现当前帧，所有视图的 Flutter 浮层统一延迟一帧。
+        // 帧驱动同步：`renderFrame` 同步等到 present 完成，之后读取的浮层数据
+        // 与纹理来自同一份 Rust 状态，不需要再按帧数延迟。
         if (!_showHome) {
           // 拖拽边缘自动滚动：先滚动视图，再渲染这一帧。
           rust.dragTick();
           rust.renderFrame();
         }
-        final delay = _overlayFrameDelay;
-        final px = rust.playheadX();
-        _playheadDelay.add(px);
-        final shownPlayhead = _playheadDelay.length > delay
-            ? _playheadDelay.removeAt(0)
-            : px;
-        _playhead.value = shownPlayhead;
+        _playhead.value = rust.playheadX();
         final snap = _readSnapshot();
-        _snapDelay.add(snap);
-        final shownSnap = _snapDelay.length > delay
-            ? _snapDelay.removeAt(0)
-            : snap;
-        if (!_sameSnapshot(shownSnap)) {
-          _snap.value = shownSnap;
+        if (!_sameSnapshot(snap)) {
+          _snap.value = snap;
         }
         _scheduleVelocityReload();
         _readOverlay();

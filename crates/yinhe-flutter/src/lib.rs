@@ -26,7 +26,7 @@ mod soundfont_archive;
 mod theme_colors;
 
 use std::ffi::{CStr, CString};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Mutex, OnceLock};
 
@@ -128,14 +128,11 @@ enum Cmd {
     /// iOS：登记一个外部纹理呈现端（0 = 主画布，1 = AM 面板）。
     #[cfg(target_os = "ios")]
     EnsureExternal(i32),
-    /// Flutter 帧驱动：渲染一帧（异步，不等回信）。
-    RenderNow,
+    /// Flutter 帧驱动：渲染一帧，present 完成后通过 `done` 回信。
+    RenderNow(std::sync::mpsc::SyncSender<()>),
 }
 
 static CMD_TX: OnceLock<Sender<Cmd>> = OnceLock::new();
-
-/// 渲染线程是否还有未完成的帧请求：UI 线程用它做非阻塞限流（忙就跳过本帧）。
-static RENDER_PENDING: AtomicBool = AtomicBool::new(false);
 
 // ── 画布逻辑尺寸（Flutter 控件逻辑像素）──
 
@@ -392,18 +389,18 @@ fn render_thread_main(rx: Receiver<Cmd>) {
     // 帧驱动：由 Flutter 每帧请求渲染并同步等待，纹理与浮层同帧产出。
     while let Ok(first) = rx.recv() {
         // 1) 处理积压命令（取最终态）；合并本轮的渲染请求。
-        let mut need_render = false;
+        let mut need_render: Option<std::sync::mpsc::SyncSender<()>> = None;
         let mut cmd = Some(first);
         while let Some(c) = cmd {
             match c {
-                Cmd::RenderNow => need_render = true,
+                Cmd::RenderNow(done) => need_render = Some(done),
                 other => apply_cmd(&mut gpu, &mut target, &mut am_target, other),
             }
             cmd = rx.try_recv().ok();
         }
 
-        // 2) 有请求则渲染一帧（含 present）；完成后解除 UI 线程的限流标志。
-        if need_render {
+        // 2) 有请求则渲染一帧（含 present）；完成后回信，UI 线程才继续 paint。
+        if let Some(done) = need_render {
             if let (Some(g), Some(t)) = (&gpu, &mut target) {
                 render::render_frame(g, t);
             }
@@ -411,7 +408,7 @@ fn render_thread_main(rx: Receiver<Cmd>) {
             if let (Some(g), Some(am)) = (&gpu, &mut am_target) {
                 render::render_automation_frame(g, am, summary);
             }
-            RENDER_PENDING.store(false, Ordering::Release);
+            let _ = done.send(());
         }
     }
     log::info!("渲染线程退出");
@@ -483,7 +480,7 @@ fn apply_cmd(
                 *am_target = render::create_external_automation_target(g, 1);
             }
         }
-        Cmd::RenderNow => {
+        Cmd::RenderNow(_) => {
             // 渲染请求由渲染循环统一处理（这里不应到达）。
         }
     }
@@ -681,6 +678,7 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeInitContext<'lo
 /// 音色库选择完成：入表并持久化。
 ///
 /// Android/鸿蒙/iOS 共用：壳只把文件拷进沙箱并回路径，入表由 Dart 调这里。
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_add_soundfont(path: *const std::ffi::c_char) {
     if path.is_null() {
@@ -2135,18 +2133,23 @@ fn cstr_arg<'a>(p: *const std::ffi::c_char) -> &'a str {
         .unwrap_or("")
 }
 
-/// Flutter 帧驱动：请求渲染一帧并等待完成（纹理与浮层同帧产出）。成功 1。
+/// Flutter 帧驱动：请求渲染一帧并同步等待 present 完成（纹理与浮层同帧产出）。
+///
+/// 返回 1 表示本帧已完成 present，0 表示发送失败或被合并/超时。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_render_frame() -> i32 {
-    // 非阻塞限流：渲染线程上一帧还没画完就跳过本次请求，UI 线程不再等待 present。
-    if RENDER_PENDING.swap(true, Ordering::AcqRel) {
+    let (done, wait) = std::sync::mpsc::sync_channel::<()>(1);
+    if cmd_tx().send(Cmd::RenderNow(done)).is_err() {
         return 0;
     }
-    if cmd_tx().send(Cmd::RenderNow).is_err() {
-        RENDER_PENDING.store(false, Ordering::Release);
-        return 0;
+    // 同步等待：Flutter 的 paint/raster 因此一定发生在 present 之后，纹理与浮层
+    // 对应同一份 Rust 状态，不再依赖各平台（Android ImageReader / iOS
+    // copyPixelBuffer / OHOS 外接纹理）各自的合成时序。
+    // 超时是兜底：surface 重建或 GPU 驱动异常时不能让 UI 线程永久阻塞。
+    match wait.recv_timeout(std::time::Duration::from_millis(500)) {
+        Ok(()) => 1,
+        Err(_) => 0,
     }
-    1
 }
 
 /// 释放本库返回的堆字符串。

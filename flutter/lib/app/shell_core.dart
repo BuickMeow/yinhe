@@ -26,16 +26,11 @@ mixin _ShellCore on _ShellBase {
 
   /// 覆盖层：仅在修订号变化时重取 JSON。
   ///
-  /// 所有视图的新数据先留在 `_overlayNext` 一帧；即使下一帧修订号不变，也必须
-  /// 把 pending 数据刷出去，否则选框会一直停在旧状态，直到用户再点一下。
+  /// `renderFrame` 已同步等到 present 完成，这里读到的就是刚画进纹理的那份
+  /// 状态，直接显示即可，不需要再押一帧。
   void _readOverlay() {
     final rev = rust.overlayRevision();
     if (rev == _overlayRev) {
-      final pending = _overlayNext;
-      if (pending != null) {
-        _overlayNext = null;
-        _overlay.value = pending;
-      }
       return;
     }
     _overlayRev = rev;
@@ -45,13 +40,8 @@ mixin _ShellCore on _ShellBase {
     }
     try {
       final json = jsonDecode(ptr.toDartString()) as Map<String, dynamic>;
-      final next = OverlayData.fromJson(json);
-      final prev = _overlayNext;
-      _overlayNext = next;
-      // 第一份数据直接显示；之后延迟一帧，避免选框先于 Texture 移动。
-      _overlay.value = prev ?? next;
+      _overlay.value = OverlayData.fromJson(json);
     } catch (_) {
-      _overlayNext = null;
       _overlay.value = OverlayData.empty;
     } finally {
       rust.freeString(ptr);
@@ -467,9 +457,6 @@ mixin _ShellCore on _ShellBase {
     _pushQuantize(_quantizeLabel);
     _velocityViewPpu = null;
     _velocityViewScroll = null;
-    _snapDelay.clear();
-    _playheadDelay.clear();
-    _overlayNext = null;
     if (mode == kViewPianoroll) {
       _loadAutomation();
       _loadVelocity();
