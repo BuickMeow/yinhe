@@ -3450,10 +3450,10 @@ fn summary_layer_matches_legacy_pixels() {
     );
 }
 
-/// 折叠预览叠加层（CurveOverlay）必须用预乘 alpha + Max 混合：同一 track
-/// 颜色的线段重复叠画，alpha/颜色都不得累加变深（整层不透明度恒定）。
+/// 折叠预览叠加层（CurveOverlay）用预乘 over：边缘与背景正常混合（不再有
+/// Max 混合造成的白边）；同色线重叠会略微加深，但不会越过不透明。
 #[test]
-fn curve_overlay_alpha_does_not_accumulate() {
+fn curve_overlay_uses_premultiplied_over() {
     let Some((device, queue)) = headless_device() else {
         return;
     };
@@ -3562,8 +3562,8 @@ fn curve_overlay_alpha_does_not_accumulate() {
         "折叠预览应半透明，实际 alpha={}",
         single[3]
     );
-    assert_eq!(
-        single, double,
-        "重叠后像素必须完全一致（Max 混合，不加深）：single={single:?} double={double:?}"
+    assert!(
+        double[3] > single[3],
+        "预乘 over 重叠应略微加深（不再取 max）：single={single:?} double={double:?}"
     );
 }
