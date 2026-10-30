@@ -77,6 +77,29 @@ Dart: MethodChannel('yinhe/surface').getTextureId()
    - `oh-uni-package.json` 的 `metaVersion` 需要是 `3.0.0`。
 6. `GeneratedPluginRegistrant.ets` 是 Flutter 工具生成的（无插件时为空实现），已提交。
 
+## 四·五、签名
+
+| 场景 | 需要的证书 | 产物 |
+| --- | --- | --- |
+| 模拟器 / 本地真机调试 | **调试证书 + 调试 Profile**（绑定设备 UDID） | `entry-default-signed.hap` |
+| AGC 云调试 / 云测试 / 上架 | **发布证书 + 发布 Profile**（DevEco 自动签名生成的是调试证书，云调试会拒"未使用证书签名"） | 同上，`type=release` |
+
+生成发布证书的流程：
+1. DevEco `Build → Generate Key and CSR` 生成 `.p12` + `.csr`；
+2. AGC → `证书、APP ID 和 Profile` → 新增**发布证书**（上传 csr）→ 下载 `.cer`；
+3. AGC → 新增**发布 Profile**（绑定应用 + 发布证书）→ 下载 `.p7b`；
+4. DevEco `Project Structure → Signing Configs` 手动填 p12/cer/p7b；
+5. `cargo xtask ohos --release`。
+
+验证签名（确认是 release）：
+
+```sh
+java -jar <sdk>/toolchains/lib/hap-sign-tool.jar verify-app \
+  -inFile entry-default-signed.hap -outCertChain /tmp/x.cer -outProfile /tmp/x.p7b
+```
+
+> 签名相关的 `build-profile.json5` 本地改动已 `git update-index --skip-worktree`，不会提交证书路径/密码。
+
 ## 五、没有真机时怎么跑（模拟器）
 
 1. 下载安装 **DevEco Studio（macOS ARM 版）**；
