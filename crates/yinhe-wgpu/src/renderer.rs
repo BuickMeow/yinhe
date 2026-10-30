@@ -122,6 +122,14 @@ impl InstanceRenderer {
         caps: GpuCaps,
     ) -> Self {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {
+            // 真机（Android 8+/arm64、鸿蒙 5+）都有 GLES 3.2 的 SSBO/compute；
+            // 缺 storage buffer 的环境（如鸿蒙模拟器的 ANGLE/Metal 封顶 GLES 3.0）
+            // 会在下面建 cull/渲染管线时失败，这里先给出明确原因。
+            if device.limits().max_storage_buffers_per_shader_stage == 0 {
+                log::error!(
+                    "设备不支持 shader storage buffer（GLES < 3.1）：音符/自动化渲染不可用"
+                );
+            }
             let render_shader = device.create_shader_module(ShaderModuleDescriptor {
                 label: Some("pianoroll_shader"),
                 source: ShaderSource::Wgsl(include_str!("shader.wgsl").into()),

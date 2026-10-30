@@ -28,9 +28,17 @@ hdc shell hilog -r && hdc shell aa start -b com.jieneng.yinhe -a EntryAbility
 
 ## 三、模拟器的已知限制
 
-- 只支持 **OpenGL ES 2.0/3.0**，不支持 Vulkan，也不支持 GLES 3.1 的 SSBO/计算着色器；
-- 因此：**wgpu 的 GPU cull（compute）在模拟器上大概率跑不起来**，真机（Mali/Adreno，ES 3.2）才准；
-- 帧率/内存数据在模拟器上没有参考价值，只验证"能起来、能交互、文件能读写"。
+- 只支持 **OpenGL ES 3.0**（`OpenGL ES 3.0 (4.1 Metal - 91.7)`，ANGLE 之上的华为翻译层），
+  不支持 Vulkan（ICD 存在但枚举到 0 个设备），也不支持 GLES 3.1 的 SSBO/计算着色器；
+- 因此**画布在模拟器上不可能出图**：音符/自动化渲染依赖顶点阶段 storage buffer，
+  缺 SSBO 时管线创建直接失败（日志会打一条「设备不支持 shader storage buffer」）。
+  真机（Mali/Adreno，ES 3.2）支持，桌面 Metal/Vulkan 同样支持；
+- 另一条独立阻塞：模拟器的外部纹理生产端不工作——我们的 EGL 交换链
+  `eglSwapBuffers` 成功，但 Bufferqueue 计数保持 `Requested: 0 Flushed: 0`，
+  引擎每帧报 `OH_NativeImage_AcquireNativeWindowBuffer() failed ... ret=40601000`，
+  所以连纯色清屏都显示不出来（与渲染代码无关）；
+- 结论：模拟器只适合验证 UI、文件读写、音频初始化等非画布部分；
+  帧率/内存/正确性一律以真机为准。
 
 ## 四、真机 vs 模拟器
 

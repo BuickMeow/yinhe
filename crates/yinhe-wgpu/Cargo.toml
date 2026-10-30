@@ -20,4 +20,6 @@ log = "0.4"
 yinhe-midi = { path = "../yinhe-midi" }
 yinhe-test-helpers = { path = "../yinhe-test-helpers" }
 pollster = { workspace = true }
-naga = { version = "30", features = ["wgsl-in"] }
+# glsl-out：把 shader 翻译成 GLSL ES 3.20（Android GLES 后端实际走这条路），
+# 在无 GPU 的 CI 上也能提前发现 naga 侧的类型/版本问题。
+naga = { version = "30", features = ["wgsl-in", "glsl-out"] }

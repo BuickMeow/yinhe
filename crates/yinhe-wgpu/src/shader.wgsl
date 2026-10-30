@@ -20,6 +20,16 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     return select(lo, hi, c > vec3<f32>(0.04045));
 }
 
+/// UNORM8 打包色（R|G<<8|B<<16|A<<24）→ sRGB 分量。
+fn unpack_rgba(packed: u32) -> vec4<f32> {
+    return vec4<f32>(
+        f32((packed >> 0u) & 0xFFu) / 255.0,
+        f32((packed >> 8u) & 0xFFu) / 255.0,
+        f32((packed >> 16u) & 0xFFu) / 255.0,
+        f32((packed >> 24u) & 0xFFu) / 255.0,
+    );
+}
+
 /// 按目标附着做颜色空间转换（仅在 sRGB 附着时生效）。
 fn to_target_space(c: vec4<f32>) -> vec4<f32> {
     if SRGB_TARGET == 1u {
@@ -288,19 +298,11 @@ fn vs_main(
             base_color = tc[track_idx];
         } else {
             // Fallback: use packed rgba if track_index out of range
-            let rgba = instance.packed.x;
-            base_color.r = f32((rgba >> 0u) & 0xFFu) / 255.0;
-            base_color.g = f32((rgba >> 8u) & 0xFFu) / 255.0;
-            base_color.b = f32((rgba >> 16u) & 0xFFu) / 255.0;
-            base_color.a = f32((rgba >> 24u) & 0xFFu) / 255.0;
+            base_color = unpack_rgba(instance.packed.x);
         }
     } else {
         // AR notes, decor, grid, keyboard: use packed rgba
-        let rgba = instance.packed.x;
-        base_color.r = f32((rgba >> 0u) & 0xFFu) / 255.0;
-        base_color.g = f32((rgba >> 8u) & 0xFFu) / 255.0;
-        base_color.b = f32((rgba >> 16u) & 0xFFu) / 255.0;
-        base_color.a = f32((rgba >> 24u) & 0xFFu) / 255.0;
+        base_color = unpack_rgba(instance.packed.x);
     }
     base_color = to_target_space(base_color);
     out.color = base_color;
@@ -759,13 +761,7 @@ fn vs_main_curve(
     out.thickness = instance.thickness;
     out.shape = instance.shape & 0xFFu;
 
-    let rgba = instance.rgba;
-    out.color = to_target_space(vec4<f32>(
-        f32((rgba >> 0u)  & 0xFFu) / 255.0,
-        f32((rgba >> 8u)  & 0xFFu) / 255.0,
-        f32((rgba >> 16u) & 0xFFu) / 255.0,
-        f32((rgba >> 24u) & 0xFFu) / 255.0,
-    ));
+    out.color = to_target_space(unpack_rgba(instance.rgba));
     return out;
 }
 
