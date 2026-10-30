@@ -11,22 +11,25 @@ final class YinhePlugin: NSObject, FlutterPlugin {
   private static let automationKind: Int32 = 1
 
   private let registrar: FlutterPluginRegistrar
+  private let channel: FlutterMethodChannel
   private let canvas: YinheTexture
   private let automation: YinheTexture
+  private let files: YinheFileBridge
 
   private init(registrar: FlutterPluginRegistrar) {
     self.registrar = registrar
     let textures = registrar.textures()
     canvas = YinheTexture(kind: Self.canvasKind, registry: textures)
     automation = YinheTexture(kind: Self.automationKind, registry: textures)
+    channel = FlutterMethodChannel(
+      name: Self.channelName, binaryMessenger: registrar.messenger())
+    files = YinheFileBridge(channel: channel)
     super.init()
+    channel.setMethodCallHandler(handleCall)
   }
 
   static func register(with registrar: FlutterPluginRegistrar) {
     let plugin = YinhePlugin(registrar: registrar)
-    let channel = FlutterMethodChannel(
-      name: channelName, binaryMessenger: registrar.messenger())
-    channel.setMethodCallHandler(plugin.handleCall)
 
     // 宿主回调先登记，再初始化引擎：Rust 建好 wgpu 设备后宿主才能建纹理池。
     yinhe_ios_set_host(yinheAcquireTexture, yinheSubmitTexture)
@@ -65,13 +68,25 @@ final class YinhePlugin: NSObject, FlutterPlugin {
       yinhe_ios_set_size(Self.automationKind, w, h)
       result(nil)
     case "exportTempPath":
-      // Rust 写临时文件，宿主再交给用户选位置（Phase 2 接 UIDocumentPicker）。
-      let ext = call.arguments as? String ?? ""
-      let name = ext.isEmpty ? "export.yin" : "export_tmp.\(ext)"
-      result(FileManager.default.temporaryDirectory.appendingPathComponent(name).path)
-    case "openFilePicker", "openSoundFontPicker", "saveProject", "saveExport",
-      "rememberProject":
-      // 文件选择/保存：Phase 2（UIDocumentPicker + 沙箱拷贝 + bookmark）。
+      result(files.tempURL(ext: call.arguments as? String ?? "").path)
+    case "openFilePicker":
+      files.pickProject(exts: args?["exts"] as? [String] ?? [])
+      result(nil)
+    case "openSoundFontPicker":
+      files.pickSoundfont(exts: args?["exts"] as? [String] ?? [])
+      result(nil)
+    case "saveProject":
+      files.saveProject(
+        name: args?["name"] as? String ?? "Untitled",
+        saveAs: args?["saveAs"] as? Bool ?? false)
+      result(nil)
+    case "saveExport":
+      files.saveExport(
+        name: args?["name"] as? String ?? "export",
+        ext: args?["ext"] as? String ?? "")
+      result(nil)
+    case "rememberProject":
+      files.rememberProject(name: args?["name"] as? String ?? "")
       result(nil)
     default:
       result(FlutterMethodNotImplemented)

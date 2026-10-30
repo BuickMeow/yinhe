@@ -13,7 +13,6 @@
 namespace {
 
 using InitFn = void (*)(const char*);
-using AddSoundfontFn = void (*)(const char*);
 using SetSurfaceFn = void (*)(void*);
 using ClearSurfaceFn = void (*)();
 using SetSizeFn = void (*)(uint32_t, uint32_t);
@@ -70,16 +69,6 @@ napi_value Init(napi_env env, napi_callback_info info) {
   if (GetStringArg(env, info, 1, files_dir, sizeof(files_dir))) {
     if (auto fn = Sym<InitFn>("yinhe_ohos_init")) {
       fn(files_dir);
-    }
-  }
-  return MakeUndefined(env);
-}
-
-napi_value AddSoundFont(napi_env env, napi_callback_info info) {
-  char path[4096] = {0};
-  if (GetStringArg(env, info, 0, path, sizeof(path))) {
-    if (auto fn = Sym<AddSoundfontFn>("yinhe_ohos_add_soundfont")) {
-      fn(path);
     }
   }
   return MakeUndefined(env);
@@ -185,7 +174,6 @@ EXTERN_C_START
 static napi_value Register(napi_env env, napi_value exports) {
   napi_property_descriptor desc[] = {
       {"init", nullptr, Init, nullptr, nullptr, nullptr, napi_default, nullptr},
-      {"addSoundFont", nullptr, AddSoundFont, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"setSurface", nullptr, SetSurface, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"clearSurface", nullptr, ClearSurface, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"setAutomationSurface", nullptr, SetAutomationSurface, nullptr, nullptr, nullptr, napi_default, nullptr},

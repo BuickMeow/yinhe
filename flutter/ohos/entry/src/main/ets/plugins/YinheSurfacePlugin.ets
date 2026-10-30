@@ -24,14 +24,6 @@ import fs from '@ohos.file.fs';
 import picker from '@ohos.file.picker';
 
 const CHANNEL_NAME = 'yinhe/surface';
-const ARCHIVE_EXTS: string[] = ['zip', '7z', 'rar'];
-const PROJECT_SUFFIXES: string[] = ['.yin', '.mid', '.midi', '.zip', '.7z', '.rar'];
-const SOUNDFONT_SUFFIXES: string[] = ['.sf2', '.sfz', '.zip', '.7z', '.rar'];
-
-function extOf(name: string): string {
-  const dot = name.lastIndexOf('.');
-  return dot >= 0 ? name.substring(dot + 1).toLowerCase() : '';
-}
 
 function baseName(uri: string): string {
   const slash = uri.lastIndexOf('/');
@@ -102,10 +94,10 @@ export class YinheSurfacePlugin implements MethodCallHandler {
         break;
       }
       case 'openFilePicker':
-        this.pickProject(result);
+        this.pickProject(this.readExts(call), result);
         break;
       case 'openSoundFontPicker':
-        this.pickSoundfont(result);
+        this.pickSoundfont(this.readExts(call), result);
         break;
       case 'exportTempPath': {
         const ext = (call.argument('ext') as string | null) ?? '';
@@ -190,39 +182,60 @@ export class YinheSurfacePlugin implements MethodCallHandler {
 
   // ── 文件选择 ──
 
-  private async pickProject(result: MethodResult): Promise<void> {
+  /** 本轮允许的扩展名（小写、不含点），由 Dart `core/platform_files.dart` 下发。 */
+  private readExts(call: MethodCall): string[] {
+    const raw = call.argument('exts') as string[] | null;
+    return (raw ?? []).map((e: string) => e.toLowerCase());
+  }
+
+  private async pickProject(exts: string[], result: MethodResult): Promise<void> {
     try {
-      const uri = await this.selectFile(PROJECT_SUFFIXES);
+      const uri = await this.selectFile(exts);
       if (uri === null) {
         result.success(null);
         return;
       }
+      const name = baseName(uri);
       const path = this.copyToSandbox(uri);
-      this.channel.invokeMethod('onFilePicked', path, null);
+      if (!this.isAllowed(exts, name)) {
+        this.channel.invokeMethod('onFileRejected', name, null);
+      } else {
+        this.channel.invokeMethod('onFilePicked', path, null);
+      }
       result.success(null);
     } catch (e) {
       result.error('pick_failed', `${e}`, null);
     }
   }
 
-  private async pickSoundfont(result: MethodResult): Promise<void> {
+  private async pickSoundfont(exts: string[], result: MethodResult): Promise<void> {
     try {
-      const uri = await this.selectFile(SOUNDFONT_SUFFIXES);
+      const uri = await this.selectFile(exts);
       if (uri === null) {
         result.success(null);
         return;
       }
+      const name = baseName(uri);
       const path = this.copyToSandbox(uri);
-      if (ARCHIVE_EXTS.includes(extOf(baseName(uri)))) {
-        this.channel.invokeMethod('onSoundFontArchivePicked', path, null);
+      if (!this.isAllowed(exts, name)) {
+        this.channel.invokeMethod('onSoundfontRejected', name, null);
       } else {
-        yinhe.addSoundFont(path);
+        // 压缩包还是裸音色库、以及入表，都由 Dart 判定/调用。
         this.channel.invokeMethod('onSoundFontPicked', path, null);
       }
       result.success(null);
     } catch (e) {
       result.error('pick_failed', `${e}`, null);
     }
+  }
+
+  /** 扩展名是否在白名单里（无扩展名视为不匹配）。 */
+  private isAllowed(exts: string[], name: string): boolean {
+    const dot = name.lastIndexOf('.');
+    if (dot < 0) {
+      return false;
+    }
+    return exts.includes(name.substring(dot + 1).toLowerCase());
   }
 
   private async saveProject(name: string, saveAs: boolean, result: MethodResult): Promise<void> {
@@ -275,10 +288,10 @@ export class YinheSurfacePlugin implements MethodCallHandler {
     }
   }
 
-  private async selectFile(suffixes: string[]): Promise<string | null> {
+  private async selectFile(exts: string[]): Promise<string | null> {
     const options = new picker.DocumentSelectOptions();
     options.maxSelectNumber = 1;
-    options.fileSuffixFilters = suffixes;
+    options.fileSuffixFilters = exts.map((e: string) => `.${e}`);
     const viewPicker = new picker.DocumentViewPicker(this.context);
     const uris = await viewPicker.select(options);
     return uris.length > 0 ? uris[0] : null;

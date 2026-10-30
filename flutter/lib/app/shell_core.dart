@@ -338,16 +338,22 @@ mixin _ShellCore on _ShellBase {
     if (path == null) {
       return;
     }
-    if (call.method == 'onSoundFontArchivePicked') {
-      _openSoundfontArchive(path);
-      return;
-    }
     switch (call.method) {
       case 'onFilePicked':
         await _handlePickedFile(path);
       case 'onSoundFontPicked':
-        // Rust 已由 JNI 入口直接入表并持久化，这里只通知设置页刷新。
-        _sfRevision.value++;
+        // 压缩包只打开会话列条目；裸 SF2/SFZ 才入表（含持久化）。
+        if (isArchivePath(path)) {
+          _openSoundfontArchive(path);
+        } else {
+          final p = path.toNativeUtf8();
+          try {
+            rust.addSoundfont(p);
+          } finally {
+            malloc.free(p);
+          }
+          _sfRevision.value++;
+        }
       case 'onProjectSaved':
         rust.markSaved();
         _loadSongTitle();
@@ -380,12 +386,17 @@ mixin _ShellCore on _ShellBase {
 
   @override
   Future<void> _pickMidi() async {
-    await _channel.invokeMethod<void>('openFilePicker');
+    // 扩展名策略在 Dart（`core/platform_files.dart`），壳只按它做校验。
+    await _channel.invokeMethod<void>('openFilePicker', {
+      'exts': projectExtensions,
+    });
   }
 
   @override
   Future<void> _pickSoundFont() async {
-    await _channel.invokeMethod<void>('openSoundFontPicker');
+    await _channel.invokeMethod<void>('openSoundFontPicker', {
+      'exts': soundfontExtensions,
+    });
   }
 
   @override

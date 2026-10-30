@@ -150,26 +150,8 @@ mixin _ShellDocument on _ShellBase {
     });
   }
 
-  /// 导出 .yin 工程：Rust 写临时文件 → Kotlin 复制到用户选择的位置。
-  /// 是否压缩包扩展名（与 Rust/桌面同一份列表）。
-  bool _isArchivePath(String path) {
-    final lower = path.toLowerCase();
-    const exts = [
-      '.zip',
-      '.7z',
-      '.rar',
-      '.lzh',
-      '.lha',
-      '.tar',
-      '.gz',
-      '.xz',
-      '.tgz',
-      '.txz',
-      '.tbz',
-      '.bz2',
-    ];
-    return exts.any(lower.endsWith);
-  }
+  /// 是否压缩包扩展名（唯一一份列表在 `core/platform_files.dart`）。
+  bool _isArchivePath(String path) => isArchivePath(path);
 
   /// 轮询压缩包状态：1=打开中（显示转圈）2=就绪（选条目）3=需要密码 4=失败。
   void _pollArchive() {

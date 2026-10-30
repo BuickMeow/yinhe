@@ -612,26 +612,6 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeSetViewport(
     set_logical_size(width, height);
 }
 
-/// `MainActivity.onSoundFontPicked(path)`：音色库（SF2/SFZ）已复制到私有目录。
-#[cfg(target_os = "android")]
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_onSoundFontPicked<'local>(
-    mut env: jni::EnvUnowned<'local>,
-    _this: jni::objects::JObject<'local>,
-    path: jni::objects::JString<'local>,
-) {
-    init_logging();
-    match read_jstring(&mut env, &path) {
-        Some(p) if !p.is_empty() => {
-            log::info!("收到音色库: {p}");
-            audio::add_soundfont(p);
-            scene::save_soundfont_settings();
-        }
-        Some(_) => {}
-        None => log::error!("onSoundFontPicked: 读取路径失败"),
-    }
-}
-
 /// 从 JNI 字符串读取 Rust String（失败返回 None）。
 #[cfg(target_os = "android")]
 fn read_jstring(env: &mut jni::EnvUnowned<'_>, s: &jni::objects::JString<'_>) -> Option<String> {
@@ -695,6 +675,24 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeInitContext<'lo
         }
         Outcome::Err(e) => log::error!("ndk-context 初始化失败: {e}"),
         Outcome::Panic(p) => log::error!("ndk-context 初始化 panic: {p:?}"),
+    }
+}
+
+/// 音色库选择完成：入表并持久化。
+///
+/// Android/鸿蒙/iOS 共用：壳只把文件拷进沙箱并回路径，入表由 Dart 调这里。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_add_soundfont(path: *const std::ffi::c_char) {
+    if path.is_null() {
+        return;
+    }
+    // SAFETY: 调用方（Dart）传入以 NUL 结尾的 UTF-8 路径，调用期间有效。
+    if let Ok(p) = unsafe { CStr::from_ptr(path) }.to_str()
+        && !p.is_empty()
+    {
+        log::info!("音色库入表: {p}");
+        audio::add_soundfont(p.to_string());
+        scene::save_soundfont_settings();
     }
 }
 
@@ -771,22 +769,6 @@ pub extern "C" fn yinhe_ohos_init(files_dir: *const std::ffi::c_char) {
         }
     }
     scene::ensure_starter_document();
-}
-
-/// 音色库选择完成：入表并持久化（对齐 Android 的 `onSoundFontPicked`）。
-#[cfg(target_env = "ohos")]
-#[unsafe(no_mangle)]
-pub extern "C" fn yinhe_ohos_add_soundfont(path: *const std::ffi::c_char) {
-    if path.is_null() {
-        return;
-    }
-    // SAFETY: 同 `yinhe_ohos_init`。
-    if let Ok(p) = unsafe { std::ffi::CStr::from_ptr(path) }.to_str()
-        && !p.is_empty()
-    {
-        audio::add_soundfont(p.to_string());
-        scene::save_soundfont_settings();
-    }
 }
 
 /// 设置（或替换）主画布 surface。

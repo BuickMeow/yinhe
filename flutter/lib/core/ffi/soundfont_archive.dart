@@ -1,5 +1,12 @@
 part of '../ffi.dart';
 
+typedef CStrVoidNative = ffi.Void Function(ffi.Pointer<Utf8>);
+typedef CStrVoidDart = void Function(ffi.Pointer<Utf8>);
+
+/// 音色库入表 + 持久化（平台壳只负责把文件拷进沙箱并回路径）。
+final CStrVoidDart addSoundfont = bridge
+    .lookupFunction<CStrVoidNative, CStrVoidDart>('yinhe_add_soundfont');
+
 typedef SfArchiveOpenNative = ffi.Int32 Function(ffi.Pointer<Utf8>);
 typedef SfArchiveOpenDart = int Function(ffi.Pointer<Utf8>);
 

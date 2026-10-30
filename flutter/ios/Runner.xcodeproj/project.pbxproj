@@ -18,6 +18,7 @@
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
 		A1B2C3D40000000000000001 /* YinhePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40000000000000011 /* YinhePlugin.swift */; };
 		A1B2C3D40000000000000002 /* YinheTexture.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40000000000000012 /* YinheTexture.swift */; };
+		A1B2C3D40000000000000003 /* YinheFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40000000000000014 /* YinheFiles.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -64,6 +65,7 @@
 		A1B2C3D40000000000000011 /* YinhePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YinhePlugin.swift; sourceTree = "<group>"; };
 		A1B2C3D40000000000000012 /* YinheTexture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YinheTexture.swift; sourceTree = "<group>"; };
 		A1B2C3D40000000000000013 /* YinheBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = YinheBridge.h; sourceTree = "<group>"; };
+		A1B2C3D40000000000000014 /* YinheFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YinheFiles.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -131,6 +133,7 @@
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 				A1B2C3D40000000000000011 /* YinhePlugin.swift */,
 				A1B2C3D40000000000000012 /* YinheTexture.swift */,
+				A1B2C3D40000000000000014 /* YinheFiles.swift */,
 				A1B2C3D40000000000000013 /* YinheBridge.h */,
 			);
 			path = Runner;
@@ -294,6 +297,7 @@
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
 				A1B2C3D40000000000000001 /* YinhePlugin.swift in Sources */,
 				A1B2C3D40000000000000002 /* YinheTexture.swift in Sources */,
+				A1B2C3D40000000000000003 /* YinheFiles.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
