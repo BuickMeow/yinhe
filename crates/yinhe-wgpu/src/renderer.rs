@@ -95,8 +95,32 @@ macro_rules! impl_upload_layer {
     };
 }
 
+/// 设备能力开关（wgpu 没有暴露到 `Device` 上的 downlevel 标志）。
+#[derive(Clone, Copy, Debug)]
+pub struct GpuCaps {
+    /// 支持间接绘制；iOS 模拟器等软件 GPU 不支持，强制走 CPU 回读。
+    pub indirect_execution: bool,
+}
+
+impl Default for GpuCaps {
+    fn default() -> Self {
+        Self {
+            indirect_execution: true,
+        }
+    }
+}
+
 impl InstanceRenderer {
     pub fn new(device: Device, queue: Queue, format: TextureFormat) -> Self {
+        Self::new_with_caps(device, queue, format, GpuCaps::default())
+    }
+
+    pub fn new_with_caps(
+        device: Device,
+        queue: Queue,
+        format: TextureFormat,
+        caps: GpuCaps,
+    ) -> Self {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {
             let render_shader = device.create_shader_module(ShaderModuleDescriptor {
                 label: Some("pianoroll_shader"),
@@ -105,7 +129,7 @@ impl InstanceRenderer {
 
             // Cull 先建：note_pipeline 的 group 1 复用其 all_instances bind
             // group layout（顶点阶段经索引间接读 all_instances）。
-            let cull = CullState::new(&device);
+            let cull = CullState::new_with_caps(&device, caps);
             let render = RenderPipelineState::new(
                 &device,
                 format,

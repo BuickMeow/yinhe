@@ -159,7 +159,21 @@ pub(crate) struct CullState {
 }
 
 impl CullState {
+    /// 默认按「支持间接绘制」创建（测试与桌面路径用）。
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn new(device: &Device) -> Self {
+        Self::new_with_caps(device, crate::GpuCaps::default())
+    }
+
+    pub(crate) fn new_with_caps(device: &Device, caps: crate::GpuCaps) -> Self {
+        // Android Adreno 间接绘制失效，强制回读；桌面/Metal 走间接零回读
+        // （需 INDIRECT_FIRST_INSTANCE + downlevel 的 INDIRECT_EXECUTION，
+        //  iOS 模拟器等软件 GPU 没有后者）。
+        let use_indirect = !cfg!(target_os = "android")
+            && caps.indirect_execution
+            && device
+                .features()
+                .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE);
         let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("cull_bind_group_layout"),
             entries: &[
@@ -269,7 +283,11 @@ impl CullState {
             &BufferDescriptor {
                 label: Some("cull_dispatch_args"),
                 size: dispatch_args_size,
-                usage: BufferUsages::STORAGE | BufferUsages::INDIRECT | BufferUsages::COPY_DST,
+                usage: if use_indirect {
+                    BufferUsages::STORAGE | BufferUsages::INDIRECT | BufferUsages::COPY_DST
+                } else {
+                    BufferUsages::STORAGE | BufferUsages::COPY_DST
+                },
                 mapped_at_creation: false,
             },
         );
@@ -317,14 +335,9 @@ impl CullState {
         }
         track_selected_buffer.unmap();
 
-        // Android Adreno 间接绘制失效，强制回读；桌面走间接零回读（需 INDIRECT_FIRST_INSTANCE）
-        let use_indirect = !cfg!(target_os = "android")
-            && device
-                .features()
-                .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE);
         let summary_levels = crate::pianoroll::SUMMARY_BLOCK_TICKS
             .iter()
-            .map(|_| SummaryLevel::new())
+            .map(|_| SummaryLevel::new_with_caps(caps))
             .collect();
         Self {
             pipeline: None,
@@ -564,10 +577,14 @@ impl CullState {
                     label: Some("draw_args_key"),
                     size: args_size,
                     // COPY_SRC 供 Adreno 回读 + 诊断；INDIRECT 供桌面直接 draw_indexed_indirect
-                    usage: BufferUsages::STORAGE
-                        | BufferUsages::INDIRECT
-                        | BufferUsages::COPY_SRC
-                        | BufferUsages::COPY_DST,
+                    usage: if self.use_indirect {
+                        BufferUsages::STORAGE
+                            | BufferUsages::INDIRECT
+                            | BufferUsages::COPY_SRC
+                            | BufferUsages::COPY_DST
+                    } else {
+                        BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST
+                    },
                     mapped_at_creation: false,
                 },
             );

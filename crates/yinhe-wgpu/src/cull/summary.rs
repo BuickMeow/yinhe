@@ -30,6 +30,8 @@ pub(crate) const SUMMARY_CHUNK: u64 = 256;
 
 /// 一个摘要档位的全部 per-key GPU 资源。
 pub(crate) struct SummaryLevel {
+    /// 是否支持间接绘制（不支持时 args 缓冲不能带 INDIRECT usage）。
+    indirect_execution: bool,
     pub(crate) per_key_buffers: Vec<Option<TrackedBuffer>>,
     pub(crate) per_key_visible_buffers: Vec<Option<TrackedBuffer>>,
     pub(crate) per_key_draw_args_buffers: Vec<Option<TrackedBuffer>>,
@@ -46,8 +48,16 @@ pub(crate) struct SummaryLevel {
 }
 
 impl SummaryLevel {
+    /// 默认按「支持间接绘制」创建（测试用）。
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn new() -> Self {
+        Self::new_with_caps(crate::GpuCaps::default())
+    }
+
+    pub(crate) fn new_with_caps(caps: crate::GpuCaps) -> Self {
+        let indirect_execution = caps.indirect_execution;
         Self {
+            indirect_execution,
             per_key_buffers: (0..KEY_COUNT).map(|_| None).collect(),
             per_key_visible_buffers: (0..KEY_COUNT).map(|_| None).collect(),
             per_key_draw_args_buffers: (0..KEY_COUNT).map(|_| None).collect(),
@@ -163,10 +173,14 @@ impl SummaryLevel {
                 &BufferDescriptor {
                     label: Some("summary_draw_args_key"),
                     size: args_size,
-                    usage: BufferUsages::STORAGE
-                        | BufferUsages::INDIRECT
-                        | BufferUsages::COPY_SRC
-                        | BufferUsages::COPY_DST,
+                    usage: if self.indirect_execution {
+                        BufferUsages::STORAGE
+                            | BufferUsages::INDIRECT
+                            | BufferUsages::COPY_SRC
+                            | BufferUsages::COPY_DST
+                    } else {
+                        BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST
+                    },
                     mapped_at_creation: false,
                 },
             );
