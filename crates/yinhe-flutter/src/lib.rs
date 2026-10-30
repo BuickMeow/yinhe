@@ -267,6 +267,15 @@ pub(crate) struct Gpu {
 fn create_gpu() -> Option<Gpu> {
     log::info!("初始化 wgpu…");
     // 默认实例在 Android 上即 VULKAN|GL 后端（按平台编译裁剪）。
+    // OHOS：wgpu-hal 只有 GLES 后端实现了 `RawWindowHandle::OhosNdk`，Vulkan 还没有
+    // `VK_OHOS_surface`；必须显式限定后端，否则会挑到 Vulkan adapter、建 surface 失败。
+    #[cfg(target_env = "ohos")]
+    let instance = {
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = wgpu::Backends::GL;
+        wgpu::Instance::new(desc)
+    };
+    #[cfg(not(target_env = "ohos"))]
     let instance = wgpu::Instance::default();
     let adapter = match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
