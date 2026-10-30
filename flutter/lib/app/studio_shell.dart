@@ -26,6 +26,7 @@ import '../l10n/app_localizations.dart';
 import '../painters/long_press_indicator_painter.dart';
 import '../painters/time_grid.dart';
 import '../core/models.dart';
+import '../core/snap_fields.dart';
 import 'system_bars.dart';
 import '../core/ui_settings.dart';
 import '../widgets/ruler_markers.dart';
@@ -34,7 +35,6 @@ import '../dialogs/event_list_dialog.dart';
 import '../dialogs/export_dialogs.dart';
 import '../dialogs/unsaved_dialog.dart';
 import '../dialogs/progress_dialog.dart';
-import '../core/bar_beat.dart';
 import '../dialogs/project_defaults_dialog.dart';
 import '../dialogs/project_dialog.dart';
 import '../painters/painters.dart';
@@ -102,9 +102,6 @@ abstract class _ShellBase extends State<StudioShell>
 
   /// 全曲音符数（顶栏标题展示）。
   int _noteCount = 0;
-
-  /// 拍号分段（标尺/模板行/时间码按分段排版；随文档刷新）。
-  final ValueNotifier<BarBeatGrid?> _grid = ValueNotifier(null);
 
   /// 顶栏实时 BPM / 拍号文本（跟随播放位置，原生事件优先）。
   String _liveBpmText = '120';
@@ -417,7 +414,6 @@ abstract class _ShellBase extends State<StudioShell>
   void _loadAutomation();
   void _loadProjectDefaults();
   void _loadSongTitle();
-  void _loadTimeSigSegments();
   void _loadVelocity();
   void _commitVelocityStroke(List<(double, double)> points);
   void _newProject();
@@ -429,7 +425,6 @@ abstract class _ShellBase extends State<StudioShell>
   Future<void> _openSoundfontArchive(String path);
   double get _ppq;
   void _pushQuantize(String label);
-  (int, int)? _parseQuantizeFraction(String label);
   void _readDocState();
   void _refreshDocumentMeta();
   void _resetInteraction();
@@ -621,7 +616,6 @@ class _StudioShellState extends _ShellBase
     _lpIndicator.dispose();
     _overlay.dispose();
     _sfRevision.dispose();
-    _grid.dispose();
     _rulerLabels.dispose();
     _gridLines.dispose();
     _saveDoneTimer?.cancel();

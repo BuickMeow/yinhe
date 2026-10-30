@@ -1189,17 +1189,50 @@ pub fn set_tool(tool: i32) -> i32 {
 
 /// 设置量化吸附档位：view 0=AR 1=PR；kind 0=Off 1=Auto 2=Fraction(num/den) 3=Absolute(ticks)。
 pub fn set_quantize(view: i32, kind: i32, num: u32, den: u32) -> i32 {
-    let Ok(mut s) = scene().lock() else {
-        return 0;
-    };
-    let Some(doc) = s.document.as_mut() else {
-        return 0;
-    };
     let preset = match kind {
         0 => QuantizePreset::Off,
         2 => QuantizePreset::Fraction(num.max(1), den.max(1)),
         3 => QuantizePreset::Absolute(num.max(1)),
         _ => QuantizePreset::Auto,
+    };
+    apply_quantize_preset(view, preset)
+}
+
+/// 按预设标签设置量化（`1/8`、`120 tick`、`Auto`、`Off`/`关闭`）。
+///
+/// Dart 不再解析标签，档位语义只有 Rust 一份。
+pub fn set_quantize_label(view: i32, label: &str) -> i32 {
+    let label = label.trim();
+    let preset = match label {
+        "Off" | "关闭" => QuantizePreset::Off,
+        "Auto" => QuantizePreset::Auto,
+        _ => {
+            if let Some(rest) = label.strip_suffix(" tick") {
+                match rest.trim().parse::<u32>() {
+                    Ok(n) if n >= 1 => QuantizePreset::Absolute(n),
+                    _ => return 0,
+                }
+            } else if let Some((num, den)) = label.split_once('/') {
+                let num = num.trim().parse::<u32>().unwrap_or(0);
+                let den = den.trim().parse::<u32>().unwrap_or(0);
+                if num == 0 || den == 0 {
+                    return 0;
+                }
+                QuantizePreset::Fraction(num, den)
+            } else {
+                return 0;
+            }
+        }
+    };
+    apply_quantize_preset(view, preset)
+}
+
+fn apply_quantize_preset(view: i32, preset: QuantizePreset) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
     };
     if view == 1 {
         doc.edit.quantize_pianoroll = preset;
@@ -1207,6 +1240,25 @@ pub fn set_quantize(view: i32, kind: i32, num: u32, den: u32) -> i32 {
         doc.edit.quantize_arrange = preset;
     }
     1
+}
+
+/// 当前视图量化档位的分数形式：`[num, den]`（非 Fraction 返回 `[0, 0]`）。
+pub fn quantize_fraction(view: i32) -> (u32, u32) {
+    let Ok(s) = scene().lock() else {
+        return (0, 0);
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return (0, 0);
+    };
+    let preset = if view == 1 {
+        doc.edit.quantize_pianoroll
+    } else {
+        doc.edit.quantize_arrange
+    };
+    match preset {
+        QuantizePreset::Fraction(num, den) => (num, den),
+        _ => (0, 0),
+    }
 }
 
 /// 设置当前编辑轨（-1 = 无）。
@@ -2106,8 +2158,11 @@ pub fn bar_beat_text(tick: f64) -> String {
     let Some(doc) = s.document.as_ref() else {
         return String::new();
     };
-    let model = &doc.data.model;
-    let tick = tick.max(0.0);
+    bar_beat_text_for_model(&doc.data.model, tick.max(0.0))
+}
+
+/// 按模型拍号算 `bar.beat.tick`（不锁 scene，事件列表批量用）。
+fn bar_beat_text_for_model(model: &YinModel, tick: f64) -> String {
     let (num, den) = model.tempo_map.time_sig_at_tick(tick as u32);
     format_tick_bar_beat_with_time_sig(
         tick,
@@ -2116,6 +2171,72 @@ pub fn bar_beat_text(tick: f64) -> String {
         num,
         den,
     )
+}
+
+/// tick 所在拍号段的小节长 / 拍长（tick）：`(measure_ticks, beat_ticks)`。
+pub fn bar_beat_ticks(at_tick: f64) -> (u32, u32) {
+    let Ok(s) = scene().lock() else {
+        return (0, 0);
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return (0, 0);
+    };
+    let model = &doc.data.model;
+    let (num, den) = model.tempo_map.time_sig_at_tick(at_tick.max(0.0) as u32);
+    let measure = measure_ticks(model.meta.ppq, num, den);
+    (measure, (measure / u32::from(num.max(1))).max(1))
+}
+
+/// 时长文本（从 0 开始，不是绝对位置）：`小节.拍.tick`。
+pub fn bar_beat_duration_text(ticks: f64, at_tick: f64) -> String {
+    let (measure, beat) = bar_beat_ticks(at_tick);
+    if ticks <= 0.0 || measure == 0 || beat == 0 {
+        return "0.0.000".into();
+    }
+    let t = ticks.floor() as u64;
+    let bars = t / u64::from(measure);
+    let rem = t % u64::from(measure);
+    let beats = rem / u64::from(beat);
+    let in_beat = rem % u64::from(beat);
+    format!("{bars}.{beats}.{in_beat:03}")
+}
+
+/// 解析时长输入：`4`=4 小节，`4.2`=4 小节 2 拍，`4.2.120`=再 120 tick。
+///
+/// 无效或 <= 0 返回 -1（调用方据此提示错误）。
+pub fn parse_bar_beat_duration(text: &str, at_tick: f64) -> f64 {
+    let text = text.trim();
+    if text.is_empty() {
+        return -1.0;
+    }
+    let (measure, beat) = bar_beat_ticks(at_tick);
+    if measure == 0 || beat == 0 {
+        return -1.0;
+    }
+    let parts: Vec<&str> = text.split('.').collect();
+    if parts.len() == 1 {
+        let Ok(bars) = text.parse::<f64>() else {
+            return -1.0;
+        };
+        if !bars.is_finite() || bars <= 0.0 {
+            return -1.0;
+        }
+        return (bars * f64::from(measure)).round();
+    }
+    if parts.len() > 3 {
+        return -1.0;
+    }
+    let bars: i64 = parts[0].parse().unwrap_or(-1);
+    let beats: i64 = parts[1].parse().unwrap_or(-1);
+    let ticks: i64 = if parts.len() == 3 {
+        parts[2].parse().unwrap_or(-1)
+    } else {
+        0
+    };
+    if bars < 0 || beats < 0 || ticks < 0 {
+        return -1.0;
+    }
+    (bars * i64::from(measure) + beats * i64::from(beat) + ticks) as f64
 }
 
 /// 时间标尺标签：Dart 只负责画，拍号分段/小节号/密度选择全部在这里算。
@@ -2410,32 +2531,6 @@ pub fn view_snapshot() -> [f32; 13] {
             bpm,
         ],
     }
-}
-
-/// 拍号分段 JSON：`[[tick,num,den_pow], ...]`（首段从 0 开始）。
-///
-/// 标尺/网格线按分段画（拍号变化时各段用各自的 measure 长）。
-pub fn time_sig_segments_json() -> String {
-    use yinhe_types::time_format::build_time_sig_segments;
-    let Ok(s) = scene().lock() else {
-        return "[]".into();
-    };
-    let Some(doc) = s.document.as_ref() else {
-        return "[]".into();
-    };
-    let tm = &doc.data.model.tempo_map;
-    let (def_num, def_den) = tm.time_sig_default;
-    let segments = build_time_sig_segments(&tm.time_sig_events, def_num, def_den);
-    let mut out = String::with_capacity(segments.len() * 16 + 2);
-    out.push('[');
-    for (i, (tick, num, den_pow)) in segments.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        out.push_str(&format!("[{tick},{num},{den_pow}]"));
-    }
-    out.push(']');
-    out
 }
 
 /// Tempo 曲线值域上界：当前最大 Tempo 事件（BPM），至少 1。
@@ -4925,7 +5020,7 @@ pub fn events_json(from_tick: f64, limit: i32, track: i32, skip: u32) -> String 
     out
 }
 
-/// 单行 JSON：`k`=note/cc/pb/rpn/tempo/marker；`t`=tick；`tr`=轨号；`tn`=轨名。
+/// 单行 JSON：`k`=note/cc/pb/rpn/tempo/marker；`t`=tick；`tt`=小节.拍.tick；`tr`=轨号；`tn`=轨名。
 fn event_row_json(row: &EventRow, model: &YinModel) -> String {
     let track_name = |track: u16| {
         model
@@ -4934,6 +5029,7 @@ fn event_row_json(row: &EventRow, model: &YinModel) -> String {
             .map(|t| t.name.clone())
             .unwrap_or_default()
     };
+    let tt = json_escape(&bar_beat_text_for_model(model, row.tick() as f64));
     match row {
         EventRow::Note {
             track,
@@ -4943,7 +5039,7 @@ fn event_row_json(row: &EventRow, model: &YinModel) -> String {
             end,
             id,
         } => format!(
-            "{{\"k\":\"note\",\"t\":{tick},\"tr\":{track},\"tn\":\"{}\",\"key\":{key},\"vel\":{vel},\"end\":{end},\"id\":{id}}}",
+            "{{\"k\":\"note\",\"t\":{tick},\"tt\":\"{tt}\",\"tr\":{track},\"tn\":\"{}\",\"key\":{key},\"vel\":{vel},\"end\":{end},\"id\":{id}}}",
             json_escape(&track_name(*track))
         ),
         EventRow::Auto {
@@ -4962,15 +5058,15 @@ fn event_row_json(row: &EventRow, model: &YinModel) -> String {
                 _ => "rpn",
             };
             format!(
-                "{{\"k\":\"{k}\",\"t\":{tick},\"tr\":{track},\"tn\":\"{}\",\"lane\":{lane},\"kind\":{kind},\"num\":{number},\"val\":{display:.3},\"max\":{max:.3}}}",
+                "{{\"k\":\"{k}\",\"t\":{tick},\"tt\":\"{tt}\",\"tr\":{track},\"tn\":\"{}\",\"lane\":{lane},\"kind\":{kind},\"num\":{number},\"val\":{display:.3},\"max\":{max:.3}}}",
                 json_escape(&track_name(*track))
             )
         }
         EventRow::Tempo { tick, bpm } => format!(
-            "{{\"k\":\"tempo\",\"t\":{tick},\"tr\":0,\"tn\":\"Conductor\",\"val\":{bpm:.3},\"max\":60000000}}"
+            "{{\"k\":\"tempo\",\"t\":{tick},\"tt\":\"{tt}\",\"tr\":0,\"tn\":\"Conductor\",\"val\":{bpm:.3},\"max\":60000000}}"
         ),
         EventRow::Marker { tick, text } => format!(
-            "{{\"k\":\"marker\",\"t\":{tick},\"tr\":0,\"tn\":\"Conductor\",\"text\":\"{}\"}}",
+            "{{\"k\":\"marker\",\"t\":{tick},\"tt\":\"{tt}\",\"tr\":0,\"tn\":\"Conductor\",\"text\":\"{}\"}}",
             json_escape(text)
         ),
     }

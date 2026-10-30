@@ -1,3 +1,5 @@
+import '../core/snap_fields.dart';
+
 import 'package:flutter/material.dart';
 
 import '../core/models.dart';
@@ -31,7 +33,7 @@ class OverlayPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final o = overlay.value;
     final s = snap.value;
-    final panelW = s.length > 5 ? s[5] : 0.0;
+    final panelW = s.length > 5 ? s[SnapField.leftPanelW] : 0.0;
     final contentW = size.width - panelW;
     canvas.save();
     if (panelW > 0 && contentW > 0) {

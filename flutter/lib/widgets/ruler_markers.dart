@@ -1,7 +1,10 @@
+import '../core/snap_fields.dart';
+
+import 'dart:ffi' as ffi;
+
 import 'package:ffi/ffi.dart';
 import 'package:flutter/material.dart';
 
-import '../core/bar_beat.dart';
 import '../core/ffi.dart' as rust;
 import '../core/models.dart';
 import '../painters/painters.dart';
@@ -18,7 +21,6 @@ class MarkerLayer extends StatefulWidget {
   const MarkerLayer({
     super.key,
     required this.snap,
-    required this.grid,
     required this.markers,
     required this.onChanged,
     this.onInsertStart,
@@ -27,7 +29,6 @@ class MarkerLayer extends StatefulWidget {
   });
 
   final ValueNotifier<List<double>> snap;
-  final ValueNotifier<BarBeatGrid?> grid;
   final List<RulerMarker> markers;
   final VoidCallback onChanged;
 
@@ -45,13 +46,18 @@ class _MarkerLayerState extends State<MarkerLayer> {
   int? _dragTick;
   double? _dragX;
 
-  /// 小节.拍.tick（1.0.000 风格；按拍号分段 = 原生事件优先，否则工程默认）。
+  /// 小节.拍.tick（1.0.000 风格；Rust 按拍号分段计算）。
   String _formatTick(double tick, double ppq) {
-    final grid = widget.grid.value;
-    if (grid != null) {
-      return grid.format(tick);
+    final ptr = rust.barBeatText(tick);
+    if (ptr == ffi.nullptr) {
+      return '${tick.round()}';
     }
-    return '${tick.round()}';
+    try {
+      final text = ptr.toDartString();
+      return text.isEmpty ? '${tick.round()}' : text;
+    } finally {
+      rust.freeString(ptr);
+    }
   }
 
   Future<void> _showMarkerMenu(RulerMarker m) async {
@@ -107,10 +113,10 @@ class _MarkerLayerState extends State<MarkerLayer> {
         if (s.length < 12) {
           return const SizedBox.shrink();
         }
-        final ppu = s[1];
-        final scrollX = s[2];
-        final origin = s[5];
-        final ppq = s[8] > 0 ? s[8] : 480.0;
+        final ppu = s[SnapField.ppu];
+        final scrollX = s[SnapField.scrollX];
+        final origin = s[SnapField.leftPanelW];
+        final ppq = s[SnapField.ppq] > 0 ? s[SnapField.ppq] : 480.0;
         if (ppu <= 0) {
           return const SizedBox.shrink();
         }
@@ -144,7 +150,7 @@ class _MarkerLayerState extends State<MarkerLayer> {
                   ),
               // AR：面板上方的占位矩形（与时间标尺夹着），盖住跨入面板区域的
               // 标签 pill。只画在 AR（快照 mode 0）。
-              if (s[0] == 0.0 && origin > 0)
+              if (s[SnapField.mode] == 0.0 && origin > 0)
                 Positioned(
                   left: 0,
                   top: 0,

@@ -59,7 +59,6 @@ mixin _ShellMenus on _ShellBase {
           context,
           automation: false,
           selectionRange: rust.selectionRange(),
-          grid: _grid.value,
           ppq: _ppq.round(),
         );
         if (!mounted || spec == null) {
@@ -333,7 +332,6 @@ mixin _ShellMenus on _ShellBase {
     _resetInteraction();
     showEventListDialog(
       context,
-      grid: _grid,
       tracks: _tracks.value,
       initialTrack: track,
       onJump: _jumpToEvent,

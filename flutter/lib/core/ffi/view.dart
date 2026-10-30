@@ -102,6 +102,27 @@ typedef SetQuantizeDart = int Function(int, int, int, int);
 final SetQuantizeDart setQuantize = bridge
     .lookupFunction<SetQuantizeNative, SetQuantizeDart>('yinhe_set_quantize');
 
+typedef SetQuantizeLabelNative = ffi.Int32 Function(
+  ffi.Int32,
+  ffi.Pointer<Utf8>,
+);
+typedef SetQuantizeLabelDart = int Function(int, ffi.Pointer<Utf8>);
+
+/// 按标签设置量化（`1/8`、`120 tick`、`Auto`、`Off`）：档位解析在 Rust。
+final SetQuantizeLabelDart setQuantizeLabel = bridge
+    .lookupFunction<SetQuantizeLabelNative, SetQuantizeLabelDart>(
+      'yinhe_set_quantize_label',
+    );
+
+typedef QuantizeFractionNative = ffi.Pointer<Utf8> Function(ffi.Int32);
+typedef QuantizeFractionDart = ffi.Pointer<Utf8> Function(int);
+
+/// 当前视图量化档位的分数：`[num, den]`（非分数返回 `[0,0]`）。
+final QuantizeFractionDart quantizeFractionJson = bridge
+    .lookupFunction<QuantizeFractionNative, QuantizeFractionDart>(
+      'yinhe_quantize_fraction_json',
+    );
+
 typedef QuantizeTickIntervalNative = ffi.Int64 Function();
 typedef QuantizeTickIntervalDart = int Function();
 

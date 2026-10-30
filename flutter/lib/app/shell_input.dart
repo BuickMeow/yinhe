@@ -748,9 +748,9 @@ mixin _ShellInput on _ShellBase {
 
   int? _rowAt(Offset p) {
     final s = _snap.value;
-    final panel = s[5];
-    final laneH = s[6];
-    final scrollY = s[3];
+    final panel = s[SnapField.leftPanelW];
+    final laneH = s[SnapField.laneHeight];
+    final scrollY = s[SnapField.scrollY];
     if (laneH <= 0 || p.dx >= panel) {
       return null;
     }
@@ -765,8 +765,8 @@ mixin _ShellInput on _ShellBase {
 
   bool _inMsZone(Offset p) {
     final s = _snap.value;
-    final panel = s[5];
-    final laneH = s[6];
+    final panel = s[SnapField.leftPanelW];
+    final laneH = s[SnapField.laneHeight];
     if (laneH < 34) {
       return false;
     }
@@ -782,9 +782,9 @@ mixin _ShellInput on _ShellBase {
     }
     final rows = _tracks.value;
     final s = _snap.value;
-    final panel = s[5];
-    final laneH = s[6];
-    final scrollY = s[3];
+    final panel = s[SnapField.leftPanelW];
+    final laneH = s[SnapField.laneHeight];
+    final scrollY = s[SnapField.scrollY];
     // AR 内容区：双击按 y 找行并进入对应轨道（单击不动，避免误进）。
     if (laneH > 0 && p.dx >= panel) {
       final idx = ((p.dy + scrollY) / laneH).floor();
@@ -832,8 +832,8 @@ mixin _ShellInput on _ShellBase {
   /// 命中 M/S 按钮：M 在左（警告色），S 在右（危险色）。
   void _toggleMs(Offset p, int idx) {
     final s = _snap.value;
-    final laneH = s[6];
-    final panelW = s[5];
+    final laneH = s[SnapField.laneHeight];
+    final panelW = s[SnapField.leftPanelW];
     final btn = (laneH * 0.44).clamp(18.0, 26.0).toDouble();
     const gap = 4.0;
     final right = panelW - 6.0;

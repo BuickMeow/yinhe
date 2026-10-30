@@ -93,16 +93,38 @@ mixin _ShellBuild on _ShellBase {
 
   // ── 布局 ──
 
+  /// 当前视图量化档位的分子/分母（Rust 解析；非分数回退到默认 1/16 或 1/4）。
+  (int, int) _quantizeFraction() {
+    final fallback = (1, _viewMode == kViewPianoroll ? 16 : 4);
+    final ptr = rust.quantizeFractionJson(_viewMode);
+    if (ptr == ffi.nullptr) {
+      return fallback;
+    }
+    try {
+      final list = jsonDecode(ptr.toDartString()) as List<dynamic>;
+      final numVal = (list[0] as num?)?.toInt() ?? 0;
+      final denVal = (list[1] as num?)?.toInt() ?? 0;
+      if (numVal <= 0 || denVal <= 0) {
+        return fallback;
+      }
+      return (numVal, denVal);
+    } catch (_) {
+      return fallback;
+    } finally {
+      rust.freeString(ptr);
+    }
+  }
+
   /// 量化菜单：'自定义' 打开分子/分母输入，其余直接切换当前视图档位。
   Future<void> _selectQuantize(String value) async {
     var label = value;
     if (value == '自定义') {
-      final parsed = _parseQuantizeFraction(_quantizeLabel);
+      final parsed = _quantizeFraction();
       final picked = await showCustomQuantizeDialog(
         context,
         ppq: _ppq.round(),
-        numerator: parsed?.$1 ?? 1,
-        denominator: parsed?.$2 ?? (_viewMode == kViewPianoroll ? 16 : 4),
+        numerator: parsed.$1,
+        denominator: parsed.$2,
       );
       if (picked == null || !mounted) {
         return;
@@ -427,7 +449,6 @@ mixin _ShellBuild on _ShellBase {
                                           height: RulerPainter.height,
                                           child: MarkerLayer(
                                             snap: _snap,
-                                            grid: _grid,
                                             markers: _markers,
                                             onChanged: _refreshDocumentMeta,
                                             onInsertStart:

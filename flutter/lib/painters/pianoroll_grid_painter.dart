@@ -1,3 +1,5 @@
+import '../core/snap_fields.dart';
+
 import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
@@ -30,11 +32,11 @@ class PianorollGridPainter extends CustomPainter {
     if (s.length < 12) {
       return;
     }
-    final ppu = s[1];
-    final scrollX = s[2];
-    final kh = s[4];
-    final kbW = s[5];
-    final key0Y = s[9];
+    final ppu = s[SnapField.ppu];
+    final scrollX = s[SnapField.scrollX];
+    final kh = s[SnapField.keyHeight];
+    final kbW = s[SnapField.leftPanelW];
+    final key0Y = s[SnapField.key0Y];
     if (kh <= 0 || kbW <= 0) {
       return;
     }

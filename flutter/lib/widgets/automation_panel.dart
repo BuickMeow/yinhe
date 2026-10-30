@@ -1,3 +1,5 @@
+import '../core/snap_fields.dart';
+
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -675,9 +677,9 @@ class _AutomationPanelState extends State<AutomationPanel>
 
   double _tickAt(double x) {
     final s = widget.snap.value;
-    final ppu = s[1];
-    final scrollX = s[2];
-    final kbW = s[5];
+    final ppu = s[SnapField.ppu];
+    final scrollX = s[SnapField.scrollX];
+    final kbW = s[SnapField.leftPanelW];
     if (ppu <= 0) {
       return 0.0;
     }
@@ -692,7 +694,9 @@ class _AutomationPanelState extends State<AutomationPanel>
 
   double _xOfTick(double tick) {
     final s = widget.snap.value;
-    return tick * s[1] - s[2] + (s[5] - AutomationPainter.comboWidth);
+    return tick * s[SnapField.ppu] -
+        s[SnapField.scrollX] +
+        (s[SnapField.leftPanelW] - AutomationPainter.comboWidth);
   }
 
   double _yOfValue(double value) =>
@@ -739,7 +743,7 @@ class _AutomationPanelState extends State<AutomationPanel>
   /// 把一个线段扫过的力度条写入预览。正式修改由 Rust 在松手时按原音符重算。
   void _hitVelocitySegment((double, double) a, (double, double) b) {
     final s = widget.snap.value;
-    final ppu = s[1];
+    final ppu = s[SnapField.ppu];
     if (ppu <= 0 || widget.activeTrack < 0) {
       return;
     }
@@ -1004,7 +1008,7 @@ class _AutomationPanelState extends State<AutomationPanel>
       return;
     }
     final s = widget.snap.value;
-    if (s[1] <= 0) {
+    if (s[SnapField.ppu] <= 0) {
       return;
     }
     final lane = widget.lanes[laneIdx];

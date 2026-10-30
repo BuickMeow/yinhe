@@ -1542,6 +1542,37 @@ pub extern "C" fn yinhe_bar_beat_text(tick: f64) -> *mut std::ffi::c_char {
     to_c_string(scene::bar_beat_text(tick))
 }
 
+/// 当前拍号段的小节长/拍长（tick）：`[measure_ticks, beat_ticks]`。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_bar_beat_ticks_json(at_tick: f64) -> *mut std::ffi::c_char {
+    let (measure, beat) = scene::bar_beat_ticks(at_tick);
+    to_c_string(format!("[{measure},{beat}]"))
+}
+
+/// 时长文本（从 0 开始）：`小节.拍.tick`。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_bar_beat_duration_text(ticks: f64, at_tick: f64) -> *mut std::ffi::c_char {
+    to_c_string(scene::bar_beat_duration_text(ticks, at_tick))
+}
+
+/// 解析时长输入（`4` / `4.2` / `4.2.120`）；无效返回 -1。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
+pub extern "C" fn yinhe_parse_bar_beat_duration(
+    text: *const std::ffi::c_char,
+    at_tick: f64,
+) -> f64 {
+    if text.is_null() {
+        return -1.0;
+    }
+    // SAFETY: dart:ffi 传入以 NUL 结尾的 UTF-8 字符串，调用期间有效。
+    let text = unsafe { CStr::from_ptr(text) };
+    match text.to_str() {
+        Ok(v) => scene::parse_bar_beat_duration(v, at_tick),
+        Err(_) => -1.0,
+    }
+}
+
 /// 时间标尺标签 JSON（Dart 只负责画）。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_ruler_labels_json() -> *mut std::ffi::c_char {
@@ -1632,12 +1663,6 @@ pub extern "C" fn yinhe_soundfont_archive_import_json() -> *mut std::ffi::c_char
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_song_title() -> *mut std::ffi::c_char {
     to_c_string(scene::song_title())
-}
-
-/// 拍号分段 JSON（标尺/网格线按分段画；堆分配）。
-#[unsafe(no_mangle)]
-pub extern "C" fn yinhe_time_sig_segments_json() -> *mut std::ffi::c_char {
-    to_c_string(scene::time_sig_segments_json())
 }
 
 /// 在 conductor 指定 tick 插入拍号（分子 + 分母 2 次幂）。成功 1。
@@ -1862,6 +1887,28 @@ pub extern "C" fn yinhe_set_tool(tool: i32) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_set_quantize(view: i32, kind: i32, num: u32, den: u32) -> i32 {
     scene::set_quantize(view, kind, num, den)
+}
+
+/// 按标签设置量化（`1/8`、`120 tick`、`Auto`、`Off`）。成功 1。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
+pub extern "C" fn yinhe_set_quantize_label(view: i32, label: *const std::ffi::c_char) -> i32 {
+    if label.is_null() {
+        return 0;
+    }
+    // SAFETY: dart:ffi 传入以 NUL 结尾的 UTF-8 字符串，调用期间有效。
+    let label = unsafe { CStr::from_ptr(label) };
+    match label.to_str() {
+        Ok(v) => scene::set_quantize_label(view, v),
+        Err(_) => 0,
+    }
+}
+
+/// 当前视图量化档位的分数：`[num, den]`（非分数返回 `[0,0]`）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_quantize_fraction_json(view: i32) -> *mut std::ffi::c_char {
+    let (num, den) = scene::quantize_fraction(view);
+    to_c_string(format!("[{num},{den}]"))
 }
 
 /// 当前视图量化档位的 tick 间隔（AM 选框按量化吸附用）。

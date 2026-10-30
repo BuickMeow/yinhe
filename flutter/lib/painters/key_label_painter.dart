@@ -1,3 +1,5 @@
+import '../core/snap_fields.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -25,9 +27,9 @@ class KeyLabelPainter extends CustomPainter {
     if (s.length < 10) {
       return;
     }
-    final kh = s[4];
-    final keyboardW = s[5];
-    final key0Top = s[9];
+    final kh = s[SnapField.keyHeight];
+    final keyboardW = s[SnapField.leftPanelW];
+    final key0Top = s[SnapField.key0Y];
     // 与键盘列同一门槛/字号；行高太小时文字会糊成一片。
     if (kh < 10 || keyboardW <= 0 || size.height <= 0) {
       return;

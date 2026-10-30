@@ -40,8 +40,8 @@ mixin _ShellTransport on _ShellBase {
     if (s.length < 3) {
       return;
     }
-    final ppu = s[1];
-    final scroll = s[2];
+    final ppu = s[SnapField.ppu];
+    final scroll = s[SnapField.scrollX];
     if (_velocityViewPpu == ppu && _velocityViewScroll == scroll) {
       return;
     }
@@ -91,8 +91,8 @@ mixin _ShellTransport on _ShellBase {
     }
     final s = _snap.value;
     if (s.length > 2) {
-      _velocityViewPpu = s[1];
-      _velocityViewScroll = s[2];
+      _velocityViewPpu = s[SnapField.ppu];
+      _velocityViewScroll = s[SnapField.scrollX];
     }
     setState(() => _velocityBars = bars);
   }
@@ -187,9 +187,13 @@ mixin _ShellTransport on _ShellBase {
     // 顶栏 BPM / 拍号：跟随播放位置的实时值（快照 10/11/12）。
     final s = _snap.value;
     if (s.length > 12) {
-      final bpmText = _fmtBpm(s[12]);
-      final sigNum = s[10] > 0 ? s[10].round() : 4;
-      final sigDen = 1 << (s[11] >= 0 ? s[11].round().clamp(0, 8) : 2);
+      final bpmText = _fmtBpm(s[SnapField.bpm]);
+      final sigNum = s[SnapField.sigNum] > 0 ? s[SnapField.sigNum].round() : 4;
+      final sigDen =
+          1 <<
+          (s[SnapField.sigDen] >= 0
+              ? s[SnapField.sigDen].round().clamp(0, 8)
+              : 2);
       final sigText = '$sigNum/$sigDen';
       if (bpmText != _liveBpmText || sigText != _liveSigText) {
         setState(() {
@@ -237,32 +241,6 @@ mixin _ShellTransport on _ShellBase {
       return _fmtBarBeat(tick, _ppq);
     }
     return _fmtTime(rust.secondsAtTick(tick));
-  }
-
-  /// 读取拍号分段（文档变化时刷新）。
-  @override
-  void _loadTimeSigSegments() {
-    final ptr = rust.timeSigSegmentsJson();
-    if (ptr == ffi.nullptr) {
-      return;
-    }
-    try {
-      final list = jsonDecode(ptr.toDartString()) as List<dynamic>;
-      final flat = <double>[];
-      for (final seg in list) {
-        if (seg is List && seg.length >= 3) {
-          flat
-            ..add((seg[0] as num).toDouble())
-            ..add((seg[1] as num).toDouble())
-            ..add((seg[2] as num).toDouble());
-        }
-      }
-      _grid.value = BarBeatGrid.fromFlat(_ppq, flat);
-    } catch (_) {
-      // 保持旧分段。
-    } finally {
-      rust.freeString(ptr);
-    }
   }
 
   @override

@@ -1,3 +1,5 @@
+import '../core/snap_fields.dart';
+
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -34,7 +36,7 @@ class SelectionLongPressPainter extends CustomPainter {
         ..strokeWidth = 1
         ..color = YinheTheme.text.withValues(alpha: 0.45);
       final s = snap.value;
-      final panelW = s.length > 5 ? s[5] : 0.0;
+      final panelW = s.length > 5 ? s[SnapField.leftPanelW] : 0.0;
       final contentW = size.width - panelW;
       canvas.save();
       if (panelW > 0 && contentW > 0) {

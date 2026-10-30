@@ -6,7 +6,6 @@ import 'package:ffi/ffi.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../core/bar_beat.dart';
 import '../core/ffi.dart' as rust;
 import '../core/midi_names.dart';
 import '../core/models.dart';
@@ -23,7 +22,6 @@ import '../l10n/app_localizations.dart';
 /// 长按一行：修改 / 删除 / 复制 / 粘贴（同时间位置）/ 跳转。
 Future<void> showEventListDialog(
   BuildContext context, {
-  required ValueNotifier<BarBeatGrid?> grid,
   required List<TrackRow> tracks,
   required int initialTrack,
   required void Function(int track, double tick) onJump,
@@ -32,7 +30,6 @@ Future<void> showEventListDialog(
   return showDialog<void>(
     context: context,
     builder: (_) => EventListDialog(
-      grid: grid,
       tracks: tracks,
       initialTrack: initialTrack,
       onJump: onJump,
@@ -44,14 +41,12 @@ Future<void> showEventListDialog(
 class EventListDialog extends StatefulWidget {
   const EventListDialog({
     super.key,
-    required this.grid,
     required this.tracks,
     required this.initialTrack,
     required this.onJump,
     required this.onChanged,
   });
 
-  final ValueNotifier<BarBeatGrid?> grid;
   final List<TrackRow> tracks;
 
   /// 进入时的音轨；-1 = 全部轨道。
@@ -255,11 +250,6 @@ class _EventListDialogState extends State<EventListDialog> {
     unawaited(_ensurePage(0));
   }
 
-  String _timeText(int tick) {
-    final grid = widget.grid.value;
-    return grid?.format(tick.toDouble()) ?? '$tick';
-  }
-
   String _noteName(int key) => MidiNames.instance.noteName(key);
 
   String _ccName(int cc) => ccInsertLabel(cc);
@@ -270,7 +260,7 @@ class _EventListDialogState extends State<EventListDialog> {
     final kind = r['k'] as String? ?? '';
     final tick = (r['t'] as num?)?.toInt() ?? 0;
     final track = r['tn'] as String? ?? '';
-    final time = _timeText(tick);
+    final time = r['tt'] as String? ?? '$tick';
     switch (kind) {
       case 'note':
         final key = (r['key'] as num?)?.toInt() ?? 0;

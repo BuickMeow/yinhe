@@ -1,3 +1,5 @@
+import '../core/snap_fields.dart';
+
 import 'package:flutter/material.dart';
 
 import '../core/models.dart';
@@ -70,9 +72,9 @@ class AutomationPainter extends CustomPainter {
     if (s.length < 12) {
       return;
     }
-    final ppu = s[1];
-    final scrollX = s[2];
-    final kbW = s[5];
+    final ppu = s[SnapField.ppu];
+    final scrollX = s[SnapField.scrollX];
+    final kbW = s[SnapField.leftPanelW];
     if (ppu <= 0) {
       return;
     }

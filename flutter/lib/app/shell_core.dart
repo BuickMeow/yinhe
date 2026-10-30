@@ -121,22 +121,7 @@ mixin _ShellCore on _ShellBase {
     _pushTool();
   }
 
-  /// 解析 'a/b' 形式的量化标签（含自定义档位）；无效返回 null。
-  @override
-  (int, int)? _parseQuantizeFraction(String label) {
-    final m = RegExp(r'^(\d+)/(\d+)$').firstMatch(label);
-    if (m == null) {
-      return null;
-    }
-    final num = int.tryParse(m[1]!);
-    final den = int.tryParse(m[2]!);
-    if (num == null || den == null || num <= 0 || den <= 0) {
-      return null;
-    }
-    return (num, den);
-  }
-
-  /// 量化档位同步给 Rust（只作用于当前视图）。
+  /// 量化档位同步给 Rust（只作用于当前视图：解析与写入都在 Rust）。
   @override
   void _pushQuantize(String label) {
     _applyQuantize(_viewMode, label);
@@ -149,20 +134,12 @@ mixin _ShellCore on _ShellBase {
   }
 
   void _applyQuantize(int view, String label) {
-    if (label == '关闭') {
-      rust.setQuantize(view, 0, 1, 1);
-      return;
+    final p = label.toNativeUtf8();
+    try {
+      rust.setQuantizeLabel(view, p);
+    } finally {
+      calloc.free(p);
     }
-    final fraction = _parseQuantizeFraction(label);
-    if (fraction != null) {
-      rust.setQuantize(view, 2, fraction.$1, fraction.$2);
-      return;
-    }
-    if (label.startsWith('1 tick')) {
-      rust.setQuantize(view, 3, 1, 1);
-      return;
-    }
-    rust.setQuantize(view, 1, 1, 1);
   }
 
   /// 新建空工程并进入工作区（先确认未保存修改）。
@@ -221,7 +198,6 @@ mixin _ShellCore on _ShellBase {
     }
     _loadSongTitle();
     _loadProjectDefaults();
-    _loadTimeSigSegments();
   }
 
   /// 加载 MIDI/工程：Rust 后台解析，Dart 延迟 120ms 再决定是否弹进度框，

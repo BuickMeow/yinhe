@@ -1,3 +1,5 @@
+import '../core/snap_fields.dart';
+
 import 'package:flutter/material.dart';
 
 import '../core/models.dart';
@@ -23,7 +25,7 @@ class LabelsPainter extends CustomPainter {
     if (s.length < 12) {
       return;
     }
-    if (s[0] == 0.0) {
+    if (s[SnapField.mode] == 0.0) {
       _paintArrangement(canvas, size, s, tracks.value);
       _paintDrag(canvas, size, s, dragFrom.value, dragTo.value);
     } else {
@@ -40,9 +42,9 @@ class LabelsPainter extends CustomPainter {
     if (rows.isEmpty) {
       return;
     }
-    final laneH = s[6];
-    final scrollY = s[3];
-    final panelW = s[5];
+    final laneH = s[SnapField.laneHeight];
+    final scrollY = s[SnapField.scrollY];
+    final panelW = s[SnapField.leftPanelW];
     if (laneH <= 0 || panelW <= 0) {
       return;
     }
@@ -165,9 +167,9 @@ class LabelsPainter extends CustomPainter {
     if (from < 0 || to < 0) {
       return;
     }
-    final laneH = s[6];
-    final scrollY = s[3];
-    final panelW = s[5];
+    final laneH = s[SnapField.laneHeight];
+    final scrollY = s[SnapField.scrollY];
+    final panelW = s[SnapField.leftPanelW];
     if (laneH <= 0 || panelW <= 0) {
       return;
     }
@@ -185,9 +187,9 @@ class LabelsPainter extends CustomPainter {
   }
 
   void _paintKeyboardLabels(Canvas canvas, Size size, List<double> s) {
-    final kh = s[4];
-    final kbW = s[5];
-    final key0Y = s[9];
+    final kh = s[SnapField.keyHeight];
+    final kbW = s[SnapField.leftPanelW];
+    final key0Y = s[SnapField.key0Y];
     if (kh < 10 || kbW <= 0) {
       return;
     }

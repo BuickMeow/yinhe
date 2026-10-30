@@ -1,3 +1,5 @@
+import '../core/snap_fields.dart';
+
 import 'package:flutter/material.dart';
 
 import '../core/models.dart';
@@ -21,9 +23,9 @@ class LongPressIndicatorPainter extends CustomPainter {
     if (s.length < 12 || size.height <= 0) {
       return;
     }
-    final ppu = s[1];
-    final scrollX = s[2];
-    final origin = s[5];
+    final ppu = s[SnapField.ppu];
+    final scrollX = s[SnapField.scrollX];
+    final origin = s[SnapField.leftPanelW];
     if (ppu <= 0) {
       return;
     }

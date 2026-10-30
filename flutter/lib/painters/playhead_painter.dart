@@ -1,3 +1,5 @@
+import '../core/snap_fields.dart';
+
 import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
@@ -16,7 +18,7 @@ class PlayheadPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final px = x.value;
     final s = snap.value;
-    final panelW = s.length > 5 ? s[5] : 0.0;
+    final panelW = s.length > 5 ? s[SnapField.leftPanelW] : 0.0;
     if (px < panelW || px > size.width) {
       return;
     }

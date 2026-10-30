@@ -1,7 +1,10 @@
+import 'dart:ffi' as ffi;
+
+import 'package:ffi/ffi.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../core/bar_beat.dart';
+import '../core/ffi.dart' as rust;
 import '../core/theme.dart';
 import '../l10n/app_localizations.dart';
 import 'frame.dart';
@@ -121,7 +124,6 @@ Future<BatchEditSpec?> showBatchEditDialog(
   BuildContext context, {
   required bool automation,
   (double, double)? selectionRange,
-  BarBeatGrid? grid,
   int ppq = 480,
 }) {
   return showDialog<BatchEditSpec>(
@@ -129,7 +131,6 @@ Future<BatchEditSpec?> showBatchEditDialog(
     builder: (_) => _BatchEditDialog(
       automation: automation,
       selectionRange: selectionRange,
-      grid: grid,
       ppq: ppq,
     ),
   );
@@ -139,13 +140,11 @@ class _BatchEditDialog extends StatefulWidget {
   const _BatchEditDialog({
     required this.automation,
     this.selectionRange,
-    this.grid,
     this.ppq = 480,
   });
 
   final bool automation;
   final (double, double)? selectionRange;
-  final BarBeatGrid? grid;
   final int ppq;
 
   @override
@@ -197,32 +196,20 @@ class _BatchEditDialogState extends State<_BatchEditDialog> {
 
   double get _selectionStart => widget.selectionRange?.$1 ?? 0;
 
-  /// 选区起点所在段的小节长 / 拍长（tick）。
-  (int, int) _barBeatTicks() {
-    final grid = widget.grid;
-    if (grid != null) {
-      return grid.ticksOfSegment(grid.segmentIndexAt(_selectionStart.round()));
-    }
-    final ppq = widget.ppq > 0 ? widget.ppq : 480;
-    return (ppq * 4, ppq);
-  }
-
   /// 时长 → `小节.拍.tick`（从 0 开始，不是绝对位置）。
   String _formatLength(double ticks) {
-    final grid = widget.grid;
-    if (grid != null) {
-      return grid.formatDuration(ticks, atTick: _selectionStart.round());
-    }
     if (ticks <= 0) {
       return '0.0.000';
     }
-    final (measure, beat) = _barBeatTicks();
-    final t = ticks.floor();
-    final bars = t ~/ measure;
-    final rem = t % measure;
-    final beats = rem ~/ beat;
-    final rest = rem % beat;
-    return '$bars.$beats.${rest.toString().padLeft(3, '0')}';
+    final ptr = rust.barBeatDurationText(ticks, _selectionStart);
+    if (ptr == ffi.nullptr) {
+      return '0.0.000';
+    }
+    try {
+      return ptr.toDartString();
+    } finally {
+      rust.freeString(ptr);
+    }
   }
 
   /// 解析目标长度：`4`=4 小节，`4.2`=4 小节 2 拍，`4.2.120`=再 120 tick。
@@ -233,28 +220,16 @@ class _BatchEditDialogState extends State<_BatchEditDialog> {
     if (text.isEmpty) {
       return null;
     }
-    final (measure, beat) = _barBeatTicks();
-    final parts = text.split('.');
-    if (parts.length == 1) {
-      final bars = double.tryParse(text);
-      if (bars == null || !bars.isFinite || bars <= 0) {
+    final p = text.toNativeUtf8();
+    try {
+      final ticks = rust.parseBarBeatDuration(p, _selectionStart);
+      if (ticks <= 0) {
         return null;
       }
-      return (bars * measure).round();
+      return ticks.round();
+    } finally {
+      calloc.free(p);
     }
-    if (parts.length > 3) {
-      return null;
-    }
-    final bars = int.tryParse(parts[0]);
-    final beats = int.tryParse(parts[1]);
-    final ticks = parts.length == 3 ? int.tryParse(parts[2]) : 0;
-    if (bars == null || beats == null || ticks == null) {
-      return null;
-    }
-    if (bars < 0 || beats < 0 || ticks < 0) {
-      return null;
-    }
-    return bars * measure + beats * beat + ticks;
   }
 
   bool get _targetInvalid {

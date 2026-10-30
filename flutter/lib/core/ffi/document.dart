@@ -29,6 +29,33 @@ final CStrDart timeGridJson = bridge.lookupFunction<CStrNative, CStrDart>(
   'yinhe_time_grid_json',
 );
 
+/// 当前拍号段的小节长/拍长：`[measure_ticks, beat_ticks]`。
+final DoubleCStrDart barBeatTicksJson = bridge
+    .lookupFunction<DoubleCStrNative, DoubleCStrDart>(
+      'yinhe_bar_beat_ticks_json',
+    );
+
+typedef TwoDoubleCStrNative = ffi.Pointer<Utf8> Function(
+  ffi.Double,
+  ffi.Double,
+);
+typedef TwoDoubleCStrDart = ffi.Pointer<Utf8> Function(double, double);
+
+/// 时长文本（从 0 开始）：`小节.拍.tick`。
+final TwoDoubleCStrDart barBeatDurationText = bridge
+    .lookupFunction<TwoDoubleCStrNative, TwoDoubleCStrDart>(
+      'yinhe_bar_beat_duration_text',
+    );
+
+typedef CStrDoubleNative = ffi.Double Function(ffi.Pointer<Utf8>, ffi.Double);
+typedef CStrDoubleDart = double Function(ffi.Pointer<Utf8>, double);
+
+/// 解析时长输入（`4` / `4.2` / `4.2.120`）；无效返回 -1。
+final CStrDoubleDart parseBarBeatDuration = bridge
+    .lookupFunction<CStrDoubleNative, CStrDoubleDart>(
+      'yinhe_parse_bar_beat_duration',
+    );
+
 /// 歌曲标题（空串 = 未设置）。
 final CStrDart songTitle = bridge.lookupFunction<CStrNative, CStrDart>(
   'yinhe_song_title',

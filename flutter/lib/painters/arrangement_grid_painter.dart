@@ -1,3 +1,5 @@
+import '../core/snap_fields.dart';
+
 import 'package:flutter/material.dart';
 
 import '../core/models.dart';
@@ -25,11 +27,11 @@ class ArrangementGridPainter extends CustomPainter {
     if (s.length < 12) {
       return;
     }
-    final ppu = s[1];
-    final scrollX = s[2];
-    final scrollY = s[3];
-    final panelW = s[5];
-    final laneH = s[6];
+    final ppu = s[SnapField.ppu];
+    final scrollX = s[SnapField.scrollX];
+    final scrollY = s[SnapField.scrollY];
+    final panelW = s[SnapField.leftPanelW];
+    final laneH = s[SnapField.laneHeight];
     final count = tracks.value.length;
     if (laneH <= 0 || panelW <= 0 || count <= 0) {
       return;
