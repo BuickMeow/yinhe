@@ -37,16 +37,12 @@ class _SfItem {
     required this.path,
     required this.name,
     required this.enabled,
-    this.channel = -1,
     this.warnings = const [],
   });
 
   final String path;
   final String name;
   bool enabled;
-
-  /// 生效通道：-1 = 全部（GM 库），0..15 = 仅该通道。
-  int channel;
 
   /// xsynth 不支持的 opcode 提示（空 = 没有或不是 SFZ）。
   final List<String> warnings;
@@ -101,7 +97,6 @@ class _SettingsViewState extends State<SettingsView> {
                 path: it['path'] as String? ?? '',
                 name: it['name'] as String? ?? '',
                 enabled: it['enabled'] as bool? ?? true,
-                channel: (it['channel'] as num?)?.toInt() ?? -1,
                 warnings: [
                   for (final w
                       in (it['warnings'] as List<dynamic>? ?? const []))
@@ -120,8 +115,7 @@ class _SettingsViewState extends State<SettingsView> {
   /// 把当前列表（顺序 = 优先级）写回 Rust 并持久化。
   void _applyFonts() {
     final json = jsonEncode([
-      for (final e in _fonts)
-        {'path': e.path, 'enabled': e.enabled, 'channel': e.channel},
+      for (final e in _fonts) {'path': e.path, 'enabled': e.enabled},
     ]);
     final p = json.toNativeUtf8();
     try {
@@ -129,11 +123,6 @@ class _SettingsViewState extends State<SettingsView> {
     } finally {
       calloc.free(p);
     }
-  }
-
-  void _setFontChannel(int index, int channel) {
-    setState(() => _fonts[index].channel = channel);
-    _applyFonts();
   }
 
   /// 展示该 SFZ 里会被忽略的 opcode。
@@ -575,44 +564,6 @@ class _SettingsViewState extends State<SettingsView> {
     );
   }
 
-  /// 音色库生效通道选择：ALL = 所有通道（GM 库），CH1..CH16 = 指定通道。
-  Widget _channelButton(int channel, ValueChanged<int> onChanged) {
-    final label = channel < 0 ? (L10n.isZh ? '全部' : 'ALL') : 'CH${channel + 1}';
-    return PopupMenuButton<int>(
-      tooltip: L10n.isZh ? '生效通道' : 'Target channel',
-      initialValue: channel,
-      onSelected: onChanged,
-      color: YinheTheme.controlBg,
-      itemBuilder: (context) => [
-        PopupMenuItem(
-          value: -1,
-          child: Text(L10n.isZh ? '全部通道' : 'All channels'),
-        ),
-        for (var c = 0; c < 16; c++)
-          PopupMenuItem(
-            value: c,
-            child: Text(L10n.isZh ? '通道 ${c + 1}' : 'Channel ${c + 1}'),
-          ),
-      ],
-      child: Container(
-        margin: const EdgeInsets.only(right: 2),
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-        decoration: BoxDecoration(
-          color: YinheTheme.controlBg,
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: channel < 0 ? YinheTheme.textSecondary : YinheTheme.accent,
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _soundFontPage() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -686,7 +637,6 @@ class _SettingsViewState extends State<SettingsView> {
                         visualDensity: VisualDensity.compact,
                         onPressed: () => _showWarnings(e),
                       ),
-                    _channelButton(e.channel, (v) => _setFontChannel(i, v)),
                     Transform.scale(
                       scale: 0.8,
                       child: Switch(

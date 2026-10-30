@@ -1856,13 +1856,11 @@ fn write_settings() {
         return;
     };
     let mut text = String::new();
-    // 音色库表：每行一个 `soundfont=<0|1>|<channel>|<path>`
-    // （0/1 = 停用/启用；channel = -1 全部通道，0..15 指定通道）。
+    // 音色库表：每行一个 `soundfont=<0|1>|<path>`（0/1 = 停用/启用）。
     for e in crate::audio::soundfonts() {
         text.push_str(&format!(
-            "soundfont={}|{}|{}\n",
+            "soundfont={}|{}\n",
             if e.enabled { 1 } else { 0 },
-            e.channel,
             e.path
         ));
     }
@@ -1906,19 +1904,19 @@ fn load_settings() {
     let mut language = String::new();
     for line in text.lines() {
         if let Some(v) = line.strip_prefix("soundfont=") {
-            // 新格式 `enabled|channel|path`；次新 `enabled|path`（无通道）；
-            // 旧格式 `path`（视为启用）。
-            let (enabled, channel, path) = match v.splitn(3, '|').collect::<Vec<_>>()[..] {
-                [flag, ch, path] => (flag != "0", ch.parse().unwrap_or(-1), path),
-                [flag, path] => (flag != "0", -1, path),
-                [path] => (true, -1, path),
-                _ => (true, -1, ""),
+            // 常规格式 `enabled|path`；旧格式 `path`（视为启用）。
+            // 三段 `enabled|channel|path` 是已回滚的按通道绑定版本写的，
+            // 读取时丢弃中间段，避免用户设置丢失。
+            let (enabled, path) = match v.splitn(3, '|').collect::<Vec<_>>()[..] {
+                [flag, _channel, path] => (flag != "0", path),
+                [flag, path] => (flag != "0", path),
+                [path] => (true, path),
+                _ => (true, ""),
             };
             if !path.is_empty() && crate::audio::is_soundfont_path(path) {
                 soundfonts.push(crate::audio::SoundfontEntry {
                     path: path.to_string(),
                     enabled,
-                    channel: channel.clamp(-1, 15),
                 });
             } else if !path.is_empty() {
                 // 旧版本选择器可能把 mid 等文件写进音色库表，读盘时清理掉。
