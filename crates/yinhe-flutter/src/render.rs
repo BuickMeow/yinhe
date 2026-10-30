@@ -149,12 +149,21 @@ impl Sink {
                 .copied()
                 .unwrap_or(wgpu::CompositeAlphaMode::Auto)
         };
+        // OHOS 的 OwnedWindow 拿不到真实尺寸（XComponent 由 ArkTS 布局，尺寸走
+        // nativeSetSize 上报）：用上报值建交换链，避免先建 1×1 再重配。
+        #[cfg(target_env = "ohos")]
+        let (init_w, init_h) = {
+            let (w, h) = crate::pixel_size();
+            (w.max(1), h.max(1))
+        };
+        #[cfg(not(target_env = "ohos"))]
+        let (init_w, init_h) = (window.width(), window.height());
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
             color_space: wgpu::SurfaceColorSpace::Auto,
-            width: window.width(),
-            height: window.height(),
+            width: init_w,
+            height: init_h,
             present_mode,
             desired_maximum_frame_latency: 2,
             alpha_mode,
