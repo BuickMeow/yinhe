@@ -126,6 +126,15 @@ fn build(debug: bool, install: bool) -> Result<(), ExitCode> {
         "--target-platform",
         "android-arm64",
     ]);
+    if !debug {
+        // Dart AOT 快照的符号表分离到 target/ 下（git 已忽略），libapp.so 因此
+        // 小几百 KB。副作用只有一个：这份 .symbols 必须和 APK 一起归档（发布时
+        // 一并保存到 target/flutter-symbols/），否则日后 Dart 侧崩溃栈只能看到
+        // 裸地址，无法符号化。运行性能、启动、功能均无影响。
+        // 不加 --obfuscate：那会扰动 Dart 符号名，收益小且平白增加还原难度。
+        let symbols = root.join("target/flutter-symbols");
+        f.arg(format!("--split-debug-info={}", symbols.display()));
+    }
     f.current_dir(root.join("flutter"));
     cmd::status(&mut f)?;
 
