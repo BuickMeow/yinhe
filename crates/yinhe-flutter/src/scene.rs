@@ -1917,7 +1917,7 @@ fn write_settings() {
         text.push_str(&format!(
             "soundfont={}|{}\n",
             if e.enabled { 1 } else { 0 },
-            e.path
+            portable_doc_path(&e.path)
         ));
     }
     text.push_str(&format!("ui_language={}\n", ui_language()));
@@ -1970,8 +1970,9 @@ fn load_settings() {
                 _ => (true, ""),
             };
             if !path.is_empty() && crate::audio::is_soundfont_path(path) {
+                let path = resolve_doc_path(path);
                 soundfonts.push(crate::audio::SoundfontEntry {
-                    path: path.to_string(),
+                    path,
                     enabled,
                 });
             } else if !path.is_empty() {
@@ -2016,9 +2017,9 @@ fn load_settings() {
 
 const DOC_PREFIX: &str = "@doc/";
 
-/// 最近文件持久化：沙箱路径写成相对 Documents 的形式，
+/// 最近文件/音色库持久化：沙箱路径写成相对 Documents 的形式，
 /// 重装/容器 UUID 变化后仍能解析到当前沙箱。
-fn portable_recent_path(path: &str) -> String {
+fn portable_doc_path(path: &str) -> String {
     if let Some(dir) = files_dir()
         && let Ok(rel) = std::path::Path::new(path).strip_prefix(&dir)
     {
@@ -2032,7 +2033,7 @@ fn portable_recent_path(path: &str) -> String {
 }
 
 /// 把 `@doc/...` 还原成当前沙箱的绝对路径。
-fn resolve_recent_path(path: &str) -> String {
+fn resolve_doc_path(path: &str) -> String {
     if let Some(rel) = path.strip_prefix(DOC_PREFIX)
         && let Some(dir) = files_dir()
     {
@@ -2065,7 +2066,7 @@ fn load_recent() {
             continue;
         };
         if !p.is_empty() {
-            let abs = resolve_recent_path(p);
+            let abs = resolve_doc_path(p);
             // 文件已不存在（旧容器路径/用户删除）就不要留在列表里，
             // 否则点击会报 `No such file or directory`。
             if std::path::Path::new(&abs).exists() {
@@ -2091,7 +2092,7 @@ fn save_recent() {
     };
     let mut text = String::new();
     for e in list.iter() {
-        text.push_str(&portable_recent_path(&e.path));
+        text.push_str(&portable_doc_path(&e.path));
         text.push('\t');
         text.push_str(&e.opened.to_string());
         text.push('\n');
