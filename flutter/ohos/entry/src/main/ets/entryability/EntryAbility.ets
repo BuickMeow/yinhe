@@ -9,7 +9,7 @@ export default class EntryAbility extends FlutterAbility {
     super.configureFlutterEngine(flutterEngine)
     GeneratedPluginRegistrant.registerWith(flutterEngine)
     // YINHE：wgpu 渲染走外接纹理，Dart 侧仍用 `yinhe/surface` 通道拿 textureId。
-    this.surfacePlugin = new YinheSurfacePlugin(flutterEngine);
+    this.surfacePlugin = new YinheSurfacePlugin(flutterEngine, this.context);
   }
 
   onDestroy(): void {

@@ -202,6 +202,7 @@ fn install_hap(sdk: &Path, hap: &Path) -> Result<(), ExitCode> {
     let hdc = find_native_dir(sdk)
         .map(|n| n.join("toolchains/hdc"))
         .filter(|p| p.is_file())
+        .or_else(|| find_deveco_hdc())
         .or_else(|| which("hdc"))
         .ok_or_else(|| {
             eprintln!("找不到 hdc（SDK toolchains 或 PATH）");
@@ -255,6 +256,21 @@ fn ensure_hvigor_plugin(ohos_dir: &Path, flutter_oh: &Path) -> Result<(), ExitCo
     let mut npm = cmd::cmd("npm");
     npm.arg("install").current_dir(ohos_dir);
     cmd::status(&mut npm)
+}
+
+/// DevEco Studio 自带的 hdc（`~/Library/Huawei/Sdk/<ver>/openharmony/toolchains/hdc`）。
+fn find_deveco_hdc() -> Option<PathBuf> {
+    let base = dirs_candidate("Library/Huawei/Sdk")?;
+    let mut versions: Vec<PathBuf> = std::fs::read_dir(base)
+        .ok()?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .collect();
+    versions.sort();
+    versions.reverse();
+    versions
+        .into_iter()
+        .map(|v| v.join("openharmony/toolchains/hdc"))
+        .find(|p| p.is_file())
 }
 
 fn which(name: &str) -> Option<PathBuf> {

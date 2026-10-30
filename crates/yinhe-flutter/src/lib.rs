@@ -649,12 +649,36 @@ pub extern "system" fn Java_com_jieneng_yinhe_MainActivity_nativeInitContext<'lo
 // 与 Android 的 JNI 入口一一对应：ArkTS 侧从 Flutter-OH 的外接纹理拿到
 // `OHNativeWindow*`（bigint），经 NAPI 胶水转成指针传进来。
 
-/// 初始化日志与占位文档（等价于 Android 的 `nativeInitContext`）。
+/// 初始化日志、私有目录与占位文档（等价于 Android 的 `nativeInitContext`）。
+///
+/// `files_dir` 是应用沙箱 files 目录：最近文件、设置、音色库列表都落在这里。
 #[cfg(target_env = "ohos")]
 #[unsafe(no_mangle)]
-pub extern "C" fn yinhe_ohos_init() {
+pub extern "C" fn yinhe_ohos_init(files_dir: *const std::ffi::c_char) {
     init_logging();
+    if !files_dir.is_null() {
+        // SAFETY: ArkTS 侧传入以 NUL 结尾的 UTF-8 路径，调用期间有效。
+        if let Ok(dir) = unsafe { std::ffi::CStr::from_ptr(files_dir) }.to_str() {
+            scene::set_files_dir(dir.to_string());
+        }
+    }
     scene::ensure_starter_document();
+}
+
+/// 音色库选择完成：入表并持久化（对齐 Android 的 `onSoundFontPicked`）。
+#[cfg(target_env = "ohos")]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_ohos_add_soundfont(path: *const std::ffi::c_char) {
+    if path.is_null() {
+        return;
+    }
+    // SAFETY: 同 `yinhe_ohos_init`。
+    if let Ok(p) = unsafe { std::ffi::CStr::from_ptr(path) }.to_str()
+        && !p.is_empty()
+    {
+        audio::add_soundfont(p.to_string());
+        scene::save_soundfont_settings();
+    }
 }
 
 /// 设置（或替换）主画布 surface。

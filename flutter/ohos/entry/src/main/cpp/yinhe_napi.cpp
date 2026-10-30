@@ -11,7 +11,8 @@
 
 namespace {
 
-using InitFn = void (*)();
+using InitFn = void (*)(const char*);
+using AddSoundfontFn = void (*)(const char*);
 using SetSurfaceFn = void (*)(void*);
 using ClearSurfaceFn = void (*)();
 using SetSizeFn = void (*)(uint32_t, uint32_t);
@@ -38,9 +39,37 @@ napi_value MakeUndefined(napi_env env) {
   return undef;
 }
 
-napi_value Init(napi_env env, napi_callback_info) {
-  if (auto fn = Sym<InitFn>("yinhe_ohos_init")) {
-    fn();
+/// 取第 0 个字符串参数（UTF-8，截断到 4KB：路径不会更长）。
+bool GetStringArg(napi_env env, napi_callback_info info, char* out, size_t cap) {
+  size_t argc = 1;
+  napi_value argv[1] = {nullptr};
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  if (argc < 1) {
+    return false;
+  }
+  size_t len = 0;
+  if (napi_get_value_string_utf8(env, argv[0], out, cap, &len) != napi_ok) {
+    return false;
+  }
+  return true;
+}
+
+napi_value Init(napi_env env, napi_callback_info info) {
+  char dir[4096] = {0};
+  if (GetStringArg(env, info, dir, sizeof(dir))) {
+    if (auto fn = Sym<InitFn>("yinhe_ohos_init")) {
+      fn(dir);
+    }
+  }
+  return MakeUndefined(env);
+}
+
+napi_value AddSoundFont(napi_env env, napi_callback_info info) {
+  char path[4096] = {0};
+  if (GetStringArg(env, info, path, sizeof(path))) {
+    if (auto fn = Sym<AddSoundfontFn>("yinhe_ohos_add_soundfont")) {
+      fn(path);
+    }
   }
   return MakeUndefined(env);
 }
@@ -145,6 +174,7 @@ EXTERN_C_START
 static napi_value Register(napi_env env, napi_value exports) {
   napi_property_descriptor desc[] = {
       {"init", nullptr, Init, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"addSoundFont", nullptr, AddSoundFont, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"setSurface", nullptr, SetSurface, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"clearSurface", nullptr, ClearSurface, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"setAutomationSurface", nullptr, SetAutomationSurface, nullptr, nullptr, nullptr, napi_default, nullptr},
