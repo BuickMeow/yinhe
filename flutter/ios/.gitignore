@@ -33,5 +33,6 @@ Runner/GeneratedPluginRegistrant.*
 !default.pbxuser
 !default.perspectivev3
 
-# Rust 静态库（cargo xtask ios 产出，不入库）
-yinhe_engine/
+# Rust 静态库（cargo xtask ios 产出，不入库）；导出清单要入库，方便直接 flutter run
+yinhe_engine/*
+!yinhe_engine/exports.txt

@@ -3,9 +3,11 @@
 // Rust 引擎：iOS 不允许 app 内 dlopen 自己的 dylib，改为静态库链进 Runner。
 // -force_load 保证没有被原生代码引用、只由 Dart `DynamicLibrary.process()` 查表
 // 的 #[no_mangle] 符号不被 dead_strip 丢掉。
+// Release 开了 dead_strip：只由 Dart `DynamicLibrary.process()` 用 dlsym 查的
+// FFI 符号必须显式导出（清单由 `cargo xtask ios` 从静态库生成）。
 // 系统框架：cpal 走 CoreAudio/AudioToolbox，wgpu 走 Metal/QuartzCore，
 // CVPixelBuffer 走 CoreVideo；-lc++ 供 unrar/zstd 的 C++ 代码。
-OTHER_LDFLAGS_RUST = -force_load "$(SRCROOT)/yinhe_engine/$(YINHE_RUST_LIB)" -lc++ -framework CoreAudio -framework AudioToolbox -framework AVFAudio -framework CoreFoundation -framework CoreGraphics -framework CoreVideo -framework Metal -framework QuartzCore -framework Security -framework UIKit -framework Foundation
+OTHER_LDFLAGS_RUST = -force_load "$(SRCROOT)/yinhe_engine/$(YINHE_RUST_LIB)" -Wl,-exported_symbols_list,$(SRCROOT)/yinhe_engine/exports.txt -lc++ -framework CoreAudio -framework AudioToolbox -framework AVFAudio -framework CoreFoundation -framework CoreGraphics -framework CoreVideo -framework Metal -framework QuartzCore -framework Security -framework UIKit -framework Foundation
 OTHER_LDFLAGS[sdk=iphoneos*] = $(inherited) $(OTHER_LDFLAGS_RUST)
 OTHER_LDFLAGS[sdk=iphonesimulator*] = $(inherited) $(OTHER_LDFLAGS_RUST)
 YINHE_RUST_LIB = libyinhe_flutter.a

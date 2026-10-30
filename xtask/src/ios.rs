@@ -1,7 +1,7 @@
 //! iOS 构建：Rust 静态库 → Flutter iOS App（模拟器 / 真机）。
 //!
 //! 流程（iOS 壳必须按此顺序，否则链接不到引擎）：
-//! 1. `cargo build --release --target aarch64-apple-ios[-sim] -p yinhe-flutter`；
+//! 1. `cargo rustc --release --lib --crate-type staticlib`（只出 .a，不出不可用的 dylib）；
 //! 2. 复制 `libyinhe_flutter.a` 到 `flutter/ios/yinhe_engine/`（Runner 的
 //!    xcconfig 用 `-force_load` 链进来；模拟器与真机是两份不同的 .a）；
 //! 3. `flutter build ios`（模拟器走 `--simulator`）。
@@ -66,14 +66,21 @@ fn build(release: bool, device: bool, install: bool) -> Result<(), ExitCode> {
         "aarch64-apple-ios-sim"
     };
     let mut c = cmd::cargo();
+    // 只编静态库：本 crate 同时声明了 cdylib（Android/鸿蒙用），但 iOS 不允许
+    // app 内带 dylib，真机链接会失败，用 --crate-type 覆盖掉。
     c.args([
-        "build",
+        "rustc",
         "--release",
         "--target",
         target,
         "-p",
         "yinhe-flutter",
+        "--lib",
+        "--crate-type",
+        "staticlib",
     ]);
+    // 与 Runner 的 IPHONEOS_DEPLOYMENT_TARGET 一致，避免 "built for newer iOS" 告警。
+    c.env("IPHONEOS_DEPLOYMENT_TARGET", "15.0");
     c.current_dir(&root);
     cmd::status(&mut c)?;
 
@@ -91,7 +98,12 @@ fn build(release: bool, device: bool, install: bool) -> Result<(), ExitCode> {
     })?;
     println!("静态库: {}", dest.display());
 
-    // 3) Flutter 壳。
+    // 3) 导出符号清单：release 的 dead_strip 会删掉没有任何原生代码引用的
+    //    FFI 函数，而 Dart 侧靠 DynamicLibrary.process() 用 dlsym 查它们，
+    //    所以必须显式列进 -exported_symbols_list（既是导出表也是保活根）。
+    write_exports(&built, &engine_dir.join("exports.txt"))?;
+
+    // 4) Flutter 壳。
     let mut f = cmd::cmd("flutter");
     f.current_dir(root.join("flutter"));
     f.arg("build").arg("ios");
@@ -117,6 +129,43 @@ fn build(release: bool, device: bool, install: bool) -> Result<(), ExitCode> {
         l.args(["simctl", "launch", "booted", BUNDLE_ID]);
         cmd::status(&mut l)?;
     }
+    Ok(())
+}
+
+/// 从静态库抽出 `_yinhe_*` 文本符号，写成 linker 的导出清单（含前导下划线）。
+fn write_exports(archive: &Path, dest: &Path) -> Result<(), ExitCode> {
+    let out = std::process::Command::new("nm")
+        .arg("-gU")
+        .arg(archive)
+        .output()
+        .map_err(|e| {
+            eprintln!("执行 nm 失败: {e}");
+            ExitCode::FAILURE
+        })?;
+    // nm 遇到 LLVM 23 的 bitcode 属性会打 error 并以非零码退出，但标准输出里的
+    // 符号表仍然完整，所以这里只看有没有解析出符号。
+    let mut symbols: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut it = line.split_whitespace();
+            let _addr = it.next()?;
+            let kind = it.next()?;
+            let name = it.next()?;
+            (kind == "T" && name.starts_with("_yinhe_")).then(|| name.to_string())
+        })
+        .collect();
+    symbols.sort_unstable();
+    symbols.dedup();
+    if symbols.is_empty() {
+        eprintln!("静态库里没有任何 _yinhe_* 符号，导出清单为空");
+        return Err(ExitCode::FAILURE);
+    }
+    let text = symbols.join("\n") + "\n";
+    std::fs::write(dest, text).map_err(|e| {
+        eprintln!("写 {} 失败: {e}", dest.display());
+        ExitCode::FAILURE
+    })?;
+    println!("导出符号: {} 个 -> {}", symbols.len(), dest.display());
     Ok(())
 }
 

@@ -29,9 +29,16 @@ cargo xtask ios --install    # 构建后装到已启动的模拟器并打开
 iOS 不允许 app 里 dlopen 自己带的 dylib，所以 `yinhe-flutter` 同时产出
 `cdylib`（Android/鸿蒙）和 `staticlib`（iOS）。静态库放在
 `flutter/ios/yinhe_engine/`（不入库），由 `Flutter/{Debug,Release}.xcconfig`
-的 `OTHER_LDFLAGS` 用 `-force_load` 链进 Runner；这样只由 Dart
-`DynamicLibrary.process()` 查表、没有原生代码引用的 `#[no_mangle]` 符号也不会
-被 dead_strip 掉。
+的 `OTHER_LDFLAGS` 用 `-force_load` 链进 Runner。
+
+**Release 额外需要导出清单**：release 开启 dead_strip，会把「没有任何原生代码
+引用、只由 Dart `DynamicLibrary.process()` 用 dlsym 查」的 FFI 函数删掉。
+`cargo xtask ios` 会从静态库里抽出全部 `_yinhe_*` 符号写成
+`ios/yinhe_engine/exports.txt`（入库），由 `Release.xcconfig` 传给
+`-Wl,-exported_symbols_list`。Debug 不用（不 strip，而且那份 LDFLAGS 也会作用
+在调试用 `Runner.debug.dylib` 上，限制导出会把它的入口符号藏掉）。
+
+加新的 FFI 入口后不用手改清单：下次 `cargo xtask ios` 会重新生成。
 
 ## 纹理链路（与 Android/鸿蒙的差异）
 
@@ -52,6 +59,8 @@ iOS 不允许 app 里 dlopen 自己带的 dylib，所以 `yinhe-flutter` 同时�
 - `AVAudioSession` 还没配置成 `.playback`：真机上拨到静音开关会没声。
 - 模拟器只出 arm64 切片（`EXCLUDED_ARCHS[sdk=iphonesimulator*] = x86_64`），
   Intel Mac 上跑模拟器需要额外编 `x86_64-apple-ios` 并 `lipo` 合并。
+- `flutter` 不支持模拟器 release（`Release mode is not supported for simulators`），
+  所以 release 包只能在真机上验证；模拟器用 debug。
 - iOS 模拟器的软件 GPU 没有 `INDIRECT_EXECUTION`：`yinhe-wgpu` 会按
   `Adapter::get_downlevel_capabilities()` 自动退回 CPU 回读路径
   （`GpuCaps::indirect_execution`），真机走间接绘制。

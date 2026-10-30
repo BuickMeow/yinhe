@@ -1,8 +1,9 @@
 #include "Generated.xcconfig"
 
 // Rust 引擎：iOS 不允许 app 内 dlopen 自己的 dylib，改为静态库链进 Runner。
-// -force_load 保证没有被原生代码引用、只由 Dart `DynamicLibrary.process()` 查表
-// 的 #[no_mangle] 符号不被 dead_strip 丢掉。
+// -force_load 保证只由 Dart `DynamicLibrary.process()` 查表的 #[no_mangle]
+// 符号一定被链进来。Debug 不做 dead_strip，因此不需要导出清单；而且这份
+// LDFLAGS 也会用在调试用的 Runner.debug.dylib 上，限制导出会把它的入口符号藏掉。
 // 系统框架：cpal 走 CoreAudio/AudioToolbox，wgpu 走 Metal/QuartzCore，
 // CVPixelBuffer 走 CoreVideo；-lc++ 供 unrar/zstd 的 C++ 代码。
 OTHER_LDFLAGS_RUST = -force_load "$(SRCROOT)/yinhe_engine/$(YINHE_RUST_LIB)" -lc++ -framework CoreAudio -framework AudioToolbox -framework AVFAudio -framework CoreFoundation -framework CoreGraphics -framework CoreVideo -framework Metal -framework QuartzCore -framework Security -framework UIKit -framework Foundation
