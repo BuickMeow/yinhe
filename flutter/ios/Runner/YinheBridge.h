@@ -6,6 +6,7 @@
 // 与 crates/yinhe-flutter 的 iOS 一节一一对应；Android 那套在 JNI 里。
 
 void yinhe_ios_init(const char *files_dir);
+void yinhe_ios_set_documents_dir(const char *documents_dir);
 void yinhe_ios_ensure(int32_t kind);
 void yinhe_ios_set_size(int32_t kind, int32_t width, int32_t height);
 void yinhe_ios_set_viewport(float width, float height);

@@ -36,6 +36,8 @@ final class YinhePlugin: NSObject, FlutterPlugin {
     // Rust 的状态（最近文件/设置/音色库列表）放应用私有目录，
     // Documents 留给用户可见的导入文件。
     yinhe_ios_init(YinheFileBridge.stateDirectory.path)
+    // 音色库/最近文件的路径持久化以 Documents 为基准。
+    yinhe_ios_set_documents_dir(YinheFileBridge.documentsDirectory.path)
   }
 
   // MARK: - MethodChannel

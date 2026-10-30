@@ -2015,12 +2015,33 @@ fn load_settings() {
     crate::soundfont_archive::cleanup();
 }
 
+static DOCUMENTS_DIR: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+
+fn documents_dir_slot() -> &'static Mutex<Option<String>> {
+    DOCUMENTS_DIR.get_or_init(|| Mutex::new(None))
+}
+
+/// iOS 用户可见 Documents（与私有状态目录分开）。Android 不设置，回退到 files_dir。
+pub fn set_documents_dir(dir: String) {
+    if let Ok(mut g) = documents_dir_slot().lock() {
+        *g = Some(dir);
+    }
+}
+
+fn documents_dir() -> Option<String> {
+    documents_dir_slot()
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .or_else(files_dir)
+}
+
 const DOC_PREFIX: &str = "@doc/";
 
 /// 最近文件/音色库持久化：沙箱路径写成相对 Documents 的形式，
 /// 重装/容器 UUID 变化后仍能解析到当前沙箱。
 fn portable_doc_path(path: &str) -> String {
-    if let Some(dir) = files_dir()
+    if let Some(dir) = documents_dir()
         && let Ok(rel) = std::path::Path::new(path).strip_prefix(&dir)
     {
         return format!("{DOC_PREFIX}{}", rel.display());
@@ -2035,7 +2056,7 @@ fn portable_doc_path(path: &str) -> String {
 /// 把 `@doc/...` 还原成当前沙箱的绝对路径。
 fn resolve_doc_path(path: &str) -> String {
     if let Some(rel) = path.strip_prefix(DOC_PREFIX)
-        && let Some(dir) = files_dir()
+        && let Some(dir) = documents_dir()
     {
         return format!("{dir}/{rel}");
     }

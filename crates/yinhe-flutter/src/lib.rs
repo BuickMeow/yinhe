@@ -715,6 +715,19 @@ pub extern "C" fn yinhe_ios_init(files_dir: *const std::ffi::c_char) {
     scene::ensure_starter_document();
 }
 
+/// 设置 iOS 用户可见 Documents（音色库/最近文件持久化的路径基准）。
+#[cfg(target_os = "ios")]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_ios_set_documents_dir(dir: *const std::ffi::c_char) {
+    if dir.is_null() {
+        return;
+    }
+    // SAFETY: Swift 侧传入以 NUL 结尾的 UTF-8 路径，调用期间有效。
+    if let Ok(dir) = unsafe { CStr::from_ptr(dir) }.to_str() {
+        scene::set_documents_dir(dir.to_string());
+    }
+}
+
 /// 登记外部纹理呈现端（0 = 主画布，1 = AM 面板）。
 #[cfg(target_os = "ios")]
 #[unsafe(no_mangle)]

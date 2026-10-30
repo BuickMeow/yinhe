@@ -9,6 +9,8 @@ import UniformTypeIdentifiers
 /// 白名单由 Dart 的 `core/platform_files.dart` 下发。
 final class YinheFileBridge: NSObject, UIDocumentPickerDelegate {
   /// 用户可见的 Documents（导入的文件放这里，Files App 里能看到）。
+  static let documentsDirectory: URL = FileManager.default.urls(
+    for: .documentDirectory, in: .userDomainMask)[0]
   private let documents: URL
   /// 应用私有状态目录（最近文件/设置/音色库列表，别让用户看到）。
   static let stateDirectory: URL = {
@@ -35,7 +37,7 @@ final class YinheFileBridge: NSObject, UIDocumentPickerDelegate {
 
   init(channel: FlutterMethodChannel) {
     self.channel = channel
-    documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    documents = Self.documentsDirectory
     super.init()
   }
 
