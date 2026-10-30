@@ -1,57 +1,74 @@
 # 鸿蒙（OpenHarmony/HarmonyOS）构建说明
 
-本目录由 `flutter create --platforms=ohos .` 生成，随后按本机 SDK 调整过配置。
-**当前能产出 debug HAP（未签名）**，但尚未接入 Rust 引擎（音频/渲染后端在做）。
+**现状：debug HAP 可构建（未签名）**，Flutter 壳 + Rust 引擎（wgpu/GLES + OHAudio）都已进包，
+尚未在真机上验证（装真机需要华为签名）。
 
-## 一、本机环境（已装好）
+## 一、构建
+
+```sh
+# 需要 hvigorw 在 PATH（DevEco 自带，或本机的 ~/harmony/bin/hvigorw 包装脚本）
+export PATH=~/harmony/bin:~/harmony/oh-command-line-tools/bin:$PATH
+cargo xtask ohos            # debug
+cargo xtask ohos --release  # release（签名后才会产出 signed.hap）
+```
+
+xtask 会做四件事：
+1. `cargo build --target aarch64-unknown-linux-ohos -p yinhe-flutter`（自动设置 ohos-clang、
+   sysroot、`-lstdc++` → `libc++_shared` 的软链）；
+2. 把 `libyinhe_flutter.so` + `libc++_shared.so` 拷到 `flutter/ohos/entry/libs/arm64-v8a`（gitignore）；
+3. 缺 `flutter-hvigor-plugin` 时自动 `npm install`；
+4. `hvigorw assembleHap`（内部会跑 `flutter assemble` 编 Dart）。
+
+产物：`flutter/ohos/entry/build/default/outputs/default/entry-default-unsigned.hap`
+
+> 不走 `flutter build hap`：它强制要求 HarmonyOS（商业）SDK（`HOS_SDK_HOME`），
+> 本机只有 OpenHarmony SDK。
+
+## 二、本机环境
 
 | 组件 | 位置 | 说明 |
 | --- | --- | --- |
 | OpenHarmony SDK 26 (arm64) | `~/harmony/sdk26/26.0.0` | `OHOS_BASE_SDK_HOME=~/harmony/sdk26` |
-| OpenHarmony SDK 23（hdc 用） | `~/harmony/sdk` | `OHOS_SDK_HOME=~/harmony/sdk`，提供 `hdc` |
-| Flutter-OH 3.47.7 | `~/harmony/flutter-oh` | 与官方 3.47.7 同一 engine revision（`deb287481e`） |
+| OpenHarmony SDK 23（hdc 用） | `~/harmony/sdk` | `OHOS_SDK_HOME`，提供 `hdc` |
+| Flutter-OH 3.47.7 | `~/harmony/flutter-oh` | 与官方 3.47.7 同 engine revision |
 | ohpm 5.0.2 | `~/harmony/oh-command-line-tools/bin` | |
-| hvigor 6.26.8 | npm 全局 + `~/harmony/bin/hvigorw` 包装脚本 | DevEco 未安装，用脚本顶替 |
+| hvigor 6.26.8 | npm 全局 + `~/harmony/bin/hvigorw` | 顶替 DevEco |
 
-## 二、构建
+## 三、运行链路
 
-```sh
-export OHOS_BASE_SDK_HOME=~/harmony/sdk26
-export OHOS_SDK_HOME=~/harmony/sdk26
-export PATH=~/harmony/flutter-oh/bin:~/harmony/oh-command-line-tools/bin:~/harmony/sdk26/26.0.0/toolchains:~/harmony/bin:$PATH
-export PUB_HOSTED_URL=https://pub.flutter-io.cn
-export FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn
-
-cd flutter/ohos
-hvigorw assembleHap -p product=default -p buildMode=debug --no-daemon
-# 产物：entry/build/default/outputs/default/entry-default-unsigned.hap
+```
+Dart: MethodChannel('yinhe/surface').getTextureId()
+  → ArkTS YinheSurfacePlugin: renderer.registerTexture()
+  → Flutter-OH 外接纹理的 OHNativeWindow*（bigint）
+  → NAPI（libyinhe_napi.so）→ yinhe_ohos_set_surface(ptr)
+  → Rust 渲染线程：wgpu Surface（RawWindowHandle::OhosNdk，GLES 后端）
+  → Flutter Texture(textureId) 合成
 ```
 
-> 不走 `flutter build hap`：它强制要求 HarmonyOS（商业）SDK（`HOS_SDK_HOME`），
-> 我们只有 OpenHarmony SDK。`hvigorw` 内部的 FlutterTask 会自己跑 `flutter assemble`，
-> Dart 侧编译不受影响。
+- 尺寸：Dart `setSize(w,h,lw,lh)` → `renderer.setTextureBufferSize` + `yinhe_ohos_set_size/set_viewport`；
+- AM 面板同理（`setAutomationSize` / 独立的第二个纹理）；
+- 音频：`OHAudio`（`OH_AudioRenderer`，48k/立体声/F32），不走 cpal。
 
-## 三、配置要点（改 SDK 版本时要一起改）
+## 四、配置要点（换 SDK 版本时要一起改）
 
 1. `build-profile.json5`：`runtimeOS: OpenHarmony`，`compileSdkVersion/compatibleSdkVersion/targetSdkVersion: "26.0.0"`。
-   - API 10–25 要写数字（如 `23`），API ≥ 26 必须写字符串（`"26.0.0"`）。
-2. `hvigor/hvigor-config.json5`、`oh-package.json5`：`modelVersion` 必须是 `6.0.0`（API 26 的要求）。
-3. `entry/build-profile.json5`：`runtimeOS` 也要是 `OpenHarmony`。
-4. `entry/src/main/module.json5`：`deviceTypes` 用 `"default"`（OpenHarmony SDK 没有 `phone` 的 syscap 定义）。
-5. SDK 端要求（本机 shim 已做）：
-   - SDK 目录名必须是 `26.0.0`（hvigor 按 platformVersion 找目录，不认 `26/`）；
+   - API 10–25 写数字（如 `23`），API ≥ 26 必须写字符串（`"26.0.0"`）。
+2. `hvigor/hvigor-config.json5`、`oh-package.json5`：`modelVersion` 必须是 `6.0.0`。
+3. `entry/build-profile.json5`：`runtimeOS: OpenHarmony` + `externalNativeOptions`（NAPI 的 CMake）。
+4. `entry/src/main/module.json5`：`deviceTypes` 用 `"default"`（OpenHarmony SDK 没有 `phone` 的 syscap）。
+5. SDK 端（本机 shim 已做）：
+   - SDK 目录名必须是 `26.0.0`（hvigor 按 platformVersion 找，不认 `26/`）；
    - 每个组件目录（ets/js/native/toolchains/previewer）需要 `sdk-pkg.json`：
      `{"meta":{"version":"3.0.0"},"data":{"path":"26.0.0,<comp>","platformVersion":"26.0.0","apiVersion":"26","fullApiVersion":"26.0.0",...}}`
    - `oh-uni-package.json` 的 `metaVersion` 需要是 `3.0.0`。
-6. `package.json`（已 gitignore）里的 `flutter-hvigor-plugin` 指向 Flutter-OH 安装目录，缺失时执行：
-   `npm install`（在 `flutter/ohos` 下）。
-7. `GeneratedPluginRegistrant.ets` 是 Flutter 工具生成的，但因为我们直接调 `hvigorw`，
-   该文件已提交（没有插件时是空实现）。
+6. `GeneratedPluginRegistrant.ets` 是 Flutter 工具生成的（无插件时为空实现），已提交。
 
-## 四、尚未完成 / 已知限制
+## 五、尚未完成 / 已知限制
 
-- **签名**：产物是 `entry-default-unsigned.hap`。装到真机需要华为签名（`hap-sign-tool` +
-  调试证书 profile，需要华为开发者账号与设备 UDID 注册）；本机暂时只保证"能编译"。
-- **Rust 引擎未接入**：`libyinhe_flutter.so` 还没为 `aarch64-unknown-linux-ohos` 编出来
-  （卡在 cpal 无 OHAudio 后端），所以现在的 HAP 只有 Flutter 壳，Dart 里的 FFI 调用会失败。
-- 只打 arm64，没有 x86_64 模拟器验证。
+- **签名**：产物是 unsigned。装真机需要华为签名（调试证书 profile + 设备 UDID 注册，
+  需要华为开发者账号）。
+- **真机未验证**：图形（GLES）、音频（OHAudio）、触摸、横竖屏都没在设备上跑过。
+- **日志**：OHOS 上还没有 hilog 后端（`log` 宏目前丢弃），排查问题前需要补。
+- **文件选择 / 导出**：`YinheSurfacePlugin` 对未实现的方法返回 `unsupported`。
+- **性能**：OHOS 走 GLES 后端（Vulkan 需要给 wgpu-hal 补 `VK_OHOS_surface`）；
+  黑乐谱的间接绘制策略未在 Mali GPU 上调过。
