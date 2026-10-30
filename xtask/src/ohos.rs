@@ -24,13 +24,16 @@ const ABI: &str = "arm64-v8a";
 
 pub fn run(args: &[String]) -> ExitCode {
     let mut release = false;
+    let mut install = false;
     for arg in args {
         match arg.as_str() {
             "--release" => release = true,
+            "--install" => install = true,
             "--help" | "-h" => {
                 println!(
-                    "用法: cargo xtask ohos [--release]\n  \
-                     --release  构建 release HAP（默认 debug）"
+                    "用法: cargo xtask ohos [--release] [--install]\n  \
+                     --release  构建 release HAP（默认 debug）\n  \
+                     --install  构建后通过 hdc 安装并启动（模拟器/真机）"
                 );
                 return ExitCode::SUCCESS;
             }
@@ -40,13 +43,13 @@ pub fn run(args: &[String]) -> ExitCode {
             }
         }
     }
-    match build(release) {
+    match build(release, install) {
         Ok(()) => ExitCode::SUCCESS,
         Err(code) => code,
     }
 }
 
-fn build(release: bool) -> Result<(), ExitCode> {
+fn build(release: bool, install: bool) -> Result<(), ExitCode> {
     let root = workspace_root();
     let ohos_dir = root.join("flutter/ohos");
     let libs = ohos_dir.join("entry/libs").join(ABI);
@@ -188,7 +191,47 @@ fn build(release: bool) -> Result<(), ExitCode> {
             "entry-default-unsigned.hap"
         });
     println!("\n产物: {}", hap.display());
+    if install {
+        install_hap(&sdk, &hap)?;
+    }
     Ok(())
+}
+
+/// 通过 hdc 安装并启动（模拟器/真机；真机需要已配置签名）。
+fn install_hap(sdk: &Path, hap: &Path) -> Result<(), ExitCode> {
+    let hdc = find_native_dir(sdk)
+        .map(|n| n.join("toolchains/hdc"))
+        .filter(|p| p.is_file())
+        .or_else(|| which("hdc"))
+        .ok_or_else(|| {
+            eprintln!("找不到 hdc（SDK toolchains 或 PATH）");
+            ExitCode::FAILURE
+        })?;
+    let mut devices = Command::new(&hdc);
+    devices.arg("list").arg("targets");
+    let out = devices.output().map_err(|e| {
+        eprintln!("执行 hdc list targets 失败: {e}");
+        ExitCode::FAILURE
+    })?;
+    let list = String::from_utf8_lossy(&out.stdout);
+    if list.trim().is_empty() || list.contains("[Empty]") {
+        eprintln!("没有连接中的设备/模拟器：先在 DevEco 里启动模拟器");
+        return Err(ExitCode::FAILURE);
+    }
+    let mut install = Command::new(&hdc);
+    install.arg("install").arg("-r").arg(hap);
+    cmd::status(&mut install)?;
+    let mut start = Command::new(&hdc);
+    start.args([
+        "shell",
+        "aa",
+        "start",
+        "-b",
+        "com.jieneng.yinhe",
+        "-a",
+        "EntryAbility",
+    ]);
+    cmd::status(&mut start)
 }
 
 fn ensure_hvigor_plugin(ohos_dir: &Path, flutter_oh: &Path) -> Result<(), ExitCode> {

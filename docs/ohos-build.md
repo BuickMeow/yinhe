@@ -63,7 +63,28 @@ Dart: MethodChannel('yinhe/surface').getTextureId()
    - `oh-uni-package.json` 的 `metaVersion` 需要是 `3.0.0`。
 6. `GeneratedPluginRegistrant.ets` 是 Flutter 工具生成的（无插件时为空实现），已提交。
 
-## 五、尚未完成 / 已知限制
+## 五、没有真机时怎么跑（模拟器）
+
+1. 下载安装 **DevEco Studio（macOS ARM 版）**，登录刚注册的华为开发者账号；
+2. `Tools > Device Manager` → 下载 **HarmonyOS 6.x 手机镜像** → 创建并启动模拟器
+   （Mac ARM 上模拟器是 arm64，与本项目的产物一致）；
+3. 本机执行：
+
+```sh
+cargo xtask ohos --install
+# 等价于：hdc install -r <hap> && hdc shell aa start -b com.jieneng.yinhe -a EntryAbility
+```
+
+4. 看日志：`hdc shell hilog | grep yinhe`（Rust 的日志都走 hilog，tag `yinhe`）。
+
+说明：
+- 模拟器**通常不需要签名**即可安装（官方文档：模拟器不需要签名，除非用到 ODID / Push）；
+  如果 `hdc install` 报签名错误，就用 DevEco 的自动签名（登录后勾选
+  `Project Structure > Signing Configs > Automatically generate signature`），
+  它会把 `signingConfigs` 写进 `build-profile.json5`，我们的 hvigor 构建会自动带上。
+- 模拟器只支持 **OpenGL ES 2.0/3.0**，不支持 Vulkan —— 正好对应我们的 GLES 路线。
+
+## 六、尚未完成 / 已知限制
 
 - **签名**：产物是 unsigned。装真机需要华为签名（调试证书 profile + 设备 UDID 注册，
   需要华为开发者账号）。
