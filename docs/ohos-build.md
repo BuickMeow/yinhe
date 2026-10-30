@@ -12,6 +12,17 @@ cargo xtask ohos            # debug
 cargo xtask ohos --release  # release（签名后才会产出 signed.hap）
 ```
 
+产物大小（release，单 arm64）：约 **46MB**；debug 约 170MB（含 55MB Dart kernel + x86_64 引擎）。
+| 组成 | 大小 |
+| --- | --- |
+| libflutter.so（OHOS 引擎 arm64） | 18.2MB |
+| libyinhe_flutter.so（Rust 引擎） | 16.7MB |
+| libapp.so（Dart AOT） | 6.8MB |
+| MaterialIcons 字体 | 1.6MB |
+| libc++_shared.so | 1.2MB |
+
+> 原生库在 HAP 里是 **Stored（不压缩）**，所以包体≈各 .so 之和。
+
 xtask 会做四件事：
 1. `cargo build --target aarch64-unknown-linux-ohos -p yinhe-flutter`（自动设置 ohos-clang、
    sysroot、`-lstdc++` → `libc++_shared` 的软链）；
@@ -56,7 +67,10 @@ Dart: MethodChannel('yinhe/surface').getTextureId()
 2. `hvigor/hvigor-config.json5`、`oh-package.json5`：`modelVersion` 必须是 `6.0.0`。
 3. `entry/build-profile.json5`：`runtimeOS: OpenHarmony` + `externalNativeOptions`（NAPI 的 CMake）。
 4. `entry/src/main/module.json5`：`deviceTypes` 用 `"default"`（OpenHarmony SDK 没有 `phone` 的 syscap）。
-5. SDK 端（本机 shim 已做）：
+5. hvigor 6.26.8 用了 Node 16 已移除的 `fs.rmdirSync(recursive)`（release 的
+   `BuildNativeWithNinja` 会踩到）：本机 `~/harmony/bin/hvigorw` 通过
+   `node --require ~/harmony/hvigorw-polyfill.js` 打补丁，否则 release 构建必失败。
+6. SDK 端（本机 shim 已做）：
    - SDK 目录名必须是 `26.0.0`（hvigor 按 platformVersion 找，不认 `26/`）；
    - 每个组件目录（ets/js/native/toolchains/previewer）需要 `sdk-pkg.json`：
      `{"meta":{"version":"3.0.0"},"data":{"path":"26.0.0,<comp>","platformVersion":"26.0.0","apiVersion":"26","fullApiVersion":"26.0.0",...}}`

@@ -202,6 +202,9 @@ fn build(release: bool, install: bool) -> Result<(), ExitCode> {
         } else {
             "buildMode=debug"
         },
+        // 只打 arm64：默认还会塞一份 x86_64 引擎（纯模拟器用，白占 ~28MB）。
+        "-p",
+        "TARGET_PLATFORM=ohos-arm64",
         "--no-daemon",
     ])
     .current_dir(&ohos_dir)
@@ -212,13 +215,13 @@ fn build(release: bool, install: bool) -> Result<(), ExitCode> {
     .env("FLUTTER_STORAGE_BASE_URL", "https://storage.flutter-io.cn");
     cmd::status(&mut h)?;
 
-    let hap = ohos_dir
-        .join("entry/build/default/outputs/default")
-        .join(if release {
-            "entry-default-signed.hap"
-        } else {
-            "entry-default-unsigned.hap"
-        });
+    // 没配签名时 hvigor 会跳过签名、只产出 unsigned；两个名字都试。
+    let out_dir = ohos_dir.join("entry/build/default/outputs/default");
+    let hap = ["entry-default-signed.hap", "entry-default-unsigned.hap"]
+        .into_iter()
+        .map(|name| out_dir.join(name))
+        .find(|p| p.is_file())
+        .unwrap_or_else(|| out_dir.join("entry-default-unsigned.hap"));
     println!("\n产物: {}", hap.display());
     if install {
         install_hap(&sdk, &hap)?;
