@@ -39,7 +39,8 @@ pub use piano_roll_view::{Orientation, PianoRollView};
 pub use source::NoteSource;
 pub use synth::{Interpolation, SynthEngine};
 pub use time_format::{
-    build_time_sig_segments, compute_measure_divisor, measure_bounds_at_tick, measure_ticks,
+    build_time_sig_segments, compute_bar_offsets, compute_measure_divisor, measure_bounds_at_tick,
+    measure_ticks,
 };
 pub use view_base::{PIXELS_PER_TICK_MAX, PIXELS_PER_TICK_MIN, TimelineViewBase};
 

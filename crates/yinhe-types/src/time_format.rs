@@ -212,7 +212,7 @@ pub fn build_time_sig_segments(
 }
 
 /// Compute the cumulative number of complete bars before each segment.
-fn compute_bar_offsets(tpb: u32, segments: &[(u32, u8, u8)]) -> Vec<u32> {
+pub fn compute_bar_offsets(tpb: u32, segments: &[(u32, u8, u8)]) -> Vec<u32> {
     let mut offsets = Vec::with_capacity(segments.len());
     let mut acc = 0u32;
     for i in 0..segments.len() {

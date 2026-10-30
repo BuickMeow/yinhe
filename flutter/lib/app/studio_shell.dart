@@ -237,6 +237,10 @@ abstract class _ShellBase extends State<StudioShell>
   final ValueNotifier<List<double>> _snap = ValueNotifier<List<double>>(
     List<double>.filled(12, 0.0),
   );
+
+  /// 标尺标签（Rust 算，Dart 只画）。
+  final ValueNotifier<List<RulerLabel>> _rulerLabels = ValueNotifier(const []);
+  List<double>? _lastRulerKey;
   final ValueNotifier<List<TrackRow>> _tracks = ValueNotifier<List<TrackRow>>(
     const [],
   );
@@ -315,6 +319,44 @@ abstract class _ShellBase extends State<StudioShell>
 
   /// 帧计数（时间码/工程状态降频）。
   int _frameCounter = 0;
+
+  /// 标尺标签：只在视图（模式/缩放/横向滚动/键盘宽）变化时重算，
+  /// 播放时标尺本身不动，不重复请求。
+  void _maybeRefreshRuler(List<double> snap) {
+    if (snap.length < 6) {
+      return;
+    }
+    final key = <double>[snap[0], snap[1], snap[2], snap[5]];
+    final last = _lastRulerKey;
+    if (last != null &&
+        last[0] == key[0] &&
+        last[1] == key[1] &&
+        last[2] == key[2] &&
+        last[3] == key[3]) {
+      return;
+    }
+    _lastRulerKey = key;
+    final ptr = rust.rulerLabelsJson();
+    if (ptr == ffi.nullptr) {
+      return;
+    }
+    try {
+      final list = jsonDecode(ptr.toDartString()) as List<dynamic>;
+      _rulerLabels.value = [
+        for (final it in list)
+          if (it is Map<String, dynamic>)
+            RulerLabel(
+              (it['x'] as num?)?.toDouble() ?? 0,
+              it['text'] as String? ?? '',
+              (it['level'] as num?)?.toInt() ?? 0,
+            ),
+      ];
+    } catch (_) {
+      // 解析失败保持旧标签。
+    } finally {
+      rust.freeString(ptr);
+    }
+  }
 
   /// 完成/取消正在等待的保存（“保存并继续”流程）。
   void _finishSaveWait(bool ok) {
@@ -449,6 +491,7 @@ class _StudioShellState extends _ShellBase
         if (!_sameSnapshot(snap)) {
           _snap.value = snap;
         }
+        _maybeRefreshRuler(snap);
         _scheduleVelocityReload();
         _readOverlay();
         // 选框状态驱动：移动态画虚线；长按中更新圆环进度（Flutter long press 推进状态）。
@@ -554,6 +597,7 @@ class _StudioShellState extends _ShellBase
     _overlay.dispose();
     _sfRevision.dispose();
     _grid.dispose();
+    _rulerLabels.dispose();
     _saveDoneTimer?.cancel();
     _savingTimer?.cancel();
     _velocityReloadTimer?.cancel();

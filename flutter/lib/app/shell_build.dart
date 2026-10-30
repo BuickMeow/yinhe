@@ -398,8 +398,7 @@ mixin _ShellBuild on _ShellBase {
                                           child: IgnorePointer(
                                             child: CustomPaint(
                                               painter: RulerPainter(
-                                                _snap,
-                                                _grid,
+                                                _rulerLabels,
                                               ),
                                             ),
                                           ),

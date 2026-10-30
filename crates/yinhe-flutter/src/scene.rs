@@ -13,6 +13,10 @@ use yinhe_editor_core::follow::total_ticks_padded;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::NoteSource;
 use yinhe_types::automation::{AutomationEvent, AutomationTarget};
+use yinhe_types::time_format::{
+    build_time_sig_segments, compute_bar_offsets, compute_measure_divisor,
+    format_tick_bar_beat_with_time_sig, measure_ticks,
+};
 use yinhe_types::{ArrangementView, PianoRollView, TimelineViewBase};
 
 /// 视图模式（与 Dart 约定一致：0=AR 走带，1=PR 卷帘）。
@@ -2094,7 +2098,126 @@ pub fn tracks_json() -> String {
     out
 }
 
-/// 视图快照（Dart 文本浮层用），固定 12 个 f32：
+/// 光标（或指定 tick）的 `bar.beat.tick` 文本，拍号变化时按段连续计数。
+pub fn bar_beat_text(tick: f64) -> String {
+    let Ok(s) = scene().lock() else {
+        return String::new();
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return String::new();
+    };
+    let model = &doc.data.model;
+    let tick = tick.max(0.0);
+    let (num, den) = model.tempo_map.time_sig_at_tick(tick as u32);
+    format_tick_bar_beat_with_time_sig(
+        tick,
+        model.meta.ppq,
+        &model.tempo_map.time_sig_events,
+        num,
+        den,
+    )
+}
+
+/// 时间标尺标签：Dart 只负责画，拍号分段/小节号/密度选择全部在这里算。
+///
+/// 返回 JSON：`[{"x":..,"text":"..","level":0..3}]`，`x` 是画布逻辑像素。
+/// level：0=小节、1=拍、2=拍内 tick、3=子拍。
+pub fn ruler_labels_json() -> String {
+    const MIN_LABEL_SPACING: f32 = 38.0;
+    const SUB_BEAT_DIV: u32 = 4;
+
+    let Ok(s) = scene().lock() else {
+        return "[]".into();
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return "[]".into();
+    };
+    let model = &doc.data.model;
+    let ppq = model.meta.ppq;
+    let (default_num, default_den) = model.tempo_map.time_sig_default;
+    let segments =
+        build_time_sig_segments(&model.tempo_map.time_sig_events, default_num, default_den);
+    let bar_offsets = compute_bar_offsets(ppq, &segments);
+
+    let (ppu, scroll_x, kb_w) = match s.view_mode {
+        ViewMode::Pianoroll => (
+            s.pr_view.base.pixels_per_tick,
+            s.pr_view.base.scroll_x,
+            s.pr_view.keyboard_width(),
+        ),
+        ViewMode::Arrangement => (
+            s.arr_view.base.pixels_per_tick,
+            s.arr_view.base.scroll_x,
+            s.arr_view.base.left_panel_width,
+        ),
+    };
+    let width = crate::logical_size().0;
+    if ppu <= 0.0 || width <= 0.0 {
+        return "[]".into();
+    }
+
+    let start_tick = (((-kb_w + scroll_x) / ppu).max(0.0)) as f64;
+    let end_tick = (((width - kb_w + scroll_x) / ppu).max(0.0)) as f64;
+    let end_i = end_tick.floor() as i64;
+    let mut labels: Vec<serde_json::Value> = Vec::new();
+
+    for (i, &(seg_start, num, den)) in segments.iter().enumerate() {
+        if seg_start as f64 > end_tick {
+            break;
+        }
+        let seg_end = segments.get(i + 1).map_or(u32::MAX, |s| s.0);
+        let mticks = measure_ticks(ppq, num, den);
+        let bticks = (mticks / u32::from(num.max(1))).max(1);
+        let sub_ticks = (bticks / SUB_BEAT_DIV).clamp(1, mticks);
+        let divisor = compute_measure_divisor(mticks as f32 * ppu, MIN_LABEL_SPACING);
+        let merged = mticks * divisor;
+        let show_beat = bticks as f32 * ppu >= MIN_LABEL_SPACING;
+        let show_sub = sub_ticks as f32 * ppu >= MIN_LABEL_SPACING;
+        let show_tick = ppu >= MIN_LABEL_SPACING;
+        let step = if show_beat || show_sub {
+            sub_ticks
+        } else {
+            merged
+        } as i64;
+
+        let first = if seg_start as f64 > start_tick {
+            seg_start as i64
+        } else {
+            start_tick.floor() as i64
+        };
+        let mut tick = seg_start as i64 + ((first - seg_start as i64) / step) * step;
+        while tick <= end_i && tick < seg_end as i64 {
+            let x = tick as f32 * ppu - scroll_x + kb_w;
+            if x >= kb_w && x <= width + 40.0 {
+                let local = (tick - seg_start as i64) as u32;
+                let is_measure = local % merged == 0;
+                let is_beat = !is_measure && (local % mticks) % bticks == 0;
+                let bar = bar_offsets[i] + local / mticks + 1;
+                let beat = (local % mticks) / bticks + 1;
+                let (text, level) = if is_measure {
+                    (bar.to_string(), 0)
+                } else if is_beat && show_beat {
+                    (format!("{bar}.{beat}"), 1)
+                } else if show_sub {
+                    if show_tick {
+                        (format!("{bar}.{beat}.{:03}", local % bticks), 2)
+                    } else {
+                        (format!("{bar}.{beat}.{}", (local % bticks) / sub_ticks), 3)
+                    }
+                } else {
+                    (String::new(), 4)
+                };
+                if !text.is_empty() {
+                    labels.push(serde_json::json!({"x": x, "text": text, "level": level}));
+                }
+            }
+            tick += step;
+        }
+    }
+    serde_json::Value::Array(labels).to_string()
+}
+
+/// 视图快照（Dart 文本浮层用），固定 13 个 f32：
 /// `[mode, ppu, scroll_x, scroll_y, key_height, left_panel_w, lane_height,
 ///   total_ticks, ppq, key0_y, time_sig_num, time_sig_den]`
 pub fn view_snapshot() -> [f32; 13] {

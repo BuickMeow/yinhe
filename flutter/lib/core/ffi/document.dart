@@ -12,6 +12,18 @@ typedef CStrArgDart = int Function(ffi.Pointer<Utf8>);
 final CStrArgDart setSoundfonts = bridge
     .lookupFunction<CStrArgNative, CStrArgDart>('yinhe_set_soundfonts');
 
+typedef DoubleCStrNative = ffi.Pointer<Utf8> Function(ffi.Double);
+typedef DoubleCStrDart = ffi.Pointer<Utf8> Function(double);
+
+/// 光标 tick 的 `bar.beat.tick` 文本（Rust 算，拍号变化时按段连续计数）。
+final DoubleCStrDart barBeatText = bridge
+    .lookupFunction<DoubleCStrNative, DoubleCStrDart>('yinhe_bar_beat_text');
+
+/// 标尺标签 JSON：`[{"x":..,"text":"..","level":..}]`（Rust 算，Dart 只画）。
+final CStrDart rulerLabelsJson = bridge.lookupFunction<CStrNative, CStrDart>(
+  'yinhe_ruler_labels_json',
+);
+
 /// 歌曲标题（空串 = 未设置）。
 final CStrDart songTitle = bridge.lookupFunction<CStrNative, CStrDart>(
   'yinhe_song_title',

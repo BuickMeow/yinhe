@@ -215,16 +215,19 @@ mixin _ShellTransport on _ShellBase {
 
   /// 小节.拍.tick（1.0.000 风格：bar 1 起、beat 0 起）。
   ///
-  /// 用拍号分段换算（拍号变化时 bar 连续计数；原生事件优先）。
+  /// 拍号分段换算统一由 Rust 完成（与桌面 `format_tick_bar_beat_with_time_sig`
+  /// 同一实现），Dart 不再自算，避免两边 bar 号漂移。
   String _fmtBarBeat(double tick, double ppq) {
-    final grid = _grid.value;
-    if (grid != null) {
-      return grid.format(tick);
-    }
-    if (ppq <= 0) {
+    final ptr = rust.barBeatText(tick);
+    if (ptr == ffi.nullptr) {
       return '1.0.000';
     }
-    return '1.0.000';
+    try {
+      final text = ptr.toDartString();
+      return text.isEmpty ? '1.0.000' : text;
+    } finally {
+      rust.freeString(ptr);
+    }
   }
 
   /// 顶部栏临时读数的位置文本：跟随时间码当前的小节/秒模式。

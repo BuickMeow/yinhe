@@ -1536,6 +1536,18 @@ pub extern "C" fn yinhe_soundfonts_json() -> *mut std::ffi::c_char {
     to_c_string(audio::soundfonts_json())
 }
 
+/// 光标 tick 的 `bar.beat.tick` 文本（Rust 算，拍号变化时按段连续计数）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_bar_beat_text(tick: f64) -> *mut std::ffi::c_char {
+    to_c_string(scene::bar_beat_text(tick))
+}
+
+/// 时间标尺标签 JSON（Dart 只负责画）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_ruler_labels_json() -> *mut std::ffi::c_char {
+    to_c_string(scene::ruler_labels_json())
+}
+
 /// 设置音色库表 JSON（设置页排序/启停/删除后调用）并持久化。成功 1。
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
