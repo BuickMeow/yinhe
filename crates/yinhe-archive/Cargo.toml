@@ -6,8 +6,8 @@ edition = "2024"
 [dependencies]
 thiserror = { workspace = true }
 tracing = { workspace = true }
-unarc-rs = "0.6"
+unarc-rs = "0.8"
 
 [dev-dependencies]
 tempfile = { workspace = true }
-zip = "8.6"
+zip = "9"

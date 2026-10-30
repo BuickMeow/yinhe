@@ -75,10 +75,7 @@ impl Archive {
         }
 
         let pw = password.map(|p| p.to_string()).filter(|p| !p.is_empty());
-        let options = match &pw {
-            Some(p) => ArchiveOptions::new().with_password(p),
-            None => ArchiveOptions::new(),
-        };
+        let options = build_options(pw.as_deref());
 
         let mut archive = ArchiveFormat::open_path_with_options(&path, options)
             .map_err(|e| classify_open_error(&e))?;
@@ -133,10 +130,7 @@ impl Archive {
     ///
     /// 重新打开压缩包并顺序遍历到目标 entry，只解压该文件。
     pub fn read_file(&self, name: &str) -> Result<Vec<u8>, ArchiveError> {
-        let options = match &self.password {
-            Some(p) => ArchiveOptions::new().with_password(p),
-            None => ArchiveOptions::new(),
-        };
+        let options = self.options();
 
         let mut archive = ArchiveFormat::open_path_with_options(&self.path, options)
             .map_err(|e| classify_open_error(&e))?;
@@ -208,10 +202,20 @@ impl Archive {
     }
 
     fn options(&self) -> ArchiveOptions {
-        match &self.password {
-            Some(p) => ArchiveOptions::new().with_password(p),
-            None => ArchiveOptions::new(),
-        }
+        build_options(self.password.as_deref())
+    }
+}
+
+/// 构造 unarc-rs 的打开选项。
+///
+/// 关闭单条目大小上限：`read_file` / `extract_all` 本来就把整个条目读进内存，
+/// 库层默认的 1 GiB 限制只会让超大音色库（如 >1 GiB 的 sf2）无故失败，
+/// 并不会真正避免内存问题。
+fn build_options(password: Option<&str>) -> ArchiveOptions {
+    let options = ArchiveOptions::new().with_max_entry_size(None);
+    match password {
+        Some(p) => options.with_password(p),
+        None => options,
     }
 }
 
