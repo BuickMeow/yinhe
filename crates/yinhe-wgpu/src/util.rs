@@ -6,6 +6,14 @@ use crate::vertex::Uniforms;
 // Re-export hash utilities from yinhe-types for backward compatibility.
 pub use yinhe_types::{hash_bools, hash_f32s, hash_f64s, hash_time_sigs};
 
+/// 设备是否支持 shader 内 storage buffer。
+///
+/// GLES 3.0（如鸿蒙模拟器的 ANGLE/Metal）没有 SSBO，限制值为 0：
+/// 此时 GPU cull / storage 取数都不可用，渲染走数据纹理降级路径。
+pub(crate) fn has_storage_buffers(device: &Device) -> bool {
+    device.limits().max_storage_buffers_per_shader_stage > 0
+}
+
 /// Create a GPU vertex buffer with memtrace tracking (RAII：Drop 自动注销)。
 pub(super) fn create_vertex_buffer(device: &Device, label: &str, size_bytes: u64) -> TrackedBuffer {
     yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {

@@ -1,9 +1,168 @@
 use wgpu::*;
 
-use crate::resource::TrackedBuffer;
+use crate::resource::{TrackedBuffer, TrackedTexture};
 use crate::vertex::{
     CurveInstance, DrawInstance, NoteInstance, SelectionUniform, Uniforms, VelocityBarInstance,
 };
+
+/// 数据纹理行宽（须与 `shader_texture.wgsl` 的 `TABLE_COLS` 一致）。
+const TABLE_COLS: u32 = 1024;
+
+/// WGSL 分三段拼装：共享前缀 + 变体前缀 + 主体。
+/// 两套变体只在「调色板 / AR 行高表」的取数方式上不同：
+///   - storage 变体：storage buffer（GLES 3.1+ / Metal / Vulkan）；
+///   - texture 变体：RGBA32F 数据纹理（GLES 3.0，无 SSBO）。
+const SHADER_STORAGE: &str = concat!(
+    include_str!("shader_base.wgsl"),
+    include_str!("shader_storage.wgsl"),
+    include_str!("shader_body.wgsl"),
+);
+const SHADER_TEXTURE: &str = concat!(
+    include_str!("shader_base.wgsl"),
+    include_str!("shader_texture.wgsl"),
+    include_str!("shader_body.wgsl"),
+);
+
+/// 本设备可用的 WGSL 源码（`use_storage` = 支持 shader 内 storage buffer）。
+pub(crate) fn shader_source(use_storage: bool) -> &'static str {
+    if use_storage {
+        SHADER_STORAGE
+    } else {
+        SHADER_TEXTURE
+    }
+}
+
+/// 一张数据纹理表：行宽固定 `TABLE_COLS`，行数按条目数增长。
+struct TableTexture {
+    texture: TrackedTexture,
+    view: TextureView,
+    /// 已分配行数（容量）。
+    rows: u32,
+}
+
+impl TableTexture {
+    fn with_rows(device: &Device, label: &str, rows: u32) -> Self {
+        let texture = TrackedTexture::new(
+            device,
+            &TextureDescriptor {
+                label: Some(label),
+                size: Extent3d {
+                    width: TABLE_COLS,
+                    height: rows,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: TextureDimension::D2,
+                format: TextureFormat::Rgba32Float,
+                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+        );
+        let view = texture.create_view(&TextureViewDescriptor::default());
+        Self {
+            texture,
+            view,
+            rows,
+        }
+    }
+
+    fn new(device: &Device, label: &str) -> Self {
+        Self::with_rows(device, label, 1)
+    }
+
+    /// 保证至少 `entries` 项容量；返回是否重建（重建后须重建 bind group）。
+    fn ensure_entries(&mut self, device: &Device, label: &str, entries: usize) -> bool {
+        let need = (entries as u32).div_ceil(TABLE_COLS).max(1);
+        if need <= self.rows {
+            return false;
+        }
+        *self = Self::with_rows(device, label, need.next_power_of_two());
+        true
+    }
+
+    /// 写入整张表：`data` 长度须为 `rows × TABLE_COLS`（尾部补零）。
+    fn write(&self, queue: &Queue, data: &[[f32; 4]]) {
+        queue.write_texture(
+            TexelCopyTextureInfo {
+                texture: &self.texture,
+                mip_level: 0,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
+            },
+            bytemuck::cast_slice(data),
+            TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(TABLE_COLS * 16),
+                rows_per_image: Some(self.rows),
+            },
+            Extent3d {
+                width: TABLE_COLS,
+                height: self.rows,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+}
+
+/// GLES 3.0 降级路径的调色板 / AR 行高表（数据纹理），
+/// 与 `shader_texture.wgsl` 的 @group(0) 绑定一一对应。
+struct TextureTable {
+    sampler: Sampler,
+    colors: TableTexture,
+    rows: TableTexture,
+}
+
+impl TextureTable {
+    fn new(device: &Device) -> Self {
+        Self {
+            // 表数据不参与插值：非过滤采样器 + RGBA32F（非 filterable）。
+            sampler: device.create_sampler(&SamplerDescriptor {
+                label: Some("table_sampler"),
+                mag_filter: FilterMode::Nearest,
+                min_filter: FilterMode::Nearest,
+                mipmap_filter: MipmapFilterMode::Nearest,
+                ..SamplerDescriptor::default()
+            }),
+            colors: TableTexture::new(device, "track_colors_table"),
+            rows: TableTexture::new(device, "row_table"),
+        }
+    }
+
+    /// 调色板扩容；返回是否重建了纹理（需重建 bind group）。
+    fn ensure_colors(&mut self, device: &Device, count: usize) -> bool {
+        self.colors
+            .ensure_entries(device, "track_colors_table", count)
+    }
+
+    /// AR 行高表扩容；返回是否重建了纹理。
+    fn ensure_rows(&mut self, device: &Device, count: usize) -> bool {
+        self.rows.ensure_entries(device, "row_table", count)
+    }
+
+    /// 上传调色板（尾部补零到整行）。
+    fn write_colors(&self, queue: &Queue, colors: &[[f32; 4]]) {
+        let mut data = vec![[0.0f32; 4]; self.colors.rows as usize * TABLE_COLS as usize];
+        for (dst, src) in data.iter_mut().zip(colors) {
+            *dst = *src;
+        }
+        self.colors.write(queue, &data);
+    }
+
+    /// 上传 AR 行表：每行 `(offset, height)`，由 offsets/heights 两个
+    /// 平行数组合成（缺项补 0，与 storage 变体的零初始化一致）。
+    fn write_rows(&self, queue: &Queue, offsets: &[f32], heights: &[f32]) {
+        let mut data = vec![[0.0f32; 4]; self.rows.rows as usize * TABLE_COLS as usize];
+        for (i, slot) in data.iter_mut().enumerate() {
+            if i >= offsets.len() && i >= heights.len() {
+                break;
+            }
+            slot[0] = offsets.get(i).copied().unwrap_or(0.0);
+            slot[1] = heights.get(i).copied().unwrap_or(0.0);
+        }
+        self.rows.write(queue, &data);
+    }
+}
 
 /// Owns the render pipelines and their shared uniform buffers / bind group.
 ///
@@ -22,7 +181,9 @@ use crate::vertex::{
 ///     `fs_main_curve_premul` + Max 混合 — 整层 alpha 固定，重叠不加深）
 pub struct RenderPipelineState {
     pub pipeline: RenderPipeline,
-    pub note_pipeline: RenderPipeline,
+    /// GPU cull 音符管线：顶点阶段经 @group(1) 读 `all_instances` storage buffer。
+    /// 适配器无 storage buffer（GLES 3.0）时为 `None`，恒走 CPU 层渲染。
+    pub note_pipeline: Option<RenderPipeline>,
     pub note_direct_pipeline: RenderPipeline,
     pub velocity_pipeline: RenderPipeline,
     pub curve_pipeline: RenderPipeline,
@@ -53,6 +214,9 @@ pub struct RenderPipelineState {
     /// 共享 index buffer：矩形四角 [0,1,2, 1,3,2]（0=TL,1=TR,2=BL,3=BR）。
     /// note / velocity pipeline 以 4 顶点 + 此 index 绘制（顶点 -33%）。
     pub index_buffer: TrackedBuffer,
+    /// 无 storage buffer 的适配器（GLES 3.0）上的调色板 / AR 行表纹理。
+    /// `Some` 时 bind group 只含 uniform + 两张表纹理 + 采样器。
+    tex: Option<TextureTable>,
 }
 
 impl RenderPipelineState {
@@ -69,6 +233,9 @@ impl RenderPipelineState {
             constants: &srgb_constants,
             ..PipelineCompilationOptions::default()
         };
+        // 无 SSBO 的适配器（GLES 3.0）：调色板/行表改走数据纹理，
+        // 且 GPU cull 管线（需顶点 storage）不创建。
+        let use_storage = crate::util::has_storage_buffers(device);
 
         // Main uniforms buffer
         let uniform_size = std::mem::size_of::<Uniforms>() as u64;
@@ -146,102 +313,29 @@ impl RenderPipelineState {
             },
         );
 
-        let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: Some("render_bind_group_layout"),
-            entries: &[
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: ShaderStages::VERTEX,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-
-        let bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: Some("render_bind_group"),
-            layout: &bind_group_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: track_colors_buffer.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: selection_buffer.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: track_offsets_buffer.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: exclude_buffer.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: row_heights_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        // 共享 group 0：storage 变体 = uniform + 3 个 storage buffer；
+        // texture 变体（GLES 3.0 无 SSBO）= uniform + 调色板/行表纹理 + 采样器。
+        let tex = if use_storage {
+            None
+        } else {
+            Some(TextureTable::new(device))
+        };
+        let bind_group_layout = if tex.is_some() {
+            create_texture_layout(device)
+        } else {
+            create_storage_layout(device)
+        };
+        let bind_group = create_bind_group(
+            device,
+            &bind_group_layout,
+            tex.as_ref(),
+            &uniform_buffer,
+            &track_colors_buffer,
+            &selection_buffer,
+            &track_offsets_buffer,
+            &exclude_buffer,
+            &row_heights_buffer,
+        );
 
         // 共享 index buffer：两个三角形共享矩形四角。
         // 顶点顺序与 shader 的 pos/uv 数组一致（0=TL, 1=TR, 2=BL, 3=BR）。
@@ -320,38 +414,43 @@ impl RenderPipelineState {
         // GPU-cull note pipeline: 4-byte u32 index vertex layout, indirect-reads
         // all_instances via @group(1). Shares uniforms/bind group.
         // 音符全不透明（硬边，无 AA），关闭混合避免 0.5 缝隙透底 + 省 ROP。
-        let note_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-            label: Some("note_pipeline"),
-            layout: Some(&cull_note_pipeline_layout),
-            vertex: VertexState {
-                module: render_shader,
-                entry_point: Some("vs_main_note"),
-                buffers: &[Some(VertexBufferLayout {
-                    array_stride: std::mem::size_of::<u32>() as u64,
-                    step_mode: VertexStepMode::Instance,
-                    attributes: &vertex_attr_array![0 => Uint32],
-                })],
-                compilation_options: compilation_options(),
-            },
-            fragment: Some(FragmentState {
-                module: render_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(ColorTargetState {
-                    format,
-                    blend: None,
-                    write_mask: ColorWrites::ALL,
-                })],
-                compilation_options: compilation_options(),
-            }),
-            primitive: PrimitiveState {
-                topology: PrimitiveTopology::TriangleList,
-                ..PrimitiveState::default()
-            },
-            depth_stencil: None,
-            multisample: MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        // 顶点阶段读 storage buffer（@group(1)）：GLES 3.0 上不可用 → None。
+        let note_pipeline = if use_storage {
+            Some(device.create_render_pipeline(&RenderPipelineDescriptor {
+                label: Some("note_pipeline"),
+                layout: Some(&cull_note_pipeline_layout),
+                vertex: VertexState {
+                    module: render_shader,
+                    entry_point: Some("vs_main_note"),
+                    buffers: &[Some(VertexBufferLayout {
+                        array_stride: std::mem::size_of::<u32>() as u64,
+                        step_mode: VertexStepMode::Instance,
+                        attributes: &vertex_attr_array![0 => Uint32],
+                    })],
+                    compilation_options: compilation_options(),
+                },
+                fragment: Some(FragmentState {
+                    module: render_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(ColorTargetState {
+                        format,
+                        blend: None,
+                        write_mask: ColorWrites::ALL,
+                    })],
+                    compilation_options: compilation_options(),
+                }),
+                primitive: PrimitiveState {
+                    topology: PrimitiveTopology::TriangleList,
+                    ..PrimitiveState::default()
+                },
+                depth_stencil: None,
+                multisample: MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            }))
+        } else {
+            None
+        };
 
         // Direct note pipeline: 12-byte NoteInstance vertex layout (ghost notes,
         // legacy CPU-built note layers). Same vertex math, no index indirection.
@@ -541,40 +640,193 @@ impl RenderPipelineState {
             bind_group,
             bind_group_layout,
             index_buffer,
+            tex,
         }
     }
 
-    /// 重建共享 bind group（排除表 buffer 扩容后调用；layout 与其余 buffer 不变）。
+    /// 重建共享 bind group（排除表/调色板/行表扩容后调用；layout 不变）。
     pub fn rebuild_bind_group(&mut self, device: &Device) {
-        self.bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: Some("render_bind_group"),
-            layout: &self.bind_group_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: self.uniform_buffer.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: self.track_colors_buffer.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: self.selection_buffer.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: self.track_offsets_buffer.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: self.exclude_buffer.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: self.row_heights_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        self.bind_group = create_bind_group(
+            device,
+            &self.bind_group_layout,
+            self.tex.as_ref(),
+            &self.uniform_buffer,
+            &self.track_colors_buffer,
+            &self.selection_buffer,
+            &self.track_offsets_buffer,
+            &self.exclude_buffer,
+            &self.row_heights_buffer,
+        );
     }
+
+    /// 当前是否为数据纹理变体（无 storage buffer 的 GLES 3.0）。
+    pub fn has_texture_tables(&self) -> bool {
+        self.tex.is_some()
+    }
+
+    /// GLES 3.0 降级路径：调色板表扩容（返回是否重建了纹理）。
+    pub fn ensure_colors_table(&mut self, device: &Device, count: usize) -> bool {
+        match &mut self.tex {
+            Some(t) => t.ensure_colors(device, count),
+            None => false,
+        }
+    }
+
+    /// GLES 3.0 降级路径：AR 行表扩容（返回是否重建了纹理）。
+    pub fn ensure_rows_table(&mut self, device: &Device, count: usize) -> bool {
+        match &mut self.tex {
+            Some(t) => t.ensure_rows(device, count),
+            None => false,
+        }
+    }
+
+    /// GLES 3.0 降级路径：上传调色板纹理（`tex` 为 None 时无操作）。
+    pub fn write_colors_table(&self, queue: &Queue, colors: &[[f32; 4]]) {
+        if let Some(t) = &self.tex {
+            t.write_colors(queue, colors);
+        }
+    }
+
+    /// GLES 3.0 降级路径：上传 AR 行表纹理（offsets/heights 平行数组）。
+    pub fn write_rows_table(&self, queue: &Queue, offsets: &[f32], heights: &[f32]) {
+        if let Some(t) = &self.tex {
+            t.write_rows(queue, offsets, heights);
+        }
+    }
+}
+
+/// storage 变体的 group 0 布局：uniform + 调色板/行高/排除表 storage buffer。
+fn create_storage_layout(device: &Device) -> BindGroupLayout {
+    let storage = |binding: u32, visibility: ShaderStages| BindGroupLayoutEntry {
+        binding,
+        visibility,
+        ty: BindingType::Buffer {
+            ty: BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    };
+    let uniform = |binding: u32| BindGroupLayoutEntry {
+        binding,
+        visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+        ty: BindingType::Buffer {
+            ty: BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    };
+    device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+        label: Some("render_bind_group_layout"),
+        entries: &[
+            uniform(0),
+            storage(1, ShaderStages::VERTEX | ShaderStages::FRAGMENT),
+            uniform(2),
+            storage(3, ShaderStages::VERTEX | ShaderStages::FRAGMENT),
+            // 排除表只在顶点阶段读（`note_geometry` 选区判定）。
+            storage(4, ShaderStages::VERTEX | ShaderStages::FRAGMENT),
+            storage(5, ShaderStages::VERTEX),
+        ],
+    })
+}
+
+/// texture 变体（GLES 3.0）的 group 0 布局：uniform + 两张 RGBA32F 数据表 +
+/// 非过滤采样器。纹理表不是 filterable 格式，采样器必须是 NonFiltering。
+fn create_texture_layout(device: &Device) -> BindGroupLayout {
+    let table = |binding: u32| BindGroupLayoutEntry {
+        binding,
+        visibility: ShaderStages::VERTEX,
+        ty: BindingType::Texture {
+            sample_type: TextureSampleType::Float { filterable: false },
+            view_dimension: TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    };
+    device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+        label: Some("render_bind_group_layout_gles3"),
+        entries: &[
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            table(1),
+            BindGroupLayoutEntry {
+                binding: 2,
+                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            table(3),
+            BindGroupLayoutEntry {
+                binding: 4,
+                visibility: ShaderStages::VERTEX,
+                ty: BindingType::Sampler(SamplerBindingType::NonFiltering),
+                count: None,
+            },
+        ],
+    })
+}
+
+/// 按当前变体创建 group 0（`tex` 为 Some 时用数据纹理，否则用 storage buffer）。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+fn create_bind_group(
+    device: &Device,
+    layout: &BindGroupLayout,
+    tex: Option<&TextureTable>,
+    uniform_buffer: &TrackedBuffer,
+    track_colors_buffer: &TrackedBuffer,
+    selection_buffer: &TrackedBuffer,
+    track_offsets_buffer: &TrackedBuffer,
+    exclude_buffer: &TrackedBuffer,
+    row_heights_buffer: &TrackedBuffer,
+) -> BindGroup {
+    fn buffer_entry(binding: u32, buffer: &TrackedBuffer) -> BindGroupEntry<'_> {
+        BindGroupEntry {
+            binding,
+            resource: buffer.as_entire_binding(),
+        }
+    }
+    let entries = match tex {
+        None => vec![
+            buffer_entry(0, uniform_buffer),
+            buffer_entry(1, track_colors_buffer),
+            buffer_entry(2, selection_buffer),
+            buffer_entry(3, track_offsets_buffer),
+            buffer_entry(4, exclude_buffer),
+            buffer_entry(5, row_heights_buffer),
+        ],
+        Some(t) => vec![
+            buffer_entry(0, uniform_buffer),
+            BindGroupEntry {
+                binding: 1,
+                resource: BindingResource::TextureView(&t.colors.view),
+            },
+            buffer_entry(2, selection_buffer),
+            BindGroupEntry {
+                binding: 3,
+                resource: BindingResource::TextureView(&t.rows.view),
+            },
+            BindGroupEntry {
+                binding: 4,
+                resource: BindingResource::Sampler(&t.sampler),
+            },
+        ],
+    };
+    device.create_bind_group(&BindGroupDescriptor {
+        label: Some("render_bind_group"),
+        layout,
+        entries: &entries,
+    })
 }

@@ -124,7 +124,10 @@ impl InstanceRenderer {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {
             let render_shader = device.create_shader_module(ShaderModuleDescriptor {
                 label: Some("pianoroll_shader"),
-                source: ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+                source: ShaderSource::Wgsl(
+                    crate::pipeline::shader_source(crate::util::has_storage_buffers(&device))
+                        .into(),
+                ),
             });
 
             // Cull 先建：note_pipeline 的 group 1 复用其 all_instances bind
@@ -176,9 +179,13 @@ impl InstanceRenderer {
     pub fn upload_track_colors(&mut self, colors: &[[f32; 4]]) {
         self.ensure_track_colors_capacity(colors.len());
         if self.cached_track_colors.as_deref() != Some(colors) {
-            let bytes = bytemuck::cast_slice(colors);
-            self.queue
-                .write_buffer(&self.render.track_colors_buffer, 0, bytes);
+            if self.render.has_texture_tables() {
+                self.render.write_colors_table(&self.queue, colors);
+            } else {
+                let bytes = bytemuck::cast_slice(colors);
+                self.queue
+                    .write_buffer(&self.render.track_colors_buffer, 0, bytes);
+            }
             self.cached_track_colors = Some(colors.to_vec());
         }
     }
@@ -186,6 +193,13 @@ impl InstanceRenderer {
     /// Grow the track_colors storage buffer when `count` exceeds current capacity.
     /// Recreates the buffer + bind group (cheap, happens only when track count grows).
     fn ensure_track_colors_capacity(&mut self, count: usize) {
+        if self.render.has_texture_tables() {
+            if self.render.ensure_colors_table(&self.device, count) {
+                self.render.rebuild_bind_group(&self.device);
+                self.cached_track_colors = None;
+            }
+            return;
+        }
         if count <= self.render.track_colors_capacity as usize {
             return;
         }
@@ -213,9 +227,17 @@ impl InstanceRenderer {
     pub fn upload_track_offsets(&mut self, offsets: &[f32]) {
         self.ensure_track_offsets_capacity(offsets.len());
         if self.cached_track_offsets.as_deref() != Some(offsets) {
-            let bytes = bytemuck::cast_slice(offsets);
-            self.queue
-                .write_buffer(&self.render.track_offsets_buffer, 0, bytes);
+            if self.render.has_texture_tables() {
+                // 纹理变体把 (offset, height) 合并成一张行表，
+                // 两个平行数组的任一侧变化都要重写整表。
+                let (offsets, heights) = (offsets, self.cached_row_heights.as_deref());
+                self.render
+                    .write_rows_table(&self.queue, offsets, heights.unwrap_or(&[]));
+            } else {
+                let bytes = bytemuck::cast_slice(offsets);
+                self.queue
+                    .write_buffer(&self.render.track_offsets_buffer, 0, bytes);
+            }
             self.cached_track_offsets = Some(offsets.to_vec());
         }
     }
@@ -223,6 +245,14 @@ impl InstanceRenderer {
     /// Grow the track_offsets storage buffer when count exceeds current capacity.
     /// Recreates the buffer + bind group（与 track_colors 同一模式）。
     fn ensure_track_offsets_capacity(&mut self, count: usize) {
+        if self.render.has_texture_tables() {
+            let entries = count.max(self.cached_row_heights.as_ref().map_or(0, Vec::len));
+            if self.render.ensure_rows_table(&self.device, entries) {
+                self.render.rebuild_bind_group(&self.device);
+                self.cached_track_offsets = None;
+            }
+            return;
+        }
         if count <= self.render.track_offsets_capacity as usize {
             return;
         }
@@ -250,15 +280,29 @@ impl InstanceRenderer {
     pub fn upload_row_heights(&mut self, heights: &[f32]) {
         self.ensure_row_heights_capacity(heights.len());
         if self.cached_row_heights.as_deref() != Some(heights) {
-            let bytes = bytemuck::cast_slice(heights);
-            self.queue
-                .write_buffer(&self.render.row_heights_buffer, 0, bytes);
+            if self.render.has_texture_tables() {
+                let (offsets, heights) = (self.cached_track_offsets.as_deref(), heights);
+                self.render
+                    .write_rows_table(&self.queue, offsets.unwrap_or(&[]), heights);
+            } else {
+                let bytes = bytemuck::cast_slice(heights);
+                self.queue
+                    .write_buffer(&self.render.row_heights_buffer, 0, bytes);
+            }
             self.cached_row_heights = Some(heights.to_vec());
         }
     }
 
     /// Grow the row_heights storage buffer when count exceeds current capacity.
     fn ensure_row_heights_capacity(&mut self, count: usize) {
+        if self.render.has_texture_tables() {
+            let entries = count.max(self.cached_track_offsets.as_ref().map_or(0, Vec::len));
+            if self.render.ensure_rows_table(&self.device, entries) {
+                self.render.rebuild_bind_group(&self.device);
+                self.cached_row_heights = None;
+            }
+            return;
+        }
         if count <= self.render.row_heights_capacity as usize {
             return;
         }
@@ -611,7 +655,7 @@ impl InstanceRenderer {
             self.layers.len()
         );
         self.last_lod_block = None;
-        if self.cull.is_ready() {
+        if self.cull.is_ready() && self.render.note_pipeline.is_some() {
             self.draw_with_cull(encoder, target, width, height);
         } else {
             self.draw_legacy(encoder, target, width, height);
@@ -784,6 +828,11 @@ impl InstanceRenderer {
         width: u32,
         height: u32,
     ) {
+        if self.render.note_pipeline.is_none() {
+            // 无顶点 storage（GLES 3.0）：GPU cull 管线不存在，退回 CPU 层渲染。
+            self.draw_legacy(_encoder, target, width, height);
+            return;
+        }
         tracing::debug!(
             "[cull-draw] is_ready={} cached_scroll_x={:?} cached_ppu={:?} cached_mode={:?}",
             self.cull.is_ready(),
@@ -828,15 +877,17 @@ impl InstanceRenderer {
                     height,
                 );
                 self.draw_static_layers(&mut pass);
-                self.cull.draw_summary_indirect(
-                    &mut pass,
-                    &self.render.note_pipeline,
-                    &self.render.bind_group,
-                    &self.render.index_buffer,
-                    key_lo,
-                    key_hi,
-                    level,
-                );
+                if let Some(note_pipeline) = &self.render.note_pipeline {
+                    self.cull.draw_summary_indirect(
+                        &mut pass,
+                        note_pipeline,
+                        &self.render.bind_group,
+                        &self.render.index_buffer,
+                        key_lo,
+                        key_hi,
+                        level,
+                    );
+                }
                 let ghost = self.layers.iter().rfind(|l| l.kind() == LayerKind::Note);
                 if let Some(ghost) = ghost {
                     pass.set_pipeline(&self.render.note_direct_pipeline);
@@ -860,14 +911,16 @@ impl InstanceRenderer {
                 height,
             );
             self.draw_static_layers(&mut pass);
-            self.cull.draw_visible_notes_indirect(
-                &mut pass,
-                &self.render.note_pipeline,
-                &self.render.bind_group,
-                &self.render.index_buffer,
-                key_lo,
-                key_hi,
-            );
+            if let Some(note_pipeline) = &self.render.note_pipeline {
+                self.cull.draw_visible_notes_indirect(
+                    &mut pass,
+                    note_pipeline,
+                    &self.render.bind_group,
+                    &self.render.index_buffer,
+                    key_lo,
+                    key_hi,
+                );
+            }
             let ghost = self.layers.iter().rfind(|l| l.kind() == LayerKind::Note);
             if let Some(ghost) = ghost {
                 pass.set_pipeline(&self.render.note_direct_pipeline);
@@ -903,14 +956,16 @@ impl InstanceRenderer {
 
         self.draw_static_layers(&mut pass);
 
-        self.cull.draw_visible_notes(
-            &mut pass,
-            &self.render.note_pipeline,
-            &self.render.bind_group,
-            &self.render.index_buffer,
-            key_lo,
-            key_hi,
-        );
+        if let Some(note_pipeline) = &self.render.note_pipeline {
+            self.cull.draw_visible_notes(
+                &mut pass,
+                note_pipeline,
+                &self.render.bind_group,
+                &self.render.index_buffer,
+                key_lo,
+                key_hi,
+            );
+        }
 
         let ghost = self.layers.iter().rfind(|l| l.kind() == LayerKind::Note);
         if let Some(ghost) = ghost {
