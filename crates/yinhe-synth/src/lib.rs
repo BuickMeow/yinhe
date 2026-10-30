@@ -16,6 +16,7 @@ pub mod cpu_synth;
 pub mod denormals;
 pub mod gpu_synth;
 pub(crate) mod sf_cache;
+pub mod sf_diagnostics;
 pub mod sf_parser;
 pub mod synth;
 mod voice_params;

@@ -532,20 +532,28 @@ pub fn set_skip_mask(skip: Vec<bool>) {
     st.handle.handle.send(AudioCommand::SkipTracks { skip });
 }
 
-/// 音色库表 JSON（设置页用）：`[{"path":..,"name":..,"enabled":..,"channel":..}, ...]`。
+/// 音色库表 JSON（设置页用）：`[{"path":..,"name":..,"enabled":..,"channel":..,"warnings":[..]}, ...]`。
+///
+/// `warnings` 是该 SFZ 里 xsynth 不支持的 opcode（空数组表示没有或不是 SFZ）。
 pub fn soundfonts_json() -> String {
     let items: Vec<serde_json::Value> = soundfonts()
         .into_iter()
         .map(|e| {
-            let name = std::path::Path::new(&e.path)
+            let path = std::path::Path::new(&e.path);
+            let name = path
                 .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default();
+            let warnings: Vec<String> = yinhe_audio::synth::sf_diagnostics::scan(path)
+                .into_iter()
+                .map(|i| i.message())
+                .collect();
             serde_json::json!({
                 "path": e.path,
                 "name": name,
                 "enabled": e.enabled,
                 "channel": e.channel,
+                "warnings": warnings,
             })
         })
         .collect();

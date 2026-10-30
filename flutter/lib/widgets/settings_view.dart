@@ -38,6 +38,7 @@ class _SfItem {
     required this.name,
     required this.enabled,
     this.channel = -1,
+    this.warnings = const [],
   });
 
   final String path;
@@ -46,6 +47,9 @@ class _SfItem {
 
   /// 生效通道：-1 = 全部（GM 库），0..15 = 仅该通道。
   int channel;
+
+  /// xsynth 不支持的 opcode 提示（空 = 没有或不是 SFZ）。
+  final List<String> warnings;
 }
 
 class _SettingsViewState extends State<SettingsView> {
@@ -98,6 +102,11 @@ class _SettingsViewState extends State<SettingsView> {
                 name: it['name'] as String? ?? '',
                 enabled: it['enabled'] as bool? ?? true,
                 channel: (it['channel'] as num?)?.toInt() ?? -1,
+                warnings: [
+                  for (final w
+                      in (it['warnings'] as List<dynamic>? ?? const []))
+                    if (w is String) w,
+                ],
               ),
         ];
       });
@@ -125,6 +134,58 @@ class _SettingsViewState extends State<SettingsView> {
   void _setFontChannel(int index, int channel) {
     setState(() => _fonts[index].channel = channel);
     _applyFonts();
+  }
+
+  /// 展示该 SFZ 里会被忽略的 opcode。
+  void _showWarnings(_SfItem item) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: YinheTheme.bg,
+        title: Text(
+          L10n.isZh ? '兼容性提示' : 'Compatibility',
+          style: TextStyle(color: YinheTheme.text, fontSize: 16),
+        ),
+        content: SizedBox(
+          width: 420,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  item.name.isNotEmpty ? item.name : item.path,
+                  style: TextStyle(
+                    color: YinheTheme.textSecondary,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                for (final w in item.warnings)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text(
+                      '• $w',
+                      style: TextStyle(color: YinheTheme.text, fontSize: 13),
+                    ),
+                  ),
+                const SizedBox(height: 4),
+                Text(
+                  L10n.isZh ? '这些 opcode 当前会被忽略，音色可能与原库不一致。' : 'These opcodes are currently ignored; the sound may differ.',
+                  style: TextStyle(color: YinheTheme.textMuted, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(L10n.isZh ? '知道了' : 'OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _reorderFonts(int oldIndex, int newIndex) {
@@ -516,9 +577,7 @@ class _SettingsViewState extends State<SettingsView> {
 
   /// 音色库生效通道选择：ALL = 所有通道（GM 库），CH1..CH16 = 指定通道。
   Widget _channelButton(int channel, ValueChanged<int> onChanged) {
-    final label = channel < 0
-        ? (L10n.isZh ? '全部' : 'ALL')
-        : 'CH${channel + 1}';
+    final label = channel < 0 ? (L10n.isZh ? '全部' : 'ALL') : 'CH${channel + 1}';
     return PopupMenuButton<int>(
       tooltip: L10n.isZh ? '生效通道' : 'Target channel',
       initialValue: channel,
@@ -554,7 +613,8 @@ class _SettingsViewState extends State<SettingsView> {
     );
   }
 
-  Widget _soundFontPage() {    return Column(
+  Widget _soundFontPage() {
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Row(
@@ -617,6 +677,15 @@ class _SettingsViewState extends State<SettingsView> {
                         ),
                       ),
                     ),
+                    if (e.warnings.isNotEmpty)
+                      IconButton(
+                        tooltip: L10n.isZh ? '兼容性提示' : 'Compatibility',
+                        icon: const Icon(Icons.warning_amber_rounded),
+                        iconSize: 18,
+                        color: YinheTheme.warning,
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => _showWarnings(e),
+                      ),
                     _channelButton(e.channel, (v) => _setFontChannel(i, v)),
                     Transform.scale(
                       scale: 0.8,
