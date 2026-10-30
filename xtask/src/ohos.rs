@@ -54,8 +54,10 @@ fn build(release: bool, install: bool) -> Result<(), ExitCode> {
     let ohos_dir = root.join("flutter/ohos");
     let libs = ohos_dir.join("entry/libs").join(ABI);
 
-    let sdk = find_ohos_sdk().ok_or_else(|| {
-        eprintln!("找不到 OpenHarmony SDK：设置 OHOS_BASE_SDK_HOME（下含 <version>/native）");
+    let sdk = find_sdk().ok_or_else(|| {
+        eprintln!(
+            "找不到鸿蒙 SDK：装 DevEco Studio（自带 SDK），或设置 OHOS_BASE_SDK_HOME（下含 <version>/native）"
+        );
         ExitCode::FAILURE
     })?;
     let flutter_oh = env::var_os("FLUTTER_OH_HOME")
@@ -66,10 +68,7 @@ fn build(release: bool, install: bool) -> Result<(), ExitCode> {
             eprintln!("找不到 Flutter-OH：设置 FLUTTER_OH_HOME（含 bin/flutter）");
             ExitCode::FAILURE
         })?;
-    let native = find_native_dir(&sdk).ok_or_else(|| {
-        eprintln!("SDK 下没有 native 目录: {}", sdk.display());
-        ExitCode::FAILURE
-    })?;
+    let native = sdk.native.clone();
 
     // 1) Rust 引擎（release 与 Dart 的 buildMode 无关：一律用 release，性能优先）。
     let clang = native.join("llvm/bin/aarch64-unknown-linux-ohos-clang");
@@ -165,7 +164,7 @@ fn build(release: bool, install: bool) -> Result<(), ExitCode> {
             "FLUTTER_GIT_URL",
             "https://atomgit.com/openharmony-tpc/flutter_flutter.git",
         )
-        .env("OHOS_SDK_HOME", &sdk)
+        .env("OHOS_SDK_HOME", &sdk.root)
         // flutter pub get 会检查 HarmonyOS SDK 布局；没有官方 SDK 时用本机 shim。
         .env(
             "HOS_SDK_HOME",
@@ -182,10 +181,12 @@ fn build(release: bool, install: bool) -> Result<(), ExitCode> {
     // 4) hvigor：需要 flutter-hvigor-plugin（由 flutter_tools 提供）。
     ensure_hvigor_plugin(&ohos_dir, &flutter_oh)?;
 
-    let hvigorw = which("hvigorw").ok_or_else(|| {
-        eprintln!("PATH 里没有 hvigorw（DevEco 或 ~/harmony/bin/hvigorw 包装脚本）");
-        ExitCode::FAILURE
-    })?;
+    let hvigorw = deveco_hvigorw()
+        .or_else(|| which("hvigorw"))
+        .ok_or_else(|| {
+            eprintln!("找不到 hvigorw：装 DevEco Studio，或把 hvigorw 加进 PATH");
+            ExitCode::FAILURE
+        })?;
 
     let path = env::var_os("PATH").unwrap_or_default();
     let mut new_path = Vec::new();
@@ -219,8 +220,9 @@ fn build(release: bool, install: bool) -> Result<(), ExitCode> {
     ])
     .current_dir(&ohos_dir)
     .env("PATH", joined)
-    .env("OHOS_BASE_SDK_HOME", &sdk)
-    .env("OHOS_SDK_HOME", &sdk)
+    .env("DEVECO_SDK_HOME", &sdk.root)
+    .env("OHOS_BASE_SDK_HOME", &sdk.root)
+    .env("OHOS_SDK_HOME", &sdk.root)
     .env("PUB_HOSTED_URL", "https://pub.flutter-io.cn")
     .env("FLUTTER_STORAGE_BASE_URL", "https://storage.flutter-io.cn");
     cmd::status(&mut h)?;
@@ -234,7 +236,7 @@ fn build(release: bool, install: bool) -> Result<(), ExitCode> {
         .unwrap_or_else(|| out_dir.join("entry-default-unsigned.hap"));
     println!("\n产物: {}", hap.display());
     if install {
-        install_hap(&sdk, &hap)?;
+        install_hap(&sdk.root, &hap)?;
     }
     Ok(())
 }
@@ -361,14 +363,38 @@ fn find_native_dir(sdk: &Path) -> Option<PathBuf> {
     versions.pop().map(|p| p.join("native"))
 }
 
-fn find_ohos_sdk() -> Option<PathBuf> {
+/// 已解析的鸿蒙 SDK：根目录（给 hvigor）与 native 目录（给 Rust 交叉编译）。
+struct Sdk {
+    root: PathBuf,
+    native: PathBuf,
+}
+
+/// 优先用 DevEco 自带的 HarmonyOS SDK（`Contents/sdk/default/openharmony`），
+/// 否则退回 OHOS_BASE_SDK_HOME / `~/harmony/sdk26`（OpenHarmony 布局 `<ver>/native`）。
+fn find_sdk() -> Option<Sdk> {
+    let deveco = PathBuf::from("/Applications/DevEco-Studio.app/Contents/sdk");
+    let deveco_native = deveco.join("default/openharmony/native");
+    if deveco_native.is_dir() {
+        return Some(Sdk {
+            root: deveco,
+            native: deveco_native,
+        });
+    }
     if let Some(p) = env::var_os("OHOS_BASE_SDK_HOME") {
-        let path = PathBuf::from(p);
-        if find_native_dir(&path).is_some() {
-            return Some(path);
+        let root = PathBuf::from(p);
+        if let Some(native) = find_native_dir(&root) {
+            return Some(Sdk { root, native });
         }
     }
-    dirs_candidate("harmony/sdk26").filter(|p| find_native_dir(p).is_some())
+    let root = dirs_candidate("harmony/sdk26")?;
+    let native = find_native_dir(&root)?;
+    Some(Sdk { root, native })
+}
+
+/// DevEco 自带的 hvigorw（版本与它的 SDK 匹配，且带自己的 Node）。
+fn deveco_hvigorw() -> Option<PathBuf> {
+    let p = PathBuf::from("/Applications/DevEco-Studio.app/Contents/tools/hvigor/bin/hvigorw");
+    p.is_file().then_some(p)
 }
 
 fn workspace_root() -> PathBuf {
