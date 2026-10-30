@@ -2,10 +2,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crossbeam_channel::{Sender, bounded, unbounded};
 use xsynth_core::soundfont::SoundfontBase;
 
+use crate::audio_out::{self, BufferSize, Device, OutputFormat, Stream, StreamErrorKind};
 use yinhe_core::YinModel;
 use yinhe_mixer::{
     InsertProcessor, InstrumentProcessor, MasterParams, MeterReading, MixerParams, SendParams,
@@ -617,7 +617,7 @@ pub struct CpalAudioHandle {
     /// 共享给 cpal 错误回调（采样率变化时恢复流）。用 Arc<Mutex<Option>> 而非裸
     /// Stream：错误回调在流创建之前就注册，只能通过共享句柄访问。回调只持 Weak，
     /// handle drop 时 Arc 归零 → Stream 正常释放，不形成循环引用。
-    pub(crate) _stream: Arc<Mutex<Option<cpal::Stream>>>,
+    pub(crate) _stream: Arc<Mutex<Option<Stream>>>,
     /// 设置为 true 时通知 renderer 线程退出。
     pub(crate) shutdown: Arc<AtomicBool>,
     /// renderer 线程的 JoinHandle。
@@ -1140,24 +1140,12 @@ enum DeviceDirection {
     Output,
 }
 
-/// 列出系统所有可用设备的描述名（cpal `Device::description()`）。
+/// 列出系统所有可用设备的描述名。
 ///
 /// 用于设置面板、"音频设备切换"对话框与录音输入选择。任何错误都被吞掉
 /// 返回空 Vec —— 列设备是 UI 辅助，失败不应阻塞音频引擎本身。
 fn list_devices(direction: DeviceDirection) -> Vec<String> {
-    let host = cpal::default_host();
-    // input_devices/output_devices 返回同一类型（DevicesFiltered），仅过滤器不同。
-    let devices = match direction {
-        DeviceDirection::Input => host.input_devices(),
-        DeviceDirection::Output => host.output_devices(),
-    };
-    devices
-        .map(|devices| {
-            devices
-                .filter_map(|d| d.description().ok().map(|desc| desc.to_string()))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default()
+    audio_out::list_devices(matches!(direction, DeviceDirection::Output))
 }
 
 /// 列出系统所有可用输出设备的描述名。
@@ -1174,27 +1162,21 @@ pub fn list_input_devices() -> Vec<String> {
 /// 失败时回退到 `(48000, [44100, 48000, 96000])`，与 `yinhe-egui` 原实现一致。
 /// 已下沉自 `yinhe-egui/src/audio_settings.rs`，避免 egui 层直接依赖 cpal 采样率枚举。
 pub fn discover_sample_rates() -> (u32, Vec<u32>) {
-    let host = cpal::default_host();
-    let Some(device) = host.default_output_device() else {
+    let Some(device) = audio_out::default_output_device() else {
         return (48000, vec![44100, 48000, 96000]);
     };
 
     let default_rate = device
-        .default_output_config()
-        .ok()
-        .map(|cfg| cfg.sample_rate())
+        .default_format()
+        .map(|fmt| fmt.sample_rate)
         .unwrap_or(48000);
 
     // 只列标准采样率与设备支持范围的交集，而非按 1000Hz 步进枚举
     // （会生成 45100、46100 等设备实际不支持的值，用户选了会建流失败）。
     const STANDARD_RATES: [u32; 8] = [22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000];
     let supported_rates: Vec<u32> = device
-        .supported_output_configs()
-        .ok()
-        .map(|configs| {
-            let ranges: Vec<(u32, u32)> = configs
-                .map(|cfg| (cfg.min_sample_rate(), cfg.max_sample_rate()))
-                .collect();
+        .f32_rate_ranges()
+        .map(|ranges| {
             STANDARD_RATES
                 .iter()
                 .copied()
@@ -1212,16 +1194,8 @@ pub fn discover_sample_rates() -> (u32, Vec<u32>) {
 
 /// 协商采样率：请求值不在设备任何 f32 输出配置的支持范围内时，
 /// 回退到设备默认采样率。枚举失败时不做判断，交给 cpal 建流时报错。
-fn negotiate_sample_rate(device: &cpal::Device, requested: u32, device_default: u32) -> u32 {
-    let ranges: Option<Vec<(u32, u32)>> = match device.supported_output_configs() {
-        Ok(configs) => Some(
-            configs
-                .filter(|c| c.sample_format() == cpal::SampleFormat::F32)
-                .map(|c| (c.min_sample_rate(), c.max_sample_rate()))
-                .collect(),
-        ),
-        Err(_) => None,
-    };
+fn negotiate_sample_rate(device: &Device, requested: u32, device_default: u32) -> u32 {
+    let ranges = device.f32_rate_ranges();
     negotiate_sample_rate_in(requested, device_default, ranges.as_deref())
 }
 
@@ -1251,26 +1225,18 @@ fn negotiate_sample_rate_in(
 
 /// 协商缓冲区：Fixed(n) 超出设备支持范围时钳制到 [min, max]。
 /// 蓝牙设备常见 max 远小于内置扬声器（如 1024），不钳制会直接建流失败。
-fn negotiate_buffer_size(
-    requested: cpal::BufferSize,
-    supported: &cpal::SupportedBufferSize,
-) -> cpal::BufferSize {
-    let n = match requested {
-        cpal::BufferSize::Fixed(n) => n,
-        default => return default,
+fn negotiate_buffer_size(requested: BufferSize, supported: Option<(u32, u32)>) -> BufferSize {
+    let BufferSize::Fixed(n) = requested else {
+        return requested;
     };
-    match supported {
-        cpal::SupportedBufferSize::Range { min, max } => {
-            let clamped = n.clamp(*min, *max);
-            if clamped != n {
-                tracing::warn!(
-                    "Buffer size {n} out of device range {min}..={max}, clamped to {clamped}"
-                );
-            }
-            cpal::BufferSize::Fixed(clamped)
-        }
-        cpal::SupportedBufferSize::Unknown => requested,
+    let Some((min, max)) = supported else {
+        return requested;
+    };
+    let clamped = n.clamp(min, max);
+    if clamped != n {
+        tracing::warn!("Buffer size {n} out of device range {min}..={max}, clamped to {clamped}");
     }
+    BufferSize::Fixed(clamped)
 }
 
 /// 合成后端可用性收敛：YinheCpu 尚未实现时回退。
@@ -1284,22 +1250,8 @@ fn resolve_synth_engine(requested: SynthEngine) -> SynthEngine {
 }
 
 /// 按名字查找输出设备；`None` = 系统默认输出设备。
-fn select_output_device(device_name: Option<&str>) -> Result<cpal::Device, String> {
-    let host = cpal::default_host();
-    match device_name {
-        Some(name) => host
-            .output_devices()
-            .map_err(|e| format!("Failed to enumerate output devices: {e}"))?
-            .find(|d| {
-                d.description()
-                    .ok()
-                    .is_some_and(|desc| desc.to_string() == name)
-            })
-            .ok_or_else(|| format!("Output device not found: {name}")),
-        None => host
-            .default_output_device()
-            .ok_or_else(|| "No output device".to_string()),
-    }
+fn select_output_device(device_name: Option<&str>) -> Result<Device, String> {
+    audio_out::find_output_device(device_name)
 }
 
 /// `init_engine` 的产物：引擎（内含预览引擎）、电平表读数端与插件退回通道。
@@ -1485,12 +1437,13 @@ fn init_renderer(
 ///（SRC），恢复流即可，不该弹"重新选择设备"。真正不可恢复的错误（设备
 /// 移除、驱动崩溃等）才置位 stream_error。
 fn build_output_stream(
-    device: &cpal::Device,
-    config: cpal::StreamConfig,
+    device: &Device,
+    format: OutputFormat,
+    buffer_size: BufferSize,
     callback: StreamCallback,
-    stream_holder_weak: std::sync::Weak<Mutex<Option<cpal::Stream>>>,
+    stream_holder_weak: std::sync::Weak<Mutex<Option<Stream>>>,
     stream_error: Arc<AtomicBool>,
-) -> Result<cpal::Stream, String> {
+) -> Result<Stream, String> {
     let StreamCallback {
         mut ring,
         reset_generation,
@@ -1507,83 +1460,82 @@ fn build_output_stream(
     let mut consumer_sample_position = 0u64;
     let mut acknowledged_generation = 0u64;
 
-    device
-        .build_output_stream(
-            config,
-            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Audio, || {
-                    let generation = reset_generation.load(Ordering::Acquire);
-                    if generation != acknowledged_generation {
-                        // 丢弃边界前的旧音频，保留边界后渲染器已推入的新音频
-                        // （整体 clear 会把新播放位置的开头一起丢掉）。
-                        ring.discard_before(clear_ring_write.load(Ordering::Acquire));
-                        consumer_sample_position = clear_base_sample.load(Ordering::Acquire);
-                        acknowledged_generation = generation;
-                    }
-
-                    // ring 有音频就读，没有就填静音（含未加载模型时的纯预览场景）。
-                    let popped = ring.pop_into(data);
-                    if popped < data.len() {
-                        data[popped..].fill(0.0);
-                        // 欠载计数：仅播放中（未播放时 ring 空是正常静音）。
-                        if playing.load(Ordering::Relaxed) {
-                            underrun_samples
-                                .fetch_add((data.len() - popped) as u64, Ordering::Relaxed);
-                        }
-                    }
-                    consumer_sample_position =
-                        consumer_sample_position.saturating_add((popped / STEREO_CHANNELS) as u64);
-
-                    // 监听混入（try_lock：失败跳过，绝不阻塞实时回调）。
-                    if let Ok(mut mon) = monitor.try_lock()
-                        && !mon.is_empty()
-                    {
-                        let n = mon.len().min(data.len());
-                        for (dst, src) in data.iter_mut().zip(mon.drain(..n)) {
-                            *dst += src;
-                        }
-                    }
-
-                    sample_position.store(consumer_sample_position, Ordering::Relaxed);
-                    playing.store(renderer_playing.load(Ordering::Relaxed), Ordering::Relaxed);
-                    duration_samples
-                        .store(renderer_duration.load(Ordering::Relaxed), Ordering::Relaxed);
-                })
-            },
-            move |err| {
-                let is_rate_change = err.kind() == cpal::ErrorKind::StreamInvalidated
-                    && err
-                        .message()
-                        .is_some_and(|m| m.contains("sample rate changed"));
-                if is_rate_change {
-                    // cpal 已把流暂停；设备还活着，CoreAudio 会做 SRC，恢复即可。
-                    tracing::warn!(
-                        "Audio stream paused by device sample rate change, resuming: {err}"
-                    );
-                    if let Some(holder) = stream_holder_weak.upgrade() {
-                        let guard = holder.lock().unwrap_or_else(|e| e.into_inner());
-                        if let Some(stream) = guard.as_ref()
-                            && let Err(e) = stream.play()
-                        {
-                            tracing::error!("Failed to resume audio stream: {e}");
-                            stream_error.store(true, Ordering::Release);
-                        }
-                    }
-                } else {
-                    tracing::error!("Audio stream error: {err}");
-                    stream_error.store(true, Ordering::Release);
+    device.build_output(
+        format,
+        buffer_size,
+        move |data: &mut [f32]| {
+            yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Audio, || {
+                let generation = reset_generation.load(Ordering::Acquire);
+                if generation != acknowledged_generation {
+                    // 丢弃边界前的旧音频，保留边界后渲染器已推入的新音频
+                    // （整体 clear 会把新播放位置的开头一起丢掉）。
+                    ring.discard_before(clear_ring_write.load(Ordering::Acquire));
+                    consumer_sample_position = clear_base_sample.load(Ordering::Acquire);
+                    acknowledged_generation = generation;
                 }
-            },
-            None,
-        )
-        .map_err(|e| format!("Failed to build stream: {e}"))
+
+                // ring 有音频就读，没有就填静音（含未加载模型时的纯预览场景）。
+                let popped = ring.pop_into(data);
+                if popped < data.len() {
+                    data[popped..].fill(0.0);
+                    // 欠载计数：仅播放中（未播放时 ring 空是正常静音）。
+                    if playing.load(Ordering::Relaxed) {
+                        underrun_samples.fetch_add((data.len() - popped) as u64, Ordering::Relaxed);
+                    }
+                }
+                consumer_sample_position =
+                    consumer_sample_position.saturating_add((popped / STEREO_CHANNELS) as u64);
+
+                // 监听混入（try_lock：失败跳过，绝不阻塞实时回调）。
+                if let Ok(mut mon) = monitor.try_lock()
+                    && !mon.is_empty()
+                {
+                    let n = mon.len().min(data.len());
+                    for (dst, src) in data.iter_mut().zip(mon.drain(..n)) {
+                        *dst += src;
+                    }
+                }
+
+                sample_position.store(consumer_sample_position, Ordering::Relaxed);
+                playing.store(renderer_playing.load(Ordering::Relaxed), Ordering::Relaxed);
+                duration_samples
+                    .store(renderer_duration.load(Ordering::Relaxed), Ordering::Relaxed);
+            })
+        },
+        move |err| {
+            let is_rate_change = err.kind == StreamErrorKind::StreamInvalidated
+                && err
+                    .message
+                    .as_deref()
+                    .is_some_and(|m| m.contains("sample rate changed"));
+            if is_rate_change {
+                // cpal 已把流暂停；设备还活着，CoreAudio 会做 SRC，恢复即可。
+                tracing::warn!("Audio stream paused by device sample rate change, resuming: {err}");
+                if let Some(holder) = stream_holder_weak.upgrade() {
+                    let guard = holder.lock().unwrap_or_else(|e| e.into_inner());
+                    if let Some(stream) = guard.as_ref()
+                        && let Err(e) = stream.play()
+                    {
+                        tracing::error!("Failed to resume audio stream: {e}");
+                        stream_error.store(true, Ordering::Release);
+                    }
+                }
+            } else {
+                tracing::error!(
+                    "Audio stream error: {}",
+                    err.message.as_deref().unwrap_or("(no message)")
+                );
+                stream_error.store(true, Ordering::Release);
+            }
+        },
+    )
 }
 
 /// 把建好的流放入共享句柄并启动（store→play 顺序：若启动前就发生采样率变化，
 /// 错误回调也能从句柄拿到流恢复）。
 fn start_output_stream(
-    stream_holder: &Arc<Mutex<Option<cpal::Stream>>>,
-    stream: cpal::Stream,
+    stream_holder: &Arc<Mutex<Option<Stream>>>,
+    stream: Stream,
 ) -> Result<(), String> {
     *stream_holder.lock().unwrap_or_else(|e| e.into_inner()) = Some(stream);
     match stream_holder
@@ -1609,7 +1561,7 @@ fn start_output_stream(
 pub fn spawn_cpal_audio(
     sample_rate: u32,
     layout: ChannelLayout,
-    buffer_size: cpal::BufferSize,
+    buffer_size: BufferSize,
     device_name: Option<&str>,
     synth_engine: SynthEngine,
     interpolation: Interpolation,
@@ -1625,7 +1577,7 @@ pub fn spawn_cpal_audio(
     let preview_stop_flag = Arc::new(AtomicBool::new(false));
 
     let device = select_output_device(device_name)?;
-    let supported = device.default_output_config().map_err(|e| e.to_string())?;
+    let supported = device.default_format()?;
     // 强制立体声：xsynth 是立体声合成器，ring buffer 和位置计算也硬编码 2 声道。
     // 不取设备默认声道数，避免多声道设备（HDMI/聚合设备 6/8 声道）导致声道映射错乱。
     let channels = STEREO_CHANNELS;
@@ -1634,21 +1586,20 @@ pub fn spawn_cpal_audio(
     // 内置扬声器窄很多（实测小米开放式耳机缓冲区仅 14..=1024 帧）。
     // 直接把用户设置塞给 build_output_stream 会失败，而失败只进日志、
     // UI 无感知，表现为"播放键失灵、时间线冻结"。这里先钳制/回退。
-    let sample_rate = negotiate_sample_rate(&device, sample_rate, supported.sample_rate());
-    let buffer_size = negotiate_buffer_size(buffer_size, supported.buffer_size());
+    let sample_rate = negotiate_sample_rate(&device, sample_rate, supported.sample_rate);
+    let buffer_size = negotiate_buffer_size(buffer_size, device.buffer_range());
 
-    let config = cpal::StreamConfig {
+    let format = OutputFormat {
         channels: channels as u16,
         sample_rate,
-        buffer_size,
     };
     // cpal 回调每次请求的帧数（约等于流缓冲）：预览时 ring 目标必须 ≥ 它，
     // 否则回调只能 pop 出部分帧、其余填静音 → 每个回调周期后半段静音 → 声音
     // "一闪一闪"地卡顿。Default（设备默认缓冲）时帧数未知，保守按 1024 帧估算
     // （常见设备与蓝牙 HFP 上限均 ≤ 1024）。
-    let callback_frames = match config.buffer_size {
-        cpal::BufferSize::Fixed(n) => n as usize,
-        cpal::BufferSize::Default => 1024,
+    let callback_frames = match buffer_size {
+        BufferSize::Fixed(n) => n as usize,
+        BufferSize::Default => 1024,
     };
 
     let EngineInit {
@@ -1697,10 +1648,11 @@ pub fn spawn_cpal_audio(
 
     // 流在回调注册之后才创建，用 Arc<Mutex<Option>> 共享给错误回调；
     // 回调只持 Weak，handle 释放时不会形成循环引用。
-    let stream_holder: Arc<Mutex<Option<cpal::Stream>>> = Arc::new(Mutex::new(None));
+    let stream_holder: Arc<Mutex<Option<Stream>>> = Arc::new(Mutex::new(None));
     let stream = match build_output_stream(
         &device,
-        config,
+        format,
+        buffer_size,
         stream_callback,
         Arc::downgrade(&stream_holder),
         Arc::clone(&stream_error),
@@ -2021,34 +1973,31 @@ mod tests {
 
     #[test]
     fn negotiate_buffer_size_clamps_fixed_into_device_range() {
-        let range = cpal::SupportedBufferSize::Range { min: 64, max: 1024 };
+        let range = Some((64, 1024));
         assert_eq!(
-            negotiate_buffer_size(cpal::BufferSize::Fixed(4096), &range),
-            cpal::BufferSize::Fixed(1024)
+            negotiate_buffer_size(BufferSize::Fixed(4096), range),
+            BufferSize::Fixed(1024)
         );
         assert_eq!(
-            negotiate_buffer_size(cpal::BufferSize::Fixed(16), &range),
-            cpal::BufferSize::Fixed(64)
+            negotiate_buffer_size(BufferSize::Fixed(16), range),
+            BufferSize::Fixed(64)
         );
         assert_eq!(
-            negotiate_buffer_size(cpal::BufferSize::Fixed(512), &range),
-            cpal::BufferSize::Fixed(512)
+            negotiate_buffer_size(BufferSize::Fixed(512), range),
+            BufferSize::Fixed(512)
         );
     }
 
     #[test]
     fn negotiate_buffer_size_keeps_default_and_unknown_support() {
-        let range = cpal::SupportedBufferSize::Range { min: 64, max: 1024 };
+        let range = Some((64, 1024));
         assert_eq!(
-            negotiate_buffer_size(cpal::BufferSize::Default, &range),
-            cpal::BufferSize::Default
+            negotiate_buffer_size(BufferSize::Default, range),
+            BufferSize::Default
         );
         assert_eq!(
-            negotiate_buffer_size(
-                cpal::BufferSize::Fixed(4096),
-                &cpal::SupportedBufferSize::Unknown
-            ),
-            cpal::BufferSize::Fixed(4096)
+            negotiate_buffer_size(BufferSize::Fixed(4096), None),
+            BufferSize::Fixed(4096)
         );
     }
 

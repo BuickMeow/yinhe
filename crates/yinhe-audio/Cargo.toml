@@ -9,7 +9,6 @@ xsynth-soundfonts = "0.4"
 symphonia = "0.5"
 rubato = "0.15"
 
-cpal = { workspace = true }
 hound = "3.5"
 crossbeam-channel = "0.5"
 rayon = { workspace = true }
@@ -28,3 +27,7 @@ pollster = { workspace = true }
 tempfile = { workspace = true }
 yinhe-midi = { path = "../yinhe-midi" }
 yinhe-editor-core = { path = "../yinhe-editor-core" }
+
+[target.'cfg(not(target_env = "ohos"))'.dependencies]
+# 鸿蒙没有 ALSA：OHOS 走 OHAudio 后端（见 src/audio_out/ohos.rs）。
+cpal = { workspace = true }

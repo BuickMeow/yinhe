@@ -212,9 +212,9 @@ impl App {
         // 供后续 notify_notes_changed / notify_audio_model_changed 做 flip 检测。
         let layout_snapshot = layout.clone();
         let buffer_size = if self.audio_settings.buffer_size == 0 {
-            cpal::BufferSize::Default
+            yinhe_audio::BufferSize::Default
         } else {
-            cpal::BufferSize::Fixed(self.audio_settings.buffer_size)
+            yinhe_audio::BufferSize::Fixed(self.audio_settings.buffer_size)
         };
         let device_name = self.audio_settings.output_device_name.clone();
         let synth_engine = self.audio_settings.synth_engine;

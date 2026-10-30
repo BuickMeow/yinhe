@@ -80,7 +80,7 @@ fn spawn(sample_rate: u32, layout: ChannelLayout) -> Result<yinhe_audio::CpalAud
     spawn_cpal_audio(
         sample_rate,
         layout,
-        cpal::BufferSize::Default,
+        yinhe_audio::BufferSize::Default,
         None,
         yinhe_audio::SynthEngine::XSynthCpu,
         Interpolation::default(),

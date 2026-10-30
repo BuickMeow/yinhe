@@ -85,7 +85,7 @@ fn main() {
     let handle = spawn_cpal_audio(
         48_000,
         layout,
-        cpal::BufferSize::Default,
+        yinhe_audio::BufferSize::Default,
         None,
         engine,
         Interpolation::default(),

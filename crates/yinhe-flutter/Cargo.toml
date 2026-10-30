@@ -15,7 +15,6 @@ log = "0.4"
 serde_json = { workspace = true }
 jni = "0.22"
 ndk-context = "0.1"
-cpal = { workspace = true }
 yinhe-types = { path = "../yinhe-types" }
 yinhe-core = { path = "../yinhe-core" }
 yinhe-editor-core = { path = "../yinhe-editor-core" }

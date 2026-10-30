@@ -1,4 +1,5 @@
 mod audio_model;
+mod audio_out;
 mod audio_renderer;
 mod audio_ring;
 pub mod audio_source;
@@ -25,6 +26,7 @@ pub mod spawn;
 pub use yinhe_synth as synth;
 pub use yinhe_synth::DEFAULT_MAX_VOICES;
 
+pub use audio_out::BufferSize;
 pub use audio_renderer::log_playing_midi;
 pub use audio_source::{
     AudioInfo, DecodedAudio, WavePeaks, decode_audio, encode_wav_bytes, probe_audio_info,

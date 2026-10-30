@@ -397,9 +397,9 @@ fn spawn_audio(layout: ChannelLayout, cursor_tick: f64, skip: Vec<bool>) -> Opti
     // 缓冲默认 2048 帧：AAudio 动态调优在部分机型上收敛慢，固定值更稳
     // （cpal Fixed(n) 实际 capacity 为 2n；蓝牙 A2DP 路径需要更大缓冲）。
     let buffer = if cfg.buffer_size == 0 {
-        cpal::BufferSize::Default
+        yinhe_audio::BufferSize::Default
     } else {
-        cpal::BufferSize::Fixed(cfg.buffer_size)
+        yinhe_audio::BufferSize::Fixed(cfg.buffer_size)
     };
     match yinhe_audio::spawn_cpal_audio(
         48_000,

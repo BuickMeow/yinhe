@@ -31,7 +31,7 @@ pub fn default_plugin_dirs() -> Vec<PathBuf> {
             }
             v
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
         {
             let mut v = vec![PathBuf::from("/usr/lib/clap")];
             if let Some(home) = std::env::var_os("HOME") {
