@@ -297,15 +297,21 @@ fn create_gpu() -> Option<Gpu> {
     } else {
         wgpu::Limits::default()
     };
+    // 设备只能申请适配器确实支持的上限：GLES 3.0（鸿蒙模拟器）的 storage buffer 是 0，
+    // 硬要 16 会直接创建设备失败。拿不到 16 时 GPU cull 建不起来，渲染自动退回
+    // `draw_legacy` 的 CPU 路径。
+    let adapter_limits = adapter.limits();
+    let required_limits = wgpu::Limits {
+        max_texture_dimension_2d: 8192.min(adapter_limits.max_texture_dimension_2d),
+        max_storage_buffers_per_shader_stage: 16
+            .min(adapter_limits.max_storage_buffers_per_shader_stage),
+        ..base_limits
+    };
     let (device, queue) =
         match pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("yinhe-flutter"),
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits {
-                max_texture_dimension_2d: 8192,
-                max_storage_buffers_per_shader_stage: 16,
-                ..base_limits
-            },
+            required_limits,
             ..Default::default()
         })) {
             Ok(dq) => dq,

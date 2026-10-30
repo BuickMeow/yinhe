@@ -263,8 +263,15 @@ fn ensure_hvigor_plugin(ohos_dir: &Path, flutter_oh: &Path) -> Result<(), ExitCo
     cmd::status(&mut npm)
 }
 
-/// DevEco Studio 自带的 hdc（`~/Library/Huawei/Sdk/<ver>/openharmony/toolchains/hdc`）。
+/// DevEco Studio 自带的 hdc（安装包内 `Contents/sdk/default/openharmony/toolchains/hdc`
+/// 或 `~/Library/Huawei/Sdk/<ver>/openharmony/toolchains/hdc`）。
 fn find_deveco_hdc() -> Option<PathBuf> {
+    let bundled = PathBuf::from(
+        "/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/toolchains/hdc",
+    );
+    if bundled.is_file() {
+        return Some(bundled);
+    }
     let base = dirs_candidate("Library/Huawei/Sdk")?;
     let mut versions: Vec<PathBuf> = std::fs::read_dir(base)
         .ok()?
