@@ -294,7 +294,16 @@ pub fn select_key_infos_multi(
         return Some(infos);
     }
     let (rb, rp) = if bank == 128 { (128, 0) } else { (0, preset) };
-    select_in_program(entries, rb, rp, key, velocity)
+    if let Some(infos) = select_in_program(entries, rb, rp, key, velocity) {
+        return Some(infos);
+    }
+    // 整个音色库没有鼓 bank（典型：SFZ 单乐器库只有一个 (0, 0) 条目）：
+    // 通道 10 被置成 bank 128 后不该直接静音，回退到普通 bank 的同 program。
+    // GM SF2 有 bank 128，上面的查询已经命中，不会走到这里。
+    if bank == 128 && !entries.iter().any(|e| e.bank == 128) {
+        return select_in_program(entries, 0, preset, key, velocity);
+    }
+    None
 }
 
 /// 二分定位 `(bank, preset)` 条目区间，返回区间内首个对该 `(key, vel)` 有 region
@@ -758,5 +767,40 @@ mod tests {
         ];
         merge_stereo_pairs(&mut map);
         assert_eq!(map[60].len(), 2);
+    }
+
+    /// SFZ 单乐器库没有 bank 128：鼓通道（bank 128）应回退到普通 bank，
+    /// 而不是静音。GM 库有真鼓 bank 时不能被回退污染。
+    #[test]
+    fn percussion_falls_back_to_bank0_when_soundfont_has_no_drum_bank() {
+        let mut sfz_map = vec![Vec::new(); 128];
+        sfz_map[60] = vec![KeyInfo {
+            lovel: 0,
+            hivel: 127,
+            volume: 1.0,
+            sample_data: Arc::from(vec![0.5f32]),
+            ..Default::default()
+        }];
+        let sfz_only = vec![KeyMapEntry::expanded(0, 0, sfz_map.clone())];
+        assert!(
+            select_key_infos_multi(&sfz_only, 128, 0, 60, 100).is_some(),
+            "SFZ 鼓通道应回退到 bank 0"
+        );
+
+        let mut drum_map = vec![Vec::new(); 128];
+        drum_map[60] = vec![KeyInfo {
+            lovel: 0,
+            hivel: 127,
+            volume: 0.5,
+            sample_data: Arc::from(vec![0.25f32]),
+            ..Default::default()
+        }];
+        let with_drum = vec![
+            KeyMapEntry::expanded(0, 0, sfz_map),
+            KeyMapEntry::expanded(128, 0, drum_map),
+        ];
+        let infos =
+            select_key_infos_multi(&with_drum, 128, 0, 60, 100).expect("GM 库的鼓 bank 应命中");
+        assert_eq!(infos[0].volume, 0.5, "有真鼓 bank 时不应回退到 bank 0");
     }
 }
