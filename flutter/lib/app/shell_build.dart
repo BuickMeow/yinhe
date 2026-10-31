@@ -164,6 +164,11 @@ mixin _ShellBuild on _ShellBase {
     // 否则键盘弹出时 padding.bottom 变成 0，会让画布逐帧改尺寸、重配交换链。
     final barsVisible = SystemBarsMode.visible(context);
     final viewPadding = MediaQuery.viewPaddingOf(context);
+    // iOS 的 home indicator 是浮在内容上的系统指示条；若为它让出底部
+    // padding，会在画布下方留下一条空白。去掉这段留白，让画布铺到屏幕
+    // 底部，指示条直接覆盖在上面（Android 导航栏仍需避让）。
+    final ios = Theme.of(context).platform == TargetPlatform.iOS;
+    final bottomInset = barsVisible && !ios ? viewPadding.bottom : 0.0;
     return PopScope(
       // 拦截系统返回：设置页 → 关闭；PR → AR；AR 才真正退出（抽屉自行消费返回）。
       canPop: false,
@@ -220,7 +225,7 @@ mixin _ShellBuild on _ShellBase {
               child: Padding(
                 padding: EdgeInsets.only(
                   top: barsVisible ? viewPadding.top : 0,
-                  bottom: barsVisible ? viewPadding.bottom : 0,
+                  bottom: bottomInset,
                 ),
                 child: Stack(
                   children: [
