@@ -1186,6 +1186,7 @@ pub fn tap_note(x: f32, y: f32) -> i32 {
     if hit.is_none() && write.is_none() {
         return 0;
     }
+    let mut preview: Option<yinhe_audio::PreviewNoteParams> = None;
     let edited = {
         let Some(doc) = s.document.as_mut() else {
             return 0;
@@ -1206,9 +1207,22 @@ pub fn tap_note(x: f32, y: f32) -> i32 {
                 end_tick: start.saturating_add(interval),
                 velocity: DEFAULT_VELOCITY,
             };
-            doc.add_note(track as u16, note).map(|action| {
+            let action = doc.add_note(track as u16, note).map(|action| {
                 doc.push_undo(action, "undo.add_note", before);
-            })
+            });
+            // 点按落音也要试听，和拖动音符改音高一致。
+            if action.is_some()
+                && let Some(t) = doc.data.model.tracks.get(track)
+            {
+                preview = Some(yinhe_audio::PreviewNoteParams {
+                    channel: t.global_channel(),
+                    key,
+                    velocity: DEFAULT_VELOCITY,
+                    target_tick: start,
+                    duration_ticks: interval,
+                });
+            }
+            action
         }
     };
     if edited.is_none() {
@@ -1216,6 +1230,9 @@ pub fn tap_note(x: f32, y: f32) -> i32 {
     }
     let model = after_edit(&mut s);
     drop(s);
+    if let Some(note) = preview {
+        crate::audio::preview_notes(vec![note], true);
+    }
     if let Some(model) = model {
         crate::audio::update_notes(model);
     }
