@@ -172,6 +172,11 @@ impl AudioRenderer {
                 // 按音色库集合分组：相同 paths 的通道只加载一次（worker 一次往返 +
                 // key map Arc 跨通道共享），避免 20 个通道重复加载同一音色库。
                 let groups = super::group_sf_configs(&configs);
+                play_log(&format!(
+                    "[sf] SetSoundFonts gen={generation} groups={} paths={:?}",
+                    groups.len(),
+                    groups.iter().map(|(_, p)| p.clone()).collect::<Vec<_>>()
+                ));
                 self.state.sf_total.store(groups.len(), Ordering::Relaxed);
                 self.state.sf_done.store(0, Ordering::Relaxed);
                 self.state

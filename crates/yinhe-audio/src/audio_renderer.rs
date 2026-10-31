@@ -74,10 +74,12 @@ pub(crate) fn play_log(msg: &str) {
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0);
     let line = format!("[{ts:.3}] {msg}");
+    // iOS 沙箱里 `/tmp` 不可写；用 temp_dir()（沙箱 tmp，可被 devicectl 读取）。
+    let path = std::env::temp_dir().join("yinhe-play.log");
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open("/tmp/yinhe-play.log")
+        .open(&path)
     {
         use std::io::Write;
         let _ = writeln!(f, "{line}");

@@ -153,9 +153,15 @@ impl AudioRenderer {
                         }
                         if !denses.is_empty()
                             && let Some(cs) = self.engine.cpu_synth.as_mut()
-                            && let Err(e) = cs.load_dense_soundfonts_many(&denses, &cpu_paths)
                         {
-                            eprintln!("[yinhe-cpu] Failed to load soundfonts: {e}");
+                            match cs.load_dense_soundfonts_many(&denses, &cpu_paths) {
+                                Ok(()) => play_log(&format!(
+                                    "[sf] CPU 加载完成 denses={denses:?} paths={cpu_paths:?}"
+                                )),
+                                Err(e) => play_log(&format!(
+                                    "[sf] CPU 加载失败 denses={denses:?} paths={cpu_paths:?}: {e}"
+                                )),
+                            }
                         }
                         // 预览也是 yinhe CPU：共享同一份 key map（进程级缓存命中）。
                         if !denses.is_empty()

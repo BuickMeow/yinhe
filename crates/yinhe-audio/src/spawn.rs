@@ -964,6 +964,10 @@ pub(crate) fn spawn_worker(
                         // latest-wins：切到更新的音色库后，队列里的旧代次直接跳过
                         // （仍回传空结果，让 renderer 的进度计数前进）。
                         if generation != sf_gen.load(Ordering::Acquire) {
+                            crate::audio_renderer::play_log(&format!(
+                                "[sf] worker 跳过旧代次 generation={generation} current={}",
+                                sf_gen.load(Ordering::Relaxed)
+                            ));
                             let _ = result_tx.send(WorkerResult::LoadedSoundFont {
                                 channels,
                                 soundfonts: Vec::new(),
@@ -993,6 +997,10 @@ pub(crate) fn spawn_worker(
                         // 预解析可能耗时几秒：完成后再检查一次代次，过期就不回传
                         // 实际音色（但仍回传空结果维持进度计数）。
                         if generation != sf_gen.load(Ordering::Acquire) {
+                            crate::audio_renderer::play_log(&format!(
+                                "[sf] worker 跳过旧代次 generation={generation} current={}",
+                                sf_gen.load(Ordering::Relaxed)
+                            ));
                             let _ = result_tx.send(WorkerResult::LoadedSoundFont {
                                 channels,
                                 soundfonts: Vec::new(),
