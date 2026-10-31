@@ -387,12 +387,15 @@ fn write_track(s: &RenderScene) -> Option<usize> {
     if s.display_track == Some(0) {
         return None;
     }
-    let t = s.display_track.or(s.active_track).unwrap_or(1).min(n - 1);
-    if t == 0 {
-        if n > 1 { Some(1) } else { None }
-    } else {
-        Some(t)
-    }
+    // Conductor 作为当前编辑轨时同样没有可写音符（即使「全部轨道」打开，
+    // 也不能把编辑落到第 1 轨或拖动其他轨的音符）。
+    let t = match s.display_track.or(s.active_track) {
+        Some(0) => return None,
+        Some(t) => t.min(n - 1),
+        None if n > 1 => 1,
+        None => return None,
+    };
+    if t == 0 { None } else { Some(t) }
 }
 
 /// 当前视图量化档位的 tick 间隔（AM 选框按量化吸附用）。
@@ -830,7 +833,7 @@ pub fn begin_selection_handle(x: f32, y: f32) -> i32 {
     let Ok(mut s) = scene::scene().lock() else {
         return 0;
     };
-    if s.document.is_none() {
+    if s.document.is_none() || s.active_track == Some(0) {
         return 0;
     }
     let handle = match s.view_mode {
@@ -870,7 +873,7 @@ pub fn begin_selection_move(x: f32, y: f32) -> i32 {
     let Ok(mut s) = scene::scene().lock() else {
         return 0;
     };
-    if s.document.is_none() {
+    if s.document.is_none() || s.active_track == Some(0) {
         return 0;
     }
     let q = quantize_of(&s);
@@ -922,7 +925,10 @@ pub fn begin_selection_gate(x: f32, y: f32) -> i32 {
     let Ok(mut s) = scene::scene().lock() else {
         return 0;
     };
-    if s.document.is_none() || !matches!(s.view_mode, ViewMode::Pianoroll | ViewMode::Arrangement) {
+    if s.document.is_none()
+        || s.active_track == Some(0)
+        || !matches!(s.view_mode, ViewMode::Pianoroll | ViewMode::Arrangement)
+    {
         return 0;
     }
     let q = quantize_of(&s);
@@ -1151,6 +1157,9 @@ pub fn tap_note(x: f32, y: f32) -> i32 {
     if s.view_mode != ViewMode::Pianoroll {
         return 0;
     }
+    if s.active_track == Some(0) {
+        return 0;
+    }
     let geom = PrGeom::new(&s.pr_view);
     if x < geom.kbw {
         return 0;
@@ -1287,6 +1296,20 @@ fn drag_delta_ticks(s: &RenderScene, q: QuantizePreset, anchor_raw: f64, current
     } else {
         (delta / interval).ceil() * interval
     }
+}
+
+/// 单音符拖动的绝对坐标吸附：按“手指 - 抓取偏移”算出音符新起点，再吸附到
+/// 绝对网格，而不是用相对位移累加。这样重拍/切分音等非整格起点也能跟随
+/// 指针落到它所在的绝对格位。
+fn note_move_start_abs(s: &RenderScene, q: QuantizePreset, d: &DragState, x: f32) -> u32 {
+    let geom = PrGeom::new(&s.pr_view);
+    let grab_offset = d.anchor_tick_raw - f64::from(d.start_tick);
+    let target = geom.x_to_tick(x) - grab_offset;
+    scene::SnapCtx::new(s)
+        .round(q, target)
+        .max(0.0)
+        .min(f64::from(u32::MAX))
+        .round() as u32
 }
 
 fn move_box_delta(s: &RenderScene, d: &DragState, x: f32, y: f32) -> Option<(f64, i32, i32)> {
@@ -2446,9 +2469,9 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
         kind::NOTE_MOVE => {
             let geom = PrGeom::new(&s.pr_view);
             let q = quantize_of(s);
-            let dt = drag_delta_ticks(s, q, d.anchor_tick_raw, geom.x_to_tick(x)).round() as i64;
+            let new_start = note_move_start_abs(s, q, d, x);
+            let dt = i64::from(new_start) - i64::from(d.start_tick);
             let dk = i32::from(geom.y_to_key(y)) - i32::from(d.anchor_key);
-            let new_start = (i64::from(d.start_tick) + dt).max(0) as u32;
             let new_key = (i32::from(d.key) + dk).clamp(0, 127) as u8;
             let len = d.end_tick.saturating_sub(d.start_tick);
             let stamp = (dt, dk, s.pr_view.render_hash());
@@ -2811,15 +2834,11 @@ fn hit_note(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option<NoteHit> {
         return None;
     }
     let tick_u = tick.floor() as u32;
-    let write = write_track(s);
+    let write = write_track(s)?;
     for note in doc.data.model.key_notes(key).iter() {
         if note.start_tick <= tick_u && tick_u < note.end_tick {
             let t = note.track as usize;
-            let allowed = match write {
-                Some(w) => t == w,
-                None => s.track_visible.get(t).copied().unwrap_or(true),
-            };
-            if !allowed {
+            if t != write {
                 continue;
             }
             let (x0, x1) = (
@@ -3302,7 +3321,8 @@ fn commit_note_move(
     }
     let geom = PrGeom::new(&s.pr_view);
     let q = quantize_of(s);
-    let dt = drag_delta_ticks(s, q, d.anchor_tick_raw, geom.x_to_tick(x)).round() as i64;
+    let new_start = note_move_start_abs(s, q, d, x);
+    let dt = i64::from(new_start) - i64::from(d.start_tick);
     let dk = i32::from(geom.y_to_key(y)) - i32::from(d.anchor_key);
     if dt == 0 && dk == 0 {
         return None;
@@ -3325,7 +3345,6 @@ fn commit_note_move(
         // 铅笔移动后选区跟随新位置，下一笔仍可直接拖这个音符。
         if PENCIL_PICK_ENABLED && matches!(s.tool, Tool::Pencil) {
             let new_key = (i32::from(d.key) + dk).clamp(0, 127) as u8;
-            let new_start = (i64::from(d.start_tick) + dt).max(0) as u32;
             let new_end = new_start.saturating_add(d.end_tick.saturating_sub(d.start_tick));
             select_note(s, d.track, new_start, new_end, new_key);
         }
@@ -3611,7 +3630,28 @@ mod tests {
 
     #[test]
     fn all_tracks_falls_back_to_first_note_track() {
-        assert_eq!(write_track(&scene(None, Some(0), 3)), Some(1));
         assert_eq!(write_track(&scene(None, None, 3)), Some(1));
+    }
+
+    #[test]
+    fn conductor_active_has_no_write_track_even_with_all_tracks() {
+        assert_eq!(write_track(&scene(None, Some(0), 3)), None);
+    }
+
+    #[test]
+    fn note_move_snaps_start_to_absolute_grid() {
+        let mut s = RenderScene::default();
+        s.pr_view.base.pixels_per_tick = 10.0;
+        let kbw = s.pr_view.keyboard_width();
+        let x_of = |tick: f32| kbw + tick * 10.0;
+        // 起点 1（非整格）、量化 2；指针拖到 tick 6。
+        // 相对位移会得到 1 + 4 = 5；绝对坐标应落在 6。
+        let d = DragState {
+            anchor_tick_raw: 1.0,
+            start_tick: 1,
+            ..Default::default()
+        };
+        let start = note_move_start_abs(&s, QuantizePreset::Absolute(2), &d, x_of(6.0));
+        assert_eq!(start, 6);
     }
 }
