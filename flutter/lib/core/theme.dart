@@ -30,10 +30,22 @@ class YinheTheme {
       Color.lerp(accent, Colors.white, 0.72) ?? accent;
 
   static ThemeData data() {
-    final scheme = ColorScheme.fromSeed(
-      seedColor: accent,
-      brightness: Brightness.light,
-    ).copyWith(primary: accent, surface: bg);
+    // M3 的 selected 容器（NavigationRail 指示器、ChoiceChip 选中态等）
+    // 默认用 fromSeed 生成的 secondaryContainer；这里统一改成和主界面
+    // 工具按钮同源的 selectedBg，避免设置页出现另一套淡紫色。
+    final scheme =
+        ColorScheme.fromSeed(
+          seedColor: accent,
+          brightness: Brightness.light,
+        ).copyWith(
+          primary: accent,
+          onPrimary: Colors.white,
+          secondary: accent,
+          onSecondary: Colors.white,
+          secondaryContainer: selectedBg,
+          onSecondaryContainer: accent,
+          surface: bg,
+        );
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
@@ -44,6 +56,26 @@ class YinheTheme {
         color: bg,
         surfaceTintColor: Colors.transparent,
         elevation: 2,
+      ),
+      navigationRailTheme: NavigationRailThemeData(
+        backgroundColor: bg,
+        indicatorColor: selectedBg,
+        selectedIconTheme: const IconThemeData(color: accent),
+        unselectedIconTheme: IconThemeData(color: textSecondary),
+        selectedLabelTextStyle: const TextStyle(color: accent, fontSize: 13),
+        unselectedLabelTextStyle: TextStyle(color: text, fontSize: 13),
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: controlBg,
+        indicatorColor: selectedBg,
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return IconThemeData(color: selected ? accent : textSecondary);
+        }),
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return TextStyle(color: selected ? accent : text, fontSize: 12);
+        }),
       ),
     );
   }

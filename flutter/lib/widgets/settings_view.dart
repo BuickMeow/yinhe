@@ -273,6 +273,11 @@ class _SettingsViewState extends State<SettingsView> {
       child: Scaffold(
         backgroundColor: YinheTheme.bg,
         appBar: AppBar(
+          // 与主工作区顶部栏同高（横屏 42；竖屏主栏是双行 84，设置页保持
+          // 单行 42 以便图标和标题不被过度拉伸）。
+          toolbarHeight: 42,
+          leadingWidth: 46,
+          titleSpacing: 4,
           backgroundColor: YinheTheme.controlBg,
           foregroundColor: YinheTheme.text,
           surfaceTintColor: Colors.transparent,
@@ -281,13 +286,16 @@ class _SettingsViewState extends State<SettingsView> {
           leading: IconButton(
             tooltip: l.back,
             icon: const Icon(Icons.arrow_back),
+            iconSize: 22,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints.tightFor(width: 40, height: 40),
             onPressed: widget.onBack,
           ),
           title: Text(
             l.settings,
             style: TextStyle(
               color: YinheTheme.text,
-              fontSize: 17,
+              fontSize: 15,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -299,7 +307,6 @@ class _SettingsViewState extends State<SettingsView> {
                     selectedIndex: _page,
                     onDestinationSelected: (i) => setState(() => _page = i),
                     labelType: NavigationRailLabelType.all,
-                    backgroundColor: YinheTheme.bg,
                     groupAlignment: -0.85,
                     destinations: [
                       for (final (icon, label) in tabs)
@@ -329,8 +336,6 @@ class _SettingsViewState extends State<SettingsView> {
                   NavigationBar(
                     selectedIndex: _page,
                     onDestinationSelected: (i) => setState(() => _page = i),
-                    backgroundColor: YinheTheme.controlBg,
-                    indicatorColor: YinheTheme.selectedBg,
                     destinations: [
                       for (final (icon, label) in tabs)
                         NavigationDestination(icon: Icon(icon), label: label),
@@ -360,6 +365,7 @@ class _SettingsViewState extends State<SettingsView> {
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
       child: SwitchListTile.adaptive(
+        applyCupertinoTheme: true,
         contentPadding: const EdgeInsets.symmetric(horizontal: 12),
         secondary: icon == null
             ? null
@@ -563,6 +569,7 @@ class _SettingsViewState extends State<SettingsView> {
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: SwitchListTile.adaptive(
+                    applyCupertinoTheme: true,
                     contentPadding: const EdgeInsets.only(left: 16, right: 8),
                     // 固定占位：有/无警告时标题都从同一列开始。
                     secondary: SizedBox(
