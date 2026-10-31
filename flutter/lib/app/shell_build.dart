@@ -195,6 +195,7 @@ mixin _ShellBuild on _ShellBase {
           onOpenFile: () => _runFromSidebar(() => unawaited(_pickMidi())),
           onSaveAs: () =>
               _runFromSidebar(() => unawaited(_saveProject(saveAs: true))),
+          onProjectSettings: () => _runFromSidebar(_openProjectSettings),
           onExportAudio: () => _runFromSidebar(() => unawaited(_exportAudio())),
           onExportMidi: () => _runFromSidebar(() => unawaited(_exportMidi())),
           onRecentFiles: _showRecentFiles,

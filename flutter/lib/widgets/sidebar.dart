@@ -13,6 +13,7 @@ class Sidebar extends StatelessWidget {
     required this.onNewProject,
     required this.onOpenFile,
     required this.onSaveAs,
+    required this.onProjectSettings,
     required this.onExportAudio,
     required this.onExportMidi,
     required this.onRecentFiles,
@@ -23,6 +24,7 @@ class Sidebar extends StatelessWidget {
   final VoidCallback onNewProject;
   final VoidCallback onOpenFile;
   final VoidCallback onSaveAs;
+  final VoidCallback onProjectSettings;
   final VoidCallback onExportAudio;
   final VoidCallback onExportMidi;
   final VoidCallback onRecentFiles;
@@ -46,6 +48,7 @@ class Sidebar extends StatelessWidget {
                   _item(Icons.add_box_outlined, l.newProject, onNewProject),
                   _item(Icons.folder_open_outlined, l.openFile, onOpenFile),
                   _item(Icons.save_as_outlined, l.saveAs, onSaveAs),
+                  _item(Icons.tune, l.projectSettings, onProjectSettings),
                   const _SidebarDivider(),
                   _item(
                     Icons.audio_file_outlined,
