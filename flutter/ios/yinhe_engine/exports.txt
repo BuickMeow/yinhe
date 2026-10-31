@@ -6,6 +6,7 @@ _yinhe_archive_open_entry
 _yinhe_archive_open_password
 _yinhe_archive_status
 _yinhe_audio_settings_json
+_yinhe_auto_pause_at_end
 _yinhe_automation_batch_edit
 _yinhe_automation_clipboard_empty
 _yinhe_automation_copy
@@ -13,6 +14,9 @@ _yinhe_automation_display_value
 _yinhe_automation_json
 _yinhe_automation_line
 _yinhe_automation_paste
+_yinhe_bar_beat_duration_text
+_yinhe_bar_beat_text
+_yinhe_bar_beat_ticks_json
 _yinhe_batch_edit
 _yinhe_begin_marquee
 _yinhe_begin_note_move
@@ -57,6 +61,7 @@ _yinhe_insert_time_sig
 _yinhe_ios_ensure
 _yinhe_ios_init
 _yinhe_ios_metal_device
+_yinhe_ios_set_documents_dir
 _yinhe_ios_set_host
 _yinhe_ios_set_size
 _yinhe_ios_set_viewport
@@ -84,6 +89,7 @@ _yinhe_open_path
 _yinhe_overlay_json
 _yinhe_overlay_revision
 _yinhe_pan_by
+_yinhe_parse_bar_beat_duration
 _yinhe_paste_selection
 _yinhe_pause_on_exit
 _yinhe_pause_on_home
@@ -92,12 +98,14 @@ _yinhe_playhead_tick
 _yinhe_playhead_x
 _yinhe_project_defaults_json
 _yinhe_project_meta_json
+_yinhe_quantize_fraction_json
 _yinhe_quantize_presets_json
 _yinhe_quantize_tick_interval
 _yinhe_recent_json
 _yinhe_redo
 _yinhe_render_frame
 _yinhe_reset_interaction
+_yinhe_ruler_labels_json
 _yinhe_save_project_start
 _yinhe_save_project_status_json
 _yinhe_scroll_at
@@ -120,6 +128,7 @@ _yinhe_set_pause_on_home
 _yinhe_set_project_defaults
 _yinhe_set_project_meta
 _yinhe_set_quantize
+_yinhe_set_quantize_label
 _yinhe_set_show_keyboard_labels
 _yinhe_set_soundfonts
 _yinhe_set_tool
@@ -127,6 +136,7 @@ _yinhe_set_track_info
 _yinhe_set_track_name
 _yinhe_set_ui_language
 _yinhe_set_view_mode
+_yinhe_sf_loading_json
 _yinhe_show_keyboard_labels
 _yinhe_song_title
 _yinhe_soundfont_archive_import
@@ -140,7 +150,7 @@ _yinhe_start_fling
 _yinhe_stop_fling
 _yinhe_tap_note
 _yinhe_tick_at_x
-_yinhe_time_sig_segments_json
+_yinhe_time_grid_json
 _yinhe_toggle_track_mute
 _yinhe_toggle_track_solo
 _yinhe_tracks_json
