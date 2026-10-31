@@ -123,6 +123,13 @@ class _AutomationPanelState extends State<AutomationPanel>
   Offset? _marqueeStart;
   Offset? _marqueeCurrent;
 
+  /// 快速滑动平移共享时间轴（长按不出选框，和 PR/AR 一致）。
+  bool _panActive = false;
+  Offset? _panLast;
+
+  /// 长按后进入选框，直到手指松开。
+  bool _longPressMarquee = false;
+
   /// 已完成的选框 tick 区间 `[lo, hi)`（与 PR/AR 选框同语义）。
   /// 松手后保留，直到点空白/换轨/换 lane；绘制时按当前 tick→像素换算，
   /// 滚动/缩放后仍贴合网格。
@@ -926,8 +933,48 @@ class _AutomationPanelState extends State<AutomationPanel>
       await _showMarqueeMenu();
       return;
     }
+    if (widget.marqueeEnabled) {
+      // 长按空白进入选框；松手前不弹菜单（拖动即框选）。
+      _startMarquee(d.localPosition);
+      _longPressMarquee = true;
+      return;
+    }
     _startHint(d.localPosition);
     await _showAutomationEmptyMenu(tick);
+  }
+
+  /// 长按后拖动：更新选框范围。
+  void _handleLongPressMove(LongPressMoveUpdateDetails d) {
+    if (!_longPressMarquee || !_marqueeActive) {
+      return;
+    }
+    _marqueeCurrent = d.localPosition;
+    final start = _marqueeStart;
+    if (start != null) {
+      final target = _marqueeRectFromTicks(
+        _snapMarquee(start, d.localPosition),
+      );
+      if (target != null && target != _marqueeTo) {
+        _setMarqueeTarget(target);
+      }
+    }
+    setState(() {});
+  }
+
+  /// 长按松手：拖动过就提交选框；没拖动则还原为空白的插入/粘贴菜单。
+  Future<void> _handleLongPressEnd(LongPressEndDetails d) async {
+    if (!_longPressMarquee) {
+      return;
+    }
+    _longPressMarquee = false;
+    final start = _marqueeStart;
+    final cur = _marqueeCurrent;
+    final hadDrag =
+        start != null && cur != null && (cur.dx - start.dx).abs() >= 3;
+    _finishMarquee();
+    if (!hadDrag) {
+      await _showAutomationEmptyMenu(_snapTickAt(d.localPosition.dx).round());
+    }
   }
 
   /// 修改单个锚点：tick + value 弹窗。
@@ -971,9 +1018,62 @@ class _AutomationPanelState extends State<AutomationPanel>
     setState(() {});
   }
 
+  /// 开始长按选框（由 LongPress 手势调用，和 PR/AR 一样不是随手拖动）。
+  void _startMarquee(Offset p) {
+    _selectedTicks.clear();
+    _singleSelection = false;
+    _dragAnchorTick = null;
+    _movePreview = {};
+    _marqueeTicks = null;
+    _marqueeActive = true;
+    _marqueeStart = p;
+    _marqueeCurrent = p;
+    _marqueeInterval = rust.quantizeTickInterval().toDouble().clamp(
+      1.0,
+      double.infinity,
+    );
+    final target = _marqueeRectFromTicks(_snapMarquee(p, p));
+    _marqueeDisplay = target;
+    _marqueeTo = target;
+    _marqueeAnimStart = null;
+    _syncSelection();
+    setState(() {});
+  }
+
+  /// 单击落一个自动化锚点（铅笔/选框工具）。
+  void _createAnchorAt(Offset p) {
+    final laneIdx = _laneIdx;
+    if (laneIdx == null || laneIdx >= widget.lanes.length) {
+      return;
+    }
+    final lane = widget.lanes[laneIdx];
+    final tick = _snapTickAt(p.dx).round();
+    final max = lane.max > 0 ? lane.max : 1.0;
+    final value = _valueAtY(p.dy) * max;
+    if (rust.insertAutomation(
+          lane.kind,
+          lane.number,
+          tick.toDouble(),
+          widget.activeTrack,
+          value,
+        ) !=
+        1) {
+      return;
+    }
+    _selectedTicks
+      ..clear()
+      ..add(tick);
+    _singleSelection = true;
+    _marqueeTicks = null;
+    _syncSelection();
+    widget.onReload();
+    setState(() {});
+  }
+
   /// 单点锚点编辑 / 框选：
   /// - 按在锚点上：选中（未选中则替换选择），拖动可改 tick+value；
-  /// - 按在空白：拉时间框选（全高），多选拖动只改 tick。
+  /// - 快速滑动空白：平移时间轴；
+  /// - 长按空白后拖动：框选。
   void _handlePanStart(DragStartDetails d) {
     _endLpWatch();
     if (widget.lineTool) {
@@ -1026,30 +1126,11 @@ class _AutomationPanelState extends State<AutomationPanel>
       setState(() {});
       return;
     }
-    // 只有选框工具能拉框；铅笔/手形等其它工具在空白处拖动不改选区。
-    if (!widget.marqueeEnabled) {
-      return;
+    // 空白处快速滑动 = 平移共享时间轴；选框改为长按后拖动（与 PR/AR 一致）。
+    if (widget.marqueeEnabled || !widget.pencilActive) {
+      _panActive = true;
+      _panLast = d.localPosition;
     }
-    _selectedTicks.clear();
-    _singleSelection = false;
-    _dragAnchorTick = null;
-    _movePreview = {};
-    _marqueeTicks = null;
-    _marqueeActive = true;
-    _marqueeStart = d.localPosition;
-    _marqueeCurrent = d.localPosition;
-    _marqueeInterval = rust.quantizeTickInterval().toDouble().clamp(
-      1.0,
-      double.infinity,
-    );
-    final target = _marqueeRectFromTicks(
-      _snapMarquee(_marqueeStart!, _marqueeCurrent!),
-    );
-    _marqueeDisplay = target;
-    _marqueeTo = target;
-    _marqueeAnimStart = null;
-    _syncSelection();
-    setState(() {});
   }
 
   void _handlePanUpdate(DragUpdateDetails d) {
@@ -1059,6 +1140,14 @@ class _AutomationPanelState extends State<AutomationPanel>
     }
     if (_velocityStrokeActive) {
       _handleVelocityUpdate(d.localPosition);
+      return;
+    }
+    if (_panActive) {
+      final last = _panLast;
+      _panLast = d.localPosition;
+      if (last != null) {
+        rust.panBy(d.localPosition.dx - last.dx, 0);
+      }
       return;
     }
     if (_marqueeActive) {
@@ -1139,6 +1228,11 @@ class _AutomationPanelState extends State<AutomationPanel>
     }
     if (_velocityStrokeActive) {
       _finishVelocityStroke();
+      return;
+    }
+    if (_panActive) {
+      _panActive = false;
+      _panLast = null;
       return;
     }
     if (_marqueeActive) {
@@ -1240,6 +1334,9 @@ class _AutomationPanelState extends State<AutomationPanel>
       _selectedTicks.clear();
       _singleSelection = false;
     }
+    _panActive = false;
+    _panLast = null;
+    _longPressMarquee = false;
     _marqueeActive = false;
     _marqueeStart = null;
     _marqueeCurrent = null;
@@ -1434,13 +1531,21 @@ class _AutomationPanelState extends State<AutomationPanel>
                           }
                           return;
                         }
-                        // 选框工具下点空白 = 取消选区/隐藏常驻选框。
-                        if (widget.marqueeEnabled) {
-                          _clearSelection();
-                          setState(() {});
+                        final laneIdx = _laneIdx;
+                        if (laneIdx != null &&
+                            (widget.pencilActive || widget.marqueeEnabled)) {
+                          // 有常驻选框时，点空白先取消选框；否则落一个锚点。
+                          if (widget.marqueeEnabled && _marqueeTicks != null) {
+                            _clearSelection();
+                            setState(() {});
+                          } else {
+                            _createAnchorAt(d.localPosition);
+                          }
                         }
                       },
                       onLongPressStart: _handleLongPressStart,
+                      onLongPressMoveUpdate: _handleLongPressMove,
+                      onLongPressEnd: _handleLongPressEnd,
                       onPanStart: _handlePanStart,
                       onPanUpdate: _handlePanUpdate,
                       onPanEnd: (_) => _handlePanEnd(),
