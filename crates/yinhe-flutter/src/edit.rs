@@ -311,7 +311,7 @@ fn pr_selection_handle(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option
     let x1 = geom.tick_to_x(t1);
     let y0 = geom.key_to_y(k1);
     let y1 = geom.key_to_y(k0) + geom.kh;
-    // 右下角加号（内缩 10px）用自己的命中区，不能按角落控制点算。
+    // 右下角 L 形角标（内缩 10px）用自己的命中区，不能按角落控制点算。
     if x >= x1 - 18.0 && x <= x1 && y >= y1 - 18.0 && y <= y1 {
         return Some(SelHandle {
             edge: 4,
@@ -851,7 +851,7 @@ pub fn begin_selection_handle(x: f32, y: f32) -> i32 {
     let Some(h) = handle else {
         return 0;
     };
-    // 暂时只保留右下角加号（Riff），四边缩放锚点关闭。
+    // 暂时只保留右下角 L 形角标（Riff），四边缩放锚点关闭。
     if h.edge != 4 {
         return 0;
     }
@@ -982,7 +982,7 @@ pub fn begin_selection_gate(x: f32, y: f32) -> i32 {
     if x < x1 - edge || x > x1 || y < y0 || y > y1 {
         return 0;
     }
-    // 右下角留给加号（Riff）。
+    // 右下角留给 L 形角标（Riff）。
     if ((x - x1).powi(2) + (y - y1).powi(2)).sqrt() < 18.0 {
         return 0;
     }

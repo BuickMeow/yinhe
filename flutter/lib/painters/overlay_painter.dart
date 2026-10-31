@@ -71,7 +71,7 @@ class OverlayPainter extends CustomPainter {
     canvas.restore();
   }
 
-  /// 选区右内侧：左右箭头（整体 gate）；右下角内侧：加号（Riff）。
+  /// 选区右内侧：`Icons.swap_horiz`（整体 gate）；右下角：L 形角标（Riff）。
   void _paintHandles(Canvas canvas, Rect r, Paint stroke, double scale) {
     if (scale <= 0.01) {
       return;
@@ -81,36 +81,35 @@ class OverlayPainter extends CustomPainter {
       ..strokeWidth = 1.4
       ..strokeCap = StrokeCap.round
       ..color = YinheTheme.text.withValues(alpha: 0.55);
-    final cy = r.center.dy;
-    final cx = r.right - 12.0;
-    final d = 4.0 * scale;
-    // 左右箭头
-    canvas.drawPath(
-      Path()
-        ..moveTo(cx - 5.0, cy)
-        ..lineTo(cx - 1.0, cy - d)
-        ..moveTo(cx - 5.0, cy)
-        ..lineTo(cx - 1.0, cy + d),
-      paint,
+    // 选区右内侧：标准 swap_horiz 图标（整体调整 gate）。
+    final icon = Icons.swap_horiz;
+    final iconSize = 14.0 * scale;
+    final tp = TextPainter(
+      text: TextSpan(
+        text: String.fromCharCode(icon.codePoint),
+        style: TextStyle(
+          fontFamily: icon.fontFamily,
+          package: icon.fontPackage,
+          fontSize: iconSize,
+          color: paint.color,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(
+      canvas,
+      Offset(r.right - 12.0 - tp.width / 2, r.center.dy - tp.height / 2),
     );
+
+    // 右下角：细 L 形角标（Riff），比加号更像角落手柄。
+    final x = r.right - 4.0;
+    final y = r.bottom - 4.0;
+    final arm = 9.0 * scale;
     canvas.drawPath(
       Path()
-        ..moveTo(cx + 5.0, cy)
-        ..lineTo(cx + 1.0, cy - d)
-        ..moveTo(cx + 5.0, cy)
-        ..lineTo(cx + 1.0, cy + d),
-      paint,
-    );
-    // 右下角加号（Riff）
-    final px = r.right - 10.0;
-    final py = r.bottom - 10.0;
-    final p = 4.0 * scale;
-    canvas.drawPath(
-      Path()
-        ..moveTo(px - p, py)
-        ..lineTo(px + p, py)
-        ..moveTo(px, py - p)
-        ..lineTo(px, py + p),
+        ..moveTo(x - arm, y)
+        ..lineTo(x, y)
+        ..lineTo(x, y - arm),
       paint,
     );
   }
