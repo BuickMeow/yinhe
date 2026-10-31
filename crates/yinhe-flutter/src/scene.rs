@@ -1970,7 +1970,7 @@ fn load_settings() {
                 _ => (true, ""),
             };
             if !path.is_empty() && crate::audio::is_soundfont_path(path) {
-                let path = resolve_doc_path(path);
+                let path = resolve_existing_soundfont(path);
                 soundfonts.push(crate::audio::SoundfontEntry { path, enabled });
             } else if !path.is_empty() {
                 // 旧版本选择器可能把 mid 等文件写进音色库表，读盘时清理掉。
@@ -2058,6 +2058,33 @@ fn resolve_doc_path(path: &str) -> String {
         return format!("{dir}/{rel}");
     }
     path.to_string()
+}
+
+/// 音色库路径自愈：旧容器/错误目录写下的路径，尽量找回当前 Documents 下的文件。
+///
+/// 优先保持原路径（存在即用），其次按 `/Documents/` 后缀重定位，
+/// 最后按文件名在 Documents 根查找（覆盖早期写成 Application Support 的坏路径）。
+fn resolve_existing_soundfont(path: &str) -> String {
+    let resolved = resolve_doc_path(path);
+    if std::path::Path::new(&resolved).exists() {
+        return resolved;
+    }
+    let Some(dir) = documents_dir() else {
+        return resolved;
+    };
+    if let Some(idx) = path.find("/Documents/") {
+        let candidate = format!("{dir}/{}", &path[idx + "/Documents/".len()..]);
+        if std::path::Path::new(&candidate).exists() {
+            return candidate;
+        }
+    }
+    if let Some(name) = std::path::Path::new(path).file_name() {
+        let candidate = format!("{dir}/{}", name.to_string_lossy());
+        if std::path::Path::new(&candidate).exists() {
+            return candidate;
+        }
+    }
+    resolved
 }
 
 fn recent_file_path() -> Option<String> {
