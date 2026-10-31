@@ -592,6 +592,74 @@ mixin _ShellBuild on _ShellBase {
                     onPickSoundFont: _pickSoundFont,
                     onBack: () => setState(() => _showSettings = false),
                   ),
+                // 音色库热切换：底部小进度条，IgnorePointer 不拦任何手势。
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 18,
+                  child: IgnorePointer(
+                    child: Center(
+                      child: ValueListenableBuilder<(bool, int, int)>(
+                        valueListenable: _sfProgress,
+                        builder: (context, p, _) {
+                          final (loading, done, total) = p;
+                          return AnimatedOpacity(
+                            opacity: loading ? 1 : 0,
+                            duration: const Duration(milliseconds: 150),
+                            child: Container(
+                              width: 190,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: YinheTheme.bg.withValues(alpha: 0.94),
+                                borderRadius: BorderRadius.circular(8),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.18),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    total > 0
+                                        ? (L10n.isZh
+                                              ? '加载音色库 $done/$total'
+                                              : 'Loading soundfont $done/$total')
+                                        : (L10n.isZh
+                                              ? '加载音色库…'
+                                              : 'Loading soundfont…'),
+                                    style: TextStyle(
+                                      color: YinheTheme.text,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(2),
+                                    child: LinearProgressIndicator(
+                                      value: total > 0
+                                          ? (done / total).clamp(0.0, 1.0)
+                                          : null,
+                                      minHeight: 3,
+                                      backgroundColor: YinheTheme.lineFg,
+                                      color: YinheTheme.accent,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),

@@ -1971,10 +1971,7 @@ fn load_settings() {
             };
             if !path.is_empty() && crate::audio::is_soundfont_path(path) {
                 let path = resolve_doc_path(path);
-                soundfonts.push(crate::audio::SoundfontEntry {
-                    path,
-                    enabled,
-                });
+                soundfonts.push(crate::audio::SoundfontEntry { path, enabled });
             } else if !path.is_empty() {
                 // 旧版本选择器可能把 mid 等文件写进音色库表，读盘时清理掉。
                 log::warn!("忽略无效音色库设置: {path}");
@@ -2091,10 +2088,7 @@ fn load_recent() {
             // 文件已不存在（旧容器路径/用户删除）就不要留在列表里，
             // 否则点击会报 `No such file or directory`。
             if std::path::Path::new(&abs).exists() {
-                list.push(RecentEntry {
-                    path: abs,
-                    opened,
-                });
+                list.push(RecentEntry { path: abs, opened });
             }
         }
     }
@@ -2369,8 +2363,8 @@ pub fn ruler_labels_json() -> String {
             let x = tick as f32 * ppu - scroll_x + kb_w;
             if x >= kb_w && x <= width + 40.0 {
                 let local = (tick - seg_start as i64) as u32;
-                let is_measure = local % merged == 0;
-                let is_beat = !is_measure && (local % mticks) % bticks == 0;
+                let is_measure = local.is_multiple_of(merged);
+                let is_beat = !is_measure && (local % mticks).is_multiple_of(bticks);
                 let bar = bar_offsets[i] + local / mticks + 1;
                 let beat = (local % mticks) / bticks + 1;
                 let (text, level) = if is_measure {
@@ -2475,10 +2469,10 @@ pub fn time_grid_json() -> String {
         let mut tick = seg_start as i64 + ((first - seg_start as i64) / step as i64) * step as i64;
         while tick <= end_i && tick < seg_end as i64 {
             let local = (tick - seg_start as i64) as u32;
-            let is_measure = local % mticks == 0;
+            let is_measure = local.is_multiple_of(mticks);
             let beat_local = local % mticks;
-            let is_beat = beat_local % bticks == 0 && beat_local > 0;
-            let is_sub = local % sub_ticks == 0;
+            let is_beat = beat_local.is_multiple_of(bticks) && beat_local > 0;
+            let is_sub = local.is_multiple_of(sub_ticks);
             let level = if is_measure {
                 Some(0)
             } else if show_beat && is_beat {
@@ -2506,7 +2500,7 @@ fn fine_grid_step(ppu: f32, ppq: u32) -> u32 {
     let mut candidates = Vec::new();
     let mut den = 1u32;
     let mut last = whole;
-    while den <= whole && whole % den == 0 {
+    while den <= whole && whole.is_multiple_of(den) {
         last = whole.div_ceil(den);
         candidates.push(last);
         if den > (1 << 30) {

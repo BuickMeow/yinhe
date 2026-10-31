@@ -81,7 +81,20 @@ impl AudioRenderer {
                     channels,
                     soundfonts,
                     paths,
+                    generation,
                 }) => {
+                    // latest-wins：只应用当前代次；旧代次的结果（含 worker 发现
+                    // 过期后回传的空结果）直接丢弃，避免旧音色覆盖新选择。
+                    let is_current = generation == self.state.sf_gen.load(Ordering::Acquire);
+                    if is_current {
+                        let done = self.state.sf_done.fetch_add(1, Ordering::Relaxed) + 1;
+                        if done >= self.state.sf_total.load(Ordering::Relaxed) {
+                            self.state.sf_loading.store(false, Ordering::Relaxed);
+                        }
+                    } else {
+                        did_work = true;
+                        continue;
+                    }
                     // 音色库完成计数：UI 的"加载音色库"stage 进度 = 已完成通道数
                     // （一条命令按组覆盖多个通道）。
                     self.state

@@ -29,6 +29,11 @@ final CStrDart timeGridJson = bridge.lookupFunction<CStrNative, CStrDart>(
   'yinhe_time_grid_json',
 );
 
+/// 音色库切换进度 JSON：`{"loading":bool,"done":n,"total":n}`。
+final CStrDart sfLoadingJson = bridge.lookupFunction<CStrNative, CStrDart>(
+  'yinhe_sf_loading_json',
+);
+
 /// 当前拍号段的小节长/拍长：`[measure_ticks, beat_ticks]`。
 final DoubleCStrDart barBeatTicksJson = bridge
     .lookupFunction<DoubleCStrNative, DoubleCStrDart>(

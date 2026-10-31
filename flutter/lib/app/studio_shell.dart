@@ -241,6 +241,13 @@ abstract class _ShellBase extends State<StudioShell>
 
   /// 时间网格线（Rust 算，Dart 只画）。
   final ValueNotifier<List<GridLine>> _gridLines = ValueNotifier(const []);
+
+  /// 音色库热切换进度：`(loading, done, total)`。
+  final ValueNotifier<(bool, int, int)> _sfProgress = ValueNotifier((
+    false,
+    0,
+    0,
+  ));
   List<double>? _lastRulerKey;
   final ValueNotifier<List<TrackRow>> _tracks = ValueNotifier<List<TrackRow>>(
     const [],
@@ -320,6 +327,29 @@ abstract class _ShellBase extends State<StudioShell>
 
   /// 帧计数（时间码/工程状态降频）。
   int _frameCounter = 0;
+
+  /// 音色库热切换进度（低频轮询，切换期间驱动底部小进度条）。
+  void _readSfProgress() {
+    final ptr = rust.sfLoadingJson();
+    if (ptr == ffi.nullptr) {
+      return;
+    }
+    try {
+      final m = jsonDecode(ptr.toDartString()) as Map<String, dynamic>;
+      final next = (
+        m['loading'] as bool? ?? false,
+        (m['done'] as num?)?.toInt() ?? 0,
+        (m['total'] as num?)?.toInt() ?? 0,
+      );
+      if (_sfProgress.value != next) {
+        _sfProgress.value = next;
+      }
+    } catch (_) {
+      // 解析失败保持旧值。
+    } finally {
+      rust.freeString(ptr);
+    }
+  }
 
   /// 标尺标签：只在视图（模式/缩放/横向滚动/键盘宽）变化时重算，
   /// 播放时标尺本身不动，不重复请求。
@@ -584,6 +614,7 @@ class _StudioShellState extends _ShellBase
         }
         _readDocState();
         _pollArchive();
+        _readSfProgress();
       }
       // 保持连续帧：Rust 侧拖拽/边缘滚动/渲染都由帧驱动（手指静止时也要跑）。
       if (!_showHome) {
@@ -618,6 +649,7 @@ class _StudioShellState extends _ShellBase
     _sfRevision.dispose();
     _rulerLabels.dispose();
     _gridLines.dispose();
+    _sfProgress.dispose();
     _saveDoneTimer?.cancel();
     _savingTimer?.cancel();
     _velocityReloadTimer?.cancel();

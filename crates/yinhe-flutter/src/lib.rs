@@ -1549,6 +1549,12 @@ pub extern "C" fn yinhe_soundfonts_json() -> *mut std::ffi::c_char {
     to_c_string(audio::soundfonts_json())
 }
 
+/// 音色库切换进度 JSON：`{"loading":bool,"done":n,"total":n}`。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_sf_loading_json() -> *mut std::ffi::c_char {
+    to_c_string(audio::sf_loading_json())
+}
+
 /// 光标 tick 的 `bar.beat.tick` 文本（Rust 算，拍号变化时按段连续计数）。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_bar_beat_text(tick: f64) -> *mut std::ffi::c_char {

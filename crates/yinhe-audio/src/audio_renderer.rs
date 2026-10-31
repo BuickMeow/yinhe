@@ -116,6 +116,15 @@ pub(crate) struct RendererSharedState {
     /// 活跃 voice 数（渲染线程每块更新）：播放到末尾后据此判断 release 尾音
     /// 是否已经自然消失，决定何时暂停（不能一到 end_tick 就 Stop）。
     pub(crate) voice_count: Arc<AtomicU64>,
+    /// 音色库切换代次：每次 `SetSoundFonts` +1。worker 只处理最新代次，
+    /// 旧代次的加载结果直接丢弃（频繁切换时 latest-wins，不被旧库阻塞）。
+    pub(crate) sf_gen: Arc<AtomicU64>,
+    /// 当前代次是否仍在加载音色库（UI 小进度条用）。
+    pub(crate) sf_loading: Arc<AtomicBool>,
+    /// 当前代次需要加载的组数（按相同 paths 分组的组数）。
+    pub(crate) sf_total: Arc<AtomicUsize>,
+    /// 当前代次已完成（或已丢弃）的组数。
+    pub(crate) sf_done: Arc<AtomicUsize>,
 }
 
 impl RendererSharedState {
@@ -133,6 +142,10 @@ impl RendererSharedState {
             bus_readings: Arc::new(Mutex::new(Vec::new())),
             underrun_samples: Arc::new(AtomicU64::new(0)),
             voice_count: Arc::new(AtomicU64::new(0)),
+            sf_gen: Arc::new(AtomicU64::new(0)),
+            sf_loading: Arc::new(AtomicBool::new(false)),
+            sf_total: Arc::new(AtomicUsize::new(0)),
+            sf_done: Arc::new(AtomicUsize::new(0)),
         }
     }
 }

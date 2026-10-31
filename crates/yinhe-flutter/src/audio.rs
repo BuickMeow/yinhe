@@ -522,7 +522,19 @@ pub fn set_skip_mask(skip: Vec<bool>) {
     st.handle.handle.send(AudioCommand::SkipTracks { skip });
 }
 
-/// 音色库表 JSON（设置页用）：`[{"path":..,"name":..,"enabled":..,"channel":..,"warnings":[..]}, ...]`。
+/// 音色库切换进度 JSON：`{"loading":bool,"done":n,"total":n}`。
+pub fn sf_loading_json() -> String {
+    let Some(guard) = lock_audio() else {
+        return r#"{"loading":false,"done":0,"total":0}"#.into();
+    };
+    let Some(st) = guard.as_ref() else {
+        return r#"{"loading":false,"done":0,"total":0}"#.into();
+    };
+    let (loading, done, total) = st.handle.handle.sf_progress();
+    format!("{{\"loading\":{loading},\"done\":{done},\"total\":{total}}}")
+}
+
+/// 音色库表 JSON（设置页用）：`[{"path":..,"name":..,"enabled":..,"warnings":[..]}, ...]`。
 ///
 /// `warnings` 是该 SFZ 里 xsynth 不支持的 opcode（空数组表示没有或不是 SFZ）。
 pub fn soundfonts_json() -> String {

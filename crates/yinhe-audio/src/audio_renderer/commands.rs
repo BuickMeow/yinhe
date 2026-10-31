@@ -166,15 +166,25 @@ impl AudioRenderer {
                 // yinhe 后端（GPU 或 CPU）都在 worker 预热 key map 解析缓存；
                 // xsynth 后端不需要（自己的 GLOBAL_SF_CACHE 在 worker 里加载）。
                 let prefetch_keymaps = self.gpu_engine() || self.yinhe_cpu_engine();
+                // latest-wins：每次切换推进代次，worker 只处理最新代次；
+                // 旧代次在队列里直接跳过，不会被大音色库的加载拖住新请求。
+                let generation = self.state.sf_gen.fetch_add(1, Ordering::AcqRel) + 1;
                 // 按音色库集合分组：相同 paths 的通道只加载一次（worker 一次往返 +
                 // key map Arc 跨通道共享），避免 20 个通道重复加载同一音色库。
-                for (channels, paths) in super::group_sf_configs(&configs) {
+                let groups = super::group_sf_configs(&configs);
+                self.state.sf_total.store(groups.len(), Ordering::Relaxed);
+                self.state.sf_done.store(0, Ordering::Relaxed);
+                self.state
+                    .sf_loading
+                    .store(!groups.is_empty(), Ordering::Relaxed);
+                for (channels, paths) in groups {
                     let _ = self.worker_tx.send(WorkerCmd::LoadSoundFont {
                         channels,
                         paths,
                         prefetch_keymaps,
                         // yinhe 后端（prefetch_keymaps=true）不需要 xsynth 版音色库。
                         load_xsynth: !prefetch_keymaps,
+                        generation,
                     });
                 }
             }
