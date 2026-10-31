@@ -52,6 +52,7 @@ class _SettingsViewState extends State<SettingsView> {
 
   int _page = 0;
   List<_SfItem> _fonts = const [];
+  int? _draggingFont;
 
   /// 音频设置（与 Rust 同步；默认值同桌面/引擎回退）。
   int _maxVoices = 512;
@@ -543,6 +544,12 @@ class _SettingsViewState extends State<SettingsView> {
             buildDefaultDragHandles: true,
             itemCount: _fonts.length,
             onReorderItem: _reorderFonts,
+            onReorderStart: (i) => setState(() => _draggingFont = i),
+            onReorderEnd: (_) => setState(() => _draggingFont = null),
+            // 默认 proxy 会用 Material 把整项（含 Card 的底部外边距）涂成
+            // 矩形，视觉上比原卡片大一圈。这里直接返回原卡片，只靠 Card
+            // 自身的 elevation 表现抬起。
+            proxyDecorator: (child, index, animation) => child,
             itemBuilder: (context, i) {
               final e = _fonts[i];
               final name = e.name.isNotEmpty ? e.name : e.path;
@@ -562,7 +569,7 @@ class _SettingsViewState extends State<SettingsView> {
                 ),
                 child: Card(
                   margin: const EdgeInsets.only(bottom: 8),
-                  elevation: 0,
+                  elevation: _draggingFont == i ? 6 : 0,
                   color: YinheTheme.controlBg,
                   clipBehavior: Clip.antiAlias,
                   shape: RoundedRectangleBorder(
