@@ -12,12 +12,16 @@ class LabelsPainter extends CustomPainter {
     required this.tracks,
     required this.dragFrom,
     required this.dragTo,
+    this.hideKeyboardLabels = false,
   }) : super(repaint: Listenable.merge([snap, tracks, dragFrom, dragTo]));
 
   final ValueNotifier<List<double>> snap;
   final ValueNotifier<List<TrackRow>> tracks;
   final ValueNotifier<int> dragFrom;
   final ValueNotifier<int> dragTo;
+
+  /// 自动化全屏时隐藏钢琴键盘上的 C 音名。
+  final bool hideKeyboardLabels;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -28,7 +32,7 @@ class LabelsPainter extends CustomPainter {
     if (s[SnapField.mode] == 0.0) {
       _paintArrangement(canvas, size, s, tracks.value);
       _paintDrag(canvas, size, s, dragFrom.value, dragTo.value);
-    } else {
+    } else if (!hideKeyboardLabels) {
       _paintKeyboardLabels(canvas, size, s);
     }
   }

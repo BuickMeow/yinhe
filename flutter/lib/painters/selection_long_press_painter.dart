@@ -126,7 +126,7 @@ class MarqueeHintPainter extends CustomPainter {
       rect,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2
+        ..strokeWidth = 1
         ..color = YinheTheme.text.withValues(alpha: 0.60 * opacity),
     );
   }

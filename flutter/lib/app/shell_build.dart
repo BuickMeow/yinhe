@@ -324,6 +324,7 @@ mixin _ShellBuild on _ShellBase {
                                                   painter: PianorollGridPainter(
                                                     _snap,
                                                     _gridLines,
+                                                    hideKeyboard: amVisible,
                                                   ),
                                                 ),
                                               ),
@@ -373,7 +374,8 @@ mixin _ShellBuild on _ShellBase {
                                             ),
                                           ),
                                           // 卷帘背景 C 音名：设置「显示键盘」开启时显示。
-                                          if (_viewMode == kViewPianoroll)
+                                          if (_viewMode == kViewPianoroll &&
+                                              !amVisible)
                                             Positioned(
                                               left: 0,
                                               right: 0,
@@ -433,6 +435,7 @@ mixin _ShellBuild on _ShellBase {
                                                   tracks: _tracks,
                                                   dragFrom: _dragFrom,
                                                   dragTo: _dragTo,
+                                                  hideKeyboardLabels: amVisible,
                                                 ),
                                               ),
                                             ),
