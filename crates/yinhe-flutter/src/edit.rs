@@ -606,7 +606,9 @@ pub fn tick_scroll() -> i32 {
     if lw < 1.0 || lh < 1.0 {
         return 0;
     }
-    const ZONE: f32 = 28.0;
+    // 边缘自动滚动触发区（逻辑像素）。手机上 28px 太窄，手指容易落在
+    // 触发区外导致“拖到边了但画面不动”；放宽到 48px。
+    const ZONE: f32 = 48.0;
     // 垂直：内容区顶部/底部边缘。
     let mut vy = 0.0f32;
     if py < ZONE {

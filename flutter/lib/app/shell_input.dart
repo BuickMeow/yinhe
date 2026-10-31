@@ -29,6 +29,14 @@ mixin _ShellInput on _ShellBase {
   bool _gestureZoomed = false;
   bool _gestureMoved = false;
 
+  /// 标尺拖动定位（playhead scrub）状态：手指离开标尺也不断，靠 ticker
+  /// 在视口边缘继续平移并重算时间。
+  bool _rulerScrubbing = false;
+  double _rulerScrubX = 0;
+
+  /// 标尺自动滚动触发区（逻辑像素）：比选框更宽，避免拖到边缘还进不去。
+  static const double _rulerScrubZone = 48.0;
+
   /// 第一根手指按下时立即 begin，保证铅笔/选框没有 100ms 点击延迟。
   /// 后续的 tap / long press / scale 全部交给 Flutter gesture arena。
   @override
@@ -474,14 +482,45 @@ mixin _ShellInput on _ShellBase {
   /// 未进入长按插入：水平拖动时间标尺切换播放位置，顶部栏蓝字显示目标时间。
   @override
   void _handleRulerScrub(Offset local) {
-    final tick = rust.tickAtX(local.dx);
-    rust.jumpToTick(tick);
-    _setInsertStatus(tick);
+    _rulerScrubbing = true;
+    _rulerScrubX = local.dx;
+    _applyRulerScrub();
   }
 
   @override
   void _handleRulerScrubEnd() {
+    _rulerScrubbing = false;
     _clearInsertStatus();
+  }
+
+  void _applyRulerScrub() {
+    final tick = rust.tickAtX(_rulerScrubX);
+    rust.jumpToTick(tick);
+    _setInsertStatus(tick);
+  }
+
+  /// 每帧推进：手指进入视口左右边缘区时继续平移，并持续更新播放位置。
+  void _tickRulerScrub() {
+    if (!_rulerScrubbing) {
+      return;
+    }
+    final width = MediaQuery.sizeOf(context).width;
+    final s = _snap.value;
+    final panel = s.length > SnapField.leftPanelW
+        ? s[SnapField.leftPanelW]
+        : 0.0;
+    final left = panel + _rulerScrubZone;
+    var vx = 0.0;
+    if (_rulerScrubX < left) {
+      vx = ((left - _rulerScrubX) * 0.9).clamp(0.0, 30.0);
+    } else if (_rulerScrubX > width - _rulerScrubZone) {
+      vx = -((_rulerScrubX - (width - _rulerScrubZone)) * 0.9).clamp(0.0, 30.0);
+    }
+    if (vx == 0.0) {
+      return;
+    }
+    rust.panBy(vx, 0);
+    _applyRulerScrub();
   }
 
   @override

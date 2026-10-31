@@ -536,6 +536,7 @@ class _StudioShellState extends _ShellBase
         // 与纹理来自同一份 Rust 状态，不需要再按帧数延迟。
         // 拖拽边缘自动滚动：先滚动视图，再渲染这一帧。
         rust.dragTick();
+        _tickRulerScrub();
         rust.renderFrame();
         // 到工程末尾：等 release 尾音自然结束后暂停在末尾，不回开头。
         rust.autoPauseAtEnd();
