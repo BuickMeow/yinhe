@@ -929,7 +929,7 @@ pub fn begin_selection_gate(x: f32, y: f32) -> i32 {
     };
     if s.document.is_none()
         || s.active_track == Some(0)
-        || !matches!(s.view_mode, ViewMode::Pianoroll | ViewMode::Arrangement)
+        || s.view_mode != ViewMode::Pianoroll
     {
         return 0;
     }

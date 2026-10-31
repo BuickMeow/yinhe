@@ -71,7 +71,8 @@ class OverlayPainter extends CustomPainter {
     canvas.restore();
   }
 
-  /// 选区右内侧：`Icons.swap_horiz`（整体 gate）；右下角：L 形角标（Riff）。
+  /// 选区右内侧：Material Symbols `arrow_range`（整体 gate，仅 PR）；
+  /// 右下角：L 形角标（Riff，PR/AR 都有）。
   void _paintHandles(Canvas canvas, Rect r, Paint stroke, double scale) {
     if (scale <= 0.01) {
       return;
@@ -81,25 +82,41 @@ class OverlayPainter extends CustomPainter {
       ..strokeWidth = 1.4
       ..strokeCap = StrokeCap.round
       ..color = YinheTheme.text.withValues(alpha: 0.55);
-    // 选区右内侧：标准 swap_horiz 图标（整体调整 gate）。
-    final icon = Icons.swap_horiz;
-    final iconSize = 14.0 * scale;
-    final tp = TextPainter(
-      text: TextSpan(
-        text: String.fromCharCode(icon.codePoint),
-        style: TextStyle(
-          fontFamily: icon.fontFamily,
-          package: icon.fontPackage,
-          fontSize: iconSize,
-          color: paint.color,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    tp.paint(
-      canvas,
-      Offset(r.right - 12.0 - tp.width / 2, r.center.dy - tp.height / 2),
-    );
+    // 选区右内侧：Material Symbols 的 arrow_range（PR 专用）。
+    // Flutter 自带 MaterialIcons 没有这个字形，按官方 24×24 路径绘制。
+    final s = snap.value;
+    final isPr = s.length > SnapField.mode && s[SnapField.mode] > 0;
+    if (isPr) {
+      final iconSize = 16.0 * scale;
+      final k = iconSize / 24.0;
+      final iconPaint = Paint()
+        ..style = PaintingStyle.fill
+        ..color = paint.color;
+      final iconPath = Path()
+        ..moveTo(7, 17)
+        ..lineTo(2, 12)
+        ..lineTo(7, 7)
+        ..lineTo(8.4, 8.4)
+        ..lineTo(5.825, 11)
+        ..lineTo(18.175, 11)
+        ..lineTo(15.6, 8.4)
+        ..lineTo(17, 7)
+        ..lineTo(22, 12)
+        ..lineTo(17, 17)
+        ..lineTo(15.6, 15.6)
+        ..lineTo(18.175, 13)
+        ..lineTo(5.825, 13)
+        ..lineTo(8.4, 15.6)
+        ..close();
+      canvas.save();
+      canvas.translate(
+        r.right - 12.0 - iconSize / 2,
+        r.center.dy - iconSize / 2,
+      );
+      canvas.scale(k, k);
+      canvas.drawPath(iconPath, iconPaint);
+      canvas.restore();
+    }
 
     // 右下角：细 L 形角标（Riff），比加号更像角落手柄。
     final x = r.right - 4.0;

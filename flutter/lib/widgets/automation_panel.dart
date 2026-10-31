@@ -35,7 +35,6 @@ class AutomationPanel extends StatefulWidget {
     required this.isConductor,
     required this.status,
     required this.formatTick,
-    required this.onCollapsed,
     required this.onReload,
     required this.textureId,
     required this.pencilActive,
@@ -65,7 +64,6 @@ class AutomationPanel extends StatefulWidget {
 
   /// tick → 顶部栏位置文本（跟随时间码的小节/秒模式）。
   final String Function(double tick) formatTick;
-  final ValueChanged<bool> onCollapsed;
   final VoidCallback onReload;
 
   /// AM wgpu 独立纹理 ID；null = 尚未创建（退回 Flutter 绘制）。
@@ -902,7 +900,8 @@ class _AutomationPanelState extends State<AutomationPanel>
     }
     final lane = widget.lanes[laneIdx];
     final tick = _snapTickAt(d.localPosition.dx).round();
-    final hit = widget.pencilActive ? _hitAnchor(lane, d.localPosition) : null;
+    final canDragAnchor = widget.pencilActive || widget.marqueeEnabled;
+    final hit = canDragAnchor ? _hitAnchor(lane, d.localPosition) : null;
     final hitTick = hit?.round();
     final inMarquee =
         _marqueeTicks != null &&
@@ -995,7 +994,9 @@ class _AutomationPanelState extends State<AutomationPanel>
     }
     final lane = widget.lanes[laneIdx];
     widget.status.value = null;
-    final hit = widget.pencilActive ? _hitAnchor(lane, d.localPosition) : null;
+    // 铅笔和选框工具都可以直接按住锚点拖动位置；空白处仍按各自逻辑处理。
+    final canDragAnchor = widget.pencilActive || widget.marqueeEnabled;
+    final hit = canDragAnchor ? _hitAnchor(lane, d.localPosition) : null;
     if (hit != null) {
       final hitTick = hit.round();
       if (!_selectedTicks.contains(hitTick)) {
@@ -1364,18 +1365,6 @@ class _AutomationPanelState extends State<AutomationPanel>
                     width: AutomationPainter.comboWidth,
                     child: Column(
                       children: [
-                        InkWell(
-                          onTap: () => widget.onCollapsed(true),
-                          child: SizedBox(
-                            height: 22,
-                            width: double.infinity,
-                            child: Icon(
-                              Icons.keyboard_arrow_down,
-                              size: 16,
-                              color: YinheTheme.textMuted,
-                            ),
-                          ),
-                        ),
                         Expanded(
                           child: PopupMenuButton<int>(
                             tooltip: l.automationType,

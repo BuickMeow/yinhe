@@ -425,9 +425,6 @@ class TopBar extends StatelessWidget {
       icon: const Icon(Icons.timeline),
       color: automationOpen ? YinheTheme.accent : YinheTheme.textSecondary,
       tooltip: l.automation,
-      style: automationOpen
-          ? IconButton.styleFrom(backgroundColor: YinheTheme.selectedBg)
-          : null,
       visualDensity: VisualDensity.compact,
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(minWidth: 40, minHeight: 40),

@@ -550,7 +550,6 @@ mixin _ShellBuild on _ShellBase {
                                                   .master,
                                           status: _editStatus,
                                           formatTick: _formatEditTick,
-                                          onCollapsed: _setAutoCollapsed,
                                           onReload: _loadAutomation,
                                           textureId: _amTextureId,
                                           pencilActive:
