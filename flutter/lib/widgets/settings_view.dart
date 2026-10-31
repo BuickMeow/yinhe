@@ -371,10 +371,48 @@ class _SettingsViewState extends State<SettingsView> {
     );
   }
 
-  /// 编辑页：当前只复用桌面的“允许重叠音符”开关。
+  /// 设置行统一外壳：Material 卡片 + adaptive 开关。
+  ///
+  /// iOS/iPadOS 自动使用 CupertinoSwitch，Android 使用 Material Switch；
+  /// 两个设置页共用这一份样式，避免出现两种开关。
+  Widget _switchCard({
+    required String title,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+    String? subtitle,
+    IconData? icon,
+  }) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      elevation: 0,
+      color: YinheTheme.controlBg,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+      child: SwitchListTile.adaptive(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+        secondary: icon == null
+            ? null
+            : Icon(icon, size: 20, color: YinheTheme.textSecondary),
+        title: Text(
+          title,
+          style: TextStyle(color: YinheTheme.text, fontSize: 14),
+        ),
+        subtitle: subtitle == null
+            ? null
+            : Text(
+                subtitle,
+                style: TextStyle(color: YinheTheme.textSecondary, fontSize: 12),
+              ),
+        value: value,
+        onChanged: onChanged,
+      ),
+    );
+  }
+
+  /// 编辑页：开关行与音色库页共用同一套 adaptive 样式。
   Widget _editingPage() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    return ListView(
+      padding: EdgeInsets.zero,
       children: [
         Text(
           l.edit,
@@ -385,107 +423,38 @@ class _SettingsViewState extends State<SettingsView> {
           ),
         ),
         const SizedBox(height: 12),
-        Container(
-          decoration: BoxDecoration(
-            color: YinheTheme.controlBg,
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: SwitchListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-            title: Text(
-              l.allowOverlappingNotes,
-              style: TextStyle(color: YinheTheme.text, fontSize: 14),
-            ),
-            subtitle: Text(
-              L10n.isZh ? '关闭后，新建或移动的音符不能与已有音符重叠' : 'When off, new or moved notes cannot overlap existing notes',
-              style: TextStyle(color: YinheTheme.textSecondary, fontSize: 12),
-            ),
-            value: _allowOverlappingNotes,
-            activeThumbColor: YinheTheme.accent,
-            onChanged: _setAllowOverlappingNotes,
-          ),
+        _switchCard(
+          title: l.allowOverlappingNotes,
+          subtitle: L10n.isZh
+              ? '关闭后，新建或移动的音符不能与已有音符重叠'
+              : 'When off, new or moved notes cannot overlap existing notes',
+          value: _allowOverlappingNotes,
+          onChanged: _setAllowOverlappingNotes,
         ),
-        const SizedBox(height: 8),
-        Container(
-          decoration: BoxDecoration(
-            color: YinheTheme.controlBg,
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: SwitchListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-            secondary: Icon(
-              Icons.center_focus_strong,
-              size: 20,
-              color: YinheTheme.textSecondary,
-            ),
-            title: Text(
-              L10n.isZh ? '跟随播放头' : 'Follow playhead',
-              style: TextStyle(color: YinheTheme.text, fontSize: 14),
-            ),
-            subtitle: Text(
-              L10n.isZh ? '播放时卷帘居中跟随；手动拖动后，播放头离开视口 2 秒会恢复' : 'Center the roll on the playhead; resumes 2 s after it leaves the view',
-              style: TextStyle(color: YinheTheme.textSecondary, fontSize: 12),
-            ),
-            value: _followPlayhead,
-            activeThumbColor: YinheTheme.accent,
-            onChanged: _setFollowPlayhead,
-          ),
+        _switchCard(
+          title: L10n.isZh ? '跟随播放头' : 'Follow playhead',
+          subtitle: L10n.isZh ? '播放时卷帘居中跟随；手动拖动后，播放头离开视口 2 秒会恢复' : 'Center the roll on the playhead; resumes 2 s after it leaves the view',
+          icon: Icons.center_focus_strong,
+          value: _followPlayhead,
+          onChanged: _setFollowPlayhead,
         ),
-        const SizedBox(height: 8),
-        Container(
-          decoration: BoxDecoration(
-            color: YinheTheme.controlBg,
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: SwitchListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-            secondary: Icon(
-              Icons.home_outlined,
-              size: 20,
-              color: YinheTheme.textSecondary,
-            ),
-            title: Text(
-              L10n.isZh ? '打开侧栏时暂停' : 'Pause on menu',
-              style: TextStyle(color: YinheTheme.text, fontSize: 14),
-            ),
-            subtitle: Text(
-              L10n.isZh
-                  ? '打开侧栏时停止播放（默认关闭）'
-                  : 'Stop playback when opening the menu',
-              style: TextStyle(color: YinheTheme.textSecondary, fontSize: 12),
-            ),
-            value: _pauseOnHome,
-            activeThumbColor: YinheTheme.accent,
-            onChanged: _setPauseOnHome,
-          ),
+        _switchCard(
+          title: L10n.isZh ? '打开侧栏时暂停' : 'Pause on menu',
+          subtitle: L10n.isZh
+              ? '打开侧栏时停止播放（默认关闭）'
+              : 'Stop playback when opening the menu',
+          icon: Icons.home_outlined,
+          value: _pauseOnHome,
+          onChanged: _setPauseOnHome,
         ),
-        const SizedBox(height: 8),
-        Container(
-          decoration: BoxDecoration(
-            color: YinheTheme.controlBg,
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: SwitchListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-            secondary: Icon(
-              Icons.exit_to_app,
-              size: 20,
-              color: YinheTheme.textSecondary,
-            ),
-            title: Text(
-              L10n.isZh ? '退出应用时暂停' : 'Pause on exit',
-              style: TextStyle(color: YinheTheme.text, fontSize: 14),
-            ),
-            subtitle: Text(
-              L10n.isZh
-                  ? '切到后台或退出时停止播放（默认关闭）'
-                  : 'Stop playback when leaving the app',
-              style: TextStyle(color: YinheTheme.textSecondary, fontSize: 12),
-            ),
-            value: _pauseOnExit,
-            activeThumbColor: YinheTheme.accent,
-            onChanged: _setPauseOnExit,
-          ),
+        _switchCard(
+          title: L10n.isZh ? '退出应用时暂停' : 'Pause on exit',
+          subtitle: L10n.isZh
+              ? '切到后台或退出时停止播放（默认关闭）'
+              : 'Stop playback when leaving the app',
+          icon: Icons.exit_to_app,
+          value: _pauseOnExit,
+          onChanged: _setPauseOnExit,
         ),
       ],
     );
@@ -593,68 +562,80 @@ class _SettingsViewState extends State<SettingsView> {
         const SizedBox(height: 4),
         Expanded(
           child: ReorderableListView.builder(
-            buildDefaultDragHandles: false,
+            // 手机/平板默认长按整行拖动；桌面端才显示 drag handle。
+            buildDefaultDragHandles: true,
             itemCount: _fonts.length,
             onReorderItem: _reorderFonts,
             itemBuilder: (context, i) {
               final e = _fonts[i];
-              return Container(
+              final name = e.name.isNotEmpty ? e.name : e.path;
+              return Dismissible(
                 key: ValueKey(e.path),
-                margin: const EdgeInsets.only(bottom: 6),
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                decoration: BoxDecoration(
-                  color: YinheTheme.controlBg,
-                  borderRadius: BorderRadius.circular(6),
+                direction: DismissDirection.endToStart,
+                onDismissed: (_) => _removeFont(i),
+                background: Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 18),
+                  alignment: Alignment.centerRight,
+                  decoration: BoxDecoration(
+                    color: YinheTheme.danger,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Icon(Icons.delete_outline, color: Colors.white),
                 ),
-                child: Row(
-                  children: [
-                    ReorderableDragStartListener(
-                      index: i,
-                      child: Icon(
-                        Icons.drag_indicator,
-                        size: 18,
-                        color: YinheTheme.textDisabled,
+                child: Card(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  elevation: 0,
+                  color: YinheTheme.controlBg,
+                  clipBehavior: Clip.antiAlias,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: SwitchListTile.adaptive(
+                    contentPadding: const EdgeInsets.only(left: 16, right: 8),
+                    // 固定占位：有/无警告时标题都从同一列开始。
+                    secondary: SizedBox(
+                      width: 32,
+                      child: e.warnings.isEmpty
+                          ? null
+                          : IconButton(
+                              tooltip: L10n.isZh ? '兼容性提示' : 'Compatibility',
+                              icon: const Icon(Icons.warning_amber_rounded),
+                              iconSize: 18,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints.tightFor(
+                                width: 32,
+                                height: 32,
+                              ),
+                              color: YinheTheme.warning,
+                              onPressed: () => _showWarnings(e),
+                            ),
+                    ),
+                    title: Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: e.enabled
+                            ? YinheTheme.text
+                            : YinheTheme.textDisabled,
+                        fontSize: 14,
                       ),
                     ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        e.name.isNotEmpty ? e.name : e.path,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: e.enabled
-                              ? YinheTheme.text
-                              : YinheTheme.textDisabled,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                    if (e.warnings.isNotEmpty)
-                      IconButton(
-                        tooltip: L10n.isZh ? '兼容性提示' : 'Compatibility',
-                        icon: const Icon(Icons.warning_amber_rounded),
-                        iconSize: 18,
-                        color: YinheTheme.warning,
-                        visualDensity: VisualDensity.compact,
-                        onPressed: () => _showWarnings(e),
-                      ),
-                    Transform.scale(
-                      scale: 0.8,
-                      child: Switch(
-                        value: e.enabled,
-                        onChanged: (v) => _toggleFont(i, v),
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: l.remove,
-                      icon: const Icon(Icons.delete_outline),
-                      iconSize: 18,
-                      color: YinheTheme.textSecondary,
-                      visualDensity: VisualDensity.compact,
-                      onPressed: () => _removeFont(i),
-                    ),
-                  ],
+                    subtitle: e.name.isNotEmpty && e.name != e.path
+                        ? Text(
+                            e.path,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: YinheTheme.textDisabled,
+                              fontSize: 11,
+                            ),
+                          )
+                        : null,
+                    value: e.enabled,
+                    onChanged: (v) => _toggleFont(i, v),
+                  ),
                 ),
               );
             },
@@ -752,23 +733,11 @@ class _SettingsViewState extends State<SettingsView> {
       runSpacing: 8,
       children: [
         for (final o in options)
-          InkWell(
-            borderRadius: BorderRadius.circular(6),
-            onTap: () => onTap(o),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              decoration: BoxDecoration(
-                color: o == value ? YinheTheme.accent : YinheTheme.controlBg,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                label(o),
-                style: TextStyle(
-                  color: o == value ? Colors.white : YinheTheme.text,
-                  fontSize: 13,
-                ),
-              ),
-            ),
+          ChoiceChip(
+            label: Text(label(o)),
+            selected: o == value,
+            showCheckmark: false,
+            onSelected: (_) => onTap(o),
           ),
       ],
     );
