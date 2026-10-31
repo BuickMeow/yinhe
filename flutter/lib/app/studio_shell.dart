@@ -19,7 +19,7 @@ import '../dialogs/batch_edit_dialog.dart';
 import '../dialogs/inputs.dart';
 import '../widgets/automation_panel.dart';
 import '../menus/canvas_menus.dart';
-import '../widgets/home_view.dart';
+import '../widgets/sidebar.dart';
 import '../dialogs/insert_flow.dart';
 import '../l10n.dart';
 import '../l10n/app_localizations.dart';
@@ -35,6 +35,7 @@ import '../dialogs/event_list_dialog.dart';
 import '../dialogs/export_dialogs.dart';
 import '../dialogs/unsaved_dialog.dart';
 import '../dialogs/progress_dialog.dart';
+import '../dialogs/recent_files_dialog.dart';
 import '../dialogs/project_defaults_dialog.dart';
 import '../dialogs/project_dialog.dart';
 import '../painters/painters.dart';
@@ -56,7 +57,7 @@ const MethodChannel _channel = MethodChannel('yinhe/surface');
 const int kViewArrangement = 0;
 const int kViewPianoroll = 1;
 
-/// 工作台壳：画布常驻，主页为覆盖浮层，上侧栏为走带控制。
+/// 工作台壳：画布常驻，左侧抽屉菜单 + 顶部走带控制。
 class StudioShell extends StatefulWidget {
   const StudioShell({super.key});
 
@@ -82,7 +83,9 @@ abstract class _ShellBase extends State<StudioShell>
   ({int w, int h})? _pendingAmSize;
   bool _surfaceSizeFlushScheduled = false;
 
-  bool _showHome = true;
+  /// 侧栏（Scaffold drawer）的开关入口：顶栏菜单按钮与启动时打开。
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+
   int _viewMode = kViewArrangement;
   String? _fileName;
 
@@ -147,7 +150,7 @@ abstract class _ShellBase extends State<StudioShell>
   /// 目前顶部栏读数是否由 PR/AR 选框移动驱动。
   bool _selectionStatusActive = false;
 
-  /// 设置页浮层（从主页进入）。
+  /// 设置页浮层（从侧栏进入）。
   bool _showSettings = false;
 
   List<RecentItem> _recent = const [];
@@ -529,13 +532,11 @@ class _StudioShellState extends _ShellBase
       if (!coveredByRoute) {
         // 帧驱动同步：`renderFrame` 同步等到 present 完成，之后读取的浮层数据
         // 与纹理来自同一份 Rust 状态，不需要再按帧数延迟。
-        if (!_showHome) {
-          // 拖拽边缘自动滚动：先滚动视图，再渲染这一帧。
-          rust.dragTick();
-          rust.renderFrame();
-          // 到工程末尾：等 release 尾音自然结束后暂停在末尾，不回开头。
-          rust.autoPauseAtEnd();
-        }
+        // 拖拽边缘自动滚动：先滚动视图，再渲染这一帧。
+        rust.dragTick();
+        rust.renderFrame();
+        // 到工程末尾：等 release 尾音自然结束后暂停在末尾，不回开头。
+        rust.autoPauseAtEnd();
         _playhead.value = rust.playheadX();
         final snap = _readSnapshot();
         if (!_sameSnapshot(snap)) {
@@ -617,9 +618,7 @@ class _StudioShellState extends _ShellBase
         _readSfProgress();
       }
       // 保持连续帧：Rust 侧拖拽/边缘滚动/渲染都由帧驱动（手指静止时也要跑）。
-      if (!_showHome) {
-        SchedulerBinding.instance.scheduleFrame();
-      }
+      SchedulerBinding.instance.scheduleFrame();
     })..start();
     _recent = _readRecent();
     _loadLanguage();

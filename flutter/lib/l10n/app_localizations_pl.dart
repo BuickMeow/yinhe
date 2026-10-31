@@ -174,6 +174,9 @@ class AppLocalizationsPl extends AppLocalizations {
   String get home => 'Strona główna';
 
   @override
+  String get menu => 'Menu';
+
+  @override
   String get backToArrangement => 'Wróć do aranżacji';
 
   @override

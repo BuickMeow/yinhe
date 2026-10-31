@@ -174,6 +174,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get home => 'Startseite';
 
   @override
+  String get menu => 'Menü';
+
+  @override
   String get backToArrangement => 'Zurück zum Arrangement';
 
   @override

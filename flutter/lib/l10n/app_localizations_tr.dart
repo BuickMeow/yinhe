@@ -174,6 +174,9 @@ class AppLocalizationsTr extends AppLocalizations {
   String get home => 'Ana sayfa';
 
   @override
+  String get menu => 'Menü';
+
+  @override
   String get backToArrangement => 'Düzenlemeye dön';
 
   @override

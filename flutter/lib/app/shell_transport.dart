@@ -33,7 +33,7 @@ mixin _ShellTransport on _ShellBase {
 
   /// 可见窗口变化后延迟重载力度条，避免滚动时每帧扫音符。
   void _scheduleVelocityReload() {
-    if (_viewMode != kViewPianoroll || _showHome || _autoCollapsed) {
+    if (_viewMode != kViewPianoroll || _autoCollapsed) {
       return;
     }
     final s = _snap.value;
@@ -53,10 +53,7 @@ mixin _ShellTransport on _ShellBase {
     }
     _velocityReloadTimer = Timer(const Duration(milliseconds: 80), () {
       _velocityReloadTimer = null;
-      if (!mounted ||
-          _viewMode != kViewPianoroll ||
-          _showHome ||
-          _autoCollapsed) {
+      if (!mounted || _viewMode != kViewPianoroll || _autoCollapsed) {
         return;
       }
       _loadVelocity();

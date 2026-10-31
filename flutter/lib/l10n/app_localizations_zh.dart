@@ -174,6 +174,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get home => '主页';
 
   @override
+  String get menu => '菜单';
+
+  @override
   String get backToArrangement => '返回走带';
 
   @override
@@ -751,6 +754,9 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get home => '主頁';
 
   @override
+  String get menu => '選單';
+
+  @override
   String get backToArrangement => '返回走帶';
 
   @override
@@ -1326,6 +1332,9 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get home => '主頁';
+
+  @override
+  String get menu => '選單';
 
   @override
   String get backToArrangement => '返回走帶';

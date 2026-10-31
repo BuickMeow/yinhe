@@ -174,6 +174,9 @@ class AppLocalizationsKo extends AppLocalizations {
   String get home => '홈';
 
   @override
+  String get menu => '메뉴';
+
+  @override
   String get backToArrangement => '어레인지로 돌아가기';
 
   @override

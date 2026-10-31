@@ -446,6 +446,12 @@ abstract class AppLocalizations {
   /// **'Home'**
   String get home;
 
+  /// No description provided for @menu.
+  ///
+  /// In en, this message translates to:
+  /// **'Menu'**
+  String get menu;
+
   /// No description provided for @backToArrangement.
   ///
   /// In en, this message translates to:

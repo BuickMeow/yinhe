@@ -174,6 +174,9 @@ class AppLocalizationsIt extends AppLocalizations {
   String get home => 'Home';
 
   @override
+  String get menu => 'Menu';
+
+  @override
   String get backToArrangement => 'Torna all\'arrangiamento';
 
   @override

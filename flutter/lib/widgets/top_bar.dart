@@ -29,7 +29,7 @@ class TopBar extends StatelessWidget {
     required this.songTitle,
     required this.fileName,
     required this.docState,
-    required this.onHome,
+    required this.onMenu,
     required this.onBack,
     required this.onTogglePlay,
     required this.onStop,
@@ -86,7 +86,7 @@ class TopBar extends StatelessWidget {
   final String songTitle;
   final String? fileName;
   final ValueListenable<int> docState;
-  final VoidCallback onHome;
+  final VoidCallback onMenu;
   final VoidCallback onBack;
   final VoidCallback onTogglePlay;
   final VoidCallback onStop;
@@ -178,10 +178,10 @@ class TopBar extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         IconButton(
-          onPressed: isPr ? onBack : onHome,
-          icon: Icon(isPr ? Icons.arrow_back : Icons.home),
+          onPressed: isPr ? onBack : onMenu,
+          icon: Icon(isPr ? Icons.arrow_back : Icons.menu),
           color: YinheTheme.text,
-          tooltip: isPr ? l.backToArrangement : l.home,
+          tooltip: isPr ? l.backToArrangement : l.menu,
           visualDensity: VisualDensity.compact,
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
@@ -310,7 +310,7 @@ class TopBar extends StatelessWidget {
   Widget _buildCompact(BuildContext context, AppLocalizations l) {
     return Column(
       children: [
-        // 第一行：左 主页/播放/停止；中 时间码/BPM/拍号；右 撤销/重做/保存。
+        // 第一行：左 菜单/播放/停止；中 时间码/BPM/拍号；右 撤销/重做/保存。
         Expanded(
           child: Stack(
             fit: StackFit.expand,

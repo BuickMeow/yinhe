@@ -174,6 +174,9 @@ class AppLocalizationsCs extends AppLocalizations {
   String get home => 'Domů';
 
   @override
+  String get menu => 'Menu';
+
+  @override
   String get backToArrangement => 'Zpět do aranžmá';
 
   @override

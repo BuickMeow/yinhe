@@ -174,6 +174,9 @@ class AppLocalizationsJa extends AppLocalizations {
   String get home => 'ホーム';
 
   @override
+  String get menu => 'メニュー';
+
+  @override
   String get backToArrangement => 'アレンジに戻る';
 
   @override

@@ -39,7 +39,7 @@ Widget _app({
             songTitle: 'Center Title',
             fileName: 'song.mid',
             docState: docState,
-            onHome: () {},
+            onMenu: () {},
             onBack: () {},
             onTogglePlay: () {},
             onStop: () {},
@@ -115,10 +115,10 @@ void main() {
     final bar = tester.getRect(find.byType(TopBar));
     final title = tester.getCenter(find.textContaining('Center Title'));
     expect(title.dx - bar.left, closeTo(bar.width / 2, 1), reason: '竖屏第二行标题居中');
-    final home = tester.getCenter(find.byIcon(Icons.home));
-    expect(home.dx - bar.left, lessThan(30), reason: '主页按钮保持在左上角');
+    final menu = tester.getCenter(find.byIcon(Icons.menu));
+    expect(menu.dx - bar.left, lessThan(30), reason: '菜单按钮保持在左上角');
     final quantizeY = tester.getCenter(find.byIcon(Icons.motion_photos_on)).dy;
-    expect(home.dy, lessThan(quantizeY), reason: '主运输在第一行，量化在第二行');
+    expect(menu.dy, lessThan(quantizeY), reason: '主运输在第一行，量化在第二行');
     final undoX = tester.getCenter(find.byIcon(Icons.undo)).dx;
     final redoX = tester.getCenter(find.byIcon(Icons.redo)).dx;
     final saveX = tester.getCenter(find.byIcon(Icons.save_outlined)).dx;

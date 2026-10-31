@@ -248,7 +248,6 @@ mixin _ShellDocument on _ShellBase {
       rust.setDisplayTrack(-1);
       rust.setActiveTrack(-1);
       setState(() {
-        _showHome = false;
         _viewMode = kViewArrangement;
         _activeTrack = null;
         _displayTrack = -1;
@@ -314,12 +313,9 @@ mixin _ShellDocument on _ShellBase {
     }
   }
 
-  /// 主页重新打开同一文件：文档还在内存里，直接回工作区，不重新解析。
+  /// 侧栏重新打开同一文件：文档还在内存里，直接回工作区，不重新解析。
   void _returnToWorkspace() {
-    if (!mounted) {
-      return;
-    }
-    setState(() => _showHome = false);
+    _scaffoldKey.currentState?.closeDrawer();
     _ensureSurface();
   }
 
@@ -328,7 +324,6 @@ mixin _ShellDocument on _ShellBase {
     _archivePolling = _isArchivePath(path);
     setState(() {
       _fileName = path.split('/').last;
-      _showHome = false;
       _viewMode = kViewArrangement;
       _activeTrack = null;
       _displayTrack = -1;

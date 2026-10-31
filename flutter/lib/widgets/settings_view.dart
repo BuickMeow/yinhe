@@ -12,7 +12,7 @@ import '../core/theme.dart';
 
 /// 设置页（全屏浮层）：左侧栏切页（音色库 / 音频）+ 右内容两栏。
 ///
-/// 无上边栏；返回按钮与工作区顶栏的主页/返回按钮同 xy、同尺寸。
+/// 无上边栏；返回按钮与工作区顶栏的菜单/返回按钮同 xy、同尺寸。
 /// 音色库为多库表：可拖动排序（顶部覆盖底部）、可启用/关闭。
 class SettingsView extends StatefulWidget {
   const SettingsView({
@@ -445,11 +445,13 @@ class _SettingsViewState extends State<SettingsView> {
               color: YinheTheme.textSecondary,
             ),
             title: Text(
-              L10n.isZh ? '进入主页时暂停' : 'Pause on home',
+              L10n.isZh ? '打开侧栏时暂停' : 'Pause on menu',
               style: TextStyle(color: YinheTheme.text, fontSize: 14),
             ),
             subtitle: Text(
-              L10n.isZh ? '打开主页时停止播放（默认关闭）' : 'Stop playback when opening home',
+              L10n.isZh
+                  ? '打开侧栏时停止播放（默认关闭）'
+                  : 'Stop playback when opening the menu',
               style: TextStyle(color: YinheTheme.textSecondary, fontSize: 12),
             ),
             value: _pauseOnHome,

@@ -175,6 +175,9 @@ class AppLocalizationsFr extends AppLocalizations {
   String get home => 'Accueil';
 
   @override
+  String get menu => 'Menu';
+
+  @override
   String get backToArrangement => 'Retour à l\'arrangement';
 
   @override

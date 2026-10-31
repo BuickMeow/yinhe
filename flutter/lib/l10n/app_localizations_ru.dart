@@ -174,6 +174,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get home => 'Главная';
 
   @override
+  String get menu => 'Меню';
+
+  @override
   String get backToArrangement => 'Назад к аранжировке';
 
   @override

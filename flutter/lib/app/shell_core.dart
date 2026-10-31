@@ -163,7 +163,6 @@ mixin _ShellCore on _ShellBase {
     _pushAllQuantizes();
     setState(() {
       _fileName = 'Untitled';
-      _showHome = false;
       _viewMode = kViewArrangement;
       _activeTrack = null;
       _displayTrack = -1;
@@ -342,6 +341,12 @@ mixin _ShellCore on _ShellBase {
       _amTextureId = amId;
     });
     await _ensureSurface();
+    // 启动时打开侧栏：替代旧主页，用户第一眼就能选文件/设置。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _scaffoldKey.currentState?.openDrawer();
+      }
+    });
   }
 
   /// 确保 Rust 已拿到生产端 surface（部分引擎版本不触发 SurfaceProducer 回调）。

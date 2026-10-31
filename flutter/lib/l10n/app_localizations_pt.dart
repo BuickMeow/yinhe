@@ -174,6 +174,9 @@ class AppLocalizationsPt extends AppLocalizations {
   String get home => 'Início';
 
   @override
+  String get menu => 'Menu';
+
+  @override
   String get backToArrangement => 'Voltar ao arranjo';
 
   @override
