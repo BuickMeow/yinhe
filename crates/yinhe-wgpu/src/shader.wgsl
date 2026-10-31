@@ -392,15 +392,28 @@ fn note_geometry(
         let x_offset = u.keyboard_width - u.scroll_x;
 
         // 右边界直接算（与相邻音符的左边界完全相同的表达式），杜绝 1px 缝隙。
-        pixel_x = x_offset + f32(start_tick) * ppu;
-        right = x_offset + f32(end_tick) * ppu;
-        // 视口左边界 = keyboard_width（键盘列/轨道面板列由 egui 层绘制，
-        // 音符左端 clamp 到其右缘，长音符从左侧进入时显示为被左列"切"掉）。
-        pixel_x = max(pixel_x, u.keyboard_width);
-        // AR 保留 1px 可视下限；PR 仍保留 2px，避免短音符消失。
-        pixel_w = max(right - pixel_x, 1.0);
-        if u.mode == 1u {
-            pixel_w = max(pixel_w, 2.0);
+        var raw_x = x_offset + f32(start_tick) * ppu;
+        var raw_right = x_offset + f32(end_tick) * ppu;
+        // ghost 的时间轴偏移要先参与可见性判断（下面不再重复叠加 dx）。
+        if is_ghost {
+            raw_x += u.ghost_dx;
+            raw_right += u.ghost_dx;
+        }
+        // 完全在视口左/右侧的音符直接退化。legacy 路径（GPU cull 未就绪）
+        // 只靠顶点几何，若不剔除，滚出左边界的长音符会在键盘列右缘留下
+        // 1~2px 的“旧音符”残影。
+        if raw_right <= u.keyboard_width || raw_x >= u.width {
+            pixel_x = u.width + 100.0;
+            pixel_w = 0.0;
+        } else {
+            // 视口左边界 = keyboard_width（键盘列/轨道面板列由 egui 层绘制，
+            // 音符左端 clamp 到其右缘，长音符从左侧进入时显示为被左列"切"掉）。
+            pixel_x = max(raw_x, u.keyboard_width);
+            // AR 保留 1px 可视下限；PR 仍保留 2px，避免短音符消失。
+            pixel_w = max(raw_right - pixel_x, 1.0);
+            if u.mode == 1u {
+                pixel_w = max(pixel_w, 2.0);
+            }
         }
 
         if u.mode == 1u {
@@ -421,9 +434,12 @@ fn note_geometry(
         }
     }
 
-    // ghost 动画偏移必须在构造顶点之前叠加。
+    // ghost 动画偏移必须在构造顶点之前叠加。横向分支的 dx 已参与上面的
+    // 可见性判断，这里只补纵向（瀑布流）和两个方向的 y 偏移。
     if is_ghost {
-        pixel_x += u.ghost_dx;
+        if u.orientation == 1u {
+            pixel_x += u.ghost_dx;
+        }
         pixel_y += u.ghost_dy;
     }
     right = pixel_x + pixel_w;
