@@ -481,6 +481,8 @@ abstract class _ShellBase extends State<StudioShell>
   void _setView(int mode);
   void _showAddTrackDialog();
   void _showPasteMenu(Offset? pos, LongPressContext? ctx);
+  void _handleRulerScrub(Offset local);
+  void _handleRulerScrubEnd();
   void _handleRulerInsertStart(Offset local, Offset global);
   void _handleRulerInsertMove(Offset local);
   void _handleRulerInsertEnd(Offset local, Offset global);

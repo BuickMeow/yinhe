@@ -483,10 +483,7 @@ class TopBar extends StatelessWidget {
         if (v >= tracks.length) {
           onToggleAllTracks();
         } else {
-          // 直接选轨 = 只看该轨；先关掉「全部轨道」再切换当前编辑轨。
-          if (showAllTracks) {
-            onToggleAllTracks();
-          }
+          // 选轨只切换当前编辑轨，不隐式改「全部轨道」开关。
           onSelectTrack(v);
         }
       },

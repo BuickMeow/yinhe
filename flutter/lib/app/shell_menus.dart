@@ -341,7 +341,6 @@ mixin _ShellMenus on _ShellBase {
 
   /// 事件列表「跳转」：选中该轨、进入 PR、光标与视口中心落在事件起点。
   void _jumpToEvent(int track, double tick) {
-    _showAllTracks = false;
     _selectEditTrack(track);
     _setView(kViewPianoroll);
     rust.jumpToEvent(tick);

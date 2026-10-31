@@ -26,6 +26,8 @@ class MarkerLayer extends StatefulWidget {
     this.onInsertStart,
     this.onInsertMove,
     this.onInsertEnd,
+    this.onScrub,
+    this.onScrubEnd,
   });
 
   final ValueNotifier<List<double>> snap;
@@ -36,6 +38,10 @@ class MarkerLayer extends StatefulWidget {
   final void Function(Offset local, Offset global)? onInsertStart;
   final ValueChanged<Offset>? onInsertMove;
   final void Function(Offset local, Offset global)? onInsertEnd;
+
+  /// 未进入长按插入前，水平拖动标尺：切换播放位置（tick 由调用方换算）。
+  final ValueChanged<Offset>? onScrub;
+  final VoidCallback? onScrubEnd;
 
   @override
   State<MarkerLayer> createState() => _MarkerLayerState();
@@ -124,9 +130,19 @@ class _MarkerLayerState extends State<MarkerLayer> {
         double xOf(int tick) => tick * ppu - scrollX + origin;
         final sorted = [...widget.markers]..sort((a, b) => a.tick - b.tick);
         final insertStart = widget.onInsertStart;
+        final scrub = widget.onScrub;
+        final scrubEnd = widget.onScrubEnd;
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTapUp: (d) => rust.jumpToTick(rust.tickAtX(d.localPosition.dx)),
+          onHorizontalDragStart: scrub == null
+              ? null
+              : (d) => scrub(d.localPosition),
+          onHorizontalDragUpdate: scrub == null
+              ? null
+              : (d) => scrub(d.localPosition),
+          onHorizontalDragEnd: scrubEnd == null ? null : (_) => scrubEnd(),
+          onHorizontalDragCancel: scrubEnd,
           onLongPressStart: insertStart == null
               ? null
               : (d) => insertStart(d.localPosition, d.globalPosition),

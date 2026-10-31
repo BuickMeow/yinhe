@@ -497,6 +497,8 @@ mixin _ShellBuild on _ShellBase {
                                                   _handleRulerInsertMove,
                                               onInsertEnd:
                                                   _handleRulerInsertEnd,
+                                              onScrub: _handleRulerScrub,
+                                              onScrubEnd: _handleRulerScrubEnd,
                                             ),
                                           ),
                                           // 长按圆环/落点竖线最后画：盖在音轨面板与自动化栏之上。

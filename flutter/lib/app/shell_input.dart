@@ -471,6 +471,19 @@ mixin _ShellInput on _ShellBase {
     }
   }
 
+  /// 未进入长按插入：水平拖动时间标尺切换播放位置，顶部栏蓝字显示目标时间。
+  @override
+  void _handleRulerScrub(Offset local) {
+    final tick = rust.tickAtX(local.dx);
+    rust.jumpToTick(tick);
+    _setInsertStatus(tick);
+  }
+
+  @override
+  void _handleRulerScrubEnd() {
+    _clearInsertStatus();
+  }
+
   @override
   void _handleRulerInsertStart(Offset local, Offset global) {
     rust.editCancel();
@@ -800,12 +813,13 @@ mixin _ShellInput on _ShellBase {
           (lastPos - p).distance <= 30) {
         _arrLastTap = null;
         _arrLastTapPos = null;
-        _showAllTracks = false;
         _selectEditTrack(idx);
         _setView(kViewPianoroll);
       } else {
         _arrLastTap = now;
         _arrLastTapPos = p;
+        // 单击（不拖动）把播放头跳到对应时间；拖动仍由视口手势处理。
+        rust.jumpToTick(rust.tickAtX(p.dx));
       }
       return;
     }
@@ -823,8 +837,7 @@ mixin _ShellInput on _ShellBase {
       _toggleMs(p, idx);
       return;
     }
-    // 进入 PR：AR 点的那条轨就是当前编辑轨；「全部轨道」默认关闭。
-    _showAllTracks = false;
+    // 进入 PR：AR 点的那条轨就是当前编辑轨；「全部轨道」开关保持不变。
     _selectEditTrack(idx);
     _setView(kViewPianoroll);
   }
