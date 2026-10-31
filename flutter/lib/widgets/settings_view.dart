@@ -10,10 +10,9 @@ import '../l10n.dart';
 import '../l10n/app_localizations.dart';
 import '../core/theme.dart';
 
-/// 设置页（全屏浮层）：左侧栏切页（音色库 / 音频）+ 右内容两栏。
+/// 设置页：Scaffold + AppBar，宽屏 NavigationRail、窄屏 NavigationBar 切页。
 ///
-/// 无上边栏；返回按钮与工作区顶栏的菜单/返回按钮同 xy、同尺寸。
-/// 音色库为多库表：可拖动排序（顶部覆盖底部）、可启用/关闭。
+/// 音色库为多库表：长按整行拖动排序、点整行启用/关闭、左滑删除。
 class SettingsView extends StatefulWidget {
   const SettingsView({
     super.key,
@@ -251,122 +250,94 @@ class _SettingsViewState extends State<SettingsView> {
 
   @override
   Widget build(BuildContext context) {
-    final compact = MediaQuery.sizeOf(context).width < 600;
+    final wide = MediaQuery.sizeOf(context).width >= 600;
+    final ios = Theme.of(context).platform == TargetPlatform.iOS;
     final page = switch (_page) {
       0 => _soundFontPage(),
       1 => _audioPage(),
       2 => _editingPage(),
       _ => _languagePage(),
     };
-    return ColoredBox(
-      color: YinheTheme.bg,
-      child: Stack(
-        children: [
-          if (compact)
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                SizedBox(
-                  height: 48,
-                  child: Padding(
-                    padding: const EdgeInsets.only(left: 52),
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          _sideItem(Icons.piano, l.soundfonts, 0),
-                          _sideItem(Icons.volume_up, l.audio, 1),
-                          _sideItem(Icons.edit, l.edit, 2),
-                          _sideItem(Icons.language, l.language, 3),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-                    child: page,
-                  ),
-                ),
-              ],
-            )
-          else
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                SizedBox(width: 170, child: _sidebar()),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 16, 24, 16),
-                    child: page,
-                  ),
-                ),
-              ],
-            ),
-          // 左上角返回：与工作区顶栏返回/主页按钮同 xy、同尺寸。
-          Positioned(
-            left: 6,
-            top: 1,
-            width: 40,
-            height: 40,
-            child: IconButton(
-              tooltip: l.back,
-              icon: const Icon(Icons.arrow_back),
+    final tabs = <(IconData, String)>[
+      (Icons.piano, l.soundfonts),
+      (Icons.volume_up, l.audio),
+      (Icons.edit, l.edit),
+      (Icons.language, l.language),
+    ];
+    return MediaQuery.removePadding(
+      context: context,
+      // 外层 StudioShell 已经为状态栏/导航栏让位；这里只保留 iOS 的
+      // home indicator 安全区，避免 NavigationBar 被小白条压住。
+      removeTop: true,
+      removeBottom: !ios,
+      child: Scaffold(
+        backgroundColor: YinheTheme.bg,
+        appBar: AppBar(
+          backgroundColor: YinheTheme.controlBg,
+          foregroundColor: YinheTheme.text,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          leading: IconButton(
+            tooltip: l.back,
+            icon: const Icon(Icons.arrow_back),
+            onPressed: widget.onBack,
+          ),
+          title: Text(
+            l.settings,
+            style: TextStyle(
               color: YinheTheme.text,
-              visualDensity: VisualDensity.compact,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-              onPressed: widget.onBack,
+              fontSize: 17,
+              fontWeight: FontWeight.w600,
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  /// 左侧栏：标签页（顶部留出返回按钮的空间），每项带图标。
-  Widget _sidebar() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const SizedBox(height: 52),
-        _sideItem(Icons.piano, l.soundfonts, 0),
-        _sideItem(Icons.volume_up, l.audio, 1),
-        _sideItem(Icons.edit, l.edit, 2),
-        _sideItem(Icons.language, l.language, 3),
-      ],
-    );
-  }
-
-  Widget _sideItem(IconData icon, String label, int index) {
-    final selected = _page == index;
-    return InkWell(
-      onTap: () => setState(() => _page = index),
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-        decoration: BoxDecoration(
-          color: selected ? YinheTheme.controlBg : Colors.transparent,
-          borderRadius: BorderRadius.circular(6),
         ),
-        child: Row(
-          children: [
-            Icon(
-              icon,
-              size: 18,
-              color: selected ? YinheTheme.accent : YinheTheme.textSecondary,
-            ),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: TextStyle(
-                color: selected ? YinheTheme.accent : YinheTheme.text,
-                fontSize: 14,
+        body: wide
+            ? Row(
+                children: [
+                  NavigationRail(
+                    selectedIndex: _page,
+                    onDestinationSelected: (i) => setState(() => _page = i),
+                    labelType: NavigationRailLabelType.all,
+                    backgroundColor: YinheTheme.bg,
+                    groupAlignment: -0.85,
+                    destinations: [
+                      for (final (icon, label) in tabs)
+                        NavigationRailDestination(
+                          icon: Icon(icon),
+                          label: Text(label),
+                        ),
+                    ],
+                  ),
+                  VerticalDivider(width: 1, color: YinheTheme.lineFg),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 12, 24, 16),
+                      child: page,
+                    ),
+                  ),
+                ],
+              )
+            : Column(
+                children: [
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                      child: page,
+                    ),
+                  ),
+                  NavigationBar(
+                    selectedIndex: _page,
+                    onDestinationSelected: (i) => setState(() => _page = i),
+                    backgroundColor: YinheTheme.controlBg,
+                    indicatorColor: YinheTheme.selectedBg,
+                    destinations: [
+                      for (final (icon, label) in tabs)
+                        NavigationDestination(icon: Icon(icon), label: label),
+                    ],
+                  ),
+                ],
               ),
-            ),
-          ],
-        ),
       ),
     );
   }
