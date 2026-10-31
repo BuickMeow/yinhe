@@ -257,6 +257,9 @@ pub struct RenderScene {
     pub preview: DragPreview,
     /// 非播放态的播放光标位置（点击跳转用，tick）。
     pub cursor_tick: f64,
+    /// 最近一帧渲染时的播放头 x（与同帧视口 scroll 完全一致）。
+    /// UI 直接读它，避免“先滚视口、后按新 tick 再算播放头”造成单帧左右抽动。
+    pub last_playhead_x: f32,
     /// 覆盖层（选框/预览）修订号与内容（画布内容逻辑坐标）。
     pub overlay_rev: u32,
     pub overlay_box: Option<[f32; 4]>,
@@ -326,6 +329,7 @@ impl Default for RenderScene {
             active_track: None,
             preview: DragPreview::default(),
             cursor_tick: 0.0,
+            last_playhead_x: -1.0,
             overlay_rev: 0,
             overlay_box: None,
             overlay_cells: Vec::new(),
@@ -1699,29 +1703,14 @@ fn remap_scene_track_index(s: &mut RenderScene, from: usize, to: usize) {
 
 /// 播放光标在当前视图下的 x（逻辑像素；-1 = 无文档）。
 ///
-/// 坐标原点与画布一致（含键盘列/轨道面板偏移），Dart 直接画竖线。
+/// 返回**最近一帧渲染时**算出的位置，而不重新读一次播放时钟：同一帧里
+/// 视口跟随已经按某个 tick 滚动，若这里再取一个更晚的 tick，播放头会
+/// 比画面领先一小段，渲染耗时抖动时表现为单帧左右抽动。
 pub fn playhead_x() -> f32 {
-    // 注意锁顺序：playback_tick 内部会锁 scene，必须先算 tick 再锁 scene
-    // （持 scene 锁调用 audio 会自锁死）。
-    let playing = crate::audio::is_playing();
-    let tick = if playing {
-        crate::audio::playback_tick()
-    } else {
-        let Ok(s) = scene().lock() else {
-            return -1.0;
-        };
-        s.cursor_tick
-    };
     let Ok(s) = scene().lock() else {
         return -1.0;
     };
-    if s.model.is_none() {
-        return -1.0;
-    }
-    match s.view_mode {
-        ViewMode::Pianoroll => s.pr_view.tick_to_x(tick),
-        ViewMode::Arrangement => s.arr_view.base.tick_to_x(tick),
-    }
+    s.last_playhead_x
 }
 
 /// 设置播放光标（点击跳转）：吸附到量化网格并 seek 音频。

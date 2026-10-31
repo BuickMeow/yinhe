@@ -360,10 +360,16 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
     }
     let (fw, fh) = t.sink.size();
 
-    // 播放跟随：先取播放位置（audio 内部会短暂锁 scene），再进场景锁，
-    // 避免在持有场景锁时反向等待音频锁。
-    let follow_tick = if crate::audio::is_playing() && crate::audio::follow_playhead() {
+    // 播放位置：先取一次（audio 内部会短暂锁 scene），再进场景锁，
+    // 避免在持有场景锁时反向等待音频锁。同一 tick 同时用于跟随滚动和
+    // 播放头，保证两者落在同一帧的坐标系里。
+    let playing_tick = if crate::audio::is_playing() {
         Some(crate::audio::playback_tick().max(0.0))
+    } else {
+        None
+    };
+    let follow_tick = if crate::audio::follow_playhead() {
+        playing_tick
     } else {
         None
     };
@@ -404,6 +410,16 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
                 s.arr_view.clamp_scroll(w, h, total_ticks, num_tracks + 1)
             }
         }
+        // 播放头与刚 clamp 完的视口使用同一个 tick，Dart 读取时不再重算。
+        let playhead_tick = playing_tick.unwrap_or(s.cursor_tick);
+        s.last_playhead_x = if s.model.is_some() {
+            match s.view_mode {
+                ViewMode::Pianoroll => s.pr_view.tick_to_x(playhead_tick),
+                ViewMode::Arrangement => s.arr_view.base.tick_to_x(playhead_tick),
+            }
+        } else {
+            -1.0
+        };
         (
             s.view_mode,
             s.model.clone(),
