@@ -1,17 +1,12 @@
 use crate::{PIXELS_PER_TICK_MAX, PIXELS_PER_TICK_MIN, TimelineViewBase};
 
-/// PR 纵向缩放的离散档：16px 一档 8px，最大 64px。
+/// PR 纵向缩放的离散档：8px 一档，最大 64px。
+/// 最小档不是固定像素，而是「一屏 128 键」（`cross_size / 128`），
+/// 否则 iPad 这类视口较矮的设备缩不到全键可见。
 /// 与 AR 行高缩放同思路：累积到 1.1 倍才跳一档，避免触控板/捏合微动连跳。
-pub const KEY_HEIGHT_MIN: f32 = 16.0;
 pub const KEY_HEIGHT_STEP: f32 = 8.0;
 pub const KEY_HEIGHT_MAX: f32 = 64.0;
 pub const KEY_ZOOM_STEP_RATIO: f32 = 1.1;
-
-/// 把任意 key 高度吸附到最近的离散档位。
-pub fn snap_key_height(h: f32) -> f32 {
-    let k = ((h - KEY_HEIGHT_MIN) / KEY_HEIGHT_STEP).round();
-    (KEY_HEIGHT_MIN + k * KEY_HEIGHT_STEP).clamp(KEY_HEIGHT_MIN, KEY_HEIGHT_MAX)
-}
 
 /// 钢琴卷帘时间轴方向（横向 / 纵向瀑布流，二选一）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -355,15 +350,18 @@ impl PianoRollView {
             return;
         };
         *accum = 1.0;
+        // 最小档 = 一屏 128 键（随视口变化）；最大档仍是固定 64px。
+        let min_h = (cross_size / 128.0).max(0.001);
+        let max_h = KEY_HEIGHT_MAX.max(min_h);
         let old = self.key_height;
-        let pos = (old - KEY_HEIGHT_MIN) / KEY_HEIGHT_STEP;
+        let pos = old / KEY_HEIGHT_STEP;
         let new_h = if dir > 0.0 {
-            KEY_HEIGHT_MIN + (pos.floor() + 1.0) * KEY_HEIGHT_STEP
+            (pos.floor() + 1.0) * KEY_HEIGHT_STEP
         } else {
-            KEY_HEIGHT_MIN + (pos.ceil() - 1.0) * KEY_HEIGHT_STEP
+            (pos.ceil() - 1.0) * KEY_HEIGHT_STEP
         }
-        .clamp(KEY_HEIGHT_MIN, KEY_HEIGHT_MAX);
-        if new_h == old {
+        .clamp(min_h, max_h);
+        if (new_h - old).abs() < 0.001 {
             return;
         }
         self.key_height = new_h;
@@ -718,6 +716,19 @@ mod tests {
         let before = v.key_height;
         v.zoom_cross_discrete(200.0, 1.05, 800.0, &mut acc);
         assert_eq!(v.key_height, before);
+    }
+
+    #[test]
+    fn test_discrete_zoom_out_reaches_fit_128_keys() {
+        let mut v = make_view();
+        let mut acc = 1.0;
+        v.key_height = 16.0;
+        let cross_size = 758.0;
+        // 一路缩小，最终档位必须是一屏 128 键（iPad 等矮视口）。
+        for _ in 0..8 {
+            v.zoom_cross_discrete(200.0, 0.8, cross_size, &mut acc);
+        }
+        assert!((v.key_height - cross_size / 128.0).abs() < 0.01);
     }
 
     #[test]
