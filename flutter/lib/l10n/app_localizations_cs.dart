@@ -275,6 +275,12 @@ class AppLocalizationsCs extends AppLocalizations {
   String get language => 'Jazyk';
 
   @override
+  String get appearance => 'Vzhled';
+
+  @override
+  String get darkMode => 'Tmavý režim';
+
+  @override
   String get followSystem => 'Podle systému';
 
   @override

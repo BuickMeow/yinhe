@@ -1910,6 +1910,7 @@ fn write_settings() {
         ));
     }
     text.push_str(&format!("ui_language={}\n", ui_language()));
+    text.push_str(&format!("ui_theme={}\n", ui_theme()));
     let a = crate::audio::settings();
     text.push_str(&format!(
         "max_voices={}\nbuffer_size={}\nignore_velocity={}\nallow_overlapping_notes={}\n\
@@ -1947,6 +1948,7 @@ fn load_settings() {
     let mut pause_on_exit = defaults.pause_on_exit;
     let mut soundfonts: Vec<crate::audio::SoundfontEntry> = Vec::new();
     let mut language = String::new();
+    let mut theme = String::new();
     for line in text.lines() {
         if let Some(v) = line.strip_prefix("soundfont=") {
             // 常规格式 `enabled|path`；旧格式 `path`（视为启用）。
@@ -1967,6 +1969,8 @@ fn load_settings() {
             }
         } else if let Some(v) = line.strip_prefix("ui_language=") {
             language = v.trim().to_string();
+        } else if let Some(v) = line.strip_prefix("ui_theme=") {
+            theme = v.trim().to_string();
         } else if let Some(v) = line.strip_prefix("max_voices=") {
             max_voices = v.trim().parse().unwrap_or(max_voices);
         } else if let Some(v) = line.strip_prefix("buffer_size=") {
@@ -1987,6 +1991,9 @@ fn load_settings() {
     }
     if !language.is_empty() {
         set_ui_language(language);
+    }
+    if !theme.is_empty() {
+        set_ui_theme(theme);
     }
     if !soundfonts.is_empty() {
         log::info!("恢复音色库设置: {} 个", soundfonts.len());
@@ -4764,6 +4771,33 @@ pub fn set_ui_language(lang: String) -> i32 {
         *g = v.clone();
     }
     log::info!("界面语言: {v}");
+    1
+}
+
+static UI_THEME: OnceLock<Mutex<String>> = OnceLock::new();
+
+fn theme_slot() -> &'static Mutex<String> {
+    UI_THEME.get_or_init(|| Mutex::new("light".to_string()))
+}
+
+/// 界面主题（light/dark）。
+pub fn ui_theme() -> String {
+    theme_slot()
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_else(|_| "light".into())
+}
+
+/// 写入界面主题（light/dark）。
+pub fn set_ui_theme(theme: String) -> i32 {
+    let v = match theme.as_str() {
+        "dark" => "dark",
+        _ => "light",
+    };
+    if let Ok(mut g) = theme_slot().lock() {
+        *g = v.to_string();
+    }
+    log::info!("界面主题: {v}");
     1
 }
 

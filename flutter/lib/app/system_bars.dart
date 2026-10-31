@@ -66,22 +66,24 @@ class _SystemBarsModeState extends State<SystemBarsMode>
 
   void _apply() {
     final visible = SystemBarsMode.visible(context);
-    if (_visible == visible) {
-      return;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    if (_visible != visible) {
+      _visible = visible;
+      SystemChrome.setEnabledSystemUIMode(
+        visible ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky,
+      );
     }
-    _visible = visible;
-    SystemChrome.setEnabledSystemUIMode(
-      visible ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky,
-    );
     SystemChrome.setSystemUIOverlayStyle(
       SystemUiOverlayStyle(
         // 状态栏底色与顶部栏一致（iOS 忽略 statusBarColor，由工作区顶部
         // 画的同色带兜底；Android 直接用这个颜色）。
         statusBarColor: YinheTheme.controlBg,
         systemNavigationBarColor: Colors.transparent,
-        statusBarIconBrightness: Brightness.dark,
-        systemNavigationBarIconBrightness: Brightness.dark,
-        statusBarBrightness: Brightness.light,
+        statusBarIconBrightness: dark ? Brightness.light : Brightness.dark,
+        systemNavigationBarIconBrightness: dark
+            ? Brightness.light
+            : Brightness.dark,
+        statusBarBrightness: dark ? Brightness.dark : Brightness.light,
       ),
     );
   }

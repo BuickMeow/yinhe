@@ -927,10 +927,7 @@ pub fn begin_selection_gate(x: f32, y: f32) -> i32 {
     let Ok(mut s) = scene::scene().lock() else {
         return 0;
     };
-    if s.document.is_none()
-        || s.active_track == Some(0)
-        || s.view_mode != ViewMode::Pianoroll
-    {
+    if s.document.is_none() || s.active_track == Some(0) || s.view_mode != ViewMode::Pianoroll {
         return 0;
     }
     let q = quantize_of(&s);

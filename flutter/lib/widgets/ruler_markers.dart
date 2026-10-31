@@ -224,7 +224,7 @@ class _MarkerLayerState extends State<MarkerLayer> {
           margin: const EdgeInsets.only(top: 1, bottom: 1),
           padding: const EdgeInsets.symmetric(horizontal: 4),
           decoration: BoxDecoration(
-            color: const Color(0xFFFAFAFA),
+            color: YinheTheme.controlBg,
             borderRadius: BorderRadius.circular(3),
             border: Border.all(color: YinheTheme.lineFg),
           ),

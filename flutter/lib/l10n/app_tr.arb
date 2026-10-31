@@ -88,6 +88,8 @@
   "soundfonts": "SoundFont",
   "audio": "Ses",
   "language": "Dil",
+  "appearance": "Görünüm",
+  "darkMode": "Koyu mod",
   "followSystem": "Sistemi takip et",
   "maxVoices": "Maksimum ses",
   "audioBuffer": "Tampon Boyutu",

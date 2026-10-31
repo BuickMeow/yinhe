@@ -203,6 +203,20 @@ final CStrDart uiLanguage = bridge.lookupFunction<CStrNative, CStrDart>(
 final CStrArgDart setUiLanguage = bridge
     .lookupFunction<CStrArgNative, CStrArgDart>('yinhe_set_ui_language');
 
+/// 界面主题（light/dark）。
+final CStrDart uiTheme = bridge.lookupFunction<CStrNative, CStrDart>(
+  'yinhe_ui_theme',
+);
+
+/// 设置界面主题并持久化（会同步 wgpu 主题）。
+final CStrArgDart setUiTheme = bridge
+    .lookupFunction<CStrArgNative, CStrArgDart>('yinhe_set_ui_theme');
+
+/// 只刷新 wgpu 主题（1=dark），启动时同步用。
+final IntArgDart setTheme = bridge.lookupFunction<IntArgNative, IntArgDart>(
+  'yinhe_set_theme',
+);
+
 /// 事件列表 JSON（从 from_tick 起，最多 limit 条；track -1 = 全部）。
 /// 返回 `{"total":N,"rows":[...],"next":{tick,skip}|null}`。
 final EventsJsonDart eventsJson = bridge

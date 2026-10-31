@@ -88,6 +88,8 @@
   "soundfonts": "SoundFont",
   "audio": "Zvuk",
   "language": "Jazyk",
+  "appearance": "Vzhled",
+  "darkMode": "Tmavý režim",
   "followSystem": "Podle systému",
   "maxVoices": "Maximální počet hlasů",
   "audioBuffer": "Velikost vyrovnávací paměti",

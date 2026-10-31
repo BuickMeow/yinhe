@@ -94,6 +94,8 @@
   "soundfonts": "音色库",
   "audio": "音频",
   "language": "语言",
+  "appearance": "外观",
+  "darkMode": "深色模式",
   "followSystem": "跟随系统",
   "maxVoices": "复音上限",
   "audioBuffer": "音频缓冲",

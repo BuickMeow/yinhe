@@ -257,12 +257,14 @@ class _SettingsViewState extends State<SettingsView> {
       0 => _soundFontPage(),
       1 => _audioPage(),
       2 => _editingPage(),
+      3 => _appearancePage(),
       _ => _languagePage(),
     };
     final tabs = <(IconData, String)>[
       (Icons.piano, l.soundfonts),
       (Icons.volume_up, l.audio),
       (Icons.edit, l.edit),
+      (Icons.brightness_6, l.appearance),
       (Icons.language, l.language),
     ];
     return MediaQuery.removePadding(
@@ -436,6 +438,44 @@ class _SettingsViewState extends State<SettingsView> {
         ),
       ],
     );
+  }
+
+  /// 外观页：亮色/深色主题。
+  Widget _appearancePage() {
+    return ListView(
+      padding: EdgeInsets.zero,
+      children: [
+        Text(
+          l.appearance,
+          style: TextStyle(
+            color: YinheTheme.text,
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 12),
+        _switchCard(
+          title: l.darkMode,
+          subtitle: L10n.isZh
+              ? '切换整个编辑器的亮色/深色主题'
+              : 'Switch the editor between light and dark',
+          icon: Icons.dark_mode_outlined,
+          value: YinheTheme.darkMode.value,
+          onChanged: _setDarkMode,
+        ),
+      ],
+    );
+  }
+
+  void _setDarkMode(bool value) {
+    YinheTheme.setDark(value);
+    final p = (value ? 'dark' : 'light').toNativeUtf8();
+    try {
+      rust.setUiTheme(p);
+    } finally {
+      calloc.free(p);
+    }
+    setState(() {});
   }
 
   /// 语言页：跟随系统 + 桌面端同款 15 种语言（原生名称）。

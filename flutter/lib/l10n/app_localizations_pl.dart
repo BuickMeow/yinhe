@@ -275,6 +275,12 @@ class AppLocalizationsPl extends AppLocalizations {
   String get language => 'Język';
 
   @override
+  String get appearance => 'Wygląd';
+
+  @override
+  String get darkMode => 'Tryb ciemny';
+
+  @override
   String get followSystem => 'Zgodnie z systemem';
 
   @override

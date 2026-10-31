@@ -273,6 +273,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get language => '语言';
 
   @override
+  String get appearance => '外观';
+
+  @override
+  String get darkMode => '深色模式';
+
+  @override
   String get followSystem => '跟随系统';
 
   @override
@@ -856,6 +862,12 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get language => '語言';
 
   @override
+  String get appearance => '外觀';
+
+  @override
+  String get darkMode => '深色模式';
+
+  @override
   String get followSystem => '跟隨系統';
 
   @override
@@ -1437,6 +1449,12 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get language => '語言';
+
+  @override
+  String get appearance => '外觀';
+
+  @override
+  String get darkMode => '深色模式';
 
   @override
   String get followSystem => '跟隨系統';

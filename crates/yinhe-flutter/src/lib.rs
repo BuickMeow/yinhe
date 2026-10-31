@@ -376,12 +376,15 @@ fn cmd_tx() -> &'static Sender<Cmd> {
 
 fn render_thread_main(rx: Receiver<Cmd>) {
     log::info!("渲染线程启动");
-    // Flutter 壳目前固定 LIGHT。必须同步给 `yinhe-wgpu` 的共享 GPU 主题；
-    // 否则 `build_render_job` 会读 `GpuTheme::default()` 的 DARK，导致亮色
-    // 主题下选中/ghost 音符按暗色方向渲染（选中偏白、力度向黑淡化）。
-    yinhe_theme::set_current_gpu_theme(yinhe_theme::GpuTheme::from_base(
-        yinhe_theme::base::BaseColors::LIGHT,
-    ));
+    // 主题由持久化的 ui_theme 决定。必须同步给 `yinhe-wgpu` 的共享 GPU
+    // 主题；否则 `build_render_job` 会读 `GpuTheme::default()` 的 DARK，
+    // 导致亮色主题下选中/ghost 音符按暗色方向渲染。
+    let dark = scene::ui_theme() == "dark";
+    yinhe_theme::set_current_gpu_theme(yinhe_theme::GpuTheme::from_base(if dark {
+        yinhe_theme::base::BaseColors::DARK
+    } else {
+        yinhe_theme::base::BaseColors::LIGHT
+    }));
     let mut gpu: Option<Gpu> = None;
     let mut target: Option<render::Target> = None;
     let mut am_target: Option<render::AmTarget> = None;
@@ -1721,6 +1724,42 @@ pub extern "C" fn yinhe_set_ui_language(lang: *const std::ffi::c_char) -> i32 {
         scene::save_audio_settings();
     }
     ok
+}
+
+/// 界面主题（light/dark，堆分配）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_ui_theme() -> *mut std::ffi::c_char {
+    to_c_string(scene::ui_theme())
+}
+
+/// 设置界面主题（light/dark）并持久化；同时刷新 wgpu 主题。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
+pub extern "C" fn yinhe_set_ui_theme(theme: *const std::ffi::c_char) -> i32 {
+    if theme.is_null() {
+        return 0;
+    }
+    let theme = unsafe { CStr::from_ptr(theme) }
+        .to_string_lossy()
+        .into_owned();
+    let ok = scene::set_ui_theme(theme);
+    if ok == 1 {
+        yinhe_set_theme(i32::from(scene::ui_theme() == "dark"));
+        scene::save_audio_settings();
+    }
+    ok
+}
+
+/// 只刷新 GPU 渲染主题（1=dark）。启动时由 Flutter 读取持久化主题后调用。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_theme(dark: i32) -> i32 {
+    let dark = dark != 0;
+    yinhe_theme::set_current_gpu_theme(yinhe_theme::GpuTheme::from_base(if dark {
+        yinhe_theme::base::BaseColors::DARK
+    } else {
+        yinhe_theme::base::BaseColors::LIGHT
+    }));
+    1
 }
 
 /// 事件列表 JSON（从 from_tick 起，最多 limit 条）。

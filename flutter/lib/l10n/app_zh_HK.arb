@@ -88,6 +88,8 @@
   "soundfonts": "音色庫",
   "audio": "音訊",
   "language": "語言",
+  "appearance": "外觀",
+  "darkMode": "深色模式",
   "followSystem": "跟隨系統",
   "maxVoices": "最大複音數",
   "audioBuffer": "緩衝區大小",

@@ -88,6 +88,8 @@
   "soundfonts": "SoundFont",
   "audio": "Audio",
   "language": "Sprache",
+  "appearance": "Darstellung",
+  "darkMode": "Dunkelmodus",
   "followSystem": "Systemeinstellung folgen",
   "maxVoices": "Maximale Stimmen",
   "audioBuffer": "Puffergröße",

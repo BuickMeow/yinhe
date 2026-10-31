@@ -152,9 +152,9 @@ mixin _ShellBuild on _ShellBase {
   Widget build(BuildContext context) {
     final id = _textureId;
     if (id == null) {
-      return const Scaffold(
-        backgroundColor: Color(0xFFF0F0F4),
-        body: Center(child: CircularProgressIndicator()),
+      return Scaffold(
+        backgroundColor: YinheTheme.bg,
+        body: const Center(child: CircularProgressIndicator()),
       );
     }
     // 竖屏顶栏拆两行（42 → 84），横屏保持单行。

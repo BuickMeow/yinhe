@@ -88,6 +88,8 @@
   "soundfonts": "SoundFont",
   "audio": "Аудио",
   "language": "Язык",
+  "appearance": "Внешний вид",
+  "darkMode": "Тёмная тема",
   "followSystem": "Как в системе",
   "maxVoices": "Максимум голосов",
   "audioBuffer": "Размер буфера",

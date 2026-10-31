@@ -275,6 +275,12 @@ class AppLocalizationsRu extends AppLocalizations {
   String get language => 'Язык';
 
   @override
+  String get appearance => 'Внешний вид';
+
+  @override
+  String get darkMode => 'Тёмная тема';
+
+  @override
   String get followSystem => 'Как в системе';
 
   @override

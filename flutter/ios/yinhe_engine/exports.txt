@@ -162,3 +162,6 @@ _yinhe_velocity_line
 _yinhe_velocity_stroke
 _yinhe_view_snapshot
 _yinhe_viewport_gesture
+_yinhe_ui_theme
+_yinhe_set_ui_theme
+_yinhe_set_theme

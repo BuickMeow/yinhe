@@ -273,6 +273,12 @@ class AppLocalizationsJa extends AppLocalizations {
   String get language => '言語';
 
   @override
+  String get appearance => '外観';
+
+  @override
+  String get darkMode => 'ダークモード';
+
+  @override
   String get followSystem => 'システムに従う';
 
   @override

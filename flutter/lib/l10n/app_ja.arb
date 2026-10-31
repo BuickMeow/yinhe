@@ -88,6 +88,8 @@
   "soundfonts": "サウンドフォント",
   "audio": "オーディオ",
   "language": "言語",
+  "appearance": "外観",
+  "darkMode": "ダークモード",
   "followSystem": "システムに従う",
   "maxVoices": "最大同時発音数",
   "audioBuffer": "バッファサイズ",

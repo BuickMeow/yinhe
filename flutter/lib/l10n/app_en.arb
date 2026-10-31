@@ -94,6 +94,8 @@
   "soundfonts": "Soundfonts",
   "audio": "Audio",
   "language": "Language",
+  "appearance": "Appearance",
+  "darkMode": "Dark mode",
   "followSystem": "Follow system",
   "maxVoices": "Max voices",
   "audioBuffer": "Audio buffer",

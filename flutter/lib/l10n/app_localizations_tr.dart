@@ -275,6 +275,12 @@ class AppLocalizationsTr extends AppLocalizations {
   String get language => 'Dil';
 
   @override
+  String get appearance => 'Görünüm';
+
+  @override
+  String get darkMode => 'Koyu mod';
+
+  @override
   String get followSystem => 'Sistemi takip et';
 
   @override

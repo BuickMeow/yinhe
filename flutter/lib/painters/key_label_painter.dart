@@ -58,5 +58,5 @@ class KeyLabelPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant KeyLabelPainter oldDelegate) => false;
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

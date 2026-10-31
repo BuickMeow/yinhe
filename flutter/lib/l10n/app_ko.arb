@@ -88,6 +88,8 @@
   "soundfonts": "사운드폰트",
   "audio": "오디오",
   "language": "언어",
+  "appearance": "모양",
+  "darkMode": "다크 모드",
   "followSystem": "시스템 설정 따르기",
   "maxVoices": "최대 동시 발음 수",
   "audioBuffer": "버퍼 크기",

@@ -38,5 +38,5 @@ class PlayheadPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant PlayheadPainter oldDelegate) => false;
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

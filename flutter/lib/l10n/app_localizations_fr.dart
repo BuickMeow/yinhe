@@ -276,6 +276,12 @@ class AppLocalizationsFr extends AppLocalizations {
   String get language => 'Langue';
 
   @override
+  String get appearance => 'Apparence';
+
+  @override
+  String get darkMode => 'Mode sombre';
+
+  @override
   String get followSystem => 'Suivre le système';
 
   @override

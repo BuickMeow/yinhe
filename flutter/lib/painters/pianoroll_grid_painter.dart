@@ -95,6 +95,5 @@ class PianorollGridPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant PianorollGridPainter oldDelegate) =>
-      oldDelegate.hideKeyboard != hideKeyboard;
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

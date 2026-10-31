@@ -88,6 +88,8 @@
   "soundfonts": "SoundFont",
   "audio": "Audio",
   "language": "Lingua",
+  "appearance": "Aspetto",
+  "darkMode": "Modalità scura",
   "followSystem": "Segui il sistema",
   "maxVoices": "Voci massime",
   "audioBuffer": "Dimensione buffer",
