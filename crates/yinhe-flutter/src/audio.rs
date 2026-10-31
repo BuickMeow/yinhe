@@ -9,6 +9,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 
 use yinhe_audio::channel_layout::ChannelLayout;
 use yinhe_audio::export::{ExportProgress, WavBitDepth};
@@ -28,6 +29,55 @@ struct AudioState {
     sf_sent: Option<Vec<String>>,
     /// 轨道 mute/solo 掩码（重建引擎后重发；空 = 不跳过任何轨道）。
     skip: Vec<bool>,
+    /// 平滑播放位置：cpal 回调按 buffer 整块推进 `sample_position`，
+    /// 直接读会让跟随滚动/播放头以 20~50ms 为台阶跳动。这里用墙钟在两次
+    /// 回读之间插值，且不超过已被渲染进 ring 的位置（producer）。
+    smooth_sample: u64,
+    smooth_raw: u64,
+    smooth_at: Option<Instant>,
+}
+
+impl AudioState {
+    /// 平滑后的采样位置（单调、不越过 producer）。仅在播放时外推。
+    fn smooth_sample_position(&mut self) -> u64 {
+        let raw = self.handle.handle.sample_position();
+        let now = Instant::now();
+        if !self.handle.handle.is_playing() {
+            self.smooth_raw = raw;
+            self.smooth_sample = raw;
+            self.smooth_at = Some(now);
+            return raw;
+        }
+        let producer = self.handle.handle.producer_sample_position();
+        // 首次、seek 回退或暂停恢复：用 (raw, producer) 较小者作为基准。
+        // seek 时 producer 已切到新位置，而 raw 要等下一次回调才更新；
+        // 取较小值可以避免播放头先画在旧位置一帧。
+        if self.smooth_at.is_none() || raw < self.smooth_raw {
+            let base = raw.min(producer);
+            self.smooth_raw = raw;
+            self.smooth_sample = base;
+            self.smooth_at = Some(now);
+            return base;
+        }
+        if raw != self.smooth_raw {
+            // 回调刚推进：以新 raw 为基准，但绝不回退（避免播放头抽动一帧）。
+            self.smooth_raw = raw;
+            self.smooth_at = Some(now);
+            self.smooth_sample = self.smooth_sample.max(raw).min(producer.max(raw));
+        } else if let Some(t0) = self.smooth_at {
+            let dt = (now - t0).as_secs_f64().min(0.1);
+            let est = raw.saturating_add((dt * f64::from(self.handle.sample_rate)) as u64);
+            self.smooth_sample = self.smooth_sample.max(est).min(producer.max(raw));
+        }
+        self.smooth_sample
+    }
+
+    /// 丢弃插值状态：seek/播放/暂停后下一帧从新的音频位置重新起算。
+    fn reset_smooth(&mut self) {
+        self.smooth_at = None;
+        self.smooth_raw = 0;
+        self.smooth_sample = 0;
+    }
 }
 
 /// 全局音色库条目：设置页可拖动排序 / 启用停用。
@@ -421,6 +471,9 @@ fn spawn_audio(layout: ChannelLayout, cursor_tick: f64, skip: Vec<bool>) -> Opti
                 cursor_tick,
                 sf_sent: None,
                 skip,
+                smooth_sample: 0,
+                smooth_raw: 0,
+                smooth_at: None,
             };
             apply_soundfonts(&mut st);
             if !st.skip.is_empty() {
@@ -711,6 +764,7 @@ fn resume_rebuilt(
             .handle
             .send(AudioCommand::Play { from_sample: from });
     }
+    st.reset_smooth();
 }
 
 /// 播放（从暂停位置开始；与暂停点接近时直接 Resume，避免 ring 回退）。
@@ -757,6 +811,7 @@ pub fn play() {
                 .send(AudioCommand::Play { from_sample: from });
             log::info!("播放: tick={tick:.0} sample={from}");
         }
+        st.reset_smooth();
     }
 }
 
@@ -771,6 +826,7 @@ pub fn pause() -> f64 {
     };
     st.handle.handle.send(AudioCommand::Pause);
     st.cursor_tick = tick;
+    st.reset_smooth();
     log::info!("暂停: tick={tick:.0}");
     tick
 }
@@ -783,6 +839,7 @@ pub fn stop() {
     if let Some(st) = guard.as_mut() {
         st.handle.handle.send(AudioCommand::Stop);
         st.cursor_tick = 0.0;
+        st.reset_smooth();
         log::info!("停止");
     }
 }
@@ -810,6 +867,7 @@ pub fn seek(tick: f64) -> bool {
     if st.handle.handle.is_playing() {
         let sample = (seconds * st.handle.sample_rate as f64) as u64;
         st.handle.handle.send(AudioCommand::Seek { sample });
+        st.reset_smooth();
         log::info!("跳转播放位置: tick={tick:.0}");
     }
     true
@@ -863,7 +921,7 @@ pub fn playback_tick_for(model: &YinModel) -> f64 {
         return 0.0;
     };
     if st.handle.handle.is_playing() {
-        let seconds = st.handle.handle.sample_position() as f64 / st.handle.sample_rate as f64;
+        let seconds = st.smooth_sample_position() as f64 / st.handle.sample_rate as f64;
         seconds_to_tick(model, seconds)
     } else {
         st.cursor_tick
@@ -895,7 +953,7 @@ fn flow_sync_cursor(st: &mut AudioState) -> f64 {
     if st.handle.handle.is_playing() {
         let model = current_model();
         if let Some(model) = model {
-            let seconds = st.handle.handle.sample_position() as f64 / st.handle.sample_rate as f64;
+            let seconds = st.smooth_sample_position() as f64 / st.handle.sample_rate as f64;
             st.cursor_tick = seconds_to_tick(&model, seconds);
         }
     }
