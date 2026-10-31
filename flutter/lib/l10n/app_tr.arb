@@ -116,6 +116,7 @@
   "major": "Majör",
   "minor": "Doğal minör",
   "automationType": "Otomasyon…",
+  "automation": "Otomasyon",
   "archivePasswordRequired": "Parola gerekli",
   "password": "Parolayı girin",
   "open": "Aç",

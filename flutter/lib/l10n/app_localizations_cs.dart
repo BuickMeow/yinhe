@@ -390,6 +390,9 @@ class AppLocalizationsCs extends AppLocalizations {
   String get automationType => 'Automatizace…';
 
   @override
+  String get automation => 'Automatizace';
+
+  @override
   String get tempoValueTitle => 'BPM tempa';
 
   @override

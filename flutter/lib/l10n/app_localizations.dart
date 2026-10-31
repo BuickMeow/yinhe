@@ -866,6 +866,12 @@ abstract class AppLocalizations {
   /// **'Automation type'**
   String get automationType;
 
+  /// No description provided for @automation.
+  ///
+  /// In en, this message translates to:
+  /// **'Automation'**
+  String get automation;
+
   /// No description provided for @tempoValueTitle.
   ///
   /// In en, this message translates to:

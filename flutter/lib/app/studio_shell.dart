@@ -164,12 +164,6 @@ abstract class _ShellBase extends State<StudioShell>
   /// 收起自动化栏（最大化画布）。手机默认收起，进入 PR 先看音符。
   bool _autoCollapsed = true;
 
-  /// 自动化栏高度（含顶部拖拽手柄）。
-  double _autoPanelHeight = AutomationPanel.defaultHeight;
-
-  /// 当前允许的最大高度（由 LayoutBuilder 每帧写入，避免溢出屏幕）。
-  double _autoPanelMaxHeight = AutomationPanel.defaultHeight;
-
   /// 当前工具（PR 5 种；AR 2 种；索引对应 `toolDefs`）。
   int _toolPr = 0;
   int _toolAr = 0;
@@ -476,8 +470,6 @@ abstract class _ShellBase extends State<StudioShell>
   int get _quickTool;
   bool get _quickSlotActive;
   void _setAutoCollapsed(bool collapsed);
-  void _resizeAutoPanel(double dy);
-  void _resetAutoPanelHeight();
   void _setView(int mode);
   void _showAddTrackDialog();
   void _showPasteMenu(Offset? pos, LongPressContext? ctx);

@@ -116,6 +116,7 @@
   "major": "Dur",
   "minor": "Natürliches Moll",
   "automationType": "Automation…",
+  "automation": "Automatisierung",
   "archivePasswordRequired": "Passwort erforderlich",
   "password": "Passwort eingeben",
   "open": "Öffnen",

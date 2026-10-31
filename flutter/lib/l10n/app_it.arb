@@ -116,6 +116,7 @@
   "major": "Maggiore",
   "minor": "Minore naturale",
   "automationType": "Automazione…",
+  "automation": "Automazione",
   "archivePasswordRequired": "Password richiesta",
   "password": "Inserisci password",
   "open": "Apri",

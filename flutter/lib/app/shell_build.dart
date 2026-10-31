@@ -238,27 +238,14 @@ mixin _ShellBuild on _ShellBase {
                           child: LayoutBuilder(
                             builder: (context, constraints) {
                               final size = constraints.biggest;
-                              // AM 面板可见时压缩画布高度：PR 与 AM 上下排列、互不覆盖。
+                              // AM 全屏浮在 PR 之上：不压缩画布，只覆盖标尺下方
+                              // 的整个内容区，半透明背景让 PR 音符透出来。
                               final amVisible =
                                   _viewMode == kViewPianoroll &&
                                   !_autoCollapsed;
-                              final maxAmH =
-                                  ((size.height - RulerPainter.height) * 0.6)
-                                      .clamp(
-                                        AutomationPanel.minHeight,
-                                        double.infinity,
-                                      );
-                              _autoPanelMaxHeight = maxAmH;
-                              final amH = amVisible
-                                  ? _autoPanelHeight.clamp(
-                                      AutomationPanel.minHeight,
-                                      maxAmH,
-                                    )
-                                  : 0.0;
-                              final canvasH = (size.height - amH).clamp(
-                                1.0,
-                                double.infinity,
-                              );
+                              final canvasH = size.height;
+                              final amH = (size.height - RulerPainter.height)
+                                  .clamp(1.0, double.infinity);
                               // 内容画布 = 画布区减去顶部标尺条（Rust 坐标系从标尺下方开始）。
                               final contentH = (canvasH - RulerPainter.height)
                                   .clamp(1.0, double.infinity);
@@ -279,13 +266,8 @@ mixin _ShellBuild on _ShellBase {
                                 final amW =
                                     (size.width - AutomationPainter.comboWidth)
                                         .clamp(1.0, double.infinity);
-                                final amH2 =
-                                    (amH - AutomationPanel.handleHeight).clamp(
-                                      1.0,
-                                      double.infinity,
-                                    );
                                 final amPw = (amW * dpr).round();
-                                final amPh = (amH2 * dpr).round();
+                                final amPh = (amH * dpr).round();
                                 _queueAutomationSize(amPw, amPh);
                               }
                               return RawGestureDetector(
@@ -542,8 +524,8 @@ mixin _ShellBuild on _ShellBase {
                                       Positioned(
                                         left: 0,
                                         right: 0,
+                                        top: RulerPainter.height,
                                         bottom: 0,
-                                        height: amH,
                                         child: AutomationPanel(
                                           height: amH,
                                           snap: _snap,
@@ -592,14 +574,7 @@ mixin _ShellBuild on _ShellBase {
                                               ),
                                             );
                                           },
-                                          onResize: _resizeAutoPanel,
-                                          onResetHeight: _resetAutoPanelHeight,
                                         ),
-                                      ),
-                                    if (_viewMode == kViewPianoroll &&
-                                        _autoCollapsed)
-                                      AutoExpandButton(
-                                        onTap: () => _setAutoCollapsed(false),
                                       ),
                                   ],
                                 ),
@@ -736,6 +711,8 @@ mixin _ShellBuild on _ShellBase {
         _updateTimecode();
       },
       onQuantize: (v) => unawaited(_selectQuantize(v)),
+      automationOpen: !_autoCollapsed,
+      onToggleAutomation: () => _setAutoCollapsed(!_autoCollapsed),
       onTool: _selectTool,
       onQuickTool: _selectQuickTool,
       onUndo: _undo,

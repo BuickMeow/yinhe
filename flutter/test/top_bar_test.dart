@@ -45,6 +45,8 @@ Widget _app({
             onStop: () {},
             onToggleTimecode: () {},
             onQuantize: (_) {},
+            automationOpen: false,
+            onToggleAutomation: () {},
             onTool: (_) {},
             onQuickTool: (_) {},
             onUndo: () {},

@@ -131,6 +131,7 @@
   "major": "大调 Major",
   "minor": "自然小调 Minor",
   "automationType": "自动化类型",
+  "automation": "自动化",
   "tempoValueTitle": "速度 BPM",
   "pitchBendValueTitle": "Pitch Bend（0–16383，8192 = 中心）",
   "archivePasswordRequired": "压缩包需要密码",

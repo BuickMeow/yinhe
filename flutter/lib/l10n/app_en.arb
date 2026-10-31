@@ -131,6 +131,7 @@
   "major": "Major",
   "minor": "Natural minor",
   "automationType": "Automation type",
+  "automation": "Automation",
   "tempoValueTitle": "Tempo BPM",
   "pitchBendValueTitle": "Pitch Bend (0–16383, 8192 = center)",
   "archivePasswordRequired": "Password required",

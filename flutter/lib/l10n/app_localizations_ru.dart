@@ -390,6 +390,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get automationType => 'Автоматизация…';
 
   @override
+  String get automation => 'Автоматизация';
+
+  @override
   String get tempoValueTitle => 'BPM темпа';
 
   @override

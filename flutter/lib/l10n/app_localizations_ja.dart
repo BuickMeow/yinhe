@@ -387,6 +387,9 @@ class AppLocalizationsJa extends AppLocalizations {
   String get automationType => 'オートメーション…';
 
   @override
+  String get automation => 'オートメーション';
+
+  @override
   String get tempoValueTitle => 'テンポ BPM';
 
   @override

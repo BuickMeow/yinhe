@@ -116,6 +116,7 @@
   "major": "長調 Major",
   "minor": "自然短調 Minor",
   "automationType": "オートメーション…",
+  "automation": "オートメーション",
   "archivePasswordRequired": "パスワードが必要です",
   "password": "パスワードを入力",
   "open": "開く",

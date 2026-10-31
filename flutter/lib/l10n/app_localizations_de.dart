@@ -390,6 +390,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get automationType => 'Automation…';
 
   @override
+  String get automation => 'Automatisierung';
+
+  @override
   String get tempoValueTitle => 'Tempo-BPM';
 
   @override

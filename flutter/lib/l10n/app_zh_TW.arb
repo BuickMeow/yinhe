@@ -116,6 +116,7 @@
   "major": "大調 Major",
   "minor": "自然小調 Minor",
   "automationType": "自動化…",
+  "automation": "自動化",
   "archivePasswordRequired": "壓縮檔需要密碼",
   "password": "請輸入密碼",
   "open": "開啟",

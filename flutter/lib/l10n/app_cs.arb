@@ -116,6 +116,7 @@
   "major": "Dur",
   "minor": "Přirozený moll",
   "automationType": "Automatizace…",
+  "automation": "Automatizace",
   "archivePasswordRequired": "Vyžadováno heslo",
   "password": "Zadejte heslo",
   "open": "Otevřít",

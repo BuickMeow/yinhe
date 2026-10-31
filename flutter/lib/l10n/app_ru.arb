@@ -116,6 +116,7 @@
   "major": "Мажор",
   "minor": "Натуральный минор",
   "automationType": "Автоматизация…",
+  "automation": "Автоматизация",
   "archivePasswordRequired": "Требуется пароль",
   "password": "Введите пароль",
   "open": "Открыть",

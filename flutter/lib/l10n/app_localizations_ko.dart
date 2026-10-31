@@ -387,6 +387,9 @@ class AppLocalizationsKo extends AppLocalizations {
   String get automationType => '자동화…';
 
   @override
+  String get automation => '자동화';
+
+  @override
   String get tempoValueTitle => '템포 BPM';
 
   @override

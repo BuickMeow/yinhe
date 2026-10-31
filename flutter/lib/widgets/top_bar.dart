@@ -35,6 +35,8 @@ class TopBar extends StatelessWidget {
     required this.onStop,
     required this.onToggleTimecode,
     required this.onQuantize,
+    required this.automationOpen,
+    required this.onToggleAutomation,
     required this.onTool,
     required this.onQuickTool,
     required this.onUndo,
@@ -92,6 +94,10 @@ class TopBar extends StatelessWidget {
   final VoidCallback onStop;
   final VoidCallback onToggleTimecode;
   final ValueChanged<String> onQuantize;
+
+  /// PR 自动化全屏面板是否打开（AR 隐藏该按钮）。
+  final bool automationOpen;
+  final VoidCallback onToggleAutomation;
   final ValueChanged<int> onTool;
   final ValueChanged<int> onQuickTool;
   final VoidCallback onUndo;
@@ -303,7 +309,11 @@ class TopBar extends StatelessWidget {
   Widget _buildRightGroup(BuildContext context, AppLocalizations l) {
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [_buildQuantizeButton(context, l), _buildHistory(l)],
+      children: [
+        _buildQuantizeButton(context, l),
+        if (isPr) _buildAutomationButton(l),
+        _buildHistory(l),
+      ],
     );
   }
 
@@ -335,7 +345,13 @@ class TopBar extends StatelessWidget {
               children: [
                 Align(
                   alignment: Alignment.centerLeft,
-                  child: _buildQuantizeButton(context, l),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildQuantizeButton(context, l),
+                      if (isPr) _buildAutomationButton(l),
+                    ],
+                  ),
                 ),
                 Align(
                   alignment: Alignment.center,
@@ -397,6 +413,21 @@ class TopBar extends StatelessWidget {
       icon: Icon(icon, color: c),
       color: c,
       tooltip: tooltip,
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+    );
+  }
+
+  Widget _buildAutomationButton(AppLocalizations l) {
+    return IconButton(
+      onPressed: onToggleAutomation,
+      icon: const Icon(Icons.timeline),
+      color: automationOpen ? YinheTheme.accent : YinheTheme.textSecondary,
+      tooltip: l.automation,
+      style: automationOpen
+          ? IconButton.styleFrom(backgroundColor: YinheTheme.selectedBg)
+          : null,
       visualDensity: VisualDensity.compact,
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(minWidth: 40, minHeight: 40),

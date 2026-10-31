@@ -52,14 +52,15 @@ class SelectionLongPressPainter extends CustomPainter {
     final v = progress.value;
     if (p != null && v > 0 && v < 1) {
       // 长按进度圆环（-90° 起顺时针）。
-      const r = 18.0;
+      // 手指会挡住圆环中心，半径加大到 28，确保圆环露在指腹外。
+      const r = 28.0;
       canvas.drawCircle(
         p,
         r,
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 2
-          ..color = YinheTheme.accent.withValues(alpha: 0.2),
+          ..strokeWidth = 3
+          ..color = YinheTheme.accent.withValues(alpha: 0.22),
       );
       canvas.drawArc(
         Rect.fromCircle(center: p, radius: r),
@@ -68,7 +69,7 @@ class SelectionLongPressPainter extends CustomPainter {
         false,
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 3
+          ..strokeWidth = 4
           ..strokeCap = StrokeCap.round
           ..color = YinheTheme.accent,
       );
@@ -113,19 +114,20 @@ class MarqueeHintPainter extends CustomPainter {
     final fadeIn = (grow / 0.18).clamp(0.0, 1.0);
     final fadeOut = t <= 1 ? 1.0 : 1.0 - (t - 1.0).clamp(0.0, 1.0);
     final opacity = fadeIn * fadeOut;
-    final side = 10.0 + 14.0 * Curves.easeOutCubic.transform(grow);
+    // 同样避开指腹：从 18 放大到 44。
+    final side = 18.0 + 26.0 * Curves.easeOutCubic.transform(grow);
     // 无圆角，填充/描边与正式选框完全一致（OverlayPainter 同款）。
     final rect = Rect.fromCenter(center: p, width: side, height: side);
     canvas.drawRect(
       rect,
-      Paint()..color = YinheTheme.text.withValues(alpha: 0.10 * opacity),
+      Paint()..color = YinheTheme.text.withValues(alpha: 0.14 * opacity),
     );
     canvas.drawRect(
       rect,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1
-        ..color = YinheTheme.text.withValues(alpha: 0.45 * opacity),
+        ..strokeWidth = 2
+        ..color = YinheTheme.text.withValues(alpha: 0.60 * opacity),
     );
   }
 

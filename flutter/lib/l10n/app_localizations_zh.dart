@@ -385,6 +385,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get automationType => '自动化类型';
 
   @override
+  String get automation => '自动化';
+
+  @override
   String get tempoValueTitle => '速度 BPM';
 
   @override
@@ -965,6 +968,9 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get automationType => '自動化…';
 
   @override
+  String get automation => '自動化';
+
+  @override
   String get tempoValueTitle => '速度 BPM';
 
   @override
@@ -1543,6 +1549,9 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get automationType => '自動化…';
+
+  @override
+  String get automation => '自動化';
 
   @override
   String get tempoValueTitle => '速度 BPM';

@@ -45,8 +45,6 @@ class AutomationPanel extends StatefulWidget {
     required this.lineTool,
     required this.marqueeEnabled,
     required this.onInsertAtTick,
-    required this.onResize,
-    required this.onResetHeight,
   });
 
   final double height;
@@ -94,24 +92,8 @@ class AutomationPanel extends StatefulWidget {
   /// 长按"插入"：把插入流程交给壳层（复用 PR/AR 的插入菜单）。
   final void Function(double tick) onInsertAtTick;
 
-  /// 拖动顶部手柄：`dy` 为本次垂直位移（向上为负 = 变高）。
-  final ValueChanged<double> onResize;
-
-  /// 双击顶部手柄恢复默认高度。
-  final VoidCallback onResetHeight;
-
-  /// 最小高度：保留旧版 81px 绘制区 + 顶部手柄。
-  static const double minHeight = 97.0;
-
-  /// 首次展开的默认高度：120px 绘制区，比旧版高一些方便手指绘制。
-  static const double defaultHeight = 136.0;
-
-  /// 顶部拖拽手柄占用的高度。
-  static const double handleHeight = 16.0;
-
-  /// 绘制区实际可用高度（面板高度扣除拖拽手柄）。
-  double get canvasHeight =>
-      (height - handleHeight).clamp(1.0, double.infinity);
+  /// 全屏面板的绘制高度（面板没有拖拽手柄）。
+  double get canvasHeight => height.clamp(1.0, double.infinity);
 
   @override
   State<AutomationPanel> createState() => _AutomationPanelState();
@@ -1373,34 +1355,11 @@ class _AutomationPanelState extends State<AutomationPanel>
       ),
       child: Column(
         children: [
-          // 顶部拖拽手柄：向上拖变高、向上拖到极限后 PR 只会被压缩不会覆盖。
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onVerticalDragUpdate: (d) => widget.onResize(d.delta.dy),
-            onDoubleTap: widget.onResetHeight,
-            child: ColoredBox(
-              color: YinheTheme.bg,
-              child: SizedBox(
-                height: AutomationPanel.handleHeight,
-                width: double.infinity,
-                child: Center(
-                  child: Container(
-                    width: 36,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: YinheTheme.textMuted.withValues(alpha: 0.55),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
           Expanded(
             child: Row(
               children: [
                 ColoredBox(
-                  color: YinheTheme.bg,
+                  color: YinheTheme.bg.withValues(alpha: 0.72),
                   child: SizedBox(
                     width: AutomationPainter.comboWidth,
                     child: Column(
@@ -1524,8 +1483,10 @@ class _AutomationPanelState extends State<AutomationPanel>
                             child: Stack(
                               fit: StackFit.expand,
                               children: [
-                                // 背景和网格在 wgpu 纹理下方；纹理透明，数据盖在网格上。
-                                const ColoredBox(color: YinheTheme.bg),
+                                // 全屏浮在 PR 上：背景半透明，PR 音符/网格透出来。
+                                ColoredBox(
+                                  color: YinheTheme.bg.withValues(alpha: 0.55),
+                                ),
                                 if (gpu) ...[
                                   CustomPaint(
                                     painter: painter(
@@ -1595,38 +1556,6 @@ class _AutomationPanelState extends State<AutomationPanel>
   }
 }
 
-/// 自动化栏收起后的左下角升起按钮。
-class AutoExpandButton extends StatelessWidget {
-  const AutoExpandButton({super.key, required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Positioned(
-      left: 8,
-      bottom: 8,
-      child: Material(
-        color: YinheTheme.controlBg,
-        borderRadius: BorderRadius.circular(6),
-        elevation: 1,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(6),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(5),
-            child: Icon(
-              Icons.keyboard_arrow_up,
-              size: 18,
-              color: YinheTheme.textSecondary,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// AM 长按进度圆环（与主画布 SelectionLongPressPainter 同节奏/同配色）。
 class _LongPressRingPainter extends CustomPainter {
   _LongPressRingPainter(this.progress, this.pos)
@@ -1642,14 +1571,14 @@ class _LongPressRingPainter extends CustomPainter {
     if (p == null || v <= 0 || v >= 1) {
       return;
     }
-    const r = 18.0;
+    const r = 28.0;
     canvas.drawCircle(
       p,
       r,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2
-        ..color = YinheTheme.accent.withValues(alpha: 0.2),
+        ..strokeWidth = 3
+        ..color = YinheTheme.accent.withValues(alpha: 0.22),
     );
     canvas.drawArc(
       Rect.fromCircle(center: p, radius: r),
@@ -1658,7 +1587,7 @@ class _LongPressRingPainter extends CustomPainter {
       false,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 3
+        ..strokeWidth = 4
         ..strokeCap = StrokeCap.round
         ..color = YinheTheme.accent,
     );
