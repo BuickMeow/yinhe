@@ -466,7 +466,9 @@ class MainActivity : FlutterActivity() {
             return false
         }
         return try {
-            val output = contentResolver.openOutputStream(uri)
+            // 必须显式用 "wt"：部分 SAF provider 的默认 "w" 不截断旧文件，
+            // 新工程比旧工程短时会把旧文件尾部残留成 mixer/audio 伪段。
+            val output = contentResolver.openOutputStream(uri, "wt")
             if (output == null) {
                 Log.e(TAG, "打开目标位置失败: $uri")
                 return false
@@ -490,7 +492,8 @@ class MainActivity : FlutterActivity() {
             return false
         }
         return try {
-            val output = contentResolver.openOutputStream(uri)
+            // 同 copyTempTo：显式 "wt" 截断旧尾部。
+            val output = contentResolver.openOutputStream(uri, "wt")
             if (output == null) {
                 Log.e(TAG, "打开目标位置失败: $uri")
                 return false
