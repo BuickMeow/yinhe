@@ -91,6 +91,27 @@ impl SegmentShape {
         }
     }
 
+    /// 用 CSS `cubic-bezier(x1, y1, x2, y2)` 的绝对控制点构造 Curve。
+    ///
+    /// CSS 的控制点以段起止点 P0=(0,0)、P3=(1,1) 为参考；本类型存的是
+    /// 相对各自锚点的偏移量，所以这里做一次换算：
+    ///
+    /// ```text
+    /// x1_stored = css_x1 / 4
+    /// y1_stored = css_y1 / 4
+    /// x2_stored = (css_x2 - 1) / 4
+    /// y2_stored = (css_y2 - 1) / 4
+    /// ```
+    #[inline]
+    pub const fn from_css_bezier(x1: f32, y1: f32, x2: f32, y2: f32) -> Self {
+        SegmentShape::Curve {
+            x1: x1 / Self::SCALE,
+            y1: y1 / Self::SCALE,
+            x2: (x2 - 1.0) / Self::SCALE,
+            y2: (y2 - 1.0) / Self::SCALE,
+        }
+    }
+
     /// 是否为直线（Curve 且偏移量全部 ≈ 0）。
     #[inline]
     pub fn is_linear(self) -> bool {
@@ -103,6 +124,214 @@ impl SegmentShape {
         x1.abs() < 1e-4 && y1.abs() < 1e-4 && x2.abs() < 1e-4 && y2.abs() < 1e-4
     }
 }
+
+/// 缓动曲线族（8 族 × 3 方向 = 24 种预设）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum EasingFamily {
+    Sine,
+    Quad,
+    Cubic,
+    Quart,
+    Quint,
+    Expo,
+    Circ,
+    Back,
+}
+
+/// 缓动方向：缓入 / 缓出 / 缓入缓出。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum EasingDirection {
+    In,
+    Out,
+    InOut,
+}
+
+impl EasingFamily {
+    /// 稳定显示名（与 CSS easings.net 一致）。
+    pub const fn label(self) -> &'static str {
+        match self {
+            EasingFamily::Sine => "Sine",
+            EasingFamily::Quad => "Quad",
+            EasingFamily::Cubic => "Cubic",
+            EasingFamily::Quart => "Quart",
+            EasingFamily::Quint => "Quint",
+            EasingFamily::Expo => "Expo",
+            EasingFamily::Circ => "Circ",
+            EasingFamily::Back => "Back",
+        }
+    }
+}
+
+impl EasingDirection {
+    pub const fn label(self) -> &'static str {
+        match self {
+            EasingDirection::In => "In",
+            EasingDirection::Out => "Out",
+            EasingDirection::InOut => "InOut",
+        }
+    }
+}
+
+/// 一条缓动预设：族 + 方向 + 归一化曲线。
+#[derive(Clone, Copy, Debug)]
+pub struct EasingPreset {
+    pub family: EasingFamily,
+    pub direction: EasingDirection,
+    pub curve: SegmentShape,
+}
+
+impl EasingPreset {
+    /// `Sine In` 这类稳定英文名（动画/音乐软件通用写法，不随语言变化）。
+    pub const fn name(self) -> (&'static str, &'static str) {
+        (self.family.label(), self.direction.label())
+    }
+}
+
+/// 缓动族顺序（菜单按此顺序分组）。
+pub const EASING_FAMILIES: [EasingFamily; 8] = [
+    EasingFamily::Sine,
+    EasingFamily::Quad,
+    EasingFamily::Cubic,
+    EasingFamily::Quart,
+    EasingFamily::Quint,
+    EasingFamily::Expo,
+    EasingFamily::Circ,
+    EasingFamily::Back,
+];
+
+/// 缓动方向顺序（菜单每行按 In / Out / InOut 排列）。
+pub const EASING_DIRECTIONS: [EasingDirection; 3] = [
+    EasingDirection::In,
+    EasingDirection::Out,
+    EasingDirection::InOut,
+];
+
+/// 24 种标准缓动（CSS `cubic-bezier` 值，源自 easings.net）。
+///
+/// 单段三次贝塞尔无法表达 Elastic / Bounce，故不收录（它们需要多段）。
+/// 所有分量都落在 `SegmentShape` 的存储范围 `[-0.5, 0.5]` 内。
+pub const EASING_PRESETS: [EasingPreset; 24] = [
+    EasingPreset {
+        family: EasingFamily::Sine,
+        direction: EasingDirection::In,
+        curve: SegmentShape::from_css_bezier(0.12, 0.0, 0.39, 0.0),
+    },
+    EasingPreset {
+        family: EasingFamily::Sine,
+        direction: EasingDirection::Out,
+        curve: SegmentShape::from_css_bezier(0.61, 1.0, 0.88, 1.0),
+    },
+    EasingPreset {
+        family: EasingFamily::Sine,
+        direction: EasingDirection::InOut,
+        curve: SegmentShape::from_css_bezier(0.37, 0.0, 0.63, 1.0),
+    },
+    EasingPreset {
+        family: EasingFamily::Quad,
+        direction: EasingDirection::In,
+        curve: SegmentShape::from_css_bezier(0.11, 0.0, 0.5, 0.0),
+    },
+    EasingPreset {
+        family: EasingFamily::Quad,
+        direction: EasingDirection::Out,
+        curve: SegmentShape::from_css_bezier(0.5, 1.0, 0.89, 1.0),
+    },
+    EasingPreset {
+        family: EasingFamily::Quad,
+        direction: EasingDirection::InOut,
+        curve: SegmentShape::from_css_bezier(0.45, 0.0, 0.55, 1.0),
+    },
+    EasingPreset {
+        family: EasingFamily::Cubic,
+        direction: EasingDirection::In,
+        curve: SegmentShape::from_css_bezier(0.32, 0.0, 0.67, 0.0),
+    },
+    EasingPreset {
+        family: EasingFamily::Cubic,
+        direction: EasingDirection::Out,
+        curve: SegmentShape::from_css_bezier(0.33, 1.0, 0.68, 1.0),
+    },
+    EasingPreset {
+        family: EasingFamily::Cubic,
+        direction: EasingDirection::InOut,
+        curve: SegmentShape::from_css_bezier(0.65, 0.0, 0.35, 1.0),
+    },
+    EasingPreset {
+        family: EasingFamily::Quart,
+        direction: EasingDirection::In,
+        curve: SegmentShape::from_css_bezier(0.5, 0.0, 0.75, 0.0),
+    },
+    EasingPreset {
+        family: EasingFamily::Quart,
+        direction: EasingDirection::Out,
+        curve: SegmentShape::from_css_bezier(0.25, 1.0, 0.5, 1.0),
+    },
+    EasingPreset {
+        family: EasingFamily::Quart,
+        direction: EasingDirection::InOut,
+        curve: SegmentShape::from_css_bezier(0.76, 0.0, 0.24, 1.0),
+    },
+    EasingPreset {
+        family: EasingFamily::Quint,
+        direction: EasingDirection::In,
+        curve: SegmentShape::from_css_bezier(0.64, 0.0, 0.78, 0.0),
+    },
+    EasingPreset {
+        family: EasingFamily::Quint,
+        direction: EasingDirection::Out,
+        curve: SegmentShape::from_css_bezier(0.22, 1.0, 0.36, 1.0),
+    },
+    EasingPreset {
+        family: EasingFamily::Quint,
+        direction: EasingDirection::InOut,
+        curve: SegmentShape::from_css_bezier(0.83, 0.0, 0.17, 1.0),
+    },
+    EasingPreset {
+        family: EasingFamily::Expo,
+        direction: EasingDirection::In,
+        curve: SegmentShape::from_css_bezier(0.7, 0.0, 0.84, 0.0),
+    },
+    EasingPreset {
+        family: EasingFamily::Expo,
+        direction: EasingDirection::Out,
+        curve: SegmentShape::from_css_bezier(0.16, 1.0, 0.3, 1.0),
+    },
+    EasingPreset {
+        family: EasingFamily::Expo,
+        direction: EasingDirection::InOut,
+        curve: SegmentShape::from_css_bezier(0.87, 0.0, 0.13, 1.0),
+    },
+    EasingPreset {
+        family: EasingFamily::Circ,
+        direction: EasingDirection::In,
+        curve: SegmentShape::from_css_bezier(0.55, 0.0, 1.0, 0.45),
+    },
+    EasingPreset {
+        family: EasingFamily::Circ,
+        direction: EasingDirection::Out,
+        curve: SegmentShape::from_css_bezier(0.0, 0.55, 0.45, 1.0),
+    },
+    EasingPreset {
+        family: EasingFamily::Circ,
+        direction: EasingDirection::InOut,
+        curve: SegmentShape::from_css_bezier(0.85, 0.0, 0.15, 1.0),
+    },
+    EasingPreset {
+        family: EasingFamily::Back,
+        direction: EasingDirection::In,
+        curve: SegmentShape::from_css_bezier(0.36, 0.0, 0.66, -0.56),
+    },
+    EasingPreset {
+        family: EasingFamily::Back,
+        direction: EasingDirection::Out,
+        curve: SegmentShape::from_css_bezier(0.34, 1.56, 0.64, 1.0),
+    },
+    EasingPreset {
+        family: EasingFamily::Back,
+        direction: EasingDirection::InOut,
+        curve: SegmentShape::from_css_bezier(0.68, -0.6, 0.32, 1.6),
+    },
+];
 
 /// 解三次贝塞尔方程 B_x(u) = t 求 u（Newton 迭代）。
 ///
@@ -1134,5 +1363,121 @@ mod tests {
             .is_linear()
         );
         assert!(!SegmentShape::Step.is_linear());
+    }
+}
+
+#[cfg(test)]
+mod easing_presets_tests {
+    use super::*;
+
+    fn css_of(shape: SegmentShape) -> (f32, f32, f32, f32) {
+        match shape {
+            SegmentShape::Curve { x1, y1, x2, y2 } => (
+                x1 * SegmentShape::SCALE,
+                y1 * SegmentShape::SCALE,
+                1.0 + x2 * SegmentShape::SCALE,
+                1.0 + y2 * SegmentShape::SCALE,
+            ),
+            SegmentShape::Step => panic!("预设不应是 Step"),
+        }
+    }
+
+    fn assert_close(got: f32, want: f32) {
+        assert!((got - want).abs() < 1e-5, "期望 {want}，实际 {got}");
+    }
+
+    /// 每个预设都能精确还原成书写时的 CSS 控制点。
+    #[test]
+    fn presets_roundtrip_css_control_points() {
+        let expected = [
+            (0.12, 0.0, 0.39, 0.0),
+            (0.61, 1.0, 0.88, 1.0),
+            (0.37, 0.0, 0.63, 1.0),
+            (0.11, 0.0, 0.5, 0.0),
+            (0.5, 1.0, 0.89, 1.0),
+            (0.45, 0.0, 0.55, 1.0),
+            (0.32, 0.0, 0.67, 0.0),
+            (0.33, 1.0, 0.68, 1.0),
+            (0.65, 0.0, 0.35, 1.0),
+            (0.5, 0.0, 0.75, 0.0),
+            (0.25, 1.0, 0.5, 1.0),
+            (0.76, 0.0, 0.24, 1.0),
+            (0.64, 0.0, 0.78, 0.0),
+            (0.22, 1.0, 0.36, 1.0),
+            (0.83, 0.0, 0.17, 1.0),
+            (0.7, 0.0, 0.84, 0.0),
+            (0.16, 1.0, 0.3, 1.0),
+            (0.87, 0.0, 0.13, 1.0),
+            (0.55, 0.0, 1.0, 0.45),
+            (0.0, 0.55, 0.45, 1.0),
+            (0.85, 0.0, 0.15, 1.0),
+            (0.36, 0.0, 0.66, -0.56),
+            (0.34, 1.56, 0.64, 1.0),
+            (0.68, -0.6, 0.32, 1.6),
+        ];
+        assert_eq!(EASING_PRESETS.len(), expected.len());
+        for (preset, want) in EASING_PRESETS.iter().zip(expected) {
+            let got = css_of(preset.curve);
+            assert_close(got.0, want.0);
+            assert_close(got.1, want.1);
+            assert_close(got.2, want.2);
+            assert_close(got.3, want.3);
+        }
+    }
+
+    /// 8 族 × 3 方向，不重不漏。
+    #[test]
+    fn presets_cover_all_families_and_directions() {
+        let families = [
+            EasingFamily::Sine,
+            EasingFamily::Quad,
+            EasingFamily::Cubic,
+            EasingFamily::Quart,
+            EasingFamily::Quint,
+            EasingFamily::Expo,
+            EasingFamily::Circ,
+            EasingFamily::Back,
+        ];
+        let directions = [
+            EasingDirection::In,
+            EasingDirection::Out,
+            EasingDirection::InOut,
+        ];
+        for family in families {
+            for direction in directions {
+                assert!(
+                    EASING_PRESETS
+                        .iter()
+                        .any(|p| p.family == family && p.direction == direction),
+                    "{family:?} {direction:?} 缺失"
+                );
+            }
+        }
+    }
+
+    /// 存储分量必须落在 SegmentShape 的合法范围，否则 UI 手柄拖拽会越界。
+    #[test]
+    fn presets_fit_storage_range() {
+        for preset in EASING_PRESETS {
+            let SegmentShape::Curve { x1, y1, x2, y2 } = preset.curve else {
+                panic!("预设不应是 Step");
+            };
+            for v in [x1, y1, x2, y2] {
+                assert!(
+                    (-0.5..=0.5).contains(&v),
+                    "{:?} 分量 {v} 超出 [-0.5, 0.5]",
+                    preset.name()
+                );
+            }
+        }
+    }
+
+    /// 曲线两端必须精确落在 0 / 1，否则相邻段会跳变。
+    #[test]
+    fn presets_hit_segment_endpoints() {
+        for preset in EASING_PRESETS {
+            assert_close(preset.curve.interpolate(0.0), 0.0);
+            assert_close(preset.curve.interpolate(1.0), 1.0);
+        }
     }
 }
