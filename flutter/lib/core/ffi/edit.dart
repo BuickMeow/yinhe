@@ -42,6 +42,24 @@ final AutomationCopyDart automationCopy = bridge
       'yinhe_automation_copy',
     );
 
+typedef AutomationShapeJsonNative = ffi.Pointer<Utf8> Function();
+typedef AutomationShapeJsonDart = ffi.Pointer<Utf8> Function();
+
+/// 当前 AM lane 的锚点插值状态 + 预设列表（JSON）。
+final AutomationShapeJsonDart automationShapeJson = bridge
+    .lookupFunction<AutomationShapeJsonNative, AutomationShapeJsonDart>(
+      'yinhe_automation_shape_json',
+    );
+
+typedef AutomationApplyShapeNative = ffi.Int32 Function(ffi.Int32);
+typedef AutomationApplyShapeDart = int Function(int);
+
+/// 应用锚点插值形状（0=Step，1=线性，2..=25=缓动预设）。
+final AutomationApplyShapeDart automationApplyShape = bridge
+    .lookupFunction<AutomationApplyShapeNative, AutomationApplyShapeDart>(
+      'yinhe_automation_apply_shape',
+    );
+
 typedef AutomationClipboardEmptyNative = ffi.Int32 Function();
 typedef AutomationClipboardEmptyDart = int Function();
 

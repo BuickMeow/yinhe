@@ -119,6 +119,51 @@ impl SegmentShape {
             if Self::is_linear_impl(x1, y1, x2, y2))
     }
 
+    /// UI 统一编号：`0` = Step，`1` = 线性，`2..=25` = `EASING_PRESETS[i]`。
+    ///
+    /// 手动拖出来的非预设曲线返回 `None`（UI 不高亮任何预设）。
+    pub fn ui_index(self) -> Option<usize> {
+        match self {
+            SegmentShape::Step => Some(0),
+            _ if self.is_linear() => Some(1),
+            _ => self.easing_preset_index().map(|i| i + 2),
+        }
+    }
+
+    /// [`Self::ui_index`] 的逆映射。
+    pub fn from_ui_index(index: usize) -> Option<Self> {
+        match index {
+            0 => Some(SegmentShape::Step),
+            1 => Some(SegmentShape::linear_curve()),
+            _ => EASING_PRESETS.get(index - 2).map(|p| p.curve),
+        }
+    }
+
+    /// 与缓动预设逐项近似比较，返回第一个匹配的索引。
+    ///
+    /// 用近似比较而不是 `==`：预设可能经过 `.yin` JSON / 手写常量往返，
+    /// 精确浮点相等不可靠。
+    pub fn easing_preset_index(self) -> Option<usize> {
+        let SegmentShape::Curve { x1, y1, x2, y2 } = self else {
+            return None;
+        };
+        EASING_PRESETS.iter().position(|p| {
+            let SegmentShape::Curve {
+                x1: px1,
+                y1: py1,
+                x2: px2,
+                y2: py2,
+            } = p.curve
+            else {
+                return false;
+            };
+            (x1 - px1).abs() < 1e-4
+                && (y1 - py1).abs() < 1e-4
+                && (x2 - px2).abs() < 1e-4
+                && (y2 - py2).abs() < 1e-4
+        })
+    }
+
     #[inline]
     fn is_linear_impl(x1: f32, y1: f32, x2: f32, y2: f32) -> bool {
         x1.abs() < 1e-4 && y1.abs() < 1e-4 && x2.abs() < 1e-4 && y2.abs() < 1e-4
@@ -1470,6 +1515,25 @@ mod easing_presets_tests {
                 );
             }
         }
+    }
+
+    /// UI 编号 0/1/2.. 与形状一一往返；手动曲线没有编号。
+    #[test]
+    fn ui_index_roundtrips_presets() {
+        assert_eq!(SegmentShape::Step.ui_index(), Some(0));
+        assert_eq!(SegmentShape::linear_curve().ui_index(), Some(1));
+        for (i, preset) in EASING_PRESETS.iter().enumerate() {
+            assert_eq!(preset.curve.ui_index(), Some(i + 2));
+            assert_eq!(SegmentShape::from_ui_index(i + 2), Some(preset.curve));
+        }
+        let custom = SegmentShape::Curve {
+            x1: 0.123,
+            y1: 0.0,
+            x2: 0.0,
+            y2: 0.0,
+        };
+        assert_eq!(custom.ui_index(), None);
+        assert_eq!(SegmentShape::from_ui_index(99), None);
     }
 
     /// 曲线两端必须精确落在 0 / 1，否则相邻段会跳变。

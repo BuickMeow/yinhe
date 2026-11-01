@@ -1,7 +1,10 @@
 import '../core/snap_fields.dart';
 
+import 'dart:convert';
+import 'dart:ffi' as ffi;
 import 'dart:math' as math;
 
+import 'package:ffi/ffi.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -589,6 +592,51 @@ class _AutomationPanelState extends State<AutomationPanel>
       setState(() {});
       widget.onReload();
     }
+  }
+
+  /// 打开锚点插值选择器：先向 Rust 取当前 lane 的形状状态。
+  Future<void> _showShapeSheet() async {
+    final ptr = rust.automationShapeJson();
+    if (ptr == ffi.nullptr) {
+      return;
+    }
+    final Map<String, dynamic> data;
+    try {
+      final raw = jsonDecode(ptr.toDartString());
+      if (raw is! Map<String, dynamic>) {
+        return;
+      }
+      data = raw;
+    } catch (_) {
+      return;
+    } finally {
+      rust.freeString(ptr);
+    }
+    if (!mounted) {
+      return;
+    }
+    final current = data['current'] as int? ?? -1;
+    final count = data['count'] as int? ?? 0;
+    final items = (data['items'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .toList();
+    if (items.isEmpty || count <= 0) {
+      return;
+    }
+    final picked = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      builder: (_) =>
+          _ShapePickerSheet(current: current, count: count, items: items),
+    );
+    if (picked == null || !mounted) {
+      return;
+    }
+    if (rust.automationApplyShape(picked) <= 0) {
+      return;
+    }
+    setState(() {});
+    widget.onReload();
   }
 
   /// 起止点按当前量化档吸附成 tick 区间，与 PR/AR 框选完全一致：
@@ -1510,6 +1558,22 @@ class _AutomationPanelState extends State<AutomationPanel>
                             ),
                           ),
                         ),
+                        if (lane != null) ...[
+                          Container(height: 1, color: YinheTheme.lineFg),
+                          Expanded(
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: _showShapeSheet,
+                              child: Center(
+                                child: Icon(
+                                  Icons.show_chart,
+                                  size: 16,
+                                  color: YinheTheme.textLabel,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -1713,4 +1777,100 @@ class _LinePreviewPainter extends CustomPainter {
   @override
   bool shouldRepaint(_LinePreviewPainter old) =>
       old.start != start || old.end != end;
+}
+
+/// 锚点插值选择器：Step / 线性 / 8 族 × 3 方向缓动。
+///
+/// 标签沿用桌面端的英文族名，避免 24 条文案在每个 locale 里重复维护。
+class _ShapePickerSheet extends StatelessWidget {
+  const _ShapePickerSheet({
+    required this.current,
+    required this.count,
+    required this.items,
+  });
+
+  /// 当前形状编号（-1 = 混合或无）。
+  final int current;
+  /// 这次应用会改多少个锚点。
+  final int count;
+  /// Rust 给出的预设列表：`{"i": 编号, "f": 族, "d": 方向}`。
+  final List<Map<String, dynamic>> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final base = items.where((e) => (e['f'] as String? ?? '').isEmpty);
+    final families = <String, List<Map<String, dynamic>>>{};
+    for (final item in items) {
+      final family = item['f'] as String? ?? '';
+      if (family.isEmpty) {
+        continue;
+      }
+      families.putIfAbsent(family, () => []).add(item);
+    }
+
+    Widget chip(Map<String, dynamic> item, Widget? avatar) {
+      final index = item['i'] as int? ?? -1;
+      return ChoiceChip(
+        avatar: avatar,
+        label: Text(item['d'] as String? ?? ''),
+        selected: current == index,
+        onSelected: (_) => Navigator.of(context).pop(index),
+      );
+    }
+
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.show_chart,
+                  size: 18,
+                  color: theme.colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Interpolation · $count',
+                  style: theme.textTheme.titleSmall,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              children: [
+                for (final item in base)
+                  chip(
+                    item,
+                    Icon(
+                      (item['i'] as int? ?? 0) == 0
+                          ? Icons.stairs
+                          : Icons.trending_flat,
+                      size: 18,
+                    ),
+                  ),
+              ],
+            ),
+            const Divider(height: 20),
+            for (final entry in families.entries) ...[
+              Text(entry.key, style: theme.textTheme.labelMedium),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: [for (final item in entry.value) chip(item, null)],
+              ),
+              const SizedBox(height: 10),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }

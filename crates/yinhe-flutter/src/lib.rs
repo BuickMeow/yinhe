@@ -1375,6 +1375,18 @@ pub extern "C" fn yinhe_automation_copy() -> i32 {
     scene::automation_copy()
 }
 
+/// 当前 AM lane 的锚点插值状态 + 预设列表（JSON）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_automation_shape_json() -> *mut std::ffi::c_char {
+    to_c_string(scene::automation_shape_json())
+}
+
+/// 应用锚点插值形状（0=Step，1=线性，2..=25=缓动预设）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_automation_apply_shape(index: i32) -> i32 {
+    scene::automation_apply_shape(index)
+}
+
 /// AM 锚点剪贴板是否为空：1 = 空。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_automation_clipboard_empty() -> i32 {

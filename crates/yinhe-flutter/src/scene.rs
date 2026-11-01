@@ -2802,6 +2802,143 @@ pub fn automation_copy() -> i32 {
     1
 }
 
+/// 当前 AM lane 的锚点插值状态 + UI 预设列表（JSON）。
+///
+/// ```json
+/// {"current":12,"mixed":false,"count":3,
+///  "items":[{"i":0,"f":"","d":"Step"},{"i":1,"f":"","d":"Linear"},
+///           {"i":2,"f":"Sine","d":"In"}, ...]}
+/// ```
+///
+/// `current = -1`：没有可改的锚点或选中形状不一致；`mixed` 标明是否混合。
+/// `count` = 这次应用会改多少个锚点（有选中时是选中数，否则整条 lane）。
+pub fn automation_shape_json() -> String {
+    use yinhe_types::automation::EASING_PRESETS;
+
+    let Ok(s) = scene().lock() else {
+        return "{}".into();
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return "{}".into();
+    };
+    let panel = &s.automation_panel;
+    let Some(target) = panel_automation_target(doc, panel) else {
+        return "{}".into();
+    };
+    let events: &[yinhe_types::AutomationEvent] = if matches!(target, AutomationTarget::Tempo) {
+        &doc.data.model.conductor.tempo.events
+    } else {
+        let Some(track) = doc.data.model.tracks.get(panel.active_track) else {
+            return "{}".into();
+        };
+        let Some((raw_idx, _)) = panel.lane.and_then(|i| visible_lane(track, i)) else {
+            return "{}".into();
+        };
+        &track.automation_lanes[raw_idx].events
+    };
+    let selected: Vec<&yinhe_types::AutomationEvent> = if panel.selected_ticks.is_empty() {
+        events.iter().collect()
+    } else {
+        events
+            .iter()
+            .filter(|e| panel.selected_ticks.binary_search(&e.tick).is_ok())
+            .collect()
+    };
+    let count = selected.len();
+    let first = selected.first().and_then(|e| e.shape.ui_index());
+    let mixed = selected.iter().any(|e| e.shape.ui_index() != first);
+    let current = if mixed { None } else { first };
+    let current = current.map_or(-1, |i| i as i32);
+
+    let mut items =
+        String::from("[{\"i\":0,\"f\":\"\",\"d\":\"Step\"},{\"i\":1,\"f\":\"\",\"d\":\"Linear\"}");
+    for (idx, preset) in EASING_PRESETS.iter().enumerate() {
+        items.push_str(&format!(
+            ",{{\"i\":{},\"f\":\"{}\",\"d\":\"{}\"}}",
+            idx + 2,
+            preset.family.label(),
+            preset.direction.label()
+        ));
+    }
+    items.push(']');
+    format!("{{\"current\":{current},\"mixed\":{mixed},\"count\":{count},\"items\":{items}}}")
+}
+
+/// 应用锚点插值形状（编号见 `SegmentShape::from_ui_index`）。
+///
+/// 有选中锚点时只改选中，否则改整条 lane；一次 undo。返回改动的锚点数。
+pub fn automation_apply_shape(index: i32) -> i32 {
+    use yinhe_types::automation::AutomationEdit;
+
+    let Some(shape) = yinhe_types::SegmentShape::from_ui_index(index.max(0) as usize) else {
+        return 0;
+    };
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let panel = s.automation_panel.clone();
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let Some(target) = panel_automation_target(doc, &panel) else {
+        return 0;
+    };
+    let (track_idx, lane_idx) = if matches!(target, AutomationTarget::Tempo) {
+        (0u16, 0usize)
+    } else {
+        let Some(track) = doc.data.model.tracks.get(panel.active_track) else {
+            return 0;
+        };
+        let Some((raw_idx, _)) = panel.lane.and_then(|i| visible_lane(track, i)) else {
+            return 0;
+        };
+        (panel.active_track as u16, raw_idx)
+    };
+    let ticks: Vec<u32> = {
+        let events: &[yinhe_types::AutomationEvent] = if matches!(target, AutomationTarget::Tempo) {
+            &doc.data.model.conductor.tempo.events
+        } else {
+            &doc.data.model.tracks[track_idx as usize].automation_lanes[lane_idx].events
+        };
+        if panel.selected_ticks.is_empty() {
+            events.iter().map(|e| e.tick).collect()
+        } else {
+            events
+                .iter()
+                .filter(|e| panel.selected_ticks.binary_search(&e.tick).is_ok())
+                .map(|e| e.tick)
+                .collect()
+        }
+    };
+    if ticks.is_empty() {
+        return 0;
+    }
+    let edits: Vec<AutomationEdit> = ticks
+        .iter()
+        .map(|&tick| AutomationEdit::SetShape {
+            track_idx,
+            lane_idx,
+            target: target.clone(),
+            tick,
+            shape,
+        })
+        .collect();
+    let before = doc.capture_snapshot();
+    let actions = doc.apply_automation_edits(edits);
+    if actions.is_empty() {
+        return 0;
+    }
+    let undo = match actions.len() {
+        1 => actions.into_iter().next(),
+        _ => Some(yinhe_editor_core::history::UndoAction::Composite(actions)),
+    };
+    if let Some(undo) = undo {
+        doc.push_undo(undo, "修改锚点插值", before);
+    }
+    doc.edit.pianoroll_view.base.dirty = true;
+    ticks.len() as i32
+}
+
 /// AM 剪贴板是否为空（Dart 菜单置灰用）。
 pub fn automation_clipboard_empty() -> bool {
     AUTOMATION_CLIPBOARD

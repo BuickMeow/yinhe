@@ -7,6 +7,7 @@ _yinhe_archive_open_password
 _yinhe_archive_status
 _yinhe_audio_settings_json
 _yinhe_auto_pause_at_end
+_yinhe_automation_apply_shape
 _yinhe_automation_batch_edit
 _yinhe_automation_clipboard_empty
 _yinhe_automation_copy
@@ -14,6 +15,7 @@ _yinhe_automation_display_value
 _yinhe_automation_json
 _yinhe_automation_line
 _yinhe_automation_paste
+_yinhe_automation_shape_json
 _yinhe_bar_beat_duration_text
 _yinhe_bar_beat_text
 _yinhe_bar_beat_ticks_json
