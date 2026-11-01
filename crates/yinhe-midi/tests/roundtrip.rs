@@ -3,7 +3,10 @@
 use std::sync::Arc;
 
 use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
-use yinhe_midi::{MidiImportEncoding, parse_bytes, parse_file_with_encoding, write_to_bytes};
+use yinhe_midi::{
+    MidiExportOptions, MidiImportEncoding, parse_bytes, parse_file_with_encoding, write_to_bytes,
+    write_to_file,
+};
 use yinhe_types::TimeSigEvent;
 use yinhe_types::automation::{ParamDevice, xsynth_param};
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
@@ -909,4 +912,15 @@ fn export_zero_bpm_as_min_tempo_keeps_timeline() {
     assert_eq!(tempos[1].value, 0.0);
     assert_eq!(tempos[2].tick, 960);
     assert!((tempos[2].value - 60.0).abs() < 0.5);
+}
+
+#[test]
+fn streaming_file_matches_in_memory_export() {
+    let model = build_complex_model();
+    let bytes = write_to_bytes(&model).expect("in-memory export");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("stream.mid");
+    write_to_file(&model, &path, &MidiExportOptions::default()).expect("streaming export");
+    let read = std::fs::read(&path).expect("read exported");
+    assert_eq!(read, bytes, "流式导出必须与内存导出逐字节一致");
 }

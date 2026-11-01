@@ -5,6 +5,8 @@
 //! `notes / automation_lanes / program_change` into one event stream
 //! sorted by tick. RPN/NRPN lanes expand to their CC selector sequences.
 
+use std::io::{BufWriter, Cursor, Write};
+
 use midly::num::{u4, u7, u15, u24};
 use midly::{
     Format, Header, MetaMessage, MidiMessage, PitchBend, Smf, Timing, TrackEvent, TrackEventKind,
@@ -58,17 +60,42 @@ pub fn write_to_bytes(model: &YinModel) -> Result<Vec<u8>, MidiError> {
     write_with_options(model, &MidiExportOptions::default())
 }
 
-/// 带选项的导出（供设置栏驱动）。
+/// 带选项的导出（供设置栏驱动），结果写入换存缓冲。
 pub fn write_with_options(
     model: &YinModel,
     opts: &MidiExportOptions,
 ) -> Result<Vec<u8>, MidiError> {
+    let mut out = Cursor::new(Vec::new());
+    write_to_writer(model, opts, &mut out)?;
+    Ok(out.into_inner())
+}
+
+/// 流式导出到文件：每次只构建**一条轨**的事件和编码块，写完即释放。
+///
+/// 旧实现把全部轨的事件和最终 SMF 都放在内存里；2000 万音符时额外峰值
+/// 可达 2~3GB，移动端会被系统直接杀掉。这里在外层逐轨写盘，内存只与
+/// 最大的单轨有关。
+pub fn write_to_file(
+    model: &YinModel,
+    path: impl AsRef<std::path::Path>,
+    opts: &MidiExportOptions,
+) -> Result<(), MidiError> {
+    let file = std::fs::File::create(path.as_ref())?;
+    let mut out = BufWriter::new(file);
+    write_to_writer(model, opts, &mut out)?;
+    out.flush()?;
+    Ok(())
+}
+
+/// 流式导出的通用 writer 版本（测试可用 `Cursor<Vec<u8>>`）。
+pub fn write_to_writer<W: Write>(
+    model: &YinModel,
+    opts: &MidiExportOptions,
+    out: &mut W,
+) -> Result<(), MidiError> {
     let ppq = model.meta.ppq;
-
-    let mut tracks: Vec<Vec<TrackEvent<'_>>> = Vec::with_capacity(model.tracks.len() + 1);
-    tracks.push(build_conductor_track_with_encoding(model, opts.encoding));
-
     let num_tracks = model.tracks.len();
+
     let mut per_track_notes: Vec<Vec<(Note, u8)>> = vec![Vec::new(); num_tracks];
     for (key, bucket) in model.notes.iter().enumerate() {
         for n in bucket.iter() {
@@ -125,35 +152,62 @@ pub fn write_with_options(
         })
         .collect();
 
+    let included: Vec<bool> = model
+        .tracks
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let notes = &per_track_notes[i];
+            !opts.strip_empty_tracks
+                || !(notes.is_empty()
+                    && t.automation_lanes.is_empty()
+                    && t.program_change.is_empty()
+                    && t.lyrics.is_empty())
+        })
+        .collect();
+    let ntrks = 1 + included.iter().filter(|x| **x).count();
+
+    // SMF 头（format 1）。逐轨写 `MTrk`，轨长由 midly 编好后直接拿现成块。
+    out.write_all(b"MThd")?;
+    out.write_all(&6u32.to_be_bytes())?;
+    out.write_all(&1u16.to_be_bytes())?;
+    out.write_all(&(ntrks as u16).to_be_bytes())?;
+    out.write_all(&(ppq.min(0x7FFF) as u16).to_be_bytes())?;
+
+    write_track_chunk(
+        out,
+        build_conductor_track_with_encoding(model, opts.encoding),
+    )?;
+
     for (i, t) in model.tracks.iter().enumerate() {
-        let notes = &per_track_notes[i];
-        let is_empty = notes.is_empty()
-            && t.automation_lanes.is_empty()
-            && t.program_change.is_empty()
-            && t.lyrics.is_empty();
-        if opts.strip_empty_tracks && is_empty {
+        if !included[i] {
             continue;
         }
-        tracks.push(build_track_with_options(
-            t,
-            notes,
-            color_payloads[i].as_deref(),
-            opts,
-        ));
+        let track =
+            build_track_with_options(t, &per_track_notes[i], color_payloads[i].as_deref(), opts);
+        write_track_chunk(out, track)?;
     }
+    Ok(())
+}
 
+/// 用 midly 编码一条轨，只把 `MTrk` 块追加到输出。
+fn write_track_chunk<W: Write>(out: &mut W, track: Vec<TrackEvent<'_>>) -> Result<(), MidiError> {
     let smf = Smf {
         header: Header {
             format: Format::Parallel,
-            timing: Timing::Metrical(u15::new(ppq as u16)),
+            timing: Timing::Metrical(u15::new(1)),
         },
-        tracks,
+        tracks: vec![track],
     };
-
     let mut buf = Vec::new();
     smf.write(&mut buf)
         .map_err(|e| MidiError::Io(std::io::Error::other(e.to_string())))?;
-    Ok(buf)
+    let pos = buf
+        .windows(4)
+        .position(|w| w == b"MTrk")
+        .ok_or_else(|| MidiError::Io(std::io::Error::other("midly 输出缺少 MTrk")))?;
+    out.write_all(&buf[pos..])?;
+    Ok(())
 }
 
 fn build_conductor_track_with_encoding<'a>(

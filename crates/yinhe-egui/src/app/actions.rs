@@ -1325,19 +1325,14 @@ impl App {
                     strip_empty_tracks: self.audio_settings.midi_export_strip_empty_tracks,
                     dedup_overlaps: self.audio_settings.midi_export_dedup_overlaps,
                 };
-                match yinhe_midi::write_with_options(&doc.data.model, &opts) {
-                    Ok(bytes) => {
-                        if let Err(e) = std::fs::write(&path_str, &bytes) {
-                            tracing::error!("Failed to export MIDI: {}", e);
-                            self.notifications.error("导出MIDI失败", e.to_string());
-                        } else {
-                            let fname = std::path::Path::new(&path_str)
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or(&path_str)
-                                .to_string();
-                            self.notifications.success("导出MIDI完成", fname);
-                        }
+                match yinhe_midi::write_to_file(&doc.data.model, &path_str, &opts) {
+                    Ok(()) => {
+                        let fname = std::path::Path::new(&path_str)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or(&path_str)
+                            .to_string();
+                        self.notifications.success("导出MIDI完成", fname);
                     }
                     Err(e) => {
                         tracing::error!("Failed to export MIDI: {}", e);

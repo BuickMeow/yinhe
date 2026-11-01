@@ -13,4 +13,6 @@ pub use error::MidiError;
 pub use parser::{
     LoadProgress, parse_bytes, parse_bytes_with_encoding, parse_file_with_encoding, parse_path,
 };
-pub use writer::{MidiExportOptions, write_to_bytes, write_with_options};
+pub use writer::{
+    MidiExportOptions, write_to_bytes, write_to_file, write_to_writer, write_with_options,
+};
