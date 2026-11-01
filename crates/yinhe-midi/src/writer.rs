@@ -7,14 +7,12 @@
 
 use std::io::{BufWriter, Cursor, Write};
 
-use midly::num::{u4, u7, u15, u24};
-use midly::{
-    Format, Header, MetaMessage, MidiMessage, PitchBend, Smf, Timing, TrackEvent, TrackEventKind,
-};
+use midly::num::{u4, u7, u24};
+use midly::{MetaMessage, MidiMessage, PitchBend, TrackEventKind};
 
 use yinhe_core::{TrackData, YinModel};
 use yinhe_types::automation::{MidiBinding, binding_max, builtin_param};
-use yinhe_types::{AutomationLane, AutomationTarget, Note, SegmentShape};
+use yinhe_types::{AutomationLane, AutomationTarget, SegmentShape};
 
 use crate::encoding::MidiImportEncoding;
 use crate::error::MidiError;
@@ -60,7 +58,7 @@ pub fn write_to_bytes(model: &YinModel) -> Result<Vec<u8>, MidiError> {
     write_with_options(model, &MidiExportOptions::default())
 }
 
-/// 带选项的导出（供设置栏驱动），结果写入换存缓冲。
+/// 带选项的导出（供设置栏驱动），结果写入内存缓冲。
 pub fn write_with_options(
     model: &YinModel,
     opts: &MidiExportOptions,
@@ -70,11 +68,10 @@ pub fn write_with_options(
     Ok(out.into_inner())
 }
 
-/// 流式导出到文件：每次只构建**一条轨**的事件和编码块，写完即释放。
+/// 流式导出到文件：只在内存里保留当前轨的索引和 `MTrk` 缓冲。
 ///
 /// 旧实现把全部轨的事件和最终 SMF 都放在内存里；2000 万音符时额外峰值
-/// 可达 2~3GB，移动端会被系统直接杀掉。这里在外层逐轨写盘，内存只与
-/// 最大的单轨有关。
+/// 可达 2~3GB，移动端会被系统直接杀掉。
 pub fn write_to_file(
     model: &YinModel,
     path: impl AsRef<std::path::Path>,
@@ -94,40 +91,11 @@ pub fn write_to_writer<W: Write>(
     out: &mut W,
 ) -> Result<(), MidiError> {
     let ppq = model.meta.ppq;
-    let num_tracks = model.tracks.len();
-
-    let mut per_track_notes: Vec<Vec<(Note, u8)>> = vec![Vec::new(); num_tracks];
-    for (key, bucket) in model.notes.iter().enumerate() {
-        for n in bucket.iter() {
-            let t = n.track as usize;
-            if t < num_tracks {
-                per_track_notes[t].push((*n, key as u8));
-            }
-        }
-    }
+    let mut per_track_notes = build_note_index(model);
 
     if opts.dedup_overlaps {
-        for notes in per_track_notes.iter_mut() {
-            if notes.len() <= 1 {
-                continue;
-            }
-            notes.sort_by(|a, b| {
-                a.1.cmp(&b.1)
-                    .then_with(|| a.0.start_tick.cmp(&b.0.start_tick))
-                    .then_with(|| a.0.end_tick.cmp(&b.0.end_tick))
-            });
-            let mut deduped: Vec<(Note, u8)> = Vec::with_capacity(notes.len());
-            let mut last_end: std::collections::HashMap<u8, u32> = std::collections::HashMap::new();
-            for (n, k) in notes.drain(..) {
-                if let Some(&le) = last_end.get(&k)
-                    && n.start_tick < le
-                {
-                    continue;
-                }
-                last_end.insert(k, n.end_tick);
-                deduped.push((n, k));
-            }
-            *notes = deduped;
+        for notes in &mut per_track_notes {
+            dedup_note_index(notes);
         }
     }
 
@@ -167,53 +135,208 @@ pub fn write_to_writer<W: Write>(
         .collect();
     let ntrks = 1 + included.iter().filter(|x| **x).count();
 
-    // SMF 头（format 1）。逐轨写 `MTrk`，轨长由 midly 编好后直接拿现成块。
+    // SMF 头（format 1）。逐轨写 `MTrk`，mem 里只有当前轨的字节缓冲。
     out.write_all(b"MThd")?;
     out.write_all(&6u32.to_be_bytes())?;
     out.write_all(&1u16.to_be_bytes())?;
     out.write_all(&(ntrks as u16).to_be_bytes())?;
     out.write_all(&(ppq.min(0x7FFF) as u16).to_be_bytes())?;
 
-    write_track_chunk(
-        out,
-        build_conductor_track_with_encoding(model, opts.encoding),
-    )?;
+    let mut conductor = EventBuf::new();
+    if !model.meta.name.is_empty() {
+        if opts.encoding == MidiImportEncoding::Utf8 {
+            conductor.push(
+                0,
+                &TrackEventKind::Meta(MetaMessage::TrackName(model.meta.name.as_bytes())),
+            );
+        } else {
+            let encoded = encode_text(opts.encoding, &model.meta.name);
+            conductor.push(0, &TrackEventKind::Meta(MetaMessage::TrackName(&encoded)));
+        }
+    }
+    for (tick, kind) in build_conductor_events(model, opts.encoding) {
+        conductor.push(tick, &kind);
+    }
+    write_chunk(out, conductor.finish())?;
 
     for (i, t) in model.tracks.iter().enumerate() {
         if !included[i] {
             continue;
         }
-        let track =
-            build_track_with_options(t, &per_track_notes[i], color_payloads[i].as_deref(), opts);
-        write_track_chunk(out, track)?;
+        // 取走本轨索引，写完立即释放；不让已导出的轨继续占内存。
+        let notes = std::mem::take(&mut per_track_notes[i]);
+        write_note_track(out, t, &notes, color_payloads[i].as_deref(), opts)?;
     }
     Ok(())
 }
 
-/// 用 midly 编码一条轨，只把 `MTrk` 块追加到输出。
-fn write_track_chunk<W: Write>(out: &mut W, track: Vec<TrackEvent<'_>>) -> Result<(), MidiError> {
-    let smf = Smf {
-        header: Header {
-            format: Format::Parallel,
-            timing: Timing::Metrical(u15::new(1)),
-        },
-        tracks: vec![track],
-    };
-    let mut buf = Vec::new();
-    smf.write(&mut buf)
-        .map_err(|e| MidiError::Io(std::io::Error::other(e.to_string())))?;
-    let pos = buf
-        .windows(4)
-        .position(|w| w == b"MTrk")
-        .ok_or_else(|| MidiError::Io(std::io::Error::other("midly 输出缺少 MTrk")))?;
-    out.write_all(&buf[pos..])?;
-    Ok(())
+/// 单个音符的紧凑导出索引（12 字节）。
+///
+/// `Note` 的 `id` / `track` 字段导出时用不上；2000 万音符时每音符省 8 字节
+/// 就是 160MB。
+#[derive(Clone, Copy, Debug)]
+struct NoteRef {
+    key: u8,
+    velocity: u8,
+    start_tick: u32,
+    end_tick: u32,
 }
 
-fn build_conductor_track_with_encoding<'a>(
+/// 一次扫描 `model.notes`，按轨道收集紧凑索引。
+///
+/// 遍历顺序是 key 桶升序、桶内 `start_tick` 升序，因此每条轨的索引天然按
+/// `(key, start_tick)` 有序；去重和归并都依赖这个顺序。
+fn build_note_index(model: &YinModel) -> Vec<Vec<NoteRef>> {
+    let mut per_track: Vec<Vec<NoteRef>> = vec![Vec::new(); model.tracks.len()];
+    for (key, bucket) in model.notes.iter().enumerate() {
+        for n in bucket.iter() {
+            if let Some(notes) = per_track.get_mut(n.track as usize) {
+                notes.push(NoteRef {
+                    key: key as u8,
+                    velocity: n.velocity,
+                    start_tick: n.start_tick,
+                    end_tick: n.end_tick,
+                });
+            }
+        }
+    }
+    per_track
+}
+
+/// `dedup_overlaps`：丢弃同 key 上与上一个音符重叠的音符。
+fn dedup_note_index(notes: &mut Vec<NoteRef>) {
+    if notes.len() <= 1 {
+        return;
+    }
+    // 桶内只保证 start_tick 有序，同 start 的 end 顺序不定；旧实现按
+    // `(key, start, end)` 稳定排序，这里保持同样的语义。
+    notes.sort_by_key(|n| (n.key, n.start_tick, n.end_tick));
+    let mut write = 0;
+    let mut last_key = 0u8;
+    let mut last_end = 0u32;
+    for read in 0..notes.len() {
+        let n = notes[read];
+        if write > 0 && n.key == last_key && n.start_tick < last_end {
+            continue;
+        }
+        last_key = n.key;
+        last_end = n.end_tick;
+        notes[write] = n;
+        write += 1;
+    }
+    notes.truncate(write);
+}
+
+/// 逐轨流式写一条音符轨：音符与非音符事件按 tick 归并，边归并边编码。
+fn write_note_track<W: Write>(
+    out: &mut W,
+    track: &TrackData,
+    notes: &[NoteRef],
+    color_payload: Option<&[u8]>,
+    opts: &MidiExportOptions,
+) -> Result<(), MidiError> {
+    let ch = u4::new(track.channel & 0x0F);
+    let aux = build_aux_events(track, color_payload, opts);
+
+    // NoteOn 按 start、NoteOff 按 end 各排一份下标。索引只有 4 字节/音符，
+    // 比整轨 `TrackEvent` 数组小一个数量级。
+    let mut on_ticks: Vec<(u32, u32)> = notes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.start_tick, i as u32))
+        .collect();
+    on_ticks.sort_unstable();
+    let mut off_ticks: Vec<(u32, u32)> = notes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.end_tick, i as u32))
+        .collect();
+    off_ticks.sort_unstable();
+
+    let mut buf = EventBuf::new();
+    if !track.name.is_empty() {
+        if opts.encoding == MidiImportEncoding::Utf8 {
+            buf.push(
+                0,
+                &TrackEventKind::Meta(MetaMessage::TrackName(track.name.as_bytes())),
+            );
+        } else {
+            let encoded = encode_text(opts.encoding, &track.name);
+            buf.push(0, &TrackEventKind::Meta(MetaMessage::TrackName(&encoded)));
+        }
+    }
+
+    let mut on_pos = 0;
+    let mut off_pos = 0;
+    let mut aux_pos = 0;
+    let mut same_tick: Vec<(u32, bool)> = Vec::new();
+
+    loop {
+        let mut tick = u32::MAX;
+        if let Some(&(t, _)) = on_ticks.get(on_pos) {
+            tick = tick.min(t);
+        }
+        if let Some(&(t, _)) = off_ticks.get(off_pos) {
+            tick = tick.min(t);
+        }
+        if let Some((t, _)) = aux.get(aux_pos) {
+            tick = tick.min(*t);
+        }
+        if tick == u32::MAX {
+            break;
+        }
+
+        // 旧实现是「音符先插入、其它事件后插入」再稳定排序，所以同 tick
+        // 永远是音符在前；音符内部按原索引、On 先于 Off。
+        if on_ticks.get(on_pos).map(|x| x.0) == Some(tick)
+            || off_ticks.get(off_pos).map(|x| x.0) == Some(tick)
+        {
+            same_tick.clear();
+            while on_ticks.get(on_pos).map(|x| x.0) == Some(tick) {
+                same_tick.push((on_ticks[on_pos].1, false));
+                on_pos += 1;
+            }
+            while off_ticks.get(off_pos).map(|x| x.0) == Some(tick) {
+                same_tick.push((off_ticks[off_pos].1, true));
+                off_pos += 1;
+            }
+            same_tick.sort_unstable();
+            for &(idx, is_off) in &same_tick {
+                let n = notes[idx as usize];
+                let message = if is_off {
+                    MidiMessage::NoteOff {
+                        key: u7::new(n.key & 0x7F),
+                        vel: u7::new(0),
+                    }
+                } else {
+                    MidiMessage::NoteOn {
+                        key: u7::new(n.key & 0x7F),
+                        vel: u7::new(n.velocity & 0x7F),
+                    }
+                };
+                buf.push(
+                    tick,
+                    &TrackEventKind::Midi {
+                        channel: ch,
+                        message,
+                    },
+                );
+            }
+        }
+
+        while aux.get(aux_pos).map(|e| e.0) == Some(tick) {
+            buf.push(tick, &aux[aux_pos].1);
+            aux_pos += 1;
+        }
+    }
+
+    write_chunk(out, buf.finish())
+}
+
+fn build_conductor_events<'a>(
     model: &'a YinModel,
     encoding: MidiImportEncoding,
-) -> Vec<TrackEvent<'a>> {
+) -> Vec<(u32, TrackEventKind<'a>)> {
     let mut events: Vec<(u32, TrackEventKind<'a>)> = Vec::new();
 
     for ev in &model.conductor.tempo.events {
@@ -275,50 +398,20 @@ fn build_conductor_track_with_encoding<'a>(
     }
 
     events.sort_by_key(|e| e.0);
-
-    if model.meta.name.is_empty() {
-        flatten_to_track(events, None)
-    } else {
-        let encoded: &'a [u8] = if encoding == MidiImportEncoding::Utf8 {
-            model.meta.name.as_bytes()
-        } else {
-            leak_bytes(encode_text(encoding, &model.meta.name))
-        };
-        flatten_to_track_with_bytes(events, Some(encoded))
-    }
+    events
 }
 
-fn build_track_with_options<'a>(
+/// 一条轨除音符外的事件（自动化 / 音色 / 端口 / 颜色 / 歌词）。
+///
+/// 这些事件通常远少于音符，可以直接在内存里排序；音符走
+/// [`write_note_track`] 的归并流。
+fn build_aux_events<'a>(
     track: &'a TrackData,
-    notes: &[(Note, u8)],
     color_payload: Option<&'a [u8]>,
     opts: &MidiExportOptions,
-) -> Vec<TrackEvent<'a>> {
+) -> Vec<(u32, TrackEventKind<'a>)> {
     let ch = u4::new(track.channel & 0x0F);
     let mut events: Vec<(u32, TrackEventKind<'a>)> = Vec::new();
-
-    for (n, key) in notes {
-        events.push((
-            n.start_tick,
-            TrackEventKind::Midi {
-                channel: ch,
-                message: MidiMessage::NoteOn {
-                    key: u7::new((*key) & 0x7F),
-                    vel: u7::new(n.velocity & 0x7F),
-                },
-            },
-        ));
-        events.push((
-            n.end_tick,
-            TrackEventKind::Midi {
-                channel: ch,
-                message: MidiMessage::NoteOff {
-                    key: u7::new((*key) & 0x7F),
-                    vel: u7::new(0),
-                },
-            },
-        ));
-    }
 
     for lane in &track.automation_lanes {
         let n = lane.events.len();
@@ -410,17 +503,7 @@ fn build_track_with_options<'a>(
     }
 
     events.sort_by_key(|e| e.0);
-
-    if track.name.is_empty() {
-        flatten_to_track(events, None)
-    } else {
-        let encoded: &'a [u8] = if opts.encoding == MidiImportEncoding::Utf8 {
-            track.name.as_bytes()
-        } else {
-            leak_bytes(encode_text(opts.encoding, &track.name))
-        };
-        flatten_to_track_with_bytes(events, Some(encoded))
-    }
+    events
 }
 
 /// 归一化值 → 原始整数（四舍五入并夹取到 `0..max`）。
@@ -556,37 +639,161 @@ fn push_lane_event<'a>(
     }
 }
 
-fn flatten_to_track<'a>(
-    events: Vec<(u32, TrackEventKind<'a>)>,
-    track_name: Option<&'a str>,
-) -> Vec<TrackEvent<'a>> {
-    let bytes = track_name.map(|s| s.as_bytes());
-    flatten_to_track_with_bytes(events, bytes)
+/// SMF 轨道事件编码缓冲。
+///
+/// 复刻 midly 的编码方式（含 running status 压缩），但逐事件追加，不需要
+/// 先把整轨变成 `Vec<TrackEvent>`。2000 万音符时后者光事件数组就要几百 MB。
+struct EventBuf {
+    buf: Vec<u8>,
+    running_status: Option<u8>,
+    last_tick: u32,
 }
 
-fn flatten_to_track_with_bytes<'a>(
-    events: Vec<(u32, TrackEventKind<'a>)>,
-    track_name_bytes: Option<&'a [u8]>,
-) -> Vec<TrackEvent<'a>> {
-    let mut out = Vec::with_capacity(events.len() + 2);
-    if let Some(name) = track_name_bytes {
-        out.push(TrackEvent {
-            delta: 0.into(),
-            kind: TrackEventKind::Meta(MetaMessage::TrackName(name)),
-        });
+impl EventBuf {
+    fn new() -> Self {
+        Self {
+            buf: Vec::new(),
+            running_status: None,
+            last_tick: 0,
+        }
     }
-    let mut last_tick: u32 = 0;
-    for (tick, kind) in events {
-        let delta = tick.saturating_sub(last_tick);
-        out.push(TrackEvent {
-            delta: delta.into(),
-            kind,
-        });
-        last_tick = tick;
+
+    /// 追加一个绝对 tick 的事件；delta 由内部计算。
+    fn push(&mut self, tick: u32, kind: &TrackEventKind<'_>) {
+        write_varlen(&mut self.buf, tick.saturating_sub(self.last_tick));
+        self.last_tick = tick;
+        match kind {
+            TrackEventKind::Midi { channel, message } => {
+                let status = midi_status_nibble(message) << 4 | channel.as_int();
+                if self.running_status != Some(status) {
+                    self.buf.push(status);
+                    self.running_status = Some(status);
+                }
+                push_midi_message(&mut self.buf, message);
+            }
+            TrackEventKind::SysEx(data) => {
+                self.running_status = None;
+                self.buf.push(0xF0);
+                write_varlen(&mut self.buf, data.len() as u32);
+                self.buf.extend_from_slice(data);
+            }
+            TrackEventKind::Escape(data) => {
+                self.running_status = None;
+                self.buf.push(0xF7);
+                write_varlen(&mut self.buf, data.len() as u32);
+                self.buf.extend_from_slice(data);
+            }
+            TrackEventKind::Meta(meta) => {
+                self.running_status = None;
+                self.buf.push(0xFF);
+                push_meta(&mut self.buf, meta);
+            }
+        }
     }
-    out.push(TrackEvent {
-        delta: 0.into(),
-        kind: TrackEventKind::Meta(MetaMessage::EndOfTrack),
-    });
-    out
+
+    /// 追加 EndOfTrack 并取走字节缓冲。
+    fn finish(mut self) -> Vec<u8> {
+        self.push(
+            self.last_tick,
+            &TrackEventKind::Meta(MetaMessage::EndOfTrack),
+        );
+        self.buf
+    }
+}
+
+/// 把一条轨的字节缓冲包成 `MTrk` chunk 写出去。
+fn write_chunk<W: Write>(out: &mut W, bytes: Vec<u8>) -> Result<(), MidiError> {
+    let len = u32::try_from(bytes.len())
+        .map_err(|_| MidiError::Io(std::io::Error::other("MIDI 轨道超过 4GB")))?;
+    out.write_all(b"MTrk")?;
+    out.write_all(&len.to_be_bytes())?;
+    out.write_all(&bytes)?;
+    Ok(())
+}
+
+/// 7-bit 变长整数（SMF delta time / 元事件长度）。
+fn write_varlen(out: &mut Vec<u8>, value: u32) {
+    let mut skipping = true;
+    for i in (0..4).rev() {
+        let byte = ((value >> (i * 7)) & 0x7F) as u8;
+        if skipping && byte == 0 && i != 0 {
+            continue;
+        }
+        skipping = false;
+        out.push(if i == 0 { byte } else { byte | 0x80 });
+    }
+}
+
+fn midi_status_nibble(message: &MidiMessage) -> u8 {
+    match message {
+        MidiMessage::NoteOff { .. } => 0x8,
+        MidiMessage::NoteOn { .. } => 0x9,
+        MidiMessage::Aftertouch { .. } => 0xA,
+        MidiMessage::Controller { .. } => 0xB,
+        MidiMessage::ProgramChange { .. } => 0xC,
+        MidiMessage::ChannelAftertouch { .. } => 0xD,
+        MidiMessage::PitchBend { .. } => 0xE,
+    }
+}
+
+fn push_midi_message(out: &mut Vec<u8>, message: &MidiMessage) {
+    match *message {
+        MidiMessage::NoteOff { key, vel }
+        | MidiMessage::NoteOn { key, vel }
+        | MidiMessage::Aftertouch { key, vel } => {
+            out.push(key.as_int());
+            out.push(vel.as_int());
+        }
+        MidiMessage::Controller { controller, value } => {
+            out.push(controller.as_int());
+            out.push(value.as_int());
+        }
+        MidiMessage::ProgramChange { program } => out.push(program.as_int()),
+        MidiMessage::ChannelAftertouch { vel } => out.push(vel.as_int()),
+        MidiMessage::PitchBend { bend } => {
+            // PitchBend 在 SMF 里是 LSB 在前。
+            let raw = bend.0.as_int();
+            out.push((raw & 0x7F) as u8);
+            out.push((raw >> 7) as u8);
+        }
+    }
+}
+
+fn push_meta(out: &mut Vec<u8>, meta: &MetaMessage<'_>) {
+    fn write_msg(out: &mut Vec<u8>, type_byte: u8, data: &[u8]) {
+        out.push(type_byte);
+        write_varlen(out, data.len() as u32);
+        out.extend_from_slice(data);
+    }
+    match meta {
+        MetaMessage::TrackNumber(track_num) => match track_num {
+            None => write_msg(out, 0x00, &[]),
+            Some(n) => write_msg(out, 0x00, &n.to_be_bytes()),
+        },
+        MetaMessage::Text(data) => write_msg(out, 0x01, data),
+        MetaMessage::Copyright(data) => write_msg(out, 0x02, data),
+        MetaMessage::TrackName(data) => write_msg(out, 0x03, data),
+        MetaMessage::InstrumentName(data) => write_msg(out, 0x04, data),
+        MetaMessage::Lyric(data) => write_msg(out, 0x05, data),
+        MetaMessage::Marker(data) => write_msg(out, 0x06, data),
+        MetaMessage::CuePoint(data) => write_msg(out, 0x07, data),
+        MetaMessage::ProgramName(data) => write_msg(out, 0x08, data),
+        MetaMessage::DeviceName(data) => write_msg(out, 0x09, data),
+        MetaMessage::MidiChannel(chan) => write_msg(out, 0x20, &[chan.as_int()]),
+        MetaMessage::MidiPort(port) => write_msg(out, 0x21, &[port.as_int()]),
+        MetaMessage::EndOfTrack => write_msg(out, 0x2F, &[]),
+        MetaMessage::Tempo(micros_per_beat) => {
+            write_msg(out, 0x51, &micros_per_beat.as_int().to_be_bytes()[1..])
+        }
+        // 导出器不会产生 SmpteOffset；midly 的编码函数不公开，这里留空。
+        MetaMessage::SmpteOffset(_) => write_msg(out, 0x54, &[]),
+        MetaMessage::TimeSignature(num, den, ticks_per_click, thirty_seconds) => {
+            write_msg(out, 0x58, &[*num, *den, *ticks_per_click, *thirty_seconds])
+        }
+        MetaMessage::KeySignature(sharps, minor) => {
+            write_msg(out, 0x59, &[*sharps as u8, u8::from(*minor)])
+        }
+        MetaMessage::SequencerSpecific(data) => write_msg(out, 0x7F, data),
+        MetaMessage::Unknown(type_byte, data) => write_msg(out, *type_byte, data),
+    }
 }

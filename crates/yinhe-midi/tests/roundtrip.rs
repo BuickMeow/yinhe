@@ -5,7 +5,7 @@ use std::sync::Arc;
 use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_midi::{
     MidiExportOptions, MidiImportEncoding, parse_bytes, parse_file_with_encoding, write_to_bytes,
-    write_to_file,
+    write_to_file, write_with_options,
 };
 use yinhe_types::TimeSigEvent;
 use yinhe_types::automation::{ParamDevice, xsynth_param};
@@ -923,4 +923,77 @@ fn streaming_file_matches_in_memory_export() {
     write_to_file(&model, &path, &MidiExportOptions::default()).expect("streaming export");
     let read = std::fs::read(&path).expect("read exported");
     assert_eq!(read, bytes, "流式导出必须与内存导出逐字节一致");
+}
+
+/// 同 key 相邻音符在同一 tick 上：前一个的 NoteOff 必须先于后一个的 NoteOn，
+/// 否则播放器会立刻关掉刚开始的音符。
+#[test]
+fn same_tick_note_off_precedes_next_note_on() {
+    let mut track = TrackData::new(0, 0);
+    track.name = "Adjacent".to_string();
+    let mut model = YinModel {
+        conductor: Arc::new(empty_conductor()),
+        tracks: vec![Arc::new(track)],
+        meta: ProjectMeta {
+            ppq: 480,
+            ..ProjectMeta::default()
+        },
+        ..Default::default()
+    };
+    model.load_track_notes(vec![vec![cut_note(0, 100, 60), cut_note(100, 200, 60)]]);
+
+    let bytes = write_to_bytes(&model).unwrap();
+    let smf = midly::Smf::parse(&bytes).unwrap();
+    let mut abs = 0u32;
+    let mut at_100 = Vec::new();
+    for ev in &smf.tracks[1] {
+        abs += ev.delta.as_int();
+        if abs == 100 {
+            at_100.push(ev.kind);
+        }
+    }
+    assert_eq!(at_100.len(), 2, "tick 100 应有一个 Off 和一个 On");
+    assert!(matches!(
+        at_100[0],
+        midly::TrackEventKind::Midi {
+            message: midly::MidiMessage::NoteOff { .. },
+            ..
+        }
+    ));
+    assert!(matches!(
+        at_100[1],
+        midly::TrackEventKind::Midi {
+            message: midly::MidiMessage::NoteOn { .. },
+            ..
+        }
+    ));
+}
+
+/// `dedup_overlaps` 丢弃同 key 上与上一个音符重叠的音符。
+#[test]
+fn dedup_overlaps_drops_overlapping_same_key_notes() {
+    let mut track = TrackData::new(0, 0);
+    track.name = "Dedup".to_string();
+    let mut model = YinModel {
+        conductor: Arc::new(empty_conductor()),
+        tracks: vec![Arc::new(track)],
+        meta: ProjectMeta {
+            ppq: 480,
+            ..ProjectMeta::default()
+        },
+        ..Default::default()
+    };
+    model.load_track_notes(vec![vec![
+        cut_note(0, 1000, 60),
+        cut_note(600, 700, 60),
+        cut_note(1000, 1200, 60),
+    ]]);
+
+    let opts = MidiExportOptions {
+        dedup_overlaps: true,
+        ..MidiExportOptions::default()
+    };
+    let bytes = write_with_options(&model, &opts).unwrap();
+    let parsed = parse_bytes(&bytes).unwrap();
+    assert_eq!(parsed.note_count, 2, "重叠音符应被丢弃");
 }
