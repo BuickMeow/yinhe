@@ -598,4 +598,52 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get dontSave => 'Не сохранять';
+
+  @override
+  String get anchorShapeTitle => 'Интерполяция якоря';
+
+  @override
+  String get anchorShapeStep => 'Ступень';
+
+  @override
+  String get anchorShapeLinear => 'Линейная';
+
+  @override
+  String get anchorShapeFamily => 'Семейство';
+
+  @override
+  String get anchorShapeDirection => 'Направление';
+
+  @override
+  String get easingSine => 'Синус';
+
+  @override
+  String get easingQuad => 'Квадратичная';
+
+  @override
+  String get easingCubic => 'Кубическая';
+
+  @override
+  String get easingQuart => 'Квартическая';
+
+  @override
+  String get easingQuint => 'Квинтическая';
+
+  @override
+  String get easingExpo => 'Экспоненциальная';
+
+  @override
+  String get easingCirc => 'Круговая';
+
+  @override
+  String get easingBack => 'Отскок';
+
+  @override
+  String get easingIn => 'Вход';
+
+  @override
+  String get easingOut => 'Выход';
+
+  @override
+  String get easingInOut => 'Вход-выход';
 }

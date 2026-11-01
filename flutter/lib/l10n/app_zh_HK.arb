@@ -198,4 +198,21 @@
   "unsavedChanges": "有未儲存的修改",
   "unsavedChangesPrompt": "繼續會捨棄目前的修改。要先儲存嗎？",
   "dontSave": "不儲存"
+,
+  "anchorShapeTitle": "錨點插值",
+  "anchorShapeStep": "離散",
+  "anchorShapeLinear": "線性",
+  "anchorShapeFamily": "種類",
+  "anchorShapeDirection": "方向",
+  "easingSine": "正弦",
+  "easingQuad": "二次",
+  "easingCubic": "三次",
+  "easingQuart": "四次",
+  "easingQuint": "五次",
+  "easingExpo": "指數",
+  "easingCirc": "圓形",
+  "easingBack": "回彈",
+  "easingIn": "緩入",
+  "easingOut": "緩出",
+  "easingInOut": "緩入緩出"
 }

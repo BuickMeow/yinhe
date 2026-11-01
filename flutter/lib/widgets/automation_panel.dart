@@ -623,11 +623,13 @@ class _AutomationPanelState extends State<AutomationPanel>
     if (items.isEmpty || count <= 0) {
       return;
     }
-    final picked = await showModalBottomSheet<int>(
+    final picked = await showDialog<int>(
       context: context,
-      showDragHandle: true,
-      builder: (_) =>
-          _ShapePickerSheet(current: current, count: count, items: items),
+      builder: (_) => _ShapePickerDialog(
+        current: current,
+        count: count,
+        items: items,
+      ),
     );
     if (picked == null || !mounted) {
       return;
@@ -1779,11 +1781,33 @@ class _LinePreviewPainter extends CustomPainter {
       old.start != start || old.end != end;
 }
 
-/// 锚点插值选择器：Step / 线性 / 8 族 × 3 方向缓动。
+/// 家族英文键 → 本地化文案。
+String _familyLabel(AppLocalizations l, String family) => switch (family) {
+  'Sine' => l.easingSine,
+  'Quad' => l.easingQuad,
+  'Cubic' => l.easingCubic,
+  'Quart' => l.easingQuart,
+  'Quint' => l.easingQuint,
+  'Expo' => l.easingExpo,
+  'Circ' => l.easingCirc,
+  'Back' => l.easingBack,
+  _ => family,
+};
+
+/// 方向英文键 → 本地化文案。
+String _directionLabel(AppLocalizations l, String direction) =>
+    switch (direction) {
+      'In' => l.easingIn,
+      'Out' => l.easingOut,
+      'InOut' => l.easingInOut,
+      _ => direction,
+    };
+
+/// 锚点插值选择器：基础形状 + 8 族 × 3 方向，右侧实时预览曲线。
 ///
-/// 标签沿用桌面端的英文族名，避免 24 条文案在每个 locale 里重复维护。
-class _ShapePickerSheet extends StatelessWidget {
-  const _ShapePickerSheet({
+/// 先选种类和方向，再点「确定」应用；不直接在点击时提交，避免误触。
+class _ShapePickerDialog extends StatefulWidget {
+  const _ShapePickerDialog({
     required this.current,
     required this.count,
     required this.items,
@@ -1793,84 +1817,297 @@ class _ShapePickerSheet extends StatelessWidget {
   final int current;
   /// 这次应用会改多少个锚点。
   final int count;
-  /// Rust 给出的预设列表：`{"i": 编号, "f": 族, "d": 方向}`。
+  /// Rust 给出的预设列表：`{"i": 编号, "f": 族, "d": 方向, "x1".."y2": CSS 控制点}`。
   final List<Map<String, dynamic>> items;
 
   @override
+  State<_ShapePickerDialog> createState() => _ShapePickerDialogState();
+}
+
+class _ShapePickerDialogState extends State<_ShapePickerDialog> {
+  /// 0 = Step，1 = 线性；非 null 时不看种类/方向。
+  int? _base;
+  String? _family;
+  String? _direction;
+
+  @override
+  void initState() {
+    super.initState();
+    final current = widget.current;
+    if (current == 0 || current == 1) {
+      _base = current;
+      return;
+    }
+    for (final item in widget.items) {
+      if ((item['i'] as int?) == current) {
+        _family = item['f'] as String?;
+        _direction = item['d'] as String?;
+        return;
+      }
+    }
+    // 混合/自定义曲线：默认第一族 + In。
+    for (final item in widget.items) {
+      if ((item['f'] as String? ?? '').isNotEmpty) {
+        _family = item['f'] as String?;
+        _direction = item['d'] as String?;
+        return;
+      }
+    }
+  }
+
+  int? get _selectedIndex {
+    if (_base != null) {
+      return _base;
+    }
+    for (final item in widget.items) {
+      if (item['f'] == _family && item['d'] == _direction) {
+        return item['i'] as int?;
+      }
+    }
+    return null;
+  }
+
+  Map<String, dynamic>? get _previewItem {
+    final index = _selectedIndex;
+    if (index == null) {
+      return null;
+    }
+    for (final item in widget.items) {
+      if ((item['i'] as int?) == index) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final base = items.where((e) => (e['f'] as String? ?? '').isEmpty);
-    final families = <String, List<Map<String, dynamic>>>{};
-    for (final item in items) {
+    final l = AppLocalizations.of(context);
+    final base = <Map<String, dynamic>>[];
+    final families = <String>[];
+    final directions = <String>[];
+    for (final item in widget.items) {
       final family = item['f'] as String? ?? '';
+      final direction = item['d'] as String? ?? '';
       if (family.isEmpty) {
+        base.add(item);
         continue;
       }
-      families.putIfAbsent(family, () => []).add(item);
+      if (!families.contains(family)) {
+        families.add(family);
+      }
+      if (!directions.contains(direction)) {
+        directions.add(direction);
+      }
     }
 
-    Widget chip(Map<String, dynamic> item, Widget? avatar) {
-      final index = item['i'] as int? ?? -1;
-      return ChoiceChip(
-        avatar: avatar,
-        label: Text(item['d'] as String? ?? ''),
-        selected: current == index,
-        onSelected: (_) => Navigator.of(context).pop(index),
+    Widget keyButton(String label, bool selected, VoidCallback onTap) {
+      return InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: selected
+                ? YinheTheme.accent.withValues(alpha: 0.18)
+                : Colors.transparent,
+            border: Border.all(
+              color: selected ? YinheTheme.accent : YinheTheme.lineFg,
+            ),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: selected ? YinheTheme.accent : YinheTheme.textLabel,
+            ),
+          ),
+        ),
       );
     }
 
-    return SafeArea(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  Icons.show_chart,
-                  size: 18,
-                  color: theme.colorScheme.primary,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'Interpolation · $count',
-                  style: theme.textTheme.titleSmall,
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              children: [
-                for (final item in base)
-                  chip(
-                    item,
-                    Icon(
-                      (item['i'] as int? ?? 0) == 0
-                          ? Icons.stairs
-                          : Icons.trending_flat,
-                      size: 18,
+    final sectionStyle = TextStyle(
+      fontSize: 11,
+      color: YinheTheme.textLabel.withValues(alpha: 0.7),
+    );
+
+    return AlertDialog(
+      title: Text(l.anchorShapeTitle),
+      contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      content: SizedBox(
+        width: 300,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  for (final item in base) ...[
+                    keyButton(
+                      item['i'] == 0
+                          ? l.anchorShapeStep
+                          : l.anchorShapeLinear,
+                      _base == item['i'],
+                      () => setState(() {
+                        _base = item['i'] as int;
+                        _family = null;
+                        _direction = null;
+                      }),
                     ),
-                  ),
-              ],
-            ),
-            const Divider(height: 20),
-            for (final entry in families.entries) ...[
-              Text(entry.key, style: theme.textTheme.labelMedium),
-              const SizedBox(height: 4),
+                    const SizedBox(width: 8),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 14),
+              Text(l.anchorShapeFamily, style: sectionStyle),
+              const SizedBox(height: 6),
               Wrap(
                 spacing: 6,
-                runSpacing: 4,
-                children: [for (final item in entry.value) chip(item, null)],
+                runSpacing: 6,
+                children: [
+                  for (final family in families)
+                    keyButton(
+                      _familyLabel(l, family),
+                      _base == null && _family == family,
+                      () => setState(() {
+                        _base = null;
+                        _family = family;
+                      }),
+                    ),
+                ],
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 14),
+              Text(l.anchorShapeDirection, style: sectionStyle),
+              const SizedBox(height: 6),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Column(
+                    children: [
+                      for (final direction in directions)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: keyButton(
+                            _directionLabel(l, direction),
+                            _base == null && _direction == direction,
+                            () => setState(() {
+                              _base = null;
+                              _direction = direction;
+                            }),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Center(
+                      child: _CurvePreview(item: _previewItem, size: 96),
+                    ),
+                  ),
+                ],
+              ),
             ],
-          ],
+          ),
         ),
       ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l.cancel),
+        ),
+        FilledButton(
+          onPressed: _selectedIndex == null
+              ? null
+              : () => Navigator.of(context).pop(_selectedIndex),
+          child: Text(l.ok),
+        ),
+      ],
     );
   }
+}
+
+/// 小曲线预览：Step 画台阶，线性画对角线，预设按参数曲线采样。
+class _CurvePreview extends StatelessWidget {
+  const _CurvePreview({required this.item, required this.size});
+
+  final Map<String, dynamic>? item;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: YinheTheme.bg.withValues(alpha: 0.5),
+        border: Border.all(color: YinheTheme.lineFg),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: CustomPaint(painter: _CurvePainter(item: item)),
+    );
+  }
+}
+
+class _CurvePainter extends CustomPainter {
+  _CurvePainter({required this.item});
+
+  final Map<String, dynamic>? item;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final index = item?['i'] as int? ?? -1;
+    if (index < 0) {
+      return;
+    }
+    const pad = 8.0;
+    final w = size.width - pad - 8.0;
+    final h = size.height - pad - 8.0;
+    double xOf(double x) => pad + x * w;
+    double yOf(double y) => pad + (1 - y) * h;
+
+    final path = Path();
+    if (index == 0) {
+      // Step：水平到右端再垂直跳变。
+      path.moveTo(xOf(0), yOf(0));
+      path.lineTo(xOf(1), yOf(0));
+      path.lineTo(xOf(1), yOf(1));
+    } else if (index == 1) {
+      path.moveTo(xOf(0), yOf(0));
+      path.lineTo(xOf(1), yOf(1));
+    } else {
+      final x1 = (item?['x1'] as num?)?.toDouble() ?? 0.0;
+      final y1 = (item?['y1'] as num?)?.toDouble() ?? 0.0;
+      final x2 = (item?['x2'] as num?)?.toDouble() ?? 1.0;
+      final y2 = (item?['y2'] as num?)?.toDouble() ?? 1.0;
+      // CSS 控制点在 0..1 空间；x 单调，直接按参数 u 采样即可。
+      const steps = 48;
+      for (var i = 0; i <= steps; i++) {
+        final u = i / steps;
+        final mu = 1 - u;
+        final x = 3 * mu * mu * u * x1 + 3 * mu * u * u * x2 + u * u * u;
+        final y = 3 * mu * mu * u * y1 + 3 * mu * u * u * y2 + u * u * u;
+        if (i == 0) {
+          path.moveTo(xOf(x), yOf(y));
+        } else {
+          path.lineTo(xOf(x), yOf(y));
+        }
+      }
+    }
+
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = YinheTheme.accent
+        ..strokeWidth = 2
+        ..style = PaintingStyle.stroke,
+    );
+    final dot = Paint()..color = YinheTheme.accent;
+    canvas.drawCircle(Offset(xOf(0), yOf(0)), 2.5, dot);
+    canvas.drawCircle(Offset(xOf(1), yOf(1)), 2.5, dot);
+  }
+
+  @override
+  bool shouldRepaint(_CurvePainter old) => old.item != item;
 }

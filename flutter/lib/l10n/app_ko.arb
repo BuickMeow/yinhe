@@ -198,4 +198,21 @@
   "unsavedChanges": "저장하지 않은 변경 사항",
   "unsavedChangesPrompt": "계속하면 현재 변경 사항이 사라집니다. 먼저 저장할까요?",
   "dontSave": "저장 안 함"
+,
+  "anchorShapeTitle": "앵커 보간",
+  "anchorShapeStep": "스텝",
+  "anchorShapeLinear": "선형",
+  "anchorShapeFamily": "종류",
+  "anchorShapeDirection": "방향",
+  "easingSine": "사인",
+  "easingQuad": "2차",
+  "easingCubic": "3차",
+  "easingQuart": "4차",
+  "easingQuint": "5차",
+  "easingExpo": "지수",
+  "easingCirc": "원형",
+  "easingBack": "백",
+  "easingIn": "이즈 인",
+  "easingOut": "이즈 아웃",
+  "easingInOut": "이즈 인아웃"
 }

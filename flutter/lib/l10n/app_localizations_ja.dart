@@ -594,4 +594,52 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get dontSave => '保存しない';
+
+  @override
+  String get anchorShapeTitle => 'アンカー補間';
+
+  @override
+  String get anchorShapeStep => 'ステップ';
+
+  @override
+  String get anchorShapeLinear => 'リニア';
+
+  @override
+  String get anchorShapeFamily => '種類';
+
+  @override
+  String get anchorShapeDirection => '方向';
+
+  @override
+  String get easingSine => 'サイン';
+
+  @override
+  String get easingQuad => '二次';
+
+  @override
+  String get easingCubic => '三次';
+
+  @override
+  String get easingQuart => '四次';
+
+  @override
+  String get easingQuint => '五次';
+
+  @override
+  String get easingExpo => '指数';
+
+  @override
+  String get easingCirc => '円形';
+
+  @override
+  String get easingBack => 'バック';
+
+  @override
+  String get easingIn => 'イーズイン';
+
+  @override
+  String get easingOut => 'イーズアウト';
+
+  @override
+  String get easingInOut => 'イーズインアウト';
 }

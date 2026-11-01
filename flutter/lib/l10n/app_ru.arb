@@ -198,4 +198,21 @@
   "unsavedChanges": "Несохранённые изменения",
   "unsavedChangesPrompt": "Продолжение удалит текущие изменения. Сначала сохранить?",
   "dontSave": "Не сохранять"
+,
+  "anchorShapeTitle": "Интерполяция якоря",
+  "anchorShapeStep": "Ступень",
+  "anchorShapeLinear": "Линейная",
+  "anchorShapeFamily": "Семейство",
+  "anchorShapeDirection": "Направление",
+  "easingSine": "Синус",
+  "easingQuad": "Квадратичная",
+  "easingCubic": "Кубическая",
+  "easingQuart": "Квартическая",
+  "easingQuint": "Квинтическая",
+  "easingExpo": "Экспоненциальная",
+  "easingCirc": "Круговая",
+  "easingBack": "Отскок",
+  "easingIn": "Вход",
+  "easingOut": "Выход",
+  "easingInOut": "Вход-выход"
 }

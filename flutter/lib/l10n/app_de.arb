@@ -198,4 +198,21 @@
   "unsavedChanges": "Ungespeicherte Änderungen",
   "unsavedChangesPrompt": "Fortfahren verwirft die aktuellen Änderungen. Zuerst speichern?",
   "dontSave": "Nicht speichern"
+,
+  "anchorShapeTitle": "Anker-Interpolation",
+  "anchorShapeStep": "Schritt",
+  "anchorShapeLinear": "Linear",
+  "anchorShapeFamily": "Familie",
+  "anchorShapeDirection": "Richtung",
+  "easingSine": "Sinus",
+  "easingQuad": "Quadratisch",
+  "easingCubic": "Kubisch",
+  "easingQuart": "Quartisch",
+  "easingQuint": "Quintisch",
+  "easingExpo": "Exponentiell",
+  "easingCirc": "Kreis",
+  "easingBack": "Rückfedernd",
+  "easingIn": "Ease-In",
+  "easingOut": "Ease-Out",
+  "easingInOut": "Ease-In-Out"
 }

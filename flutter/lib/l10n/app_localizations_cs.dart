@@ -598,4 +598,52 @@ class AppLocalizationsCs extends AppLocalizations {
 
   @override
   String get dontSave => 'Neukládat';
+
+  @override
+  String get anchorShapeTitle => 'Interpolace kotvy';
+
+  @override
+  String get anchorShapeStep => 'Krok';
+
+  @override
+  String get anchorShapeLinear => 'Lineární';
+
+  @override
+  String get anchorShapeFamily => 'Rodina';
+
+  @override
+  String get anchorShapeDirection => 'Směr';
+
+  @override
+  String get easingSine => 'Sinus';
+
+  @override
+  String get easingQuad => 'Kvadratická';
+
+  @override
+  String get easingCubic => 'Kubická';
+
+  @override
+  String get easingQuart => 'Kvartická';
+
+  @override
+  String get easingQuint => 'Kvintická';
+
+  @override
+  String get easingExpo => 'Exponenciální';
+
+  @override
+  String get easingCirc => 'Kruhová';
+
+  @override
+  String get easingBack => 'Zpětná';
+
+  @override
+  String get easingIn => 'Vstup';
+
+  @override
+  String get easingOut => 'Výstup';
+
+  @override
+  String get easingInOut => 'Vstup-výstup';
 }

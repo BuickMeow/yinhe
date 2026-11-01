@@ -198,4 +198,21 @@
   "unsavedChanges": "Neuložené změny",
   "unsavedChangesPrompt": "Pokračování zahodí aktuální změny. Nejprve uložit?",
   "dontSave": "Neukládat"
+,
+  "anchorShapeTitle": "Interpolace kotvy",
+  "anchorShapeStep": "Krok",
+  "anchorShapeLinear": "Lineární",
+  "anchorShapeFamily": "Rodina",
+  "anchorShapeDirection": "Směr",
+  "easingSine": "Sinus",
+  "easingQuad": "Kvadratická",
+  "easingCubic": "Kubická",
+  "easingQuart": "Kvartická",
+  "easingQuint": "Kvintická",
+  "easingExpo": "Exponenciální",
+  "easingCirc": "Kruhová",
+  "easingBack": "Zpětná",
+  "easingIn": "Vstup",
+  "easingOut": "Výstup",
+  "easingInOut": "Vstup-výstup"
 }

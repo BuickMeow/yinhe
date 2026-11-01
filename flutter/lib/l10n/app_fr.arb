@@ -198,4 +198,21 @@
   "unsavedChanges": "Modifications non enregistrées",
   "unsavedChangesPrompt": "Continuer effacera les modifications actuelles. Enregistrer d’abord ?",
   "dontSave": "Ne pas enregistrer"
+,
+  "anchorShapeTitle": "Interpolation d'ancre",
+  "anchorShapeStep": "Marche",
+  "anchorShapeLinear": "Linéaire",
+  "anchorShapeFamily": "Famille",
+  "anchorShapeDirection": "Direction",
+  "easingSine": "Sinus",
+  "easingQuad": "Quadratique",
+  "easingCubic": "Cubique",
+  "easingQuart": "Quartique",
+  "easingQuint": "Quintique",
+  "easingExpo": "Exponentielle",
+  "easingCirc": "Circulaire",
+  "easingBack": "Rebond",
+  "easingIn": "Entrée",
+  "easingOut": "Sortie",
+  "easingInOut": "Entrée-Sortie"
 }

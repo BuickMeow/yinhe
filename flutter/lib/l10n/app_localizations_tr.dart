@@ -598,4 +598,52 @@ class AppLocalizationsTr extends AppLocalizations {
 
   @override
   String get dontSave => 'Kaydetme';
+
+  @override
+  String get anchorShapeTitle => 'Bağlantı noktası interpolasyonu';
+
+  @override
+  String get anchorShapeStep => 'Adım';
+
+  @override
+  String get anchorShapeLinear => 'Doğrusal';
+
+  @override
+  String get anchorShapeFamily => 'Aile';
+
+  @override
+  String get anchorShapeDirection => 'Yön';
+
+  @override
+  String get easingSine => 'Sinüs';
+
+  @override
+  String get easingQuad => 'Kuadratik';
+
+  @override
+  String get easingCubic => 'Kübik';
+
+  @override
+  String get easingQuart => 'Kuartik';
+
+  @override
+  String get easingQuint => 'Kuintik';
+
+  @override
+  String get easingExpo => 'Üstel';
+
+  @override
+  String get easingCirc => 'Dairesel';
+
+  @override
+  String get easingBack => 'Geri';
+
+  @override
+  String get easingIn => 'Giriş';
+
+  @override
+  String get easingOut => 'Çıkış';
+
+  @override
+  String get easingInOut => 'Giriş-Çıkış';
 }

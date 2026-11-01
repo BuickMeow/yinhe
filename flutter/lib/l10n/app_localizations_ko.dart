@@ -594,4 +594,52 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get dontSave => '저장 안 함';
+
+  @override
+  String get anchorShapeTitle => '앵커 보간';
+
+  @override
+  String get anchorShapeStep => '스텝';
+
+  @override
+  String get anchorShapeLinear => '선형';
+
+  @override
+  String get anchorShapeFamily => '종류';
+
+  @override
+  String get anchorShapeDirection => '방향';
+
+  @override
+  String get easingSine => '사인';
+
+  @override
+  String get easingQuad => '2차';
+
+  @override
+  String get easingCubic => '3차';
+
+  @override
+  String get easingQuart => '4차';
+
+  @override
+  String get easingQuint => '5차';
+
+  @override
+  String get easingExpo => '지수';
+
+  @override
+  String get easingCirc => '원형';
+
+  @override
+  String get easingBack => '백';
+
+  @override
+  String get easingIn => '이즈 인';
+
+  @override
+  String get easingOut => '이즈 아웃';
+
+  @override
+  String get easingInOut => '이즈 인아웃';
 }

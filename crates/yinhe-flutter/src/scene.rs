@@ -2853,11 +2853,20 @@ pub fn automation_shape_json() -> String {
     let mut items =
         String::from("[{\"i\":0,\"f\":\"\",\"d\":\"Step\"},{\"i\":1,\"f\":\"\",\"d\":\"Linear\"}");
     for (idx, preset) in EASING_PRESETS.iter().enumerate() {
+        let yinhe_types::SegmentShape::Curve { x1, y1, x2, y2 } = preset.curve else {
+            continue;
+        };
+        let scale = yinhe_types::SegmentShape::SCALE;
+        // 输出 CSS 绝对控制点（0..1 归一化空间），Dart 直接按参数曲线采样画预览。
         items.push_str(&format!(
-            ",{{\"i\":{},\"f\":\"{}\",\"d\":\"{}\"}}",
+            ",{{\"i\":{},\"f\":\"{}\",\"d\":\"{}\",\"x1\":{:.4},\"y1\":{:.4},\"x2\":{:.4},\"y2\":{:.4}}}",
             idx + 2,
             preset.family.label(),
-            preset.direction.label()
+            preset.direction.label(),
+            x1 * scale,
+            y1 * scale,
+            1.0 + x2 * scale,
+            1.0 + y2 * scale,
         ));
     }
     items.push(']');

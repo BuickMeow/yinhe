@@ -1267,6 +1267,102 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Don\'t save'**
   String get dontSave;
+
+  /// No description provided for @anchorShapeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Anchor interpolation'**
+  String get anchorShapeTitle;
+
+  /// No description provided for @anchorShapeStep.
+  ///
+  /// In en, this message translates to:
+  /// **'Step'**
+  String get anchorShapeStep;
+
+  /// No description provided for @anchorShapeLinear.
+  ///
+  /// In en, this message translates to:
+  /// **'Linear'**
+  String get anchorShapeLinear;
+
+  /// No description provided for @anchorShapeFamily.
+  ///
+  /// In en, this message translates to:
+  /// **'Family'**
+  String get anchorShapeFamily;
+
+  /// No description provided for @anchorShapeDirection.
+  ///
+  /// In en, this message translates to:
+  /// **'Direction'**
+  String get anchorShapeDirection;
+
+  /// No description provided for @easingSine.
+  ///
+  /// In en, this message translates to:
+  /// **'Sine'**
+  String get easingSine;
+
+  /// No description provided for @easingQuad.
+  ///
+  /// In en, this message translates to:
+  /// **'Quad'**
+  String get easingQuad;
+
+  /// No description provided for @easingCubic.
+  ///
+  /// In en, this message translates to:
+  /// **'Cubic'**
+  String get easingCubic;
+
+  /// No description provided for @easingQuart.
+  ///
+  /// In en, this message translates to:
+  /// **'Quart'**
+  String get easingQuart;
+
+  /// No description provided for @easingQuint.
+  ///
+  /// In en, this message translates to:
+  /// **'Quint'**
+  String get easingQuint;
+
+  /// No description provided for @easingExpo.
+  ///
+  /// In en, this message translates to:
+  /// **'Expo'**
+  String get easingExpo;
+
+  /// No description provided for @easingCirc.
+  ///
+  /// In en, this message translates to:
+  /// **'Circ'**
+  String get easingCirc;
+
+  /// No description provided for @easingBack.
+  ///
+  /// In en, this message translates to:
+  /// **'Back'**
+  String get easingBack;
+
+  /// No description provided for @easingIn.
+  ///
+  /// In en, this message translates to:
+  /// **'In'**
+  String get easingIn;
+
+  /// No description provided for @easingOut.
+  ///
+  /// In en, this message translates to:
+  /// **'Out'**
+  String get easingOut;
+
+  /// No description provided for @easingInOut.
+  ///
+  /// In en, this message translates to:
+  /// **'In-Out'**
+  String get easingInOut;
 }
 
 class _AppLocalizationsDelegate

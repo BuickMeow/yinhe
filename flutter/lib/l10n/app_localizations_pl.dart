@@ -598,4 +598,52 @@ class AppLocalizationsPl extends AppLocalizations {
 
   @override
   String get dontSave => 'Nie zapisuj';
+
+  @override
+  String get anchorShapeTitle => 'Interpolacja kotwicy';
+
+  @override
+  String get anchorShapeStep => 'Skok';
+
+  @override
+  String get anchorShapeLinear => 'Liniowa';
+
+  @override
+  String get anchorShapeFamily => 'Rodzina';
+
+  @override
+  String get anchorShapeDirection => 'Kierunek';
+
+  @override
+  String get easingSine => 'Sinus';
+
+  @override
+  String get easingQuad => 'Kwadratowa';
+
+  @override
+  String get easingCubic => 'Sześcienna';
+
+  @override
+  String get easingQuart => 'Czwartego stopnia';
+
+  @override
+  String get easingQuint => 'Piątego stopnia';
+
+  @override
+  String get easingExpo => 'Wykładnicza';
+
+  @override
+  String get easingCirc => 'Okrągła';
+
+  @override
+  String get easingBack => 'Odbicie';
+
+  @override
+  String get easingIn => 'Wejście';
+
+  @override
+  String get easingOut => 'Wyjście';
+
+  @override
+  String get easingInOut => 'Wejście-Wyjście';
 }

@@ -198,4 +198,21 @@
   "unsavedChanges": "Niezapisane zmiany",
   "unsavedChangesPrompt": "Kontynuowanie odrzuci bieżące zmiany. Najpierw zapisać?",
   "dontSave": "Nie zapisuj"
+,
+  "anchorShapeTitle": "Interpolacja kotwicy",
+  "anchorShapeStep": "Skok",
+  "anchorShapeLinear": "Liniowa",
+  "anchorShapeFamily": "Rodzina",
+  "anchorShapeDirection": "Kierunek",
+  "easingSine": "Sinus",
+  "easingQuad": "Kwadratowa",
+  "easingCubic": "Sześcienna",
+  "easingQuart": "Czwartego stopnia",
+  "easingQuint": "Piątego stopnia",
+  "easingExpo": "Wykładnicza",
+  "easingCirc": "Okrągła",
+  "easingBack": "Odbicie",
+  "easingIn": "Wejście",
+  "easingOut": "Wyjście",
+  "easingInOut": "Wejście-Wyjście"
 }

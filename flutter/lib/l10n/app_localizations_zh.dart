@@ -592,6 +592,54 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get dontSave => '不保存';
+
+  @override
+  String get anchorShapeTitle => '锚点插值';
+
+  @override
+  String get anchorShapeStep => '离散';
+
+  @override
+  String get anchorShapeLinear => '线性';
+
+  @override
+  String get anchorShapeFamily => '种类';
+
+  @override
+  String get anchorShapeDirection => '方向';
+
+  @override
+  String get easingSine => '正弦';
+
+  @override
+  String get easingQuad => '二次';
+
+  @override
+  String get easingCubic => '三次';
+
+  @override
+  String get easingQuart => '四次';
+
+  @override
+  String get easingQuint => '五次';
+
+  @override
+  String get easingExpo => '指数';
+
+  @override
+  String get easingCirc => '圆形';
+
+  @override
+  String get easingBack => '回弹';
+
+  @override
+  String get easingIn => '缓入';
+
+  @override
+  String get easingOut => '缓出';
+
+  @override
+  String get easingInOut => '缓入缓出';
 }
 
 /// The translations for Chinese, as used in Hong Kong (`zh_HK`).
@@ -1181,6 +1229,54 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
 
   @override
   String get dontSave => '不儲存';
+
+  @override
+  String get anchorShapeTitle => '錨點插值';
+
+  @override
+  String get anchorShapeStep => '離散';
+
+  @override
+  String get anchorShapeLinear => '線性';
+
+  @override
+  String get anchorShapeFamily => '種類';
+
+  @override
+  String get anchorShapeDirection => '方向';
+
+  @override
+  String get easingSine => '正弦';
+
+  @override
+  String get easingQuad => '二次';
+
+  @override
+  String get easingCubic => '三次';
+
+  @override
+  String get easingQuart => '四次';
+
+  @override
+  String get easingQuint => '五次';
+
+  @override
+  String get easingExpo => '指數';
+
+  @override
+  String get easingCirc => '圓形';
+
+  @override
+  String get easingBack => '回彈';
+
+  @override
+  String get easingIn => '緩入';
+
+  @override
+  String get easingOut => '緩出';
+
+  @override
+  String get easingInOut => '緩入緩出';
 }
 
 /// The translations for Chinese, as used in Taiwan (`zh_TW`).
@@ -1770,4 +1866,52 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get dontSave => '不儲存';
+
+  @override
+  String get anchorShapeTitle => '錨點插值';
+
+  @override
+  String get anchorShapeStep => '離散';
+
+  @override
+  String get anchorShapeLinear => '線性';
+
+  @override
+  String get anchorShapeFamily => '種類';
+
+  @override
+  String get anchorShapeDirection => '方向';
+
+  @override
+  String get easingSine => '正弦';
+
+  @override
+  String get easingQuad => '二次';
+
+  @override
+  String get easingCubic => '三次';
+
+  @override
+  String get easingQuart => '四次';
+
+  @override
+  String get easingQuint => '五次';
+
+  @override
+  String get easingExpo => '指數';
+
+  @override
+  String get easingCirc => '圓形';
+
+  @override
+  String get easingBack => '回彈';
+
+  @override
+  String get easingIn => '緩入';
+
+  @override
+  String get easingOut => '緩出';
+
+  @override
+  String get easingInOut => '緩入緩出';
 }

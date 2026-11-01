@@ -198,4 +198,21 @@
   "unsavedChanges": "未保存の変更があります",
   "unsavedChangesPrompt": "続行すると現在の変更は破棄されます。先に保存しますか？",
   "dontSave": "保存しない"
+,
+  "anchorShapeTitle": "アンカー補間",
+  "anchorShapeStep": "ステップ",
+  "anchorShapeLinear": "リニア",
+  "anchorShapeFamily": "種類",
+  "anchorShapeDirection": "方向",
+  "easingSine": "サイン",
+  "easingQuad": "二次",
+  "easingCubic": "三次",
+  "easingQuart": "四次",
+  "easingQuint": "五次",
+  "easingExpo": "指数",
+  "easingCirc": "円形",
+  "easingBack": "バック",
+  "easingIn": "イーズイン",
+  "easingOut": "イーズアウト",
+  "easingInOut": "イーズインアウト"
 }

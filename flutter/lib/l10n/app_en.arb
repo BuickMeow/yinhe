@@ -250,4 +250,21 @@
   "unsavedChanges": "Unsaved changes",
   "unsavedChangesPrompt": "Continuing will discard the current changes. Save first?",
   "dontSave": "Don't save"
+,
+  "anchorShapeTitle": "Anchor interpolation",
+  "anchorShapeStep": "Step",
+  "anchorShapeLinear": "Linear",
+  "anchorShapeFamily": "Family",
+  "anchorShapeDirection": "Direction",
+  "easingSine": "Sine",
+  "easingQuad": "Quad",
+  "easingCubic": "Cubic",
+  "easingQuart": "Quart",
+  "easingQuint": "Quint",
+  "easingExpo": "Expo",
+  "easingCirc": "Circ",
+  "easingBack": "Back",
+  "easingIn": "In",
+  "easingOut": "Out",
+  "easingInOut": "In-Out"
 }

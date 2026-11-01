@@ -198,4 +198,21 @@
   "unsavedChanges": "有未保存的修改",
   "unsavedChangesPrompt": "继续会丢弃当前修改。要先保存吗？",
   "dontSave": "不保存"
+,
+  "anchorShapeTitle": "锚点插值",
+  "anchorShapeStep": "离散",
+  "anchorShapeLinear": "线性",
+  "anchorShapeFamily": "种类",
+  "anchorShapeDirection": "方向",
+  "easingSine": "正弦",
+  "easingQuad": "二次",
+  "easingCubic": "三次",
+  "easingQuart": "四次",
+  "easingQuint": "五次",
+  "easingExpo": "指数",
+  "easingCirc": "圆形",
+  "easingBack": "回弹",
+  "easingIn": "缓入",
+  "easingOut": "缓出",
+  "easingInOut": "缓入缓出"
 }

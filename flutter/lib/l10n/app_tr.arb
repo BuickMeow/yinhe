@@ -198,4 +198,21 @@
   "unsavedChanges": "Kaydedilmemiş değişiklikler",
   "unsavedChangesPrompt": "Devam etmek mevcut değişiklikleri siler. Önce kaydedilsin mi?",
   "dontSave": "Kaydetme"
+,
+  "anchorShapeTitle": "Bağlantı noktası interpolasyonu",
+  "anchorShapeStep": "Adım",
+  "anchorShapeLinear": "Doğrusal",
+  "anchorShapeFamily": "Aile",
+  "anchorShapeDirection": "Yön",
+  "easingSine": "Sinüs",
+  "easingQuad": "Kuadratik",
+  "easingCubic": "Kübik",
+  "easingQuart": "Kuartik",
+  "easingQuint": "Kuintik",
+  "easingExpo": "Üstel",
+  "easingCirc": "Dairesel",
+  "easingBack": "Geri",
+  "easingIn": "Giriş",
+  "easingOut": "Çıkış",
+  "easingInOut": "Giriş-Çıkış"
 }
