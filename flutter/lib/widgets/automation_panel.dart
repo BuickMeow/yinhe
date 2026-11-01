@@ -1901,42 +1901,29 @@ class _ShapePickerDialogState extends State<_ShapePickerDialog> {
       }
     }
 
-    Widget keyButton(String label, bool selected, VoidCallback onTap) {
-      return InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(6),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: selected
-                ? YinheTheme.accent.withValues(alpha: 0.18)
-                : Colors.transparent,
-            border: Border.all(
-              color: selected ? YinheTheme.accent : YinheTheme.lineFg,
-            ),
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              color: selected ? YinheTheme.accent : YinheTheme.textLabel,
-            ),
-          ),
-        ),
-      );
-    }
-
     final sectionStyle = TextStyle(
       fontSize: 11,
       color: YinheTheme.textLabel.withValues(alpha: 0.7),
     );
 
+    Widget chip(String label, bool selected, VoidCallback onTap) {
+      return ChoiceChip(
+        label: Text(label),
+        selected: selected,
+        onSelected: (_) => onTap(),
+        visualDensity: VisualDensity.compact,
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        labelPadding: EdgeInsets.zero,
+      );
+    }
+
     return AlertDialog(
-      title: Text(l.anchorShapeTitle),
-      contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      // 去掉大标题；加宽到接近屏宽，让 8 个种类排成一行。
+      insetPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 24),
+      contentPadding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
       content: SizedBox(
-        width: 300,
+        width: 330,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1945,7 +1932,7 @@ class _ShapePickerDialogState extends State<_ShapePickerDialog> {
               Row(
                 children: [
                   for (final item in base) ...[
-                    keyButton(
+                    chip(
                       item['i'] == 0
                           ? l.anchorShapeStep
                           : l.anchorShapeLinear,
@@ -1956,29 +1943,37 @@ class _ShapePickerDialogState extends State<_ShapePickerDialog> {
                         _direction = null;
                       }),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 6),
                   ],
                 ],
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
               Text(l.anchorShapeFamily, style: sectionStyle),
               const SizedBox(height: 6),
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  for (final family in families)
-                    keyButton(
-                      _familyLabel(l, family),
-                      _base == null && _family == family,
-                      () => setState(() {
-                        _base = null;
-                        _family = family;
-                      }),
-                    ),
-                ],
+              // 8 个种类强制一行；窄屏或长语种时横向滚动。
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    for (final family in families) ...[
+                      chip(
+                        _familyLabel(l, family),
+                        _base == null && _family == family,
+                        () => setState(() {
+                          _base = null;
+                          _family = family;
+                          // 从 Step/线性切过来时还没方向，自动补一个，
+                          // 保证右侧预览始终有图像。
+                          _direction ??=
+                              directions.isEmpty ? null : directions.first;
+                        }),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                  ],
+                ),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
               Text(l.anchorShapeDirection, style: sectionStyle),
               const SizedBox(height: 6),
               Row(
@@ -1989,18 +1984,20 @@ class _ShapePickerDialogState extends State<_ShapePickerDialog> {
                       for (final direction in directions)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 6),
-                          child: keyButton(
+                          child: chip(
                             _directionLabel(l, direction),
                             _base == null && _direction == direction,
                             () => setState(() {
                               _base = null;
                               _direction = direction;
+                              _family ??=
+                                  families.isEmpty ? null : families.first;
                             }),
                           ),
                         ),
                     ],
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Center(
                       child: _CurvePreview(item: _previewItem, size: 96),
@@ -2062,40 +2059,47 @@ class _CurvePainter extends CustomPainter {
       return;
     }
     const pad = 8.0;
-    final w = size.width - pad - 8.0;
-    final h = size.height - pad - 8.0;
-    double xOf(double x) => pad + x * w;
-    double yOf(double y) => pad + (1 - y) * h;
+    final w = size.width - pad * 2;
+    final h = size.height - pad * 2;
 
-    final path = Path();
+    final points = <Offset>[];
     if (index == 0) {
       // Step：水平到右端再垂直跳变。
-      path.moveTo(xOf(0), yOf(0));
-      path.lineTo(xOf(1), yOf(0));
-      path.lineTo(xOf(1), yOf(1));
+      points.addAll(const [Offset(0, 0), Offset(1, 0), Offset(1, 1)]);
     } else if (index == 1) {
-      path.moveTo(xOf(0), yOf(0));
-      path.lineTo(xOf(1), yOf(1));
+      points.addAll(const [Offset(0, 0), Offset(1, 1)]);
     } else {
       final x1 = (item?['x1'] as num?)?.toDouble() ?? 0.0;
       final y1 = (item?['y1'] as num?)?.toDouble() ?? 0.0;
       final x2 = (item?['x2'] as num?)?.toDouble() ?? 1.0;
       final y2 = (item?['y2'] as num?)?.toDouble() ?? 1.0;
       // CSS 控制点在 0..1 空间；x 单调，直接按参数 u 采样即可。
-      const steps = 48;
+      const steps = 64;
       for (var i = 0; i <= steps; i++) {
         final u = i / steps;
         final mu = 1 - u;
         final x = 3 * mu * mu * u * x1 + 3 * mu * u * u * x2 + u * u * u;
         final y = 3 * mu * mu * u * y1 + 3 * mu * u * u * y2 + u * u * u;
-        if (i == 0) {
-          path.moveTo(xOf(x), yOf(y));
-        } else {
-          path.lineTo(xOf(x), yOf(y));
-        }
+        points.add(Offset(x, y));
       }
     }
 
+    // 回弹（Back）的 y 会冲出 0..1；按实际范围映射，保证整条曲线在框内。
+    var minY = 0.0;
+    var maxY = 1.0;
+    for (final point in points) {
+      minY = math.min(minY, point.dy);
+      maxY = math.max(maxY, point.dy);
+    }
+    final span = (maxY - minY).clamp(1e-6, double.infinity);
+    double xOf(double x) => pad + x * w;
+    double yOf(double y) => pad + (1 - (y - minY) / span) * h;
+
+    final path = Path()
+      ..moveTo(xOf(points.first.dx), yOf(points.first.dy));
+    for (final point in points.skip(1)) {
+      path.lineTo(xOf(point.dx), yOf(point.dy));
+    }
     canvas.drawPath(
       path,
       Paint()
