@@ -1217,3 +1217,8 @@ hint.float_panel_dock: "收回停靠"
 # ── Arrange float ──
 float.arrange: "工程走带"
 float.yielded: "该视图已浮动为独立窗口"
+automation.shape_selected: "已选中 %{n} 个锚点"
+automation.shape_all: "未选中锚点，将修改整条 lane 的 %{n} 个锚点"
+automation.step: "离散（Step）"
+automation.linear: "线性"
+hint.pr.anchor_shape: "锚点插值形状"

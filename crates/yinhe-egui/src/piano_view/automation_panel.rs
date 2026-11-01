@@ -292,14 +292,50 @@ pub fn show_panels(
             panel_rect.min,
             egui::pos2(panel_rect.min.x + lay.combo_width, panel_rect.max.y),
         );
-        widgets::show_target_combo(
+        // combo 列第二个按钮：锚点插值形状（Step / 线性 / 缓动预设）。
+        // 有选中锚点时只改选中，否则改整条 lane。
+        let lane = if panel.show_velocity {
+            None
+        } else if panel.selected_target == yinhe_types::AutomationTarget::Tempo {
+            Some(data.tempo_lane)
+        } else {
+            data.automation_lanes
+                .iter()
+                .find(|l| l.target == panel.selected_target)
+        };
+        if let Some(shape_edits) = widgets::show_target_combo(
             ui,
             panel,
             combo_rect,
             panels_area_rect,
             cfg.editing_is_conductor,
             data.write_channel,
-        );
+            lane,
+        ) {
+            let is_tempo = panel.selected_target == yinhe_types::AutomationTarget::Tempo;
+            let track_idx = if is_tempo {
+                0
+            } else {
+                edit_ctx.and_then(|c| c.active_track).unwrap_or(0)
+            };
+            let lane_idx = if is_tempo {
+                0
+            } else {
+                data.automation_lanes
+                    .iter()
+                    .position(|l| l.target == panel.selected_target)
+                    .unwrap_or(panel.lane_index)
+            };
+            for (tick, shape) in shape_edits {
+                edits.push(AutomationEdit::SetShape {
+                    track_idx,
+                    lane_idx,
+                    target: panel.selected_target.clone(),
+                    tick,
+                    shape,
+                });
+            }
+        }
 
         render::draw_value_labels(ui, panel, panel_rect, lay.combo_width, max_val_f);
 

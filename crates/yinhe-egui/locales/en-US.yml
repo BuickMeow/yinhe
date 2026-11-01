@@ -1217,3 +1217,8 @@ hint.float_panel_dock: "Dock back"
 # ── Arrange float ──
 float.arrange: "Arrangement"
 float.yielded: "This view is floating in a separate window"
+automation.shape_selected: "%{n} anchor(s) selected"
+automation.shape_all: "No selection: applies to all %{n} anchors in this lane"
+automation.step: "Step"
+automation.linear: "Linear"
+hint.pr.anchor_shape: "Anchor interpolation"
