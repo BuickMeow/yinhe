@@ -206,6 +206,18 @@ mixin _ShellCore on _ShellBase {
   /// 避免小文件一闪而过。返回的 state：0=无 1=加载中 2=完成 3=失败。
   @override
   Future<void> _showLoadProgress() async {
+    // 复制进度框可能还在关闭动画里：先等它彻底关掉，再开加载框。
+    // 超时只是兜底（平台异常时进程已没有意义），避免永久等待。
+    final copyClosed = _copyClosed;
+    if (copyClosed != null) {
+      await copyClosed.future.timeout(
+        const Duration(minutes: 5),
+        onTimeout: () {},
+      );
+    }
+    if (!mounted) {
+      return;
+    }
     // 先占住“UI 未就绪”，避免加载恰好在 120ms 延迟内完成时，
     // generation 刷新已经跑过、标志却没置位，导致对话框永不关闭。
     _loadUiSettled = false;
@@ -274,6 +286,23 @@ mixin _ShellCore on _ShellBase {
     if (!mounted) {
       return;
     }
+    // 大文件复制进度（Android/iOS/OHOS 统一协议）。
+    if (call.method == 'onCopyStart') {
+      final args = (call.arguments as Map?) ?? const {};
+      _beginCopyProgress(
+        kind: args['kind'] as String? ?? 'open',
+        total: (args['total'] as num?)?.toInt() ?? -1,
+      );
+      return;
+    }
+    if (call.method == 'onCopyProgress') {
+      final args = (call.arguments as Map?) ?? const {};
+      _copyDone = (args['done'] as num?)?.toInt() ?? 0;
+      _copyTotal = (args['total'] as num?)?.toInt() ?? _copyTotal;
+      return;
+    }
+    // 以下都是复制/保存的终止事件：先收起复制进度框。
+    _endCopyProgress();
     if (call.method == 'onFileRejected' ||
         call.method == 'onSoundfontRejected') {
       final name = call.arguments as String? ?? '';
@@ -330,6 +359,106 @@ mixin _ShellCore on _ShellBase {
         _finishSaveWait(true);
       case 'onExportSaved':
         showSnack(context, '${l.exportDone}：$path');
+    }
+  }
+
+  // ── 大文件复制进度（三端统一事件）──
+  int _copyState = 0; // 0 = 无，1 = 进行中，2 = 已结束
+  int _copyDone = 0;
+  int _copyTotal = -1;
+  int _copyToken = 0;
+
+  /// 复制进度框真正关闭后完成；加载进度框要等它，避免两个路由叠在一起。
+  Completer<void>? _copyClosed;
+
+  void _beginCopyProgress({required String kind, required int total}) {
+    _copyState = 1;
+    _copyDone = 0;
+    _copyTotal = total;
+    final token = ++_copyToken;
+    final closed = Completer<void>();
+    _copyClosed = closed;
+    final title = switch (kind) {
+      'soundfont' => l.importingSoundfont,
+      'saveProject' => l.savingProject,
+      'saveExport' => l.exporting,
+      _ => l.loadingFile,
+    };
+    // 小文件复制可能 100ms 内就完成：延迟弹框，避免闪一下。
+    unawaited(Future<void>.delayed(const Duration(milliseconds: 150), () async {
+      if (!mounted || token != _copyToken || _copyState != 1) {
+        if (!closed.isCompleted) {
+          closed.complete();
+        }
+        return;
+      }
+      await showTaskProgressDialog(
+        context,
+        poll: _copyProgressJson,
+        determinate: _copyTotal > 0,
+        title: title,
+      );
+      if (!closed.isCompleted) {
+        closed.complete();
+      }
+    }));
+  }
+
+  void _endCopyProgress() {
+    if (_copyState == 0) {
+      return;
+    }
+    _copyState = 2;
+    _copyToken++;
+  }
+
+  String _copyProgressJson() {
+    final ratio = _copyTotal > 0
+        ? (_copyDone / _copyTotal).clamp(0.0, 1.0)
+        : 0.0;
+    return '{"state":${_copyState == 1 ? 1 : 2},"progress":$ratio,"status":""}';
+  }
+
+  /// 显示后台文档任务的进度框；完成/失败后刷新工程元数据。
+  @override
+  Future<bool> _runDocJob({
+    required String title,
+    bool determinate = false,
+    bool cancelable = false,
+  }) async {
+    // 小操作通常 150ms 内完成：先等一下，已经结束就不弹框（撤销/重做不闪）。
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    if (!mounted) {
+      return false;
+    }
+    final state = _docJobState();
+    if (state == 0 || state == 2) {
+      _refreshDocumentMeta();
+      return true;
+    }
+    final done = await showTaskProgressDialog(
+      context,
+      poll: () => rust.takeString(rust.docJobStatusJson()),
+      determinate: determinate,
+      title: title,
+      failureTitle: l.loadFailed,
+      onCancel: cancelable ? () => rust.docJobCancel() : null,
+    );
+    if (!mounted) {
+      return false;
+    }
+    if (done == true) {
+      _refreshDocumentMeta();
+    }
+    return done == true;
+  }
+
+  int _docJobState() {
+    try {
+      final raw = rust.takeString(rust.docJobStatusJson());
+      return (jsonDecode(raw)['state'] as num?)?.toInt() ?? 0;
+    } catch (_) {
+      return 0;
     }
   }
 

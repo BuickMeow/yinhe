@@ -83,6 +83,18 @@ mixin _ShellTransport on _ShellBase {
     } finally {
       calloc.free(lenPtr);
     }
+    // 低倍率数据来自渲染线程的后台摘要；还没追上当前文档时保留上一帧，
+    // 稍后重试，避免闪空或不必要地退回 UI 线程全量扫描。
+    if (rust.velocityReady() == 0) {
+      _velocityRetryTimer?.cancel();
+      _velocityRetryTimer = Timer(const Duration(milliseconds: 80), () {
+        _velocityRetryTimer = null;
+        if (mounted && _viewMode == kViewPianoroll && !_autoCollapsed) {
+          _loadVelocity();
+        }
+      });
+      return;
+    }
     if (!mounted) {
       return;
     }

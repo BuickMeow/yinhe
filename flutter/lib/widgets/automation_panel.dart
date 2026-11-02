@@ -47,6 +47,7 @@ class AutomationPanel extends StatefulWidget {
     required this.lineTool,
     required this.marqueeEnabled,
     required this.onInsertAtTick,
+    this.onDocJob,
   });
 
   final double height;
@@ -92,6 +93,9 @@ class AutomationPanel extends StatefulWidget {
 
   /// 长按"插入"：把插入流程交给壳层（复用 PR/AR 的插入菜单）。
   final void Function(double tick) onInsertAtTick;
+
+  /// 选区批量操作走后台文档任务的入口（返回的 Future 在任务结束时完成）。
+  final Future<void> Function()? onDocJob;
 
   /// 全屏面板的绘制高度（面板没有拖拽手柄）。
   double get canvasHeight => height.clamp(1.0, double.infinity);
@@ -675,12 +679,15 @@ class _AutomationPanelState extends State<AutomationPanel>
           return;
         }
         if (rust.automationBatchEdit(spec.value, spec.tick) == 1) {
+          await widget.onDocJob?.call();
           setState(() {});
           widget.onReload();
         }
         return;
       }
       if (rust.selectionAction(1, id) == 1) {
+        // 锚点批量操作在后台任务里跑；结束后再清选择/重载 lane。
+        await widget.onDocJob?.call();
         if (id == 11) {
           _clearSelection();
         }

@@ -62,11 +62,11 @@ mod kind {
 }
 
 /// 整体拖动音符：`(track, start_tick, end_tick, velocity)`（key 由外层桶给出）。
-type DragNote = (u16, u32, u32, u8);
+pub(crate) type DragNote = (u16, u32, u32, u8);
 /// 整体拖动音符按 key 分桶。
-type DragByKey = Vec<Vec<DragNote>>;
+pub(crate) type DragByKey = Vec<Vec<DragNote>>;
 /// 原位置隐藏键：`(track, start_tick, key)`。
-type HiddenKey = (u16, u32, u8);
+pub(crate) type HiddenKey = (u16, u32, u8);
 
 #[derive(Clone)]
 struct DragState {
@@ -92,9 +92,10 @@ struct DragState {
     end_tick: u32,
     key: u8,
     side: u8,
-    /// 选区整体移动的预计算音符，按 key 分桶：每项 `(track, start, end)`。
-    drag_by_key: DragByKey,
-    /// 选区原位置隐藏集合（拖动开始时算一次，避免每帧重扫）。
+    /// 大选区整体拖动的 ghost/隐藏集：后台物化后按 Arc 共享，
+    /// 同一选区反复拖动不重算；单音符拖动保持 `None`。
+    drag: Option<std::sync::Arc<crate::selection_materializer::DragData>>,
+    /// 原位置隐藏集合（大选区时与 `drag.hidden` 相同；单音符拖动单独设置）。
     drag_hidden: Option<std::sync::Arc<std::collections::HashSet<HiddenKey>>>,
     /// 整体拖动上一次 ghost 的 `(dt, dk, 视图 hash)`；未变化时跳过重建。
     last_ghost: Option<(i64, i32, u64)>,
@@ -134,7 +135,7 @@ impl Default for DragState {
             end_tick: 0,
             key: 0,
             side: 0,
-            drag_by_key: Vec::new(),
+            drag: None,
             drag_hidden: None,
             last_ghost: None,
             preview_last_dk: 0,
@@ -167,7 +168,7 @@ static DRAG: std::sync::Mutex<DragState> = std::sync::Mutex::new(DragState {
     end_tick: 0,
     key: 0,
     side: 0,
-    drag_by_key: Vec::new(),
+    drag: None,
     drag_hidden: None,
     last_ghost: None,
     preview_last_dk: 0,
@@ -871,16 +872,10 @@ pub fn begin_selection_move(x: f32, y: f32) -> i32 {
     if s.document.is_none() || s.active_track == Some(0) {
         return 0;
     }
-    // 按下时 `begin_pr` 的选框分支已经收集过一次 ghost；手势真正开始后
-    // 这里只重置起点并复用，避免同一选区被 O(N) 扫描两遍。
-    let reuse = matches!(d.kind, kind::PENDING | kind::MOVE_BOX)
-        && d.drag_by_key.iter().any(|bucket| !bucket.is_empty());
-    let prev_by_key = if reuse {
-        std::mem::take(&mut d.drag_by_key)
-    } else {
-        Vec::new()
-    };
-    let prev_hidden = if reuse { d.drag_hidden.take() } else { None };
+    // 按下时 `begin_pr`/`begin_arr` 已尝试取过后台物化的 ghost；手势真正
+    // 开始时只重置起点并复用，避免同一选区被 O(N) 扫描两遍。
+    let prev_drag = d.drag.clone();
+    let prev_hidden = d.drag_hidden.clone();
     *d = DragState {
         x0: x,
         y0: y,
@@ -913,13 +908,14 @@ pub fn begin_selection_move(x: f32, y: f32) -> i32 {
         }
     }
     s.clear_preview_anim();
-    if reuse {
-        d.drag_by_key = prev_by_key;
-        d.drag_hidden = prev_hidden;
-    } else {
-        let (by_key, hidden) = collect_selected_notes(&s);
-        d.drag_by_key = by_key;
-        d.drag_hidden = Some(std::sync::Arc::new(hidden));
+    d.drag = prev_drag.or_else(|| crate::selection_materializer::take_drag(&s));
+    d.drag_hidden = d
+        .drag
+        .as_ref()
+        .map(|drag| std::sync::Arc::clone(&drag.hidden))
+        .or(prev_hidden);
+    if d.drag.is_none() {
+        crate::selection_materializer::schedule_drag(&s);
     }
     d.kind = kind::MOVE_BOX;
     refresh_preview(&mut d, &mut s);
@@ -1012,9 +1008,14 @@ pub fn begin_selection_gate(x: f32, y: f32) -> i32 {
         ViewMode::Arrangement => ArGeom::new(&s.arr_view).y_to_row(y),
     };
     d.box_ticks = Some((t0, t1, k0, k1));
-    let (by_key, hidden) = collect_selected_notes(&s);
-    d.drag_by_key = by_key;
-    d.drag_hidden = Some(std::sync::Arc::new(hidden));
+    d.drag = crate::selection_materializer::take_drag(&s);
+    d.drag_hidden = d
+        .drag
+        .as_ref()
+        .map(|drag| std::sync::Arc::clone(&drag.hidden));
+    if d.drag.is_none() {
+        crate::selection_materializer::schedule_drag(&s);
+    }
     d.kind = kind::SEL_GATE;
     s.clear_preview_anim();
     s.set_sel_target([x0, y0, x1, y1]);
@@ -1573,6 +1574,9 @@ fn preview_group(s: &RenderScene, d: &DragState, dt: i64, dk: i32) {
     let Some(doc) = s.document.as_ref() else {
         return;
     };
+    let Some(drag) = d.drag.as_ref() else {
+        return;
+    };
     let src_lo = (i32::from(key_lo) - dk).clamp(0, 127) as usize;
     let src_hi = (i32::from(key_hi) - dk).clamp(0, 127) as usize;
     let mut notes = Vec::new();
@@ -1581,7 +1585,7 @@ fn preview_group(s: &RenderScene, d: &DragState, dt: i64, dk: i32) {
         if new_key < key_lo || new_key > key_hi {
             continue;
         }
-        for &(track, start, end, velocity) in &d.drag_by_key[src_key] {
+        for &(track, start, end, velocity) in &drag.by_key[src_key] {
             let new_start = (i64::from(start) + dt).max(0) as u32;
             let new_end = new_start.saturating_add(end.saturating_sub(start));
             if f64::from(new_start) >= tick_hi || f64::from(new_end) <= tick_lo {
@@ -2122,6 +2126,14 @@ fn preview_line(s: &mut RenderScene, d: &mut DragState) {
 }
 
 fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
+    // 大选区 ghost 由后台物化：结果到了就补上（按下那一刻可能还没算完）。
+    if d.drag.is_none()
+        && matches!(d.kind, kind::MOVE_BOX | kind::SEL_GATE | kind::SEL_RESIZE)
+        && let Some(drag) = crate::selection_materializer::take_drag(s)
+    {
+        d.drag_hidden = Some(std::sync::Arc::clone(&drag.hidden));
+        d.drag = Some(drag);
+    }
     let (x, y) = (d.px, d.py);
     let (lw, lh) = crate::logical_size();
     let snap = scene::SnapCtx::new(s);
@@ -2243,16 +2255,20 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                         let mut ghost = Vec::new();
                         let src_lo = (i32::from(key_lo) - dk).clamp(0, 127) as usize;
                         let src_hi = (i32::from(key_hi) - dk).clamp(0, 127) as usize;
-                        for src_key in src_lo..=src_hi {
-                            let new_key = (src_key as i32 + dk).clamp(0, 127) as u8;
-                            for &(track, start, end, _vel) in &d.drag_by_key[src_key] {
-                                let new_start = (i64::from(start) + dt).max(0) as u32;
-                                let new_end = new_start.saturating_add(end.saturating_sub(start));
-                                if f64::from(new_start) >= tick_hi || f64::from(new_end) <= tick_lo
-                                {
-                                    continue;
+                        if let Some(drag) = d.drag.as_ref() {
+                            for src_key in src_lo..=src_hi {
+                                let new_key = (src_key as i32 + dk).clamp(0, 127) as u8;
+                                for &(track, start, end, _vel) in &drag.by_key[src_key] {
+                                    let new_start = (i64::from(start) + dt).max(0) as u32;
+                                    let new_end =
+                                        new_start.saturating_add(end.saturating_sub(start));
+                                    if f64::from(new_start) >= tick_hi
+                                        || f64::from(new_end) <= tick_lo
+                                    {
+                                        continue;
+                                    }
+                                    ghost.push((new_start, new_end, new_key, track));
                                 }
-                                ghost.push((new_start, new_end, new_key, track));
                             }
                         }
                         apply_preview(s, d, std::mem::take(&mut ghost), true);
@@ -2296,20 +2312,24 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                                 s.num_tracks,
                             );
                         let mut ghost = Vec::new();
-                        for (key, bucket) in d.drag_by_key.iter().enumerate() {
-                            for &(track, start, end, _vel) in bucket {
-                                let new_start = (i64::from(start) + dt).max(0) as u32;
-                                let new_end = new_start.saturating_add(end.saturating_sub(start));
-                                let new_track = (i32::from(track) + dtr).clamp(0, max_row) as u16;
-                                let row = new_track as usize;
-                                if row < first_row
-                                    || row >= last_row
-                                    || f64::from(new_start) >= tick_hi
-                                    || f64::from(new_end) <= tick_lo
-                                {
-                                    continue;
+                        if let Some(drag) = d.drag.as_ref() {
+                            for (key, bucket) in drag.by_key.iter().enumerate() {
+                                for &(track, start, end, _vel) in bucket {
+                                    let new_start = (i64::from(start) + dt).max(0) as u32;
+                                    let new_end =
+                                        new_start.saturating_add(end.saturating_sub(start));
+                                    let new_track =
+                                        (i32::from(track) + dtr).clamp(0, max_row) as u16;
+                                    let row = new_track as usize;
+                                    if row < first_row
+                                        || row >= last_row
+                                        || f64::from(new_start) >= tick_hi
+                                        || f64::from(new_end) <= tick_lo
+                                    {
+                                        continue;
+                                    }
+                                    ghost.push((new_start, new_end, key as u8, new_track));
                                 }
-                                ghost.push((new_start, new_end, key as u8, new_track));
                             }
                         }
                         apply_preview(s, d, std::mem::take(&mut ghost), false);
@@ -2430,17 +2450,20 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                             .pr_view
                             .visible_cross_range(s.pr_view.cross_axis_len(lw, lh));
                         let mut ghost = Vec::new();
-                        for (key, bucket) in d.drag_by_key.iter().enumerate() {
-                            if (key as u8) < key_lo || (key as u8) > key_hi {
-                                continue;
-                            }
-                            for &(track, start, end, _vel) in bucket {
-                                let new_end =
-                                    (i64::from(end) + dt).max(i64::from(start) + 1) as u32;
-                                if f64::from(start) >= tick_hi || f64::from(new_end) <= tick_lo {
+                        if let Some(drag) = d.drag.as_ref() {
+                            for (key, bucket) in drag.by_key.iter().enumerate() {
+                                if (key as u8) < key_lo || (key as u8) > key_hi {
                                     continue;
                                 }
-                                ghost.push((start, new_end, key as u8, track));
+                                for &(track, start, end, _vel) in bucket {
+                                    let new_end =
+                                        (i64::from(end) + dt).max(i64::from(start) + 1) as u32;
+                                    if f64::from(start) >= tick_hi || f64::from(new_end) <= tick_lo
+                                    {
+                                        continue;
+                                    }
+                                    ghost.push((start, new_end, key as u8, track));
+                                }
                             }
                         }
                         apply_preview(s, d, std::mem::take(&mut ghost), true);
@@ -2464,14 +2487,17 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                         d.last_ghost = Some(stamp);
                         let (tick_lo, tick_hi) = s.arr_view.visible_tick_range(lw);
                         let mut ghost = Vec::new();
-                        for (key, bucket) in d.drag_by_key.iter().enumerate() {
-                            for &(track, start, end, _vel) in bucket {
-                                let new_end =
-                                    (i64::from(end) + dt).max(i64::from(start) + 1) as u32;
-                                if f64::from(start) >= tick_hi || f64::from(new_end) <= tick_lo {
-                                    continue;
+                        if let Some(drag) = d.drag.as_ref() {
+                            for (key, bucket) in drag.by_key.iter().enumerate() {
+                                for &(track, start, end, _vel) in bucket {
+                                    let new_end =
+                                        (i64::from(end) + dt).max(i64::from(start) + 1) as u32;
+                                    if f64::from(start) >= tick_hi || f64::from(new_end) <= tick_lo
+                                    {
+                                        continue;
+                                    }
+                                    ghost.push((start, new_end, key as u8, track));
                                 }
-                                ghost.push((start, new_end, key as u8, track));
                             }
                         }
                         apply_preview(s, d, std::mem::take(&mut ghost), true);
@@ -2713,10 +2739,15 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: Tool) 
                 // 进入长按待定；500ms 后由 Flutter long press 推进到移动态。
                 d.kind = kind::PENDING;
                 d.box_ticks = Some(rect);
-                // 框选整体移动的 ghost：拖动开始前一次收集，避免每帧扫选区。
-                let (by_key, hidden) = collect_selected_notes(s);
-                d.drag_by_key = by_key;
-                d.drag_hidden = Some(std::sync::Arc::new(hidden));
+                // ghost 来自后台物化缓存；没有就安排物化，结果到了再补上。
+                d.drag = crate::selection_materializer::take_drag(s);
+                d.drag_hidden = d
+                    .drag
+                    .as_ref()
+                    .map(|drag| std::sync::Arc::clone(&drag.hidden));
+                if d.drag.is_none() {
+                    crate::selection_materializer::schedule_drag(s);
+                }
                 d.preview_last_dk = 0;
                 preview_group(s, d, 0, 0);
                 return;
@@ -2824,9 +2855,14 @@ fn begin_arr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: Tool)
     if let Some(rect) = arr_box_at(s, &geom, x, y) {
         d.kind = kind::PENDING;
         d.box_rows = Some(rect);
-        let (by_key, hidden) = collect_selected_notes(s);
-        d.drag_by_key = by_key;
-        d.drag_hidden = Some(std::sync::Arc::new(hidden));
+        d.drag = crate::selection_materializer::take_drag(s);
+        d.drag_hidden = d
+            .drag
+            .as_ref()
+            .map(|drag| std::sync::Arc::clone(&drag.hidden));
+        if d.drag.is_none() {
+            crate::selection_materializer::schedule_drag(s);
+        }
         return;
     }
     // 空白处：长按待定（同上），拖动后转框选。
@@ -2876,52 +2912,6 @@ fn hit_note(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option<NoteHit> {
         }
     }
     None
-}
-
-/// 收集当前选区中的音符，按 key 分桶，供整体拖动 ghost 使用。
-///
-/// 选区可能是矩形/成员位图，统一用 `accepts_note` 判定；按 `(track,start,key)`
-/// 去重，避免多个重叠矩形重复产出。返回 `(per-key (track,start,end), hidden)`。
-fn collect_selected_notes(s: &RenderScene) -> (DragByKey, std::collections::HashSet<HiddenKey>) {
-    let mut by_key: DragByKey = (0..yinhe_types::KEY_COUNT).map(|_| Vec::new()).collect();
-    let mut hidden = std::collections::HashSet::new();
-    let Some(doc) = s.document.as_ref() else {
-        return (by_key, hidden);
-    };
-    // 单矩形（绝大多数框选/全选）不会跨矩形重复产出音符：音符在桶内按
-    // start 排序，只需和同 key 上一个已接受的音符比较，省掉百万级
-    // HashSet 的分配与哈希——这是大选区起手卡顿的主要来源。
-    let single_rect = doc.edit.selected.rects.len() == 1;
-    let mut seen = std::collections::HashSet::new();
-    let mut last_start: Vec<Option<(u16, u32)>> = vec![None; yinhe_types::KEY_COUNT];
-    for &(t0, t1, klo, khi, _, _) in &doc.edit.selected.rects {
-        let (ts, te) = (t0.min(t1), t0.max(t1));
-        if te <= ts {
-            continue;
-        }
-        for key in klo..=khi {
-            for n in doc.data.model.key_notes_in_range(key, ts, te) {
-                if n.start_tick < ts || n.start_tick >= te {
-                    continue;
-                }
-                if !doc.edit.selected.accepts_note(n, key) {
-                    continue;
-                }
-                if single_rect {
-                    let slot = &mut last_start[key as usize];
-                    if *slot == Some((n.track, n.start_tick)) {
-                        continue;
-                    }
-                    *slot = Some((n.track, n.start_tick));
-                } else if !seen.insert((n.track, n.start_tick, key)) {
-                    continue;
-                }
-                by_key[key as usize].push((n.track, n.start_tick, n.end_tick, n.velocity));
-                hidden.insert((n.track, n.start_tick, key));
-            }
-        }
-    }
-    (by_key, hidden)
 }
 
 /// PR 已选框命中（像素坐标，取第一个）。

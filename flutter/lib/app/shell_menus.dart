@@ -35,10 +35,8 @@ mixin _ShellMenus on _ShellBase {
       }
       // 剪切 = 复制 + 删除（删除本身一步 undo）。
       if (id == 2) {
-        if (rust.copySelection() == 1) {
-          if (rust.selectionAction(0, 11) == 1) {
-            _refreshDocumentMeta();
-          }
+        if (rust.copySelection() == 1 && rust.selectionAction(0, 11) == 1) {
+          await _runDocJob(title: l.cut);
         }
         return;
       }
@@ -49,7 +47,7 @@ mixin _ShellMenus on _ShellBase {
           return;
         }
         if (rust.humanize(spec.timing, spec.velocity, spec.gate) == 1) {
-          _refreshDocumentMeta();
+          await _runDocJob(title: l.batchProcess);
         }
         return;
       }
@@ -72,12 +70,12 @@ mixin _ShellMenus on _ShellBase {
               spec.stretch,
             ) ==
             1) {
-          _refreshDocumentMeta();
+          await _runDocJob(title: l.batchProcess);
         }
         return;
       }
       if (rust.selectionAction(0, id) == 1) {
-        _refreshDocumentMeta();
+        await _runDocJob(title: l.batchProcess);
       }
     } finally {
       _selectionMenuBusy = false;
@@ -109,7 +107,7 @@ mixin _ShellMenus on _ShellBase {
       },
       onPaste: () {
         if (rust.pasteSelection(pos.dx) == 1) {
-          _refreshDocumentMeta();
+          unawaited(_runDocJob(title: l.paste));
         }
       },
     ).whenComplete(() {
@@ -153,7 +151,7 @@ mixin _ShellMenus on _ShellBase {
       },
       onPaste: () {
         if (rust.pasteSelection(local.dx) == 1) {
-          _refreshDocumentMeta();
+          unawaited(_runDocJob(title: l.paste));
         }
       },
       onInsert: ctx == null || !fromRuler

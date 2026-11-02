@@ -13,6 +13,7 @@
 //!   （surface buffer 为物理像素，两者分别用于 view 与交换链）
 
 mod audio;
+mod doc_job;
 mod edit;
 mod inertia;
 #[cfg(target_os = "ios")]
@@ -24,6 +25,7 @@ mod scene;
 mod selection_materializer;
 mod soundfont_archive;
 mod theme_colors;
+mod velocity_cache;
 
 use std::ffi::{CStr, CString};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -1218,6 +1220,12 @@ pub extern "C" fn yinhe_velocity_bars(out_len: *mut u32) -> *const f64 {
     }
 }
 
+/// 力度条数据是否已就绪（摘要尚未追上当前文档时返回 0，Dart 稍后重试）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_velocity_ready() -> i32 {
+    scene::velocity_ready()
+}
+
 /// PR 力度笔划：`points` 为扁平的 `[tick, velocity, ...]`（`len` 是 f64 元素数，
 /// 不是点对数），长度必须为偶数。
 ///
@@ -2149,6 +2157,20 @@ pub extern "C" fn yinhe_doc_state(out: *mut i32) -> i32 {
         *out.add(2) = st[2];
     }
     1
+}
+
+/// 文档后台任务状态 JSON：`{"state","progress","status","error"}`。
+///
+/// `state`: 0=无任务 1=运行中 2=完成 3=失败。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_doc_job_status_json() -> *mut std::ffi::c_char {
+    to_c_string(doc_job::status_json())
+}
+
+/// 取消当前文档任务（只有 PPQ 缩放在安全点响应）。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_doc_job_cancel() -> i32 {
+    doc_job::cancel()
 }
 
 /// Dart 布局后同步 AM 面板在主纹理中的绘制区域与当前 lane。`lane < 0` = 力度。

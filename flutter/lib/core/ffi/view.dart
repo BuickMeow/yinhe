@@ -287,6 +287,14 @@ typedef DocStateDart = int Function(ffi.Pointer<ffi.Int32>);
 final DocStateDart docState = bridge
     .lookupFunction<DocStateNative, DocStateDart>('yinhe_doc_state');
 
+/// 文档后台任务状态 JSON（批量编辑/撤销重做/PPQ 等）。
+final CStrDart docJobStatusJson = bridge
+    .lookupFunction<CStrNative, CStrDart>('yinhe_doc_job_status_json');
+
+/// 取消当前文档后台任务（目前只有 PPQ 缩放在安全点响应）。
+final IntNoArgDart docJobCancel = bridge
+    .lookupFunction<IntNoArgNative, IntNoArgDart>('yinhe_doc_job_cancel');
+
 typedef RenderFrameNative = ffi.Int32 Function();
 typedef RenderFrameDart = int Function();
 

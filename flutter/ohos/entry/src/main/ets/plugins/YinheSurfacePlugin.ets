@@ -25,6 +25,10 @@ import picker from '@ohos.file.picker';
 
 const CHANNEL_NAME = 'yinhe/surface';
 
+/** 大文件复制分块大小（1MB）与进度上报节流间隔（~100ms）。 */
+const COPY_CHUNK_SIZE = 1024 * 1024;
+const COPY_PROGRESS_INTERVAL_MS = 100;
+
 function baseName(uri: string): string {
   const slash = uri.lastIndexOf('/');
   return slash >= 0 ? uri.substring(slash + 1) : uri;
@@ -198,8 +202,15 @@ export class YinheSurfacePlugin implements MethodCallHandler {
       const name = baseName(uri);
       if (!this.isAllowed(exts, name)) {
         this.channel.invokeMethod('onFileRejected', name, null);
-      } else {
-        this.channel.invokeMethod('onFilePicked', this.copyToSandbox(uri), null);
+        result.success(null);
+        return;
+      }
+      try {
+        const dest = await this.copyToSandbox(uri, 'open', name);
+        this.channel.invokeMethod('onFilePicked', dest, null);
+      } catch (e) {
+        console.error(`[yinhe] 导入工程失败: ${e}`);
+        this.channel.invokeMethod('onFileRejected', name, null);
       }
       result.success(null);
     } catch (e) {
@@ -217,9 +228,16 @@ export class YinheSurfacePlugin implements MethodCallHandler {
       const name = baseName(uri);
       if (!this.isAllowed(exts, name)) {
         this.channel.invokeMethod('onSoundfontRejected', name, null);
-      } else {
+        result.success(null);
+        return;
+      }
+      try {
         // 压缩包还是裸音色库、以及入表，都由 Dart 判定/调用。
-        this.channel.invokeMethod('onSoundFontPicked', this.copyToSandbox(uri), null);
+        const dest = await this.copyToSandbox(uri, 'soundfont', name);
+        this.channel.invokeMethod('onSoundFontPicked', dest, null);
+      } catch (e) {
+        console.error(`[yinhe] 导入音色库失败: ${e}`);
+        this.channel.invokeMethod('onSoundfontRejected', name, null);
       }
       result.success(null);
     } catch (e) {
@@ -238,24 +256,24 @@ export class YinheSurfacePlugin implements MethodCallHandler {
 
   private async saveProject(name: string, saveAs: boolean, result: MethodResult): Promise<void> {
     const tempPath = `${this.context.filesDir}/export.yin`;
+    const fileName = name.endsWith('.yin') ? name : `${name}.yin`;
     try {
       if (!saveAs) {
         const known = this.projectUris.get(name);
         if (known !== undefined) {
-          this.copyToUri(tempPath, known);
+          await this.copyToUri(tempPath, known, 'saveProject', fileName);
           this.channel.invokeMethod('onProjectSaved', 'ok', null);
           result.success(null);
           return;
         }
       }
-      const fileName = name.endsWith('.yin') ? name : `${name}.yin`;
       const uri = await this.saveFile(fileName);
       if (uri === null) {
         this.channel.invokeMethod('onProjectSaveCancelled', 'cancel', null);
         result.success(null);
         return;
       }
-      this.copyToUri(tempPath, uri);
+      await this.copyToUri(tempPath, uri, 'saveProject', fileName);
       this.projectUris.set(name, uri);
       this.channel.invokeMethod('onProjectSaved', 'ok', null);
       result.success(null);
@@ -278,7 +296,7 @@ export class YinheSurfacePlugin implements MethodCallHandler {
         result.error('cancelled', '用户取消保存', null);
         return;
       }
-      this.copyToUri(tempPath, uri);
+      await this.copyToUri(tempPath, uri, 'saveExport', fileName);
       this.channel.invokeMethod('onExportSaved', fileName, null);
       result.success(null);
     } catch (e) {
@@ -304,35 +322,88 @@ export class YinheSurfacePlugin implements MethodCallHandler {
   }
 
   /** 系统选择器给的 uri → 应用沙箱里的真实路径（Rust 只认路径）。 */
-  private copyToSandbox(uri: string): string {
-    const name = baseName(uri).length > 0 ? baseName(uri) : 'picked.bin';
-    const dest = `${this.context.filesDir}/${name}`;
-    const src = fs.openSync(uri, fs.OpenMode.READ_ONLY);
-    try {
-      const dst = fs.openSync(dest, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
-      try {
-        fs.copyFileSync(src.fd, dst.fd);
-      } finally {
-        fs.closeSync(dst);
-      }
-    } finally {
-      fs.closeSync(src);
-    }
+  private async copyToSandbox(uri: string, kind: string, name: string): Promise<string> {
+    const dest = `${this.context.filesDir}/${name.length > 0 ? name : 'picked.bin'}`;
+    await this.copyChunked(
+      uri, dest,
+      fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC,
+      kind, name);
     return dest;
   }
 
   /** 沙箱文件 → 用户选中的保存位置。 */
-  private copyToUri(srcPath: string, uri: string): void {
-    const src = fs.openSync(srcPath, fs.OpenMode.READ_ONLY);
+  private async copyToUri(
+    srcPath: string, uri: string, kind: string, name: string
+  ): Promise<void> {
+    await this.copyChunked(
+      srcPath, uri, fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC, kind, name);
+  }
+
+  // ── 复制进度事件 ──
+
+  private copyEvent(kind: string, name: string, total: number): Map<string, Object> {
+    const payload: Map<string, Object> = new Map();
+    payload.set('kind', kind);
+    payload.set('name', name);
+    payload.set('total', total);
+    return payload;
+  }
+
+  private emitCopyStart(kind: string, name: string, total: number): void {
+    this.channel.invokeMethod('onCopyStart', this.copyEvent(kind, name, total), null);
+  }
+
+  private emitCopyProgress(kind: string, name: string, total: number, done: number): void {
+    const payload = this.copyEvent(kind, name, total);
+    payload.set('done', done);
+    this.channel.invokeMethod('onCopyProgress', payload, null);
+  }
+
+  /**
+   * 1MB 分块异步复制：fileio 的 Promise 读写不占 UI 线程，按 ~100ms 节流上报字节进度。
+   * `destMode` 决定是新建沙箱文件还是覆盖用户选中的目标。
+   */
+  private async copyChunked(
+    src: string, dest: string, destMode: number, kind: string, name: string
+  ): Promise<void> {
+    const srcFile = await fs.open(src, fs.OpenMode.READ_ONLY);
     try {
-      const dst = fs.openSync(uri, fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
+      let total = -1;
       try {
-        fs.copyFileSync(src.fd, dst.fd);
+        total = (await fs.stat(srcFile.fd)).size;
+      } catch (e) {
+        total = -1;
+      }
+      this.emitCopyStart(kind, name, total);
+      const dstFile = await fs.open(dest, destMode);
+      try {
+        const buffer = new ArrayBuffer(COPY_CHUNK_SIZE);
+        let done = 0;
+        let reported = -1;
+        let lastReport = Date.now();
+        while (true) {
+          const readLength = await fs.read(srcFile.fd, buffer);
+          if (readLength <= 0) {
+            break;
+          }
+          const options: fs.WriteOptions = { length: readLength };
+          await fs.write(dstFile.fd, buffer, options);
+          done += readLength;
+          const now = Date.now();
+          if (now - lastReport >= COPY_PROGRESS_INTERVAL_MS) {
+            lastReport = now;
+            reported = done;
+            this.emitCopyProgress(kind, name, total, done);
+          }
+        }
+        if (done !== reported) {
+          this.emitCopyProgress(kind, name, total, done);
+        }
       } finally {
-        fs.closeSync(dst);
+        await fs.close(dstFile);
       }
     } finally {
-      fs.closeSync(src);
+      await fs.close(srcFile);
     }
   }
 }

@@ -507,6 +507,12 @@ impl InstanceRenderer {
         self.velocity_summary_gen
     }
 
+    /// 当前摘要对应的 `vs_key`（`revision ^ visible_hash`）。
+    /// 异步重建期间仍是旧值；上层据此判断摘要是否已跟上最新文档。
+    pub fn velocity_summary_revision(&self) -> u64 {
+        self.velocity_summary_revision
+    }
+
     /// 替换摘要并维护世代计数：Arc 实体变化时 +1。
     fn replace_velocity_summary(
         &mut self,

@@ -576,6 +576,9 @@ mixin _ShellBuild on _ShellBase {
                                               ),
                                             );
                                           },
+                                          onDocJob: () => _runDocJob(
+                                            title: l.batchProcess,
+                                          ),
                                         ),
                                       ),
                                   ],
@@ -769,7 +772,7 @@ mixin _ShellBuild on _ShellBase {
   @override
   void _undo() {
     if (rust.undo() == 1) {
-      _refreshDocumentMeta();
+      unawaited(_runDocJob(title: l.undo));
     }
   }
 
@@ -777,7 +780,7 @@ mixin _ShellBuild on _ShellBase {
   @override
   void _redo() {
     if (rust.redo() == 1) {
-      _refreshDocumentMeta();
+      unawaited(_runDocJob(title: l.redo));
     }
   }
 }

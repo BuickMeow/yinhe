@@ -32,14 +32,23 @@ mixin _ShellDocument on _ShellBase {
           final n = name.toNativeUtf8();
           final a = artist.toNativeUtf8();
           final d = desc.toNativeUtf8();
+          var started = 0;
           try {
-            if (rust.setProjectMeta(n, a, d, ppq) == 1) {
-              _refreshDocumentMeta();
-            }
+            started = rust.setProjectMeta(n, a, d, ppq);
           } finally {
             calloc.free(n);
             calloc.free(a);
             calloc.free(d);
+          }
+          if (started == 1) {
+            // PPQ 缩放可能很重：后台任务 + 进度（可取消）。
+            unawaited(
+              _runDocJob(
+                title: l.projectSettings,
+                determinate: true,
+                cancelable: true,
+              ),
+            );
           }
         },
       ),

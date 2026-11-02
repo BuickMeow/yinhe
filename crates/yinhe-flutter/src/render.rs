@@ -438,7 +438,7 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
                 .as_ref()
                 .map(|d| d.edit.track_selected.clone())
                 .unwrap_or_default(),
-            s.document.as_ref().map(|d| d.data.revision).unwrap_or(0),
+            s.model_revision,
             s.model_epoch,
             s.preview.clone(),
             (s.ghost_dx, s.ghost_dy),
@@ -475,6 +475,14 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
         let tv_hash = yinhe_wgpu::hash_bools(&visible);
         t.renderer
             .poll_velocity_summary(Some(model), &visible, revision ^ tv_hash.rotate_left(32));
+        // 把当前摘要发布给 Dart（键 = 摘要实际对应的 vs_key）。
+        // 尚未重建完成时发布的是旧摘要，Dart 用键比对后自行重试。
+        match t.renderer.velocity_summary() {
+            Some(summary) => {
+                crate::velocity_cache::publish(t.renderer.velocity_summary_revision(), summary)
+            }
+            None => crate::velocity_cache::clear(),
+        }
     }
 
     // ── 取帧纹理 ──
@@ -561,7 +569,7 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
 }
 
 /// “显示轨道”过滤后的可见掩码（None = 原样）。
-fn effective_visible(track_visible: &[bool], display_track: Option<usize>) -> Vec<bool> {
+pub(crate) fn effective_visible(track_visible: &[bool], display_track: Option<usize>) -> Vec<bool> {
     match display_track {
         None => track_visible.to_vec(),
         Some(t) => (0..track_visible.len())
@@ -807,7 +815,7 @@ pub fn render_automation_frame(
             .as_ref()
             .map(|d| d.edit.track_selected.clone())
             .unwrap_or_default();
-        let revision = s.document.as_ref().map(|d| d.data.revision).unwrap_or(0);
+        let revision = s.model_revision;
         let pr_view = s.pr_view.clone();
         (
             state,

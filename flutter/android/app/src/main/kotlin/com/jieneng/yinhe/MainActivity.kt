@@ -6,17 +6,24 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.util.Log
 import android.view.Surface
+import android.widget.Toast
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.view.TextureRegistry
 import java.io.File
-import android.widget.Toast
+import java.io.InputStream
+import java.io.OutputStream
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 private const val TAG = "yinhe-bridge"
 
@@ -49,6 +56,12 @@ class MainActivity : FlutterActivity() {
         /** SAF 目录选择（SFZ 音色库连同采样一起导入）。 */
         /** 导出工程的临时文件（Rust 写入，Kotlin 复制到用户选择的位置）。 */
         private const val EXPORT_TMP = "export.yin"
+
+        /** 整文件复制的分块大小：1MB，兼顾吞吐与进度粒度。 */
+        private const val COPY_BUFFER_SIZE = 1 shl 20
+
+        /** 进度事件节流间隔（毫秒）：GB 级文件不节流会把主线程事件队列淹掉。 */
+        private const val COPY_PROGRESS_INTERVAL_MS = 100L
 
         init {
             // 压缩包支持（unarc-rs）带 C++ 代码：先加载 NDK 的 C++ 运行时，
@@ -98,6 +111,23 @@ class MainActivity : FlutterActivity() {
 
     /** 与 Dart 的桥（双向：Dart 请求 + 文件选择结果回传）。 */
     private var methodChannel: MethodChannel? = null
+
+    /**
+     * 整文件复制专用单线程：工程/音色库动辄几十 MB～GB，放主线程会卡住输入与渲染。
+     * 单线程既能保证复制串行（避免同名文件互相覆盖），也省掉并发调度的复杂度。
+     * daemon：进程退出时不阻塞，也不需要在 onDestroy 里等复制结束。
+     */
+    private val fileIo: ExecutorService by lazy {
+        Executors.newSingleThreadExecutor { r ->
+            Thread(r, "yinhe-file-io").apply { isDaemon = true }
+        }
+    }
+
+    /**
+     * 主线程 Handler：所有 `methodChannel.invokeMethod` 必须在主线程调用
+     * （Flutter 的 channel 不能跨线程直接回调），后台复制只能通过它回送事件。
+     */
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private external fun nativeSetSurface(surface: Surface)
 
@@ -255,11 +285,14 @@ class MainActivity : FlutterActivity() {
                         val uri = lastProjectUri
                         if (!saveAs && uri != null) {
                             // 覆盖当前工程文件；失败则退回另存为。
-                            if (copyExportTo(uri)) {
-                                methodChannel?.invokeMethod("onProjectSaved", "ok")
-                            } else {
-                                lastProjectUri = null
-                                openSavePicker(name)
+                            // 复制在后台：几十 MB 的工程不能阻塞主线程，先立即返回 result。
+                            copyTempToAsync(uri, "", name, "saveProject") { ok ->
+                                if (ok) {
+                                    methodChannel?.invokeMethod("onProjectSaved", "ok")
+                                } else {
+                                    lastProjectUri = null
+                                    openSavePicker(name)
+                                }
                             }
                         } else {
                             openSavePicker(name)
@@ -454,55 +487,132 @@ class MainActivity : FlutterActivity() {
         startActivityForResult(intent, REQ_SAVE_EXPORT)
     }
 
-    /** 把指定扩展名的导出临时文件复制到用户选择的 uri。 */
-    private fun copyTempTo(uri: android.net.Uri?, ext: String): Boolean {
-        if (uri == null) {
-            return false
+    /** 后台线程回送 MethodChannel 事件：channel 只能在创建它的主线程使用。 */
+    private fun postEvent(method: String, args: Any?) {
+        mainHandler.post { methodChannel?.invokeMethod(method, args) }
+    }
+
+    /**
+     * 约 100ms 节流一次进度事件；复制完成那块一定上报（done == total），
+     * 保证 Dart 侧进度条能走到 100%。返回的回调在后台线程调用。
+     */
+    private fun progressEmitter(kind: String, name: String, total: Long): (Long) -> Unit {
+        var lastMs = 0L
+        return { done ->
+            val now = SystemClock.uptimeMillis()
+            if (done == total || now - lastMs >= COPY_PROGRESS_INTERVAL_MS) {
+                lastMs = now
+                postEvent(
+                    "onCopyProgress",
+                    mapOf("kind" to kind, "name" to name, "done" to done, "total" to total),
+                )
+            }
         }
+    }
+
+    /**
+     * 1MB 分块复制并汇报累计字节。读整文件到内存会在 GB 级文件上 OOM，
+     * 所以固定小缓冲循环。只在后台线程调用。
+     */
+    private fun copyChunked(
+        src: InputStream,
+        dst: OutputStream,
+        onProgress: (Long) -> Unit,
+    ) {
+        val buf = ByteArray(COPY_BUFFER_SIZE)
+        var done = 0L
+        while (true) {
+            val n = src.read(buf)
+            if (n < 0) {
+                break
+            }
+            dst.write(buf, 0, n)
+            done += n
+            onProgress(done)
+        }
+    }
+
+    /** SAF 文件大小（OpenableColumns.SIZE）；provider 不提供时返回 -1。 */
+    private fun querySize(uri: Uri): Long {
+        val size = runCatching {
+            contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { c ->
+                val idx = c.getColumnIndex(OpenableColumns.SIZE)
+                if (idx >= 0 && c.moveToFirst() && !c.isNull(idx)) c.getLong(idx) else null
+            }
+        }.getOrNull()
+        return size ?: -1L
+    }
+
+    /**
+     * 把导出的临时文件（ext 决定文件名）复制到用户选择的 uri。
+     * 复制必须在后台：工程/导出文件可能几十 MB～GB，同步复制会让主线程 ANR。
+     * onDone 已切回主线程，调用方可以安全地发 channel 事件/弹选择器。
+     */
+    private fun copyTempToAsync(
+        uri: Uri,
+        ext: String,
+        name: String,
+        kind: String,
+        onDone: (Boolean) -> Unit,
+    ) {
         val fileName = if (ext.isBlank()) EXPORT_TMP else "export_tmp.$ext"
         val src = File(filesDir, fileName)
         if (!src.exists()) {
             Log.e(TAG, "导出临时文件不存在: ${src.absolutePath}")
-            return false
+            onDone(false)
+            return
         }
-        return try {
-            // 必须显式用 "wt"：部分 SAF provider 的默认 "w" 不截断旧文件，
-            // 新工程比旧工程短时会把旧文件尾部残留成 mixer/audio 伪段。
-            val output = contentResolver.openOutputStream(uri, "wt")
-            if (output == null) {
-                Log.e(TAG, "打开目标位置失败: $uri")
-                return false
+        fileIo.execute {
+            val total = src.length()
+            postEvent("onCopyStart", mapOf("kind" to kind, "name" to name, "total" to total))
+            val ok = runCatching {
+                // 必须显式用 "wt"：部分 SAF provider 的默认 "w" 不截断旧文件，
+                // 新工程比旧工程短时会把旧文件尾部残留成 mixer/audio 伪段。
+                val output = contentResolver.openOutputStream(uri, "wt")
+                    ?: return@runCatching false
+                output.use { dst ->
+                    src.inputStream().use { srcStream ->
+                        copyChunked(srcStream, dst, progressEmitter(kind, name, total))
+                    }
+                }
+                true
+            }.getOrElse { e ->
+                Log.e(TAG, "复制临时文件失败: $e")
+                false
             }
-            output.use { dst -> src.inputStream().use { it.copyTo(dst) } }
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "复制导出文件失败: $e")
-            false
+            mainHandler.post { onDone(ok) }
         }
     }
 
-    /** 把导出的临时工程复制到用户选择的 uri。 */
-    private fun copyExportTo(uri: android.net.Uri?): Boolean {
-        if (uri == null) {
-            return false
-        }
-        val src = File(filesDir, EXPORT_TMP)
-        if (!src.exists()) {
-            Log.e(TAG, "导出临时文件不存在: ${src.absolutePath}")
-            return false
-        }
-        return try {
-            // 同 copyTempTo：显式 "wt" 截断旧尾部。
-            val output = contentResolver.openOutputStream(uri, "wt")
-            if (output == null) {
-                Log.e(TAG, "打开目标位置失败: $uri")
-                return false
+    /**
+     * 把 SAF uri 复制进私有目录（后台）。
+     * 主线程只负责取名字/校验；复制完再回主线程做权限记忆与事件上报。
+     */
+    private fun copyPickedAsync(
+        uri: Uri,
+        name: String,
+        kind: String,
+        onDone: (String?) -> Unit,
+    ) {
+        fileIo.execute {
+            val total = querySize(uri)
+            postEvent("onCopyStart", mapOf("kind" to kind, "name" to name, "total" to total))
+            val dest = File(filesDir, name)
+            val ok = runCatching {
+                val input = contentResolver.openInputStream(uri)
+                    ?: return@runCatching false
+                input.use { src ->
+                    dest.outputStream().use { dst ->
+                        copyChunked(src, dst, progressEmitter(kind, name, total))
+                    }
+                }
+                true
+            }.getOrElse { e ->
+                Log.e(TAG, "复制所选文件失败: $e")
+                false
             }
-            output.use { dst -> src.inputStream().use { it.copyTo(dst) } }
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "复制工程失败: $e")
-            false
+            // 失败时不删 dest：与旧行为一致（旧实现截断后中途失败也留下部分文件）。
+            mainHandler.post { onDone(if (ok) dest.absolutePath else null) }
         }
     }
 
@@ -523,21 +633,34 @@ class MainActivity : FlutterActivity() {
                     methodChannel?.invokeMethod("onFileRejected", name ?: "")
                     return
                 }
-                val path = copyPicked(uri) ?: return
-                // .yin 工程记住原 uri（含持久权限），供“保存工程”直接覆盖。
-                if (path.lowercase().endsWith(".yin")) {
-                    runCatching {
-                        contentResolver.takePersistableUriPermission(
-                            uri,
-                            Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                                Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-                        )
-                    }
-                    rememberUri(path.substringAfterLast('/'), uri)
+                // .sfz 原地读取的判定仍在主线程：要查「所有文件访问」和真实路径，
+                // 命中原路径就直接用，不复制（采样是相对 sfz 的路径，复制会断链）。
+                inPlaceSfzPath(uri)?.let { path ->
+                    methodChannel?.invokeMethod("onFilePicked", path)
+                    return
                 }
-                // 不在这里直接加载：Dart 先检查“未保存修改/同一文件”，
-                // 再通过 FFI 发起加载，避免覆盖当前工程时没有确认。
-                methodChannel?.invokeMethod("onFilePicked", path)
+                copyPickedAsync(uri, name, "open") { path ->
+                    if (path == null) {
+                        // 复制失败要让 Dart 知道，否则 UI 一直等结果。
+                        methodChannel?.invokeMethod("onFileRejected", name)
+                        return@copyPickedAsync
+                    }
+                    // .yin 工程记住原 uri（含持久权限），供“保存工程”直接覆盖。
+                    // 这些都在复制完成后回主线程执行。
+                    if (path.lowercase().endsWith(".yin")) {
+                        runCatching {
+                            contentResolver.takePersistableUriPermission(
+                                uri,
+                                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                            )
+                        }
+                        rememberUri(path.substringAfterLast('/'), uri)
+                    }
+                    // 不在这里直接加载：Dart 先检查“未保存修改/同一文件”，
+                    // 再通过 FFI 发起加载，避免覆盖当前工程时没有确认。
+                    methodChannel?.invokeMethod("onFilePicked", path)
+                }
             }
             REQ_OPEN_SF -> {
                 val uri = data?.data
@@ -546,15 +669,30 @@ class MainActivity : FlutterActivity() {
                     methodChannel?.invokeMethod("onSoundfontRejected", name ?: "")
                     return
                 }
-                val path = copyPicked(uri) ?: return
-                // 压缩包还是裸音色库由 Dart 判定（入表也由 Dart 调 FFI）。
-                methodChannel?.invokeMethod("onSoundFontPicked", path)
+                inPlaceSfzPath(uri)?.let { path ->
+                    methodChannel?.invokeMethod("onSoundFontPicked", path)
+                    return
+                }
+                copyPickedAsync(uri, name, "soundfont") { path ->
+                    if (path == null) {
+                        methodChannel?.invokeMethod("onSoundfontRejected", name)
+                        return@copyPickedAsync
+                    }
+                    // 压缩包还是裸音色库由 Dart 判定（入表也由 Dart 调 FFI）。
+                    methodChannel?.invokeMethod("onSoundFontPicked", path)
+                }
             }
             REQ_SAVE_FILE -> {
                 val uri = data?.data
-                if (copyExportTo(uri)) {
-                    if (uri != null) {
-                        val name = displayName(uri) ?: "Untitled.yin"
+                if (uri == null) {
+                    // 旧实现是 copyExportTo(null) 返回 false，语义保持一致。
+                    methodChannel?.invokeMethod("onProjectSaveFailed", "copy failed")
+                    return
+                }
+                // displayName 仍在主线程取：后台只做字节复制。
+                val name = displayName(uri) ?: "Untitled.yin"
+                copyTempToAsync(uri, "", name, "saveProject") { ok ->
+                    if (ok) {
                         rememberUri(name, uri)
                         runCatching {
                             contentResolver.takePersistableUriPermission(
@@ -563,51 +701,34 @@ class MainActivity : FlutterActivity() {
                                     Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
                             )
                         }
+                        methodChannel?.invokeMethod("onProjectSaved", "ok")
+                    } else {
+                        methodChannel?.invokeMethod("onProjectSaveFailed", "copy failed")
                     }
-                    methodChannel?.invokeMethod("onProjectSaved", "ok")
-                } else {
-                    methodChannel?.invokeMethod("onProjectSaveFailed", "copy failed")
                 }
             }
             REQ_SAVE_EXPORT -> {
-                val uri = data?.data
-                if (copyTempTo(uri, pendingExportExt)) {
-                    val name = uri?.let { displayName(it) } ?: "export"
-                    methodChannel?.invokeMethod("onExportSaved", name)
+                val uri = data?.data ?: return
+                val name = displayName(uri) ?: "export"
+                copyTempToAsync(uri, pendingExportExt, name, "saveExport") { ok ->
+                    // 导出复制失败保持旧行为：只 log（在后台已记录）。
+                    if (ok) {
+                        methodChannel?.invokeMethod("onExportSaved", name)
+                    }
                 }
             }
             else -> {}
         }
     }
 
-    /** SAF uri → 私有目录副本，返回绝对路径（失败返回 null）。 */
-    private fun copyPicked(uri: android.net.Uri?): String? {
-        if (uri == null) {
-            return null
-        }
-        // 只有 .sfz 允许原地读取（采样是相对 sfz 的路径，复制单个文件会断链），
-        // 而且必须真的可读；其余（MIDI/工程/压缩包/SF2）一律复制进私有目录，
-        // 避免外部路径在分区存储 / 鸿蒙上被判定为 EACCES。
+    /**
+     * .sfz 允许原地读取：采样是相对 sfz 的路径，复制单个文件会断链。
+     * 必须真的可读才用原路径；其余（MIDI/工程/压缩包/SF2）一律复制进私有目录，
+     * 避免外部路径在分区存储 / 鸿蒙上被判定为 EACCES。需在主线程调用。
+     */
+    private fun inPlaceSfzPath(uri: Uri): String? =
         externalStoragePath(uri)
             ?.takeIf { it.endsWith(".sfz", ignoreCase = true) && File(it).canRead() }
-            ?.let { return it }
-        val name = displayName(uri) ?: "picked.bin"
-        val dest = File(filesDir, name)
-        return try {
-            val input = contentResolver.openInputStream(uri)
-            if (input == null) {
-                Log.e(TAG, "打开所选文件失败: $uri")
-                return null
-            }
-            input.use { src ->
-                dest.outputStream().use { dst -> src.copyTo(dst) }
-            }
-            dest.absolutePath
-        } catch (e: Exception) {
-            Log.e(TAG, "复制所选文件失败: $e")
-            null
-        }
-    }
 
     /**
      * `content://com.android.externalstorage.documents/...` → `/storage/...` 真实路径。

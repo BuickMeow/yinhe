@@ -301,6 +301,9 @@ abstract class _ShellBase extends State<StudioShell>
 
   /// PR 力度条可见窗口重载：滚动/缩放后延迟一次，避免逐帧扫音符。
   Timer? _velocityReloadTimer;
+
+  /// 力度摘要尚未就绪时的重试计时器（等渲染线程后台算完）。
+  Timer? _velocityRetryTimer;
   double? _velocityViewPpu;
   double? _velocityViewScroll;
 
@@ -454,6 +457,13 @@ abstract class _ShellBase extends State<StudioShell>
   void _pushQuantize(String label);
   void _readDocState();
   void _refreshDocumentMeta();
+
+  /// 显示后台文档任务（批量编辑/撤销重做/PPQ 等）的进度框。
+  Future<bool> _runDocJob({
+    required String title,
+    bool determinate = false,
+    bool cancelable = false,
+  });
   void _resetInteraction();
   void _undo();
   void _redo();
@@ -647,6 +657,7 @@ class _StudioShellState extends _ShellBase
     _saveDoneTimer?.cancel();
     _savingTimer?.cancel();
     _velocityReloadTimer?.cancel();
+    _velocityRetryTimer?.cancel();
     _docState.dispose();
     _editStatus.dispose();
     calloc.free(_snapPtr);

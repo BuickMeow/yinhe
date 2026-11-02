@@ -159,6 +159,10 @@ final VelocityBarsDart velocityBars = bridge
       'yinhe_velocity_bars',
     );
 
+/// 力度条摘要是否已跟上当前文档（0 = 尚未就绪，稍后重试）。
+final IntNoArgDart velocityReady = bridge
+    .lookupFunction<IntNoArgNative, IntNoArgDart>('yinhe_velocity_ready');
+
 typedef VelocityStrokeNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Double>,
   ffi.Uint32,

@@ -274,6 +274,11 @@ pub struct RenderScene {
     /// 文档模型身份：只在替换文档（打开/新建）时自增，编辑不变。
     /// 供音符层缓存判断“这是不是一个全新的模型”，避免 revision 重置后复用旧实例。
     pub model_epoch: u64,
+    /// 当前快照对应模型的内容修订号。
+    ///
+    /// 后台文档任务运行期间 `document` 会被临时取走（渲染仍用 `model`），
+    /// 渲染层不能直接读 `document.data.revision`，否则会误判为 revision 0。
+    pub model_revision: u64,
     /// PR 底部 AM 面板的 wgpu 叠加区域。
     pub automation_panel: AutomationPanelState,
     /// 播放跟随：用户手动平移/缩放后暂停，等播放头连续离开视口后恢复。
@@ -337,6 +342,7 @@ impl Default for RenderScene {
             source_path: None,
             doc_generation: 0,
             model_epoch: 0,
+            model_revision: 0,
             automation_panel: AutomationPanelState::default(),
             follow_paused: false,
             follow_out_since: None,
@@ -1405,80 +1411,90 @@ pub fn project_meta_json() -> String {
 }
 
 /// 工程元数据编辑（歌名/艺术家/简介/PPQ），差异字段合并为一条 undo。
+///
+/// PPQ 改动在后台任务里用 `rescale_ppq_with_progress` 执行（可取消/有进度），
+/// 与桌面一致；元数据字段在同一任务内一次性提交。
 pub fn set_project_meta(name: String, artist: String, description: String, ppq: u32) -> i32 {
-    use yinhe_editor_core::history::UndoAction;
+    crate::doc_job::try_start(
+        "project-meta",
+        crate::doc_job::Reload::Model,
+        move |doc, job| {
+            use yinhe_editor_core::history::UndoAction;
 
-    let Ok(mut s) = scene().lock() else {
-        return 0;
-    };
-    let Some(doc) = s.document.as_mut() else {
-        return 0;
-    };
-    let before = doc.capture_snapshot();
-    let mut actions: Vec<UndoAction> = Vec::new();
-    let mut ppq_change: Option<(u32, u32)> = None;
-    {
-        let model = std::sync::Arc::make_mut(&mut doc.data.model);
-        let has_notes = model.note_count > 0;
-        if model.meta.name != name {
-            actions.push(UndoAction::ProjectName {
-                old: model.meta.name.clone(),
-                new: name.clone(),
-            });
-            model.meta.name = name.clone();
-        }
-        if model.meta.artist != artist {
-            actions.push(UndoAction::ProjectArtist {
-                old: model.meta.artist.clone(),
-                new: artist.clone(),
-            });
-            model.meta.artist = artist;
-        }
-        if model.meta.description != description {
-            actions.push(UndoAction::ProjectDescription {
-                old: model.meta.description.clone(),
-                new: description.clone(),
-            });
-            model.meta.description = description;
-        }
-        let old_ppq = model.meta.ppq;
-        if old_ppq != ppq && ppq > 0 {
-            if has_notes {
-                // 有音符：缩放全部 tick 字段（与桌面一致）。
-                model.rescale_ppq(ppq);
-            } else {
-                model.meta.ppq = ppq;
-                model.commit_automation(&yinhe_types::automation::AutomationTarget::Tempo);
+            let old_ppq = doc.data.model.meta.ppq;
+            let has_notes = doc.data.model.note_count > 0;
+            let ppq_changed = old_ppq != ppq && ppq > 0;
+            let before = doc.capture_snapshot();
+
+            if ppq_changed && has_notes {
+                job.set_progress(0.0, "缩放 PPQ");
+                let model = (*doc.data.model).clone();
+                match yinhe_core::YinModel::rescale_ppq_with_progress(
+                    model,
+                    ppq,
+                    job.progress(),
+                    job.cancel_flag(),
+                ) {
+                    Ok(rescaled) => doc.data.model = std::sync::Arc::new(rescaled),
+                    // 取消：文档保持原样（元数据也不提交）。
+                    Err(_) => return false,
+                }
             }
-            ppq_change = Some((old_ppq, ppq));
-        }
-    }
-    if let Some((old, new)) = ppq_change {
-        let has_notes = doc.data.model.note_count > 0;
-        actions.push(UndoAction::ProjectPpq {
-            old,
-            new,
-            rescale: has_notes,
-        });
-    }
-    if actions.is_empty() {
-        return 0;
-    }
-    let action = if actions.len() == 1 {
-        actions.pop().unwrap_or(UndoAction::ProjectName {
-            old: String::new(),
-            new: String::new(),
-        })
-    } else {
-        UndoAction::Composite(actions)
-    };
-    doc.push_undo(action, "Edit project meta", before);
-    let model = doc.data.model.clone();
-    refresh_snapshot(&mut s);
-    drop(s);
-    crate::audio::on_model_loaded(model);
-    log::info!("工程元数据已更新");
-    1
+
+            let mut actions: Vec<UndoAction> = Vec::new();
+            {
+                let model = std::sync::Arc::make_mut(&mut doc.data.model);
+                if model.meta.name != name {
+                    actions.push(UndoAction::ProjectName {
+                        old: model.meta.name.clone(),
+                        new: name.clone(),
+                    });
+                    model.meta.name = name.clone();
+                }
+                if model.meta.artist != artist {
+                    actions.push(UndoAction::ProjectArtist {
+                        old: model.meta.artist.clone(),
+                        new: artist.clone(),
+                    });
+                    model.meta.artist = artist;
+                }
+                if model.meta.description != description {
+                    actions.push(UndoAction::ProjectDescription {
+                        old: model.meta.description.clone(),
+                        new: description.clone(),
+                    });
+                    model.meta.description = description;
+                }
+                if ppq_changed {
+                    if !has_notes {
+                        model.meta.ppq = ppq;
+                        model.commit_automation(&yinhe_types::automation::AutomationTarget::Tempo);
+                    }
+                    actions.push(UndoAction::ProjectPpq {
+                        old: old_ppq,
+                        new: ppq,
+                        rescale: has_notes,
+                    });
+                }
+            }
+            if actions.is_empty() {
+                return false;
+            }
+            let action = if actions.len() == 1 {
+                actions.pop().unwrap_or(UndoAction::ProjectName {
+                    old: String::new(),
+                    new: String::new(),
+                })
+            } else {
+                UndoAction::Composite(actions)
+            };
+            doc.push_undo(action, "Edit project meta", before);
+            doc.edit.pianoroll_view.base.dirty = true;
+            log::info!("工程元数据已更新");
+            true
+        },
+        None::<fn()>,
+    )
 }
 
 /// 把文档写入场景快照（演示与文件加载共用）。
@@ -1549,6 +1565,8 @@ pub(crate) fn selection_changed(s: &mut RenderScene) {
 
 /// 从文档重算轨道快照（模型/颜色/显隐/轨道面板信息/ppq）。
 pub(crate) fn refresh_snapshot(s: &mut RenderScene) {
+    // 内容已变：选区物化/拖动 ghost 缓存都作废（ghost 里存的是旧位置/旧 id）。
+    crate::selection_materializer::invalidate();
     s.doc_generation = s.doc_generation.wrapping_add(1);
     // 覆盖层（选框/预览）随快照变化一起失效（undo/编辑/加载后重取）。
     s.overlay_rev = s.overlay_rev.wrapping_add(1);
@@ -1561,6 +1579,7 @@ pub(crate) fn refresh_snapshot(s: &mut RenderScene) {
     };
     let model = doc.data.model.clone();
     let colors = doc.edit.track_cache.colors.clone();
+    s.model_revision = doc.data.revision;
     // 内容结束后实时保留 64 小节空余（编辑后立即可滚动/点击）。
     s.total_ticks = total_ticks_padded(model.tick_length, model.meta.ppq).max(1.0);
     s.model = Some(model.clone());
@@ -3050,6 +3069,8 @@ pub fn select_all(scope: i32, track: i32) -> i32 {
     // 纯选区变化：不重建轨道/音符快照，也不 bump doc_generation
     //（否则 Dart 会全量重扫力度条与自动化）。
     selection_changed(&mut s);
+    // 大选区松手/全选后立刻后台物化成员位图与拖动 ghost，按下拖动时直接复用。
+    crate::selection_materializer::schedule(&s);
     1
 }
 
@@ -3074,7 +3095,8 @@ pub fn clear_selection() -> i32 {
     doc.edit.chan_ar_sel.clear();
     doc.edit.track_selected.clear();
     doc.edit.pianoroll_view.base.dirty = true;
-    // 同 select_all：选区清空只刷新覆盖层。
+    // 同 select_all：选区清空只刷新覆盖层；同时释放大选区的 ghost 缓存。
+    crate::selection_materializer::invalidate();
     selection_changed(&mut s);
     1
 }
@@ -3119,12 +3141,6 @@ fn select_track_all(doc: &mut Document, track: u16, arrange: bool) -> bool {
 /// 幅度全 0 = 不改。一次操作一个 undo。
 pub fn humanize_selection(timing: u32, velocity: u32, gate: u32) -> i32 {
     use yinhe_editor_core::HumanizeParams;
-    let Ok(mut s) = scene().lock() else {
-        return 0;
-    };
-    let Some(doc) = s.document.as_mut() else {
-        return 0;
-    };
     let params = HumanizeParams {
         timing,
         velocity: velocity.min(127) as u8,
@@ -3133,17 +3149,20 @@ pub fn humanize_selection(timing: u32, velocity: u32, gate: u32) -> i32 {
     if params.is_noop() {
         return 0;
     }
-    let before = doc.capture_snapshot();
-    let Some(action) = doc.humanize_selected(params) else {
-        return 0;
-    };
-    doc.push_undo(action, "人性化", before);
-    doc.edit.pianoroll_view.base.dirty = true;
-    let model = doc.data.model.clone();
-    refresh_snapshot(&mut s);
-    drop(s);
-    crate::audio::reload_notes(model);
-    1
+    crate::doc_job::try_start(
+        "humanize",
+        crate::doc_job::Reload::Notes,
+        move |doc, _job| {
+            let before = doc.capture_snapshot();
+            let Some(action) = doc.humanize_selected(params) else {
+                return false;
+            };
+            doc.push_undo(action, "人性化", before);
+            doc.edit.pianoroll_view.base.dirty = true;
+            true
+        },
+        None::<fn()>,
+    )
 }
 
 /// 当前音符选区的 tick 范围 `(t0, t1)`；无选区返回 None。
@@ -3182,81 +3201,86 @@ pub fn batch_edit(
     use yinhe_editor_core::document::note_edit::NoteField;
     use yinhe_editor_core::num_expr::apply_ops;
 
-    let Ok(mut s) = scene().lock() else {
-        return 0;
-    };
-    let Some(doc) = s.document.as_mut() else {
-        return 0;
-    };
-    if doc.edit.selected.is_empty() {
-        return 0;
-    }
-    let before = doc.capture_snapshot();
-    let mut actions = Vec::new();
-
-    // 变速：把表达式应用到 1.0 得到倍率，直接用 f64 算新跨度（只舍入一次，
-    // 不再转整数比例，避免 1.3333333333 这类输入多一次误差）。
-    let factor = field_ops(stretch_expr)
-        .map(|ops| apply_ops(&ops, 1.0))
-        .unwrap_or(1.0);
-    if factor.is_finite() && factor > 0.0 && (factor - 1.0).abs() > 1e-9 {
-        let (mut t0, mut t1) = (u64::MAX, 0u64);
-        for &(ts, te, _, _, _, _) in &doc.edit.selected.rects {
-            t0 = t0.min(ts as u64);
-            t1 = t1.max(te as u64);
-        }
-        let span = t1.saturating_sub(t0);
-        if span > 0 {
-            let new_span = (span as f64 * factor).round().max(1.0) as u64;
-            if new_span != span
-                && let Some(a) = doc.rescale_selection_span(new_span)
-            {
-                actions.push(a);
+    let velocity_expr = velocity_expr.to_string();
+    let gate_expr = gate_expr.to_string();
+    let key_expr = key_expr.to_string();
+    let tick_expr = tick_expr.to_string();
+    let stretch_expr = stretch_expr.to_string();
+    crate::doc_job::try_start(
+        "batch-edit",
+        crate::doc_job::Reload::Notes,
+        move |doc, _job| {
+            if doc.edit.selected.is_empty() {
+                return false;
             }
-        }
-    }
+            let before = doc.capture_snapshot();
+            let mut actions = Vec::new();
 
-    for (field, expr) in [
-        (NoteField::Velocity, velocity_expr),
-        (NoteField::Gate, gate_expr),
-        (NoteField::Key, key_expr),
-        (NoteField::Tick, tick_expr),
-    ] {
-        let Some(ops) = field_ops(expr) else {
-            continue;
-        };
-        if let Some(a) = doc.apply_note_field_edit(field, &ops) {
-            actions.push(a);
-        }
-    }
-    if actions.is_empty() {
-        return 0;
-    }
-    let undo = match actions.len() {
-        1 => actions.into_iter().next(),
-        _ => Some(yinhe_editor_core::history::UndoAction::Composite(actions)),
-    };
-    if let Some(undo) = undo {
-        doc.push_undo(undo, "批量处理", before);
-    }
-    doc.edit.pianoroll_view.base.dirty = true;
-    let model = doc.data.model.clone();
-    refresh_snapshot(&mut s);
-    drop(s);
-    crate::audio::reload_notes(model);
-    1
+            // 变速：把表达式应用到 1.0 得到倍率，直接用 f64 算新跨度（只舍入一次，
+            // 不再转整数比例，避免 1.3333333333 这类输入多一次误差）。
+            let factor = field_ops(&stretch_expr)
+                .map(|ops| apply_ops(&ops, 1.0))
+                .unwrap_or(1.0);
+            if factor.is_finite() && factor > 0.0 && (factor - 1.0).abs() > 1e-9 {
+                let (mut t0, mut t1) = (u64::MAX, 0u64);
+                for &(ts, te, _, _, _, _) in &doc.edit.selected.rects {
+                    t0 = t0.min(ts as u64);
+                    t1 = t1.max(te as u64);
+                }
+                let span = t1.saturating_sub(t0);
+                if span > 0 {
+                    let new_span = (span as f64 * factor).round().max(1.0) as u64;
+                    if new_span != span
+                        && let Some(a) = doc.rescale_selection_span(new_span)
+                    {
+                        actions.push(a);
+                    }
+                }
+            }
+
+            for (field, expr) in [
+                (NoteField::Velocity, &velocity_expr),
+                (NoteField::Gate, &gate_expr),
+                (NoteField::Key, &key_expr),
+                (NoteField::Tick, &tick_expr),
+            ] {
+                let Some(ops) = field_ops(expr) else {
+                    continue;
+                };
+                if let Some(a) = doc.apply_note_field_edit(field, &ops) {
+                    actions.push(a);
+                }
+            }
+            if actions.is_empty() {
+                return false;
+            }
+            let undo = match actions.len() {
+                1 => actions.into_iter().next(),
+                _ => Some(yinhe_editor_core::history::UndoAction::Composite(actions)),
+            };
+            if let Some(undo) = undo {
+                doc.push_undo(undo, "批量处理", before);
+            }
+            doc.edit.pianoroll_view.base.dirty = true;
+            true
+        },
+        None::<fn()>,
+    )
 }
 
 /// 批量处理（AM 当前 lane）：值与位置各一个表达式（`100`/`+2`/`x0.5`），
 /// 空串或无效 = 跳过。值是显示值（CC 0..127、PB 0..16383）。
 pub fn automation_batch_edit(value_expr: &str, tick_expr: &str) -> i32 {
     use yinhe_editor_core::num_expr::{apply_ops, apply_ops_round};
-    let Ok(mut s) = scene().lock() else {
-        return 0;
-    };
-    let panel = s.automation_panel.clone();
-    let Some(doc) = s.document.as_mut() else {
-        return 0;
+
+    let panel = {
+        let Ok(s) = scene().lock() else {
+            return 0;
+        };
+        if s.document.is_none() {
+            return 0;
+        }
+        s.automation_panel.clone()
     };
     let Some(lane_index) = panel.lane else {
         return 0;
@@ -3264,76 +3288,81 @@ pub fn automation_batch_edit(value_expr: &str, tick_expr: &str) -> i32 {
     if panel.selected_ticks.is_empty() {
         return 0;
     }
-    let value_ops = field_ops(value_expr);
-    let tick_ops = field_ops(tick_expr);
-    if value_ops.is_none() && tick_ops.is_none() {
-        return 0;
-    }
-    let track = panel.active_track;
-    let Some((raw_idx, target)) = doc
-        .data
-        .model
-        .tracks
-        .get(track)
-        .and_then(|t| visible_lane(t, lane_index))
-    else {
-        return 0;
-    };
-    let display_max = f64::from(target.display_max().unwrap_or(1.0));
-    let Some(lane) = doc
-        .data
-        .model
-        .tracks
-        .get(track)
-        .and_then(|t| t.automation_lanes.get(raw_idx))
-    else {
-        return 0;
-    };
-    let events: Vec<(u32, f32)> = lane
-        .events
-        .iter()
-        .filter(|e| panel.selected_ticks.binary_search(&e.tick).is_ok())
-        .map(|e| (e.tick, e.value))
-        .collect();
-    if events.is_empty() {
-        return 0;
-    }
-
-    let mut moves: Vec<(u32, u32, f32)> = Vec::new();
-    for (old_tick, old_value) in events {
-        let new_tick = match &tick_ops {
-            Some(ops) => {
-                apply_ops_round(ops, f64::from(old_tick)).clamp(0.0, f64::from(u32::MAX)) as u32
+    let value_expr = value_expr.to_string();
+    let tick_expr = tick_expr.to_string();
+    crate::doc_job::try_start(
+        "automation-batch",
+        crate::doc_job::Reload::Notes,
+        move |doc, _job| {
+            let value_ops = field_ops(&value_expr);
+            let tick_ops = field_ops(&tick_expr);
+            if value_ops.is_none() && tick_ops.is_none() {
+                return false;
             }
-            None => old_tick,
-        };
-        let new_value = match &value_ops {
-            Some(ops) => {
-                let cur = f64::from(target.to_display_value(old_value));
-                let display = apply_ops(ops, cur).clamp(0.0, display_max) as f32;
-                target.from_display_value(display)
+            let track = panel.active_track;
+            let Some((raw_idx, target)) = doc
+                .data
+                .model
+                .tracks
+                .get(track)
+                .and_then(|t| visible_lane(t, lane_index))
+            else {
+                return false;
+            };
+            let display_max = f64::from(target.display_max().unwrap_or(1.0));
+            let Some(lane) = doc
+                .data
+                .model
+                .tracks
+                .get(track)
+                .and_then(|t| t.automation_lanes.get(raw_idx))
+            else {
+                return false;
+            };
+            let events: Vec<(u32, f32)> = lane
+                .events
+                .iter()
+                .filter(|e| panel.selected_ticks.binary_search(&e.tick).is_ok())
+                .map(|e| (e.tick, e.value))
+                .collect();
+            if events.is_empty() {
+                return false;
             }
-            None => old_value,
-        };
-        if new_tick != old_tick || new_value != old_value {
-            moves.push((old_tick, new_tick, new_value));
-        }
-    }
-    if moves.is_empty() {
-        return 0;
-    }
 
-    let before = doc.capture_snapshot();
-    let Some(action) = doc.move_automation_events_batch(track, raw_idx, &target, &moves) else {
-        return 0;
-    };
-    doc.push_undo(action, "批量处理", before);
-    doc.edit.pianoroll_view.base.dirty = true;
-    let model = doc.data.model.clone();
-    refresh_snapshot(&mut s);
-    drop(s);
-    crate::audio::reload_notes(model);
-    1
+            let mut moves: Vec<(u32, u32, f32)> = Vec::new();
+            for (old_tick, old_value) in events {
+                let new_tick = match &tick_ops {
+                    Some(ops) => apply_ops_round(ops, f64::from(old_tick))
+                        .clamp(0.0, f64::from(u32::MAX)) as u32,
+                    None => old_tick,
+                };
+                let new_value = match &value_ops {
+                    Some(ops) => {
+                        let cur = f64::from(target.to_display_value(old_value));
+                        let display = apply_ops(ops, cur).clamp(0.0, display_max) as f32;
+                        target.from_display_value(display)
+                    }
+                    None => old_value,
+                };
+                if new_tick != old_tick || new_value != old_value {
+                    moves.push((old_tick, new_tick, new_value));
+                }
+            }
+            if moves.is_empty() {
+                return false;
+            }
+
+            let before = doc.capture_snapshot();
+            let Some(action) = doc.move_automation_events_batch(track, raw_idx, &target, &moves)
+            else {
+                return false;
+            };
+            doc.push_undo(action, "批量处理", before);
+            doc.edit.pianoroll_view.base.dirty = true;
+            true
+        },
+        None::<fn()>,
+    )
 }
 
 /// 框选批量操作（编号与桌面 transport bar「操作」菜单一致）。
@@ -3341,28 +3370,31 @@ pub fn automation_batch_edit(value_expr: &str, tick_expr: &str) -> i32 {
 /// `scope`: 0 = 音符（PR/AR 共用 `edit.selected`），1 = 当前 AM lane 的锚点。
 /// 返回 1 = 已执行，0 = 无变化或该操作不适用。
 pub fn selection_action(scope: i32, action: i32) -> i32 {
-    let Ok(mut s) = scene().lock() else {
-        return 0;
+    let (panel, view_mode) = {
+        let Ok(s) = scene().lock() else {
+            return 0;
+        };
+        if s.document.is_none() {
+            return 0;
+        }
+        (s.automation_panel.clone(), s.view_mode)
     };
-    let panel = s.automation_panel.clone();
-    let view_mode = s.view_mode;
-    let Some(doc) = s.document.as_mut() else {
-        return 0;
-    };
-    let changed = if scope == 1 {
-        automation_selection_action(doc, &panel, action)
-    } else {
-        note_selection_action(doc, action, view_mode)
-    };
-    if !changed {
-        return 0;
-    }
-    doc.edit.pianoroll_view.base.dirty = true;
-    let model = doc.data.model.clone();
-    refresh_snapshot(&mut s);
-    drop(s);
-    crate::audio::reload_notes(model);
-    1
+    crate::doc_job::try_start(
+        "selection-action",
+        crate::doc_job::Reload::Notes,
+        move |doc, _job| {
+            let changed = if scope == 1 {
+                automation_selection_action(doc, &panel, action)
+            } else {
+                note_selection_action(doc, action, view_mode)
+            };
+            if changed {
+                doc.edit.pianoroll_view.base.dirty = true;
+            }
+            changed
+        },
+        None::<fn()>,
+    )
 }
 
 /// 音符选区批量操作（PR/AR 共用）。
@@ -3625,11 +3657,32 @@ pub fn set_automation_ghost(flat: &[f64]) {
     s.automation_panel.ghost = ghost;
 }
 
+/// 当前力度摘要的键：与渲染线程构建 `VelocitySummary` 时的 `vs_key` 完全一致。
+fn velocity_key(s: &RenderScene) -> u64 {
+    let visible = crate::render::effective_visible(&s.pr_track_visible, s.display_track);
+    let tv_hash = yinhe_wgpu::hash_bools(&visible);
+    s.model_revision ^ tv_hash.rotate_left(32)
+}
+
+/// 力度条数据是否已就绪。
+///
+/// 高倍率走原始窗口扫描，不依赖摘要；低倍率必须等渲染线程的摘要键追上
+/// 当前文档。Dart 在未就绪时延迟重试，而不是退回同步全量扫描。
+pub fn velocity_ready() -> i32 {
+    let Ok(s) = scene().lock() else {
+        return 1;
+    };
+    if yinhe_wgpu::pianoroll::select_summary_level(s.pr_view.base.pixels_per_tick).is_none() {
+        return 1;
+    }
+    i32::from(crate::velocity_cache::get(velocity_key(&s)).is_some())
+}
+
 /// PR 力度条数据（当前可见 tick 范围 + 可见轨）。
 ///
 /// 扁平的 `[tick, length, velocity01, track, ...]` f64 数组，不再经过 JSON。
-/// 与桌面一致：velocity <= 1 过滤；ppu 较小时按 `SUMMARY_BLOCK_TICKS`
-/// 对每个 (块, 轨道) 取 gate 最长的代表音符（LOD 摘要）。
+/// 低倍率直接切渲染线程后台预计算的摘要（与 GPU 同一份数据），不再在 UI
+/// 线程同步扫全曲；高倍率可见音符本来就少，按窗口扫原始音符。
 pub fn velocity_bars() -> Vec<f64> {
     let Ok(s) = scene().lock() else {
         return Vec::new();
@@ -3638,11 +3691,7 @@ pub fn velocity_bars() -> Vec<f64> {
         return Vec::new();
     };
     let model = &doc.data.model;
-    let visible = doc.edit.pr_visible();
-    let only_track = s.display_track;
     let ppu = s.pr_view.base.pixels_per_tick;
-    let block = yinhe_wgpu::pianoroll::select_summary_level(ppu)
-        .map(|l| yinhe_wgpu::pianoroll::SUMMARY_BLOCK_TICKS[l]);
     let (lw, lh) = crate::logical_size();
     let (scan_lo, scan_hi) = if lw > 0.0 {
         s.pr_view
@@ -3654,67 +3703,47 @@ pub fn velocity_bars() -> Vec<f64> {
     let scan_hi_tick = scan_hi.max(scan_lo + 1.0).ceil().min(u32::MAX as f64) as u32;
 
     let mut bars: Vec<(u32, u32, u8, u16)> = Vec::new();
-    match block {
-        None => {
-            for key in 0..=yinhe_types::MAX_KEY {
-                for note in model.key_notes_in_range(key, scan_lo_tick, scan_hi_tick) {
-                    if note.velocity <= 1 {
-                        continue;
-                    }
-                    if f64::from(note.end_tick) <= scan_lo || f64::from(note.start_tick) >= scan_hi
-                    {
-                        continue;
-                    }
-                    let t = note.track as usize;
-                    if !visible.get(t).copied().unwrap_or(true) {
-                        continue;
-                    }
-                    if only_track.is_some_and(|only| only != t) {
-                        continue;
-                    }
-                    bars.push((
-                        note.start_tick,
-                        note.end_tick.saturating_sub(note.start_tick),
-                        note.velocity,
-                        note.track,
-                    ));
-                }
+    if yinhe_wgpu::pianoroll::select_summary_level(ppu).is_some() {
+        let Some(summary) = crate::velocity_cache::get(velocity_key(&s)) else {
+            return Vec::new();
+        };
+        let Some(level) = summary.level_for_ppu(ppu) else {
+            return Vec::new();
+        };
+        for b in summary.level(level) {
+            if b.start_tick > scan_hi_tick {
+                break;
             }
+            if b.end_tick <= scan_lo_tick {
+                continue;
+            }
+            bars.push((
+                b.start_tick,
+                b.end_tick.saturating_sub(b.start_tick),
+                b.velocity,
+                b.track,
+            ));
         }
-        Some(block) => {
-            use std::collections::HashMap;
-            let mut map: HashMap<(u32, u16), (u32, u32, u8)> = HashMap::new();
-            for key in 0..=yinhe_types::MAX_KEY {
-                for note in model.key_notes_in_range(key, scan_lo_tick, scan_hi_tick) {
-                    if note.velocity <= 1 {
-                        continue;
-                    }
-                    if f64::from(note.end_tick) <= scan_lo || f64::from(note.start_tick) >= scan_hi
-                    {
-                        continue;
-                    }
-                    let t = note.track as usize;
-                    if !visible.get(t).copied().unwrap_or(true) {
-                        continue;
-                    }
-                    if only_track.is_some_and(|only| only != t) {
-                        continue;
-                    }
-                    let len = note.end_tick.saturating_sub(note.start_tick);
-                    let entry = map.entry((note.start_tick / block, note.track)).or_insert((
-                        note.start_tick,
-                        len,
-                        note.velocity,
-                    ));
-                    if len > entry.1 || (len == entry.1 && note.velocity > entry.2) {
-                        *entry = (note.start_tick, len, note.velocity);
-                    }
+    } else {
+        let visible = crate::render::effective_visible(&s.pr_track_visible, s.display_track);
+        for key in 0..=yinhe_types::MAX_KEY {
+            for note in model.key_notes_in_range(key, scan_lo_tick, scan_hi_tick) {
+                if note.velocity <= 1 {
+                    continue;
                 }
+                if f64::from(note.end_tick) <= scan_lo || f64::from(note.start_tick) >= scan_hi {
+                    continue;
+                }
+                if !visible.get(note.track as usize).copied().unwrap_or(true) {
+                    continue;
+                }
+                bars.push((
+                    note.start_tick,
+                    note.end_tick.saturating_sub(note.start_tick),
+                    note.velocity,
+                    note.track,
+                ));
             }
-            bars.extend(
-                map.into_iter()
-                    .map(|((_, track), (tick, len, vel))| (tick, len, vel, track)),
-            );
         }
     }
     bars.sort_unstable_by_key(|b| (b.0, b.3));
@@ -3905,43 +3934,48 @@ pub fn paste_selection(x: f32) -> i32 {
     if clipboard.is_empty() {
         return 0;
     }
-    let Ok(mut s) = scene().lock() else {
-        return 0;
+    // 先按当前视口算出长按位置对应的 tick（进入后台后视口可能变化）。
+    let tick = {
+        let Ok(s) = scene().lock() else {
+            return 0;
+        };
+        if s.document.is_none() {
+            return 0;
+        }
+        tick_at_x(&s, x)
     };
-    // 先按当前视口算出长按位置对应的 tick，并用当前量化档吸附。
-    let tick = tick_at_x(&s, x);
+    crate::doc_job::try_start(
+        "paste",
+        crate::doc_job::Reload::Notes,
+        move |doc, _job| {
+            let track_selected = doc.edit.track_selected.clone();
+            let before = doc.capture_snapshot();
+            let Some((action, _span)) =
+                doc.paste_notes(&clipboard, tick, &track_selected, PasteMode::AtCursor)
+            else {
+                return false;
+            };
+            doc.push_undo(action, "undo.paste", before);
 
-    let Some(doc) = s.document.as_mut() else {
-        return 0;
-    };
-    let track_selected = doc.edit.track_selected.clone();
-    let before = doc.capture_snapshot();
-    let Some((action, _span)) =
-        doc.paste_notes(&clipboard, tick, &track_selected, PasteMode::AtCursor)
-    else {
-        return 0;
-    };
-    doc.push_undo(action, "undo.paste", before);
-
-    // paste_notes 只更新成员集；这里同步 PR/AR 选框，粘贴后可直接再次长按复制。
-    let rects = doc.edit.selected.rects.clone();
-    doc.edit.sel_rect.clear();
-    doc.edit.arr_sel_rect.clear();
-    for (t0, t1, klo, khi, trlo, trhi) in rects {
-        doc.edit
-            .sel_rect
-            .push_rect((f64::from(t0), f64::from(t1), klo, khi), false);
-        doc.edit
-            .arr_sel_rect
-            .push((f64::from(t0), f64::from(t1), trlo as usize, trhi as usize));
-    }
-    let model = doc.data.model.clone();
-    refresh_snapshot(&mut s);
-    drop(s);
-    crate::audio::reload_notes(model);
-    set_play_cursor(tick);
-    log::info!("已粘贴剪贴板到 tick {tick:.0}");
-    1
+            // paste_notes 只更新成员集；这里同步 PR/AR 选框，粘贴后可直接再次长按复制。
+            let rects = doc.edit.selected.rects.clone();
+            doc.edit.sel_rect.clear();
+            doc.edit.arr_sel_rect.clear();
+            for (t0, t1, klo, khi, trlo, trhi) in rects {
+                doc.edit
+                    .sel_rect
+                    .push_rect((f64::from(t0), f64::from(t1), klo, khi), false);
+                doc.edit.arr_sel_rect.push((
+                    f64::from(t0),
+                    f64::from(t1),
+                    trlo as usize,
+                    trhi as usize,
+                ));
+            }
+            true
+        },
+        Some(move || set_play_cursor(tick)),
+    )
 }
 
 /// 通道级默认乐器 JSON：16 项，`[bank, program]` 或 null。
@@ -4811,33 +4845,27 @@ pub fn ensure_automation_lane(track: usize, kind: i32, number: i32) -> i32 {
     1
 }
 
-/// 撤销一步（含音频与快照刷新）。成功 1。
+/// 撤销一步（含音频与快照刷新）。成功 1（已启动后台任务）。
 pub fn undo() -> i32 {
-    history_step(|doc| doc.undo())
+    history_step(false)
 }
 
-/// 重做一步（含音频与快照刷新）。成功 1。
+/// 重做一步（含音频与快照刷新）。成功 1（已启动后台任务）。
 pub fn redo() -> i32 {
-    history_step(|doc| doc.redo())
+    history_step(true)
 }
 
-fn history_step(step: impl FnOnce(&mut Document) -> bool) -> i32 {
-    let Ok(mut s) = scene().lock() else {
-        return 0;
-    };
-    crate::selection_materializer::invalidate();
-    let Some(doc) = s.document.as_mut() else {
-        return 0;
-    };
-    if !step(doc) {
-        return 0;
-    }
-    let model = doc.data.model.clone();
-    refresh_snapshot(&mut s);
-    drop(s);
-    // 撤销/重做可能改动音符或自动化：重载 CC（不中断播放）。
-    crate::audio::reload_notes(model);
-    1
+fn history_step(redo: bool) -> i32 {
+    crate::doc_job::try_start(
+        if redo { "redo" } else { "undo" },
+        crate::doc_job::Reload::Notes,
+        move |doc, _job| {
+            // 历史重放会换掉选区引用的音符：先作废后台物化/ghost 缓存。
+            crate::selection_materializer::invalidate();
+            if redo { doc.redo() } else { doc.undo() }
+        },
+        None::<fn()>,
+    )
 }
 
 /// 设置“显示轨道”过滤（-1 = 全部）。PR/AR 音符只画该轨。成功 1。
@@ -5701,7 +5729,7 @@ fn visible_lane(
 }
 
 /// 极简 JSON 字符串转义（双引号/反斜杠/控制字符）。
-fn json_escape(s: &str) -> String {
+pub(crate) fn json_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 8);
     for c in s.chars() {
         match c {

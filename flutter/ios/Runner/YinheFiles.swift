@@ -27,6 +27,16 @@ final class YinheFileBridge: NSObject, UIDocumentPickerDelegate {
     case openSoundfont
     case saveProject(name: String)
     case saveExport(name: String)
+
+    /// 大文件复制事件里的 `kind`。
+    var copyKind: String {
+      switch self {
+      case .openProject: return "open"
+      case .openSoundfont: return "soundfont"
+      case .saveProject: return "saveProject"
+      case .saveExport: return "saveExport"
+      }
+    }
   }
 
   private var action: Action?
@@ -34,6 +44,10 @@ final class YinheFileBridge: NSObject, UIDocumentPickerDelegate {
 
   /// 写入位置书签：文件名 → security-scoped bookmark（UserDefaults 持久化）。
   private let bookmarkKey = "yinhe.fileBookmarks"
+
+  /// 大文件复制分块大小（1MB）与进度上报节流间隔（~100ms）。
+  private static let copyChunkSize = 1 << 20
+  private static let progressIntervalNanos: UInt64 = 100_000_000
 
   init(channel: FlutterMethodChannel) {
     self.channel = channel
@@ -59,13 +73,18 @@ final class YinheFileBridge: NSObject, UIDocumentPickerDelegate {
     let temp = tempURL(ext: "")
     // 不是「另存为」且记得上次位置：直接覆盖，不弹选择器。
     if !saveAs, let bookmark = bookmark(for: name) {
-      do {
-        try overwrite(bookmark: bookmark, with: temp)
-        channel.invokeMethod("onProjectSaved", arguments: "ok")
-      } catch {
-        NSLog("[yinhe] 覆盖保存失败：\(error)")
-        removeBookmark(for: name)
-        presentExport(file: temp, fileName: ensureExt(name, "yin"), action: .saveProject(name: name))
+      let fileName = ensureExt(name, "yin")
+      overwriteInBackground(
+        bookmark: bookmark, with: temp, kind: "saveProject", name: fileName
+      ) { result in
+        switch result {
+        case .success:
+          self.send("onProjectSaved", "ok")
+        case .failure(let error):
+          NSLog("[yinhe] 覆盖保存失败：\(error)")
+          self.removeBookmark(for: name)
+          self.presentExport(file: temp, fileName: fileName, action: .saveProject(name: name))
+        }
       }
       return
     }
@@ -107,24 +126,29 @@ final class YinheFileBridge: NSObject, UIDocumentPickerDelegate {
     guard FileManager.default.fileExists(atPath: file.path) else {
       NSLog("[yinhe] 待保存的临时文件不存在：\(file.path)")
       if case .saveProject = action {
-        channel.invokeMethod("onProjectSaveFailed", arguments: "temp missing")
+        send("onProjectSaveFailed", "temp missing")
       }
       return
     }
     // 导出页用文件 URL 当默认文件名：拷一份改成目标名再交给系统，
     // 原临时文件保留（Rust 下次还是写同一个路径，取消保存后不影响重试）。
     let named = file.deletingLastPathComponent().appendingPathComponent(fileName)
-    if named != file {
-      try? FileManager.default.removeItem(at: named)
-      do {
-        try FileManager.default.copyItem(at: file, to: named)
-      } catch {
-        NSLog("[yinhe] 准备导出文件失败：\(error)")
-      }
+    if named == file {
+      presentExportPicker(file: file, action: action)
+      return
     }
-    let exportURL = FileManager.default.fileExists(atPath: named.path) ? named : file
+    copyInBackground(from: file, to: named, kind: action.copyKind, name: fileName) { ok in
+      if !ok {
+        NSLog("[yinhe] 准备导出文件失败，改用原临时文件：\(file.path)")
+      }
+      let exportURL = FileManager.default.fileExists(atPath: named.path) ? named : file
+      self.presentExportPicker(file: exportURL, action: action)
+    }
+  }
+
+  private func presentExportPicker(file: URL, action: Action) {
     self.action = action
-    let picker = UIDocumentPickerViewController(forExporting: [exportURL], asCopy: true)
+    let picker = UIDocumentPickerViewController(forExporting: [file], asCopy: true)
     picker.delegate = self
     present(picker)
   }
@@ -175,7 +199,7 @@ final class YinheFileBridge: NSObject, UIDocumentPickerDelegate {
     guard let action else { return }
     self.action = nil
     if case .saveProject = action {
-      channel.invokeMethod("onProjectSaveCancelled", arguments: "cancel")
+      send("onProjectSaveCancelled", "cancel")
     }
   }
 
@@ -185,32 +209,46 @@ final class YinheFileBridge: NSObject, UIDocumentPickerDelegate {
     let name = url.lastPathComponent
     let ext = url.pathExtension.lowercased()
     guard !ext.isEmpty, pendingExts.contains(ext) else {
-      channel.invokeMethod(soundfont ? "onSoundfontRejected" : "onFileRejected", arguments: name)
+      send(soundfont ? "onSoundfontRejected" : "onFileRejected", name)
       return
     }
+    // security scope 要一直持有到复制完成（以及 .yin 书签创建完），
+    // 所以不能像以前那样用完就 defer stop。
     let scoped = url.startAccessingSecurityScopedResource()
-    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-
     let dest = documents.appendingPathComponent(name.isEmpty ? "picked.bin" : name)
-    do {
-      if url.standardizedFileURL.path != dest.standardizedFileURL.path {
-        // 用户可能就是从「我的 iPad > yinhe」（本应用 Documents）里选的，同一路径不要再拷。
-        try copy(from: url, to: dest)
-      }
-    } catch {
-      NSLog("[yinhe] 复制所选文件失败：\(error)")
-      channel.invokeMethod(soundfont ? "onSoundfontRejected" : "onFileRejected", arguments: name)
+    let kind = soundfont ? "soundfont" : "open"
+
+    if url.standardizedFileURL.path == dest.standardizedFileURL.path {
+      // 用户可能就是从「我的 iPad > yinhe」（本应用 Documents）里选的，同一路径不要再拷。
+      finishOpen(
+        url: url, dest: dest, ext: ext, name: name, soundfont: soundfont, scoped: scoped)
       return
     }
 
+    copyInBackground(from: url, to: dest, kind: kind, name: name) { ok in
+      guard ok else {
+        if scoped { url.stopAccessingSecurityScopedResource() }
+        self.send(soundfont ? "onSoundfontRejected" : "onFileRejected", name)
+        return
+      }
+      self.finishOpen(
+        url: url, dest: dest, ext: ext, name: name, soundfont: soundfont, scoped: scoped)
+    }
+  }
+
+  /// 复制完成后收尾（主线程）：记书签、释放 security scope、通知 Dart。
+  private func finishOpen(
+    url: URL, dest: URL, ext: String, name: String, soundfont: Bool, scoped: Bool
+  ) {
     // .yin 工程记住原位置（bookmark），「保存」时直接覆盖原文件。
-    if ext == "yin", scoped, let data = try? url.bookmarkData(
-      options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+    if ext == "yin", scoped,
+      let data = try? url.bookmarkData(
+        options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
     {
       saveBookmark(data, for: name)
     }
-
-    channel.invokeMethod(soundfont ? "onSoundFontPicked" : "onFilePicked", arguments: dest.path)
+    if scoped { url.stopAccessingSecurityScopedResource() }
+    send(soundfont ? "onSoundFontPicked" : "onFilePicked", dest.path)
   }
 
   // MARK: - 保存
@@ -225,47 +263,162 @@ final class YinheFileBridge: NSObject, UIDocumentPickerDelegate {
       saveBookmark(data, for: isProject ? name : url.lastPathComponent)
     }
     if isProject {
-      channel.invokeMethod("onProjectSaved", arguments: "ok")
+      send("onProjectSaved", "ok")
     } else {
-      channel.invokeMethod("onExportSaved", arguments: url.lastPathComponent)
+      send("onExportSaved", url.lastPathComponent)
     }
   }
 
   // MARK: - 拷贝 / 覆盖
 
-  private func copy(from src: URL, to dst: URL) throws {
-    let fm = FileManager.default
-    if fm.fileExists(atPath: dst.path) {
-      try fm.removeItem(at: dst)
+  /// 1MB 分块搬运，按 ~100ms 节流上报进度（在后台队列里跑）。
+  private func streamCopy(
+    from input: FileHandle, to output: FileHandle, total: Int64, kind: String, name: String
+  ) throws {
+    var done: Int64 = 0
+    var reported: Int64 = -1
+    var lastReport = DispatchTime.now()
+    while let chunk = try input.read(upToCount: Self.copyChunkSize), !chunk.isEmpty {
+      try output.write(contentsOf: chunk)
+      done += Int64(chunk.count)
+      let now = DispatchTime.now()
+      if now.uptimeNanoseconds - lastReport.uptimeNanoseconds >= Self.progressIntervalNanos {
+        lastReport = now
+        reported = done
+        emitCopyProgress(kind: kind, name: name, total: total, done: done)
+      }
     }
-    try fm.copyItem(at: src, to: dst)
+    if done != reported {
+      emitCopyProgress(kind: kind, name: name, total: total, done: done)
+    }
   }
 
-  /// 用书签找回原写入位置并覆盖（流式写，不整文件读进内存）。
-  private func overwrite(bookmark: Data, with src: URL) throws {
-    var stale = false
-    let url = try URL(
-      resolvingBookmarkData: bookmark, options: [], relativeTo: nil,
-      bookmarkDataIsStale: &stale)
-    guard url.startAccessingSecurityScopedResource() else {
-      throw NSError(
-        domain: "yinhe", code: 1,
-        userInfo: [NSLocalizedDescriptionKey: "无法访问上次的保存位置"])
+  /// 后台整文件复制（导入到沙箱 / 准备导出文件）。
+  private func copyInBackground(
+    from src: URL, to dst: URL, kind: String, name: String,
+    completion: @escaping (Bool) -> Void
+  ) {
+    let total = fileSize(src)
+    emitCopyStart(kind: kind, name: name, total: total)
+    DispatchQueue.global(qos: .userInitiated).async {
+      let fm = FileManager.default
+      var ok = true
+      do {
+        if fm.fileExists(atPath: dst.path) {
+          try fm.removeItem(at: dst)
+        }
+        guard fm.createFile(atPath: dst.path, contents: nil) else {
+          throw NSError(
+            domain: "yinhe", code: 3,
+            userInfo: [NSLocalizedDescriptionKey: "无法创建目标文件"])
+        }
+        let input = try FileHandle(forReadingFrom: src)
+        defer { try? input.close() }
+        let output = try FileHandle(forWritingTo: dst)
+        defer { try? output.close() }
+        try self.streamCopy(from: input, to: output, total: total, kind: kind, name: name)
+      } catch {
+        NSLog("[yinhe] 复制文件失败：\(error)")
+        ok = false
+        try? fm.removeItem(at: dst)
+      }
+      DispatchQueue.main.async { completion(ok) }
     }
-    defer { url.stopAccessingSecurityScopedResource() }
-    guard FileManager.default.fileExists(atPath: url.path) else {
-      throw NSError(
-        domain: "yinhe", code: 2,
-        userInfo: [NSLocalizedDescriptionKey: "目标文件已被移动或删除"])
+  }
+
+  /// 用书签找回原写入位置并在后台覆盖（流式写，不整文件读进内存）。
+  private func overwriteInBackground(
+    bookmark: Data, with src: URL, kind: String, name: String,
+    completion: @escaping (Result<Void, Error>) -> Void
+  ) {
+    let target: URL
+    do {
+      var stale = false
+      target = try URL(
+        resolvingBookmarkData: bookmark, options: [], relativeTo: nil,
+        bookmarkDataIsStale: &stale)
+    } catch {
+      completion(.failure(error))
+      return
     }
-    let input = try FileHandle(forReadingFrom: src)
-    defer { try? input.close() }
-    let output = try FileHandle(forWritingTo: url)
-    defer { try? output.close() }
-    try output.truncate(atOffset: 0)
-    while let chunk = try input.read(upToCount: 1 << 20), !chunk.isEmpty {
-      try output.write(contentsOf: chunk)
+    guard target.startAccessingSecurityScopedResource() else {
+      completion(
+        .failure(
+          NSError(
+            domain: "yinhe", code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "无法访问上次的保存位置"])))
+      return
     }
+    guard FileManager.default.fileExists(atPath: target.path) else {
+      target.stopAccessingSecurityScopedResource()
+      completion(
+        .failure(
+          NSError(
+            domain: "yinhe", code: 2,
+            userInfo: [NSLocalizedDescriptionKey: "目标文件已被移动或删除"])))
+      return
+    }
+    guard FileManager.default.fileExists(atPath: src.path) else {
+      target.stopAccessingSecurityScopedResource()
+      completion(
+        .failure(
+          NSError(
+            domain: "yinhe", code: 4,
+            userInfo: [NSLocalizedDescriptionKey: "待保存的临时文件不存在"])))
+      return
+    }
+    let total = fileSize(src)
+    emitCopyStart(kind: kind, name: name, total: total)
+    DispatchQueue.global(qos: .userInitiated).async {
+      var failure: Error?
+      do {
+        let input = try FileHandle(forReadingFrom: src)
+        defer { try? input.close() }
+        let output = try FileHandle(forWritingTo: target)
+        defer { try? output.close() }
+        try output.truncate(atOffset: 0)
+        try self.streamCopy(from: input, to: output, total: total, kind: kind, name: name)
+      } catch {
+        failure = error
+      }
+      DispatchQueue.main.async {
+        target.stopAccessingSecurityScopedResource()
+        if let error = failure {
+          completion(.failure(error))
+        } else {
+          completion(.success(()))
+        }
+      }
+    }
+  }
+
+  private func fileSize(_ url: URL) -> Int64 {
+    guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+      let size = attrs[.size] as? NSNumber
+    else {
+      return -1
+    }
+    return size.int64Value
+  }
+
+  // MARK: - 通道回调（统一切主线程）
+
+  private func send(_ method: String, _ arguments: Any?) {
+    if Thread.isMainThread {
+      channel.invokeMethod(method, arguments: arguments)
+    } else {
+      DispatchQueue.main.async { [weak self] in
+        self?.channel.invokeMethod(method, arguments: arguments)
+      }
+    }
+  }
+
+  private func emitCopyStart(kind: String, name: String, total: Int64) {
+    send("onCopyStart", ["kind": kind, "name": name, "total": total])
+  }
+
+  private func emitCopyProgress(kind: String, name: String, total: Int64, done: Int64) {
+    send("onCopyProgress", ["kind": kind, "name": name, "total": total, "done": done])
   }
 
   // MARK: - 书签存储
