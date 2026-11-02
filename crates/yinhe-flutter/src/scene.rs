@@ -3047,7 +3047,9 @@ pub fn select_all(scope: i32, track: i32) -> i32 {
         return 0;
     }
     doc.edit.pianoroll_view.base.dirty = true;
-    refresh_snapshot(&mut s);
+    // 纯选区变化：不重建轨道/音符快照，也不 bump doc_generation
+    //（否则 Dart 会全量重扫力度条与自动化）。
+    selection_changed(&mut s);
     1
 }
 
@@ -3072,7 +3074,8 @@ pub fn clear_selection() -> i32 {
     doc.edit.chan_ar_sel.clear();
     doc.edit.track_selected.clear();
     doc.edit.pianoroll_view.base.dirty = true;
-    refresh_snapshot(&mut s);
+    // 同 select_all：选区清空只刷新覆盖层。
+    selection_changed(&mut s);
     1
 }
 

@@ -322,9 +322,9 @@ mixin _ShellMenus on _ShellBase {
 
   /// 全选：`scope` 0 = PR，1 = AR；`track < 0` = 全工程。
   void _selectAll(int scope, int track) {
-    if (rust.selectAll(scope, track) == 1) {
-      _refreshDocumentMeta();
-    }
+    // 纯选区变化：Rust 只刷新覆盖层，不 bump documentGeneration，
+    // 这里也不需要重读轨道 / 力度条 / 自动化。
+    rust.selectAll(scope, track);
   }
 
   /// 打开事件列表（音符/自动化/全局事件穿插）。

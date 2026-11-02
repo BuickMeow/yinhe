@@ -122,6 +122,8 @@ mixin _ShellTransport on _ShellBase {
   void _setAutoCollapsed(bool collapsed) {
     setState(() => _autoCollapsed = collapsed);
     if (!collapsed && _viewMode == kViewPianoroll) {
+      // 面板展开才需要自动化/力度数据（收起时上面两处刷新会跳过）。
+      _loadAutomation();
       _loadVelocity();
     }
   }

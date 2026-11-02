@@ -43,6 +43,15 @@ impl Document {
 
         for key in 0..yinhe_types::KEY_COUNT {
             let k = key as u8;
+            // 只有被任一选区矩形覆盖的 key 才可能命中。跳过空 key，
+            // 否则 `Arc::make_mut` 会把整个桶深拷贝一遍（全选时 ≈100MB 白拷）。
+            if !selection
+                .rects
+                .iter()
+                .any(|&(_, _, kl, kh, _, _)| k >= kl && k <= kh)
+            {
+                continue;
+            }
             let bucket = Arc::make_mut(&mut model.notes[key]);
             let touched = bucket.update_matching(
                 |n| {

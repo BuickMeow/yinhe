@@ -731,11 +731,8 @@ mixin _ShellBuild on _ShellBase {
       onEditBpm: _editDefaultBpm,
       onEditSig: _editDefaultTimeSig,
       onDeselect: () {
-        final had = rust.clearSelection() == 1;
+        rust.clearSelection();
         setState(() => _amDeselectTick++);
-        if (had) {
-          _refreshDocumentMeta();
-        }
       },
     );
   }
@@ -753,8 +750,10 @@ mixin _ShellBuild on _ShellBase {
     if (!_showAllTracks) {
       rust.setDisplayTrack(track);
     }
-    _loadAutomation();
-    _loadVelocity();
+    if (_viewMode == kViewPianoroll && !_autoCollapsed) {
+      _loadAutomation();
+      _loadVelocity();
+    }
   }
 
   /// 「全部轨道」开关（仅影响 PR 绘制；AR 始终按自身显隐）。

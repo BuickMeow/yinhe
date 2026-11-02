@@ -865,6 +865,22 @@ pub fn begin_selection_move(x: f32, y: f32) -> i32 {
     let Ok(mut d) = DRAG.lock() else {
         return 0;
     };
+    let Ok(mut s) = scene::scene().lock() else {
+        return 0;
+    };
+    if s.document.is_none() || s.active_track == Some(0) {
+        return 0;
+    }
+    // 按下时 `begin_pr` 的选框分支已经收集过一次 ghost；手势真正开始后
+    // 这里只重置起点并复用，避免同一选区被 O(N) 扫描两遍。
+    let reuse = matches!(d.kind, kind::PENDING | kind::MOVE_BOX)
+        && d.drag_by_key.iter().any(|bucket| !bucket.is_empty());
+    let prev_by_key = if reuse {
+        std::mem::take(&mut d.drag_by_key)
+    } else {
+        Vec::new()
+    };
+    let prev_hidden = if reuse { d.drag_hidden.take() } else { None };
     *d = DragState {
         x0: x,
         y0: y,
@@ -872,12 +888,6 @@ pub fn begin_selection_move(x: f32, y: f32) -> i32 {
         py: y,
         ..Default::default()
     };
-    let Ok(mut s) = scene::scene().lock() else {
-        return 0;
-    };
-    if s.document.is_none() || s.active_track == Some(0) {
-        return 0;
-    }
     let q = quantize_of(&s);
     let snap = scene::SnapCtx::new(&s);
     match s.view_mode {
@@ -903,9 +913,14 @@ pub fn begin_selection_move(x: f32, y: f32) -> i32 {
         }
     }
     s.clear_preview_anim();
-    let (by_key, hidden) = collect_selected_notes(&s);
-    d.drag_by_key = by_key;
-    d.drag_hidden = Some(std::sync::Arc::new(hidden));
+    if reuse {
+        d.drag_by_key = prev_by_key;
+        d.drag_hidden = prev_hidden;
+    } else {
+        let (by_key, hidden) = collect_selected_notes(&s);
+        d.drag_by_key = by_key;
+        d.drag_hidden = Some(std::sync::Arc::new(hidden));
+    }
     d.kind = kind::MOVE_BOX;
     refresh_preview(&mut d, &mut s);
     bump(&mut s);
@@ -2873,7 +2888,12 @@ fn collect_selected_notes(s: &RenderScene) -> (DragByKey, std::collections::Hash
     let Some(doc) = s.document.as_ref() else {
         return (by_key, hidden);
     };
+    // 单矩形（绝大多数框选/全选）不会跨矩形重复产出音符：音符在桶内按
+    // start 排序，只需和同 key 上一个已接受的音符比较，省掉百万级
+    // HashSet 的分配与哈希——这是大选区起手卡顿的主要来源。
+    let single_rect = doc.edit.selected.rects.len() == 1;
     let mut seen = std::collections::HashSet::new();
+    let mut last_start: Vec<Option<(u16, u32)>> = vec![None; yinhe_types::KEY_COUNT];
     for &(t0, t1, klo, khi, _, _) in &doc.edit.selected.rects {
         let (ts, te) = (t0.min(t1), t0.max(t1));
         if te <= ts {
@@ -2887,10 +2907,17 @@ fn collect_selected_notes(s: &RenderScene) -> (DragByKey, std::collections::Hash
                 if !doc.edit.selected.accepts_note(n, key) {
                     continue;
                 }
-                if seen.insert((n.track, n.start_tick, key)) {
-                    by_key[key as usize].push((n.track, n.start_tick, n.end_tick, n.velocity));
-                    hidden.insert((n.track, n.start_tick, key));
+                if single_rect {
+                    let slot = &mut last_start[key as usize];
+                    if *slot == Some((n.track, n.start_tick)) {
+                        continue;
+                    }
+                    *slot = Some((n.track, n.start_tick));
+                } else if !seen.insert((n.track, n.start_tick, key)) {
+                    continue;
                 }
+                by_key[key as usize].push((n.track, n.start_tick, n.end_tick, n.velocity));
+                hidden.insert((n.track, n.start_tick, key));
             }
         }
     }

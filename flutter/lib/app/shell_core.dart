@@ -184,14 +184,17 @@ mixin _ShellCore on _ShellBase {
     if (!mounted) {
       return;
     }
+    // 吃掉当前 generation：菜单等主动刷新之后，ticker 不再重复刷一次。
+    _docGeneration = rust.documentGeneration();
     setState(() {
       _recent = _readRecent();
       _tracks.value = _readTracks();
       _markers = _readMarkers();
     });
     // PR 专属面板（力度条/自动化条）不参与 AR 绘制。AR 下每次音符编辑
-    // 都重扫全曲力度会卡住主线程，这里只在 PR 视图加载。
-    if (_viewMode == kViewPianoroll) {
+    // 都重扫全曲力度会卡住主线程，这里只在 PR 视图加载；AM 面板收起时
+    // 面板不渲染，也没必要解析整条 lane。
+    if (_viewMode == kViewPianoroll && !_autoCollapsed) {
       _loadAutomation();
       _loadVelocity();
     }
@@ -438,7 +441,7 @@ mixin _ShellCore on _ShellBase {
     _pushQuantize(_quantizeLabel);
     _velocityViewPpu = null;
     _velocityViewScroll = null;
-    if (mode == kViewPianoroll) {
+    if (mode == kViewPianoroll && !_autoCollapsed) {
       _loadAutomation();
       _loadVelocity();
     }
