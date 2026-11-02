@@ -171,6 +171,41 @@ int moveAutomationAnchors(
   }
 }
 
+typedef DeleteAutomationAnchorsNative = ffi.Int32 Function(
+  ffi.Int32,
+  ffi.Int32,
+  ffi.Pointer<ffi.Uint32>,
+  ffi.Uint32,
+);
+typedef DeleteAutomationAnchorsDart = int Function(
+  int,
+  int,
+  ffi.Pointer<ffi.Uint32>,
+  int,
+);
+
+final DeleteAutomationAnchorsDart _deleteAutomationAnchors = bridge
+    .lookupFunction<
+      DeleteAutomationAnchorsNative,
+      DeleteAutomationAnchorsDart
+    >('yinhe_delete_automation_anchors');
+
+/// 删除指定 tick 的自动化锚点（单击删除），一笔一个 undo。
+int deleteAutomationAnchors(int track, int laneIndex, List<int> ticks) {
+  if (ticks.isEmpty) {
+    return 0;
+  }
+  final ptr = calloc<ffi.Uint32>(ticks.length);
+  try {
+    for (var i = 0; i < ticks.length; i++) {
+      ptr[i] = ticks[i];
+    }
+    return _deleteAutomationAnchors(track, laneIndex, ptr, ticks.length);
+  } finally {
+    calloc.free(ptr);
+  }
+}
+
 /// 标尺标签（marker）JSON。
 final CStrDart markersJson = bridge.lookupFunction<CStrNative, CStrDart>(
   'yinhe_markers_json',

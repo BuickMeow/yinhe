@@ -335,7 +335,6 @@ mixin _ShellBuild on _ShellBase {
                                                   painter: PianorollGridPainter(
                                                     _snap,
                                                     _gridLines,
-                                                    hideKeyboard: amVisible,
                                                   ),
                                                 ),
                                               ),
@@ -446,7 +445,6 @@ mixin _ShellBuild on _ShellBase {
                                                   tracks: _tracks,
                                                   dragFrom: _dragFrom,
                                                   dragTo: _dragTo,
-                                                  hideKeyboardLabels: amVisible,
                                                 ),
                                               ),
                                             ),

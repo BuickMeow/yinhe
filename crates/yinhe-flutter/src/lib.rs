@@ -1533,12 +1533,30 @@ pub extern "C" fn yinhe_move_automation_anchors(
     moves: *const f64,
     len: u32,
 ) -> i32 {
-    if track < 0 || lane_index <= 0 || moves.is_null() || len < 3 || !len.is_multiple_of(3) {
+    // lane_index 是可视 lane 的 0 基下标：0 就是第一条自动化 lane，
+    // 不能再按旧的一基约定拒绝 0（否则第一条 lane 的锚点永远拖不动）。
+    if track < 0 || lane_index < 0 || moves.is_null() || len < 3 || !len.is_multiple_of(3) {
         return 0;
     }
     let flat = unsafe { std::slice::from_raw_parts(moves, len as usize) };
     let parsed = parse_automation_moves(flat);
     scene::move_automation_anchors(track as usize, lane_index as usize, &parsed)
+}
+
+/// 删除指定 tick 的自动化锚点（单击删除），一笔一个 undo。成功 1。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
+pub extern "C" fn yinhe_delete_automation_anchors(
+    track: i32,
+    lane_index: i32,
+    ticks: *const u32,
+    len: u32,
+) -> i32 {
+    if track < 0 || lane_index < 0 || ticks.is_null() || len == 0 {
+        return 0;
+    }
+    let ticks = unsafe { std::slice::from_raw_parts(ticks, len as usize) };
+    scene::delete_automation_anchors(track as usize, lane_index as usize, ticks)
 }
 
 /// 确保自动化 lane 存在（kind/number 与插入自动化一致），成功 1。

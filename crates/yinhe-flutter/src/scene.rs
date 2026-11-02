@@ -4819,6 +4819,36 @@ pub fn move_automation_anchors(track: usize, lane_index: usize, moves: &[(u32, u
     1
 }
 
+/// 删除指定 tick 的自动化锚点（AM 单击删除）。成功 1。
+///
+/// 复用选区删除逻辑：把要删的 tick 作为临时选择交给 `automation_selection_action`。
+pub fn delete_automation_anchors(track: usize, lane_index: usize, ticks: &[u32]) -> i32 {
+    if ticks.is_empty() {
+        return 0;
+    }
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let mut panel = s.automation_panel.clone();
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    panel.active_track = track;
+    panel.lane = Some(lane_index);
+    panel.selected_ticks = ticks.to_vec();
+    panel.selected_ticks.sort_unstable();
+    panel.selected_ticks.dedup();
+    if !automation_selection_action(doc, &panel, 11) {
+        return 0;
+    }
+    doc.edit.pianoroll_view.base.dirty = true;
+    let model = doc.data.model.clone();
+    refresh_snapshot(&mut s);
+    drop(s);
+    crate::audio::reload_notes(model);
+    1
+}
+
 /// 确保指定 target 的自动化 lane 存在（不存在则创建空 lane）。成功 1。
 ///
 /// AM 面板下拉用：`kind` 编码与 `insert_automation` 一致

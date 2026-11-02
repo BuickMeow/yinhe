@@ -3,6 +3,7 @@ import '../core/snap_fields.dart';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'dart:math' as math;
+import 'dart:ui' show ImageFilter;
 
 import 'package:ffi/ffi.dart';
 import 'package:flutter/material.dart';
@@ -1119,6 +1120,25 @@ class _AutomationPanelState extends State<AutomationPanel>
     setState(() {});
   }
 
+  /// 单击锚点直接删除（一步 undo），不需要先进框选再删。
+  void _deleteAnchorAt(int tick) {
+    final laneIdx = _laneIdx;
+    if (laneIdx == null || laneIdx >= widget.lanes.length) {
+      return;
+    }
+    if (rust.deleteAutomationAnchors(widget.activeTrack, laneIdx, [tick]) != 1) {
+      return;
+    }
+    _selectedTicks.remove(tick);
+    if (_selectedTicks.isEmpty) {
+      _marqueeTicks = null;
+    }
+    _singleSelection = _selectedTicks.length == 1;
+    setState(() {});
+    _syncSelection();
+    widget.onReload();
+  }
+
   /// 单点锚点编辑 / 框选：
   /// - 按在锚点上：选中（未选中则替换选择），拖动可改 tick+value；
   /// - 快速滑动空白：平移时间轴；
@@ -1598,7 +1618,17 @@ class _AutomationPanelState extends State<AutomationPanel>
                         }
                         final laneIdx = _laneIdx;
                         if (laneIdx != null &&
+                            laneIdx < widget.lanes.length &&
                             (widget.pencilActive || widget.marqueeEnabled)) {
+                          // 单击已有锚点 = 删除；点空白才继续原来的选题/落点逻辑。
+                          final hit = _hitAnchor(
+                            widget.lanes[laneIdx],
+                            d.localPosition,
+                          );
+                          if (hit != null) {
+                            _deleteAnchorAt(hit.round());
+                            return;
+                          }
                           // 有常驻选框时，点空白先取消选框；否则落一个锚点。
                           if (widget.marqueeEnabled && _marqueeTicks != null) {
                             _clearSelection();
@@ -1642,9 +1672,15 @@ class _AutomationPanelState extends State<AutomationPanel>
                             child: Stack(
                               fit: StackFit.expand,
                               children: [
-                                // 全屏浮在 PR 上：背景半透明，PR 音符/网格透出来。
-                                ColoredBox(
-                                  color: YinheTheme.bg.withValues(alpha: 0.55),
+                                // 浮在 PR 上：模糊下方音符/条纹/键盘，再叠一层淡底色。
+                                BackdropFilter(
+                                  filter: ImageFilter.blur(
+                                    sigmaX: 8,
+                                    sigmaY: 8,
+                                  ),
+                                  child: ColoredBox(
+                                    color: YinheTheme.bg.withValues(alpha: 0.45),
+                                  ),
                                 ),
                                 if (gpu) ...[
                                   CustomPaint(
