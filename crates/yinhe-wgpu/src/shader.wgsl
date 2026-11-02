@@ -812,6 +812,10 @@ fn curve_coverage(in: CurveOutput) -> f32 {
         let ring_width = 1.5;
         let inner = in.thickness - ring_width;
         d = max(r - in.thickness, inner - r);
+    } else if (in.shape == 4u) {
+        // Filled diamond (L1 ball SDF): half-diagonal = thickness.
+        let q = abs(p - in.p0);
+        d = q.x + q.y - in.thickness;
     } else {
         // shape == 0: line segment (Bézier curves are flattened on CPU).
         d = sd_line(p, in.p0, in.p3);
@@ -822,7 +826,7 @@ fn curve_coverage(in: CurveOutput) -> f32 {
     let fw = max(fwidth(d), 0.0001);
     let aa = fw * 0.5;
     // shape 0（曲线/线段）: d 是到曲线的 unsigned 距离（≥0）。
-    // shape 1/2/3（圆/方/环）: d 是 signed distance（d=0 在几何边界）。
+    // shape 1/2/3/4（圆/方/环/菱形）: d 是 signed distance（d=0 在几何边界）。
     if (in.shape == 0u) {
         return 1.0 - smoothstep(in.thickness - aa, in.thickness + aa, d);
     }

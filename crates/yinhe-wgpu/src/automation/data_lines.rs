@@ -6,8 +6,10 @@ use yinhe_types::{AutomationEvent, AutomationLane, SegmentShape, TRACK_PALETTE};
 /// 自动化曲线的线宽（SDF 半宽，像素）。视觉宽度 ≈ 2×thickness + 1px AA。
 /// 移动端触屏需要更明显的曲线：比原 0.5 翻倍。
 const LINE_THICKNESS: f32 = 1.0;
-/// 锚点半径（像素）。移动端默认显示，做成更大的圆点方便手指命中。
-const ANCHOR_RADIUS: f32 = 6.0;
+/// Step 锚点（实心方块）的半边长，像素。移动端默认显示，做大方便手指命中。
+const ANCHOR_SQUARE_HALF: f32 = 5.0;
+/// 缓动锚点（实心菱形）的半对角线，像素。
+const ANCHOR_DIAMOND_RADIUS: f32 = 6.0;
 /// 贝塞尔控制点（空心圆）外半径，像素。
 const CTRL_POINT_RADIUS: f32 = 4.0;
 /// 控制点到锚点的连线线宽。
@@ -245,7 +247,7 @@ pub fn build_data_lines(
         // 画锚点 + 曲线段的控制点
         if show_anchors {
             let visible_events = lane.events_in_range(pad_start, pad_end);
-            // 锚点统一画成圆点（移动端默认显示；Step 也不再画方块）。
+            // 锚点形状按插值类型分派：Step → 方块，缓动 → 菱形。
             for evt in visible_events {
                 // clamp 到 [grid_left_x, w]：锚点不画到 combo 列下方
                 let x = (x_offset + evt.tick as f32 * ppu).clamp(grid_left_x, w);
@@ -256,7 +258,20 @@ pub fn build_data_lines(
                 } else {
                     [color[0], color[1], color[2], 1.0]
                 };
-                out.push(CurveInstance::circle(x, y, ANCHOR_RADIUS, anchor_color));
+                match evt.shape {
+                    SegmentShape::Step => out.push(CurveInstance::square(
+                        x,
+                        y,
+                        ANCHOR_SQUARE_HALF,
+                        anchor_color,
+                    )),
+                    SegmentShape::Curve { .. } => out.push(CurveInstance::diamond(
+                        x,
+                        y,
+                        ANCHOR_DIAMOND_RADIUS,
+                        anchor_color,
+                    )),
+                }
             }
             // 曲线段中间的空心控制点（仅 Curve 段，非直线时才画）
             push_curve_control_points(
@@ -317,7 +332,20 @@ pub(crate) fn build_lane_instances(
             let x = (x_offset + evt.tick as f32 * ppu).clamp(grid_left_x, w);
             let y = view.value_to_y(evt.value, max_val);
             let anchor_color = [color[0], color[1], color[2], 1.0];
-            out.push(CurveInstance::circle(x, y, ANCHOR_RADIUS, anchor_color));
+            match evt.shape {
+                SegmentShape::Step => out.push(CurveInstance::square(
+                    x,
+                    y,
+                    ANCHOR_SQUARE_HALF,
+                    anchor_color,
+                )),
+                SegmentShape::Curve { .. } => out.push(CurveInstance::diamond(
+                    x,
+                    y,
+                    ANCHOR_DIAMOND_RADIUS,
+                    anchor_color,
+                )),
+            }
         }
         push_curve_control_points(
             out,
@@ -709,8 +737,8 @@ mod tests {
         assert!(
             expanded
                 .iter()
-                .any(|i| i.shape == 1 && (i.thickness - ANCHOR_RADIUS).abs() < f32::EPSILON),
-            "展开时 Step 锚点也应为大圆点（shape 1）"
+                .any(|i| i.shape == 2 && (i.thickness - ANCHOR_SQUARE_HALF).abs() < f32::EPSILON),
+            "展开时 Step 锚点应为方块（shape 2）"
         );
         assert!(
             expanded
@@ -842,5 +870,56 @@ mod tests {
         );
         assert_eq!(out.len(), 1, "skip_ticks 命中的竖线应隐藏");
         assert!(out[0].x1 > 0.0, "保留的应是 tick 100 的竖线");
+    }
+    /// 缓动（Curve）锚点画菱形：移动端默认显示时据此区分 Step。
+    #[test]
+    fn easing_anchors_are_diamonds() {
+        let view = panel_view();
+        let lane = AutomationLane {
+            target: AutomationTarget::CC { controller: 7 },
+            track: 0,
+            events: vec![
+                AutomationEvent {
+                    id: 0,
+                    tick: 0,
+                    value: 0.0,
+                    shape: SegmentShape::Curve {
+                        x1: 0.0,
+                        y1: 0.0,
+                        x2: 1.0,
+                        y2: 1.0,
+                    },
+                },
+                AutomationEvent {
+                    id: 1,
+                    tick: 1000,
+                    value: 1.0,
+                    shape: SegmentShape::Step,
+                },
+            ],
+        };
+        let theme = GpuTheme::from_base(BaseColors::default());
+        let colors = [[1.0, 0.0, 0.0, 1.0]];
+        let mut out = Vec::new();
+        build_data_lines(
+            &mut out,
+            400.0,
+            40.0,
+            &view,
+            &[&lane],
+            1.0,
+            &[true],
+            &colors,
+            true,
+            None,
+            &[],
+            LINE_ALPHA,
+            &theme,
+        );
+        assert!(
+            out.iter().any(|i| i.shape == 4
+                && (i.thickness - ANCHOR_DIAMOND_RADIUS).abs() < f32::EPSILON),
+            "缓动锚点应为菱形（shape 4）"
+        );
     }
 }

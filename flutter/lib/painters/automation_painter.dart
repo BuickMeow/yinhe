@@ -245,11 +245,16 @@ class AutomationPainter extends CustomPainter {
       }
       final y = yOf(p.dy);
       final center = Offset(x, y);
+      // 兜底绘制拿不到每个锚点的插值类型：统一画方块（与 Step 一致）。
       if (selected.contains(p.dx.round())) {
-        canvas.drawCircle(center, 6, selectedPaint);
-        canvas.drawCircle(center, 6, selectedEdge);
+        final r = Rect.fromCenter(center: center, width: 12, height: 12);
+        canvas.drawRect(r, selectedPaint);
+        canvas.drawRect(r, selectedEdge);
       } else {
-        canvas.drawCircle(center, 6, anchor);
+        canvas.drawRect(
+          Rect.fromCenter(center: center, width: 10, height: 10),
+          anchor,
+        );
       }
     }
   }

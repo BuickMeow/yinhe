@@ -194,6 +194,8 @@ impl VelocityBarInstance {
 ///   `thickness` = half-size. Other fields ignored.
 /// - **Hollow circle** (`shape == 3`): 贝塞尔控制点 at (x1, y1) with
 ///   `thickness` = outer radius. Other fields ignored.
+/// - **Filled diamond** (`shape == 4`): 缓动曲线锚点 at (x1, y1) with
+///   `thickness` = half-diagonal. Other fields ignored.
 ///
 /// Layout (matches `vs_main_curve` in shader.wgsl):
 ///   - `@location(0)`: Float32x4 = (x1, y1, x2, y2)   — P0, P3 端点
@@ -209,7 +211,8 @@ pub struct CurveInstance {
     pub y2: f32,
     pub thickness: f32,
     pub rgba_packed: u32,
-    /// 0 = line segment, 1 = filled circle, 2 = filled square, 3 = hollow circle.
+    /// 0 = line segment, 1 = filled circle, 2 = filled square,
+    /// 3 = hollow circle, 4 = filled diamond.
     pub shape: u32,
 }
 
@@ -253,6 +256,20 @@ impl CurveInstance {
             thickness: half_size,
             rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
             shape: 2,
+        }
+    }
+
+    /// Construct a filled-diamond anchor instance at `(cx, cy)` with `radius`
+    /// （中心到四个顶点的距离）。
+    pub fn diamond(cx: f32, cy: f32, radius: f32, color: [f32; 4]) -> Self {
+        CurveInstance {
+            x1: cx,
+            y1: cy,
+            x2: cx,
+            y2: cy,
+            thickness: radius,
+            rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
+            shape: 4,
         }
     }
 
