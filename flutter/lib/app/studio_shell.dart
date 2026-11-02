@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
+import 'dart:ui' show ImageFilter;
 
 import 'package:ffi/ffi.dart';
 import 'package:flutter/gestures.dart';

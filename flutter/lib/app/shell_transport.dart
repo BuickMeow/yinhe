@@ -202,6 +202,8 @@ mixin _ShellTransport on _ShellBase {
     setState(() {
       _autoPanelHeight = current >= maxH - 1 ? maxH * 0.5 : maxH;
     });
+    // 高度大跳变：等 surface 跟上再画纹理，避免旧尺寸层闪现。
+    _amTextureWarmup = 3;
   }
 
   // ── 走带 ──
