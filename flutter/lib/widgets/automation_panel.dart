@@ -3,7 +3,6 @@ import '../core/snap_fields.dart';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'dart:math' as math;
-import 'dart:ui' show ImageFilter;
 
 import 'package:ffi/ffi.dart';
 import 'package:flutter/material.dart';
@@ -1672,15 +1671,10 @@ class _AutomationPanelState extends State<AutomationPanel>
                             child: Stack(
                               fit: StackFit.expand,
                               children: [
-                                // 浮在 PR 上：模糊下方音符/条纹/键盘，再叠一层淡底色。
-                                BackdropFilter(
-                                  filter: ImageFilter.blur(
-                                    sigmaX: 8,
-                                    sigmaY: 8,
-                                  ),
-                                  child: ColoredBox(
-                                    color: YinheTheme.bg.withValues(alpha: 0.45),
-                                  ),
+                                // 模糊由壳层对整个面板（含左侧 combo 列）统一做，
+                                // 这里只叠一层淡底色（否则钢琴键盘在 combo 列下不会被模糊）。
+                                ColoredBox(
+                                  color: YinheTheme.bg.withValues(alpha: 0.45),
                                 ),
                                 if (gpu) ...[
                                   CustomPaint(

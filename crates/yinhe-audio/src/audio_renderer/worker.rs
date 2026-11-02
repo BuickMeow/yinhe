@@ -87,10 +87,9 @@ impl AudioRenderer {
                     // 过期后回传的空结果）直接丢弃，避免旧音色覆盖新选择。
                     let is_current = generation == self.state.sf_gen.load(Ordering::Acquire);
                     if is_current {
-                        let done = self.state.sf_done.fetch_add(1, Ordering::Relaxed) + 1;
-                        if done >= self.state.sf_total.load(Ordering::Relaxed) {
-                            self.state.sf_loading.store(false, Ordering::Relaxed);
-                        }
+                        self.state.sf_done.fetch_add(1, Ordering::Relaxed);
+                        // 结果已回传但还没应用/上传：先给 85%，真正完成在分支末尾。
+                        self.state.sf_progress.store(850, Ordering::Relaxed);
                     } else {
                         did_work = true;
                         continue;
@@ -253,6 +252,15 @@ impl AudioRenderer {
                     // 把释放的空闲页归还 OS（jemalloc/mimalloc）：否则 RSS 只涨不降，
                     // 表现为"清空音色库后内存不还"。
                     yinhe_memtrace::purge_free_pages();
+                    if is_current
+                        && self.state.sf_done.load(Ordering::Relaxed)
+                            >= self.state.sf_total.load(Ordering::Relaxed)
+                    {
+                        // 应用 + GPU 上传/预热已完成才报 100%，避免进度条先满、
+                        // 声音还没准备好。
+                        self.state.sf_progress.store(1000, Ordering::Relaxed);
+                        self.state.sf_loading.store(false, Ordering::Relaxed);
+                    }
                     did_work = true;
                 }
                 Err(TryRecvError::Empty) => break,

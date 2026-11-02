@@ -132,7 +132,32 @@ mixin _ShellTransport on _ShellBase {
 
   @override
   void _setAutoCollapsed(bool collapsed) {
-    setState(() => _autoCollapsed = collapsed);
+    _amCloseTimer?.cancel();
+    _amCloseTimer = null;
+    if (collapsed && !_autoCollapsed) {
+      // 收起走一段滑出动画，动画结束后才真正从树上移除。
+      setState(() => _amClosing = true);
+      _amCloseTimer = Timer(kAmCollapseDuration, () {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _autoCollapsed = true;
+          _amClosing = false;
+        });
+      });
+      return;
+    }
+    setState(() {
+      _autoCollapsed = collapsed;
+      _amClosing = false;
+      // 之前被缩到很矮再自动收起的，重新打开时恢复默认（全屏）。
+      if (!collapsed &&
+          _autoPanelHeight != null &&
+          _autoPanelHeight! < kAmAutoCollapseHeight) {
+        _autoPanelHeight = null;
+      }
+    });
     if (!collapsed && _viewMode == kViewPianoroll) {
       // 面板展开才需要自动化/力度数据（收起时上面两处刷新会跳过）。
       _loadAutomation();
@@ -140,20 +165,28 @@ mixin _ShellTransport on _ShellBase {
     }
   }
 
-  /// 拖动 AM 顶部手柄调整高度（向上拖变大）。高度可到全屏。
+  /// 拖动 AM 顶部手柄调整高度（向上拖变大）。可以一路缩到 0。
   @override
   void _resizeAutoPanel(double dy) {
     final maxH = _amMaxDrawHeight;
     if (maxH <= 0) {
       return;
     }
-    final minH = maxH < kAmMinDrawHeight ? maxH : kAmMinDrawHeight;
-    final current = (_autoPanelHeight ?? maxH).clamp(minH, maxH);
-    final next = (current - dy).clamp(minH, maxH);
+    final current = (_autoPanelHeight ?? maxH).clamp(0.0, maxH);
+    final next = (current - dy).clamp(0.0, maxH);
     if ((next - current).abs() < 0.5) {
       return;
     }
     setState(() => _autoPanelHeight = next);
+  }
+
+  /// 松手：面板太矮就带动画自动收起。
+  @override
+  void _finishAutoPanelResize() {
+    final h = _autoPanelHeight ?? _amMaxDrawHeight;
+    if (h < kAmAutoCollapseHeight) {
+      _setAutoCollapsed(true);
+    }
   }
 
   /// 双击手柄：全屏 ↔ 约半屏（再双击回全屏）。

@@ -575,7 +575,7 @@ pub fn set_skip_mask(skip: Vec<bool>) {
     st.handle.handle.send(AudioCommand::SkipTracks { skip });
 }
 
-/// 音色库切换进度 JSON：`{"loading":bool,"done":n,"total":n}`。
+/// 音色库切换进度 JSON：`{"loading":bool,"done":n,"total":n,"progress":0..1}`。
 pub fn sf_loading_json() -> String {
     let Some(guard) = lock_audio() else {
         return r#"{"loading":false,"done":0,"total":0}"#.into();
@@ -583,8 +583,10 @@ pub fn sf_loading_json() -> String {
     let Some(st) = guard.as_ref() else {
         return r#"{"loading":false,"done":0,"total":0}"#.into();
     };
-    let (loading, done, total) = st.handle.handle.sf_progress();
-    format!("{{\"loading\":{loading},\"done\":{done},\"total\":{total}}}")
+    let (loading, done, total, progress) = st.handle.handle.sf_progress();
+    format!(
+        "{{\"loading\":{loading},\"done\":{done},\"total\":{total},\"progress\":{progress:.4}}}"
+    )
 }
 
 /// 音色库表 JSON（设置页用）：`[{"path":..,"name":..,"enabled":..,"warnings":[..]}, ...]`。

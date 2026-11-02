@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
+import 'dart:ui' show ImageFilter;
 
 import 'package:ffi/ffi.dart';
 import 'package:flutter/gestures.dart';
@@ -60,8 +61,10 @@ const int kViewPianoroll = 1;
 /// 自动化面板顶部的拖拽手柄高度（逻辑像素，兼顾触屏命中）。
 const double kAmHandleHeight = 26.0;
 
-/// 自动化面板绘制区最小高度（再小就看不清曲线了）。
-const double kAmMinDrawHeight = 120.0;
+/// 自动化面板拖到低于此高度时，松手自动收起（带动画）。
+const double kAmAutoCollapseHeight = 72.0;
+/// 自动收起/展开的动画时长。
+const Duration kAmCollapseDuration = Duration(milliseconds: 180);
 
 /// 工作台壳：画布常驻，左侧抽屉菜单 + 顶部走带控制。
 class StudioShell extends StatefulWidget {
@@ -180,6 +183,10 @@ abstract class _ShellBase extends State<StudioShell>
   final ValueNotifier<Set<String>> _arrExpandedTracks =
       ValueNotifier<Set<String>>(<String>{});
 
+  /// AM 正在播放收起动画（期间仍渲染，滑出后真正隐藏）。
+  bool _amClosing = false;
+  Timer? _amCloseTimer;
+
   /// 当前工具（PR 5 种；AR 2 种；索引对应 `toolDefs`）。
   int _toolPr = 0;
   int _toolAr = 0;
@@ -256,11 +263,8 @@ abstract class _ShellBase extends State<StudioShell>
   final ValueNotifier<List<GridLine>> _gridLines = ValueNotifier(const []);
 
   /// 音色库热切换进度：`(loading, done, total)`。
-  final ValueNotifier<(bool, int, int)> _sfProgress = ValueNotifier((
-    false,
-    0,
-    0,
-  ));
+  final ValueNotifier<(bool, int, int, double)> _sfProgress =
+      ValueNotifier<(bool, int, int, double)>((false, 0, 0, 0.0));
   List<double>? _lastRulerKey;
   final ValueNotifier<List<TrackRow>> _tracks = ValueNotifier<List<TrackRow>>(
     const [],
@@ -356,6 +360,7 @@ abstract class _ShellBase extends State<StudioShell>
         m['loading'] as bool? ?? false,
         (m['done'] as num?)?.toInt() ?? 0,
         (m['total'] as num?)?.toInt() ?? 0,
+        (m['progress'] as num?)?.toDouble() ?? 0.0,
       );
       if (_sfProgress.value != next) {
         _sfProgress.value = next;
@@ -498,6 +503,7 @@ abstract class _ShellBase extends State<StudioShell>
   void _setAutoCollapsed(bool collapsed);
   void _resizeAutoPanel(double dy);
   void _toggleAutoPanelFullscreen();
+  void _finishAutoPanelResize();
   void _setView(int mode);
   void _showAddTrackDialog();
   void _showPasteMenu(Offset? pos, LongPressContext? ctx);
@@ -677,6 +683,7 @@ class _StudioShellState extends _ShellBase
     _velocityReloadTimer?.cancel();
     _velocityRetryTimer?.cancel();
     _arrExpandedTracks.dispose();
+    _amCloseTimer?.cancel();
     _docState.dispose();
     _editStatus.dispose();
     calloc.free(_snapPtr);

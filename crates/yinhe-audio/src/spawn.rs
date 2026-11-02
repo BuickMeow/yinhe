@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -368,6 +368,8 @@ pub struct AudioHandle {
     sf_loading: Arc<AtomicBool>,
     sf_total: Arc<AtomicUsize>,
     sf_done: Arc<AtomicUsize>,
+    /// 音色库加载细粒度进度（0..1000）。
+    sf_progress: Arc<AtomicU32>,
     /// 音频完全就绪（模型 + 音色库 + 采样上传 + 管线预热）。
     audio_ready: Arc<AtomicBool>,
     /// latest-wins：轨道 mute/solo 掩码必达（命令通道满合并时不丢最新值）。
@@ -554,12 +556,13 @@ impl AudioHandle {
         self.sf_loaded.load(Ordering::Relaxed)
     }
 
-    /// 音色库切换进度：`(loading, done, total)`。切换期间 UI 显示小进度条。
-    pub fn sf_progress(&self) -> (bool, usize, usize) {
+    /// 音色库切换进度：`(loading, done, total, progress 0..1)`。
+    pub fn sf_progress(&self) -> (bool, usize, usize, f32) {
         (
             self.sf_loading.load(Ordering::Relaxed),
             self.sf_done.load(Ordering::Relaxed),
             self.sf_total.load(Ordering::Relaxed),
+            f32::from(self.sf_progress.load(Ordering::Relaxed) as u16) / 1000.0,
         )
     }
 
@@ -821,6 +824,7 @@ pub(crate) fn spawn_worker(
     sample_rate: u32,
     interpolation: Interpolation,
     sf_gen: Arc<AtomicU64>,
+    sf_progress: Arc<AtomicU32>,
 ) -> Result<(Sender<WorkerCmd>, crossbeam_channel::Receiver<WorkerResult>), std::io::Error> {
     let (cmd_tx, cmd_rx) = unbounded::<WorkerCmd>();
     let (result_tx, result_rx) = bounded::<WorkerResult>(1);
@@ -980,7 +984,9 @@ pub(crate) fn spawn_worker(
                         // 移到 worker：音频线程随后只做缓存命中 + 登记。
                         if prefetch_keymaps {
                             let t_prefetch = std::time::Instant::now();
-                            for path in &paths {
+                            sf_progress.store(50, Ordering::Relaxed);
+                            let n = paths.len().max(1);
+                            for (i, path) in paths.iter().enumerate() {
                                 if let Err(e) = yinhe_synth::prefetch_key_maps(
                                     std::path::Path::new(path),
                                     sample_rate,
@@ -988,11 +994,15 @@ pub(crate) fn spawn_worker(
                                 ) {
                                     eprintln!("[gpu] worker 预解析失败 {path}: {e}");
                                 }
+                                // 预解析（SFZ 解析 + 重采样）通常是主要耗时点。
+                                sf_progress
+                                    .store(50 + (450 * (i + 1) / n) as u32, Ordering::Relaxed);
                             }
                             crate::audio_renderer::play_log(&format!(
                                 "[play] worker 预解析 GPU key map={:?}",
                                 t_prefetch.elapsed()
                             ));
+                            sf_progress.store(500, Ordering::Relaxed);
                         }
                         // 预解析可能耗时几秒：完成后再检查一次代次，过期就不回传
                         // 实际音色（但仍回传空结果维持进度计数）。
@@ -1010,12 +1020,19 @@ pub(crate) fn spawn_worker(
                             continue;
                         }
                         if load_xsynth {
+                            sf_progress.store(550, Ordering::Relaxed);
+                            let t_load = std::time::Instant::now();
                             let soundfonts = crate::engine::AudioEngine::load_soundfont_paths(
                                 sample_rate,
                                 &paths,
                                 interpolation,
                             )
                             .unwrap_or_default();
+                            crate::audio_renderer::play_log(&format!(
+                                "[sf] worker 解析 xsynth 音色库={:?}",
+                                t_load.elapsed()
+                            ));
+                            sf_progress.store(900, Ordering::Relaxed);
                             let _ = result_tx.send(WorkerResult::LoadedSoundFont {
                                 channels,
                                 soundfonts,
@@ -1025,6 +1042,7 @@ pub(crate) fn spawn_worker(
                         } else {
                             // yinhe 后端：不加载 xsynth 版音色（主引擎与预览都用 key map）。
                             // 仅回传 paths 供主引擎登记 key map；soundfonts 留空。
+                            sf_progress.store(900, Ordering::Relaxed);
                             let _ = result_tx.send(WorkerResult::LoadedSoundFont {
                                 channels,
                                 soundfonts: Vec::new(),
@@ -1402,6 +1420,8 @@ struct RendererStarted {
     sf_loading: Arc<AtomicBool>,
     sf_total: Arc<AtomicUsize>,
     sf_done: Arc<AtomicUsize>,
+    /// 音色库加载细粒度进度（0..1000）。
+    sf_progress: Arc<AtomicU32>,
     /// 音频完全就绪（模型 + 音色库 + 采样上传 + 管线预热）。
     audio_ready: Arc<AtomicBool>,
     stream_callback: StreamCallback,
@@ -1425,6 +1445,7 @@ fn init_renderer(
     pending_skip: Arc<Mutex<Option<Vec<bool>>>>,
     pending_am_ms: Arc<Mutex<Option<Arc<AmMsMap>>>>,
     sf_gen: Arc<AtomicU64>,
+    sf_progress: Arc<AtomicU32>,
     callback_frames: usize,
     insert_return_tx: Sender<Vec<Box<dyn InsertProcessor>>>,
     instrument_return_tx: Sender<(u64, Box<dyn InstrumentProcessor>)>,
@@ -1436,12 +1457,14 @@ fn init_renderer(
     let mut renderer_state = RendererSharedState::new();
     renderer_state.bus_readings = bus_readings;
     renderer_state.sf_gen = sf_gen;
+    renderer_state.sf_progress = sf_progress;
 
     let producer_sample_position = Arc::clone(&renderer_state.producer_sample_position);
     let sf_loaded = Arc::clone(&renderer_state.sf_loaded);
     let sf_loading = Arc::clone(&renderer_state.sf_loading);
     let sf_total = Arc::clone(&renderer_state.sf_total);
     let sf_done = Arc::clone(&renderer_state.sf_done);
+    let sf_progress = Arc::clone(&renderer_state.sf_progress);
     let audio_ready = Arc::clone(&renderer_state.audio_ready);
     let voice_count = Arc::clone(&renderer_state.voice_count);
     // 监听缓冲：容量上限由输入侧（yinhe-egui 的录音回调）控制，
@@ -1493,6 +1516,7 @@ fn init_renderer(
         sf_loading,
         sf_total,
         sf_done,
+        sf_progress,
         audio_ready,
         stream_callback,
         monitor,
@@ -1684,8 +1708,14 @@ pub fn spawn_cpal_audio(
     } = init_engine(sample_rate, layout, interpolation, synth_engine)?;
 
     let sf_gen: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
-    let (worker_tx, prepared_rx) = spawn_worker(sample_rate, interpolation, Arc::clone(&sf_gen))
-        .map_err(|e| format!("Failed to spawn audio worker thread: {e}"))?;
+    let sf_progress: Arc<AtomicU32> = Arc::new(AtomicU32::new(0));
+    let (worker_tx, prepared_rx) = spawn_worker(
+        sample_rate,
+        interpolation,
+        Arc::clone(&sf_gen),
+        Arc::clone(&sf_progress),
+    )
+    .map_err(|e| format!("Failed to spawn audio worker thread: {e}"))?;
 
     let shutdown = Arc::new(AtomicBool::new(false));
     // latest-wins 槽：M/S 掩码必达（UI 写、renderer 每轮消费最新值）。
@@ -1699,6 +1729,7 @@ pub fn spawn_cpal_audio(
         sf_loading,
         sf_total,
         sf_done,
+        sf_progress,
         audio_ready,
         stream_callback,
         monitor,
@@ -1716,6 +1747,7 @@ pub fn spawn_cpal_audio(
         Arc::clone(&pending_skip),
         Arc::clone(&pending_am_ms),
         Arc::clone(&sf_gen),
+        Arc::clone(&sf_progress),
         callback_frames,
         insert_return_tx,
         instrument_return_tx,
@@ -1764,6 +1796,7 @@ pub fn spawn_cpal_audio(
             sf_loading,
             sf_total,
             sf_done,
+            sf_progress,
             audio_ready,
             pending_skip,
             pending_am_ms,

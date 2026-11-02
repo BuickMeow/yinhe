@@ -179,6 +179,7 @@ impl AudioRenderer {
                 ));
                 self.state.sf_total.store(groups.len(), Ordering::Relaxed);
                 self.state.sf_done.store(0, Ordering::Relaxed);
+                self.state.sf_progress.store(0, Ordering::Relaxed);
                 self.state
                     .sf_loading
                     .store(!groups.is_empty(), Ordering::Relaxed);

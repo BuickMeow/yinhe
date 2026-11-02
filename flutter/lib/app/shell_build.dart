@@ -245,16 +245,14 @@ mixin _ShellBuild on _ShellBase {
                                   !_autoCollapsed;
                               final canvasH = size.height;
                               // AM 绘制区高度：默认占满可用区，可拖手柄任意缩放/全屏。
-                              final amMax = (size.height -
-                                      RulerPainter.height -
-                                      kAmHandleHeight)
-                                  .clamp(1.0, double.infinity);
+                              final amMax =
+                                  (size.height -
+                                          RulerPainter.height -
+                                          kAmHandleHeight)
+                                      .clamp(1.0, double.infinity);
                               _amMaxDrawHeight = amMax;
-                              final amMin = amMax < kAmMinDrawHeight
-                                  ? amMax
-                                  : kAmMinDrawHeight;
                               final amH = (_autoPanelHeight ?? amMax).clamp(
-                                amMin,
+                                0.0,
                                 amMax,
                               );
                               // 内容画布 = 画布区减去顶部标尺条（Rust 坐标系从标尺下方开始）。
@@ -538,68 +536,115 @@ mixin _ShellBuild on _ShellBase {
                                       Positioned(
                                         left: 0,
                                         right: 0,
-                                        bottom: amH,
-                                        height: kAmHandleHeight,
-                                        child: _AutomationResizeHandle(
-                                          onDrag: _resizeAutoPanel,
-                                          onDoubleTap:
-                                              _toggleAutoPanelFullscreen,
-                                        ),
-                                      ),
-                                      Positioned(
-                                        left: 0,
-                                        right: 0,
                                         bottom: 0,
-                                        height: amH,
-                                        child: AutomationPanel(
-                                          height: amH,
-                                          snap: _snap,
-                                          gridLines: _gridLines,
-                                          lanes: _autoLanes,
-                                          velocity: _velocityBars,
-                                          trackColors: [
-                                            for (final t in _tracks.value)
-                                              t.color,
-                                          ],
-                                          activeTrack: _activeTrack ?? 0,
-                                          isConductor:
-                                              _activeTrack != null &&
-                                              _activeTrack! >= 0 &&
-                                              _activeTrack! <
-                                                  _tracks.value.length &&
-                                              _tracks
-                                                  .value[_activeTrack!]
-                                                  .master,
-                                          status: _editStatus,
-                                          formatTick: _formatEditTick,
-                                          onReload: _loadAutomation,
-                                          textureId: _amTextureId,
-                                          pencilActive:
-                                              _tool == 2 || _tool == 5,
-                                          deselectTick: _amDeselectTick,
-                                          onVelocityCommit:
-                                              _commitVelocityStroke,
-                                          velocityDrawEnabled:
-                                              _tool == 2 || _tool == 5,
-                                          lineTool: _tool == 5,
-                                          marqueeEnabled: _tool == 0,
-                                          onInsertAtTick: (tick) {
-                                            final track = _activeTrack ?? 0;
-                                            final conductor =
-                                                track >= 0 &&
-                                                track < _tracks.value.length &&
-                                                _tracks.value[track].master;
-                                            _runInsertFlow(
-                                              LongPressContext(
-                                                tick: tick,
-                                                track: track,
-                                                conductor: conductor,
-                                                pr: true,
+                                        height: amH + kAmHandleHeight,
+                                        child: IgnorePointer(
+                                          ignoring: _amClosing,
+                                          child: AnimatedSlide(
+                                            offset: _amClosing
+                                                ? const Offset(0, 1)
+                                                : Offset.zero,
+                                            duration: kAmCollapseDuration,
+                                            curve: Curves.easeIn,
+                                            child: AnimatedOpacity(
+                                              opacity: _amClosing ? 0 : 1,
+                                              duration: kAmCollapseDuration,
+                                              child: BackdropFilter(
+                                                filter: ImageFilter.blur(
+                                                  sigmaX: 8,
+                                                  sigmaY: 8,
+                                                ),
+                                                child: Column(
+                                                  children: [
+                                                    SizedBox(
+                                                      height: kAmHandleHeight,
+                                                      child: _AutomationResizeHandle(
+                                                        onDrag:
+                                                            _resizeAutoPanel,
+                                                        onDragEnd:
+                                                            _finishAutoPanelResize,
+                                                        onDoubleTap:
+                                                            _toggleAutoPanelFullscreen,
+                                                      ),
+                                                    ),
+                                                    Expanded(
+                                                      child: AutomationPanel(
+                                                        height: amH,
+                                                        snap: _snap,
+                                                        gridLines: _gridLines,
+                                                        lanes: _autoLanes,
+                                                        velocity: _velocityBars,
+                                                        trackColors: [
+                                                          for (final t
+                                                              in _tracks.value)
+                                                            t.color,
+                                                        ],
+                                                        activeTrack:
+                                                            _activeTrack ?? 0,
+                                                        isConductor:
+                                                            _activeTrack !=
+                                                                null &&
+                                                            _activeTrack! >=
+                                                                0 &&
+                                                            _activeTrack! <
+                                                                _tracks
+                                                                    .value
+                                                                    .length &&
+                                                            _tracks
+                                                                .value[_activeTrack!]
+                                                                .master,
+                                                        status: _editStatus,
+                                                        formatTick:
+                                                            _formatEditTick,
+                                                        onReload:
+                                                            _loadAutomation,
+                                                        textureId: _amTextureId,
+                                                        pencilActive:
+                                                            _tool == 2 ||
+                                                            _tool == 5,
+                                                        deselectTick:
+                                                            _amDeselectTick,
+                                                        onVelocityCommit:
+                                                            _commitVelocityStroke,
+                                                        velocityDrawEnabled:
+                                                            _tool == 2 ||
+                                                            _tool == 5,
+                                                        lineTool: _tool == 5,
+                                                        marqueeEnabled:
+                                                            _tool == 0,
+                                                        onInsertAtTick: (tick) {
+                                                          final track =
+                                                              _activeTrack ?? 0;
+                                                          final conductor =
+                                                              track >= 0 &&
+                                                              track <
+                                                                  _tracks
+                                                                      .value
+                                                                      .length &&
+                                                              _tracks
+                                                                  .value[track]
+                                                                  .master;
+                                                          _runInsertFlow(
+                                                            LongPressContext(
+                                                              tick: tick,
+                                                              track: track,
+                                                              conductor:
+                                                                  conductor,
+                                                              pr: true,
+                                                            ),
+                                                          );
+                                                        },
+                                                        onDocJob: () =>
+                                                            _runDocJob(
+                                                              title: l
+                                                                  .batchProcess,
+                                                            ),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
                                               ),
-                                            );
-                                          },
-                                          onDocJob: () => _runDocJob(
-                                            title: l.batchProcess,
+                                            ),
                                           ),
                                         ),
                                       ),
@@ -635,10 +680,10 @@ mixin _ShellBuild on _ShellBase {
                       bottom: 18,
                       child: IgnorePointer(
                         child: Center(
-                          child: ValueListenableBuilder<(bool, int, int)>(
+                          child: ValueListenableBuilder<(bool, int, int, double)>(
                             valueListenable: _sfProgress,
                             builder: (context, p, _) {
-                              final (loading, done, total) = p;
+                              final (loading, done, total, progress) = p;
                               return AnimatedOpacity(
                                 opacity: loading ? 1 : 0,
                                 duration: const Duration(milliseconds: 150),
@@ -669,8 +714,8 @@ mixin _ShellBuild on _ShellBase {
                                       Text(
                                         total > 0
                                             ? (L10n.isZh
-                                                  ? '加载音色库 $done/$total'
-                                                  : 'Loading soundfont $done/$total')
+                                                  ? '加载音色库 ${(progress * 100).round()}%'
+                                                  : 'Loading soundfont ${(progress * 100).round()}%')
                                             : (L10n.isZh
                                                   ? '加载音色库…'
                                                   : 'Loading soundfont…'),
@@ -684,7 +729,7 @@ mixin _ShellBuild on _ShellBase {
                                         borderRadius: BorderRadius.circular(2),
                                         child: LinearProgressIndicator(
                                           value: total > 0
-                                              ? (done / total).clamp(0.0, 1.0)
+                                              ? progress.clamp(0.0, 1.0)
                                               : null,
                                           minHeight: 3,
                                           backgroundColor: YinheTheme.lineFg,
@@ -739,8 +784,9 @@ mixin _ShellBuild on _ShellBase {
         _updateTimecode();
       },
       onQuantize: (v) => unawaited(_selectQuantize(v)),
-      automationOpen: !_autoCollapsed,
-      onToggleAutomation: () => _setAutoCollapsed(!_autoCollapsed),
+      automationOpen: !_autoCollapsed && !_amClosing,
+      onToggleAutomation: () =>
+          _setAutoCollapsed(!_autoCollapsed && !_amClosing),
       onTool: _selectTool,
       onQuickTool: _selectQuickTool,
       onUndo: _undo,
@@ -812,10 +858,12 @@ mixin _ShellBuild on _ShellBase {
 class _AutomationResizeHandle extends StatelessWidget {
   const _AutomationResizeHandle({
     required this.onDrag,
+    required this.onDragEnd,
     required this.onDoubleTap,
   });
 
   final ValueChanged<double> onDrag;
+  final VoidCallback onDragEnd;
   final VoidCallback onDoubleTap;
 
   @override
@@ -824,6 +872,7 @@ class _AutomationResizeHandle extends StatelessWidget {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onVerticalDragUpdate: (d) => onDrag(d.delta.dy),
+      onVerticalDragEnd: (_) => onDragEnd(),
       onDoubleTap: onDoubleTap,
       child: Container(
         color: scheme.surface.withValues(alpha: 0.92),

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -127,6 +127,9 @@ pub(crate) struct RendererSharedState {
     pub(crate) sf_total: Arc<AtomicUsize>,
     /// 当前代次已完成（或已丢弃）的组数。
     pub(crate) sf_done: Arc<AtomicUsize>,
+    /// 音色库加载的细粒度进度（0..1000）：解析/加载/上传各阶段由 worker 与
+    /// 结果应用处更新，UI 不再只有 0 和 100%。
+    pub(crate) sf_progress: Arc<AtomicU32>,
 }
 
 impl RendererSharedState {
@@ -148,6 +151,7 @@ impl RendererSharedState {
             sf_loading: Arc::new(AtomicBool::new(false)),
             sf_total: Arc::new(AtomicUsize::new(0)),
             sf_done: Arc::new(AtomicUsize::new(0)),
+            sf_progress: Arc::new(AtomicU32::new(0)),
         }
     }
 }
