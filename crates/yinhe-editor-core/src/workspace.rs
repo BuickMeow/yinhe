@@ -52,7 +52,7 @@ impl Workspace {
     /// 新建空白工程并切换为活跃标签页。
     /// 调用方需同步 `mixer_racks` / `instrument_racks` 等平行数组（egui 层）。
     pub fn new_project(&mut self) -> usize {
-        self.documents.push(Document::empty());
+        self.documents.push(Document::empty_conductor_only());
         let idx = self.documents.len() - 1;
         self.active_doc = Some(idx);
         idx

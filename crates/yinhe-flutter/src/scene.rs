@@ -1128,9 +1128,9 @@ fn load_project_document(path: &str, token: u64) -> Result<Document, String> {
     Ok(doc)
 }
 
-/// 新建空工程（17 轨、120BPM、4/4；等同桌面 `Document::empty()`）。
+/// 新建空工程（仅 Conductor，其余音轨由 AR 末尾的加号创建；120BPM、4/4）。
 pub fn new_project() -> i32 {
-    let doc = Document::empty();
+    let doc = Document::empty_conductor_only();
     // 空工程给 4 小节的初始时间轴长度，避免除零缩放。
     apply_document(doc, 1920.0);
     1
