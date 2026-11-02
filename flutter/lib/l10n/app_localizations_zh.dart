@@ -231,6 +231,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get allTracks => '全部轨道';
 
   @override
+  String get showAllTracksColored => '显示全部轨道（彩色）';
+
+  @override
   String get project => '工程';
 
   @override
@@ -868,6 +871,9 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get allTracks => '全部顯示';
 
   @override
+  String get showAllTracksColored => '顯示全部軌道（彩色）';
+
+  @override
   String get project => '工程';
 
   @override
@@ -1503,6 +1509,9 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get allTracks => '全部顯示';
+
+  @override
+  String get showAllTracksColored => '顯示全部軌道（彩色）';
 
   @override
   String get project => '工程';

@@ -12,12 +12,24 @@ class LabelsPainter extends CustomPainter {
     required this.tracks,
     required this.dragFrom,
     required this.dragTo,
-  }) : super(repaint: Listenable.merge([snap, tracks, dragFrom, dragTo]));
+    required this.expandedTracks,
+  }) : super(
+         repaint: Listenable.merge([
+           snap,
+           tracks,
+           dragFrom,
+           dragTo,
+           expandedTracks,
+         ]),
+       );
 
   final ValueNotifier<List<double>> snap;
   final ValueNotifier<List<TrackRow>> tracks;
   final ValueNotifier<int> dragFrom;
   final ValueNotifier<int> dragTo;
+
+  /// 已展开的 AR 轨道卡片（按 uuid）；不在集合内 = 收起，只画编号。
+  final ValueNotifier<Set<String>> expandedTracks;
 
   @override
   void paint(Canvas canvas, Size size) {

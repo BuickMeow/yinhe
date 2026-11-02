@@ -76,6 +76,7 @@
   "saved": "Проект сохранён",
   "currentTrack": "Текущая дорожка",
   "allTracks": "Показать все",
+  "showAllTracksColored": "Показать все дорожки (цветные)",
   "project": "Проект",
   "projectSettings": "Настройки проекта",
   "songTitle": "Название проекта",

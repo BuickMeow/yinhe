@@ -76,6 +76,7 @@
   "saved": "Proyecto guardado",
   "currentTrack": "Pista actual",
   "allTracks": "Mostrar todo",
+  "showAllTracksColored": "Mostrar todas las pistas (en color)",
   "project": "Proyecto",
   "projectSettings": "Ajustes del proyecto",
   "songTitle": "Nombre del proyecto",

@@ -527,7 +527,7 @@ class TopBar extends StatelessWidget {
         CheckedPopupMenuItem<int>(
           value: tracks.length,
           checked: showAllTracks,
-          child: Text(l.allTracks),
+          child: Text(l.showAllTracksColored),
         ),
         const PopupMenuDivider(height: 1),
         for (var i = 0; i < tracks.length; i++)

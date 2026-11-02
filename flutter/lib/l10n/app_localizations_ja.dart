@@ -231,6 +231,9 @@ class AppLocalizationsJa extends AppLocalizations {
   String get allTracks => 'すべてを表示';
 
   @override
+  String get showAllTracksColored => 'すべてのトラックを表示（カラー）';
+
+  @override
   String get project => 'プロジェクト';
 
   @override

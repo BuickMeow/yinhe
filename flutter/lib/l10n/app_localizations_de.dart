@@ -232,6 +232,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get allTracks => 'Alle einblenden';
 
   @override
+  String get showAllTracksColored => 'Alle Spuren anzeigen (farbig)';
+
+  @override
   String get project => 'Projekt';
 
   @override

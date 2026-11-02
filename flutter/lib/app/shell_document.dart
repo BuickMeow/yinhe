@@ -346,6 +346,7 @@ mixin _ShellDocument on _ShellBase {
     rust.setDisplayTrack(-1);
     rust.setActiveTrack(-1);
     rust.setTool(1);
+    _arrExpandedTracks.value = <String>{};
     final p = path.toNativeUtf8();
     try {
       rust.openPath(p);

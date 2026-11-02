@@ -106,10 +106,6 @@ pub fn paint_grid_lines(
     };
 
     let ticks_per_sub = (tpb / SUB_BEAT_DIV).max(1);
-    // 1/16 以下沿同一套惯性继续细分：1/32、1/64…直到 1 tick。
-    let fine_step = yinhe_editor_core::quantize::fine_grid_preset(ppu, tpb)
-        .tick_interval(tpb)
-        .max(1);
     let segments = build_time_sig_segments(time_sig_events, default_num, default_den);
 
     // 网格线 = 标签的下一级（与 time_ruler 的标签级别严格错开）：
@@ -132,37 +128,21 @@ pub fn paint_grid_lines(
         let ticks_per_measure = measure_ticks(tpb, num, den);
         let ticks_per_beat = (ticks_per_measure / num as u32).max(1);
 
-        // 多小节合并（缩很小时按 2/4/8… 小节合并显示）
-        let pixels_per_measure = ticks_per_measure as f32 * ppu;
-        let measure_divisor = compute_measure_divisor(pixels_per_measure, MIN_SPACING);
-        let merged_measure_ticks = ticks_per_measure.saturating_mul(measure_divisor);
-
-        // 网格级别判定：
-        // - merged: 标签在合并边界，网格在合并/2 边界
-        // - not merged: 标签在每小节，下一级为 beat 线（无条件，保证"有标签就有线"）
-        let merged = measure_divisor > 1;
+        // 网格级别判定（层级开关只用于挑选颜色；步长统一由 Auto 同源的
+        // `visible_grid_step` 给出，保证网格与自动量化永远一致）。
+        let merged = compute_measure_divisor(ticks_per_measure as f32 * ppu, MIN_SPACING) > 1;
         let show_beat = !merged;
         let show_sub =
             colors.sub_beat.is_some() && show_beat && (ticks_per_beat as f32 * ppu) >= MIN_SPACING;
         let show_tick = colors.tick.is_some() && show_sub && ppu >= MAX_PPU;
-
-        // 合并时的 measure 网格步长
-        let grid_measure_ticks = if merged {
-            (merged_measure_ticks / 2).max(1)
-        } else {
-            ticks_per_measure
-        };
-
-        // 遍历步长 = 当前最细可见级别的步长
-        let step = if show_tick {
-            1u32
-        } else if show_sub {
-            fine_step.min(ticks_per_sub).max(1)
-        } else if show_beat {
-            ticks_per_beat
-        } else {
-            grid_measure_ticks.max(1)
-        };
+        let step = yinhe_editor_core::quantize::visible_grid_step(
+            ppu,
+            tpb,
+            num,
+            den,
+            colors.sub_beat.is_some(),
+            colors.tick.is_some(),
+        );
 
         // 对齐到段内网格：变拍子段的 seg_start 通常不在全局 step 网格上，
         // 必须从 seg_start 开始按 local 对齐，否则段内 tick 全落在错误偏移，整屏无线。

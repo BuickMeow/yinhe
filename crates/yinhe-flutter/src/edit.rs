@@ -22,7 +22,10 @@ const PENDING_CANCEL: f32 = 12.0;
 ///
 /// 6px 对手机太窄（约 2mm），成熟移动端编曲软件一般在 10~16dp；
 /// 这里取 12dp，比 44pt 按钮标准小，但足以稳定按住音符末端。
-const EDGE: f32 = 12.0;
+const EDGE: f32 = 24.0;
+/// 音符整体拖动的额外命中外扩（像素，仅时间轴方向）。
+/// 触屏上按在音符边缘外一点也应该能拖动它。
+const NOTE_HIT_PAD: f32 = 12.0;
 /// 新音符默认力度（桌面无记忆时回退 100）。
 const DEFAULT_VELOCITY: u8 = 100;
 /// 铅笔“单音符精调选择 → 二次拖动移动”功能开关。
@@ -31,7 +34,11 @@ const DEFAULT_VELOCITY: u8 = 100;
 /// 仍按原行为新建音符。后续要启用时只改这里。
 const PENCIL_PICK_ENABLED: bool = false;
 /// 选框控制点命中半径（逻辑像素）。
-const SEL_HANDLE_R: f32 = 14.0;
+const SEL_HANDLE_R: f32 = 28.0;
+/// 右下角 Riff L 形角标的命中边长（像素，受半框上限约束）。
+const SEL_CORNER: f32 = 36.0;
+/// 角标命中允许到框外的余量：手指中心稍微偏出选框也不该变成平移。
+const SEL_CORNER_PAD: f32 = 12.0;
 
 /// 拖拽类型。
 mod kind {
@@ -265,6 +272,17 @@ struct SelHandle {
     r1: usize,
 }
 
+/// 右下角 Riff 角标命中：36px 见方，受半框上限约束，并允许框外 12px。
+fn corner_hit(x0: f32, y0: f32, x1: f32, y1: f32, x: f32, y: f32) -> bool {
+    let (x0, x1) = (x0.min(x1), x0.max(x1));
+    let (y0, y1) = (y0.min(y1), y0.max(y1));
+    let w = (x1 - x0).max(1.0);
+    let h = (y1 - y0).max(1.0);
+    let lw = SEL_CORNER.min(w * 0.5);
+    let lh = SEL_CORNER.min(h * 0.5);
+    x >= x1 - lw && x <= x1 + SEL_CORNER_PAD && y >= y1 - lh && y <= y1 + SEL_CORNER_PAD
+}
+
 /// 控制点命中：四边中点圆形，右下角方形。
 fn handle_hit(x0: f32, y0: f32, x1: f32, y1: f32, x: f32, y: f32) -> Option<u8> {
     let (x0, x1) = (x0.min(x1), x0.max(x1));
@@ -276,7 +294,7 @@ fn handle_hit(x0: f32, y0: f32, x1: f32, y1: f32, x: f32, y: f32) -> Option<u8> 
         let dy = y - hy;
         dx * dx + dy * dy <= SEL_HANDLE_R * SEL_HANDLE_R
     };
-    if (x - x1).abs() <= 10.0 && (y - y1).abs() <= 10.0 {
+    if corner_hit(x0, y0, x1, y1, x, y) {
         return Some(4);
     }
     if near(cx, y0) {
@@ -311,8 +329,8 @@ fn pr_selection_handle(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option
     let x1 = geom.tick_to_x(t1);
     let y0 = geom.key_to_y(k1);
     let y1 = geom.key_to_y(k0) + geom.kh;
-    // 右下角 L 形角标（内缩 10px）用自己的命中区，不能按角落控制点算。
-    if x >= x1 - 18.0 && x <= x1 && y >= y1 - 18.0 && y <= y1 {
+    // 右下角 L 形角标用自己的命中区（半框上限 + 框外余量）。
+    if corner_hit(x0, y0, x1, y1, x, y) {
         return Some(SelHandle {
             edge: 4,
             t0,
@@ -349,7 +367,7 @@ fn ar_selection_handle(s: &RenderScene, geom: &ArGeom, x: f32, y: f32) -> Option
     let x1 = geom.tick_to_x(t1);
     let y0 = geom.row_to_y(r0);
     let y1 = geom.row_to_y(r1 + 1);
-    if x >= x1 - 18.0 && x <= x1 && y >= y1 - 18.0 && y <= y1 {
+    if corner_hit(x0, y0, x1, y1, x, y) {
         return Some(SelHandle {
             edge: 4,
             t0,
@@ -835,7 +853,11 @@ pub fn begin_selection_handle(x: f32, y: f32) -> i32 {
     let Ok(mut s) = scene::scene().lock() else {
         return 0;
     };
-    if s.document.is_none() || s.active_track == Some(0) {
+    if s.document.is_none() {
+        return 0;
+    }
+    // Conductor 只在 PR 里不可编辑；AR 第 0 行是合法轨道行。
+    if s.view_mode == ViewMode::Pianoroll && s.active_track == Some(0) {
         return 0;
     }
     let handle = match s.view_mode {
@@ -937,7 +959,10 @@ pub fn begin_selection_gate(x: f32, y: f32) -> i32 {
     let Ok(mut s) = scene::scene().lock() else {
         return 0;
     };
-    if s.document.is_none() || s.active_track == Some(0) || s.view_mode != ViewMode::Pianoroll {
+    if s.document.is_none() {
+        return 0;
+    }
+    if s.view_mode == ViewMode::Pianoroll && s.active_track == Some(0) {
         return 0;
     }
     let q = quantize_of(&s);
@@ -986,11 +1011,11 @@ pub fn begin_selection_gate(x: f32, y: f32) -> i32 {
         }
     };
     let edge = EDGE.min((x1 - x0) / 3.0);
-    if x < x1 - edge || x > x1 || y < y0 || y > y1 {
+    if x < x1 - edge || x > x1 + SEL_CORNER_PAD || y < y0 || y > y1 {
         return 0;
     }
     // 右下角留给 L 形角标（Riff）。
-    if ((x - x1).powi(2) + (y - y1).powi(2)).sqrt() < 18.0 {
+    if corner_hit(x0, y0, x1, y1, x, y) {
         return 0;
     }
     d.anchor_tick_raw = match s.view_mode {
@@ -1017,6 +1042,7 @@ pub fn begin_selection_gate(x: f32, y: f32) -> i32 {
     }
     d.kind = kind::SEL_GATE;
     s.clear_preview_anim();
+    s.sel_drag_active = true;
     s.set_sel_target([x0, y0, x1, y1]);
     s.hold_sel_edge(0);
     s.hold_sel_edge(1);
@@ -1727,7 +1753,7 @@ fn update_sel_resize(d: &DragState, s: &mut RenderScene, x: f32, y: f32) {
                 let m = if moving >= fixed {
                     moving.max(fixed + 1)
                 } else {
-                    moving.saturating_sub(1)
+                    moving.min(fixed.saturating_sub(1))
                 };
                 if d.sel_edge == 0 {
                     nr0 = m;
@@ -2884,40 +2910,61 @@ fn hit_note(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option<NoteHit> {
     }
     let tick_u = tick.floor() as u32;
     let write = write_track(s)?;
+    // 时间轴方向允许外扩 NOTE_HIT_PAD 像素；命中多个时取离按下点最近的音符，
+    // 避免外扩后抢到相邻音符。
+    let pad_ticks = (NOTE_HIT_PAD / geom.ppu.max(0.0001)).ceil() as i64;
+    let mut best: Option<(f32, NoteHit)> = None;
     for note in doc.data.model.key_notes(key).iter() {
-        if note.start_tick <= tick_u && tick_u < note.end_tick {
-            let t = note.track as usize;
-            if t != write {
-                continue;
-            }
-            let (x0, x1) = (
-                geom.tick_to_x(f64::from(note.start_tick)),
-                geom.tick_to_x(f64::from(note.end_tick)),
-            );
-            let (y0, y1) = (geom.key_to_y(key), geom.key_to_y(key) + geom.kh);
-            if x >= x0 && x <= x1 && y >= y0 && y <= y1 {
-                // 边缘宽度按音符宽度自适应：短音符也要留出中间区域用来移动，
-                // 否则 12px 热区会把整颗短音符吃成“右端把手”。
-                let edge = EDGE.min((x1 - x0) / 3.0);
-                let side = if x1 - x <= edge {
-                    2
-                } else if x - x0 <= edge {
-                    1
-                } else {
-                    0
-                };
-                return Some((
-                    note.track,
-                    note.start_tick,
-                    note.end_tick,
-                    key,
-                    side,
-                    note.id,
-                ));
-            }
+        if f64::from(note.start_tick) > f64::from(tick_u) + f64::from(pad_ticks as u32)
+            || i64::from(note.end_tick) < i64::from(tick_u) - pad_ticks
+        {
+            continue;
+        }
+        let t = note.track as usize;
+        if t != write {
+            continue;
+        }
+        let (x0, x1) = (
+            geom.tick_to_x(f64::from(note.start_tick)),
+            geom.tick_to_x(f64::from(note.end_tick)),
+        );
+        let (y0, y1) = (geom.key_to_y(key), geom.key_to_y(key) + geom.kh);
+        if y < y0 || y > y1 {
+            continue;
+        }
+        let dist = if x < x0 {
+            x0 - x
+        } else if x > x1 {
+            x - x1
+        } else {
+            0.0
+        };
+        if dist > NOTE_HIT_PAD {
+            continue;
+        }
+        let edge = EDGE.min((x1 - x0) / 3.0);
+        let side = if x < x0 {
+            1
+        } else if x > x1 || x1 - x <= edge {
+            2
+        } else if x - x0 <= edge {
+            1
+        } else {
+            0
+        };
+        let hit = (
+            note.track,
+            note.start_tick,
+            note.end_tick,
+            key,
+            side,
+            note.id,
+        );
+        if best.as_ref().is_none_or(|(best_dist, _)| dist < *best_dist) {
+            best = Some((dist, hit));
         }
     }
-    None
+    best.map(|(_, hit)| hit)
 }
 
 /// PR 已选框命中（像素坐标，取第一个）。
@@ -3028,8 +3075,12 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
                     tb = ta + interval;
                 }
                 let r_cur = geom_ar.y_to_row(y);
-                let (rlo, rhi) = (d.anchor_row.min(r_cur), d.anchor_row.max(r_cur));
-                let (tr_lo, tr_hi) = (rlo, rhi.min(num_tracks.saturating_sub(1)));
+                let max_row = num_tracks.saturating_sub(1);
+                let (rlo, rhi) = (
+                    d.anchor_row.min(r_cur).min(max_row),
+                    d.anchor_row.max(r_cur).min(max_row),
+                );
+                let (tr_lo, tr_hi) = (rlo, rhi);
                 let Document { edit, .. } = doc;
                 edit.selected.clear();
                 edit.sel_rect.clear();
@@ -3658,6 +3709,15 @@ mod tests {
     #[test]
     fn conductor_active_has_no_write_track_even_with_all_tracks() {
         assert_eq!(write_track(&scene(None, Some(0), 3)), None);
+    }
+
+    #[test]
+    fn corner_hit_is_capped_by_half_box() {
+        // 单行 16px 高的选框：角标最多占下半 8px，框中间仍可拖动。
+        assert!(corner_hit(0.0, 0.0, 100.0, 16.0, 99.0, 15.0));
+        assert!(!corner_hit(0.0, 0.0, 100.0, 16.0, 50.0, 8.0));
+        // 框外 12px 内仍能抓角标（手指中心略偏出选框）。
+        assert!(corner_hit(0.0, 0.0, 100.0, 16.0, 105.0, 20.0));
     }
 
     #[test]

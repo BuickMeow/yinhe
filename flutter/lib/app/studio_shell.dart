@@ -176,6 +176,10 @@ abstract class _ShellBase extends State<StudioShell>
   /// 最近一次布局可用的 AM 最大绘制高度（拖动时用来 clamp）。
   double _amMaxDrawHeight = 0;
 
+  /// 已展开的 AR 轨道卡片（按轨道 uuid；空 = 全部收起，默认收起）。
+  final ValueNotifier<Set<String>> _arrExpandedTracks =
+      ValueNotifier<Set<String>>(<String>{});
+
   /// 当前工具（PR 5 种；AR 2 种；索引对应 `toolDefs`）。
   int _toolPr = 0;
   int _toolAr = 0;
@@ -672,6 +676,7 @@ class _StudioShellState extends _ShellBase
     _savingTimer?.cancel();
     _velocityReloadTimer?.cancel();
     _velocityRetryTimer?.cancel();
+    _arrExpandedTracks.dispose();
     _docState.dispose();
     _editStatus.dispose();
     calloc.free(_snapPtr);

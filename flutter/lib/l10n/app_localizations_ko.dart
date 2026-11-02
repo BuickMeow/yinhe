@@ -231,6 +231,9 @@ class AppLocalizationsKo extends AppLocalizations {
   String get allTracks => '모두 표시';
 
   @override
+  String get showAllTracksColored => '모든 트랙 표시(컬러)';
+
+  @override
   String get project => '프로젝트';
 
   @override

@@ -41,6 +41,7 @@ class OverlayData {
 /// 轨道面板行数据（Rust tracks_json）。
 class TrackRow {
   const TrackRow({
+    this.uuid = '',
     required this.name,
     required this.port,
     required this.channel,
@@ -52,6 +53,8 @@ class TrackRow {
     this.master = false,
   });
 
+  /// 轨道稳定标识（轨道重排/删除后仍能记住展开状态）。
+  final String uuid;
   final String name;
   final int port;
   final int channel;
@@ -71,6 +74,7 @@ class TrackRow {
     double ch(int i, double fallback) =>
         (i < c.length ? (c[i] as num).toDouble() : fallback);
     return TrackRow(
+      uuid: json['uuid'] as String? ?? '',
       name: json['name'] as String? ?? '',
       port: (json['port'] as num?)?.toInt() ?? 0,
       channel: (json['channel'] as num?)?.toInt() ?? 0,

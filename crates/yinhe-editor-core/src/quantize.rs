@@ -291,34 +291,71 @@ pub fn fine_grid_preset(pixels_per_tick: f32, ppq: u32) -> QuantizePreset {
 ///
 /// 中高缩放时返回 1/16 或 1 tick；低缩放返回合并小节/小节/拍。
 /// AR 没有 sub/tick 层（`allow_sub_tick = false`），最高只到拍线。
-fn grid_base_interval(
+/// 当前视图实际画出的最细网格步长（tick）。
+///
+/// 这是「网格」与「自动量化」的唯一来源：`time_grid_json` / 桌面
+/// `paint_grid_lines` / `QuantizePreset::Auto` 都调用它，保证 Auto 永远
+/// 吸到屏幕上真实存在的最细线上。
+///
+/// `allow_sub` = 允许 1/16 及以下细分（PR/AM）；AR 只画小节/拍，传 false。
+/// `allow_tick` = 允许最大缩放时的 1 tick 线（PR），AR 传 false。
+pub struct VisibleGrid {
+    /// 实际画出的最细网格步长（tick）。
+    pub step: u32,
+    /// 是否进入「1/16 以下细分」层（此时 Auto 用 fine_grid_preset 保持档位命名）。
+    pub show_sub: bool,
+    /// 是否进入 1 tick 层。
+    pub show_tick: bool,
+}
+
+pub fn visible_grid(
     pixels_per_tick: f32,
     ppq: u32,
     num: u8,
     den_pow: u8,
-    allow_sub_tick: bool,
-) -> u32 {
+    allow_sub: bool,
+    allow_tick: bool,
+) -> VisibleGrid {
     let ppq = ppq.max(1);
     let ppu = pixels_per_tick.max(0.001);
     let measure = yinhe_types::measure_ticks(ppq, num, den_pow).max(1);
     let beat = (measure / u32::from(num.max(1))).max(1);
     let sub = (ppq / 4).max(1);
-
     let measure_divisor =
         yinhe_types::compute_measure_divisor(measure as f32 * ppu, AUTO_GRID_MIN_SPACING);
-    if measure_divisor > 1 {
-        return (measure.saturating_mul(measure_divisor) / 2).max(1);
+    let merged = measure_divisor > 1;
+    let show_beat = !merged;
+    let show_sub = allow_sub && show_beat && (beat as f32 * ppu) >= AUTO_GRID_MIN_SPACING;
+    let show_tick = allow_tick && show_sub && ppu >= AUTO_MAX_TICK_PPU;
+    let step = if show_tick {
+        1
+    } else if show_sub {
+        fine_grid_preset(ppu, ppq)
+            .tick_interval(ppq)
+            .min(sub)
+            .max(1)
+    } else if show_beat {
+        beat
+    } else {
+        (measure.saturating_mul(measure_divisor) / 2).max(1)
+    };
+    VisibleGrid {
+        step,
+        show_sub,
+        show_tick,
     }
-    if !allow_sub_tick {
-        return beat;
-    }
-    if ppu >= AUTO_MAX_TICK_PPU {
-        return 1;
-    }
-    if (beat as f32 * ppu) >= AUTO_GRID_MIN_SPACING {
-        return sub;
-    }
-    beat
+}
+
+/// 只需要步长时的便捷封装。
+pub fn visible_grid_step(
+    pixels_per_tick: f32,
+    ppq: u32,
+    num: u8,
+    den_pow: u8,
+    allow_sub: bool,
+    allow_tick: bool,
+) -> u32 {
+    visible_grid(pixels_per_tick, ppq, num, den_pow, allow_sub, allow_tick).step
 }
 
 /// 把 tick 间隔转成最自然的量化档位：能整除全音符时用分数，否则用绝对 tick。
@@ -362,15 +399,24 @@ pub fn auto_preset_with_time_sig(
     allow_sub_tick: bool,
 ) -> QuantizePreset {
     let ppq = ppq.max(1);
-    let base = grid_base_interval(pixels_per_tick, ppq, num, den_pow, allow_sub_tick);
-    let sub = (ppq / 4).max(1);
-    if base > sub {
-        return preset_for_interval(base, ppq);
+    // 直接投影可见网格：Auto 与画出来的最细线完全一致（AR 不画细分时不会
+    // 吸到看不见的 1/32）。tick 层与细分层同开关，避免 PR 在最大缩放时
+    // 网格画到 1 tick 而 Auto 还停在 1/16。
+    let grid = visible_grid(
+        pixels_per_tick,
+        ppq,
+        num,
+        den_pow,
+        allow_sub_tick,
+        allow_sub_tick,
+    );
+    if grid.show_sub {
+        // 保持细分档位的命名（1/32、Absolute(2)…），与旧 UI 一致。
+        let fine = fine_grid_preset(pixels_per_tick, ppq);
+        debug_assert_eq!(fine.tick_interval(ppq), grid.step);
+        return fine;
     }
-    if base <= 1 {
-        return QuantizePreset::Absolute(1);
-    }
-    fine_grid_preset(pixels_per_tick, ppq)
+    preset_for_interval(grid.step, ppq)
 }
 
 // ── 小节感知的 snap（原 yinhe-egui/src/view_interaction.rs，下沉至此） ──
@@ -699,6 +745,26 @@ mod tests {
             auto_preset_with_time_sig(0.08, 480, 1, 3, false),
             QuantizePreset::Fraction(1, 8)
         );
+    }
+
+    /// 回归：Auto 必须严格等于当前视图实际画出的最细网格步长，
+    /// 不能因为「拍号/合并步长比 1/16 细」而吸到看不见的线。
+    #[test]
+    fn auto_matches_visible_grid_step() {
+        for ppu in [0.001, 0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 5.0, 10.0, 20.0] {
+            for (num, den) in [(4, 2), (3, 2), (6, 3), (7, 3), (4, 4), (4, 5), (1, 5)] {
+                for allow_sub in [false, true] {
+                    let step = visible_grid_step(ppu, 480, num, den, allow_sub, allow_sub);
+                    let auto = auto_preset_with_time_sig(ppu, 480, num, den, allow_sub);
+                    assert_eq!(
+                        auto.tick_interval(480),
+                        step,
+                        "ppu={ppu} sig={num}/{} allow_sub={allow_sub}",
+                        1u32 << den
+                    );
+                }
+            }
+        }
     }
 
     #[test]

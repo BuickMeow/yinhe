@@ -80,6 +80,7 @@
   "saved": "已保存",
   "currentTrack": "当前编辑音轨",
   "allTracks": "全部轨道",
+  "showAllTracksColored": "显示全部轨道（彩色）",
   "project": "工程",
   "projectSettings": "工程设置",
   "songTitle": "歌名",

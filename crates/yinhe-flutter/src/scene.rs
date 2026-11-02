@@ -91,6 +91,8 @@ pub const INITIAL_VISIBLE_KEYS: f32 = 32.0;
 
 /// 轨道面板用的精简轨道信息（Dart 浮层绘制）。
 pub struct TrackInfoLite {
+    /// 轨道稳定标识（轨道重排/删除后 Dart 仍能记住展开状态）。
+    pub uuid: String,
     pub name: String,
     pub port: u8,
     pub channel: u8,
@@ -299,6 +301,9 @@ pub struct RenderScene {
     /// 选框锚点拖动时的视觉偏移（四条边，像素）：和选框预览使用同一套缓动。
     pub sel_anim: [f32; 4],
     pub sel_target: Option<[f32; 4]>,
+    /// 正在拖动选框控制点：期间不能丢掉 `sel_target`，否则 overlay 会退回
+    /// 未提交的旧矩形，产生「新边 ↔ 旧边」来回抖动。
+    pub sel_drag_active: bool,
     /// 上一次动画推进时间（指数衰减用）。
     pub(crate) anim_last: Option<std::time::Instant>,
 }
@@ -355,6 +360,7 @@ impl Default for RenderScene {
             pr_key_zoom_accum: 1.0,
             sel_anim: [0.0; 4],
             sel_target: None,
+            sel_drag_active: false,
             anim_last: None,
         }
     }
@@ -442,6 +448,7 @@ impl RenderScene {
         self.ghost_dy = 0.0;
         self.sel_anim = [0.0; 4];
         self.sel_target = None;
+        self.sel_drag_active = false;
         self.anim_last = None;
     }
 
@@ -473,7 +480,7 @@ impl RenderScene {
             self.ghost_dy = 0.0;
             let had_sel = self.sel_target.is_some() && self.sel_anim != [0.0; 4];
             self.sel_anim = [0.0; 4];
-            if self.sel_target.is_some() {
+            if self.sel_target.is_some() && !self.sel_drag_active {
                 self.sel_target = None;
             }
             if had_box {
@@ -514,7 +521,7 @@ impl RenderScene {
                 *v * k
             };
         }
-        if self.sel_target.is_some() && self.sel_anim == [0.0; 4] {
+        if self.sel_target.is_some() && self.sel_anim == [0.0; 4] && !self.sel_drag_active {
             self.sel_target = None;
         }
         if self.sel_target.is_some() {
@@ -1600,6 +1607,7 @@ pub(crate) fn refresh_snapshot(s: &mut RenderScene) {
                 .copied()
                 .flatten();
             TrackInfoLite {
+                uuid: t.uuid.clone(),
                 name: t.name.to_string(),
                 port: t.port,
                 channel: t.channel,
@@ -2224,8 +2232,9 @@ pub fn tracks_json() -> String {
             out.push(',');
         }
         out.push_str(&format!(
-            "{{\"index\":{},\"name\":\"{}\",\"port\":{},\"channel\":{},\"color\":[{},{},{},{}],\"muted\":{},\"soloed\":{},\"ib\":{},\"ip\":{},\"master\":{}}}",
+            "{{\"index\":{},\"uuid\":\"{}\",\"name\":\"{}\",\"port\":{},\"channel\":{},\"color\":[{},{},{},{}],\"muted\":{},\"soloed\":{},\"ib\":{},\"ip\":{},\"master\":{}}}",
             i,
+            json_escape(&t.uuid),
             json_escape(&t.name),
             t.port,
             t.channel,
@@ -2472,7 +2481,8 @@ pub fn time_grid_json() -> String {
     let end_tick = (((scroll_x - left_inset + width) / ppu).max(0.0)) as f64;
     let end_i = end_tick.floor() as i64;
     let sub_ticks = (ppq / 4).max(1);
-    let fine_step = fine_grid_step(ppu, ppq);
+    // AR 只画小节/拍线；PR/AM 才有细分和 tick 层。Auto 量化用同一开关。
+    let allow_sub = matches!(s.view_mode, ViewMode::Pianoroll);
     let mut lines: Vec<serde_json::Value> = Vec::new();
 
     for (i, &(seg_start, num, den)) in segments.iter().enumerate() {
@@ -2484,24 +2494,13 @@ pub fn time_grid_json() -> String {
         let bticks = (mticks / u32::from(num.max(1))).max(1);
         let divisor = compute_measure_divisor(mticks as f32 * ppu, MIN_SPACING);
         let merged = divisor > 1;
-        let merged_mticks = mticks * divisor;
         let show_beat = !merged;
-        let show_sub = show_beat && bticks as f32 * ppu >= MIN_SPACING;
-        let show_tick = show_sub && ppu >= 10.0;
-        let grid_mticks = if merged {
-            (merged_mticks / 2).max(1)
-        } else {
-            mticks
-        };
-        let step = if show_tick {
-            1
-        } else if show_sub {
-            fine_step.min(sub_ticks).max(1)
-        } else if show_beat {
-            bticks.max(1)
-        } else {
-            grid_mticks.max(1)
-        };
+        let show_sub = allow_sub && show_beat && bticks as f32 * ppu >= MIN_SPACING;
+        let show_tick = allow_sub && show_sub && ppu >= 10.0;
+        // 与 Auto 量化共用的唯一来源：当前实际画出的最细网格步长。
+        let step = yinhe_editor_core::quantize::visible_grid_step(
+            ppu, ppq, num, den, allow_sub, allow_sub,
+        );
 
         let first = if seg_start as f64 > start_tick {
             seg_start as i64
@@ -2533,44 +2532,6 @@ pub fn time_grid_json() -> String {
         }
     }
     serde_json::Value::Array(lines).to_string()
-}
-
-/// 细分网格档位：与桌面 `fine_grid_preset` 同规则（屏幕格宽最接近 13px）。
-fn fine_grid_step(ppu: f32, ppq: u32) -> u32 {
-    let p = ppq.max(1);
-    let whole = p * 4;
-    let mut candidates = Vec::new();
-    let mut den = 1u32;
-    let mut last = whole;
-    while den <= whole && whole.is_multiple_of(den) {
-        last = whole.div_ceil(den);
-        candidates.push(last);
-        if den > (1 << 30) {
-            break;
-        }
-        den *= 2;
-    }
-    let mut t = last.next_power_of_two() >> 1;
-    while t >= 1 {
-        candidates.push(t);
-        t >>= 1;
-    }
-    let max_interval = (p / 4).max(1);
-    let mut best = 1u32;
-    let mut best_err = f32::INFINITY;
-    let mut prev = u32::MAX;
-    for interval in candidates {
-        if interval == 0 || interval > max_interval || interval >= prev {
-            continue;
-        }
-        prev = interval;
-        let err = (interval as f32 * ppu / 13.0).ln().abs();
-        if err < best_err {
-            best_err = err;
-            best = interval;
-        }
-    }
-    best
 }
 
 /// 视图快照（Dart 文本浮层用），固定 13 个 f32：
@@ -5798,6 +5759,20 @@ mod tests {
             track: 0,
             events: Vec::new(),
         }
+    }
+
+    /// 拖动选框控制点期间不能丢掉 sel_target，否则 overlay 会退回旧矩形来回抖。
+    #[test]
+    fn sel_target_survives_while_drag_active() {
+        let mut s = super::RenderScene::default();
+        s.set_sel_target([0.0, 0.0, 100.0, 40.0]);
+        s.sel_drag_active = true;
+        s.sel_anim = [0.0; 4];
+        s.tick_preview_anim();
+        assert!(s.sel_target.is_some(), "拖动期间 sel_target 必须保留");
+        s.sel_drag_active = false;
+        s.tick_preview_anim();
+        assert!(s.sel_target.is_none(), "松手后预览应回到已提交矩形");
     }
 
     /// `panel.lane` 与渲染层一致使用 0 基下标：0 = 第一条可绘制自动化 lane。
