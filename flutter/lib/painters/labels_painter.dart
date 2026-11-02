@@ -102,6 +102,20 @@ class LabelsPainter extends CustomPainter {
     for (var idx = first; idx < last; idx++) {
       final row = rows[idx];
       final y = idx * laneH - scrollY;
+      // 收起态只画三位编号，点击卡片再展开完整信息。
+      if (!expandedTracks.value.contains(row.uuid)) {
+        final font = (laneH * 0.28).clamp(10.0, 14.0).toDouble();
+        _text(
+          canvas,
+          idx.toString().padLeft(3, '0'),
+          Offset(10, y + laneH / 2),
+          font,
+          YinheTheme.text,
+          vCenter: true,
+          maxWidth: (panelW - 16.0).clamp(8.0, double.infinity),
+        );
+        continue;
+      }
       final port = row.port >= 0 && row.port < 4 ? 'ABCD'[row.port] : '?';
       final code =
           '${idx.toString().padLeft(3, '0')}  $port${(row.channel + 1).toString().padLeft(2, '0')}';
