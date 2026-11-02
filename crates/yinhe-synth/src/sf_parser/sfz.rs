@@ -2,14 +2,6 @@
 
 use super::*;
 
-pub(super) fn build_key_map_from_sfz(
-    sfz_path: &Path,
-    sample_rate: u32,
-    interp: u32,
-) -> Result<Vec<Vec<KeyInfo>>, String> {
-    build_key_map_from_sfz_with_progress(sfz_path, sample_rate, interp, &mut |_| {})
-}
-
 pub(super) fn build_key_map_from_sfz_with_progress(
     sfz_path: &Path,
     sample_rate: u32,

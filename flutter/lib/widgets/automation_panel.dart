@@ -48,6 +48,7 @@ class AutomationPanel extends StatefulWidget {
     required this.marqueeEnabled,
     required this.onInsertAtTick,
     this.onDocJob,
+    this.textureReady = true,
   });
 
   final double height;
@@ -96,6 +97,9 @@ class AutomationPanel extends StatefulWidget {
 
   /// 选区批量操作走后台文档任务的入口（返回的 Future 在任务结束时完成）。
   final Future<void> Function()? onDocJob;
+
+  /// AM surface 是否已跟上当前布局尺寸；false 时先不画 wgpu Texture。
+  final bool textureReady;
 
   /// 全屏面板的绘制高度（面板没有拖拽手柄）。
   double get canvasHeight => height.clamp(1.0, double.infinity);
@@ -1684,7 +1688,8 @@ class _AutomationPanelState extends State<AutomationPanel>
                                       base: false,
                                     ),
                                   ),
-                                  Texture(textureId: widget.textureId!),
+                                  if (widget.textureReady)
+                                    Texture(textureId: widget.textureId!),
                                   CustomPaint(
                                     painter: painter(
                                       grid: false,

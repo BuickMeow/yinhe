@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
-import 'dart:ui' show ImageFilter;
 
 import 'package:ffi/ffi.dart';
 import 'package:flutter/gestures.dart';
@@ -63,8 +62,6 @@ const double kAmHandleHeight = 26.0;
 
 /// 自动化面板拖到低于此高度时，松手自动收起（带动画）。
 const double kAmAutoCollapseHeight = 12.0;
-/// 自动收起/展开的动画时长。
-const Duration kAmCollapseDuration = Duration(milliseconds: 180);
 
 /// 工作台壳：画布常驻，左侧抽屉菜单 + 顶部走带控制。
 class StudioShell extends StatefulWidget {
@@ -179,13 +176,12 @@ abstract class _ShellBase extends State<StudioShell>
   /// 最近一次布局可用的 AM 最大绘制高度（拖动时用来 clamp）。
   double _amMaxDrawHeight = 0;
 
+  /// AM 纹理预热帧数：展开后头几帧先不画 Texture，避免旧的小尺寸层闪现。
+  int _amTextureWarmup = 0;
+
   /// 已展开的 AR 轨道卡片（按轨道 uuid；空 = 全部收起，默认收起）。
   final ValueNotifier<Set<String>> _arrExpandedTracks =
       ValueNotifier<Set<String>>(<String>{});
-
-  /// AM 正在播放收起动画（期间仍渲染，滑出后真正隐藏）。
-  bool _amClosing = false;
-  Timer? _amCloseTimer;
 
   /// 当前工具（PR 5 种；AR 2 种；索引对应 `toolDefs`）。
   int _toolPr = 0;
@@ -628,6 +624,12 @@ class _StudioShellState extends _ShellBase
       // 工程状态降频（每 ~66ms）：减少音频锁与历史栈分配开销。
       // 对话框打开时也要跑：_pollArchive 靠它关闭加载进度框。
       _frameCounter++;
+      if (_amTextureWarmup > 0) {
+        _amTextureWarmup--;
+        if (_amTextureWarmup == 0 && mounted) {
+          setState(() {});
+        }
+      }
       if (_frameCounter % 4 == 0) {
         final generation = rust.documentGeneration();
         if (generation != _docGeneration) {
@@ -683,7 +685,6 @@ class _StudioShellState extends _ShellBase
     _velocityReloadTimer?.cancel();
     _velocityRetryTimer?.cancel();
     _arrExpandedTracks.dispose();
-    _amCloseTimer?.cancel();
     _docState.dispose();
     _editStatus.dispose();
     calloc.free(_snapPtr);

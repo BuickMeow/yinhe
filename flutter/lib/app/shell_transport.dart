@@ -132,35 +132,20 @@ mixin _ShellTransport on _ShellBase {
 
   @override
   void _setAutoCollapsed(bool collapsed) {
-    _amCloseTimer?.cancel();
-    _amCloseTimer = null;
-    if (collapsed && !_autoCollapsed) {
-      // 收起走一段滑出动画，动画结束后才真正从树上移除。
-      setState(() => _amClosing = true);
-      _amCloseTimer = Timer(kAmCollapseDuration, () {
-        if (!mounted) {
-          return;
-        }
-        setState(() {
-          _autoCollapsed = true;
-          _amClosing = false;
-          // 手柄停在最底部；下次拖动从 0 开始拉起。
-          _autoPanelHeight = 0;
-        });
-      });
-      return;
-    }
     setState(() {
       _autoCollapsed = collapsed;
-      _amClosing = false;
-      // 之前被缩到很矮再自动收起的，重新打开时恢复默认（全屏）。
-      if (!collapsed &&
-          _autoPanelHeight != null &&
+      // 收起直接停到底部（手柄常驻），不做滑出再弹出的动画。
+      if (collapsed) {
+        _autoPanelHeight = 0;
+      } else if (_autoPanelHeight != null &&
           _autoPanelHeight! < kAmAutoCollapseHeight) {
+        // 之前被缩到很矮再自动收起的，重新打开时恢复默认（全屏）。
         _autoPanelHeight = null;
       }
     });
     if (!collapsed && _viewMode == kViewPianoroll) {
+      // 等 surface resize 生效的前几帧先不画 Texture，避免旧尺寸层闪现。
+      _amTextureWarmup = 3;
       // 面板展开才需要自动化/力度数据（收起时上面两处刷新会跳过）。
       _loadAutomation();
       _loadVelocity();
@@ -179,12 +164,11 @@ mixin _ShellTransport on _ShellBase {
       if (dy >= 0) {
         return;
       }
-      _amCloseTimer?.cancel();
       setState(() {
         _autoCollapsed = false;
-        _amClosing = false;
         _autoPanelHeight = 0;
       });
+      _amTextureWarmup = 3;
       if (_viewMode == kViewPianoroll) {
         _loadAutomation();
         _loadVelocity();

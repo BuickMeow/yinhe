@@ -238,11 +238,6 @@ mixin _ShellBuild on _ShellBase {
                           child: LayoutBuilder(
                             builder: (context, constraints) {
                               final size = constraints.biggest;
-                              // AM 全屏浮在 PR 之上：不压缩画布，只覆盖标尺下方
-                              // 的整个内容区，半透明背景让 PR 音符透出来。
-                              final amVisible =
-                                  _viewMode == kViewPianoroll &&
-                                  !_autoCollapsed;
                               final canvasH = size.height;
                               // AM 绘制区高度：默认占满可用区，可拖手柄任意缩放/全屏。
                               final amMax =
@@ -251,13 +246,24 @@ mixin _ShellBuild on _ShellBase {
                                           kAmHandleHeight)
                                       .clamp(1.0, double.infinity);
                               _amMaxDrawHeight = amMax;
-                              final amH = (_autoPanelHeight ?? amMax).clamp(
-                                0.0,
-                                amMax,
-                              );
-                              // 内容画布 = 画布区减去顶部标尺条（Rust 坐标系从标尺下方开始）。
-                              final contentH = (canvasH - RulerPainter.height)
-                                  .clamp(1.0, double.infinity);
+                              final amVisible =
+                                  _viewMode == kViewPianoroll &&
+                                  !_autoCollapsed;
+                              final amH = amVisible
+                                  ? (_autoPanelHeight ?? amMax).clamp(
+                                      0.0,
+                                      amMax,
+                                    )
+                                  : 0.0;
+                              // 底部栏（手柄 + 展开的面板）参与布局：PR 视口让出这块高度，
+                              // 不再被浮层遮住。
+                              final bottomBarH = _viewMode == kViewPianoroll
+                                  ? kAmHandleHeight + amH
+                                  : 0.0;
+                              // 内容画布 = 画布区减去标尺条和底部栏（Rust 坐标系从标尺下方开始）。
+                              final contentH =
+                                  (canvasH - RulerPainter.height - bottomBarH)
+                                      .clamp(1.0, double.infinity);
                               final dpr = MediaQuery.devicePixelRatioOf(
                                 context,
                               );
@@ -271,6 +277,7 @@ mixin _ShellBuild on _ShellBase {
                               );
                               // AM 与 PR 一样在布局层确认视口：物理尺寸才决定
                               // SurfaceProducer 的交换链大小，不能等子组件回调。
+                              var amTextureReady = false;
                               if (amVisible) {
                                 final amW =
                                     (size.width - AutomationPainter.comboWidth)
@@ -278,6 +285,14 @@ mixin _ShellBuild on _ShellBase {
                                 final amPw = (amW * dpr).round();
                                 final amPh = (amH * dpr).round();
                                 _queueAutomationSize(amPw, amPh);
+                                // surface 还没追上布局尺寸时先隐藏 Texture：
+                                // 否则会把旧的矮层按自然尺寸显示出来闪一下。
+                                final reported = _reportedAmSize;
+                                amTextureReady =
+                                    _amTextureWarmup == 0 &&
+                                    (reported == null ||
+                                        (reported.width >= amPw &&
+                                            reported.height >= amPh));
                               }
                               return RawGestureDetector(
                                 behavior: HitTestBehavior.translucent,
@@ -310,7 +325,7 @@ mixin _ShellBuild on _ShellBase {
                                               left: 0,
                                               right: 0,
                                               top: RulerPainter.height,
-                                              bottom: 0,
+                                              bottom: bottomBarH,
                                               child: IgnorePointer(
                                                 child: CustomPaint(
                                                   painter:
@@ -327,7 +342,7 @@ mixin _ShellBuild on _ShellBase {
                                               left: 0,
                                               right: 0,
                                               top: RulerPainter.height,
-                                              bottom: 0,
+                                              bottom: bottomBarH,
                                               child: IgnorePointer(
                                                 child: CustomPaint(
                                                   painter: PianorollGridPainter(
@@ -341,7 +356,7 @@ mixin _ShellBuild on _ShellBase {
                                             left: 0,
                                             right: 0,
                                             top: RulerPainter.height,
-                                            bottom: 0,
+                                            bottom: bottomBarH,
                                             child: GestureDetector(
                                               behavior: HitTestBehavior.opaque,
                                               onTapUp: _handleTapUp,
@@ -388,7 +403,7 @@ mixin _ShellBuild on _ShellBase {
                                               left: 0,
                                               right: 0,
                                               top: RulerPainter.height,
-                                              bottom: 0,
+                                              bottom: bottomBarH,
                                               child: IgnorePointer(
                                                 child: CustomPaint(
                                                   painter: KeyLabelPainter(
@@ -403,7 +418,7 @@ mixin _ShellBuild on _ShellBase {
                                             left: 0,
                                             right: 0,
                                             top: RulerPainter.height,
-                                            bottom: 0,
+                                            bottom: bottomBarH,
                                             child: IgnorePointer(
                                               child: CustomPaint(
                                                 painter: NoteDeleteFadePainter(
@@ -418,7 +433,7 @@ mixin _ShellBuild on _ShellBase {
                                             left: 0,
                                             right: 0,
                                             top: RulerPainter.height,
-                                            bottom: 0,
+                                            bottom: bottomBarH,
                                             child: IgnorePointer(
                                               child: CustomPaint(
                                                 painter: OverlayPainter(
@@ -435,7 +450,7 @@ mixin _ShellBuild on _ShellBase {
                                             left: 0,
                                             right: 0,
                                             top: RulerPainter.height,
-                                            bottom: 0,
+                                            bottom: bottomBarH,
                                             child: IgnorePointer(
                                               child: CustomPaint(
                                                 painter: LabelsPainter(
@@ -501,7 +516,7 @@ mixin _ShellBuild on _ShellBase {
                                             left: 0,
                                             right: 0,
                                             top: RulerPainter.height,
-                                            bottom: 0,
+                                            bottom: bottomBarH,
                                             child: IgnorePointer(
                                               child: CustomPaint(
                                                 painter:
@@ -519,7 +534,7 @@ mixin _ShellBuild on _ShellBase {
                                             left: 0,
                                             right: 0,
                                             top: RulerPainter.height,
-                                            bottom: 0,
+                                            bottom: bottomBarH,
                                             child: IgnorePointer(
                                               child: CustomPaint(
                                                 painter: MarqueeHintPainter(
@@ -532,142 +547,103 @@ mixin _ShellBuild on _ShellBase {
                                         ],
                                       ),
                                     ),
-                                    if (_viewMode ==
-                                        kViewPianoroll) ...<Widget>[
+                                    if (_viewMode == kViewPianoroll)
                                       Positioned(
                                         left: 0,
                                         right: 0,
                                         bottom: 0,
-                                        height: amH + kAmHandleHeight,
-                                        child: IgnorePointer(
-                                          ignoring: _amClosing,
-                                          child: AnimatedSlide(
-                                            offset: _amClosing
-                                                ? const Offset(0, 1)
-                                                : Offset.zero,
-                                            duration: kAmCollapseDuration,
-                                            curve: Curves.easeIn,
-                                            child: AnimatedOpacity(
-                                              opacity: _amClosing ? 0 : 1,
-                                              duration: kAmCollapseDuration,
-                                              child: ClipRect(
-                                                child: BackdropFilter(
-                                                  filter: ImageFilter.blur(
-                                                    sigmaX: 8,
-                                                    sigmaY: 8,
-                                                  ),
-                                                  child: Column(
-                                                    children: [
-                                                      SizedBox(
-                                                        height: kAmHandleHeight,
-                                                        child: _AutomationResizeHandle(
-                                                          onDrag:
-                                                              _resizeAutoPanel,
-                                                          onDragEnd:
-                                                              _finishAutoPanelResize,
-                                                          onDoubleTap:
-                                                              _toggleAutoPanelFullscreen,
-                                                        ),
-                                                      ),
-                                                      Expanded(
-                                                        child: amH > 1
-                                                            ? AutomationPanel(
-                                                                height: amH,
-                                                                snap: _snap,
-                                                                gridLines:
-                                                                    _gridLines,
-                                                                lanes:
-                                                                    _autoLanes,
-                                                                velocity:
-                                                                    _velocityBars,
-                                                                trackColors: [
-                                                                  for (final t
-                                                                      in _tracks
-                                                                          .value)
-                                                                    t.color,
-                                                                ],
-                                                                activeTrack:
-                                                                    _activeTrack ??
-                                                                    0,
-                                                                isConductor:
-                                                                    _activeTrack !=
-                                                                        null &&
-                                                                    _activeTrack! >=
-                                                                        0 &&
-                                                                    _activeTrack! <
-                                                                        _tracks
-                                                                            .value
-                                                                            .length &&
-                                                                    _tracks
-                                                                        .value[_activeTrack!]
-                                                                        .master,
-                                                                status:
-                                                                    _editStatus,
-                                                                formatTick:
-                                                                    _formatEditTick,
-                                                                onReload:
-                                                                    _loadAutomation,
-                                                                textureId:
-                                                                    _amTextureId,
-                                                                pencilActive:
-                                                                    _tool ==
-                                                                        2 ||
-                                                                    _tool == 5,
-                                                                deselectTick:
-                                                                    _amDeselectTick,
-                                                                onVelocityCommit:
-                                                                    _commitVelocityStroke,
-                                                                velocityDrawEnabled:
-                                                                    _tool ==
-                                                                        2 ||
-                                                                    _tool == 5,
-                                                                lineTool:
-                                                                    _tool == 5,
-                                                                marqueeEnabled:
-                                                                    _tool == 0,
-                                                                onInsertAtTick: (tick) {
-                                                                  final track =
-                                                                      _activeTrack ??
-                                                                      0;
-                                                                  final conductor =
-                                                                      track >=
-                                                                          0 &&
-                                                                      track <
-                                                                          _tracks
-                                                                              .value
-                                                                              .length &&
-                                                                      _tracks
-                                                                          .value[track]
-                                                                          .master;
-                                                                  _runInsertFlow(
-                                                                    LongPressContext(
-                                                                      tick:
-                                                                          tick,
-                                                                      track:
-                                                                          track,
-                                                                      conductor:
-                                                                          conductor,
-                                                                      pr: true,
-                                                                    ),
-                                                                  );
-                                                                },
-                                                                onDocJob: () =>
-                                                                    _runDocJob(
-                                                                      title: l
-                                                                          .batchProcess,
-                                                                    ),
-                                                              )
-                                                            : const SizedBox.shrink(),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                ),
+                                        height: bottomBarH,
+                                        child: Column(
+                                          children: [
+                                            SizedBox(
+                                              height: kAmHandleHeight,
+                                              child: _AutomationResizeHandle(
+                                                onDrag: _resizeAutoPanel,
+                                                onDragEnd:
+                                                    _finishAutoPanelResize,
+                                                onDoubleTap:
+                                                    _toggleAutoPanelFullscreen,
                                               ),
                                             ),
-                                          ),
+                                            Expanded(
+                                              child: amH > 1
+                                                  ? AutomationPanel(
+                                                      height: amH,
+                                                      textureReady:
+                                                          amTextureReady,
+                                                      snap: _snap,
+                                                      gridLines: _gridLines,
+                                                      lanes: _autoLanes,
+                                                      velocity: _velocityBars,
+                                                      trackColors: [
+                                                        for (final t
+                                                            in _tracks.value)
+                                                          t.color,
+                                                      ],
+                                                      activeTrack:
+                                                          _activeTrack ?? 0,
+                                                      isConductor:
+                                                          _activeTrack !=
+                                                              null &&
+                                                          _activeTrack! >= 0 &&
+                                                          _activeTrack! <
+                                                              _tracks
+                                                                  .value
+                                                                  .length &&
+                                                          _tracks
+                                                              .value[_activeTrack!]
+                                                              .master,
+                                                      status: _editStatus,
+                                                      formatTick:
+                                                          _formatEditTick,
+                                                      onReload: _loadAutomation,
+                                                      textureId: _amTextureId,
+                                                      pencilActive:
+                                                          _tool == 2 ||
+                                                          _tool == 5,
+                                                      deselectTick:
+                                                          _amDeselectTick,
+                                                      onVelocityCommit:
+                                                          _commitVelocityStroke,
+                                                      velocityDrawEnabled:
+                                                          _tool == 2 ||
+                                                          _tool == 5,
+                                                      lineTool: _tool == 5,
+                                                      marqueeEnabled:
+                                                          _tool == 0,
+                                                      onInsertAtTick: (tick) {
+                                                        final track =
+                                                            _activeTrack ?? 0;
+                                                        final conductor =
+                                                            track >= 0 &&
+                                                            track <
+                                                                _tracks
+                                                                    .value
+                                                                    .length &&
+                                                            _tracks
+                                                                .value[track]
+                                                                .master;
+                                                        _runInsertFlow(
+                                                          LongPressContext(
+                                                            tick: tick,
+                                                            track: track,
+                                                            conductor:
+                                                                conductor,
+                                                            pr: true,
+                                                          ),
+                                                        );
+                                                      },
+                                                      onDocJob: () =>
+                                                          _runDocJob(
+                                                            title:
+                                                                l.batchProcess,
+                                                          ),
+                                                    )
+                                                  : const SizedBox.shrink(),
+                                            ),
+                                          ],
                                         ),
                                       ),
-                                    ],
                                   ],
                                 ),
                               );
@@ -803,9 +779,9 @@ mixin _ShellBuild on _ShellBase {
         _updateTimecode();
       },
       onQuantize: (v) => unawaited(_selectQuantize(v)),
-      automationOpen: !_autoCollapsed && !_amClosing,
+      automationOpen: !_autoCollapsed,
       onToggleAutomation: () =>
-          _setAutoCollapsed(!_autoCollapsed && !_amClosing),
+          _setAutoCollapsed(!_autoCollapsed),
       onTool: _selectTool,
       onQuickTool: _selectQuickTool,
       onUndo: _undo,
