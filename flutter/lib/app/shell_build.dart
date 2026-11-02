@@ -551,9 +551,8 @@ mixin _ShellBuild on _ShellBase {
                                         bottom: 0,
                                         height: kAmHandleHeight + amH,
                                         child: Column(
-                                          // 手柄永远在屏幕底部；面板从手柄向上生长。
-                                          verticalDirection:
-                                              VerticalDirection.up,
+                                          // 手柄在面板上沿，随面板一起移动；
+                                          // PR 视口则固定只让出手柄这一条高度。
                                           children: [
                                             SizedBox(
                                               height: kAmHandleHeight,
