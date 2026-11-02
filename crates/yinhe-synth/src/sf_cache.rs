@@ -30,15 +30,31 @@ pub fn prefetch_key_maps(
     sample_rate: u32,
     interp: u32,
 ) -> Result<(), String> {
+    prefetch_key_maps_with_progress(path, sample_rate, interp, &mut |_| {})
+}
+
+/// 同 [`prefetch_key_maps`]，但把解析进度（0..1）透传给调用方。
+pub fn prefetch_key_maps_with_progress(
+    path: &std::path::Path,
+    sample_rate: u32,
+    interp: u32,
+    on_progress: &mut dyn FnMut(f32),
+) -> Result<(), String> {
     let key = (path.to_path_buf(), sample_rate, interp);
     {
         let cache = KEY_MAP_CACHE.lock().unwrap_or_else(|e| e.into_inner());
         if cache.contains_key(&key) {
+            on_progress(1.0);
             return Ok(());
         }
     }
     let t = std::time::Instant::now();
-    let built = Arc::new(sf_parser::build_key_maps(path, sample_rate, interp)?);
+    let built = Arc::new(sf_parser::build_key_maps_with_progress(
+        path,
+        sample_rate,
+        interp,
+        on_progress,
+    )?);
     eprintln!(
         "[synth] worker 预解析音色库={:?}：{}",
         t.elapsed(),

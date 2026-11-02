@@ -987,14 +987,20 @@ pub(crate) fn spawn_worker(
                             sf_progress.store(50, Ordering::Relaxed);
                             let n = paths.len().max(1);
                             for (i, path) in paths.iter().enumerate() {
-                                if let Err(e) = yinhe_synth::prefetch_key_maps(
+                                let base = 50 + (450 * i / n) as u32;
+                                let span = (450 / n) as f32;
+                                if let Err(e) = yinhe_synth::prefetch_key_maps_with_progress(
                                     std::path::Path::new(path),
                                     sample_rate,
                                     interpolation.code(),
+                                    &mut |f| {
+                                        // SFZ 逐 region / SF2 解析阶段：映射进本路径区间。
+                                        let p = base as f32 + f.clamp(0.0, 1.0) * span;
+                                        sf_progress.store(p as u32, Ordering::Relaxed);
+                                    },
                                 ) {
                                     eprintln!("[gpu] worker 预解析失败 {path}: {e}");
                                 }
-                                // 预解析（SFZ 解析 + 重采样）通常是主要耗时点。
                                 sf_progress
                                     .store(50 + (450 * (i + 1) / n) as u32, Ordering::Relaxed);
                             }

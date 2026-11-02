@@ -144,6 +144,8 @@ mixin _ShellTransport on _ShellBase {
         setState(() {
           _autoCollapsed = true;
           _amClosing = false;
+          // 手柄停在最底部；下次拖动从 0 开始拉起。
+          _autoPanelHeight = 0;
         });
       });
       return;
@@ -171,6 +173,22 @@ mixin _ShellTransport on _ShellBase {
     final maxH = _amMaxDrawHeight;
     if (maxH <= 0) {
       return;
+    }
+    // 收起状态下向上拉手柄：直接展开并从 0 高度开始跟手。
+    if (_autoCollapsed) {
+      if (dy >= 0) {
+        return;
+      }
+      _amCloseTimer?.cancel();
+      setState(() {
+        _autoCollapsed = false;
+        _amClosing = false;
+        _autoPanelHeight = 0;
+      });
+      if (_viewMode == kViewPianoroll) {
+        _loadAutomation();
+        _loadVelocity();
+      }
     }
     final current = (_autoPanelHeight ?? maxH).clamp(0.0, maxH);
     final next = (current - dy).clamp(0.0, maxH);

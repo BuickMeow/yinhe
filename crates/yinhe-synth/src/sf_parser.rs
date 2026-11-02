@@ -252,6 +252,16 @@ pub fn build_key_maps(
     sample_rate: u32,
     interp: u32,
 ) -> Result<Vec<KeyMapEntry>, String> {
+    build_key_maps_with_progress(path, sample_rate, interp, &mut |_| {})
+}
+
+/// 同 [`build_key_maps`]，但按 0..1 上报进度（SFZ 逐 region、SF2 解析阶段）。
+pub fn build_key_maps_with_progress(
+    path: &Path,
+    sample_rate: u32,
+    interp: u32,
+    on_progress: &mut dyn FnMut(f32),
+) -> Result<Vec<KeyMapEntry>, String> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
@@ -260,15 +270,21 @@ pub fn build_key_maps(
         Some("sfz") => vec![KeyMapEntry::expanded(
             0,
             0,
-            sfz::build_key_map_from_sfz(path, sample_rate, interp)?,
+            sfz::build_key_map_from_sfz_with_progress(path, sample_rate, interp, on_progress)?,
         )],
-        Some("sf2") => sf2::build_key_maps_from_sf2(path, sample_rate, interp)?,
+        Some("sf2") => {
+            on_progress(0.05);
+            let out = sf2::build_key_maps_from_sf2(path, sample_rate, interp)?;
+            on_progress(0.95);
+            out
+        }
         _ => return Err(format!("Unsupported soundfont format: {:?}", path)),
     };
     // 按 (bank, preset) 升序，使 `select_key_info_multi` 能二分定位（GM 库常含
     // 数百 preset，逐个线性扫描是 note_on 热路径的开销）。稳定排序保留同键条目
     // 的原始先后，"区间内首个命中条目胜出"的语义不变。
     entries.sort_by_key(|e| (e.bank, e.preset));
+    on_progress(1.0);
     Ok(entries)
 }
 

@@ -62,7 +62,7 @@ const int kViewPianoroll = 1;
 const double kAmHandleHeight = 26.0;
 
 /// 自动化面板拖到低于此高度时，松手自动收起（带动画）。
-const double kAmAutoCollapseHeight = 72.0;
+const double kAmAutoCollapseHeight = 12.0;
 /// 自动收起/展开的动画时长。
 const Duration kAmCollapseDuration = Duration(milliseconds: 180);
 

@@ -7,15 +7,27 @@ pub(super) fn build_key_map_from_sfz(
     sample_rate: u32,
     interp: u32,
 ) -> Result<Vec<Vec<KeyInfo>>, String> {
+    build_key_map_from_sfz_with_progress(sfz_path, sample_rate, interp, &mut |_| {})
+}
+
+pub(super) fn build_key_map_from_sfz_with_progress(
+    sfz_path: &Path,
+    sample_rate: u32,
+    interp: u32,
+    on_progress: &mut dyn FnMut(f32),
+) -> Result<Vec<Vec<KeyInfo>>, String> {
     let regions = xsynth_soundfonts::sfz::parse_soundfont(sfz_path)
         .map_err(|e| format!("SFZ parse error: {}", e))?;
+    let region_count = regions.len().max(1);
 
     let mut key_map: Vec<Vec<KeyInfo>> = vec![Vec::new(); 128];
 
     // wav 按路径去重加载并重采样到目标采样率（同一文件被多个 region 引用）
     let mut wav_cache: HashMap<PathBuf, (Arc<[f32]>, u32, bool)> = HashMap::new();
 
-    for region in &regions {
+    for (region_idx, region) in regions.iter().enumerate() {
+        // 大 SFZ 的主要耗时是逐 region 读 wav + 重采样：按 region 上报进度。
+        on_progress((region_idx + 1) as f32 / region_count as f32);
         // 采样加载失败只跳过该 region（损坏/缺失的 wav 不应拖垮整个音色库）
         let (samples, src_sr, is_stereo) = match wav_cache.get(&region.sample_path) {
             Some(entry) => entry.clone(),

@@ -532,7 +532,8 @@ mixin _ShellBuild on _ShellBase {
                                         ],
                                       ),
                                     ),
-                                    if (amVisible) ...<Widget>[
+                                    if (_viewMode ==
+                                        kViewPianoroll) ...<Widget>[
                                       Positioned(
                                         left: 0,
                                         right: 0,
@@ -549,99 +550,117 @@ mixin _ShellBuild on _ShellBase {
                                             child: AnimatedOpacity(
                                               opacity: _amClosing ? 0 : 1,
                                               duration: kAmCollapseDuration,
-                                              child: BackdropFilter(
-                                                filter: ImageFilter.blur(
-                                                  sigmaX: 8,
-                                                  sigmaY: 8,
-                                                ),
-                                                child: Column(
-                                                  children: [
-                                                    SizedBox(
-                                                      height: kAmHandleHeight,
-                                                      child: _AutomationResizeHandle(
-                                                        onDrag:
-                                                            _resizeAutoPanel,
-                                                        onDragEnd:
-                                                            _finishAutoPanelResize,
-                                                        onDoubleTap:
-                                                            _toggleAutoPanelFullscreen,
+                                              child: ClipRect(
+                                                child: BackdropFilter(
+                                                  filter: ImageFilter.blur(
+                                                    sigmaX: 8,
+                                                    sigmaY: 8,
+                                                  ),
+                                                  child: Column(
+                                                    children: [
+                                                      SizedBox(
+                                                        height: kAmHandleHeight,
+                                                        child: _AutomationResizeHandle(
+                                                          onDrag:
+                                                              _resizeAutoPanel,
+                                                          onDragEnd:
+                                                              _finishAutoPanelResize,
+                                                          onDoubleTap:
+                                                              _toggleAutoPanelFullscreen,
+                                                        ),
                                                       ),
-                                                    ),
-                                                    Expanded(
-                                                      child: AutomationPanel(
-                                                        height: amH,
-                                                        snap: _snap,
-                                                        gridLines: _gridLines,
-                                                        lanes: _autoLanes,
-                                                        velocity: _velocityBars,
-                                                        trackColors: [
-                                                          for (final t
-                                                              in _tracks.value)
-                                                            t.color,
-                                                        ],
-                                                        activeTrack:
-                                                            _activeTrack ?? 0,
-                                                        isConductor:
-                                                            _activeTrack !=
-                                                                null &&
-                                                            _activeTrack! >=
-                                                                0 &&
-                                                            _activeTrack! <
-                                                                _tracks
-                                                                    .value
-                                                                    .length &&
-                                                            _tracks
-                                                                .value[_activeTrack!]
-                                                                .master,
-                                                        status: _editStatus,
-                                                        formatTick:
-                                                            _formatEditTick,
-                                                        onReload:
-                                                            _loadAutomation,
-                                                        textureId: _amTextureId,
-                                                        pencilActive:
-                                                            _tool == 2 ||
-                                                            _tool == 5,
-                                                        deselectTick:
-                                                            _amDeselectTick,
-                                                        onVelocityCommit:
-                                                            _commitVelocityStroke,
-                                                        velocityDrawEnabled:
-                                                            _tool == 2 ||
-                                                            _tool == 5,
-                                                        lineTool: _tool == 5,
-                                                        marqueeEnabled:
-                                                            _tool == 0,
-                                                        onInsertAtTick: (tick) {
-                                                          final track =
-                                                              _activeTrack ?? 0;
-                                                          final conductor =
-                                                              track >= 0 &&
-                                                              track <
-                                                                  _tracks
-                                                                      .value
-                                                                      .length &&
-                                                              _tracks
-                                                                  .value[track]
-                                                                  .master;
-                                                          _runInsertFlow(
-                                                            LongPressContext(
-                                                              tick: tick,
-                                                              track: track,
-                                                              conductor:
-                                                                  conductor,
-                                                              pr: true,
-                                                            ),
-                                                          );
-                                                        },
-                                                        onDocJob: () =>
-                                                            _runDocJob(
-                                                              title: l
-                                                                  .batchProcess,
-                                                            ),
+                                                      Expanded(
+                                                        child: amH > 1
+                                                            ? AutomationPanel(
+                                                                height: amH,
+                                                                snap: _snap,
+                                                                gridLines:
+                                                                    _gridLines,
+                                                                lanes:
+                                                                    _autoLanes,
+                                                                velocity:
+                                                                    _velocityBars,
+                                                                trackColors: [
+                                                                  for (final t
+                                                                      in _tracks
+                                                                          .value)
+                                                                    t.color,
+                                                                ],
+                                                                activeTrack:
+                                                                    _activeTrack ??
+                                                                    0,
+                                                                isConductor:
+                                                                    _activeTrack !=
+                                                                        null &&
+                                                                    _activeTrack! >=
+                                                                        0 &&
+                                                                    _activeTrack! <
+                                                                        _tracks
+                                                                            .value
+                                                                            .length &&
+                                                                    _tracks
+                                                                        .value[_activeTrack!]
+                                                                        .master,
+                                                                status:
+                                                                    _editStatus,
+                                                                formatTick:
+                                                                    _formatEditTick,
+                                                                onReload:
+                                                                    _loadAutomation,
+                                                                textureId:
+                                                                    _amTextureId,
+                                                                pencilActive:
+                                                                    _tool ==
+                                                                        2 ||
+                                                                    _tool == 5,
+                                                                deselectTick:
+                                                                    _amDeselectTick,
+                                                                onVelocityCommit:
+                                                                    _commitVelocityStroke,
+                                                                velocityDrawEnabled:
+                                                                    _tool ==
+                                                                        2 ||
+                                                                    _tool == 5,
+                                                                lineTool:
+                                                                    _tool == 5,
+                                                                marqueeEnabled:
+                                                                    _tool == 0,
+                                                                onInsertAtTick: (tick) {
+                                                                  final track =
+                                                                      _activeTrack ??
+                                                                      0;
+                                                                  final conductor =
+                                                                      track >=
+                                                                          0 &&
+                                                                      track <
+                                                                          _tracks
+                                                                              .value
+                                                                              .length &&
+                                                                      _tracks
+                                                                          .value[track]
+                                                                          .master;
+                                                                  _runInsertFlow(
+                                                                    LongPressContext(
+                                                                      tick:
+                                                                          tick,
+                                                                      track:
+                                                                          track,
+                                                                      conductor:
+                                                                          conductor,
+                                                                      pr: true,
+                                                                    ),
+                                                                  );
+                                                                },
+                                                                onDocJob: () =>
+                                                                    _runDocJob(
+                                                                      title: l
+                                                                          .batchProcess,
+                                                                    ),
+                                                              )
+                                                            : const SizedBox.shrink(),
                                                       ),
-                                                    ),
-                                                  ],
+                                                    ],
+                                                  ),
                                                 ),
                                               ),
                                             ),

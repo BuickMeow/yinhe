@@ -89,7 +89,7 @@ impl AudioRenderer {
                     if is_current {
                         self.state.sf_done.fetch_add(1, Ordering::Relaxed);
                         // 结果已回传但还没应用/上传：先给 85%，真正完成在分支末尾。
-                        self.state.sf_progress.store(850, Ordering::Relaxed);
+                        self.state.sf_progress.store(920, Ordering::Relaxed);
                     } else {
                         did_work = true;
                         continue;
