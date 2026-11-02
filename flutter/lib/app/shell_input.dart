@@ -827,7 +827,7 @@ mixin _ShellInput on _ShellBase {
     return p.dx >= zoneLeft;
   }
 
-  /// AR：点击轨道面板。M/S 按钮切换；末行 + 打开添加音轨；其余进入 PR。
+  /// AR：点击轨道面板。M/S 按钮切换；末行 + 打开添加音轨；其余切换卡片展开。
   void _handleCanvasTap(Offset p) {
     if (_viewMode != kViewArrangement) {
       return;
@@ -872,13 +872,31 @@ mixin _ShellInput on _ShellBase {
       _showAddTrackDialog();
       return;
     }
-    if (!rows[idx].master && _inMsZone(p)) {
+    final expanded = _arrExpandedTracks.value.contains(rows[idx].uuid);
+    // 只有展开态才响应 M/S；收起态点右缘也是切换展开。
+    if (expanded && !rows[idx].master && _inMsZone(p)) {
       _toggleMs(p, idx);
       return;
     }
-    // 进入 PR：AR 点的那条轨就是当前编辑轨；「全部轨道」开关保持不变。
-    _selectEditTrack(idx);
-    _setView(kViewPianoroll);
+    // 面板卡片单击只做收起/展开，不再进入轨道；进 PR 用内容区双击。
+    _toggleArrCard(idx);
+  }
+
+  /// 切换 AR 轨道卡片的收起/展开（默认全部收起，只显示三位编号）。
+  void _toggleArrCard(int idx) {
+    final rows = _tracks.value;
+    if (idx < 0 || idx >= rows.length) {
+      return;
+    }
+    final uuid = rows[idx].uuid;
+    if (uuid.isEmpty) {
+      return;
+    }
+    final next = Set<String>.of(_arrExpandedTracks.value);
+    if (!next.remove(uuid)) {
+      next.add(uuid);
+    }
+    _arrExpandedTracks.value = next;
   }
 
   /// 命中 M/S 按钮：M 在左（警告色），S 在右（危险色）。
