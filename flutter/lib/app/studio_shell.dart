@@ -499,6 +499,7 @@ abstract class _ShellBase extends State<StudioShell>
   void _setAutoCollapsed(bool collapsed);
   void _resizeAutoPanel(double dy);
   void _toggleAutoPanelFullscreen();
+  void _syncArrPanelWidth();
   void _finishAutoPanelResize();
   void _setView(int mode);
   void _showAddTrackDialog();

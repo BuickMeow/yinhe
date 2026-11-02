@@ -1508,6 +1508,9 @@ pub fn set_project_meta(name: String, artist: String, description: String, ppq: 
 ///
 /// `min_ticks`：演示内容生成时模型 tick_length 尚未刷新，用它兜底总长。
 fn apply_document(mut doc: Document, min_ticks: f64) {
+    // 新建/占位文档也必须同步 Conductor 色：`Document::from_empty_model` 里
+    // 用的是暗色主题 fallback（220,220,220），浅色背景下那条 6px 色带几乎看不见。
+    doc.sync_track_caches_with_conductor_color(crate::theme_colors::TEXT_PRIMARY);
     // 移动端编辑设置与桌面同名配置对齐（当前只有重叠开关）。
     doc.edit.allow_overlapping_notes = crate::audio::settings().allow_overlapping_notes;
     doc.edit.overlap_blocked_behavior =
@@ -4867,6 +4870,19 @@ fn history_step(redo: bool) -> i32 {
         },
         None::<fn()>,
     )
+}
+
+/// 设置 AR 左侧轨道面板宽度（折叠/展开两档）。成功 1。
+pub fn set_arr_panel_width(width: f32) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let w = width.clamp(60.0, 400.0);
+    if (s.arr_view.base.left_panel_width - w).abs() < 0.5 {
+        return 1;
+    }
+    s.arr_view.base.left_panel_width = w;
+    1
 }
 
 /// 设置“显示轨道”过滤（-1 = 全部）。PR/AR 音符只画该轨。成功 1。

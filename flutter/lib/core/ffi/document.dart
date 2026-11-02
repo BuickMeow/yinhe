@@ -98,6 +98,10 @@ typedef IntArgDart = int Function(int);
 final IntArgDart setDisplayTrack = bridge
     .lookupFunction<IntArgNative, IntArgDart>('yinhe_set_display_track');
 
+/// 设置 AR 左侧轨道面板宽度（折叠/展开两档）。
+final FloatArgDart setArrPanelWidth = bridge
+    .lookupFunction<FloatArgNative, FloatArgDart>('yinhe_set_arr_panel_width');
+
 typedef ActionNative = ffi.Int32 Function();
 typedef ActionDart = int Function();
 

@@ -1955,6 +1955,12 @@ pub extern "C" fn yinhe_set_project_defaults(bpm: f32, num: i32, den_pow: i32) -
     scene::set_project_defaults(bpm, num.clamp(1, 32) as u8, den_pow.clamp(0, 6) as u8)
 }
 
+/// 设置 AR 左侧轨道面板宽度（折叠/展开两档）。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_arr_panel_width(width: f32) -> i32 {
+    scene::set_arr_panel_width(width)
+}
+
 /// 设置“显示轨道”过滤（-1 = 全部轨道）。成功 1。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_set_display_track(track: i32) -> i32 {

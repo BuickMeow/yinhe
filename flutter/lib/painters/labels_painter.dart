@@ -102,27 +102,16 @@ class LabelsPainter extends CustomPainter {
     for (var idx = first; idx < last; idx++) {
       final row = rows[idx];
       final y = idx * laneH - scrollY;
-      // 收起态只画三位编号，点击卡片再展开完整信息。
-      if (!expandedTracks.value.contains(row.uuid)) {
-        final font = (laneH * 0.28).clamp(10.0, 14.0).toDouble();
-        _text(
-          canvas,
-          idx.toString().padLeft(3, '0'),
-          Offset(10, y + laneH / 2),
-          font,
-          YinheTheme.text,
-          vCenter: true,
-          maxWidth: (panelW - 16.0).clamp(8.0, double.infinity),
-        );
-        continue;
-      }
+      final expanded = expandedTracks.value.contains(row.uuid);
       final port = row.port >= 0 && row.port < 4 ? 'ABCD'[row.port] : '?';
       final code =
           '${idx.toString().padLeft(3, '0')}  $port${(row.channel + 1).toString().padLeft(2, '0')}';
       final font = (laneH * 0.24).clamp(9.0, 13.0).toDouble();
       // 文本可用宽度：面板宽 - 左内边距 - 右内边距；显示 M/S 时再让出按钮区。
       final btn = (laneH * 0.44).clamp(18.0, 26.0).toDouble();
-      final msReserve = (!row.master && laneH >= 34) ? btn * 2 + 8.0 : 0.0;
+      final msReserve = (expanded && !row.master && laneH >= 34)
+          ? btn * 2 + 8.0
+          : 0.0;
       final textMax = (panelW - 16.0 - msReserve).clamp(8.0, double.infinity);
       _text(
         canvas,
@@ -144,7 +133,7 @@ class LabelsPainter extends CustomPainter {
         maxWidth: textMax,
       );
       // Master（Conductor）轨没有 M/S。
-      if (laneH >= 34 && !row.master) {
+      if (expanded && laneH >= 34 && !row.master) {
         final btn = (laneH * 0.44).clamp(18.0, 26.0).toDouble();
         const gap = 4.0;
         final right = panelW - 6.0;

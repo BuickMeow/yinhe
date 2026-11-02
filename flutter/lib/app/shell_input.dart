@@ -897,6 +897,14 @@ mixin _ShellInput on _ShellBase {
       next.add(uuid);
     }
     _arrExpandedTracks.value = next;
+    _syncArrPanelWidth();
+  }
+
+  /// 全收起时轨道面板变窄；有任意展开才恢复带 M/S 的宽度。
+  @override
+  void _syncArrPanelWidth() {
+    final w = _arrExpandedTracks.value.isEmpty ? 100.0 : 134.0;
+    rust.setArrPanelWidth(w);
   }
 
   /// 命中 M/S 按钮：M 在左（警告色），S 在右（危险色）。

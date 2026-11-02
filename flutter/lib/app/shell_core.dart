@@ -201,6 +201,7 @@ mixin _ShellCore on _ShellBase {
     }
     _loadSongTitle();
     _loadProjectDefaults();
+    _syncArrPanelWidth();
   }
 
   /// 加载 MIDI/工程：Rust 后台解析，Dart 延迟 120ms 再决定是否弹进度框，
@@ -474,6 +475,7 @@ mixin _ShellCore on _ShellBase {
       _amTextureId = amId;
     });
     await _ensureSurface();
+    _syncArrPanelWidth();
     // 启动时打开侧栏：替代旧主页，用户第一眼就能选文件/设置。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -566,6 +568,7 @@ mixin _ShellCore on _ShellBase {
       return;
     }
     rust.setViewMode(mode);
+    _syncArrPanelWidth();
     setState(() => _viewMode = mode);
     _pushTool();
     _pushQuantize(_quantizeLabel);
