@@ -23,8 +23,8 @@ import '../core/theme.dart';
 
 /// PR 底部自动化栏：combo 列 + 自动化/力度绘制 + 锚点拖动。
 ///
-/// 面板高度由外部控制（[height]），顶部有一条拖拽手柄；展开时 PR 视口会
-/// 同步缩短，两者上下排列、互不覆盖。
+/// 面板高度由壳层控制（[height] 是绘制区高度）；顶部拖拽手柄由
+/// `shell_build.dart` 叠加，可把面板拖到任意高度或全屏。
 class AutomationPanel extends StatefulWidget {
   const AutomationPanel({
     super.key,
@@ -192,7 +192,6 @@ class _AutomationPanelState extends State<AutomationPanel>
   int _amTrack = -1;
   int _amLane = -2;
   bool _amVisible = false;
-  bool _amAnchors = false;
 
   @override
   void initState() {
@@ -246,13 +245,11 @@ class _AutomationPanelState extends State<AutomationPanel>
     final h = _amH;
     final track = widget.activeTrack;
     final lane = _laneIdx ?? -1;
-    final showAnchors = widget.pencilActive;
     if (_amVisible == visible &&
         _sentAmW == w &&
         _sentAmH == h &&
         _amTrack == track &&
-        _amLane == lane &&
-        _amAnchors == showAnchors) {
+        _amLane == lane) {
       return;
     }
     _amVisible = visible;
@@ -260,15 +257,8 @@ class _AutomationPanelState extends State<AutomationPanel>
     _sentAmH = h;
     _amTrack = track;
     _amLane = lane;
-    _amAnchors = showAnchors;
-    rust.setAutomationPanel(
-      w,
-      h,
-      visible ? 1 : 0,
-      track,
-      lane,
-      showAnchors ? 1 : 0,
-    );
+    // 移动端默认显示锚点圆点（不再只在铅笔工具下显示）。
+    rust.setAutomationPanel(w, h, visible ? 1 : 0, track, lane, 1);
   }
 
   /// 把拖动预览推给 wgpu ghost 层；空 map 清除 ghost。
@@ -641,6 +631,8 @@ class _AutomationPanelState extends State<AutomationPanel>
     if (rust.automationApplyShape(picked) <= 0) {
       return;
     }
+    // 整条 lane 的插值改写可能很重：走后台文档任务。
+    await widget.onDocJob?.call();
     setState(() {});
     widget.onReload();
   }

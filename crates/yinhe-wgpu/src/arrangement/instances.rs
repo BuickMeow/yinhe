@@ -1,7 +1,8 @@
-use std::collections::HashSet;
-
 use rayon::prelude::*;
 use yinhe_types::NoteSource;
+
+#[cfg(test)]
+use std::collections::HashSet;
 
 use crate::vertex::NoteInstance;
 use yinhe_types::ArrangementView;
@@ -97,7 +98,7 @@ pub fn build_notes(
     view: &ArrangementView,
     track_range: (usize, usize),
     track_visible: &[bool],
-    hidden_notes: &HashSet<(u16, u32, u8)>,
+    hidden_notes: &dyn yinhe_types::HiddenFilter,
 ) {
     let ppu = view.base.pixels_per_tick;
     let num_tracks = track_visible.len();
@@ -130,7 +131,7 @@ pub fn build_notes(
                     if !track_visible.get(ti).copied().unwrap_or(true) {
                         continue;
                     }
-                    if hidden_notes.contains(&(note.track, note.start_tick, key)) {
+                    if hidden_notes.is_hidden(note, key) {
                         continue;
                     }
                     track_buckets[ti].push((note.start_tick, note.end_tick, note.velocity));
@@ -233,7 +234,7 @@ pub fn build_channel_notes(
     view: &ArrangementView,
     track_rows: &[Vec<u16>],
     track_visible: &[bool],
-    hidden_notes: &HashSet<(u16, u32, u8)>,
+    hidden_notes: &dyn yinhe_types::HiddenFilter,
 ) {
     let ppu = view.base.pixels_per_tick;
     let (tick_start, tick_end) = view.visible_tick_range(w);
@@ -258,7 +259,7 @@ pub fn build_channel_notes(
                     if !track_visible.get(ti).copied().unwrap_or(true) {
                         continue;
                     }
-                    if hidden_notes.contains(&(note.track, note.start_tick, key)) {
+                    if hidden_notes.is_hidden(note, key) {
                         continue;
                     }
                     let Some(rows) = track_rows.get(ti) else {

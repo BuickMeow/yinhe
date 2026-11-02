@@ -13,14 +13,14 @@ use std::sync::{Arc, Mutex, OnceLock};
 use yinhe_core::{Selection, YinModel};
 use yinhe_types::NoteSource;
 
-use crate::edit::{DragByKey, HiddenKey};
+use crate::edit::DragByKey;
 use crate::scene::RenderScene;
 
 /// 选区整体拖动所需的数据：按 key 分桶的 `(track, start, end, velocity)`，
 /// 以及原位置隐藏集合（拖动时把原音符藏起来）。
 pub struct DragData {
     pub by_key: DragByKey,
-    pub hidden: Arc<std::collections::HashSet<HiddenKey>>,
+    pub hidden: Arc<yinhe_types::HiddenNotes>,
 }
 
 struct Pending {
@@ -180,14 +180,11 @@ pub fn apply_pending(s: &mut RenderScene) {
 ///
 /// 单矩形（绝大多数框选/全选）不会跨矩形重复产出音符：音符在桶内按 start
 /// 排序，只需和同 key 上一个已接受的音符比较，避免百万级 HashSet。
-fn collect(
-    model: &YinModel,
-    selection: &Selection,
-) -> (DragByKey, std::collections::HashSet<HiddenKey>) {
+fn collect(model: &YinModel, selection: &Selection) -> (DragByKey, yinhe_types::HiddenNotes) {
     use std::collections::HashSet;
 
     let mut by_key: DragByKey = (0..yinhe_types::KEY_COUNT).map(|_| Vec::new()).collect();
-    let mut hidden = HashSet::new();
+    let mut hidden = yinhe_types::HiddenNotesBuilder::new();
     let single_rect = selection.rects.len() == 1;
     let mut seen = HashSet::new();
     let mut last_start: Vec<Option<(u16, u32)>> = vec![None; yinhe_types::KEY_COUNT];
@@ -214,9 +211,9 @@ fn collect(
                     continue;
                 }
                 by_key[key as usize].push((n.track, n.start_tick, n.end_tick, n.velocity));
-                hidden.insert((n.track, n.start_tick, key));
+                hidden.insert(n.id, key);
             }
         }
     }
-    (by_key, hidden)
+    (by_key, hidden.build())
 }

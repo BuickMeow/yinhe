@@ -140,6 +140,35 @@ mixin _ShellTransport on _ShellBase {
     }
   }
 
+  /// 拖动 AM 顶部手柄调整高度（向上拖变大）。高度可到全屏。
+  @override
+  void _resizeAutoPanel(double dy) {
+    final maxH = _amMaxDrawHeight;
+    if (maxH <= 0) {
+      return;
+    }
+    final minH = maxH < kAmMinDrawHeight ? maxH : kAmMinDrawHeight;
+    final current = (_autoPanelHeight ?? maxH).clamp(minH, maxH);
+    final next = (current - dy).clamp(minH, maxH);
+    if ((next - current).abs() < 0.5) {
+      return;
+    }
+    setState(() => _autoPanelHeight = next);
+  }
+
+  /// 双击手柄：全屏 ↔ 约半屏（再双击回全屏）。
+  @override
+  void _toggleAutoPanelFullscreen() {
+    final maxH = _amMaxDrawHeight;
+    if (maxH <= 0) {
+      return;
+    }
+    final current = _autoPanelHeight ?? maxH;
+    setState(() {
+      _autoPanelHeight = current >= maxH - 1 ? maxH * 0.5 : maxH;
+    });
+  }
+
   // ── 走带 ──
 
   @override

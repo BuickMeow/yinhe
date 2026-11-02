@@ -52,13 +52,13 @@ fn instance_visible(
     note: &yinhe_types::Note,
     key: u8,
     track_visible: &[bool],
-    hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
+    hidden_notes: &dyn yinhe_types::HiddenFilter,
 ) -> bool {
     track_visible
         .get(note.track as usize)
         .copied()
         .unwrap_or(true)
-        && !hidden_notes.contains(&(note.track, note.start_tick, key))
+        && !hidden_notes.is_hidden(note, key)
 }
 
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
@@ -67,7 +67,7 @@ fn build_key_instances(
     midi: &dyn NoteSource,
     key: u8,
     track_visible: &[bool],
-    hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
+    hidden_notes: &dyn yinhe_types::HiddenFilter,
     range: Option<(f64, f64)>,
     selected: Option<&Selection>,
     track_selected: Option<&std::collections::HashSet<u16>>,
@@ -153,7 +153,7 @@ fn count_key_instances(
     midi: &dyn NoteSource,
     key: u8,
     track_visible: &[bool],
-    hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
+    hidden_notes: &dyn yinhe_types::HiddenFilter,
 ) -> usize {
     let mut n = 0;
     for_each_key_note(midi, key, None, |note| {
@@ -170,7 +170,7 @@ fn fill_key_instances(
     midi: &dyn NoteSource,
     key: u8,
     track_visible: &[bool],
-    hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
+    hidden_notes: &dyn yinhe_types::HiddenFilter,
 ) -> usize {
     let mut i = 0;
     for_each_key_note(midi, key, None, |note| {
@@ -211,7 +211,7 @@ pub fn build_notes(
     h: f32,
     midi: &dyn NoteSource,
     view: &PianoRollView,
-    hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
+    hidden_notes: &dyn yinhe_types::HiddenFilter,
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
     selected: Option<&Selection>,
@@ -262,7 +262,7 @@ pub fn build_summary_notes(
     h: f32,
     midi: &dyn NoteSource,
     view: &PianoRollView,
-    hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
+    hidden_notes: &dyn yinhe_types::HiddenFilter,
     track_visible: &[bool],
     block_ticks: u32,
 ) {
@@ -315,7 +315,7 @@ pub fn build_summary_notes(
 /// is the total count.
 pub fn build_all_notes(
     midi: &dyn NoteSource,
-    hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
+    hidden_notes: &dyn yinhe_types::HiddenFilter,
     track_visible: &[bool],
 ) -> (Vec<NoteInstance>, [u32; KEY_COUNT + 1]) {
     // 计数（无实例构造）→ 前缀和一次分配 → 按 key 并行分段写入：
@@ -370,7 +370,7 @@ pub fn build_key_notes_in_range(
     key: u8,
     tick_start: u32,
     tick_end: u32,
-    hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
+    hidden_notes: &dyn yinhe_types::HiddenFilter,
     track_visible: &[bool],
     selected: Option<&Selection>,
     track_selected: Option<&std::collections::HashSet<u16>>,
@@ -397,7 +397,7 @@ pub fn build_key_notes_in_range(
 pub fn build_key_notes(
     midi: &dyn NoteSource,
     key: u8,
-    hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
+    hidden_notes: &dyn yinhe_types::HiddenFilter,
     track_visible: &[bool],
 ) -> Vec<NoteInstance> {
     let mut local = Vec::new();

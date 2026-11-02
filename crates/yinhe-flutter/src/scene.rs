@@ -17,7 +17,7 @@ use yinhe_types::time_format::{
     build_time_sig_segments, compute_bar_offsets, compute_measure_divisor,
     format_tick_bar_beat_with_time_sig, measure_ticks,
 };
-use yinhe_types::{ArrangementView, PianoRollView, TimelineViewBase};
+use yinhe_types::{ArrangementView, HiddenFilter, HiddenNotes, PianoRollView, TimelineViewBase};
 
 /// 视图模式（与 Dart 约定一致：0=AR 走带，1=PR 卷帘）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,7 +127,7 @@ pub struct AutoGhostLane {
 #[derive(Clone, Default)]
 pub struct DragPreview {
     pub ghost: Arc<Vec<(u32, u32, u8, u16)>>,
-    pub hidden: Arc<HashSet<(u16, u32, u8)>>,
+    pub hidden: Arc<HiddenNotes>,
     /// AR 自动化竖线 ghost（跟随选框移动）。
     pub auto_ghost: Arc<Vec<AutoGhostLane>>,
     /// hidden 集合的稳定 hash；只在 hidden 真正变化时重算。
@@ -153,12 +153,12 @@ impl DragPreview {
         self.revision = self.revision.wrapping_add(1);
     }
 
-    pub fn set_hidden_arc(&mut self, hidden: Arc<HashSet<(u16, u32, u8)>>) {
+    pub fn set_hidden_arc(&mut self, hidden: Arc<HiddenNotes>) {
         if Arc::ptr_eq(&self.hidden, &hidden) {
             return;
         }
-        let hash = yinhe_wgpu::hash_hidden(hidden.as_ref());
-        if hash == self.hidden_hash && hidden.len() == self.hidden.len() {
+        let hash = hidden.hidden_hash();
+        if hash == self.hidden_hash && hidden.hidden_count() == self.hidden.hidden_count() {
             return;
         }
         self.hidden = hidden;
@@ -170,7 +170,7 @@ impl DragPreview {
         if self.hidden.is_empty() && self.hidden_hash == 0 {
             return;
         }
-        self.hidden = Arc::new(HashSet::new());
+        self.hidden = Arc::new(HiddenNotes::default());
         self.hidden_hash = 0;
         self.revision = self.revision.wrapping_add(1);
     }
@@ -181,7 +181,7 @@ impl DragPreview {
             || !self.auto_ghost.is_empty()
             || self.selected;
         self.ghost = Arc::new(Vec::new());
-        self.hidden = Arc::new(HashSet::new());
+        self.hidden = Arc::new(HiddenNotes::default());
         self.hidden_hash = 0;
         self.auto_ghost = Arc::new(Vec::new());
         self.selected = false;
@@ -2901,70 +2901,80 @@ pub fn automation_apply_shape(index: i32) -> i32 {
     let Some(shape) = yinhe_types::SegmentShape::from_ui_index(index.max(0) as usize) else {
         return 0;
     };
-    let Ok(mut s) = scene().lock() else {
-        return 0;
-    };
-    let panel = s.automation_panel.clone();
-    let Some(doc) = s.document.as_mut() else {
-        return 0;
-    };
-    let Some(target) = panel_automation_target(doc, &panel) else {
-        return 0;
-    };
-    let (track_idx, lane_idx) = if matches!(target, AutomationTarget::Tempo) {
-        (0u16, 0usize)
-    } else {
-        let Some(track) = doc.data.model.tracks.get(panel.active_track) else {
+    let panel = {
+        let Ok(s) = scene().lock() else {
             return 0;
         };
-        let Some((raw_idx, _)) = panel.lane.and_then(|i| visible_lane(track, i)) else {
+        if s.document.is_none() {
             return 0;
-        };
-        (panel.active_track as u16, raw_idx)
-    };
-    let ticks: Vec<u32> = {
-        let events: &[yinhe_types::AutomationEvent] = if matches!(target, AutomationTarget::Tempo) {
-            &doc.data.model.conductor.tempo.events
-        } else {
-            &doc.data.model.tracks[track_idx as usize].automation_lanes[lane_idx].events
-        };
-        if panel.selected_ticks.is_empty() {
-            events.iter().map(|e| e.tick).collect()
-        } else {
-            events
-                .iter()
-                .filter(|e| panel.selected_ticks.binary_search(&e.tick).is_ok())
-                .map(|e| e.tick)
-                .collect()
         }
+        s.automation_panel.clone()
     };
-    if ticks.is_empty() {
-        return 0;
-    }
-    let edits: Vec<AutomationEdit> = ticks
-        .iter()
-        .map(|&tick| AutomationEdit::SetShape {
-            track_idx,
-            lane_idx,
-            target: target.clone(),
-            tick,
-            shape,
-        })
-        .collect();
-    let before = doc.capture_snapshot();
-    let actions = doc.apply_automation_edits(edits);
-    if actions.is_empty() {
-        return 0;
-    }
-    let undo = match actions.len() {
-        1 => actions.into_iter().next(),
-        _ => Some(yinhe_editor_core::history::UndoAction::Composite(actions)),
-    };
-    if let Some(undo) = undo {
-        doc.push_undo(undo, "修改锚点插值", before);
-    }
-    doc.edit.pianoroll_view.base.dirty = true;
-    ticks.len() as i32
+    crate::doc_job::try_start(
+        "automation-shape",
+        crate::doc_job::Reload::Notes,
+        move |doc, _job| {
+            let Some(target) = panel_automation_target(doc, &panel) else {
+                return false;
+            };
+            let (track_idx, lane_idx) = if matches!(target, AutomationTarget::Tempo) {
+                (0u16, 0usize)
+            } else {
+                let Some(track) = doc.data.model.tracks.get(panel.active_track) else {
+                    return false;
+                };
+                let Some((raw_idx, _)) = panel.lane.and_then(|i| visible_lane(track, i)) else {
+                    return false;
+                };
+                (panel.active_track as u16, raw_idx)
+            };
+            let ticks: Vec<u32> = {
+                let events: &[yinhe_types::AutomationEvent] =
+                    if matches!(target, AutomationTarget::Tempo) {
+                        &doc.data.model.conductor.tempo.events
+                    } else {
+                        &doc.data.model.tracks[track_idx as usize].automation_lanes[lane_idx].events
+                    };
+                if panel.selected_ticks.is_empty() {
+                    events.iter().map(|e| e.tick).collect()
+                } else {
+                    events
+                        .iter()
+                        .filter(|e| panel.selected_ticks.binary_search(&e.tick).is_ok())
+                        .map(|e| e.tick)
+                        .collect()
+                }
+            };
+            if ticks.is_empty() {
+                return false;
+            }
+            let edits: Vec<AutomationEdit> = ticks
+                .iter()
+                .map(|&tick| AutomationEdit::SetShape {
+                    track_idx,
+                    lane_idx,
+                    target: target.clone(),
+                    tick,
+                    shape,
+                })
+                .collect();
+            let before = doc.capture_snapshot();
+            let actions = doc.apply_automation_edits(edits);
+            if actions.is_empty() {
+                return false;
+            }
+            let undo = match actions.len() {
+                1 => actions.into_iter().next(),
+                _ => Some(yinhe_editor_core::history::UndoAction::Composite(actions)),
+            };
+            if let Some(undo) = undo {
+                doc.push_undo(undo, "修改锚点插值", before);
+            }
+            doc.edit.pianoroll_view.base.dirty = true;
+            true
+        },
+        None::<fn()>,
+    )
 }
 
 /// AM 剪贴板是否为空（Dart 菜单置灰用）。

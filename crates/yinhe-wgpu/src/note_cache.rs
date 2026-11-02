@@ -65,7 +65,7 @@ pub struct NoteCacheParams<'a> {
     pub height: f32,
     pub track_visible: &'a [bool],
     pub track_selected: &'a HashSet<u16>,
-    pub hidden_notes: &'a HashSet<(u16, u32, u8)>,
+    pub hidden_notes: &'a dyn yinhe_types::HiddenFilter,
     /// `hidden_notes` 的预计算 hash；避免每帧重扫大选区隐藏集合。
     pub hidden_hash: u64,
     /// `None` = 不做选中位/选中排序。
@@ -307,7 +307,7 @@ mod tests {
         visible: &[bool],
         selection: &Selection,
         tracks: &HashSet<u16>,
-        hidden: &HashSet<(u16, u32, u8)>,
+        hidden: &dyn yinhe_types::HiddenFilter,
         revisions: &[u64; KEY_COUNT],
     ) -> bool {
         cache.update(&NoteCacheParams {

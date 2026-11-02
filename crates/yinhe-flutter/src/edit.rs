@@ -66,7 +66,6 @@ pub(crate) type DragNote = (u16, u32, u32, u8);
 /// 整体拖动音符按 key 分桶。
 pub(crate) type DragByKey = Vec<Vec<DragNote>>;
 /// 原位置隐藏键：`(track, start_tick, key)`。
-pub(crate) type HiddenKey = (u16, u32, u8);
 
 #[derive(Clone)]
 struct DragState {
@@ -96,7 +95,7 @@ struct DragState {
     /// 同一选区反复拖动不重算；单音符拖动保持 `None`。
     drag: Option<std::sync::Arc<crate::selection_materializer::DragData>>,
     /// 原位置隐藏集合（大选区时与 `drag.hidden` 相同；单音符拖动单独设置）。
-    drag_hidden: Option<std::sync::Arc<std::collections::HashSet<HiddenKey>>>,
+    drag_hidden: Option<std::sync::Arc<yinhe_types::HiddenNotes>>,
     /// 整体拖动上一次 ghost 的 `(dt, dk, 视图 hash)`；未变化时跳过重建。
     last_ghost: Option<(i64, i32, u64)>,
     /// 预览音上次播放时的 key 偏移，避免同一位置重复触发。
@@ -459,7 +458,7 @@ fn begin_sel_handle(d: &mut DragState, s: &mut RenderScene, h: SelHandle) {
     d.sel_tr_hi = h.tr_hi;
     if h.edge == 4 {
         // Riff 预览只画重复选框，不预先扫描/物化选中音符。
-        d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::new()));
+        d.drag_hidden = Some(std::sync::Arc::new(yinhe_types::HiddenNotes::default()));
     }
     // 锚点拖动沿用选框预览的缓动：先以当前矩形为起点，下一次 update 才有跳变量。
     match s.view_mode {
@@ -791,7 +790,7 @@ pub fn begin_note_resize(x: f32, y: f32) -> i32 {
     if x < geom.kbw {
         return 0;
     }
-    let Some((track, start_tick, end_tick, key, side)) = hit_note(&s, &geom, x, y) else {
+    let Some((track, start_tick, end_tick, key, side, id)) = hit_note(&s, &geom, x, y) else {
         return 0;
     };
     if side != 2 {
@@ -805,9 +804,9 @@ pub fn begin_note_resize(x: f32, y: f32) -> i32 {
     d.end_tick = end_tick;
     d.key = key;
     d.side = side;
-    d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::from([(
-        track, start_tick, key,
-    )])));
+    d.drag_hidden = Some(std::sync::Arc::new(yinhe_types::HiddenNotes::single(
+        id, key,
+    )));
     if let Some(velocity) = note_velocity(&s, track, start_tick, key) {
         preview_note(
             &s,
@@ -1051,7 +1050,7 @@ pub fn begin_note_move(x: f32, y: f32) -> i32 {
     if x < geom.kbw {
         return 0;
     }
-    let Some((track, start_tick, end_tick, key, side)) = hit_note(&s, &geom, x, y) else {
+    let Some((track, start_tick, end_tick, key, side, id)) = hit_note(&s, &geom, x, y) else {
         return 0;
     };
     if side == 2 {
@@ -1072,9 +1071,9 @@ pub fn begin_note_move(x: f32, y: f32) -> i32 {
     d.end_tick = end_tick;
     d.key = key;
     d.side = side;
-    d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::from([(
-        track, start_tick, key,
-    )])));
+    d.drag_hidden = Some(std::sync::Arc::new(yinhe_types::HiddenNotes::single(
+        id, key,
+    )));
     if let Some(velocity) = note_velocity(&s, track, start_tick, key) {
         preview_note(
             &s,
@@ -1152,7 +1151,7 @@ pub fn note_rect_at(x: f32, y: f32) -> String {
         return "{}".into();
     }
     let geom = PrGeom::new(&s.pr_view);
-    let Some((track, start, end, key, _)) = hit_note(&s, &geom, x, y) else {
+    let Some((track, start, end, key, _, _id)) = hit_note(&s, &geom, x, y) else {
         return "{}".into();
     };
     let x0 = geom.tick_to_x(f64::from(start));
@@ -1855,7 +1854,7 @@ fn riff_steps(d: &DragState, s: &RenderScene, x: f32, y: f32) -> RiffSteps {
 fn update_riff_fill(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
     let steps = riff_steps(d, s, x, y);
     if steps.is_zero() {
-        d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::new()));
+        d.drag_hidden = Some(std::sync::Arc::new(yinhe_types::HiddenNotes::default()));
         s.overlay_cells.clear();
         s.preview.clear();
         bump(s);
@@ -2357,7 +2356,7 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
         }
         kind::PENCIL_PICK => {
             let geom = PrGeom::new(&s.pr_view);
-            if let Some((track, start, end, key, _)) = hit_note(s, &geom, x, y) {
+            if let Some((track, start, end, key, _, id)) = hit_note(s, &geom, x, y) {
                 let changed =
                     d.track != track || d.start_tick != start || d.end_tick != end || d.key != key;
                 if changed {
@@ -2365,9 +2364,9 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                     d.start_tick = start;
                     d.end_tick = end;
                     d.key = key;
-                    d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::from([(
-                        track, start, key,
-                    )])));
+                    d.drag_hidden = Some(std::sync::Arc::new(yinhe_types::HiddenNotes::single(
+                        id, key,
+                    )));
                     if let Some(velocity) = note_velocity(s, track, start, key) {
                         preview_note(s, track, key, velocity, start, end.saturating_sub(start));
                     }
@@ -2375,7 +2374,7 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                 apply_preview(s, d, vec![(start, end, key, track)], true);
             } else {
                 // 只有真正压在音符上才算候选；空白处不吸附到最近行。
-                d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::new()));
+                d.drag_hidden = Some(std::sync::Arc::new(yinhe_types::HiddenNotes::default()));
                 s.preview.clear();
             }
         }
@@ -2762,16 +2761,16 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: Tool) 
             d.anchor_tick = anchor_tick;
             d.anchor_key = anchor_key;
             // 铅笔压在已有音符上：直接拖动该音符；空白处才新建。
-            if let Some((track, start, end, key, _)) = hit_note(s, &geom, x, y) {
+            if let Some((track, start, end, key, _, id)) = hit_note(s, &geom, x, y) {
                 d.kind = kind::NOTE_MOVE;
                 d.track = track;
                 d.start_tick = start;
                 d.end_tick = end;
                 d.key = key;
                 d.side = 0;
-                d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::from([(
-                    track, start, key,
-                )])));
+                d.drag_hidden = Some(std::sync::Arc::new(yinhe_types::HiddenNotes::single(
+                    id, key,
+                )));
                 d.preview_last_dk = 0;
                 if let Some(velocity) = note_velocity(s, track, start, key) {
                     preview_note(s, track, key, velocity, start, end.saturating_sub(start));
@@ -2781,7 +2780,7 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: Tool) 
             // 空白处：保持原有铅笔新建。
             let gate = f64::from(q.tick_interval(s.ppq).max(1));
             d.kind = kind::PENCIL;
-            d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::new()));
+            d.drag_hidden = Some(std::sync::Arc::new(yinhe_types::HiddenNotes::default()));
             d.start_f = anchor_tick;
             d.cur_end = anchor_tick + gate;
             d.key = anchor_key;
@@ -2800,7 +2799,7 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: Tool) 
         }
         Tool::Eraser => {
             d.kind = kind::ERASE;
-            d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::new()));
+            d.drag_hidden = Some(std::sync::Arc::new(yinhe_types::HiddenNotes::default()));
             d.anchor_tick = anchor_tick;
             d.anchor_key = anchor_key;
             s.set_box_target([x, y, x, y]);
@@ -2808,7 +2807,7 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: Tool) 
         }
         Tool::Brush => {
             let interval = u64::from(q.tick_interval(s.ppq).max(1));
-            d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::new()));
+            d.drag_hidden = Some(std::sync::Arc::new(yinhe_types::HiddenNotes::default()));
             let cell = ((anchor_tick as u64 / interval) as u32, anchor_key);
             d.kind = kind::BRUSH;
             d.last_cell = cell;
@@ -2817,7 +2816,7 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: Tool) 
             brush_cells(s, d, &geom, interval as u32);
         }
         Tool::Line => {
-            d.drag_hidden = Some(std::sync::Arc::new(std::collections::HashSet::new()));
+            d.drag_hidden = Some(std::sync::Arc::new(yinhe_types::HiddenNotes::default()));
             d.kind = kind::LINE;
             d.anchor_tick = anchor_tick;
             d.anchor_key = anchor_key;
@@ -2873,7 +2872,7 @@ fn begin_arr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: Tool)
 
 // ── 命中测试与选框查询 ──
 
-type NoteHit = (u16, u32, u32, u8, u8);
+type NoteHit = (u16, u32, u32, u8, u8, u32);
 
 /// PR 命中音符：返回 `(track, start_tick, end_tick, key, side)`，side 0=移动 1=左缘 2=右缘。
 fn hit_note(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option<NoteHit> {
@@ -2907,7 +2906,14 @@ fn hit_note(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option<NoteHit> {
                 } else {
                     0
                 };
-                return Some((note.track, note.start_tick, note.end_tick, key, side));
+                return Some((
+                    note.track,
+                    note.start_tick,
+                    note.end_tick,
+                    key,
+                    side,
+                    note.id,
+                ));
             }
         }
     }
@@ -3167,7 +3173,7 @@ fn commit_move(
 /// 铅笔精调选择提交：松手时以最后一次真实命中的音符为准。
 fn commit_pick(s: &mut RenderScene, x: f32, y: f32) -> bool {
     let geom = PrGeom::new(&s.pr_view);
-    let Some((track, start, end, key, _)) = hit_note(s, &geom, x, y) else {
+    let Some((track, start, end, key, _, _id)) = hit_note(s, &geom, x, y) else {
         return false;
     };
     select_note(s, track, start, end, key);

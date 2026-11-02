@@ -942,7 +942,7 @@ pub fn render_automation_frame(
             if is_velocity { 127.0 } else { value_max },
             ghost,
             revision,
-            &[],
+            &state.selected_ticks,
         );
     }
 

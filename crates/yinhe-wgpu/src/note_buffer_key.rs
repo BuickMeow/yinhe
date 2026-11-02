@@ -5,7 +5,7 @@
 //! every construction site that needs updating — no more "forgot to
 //! include X in the cache key" bugs.
 
-use std::collections::HashSet;
+use yinhe_types::HiddenFilter;
 
 use crate::hash_bools;
 
@@ -19,11 +19,7 @@ pub struct NoteBufferKey(u64);
 
 impl NoteBufferKey {
     /// Compute the cache key from all relevant inputs.
-    pub fn new(
-        revision: u64,
-        track_visible: &[bool],
-        hidden_notes: &HashSet<(u16, u32, u8)>,
-    ) -> Self {
+    pub fn new(revision: u64, track_visible: &[bool], hidden_notes: &dyn HiddenFilter) -> Self {
         Self::from_hashes(
             revision,
             hash_bools(track_visible),
@@ -51,12 +47,6 @@ impl NoteBufferKey {
 /// Exposed separately so callers can check whether hidden_notes changed
 /// independently of revision/track_visible, enabling the upload decision
 /// logic to choose between full vs. incremental upload.
-pub fn hash_hidden(hidden_notes: &HashSet<(u16, u32, u8)>) -> u64 {
-    hidden_notes.iter().fold(0u64, |acc, &(trk, tick, key)| {
-        acc.wrapping_add(trk as u64)
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(tick as u64)
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(key as u64)
-    })
+pub fn hash_hidden(hidden_notes: &dyn HiddenFilter) -> u64 {
+    hidden_notes.hidden_hash()
 }

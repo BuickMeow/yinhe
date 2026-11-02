@@ -203,7 +203,7 @@ class AutomationPainter extends CustomPainter {
     final line = Paint()
       ..color = color.withValues(alpha: 0.85 * alpha)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
+      ..strokeWidth = 3.0;
     final path = Path();
     var started = false;
     var lastY = 0.0;
@@ -244,15 +244,12 @@ class AutomationPainter extends CustomPainter {
         continue;
       }
       final y = yOf(p.dy);
+      final center = Offset(x, y);
       if (selected.contains(p.dx.round())) {
-        final r = Rect.fromCenter(center: Offset(x, y), width: 7, height: 7);
-        canvas.drawRect(r, selectedPaint);
-        canvas.drawRect(r, selectedEdge);
+        canvas.drawCircle(center, 6, selectedPaint);
+        canvas.drawCircle(center, 6, selectedEdge);
       } else {
-        canvas.drawRect(
-          Rect.fromCenter(center: Offset(x, y), width: 5, height: 5),
-          anchor,
-        );
+        canvas.drawCircle(center, 6, anchor);
       }
     }
   }

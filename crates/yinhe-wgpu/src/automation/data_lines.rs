@@ -4,10 +4,10 @@ use yinhe_types::AutomationPanelView;
 use yinhe_types::{AutomationEvent, AutomationLane, SegmentShape, TRACK_PALETTE};
 
 /// 自动化曲线的线宽（SDF 半宽，像素）。视觉宽度 ≈ 2×thickness + 1px AA。
-/// 0.5 ≈ 原 1px 矩形拟合的视觉宽度，但带 AA 抗锯齿。
-const LINE_THICKNESS: f32 = 0.5;
-/// 锚点（pencil 工具下显示）的半径/半边长，像素。
-const ANCHOR_RADIUS: f32 = 3.0;
+/// 移动端触屏需要更明显的曲线：比原 0.5 翻倍。
+const LINE_THICKNESS: f32 = 1.0;
+/// 锚点半径（像素）。移动端默认显示，做成更大的圆点方便手指命中。
+const ANCHOR_RADIUS: f32 = 6.0;
 /// 贝塞尔控制点（空心圆）外半径，像素。
 const CTRL_POINT_RADIUS: f32 = 4.0;
 /// 控制点到锚点的连线线宽。
@@ -245,7 +245,7 @@ pub fn build_data_lines(
         // 画锚点 + 曲线段的控制点
         if show_anchors {
             let visible_events = lane.events_in_range(pad_start, pad_end);
-            // 锚点形状按 shape 分派：Step → 方形，Curve → 圆形
+            // 锚点统一画成圆点（移动端默认显示；Step 也不再画方块）。
             for evt in visible_events {
                 // clamp 到 [grid_left_x, w]：锚点不画到 combo 列下方
                 let x = (x_offset + evt.tick as f32 * ppu).clamp(grid_left_x, w);
@@ -256,14 +256,7 @@ pub fn build_data_lines(
                 } else {
                     [color[0], color[1], color[2], 1.0]
                 };
-                match evt.shape {
-                    SegmentShape::Step => {
-                        out.push(CurveInstance::square(x, y, ANCHOR_RADIUS, anchor_color))
-                    }
-                    SegmentShape::Curve { .. } => {
-                        out.push(CurveInstance::circle(x, y, ANCHOR_RADIUS, anchor_color))
-                    }
-                }
+                out.push(CurveInstance::circle(x, y, ANCHOR_RADIUS, anchor_color));
             }
             // 曲线段中间的空心控制点（仅 Curve 段，非直线时才画）
             push_curve_control_points(
@@ -324,14 +317,7 @@ pub(crate) fn build_lane_instances(
             let x = (x_offset + evt.tick as f32 * ppu).clamp(grid_left_x, w);
             let y = view.value_to_y(evt.value, max_val);
             let anchor_color = [color[0], color[1], color[2], 1.0];
-            match evt.shape {
-                SegmentShape::Step => {
-                    out.push(CurveInstance::square(x, y, ANCHOR_RADIUS, anchor_color))
-                }
-                SegmentShape::Curve { .. } => {
-                    out.push(CurveInstance::circle(x, y, ANCHOR_RADIUS, anchor_color))
-                }
-            }
+            out.push(CurveInstance::circle(x, y, ANCHOR_RADIUS, anchor_color));
         }
         push_curve_control_points(
             out,
@@ -721,8 +707,17 @@ mod tests {
             &theme,
         );
         assert!(
-            expanded.iter().any(|i| i.shape == 2),
-            "展开时 Step 锚点应为方块（shape 2）"
+            expanded
+                .iter()
+                .any(|i| i.shape == 1 && (i.thickness - ANCHOR_RADIUS).abs() < f32::EPSILON),
+            "展开时 Step 锚点也应为大圆点（shape 1）"
+        );
+        assert!(
+            expanded
+                .iter()
+                .filter(|i| i.shape == 0)
+                .all(|i| (i.thickness - LINE_THICKNESS).abs() < f32::EPSILON),
+            "曲线线宽应使用 LINE_THICKNESS"
         );
     }
 

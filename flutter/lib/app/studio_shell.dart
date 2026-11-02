@@ -57,6 +57,12 @@ const MethodChannel _channel = MethodChannel('yinhe/surface');
 const int kViewArrangement = 0;
 const int kViewPianoroll = 1;
 
+/// 自动化面板顶部的拖拽手柄高度（逻辑像素，兼顾触屏命中）。
+const double kAmHandleHeight = 26.0;
+
+/// 自动化面板绘制区最小高度（再小就看不清曲线了）。
+const double kAmMinDrawHeight = 120.0;
+
 /// 工作台壳：画布常驻，左侧抽屉菜单 + 顶部走带控制。
 class StudioShell extends StatefulWidget {
   const StudioShell({super.key});
@@ -163,6 +169,12 @@ abstract class _ShellBase extends State<StudioShell>
 
   /// 收起自动化栏（最大化画布）。手机默认收起，进入 PR 先看音符。
   bool _autoCollapsed = true;
+
+  /// 自动化面板绘制区高度（逻辑像素）；null = 默认占满可用高度。
+  double? _autoPanelHeight;
+
+  /// 最近一次布局可用的 AM 最大绘制高度（拖动时用来 clamp）。
+  double _amMaxDrawHeight = 0;
 
   /// 当前工具（PR 5 种；AR 2 种；索引对应 `toolDefs`）。
   int _toolPr = 0;
@@ -480,6 +492,8 @@ abstract class _ShellBase extends State<StudioShell>
   int get _quickTool;
   bool get _quickSlotActive;
   void _setAutoCollapsed(bool collapsed);
+  void _resizeAutoPanel(double dy);
+  void _toggleAutoPanelFullscreen();
   void _setView(int mode);
   void _showAddTrackDialog();
   void _showPasteMenu(Offset? pos, LongPressContext? ctx);

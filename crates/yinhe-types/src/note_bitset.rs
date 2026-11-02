@@ -72,10 +72,10 @@ impl NoteBitsetBuilder {
         }
     }
 
-    /// 置位（id 0 = 发号器哨兵，忽略）。
-    pub fn insert(&mut self, id: u32) {
+    /// 置位（id 0 = 发号器哨兵，忽略）。返回是否为新成员。
+    pub fn insert(&mut self, id: u32) -> bool {
         if id == 0 {
-            return;
+            return false;
         }
         let page_idx = (id >> PAGE_SHIFT) as usize;
         if page_idx >= self.pages.len() {
@@ -87,7 +87,9 @@ impl NoteBitsetBuilder {
         if page[word] & mask == 0 {
             page[word] |= mask;
             self.count += 1;
+            return true;
         }
+        false
     }
 
     /// 组装为位图（只保留非空页）。

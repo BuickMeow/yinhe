@@ -6,6 +6,7 @@ pub mod automation;
 pub mod automation_panel_view;
 pub mod gm;
 pub mod hash;
+pub mod hidden_notes;
 pub mod metadata;
 mod note;
 pub mod note_bitset;
@@ -29,6 +30,7 @@ pub use automation::{
 };
 pub use automation_panel_view::{AnchorSelRect, AutomationPanelView};
 pub use hash::*;
+pub use hidden_notes::{HiddenFilter, HiddenNotes, HiddenNotesBuilder};
 pub use metadata::{ChordEvent, KeySigEvent, LyricsEvent, MarkerEvent, ScaleType, from_midi_sf_mi};
 pub use note::{Note, PencilNoteDrag, TimeSigEvent, VelocityEdit};
 pub use note_bitset::{NoteBitset, NoteBitsetBuilder};

@@ -244,8 +244,19 @@ mixin _ShellBuild on _ShellBase {
                                   _viewMode == kViewPianoroll &&
                                   !_autoCollapsed;
                               final canvasH = size.height;
-                              final amH = (size.height - RulerPainter.height)
+                              // AM 绘制区高度：默认占满可用区，可拖手柄任意缩放/全屏。
+                              final amMax = (size.height -
+                                      RulerPainter.height -
+                                      kAmHandleHeight)
                                   .clamp(1.0, double.infinity);
+                              _amMaxDrawHeight = amMax;
+                              final amMin = amMax < kAmMinDrawHeight
+                                  ? amMax
+                                  : kAmMinDrawHeight;
+                              final amH = (_autoPanelHeight ?? amMax).clamp(
+                                amMin,
+                                amMax,
+                              );
                               // 内容画布 = 画布区减去顶部标尺条（Rust 坐标系从标尺下方开始）。
                               final contentH = (canvasH - RulerPainter.height)
                                   .clamp(1.0, double.infinity);
@@ -523,12 +534,23 @@ mixin _ShellBuild on _ShellBase {
                                         ],
                                       ),
                                     ),
-                                    if (amVisible)
+                                    if (amVisible) ...<Widget>[
                                       Positioned(
                                         left: 0,
                                         right: 0,
-                                        top: RulerPainter.height,
+                                        bottom: amH,
+                                        height: kAmHandleHeight,
+                                        child: _AutomationResizeHandle(
+                                          onDrag: _resizeAutoPanel,
+                                          onDoubleTap:
+                                              _toggleAutoPanelFullscreen,
+                                        ),
+                                      ),
+                                      Positioned(
+                                        left: 0,
+                                        right: 0,
                                         bottom: 0,
+                                        height: amH,
                                         child: AutomationPanel(
                                           height: amH,
                                           snap: _snap,
@@ -581,6 +603,7 @@ mixin _ShellBuild on _ShellBase {
                                           ),
                                         ),
                                       ),
+                                    ],
                                   ],
                                 ),
                               );
@@ -782,5 +805,38 @@ mixin _ShellBuild on _ShellBase {
     if (rust.redo() == 1) {
       unawaited(_runDocJob(title: l.redo));
     }
+  }
+}
+
+/// 自动化面板顶部的拖拽手柄：上下拖动任意改变高度，双击切换全屏/半屏。
+class _AutomationResizeHandle extends StatelessWidget {
+  const _AutomationResizeHandle({
+    required this.onDrag,
+    required this.onDoubleTap,
+  });
+
+  final ValueChanged<double> onDrag;
+  final VoidCallback onDoubleTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onVerticalDragUpdate: (d) => onDrag(d.delta.dy),
+      onDoubleTap: onDoubleTap,
+      child: Container(
+        color: scheme.surface.withValues(alpha: 0.92),
+        alignment: Alignment.center,
+        child: Container(
+          width: 44,
+          height: 4,
+          decoration: BoxDecoration(
+            color: scheme.onSurfaceVariant.withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+      ),
+    );
   }
 }
