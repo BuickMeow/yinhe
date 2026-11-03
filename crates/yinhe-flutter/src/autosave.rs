@@ -108,7 +108,7 @@ pub fn tick() {
 
 fn poll_result() {
     let msg = {
-        let Ok(mut s) = session().lock() else {
+        let Ok(s) = session().lock() else {
             return;
         };
         let Some(rx) = s.rx.as_ref() else {
