@@ -1039,6 +1039,7 @@ impl App {
             | transport_bar::FileAction::Settings
             | transport_bar::FileAction::ProjectSettings
             | transport_bar::FileAction::ImportAudio
+            | transport_bar::FileAction::ImportMidi
             | transport_bar::FileAction::Welcome
             | transport_bar::FileAction::About
             | transport_bar::FileAction::Open => {
@@ -1143,6 +1144,9 @@ impl App {
             }
             transport_bar::FileAction::ImportAudio => {
                 self.import_audio_dialog();
+            }
+            transport_bar::FileAction::ImportMidi => {
+                self.import_midi_dialog(ctx);
             }
             transport_bar::FileAction::Save => {
                 if let Some(idx) = self.workspace.active_doc {

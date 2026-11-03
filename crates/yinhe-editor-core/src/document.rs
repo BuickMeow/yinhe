@@ -27,6 +27,7 @@ pub mod automation_edit;
 pub mod conductor_edit;
 pub(crate) mod event_edit;
 pub mod event_list_edit;
+pub mod midi_import;
 pub mod note_edit;
 pub mod note_pencil;
 pub mod selection;
@@ -460,6 +461,9 @@ impl Document {
         // Save current selection so redo can restore it.
         let current = self.capture_snapshot();
 
+        // 导入不保存源数据（1 亿音符不存两份），undo 后清空 redo 栈。
+        let irreversible = matches!(&entry.action, UndoAction::ImportMidi { .. });
+
         // 反转 action（消耗 entry.action，零克隆），apply 一次后再 move 进 redo 栈。
         let reversed = entry.action.reversed();
         reversed.redo(self);
@@ -473,6 +477,9 @@ impl Document {
             label: entry.label,
             snapshot: current,
         });
+        if irreversible {
+            self.history.future.clear();
+        }
 
         true
     }

@@ -388,6 +388,11 @@ mixin _ShellDocument on _ShellBase {
   /// 文件选择回调：先判同一文件/未保存，再让 Rust 开始加载。
   @override
   Future<void> _handlePickedFile(String path) async {
+    if (_pickingForImport) {
+      _pickingForImport = false;
+      await _startMidiImport(path);
+      return;
+    }
     final current = rust.takeString(rust.currentPath());
     if (current.isNotEmpty && current == path) {
       _returnToWorkspace();
@@ -401,6 +406,83 @@ mixin _ShellDocument on _ShellBase {
       return;
     }
     _startOpenPath(path);
+  }
+
+  /// 选择完 MIDI 后的完整导入流程：解析 → 摘要/勾选 → 文档后台任务。
+  Future<void> _startMidiImport(String path) async {
+    final p = path.toNativeUtf8();
+    var started = 0;
+    try {
+      started = rust.midiImportStart(p);
+    } finally {
+      malloc.free(p);
+    }
+    if (!mounted) {
+      return;
+    }
+    if (started != 1) {
+      showSnack(context, l.loadFailed);
+      return;
+    }
+    final parsed = await showTaskProgressDialog(
+      context,
+      poll: () => rust.takeString(rust.midiImportStatusJson()),
+      determinate: true,
+      title: L10n.isZh ? '解析 MIDI' : 'Parsing MIDI',
+      failureTitle: l.loadFailed,
+      onCancel: () => rust.midiImportCancel(),
+    );
+    if (!mounted || parsed != true) {
+      return;
+    }
+    MidiImportSummary? summary;
+    try {
+      final raw = rust.takeString(rust.midiImportStatusJson());
+      final status = jsonDecode(raw) as Map<String, dynamic>;
+      summary = MidiImportSummary.fromJson(status['summary']);
+    } catch (_) {
+      summary = null;
+    }
+    if (!mounted) {
+      return;
+    }
+    if (summary == null || summary.tracks.isEmpty) {
+      showSnack(context, l.loadFailed);
+      return;
+    }
+    final choice = await showMidiImportDialog(context, summary);
+    if (!mounted) {
+      return;
+    }
+    if (choice == null) {
+      rust.midiImportCancel();
+      return;
+    }
+    final include = jsonEncode(choice.include).toNativeUtf8();
+    var applied = 0;
+    try {
+      applied = rust.midiImportApply(include, choice.allocateFree ? 1 : 0);
+    } finally {
+      malloc.free(include);
+    }
+    if (!mounted) {
+      return;
+    }
+    if (applied != 1) {
+      showSnack(context, l.loadFailed);
+      return;
+    }
+    final done = await _runDocJob(
+      title: L10n.isZh ? '导入 MIDI' : 'Import MIDI',
+      determinate: true,
+    );
+    if (!mounted || !done) {
+      return;
+    }
+    _setView(kViewArrangement);
+    rust.midiImportFocus();
+    _refreshDocumentMeta();
+    showSnack(context, L10n.isZh ? '导入完成' : 'Import complete');
   }
 
   @override

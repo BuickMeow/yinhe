@@ -21,7 +21,7 @@ pub const RECENT_FILES_LIMIT: usize = 10;
 /// 文件菜单图钉数组长度：必须与 egui 层 `FileAction::ALL.len()` 保持一致
 /// （egui 层的 `pinned_arrays_cover_all_actions` 测试防漏改；
 /// 旧配置加载时自动扩容，见 `persistence::load`）。
-pub const PINNED_FILE_ACTIONS_LEN: usize = 13;
+pub const PINNED_FILE_ACTIONS_LEN: usize = 14;
 /// 编辑菜单图钉数组长度：必须与 `EditAction::ALL.len()` 保持一致。
 pub const PINNED_EDIT_ACTIONS_LEN: usize = 24;
 /// 插入菜单图钉数组长度：必须与 `InsertAction::ALL.len()` 保持一致。

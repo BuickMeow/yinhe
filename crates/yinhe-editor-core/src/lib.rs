@@ -11,6 +11,7 @@ pub mod edit_state;
 pub mod file_loading;
 pub mod follow;
 pub mod history;
+pub mod midi_import;
 pub mod num_expr;
 pub mod paths;
 pub mod pen;

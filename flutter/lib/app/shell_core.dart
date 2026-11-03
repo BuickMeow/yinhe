@@ -388,23 +388,25 @@ mixin _ShellCore on _ShellBase {
       _ => l.loadingFile,
     };
     // 小文件复制可能 100ms 内就完成：延迟弹框，避免闪一下。
-    unawaited(Future<void>.delayed(const Duration(milliseconds: 150), () async {
-      if (!mounted || token != _copyToken || _copyState != 1) {
+    unawaited(
+      Future<void>.delayed(const Duration(milliseconds: 150), () async {
+        if (!mounted || token != _copyToken || _copyState != 1) {
+          if (!closed.isCompleted) {
+            closed.complete();
+          }
+          return;
+        }
+        await showTaskProgressDialog(
+          context,
+          poll: _copyProgressJson,
+          determinate: _copyTotal > 0,
+          title: title,
+        );
         if (!closed.isCompleted) {
           closed.complete();
         }
-        return;
-      }
-      await showTaskProgressDialog(
-        context,
-        poll: _copyProgressJson,
-        determinate: _copyTotal > 0,
-        title: title,
-      );
-      if (!closed.isCompleted) {
-        closed.complete();
-      }
-    }));
+      }),
+    );
   }
 
   void _endCopyProgress() {
@@ -494,9 +496,21 @@ mixin _ShellCore on _ShellBase {
 
   @override
   Future<void> _pickMidi() async {
+    _pickingForImport = false;
     // 扩展名策略在 Dart（`core/platform_files.dart`），壳只按它做校验。
     await _channel.invokeMethod<void>('openFilePicker', {
       'exts': projectExtensions,
+    });
+  }
+
+  @override
+  Future<void> _pickImportMidi() async {
+    _pickingForImport = true;
+    if (_viewMode != kViewArrangement) {
+      _setView(kViewArrangement);
+    }
+    await _channel.invokeMethod<void>('openFilePicker', {
+      'exts': midiExtensions,
     });
   }
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
 import '../l10n/app_localizations.dart';
+import '../l10n.dart';
 
 /// AR 左侧菜单栏（抽屉）：固定顶部返回栏 + 可滚动选项。
 ///
@@ -12,6 +13,7 @@ class Sidebar extends StatelessWidget {
     required this.onBack,
     required this.onNewProject,
     required this.onOpenFile,
+    required this.onImportMidi,
     required this.onSaveAs,
     required this.onProjectSettings,
     required this.onExportAudio,
@@ -23,6 +25,7 @@ class Sidebar extends StatelessWidget {
   final VoidCallback onBack;
   final VoidCallback onNewProject;
   final VoidCallback onOpenFile;
+  final VoidCallback onImportMidi;
   final VoidCallback onSaveAs;
   final VoidCallback onProjectSettings;
   final VoidCallback onExportAudio;
@@ -47,6 +50,11 @@ class Sidebar extends StatelessWidget {
                 children: [
                   _item(Icons.add_box_outlined, l.newProject, onNewProject),
                   _item(Icons.folder_open_outlined, l.openFile, onOpenFile),
+                  _item(
+                    Icons.playlist_add,
+                    L10n.isZh ? '导入 MIDI' : 'Import MIDI',
+                    onImportMidi,
+                  ),
                   _item(Icons.save_as_outlined, l.saveAs, onSaveAs),
                   _item(Icons.tune, l.projectSettings, onProjectSettings),
                   const _SidebarDivider(),

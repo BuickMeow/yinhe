@@ -38,6 +38,7 @@ import '../dialogs/progress_dialog.dart';
 import '../dialogs/recent_files_dialog.dart';
 import '../dialogs/project_defaults_dialog.dart';
 import '../dialogs/project_dialog.dart';
+import '../dialogs/midi_import_dialog.dart';
 import '../painters/painters.dart';
 import '../widgets/settings_view.dart';
 import '../core/theme.dart';
@@ -84,6 +85,7 @@ abstract class _ShellBase extends State<StudioShell>
   /// AM 面板独立 wgpu 纹理。
   int? _amTextureId;
   Size? _reportedPixelSize;
+
   /// 最近一帧画布区（标尺上方、系统栏内）的逻辑宽高与 DPR：切换视图前用它
   /// 预先下发目标画布尺寸，保证 surface 尺寸和视图模式在同一帧生效。
   double _canvasAreaW = 0;
@@ -103,6 +105,9 @@ abstract class _ShellBase extends State<StudioShell>
 
   int _viewMode = kViewArrangement;
   String? _fileName;
+
+  /// 本次系统文件选择器是否用于「导入 MIDI」（onFilePicked 分流用）。
+  bool _pickingForImport = false;
 
   /// 顶栏取消选区信号：AM 面板据此清空锚点选择。
   int _amDeselectTick = 0;
@@ -481,6 +486,7 @@ abstract class _ShellBase extends State<StudioShell>
   void _openRecent(RecentItem item);
   void _openSettings();
   Future<void> _pickMidi();
+  Future<void> _pickImportMidi();
   Future<void> _pickSoundFont();
   Future<void> _openSoundfontArchive(String path);
   double get _ppq;

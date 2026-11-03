@@ -192,3 +192,32 @@ final IntArgDart toggleTrackMute = bridge
 /// 切换轨道 solo。
 final IntArgDart toggleTrackSolo = bridge
     .lookupFunction<IntArgNative, IntArgDart>('yinhe_toggle_track_solo');
+
+// ── 导入 MIDI ──
+
+typedef CStrArgIntNative = ffi.Int32 Function(ffi.Pointer<Utf8>, ffi.Int32);
+typedef CStrArgIntDart = int Function(ffi.Pointer<Utf8>, int);
+typedef VoidNoArgNative = ffi.Void Function();
+typedef VoidNoArgDart = void Function();
+
+/// 开始解析要导入的 MIDI（后台线程，轮询 [midiImportStatusJson]）。
+final CStrArgDart midiImportStart = bridge
+    .lookupFunction<CStrArgNative, CStrArgDart>('yinhe_midi_import_start');
+
+/// 解析状态 JSON：`{"state","progress","error","summary"}`。
+final CStrDart midiImportStatusJson = bridge
+    .lookupFunction<CStrNative, CStrDart>('yinhe_midi_import_status_json');
+
+/// 应用导入；`includeJson` 是每源轨 bool 数组，`channelMode` 0=保留源通道 1=分配空闲。
+final CStrArgIntDart midiImportApply = bridge
+    .lookupFunction<CStrArgIntNative, CStrArgIntDart>(
+      'yinhe_midi_import_apply',
+    );
+
+/// 取消/丢弃解析结果。
+final IntNoArgDart midiImportCancel = bridge
+    .lookupFunction<IntNoArgNative, IntNoArgDart>('yinhe_midi_import_cancel');
+
+/// 导入完成后把 AR 视口定位到导入起点。
+final VoidNoArgDart midiImportFocus = bridge
+    .lookupFunction<VoidNoArgNative, VoidNoArgDart>('yinhe_midi_import_focus');

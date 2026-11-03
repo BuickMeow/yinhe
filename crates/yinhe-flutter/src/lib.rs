@@ -20,6 +20,7 @@ mod inertia;
 #[cfg(target_os = "ios")]
 mod ios;
 mod midi_export;
+mod midi_import;
 mod midi_names;
 mod render;
 mod scene;
@@ -2215,6 +2216,53 @@ pub extern "C" fn yinhe_doc_job_status_json() -> *mut std::ffi::c_char {
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_doc_job_cancel() -> i32 {
     doc_job::cancel()
+}
+
+/// 开始解析要导入的 MIDI；返回 1 = 已开始。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
+pub extern "C" fn yinhe_midi_import_start(path: *const std::ffi::c_char) -> i32 {
+    if path.is_null() {
+        return 0;
+    }
+    let Ok(path) = unsafe { CStr::from_ptr(path) }.to_str() else {
+        return 0;
+    };
+    midi_import::start(path.to_string())
+}
+
+/// 导入解析状态 JSON：`{"state","progress","error","summary"}`。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_midi_import_status_json() -> *mut std::ffi::c_char {
+    to_c_string(midi_import::status_json())
+}
+
+/// 应用导入；`include_json` 是每源轨 bool 数组，`channel_mode` 0=保留源通道 1=分配空闲。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn yinhe_midi_import_apply(
+    include_json: *const std::ffi::c_char,
+    channel_mode: i32,
+) -> i32 {
+    if include_json.is_null() {
+        return 0;
+    }
+    let Ok(include) = unsafe { CStr::from_ptr(include_json) }.to_str() else {
+        return 0;
+    };
+    midi_import::apply(include, channel_mode)
+}
+
+/// 取消/丢弃当前导入解析结果。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_midi_import_cancel() -> i32 {
+    midi_import::cancel()
+}
+
+/// 导入完成后把 AR 视口定位到导入起点。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_midi_import_focus() {
+    midi_import::focus_selection();
 }
 
 /// Dart 布局后同步 AM 面板在主纹理中的绘制区域与当前 lane。`lane < 0` = 力度。

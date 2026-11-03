@@ -232,6 +232,7 @@ impl eframe::App for App {
                 MenuAction::NewProject => transport_bar::FileAction::NewProject,
                 MenuAction::Open => transport_bar::FileAction::Open,
                 MenuAction::ImportAudio => transport_bar::FileAction::ImportAudio,
+                MenuAction::ImportMidi => transport_bar::FileAction::ImportMidi,
                 MenuAction::Welcome => transport_bar::FileAction::Welcome,
                 MenuAction::Save => transport_bar::FileAction::Save,
                 MenuAction::SaveAs => transport_bar::FileAction::SaveAs,
@@ -936,6 +937,8 @@ impl eframe::App for App {
         // ── 浮动面板窗口（PR / 设备链 / 混音台泊出）──
         self.show_floating_panels(ui.ctx());
         crate::mix::show_global_overlays(self, ui.ctx());
+        self.poll_midi_import(ui.ctx());
+        self.show_midi_import_ui(ui.ctx());
         self.show_dialogs(ui);
         self.show_unsaved_dialog(ui);
 

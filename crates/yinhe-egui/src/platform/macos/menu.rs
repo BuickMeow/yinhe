@@ -81,6 +81,7 @@ impl MenuActionFrom for crate::chrome::transport_bar::FileAction {
             FileAction::NewProject => MenuAction::NewProject,
             FileAction::Open => MenuAction::Open,
             FileAction::ImportAudio => MenuAction::ImportAudio,
+            FileAction::ImportMidi => MenuAction::ImportMidi,
             FileAction::Welcome => MenuAction::Welcome,
             FileAction::Save => MenuAction::Save,
             FileAction::SaveAs => MenuAction::SaveAs,

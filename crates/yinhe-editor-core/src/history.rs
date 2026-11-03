@@ -181,6 +181,20 @@ pub enum UndoAction {
         note_remap_inverse: Vec<u16>, // new_track -> old_track (for undo)
         deleted_notes: Vec<(Note, u8)>, // 被 remove_track 删掉的音符（含 key），用于 undo 恢复
     },
+    /// MIDI 导入：只存轨道/全局事件快照 + 新增音符的 id 区间。
+    ///
+    /// 导入的音符 id 是连续分配的，undo 按区间删除即可，不需要为 1 亿音符
+    /// 再存一份副本。`undone` = false 是正向（内容已由导入流程写入），
+    /// `undone` = true 是反向（删除导入内容）。redo 不提供，见
+    /// `Document::undo` 对导入操作清空 redo 栈。
+    ImportMidi {
+        tracks_before: Vec<Arc<yinhe_core::TrackData>>,
+        conductor_before: yinhe_core::ConductorData,
+        note_id_start: u32,
+        note_id_end: u32,
+        note_keys: Vec<u8>,
+        undone: bool,
+    },
     /// 几何平移类操作（move/transpose）的操作式 undo：不存数据副本，
     /// 存逆操作参数（O(1) 内存，与受影响音符数无关）。
     ///
@@ -366,6 +380,21 @@ impl UndoAction {
                     deleted_notes,
                 }
             }
+            UndoAction::ImportMidi {
+                tracks_before,
+                conductor_before,
+                note_id_start,
+                note_id_end,
+                note_keys,
+                undone,
+            } => UndoAction::ImportMidi {
+                tracks_before,
+                conductor_before,
+                note_id_start,
+                note_id_end,
+                note_keys,
+                undone: !undone,
+            },
             UndoAction::MoveNotes {
                 mut selection,
                 delta_ticks,

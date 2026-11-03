@@ -174,6 +174,31 @@ impl UndoAction {
                         .filter(|&v| v != u16::MAX)
                 });
             }
+            UndoAction::ImportMidi {
+                tracks_before,
+                conductor_before,
+                note_id_start,
+                note_id_end,
+                note_keys,
+                undone,
+            } => {
+                // 正向动作（undone=false）在导入流程里已写入，redo 不应再执行。
+                // 只有 undo 方向（undone=true）才真正删除导入内容；导入 undo 后
+                // `Document::undo` 会清空 redo 栈，所以这条路径不会反向重放。
+                if *undone {
+                    let model = Arc::make_mut(&mut doc.data.model);
+                    crate::midi_import::revert_midi_import(
+                        model,
+                        tracks_before.clone(),
+                        conductor_before.clone(),
+                        *note_id_start,
+                        *note_id_end,
+                        note_keys,
+                    );
+                    doc.sync_track_caches();
+                    doc.data.bump_revision();
+                }
+            }
             UndoAction::AudioClips {
                 track_idx,
                 before: _,

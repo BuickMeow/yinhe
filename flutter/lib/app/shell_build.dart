@@ -221,6 +221,8 @@ mixin _ShellBuild on _ShellBase {
           onBack: () => _scaffoldKey.currentState?.closeDrawer(),
           onNewProject: () => _runFromSidebar(_newProject),
           onOpenFile: () => _runFromSidebar(() => unawaited(_pickMidi())),
+          onImportMidi: () =>
+              _runFromSidebar(() => unawaited(_pickImportMidi())),
           onSaveAs: () =>
               _runFromSidebar(() => unawaited(_saveProject(saveAs: true))),
           onProjectSettings: () => _runFromSidebar(_openProjectSettings),

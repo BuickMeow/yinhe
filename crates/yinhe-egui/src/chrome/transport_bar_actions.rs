@@ -10,6 +10,8 @@ pub enum FileAction {
     NewProject,
     Open,
     ImportAudio,
+    /// 导入 MIDI 到当前工程末尾。
+    ImportMidi,
     /// 欢迎页面：打开独立欢迎窗口（与启动欢迎窗口同款）。
     Welcome,
     Save,
@@ -25,10 +27,11 @@ pub enum FileAction {
 }
 
 impl FileAction {
-    pub const ALL: [FileAction; 13] = [
+    pub const ALL: [FileAction; 14] = [
         FileAction::NewProject,
         FileAction::Open,
         FileAction::ImportAudio,
+        FileAction::ImportMidi,
         FileAction::Welcome,
         FileAction::Save,
         FileAction::SaveAs,
@@ -57,6 +60,8 @@ impl FileAction {
             FileAction::Exit => 10,
             FileAction::Welcome => 11,
             FileAction::About => 12,
+            // 新增项追加索引，保证旧 pin 持久化数据不错位。
+            FileAction::ImportMidi => 13,
         }
     }
 
@@ -74,7 +79,7 @@ impl FileAction {
             FileAction::Settings => shortcuts::ACTION_SETTINGS,
             FileAction::Exit => shortcuts::ACTION_EXIT,
             // 欢迎页面 / 关于：无快捷键（label_key 特例，不走快捷键表）。
-            FileAction::Welcome | FileAction::About => "",
+            FileAction::Welcome | FileAction::About | FileAction::ImportMidi => "",
         }
     }
 
@@ -83,6 +88,7 @@ impl FileAction {
             FileAction::NewProject => ICON_NOTE_ADD,
             FileAction::Open => ICON_FOLDER_OPEN,
             FileAction::ImportAudio => ICON_AUDIO_FILE,
+            FileAction::ImportMidi => ICON_NOTE_ADD,
             FileAction::Welcome => ICON_HOME,
             FileAction::Save => ICON_SAVE,
             FileAction::SaveAs => ICON_SAVE_ALT,
@@ -100,6 +106,7 @@ impl FileAction {
         match self {
             FileAction::Welcome => "menu.welcome_page",
             FileAction::About => "menu.about",
+            FileAction::ImportMidi => "file.import_midi",
             _ => crate::shortcuts::action_label_key(self.action_id()),
         }
     }
@@ -107,6 +114,7 @@ impl FileAction {
     fn is_enabled(self, has_active: bool, loading: bool) -> bool {
         match self {
             FileAction::NewProject | FileAction::Open | FileAction::ImportAudio => !loading,
+            FileAction::ImportMidi => has_active && !loading,
             // 欢迎页面/关于/设置/退出：任何时候都可用。
             FileAction::Welcome | FileAction::About | FileAction::Settings | FileAction::Exit => {
                 true
@@ -573,6 +581,7 @@ pub const FILE_GROUPS: [MenuGroup<'static, FileAction>; 5] = [
             FileAction::NewProject,
             FileAction::Open,
             FileAction::ImportAudio,
+            FileAction::ImportMidi,
             FileAction::Welcome,
         ],
     ),

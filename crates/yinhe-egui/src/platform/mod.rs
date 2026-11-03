@@ -12,6 +12,7 @@ pub enum MenuAction {
     NewProject,
     Open,
     ImportAudio,
+    ImportMidi,
     Save,
     SaveAs,
     CloseDocument,

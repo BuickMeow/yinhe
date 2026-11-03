@@ -327,61 +327,9 @@ impl YinModel {
         if old_ppq == new_ppq || old_ppq == 0 {
             return;
         }
-        let scale = new_ppq as f64 / old_ppq as f64;
-        let scale_tick = |t: u32| -> u32 {
-            let v = (t as f64 * scale).round();
-            // 防御性 clamp：避免极端输入溢出。u32::MAX 已经远超任何合理 tick。
-            if v > u32::MAX as f64 {
-                u32::MAX
-            } else {
-                v as u32
-            }
-        };
-
-        // 1. Notes (KEY_COUNT buckets, parallel)
-        use rayon::prelude::*;
-        self.notes.par_iter_mut().for_each(|bucket| {
-            let bucket = Arc::make_mut(bucket);
-            for n in bucket.iter_mut() {
-                n.start_tick = scale_tick(n.start_tick);
-                n.end_tick = scale_tick(n.end_tick);
-                // 维持 end >= start 的不变量（极端 round 情况下可能相等）
-                if n.end_tick < n.start_tick {
-                    n.end_tick = n.start_tick;
-                }
-            }
-            // start_tick 是排序键：缩放后重新排序切块。
-            bucket.sort();
-        });
-
-        // 2. Conductor: tempo events + time signature events
-        let conductor = Arc::make_mut(&mut self.conductor);
-        for ev in conductor.tempo.events.iter_mut() {
-            ev.tick = scale_tick(ev.tick);
-        }
-        conductor.tempo.events.sort_by_key(|e| e.tick);
-        for ts in conductor.time_sig.iter_mut() {
-            ts.tick = scale_tick(ts.tick);
-        }
-        conductor.time_sig.sort_by_key(|e| e.tick);
-
-        // 3. Track automation lanes + program changes
-        for track in self.tracks.iter_mut() {
-            let track = Arc::make_mut(track);
-            for lane in track.automation_lanes.iter_mut() {
-                for ev in lane.events.iter_mut() {
-                    ev.tick = scale_tick(ev.tick);
-                }
-                lane.events.sort_by_key(|e| e.tick);
-            }
-            for pc in track.program_change.iter_mut() {
-                pc.tick = scale_tick(pc.tick);
-            }
-            track.program_change.sort_by_key(|e| e.tick);
-        }
-
-        // 4. Update ppq + rebuild derived data
-        self.meta.ppq = new_ppq;
+        // 唯一一份 tick 字段实现（含 key_sig / markers / lyrics / chord），
+        // 见 `model_transform.rs`。这里只负责最后重建派生数据。
+        self.rescale_and_offset_ticks(new_ppq, 0);
         self.rebuild();
     }
 

@@ -14,6 +14,7 @@ mod automation;
 mod events;
 mod model;
 mod model_stats;
+mod model_transform;
 mod note_write;
 mod selection;
 mod selection_highlight;
@@ -27,6 +28,7 @@ pub use model::{
     TrackKind, YinModel, effective_fades,
 };
 pub use model_stats::{NoteLoader, RescaleProgress};
+pub use model_transform::remove_notes_by_id_range;
 pub use selection::{Selection, SelectionFilter};
 pub use selection_highlight::{
     build_exclude_table_gpu, build_selection_exclude_set, exclude_hash, exclude_key,

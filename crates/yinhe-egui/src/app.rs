@@ -16,6 +16,7 @@ pub(crate) mod insert;
 pub(crate) mod jobs;
 pub(crate) mod layout;
 pub(crate) mod main_loop;
+pub(crate) mod midi_import;
 pub(crate) mod midi_input;
 pub(crate) mod plugin_automation;
 pub(crate) mod poll;
@@ -97,6 +98,8 @@ pub struct App {
     pub(crate) file_loader: FileLoader,
     /// 异步任务运行时状态（保存 / 加载 / 导出 / 重采样 / 自动保存）。
     pub(crate) jobs: jobs::JobCenter,
+    /// 导入 MIDI：解析 / 确认框 / 合并三段状态。
+    pub(crate) midi_import: midi_import::MidiImportState,
 
     // ── Unsaved changes confirmation ──
     /// A file action deferred until the user chooses save/discard/cancel.
@@ -470,6 +473,7 @@ impl App {
             clipboard: yinhe_editor_core::ClipboardContent::default(),
             paste_chain: None,
             clipboard_sync: clipboard_sync::ClipboardSync::new(),
+            midi_import: midi_import::MidiImportState::default(),
             notifications: crate::widgets::toast::Notifications::new(),
         };
 

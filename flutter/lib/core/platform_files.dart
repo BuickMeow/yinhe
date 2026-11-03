@@ -25,6 +25,9 @@ const List<String> archiveExtensions = [
   'bz2',
 ];
 
+/// 仅 MIDI（导入 MIDI 用）。
+final List<String> midiExtensions = ['mid', 'midi'];
+
 /// 打开工程：MIDI / `.yin` / 压缩包。
 final List<String> projectExtensions = [
   'mid',
