@@ -1213,20 +1213,29 @@ impl App {
 
     /// 保存前把编辑态同步进 model/project_file，并抓取可离线保存的快照。
     /// 保存线程只持有快照，不再借用 `self`；保存与自动保存共用。
-    pub(crate) fn take_save_snapshot(&mut self, idx: usize) -> SaveSnapshot {
+    pub(crate) fn take_save_snapshot(
+        &mut self,
+        idx: usize,
+        sync_plugin_state: bool,
+    ) -> SaveSnapshot {
         let doc = &mut self.workspace.documents[idx];
         doc.sync_overrides_to_model();
         doc.data.sync_project_file();
         doc.data.sync_mapping_file();
         doc.sync_sf_overrides_to_project_file();
 
-        // 混音台插件：保存前把实例的 CLAP state 写回 InsertRef（旁通标志同步）。
-        if let Some(rack) = self.mixer_racks.get_mut(idx) {
-            rack.sync_states_to(&mut self.workspace.documents[idx].mixer);
-        }
-        // 乐器插件：同样把实例 state 写回 mixer.instruments[channel]。
-        if let Some(irack) = self.instrument_racks.get_mut(idx) {
-            irack.sync_states_to(&mut self.workspace.documents[idx].mixer);
+        // 插件实例不是 Send（CLAP/VST3 带原生窗口/COM 对象），无法搬到后台线程；
+        // 自动保存跳过这一步，避免每 5 分钟在主线程逐个插件调 save_state。
+        // 手工保存仍然同步，保证插件状态落盘。
+        if sync_plugin_state {
+            // 混音台插件：保存前把实例的 CLAP state 写回 InsertRef（旁通标志同步）。
+            if let Some(rack) = self.mixer_racks.get_mut(idx) {
+                rack.sync_states_to(&mut self.workspace.documents[idx].mixer);
+            }
+            // 乐器插件：同样把实例 state 写回 mixer.instruments[channel]。
+            if let Some(irack) = self.instrument_racks.get_mut(idx) {
+                irack.sync_states_to(&mut self.workspace.documents[idx].mixer);
+            }
         }
         let doc = &self.workspace.documents[idx];
         SaveSnapshot {
@@ -1239,7 +1248,7 @@ impl App {
 
     /// Spawn a background thread to save the project.
     pub(crate) fn save_project_async(&mut self, idx: usize, path: String) {
-        let snap = self.take_save_snapshot(idx);
+        let snap = self.take_save_snapshot(idx, true);
         let path_for_thread = path.clone();
         // 发起时的撤销栈长度快照：保存期间的新编辑不应被误标为已保存
         let saved_past_len = self

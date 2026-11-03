@@ -13,6 +13,7 @@
 //!   （surface buffer 为物理像素，两者分别用于 view 与交换链）
 
 mod audio;
+mod autosave;
 mod doc_job;
 mod edit;
 mod inertia;
@@ -1582,6 +1583,25 @@ fn parse_automation_moves(flat: &[f64]) -> Vec<(u32, u32, f32)> {
             )
         })
         .collect()
+}
+
+/// 自动保存心跳：Dart 每约 1 秒调用一次，内部按间隔触发并回收后台结果。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_autosave_tick() {
+    autosave::tick();
+}
+
+/// 启动时检查自动保存残留：`{"path","name"}` 或 `{}`。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_autosave_pending_json() -> *mut std::ffi::c_char {
+    to_c_string(autosave::pending_json())
+}
+
+/// 自动保存开关。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_auto_save_enabled(on: i32) -> i32 {
+    scene::set_auto_save_enabled(on != 0);
+    1
 }
 
 /// 当前音色库表 JSON（顺序 = 优先级，堆分配）。

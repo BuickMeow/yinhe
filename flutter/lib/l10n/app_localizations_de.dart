@@ -232,6 +232,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get allTracks => 'Alle einblenden';
 
   @override
+  String get autoSave => 'Automatisch speichern';
+
+  @override
   String get showAllTracksColored => 'Alle Spuren anzeigen (farbig)';
 
   @override

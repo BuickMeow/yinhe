@@ -1093,8 +1093,19 @@ fn load_document(path: &str, token: u64) -> Result<Document, String> {
     doc.sync_track_caches_with_conductor_color(crate::theme_colors::TEXT_PRIMARY);
     // 记录来源：加载完成即视为“已落盘来源”，dirty 从干净状态起步；
     // 同时供主页重复选择同一文件时跳过解析。
-    doc.file_path = Some(path.to_string());
-    push_recent(path);
+    if crate::autosave::is_autosave_path(path) {
+        // 恢复备份：不绑定备份文件路径，保持“未保存”让用户重新落盘。
+        if let Some(name) = crate::autosave::name_for_path(path) {
+            doc.file_name = name;
+        }
+        doc.file_path = None;
+        crate::autosave::clear();
+    } else {
+        doc.file_path = Some(path.to_string());
+        // 打开别的文件：旧文档的自动保存没有意义了。
+        crate::autosave::clear();
+        push_recent(path);
+    }
     Ok(doc)
 }
 
@@ -1135,14 +1146,23 @@ fn load_project_document(path: &str, token: u64) -> Result<Document, String> {
     doc.sync_sf_overrides_to_project_file();
     // 打开既有工程视为已保存（dirty 起点干净）。
     doc.mark_saved();
-    doc.file_path = Some(path.to_string());
-    doc.sync_track_caches_with_conductor_color(crate::theme_colors::TEXT_PRIMARY);
-    push_recent(path);
+    if crate::autosave::is_autosave_path(path) {
+        if let Some(name) = crate::autosave::name_for_path(path) {
+            doc.file_name = name;
+        }
+        doc.file_path = None;
+        crate::autosave::clear();
+    } else {
+        doc.file_path = Some(path.to_string());
+        crate::autosave::clear();
+        push_recent(path);
+    }
     Ok(doc)
 }
 
 /// 新建空工程（仅 Conductor，其余音轨由 AR 末尾的加号创建；120BPM、4/4）。
 pub fn new_project() -> i32 {
+    crate::autosave::clear();
     let doc = Document::empty_conductor_only();
     // 空工程给 4 小节的初始时间轴长度，避免除零缩放。
     apply_document(doc, 1920.0);
@@ -1170,6 +1190,7 @@ pub fn mark_saved() -> i32 {
         return 0;
     };
     doc.mark_saved();
+    crate::autosave::clear();
     1
 }
 
@@ -1926,6 +1947,12 @@ pub fn pause_on_exit() -> bool {
     crate::audio::pause_on_exit()
 }
 
+/// 自动保存开关（持久化到 settings.txt）。
+pub fn set_auto_save_enabled(on: bool) {
+    crate::audio::set_auto_save_enabled(on);
+    save_audio_settings();
+}
+
 fn write_settings() {
     let Some(dir) = files_dir_slot().lock().ok().and_then(|g| g.clone()) else {
         return;
@@ -1944,7 +1971,7 @@ fn write_settings() {
     let a = crate::audio::settings();
     text.push_str(&format!(
         "max_voices={}\nbuffer_size={}\nignore_velocity={}\nallow_overlapping_notes={}\n\
-         show_keyboard_labels={}\nfollow_playhead={}\npause_on_home={}\npause_on_exit={}\n",
+         show_keyboard_labels={}\nfollow_playhead={}\npause_on_home={}\npause_on_exit={}\nauto_save={}\n",
         a.max_voices,
         a.buffer_size,
         a.ignore_velocity,
@@ -1952,7 +1979,8 @@ fn write_settings() {
         if a.show_keyboard_labels { 1 } else { 0 },
         if a.follow_playhead { 1 } else { 0 },
         if a.pause_on_home { 1 } else { 0 },
-        if a.pause_on_exit { 1 } else { 0 }
+        if a.pause_on_exit { 1 } else { 0 },
+        if a.auto_save_enabled { 1 } else { 0 }
     ));
     if let Err(e) = std::fs::write(format!("{dir}/settings.txt"), text) {
         log::error!("设置写入失败: {e}");
@@ -1976,6 +2004,7 @@ fn load_settings() {
     let mut follow_playhead = defaults.follow_playhead;
     let mut pause_on_home = defaults.pause_on_home;
     let mut pause_on_exit = defaults.pause_on_exit;
+    let mut auto_save = defaults.auto_save_enabled;
     let mut soundfonts: Vec<crate::audio::SoundfontEntry> = Vec::new();
     let mut language = String::new();
     let mut theme = String::new();
@@ -2017,6 +2046,8 @@ fn load_settings() {
             pause_on_home = v.trim() != "0";
         } else if let Some(v) = line.strip_prefix("pause_on_exit=") {
             pause_on_exit = v.trim() != "0";
+        } else if let Some(v) = line.strip_prefix("auto_save=") {
+            auto_save = v.trim() != "0";
         }
     }
     if !language.is_empty() {
@@ -2035,6 +2066,7 @@ fn load_settings() {
     crate::audio::set_follow_playhead(follow_playhead);
     crate::audio::set_pause_on_home(pause_on_home);
     crate::audio::set_pause_on_exit(pause_on_exit);
+    crate::audio::set_auto_save_enabled(auto_save);
     crate::soundfont_archive::cleanup();
 }
 

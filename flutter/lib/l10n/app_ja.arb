@@ -76,6 +76,7 @@
   "saved": "プロジェクトを保存しました",
   "currentTrack": "編集中のトラック",
   "allTracks": "すべてを表示",
+  "autoSave": "自動保存",
   "showAllTracksColored": "すべてのトラックを表示（カラー）",
   "project": "プロジェクト",
   "projectSettings": "プロジェクト設定",

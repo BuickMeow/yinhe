@@ -159,6 +159,10 @@ final VelocityBarsDart velocityBars = bridge
       'yinhe_velocity_bars',
     );
 
+/// 自动保存心跳（约 1 秒一次）。
+final IntNoArgDart autosaveTick = bridge
+    .lookupFunction<IntNoArgNative, IntNoArgDart>('yinhe_autosave_tick');
+
 /// 力度条摘要是否已跟上当前文档（0 = 尚未就绪，稍后重试）。
 final IntNoArgDart velocityReady = bridge
     .lookupFunction<IntNoArgNative, IntNoArgDart>('yinhe_velocity_ready');

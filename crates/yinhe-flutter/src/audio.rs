@@ -106,6 +106,8 @@ pub struct AudioSettings {
     pub pause_on_home: bool,
     /// 退出应用（切后台）时暂停播放。
     pub pause_on_exit: bool,
+    /// 定时把脏文档备份到应用私有目录（崩溃恢复用）。
+    pub auto_save_enabled: bool,
 }
 
 /// “自动复音”的平台默认值。
@@ -132,6 +134,7 @@ impl Default for AudioSettings {
             follow_playhead: true,
             pause_on_home: false,
             pause_on_exit: false,
+            auto_save_enabled: true,
         }
     }
 }
@@ -250,6 +253,7 @@ pub fn set_settings(max_voices: u32, buffer_size: u32, ignore_velocity: u8) {
         let follow_playhead = g.follow_playhead;
         let pause_on_home = g.pause_on_home;
         let pause_on_exit = g.pause_on_exit;
+        let auto_save_enabled = g.auto_save_enabled;
         *g = AudioSettings {
             max_voices,
             buffer_size,
@@ -259,6 +263,7 @@ pub fn set_settings(max_voices: u32, buffer_size: u32, ignore_velocity: u8) {
             follow_playhead,
             pause_on_home,
             pause_on_exit,
+            auto_save_enabled,
         };
     }
     let Some(mut guard) = lock_audio() else {
@@ -319,11 +324,22 @@ pub fn pause_on_exit() -> bool {
     settings().pause_on_exit
 }
 
+/// 自动保存开关。
+pub fn set_auto_save_enabled(on: bool) {
+    if let Ok(mut s) = settings_slot().lock() {
+        s.auto_save_enabled = on;
+    }
+}
+
+pub fn auto_save_enabled() -> bool {
+    settings().auto_save_enabled
+}
+
 /// 音频设置 JSON（设置页回显）。
 pub fn settings_json() -> String {
     let s = settings();
     format!(
-        "{{\"max_voices\":{},\"buffer_size\":{},\"ignore_velocity\":{},\"allow_overlapping_notes\":{},\"show_keyboard_labels\":{},\"follow_playhead\":{},\"pause_on_home\":{},\"pause_on_exit\":{}}}",
+        "{{\"max_voices\":{},\"buffer_size\":{},\"ignore_velocity\":{},\"allow_overlapping_notes\":{},\"show_keyboard_labels\":{},\"follow_playhead\":{},\"pause_on_home\":{},\"pause_on_exit\":{},\"auto_save\":{}}}",
         s.max_voices,
         s.buffer_size,
         s.ignore_velocity,
@@ -331,7 +347,8 @@ pub fn settings_json() -> String {
         s.show_keyboard_labels,
         s.follow_playhead,
         s.pause_on_home,
-        s.pause_on_exit
+        s.pause_on_exit,
+        s.auto_save_enabled
     )
 }
 

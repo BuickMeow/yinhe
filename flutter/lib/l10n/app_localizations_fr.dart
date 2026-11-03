@@ -233,6 +233,9 @@ class AppLocalizationsFr extends AppLocalizations {
   String get allTracks => 'Tout afficher';
 
   @override
+  String get autoSave => 'Sauvegarde auto';
+
+  @override
   String get showAllTracksColored => 'Afficher toutes les pistes (en couleur)';
 
   @override

@@ -76,6 +76,7 @@
   "saved": "Projet enregistré",
   "currentTrack": "Piste en cours",
   "allTracks": "Tout afficher",
+  "autoSave": "Sauvegarde auto",
   "showAllTracksColored": "Afficher toutes les pistes (en couleur)",
   "project": "Projet",
   "projectSettings": "Paramètres du projet",

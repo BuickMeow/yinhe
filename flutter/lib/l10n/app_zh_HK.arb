@@ -76,6 +76,7 @@
   "saved": "工程已儲存",
   "currentTrack": "目前編輯音軌",
   "allTracks": "全部顯示",
+  "autoSave": "自動儲存",
   "showAllTracksColored": "顯示全部軌道（彩色）",
   "project": "工程",
   "projectSettings": "工程設定",

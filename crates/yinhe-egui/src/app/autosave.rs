@@ -260,7 +260,7 @@ impl App {
 
     /// 为一个文档构造后台保存任务。
     fn autosave_job(&mut self, idx: usize) -> AutoSaveJob {
-        let snapshot = self.take_save_snapshot(idx);
+        let snapshot = self.take_save_snapshot(idx, false);
         let doc = &self.workspace.documents[idx];
         let path = autosave_dir().join(format!("doc_{}.yin", doc.doc_id));
         AutoSaveJob {

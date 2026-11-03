@@ -76,6 +76,7 @@
   "saved": "프로젝트 저장됨",
   "currentTrack": "현재 편집 트랙",
   "allTracks": "모두 표시",
+  "autoSave": "자동 저장",
   "showAllTracksColored": "모든 트랙 표시(컬러)",
   "project": "프로젝트",
   "projectSettings": "프로젝트 설정",

@@ -328,11 +328,35 @@ mixin _ShellDocument on _ShellBase {
     _ensureSurface();
   }
 
+  /// 启动时若存在自动保存残留，异步加载它（不阻塞启动）。
+  @override
+  Future<void> _restoreAutosaveIfAny() async {
+    final raw = rust.takeString(rust.autosavePendingJson());
+    if (raw.isEmpty || raw == '{}') {
+      return;
+    }
+    try {
+      final m = jsonDecode(raw) as Map<String, dynamic>;
+      final path = m['path'] as String? ?? '';
+      final name = m['name'] as String? ?? '';
+      if (path.isEmpty) {
+        return;
+      }
+      if (!mounted) {
+        return;
+      }
+      setState(() => _fileName = name.isNotEmpty ? name : 'Untitled');
+      _startOpenPath(path, displayName: name);
+    } catch (_) {
+      // 残留格式不对就忽略，不打断启动。
+    }
+  }
+
   /// 真正开始替换文档（调用方已完成未保存确认）。
-  void _startOpenPath(String path) {
+  void _startOpenPath(String path, {String? displayName}) {
     _archivePolling = _isArchivePath(path);
     setState(() {
-      _fileName = path.split('/').last;
+      _fileName = displayName ?? path.split('/').last;
       _viewMode = kViewArrangement;
       _activeTrack = null;
       _displayTrack = -1;

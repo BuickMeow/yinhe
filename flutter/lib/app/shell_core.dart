@@ -477,6 +477,7 @@ mixin _ShellCore on _ShellBase {
     });
     await _ensureSurface();
     _syncArrPanelWidth();
+    await _restoreAutosaveIfAny();
     // 启动时打开侧栏：替代旧主页，用户第一眼就能选文件/设置。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {

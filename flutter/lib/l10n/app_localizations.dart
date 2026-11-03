@@ -560,6 +560,12 @@ abstract class AppLocalizations {
   /// **'All tracks'**
   String get allTracks;
 
+  /// No description provided for @autoSave.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto save'**
+  String get autoSave;
+
   /// No description provided for @showAllTracksColored.
   ///
   /// In en, this message translates to:

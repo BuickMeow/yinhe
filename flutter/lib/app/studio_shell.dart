@@ -497,6 +497,7 @@ abstract class _ShellBase extends State<StudioShell>
   Future<bool> _saveProject({bool saveAs});
   Future<void> _showLoadProgress();
   Future<bool> _confirmReplace();
+  Future<void> _restoreAutosaveIfAny();
   Future<void> _handlePickedFile(String path);
   void _selectEditTrack(int track);
   void _selectTool(int tool);
@@ -657,6 +658,7 @@ class _StudioShellState extends _ShellBase
         _readDocState();
         _pollArchive();
         _readSfProgress();
+        rust.autosaveTick();
       }
       // 保持连续帧：Rust 侧拖拽/边缘滚动/渲染都由帧驱动（手指静止时也要跑）。
       SchedulerBinding.instance.scheduleFrame();

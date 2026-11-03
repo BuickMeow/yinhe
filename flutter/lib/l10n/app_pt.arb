@@ -76,6 +76,7 @@
   "saved": "Projeto Salvo",
   "currentTrack": "Faixa atual",
   "allTracks": "Mostrar Tudo",
+  "autoSave": "Salvamento automático",
   "showAllTracksColored": "Mostrar todas as faixas (coloridas)",
   "project": "Projeto",
   "projectSettings": "Configurações do Projeto",

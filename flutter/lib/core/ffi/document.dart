@@ -98,6 +98,14 @@ typedef IntArgDart = int Function(int);
 final IntArgDart setDisplayTrack = bridge
     .lookupFunction<IntArgNative, IntArgDart>('yinhe_set_display_track');
 
+/// 启动时检查自动保存残留：`{"path","name"}` 或 `{}`。
+final CStrDart autosavePendingJson = bridge
+    .lookupFunction<CStrNative, CStrDart>('yinhe_autosave_pending_json');
+
+/// 自动保存开关。
+final IntArgDart setAutoSaveEnabled = bridge
+    .lookupFunction<IntArgNative, IntArgDart>('yinhe_set_auto_save_enabled');
+
 /// 设置 AR 左侧轨道面板宽度（折叠/展开两档）。
 final FloatArgDart setArrPanelWidth = bridge
     .lookupFunction<FloatArgNative, FloatArgDart>('yinhe_set_arr_panel_width');

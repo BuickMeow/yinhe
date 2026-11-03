@@ -232,6 +232,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get allTracks => 'Показать все';
 
   @override
+  String get autoSave => 'Автосохранение';
+
+  @override
   String get showAllTracksColored => 'Показать все дорожки (цветные)';
 
   @override

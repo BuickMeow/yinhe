@@ -76,6 +76,7 @@
   "saved": "Proje Kaydedildi",
   "currentTrack": "Geçerli parça",
   "allTracks": "Tümünü Göster",
+  "autoSave": "Otomatik kaydet",
   "showAllTracksColored": "Tüm kanalları göster (renkli)",
   "project": "Proje",
   "projectSettings": "Proje Ayarları",

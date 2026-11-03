@@ -60,6 +60,7 @@ class _SettingsViewState extends State<SettingsView> {
   int _ignoreVelocity = 1;
   bool _allowOverlappingNotes = true;
   bool _followPlayhead = true;
+  bool _autoSave = true;
   bool _pauseOnHome = false;
   bool _pauseOnExit = false;
 
@@ -212,6 +213,7 @@ class _SettingsViewState extends State<SettingsView> {
         _allowOverlappingNotes =
             json['allow_overlapping_notes'] as bool? ?? _allowOverlappingNotes;
         _followPlayhead = json['follow_playhead'] as bool? ?? _followPlayhead;
+        _autoSave = json['auto_save'] as bool? ?? _autoSave;
       });
     } catch (_) {
       // 回退默认值。
@@ -227,6 +229,11 @@ class _SettingsViewState extends State<SettingsView> {
       _ignoreVelocity = ignoreVelocity ?? _ignoreVelocity;
     });
     rust.setAudioSettings(_maxVoices, _bufferSize, _ignoreVelocity);
+  }
+
+  void _setAutoSave(bool value) {
+    setState(() => _autoSave = value);
+    rust.setAutoSaveEnabled(value ? 1 : 0);
   }
 
   void _setAllowOverlappingNotes(bool value) {
@@ -410,6 +417,15 @@ class _SettingsViewState extends State<SettingsView> {
               : 'When off, new or moved notes cannot overlap existing notes',
           value: _allowOverlappingNotes,
           onChanged: _setAllowOverlappingNotes,
+        ),
+        _switchCard(
+          title: l.autoSave,
+          subtitle: L10n.isZh
+              ? '每 5 分钟在应用内备份未保存的工程，崩溃后可恢复'
+              : 'Back up unsaved work every 5 minutes for crash recovery',
+          icon: Icons.save_outlined,
+          value: _autoSave,
+          onChanged: _setAutoSave,
         ),
         _switchCard(
           title: L10n.isZh ? '跟随播放头' : 'Follow playhead',

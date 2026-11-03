@@ -232,6 +232,9 @@ class AppLocalizationsCs extends AppLocalizations {
   String get allTracks => 'Zobrazit vše';
 
   @override
+  String get autoSave => 'Automatické ukládání';
+
+  @override
   String get showAllTracksColored => 'Zobrazit všechny stopy (barevně)';
 
   @override
