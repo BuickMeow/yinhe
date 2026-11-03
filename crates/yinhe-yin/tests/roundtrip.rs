@@ -1013,3 +1013,29 @@ fn zero_bpm_jump_marker_roundtrips() {
     assert_eq!(values, vec![120.0, 0.0, 60.0]);
     assert_eq!(loaded.tempo_map.skip_ranges, vec![(480, 960)]);
 }
+
+/// 歌曲元数据字段必须随 project.json 往返；旧文件缺失时 serde default 生效。
+#[test]
+fn song_metadata_roundtrip() {
+    let mut m = YinModel::default();
+    m.meta.name = "Song".into();
+    m.meta.artist = "Artist".into();
+    m.meta.description = "Desc".into();
+    m.meta.album = "Album".into();
+    m.meta.album_artist = "Album Artist".into();
+    m.meta.genre = "Black MIDI".into();
+    m.meta.year = "2026".into();
+    m.meta.track_no = 3;
+    m.meta.disc_no = 2;
+    m.meta.copyright = "(c) Jieneng".into();
+
+    let bytes = save_yin_bytes(&m).expect("save");
+    let loaded = load_yin_bytes(&bytes).expect("load");
+    assert_eq!(loaded.meta.album, "Album");
+    assert_eq!(loaded.meta.album_artist, "Album Artist");
+    assert_eq!(loaded.meta.genre, "Black MIDI");
+    assert_eq!(loaded.meta.year, "2026");
+    assert_eq!(loaded.meta.track_no, 3);
+    assert_eq!(loaded.meta.disc_no, 2);
+    assert_eq!(loaded.meta.copyright, "(c) Jieneng");
+}

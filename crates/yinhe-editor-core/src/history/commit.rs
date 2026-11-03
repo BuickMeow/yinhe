@@ -229,42 +229,6 @@ pub fn commit_track_name(doc: &mut Document, id: u64, track_idx: usize, new_name
     );
 }
 
-/// Commit a project-name edit.
-pub fn commit_project_name(doc: &mut Document, id: u64, new_value: &str) {
-    commit_field(
-        doc,
-        id,
-        new_value.to_string(),
-        |s| s.to_string(),
-        |old, new| UndoAction::ProjectName { old, new },
-        "Edit project name",
-    );
-}
-
-/// Commit an artist edit.
-pub fn commit_artist(doc: &mut Document, id: u64, new_value: &str) {
-    commit_field(
-        doc,
-        id,
-        new_value.to_string(),
-        |s| s.to_string(),
-        |old, new| UndoAction::ProjectArtist { old, new },
-        "Edit artist",
-    );
-}
-
-/// Commit a description edit.
-pub fn commit_description(doc: &mut Document, id: u64, new_value: &str) {
-    commit_field(
-        doc,
-        id,
-        new_value.to_string(),
-        |s| s.to_string(),
-        |old, new| UndoAction::ProjectDescription { old, new },
-        "Edit description",
-    );
-}
-
 /// Commit a PPQ edit.
 ///
 /// `rescale` = true 表示此次 PPQ 变更同时 rescale 了所有音符/automation 的 tick，

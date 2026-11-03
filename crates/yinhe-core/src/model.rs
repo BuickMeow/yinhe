@@ -253,6 +253,54 @@ impl TrackData {
 //  Project metadata
 // =========================================================
 
+/// 歌曲元数据（可编辑文本字段 + 编号）。
+///
+/// 与 `ProjectMeta` 同步；单独成结构体用于工程设置对话框一次性比较/提交，
+/// 避免为每个字段各建一个 undo action。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SongInfo {
+    pub name: String,
+    pub artist: String,
+    pub description: String,
+    pub album: String,
+    pub album_artist: String,
+    pub genre: String,
+    pub year: String,
+    pub track_no: u16,
+    pub disc_no: u16,
+    pub copyright: String,
+}
+
+impl SongInfo {
+    pub fn from_meta(meta: &ProjectMeta) -> Self {
+        Self {
+            name: meta.name.clone(),
+            artist: meta.artist.clone(),
+            description: meta.description.clone(),
+            album: meta.album.clone(),
+            album_artist: meta.album_artist.clone(),
+            genre: meta.genre.clone(),
+            year: meta.year.clone(),
+            track_no: meta.track_no,
+            disc_no: meta.disc_no,
+            copyright: meta.copyright.clone(),
+        }
+    }
+
+    pub fn apply_to(&self, meta: &mut ProjectMeta) {
+        meta.name.clone_from(&self.name);
+        meta.artist.clone_from(&self.artist);
+        meta.description.clone_from(&self.description);
+        meta.album.clone_from(&self.album);
+        meta.album_artist.clone_from(&self.album_artist);
+        meta.genre.clone_from(&self.genre);
+        meta.year.clone_from(&self.year);
+        meta.track_no = self.track_no;
+        meta.disc_no = self.disc_no;
+        meta.copyright.clone_from(&self.copyright);
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProjectMeta {
     pub name: String,
@@ -268,6 +316,25 @@ pub struct ProjectMeta {
     /// conductor 没有原生拍号事件时的回退值（原生事件优先级更高）。
     #[serde(default = "default_project_time_sig")]
     pub default_time_sig: (u8, u8),
+
+    // ── 歌曲信息（旧存档缺失时为空/0）──
+    #[serde(default)]
+    pub album: String,
+    #[serde(default)]
+    pub album_artist: String,
+    #[serde(default)]
+    pub genre: String,
+    /// 发行年份/日期文本（保持字符串，兼容 "2026"、"2026-11"）。
+    #[serde(default)]
+    pub year: String,
+    /// 音轨号（0 = 未设置）。
+    #[serde(default)]
+    pub track_no: u16,
+    /// 碟号（0 = 未设置）。
+    #[serde(default)]
+    pub disc_no: u16,
+    #[serde(default)]
+    pub copyright: String,
 }
 
 fn default_project_bpm() -> f32 {
@@ -288,6 +355,13 @@ impl Default for ProjectMeta {
             compression_level: 3,
             default_bpm: default_project_bpm(),
             default_time_sig: default_project_time_sig(),
+            album: String::new(),
+            album_artist: String::new(),
+            genre: String::new(),
+            year: String::new(),
+            track_no: 0,
+            disc_no: 0,
+            copyright: String::new(),
         }
     }
 }

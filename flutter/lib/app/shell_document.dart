@@ -27,18 +27,22 @@ mixin _ShellDocument on _ShellBase {
         initialName: meta['name'] as String? ?? '',
         initialArtist: meta['artist'] as String? ?? '',
         initialDescription: meta['description'] as String? ?? '',
+        initialAlbum: meta['album'] as String? ?? '',
+        initialAlbumArtist: meta['album_artist'] as String? ?? '',
+        initialGenre: meta['genre'] as String? ?? '',
+        initialYear: meta['year'] as String? ?? '',
+        initialTrackNo: (meta['track_no'] as num?)?.toInt() ?? 0,
+        initialDiscNo: (meta['disc_no'] as num?)?.toInt() ?? 0,
+        initialCopyright: meta['copyright'] as String? ?? '',
         initialPpq: (meta['ppq'] as num?)?.toInt() ?? 480,
-        onSave: (name, artist, desc, ppq) {
-          final n = name.toNativeUtf8();
-          final a = artist.toNativeUtf8();
-          final d = desc.toNativeUtf8();
+        onSave: (info) {
+          final json = jsonEncode(info);
+          final p = json.toNativeUtf8();
           var started = 0;
           try {
-            started = rust.setProjectMeta(n, a, d, ppq);
+            started = rust.setProjectMetaJson(p);
           } finally {
-            calloc.free(n);
-            calloc.free(a);
-            calloc.free(d);
+            calloc.free(p);
           }
           if (started == 1) {
             // PPQ 缩放可能很重：后台任务 + 进度（可取消）。
@@ -156,6 +160,55 @@ mixin _ShellDocument on _ShellBase {
       'name': '${_exportBaseName()}.mid',
       'mime': 'audio/midi',
       'ext': 'mid',
+    });
+  }
+
+  /// 主页：导出压缩 MIDI（7z/LZMA2，单个 .mid）。
+  @override
+  Future<void> _exportMidi7z() async {
+    if (_tracks.value.isEmpty) {
+      showSnack(context, l.openFirst);
+      return;
+    }
+    if (_playing) {
+      _stopPlayback();
+    }
+    final tmp = await _exportTempPath('7z');
+    if (!mounted || tmp == null) {
+      return;
+    }
+    const opts =
+        '{"encoding":"utf8","rpn_full":true,"curve_interpolate":false,'
+        '"strip_empty_tracks":true,"dedup_overlaps":false}';
+    final p = tmp.toNativeUtf8();
+    final o = opts.toNativeUtf8();
+    var ok = 0;
+    try {
+      ok = rust.exportMidi7zStart(p, o);
+    } finally {
+      calloc.free(p);
+      calloc.free(o);
+    }
+    if (!mounted) {
+      return;
+    }
+    if (ok != 1) {
+      showSnack(context, l.exportFailedShort);
+      return;
+    }
+    final done = await showTaskProgressDialog(
+      context,
+      poll: () => rust.takeString(rust.exportMidiStatusJson()),
+      determinate: true,
+      title: L10n.isZh ? '导出压缩 MIDI' : 'Export Compressed MIDI',
+    );
+    if (!mounted || done != true) {
+      return;
+    }
+    await _channel.invokeMethod<void>('saveExport', {
+      'name': '${_exportBaseName()}.7z',
+      'mime': 'application/x-7z-compressed',
+      'ext': '7z',
     });
   }
 

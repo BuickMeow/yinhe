@@ -19,6 +19,8 @@ pub enum FileAction {
     CloseDocument,
     ExportAudio,
     ExportMidi,
+    /// 导出压缩 MIDI（.7z，LZMA2）。
+    ExportMidi7z,
     ProjectSettings,
     Settings,
     Exit,
@@ -27,7 +29,7 @@ pub enum FileAction {
 }
 
 impl FileAction {
-    pub const ALL: [FileAction; 14] = [
+    pub const ALL: [FileAction; 15] = [
         FileAction::NewProject,
         FileAction::Open,
         FileAction::ImportAudio,
@@ -38,6 +40,7 @@ impl FileAction {
         FileAction::CloseDocument,
         FileAction::ExportAudio,
         FileAction::ExportMidi,
+        FileAction::ExportMidi7z,
         FileAction::ProjectSettings,
         FileAction::Settings,
         FileAction::Exit,
@@ -62,6 +65,7 @@ impl FileAction {
             FileAction::About => 12,
             // 新增项追加索引，保证旧 pin 持久化数据不错位。
             FileAction::ImportMidi => 13,
+            FileAction::ExportMidi7z => 14,
         }
     }
 
@@ -79,7 +83,10 @@ impl FileAction {
             FileAction::Settings => shortcuts::ACTION_SETTINGS,
             FileAction::Exit => shortcuts::ACTION_EXIT,
             // 欢迎页面 / 关于：无快捷键（label_key 特例，不走快捷键表）。
-            FileAction::Welcome | FileAction::About | FileAction::ImportMidi => "",
+            FileAction::Welcome
+            | FileAction::About
+            | FileAction::ImportMidi
+            | FileAction::ExportMidi7z => "",
         }
     }
 
@@ -95,6 +102,7 @@ impl FileAction {
             FileAction::CloseDocument => ICON_CLOSE,
             FileAction::ExportAudio => ICON_AUDIO_FILE,
             FileAction::ExportMidi => ICON_MUSIC_NOTE,
+            FileAction::ExportMidi7z => ICON_ARCHIVE,
             FileAction::ProjectSettings => ICON_TUNE,
             FileAction::Settings => ICON_SETTINGS,
             FileAction::Exit => ICON_EXIT_TO_APP,
@@ -107,6 +115,7 @@ impl FileAction {
             FileAction::Welcome => "menu.welcome_page",
             FileAction::About => "menu.about",
             FileAction::ImportMidi => "file.import_midi",
+            FileAction::ExportMidi7z => "file.export_midi_7z",
             _ => crate::shortcuts::action_label_key(self.action_id()),
         }
     }
@@ -124,6 +133,7 @@ impl FileAction {
             | FileAction::CloseDocument
             | FileAction::ExportAudio
             | FileAction::ExportMidi
+            | FileAction::ExportMidi7z
             | FileAction::ProjectSettings => has_active,
         }
     }
@@ -599,7 +609,11 @@ pub const FILE_GROUPS: [MenuGroup<'static, FileAction>; 5] = [
     ),
     MenuGroup::titled(
         "menu.file.group.export",
-        &[FileAction::ExportAudio, FileAction::ExportMidi],
+        &[
+            FileAction::ExportAudio,
+            FileAction::ExportMidi,
+            FileAction::ExportMidi7z,
+        ],
     ),
     // 组 5 不进 macOS 文件菜单（设置/退出在 App 菜单），About 也随之只在应用内菜单出现。
     MenuGroup::titled(

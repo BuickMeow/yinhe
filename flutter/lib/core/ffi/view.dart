@@ -149,22 +149,9 @@ final ActionDart newProject = bridge.lookupFunction<ActionNative, ActionDart>(
   'yinhe_new_project',
 );
 
-typedef SetMetaNative = ffi.Int32 Function(
-  ffi.Pointer<Utf8>,
-  ffi.Pointer<Utf8>,
-  ffi.Pointer<Utf8>,
-  ffi.Uint32,
-);
-typedef SetMetaDart = int Function(
-  ffi.Pointer<Utf8>,
-  ffi.Pointer<Utf8>,
-  ffi.Pointer<Utf8>,
-  int,
-);
-
-/// 工程元数据编辑（歌名/艺术家/简介/PPQ）。
-final SetMetaDart setProjectMeta = bridge
-    .lookupFunction<SetMetaNative, SetMetaDart>('yinhe_set_project_meta');
+/// 工程元数据编辑（JSON：歌名/艺术家/专辑/流派/年份/编号/版权/简介/PPQ）。
+final CStrArgDart setProjectMetaJson = bridge
+    .lookupFunction<CStrArgNative, CStrArgDart>('yinhe_set_project_meta_json');
 
 /// 音频设置 JSON。
 final CStrDart audioSettingsJson = bridge.lookupFunction<CStrNative, CStrDart>(
@@ -288,8 +275,9 @@ final DocStateDart docState = bridge
     .lookupFunction<DocStateNative, DocStateDart>('yinhe_doc_state');
 
 /// 文档后台任务状态 JSON（批量编辑/撤销重做/PPQ 等）。
-final CStrDart docJobStatusJson = bridge
-    .lookupFunction<CStrNative, CStrDart>('yinhe_doc_job_status_json');
+final CStrDart docJobStatusJson = bridge.lookupFunction<CStrNative, CStrDart>(
+  'yinhe_doc_job_status_json',
+);
 
 /// 取消当前文档后台任务（目前只有 PPQ 缩放在安全点响应）。
 final IntNoArgDart docJobCancel = bridge

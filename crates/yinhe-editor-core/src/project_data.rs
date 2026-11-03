@@ -125,6 +125,13 @@ impl ProjectData {
         self.project_file.description = meta.description.clone();
         self.project_file.ppq = meta.ppq;
         self.project_file.compression_level = meta.compression_level;
+        self.project_file.album = meta.album.clone();
+        self.project_file.album_artist = meta.album_artist.clone();
+        self.project_file.genre = meta.genre.clone();
+        self.project_file.year = meta.year.clone();
+        self.project_file.track_no = meta.track_no;
+        self.project_file.disc_no = meta.disc_no;
+        self.project_file.copyright = meta.copyright.clone();
     }
 
     /// Rebuild `mapping_file` from current model tracks.

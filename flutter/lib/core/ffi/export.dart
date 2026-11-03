@@ -41,3 +41,9 @@ final ExportMidiStartDart exportMidiStart = bridge
 /// MIDI 导出状态 JSON。
 final CStrDart exportMidiStatusJson = bridge
     .lookupFunction<CStrNative, CStrDart>('yinhe_export_midi_status_json');
+
+/// 开始导出压缩 MIDI（.7z，路径 + 选项 JSON）。
+final ExportMidiStartDart exportMidi7zStart = bridge
+    .lookupFunction<ExportMidiStartNative, ExportMidiStartDart>(
+      'yinhe_export_midi_7z_start',
+    );

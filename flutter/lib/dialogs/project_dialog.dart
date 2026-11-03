@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
+import '../l10n.dart';
 import '../l10n/app_localizations.dart';
 import 'frame.dart';
 
-/// 工程设置对话框（歌名/艺术家/PPQ/简介）。
+/// 工程设置对话框（歌曲信息 / 专辑信息 / PPQ）。
 class ProjectDialog extends StatefulWidget {
   const ProjectDialog({
     super.key,
@@ -12,6 +13,13 @@ class ProjectDialog extends StatefulWidget {
     required this.initialName,
     required this.initialArtist,
     required this.initialDescription,
+    required this.initialAlbum,
+    required this.initialAlbumArtist,
+    required this.initialGenre,
+    required this.initialYear,
+    required this.initialTrackNo,
+    required this.initialDiscNo,
+    required this.initialCopyright,
     required this.initialPpq,
     required this.onSave,
   });
@@ -21,8 +29,15 @@ class ProjectDialog extends StatefulWidget {
   final String initialName;
   final String initialArtist;
   final String initialDescription;
+  final String initialAlbum;
+  final String initialAlbumArtist;
+  final String initialGenre;
+  final String initialYear;
+  final int initialTrackNo;
+  final int initialDiscNo;
+  final String initialCopyright;
   final int initialPpq;
-  final void Function(String name, String artist, String desc, int ppq) onSave;
+  final void Function(Map<String, dynamic> info) onSave;
 
   @override
   State<ProjectDialog> createState() => _ProjectDialogState();
@@ -40,6 +55,27 @@ class _ProjectDialogState extends State<ProjectDialog> {
   late final TextEditingController _desc = TextEditingController(
     text: widget.initialDescription,
   );
+  late final TextEditingController _album = TextEditingController(
+    text: widget.initialAlbum,
+  );
+  late final TextEditingController _albumArtist = TextEditingController(
+    text: widget.initialAlbumArtist,
+  );
+  late final TextEditingController _genre = TextEditingController(
+    text: widget.initialGenre,
+  );
+  late final TextEditingController _year = TextEditingController(
+    text: widget.initialYear,
+  );
+  late final TextEditingController _trackNo = TextEditingController(
+    text: widget.initialTrackNo > 0 ? '${widget.initialTrackNo}' : '',
+  );
+  late final TextEditingController _discNo = TextEditingController(
+    text: widget.initialDiscNo > 0 ? '${widget.initialDiscNo}' : '',
+  );
+  late final TextEditingController _copyright = TextEditingController(
+    text: widget.initialCopyright,
+  );
   late final TextEditingController _ppq = TextEditingController(
     text: '${widget.initialPpq}',
   );
@@ -50,8 +86,20 @@ class _ProjectDialogState extends State<ProjectDialog> {
     _name.dispose();
     _artist.dispose();
     _desc.dispose();
+    _album.dispose();
+    _albumArtist.dispose();
+    _genre.dispose();
+    _year.dispose();
+    _trackNo.dispose();
+    _discNo.dispose();
+    _copyright.dispose();
     _ppq.dispose();
     super.dispose();
+  }
+
+  int _number(TextEditingController c) {
+    final v = int.tryParse(c.text.trim());
+    return v == null || v < 0 ? 0 : v;
   }
 
   void _save() {
@@ -60,12 +108,19 @@ class _ProjectDialogState extends State<ProjectDialog> {
       setState(() => _error = l.ppqError);
       return;
     }
-    widget.onSave(
-      _name.text.trim(),
-      _artist.text.trim(),
-      _desc.text.trim(),
-      ppq,
-    );
+    widget.onSave({
+      'name': _name.text.trim(),
+      'artist': _artist.text.trim(),
+      'description': _desc.text.trim(),
+      'album': _album.text.trim(),
+      'album_artist': _albumArtist.text.trim(),
+      'genre': _genre.text.trim(),
+      'year': _year.text.trim(),
+      'track_no': _number(_trackNo),
+      'disc_no': _number(_discNo),
+      'copyright': _copyright.text.trim(),
+      'ppq': ppq,
+    });
     Navigator.of(context).pop();
   }
 
@@ -87,10 +142,41 @@ class _ProjectDialogState extends State<ProjectDialog> {
       ],
       content: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _field(_name, l.songTitle),
           const SizedBox(height: 12),
           _field(_artist, l.artist),
+          const SizedBox(height: 12),
+          _field(_album, L10n.isZh ? '专辑' : 'Album'),
+          const SizedBox(height: 12),
+          _field(_albumArtist, L10n.isZh ? '专辑艺术家' : 'Album artist'),
+          const SizedBox(height: 12),
+          _field(_genre, L10n.isZh ? '流派' : 'Genre'),
+          const SizedBox(height: 12),
+          _field(_year, L10n.isZh ? '年份' : 'Year'),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _field(
+                  _trackNo,
+                  L10n.isZh ? '音轨号' : 'Track no.',
+                  keyboardType: TextInputType.number,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _field(
+                  _discNo,
+                  L10n.isZh ? '碟号' : 'Disc no.',
+                  keyboardType: TextInputType.number,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _field(_copyright, L10n.isZh ? '版权' : 'Copyright'),
           const SizedBox(height: 12),
           _field(_ppq, l.ppq, keyboardType: TextInputType.number),
           const SizedBox(height: 12),

@@ -7854,6 +7854,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "sevenz-rust2",
  "tracing",
  "uuid",
  "yinhe-archive",

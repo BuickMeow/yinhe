@@ -108,18 +108,9 @@ impl UndoAction {
                 *instrument_channel,
                 *instrument_after,
             ),
-            UndoAction::ProjectName { old: _, new } => {
-                // 只改工程歌名；Conductor 轨名称不被歌名联动。
+            UndoAction::SongInfo { old: _, new } => {
                 let model = Arc::make_mut(&mut doc.data.model);
-                model.meta.name = new.clone();
-            }
-            UndoAction::ProjectArtist { old: _, new } => {
-                let model = Arc::make_mut(&mut doc.data.model);
-                model.meta.artist = new.clone();
-            }
-            UndoAction::ProjectDescription { old: _, new } => {
-                let model = Arc::make_mut(&mut doc.data.model);
-                model.meta.description = new.clone();
+                new.apply_to(&mut model.meta);
             }
             UndoAction::ProjectPpq {
                 old: _,

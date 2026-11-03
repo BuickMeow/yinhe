@@ -7,6 +7,7 @@ use yinhe_midi::{MidiExportOptions, MidiImportEncoding, write_to_file};
 struct Status {
     /// 0=空闲、1=导出中、2=完成、3=失败
     state: u32,
+    progress: f32,
     error: String,
 }
 
@@ -16,6 +17,7 @@ fn status_slot() -> &'static Mutex<Status> {
     STATUS.get_or_init(|| {
         Mutex::new(Status {
             state: 0,
+            progress: 0.0,
             error: String::new(),
         })
     })
@@ -39,6 +41,7 @@ pub fn start(path: String, opts_json: &str) -> i32 {
         return 0;
     }
     st.state = 1;
+    st.progress = 0.0;
     st.error.clear();
     drop(st);
 
@@ -47,7 +50,54 @@ pub fn start(path: String, opts_json: &str) -> i32 {
         let result = write_to_file(&model, &path, &opts).map_err(|e| e.to_string());
         if let Ok(mut st) = status_slot().lock() {
             match result {
-                Ok(()) => st.state = 2,
+                Ok(()) => {
+                    st.state = 2;
+                    st.progress = 1.0;
+                }
+                Err(e) => {
+                    st.state = 3;
+                    st.error = e;
+                }
+            }
+        }
+    });
+    1
+}
+
+/// 开始导出压缩 MIDI（.7z）；返回 1 = 已开始。
+pub fn start_7z(path: String, opts_json: &str) -> i32 {
+    let Some(model) = crate::scene::model_arc() else {
+        return 0;
+    };
+    let Ok(mut st) = status_slot().lock() else {
+        return 0;
+    };
+    if st.state == 1 {
+        return 0;
+    }
+    st.state = 1;
+    st.progress = 0.0;
+    st.error.clear();
+    drop(st);
+
+    let opts = parse_options(opts_json);
+    std::thread::spawn(move || {
+        let result = yinhe_editor_core::midi_7z::export_midi_7z(
+            &model,
+            std::path::Path::new(&path),
+            &opts,
+            |f| {
+                if let Ok(mut st) = status_slot().lock() {
+                    st.progress = f.clamp(0.0, 1.0);
+                }
+            },
+        );
+        if let Ok(mut st) = status_slot().lock() {
+            match result {
+                Ok(()) => {
+                    st.state = 2;
+                    st.progress = 1.0;
+                }
                 Err(e) => {
                     st.state = 3;
                     st.error = e;
@@ -64,8 +114,9 @@ pub fn status_json() -> String {
         return "{\"state\":0,\"error\":\"\"}".into();
     };
     format!(
-        "{{\"state\":{},\"error\":\"{}\"}}",
+        "{{\"state\":{},\"progress\":{:.3},\"error\":\"{}\"}}",
         st.state,
+        st.progress.clamp(0.0, 1.0),
         json_escape(&st.error)
     )
 }

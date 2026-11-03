@@ -1035,6 +1035,7 @@ impl App {
             transport_bar::FileAction::Save
             | transport_bar::FileAction::SaveAs
             | transport_bar::FileAction::ExportMidi
+            | transport_bar::FileAction::ExportMidi7z
             | transport_bar::FileAction::ExportAudio
             | transport_bar::FileAction::Settings
             | transport_bar::FileAction::ProjectSettings
@@ -1168,6 +1169,9 @@ impl App {
             }
             transport_bar::FileAction::ExportMidi => {
                 self.export_midi_dialog();
+            }
+            transport_bar::FileAction::ExportMidi7z => {
+                self.export_midi_7z_dialog();
             }
             transport_bar::FileAction::ExportAudio => {
                 self.export_audio_dialog(ctx);

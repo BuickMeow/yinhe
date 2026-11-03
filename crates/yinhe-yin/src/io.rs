@@ -243,6 +243,13 @@ fn load_yin_bytes_inner(
             compression_level: project.compression_level,
             default_bpm: project.default_bpm,
             default_time_sig: project.default_time_sig,
+            album: project.album.clone(),
+            album_artist: project.album_artist.clone(),
+            genre: project.genre.clone(),
+            year: project.year.clone(),
+            track_no: project.track_no,
+            disc_no: project.disc_no,
+            copyright: project.copyright.clone(),
         },
         audio_sources,
         ..Default::default()

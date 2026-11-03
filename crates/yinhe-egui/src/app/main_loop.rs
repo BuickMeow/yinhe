@@ -239,6 +239,7 @@ impl eframe::App for App {
                 MenuAction::CloseDocument => transport_bar::FileAction::CloseDocument,
                 MenuAction::ExportAudio => transport_bar::FileAction::ExportAudio,
                 MenuAction::ExportMidi => transport_bar::FileAction::ExportMidi,
+                MenuAction::ExportMidi7z => transport_bar::FileAction::ExportMidi7z,
                 MenuAction::ProjectSettings => transport_bar::FileAction::ProjectSettings,
                 MenuAction::Undo => {
                     self.handle_edit_action(transport_bar::EditAction::Undo);
@@ -939,6 +940,8 @@ impl eframe::App for App {
         crate::mix::show_global_overlays(self, ui.ctx());
         self.poll_midi_import(ui.ctx());
         self.show_midi_import_ui(ui.ctx());
+        self.poll_midi7z(ui.ctx());
+        self.show_midi7z_ui(ui.ctx());
         self.show_dialogs(ui);
         self.show_unsaved_dialog(ui);
 

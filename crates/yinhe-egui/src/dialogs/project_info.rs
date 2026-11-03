@@ -1,33 +1,27 @@
 use eframe::egui;
 
 use rust_i18n::t;
+use yinhe_core::SongInfo;
 use yinhe_editor_core::document::Document;
-use yinhe_editor_core::history::{
-    begin_edit, commit_artist, commit_compression_level, commit_description, commit_ppq,
-    commit_project_name,
-};
+use yinhe_editor_core::history::{begin_edit, commit_compression_level, commit_ppq};
 
 use crate::dialogs::settings::setting_row;
 
 /// 工程设置草稿：编辑期缓存，点「保存」才写回 doc（支持「取消」）。
 #[derive(Clone)]
 pub struct ProjectSettingsDraft {
-    pub name: String,
-    pub artist: String,
+    pub info: SongInfo,
     pub ppq: i32,
     pub compression_level: i32,
-    pub description: String,
 }
 
 impl ProjectSettingsDraft {
     pub fn from_doc(doc: &Document) -> Self {
         let meta = &doc.data.model.meta;
         Self {
-            name: meta.name.clone(),
-            artist: meta.artist.clone(),
+            info: SongInfo::from_meta(meta),
             ppq: meta.ppq as i32,
             compression_level: meta.compression_level,
-            description: meta.description.clone(),
         }
     }
 }
@@ -47,7 +41,7 @@ pub fn show(ui: &mut egui::Ui, draft: &mut ProjectSettingsDraft) {
         |ui| {
             crate::widgets::text_input::control_text_input(
                 ui,
-                &mut draft.name,
+                &mut draft.info.name,
                 220.0,
                 "proj_name",
                 None,
@@ -63,9 +57,109 @@ pub fn show(ui: &mut egui::Ui, draft: &mut ProjectSettingsDraft) {
         |ui| {
             crate::widgets::text_input::control_text_input(
                 ui,
-                &mut draft.artist,
+                &mut draft.info.artist,
                 220.0,
                 "proj_artist",
+                None,
+            );
+        },
+    );
+
+    // ── Album / album artist / genre / year / track / disc / copyright ──
+    setting_row(
+        ui,
+        t!("project.album").as_ref(),
+        t!("project.album_desc").as_ref(),
+        |ui| {
+            crate::widgets::text_input::control_text_input(
+                ui,
+                &mut draft.info.album,
+                220.0,
+                "proj_album",
+                None,
+            );
+        },
+    );
+    setting_row(
+        ui,
+        t!("project.album_artist").as_ref(),
+        t!("project.album_artist_desc").as_ref(),
+        |ui| {
+            crate::widgets::text_input::control_text_input(
+                ui,
+                &mut draft.info.album_artist,
+                220.0,
+                "proj_album_artist",
+                None,
+            );
+        },
+    );
+    setting_row(
+        ui,
+        t!("project.genre").as_ref(),
+        t!("project.genre_desc").as_ref(),
+        |ui| {
+            crate::widgets::text_input::control_text_input(
+                ui,
+                &mut draft.info.genre,
+                220.0,
+                "proj_genre",
+                None,
+            );
+        },
+    );
+    setting_row(
+        ui,
+        t!("project.year").as_ref(),
+        t!("project.year_desc").as_ref(),
+        |ui| {
+            crate::widgets::text_input::control_text_input(
+                ui,
+                &mut draft.info.year,
+                160.0,
+                "proj_year",
+                None,
+            );
+        },
+    );
+    setting_row(
+        ui,
+        t!("project.track_no").as_ref(),
+        t!("project.track_no_desc").as_ref(),
+        |ui| {
+            let mut v = i32::from(draft.info.track_no);
+            crate::widgets::stepper::stepper(&mut v)
+                .range(0..=999)
+                .step(1.0)
+                .width(110.0)
+                .show(ui);
+            draft.info.track_no = v.max(0) as u16;
+        },
+    );
+    setting_row(
+        ui,
+        t!("project.disc_no").as_ref(),
+        t!("project.disc_no_desc").as_ref(),
+        |ui| {
+            let mut v = i32::from(draft.info.disc_no);
+            crate::widgets::stepper::stepper(&mut v)
+                .range(0..=99)
+                .step(1.0)
+                .width(110.0)
+                .show(ui);
+            draft.info.disc_no = v.max(0) as u16;
+        },
+    );
+    setting_row(
+        ui,
+        t!("project.copyright").as_ref(),
+        t!("project.copyright_desc").as_ref(),
+        |ui| {
+            crate::widgets::text_input::control_text_input(
+                ui,
+                &mut draft.info.copyright,
+                220.0,
+                "proj_copyright",
                 None,
             );
         },
@@ -107,7 +201,7 @@ pub fn show(ui: &mut egui::Ui, draft: &mut ProjectSettingsDraft) {
         |ui| {
             crate::widgets::text_input::control_text_input_multiline(
                 ui,
-                &mut draft.description,
+                &mut draft.info.description,
                 220.0,
                 60.0,
                 "proj_desc",
@@ -127,30 +221,21 @@ pub(crate) fn commit_draft(
 ) {
     use std::sync::Arc;
 
-    let has_notes = doc.data.model.note_count > 0;
-
-    // ── Project name（只改歌名；Conductor 轨名称不联动）──
-    if draft.name != doc.data.model.meta.name {
-        let old = doc.data.model.meta.name.clone();
-        begin_edit(&mut doc.edit.pending_edits, save_id, &old);
-        commit_project_name(doc, save_id, &draft.name);
-        Arc::make_mut(&mut doc.data.model).meta.name = draft.name.clone();
-    }
-
-    // ── Artist ──
-    if draft.artist != doc.data.model.meta.artist {
-        let old = doc.data.model.meta.artist.clone();
-        begin_edit(&mut doc.edit.pending_edits, save_id, &old);
-        commit_artist(doc, save_id, &draft.artist);
-        Arc::make_mut(&mut doc.data.model).meta.artist = draft.artist.clone();
-    }
-
-    // ── Description ──
-    if draft.description != doc.data.model.meta.description {
-        let old = doc.data.model.meta.description.clone();
-        begin_edit(&mut doc.edit.pending_edits, save_id, &old);
-        commit_description(doc, save_id, &draft.description);
-        Arc::make_mut(&mut doc.data.model).meta.description = draft.description.clone();
+    // ── 歌曲元数据：整组比较，差异合并为一条 undo ──
+    let old = SongInfo::from_meta(&doc.data.model.meta);
+    if old != draft.info {
+        let before = doc.capture_snapshot();
+        draft
+            .info
+            .apply_to(&mut Arc::make_mut(&mut doc.data.model).meta);
+        doc.push_undo(
+            yinhe_editor_core::history::UndoAction::SongInfo {
+                old: Box::new(old),
+                new: Box::new(draft.info.clone()),
+            },
+            "Edit song info",
+            before,
+        );
     }
 
     // ── zstd compression level ──
@@ -166,7 +251,7 @@ pub(crate) fn commit_draft(
     if new_ppq != doc.data.model.meta.ppq {
         let old = doc.data.model.meta.ppq;
         begin_edit(&mut doc.edit.pending_edits, save_id, &old.to_string());
-        if has_notes {
+        if doc.data.model.note_count > 0 {
             // 异步 rescale：meta.ppq 保持 old 作为子线程基准，
             // 完成后 poll 里 commit_ppq(rescale=true)。
             ctx.data_mut(|d| {
@@ -180,7 +265,7 @@ pub(crate) fn commit_draft(
                 )
             });
         } else {
-            let model = std::sync::Arc::make_mut(&mut doc.data.model);
+            let model = Arc::make_mut(&mut doc.data.model);
             model.meta.ppq = new_ppq;
             model.rebuild_tempo_map();
             commit_ppq(doc, save_id, new_ppq, false);

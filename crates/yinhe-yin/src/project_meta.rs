@@ -45,6 +45,22 @@ pub struct ProjectFile {
     #[serde(default = "default_time_sig")]
     pub default_time_sig: (u8, u8),
 
+    // ── 歌曲信息（旧存档缺失时为空/0）──
+    #[serde(default)]
+    pub album: String,
+    #[serde(default)]
+    pub album_artist: String,
+    #[serde(default)]
+    pub genre: String,
+    #[serde(default)]
+    pub year: String,
+    #[serde(default)]
+    pub track_no: u16,
+    #[serde(default)]
+    pub disc_no: u16,
+    #[serde(default)]
+    pub copyright: String,
+
     // ── SoundFont state ──
     /// 每源通道（0..=255，共 256 条）的音色库覆盖；未列出的通道用全局音色库。
     #[serde(default)]
@@ -70,6 +86,13 @@ impl Default for ProjectFile {
             compression_level: 3,
             default_bpm: default_bpm(),
             default_time_sig: default_time_sig(),
+            album: String::new(),
+            album_artist: String::new(),
+            genre: String::new(),
+            year: String::new(),
+            track_no: 0,
+            disc_no: 0,
+            copyright: String::new(),
             sf_channel_overrides: Vec::new(),
         }
     }
@@ -87,6 +110,13 @@ impl ProjectFile {
             compression_level: meta.compression_level,
             default_bpm: meta.default_bpm,
             default_time_sig: meta.default_time_sig,
+            album: meta.album.clone(),
+            album_artist: meta.album_artist.clone(),
+            genre: meta.genre.clone(),
+            year: meta.year.clone(),
+            track_no: meta.track_no,
+            disc_no: meta.disc_no,
+            copyright: meta.copyright.clone(),
             sf_channel_overrides: Vec::new(),
         }
     }
@@ -105,6 +135,13 @@ impl ProjectFile {
             compression_level: meta.compression_level,
             default_bpm: meta.default_bpm,
             default_time_sig: meta.default_time_sig,
+            album: meta.album.clone(),
+            album_artist: meta.album_artist.clone(),
+            genre: meta.genre.clone(),
+            year: meta.year.clone(),
+            track_no: meta.track_no,
+            disc_no: meta.disc_no,
+            copyright: meta.copyright.clone(),
             sf_channel_overrides,
         }
     }

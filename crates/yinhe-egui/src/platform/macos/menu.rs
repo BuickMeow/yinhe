@@ -88,6 +88,7 @@ impl MenuActionFrom for crate::chrome::transport_bar::FileAction {
             FileAction::CloseDocument => MenuAction::CloseDocument,
             FileAction::ExportAudio => MenuAction::ExportAudio,
             FileAction::ExportMidi => MenuAction::ExportMidi,
+            FileAction::ExportMidi7z => MenuAction::ExportMidi7z,
             FileAction::ProjectSettings => MenuAction::ProjectSettings,
             FileAction::Settings => MenuAction::Settings,
             FileAction::Exit => MenuAction::Exit,

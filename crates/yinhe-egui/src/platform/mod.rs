@@ -18,6 +18,7 @@ pub enum MenuAction {
     CloseDocument,
     ExportAudio,
     ExportMidi,
+    ExportMidi7z,
     Undo,
     Redo,
     Cut,

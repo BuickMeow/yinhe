@@ -24,8 +24,8 @@ mod tempo_map;
 pub use events::NoteEvent;
 pub use model::DEFAULT_TRACK_COLOR;
 pub use model::{
-    AudioClip, AudioSource, ChannelInstrument, ConductorData, ProjectMeta, TrackData, TrackInfo,
-    TrackKind, YinModel, effective_fades,
+    AudioClip, AudioSource, ChannelInstrument, ConductorData, ProjectMeta, SongInfo, TrackData,
+    TrackInfo, TrackKind, YinModel, effective_fades,
 };
 pub use model_stats::{NoteLoader, RescaleProgress};
 pub use model_transform::remove_notes_by_id_range;

@@ -185,10 +185,9 @@ typedef DeleteAutomationAnchorsDart = int Function(
 );
 
 final DeleteAutomationAnchorsDart _deleteAutomationAnchors = bridge
-    .lookupFunction<
-      DeleteAutomationAnchorsNative,
-      DeleteAutomationAnchorsDart
-    >('yinhe_delete_automation_anchors');
+    .lookupFunction<DeleteAutomationAnchorsNative, DeleteAutomationAnchorsDart>(
+      'yinhe_delete_automation_anchors',
+    );
 
 /// 删除指定 tick 的自动化锚点（单击删除），一笔一个 undo。
 int deleteAutomationAnchors(int track, int laneIndex, List<int> ticks) {

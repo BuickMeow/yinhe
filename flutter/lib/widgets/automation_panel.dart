@@ -623,11 +623,8 @@ class _AutomationPanelState extends State<AutomationPanel>
     }
     final picked = await showDialog<int>(
       context: context,
-      builder: (_) => _ShapePickerDialog(
-        current: current,
-        count: count,
-        items: items,
-      ),
+      builder: (_) =>
+          _ShapePickerDialog(current: current, count: count, items: items),
     );
     if (picked == null || !mounted) {
       return;
@@ -1129,7 +1126,8 @@ class _AutomationPanelState extends State<AutomationPanel>
     if (laneIdx == null || laneIdx >= widget.lanes.length) {
       return;
     }
-    if (rust.deleteAutomationAnchors(widget.activeTrack, laneIdx, [tick]) != 1) {
+    if (rust.deleteAutomationAnchors(widget.activeTrack, laneIdx, [tick]) !=
+        1) {
       return;
     }
     _selectedTicks.remove(tick);
@@ -1849,8 +1847,10 @@ class _ShapePickerDialog extends StatefulWidget {
 
   /// 当前形状编号（-1 = 混合或无）。
   final int current;
+
   /// 这次应用会改多少个锚点。
   final int count;
+
   /// Rust 给出的预设列表：`{"i": 编号, "f": 族, "d": 方向, "x1".."y2": CSS 控制点}`。
   final List<Map<String, dynamic>> items;
 
@@ -1967,9 +1967,7 @@ class _ShapePickerDialogState extends State<_ShapePickerDialog> {
                 children: [
                   for (final item in base) ...[
                     chip(
-                      item['i'] == 0
-                          ? l.anchorShapeStep
-                          : l.anchorShapeLinear,
+                      item['i'] == 0 ? l.anchorShapeStep : l.anchorShapeLinear,
                       _base == item['i'],
                       () => setState(() {
                         _base = item['i'] as int;
@@ -1998,8 +1996,9 @@ class _ShapePickerDialogState extends State<_ShapePickerDialog> {
                           _family = family;
                           // 从 Step/线性切过来时还没方向，自动补一个，
                           // 保证右侧预览始终有图像。
-                          _direction ??=
-                              directions.isEmpty ? null : directions.first;
+                          _direction ??= directions.isEmpty
+                              ? null
+                              : directions.first;
                         }),
                       ),
                       const SizedBox(width: 6),
@@ -2024,8 +2023,9 @@ class _ShapePickerDialogState extends State<_ShapePickerDialog> {
                             () => setState(() {
                               _base = null;
                               _direction = direction;
-                              _family ??=
-                                  families.isEmpty ? null : families.first;
+                              _family ??= families.isEmpty
+                                  ? null
+                                  : families.first;
                             }),
                           ),
                         ),
@@ -2129,8 +2129,7 @@ class _CurvePainter extends CustomPainter {
     double xOf(double x) => pad + x * w;
     double yOf(double y) => pad + (1 - (y - minY) / span) * h;
 
-    final path = Path()
-      ..moveTo(xOf(points.first.dx), yOf(points.first.dy));
+    final path = Path()..moveTo(xOf(points.first.dx), yOf(points.first.dy));
     for (final point in points.skip(1)) {
       path.lineTo(xOf(point.dx), yOf(point.dy));
     }

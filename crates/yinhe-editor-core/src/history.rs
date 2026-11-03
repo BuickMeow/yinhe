@@ -16,9 +16,8 @@ pub mod commit;
 mod tests;
 
 pub use commit::{
-    EditSnapshot, PendingEdits, UndoEntry, UndoStack, begin_edit, commit_artist,
-    commit_compression_level, commit_description, commit_ppq, commit_project_name,
-    commit_track_name,
+    EditSnapshot, PendingEdits, UndoEntry, UndoStack, begin_edit, commit_compression_level,
+    commit_ppq, commit_track_name,
 };
 
 /// Maximum number of past edits kept in the undo stack.
@@ -140,18 +139,11 @@ pub enum UndoAction {
         instrument_before: Option<yinhe_core::ChannelInstrument>,
         instrument_after: Option<yinhe_core::ChannelInstrument>,
     },
-    /// Project metadata was edited.
-    ProjectName {
-        old: String,
-        new: String,
-    },
-    ProjectArtist {
-        old: String,
-        new: String,
-    },
-    ProjectDescription {
-        old: String,
-        new: String,
+    /// 歌曲元数据整体编辑（歌名/音乐人/专辑/流派/年份/编号/版权/简介）。
+    /// 工程设置对话框一次提交，避免每个字段一条 undo。
+    SongInfo {
+        old: Box<yinhe_core::SongInfo>,
+        new: Box<yinhe_core::SongInfo>,
     },
     ProjectPpq {
         old: u32,
@@ -336,17 +328,9 @@ impl UndoAction {
                     instrument_after,
                 }
             }
-            UndoAction::ProjectName { mut old, mut new } => {
+            UndoAction::SongInfo { mut old, mut new } => {
                 std::mem::swap(&mut old, &mut new);
-                UndoAction::ProjectName { old, new }
-            }
-            UndoAction::ProjectArtist { mut old, mut new } => {
-                std::mem::swap(&mut old, &mut new);
-                UndoAction::ProjectArtist { old, new }
-            }
-            UndoAction::ProjectDescription { mut old, mut new } => {
-                std::mem::swap(&mut old, &mut new);
-                UndoAction::ProjectDescription { old, new }
+                UndoAction::SongInfo { old, new }
             }
             UndoAction::ProjectPpq { old, new, rescale } => UndoAction::ProjectPpq {
                 old: new,

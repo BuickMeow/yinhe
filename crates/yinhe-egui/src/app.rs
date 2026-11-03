@@ -16,6 +16,7 @@ pub(crate) mod insert;
 pub(crate) mod jobs;
 pub(crate) mod layout;
 pub(crate) mod main_loop;
+pub(crate) mod midi7z;
 pub(crate) mod midi_import;
 pub(crate) mod midi_input;
 pub(crate) mod plugin_automation;
@@ -100,6 +101,8 @@ pub struct App {
     pub(crate) jobs: jobs::JobCenter,
     /// 导入 MIDI：解析 / 确认框 / 合并三段状态。
     pub(crate) midi_import: midi_import::MidiImportState,
+    /// 导出压缩 MIDI（.7z）的后台任务。
+    pub(crate) midi7z: midi7z::Midi7zState,
 
     // ── Unsaved changes confirmation ──
     /// A file action deferred until the user chooses save/discard/cancel.
@@ -474,6 +477,7 @@ impl App {
             paste_chain: None,
             clipboard_sync: clipboard_sync::ClipboardSync::new(),
             midi_import: midi_import::MidiImportState::default(),
+            midi7z: midi7z::Midi7zState::default(),
             notifications: crate::widgets::toast::Notifications::new(),
         };
 

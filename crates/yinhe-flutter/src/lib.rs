@@ -1156,6 +1156,29 @@ pub extern "C" fn yinhe_export_midi_start(
     midi_export::start(path, &opts)
 }
 
+/// 开始导出压缩 MIDI（.7z，路径 + 选项 JSON）。成功 1。
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_export_midi_7z_start(
+    path: *const std::ffi::c_char,
+    opts: *const std::ffi::c_char,
+) -> i32 {
+    if path.is_null() {
+        return 0;
+    }
+    let path = unsafe { CStr::from_ptr(path) }
+        .to_string_lossy()
+        .into_owned();
+    let opts = if opts.is_null() {
+        "{}".to_string()
+    } else {
+        unsafe { CStr::from_ptr(opts) }
+            .to_string_lossy()
+            .into_owned()
+    };
+    midi_export::start_7z(path, &opts)
+}
+
 /// MIDI 导出状态 JSON（堆分配）。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_export_midi_status_json() -> *mut std::ffi::c_char {
@@ -2065,23 +2088,15 @@ pub extern "C" fn yinhe_new_project() -> i32 {
     scene::new_project()
 }
 
-/// 工程元数据编辑（歌名/艺术家/简介/PPQ）。成功 1。
+/// 工程元数据编辑（歌名/艺术家/专辑/流派/年份/编号/版权/简介/PPQ）。JSON 参数，成功 1。
 #[allow(clippy::not_unsafe_ptr_arg_deref)] // JNI/dart:ffi 入口，指针有效性由调用方保证
 #[unsafe(no_mangle)]
-pub extern "C" fn yinhe_set_project_meta(
-    name: *const std::ffi::c_char,
-    artist: *const std::ffi::c_char,
-    description: *const std::ffi::c_char,
-    ppq: u32,
-) -> i32 {
-    let read = |p: *const std::ffi::c_char| -> String {
-        if p.is_null() {
-            return String::new();
-        }
-        // 安全性：调用方保证指针为有效 NUL 结尾字符串（dart:ffi 分配）。
-        unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
-    };
-    scene::set_project_meta(read(name), read(artist), read(description), ppq)
+pub extern "C" fn yinhe_set_project_meta_json(json: *const std::ffi::c_char) -> i32 {
+    if json.is_null() {
+        return 0;
+    }
+    let json = unsafe { CStr::from_ptr(json) }.to_string_lossy();
+    scene::set_project_meta_json(&json)
 }
 
 /// 音频设置 JSON：`{"max_voices":..,"buffer_size":..,"ignore_velocity":..}`。

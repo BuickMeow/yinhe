@@ -1436,10 +1436,17 @@ pub fn project_meta_json() -> String {
     };
     let m = &doc.data.model.meta;
     format!(
-        "{{\"name\":\"{}\",\"artist\":\"{}\",\"description\":\"{}\",\"ppq\":{}}}",
+        "{{\"name\":\"{}\",\"artist\":\"{}\",\"description\":\"{}\",\"album\":\"{}\",\"album_artist\":\"{}\",\"genre\":\"{}\",\"year\":\"{}\",\"track_no\":{},\"disc_no\":{},\"copyright\":\"{}\",\"ppq\":{}}}",
         json_escape(&m.name),
         json_escape(&m.artist),
         json_escape(&m.description),
+        json_escape(&m.album),
+        json_escape(&m.album_artist),
+        json_escape(&m.genre),
+        json_escape(&m.year),
+        m.track_no,
+        m.disc_no,
+        json_escape(&m.copyright),
         m.ppq
     )
 }
@@ -1448,7 +1455,29 @@ pub fn project_meta_json() -> String {
 ///
 /// PPQ 改动在后台任务里用 `rescale_ppq_with_progress` 执行（可取消/有进度），
 /// 与桌面一致；元数据字段在同一任务内一次性提交。
-pub fn set_project_meta(name: String, artist: String, description: String, ppq: u32) -> i32 {
+pub fn set_project_meta_json(json: &str) -> i32 {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return 0;
+    };
+    let text = |key: &str| {
+        v.get(key)
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let info = yinhe_core::SongInfo {
+        name: text("name"),
+        artist: text("artist"),
+        description: text("description"),
+        album: text("album"),
+        album_artist: text("album_artist"),
+        genre: text("genre"),
+        year: text("year"),
+        track_no: v.get("track_no").and_then(|x| x.as_u64()).unwrap_or(0) as u16,
+        disc_no: v.get("disc_no").and_then(|x| x.as_u64()).unwrap_or(0) as u16,
+        copyright: text("copyright"),
+    };
+    let ppq = v.get("ppq").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
     crate::doc_job::try_start(
         "project-meta",
         crate::doc_job::Reload::Model,
@@ -1476,29 +1505,16 @@ pub fn set_project_meta(name: String, artist: String, description: String, ppq: 
             }
 
             let mut actions: Vec<UndoAction> = Vec::new();
+            let old_info = yinhe_core::SongInfo::from_meta(&doc.data.model.meta);
+            if old_info != info {
+                actions.push(UndoAction::SongInfo {
+                    old: Box::new(old_info),
+                    new: Box::new(info.clone()),
+                });
+                info.apply_to(&mut std::sync::Arc::make_mut(&mut doc.data.model).meta);
+            }
             {
                 let model = std::sync::Arc::make_mut(&mut doc.data.model);
-                if model.meta.name != name {
-                    actions.push(UndoAction::ProjectName {
-                        old: model.meta.name.clone(),
-                        new: name.clone(),
-                    });
-                    model.meta.name = name.clone();
-                }
-                if model.meta.artist != artist {
-                    actions.push(UndoAction::ProjectArtist {
-                        old: model.meta.artist.clone(),
-                        new: artist.clone(),
-                    });
-                    model.meta.artist = artist;
-                }
-                if model.meta.description != description {
-                    actions.push(UndoAction::ProjectDescription {
-                        old: model.meta.description.clone(),
-                        new: description.clone(),
-                    });
-                    model.meta.description = description;
-                }
                 if ppq_changed {
                     if !has_notes {
                         model.meta.ppq = ppq;
@@ -1515,10 +1531,10 @@ pub fn set_project_meta(name: String, artist: String, description: String, ppq: 
                 return false;
             }
             let action = if actions.len() == 1 {
-                actions.pop().unwrap_or(UndoAction::ProjectName {
-                    old: String::new(),
-                    new: String::new(),
-                })
+                let Some(action) = actions.pop() else {
+                    return false;
+                };
+                action
             } else {
                 UndoAction::Composite(actions)
             };
