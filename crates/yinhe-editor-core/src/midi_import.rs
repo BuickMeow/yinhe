@@ -391,6 +391,10 @@ pub fn revert_midi_import(
 ) {
     yinhe_core::remove_notes_by_id_range(model, note_id_start, note_id_end, note_keys);
     model.tracks = tracks_before;
+    // 统计数组必须跟着轨道一起收缩：否则下一次 push_empty_track_stats 的新轨
+    // 统计会落到旧长度之后，track_note_count 与 tracks 索引错位。
+    model.track_note_count.truncate(model.tracks.len());
+    model.track_audible_count.truncate(model.tracks.len());
     model.conductor = Arc::new(conductor_before);
     model.rebuild_dirty();
     model.rebuild_tempo_map();
@@ -503,6 +507,11 @@ mod tests {
         assert_eq!(dst.tick_length, 1000);
         assert_eq!(dst.notes[60].len(), 0);
         assert_eq!(dst.notes[64].len(), 0);
+        assert_eq!(
+            dst.track_note_count.len(),
+            dst.tracks.len(),
+            "undo 后轨道统计数组必须与轨道数一致"
+        );
     }
 
     #[test]

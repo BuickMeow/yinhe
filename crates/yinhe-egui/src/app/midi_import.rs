@@ -142,6 +142,11 @@ impl App {
                             let ppt = doc.edit.arrange_view.base.pixels_per_tick.max(0.001);
                             doc.edit.arrange_view.base.scroll_x =
                                 (outcome.start_tick as f32 * ppt - 160.0).max(0.0);
+                            let row_h = doc.edit.arrange_view.lane_height();
+                            doc.edit.arrange_view.base.scroll_y =
+                                (outcome.first_track as f32 * row_h - 120.0).max(0.0);
+                            doc.edit.arrange_view.base.track_panel_scroll_y =
+                                doc.edit.arrange_view.base.scroll_y;
                             doc.edit.arrange_view.base.dirty = true;
                         }
                         self.notify_audio_model_changed();
