@@ -872,39 +872,33 @@ mixin _ShellInput on _ShellBase {
       _showAddTrackDialog();
       return;
     }
-    final expanded = _arrExpandedTracks.value.contains(rows[idx].uuid);
+    final expanded = _arrTracksExpanded.value;
     // 只有展开态才响应 M/S；收起态点右缘也是切换展开。
     if (expanded && !rows[idx].master && _inMsZone(p)) {
       _toggleMs(p, idx);
       return;
     }
-    // 面板卡片单击只做收起/展开，不再进入轨道；进 PR 用内容区双击。
-    _toggleArrCard(idx);
+    // 面板卡片单击只做整体收起/展开，不再进入轨道；进 PR 用内容区双击。
+    _toggleArrTracksExpanded();
   }
 
-  /// 切换 AR 轨道卡片的收起/展开（默认全部收起，只显示三位编号）。
-  void _toggleArrCard(int idx) {
-    final rows = _tracks.value;
-    if (idx < 0 || idx >= rows.length) {
-      return;
-    }
-    final uuid = rows[idx].uuid;
-    if (uuid.isEmpty) {
-      return;
-    }
-    final next = Set<String>.of(_arrExpandedTracks.value);
-    if (!next.remove(uuid)) {
-      next.add(uuid);
-    }
-    _arrExpandedTracks.value = next;
-    _syncArrPanelWidth();
+  /// 整体切换 AR 轨道卡片：收起（无 M/S、面板变窄）↔ 展开（带 M/S）。
+  void _toggleArrTracksExpanded() {
+    final next = !_arrTracksExpanded.value;
+    _arrTracksExpanded.value = next;
+    _arrPanelAnimFrom = _arrPanelWidth;
+    _arrPanelAnimTo = next ? kArrPanelExpandedWidth : kArrPanelCollapsedWidth;
+    _arrPanelAnimStart = DateTime.now();
   }
 
-  /// 全收起时轨道面板变窄；有任意展开才恢复带 M/S 的宽度。
   @override
   void _syncArrPanelWidth() {
-    final w = _arrExpandedTracks.value.isEmpty ? 100.0 : 134.0;
-    rust.setArrPanelWidth(w);
+    final target = _arrTracksExpanded.value
+        ? kArrPanelExpandedWidth
+        : kArrPanelCollapsedWidth;
+    _arrPanelAnimStart = null;
+    _arrPanelWidth = target;
+    rust.setArrPanelWidth(target);
   }
 
   /// 命中 M/S 按钮：M 在左（警告色），S 在右（危险色）。

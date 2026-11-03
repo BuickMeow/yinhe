@@ -60,6 +60,10 @@ const int kViewPianoroll = 1;
 /// 自动化面板顶部的拖拽手柄高度（逻辑像素，兼顾触屏命中）。
 const double kAmHandleHeight = 26.0;
 
+/// AR 轨道面板两档宽度：收起（无 M/S）/ 展开（带 M/S）。
+const double kArrPanelCollapsedWidth = 100.0;
+const double kArrPanelExpandedWidth = 134.0;
+
 /// 自动化面板拖到低于此高度时，松手自动收起（带动画）。
 const double kAmAutoCollapseHeight = 12.0;
 
@@ -179,9 +183,13 @@ abstract class _ShellBase extends State<StudioShell>
   /// AM 纹理预热帧数：展开后头几帧先不画 Texture，避免旧的小尺寸层闪现。
   int _amTextureWarmup = 0;
 
-  /// 已展开的 AR 轨道卡片（按轨道 uuid；空 = 全部收起，默认收起）。
-  final ValueNotifier<Set<String>> _arrExpandedTracks =
-      ValueNotifier<Set<String>>(<String>{});
+  /// AR 轨道卡片是否整体展开（默认收起）。
+  final ValueNotifier<bool> _arrTracksExpanded = ValueNotifier<bool>(false);
+
+  double _arrPanelWidth = kArrPanelCollapsedWidth;
+  double _arrPanelAnimFrom = kArrPanelCollapsedWidth;
+  double _arrPanelAnimTo = kArrPanelCollapsedWidth;
+  DateTime? _arrPanelAnimStart;
 
   /// 当前工具（PR 5 种；AR 2 种；索引对应 `toolDefs`）。
   int _toolPr = 0;
@@ -549,6 +557,7 @@ class _StudioShellState extends _ShellBase
       }
     });
     _ticker = createTicker((_) {
+      _tickArrPanelAnimation();
       // 模态路由（各类对话框）在上层时编辑器被遮罩：跳过 wgpu 帧提交与视图同步。
       // `renderFrame` 会同步等待渲染线程完成 present，键盘弹出/收起与对话框
       // 动画期间继续每帧等待会占住 UI 线程，输入法动画直接掉帧。
@@ -658,6 +667,26 @@ class _StudioShellState extends _ShellBase
     _pushAllQuantizes();
   }
 
+  /// 轨道面板宽度动画：每帧把当前宽度推给 Rust，Flutter 浮层/命中区跟随。
+  void _tickArrPanelAnimation() {
+    final start = _arrPanelAnimStart;
+    if (start == null) {
+      return;
+    }
+    const dur = 0.18;
+    final t = (DateTime.now().difference(start).inMicroseconds / 1e6 / dur)
+        .clamp(0.0, 1.0);
+    final eased = Curves.easeOutCubic.transform(t);
+    final w = _arrPanelAnimFrom + (_arrPanelAnimTo - _arrPanelAnimFrom) * eased;
+    if ((w - _arrPanelWidth).abs() > 0.01) {
+      _arrPanelWidth = w;
+      rust.setArrPanelWidth(w);
+    }
+    if (t >= 1.0) {
+      _arrPanelAnimStart = null;
+    }
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -685,7 +714,7 @@ class _StudioShellState extends _ShellBase
     _savingTimer?.cancel();
     _velocityReloadTimer?.cancel();
     _velocityRetryTimer?.cancel();
-    _arrExpandedTracks.dispose();
+    _arrTracksExpanded.dispose();
     _docState.dispose();
     _editStatus.dispose();
     calloc.free(_snapPtr);

@@ -12,14 +12,14 @@ class LabelsPainter extends CustomPainter {
     required this.tracks,
     required this.dragFrom,
     required this.dragTo,
-    required this.expandedTracks,
+    required this.tracksExpanded,
   }) : super(
          repaint: Listenable.merge([
            snap,
            tracks,
            dragFrom,
            dragTo,
-           expandedTracks,
+           tracksExpanded,
          ]),
        );
 
@@ -28,8 +28,8 @@ class LabelsPainter extends CustomPainter {
   final ValueNotifier<int> dragFrom;
   final ValueNotifier<int> dragTo;
 
-  /// 已展开的 AR 轨道卡片（按 uuid）；不在集合内 = 收起，只画编号。
-  final ValueNotifier<Set<String>> expandedTracks;
+  /// AR 轨道卡片是否整体展开（收起时不画 M/S）。
+  final ValueNotifier<bool> tracksExpanded;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -102,7 +102,7 @@ class LabelsPainter extends CustomPainter {
     for (var idx = first; idx < last; idx++) {
       final row = rows[idx];
       final y = idx * laneH - scrollY;
-      final expanded = expandedTracks.value.contains(row.uuid);
+      final expanded = tracksExpanded.value;
       final port = row.port >= 0 && row.port < 4 ? 'ABCD'[row.port] : '?';
       final code =
           '${idx.toString().padLeft(3, '0')}  $port${(row.channel + 1).toString().padLeft(2, '0')}';
