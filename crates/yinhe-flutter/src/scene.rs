@@ -77,6 +77,12 @@ impl SnapCtx {
         yinhe_editor_core::quantize::snap_tick_floor(tick, q, tpb, Some((tpb, num, den, ev)))
             .max(0.0)
     }
+
+    /// 新选框的最小右端：一格量化，但不超过下一个小节线。
+    pub fn min_selection_end(&self, start: f64, interval: f64) -> f64 {
+        let (tpb, num, den, ev) = self.args();
+        yinhe_editor_core::quantize::selection_min_end(start, interval, Some((tpb, num, den, ev)))
+    }
 }
 
 /// AR 轨道面板宽度（逻辑像素，与旧安卓壳 PANEL_W 一致）。
@@ -1801,6 +1807,37 @@ pub fn set_play_cursor(tick: f64) {
         s.cursor_tick = snapped;
     }
     crate::audio::seek(snapped);
+}
+
+/// AR 视口定位到某个 tick / 第一条选中轨（导入 MIDI 后调用）。
+pub fn focus_arr_tick(tick: f64) {
+    let (lw, lh) = crate::logical_size();
+    let Ok(mut s) = scene().lock() else {
+        return;
+    };
+    let selected_track = s
+        .document
+        .as_ref()
+        .and_then(|d| d.edit.arr_sel_rect.first().map(|r| r.2))
+        .unwrap_or(0);
+    let total_ticks = s.total_ticks;
+    let num_tracks = s.num_tracks;
+    let view = &mut s.arr_view;
+    let content_w = (lw - view.base.left_panel_width).max(1.0);
+    let ppt = view.base.pixels_per_tick.max(0.001);
+    let max_scroll = (total_ticks as f32 * ppt - content_w).max(0.0);
+    view.base.scroll_x = (tick as f32 * ppt - content_w * 0.25)
+        .max(0.0)
+        .min(max_scroll);
+    let row_h = view.lane_height();
+    let max_y = (num_tracks as f32 * row_h - lh).max(0.0);
+    view.base.scroll_y = (selected_track as f32 * row_h - lh * 0.25)
+        .max(0.0)
+        .min(max_y);
+    view.base.track_panel_scroll_y = view.base.scroll_y;
+    view.base.follow_target = None;
+    view.base.dirty = true;
+    s.overlay_rev = s.overlay_rev.wrapping_add(1);
 }
 
 /// 事件列表跳转：光标精确落在 tick（不吸附），并把 PR 视口水平居中。

@@ -473,6 +473,24 @@ pub fn snap_tick_ceil(
     }
 }
 
+/// Minimum end for a fresh selection box: one grid step, but never across the
+/// next bar line. Without this, a 1/1 grid in 3/4 produces a four-beat box
+/// (a whole note) at the start of a three-beat bar.
+pub fn selection_min_end(
+    start: f64,
+    interval: f64,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+) -> f64 {
+    let plain = start + interval.max(1.0);
+    if let Some((tpb, num, den, events)) = bar_line_data
+        && let (_, next_bar) = measure_bounds_at_tick(start, tpb, num, den, events)
+        && next_bar > start
+    {
+        return plain.min(next_bar).max(start + 1.0);
+    }
+    plain
+}
+
 /// Snap 到上一网格（floor），带小节线感知。
 pub fn snap_tick_floor(
     tick: f64,
@@ -927,6 +945,37 @@ mod tests {
             line_tick_at_key((100.0, 60), (700.0, 60), 60),
             100.0,
             "同 key 返回起点 tick"
+        );
+    }
+
+    /// 3/4 下最小选框不能是 1/1 全音符的 4 拍（应停在 3 拍的小节线）。
+    #[test]
+    fn selection_min_end_respects_three_four() {
+        let ev: [TimeSigEvent; 0] = [];
+        assert_eq!(
+            selection_min_end(0.0, 1920.0, Some((480, 3, 2, &ev))),
+            1440.0,
+            "3/4 小节 = 1440 tick，不能跨到下一小节"
+        );
+        assert_eq!(
+            selection_min_end(0.0, 1920.0, Some((480, 4, 2, &ev))),
+            1920.0,
+            "4/4 全音符正好一小节"
+        );
+        assert_eq!(
+            selection_min_end(480.0, 1920.0, Some((480, 3, 2, &ev))),
+            1440.0,
+            "小节中间起手也只到小节线"
+        );
+        assert_eq!(
+            selection_min_end(0.0, 120.0, Some((480, 3, 2, &ev))),
+            120.0,
+            "细分网格不受小节限制"
+        );
+        assert_eq!(
+            selection_min_end(0.0, 1920.0, None),
+            1920.0,
+            "无拍号数据时保持旧行为"
         );
     }
 }

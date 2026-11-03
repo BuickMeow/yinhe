@@ -1338,6 +1338,36 @@ fn drag_delta_ticks(s: &RenderScene, q: QuantizePreset, anchor_raw: f64, current
     }
 }
 
+/// 选区整体移动的 delta：锚定选区起点，而不是手指按下点。
+///
+/// 起点不在量化格上时（例如导入 MIDI 落在工程末尾的非整格处），第一次
+/// 拖动把起点吸到拖动方向的下一条量化线；起点已在格上时保持旧的整格移动。
+fn selection_move_delta(
+    s: &RenderScene,
+    q: QuantizePreset,
+    sel_start: f64,
+    anchor_raw: f64,
+    current_raw: f64,
+) -> f64 {
+    let interval = f64::from(q.tick_interval(s.ppq).max(1));
+    let ratio = sel_start / interval;
+    if (ratio - ratio.round()).abs() < 1e-6 {
+        return drag_delta_ticks(s, q, anchor_raw, current_raw);
+    }
+    let raw = current_raw - anchor_raw;
+    if raw.abs() < 1e-9 {
+        return 0.0;
+    }
+    let target = sel_start + raw;
+    let snap = scene::SnapCtx::new(s);
+    let snapped = if raw > 0.0 {
+        snap.ceil(q, target)
+    } else {
+        snap.floor(q, target)
+    };
+    snapped - sel_start
+}
+
 /// 单音符拖动的绝对坐标吸附：按“手指 - 抓取偏移”算出音符新起点，再吸附到
 /// 绝对网格，而不是用相对位移累加。这样重拍/切分音等非整格起点也能跟随
 /// 指针落到它所在的绝对格位。
@@ -1358,7 +1388,7 @@ fn move_box_delta(s: &RenderScene, d: &DragState, x: f32, y: f32) -> Option<(f64
         ViewMode::Pianoroll => {
             let (t0, _, _, _) = d.box_ticks?;
             let geom = PrGeom::new(&s.pr_view);
-            let mut dt = drag_delta_ticks(s, q, d.anchor_tick_raw, geom.x_to_tick(x));
+            let mut dt = selection_move_delta(s, q, t0, d.anchor_tick_raw, geom.x_to_tick(x));
             if t0 + dt < 0.0 {
                 dt = -t0;
             }
@@ -1368,7 +1398,7 @@ fn move_box_delta(s: &RenderScene, d: &DragState, x: f32, y: f32) -> Option<(f64
         ViewMode::Arrangement => {
             let (t0, _, _, _) = d.box_rows?;
             let geom = ArGeom::new(&s.arr_view);
-            let mut dt = drag_delta_ticks(s, q, d.anchor_tick_raw, geom.x_to_tick(x));
+            let mut dt = selection_move_delta(s, q, t0, d.anchor_tick_raw, geom.x_to_tick(x));
             if t0 + dt < 0.0 {
                 dt = -t0;
             }
@@ -1461,7 +1491,9 @@ fn build_erase_preview(s: &mut RenderScene, d: &DragState, x: f32, y: f32) {
             let ta = snap.round(q, geom.x_to_tick(d.x0.min(x))) as u32;
             let mut tb = snap.round(q, geom.x_to_tick(d.x0.max(x))) as u32;
             if tb <= ta {
-                tb = ta + q.tick_interval(s.ppq).max(1);
+                tb = snap
+                    .min_selection_end(f64::from(ta), f64::from(q.tick_interval(s.ppq).max(1)))
+                    .round() as u32;
             }
             let ka = geom.y_to_key(d.y0.max(y));
             let kb = geom.y_to_key(d.y0.min(y));
@@ -1486,7 +1518,9 @@ fn build_erase_preview(s: &mut RenderScene, d: &DragState, x: f32, y: f32) {
             let ta = snap.round(q, geom.x_to_tick(d.x0.min(x))) as u32;
             let mut tb = snap.round(q, geom.x_to_tick(d.x0.max(x))) as u32;
             if tb <= ta {
-                tb = ta + q.tick_interval(s.ppq).max(1);
+                tb = snap
+                    .min_selection_end(f64::from(ta), f64::from(q.tick_interval(s.ppq).max(1)))
+                    .round() as u32;
             }
             let ra = geom.y_to_row(d.y0.min(y));
             let rb = geom.y_to_row(d.y0.max(y));
@@ -2173,7 +2207,7 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                     let ta = d.anchor_tick.min(cur).max(0.0);
                     let mut tb = d.anchor_tick.max(cur).max(0.0);
                     if tb <= ta {
-                        tb = ta + interval;
+                        tb = snap.min_selection_end(ta, interval);
                     }
                     let k_cur = geom.y_to_key(y);
                     let (klo, khi) = (d.anchor_key.min(k_cur), d.anchor_key.max(k_cur));
@@ -2192,7 +2226,7 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                     let ta = d.anchor_tick.min(cur).max(0.0);
                     let mut tb = d.anchor_tick.max(cur).max(0.0);
                     if tb <= ta {
-                        tb = ta + interval;
+                        tb = snap.min_selection_end(ta, interval);
                     }
                     let r_cur = geom.y_to_row(y);
                     let (rlo, rhi) = (d.anchor_row.min(r_cur), d.anchor_row.max(r_cur));
@@ -3037,7 +3071,9 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
                 let ta = d.anchor_tick.min(cur).max(0.0) as u32;
                 let mut tb = d.anchor_tick.max(cur).max(0.0) as u32;
                 if tb <= ta {
-                    tb = ta + interval;
+                    tb = snap
+                        .min_selection_end(f64::from(ta), f64::from(interval))
+                        .round() as u32;
                 }
                 let k_cur = geom_pr.y_to_key(y);
                 let (klo, khi) = (d.anchor_key.min(k_cur), d.anchor_key.max(k_cur));
@@ -3072,7 +3108,9 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
                 let ta = d.anchor_tick.min(cur).max(0.0) as u32;
                 let mut tb = d.anchor_tick.max(cur).max(0.0) as u32;
                 if tb <= ta {
-                    tb = ta + interval;
+                    tb = snap
+                        .min_selection_end(f64::from(ta), f64::from(interval))
+                        .round() as u32;
                 }
                 let r_cur = geom_ar.y_to_row(y);
                 let max_row = num_tracks.saturating_sub(1);
@@ -3549,7 +3587,9 @@ fn commit_erase(
             let ta = snap.round(q, geom_pr.x_to_tick(d.x0.min(x))) as u32;
             let mut tb = snap.round(q, geom_pr.x_to_tick(d.x0.max(x))) as u32;
             if tb <= ta {
-                tb = ta + interval;
+                tb = snap
+                    .min_selection_end(f64::from(ta), f64::from(interval))
+                    .round() as u32;
             }
             let ka = geom_pr.y_to_key(d.y0.max(y));
             let kb = geom_pr.y_to_key(d.y0.min(y));
@@ -3576,7 +3616,9 @@ fn commit_erase(
             let ta = snap.round(q, geom_ar.x_to_tick(d.x0.min(x))) as u32;
             let mut tb = snap.round(q, geom_ar.x_to_tick(d.x0.max(x))) as u32;
             if tb <= ta {
-                tb = ta + interval;
+                tb = snap
+                    .min_selection_end(f64::from(ta), f64::from(interval))
+                    .round() as u32;
             }
             let ra = geom_ar.y_to_row(d.y0.min(y));
             let rb = geom_ar.y_to_row(d.y0.max(y));

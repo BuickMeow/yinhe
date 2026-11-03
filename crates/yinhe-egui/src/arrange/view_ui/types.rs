@@ -40,7 +40,8 @@ pub(crate) fn arrange_snapped_bounds(
     let mut t_end = snapped_s.max(snapped_e);
     let interval = data.quantize.tick_interval(data.ppq) as f64;
     if t_end <= t_start {
-        t_end = t_start + interval.max(1.0);
+        t_end =
+            yinhe_editor_core::quantize::selection_min_end(t_start, interval, data.bar_line_data);
     }
     if data.num_tracks == 0 {
         return None;
@@ -196,6 +197,40 @@ pub(crate) fn snapped_delta(
     (b - a).round() as i64
 }
 
+/// 选区整体移动的 snab delta（锚定选区起点，而不是鼠标按下点）。
+///
+/// 选区起点不在量化格上时（例如导入 MIDI 恰好落在工程末尾的非整格处），
+/// 第一次拖动会把起点吸到拖动方向的下一条量化线，之后按格移动；起点已在
+/// 格上时保持旧的“两端各自吸附再取差”行为，不会产生额外跳动。
+pub(crate) fn snapped_selection_delta(
+    sel_start: f64,
+    origin_tick: f64,
+    current_tick: f64,
+    quantize: yinhe_editor_core::quantize::QuantizePreset,
+    ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[yinhe_types::TimeSigEvent])>,
+) -> i64 {
+    let interval = quantize.tick_interval(ppq) as f64;
+    if interval <= 0.0 {
+        return (current_tick - origin_tick).round() as i64;
+    }
+    let ratio = sel_start / interval;
+    if (ratio - ratio.round()).abs() < 1e-6 {
+        return snapped_delta(origin_tick, current_tick, quantize, ppq, bar_line_data);
+    }
+    let raw = current_tick - origin_tick;
+    if raw.abs() < 1e-9 {
+        return 0;
+    }
+    let target = sel_start + raw;
+    let snapped = if raw > 0.0 {
+        crate::view_interaction::snap_tick_ceil(target, quantize, ppq, bar_line_data)
+    } else {
+        crate::view_interaction::snap_tick_floor(target, quantize, ppq, bar_line_data)
+    };
+    (snapped - sel_start).round() as i64
+}
+
 pub(crate) fn delta_tracks(origin_tr: f32, current_tr: f32, vertical: bool) -> i32 {
     if vertical {
         0
@@ -273,6 +308,34 @@ mod tests {
         assert_eq!(d, 240, "130→120、370→360，delta=240");
         let d = snapped_delta(130.0, 130.0, QuantizePreset::Fraction(1, 16), 480, None);
         assert_eq!(d, 0, "同一位置吸附后 delta=0");
+    }
+
+    /// 选区起点不在格上时，第一次拖动吸到下一条量化线。
+    #[test]
+    fn snapped_selection_delta_snaps_off_grid_start() {
+        use yinhe_editor_core::quantize::QuantizePreset;
+
+        // 起点 100（1/16 = 120 的格上为 0/120），向右拖 10 →
+        // 目标 110 应吸到 120，delta = 20 而不是 0。
+        let d = snapped_selection_delta(
+            100.0,
+            500.0,
+            510.0,
+            QuantizePreset::Fraction(1, 16),
+            480,
+            None,
+        );
+        assert_eq!(d, 20);
+        // 起点已在格上：保持旧的整格移动。
+        let d = snapped_selection_delta(
+            120.0,
+            500.0,
+            610.0,
+            QuantizePreset::Fraction(1, 16),
+            480,
+            None,
+        );
+        assert_eq!(d, 120);
     }
 
     /// delta_tracks：纵向视图恒 0（无轨道轴）；横向按行号差四舍五入。

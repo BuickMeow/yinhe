@@ -76,7 +76,8 @@ fn snapped_bounds(
     let mut t_end = snapped_s.max(snapped_e);
     let interval = data.quantize.tick_interval(data.ppq) as f64;
     if t_end <= t_start {
-        t_end = t_start + interval.max(1.0);
+        t_end =
+            yinhe_editor_core::quantize::selection_min_end(t_start, interval, data.bar_line_data);
     }
     if layout.is_empty() {
         return None;
@@ -283,7 +284,8 @@ pub(crate) fn sel_drag_frame(
     if let Some(((origin_t, origin_y), (current_t, current_y), alt)) = move_drag
         && !move_orig_sel.is_empty()
     {
-        let dt = crate::arrange::view_ui::types::snapped_delta(
+        let dt = crate::arrange::view_ui::types::snapped_selection_delta(
+            move_min_tick,
             origin_t,
             current_t,
             data.quantize,
@@ -325,7 +327,8 @@ pub(crate) fn sel_drag_frame(
     }
     if move_drag.is_some() && pointer.primary_released() {
         if let Some(((origin_t, origin_y), (current_t, current_y), alt)) = move_drag {
-            let delta_ticks = crate::arrange::view_ui::types::snapped_delta(
+            let delta_ticks = crate::arrange::view_ui::types::snapped_selection_delta(
+                move_min_tick,
                 origin_t,
                 current_t,
                 data.quantize,

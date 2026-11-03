@@ -298,10 +298,10 @@ pub(crate) fn piano_snapped_bounds(
     let t_start = snapped_s.min(snapped_e);
     let mut t_end = snapped_s.max(snapped_e);
 
-    // Ensure minimum width of one quantise grid interval
+    // Minimum width: one grid step, capped to the next bar line.
     let interval = quantize.tick_interval(ppq) as f64;
     if t_end <= t_start {
-        t_end = t_start + interval.max(1.0);
+        t_end = yinhe_editor_core::quantize::selection_min_end(t_start, interval, bar_line_data);
     }
 
     // 副轴 key 范围 + 对齐整键单元的屏幕边界。横向保持旧数学（key127 在顶）；

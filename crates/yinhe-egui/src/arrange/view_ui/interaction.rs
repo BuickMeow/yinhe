@@ -158,7 +158,8 @@ pub(crate) fn sel_drag_frame_arrange(
             .unwrap_or(0.0);
         move_drag = Some((origin, (current_tick, current_track_f), alt));
         {
-            let dt = super::types::snapped_delta(
+            let dt = super::types::snapped_selection_delta(
+                move_min_tick,
                 origin.0,
                 current_tick,
                 data.quantize,
@@ -183,7 +184,8 @@ pub(crate) fn sel_drag_frame_arrange(
     if let Some(((origin_t, origin_tr), (current_t, current_tr), alt)) = move_drag
         && !move_orig_sel.is_empty()
     {
-        let dt = super::types::snapped_delta(
+        let dt = super::types::snapped_selection_delta(
+            move_min_tick,
             origin_t,
             current_t,
             data.quantize,
@@ -218,7 +220,8 @@ pub(crate) fn sel_drag_frame_arrange(
     }
     if move_drag.is_some() && pointer.primary_released() {
         if let Some(((origin_t, origin_tr), (current_t, current_tr), alt)) = move_drag {
-            let delta_ticks = super::types::snapped_delta(
+            let delta_ticks = super::types::snapped_selection_delta(
+                move_min_tick,
                 origin_t,
                 current_t,
                 data.quantize,
