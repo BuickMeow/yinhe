@@ -84,6 +84,11 @@ abstract class _ShellBase extends State<StudioShell>
   /// AM 面板独立 wgpu 纹理。
   int? _amTextureId;
   Size? _reportedPixelSize;
+  /// 最近一帧画布区（标尺上方、系统栏内）的逻辑宽高与 DPR：切换视图前用它
+  /// 预先下发目标画布尺寸，保证 surface 尺寸和视图模式在同一帧生效。
+  double _canvasAreaW = 0;
+  double _canvasAreaH = 0;
+  double _canvasDpr = 1;
 
   /// AM 独立纹理的物理尺寸（布局层上报，和 PR 的 setSize 同一策略）。
   Size? _reportedAmSize;
@@ -509,6 +514,7 @@ abstract class _ShellBase extends State<StudioShell>
   void _resizeAutoPanel(double dy);
   void _toggleAutoPanelFullscreen();
   void _syncArrPanelWidth();
+  void _syncCanvasSizeForView(int mode);
   void _finishAutoPanelResize();
   void _setView(int mode);
   void _showAddTrackDialog();

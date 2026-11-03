@@ -569,6 +569,7 @@ mixin _ShellCore on _ShellBase {
     if (_viewMode == mode) {
       return;
     }
+    _syncCanvasSizeForView(mode);
     rust.setViewMode(mode);
     _syncArrPanelWidth();
     setState(() => _viewMode = mode);

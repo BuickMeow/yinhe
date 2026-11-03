@@ -76,6 +76,34 @@ mixin _ShellBuild on _ShellBase {
     });
   }
 
+  /// 切换视图前先按目标视图的底部栏高度刷新画布 surface 尺寸，避免
+  /// surface 比布局晚一帧、出现旧尺寸纹理被拉伸/错位的抖动。
+  @override
+  void _syncCanvasSizeForView(int mode) {
+    if (_canvasAreaW <= 0 || _canvasAreaH <= 0) {
+      return;
+    }
+    final bottom = mode == kViewPianoroll ? kAmHandleHeight : 0.0;
+    final lh = (_canvasAreaH - RulerPainter.height - bottom).clamp(
+      1.0,
+      double.infinity,
+    );
+    final w = (_canvasAreaW * _canvasDpr).round();
+    final h = (lh * _canvasDpr).round();
+    final pixel = Size(w.toDouble(), h.toDouble());
+    if (_reportedPixelSize == pixel) {
+      return;
+    }
+    _reportedPixelSize = pixel;
+    _pendingCanvasSize = null;
+    _channel.invokeMethod<void>('setSize', {
+      'w': w,
+      'h': h,
+      'lw': _canvasAreaW,
+      'lh': lh,
+    });
+  }
+
   /// 打开侧栏：按设置决定是否暂停播放（沿用旧主页的行为）。
   void _openMenu() {
     final pause = rust.pauseOnHome() == 1 && rust.isPlaying() == 1;
@@ -270,6 +298,9 @@ mixin _ShellBuild on _ShellBase {
                               final dpr = MediaQuery.devicePixelRatioOf(
                                 context,
                               );
+                              _canvasAreaW = size.width;
+                              _canvasAreaH = canvasH;
+                              _canvasDpr = dpr;
                               final pixelW = (size.width * dpr).round();
                               final pixelH = (contentH * dpr).round();
                               _queueCanvasSize(
