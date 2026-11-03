@@ -382,8 +382,8 @@ impl YinModel {
             for n in bucket.iter_mut() {
                 n.start_tick = scale_tick(n.start_tick);
                 n.end_tick = scale_tick(n.end_tick);
-                if n.end_tick < n.start_tick {
-                    n.end_tick = n.start_tick;
+                if n.end_tick <= n.start_tick {
+                    n.end_tick = n.start_tick.saturating_add(1);
                 }
             }
             bucket.sort();
@@ -408,6 +408,22 @@ impl YinModel {
                 ts.tick = scale_tick(ts.tick);
             }
             conductor.time_sig.sort_by_key(|e| e.tick);
+            for ev in conductor.key_sig.iter_mut() {
+                ev.tick = scale_tick(ev.tick);
+            }
+            conductor.key_sig.sort_by_key(|e| e.tick);
+            for ev in conductor.markers.iter_mut() {
+                ev.tick = scale_tick(ev.tick);
+            }
+            conductor.markers.sort_by_key(|e| e.tick);
+            for ev in conductor.lyrics.iter_mut() {
+                ev.tick = scale_tick(ev.tick);
+            }
+            conductor.lyrics.sort_by_key(|e| e.tick);
+            for ev in conductor.chord.iter_mut() {
+                ev.tick = scale_tick(ev.tick);
+            }
+            conductor.chord.sort_by_key(|e| e.tick);
         }
         if let Ok(mut p) = progress.lock() {
             p.progress = 0.95;
@@ -430,6 +446,14 @@ impl YinModel {
                 pc.tick = scale_tick(pc.tick);
             }
             track.program_change.sort_by_key(|e| e.tick);
+            for ev in track.lyrics.iter_mut() {
+                ev.tick = scale_tick(ev.tick);
+            }
+            track.lyrics.sort_by_key(|e| e.tick);
+            for ev in track.chord.iter_mut() {
+                ev.tick = scale_tick(ev.tick);
+            }
+            track.chord.sort_by_key(|e| e.tick);
         }
 
         // ── 阶段 4：更新 ppq + rebuild（100%）──

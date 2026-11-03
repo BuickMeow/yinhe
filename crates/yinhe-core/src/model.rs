@@ -1640,6 +1640,66 @@ mod tests {
         assert_eq!(m.notes[60][0].end_tick, before.notes[60][0].end_tick);
     }
 
+    /// 异步 PPQ 缩放也必须覆盖标记/调号/歌词/和弦（旧实现漏了这些 tick）。
+    #[test]
+    fn rescale_ppq_with_progress_scales_all_event_lists() {
+        use yinhe_types::{
+            ChordEvent, KeySigEvent, LyricsEvent, MarkerEvent, ScaleType, TimeSigEvent,
+        };
+
+        let mut conductor = ConductorData::default();
+        conductor.time_sig.push(TimeSigEvent {
+            tick: 240,
+            numerator: 3,
+            denominator: 2,
+        });
+        conductor.key_sig.push(KeySigEvent {
+            tick: 480,
+            root: 0,
+            scale: ScaleType::Major,
+        });
+        conductor.markers.push(MarkerEvent {
+            tick: 600,
+            text: "A".into(),
+        });
+        conductor.lyrics.push(LyricsEvent {
+            tick: 720,
+            text: "la".into(),
+        });
+        conductor.chord.push(ChordEvent {
+            tick: 840,
+            text: "C".into(),
+        });
+        let mut t0 = TrackData::new(0, 0);
+        t0.lyrics.push(LyricsEvent {
+            tick: 960,
+            text: "track".into(),
+        });
+        t0.chord.push(ChordEvent {
+            tick: 1200,
+            text: "G".into(),
+        });
+
+        let m = YinModel {
+            conductor: Arc::new(conductor),
+            tracks: vec![Arc::new(t0)],
+            ..Default::default()
+        };
+        let progress = Arc::new(std::sync::Mutex::new(
+            crate::model_stats::RescaleProgress::default(),
+        ));
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let m =
+            YinModel::rescale_ppq_with_progress(m, 960, progress, cancel).expect("rescale 应成功");
+        assert_eq!(m.conductor.time_sig[0].tick, 480);
+        assert_eq!(m.conductor.key_sig[0].tick, 960);
+        assert_eq!(m.conductor.markers[0].tick, 1200);
+        assert_eq!(m.conductor.lyrics[0].tick, 1440);
+        assert_eq!(m.conductor.chord[0].tick, 1680);
+        assert_eq!(m.tracks[0].lyrics[0].tick, 1920);
+        assert_eq!(m.tracks[0].chord[0].tick, 2400);
+    }
+
     #[test]
     fn rescale_ppq_round_trip_restores_original() {
         // 480 → 960 → 480：整数比例下 round-trip 精确还原。
