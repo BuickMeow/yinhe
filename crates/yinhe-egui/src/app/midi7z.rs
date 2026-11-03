@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use eframe::egui;
 use rust_i18n::t;
-use yinhe_editor_core::midi_7z::export_midi_7z;
+use yinhe_editor_core::midi_7z::{MidiArchiveFormat, export_midi_archive};
 use yinhe_midi::MidiExportOptions;
 
 use crate::app::App;
@@ -22,15 +22,26 @@ struct Job {
 
 #[derive(Default)]
 pub(crate) struct Midi7zState {
+    /// 等待用户选择 7z / zip。
+    pub choose: bool,
+    pub format: MidiArchiveFormat,
     job: Option<Job>,
 }
 
 impl App {
-    /// 文件菜单入口：选择 `.7z` 目标并启动后台任务。
-    pub(crate) fn export_midi_7z_dialog(&mut self) {
-        if self.midi7z.job.is_some() {
+    /// 文件菜单入口：先选 7z / zip，再选保存路径。
+    pub(crate) fn export_midi_archive_dialog(&mut self) {
+        if self.midi7z.job.is_some() || self.midi7z.choose {
             return;
         }
+        if self.workspace.active_doc.is_none() {
+            return;
+        }
+        self.midi7z.format = MidiArchiveFormat::SevenZ;
+        self.midi7z.choose = true;
+    }
+
+    fn start_midi_archive_export(&mut self, format: MidiArchiveFormat) {
         let Some(idx) = self.workspace.active_doc else {
             return;
         };
@@ -40,20 +51,21 @@ impl App {
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("export");
-            format!("{stem}.7z")
+            format!("{stem}.{}", format.extension())
+        };
+        let filter_name = if format == MidiArchiveFormat::Zip {
+            "ZIP"
+        } else {
+            "7z"
         };
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("7z", &["7z"])
+            .add_filter(filter_name, &[format.extension()])
             .set_file_name(&default_name)
             .save_file()
         else {
             return;
         };
-        let path = if path.extension().is_some() {
-            path
-        } else {
-            path.with_extension("7z")
-        };
+        let path = path.with_extension(format.extension());
         let model = Arc::clone(&self.workspace.documents[idx].data.model);
         let opts = MidiExportOptions {
             encoding: self.audio_settings.midi_export_encoding,
@@ -68,10 +80,10 @@ impl App {
         let (tx, rx) = mpsc::channel();
         let out = path.clone();
         let spawn = std::thread::Builder::new()
-            .name("yinhe-midi-7z".into())
+            .name("yinhe-midi-archive".into())
             .stack_size(8 * 1024 * 1024)
             .spawn(move || {
-                let result = export_midi_7z(&model, &out, &opts, |f| {
+                let result = export_midi_archive(&model, &out, format, &opts, |f| {
                     if let Ok(mut p) = p.lock() {
                         *p = f;
                     }
@@ -116,6 +128,45 @@ impl App {
     }
 
     pub(crate) fn show_midi7z_ui(&mut self, ctx: &egui::Context) {
+        if self.midi7z.choose {
+            let mut chosen = None;
+            let mut cancel = false;
+            let response = egui::Modal::new(egui::Id::unique("midi7z_choose")).show(ctx, |ui| {
+                ui.set_width(360.0);
+                ui.heading(t!("midi7z.choose_title"));
+                ui.label(t!("midi7z.choose_hint"));
+                ui.radio_value(
+                    &mut self.midi7z.format,
+                    MidiArchiveFormat::SevenZ,
+                    t!("midi7z.format_7z"),
+                );
+                ui.radio_value(
+                    &mut self.midi7z.format,
+                    MidiArchiveFormat::Zip,
+                    t!("midi7z.format_zip"),
+                );
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button(t!("common.cancel")).clicked() {
+                        cancel = true;
+                    }
+                    if ui.button(t!("midi7z.export")).clicked() {
+                        chosen = Some(self.midi7z.format);
+                    }
+                });
+            });
+            if response.should_close() {
+                cancel = true;
+            }
+            if let Some(format) = chosen {
+                self.midi7z.choose = false;
+                self.start_midi_archive_export(format);
+            } else if cancel {
+                self.midi7z.choose = false;
+            }
+            return;
+        }
+
         let Some(job) = &self.midi7z.job else {
             return;
         };

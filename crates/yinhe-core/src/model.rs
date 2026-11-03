@@ -264,6 +264,12 @@ pub struct ArtistRef {
     /// 角色（如 "main" / "feat."），空 = 未指定。
     #[serde(default)]
     pub role: String,
+    /// 个人网站/主页（可多条，仅文本，不嵌入头像）。
+    #[serde(default)]
+    pub websites: Vec<String>,
+    /// 个人介绍（仅文本）。
+    #[serde(default)]
+    pub bio: String,
 }
 
 /// 工程最终封面（仅一张；`.yin` 独立段存储）。

@@ -108,6 +108,8 @@ pub struct AudioSettings {
     pub pause_on_exit: bool,
     /// 定时把脏文档备份到应用私有目录（崩溃恢复用）。
     pub auto_save_enabled: bool,
+    /// 导出音频时写入歌曲信息（关闭 = 隐私/省空间）。
+    pub export_audio_metadata: bool,
 }
 
 /// “自动复音”的平台默认值。
@@ -135,6 +137,7 @@ impl Default for AudioSettings {
             pause_on_home: false,
             pause_on_exit: false,
             auto_save_enabled: true,
+            export_audio_metadata: true,
         }
     }
 }
@@ -178,15 +181,19 @@ pub fn start_export(path: &str, bit_depth: i32) -> i32 {
         p.reset();
     }
     let cancel = Arc::new(AtomicBool::new(false));
-    let tags = crate::scene::scene()
-        .lock()
-        .ok()
-        .and_then(|s| {
-            s.document
-                .as_ref()
-                .map(|d| yinhe_core::SongInfo::from_meta(&d.data.model.meta))
-        })
-        .map(|info| (PathBuf::from(path), info));
+    let tags = if settings().export_audio_metadata {
+        crate::scene::scene()
+            .lock()
+            .ok()
+            .and_then(|s| {
+                s.document
+                    .as_ref()
+                    .map(|d| yinhe_core::SongInfo::from_meta(&d.data.model.meta))
+            })
+            .map(|info| (PathBuf::from(path), info))
+    } else {
+        None
+    };
     let bit_depth = match bit_depth {
         24 => WavBitDepth::Bit24,
         32 => WavBitDepth::Bit32Float,
@@ -283,6 +290,7 @@ pub fn set_settings(max_voices: u32, buffer_size: u32, ignore_velocity: u8) {
         let pause_on_home = g.pause_on_home;
         let pause_on_exit = g.pause_on_exit;
         let auto_save_enabled = g.auto_save_enabled;
+        let export_audio_metadata = g.export_audio_metadata;
         *g = AudioSettings {
             max_voices,
             buffer_size,
@@ -293,6 +301,7 @@ pub fn set_settings(max_voices: u32, buffer_size: u32, ignore_velocity: u8) {
             pause_on_home,
             pause_on_exit,
             auto_save_enabled,
+            export_audio_metadata,
         };
     }
     let Some(mut guard) = lock_audio() else {
@@ -364,11 +373,22 @@ pub fn auto_save_enabled() -> bool {
     settings().auto_save_enabled
 }
 
+/// 导出音频是否写入歌曲信息。
+pub fn set_export_audio_metadata(on: bool) {
+    if let Ok(mut s) = settings_slot().lock() {
+        s.export_audio_metadata = on;
+    }
+}
+
+pub fn export_audio_metadata() -> bool {
+    settings().export_audio_metadata
+}
+
 /// 音频设置 JSON（设置页回显）。
 pub fn settings_json() -> String {
     let s = settings();
     format!(
-        "{{\"max_voices\":{},\"buffer_size\":{},\"ignore_velocity\":{},\"allow_overlapping_notes\":{},\"show_keyboard_labels\":{},\"follow_playhead\":{},\"pause_on_home\":{},\"pause_on_exit\":{},\"auto_save\":{}}}",
+        "{{\"max_voices\":{},\"buffer_size\":{},\"ignore_velocity\":{},\"allow_overlapping_notes\":{},\"show_keyboard_labels\":{},\"follow_playhead\":{},\"pause_on_home\":{},\"pause_on_exit\":{},\"auto_save\":{},\"export_audio_metadata\":{}}}",
         s.max_voices,
         s.buffer_size,
         s.ignore_velocity,
@@ -377,7 +397,8 @@ pub fn settings_json() -> String {
         s.follow_playhead,
         s.pause_on_home,
         s.pause_on_exit,
-        s.auto_save_enabled
+        s.auto_save_enabled,
+        s.export_audio_metadata
     )
 }
 

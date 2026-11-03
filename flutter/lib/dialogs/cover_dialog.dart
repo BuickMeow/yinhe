@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
@@ -11,6 +13,7 @@ Future<CoverAction?> showCoverDialog(
   BuildContext context, {
   required bool hasCover,
   required int sizeBytes,
+  String? previewPath,
 }) {
   final zh = L10n.isZh;
   return showDialog<CoverAction>(
@@ -41,6 +44,18 @@ Future<CoverAction?> showCoverDialog(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (hasCover && previewPath != null && previewPath.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: Image.file(
+                    File(previewPath),
+                    height: 140,
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              ),
             Text(
               hasCover
                   ? (zh

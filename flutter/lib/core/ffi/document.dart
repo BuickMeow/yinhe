@@ -234,3 +234,14 @@ final CStrArgDart setProjectCover = bridge
 /// 清除工程封面。成功 1。
 final IntNoArgDart clearProjectCover = bridge
     .lookupFunction<IntNoArgNative, IntNoArgDart>('yinhe_clear_project_cover');
+
+/// 导出音频时是否写入歌曲信息。
+final IntArgDart setExportAudioMetadata = bridge
+    .lookupFunction<IntArgNative, IntArgDart>(
+      'yinhe_set_export_audio_metadata',
+    );
+
+/// 当前封面的预览文件路径（无封面返回空串）。
+final CStrDart coverPreviewPath = bridge.lookupFunction<CStrNative, CStrDart>(
+  'yinhe_cover_preview_path',
+);

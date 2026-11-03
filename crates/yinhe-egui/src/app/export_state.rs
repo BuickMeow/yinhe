@@ -25,6 +25,8 @@ pub(crate) struct ExportState {
     pub layer_count: u32,
     /// Sample rate for export (0 = follow global audio settings).
     pub sample_rate: u32,
+    /// 导出成功后是否写入 WAV 歌曲信息（隐私开关）。
+    pub write_metadata: bool,
     /// 本次导出用户选择的输出路径（中止卡“打开文件夹”用；None 则不设按钮）。
     pub last_output_path: Option<String>,
     /// 导出成功后要写入 WAV 的歌曲信息（路径 + 元数据快照）。
@@ -42,6 +44,7 @@ impl ExportState {
             bit_depth: WavBitDepth::Bit24,
             layer_count: 0,
             sample_rate: 0,
+            write_metadata: true,
             last_output_path: None,
             tags: None,
         }

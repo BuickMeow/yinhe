@@ -31,6 +31,20 @@ mixin _ShellDocument on _ShellBase {
             .map((e) => e['name'] as String? ?? '')
             .where((e) => e.isNotEmpty)
             .join(', '),
+        initialArtistWebsites:
+            (((meta['artists'] as List?) ?? const [])
+                        .whereType<Map>()
+                        .firstOrNull?['websites']
+                    as List?)
+                ?.whereType<String>()
+                .join('\n') ??
+            '',
+        initialArtistBio:
+            ((meta['artists'] as List?) ?? const [])
+                    .whereType<Map>()
+                    .firstOrNull?['bio']
+                as String? ??
+            '',
         initialDescription: meta['description'] as String? ?? '',
         initialAlbum: meta['album'] as String? ?? '',
         initialAlbumArtist: meta['album_artist'] as String? ?? '',
@@ -168,9 +182,9 @@ mixin _ShellDocument on _ShellBase {
     });
   }
 
-  /// 主页：导出压缩 MIDI（7z/LZMA2，单个 .mid）。
+  /// 主页：导出压缩 MIDI（7z / zip，单个 .mid）。
   @override
-  Future<void> _exportMidi7z() async {
+  Future<void> _exportMidiArchive() async {
     if (_tracks.value.isEmpty) {
       showSnack(context, l.openFirst);
       return;
@@ -178,7 +192,13 @@ mixin _ShellDocument on _ShellBase {
     if (_playing) {
       _stopPlayback();
     }
-    final tmp = await _exportTempPath('7z');
+    final format = await showMidiArchiveFormatDialog(context);
+    if (!mounted || format == null) {
+      return;
+    }
+    final isZip = format == MidiArchiveFormat.zip;
+    final ext = isZip ? 'zip' : '7z';
+    final tmp = await _exportTempPath(ext);
     if (!mounted || tmp == null) {
       return;
     }
@@ -189,7 +209,7 @@ mixin _ShellDocument on _ShellBase {
     final o = opts.toNativeUtf8();
     var ok = 0;
     try {
-      ok = rust.exportMidi7zStart(p, o);
+      ok = rust.exportMidiArchiveStart(p, o, isZip ? 1 : 0);
     } finally {
       calloc.free(p);
       calloc.free(o);
@@ -211,9 +231,9 @@ mixin _ShellDocument on _ShellBase {
       return;
     }
     await _channel.invokeMethod<void>('saveExport', {
-      'name': '${_exportBaseName()}.7z',
-      'mime': 'application/x-7z-compressed',
-      'ext': '7z',
+      'name': '${_exportBaseName()}.$ext',
+      'mime': isZip ? 'application/zip' : 'application/x-7z-compressed',
+      'ext': ext,
     });
   }
 
@@ -500,10 +520,12 @@ mixin _ShellDocument on _ShellBase {
         size = (cover['size'] as num?)?.toInt() ?? 0;
       }
     } catch (_) {}
+    final previewPath = rust.takeString(rust.coverPreviewPath());
     final action = await showCoverDialog(
       context,
       hasCover: hasCover,
       sizeBytes: size,
+      previewPath: previewPath,
     );
     if (!mounted || action == null) {
       return;

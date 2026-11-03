@@ -552,7 +552,24 @@ pub fn write_wav_info_tags(path: &Path, info: &yinhe_core::SongInfo) -> Result<(
     push(b"IPRD", &info.album);
     push(b"ICRD", &info.year);
     push(b"IGNR", &info.genre);
-    push(b"ICMT", &info.description);
+    let mut comment = info.description.clone();
+    if let Some(primary) = info.artists.first() {
+        if !primary.bio.trim().is_empty() {
+            if !comment.is_empty() {
+                comment.push('\n');
+            }
+            comment.push_str(primary.bio.trim());
+        }
+        for site in &primary.websites {
+            if !site.trim().is_empty() {
+                if !comment.is_empty() {
+                    comment.push('\n');
+                }
+                comment.push_str(site.trim());
+            }
+        }
+    }
+    push(b"ICMT", &comment);
     push(b"ICOP", &info.copyright);
     if info.track_no > 0 {
         push(b"ITRK", &info.track_no.to_string());

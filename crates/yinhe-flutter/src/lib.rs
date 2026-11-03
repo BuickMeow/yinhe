@@ -1160,9 +1160,10 @@ pub extern "C" fn yinhe_export_midi_start(
 /// 开始导出压缩 MIDI（.7z，路径 + 选项 JSON）。成功 1。
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
-pub extern "C" fn yinhe_export_midi_7z_start(
+pub extern "C" fn yinhe_export_midi_archive_start(
     path: *const std::ffi::c_char,
     opts: *const std::ffi::c_char,
+    format: i32,
 ) -> i32 {
     if path.is_null() {
         return 0;
@@ -1177,7 +1178,7 @@ pub extern "C" fn yinhe_export_midi_7z_start(
             .to_string_lossy()
             .into_owned()
     };
-    midi_export::start_7z(path, &opts)
+    midi_export::start_archive(path, &opts, format)
 }
 
 /// MIDI 导出状态 JSON（堆分配）。
@@ -1626,6 +1627,14 @@ pub extern "C" fn yinhe_autosave_pending_json() -> *mut std::ffi::c_char {
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_set_auto_save_enabled(on: i32) -> i32 {
     scene::set_auto_save_enabled(on != 0);
+    1
+}
+
+/// 导出音频时写入歌曲信息。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_export_audio_metadata(on: i32) -> i32 {
+    crate::audio::set_export_audio_metadata(on != 0);
+    scene::save_audio_settings();
     1
 }
 
@@ -2111,6 +2120,12 @@ pub extern "C" fn yinhe_set_project_cover(path: *const std::ffi::c_char) -> i32 
         .to_string_lossy()
         .into_owned();
     scene::set_project_cover(path)
+}
+
+/// 当前封面的预览文件路径（无封面返回空串）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_cover_preview_path() -> *mut std::ffi::c_char {
+    to_c_string(scene::cover_preview_path())
 }
 
 /// 清除工程封面。成功 1。

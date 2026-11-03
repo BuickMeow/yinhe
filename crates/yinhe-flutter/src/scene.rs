@@ -1490,6 +1490,35 @@ pub fn set_project_cover(path: String) -> i32 {
     1
 }
 
+/// 把当前封面写成预览文件，返回路径（无封面返回空串）。
+pub fn cover_preview_path() -> String {
+    let Some(dir) = files_dir() else {
+        return String::new();
+    };
+    let (data, ext) = {
+        let Ok(s) = scene().lock() else {
+            return String::new();
+        };
+        let Some(doc) = s.document.as_ref() else {
+            return String::new();
+        };
+        let Some(cover) = doc.data.cover.as_ref() else {
+            return String::new();
+        };
+        let ext = match cover.mime.as_str() {
+            "image/png" => "png",
+            "image/webp" => "webp",
+            _ => "jpg",
+        };
+        (cover.data.clone(), ext)
+    };
+    let path = format!("{dir}/cover_preview.{ext}");
+    if std::fs::write(&path, &*data).is_err() {
+        return String::new();
+    }
+    path
+}
+
 /// 清除工程封面（成功 1）。
 pub fn clear_project_cover() -> i32 {
     let Ok(mut s) = scene().lock() else {
@@ -1526,6 +1555,11 @@ pub fn set_project_meta_json(json: &str) -> i32 {
             .unwrap_or("")
             .to_string()
     };
+    let artist_websites: Vec<String> = v
+        .get("artist_websites")
+        .and_then(|x| serde_json::from_value(x.clone()).ok())
+        .unwrap_or_default();
+    let artist_bio = text("artist_bio");
     let info = yinhe_core::SongInfo {
         name: text("name"),
         artist: text("artist"),
@@ -1542,6 +1576,19 @@ pub fn set_project_meta_json(json: &str) -> i32 {
             .and_then(|x| serde_json::from_value(x.clone()).ok())
             .unwrap_or_default(),
     };
+    let mut info = info;
+    if let Some(first) = info.artists.first_mut() {
+        first.websites = artist_websites;
+        first.bio = artist_bio;
+    } else if !artist_websites.is_empty() || !artist_bio.is_empty() {
+        info.artists.push(yinhe_core::ArtistRef {
+            id: String::new(),
+            name: info.artist.clone(),
+            role: String::new(),
+            websites: artist_websites,
+            bio: artist_bio,
+        });
+    }
     let ppq = v.get("ppq").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
     crate::doc_job::try_start(
         "project-meta",
@@ -2089,7 +2136,7 @@ fn write_settings() {
     let a = crate::audio::settings();
     text.push_str(&format!(
         "max_voices={}\nbuffer_size={}\nignore_velocity={}\nallow_overlapping_notes={}\n\
-         show_keyboard_labels={}\nfollow_playhead={}\npause_on_home={}\npause_on_exit={}\nauto_save={}\n",
+         show_keyboard_labels={}\nfollow_playhead={}\npause_on_home={}\npause_on_exit={}\nauto_save={}\nexport_audio_metadata={}\n",
         a.max_voices,
         a.buffer_size,
         a.ignore_velocity,
@@ -2098,7 +2145,8 @@ fn write_settings() {
         if a.follow_playhead { 1 } else { 0 },
         if a.pause_on_home { 1 } else { 0 },
         if a.pause_on_exit { 1 } else { 0 },
-        if a.auto_save_enabled { 1 } else { 0 }
+        if a.auto_save_enabled { 1 } else { 0 },
+        if a.export_audio_metadata { 1 } else { 0 }
     ));
     if let Err(e) = std::fs::write(format!("{dir}/settings.txt"), text) {
         log::error!("设置写入失败: {e}");
@@ -2123,6 +2171,7 @@ fn load_settings() {
     let mut pause_on_home = defaults.pause_on_home;
     let mut pause_on_exit = defaults.pause_on_exit;
     let mut auto_save = defaults.auto_save_enabled;
+    let mut export_audio_metadata = defaults.export_audio_metadata;
     let mut soundfonts: Vec<crate::audio::SoundfontEntry> = Vec::new();
     let mut language = String::new();
     let mut theme = String::new();
@@ -2166,6 +2215,8 @@ fn load_settings() {
             pause_on_exit = v.trim() != "0";
         } else if let Some(v) = line.strip_prefix("auto_save=") {
             auto_save = v.trim() != "0";
+        } else if let Some(v) = line.strip_prefix("export_audio_metadata=") {
+            export_audio_metadata = v.trim() != "0";
         }
     }
     if !language.is_empty() {
@@ -2185,6 +2236,7 @@ fn load_settings() {
     crate::audio::set_pause_on_home(pause_on_home);
     crate::audio::set_pause_on_exit(pause_on_exit);
     crate::audio::set_auto_save_enabled(auto_save);
+    crate::audio::set_export_audio_metadata(export_audio_metadata);
     crate::soundfont_archive::cleanup();
 }
 

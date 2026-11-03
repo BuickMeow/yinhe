@@ -10,6 +10,7 @@ pub(crate) fn show_settings_viewport(
     bit_depth: &mut yinhe_audio::export::WavBitDepth,
     layer_count: &mut u32,
     export_sample_rate: &mut u32,
+    write_metadata: &mut bool,
 ) -> bool {
     let viewport_id = egui::ViewportId::from_hash_of("export_settings_dialog");
     if !*show {
@@ -19,6 +20,7 @@ pub(crate) fn show_settings_viewport(
     let bd = std::rc::Rc::new(std::cell::Cell::new(*bit_depth));
     let lc = std::rc::Rc::new(std::cell::Cell::new(*layer_count));
     let sr = std::rc::Rc::new(std::cell::Cell::new(*export_sample_rate));
+    let wm = std::rc::Rc::new(std::cell::Cell::new(*write_metadata));
     let open = std::rc::Rc::new(std::cell::RefCell::new(true));
     let started = std::rc::Rc::new(std::cell::RefCell::new(false));
     let ctx_clone = ctx.clone();
@@ -27,6 +29,7 @@ pub(crate) fn show_settings_viewport(
     let bd_cb = bd.clone();
     let lc_cb = lc.clone();
     let sr_cb = sr.clone();
+    let wm_cb = wm.clone();
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
@@ -175,6 +178,16 @@ pub(crate) fn show_settings_viewport(
                                             }
                                         },
                                     );
+                                    crate::widgets::rows::panel_row(
+                                        ui,
+                                        t!("dialog.export.write_metadata").as_ref(),
+                                        |ui| {
+                                            let mut on = wm_cb.get();
+                                            if ui.checkbox(&mut on, "").changed() {
+                                                wm_cb.set(on);
+                                            }
+                                        },
+                                    );
                                 },
                                 |ui| {
                                     use crate::chrome::dialog_buttons::{DialogButton, dialog_button_row};
@@ -205,6 +218,7 @@ pub(crate) fn show_settings_viewport(
     *bit_depth = bd.get();
     *layer_count = lc.get();
     *export_sample_rate = sr.get();
+    *write_metadata = wm.get();
 
     *started.borrow()
 }

@@ -13,6 +13,10 @@ pub struct ProjectSettingsDraft {
     pub info: SongInfo,
     /// 多音乐人的文本编辑形态（逗号/顿号分隔；首位为主）。
     pub artists_text: String,
+    /// 首位音乐人的网站（每行一条）。
+    pub artist_websites_text: String,
+    /// 首位音乐人的介绍。
+    pub artist_bio: String,
     pub ppq: i32,
     pub compression_level: i32,
     /// 最终封面（None = 未设置）。
@@ -35,6 +39,16 @@ impl ProjectSettingsDraft {
                     .collect();
                 names.join(", ")
             },
+            artist_websites_text: meta
+                .artists
+                .first()
+                .map(|a| a.websites.join("\n"))
+                .unwrap_or_default(),
+            artist_bio: meta
+                .artists
+                .first()
+                .map(|a| a.bio.clone())
+                .unwrap_or_default(),
             ppq: meta.ppq as i32,
             compression_level: meta.compression_level,
             cover: doc.data.cover.clone(),
@@ -94,6 +108,36 @@ pub fn show(ui: &mut egui::Ui, draft: &mut ProjectSettingsDraft) {
                 220.0,
                 "proj_artists",
                 None,
+            );
+        },
+    );
+
+    // ── 首位音乐人的网站/介绍（工程内独立快照）──
+    setting_row(
+        ui,
+        t!("project.artist_websites").as_ref(),
+        t!("project.artist_websites_desc").as_ref(),
+        |ui| {
+            crate::widgets::text_input::control_text_input_multiline(
+                ui,
+                &mut draft.artist_websites_text,
+                220.0,
+                50.0,
+                "proj_artist_websites",
+            );
+        },
+    );
+    setting_row(
+        ui,
+        t!("project.artist_bio").as_ref(),
+        t!("project.artist_bio_desc").as_ref(),
+        |ui| {
+            crate::widgets::text_input::control_text_input_multiline(
+                ui,
+                &mut draft.artist_bio,
+                220.0,
+                60.0,
+                "proj_artist_bio",
             );
         },
     );
@@ -304,8 +348,30 @@ pub(crate) fn commit_draft(
             id: String::new(),
             name: name.to_string(),
             role: String::new(),
+            websites: Vec::new(),
+            bio: String::new(),
         })
         .collect();
+    let websites: Vec<String> = draft
+        .artist_websites_text
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    let bio = draft.artist_bio.trim().to_string();
+    if let Some(first) = info.artists.first_mut() {
+        first.websites = websites;
+        first.bio = bio;
+    } else if !websites.is_empty() || !bio.is_empty() {
+        info.artists.push(yinhe_core::ArtistRef {
+            id: String::new(),
+            name: info.artist.clone(),
+            role: String::new(),
+            websites,
+            bio,
+        });
+    }
     let old = SongInfo::from_meta(&doc.data.model.meta);
     if old != info {
         let before = doc.capture_snapshot();

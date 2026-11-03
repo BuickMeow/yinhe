@@ -31,6 +31,16 @@ typedef ExportMidiStartDart = int Function(
   ffi.Pointer<Utf8>,
   ffi.Pointer<Utf8>,
 );
+typedef ExportMidiArchiveStartNative = ffi.Int32 Function(
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  ffi.Int32,
+);
+typedef ExportMidiArchiveStartDart = int Function(
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+  int,
+);
 
 /// 开始导出 MIDI（路径 + 选项 JSON）。
 final ExportMidiStartDart exportMidiStart = bridge
@@ -42,8 +52,8 @@ final ExportMidiStartDart exportMidiStart = bridge
 final CStrDart exportMidiStatusJson = bridge
     .lookupFunction<CStrNative, CStrDart>('yinhe_export_midi_status_json');
 
-/// 开始导出压缩 MIDI（.7z，路径 + 选项 JSON）。
-final ExportMidiStartDart exportMidi7zStart = bridge
-    .lookupFunction<ExportMidiStartNative, ExportMidiStartDart>(
-      'yinhe_export_midi_7z_start',
+/// 开始导出压缩 MIDI（7z/zip，路径 + 选项 JSON + 格式 0=7z 1=zip）。
+final ExportMidiArchiveStartDart exportMidiArchiveStart = bridge
+    .lookupFunction<ExportMidiArchiveStartNative, ExportMidiArchiveStartDart>(
+      'yinhe_export_midi_archive_start',
     );

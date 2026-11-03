@@ -491,7 +491,7 @@ abstract class _ShellBase extends State<StudioShell>
   void _openRecent(RecentItem item);
   void _openSettings();
   Future<void> _pickMidi();
-  Future<void> _exportMidi7z();
+  Future<void> _exportMidiArchive();
   Future<void> _showLibrary();
   Future<void> _showCover();
   Future<void> _pickImportMidi();

@@ -61,6 +61,7 @@ class _SettingsViewState extends State<SettingsView> {
   bool _allowOverlappingNotes = true;
   bool _followPlayhead = true;
   bool _autoSave = true;
+  bool _exportAudioMetadata = true;
   bool _pauseOnHome = false;
   bool _pauseOnExit = false;
 
@@ -214,6 +215,8 @@ class _SettingsViewState extends State<SettingsView> {
             json['allow_overlapping_notes'] as bool? ?? _allowOverlappingNotes;
         _followPlayhead = json['follow_playhead'] as bool? ?? _followPlayhead;
         _autoSave = json['auto_save'] as bool? ?? _autoSave;
+        _exportAudioMetadata =
+            json['export_audio_metadata'] as bool? ?? _exportAudioMetadata;
       });
     } catch (_) {
       // 回退默认值。
@@ -229,6 +232,11 @@ class _SettingsViewState extends State<SettingsView> {
       _ignoreVelocity = ignoreVelocity ?? _ignoreVelocity;
     });
     rust.setAudioSettings(_maxVoices, _bufferSize, _ignoreVelocity);
+  }
+
+  void _setExportAudioMetadata(bool value) {
+    setState(() => _exportAudioMetadata = value);
+    rust.setExportAudioMetadata(value ? 1 : 0);
   }
 
   void _setAutoSave(bool value) {
@@ -426,6 +434,15 @@ class _SettingsViewState extends State<SettingsView> {
           icon: Icons.save_outlined,
           value: _autoSave,
           onChanged: _setAutoSave,
+        ),
+        _switchCard(
+          title: L10n.isZh ? '导出音频写入歌曲信息' : 'Write song metadata to audio',
+          subtitle: L10n.isZh
+              ? '关闭后导出的 WAV 不写歌名/音乐人/专辑等标签'
+              : 'Disable to export WAV without title/artist/album tags',
+          icon: Icons.info_outline,
+          value: _exportAudioMetadata,
+          onChanged: _setExportAudioMetadata,
         ),
         _switchCard(
           title: L10n.isZh ? '跟随播放头' : 'Follow playhead',

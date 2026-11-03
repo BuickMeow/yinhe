@@ -391,6 +391,7 @@ impl App {
             &mut self.jobs.export.bit_depth,
             &mut self.jobs.export.layer_count,
             &mut self.jobs.export.sample_rate,
+            &mut self.jobs.export.write_metadata,
         ) {
             self.start_export();
         }

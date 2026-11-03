@@ -62,6 +62,7 @@ cpal = "0.18"
 dirs = "6"
 rust-i18n = "4"
 sevenz-rust2 = { version = "0.24", default-features = false, features = ["compress", "util"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 
 # debug 产物只服务于 AI 的 clippy/test 迭代，不用于手动调试：
 # 自身保留行号（panic backtrace 可读），依赖不生成 DWARF（显著减小 target、编译更快）。

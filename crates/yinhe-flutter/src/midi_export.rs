@@ -64,8 +64,8 @@ pub fn start(path: String, opts_json: &str) -> i32 {
     1
 }
 
-/// 开始导出压缩 MIDI（.7z）；返回 1 = 已开始。
-pub fn start_7z(path: String, opts_json: &str) -> i32 {
+/// 开始导出压缩 MIDI（7z/zip）；`format` 0=7z 1=zip。返回 1 = 已开始。
+pub fn start_archive(path: String, opts_json: &str, format: i32) -> i32 {
     let Some(model) = crate::scene::model_arc() else {
         return 0;
     };
@@ -82,9 +82,14 @@ pub fn start_7z(path: String, opts_json: &str) -> i32 {
 
     let opts = parse_options(opts_json);
     std::thread::spawn(move || {
-        let result = yinhe_editor_core::midi_7z::export_midi_7z(
+        let result = yinhe_editor_core::midi_7z::export_midi_archive(
             &model,
             std::path::Path::new(&path),
+            if format == 1 {
+                yinhe_editor_core::midi_7z::MidiArchiveFormat::Zip
+            } else {
+                yinhe_editor_core::midi_7z::MidiArchiveFormat::SevenZ
+            },
             &opts,
             |f| {
                 if let Ok(mut st) = status_slot().lock() {

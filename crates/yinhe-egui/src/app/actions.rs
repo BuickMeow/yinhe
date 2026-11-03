@@ -1171,7 +1171,7 @@ impl App {
                 self.export_midi_dialog();
             }
             transport_bar::FileAction::ExportMidi7z => {
-                self.export_midi_7z_dialog();
+                self.export_midi_archive_dialog();
             }
             transport_bar::FileAction::ExportAudio => {
                 self.export_audio_dialog(ctx);
@@ -1434,12 +1434,16 @@ impl App {
         // 记下输出路径：中止卡“打开文件夹”按钮用。
         self.jobs.export.last_output_path = Some(path_str.clone());
         // 音频完成后写 WAV LIST/INFO；元数据取发起导出时的快照。
-        self.jobs.export.tags = self.workspace.active_doc.map(|i| {
-            (
-                path_str.clone(),
-                yinhe_core::SongInfo::from_meta(&self.workspace.documents[i].data.model.meta),
-            )
-        });
+        self.jobs.export.tags = if self.jobs.export.write_metadata {
+            self.workspace.active_doc.map(|i| {
+                (
+                    path_str.clone(),
+                    yinhe_core::SongInfo::from_meta(&self.workspace.documents[i].data.model.meta),
+                )
+            })
+        } else {
+            None
+        };
         cancel_flag.store(false, std::sync::atomic::Ordering::Relaxed);
         pause_flag.store(false, std::sync::atomic::Ordering::Relaxed);
         // Reset progress state（计时起点为按钮点击时刻，保证壁钟时间真实）。

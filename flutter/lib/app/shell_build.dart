@@ -228,8 +228,8 @@ mixin _ShellBuild on _ShellBase {
           onProjectSettings: () => _runFromSidebar(_openProjectSettings),
           onExportAudio: () => _runFromSidebar(() => unawaited(_exportAudio())),
           onExportMidi: () => _runFromSidebar(() => unawaited(_exportMidi())),
-          onExportMidi7z: () =>
-              _runFromSidebar(() => unawaited(_exportMidi7z())),
+          onExportMidiArchive: () =>
+              _runFromSidebar(() => unawaited(_exportMidiArchive())),
           onCover: () => _runFromSidebar(() => unawaited(_showCover())),
           onLibrary: () => _runFromSidebar(() => unawaited(_showLibrary())),
           onRecentFiles: _showRecentFiles,

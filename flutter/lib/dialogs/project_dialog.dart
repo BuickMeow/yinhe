@@ -13,6 +13,8 @@ class ProjectDialog extends StatefulWidget {
     required this.initialName,
     required this.initialArtist,
     required this.initialArtists,
+    required this.initialArtistWebsites,
+    required this.initialArtistBio,
     required this.initialDescription,
     required this.initialAlbum,
     required this.initialAlbumArtist,
@@ -32,6 +34,8 @@ class ProjectDialog extends StatefulWidget {
 
   /// 多音乐人（逗号分隔，首位为主）。
   final String initialArtists;
+  final String initialArtistWebsites;
+  final String initialArtistBio;
   final String initialDescription;
   final String initialAlbum;
   final String initialAlbumArtist;
@@ -61,6 +65,12 @@ class _ProjectDialogState extends State<ProjectDialog> {
   );
   late final TextEditingController _artists = TextEditingController(
     text: widget.initialArtists,
+  );
+  late final TextEditingController _artistWebsites = TextEditingController(
+    text: widget.initialArtistWebsites,
+  );
+  late final TextEditingController _artistBio = TextEditingController(
+    text: widget.initialArtistBio,
   );
   late final TextEditingController _album = TextEditingController(
     text: widget.initialAlbum,
@@ -94,6 +104,8 @@ class _ProjectDialogState extends State<ProjectDialog> {
     _artist.dispose();
     _desc.dispose();
     _artists.dispose();
+    _artistWebsites.dispose();
+    _artistBio.dispose();
     _album.dispose();
     _albumArtist.dispose();
     _genre.dispose();
@@ -126,6 +138,12 @@ class _ProjectDialogState extends State<ProjectDialog> {
       'name': _name.text.trim(),
       'artist': _artist.text.trim(),
       'artists': artists,
+      'artist_websites': _artistWebsites.text
+          .split(RegExp(r'\r?\n'))
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList(),
+      'artist_bio': _artistBio.text.trim(),
       'description': _desc.text.trim(),
       'album': _album.text.trim(),
       'album_artist': _albumArtist.text.trim(),

@@ -7865,6 +7865,7 @@ dependencies = [
  "yinhe-theme",
  "yinhe-types",
  "yinhe-yin",
+ "zip",
 ]
 
 [[package]]

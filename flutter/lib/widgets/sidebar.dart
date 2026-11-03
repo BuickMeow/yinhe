@@ -18,7 +18,7 @@ class Sidebar extends StatelessWidget {
     required this.onProjectSettings,
     required this.onExportAudio,
     required this.onExportMidi,
-    required this.onExportMidi7z,
+    required this.onExportMidiArchive,
     required this.onCover,
     required this.onLibrary,
     required this.onRecentFiles,
@@ -33,7 +33,7 @@ class Sidebar extends StatelessWidget {
   final VoidCallback onProjectSettings;
   final VoidCallback onExportAudio;
   final VoidCallback onExportMidi;
-  final VoidCallback onExportMidi7z;
+  final VoidCallback onExportMidiArchive;
   final VoidCallback onCover;
   final VoidCallback onLibrary;
   final VoidCallback onRecentFiles;
@@ -77,7 +77,7 @@ class Sidebar extends StatelessWidget {
                   _item(
                     Icons.archive_outlined,
                     L10n.isZh ? '导出压缩 MIDI' : 'Export compressed MIDI',
-                    onExportMidi7z,
+                    onExportMidiArchive,
                   ),
                   const _SidebarDivider(),
                   _item(

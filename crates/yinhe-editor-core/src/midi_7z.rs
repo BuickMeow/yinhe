@@ -59,12 +59,88 @@ impl<R: Read> Read for ProgressReader<'_, R> {
     }
 }
 
-/// 导出一个 MIDI 到 7z。
+/// 压缩 MIDI 的容器格式。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MidiArchiveFormat {
+    /// 7z + LZMA2，体积最小，推荐。
+    #[default]
+    SevenZ,
+    /// zip + Deflate，兼容性最好，但对 MIDI 压缩率差。
+    Zip,
+}
+
+impl MidiArchiveFormat {
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::SevenZ => "7z",
+            Self::Zip => "zip",
+        }
+    }
+    pub fn from_extension(ext: &str) -> Self {
+        if ext.eq_ignore_ascii_case("zip") {
+            Self::Zip
+        } else {
+            Self::SevenZ
+        }
+    }
+}
+
+fn write_7z(
+    file: File,
+    out_path: &Path,
+    entry_name: &str,
+    total: u64,
+    progress: &mut dyn FnMut(f32),
+) -> Result<(), String> {
+    let mut writer = ArchiveWriter::create(out_path).map_err(|e| format!("创建 7z 失败: {e}"))?;
+    // 不加密头：目标只是压缩分享，加密会让兼容性变差。
+    writer.set_encrypt_header(false);
+    let reader = ProgressReader {
+        inner: file,
+        total,
+        done: 0,
+        last_report: 0,
+        progress,
+    };
+    writer
+        .push_archive_entry(ArchiveEntry::new_file(entry_name), Some(reader))
+        .map_err(|e| format!("写入 7z 失败: {e}"))?;
+    writer.finish().map_err(|e| format!("完成 7z 失败: {e}"))?;
+    Ok(())
+}
+
+fn write_zip(
+    file: File,
+    out_path: &Path,
+    entry_name: &str,
+    total: u64,
+    progress: &mut dyn FnMut(f32),
+) -> Result<(), String> {
+    let out = File::create(out_path).map_err(|e| format!("创建 zip 失败: {e}"))?;
+    let mut zip = zip::ZipWriter::new(out);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    zip.start_file(entry_name, options)
+        .map_err(|e| format!("写入 zip 失败: {e}"))?;
+    let mut reader = ProgressReader {
+        inner: file,
+        total,
+        done: 0,
+        last_report: 0,
+        progress,
+    };
+    std::io::copy(&mut reader, &mut zip).map_err(|e| format!("写入 zip 失败: {e}"))?;
+    zip.finish().map_err(|e| format!("完成 zip 失败: {e}"))?;
+    Ok(())
+}
+
+/// 导出一个 MIDI 到压缩包（7z 或 zip）。
 ///
-/// `progress` 收到 0.0..1.0：前 0.5 是写 MIDI，后 0.5 是 LZMA2 压缩。
-pub fn export_midi_7z(
+/// `progress` 收到 0.0..1.0：前 0.5 是写 MIDI，后 0.5 是压缩。
+pub fn export_midi_archive(
     model: &YinModel,
     out_path: &Path,
+    format: MidiArchiveFormat,
     opts: &MidiExportOptions,
     mut progress: impl FnMut(f32),
 ) -> Result<(), String> {
@@ -86,33 +162,28 @@ pub fn export_midi_7z(
     let file = File::open(&tmp).map_err(|e| format!("打开临时 MIDI 失败: {e}"))?;
     let entry_name = midi_entry_name(out_path);
 
-    let result = (|| -> Result<(), String> {
-        let mut writer =
-            ArchiveWriter::create(out_path).map_err(|e| format!("创建 7z 失败: {e}"))?;
-        // 不加密头：目标只是压缩分享，加密会让兼容性变差。
-        writer.set_encrypt_header(false);
-        let reader = ProgressReader {
-            inner: file,
-            total,
-            done: 0,
-            last_report: 0,
-            progress: &mut progress,
-        };
-        writer
-            .push_archive_entry(ArchiveEntry::new_file(&entry_name), Some(reader))
-            .map_err(|e| format!("写入 7z 失败: {e}"))?;
-        writer.finish().map_err(|e| format!("完成 7z 失败: {e}"))?;
-        Ok(())
-    })();
+    let result = match format {
+        MidiArchiveFormat::SevenZ => write_7z(file, out_path, &entry_name, total, &mut progress),
+        MidiArchiveFormat::Zip => write_zip(file, out_path, &entry_name, total, &mut progress),
+    };
 
     drop(tmp_guard);
     if result.is_err() {
-        // 失败时不要留下半个 .7z。
         let _ = fs::remove_file(out_path);
         return result;
     }
     progress(1.0);
     Ok(())
+}
+
+/// 兼容旧调用：导出 7z。
+pub fn export_midi_7z(
+    model: &YinModel,
+    out_path: &Path,
+    opts: &MidiExportOptions,
+    progress: impl FnMut(f32),
+) -> Result<(), String> {
+    export_midi_archive(model, out_path, MidiArchiveFormat::SevenZ, opts, progress)
 }
 
 #[cfg(test)]
@@ -165,6 +236,55 @@ mod tests {
         let mid = out.join("song.mid");
         assert!(mid.exists(), "7z 内应有 song.mid");
         let bytes = fs::read(&mid).expect("read mid");
+        assert!(bytes.starts_with(b"MThd"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod zip_tests {
+    use super::*;
+    use std::io::Read;
+    use std::sync::Arc;
+    use yinhe_core::{NoteEvent, TrackData, YinModel};
+
+    #[test]
+    fn exports_single_midi_into_zip() {
+        let dir = std::env::temp_dir().join(format!(
+            "yinhe-zip-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let archive = dir.join("song.zip");
+        let mut m = YinModel {
+            tracks: vec![Arc::new(TrackData::new(0, 0))],
+            ..Default::default()
+        };
+        m.load_track_notes(vec![vec![NoteEvent {
+            id: 0,
+            start_tick: 0,
+            end_tick: 480,
+            key: 60,
+            velocity: 100,
+        }]]);
+        m.rebuild();
+        export_midi_archive(
+            &m,
+            &archive,
+            MidiArchiveFormat::Zip,
+            &MidiExportOptions::default(),
+            |_| {},
+        )
+        .expect("export");
+        let file = File::open(&archive).unwrap();
+        let mut zip = zip::ZipArchive::new(file).unwrap();
+        let mut entry = zip.by_name("song.mid").expect("song.mid");
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).unwrap();
         assert!(bytes.starts_with(b"MThd"));
         let _ = fs::remove_dir_all(&dir);
     }
