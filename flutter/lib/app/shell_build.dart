@@ -257,9 +257,12 @@ mixin _ShellBuild on _ShellBase {
                                   : 0.0;
                               // 底部栏（手柄 + 展开的面板）参与布局：PR 视口让出这块高度，
                               // 不再被浮层遮住。
-                              // PR/AR 都固定让出底部手柄这一条：切换视图时画布高度
-                              // 不变，避免视图/纹理/浮层在相邻帧里不同步而抖动。
-                              final bottomBarH = kAmHandleHeight;
+                              // 底部栏高度按当前视图实际存在的栏位计算：
+                              // PR 有 AM 手柄，AR 没有；未来某个视图新增底部栏时
+                              // 只需要在这里加一项，视口会自动让出对应高度。
+                              final bottomBarH = _viewMode == kViewPianoroll
+                                  ? kAmHandleHeight
+                                  : 0.0;
                               // 内容画布 = 画布区减去标尺条和底部栏（Rust 坐标系从标尺下方开始）。
                               final contentH =
                                   (canvasH - RulerPainter.height - bottomBarH)
