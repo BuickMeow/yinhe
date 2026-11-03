@@ -19,6 +19,8 @@ class Sidebar extends StatelessWidget {
     required this.onExportAudio,
     required this.onExportMidi,
     required this.onExportMidi7z,
+    required this.onCover,
+    required this.onLibrary,
     required this.onRecentFiles,
     required this.onSettings,
   });
@@ -32,6 +34,8 @@ class Sidebar extends StatelessWidget {
   final VoidCallback onExportAudio;
   final VoidCallback onExportMidi;
   final VoidCallback onExportMidi7z;
+  final VoidCallback onCover;
+  final VoidCallback onLibrary;
   final VoidCallback onRecentFiles;
   final VoidCallback onSettings;
 
@@ -76,6 +80,16 @@ class Sidebar extends StatelessWidget {
                     onExportMidi7z,
                   ),
                   const _SidebarDivider(),
+                  _item(
+                    Icons.image_outlined,
+                    L10n.isZh ? '工程封面…' : 'Project cover…',
+                    onCover,
+                  ),
+                  _item(
+                    Icons.library_music_outlined,
+                    L10n.isZh ? '音乐库' : 'Library',
+                    onLibrary,
+                  ),
                   _item(Icons.history, l.recentFiles, onRecentFiles),
                   _item(Icons.settings_outlined, l.settings, onSettings),
                 ],

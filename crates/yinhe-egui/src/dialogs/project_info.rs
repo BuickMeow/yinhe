@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use rust_i18n::t;
-use yinhe_core::SongInfo;
+use yinhe_core::{CoverArt, SongInfo};
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::history::{begin_edit, commit_compression_level, commit_ppq};
 
@@ -11,8 +11,14 @@ use crate::dialogs::settings::setting_row;
 #[derive(Clone)]
 pub struct ProjectSettingsDraft {
     pub info: SongInfo,
+    /// 多音乐人的文本编辑形态（逗号/顿号分隔；首位为主）。
+    pub artists_text: String,
     pub ppq: i32,
     pub compression_level: i32,
+    /// 最终封面（None = 未设置）。
+    pub cover: Option<CoverArt>,
+    /// 选图失败的临时提示（对话框内显示）。
+    pub cover_error: Option<String>,
 }
 
 impl ProjectSettingsDraft {
@@ -20,8 +26,19 @@ impl ProjectSettingsDraft {
         let meta = &doc.data.model.meta;
         Self {
             info: SongInfo::from_meta(meta),
+            artists_text: {
+                let names: Vec<String> = meta
+                    .artists
+                    .iter()
+                    .map(|a| a.name.clone())
+                    .filter(|s| !s.trim().is_empty())
+                    .collect();
+                names.join(", ")
+            },
             ppq: meta.ppq as i32,
             compression_level: meta.compression_level,
+            cover: doc.data.cover.clone(),
+            cover_error: None,
         }
     }
 }
@@ -60,6 +77,22 @@ pub fn show(ui: &mut egui::Ui, draft: &mut ProjectSettingsDraft) {
                 &mut draft.info.artist,
                 220.0,
                 "proj_artist",
+                None,
+            );
+        },
+    );
+
+    // ── Ordered artists (first = primary) ──
+    setting_row(
+        ui,
+        t!("project.artists").as_ref(),
+        t!("project.artists_desc").as_ref(),
+        |ui| {
+            crate::widgets::text_input::control_text_input(
+                ui,
+                &mut draft.artists_text,
+                220.0,
+                "proj_artists",
                 None,
             );
         },
@@ -165,6 +198,45 @@ pub fn show(ui: &mut egui::Ui, draft: &mut ProjectSettingsDraft) {
         },
     );
 
+    // ── Cover ──
+    setting_row(
+        ui,
+        t!("project.cover").as_ref(),
+        t!("project.cover_desc").as_ref(),
+        |ui| {
+            ui.horizontal(|ui| {
+                if ui.button(t!("project.cover_pick")).clicked()
+                    && let Some(path) = rfd::FileDialog::new()
+                        .add_filter("Image", &["jpg", "jpeg", "png", "webp"])
+                        .pick_file()
+                {
+                    match yinhe_editor_core::cover::load_cover(&path) {
+                        Ok(c) => {
+                            draft.cover = Some(c);
+                            draft.cover_error = None;
+                        }
+                        Err(e) => draft.cover_error = Some(e),
+                    }
+                }
+                if draft.cover.is_some() && ui.button(t!("project.cover_clear")).clicked() {
+                    draft.cover = None;
+                    draft.cover_error = None;
+                }
+                match &draft.cover {
+                    Some(c) => {
+                        ui.weak(format!("{} KB", c.data.len().div_ceil(1024)));
+                    }
+                    None => {
+                        ui.weak(t!("project.cover_none"));
+                    }
+                }
+            });
+            if let Some(e) = &draft.cover_error {
+                ui.colored_label(crate::theme::danger(), e);
+            }
+        },
+    );
+
     // ── PPQ ──
     setting_row(
         ui,
@@ -222,16 +294,26 @@ pub(crate) fn commit_draft(
     use std::sync::Arc;
 
     // ── 歌曲元数据：整组比较，差异合并为一条 undo ──
+    let mut info = draft.info.clone();
+    info.artists = draft
+        .artists_text
+        .split([',', '，', '、'])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|name| yinhe_core::ArtistRef {
+            id: String::new(),
+            name: name.to_string(),
+            role: String::new(),
+        })
+        .collect();
     let old = SongInfo::from_meta(&doc.data.model.meta);
-    if old != draft.info {
+    if old != info {
         let before = doc.capture_snapshot();
-        draft
-            .info
-            .apply_to(&mut Arc::make_mut(&mut doc.data.model).meta);
+        info.apply_to(&mut Arc::make_mut(&mut doc.data.model).meta);
         doc.push_undo(
             yinhe_editor_core::history::UndoAction::SongInfo {
                 old: Box::new(old),
-                new: Box::new(draft.info.clone()),
+                new: Box::new(info),
             },
             "Edit song info",
             before,
@@ -270,5 +352,21 @@ pub(crate) fn commit_draft(
             model.rebuild_tempo_map();
             commit_ppq(doc, save_id, new_ppq, false);
         }
+    }
+
+    // ── Cover ──
+    if draft.cover != doc.data.cover {
+        let before = doc.capture_snapshot();
+        let old = doc.data.cover.clone();
+        doc.data.cover = draft.cover.clone();
+        doc.data.bump_revision();
+        doc.push_undo(
+            yinhe_editor_core::history::UndoAction::Cover {
+                old,
+                new: draft.cover.clone(),
+            },
+            "Edit cover",
+            before,
+        );
     }
 }

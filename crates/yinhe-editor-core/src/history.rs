@@ -139,6 +139,11 @@ pub enum UndoAction {
         instrument_before: Option<yinhe_core::ChannelInstrument>,
         instrument_after: Option<yinhe_core::ChannelInstrument>,
     },
+    /// 工程封面变更（只嵌入最终一张图）。
+    Cover {
+        old: Option<yinhe_core::CoverArt>,
+        new: Option<yinhe_core::CoverArt>,
+    },
     /// 歌曲元数据整体编辑（歌名/音乐人/专辑/流派/年份/编号/版权/简介）。
     /// 工程设置对话框一次提交，避免每个字段一条 undo。
     SongInfo {
@@ -327,6 +332,10 @@ impl UndoAction {
                     instrument_before,
                     instrument_after,
                 }
+            }
+            UndoAction::Cover { mut old, mut new } => {
+                std::mem::swap(&mut old, &mut new);
+                UndoAction::Cover { old, new }
             }
             UndoAction::SongInfo { mut old, mut new } => {
                 std::mem::swap(&mut old, &mut new);

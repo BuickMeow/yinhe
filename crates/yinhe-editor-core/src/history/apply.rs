@@ -108,6 +108,10 @@ impl UndoAction {
                 *instrument_channel,
                 *instrument_after,
             ),
+            UndoAction::Cover { old: _, new } => {
+                doc.data.cover = new.clone();
+                doc.data.bump_revision();
+            }
             UndoAction::SongInfo { old: _, new } => {
                 let model = Arc::make_mut(&mut doc.data.model);
                 new.apply_to(&mut model.meta);

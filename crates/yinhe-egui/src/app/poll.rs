@@ -96,6 +96,7 @@ impl App {
                 sf,
                 mapping,
                 mixer,
+                cover,
             } => {
                 let (quantize_arrange, quantize_pianoroll) = self
                     .workspace
@@ -103,7 +104,8 @@ impl App {
                     .and_then(|idx| self.workspace.documents.get(idx))
                     .map(|doc| (doc.edit.quantize_arrange, doc.edit.quantize_pianoroll))
                     .unwrap_or((QuantizePreset::Auto, QuantizePreset::Auto));
-                let project_file = yinhe_yin::ProjectFile::from_meta(&model.meta);
+                let mut project_file = yinhe_yin::ProjectFile::from_meta(&model.meta);
+                project_file.cover = cover;
                 let result = Document::from_model(
                     &path,
                     *model,
@@ -338,6 +340,14 @@ impl App {
                         None,
                     );
                 } else {
+                    if let Some((path, info)) = self.jobs.export.tags.take()
+                        && let Err(e) = yinhe_audio::export::write_wav_info_tags(
+                            std::path::Path::new(&path),
+                            &info,
+                        )
+                    {
+                        tracing::warn!("写入 WAV 元数据失败: {e}");
+                    }
                     let acted = self.notifications.finish_progress(
                         crate::widgets::toast::EXPORT_PROGRESS_ID,
                         crate::widgets::toast::ProgressOutcome::Completed,

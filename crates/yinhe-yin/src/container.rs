@@ -1,7 +1,7 @@
 //! Container framing: header + length-prefixed sections.
 //!
-//! 固定 3 段（project.json / mapping.json / data）+ 2 个可选段
-//! （mixer / audio，老文件没有，读取器按尾部剩余字节惰性识别）。
+//! 固定 3 段（project.json / mapping.json / data）+ 3 个可选段
+//! （mixer / audio / cover，老文件没有，读取器按尾部剩余字节惰性识别）。
 
 use crate::error::YinError;
 use crate::{MAGIC, VERSION};
@@ -12,21 +12,27 @@ pub(crate) struct Sections {
     pub mapping_json: Vec<u8>,
     pub data: Vec<u8>,
     /// 可选第 4 段：混音台参数（postcard + zstd）。
-    /// 老文件没有这一段 → None；老读取器不检查尾部，读新文件时自动忽略。
     pub mixer: Option<Vec<u8>>,
     /// 可选第 5 段：音频素材（内嵌原始文件字节，postcard + zstd）。
-    /// 老文件没有这一段 → None；老读取器读完 mixer 段即停，忽略本段。
     pub audio: Option<Vec<u8>>,
+    /// 可选第 6 段：工程最终封面（原始图片字节）。
+    pub cover: Option<Vec<u8>>,
 }
 
 /// Pack header + sections into the final byte buffer.
 pub(crate) fn pack(sections: Sections) -> Vec<u8> {
-    // 段序由位置隐含（无段 id）：有音频段而 mixer 段为 None 时，必须写一个
-    // 长度为 0 的 mixer 占位，否则读取侧会把音频段当作 mixer 段。
-    // 空 mixer 段解码为 None，不丢任何设置。
+    // 段序由位置隐含（无段 id）。任意可选段缺失但其后的段存在时，必须写
+    // 长度为 0 的占位，否则读取侧会把后一段当作前一段。
     let mixer_len = sections.mixer.as_ref().map_or(0, |m| 4 + m.len());
     let audio_len = sections.audio.as_ref().map_or(0, |a| 4 + a.len());
-    let mixer_placeholder = if sections.audio.is_some() && sections.mixer.is_none() {
+    let cover_len = sections.cover.as_ref().map_or(0, |c| 4 + c.len());
+    let has_audio_or_cover = sections.audio.is_some() || sections.cover.is_some();
+    let mixer_placeholder = if has_audio_or_cover && sections.mixer.is_none() {
+        4
+    } else {
+        0
+    };
+    let audio_placeholder = if sections.cover.is_some() && sections.audio.is_none() {
         4
     } else {
         0
@@ -41,7 +47,9 @@ pub(crate) fn pack(sections: Sections) -> Vec<u8> {
         + sections.data.len()
         + mixer_len
         + mixer_placeholder
-        + audio_len;
+        + audio_len
+        + audio_placeholder
+        + cover_len;
     let mut out = Vec::with_capacity(total);
     out.extend_from_slice(MAGIC);
     out.extend_from_slice(&VERSION.to_le_bytes());
@@ -54,13 +62,18 @@ pub(crate) fn pack(sections: Sections) -> Vec<u8> {
     if let Some(mixer) = &sections.mixer {
         out.extend_from_slice(&(mixer.len() as u32).to_le_bytes());
         out.extend_from_slice(mixer);
+    } else if mixer_placeholder > 0 {
+        out.extend_from_slice(&0u32.to_le_bytes());
     }
     if let Some(audio) = &sections.audio {
-        if sections.mixer.is_none() {
-            out.extend_from_slice(&0u32.to_le_bytes());
-        }
         out.extend_from_slice(&(audio.len() as u32).to_le_bytes());
         out.extend_from_slice(audio);
+    } else if audio_placeholder > 0 {
+        out.extend_from_slice(&0u32.to_le_bytes());
+    }
+    if let Some(cover) = &sections.cover {
+        out.extend_from_slice(&(cover.len() as u32).to_le_bytes());
+        out.extend_from_slice(cover);
     }
     out
 }
@@ -113,6 +126,22 @@ pub(crate) fn unpack(bytes: &[u8]) -> Result<Sections, YinError> {
             Ok(v) => Some(v),
             Err(e) => {
                 tracing::warn!("音频段损坏/被截断，忽略：{e}");
+                optional_damaged = true;
+                None
+            }
+        }
+    } else {
+        None
+    };
+    // 可选第 6 段：音频段之后还有字节 → 封面段。
+    let cover = if !optional_damaged && cur.pos < bytes.len() {
+        match cur
+            .read_u32()
+            .and_then(|len| cur.take(len as usize).map(|b| b.to_vec()))
+        {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::warn!("封面段损坏/被截断，忽略：{e}");
                 None
             }
         }
@@ -125,6 +154,7 @@ pub(crate) fn unpack(bytes: &[u8]) -> Result<Sections, YinError> {
         data,
         mixer,
         audio,
+        cover,
     })
 }
 
@@ -169,6 +199,7 @@ mod tests {
             data: b"note-data".to_vec(),
             mixer,
             audio: None,
+            cover: None,
         })
     }
 

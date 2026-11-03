@@ -27,6 +27,8 @@ pub(crate) struct ExportState {
     pub sample_rate: u32,
     /// 本次导出用户选择的输出路径（中止卡“打开文件夹”用；None 则不设按钮）。
     pub last_output_path: Option<String>,
+    /// 导出成功后要写入 WAV 的歌曲信息（路径 + 元数据快照）。
+    pub tags: Option<(String, yinhe_core::SongInfo)>,
 }
 
 impl ExportState {
@@ -41,6 +43,7 @@ impl ExportState {
             layer_count: 0,
             sample_rate: 0,
             last_output_path: None,
+            tags: None,
         }
     }
 }

@@ -1039,3 +1039,46 @@ fn song_metadata_roundtrip() {
     assert_eq!(loaded.meta.disc_no, 2);
     assert_eq!(loaded.meta.copyright, "(c) Jieneng");
 }
+
+/// 封面走独立段：保存/加载往返，且不写进 project.json（不增大库扫描）。
+#[test]
+fn cover_section_roundtrip() {
+    use std::sync::Arc;
+    use yinhe_core::CoverArt;
+    use yinhe_yin::{MappingFile, ProjectFile};
+
+    let dir = std::env::temp_dir().join(format!(
+        "yinhe-cover-test-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("cover.yin");
+
+    let model = YinModel::default();
+    let mut project = ProjectFile::from_meta(&model.meta);
+    let data = vec![0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3, 4];
+    project.cover = Some(CoverArt {
+        mime: "image/jpeg".into(),
+        data: Arc::new(data.clone()),
+        thumb: Arc::new(vec![9, 9]),
+    });
+    yinhe_yin::save_yin_with_files(&model, &path, &project, &MappingFile::default(), None)
+        .expect("save");
+
+    // project.json 里不应出现封面二进制（只读头部的库扫描不会被撑大）。
+    let header = yinhe_yin::read_project_file(&path).expect("read project");
+    assert_eq!(header.name, "");
+    assert!(header.cover.is_none(), "cover 不写进 project.json");
+
+    let (_model, _sf, _mapping, _mixer, cover) =
+        yinhe_yin::load_yin_with_sf_progress(&path, |_| {}).expect("load");
+    let cover = cover.expect("cover");
+    assert_eq!(cover.mime, "image/jpeg");
+    assert_eq!(&*cover.data, &data);
+    assert_eq!(&*cover.thumb, &[9, 9]);
+    let _ = std::fs::remove_dir_all(&dir);
+}

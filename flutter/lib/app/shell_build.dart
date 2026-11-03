@@ -230,6 +230,8 @@ mixin _ShellBuild on _ShellBase {
           onExportMidi: () => _runFromSidebar(() => unawaited(_exportMidi())),
           onExportMidi7z: () =>
               _runFromSidebar(() => unawaited(_exportMidi7z())),
+          onCover: () => _runFromSidebar(() => unawaited(_showCover())),
+          onLibrary: () => _runFromSidebar(() => unawaited(_showLibrary())),
           onRecentFiles: _showRecentFiles,
           onSettings: () => _runFromSidebar(_openSettings),
         ),

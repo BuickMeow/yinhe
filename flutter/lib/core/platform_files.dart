@@ -25,6 +25,9 @@ const List<String> archiveExtensions = [
   'bz2',
 ];
 
+/// 工程封面/头像图片。
+final List<String> imageExtensions = ['jpg', 'jpeg', 'png', 'webp'];
+
 /// 仅 MIDI（导入 MIDI 用）。
 final List<String> midiExtensions = ['mid', 'midi'];
 

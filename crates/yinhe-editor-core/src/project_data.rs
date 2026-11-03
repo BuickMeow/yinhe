@@ -33,6 +33,8 @@ pub struct ProjectData {
     pub project_file: ProjectFile,
     /// The original `mapping.json` structure, preserved for faithful round-tripping.
     pub mapping_file: MappingFile,
+    /// 工程最终封面（仅一张）；保存时写入 `.yin` 的可选 cover 段。
+    pub cover: Option<yinhe_core::CoverArt>,
 
     /// Monotonic counter bumped on every YinModel mutation or snapshot restore.
     /// Used as pianoroll layer-cache key so GPU re-renders when data changes.
@@ -132,6 +134,8 @@ impl ProjectData {
         self.project_file.track_no = meta.track_no;
         self.project_file.disc_no = meta.disc_no;
         self.project_file.copyright = meta.copyright.clone();
+        self.project_file.artists = meta.artists.clone();
+        self.project_file.cover = self.cover.clone();
     }
 
     /// Rebuild `mapping_file` from current model tracks.
@@ -149,10 +153,12 @@ impl ProjectData {
     /// 初始 `revision` 取全局唯一值（见 `NEXT_DOC_REVISION` 注释）：
     /// 新文档绝不能与任何已存在文档共享缓存键。
     pub fn new(model: Arc<YinModel>, project_file: ProjectFile, mapping_file: MappingFile) -> Self {
+        let cover = project_file.cover.clone();
         Self {
             model,
             project_file,
             mapping_file,
+            cover,
             revision: NEXT_DOC_REVISION.fetch_add(1, Ordering::Relaxed),
         }
     }

@@ -1123,7 +1123,7 @@ fn load_document(path: &str, token: u64) -> Result<Document, String> {
 fn load_project_document(path: &str, token: u64) -> Result<Document, String> {
     let started = std::time::Instant::now();
     set_load_progress(token, 0.02);
-    let (model, sf, mapping, mixer) = yinhe_yin::load_yin_with_sf_progress(path, |p| {
+    let (model, sf, mapping, mixer, cover) = yinhe_yin::load_yin_with_sf_progress(path, |p| {
         let frac = match p.stage {
             yinhe_yin::YinProgressStage::Decompress => p.fraction * 0.55,
             yinhe_yin::YinProgressStage::Rebuild => 0.55 + p.fraction * 0.25,
@@ -1138,7 +1138,8 @@ fn load_project_document(path: &str, token: u64) -> Result<Document, String> {
         model.note_count,
         started.elapsed()
     );
-    let project_file = yinhe_yin::ProjectFile::from_meta(&model.meta);
+    let mut project_file = yinhe_yin::ProjectFile::from_meta(&model.meta);
+    project_file.cover = cover;
     let mut doc = Document::from_model(
         path,
         model,
@@ -1435,20 +1436,80 @@ pub fn project_meta_json() -> String {
         return "{}".into();
     };
     let m = &doc.data.model.meta;
-    format!(
-        "{{\"name\":\"{}\",\"artist\":\"{}\",\"description\":\"{}\",\"album\":\"{}\",\"album_artist\":\"{}\",\"genre\":\"{}\",\"year\":\"{}\",\"track_no\":{},\"disc_no\":{},\"copyright\":\"{}\",\"ppq\":{}}}",
-        json_escape(&m.name),
-        json_escape(&m.artist),
-        json_escape(&m.description),
-        json_escape(&m.album),
-        json_escape(&m.album_artist),
-        json_escape(&m.genre),
-        json_escape(&m.year),
-        m.track_no,
-        m.disc_no,
-        json_escape(&m.copyright),
-        m.ppq
-    )
+    let cover = doc
+        .data
+        .cover
+        .as_ref()
+        .map(|c| serde_json::json!({"set": true, "mime": c.mime, "size": c.data.len()}))
+        .unwrap_or_else(|| serde_json::json!({"set": false}));
+    serde_json::json!({
+        "name": m.name,
+        "artist": m.artist,
+        "description": m.description,
+        "album": m.album,
+        "album_artist": m.album_artist,
+        "genre": m.genre,
+        "year": m.year,
+        "track_no": m.track_no,
+        "disc_no": m.disc_no,
+        "copyright": m.copyright,
+        "ppq": m.ppq,
+        "artists": m.artists,
+        "cover": cover,
+    })
+    .to_string()
+}
+
+/// 设置工程封面（读取图片文件；成功 1）。仅当当前文档未在后台任务中。
+pub fn set_project_cover(path: String) -> i32 {
+    let cover = match yinhe_editor_core::cover::load_cover(std::path::Path::new(&path)) {
+        Ok(c) => c,
+        Err(e) => {
+            log::warn!("设置封面失败: {e}");
+            return 0;
+        }
+    };
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let before = doc.capture_snapshot();
+    let old = doc.data.cover.clone();
+    doc.data.cover = Some(cover.clone());
+    doc.data.bump_revision();
+    doc.push_undo(
+        yinhe_editor_core::history::UndoAction::Cover {
+            old,
+            new: Some(cover),
+        },
+        "Edit cover",
+        before,
+    );
+    1
+}
+
+/// 清除工程封面（成功 1）。
+pub fn clear_project_cover() -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    if doc.data.cover.is_none() {
+        return 1;
+    }
+    let before = doc.capture_snapshot();
+    let old = doc.data.cover.take();
+    doc.data.bump_revision();
+    doc.push_undo(
+        yinhe_editor_core::history::UndoAction::Cover { old, new: None },
+        "Edit cover",
+        before,
+    );
+    1
 }
 
 /// 工程元数据编辑（歌名/艺术家/简介/PPQ），差异字段合并为一条 undo。
@@ -1476,6 +1537,10 @@ pub fn set_project_meta_json(json: &str) -> i32 {
         track_no: v.get("track_no").and_then(|x| x.as_u64()).unwrap_or(0) as u16,
         disc_no: v.get("disc_no").and_then(|x| x.as_u64()).unwrap_or(0) as u16,
         copyright: text("copyright"),
+        artists: v
+            .get("artists")
+            .and_then(|x| serde_json::from_value(x.clone()).ok())
+            .unwrap_or_default(),
     };
     let ppq = v.get("ppq").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
     crate::doc_job::try_start(
@@ -2284,6 +2349,14 @@ pub fn model_arc() -> Option<Arc<YinModel>> {
 }
 
 /// 最近文件 JSON（Dart 解析）：`[{"name","path","time"}]`。
+/// 最近打开的本地路径（按最近优先；音乐库扫描用）。
+pub fn recent_paths() -> Vec<String> {
+    recent_slot()
+        .lock()
+        .map(|list| list.iter().map(|e| e.path.clone()).collect())
+        .unwrap_or_default()
+}
+
 pub fn recent_json() -> String {
     let Ok(list) = recent_slot().lock() else {
         return "[]".into();

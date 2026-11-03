@@ -12,6 +12,7 @@ class ProjectDialog extends StatefulWidget {
     required this.noteCount,
     required this.initialName,
     required this.initialArtist,
+    required this.initialArtists,
     required this.initialDescription,
     required this.initialAlbum,
     required this.initialAlbumArtist,
@@ -28,6 +29,9 @@ class ProjectDialog extends StatefulWidget {
   final int noteCount;
   final String initialName;
   final String initialArtist;
+
+  /// 多音乐人（逗号分隔，首位为主）。
+  final String initialArtists;
   final String initialDescription;
   final String initialAlbum;
   final String initialAlbumArtist;
@@ -54,6 +58,9 @@ class _ProjectDialogState extends State<ProjectDialog> {
   );
   late final TextEditingController _desc = TextEditingController(
     text: widget.initialDescription,
+  );
+  late final TextEditingController _artists = TextEditingController(
+    text: widget.initialArtists,
   );
   late final TextEditingController _album = TextEditingController(
     text: widget.initialAlbum,
@@ -86,6 +93,7 @@ class _ProjectDialogState extends State<ProjectDialog> {
     _name.dispose();
     _artist.dispose();
     _desc.dispose();
+    _artists.dispose();
     _album.dispose();
     _albumArtist.dispose();
     _genre.dispose();
@@ -108,9 +116,16 @@ class _ProjectDialogState extends State<ProjectDialog> {
       setState(() => _error = l.ppqError);
       return;
     }
+    final artists = _artists.text
+        .split(RegExp(r'[,，、]'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .map((e) => {'id': '', 'name': e, 'role': ''})
+        .toList();
     widget.onSave({
       'name': _name.text.trim(),
       'artist': _artist.text.trim(),
+      'artists': artists,
       'description': _desc.text.trim(),
       'album': _album.text.trim(),
       'album_artist': _albumArtist.text.trim(),
@@ -147,6 +162,13 @@ class _ProjectDialogState extends State<ProjectDialog> {
           _field(_name, l.songTitle),
           const SizedBox(height: 12),
           _field(_artist, l.artist),
+          const SizedBox(height: 12),
+          _field(
+            _artists,
+            L10n.isZh
+                ? '音乐人列表（逗号分隔，首位为主）'
+                : 'Artists (comma-separated, first is primary)',
+          ),
           const SizedBox(height: 12),
           _field(_album, L10n.isZh ? '专辑' : 'Album'),
           const SizedBox(height: 12),

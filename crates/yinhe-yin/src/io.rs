@@ -7,6 +7,7 @@
 //! 段编解码分散在同目录子模块：`data_section`（meta + 音符流）、
 //! `mixer_section`（混音台参数）、`audio_section`（内嵌音频素材）。
 
+use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -24,6 +25,39 @@ use crate::mixer_section::{decode_mixer_section, encode_mixer_section};
 use crate::progress::YinProgress;
 use crate::project_meta::{ProjectFile, SfChannelOverride};
 
+/// `.yin` 完整加载结果（模型 / 音色库 / 映射 / 混音 / 封面）。
+pub type LoadedYin = (
+    YinModel,
+    ProjectSoundFonts,
+    MappingFile,
+    Option<MixerParams>,
+    Option<yinhe_core::CoverArt>,
+);
+
+/// 只读 `.yin` 头部的 `project.json`（未压缩、位于文件最前）。
+///
+/// 供音乐库/最近项目列表按专辑分组用：不解压音符段、不读 mapping/audio，
+/// 内存只有几 KB。文件不在/不是 `.yin` 时返回错误，调用方跳过即可。
+pub fn read_project_file(path: impl AsRef<Path>) -> Result<ProjectFile, YinError> {
+    let mut file = std::fs::File::open(path.as_ref())?;
+    let mut head = [0u8; 10];
+    file.read_exact(&mut head)?;
+    if &head[0..4] != crate::MAGIC {
+        return Err(YinError::BadMagic);
+    }
+    let version = u16::from_le_bytes([head[4], head[5]]);
+    if version != crate::VERSION {
+        return Err(YinError::BadVersion(version));
+    }
+    let len = u32::from_le_bytes([head[6], head[7], head[8], head[9]]) as usize;
+    // project.json 正常只有几 KB；限制上限防止损坏文件把内存吃满。
+    if len > 64 * 1024 * 1024 {
+        return Err(invalid_data("project.json 过大"));
+    }
+    let mut buf = vec![0u8; len];
+    file.read_exact(&mut buf)?;
+    Ok(serde_json::from_slice(&buf)?)
+}
 /// SoundFont state attached to a project（每源通道覆盖）。
 ///
 /// This is what `save_yin_with_sf` consumes and `load_yin_with_sf` returns.
@@ -93,12 +127,17 @@ fn save_yin_bytes_with_files_inner(
         .map(|m| encode_mixer_section(m, model.meta.compression_level))
         .transpose()?;
     let audio = encode_audio_section(model, model.meta.compression_level)?;
+    let cover = project
+        .cover
+        .as_ref()
+        .map(crate::cover_section::encode_cover_section);
     let bytes = pack(Sections {
         project_json,
         mapping_json,
         data,
         mixer,
         audio,
+        cover,
     });
     // 编码/压缩的临时缓冲已释放，把空闲页归还 OS（1.64 亿音符可降 RSS ~1GB）。
     yinhe_memtrace::purge_free_pages();
@@ -179,7 +218,11 @@ fn load_yin_bytes_inner(
         .map(decode_audio_section)
         .unwrap_or_default();
 
-    let project: ProjectFile = serde_json::from_slice(&sections.project_json)?;
+    let mut project: ProjectFile = serde_json::from_slice(&sections.project_json)?;
+    project.cover = sections
+        .cover
+        .as_deref()
+        .and_then(crate::cover_section::decode_cover_section);
     let mapping: MappingFile = serde_json::from_slice(&sections.mapping_json)?;
 
     let (model_data, mut note_streams) = open_note_streams(&sections.data, on_progress)?;
@@ -250,6 +293,7 @@ fn load_yin_bytes_inner(
             track_no: project.track_no,
             disc_no: project.disc_no,
             copyright: project.copyright.clone(),
+            artists: project.artists.clone(),
         },
         audio_sources,
         ..Default::default()
@@ -314,26 +358,19 @@ pub fn load_yin_with_sf(
     ),
     YinError,
 > {
-    load_yin_with_sf_progress(path, |_| {})
+    let (model, sf, mapping, mixer, _cover) = load_yin_with_sf_progress(path, |_| {})?;
+    Ok((model, sf, mapping, mixer))
 }
 
 /// `load_yin_with_sf` + 进度回调（后台线程加载时用于驱动 UI 进度条）。
 pub fn load_yin_with_sf_progress(
     path: impl AsRef<Path>,
     mut on_progress: impl FnMut(YinProgress) + Send,
-) -> Result<
-    (
-        YinModel,
-        ProjectSoundFonts,
-        MappingFile,
-        Option<MixerParams>,
-    ),
-    YinError,
-> {
+) -> Result<LoadedYin, YinError> {
     let bytes = std::fs::read(path.as_ref())?;
     let (model, project, mapping, mixer) = load_yin_bytes_inner(&bytes, &mut on_progress)?;
     let sf = ProjectSoundFonts {
         overrides: project.sf_channel_overrides,
     };
-    Ok((model, sf, mapping, mixer))
+    Ok((model, sf, mapping, mixer, project.cover))
 }

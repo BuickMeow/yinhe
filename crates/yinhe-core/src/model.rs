@@ -253,7 +253,29 @@ impl TrackData {
 //  Project metadata
 // =========================================================
 
-/// 歌曲元数据（可编辑文本字段 + 编号）。
+/// 工程内音乐人引用（有序；第一项为主音乐人）。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArtistRef {
+    /// 全局音乐人档案 id（可空；空 = 仅手填名字）。
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    /// 角色（如 "main" / "feat."），空 = 未指定。
+    #[serde(default)]
+    pub role: String,
+}
+
+/// 工程最终封面（仅一张；`.yin` 独立段存储）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CoverArt {
+    pub mime: String,
+    pub data: Arc<Vec<u8>>,
+    /// 列表/库视图用的小图；可为空。
+    pub thumb: Arc<Vec<u8>>,
+}
+
+/// 歌曲元数据（可编辑文本字段 + 编号 + 音乐人列表）。
 ///
 /// 与 `ProjectMeta` 同步；单独成结构体用于工程设置对话框一次性比较/提交，
 /// 避免为每个字段各建一个 undo action。
@@ -269,6 +291,7 @@ pub struct SongInfo {
     pub track_no: u16,
     pub disc_no: u16,
     pub copyright: String,
+    pub artists: Vec<ArtistRef>,
 }
 
 impl SongInfo {
@@ -284,7 +307,21 @@ impl SongInfo {
             track_no: meta.track_no,
             disc_no: meta.disc_no,
             copyright: meta.copyright.clone(),
+            artists: meta.artists.clone(),
         }
+    }
+
+    /// 导出标签用的音乐人文本：优先有序列表，列表为空回退旧 `artist`。
+    pub fn effective_artist(&self) -> String {
+        if self.artists.is_empty() {
+            return self.artist.clone();
+        }
+        self.artists
+            .iter()
+            .map(|a| a.name.trim())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" / ")
     }
 
     pub fn apply_to(&self, meta: &mut ProjectMeta) {
@@ -298,6 +335,7 @@ impl SongInfo {
         meta.track_no = self.track_no;
         meta.disc_no = self.disc_no;
         meta.copyright.clone_from(&self.copyright);
+        meta.artists.clone_from(&self.artists);
     }
 }
 
@@ -335,6 +373,9 @@ pub struct ProjectMeta {
     pub disc_no: u16,
     #[serde(default)]
     pub copyright: String,
+    /// 工程音乐人列表（有序；第一项为主音乐人）。
+    #[serde(default)]
+    pub artists: Vec<ArtistRef>,
 }
 
 fn default_project_bpm() -> f32 {
@@ -362,6 +403,7 @@ impl Default for ProjectMeta {
             track_no: 0,
             disc_no: 0,
             copyright: String::new(),
+            artists: Vec::new(),
         }
     }
 }

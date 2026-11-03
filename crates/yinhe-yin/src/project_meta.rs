@@ -60,6 +60,13 @@ pub struct ProjectFile {
     pub disc_no: u16,
     #[serde(default)]
     pub copyright: String,
+    #[serde(default)]
+    pub artists: Vec<yinhe_core::ArtistRef>,
+
+    /// 最终封面。不写进 project.json（避免 base64 +33%），由 `.yin` 的可选
+    /// cover 段承载；加载时由 container 解出后回填到这里。
+    #[serde(skip)]
+    pub cover: Option<yinhe_core::CoverArt>,
 
     // ── SoundFont state ──
     /// 每源通道（0..=255，共 256 条）的音色库覆盖；未列出的通道用全局音色库。
@@ -93,6 +100,8 @@ impl Default for ProjectFile {
             track_no: 0,
             disc_no: 0,
             copyright: String::new(),
+            artists: Vec::new(),
+            cover: None,
             sf_channel_overrides: Vec::new(),
         }
     }
@@ -117,6 +126,8 @@ impl ProjectFile {
             track_no: meta.track_no,
             disc_no: meta.disc_no,
             copyright: meta.copyright.clone(),
+            artists: meta.artists.clone(),
+            cover: None,
             sf_channel_overrides: Vec::new(),
         }
     }
@@ -142,6 +153,8 @@ impl ProjectFile {
             track_no: meta.track_no,
             disc_no: meta.disc_no,
             copyright: meta.copyright.clone(),
+            artists: meta.artists.clone(),
+            cover: None,
             sf_channel_overrides,
         }
     }

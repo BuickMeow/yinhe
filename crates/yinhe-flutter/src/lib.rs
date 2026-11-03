@@ -19,6 +19,7 @@ mod edit;
 mod inertia;
 #[cfg(target_os = "ios")]
 mod ios;
+mod library;
 mod midi_export;
 mod midi_import;
 mod midi_names;
@@ -2099,6 +2100,25 @@ pub extern "C" fn yinhe_set_project_meta_json(json: *const std::ffi::c_char) -> 
     scene::set_project_meta_json(&json)
 }
 
+/// 设置工程封面（图片路径）。成功 1。
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn yinhe_set_project_cover(path: *const std::ffi::c_char) -> i32 {
+    if path.is_null() {
+        return 0;
+    }
+    let path = unsafe { CStr::from_ptr(path) }
+        .to_string_lossy()
+        .into_owned();
+    scene::set_project_cover(path)
+}
+
+/// 清除工程封面。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_clear_project_cover() -> i32 {
+    scene::clear_project_cover()
+}
+
 /// 音频设置 JSON：`{"max_voices":..,"buffer_size":..,"ignore_velocity":..}`。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_audio_settings_json() -> *mut std::ffi::c_char {
@@ -2217,6 +2237,12 @@ pub extern "C" fn yinhe_doc_state(out: *mut i32) -> i32 {
         *out.add(2) = st[2];
     }
     1
+}
+
+/// 音乐库 JSON（只读 project.json，按专辑分组）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_library_json() -> *mut std::ffi::c_char {
+    to_c_string(library::library_json())
 }
 
 /// 文档后台任务状态 JSON：`{"state","progress","status","error"}`。

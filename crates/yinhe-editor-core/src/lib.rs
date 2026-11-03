@@ -5,6 +5,7 @@ pub mod chord;
 pub mod clipboard;
 pub mod clipboard_file;
 pub mod config;
+pub mod cover;
 pub mod density;
 pub mod document;
 pub mod edit_state;

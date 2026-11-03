@@ -221,3 +221,16 @@ final IntNoArgDart midiImportCancel = bridge
 /// 导入完成后把 AR 视口定位到导入起点。
 final VoidNoArgDart midiImportFocus = bridge
     .lookupFunction<VoidNoArgNative, VoidNoArgDart>('yinhe_midi_import_focus');
+
+/// 音乐库 JSON（只读 project.json，按专辑分组）。
+final CStrDart libraryJson = bridge.lookupFunction<CStrNative, CStrDart>(
+  'yinhe_library_json',
+);
+
+/// 设置工程封面（图片路径）。成功 1。
+final CStrArgDart setProjectCover = bridge
+    .lookupFunction<CStrArgNative, CStrArgDart>('yinhe_set_project_cover');
+
+/// 清除工程封面。成功 1。
+final IntNoArgDart clearProjectCover = bridge
+    .lookupFunction<IntNoArgNative, IntNoArgDart>('yinhe_clear_project_cover');

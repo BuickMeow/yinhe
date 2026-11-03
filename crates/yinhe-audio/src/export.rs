@@ -513,3 +513,127 @@ mod job_tests {
         assert!(job.cancelled());
     }
 }
+
+/// Write RIFF `LIST/INFO` metadata chunks into an existing WAV file.
+///
+/// WAV has no standard cover-art chunk; cover art is intentionally skipped here
+/// (FLAC/MP3 will carry it). Empty fields are omitted. Non-ASCII text is
+/// written as UTF-8, which most modern players accept.
+pub fn write_wav_info_tags(path: &Path, info: &yinhe_core::SongInfo) -> Result<(), String> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|e| format!("打开 WAV 失败: {e}"))?;
+    let mut header = [0u8; 12];
+    file.read_exact(&mut header)
+        .map_err(|e| format!("读取 WAV 头失败: {e}"))?;
+    if &header[0..4] != b"RIFF" || &header[8..12] != b"WAVE" {
+        return Err("不是 RIFF/WAVE 文件".into());
+    }
+
+    let mut subs: Vec<u8> = Vec::new();
+    let mut push = |id: &[u8; 4], text: &str| {
+        if text.is_empty() {
+            return;
+        }
+        let bytes = text.as_bytes();
+        subs.extend_from_slice(id);
+        subs.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        subs.extend_from_slice(bytes);
+        if bytes.len() % 2 == 1 {
+            subs.push(0);
+        }
+    };
+    push(b"INAM", &info.name);
+    push(b"IART", &info.effective_artist());
+    push(b"IPRD", &info.album);
+    push(b"ICRD", &info.year);
+    push(b"IGNR", &info.genre);
+    push(b"ICMT", &info.description);
+    push(b"ICOP", &info.copyright);
+    if info.track_no > 0 {
+        push(b"ITRK", &info.track_no.to_string());
+    }
+    if info.disc_no > 0 {
+        push(b"IPRT", &info.disc_no.to_string());
+    }
+    if subs.is_empty() {
+        return Ok(());
+    }
+
+    let old_len = file
+        .metadata()
+        .map_err(|e| format!("读取 WAV 大小失败: {e}"))?
+        .len();
+    file.seek(SeekFrom::End(0))
+        .map_err(|e| format!("定位 WAV 末尾失败: {e}"))?;
+    let list_size = 4 + subs.len() as u32;
+    file.write_all(b"LIST")
+        .and_then(|_| file.write_all(&list_size.to_le_bytes()))
+        .and_then(|_| file.write_all(b"INFO"))
+        .and_then(|_| file.write_all(&subs))
+        .map_err(|e| format!("写入 INFO 失败: {e}"))?;
+    let mut new_len = old_len + 8 + u64::from(list_size);
+    if new_len % 2 == 1 {
+        file.write_all(&[0])
+            .map_err(|e| format!("写入 RIFF pad 失败: {e}"))?;
+        new_len += 1;
+    }
+    let riff_size = u32::try_from(new_len.saturating_sub(8))
+        .map_err(|_| "WAV 超过 4GB，无法写入 RIFF 长度".to_string())?;
+    file.seek(SeekFrom::Start(4))
+        .and_then(|_| file.write_all(&riff_size.to_le_bytes()))
+        .map_err(|e| format!("更新 RIFF 长度失败: {e}"))?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tag_tests {
+    use super::*;
+
+    #[test]
+    fn wav_info_tags_append_and_keep_readable() {
+        let dir = std::env::temp_dir().join(format!(
+            "yinhe-wav-tags-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.wav");
+        {
+            let spec = hound::WavSpec {
+                channels: 2,
+                sample_rate: 48_000,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            };
+            let mut w = hound::WavWriter::create(&path, spec).unwrap();
+            for _ in 0..16 {
+                w.write_sample(0i16).unwrap();
+                w.write_sample(0i16).unwrap();
+            }
+            w.finalize().unwrap();
+        }
+        let info = yinhe_core::SongInfo {
+            name: "Song".into(),
+            artist: "Artist".into(),
+            album: "Album".into(),
+            track_no: 3,
+            ..Default::default()
+        };
+        write_wav_info_tags(&path, &info).expect("tags");
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(bytes.windows(4).any(|w| w == b"LIST"));
+        assert!(bytes.windows(4).any(|w| w == b"INAM"));
+        assert!(bytes.windows(4).any(|w| w == b"Song"));
+        let reader = hound::WavReader::open(&path).expect("仍可读回 WAV");
+        assert_eq!(reader.len(), 32);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

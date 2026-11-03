@@ -39,6 +39,8 @@ import '../dialogs/recent_files_dialog.dart';
 import '../dialogs/project_defaults_dialog.dart';
 import '../dialogs/project_dialog.dart';
 import '../dialogs/midi_import_dialog.dart';
+import '../dialogs/library_dialog.dart';
+import '../dialogs/cover_dialog.dart';
 import '../painters/painters.dart';
 import '../widgets/settings_view.dart';
 import '../core/theme.dart';
@@ -108,6 +110,9 @@ abstract class _ShellBase extends State<StudioShell>
 
   /// 本次系统文件选择器是否用于「导入 MIDI」（onFilePicked 分流用）。
   bool _pickingForImport = false;
+
+  /// 本次系统文件选择器是否用于「设置封面」。
+  bool _pickingCover = false;
 
   /// 顶栏取消选区信号：AM 面板据此清空锚点选择。
   int _amDeselectTick = 0;
@@ -487,6 +492,8 @@ abstract class _ShellBase extends State<StudioShell>
   void _openSettings();
   Future<void> _pickMidi();
   Future<void> _exportMidi7z();
+  Future<void> _showLibrary();
+  Future<void> _showCover();
   Future<void> _pickImportMidi();
   Future<void> _pickSoundFont();
   Future<void> _openSoundfontArchive(String path);

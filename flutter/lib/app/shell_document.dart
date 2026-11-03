@@ -26,6 +26,11 @@ mixin _ShellDocument on _ShellBase {
         noteCount: _noteCount,
         initialName: meta['name'] as String? ?? '',
         initialArtist: meta['artist'] as String? ?? '',
+        initialArtists: ((meta['artists'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => e['name'] as String? ?? '')
+            .where((e) => e.isNotEmpty)
+            .join(', '),
         initialDescription: meta['description'] as String? ?? '',
         initialAlbum: meta['album'] as String? ?? '',
         initialAlbumArtist: meta['album_artist'] as String? ?? '',
@@ -441,6 +446,26 @@ mixin _ShellDocument on _ShellBase {
   /// 文件选择回调：先判同一文件/未保存，再让 Rust 开始加载。
   @override
   Future<void> _handlePickedFile(String path) async {
+    if (_pickingCover) {
+      _pickingCover = false;
+      final p = path.toNativeUtf8();
+      var ok = 0;
+      try {
+        ok = rust.setProjectCover(p);
+      } finally {
+        malloc.free(p);
+      }
+      if (!mounted) {
+        return;
+      }
+      showSnack(
+        context,
+        ok == 1
+            ? (L10n.isZh ? '封面已更新' : 'Cover updated')
+            : (L10n.isZh ? '设置封面失败' : 'Failed to set cover'),
+      );
+      return;
+    }
     if (_pickingForImport) {
       _pickingForImport = false;
       await _startMidiImport(path);
@@ -459,6 +484,60 @@ mixin _ShellDocument on _ShellBase {
       return;
     }
     _startOpenPath(path);
+  }
+
+  /// 封面：查看/选择/清除当前工程最终封面。
+  @override
+  Future<void> _showCover() async {
+    final metaRaw = rust.takeString(rust.projectMetaJson());
+    var hasCover = false;
+    var size = 0;
+    try {
+      final meta = jsonDecode(metaRaw) as Map<String, dynamic>;
+      final cover = meta['cover'];
+      if (cover is Map) {
+        hasCover = cover['set'] as bool? ?? false;
+        size = (cover['size'] as num?)?.toInt() ?? 0;
+      }
+    } catch (_) {}
+    final action = await showCoverDialog(
+      context,
+      hasCover: hasCover,
+      sizeBytes: size,
+    );
+    if (!mounted || action == null) {
+      return;
+    }
+    if (action == CoverAction.pick) {
+      _pickingForImport = false;
+      _pickingCover = true;
+      await _channel.invokeMethod<void>('openFilePicker', {
+        'exts': imageExtensions,
+      });
+      return;
+    }
+    if (action == CoverAction.clear) {
+      final ok = rust.clearProjectCover();
+      if (!mounted) {
+        return;
+      }
+      showSnack(
+        context,
+        ok == 1
+            ? (L10n.isZh ? '封面已清除' : 'Cover cleared')
+            : (L10n.isZh ? '清除封面失败' : 'Failed to clear cover'),
+      );
+    }
+  }
+
+  /// 音乐库：按专辑分组选择工程，复用打开流程（含未保存确认）。
+  @override
+  Future<void> _showLibrary() async {
+    final path = await showLibraryDialog(context);
+    if (!mounted || path == null) {
+      return;
+    }
+    await _handlePickedFile(path);
   }
 
   /// 选择完 MIDI 后的完整导入流程：解析 → 摘要/勾选 → 文档后台任务。

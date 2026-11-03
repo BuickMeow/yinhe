@@ -149,6 +149,8 @@ fn settings_slot() -> &'static Mutex<AudioSettings> {
 struct ExportSession {
     progress: Arc<Mutex<ExportProgress>>,
     cancel: Arc<AtomicBool>,
+    /// 成功完成后要写入的 WAV 元数据（路径 + 发起时快照）。
+    tags: Option<(PathBuf, yinhe_core::SongInfo)>,
 }
 
 static EXPORT_SESSION: OnceLock<Mutex<Option<ExportSession>>> = OnceLock::new();
@@ -176,6 +178,15 @@ pub fn start_export(path: &str, bit_depth: i32) -> i32 {
         p.reset();
     }
     let cancel = Arc::new(AtomicBool::new(false));
+    let tags = crate::scene::scene()
+        .lock()
+        .ok()
+        .and_then(|s| {
+            s.document
+                .as_ref()
+                .map(|d| yinhe_core::SongInfo::from_meta(&d.data.model.meta))
+        })
+        .map(|info| (PathBuf::from(path), info));
     let bit_depth = match bit_depth {
         24 => WavBitDepth::Bit24,
         32 => WavBitDepth::Bit32Float,
@@ -197,7 +208,11 @@ pub fn start_export(path: &str, bit_depth: i32) -> i32 {
         cancel: Arc::clone(&cancel),
         pause: Arc::new(AtomicBool::new(false)),
     });
-    *slot = Some(ExportSession { progress, cancel });
+    *slot = Some(ExportSession {
+        progress,
+        cancel,
+        tags,
+    });
     1
 }
 
@@ -209,26 +224,40 @@ fn json_escape(s: &str) -> String {
 
 /// 导出进度 JSON：state 0=无会话、1=导出中、2=完成、3=失败。
 pub fn export_progress_json() -> String {
-    let Ok(slot) = export_slot().lock() else {
+    let Ok(mut slot) = export_slot().lock() else {
         return "{\"state\":0}".into();
     };
-    let Some(session) = slot.as_ref() else {
+    let Some(session) = slot.as_mut() else {
         return "{\"state\":0}".into();
     };
-    let Ok(p) = session.progress.lock() else {
-        return "{\"state\":0}".into();
+    let (state, progress, status, error) = {
+        let Ok(p) = session.progress.lock() else {
+            return "{\"state\":0}".into();
+        };
+        let state = if p.finished {
+            if p.error.is_some() { 3 } else { 2 }
+        } else {
+            1
+        };
+        (
+            state,
+            p.progress.clamp(0.0, 1.0),
+            p.status.clone(),
+            p.error.clone().unwrap_or_default(),
+        )
     };
-    let state = if p.finished {
-        if p.error.is_some() { 3 } else { 2 }
-    } else {
-        1
-    };
+    if state == 2
+        && let Some((path, info)) = session.tags.take()
+        && let Err(e) = yinhe_audio::export::write_wav_info_tags(&path, &info)
+    {
+        log::warn!("写入 WAV 元数据失败: {e}");
+    }
     format!(
         "{{\"state\":{},\"progress\":{:.4},\"status\":\"{}\",\"error\":\"{}\"}}",
         state,
-        p.progress.clamp(0.0, 1.0),
-        json_escape(&p.status),
-        json_escape(p.error.as_deref().unwrap_or(""))
+        progress,
+        json_escape(&status),
+        json_escape(&error)
     )
 }
 

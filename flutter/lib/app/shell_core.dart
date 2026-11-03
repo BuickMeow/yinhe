@@ -497,6 +497,7 @@ mixin _ShellCore on _ShellBase {
   @override
   Future<void> _pickMidi() async {
     _pickingForImport = false;
+    _pickingCover = false;
     // 扩展名策略在 Dart（`core/platform_files.dart`），壳只按它做校验。
     await _channel.invokeMethod<void>('openFilePicker', {
       'exts': projectExtensions,
@@ -505,6 +506,7 @@ mixin _ShellCore on _ShellBase {
 
   @override
   Future<void> _pickImportMidi() async {
+    _pickingCover = false;
     _pickingForImport = true;
     if (_viewMode != kViewArrangement) {
       _setView(kViewArrangement);
