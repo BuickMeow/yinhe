@@ -156,102 +156,99 @@ class _MidiImportDialogState extends State<_MidiImportDialog> {
           child: Text(L10n.isZh ? '导入' : 'Import'),
         ),
       ],
-      content: SizedBox(
-        width: 520,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              L10n.isZh
-                  ? '插入位置：工程末尾（速度/拍号也接在末尾）'
-                  : 'Insert at project end (tempo/time signature too)',
-              style: TextStyle(color: YinheTheme.textSecondary, fontSize: 13),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            L10n.isZh
+                ? '插入位置：工程末尾（速度/拍号也接在末尾）'
+                : 'Insert at project end (tempo/time signature too)',
+            style: TextStyle(color: YinheTheme.textSecondary, fontSize: 13),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${s.noteCount} notes · PPQ ${s.ppq} · '
+            '${s.tempoEvents} tempo · ${s.timeSigEvents} time sig',
+            style: TextStyle(color: YinheTheme.textSecondary, fontSize: 12),
+          ),
+          const SizedBox(height: 10),
+          Text(_tracksLine, style: const TextStyle(fontSize: 13)),
+          const SizedBox(height: 6),
+          Container(
+            height: 240,
+            decoration: BoxDecoration(
+              color: YinheTheme.controlBg,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: YinheTheme.lineFg),
             ),
-            const SizedBox(height: 4),
-            Text(
-              '${s.noteCount} notes · PPQ ${s.ppq} · '
-              '${s.tempoEvents} tempo · ${s.timeSigEvents} time sig',
-              style: TextStyle(color: YinheTheme.textSecondary, fontSize: 12),
-            ),
-            const SizedBox(height: 10),
-            Text(_tracksLine, style: const TextStyle(fontSize: 13)),
-            const SizedBox(height: 6),
-            Container(
-              height: 240,
-              decoration: BoxDecoration(
-                color: YinheTheme.controlBg,
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: YinheTheme.lineFg),
-              ),
-              child: s.tracks.isEmpty
-                  ? Center(
-                      child: Text(
-                        L10n.isZh ? '没有可导入的音轨' : 'No importable tracks',
-                        style: TextStyle(color: YinheTheme.textSecondary),
-                      ),
-                    )
-                  : ListView.builder(
-                      itemCount: s.tracks.length,
-                      itemBuilder: (context, i) {
-                        final t = s.tracks[i];
-                        final ch =
-                            '${String.fromCharCode(65 + t.port)}${t.channel + 1}';
-                        return CheckboxListTile(
-                          dense: true,
-                          value: _include[i],
-                          onChanged: (v) =>
-                              setState(() => _include[i] = v ?? false),
-                          controlAffinity: ListTileControlAffinity.leading,
-                          title: Text(
-                            t.name.isEmpty ? 'Track ${i + 1}' : t.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 13),
+            child: s.tracks.isEmpty
+                ? Center(
+                    child: Text(
+                      L10n.isZh ? '没有可导入的音轨' : 'No importable tracks',
+                      style: TextStyle(color: YinheTheme.textSecondary),
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: s.tracks.length,
+                    itemBuilder: (context, i) {
+                      final t = s.tracks[i];
+                      final ch =
+                          '${String.fromCharCode(65 + t.port)}${t.channel + 1}';
+                      return CheckboxListTile(
+                        dense: true,
+                        value: _include[i],
+                        onChanged: (v) =>
+                            setState(() => _include[i] = v ?? false),
+                        controlAffinity: ListTileControlAffinity.leading,
+                        title: Text(
+                          t.name.isEmpty ? 'Track ${i + 1}' : t.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                        subtitle: Text(
+                          'CH $ch · ${t.notes}${t.automation ? ' · CC' : ''}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: YinheTheme.textSecondary,
                           ),
-                          subtitle: Text(
-                            'CH $ch · ${t.notes}${t.automation ? ' · CC' : ''}',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: YinheTheme.textSecondary,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-            ),
-            const SizedBox(height: 8),
-            RadioGroup<bool>(
-              groupValue: _allocateFree,
-              onChanged: (v) => setState(() => _allocateFree = v ?? false),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  RadioListTile<bool>(
-                    dense: true,
-                    value: false,
-                    title: Text(
-                      L10n.isZh
-                          ? '保留源通道（可能共享乐器）'
-                          : 'Keep source channels (share instruments)',
-                      style: const TextStyle(fontSize: 13),
-                    ),
+                        ),
+                      );
+                    },
                   ),
-                  RadioListTile<bool>(
-                    dense: true,
-                    value: true,
-                    title: Text(
-                      L10n.isZh
-                          ? '分配空闲通道（音色隔离）'
-                          : 'Assign free channels (isolate instruments)',
-                      style: const TextStyle(fontSize: 13),
-                    ),
+          ),
+          const SizedBox(height: 8),
+          RadioGroup<bool>(
+            groupValue: _allocateFree,
+            onChanged: (v) => setState(() => _allocateFree = v ?? false),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                RadioListTile<bool>(
+                  dense: true,
+                  value: false,
+                  title: Text(
+                    L10n.isZh
+                        ? '保留源通道（可能共享乐器）'
+                        : 'Keep source channels (share instruments)',
+                    style: const TextStyle(fontSize: 13),
                   ),
-                ],
-              ),
+                ),
+                RadioListTile<bool>(
+                  dense: true,
+                  value: true,
+                  title: Text(
+                    L10n.isZh
+                        ? '分配空闲通道（音色隔离）'
+                        : 'Assign free channels (isolate instruments)',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
