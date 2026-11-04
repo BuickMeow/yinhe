@@ -157,12 +157,14 @@ impl ArrangementView {
         self.lane_zoom_accum = 1.0;
 
         let old = self.lane_height();
-        let new_h = if dir > 0.0 {
-            old * LANE_HEIGHT_ZOOM_RATIO
-        } else {
-            old / LANE_HEIGHT_ZOOM_RATIO
-        }
-        .clamp(LANE_HEIGHT_MIN, LANE_HEIGHT_MAX);
+        let Some(grid) = crate::log_zoom::LogZoomGrid::new(
+            LANE_HEIGHT_MIN,
+            LANE_HEIGHT_MAX,
+            LANE_HEIGHT_ZOOM_RATIO,
+        ) else {
+            return;
+        };
+        let new_h = grid.step(old, dir as i32);
         if new_h == old {
             return;
         }
@@ -222,19 +224,24 @@ mod tests {
 
     #[test]
     fn zoom_lane_height_steps_one_notch_and_stops_at_bounds() {
-        let mut v = ArrangementView::default(); // 40px
-        v.zoom_lane_height(100.0, 1.1);
-        assert_eq!(v.lane_height(), 48.0);
-        v.zoom_lane_height(100.0, 0.9);
-        assert_eq!(v.lane_height(), 40.0);
-
-        v.base.track_panel_row_height = LANE_HEIGHT_MIN;
-        v.zoom_lane_height(0.0, 0.9);
-        assert_eq!(v.lane_height(), LANE_HEIGHT_MIN);
-
+        let mut v = ArrangementView::default();
+        // 上限：放大不越界，反向一档必须离开上限，再放大回上限。
         v.base.track_panel_row_height = LANE_HEIGHT_MAX;
         v.zoom_lane_height(0.0, 1.1);
-        assert_eq!(v.lane_height(), LANE_HEIGHT_MAX);
+        assert!((v.lane_height() - LANE_HEIGHT_MAX).abs() < 0.01);
+        v.zoom_lane_height(0.0, 0.9);
+        assert!(v.lane_height() < LANE_HEIGHT_MAX);
+        v.zoom_lane_height(0.0, 1.1);
+        assert!((v.lane_height() - LANE_HEIGHT_MAX).abs() < 0.01);
+
+        // 下限同理。
+        v.base.track_panel_row_height = LANE_HEIGHT_MIN;
+        v.zoom_lane_height(0.0, 0.9);
+        assert!((v.lane_height() - LANE_HEIGHT_MIN).abs() < 0.01);
+        v.zoom_lane_height(0.0, 1.1);
+        assert!(v.lane_height() > LANE_HEIGHT_MIN);
+        v.zoom_lane_height(0.0, 0.9);
+        assert!((v.lane_height() - LANE_HEIGHT_MIN).abs() < 0.01);
     }
 
     /// 细微连续输入不跳档，累积到阈值才跳一档（触控板微操作回归）。
@@ -248,14 +255,19 @@ mod tests {
         assert_eq!(v.lane_height(), 40.0);
         // 再 6%：累积 1.114 ≥ 1.1 → 跳一档
         v.zoom_lane_height(0.0, 1.06);
-        assert_eq!(v.lane_height(), 48.0);
-        // 单次滚轮 1.1 恰好一档
+        let after_one = v.lane_height();
+        assert!(after_one > 40.0);
+        // 单次滚轮 1.1 恰好再跳一档
         v.zoom_lane_height(0.0, 1.1);
-        assert!((v.lane_height() - 57.6).abs() < 0.01);
-        // 反向同理：累积到倒数阈值才缩一档
+        let after_two = v.lane_height();
+        assert!(after_two > after_one);
+        // 反向同理：累积到倒数阈值才缩一档，回到上一档
         v.zoom_lane_height(0.0, 0.95);
         v.zoom_lane_height(0.0, 0.95);
-        assert_eq!(v.lane_height(), 48.0, "0.9025 ≤ 1/1.1 才缩档");
+        assert!(
+            (v.lane_height() - after_one).abs() < 0.01,
+            "0.9025 ≤ 1/1.1 才缩档"
+        );
     }
 
     /// 到达边界时累积器被消费重置，不会卡住后续反向缩放。
@@ -264,10 +276,10 @@ mod tests {
         let mut v = ArrangementView::default();
         v.base.track_panel_row_height = LANE_HEIGHT_MAX;
         v.zoom_lane_height(0.0, 2.0); // 到顶：边界不动，累积器应被消费
-        assert_eq!(v.lane_height(), LANE_HEIGHT_MAX);
+        assert!((v.lane_height() - LANE_HEIGHT_MAX).abs() < 0.01);
         // 若累积器残留（2.0 × 0.9 = 1.8）会被误判为放大而卡在顶部；正确应缩一档。
         v.zoom_lane_height(0.0, 0.9);
-        assert!((v.lane_height() - LANE_HEIGHT_MAX / LANE_HEIGHT_ZOOM_RATIO).abs() < 0.01);
+        assert!(v.lane_height() < LANE_HEIGHT_MAX);
     }
 
     /// 等差档位恰好覆盖到最大档：16 + k·8 = 120。

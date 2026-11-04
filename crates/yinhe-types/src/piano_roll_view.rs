@@ -355,12 +355,11 @@ impl PianoRollView {
         let min_h = (cross_size / 128.0).max(0.001);
         let max_h = KEY_HEIGHT_MAX.max(min_h);
         let old = self.key_height;
-        let new_h = if dir > 0.0 {
-            old * KEY_HEIGHT_ZOOM_RATIO
-        } else {
-            old / KEY_HEIGHT_ZOOM_RATIO
-        }
-        .clamp(min_h, max_h);
+        let Some(grid) = crate::log_zoom::LogZoomGrid::new(min_h, max_h, KEY_HEIGHT_ZOOM_RATIO)
+        else {
+            return;
+        };
+        let new_h = grid.step(old, dir as i32);
         if (new_h - old).abs() < 0.001 {
             return;
         }
@@ -704,17 +703,42 @@ mod tests {
     fn test_key_height_discrete_zoom_steps() {
         let mut v = make_view();
         let mut acc = 1.0;
-        v.key_height = 28.0;
-        // 每档固定 ×1.2：28 → 33.6 → 40.32 → 33.6，相对步长始终一致。
-        v.zoom_cross_discrete(200.0, 1.2, 800.0, &mut acc);
-        assert!((v.key_height - 33.6).abs() < 0.01);
-        v.zoom_cross_discrete(200.0, 1.2, 800.0, &mut acc);
-        assert!((v.key_height - 40.32).abs() < 0.01);
-        v.zoom_cross_discrete(200.0, 0.8, 800.0, &mut acc);
-        assert!((v.key_height - 33.6).abs() < 0.01);
+        let cross = 800.0;
+        let min_h = cross / 128.0;
+        // 下限：缩到底不再变小，反向放大一档再缩回必须回到下限。
+        v.key_height = min_h;
+        v.zoom_cross_discrete(200.0, 0.8, cross, &mut acc);
+        assert!((v.key_height - min_h).abs() < 0.01, "下限不能继续缩");
+        acc = 1.0;
+        v.zoom_cross_discrete(200.0, 1.2, cross, &mut acc);
+        let up = v.key_height;
+        assert!(up > min_h, "从下限放大一档");
+        acc = 1.0;
+        v.zoom_cross_discrete(200.0, 0.8, cross, &mut acc);
+        assert!((v.key_height - min_h).abs() < 0.01, "反向一档必须回到下限");
+
+        // 上限：120 附近的边界不能被 clamp 吃掉档位。
+        v.key_height = KEY_HEIGHT_MAX;
+        acc = 1.0;
+        v.zoom_cross_discrete(200.0, 1.2, cross, &mut acc);
+        assert!(
+            (v.key_height - KEY_HEIGHT_MAX).abs() < 0.01,
+            "上限不能继续放大"
+        );
+        acc = 1.0;
+        v.zoom_cross_discrete(200.0, 0.8, cross, &mut acc);
+        let down = v.key_height;
+        assert!(down < KEY_HEIGHT_MAX, "从上限缩一档");
+        acc = 1.0;
+        v.zoom_cross_discrete(200.0, 1.2, cross, &mut acc);
+        assert!(
+            (v.key_height - KEY_HEIGHT_MAX).abs() < 0.01,
+            "反向一档必须回到上限"
+        );
+
         // 小于跳档比例的微动不跳。
         let before = v.key_height;
-        v.zoom_cross_discrete(200.0, 1.05, 800.0, &mut acc);
+        v.zoom_cross_discrete(200.0, 1.05, cross, &mut acc);
         assert_eq!(v.key_height, before);
     }
 

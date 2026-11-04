@@ -7,6 +7,7 @@ pub mod automation_panel_view;
 pub mod gm;
 pub mod hash;
 pub mod hidden_notes;
+mod log_zoom;
 pub mod metadata;
 mod note;
 pub mod note_bitset;
