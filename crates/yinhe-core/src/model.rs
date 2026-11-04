@@ -303,17 +303,22 @@ pub struct SongInfo {
     pub artists: Vec<ArtistRef>,
 }
 
+/// 单字段格式（音频标签、MIDI 兼容字段）使用的合并文本。
+fn join_artist_names(artists: &[ArtistRef]) -> String {
+    artists
+        .iter()
+        .map(|a| a.name.trim())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" / ")
+}
+
 impl SongInfo {
     pub fn from_meta(meta: &ProjectMeta) -> Self {
         // 艺术家 / 音乐人 / 版权统一为一组：旧工程的 artist 与 copyright
         // 都迁移成独立艺术家框，保存后只剩 artists 作为唯一来源。
         let mut artists = meta.artists.clone();
-        let effective = artists
-            .iter()
-            .map(|a| a.name.trim())
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join(" / ");
+        let effective = join_artist_names(&artists);
         for legacy in [&meta.artist, &meta.copyright] {
             let name = legacy.trim();
             if name.is_empty()
@@ -333,12 +338,7 @@ impl SongInfo {
         let copyright = if artists.is_empty() {
             meta.copyright.clone()
         } else {
-            artists
-                .iter()
-                .map(|a| a.name.trim())
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join(" / ")
+            join_artist_names(&artists)
         };
         Self {
             name: meta.name.clone(),
@@ -360,12 +360,7 @@ impl SongInfo {
         if self.artists.is_empty() {
             return self.artist.clone();
         }
-        self.artists
-            .iter()
-            .map(|a| a.name.trim())
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join(" / ")
+        join_artist_names(&self.artists)
     }
 
     pub fn apply_to(&self, meta: &mut ProjectMeta) {
