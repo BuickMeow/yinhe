@@ -37,42 +37,31 @@ Future<void> showRecentFilesDialog(
                 itemCount: recent.length,
                 itemBuilder: (context, i) {
                   final item = recent[i];
-                  return InkWell(
+                  return ListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 2),
+                    leading: Icon(
+                      Icons.audio_file,
+                      size: 18,
+                      color: YinheTheme.textLabel,
+                    ),
+                    title: Text(
+                      item.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: YinheTheme.text, fontSize: 14),
+                    ),
+                    trailing: Text(
+                      _fmtDate(item.time),
+                      style: TextStyle(
+                        color: YinheTheme.textDisabled,
+                        fontSize: 12,
+                      ),
+                    ),
                     onTap: () {
                       Navigator.of(context).pop();
                       onOpen(item);
                     },
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.audio_file,
-                            size: 18,
-                            color: YinheTheme.textLabel,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              item.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: YinheTheme.text,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ),
-                          Text(
-                            _fmtDate(item.time),
-                            style: TextStyle(
-                              color: YinheTheme.textDisabled,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
                   );
                 },
               ),

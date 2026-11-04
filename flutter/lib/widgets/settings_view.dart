@@ -498,39 +498,27 @@ class _SettingsViewState extends State<SettingsView> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.brightness_6_outlined,
-                      size: 20,
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  leading: Icon(
+                    Icons.brightness_6_outlined,
+                    size: 20,
+                    color: YinheTheme.textSecondary,
+                  ),
+                  title: Text(
+                    L10n.isZh ? '主题模式' : 'Theme mode',
+                    style: TextStyle(color: YinheTheme.text, fontSize: 14),
+                  ),
+                  subtitle: Text(
+                    L10n.isZh
+                        ? '浅色、深色，或跟随系统自动切换'
+                        : 'Light, dark, or follow the system',
+                    style: TextStyle(
                       color: YinheTheme.textSecondary,
+                      fontSize: 12,
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            L10n.isZh ? '主题模式' : 'Theme mode',
-                            style: TextStyle(
-                              color: YinheTheme.text,
-                              fontSize: 14,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            L10n.isZh
-                                ? '浅色、深色，或跟随系统自动切换'
-                                : 'Light, dark, or follow the system',
-                            style: TextStyle(
-                              color: YinheTheme.textSecondary,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
                 const SizedBox(height: 12),
                 Wrap(
@@ -654,25 +642,24 @@ class _SettingsViewState extends State<SettingsView> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          children: [
-            Text(
-              l.soundfonts,
-              style: TextStyle(
-                color: YinheTheme.text,
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-              ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: Text(
+            l.soundfonts,
+            style: TextStyle(
+              color: YinheTheme.text,
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
             ),
-            const Spacer(),
-            IconButton(
-              tooltip: l.addSoundfont,
-              icon: const Icon(Icons.add),
-              color: YinheTheme.textSecondary,
-              visualDensity: VisualDensity.compact,
-              onPressed: widget.onPickSoundFont,
-            ),
-          ],
+          ),
+          trailing: IconButton(
+            tooltip: l.addSoundfont,
+            icon: const Icon(Icons.add),
+            color: YinheTheme.textSecondary,
+            visualDensity: VisualDensity.compact,
+            onPressed: widget.onPickSoundFont,
+          ),
         ),
         const SizedBox(height: 4),
         Expanded(

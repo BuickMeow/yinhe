@@ -188,25 +188,27 @@ class _SelectionGridCell extends StatelessWidget {
     if (action.quarterTurns != 0) {
       icon = RotatedBox(quarterTurns: action.quarterTurns, child: icon);
     }
-    return InkWell(
-      borderRadius: BorderRadius.circular(8),
-      onTap: onTap,
-      child: Padding(
+    return TextButton(
+      onPressed: onTap,
+      style: TextButton.styleFrom(
         padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            icon,
-            const SizedBox(height: 4),
-            Text(
-              action.label,
-              maxLines: 2,
-              textAlign: TextAlign.center,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: color, fontSize: 10, height: 1.15),
-            ),
-          ],
-        ),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          icon,
+          const SizedBox(height: 4),
+          Text(
+            action.label,
+            maxLines: 2,
+            textAlign: TextAlign.center,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: color, fontSize: 10, height: 1.15),
+          ),
+        ],
       ),
     );
   }

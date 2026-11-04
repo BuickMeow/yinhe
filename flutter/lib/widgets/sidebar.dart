@@ -128,25 +128,20 @@ class Sidebar extends StatelessWidget {
   }
 
   Widget _item(IconData icon, String label, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-        child: Row(
-          children: [
-            Icon(icon, size: 20, color: YinheTheme.textSecondary),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: YinheTheme.text, fontSize: 14),
-              ),
-            ),
-          ],
-        ),
+    return ListTile(
+      dense: true,
+      visualDensity: VisualDensity.compact,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 2),
+      horizontalTitleGap: 14,
+      minLeadingWidth: 20,
+      leading: Icon(icon, size: 20, color: YinheTheme.textSecondary),
+      title: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(color: YinheTheme.text, fontSize: 14),
       ),
+      onTap: onTap,
     );
   }
 }
