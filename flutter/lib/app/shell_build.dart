@@ -83,14 +83,8 @@ mixin _ShellBuild on _ShellBase {
     if (_canvasAreaW <= 0 || _canvasAreaH <= 0) {
       return;
     }
-    // 自动化收起时没有手柄，画布直接铺到底部。
-    final bottom = mode == kViewPianoroll && !_autoCollapsed
-        ? kAmHandleHeight
-        : 0.0;
-    final lh = (_canvasAreaH - RulerPainter.height - bottom).clamp(
-      1.0,
-      double.infinity,
-    );
+    // 自动化提手不参与布局：画布/卷帘/wgpu 始终铺到内容区底部。
+    final lh = (_canvasAreaH - RulerPainter.height).clamp(1.0, double.infinity);
     final w = (_canvasAreaW * _canvasDpr).round();
     final h = (lh * _canvasDpr).round();
     final pixel = Size(w.toDouble(), h.toDouble());
@@ -279,7 +273,7 @@ mixin _ShellBuild on _ShellBase {
                               final amVisible =
                                   _viewMode == kViewPianoroll &&
                                   !_autoCollapsed;
-                              // 只有展开时才让出手柄高度；收起后不留空位。
+                              // 面板最大高度仍扣掉提手，避免全屏时越过标尺；画布本身不再避让。
                               final amMax =
                                   (size.height -
                                           RulerPainter.height -
@@ -292,15 +286,10 @@ mixin _ShellBuild on _ShellBase {
                                       amMax,
                                     )
                                   : 0.0;
-                              // 底部栏（手柄 + 展开的面板）参与布局：展开时 PR
-                              // 视口让出手柄高度，收起后完全让出，不再常驻。
-                              final bottomBarH = amVisible
-                                  ? kAmHandleHeight
-                                  : 0.0;
-                              // 内容画布 = 画布区减去标尺条和底部栏（Rust 坐标系从标尺下方开始）。
-                              final contentH =
-                                  (canvasH - RulerPainter.height - bottomBarH)
-                                      .clamp(1.0, double.infinity);
+                              // 内容画布 = 画布区减去标尺条。AM 提手只是浮层，
+                              // 不再让 PR/卷帘/wgpu 为它让出高度。
+                              final contentH = (canvasH - RulerPainter.height)
+                                  .clamp(1.0, double.infinity);
                               final dpr = MediaQuery.devicePixelRatioOf(
                                 context,
                               );
@@ -360,7 +349,7 @@ mixin _ShellBuild on _ShellBase {
                                               left: 0,
                                               right: 0,
                                               top: RulerPainter.height,
-                                              bottom: bottomBarH,
+                                              bottom: 0,
                                               child: IgnorePointer(
                                                 child: CustomPaint(
                                                   painter:
@@ -377,7 +366,7 @@ mixin _ShellBuild on _ShellBase {
                                               left: 0,
                                               right: 0,
                                               top: RulerPainter.height,
-                                              bottom: bottomBarH,
+                                              bottom: 0,
                                               child: IgnorePointer(
                                                 child: CustomPaint(
                                                   painter: PianorollGridPainter(
@@ -391,7 +380,7 @@ mixin _ShellBuild on _ShellBase {
                                             left: 0,
                                             right: 0,
                                             top: RulerPainter.height,
-                                            bottom: bottomBarH,
+                                            bottom: 0,
                                             child: GestureDetector(
                                               behavior: HitTestBehavior.opaque,
                                               onTapUp: _handleTapUp,
@@ -438,7 +427,7 @@ mixin _ShellBuild on _ShellBase {
                                               left: 0,
                                               right: 0,
                                               top: RulerPainter.height,
-                                              bottom: bottomBarH,
+                                              bottom: 0,
                                               child: IgnorePointer(
                                                 child: CustomPaint(
                                                   painter: KeyLabelPainter(
@@ -453,7 +442,7 @@ mixin _ShellBuild on _ShellBase {
                                             left: 0,
                                             right: 0,
                                             top: RulerPainter.height,
-                                            bottom: bottomBarH,
+                                            bottom: 0,
                                             child: IgnorePointer(
                                               child: CustomPaint(
                                                 painter: NoteDeleteFadePainter(
@@ -468,7 +457,7 @@ mixin _ShellBuild on _ShellBase {
                                             left: 0,
                                             right: 0,
                                             top: RulerPainter.height,
-                                            bottom: bottomBarH,
+                                            bottom: 0,
                                             child: IgnorePointer(
                                               child: CustomPaint(
                                                 painter: OverlayPainter(
@@ -477,6 +466,9 @@ mixin _ShellBuild on _ShellBase {
                                                   _snap,
                                                   _tool == 0,
                                                   _handlesScale,
+                                                  rust
+                                                      .quantizeTickInterval()
+                                                      .toDouble(),
                                                 ),
                                               ),
                                             ),
@@ -485,7 +477,7 @@ mixin _ShellBuild on _ShellBase {
                                             left: 0,
                                             right: 0,
                                             top: RulerPainter.height,
-                                            bottom: bottomBarH,
+                                            bottom: 0,
                                             child: IgnorePointer(
                                               child: CustomPaint(
                                                 painter: LabelsPainter(
@@ -534,7 +526,7 @@ mixin _ShellBuild on _ShellBase {
                                             left: 0,
                                             right: 0,
                                             top: RulerPainter.height,
-                                            bottom: bottomBarH,
+                                            bottom: 0,
                                             child: IgnorePointer(
                                               child: CustomPaint(
                                                 painter:
@@ -569,7 +561,7 @@ mixin _ShellBuild on _ShellBase {
                                             left: 0,
                                             right: 0,
                                             top: RulerPainter.height,
-                                            bottom: bottomBarH,
+                                            bottom: 0,
                                             child: IgnorePointer(
                                               child: CustomPaint(
                                                 painter:
@@ -587,7 +579,7 @@ mixin _ShellBuild on _ShellBase {
                                             left: 0,
                                             right: 0,
                                             top: RulerPainter.height,
-                                            bottom: bottomBarH,
+                                            bottom: 0,
                                             child: IgnorePointer(
                                               child: CustomPaint(
                                                 painter: MarqueeHintPainter(

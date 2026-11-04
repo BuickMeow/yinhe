@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/midi_names.dart';
+import '../core/models.dart';
 import '../l10n/app_localizations.dart';
 import '../core/theme.dart';
 import 'frame.dart';
@@ -124,10 +125,7 @@ class _TrackInfoDialogState extends State<TrackInfoDialog> {
                     ),
                     items: [
                       for (var i = 0; i < 16; i++)
-                        DropdownMenuItem(
-                          value: i,
-                          child: Text(String.fromCharCode(0x41 + i)),
-                        ),
+                        DropdownMenuItem(value: i, child: Text(portLetter(i))),
                     ],
                     onChanged: (v) => setState(() => _port = v ?? _port),
                   ),

@@ -363,6 +363,13 @@ pub fn show(
             crate::theme::contrast_fg(),
             crate::theme::contrast_fg(),
         );
+        if edit.arr_sel_rect.len() == 1 {
+            let screen = egui::Rect::from_min_max(
+                egui::pos2(rect.min.x + snapped.min.x, rect.min.y + snapped.min.y),
+                egui::pos2(rect.min.x + snapped.max.x, rect.min.y + snapped.max.y),
+            );
+            crate::selection::draw::draw_arrange_handles(ui.painter(), screen);
+        }
     }
     if *cfg.active_tool == Tool::Eraser {
         let drag_id = ui.scope_id().with("eraser_drag_arr");

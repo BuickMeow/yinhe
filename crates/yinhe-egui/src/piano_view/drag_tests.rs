@@ -86,6 +86,8 @@ fn run_sel_frame(
         Vec<crate::piano_view::PreviewReq>,
         Option<yinhe_types::PencilNoteDrag>,
     ) = (None, Vec::new(), None);
+    let mut selection_scale_delta = None;
+    let mut riff_repeat = None;
     // run_ui 返回的 FullOutput 含字体纹理 delta，丢弃前必须 clear（epaint 断言）。
     ctx.run_ui(raw, |ui| {
         let (_, _, previews, note_event, pencil_drag, _) = sel_drag_frame(
@@ -102,6 +104,8 @@ fn run_sel_frame(
             cursor_tick,
             note_drag_delta,
             note_resize_delta,
+            &mut selection_scale_delta,
+            &mut riff_repeat,
             sel_rect,
             &[[0.5, 0.5, 0.5, 1.0]],
             &[true],
@@ -1753,6 +1757,8 @@ fn note_drag_ghost_survives_viewport_cull() {
     let mut cursor_tick = None;
     let mut note_drag_delta = None;
     let mut note_resize_delta = None;
+    let mut selection_scale_delta = None;
+    let mut riff_repeat = None;
     let track_selected = std::collections::HashSet::new();
 
     // 屏幕坐标：tick 1100 → x = 200 + 1100 = 1300；key 70 → y = (127-70)*10 = 570。
@@ -1776,6 +1782,8 @@ fn note_drag_ghost_survives_viewport_cull() {
                 &mut cursor_tick,
                 &mut note_drag_delta,
                 &mut note_resize_delta,
+                &mut selection_scale_delta,
+                &mut riff_repeat,
                 &mut sel_rect,
                 &[[0.5, 0.5, 0.5, 1.0]],
                 &[true],

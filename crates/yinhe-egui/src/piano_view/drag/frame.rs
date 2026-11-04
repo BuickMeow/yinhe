@@ -9,6 +9,7 @@ use yinhe_types::TimeSigEvent;
 
 use super::group_move::note_drag_frame;
 use super::group_resize::sel_resize_frame;
+use super::group_scale::{sel_riff_frame, sel_scale_frame};
 use super::hit::{handle_double_click_create, quick_delete_early};
 use super::interact::handle_sel_marquee;
 use super::press::sel_press;
@@ -32,6 +33,8 @@ pub(crate) fn sel_drag_frame(
     cursor_tick: &mut Option<f64>,
     note_drag_delta: &mut Option<(i64, i32, bool)>,
     note_resize_delta: &mut Option<(ResizeSide, i64)>,
+    selection_scale_delta: &mut Option<u64>,
+    riff_repeat: &mut Option<(i64, i64)>,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     _track_colors: &[[f32; 4]],
     track_visible: &[bool],
@@ -116,6 +119,32 @@ pub(crate) fn sel_drag_frame(
         total_ticks,
         sel_rect,
         note_resize_delta,
+        &pointer,
+    );
+    sel_scale_frame(
+        ui,
+        &mut state,
+        view,
+        content_rect,
+        music_rect,
+        quantize,
+        ppq,
+        bar_line_data,
+        total_ticks,
+        sel_rect,
+        selection_scale_delta,
+        &pointer,
+    );
+    sel_riff_frame(
+        ui,
+        &mut state,
+        view,
+        content_rect,
+        music_rect,
+        quantize,
+        ppq,
+        bar_line_data,
+        riff_repeat,
         &pointer,
     );
     if can_edit {

@@ -95,6 +95,8 @@ pub(crate) fn dispatch(
                 cursor_tick,
                 feedback.note_drag_delta,
                 feedback.note_resize_delta,
+                feedback.selection_scale_delta,
+                feedback.riff_repeat,
                 sel_rect,
                 track_colors,
                 track_visible,
@@ -263,6 +265,8 @@ pub(crate) fn update_hover_cursor(
     write_track: Option<u16>,
     conductor_idx: Option<u16>,
     effective_tool: Tool,
+    quantize: QuantizePreset,
+    ppq: u32,
 ) {
     if (effective_tool == Tool::Select || effective_tool == Tool::SelectVertical)
         && !crate::view_interaction::pointer_over_popup(ui.ctx())
@@ -289,13 +293,19 @@ pub(crate) fn update_hover_cursor(
             hit_note = true;
         }
         if !hit_note {
-            if let Some((side, _, _)) = super::drag::hit_test_sel_edge(&eff_rects, view, local) {
-                match side {
-                    yinhe_editor_core::ResizeSide::Left => {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest)
-                    }
-                    yinhe_editor_core::ResizeSide::Right => {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast)
+            if let Some(h) =
+                crate::selection::drag::hit_test_sel_handles(&eff_rects, view, local, quantize, ppq)
+            {
+                use crate::selection::drag::SelHandleKind;
+                let vertical = view.is_vertical();
+                match h.kind {
+                    SelHandleKind::Riff => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe),
+                    SelHandleKind::Scale | SelHandleKind::Gate => {
+                        if vertical {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical)
+                        } else {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal)
+                        }
                     }
                 }
             } else {

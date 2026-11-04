@@ -275,6 +275,8 @@ impl App {
         let mut request_pianoroll = false;
         let mut arr_drag_delta: Option<crate::arrange::ArrDragDelta> = None;
         let mut arr_eraser_rect: Option<crate::arrange::ArrSelRect> = None;
+        let mut arr_scale_span: Option<u64> = None;
+        let mut arr_riff_steps: Option<(i64, i64)> = None;
         let mut automation_picker_req: Option<usize> = None;
         // 方案 A：音轨结构变化（add/remove track）→ drop 旧引擎。
         // ChannelLayout 在引擎创建时冻结，旧引擎无法 dispatch 新增通道。
@@ -319,6 +321,8 @@ impl App {
                 &mut self.track_selection_anchor,
                 &mut arr_drag_delta,
                 &mut arr_eraser_rect,
+                &mut arr_scale_span,
+                &mut arr_riff_steps,
                 &mut self.info_content,
                 &mut self.right_tab,
                 &mut needs_audio_rebuild,
@@ -371,6 +375,9 @@ impl App {
         if let Some((delta_ticks, delta_tracks, alt)) = arr_drag_delta {
             self.handle_arr_drag(delta_ticks, delta_tracks, alt);
         }
+        // AR 选区整体变速 / Riff 重复。
+        self.handle_arr_selection_scale(arr_scale_span);
+        self.handle_arr_riff_repeat(arr_riff_steps);
     }
 
     /// 主视图已浮动为独立窗口时的占位提示（视图让位）。
@@ -561,7 +568,15 @@ impl App {
             Vec::new();
         let mut velocity_edits: Vec<yinhe_types::VelocityEdit> = Vec::new();
 
-        let (piano_event, note_drag_delta, pencil_note_drag, note_resize_delta, preview_reqs) = {
+        let (
+            piano_event,
+            note_drag_delta,
+            pencil_note_drag,
+            note_resize_delta,
+            selection_scale_delta,
+            riff_repeat,
+            preview_reqs,
+        ) = {
             let mut guard =
                 crate::app::main_loop::ReplaceGuard::new(&mut self.workspace.documents[idx]);
             let doc = guard.as_mut();
@@ -575,6 +590,8 @@ impl App {
             let mut note_drag_delta: Option<(i64, i32, bool)> = None;
             let mut pencil_note_drag: Option<crate::piano_view::PencilNoteDrag> = None;
             let mut note_resize_delta: Option<(crate::piano_view::ResizeSide, i64)> = None;
+            let mut selection_scale_delta: Option<u64> = None;
+            let mut riff_repeat: Option<(i64, i64)> = None;
             let mut preview_reqs: Vec<crate::piano_view::PreviewReq> = Vec::new();
             ui.scope_builder(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
                 let _piano_total_start = if yinhe_memtrace::perf_probe::enabled() {
@@ -691,6 +708,8 @@ impl App {
                     note_drag_delta: &mut note_drag_delta,
                     pencil_note_drag: &mut pencil_note_drag,
                     note_resize_delta: &mut note_resize_delta,
+                    selection_scale_delta: &mut selection_scale_delta,
+                    riff_repeat: &mut riff_repeat,
                     velocity_edits: &mut velocity_edits,
                     preview_reqs: &mut preview_reqs,
                 };
@@ -759,6 +778,8 @@ impl App {
                 note_drag_delta,
                 pencil_note_drag,
                 note_resize_delta,
+                selection_scale_delta,
+                riff_repeat,
                 preview_reqs,
             )
         };
@@ -850,6 +871,10 @@ impl App {
 
         // Handle note resize (selection edge drag)
         self.handle_note_resize(note_resize_delta);
+
+        // Handle selection overall time stretch / Riff repeat.
+        self.handle_selection_scale(selection_scale_delta);
+        self.handle_riff_repeat(riff_repeat);
 
         // Handle pencil note drag
         self.handle_pencil_note_drag(pencil_note_drag);
@@ -1019,6 +1044,48 @@ impl App {
         }
     }
 
+    /// Handle selection overall time stretch (right-edge square).
+    fn handle_selection_scale(&mut self, new_span: Option<u64>) {
+        let Some(new_span) = new_span else {
+            return;
+        };
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
+        let before = doc.capture_snapshot();
+        if let Some(action) = doc.rescale_selection_span(new_span) {
+            doc.edit.pianoroll_view.base.dirty = true;
+            doc.push_undo(action, t!("undo.rescale_span").as_ref(), before);
+            self.notify_notes_changed();
+        }
+    }
+
+    /// Handle Riff repeat (bottom-right square): repeat the selection by `(sx, sy)`.
+    fn handle_riff_repeat(&mut self, steps: Option<(i64, i64)>) {
+        let Some((sx, sy)) = steps else {
+            return;
+        };
+        if sx == 0 && sy == 0 {
+            return;
+        }
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
+        let Some(&(t0, t1, k0, k1)) = doc.edit.sel_rect.rects.first() else {
+            return;
+        };
+        let width = (t1 - t0).max(1.0).round() as i64;
+        let key_span = (i64::from(k1) - i64::from(k0) + 1).max(1) as u16;
+        let before = doc.capture_snapshot();
+        if let Some(action) = doc.repeat_selected_keys(width, sx, key_span, sy) {
+            doc.edit.pianoroll_view.base.dirty = true;
+            doc.push_undo(action, t!("undo.duplicate_notes").as_ref(), before);
+            self.notify_notes_changed();
+        }
+    }
+
     /// Handle pencil note drag updates (move or resize a single note).
     fn handle_pencil_note_drag(&mut self, drag: Option<crate::piano_view::PencilNoteDrag>) {
         let Some(drag) = drag else { return };
@@ -1066,6 +1133,48 @@ impl App {
             doc.edit.arrange_view.base.dirty = true;
             doc.push_undo(action, &label, before);
             self.notify_audio_model_changed();
+        }
+    }
+
+    /// Handle AR selection overall time stretch.
+    fn handle_arr_selection_scale(&mut self, new_span: Option<u64>) {
+        let Some(new_span) = new_span else {
+            return;
+        };
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
+        let before = doc.capture_snapshot();
+        if let Some(action) = doc.rescale_selection_span(new_span) {
+            doc.edit.arrange_view.base.dirty = true;
+            doc.push_undo(action, t!("undo.rescale_span").as_ref(), before);
+            self.notify_notes_changed();
+        }
+    }
+
+    /// Handle AR Riff repeat: repeat selected notes by `(sx, sy)`.
+    fn handle_arr_riff_repeat(&mut self, steps: Option<(i64, i64)>) {
+        let Some((sx, sy)) = steps else {
+            return;
+        };
+        if sx == 0 && sy == 0 {
+            return;
+        }
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
+        let Some(&(t0, t1, r0, r1)) = doc.edit.arr_sel_rect.first() else {
+            return;
+        };
+        let width = (t1 - t0).max(1.0).round() as i64;
+        let row_span = (r1 - r0 + 1).max(1) as u16;
+        let before = doc.capture_snapshot();
+        if let Some(action) = doc.repeat_selected_tracks(width, sx, row_span, sy) {
+            doc.edit.arrange_view.base.dirty = true;
+            doc.push_undo(action, t!("undo.duplicate_notes").as_ref(), before);
+            self.notify_notes_changed();
         }
     }
 

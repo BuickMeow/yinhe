@@ -3,9 +3,6 @@ use yinhe_editor_core::ResizeSide;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::{NoteSource, PianoRollView, TimeSigEvent};
 
-/// Hit-test 边缘的像素阈值（与铅笔工具一致）。
-const EDGE_THRESHOLD_PX: f32 = 6.0;
-
 /// 一次拖拽中收集的选中音符信息（move / resize 共用）。
 #[derive(Clone, Debug)]
 pub struct CollectedNote {
@@ -230,58 +227,95 @@ pub fn add_pr_selection_rect(
     }
 }
 
-/// Hit-test 鼠标是否在某个选框的主轴两端边缘 `EDGE_THRESHOLD_PX` 内。
-///
-/// 返回 `(side, origin_boundary_tick, other_boundary_tick)`：
-/// - `origin_boundary_tick`：被拖动边缘的原 tick
-/// - `other_boundary_tick`：另一个边缘的原 tick（用于计算最小宽度约束）
-///
-/// Left = 主轴起始端（t_start 侧），Right = 主轴末端（t_end 侧）。
-/// 横向主轴的屏幕方向是 X，纵向是 Y。副轴范围判定横向用屏幕 Y、纵向用屏幕 X。
-///
-/// 窄选框（主轴方向宽度 <= 2×阈值）跳过边缘检测，避免与 move 冲突。
-pub fn hit_test_sel_edge(
+/// 桌面选框控制点命中半径（像素）。
+pub const SEL_HANDLE_R: f32 = 11.0;
+
+/// 选框右侧三个方块控制点。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelHandleKind {
+    /// 右下角：按选区宽度重复。
+    Riff,
+    /// 右缘中点：整体变速。
+    Scale,
+    /// 右缘内缩一个量化格：每个音符批量改 gate。
+    Gate,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SelHandleHit {
+    pub kind: SelHandleKind,
+    pub t0: f64,
+    pub t1: f64,
+    pub k0: u8,
+    pub k1: u8,
+}
+
+/// 三个方块中心的屏幕/内容坐标（与 `music_sel_to_pixel_rect` 同一坐标系）。
+pub fn selection_handle_centers(
+    view: &PianoRollView,
+    rect: egui::Rect,
+    interval_px: f32,
+) -> (egui::Pos2, egui::Pos2, Option<egui::Pos2>) {
+    const INSET: f32 = 4.0;
+    let corner = egui::pos2(rect.max.x - INSET, rect.max.y - INSET);
+    if view.is_vertical() {
+        let scale = egui::pos2(rect.center().x, rect.max.y - INSET);
+        let y = rect.max.y - INSET - interval_px;
+        let gate = (y > rect.min.y + 6.0).then(|| egui::pos2(rect.center().x, y));
+        (corner, scale, gate)
+    } else {
+        let scale = egui::pos2(rect.max.x - INSET, rect.center().y);
+        let x = rect.max.x - INSET - interval_px;
+        let gate = (x > rect.min.x + 6.0).then(|| egui::pos2(x, rect.center().y));
+        (corner, scale, gate)
+    }
+}
+
+/// 命中选框右侧三个方块。只对单选框生效，取距离最近者。
+pub fn hit_test_sel_handles(
     eff_rects: &[(f64, f64, u8, u8)],
     view: &PianoRollView,
     local: egui::Pos2,
-) -> Option<(ResizeSide, f64, f64)> {
-    for &(t_start, t_end, key_lo, key_hi) in eff_rects {
-        let pixel_rect = music_sel_to_pixel_rect(view, t_start, t_end, key_lo, key_hi);
-        // 副轴不在选框范围（含阈值）内 → 跳过。横向副轴 = 屏幕 Y；纵向副轴 = 屏幕 X。
-        let (cross_local, cross_lo, cross_hi) = if view.is_vertical() {
-            (local.x, pixel_rect.min.x, pixel_rect.max.x)
-        } else {
-            (local.y, pixel_rect.min.y, pixel_rect.max.y)
-        };
-        if cross_local < cross_lo - EDGE_THRESHOLD_PX || cross_local > cross_hi + EDGE_THRESHOLD_PX
-        {
-            continue;
-        }
-        // 窄选框跳过边缘检测，避免与 move 冲突（主轴方向跨度）。
-        let main_span = if view.is_vertical() {
-            pixel_rect.height()
-        } else {
-            pixel_rect.width()
-        };
-        if main_span <= 2.0 * EDGE_THRESHOLD_PX {
-            continue;
-        }
-        // 主轴边缘距离判定：横向用 local.x 与 min.x/max.x；纵向用 local.y 与 min.y/max.y。
-        let (main_local, main_lo, main_hi) = if view.is_vertical() {
-            (local.y, pixel_rect.min.y, pixel_rect.max.y)
-        } else {
-            (local.x, pixel_rect.min.x, pixel_rect.max.x)
-        };
-        // 起点边缘（主轴起始端 = t_start）
-        if (main_local - main_lo).abs() <= EDGE_THRESHOLD_PX {
-            return Some((ResizeSide::Left, t_start, t_end));
-        }
-        // 终点边缘（主轴末端 = t_end）
-        if (main_local - main_hi).abs() <= EDGE_THRESHOLD_PX {
-            return Some((ResizeSide::Right, t_end, t_start));
+    quantize: QuantizePreset,
+    ppq: u32,
+) -> Option<SelHandleHit> {
+    let &(t0, t1, k0, k1) = eff_rects.first()?;
+    if eff_rects.len() != 1 {
+        return None;
+    }
+    let rect = music_sel_to_pixel_rect(view, t0, t1, k0, k1);
+    let interval_px = quantize.tick_interval(ppq).max(1) as f32 * view.base.pixels_per_tick;
+    let (corner, scale, gate) = selection_handle_centers(view, rect, interval_px);
+    let near = |p: egui::Pos2| (p - local).length_sq() <= SEL_HANDLE_R * SEL_HANDLE_R;
+    if near(corner) {
+        return Some(SelHandleHit {
+            kind: SelHandleKind::Riff,
+            t0,
+            t1,
+            k0,
+            k1,
+        });
+    }
+    let mut best: Option<(SelHandleKind, f32)> = None;
+    for (kind, p) in [
+        (SelHandleKind::Scale, Some(scale)),
+        (SelHandleKind::Gate, gate),
+    ] {
+        let Some(p) = p else { continue };
+        if near(p) {
+            let d = (p - local).length_sq();
+            if best.is_none_or(|(_, bd)| d < bd) {
+                best = Some((kind, d));
+            }
         }
     }
-    None
+    best.map(|(kind, _)| SelHandleHit {
+        kind,
+        t0,
+        t1,
+        k0,
+        k1,
+    })
 }
 
 /// 计算 resize 的 dt（按量化 snap），并约束最小宽度为一个量化间隔。
@@ -402,5 +436,18 @@ mod tests {
             collect_selected_notes(&sel, Some(&midi), &[true, true], &Default::default(), &[]);
         assert_eq!(notes.len(), 1, "锁定轨 0 不应被框选中");
         assert_eq!(notes[0].track, 1);
+    }
+    #[test]
+    fn selection_handles_hit_corner_scale_and_gate() {
+        let view = yinhe_types::PianoRollView::default();
+        let quantize = QuantizePreset::Fraction(1, 4);
+        let rect = music_sel_to_pixel_rect(&view, 0.0, 1920.0, 60, 72);
+        let interval = quantize.tick_interval(480).max(1) as f32 * view.base.pixels_per_tick;
+        let (corner, scale, gate) = selection_handle_centers(&view, rect, interval);
+        let rects = [(0.0, 1920.0, 60, 72)];
+        let hit = |p| hit_test_sel_handles(&rects, &view, p, quantize, 480).map(|h| h.kind);
+        assert_eq!(hit(corner), Some(SelHandleKind::Riff));
+        assert_eq!(hit(scale), Some(SelHandleKind::Scale));
+        assert_eq!(hit(gate.expect("gate handle")), Some(SelHandleKind::Gate));
     }
 }

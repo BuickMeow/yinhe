@@ -38,6 +38,10 @@ class OverlayData {
   }
 }
 
+/// MIDI 端口字母：0=A、1=B … 15=P；超出范围显示 `?`。
+String portLetter(int port) =>
+    port >= 0 && port < 26 ? String.fromCharCode(0x41 + port) : '?';
+
 /// 轨道面板行数据（Rust tracks_json）。
 class TrackRow {
   const TrackRow({

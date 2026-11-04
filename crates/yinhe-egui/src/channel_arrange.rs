@@ -308,12 +308,16 @@ pub(crate) fn show(
             audio_sources: &model.audio_sources,
         };
         let mut no_eraser: Option<(f64, f64, usize, usize)> = None;
+        let mut no_scale: Option<u64> = None;
+        let mut no_riff: Option<(i64, i64)> = None;
         let mut edit = crate::arrange::ArrangeEdit {
             selected: &mut doc.edit.selected,
             cursor_tick: &mut doc.edit.cursor_tick,
             arr_sel_rect: &mut doc.edit.arr_sel_rect,
             arr_drag_delta,
             arr_eraser_rect: &mut no_eraser,
+            arr_scale_span: &mut no_scale,
+            arr_riff_steps: &mut no_riff,
             track_selected: &mut doc.edit.track_selected,
             selection_anchor,
             info_content,

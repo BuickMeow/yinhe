@@ -134,7 +134,7 @@ mixin _ShellTransport on _ShellBase {
   void _setAutoCollapsed(bool collapsed) {
     setState(() {
       _autoCollapsed = collapsed;
-      // 收起直接停到底部（手柄常驻），不做滑出再弹出的动画。
+      // 收起直接移除手柄和面板，不做滑出再弹出的动画；重新打开走顶部按钮。
       if (collapsed) {
         _autoPanelHeight = 0;
       } else if (_autoPanelHeight != null &&

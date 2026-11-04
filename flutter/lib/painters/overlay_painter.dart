@@ -13,6 +13,7 @@ class OverlayPainter extends CustomPainter {
     this.snap,
     this.showHandles,
     this.handlesScale,
+    this.quantizeTicks,
   ) : super(repaint: Listenable.merge([overlay, moving, snap, handlesScale]));
 
   final ValueNotifier<OverlayData> overlay;
@@ -28,6 +29,9 @@ class OverlayPainter extends CustomPainter {
 
   /// 锚点出现动画：0 = 隐藏，1 = 正常大小（可略大于 1 做回弹）。
   final ValueNotifier<double> handlesScale;
+
+  /// 当前量化间隔（tick）：右侧 gate 方块从右缘向内缩这么多。
+  final double quantizeTicks;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -66,69 +70,48 @@ class OverlayPainter extends CustomPainter {
       rect(b);
     }
     if (showHandles && !moving.value && o.box == null && o.sel.length == 1) {
-      _paintHandles(canvas, o.sel.first, stroke, handlesScale.value);
+      _paintHandles(canvas, o.sel.first, handlesScale.value);
     }
     canvas.restore();
   }
 
-  /// 选区右内侧：Material Symbols `arrow_range`（整体 gate，仅 PR）；
-  /// 右下角：L 形角标（Riff，PR/AR 都有）。
-  void _paintHandles(Canvas canvas, Rect r, Paint stroke, double scale) {
+  /// 三个方块控制点：
+  /// - 右下角：重复（Riff）；
+  /// - 右缘中点：整体变速；
+  /// - 右缘内缩一个量化格：每个音符批量改 gate（仅 PR）。
+  void _paintHandles(Canvas canvas, Rect r, double scale) {
     if (scale <= 0.01) {
       return;
     }
-    final paint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.4
-      ..strokeCap = StrokeCap.round
-      ..color = YinheTheme.text.withValues(alpha: 0.55);
-    // 选区右内侧：Material Symbols 的 arrow_range（PR 专用）。
-    // Flutter 自带 MaterialIcons 没有这个字形，按官方 24×24 路径绘制。
     final s = snap.value;
+    final ppu = s.length > SnapField.ppu ? s[SnapField.ppu] : 0.0;
     final isPr = s.length > SnapField.mode && s[SnapField.mode] > 0;
-    if (isPr) {
-      final iconSize = 16.0 * scale;
-      final k = iconSize / 24.0;
-      final iconPaint = Paint()
-        ..style = PaintingStyle.fill
-        ..color = paint.color;
-      final iconPath = Path()
-        ..moveTo(7, 17)
-        ..lineTo(2, 12)
-        ..lineTo(7, 7)
-        ..lineTo(8.4, 8.4)
-        ..lineTo(5.825, 11)
-        ..lineTo(18.175, 11)
-        ..lineTo(15.6, 8.4)
-        ..lineTo(17, 7)
-        ..lineTo(22, 12)
-        ..lineTo(17, 17)
-        ..lineTo(15.6, 15.6)
-        ..lineTo(18.175, 13)
-        ..lineTo(5.825, 13)
-        ..lineTo(8.4, 15.6)
-        ..close();
-      canvas.save();
-      canvas.translate(
-        r.right - 12.0 - iconSize / 2,
-        r.center.dy - iconSize / 2,
-      );
-      canvas.scale(k, k);
-      canvas.drawPath(iconPath, iconPaint);
-      canvas.restore();
+    final fill = Paint()
+      ..style = PaintingStyle.fill
+      ..color = YinheTheme.text.withValues(alpha: 0.62);
+    final border = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1
+      ..color = YinheTheme.bg.withValues(alpha: 0.9);
+    final side = 8.0 * scale;
+    void square(Offset center) {
+      final rect = Rect.fromCenter(center: center, width: side, height: side);
+      canvas.drawRect(rect, fill);
+      canvas.drawRect(rect, border);
     }
 
-    // 右下角：细 L 形角标（Riff），比加号更像角落手柄。
-    final x = r.right - 4.0;
-    final y = r.bottom - 4.0;
-    final arm = 9.0 * scale;
-    canvas.drawPath(
-      Path()
-        ..moveTo(x - arm, y)
-        ..lineTo(x, y)
-        ..lineTo(x, y - arm),
-      paint,
-    );
+    const inset = 4.0;
+    // 右下角：重复。
+    square(Offset(r.right - inset, r.bottom - inset));
+    // 右缘中点：整体变速。
+    square(Offset(r.right - inset, r.center.dy));
+    // 量化格内缩：批量 gate（AR 没有）。
+    if (isPr && ppu > 0 && quantizeTicks > 0) {
+      final x = r.right - inset - quantizeTicks * ppu;
+      if (x > r.left + 6.0) {
+        square(Offset(x, r.center.dy));
+      }
+    }
   }
 
   @override

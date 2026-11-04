@@ -53,6 +53,14 @@ pub(crate) fn sel_drag_frame_arrange(
     let mut move_min_tick: f64 = ui
         .data_mut(|d| d.get_persisted(move_min_tick_id))
         .unwrap_or(f64::INFINITY);
+    let scale_state_id = ui.scope_id().with("arr_scale_state");
+    let mut scale_state: Option<(f64, f64, usize, usize)> = ui
+        .data_mut(|d| d.get_persisted(scale_state_id))
+        .unwrap_or(None);
+    let riff_state_id = ui.scope_id().with("arr_riff_state");
+    let mut riff_state: Option<(f64, f64, usize, usize)> = ui
+        .data_mut(|d| d.get_persisted(riff_state_id))
+        .unwrap_or(None);
     let pointer = ui.input(|i| i.pointer.clone());
     let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
     let additive = cmd || ui.input(|i| i.modifiers.shift);
@@ -73,6 +81,8 @@ pub(crate) fn sel_drag_frame_arrange(
         ui.data_mut(|d| d.insert_persisted(move_had_moved_id, move_had_moved));
         ui.data_mut(|d| d.insert_persisted(move_notes_id, move_notes));
         ui.data_mut(|d| d.insert_persisted(move_min_tick_id, move_min_tick));
+        ui.data_mut(|d| d.insert_persisted(scale_state_id, scale_state));
+        ui.data_mut(|d| d.insert_persisted(riff_state_id, riff_state));
         return (ghost_notes, hidden_notes, drag_rect);
     }
     let inside_sel_rect = is_inside_sel_rect(
@@ -104,7 +114,20 @@ pub(crate) fn sel_drag_frame_arrange(
             .hit_at_music_y(local.y + view.base.scroll_y, view.lane_height())
             .map(|h| h.track() as f32)
             .unwrap_or(0.0);
-        if inside_sel_rect && !additive {
+        let handle_hit = if scale_state.is_some() || riff_state.is_some() {
+            None
+        } else if !additive {
+            arr_handle_hit(edit.arr_sel_rect, view, row_layout, local)
+        } else {
+            None
+        };
+        if let Some((kind, t0, t1, r0, r1)) = handle_hit {
+            if kind == 4 {
+                riff_state = Some((t0, t1, r0, r1));
+            } else {
+                scale_state = Some((t0, t1, r0, r1));
+            }
+        } else if inside_sel_rect && !additive {
             // 先按当前选区收集一次（下一行会清空选区）。
             move_notes = Some(std::sync::Arc::new(
                 crate::selection::drag::collect_selected_notes(
@@ -145,6 +168,93 @@ pub(crate) fn sel_drag_frame_arrange(
             }
         }
     }
+    if let Some((t0, t1, r0, r1)) = scale_state {
+        if pointer.primary_down()
+            && !pointer.primary_pressed()
+            && let Some(pos) = pointer.hover_pos()
+        {
+            let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+            let raw = view.x_to_tick(local.x);
+            let snapped = crate::view_interaction::snap_tick(
+                raw,
+                data.quantize,
+                data.ppq,
+                data.bar_line_data,
+            );
+            let min_span = (t1 - t0)
+                .min(f64::from(data.quantize.tick_interval(data.ppq).max(1)))
+                .max(1.0);
+            let new_t1 = snapped.max(t0 + min_span);
+            if let Some(r) = edit.arr_sel_rect.first_mut() {
+                r.0 = t0;
+                r.1 = new_t1;
+                r.2 = r0;
+                r.3 = r1;
+            }
+            view.base.dirty = true;
+        }
+        if pointer.primary_released() {
+            if let Some(pos) = pointer.hover_pos() {
+                let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+                let raw = view.x_to_tick(local.x);
+                let snapped = crate::view_interaction::snap_tick(
+                    raw,
+                    data.quantize,
+                    data.ppq,
+                    data.bar_line_data,
+                );
+                let min_span = (t1 - t0)
+                    .min(f64::from(data.quantize.tick_interval(data.ppq).max(1)))
+                    .max(1.0);
+                let new_span = (snapped - t0).max(min_span);
+                *edit.arr_scale_span = Some(new_span.round().max(1.0) as u64);
+            }
+            if let Some(r) = edit.arr_sel_rect.first_mut() {
+                *r = (t0, t1, r0, r1);
+            }
+            scale_state = None;
+            view.base.dirty = true;
+        }
+    }
+
+    if let Some((t0, t1, r0, r1)) = riff_state
+        && pointer.primary_released()
+    {
+        if let Some(pos) = pointer.hover_pos() {
+            let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+            let tick = crate::view_interaction::snap_tick(
+                view.x_to_tick(local.x),
+                data.quantize,
+                data.ppq,
+                data.bar_line_data,
+            );
+            let width = (t1 - t0).max(1.0);
+            let sx = if tick > t1 {
+                ((tick - t1) / width).ceil() as i64
+            } else if tick < t0 {
+                -((t0 - tick) / width).ceil() as i64
+            } else {
+                0
+            };
+            let row = row_layout
+                .hit_at_music_y(local.y + view.base.scroll_y, view.lane_height())
+                .map(|h| h.track() as i64)
+                .unwrap_or(r1 as i64);
+            let span = (r1 - r0 + 1).max(1) as i64;
+            let sy = if row > r1 as i64 {
+                ((row - r1 as i64) as f64 / span as f64).ceil() as i64
+            } else if row < r0 as i64 {
+                -((r0 as i64 - row) as f64 / span as f64).ceil() as i64
+            } else {
+                0
+            };
+            if sx != 0 || sy != 0 {
+                *edit.arr_riff_steps = Some((sx, sy));
+            }
+        }
+        riff_state = None;
+    }
+
     if let Some((origin, _, alt)) = move_drag
         && pointer.primary_down()
         && !pointer.primary_pressed()
@@ -372,6 +482,8 @@ pub(crate) fn sel_drag_frame_arrange(
     ui.data_mut(|d| d.insert_persisted(move_had_moved_id, move_had_moved));
     ui.data_mut(|d| d.insert_persisted(move_notes_id, move_notes));
     ui.data_mut(|d| d.insert_persisted(move_min_tick_id, move_min_tick));
+    ui.data_mut(|d| d.insert_persisted(scale_state_id, scale_state));
+    ui.data_mut(|d| d.insert_persisted(riff_state_id, riff_state));
     (ghost_notes, hidden_notes, drag_rect)
 }
 
@@ -453,4 +565,33 @@ pub(crate) fn eraser_drag_frame_arrange(
         }
     }
     ui.data_mut(|d| d.insert_persisted(drag_id, drag));
+}
+
+fn arr_handle_hit(
+    rects: &[(f64, f64, usize, usize)],
+    view: &ArrangementView,
+    row_layout: &ArRowLayout,
+    local: egui::Pos2,
+) -> Option<(u8, f64, f64, usize, usize)> {
+    let &(t0, t1, r0, r1) = rects.first()?;
+    if rects.len() != 1 {
+        return None;
+    }
+    let lh = view.lane_height();
+    let scroll_y = view.base.scroll_y;
+    let x0 = view.tick_to_x(t0);
+    let x1 = view.tick_to_x(t1);
+    let y0 = row_layout.track_y(r0, lh) - scroll_y;
+    let y1 = row_layout.track_y(r1, lh) + row_layout.track_height(r1, lh) - scroll_y;
+    let _ = x0;
+    let corner = egui::pos2(x1 - 4.0, y1 - 4.0);
+    let scale = egui::pos2(x1 - 4.0, (y0 + y1) * 0.5);
+    let near = |p: egui::Pos2| (p - local).length_sq() <= 11.0 * 11.0;
+    if near(corner) {
+        return Some((4, t0, t1, r0, r1));
+    }
+    if near(scale) {
+        return Some((3, t0, t1, r0, r1));
+    }
+    None
 }

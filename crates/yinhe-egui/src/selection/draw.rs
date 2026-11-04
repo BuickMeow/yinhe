@@ -108,3 +108,55 @@ pub fn draw(
         );
     }
 }
+
+/// 在选框上画右侧三个方块：重复 / 整体变速 / 批量 gate。
+///
+/// `screen_rect` 是包含键盘偏移后的屏幕坐标矩形（与 `music_sel_to_pixel_rect`
+/// 加 `content_rect.min` 后的结果一致）。`gate` 由调用方决定是否画（AR 不画）。
+pub fn draw_handles(
+    painter: &egui::Painter,
+    view: &yinhe_types::PianoRollView,
+    screen_rect: egui::Rect,
+    quantize: yinhe_editor_core::quantize::QuantizePreset,
+    ppq: u32,
+    show_gate: bool,
+) {
+    let interval_px = quantize.tick_interval(ppq).max(1) as f32 * view.base.pixels_per_tick;
+    let (corner, scale, gate) =
+        super::drag::selection_handle_centers(view, screen_rect, interval_px);
+    let fill = egui::Color32::from_rgb(235, 235, 235);
+    let border = crate::theme::app_bg();
+    let square = |p: egui::Pos2| {
+        let r = egui::Rect::from_center_size(p, egui::vec2(8.0, 8.0));
+        painter.rect_filled(r, 0.0, fill);
+        painter.rect_stroke(
+            r,
+            0.0,
+            egui::Stroke::new(1.0, border),
+            egui::StrokeKind::Inside,
+        );
+    };
+    square(corner);
+    square(scale);
+    if show_gate && let Some(gate) = gate {
+        square(gate);
+    }
+}
+
+/// AR 选框右侧两个方块：右下角重复、右缘中点整体变速（AR 没有 gate）。
+pub fn draw_arrange_handles(painter: &egui::Painter, screen_rect: egui::Rect) {
+    let corner = egui::pos2(screen_rect.max.x - 4.0, screen_rect.max.y - 4.0);
+    let scale = egui::pos2(screen_rect.max.x - 4.0, screen_rect.center().y);
+    let fill = egui::Color32::from_rgb(235, 235, 235);
+    let border = crate::theme::app_bg();
+    for p in [corner, scale] {
+        let r = egui::Rect::from_center_size(p, egui::vec2(8.0, 8.0));
+        painter.rect_filled(r, 0.0, fill);
+        painter.rect_stroke(
+            r,
+            0.0,
+            egui::Stroke::new(1.0, border),
+            egui::StrokeKind::Inside,
+        );
+    }
+}

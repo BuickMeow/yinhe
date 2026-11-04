@@ -103,7 +103,7 @@ class LabelsPainter extends CustomPainter {
       final row = rows[idx];
       final y = idx * laneH - scrollY;
       final expanded = tracksExpanded.value;
-      final port = row.port >= 0 && row.port < 4 ? 'ABCD'[row.port] : '?';
+      final port = portLetter(row.port);
       final code =
           '${idx.toString().padLeft(3, '0')}  $port${(row.channel + 1).toString().padLeft(2, '0')}';
       final font = (laneH * 0.24).clamp(9.0, 13.0).toDouble();

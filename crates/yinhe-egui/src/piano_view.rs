@@ -218,6 +218,8 @@ pub fn show(
         write_track,
         conductor_idx,
         effective_tool,
+        quantize,
+        ppq,
     );
 
     // ── Content interaction (zoom/pan/cursor/drag/reset) ──

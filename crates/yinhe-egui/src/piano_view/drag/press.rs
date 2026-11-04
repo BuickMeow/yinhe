@@ -9,7 +9,8 @@ use yinhe_types::TimeSigEvent;
 use super::hit::hit_test_note;
 use super::state::SelDragFrameState;
 use crate::selection::drag::{
-    collect_selected_notes, hit_test_sel_edge, main_cross_x_y, main_px_to_tick_dir,
+    SelHandleKind, collect_selected_notes, hit_test_sel_handles, main_cross_x_y,
+    main_px_to_tick_dir,
 };
 
 /// Press 帧分发：音符 hit-test → 单音符伸缩/移动；选框边缘 → 选区缩放；
@@ -112,25 +113,42 @@ pub(crate) fn sel_press(
                 }
             }
 
-            // ── 选框边缘 hit-test：优先级大于拖动移动 ──
+            // ── 选框右侧三个方块：重复 / 整体变速 / 批量 gate ──
             // 已命中音符（伸缩/移动）时跳过——单音符操作优先于选框整体操作。
-            let edge_hit = if state.sel_note_resize.is_some() || state.sel_note_move.is_some() {
+            let handle_hit = if state.sel_note_resize.is_some() || state.sel_note_move.is_some() {
                 None
             } else {
-                hit_test_sel_edge(eff_rects, view, local)
+                hit_test_sel_handles(eff_rects, view, local, quantize, ppq)
             };
 
-            if let Some((side, origin_boundary_tick, other_boundary_tick)) = edge_hit {
-                // 启动 resize：记录原边缘 tick + 另一边缘 + 预计算选中音符
-                state.sel_resize_state = Some((side, origin_boundary_tick, other_boundary_tick));
-                sel_rect.start_resize(side);
-                state.drag_notes = Some(std::sync::Arc::new(collect_selected_notes(
-                    selected,
-                    midi,
-                    track_visible,
-                    track_selected,
-                    track_locked,
-                )));
+            if let Some(h) = handle_hit {
+                match h.kind {
+                    SelHandleKind::Riff => {
+                        state.sel_riff_state = Some((h.t0, h.t1, h.k0, h.k1));
+                    }
+                    SelHandleKind::Scale => {
+                        state.sel_scale_state = Some((h.t0, h.t1));
+                        sel_rect.start_resize(ResizeSide::Right);
+                        state.drag_notes = Some(std::sync::Arc::new(collect_selected_notes(
+                            selected,
+                            midi,
+                            track_visible,
+                            track_selected,
+                            track_locked,
+                        )));
+                    }
+                    SelHandleKind::Gate => {
+                        state.sel_resize_state = Some((ResizeSide::Right, h.t1, h.t0));
+                        sel_rect.start_resize(ResizeSide::Right);
+                        state.drag_notes = Some(std::sync::Arc::new(collect_selected_notes(
+                            selected,
+                            midi,
+                            track_visible,
+                            track_selected,
+                            track_locked,
+                        )));
+                    }
+                }
             } else if state.sel_note_resize.is_none() && state.sel_note_move.is_none() {
                 if in_sel_rect {
                     let (main_px, cross_px) = main_cross_x_y(view, (local.x, local.y));

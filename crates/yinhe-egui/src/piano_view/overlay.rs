@@ -292,6 +292,33 @@ pub(crate) fn draw_overlays(
                             fill_color,
                             stroke_color,
                         );
+                        if persisted_pixel_rects.len() == 1
+                            && !grid_preview
+                            && matches!(
+                                effective_tool,
+                                crate::widgets::tools_panel::Tool::Select
+                                    | crate::widgets::tools_panel::Tool::SelectVertical
+                            )
+                        {
+                            let screen = egui::Rect::from_min_max(
+                                egui::pos2(
+                                    music_rect.min.x + shifted.min.x,
+                                    music_rect.min.y + shifted.min.y,
+                                ),
+                                egui::pos2(
+                                    music_rect.min.x + shifted.max.x,
+                                    music_rect.min.y + shifted.max.y,
+                                ),
+                            );
+                            crate::selection::draw::draw_handles(
+                                ui.painter(),
+                                view,
+                                screen,
+                                quantize,
+                                ppq,
+                                true,
+                            );
+                        }
                     }
                 }
             }

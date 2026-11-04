@@ -332,7 +332,6 @@ Future<int?> showInsertTrackPicker(
   required List<TrackRow> tracks,
   required int initial,
 }) {
-  final l = AppLocalizations.of(context);
   return showDialog<int>(
     context: context,
     builder: (ctx) {
@@ -340,12 +339,6 @@ Future<int?> showInsertTrackPicker(
       return YinheDialog(
         title: zh ? '选择插入音轨' : 'Choose insert track',
         width: 380,
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text(l.cancel),
-          ),
-        ],
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -369,7 +362,7 @@ Future<int?> showInsertTrackPicker(
                 subtitle: tracks[i].master
                     ? Text(zh ? '全局事件（Tempo/拍号/调号/标签）' : 'Global events')
                     : Text(
-                        '${zh ? '端口' : 'Port'} ${tracks[i].port} · '
+                        '${zh ? '端口' : 'Port'} ${portLetter(tracks[i].port)} · '
                         '${zh ? '通道' : 'Ch'} ${tracks[i].channel + 1}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,

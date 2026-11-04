@@ -21,6 +21,10 @@ pub(crate) struct SelDragFrameState {
     pub(crate) note_drag_had_moved: bool,
     /// 选区边缘缩放：(side, origin_boundary_tick, other_boundary_tick)。
     pub(crate) sel_resize_state: Option<(ResizeSide, f64, f64)>,
+    /// 选区右缘整体变速：(t0, t1)。
+    pub(crate) sel_scale_state: Option<(f64, f64)>,
+    /// 选区右下角 Riff：(t0, t1, k0, k1)。
+    pub(crate) sel_riff_state: Option<(f64, f64, u8, u8)>,
     /// 单音符边缘伸缩：(side, track, start_tick, end_tick, key)。
     pub(crate) sel_note_resize: Option<SelNoteResize>,
     /// 单音符移动：(track, orig_start, orig_key, orig_end, press_tick, last_dk, alt)。
@@ -44,6 +48,10 @@ pub(crate) fn sel_drag_in_progress(ui: &egui::Ui) -> bool {
         d.get_persisted::<Option<(f64, f64, bool)>>(id.with("note_drag_origin"))
             .is_some_and(|v| v.is_some())
             || d.get_persisted::<Option<(ResizeSide, f64, f64)>>(id.with("sel_resize_state"))
+                .is_some_and(|v| v.is_some())
+            || d.get_persisted::<Option<(f64, f64)>>(id.with("sel_scale_state"))
+                .is_some_and(|v| v.is_some())
+            || d.get_persisted::<Option<(f64, f64, u8, u8)>>(id.with("sel_riff_state"))
                 .is_some_and(|v| v.is_some())
             || d.get_persisted::<Option<SelNoteResize>>(id.with("sel_note_resize_state"))
                 .is_some_and(|v| v.is_some())
@@ -75,6 +83,12 @@ impl SelDragFrameState {
             sel_resize_state: ui
                 .data_mut(|d| d.get_persisted(ui.scope_id().with("sel_resize_state")))
                 .unwrap_or(None),
+            sel_scale_state: ui
+                .data_mut(|d| d.get_persisted(ui.scope_id().with("sel_scale_state")))
+                .unwrap_or(None),
+            sel_riff_state: ui
+                .data_mut(|d| d.get_persisted(ui.scope_id().with("sel_riff_state")))
+                .unwrap_or(None),
             sel_note_resize: ui
                 .data_mut(|d| d.get_persisted(ui.scope_id().with("sel_note_resize_state")))
                 .unwrap_or(None),
@@ -98,6 +112,8 @@ impl SelDragFrameState {
             drag_notes,
             note_drag_had_moved,
             sel_resize_state,
+            sel_scale_state,
+            sel_riff_state,
             sel_note_resize,
             sel_note_move,
             single_note_had_moved,
@@ -121,6 +137,15 @@ impl SelDragFrameState {
                 ui.scope_id().with("sel_resize_state"),
                 sel_resize_state.take(),
             )
+        });
+        ui.data_mut(|d| {
+            d.insert_persisted(
+                ui.scope_id().with("sel_scale_state"),
+                sel_scale_state.take(),
+            )
+        });
+        ui.data_mut(|d| {
+            d.insert_persisted(ui.scope_id().with("sel_riff_state"), sel_riff_state.take())
         });
         ui.data_mut(|d| {
             d.insert_persisted(
@@ -160,6 +185,15 @@ impl SelDragFrameState {
             self.sel_resize_state = None;
             self.drag_notes = None;
             sel_rect.cancel_resize();
+        }
+        if self.sel_scale_state.is_some() && !pointer.primary_down() && !pointer.primary_released()
+        {
+            self.sel_scale_state = None;
+            self.drag_notes = None;
+            sel_rect.cancel_resize();
+        }
+        if self.sel_riff_state.is_some() && !pointer.primary_down() && !pointer.primary_released() {
+            self.sel_riff_state = None;
         }
         if self.sel_note_resize.is_some() && !pointer.primary_down() && !pointer.primary_released()
         {

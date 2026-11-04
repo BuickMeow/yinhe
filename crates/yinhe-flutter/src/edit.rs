@@ -58,12 +58,12 @@ mod kind {
     pub const PASTE_READY: u8 = 10;
     /// 铅笔精调选择：手指在音符上滑动，松手选中最后命中的音符。
     pub const PENCIL_PICK: u8 = 11;
-    /// 拖动选框四边控制点，微调选区范围。
-    pub const SEL_RESIZE: u8 = 12;
     /// 拖动选框右下角方块，按选区宽度重复 Riff。
     pub const RIFF_FILL: u8 = 13;
-    /// 拖动选框右端的箭头，整体改选中音符的 gate。
+    /// 拖动选框右缘内的方块，整体改选中音符的 gate。
     pub const SEL_GATE: u8 = 15;
+    /// 拖动选框右缘方块，整体缩放选中音符的时间跨度。
+    pub const SEL_SCALE: u8 = 16;
     /// 直线工具：按量化列在起止点之间生成直线音符。
     pub const LINE: u8 = 14;
 }
@@ -272,7 +272,7 @@ struct SelHandle {
     r1: usize,
 }
 
-/// 右下角 Riff 角标命中：36px 见方，受半框上限约束，并允许框外 12px。
+/// 右下角 Riff 方块命中：36px 见方，受半框上限约束，并允许框外 12px。
 fn corner_hit(x0: f32, y0: f32, x1: f32, y1: f32, x: f32, y: f32) -> bool {
     let (x0, x1) = (x0.min(x1), x0.max(x1));
     let (y0, y1) = (y0.min(y1), y0.max(y1));
@@ -283,33 +283,49 @@ fn corner_hit(x0: f32, y0: f32, x1: f32, y1: f32, x: f32, y: f32) -> bool {
     x >= x1 - lw && x <= x1 + SEL_CORNER_PAD && y >= y1 - lh && y <= y1 + SEL_CORNER_PAD
 }
 
-/// 控制点命中：四边中点圆形，右下角方形。
-fn handle_hit(x0: f32, y0: f32, x1: f32, y1: f32, x: f32, y: f32) -> Option<u8> {
+fn square_hit(hx: f32, hy: f32, x: f32, y: f32) -> bool {
+    let dx = x - hx;
+    let dy = y - hy;
+    dx * dx + dy * dy <= SEL_HANDLE_R * SEL_HANDLE_R
+}
+
+/// 选框右侧三个方块控制点：
+/// - 右下角 `4`：重复（Riff）；
+/// - 右缘中点 `3`：整体变速；
+/// - 右缘内缩一个量化格 `5`：每个音符批量改 gate（仅 PR）。
+///
+/// 两个右侧方块距离很近时取最近者，避免量化很细时误触。
+fn selection_handle_hit(
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    x: f32,
+    y: f32,
+    inner_x: Option<f32>,
+) -> Option<u8> {
     let (x0, x1) = (x0.min(x1), x0.max(x1));
     let (y0, y1) = (y0.min(y1), y0.max(y1));
-    let cx = (x0 + x1) * 0.5;
-    let cy = (y0 + y1) * 0.5;
-    let near = |hx: f32, hy: f32| {
-        let dx = x - hx;
-        let dy = y - hy;
-        dx * dx + dy * dy <= SEL_HANDLE_R * SEL_HANDLE_R
-    };
     if corner_hit(x0, y0, x1, y1, x, y) {
         return Some(4);
     }
-    if near(cx, y0) {
-        return Some(0);
+    let cy = (y0 + y1) * 0.5;
+    let mut best: Option<(u8, f32)> = None;
+    let mut consider = |edge: u8, hx: f32| {
+        if square_hit(hx, cy, x, y) {
+            let d = (x - hx).abs();
+            if best.is_none_or(|(_, bd)| d < bd) {
+                best = Some((edge, d));
+            }
+        }
+    };
+    consider(3, x1);
+    if let Some(ix) = inner_x
+        && ix > x0 + 4.0
+    {
+        consider(5, ix);
     }
-    if near(cx, y1) {
-        return Some(1);
-    }
-    if near(x0, cy) {
-        return Some(2);
-    }
-    if near(x1, cy) {
-        return Some(3);
-    }
-    None
+    best.map(|(edge, _)| edge)
 }
 
 fn pr_selection_handle(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option<SelHandle> {
@@ -329,21 +345,8 @@ fn pr_selection_handle(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option
     let x1 = geom.tick_to_x(t1);
     let y0 = geom.key_to_y(k1);
     let y1 = geom.key_to_y(k0) + geom.kh;
-    // 右下角 L 形角标用自己的命中区（半框上限 + 框外余量）。
-    if corner_hit(x0, y0, x1, y1, x, y) {
-        return Some(SelHandle {
-            edge: 4,
-            t0,
-            t1,
-            k0,
-            k1,
-            tr_lo,
-            tr_hi,
-            r0: 0,
-            r1: 0,
-        });
-    }
-    let edge = handle_hit(x0, y0, x1, y1, x, y)?;
+    let interval_px = quantize_of(s).tick_interval(s.ppq).max(1) as f32 * geom.ppu;
+    let edge = selection_handle_hit(x0, y0, x1, y1, x, y, Some(x1 - interval_px))?;
     Some(SelHandle {
         edge,
         t0,
@@ -367,20 +370,7 @@ fn ar_selection_handle(s: &RenderScene, geom: &ArGeom, x: f32, y: f32) -> Option
     let x1 = geom.tick_to_x(t1);
     let y0 = geom.row_to_y(r0);
     let y1 = geom.row_to_y(r1 + 1);
-    if corner_hit(x0, y0, x1, y1, x, y) {
-        return Some(SelHandle {
-            edge: 4,
-            t0,
-            t1,
-            k0: 0,
-            k1: yinhe_types::MAX_KEY,
-            tr_lo: r0 as u16,
-            tr_hi: r1 as u16,
-            r0,
-            r1,
-        });
-    }
-    let edge = handle_hit(x0, y0, x1, y1, x, y)?;
+    let edge = selection_handle_hit(x0, y0, x1, y1, x, y, None)?;
     Some(SelHandle {
         edge,
         t0,
@@ -463,20 +453,42 @@ fn bump(s: &mut RenderScene) {
 
 // ── 拖拽生命周期 ──
 
-fn begin_sel_handle(d: &mut DragState, s: &mut RenderScene, h: SelHandle) {
-    d.kind = if h.edge == 4 {
-        kind::RIFF_FILL
-    } else {
-        kind::SEL_RESIZE
+fn begin_sel_handle(d: &mut DragState, s: &mut RenderScene, h: SelHandle, x: f32) {
+    d.kind = match h.edge {
+        4 => kind::RIFF_FILL,
+        3 => kind::SEL_SCALE,
+        5 => kind::SEL_GATE,
+        _ => return,
     };
     d.sel_edge = h.edge;
     d.box_ticks = Some((h.t0, h.t1, h.k0, h.k1));
     d.box_rows = Some((h.t0, h.t1, h.r0, h.r1));
     d.sel_tr_lo = h.tr_lo;
     d.sel_tr_hi = h.tr_hi;
+    let q = quantize_of(s);
+    let snap = scene::SnapCtx::new(s);
+    d.anchor_tick_raw = match s.view_mode {
+        ViewMode::Pianoroll => PrGeom::new(&s.pr_view).x_to_tick(x),
+        ViewMode::Arrangement => ArGeom::new(&s.arr_view).x_to_tick(x),
+    };
+    d.anchor_tick = snap.round(q, d.anchor_tick_raw);
     if h.edge == 4 {
         // Riff 预览只画重复选框，不预先扫描/物化选中音符。
         d.drag_hidden = Some(std::sync::Arc::new(yinhe_types::HiddenNotes::default()));
+    } else {
+        d.drag = crate::selection_materializer::take_drag(s);
+        d.drag_hidden = d
+            .drag
+            .as_ref()
+            .map(|drag| std::sync::Arc::clone(&drag.hidden));
+        if d.drag.is_none() {
+            crate::selection_materializer::schedule_drag(s);
+        }
+        s.sel_drag_active = true;
+        // 整体变速/批量 gate 都保持左、上、右三条边，只让右缘跟手。
+        s.hold_sel_edge(0);
+        s.hold_sel_edge(1);
+        s.hold_sel_edge(3);
     }
     // 锚点拖动沿用选框预览的缓动：先以当前矩形为起点，下一次 update 才有跳变量。
     match s.view_mode {
@@ -873,12 +885,8 @@ pub fn begin_selection_handle(x: f32, y: f32) -> i32 {
     let Some(h) = handle else {
         return 0;
     };
-    // 暂时只保留右下角 L 形角标（Riff），四边缩放锚点关闭。
-    if h.edge != 4 {
-        return 0;
-    }
     s.clear_preview_anim();
-    begin_sel_handle(&mut d, &mut s, h);
+    begin_sel_handle(&mut d, &mut s, h, x);
     1
 }
 
@@ -941,112 +949,6 @@ pub fn begin_selection_move(x: f32, y: f32) -> i32 {
     d.kind = kind::MOVE_BOX;
     refresh_preview(&mut d, &mut s);
     bump(&mut s);
-    1
-}
-
-/// 选框右端：整体拖动选中音符的 gate（x 命中区与音符右端一致，y 为整个选框）。
-pub fn begin_selection_gate(x: f32, y: f32) -> i32 {
-    let Ok(mut d) = DRAG.lock() else {
-        return 0;
-    };
-    *d = DragState {
-        x0: x,
-        y0: y,
-        px: x,
-        py: y,
-        ..Default::default()
-    };
-    let Ok(mut s) = scene::scene().lock() else {
-        return 0;
-    };
-    if s.document.is_none() {
-        return 0;
-    }
-    if s.view_mode == ViewMode::Pianoroll && s.active_track == Some(0) {
-        return 0;
-    }
-    let q = quantize_of(&s);
-    let snap = scene::SnapCtx::new(&s);
-    let (t0, t1, k0, k1, x0, x1, y0, y1) = match s.view_mode {
-        ViewMode::Pianoroll => {
-            let Some((t0, t1, k0, k1)) = s
-                .document
-                .as_ref()
-                .and_then(|doc| doc.edit.sel_rect.rects.first().copied())
-            else {
-                return 0;
-            };
-            let geom = PrGeom::new(&s.pr_view);
-            (
-                t0,
-                t1,
-                k0,
-                k1,
-                geom.tick_to_x(t0),
-                geom.tick_to_x(t1),
-                geom.key_to_y(k1),
-                geom.key_to_y(k0) + geom.kh,
-            )
-        }
-        ViewMode::Arrangement => {
-            let Some((t0, t1, r0, r1)) = s
-                .document
-                .as_ref()
-                .and_then(|doc| doc.edit.arr_sel_rect.first().copied())
-            else {
-                return 0;
-            };
-            let geom = ArGeom::new(&s.arr_view);
-            d.box_rows = Some((t0, t1, r0, r1));
-            (
-                t0,
-                t1,
-                0,
-                yinhe_types::MAX_KEY,
-                geom.tick_to_x(t0),
-                geom.tick_to_x(t1),
-                geom.row_to_y(r0),
-                geom.row_to_y(r1 + 1),
-            )
-        }
-    };
-    let edge = EDGE.min((x1 - x0) / 3.0);
-    if x < x1 - edge || x > x1 + SEL_CORNER_PAD || y < y0 || y > y1 {
-        return 0;
-    }
-    // 右下角留给 L 形角标（Riff）。
-    if corner_hit(x0, y0, x1, y1, x, y) {
-        return 0;
-    }
-    d.anchor_tick_raw = match s.view_mode {
-        ViewMode::Pianoroll => PrGeom::new(&s.pr_view).x_to_tick(x),
-        ViewMode::Arrangement => ArGeom::new(&s.arr_view).x_to_tick(x),
-    };
-    d.anchor_tick = snap.round(q, d.anchor_tick_raw);
-    d.anchor_key = match s.view_mode {
-        ViewMode::Pianoroll => PrGeom::new(&s.pr_view).y_to_key(y),
-        ViewMode::Arrangement => 0,
-    };
-    d.anchor_row = match s.view_mode {
-        ViewMode::Pianoroll => 0,
-        ViewMode::Arrangement => ArGeom::new(&s.arr_view).y_to_row(y),
-    };
-    d.box_ticks = Some((t0, t1, k0, k1));
-    d.drag = crate::selection_materializer::take_drag(&s);
-    d.drag_hidden = d
-        .drag
-        .as_ref()
-        .map(|drag| std::sync::Arc::clone(&drag.hidden));
-    if d.drag.is_none() {
-        crate::selection_materializer::schedule_drag(&s);
-    }
-    d.kind = kind::SEL_GATE;
-    s.clear_preview_anim();
-    s.sel_drag_active = true;
-    s.set_sel_target([x0, y0, x1, y1]);
-    s.hold_sel_edge(0);
-    s.hold_sel_edge(1);
-    s.hold_sel_edge(3);
     1
 }
 
@@ -1694,148 +1596,6 @@ fn view_tick_at(s: &RenderScene, x: f32) -> f64 {
     }
 }
 
-fn update_sel_resize(d: &DragState, s: &mut RenderScene, x: f32, y: f32) {
-    let Some((t0, t1, k0, k1)) = d.box_ticks else {
-        return;
-    };
-    let cur_tick = view_tick_at(s, x);
-    // 时间方向最少保留一个量化格，不能拖成零长度。
-    let min_ticks = f64::from(quantize_of(s).tick_interval(s.ppq).max(1));
-    // 锚点拖动只动被抓住的那条边；对边固定，可越过固定边翻转。
-    // 排序后写回选区；固定边在视觉上不参与缓动。
-    fn clamp_edge(moving: f64, fixed: f64, min: f64) -> f64 {
-        if moving >= fixed {
-            moving.max(fixed + min)
-        } else {
-            moving.min(fixed - min).max(0.0)
-        }
-    }
-    let fixed_edge = match d.sel_edge {
-        0 => 3, // 上 → 固定下
-        1 => 1, // 下 → 固定上
-        2 => 2, // 左 → 固定右
-        _ => 0, // 右 → 固定左
-    };
-    match s.view_mode {
-        ViewMode::Pianoroll => {
-            let geom = PrGeom::new(&s.pr_view);
-            let cur_key = geom.y_to_key(y);
-            let (mut nt0, mut nt1) = (t0, t1);
-            let (mut nk0, mut nk1) = (k0, k1);
-            match d.sel_edge {
-                0 => nk1 = cur_key,
-                1 => nk0 = cur_key,
-                2 => nt0 = cur_tick.max(0.0),
-                3 => nt1 = cur_tick.max(0.0),
-                _ => return,
-            }
-            if d.sel_edge == 2 || d.sel_edge == 3 {
-                let fixed = if d.sel_edge == 2 { t1 } else { t0 };
-                let moving = if d.sel_edge == 2 { nt0 } else { nt1 };
-                let m = clamp_edge(moving, fixed, min_ticks);
-                if d.sel_edge == 2 {
-                    nt0 = m;
-                } else {
-                    nt1 = m;
-                }
-            } else {
-                let fixed = if d.sel_edge == 0 { k0 } else { k1 };
-                let moving = if d.sel_edge == 0 { nk1 } else { nk0 };
-                let m = if moving >= fixed {
-                    moving.max(fixed.saturating_add(1))
-                } else {
-                    moving.min(fixed.saturating_sub(1))
-                };
-                if d.sel_edge == 0 {
-                    nk1 = m;
-                } else {
-                    nk0 = m;
-                }
-            }
-            let (lo_t, hi_t) = (nt0.min(nt1), nt0.max(nt1));
-            let (lo_k, hi_k) = (nk0.min(nk1), nk0.max(nk1));
-            if let Some(doc) = s.document.as_mut()
-                && let Some(rect) = doc.edit.sel_rect.rects.first_mut()
-            {
-                *rect = (lo_t, hi_t, lo_k, hi_k);
-            }
-            s.set_sel_target([
-                geom.tick_to_x(lo_t),
-                geom.key_to_y(hi_k),
-                geom.tick_to_x(hi_t),
-                geom.key_to_y(lo_k) + geom.kh,
-            ]);
-            s.hold_sel_edge(fixed_edge);
-            bump(s);
-        }
-        ViewMode::Arrangement => {
-            let geom = ArGeom::new(&s.arr_view);
-            let cur_row = geom.y_to_row(y).min(s.num_tracks.saturating_sub(1));
-            let (mut nt0, mut nt1) = (t0, t1);
-            let (mut nr0, mut nr1) = (d.box_rows.map_or(0, |r| r.2), d.box_rows.map_or(0, |r| r.3));
-            match d.sel_edge {
-                // AR 行号向下增大：上控制点改 r0，下控制点改 r1。
-                0 => nr0 = cur_row,
-                1 => nr1 = cur_row,
-                2 => nt0 = cur_tick.max(0.0),
-                3 => nt1 = cur_tick.max(0.0),
-                _ => return,
-            }
-            if d.sel_edge == 0 || d.sel_edge == 1 {
-                let fixed = if d.sel_edge == 0 { nr1 } else { nr0 };
-                let moving = if d.sel_edge == 0 { nr0 } else { nr1 };
-                let m = if moving >= fixed {
-                    moving.max(fixed + 1)
-                } else {
-                    moving.min(fixed.saturating_sub(1))
-                };
-                if d.sel_edge == 0 {
-                    nr0 = m;
-                } else {
-                    nr1 = m;
-                }
-            } else {
-                let fixed = if d.sel_edge == 2 { t1 } else { t0 };
-                let moving = if d.sel_edge == 2 { nt0 } else { nt1 };
-                let m = clamp_edge(moving, fixed, min_ticks);
-                if d.sel_edge == 2 {
-                    nt0 = m;
-                } else {
-                    nt1 = m;
-                }
-            }
-            let (lo_t, hi_t) = (nt0.min(nt1), nt0.max(nt1));
-            let (lo_r, hi_r) = (nr0.min(nr1), nr0.max(nr1));
-            if let Some(doc) = s.document.as_mut()
-                && let Some(rect) = doc.edit.arr_sel_rect.first_mut()
-            {
-                *rect = (lo_t, hi_t, lo_r, hi_r);
-            }
-            s.set_sel_target([
-                geom.tick_to_x(lo_t),
-                geom.row_to_y(lo_r),
-                geom.tick_to_x(hi_t),
-                geom.row_to_y(hi_r + 1),
-            ]);
-            s.hold_sel_edge(fixed_edge);
-            bump(s);
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct RiffSteps {
-    sx: i64,
-    sy: i64,
-}
-
-impl RiffSteps {
-    fn is_zero(self) -> bool {
-        self.sx == 0 && self.sy == 0
-    }
-}
-
-/// 带符号的 `[0, ±1, .., ±N]`；二维铺满整个矩形，调用方跳过 `(0, 0)`。
 fn riff_step_offsets(steps: i64) -> Vec<i64> {
     let mut out = vec![0];
     if steps != 0 {
@@ -1901,6 +1661,18 @@ fn riff_steps_y(d: &DragState, s: &RenderScene, y: f32) -> i64 {
             let max = (last - r1 as i64) / span;
             raw.clamp(min, max)
         }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RiffSteps {
+    sx: i64,
+    sy: i64,
+}
+
+impl RiffSteps {
+    fn is_zero(self) -> bool {
+        self.sx == 0 && self.sy == 0
     }
 }
 
@@ -2187,7 +1959,7 @@ fn preview_line(s: &mut RenderScene, d: &mut DragState) {
 fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
     // 大选区 ghost 由后台物化：结果到了就补上（按下那一刻可能还没算完）。
     if d.drag.is_none()
-        && matches!(d.kind, kind::MOVE_BOX | kind::SEL_GATE | kind::SEL_RESIZE)
+        && matches!(d.kind, kind::MOVE_BOX | kind::SEL_GATE | kind::SEL_SCALE)
         && let Some(drag) = crate::selection_materializer::take_drag(s)
     {
         d.drag_hidden = Some(std::sync::Arc::clone(&drag.hidden));
@@ -2614,7 +2386,7 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
             };
             apply_preview(s, d, vec![ghost], true);
         }
-        kind::SEL_RESIZE => update_sel_resize(d, s, x, y),
+        kind::SEL_SCALE => update_sel_scale(d, s, x),
         kind::RIFF_FILL => update_riff_fill(d, s, x, y),
         _ => {
             s.preview.clear();
@@ -2652,10 +2424,7 @@ pub fn end(x: f32, y: f32) {
         kind::NOTE_MOVE => commit_note_move(&mut s, &d, x, y, moved),
         kind::NOTE_RESIZE => commit_note_resize(&mut s, &d, x, y, moved),
         kind::SEL_GATE => commit_selection_gate(&mut s, &d, x, y, moved),
-        kind::SEL_RESIZE => {
-            commit_selection_resize(&mut s, &d);
-            None
-        }
+        kind::SEL_SCALE => commit_selection_scale(&mut s, &d, x, moved),
         kind::RIFF_FILL => commit_riff(&mut s, &d, x, y),
         kind::PENCIL_PICK => {
             commit_pick(&mut s, x, y);
@@ -2694,7 +2463,7 @@ pub fn end(x: f32, y: f32) {
         }
     }
     // 锚点缩放松手后让缓动继续跑完，避免最后一下直接跳到目标。
-    let sel_tail = if matches!(k, kind::SEL_RESIZE | kind::SEL_GATE) {
+    let sel_tail = if matches!(k, kind::SEL_SCALE | kind::SEL_GATE) {
         s.sel_target.map(|t| (t, s.sel_anim))
     } else {
         None
@@ -2735,32 +2504,9 @@ pub fn cancel() {
     if d.kind == kind::NONE {
         return;
     }
-    let resize = d.kind == kind::SEL_RESIZE;
-    let orig_ticks = d.box_ticks;
-    let orig_rows = d.box_rows;
     d.kind = kind::NONE;
     drop(d);
     if let Ok(mut s) = scene::scene().lock() {
-        if resize {
-            match s.view_mode {
-                ViewMode::Pianoroll => {
-                    if let Some((t0, t1, k0, k1)) = orig_ticks
-                        && let Some(doc) = s.document.as_mut()
-                        && let Some(rect) = doc.edit.sel_rect.rects.first_mut()
-                    {
-                        *rect = (t0, t1, k0, k1);
-                    }
-                }
-                ViewMode::Arrangement => {
-                    if let Some((t0, t1, r0, r1)) = orig_rows
-                        && let Some(doc) = s.document.as_mut()
-                        && let Some(rect) = doc.edit.arr_sel_rect.first_mut()
-                    {
-                        *rect = (t0, t1, r0, r1);
-                    }
-                }
-            }
-        }
         s.preview.clear();
         s.clear_preview_anim();
         s.overlay_cells.clear();
@@ -2787,7 +2533,7 @@ fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: Tool) 
     if tool == Tool::Select
         && let Some(h) = pr_selection_handle(s, &geom, x, y)
     {
-        begin_sel_handle(d, s, h);
+        begin_sel_handle(d, s, h, x);
         return;
     }
     match tool {
@@ -2908,7 +2654,7 @@ fn begin_arr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: Tool)
     d.anchor_tick = anchor_tick;
     d.anchor_row = anchor_row;
     if let Some(h) = ar_selection_handle(s, &geom, x, y) {
-        begin_sel_handle(d, s, h);
+        begin_sel_handle(d, s, h, x);
         return;
     }
     if let Some(rect) = arr_box_at(s, &geom, x, y) {
@@ -3147,6 +2893,139 @@ fn commit_marquee(s: &mut RenderScene, d: &DragState, x: f32, y: f32, moved: boo
     click_tick
 }
 
+/// 选框右缘整体变速：新跨度（t0 固定，右端跟随指针并按量化吸附）。
+fn selection_scale_span(s: &RenderScene, d: &DragState, x: f32) -> f64 {
+    let Some((t0, t1, _, _)) = d.box_ticks else {
+        return 1.0;
+    };
+    let q = quantize_of(s);
+    let min_ticks = f64::from(q.tick_interval(s.ppq).max(1));
+    let min_span = (t1 - t0).min(min_ticks).max(1.0);
+    let current = match s.view_mode {
+        ViewMode::Pianoroll => PrGeom::new(&s.pr_view).x_to_tick(x),
+        ViewMode::Arrangement => ArGeom::new(&s.arr_view).x_to_tick(x),
+    };
+    let raw = drag_delta_ticks(s, q, d.anchor_tick_raw, current);
+    (t1 + raw - t0).max(min_span)
+}
+
+/// 整体变速预览：选中音符相对 t0 等比缩放，原位置隐藏。
+fn update_sel_scale(d: &mut DragState, s: &mut RenderScene, x: f32) {
+    let Some((t0, t1, k0, k1)) = d.box_ticks else {
+        return;
+    };
+    let new_span = selection_scale_span(s, d, x);
+    let old_span = (t1 - t0).max(1.0);
+    let factor = new_span / old_span;
+    let stamp = (
+        new_span.round() as i64,
+        0,
+        match s.view_mode {
+            ViewMode::Pianoroll => s.pr_view.render_hash(),
+            ViewMode::Arrangement => s.arr_view.render_hash(),
+        },
+    );
+    let (lw, lh) = crate::logical_size();
+    match s.view_mode {
+        ViewMode::Pianoroll => {
+            let geom = PrGeom::new(&s.pr_view);
+            s.set_sel_target([
+                geom.tick_to_x(t0),
+                geom.key_to_y(k1),
+                geom.tick_to_x(t0 + new_span),
+                geom.key_to_y(k0) + geom.kh,
+            ]);
+            s.hold_sel_edge(0);
+            s.hold_sel_edge(1);
+            s.hold_sel_edge(3);
+            if d.last_ghost != Some(stamp) {
+                d.last_ghost = Some(stamp);
+                let (tick_lo, tick_hi) = s
+                    .pr_view
+                    .visible_main_range(s.pr_view.main_axis_len(lw, lh));
+                let (key_lo, key_hi) = s
+                    .pr_view
+                    .visible_cross_range(s.pr_view.cross_axis_len(lw, lh));
+                let mut ghost = Vec::new();
+                if let Some(drag) = d.drag.as_ref() {
+                    let scale = |v: f64| (t0 + (v - t0) * factor).round().max(t0);
+                    for (key, bucket) in drag.by_key.iter().enumerate() {
+                        if (key as u8) < key_lo || (key as u8) > key_hi {
+                            continue;
+                        }
+                        for &(track, start, end, _vel) in bucket {
+                            let new_start = scale(f64::from(start)) as u32;
+                            let new_end =
+                                (scale(f64::from(end)) as u32).max(new_start.saturating_add(1));
+                            if f64::from(new_start) >= tick_hi || f64::from(new_end) <= tick_lo {
+                                continue;
+                            }
+                            ghost.push((new_start, new_end, key as u8, track));
+                        }
+                    }
+                }
+                apply_preview(s, d, std::mem::take(&mut ghost), true);
+            }
+        }
+        ViewMode::Arrangement => {
+            let Some((_, _, r0, r1)) = d.box_rows else {
+                return;
+            };
+            let geom = ArGeom::new(&s.arr_view);
+            s.set_sel_target([
+                geom.tick_to_x(t0),
+                geom.row_to_y(r0),
+                geom.tick_to_x(t0 + new_span),
+                geom.row_to_y(r1 + 1),
+            ]);
+            s.hold_sel_edge(0);
+            s.hold_sel_edge(1);
+            s.hold_sel_edge(3);
+            if d.last_ghost != Some(stamp) {
+                d.last_ghost = Some(stamp);
+                let (tick_lo, tick_hi) = s.arr_view.visible_tick_range(lw);
+                let mut ghost = Vec::new();
+                if let Some(drag) = d.drag.as_ref() {
+                    let scale = |v: f64| (t0 + (v - t0) * factor).round().max(t0);
+                    for (key, bucket) in drag.by_key.iter().enumerate() {
+                        for &(track, start, end, _vel) in bucket {
+                            let new_start = scale(f64::from(start)) as u32;
+                            let new_end =
+                                (scale(f64::from(end)) as u32).max(new_start.saturating_add(1));
+                            if f64::from(new_start) >= tick_hi || f64::from(new_end) <= tick_lo {
+                                continue;
+                            }
+                            ghost.push((new_start, new_end, key as u8, track));
+                        }
+                    }
+                }
+                apply_preview(s, d, std::mem::take(&mut ghost), true);
+            }
+        }
+    }
+    bump(s);
+}
+
+/// 整体变速提交：按新跨度等比缩放选中音符（一步 undo）。
+fn commit_selection_scale(
+    s: &mut RenderScene,
+    d: &DragState,
+    x: f32,
+    moved: bool,
+) -> Option<std::sync::Arc<yinhe_core::YinModel>> {
+    if !moved {
+        return None;
+    }
+    let new_span = selection_scale_span(s, d, x).round().max(1.0) as u64;
+    let doc = s.document.as_mut()?;
+    let before = doc.capture_snapshot();
+    if let Some(action) = doc.rescale_selection_span(new_span) {
+        doc.push_undo(action, "整体变速", before);
+        return after_edit(s);
+    }
+    None
+}
+
 /// 已选框整体移动提交。
 /// 选框右端整体 gate 拖动：最终 dt（已按量化格对齐并保证选区至少一格）。
 fn selection_gate_dt(s: &RenderScene, d: &DragState, x: f32) -> f64 {
@@ -3268,61 +3147,6 @@ fn commit_pick(s: &mut RenderScene, x: f32, y: f32) -> bool {
     select_note(s, track, start, end, key);
     after_selection_change(s);
     true
-}
-
-/// 选框边缘控制点释放：按新矩形更新选区。
-///
-/// 保持矩形选区模式，不在这里全量物化音符位图；选中判定按矩形惰性完成，
-/// 避免大选区松手时扫描整片区域导致卡顿。
-fn commit_selection_resize(s: &mut RenderScene, d: &DragState) {
-    match s.view_mode {
-        ViewMode::Pianoroll => {
-            let Some((t0, t1, k0, k1)) = s
-                .document
-                .as_ref()
-                .and_then(|doc| doc.edit.sel_rect.rects.first().copied())
-            else {
-                return;
-            };
-            let Some(doc) = s.document.as_mut() else {
-                return;
-            };
-            let Document { edit, .. } = doc;
-            edit.selected.clear_rects();
-            edit.selected.add_rect_track(
-                t0.max(0.0) as u32,
-                t1.max(t0 + 1.0) as u32,
-                k0,
-                k1,
-                d.sel_tr_lo,
-                d.sel_tr_hi,
-            );
-        }
-        ViewMode::Arrangement => {
-            let Some((t0, t1, r0, r1)) = s
-                .document
-                .as_ref()
-                .and_then(|doc| doc.edit.arr_sel_rect.first().copied())
-            else {
-                return;
-            };
-            let Some(doc) = s.document.as_mut() else {
-                return;
-            };
-            let Document { edit, .. } = doc;
-            edit.selected.clear_rects();
-            edit.selected.add_rect_track(
-                t0.max(0.0) as u32,
-                t1.max(t0 + 1.0) as u32,
-                0,
-                yinhe_types::MAX_KEY,
-                r0 as u16,
-                r1 as u16,
-            );
-        }
-    }
-    after_selection_change(s);
-    crate::selection_materializer::schedule(s);
 }
 
 /// 右下角 Riff 方块释放：按选区宽度向左右重复，一步 undo。
@@ -3760,6 +3584,31 @@ mod tests {
         assert!(!corner_hit(0.0, 0.0, 100.0, 16.0, 50.0, 8.0));
         // 框外 12px 内仍能抓角标（手指中心略偏出选框）。
         assert!(corner_hit(0.0, 0.0, 100.0, 16.0, 105.0, 20.0));
+    }
+
+    #[test]
+    fn selection_handles_map_corner_scale_and_gate() {
+        // 选框 0..100 × 0..100，量化格 20px。
+        assert_eq!(
+            selection_handle_hit(0.0, 0.0, 100.0, 100.0, 96.0, 96.0, Some(80.0)),
+            Some(4),
+            "右下角优先重复"
+        );
+        assert_eq!(
+            selection_handle_hit(0.0, 0.0, 100.0, 100.0, 96.0, 50.0, Some(80.0)),
+            Some(3),
+            "右缘中点整体变速"
+        );
+        assert_eq!(
+            selection_handle_hit(0.0, 0.0, 100.0, 100.0, 80.0, 50.0, Some(80.0)),
+            Some(5),
+            "右缘内缩一格批量 gate"
+        );
+        assert_eq!(
+            selection_handle_hit(0.0, 0.0, 100.0, 100.0, 60.0, 50.0, None),
+            None,
+            "AR 没有批量 gate 控制点"
+        );
     }
 
     #[test]
