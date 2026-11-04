@@ -984,7 +984,10 @@ impl App {
             self.work_time_accum = 0.0;
             return;
         }
-        let dt = ctx.input(|i| i.stable_dt).clamp(0.0, 0.5);
+        // 不用 stable_dt：egui 在 reactive 模式下会把「上一帧没有立即重绘」
+        // 的间隔替换成 predicted_dt（约 1/60s），而本计时器正是每 0.5s
+        // 主动唤醒一次，用 stable_dt 会漏计绝大部分时间。
+        let dt = ctx.input(|i| i.unstable_dt).clamp(0.0, 1.0);
         self.work_time_accum += dt;
         if self.work_time_accum >= 1.0 {
             let secs = self.work_time_accum.floor() as u64;
