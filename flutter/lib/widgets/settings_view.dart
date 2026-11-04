@@ -294,8 +294,9 @@ class _SettingsViewState extends State<SettingsView> {
           // 与主工作区顶部栏同高（横屏 42；竖屏主栏是双行 84，设置页保持
           // 单行 42 以便图标和标题不被过度拉伸）。
           toolbarHeight: 42,
-          leadingWidth: 46,
-          titleSpacing: 4,
+          // 与主工作区顶部栏/抽屉返回键同一位置：6px 外边距 + 40px 按钮。
+          leadingWidth: 52,
+          titleSpacing: 2,
           backgroundColor: YinheTheme.controlBg,
           foregroundColor: YinheTheme.text,
           surfaceTintColor: Colors.transparent,
@@ -304,7 +305,7 @@ class _SettingsViewState extends State<SettingsView> {
           leading: IconButton(
             tooltip: l.back,
             icon: const Icon(Icons.arrow_back),
-            iconSize: 22,
+            iconSize: 24,
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints.tightFor(width: 40, height: 40),
             onPressed: widget.onBack,
