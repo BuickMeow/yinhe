@@ -158,51 +158,67 @@ class YinheTheme {
   );
 
   static ThemeData data() {
+    // Material 主题只用“目标明暗”的最终色，不能跟随 _t 过渡值：
+    // ThemeData 只在 darkMode 变化时构建一次，若用 _t 会锁在切换起始帧，
+    // 造成导航栏/ChoiceChip 等 Material 控件一直是旧色（自定义控件却是新色）。
+    final tBg = _dark ? _darkBg : _lightBg;
+    final tText = _dark ? _darkText : _lightText;
+    final tAccent = _dark ? _darkAccent : _lightAccent;
+    final tSelectedBg = _dark
+        ? _shade(_darkBg, _darkAccent, 0.38)
+        : _shade(_lightBg, _lightAccent, 0.30);
+    final tControlBg = _dark
+        ? _shade(_darkBg, _white, 0.06)
+        : _shade(_lightBg, _black, 0.03);
+    final tTextSecondary = _dark
+        ? _shade(_darkText, _darkBg, 0.14)
+        : _shade(_lightText, _lightBg, 0.14);
+
     // M3 的 selected 容器（NavigationRail 指示器、ChoiceChip 选中态等）
     // 默认用 fromSeed 生成的 secondaryContainer；这里统一改成和主界面
     // 工具按钮同源的 selectedBg，避免设置页出现另一套淡紫色。
     final scheme =
         ColorScheme.fromSeed(
-          seedColor: accent,
+          seedColor: tAccent,
           brightness: _dark ? Brightness.dark : Brightness.light,
         ).copyWith(
-          primary: accent,
+          primary: tAccent,
           onPrimary: Colors.white,
-          secondary: accent,
+          secondary: tAccent,
           onSecondary: Colors.white,
-          secondaryContainer: selectedBg,
-          onSecondaryContainer: accent,
-          surface: bg,
+          secondaryContainer: tSelectedBg,
+          onSecondaryContainer: tAccent,
+          surface: tBg,
         );
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
-      scaffoldBackgroundColor: bg,
+      scaffoldBackgroundColor: tBg,
       splashFactory: InkSparkle.splashFactory,
       // 弹出菜单强制不透明底色：避免首帧只看到文字、背景晚一帧才出现的观感。
       popupMenuTheme: PopupMenuThemeData(
-        color: bg,
+        color: tBg,
         surfaceTintColor: Colors.transparent,
         elevation: 2,
       ),
       navigationRailTheme: NavigationRailThemeData(
-        backgroundColor: bg,
-        indicatorColor: selectedBg,
-        selectedIconTheme: IconThemeData(color: accent),
-        unselectedIconTheme: IconThemeData(color: textSecondary),
-        selectedLabelTextStyle: TextStyle(color: accent, fontSize: 13),
-        unselectedLabelTextStyle: TextStyle(color: text, fontSize: 13),
+        backgroundColor: tBg,
+        indicatorColor: tSelectedBg,
+        selectedIconTheme: IconThemeData(color: tAccent),
+        unselectedIconTheme: IconThemeData(color: tTextSecondary),
+        selectedLabelTextStyle: TextStyle(color: tAccent, fontSize: 13),
+        unselectedLabelTextStyle: TextStyle(color: tText, fontSize: 13),
       ),
       navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: controlBg,
-        indicatorColor: selectedBg,
+        backgroundColor: tControlBg,
+        indicatorColor: tSelectedBg,
         iconTheme: WidgetStateProperty.resolveWith((states) {
           final selected = states.contains(WidgetState.selected);
-          return IconThemeData(color: selected ? accent : textSecondary);
+          return IconThemeData(color: selected ? tAccent : tTextSecondary);
         }),
         labelTextStyle: WidgetStateProperty.resolveWith((states) {
           final selected = states.contains(WidgetState.selected);
-          return TextStyle(color: selected ? accent : text, fontSize: 12);
+          return TextStyle(color: selected ? tAccent : tText, fontSize: 12);
         }),
       ),
     );

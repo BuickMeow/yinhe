@@ -24,4 +24,16 @@ void main() {
     );
     expect(YinheTheme.resolveDark(AppThemeMode.dark, Brightness.light), isTrue);
   });
+
+  test('Material 主题跟随目标明暗，不受过渡进度影响', () {
+    // 模拟“深色 → 浅色”过渡仍停在深色起点：ThemeData 不能跟着 _t 变黑。
+    YinheTheme.setMode(AppThemeMode.light, Brightness.dark);
+    YinheTheme.setTransition(1.0);
+    final theme = YinheTheme.data();
+    expect(theme.colorScheme.brightness, Brightness.light);
+    expect(theme.brightness, Brightness.light);
+
+    YinheTheme.setTransition(0.0);
+    YinheTheme.setMode(AppThemeMode.system, Brightness.light);
+  });
 }
