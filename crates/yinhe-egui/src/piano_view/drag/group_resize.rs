@@ -64,11 +64,7 @@ pub(crate) fn sel_resize_frame(
                 }
                 match side {
                     ResizeSide::Right => {
-                        let min = if info.end_tick - info.start_tick >= min_gate {
-                            min_gate
-                        } else {
-                            1
-                        };
+                        let min = (info.end_tick - info.start_tick).min(min_gate).max(1);
                         let new_end = (info.end_tick as i64 + dt)
                             .max(info.start_tick as i64 + i64::from(min))
                             as u32;
@@ -148,11 +144,7 @@ pub(crate) fn sel_resize_frame(
                     }
                     match side {
                         ResizeSide::Right => {
-                            let min = if info.end_tick - info.start_tick >= min_gate {
-                                min_gate
-                            } else {
-                                1
-                            };
+                            let min = (info.end_tick - info.start_tick).min(min_gate).max(1);
                             let new_end = (info.end_tick as i64 + dt)
                                 .max(info.start_tick as i64 + i64::from(min))
                                 as u32;

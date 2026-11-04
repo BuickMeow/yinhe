@@ -3053,11 +3053,7 @@ fn commit_selection_scale(
 /// 已选框整体移动提交。
 /// gate 拉伸预览/提交共用的最短长度：长音符至少一个量化格，短音符至少 1 tick。
 fn clamp_gate_end(start: u32, end: u32, dt: i64, min_gate: u32) -> u32 {
-    let min = if end.saturating_sub(start) >= min_gate {
-        min_gate
-    } else {
-        1
-    };
+    let min = end.saturating_sub(start).min(min_gate).max(1);
     (i64::from(end) + dt).max(i64::from(start) + i64::from(min)) as u32
 }
 

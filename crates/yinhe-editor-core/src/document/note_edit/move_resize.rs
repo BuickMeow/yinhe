@@ -197,14 +197,8 @@ impl Document {
             return None;
         }
         let min_gate_limit = min_gate.max(1);
-        // 原本就短于量化的音符不受量化下限约束（仍保留至少 1 tick）。
-        let note_min_gate = |gate: u32| -> i64 {
-            if gate >= min_gate_limit {
-                i64::from(min_gate_limit)
-            } else {
-                1
-            }
-        };
+        // 下限：长音符收缩到一个量化格为止；原本就短于量化的音符以自身为下限。
+        let note_min_gate = |gate: u32| -> i64 { i64::from(gate.min(min_gate_limit).max(1)) };
 
         // ── 快速路径：无 clamp、目标无重叠 → 逐桶原地改（操作式 undo）──
         // 判定全部流式只读（不物化）；target 区域用平移后的选框近似

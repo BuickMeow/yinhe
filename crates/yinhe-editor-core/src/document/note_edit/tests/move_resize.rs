@@ -213,10 +213,21 @@ fn resize_selected_notes_min_gate_clamps_per_note() {
     assert_eq!(a.end_tick, 150, "A 最短保持一个量化格 50");
     assert_eq!(a.end_tick - a.start_tick, 50);
     assert_eq!(
-        b.end_tick, 301,
-        "B 原本小于量化，不受量化下限约束（至少 1 tick）"
+        b.end_tick, 320,
+        "B 原本小于量化，下限是自身，不能被继续缩短"
     );
-    assert_eq!(b.end_tick - b.start_tick, 1);
+    assert_eq!(b.end_tick - b.start_tick, 20);
+
+    // 向右拉一个量化：所有音符都统一加 50，短音符也一样（20 → 70）。
+    // 上一步收缩后短音符可能已不在选区矩形内，这里重新框住两者。
+    doc.edit.selected.clear();
+    doc.edit.selected.add_rect_track(100, 401, 60, 62, 0, 0);
+    doc.resize_selected_notes_min_gate(ResizeSide::Right, 50, 50)
+        .expect("应产生 UndoAction");
+    let a = doc.data.model.notes[60][0];
+    let b = doc.data.model.notes[62][0];
+    assert_eq!(a.end_tick - a.start_tick, 100, "A: 50 + 50");
+    assert_eq!(b.end_tick - b.start_tick, 70, "B: 20 + 50");
 }
 
 #[test]
