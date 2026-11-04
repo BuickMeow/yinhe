@@ -45,9 +45,12 @@ class _YinheAppState extends State<YinheApp>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // 与 Flutter Material 的 kThemeAnimationDuration（200ms、linear）严格对齐：
+    // 左侧栏走 AnimatedTheme，自绘控件走 _t，两者不同步时切换主题会看到一半
+    // 已经变完、另一半还停在旧色。
     _themeAnim = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 220),
+      duration: const Duration(milliseconds: 200),
       value: YinheTheme.transitionValue,
     )..addListener(() => YinheTheme.setTransition(_themeAnim.value));
     YinheTheme.darkMode.addListener(_onThemeTargetChanged);
@@ -71,8 +74,8 @@ class _YinheAppState extends State<YinheApp>
     _themeAnim.value = YinheTheme.transitionValue;
     _themeAnim.animateTo(
       target,
-      duration: const Duration(milliseconds: 220),
-      curve: Curves.easeInOutCubic,
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.linear,
     );
   }
 
@@ -95,6 +98,9 @@ class _YinheAppState extends State<YinheApp>
         builder: (context, _, _) => MaterialApp(
           debugShowCheckedModeBanner: false,
           theme: YinheTheme.data(),
+          // 显式写死 Material 的主题动画参数；自绘层使用同一时长/曲线。
+          themeAnimationDuration: const Duration(milliseconds: 200),
+          themeAnimationCurve: Curves.linear,
           locale: L10n.locale,
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
