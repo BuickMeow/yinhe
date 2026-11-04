@@ -728,8 +728,8 @@ fn upload_pianoroll(
         &[],
         &visible,
         track_colors,
-        tc::BG,
-        tc::STRIPE_BG,
+        tc::bg(),
+        tc::stripe_bg(),
         am_key,
     );
     // 清掉 AR 拖动留下的自动化竖线 ghost（layer 4）。
@@ -1083,8 +1083,8 @@ fn upload_arrangement(
         &lanes,
         &visible,
         track_colors,
-        tc::BG,
-        tc::STRIPE_BG,
+        tc::bg(),
+        tc::stripe_bg(),
         yinhe_wgpu::layer_cache_key(&[am_key, VIEW_TAG_ARRANGEMENT]),
     );
 

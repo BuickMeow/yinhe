@@ -1,14 +1,44 @@
-//! LIGHT 主题派生色（与 `yinhe-theme::base::BaseColors::LIGHT` 同步）。
+//! 当前 GPU 主题派生色（跟随 `yinhe_theme::current_gpu_theme`）。
 //!
-//! 派生规则见 `yinhe-theme/src/egui_colors.rs::derive_theme`（浅色 token）。
-//! wgpu 侧（折叠自动化底色、无文档清屏）与 Dart 侧 UI 使用同一套色值；
-//! 后续接入主题配置时，这里应改为从 `yinhe_theme` 读取。
+//! wgpu 侧（折叠自动化底色、无文档清屏）与 Dart 侧 UI 需要同一套色值；
+//! 以前这里写死 LIGHT，切深色后 Conductor 轨道色带仍然是浅色文字色。
 
-/// 应用背景（LIGHT：240,240,244），装饰层底矩形与无文档清屏用。
-pub const BG: [f32; 4] = [240.0 / 255.0, 240.0 / 255.0, 244.0 / 255.0, 1.0];
+use yinhe_theme::base::{BaseColors, Rgba};
 
-/// AR 交替行底色：mix(bg, black, 0.06)。
-pub const STRIPE_BG: [f32; 4] = [226.0 / 255.0, 226.0 / 255.0, 229.0 / 255.0, 1.0];
+fn base() -> BaseColors {
+    if yinhe_theme::current_gpu_theme().dark_mode {
+        BaseColors::DARK
+    } else {
+        BaseColors::LIGHT
+    }
+}
 
-/// 主文字色（LIGHT：30,30,34）。
-pub const TEXT_PRIMARY: [f32; 4] = [30.0 / 255.0, 30.0 / 255.0, 34.0 / 255.0, 1.0];
+fn rgba(c: Rgba) -> [f32; 4] {
+    [
+        c.r as f32 / 255.0,
+        c.g as f32 / 255.0,
+        c.b as f32 / 255.0,
+        c.a as f32 / 255.0,
+    ]
+}
+
+/// 应用背景（装饰层底矩形与无文档清屏用）。
+pub fn bg() -> [f32; 4] {
+    rgba(base().bg)
+}
+
+/// AR 交替行底色：亮色向黑混 6%，暗色向白混 5%。
+pub fn stripe_bg() -> [f32; 4] {
+    let b = base();
+    let c = if b.is_dark() {
+        b.bg.mix(Rgba::new(255, 255, 255, 255), 0.05)
+    } else {
+        b.bg.mix(Rgba::new(0, 0, 0, 255), 0.06)
+    };
+    rgba(c)
+}
+
+/// 主文字色：Conductor（000）轨道色带与文本色一致。
+pub fn text_primary() -> [f32; 4] {
+    rgba(base().text)
+}

@@ -215,6 +215,7 @@ mixin _ShellInput on _ShellBase {
       if ((hDelta - 1.0).abs() > 1e-6 || (vDelta - 1.0).abs() > 1e-6) {
         _gestureZoomed = true;
       }
+      _pokeMiniScrollbar();
       return;
     }
 
@@ -242,6 +243,7 @@ mixin _ShellInput on _ShellBase {
         focal.dx,
         focal.dy,
       );
+      _pokeMiniScrollbar();
     }
     if (_gestureStart != null && (focal - _gestureStart!).distance > 3.0) {
       _gestureMoved = true;
@@ -267,6 +269,22 @@ mixin _ShellInput on _ShellBase {
     _pinchRebase = false;
     _pinchZoom.rebase(_pointerPositions.values.toList(growable: false));
     _clearLongPressUi();
+  }
+
+  /// 缩放/平移时把底部迷你滚动条调亮，停手 2 秒后降回常驻暗度。
+  void _pokeMiniScrollbar() {
+    if (!mounted) {
+      return;
+    }
+    _miniScrollTimer?.cancel();
+    if (!_miniScrollActive) {
+      setState(() => _miniScrollActive = true);
+    }
+    _miniScrollTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted) {
+        setState(() => _miniScrollActive = false);
+      }
+    });
   }
 
   // ── 长按（Flutter LongPressGestureRecognizer）──
@@ -779,6 +797,7 @@ mixin _ShellInput on _ShellBase {
       e.scrollDelta.dy,
       ctrl ? 1 : 0,
     );
+    _pokeMiniScrollbar();
   }
 
   int? _rowAt(Offset p) {

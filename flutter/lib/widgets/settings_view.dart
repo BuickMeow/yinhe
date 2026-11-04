@@ -473,7 +473,7 @@ class _SettingsViewState extends State<SettingsView> {
     );
   }
 
-  /// 外观页：亮色/深色主题。
+  /// 外观页：浅色 / 深色 / 跟随系统三选一。
   Widget _appearancePage() {
     return ListView(
       padding: EdgeInsets.zero,
@@ -487,27 +487,91 @@ class _SettingsViewState extends State<SettingsView> {
           ),
         ),
         const SizedBox(height: 12),
-        _switchCard(
-          title: l.darkMode,
-          subtitle: L10n.isZh
-              ? '切换整个编辑器的亮色/深色主题'
-              : 'Switch the editor between light and dark',
-          icon: Icons.dark_mode_outlined,
-          value: YinheTheme.darkMode.value,
-          onChanged: _setDarkMode,
+        Card(
+          margin: const EdgeInsets.only(bottom: 8),
+          elevation: 0,
+          color: YinheTheme.controlBg,
+          clipBehavior: Clip.antiAlias,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.brightness_6_outlined,
+                      size: 20,
+                      color: YinheTheme.textSecondary,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            L10n.isZh ? '主题模式' : 'Theme mode',
+                            style: TextStyle(
+                              color: YinheTheme.text,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            L10n.isZh
+                                ? '浅色、深色，或跟随系统自动切换'
+                                : 'Light, dark, or follow the system',
+                            style: TextStyle(
+                              color: YinheTheme.textSecondary,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final m in AppThemeMode.values)
+                      ChoiceChip(
+                        label: Text(_themeModeLabel(m)),
+                        selected: YinheTheme.currentMode == m,
+                        showCheckmark: false,
+                        onSelected: (_) => _setThemeMode(m),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
         ),
       ],
     );
   }
 
-  void _setDarkMode(bool value) {
-    YinheTheme.setDark(value);
-    final p = (value ? 'dark' : 'light').toNativeUtf8();
+  String _themeModeLabel(AppThemeMode mode) {
+    return switch (mode) {
+      AppThemeMode.system => L10n.isZh ? '自动' : 'Auto',
+      AppThemeMode.light => L10n.isZh ? '浅色' : 'Light',
+      AppThemeMode.dark => L10n.isZh ? '深色' : 'Dark',
+    };
+  }
+
+  void _setThemeMode(AppThemeMode mode) {
+    YinheTheme.setMode(mode, MediaQuery.platformBrightnessOf(context));
+    final p = YinheTheme.modeName(mode).toNativeUtf8();
     try {
       rust.setUiTheme(p);
     } finally {
       calloc.free(p);
     }
+    // 偏好写盘后，再按解析出的实际明暗刷新 wgpu/轨道色。
+    rust.setTheme(YinheTheme.isDark ? 1 : 0);
     setState(() {});
   }
 

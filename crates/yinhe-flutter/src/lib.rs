@@ -1818,7 +1818,9 @@ pub extern "C" fn yinhe_ui_theme() -> *mut std::ffi::c_char {
     to_c_string(scene::ui_theme())
 }
 
-/// 设置界面主题（light/dark）并持久化；同时刷新 wgpu 主题。
+/// 设置界面主题偏好（auto/light/dark）并持久化。
+///
+/// 实际明暗由 Flutter 解析系统亮度后调用 [`yinhe_set_theme`] 应用。
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)] // dart:ffi 入口，指针有效性由调用方保证
 pub extern "C" fn yinhe_set_ui_theme(theme: *const std::ffi::c_char) -> i32 {
@@ -1830,13 +1832,12 @@ pub extern "C" fn yinhe_set_ui_theme(theme: *const std::ffi::c_char) -> i32 {
         .into_owned();
     let ok = scene::set_ui_theme(theme);
     if ok == 1 {
-        yinhe_set_theme(i32::from(scene::ui_theme() == "dark"));
         scene::save_audio_settings();
     }
     ok
 }
 
-/// 只刷新 GPU 渲染主题（1=dark）。启动时由 Flutter 读取持久化主题后调用。
+/// 应用实际明暗（1=dark）：刷新 GPU 主题、Conductor 色带与场景快照。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_set_theme(dark: i32) -> i32 {
     let dark = dark != 0;
@@ -1845,6 +1846,7 @@ pub extern "C" fn yinhe_set_theme(dark: i32) -> i32 {
     } else {
         yinhe_theme::base::BaseColors::LIGHT
     }));
+    scene::apply_theme_colors();
     1
 }
 

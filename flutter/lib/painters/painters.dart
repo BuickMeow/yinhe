@@ -8,3 +8,4 @@ export 'key_label_painter.dart';
 export 'pianoroll_grid_painter.dart';
 export 'arrangement_grid_painter.dart';
 export 'automation_painter.dart';
+export 'mini_scrollbar_painter.dart';

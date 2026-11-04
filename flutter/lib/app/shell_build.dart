@@ -603,6 +603,31 @@ mixin _ShellBuild on _ShellBase {
                                               onToggle: _togglePlay,
                                             ),
                                           ),
+                                          // 底部迷你滚动条：只显示整曲/当前视口/播放头，
+                                          // 不可拖动；缩放或平移时短暂提高不透明度。
+                                          Positioned(
+                                            left: 0,
+                                            right: 0,
+                                            bottom: 4,
+                                            height: MiniScrollbarPainter.height,
+                                            child: IgnorePointer(
+                                              child: AnimatedOpacity(
+                                                opacity: _miniScrollActive
+                                                    ? 1.0
+                                                    : 0.35,
+                                                duration: const Duration(
+                                                  milliseconds: 220,
+                                                ),
+                                                curve: Curves.easeOut,
+                                                child: CustomPaint(
+                                                  painter: MiniScrollbarPainter(
+                                                    _snap,
+                                                    _playhead,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
                                         ],
                                       ),
                                     ),

@@ -18,14 +18,73 @@ void main() {
       systemNavigationBarColor: Colors.transparent,
     ),
   );
-  // 主题持久化在 Rust settings；先读出来再建 MaterialApp，避免首帧闪白。
-  YinheTheme.setDark(rust.takeString(rust.uiTheme()) == 'dark');
+  // 主题偏好（auto/light/dark）持久化在 Rust settings；先解析系统亮度再建
+  // MaterialApp，避免首帧闪白。
+  final mode = YinheTheme.parseMode(rust.takeString(rust.uiTheme()));
+  YinheTheme.setMode(
+    mode,
+    WidgetsBinding.instance.platformDispatcher.platformBrightness,
+  );
+  YinheTheme.setTransition(YinheTheme.isDark ? 1 : 0);
   rust.setTheme(YinheTheme.isDark ? 1 : 0);
   runApp(const YinheApp());
 }
 
-class YinheApp extends StatelessWidget {
+class YinheApp extends StatefulWidget {
   const YinheApp({super.key});
+
+  @override
+  State<YinheApp> createState() => _YinheAppState();
+}
+
+class _YinheAppState extends State<YinheApp>
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
+  late final AnimationController _themeAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _themeAnim = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+      value: YinheTheme.transitionValue,
+    )..addListener(() => YinheTheme.setTransition(_themeAnim.value));
+    YinheTheme.darkMode.addListener(_onThemeTargetChanged);
+  }
+
+  @override
+  void dispose() {
+    YinheTheme.darkMode.removeListener(_onThemeTargetChanged);
+    _themeAnim.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  void _onThemeTargetChanged() {
+    final target = YinheTheme.isDark ? 1.0 : 0.0;
+    if ((YinheTheme.transitionValue - target).abs() <= 0.001) {
+      YinheTheme.setTransition(target);
+      return;
+    }
+    _themeAnim.stop();
+    _themeAnim.value = YinheTheme.transitionValue;
+    _themeAnim.animateTo(
+      target,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeInOutCubic,
+    );
+  }
+
+  @override
+  void didChangePlatformBrightness() {
+    final changed = YinheTheme.applySystemBrightness(
+      WidgetsBinding.instance.platformDispatcher.platformBrightness,
+    );
+    if (changed) {
+      rust.setTheme(YinheTheme.isDark ? 1 : 0);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

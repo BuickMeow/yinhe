@@ -768,7 +768,7 @@ fn load_midi_bytes_document(data: Vec<u8>, path: &str, token: u64) -> Result<Doc
         None,
     )?;
     doc.mark_loaded();
-    doc.sync_track_caches_with_conductor_color(crate::theme_colors::TEXT_PRIMARY);
+    doc.sync_track_caches_with_conductor_color(crate::theme_colors::text_primary());
     doc.file_path = Some(path.to_string());
     Ok(doc)
 }
@@ -1096,7 +1096,7 @@ fn load_document(path: &str, token: u64) -> Result<Document, String> {
     )?;
     doc.mark_loaded();
     // 与演示文档一致的 conductor 色（保证两台机器/两种来源配色相同）。
-    doc.sync_track_caches_with_conductor_color(crate::theme_colors::TEXT_PRIMARY);
+    doc.sync_track_caches_with_conductor_color(crate::theme_colors::text_primary());
     // 记录来源：加载完成即视为“已落盘来源”，dirty 从干净状态起步；
     // 同时供主页重复选择同一文件时跳过解析。
     if crate::autosave::is_autosave_path(path) {
@@ -1665,7 +1665,7 @@ pub fn set_project_meta_json(json: &str) -> i32 {
 fn apply_document(mut doc: Document, min_ticks: f64) {
     // 新建/占位文档也必须同步 Conductor 色：`Document::from_empty_model` 里
     // 用的是暗色主题 fallback（220,220,220），浅色背景下那条 6px 色带几乎看不见。
-    doc.sync_track_caches_with_conductor_color(crate::theme_colors::TEXT_PRIMARY);
+    doc.sync_track_caches_with_conductor_color(crate::theme_colors::text_primary());
     // 移动端编辑设置与桌面同名配置对齐（当前只有重叠开关）。
     doc.edit.allow_overlapping_notes = crate::audio::settings().allow_overlapping_notes;
     doc.edit.overlap_blocked_behavior =
@@ -5181,7 +5181,7 @@ pub fn set_ui_language(lang: String) -> i32 {
 static UI_THEME: OnceLock<Mutex<String>> = OnceLock::new();
 
 fn theme_slot() -> &'static Mutex<String> {
-    UI_THEME.get_or_init(|| Mutex::new("light".to_string()))
+    UI_THEME.get_or_init(|| Mutex::new("auto".to_string()))
 }
 
 /// 界面主题（light/dark）。
@@ -5196,13 +5196,25 @@ pub fn ui_theme() -> String {
 pub fn set_ui_theme(theme: String) -> i32 {
     let v = match theme.as_str() {
         "dark" => "dark",
+        "auto" | "system" => "auto",
         _ => "light",
     };
     if let Ok(mut g) = theme_slot().lock() {
         *g = v.to_string();
     }
-    log::info!("界面主题: {v}");
+    log::info!("界面主题偏好: {v}");
     1
+}
+
+/// 主题实际明暗切换后：重刷 Conductor（000）色带并让 Flutter/wgpu 快照跟上。
+pub fn apply_theme_colors() {
+    let Ok(mut s) = scene().lock() else {
+        return;
+    };
+    if let Some(doc) = s.document.as_mut() {
+        doc.sync_track_caches_with_conductor_color(crate::theme_colors::text_primary());
+    }
+    refresh_snapshot(&mut s);
 }
 
 /// 全曲音符数（顶栏标题展示用）。

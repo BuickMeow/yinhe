@@ -354,6 +354,10 @@ abstract class _ShellBase extends State<StudioShell>
   bool _saving = false;
   Timer? _savingTimer;
 
+  /// 底部迷你滚动条：缩放/平移时提高不透明度，停手几秒后降回。
+  bool _miniScrollActive = false;
+  Timer? _miniScrollTimer;
+
   /// “保存并继续”等待 SAF/复制完成；普通保存为 null。
   Completer<bool>? _saveCompleter;
 
@@ -574,6 +578,7 @@ class _StudioShellState extends _ShellBase
     _dragDkPtr = calloc<ffi.Int32>();
     _dragDtrPtr = calloc<ffi.Int32>();
     _channel.setMethodCallHandler(_onNativeCall);
+    YinheTheme.transition.addListener(_onThemeTransition);
     showKeyboardLabels.value = rust.showKeyboardLabels() == 1;
     _init().then((_) {
       if (mounted) {
@@ -582,11 +587,11 @@ class _StudioShellState extends _ShellBase
     });
     _ticker = createTicker((_) {
       _tickArrPanelAnimation();
-      // 模态路由（各类对话框）在上层时编辑器被遮罩：跳过 wgpu 帧提交与视图同步。
-      // `renderFrame` 会同步等待渲染线程完成 present，键盘弹出/收起与对话框
-      // 动画期间继续每帧等待会占住 UI 线程，输入法动画直接掉帧。
-      // 帧循环仍保持，对话框关闭后的下一帧自动恢复。
-      final coveredByRoute = !(ModalRoute.of(context)?.isCurrent ?? true);
+      // 模态路由（各类对话框）或全屏设置页在上层时编辑器被完全遮住：跳过
+      // wgpu 帧提交与视图同步。`renderFrame` 会同步等待渲染线程 present，
+      // 被遮住还每帧提交会白烧 GPU/UI 线程。帧循环仍保持，关闭后自动恢复。
+      final coveredByRoute =
+          !(ModalRoute.of(context)?.isCurrent ?? true) || _showSettings;
       if (!coveredByRoute) {
         // 帧驱动同步：`renderFrame` 同步等到 present 完成，之后读取的浮层数据
         // 与纹理来自同一份 Rust 状态，不需要再按帧数延迟。
@@ -712,8 +717,15 @@ class _StudioShellState extends _ShellBase
     }
   }
 
+  void _onThemeTransition() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
   @override
   void dispose() {
+    YinheTheme.transition.removeListener(_onThemeTransition);
     WidgetsBinding.instance.removeObserver(this);
     _ticker.dispose();
     _timecodeText.dispose();
@@ -737,6 +749,7 @@ class _StudioShellState extends _ShellBase
     _sfProgress.dispose();
     _saveDoneTimer?.cancel();
     _savingTimer?.cancel();
+    _miniScrollTimer?.cancel();
     _velocityReloadTimer?.cancel();
     _velocityRetryTimer?.cancel();
     _arrTracksExpanded.dispose();
