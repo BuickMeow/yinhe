@@ -212,18 +212,103 @@ class _SelectionGridCell extends StatelessWidget {
   }
 }
 
-/// 主视口空白处长按完成：粘贴 / 全选 菜单。
+/// 通用浮动操作菜单：贴着长按位置弹出，样式与桌面右键一致。
 ///
-/// 插入位置与插入菜单已移到时间标尺（见 `MarkerLayer` 的长按回调）。
-Future<void> showEmptyLongPressMenu(
+/// 适合 2–5 项的小菜单；操作很多（选框网格、插入类型）仍用底部面板。
+Future<String?> showFloatingActionMenu(
   BuildContext context, {
+  required Offset globalPosition,
+  required List<SheetAction> actions,
+  String? title,
+  String? subtitle,
+  IconData? headerIcon,
+}) async {
+  final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+  final origin = overlay?.globalToLocal(globalPosition) ?? globalPosition;
+  final size = overlay?.size ?? MediaQuery.sizeOf(context);
+  final hasHeader = title != null && title.isNotEmpty;
+  return showMenu<String>(
+    context: context,
+    position: RelativeRect.fromLTRB(
+      origin.dx,
+      origin.dy,
+      (size.width - origin.dx).clamp(0.0, double.infinity),
+      (size.height - origin.dy).clamp(0.0, double.infinity),
+    ),
+    items: [
+      if (hasHeader)
+        PopupMenuItem<String>(
+          enabled: false,
+          height: subtitle == null || subtitle.isEmpty ? 40 : 54,
+          child: Row(
+            children: [
+              if (headerIcon != null) ...[
+                Icon(headerIcon, size: 18, color: YinheTheme.textSecondary),
+                const SizedBox(width: 10),
+              ],
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: YinheTheme.text,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (subtitle != null && subtitle.isNotEmpty)
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: YinheTheme.textSecondary,
+                          fontSize: 11,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      if (hasHeader) const PopupMenuDivider(),
+      for (final a in actions)
+        PopupMenuItem<String>(
+          value: a.value,
+          enabled: a.enabled,
+          height: 40,
+          child: _menuRow(
+            a.icon,
+            a.label,
+            enabled: a.enabled,
+            danger: a.danger,
+            quarterTurns: a.quarterTurns,
+          ),
+        ),
+    ],
+  );
+}
+
+/// 长按空白处：在手指位置弹小型浮动菜单（粘贴/插入/全选/标签）。
+Future<void> showFloatingEmptyLongPressMenu(
+  BuildContext context, {
+  required Offset globalPosition,
   required bool canPaste,
   required VoidCallback onPaste,
+  required VoidCallback? onInsert,
   required VoidCallback onSelectAll,
+  VoidCallback? onAddMarker,
 }) async {
   final l = AppLocalizations.of(context);
-  final action = await showActionSheet(
+  final action = await showFloatingActionMenu(
     context,
+    globalPosition: globalPosition,
     actions: [
       SheetAction(
         value: 'select_all',
@@ -236,61 +321,17 @@ Future<void> showEmptyLongPressMenu(
         icon: Icons.content_paste,
         enabled: canPaste,
       ),
-    ],
-  );
-  switch (action) {
-    case 'select_all':
-      onSelectAll();
-    case 'paste':
-      onPaste();
-  }
-}
-
-/// 长按空白处：在手指位置弹小型浮动菜单（替代底部 sheet，减少手指位移）。
-Future<void> showFloatingEmptyLongPressMenu(
-  BuildContext context, {
-  required Offset globalPosition,
-  required bool canPaste,
-  required VoidCallback onPaste,
-  required VoidCallback? onInsert,
-  required VoidCallback onSelectAll,
-  VoidCallback? onAddMarker,
-}) async {
-  final l = AppLocalizations.of(context);
-  final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
-  final origin = overlay?.globalToLocal(globalPosition) ?? globalPosition;
-  final size = overlay?.size ?? MediaQuery.sizeOf(context);
-  final action = await showMenu<String>(
-    context: context,
-    position: RelativeRect.fromLTRB(
-      origin.dx,
-      origin.dy,
-      (size.width - origin.dx).clamp(0.0, double.infinity),
-      (size.height - origin.dy).clamp(0.0, double.infinity),
-    ),
-    items: [
-      PopupMenuItem(
-        value: 'select_all',
-        height: 40,
-        child: _menuRow(Icons.select_all, l.selectAll),
-      ),
-      PopupMenuItem(
-        value: 'paste',
-        height: 40,
-        enabled: canPaste,
-        child: _menuRow(Icons.content_paste, l.paste),
-      ),
       if (onInsert != null)
-        PopupMenuItem(
+        SheetAction(
           value: 'insert',
-          height: 40,
-          child: _menuRow(Icons.add_circle_outline, l.insert),
+          label: l.insert,
+          icon: Icons.add_circle_outline,
         ),
       if (onAddMarker != null)
-        PopupMenuItem(
+        SheetAction(
           value: 'marker',
-          height: 40,
-          child: _menuRow(Icons.bookmark_add_outlined, l.markerLabel),
+          label: l.markerLabel,
+          icon: Icons.bookmark_add_outlined,
         ),
     ],
   );
@@ -306,28 +347,49 @@ Future<void> showFloatingEmptyLongPressMenu(
   }
 }
 
-Widget _menuRow(IconData icon, String label) {
+Widget _menuRow(
+  IconData icon,
+  String label, {
+  bool enabled = true,
+  bool danger = false,
+  int quarterTurns = 0,
+}) {
+  final color = !enabled
+      ? YinheTheme.textMuted.withValues(alpha: 0.5)
+      : danger
+      ? YinheTheme.danger
+      : YinheTheme.text;
+  Widget iconWidget = Icon(
+    icon,
+    size: 18,
+    color: danger && enabled ? YinheTheme.danger : YinheTheme.textSecondary,
+  );
+  if (quarterTurns != 0) {
+    iconWidget = RotatedBox(quarterTurns: quarterTurns, child: iconWidget);
+  }
   return Row(
     mainAxisSize: MainAxisSize.min,
     children: [
-      Icon(icon, size: 18, color: YinheTheme.textSecondary),
+      iconWidget,
       const SizedBox(width: 10),
-      Text(label, style: TextStyle(color: YinheTheme.text, fontSize: 14)),
+      Text(label, style: TextStyle(color: color, fontSize: 14)),
     ],
   );
 }
 
-/// AR 长按音轨（未拖动）：音轨信息菜单。
+/// AR 长按音轨（未拖动）：音轨信息菜单（贴手指弹出）。
 Future<void> showTrackMenu(
   BuildContext context, {
+  required Offset globalPosition,
   required VoidCallback onEdit,
   required VoidCallback onSelectAll,
   VoidCallback? onDelete,
   VoidCallback? onEvents,
 }) async {
   final l = AppLocalizations.of(context);
-  final action = await showActionSheet(
+  final action = await showFloatingActionMenu(
     context,
+    globalPosition: globalPosition,
     actions: [
       SheetAction(
         value: 'select_all',

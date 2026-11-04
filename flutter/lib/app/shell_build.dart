@@ -83,7 +83,10 @@ mixin _ShellBuild on _ShellBase {
     if (_canvasAreaW <= 0 || _canvasAreaH <= 0) {
       return;
     }
-    final bottom = mode == kViewPianoroll ? kAmHandleHeight : 0.0;
+    // 自动化收起时没有手柄，画布直接铺到底部。
+    final bottom = mode == kViewPianoroll && !_autoCollapsed
+        ? kAmHandleHeight
+        : 0.0;
     final lh = (_canvasAreaH - RulerPainter.height - bottom).clamp(
       1.0,
       double.infinity,
@@ -273,28 +276,25 @@ mixin _ShellBuild on _ShellBase {
                             builder: (context, constraints) {
                               final size = constraints.biggest;
                               final canvasH = size.height;
-                              // AM 绘制区高度：默认占满可用区，可拖手柄任意缩放/全屏。
-                              final amMax =
-                                  (size.height -
-                                          RulerPainter.height -
-                                          kAmHandleHeight)
-                                      .clamp(1.0, double.infinity);
-                              _amMaxDrawHeight = amMax;
                               final amVisible =
                                   _viewMode == kViewPianoroll &&
                                   !_autoCollapsed;
+                              // 只有展开时才让出手柄高度；收起后不留空位。
+                              final amMax =
+                                  (size.height -
+                                          RulerPainter.height -
+                                          (amVisible ? kAmHandleHeight : 0))
+                                      .clamp(1.0, double.infinity);
+                              _amMaxDrawHeight = amMax;
                               final amH = amVisible
                                   ? (_autoPanelHeight ?? amMax).clamp(
                                       0.0,
                                       amMax,
                                     )
                                   : 0.0;
-                              // 底部栏（手柄 + 展开的面板）参与布局：PR 视口让出这块高度，
-                              // 不再被浮层遮住。
-                              // 底部栏高度按当前视图实际存在的栏位计算：
-                              // PR 有 AM 手柄，AR 没有；未来某个视图新增底部栏时
-                              // 只需要在这里加一项，视口会自动让出对应高度。
-                              final bottomBarH = _viewMode == kViewPianoroll
+                              // 底部栏（手柄 + 展开的面板）参与布局：展开时 PR
+                              // 视口让出手柄高度，收起后完全让出，不再常驻。
+                              final bottomBarH = amVisible
                                   ? kAmHandleHeight
                                   : 0.0;
                               // 内容画布 = 画布区减去标尺条和底部栏（Rust 坐标系从标尺下方开始）。
@@ -523,6 +523,24 @@ mixin _ShellBuild on _ShellBase {
                                                     LongPressIndicatorPainter(
                                                       _snap,
                                                       _lpIndicator,
+                                                      trackAware: false,
+                                                    ),
+                                              ),
+                                            ),
+                                          ),
+                                          // 内容区落点竖线：AR 只覆盖目标轨道，
+                                          // PR 覆盖整个卷帘高度。
+                                          Positioned(
+                                            left: 0,
+                                            right: 0,
+                                            top: RulerPainter.height,
+                                            bottom: bottomBarH,
+                                            child: IgnorePointer(
+                                              child: CustomPaint(
+                                                painter:
+                                                    LongPressIndicatorPainter(
+                                                      _snap,
+                                                      _lpIndicator,
                                                     ),
                                               ),
                                             ),
@@ -582,7 +600,7 @@ mixin _ShellBuild on _ShellBase {
                                         ],
                                       ),
                                     ),
-                                    if (_viewMode == kViewPianoroll)
+                                    if (amVisible)
                                       Positioned(
                                         left: 0,
                                         right: 0,
@@ -590,7 +608,7 @@ mixin _ShellBuild on _ShellBase {
                                         height: kAmHandleHeight + amH,
                                         child: Column(
                                           // 手柄在面板上沿，随面板一起移动；
-                                          // PR 视口则固定只让出手柄这一条高度。
+                                          // 收起时整块移除，画布不再让出高度。
                                           children: [
                                             SizedBox(
                                               height: kAmHandleHeight,

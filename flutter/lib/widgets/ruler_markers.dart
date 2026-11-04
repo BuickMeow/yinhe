@@ -11,6 +11,7 @@ import '../painters/painters.dart';
 import '../core/theme.dart';
 import '../dialogs/inputs.dart';
 import '../dialogs/sheet.dart';
+import '../menus/canvas_menus.dart';
 import '../l10n/app_localizations.dart';
 
 /// 时间标尺上的标签（marker）层：pill 显示 + 点击跳转 / 长按菜单 / 拖动移动。
@@ -66,10 +67,11 @@ class _MarkerLayerState extends State<MarkerLayer> {
     }
   }
 
-  Future<void> _showMarkerMenu(RulerMarker m) async {
+  Future<void> _showMarkerMenu(RulerMarker m, Offset global) async {
     final l = AppLocalizations.of(context);
-    final action = await showActionSheet(
+    final action = await showFloatingActionMenu(
       context,
+      globalPosition: global,
       actions: [
         SheetAction(value: 'rename', label: l.markerRename, icon: Icons.edit),
         SheetAction(
@@ -200,7 +202,7 @@ class _MarkerLayerState extends State<MarkerLayer> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => rust.jumpToTick(m.tick.toDouble()),
-        onLongPress: () => _showMarkerMenu(m),
+        onLongPressStart: (d) => _showMarkerMenu(m, d.globalPosition),
         onHorizontalDragStart: (_) => setState(() {
           _dragTick = m.tick;
           _dragX = x;

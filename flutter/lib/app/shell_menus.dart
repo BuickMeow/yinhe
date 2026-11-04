@@ -82,43 +82,7 @@ mixin _ShellMenus on _ShellBase {
     }
   }
 
-  /// 主视口空白处长按完成：只保留粘贴/全选（插入已移到时间标尺）。
-  @override
-  void _showPasteMenu(Offset? pos, LongPressContext? ctx) {
-    if (pos == null) {
-      return;
-    }
-    _resetInteraction();
-    final token = ++_lpToken;
-    _lpIndicator.value = null;
-    showEmptyLongPressMenu(
-      context,
-      canPaste: rust.clipboardEmpty() == 0,
-      onSelectAll: () {
-        if (_viewMode == kViewPianoroll) {
-          final track =
-              ctx?.track ??
-              (_displayTrack >= 0 ? _displayTrack : (_activeTrack ?? -1));
-          _selectAll(0, track);
-        } else {
-          // AR 空白长按：全工程所有轨道、所有长度。
-          _selectAll(1, -1);
-        }
-      },
-      onPaste: () {
-        if (rust.pasteSelection(pos.dx) == 1) {
-          unawaited(_runDocJob(title: l.paste));
-        }
-      },
-    ).whenComplete(() {
-      _clearInsertStatus();
-      if (token == _lpToken) {
-        _lpIndicator.value = null;
-      }
-    });
-  }
-
-  /// 长按未拖动：在手指位置弹浮动菜单（内容同 [_showPasteMenu]）。
+  /// 长按未拖动：在手指位置弹浮动菜单（粘贴/插入/全选/标签）。
   @override
   void _showPasteMenuAt(
     Offset local,
@@ -128,10 +92,10 @@ mixin _ShellMenus on _ShellBase {
   }) {
     _resetInteraction();
     final token = ++_lpToken;
-    _lpIndicator.value = ctx == null || !fromRuler
+    _lpIndicator.value = ctx == null
         ? null
         : LongPressIndicator(tick: ctx.tick, track: ctx.track, pr: ctx.pr);
-    if (ctx != null && fromRuler) {
+    if (ctx != null) {
       _setInsertStatus(ctx.tick);
     }
     var inserting = false;
@@ -154,11 +118,11 @@ mixin _ShellMenus on _ShellBase {
           unawaited(_runDocJob(title: l.paste));
         }
       },
-      onInsert: ctx == null || !fromRuler
+      onInsert: ctx == null
           ? null
           : () {
               inserting = true;
-              _runInsertFlow(ctx);
+              _runInsertFlow(ctx, chooseTrack: fromRuler);
             },
       onAddMarker: fromRuler && ctx != null
           ? () => addMarkerAtTick(
@@ -178,11 +142,37 @@ mixin _ShellMenus on _ShellBase {
   }
 
   /// 长按"插入"完整流程：选目标 →（自定义号）→ 值输入 → 插入。
+  ///
+  /// `chooseTrack`：从时间标尺进入时没有行坐标，先让用户选目标音轨；
+  /// 主视口长按直接使用手指所在轨道。
   @override
-  Future<void> _runInsertFlow(LongPressContext ctx) async {
+  Future<void> _runInsertFlow(
+    LongPressContext ctx, {
+    bool chooseTrack = false,
+  }) async {
     _lpToken++;
     try {
-      final choice = await showInsertMenu(context, conductor: ctx.conductor);
+      var track = ctx.track;
+      var conductor = ctx.conductor;
+      if (chooseTrack && _tracks.value.isNotEmpty) {
+        final initial = track >= 0 && track < _tracks.value.length ? track : 0;
+        final picked = await showInsertTrackPicker(
+          context,
+          tracks: _tracks.value,
+          initial: initial,
+        );
+        if (!mounted || picked == null) {
+          return;
+        }
+        track = picked;
+        conductor = _tracks.value[picked].master;
+        _lpIndicator.value = LongPressIndicator(
+          tick: ctx.tick,
+          track: track,
+          pr: ctx.pr,
+        );
+      }
+      final choice = await showInsertMenu(context, conductor: conductor);
       if (!mounted || choice == null) {
         return;
       }
@@ -247,7 +237,7 @@ mixin _ShellMenus on _ShellBase {
         kind,
         number,
         ctx.tick,
-        ctx.track,
+        track,
       );
       final initial = current.isNaN
           ? insertDefaultValue(kind, number).clamp(minValue, maxValue)
@@ -266,13 +256,7 @@ mixin _ShellMenus on _ShellBase {
       if (!mounted || v == null) {
         return;
       }
-      if (rust.insertAutomation(
-            kind,
-            number,
-            ctx.tick,
-            ctx.track,
-            v.toDouble(),
-          ) ==
+      if (rust.insertAutomation(kind, number, ctx.tick, track, v.toDouble()) ==
           1) {
         _refreshDocumentMeta();
       }
@@ -305,12 +289,13 @@ mixin _ShellMenus on _ShellBase {
 
   /// AR 长按音轨（未拖动）：音轨信息菜单（含删除）。
   @override
-  void _showTrackMenu(int track) {
+  void _showTrackMenu(int track, Offset? global) {
     final rows = _tracks.value;
     final master = track < 0 || track >= rows.length || rows[track].master;
     _resetInteraction();
     showTrackMenu(
       context,
+      globalPosition: global ?? Offset.zero,
       onSelectAll: () => _selectAll(1, track),
       onEdit: () => _editTrackInfo(track),
       onDelete: master ? null : () => _deleteTrack(track),

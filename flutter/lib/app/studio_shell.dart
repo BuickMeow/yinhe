@@ -302,6 +302,9 @@ abstract class _ShellBase extends State<StudioShell>
   /// AR 长按音轨期间手指是否离开过起始行（移动过又放回原位时不弹菜单）。
   bool _trackDragMoved = false;
 
+  /// AR 长按音轨的全局落点：松手后浮动菜单贴着这里弹出。
+  Offset? _trackMenuGlobal;
+
   /// AR 内容区双击进入轨道（不用 GestureDetector 双指识别，避免普通 tap 延迟）。
   DateTime? _arrLastTap;
   Offset? _arrLastTapPos;
@@ -532,7 +535,6 @@ abstract class _ShellBase extends State<StudioShell>
   void _finishAutoPanelResize();
   void _setView(int mode);
   void _showAddTrackDialog();
-  void _showPasteMenu(Offset? pos, LongPressContext? ctx);
   void _handleRulerScrub(Offset local);
   void _handleRulerScrubEnd();
   void _handleRulerInsertStart(Offset local, Offset global);
@@ -546,7 +548,7 @@ abstract class _ShellBase extends State<StudioShell>
   });
   void _showSelectionMenu();
   Future<void> _runInsertFlow(LongPressContext ctx);
-  void _showTrackMenu(int track);
+  void _showTrackMenu(int track, Offset? global);
   void _stopPlayback();
   void _togglePlay();
   int get _tool;

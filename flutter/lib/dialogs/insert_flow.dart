@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../core/midi_names.dart';
+import '../core/models.dart';
 import 'inputs.dart';
+import 'frame.dart';
 
+import '../l10n.dart';
 import '../l10n/app_localizations.dart';
 import '../core/theme.dart';
 
@@ -317,5 +320,68 @@ Future<String?> showInsertTextDialog(
     label: l.value,
     initial: initial,
     confirmText: l.ok,
+  );
+}
+
+/// 从时间标尺插入时，先选目标音轨。
+///
+/// 标尺没有行坐标，默认停在当前活动轨；选中 Master 时插入菜单会变成
+/// Tempo/拍号/调号/标签等全局事件。
+Future<int?> showInsertTrackPicker(
+  BuildContext context, {
+  required List<TrackRow> tracks,
+  required int initial,
+}) {
+  final l = AppLocalizations.of(context);
+  return showDialog<int>(
+    context: context,
+    builder: (ctx) {
+      final zh = L10n.isZh;
+      return YinheDialog(
+        title: zh ? '选择插入音轨' : 'Choose insert track',
+        width: 380,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text(l.cancel),
+          ),
+        ],
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < tracks.length; i++)
+              ListTile(
+                dense: true,
+                leading: Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: tracks[i].color,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                title: Text(
+                  tracks[i].name.isEmpty ? 'Track ${i + 1}' : tracks[i].name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: tracks[i].master
+                    ? Text(zh ? '全局事件（Tempo/拍号/调号/标签）' : 'Global events')
+                    : Text(
+                        '${zh ? '端口' : 'Port'} ${tracks[i].port} · '
+                        '${zh ? '通道' : 'Ch'} ${tracks[i].channel + 1}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                trailing: i == initial
+                    ? Icon(Icons.check, color: YinheTheme.accent, size: 18)
+                    : null,
+                onTap: () => Navigator.of(ctx).pop(i),
+              ),
+          ],
+        ),
+      );
+    },
   );
 }

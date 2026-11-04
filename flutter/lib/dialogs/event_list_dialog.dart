@@ -13,6 +13,7 @@ import '../core/snack.dart';
 import 'inputs.dart';
 import 'insert_flow.dart';
 import 'sheet.dart';
+import '../menus/canvas_menus.dart';
 import '../core/theme.dart';
 import '../l10n/app_localizations.dart';
 
@@ -323,10 +324,11 @@ class _EventListDialogState extends State<EventListDialog> {
     }
   }
 
-  Future<void> _openActions(Map<String, dynamic> row) async {
+  Future<void> _openActions(Map<String, dynamic> row, Offset global) async {
     final desc = _describe(row);
-    final action = await showActionSheet(
+    final action = await showFloatingActionMenu(
       context,
+      globalPosition: global,
       title: desc.title,
       subtitle: desc.subtitle,
       headerIcon: desc.icon,
@@ -666,29 +668,33 @@ class _EventListDialogState extends State<EventListDialog> {
                       itemBuilder: (context, i) {
                         final row = rows[i];
                         final d = _describe(row);
-                        return ListTile(
-                          dense: true,
-                          leading: Icon(
-                            d.icon,
-                            size: 18,
-                            color: YinheTheme.textSecondary,
-                          ),
-                          title: Text(
-                            d.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                          subtitle: Text(
-                            d.subtitle,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: YinheTheme.textDisabled,
-                              fontSize: 11,
+                        return GestureDetector(
+                          behavior: HitTestBehavior.translucent,
+                          onLongPressStart: (e) =>
+                              _openActions(row, e.globalPosition),
+                          child: ListTile(
+                            dense: true,
+                            leading: Icon(
+                              d.icon,
+                              size: 18,
+                              color: YinheTheme.textSecondary,
+                            ),
+                            title: Text(
+                              d.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 14),
+                            ),
+                            subtitle: Text(
+                              d.subtitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: YinheTheme.textDisabled,
+                                fontSize: 11,
+                              ),
                             ),
                           ),
-                          onLongPress: () => _openActions(row),
                         );
                       },
                     ),

@@ -285,6 +285,7 @@ mixin _ShellInput on _ShellBase {
       if (idx != null && idx < _tracks.value.length) {
         // AR 音轨面板：长按拖动排序。
         _clearLongPressUi();
+        _trackMenuGlobal = d.globalPosition;
         _trackDragMoved = false;
         setState(() {
           _dragFrom.value = idx;
@@ -662,14 +663,16 @@ mixin _ShellInput on _ShellBase {
     if (from < 0) {
       return;
     }
+    final global = _trackMenuGlobal;
+    _trackMenuGlobal = null;
     if (from == 0) {
       // Master 轨只弹信息菜单，不参与排序。
-      _showTrackMenu(0);
+      _showTrackMenu(0, global);
       return;
     }
     if (to < 0 || (from == to && !_trackDragMoved)) {
       // 长按未拖动：弹出音轨信息菜单。
-      _showTrackMenu(from);
+      _showTrackMenu(from, global);
       return;
     }
     if (from == to) {
@@ -681,26 +684,9 @@ mixin _ShellInput on _ShellBase {
     }
   }
 
-  /// 统一的编辑收尾：提交 Rust 编辑，再按长按时的状态弹选区/粘贴菜单。
+  /// 统一的编辑收尾：提交 Rust 编辑，再按长按时的状态弹选区菜单。
   void _finishEditGesture(Offset p, {required bool moved}) {
     final state = rust.selectionState();
-    LongPressContext? ctx;
-    if (state == 3) {
-      final ptr = rust.longPressContextJson();
-      if (ptr != ffi.nullptr) {
-        try {
-          final decoded = jsonDecode(ptr.toDartString());
-          if (decoded is Map<String, dynamic>) {
-            ctx = LongPressContext.fromJson(decoded);
-          }
-        } catch (_) {
-          ctx = null;
-        } finally {
-          rust.freeString(ptr);
-        }
-      }
-    }
-    final pos = _lpPos ?? p;
     rust.editEnd(p.dx, p.dy);
     _gestureEditing = false;
     // 编辑提交后立刻刷新撤销/重做图标，不等下一次 66ms 状态轮询。
@@ -708,8 +694,6 @@ mixin _ShellInput on _ShellBase {
     _clearLongPressUi();
     if (state == 2 && !moved) {
       _showSelectionMenu();
-    } else if (state == 3) {
-      _showPasteMenu(pos, ctx);
     }
   }
 

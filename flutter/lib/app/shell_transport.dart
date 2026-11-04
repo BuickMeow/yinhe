@@ -156,23 +156,8 @@ mixin _ShellTransport on _ShellBase {
   @override
   void _resizeAutoPanel(double dy) {
     final maxH = _amMaxDrawHeight;
-    if (maxH <= 0) {
+    if (maxH <= 0 || _autoCollapsed) {
       return;
-    }
-    // 收起状态下向上拉手柄：直接展开并从 0 高度开始跟手。
-    if (_autoCollapsed) {
-      if (dy >= 0) {
-        return;
-      }
-      setState(() {
-        _autoCollapsed = false;
-        _autoPanelHeight = 0;
-      });
-      _amTextureWarmup = 3;
-      if (_viewMode == kViewPianoroll) {
-        _loadAutomation();
-        _loadVelocity();
-      }
     }
     final current = (_autoPanelHeight ?? maxH).clamp(0.0, maxH);
     final next = (current - dy).clamp(0.0, maxH);

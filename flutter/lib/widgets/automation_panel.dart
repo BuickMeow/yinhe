@@ -16,6 +16,7 @@ import '../core/snack.dart';
 import '../dialogs/automation_anchor_dialog.dart';
 import '../dialogs/batch_edit_dialog.dart';
 import '../dialogs/sheet.dart';
+import '../menus/canvas_menus.dart';
 import '../painters/painters.dart';
 import '../painters/time_grid.dart';
 import '../l10n/app_localizations.dart';
@@ -433,9 +434,10 @@ class _AutomationPanelState extends State<AutomationPanel>
   bool _selectionMenuBusy = false;
 
   /// 选框菜单：只做针对整段选区的操作（复制 / 删除 / 批量处理）。
-  Future<void> _showMarqueeMenu() async {
-    final action = await showActionSheet(
+  Future<void> _showMarqueeMenu(Offset global) async {
+    final action = await showFloatingActionMenu(
       context,
+      globalPosition: global,
       actions: [
         SheetAction(
           value: 'copy',
@@ -474,10 +476,15 @@ class _AutomationPanelState extends State<AutomationPanel>
   }
 
   /// 单个锚点菜单：复制 / 粘贴 / 修改 / 插入 / 删除。
-  Future<void> _showAnchorMenu({required int tick, int? modifyTick}) async {
+  Future<void> _showAnchorMenu({
+    required Offset global,
+    required int tick,
+    int? modifyTick,
+  }) async {
     final canPaste = rust.automationClipboardEmpty() == 0;
-    final action = await showActionSheet(
+    final action = await showFloatingActionMenu(
       context,
+      globalPosition: global,
       actions: [
         SheetAction(
           value: 'copy',
@@ -533,10 +540,11 @@ class _AutomationPanelState extends State<AutomationPanel>
   }
 
   /// 没有按到锚点/选框：只给粘贴、插入。
-  Future<void> _showAutomationEmptyMenu(int tick) async {
+  Future<void> _showAutomationEmptyMenu(int tick, Offset global) async {
     final canPaste = rust.automationClipboardEmpty() == 0;
-    final action = await showActionSheet(
+    final action = await showFloatingActionMenu(
       context,
+      globalPosition: global,
       actions: [
         SheetAction(
           value: 'paste',
@@ -976,11 +984,15 @@ class _AutomationPanelState extends State<AutomationPanel>
       _syncGhost();
       _syncSelection();
       setState(() {});
-      await _showAnchorMenu(tick: tick, modifyTick: hitTick);
+      await _showAnchorMenu(
+        global: d.globalPosition,
+        tick: tick,
+        modifyTick: hitTick,
+      );
       return;
     }
     if (inMarquee) {
-      await _showMarqueeMenu();
+      await _showMarqueeMenu(d.globalPosition);
       return;
     }
     if (widget.marqueeEnabled) {
@@ -990,7 +1002,7 @@ class _AutomationPanelState extends State<AutomationPanel>
       return;
     }
     _startHint(d.localPosition);
-    await _showAutomationEmptyMenu(tick);
+    await _showAutomationEmptyMenu(tick, d.globalPosition);
   }
 
   /// 长按后拖动：更新选框范围。
@@ -1023,7 +1035,10 @@ class _AutomationPanelState extends State<AutomationPanel>
         start != null && cur != null && (cur.dx - start.dx).abs() >= 3;
     _finishMarquee();
     if (!hadDrag) {
-      await _showAutomationEmptyMenu(_snapTickAt(d.localPosition.dx).round());
+      await _showAutomationEmptyMenu(
+        _snapTickAt(d.localPosition.dx).round(),
+        d.globalPosition,
+      );
     }
   }
 
