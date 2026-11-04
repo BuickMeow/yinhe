@@ -623,6 +623,9 @@ mixin _ShellBuild on _ShellBase {
                                                   painter: MiniScrollbarPainter(
                                                     _snap,
                                                     _playhead,
+                                                    hasDocument: _tracks
+                                                        .value
+                                                        .isNotEmpty,
                                                   ),
                                                 ),
                                               ),
