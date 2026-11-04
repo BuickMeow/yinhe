@@ -58,7 +58,7 @@ class _SettingsViewState extends State<SettingsView> {
   int _maxVoices = 512;
   int _bufferSize = 2048;
   int _ignoreVelocity = 1;
-  bool _allowOverlappingNotes = true;
+  bool _allowOverlappingNotes = false;
   bool _followPlayhead = true;
   bool _autoSave = true;
   bool _exportAudioMetadata = true;
@@ -311,11 +311,7 @@ class _SettingsViewState extends State<SettingsView> {
           ),
           title: Text(
             l.settings,
-            style: TextStyle(
-              color: YinheTheme.text,
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-            ),
+            style: TextStyle(color: YinheTheme.text, fontSize: 15),
           ),
         ),
         body: wide

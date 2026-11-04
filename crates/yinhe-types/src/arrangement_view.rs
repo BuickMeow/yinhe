@@ -4,6 +4,8 @@ use crate::{PIXELS_PER_TICK_MAX, PIXELS_PER_TICK_MIN, TimelineViewBase};
 pub const LANE_HEIGHT_MIN: f32 = 16.0;
 /// AR 垂直缩放每档步进：8px（等差数列 16, 24, …, 120）。
 pub const LANE_HEIGHT_STEP: f32 = 8.0;
+/// 垂直缩放的每档比例（几何级数，保证各缩放级别的相对步长一致）。
+pub const LANE_HEIGHT_ZOOM_RATIO: f32 = 1.2;
 /// AR 垂直缩放的最大档：120px（落在等差序列上）。
 pub const LANE_HEIGHT_MAX: f32 = 120.0;
 /// 跳一档所需的累积缩放倍率：单帧 `factor` 先累乘到此值（或倒数）才跳一档。
@@ -155,9 +157,12 @@ impl ArrangementView {
         self.lane_zoom_accum = 1.0;
 
         let old = self.lane_height();
-        let k = ((old - LANE_HEIGHT_MIN) / LANE_HEIGHT_STEP).round();
-        let new_h = (LANE_HEIGHT_MIN + (k + dir) * LANE_HEIGHT_STEP)
-            .clamp(LANE_HEIGHT_MIN, LANE_HEIGHT_MAX);
+        let new_h = if dir > 0.0 {
+            old * LANE_HEIGHT_ZOOM_RATIO
+        } else {
+            old / LANE_HEIGHT_ZOOM_RATIO
+        }
+        .clamp(LANE_HEIGHT_MIN, LANE_HEIGHT_MAX);
         if new_h == old {
             return;
         }
@@ -246,7 +251,7 @@ mod tests {
         assert_eq!(v.lane_height(), 48.0);
         // 单次滚轮 1.1 恰好一档
         v.zoom_lane_height(0.0, 1.1);
-        assert_eq!(v.lane_height(), 56.0);
+        assert!((v.lane_height() - 57.6).abs() < 0.01);
         // 反向同理：累积到倒数阈值才缩一档
         v.zoom_lane_height(0.0, 0.95);
         v.zoom_lane_height(0.0, 0.95);
@@ -262,7 +267,7 @@ mod tests {
         assert_eq!(v.lane_height(), LANE_HEIGHT_MAX);
         // 若累积器残留（2.0 × 0.9 = 1.8）会被误判为放大而卡在顶部；正确应缩一档。
         v.zoom_lane_height(0.0, 0.9);
-        assert_eq!(v.lane_height(), LANE_HEIGHT_MAX - LANE_HEIGHT_STEP);
+        assert!((v.lane_height() - LANE_HEIGHT_MAX / LANE_HEIGHT_ZOOM_RATIO).abs() < 0.01);
     }
 
     /// 等差档位恰好覆盖到最大档：16 + k·8 = 120。

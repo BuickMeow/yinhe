@@ -163,6 +163,33 @@ impl Document {
         Self::combine_undo(note, auto)
     }
 
+    /// 把选框整体时间跨度缩放为 `new_span`：音符和自动化事件一起等比缩放。
+    ///
+    /// AR 的整体变速拖拽使用这个入口；PR 只缩放音符，走
+    /// [`Document::rescale_selection_span`]。
+    pub fn rescale_selection_span_with_automation(&mut self, new_span: u64) -> Option<UndoAction> {
+        let (t0, t1) = self.selection_tick_bounds()?;
+        let span = u64::from(t1 - t0);
+        if new_span == 0 || new_span == span {
+            return None;
+        }
+        let factor = new_span as f64 / span as f64;
+        let edits =
+            Self::automation_move_edits(&self.selected_automation_events(), |tick, value| {
+                let nt = (f64::from(t0) + (f64::from(tick) - f64::from(t0)) * factor)
+                    .round()
+                    .clamp(0.0, f64::from(u32::MAX)) as u32;
+                (nt != tick).then_some((nt, value))
+            });
+        let note = self.rescale_selection_span(new_span);
+        if note.is_none() {
+            // 选框里只有自动化、没有音符时，补一次 tick 缩放保持选框一致。
+            self.edit.scale_sel_ticks(u64::from(t0), factor);
+        }
+        let auto = self.apply_automation_edits(edits);
+        Self::combine_undo(note, auto)
+    }
+
     /// 水平翻转：音符和自动化事件都按选框 tick 范围镜像。
     /// 垂直翻转只对音符有意义，自动化保持原位。
     pub fn flip_selected_with_automation(&mut self, axis: FlipAxis) -> Option<UndoAction> {
@@ -335,6 +362,25 @@ mod tests {
         assert_eq!(cc_ticks(&doc), vec![0, 480]);
         assert_eq!(doc.edit.selected.rects[0].0, 0);
         assert_eq!(doc.edit.selected.rects[0].1, 960);
+    }
+
+    #[test]
+    fn rescale_span_scales_note_and_automation_ticks() {
+        let mut doc = make_doc();
+        add_note(&mut doc, 0, 480, 60);
+        add_cc_lane(&mut doc, &[0, 240]);
+        doc.edit
+            .selected
+            .add_rect_track(0, 480, 0, yinhe_types::MAX_KEY, 1, 1);
+
+        doc.rescale_selection_span_with_automation(960)
+            .expect("应缩放音符与自动化");
+        let note = doc.data.model.notes[60]
+            .range(0, 1000)
+            .next()
+            .expect("音符仍在");
+        assert_eq!((note.start_tick, note.end_tick), (0, 960));
+        assert_eq!(cc_ticks(&doc), vec![0, 480]);
     }
 
     #[test]

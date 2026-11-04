@@ -4,7 +4,7 @@ use crate::{PIXELS_PER_TICK_MAX, PIXELS_PER_TICK_MIN, TimelineViewBase};
 /// 最小档不是固定像素，而是「一屏 128 键」（`cross_size / 128`），
 /// 否则 iPad 这类视口较矮的设备缩不到全键可见。
 /// 与 AR 行高缩放同思路：累积到 1.1 倍才跳一档，避免触控板/捏合微动连跳。
-pub const KEY_HEIGHT_STEP: f32 = 8.0;
+pub const KEY_HEIGHT_ZOOM_RATIO: f32 = 1.2;
 pub const KEY_HEIGHT_MAX: f32 = 64.0;
 pub const KEY_ZOOM_STEP_RATIO: f32 = 1.1;
 
@@ -351,14 +351,14 @@ impl PianoRollView {
         };
         *accum = 1.0;
         // 最小档 = 一屏 128 键（随视口变化）；最大档仍是固定 64px。
+        // 每一档乘/除固定比例（几何级数），缩放手感在对数尺度上均匀。
         let min_h = (cross_size / 128.0).max(0.001);
         let max_h = KEY_HEIGHT_MAX.max(min_h);
         let old = self.key_height;
-        let pos = old / KEY_HEIGHT_STEP;
         let new_h = if dir > 0.0 {
-            (pos.floor() + 1.0) * KEY_HEIGHT_STEP
+            old * KEY_HEIGHT_ZOOM_RATIO
         } else {
-            (pos.ceil() - 1.0) * KEY_HEIGHT_STEP
+            old / KEY_HEIGHT_ZOOM_RATIO
         }
         .clamp(min_h, max_h);
         if (new_h - old).abs() < 0.001 {
@@ -705,13 +705,13 @@ mod tests {
         let mut v = make_view();
         let mut acc = 1.0;
         v.key_height = 28.0;
-        // 28 不在档位上：放大取上一个档 32，缩小取 24，方向不会反。
+        // 每档固定 ×1.2：28 → 33.6 → 40.32 → 33.6，相对步长始终一致。
         v.zoom_cross_discrete(200.0, 1.2, 800.0, &mut acc);
-        assert_eq!(v.key_height, 32.0);
+        assert!((v.key_height - 33.6).abs() < 0.01);
         v.zoom_cross_discrete(200.0, 1.2, 800.0, &mut acc);
-        assert_eq!(v.key_height, 40.0);
+        assert!((v.key_height - 40.32).abs() < 0.01);
         v.zoom_cross_discrete(200.0, 0.8, 800.0, &mut acc);
-        assert_eq!(v.key_height, 32.0);
+        assert!((v.key_height - 33.6).abs() < 0.01);
         // 小于跳档比例的微动不跳。
         let before = v.key_height;
         v.zoom_cross_discrete(200.0, 1.05, 800.0, &mut acc);

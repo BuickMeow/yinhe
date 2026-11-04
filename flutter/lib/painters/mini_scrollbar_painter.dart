@@ -40,9 +40,8 @@ class MiniScrollbarPainter extends CustomPainter {
     if (contentW <= 0) {
       return;
     }
-    const margin = 6.0;
-    final trackLeft = panelW + margin;
-    final trackW = contentW - margin * 2;
+    final trackLeft = panelW;
+    final trackW = contentW;
     if (trackW <= 0) {
       return;
     }

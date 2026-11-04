@@ -3041,9 +3041,14 @@ fn commit_selection_scale(
         return None;
     }
     let new_span = selection_scale_span(s, d, x).round().max(1.0) as u64;
+    let view_mode = s.view_mode;
     let doc = s.document.as_mut()?;
     let before = doc.capture_snapshot();
-    if let Some(action) = doc.rescale_selection_span(new_span) {
+    let action = match view_mode {
+        ViewMode::Pianoroll => doc.rescale_selection_span(new_span),
+        ViewMode::Arrangement => doc.rescale_selection_span_with_automation(new_span),
+    };
+    if let Some(action) = action {
         doc.push_undo(action, "整体变速", before);
         return after_edit(s);
     }

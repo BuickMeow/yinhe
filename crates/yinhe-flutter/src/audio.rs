@@ -131,7 +131,7 @@ impl Default for AudioSettings {
             max_voices: 512,
             buffer_size: 2048,
             ignore_velocity: 1,
-            allow_overlapping_notes: true,
+            allow_overlapping_notes: false,
             show_keyboard_labels: true,
             follow_playhead: true,
             pause_on_home: false,

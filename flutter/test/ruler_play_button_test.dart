@@ -22,6 +22,8 @@ void main() {
               playhead: playhead,
               playing: false,
               onToggle: () => taps++,
+              onSeek: (_) {},
+              onSeekEnd: () {},
             ),
           ),
         ),

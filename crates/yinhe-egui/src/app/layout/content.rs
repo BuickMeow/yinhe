@@ -1156,7 +1156,7 @@ impl App {
         };
         let doc = &mut self.workspace.documents[idx];
         let before = doc.capture_snapshot();
-        if let Some(action) = doc.rescale_selection_span(new_span) {
+        if let Some(action) = doc.rescale_selection_span_with_automation(new_span) {
             doc.edit.arrange_view.base.dirty = true;
             doc.push_undo(action, t!("undo.rescale_span").as_ref(), before);
             self.notify_notes_changed();

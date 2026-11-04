@@ -589,26 +589,12 @@ mixin _ShellBuild on _ShellBase {
                                               ),
                                             ),
                                           ),
-                                          // 浮动播放按钮：跟着播放头走，盖在标尺左侧
-                                          // 空白区之上；播放头出视口时自己隐藏。
+                                          // 迷你滚动条叠加在时间标尺顶部：只占内容主区域，
+                                          // 不留边距；不可拖动，缩放/平移时短暂提亮。
                                           Positioned(
                                             left: 0,
                                             right: 0,
                                             top: 0,
-                                            height: RulerPainter.height,
-                                            child: RulerPlayButton(
-                                              snap: _snap,
-                                              playhead: _playhead,
-                                              playing: _playing,
-                                              onToggle: _togglePlay,
-                                            ),
-                                          ),
-                                          // 底部迷你滚动条：只显示整曲/当前视口/播放头，
-                                          // 不可拖动；缩放或平移时短暂提高不透明度。
-                                          Positioned(
-                                            left: 0,
-                                            right: 0,
-                                            bottom: 4,
                                             height: MiniScrollbarPainter.height,
                                             child: IgnorePointer(
                                               child: AnimatedOpacity(
@@ -629,6 +615,24 @@ mixin _ShellBuild on _ShellBase {
                                                   ),
                                                 ),
                                               ),
+                                            ),
+                                          ),
+                                          // 浮动播放按钮：跟着播放头走，盖在标尺左侧
+                                          // 空白区之上；播放头出视口时自己隐藏。
+                                          Positioned(
+                                            left: 0,
+                                            right: 0,
+                                            top: 0,
+                                            height: RulerPainter.height,
+                                            child: RulerPlayButton(
+                                              snap: _snap,
+                                              playhead: _playhead,
+                                              playing: _playing,
+                                              onToggle: _togglePlay,
+                                              onSeek: (x) => _handleRulerScrub(
+                                                Offset(x, 0),
+                                              ),
+                                              onSeekEnd: _handleRulerScrubEnd,
                                             ),
                                           ),
                                         ],

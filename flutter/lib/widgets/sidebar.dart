@@ -103,7 +103,7 @@ class Sidebar extends StatelessWidget {
 
   Widget _buildHeader(BuildContext context, AppLocalizations l) {
     return Container(
-      height: 48,
+      height: 42,
       padding: const EdgeInsets.symmetric(horizontal: 6),
       decoration: BoxDecoration(
         color: YinheTheme.controlBg,
