@@ -1892,6 +1892,39 @@ mod tests {
         assert_eq!(m.tempo_map.tempo_segments[0].micros_per_quarter, 500_000);
         assert_eq!(m.tempo_map.time_sig_default, (4, 2));
     }
+
+    #[test]
+    fn song_info_migrates_legacy_artist_and_syncs_first_back() {
+        let mut meta = ProjectMeta {
+            artist: "Legacy".into(),
+            ..Default::default()
+        };
+        let migrated = SongInfo::from_meta(&meta);
+        assert_eq!(migrated.artists.len(), 1, "旧 artist 补成艺术家 1");
+        assert_eq!(migrated.artists[0].name, "Legacy");
+
+        let mut info = SongInfo::from_meta(&meta);
+        info.artist = "stale".into();
+        info.artists = vec![
+            ArtistRef {
+                name: "A".into(),
+                ..Default::default()
+            },
+            ArtistRef {
+                name: "B".into(),
+                ..Default::default()
+            },
+        ];
+        info.apply_to(&mut meta);
+        assert_eq!(meta.artists.len(), 2);
+        assert_eq!(meta.artist, "A", "兼容字段由首位艺术家同步");
+
+        // 列表为空时保留手填的 artist。
+        info.artists.clear();
+        info.artist = "Fallback".into();
+        info.apply_to(&mut meta);
+        assert_eq!(meta.artist, "Fallback");
+    }
 }
 
 /// Display-oriented track info derived from `TrackData` for UI panels.
