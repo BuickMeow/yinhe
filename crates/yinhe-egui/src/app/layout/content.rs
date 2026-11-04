@@ -1035,8 +1035,18 @@ impl App {
                 return;
             };
             let doc = &mut self.workspace.documents[idx];
+            let ppq = doc.data.model.meta.ppq;
+            let (num, den_pow) = doc.data.model.tempo_map.time_sig_default;
+            let q = doc.edit.quantize_pianoroll.resolved_with_time_sig(
+                doc.edit.pianoroll_view.base.pixels_per_tick,
+                ppq,
+                num,
+                den_pow,
+                true,
+            );
+            let min_gate = q.tick_interval(ppq).max(1);
             let before = doc.capture_snapshot();
-            if let Some(action) = doc.resize_selected_notes(side, dt) {
+            if let Some(action) = doc.resize_selected_notes_min_gate(side, dt, min_gate) {
                 doc.edit.pianoroll_view.base.dirty = true;
                 doc.push_undo(action, t!("undo.resize_notes").as_ref(), before);
                 self.notify_notes_changed();

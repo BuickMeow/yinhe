@@ -75,7 +75,7 @@ class OverlayPainter extends CustomPainter {
     canvas.restore();
   }
 
-  /// 三个方块控制点：
+  /// 三个方块控制点（沿用旧版画法：背景填充 + 细描边）：
   /// - 右下角：重复（Riff）；
   /// - 右缘中点：整体变速；
   /// - 右缘内缩一个量化格：每个音符批量改 gate（仅 PR）。
@@ -86,29 +86,26 @@ class OverlayPainter extends CustomPainter {
     final s = snap.value;
     final ppu = s.length > SnapField.ppu ? s[SnapField.ppu] : 0.0;
     final isPr = s.length > SnapField.mode && s[SnapField.mode] > 0;
-    final fill = Paint()
-      ..style = PaintingStyle.fill
-      ..color = YinheTheme.text.withValues(alpha: 0.62);
-    final border = Paint()
+    final fill = Paint()..color = YinheTheme.bg;
+    final stroke = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1
-      ..color = YinheTheme.bg.withValues(alpha: 0.9);
-    final side = 8.0 * scale;
+      ..strokeWidth = 1.5
+      ..color = YinheTheme.text.withValues(alpha: 0.45);
+    final side = 9.0 * scale;
     void square(Offset center) {
       final rect = Rect.fromCenter(center: center, width: side, height: side);
       canvas.drawRect(rect, fill);
-      canvas.drawRect(rect, border);
+      canvas.drawRect(rect, stroke);
     }
 
-    const inset = 4.0;
     // 右下角：重复。
-    square(Offset(r.right - inset, r.bottom - inset));
+    square(r.bottomRight);
     // 右缘中点：整体变速。
-    square(Offset(r.right - inset, r.center.dy));
+    square(Offset(r.right, r.center.dy));
     // 量化格内缩：批量 gate（AR 没有）。
     if (isPr && ppu > 0 && quantizeTicks > 0) {
-      final x = r.right - inset - quantizeTicks * ppu;
-      if (x > r.left + 6.0) {
+      final x = r.right - quantizeTicks * ppu;
+      if (x > r.left) {
         square(Offset(x, r.center.dy));
       }
     }

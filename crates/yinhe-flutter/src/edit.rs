@@ -33,12 +33,8 @@ const DEFAULT_VELOCITY: u8 = 100;
 /// 交互与实现先保留（[`kind::PENCIL_PICK`]），当前暂时关闭：铅笔压在已有音符上
 /// 仍按原行为新建音符。后续要启用时只改这里。
 const PENCIL_PICK_ENABLED: bool = false;
-/// 选框控制点命中半径（逻辑像素）。
-const SEL_HANDLE_R: f32 = 28.0;
-/// 右下角 Riff L 形角标的命中边长（像素，受半框上限约束）。
-const SEL_CORNER: f32 = 36.0;
-/// 角标命中允许到框外的余量：手指中心稍微偏出选框也不该变成平移。
-const SEL_CORNER_PAD: f32 = 12.0;
+/// 选框方块控制点命中半径（逻辑像素）。三个方块间距近，半径过大会互相抢。
+const SEL_HANDLE_R: f32 = 18.0;
 
 /// 拖拽类型。
 mod kind {
@@ -272,17 +268,6 @@ struct SelHandle {
     r1: usize,
 }
 
-/// 右下角 Riff 方块命中：36px 见方，受半框上限约束，并允许框外 12px。
-fn corner_hit(x0: f32, y0: f32, x1: f32, y1: f32, x: f32, y: f32) -> bool {
-    let (x0, x1) = (x0.min(x1), x0.max(x1));
-    let (y0, y1) = (y0.min(y1), y0.max(y1));
-    let w = (x1 - x0).max(1.0);
-    let h = (y1 - y0).max(1.0);
-    let lw = SEL_CORNER.min(w * 0.5);
-    let lh = SEL_CORNER.min(h * 0.5);
-    x >= x1 - lw && x <= x1 + SEL_CORNER_PAD && y >= y1 - lh && y <= y1 + SEL_CORNER_PAD
-}
-
 fn square_hit(hx: f32, hy: f32, x: f32, y: f32) -> bool {
     let dx = x - hx;
     let dy = y - hy;
@@ -294,7 +279,7 @@ fn square_hit(hx: f32, hy: f32, x: f32, y: f32) -> bool {
 /// - 右缘中点 `3`：整体变速；
 /// - 右缘内缩一个量化格 `5`：每个音符批量改 gate（仅 PR）。
 ///
-/// 两个右侧方块距离很近时取最近者，避免量化很细时误触。
+/// 三个方块距离可能很近，统一按“离哪个中心最近”判定，避免右下角吞掉右缘。
 fn selection_handle_hit(
     x0: f32,
     y0: f32,
@@ -306,24 +291,22 @@ fn selection_handle_hit(
 ) -> Option<u8> {
     let (x0, x1) = (x0.min(x1), x0.max(x1));
     let (y0, y1) = (y0.min(y1), y0.max(y1));
-    if corner_hit(x0, y0, x1, y1, x, y) {
-        return Some(4);
-    }
     let cy = (y0 + y1) * 0.5;
     let mut best: Option<(u8, f32)> = None;
-    let mut consider = |edge: u8, hx: f32| {
-        if square_hit(hx, cy, x, y) {
-            let d = (x - hx).abs();
+    let mut consider = |edge: u8, hx: f32, hy: f32| {
+        if square_hit(hx, hy, x, y) {
+            let d = (x - hx).powi(2) + (y - hy).powi(2);
             if best.is_none_or(|(_, bd)| d < bd) {
                 best = Some((edge, d));
             }
         }
     };
-    consider(3, x1);
+    consider(4, x1, y1);
+    consider(3, x1, cy);
     if let Some(ix) = inner_x
         && ix > x0 + 4.0
     {
-        consider(5, ix);
+        consider(5, ix, cy);
     }
     best.map(|(edge, _)| edge)
 }
@@ -1683,12 +1666,50 @@ fn riff_steps(d: &DragState, s: &RenderScene, x: f32, y: f32) -> RiffSteps {
     }
 }
 
+/// Riff 拖拽时选区的视觉外框：原选框 ∪ 所有重复段。
+///
+/// 用 `set_sel_target` 走和其它控制点同一套缓动，避免重复框突然出现。
+fn riff_union_rect(s: &RenderScene, d: &DragState, rects: &[[f32; 4]]) -> Option<[f32; 4]> {
+    let (t0, t1, k0, k1) = d.box_ticks?;
+    let mut u = match s.view_mode {
+        ViewMode::Pianoroll => {
+            let geom = PrGeom::new(&s.pr_view);
+            [
+                geom.tick_to_x(t0),
+                geom.key_to_y(k1),
+                geom.tick_to_x(t1),
+                geom.key_to_y(k0) + geom.kh,
+            ]
+        }
+        ViewMode::Arrangement => {
+            let (_, _, r0, r1) = d.box_rows.unwrap_or((t0, t1, 0, 0));
+            let geom = ArGeom::new(&s.arr_view);
+            [
+                geom.tick_to_x(t0),
+                geom.row_to_y(r0),
+                geom.tick_to_x(t1),
+                geom.row_to_y(r1 + 1),
+            ]
+        }
+    };
+    for r in rects {
+        u[0] = u[0].min(r[0]);
+        u[1] = u[1].min(r[1]);
+        u[2] = u[2].max(r[2]);
+        u[3] = u[3].max(r[3]);
+    }
+    Some(u)
+}
+
 fn update_riff_fill(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
     let steps = riff_steps(d, s, x, y);
     if steps.is_zero() {
         d.drag_hidden = Some(std::sync::Arc::new(yinhe_types::HiddenNotes::default()));
         s.overlay_cells.clear();
         s.preview.clear();
+        if let Some(union) = riff_union_rect(s, d, &[]) {
+            s.set_box_target(union);
+        }
         bump(s);
         return;
     }
@@ -1789,6 +1810,10 @@ fn update_riff_fill(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
                 }
             }
         }
+    }
+    if let Some(union) = riff_union_rect(s, d, &rects) {
+        // 用独立的预览外框做缓动：原选区与方块保持不动，重复范围平滑展开。
+        s.set_box_target(union);
     }
     s.overlay_cells = rects;
     s.preview.clear();
@@ -2252,6 +2277,7 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                 return;
             };
             let dt = selection_gate_dt(s, d, x).round() as i64;
+            let min_gate = quantize_of(s).tick_interval(s.ppq).max(1);
             let stamp = (
                 dt,
                 0,
@@ -2287,8 +2313,7 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                                     continue;
                                 }
                                 for &(track, start, end, _vel) in bucket {
-                                    let new_end =
-                                        (i64::from(end) + dt).max(i64::from(start) + 1) as u32;
+                                    let new_end = clamp_gate_end(start, end, dt, min_gate);
                                     if f64::from(start) >= tick_hi || f64::from(new_end) <= tick_lo
                                     {
                                         continue;
@@ -2321,8 +2346,7 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                         if let Some(drag) = d.drag.as_ref() {
                             for (key, bucket) in drag.by_key.iter().enumerate() {
                                 for &(track, start, end, _vel) in bucket {
-                                    let new_end =
-                                        (i64::from(end) + dt).max(i64::from(start) + 1) as u32;
+                                    let new_end = clamp_gate_end(start, end, dt, min_gate);
                                     if f64::from(start) >= tick_hi || f64::from(new_end) <= tick_lo
                                     {
                                         continue;
@@ -3027,6 +3051,16 @@ fn commit_selection_scale(
 }
 
 /// 已选框整体移动提交。
+/// gate 拉伸预览/提交共用的最短长度：长音符至少一个量化格，短音符至少 1 tick。
+fn clamp_gate_end(start: u32, end: u32, dt: i64, min_gate: u32) -> u32 {
+    let min = if end.saturating_sub(start) >= min_gate {
+        min_gate
+    } else {
+        1
+    };
+    (i64::from(end) + dt).max(i64::from(start) + i64::from(min)) as u32
+}
+
 /// 选框右端整体 gate 拖动：最终 dt（已按量化格对齐并保证选区至少一格）。
 fn selection_gate_dt(s: &RenderScene, d: &DragState, x: f32) -> f64 {
     let Some((t0, t1, _, _)) = d.box_ticks else {
@@ -3034,12 +3068,14 @@ fn selection_gate_dt(s: &RenderScene, d: &DragState, x: f32) -> f64 {
     };
     let q = quantize_of(s);
     let min_ticks = f64::from(q.tick_interval(s.ppq).max(1));
+    // 原选框本身小于一个量化格时，以原宽度为下限，不要一按就把它撑大。
+    let min_span = (t1 - t0).min(min_ticks).max(1.0);
     let current = match s.view_mode {
         ViewMode::Pianoroll => PrGeom::new(&s.pr_view).x_to_tick(x),
         ViewMode::Arrangement => ArGeom::new(&s.arr_view).x_to_tick(x),
     };
     let raw = drag_delta_ticks(s, q, d.anchor_tick_raw, current);
-    (t1 + raw).max(t0 + min_ticks) - t1
+    (t1 + raw).max(t0 + min_span) - t1
 }
 
 /// 选框右端整体 gate 提交：所有选中音符 end + dt，选区右边界同步。
@@ -3057,9 +3093,10 @@ fn commit_selection_gate(
     if dt == 0 {
         return None;
     }
+    let min_gate = quantize_of(s).tick_interval(s.ppq).max(1);
     let doc = s.document.as_mut()?;
     let before = doc.capture_snapshot();
-    if let Some(action) = doc.resize_selected_notes(ResizeSide::Right, dt) {
+    if let Some(action) = doc.resize_selected_notes_min_gate(ResizeSide::Right, dt, min_gate) {
         doc.push_undo(action, "undo.resize_notes", before);
         match s.view_mode {
             ViewMode::Pianoroll => {
@@ -3578,24 +3615,15 @@ mod tests {
     }
 
     #[test]
-    fn corner_hit_is_capped_by_half_box() {
-        // 单行 16px 高的选框：角标最多占下半 8px，框中间仍可拖动。
-        assert!(corner_hit(0.0, 0.0, 100.0, 16.0, 99.0, 15.0));
-        assert!(!corner_hit(0.0, 0.0, 100.0, 16.0, 50.0, 8.0));
-        // 框外 12px 内仍能抓角标（手指中心略偏出选框）。
-        assert!(corner_hit(0.0, 0.0, 100.0, 16.0, 105.0, 20.0));
-    }
-
-    #[test]
     fn selection_handles_map_corner_scale_and_gate() {
         // 选框 0..100 × 0..100，量化格 20px。
         assert_eq!(
-            selection_handle_hit(0.0, 0.0, 100.0, 100.0, 96.0, 96.0, Some(80.0)),
+            selection_handle_hit(0.0, 0.0, 100.0, 100.0, 100.0, 100.0, Some(80.0)),
             Some(4),
             "右下角优先重复"
         );
         assert_eq!(
-            selection_handle_hit(0.0, 0.0, 100.0, 100.0, 96.0, 50.0, Some(80.0)),
+            selection_handle_hit(0.0, 0.0, 100.0, 100.0, 100.0, 50.0, Some(80.0)),
             Some(3),
             "右缘中点整体变速"
         );

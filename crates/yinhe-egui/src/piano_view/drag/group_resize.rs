@@ -31,6 +31,7 @@ pub(crate) fn sel_resize_frame(
     if let Some((side, origin_boundary_tick, other_boundary_tick)) = state.sel_resize_state
         && let Some(ref notes) = state.drag_notes
     {
+        let min_gate = quantize.tick_interval(ppq).max(1);
         // Drag：实时显示 ghost + 更新 sel_rect
         if pointer.primary_down()
             && !pointer.primary_pressed()
@@ -63,8 +64,14 @@ pub(crate) fn sel_resize_frame(
                 }
                 match side {
                     ResizeSide::Right => {
-                        let new_end =
-                            (info.end_tick as i64 + dt).max(info.start_tick as i64 + 1) as u32;
+                        let min = if info.end_tick - info.start_tick >= min_gate {
+                            min_gate
+                        } else {
+                            1
+                        };
+                        let new_end = (info.end_tick as i64 + dt)
+                            .max(info.start_tick as i64 + i64::from(min))
+                            as u32;
                         if (new_end as f64) > tick_lo && (info.start_tick as f64) < tick_hi {
                             state.ghost_notes.push((
                                 info.start_tick,
@@ -141,8 +148,14 @@ pub(crate) fn sel_resize_frame(
                     }
                     match side {
                         ResizeSide::Right => {
-                            let new_end =
-                                (info.end_tick as i64 + dt).max(info.start_tick as i64 + 1) as u32;
+                            let min = if info.end_tick - info.start_tick >= min_gate {
+                                min_gate
+                            } else {
+                                1
+                            };
+                            let new_end = (info.end_tick as i64 + dt)
+                                .max(info.start_tick as i64 + i64::from(min))
+                                as u32;
                             if (new_end as f64) > tick_lo && (info.start_tick as f64) < tick_hi {
                                 state.ghost_notes.push((
                                     info.start_tick,

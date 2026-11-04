@@ -176,6 +176,50 @@ fn resize_selected_notes_right_clamps_to_min_length() {
 }
 
 #[test]
+fn resize_selected_notes_min_gate_clamps_per_note() {
+    let mut doc = make_doc_with_note(); // A: 100~200 (gate 100)
+    doc.add_note(
+        0,
+        yinhe_core::NoteEvent {
+            id: 0,
+            start_tick: 300,
+            end_tick: 320, // 本身 gate 20，小于量化 50
+            key: 62,
+            velocity: 100,
+        },
+    );
+    doc.edit.selected.clear();
+    doc.edit.selected.add_rect_track(100, 321, 60, 62, 0, 0);
+
+    // dt=-200：A 的 gate 被压到 min_gate=50；B 原本就小于 50，保持 gate 20。
+    doc.resize_selected_notes_min_gate(ResizeSide::Right, -200, 50)
+        .expect("应产生 UndoAction");
+    let a = doc
+        .data
+        .model
+        .notes
+        .get(60)
+        .and_then(|v| v.first())
+        .copied()
+        .expect("A");
+    let b = doc
+        .data
+        .model
+        .notes
+        .get(62)
+        .and_then(|v| v.first())
+        .copied()
+        .expect("B");
+    assert_eq!(a.end_tick, 150, "A 最短保持一个量化格 50");
+    assert_eq!(a.end_tick - a.start_tick, 50);
+    assert_eq!(
+        b.end_tick, 301,
+        "B 原本小于量化，不受量化下限约束（至少 1 tick）"
+    );
+    assert_eq!(b.end_tick - b.start_tick, 1);
+}
+
+#[test]
 fn resize_selected_notes_left_clamps_to_min_length() {
     let mut doc = make_doc_with_note();
     // 原音符: tick 100~200。dt = 200 会让 start >= end，应 clamp 到 end-1

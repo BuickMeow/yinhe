@@ -180,9 +180,31 @@ impl Document {
     /// 统一偏移 `dt`。每个音符独立 clamp，保证 `end_tick > start_tick`。
     /// 选框 (`sel_rect`) 的更新由 UI 层负责（与 move 一致）。
     pub fn resize_selected_notes(&mut self, side: ResizeSide, dt: i64) -> Option<UndoAction> {
+        self.resize_selected_notes_min_gate(side, dt, 1)
+    }
+
+    /// 同 [`Self::resize_selected_notes`]，但每个音符缩短后的 gate 不小于
+    /// `min_gate`（原 gate 已小于 `min_gate` 的音符保持原 gate）。
+    ///
+    /// 用于选框 gate 控制点：不允许把音符拉到比当前量化格更短。
+    pub fn resize_selected_notes_min_gate(
+        &mut self,
+        side: ResizeSide,
+        dt: i64,
+        min_gate: u32,
+    ) -> Option<UndoAction> {
         if self.edit.selected.is_empty() || dt == 0 {
             return None;
         }
+        let min_gate_limit = min_gate.max(1);
+        // 原本就短于量化的音符不受量化下限约束（仍保留至少 1 tick）。
+        let note_min_gate = |gate: u32| -> i64 {
+            if gate >= min_gate_limit {
+                i64::from(min_gate_limit)
+            } else {
+                1
+            }
+        };
 
         // ── 快速路径：无 clamp、目标无重叠 → 逐桶原地改（操作式 undo）──
         // 判定全部流式只读（不物化）；target 区域用平移后的选框近似
@@ -197,14 +219,16 @@ impl Document {
                 hit_any = true;
                 match side {
                     ResizeSide::Left => {
+                        let min_g = note_min_gate(n.end_tick - n.start_tick);
                         let ns = n.start_tick as i64 + dt;
-                        if ns < 0 || ns > n.end_tick as i64 - 1 {
+                        if ns < 0 || ns > n.end_tick as i64 - min_g {
                             ok = false;
                         }
                     }
                     ResizeSide::Right => {
+                        let min_g = note_min_gate(n.end_tick - n.start_tick);
                         let ne = n.end_tick as i64 + dt;
-                        if ne < n.start_tick as i64 + 1 || ne > u32::MAX as i64 {
+                        if ne < n.start_tick as i64 + min_g || ne > u32::MAX as i64 {
                             ok = false;
                         }
                     }
@@ -295,19 +319,22 @@ impl Document {
         for (note, old_key) in &originals {
             let new_note = match side {
                 ResizeSide::Left => {
-                    // start_tick += dt，clamp 到 [0, end_tick - 1]
+                    // start_tick += dt，clamp 到 [0, end_tick - min_gate]
+                    let min_g = note_min_gate(note.end_tick - note.start_tick);
                     let new_start = (note.start_tick as i64 + dt)
                         .max(0)
-                        .min(note.end_tick as i64 - 1) as u32;
+                        .min(note.end_tick as i64 - min_g)
+                        as u32;
                     yinhe_types::Note {
                         start_tick: new_start,
                         ..*note
                     }
                 }
                 ResizeSide::Right => {
-                    // end_tick += dt，clamp 到 [start_tick + 1, u32::MAX]
+                    // end_tick += dt，clamp 到 [start_tick + min_gate, u32::MAX]
+                    let min_g = note_min_gate(note.end_tick - note.start_tick);
                     let new_end =
-                        (note.end_tick as i64 + dt).max(note.start_tick as i64 + 1) as u32;
+                        (note.end_tick as i64 + dt).max(note.start_tick as i64 + min_g) as u32;
                     yinhe_types::Note {
                         end_tick: new_end,
                         ..*note

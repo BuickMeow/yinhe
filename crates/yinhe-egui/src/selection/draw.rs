@@ -124,17 +124,15 @@ pub fn draw_handles(
     let interval_px = quantize.tick_interval(ppq).max(1) as f32 * view.base.pixels_per_tick;
     let (corner, scale, gate) =
         super::drag::selection_handle_centers(view, screen_rect, interval_px);
-    let fill = egui::Color32::from_rgb(235, 235, 235);
-    let border = crate::theme::app_bg();
+    let fill = crate::theme::app_bg();
+    let stroke = egui::Stroke::new(
+        1.5,
+        crate::theme::contrast_fg().gamma_multiply(crate::theme::marquee_stroke_alpha()),
+    );
     let square = |p: egui::Pos2| {
-        let r = egui::Rect::from_center_size(p, egui::vec2(8.0, 8.0));
+        let r = egui::Rect::from_center_size(p, egui::vec2(9.0, 9.0));
         painter.rect_filled(r, 0.0, fill);
-        painter.rect_stroke(
-            r,
-            0.0,
-            egui::Stroke::new(1.0, border),
-            egui::StrokeKind::Inside,
-        );
+        painter.rect_stroke(r, 0.0, stroke, egui::StrokeKind::Inside);
     };
     square(corner);
     square(scale);
@@ -145,18 +143,16 @@ pub fn draw_handles(
 
 /// AR 选框右侧两个方块：右下角重复、右缘中点整体变速（AR 没有 gate）。
 pub fn draw_arrange_handles(painter: &egui::Painter, screen_rect: egui::Rect) {
-    let corner = egui::pos2(screen_rect.max.x - 4.0, screen_rect.max.y - 4.0);
-    let scale = egui::pos2(screen_rect.max.x - 4.0, screen_rect.center().y);
-    let fill = egui::Color32::from_rgb(235, 235, 235);
-    let border = crate::theme::app_bg();
+    let corner = egui::pos2(screen_rect.max.x, screen_rect.max.y);
+    let scale = egui::pos2(screen_rect.max.x, screen_rect.center().y);
+    let fill = crate::theme::app_bg();
+    let stroke = egui::Stroke::new(
+        1.5,
+        crate::theme::contrast_fg().gamma_multiply(crate::theme::marquee_stroke_alpha()),
+    );
     for p in [corner, scale] {
-        let r = egui::Rect::from_center_size(p, egui::vec2(8.0, 8.0));
+        let r = egui::Rect::from_center_size(p, egui::vec2(9.0, 9.0));
         painter.rect_filled(r, 0.0, fill);
-        painter.rect_stroke(
-            r,
-            0.0,
-            egui::Stroke::new(1.0, border),
-            egui::StrokeKind::Inside,
-        );
+        painter.rect_stroke(r, 0.0, stroke, egui::StrokeKind::Inside);
     }
 }

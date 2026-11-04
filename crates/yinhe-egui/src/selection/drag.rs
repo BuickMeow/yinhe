@@ -256,17 +256,16 @@ pub fn selection_handle_centers(
     rect: egui::Rect,
     interval_px: f32,
 ) -> (egui::Pos2, egui::Pos2, Option<egui::Pos2>) {
-    const INSET: f32 = 4.0;
-    let corner = egui::pos2(rect.max.x - INSET, rect.max.y - INSET);
+    let corner = egui::pos2(rect.max.x, rect.max.y);
     if view.is_vertical() {
-        let scale = egui::pos2(rect.center().x, rect.max.y - INSET);
-        let y = rect.max.y - INSET - interval_px;
-        let gate = (y > rect.min.y + 6.0).then(|| egui::pos2(rect.center().x, y));
+        let scale = egui::pos2(rect.center().x, rect.max.y);
+        let y = rect.max.y - interval_px;
+        let gate = (y > rect.min.y).then(|| egui::pos2(rect.center().x, y));
         (corner, scale, gate)
     } else {
-        let scale = egui::pos2(rect.max.x - INSET, rect.center().y);
-        let x = rect.max.x - INSET - interval_px;
-        let gate = (x > rect.min.x + 6.0).then(|| egui::pos2(x, rect.center().y));
+        let scale = egui::pos2(rect.max.x, rect.center().y);
+        let x = rect.max.x - interval_px;
+        let gate = (x > rect.min.x).then(|| egui::pos2(x, rect.center().y));
         (corner, scale, gate)
     }
 }
