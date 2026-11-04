@@ -69,9 +69,13 @@ class MiniScrollbarPainter extends CustomPainter {
       Paint()..color = YinheTheme.text.withValues(alpha: 0.55),
     );
 
-    // 播放头位置：与滚动条同高的小方块，强调色。
-    final px = playhead.value;
-    if (px >= trackLeft && px <= trackLeft + trackW) {
+    // 播放头位置：按整曲比例映射，而不是直接用屏幕 x 和当前视口重合。
+    // 屏幕 x → tick → 整曲比例，与桌面滚动条同一套 scale。
+    final playX = playhead.value;
+    if (playX.isFinite && playX >= 0) {
+      final tick = (playX - panelW + scrollX) / ppu;
+      final frac = (tick / total).clamp(0.0, 1.0);
+      final px = trackLeft + frac * trackW;
       canvas.drawRect(
         Rect.fromCenter(
           center: Offset(px, y + height / 2),
