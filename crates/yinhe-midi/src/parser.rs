@@ -14,7 +14,9 @@ use std::path::Path;
 
 use rayon::prelude::*;
 
-use yinhe_core::{ConductorData, NoteEvent, NoteLoader, PcEvent, ProjectMeta, TrackData, YinModel};
+use yinhe_core::{
+    ArtistRef, ConductorData, NoteEvent, NoteLoader, PcEvent, ProjectMeta, TrackData, YinModel,
+};
 use yinhe_types::automation::{
     MidiBinding, ParamDevice, binding_max, xsynth_param, xsynth_param_id_for_midi,
 };
@@ -170,9 +172,21 @@ pub fn parse_bytes_with_encoding(
             }
         }
 
+        let artists: Vec<ArtistRef> = cond_meta
+            .artists
+            .into_iter()
+            .map(|name| ArtistRef {
+                id: String::new(),
+                name,
+                role: String::new(),
+                websites: Vec::new(),
+                bio: String::new(),
+            })
+            .collect();
         let meta = ProjectMeta {
             name: cond_meta.song_title.unwrap_or_default(),
-            artist: cond_meta.artist.unwrap_or_default(),
+            artist: artists.first().map(|a| a.name.clone()).unwrap_or_default(),
+            artists,
             ppq: ticks_per_beat,
             ..ProjectMeta::default()
         };
@@ -224,8 +238,8 @@ fn dedup_conductor_keep_last<T>(events: &mut Vec<T>, mut tick_of: impl FnMut(&T)
 struct ConductorMeta {
     /// track 0 的 TrackName（FF 03）。
     song_title: Option<String>,
-    /// track 0 的 Copyright（FF 02）。
-    artist: Option<String>,
+    /// track 0 的全部 Copyright（FF 02）；每个非空事件对应一位艺术家。
+    artists: Vec<String>,
 }
 
 fn collect_conductor(
@@ -238,7 +252,7 @@ fn collect_conductor(
     let mut markers: Vec<yinhe_types::MarkerEvent> = Vec::new();
     let mut lyrics: Vec<yinhe_types::LyricsEvent> = Vec::new();
     let mut song_title: Option<String> = None;
-    let mut artist: Option<String> = None;
+    let mut artists: Vec<String> = Vec::new();
     // 每个 key 的 NoteOn 数（含未配对）：NoteLoader 精确预分配容量的上界。
     let mut per_key_count = [0u32; KEY_COUNT];
 
@@ -301,13 +315,15 @@ fn collect_conductor(
                     song_title = Some(encoding.decode(name));
                 }
                 // SMF 标准：track 0 的 Copyright（FF 02）= artist。
-                // 首个 Copyright 文本为空时，退而取首个非空文本。
+                // 允许一个文件写多条 Copyright，每条对应一位艺术家；
+                // 空文本和重复文本忽略。
                 midly::TrackEventKind::Meta(midly::MetaMessage::Copyright(text))
-                    if track_idx == 0 && artist.is_none() =>
+                    if track_idx == 0 =>
                 {
                     let decoded = encoding.decode(text);
-                    if !decoded.is_empty() {
-                        artist = Some(decoded);
+                    let decoded = decoded.trim();
+                    if !decoded.is_empty() && !artists.iter().any(|a| a == decoded) {
+                        artists.push(decoded.to_string());
                     }
                 }
                 // SMF 允许歌词放在 track 0（conductor-only track）。
@@ -350,7 +366,10 @@ fn collect_conductor(
             lyrics,
             chord: Vec::new(),
         },
-        ConductorMeta { song_title, artist },
+        ConductorMeta {
+            song_title,
+            artists,
+        },
         per_key_count,
     ))
 }

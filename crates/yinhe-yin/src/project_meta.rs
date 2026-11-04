@@ -58,8 +58,10 @@ pub struct ProjectFile {
     pub track_no: u16,
     #[serde(default)]
     pub disc_no: u16,
+    /// 兼容字段：由 artists 合并同步（音频 ICOP 等单字段场景）。
     #[serde(default)]
     pub copyright: String,
+    /// 艺术家 / 音乐人 / 版权的唯一来源。
     #[serde(default)]
     pub artists: Vec<yinhe_core::ArtistRef>,
     /// 累计前台工作时间（秒）。

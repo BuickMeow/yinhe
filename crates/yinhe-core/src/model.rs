@@ -288,6 +288,7 @@ pub struct CoverArt {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SongInfo {
     pub name: String,
+    /// 兼容字段：MIDI Copyright / 单字段导出取首位艺术家。
     pub artist: String,
     pub description: String,
     pub album: String,
@@ -296,23 +297,49 @@ pub struct SongInfo {
     pub year: String,
     pub track_no: u16,
     pub disc_no: u16,
+    /// 兼容字段：单字段音频标签取合并后的艺术家文本。
     pub copyright: String,
+    /// 唯一来源：艺术家 / 音乐人 / 版权统一为有序列表。
     pub artists: Vec<ArtistRef>,
 }
 
 impl SongInfo {
     pub fn from_meta(meta: &ProjectMeta) -> Self {
+        // 艺术家 / 音乐人 / 版权统一为一组：旧工程的 artist 与 copyright
+        // 都迁移成独立艺术家框，保存后只剩 artists 作为唯一来源。
         let mut artists = meta.artists.clone();
-        // 旧工程只有单 artist 字符串：读入时补成「艺术家 1」，保存后自然迁移。
-        if artists.is_empty() && !meta.artist.trim().is_empty() {
+        let effective = artists
+            .iter()
+            .map(|a| a.name.trim())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" / ");
+        for legacy in [&meta.artist, &meta.copyright] {
+            let name = legacy.trim();
+            if name.is_empty()
+                || artists.iter().any(|a| a.name.trim() == name)
+                || (!effective.is_empty() && name == effective)
+            {
+                continue;
+            }
             artists.push(ArtistRef {
                 id: String::new(),
-                name: meta.artist.clone(),
+                name: name.to_string(),
                 role: String::new(),
                 websites: Vec::new(),
                 bio: String::new(),
             });
         }
+        let copyright = if artists.is_empty() {
+            meta.copyright.clone()
+        } else {
+            artists
+                .iter()
+                .map(|a| a.name.trim())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(" / ")
+        };
         Self {
             name: meta.name.clone(),
             artist: meta.artist.clone(),
@@ -323,7 +350,7 @@ impl SongInfo {
             year: meta.year.clone(),
             track_no: meta.track_no,
             disc_no: meta.disc_no,
-            copyright: meta.copyright.clone(),
+            copyright,
             artists,
         }
     }
@@ -343,7 +370,8 @@ impl SongInfo {
 
     pub fn apply_to(&self, meta: &mut ProjectMeta) {
         meta.name.clone_from(&self.name);
-        // artist 是兼容字段：始终由有序列表的首位同步，避免两个来源不一致。
+        // artist / copyright 是兼容字段：artist 取首位，copyright 取合并文本，
+        // 因为 MIDI 和音频标签都只有一个字段可写。
         meta.artist = self
             .artists
             .iter()
@@ -357,7 +385,11 @@ impl SongInfo {
         meta.year.clone_from(&self.year);
         meta.track_no = self.track_no;
         meta.disc_no = self.disc_no;
-        meta.copyright.clone_from(&self.copyright);
+        meta.copyright = if self.artists.is_empty() {
+            self.copyright.clone()
+        } else {
+            self.effective_artist()
+        };
         meta.artists.clone_from(&self.artists);
     }
 }
@@ -365,6 +397,7 @@ impl SongInfo {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProjectMeta {
     pub name: String,
+    /// 兼容字段：由 `artists` 首位同步。
     pub artist: String,
     pub description: String,
     pub ppq: u32,
@@ -1894,14 +1927,17 @@ mod tests {
     }
 
     #[test]
-    fn song_info_migrates_legacy_artist_and_syncs_first_back() {
+    fn song_info_migrates_legacy_artist_and_copyright_into_artists() {
         let mut meta = ProjectMeta {
             artist: "Legacy".into(),
+            copyright: "(c) Label".into(),
             ..Default::default()
         };
         let migrated = SongInfo::from_meta(&meta);
-        assert_eq!(migrated.artists.len(), 1, "旧 artist 补成艺术家 1");
+        assert_eq!(migrated.artists.len(), 2, "artist 与 copyright 各自成框");
         assert_eq!(migrated.artists[0].name, "Legacy");
+        assert_eq!(migrated.artists[1].name, "(c) Label");
+        assert_eq!(migrated.copyright, "Legacy / (c) Label");
 
         let mut info = SongInfo::from_meta(&meta);
         info.artist = "stale".into();
@@ -1918,12 +1954,36 @@ mod tests {
         info.apply_to(&mut meta);
         assert_eq!(meta.artists.len(), 2);
         assert_eq!(meta.artist, "A", "兼容字段由首位艺术家同步");
+        assert_eq!(meta.copyright, "A / B", "单字段格式写合并文本");
 
-        // 列表为空时保留手填的 artist。
+        // 列表为空时保留手填的 artist / copyright。
         info.artists.clear();
         info.artist = "Fallback".into();
+        info.copyright = "Keep".into();
         info.apply_to(&mut meta);
         assert_eq!(meta.artist, "Fallback");
+        assert_eq!(meta.copyright, "Keep");
+    }
+
+    #[test]
+    fn song_info_skips_derived_copyright_mirror() {
+        let meta = ProjectMeta {
+            artist: "A".into(),
+            copyright: "A / B".into(),
+            artists: vec![
+                ArtistRef {
+                    name: "A".into(),
+                    ..Default::default()
+                },
+                ArtistRef {
+                    name: "B".into(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let info = SongInfo::from_meta(&meta);
+        assert_eq!(info.artists.len(), 2, "派生合并文本不能再变成艺术家 3");
     }
 }
 

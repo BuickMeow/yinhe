@@ -20,7 +20,6 @@ class ProjectDialog extends StatefulWidget {
     required this.initialYear,
     required this.initialTrackNo,
     required this.initialDiscNo,
-    required this.initialCopyright,
     required this.initialPpq,
     required this.workTime,
     required this.onSave,
@@ -40,7 +39,6 @@ class ProjectDialog extends StatefulWidget {
   final String initialYear;
   final int initialTrackNo;
   final int initialDiscNo;
-  final String initialCopyright;
   final int initialPpq;
 
   /// 正在累计的前台工作时间（秒）；对话框内实时刷新。
@@ -125,9 +123,6 @@ class _ProjectDialogState extends State<ProjectDialog> {
   late final TextEditingController _discNo = TextEditingController(
     text: widget.initialDiscNo > 0 ? '${widget.initialDiscNo}' : '',
   );
-  late final TextEditingController _copyright = TextEditingController(
-    text: widget.initialCopyright,
-  );
   late final TextEditingController _ppq = TextEditingController(
     text: '${widget.initialPpq}',
   );
@@ -152,7 +147,6 @@ class _ProjectDialogState extends State<ProjectDialog> {
     _year.dispose();
     _trackNo.dispose();
     _discNo.dispose();
-    _copyright.dispose();
     _ppq.dispose();
     for (final a in _artists) {
       a.dispose();
@@ -196,7 +190,6 @@ class _ProjectDialogState extends State<ProjectDialog> {
       'year': _year.text.trim(),
       'track_no': _number(_trackNo),
       'disc_no': _number(_discNo),
-      'copyright': _copyright.text.trim(),
       'ppq': ppq,
     });
     Navigator.of(context).pop();
@@ -227,7 +220,7 @@ class _ProjectDialogState extends State<ProjectDialog> {
           Row(
             children: [
               Text(
-                L10n.isZh ? '艺术家' : 'Artists',
+                L10n.isZh ? '艺术家 / 版权' : 'Artists / Copyright',
                 style: TextStyle(
                   color: YinheTheme.text,
                   fontSize: 13,
@@ -287,8 +280,6 @@ class _ProjectDialogState extends State<ProjectDialog> {
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          _field(_copyright, L10n.isZh ? '版权' : 'Copyright'),
           const SizedBox(height: 12),
           _field(_desc, l.description, maxLines: 3),
           if (_error != null)

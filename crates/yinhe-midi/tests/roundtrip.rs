@@ -807,6 +807,8 @@ fn import_parses_title_and_artist() {
     let model = parse_bytes(&build_title_artist_midi()).expect("parse failed");
     assert_eq!(model.meta.name, "Song A");
     assert_eq!(model.meta.artist, "Artist B");
+    assert_eq!(model.meta.artists.len(), 1);
+    assert_eq!(model.meta.artists[0].name, "Artist B");
 }
 
 /// 首个 Copyright 为空时，artist 取首个非空文本。
@@ -827,6 +829,32 @@ fn import_artist_uses_first_non_empty_copyright() {
 
     let model = parse_bytes(&data).expect("parse failed");
     assert_eq!(model.meta.artist, "Art");
+    assert_eq!(model.meta.artists.len(), 1);
+    assert_eq!(model.meta.artists[0].name, "Art");
+}
+
+/// 多条 Copyright 各对应一位艺术家；空文本和重复文本忽略。
+#[test]
+fn import_collects_multiple_copyrights_as_artists() {
+    let mut data = Vec::new();
+    data.extend_from_slice(b"MThd");
+    data.extend_from_slice(&6u32.to_be_bytes());
+    data.extend_from_slice(&[0, 0, 0, 1, 1, 0xE0]); // format 0, 1 track
+    data.extend_from_slice(b"MTrk");
+    let track: &[u8] = &[
+        0x00, 0xFF, 0x02, 0x01, b'A', // Copyright "A"
+        0x00, 0xFF, 0x02, 0x00, // 空
+        0x00, 0xFF, 0x02, 0x01, b'B', // Copyright "B"
+        0x00, 0xFF, 0x02, 0x01, b'A', // 重复
+        0x00, 0x90, 60, 100, 0x81, 0x70, 0x80, 60, 0, 0x00, 0xFF, 0x2F, 0x00,
+    ];
+    data.extend_from_slice(&(track.len() as u32).to_be_bytes());
+    data.extend_from_slice(track);
+
+    let model = parse_bytes(&data).expect("parse failed");
+    assert_eq!(model.meta.artist, "A");
+    let names: Vec<&str> = model.meta.artists.iter().map(|a| a.name.as_str()).collect();
+    assert_eq!(names, ["A", "B"]);
 }
 
 /// name + artist 经 SMF 往返后保留。
@@ -835,10 +863,27 @@ fn title_artist_roundtrip_via_smf() {
     let mut model1 = build_complex_model();
     model1.meta.name = "Round Song".to_string();
     model1.meta.artist = "Round Artist".to_string();
+    model1.meta.artists = vec![
+        yinhe_core::ArtistRef {
+            name: "Round Artist".into(),
+            ..Default::default()
+        },
+        yinhe_core::ArtistRef {
+            name: "Featured".into(),
+            ..Default::default()
+        },
+    ];
     let bytes = write_to_bytes(&model1).unwrap();
     let model2 = parse_bytes(&bytes).unwrap();
     assert_eq!(model2.meta.name, "Round Song");
     assert_eq!(model2.meta.artist, "Round Artist");
+    let names: Vec<&str> = model2
+        .meta
+        .artists
+        .iter()
+        .map(|a| a.name.as_str())
+        .collect();
+    assert_eq!(names, ["Round Artist", "Featured"]);
 }
 
 fn cut_note(start: u32, end: u32, key: u8) -> NoteEvent {

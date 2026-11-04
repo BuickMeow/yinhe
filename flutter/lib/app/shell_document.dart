@@ -36,7 +36,6 @@ mixin _ShellDocument on _ShellBase {
         initialYear: meta['year'] as String? ?? '',
         initialTrackNo: (meta['track_no'] as num?)?.toInt() ?? 0,
         initialDiscNo: (meta['disc_no'] as num?)?.toInt() ?? 0,
-        initialCopyright: meta['copyright'] as String? ?? '',
         initialPpq: (meta['ppq'] as num?)?.toInt() ?? 480,
         workTime: _workSeconds,
         onSave: (info) {

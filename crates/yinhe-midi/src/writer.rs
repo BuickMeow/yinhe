@@ -387,12 +387,23 @@ fn build_conductor_events<'a>(
         events.push((ev.tick, TrackEventKind::Meta(MetaMessage::Lyric(bytes))));
     }
 
-    // artist 写回 track 0 的 Copyright（FF 02），编码方式与 name 一致。
-    if !model.meta.artist.is_empty() {
+    // 艺术家写回 track 0 的 Copyright（FF 02），每位一条，编码方式与 name 一致。
+    // 旧工程没有 artists 时回退单 artist 字段。
+    let mut artist_names: Vec<&str> = model
+        .meta
+        .artists
+        .iter()
+        .map(|a| a.name.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if artist_names.is_empty() && !model.meta.artist.trim().is_empty() {
+        artist_names.push(model.meta.artist.trim());
+    }
+    for name in artist_names {
         let bytes: &'a [u8] = if encoding == MidiImportEncoding::Utf8 {
-            model.meta.artist.as_bytes()
+            name.as_bytes()
         } else {
-            leak_bytes(encode_text(encoding, &model.meta.artist))
+            leak_bytes(encode_text(encoding, name))
         };
         events.push((0, TrackEventKind::Meta(MetaMessage::Copyright(bytes))));
     }

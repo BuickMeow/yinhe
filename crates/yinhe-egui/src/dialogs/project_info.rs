@@ -200,7 +200,7 @@ pub fn show(ui: &mut egui::Ui, draft: &mut ProjectSettingsDraft) {
         },
     );
 
-    // ── Album / album artist / genre / year / track / disc / copyright ──
+    // ── Album / album artist / genre / year / track / disc ──
     setting_row(
         ui,
         t!("project.album").as_ref(),
@@ -285,21 +285,6 @@ pub fn show(ui: &mut egui::Ui, draft: &mut ProjectSettingsDraft) {
             draft.info.disc_no = v.max(0) as u16;
         },
     );
-    setting_row(
-        ui,
-        t!("project.copyright").as_ref(),
-        t!("project.copyright_desc").as_ref(),
-        |ui| {
-            crate::widgets::text_input::control_text_input(
-                ui,
-                &mut draft.info.copyright,
-                220.0,
-                "proj_copyright",
-                None,
-            );
-        },
-    );
-
     // ── Cover ──
     setting_row(
         ui,
