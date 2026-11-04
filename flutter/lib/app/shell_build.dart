@@ -589,6 +589,20 @@ mixin _ShellBuild on _ShellBase {
                                               ),
                                             ),
                                           ),
+                                          // 浮动播放按钮：跟着播放头走，盖在标尺左侧
+                                          // 空白区之上；播放头出视口时自己隐藏。
+                                          Positioned(
+                                            left: 0,
+                                            right: 0,
+                                            top: 0,
+                                            height: RulerPainter.height,
+                                            child: RulerPlayButton(
+                                              snap: _snap,
+                                              playhead: _playhead,
+                                              playing: _playing,
+                                              onToggle: _togglePlay,
+                                            ),
+                                          ),
                                         ],
                                       ),
                                     ),

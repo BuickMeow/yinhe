@@ -42,6 +42,7 @@ import '../dialogs/midi_import_dialog.dart';
 import '../dialogs/library_dialog.dart';
 import '../dialogs/cover_dialog.dart';
 import '../painters/painters.dart';
+import '../widgets/ruler_play_button.dart';
 import '../widgets/settings_view.dart';
 import '../core/theme.dart';
 import '../core/tools.dart';
