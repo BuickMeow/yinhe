@@ -118,6 +118,9 @@ impl eframe::App for App {
             None
         };
 
+        // ── 前台工作时间：窗口失焦即暂停 ──
+        self.tick_work_time(ui.ctx());
+
         // ── MIDI 输入（直通试听/录音），每帧消费 ──
         self.poll_midi_input();
 
@@ -970,5 +973,27 @@ impl eframe::App for App {
         if let Some(t0) = _ui_total_start {
             yinhe_memtrace::perf_probe::record_ui_total(t0.elapsed());
         }
+    }
+}
+
+impl App {
+    /// 累计当前工程的前台工作时间；不触发模型 revision/渲染。
+    fn tick_work_time(&mut self, ctx: &egui::Context) {
+        let focused = ctx.input(|i| i.raw.focused);
+        if !focused || self.workspace.active_doc.is_none() {
+            self.work_time_accum = 0.0;
+            return;
+        }
+        let dt = ctx.input(|i| i.stable_dt).clamp(0.0, 0.5);
+        self.work_time_accum += dt;
+        if self.work_time_accum >= 1.0 {
+            let secs = self.work_time_accum.floor() as u64;
+            self.work_time_accum -= secs as f32;
+            if let Some(idx) = self.workspace.active_doc {
+                let doc = &mut self.workspace.documents[idx];
+                doc.data.work_time_secs = doc.data.work_time_secs.saturating_add(secs);
+            }
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(500));
     }
 }

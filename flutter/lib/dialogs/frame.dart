@@ -83,12 +83,13 @@ InputDecoration dialogInputDecoration(
   String label, {
   String? errorText,
   String? hintText,
+  bool isDense = true,
 }) {
   return InputDecoration(
     labelText: label,
     hintText: hintText,
     border: const OutlineInputBorder(),
-    isDense: true,
+    isDense: isDense,
     errorText: errorText,
   );
 }

@@ -349,6 +349,10 @@ abstract class _ShellBase extends State<StudioShell>
   bool _miniScrollActive = false;
   Timer? _miniScrollTimer;
 
+  /// 工程前台工作时间：每秒累加一次；切后台/失焦时暂停。
+  final ValueNotifier<int> _workSeconds = ValueNotifier<int>(0);
+  Timer? _workTimer;
+
   /// “保存并继续”等待 SAF/复制完成；普通保存为 null。
   Completer<bool>? _saveCompleter;
 
@@ -527,6 +531,7 @@ abstract class _ShellBase extends State<StudioShell>
   void _resizeAutoPanel(double dy);
   void _toggleAutoPanelFullscreen();
   void _syncArrPanelWidth();
+  void _syncWorkSeconds();
   void _syncCanvasSizeForView(int mode);
   void _finishAutoPanelResize();
   void _setView(int mode);
@@ -570,6 +575,7 @@ class _StudioShellState extends _ShellBase
     _dragDtrPtr = calloc<ffi.Int32>();
     _channel.setMethodCallHandler(_onNativeCall);
     YinheTheme.transition.addListener(_onThemeTransition);
+    _startWorkTimer();
     showKeyboardLabels.value = rust.showKeyboardLabels() == 1;
     _init().then((_) {
       if (mounted) {
@@ -687,6 +693,29 @@ class _StudioShellState extends _ShellBase
     _pushAllQuantizes();
   }
 
+  void _startWorkTimer() {
+    _workTimer?.cancel();
+    _workTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final secs = rust.addWorkTime(1);
+      if (mounted && secs != _workSeconds.value) {
+        _workSeconds.value = secs;
+      }
+    });
+  }
+
+  void _stopWorkTimer() {
+    _workTimer?.cancel();
+    _workTimer = null;
+  }
+
+  @override
+  void _syncWorkSeconds() {
+    final secs = rust.workTimeSecs();
+    if (mounted && secs != _workSeconds.value) {
+      _workSeconds.value = secs;
+    }
+  }
+
   void _onThemeTransition() {
     if (mounted) {
       setState(() {});
@@ -696,6 +725,8 @@ class _StudioShellState extends _ShellBase
   @override
   void dispose() {
     YinheTheme.transition.removeListener(_onThemeTransition);
+    _workTimer?.cancel();
+    _workSeconds.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _ticker.dispose();
     _timecodeText.dispose();
@@ -758,6 +789,8 @@ class _StudioShellState extends _ShellBase
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      _syncWorkSeconds();
+      _startWorkTimer();
       // 从 SAF 选择器返回：保存流程要么已完成（onProjectSaved 会给对勾），
       // 要么被取消 —— 这里清掉"保存中"圆环，避免一直转。
       if (_saving) {
@@ -775,6 +808,8 @@ class _StudioShellState extends _ShellBase
           setState(() => _playing = false);
         }
       }
+      // 切后台时暂停工作时间计时。
+      _stopWorkTimer();
       // 切后台/失去焦点时触点 up 可能收不到：清空，避免残留成“幽灵手指”。
       _resetInteraction();
     }

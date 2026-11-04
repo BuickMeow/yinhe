@@ -201,6 +201,7 @@ mixin _ShellCore on _ShellBase {
     }
     _loadSongTitle();
     _loadProjectDefaults();
+    _syncWorkSeconds();
     _syncArrPanelWidth();
   }
 

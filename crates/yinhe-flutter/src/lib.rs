@@ -1987,6 +1987,18 @@ pub extern "C" fn yinhe_delete_track(idx: i32) -> i32 {
     scene::delete_track(idx.max(0) as usize)
 }
 
+/// 当前工程累计前台工作时间（秒）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_work_time_secs() -> i64 {
+    scene::work_time_secs().min(i64::MAX as u64) as i64
+}
+
+/// 前台计时器每秒累加；返回新的累计秒数。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_add_work_time(secs: i64) -> i64 {
+    scene::add_work_time(secs.max(0) as u64).min(i64::MAX as u64) as i64
+}
+
 /// 全曲音符数（顶栏标题展示用）。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_note_count() -> i64 {

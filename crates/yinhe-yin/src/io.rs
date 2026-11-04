@@ -294,6 +294,7 @@ fn load_yin_bytes_inner(
             disc_no: project.disc_no,
             copyright: project.copyright.clone(),
             artists: project.artists.clone(),
+            work_time_secs: project.work_time_secs,
         },
         audio_sources,
         ..Default::default()

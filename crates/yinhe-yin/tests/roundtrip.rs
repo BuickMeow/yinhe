@@ -1028,6 +1028,14 @@ fn song_metadata_roundtrip() {
     m.meta.track_no = 3;
     m.meta.disc_no = 2;
     m.meta.copyright = "(c) Jieneng".into();
+    m.meta.artists = vec![yinhe_core::ArtistRef {
+        id: "artist-1".into(),
+        name: "Artist".into(),
+        role: "main".into(),
+        websites: vec!["https://example.com".into()],
+        bio: "Bio".into(),
+    }];
+    m.meta.work_time_secs = 1234;
 
     let bytes = save_yin_bytes(&m).expect("save");
     let loaded = load_yin_bytes(&bytes).expect("load");
@@ -1038,6 +1046,8 @@ fn song_metadata_roundtrip() {
     assert_eq!(loaded.meta.track_no, 3);
     assert_eq!(loaded.meta.disc_no, 2);
     assert_eq!(loaded.meta.copyright, "(c) Jieneng");
+    assert_eq!(loaded.meta.artists, m.meta.artists);
+    assert_eq!(loaded.meta.work_time_secs, 1234);
 }
 
 /// 封面走独立段：保存/加载往返，且不写进 project.json（不增大库扫描）。

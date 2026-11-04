@@ -35,6 +35,8 @@ pub struct ProjectData {
     pub mapping_file: MappingFile,
     /// 工程最终封面（仅一张）；保存时写入 `.yin` 的可选 cover 段。
     pub cover: Option<yinhe_core::CoverArt>,
+    /// 累计前台工作时间（秒）；运行时更新，保存时写入 project_file。
+    pub work_time_secs: u64,
 
     /// Monotonic counter bumped on every YinModel mutation or snapshot restore.
     /// Used as pianoroll layer-cache key so GPU re-renders when data changes.
@@ -135,6 +137,7 @@ impl ProjectData {
         self.project_file.disc_no = meta.disc_no;
         self.project_file.copyright = meta.copyright.clone();
         self.project_file.artists = meta.artists.clone();
+        self.project_file.work_time_secs = self.work_time_secs;
         self.project_file.cover = self.cover.clone();
     }
 
@@ -154,11 +157,13 @@ impl ProjectData {
     /// 新文档绝不能与任何已存在文档共享缓存键。
     pub fn new(model: Arc<YinModel>, project_file: ProjectFile, mapping_file: MappingFile) -> Self {
         let cover = project_file.cover.clone();
+        let work_time_secs = model.meta.work_time_secs;
         Self {
             model,
             project_file,
             mapping_file,
             cover,
+            work_time_secs,
             revision: NEXT_DOC_REVISION.fetch_add(1, Ordering::Relaxed),
         }
     }
@@ -168,6 +173,25 @@ impl ProjectData {
 mod tests {
     use super::*;
     use yinhe_core::ChannelInstrument;
+
+    #[test]
+    fn work_time_roundtrips_through_project_file() {
+        let mut model = YinModel::default();
+        model.meta.work_time_secs = 42;
+        let mut data = ProjectData::new(
+            Arc::new(model),
+            ProjectFile::default(),
+            MappingFile::default(),
+        );
+        assert_eq!(data.work_time_secs, 42, "加载时从 meta 恢复");
+
+        data.work_time_secs = 99;
+        data.sync_project_file();
+        assert_eq!(
+            data.project_file.work_time_secs, 99,
+            "保存时写入 project.json"
+        );
+    }
 
     #[test]
     fn sync_mapping_file_keeps_channel_instruments() {

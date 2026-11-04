@@ -7,18 +7,55 @@ use yinhe_editor_core::history::{begin_edit, commit_compression_level, commit_pp
 
 use crate::dialogs::settings::setting_row;
 
+/// 单个艺术家的 egui 编辑形态。
+#[derive(Clone, Default)]
+pub struct ArtistDraft {
+    pub id: String,
+    pub name: String,
+    pub role: String,
+    /// 每行一条网站。
+    pub websites_text: String,
+    pub bio: String,
+}
+
+impl ArtistDraft {
+    fn from_ref(a: &yinhe_core::ArtistRef) -> Self {
+        Self {
+            id: a.id.clone(),
+            name: a.name.clone(),
+            role: a.role.clone(),
+            websites_text: a.websites.join("\n"),
+            bio: a.bio.clone(),
+        }
+    }
+
+    fn to_ref(&self) -> yinhe_core::ArtistRef {
+        yinhe_core::ArtistRef {
+            id: self.id.clone(),
+            name: self.name.trim().to_string(),
+            role: self.role.trim().to_string(),
+            websites: self
+                .websites_text
+                .lines()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect(),
+            bio: self.bio.trim().to_string(),
+        }
+    }
+}
+
 /// 工程设置草稿：编辑期缓存，点「保存」才写回 doc（支持「取消」）。
 #[derive(Clone)]
 pub struct ProjectSettingsDraft {
     pub info: SongInfo,
-    /// 多音乐人的文本编辑形态（逗号/顿号分隔；首位为主）。
-    pub artists_text: String,
-    /// 首位音乐人的网站（每行一条）。
-    pub artist_websites_text: String,
-    /// 首位音乐人的介绍。
-    pub artist_bio: String,
+    /// 动态艺术家列表；第一项为主。
+    pub artists: Vec<ArtistDraft>,
     pub ppq: i32,
     pub compression_level: i32,
+    /// 当前累计前台工作时间（秒），只读展示。
+    pub work_time_secs: u64,
     /// 最终封面（None = 未设置）。
     pub cover: Option<CoverArt>,
     /// 选图失败的临时提示（对话框内显示）。
@@ -28,29 +65,14 @@ pub struct ProjectSettingsDraft {
 impl ProjectSettingsDraft {
     pub fn from_doc(doc: &Document) -> Self {
         let meta = &doc.data.model.meta;
+        let info = SongInfo::from_meta(meta);
+        let artists = info.artists.iter().map(ArtistDraft::from_ref).collect();
         Self {
-            info: SongInfo::from_meta(meta),
-            artists_text: {
-                let names: Vec<String> = meta
-                    .artists
-                    .iter()
-                    .map(|a| a.name.clone())
-                    .filter(|s| !s.trim().is_empty())
-                    .collect();
-                names.join(", ")
-            },
-            artist_websites_text: meta
-                .artists
-                .first()
-                .map(|a| a.websites.join("\n"))
-                .unwrap_or_default(),
-            artist_bio: meta
-                .artists
-                .first()
-                .map(|a| a.bio.clone())
-                .unwrap_or_default(),
+            info,
+            artists,
             ppq: meta.ppq as i32,
             compression_level: meta.compression_level,
+            work_time_secs: doc.data.work_time_secs,
             cover: doc.data.cover.clone(),
             cover_error: None,
         }
@@ -80,65 +102,101 @@ pub fn show(ui: &mut egui::Ui, draft: &mut ProjectSettingsDraft) {
         },
     );
 
-    // ── Artist ──
+    // ── Artists（动态列表，第一项为主）──
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(t!("project.artists").as_ref())
+                .strong()
+                .size(crate::scaling::scaled_font(
+                    ui.ctx(),
+                    crate::theme::SUB_TITLE_FONT,
+                )),
+        );
+        if ui
+            .small_button(format!("+ {}", t!("project.artist").as_ref()))
+            .clicked()
+        {
+            draft.artists.push(ArtistDraft::default());
+        }
+    });
+    let mut remove_artist: Option<usize> = None;
+    for i in 0..draft.artists.len() {
+        let label = format!("{} {}", t!("project.artist").as_ref(), i + 1);
+        setting_row(ui, &label, t!("project.artist_desc").as_ref(), |ui| {
+            ui.horizontal(|ui| {
+                crate::widgets::text_input::control_text_input(
+                    ui,
+                    &mut draft.artists[i].name,
+                    190.0,
+                    ("proj_artist_name", i),
+                    None,
+                );
+                if ui.small_button("−").clicked() {
+                    remove_artist = Some(i);
+                }
+            });
+        });
+        setting_row(
+            ui,
+            t!("project.artist_websites").as_ref(),
+            t!("project.artist_websites_desc").as_ref(),
+            |ui| {
+                crate::widgets::text_input::control_text_input_multiline(
+                    ui,
+                    &mut draft.artists[i].websites_text,
+                    220.0,
+                    44.0,
+                    ("proj_artist_websites", i),
+                );
+            },
+        );
+        setting_row(
+            ui,
+            t!("project.artist_bio").as_ref(),
+            t!("project.artist_bio_desc").as_ref(),
+            |ui| {
+                crate::widgets::text_input::control_text_input_multiline(
+                    ui,
+                    &mut draft.artists[i].bio,
+                    220.0,
+                    52.0,
+                    ("proj_artist_bio", i),
+                );
+            },
+        );
+    }
+    if let Some(i) = remove_artist {
+        draft.artists.remove(i);
+    }
+
+    // ── PPQ（第三个主要字段）──
     setting_row(
         ui,
-        t!("project.artist").as_ref(),
-        t!("project.artist_desc").as_ref(),
+        t!("project.ppq").as_ref(),
+        t!("project.ppq_desc").as_ref(),
         |ui| {
-            crate::widgets::text_input::control_text_input(
-                ui,
-                &mut draft.info.artist,
-                220.0,
-                "proj_artist",
-                None,
-            );
+            crate::widgets::stepper::stepper(&mut draft.ppq)
+                .range(1..=32767)
+                .step(1.0)
+                .width(110.0)
+                .show(ui);
         },
     );
 
-    // ── Ordered artists (first = primary) ──
+    // ── 工作时间（只读）──
     setting_row(
         ui,
-        t!("project.artists").as_ref(),
-        t!("project.artists_desc").as_ref(),
+        t!("project.work_time").as_ref(),
+        t!("project.work_time_desc").as_ref(),
         |ui| {
-            crate::widgets::text_input::control_text_input(
-                ui,
-                &mut draft.artists_text,
-                220.0,
-                "proj_artists",
-                None,
-            );
-        },
-    );
-
-    // ── 首位音乐人的网站/介绍（工程内独立快照）──
-    setting_row(
-        ui,
-        t!("project.artist_websites").as_ref(),
-        t!("project.artist_websites_desc").as_ref(),
-        |ui| {
-            crate::widgets::text_input::control_text_input_multiline(
-                ui,
-                &mut draft.artist_websites_text,
-                220.0,
-                50.0,
-                "proj_artist_websites",
-            );
-        },
-    );
-    setting_row(
-        ui,
-        t!("project.artist_bio").as_ref(),
-        t!("project.artist_bio_desc").as_ref(),
-        |ui| {
-            crate::widgets::text_input::control_text_input_multiline(
-                ui,
-                &mut draft.artist_bio,
-                220.0,
-                60.0,
-                "proj_artist_bio",
-            );
+            let secs = draft.work_time_secs;
+            ui.label(format!(
+                "{:02}:{:02}:{:02}",
+                secs / 3600,
+                (secs % 3600) / 60,
+                secs % 60
+            ));
         },
     );
 
@@ -281,20 +339,6 @@ pub fn show(ui: &mut egui::Ui, draft: &mut ProjectSettingsDraft) {
         },
     );
 
-    // ── PPQ ──
-    setting_row(
-        ui,
-        t!("project.ppq").as_ref(),
-        t!("project.ppq_desc").as_ref(),
-        |ui| {
-            crate::widgets::stepper::stepper(&mut draft.ppq)
-                .range(1..=32767)
-                .step(1.0)
-                .width(110.0)
-                .show(ui);
-        },
-    );
-
     // ── zstd compression level ──
     setting_row(
         ui,
@@ -340,38 +384,16 @@ pub(crate) fn commit_draft(
     // ── 歌曲元数据：整组比较，差异合并为一条 undo ──
     let mut info = draft.info.clone();
     info.artists = draft
-        .artists_text
-        .split([',', '，', '、'])
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|name| yinhe_core::ArtistRef {
-            id: String::new(),
-            name: name.to_string(),
-            role: String::new(),
-            websites: Vec::new(),
-            bio: String::new(),
-        })
+        .artists
+        .iter()
+        .filter(|a| !a.name.trim().is_empty())
+        .map(ArtistDraft::to_ref)
         .collect();
-    let websites: Vec<String> = draft
-        .artist_websites_text
-        .lines()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .collect();
-    let bio = draft.artist_bio.trim().to_string();
-    if let Some(first) = info.artists.first_mut() {
-        first.websites = websites;
-        first.bio = bio;
-    } else if !websites.is_empty() || !bio.is_empty() {
-        info.artists.push(yinhe_core::ArtistRef {
-            id: String::new(),
-            name: info.artist.clone(),
-            role: String::new(),
-            websites,
-            bio,
-        });
-    }
+    info.artist = info
+        .artists
+        .first()
+        .map(|a| a.name.clone())
+        .unwrap_or_default();
     let old = SongInfo::from_meta(&doc.data.model.meta);
     if old != info {
         let before = doc.capture_snapshot();

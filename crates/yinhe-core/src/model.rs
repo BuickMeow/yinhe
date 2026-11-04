@@ -302,6 +302,17 @@ pub struct SongInfo {
 
 impl SongInfo {
     pub fn from_meta(meta: &ProjectMeta) -> Self {
+        let mut artists = meta.artists.clone();
+        // 旧工程只有单 artist 字符串：读入时补成「艺术家 1」，保存后自然迁移。
+        if artists.is_empty() && !meta.artist.trim().is_empty() {
+            artists.push(ArtistRef {
+                id: String::new(),
+                name: meta.artist.clone(),
+                role: String::new(),
+                websites: Vec::new(),
+                bio: String::new(),
+            });
+        }
         Self {
             name: meta.name.clone(),
             artist: meta.artist.clone(),
@@ -313,7 +324,7 @@ impl SongInfo {
             track_no: meta.track_no,
             disc_no: meta.disc_no,
             copyright: meta.copyright.clone(),
-            artists: meta.artists.clone(),
+            artists,
         }
     }
 
@@ -332,7 +343,13 @@ impl SongInfo {
 
     pub fn apply_to(&self, meta: &mut ProjectMeta) {
         meta.name.clone_from(&self.name);
-        meta.artist.clone_from(&self.artist);
+        // artist 是兼容字段：始终由有序列表的首位同步，避免两个来源不一致。
+        meta.artist = self
+            .artists
+            .iter()
+            .find(|a| !a.name.trim().is_empty())
+            .map(|a| a.name.trim().to_string())
+            .unwrap_or_else(|| self.artist.clone());
         meta.description.clone_from(&self.description);
         meta.album.clone_from(&self.album);
         meta.album_artist.clone_from(&self.album_artist);
@@ -382,6 +399,9 @@ pub struct ProjectMeta {
     /// 工程音乐人列表（有序；第一项为主音乐人）。
     #[serde(default)]
     pub artists: Vec<ArtistRef>,
+    /// 累计前台工作时间（秒）；只在保存时落盘，不计入 undo。
+    #[serde(default)]
+    pub work_time_secs: u64,
 }
 
 fn default_project_bpm() -> f32 {
@@ -410,6 +430,7 @@ impl Default for ProjectMeta {
             disc_no: 0,
             copyright: String::new(),
             artists: Vec::new(),
+            work_time_secs: 0,
         }
     }
 }

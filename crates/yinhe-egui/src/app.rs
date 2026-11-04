@@ -96,6 +96,8 @@ pub struct App {
 
     // ── Shared state ──
     pub(crate) transport_panel_width: f32,
+    /// 前台工作时间累加器（秒的小数部分）。
+    pub(crate) work_time_accum: f32,
     pub(crate) file_loader: FileLoader,
     /// 异步任务运行时状态（保存 / 加载 / 导出 / 重采样 / 自动保存）。
     pub(crate) jobs: jobs::JobCenter,
@@ -368,6 +370,7 @@ impl App {
             instrument_racks: Vec::new(),
 
             transport_panel_width: audio_settings.layout.transport_panel_width,
+            work_time_accum: 0.0,
             startup: startup::StartupState::new(),
             file_loader: FileLoader::new(jobs.load_progress.clone()),
             jobs,

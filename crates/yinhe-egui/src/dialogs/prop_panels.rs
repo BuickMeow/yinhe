@@ -45,6 +45,7 @@ pub(crate) fn show_project_settings_viewport(
             let mut draft = vctx
                 .data(|d| d.get_temp::<ProjectSettingsDraft>(draft_key))
                 .unwrap_or_else(|| ProjectSettingsDraft::from_doc(doc));
+            draft.work_time_secs = doc.data.work_time_secs;
             let mut save = false;
             let mut cancel = false;
 

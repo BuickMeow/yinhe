@@ -1,5 +1,6 @@
 //! Automation event editing: add, move, delete, set-shape, apply-batch.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use yinhe_types::AutomationEdit;
@@ -59,7 +60,10 @@ impl Document {
         ))
     }
 
-    /// 插入或更新单个 automation 事件（同 tick 覆盖，不产生重复锚点）。
+    /// 插入或更新单个 automation 事件（同 tick 保留最大值，不产生重复锚点）。
+    ///
+    /// 与音频 dispatch 的“同 tick 同通道同目标取 max”一致，避免编辑器里
+    /// 后写入的低值把高值覆盖掉。
     ///
     /// 用于 UI 的"在当前位置插入事件"：lane 不存在时懒创建（Tempo 恒存在）。
     /// 返回 `(result_track, lane_idx, UndoAction)`；Tempo 的 result_track 恒为 0。
@@ -76,13 +80,15 @@ impl Document {
         let result_track = if is_tempo { 0 } else { track_idx };
         let model = Arc::make_mut(&mut self.data.model);
         let (lane, lane_idx) = model.ensure_automation_lane_mut(track_idx, target.clone())?;
-        let before: Vec<AutomationEvent> = lane
-            .events
-            .iter()
-            .find(|e| e.tick == event.tick)
-            .copied()
-            .into_iter()
-            .collect();
+        let old = lane.events.iter().find(|e| e.tick == event.tick).copied();
+        if let Some(old) = old {
+            if old.value >= event.value {
+                return None;
+            }
+            // 保持旧 id，选择集/撤销身份稳定。
+            event.id = old.id;
+        }
+        let before: Vec<AutomationEvent> = old.into_iter().collect();
         lane.upsert(event);
         model.commit_automation(&target);
         self.data.bump_revision();
@@ -99,7 +105,7 @@ impl Document {
         ))
     }
 
-    /// 批量写入自动化事件（同 tick 覆盖），一次 undo。
+    /// 批量写入自动化事件（同 tick 保留最大值），一次 undo。
     ///
     /// 用于 AM 直线工具这类"一次操作插入一串锚点"的场景：所有事件合并成
     /// 一个 `AutomationDelta`（before = 被覆盖的旧事件，after = 新事件）。
@@ -122,14 +128,32 @@ impl Document {
             }
         }
         let (lane, lane_idx) = model.ensure_automation_lane_mut(track_idx, target.clone())?;
-        let mut before: Vec<yinhe_types::AutomationEvent> = Vec::new();
-        let mut after: Vec<yinhe_types::AutomationEvent> = Vec::with_capacity(prepared.len());
+        // 批内先按 tick 取最大值，避免同一批的中间值进入 undo。
+        let mut merged: BTreeMap<u32, AutomationEvent> = BTreeMap::new();
         for event in prepared {
-            if let Some(old) = lane.events.iter().find(|e| e.tick == event.tick) {
-                before.push(*old);
+            match merged.get_mut(&event.tick) {
+                Some(old) if old.value >= event.value => {}
+                Some(old) => *old = event,
+                None => {
+                    merged.insert(event.tick, event);
+                }
+            }
+        }
+        let mut before: Vec<AutomationEvent> = Vec::new();
+        let mut after: Vec<AutomationEvent> = Vec::with_capacity(merged.len());
+        for (_, mut event) in merged {
+            if let Some(old) = lane.events.iter().find(|e| e.tick == event.tick).copied() {
+                if old.value >= event.value {
+                    continue;
+                }
+                event.id = old.id;
+                before.push(old);
             }
             lane.upsert(event);
             after.push(event);
+        }
+        if after.is_empty() {
+            return None;
         }
         model.commit_automation(&target);
         self.data.bump_revision();
@@ -228,9 +252,14 @@ impl Document {
         // 时 remove + upsert 回同位置，等价于原地改 value。
         let orig = lane.remove_at(old_tick)?;
         let mut before = vec![orig];
+        let merged_value = lane
+            .events
+            .iter()
+            .find(|e| e.tick == new_tick)
+            .map_or(new_value, |e| e.value.max(new_value));
         let new_evt = AutomationEvent {
             tick: new_tick,
-            value: new_value,
+            value: merged_value,
             ..orig // 保留原 id/shape
         };
         // 目标 tick 上已有的事件（冲突项）会被替换——必须进 before，
@@ -297,24 +326,33 @@ impl Document {
                 bases.push((target.default_shape(), 0));
             }
         }
-        // 按 new_tick 排序后插入（冲突时后者覆盖）
-        let mut sorted: Vec<(u32, f32, yinhe_types::SegmentShape, u32)> = moves
-            .iter()
-            .zip(bases.iter())
-            .map(|((_, new, val), (shape, id))| (*new, *val, *shape, *id))
-            .collect();
-        sorted.sort_by_key(|(new, _, _, _)| *new);
-        let mut after: Vec<AutomationEvent> = Vec::with_capacity(sorted.len());
-        for (new_tick, new_value, shape, id) in sorted {
-            // 移除 new_tick 处可能残留的旧事件
+        // 同 new_tick 先取最大値（与音频 dispatch 的 max 聚合一致）。
+        let mut merged: BTreeMap<u32, (f32, yinhe_types::SegmentShape, u32)> = BTreeMap::new();
+        for ((_, new_tick, value), (shape, id)) in moves.iter().zip(bases.iter()) {
+            match merged.get_mut(new_tick) {
+                Some((old_value, _, _)) if *old_value >= *value => {}
+                Some((old_value, old_shape, old_id)) => {
+                    *old_value = *value;
+                    *old_shape = *shape;
+                    *old_id = *id;
+                }
+                None => {
+                    merged.insert(*new_tick, (*value, *shape, *id));
+                }
+            }
+        }
+        let mut after: Vec<AutomationEvent> = Vec::with_capacity(merged.len());
+        for (new_tick, (mut value, shape, id)) in merged {
+            // 移除 new_tick 处可能残留的旧事件；冲突值取 max。
             if let Some(idx) = events.iter().position(|e| e.tick == new_tick) {
+                value = value.max(events[idx].value);
                 events.remove(idx);
             }
             let insert_idx = events.partition_point(|e| e.tick < new_tick);
             let evt = AutomationEvent {
                 id,
                 tick: new_tick,
-                value: new_value,
+                value,
                 shape,
             };
             events.insert(insert_idx, evt);
@@ -812,7 +850,7 @@ mod tests {
             AutomationEvent {
                 id: 0,
                 tick: 100,
-                value: 0.2,
+                value: 0.7,
                 shape: linear,
             },
             AutomationEvent {
@@ -824,7 +862,7 @@ mod tests {
             AutomationEvent {
                 id: 0,
                 tick: 200,
-                value: 0.8,
+                value: 0.9,
                 shape: linear,
             },
         ];
@@ -835,14 +873,66 @@ mod tests {
         doc.push_undo(action, "test", before);
         let lane = &doc.data.model.tracks[0].automation_lanes[0];
         assert_eq!(lane.events.len(), 3);
-        assert!((lane.events[0].value - 0.2).abs() < 1e-6);
-        assert!((lane.events[2].value - 0.8).abs() < 1e-6);
+        assert!((lane.events[0].value - 0.7).abs() < 1e-6);
+        assert!((lane.events[2].value - 0.9).abs() < 1e-6);
 
         doc.undo();
         let lane = &doc.data.model.tracks[0].automation_lanes[0];
         assert_eq!(lane.events.len(), 2, "undo 只恢复原有两个锚点");
         assert!((lane.events[0].value - 64.0 / 127.0).abs() < 1e-6);
         assert!((lane.events[1].value - 96.0 / 127.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn upsert_automation_same_tick_keeps_max_value() {
+        let mut doc = make_doc_with_anchor();
+        let target = AutomationTarget::CC { controller: 7 };
+        // 低值不能覆盖已有高值。
+        assert!(
+            doc.upsert_automation_event(
+                0,
+                target.clone(),
+                AutomationEvent {
+                    id: 0,
+                    tick: 100,
+                    value: 0.1,
+                    shape: SegmentShape::Step,
+                },
+            )
+            .is_none()
+        );
+        let lane = &doc.data.model.tracks[0].automation_lanes[0];
+        assert!((lane.events[0].value - 64.0 / 127.0).abs() < 1e-6);
+        // 高值覆盖。
+        assert!(
+            doc.upsert_automation_event(
+                0,
+                target,
+                AutomationEvent {
+                    id: 0,
+                    tick: 100,
+                    value: 1.0,
+                    shape: SegmentShape::Step,
+                },
+            )
+            .is_some()
+        );
+        let lane = &doc.data.model.tracks[0].automation_lanes[0];
+        assert!((lane.events[0].value - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn move_automation_onto_occupied_tick_keeps_max_value() {
+        let mut doc = make_doc_with_anchor();
+        let target = AutomationTarget::CC { controller: 7 };
+        doc.move_automation_event(0, 0, &target, 100, 200, 0.1)
+            .expect("应移动");
+        let lane = &doc.data.model.tracks[0].automation_lanes[0];
+        assert_eq!(lane.events.len(), 1, "同 tick 必须合并");
+        assert!(
+            (lane.events[0].value - 96.0 / 127.0).abs() < 1e-6,
+            "冲突取较大值"
+        );
     }
 
     #[test]

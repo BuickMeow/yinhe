@@ -25,26 +25,25 @@ mixin _ShellDocument on _ShellBase {
       builder: (_) => ProjectDialog(
         noteCount: _noteCount,
         initialName: meta['name'] as String? ?? '',
-        initialArtist: meta['artist'] as String? ?? '',
-        initialArtists: ((meta['artists'] as List?) ?? const [])
-            .whereType<Map>()
-            .map((e) => e['name'] as String? ?? '')
-            .where((e) => e.isNotEmpty)
-            .join(', '),
-        initialArtistWebsites:
-            (((meta['artists'] as List?) ?? const [])
-                        .whereType<Map>()
-                        .firstOrNull?['websites']
-                    as List?)
-                ?.whereType<String>()
-                .join('\n') ??
-            '',
-        initialArtistBio:
-            ((meta['artists'] as List?) ?? const [])
-                    .whereType<Map>()
-                    .firstOrNull?['bio']
-                as String? ??
-            '',
+        initialArtists: () {
+          final list = ((meta['artists'] as List?) ?? const [])
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+          if (list.isEmpty) {
+            final legacy = (meta['artist'] as String? ?? '').trim();
+            if (legacy.isNotEmpty) {
+              list.add({
+                'id': '',
+                'name': legacy,
+                'role': '',
+                'websites': <String>[],
+                'bio': '',
+              });
+            }
+          }
+          return list;
+        }(),
         initialDescription: meta['description'] as String? ?? '',
         initialAlbum: meta['album'] as String? ?? '',
         initialAlbumArtist: meta['album_artist'] as String? ?? '',
@@ -54,6 +53,7 @@ mixin _ShellDocument on _ShellBase {
         initialDiscNo: (meta['disc_no'] as num?)?.toInt() ?? 0,
         initialCopyright: meta['copyright'] as String? ?? '',
         initialPpq: (meta['ppq'] as num?)?.toInt() ?? 480,
+        workTime: _workSeconds,
         onSave: (info) {
           final json = jsonEncode(info);
           final p = json.toNativeUtf8();

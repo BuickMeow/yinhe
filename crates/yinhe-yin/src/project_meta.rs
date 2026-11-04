@@ -62,6 +62,9 @@ pub struct ProjectFile {
     pub copyright: String,
     #[serde(default)]
     pub artists: Vec<yinhe_core::ArtistRef>,
+    /// 累计前台工作时间（秒）。
+    #[serde(default)]
+    pub work_time_secs: u64,
 
     /// 最终封面。不写进 project.json（避免 base64 +33%），由 `.yin` 的可选
     /// cover 段承载；加载时由 container 解出后回填到这里。
@@ -101,6 +104,7 @@ impl Default for ProjectFile {
             disc_no: 0,
             copyright: String::new(),
             artists: Vec::new(),
+            work_time_secs: 0,
             cover: None,
             sf_channel_overrides: Vec::new(),
         }
@@ -127,6 +131,7 @@ impl ProjectFile {
             disc_no: meta.disc_no,
             copyright: meta.copyright.clone(),
             artists: meta.artists.clone(),
+            work_time_secs: meta.work_time_secs,
             cover: None,
             sf_channel_overrides: Vec::new(),
         }
@@ -154,6 +159,7 @@ impl ProjectFile {
             disc_no: meta.disc_no,
             copyright: meta.copyright.clone(),
             artists: meta.artists.clone(),
+            work_time_secs: meta.work_time_secs,
             cover: None,
             sf_channel_overrides,
         }

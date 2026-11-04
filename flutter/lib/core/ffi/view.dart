@@ -456,3 +456,17 @@ typedef SnapDart = int Function(ffi.Pointer<ffi.Float>);
 final SnapDart viewSnapshot = bridge.lookupFunction<SnapNative, SnapDart>(
   'yinhe_view_snapshot',
 );
+
+typedef WorkTimeNative = ffi.Int64 Function();
+typedef WorkTimeDart = int Function();
+
+/// 当前工程累计前台工作时间（秒）。
+final WorkTimeDart workTimeSecs = bridge
+    .lookupFunction<WorkTimeNative, WorkTimeDart>('yinhe_work_time_secs');
+
+typedef AddWorkTimeNative = ffi.Int64 Function(ffi.Int64);
+typedef AddWorkTimeDart = int Function(int);
+
+/// 前台计时器每秒累加一次。
+final AddWorkTimeDart addWorkTime = bridge
+    .lookupFunction<AddWorkTimeNative, AddWorkTimeDart>('yinhe_add_work_time');

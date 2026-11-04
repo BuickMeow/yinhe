@@ -1555,11 +1555,6 @@ pub fn set_project_meta_json(json: &str) -> i32 {
             .unwrap_or("")
             .to_string()
     };
-    let artist_websites: Vec<String> = v
-        .get("artist_websites")
-        .and_then(|x| serde_json::from_value(x.clone()).ok())
-        .unwrap_or_default();
-    let artist_bio = text("artist_bio");
     let info = yinhe_core::SongInfo {
         name: text("name"),
         artist: text("artist"),
@@ -1576,19 +1571,6 @@ pub fn set_project_meta_json(json: &str) -> i32 {
             .and_then(|x| serde_json::from_value(x.clone()).ok())
             .unwrap_or_default(),
     };
-    let mut info = info;
-    if let Some(first) = info.artists.first_mut() {
-        first.websites = artist_websites;
-        first.bio = artist_bio;
-    } else if !artist_websites.is_empty() || !artist_bio.is_empty() {
-        info.artists.push(yinhe_core::ArtistRef {
-            id: String::new(),
-            name: info.artist.clone(),
-            role: String::new(),
-            websites: artist_websites,
-            bio: artist_bio,
-        });
-    }
     let ppq = v.get("ppq").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
     crate::doc_job::try_start(
         "project-meta",
@@ -5215,6 +5197,27 @@ pub fn apply_theme_colors() {
         doc.sync_track_caches_with_conductor_color(crate::theme_colors::text_primary());
     }
     refresh_snapshot(&mut s);
+}
+
+/// 当前工程累计前台工作时间（秒；无文档返回 0）。
+pub fn work_time_secs() -> u64 {
+    scene()
+        .lock()
+        .ok()
+        .and_then(|s| s.document.as_ref().map(|d| d.data.work_time_secs))
+        .unwrap_or(0)
+}
+
+/// 前台计时器每秒钟累加一次；不 bump revision、不触发重渲染。
+pub fn add_work_time(secs: u64) -> u64 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    doc.data.work_time_secs = doc.data.work_time_secs.saturating_add(secs);
+    doc.data.work_time_secs
 }
 
 /// 全曲音符数（顶栏标题展示用）。
