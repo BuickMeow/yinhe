@@ -1454,7 +1454,8 @@ pub fn project_meta_json() -> String {
         "disc_no": m.disc_no,
         "copyright": m.copyright,
         "ppq": m.ppq,
-        "artists": m.artists,
+        // 统一输出迁移后的列表：旧工程只有 artist 时也会得到「艺术家 1」。
+        "artists": yinhe_core::SongInfo::from_meta(m).artists,
         "cover": cover,
     })
     .to_string()

@@ -25,25 +25,10 @@ mixin _ShellDocument on _ShellBase {
       builder: (_) => ProjectDialog(
         noteCount: _noteCount,
         initialName: meta['name'] as String? ?? '',
-        initialArtists: () {
-          final list = ((meta['artists'] as List?) ?? const [])
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
-          if (list.isEmpty) {
-            final legacy = (meta['artist'] as String? ?? '').trim();
-            if (legacy.isNotEmpty) {
-              list.add({
-                'id': '',
-                'name': legacy,
-                'role': '',
-                'websites': <String>[],
-                'bio': '',
-              });
-            }
-          }
-          return list;
-        }(),
+        initialArtists: ((meta['artists'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList(),
         initialDescription: meta['description'] as String? ?? '',
         initialAlbum: meta['album'] as String? ?? '',
         initialAlbumArtist: meta['album_artist'] as String? ?? '',
