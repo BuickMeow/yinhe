@@ -665,6 +665,11 @@ class _StudioShellState extends _ShellBase
           setState(() {});
         }
       }
+      // 移动端没有桌面那种音频设备切换对话框：每秒检查一次 cpal 流是否
+      // 已失效（AAudio 长时间后台/模拟器音频后端重启），失效则自动重建。
+      if (_frameCounter % 60 == 0) {
+        rust.recoverAudio();
+      }
       if (_frameCounter % 4 == 0) {
         final generation = rust.documentGeneration();
         if (generation != _docGeneration) {
@@ -789,6 +794,8 @@ class _StudioShellState extends _ShellBase
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      // 回前台先检查音频流；后台期间 AAudio 可能已被系统回收。
+      rust.recoverAudio();
       _syncWorkSeconds();
       _startWorkTimer();
       // 从 SAF 选择器返回：保存流程要么已完成（onProjectSaved 会给对勾），

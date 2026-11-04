@@ -607,6 +607,53 @@ fn ensure_audio() -> bool {
     }
 }
 
+/// 检测 cpal 流错误并重建引擎（移动端没有桌面那种设备切换对话框）。
+///
+/// AAudio 在长时间后台、模拟器音频后端重启、设备路由切换后可能上报
+/// `Disconnected`；旧实现只在 `ensure_audio` 里看 `guard.is_some()`，
+/// 流死掉后仍一直复用，表现为播放头照走但没有声音。这里检测到
+/// `stream_error` 就按当前光标/播放状态重建，和通道变化重建走同一条路径。
+///
+/// 返回是否执行了重建（没有错误或没有引擎时 false）。
+pub fn recover_stream_error() -> bool {
+    // 锁顺序 scene → audio：先取模型，再进音频锁。
+    let model = current_model();
+    let Some(mut guard) = lock_audio() else {
+        return false;
+    };
+    let Some(st) = guard.as_mut() else {
+        return false;
+    };
+    if !st.handle.handle.stream_error() {
+        return false;
+    }
+    let playing = st.handle.handle.is_playing();
+    let cursor = if playing {
+        match model.as_ref() {
+            Some(m) => {
+                let seconds = st.smooth_sample_position() as f64 / st.handle.sample_rate as f64;
+                seconds_to_tick(m, seconds)
+            }
+            None => st.cursor_tick,
+        }
+    } else {
+        st.cursor_tick
+    };
+    let skip = st.skip.clone();
+    log::warn!("音频流错误，重建引擎（cursor={cursor:.0}, playing={playing}）");
+    if let Some(old) = guard.take() {
+        old.handle.pause_stream();
+        std::thread::spawn(move || drop(old));
+    }
+    let Some(model) = model else {
+        return true;
+    };
+    let layout = ChannelLayout::from_model(&model);
+    *guard = spawn_audio(layout, cursor, skip);
+    resume_rebuilt(&mut guard, model, cursor, playing);
+    true
+}
+
 fn send_soundfonts(handle: &CpalAudioHandle, layout: &ChannelLayout, paths: &[String]) {
     // 按 layout 激活的源通道下发（最多 256 = 16 port × 16 通道）：
     // 所有通道共用同一份全局音色库表（顺序 = 优先级，靠前者覆盖靠后者）。
@@ -727,6 +774,7 @@ pub fn preview_notes(notes: Vec<yinhe_audio::PreviewNoteParams>, exclusive: bool
     if !ensure_audio() {
         return;
     }
+    recover_stream_error();
     let Some(mut guard) = lock_audio() else {
         return;
     };
@@ -841,6 +889,7 @@ pub fn play() {
     if !ensure_audio() {
         return;
     }
+    recover_stream_error();
     let mut tick = {
         let Some(mut guard) = lock_audio() else {
             return;

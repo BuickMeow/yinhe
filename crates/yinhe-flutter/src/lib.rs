@@ -1049,6 +1049,12 @@ pub extern "C" fn yinhe_is_playing() -> i32 {
     i32::from(audio::is_playing())
 }
 
+/// 检查音频流是否已失效并重建（1 = 本次执行了重建）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_audio_recover() -> i32 {
+    i32::from(audio::recover_stream_error())
+}
+
 /// 播放到工程末尾且 release 尾音已结束：暂停在末尾并同步 UI 光标。
 /// 返回 1 表示本次调用触发了暂停。
 #[unsafe(no_mangle)]

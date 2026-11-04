@@ -428,6 +428,11 @@ final IntDart isPlaying = bridge.lookupFunction<IntNative, IntDart>(
   'yinhe_is_playing',
 );
 
+/// 检查音频流是否失效并重建（1 = 本次执行了重建）。
+final IntDart recoverAudio = bridge.lookupFunction<IntNative, IntDart>(
+  'yinhe_audio_recover',
+);
+
 /// 播放到末尾且尾音结束后暂停在末尾（返回 1 表示本次触发）。
 final IntDart autoPauseAtEnd = bridge.lookupFunction<IntNative, IntDart>(
   'yinhe_auto_pause_at_end',

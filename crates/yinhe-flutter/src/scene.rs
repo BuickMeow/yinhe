@@ -2171,6 +2171,12 @@ fn load_settings() {
             };
             if !path.is_empty() && crate::audio::is_soundfont_path(path) {
                 let path = resolve_existing_soundfont(path);
+                // 重装/恢复备份后 settings.txt 可能还在，但音色库文件已被清掉；
+                // 保留条目只会让引擎加载空音色库，表现为“能播放但没声音”。
+                if !std::path::Path::new(&path).exists() {
+                    log::warn!("音色库文件不存在，已跳过: {path}");
+                    continue;
+                }
                 soundfonts.push(crate::audio::SoundfontEntry { path, enabled });
             } else if !path.is_empty() {
                 // 旧版本选择器可能把 mid 等文件写进音色库表，读盘时清理掉。
