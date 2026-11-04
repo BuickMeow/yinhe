@@ -476,22 +476,29 @@ class TopBar extends StatelessWidget {
   }
 
   /// AR：歌名按钮（点击直接打开工程设置大窗口；音符数在窗口内部）。
+  ///
+  /// 与 PR 的音轨选择器同一套“带外框”样式，但稍短一点，避免和顶部工具抢宽。
   Widget _titleButton(AppLocalizations l) {
     return InkWell(
       borderRadius: BorderRadius.circular(6),
       onTap: onProjectSettings,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 260),
-          child: ValueListenableBuilder<int>(
-            valueListenable: docState,
-            builder: (context, st, _) => Text(
-              (st & 4) != 0 ? '• ${_titled(l)}' : _titled(l),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
-            ),
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        constraints: const BoxConstraints(maxWidth: 180),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: YinheTheme.btnBg,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: YinheTheme.lineFg),
+        ),
+        child: ValueListenableBuilder<int>(
+          valueListenable: docState,
+          builder: (context, st, _) => Text(
+            (st & 4) != 0 ? '• ${_titled(l)}' : _titled(l),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
           ),
         ),
       ),
@@ -546,6 +553,7 @@ class TopBar extends StatelessWidget {
           // 比顶栏底（controlBg）稍深一档，长按钮才可见。
           color: YinheTheme.btnBg,
           borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: YinheTheme.lineFg),
         ),
         child: ValueListenableBuilder<int>(
           valueListenable: docState,

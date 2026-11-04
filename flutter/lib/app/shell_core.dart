@@ -160,7 +160,6 @@ mixin _ShellCore on _ShellBase {
     rust.setDisplayTrack(-1);
     rust.setActiveTrack(-1);
     rust.setTool(1);
-    _arrTracksExpanded.value = false;
     _syncArrPanelWidth();
     _pushAllQuantizes();
     setState(() {

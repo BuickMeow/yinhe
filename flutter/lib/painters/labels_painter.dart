@@ -12,24 +12,16 @@ class LabelsPainter extends CustomPainter {
     required this.tracks,
     required this.dragFrom,
     required this.dragTo,
-    required this.tracksExpanded,
-  }) : super(
-         repaint: Listenable.merge([
-           snap,
-           tracks,
-           dragFrom,
-           dragTo,
-           tracksExpanded,
-         ]),
-       );
+    required this.selectedTrack,
+  }) : super(repaint: Listenable.merge([snap, tracks, dragFrom, dragTo]));
 
   final ValueNotifier<List<double>> snap;
   final ValueNotifier<List<TrackRow>> tracks;
   final ValueNotifier<int> dragFrom;
   final ValueNotifier<int> dragTo;
 
-  /// AR 轨道卡片是否整体展开（收起时不画 M/S）。
-  final ValueNotifier<bool> tracksExpanded;
+  /// 当前选中的音轨（-1 = 未选中）。
+  final int selectedTrack;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -94,6 +86,13 @@ class LabelsPainter extends CustomPainter {
     // 色带（sRGB 直绘保持饱和，与桌面 egui badge 一致；wgpu decor 不再画）。
     for (var idx = first; idx < last; idx++) {
       final y = idx * laneH - scrollY;
+      if (idx == selectedTrack) {
+        // 选中行浅强调底；色带仍画在最左，不遮住轨道色。
+        canvas.drawRect(
+          Rect.fromLTWH(0, y, panelW, laneH),
+          Paint()..color = YinheTheme.accent.withValues(alpha: 0.10),
+        );
+      }
       canvas.drawRect(
         Rect.fromLTWH(0, y, 6, laneH),
         Paint()..color = rows[idx].color,
@@ -102,16 +101,13 @@ class LabelsPainter extends CustomPainter {
     for (var idx = first; idx < last; idx++) {
       final row = rows[idx];
       final y = idx * laneH - scrollY;
-      final expanded = tracksExpanded.value;
       final port = portLetter(row.port);
       final code =
           '${idx.toString().padLeft(3, '0')}  $port${(row.channel + 1).toString().padLeft(2, '0')}';
       final font = (laneH * 0.24).clamp(9.0, 13.0).toDouble();
       // 文本可用宽度：面板宽 - 左内边距 - 右内边距；显示 M/S 时再让出按钮区。
       final btn = (laneH * 0.44).clamp(18.0, 26.0).toDouble();
-      final msReserve = (expanded && !row.master && laneH >= 34)
-          ? btn * 2 + 8.0
-          : 0.0;
+      final msReserve = (!row.master && laneH >= 34) ? btn * 2 + 8.0 : 0.0;
       final textMax = (panelW - 16.0 - msReserve).clamp(8.0, double.infinity);
       _text(
         canvas,
@@ -132,8 +128,8 @@ class LabelsPainter extends CustomPainter {
         vCenter: true,
         maxWidth: textMax,
       );
-      // Master（Conductor）轨没有 M/S。
-      if (expanded && laneH >= 34 && !row.master) {
+      // Master（Conductor）轨没有 M/S；其余行常驻显示。
+      if (laneH >= 34 && !row.master) {
         final btn = (laneH * 0.44).clamp(18.0, 26.0).toDouble();
         const gap = 4.0;
         final right = panelW - 6.0;

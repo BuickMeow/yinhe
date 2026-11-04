@@ -448,7 +448,6 @@ mixin _ShellDocument on _ShellBase {
     rust.setDisplayTrack(-1);
     rust.setActiveTrack(-1);
     rust.setTool(1);
-    _arrTracksExpanded.value = false;
     _syncArrPanelWidth();
     final p = path.toNativeUtf8();
     try {

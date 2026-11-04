@@ -485,8 +485,8 @@ mixin _ShellBuild on _ShellBase {
                                                   tracks: _tracks,
                                                   dragFrom: _dragFrom,
                                                   dragTo: _dragTo,
-                                                  tracksExpanded:
-                                                      _arrTracksExpanded,
+                                                  selectedTrack:
+                                                      _activeTrack ?? -1,
                                                 ),
                                               ),
                                             ),

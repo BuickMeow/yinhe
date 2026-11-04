@@ -874,33 +874,17 @@ mixin _ShellInput on _ShellBase {
       _showAddTrackDialog();
       return;
     }
-    final expanded = _arrTracksExpanded.value;
-    // 只有展开态才响应 M/S；收起态点右缘也是切换展开。
-    if (expanded && !rows[idx].master && _inMsZone(p)) {
+    // M/S 常驻；点 M/S 切换状态，点行内其它位置选中该音轨。
+    if (!rows[idx].master && _inMsZone(p)) {
       _toggleMs(p, idx);
       return;
     }
-    // 面板卡片单击只做整体收起/展开，不再进入轨道；进 PR 用内容区双击。
-    _toggleArrTracksExpanded();
-  }
-
-  /// 整体切换 AR 轨道卡片：收起（无 M/S、面板变窄）↔ 展开（带 M/S）。
-  void _toggleArrTracksExpanded() {
-    final next = !_arrTracksExpanded.value;
-    _arrTracksExpanded.value = next;
-    _arrPanelAnimFrom = _arrPanelWidth;
-    _arrPanelAnimTo = next ? kArrPanelExpandedWidth : kArrPanelCollapsedWidth;
-    _arrPanelAnimStart = DateTime.now();
+    _selectEditTrack(idx);
   }
 
   @override
   void _syncArrPanelWidth() {
-    final target = _arrTracksExpanded.value
-        ? kArrPanelExpandedWidth
-        : kArrPanelCollapsedWidth;
-    _arrPanelAnimStart = null;
-    _arrPanelWidth = target;
-    rust.setArrPanelWidth(target);
+    rust.setArrPanelWidth(kArrPanelWidth);
   }
 
   /// 命中 M/S 按钮：M 在左（警告色），S 在右（危险色）。
