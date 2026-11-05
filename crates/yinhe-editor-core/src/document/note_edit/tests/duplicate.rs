@@ -15,7 +15,9 @@ fn overlapping_rects_duplicate_once() {
 #[test]
 fn repeat_selected_creates_all_steps_in_one_action() {
     let mut doc = make_doc_with_note();
-    let action = doc.repeat_selected(100, 2).expect("重复应产生 undo");
+    let action = doc
+        .repeat_selected_keys_extent(100, 200, 200, 1, 0)
+        .expect("重复应产生 undo");
     let total: usize = (0..yinhe_types::KEY_COUNT)
         .map(|k| doc.data.model.notes[k].len())
         .sum();
@@ -190,7 +192,7 @@ fn duplicate_selected_to_skips_overlapping_copy() {
 fn repeat_selected_keys_fills_down() {
     let mut doc = make_doc_with_note(); // k60, tick 100..200
     let action = doc
-        .repeat_selected_keys(100, 0, 1, -1)
+        .repeat_selected_keys_extent(100, 200, 0, 1, -1)
         .expect("向下 Riff 应产生 undo");
     assert_eq!(doc.data.model.notes[59].len(), 1);
     assert_eq!(doc.data.model.notes[59][0].start_tick, 100);
@@ -204,7 +206,7 @@ fn repeat_selected_keys_fills_down() {
 #[test]
 fn repeat_selected_keys_fills_up() {
     let mut doc = make_doc_with_note();
-    doc.repeat_selected_keys(100, 0, 1, 1)
+    doc.repeat_selected_keys_extent(100, 200, 0, 1, 1)
         .expect("向上 Riff 应产生 undo");
     assert_eq!(doc.data.model.notes[61].len(), 1);
     assert_eq!(doc.data.model.notes[60].len(), 1);
@@ -214,7 +216,7 @@ fn repeat_selected_keys_fills_up() {
 fn repeat_selected_keys_diagonal_fills_block() {
     let mut doc = make_doc_with_note();
     let action = doc
-        .repeat_selected_keys(100, 1, 1, -1)
+        .repeat_selected_keys_extent(100, 200, 100, 1, -1)
         .expect("右下 Riff 应产生 undo");
     // 原 k60/t100 + 右 k60/t200 + 下 k59/t100 + 右下 k59/t200
     assert_eq!(doc.data.model.notes[60].len(), 2);
@@ -234,7 +236,7 @@ fn repeat_selected_keys_truncates_at_key_zero() {
 
     // 选区高度 2：k2 -> k0 有效，k1 -> k-1 截断
     let action = doc
-        .repeat_selected_keys(100, 0, 2, -1)
+        .repeat_selected_keys_extent(100, 200, 0, 2, -1)
         .expect("部分 key 有效时仍应复制");
     assert_eq!(doc.data.model.notes[0].len(), 1);
     assert!(doc.data.model.notes[1].is_empty() || doc.data.model.notes[1].len() == 1);
@@ -250,7 +252,7 @@ fn repeat_selected_tracks_fills_down() {
     doc.add_note(1, ev(100, 200, 60));
     doc.edit.selected.add_rect_track(100, 201, 60, 60, 1, 1);
 
-    doc.repeat_selected_tracks(100, 0, 1, 1)
+    doc.repeat_selected_tracks_extent(100, 200, 0, 1, 1)
         .expect("AR 向下 Riff 应产生 undo");
     assert_eq!(
         doc.data.model.notes[60]
@@ -268,7 +270,7 @@ fn repeat_selected_tracks_up_skips_conductor() {
     doc.edit.selected.add_rect_track(100, 201, 60, 60, 2, 2);
 
     // 上一步目标 track 1（MIDI）有效
-    doc.repeat_selected_tracks(100, 0, 1, -1)
+    doc.repeat_selected_tracks_extent(100, 200, 0, 1, -1)
         .expect("AR 向上 Riff 应产生 undo");
     assert_eq!(
         doc.data.model.notes[60]
@@ -281,13 +283,17 @@ fn repeat_selected_tracks_up_skips_conductor() {
     // 从 track 1 再上一步只有 Conductor(0)，应全部忽略
     doc.edit.selected.clear_rects();
     doc.edit.selected.add_rect_track(100, 201, 60, 60, 1, 1);
-    assert!(doc.repeat_selected_tracks(100, 0, 1, -1).is_none());
+    assert!(
+        doc.repeat_selected_tracks_extent(100, 200, 0, 1, -1)
+            .is_none()
+    );
 }
 
 #[test]
 fn repeat_selected_left_still_works() {
     let mut doc = make_doc_with_note(); // t100..200
-    doc.repeat_selected(100, -1).expect("向左 Riff 应产生 undo");
+    doc.repeat_selected_keys_extent(100, 200, -100, 1, 0)
+        .expect("向左 Riff 应产生 undo");
     let starts: Vec<u32> = doc.data.model.notes[60]
         .iter()
         .map(|n| n.start_tick)
