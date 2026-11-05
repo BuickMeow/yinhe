@@ -578,17 +578,16 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
 fn pr_track_colors(
     colors: &[[f32; 4]],
     active_track: Option<usize>,
+    track_selected: &HashSet<u16>,
     gray_other_tracks: bool,
 ) -> Vec<[f32; 4]> {
     if !gray_other_tracks {
         return colors.to_vec();
     }
-    let mut keep = vec![false; colors.len()];
-    if let Some(t) = active_track
-        && let Some(slot) = keep.get_mut(t)
-    {
-        *slot = true;
-    }
+    // 当前编辑轨 + 所有选中轨都保留彩色，避免多选时把选中的轨也灰掉。
+    let keep: Vec<bool> = (0..colors.len())
+        .map(|i| active_track == Some(i) || track_selected.contains(&(i as u16)))
+        .collect();
     yinhe_editor_core::document::gray_other_track_colors(colors, &keep)
 }
 
@@ -695,7 +694,12 @@ fn upload_pianoroll(
     preview_offset: (f32, f32),
 ) {
     let visible = effective_visible(track_visible, display_track);
-    let colors = pr_track_colors(track_colors, active_track, gray_other_tracks);
+    let colors = pr_track_colors(
+        track_colors,
+        active_track,
+        track_selected,
+        gray_other_tracks,
+    );
     let mut job = build_render_job(w as u32, h as u32, view, selection, &colors, 0.0, true);
     job.uniforms.ghost_dx = preview_offset.0;
     job.uniforms.ghost_dy = preview_offset.1;
@@ -836,12 +840,17 @@ pub fn render_automation_frame(
                 .unwrap_or_default();
             effective_visible(&raw, s.display_track)
         };
-        let track_colors = pr_track_colors(&s.track_colors, s.active_track, s.gray_other_tracks);
         let track_selected = s
             .document
             .as_ref()
             .map(|d| d.edit.track_selected.clone())
             .unwrap_or_default();
+        let track_colors = pr_track_colors(
+            &s.track_colors,
+            s.active_track,
+            &track_selected,
+            s.gray_other_tracks,
+        );
         let revision = s.model_revision;
         let pr_view = s.pr_view.clone();
         (
