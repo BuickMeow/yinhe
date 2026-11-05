@@ -1086,10 +1086,10 @@ impl App {
 
     /// Handle Riff repeat (bottom-right square): extend by `(extent_ticks, sy)`.
     fn handle_riff_repeat(&mut self, steps: Option<(i64, i64)>) {
-        let Some((extent, sy)) = steps else {
+        let Some((extent, extent_y)) = steps else {
             return;
         };
-        if extent == 0 && sy == 0 {
+        if extent == 0 && extent_y == 0 {
             return;
         }
         let Some(idx) = self.workspace.active_doc else {
@@ -1101,11 +1101,15 @@ impl App {
         };
         let sel_start = t0.round() as i64;
         let sel_end = t1.round() as i64;
-        let key_span = (i64::from(k1) - i64::from(k0) + 1).max(1) as u16;
         let before = doc.capture_snapshot();
-        if let Some(action) =
-            doc.repeat_selected_keys_extent(sel_start, sel_end, extent, key_span, sy)
-        {
+        if let Some(action) = doc.repeat_selected_keys_extent(
+            sel_start,
+            sel_end,
+            extent,
+            i64::from(k0),
+            i64::from(k1) + 1,
+            extent_y,
+        ) {
             doc.edit.pianoroll_view.base.dirty = true;
             doc.push_undo(action, t!("undo.duplicate_notes").as_ref(), before);
             self.notify_notes_changed();
@@ -1181,10 +1185,10 @@ impl App {
 
     /// Handle AR Riff repeat: extend by `(extent_ticks, sy)`.
     fn handle_arr_riff_repeat(&mut self, steps: Option<(i64, i64)>) {
-        let Some((extent, sy)) = steps else {
+        let Some((extent, extent_y)) = steps else {
             return;
         };
-        if extent == 0 && sy == 0 {
+        if extent == 0 && extent_y == 0 {
             return;
         }
         let Some(idx) = self.workspace.active_doc else {
@@ -1196,11 +1200,15 @@ impl App {
         };
         let sel_start = t0.round() as i64;
         let sel_end = t1.round() as i64;
-        let row_span = (r1 - r0 + 1).max(1) as u16;
         let before = doc.capture_snapshot();
-        if let Some(action) =
-            doc.repeat_selected_tracks_extent(sel_start, sel_end, extent, row_span, sy)
-        {
+        if let Some(action) = doc.repeat_selected_tracks_extent(
+            sel_start,
+            sel_end,
+            extent,
+            r0 as i64,
+            r1 as i64 + 1,
+            extent_y,
+        ) {
             doc.edit.arrange_view.base.dirty = true;
             doc.push_undo(action, t!("undo.duplicate_notes").as_ref(), before);
             self.notify_notes_changed();

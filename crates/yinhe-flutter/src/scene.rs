@@ -259,6 +259,8 @@ pub struct RenderScene {
     pub display_track: Option<usize>,
     /// PR 其他轨道去色：当前编辑轨保留彩色，其余轨道转黑白。
     pub gray_other_tracks: bool,
+    /// Riff 拖拽预览：只画一个“原选区 + 重复范围”的总框，隐藏持久选框。
+    pub riff_preview: bool,
     /// 当前工具（PR：5 种；AR 只用选框/手形）。
     pub tool: Tool,
     /// 当前编辑轨（AR 进入 PR 的轨；工具写入目标）。
@@ -344,6 +346,7 @@ impl Default for RenderScene {
             ppq: 480,
             display_track: None,
             gray_other_tracks: false,
+            riff_preview: false,
             tool: Tool::Select,
             active_track: None,
             preview: DragPreview::default(),
@@ -465,6 +468,7 @@ impl RenderScene {
         self.sel_anim = [0.0; 4];
         self.sel_target = None;
         self.sel_drag_active = false;
+        self.riff_preview = false;
         self.anim_last = None;
     }
 
@@ -1370,7 +1374,7 @@ pub fn overlay_json() -> String {
             t[3] + s.sel_anim[3],
         ]
     });
-    if let Some(doc) = s.document.as_ref() {
+    if let Some(doc) = s.document.as_ref().filter(|_| !s.riff_preview) {
         match s.view_mode {
             ViewMode::Pianoroll => {
                 let view = &s.pr_view;

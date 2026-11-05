@@ -88,7 +88,7 @@ pub struct PianoViewFeedback<'a> {
     pub note_resize_delta: &'a mut Option<(yinhe_editor_core::ResizeSide, i64)>,
     /// 选框右缘整体变速：新的时间跨度（tick）。
     pub selection_scale_delta: &'a mut Option<u64>,
-    /// 选框右下角 Riff：`(横向延伸 tick, 纵向完整步数)`。
+    /// 选框右下角 Riff：`(横向延伸 tick, 纵向延伸 key/轨道数)`。
     pub riff_repeat: &'a mut Option<(i64, i64)>,
     pub velocity_edits: &'a mut Vec<VelocityEdit>,
     /// 音符听觉预览请求（铅笔新建/拖拽、选框拖拽触发）。

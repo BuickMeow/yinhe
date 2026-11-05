@@ -110,7 +110,7 @@ pub(crate) fn sel_scale_frame(
     }
 }
 
-/// 右下角 Riff：横向按量化延伸 tick，纵向按完整选区高度步进；松手提交。
+/// 右下角 Riff：横向按量化延伸 tick，纵向按 key/轨道数延伸；松手提交。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn sel_riff_frame(
     _ui: &mut egui::Ui,
@@ -138,17 +138,16 @@ pub(crate) fn sel_riff_frame(
             } else {
                 0
             };
-            let span = (i64::from(k1) - i64::from(k0) + 1).max(1);
             let key = i64::from(view.cross_px_to_key(cross_px));
-            let sy = if key > i64::from(k1) {
-                ((key - i64::from(k1)) as f64 / span as f64).ceil() as i64
+            let extent_y = if key > i64::from(k1) {
+                key - i64::from(k1)
             } else if key < i64::from(k0) {
-                -((i64::from(k0) - key) as f64 / span as f64).ceil() as i64
+                key - i64::from(k0)
             } else {
                 0
             };
-            if extent != 0 || sy != 0 {
-                *riff_repeat = Some((extent, sy));
+            if extent != 0 || extent_y != 0 {
+                *riff_repeat = Some((extent, extent_y));
             }
         }
         state.sel_riff_state = None;

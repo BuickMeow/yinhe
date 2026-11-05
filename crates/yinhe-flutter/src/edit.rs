@@ -8,7 +8,6 @@ use std::collections::HashMap;
 
 use yinhe_core::TrackKind;
 use yinhe_editor_core::ResizeSide;
-use yinhe_editor_core::document::repeat_tiles_x;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::NoteSource;
 use yinhe_types::automation::{AutomationEvent, AutomationTarget};
@@ -1580,14 +1579,6 @@ fn view_tick_at(s: &RenderScene, x: f32) -> f64 {
     }
 }
 
-fn riff_step_offsets(steps: i64) -> Vec<i64> {
-    let mut out = vec![0];
-    if steps != 0 {
-        out.extend((1..=steps.unsigned_abs()).map(|i| i as i64 * steps.signum()));
-    }
-    out
-}
-
 fn riff_extent_x(d: &DragState, s: &RenderScene, x: f32) -> i64 {
     let Some((t0, t1, _, _)) = d.box_ticks else {
         return 0;
@@ -1606,43 +1597,34 @@ fn riff_extent_x(d: &DragState, s: &RenderScene, x: f32) -> i64 {
 /// 纵向步数（轴坐标）：PR 正 = key 增大（屏幕向上），AR 正 = track 增大（屏幕向下）。
 ///
 /// 按 key/轨道边界夹住，避免在完全越界的方向上生成预览/复制步。
-fn riff_steps_y(d: &DragState, s: &RenderScene, y: f32) -> i64 {
+fn riff_extent_y(d: &DragState, s: &RenderScene, y: f32) -> i64 {
     match s.view_mode {
         ViewMode::Pianoroll => {
             let Some((_, _, k0, k1)) = d.box_ticks else {
                 return 0;
             };
-            let span = (i64::from(k1) - i64::from(k0) + 1).max(1);
             let cur = i64::from(PrGeom::new(&s.pr_view).y_to_key(y));
-            let raw = if cur < i64::from(k0) {
-                -(((i64::from(k0) - cur) as f64 / span as f64).ceil() as i64)
+            if cur < i64::from(k0) {
+                cur - i64::from(k0)
             } else if cur > i64::from(k1) {
-                ((cur - i64::from(k1)) as f64 / span as f64).ceil() as i64
+                cur - i64::from(k1)
             } else {
                 0
-            };
-            let min = -(i64::from(k1) / span);
-            let max = (i64::from(yinhe_types::MAX_KEY) - i64::from(k0)) / span;
-            raw.clamp(min, max)
+            }
         }
         ViewMode::Arrangement => {
             let Some((t0, t1, _, _)) = d.box_ticks else {
                 return 0;
             };
             let (_, _, r0, r1) = d.box_rows.unwrap_or((t0, t1, 0, 0));
-            let span = (r1 - r0 + 1).max(1) as i64;
             let cur = ArGeom::new(&s.arr_view).y_to_row(y) as i64;
-            let raw = if cur > r1 as i64 {
-                ((cur - r1 as i64) as f64 / span as f64).ceil() as i64
+            if cur > r1 as i64 {
+                cur - r1 as i64
             } else if cur < r0 as i64 {
-                -((r0 as i64 - cur) as f64 / span as f64).ceil() as i64
+                cur - r0 as i64
             } else {
                 0
-            };
-            let last = s.num_tracks.saturating_sub(1) as i64;
-            let min = -(r0 as i64 / span);
-            let max = (last - r1 as i64) / span;
-            raw.clamp(min, max)
+            }
         }
     }
 }
@@ -1651,19 +1633,20 @@ fn riff_steps_y(d: &DragState, s: &RenderScene, y: f32) -> i64 {
 struct RiffSteps {
     /// 横向延伸 tick（带符号；不是完整选区宽度的步数）。
     extent_x: i64,
-    sy: i64,
+    /// 纵向延伸行数/key 数（带符号；不是完整选区高度的步数）。
+    extent_y: i64,
 }
 
 impl RiffSteps {
     fn is_zero(self) -> bool {
-        self.extent_x == 0 && self.sy == 0
+        self.extent_x == 0 && self.extent_y == 0
     }
 }
 
 fn riff_steps(d: &DragState, s: &RenderScene, x: f32, y: f32) -> RiffSteps {
     RiffSteps {
         extent_x: riff_extent_x(d, s, x),
-        sy: riff_steps_y(d, s, y),
+        extent_y: riff_extent_y(d, s, y),
     }
 }
 
@@ -1671,6 +1654,7 @@ fn update_riff_fill(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
     let steps = riff_steps(d, s, x, y);
     if steps.is_zero() {
         d.drag_hidden = Some(std::sync::Arc::new(yinhe_types::HiddenNotes::default()));
+        s.riff_preview = false;
         s.overlay_cells.clear();
         s.preview.clear();
         s.clear_box_preview();
@@ -1680,68 +1664,30 @@ fn update_riff_fill(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
     let Some((t0, t1, k0, k1)) = d.box_ticks else {
         return;
     };
-    let sel_start = t0.round() as i64;
-    let sel_end = t1.round() as i64;
-    let tiles = repeat_tiles_x(sel_start, sel_end, steps.extent_x);
-    let (lw, lh) = crate::logical_size();
-    let tick_lo = match s.view_mode {
-        ViewMode::Pianoroll => {
-            s.pr_view
-                .visible_main_range(s.pr_view.main_axis_len(lw, lh))
-                .0
-        }
-        ViewMode::Arrangement => s.arr_view.visible_tick_range(lw).0,
-    };
-    let tick_hi = match s.view_mode {
-        ViewMode::Pianoroll => {
-            s.pr_view
-                .visible_main_range(s.pr_view.main_axis_len(lw, lh))
-                .1
-        }
-        ViewMode::Arrangement => s.arr_view.visible_tick_range(lw).1,
-    };
-    let ys = riff_step_offsets(steps.sy);
-    let mut rects = Vec::new();
-    match s.view_mode {
+    let rect = match s.view_mode {
         ViewMode::Pianoroll => {
             let geom = PrGeom::new(&s.pr_view);
-            let span = i64::from(k1) - i64::from(k0) + 1;
-            let mut push = |copy_lo: f64, copy_hi: f64, sy: i64| {
-                if copy_hi <= tick_lo || copy_lo >= tick_hi {
-                    return;
-                }
-                let raw_k0 = i64::from(k0) + sy * span;
-                let raw_k1 = i64::from(k1) + sy * span;
-                if raw_k1 < 0 || raw_k0 > i64::from(yinhe_types::MAX_KEY) {
-                    return;
-                }
-                let nk0 = raw_k0.max(0) as u8;
-                let nk1 = raw_k1.min(i64::from(yinhe_types::MAX_KEY)) as u8;
-                if nk0 > nk1 {
-                    return;
-                }
-                let y0 = geom.key_to_y(nk1);
-                let y1 = geom.key_to_y(nk0) + geom.kh;
-                rects.push([geom.tick_to_x(copy_lo), y0, geom.tick_to_x(copy_hi), y1]);
-            };
-            for &sy in &ys {
-                if sy != 0 {
-                    push(t0, t1, sy);
-                }
-                for tile in &tiles {
-                    push(
-                        tile.dst_start as f64,
-                        (tile.dst_start + tile.len) as f64,
-                        sy,
-                    );
-                }
-            }
+            let new_t0 = (t0 + steps.extent_x.min(0) as f64).max(0.0);
+            let new_t1 = t1 + steps.extent_x.max(0) as f64;
+            let new_k0 = (i64::from(k0) + steps.extent_y.min(0))
+                .clamp(0, i64::from(yinhe_types::MAX_KEY)) as u8;
+            let new_k1 = (i64::from(k1) + steps.extent_y.max(0))
+                .clamp(0, i64::from(yinhe_types::MAX_KEY)) as u8;
+            [
+                geom.tick_to_x(new_t0),
+                geom.key_to_y(new_k1),
+                geom.tick_to_x(new_t1),
+                geom.key_to_y(new_k0) + geom.kh,
+            ]
         }
         ViewMode::Arrangement => {
             let geom = ArGeom::new(&s.arr_view);
             let (_, _, r0, r1) = d.box_rows.unwrap_or((t0, t1, 0, 0));
-            let span = (r1 - r0 + 1) as i64;
             let last = s.num_tracks.saturating_sub(1) as i64;
+            let new_t0 = (t0 + steps.extent_x.min(0) as f64).max(0.0);
+            let new_t1 = t1 + steps.extent_x.max(0) as f64;
+            let mut new_r0 = (r0 as i64 + steps.extent_y.min(0)).clamp(0, last) as usize;
+            let new_r1 = (r1 as i64 + steps.extent_y.max(0)).clamp(0, last) as usize;
             let conductor = s.document.as_ref().is_some_and(|d| {
                 d.data
                     .model
@@ -1749,45 +1695,21 @@ fn update_riff_fill(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
                     .first()
                     .is_some_and(|t| t.kind == yinhe_core::TrackKind::Master)
             });
-            let mut push = |copy_lo: f64, copy_hi: f64, sy: i64| {
-                if copy_hi <= tick_lo || copy_lo >= tick_hi {
-                    return;
-                }
-                let raw_r0 = r0 as i64 + sy * span;
-                let raw_r1 = r1 as i64 + sy * span;
-                if raw_r1 < 0 || raw_r0 > last {
-                    return;
-                }
-                let mut nr0 = raw_r0.max(0) as usize;
-                let nr1 = raw_r1.min(last) as usize;
-                if conductor {
-                    nr0 = nr0.max(1);
-                }
-                if nr0 > nr1 {
-                    return;
-                }
-                let y0 = geom.row_to_y(nr0);
-                let y1 = geom.row_to_y(nr1 + 1);
-                rects.push([geom.tick_to_x(copy_lo), y0, geom.tick_to_x(copy_hi), y1]);
-            };
-            for &sy in &ys {
-                if sy != 0 {
-                    push(t0, t1, sy);
-                }
-                for tile in &tiles {
-                    push(
-                        tile.dst_start as f64,
-                        (tile.dst_start + tile.len) as f64,
-                        sy,
-                    );
-                }
+            if conductor && new_r1 > 0 {
+                new_r0 = new_r0.max(1);
             }
+            [
+                geom.tick_to_x(new_t0),
+                geom.row_to_y(new_r0),
+                geom.tick_to_x(new_t1),
+                geom.row_to_y(new_r1 + 1),
+            ]
         }
-    }
-    // 每个重复段都按普通选框绘制（同一套填充/描边），不再额外画一个
-    // 覆盖全部重复段的总框，避免选框叠色或出现两套边框样式。
-    s.overlay_cells = rects;
-    s.clear_box_preview();
+    };
+    // 重复段不再逐段画框：整个“原选区 + 重复范围”只保留一个选框。
+    s.overlay_cells.clear();
+    s.riff_preview = true;
+    s.set_box_target(rect);
     s.preview.clear();
     bump(s);
 }
@@ -3185,18 +3107,17 @@ fn commit_riff(
         let new_t1 = t1 + extent.max(0) as f64;
         match view_mode {
             ViewMode::Pianoroll => {
-                let span = (i64::from(k1) - i64::from(k0) + 1) as u16;
                 let action = doc.repeat_selected_keys_extent(
                     sel_start,
                     sel_end,
                     steps.extent_x,
-                    span,
-                    steps.sy,
+                    i64::from(k0),
+                    i64::from(k1) + 1,
+                    steps.extent_y,
                 )?;
-                let key_off = steps.sy * i64::from(span);
-                let new_k0 = (i64::from(k0) + key_off.min(0))
+                let new_k0 = (i64::from(k0) + steps.extent_y.min(0))
                     .clamp(0, i64::from(yinhe_types::MAX_KEY)) as u8;
-                let new_k1 = (i64::from(k1) + key_off.max(0))
+                let new_k1 = (i64::from(k1) + steps.extent_y.max(0))
                     .clamp(0, i64::from(yinhe_types::MAX_KEY)) as u8;
 
                 // Riff 完成后把选框扩到“原选区 + 所有重复段”，并将新范围设为
@@ -3218,18 +3139,17 @@ fn commit_riff(
             }
             ViewMode::Arrangement => {
                 let (_, _, r0, r1) = d.box_rows.unwrap_or((t0, t1, 0, 0));
-                let span = (r1 - r0 + 1) as u16;
                 let action = doc.repeat_selected_tracks_extent(
                     sel_start,
                     sel_end,
                     steps.extent_x,
-                    span,
-                    steps.sy,
+                    r0 as i64,
+                    r1 as i64 + 1,
+                    steps.extent_y,
                 )?;
-                let row_off = steps.sy * i64::from(span);
                 let last = s.num_tracks.saturating_sub(1) as i64;
-                let mut new_r0 = (r0 as i64 + row_off.min(0)).clamp(0, last) as usize;
-                let new_r1 = (r1 as i64 + row_off.max(0)).clamp(0, last) as usize;
+                let mut new_r0 = (r0 as i64 + steps.extent_y.min(0)).clamp(0, last) as usize;
+                let new_r1 = (r1 as i64 + steps.extent_y.max(0)).clamp(0, last) as usize;
                 // Conductor 不参与 Riff：选框也不要把 0 号轨圈进去。
                 if new_r1 > 0
                     && doc

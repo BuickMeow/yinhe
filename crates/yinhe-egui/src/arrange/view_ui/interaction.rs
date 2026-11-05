@@ -239,16 +239,15 @@ pub(crate) fn sel_drag_frame_arrange(
                 .hit_at_music_y(local.y + view.base.scroll_y, view.lane_height())
                 .map(|h| h.track() as i64)
                 .unwrap_or(r1 as i64);
-            let span = (r1 - r0 + 1).max(1) as i64;
-            let sy = if row > r1 as i64 {
-                ((row - r1 as i64) as f64 / span as f64).ceil() as i64
+            let extent_y = if row > r1 as i64 {
+                row - r1 as i64
             } else if row < r0 as i64 {
-                -((r0 as i64 - row) as f64 / span as f64).ceil() as i64
+                row - r0 as i64
             } else {
                 0
             };
-            if extent != 0 || sy != 0 {
-                *edit.arr_riff_steps = Some((extent, sy));
+            if extent != 0 || extent_y != 0 {
+                *edit.arr_riff_steps = Some((extent, extent_y));
             }
         }
         riff_state = None;
