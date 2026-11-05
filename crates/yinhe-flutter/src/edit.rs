@@ -1667,50 +1667,13 @@ fn riff_steps(d: &DragState, s: &RenderScene, x: f32, y: f32) -> RiffSteps {
     }
 }
 
-/// Riff 拖拽时选区的视觉外框：原选框 ∪ 所有重复段。
-///
-/// 用 `set_sel_target` 走和其它控制点同一套缓动，避免重复框突然出现。
-fn riff_union_rect(s: &RenderScene, d: &DragState, rects: &[[f32; 4]]) -> Option<[f32; 4]> {
-    let (t0, t1, k0, k1) = d.box_ticks?;
-    let mut u = match s.view_mode {
-        ViewMode::Pianoroll => {
-            let geom = PrGeom::new(&s.pr_view);
-            [
-                geom.tick_to_x(t0),
-                geom.key_to_y(k1),
-                geom.tick_to_x(t1),
-                geom.key_to_y(k0) + geom.kh,
-            ]
-        }
-        ViewMode::Arrangement => {
-            let (_, _, r0, r1) = d.box_rows.unwrap_or((t0, t1, 0, 0));
-            let geom = ArGeom::new(&s.arr_view);
-            [
-                geom.tick_to_x(t0),
-                geom.row_to_y(r0),
-                geom.tick_to_x(t1),
-                geom.row_to_y(r1 + 1),
-            ]
-        }
-    };
-    for r in rects {
-        u[0] = u[0].min(r[0]);
-        u[1] = u[1].min(r[1]);
-        u[2] = u[2].max(r[2]);
-        u[3] = u[3].max(r[3]);
-    }
-    Some(u)
-}
-
 fn update_riff_fill(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
     let steps = riff_steps(d, s, x, y);
     if steps.is_zero() {
         d.drag_hidden = Some(std::sync::Arc::new(yinhe_types::HiddenNotes::default()));
         s.overlay_cells.clear();
         s.preview.clear();
-        if let Some(union) = riff_union_rect(s, d, &[]) {
-            s.set_box_target(union);
-        }
+        s.clear_box_preview();
         bump(s);
         return;
     }
@@ -1821,11 +1784,10 @@ fn update_riff_fill(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
             }
         }
     }
-    if let Some(union) = riff_union_rect(s, d, &rects) {
-        // 用独立的预览外框做缓动：原选区与方块保持不动，重复范围平滑展开。
-        s.set_box_target(union);
-    }
+    // 每个重复段都按普通选框绘制（同一套填充/描边），不再额外画一个
+    // 覆盖全部重复段的总框，避免选框叠色或出现两套边框样式。
     s.overlay_cells = rects;
+    s.clear_box_preview();
     s.preview.clear();
     bump(s);
 }

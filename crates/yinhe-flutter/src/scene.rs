@@ -400,6 +400,13 @@ impl RenderScene {
         self.anim_last = Some(std::time::Instant::now());
     }
 
+    /// 只清除临时拖动框，保留持久选框（Riff 预览用）。
+    pub fn clear_box_preview(&mut self) {
+        self.box_target = None;
+        self.box_anim = [0.0; 4];
+        self.overlay_box = None;
+    }
+
     /// 不参与缓动的选框（铅笔等连续预览）。
     pub fn set_box_static(&mut self, target: [f32; 4]) {
         self.box_target = None;
