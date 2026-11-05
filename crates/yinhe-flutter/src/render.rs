@@ -574,6 +574,15 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
     }
 }
 
+/// 音轨置顶集合：真实选中轨 + 当前编辑轨（仅用于渲染排序）。
+fn z_order_track_set(track_selected: &HashSet<u16>, active_track: Option<usize>) -> HashSet<u16> {
+    let mut out = track_selected.clone();
+    if let Some(t) = active_track {
+        out.insert(t as u16);
+    }
+    out
+}
+
 /// PR 用的轨道颜色：开启去色时，仅当前编辑轨保留原色。
 fn pr_track_colors(
     colors: &[[f32; 4]],
@@ -700,6 +709,10 @@ fn upload_pianoroll(
         track_selected,
         gray_other_tracks,
     );
+    // 当前编辑轨必须置顶：track_selected 只包含“有选中音符的轨”，
+    // 从顶部栏切轨时它可能为空；这里把 active_track 并入渲染专用集合，
+    // 不改文档里的真实选择集。
+    let z_selected = z_order_track_set(track_selected, active_track);
     let mut job = build_render_job(w as u32, h as u32, view, selection, &colors, 0.0, true);
     job.uniforms.ghost_dx = preview_offset.0;
     job.uniforms.ghost_dy = preview_offset.1;
@@ -713,7 +726,7 @@ fn upload_pianoroll(
         width: w,
         height: h,
         track_visible: &visible,
-        track_selected,
+        track_selected: &z_selected,
         hidden_notes: preview.hidden.as_ref(),
         hidden_hash: preview.hidden_hash,
         selection: Some(selection),
@@ -1158,3 +1171,23 @@ fn upload_arrangement(
 }
 
 // ── 装饰层（wgpu decor，画在音符下层，像素级对齐桌面视觉）──
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn z_order_includes_active_track() {
+        let selected: HashSet<u16> = [2, 5].into_iter().collect();
+        let out = z_order_track_set(&selected, Some(3));
+        assert!(out.contains(&2) && out.contains(&5) && out.contains(&3));
+        // 不修改传入集合。
+        assert_eq!(selected.len(), 2);
+    }
+
+    #[test]
+    fn z_order_without_active_keeps_selected() {
+        let selected: HashSet<u16> = [7].into_iter().collect();
+        assert_eq!(z_order_track_set(&selected, None), selected);
+    }
+}

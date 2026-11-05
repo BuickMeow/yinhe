@@ -297,6 +297,7 @@ pub fn show(
         &*selected,
         track_visible,
         track_selected,
+        write_track,
         &hidden_notes,
         track_colors,
         revision,

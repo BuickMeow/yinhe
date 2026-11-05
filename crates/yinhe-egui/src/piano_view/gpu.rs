@@ -39,6 +39,7 @@ pub(crate) fn upload_and_prepare(
     selected: &yinhe_core::Selection,
     track_visible: &[bool],
     track_selected: &HashSet<u16>,
+    z_order_track: Option<u16>,
     hidden_notes: &HashSet<(u16, u32, u8)>,
     track_colors: &[[f32; 4]],
     revision: u64,
@@ -66,6 +67,13 @@ pub(crate) fn upload_and_prepare(
     perf_on: bool,
     t_prepare_end: &mut Option<Instant>,
 ) -> (bool, yinhe_theme::GpuTheme) {
+    // 当前编辑轨必须置顶：track_selected 可能为空（例如只切了主音轨），
+    // 渲染排序用集合额外并入主音轨，不改文档里的真实选择集。
+    let mut z_selected = track_selected.clone();
+    if let Some(t) = z_order_track {
+        z_selected.insert(t);
+    }
+
     // LOD 开关同步到主 renderer（决定 GPU cull 路径是否选摘要层）。
     pianoroll.set_lod_enabled(lod_enabled);
     // ── AM 力度条 LOD 摘要：编辑/切轨后后台防抖重建 ──
@@ -83,7 +91,7 @@ pub(crate) fn upload_and_prepare(
             revision,
             note_revisions,
             track_visible,
-            track_selected,
+            track_selected: &z_selected,
             hidden_notes,
             tv_hash,
             hidden_hash: yinhe_wgpu::hash_hidden(hidden_notes),
@@ -180,7 +188,7 @@ pub(crate) fn upload_and_prepare(
                 width: w as f32,
                 height: h as f32,
                 track_visible,
-                track_selected,
+                track_selected: &z_selected,
                 hidden_notes,
                 hidden_hash: yinhe_wgpu::hash_hidden(hidden_notes),
                 selection: Some(selected),
