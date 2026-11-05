@@ -1084,12 +1084,12 @@ impl App {
         }
     }
 
-    /// Handle Riff repeat (bottom-right square): repeat the selection by `(sx, sy)`.
+    /// Handle Riff repeat (bottom-right square): extend by `(extent_ticks, sy)`.
     fn handle_riff_repeat(&mut self, steps: Option<(i64, i64)>) {
-        let Some((sx, sy)) = steps else {
+        let Some((extent, sy)) = steps else {
             return;
         };
-        if sx == 0 && sy == 0 {
+        if extent == 0 && sy == 0 {
             return;
         }
         let Some(idx) = self.workspace.active_doc else {
@@ -1099,10 +1099,13 @@ impl App {
         let Some(&(t0, t1, k0, k1)) = doc.edit.sel_rect.rects.first() else {
             return;
         };
-        let width = (t1 - t0).max(1.0).round() as i64;
+        let sel_start = t0.round() as i64;
+        let sel_end = t1.round() as i64;
         let key_span = (i64::from(k1) - i64::from(k0) + 1).max(1) as u16;
         let before = doc.capture_snapshot();
-        if let Some(action) = doc.repeat_selected_keys(width, sx, key_span, sy) {
+        if let Some(action) =
+            doc.repeat_selected_keys_extent(sel_start, sel_end, extent, key_span, sy)
+        {
             doc.edit.pianoroll_view.base.dirty = true;
             doc.push_undo(action, t!("undo.duplicate_notes").as_ref(), before);
             self.notify_notes_changed();
@@ -1176,12 +1179,12 @@ impl App {
         }
     }
 
-    /// Handle AR Riff repeat: repeat selected notes by `(sx, sy)`.
+    /// Handle AR Riff repeat: extend by `(extent_ticks, sy)`.
     fn handle_arr_riff_repeat(&mut self, steps: Option<(i64, i64)>) {
-        let Some((sx, sy)) = steps else {
+        let Some((extent, sy)) = steps else {
             return;
         };
-        if sx == 0 && sy == 0 {
+        if extent == 0 && sy == 0 {
             return;
         }
         let Some(idx) = self.workspace.active_doc else {
@@ -1191,10 +1194,13 @@ impl App {
         let Some(&(t0, t1, r0, r1)) = doc.edit.arr_sel_rect.first() else {
             return;
         };
-        let width = (t1 - t0).max(1.0).round() as i64;
+        let sel_start = t0.round() as i64;
+        let sel_end = t1.round() as i64;
         let row_span = (r1 - r0 + 1).max(1) as u16;
         let before = doc.capture_snapshot();
-        if let Some(action) = doc.repeat_selected_tracks(width, sx, row_span, sy) {
+        if let Some(action) =
+            doc.repeat_selected_tracks_extent(sel_start, sel_end, extent, row_span, sy)
+        {
             doc.edit.arrange_view.base.dirty = true;
             doc.push_undo(action, t!("undo.duplicate_notes").as_ref(), before);
             self.notify_notes_changed();

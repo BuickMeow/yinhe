@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::batch_ops;
-use crate::document::Document;
+use crate::document::{Document, repeat_tiles_x};
 use crate::history::{NoteDelta, UndoAction};
 
 /// Riff 的纵向轴：PR 复制到不同 key，AR 复制到不同 track。
@@ -23,6 +23,47 @@ fn step_offsets(steps: i64) -> Vec<i64> {
         out.extend((1..=steps.unsigned_abs()).map(|i| i as i64 * steps.signum()));
     }
     out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_repeat_note(
+    model: &yinhe_core::YinModel,
+    new_by_key: &mut std::collections::HashMap<u8, Vec<yinhe_types::Note>>,
+    allow_overlap: bool,
+    new_key: u8,
+    new_track: u16,
+    new_start: i64,
+    new_end: i64,
+    velocity: u8,
+) {
+    let start = new_start.max(0);
+    let mut end = new_end.max(0);
+    if end <= start {
+        return;
+    }
+    let max_tick = i64::from(u32::MAX);
+    if start > max_tick {
+        return;
+    }
+    end = end.min(max_tick);
+    if end <= start {
+        return;
+    }
+    let start = start as u32;
+    let end = end as u32;
+    if !allow_overlap && batch_ops::has_overlapping_note(model, new_track, new_key, start, end) {
+        return;
+    }
+    new_by_key
+        .entry(new_key)
+        .or_default()
+        .push(yinhe_types::Note {
+            id: 0,
+            start_tick: start,
+            end_tick: end,
+            velocity,
+            track: new_track,
+        });
 }
 
 impl Document {
@@ -78,6 +119,160 @@ impl Document {
         steps_y: i64,
     ) -> Option<UndoAction> {
         self.repeat_selected_impl(width_ticks, steps_x, row_span, steps_y, FillAxis::Track)
+    }
+
+    /// PR Riff：横向按 `extent_ticks` 延伸到选区外，纵向按 `key_span` 重复。
+    ///
+    /// `extent_ticks` 是量化后的拖拽距离（可为负），不是完整选区宽度步数。
+    /// 最后一段按剩余距离裁剪：选区 1 小节、延伸到 5/4 小节时，生成
+    /// 1 小节完整副本 + 开头 1/4 小节的部分副本。
+    pub fn repeat_selected_keys_extent(
+        &mut self,
+        sel_start: i64,
+        sel_end: i64,
+        extent_ticks: i64,
+        key_span: u16,
+        steps_y: i64,
+    ) -> Option<UndoAction> {
+        self.repeat_selected_extent_impl(
+            sel_start,
+            sel_end,
+            extent_ticks,
+            key_span,
+            steps_y,
+            FillAxis::Key,
+        )
+    }
+
+    /// AR Riff：横向按 `extent_ticks` 延伸到选区外，纵向按 `row_span` 重复。
+    pub fn repeat_selected_tracks_extent(
+        &mut self,
+        sel_start: i64,
+        sel_end: i64,
+        extent_ticks: i64,
+        row_span: u16,
+        steps_y: i64,
+    ) -> Option<UndoAction> {
+        self.repeat_selected_extent_impl(
+            sel_start,
+            sel_end,
+            extent_ticks,
+            row_span,
+            steps_y,
+            FillAxis::Track,
+        )
+    }
+
+    fn repeat_selected_extent_impl(
+        &mut self,
+        sel_start: i64,
+        sel_end: i64,
+        extent_ticks: i64,
+        span: u16,
+        steps_y: i64,
+        axis: FillAxis,
+    ) -> Option<UndoAction> {
+        if self.edit.selected.is_empty() || (extent_ticks == 0 && steps_y == 0) {
+            return None;
+        }
+        let width = sel_end - sel_start;
+        if width <= 0 {
+            return None;
+        }
+        if steps_y != 0 && span == 0 {
+            return None;
+        }
+        let allow_overlap = self.edit.allow_overlapping_notes;
+        let num_tracks = self.data.model.tracks.len();
+        let tiles = repeat_tiles_x(sel_start, sel_end, extent_ticks);
+        let ys = step_offsets(steps_y);
+        let after = {
+            let model = &self.data.model;
+            let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
+                std::collections::HashMap::new();
+            batch_ops::for_each_selected(model, &self.edit.selected, |note, old_key| {
+                for &sy in &ys {
+                    let (new_key, new_track) = match axis {
+                        FillAxis::Key => {
+                            let k = i64::from(old_key) + sy.saturating_mul(i64::from(span));
+                            if !(0..=i64::from(yinhe_types::MAX_KEY)).contains(&k) {
+                                continue;
+                            }
+                            (k as u8, note.track)
+                        }
+                        FillAxis::Track => {
+                            let t = i64::from(note.track) + sy.saturating_mul(i64::from(span));
+                            if t < 0 || t as usize >= num_tracks {
+                                continue;
+                            }
+                            let track = &model.tracks[t as usize];
+                            if track.kind != yinhe_core::TrackKind::Midi {
+                                continue;
+                            }
+                            (old_key, t as u16)
+                        }
+                    };
+                    // 纵向副本保留整条音符（与旧 Riff 一致）。
+                    if sy != 0 {
+                        push_repeat_note(
+                            model,
+                            &mut new_by_key,
+                            allow_overlap,
+                            new_key,
+                            new_track,
+                            i64::from(note.start_tick),
+                            i64::from(note.end_tick),
+                            note.velocity,
+                        );
+                    }
+                    // 横向重复：完整周期复制整条音符，最后一段按选区窗口裁剪。
+                    for tile in &tiles {
+                        let full = tile.len == width;
+                        let src_lo = if full { i64::MIN } else { tile.src_start };
+                        let src_hi = if full {
+                            i64::MAX
+                        } else {
+                            tile.src_start + tile.len
+                        };
+                        let src_start = i64::from(note.start_tick).max(src_lo);
+                        let src_end = i64::from(note.end_tick).min(src_hi);
+                        if src_end <= src_start {
+                            continue;
+                        }
+                        let offset = tile.dst_start - tile.src_start;
+                        push_repeat_note(
+                            model,
+                            &mut new_by_key,
+                            allow_overlap,
+                            new_key,
+                            new_track,
+                            src_start + offset,
+                            src_end + offset,
+                            note.velocity,
+                        );
+                    }
+                }
+            });
+            if new_by_key.is_empty() {
+                return None;
+            }
+            let model = Arc::make_mut(&mut self.data.model);
+            let mut after = Vec::new();
+            for (key, notes) in new_by_key.iter_mut() {
+                for n in notes.iter_mut() {
+                    n.id = model.alloc_note_id();
+                    after.push((*n, *key));
+                }
+            }
+            batch_ops::insert_batch(model, new_by_key);
+            after
+        };
+        self.data.rebuild_model_dirty();
+        self.data.bump_revision();
+        Some(UndoAction::Notes(NoteDelta {
+            before: vec![],
+            after,
+        }))
     }
 
     fn repeat_selected_impl(

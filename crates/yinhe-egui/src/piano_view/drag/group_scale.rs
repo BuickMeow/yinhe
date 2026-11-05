@@ -110,7 +110,7 @@ pub(crate) fn sel_scale_frame(
     }
 }
 
-/// 右下角 Riff：按选区宽度/高度计算重复步数，松手交给 App 提交一次 undo。
+/// 右下角 Riff：横向按量化延伸 tick，纵向按完整选区高度步进；松手提交。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn sel_riff_frame(
     _ui: &mut egui::Ui,
@@ -131,11 +131,10 @@ pub(crate) fn sel_riff_frame(
         if let Some(pos) = pointer.hover_pos() {
             let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
             let (tick, cross_px) = snapped_main_tick(view, local, quantize, ppq, bar_line_data);
-            let width = (t1 - t0).max(1.0);
-            let sx = if tick > t1 {
-                ((tick - t1) / width).ceil() as i64
+            let extent = if tick > t1 {
+                (tick - t1).round() as i64
             } else if tick < t0 {
-                -((t0 - tick) / width).ceil() as i64
+                -((t0 - tick).round() as i64)
             } else {
                 0
             };
@@ -148,8 +147,8 @@ pub(crate) fn sel_riff_frame(
             } else {
                 0
             };
-            if sx != 0 || sy != 0 {
-                *riff_repeat = Some((sx, sy));
+            if extent != 0 || sy != 0 {
+                *riff_repeat = Some((extent, sy));
             }
         }
         state.sel_riff_state = None;

@@ -708,6 +708,48 @@ pub fn gray_other_track_colors(colors: &[[f32; 4]], keep: &[bool]) -> Vec<[f32; 
         .collect()
 }
 
+/// Riff 横向重复的一段：从选区复制 `len` tick 到目标位置。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RepeatTile {
+    /// 源窗口起点（选区内的绝对 tick）。
+    pub src_start: i64,
+    /// 目标起点（绝对 tick）。
+    pub dst_start: i64,
+    /// 拷贝长度。
+    pub len: i64,
+}
+
+/// 按 `extent`（从选区边界向外延伸的 tick 数）生成横向重复段。
+///
+/// 选区宽度是重复周期：先铺满完整周期，最后一段按剩余长度裁剪。
+/// 例如选区 1 小节、延伸到 5/4 小节：先复制 1 小节，再复制开头 1/4 小节。
+/// 向左延伸时裁剪的是选区尾部，保证重复序列连续。
+pub fn repeat_tiles_x(sel_start: i64, sel_end: i64, extent: i64) -> Vec<RepeatTile> {
+    let width = sel_end - sel_start;
+    if width <= 0 || extent == 0 {
+        return Vec::new();
+    }
+    let distance = extent.saturating_abs();
+    let dir = extent.signum();
+    let mut out = Vec::new();
+    let mut covered = 0i64;
+    while covered < distance {
+        let len = (distance - covered).min(width);
+        let (src_start, dst_start) = if dir > 0 {
+            (sel_start, sel_end + covered)
+        } else {
+            (sel_end - len, sel_start - covered - len)
+        };
+        out.push(RepeatTile {
+            src_start,
+            dst_start,
+            len,
+        });
+        covered += len;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -962,6 +1004,58 @@ mod tests {
             colors.to_vec()
         );
         assert_eq!(gray_other_track_colors(&colors, &[]), colors.to_vec());
+    }
+
+    #[test]
+    fn repeat_tiles_fill_full_periods_then_partial() {
+        let tiles = repeat_tiles_x(0, 1920, 2400);
+        assert_eq!(
+            tiles,
+            vec![
+                RepeatTile {
+                    src_start: 0,
+                    dst_start: 1920,
+                    len: 1920
+                },
+                RepeatTile {
+                    src_start: 0,
+                    dst_start: 3840,
+                    len: 480
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn repeat_tiles_left_clips_selection_tail() {
+        let tiles = repeat_tiles_x(1920, 3840, -2400);
+        assert_eq!(
+            tiles,
+            vec![
+                RepeatTile {
+                    src_start: 1920,
+                    dst_start: 0,
+                    len: 1920
+                },
+                RepeatTile {
+                    src_start: 3360,
+                    dst_start: -480,
+                    len: 480
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn repeat_tiles_partial_first_copy() {
+        assert_eq!(
+            repeat_tiles_x(0, 1920, 480),
+            vec![RepeatTile {
+                src_start: 0,
+                dst_start: 1920,
+                len: 480
+            }]
+        );
     }
 
     #[test]

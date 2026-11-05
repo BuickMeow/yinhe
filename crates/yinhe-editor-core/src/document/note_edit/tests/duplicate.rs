@@ -294,3 +294,48 @@ fn repeat_selected_left_still_works() {
         .collect();
     assert_eq!(starts, vec![0, 100], "副本落在 [0,100)，原件保留");
 }
+
+// ── 按量化延伸的 Riff（最后一段裁剪）──
+
+#[test]
+fn repeat_extent_right_adds_partial_tail() {
+    let mut doc = make_doc_with_note(); // 音符 [100,200)，选区宽 100
+    doc.repeat_selected_keys_extent(100, 200, 125, 1, 0)
+        .expect("应产生完整 + 部分副本");
+    let notes = &doc.data.model.notes[60];
+    let spans: Vec<(u32, u32)> = notes.iter().map(|n| (n.start_tick, n.end_tick)).collect();
+    assert_eq!(
+        spans,
+        vec![(100, 200), (200, 300), (300, 325)],
+        "1.25 个选区宽 = 1 个完整副本 + 开头 0.25 的部分副本"
+    );
+}
+
+#[test]
+fn repeat_extent_left_clips_selection_tail() {
+    let mut doc = Document::empty();
+    doc.add_note(1, ev(200, 300, 60));
+    doc.edit.selected.add_rect_track(200, 301, 60, 60, 1, 1);
+    doc.repeat_selected_keys_extent(200, 300, -125, 1, 0)
+        .expect("应产生完整 + 部分副本");
+    let notes = &doc.data.model.notes[60];
+    let spans: Vec<(u32, u32)> = notes.iter().map(|n| (n.start_tick, n.end_tick)).collect();
+    assert_eq!(
+        spans,
+        vec![(75, 100), (100, 200), (200, 300)],
+        "向左延伸裁剪选区尾部"
+    );
+}
+
+#[test]
+fn repeat_extent_two_axes_fills_block() {
+    let mut doc = make_doc_with_note();
+    doc.repeat_selected_keys_extent(100, 200, 125, 1, -1)
+        .expect("二维 Riff 应产生副本");
+    assert_eq!(doc.data.model.notes[60].len(), 3, "本行：原 + 完整 + 部分");
+    assert_eq!(
+        doc.data.model.notes[59].len(),
+        3,
+        "下行：纵向 + 横向完整/部分"
+    );
+}

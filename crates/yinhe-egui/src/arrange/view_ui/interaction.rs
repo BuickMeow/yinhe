@@ -228,11 +228,10 @@ pub(crate) fn sel_drag_frame_arrange(
                 data.ppq,
                 data.bar_line_data,
             );
-            let width = (t1 - t0).max(1.0);
-            let sx = if tick > t1 {
-                ((tick - t1) / width).ceil() as i64
+            let extent = if tick > t1 {
+                (tick - t1).round() as i64
             } else if tick < t0 {
-                -((t0 - tick) / width).ceil() as i64
+                -((t0 - tick).round() as i64)
             } else {
                 0
             };
@@ -248,8 +247,8 @@ pub(crate) fn sel_drag_frame_arrange(
             } else {
                 0
             };
-            if sx != 0 || sy != 0 {
-                *edit.arr_riff_steps = Some((sx, sy));
+            if extent != 0 || sy != 0 {
+                *edit.arr_riff_steps = Some((extent, sy));
             }
         }
         riff_state = None;

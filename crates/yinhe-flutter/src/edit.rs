@@ -8,6 +8,7 @@ use std::collections::HashMap;
 
 use yinhe_core::TrackKind;
 use yinhe_editor_core::ResizeSide;
+use yinhe_editor_core::document::repeat_tiles_x;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::NoteSource;
 use yinhe_types::automation::{AutomationEvent, AutomationTarget};
@@ -1587,17 +1588,16 @@ fn riff_step_offsets(steps: i64) -> Vec<i64> {
     out
 }
 
-fn riff_steps_x(d: &DragState, s: &RenderScene, x: f32) -> i64 {
+fn riff_extent_x(d: &DragState, s: &RenderScene, x: f32) -> i64 {
     let Some((t0, t1, _, _)) = d.box_ticks else {
         return 0;
     };
-    let width = (t1 - t0).max(1.0);
     let cur = view_tick_at(s, x);
     if cur > t1 {
-        ((cur - t1) / width).ceil() as i64
+        (cur - t1).round() as i64
     } else if cur < t0 {
-        let max_left = (t0 / width).floor() as i64;
-        (-(((t0 - cur) / width).ceil() as i64)).max(-max_left)
+        // 左侧不能越过 tick 0；裁到选区起点即可。
+        (-((t0 - cur).round() as i64)).max(-(t0.round() as i64))
     } else {
         0
     }
@@ -1649,19 +1649,20 @@ fn riff_steps_y(d: &DragState, s: &RenderScene, y: f32) -> i64 {
 
 #[derive(Clone, Copy)]
 struct RiffSteps {
-    sx: i64,
+    /// 横向延伸 tick（带符号；不是完整选区宽度的步数）。
+    extent_x: i64,
     sy: i64,
 }
 
 impl RiffSteps {
     fn is_zero(self) -> bool {
-        self.sx == 0 && self.sy == 0
+        self.extent_x == 0 && self.sy == 0
     }
 }
 
 fn riff_steps(d: &DragState, s: &RenderScene, x: f32, y: f32) -> RiffSteps {
     RiffSteps {
-        sx: riff_steps_x(d, s, x),
+        extent_x: riff_extent_x(d, s, x),
         sy: riff_steps_y(d, s, y),
     }
 }
@@ -1716,7 +1717,9 @@ fn update_riff_fill(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
     let Some((t0, t1, k0, k1)) = d.box_ticks else {
         return;
     };
-    let width = (t1 - t0).max(1.0);
+    let sel_start = t0.round() as i64;
+    let sel_end = t1.round() as i64;
+    let tiles = repeat_tiles_x(sel_start, sel_end, steps.extent_x);
     let (lw, lh) = crate::logical_size();
     let tick_lo = match s.view_mode {
         ViewMode::Pianoroll => {
@@ -1734,37 +1737,40 @@ fn update_riff_fill(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
         }
         ViewMode::Arrangement => s.arr_view.visible_tick_range(lw).1,
     };
-    let xs = riff_step_offsets(steps.sx);
     let ys = riff_step_offsets(steps.sy);
     let mut rects = Vec::new();
     match s.view_mode {
         ViewMode::Pianoroll => {
             let geom = PrGeom::new(&s.pr_view);
             let span = i64::from(k1) - i64::from(k0) + 1;
-            for &sx in &xs {
-                for &sy in &ys {
-                    if sx == 0 && sy == 0 {
-                        continue;
-                    }
-                    let offset = width * sx as f64;
-                    let copy_lo = t0 + offset;
-                    let copy_hi = t1 + offset;
-                    if copy_hi <= tick_lo || copy_lo >= tick_hi {
-                        continue;
-                    }
-                    let raw_k0 = i64::from(k0) + sy * span;
-                    let raw_k1 = i64::from(k1) + sy * span;
-                    if raw_k1 < 0 || raw_k0 > i64::from(yinhe_types::MAX_KEY) {
-                        continue;
-                    }
-                    let nk0 = raw_k0.max(0) as u8;
-                    let nk1 = raw_k1.min(i64::from(yinhe_types::MAX_KEY)) as u8;
-                    if nk0 > nk1 {
-                        continue;
-                    }
-                    let y0 = geom.key_to_y(nk1);
-                    let y1 = geom.key_to_y(nk0) + geom.kh;
-                    rects.push([geom.tick_to_x(copy_lo), y0, geom.tick_to_x(copy_hi), y1]);
+            let mut push = |copy_lo: f64, copy_hi: f64, sy: i64| {
+                if copy_hi <= tick_lo || copy_lo >= tick_hi {
+                    return;
+                }
+                let raw_k0 = i64::from(k0) + sy * span;
+                let raw_k1 = i64::from(k1) + sy * span;
+                if raw_k1 < 0 || raw_k0 > i64::from(yinhe_types::MAX_KEY) {
+                    return;
+                }
+                let nk0 = raw_k0.max(0) as u8;
+                let nk1 = raw_k1.min(i64::from(yinhe_types::MAX_KEY)) as u8;
+                if nk0 > nk1 {
+                    return;
+                }
+                let y0 = geom.key_to_y(nk1);
+                let y1 = geom.key_to_y(nk0) + geom.kh;
+                rects.push([geom.tick_to_x(copy_lo), y0, geom.tick_to_x(copy_hi), y1]);
+            };
+            for &sy in &ys {
+                if sy != 0 {
+                    push(t0, t1, sy);
+                }
+                for tile in &tiles {
+                    push(
+                        tile.dst_start as f64,
+                        (tile.dst_start + tile.len) as f64,
+                        sy,
+                    );
                 }
             }
         }
@@ -1780,33 +1786,37 @@ fn update_riff_fill(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
                     .first()
                     .is_some_and(|t| t.kind == yinhe_core::TrackKind::Master)
             });
-            for &sx in &xs {
-                for &sy in &ys {
-                    if sx == 0 && sy == 0 {
-                        continue;
-                    }
-                    let offset = width * sx as f64;
-                    let copy_lo = t0 + offset;
-                    let copy_hi = t1 + offset;
-                    if copy_hi <= tick_lo || copy_lo >= tick_hi {
-                        continue;
-                    }
-                    let raw_r0 = r0 as i64 + sy * span;
-                    let raw_r1 = r1 as i64 + sy * span;
-                    if raw_r1 < 0 || raw_r0 > last {
-                        continue;
-                    }
-                    let mut nr0 = raw_r0.max(0) as usize;
-                    let nr1 = raw_r1.min(last) as usize;
-                    if conductor {
-                        nr0 = nr0.max(1);
-                    }
-                    if nr0 > nr1 {
-                        continue;
-                    }
-                    let y0 = geom.row_to_y(nr0);
-                    let y1 = geom.row_to_y(nr1 + 1);
-                    rects.push([geom.tick_to_x(copy_lo), y0, geom.tick_to_x(copy_hi), y1]);
+            let mut push = |copy_lo: f64, copy_hi: f64, sy: i64| {
+                if copy_hi <= tick_lo || copy_lo >= tick_hi {
+                    return;
+                }
+                let raw_r0 = r0 as i64 + sy * span;
+                let raw_r1 = r1 as i64 + sy * span;
+                if raw_r1 < 0 || raw_r0 > last {
+                    return;
+                }
+                let mut nr0 = raw_r0.max(0) as usize;
+                let nr1 = raw_r1.min(last) as usize;
+                if conductor {
+                    nr0 = nr0.max(1);
+                }
+                if nr0 > nr1 {
+                    return;
+                }
+                let y0 = geom.row_to_y(nr0);
+                let y1 = geom.row_to_y(nr1 + 1);
+                rects.push([geom.tick_to_x(copy_lo), y0, geom.tick_to_x(copy_hi), y1]);
+            };
+            for &sy in &ys {
+                if sy != 0 {
+                    push(t0, t1, sy);
+                }
+                for tile in &tiles {
+                    push(
+                        tile.dst_start as f64,
+                        (tile.dst_start + tile.len) as f64,
+                        sy,
+                    );
                 }
             }
         }
@@ -3199,7 +3209,8 @@ fn commit_riff(
         return None;
     }
     let (t0, t1, k0, k1) = d.box_ticks?;
-    let width = (t1 - t0).max(1.0).round() as i64;
+    let sel_start = t0.round() as i64;
+    let sel_end = t1.round() as i64;
     let view_mode = s.view_mode;
     let changed = {
         let doc = s.document.as_mut()?;
@@ -3207,13 +3218,19 @@ fn commit_riff(
             return None;
         }
         let before = doc.capture_snapshot();
-        let x_off = steps.sx * width;
-        let new_t0 = (t0 + x_off.min(0) as f64).max(0.0);
-        let new_t1 = t1 + x_off.max(0) as f64;
+        let extent = steps.extent_x;
+        let new_t0 = (t0 + extent.min(0) as f64).max(0.0);
+        let new_t1 = t1 + extent.max(0) as f64;
         match view_mode {
             ViewMode::Pianoroll => {
                 let span = (i64::from(k1) - i64::from(k0) + 1) as u16;
-                let action = doc.repeat_selected_keys(width, steps.sx, span, steps.sy)?;
+                let action = doc.repeat_selected_keys_extent(
+                    sel_start,
+                    sel_end,
+                    steps.extent_x,
+                    span,
+                    steps.sy,
+                )?;
                 let key_off = steps.sy * i64::from(span);
                 let new_k0 = (i64::from(k0) + key_off.min(0))
                     .clamp(0, i64::from(yinhe_types::MAX_KEY)) as u8;
@@ -3240,7 +3257,13 @@ fn commit_riff(
             ViewMode::Arrangement => {
                 let (_, _, r0, r1) = d.box_rows.unwrap_or((t0, t1, 0, 0));
                 let span = (r1 - r0 + 1) as u16;
-                let action = doc.repeat_selected_tracks(width, steps.sx, span, steps.sy)?;
+                let action = doc.repeat_selected_tracks_extent(
+                    sel_start,
+                    sel_end,
+                    steps.extent_x,
+                    span,
+                    steps.sy,
+                )?;
                 let row_off = steps.sy * i64::from(span);
                 let last = s.num_tracks.saturating_sub(1) as i64;
                 let mut new_r0 = (r0 as i64 + row_off.min(0)).clamp(0, last) as usize;
