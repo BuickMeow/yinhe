@@ -235,7 +235,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get autoSave => 'Auto save';
 
   @override
-  String get showAllTracksColored => 'Show all tracks (colored)';
+  String get showAllTracksColored => 'Show other tracks (colored)';
+
+  @override
+  String get showOtherTracksGray => 'Show other tracks (grayscale)';
 
   @override
   String get project => 'Project';

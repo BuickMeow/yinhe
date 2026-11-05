@@ -234,7 +234,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get autoSave => '自动保存';
 
   @override
-  String get showAllTracksColored => '显示全部轨道（彩色）';
+  String get showAllTracksColored => '显示其他轨道（彩色）';
+
+  @override
+  String get showOtherTracksGray => '显示其他轨道（黑白）';
 
   @override
   String get project => '工程';
@@ -877,7 +880,10 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get autoSave => '自動儲存';
 
   @override
-  String get showAllTracksColored => '顯示全部軌道（彩色）';
+  String get showAllTracksColored => '顯示其他軌道（彩色）';
+
+  @override
+  String get showOtherTracksGray => '顯示其他軌道（黑白）';
 
   @override
   String get project => '工程';
@@ -1520,7 +1526,10 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
   String get autoSave => '自動儲存';
 
   @override
-  String get showAllTracksColored => '顯示全部軌道（彩色）';
+  String get showAllTracksColored => '顯示其他軌道（彩色）';
+
+  @override
+  String get showOtherTracksGray => '顯示其他軌道（黑白）';
 
   @override
   String get project => '工程';

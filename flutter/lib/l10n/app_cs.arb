@@ -78,6 +78,7 @@
   "allTracks": "Zobrazit vše",
   "autoSave": "Automatické ukládání",
   "showAllTracksColored": "Zobrazit všechny stopy (barevně)",
+  "showOtherTracksGray": "Show other tracks (grayscale)",
   "project": "Projekt",
   "projectSettings": "Nastavení projektu",
   "songTitle": "Název projektu",

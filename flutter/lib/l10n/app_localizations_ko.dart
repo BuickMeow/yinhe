@@ -237,6 +237,9 @@ class AppLocalizationsKo extends AppLocalizations {
   String get showAllTracksColored => '모든 트랙 표시(컬러)';
 
   @override
+  String get showOtherTracksGray => 'Show other tracks (grayscale)';
+
+  @override
   String get project => '프로젝트';
 
   @override

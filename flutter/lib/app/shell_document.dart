@@ -317,12 +317,14 @@ mixin _ShellDocument on _ShellBase {
       setState(() => _fileName = entries[index].name);
       rust.setViewMode(kViewArrangement);
       rust.setDisplayTrack(-1);
+      rust.setGrayOtherTracks(0);
       rust.setActiveTrack(-1);
       setState(() {
         _viewMode = kViewArrangement;
         _activeTrack = null;
         _displayTrack = -1;
         _showAllTracks = true;
+        _grayOtherTracks = false;
       });
     }
   }
@@ -423,6 +425,7 @@ mixin _ShellDocument on _ShellBase {
       _activeTrack = null;
       _displayTrack = -1;
       _showAllTracks = true;
+      _grayOtherTracks = false;
       _toolAr = 0;
       _mainToolAr = 0;
       _quickToolAr = quickToolsAr.last;
@@ -430,6 +433,7 @@ mixin _ShellDocument on _ShellBase {
     });
     rust.setViewMode(kViewArrangement);
     rust.setDisplayTrack(-1);
+    rust.setGrayOtherTracks(0);
     rust.setActiveTrack(-1);
     rust.setTool(1);
     _syncArrPanelWidth();

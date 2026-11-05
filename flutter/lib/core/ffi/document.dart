@@ -98,6 +98,10 @@ typedef IntArgDart = int Function(int);
 final IntArgDart setDisplayTrack = bridge
     .lookupFunction<IntArgNative, IntArgDart>('yinhe_set_display_track');
 
+/// 设置 PR 其他轨道是否去色（0/1）；当前编辑轨始终保留彩色。
+final IntArgDart setGrayOtherTracks = bridge
+    .lookupFunction<IntArgNative, IntArgDart>('yinhe_set_gray_other_tracks');
+
 /// 启动时检查自动保存残留：`{"path","name"}` 或 `{}`。
 final CStrDart autosavePendingJson = bridge
     .lookupFunction<CStrNative, CStrDart>('yinhe_autosave_pending_json');

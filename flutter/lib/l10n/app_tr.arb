@@ -78,6 +78,7 @@
   "allTracks": "Tümünü Göster",
   "autoSave": "Otomatik kaydet",
   "showAllTracksColored": "Tüm kanalları göster (renkli)",
+  "showOtherTracksGray": "Show other tracks (grayscale)",
   "project": "Proje",
   "projectSettings": "Proje Ayarları",
   "songTitle": "Proje Adı",

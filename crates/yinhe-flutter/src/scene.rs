@@ -257,6 +257,8 @@ pub struct RenderScene {
     pub ppq: u32,
     /// “显示轨道”过滤：Some = 只画该轨（曲名框选择）。
     pub display_track: Option<usize>,
+    /// PR 其他轨道去色：当前编辑轨保留彩色，其余轨道转黑白。
+    pub gray_other_tracks: bool,
     /// 当前工具（PR：5 种；AR 只用选框/手形）。
     pub tool: Tool,
     /// 当前编辑轨（AR 进入 PR 的轨；工具写入目标）。
@@ -341,6 +343,7 @@ impl Default for RenderScene {
             tracks: Vec::new(),
             ppq: 480,
             display_track: None,
+            gray_other_tracks: false,
             tool: Tool::Select,
             active_track: None,
             preview: DragPreview::default(),
@@ -5108,6 +5111,16 @@ pub fn set_display_track(track: i32) -> i32 {
         s.overlay_rev = s.overlay_rev.wrapping_add(1);
     }
     log::info!("显示轨道: {track}");
+    1
+}
+
+/// 设置 PR 其他轨道是否去色（0/1）。仅影响钢琴卷帘，不影响 AR。
+pub fn set_gray_other_tracks(on: bool) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    s.gray_other_tracks = on;
+    log::info!("其他轨道去色: {on}");
     1
 }
 

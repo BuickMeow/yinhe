@@ -2035,6 +2035,12 @@ pub extern "C" fn yinhe_set_display_track(track: i32) -> i32 {
     scene::set_display_track(track)
 }
 
+/// 设置 PR 其他轨道是否去色（0/1）。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_set_gray_other_tracks(on: i32) -> i32 {
+    scene::set_gray_other_tracks(on != 0)
+}
+
 /// 撤销一步；成功 1。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_undo() -> i32 {

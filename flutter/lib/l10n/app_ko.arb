@@ -78,6 +78,7 @@
   "allTracks": "모두 표시",
   "autoSave": "자동 저장",
   "showAllTracksColored": "모든 트랙 표시(컬러)",
+  "showOtherTracksGray": "Show other tracks (grayscale)",
   "project": "프로젝트",
   "projectSettings": "프로젝트 설정",
   "songTitle": "프로젝트 이름",

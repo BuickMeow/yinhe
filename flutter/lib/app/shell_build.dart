@@ -860,6 +860,7 @@ mixin _ShellBuild on _ShellBase {
       tracks: _tracks.value,
       activeTrack: _activeTrack ?? -1,
       showAllTracks: _showAllTracks,
+      grayOtherTracks: _grayOtherTracks,
       songTitle: _songTitle,
       fileName: _fileName,
       docState: _docState,
@@ -880,6 +881,7 @@ mixin _ShellBuild on _ShellBase {
       onRedo: _redo,
       onSelectTrack: _selectEditTrack,
       onToggleAllTracks: _toggleAllTracks,
+      onToggleGrayTracks: _toggleGrayTracks,
       onProjectSettings: _openProjectSettings,
       onSave: () => _saveProject(),
       saveDone: _saveDone,
@@ -915,13 +917,37 @@ mixin _ShellBuild on _ShellBase {
     }
   }
 
-  /// 「全部轨道」开关（仅影响 PR 绘制；AR 始终按自身显隐）。
-  void _toggleAllTracks() {
+  /// 设置 PR 的“其他轨道”显示方式：彩色 / 黑白 / 只显示当前轨。
+  ///
+  /// 两个菜单项最多选中一个；重复点击已选项 = 关闭，回到只显示当前轨。
+  void _setPrTrackDisplay({required bool showAll, required bool gray}) {
     setState(() {
-      _showAllTracks = !_showAllTracks;
-      _displayTrack = _showAllTracks ? -1 : (_activeTrack ?? -1);
+      _showAllTracks = showAll;
+      _grayOtherTracks = showAll && gray;
+      _displayTrack = showAll ? -1 : (_activeTrack ?? -1);
     });
     rust.setDisplayTrack(_displayTrack);
+    rust.setGrayOtherTracks(_grayOtherTracks ? 1 : 0);
+  }
+
+  /// 「显示其他轨道（彩色）」：已选中时关闭，否则切到彩色。
+  void _toggleAllTracks() {
+    final next = togglePrTrackDisplay(
+      showAll: _showAllTracks,
+      gray: _grayOtherTracks,
+      pickGray: false,
+    );
+    _setPrTrackDisplay(showAll: next.showAll, gray: next.gray);
+  }
+
+  /// 「显示其他轨道（黑白）」：已选中时关闭，否则切到黑白。
+  void _toggleGrayTracks() {
+    final next = togglePrTrackDisplay(
+      showAll: _showAllTracks,
+      gray: _grayOtherTracks,
+      pickGray: true,
+    );
+    _setPrTrackDisplay(showAll: next.showAll, gray: next.gray);
   }
 
   /// 撤销一步（含快照/音频刷新）。

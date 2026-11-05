@@ -158,6 +158,7 @@ mixin _ShellCore on _ShellBase {
     rust.newProject();
     rust.setViewMode(kViewArrangement);
     rust.setDisplayTrack(-1);
+    rust.setGrayOtherTracks(0);
     rust.setActiveTrack(-1);
     rust.setTool(1);
     _syncArrPanelWidth();
@@ -168,6 +169,7 @@ mixin _ShellCore on _ShellBase {
       _activeTrack = null;
       _displayTrack = -1;
       _showAllTracks = true;
+      _grayOtherTracks = false;
       _toolAr = 0;
       _mainToolAr = 0;
       _quickToolAr = quickToolsAr.last;

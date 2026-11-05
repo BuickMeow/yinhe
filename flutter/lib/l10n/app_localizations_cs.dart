@@ -238,6 +238,9 @@ class AppLocalizationsCs extends AppLocalizations {
   String get showAllTracksColored => 'Zobrazit všechny stopy (barevně)';
 
   @override
+  String get showOtherTracksGray => 'Show other tracks (grayscale)';
+
+  @override
   String get project => 'Projekt';
 
   @override

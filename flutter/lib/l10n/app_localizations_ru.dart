@@ -238,6 +238,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String get showAllTracksColored => 'Показать все дорожки (цветные)';
 
   @override
+  String get showOtherTracksGray => 'Show other tracks (grayscale)';
+
+  @override
   String get project => 'Проект';
 
   @override

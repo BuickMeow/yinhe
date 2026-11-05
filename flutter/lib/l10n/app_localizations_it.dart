@@ -238,6 +238,9 @@ class AppLocalizationsIt extends AppLocalizations {
   String get showAllTracksColored => 'Mostra tutte le tracce (a colori)';
 
   @override
+  String get showOtherTracksGray => 'Show other tracks (grayscale)';
+
+  @override
   String get project => 'Progetto';
 
   @override

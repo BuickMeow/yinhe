@@ -78,6 +78,7 @@
   "allTracks": "すべてを表示",
   "autoSave": "自動保存",
   "showAllTracksColored": "すべてのトラックを表示（カラー）",
+  "showOtherTracksGray": "Show other tracks (grayscale)",
   "project": "プロジェクト",
   "projectSettings": "プロジェクト設定",
   "songTitle": "プロジェクト名",

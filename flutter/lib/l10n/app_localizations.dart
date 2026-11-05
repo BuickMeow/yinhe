@@ -569,8 +569,14 @@ abstract class AppLocalizations {
   /// No description provided for @showAllTracksColored.
   ///
   /// In en, this message translates to:
-  /// **'Show all tracks (colored)'**
+  /// **'Show other tracks (colored)'**
   String get showAllTracksColored;
+
+  /// No description provided for @showOtherTracksGray.
+  ///
+  /// In en, this message translates to:
+  /// **'Show other tracks (grayscale)'**
+  String get showOtherTracksGray;
 
   /// No description provided for @project.
   ///

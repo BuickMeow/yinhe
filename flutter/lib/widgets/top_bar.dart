@@ -26,6 +26,7 @@ class TopBar extends StatelessWidget {
     required this.tracks,
     required this.activeTrack,
     required this.showAllTracks,
+    required this.grayOtherTracks,
     required this.songTitle,
     required this.fileName,
     required this.docState,
@@ -43,6 +44,7 @@ class TopBar extends StatelessWidget {
     required this.onRedo,
     required this.onSelectTrack,
     required this.onToggleAllTracks,
+    required this.onToggleGrayTracks,
     required this.onProjectSettings,
     required this.onSave,
     required this.saveDone,
@@ -85,6 +87,9 @@ class TopBar extends StatelessWidget {
 
   /// PR「全部轨道」开关：开 = 不按当前编辑轨过滤。
   final bool showAllTracks;
+
+  /// PR 其他轨道是否去色（仅当前编辑轨保留彩色）。
+  final bool grayOtherTracks;
   final String songTitle;
   final String? fileName;
   final ValueListenable<int> docState;
@@ -104,6 +109,7 @@ class TopBar extends StatelessWidget {
   final VoidCallback onRedo;
   final ValueChanged<int> onSelectTrack;
   final VoidCallback onToggleAllTracks;
+  final VoidCallback onToggleGrayTracks;
   final VoidCallback onProjectSettings;
 
   /// 保存工程（无改动时按钮置灰不可点）。
@@ -515,8 +521,10 @@ class TopBar extends StatelessWidget {
       tooltip: l.currentTrack,
       padding: EdgeInsets.zero,
       onSelected: (v) {
-        if (v >= tracks.length) {
+        if (v == tracks.length) {
           onToggleAllTracks();
+        } else if (v == tracks.length + 1) {
+          onToggleGrayTracks();
         } else {
           // 选轨只切换当前编辑轨，不隐式改「全部轨道」开关。
           onSelectTrack(v);
@@ -533,8 +541,13 @@ class TopBar extends StatelessWidget {
         ),
         CheckedPopupMenuItem<int>(
           value: tracks.length,
-          checked: showAllTracks,
+          checked: showAllTracks && !grayOtherTracks,
           child: Text(l.showAllTracksColored),
+        ),
+        CheckedPopupMenuItem<int>(
+          value: tracks.length + 1,
+          checked: showAllTracks && grayOtherTracks,
+          child: Text(l.showOtherTracksGray),
         ),
         const PopupMenuDivider(height: 1),
         for (var i = 0; i < tracks.length; i++)

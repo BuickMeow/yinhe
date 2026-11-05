@@ -430,6 +430,8 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
             s.pr_track_visible.clone(),
             s.num_tracks,
             s.display_track,
+            s.active_track,
+            s.gray_other_tracks,
             s.document
                 .as_ref()
                 .map(|d| d.edit.selected.clone())
@@ -454,6 +456,8 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
         pr_track_visible,
         num_tracks,
         display_track,
+        active_track,
+        gray_other_tracks,
         selection,
         track_selected,
         revision,
@@ -505,6 +509,8 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
                 &track_colors,
                 &pr_track_visible,
                 display_track,
+                active_track,
+                gray_other_tracks,
                 &selection,
                 &track_selected,
                 model_epoch,
@@ -566,6 +572,24 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
         t.frames = 0;
         t.fps_start = Instant::now();
     }
+}
+
+/// PR 用的轨道颜色：开启去色时，仅当前编辑轨保留原色。
+fn pr_track_colors(
+    colors: &[[f32; 4]],
+    active_track: Option<usize>,
+    gray_other_tracks: bool,
+) -> Vec<[f32; 4]> {
+    if !gray_other_tracks {
+        return colors.to_vec();
+    }
+    let mut keep = vec![false; colors.len()];
+    if let Some(t) = active_track
+        && let Some(slot) = keep.get_mut(t)
+    {
+        *slot = true;
+    }
+    yinhe_editor_core::document::gray_other_track_colors(colors, &keep)
 }
 
 /// “显示轨道”过滤后的可见掩码（None = 原样）。
@@ -660,6 +684,8 @@ fn upload_pianoroll(
     track_colors: &[[f32; 4]],
     track_visible: &[bool],
     display_track: Option<usize>,
+    active_track: Option<usize>,
+    gray_other_tracks: bool,
     selection: &Selection,
     track_selected: &HashSet<u16>,
     model_epoch: u64,
@@ -669,7 +695,8 @@ fn upload_pianoroll(
     preview_offset: (f32, f32),
 ) {
     let visible = effective_visible(track_visible, display_track);
-    let mut job = build_render_job(w as u32, h as u32, view, selection, track_colors, 0.0, true);
+    let colors = pr_track_colors(track_colors, active_track, gray_other_tracks);
+    let mut job = build_render_job(w as u32, h as u32, view, selection, &colors, 0.0, true);
     job.uniforms.ghost_dx = preview_offset.0;
     job.uniforms.ghost_dy = preview_offset.1;
     t.renderer.upload_uniforms(job.uniforms);
@@ -809,7 +836,7 @@ pub fn render_automation_frame(
                 .unwrap_or_default();
             effective_visible(&raw, s.display_track)
         };
-        let track_colors = s.track_colors.clone();
+        let track_colors = pr_track_colors(&s.track_colors, s.active_track, s.gray_other_tracks);
         let track_selected = s
             .document
             .as_ref()

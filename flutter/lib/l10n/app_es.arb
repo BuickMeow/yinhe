@@ -78,6 +78,7 @@
   "allTracks": "Mostrar todo",
   "autoSave": "Guardado automático",
   "showAllTracksColored": "Mostrar todas las pistas (en color)",
+  "showOtherTracksGray": "Show other tracks (grayscale)",
   "project": "Proyecto",
   "projectSettings": "Ajustes del proyecto",
   "songTitle": "Nombre del proyecto",

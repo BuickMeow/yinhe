@@ -14,6 +14,7 @@ import '../core/edit_status.dart';
 import '../core/multi_finger_gesture.dart';
 import '../core/pinch_zoom.dart';
 import '../core/platform_files.dart';
+import '../core/pr_track_display.dart';
 import '../dialogs/add_tracks_dialog.dart';
 import '../dialogs/batch_edit_dialog.dart';
 import '../dialogs/inputs.dart';
@@ -238,6 +239,9 @@ abstract class _ShellBase extends State<StudioShell>
 
   /// PR 顶部「全部轨道」开关：开 = 不按当前编辑轨过滤（只影响 PR）。
   bool _showAllTracks = true;
+
+  /// PR 其他轨道去色：仅当前编辑轨保留彩色（只影响 PR）。
+  bool _grayOtherTracks = false;
 
   /// 歌曲标题（meta.name；空 = 未设置）。
   String _songTitle = '';
