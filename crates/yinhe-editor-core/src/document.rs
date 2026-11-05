@@ -685,6 +685,29 @@ pub fn track_color_with_conductor_color(
     [c[0], c[1], c[2], 1.0]
 }
 
+/// 把 `keep` 之外的轨道颜色转灰度（去色），保留 alpha。
+///
+/// `keep` 与 `colors` 按轨道索引对齐；没有任何 true 时原样返回，避免
+/// “没有当前轨/选中轨”时把整个工程变成黑白。灰度用 Rec.601 亮度系数，
+/// 只改 RGB，不改透明度和几何数据。
+pub fn gray_other_track_colors(colors: &[[f32; 4]], keep: &[bool]) -> Vec<[f32; 4]> {
+    if !keep.iter().any(|&k| k) {
+        return colors.to_vec();
+    }
+    colors
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            if keep.get(i).copied().unwrap_or(false) {
+                *c
+            } else {
+                let y = 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
+                [y, y, y, c[3]]
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -908,6 +931,37 @@ mod tests {
             track_color_with_conductor_color(&t, 0, Some(0), custom),
             custom
         );
+    }
+
+    #[test]
+    fn gray_other_track_colors_keeps_highlight_and_alpha() {
+        let colors = [
+            [1.0, 0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0, 0.5],
+            [0.0, 0.0, 1.0, 0.25],
+        ];
+        let out = gray_other_track_colors(&colors, &[true, false, false]);
+        assert_eq!(out[0], colors[0], "高亮轨保持原色");
+        assert_eq!(out[1][3], 0.5, "alpha 不变");
+        assert_eq!(out[2][3], 0.25);
+        for gray in &out[1..] {
+            assert!(
+                (gray[0] - gray[1]).abs() < 1e-6 && (gray[1] - gray[2]).abs() < 1e-6,
+                "其他轨 RGB 必须相等: {gray:?}"
+            );
+        }
+        assert!((out[1][0] - 0.587).abs() < 1e-6);
+        assert!((out[2][0] - 0.114).abs() < 1e-6);
+    }
+
+    #[test]
+    fn gray_other_track_colors_without_highlight_returns_original() {
+        let colors = [[1.0, 0.2, 0.3, 1.0], [0.1, 0.8, 0.2, 0.7]];
+        assert_eq!(
+            gray_other_track_colors(&colors, &[false, false]),
+            colors.to_vec()
+        );
+        assert_eq!(gray_other_track_colors(&colors, &[]), colors.to_vec());
     }
 
     #[test]
