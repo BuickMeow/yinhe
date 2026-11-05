@@ -843,6 +843,8 @@ settings.render.note_outline_desc: "노트 외곽선을 그릴지 여부, 끄면
 settings.render.min_border_width_desc: "노트 테두리의 최소 너비"
 settings.render.gpu_cull_desc: "화면 밖 노트를 GPU로 컬링, 초대형 프로젝트용"
 settings.render.lod_desc: "축소 시 노트를 요약 블록으로 병합하여 대형 프로젝트 성능 향상"
+settings.render.gray_other_tracks: "Other tracks grayscale"
+settings.render.gray_other_tracks_desc: "Keep selected tracks colored and desaturate the others"
 settings.factory_reset_desc: "모든 설정을 공장 초기화, 되돌릴 수 없음"
 settings.notification.collapse_desc: "조치가 필요 없는 완료 알림이 알림 목록으로 접히기 전 떠 있는 시간"
 settings.notification.action_collapse_desc: "작업 버튼이 있거나 주의가 필요한 알림(내보내기 완료, 실패 등)이 떠 있는 시간"

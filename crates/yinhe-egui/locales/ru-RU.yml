@@ -942,6 +942,8 @@ settings.render.note_outline_desc: "Рисовать контуры нот, от
 settings.render.min_border_width_desc: "Минимальная ширина границы нот"
 settings.render.gpu_cull_desc: "GPU-отсечение нот за экраном, для огромных проектов"
 settings.render.lod_desc: "Объединять ноты в сводные блоки при отдалении, для больших проектов"
+settings.render.gray_other_tracks: "Other tracks grayscale"
+settings.render.gray_other_tracks_desc: "Keep selected tracks colored and desaturate the others"
 settings.factory_reset_desc: "Сбросить все настройки к заводским, действие необратимо"
 settings.notification.collapse_desc: "Как долго завершённые уведомления без действий остаются плавающими до перемещения в список"
 settings.notification.action_collapse_desc: "Как долго уведомления с кнопками действий или требующие внимания (например, завершение экспорта, сбои) остаются плавающими"

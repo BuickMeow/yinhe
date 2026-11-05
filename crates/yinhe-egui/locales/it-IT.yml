@@ -942,6 +942,8 @@ settings.render.note_outline_desc: "Disegna i contorni delle note, disabilitarlo
 settings.render.min_border_width_desc: "Larghezza minima del bordo per le note"
 settings.render.gpu_cull_desc: "Culling GPU per le note fuori schermo, per progetti enormi"
 settings.render.lod_desc: "Unisce le note in blocchi riepilogativi quando si è zoomati indietro, per progetti grandi"
+settings.render.gray_other_tracks: "Other tracks grayscale"
+settings.render.gray_other_tracks_desc: "Keep selected tracks colored and desaturate the others"
 settings.factory_reset_desc: "Ripristina tutte le impostazioni ai valori di fabbrica, non può essere annullato"
 settings.notification.collapse_desc: "Per quanto tempo le notifiche completate che non richiedono azioni restano flottanti prima di passare all'elenco"
 settings.notification.action_collapse_desc: "Per quanto tempo le notifiche con pulsanti di azione o che richiedono attenzione (es. esportazione completata, errori) restano flottanti"

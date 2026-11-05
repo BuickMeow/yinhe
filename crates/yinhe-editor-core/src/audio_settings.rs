@@ -132,6 +132,9 @@ pub struct AudioSettings {
     /// 是否启用 LOD 摘要层（缩小视图时用摘要段替代逐音符绘制）。
     #[serde(default = "default_lod_enabled")]
     pub lod_enabled: bool,
+    /// PR 其他轨道去色：仅选中轨保留彩色（不影响 AR）。
+    #[serde(default)]
+    pub gray_other_tracks: bool,
     /// 完成通知自动收起秒数（0 = 不自动收起，支持小数）
     #[serde(
         default = "default_toast_collapse_secs",
@@ -227,6 +230,7 @@ impl Default for AudioSettings {
             ui_scale: 1.0,
             font_scale: 1.0,
             lod_enabled: true,
+            gray_other_tracks: false,
             toast_collapse_secs: default_toast_collapse_secs(),
             toast_action_collapse_secs: default_toast_action_collapse_secs(),
             toast_enabled: default_toast_enabled(),

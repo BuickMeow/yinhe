@@ -959,6 +959,8 @@ settings.render.note_outline_desc: "Draw note outlines, disabling improves perfo
 settings.render.min_border_width_desc: "Minimum border width for notes"
 settings.render.gpu_cull_desc: "GPU culling for off-screen notes, for huge projects"
 settings.render.lod_desc: "Merge notes into summary blocks when zoomed out, for large projects"
+settings.render.gray_other_tracks: "Other tracks grayscale"
+settings.render.gray_other_tracks_desc: "Keep selected tracks colored and desaturate the others"
 settings.factory_reset_desc: "Reset all settings to factory defaults, cannot be undone"
 settings.notification.collapse_desc: "How long finished notifications with no action needed stay floating before moving to the list"
 settings.notification.action_collapse_desc: "How long notifications with action buttons or needing attention (e.g. export done, failures) stay floating"

@@ -942,6 +942,8 @@ settings.render.note_outline_desc: "Rysuj obrysy nut, wyłączenie poprawia wyda
 settings.render.min_border_width_desc: "Minimalna szerokość obramowania nut"
 settings.render.gpu_cull_desc: "Odcinanie GPU dla nut poza ekranem, dla ogromnych projektów"
 settings.render.lod_desc: "Scalaj nuty w bloki podsumowania przy oddaleniu, dla dużych projektów"
+settings.render.gray_other_tracks: "Other tracks grayscale"
+settings.render.gray_other_tracks_desc: "Keep selected tracks colored and desaturate the others"
 settings.factory_reset_desc: "Przywróć wszystkie ustawienia do wartości fabrycznych, nie można cofnąć"
 settings.notification.collapse_desc: "Jak długo zakończone powiadomienia niewymagające działania pozostają widoczne, zanim trafią do listy"
 settings.notification.action_collapse_desc: "Jak długo powiadomienia z przyciskami akcji lub wymagające uwagi (np. zakończony eksport, błędy) pozostają widoczne"

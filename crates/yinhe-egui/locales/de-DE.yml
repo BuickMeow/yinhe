@@ -942,6 +942,8 @@ settings.render.note_outline_desc: "Notenumrisse zeichnen; Deaktivieren verbesse
 settings.render.min_border_width_desc: "Minimale Rahmenbreite für Noten"
 settings.render.gpu_cull_desc: "GPU-Culling für Noten außerhalb des Bildschirms, für riesige Projekte"
 settings.render.lod_desc: "Noten beim Herauszoomen zu Zusammenfassungsblöcken zusammenfassen, für große Projekte"
+settings.render.gray_other_tracks: "Other tracks grayscale"
+settings.render.gray_other_tracks_desc: "Keep selected tracks colored and desaturate the others"
 settings.factory_reset_desc: "Alle Einstellungen auf Werkseinstellungen zurücksetzen, kann nicht rückgängig gemacht werden"
 settings.notification.collapse_desc: "Wie lange abgeschlossene Benachrichtigungen ohne erforderliche Aktion schweben bleiben, bevor sie in die Liste wandern"
 settings.notification.action_collapse_desc: "Wie lange Benachrichtigungen mit Aktionsschaltflächen oder mit Handlungsbedarf (z. B. Export abgeschlossen, Fehler) schweben bleiben"

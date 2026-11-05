@@ -959,6 +959,8 @@ settings.render.note_outline_desc: "是否绘制音符边框，关闭可提升�
 settings.render.min_border_width_desc: "音符边框的最小宽度"
 settings.render.gpu_cull_desc: "使用 GPU 计算裁剪视口外音符，适合超大工程"
 settings.render.lod_desc: "缩小时用摘要段合并音符，提升大工程性能"
+settings.render.gray_other_tracks: "其他轨道黑白"
+settings.render.gray_other_tracks_desc: "仅选中轨道保留彩色，其余轨道去色"
 settings.factory_reset_desc: "将所有设置恢复为默认值，此操作不可撤销"
 settings.notification.collapse_desc: "无需操作的完成通知在浮动显示多久后收进通知列表"
 settings.notification.action_collapse_desc: "带操作按钮或需留意的通知（如导出完成、失败）在浮动显示多久后收进通知列表"

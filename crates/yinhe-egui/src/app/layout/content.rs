@@ -608,6 +608,19 @@ impl App {
                 // 提前计算避开后面的可变借用。
                 let write_track = main;
                 let pr_visible: Vec<bool> = doc.edit.pr_visible();
+                // PR 其他轨道去色：所有选中轨保留原色，未选中的轨道转黑白。
+                // 无选中轨时 helper 原样返回，避免没有“当前轨”却把整屏变灰。
+                let pr_colors = if self.audio_settings.gray_other_tracks {
+                    let keep: Vec<bool> = (0..doc.edit.track_cache.colors.len())
+                        .map(|i| doc.edit.track_selected.contains(&(i as u16)))
+                        .collect();
+                    yinhe_editor_core::document::gray_other_track_colors(
+                        &doc.edit.track_cache.colors,
+                        &keep,
+                    )
+                } else {
+                    doc.edit.track_cache.colors.clone()
+                };
                 // 锁定掩码：长度对齐轨道数，缺省 false。
                 let pr_locked: Vec<bool> = (0..doc.data.model.tracks.len())
                     .map(|i| doc.edit.track_locked.get(i).copied().unwrap_or(false))
@@ -717,7 +730,7 @@ impl App {
                 // 与 PR 画布一致；AR/通道 AR 用 doc.density（track_visible）。
                 let density_preview = crate::widgets::scrollbar::DensityPreview {
                     density: doc.density_pr.view(),
-                    track_colors: &doc.edit.track_cache.colors,
+                    track_colors: &pr_colors,
                 };
                 event = piano_view::show(
                     ui,
@@ -739,7 +752,7 @@ impl App {
                     &pr_visible,
                     Some(&density_preview),
                     &pr_locked,
-                    &doc.edit.track_cache.colors,
+                    &pr_colors,
                     &mut doc.edit.cursor_tick,
                     is_playing,
                     pr_quantize,

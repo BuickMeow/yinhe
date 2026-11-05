@@ -942,6 +942,8 @@ settings.render.note_outline_desc: "Nota ana hatlarını çiz, devre dışı bı
 settings.render.min_border_width_desc: "Notalar için minimum kenarlık genişliği"
 settings.render.gpu_cull_desc: "Ekran dışı notalar için GPU ayıklama, çok büyük projeler için"
 settings.render.lod_desc: "Uzaklaştırıldığında notaları özet bloklarına birleştir, büyük projeler için"
+settings.render.gray_other_tracks: "Other tracks grayscale"
+settings.render.gray_other_tracks_desc: "Keep selected tracks colored and desaturate the others"
 settings.factory_reset_desc: "Tüm ayarları fabrika varsayılanlarına sıfırla, geri alınamaz"
 settings.notification.collapse_desc: "İşlem gerektirmeyen tamamlanmış bildirimlerin listeye taşınmadan önce ne kadar süre yüzer kalacağı"
 settings.notification.action_collapse_desc: "Eylem düğmeleri olan veya dikkat gerektiren bildirimlerin (örn. dışa aktarma tamamlandı, hatalar) ne kadar süre yüzer kalacağı"

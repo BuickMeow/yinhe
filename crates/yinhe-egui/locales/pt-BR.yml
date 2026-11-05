@@ -942,6 +942,8 @@ settings.render.note_outline_desc: "Desenha contornos das notas, desativar melho
 settings.render.min_border_width_desc: "Largura mínima da borda das notas"
 settings.render.gpu_cull_desc: "Descarte pela GPU para notas fora da tela, para projetos enormes"
 settings.render.lod_desc: "Mescla notas em blocos de resumo quando afastado, para projetos grandes"
+settings.render.gray_other_tracks: "Other tracks grayscale"
+settings.render.gray_other_tracks_desc: "Keep selected tracks colored and desaturate the others"
 settings.factory_reset_desc: "Redefine todas as configurações para os padrões de fábrica, não pode ser desfeito"
 settings.notification.collapse_desc: "Quanto tempo notificações concluídas sem ação necessária permanecem flutuando antes de ir para a lista"
 settings.notification.action_collapse_desc: "Quanto tempo notificações com botões de ação ou que precisam de atenção (ex.: exportação concluída, falhas) permanecem flutuando"

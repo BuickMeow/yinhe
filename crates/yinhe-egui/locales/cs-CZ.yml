@@ -942,6 +942,8 @@ settings.render.note_outline_desc: "Kreslit obrysy not, vypnutí zlepšuje výko
 settings.render.min_border_width_desc: "Minimální šířka okraje not"
 settings.render.gpu_cull_desc: "GPU ořezávání not mimo obrazovku, pro obrovské projekty"
 settings.render.lod_desc: "Sloučit noty do souhrnných bloků při oddálení, pro velké projekty"
+settings.render.gray_other_tracks: "Other tracks grayscale"
+settings.render.gray_other_tracks_desc: "Keep selected tracks colored and desaturate the others"
 settings.factory_reset_desc: "Obnovit všechna nastavení na tovární hodnoty, nelze vrátit zpět"
 settings.notification.collapse_desc: "Jak dlouho dokončená oznámení bez potřeby akce zůstávají plavat, než se přesunou do seznamu"
 settings.notification.action_collapse_desc: "Jak dlouho oznámení s tlačítky akcí nebo vyžadující pozornost (např. dokončený export, selhání) zůstávají plavat"

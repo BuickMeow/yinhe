@@ -51,6 +51,17 @@ pub fn show_render_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool 
 
     setting_row(
         ui,
+        t!("settings.render.gray_other_tracks").as_ref(),
+        t!("settings.render.gray_other_tracks_desc").as_ref(),
+        |ui| {
+            if crate::widgets::switch::switch(ui, &mut settings.gray_other_tracks).changed() {
+                changed = true;
+            }
+        },
+    );
+
+    setting_row(
+        ui,
         t!("settings.render.lod").as_ref(),
         t!("settings.render.lod_desc").as_ref(),
         |ui| {
