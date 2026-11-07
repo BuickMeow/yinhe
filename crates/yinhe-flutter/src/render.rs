@@ -758,7 +758,7 @@ fn upload_pianoroll(
         }
     });
 
-    // PR 不显示 AR 折叠自动化；上传空 layer 清掉 AR 切过来时的残留。
+    // PR 不显示 AR 折叠自动化；上传空 layer 3 清掉 AR 切过来时的残留。
     let am_key = yinhe_wgpu::layer_cache_key(&[
         VIEW_TAG_PIANOROLL ^ 0x51_51_51_51,
         u64::from(w.to_bits()),
@@ -772,9 +772,11 @@ fn upload_pianoroll(
         &[],
         &visible,
         track_colors,
+        tc::bg(),
+        tc::stripe_bg(),
         am_key,
     );
-    // 清掉 AR 拖动留下的自动化竖线 ghost。
+    // 清掉 AR 拖动留下的自动化竖线 ghost（layer 4）。
     yinhe_wgpu::prepare_folded_automation_ghost(&mut t.renderer, w, &view.base, &[], &[], &[]);
 }
 
@@ -1045,9 +1047,6 @@ fn upload_arrangement(
         value_zoom: 0.0,
         value_scroll: 0.0,
         orientation: 0,
-        // 折叠自动化竖线不透明烘焙的 AA 边缘混色底（shader 每帧读取）。
-        baked_bg: tc::bg(),
-        baked_stripe_bg: tc::stripe_bg(),
         ghost_dx: preview_offset.0,
         ghost_dy: preview_offset.1,
         ..Default::default()
@@ -1133,6 +1132,8 @@ fn upload_arrangement(
         &lanes,
         &visible,
         track_colors,
+        tc::bg(),
+        tc::stripe_bg(),
         yinhe_wgpu::layer_cache_key(&[am_key, VIEW_TAG_ARRANGEMENT]),
     );
 

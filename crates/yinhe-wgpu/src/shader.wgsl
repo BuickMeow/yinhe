@@ -69,14 +69,6 @@ struct Uniforms {
     ghost_dy: f32,
     ghost_pad0: f32,
     ghost_pad1: f32,
-
-    // ── 移动端折叠自动化竖线不透明烘焙（仅 OPAQUE_BAKED 实例使用）──
-    // Flutter 按预乘 alpha 在 sRGB 空间合成外接纹理，半透明边缘像素会与
-    // Flutter 画的行背景二次混合产生白边；带 OPAQUE_BAKED 位的实例改输出
-    // alpha=1、coverage 混进颜色的像素，二次合成对它无操作。
-    // 两个底色 = AR 普通行背景 / 偶数行条纹（与 Flutter 端同源色值）。
-    baked_bg: vec4<f32>,
-    baked_stripe_bg: vec4<f32>,
 }
 
 // Track colors: runtime-sized storage buffer (allocated dynamically to actual
@@ -205,7 +197,6 @@ struct CurveOutput {
     @location(3) thickness: f32,
     @location(4) color: vec4<f32>,
     @location(5) @interpolate(flat) shape: u32,
-    @location(6) @interpolate(flat) bits: u32, // instance.shape 原值（高位标志位）
 }
 
 struct VertexOutput {
@@ -785,14 +776,8 @@ fn vs_main_curve(
     out.p3 = p3;
     out.thickness = instance.thickness;
     out.shape = instance.shape & 0xFFu;
-    out.bits = instance.shape;
 
-    out.color = unpack_rgba(instance.rgba);
-    // OPAQUE_BAKED 实例保持 sRGB 原色：fragment 要在 sRGB 空间混背景
-    // （观感与旧 CPU 烘焙一致），混完再按目标附着转换，见 fs_main_curve_premul。
-    if ((instance.shape & 0x200u) == 0u) {
-        out.color = to_target_space(out.color);
-    }
+    out.color = to_target_space(unpack_rgba(instance.rgba));
     return out;
 }
 
@@ -801,30 +786,11 @@ fn fs_main_curve(in: CurveOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(in.color.rgb, in.color.a * curve_coverage(in));
 }
 
-// 折叠预览叠加层。默认输出预乘 alpha，配合 Max 混合实现「整层 0.35 不透明度、
+// 折叠预览叠加层：预乘 alpha 输出，配合 Max 混合实现「整层 0.35 不透明度、
 // 重叠不加深」。同一轨所有折叠 lane 共享 track 颜色，Max 即取并集覆盖。
-//
-// OPAQUE_BAKED 实例（移动端折叠竖线）：改为输出 **alpha=1 的不透明像素**，
-// coverage 与层 alpha 混进颜色（背景取 u.baked_bg / u.baked_stripe_bg）。
-// 原因：Flutter 按预乘 alpha 在 sRGB 空间合成外接纹理，任何 alpha<1 的像素
-// 都会再与 Flutter 画的行背景混一次，GPU 端按线性空间预乘的边缘像素被二次
-// 提亮，表现为竖线周围一圈白边；alpha=1 时二次合成无操作，边缘即正确 AA。
 @fragment
 fn fs_main_curve_premul(in: CurveOutput) -> @location(0) vec4<f32> {
     let a = in.color.a * curve_coverage(in);
-    if ((in.bits & 0x200u) != 0u) {
-        // coverage=0 的 AABB 填充像素必须丢弃：不透明输出会整块盖住行背景
-        // 与时间网格。有覆盖度的像素才输出（边缘带约 1px，与核心一致为不透明）。
-        if (a <= 0.0) {
-            discard;
-        }
-        // 在 sRGB 空间混背景：gamma 不正确的混色让半透明竖线更重，与旧
-        // CPU 烘焙观感一致；线性空间混色会让亮色主题下的细线发白。混完
-        // 再转目标附着空间（sRGB 附着存储时会编码回来）。
-        let bg = select(u.baked_bg, u.baked_stripe_bg, (in.bits & 0x400u) != 0u);
-        let mixed = mix(bg.rgb, in.color.rgb, a);
-        return vec4<f32>(to_target_space(vec4<f32>(mixed, 1.0)).rgb, 1.0);
-    }
     return vec4<f32>(in.color.rgb * a, a);
 }
 

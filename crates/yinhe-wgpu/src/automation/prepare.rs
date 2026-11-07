@@ -396,33 +396,11 @@ fn build_lane_data(
     }
 }
 
-/// AR 折叠自动化竖线的 overlay 层索引（移动端专用；桌面走
-/// [`prepare_arr_automation`] 的 layer 4）。ghost 在其后一层，保证画在折叠层上。
-pub const MOBILE_FOLDED_LAYER: usize = 5;
-/// AR 折叠自动化竖线拖动 ghost 的 overlay 层索引（移动端专用）。
-pub const MOBILE_FOLDED_GHOST_LAYER: usize = 6;
-
-/// 折叠竖线实例统一打的高位标志：不透明烘焙 +（偶数轨）条纹底色。
+/// 只准备 AR 折叠自动化竖线层（layer 3，普通 alpha 混合）。
 ///
-/// 移动端 AR 行背景由 Flutter 绘制、外接纹理按预乘 alpha 在 sRGB 空间合成，
-/// 任何 alpha<1 的像素都会与行背景二次混合产生白边；`OPAQUE_BAKED` 让
-/// shader 输出 alpha=1 的不透明像素（coverage 混进颜色，背景取 uniforms 的
-/// `baked_bg` / `baked_stripe_bg`），二次合成对它无操作。奇偶行条纹与
-/// Flutter `ArrangementGridPainter` 的 `idx.isEven` 一致。
-fn folded_bits(track: u16) -> u32 {
-    let stripe = if track.is_multiple_of(2) {
-        crate::vertex::CurveInstance::STRIPE_BG_BIT
-    } else {
-        0
-    };
-    crate::vertex::CurveInstance::OPAQUE_BAKED_BIT | stripe
-}
-
-/// 只准备 AR 折叠自动化竖线层（overlay 层，Max 混合 + 不透明烘焙）。
-///
-/// 与桌面 [`prepare_arr_automation`] 的折叠分支同为 CurveOverlay，但实例打
-/// [`folded_bits`] 位：移动端不能输出半透明像素（白边，见上）。背景不再烘进
-/// 实例（shader 每帧从 uniforms 取），主题底色变化无需重建本层缓存。
+/// 与 [`prepare_arr_automation`] 的 folded 分支相同，但移动端 AR 背景是不透明
+/// 的，不能使用 layer 4 的 Max 预乘 alpha（会被浅色背景吃掉）；这里改用普通
+/// alpha 的 Curve 层。
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn prepare_folded_automation(
     renderer: &mut InstanceRenderer,
@@ -432,6 +410,8 @@ pub fn prepare_folded_automation(
     lanes: &[ArrAutomationLane<'_>],
     track_visible: &[bool],
     track_colors: &[[f32; 4]],
+    background: [f32; 4],
+    stripe_background: [f32; 4],
     cache_key: u64,
 ) {
     let tc_hash = {
@@ -443,9 +423,11 @@ pub fn prepare_folded_automation(
         }
         h
     };
-    let folded_key = layer_cache_key(&[cache_key, tc_hash, lane_set_hash(lanes)]);
+    let bg_hash =
+        crate::hash_f32s(&background) ^ crate::hash_f32s(&stripe_background).rotate_left(17);
+    let folded_key = layer_cache_key(&[cache_key, tc_hash, bg_hash, lane_set_hash(lanes)]);
     let theme = renderer.theme();
-    renderer.upload_curve_overlay_layer(MOBILE_FOLDED_LAYER, folded_key, |out| {
+    renderer.upload_curve_layer(3, folded_key, |out| {
         for l in lanes {
             let start = out.len();
             build_lane_data(
@@ -460,21 +442,30 @@ pub fn prepare_folded_automation(
                 data_lines::FOLDED_ALPHA,
                 &theme,
             );
-            let bits = folded_bits(l.lane.track);
+            // 预乘到行背景并输出不透明颜色：AA/搭接像素不会重复叠加变深，
+            // 视觉上等价于“整层统一 alpha”，同时避免 Max 混合被背景吃掉。
+            let bg = if l.lane.track % 2 == 0 {
+                stripe_background
+            } else {
+                background
+            };
             for inst in &mut out[start..] {
-                inst.shape |= bits;
+                let (r, g, b, a) = crate::vertex::unpack_rgba(inst.rgba_packed);
+                inst.rgba_packed = crate::vertex::pack_rgba(
+                    r * a + bg[0] * (1.0 - a),
+                    g * a + bg[1] * (1.0 - a),
+                    b * a + bg[2] * (1.0 - a),
+                    1.0,
+                );
             }
         }
     });
 }
 
-/// 只准备 AR 自动化竖线的拖动 ghost（overlay 层，不透明烘焙）。
+/// 只准备 AR 自动化竖线的拖动 ghost（layer 4，普通 alpha）。
 ///
 /// ghost lane 的 `lane.track` 已在调用方改成移动后的目标轨；这里只画事件
-/// 竖线，不画横线/锚点。半透明感由 `LINE_ALPHA` 混进颜色保留（`OPAQUE_BAKED`
-/// 下 shader 输出 `mix(行背景, 线色, LINE_ALPHA·coverage)` 的不透明像素，与
-/// 直通 alpha 混合在行背景上的观感一致，但没有白边）。空列表时上传一次空层，
-/// 清掉上一帧残影。
+/// 竖线，不画横线/锚点。空列表时上传一次空层，清掉上一帧残影。
 pub fn prepare_folded_automation_ghost(
     renderer: &mut InstanceRenderer,
     width: f32,
@@ -488,9 +479,8 @@ pub fn prepare_folded_automation_ghost(
     } else {
         0 // 拖动中每帧重建
     };
-    renderer.upload_curve_overlay_layer(MOBILE_FOLDED_GHOST_LAYER, key, |out| {
+    renderer.upload_curve_layer(4, key, |out| {
         for l in lanes {
-            let start = out.len();
             let view = AutomationPanelView {
                 base: base.clone(),
                 panel_height: l.height,
@@ -512,10 +502,9 @@ pub fn prepare_folded_automation_ghost(
                 data_lines::LINE_ALPHA,
                 &[],
             );
-            let bits = folded_bits(l.lane.track) | crate::vertex::CurveInstance::GHOST_BIT;
-            for inst in &mut out[start..] {
-                inst.shape |= bits;
-            }
+        }
+        for inst in out.iter_mut() {
+            inst.shape |= crate::vertex::CurveInstance::GHOST_BIT;
         }
     });
 }
