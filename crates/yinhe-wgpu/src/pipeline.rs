@@ -432,10 +432,10 @@ impl RenderPipelineState {
         });
 
         // Curve overlay pipeline：与 curve_pipeline 同顶点布局/entry，输出
-        // 预乘 alpha（fs_main_curve_premul）。这里用**预乘 over**而不是 Max：
-        // Max 在抗锯齿边缘会把低 alpha 的边缘像素与不透明背景取 max，
-        // 表现为自动化竖线周围一圈白边；over 在透明目标上与 Max 等价，
-        // 在不透明背景上则正确混合。
+        // 预乘 alpha（fs_main_curve_premul），并用 **Max 混合**。目标纹理在折叠
+        // 音轨行处为透明，Max 取并集 → 多条 lane 重叠时 alpha 恒为层 alpha，
+        // 重叠不加深；非重叠的 AA 边缘像素 Max 与 over 完全等价，不会产生白边。
+        // （over 会让同色线重叠处略微加深，不是想要的"整层恒定不透明度"。）
         let curve_overlay_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
             label: Some("curve_overlay_pipeline"),
             layout: Some(&pipeline_layout),
@@ -462,13 +462,13 @@ impl RenderPipelineState {
                     blend: Some(BlendState {
                         color: BlendComponent {
                             src_factor: BlendFactor::One,
-                            dst_factor: BlendFactor::OneMinusSrcAlpha,
-                            operation: BlendOperation::Add,
+                            dst_factor: BlendFactor::One,
+                            operation: BlendOperation::Max,
                         },
                         alpha: BlendComponent {
                             src_factor: BlendFactor::One,
-                            dst_factor: BlendFactor::OneMinusSrcAlpha,
-                            operation: BlendOperation::Add,
+                            dst_factor: BlendFactor::One,
+                            operation: BlendOperation::Max,
                         },
                     }),
                     write_mask: ColorWrites::ALL,
