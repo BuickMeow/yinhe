@@ -111,11 +111,15 @@ impl Sink {
         let surface = create_raw_surface(gpu, &window)?;
 
         let caps = surface.get_capabilities(&gpu.adapter);
+        // 非 sRGB 附着：让「着色器输出 → GPU 混合 → 存储 → Flutter 预乘合成」
+        // 整条链路统一在 sRGB 空间。sRGB 附着会强制 GPU 在线性空间混合，存出
+        // 的线性预乘字节被 Flutter 按 sRGB 预乘合成时，AA 边缘像素被行背景
+        // 二次提亮（自动化竖线白边的根因）。
         let Some(format) = caps
             .formats
             .iter()
             .copied()
-            .find(|f| f.is_srgb())
+            .find(|f| !f.is_srgb())
             .or_else(|| caps.formats.first().copied())
         else {
             log::error!("surface 无可用格式");
@@ -200,9 +204,11 @@ impl Sink {
     fn format(&self) -> wgpu::TextureFormat {
         match self {
             Self::Surface { config, .. } => config.format,
-            // 视图按 sRGB 解释（与 Android 的 srgb surface 格式一致）。
+            // 非 sRGB 视图（与 Android surface 一致）：Flutter 按原始字节做
+            // sRGB 空间预乘合成，附着若带 sRGB 会强制 GPU 线性混合产生错位
+            // （同 Sink::surface 的注释）。
             #[cfg(target_os = "ios")]
-            Self::External(_) => wgpu::TextureFormat::Bgra8UnormSrgb,
+            Self::External(_) => wgpu::TextureFormat::Bgra8Unorm,
         }
     }
 
