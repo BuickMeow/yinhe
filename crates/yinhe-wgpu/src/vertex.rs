@@ -48,6 +48,11 @@ pub struct Uniforms {
     /// 保持 uniform 结构 16 字节对齐（WGSL 同名字段）。
     pub ghost_pad0: f32,
     pub ghost_pad1: f32,
+
+    // ── 移动端折叠竖线不透明烘焙（只对带 OPAQUE_BAKED 位的 curve 实例生效）──
+    /// AR 普通行背景 / 偶数行条纹（移动端 Flutter 画的底色，shader 混 AA 边缘）。
+    pub baked_bg: [f32; 4],
+    pub baked_stripe_bg: [f32; 4],
 }
 
 /// Maximum number of tracks supported. Track indices are u16, so 65536 is the
@@ -219,6 +224,14 @@ pub struct CurveInstance {
 impl CurveInstance {
     /// shape 的高位：ghost 层标记（顶点着色器据此叠加预览动画偏移）。
     pub const GHOST_BIT: u32 = 1 << 8;
+    /// shape 高位：不透明烘焙（移动端折叠竖线专用）。fragment 输出 alpha=1、
+    /// coverage 混进颜色的像素，背景取 uniforms 的 `baked_bg` / `baked_stripe_bg`。
+    /// 原因见 shader.wgsl `fs_main_curve_premul`：Flutter 按预乘 alpha 在 sRGB
+    /// 空间合成外接纹理，任何 alpha<1 的像素都会被行背景二次提亮（白边）。
+    pub const OPAQUE_BAKED_BIT: u32 = 1 << 9;
+    /// shape 高位：配合 [`CurveInstance::OPAQUE_BAKED_BIT`]，选条纹底色
+    /// （AR 偶数行，与 Flutter `ArrangementGridPainter` 的 `idx.isEven` 一致）。
+    pub const STRIPE_BG_BIT: u32 = 1 << 10;
 
     /// Construct a straight-line segment instance.
     pub fn line(x1: f32, y1: f32, x2: f32, y2: f32, thickness: f32, color: [f32; 4]) -> Self {
@@ -457,10 +470,10 @@ mod tests {
 mod uniform_layout_tests {
     use super::Uniforms;
 
-    /// WGSL `Uniforms` 现有 28 个 4 字节字段；uniform struct 必须 16 字节对齐。
+    /// WGSL `Uniforms` 现有 36 个 4 字节字段；uniform struct 必须 16 字节对齐。
     /// 改字段时如果忘记同步 shader，这里会先失败。
     #[test]
     fn uniform_size_matches_shader() {
-        assert_eq!(std::mem::size_of::<Uniforms>(), 112);
+        assert_eq!(std::mem::size_of::<Uniforms>(), 144);
     }
 }
