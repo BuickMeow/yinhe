@@ -787,7 +787,12 @@ fn vs_main_curve(
     out.shape = instance.shape & 0xFFu;
     out.bits = instance.shape;
 
-    out.color = to_target_space(unpack_rgba(instance.rgba));
+    out.color = unpack_rgba(instance.rgba);
+    // OPAQUE_BAKED 实例保持 sRGB 原色：fragment 要在 sRGB 空间混背景
+    // （观感与旧 CPU 烘焙一致），混完再按目标附着转换，见 fs_main_curve_premul。
+    if ((instance.shape & 0x200u) == 0u) {
+        out.color = to_target_space(out.color);
+    }
     return out;
 }
 
@@ -813,12 +818,12 @@ fn fs_main_curve_premul(in: CurveOutput) -> @location(0) vec4<f32> {
         if (a <= 0.0) {
             discard;
         }
-        let bg = select(
-            to_target_space(u.baked_bg),
-            to_target_space(u.baked_stripe_bg),
-            (in.bits & 0x400u) != 0u,
-        );
-        return vec4<f32>(mix(bg.rgb, in.color.rgb, a), 1.0);
+        // 在 sRGB 空间混背景：gamma 不正确的混色让半透明竖线更重，与旧
+        // CPU 烘焙观感一致；线性空间混色会让亮色主题下的细线发白。混完
+        // 再转目标附着空间（sRGB 附着存储时会编码回来）。
+        let bg = select(u.baked_bg, u.baked_stripe_bg, (in.bits & 0x400u) != 0u);
+        let mixed = mix(bg.rgb, in.color.rgb, a);
+        return vec4<f32>(to_target_space(vec4<f32>(mixed, 1.0)).rgb, 1.0);
     }
     return vec4<f32>(in.color.rgb * a, a);
 }

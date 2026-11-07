@@ -3569,7 +3569,8 @@ fn curve_overlay_alpha_does_not_accumulate() {
 }
 
 /// 移动端折叠竖线的不透明烘焙（OPAQUE_BAKED）：输出像素必须 alpha=255，
-/// 颜色 = mix(行背景, 线色, 层alpha·coverage) 的 sRGB 编码值。
+/// 颜色 = sRGB 空间 mix(行背景, 线色, 层alpha·coverage)（与旧 CPU 烘焙观感
+/// 一致：gamma 不正确的混色让半透明细线更重，线性空间混色会发白）。
 ///
 /// 白边回归：Flutter 按预乘 alpha 在 sRGB 空间合成外接纹理，任何 alpha<1
 /// 的像素都会被行背景二次提亮。只要线上还有半透明像素，白边就会复发。
@@ -3606,26 +3607,10 @@ fn curve_overlay_opaque_baked_outputs_opaque_pixels() {
         [(32u32, 32u32), (32u32, 34u32)],
     );
 
-    // sRGB 编码（与 GPU 存储一致），验证边缘混色正确。
-    let lin = |c: f32| {
-        if c <= 0.04045 {
-            c / 12.92
-        } else {
-            ((c + 0.055) / 1.055).powf(2.4)
-        }
-    };
-    let enc = |c: f32| {
-        if c <= 0.0031308 {
-            c * 12.92
-        } else {
-            1.055 * c.powf(1.0 / 2.4) - 0.055
-        }
-    };
-    let bg_lin = lin(0.94);
-    // 线色纯红：r = mix(bg, 1, a)，g/b = mix(bg, 0, a)。
-    let expect = |ch_lin: f32| -> u8 {
-        let mixed = bg_lin + (ch_lin - bg_lin) * alpha;
-        (enc(mixed) * 255.0 + 0.5) as u8
+    // 线色纯红：r = mix(bg, 1, a)，g/b = mix(bg, 0, a)，全部在 sRGB 空间。
+    let expect = |ch: f32| -> u8 {
+        let mixed = 0.94 + (ch - 0.94) * alpha;
+        (mixed * 255.0 + 0.5) as u8
     };
 
     assert_eq!(px_center[3], 255, "线中心必须不透明: {px_center:?}");
@@ -3637,7 +3622,7 @@ fn curve_overlay_opaque_baked_outputs_opaque_pixels() {
     for ch in 0..3 {
         assert!(
             (px_center[ch] as i32 - expected[ch] as i32).abs() <= 2,
-            "中心颜色应等于 mix(背景, 线色, alpha) 的编码值: {px_center:?} vs {expected:?}"
+            "中心颜色应等于 sRGB 空间 mix(背景, 线色, alpha): {px_center:?} vs {expected:?}"
         );
     }
 }

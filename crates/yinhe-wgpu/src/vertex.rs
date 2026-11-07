@@ -225,9 +225,10 @@ impl CurveInstance {
     /// shape 的高位：ghost 层标记（顶点着色器据此叠加预览动画偏移）。
     pub const GHOST_BIT: u32 = 1 << 8;
     /// shape 高位：不透明烘焙（移动端折叠竖线专用）。fragment 输出 alpha=1、
-    /// coverage 混进颜色的像素，背景取 uniforms 的 `baked_bg` / `baked_stripe_bg`。
-    /// 原因见 shader.wgsl `fs_main_curve_premul`：Flutter 按预乘 alpha 在 sRGB
-    /// 空间合成外接纹理，任何 alpha<1 的像素都会被行背景二次提亮（白边）。
+    /// coverage 与层 alpha 混进颜色的像素，背景取 uniforms 的 `baked_bg` /
+    /// `baked_stripe_bg`（sRGB 空间混色，观感与旧 CPU 烘焙一致）。原因见
+    /// shader.wgsl `fs_main_curve_premul`：Flutter 按预乘 alpha 在 sRGB 空间
+    /// 合成外接纹理，任何 alpha<1 的像素都会被行背景二次提亮（白边）。
     pub const OPAQUE_BAKED_BIT: u32 = 1 << 9;
     /// shape 高位：配合 [`CurveInstance::OPAQUE_BAKED_BIT`]，选条纹底色
     /// （AR 偶数行，与 Flutter `ArrangementGridPainter` 的 `idx.isEven` 一致）。
