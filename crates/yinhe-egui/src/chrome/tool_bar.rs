@@ -20,8 +20,7 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, active_tool: &mut Tool) {
     let mut hovered_hint: Option<String> = None;
     ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
         ui.set_clip_rect(rect.intersect(ui.clip_rect()));
-        ui.painter()
-            .rect_filled(rect, 0.0, crate::theme::track_bg());
+        ui.painter().rect_filled(rect, 0.0, crate::theme::app_bg());
         ui.spacing_mut().item_spacing.x = 2.0;
         // 横向放得下多少工具就显示多少，放不下的收进末尾「…」。
         let pad_x = 6.0;
@@ -82,12 +81,18 @@ pub fn show_auto_buttons(
     if rect.width() < 16.0 || rect.height() < 8.0 {
         return;
     }
-    ui.painter()
-        .rect_filled(rect, 0.0, crate::theme::track_bg());
+    // 外框区域只铺背景；两个按钮矩形内缩 2px，留出 padding。
+    let pad = 2.0;
+    ui.painter().rect_filled(rect, 0.0, crate::theme::app_bg());
     let gap = 2.0;
-    let w = ((rect.width() - gap) * 0.5).max(1.0);
-    let toggle_rect = egui::Rect::from_min_size(rect.min, egui::vec2(w, rect.height()));
-    let add_rect = egui::Rect::from_min_max(egui::pos2(rect.min.x + w + gap, rect.min.y), rect.max);
+    let inner = egui::Rect::from_min_max(
+        egui::pos2(rect.min.x + pad, rect.min.y + pad),
+        egui::pos2(rect.max.x - pad, rect.max.y - pad),
+    );
+    let w = ((inner.width() - gap) * 0.5).max(1.0);
+    let toggle_rect = egui::Rect::from_min_size(inner.min, egui::vec2(w, inner.height()));
+    let add_rect =
+        egui::Rect::from_min_max(egui::pos2(inner.min.x + w + gap, inner.min.y), inner.max);
 
     let toggle = icon_button_at(
         ui,
