@@ -12,7 +12,7 @@ use crate::note::Note;
 use crate::note_bitset::{NoteBitset, NoteBitsetBuilder};
 
 /// 音高数量（hidden 的 key 掩码按它取位）。
-const KEY_COUNT: usize = 128;
+const KEY_COUNT: usize = crate::KEY_COUNT;
 const KEY_WORDS: usize = KEY_COUNT.div_ceil(64);
 
 /// 渲染层判断“这个音符当前是否被拖动 ghost 替代”。

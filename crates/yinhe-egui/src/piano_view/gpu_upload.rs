@@ -813,6 +813,7 @@ mod tests {
                 follow_anim_start: 0.0,
                 follow_anim_elapsed: 0.0,
             },
+            layout: yinhe_types::KeyLayout::default(),
         };
         let track_colors: [[f32; 4]; 2] = [[0.2, 0.7, 1.0, 1.0], [0.9, 0.3, 0.3, 1.0]];
         let job = yinhe_wgpu::build_render_job(

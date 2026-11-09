@@ -300,6 +300,7 @@ mod tests {
         vec![true, true]
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn update_cache(
         cache: &mut NoteLayerCache,
         model: &yinhe_test_helpers::MockMidi,

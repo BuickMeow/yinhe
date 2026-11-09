@@ -1,3 +1,4 @@
+use crate::fold::KeyLayout;
 use crate::{PIXELS_PER_TICK_MAX, PIXELS_PER_TICK_MIN, TimelineViewBase};
 
 /// PR 纵向缩放的离散档：8px 一档，最大 64px。
@@ -56,6 +57,8 @@ pub struct PianoRollView {
     /// 音符自上而下落，键盘在底部 = 当前时刻），换算需要视口高度。
     /// `clamp_scroll` 每帧写入。
     pub main_size: f32,
+    /// 音高轴布局：键数（88/128/256）、起始键、调式折叠掩码。
+    pub layout: KeyLayout,
     /// 在琴键上拖出的音域（闭区间，key_select）。`None` = 未选择。
     /// 仅影响键盘高亮，不参与 GPU 渲染。
     pub key_select: Option<(u8, u8)>,
@@ -80,6 +83,7 @@ impl Default for PianoRollView {
             viewport_h: 0.0,
             main_size: 0.0,
             orientation: Orientation::Horizontal,
+            layout: KeyLayout::default(),
             key_select: None,
         }
     }
@@ -120,9 +124,9 @@ impl PianoRollView {
         self.base.left_panel_width
     }
 
-    /// Total height of all 128 keys in pixels.
+    /// Total height of all keys (folding-aware) in pixels.
     pub fn total_key_height(&self) -> f32 {
-        128.0 * self.key_height
+        self.layout.total_units() * self.key_height
     }
 
     /// Convert a MIDI tick to screen x coordinate（横向语义：相对内容区左缘）。
@@ -134,8 +138,8 @@ impl PianoRollView {
     /// Convert a MIDI key (0-127) to screen y coordinate（横向语义）。
     /// Key 127 (G9) is at the top, key 0 (C-1) is at the bottom.
     pub fn key_to_y(&self, key: u8) -> f32 {
-        let bottom = self.total_key_height() - self.base.scroll_y;
-        bottom - (key as f32 + 1.0) * self.key_height
+        self.layout
+            .key_to_y(key as u16, self.key_height, self.base.scroll_y)
     }
 
     /// Convert screen x to MIDI tick（横向语义：相对内容区左缘）。
@@ -146,9 +150,7 @@ impl PianoRollView {
 
     /// Convert screen y to MIDI key（横向语义）。
     pub fn y_to_key(&self, y: f32) -> u8 {
-        let bottom = self.total_key_height() - self.base.scroll_y;
-        let key_f = ((bottom - y) / self.key_height).clamp(0.0, 128.0);
-        (key_f.ceil() as u8).saturating_sub(1)
+        self.layout.y_to_key(y, self.key_height, self.base.scroll_y) as u8
     }
 
     /// The tick range visible on screen（横向语义，需音乐区宽度）。
@@ -256,12 +258,16 @@ impl PianoRollView {
     }
 
     /// key → 副轴像素。
-    /// 横向：y（顶部 = key 127）；纵向：x（左缘 = key 0）。
+    /// 横向：y（顶部 = 最高键）；纵向：x（左缘 = 起始键）。
     #[inline]
     pub fn key_to_cross_px(&self, key: u8) -> f32 {
         match self.orientation {
             Orientation::Horizontal => self.key_to_y(key),
-            Orientation::Vertical => key as f32 * self.key_height - self.base.scroll_x,
+            Orientation::Vertical => {
+                let base = self.layout.units_before(self.layout.start);
+                let rel = self.layout.units_before(key as u16) - base;
+                rel * self.key_height - self.base.scroll_x
+            }
         }
     }
 
@@ -271,8 +277,16 @@ impl PianoRollView {
         match self.orientation {
             Orientation::Horizontal => self.y_to_key(px),
             Orientation::Vertical => {
-                let key_f = ((px + self.base.scroll_x) / self.key_height).clamp(0.0, 127.999);
-                key_f.floor() as u8
+                let base = self.layout.units_before(self.layout.start);
+                let units = (px + self.base.scroll_x) / self.key_height + base;
+                let mut out = self.layout.start;
+                for key in self.layout.start..=self.layout.end() {
+                    if self.layout.units_before(key.saturating_add(1)) > units {
+                        return key as u8;
+                    }
+                    out = key;
+                }
+                out as u8
             }
         }
     }
@@ -300,16 +314,36 @@ impl PianoRollView {
                 let top = self.y_to_key(0.0);
                 let bottom = self.y_to_key(cross_size);
                 let (lo, hi) = (bottom.min(top), top.max(bottom));
-                (lo.saturating_sub(1).min(127), hi.saturating_add(1).min(127))
+                self.clamp_key_range(lo, hi)
             }
             Orientation::Vertical => {
-                let lo = (self.base.scroll_x / self.key_height).floor() as i64;
-                let hi = ((self.base.scroll_x + cross_size) / self.key_height).ceil() as i64;
-                let lo = lo.clamp(0, 127) as u8;
-                let hi = (hi - 1).clamp(0, 127) as u8;
-                (lo.saturating_sub(1).min(127), hi.saturating_add(1).min(127))
+                // 纵向按行单位换算（折叠后行高不等），两端各留 1 行 padding。
+                let start = self.layout.start as f32;
+                let end = self.layout.end() as f32;
+                let lo = (self.base.scroll_x / self.key_height)
+                    .floor()
+                    .clamp(0.0, end - start)
+                    + start
+                    - 1.0;
+                let hi = ((self.base.scroll_x + cross_size) / self.key_height)
+                    .ceil()
+                    .clamp(0.0, end - start)
+                    + start;
+                let lo = (lo.clamp(start, end)) as u8;
+                let hi = (hi.clamp(start, end)) as u8;
+                (lo, hi)
             }
         }
+    }
+
+    /// 把音高范围限制到布局域并左右各留 1 键 padding。
+    fn clamp_key_range(&self, lo: u8, hi: u8) -> (u8, u8) {
+        let first = self.layout.start.min(255) as u8;
+        let last = self.layout.end().min(255) as u8;
+        (
+            lo.saturating_sub(1).clamp(first, last),
+            hi.saturating_add(1).clamp(first, last),
+        )
     }
 
     /// 首次进入时的纵向缩放：让副轴一屏显示 `keys` 个键并居中。
@@ -328,8 +362,8 @@ impl PianoRollView {
 
     /// 副轴上围绕 `px` 缩放（音高缩放）。`cross_size` 为副轴视口长度。
     pub fn zoom_cross_around(&mut self, px: f32, factor: f32, cross_size: f32) {
-        // 相对缩放：最小 = 128 键一屏（缩小极限），最大 = 12 键一屏（放大极限）。
-        let min_kh = (cross_size / 128.0).max(0.0);
+        // 相对缩放：最小 = 全部键一屏（缩小极限），最大 = 12 键一屏（放大极限）。
+        let min_kh = (cross_size / self.layout.count.max(1) as f32).max(0.0);
         let max_kh = (cross_size / 12.0).max(min_kh);
         let old = self.key_height;
         self.key_height = (self.key_height * factor).clamp(min_kh, max_kh);
@@ -354,9 +388,9 @@ impl PianoRollView {
             return;
         };
         *accum = 1.0;
-        // 最小档 = 一屏 128 键（随视口变化）；最大档仍是固定 64px。
+        // 最小档 = 一屏全部键（随视口变化）；最大档仍是固定 64px。
         // 每一档乘/除固定比例（几何级数），缩放手感在对数尺度上均匀。
-        let min_h = (cross_size / 128.0).max(0.001);
+        let min_h = (cross_size / self.layout.count.max(1) as f32).max(0.001);
         let max_h = KEY_HEIGHT_MAX.max(min_h);
         let old = self.key_height;
         let Some(grid) = crate::log_zoom::LogZoomGrid::new(min_h, max_h, KEY_HEIGHT_ZOOM_RATIO)
@@ -394,6 +428,9 @@ impl PianoRollView {
             self.base.left_panel_width,
             self.key_height,
             self.orientation as u8 as f32,
+            self.layout.start as f32,
+            self.layout.count as f32,
+            self.layout.fold_mask as f32,
         ])
     }
 
@@ -416,8 +453,10 @@ impl PianoRollView {
         if cross_size > 0.0 {
             if self.viewport_h > 0.0 && cross_size != self.viewport_h {
                 let ratio = cross_size / self.viewport_h;
-                self.key_height =
-                    (self.key_height * ratio).clamp(cross_size / 128.0, cross_size / 12.0);
+                self.key_height = (self.key_height * ratio).clamp(
+                    cross_size / self.layout.count.max(1) as f32,
+                    cross_size / 12.0,
+                );
                 let s = self.cross_scroll();
                 *s *= ratio;
             } else if self.viewport_h == 0.0 {
@@ -428,10 +467,11 @@ impl PianoRollView {
         }
         self.viewport_h = cross_size;
 
-        // 128 键总高未超过副轴视口（含略超几像素的浮点误差）时吸附填满。
+        // 全部键总高未超过副轴视口（含略超几像素的浮点误差）时吸附填满。
         let total = self.total_key_height();
+        let units = self.layout.total_units().max(1.0);
         if cross_size > 0.0 && total < cross_size + 5.0 {
-            self.key_height = cross_size / 128.0;
+            self.key_height = cross_size / units;
         }
 
         // 副轴（音高）clamp
@@ -482,13 +522,34 @@ impl PianoRollView {
         }
     }
 
-    /// 音高轴 fit：让 128 个音高键铺满副轴视口。
+    /// 音高轴 fit：让全部音高行铺满副轴视口。
     pub fn fit_pitch(&mut self, cross_size: f32) {
         if cross_size > 0.0 {
-            self.key_height = cross_size / 128.0;
+            self.key_height = cross_size / self.layout.total_units().max(1.0);
             *self.cross_scroll() = 0.0;
             self.base.dirty = true;
         }
+    }
+
+    /// 切换键数（88/128/256）并关闭折叠，把滚动夹回新范围。
+    pub fn set_key_count(&mut self, count: u16) {
+        if self.layout.count == count && self.layout.start == KeyLayout::for_key_count(count).start
+        {
+            return;
+        }
+        self.layout = KeyLayout::for_key_count(count);
+        self.key_select = None;
+        self.base.dirty = true;
+    }
+
+    /// 开启/关闭调式折叠。`mask` = 0 表示关闭。
+    pub fn set_fold(&mut self, mask: u16) {
+        if self.layout.fold_mask == mask {
+            return;
+        }
+        self.layout.fold_mask = mask;
+        self.key_select = None;
+        self.base.dirty = true;
     }
 }
 
@@ -514,6 +575,7 @@ mod tests {
             viewport_h: 0.0,
             main_size: 0.0,
             orientation: Orientation::Horizontal,
+            layout: KeyLayout::default(),
             key_select: None,
         }
     }

@@ -99,7 +99,7 @@ fn paint_horizontal(
             }
         }
     }
-    paint_octave_lines(painter, content_rect, kb_w, kh, view);
+    paint_octave_lines(painter, content_rect, kb_w, view);
 }
 
 /// 按调号区间渲染 piano roll 背景条带（横向）。
@@ -118,11 +118,7 @@ fn paint_scale_background(
 ) {
     let content_left = content_rect.min.x + kb_w;
     let h = content_rect.height();
-    let bottom = 128.0 * kh - view.base.scroll_y;
-
-    // 可见 key 范围：y_to_key(0.0)=顶部 key（大值），y_to_key(h)=底部 key（小值）
-    let key_hi = view.y_to_key(0.0).min(127);
-    let key_lo = view.y_to_key(h);
+    let (key_lo, key_hi) = view.visible_cross_range(h);
 
     // 按 tick 区间渲染
     let (tick_start, tick_end) = view.visible_tick_range(content_rect.width());
@@ -175,15 +171,15 @@ fn paint_scale_background(
                     } else {
                         continue; // 白键行 = 背景色
                     };
-                    let y = bottom - (key as f32 + 1.0) * kh;
-                    let screen_y = content_rect.min.y + y;
-                    if screen_y + kh < content_rect.min.y || screen_y > content_rect.max.y {
+                    let row_h = (view.layout.row_units(key as u16) * kh).max(1.0);
+                    let screen_y = content_rect.min.y + view.key_to_y(key);
+                    if screen_y + row_h < content_rect.min.y || screen_y > content_rect.max.y {
                         continue;
                     }
                     painter.rect_filled(
                         egui::Rect::from_min_size(
                             egui::pos2(x_start, screen_y),
-                            egui::vec2(seg_w, kh),
+                            egui::vec2(seg_w, row_h),
                         ),
                         0.0,
                         color,
@@ -216,11 +212,7 @@ fn paint_black_key_rows(
 ) {
     let content_left = content_rect.min.x + kb_w;
     let h = content_rect.height();
-    let bottom = 128.0 * kh - view.base.scroll_y;
-
-    // 可见 key 范围
-    let key_hi = view.y_to_key(0.0).min(127);
-    let key_lo = view.y_to_key(h);
+    let (key_lo, key_hi) = view.visible_cross_range(h);
 
     // 区间 x 范围（clamp 到 content 区域）
     let ppt = view.base.pixels_per_tick;
@@ -237,13 +229,13 @@ fn paint_black_key_rows(
         if !yinhe_types::is_black_key(key) {
             continue;
         }
-        let y = bottom - (key as f32 + 1.0) * kh;
-        let screen_y = content_rect.min.y + y;
-        if screen_y + kh < content_rect.min.y || screen_y > content_rect.max.y {
+        let row_h = (view.layout.row_units(key as u16) * kh).max(1.0);
+        let screen_y = content_rect.min.y + view.key_to_y(key);
+        if screen_y + row_h < content_rect.min.y || screen_y > content_rect.max.y {
             continue;
         }
         painter.rect_filled(
-            egui::Rect::from_min_size(egui::pos2(x_start, screen_y), egui::vec2(seg_w, kh)),
+            egui::Rect::from_min_size(egui::pos2(x_start, screen_y), egui::vec2(seg_w, row_h)),
             0.0,
             bk_color,
         );
@@ -255,15 +247,18 @@ fn paint_octave_lines(
     painter: &egui::Painter,
     content_rect: egui::Rect,
     kb_w: f32,
-    kh: f32,
     view: &PianoRollView,
 ) {
     let octave_line = crate::theme::line_fg();
     let content_left = content_rect.min.x + kb_w;
-    let bottom = 128.0 * kh - view.base.scroll_y;
-    for key in (0u8..128).step_by(12) {
-        let y = bottom - key as f32 * kh; // C 的顶部
-        let screen_y = content_rect.min.y + y;
+    let start = view.layout.start as usize;
+    let end = view.layout.end() as usize;
+    for key_idx in (0..=end).step_by(12) {
+        if key_idx < start {
+            continue;
+        }
+        let key = key_idx as u8;
+        let screen_y = content_rect.min.y + view.key_to_y(key); // C 的顶部
         if screen_y < content_rect.min.y || screen_y > content_rect.max.y {
             continue;
         }
@@ -406,12 +401,13 @@ fn paint_scale_background_v(
                     } else {
                         continue; // 白键列 = 背景色
                     };
+                    let row_w = (view.layout.row_units(key as u16) * kh).max(1.0);
                     let x = content_rect.min.x + view.key_to_cross_px(key);
-                    if x + kh < content_rect.min.x || x > content_rect.max.x {
+                    if x + row_w < content_rect.min.x || x > content_rect.max.x {
                         continue;
                     }
                     painter.rect_filled(
-                        egui::Rect::from_min_size(egui::pos2(x, y_start), egui::vec2(kh, seg_h)),
+                        egui::Rect::from_min_size(egui::pos2(x, y_start), egui::vec2(row_w, seg_h)),
                         0.0,
                         color,
                     );
@@ -459,12 +455,13 @@ fn paint_black_key_rows_v(
         if !yinhe_types::is_black_key(key) {
             continue;
         }
+        let row_w = (view.layout.row_units(key as u16) * kh).max(1.0);
         let x = content_rect.min.x + view.key_to_cross_px(key);
-        if x + kh < content_rect.min.x || x > content_rect.max.x {
+        if x + row_w < content_rect.min.x || x > content_rect.max.x {
             continue;
         }
         painter.rect_filled(
-            egui::Rect::from_min_size(egui::pos2(x, y_start), egui::vec2(kh, seg_h)),
+            egui::Rect::from_min_size(egui::pos2(x, y_start), egui::vec2(row_w, seg_h)),
             0.0,
             bk_color,
         );
@@ -474,7 +471,13 @@ fn paint_black_key_rows_v(
 /// 绘制八度竖线（每个 C 左缘一条细线，从顶部画到底部）（纵向）。
 fn paint_octave_lines_v(painter: &egui::Painter, content_rect: egui::Rect, view: &PianoRollView) {
     let octave_line = crate::theme::line_fg();
-    for key in (0u8..128).step_by(12) {
+    let start = view.layout.start as usize;
+    let end = view.layout.end() as usize;
+    for key_idx in (0..=end).step_by(12) {
+        if key_idx < start {
+            continue;
+        }
+        let key = key_idx as u8;
         let x = content_rect.min.x + view.key_to_cross_px(key); // C 的左缘
         if x < content_rect.min.x || x > content_rect.max.x {
             continue;

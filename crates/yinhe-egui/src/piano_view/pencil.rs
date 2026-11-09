@@ -693,6 +693,7 @@ mod tests {
             viewport_h: 0.0,
             main_size: 0.0,
             orientation: yinhe_types::Orientation::Horizontal,
+            layout: yinhe_types::KeyLayout::default(),
             key_select: None,
         }
     }

@@ -77,9 +77,7 @@ pub fn build_key_summary(key: u8, notes: &[NoteInstance], block_ticks: u32) -> V
             min_s = min_s.min(note.start_tick);
             max_e = max_e.max(note.end_tick);
             max_vel = max_vel.max(note.velocity());
-            *counts
-                .entry(((note.packed >> 8) & 0xFFFF) as u16)
-                .or_insert(0) += 1;
+            *counts.entry(note.track()).or_insert(0) += 1;
             i += 1;
         }
         out.push(NoteInstance {
@@ -186,14 +184,14 @@ mod tests {
         let notes = vec![note(60, 1, 0, 10), note(60, 2, 20, 30), note(60, 2, 40, 50)];
         let out = build_key_summary(60, &notes, 4096);
         assert_eq!(out.len(), 1);
-        assert_eq!((out[0].packed >> 8) & 0xFFFF, 2);
+        assert_eq!(out[0].track(), 2);
     }
 
     #[test]
     fn dominant_track_tie_takes_smallest_index() {
         let notes = vec![note(60, 5, 0, 10), note(60, 3, 20, 30)];
         let out = build_key_summary(60, &notes, 4096);
-        assert_eq!((out[0].packed >> 8) & 0xFFFF, 3);
+        assert_eq!(out[0].track(), 3);
     }
 
     #[test]

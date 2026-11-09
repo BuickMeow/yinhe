@@ -540,8 +540,6 @@ impl App {
                 (layout.bottom_y + crate::theme::PR_TOOL_BAR_H).min(layout.remaining.max.y),
             ),
         );
-        crate::chrome::tool_bar::show(ui, tool_rect, &mut self.active_tool);
-
         // Pianoroll GPU view
         let auto_wgpu_state = self.render_ctx.wgpu_state().clone();
         while self.controller_renderers.len() <= idx {
@@ -577,6 +575,16 @@ impl App {
             let mut selection_scale_delta: Option<u64> = None;
             let mut riff_repeat: Option<(i64, i64)> = None;
             let mut preview_reqs: Vec<crate::piano_view::PreviewReq> = Vec::new();
+            // 顶部工具栏（需要文档视图状态：键数 / 调式折叠）。
+            let fold_mask = crate::widgets::timecode::current_key_sig(doc)
+                .map(|(root, scale)| scale.pitch_classes(root));
+            crate::chrome::tool_bar::show(
+                ui,
+                tool_rect,
+                &mut self.active_tool,
+                &mut doc.edit.pianoroll_view,
+                fold_mask,
+            );
             ui.scope_builder(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
                 let _piano_total_start = if yinhe_memtrace::perf_probe::enabled() {
                     Some(std::time::Instant::now())

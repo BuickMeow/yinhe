@@ -98,7 +98,7 @@ fn build_key_instances(
 /// `NoteInstance` 的轨道号。
 #[inline]
 fn track_of(n: &NoteInstance) -> u16 {
-    ((n.packed >> 8) & 0xFFFF) as u16
+    n.track()
 }
 
 /// 选中轨道优先的绘制顺序（CPU 可见层用）：
@@ -138,7 +138,7 @@ fn sort_key_z_order_selected(
 /// 逐字段覆盖全部可变字段，保证 `sort_unstable` 下也是确定顺序（否则相等键
 /// 顺序不确定会逐帧闪烁）。`key` 在单 key 桶内恒定，无需参与；选中位不参与。
 fn sort_key_z_order(insts: &mut [NoteInstance]) {
-    let track_of = |n: &NoteInstance| (n.packed >> 8) & 0xFFFF;
+    let track_of = |n: &NoteInstance| n.track() as u32;
     insts.sort_unstable_by(|a, b| {
         a.start_tick
             .cmp(&b.start_tick)
@@ -465,6 +465,7 @@ mod tests {
             main_size: 0.0,
 
             orientation: yinhe_types::Orientation::Horizontal,
+            layout: yinhe_types::KeyLayout::default(),
             key_select: None,
         }
     }
@@ -523,9 +524,9 @@ mod tests {
         assert_eq!(note.start_tick, 0);
         assert_eq!(note.end_tick, 480);
         // packed = key(100) | track(0) | vel(100)
-        assert_eq!(note.packed & 0xFF, 100, "key");
-        assert_eq!((note.packed >> 8) & 0xFFFF, 0, "track");
-        assert_eq!((note.packed >> 24) & 0xFF, 100, "velocity");
+        assert_eq!(note.key(), 100, "key");
+        assert_eq!(note.track(), 0, "track");
+        assert_eq!(note.velocity(), 100, "velocity");
     }
 
     /// CPU LOD：同一 block 内的音符合并为一段，跨 block 另起一段。
@@ -554,7 +555,7 @@ mod tests {
             256,
         );
         assert_eq!(out.len(), 2, "两个 block 各一段");
-        assert_eq!(out[0].packed & 0xFF, 60, "key 保留");
+        assert_eq!(out[0].key(), 60, "key 保留");
         assert_eq!((out[0].start_tick, out[0].end_tick), (0, 110), "块内合并");
         assert_eq!((out[1].start_tick, out[1].end_tick), (300, 310));
     }
@@ -601,7 +602,7 @@ mod tests {
             &std::collections::HashSet::new(),
             None,
         );
-        assert_eq!((out[0].packed >> 8) & 0xFFFF, 2, "track should be 2");
+        assert_eq!(out[0].track(), 2, "track should be 2");
     }
 
     #[test]
@@ -624,7 +625,7 @@ mod tests {
             &std::collections::HashSet::new(),
             None,
         );
-        assert_eq!((out[0].packed >> 8) & 0xFFFF, 0, "track should be 0");
+        assert_eq!(out[0].track(), 0, "track should be 0");
     }
 
     #[test]
@@ -790,10 +791,7 @@ mod tests {
         };
         let mut v = vec![inst(2), inst(0), inst(1)];
         sort_key_z_order(&mut v);
-        let tracks: Vec<u16> = v
-            .iter()
-            .map(|n| ((n.packed >> 8) & 0xFFFF) as u16)
-            .collect();
+        let tracks: Vec<u16> = v.iter().map(|n| n.track()).collect();
         assert_eq!(tracks, vec![0, 1, 2], "track 升序，确定不闪烁");
     }
 

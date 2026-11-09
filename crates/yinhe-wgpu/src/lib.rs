@@ -21,6 +21,9 @@ pub use note_cache::{NoteCacheParams, NoteLayerCache, NoteWindow, plan_window};
 pub use render_thread::{NoteLayerData, RenderJob, RenderThreadHandle};
 pub use renderer::{GpuCaps, InstanceRenderer, PrepareTimings};
 pub use util::{hash_bools, hash_f32s, hash_f64s, hash_time_sigs};
+/// 调式折叠时，调外音行的行高比例（相对调内一行）。
+pub const FOLD_THIN: f32 = 0.18;
+
 pub use vertex::{
     DrawInstance, MAX_TRACKS, NoteInstance, Uniforms, VelocityBarInstance, pack_props, pack_rgba,
 };

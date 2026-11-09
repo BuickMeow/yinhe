@@ -172,8 +172,9 @@ fn paint_horizontal(
     let line_color = crate::theme::line_fg();
     for idx in (0..KEY_COUNT).step_by(12) {
         let key = idx as u8;
+        let row_h = (view.layout.row_units(key as u16) * kh).max(1.0);
         let screen_y = key_row_y(keyboard_rect, view, key);
-        if !visible_row(screen_y, keyboard_rect, kh) {
+        if !visible_row(screen_y, keyboard_rect, row_h) {
             continue;
         }
         painter.hline(
@@ -183,7 +184,7 @@ fn paint_horizontal(
         );
         let octave = key as i32 / 12 - 1;
         painter.text(
-            egui::pos2(gutter.center().x, screen_y + kh / 2.0),
+            egui::pos2(gutter.center().x, screen_y + row_h / 2.0),
             egui::Align2::CENTER_CENTER,
             format!("C{octave}"),
             font.clone(),
@@ -197,12 +198,16 @@ fn paint_horizontal(
         if yinhe_types::is_black_key(key) {
             continue;
         }
+        if (key as u16) < view.layout.start || (key as u16) > view.layout.end() {
+            continue;
+        }
+        let row_h = (view.layout.row_units(key as u16) * kh).max(1.0);
         let screen_y = key_row_y(keyboard_rect, view, key);
-        if !visible_row(screen_y, keyboard_rect, kh) {
+        if !visible_row(screen_y, keyboard_rect, row_h) {
             continue;
         }
         let key_rect =
-            egui::Rect::from_min_size(egui::pos2(keys_x, screen_y), egui::vec2(keys_w, kh));
+            egui::Rect::from_min_size(egui::pos2(keys_x, screen_y), egui::vec2(keys_w, row_h));
         painter.rect_filled(key_rect, 0.0, crate::theme::rgb_to_color32(theme.key_white));
         painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
     }
@@ -213,12 +218,16 @@ fn paint_horizontal(
         if !yinhe_types::is_black_key(key) {
             continue;
         }
+        if (key as u16) < view.layout.start || (key as u16) > view.layout.end() {
+            continue;
+        }
+        let row_h = (view.layout.row_units(key as u16) * kh).max(1.0);
         let screen_y = key_row_y(keyboard_rect, view, key);
-        if !visible_row(screen_y, keyboard_rect, kh) {
+        if !visible_row(screen_y, keyboard_rect, row_h) {
             continue;
         }
         let key_rect =
-            egui::Rect::from_min_size(egui::pos2(keys_x, screen_y), egui::vec2(keys_w, kh));
+            egui::Rect::from_min_size(egui::pos2(keys_x, screen_y), egui::vec2(keys_w, row_h));
         painter.rect_filled(key_rect, 0.0, crate::theme::rgb_to_color32(theme.key_black));
         painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
     }
@@ -228,12 +237,16 @@ fn paint_horizontal(
     let accent = crate::theme::accent_active();
     for (idx, &playing) in highlights.playing.iter().enumerate() {
         let key = idx as u8;
+        if (key as u16) < view.layout.start || (key as u16) > view.layout.end() {
+            continue;
+        }
+        let row_h = (view.layout.row_units(key as u16) * kh).max(1.0);
         let screen_y = key_row_y(keyboard_rect, view, key);
-        if !visible_row(screen_y, keyboard_rect, kh) {
+        if !visible_row(screen_y, keyboard_rect, row_h) {
             continue;
         }
         let key_rect =
-            egui::Rect::from_min_size(egui::pos2(keys_x, screen_y), egui::vec2(keys_w, kh));
+            egui::Rect::from_min_size(egui::pos2(keys_x, screen_y), egui::vec2(keys_w, row_h));
         let in_range = highlights
             .select
             .is_some_and(|(lo, hi)| key >= lo && key <= hi);
@@ -268,12 +281,16 @@ fn paint_vertical(
         if yinhe_types::is_black_key(key) {
             continue;
         }
+        if (key as u16) < view.layout.start || (key as u16) > view.layout.end() {
+            continue;
+        }
+        let row_w = (view.layout.row_units(key as u16) * kh).max(1.0);
         let x = keyboard_rect.min.x + view.key_to_cross_px(key);
-        if x + kh < keyboard_rect.min.x || x > keyboard_rect.max.x {
+        if x + row_w < keyboard_rect.min.x || x > keyboard_rect.max.x {
             continue;
         }
         let key_rect =
-            egui::Rect::from_min_size(egui::pos2(x, keyboard_rect.min.y), egui::vec2(kh, kb_w));
+            egui::Rect::from_min_size(egui::pos2(x, keyboard_rect.min.y), egui::vec2(row_w, kb_w));
         painter.rect_filled(key_rect, 0.0, crate::theme::rgb_to_color32(theme.key_white));
         painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
 
@@ -284,7 +301,7 @@ fn paint_vertical(
             let font_id = egui::FontId::proportional((kh * 0.5).clamp(8.0, 14.0));
             let color = crate::theme::text_disabled();
             let galley = painter.layout_no_wrap(label, font_id, color);
-            let pos = egui::pos2(x + kh / 2.0, keyboard_rect.min.y + kb_w / 2.0);
+            let pos = egui::pos2(x + row_w / 2.0, keyboard_rect.min.y + kb_w / 2.0);
             painter.add(
                 egui::epaint::TextShape::new(pos, galley, color).with_angle_and_anchor(
                     -std::f32::consts::FRAC_PI_2,
@@ -300,12 +317,16 @@ fn paint_vertical(
         if !yinhe_types::is_black_key(key) {
             continue;
         }
+        if (key as u16) < view.layout.start || (key as u16) > view.layout.end() {
+            continue;
+        }
+        let row_w = (view.layout.row_units(key as u16) * kh).max(1.0);
         let x = keyboard_rect.min.x + view.key_to_cross_px(key);
-        if x + kh < keyboard_rect.min.x || x > keyboard_rect.max.x {
+        if x + row_w < keyboard_rect.min.x || x > keyboard_rect.max.x {
             continue;
         }
         let key_rect =
-            egui::Rect::from_min_size(egui::pos2(x, keyboard_rect.min.y), egui::vec2(kh, kb_w));
+            egui::Rect::from_min_size(egui::pos2(x, keyboard_rect.min.y), egui::vec2(row_w, kb_w));
         painter.rect_filled(key_rect, 0.0, crate::theme::rgb_to_color32(theme.key_black));
         painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
     }
@@ -315,12 +336,16 @@ fn paint_vertical(
     let accent = crate::theme::accent_active();
     for (idx, &playing) in highlights.playing.iter().enumerate() {
         let key = idx as u8;
+        if (key as u16) < view.layout.start || (key as u16) > view.layout.end() {
+            continue;
+        }
+        let row_w = (view.layout.row_units(key as u16) * kh).max(1.0);
         let x = keyboard_rect.min.x + view.key_to_cross_px(key);
-        if x + kh < keyboard_rect.min.x || x > keyboard_rect.max.x {
+        if x + row_w < keyboard_rect.min.x || x > keyboard_rect.max.x {
             continue;
         }
         let key_rect =
-            egui::Rect::from_min_size(egui::pos2(x, keyboard_rect.min.y), egui::vec2(kh, kb_w));
+            egui::Rect::from_min_size(egui::pos2(x, keyboard_rect.min.y), egui::vec2(row_w, kb_w));
         let in_range = highlights
             .select
             .is_some_and(|(lo, hi)| key >= lo && key <= hi);

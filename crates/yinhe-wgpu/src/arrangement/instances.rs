@@ -414,7 +414,7 @@ mod tests {
     }
 
     fn packed_track(packed: u32) -> u16 {
-        ((packed >> 8) & 0xFFFF) as u16
+        ((packed >> 10) & 0x3FFF) as u16
     }
 
     /// 折叠通道合并行：两条轨道的音符经同一行 id 跨轨合并（子像素间隙内）。

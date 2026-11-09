@@ -9,10 +9,19 @@ use egui_material_icons::icons::{ICON_ADD_CHART, ICON_BAR_CHART, ICON_MORE_HORIZ
 use rust_i18n::t;
 
 use crate::widgets::tools_panel::{ALL_TOOLS, Tool};
-use yinhe_types::AutomationPanelView;
+use yinhe_types::{AutomationPanelView, PianoRollView};
 
 /// 顶部横向工具栏（由 PR 布局扣出的整条顶部带）。
-pub fn show(ui: &mut egui::Ui, rect: egui::Rect, active_tool: &mut Tool) {
+///
+/// 右侧常驻两项视图开关：调式折叠（FOLD）与键数（88/128/256）。
+/// `fold_mask` = 当前调号对应的 12 位音级掩码；`None` = 无调式信息（折叠禁用）。
+pub fn show(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    active_tool: &mut Tool,
+    view: &mut PianoRollView,
+    fold_mask: Option<u16>,
+) {
     let btn_size = egui::vec2(
         crate::theme::PR_TOOL_BTN_SIZE,
         crate::theme::PR_TOOL_BTN_SIZE,
@@ -56,6 +65,47 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, active_tool: &mut Tool) {
                         });
                     });
             }
+            // ── 右侧视图开关：键数 / 调式折叠 ──
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(pad_x);
+                let w = 40.0;
+                let size = egui::vec2(w, btn_size.y);
+
+                // 键数：88 → 128 → 256 → 88 循环。
+                let label = view.layout.count.to_string();
+                let resp = text_button(ui, &label, size, false, "pr_key_count");
+                crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.pr.key_count"));
+                if resp.clicked() {
+                    let next = match view.layout.count {
+                        88 => 128,
+                        128 => 256,
+                        _ => 88,
+                    };
+                    view.set_key_count(next);
+                }
+
+                // FOLD：按当前调号折叠。
+                let fold_on = view.layout.fold_mask != 0;
+                let enabled = fold_mask.is_some();
+                let resp = text_button(ui, "FOLD", size, fold_on, "pr_fold");
+                crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.pr.fold"));
+                if resp.clicked() {
+                    if fold_on {
+                        view.set_fold(0);
+                    } else if let Some(mask) = fold_mask {
+                        view.set_fold(mask);
+                    }
+                } else if fold_on
+                    && let Some(mask) = fold_mask
+                    && view.layout.fold_mask != mask
+                {
+                    // 调号变化时跟随（覆盖事件/手动调式都生效）。
+                    view.set_fold(mask);
+                }
+                if !enabled {
+                    hovered_hint = Some(t!("hint.pr.fold_unavailable").to_string());
+                }
+            });
         });
     });
 
@@ -172,6 +222,34 @@ fn tool_more_button(ui: &mut egui::Ui, btn_size: egui::Vec2) -> egui::Response {
                 .color(crate::theme::text_primary()),
             btn_size,
             None,
+            true,
+        )
+    })
+    .inner
+}
+
+/// 纯文字小按钮（工具栏右侧的键数 / FOLD）。
+fn text_button(
+    ui: &mut egui::Ui,
+    label: &str,
+    size: egui::Vec2,
+    active: bool,
+    id_salt: &str,
+) -> egui::Response {
+    let color = if active {
+        crate::theme::accent_active()
+    } else {
+        crate::theme::text_primary()
+    };
+    let sel_bg = active.then(crate::theme::selected_bg);
+    ui.push_id(id_salt, |ui| {
+        crate::widgets::flat::flat_button_filled_ghost(
+            ui,
+            egui::RichText::new(label)
+                .size(crate::theme::PR_TOOL_BTN_FONT - 1.0)
+                .color(color),
+            size,
+            sel_bg,
             true,
         )
     })

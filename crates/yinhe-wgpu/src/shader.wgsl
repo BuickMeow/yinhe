@@ -67,9 +67,65 @@ struct Uniforms {
     dark_theme: u32, // 1=暗色主题（力度淡化/选中高对比方向翻转）
     ghost_dx: f32, // ghost 预览动画像素偏移（仅 GHOST_BIT 实例）
     ghost_dy: f32,
-    ghost_pad0: f32,
-    ghost_pad1: f32,
+    key_count: u32,
+    key_offset: u32,
+    fold_enabled: u32,
+    fold_root: u32,
+    fold_mask: u32,
+    fold_thin: f32,
+    fold_pad0: f32,
+    fold_pad1: f32,
+    fold_pad2: f32,
+    fold_pad3: f32,
 }
+
+// ── PR 音高行几何（256 键 + 调式折叠）──
+// 与 cull.wgsl / CPU `PianoRollView` 同一套公式。
+fn pr_in_scale(pc: u32) -> bool {
+    return (u.fold_mask & (1u << pc)) != 0u;
+}
+
+fn pr_units_before(key: u32) -> f32 {
+    if (u.fold_enabled == 0u) {
+        return f32(key);
+    }
+    let pc = key % 12u;
+    let oct = key / 12u;
+    let n_in = countOneBits(u.fold_mask);
+    let n_out = 12u - n_in;
+    let per_oct = f32(n_in) + f32(n_out) * u.fold_thin;
+    let in_before = f32(countOneBits(u.fold_mask & ((1u << pc) - 1u)));
+    let out_before = f32(pc) - in_before;
+    return f32(oct) * per_oct + in_before + out_before * u.fold_thin;
+}
+
+fn pr_row(key: u32) -> vec2<f32> {
+    let lo = pr_units_before(key);
+    if (u.fold_enabled == 0u) {
+        return vec2<f32>(lo, lo + 1.0);
+    }
+    let h = select(u.fold_thin, 1.0, pr_in_scale(key % 12u));
+    return vec2<f32>(lo, lo + h);
+}
+
+fn pr_total_units() -> f32 {
+    if (u.fold_enabled == 0u) {
+        return f32(u.key_count);
+    }
+    return pr_units_before(u.key_offset + u.key_count) - pr_units_before(u.key_offset);
+}
+
+fn pr_key_px(key: u32) -> vec2<f32> {
+    let base = pr_units_before(u.key_offset);
+    let r = pr_row(key);
+    let rel_lo = r.x - base;
+    let h_units = r.y - r.x;
+    let total = pr_total_units();
+    let bottom = total * u.key_height - u.scroll_y;
+    let top = bottom - (rel_lo + h_units) * u.key_height;
+    return vec2<f32>(top, max(h_units * u.key_height, 1.0));
+}
+
 
 // Track colors: runtime-sized storage buffer (allocated dynamically to actual
 // track count, see pipeline.rs / renderer.rs).
@@ -247,9 +303,9 @@ fn vs_main(
         // 视口左边界 = keyboard_width（见 note_geometry 同注释）。
         pixel_x = max(pixel_x, u.keyboard_width);
         pixel_w = max(x_offset + end_tick * ppu - pixel_x, 2.0);
-        let bottom = 128.0 * u.key_height - u.scroll_y;
-        pixel_y = bottom - (key + 1.0) * u.key_height;
-        pixel_h = u.key_height;
+        let kpx = pr_key_px(u32(key));
+        pixel_y = kpx.x;
+        pixel_h = kpx.y;
     }
 
     if u.mode == 2u && vel > 0u {
@@ -353,10 +409,10 @@ fn note_geometry(
 ) -> VertexOutput {
     var out: VertexOutput;
 
-    // bit7 = ghost 标记（key 只有 0..127）；动画偏移只作用于 ghost 实例。
-    let is_ghost = (packed & 0x80u) != 0u;
-    let key = packed & 0x7Fu;
-    let track = (packed >> 8u) & 0xFFFFu;
+    // bit9 = ghost 标记；key 9 位（256 键），track 14 位。
+    let is_ghost = (packed & 0x200u) != 0u;
+    let key = packed & 0x1FFu;
+    let track = (packed >> 10u) & 0x3FFFu;
     // vel 字段拆位：bit7 = 选中（填充加深），bit0..7 = MIDI 力度。
     let vel_raw = (packed >> 24u) & 0xFFu;
     var selected = (vel_raw & 0x80u) != 0u;
@@ -366,7 +422,7 @@ fn note_geometry(
     if u.mode == 1u && !selected {
         let gate = end_tick - min(start_tick, end_tick);
         selected = in_selection_rects(start_tick, key, track)
-            && !in_exclude_table(key | (track << 8u), start_tick)
+            && !in_exclude_table(key | (track << 9u), start_tick)
             && selection_filter_passes(key, track, vel, gate);
     }
 
@@ -381,9 +437,10 @@ fn note_geometry(
     if u.orientation == 1u {
         // 纵向瀑布流：音高沿 X（key * key_height - scroll_x，从 0 开始），
         // 时间沿 Y 反转（tick 0 在底部、越大越靠上，键盘在底部 = 当前时刻）。
-        pixel_x = f32(key) * u.key_height - u.scroll_x;
-        right = pixel_x + u.key_height;
-        pixel_w = u.key_height;
+        let kpx = pr_key_px(key);
+        pixel_x = kpx.x - u.scroll_x;
+        right = pixel_x + kpx.y;
+        pixel_w = kpx.y;
         let y_a = u.height - (f32(start_tick) * ppu - u.scroll_y);
         let y_b = u.height - (f32(end_tick) * ppu - u.scroll_y);
         pixel_y = min(y_a, y_b);
@@ -417,10 +474,10 @@ fn note_geometry(
         }
 
         if u.mode == 1u {
-            // PR: key_height based vertical layout
-            let bottom = 128.0 * u.key_height - u.scroll_y;
-            pixel_y = bottom - (f32(key) + 1.0) * u.key_height;
-            pixel_h = u.key_height;
+            // PR: 256 键 + 调式折叠
+            let kpx = pr_key_px(key);
+            pixel_y = kpx.x;
+            pixel_h = kpx.y;
         } else {
             // AR (mode == 2u): lane_height based vertical layout
             // 行高 per-row（通道 AR 的窄合并行）：`row_heights[track]`；

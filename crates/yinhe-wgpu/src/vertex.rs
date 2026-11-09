@@ -1,6 +1,6 @@
 /// Uniforms passed to the vertex / fragment shader.
 #[repr(C)]
-#[derive(Clone, Copy, PartialEq, Default, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Uniforms {
     pub width: f32,
     pub height: f32,
@@ -45,9 +45,34 @@ pub struct Uniforms {
     /// ghost 层整体像素偏移：选区跳跃时从旧位置缓动到量化目标。
     pub ghost_dx: f32,
     pub ghost_dy: f32,
+    /// PR 音高范围：键总数（88/128/256）与起始键（88 键钢琴从 A0=21 开始）。
+    pub key_count: u32,
+    pub key_offset: u32,
+
+    // ── 调式折叠（Scale folding）──
+    /// 0 = 关闭；1 = 开启。开启时音高行按调内音展开、调外音压成细条。
+    pub fold_enabled: u32,
+    /// 折叠根音（0..11）。
+    pub fold_root: u32,
+    /// 12 位音级掩码（bit i = pc i 在调内）。
+    pub fold_mask: u32,
+    /// 调外音行高（相对调内一行的比例，0..1）。
+    pub fold_thin: f32,
     /// 保持 uniform 结构 16 字节对齐（WGSL 同名字段）。
-    pub ghost_pad0: f32,
-    pub ghost_pad1: f32,
+    pub fold_pad0: f32,
+    pub fold_pad1: f32,
+    pub fold_pad2: f32,
+    pub fold_pad3: f32,
+}
+
+impl Default for Uniforms {
+    fn default() -> Self {
+        let mut u: Self = bytemuck::Zeroable::zeroed();
+        // 测试与旧调用默认 PR 使用标准 128 键。
+        u.key_count = 128;
+        u.fold_thin = crate::FOLD_THIN;
+        u
+    }
 }
 
 /// Maximum number of tracks supported. Track indices are u16, so 65536 is the
@@ -96,10 +121,14 @@ pub struct DrawInstance {
 /// Layout:
 ///   d0 = start_tick (u32)
 ///   d1 = end_tick   (u32)
-///   d2 = packed: key(u8) | track(u16) | vel(u8)
+///   d2 = packed: key(u9, bits 0..9) | ghost(bit9) | track(14, bits 10..24)
+///                | vel(7, bits 24..31) | selected(bit31)
 ///
-/// `vel` 字段拆位：bit7 = 选中（渲染填充加深），bit0..7 = MIDI 力度
-/// （0..=127，渲染时向白变浅；127 = 原色）。见 [`NoteInstance::SELECTED_BIT`]。
+/// 256 键（黑乐谱扩展音域）需要 9 位 key；ghost 标记挪到 bit9，
+/// track 收窄到 14 位（16384 轨，远超实际工程规模）。
+///
+/// `vel` 字段：bit31 = 选中（渲染填充加深），bit24..31 的其余 7 位 = MIDI
+/// 力度（0..=127，渲染时向白变浅；127 = 原色）。见 [`NoteInstance::SELECTED_BIT`]。
 /// GPU cull 全曲层的实例不带该位（不随选区重传），由 shader 用
 /// `SelectionUniform` 矩形判定实时补位。
 #[repr(C)]
@@ -107,20 +136,36 @@ pub struct DrawInstance {
 pub struct NoteInstance {
     pub start_tick: u32,
     pub end_tick: u32,
-    /// key(u8, bits 0..8) | track(u16, bits 8..24) | vel(u8, bits 24..32)
+    /// key(u9, bits 0..9) | ghost(bit9) | track(14, bits 10..24)
+    /// | vel(7, bits 24..31) | selected(bit31)
     pub packed: u32,
 }
 
 impl NoteInstance {
     /// packed 的 bit31（vel 字段最高位）：选中标记。
     pub const SELECTED_BIT: u32 = 1 << 31;
-    /// bit7（key 只有 0..127）：ghost 层标记，顶点着色器据此叠加动画偏移。
-    pub const GHOST_BIT: u32 = 1 << 7;
+    /// bit9：ghost 层标记，顶点着色器据此叠加动画偏移。
+    pub const GHOST_BIT: u32 = 1 << 9;
 
-    /// 打包实例。`vel` 只取低 7 位（MIDI 力度语义），bit7 由
-    /// [`NoteInstance::set_selected`] 控制。
+    /// 打包实例。`vel` 只取低 7 位（MIDI 力度语义），选中位由
+    /// [`NoteInstance::set_selected`] 控制。`track` 只有 14 位，超出时截断
+    /// （16384 轨，超过实际 MIDI 工程规模）。
     pub fn pack(key: u8, track: u16, vel: u8) -> u32 {
-        key as u32 | ((track as u32) << 8) | (((vel & 0x7F) as u32) << 24)
+        (key as u32) | (((track as u32) & 0x3FFF) << 10) | (((vel & 0x7F) as u32) << 24)
+    }
+
+    /// 解出 key（0..255）。
+    pub fn key(&self) -> u8 {
+        (self.packed & 0x1FF) as u8
+    }
+
+    /// 解出 track（0..16383）。
+    pub fn track(&self) -> u16 {
+        ((self.packed >> 10) & 0x3FFF) as u16
+    }
+
+    pub fn is_ghost(&self) -> bool {
+        self.packed & Self::GHOST_BIT != 0
     }
 
     /// 设置选中标记（填充加深）。CPU 可见层构建时按成员位图精确设置；
@@ -430,8 +475,8 @@ mod tests {
         };
         assert!(!inst.is_selected());
         assert_eq!(inst.velocity(), 100);
-        assert_eq!((inst.packed >> 8) & 0xFFFF, 3, "track 不受影响");
-        assert_eq!(inst.packed & 0xFF, 60, "key 不受影响");
+        assert_eq!(inst.track(), 3, "track 不受影响");
+        assert_eq!(inst.key(), 60, "key 不受影响");
 
         inst.set_selected(true);
         assert!(inst.is_selected());
@@ -457,10 +502,10 @@ mod tests {
 mod uniform_layout_tests {
     use super::Uniforms;
 
-    /// WGSL `Uniforms` 现有 28 个 4 字节字段；uniform struct 必须 16 字节对齐。
-    /// 改字段时如果忘记同步 shader，这里会先失败。
+    /// WGSL `Uniforms` 现有 36 个 4 字节字段（含 256 键 / 折叠参数）；
+    /// uniform struct 必须 16 字节对齐。改字段时如果忘记同步 shader，这里会先失败。
     #[test]
     fn uniform_size_matches_shader() {
-        assert_eq!(std::mem::size_of::<Uniforms>(), 112);
+        assert_eq!(std::mem::size_of::<Uniforms>(), 144);
     }
 }

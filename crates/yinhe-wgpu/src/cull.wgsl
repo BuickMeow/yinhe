@@ -40,7 +40,78 @@ struct Uniforms {
     value_zoom: f32,
     value_scroll: f32,
     orientation: u32,
+    // 以下与 shader.wgsl / Rust `Uniforms` 同序（256 键 + 调式折叠）。
+    filter_key: u32,
+    filter_track: u32,
+    filter_velocity: u32,
+    filter_gate_lo: u32,
+    filter_gate_hi: u32,
+    filter_flags: u32,
+    exclude_mask: u32,
+    dark_theme: u32,
+    ghost_dx: f32,
+    ghost_dy: f32,
+    key_count: u32,
+    key_offset: u32,
+    fold_enabled: u32,
+    fold_root: u32,
+    fold_mask: u32,
+    fold_thin: f32,
+    fold_pad0: f32,
+    fold_pad1: f32,
+    fold_pad2: f32,
+    fold_pad3: f32,
 };
+
+fn pr_in_scale(pc: u32) -> bool {
+    return (u.fold_mask & (1u << pc)) != 0u;
+}
+
+fn pr_units_before(key: u32) -> f32 {
+    if (u.fold_enabled == 0u) {
+        return f32(key);
+    }
+    let pc = key % 12u;
+    let oct = key / 12u;
+    let n_in = countOneBits(u.fold_mask);
+    let n_out = 12u - n_in;
+    let per_oct = f32(n_in) + f32(n_out) * u.fold_thin;
+    let in_before = f32(countOneBits(u.fold_mask & ((1u << pc) - 1u)));
+    let out_before = f32(pc) - in_before;
+    return f32(oct) * per_oct + in_before + out_before * u.fold_thin;
+}
+
+fn pr_row(key: u32) -> vec2<f32> {
+    let lo = pr_units_before(key);
+    if (u.fold_enabled == 0u) {
+        return vec2<f32>(lo, lo + 1.0);
+    }
+    let h = select(u.fold_thin, 1.0, pr_in_scale(key % 12u));
+    return vec2<f32>(lo, lo + h);
+}
+
+fn pr_total_units() -> f32 {
+    if (u.fold_enabled == 0u) {
+        return f32(u.key_count);
+    }
+    return pr_units_before(u.key_offset + u.key_count) - pr_units_before(u.key_offset);
+}
+
+/// PR 音高行底部像素 y（横向：`total*kh - scroll - rel*kh`）。
+fn pr_key_bottom(key: u32) -> f32 {
+    let base = pr_units_before(u.key_offset);
+    let rel_lo = pr_units_before(key) - base;
+    return (pr_total_units() * u.key_height - u.scroll_y) - rel_lo * u.key_height;
+}
+
+/// PR 音高行 → `(top, height)` 像素（横向 y / 纵向 x）。
+fn pr_key_px(key: u32) -> vec2<f32> {
+    let r = pr_row(key);
+    let h_units = r.y - r.x;
+    let bottom = pr_key_bottom(key);
+    return vec2<f32>(bottom - h_units * u.key_height, max(h_units * u.key_height, 1.0));
+}
+
 
 struct NoteInstance {
     start_tick: u32,
@@ -113,8 +184,9 @@ fn main(
         let start_tick = inst.start_tick;
         let end_tick = inst.end_tick;
         let packed = inst.packed;
-        let key = packed & 0xFFu;
-        let track = (packed >> 8u) & 0xFFFFu;
+        // key 9 位（256 键）；ghost 在 bit9，track 是 14 位。
+        let key = packed & 0x1FFu;
+        let track = (packed >> 10u) & 0x3FFFu;
         // Track 显隐 mask：隐藏轨道的音符直接跳过。mask 始终反映当前
         // track_visible（上传数据也按构建时的 track_visible 过滤过），
         // 双重过滤无害——这是「后台重建期间显示不闪错」的保证。
@@ -123,10 +195,10 @@ fn main(
         // Skip zero-length notes (deleted/placeholder)
         if track_visible && end_tick > start_tick {
             if u.orientation == 1u {
-                // 纵向瀑布流：音高沿 X（key * key_height - scroll_x），
-                // 时间沿 Y（tick * ppu - scroll_y，tick 0 在顶部）。
-                let key_x = f32(key) * u.key_height - u.scroll_x;
-                let key_x_right = key_x + u.key_height;
+                // 纵向瀑布流：音高沿 X（折叠后的行位置），时间沿 Y。
+                let kpx = pr_key_px(key);
+                let key_x = kpx.x - u.scroll_x;
+                let key_x_right = key_x + kpx.y;
                 let tick_y = f32(start_tick) * u.pixels_per_tick - u.scroll_y;
                 let tick_y_bottom = f32(end_tick) * u.pixels_per_tick - u.scroll_y;
                 if key_x_right >= 0.0 && key_x <= u.width && tick_y_bottom >= 0.0 && tick_y <= u.height
@@ -148,10 +220,9 @@ fn main(
                     var pixel_bottom: f32;
 
                     if u.mode == 1u {
-                        // PR: key_height based
-                        let bottom = 128.0 * u.key_height - u.scroll_y;
-                        pixel_bottom = bottom - f32(key) * u.key_height;
-                        pixel_y = bottom - (f32(key) + 1.0) * u.key_height;
+                        // PR: 256 键 + 调式折叠后的行位置
+                        pixel_bottom = pr_key_bottom(key);
+                        pixel_y = pr_key_px(key).x;
                     } else {
                         // AR: lane_height based
                         let lh = u.lane_height;

@@ -755,6 +755,7 @@ fn cull_real_midi_vs_cpu() {
                 follow_anim_elapsed: 0.0,
             },
             key_select: None,
+            layout: yinhe_types::KeyLayout::default(),
         };
         let hidden = std::collections::HashSet::new();
         let track_visible: Vec<bool> = vec![true; model.tracks.len()];
@@ -775,7 +776,7 @@ fn cull_real_midi_vs_cpu() {
         // CPU 输出按 key 统计
         let mut cpu_by_key = [0u32; 128];
         for n in &cpu_out {
-            cpu_by_key[(n.packed & 0xFF) as usize] += 1;
+            cpu_by_key[(n.packed & 0x1FF) as usize] += 1;
         }
         let cpu_total: u32 = cpu_by_key.iter().sum();
 
@@ -1281,7 +1282,7 @@ fn cull_mid_song_exact_per_key() {
                         let pr = x_offset + n.end_tick as f32 * ppu;
                         // 与 cull.wgsl 一致：左边界 = keyboard_width（键盘列下不画）
                         if pr >= kb_w && px <= w {
-                            let k = (n.packed & 0xFF) as f32;
+                            let k = (n.packed & 0x1FF) as f32;
                             let pb = bottom_y - k * kh;
                             let py = bottom_y - (k + 1.0) * kh;
                             if pb >= 0.0 && py <= h {
@@ -1454,7 +1455,7 @@ fn cull_real_large_midi_relative_viewport() {
                         let pr = xo + n.end_tick as f32 * ppu;
                         // 与 cull.wgsl 一致：左边界 = keyboard_width（键盘列下不画）
                         if pr >= kb_w && px <= w {
-                            let k = (n.packed & 0xFF) as f32;
+                            let k = (n.packed & 0x1FF) as f32;
                             let pb = bottom_y - k * kh;
                             let py = bottom_y - (k + 1.0) * kh;
                             if pb >= 0.0 && py <= h {
@@ -2053,6 +2054,7 @@ fn cull_render_pixel_check() {
                 follow_anim_elapsed: 0.0,
             },
             key_select: None,
+            layout: yinhe_types::KeyLayout::default(),
         };
         let job = crate::pianoroll::build_render_job(
             pw,
@@ -2089,7 +2091,7 @@ fn cull_render_pixel_check() {
         // 每 key 的 CPU 实例数
         let mut cpu_by_key = [0u32; 128];
         for n in &instances {
-            cpu_by_key[(n.packed & 0xFF) as usize] += 1;
+            cpu_by_key[(n.packed & 0x1FF) as usize] += 1;
         }
         renderer_legacy.upload_uniforms(job.uniforms);
         renderer_legacy.upload_track_colors(&job.track_colors);
@@ -2310,6 +2312,7 @@ fn cull_visible_buffer_content_check() {
             follow_anim_elapsed: 0.0,
         },
         key_select: None,
+        layout: yinhe_types::KeyLayout::default(),
     };
     let mut cpu_instances = Vec::new();
     crate::pianoroll::build_notes(
@@ -2538,6 +2541,7 @@ fn cull_draw_c_lo_nonzero_minimal() {
                 follow_anim_elapsed: 0.0,
             },
             key_select: None,
+            layout: yinhe_types::KeyLayout::default(),
         };
         let job = crate::pianoroll::build_render_job(
             pw,
@@ -2797,6 +2801,7 @@ fn note_boundary_no_gap_large_tick() {
                 follow_anim_elapsed: 0.0,
             },
             key_select: None,
+            layout: yinhe_types::KeyLayout::default(),
         };
         let job = crate::pianoroll::build_render_job(
             pw,
@@ -3022,6 +3027,7 @@ fn cull_bench_vs_cpu_start_mid() {
                     follow_anim_elapsed: 0.0,
                 },
                 key_select: None,
+                layout: yinhe_types::KeyLayout::default(),
             };
 
             // CPU 路径：暖机 1 次 + 3 次取最优（复用 Vec 避免分配噪声）。
@@ -3262,8 +3268,8 @@ fn cull_arr_mode_lane_height_vs_cpu() {
         if n.start_tick > ts_hi || n.end_tick < ts_lo {
             continue; // 保守跳过，不漏（长音符跨左边界时 end >= ts_lo 仍保留）
         }
-        let key = (n.packed & 0xFF) as f32;
-        let track = ((n.packed >> 8) & 0xFFFF) as f32;
+        let key = (n.packed & 0x1FF) as f32;
+        let track = ((n.packed >> 10) & 0x3FFF) as f32;
         let x_offset = kb_w - scroll_x;
         let pixel_x = x_offset + n.start_tick as f32 * ppu;
         let pixel_right = x_offset + n.end_tick as f32 * ppu;

@@ -9,10 +9,10 @@ use yinhe_types::NoteSource;
 
 use crate::selection::Selection;
 
-/// 排除表键打包：`lo = key | track<<8`，`hi = start_tick`。
+/// 排除表键打包：`lo = key | track<<9`（key 9 位，支持 256 键），`hi = start_tick`。
 #[inline]
 pub fn exclude_key(track: u16, key: u8, start_tick: u32) -> (u32, u32) {
-    (key as u32 | ((track as u32) << 8), start_tick)
+    (key as u32 | ((track as u32) << 9), start_tick)
 }
 
 /// 排除表哈希（CPU/GPU 必须一致；u32 乘法 wrapping）。

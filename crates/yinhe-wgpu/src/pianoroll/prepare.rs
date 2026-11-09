@@ -108,6 +108,13 @@ pub fn build_render_job(
         exclude_mask: 0,
         // 力度淡化/选中高对比方向：随当前主题暗亮翻转（GPU 主题全局同步）。
         dark_theme: u32::from(yinhe_theme::current_gpu_theme().dark_mode),
+        // 音高范围与调式折叠（PR）。
+        key_count: view.layout.count as u32,
+        key_offset: view.layout.start as u32,
+        fold_enabled: u32::from(view.layout.fold_on()),
+        fold_root: 0,
+        fold_mask: view.layout.fold_mask as u32,
+        fold_thin: yinhe_types::THIN_RATIO,
         // ghost 动画偏移由移动端渲染前写入（build_render_job 默认 0）。
         ..Default::default()
     };

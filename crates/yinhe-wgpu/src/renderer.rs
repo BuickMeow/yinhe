@@ -764,27 +764,58 @@ impl InstanceRenderer {
         if u.mode != 1 || u.key_height <= 0.0 {
             return (0, 127);
         }
+        let layout = yinhe_types::KeyLayout {
+            start: u.key_offset as u16,
+            count: u.key_count.max(1) as u16,
+            fold_mask: if u.fold_enabled == 0 {
+                0
+            } else {
+                u.fold_mask as u16
+            },
+        };
+        let first = layout.start;
+        let last = layout.end();
         if u.orientation == 1 {
-            // 纵向瀑布流：音高轴沿 X（key * key_height - scroll_x）。
-            // 可见 key 范围按横向方位计算，padding 1 键防子像素抖动。
-            let lo = (u.scroll_x / u.key_height).floor() as i32;
-            let hi = ((u.scroll_x + u.width) / u.key_height).ceil() as i32;
-            let lo = lo.clamp(0, 127);
-            let hi = hi.saturating_sub(1).clamp(0, 127);
-            let lo = lo.saturating_sub(1).clamp(0, 127);
-            let hi = hi.saturating_add(1).clamp(0, 127);
+            // 纵向瀑布流：音高轴沿 X。按行单位反查可见键，注意折叠后行高不等。
+            let kh = u.key_height;
+            let lo_units = u.scroll_x / kh;
+            let hi_units = (u.scroll_x + u.width) / kh;
+            let mut lo = first;
+            let mut hi = last;
+            for key in first..=last {
+                let b = layout.units_before(key.saturating_add(1));
+                if b > lo_units {
+                    lo = key;
+                    break;
+                }
+            }
+            for key in (first..=last).rev() {
+                let a = layout.units_before(key);
+                if a < hi_units {
+                    hi = key;
+                    break;
+                }
+            }
+            let lo = lo.saturating_sub(1).max(first);
+            let hi = hi.saturating_add(1).min(last);
             return (lo as u8, hi as u8);
         }
-        // PR: bottom = 128 * key_height - scroll_y
-        // y_to_key(y) = ceil((bottom - y) / key_height) - 1, clamped to 0..127
-        let bottom = 128.0 * u.key_height - u.scroll_y;
-        let top_key = ((bottom / u.key_height).ceil() as i32 - 1).clamp(0, 127);
-        let bottom_key = (((bottom - u.height) / u.key_height).ceil() as i32 - 1).clamp(0, 127);
-        let lo = bottom_key.min(top_key);
-        let hi = bottom_key.max(top_key);
-        // 1-key padding for sub-pixel edge cases.
-        let lo = lo.saturating_sub(1).clamp(0, 127);
-        let hi = hi.saturating_add(1).clamp(0, 127);
+        // 横向：逐键比较行区间与视口（256 键线性扫描，代价可忽略）。
+        let mut lo = last;
+        let mut hi = first;
+        for key in first..=last {
+            let top = layout.key_to_y(key, u.key_height, u.scroll_y);
+            let h = layout.row_units(key) * u.key_height;
+            if top + h >= 0.0 && top <= u.height {
+                lo = lo.min(key);
+                hi = hi.max(key);
+            }
+        }
+        if lo > hi {
+            return (first as u8, first as u8);
+        }
+        let lo = lo.saturating_sub(1).max(first);
+        let hi = hi.saturating_add(1).min(last);
         (lo as u8, hi as u8)
     }
 
