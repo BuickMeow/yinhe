@@ -10,6 +10,10 @@ const LINE_THICKNESS: f32 = 1.0;
 const ANCHOR_SQUARE_HALF: f32 = 5.0;
 /// 缓动锚点（实心菱形）的半对角线，像素。
 const ANCHOR_DIAMOND_RADIUS: f32 = 6.0;
+/// 桌面端锚点缩放：恢复移动端放大前的视觉尺寸（3px 半径档）。
+pub const ANCHOR_SCALE_DESKTOP: f32 = 0.5;
+/// 触屏端（Flutter）锚点缩放：手指命中友好。
+pub const ANCHOR_SCALE_TOUCH: f32 = 1.0;
 /// 贝塞尔控制点（空心圆）外半径，像素。
 const CTRL_POINT_RADIUS: f32 = 4.0;
 /// 控制点到锚点的连线线宽。
@@ -198,6 +202,7 @@ pub fn build_data_lines(
     track_visible: &[bool],
     track_color: &[[f32; 4]],
     show_anchors: bool,
+    anchor_scale: f32,
     skip_lane: Option<&AutomationLane>,
     highlight_ticks: &[u32],
     alpha: f32,
@@ -262,13 +267,13 @@ pub fn build_data_lines(
                     SegmentShape::Step => out.push(CurveInstance::square(
                         x,
                         y,
-                        ANCHOR_SQUARE_HALF,
+                        ANCHOR_SQUARE_HALF * anchor_scale,
                         anchor_color,
                     )),
                     SegmentShape::Curve { .. } => out.push(CurveInstance::diamond(
                         x,
                         y,
-                        ANCHOR_DIAMOND_RADIUS,
+                        ANCHOR_DIAMOND_RADIUS * anchor_scale,
                         anchor_color,
                     )),
                 }
@@ -299,6 +304,7 @@ pub(crate) fn build_lane_instances(
     max_val: f32,
     color: [f32; 3],
     show_anchors: bool,
+    anchor_scale: f32,
 ) {
     if max_val <= 0.0 {
         return;
@@ -336,13 +342,13 @@ pub(crate) fn build_lane_instances(
                 SegmentShape::Step => out.push(CurveInstance::square(
                     x,
                     y,
-                    ANCHOR_SQUARE_HALF,
+                    ANCHOR_SQUARE_HALF * anchor_scale,
                     anchor_color,
                 )),
                 SegmentShape::Curve { .. } => out.push(CurveInstance::diamond(
                     x,
                     y,
-                    ANCHOR_DIAMOND_RADIUS,
+                    ANCHOR_DIAMOND_RADIUS * anchor_scale,
                     anchor_color,
                 )),
             }
@@ -707,6 +713,7 @@ mod tests {
             &[true],
             &colors,
             false,
+            1.0,
             None,
             &[],
             FOLDED_ALPHA,
@@ -729,6 +736,7 @@ mod tests {
             &[true],
             &colors,
             true,
+            1.0,
             None,
             &[],
             LINE_ALPHA,
@@ -911,6 +919,7 @@ mod tests {
             &[true],
             &colors,
             true,
+            1.0,
             None,
             &[],
             LINE_ALPHA,
@@ -920,6 +929,65 @@ mod tests {
             out.iter().any(|i| i.shape == 4
                 && (i.thickness - ANCHOR_DIAMOND_RADIUS).abs() < f32::EPSILON),
             "缓动锚点应为菱形（shape 4）"
+        );
+    }
+
+    /// 桌面锚点必须使用 `ANCHOR_SCALE_DESKTOP`：移动端放大曾让桌面也翻倍。
+    #[test]
+    fn desktop_anchor_scale_halves_anchor_size() {
+        let view = panel_view();
+        let lane = AutomationLane {
+            target: AutomationTarget::CC { controller: 7 },
+            track: 0,
+            events: vec![
+                AutomationEvent {
+                    id: 0,
+                    tick: 0,
+                    value: 0.0,
+                    shape: SegmentShape::Step,
+                },
+                AutomationEvent {
+                    id: 1,
+                    tick: 1000,
+                    value: 1.0,
+                    shape: SegmentShape::Curve {
+                        x1: 0.0,
+                        y1: 0.0,
+                        x2: 1.0,
+                        y2: 1.0,
+                    },
+                },
+            ],
+        };
+        let theme = GpuTheme::from_base(BaseColors::default());
+        let colors = [[1.0, 0.0, 0.0, 1.0]];
+        let mut out = Vec::new();
+        build_data_lines(
+            &mut out,
+            400.0,
+            40.0,
+            &view,
+            &[&lane],
+            1.0,
+            &[true],
+            &colors,
+            true,
+            ANCHOR_SCALE_DESKTOP,
+            None,
+            &[],
+            LINE_ALPHA,
+            &theme,
+        );
+        assert!(
+            out.iter().any(|i| i.shape == 2
+                && (i.thickness - ANCHOR_SQUARE_HALF * ANCHOR_SCALE_DESKTOP).abs() < f32::EPSILON),
+            "桌面 Step 锚点应回到半尺寸"
+        );
+        assert!(
+            out.iter().any(|i| i.shape == 4
+                && (i.thickness - ANCHOR_DIAMOND_RADIUS * ANCHOR_SCALE_DESKTOP).abs()
+                    < f32::EPSILON),
+            "桌面缓动锚点应回到半尺寸"
         );
     }
 }

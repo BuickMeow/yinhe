@@ -458,6 +458,7 @@ pub(crate) fn prepare_automation(
         data.track_visible,
         data.track_colors,
         show_anchors,
+        yinhe_wgpu::ANCHOR_SCALE_DESKTOP,
         am_ghost,
         am_key,
     );

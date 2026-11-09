@@ -44,29 +44,30 @@ pub(crate) struct SelDragFrameState {
 /// 临时切成铅笔工具、中断本次拖拽。
 pub(crate) fn sel_drag_in_progress(ui: &egui::Ui) -> bool {
     let id = ui.scope_id();
-    ui.data_mut(|d| {
-        d.get_persisted::<Option<(f64, f64, bool)>>(id.with("note_drag_origin"))
-            .is_some_and(|v| v.is_some())
-            || d.get_persisted::<Option<(ResizeSide, f64, f64)>>(id.with("sel_resize_state"))
+    SelDragFrameState::load(ui).is_dragging()
+        || ui.data_mut(|d| {
+            d.get_persisted::<Option<((f64, f32), egui::Pos2, egui::Pos2)>>(id.with("sel_drag"))
                 .is_some_and(|v| v.is_some())
-            || d.get_persisted::<Option<(f64, f64)>>(id.with("sel_scale_state"))
-                .is_some_and(|v| v.is_some())
-            || d.get_persisted::<Option<(f64, f64, u8, u8)>>(id.with("sel_riff_state"))
-                .is_some_and(|v| v.is_some())
-            || d.get_persisted::<Option<SelNoteResize>>(id.with("sel_note_resize_state"))
-                .is_some_and(|v| v.is_some())
-            || d.get_persisted::<Option<(u16, u32, u8, u32, f64, i32, bool)>>(
-                id.with("sel_note_move_state"),
-            )
-            .is_some_and(|v| v.is_some())
-            || d.get_persisted::<Option<((f64, f32), egui::Pos2, egui::Pos2)>>(id.with("sel_drag"))
-                .is_some_and(|v| v.is_some())
-    })
+        })
 }
 
 impl SelDragFrameState {
+    /// 是否有任一拖拽状态机正在进行。
+    ///
+    /// 新增状态时只改这里——`handle_sel_marquee` 与 `sel_drag_in_progress`
+    /// 共用同一个判断，避免两处状态列表漂移（曾漏掉 scale/riff 导致拖控制点
+    /// 同时拉起第二个选框）。
+    pub(crate) fn is_dragging(&self) -> bool {
+        self.note_drag_origin.is_some()
+            || self.sel_resize_state.is_some()
+            || self.sel_scale_state.is_some()
+            || self.sel_riff_state.is_some()
+            || self.sel_note_resize.is_some()
+            || self.sel_note_move.is_some()
+    }
+
     /// 从 egui 持久化加载拖拽状态（拖拽跨帧保持）。
-    pub(crate) fn load(ui: &mut egui::Ui) -> Self {
+    pub(crate) fn load(ui: &egui::Ui) -> Self {
         Self {
             note_drag_origin: ui
                 .data_mut(|d| d.get_persisted(ui.scope_id().with("note_drag_origin")))

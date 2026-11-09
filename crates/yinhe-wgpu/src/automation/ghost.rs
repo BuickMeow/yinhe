@@ -178,9 +178,19 @@ pub fn build_ghost(
     view: &AutomationPanelView,
     max_val: f32,
     show_anchors: bool,
+    anchor_scale: f32,
     _theme: &GpuTheme,
 ) {
     let AutomationGhost::Move { lane, color } = ghost;
     // 整条 lane 作为 ghost 重新绘制
-    data_lines::build_lane_instances(out, w, view, &lane, max_val, color, show_anchors);
+    data_lines::build_lane_instances(
+        out,
+        w,
+        view,
+        &lane,
+        max_val,
+        color,
+        show_anchors,
+        anchor_scale,
+    );
 }

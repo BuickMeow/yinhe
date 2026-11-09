@@ -88,6 +88,7 @@ pub(crate) fn render_panel_content(
         track_colors,
         min_border_width,
         show_anchors,
+        yinhe_wgpu::ANCHOR_SCALE_DESKTOP,
         max_val_f,
         panel_ghost,
         revision,

@@ -230,16 +230,8 @@ pub fn add_pr_selection_rect(
 /// 桌面选框控制点命中半径（像素）。
 pub const SEL_HANDLE_R: f32 = 11.0;
 
-/// 选框右侧三个方块控制点。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SelHandleKind {
-    /// 右下角：按选区宽度重复。
-    Riff,
-    /// 右缘中点：整体变速。
-    Scale,
-    /// 右缘内缩一个量化格：每个音符批量改 gate。
-    Gate,
-}
+/// 选框右侧控制点种类：桌面/Flutter 共用 `yinhe_editor_core` 的几何定义。
+pub use yinhe_editor_core::selection_handle::SelHandleKind;
 
 #[derive(Clone, Copy, Debug)]
 pub struct SelHandleHit {
@@ -256,18 +248,17 @@ pub fn selection_handle_centers(
     rect: egui::Rect,
     interval_px: f32,
 ) -> (egui::Pos2, egui::Pos2, Option<egui::Pos2>) {
-    let corner = egui::pos2(rect.max.x, rect.max.y);
-    if view.is_vertical() {
-        let scale = egui::pos2(rect.center().x, rect.max.y);
-        let y = rect.max.y - interval_px;
-        let gate = (y > rect.min.y).then(|| egui::pos2(rect.center().x, y));
-        (corner, scale, gate)
-    } else {
-        let scale = egui::pos2(rect.max.x, rect.center().y);
-        let x = rect.max.x - interval_px;
-        let gate = (x > rect.min.x).then(|| egui::pos2(x, rect.center().y));
-        (corner, scale, gate)
-    }
+    let c = yinhe_editor_core::selection_handle::centers(
+        (rect.min.x, rect.min.y, rect.max.x, rect.max.y),
+        interval_px,
+        view.is_vertical(),
+        true,
+    );
+    (
+        egui::pos2(c.corner.0, c.corner.1),
+        egui::pos2(c.scale.0, c.scale.1),
+        c.gate.map(|(x, y)| egui::pos2(x, y)),
+    )
 }
 
 /// 命中选框右侧三个方块。只对单选框生效，取距离最近者。
@@ -284,31 +275,16 @@ pub fn hit_test_sel_handles(
     }
     let rect = music_sel_to_pixel_rect(view, t0, t1, k0, k1);
     let interval_px = quantize.tick_interval(ppq).max(1) as f32 * view.base.pixels_per_tick;
-    let (corner, scale, gate) = selection_handle_centers(view, rect, interval_px);
-    let near = |p: egui::Pos2| (p - local).length_sq() <= SEL_HANDLE_R * SEL_HANDLE_R;
-    if near(corner) {
-        return Some(SelHandleHit {
-            kind: SelHandleKind::Riff,
-            t0,
-            t1,
-            k0,
-            k1,
-        });
-    }
-    let mut best: Option<(SelHandleKind, f32)> = None;
-    for (kind, p) in [
-        (SelHandleKind::Scale, Some(scale)),
-        (SelHandleKind::Gate, gate),
-    ] {
-        let Some(p) = p else { continue };
-        if near(p) {
-            let d = (p - local).length_sq();
-            if best.is_none_or(|(_, bd)| d < bd) {
-                best = Some((kind, d));
-            }
-        }
-    }
-    best.map(|(kind, _)| SelHandleHit {
+    let kind = yinhe_editor_core::selection_handle::hit_test(
+        (rect.min.x, rect.min.y, rect.max.x, rect.max.y),
+        interval_px,
+        view.is_vertical(),
+        true,
+        local.x,
+        local.y,
+        SEL_HANDLE_R,
+    )?;
+    Some(SelHandleHit {
         kind,
         t0,
         t1,

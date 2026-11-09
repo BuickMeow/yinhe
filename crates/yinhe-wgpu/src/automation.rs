@@ -4,6 +4,7 @@ mod prepare;
 pub(crate) mod velocity_bars;
 pub(crate) mod velocity_summary;
 
+pub use data_lines::{ANCHOR_SCALE_DESKTOP, ANCHOR_SCALE_TOUCH};
 pub use ghost::{
     build_lane_multi_copy, build_lane_multi_move, build_lane_override, build_lane_shape_override,
 };

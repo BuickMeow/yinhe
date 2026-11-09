@@ -92,13 +92,7 @@ pub(crate) fn handle_sel_marquee(
 ) {
     // 选框右侧控制点（Riff / 变速 / 批量 gate）拖拽期间不得再启动 marquee：
     // 否则同一次按下既拖控制点又拉出一个新选框，松手后选区里会多出第二个框。
-    if state.note_drag_origin.is_some()
-        || state.sel_resize_state.is_some()
-        || state.sel_scale_state.is_some()
-        || state.sel_riff_state.is_some()
-        || state.sel_note_resize.is_some()
-        || state.sel_note_move.is_some()
-    {
+    if state.is_dragging() {
         let sel_id = ui.scope_id().with("sel_drag");
         ui.data_mut(|d| {
             d.insert_persisted(sel_id, Option::<((f64, f32), egui::Pos2, egui::Pos2)>::None)

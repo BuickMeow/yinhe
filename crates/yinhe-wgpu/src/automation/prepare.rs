@@ -123,6 +123,7 @@ pub fn prepare(
     track_colors: &[[f32; 4]],
     min_border_width: f32,
     show_anchors: bool,
+    anchor_scale: f32,
     max_val: f32,
     ghost: Option<AutomationGhost>,
     revision: u64,
@@ -207,6 +208,7 @@ pub fn prepare(
         sel_hash,
         target_hash(&view.selected_target),
         show_anchors as u64,
+        crate::hash_f32s(&[anchor_scale]),
         view.show_velocity as u64,
         ghost_lane_hash,
         revision,
@@ -266,6 +268,7 @@ pub fn prepare(
                 track_visible,
                 track_colors,
                 show_anchors,
+                anchor_scale,
                 skip_lane,
                 highlight_ticks_for_layer0,
                 data_lines::LINE_ALPHA,
@@ -282,7 +285,7 @@ pub fn prepare(
         if ghost.is_some() { 0 } else { EMPTY_GHOST_KEY },
         |out| {
             if let Some(g) = ghost {
-                ghost::build_ghost(out, g, w, view, max_val, show_anchors, &theme);
+                ghost::build_ghost(out, g, w, view, max_val, show_anchors, anchor_scale, &theme);
             }
         },
     );
@@ -352,6 +355,7 @@ fn build_lane_data(
     track_colors: &[[f32; 4]],
     skip_lane: Option<&AutomationLane>,
     alpha: f32,
+    anchor_scale: f32,
     theme: &yinhe_theme::GpuTheme,
 ) {
     let view = AutomationPanelView {
@@ -388,6 +392,7 @@ fn build_lane_data(
             track_visible,
             track_colors,
             l.show_anchors,
+            anchor_scale,
             skip_lane,
             l.highlight_ticks,
             alpha,
@@ -440,6 +445,7 @@ pub fn prepare_folded_automation(
                 track_colors,
                 None,
                 data_lines::FOLDED_ALPHA,
+                1.0,
                 &theme,
             );
             // 预乘到行背景并输出不透明颜色：AA/搭接像素不会重复叠加变深，
@@ -535,6 +541,7 @@ pub fn prepare_arr_automation(
     track_visible: &[bool],
     track_colors: &[[f32; 4]],
     show_anchors: bool,
+    anchor_scale: f32,
     ghost: Option<(AutomationGhost, f32, f32, f32)>,
     cache_key: u64,
 ) {
@@ -568,6 +575,7 @@ pub fn prepare_arr_automation(
         cache_key,
         ghost_lane_hash,
         tc_hash,
+        crate::hash_f32s(&[anchor_scale]),
         lane_set_hash(&expanded),
     ]);
     let folded_key = layer_cache_key(&[cache_key, tc_hash, lane_set_hash(&folded)]);
@@ -595,6 +603,7 @@ pub fn prepare_arr_automation(
                 track_colors,
                 skip_lane,
                 data_lines::LINE_ALPHA,
+                anchor_scale,
                 &theme,
             );
         }
@@ -615,6 +624,7 @@ pub fn prepare_arr_automation(
                 track_colors,
                 None,
                 data_lines::FOLDED_ALPHA,
+                1.0,
                 &theme,
             );
         }
@@ -632,7 +642,16 @@ pub fn prepare_arr_automation(
                 value_scroll: 0.0,
                 ..Default::default()
             };
-            ghost::build_ghost(out, g, width, &view, max_val, show_anchors, &theme);
+            ghost::build_ghost(
+                out,
+                g,
+                width,
+                &view,
+                max_val,
+                show_anchors,
+                anchor_scale,
+                &theme,
+            );
         }
     });
 }

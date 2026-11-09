@@ -581,15 +581,14 @@ fn arr_handle_hit(
     let x1 = view.tick_to_x(t1);
     let y0 = row_layout.track_y(r0, lh) - scroll_y;
     let y1 = row_layout.track_y(r1, lh) + row_layout.track_height(r1, lh) - scroll_y;
-    let _ = x0;
-    let corner = egui::pos2(x1 - 4.0, y1 - 4.0);
-    let scale = egui::pos2(x1 - 4.0, (y0 + y1) * 0.5);
-    let near = |p: egui::Pos2| (p - local).length_sq() <= 11.0 * 11.0;
-    if near(corner) {
-        return Some((4, t0, t1, r0, r1));
-    }
-    if near(scale) {
-        return Some((3, t0, t1, r0, r1));
-    }
-    None
+    let kind = yinhe_editor_core::selection_handle::hit_test(
+        (x0, y0, x1, y1),
+        0.0,
+        false,
+        false,
+        local.x,
+        local.y,
+        crate::selection::drag::SEL_HANDLE_R,
+    )?;
+    Some((kind.code(), t0, t1, r0, r1))
 }

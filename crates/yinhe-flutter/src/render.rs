@@ -994,6 +994,7 @@ pub fn render_automation_frame(
             &track_colors,
             1.0,
             state.show_anchors,
+            yinhe_wgpu::ANCHOR_SCALE_TOUCH,
             if is_velocity { 127.0 } else { value_max },
             ghost,
             revision,

@@ -268,18 +268,13 @@ struct SelHandle {
     r1: usize,
 }
 
-fn square_hit(hx: f32, hy: f32, x: f32, y: f32) -> bool {
-    let dx = x - hx;
-    let dy = y - hy;
-    dx * dx + dy * dy <= SEL_HANDLE_R * SEL_HANDLE_R
-}
-
 /// 选框右侧三个方块控制点：
 /// - 右下角 `4`：重复（Riff）；
 /// - 右缘中点 `3`：整体变速；
 /// - 右缘内缩一个量化格 `5`：每个音符批量改 gate（仅 PR）。
 ///
-/// 三个方块距离可能很近，统一按“离哪个中心最近”判定，避免右下角吞掉右缘。
+/// 几何与命中判定统一走 `yinhe_editor_core::selection_handle`，与桌面端同源。
+/// `interval_px` 为 `None` 时（AR）不生成 gate 控制点。
 fn selection_handle_hit(
     x0: f32,
     y0: f32,
@@ -287,28 +282,18 @@ fn selection_handle_hit(
     y1: f32,
     x: f32,
     y: f32,
-    inner_x: Option<f32>,
+    interval_px: Option<f32>,
 ) -> Option<u8> {
-    let (x0, x1) = (x0.min(x1), x0.max(x1));
-    let (y0, y1) = (y0.min(y1), y0.max(y1));
-    let cy = (y0 + y1) * 0.5;
-    let mut best: Option<(u8, f32)> = None;
-    let mut consider = |edge: u8, hx: f32, hy: f32| {
-        if square_hit(hx, hy, x, y) {
-            let d = (x - hx).powi(2) + (y - hy).powi(2);
-            if best.is_none_or(|(_, bd)| d < bd) {
-                best = Some((edge, d));
-            }
-        }
-    };
-    consider(4, x1, y1);
-    consider(3, x1, cy);
-    if let Some(ix) = inner_x
-        && ix > x0 + 4.0
-    {
-        consider(5, ix, cy);
-    }
-    best.map(|(edge, _)| edge)
+    let kind = yinhe_editor_core::selection_handle::hit_test(
+        (x0, y0, x1, y1),
+        interval_px.unwrap_or(0.0),
+        false,
+        interval_px.is_some(),
+        x,
+        y,
+        SEL_HANDLE_R,
+    )?;
+    Some(kind.code())
 }
 
 fn pr_selection_handle(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option<SelHandle> {
@@ -329,7 +314,7 @@ fn pr_selection_handle(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option
     let y0 = geom.key_to_y(k1);
     let y1 = geom.key_to_y(k0) + geom.kh;
     let interval_px = quantize_of(s).tick_interval(s.ppq).max(1) as f32 * geom.ppu;
-    let edge = selection_handle_hit(x0, y0, x1, y1, x, y, Some(x1 - interval_px))?;
+    let edge = selection_handle_hit(x0, y0, x1, y1, x, y, Some(interval_px))?;
     Some(SelHandle {
         edge,
         t0,
@@ -3524,17 +3509,17 @@ mod tests {
     fn selection_handles_map_corner_scale_and_gate() {
         // 选框 0..100 × 0..100，量化格 20px。
         assert_eq!(
-            selection_handle_hit(0.0, 0.0, 100.0, 100.0, 100.0, 100.0, Some(80.0)),
+            selection_handle_hit(0.0, 0.0, 100.0, 100.0, 100.0, 100.0, Some(20.0)),
             Some(4),
             "右下角优先重复"
         );
         assert_eq!(
-            selection_handle_hit(0.0, 0.0, 100.0, 100.0, 100.0, 50.0, Some(80.0)),
+            selection_handle_hit(0.0, 0.0, 100.0, 100.0, 100.0, 50.0, Some(20.0)),
             Some(3),
             "右缘中点整体变速"
         );
         assert_eq!(
-            selection_handle_hit(0.0, 0.0, 100.0, 100.0, 80.0, 50.0, Some(80.0)),
+            selection_handle_hit(0.0, 0.0, 100.0, 100.0, 80.0, 50.0, Some(20.0)),
             Some(5),
             "右缘内缩一格批量 gate"
         );
