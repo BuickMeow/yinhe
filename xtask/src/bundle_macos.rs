@@ -12,6 +12,8 @@ use std::process::ExitCode;
 use crate::cmd::{cargo, cmd, status};
 
 const APP_NAME: &str = "Yinhe";
+/// bundle 内的可执行文件名（cargo-bundle 用 package 名）。
+const EXEC_NAME: &str = "yinhe-egui";
 const BUNDLE_DIR: &str = "target/release/bundle/osx";
 const DMG_DIR: &str = "target/release/bundle/dmg";
 const STAGING_DIR: &str = "target/release/bundle/dmg/.staging";
@@ -58,18 +60,35 @@ pub fn run() -> ExitCode {
     }
 }
 
-fn run_inner() -> Result<(), ExitCode> {
-    let app = format!("{BUNDLE_DIR}/{APP_NAME}.app");
-    let dmg = format!("{DMG_DIR}/{APP_NAME}.dmg");
-    let plist = format!("{app}/Contents/Info.plist");
+/// 快速本地构建：只产出 `.app`（build + cargo bundle + Info.plist 修补），
+/// 不做 codesign / xattr / dmg。约 2~3 秒（增量 build 时）。
+pub fn run_app() -> ExitCode {
+    match run_app_inner() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(code) => code,
+    }
+}
 
-    // 1) 构建 + cargo-bundle。
+fn run_app_inner() -> Result<(), ExitCode> {
+    let app = format!("{BUNDLE_DIR}/{APP_NAME}.app");
+    let plist = format!("{app}/Contents/Info.plist");
+    build_and_bundle()?;
+    patch_info_plist(&app, &plist)?;
+    println!("已生成: {app}");
+    println!("控制台运行: {app}/Contents/MacOS/{EXEC_NAME}");
+    Ok(())
+}
+
+/// `cargo build --release` + `cargo bundle`（增量时 bundle 约 1.9s）。
+fn build_and_bundle() -> Result<(), ExitCode> {
     status(cargo().args(["build", "--release", "-p", "yinhe-egui"]))?;
     status(cargo().args(["bundle", "--release", "--format", "osx", "-p", "yinhe-egui"]))?;
+    Ok(())
+}
 
-    // 2) 声明本地化：让系统 UI（打开/保存面板、红绿灯悬停菜单等）跟随系统语言。
-    //    不声明的话 AppKit 认为应用只支持英文，中文系统上也显示英文。
-    //    CFBundleDevelopmentRegion 作为无法匹配任何本地化时的 fallback。
+/// 本地化 / 文档类型 / UTI 写入 Info.plist（分发与本地构建共用）。
+fn patch_info_plist(app: &str, plist: &str) -> Result<(), ExitCode> {
+    // 声明本地化：让系统 UI（打开/保存面板、红绿灯悬停菜单等）跟随系统语言。
     status(
         cmd("/usr/libexec/PlistBuddy")
             .args(["-c", "Add :CFBundleLocalizations array"])
@@ -78,11 +97,11 @@ fn run_inner() -> Result<(), ExitCode> {
             .args(["-c", "Add :CFBundleLocalizations:2 string ja"])
             .args(["-c", "Add :CFBundleLocalizations:3 string ko"])
             .args(["-c", "Set :CFBundleDevelopmentRegion zh-Hans"])
-            .arg(&plist),
+            .arg(plist),
     )?;
 
-    // 3) CI 注入的版本号写进 Info.plist（Finder/系统显示正确的构建版本）。
-    //    本地构建没有 YINHE_VERSION，保持 cargo-bundle 用 Cargo.toml 写的版本。
+    // CI 注入的版本号写进 Info.plist（Finder/系统显示正确的构建版本）。
+    // 本地构建没有 YINHE_VERSION，保持 cargo-bundle 用 Cargo.toml 写的版本。
     if let Ok(version) = std::env::var("YINHE_VERSION")
         && !version.is_empty()
     {
@@ -94,12 +113,12 @@ fn run_inner() -> Result<(), ExitCode> {
                     "-string",
                     &version,
                 ])
-                .arg(&plist),
+                .arg(plist),
         )?;
     }
 
-    // 4) .lproj 兜底：部分系统组件只认 Resources 下的 .lproj 目录，目录存在即可
-    //    让 CFBundle 的 knownLocalizations 包含该语言。
+    // .lproj 兜底：部分系统组件只认 Resources 下的 .lproj 目录，目录存在即可
+    // 让 CFBundle 的 knownLocalizations 包含该语言。
     for lang in ["zh-Hans", "en", "ja", "ko"] {
         let dir = format!("{app}/Contents/Resources/{lang}.lproj");
         fs::create_dir_all(&dir).map_err(|e| report_io("创建 .lproj 目录", &dir, &e))?;
@@ -108,8 +127,8 @@ fn run_inner() -> Result<(), ExitCode> {
             .map_err(|e| report_io("创建 InfoPlist.strings", &strings, &e))?;
     }
 
-    // 5) 声明文档类型与导出的 UTI（用 plutil -insert -json：PlistBuddy 批量 -c
-    //    指令会 Abort trap）。
+    // 声明文档类型与导出的 UTI（用 plutil -insert -json：PlistBuddy 批量 -c
+    // 指令会 Abort trap）。
     status(
         cmd("plutil")
             .args([
@@ -118,7 +137,7 @@ fn run_inner() -> Result<(), ExitCode> {
                 "-json",
                 DOCUMENT_TYPES_JSON,
             ])
-            .arg(&plist),
+            .arg(plist),
     )?;
     status(
         cmd("plutil")
@@ -128,8 +147,19 @@ fn run_inner() -> Result<(), ExitCode> {
                 "-json",
                 UTI_DECLARATIONS_JSON,
             ])
-            .arg(&plist),
+            .arg(plist),
     )?;
+    Ok(())
+}
+
+fn run_inner() -> Result<(), ExitCode> {
+    let app = format!("{BUNDLE_DIR}/{APP_NAME}.app");
+    let dmg = format!("{DMG_DIR}/{APP_NAME}.dmg");
+    let plist = format!("{app}/Contents/Info.plist");
+
+    // 1) 构建 + cargo-bundle + Info.plist（本地化/文档类型/UTI）。
+    build_and_bundle()?;
+    patch_info_plist(&app, &plist)?;
 
     // 6) 整体重签名（--force 覆盖链接器的部分签名，--deep 递归签嵌套内容），
     //    seal 上 Info.plist 和 Resources，使 codesign --verify 通过。

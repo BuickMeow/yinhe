@@ -25,6 +25,7 @@ fn main() -> ExitCode {
 
     match cmd {
         Some("android") => android::run(&args[1..]),
+        Some("app") => bundle_macos::run_app(),
         Some("bundle-macos") => bundle_macos::run(),
         Some("emulator") => emulator::run(&args[1..]),
         Some("ios") => ios::run(&args[1..]),
@@ -46,6 +47,7 @@ fn print_help() {
     println!(
         "yinhe xtask\n\n\
          用法:\n  \
+         cargo xtask app               构建本地测试用 macOS .app（不签名/不打 dmg）\n  \
          cargo xtask bundle-macos       打包 macOS .app 并生成 .dmg\n  \
          cargo xtask verify [crate..]   fmt --check + clippy + test + release\n  \
          cargo xtask android [选项]      构建 Android APK（--debug/--install）\n  \
