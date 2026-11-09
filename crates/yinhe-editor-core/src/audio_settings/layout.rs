@@ -56,7 +56,7 @@ impl Default for LayoutSettings {
             show_bottom_dock: false,
             bottom_dock_height: 200.0,
             show_mixer_panel: true,
-            mix_height: 480.0,
+            mix_height: 260.0,
             float_pianoroll: FloatPanelState::default(),
             float_bottom_dock: FloatPanelState::default(),
             float_mixer: FloatPanelState::default(),

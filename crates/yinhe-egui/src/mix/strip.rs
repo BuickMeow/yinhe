@@ -569,23 +569,43 @@ fn ms_column(ui: &mut egui::Ui, params: &StripParams, width: f32) -> Option<Stri
     .inner
 }
 
-/// 声像旋钮（右列，宽度 `width` 内居中）。返回 `Some(新 pan)` 表示被改动。
+/// 声像旋钮（右列）：旋钮居中，左右分别标 L / R。
+/// 返回 `Some(新 pan)` 表示被改动。
 fn pan_knob(ui: &mut egui::Ui, pan: f32, width: f32) -> Option<f32> {
-    ui.allocate_ui_with_layout(
-        egui::vec2(width, KNOB_D),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            let mut norm = (pan + 1.0) / 2.0;
-            let resp = knob(ui, &mut norm, KNOB_D);
-            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.pan"));
-            if resp.changed() {
-                Some(norm * 2.0 - 1.0)
-            } else {
-                None
-            }
-        },
-    )
-    .inner
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, KNOB_D), egui::Sense::hover());
+    let painter = ui.painter();
+    let font = egui::FontId::proportional((crate::theme::SMALL_FONT - 1.0).max(8.0));
+    let color = crate::theme::text_muted();
+    painter.text(
+        egui::pos2(rect.min.x + 1.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        "L",
+        font.clone(),
+        color,
+    );
+    painter.text(
+        egui::pos2(rect.max.x - 1.0, rect.center().y),
+        egui::Align2::RIGHT_CENTER,
+        "R",
+        font,
+        color,
+    );
+    let knob_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(KNOB_D, KNOB_D));
+    let mut norm = (pan + 1.0) / 2.0;
+    let resp = ui
+        .scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(knob_rect)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            |ui| knob(ui, &mut norm, KNOB_D),
+        )
+        .inner;
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.pan"));
+    if resp.changed() {
+        Some(norm * 2.0 - 1.0)
+    } else {
+        None
+    }
 }
 
 /// dB 读数（右列顶部）：可点击**直接输入**、也可上下拖动。
@@ -674,10 +694,11 @@ fn gain_meter(
         egui::pos2(x, y + half),
         egui::pos2(x - half, y),
     ];
+    // 只画边框不填充：透过菱形可以直接看到电平表。
     ui.painter().add(egui::Shape::convex_polygon(
         points,
-        crate::theme::app_bg(),
-        egui::Stroke::new(1.5, color),
+        egui::Color32::TRANSPARENT,
+        egui::Stroke::new(1.0, color),
     ));
 
     let resp = resp.on_hover_cursor(egui::CursorIcon::ResizeVertical);
