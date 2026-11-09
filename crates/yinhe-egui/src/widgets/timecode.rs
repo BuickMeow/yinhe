@@ -117,11 +117,15 @@ fn select_all_on_focus(ui: &egui::Ui, resp: &egui::Response, id: egui::Id, text:
 }
 
 /// 无框单行输入（时间码字段共用样式，文字在格内垂直居中）。
+///
+/// 必须用**等宽**字体：时间码是居中对齐的数字串，比例字体的数字宽度不等
+/// （例如 `0` 比 `1` 宽 2px），播放时每变一位整串都会重新居中 → 肉眼可见的
+/// 左右跳变。0.37 升级同时更换了字体栈（fontique），比例数字才暴露出来。
 fn text_edit<'a>(id: egui::Id, buf: &'a mut String, width: f32, height: f32) -> egui::TextEdit<'a> {
     egui::TextEdit::singleline(buf)
         .id(id)
         .frame(egui::Frame::NONE)
-        .font(egui::FontId::proportional(crate::theme::TIMECODE_FONT))
+        .font(egui::FontId::monospace(crate::theme::TIMECODE_FONT))
         .text_color(crate::theme::accent_active())
         .align(egui::Align2::CENTER_CENTER)
         .margin(egui::Margin::symmetric(2, 0))

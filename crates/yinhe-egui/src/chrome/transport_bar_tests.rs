@@ -610,3 +610,26 @@ fn selection_buttons_do_not_overlap_timecode() {
         "删除按钮 x={delete_x} 不得早于时间码右缘 {tc_right}（重叠）"
     );
 }
+
+/// 回归：时间码数字必须等宽——否则播放时（数字变化）居中的文本会左右跳变。
+#[test]
+fn timecode_digits_are_tabular() {
+    let ctx = egui::Context::default();
+    ctx.set_fonts(yinhe_fonts::build(400, "en"));
+    ctx.run_ui(Default::default(), |_| {})
+        .drop_without_applying_deltas();
+    let font = egui::FontId::monospace(crate::theme::TIMECODE_FONT);
+    let width = |text: &str| {
+        ctx.fonts_mut(|f| {
+            f.layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::WHITE)
+                .size()
+                .x
+        })
+    };
+    for (a, b) in [("0:01.500", "0:01.501"), ("1.4.000", "1.4.001")] {
+        assert!(
+            (width(a) - width(b)).abs() < 0.01,
+            "{a} 与 {b} 宽度不同：数字不等宽会跳变"
+        );
+    }
+}
