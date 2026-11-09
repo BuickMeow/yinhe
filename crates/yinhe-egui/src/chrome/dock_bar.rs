@@ -725,8 +725,10 @@ fn effect_card(
     let mut clicked = false;
 
     let rect = ui.max_rect();
+    // 必须占满整块：否则父布局只按标题内容宽度推进，下一张卡片/「+」会错位。
+    ui.allocate_rect(rect, egui::Sense::hover());
     let painter = ui.painter_at(rect);
-    paint_card_frame(&painter, rect, is_selected);
+    paint_card_frame(&painter, rect);
 
     let title_rect = egui::Rect::from_min_size(
         rect.min,
@@ -739,7 +741,7 @@ fn effect_card(
             },
         ),
     );
-    paint_card_title(&painter, title_rect);
+    paint_card_title(&painter, title_rect, is_selected);
     let title_fg = crate::theme::contrast_text(crate::theme::selected_bg());
 
     let title_resp = ui.interact(
@@ -855,21 +857,19 @@ fn effect_card(
     clicked
 }
 
-/// 卡片底：圆角背景 + 选中描边。
-fn paint_card_frame(painter: &egui::Painter, rect: egui::Rect, selected: bool) {
+/// 卡片底：圆角背景（选中态改由标题栏深浅表示，不再画描边圈）。
+fn paint_card_frame(painter: &egui::Painter, rect: egui::Rect) {
     painter.rect_filled(rect, 4.0, crate::theme::track_bg());
-    if selected {
-        painter.rect_stroke(
-            rect,
-            4.0,
-            egui::Stroke::new(1.0, crate::theme::accent_active()),
-            egui::StrokeKind::Inside,
-        );
-    }
 }
 
 /// 标题栏：贴卡片上缘与左右边，只有上方两角圆角，下部直角。
-fn paint_card_title(painter: &egui::Painter, rect: egui::Rect) {
+/// 普通卡片用很轻的强调底色，选中卡片加深一档。
+fn paint_card_title(painter: &egui::Painter, rect: egui::Rect, selected: bool) {
+    let fill = if selected {
+        crate::theme::selected_bg()
+    } else {
+        crate::theme::control_selected_bg()
+    };
     painter.rect_filled(
         rect,
         egui::CornerRadius {
@@ -878,7 +878,7 @@ fn paint_card_title(painter: &egui::Painter, rect: egui::Rect) {
             sw: 0,
             se: 0,
         },
-        crate::theme::selected_bg(),
+        fill,
     );
 }
 
@@ -960,8 +960,10 @@ fn instrument_card(
     };
 
     let rect = ui.max_rect();
+    // 必须占满整块：否则父布局只按标题内容宽度推进，下一张卡片/「+」会错位。
+    ui.allocate_rect(rect, egui::Sense::hover());
     let painter = ui.painter_at(rect);
-    paint_card_frame(&painter, rect, is_selected);
+    paint_card_frame(&painter, rect);
 
     let title_rect = egui::Rect::from_min_size(
         rect.min,
@@ -974,7 +976,7 @@ fn instrument_card(
             },
         ),
     );
-    paint_card_title(&painter, title_rect);
+    paint_card_title(&painter, title_rect, is_selected);
     let title_fg = crate::theme::contrast_text(crate::theme::selected_bg());
 
     let title_resp = ui.interact(
