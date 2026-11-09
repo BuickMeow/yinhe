@@ -8069,6 +8069,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
  "vst3",
+ "windows-sys 0.61.2",
  "yinhe-mixer",
 ]
 

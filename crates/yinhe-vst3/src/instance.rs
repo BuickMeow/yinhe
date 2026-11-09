@@ -23,11 +23,22 @@ use vst3::Steinberg::Vst::{
     SymbolicSampleSizes_::kSample32,
 };
 use vst3::Steinberg::{
-    FUnknown, IBStream, IPlugFrame, IPlugView, IPlugViewContentScaleSupport,
-    IPlugViewContentScaleSupportTrait, IPlugViewTrait, IPluginBaseTrait, IPluginFactory,
-    IPluginFactoryTrait, TUID, ViewRect, kNotImplemented, kPlatformTypeNSView, kResultOk,
+    FUnknown, IBStream, IPlugFrame, IPlugView, IPlugViewTrait, IPluginBaseTrait, IPluginFactory,
+    IPluginFactoryTrait, TUID, ViewRect, kNotImplemented, kResultOk,
 };
 use vst3::{ComPtr, ComRef, ComWrapper, Interface};
+
+/// VST3 编辑器父容器的平台类型（宿主自建窗口的句柄类型）。
+///
+/// macOS 传 NSView；Windows 传 HWND。插件用这个字符串决定 `attached`
+/// 的 parent 参数怎么解释。
+#[cfg(target_os = "macos")]
+const VST_PLATFORM_TYPE: vst3::Steinberg::FIDString = vst3::Steinberg::kPlatformTypeNSView;
+#[cfg(target_os = "windows")]
+const VST_PLATFORM_TYPE: vst3::Steinberg::FIDString = vst3::Steinberg::kPlatformTypeHWND;
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+const VST_PLATFORM_TYPE: vst3::Steinberg::FIDString =
+    vst3::Steinberg::kPlatformTypeX11EmbedWindowID;
 
 use yinhe_mixer::ParamQueue;
 
@@ -236,10 +247,10 @@ impl Vst3PluginInstance {
                     "插件没有编辑器（createView 返回空）".into(),
                 ));
             };
-            let r = unsafe { view.isPlatformTypeSupported(kPlatformTypeNSView) };
+            let r = unsafe { view.isPlatformTypeSupported(VST_PLATFORM_TYPE) };
             if r != kResultOk {
                 return Err(InstanceError::Initialize(
-                    "插件编辑器不支持 NSView 嵌入".into(),
+                    "插件编辑器不支持原生 view 嵌入".into(),
                 ));
             }
             let frame = crate::host::create_plug_frame()
@@ -251,9 +262,15 @@ impl Vst3PluginInstance {
                 let _ = view.setFrame(frame_ptr.as_ptr());
             }
             // Retina 缩放：Serum 等插件在 attached 前依赖已设置的 scale factor
-            //（接口可选；不实现则忽略）。
-            if let Some(scale) = view.cast::<IPlugViewContentScaleSupport>() {
-                let _ = unsafe { scale.setContentScaleFactor(2.0) };
+            //（接口可选；不实现则忽略）。Windows 用系统 DPI，不在这里硬编码 2x。
+            #[cfg(target_os = "macos")]
+            {
+                use vst3::Steinberg::{
+                    IPlugViewContentScaleSupport, IPlugViewContentScaleSupportTrait,
+                };
+                if let Some(scale) = view.cast::<IPlugViewContentScaleSupport>() {
+                    let _ = unsafe { scale.setContentScaleFactor(2.0) };
+                }
             }
             self.view = Some(view);
             self.plug_frame = Some(frame);
@@ -287,7 +304,7 @@ impl Vst3PluginInstance {
         let Some(view) = &self.view else {
             return Err(InstanceError::Initialize("编辑器未创建".into()));
         };
-        let r = unsafe { view.attached(parent, kPlatformTypeNSView) };
+        let r = unsafe { view.attached(parent, VST_PLATFORM_TYPE) };
         if r != kResultOk {
             return Err(InstanceError::Initialize(format!(
                 "编辑器嵌入失败（{r:#x}）"
@@ -303,7 +320,7 @@ impl Vst3PluginInstance {
             unsafe {
                 if self.gui_attached {
                     let _ = view.removed();
-                    let _ = view.attached(std::ptr::null_mut(), kPlatformTypeNSView);
+                    let _ = view.attached(std::ptr::null_mut(), VST_PLATFORM_TYPE);
                 }
                 let _ = view.setFrame(std::ptr::null_mut());
             }
