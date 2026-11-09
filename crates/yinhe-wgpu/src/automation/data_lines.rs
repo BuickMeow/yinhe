@@ -296,6 +296,7 @@ pub fn build_data_lines(
 }
 
 /// 画单条 lane 的线段和锚点（用于 ghost 层）。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(crate) fn build_lane_instances(
     out: &mut Vec<CurveInstance>,
     w: f32,

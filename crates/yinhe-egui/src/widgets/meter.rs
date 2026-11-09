@@ -51,20 +51,28 @@ const METER_TICKS: &[(f32, bool)] = &[
     (-48.0, true),
 ];
 
-/// 自绘电平表（向上 L/R 双条）：左侧 dB 数字刻度栏 + 双条 + 刻度 + 峰值保持线。
-/// dB 映射 -60..+6；>0dB 金色、≥0dBFS 红色顶格。
-pub(crate) fn level_meter(ui: &mut egui::Ui, level: (f32, f32), hold: (f32, f32), height: f32) {
+/// 电平表刻度文字：去掉负号，只显示绝对值（-6 → 6）。
+fn db_tick_label(db: f32) -> String {
+    format!("{}", (db as i32).abs())
+}
+
+/// 把电平表画进给定矩形（左侧刻度栏 + 右侧双条）。供需要自定义交互
+/// （例如在电平表上拖拽增益菱形）的调用方复用。
+pub(crate) fn paint_level_meter(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    level: (f32, f32),
+    hold: (f32, f32),
+) {
     let bars_w = METER_W * 2.0 + METER_GAP;
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(SCALE_W + bars_w, height), egui::Sense::hover());
-    let painter = ui.painter();
+    let height = rect.height();
     let bars = egui::Rect::from_min_size(
         egui::pos2(rect.min.x + SCALE_W, rect.min.y),
         egui::vec2(bars_w, height),
     );
     painter.rect_filled(bars, 0.0, crate::theme::track_bg());
 
-    // 刻度线 + 数字标注。
+    // 刻度线 + 数字标注（只显示刻度绝对值：-6 显示 6）。
     let font = egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT);
     for &(db, labeled) in METER_TICKS {
         let y = bars.max.y - db_frac(db) * bars.height();
@@ -80,7 +88,7 @@ pub(crate) fn level_meter(ui: &mut egui::Ui, level: (f32, f32), hold: (f32, f32)
             painter.text(
                 egui::pos2(bars.min.x - 3.0, y),
                 egui::Align2::RIGHT_CENTER,
-                format!("{}", db as i32),
+                db_tick_label(db),
                 font.clone(),
                 crate::theme::text_secondary(),
             );
@@ -252,6 +260,15 @@ fn velocity_color(v: f32) -> egui::Color32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 电平表刻度不显示负号。
+    #[test]
+    fn meter_tick_labels_have_no_minus_sign() {
+        assert_eq!(db_tick_label(0.0), "0");
+        assert_eq!(db_tick_label(-6.0), "6");
+        assert_eq!(db_tick_label(-24.0), "24");
+        assert_eq!(db_tick_label(-48.0), "48");
+    }
 
     /// 自动化表填充：底部基线从底部填充；中部基线按差值方向上下填充；值 clamp。
     #[test]

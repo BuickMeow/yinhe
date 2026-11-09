@@ -162,25 +162,9 @@ pub(crate) enum MixAction {
     SetMaster {
         params: MasterParams,
     },
-    OpenPicker {
-        target: InsertTarget,
-    },
     AddInsert {
         target: InsertTarget,
         plugin: PluginEntry,
-    },
-    BypassInsert {
-        target: InsertTarget,
-        slot: usize,
-        bypassed: bool,
-    },
-    ToggleGui {
-        target: InsertTarget,
-        slot: usize,
-    },
-    RemoveInsert {
-        target: InsertTarget,
-        slot: usize,
     },
     /// 新增一条总线（追加到末尾）。
     AddBus,
@@ -217,43 +201,14 @@ pub(crate) enum MixAction {
         target_bus: u8,
         amount: f32,
     },
-    /// 打开乐器选择器（channel = MIDI 通道；含内置 XSynth 与插件）。
-    OpenInstrumentPicker {
-        channel: u8,
-    },
     /// 为 MIDI 通道**追加**一个插件乐器到链尾（InsertRef 入持久化层 +
     /// 机架加载 + 安装引擎）。
     AssignInstrument {
         channel: u8,
         plugin: PluginEntry,
     },
-    /// 移除 MIDI 通道链内第 `index` 个插件乐器（卸载机架 + 持久化层移除，
-    /// 链路空后回到 XSynth）。
-    RemoveInstrument {
-        channel: u8,
-        index: usize,
-    },
     /// 清空某 MIDI 通道的全部插件乐器（回到内置 XSynth）。
     ClearInstruments {
-        channel: u8,
-    },
-    /// 打开 insert 槽位的参数面板。
-    OpenInsertParams {
-        target: InsertTarget,
-        slot: usize,
-    },
-    /// 打开乐器槽位的参数面板（`index` = 该通道链内序号）。
-    OpenInstrumentParams {
-        channel: u8,
-        index: usize,
-    },
-    /// 打开/关闭乐器插件原生界面（`index` = 该通道链内序号）。
-    ToggleInstrumentGui {
-        channel: u8,
-        index: usize,
-    },
-    /// 打开某 MIDI 通道内置 XSynth 的音色库配置窗口。
-    OpenXsynthConfig {
         channel: u8,
     },
     RescanPlugins,
@@ -940,13 +895,6 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
             app.note_mixer_edit(t!("undo.mix_param").as_ref());
             app.apply_master(idx, params);
         }
-        MixAction::OpenPicker { target } => {
-            app.mix.picker_for = Some(target);
-            app.mix.instrument_picker_for = None;
-            app.mix.picker_tab = strip::PickerTab::Effect;
-            app.mix.picker_selected = None;
-            app.mix.picker_filter.clear();
-        }
         MixAction::AddInsert { target, plugin } => {
             if let Some(refs) = insert_refs(app.workspace.documents[idx].mixer_mut(), target) {
                 refs.push(yinhe_mixer::InsertRef {
@@ -975,30 +923,6 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
             }
             app.push_mixer_state_to_engine(idx);
             app.mix.picker_for = None;
-        }
-        MixAction::BypassInsert {
-            target,
-            slot,
-            bypassed,
-        } => {
-            if let Some(refs) = insert_refs(app.workspace.documents[idx].mixer_mut(), target)
-                && let Some(r) = refs.get_mut(slot)
-            {
-                r.bypassed = bypassed;
-            }
-            app.mixer_rack_mut(idx).set_bypass(target, slot, bypassed);
-        }
-        MixAction::RemoveInsert { target, slot } => {
-            if let Some(refs) = insert_refs(app.workspace.documents[idx].mixer_mut(), target)
-                && slot < refs.len()
-            {
-                refs.remove(slot);
-            }
-            // 字段级借用分裂：audio_state 只读、mixer_racks 可变。
-            let handle = app.audio_state.handle.as_ref().map(|a| &a.handle);
-            if idx < app.mixer_racks.len() {
-                app.mixer_racks[idx].remove_slot(target, slot, handle);
-            }
         }
         MixAction::AddBus => {
             app.note_mixer_edit(t!("undo.mix_bus").as_ref());
@@ -1093,36 +1017,6 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
             app.sync_bus_config_to_engine(idx);
         }
         MixAction::OpenSends { channel } => app.mix.sends_for = Some(channel),
-        MixAction::ToggleGui { target, slot } => {
-            match app.mixer_rack_mut(idx).toggle_gui(target, slot) {
-                Ok(_) => {}
-                Err(e) => {
-                    let msg = e.0.clone();
-                    app.mixer_rack_mut(idx).last_error = Some(msg);
-                }
-            }
-        }
-        MixAction::OpenInstrumentPicker { channel } => {
-            app.mix.instrument_picker_for = Some(channel);
-            app.mix.picker_for = None;
-            app.mix.picker_tab = strip::PickerTab::Instrument;
-            app.mix.picker_selected = None;
-            app.mix.picker_filter.clear();
-        }
-        MixAction::OpenXsynthConfig { channel } => {
-            app.mix.xsynth_config_for = Some(channel);
-        }
-        MixAction::ToggleInstrumentGui { channel, index } => {
-            let result = app
-                .instrument_racks
-                .get_mut(idx)
-                .map(|rack| rack.toggle_gui(channel, index));
-            if let Some(Err(e)) = result
-                && let Some(rack) = app.instrument_racks.get_mut(idx)
-            {
-                rack.last_error = Some(e.0);
-            }
-        }
         MixAction::AssignInstrument { channel, plugin } => {
             let uid;
             {
@@ -1157,20 +1051,6 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
             app.push_mixer_state_to_engine(idx);
             app.mix.instrument_picker_for = None;
         }
-        MixAction::RemoveInstrument { channel, index } => {
-            {
-                let doc = &mut app.workspace.documents[idx];
-                let refs = &mut doc.mixer_mut().instruments[channel as usize];
-                if index < refs.len() {
-                    refs.remove(index);
-                }
-            }
-            if idx < app.instrument_racks.len() {
-                let handle = app.audio_state.handle.as_ref().map(|a| &a.handle);
-                let rack = &mut app.instrument_racks[idx];
-                rack.remove(channel, index, handle);
-            }
-        }
         MixAction::ClearInstruments { channel } => {
             app.workspace.documents[idx].mixer_mut().instruments[channel as usize].clear();
             if idx < app.instrument_racks.len() {
@@ -1179,51 +1059,6 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
                 while rack.slot_count(channel) > 0 {
                     rack.remove(channel, 0, handle);
                 }
-            }
-        }
-        MixAction::OpenInsertParams { target, slot } => {
-            let panel = app
-                .mixer_racks
-                .get_mut(idx)
-                .and_then(|rack| rack.instance_mut(target, slot))
-                .map(|instance| {
-                    let title = instance.name().to_string();
-                    ParamPanel::open(
-                        param_panel::ParamTarget::Insert { target, slot },
-                        title,
-                        instance,
-                    )
-                });
-            if let Some(panel) = panel {
-                app.mix.param_panel = Some(panel);
-            }
-        }
-        MixAction::OpenInstrumentParams { channel, index } => {
-            let uid = app.workspace.documents[idx]
-                .mixer
-                .instruments
-                .get(channel as usize)
-                .and_then(|refs| refs.get(index))
-                .map(|r| r.uid)
-                .unwrap_or(0);
-            let panel = app
-                .instrument_racks
-                .get_mut(idx)
-                .and_then(|rack| rack.instance_mut(channel, index))
-                .map(|instance| {
-                    let title = instance.name().to_string();
-                    ParamPanel::open(
-                        param_panel::ParamTarget::Instrument {
-                            channel,
-                            index,
-                            uid,
-                        },
-                        title,
-                        instance,
-                    )
-                });
-            if let Some(panel) = panel {
-                app.mix.param_panel = Some(panel);
             }
         }
         MixAction::RescanPlugins => start_plugin_scan(app),

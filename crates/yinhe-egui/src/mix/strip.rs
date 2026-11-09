@@ -3,24 +3,23 @@
 //! 每个通道 = 一个**直角矩形 + 单层描边**（通道框不用圆角，避免卡片出界）。按钮类
 //! 控件用通用圆角矩形。自上而下：
 //! 1. 顶部**色带**（轨道色）+ 通道号；
-//! 2. **设备链**（若干乐器 / 效果器，固定高度、整行滚动，不撑破通道）；
-//! 3. **效果发送**（BUS 1 旋钮；无总线时首次拖动自动创建）；
-//! 4. **M/S**（居中）；
-//! 5. **声像旋钮**（居中）；
-//! 6. **当前增益 dB 读数** + **左侧电平表（带刻度 + 峰值保持）+ 右侧推子**。
+//! 2. **效果发送**（BUS 1 旋钮；无总线时首次拖动自动创建）；
+//! 3. **固定高度的电平表模块**：
+//!    - 左侧电平表（刻度 + 峰值保持）+ 表内增益菱形（拖动改电平）；
+//!    - 右侧自上而下：dB 读数、声像旋钮、M、S。
 //!
-//! 各分区高度固定，因此所有通道条的推子/电平表**等高**。
+//! 模块高度固定（面板更高时贴底），因此所有通道条的电平表/按钮**等高**。
+//! 设备链只在底部设备链视图编辑，混音台不再绘制设备链。
 
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_audio::InsertTarget;
-use yinhe_mixer::{InsertRef, MasterParams, MixerParams, SendParams, StripParams};
+use yinhe_mixer::{MasterParams, SendParams, StripParams};
 
 use crate::app::App;
 use crate::widgets::knob::knob;
 
 use super::plugin_instance::PluginEntry;
-use super::rack::SlotRuntime;
 use super::{MixAction, channel_label};
 use crate::widgets::meter::{
     DB_MAX, DB_MIN, METER_GAP, METER_W, SCALE_W, db_frac, db_to_gain, gain_to_db,
@@ -36,8 +35,6 @@ const PAD_X: f32 = 6.0;
 const CONTENT_W: f32 = STRIP_WIDTH - PAD_X * 2.0;
 /// 顶部色带高度（px）。
 const HEADER_H: f32 = 20.0;
-/// 设备链单行高度（px）。
-const DEVICE_ROW_H: f32 = 17.0;
 /// 通用按钮圆角（px）。
 const RADIUS: f32 = 4.0;
 /// 小按钮边长（px，M/S、图标按钮）。
@@ -46,75 +43,24 @@ const BTN: f32 = 18.0;
 const KNOB_D: f32 = 26.0;
 /// 分区之间的竖直间隙（px）。
 const GAP: f32 = 4.0;
-/// 发送 / M-S / 声像 / dB 读数各区高度（px，固定以保证所有条等高）。
+/// 发送区一行高度（px）。
 const SEND_ROW_H: f32 = KNOB_D;
-const MS_ROW_H: f32 = BTN;
-const PAN_ROW_H: f32 = KNOB_D;
+/// dB 读数行高（px）。
 const DB_ROW_H: f32 = 18.0;
-/// 「完整条」（通道 / 音频 / 总线）底部固定区高度。
-const BOTTOM_FULL: f32 = SEND_ROW_H + MS_ROW_H + PAN_ROW_H + DB_ROW_H + GAP * 4.0;
-/// 主输出条底部固定区高度（只有 dB 读数）。
-const BOTTOM_MASTER: f32 = DB_ROW_H + GAP;
-/// 推子槽宽（px）。
-const FADER_SLOT_W: f32 = 4.0;
-/// 推子手柄尺寸（px）。
-const FADER_HANDLE_W: f32 = 22.0;
-const FADER_HANDLE_H: f32 = 11.0;
-/// 推子最小高度（px）。
-const FADER_MIN_H: f32 = 60.0;
+/// 电平表 + 右侧按钮的固定模块高度（px）。不再用剩余高度拉伸。
+const METER_MODULE_H: f32 = 168.0;
+/// 固定模块右侧控制列宽度：dB / 声像 / M / S。
+const CONTROLS_W: f32 = CONTENT_W - (SCALE_W + METER_W * 2.0 + METER_GAP) - GAP;
 
-/// 推子：线性增益 → 推子矩形内的 y 坐标（top = 最大 dB）。
-fn fader_y(gain: f32, top: f32, bottom: f32) -> f32 {
+/// 电平表：线性增益 → 表内 y 坐标（top = 最大 dB）。
+fn gain_y(gain: f32, top: f32, bottom: f32) -> f32 {
     bottom - db_frac(gain_to_db(gain)) * (bottom - top)
 }
 
-/// 推子：推子矩形内的 y 坐标 → 线性增益（超出范围夹到两端）。
-fn fader_gain_at_y(y: f32, top: f32, bottom: f32) -> f32 {
+/// 电平表：表内 y 坐标 → 线性增益（超出范围夹到两端）。
+fn gain_at_y(y: f32, top: f32, bottom: f32) -> f32 {
     let t = ((bottom - y) / (bottom - top)).clamp(0.0, 1.0);
     db_to_gain(DB_MIN + t * (DB_MAX - DB_MIN))
-}
-
-/// insert 链的展示视图：名称/旁通借用自持久化链，GUI 状态借用自机架。
-struct InsertView<'a> {
-    refs: &'a [InsertRef],
-    runtime: &'a [SlotRuntime],
-}
-
-impl InsertView<'_> {
-    /// 某槽位的插件 GUI 是否打开（机架槽位缺失时 false）。
-    fn gui_open(&self, slot: usize) -> bool {
-        self.runtime.get(slot).is_some_and(|rt| rt.gui_open)
-    }
-}
-
-/// 采集某目标的 insert 展示视图（链或机架槽位缺失时为空）。
-fn insert_view<'a>(
-    mixer: &'a MixerParams,
-    rack: Option<&'a super::MixerRack>,
-    target: InsertTarget,
-) -> InsertView<'a> {
-    let refs: &[InsertRef] = match target {
-        InsertTarget::Channel(ch) => mixer
-            .channel_inserts
-            .get(ch as usize)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]),
-        InsertTarget::Audio(ch) => mixer
-            .audio_inserts
-            .get(ch as usize)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]),
-        InsertTarget::Bus(bus) => mixer
-            .bus_inserts
-            .get(bus as usize)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]),
-        InsertTarget::Master => &mixer.master_inserts,
-    };
-    InsertView {
-        refs,
-        runtime: rack.map(|r| r.chain(target)).unwrap_or(&[]),
-    }
 }
 
 /// 通道条外框：直角矩形 + 单层描边 + 顶部色带（写标题）。
@@ -157,14 +103,13 @@ fn strip_frame(
             .max_rect(content)
             .layout(egui::Layout::top_down(egui::Align::LEFT)),
     );
-    // clip 放宽到整卡片：设备链行整宽贴边（突破内容区左右内缩）不被裁。
+    // clip 放宽到整卡片：电平表/发送区不受内容区左右内缩裁剪。
     child.set_clip_rect(rect);
     child.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
     add_contents(&mut child, content.height());
 
-    // 单层描边确定一个通道。**最后画**：设备链行整宽贴边（不透明填充）会盖住
-    // 左右描边，色带同理——描边放最后保证通道之间的分界线贯穿全高、不被内容
-    // 打断（色带与设备行都在描边之下）。
+    // 单层描边确定一个通道。**最后画**：色带等不透明填充会盖住左右描边，
+    // 描边放最后保证通道之间的分界线贯穿全高、不被内容打断。
     painter.rect_stroke(
         rect,
         0.0,
@@ -199,42 +144,16 @@ pub(crate) fn channel_strip(
     actions: &mut Vec<MixAction>,
 ) {
     let params = app.workspace.documents[idx].mixer.strip(channel);
-    let target = InsertTarget::Channel(channel);
-    let view = insert_view(
-        &app.workspace.documents[idx].mixer,
-        app.mixer_racks.get(idx),
-        target,
-    );
     let bus_count = app.workspace.documents[idx].mixer.bus_count();
-    // 本通道的发送列表：每条总线一个旋钮（数量很小，clone 免借用纠缠）。
     let sends = app.workspace.documents[idx]
         .mixer
         .sends
         .get(channel as usize)
         .cloned()
         .unwrap_or_default();
-    let instruments: Vec<String> = app.workspace.documents[idx]
-        .mixer
-        .instruments
-        .get(channel as usize)
-        .map(|refs| refs.iter().map(|r| r.name.clone()).collect())
-        .unwrap_or_default();
     let title = channel_label(channel);
 
-    let rect = strip_frame(ui, color, &title, height, |ui, content_h| {
-        let dev_h = strip_metrics(content_h, true);
-        section(ui, dev_h, egui::Layout::top_down(egui::Align::LEFT), |ui| {
-            device_chain(
-                ui,
-                target,
-                &view,
-                Some(channel),
-                &instruments,
-                dev_h,
-                actions,
-            );
-        });
-        ui.add_space(GAP);
+    let rect = strip_frame(ui, color, &title, height, |ui, _| {
         section(
             ui,
             SEND_ROW_H,
@@ -244,52 +163,9 @@ pub(crate) fn channel_strip(
             },
         );
         ui.add_space(GAP);
-        section(
-            ui,
-            MS_ROW_H,
-            egui::Layout::top_down(egui::Align::Center),
-            |ui| {
-                ms_row(ui, &params, |p| {
-                    actions.push(MixAction::SetStrip { channel, params: p })
-                });
-            },
-        );
-        ui.add_space(GAP);
-        section(
-            ui,
-            PAN_ROW_H,
-            egui::Layout::top_down(egui::Align::Center),
-            |ui| {
-                pan_knob(ui, params.pan, |pan| {
-                    actions.push(MixAction::SetStrip {
-                        channel,
-                        params: StripParams { pan, ..params },
-                    })
-                });
-            },
-        );
-        ui.add_space(GAP);
-        if let Some(g) = db_row(ui, params.gain) {
-            actions.push(MixAction::SetStrip {
-                channel,
-                params: StripParams { gain: g, ..params },
-            });
+        if let Some(p) = strip_controls(ui, &params, level, hold, true, true) {
+            actions.push(MixAction::SetStrip { channel, params: p });
         }
-        // 推子/电平表吸收剩余高度：底边贴住内容区底边（无下方空白）。
-        let bar_h = ui.available_height().max(FADER_MIN_H);
-        section(
-            ui,
-            bar_h,
-            egui::Layout::top_down(egui::Align::Center),
-            |ui| {
-                meter_fader(ui, params.gain, level, hold, bar_h, |g| {
-                    actions.push(MixAction::SetStrip {
-                        channel,
-                        params: StripParams { gain: g, ..params },
-                    })
-                });
-            },
-        );
     });
     // 双击色带：打开底部设备链并选中该通道。
     header_double_click_opens_dock(
@@ -315,14 +191,7 @@ pub(crate) fn audio_strip(
     actions: &mut Vec<MixAction>,
 ) {
     let params = app.workspace.documents[idx].mixer.audio_strip(channel);
-    let target = InsertTarget::Audio(channel);
-    let view = insert_view(
-        &app.workspace.documents[idx].mixer,
-        app.mixer_racks.get(idx),
-        target,
-    );
     let title = crate::mix::audio_label(channel);
-    // 本音频通道的发送列表与总线总数（发送区行数）。
     let audio_sends = app.workspace.documents[idx]
         .mixer
         .audio_sends
@@ -336,16 +205,11 @@ pub(crate) fn audio_strip(
         crate::theme::accent_active(),
         &title,
         height,
-        |ui, content_h| {
-            let dev_h = strip_metrics(content_h, true);
-            section(ui, dev_h, egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                device_chain(ui, target, &view, None, &[], dev_h, actions);
-            });
-            ui.add_space(GAP);
+        |ui, _| {
             section(
                 ui,
                 SEND_ROW_H,
-                egui::Layout::top_down(egui::Align::LEFT),
+                egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     send_block(
                         ui,
@@ -357,52 +221,9 @@ pub(crate) fn audio_strip(
                 },
             );
             ui.add_space(GAP);
-            section(
-                ui,
-                MS_ROW_H,
-                egui::Layout::top_down(egui::Align::Center),
-                |ui| {
-                    ms_row(ui, &params, |p| {
-                        actions.push(MixAction::SetAudioStrip { channel, params: p })
-                    });
-                },
-            );
-            ui.add_space(GAP);
-            section(
-                ui,
-                PAN_ROW_H,
-                egui::Layout::top_down(egui::Align::Center),
-                |ui| {
-                    pan_knob(ui, params.pan, |pan| {
-                        actions.push(MixAction::SetAudioStrip {
-                            channel,
-                            params: StripParams { pan, ..params },
-                        })
-                    });
-                },
-            );
-            ui.add_space(GAP);
-            if let Some(g) = db_row(ui, params.gain) {
-                actions.push(MixAction::SetAudioStrip {
-                    channel,
-                    params: StripParams { gain: g, ..params },
-                });
+            if let Some(p) = strip_controls(ui, &params, level, hold, true, true) {
+                actions.push(MixAction::SetAudioStrip { channel, params: p });
             }
-            // 推子/电平表吸收剩余高度：底边贴住内容区底边（无下方空白）。
-            let bar_h = ui.available_height().max(FADER_MIN_H);
-            section(
-                ui,
-                bar_h,
-                egui::Layout::top_down(egui::Align::Center),
-                |ui| {
-                    meter_fader(ui, params.gain, level, hold, bar_h, |g| {
-                        actions.push(MixAction::SetAudioStrip {
-                            channel,
-                            params: StripParams { gain: g, ..params },
-                        })
-                    });
-                },
-            );
         },
     );
     // 双击色带：打开底部设备链并选中该音频通道。
@@ -416,7 +237,7 @@ pub(crate) fn audio_strip(
     );
 }
 
-/// 总线条（bus / return）：与通道条同构，额外在设备链上方提供删除入口。
+/// 总线条（bus / return）：与通道条同构，额外在色带右侧提供删除入口。
 #[allow(clippy::too_many_arguments)] // 通道条渲染上下文透传
 pub(crate) fn bus_strip(
     app: &mut App,
@@ -434,14 +255,7 @@ pub(crate) fn bus_strip(
         .get(bus as usize)
         .copied()
         .unwrap_or_default();
-    let target = InsertTarget::Bus(bus);
-    let view = insert_view(
-        &app.workspace.documents[idx].mixer,
-        app.mixer_racks.get(idx),
-        target,
-    );
     let title = format!("BUS {}", bus + 1);
-    // 本总线的发送列表（总线 → 总线，含自发送）与总线总数（发送区行数）。
     let bus_sends = app.workspace.documents[idx]
         .mixer
         .bus_sends
@@ -455,67 +269,19 @@ pub(crate) fn bus_strip(
         crate::theme::accent_active(),
         &title,
         height,
-        |ui, content_h| {
-            let dev_h = strip_metrics(content_h, true);
-            section(ui, dev_h, egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                device_chain(ui, target, &view, None, &[], dev_h, actions);
-            });
-            ui.add_space(GAP);
+        |ui, _| {
             section(
                 ui,
                 SEND_ROW_H,
-                egui::Layout::top_down(egui::Align::LEFT),
+                egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     send_block(ui, SendSource::Bus(bus), &bus_sends, bus_count, actions);
                 },
             );
             ui.add_space(GAP);
-            section(
-                ui,
-                MS_ROW_H,
-                egui::Layout::top_down(egui::Align::Center),
-                |ui| {
-                    ms_row(ui, &params, |p| {
-                        actions.push(MixAction::SetBusStrip { bus, params: p })
-                    });
-                },
-            );
-            ui.add_space(GAP);
-            section(
-                ui,
-                PAN_ROW_H,
-                egui::Layout::top_down(egui::Align::Center),
-                |ui| {
-                    pan_knob(ui, params.pan, |pan| {
-                        actions.push(MixAction::SetBusStrip {
-                            bus,
-                            params: StripParams { pan, ..params },
-                        })
-                    });
-                },
-            );
-            ui.add_space(GAP);
-            if let Some(g) = db_row(ui, params.gain) {
-                actions.push(MixAction::SetBusStrip {
-                    bus,
-                    params: StripParams { gain: g, ..params },
-                });
+            if let Some(p) = strip_controls(ui, &params, level, hold, true, true) {
+                actions.push(MixAction::SetBusStrip { bus, params: p });
             }
-            // 推子/电平表吸收剩余高度：底边贴住内容区底边（无下方空白）。
-            let bar_h = ui.available_height().max(FADER_MIN_H);
-            section(
-                ui,
-                bar_h,
-                egui::Layout::top_down(egui::Align::Center),
-                |ui| {
-                    meter_fader(ui, params.gain, level, hold, bar_h, |g| {
-                        actions.push(MixAction::SetBusStrip {
-                            bus,
-                            params: StripParams { gain: g, ..params },
-                        })
-                    });
-                },
-            );
         },
     );
 
@@ -552,7 +318,7 @@ pub(crate) fn bus_strip(
     }
 }
 
-/// 主输出条：设备链 + dB 读数 + 电平/推子（无 M/S/声像/发送）。
+/// 主输出条：固定高度电平表 + dB 读数（无 M/S/声像/发送）。
 pub(crate) fn master_strip(
     app: &mut App,
     ui: &mut egui::Ui,
@@ -563,11 +329,6 @@ pub(crate) fn master_strip(
     actions: &mut Vec<MixAction>,
 ) {
     let params = app.workspace.documents[idx].mixer.master;
-    let view = insert_view(
-        &app.workspace.documents[idx].mixer,
-        app.mixer_racks.get(idx),
-        InsertTarget::Master,
-    );
     let title = t!("mix.master").to_string();
 
     strip_frame(
@@ -575,42 +336,14 @@ pub(crate) fn master_strip(
         crate::theme::accent_active(),
         &title,
         height,
-        |ui, content_h| {
-            let dev_h = strip_metrics(content_h, false);
-            section(ui, dev_h, egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                device_chain(ui, InsertTarget::Master, &view, None, &[], dev_h, actions);
-            });
-            ui.add_space(GAP);
-            if let Some(g) = db_row(ui, params.gain) {
+        |ui, _| {
+            if let Some(g) = master_controls(ui, params.gain, level, hold) {
                 actions.push(MixAction::SetMaster {
                     params: MasterParams { gain: g },
                 });
             }
-            // 推子/电平表吸收剩余高度：底边贴住内容区底边（无下方空白）。
-            let bar_h = ui.available_height().max(FADER_MIN_H);
-            section(
-                ui,
-                bar_h,
-                egui::Layout::top_down(egui::Align::Center),
-                |ui| {
-                    meter_fader(ui, params.gain, level, hold, bar_h, |g| {
-                        actions.push(MixAction::SetMaster {
-                            params: MasterParams { gain: g },
-                        })
-                    });
-                },
-            );
         },
     );
-}
-
-/// 设备链可用高度：`full` = 预留发送/M-S/声像（通道/音频/总线），
-/// 主输出只预留 dB 读数。推子/电平表吸收剩余高度（各条 `bar_h` 取剩余可用）。
-fn strip_metrics(content_h: f32, full: bool) -> f32 {
-    let reserved = if full { BOTTOM_FULL } else { BOTTOM_MASTER };
-    // 设备区最多占 35%（避免把额外高度全吃掉、把推子/电平表压到最小）。
-    let max_dev = (content_h * 0.35).max(DEVICE_ROW_H);
-    (content_h - reserved - FADER_MIN_H).clamp(DEVICE_ROW_H, max_dev)
 }
 
 /// 色带双击：打开底部设备链（dock）并选中该通道（通道条 / 音频条共用）。
@@ -659,412 +392,7 @@ fn header_double_click_opens_dock(
     app.dock_selected = None;
 }
 
-/// 设备链：乐器（0/1 个）+ 效果器列表 + 「+」添加入口，按整行滚动。
-#[allow(clippy::too_many_arguments)] // 设备链渲染上下文透传
-fn device_chain(
-    ui: &mut egui::Ui,
-    target: InsertTarget,
-    view: &InsertView<'_>,
-    channel: Option<u8>,
-    instruments: &[String],
-    max_h: f32,
-    actions: &mut Vec<MixAction>,
-) {
-    // 行距 0（行间靠底部 1px 分隔线分隔），整行取高。
-    let step = DEVICE_ROW_H;
-    let max_rows = (max_h / step).floor().max(1.0) as usize;
-    crate::widgets::scroll::rows_scroll(
-        ui,
-        ("mix_device_chain", target),
-        DEVICE_ROW_H,
-        Some(max_rows),
-        |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            // 乐器段（仅 MIDI 通道）：空链显示内置 XSynth，否则逐个列出可叠加
-            // 的插件乐器。
-            if let Some(ch) = channel {
-                if instruments.is_empty() {
-                    xsynth_row(ui, ch, actions);
-                } else {
-                    for (i, name) in instruments.iter().enumerate() {
-                        instrument_row(ui, ch, i, name, actions);
-                    }
-                }
-            }
-            // 效果器段（四种条通用）。
-            for (slot, r) in view.refs.iter().enumerate() {
-                effect_row(
-                    ui,
-                    target,
-                    slot,
-                    &r.name,
-                    r.bypassed,
-                    view.gui_open(slot),
-                    actions,
-                );
-            }
-            // 统一的「+」入口（原乐器/效果器两个加号合并）：MIDI 通道打开
-            // 统一选择器（初始分类乐器，可切到效果器）；其他条初始分类效果器。
-            if add_row(ui, t!("hint.mix.add_insert")) {
-                match channel {
-                    Some(ch) => actions.push(MixAction::OpenInstrumentPicker { channel: ch }),
-                    None => actions.push(MixAction::OpenPicker { target }),
-                }
-            }
-        },
-    );
-}
-
-/// 设备链行框架：**整宽贴边**（突破内容区左右内缩，铺满通道条宽度）、直角，
-/// 返回行矩形与点击响应（布局高度照常推进）。
-fn device_row_frame(ui: &mut egui::Ui) -> (egui::Rect, egui::Response) {
-    let rect = egui::Rect::from_min_size(
-        egui::pos2(ui.max_rect().min.x - PAD_X, ui.cursor().min.y),
-        egui::vec2(STRIP_WIDTH, DEVICE_ROW_H),
-    );
-    let resp = ui.interact(rect, ui.next_auto_id(), egui::Sense::click());
-    ui.allocate_space(egui::vec2(0.0, DEVICE_ROW_H));
-    (rect, resp)
-}
-
-/// 设备行的统一外观（背景 + 底部细分隔线 + 左对齐名称）。
-fn device_row_visual(ui: &mut egui::Ui, label: &str) -> (egui::Rect, egui::Response) {
-    let (rect, resp) = device_row_frame(ui);
-    let painter = ui.painter();
-    let bg = if resp.hovered() {
-        crate::theme::hover_color(crate::theme::app_bg())
-    } else {
-        crate::theme::app_bg()
-    };
-    painter.rect_filled(rect, 0.0, bg);
-    // 行间仅底部 1px 分隔线（去掉整圈边框，接近色带式的连续列表）。
-    painter.hline(
-        rect.x_range(),
-        rect.max.y - 0.5,
-        egui::Stroke::new(1.0, crate::theme::grid_sub_beat()),
-    );
-    // 名称左侧内边距；右侧留出「更换乐器」按钮的悬停区。
-    let name_clip = egui::Rect::from_min_max(rect.min, egui::pos2(rect.max.x - 20.0, rect.max.y));
-    painter.with_clip_rect(name_clip).text(
-        egui::pos2(rect.min.x + 6.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        label,
-        egui::FontId::proportional(crate::theme::SMALL_FONT),
-        crate::theme::text_primary(),
-    );
-    (rect, resp)
-}
-
-/// 乐器行右侧的「更换乐器」按钮（悬停出现）：打开统一选择器（乐器语境）。
-/// 行的其余部分仍执行原点击行为（打开乐器界面/配置）。
-fn instrument_swap_button(
-    ui: &mut egui::Ui,
-    rect: egui::Rect,
-    channel: u8,
-    row_salt: u64,
-    actions: &mut Vec<MixAction>,
-) {
-    if !ui.rect_contains_pointer(rect) {
-        return;
-    }
-    let swap_rect = egui::Rect::from_center_size(
-        egui::pos2(rect.max.x - 12.0, rect.center().y),
-        egui::vec2(18.0, DEVICE_ROW_H),
-    );
-    let resp = ui.interact(
-        swap_rect,
-        ui.scope_id().with(("mix_swap_instr", channel, row_salt)),
-        egui::Sense::click(),
-    );
-    let icon = egui_material_icons::icons::ICON_SWAP_HORIZ;
-    let color = if resp.hovered() {
-        crate::theme::accent_active()
-    } else {
-        crate::theme::text_muted()
-    };
-    ui.painter().text(
-        swap_rect.center(),
-        egui::Align2::CENTER_CENTER,
-        icon.codepoint,
-        egui::FontId::new(crate::theme::ICON_FONT_SM, icon.font_family()),
-        color,
-    );
-    let clicked = resp.clicked();
-    resp.on_hover_text(t!("hint.mix.swap_instrument"));
-    if clicked {
-        actions.push(MixAction::OpenInstrumentPicker { channel });
-    }
-}
-
-/// 插件乐器设备行（`index` = 该通道链内序号）：点击开关插件界面，右键菜单。
-fn instrument_row(
-    ui: &mut egui::Ui,
-    channel: u8,
-    index: usize,
-    name: &str,
-    actions: &mut Vec<MixAction>,
-) {
-    let (rect, resp) = device_row_visual(ui, name);
-    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.toggle_gui"));
-    if resp.clicked() {
-        actions.push(MixAction::ToggleInstrumentGui { channel, index });
-    }
-    instrument_swap_button(ui, rect, channel, index as u64, actions);
-    resp.context_menu(|ui| {
-        ui.set_min_width(96.0);
-        ui.set_max_width(96.0);
-        let gui_item = ui.add(crate::widgets::menu::menu_item_button(
-            ui,
-            false,
-            t!("mix.toggle_gui").as_ref(),
-        ));
-        crate::widgets::hint::hover(ui.ctx(), &gui_item, t!("hint.mix.toggle_gui"));
-        if gui_item.clicked() {
-            actions.push(MixAction::ToggleInstrumentGui { channel, index });
-            ui.close();
-        }
-        let params_item = ui.add(crate::widgets::menu::menu_item_button(
-            ui,
-            false,
-            t!("mix.params").as_ref(),
-        ));
-        crate::widgets::hint::hover(ui.ctx(), &params_item, t!("hint.mix.instrument_params"));
-        if params_item.clicked() {
-            actions.push(MixAction::OpenInstrumentParams { channel, index });
-            ui.close();
-        }
-        let remove_item = ui.add(crate::widgets::menu::menu_item_button(
-            ui,
-            false,
-            t!("mix.remove_insert").as_ref(),
-        ));
-        if remove_item.clicked() {
-            actions.push(MixAction::RemoveInstrument { channel, index });
-            ui.close();
-        }
-    });
-}
-
-/// 内置 XSynth 设备行（该通道未挂任何插件乐器时显示）。
-fn xsynth_row(ui: &mut egui::Ui, channel: u8, actions: &mut Vec<MixAction>) {
-    let (rect, resp) = device_row_visual(ui, "XSynth");
-    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.instrument_xsynth"));
-    if resp.clicked() {
-        actions.push(MixAction::OpenXsynthConfig { channel });
-    }
-    instrument_swap_button(ui, rect, channel, 0, actions);
-    resp.context_menu(|ui| {
-        ui.set_min_width(96.0);
-        ui.set_max_width(96.0);
-        let cfg_item = ui.add(crate::widgets::menu::menu_item_button(
-            ui,
-            false,
-            t!("mix.toggle_gui").as_ref(),
-        ));
-        crate::widgets::hint::hover(ui.ctx(), &cfg_item, t!("hint.mix.instrument_xsynth"));
-        if cfg_item.clicked() {
-            actions.push(MixAction::OpenXsynthConfig { channel });
-            ui.close();
-        }
-        let params_item = ui.add(crate::widgets::menu::menu_item_button(
-            ui,
-            false,
-            t!("mix.params").as_ref(),
-        ));
-        crate::widgets::hint::hover(ui.ctx(), &params_item, t!("hint.mix.instrument_params"));
-        if params_item.clicked() {
-            actions.push(MixAction::OpenXsynthConfig { channel });
-            ui.close();
-        }
-    });
-}
-
-/// 效果器设备行：状态点（点击旁通）+ 名称（点击开关界面）+ 参数图标；右键菜单。
-fn effect_row(
-    ui: &mut egui::Ui,
-    target: InsertTarget,
-    slot: usize,
-    name: &str,
-    is_bypassed: bool,
-    is_open: bool,
-    actions: &mut Vec<MixAction>,
-) {
-    let (rect, resp) = device_row_frame(ui);
-    let painter = ui.painter();
-    painter.rect_filled(rect, 0.0, crate::theme::app_bg());
-    if resp.hovered() {
-        painter.rect_filled(rect, 0.0, crate::theme::hover_color(crate::theme::app_bg()));
-    }
-    // 行间仅底部 1px 分隔线（去掉整圈边框，接近色带式的连续列表）。
-    painter.hline(
-        rect.x_range(),
-        rect.max.y - 0.5,
-        egui::Stroke::new(1.0, crate::theme::grid_sub_beat()),
-    );
-
-    // 状态点（点击旁通）：正常 = 强调/次文字色；旁通 = 灰。
-    let dot_center = egui::pos2(rect.min.x + 8.0, rect.center().y);
-    let dot_color = if is_bypassed {
-        crate::theme::text_disabled()
-    } else if is_open {
-        crate::theme::accent_active()
-    } else {
-        crate::theme::text_secondary()
-    };
-    painter.circle_filled(dot_center, 3.0, dot_color);
-    let dot_hit = egui::Rect::from_center_size(dot_center, egui::vec2(15.0, DEVICE_ROW_H));
-    let dot_resp = ui.interact(
-        dot_hit,
-        ui.scope_id().with(("mix_dev_bypass", target, slot)),
-        egui::Sense::click(),
-    );
-    if dot_resp.clicked() {
-        actions.push(MixAction::BypassInsert {
-            target,
-            slot,
-            bypassed: !is_bypassed,
-        });
-    }
-    crate::widgets::hint::hover(ui.ctx(), &dot_resp, t!("hint.mix.bypass"));
-
-    // 名称（截断，hover 全名；右侧给参数图标留位）。
-    let name_rect = egui::Rect::from_min_max(
-        egui::pos2(dot_hit.max.x + 2.0, rect.min.y),
-        egui::pos2(rect.max.x - 17.0, rect.max.y),
-    );
-    let name_color = if is_bypassed {
-        crate::theme::text_muted()
-    } else {
-        crate::theme::text_primary()
-    };
-    ui.put(
-        name_rect,
-        egui::Label::new(
-            egui::RichText::new(name)
-                .size(crate::theme::SMALL_FONT)
-                .color(name_color),
-        )
-        .truncate(),
-    );
-
-    // 参数图标：打开通用参数面板。
-    let tune = egui_material_icons::icons::ICON_TUNE;
-    let btn_rect = egui::Rect::from_min_max(
-        egui::pos2(rect.max.x - 16.0, rect.min.y + 2.0),
-        egui::pos2(rect.max.x - 1.0, rect.max.y - 2.0),
-    );
-    let params_resp = ui.interact(
-        btn_rect,
-        ui.scope_id().with(("mix_dev_params", target, slot)),
-        egui::Sense::click(),
-    );
-    let icon_color = if params_resp.hovered() {
-        crate::theme::accent_active()
-    } else {
-        crate::theme::text_muted()
-    };
-    ui.painter().text(
-        btn_rect.center(),
-        egui::Align2::CENTER_CENTER,
-        tune.codepoint,
-        egui::FontId::new(11.0, tune.font_family()),
-        icon_color,
-    );
-    crate::widgets::hint::hover(ui.ctx(), &params_resp, t!("hint.mix.insert_params"));
-    if params_resp.clicked() {
-        actions.push(MixAction::OpenInsertParams { target, slot });
-    }
-
-    if resp.clicked() {
-        actions.push(MixAction::ToggleGui { target, slot });
-    }
-    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.toggle_gui"));
-    resp.context_menu(|ui| {
-        ui.set_min_width(96.0);
-        ui.set_max_width(96.0);
-        if ui
-            .add(crate::widgets::menu::menu_item_button(
-                ui,
-                false,
-                t!("mix.bypass").as_ref(),
-            ))
-            .clicked()
-        {
-            actions.push(MixAction::BypassInsert {
-                target,
-                slot,
-                bypassed: !is_bypassed,
-            });
-            ui.close();
-        }
-        if ui
-            .add(crate::widgets::menu::menu_item_button(
-                ui,
-                false,
-                t!("mix.toggle_gui").as_ref(),
-            ))
-            .clicked()
-        {
-            actions.push(MixAction::ToggleGui { target, slot });
-            ui.close();
-        }
-        if ui
-            .add(crate::widgets::menu::menu_item_button(
-                ui,
-                false,
-                t!("mix.params").as_ref(),
-            ))
-            .clicked()
-        {
-            actions.push(MixAction::OpenInsertParams { target, slot });
-            ui.close();
-        }
-        if ui
-            .add(crate::widgets::menu::menu_item_button(
-                ui,
-                false,
-                t!("mix.remove_insert").as_ref(),
-            ))
-            .clicked()
-        {
-            actions.push(MixAction::RemoveInsert { target, slot });
-            ui.close();
-        }
-    });
-}
-
-/// 「+」设备添加入口：返回是否被点击（调用方决定打开哪个选择器）。
-fn add_row(ui: &mut egui::Ui, hint: impl Into<String>) -> bool {
-    let (rect, resp) = device_row_frame(ui);
-    let painter = ui.painter();
-    let bg = if resp.hovered() {
-        crate::theme::hover_color(crate::theme::app_bg())
-    } else {
-        crate::theme::app_bg()
-    };
-    painter.rect_filled(rect, 0.0, bg);
-    // 行间仅底部 1px 分隔线（去掉整圈边框，接近色带式的连续列表）。
-    painter.hline(
-        rect.x_range(),
-        rect.max.y - 0.5,
-        egui::Stroke::new(1.0, crate::theme::grid_sub_beat()),
-    );
-    painter.text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        egui_material_icons::icons::ICON_ADD.codepoint,
-        egui::FontId::new(
-            crate::theme::ICON_FONT_SM,
-            egui_material_icons::icons::ICON_ADD.font_family(),
-        ),
-        crate::theme::text_muted(),
-    );
-    crate::widgets::hint::hover(ui.ctx(), &resp, hint);
-    resp.clicked()
-}
-
-/// 发送源：MIDI 通道 / 音频通道（`sends`/`audio_sends` 表按通道索引）
-/// 或总线（`bus_sends` 表按总线索引）。
+/// 发送区来源：通道 / 音频通道 / 总线。
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SendSource {
     Channel(u8),
@@ -1214,73 +542,69 @@ fn self_send_toggle(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
     resp
 }
 
-/// M/S 按钮（居中，等宽）。
-fn ms_row(ui: &mut egui::Ui, params: &StripParams, mut on_change: impl FnMut(StripParams)) {
-    let group = BTN * 2.0 + 4.0;
+/// M/S 竖向按钮列（右列底部）：M 上、S 下。
+fn ms_column(ui: &mut egui::Ui, params: &StripParams, width: f32) -> Option<StripParams> {
     ui.allocate_ui_with_layout(
-        egui::vec2(group, MS_ROW_H),
-        egui::Layout::left_to_right(egui::Align::Center),
+        egui::vec2(width, BTN * 2.0 + GAP),
+        egui::Layout::top_down(egui::Align::Center),
         |ui| {
-            let m_resp = toggle_button(ui, "M", params.mute, crate::theme::mute_active());
+            let mut p = *params;
+            let mut changed = false;
+            let m_resp = toggle_button(ui, "M", p.mute, crate::theme::mute_active());
             crate::widgets::hint::hover(ui.ctx(), &m_resp, t!("hint.mix.mute"));
             if m_resp.clicked() {
-                let mut p = *params;
                 p.mute = !p.mute;
-                on_change(p);
+                changed = true;
             }
-            ui.add_space(4.0);
-            let s_resp = toggle_button(ui, "S", params.solo, crate::theme::solo_active());
+            ui.add_space(GAP);
+            let s_resp = toggle_button(ui, "S", p.solo, crate::theme::solo_active());
             crate::widgets::hint::hover(ui.ctx(), &s_resp, t!("hint.mix.solo"));
             if s_resp.clicked() {
-                let mut p = *params;
                 p.solo = !p.solo;
-                on_change(p);
+                changed = true;
             }
+            changed.then_some(p)
         },
-    );
+    )
+    .inner
 }
 
-/// 声像旋钮（居中）。
-fn pan_knob(ui: &mut egui::Ui, pan: f32, mut on_pan: impl FnMut(f32)) {
+/// 声像旋钮（右列，宽度 `width` 内居中）。返回 `Some(新 pan)` 表示被改动。
+fn pan_knob(ui: &mut egui::Ui, pan: f32, width: f32) -> Option<f32> {
     ui.allocate_ui_with_layout(
-        egui::vec2(KNOB_D, PAN_ROW_H),
+        egui::vec2(width, KNOB_D),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
             let mut norm = (pan + 1.0) / 2.0;
             let resp = knob(ui, &mut norm, KNOB_D);
-            if resp.changed() {
-                on_pan(norm * 2.0 - 1.0);
-            }
             crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.pan"));
-        },
-    );
-}
-
-/// 当前增益 dB（居中，推子/电平表之上）：可点击**直接输入**、也可上下拖动。
-/// 返回 `Some(新增益)` 表示本次被改动。
-fn db_row(ui: &mut egui::Ui, gain: f32) -> Option<f32> {
-    section(
-        ui,
-        DB_ROW_H,
-        egui::Layout::top_down(egui::Align::Center),
-        |ui| {
-            let mut db = gain_to_db(gain);
-            let resp = ui.add_sized(
-                [CONTENT_W, DB_ROW_H],
-                egui::DragValue::new(&mut db)
-                    .speed(0.2)
-                    .range(DB_MIN..=DB_MAX)
-                    .max_decimals(1)
-                    .suffix(" dB"),
-            );
-            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.fader"));
             if resp.changed() {
-                Some(db_to_gain(db))
+                Some(norm * 2.0 - 1.0)
             } else {
                 None
             }
         },
     )
+    .inner
+}
+
+/// dB 读数（右列顶部）：可点击**直接输入**、也可上下拖动。
+/// 返回 `Some(新增益)` 表示本次被改动。
+fn db_row(ui: &mut egui::Ui, gain: f32, width: f32) -> Option<f32> {
+    let mut db = gain_to_db(gain);
+    let resp = ui.add_sized(
+        [width, DB_ROW_H],
+        egui::DragValue::new(&mut db)
+            .speed(0.2)
+            .range(DB_MIN..=DB_MAX)
+            .max_decimals(1),
+    );
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.fader"));
+    if resp.changed() {
+        Some(db_to_gain(db))
+    } else {
+        None
+    }
 }
 
 /// 自绘小开关按钮（M/S），激活时填充激活色；圆角矩形。
@@ -1321,88 +645,149 @@ fn toggle_button(
     resp
 }
 
-/// 电平表（左）+ 推子（右），等高，整体居中。
-fn meter_fader(
+/// 电平表 + 增益菱形：菱形贴在当前 dB 位置的 L/R 条中间，拖动改增益，
+/// 双击回 0dB。返回 `Some(新增益)`。
+fn gain_meter(
     ui: &mut egui::Ui,
     gain: f32,
     level: (f32, f32),
     hold: (f32, f32),
     height: f32,
-    mut on_gain: impl FnMut(f32),
-) {
-    let group = (SCALE_W + METER_W * 2.0 + METER_GAP) + 6.0 + FADER_HANDLE_W;
-    ui.allocate_ui_with_layout(
-        egui::vec2(group, height),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            crate::widgets::meter::level_meter(ui, level, hold, height);
-            ui.add_space(6.0);
-            fader(ui, gain, height, &mut on_gain);
-        },
-    );
+) -> Option<f32> {
+    let meter_w = SCALE_W + METER_W * 2.0 + METER_GAP;
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(meter_w, height), egui::Sense::click_and_drag());
+    crate::widgets::meter::paint_level_meter(ui.painter(), rect, level, hold);
+
+    let bars_w = METER_W * 2.0 + METER_GAP;
+    let x = rect.min.x + SCALE_W + bars_w * 0.5;
+    let y = gain_y(gain, rect.min.y, rect.max.y);
+    let half = 5.5;
+    let color = if resp.hovered() || resp.dragged() {
+        crate::theme::accent_active()
+    } else {
+        crate::theme::text_primary()
+    };
+    let points = vec![
+        egui::pos2(x, y - half),
+        egui::pos2(x + half, y),
+        egui::pos2(x, y + half),
+        egui::pos2(x - half, y),
+    ];
+    ui.painter().add(egui::Shape::convex_polygon(
+        points,
+        crate::theme::app_bg(),
+        egui::Stroke::new(1.5, color),
+    ));
+
+    let resp = resp.on_hover_cursor(egui::CursorIcon::ResizeVertical);
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.fader"));
+    if resp.dragged()
+        && let Some(pos) = resp.interact_pointer_pos()
+    {
+        return Some(gain_at_y(pos.y, rect.min.y, rect.max.y));
+    }
+    if resp.double_clicked() {
+        return Some(1.0);
+    }
+    None
 }
 
-/// 自绘推子：凹槽 + 填充 + 0dB 刻度 + 手柄（拖动改值，双击回 0dB）。直角。
-fn fader(ui: &mut egui::Ui, gain: f32, height: f32, mut on_gain: impl FnMut(f32)) {
-    let (rect, resp) = ui.allocate_exact_size(
-        egui::vec2(FADER_HANDLE_W, height),
-        egui::Sense::click_and_drag(),
-    );
-    let y = fader_y(gain, rect.min.y, rect.max.y);
-    let painter = ui.painter();
-
-    // 凹槽。
-    let slot = egui::Rect::from_center_size(rect.center(), egui::vec2(FADER_SLOT_W, rect.height()));
-    painter.rect_filled(slot, 0.0, crate::theme::track_bg());
-    // 已填充部分（底部 → 手柄）。
-    let fill = egui::Rect::from_min_max(egui::pos2(slot.min.x, y), slot.max);
-    painter.rect_filled(fill, 0.0, crate::theme::accent_active());
-    // 0dB 参考线（槽两侧短横线）。
-    let zero_y = rect.max.y - db_frac(0.0) * rect.height();
-    let tick = egui::Stroke::new(1.0, crate::theme::text_muted().gamma_multiply(0.6));
-    painter.hline(
-        egui::Rangef::new(rect.min.x, slot.min.x - 1.0),
-        zero_y,
-        tick,
-    );
-    painter.hline(
-        egui::Rangef::new(slot.max.x + 1.0, rect.max.x),
-        zero_y,
-        tick,
-    );
-    // 手柄。
-    let handle = egui::Rect::from_center_size(
-        egui::pos2(rect.center().x, y),
-        egui::vec2(FADER_HANDLE_W, FADER_HANDLE_H),
-    );
-    let handle_bg = if resp.dragged() {
-        crate::theme::pressed_color(crate::theme::btn_bg())
-    } else if resp.hovered() {
-        crate::theme::hover_color(crate::theme::btn_bg())
-    } else {
-        crate::theme::btn_bg()
-    };
-    painter.rect_filled(handle, 2.0, handle_bg);
-    painter.rect_stroke(
-        handle,
-        2.0,
-        egui::Stroke::new(1.0, crate::theme::line_fg()),
-        egui::StrokeKind::Inside,
-    );
-    painter.hline(
-        handle.x_range(),
-        y,
-        egui::Stroke::new(1.0, crate::theme::text_secondary()),
-    );
-
-    if resp.dragged() {
-        if let Some(pos) = resp.interact_pointer_pos() {
-            on_gain(fader_gain_at_y(pos.y, rect.min.y, rect.max.y));
-        }
-    } else if resp.double_clicked() {
-        on_gain(1.0);
+/// 通道/音频/总线共用：固定高度的电平表 + 右侧 dB / 声像 / M / S。
+///
+/// 模块高度取 `METER_MODULE_H` 与剩余高度的较小值；面板更高时用空白把模块
+/// 顶到卡片底部，不再随面板高度拉伸。
+fn strip_controls(
+    ui: &mut egui::Ui,
+    params: &StripParams,
+    level: (f32, f32),
+    hold: (f32, f32),
+    show_pan: bool,
+    show_ms: bool,
+) -> Option<StripParams> {
+    let avail = ui.available_height();
+    let module_h = METER_MODULE_H.min(avail).max(1.0);
+    if avail > module_h {
+        ui.add_space(avail - module_h);
     }
-    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.fader"));
+    section(
+        ui,
+        module_h,
+        egui::Layout::left_to_right(egui::Align::TOP),
+        |ui| {
+            let mut p = *params;
+            let mut changed = false;
+            if let Some(g) = gain_meter(ui, p.gain, level, hold, module_h) {
+                p.gain = g;
+                changed = true;
+            }
+            ui.add_space(GAP);
+            ui.allocate_ui_with_layout(
+                egui::vec2(CONTROLS_W, module_h),
+                egui::Layout::top_down(egui::Align::Center),
+                |ui| {
+                    if let Some(g) = db_row(ui, p.gain, CONTROLS_W) {
+                        p.gain = g;
+                        changed = true;
+                    }
+                    if show_pan {
+                        ui.add_space(GAP);
+                        if let Some(pan) = pan_knob(ui, p.pan, CONTROLS_W) {
+                            p.pan = pan;
+                            changed = true;
+                        }
+                    }
+                    if show_ms {
+                        ui.add_space(GAP);
+                        if let Some(next) = ms_column(ui, &p, CONTROLS_W) {
+                            p = next;
+                            changed = true;
+                        }
+                    }
+                },
+            );
+            changed.then_some(p)
+        },
+    )
+}
+
+/// 主输出：只有电平表 + dB 读数，固定高度模块。
+fn master_controls(
+    ui: &mut egui::Ui,
+    gain: f32,
+    level: (f32, f32),
+    hold: (f32, f32),
+) -> Option<f32> {
+    let avail = ui.available_height();
+    let module_h = METER_MODULE_H.min(avail).max(1.0);
+    if avail > module_h {
+        ui.add_space(avail - module_h);
+    }
+    section(
+        ui,
+        module_h,
+        egui::Layout::left_to_right(egui::Align::TOP),
+        |ui| {
+            let mut g = gain;
+            let mut changed = false;
+            if let Some(v) = gain_meter(ui, g, level, hold, module_h) {
+                g = v;
+                changed = true;
+            }
+            ui.add_space(GAP);
+            ui.allocate_ui_with_layout(
+                egui::vec2(CONTROLS_W, module_h),
+                egui::Layout::top_down(egui::Align::Center),
+                |ui| {
+                    if let Some(v) = db_row(ui, g, CONTROLS_W) {
+                        g = v;
+                        changed = true;
+                    }
+                },
+            );
+            changed.then_some(g)
+        },
+    )
 }
 
 /// 发送面板（某源通道对各总线的发送量 / 推子前推子后）。
@@ -2167,7 +1552,7 @@ fn plugin_row(
 mod tests {
     use super::*;
 
-    /// 推子矩形：y 从 0（顶 = +6dB）到 100（底 = -60dB）。
+    /// 电平表矩形：y 从 0（顶 = +6dB）到 100（底 = -60dB）。
     const TOP: f32 = 0.0;
     const BOTTOM: f32 = 100.0;
 
@@ -2176,68 +1561,38 @@ mod tests {
     }
 
     #[test]
-    fn fader_y_boundaries() {
+    fn gain_y_boundaries() {
         // 静音（≤ -60dB）= 最底部。
-        assert!(approx(fader_y(0.0, TOP, BOTTOM), BOTTOM));
+        assert!(approx(gain_y(0.0, TOP, BOTTOM), BOTTOM));
         // 0dB（gain = 1）位于 DB_MIN..DB_MAX 的 60/66 处。
         assert!(approx(
-            fader_y(1.0, TOP, BOTTOM),
+            gain_y(1.0, TOP, BOTTOM),
             BOTTOM - 60.0 / 66.0 * 100.0
         ));
         // 超过 DB_MAX 的增益顶格。
-        assert!(approx(fader_y(db_to_gain(DB_MAX), TOP, BOTTOM), TOP));
-        assert!(approx(fader_y(10.0, TOP, BOTTOM), TOP));
+        assert!(approx(gain_y(db_to_gain(DB_MAX), TOP, BOTTOM), TOP));
+        assert!(approx(gain_y(10.0, TOP, BOTTOM), TOP));
     }
 
     #[test]
-    fn fader_gain_at_y_boundaries() {
-        assert_eq!(fader_gain_at_y(BOTTOM, TOP, BOTTOM), 0.0);
-        assert!(approx(
-            fader_gain_at_y(TOP, TOP, BOTTOM),
-            db_to_gain(DB_MAX)
-        ));
+    fn gain_at_y_boundaries() {
+        assert_eq!(gain_at_y(BOTTOM, TOP, BOTTOM), 0.0);
+        assert!(approx(gain_at_y(TOP, TOP, BOTTOM), db_to_gain(DB_MAX)));
         // y 超出矩形：夹到两端。
-        assert_eq!(fader_gain_at_y(BOTTOM + 50.0, TOP, BOTTOM), 0.0);
+        assert_eq!(gain_at_y(BOTTOM + 50.0, TOP, BOTTOM), 0.0);
         assert!(approx(
-            fader_gain_at_y(TOP - 50.0, TOP, BOTTOM),
+            gain_at_y(TOP - 50.0, TOP, BOTTOM),
             db_to_gain(DB_MAX)
         ));
     }
 
     #[test]
-    fn fader_gain_position_round_trip() {
+    fn gain_position_round_trip() {
         for gain in [0.0, 0.01, 0.1, 0.5, 1.0, 1.5, db_to_gain(DB_MAX)] {
-            let y = fader_y(gain, TOP, BOTTOM);
-            let back = fader_gain_at_y(y, TOP, BOTTOM);
+            let y = gain_y(gain, TOP, BOTTOM);
+            let back = gain_at_y(y, TOP, BOTTOM);
             assert!(approx(back, gain), "gain={gain} y={y} back={back}");
         }
-    }
-
-    /// 回归：同一容器内多行设备行的交互 ID 必须互不相同。
-    ///
-    /// `device_row_frame` 交互 ID 取自 `ui.next_auto_id()`（只预览、不推进），
-    /// 依赖随后的 `ui.allocate_space` 推进计数器——两者任一被改动/移除都会
-    /// 让整列设备行共享同一 ID（debug 构建下满屏 ID 冲突警告）。
-    #[test]
-    fn device_rows_have_unique_interaction_ids() {
-        let ctx = egui::Context::default();
-        let output = ctx.run_ui(Default::default(), |ui| {
-            let (r1, resp1) = device_row_frame(ui);
-            let (r2, resp2) = device_row_frame(ui);
-            assert!(r1.min.y < r2.min.y, "两行应纵向排布");
-            assert_ne!(resp1.id, resp2.id, "两行交互 ID 必须不同");
-        });
-        // 同时扫描本帧绘制文本：不应出现 egui 的 ID 冲突警告。
-        let mut clash_text = None;
-        for cs in &output.shapes {
-            if let egui::Shape::Text(t) = &cs.shape
-                && t.galley.text().contains("of widget ID")
-            {
-                clash_text = Some(t.galley.text().to_owned());
-            }
-        }
-        output.drop_without_applying_deltas();
-        assert!(clash_text.is_none(), "触发 ID 冲突警告: {clash_text:?}");
     }
 
     /// 实验：两个通道条共享同一 `mix_send_scroll` 滚动位置时，

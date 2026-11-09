@@ -171,6 +171,7 @@ pub fn build_lane_multi_copy(lane: &AutomationLane, copies: &[(u32, u32, f32)]) 
 /// Build ghost preview instances (layer 2, rebuilt every frame).
 ///
 /// `AutomationGhost` 坐标为 panel 局部像素坐标。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn build_ghost(
     out: &mut Vec<CurveInstance>,
     ghost: AutomationGhost,

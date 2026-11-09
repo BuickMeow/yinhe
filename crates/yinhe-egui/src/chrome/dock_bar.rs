@@ -271,6 +271,7 @@ enum DockAction {
     ToggleInstrument(bool),
     ToggleBypass(usize, bool),
     OpenGui(DockDevice),
+    RemoveInsert(usize),
 }
 
 /// 设备链 + 参数区（收集 → 绘制 → 应用）。
@@ -467,6 +468,7 @@ fn draw_dock(ui: &mut egui::Ui, state: &DockState, search: &mut String) -> Vec<D
     let mut toggle_bypass: Option<(usize, bool)> = None;
     let mut toggle_instrument: Option<bool> = None;
     let mut open_gui: Option<DockDevice> = None;
+    let mut remove_insert: Option<usize> = None;
     let mut open_instrument_picker: Option<u8> = None;
     let mut open_picker = false;
 
@@ -584,6 +586,7 @@ fn draw_dock(ui: &mut egui::Ui, state: &DockState, search: &mut String) -> Vec<D
                                         &mut open_params,
                                         &mut toggle_bypass,
                                         &mut open_gui,
+                                        &mut remove_insert,
                                     ) {
                                         selected = Some(DockDevice::Insert(slot));
                                     }
@@ -621,6 +624,9 @@ fn draw_dock(ui: &mut egui::Ui, state: &DockState, search: &mut String) -> Vec<D
     }
     if let Some(device) = open_gui {
         actions.push(DockAction::OpenGui(device));
+    }
+    if let Some(slot) = remove_insert {
+        actions.push(DockAction::RemoveInsert(slot));
     }
     actions
 }
@@ -684,6 +690,20 @@ fn apply_dock_actions(app: &mut App, idx: usize, state: &DockState, actions: Vec
                 if let Some(rack) = app.mixer_racks.get_mut(idx) {
                     rack.set_bypass(state.insert_target, slot, bypassed);
                 }
+            }
+            DockAction::RemoveInsert(slot) => {
+                if let Some(chain) = crate::mix::insert_refs(
+                    &mut app.workspace.documents[idx].mixer,
+                    state.insert_target,
+                ) && slot < chain.len()
+                {
+                    chain.remove(slot);
+                }
+                let handle = app.audio_state.handle.as_ref().map(|a| &a.handle);
+                if idx < app.mixer_racks.len() {
+                    app.mixer_racks[idx].remove_slot(state.insert_target, slot, handle);
+                }
+                app.dock_selected = None;
             }
             DockAction::OpenGui(device) => match device {
                 DockDevice::Insert(slot) => {
@@ -754,6 +774,7 @@ fn icon_button(
 
 /// 效果器大卡片：插件效果器显示参数面板 / 原生界面入口。
 /// 返回 true = 卡片被点击（选中高亮）。
+#[allow(clippy::too_many_arguments)] // 设备链绘制上下文透传
 fn effect_card(
     ui: &mut egui::Ui,
     slot: usize,
@@ -762,6 +783,7 @@ fn effect_card(
     open_params: &mut Option<DockDevice>,
     toggle_bypass: &mut Option<(usize, bool)>,
     open_gui: &mut Option<DockDevice>,
+    remove_insert: &mut Option<usize>,
 ) -> bool {
     let is_selected = selected == Some(DockDevice::Insert(slot));
     let mut clicked = false;
@@ -830,6 +852,18 @@ fn effect_card(
             .clicked()
             {
                 *open_gui = Some(DockDevice::Insert(slot));
+            }
+
+            if icon_button(
+                ui,
+                egui_material_icons::icons::ICON_DELETE,
+                13.0,
+                crate::theme::text_secondary(),
+                t!("mix.remove_insert"),
+            )
+            .clicked()
+            {
+                *remove_insert = Some(slot);
             }
         });
         ui.add_space(6.0);
