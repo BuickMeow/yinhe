@@ -76,7 +76,8 @@ pub(crate) fn show_scrollbars(
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
         }
         if active {
-            let d = scrollbar::drag_delta_with_edge_warp(ui, warp_id, &resp);
+            let d =
+                scrollbar::drag_delta_with_edge_warp(ui, warp_id, &resp, scrollbar::WarpAxis::Both);
             let k = 0.005;
             let anchor_x = content_rect.center().x - content_rect.min.x;
             let anchor_y = content_rect.center().y - content_rect.min.y;

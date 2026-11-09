@@ -43,6 +43,17 @@ pub(crate) fn double_clicked_in(ui: &egui::Ui, rect: egui::Rect) -> bool {
 /// 指针距离窗口边缘小于此值时，拖动中把指针瞬移到窗口中心。
 const EDGE_WARP_MARGIN: f32 = 48.0;
 
+/// 防撞边只检查滚动条主轴方向的窗口边缘。
+///
+/// 横向滚动条贴在窗口底部，拖动时 y 本来就靠近底边；若检查四边会每帧
+/// 触发瞬移并吞掉横向位移。纵向滚动条同理只检查左右（主轴为 Y 时检查上下）。
+#[derive(Clone, Copy)]
+pub(crate) enum WarpAxis {
+    X,
+    Y,
+    Both,
+}
+
 /// 滚动条拖动中的指针防撞边状态。
 #[derive(Clone, Copy)]
 struct DragWarpState {
@@ -63,6 +74,7 @@ pub(crate) fn drag_delta_with_edge_warp(
     ui: &egui::Ui,
     id: egui::Id,
     resp: &egui::Response,
+    axis: WarpAxis,
 ) -> egui::Vec2 {
     let anchor = ui
         .input(|i| {
@@ -87,11 +99,15 @@ pub(crate) fn drag_delta_with_edge_warp(
     }
     let vp = ui.ctx().viewport_rect();
     let pos = ui.input(|i| i.pointer.interact_pos());
-    let near_edge = pos.is_none_or(|p| {
-        p.x < vp.min.x + EDGE_WARP_MARGIN
-            || p.x > vp.max.x - EDGE_WARP_MARGIN
-            || p.y < vp.min.y + EDGE_WARP_MARGIN
-            || p.y > vp.max.y - EDGE_WARP_MARGIN
+    let near_edge = pos.is_none_or(|p| match axis {
+        WarpAxis::X => p.x < vp.min.x + EDGE_WARP_MARGIN || p.x > vp.max.x - EDGE_WARP_MARGIN,
+        WarpAxis::Y => p.y < vp.min.y + EDGE_WARP_MARGIN || p.y > vp.max.y - EDGE_WARP_MARGIN,
+        WarpAxis::Both => {
+            p.x < vp.min.x + EDGE_WARP_MARGIN
+                || p.x > vp.max.x - EDGE_WARP_MARGIN
+                || p.y < vp.min.y + EDGE_WARP_MARGIN
+                || p.y > vp.max.y - EDGE_WARP_MARGIN
+        }
     });
     if near_edge {
         ui.ctx()
@@ -351,7 +367,12 @@ pub(crate) fn show(
     // Drag middle → pan（x 方向）；垂直位移 → 返回 dy 供调用处缩放对面轴。
     // 斜拖 = 平移 + 缩放同时进行。
     if press_on_sb && middle_resp.dragged() {
-        let drag = drag_delta_with_edge_warp(ui, warp_id, &middle_resp);
+        let drag = drag_delta_with_edge_warp(
+            ui,
+            warp_id,
+            &middle_resp,
+            if vertical { WarpAxis::Y } else { WarpAxis::X },
+        );
         let delta = signed(drag_main(drag));
         let delta_ticks = delta as f64 / scale;
         *scroll_x = (*scroll_x as f64 + delta_ticks * *pixels_per_tick as f64) as f32;
@@ -376,11 +397,8 @@ pub(crate) fn show(
 
     // Drag left edge → zoom, anchoring at right edge
     if press_on_sb && left_resp.dragged() {
-        let new_left = (rect_left
-            + signed(drag_main(drag_delta_with_edge_warp(
-                ui, warp_id, &left_resp,
-            ))))
-        .clamp(0.0, rect_right - 2.0 * EDGE_WIDTH);
+        let new_left = (rect_left + signed(drag_main(left_resp.drag_delta())))
+            .clamp(0.0, rect_right - 2.0 * EDGE_WIDTH);
         let new_start_tick = new_left as f64 / scale;
         let right_tick = start_tick + viewport_ticks;
         let new_viewport_ticks = (right_tick - new_start_tick).max(1.0);
@@ -396,13 +414,8 @@ pub(crate) fn show(
 
     // Drag right edge → zoom, anchoring at left edge
     if press_on_sb && right_resp.dragged() {
-        let new_right = (rect_right
-            + signed(drag_main(drag_delta_with_edge_warp(
-                ui,
-                warp_id,
-                &right_resp,
-            ))))
-        .clamp(rect_left + 2.0 * EDGE_WIDTH, sb_w);
+        let new_right = (rect_right + signed(drag_main(right_resp.drag_delta())))
+            .clamp(rect_left + 2.0 * EDGE_WIDTH, sb_w);
         let new_right_tick = new_right as f64 / scale;
         let new_viewport_ticks = (new_right_tick - start_tick).max(1.0);
         apply_zoom(scroll_x, pixels_per_tick, start_tick, new_viewport_ticks);
@@ -793,7 +806,12 @@ pub(crate) fn show_vertical(
     // Drag middle → pan（主轴方向）；副轴位移 → 返回供调用处缩放对面轴。
     if press_on_sb && middle_resp.dragged() {
         if max_scroll > 0.0 {
-            let drag = drag_delta_with_edge_warp(ui, warp_id, &middle_resp);
+            let drag = drag_delta_with_edge_warp(
+                ui,
+                warp_id,
+                &middle_resp,
+                if transpose { WarpAxis::X } else { WarpAxis::Y },
+            );
             let delta = drag_main(drag);
             *scroll_y = (*scroll_y + delta / scale).clamp(0.0, max_scroll);
             *dirty = true;
@@ -805,9 +823,8 @@ pub(crate) fn show_vertical(
 
     // Drag start edge → zoom，锚定 thumb 终点 sb 位置（rect_bottom 不动）
     if press_on_sb && start_resp.dragged() {
-        let new_thumb_start_sb = (rect_top
-            + drag_main(drag_delta_with_edge_warp(ui, warp_id, &start_resp)))
-        .clamp(0.0, rect_bottom - 2.0 * EDGE_WIDTH);
+        let new_thumb_start_sb = (rect_top + drag_main(start_resp.drag_delta()))
+            .clamp(0.0, rect_bottom - 2.0 * EDGE_WIDTH);
         let new_thumb_len_sb = (rect_bottom - new_thumb_start_sb).max(2.0 * EDGE_WIDTH);
         let new_cs = snap_cell_size(k_constant / new_thumb_len_sb, cell_min, cell_max, cell_step);
         let new_scale = sb_h / (num_cells_f * new_cs);
@@ -823,9 +840,8 @@ pub(crate) fn show_vertical(
 
     // Drag end edge → zoom，锚定 thumb 起点 sb 位置（rect_top 不动）
     if press_on_sb && end_resp.dragged() {
-        let new_thumb_end_sb = (rect_bottom
-            + drag_main(drag_delta_with_edge_warp(ui, warp_id, &end_resp)))
-        .clamp(rect_top + 2.0 * EDGE_WIDTH, sb_h);
+        let new_thumb_end_sb = (rect_bottom + drag_main(end_resp.drag_delta()))
+            .clamp(rect_top + 2.0 * EDGE_WIDTH, sb_h);
         let new_thumb_len_sb = (new_thumb_end_sb - rect_top).max(2.0 * EDGE_WIDTH);
         let new_cs = snap_cell_size(k_constant / new_thumb_len_sb, cell_min, cell_max, cell_step);
         let new_scale = sb_h / (num_cells_f * new_cs);
@@ -976,7 +992,7 @@ pub(crate) fn show_vertical_value(
 
     // Drag middle → pan value_scroll（仅当 max_scroll > 0 时有效）
     if press_on_sb && middle_resp.dragged() && max_scroll > 0.0 {
-        let delta = drag_delta_with_edge_warp(ui, warp_id, &middle_resp).y;
+        let delta = drag_delta_with_edge_warp(ui, warp_id, &middle_resp, WarpAxis::Y).y;
         // y 增加 = 向下滚 = value_scroll 减小
         *value_scroll = (*value_scroll - delta / scale).clamp(0.0, max_scroll);
         *dirty = true;
@@ -986,8 +1002,8 @@ pub(crate) fn show_vertical_value(
 
     // Drag top edge → zoom, anchoring at bottom edge (固定 bottom_value)
     if press_on_sb && top_resp.dragged() {
-        let new_top_pixel = (rect_top + drag_delta_with_edge_warp(ui, warp_id, &top_resp).y)
-            .clamp(0.0, rect_bottom - 2.0 * EDGE_WIDTH);
+        let new_top_pixel =
+            (rect_top + top_resp.drag_delta().y).clamp(0.0, rect_bottom - 2.0 * EDGE_WIDTH);
         let new_top_value = total_value - new_top_pixel / scale;
         let new_visible = (new_top_value - bottom_value).max(0.01);
         let new_z = (total_value / new_visible).clamp(zoom_min, zoom_max);
@@ -1003,9 +1019,8 @@ pub(crate) fn show_vertical_value(
 
     // Drag bottom edge → zoom, anchoring at top edge (固定 top_value)
     if press_on_sb && bottom_resp.dragged() {
-        let new_bottom_pixel = (rect_bottom
-            + drag_delta_with_edge_warp(ui, warp_id, &bottom_resp).y)
-            .clamp(rect_top + 2.0 * EDGE_WIDTH, sb_h);
+        let new_bottom_pixel =
+            (rect_bottom + bottom_resp.drag_delta().y).clamp(rect_top + 2.0 * EDGE_WIDTH, sb_h);
         let new_bottom_value = total_value - new_bottom_pixel / scale;
         let new_visible = (top_value - new_bottom_value).max(0.01);
         let new_z = (total_value / new_visible).clamp(zoom_min, zoom_max);
@@ -1399,10 +1414,11 @@ mod tests {
             &mut dirty,
         );
 
-        // 向右拖 50px；y 仍在底边附近 → 应发出 CursorPosition 瞬移到中心。
+        // 向右拖到窗口右缘；y 仍在底边附近，但横向滚动条只检查 X 轴，
+        // 不应因为贴底而吞掉横向位移。
         let out = run(
             &ctx,
-            raw_with_screen(egui::pos2(95.0, 278.0), None),
+            raw_with_screen(egui::pos2(370.0, 278.0), None),
             rect,
             &mut scroll_x,
             &mut ppt,
@@ -1431,16 +1447,17 @@ mod tests {
         assert_eq!(scroll_x, after_drag, "瞬移产生的反向 delta 必须被丢弃");
         assert!(!has_cursor_position(&out), "中心位置不应再次瞬移");
 
-        // 从中心继续拖 10px → 正常平移。
+        // 从中心继续拖（反向 10px）→ 正常平移。上一步已把 scroll 拖到上限，
+        // 只有反向移动才能观察到变化。
         let _ = run(
             &ctx,
-            raw_with_screen(egui::pos2(210.0, 150.0), None),
+            raw_with_screen(egui::pos2(190.0, 150.0), None),
             rect,
             &mut scroll_x,
             &mut ppt,
             &mut dirty,
         );
-        assert!(scroll_x > after_drag, "瞬移后应能继续拖动");
+        assert!(scroll_x < after_drag, "瞬移后应能继续拖动");
 
         // 松手：指针放回按下位置 (45,278)。
         let out = run(
