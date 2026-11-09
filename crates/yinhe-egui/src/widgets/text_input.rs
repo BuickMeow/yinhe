@@ -77,7 +77,13 @@ fn control_text_input_impl(
     if let Some(h) = hint {
         te = te.hint_text(h);
     }
+    // TextEdit 的最小高度取 `interact_size.y`（0.37 默认 20~24），比这里
+    // 18px 的文本行高，`ui.put` 会把控件从 inner 顶部往下撑，导致文字偏下。
+    // 把交互高度临时对齐到文本行高，文字才会严格垂直居中。
+    let prev_interact_y = ui.spacing().interact_size.y;
+    ui.spacing_mut().interact_size.y = text_h;
     let mut resp = ui.put(inner, te);
+    ui.spacing_mut().interact_size.y = prev_interact_y;
 
     if clear_w > 0.0 {
         let x_rect = egui::Rect::from_center_size(

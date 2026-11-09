@@ -3,6 +3,59 @@ use rust_i18n::t;
 
 use crate::audio_settings::AudioSettings;
 
+/// 设置左栏分类图标（与 `CATEGORY_KEYS` 一一对应）。
+const CATEGORY_ICONS: [egui_material_icons::MaterialIcon; 12] = [
+    egui_material_icons::icons::ICON_PALETTE,       // theme
+    egui_material_icons::icons::ICON_DASHBOARD,     // appearance
+    egui_material_icons::icons::ICON_LANGUAGE,      // language
+    egui_material_icons::icons::ICON_SPEAKER,       // audio
+    egui_material_icons::icons::ICON_MOVIE,         // render
+    egui_material_icons::icons::ICON_FILE_DOWNLOAD, // midi_export
+    egui_material_icons::icons::ICON_EDIT,          // editing
+    egui_material_icons::icons::ICON_KEYBOARD,      // shortcuts
+    egui_material_icons::icons::ICON_NOTIFICATIONS, // notification
+    egui_material_icons::icons::ICON_SETTINGS,      // general
+    egui_material_icons::icons::ICON_SAVE,          // saving
+    egui_material_icons::icons::ICON_LIBRARY_MUSIC, // soundfont
+];
+
+/// 左栏导航文本：Material 图标 + 分类名，颜色交给菜单项按选中/悬停统一着色。
+fn nav_label(
+    icon: egui_material_icons::MaterialIcon,
+    text: &str,
+    size: f32,
+) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        icon.codepoint,
+        0.0,
+        egui::text::TextFormat {
+            font_id: egui::FontId::new(size, icon.font_family()),
+            color: egui::Color32::PLACEHOLDER,
+            ..Default::default()
+        },
+    );
+    job.append(
+        "  ",
+        0.0,
+        egui::text::TextFormat {
+            font_id: egui::FontId::proportional(size),
+            color: egui::Color32::PLACEHOLDER,
+            ..Default::default()
+        },
+    );
+    job.append(
+        text,
+        0.0,
+        egui::text::TextFormat {
+            font_id: egui::FontId::proportional(size),
+            color: egui::Color32::PLACEHOLDER,
+            ..Default::default()
+        },
+    );
+    job
+}
+
 mod appearance;
 mod audio;
 mod constants;
@@ -110,16 +163,14 @@ pub fn show_content(
 
                             for (i, key) in CATEGORY_KEYS.iter().enumerate() {
                                 let selected = settings.ui_session.settings_tab == i;
+                                let size = crate::scaling::scaled_font(
+                                    ui.ctx(),
+                                    crate::theme::FILE_MENU_FONT,
+                                );
+                                let label = nav_label(CATEGORY_ICONS[i], t!(*key).as_ref(), size);
                                 if ui
                                     .add(crate::widgets::menu::menu_item_button(
-                                        ui,
-                                        selected,
-                                        egui::RichText::new(t!(*key).as_ref()).size(
-                                            crate::scaling::scaled_font(
-                                                ui.ctx(),
-                                                crate::theme::FILE_MENU_FONT,
-                                            ),
-                                        ),
+                                        ui, selected, label,
                                     ))
                                     .clicked()
                                 {

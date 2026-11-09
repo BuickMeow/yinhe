@@ -166,7 +166,7 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui) {
     // 顶部 2px 用项目统一的 `split_handle::horizontal`（同右栏/PR 样式与交互），
     // 不用 egui Panel 原生 resizable 分隔线——它的颜色取自全局 Visuals，
     // 亮暗主题下与 `theme::line_fg` 不一致（高亮发黑）。
-    egui::Panel::bottom("bottom_dock")
+    let panel_resp = egui::Panel::bottom("bottom_dock")
         .exact_size(h)
         .resizable(false)
         .show_separator_line(false)
@@ -209,6 +209,9 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui) {
                 show_body(app, idx, ui);
             });
         });
+
+    // 点击设备栏以外的任何地方（卷帘/走带/混音台/其它面板）→ 取消设备选中。
+    clear_dock_selection_on_outside_click(app, ui, panel_resp.response.rect);
 }
 
 /// 浮动窗口形态：在给定矩形内渲染设备链（无分割条/无面板边框），
@@ -227,6 +230,25 @@ pub(crate) fn show_floating(app: &mut App, idx: usize, ui: &mut egui::Ui, rect: 
     ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
         show_body(app, idx, ui);
     });
+    clear_dock_selection_on_outside_click(app, ui, rect);
+}
+
+/// 点击 dock 外 → 清空设备选中（成熟 DAW 的通用行为：选中不跨区域残留）。
+fn clear_dock_selection_on_outside_click(app: &mut App, ui: &egui::Ui, dock_rect: egui::Rect) {
+    if app.dock_selected.is_none() {
+        return;
+    }
+    let (clicked, pos) = ui.input(|i| (i.pointer.primary_clicked(), i.pointer.interact_pos()));
+    if !clicked {
+        return;
+    }
+    let Some(pos) = pos else {
+        return;
+    };
+    if dock_rect.contains(pos) || crate::view_interaction::pointer_over_popup(ui.ctx()) {
+        return;
+    }
+    app.dock_selected = None;
 }
 
 /// dock 的通道语境（MIDI / 音频两套命名空间独立）。
