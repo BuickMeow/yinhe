@@ -1228,7 +1228,7 @@ impl App {
                 .workspace
                 .active_doc
                 .and_then(|idx| self.workspace.documents.get_mut(idx));
-            let (changed, jump_request, width_drag_ended) = crate::right_panel::show(
+            let (changed, jump_request, history_jump, width_drag_ended) = crate::right_panel::show(
                 ui,
                 right_rect,
                 &mut self.right_panel_width,
@@ -1251,6 +1251,9 @@ impl App {
             }
             if let Some(req) = jump_request {
                 self.handle_jump_request(req, layout);
+            }
+            if let Some(target) = history_jump {
+                self.jump_history_to(target);
             }
         }
 

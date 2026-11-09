@@ -806,16 +806,21 @@ impl App {
         Some(extra)
     }
 
-    /// Restore the previous state on the active document's history stack.
-    pub(crate) fn undo(&mut self) {
+    /// 在活跃文档的历史栈上执行一次状态变更，并统一处理模型/混音/音频同步。
+    ///
+    /// undo / redo / 点击历史行跳转共用，避免三份重复的收尾逻辑漂移。
+    fn apply_history_change(&mut self, change: impl FnOnce(&mut Document) -> bool) -> bool {
         let Some(idx) = self.workspace.active_doc else {
-            return;
+            return false;
         };
         // 混音台参数被替换时需整体推回引擎（其余 undo 不受影响）。
         let before_mixer = self.workspace.documents[idx].mixer.clone();
-        let doc: &mut Document = &mut self.workspace.documents[idx];
-        let changed = doc.undo();
+        let changed = {
+            let doc: &mut Document = &mut self.workspace.documents[idx];
+            change(doc)
+        };
         if changed {
+            let doc = &mut self.workspace.documents[idx];
             doc.data.bump_revision();
             doc.edit.pianoroll_view.base.dirty = true;
             self.notify_audio_model_changed();
@@ -823,24 +828,22 @@ impl App {
                 self.push_mixer_state_to_engine(idx);
             }
         }
+        changed
+    }
+
+    /// Restore the previous state on the active document's history stack.
+    pub(crate) fn undo(&mut self) {
+        self.apply_history_change(|doc| doc.undo());
     }
 
     /// Re-apply the most recently undone state on the active document.
     pub(crate) fn redo(&mut self) {
-        let Some(idx) = self.workspace.active_doc else {
-            return;
-        };
-        let before_mixer = self.workspace.documents[idx].mixer.clone();
-        let doc: &mut Document = &mut self.workspace.documents[idx];
-        let changed = doc.redo();
-        if changed {
-            doc.data.bump_revision();
-            doc.edit.pianoroll_view.base.dirty = true;
-            self.notify_audio_model_changed();
-            if self.workspace.documents[idx].mixer != before_mixer {
-                self.push_mixer_state_to_engine(idx);
-            }
-        }
+        self.apply_history_change(|doc| doc.redo());
+    }
+
+    /// 点击历史行：跳到指定撤销栈长度，future 保留（新编辑才会覆盖）。
+    pub(crate) fn jump_history_to(&mut self, target_past_len: usize) {
+        self.apply_history_change(|doc| doc.jump_history_to(target_past_len));
     }
 }
 

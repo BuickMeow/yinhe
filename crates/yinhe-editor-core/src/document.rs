@@ -508,6 +508,29 @@ impl Document {
         true
     }
 
+    /// 跳到撤销栈的指定长度（0 = 最初状态）：
+    /// 向前/向后连续 undo / redo，**保留** future 栈，便于再点其它历史行跳转。
+    /// 之后只要有新编辑，`push` 会照常清空 future，旧分支被覆盖。
+    ///
+    /// 返回是否有状态变化。不可逆操作（导入 MIDI）undo 时会清空 future，
+    /// 此时循环自然停在能到达的位置。
+    pub fn jump_history_to(&mut self, target_past_len: usize) -> bool {
+        let mut changed = false;
+        while self.history.past_len() > target_past_len {
+            if !self.undo() {
+                break;
+            }
+            changed = true;
+        }
+        while self.history.past_len() < target_past_len {
+            if !self.redo() {
+                break;
+            }
+            changed = true;
+        }
+        changed
+    }
+
     /// Rebuild the track caches (`track_cache.info` / `track_cache.colors`) and
     /// resize track_visible/track_pianoroll_visible/track_overrides to match
     /// current track count.
@@ -1193,6 +1216,63 @@ mod tests {
         assert!(doc.redo(), "redo 应成功");
         assert_eq!(doc.model().tracks.len(), 16);
         assert_eq!(doc.model().note_count, 0, "redo 后音符应再次清零");
+    }
+
+    /// 点击历史行跳转：前后连续 undo/redo，future 必须保留；
+    /// 之后再产生新编辑，future 才被覆盖（标准 undo 分支语义）。
+    #[test]
+    fn jump_history_preserves_future_until_new_edit() {
+        use crate::history::{EditSnapshot, UndoEntry};
+        use yinhe_core::NoteEvent;
+
+        let mut doc = Document::empty();
+        for (i, key) in [60u8, 62, 64].into_iter().enumerate() {
+            let note = NoteEvent {
+                id: 0,
+                start_tick: i as u32 * 480,
+                end_tick: i as u32 * 480 + 120,
+                key,
+                velocity: 100,
+            };
+            let action = doc.add_note(1, note).expect("add_note");
+            doc.history.push(UndoEntry {
+                action,
+                label: format!("step{}", i + 1),
+                snapshot: EditSnapshot::default(),
+            });
+        }
+        assert_eq!(doc.history.past_len(), 3);
+        assert_eq!(doc.model().note_count, 3);
+
+        // 回到第一步之后：后面两步进入 future，但未丢失。
+        assert!(doc.jump_history_to(1));
+        assert_eq!(doc.history.past_len(), 1);
+        assert_eq!(doc.redo_labels().len(), 2);
+        assert_eq!(doc.model().note_count, 1);
+
+        // 再跳到最后一步：future 被依次 redo 回来。
+        assert!(doc.jump_history_to(3));
+        assert_eq!(doc.history.past_len(), 3);
+        assert!(doc.redo_labels().is_empty());
+        assert_eq!(doc.model().note_count, 3);
+
+        // 回退后做新编辑：旧 future 分支被覆盖。
+        assert!(doc.jump_history_to(1));
+        assert_eq!(doc.redo_labels().len(), 2);
+        let note = NoteEvent {
+            id: 0,
+            start_tick: 1440,
+            end_tick: 1560,
+            key: 67,
+            velocity: 100,
+        };
+        let action = doc.add_note(1, note).expect("add_note");
+        doc.history.push(UndoEntry {
+            action,
+            label: "new_branch".to_string(),
+            snapshot: EditSnapshot::default(),
+        });
+        assert!(doc.redo_labels().is_empty(), "新编辑必须覆盖旧 future 分支");
     }
 
     /// 回归测试：跨轨拖 automation 被 clamp 回原轨时事件不能蒸发。

@@ -73,9 +73,14 @@ pub fn show(
     event_browser_state: &mut event_browser::EventBrowserState,
     info_content: &mut Option<InfoContent>,
     automation_drag_ghost: Option<(u32, f32)>,
-) -> (bool, Option<event_browser::JumpRequest>, bool) {
+) -> (
+    bool,
+    Option<event_browser::JumpRequest>,
+    Option<usize>,
+    bool,
+) {
     let Some(tab) = *right_tab else {
-        return (false, None, false);
+        return (false, None, None, false);
     };
     // 旧入口（右键/快捷键 focus Info/EventBrowser）→ 仅在切换的那一帧定位选项卡，
     // 避免每帧重置用户手动选择的选项卡。
@@ -127,6 +132,7 @@ pub fn show(
     // 图层拖动排序等音轨结构变化 → 需 drop 引擎重建（与 port_changed 同路径）。
     let mut structural_changed = false;
     let mut jump_request: Option<event_browser::JumpRequest> = None;
+    let mut history_jump: Option<usize> = None;
 
     // 边距由 dock 按「标签卡 / 内容」分别施加：分割线因此能铺满整宽。
     let mut layout_changed = false;
@@ -174,7 +180,7 @@ pub fn show(
             }
             PanelKind::History => {
                 if let Some(doc) = doc_ref.as_deref_mut() {
-                    info_panel::show_history(ui, doc);
+                    history_jump = info_panel::show_history(ui, doc);
                 }
             }
             PanelKind::Summary => {
@@ -204,6 +210,7 @@ pub fn show(
     (
         port_changed || structural_changed,
         jump_request,
+        history_jump,
         width_drag_ended || layout_changed,
     )
 }

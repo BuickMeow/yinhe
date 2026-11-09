@@ -107,9 +107,9 @@ pub(crate) fn show_layers(ui: &mut egui::Ui, doc: &mut Document, is_mix: bool) -
     }
 }
 
-/// 「历史记录」选项卡。
-pub(crate) fn show_history(ui: &mut egui::Ui, doc: &mut Document) {
-    history::show(ui, doc);
+/// 「历史记录」选项卡。返回被点击行的目标撤销栈长度。
+pub(crate) fn show_history(ui: &mut egui::Ui, doc: &mut Document) -> Option<usize> {
+    history::show(ui, doc)
 }
 
 /// 「属性概要」选项卡。
