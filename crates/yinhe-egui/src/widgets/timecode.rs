@@ -101,18 +101,14 @@ fn select_all_on_focus(ui: &egui::Ui, resp: &egui::Response, id: egui::Id, text:
 }
 
 /// 无框单行输入（时间码字段共用样式，文字在格内垂直居中）。
-///
-/// 用**左对齐**而不是居中：比例字体数字宽度不等，居中时任何一位数字变化都会
-/// 让整串重新居中（0.37 换字体栈后数字变成比例宽度，跳变才暴露）。左对齐把
-/// 起始位置钉死，变化的只有尾部，肉眼看不到抖动。
 fn text_edit<'a>(id: egui::Id, buf: &'a mut String, width: f32, height: f32) -> egui::TextEdit<'a> {
     egui::TextEdit::singleline(buf)
         .id(id)
         .frame(egui::Frame::NONE)
         .font(egui::FontId::proportional(crate::theme::TIMECODE_FONT))
         .text_color(crate::theme::accent_active())
-        .align(egui::Align2::LEFT_CENTER)
-        .margin(egui::Margin::symmetric(6, 0))
+        .align(egui::Align2::CENTER_CENTER)
+        .margin(egui::Margin::symmetric(2, 0))
         .min_size(egui::vec2(width, height))
         .desired_width(width)
 }
