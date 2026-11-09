@@ -50,6 +50,7 @@ pub(crate) fn show_scrollbars(
         (content_rect.width(), content_rect.height())
     };
     {
+        let warp_id = ui.scope_id().with("pr_corner_warp");
         let resp = ui.interact(
             corner_rect,
             ui.scope_id().with("pr_corner_zoom"),
@@ -75,7 +76,7 @@ pub(crate) fn show_scrollbars(
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
         }
         if active {
-            let d = resp.drag_delta();
+            let d = scrollbar::drag_delta_with_edge_warp(ui, warp_id, &resp);
             let k = 0.005;
             let anchor_x = content_rect.center().x - content_rect.min.x;
             let anchor_y = content_rect.center().y - content_rect.min.y;
@@ -91,6 +92,7 @@ pub(crate) fn show_scrollbars(
         if crate::view_interaction::pointer_hits(ui, corner_rect) {
             crate::widgets::hint::set(ui.ctx(), t!("hint.pr.corner_zoom"));
         }
+        scrollbar::finish_edge_warp(ui, warp_id);
     }
 
     if view.is_vertical() {

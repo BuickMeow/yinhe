@@ -40,6 +40,84 @@ pub(crate) fn double_clicked_in(ui: &egui::Ui, rect: egui::Rect) -> bool {
         && !crate::view_interaction::pointer_over_popup(ui.ctx())
 }
 
+/// 指针距离窗口边缘小于此值时，拖动中把指针瞬移到窗口中心。
+const EDGE_WARP_MARGIN: f32 = 48.0;
+
+/// 滚动条拖动中的指针防撞边状态。
+#[derive(Clone, Copy)]
+struct DragWarpState {
+    /// 按下时的位置，松手后把指针放回这里（只在实际发生过瞬移时）。
+    anchor: egui::Pos2,
+    /// 上一帧刚瞬移过：下一帧的绝对位移是瞬移造成的反向跳动，必须丢弃。
+    pending: bool,
+    /// 本次拖动是否发生过瞬移。
+    warped: bool,
+}
+
+/// 滚动条拖动的位移：优先使用当前帧绝对位移；当指针接近窗口边缘时，
+/// 把它瞬移到窗口中心，并丢弃下一帧由瞬移产生的反向位移。
+///
+/// 隐藏指针还不够——指针仍会实际移动到屏幕/窗口边缘并停在那里。
+/// 瞬移后指针始终有继续移动的空间，拖动可以无限继续。
+pub(crate) fn drag_delta_with_edge_warp(
+    ui: &egui::Ui,
+    id: egui::Id,
+    resp: &egui::Response,
+) -> egui::Vec2 {
+    let anchor = ui
+        .input(|i| {
+            i.pointer
+                .press_origin()
+                .or_else(|| i.pointer.interact_pos())
+        })
+        .unwrap_or_default();
+    let mut st = ui.data_mut(|d| {
+        d.get_persisted::<DragWarpState>(id)
+            .unwrap_or(DragWarpState {
+                anchor,
+                pending: false,
+                warped: false,
+            })
+    });
+    let mut delta = resp.drag_delta();
+    if st.pending {
+        // 瞬移产生的 PointerMoved 会表现为一个巨大的反向 delta，丢弃它。
+        delta = egui::Vec2::ZERO;
+        st.pending = false;
+    }
+    let vp = ui.ctx().viewport_rect();
+    let pos = ui.input(|i| i.pointer.interact_pos());
+    let near_edge = pos.is_none_or(|p| {
+        p.x < vp.min.x + EDGE_WARP_MARGIN
+            || p.x > vp.max.x - EDGE_WARP_MARGIN
+            || p.y < vp.min.y + EDGE_WARP_MARGIN
+            || p.y > vp.max.y - EDGE_WARP_MARGIN
+    });
+    if near_edge {
+        ui.ctx()
+            .send_viewport_cmd(egui::ViewportCommand::CursorPosition(vp.center()));
+        st.pending = true;
+        st.warped = true;
+    }
+    ui.data_mut(|d| d.insert_persisted(id, st));
+    delta
+}
+
+/// 松手后清理防撞边状态：若拖动中瞬移过，把可见指针放回按下位置。
+pub(crate) fn finish_edge_warp(ui: &egui::Ui, id: egui::Id) {
+    if ui.input(|i| i.pointer.primary_down()) {
+        return;
+    }
+    let st = ui.data_mut(|d| d.get_persisted::<DragWarpState>(id));
+    ui.data_mut(|d| d.remove::<DragWarpState>(id));
+    if let Some(st) = st
+        && st.warped
+    {
+        ui.ctx()
+            .send_viewport_cmd(egui::ViewportCommand::CursorPosition(st.anchor));
+    }
+}
+
 // ── Horizontal scrollbar ──
 
 /// 密度预览的绘制参数：计数数据 + 轨道配色（索引 = track id，`[r,g,b,a]`）。
@@ -170,6 +248,7 @@ pub(crate) fn show(
     let edge_id_left = ui.scope_id().with("__sb_left__");
     let edge_id_right = ui.scope_id().with("__sb_right__");
     let middle_id = ui.scope_id().with("__sb_mid__");
+    let warp_id = ui.scope_id().with("__sb_warp__");
 
     let left_resp = ui.interact(left_edge_rect, edge_id_left, egui::Sense::click_and_drag());
     let right_resp = ui.interact(
@@ -272,13 +351,14 @@ pub(crate) fn show(
     // Drag middle → pan（x 方向）；垂直位移 → 返回 dy 供调用处缩放对面轴。
     // 斜拖 = 平移 + 缩放同时进行。
     if press_on_sb && middle_resp.dragged() {
-        let delta = signed(drag_main(middle_resp.drag_delta()));
+        let drag = drag_delta_with_edge_warp(ui, warp_id, &middle_resp);
+        let delta = signed(drag_main(drag));
         let delta_ticks = delta as f64 / scale;
         *scroll_x = (*scroll_x as f64 + delta_ticks * *pixels_per_tick as f64) as f32;
         *scroll_x = scroll_x.clamp(0.0, max_scroll_x(*pixels_per_tick));
         *dirty = true;
         ui.ctx().request_repaint();
-        return drag_cross(middle_resp.drag_delta());
+        return drag_cross(drag);
     }
 
     // Apply zoom, clamping both ppt and scroll_x so the rectangle never
@@ -296,8 +376,11 @@ pub(crate) fn show(
 
     // Drag left edge → zoom, anchoring at right edge
     if press_on_sb && left_resp.dragged() {
-        let new_left = (rect_left + signed(drag_main(left_resp.drag_delta())))
-            .clamp(0.0, rect_right - 2.0 * EDGE_WIDTH);
+        let new_left = (rect_left
+            + signed(drag_main(drag_delta_with_edge_warp(
+                ui, warp_id, &left_resp,
+            ))))
+        .clamp(0.0, rect_right - 2.0 * EDGE_WIDTH);
         let new_start_tick = new_left as f64 / scale;
         let right_tick = start_tick + viewport_ticks;
         let new_viewport_ticks = (right_tick - new_start_tick).max(1.0);
@@ -313,8 +396,13 @@ pub(crate) fn show(
 
     // Drag right edge → zoom, anchoring at left edge
     if press_on_sb && right_resp.dragged() {
-        let new_right = (rect_right + signed(drag_main(right_resp.drag_delta())))
-            .clamp(rect_left + 2.0 * EDGE_WIDTH, sb_w);
+        let new_right = (rect_right
+            + signed(drag_main(drag_delta_with_edge_warp(
+                ui,
+                warp_id,
+                &right_resp,
+            ))))
+        .clamp(rect_left + 2.0 * EDGE_WIDTH, sb_w);
         let new_right_tick = new_right as f64 / scale;
         let new_viewport_ticks = (new_right_tick - start_tick).max(1.0);
         apply_zoom(scroll_x, pixels_per_tick, start_tick, new_viewport_ticks);
@@ -323,6 +411,7 @@ pub(crate) fn show(
 
     // 背景区域 / 未按下：返回 0，不触发任何缩放/平移。
     // （缩放对面轴的 dy 已由 thumb 中间拖拽的垂直位移提供。）
+    finish_edge_warp(ui, warp_id);
     0.0
 }
 
@@ -638,6 +727,7 @@ pub(crate) fn show_vertical(
     let edge_id_start = ui.scope_id().with("__vsb_start__");
     let edge_id_end = ui.scope_id().with("__vsb_end__");
     let middle_id = ui.scope_id().with("__vsb_mid__");
+    let warp_id = ui.scope_id().with("__vsb_warp__");
 
     let start_resp = ui.interact(
         start_edge_rect,
@@ -703,18 +793,21 @@ pub(crate) fn show_vertical(
     // Drag middle → pan（主轴方向）；副轴位移 → 返回供调用处缩放对面轴。
     if press_on_sb && middle_resp.dragged() {
         if max_scroll > 0.0 {
-            let delta = drag_main(middle_resp.drag_delta());
+            let drag = drag_delta_with_edge_warp(ui, warp_id, &middle_resp);
+            let delta = drag_main(drag);
             *scroll_y = (*scroll_y + delta / scale).clamp(0.0, max_scroll);
             *dirty = true;
             ui.ctx().request_repaint();
+            return drag_cross(drag);
         }
-        return drag_cross(middle_resp.drag_delta());
+        return 0.0;
     }
 
     // Drag start edge → zoom，锚定 thumb 终点 sb 位置（rect_bottom 不动）
     if press_on_sb && start_resp.dragged() {
-        let new_thumb_start_sb = (rect_top + drag_main(start_resp.drag_delta()))
-            .clamp(0.0, rect_bottom - 2.0 * EDGE_WIDTH);
+        let new_thumb_start_sb = (rect_top
+            + drag_main(drag_delta_with_edge_warp(ui, warp_id, &start_resp)))
+        .clamp(0.0, rect_bottom - 2.0 * EDGE_WIDTH);
         let new_thumb_len_sb = (rect_bottom - new_thumb_start_sb).max(2.0 * EDGE_WIDTH);
         let new_cs = snap_cell_size(k_constant / new_thumb_len_sb, cell_min, cell_max, cell_step);
         let new_scale = sb_h / (num_cells_f * new_cs);
@@ -730,8 +823,9 @@ pub(crate) fn show_vertical(
 
     // Drag end edge → zoom，锚定 thumb 起点 sb 位置（rect_top 不动）
     if press_on_sb && end_resp.dragged() {
-        let new_thumb_end_sb = (rect_bottom + drag_main(end_resp.drag_delta()))
-            .clamp(rect_top + 2.0 * EDGE_WIDTH, sb_h);
+        let new_thumb_end_sb = (rect_bottom
+            + drag_main(drag_delta_with_edge_warp(ui, warp_id, &end_resp)))
+        .clamp(rect_top + 2.0 * EDGE_WIDTH, sb_h);
         let new_thumb_len_sb = (new_thumb_end_sb - rect_top).max(2.0 * EDGE_WIDTH);
         let new_cs = snap_cell_size(k_constant / new_thumb_len_sb, cell_min, cell_max, cell_step);
         let new_scale = sb_h / (num_cells_f * new_cs);
@@ -745,6 +839,7 @@ pub(crate) fn show_vertical(
     }
 
     // 背景区域 / 未按下：返回 0，不触发任何缩放/平移。
+    finish_edge_warp(ui, warp_id);
     0.0
 }
 
@@ -828,6 +923,7 @@ pub(crate) fn show_vertical_value(
     let edge_id_top = ui.scope_id().with("__vsb_v_top__");
     let edge_id_bottom = ui.scope_id().with("__vsb_v_bottom__");
     let middle_id = ui.scope_id().with("__vsb_v_mid__");
+    let warp_id = ui.scope_id().with("__vsb_v_warp__");
 
     let top_resp = ui.interact(top_edge_rect, edge_id_top, egui::Sense::click_and_drag());
     let bottom_resp = ui.interact(
@@ -880,7 +976,7 @@ pub(crate) fn show_vertical_value(
 
     // Drag middle → pan value_scroll（仅当 max_scroll > 0 时有效）
     if press_on_sb && middle_resp.dragged() && max_scroll > 0.0 {
-        let delta = middle_resp.drag_delta().y;
+        let delta = drag_delta_with_edge_warp(ui, warp_id, &middle_resp).y;
         // y 增加 = 向下滚 = value_scroll 减小
         *value_scroll = (*value_scroll - delta / scale).clamp(0.0, max_scroll);
         *dirty = true;
@@ -890,8 +986,8 @@ pub(crate) fn show_vertical_value(
 
     // Drag top edge → zoom, anchoring at bottom edge (固定 bottom_value)
     if press_on_sb && top_resp.dragged() {
-        let new_top_pixel =
-            (rect_top + top_resp.drag_delta().y).clamp(0.0, rect_bottom - 2.0 * EDGE_WIDTH);
+        let new_top_pixel = (rect_top + drag_delta_with_edge_warp(ui, warp_id, &top_resp).y)
+            .clamp(0.0, rect_bottom - 2.0 * EDGE_WIDTH);
         let new_top_value = total_value - new_top_pixel / scale;
         let new_visible = (new_top_value - bottom_value).max(0.01);
         let new_z = (total_value / new_visible).clamp(zoom_min, zoom_max);
@@ -907,8 +1003,9 @@ pub(crate) fn show_vertical_value(
 
     // Drag bottom edge → zoom, anchoring at top edge (固定 top_value)
     if press_on_sb && bottom_resp.dragged() {
-        let new_bottom_pixel =
-            (rect_bottom + bottom_resp.drag_delta().y).clamp(rect_top + 2.0 * EDGE_WIDTH, sb_h);
+        let new_bottom_pixel = (rect_bottom
+            + drag_delta_with_edge_warp(ui, warp_id, &bottom_resp).y)
+            .clamp(rect_top + 2.0 * EDGE_WIDTH, sb_h);
         let new_bottom_value = total_value - new_bottom_pixel / scale;
         let new_visible = (top_value - new_bottom_value).max(0.01);
         let new_z = (total_value / new_visible).clamp(zoom_min, zoom_max);
@@ -921,6 +1018,7 @@ pub(crate) fn show_vertical_value(
         *dirty = true;
         ui.ctx().request_repaint();
     }
+    finish_edge_warp(ui, warp_id);
 }
 
 #[cfg(test)]
@@ -1219,6 +1317,141 @@ mod tests {
         let mut raw = egui::RawInput::default();
         raw.events.push(egui::Event::PointerMoved(pos));
         raw
+    }
+
+    fn has_cursor_position(out: &egui::FullOutput) -> bool {
+        out.viewport_output.values().any(|v| {
+            v.commands
+                .iter()
+                .any(|c| matches!(c, egui::ViewportCommand::CursorPosition(_)))
+        })
+    }
+
+    fn raw_with_screen(pos: egui::Pos2, pressed: Option<bool>) -> egui::RawInput {
+        let mut raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(400.0, 300.0),
+            )),
+            ..Default::default()
+        };
+        raw.events.push(egui::Event::PointerMoved(pos));
+        if let Some(pressed) = pressed {
+            raw.events.push(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::default(),
+            });
+        }
+        raw
+    }
+
+    /// 指针靠近窗口边缘时拖动滚动条：瞬移到窗口中心；下一帧的反向 delta
+    /// 必须被丢弃，之后仍可继续拖动。松手后指针回到按下位置。
+    #[test]
+    fn scrollbar_drag_warps_away_from_window_edge() {
+        let ctx = egui::Context::default();
+        // 滚动条贴近窗口底部：y=278，距 300 的底边只有 22px。
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 270.0), egui::vec2(300.0, 16.0));
+        let mut scroll_x = 0.0f32;
+        let mut ppt = 1.0f32;
+        let mut dirty = false;
+        fn run(
+            ctx: &egui::Context,
+            raw: egui::RawInput,
+            rect: egui::Rect,
+            scroll_x: &mut f32,
+            ppt: &mut f32,
+            dirty: &mut bool,
+        ) -> egui::FullOutput {
+            let mut out = ctx.run_ui(raw, |ui| {
+                show(
+                    ui,
+                    rect,
+                    300.0,
+                    scroll_x,
+                    ppt,
+                    1000.0,
+                    None,
+                    None,
+                    dirty,
+                    yinhe_types::Orientation::Horizontal,
+                );
+            });
+            out.textures_delta.clear();
+            out
+        }
+        let _ = run(
+            &ctx,
+            raw_with_screen(egui::pos2(45.0, 278.0), None),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        let _ = run(
+            &ctx,
+            raw_with_screen(egui::pos2(45.0, 278.0), Some(true)),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+
+        // 向右拖 50px；y 仍在底边附近 → 应发出 CursorPosition 瞬移到中心。
+        let out = run(
+            &ctx,
+            raw_with_screen(egui::pos2(95.0, 278.0), None),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        let after_drag = scroll_x;
+        assert!(
+            after_drag > 0.0,
+            "拖动本身仍应平移，实际 scroll_x={after_drag}"
+        );
+        assert!(
+            has_cursor_position(&out),
+            "指针靠近窗口边缘时应瞬移到窗口中心"
+        );
+
+        // 模拟瞬移后的 PointerMoved：指针已跳到中心，此时绝不能把反向 delta
+        // 当成拖动，scroll_x 必须保持不变。
+        let out = run(
+            &ctx,
+            raw_with_screen(egui::pos2(200.0, 150.0), None),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        assert_eq!(scroll_x, after_drag, "瞬移产生的反向 delta 必须被丢弃");
+        assert!(!has_cursor_position(&out), "中心位置不应再次瞬移");
+
+        // 从中心继续拖 10px → 正常平移。
+        let _ = run(
+            &ctx,
+            raw_with_screen(egui::pos2(210.0, 150.0), None),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        assert!(scroll_x > after_drag, "瞬移后应能继续拖动");
+
+        // 松手：指针放回按下位置 (45,278)。
+        let out = run(
+            &ctx,
+            raw_with_screen(egui::pos2(210.0, 150.0), Some(false)),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        assert!(has_cursor_position(&out), "松手后应把可见指针放回按下位置");
     }
 
     /// 背景拖拽（thumb 之外的 band 区域）→ 不返回 dy、不平移。
