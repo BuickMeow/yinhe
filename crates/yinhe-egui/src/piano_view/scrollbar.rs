@@ -68,7 +68,10 @@ pub(crate) fn show_scrollbars(
             base
         };
         ui.painter().rect_filled(corner_rect, 0.0, fill);
-        if resp.hovered() || active {
+        if active {
+            // 拖动夹角缩放时隐藏系统指针（同各滚动条）。
+            ui.ctx().set_cursor_icon(egui::CursorIcon::None);
+        } else if resp.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
         }
         if active {
