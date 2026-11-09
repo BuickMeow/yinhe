@@ -1,8 +1,8 @@
-//! 左侧工具栏（Photoshop 风格）：单列竖排全部编辑工具。
+//! PR 顶部工具栏 + 钢琴/滚动条交界处的自动化宽按钮。
 //!
-//! 取代原 transport bar 的「工具菜单 + 图钉工具按钮」：工具不再藏在下拉里，
-//! 而是常驻钢琴卷帘左侧单列，点击即切换；悬停提示走底部讲解行（mode bar）。
-//! 仅钢琴卷帘可见时显示——工具只对 PR/AM 生效，因此只占 PR 那条带，不影响走带视图。
+//! 工具按钮横向常驻在钢琴卷帘顶部（取代原左侧竖条），点击即切换；
+//! 悬停提示走底部讲解行。自动化开关/新增放在键盘列与底部滚动条交界的
+//! 空白矩形里，做成两个宽按钮，避免再占用工具区。
 
 use eframe::egui;
 use egui_material_icons::icons::{ICON_ADD_CHART, ICON_BAR_CHART, ICON_MORE_HORIZ};
@@ -11,50 +11,31 @@ use rust_i18n::t;
 use crate::widgets::tools_panel::{ALL_TOOLS, Tool};
 use yinhe_types::AutomationPanelView;
 
-/// 在给定矩形内渲染左侧工具栏（由 PR 布局扣出的左侧竖条）。
-///
-/// 顶部为编辑工具，底部两个为自动化（AM）控制：
-/// 最下方 `bar_chart` 开关显示/隐藏自动化面板（选中态与工具一致），
-/// 其上方 `addchart` 新增一个自动化面板。删除面板的按钮在各面板内部。
-///
-/// 悬停提示走统一讲解行（见 `widgets::hint`）；离开工具栏时显示面板说明。
-pub fn show(
-    ui: &mut egui::Ui,
-    rect: egui::Rect,
-    active_tool: &mut Tool,
-    show_panels: &mut bool,
-    panels: &mut Vec<AutomationPanelView>,
-    show_automation_buttons: bool,
-) {
+/// 顶部横向工具栏（由 PR 布局扣出的整条顶部带）。
+pub fn show(ui: &mut egui::Ui, rect: egui::Rect, active_tool: &mut Tool) {
     let btn_size = egui::vec2(
-        crate::theme::TRANSPORT_BTN_SIZE,
-        crate::theme::TRANSPORT_BTN_SIZE,
+        crate::theme::PR_TOOL_BTN_SIZE,
+        crate::theme::PR_TOOL_BTN_SIZE,
     );
     let mut hovered_hint: Option<String> = None;
     ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
         ui.set_clip_rect(rect.intersect(ui.clip_rect()));
         ui.painter()
             .rect_filled(rect, 0.0, crate::theme::track_bg());
-        ui.spacing_mut().item_spacing.y = 2.0;
-        // 高度不足时：放得下的工具正常显示，最后一个槽位变省略号，
-        // 点开子悬浮栏放剩余工具（从上往下数放不下的收进去）。
-        let top_pad = 6.0;
-        let spacing_y = ui.spacing().item_spacing.y;
-        let bottom_reserved = if show_automation_buttons {
-            2.0 + btn_size.y * 2.0 + 2.0 + 2.0
-        } else {
-            0.0
-        };
-        let slot = btn_size.y + spacing_y;
-        let avail = (rect.height() - top_pad - bottom_reserved).max(0.0);
-        let fit = (((avail + spacing_y) / slot).floor() as usize).max(1);
+        ui.spacing_mut().item_spacing.x = 2.0;
+        // 横向放得下多少工具就显示多少，放不下的收进末尾「…」。
+        let pad_x = 6.0;
+        let spacing_x = 2.0;
+        let slot = btn_size.x + spacing_x;
+        let avail = (rect.width() - pad_x * 2.0).max(0.0);
+        let fit = (((avail + spacing_x) / slot).floor() as usize).max(1);
         let n_visible = if fit >= ALL_TOOLS.len() {
             ALL_TOOLS.len()
         } else {
             fit.saturating_sub(1)
         };
-        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-            ui.add_space(top_pad);
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.add_space(pad_x);
             for tool in ALL_TOOLS.iter().take(n_visible) {
                 if let Some(hint) = tool_button(ui, *tool, active_tool, btn_size) {
                     hovered_hint = Some(hint);
@@ -68,37 +49,15 @@ pub fn show(
                 egui::Popup::from_toggle_button_response(&more)
                     .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
                     .show(|ui| {
-                        ui.spacing_mut().item_spacing.y = spacing_y;
-                        for tool in ALL_TOOLS.iter().skip(n_visible) {
-                            tool_button(ui, *tool, active_tool, btn_size);
-                        }
+                        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                            ui.spacing_mut().item_spacing.y = spacing_x;
+                            for tool in ALL_TOOLS.iter().skip(n_visible) {
+                                tool_button(ui, *tool, active_tool, btn_size);
+                            }
+                        });
                     });
             }
         });
-        // 自动化按钮固定贴底：最下方 = 开关，其上方 = 新增。
-        if show_automation_buttons {
-            // 贴住工具栏底缘（留 2px，避免圆角被裁）；add 在其正上方。
-            let mut center_y = rect.max.y - 2.0 - btn_size.y * 0.5;
-            if let Some(hint) = automation_toggle_button(
-                ui,
-                egui::pos2(rect.center().x, center_y),
-                btn_size,
-                show_panels,
-                panels,
-            ) {
-                hovered_hint = Some(hint);
-            }
-            center_y -= btn_size.y + 2.0;
-            if let Some(hint) = automation_add_button(
-                ui,
-                egui::pos2(rect.center().x, center_y),
-                btn_size,
-                show_panels,
-                panels,
-            ) {
-                hovered_hint = Some(hint);
-            }
-        }
     });
 
     let over_bar = ui
@@ -108,6 +67,56 @@ pub fn show(
         crate::widgets::hint::set(ui.ctx(), hint);
     } else if over_bar {
         crate::widgets::hint::set_region(ui.ctx(), t!("hint.panel.tool_bar"));
+    }
+}
+
+/// 钢琴/滚动条交界处的两个宽按钮：左 = 显示自动化，右 = 新增自动化。
+///
+/// `rect` 为滚动条左侧空白区（键盘列宽 × 滚动条高）。
+pub fn show_auto_buttons(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    show_panels: &mut bool,
+    panels: &mut Vec<AutomationPanelView>,
+) {
+    if rect.width() < 16.0 || rect.height() < 8.0 {
+        return;
+    }
+    ui.painter()
+        .rect_filled(rect, 0.0, crate::theme::track_bg());
+    let gap = 2.0;
+    let w = ((rect.width() - gap) * 0.5).max(1.0);
+    let toggle_rect = egui::Rect::from_min_size(rect.min, egui::vec2(w, rect.height()));
+    let add_rect = egui::Rect::from_min_max(egui::pos2(rect.min.x + w + gap, rect.min.y), rect.max);
+
+    let toggle = icon_button_at(
+        ui,
+        toggle_rect.center(),
+        toggle_rect.size(),
+        "pr_auto_toggle",
+        ICON_BAR_CHART,
+        *show_panels,
+    );
+    crate::widgets::hint::hover(ui.ctx(), &toggle, t!("hint.pr.auto_toggle"));
+    if toggle.clicked() {
+        *show_panels = !*show_panels;
+        if *show_panels && panels.is_empty() {
+            panels.push(AutomationPanelView::default());
+        }
+    }
+
+    let add = icon_button_at(
+        ui,
+        add_rect.center(),
+        add_rect.size(),
+        "pr_auto_add",
+        ICON_ADD_CHART,
+        false,
+    );
+    crate::widgets::hint::hover(ui.ctx(), &add, t!("hint.pr.auto_add"));
+    if add.clicked() {
+        *show_panels = true;
+        panels.push(AutomationPanelView::default());
     }
 }
 
@@ -132,7 +141,7 @@ fn tool_button(
                 ui,
                 tool.icon()
                     .rich_text()
-                    .size(crate::theme::TRANSPORT_BTN_FONT)
+                    .size(crate::theme::PR_TOOL_BTN_FONT)
                     .color(color),
                 btn_size,
                 sel_bg,
@@ -154,7 +163,7 @@ fn tool_more_button(ui: &mut egui::Ui, btn_size: egui::Vec2) -> egui::Response {
             ui,
             ICON_MORE_HORIZ
                 .rich_text()
-                .size(crate::theme::TRANSPORT_BTN_FONT)
+                .size(crate::theme::PR_TOOL_BTN_FONT)
                 .color(crate::theme::text_primary()),
             btn_size,
             None,
@@ -185,7 +194,7 @@ fn icon_button_at(
             crate::widgets::flat::flat_button_filled_ghost(
                 ui,
                 icon.rich_text()
-                    .size(crate::theme::TRANSPORT_BTN_FONT)
+                    .size(crate::theme::PR_TOOL_BTN_FONT)
                     .color(color),
                 btn_size,
                 sel_bg,
@@ -195,53 +204,4 @@ fn icon_button_at(
         .inner
     })
     .inner
-}
-
-/// 自动化显示/隐藏开关（贴工具栏底部）：选中态与工具一致。
-fn automation_toggle_button(
-    ui: &mut egui::Ui,
-    center: egui::Pos2,
-    btn_size: egui::Vec2,
-    show_panels: &mut bool,
-    panels: &mut Vec<AutomationPanelView>,
-) -> Option<String> {
-    let resp = icon_button_at(
-        ui,
-        center,
-        btn_size,
-        "tool_bar_auto_toggle",
-        ICON_BAR_CHART,
-        *show_panels,
-    );
-    if resp.clicked() {
-        *show_panels = !*show_panels;
-        if *show_panels && panels.is_empty() {
-            panels.push(AutomationPanelView::default());
-        }
-    }
-    resp.hovered()
-        .then(|| t!("hint.pr.auto_toggle").to_string())
-}
-
-/// 新增一个自动化面板（开关上方）。
-fn automation_add_button(
-    ui: &mut egui::Ui,
-    center: egui::Pos2,
-    btn_size: egui::Vec2,
-    show_panels: &mut bool,
-    panels: &mut Vec<AutomationPanelView>,
-) -> Option<String> {
-    let resp = icon_button_at(
-        ui,
-        center,
-        btn_size,
-        "tool_bar_auto_add",
-        ICON_ADD_CHART,
-        false,
-    );
-    if resp.clicked() {
-        *show_panels = true;
-        panels.push(AutomationPanelView::default());
-    }
-    resp.hovered().then(|| t!("hint.pr.auto_add").to_string())
 }

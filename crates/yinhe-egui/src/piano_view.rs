@@ -421,7 +421,7 @@ pub fn show(
         content_rect,
         panels_y,
         panels_total_h,
-        auto_ctx,
+        auto_ctx.as_mut(),
         midi,
         track_visible,
         track_colors,
@@ -444,6 +444,12 @@ pub fn show(
     );
 
     let pr_orientation = view.orientation();
+    let auto_buttons = auto_ctx.as_mut().map(|ctx| {
+        (
+            &mut *ctx.show as &mut bool,
+            &mut *ctx.panels as &mut Vec<yinhe_types::AutomationPanelView>,
+        )
+    });
     scrollbar::show_scrollbars(
         ui,
         view,
@@ -457,6 +463,7 @@ pub fn show(
         density_preview,
         *cursor_tick,
         pr_orientation,
+        auto_buttons,
     );
 
     // ── Perf probe + 状态栏讲解行 ──

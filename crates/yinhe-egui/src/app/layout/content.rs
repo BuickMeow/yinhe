@@ -531,32 +531,16 @@ impl App {
         follow_mode: &mut crate::view_interaction::FollowMode,
         sel_hint: Option<&SelHintInfo>,
     ) {
-        // ── 左侧工具栏（仅 PR 带内，Photoshop 风格）──
-        // 从 PR 内容左缘扣出竖条，走带视图不受影响；工具只对 PR/AM 生效。
-        let tool_strip = egui::Rect::from_min_max(
+        // ── 顶部工具栏（仅 PR 带内）──
+        // 工具横向常驻在钢琴卷帘顶部，不再占用左侧竖条。
+        let tool_rect = egui::Rect::from_min_max(
             egui::pos2(layout.remaining.min.x, layout.bottom_y),
             egui::pos2(
-                layout.remaining.min.x + crate::theme::TOOL_BAR_W,
-                layout.remaining.max.y,
+                layout.remaining.max.x,
+                (layout.bottom_y + crate::theme::PR_TOOL_BAR_H).min(layout.remaining.max.y),
             ),
         );
-        // 纵向瀑布流不提供 AM 视图，隐藏自动化按钮（auto_ctx 也会被忽略）。
-        let show_auto_buttons = {
-            let view = &self.workspace.documents[idx].edit.pianoroll_view;
-            !view.is_vertical()
-        };
-        {
-            let doc = &mut self.workspace.documents[idx];
-            crate::chrome::tool_bar::show(
-                ui,
-                tool_strip,
-                &mut self.active_tool,
-                &mut doc.edit.show_controller_panels,
-                &mut doc.edit.controller_panels,
-                show_auto_buttons,
-            );
-        }
-        let piano_left = tool_strip.max.x;
+        crate::chrome::tool_bar::show(ui, tool_rect, &mut self.active_tool);
 
         // Pianoroll GPU view
         let auto_wgpu_state = self.render_ctx.wgpu_state().clone();
@@ -582,7 +566,7 @@ impl App {
             let doc = guard.as_mut();
             let midi_source: Option<&dyn yinhe_types::NoteSource> = Some(doc.data.model.as_ref());
             let piano_rect = egui::Rect::from_min_max(
-                egui::pos2(piano_left, layout.bottom_y),
+                egui::pos2(layout.remaining.min.x, tool_rect.max.y),
                 layout.remaining.max,
             );
 

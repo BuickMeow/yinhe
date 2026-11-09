@@ -28,6 +28,12 @@ pub const TRANSPORT_BTN_FONT: f32 = ICON_BTN_FONT;
 /// 左侧工具栏宽度（单列竖排图标，Photoshop 风格）。
 /// 与 transport bar 的高度一致（时间码 RECT_H 36 + 底边距 8），使左侧竖条与顶部走带栏等厚。
 pub const TOOL_BAR_W: f32 = 44.0;
+/// PR 顶部工具栏高度（px）。
+pub const PR_TOOL_BAR_H: f32 = 30.0;
+/// PR 顶部工具栏按钮边长（px）：比 transport 的 32 略小。
+pub const PR_TOOL_BTN_SIZE: f32 = 28.0;
+/// PR 顶部工具栏图标字号：比原来的 18 略小。
+pub const PR_TOOL_BTN_FONT: f32 = 16.0;
 pub const TIMECODE_FONT: f32 = 12.0;
 pub const FILE_MENU_FONT: f32 = 14.0;
 

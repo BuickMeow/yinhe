@@ -30,7 +30,7 @@ pub(crate) fn show_panels(
     content_rect: egui::Rect,
     panels_y: f32,
     panels_total_h: f32,
-    mut auto_ctx: Option<AutomationPanelsCtx<'_>>,
+    auto_ctx: Option<&mut AutomationPanelsCtx<'_>>,
     midi: Option<&dyn yinhe_types::NoteSource>,
     track_visible: &[bool],
     track_colors: &[[f32; 4]],
@@ -54,7 +54,7 @@ pub(crate) fn show_panels(
     let _ = theme;
     let _ = panels_y;
     let mut panels_status_hint: Option<String> = None;
-    if let Some(ctx) = auto_ctx.as_mut() {
+    if let Some(ctx) = auto_ctx {
         let kb_w = view.keyboard_width();
         let combo_w = kb_w * crate::theme::AUTO_PANEL_COMBO_WIDTH_RATIO;
         let active_track = write_track

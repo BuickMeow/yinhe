@@ -30,6 +30,7 @@ pub(crate) fn show_scrollbars(
     density_preview: Option<&scrollbar::DensityPreview<'_>>,
     play_tick: Option<f64>,
     pr_orientation: yinhe_types::Orientation,
+    auto_buttons: Option<(&mut bool, &mut Vec<yinhe_types::AutomationPanelView>)>,
 ) {
     let _ = h;
     let sb_y = rect.min.y + rect.height() - scrollbar::SCROLLBAR_H;
@@ -280,6 +281,15 @@ pub(crate) fn show_scrollbars(
         if scrollbar::double_clicked_in(ui, vsb_rect) {
             view.fit_pitch(content_rect.height());
             ui.ctx().request_repaint();
+        }
+
+        // 钢琴/滚动条交界处：键盘列宽 × 滚动条高的空白矩形，放两个自动化宽按钮。
+        if let Some((show_panels, panels)) = auto_buttons {
+            let auto_rect = egui::Rect::from_min_max(
+                egui::pos2(rect.min.x, sb_y),
+                egui::pos2(rect.min.x + kb_w, rect.max.y),
+            );
+            crate::chrome::tool_bar::show_auto_buttons(ui, auto_rect, show_panels, panels);
         }
 
         // 滚动条滚轮缩放：水平滚动条滚轮 = x 轴缩放；垂直滚动条滚轮 = y 轴缩放
