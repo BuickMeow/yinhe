@@ -344,7 +344,7 @@ pub fn show(
             track_visible,
             view.visible_cross_range(view.cross_axis_len(w as f32, h as f32)),
         ),
-        _ => [false; yinhe_types::KEY_COUNT],
+        _ => [None; yinhe_types::KEY_COUNT],
     };
     let markers: &[yinhe_types::MarkerEvent] = midi_arc
         .map(|m| m.conductor.markers.as_slice())
@@ -370,6 +370,7 @@ pub fn show(
         pw,
         ph,
         &playing_keys,
+        track_colors,
         cursor_tick,
         effective_tool,
         sel_rect,

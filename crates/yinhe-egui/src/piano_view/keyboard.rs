@@ -13,11 +13,21 @@ use yinhe_types::{KEY_COUNT, PianoRollView};
 /// 横向键盘里「音名栏」占键盘宽度的比例（左半）。
 const LABEL_GUTTER_RATIO: f32 = 0.5;
 
-/// 键盘上的临时高亮：正在演奏的键 + 拖选出的音域。
+/// 键盘上的临时高亮：正在演奏的键（含音轨号，用于取轨道颜色）+ 拖选出的音域。
 #[derive(Clone, Copy)]
 pub struct KeyHighlights<'a> {
-    pub playing: &'a [bool; KEY_COUNT],
+    pub playing: &'a [Option<u16>; KEY_COUNT],
     pub select: Option<(u8, u8)>,
+    pub track_colors: &'a [[f32; 4]],
+}
+
+impl KeyHighlights<'_> {
+    fn playing_color(&self, track: u16) -> egui::Color32 {
+        self.track_colors
+            .get(track as usize)
+            .map(|tc| crate::theme::rgba_to_color32((tc[0], tc[1], tc[2], tc[3])))
+            .unwrap_or_else(crate::theme::accent_active)
+    }
 }
 
 /// 绘制 pianoroll 键盘条（白键在下层，黑键在上层，C 位置标注音名）。
@@ -52,8 +62,8 @@ pub fn playing_keys_at(
     tick: f64,
     visible: &[bool],
     (key_lo, key_hi): (u8, u8),
-) -> [bool; KEY_COUNT] {
-    let mut keys = [false; KEY_COUNT];
+) -> [Option<u16>; KEY_COUNT] {
+    let mut keys = [None; KEY_COUNT];
     if tick < 0.0 {
         return keys;
     }
@@ -72,7 +82,7 @@ pub fn playing_keys_at(
                 && note.end_tick > tick
                 && visible.get(note.track as usize).copied().unwrap_or(true)
             {
-                keys[key as usize] = true;
+                keys[key as usize] = Some(note.track);
                 break;
             }
         }
@@ -157,9 +167,6 @@ fn paint_horizontal(
     let stroke_color = crate::theme::rgb_to_color32(theme.key_black);
     // 描边宽度随键高等比：kh=12（默认）时 1px
     let stroke = egui::Stroke::new((kh * 0.0833).clamp(0.5, 2.0), stroke_color);
-    // 所有相邻行之间留同样宽的空隙（折叠后细行也不会被描边糊住）。
-    let gap = stroke.width;
-
     let gutter_w = kb_w * LABEL_GUTTER_RATIO;
     let keys_x = keyboard_rect.min.x + gutter_w;
     let keys_w = (kb_w - gutter_w).max(0.0);
@@ -208,14 +215,10 @@ fn paint_horizontal(
         if !visible_row(screen_y, keyboard_rect, row_h) {
             continue;
         }
-        let key_rect = egui::Rect::from_min_size(
-            egui::pos2(keys_x, screen_y + gap * 0.5),
-            egui::vec2(keys_w, (row_h - gap).max(1.0)),
-        );
+        let key_rect =
+            egui::Rect::from_min_size(egui::pos2(keys_x, screen_y), egui::vec2(keys_w, row_h));
         painter.rect_filled(key_rect, 0.0, crate::theme::rgb_to_color32(theme.key_white));
-        if row_h >= 3.0 {
-            painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
-        }
+        painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
     }
 
     // Black keys on top
@@ -232,19 +235,14 @@ fn paint_horizontal(
         if !visible_row(screen_y, keyboard_rect, row_h) {
             continue;
         }
-        let key_rect = egui::Rect::from_min_size(
-            egui::pos2(keys_x, screen_y + gap * 0.5),
-            egui::vec2(keys_w, (row_h - gap).max(1.0)),
-        );
+        let key_rect =
+            egui::Rect::from_min_size(egui::pos2(keys_x, screen_y), egui::vec2(keys_w, row_h));
         painter.rect_filled(key_rect, 0.0, crate::theme::rgb_to_color32(theme.key_black));
-        if row_h >= 3.0 {
-            painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
-        }
+        painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
     }
 
     // 音域 / 演奏高亮（盖在黑白键之上）。
     let sel_bg = crate::theme::selected_bg();
-    let accent = crate::theme::accent_active();
     for (idx, &playing) in highlights.playing.iter().enumerate() {
         let key = idx as u8;
         if (key as u16) < view.layout.start || (key as u16) > view.layout.end() {
@@ -255,18 +253,16 @@ fn paint_horizontal(
         if !visible_row(screen_y, keyboard_rect, row_h) {
             continue;
         }
-        let key_rect = egui::Rect::from_min_size(
-            egui::pos2(keys_x, screen_y + gap * 0.5),
-            egui::vec2(keys_w, (row_h - gap).max(1.0)),
-        );
+        let key_rect =
+            egui::Rect::from_min_size(egui::pos2(keys_x, screen_y), egui::vec2(keys_w, row_h));
         let in_range = highlights
             .select
             .is_some_and(|(lo, hi)| key >= lo && key <= hi);
         if in_range {
             painter.rect_filled(key_rect, 0.0, sel_bg);
         }
-        if playing {
-            painter.rect_filled(key_rect, 0.0, accent.gamma_multiply(0.85));
+        if let Some(track) = playing {
+            painter.rect_filled(key_rect, 0.0, highlights.playing_color(track));
         }
     }
 }
@@ -286,7 +282,6 @@ fn paint_vertical(
     let stroke_color = crate::theme::rgb_to_color32(theme.key_black);
     // 描边宽度随键宽（=kh）等比：kh=12（默认）时 1px
     let stroke = egui::Stroke::new((kh * 0.0833).clamp(0.5, 2.0), stroke_color);
-    let gap = stroke.width;
 
     // White keys
     for idx in 0..KEY_COUNT {
@@ -302,14 +297,10 @@ fn paint_vertical(
         if x + row_w < keyboard_rect.min.x || x > keyboard_rect.max.x {
             continue;
         }
-        let key_rect = egui::Rect::from_min_size(
-            egui::pos2(x + gap * 0.5, keyboard_rect.min.y),
-            egui::vec2((row_w - gap).max(1.0), kb_w),
-        );
+        let key_rect =
+            egui::Rect::from_min_size(egui::pos2(x, keyboard_rect.min.y), egui::vec2(row_w, kb_w));
         painter.rect_filled(key_rect, 0.0, crate::theme::rgb_to_color32(theme.key_white));
-        if row_w >= 3.0 {
-            painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
-        }
+        painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
 
         // C 位置标注音名（中央 C = C4 = key 60），竖排标注
         if key.is_multiple_of(12) {
@@ -342,19 +333,14 @@ fn paint_vertical(
         if x + row_w < keyboard_rect.min.x || x > keyboard_rect.max.x {
             continue;
         }
-        let key_rect = egui::Rect::from_min_size(
-            egui::pos2(x + gap * 0.5, keyboard_rect.min.y),
-            egui::vec2((row_w - gap).max(1.0), kb_w),
-        );
+        let key_rect =
+            egui::Rect::from_min_size(egui::pos2(x, keyboard_rect.min.y), egui::vec2(row_w, kb_w));
         painter.rect_filled(key_rect, 0.0, crate::theme::rgb_to_color32(theme.key_black));
-        if row_w >= 3.0 {
-            painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
-        }
+        painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
     }
 
     // 音域 / 演奏高亮。
     let sel_bg = crate::theme::selected_bg();
-    let accent = crate::theme::accent_active();
     for (idx, &playing) in highlights.playing.iter().enumerate() {
         let key = idx as u8;
         if (key as u16) < view.layout.start || (key as u16) > view.layout.end() {
@@ -365,18 +351,16 @@ fn paint_vertical(
         if x + row_w < keyboard_rect.min.x || x > keyboard_rect.max.x {
             continue;
         }
-        let key_rect = egui::Rect::from_min_size(
-            egui::pos2(x + gap * 0.5, keyboard_rect.min.y),
-            egui::vec2((row_w - gap).max(1.0), kb_w),
-        );
+        let key_rect =
+            egui::Rect::from_min_size(egui::pos2(x, keyboard_rect.min.y), egui::vec2(row_w, kb_w));
         let in_range = highlights
             .select
             .is_some_and(|(lo, hi)| key >= lo && key <= hi);
         if in_range {
             painter.rect_filled(key_rect, 0.0, sel_bg);
         }
-        if playing {
-            painter.rect_filled(key_rect, 0.0, accent.gamma_multiply(0.85));
+        if let Some(track) = playing {
+            painter.rect_filled(key_rect, 0.0, highlights.playing_color(track));
         }
     }
 }
@@ -390,12 +374,12 @@ mod tests {
         let midi =
             yinhe_test_helpers::make_midi(vec![(60, 0, 480, 0, 100), (64, 480, 960, 1, 100)]);
         let keys = playing_keys_at(&midi, 100.0, &[true, true], (0, 127));
-        assert!(keys[60]);
-        assert!(!keys[64]);
+        assert_eq!(keys[60], Some(0));
+        assert_eq!(keys[64], None);
 
         let keys = playing_keys_at(&midi, 480.0, &[true, true], (0, 127));
-        assert!(!keys[60]);
-        assert!(keys[64]);
+        assert_eq!(keys[60], None);
+        assert_eq!(keys[64], Some(1));
     }
 
     /// 隐藏轨道的音符不点亮，且可见音高范围外不扫描。
@@ -403,8 +387,8 @@ mod tests {
     fn playing_keys_respect_visibility_and_range() {
         let midi = yinhe_test_helpers::make_midi(vec![(64, 480, 960, 1, 100)]);
         let hidden = playing_keys_at(&midi, 500.0, &[true, false], (0, 127));
-        assert!(!hidden[64]);
+        assert_eq!(hidden[64], None);
         let out_of_range = playing_keys_at(&midi, 500.0, &[true, true], (0, 60));
-        assert!(!out_of_range[64]);
+        assert_eq!(out_of_range[64], None);
     }
 }

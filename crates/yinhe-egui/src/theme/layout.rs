@@ -35,6 +35,9 @@ pub const PR_TOOL_BTN_SIZE: f32 = 28.0;
 /// PR 顶部工具栏图标字号：比原来的 18 略小。
 pub const PR_TOOL_BTN_FONT: f32 = 16.0;
 pub const TIMECODE_FONT: f32 = 12.0;
+
+/// 传输栏固定高度：按钮 32 / 时间码 36 + 底部 8px 边距。
+pub const TRANSPORT_BAR_H: f32 = 44.0;
 pub const FILE_MENU_FONT: f32 = 14.0;
 
 // ── Layout defaults ──

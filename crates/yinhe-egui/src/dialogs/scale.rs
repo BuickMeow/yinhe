@@ -100,7 +100,8 @@ impl ScaleDialogState {
 
         ctx.show_viewport_immediate(
             viewport_id,
-            viewport_builder(title.as_ref(), [560.0, 560.0], true),
+            // 高度按内容实际高度收口（列表 260 + 名称/开关 + 按钮区），避免底部大片留白。
+            viewport_builder(title.as_ref(), [560.0, 448.0], true),
             |vctx, _class| {
                 if vctx.input(|i| i.viewport().close_requested()) {
                     close = true;

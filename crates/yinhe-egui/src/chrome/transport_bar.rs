@@ -42,6 +42,9 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
     let mut bar_rect = egui::Rect::NOTHING;
 
     let panel = egui::Panel::top("transport_bar")
+        // 固定高度：首帧字体度量/控件高度未稳定时，若按内容自适应会让面板高度
+        // 在两帧间跳动（内容区忽高忽低，wgpu 纹理边缘露出一条黑边）。
+        .exact_size(crate::theme::TRANSPORT_BAR_H)
         .frame(egui::Frame {
             fill: crate::theme::app_bg(),
             inner_margin: egui::Margin {

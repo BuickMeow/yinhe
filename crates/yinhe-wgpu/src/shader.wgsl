@@ -372,7 +372,7 @@ fn vs_main(
     if u.mode == 1u && vel > 0u {
         // PR notes: no rounded corners, border based on key height
         radius = 0.0;
-        border_width = select(0.0, max(0.1 * pixel_h, u.min_border_width), u.note_outline != 0u);
+        border_width = select(0.0, max(0.1 * u.key_height, u.min_border_width), u.note_outline != 0u);
     }
 
     out.radius = radius;
@@ -561,7 +561,12 @@ fn note_geometry(
     // 纵向瀑布流：音符高度是时间长度，border 改基于宽度（key_height 方向），
     // 避免长音符的竖直边缘过宽。
     out.radius = 0.0;
-    let border_dim = select(pixel_h, pixel_w, u.orientation == 1u);
+    // PR 的音符行高可能被调式折叠压成细条，描边仍按主键高（key_height）算，
+    // 否则细条会变成"细边框"，与其它音符不一致。AR 维持按实际行高。
+    var border_dim = select(pixel_h, pixel_w, u.orientation == 1u);
+    if u.mode == 1u {
+        border_dim = u.key_height;
+    }
     let border_factor = select(0.1, 0.05, u.mode == 1u);
     out.border_width = select(0.0, max(border_factor * border_dim, u.min_border_width), u.note_outline != 0u);
 

@@ -31,7 +31,8 @@ pub(crate) fn draw_overlays(
     pianoroll: &mut yinhe_wgpu::InstanceRenderer,
     pw: u32,
     ph: u32,
-    playing_keys: &[bool; yinhe_types::KEY_COUNT],
+    playing_keys: &[Option<u16>; yinhe_types::KEY_COUNT],
+    track_colors: &[[f32; 4]],
     cursor_tick: &mut Option<f64>,
     effective_tool: crate::widgets::tools_panel::Tool,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
@@ -139,6 +140,7 @@ pub(crate) fn draw_overlays(
         super::keyboard::KeyHighlights {
             playing: playing_keys,
             select: view.key_select,
+            track_colors,
         },
     );
 
