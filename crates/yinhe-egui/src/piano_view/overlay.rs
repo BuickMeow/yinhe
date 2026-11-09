@@ -31,7 +31,7 @@ pub(crate) fn draw_overlays(
     pianoroll: &mut yinhe_wgpu::InstanceRenderer,
     pw: u32,
     ph: u32,
-    keyboard_rect: egui::Rect,
+    playing_keys: &[bool; yinhe_types::KEY_COUNT],
     cursor_tick: &mut Option<f64>,
     effective_tool: crate::widgets::tools_panel::Tool,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
@@ -49,7 +49,6 @@ pub(crate) fn draw_overlays(
     // 兼容任务要求的形参（部分由 midi 派生，此处透传占位，避免未使用警告）
     let _ = tpb;
     let _ = grid_rect;
-    let _ = keyboard_rect;
 
     // ── Background（app_bg 一层，不透明不叠加；条纹/色块自行叠上）──
     painter.rect_filled(content_rect, 0.0, crate::theme::app_bg());
@@ -130,7 +129,43 @@ pub(crate) fn draw_overlays(
             egui::pos2(content_rect.min.x + kb_w, content_rect.max.y),
         )
     };
-    super::keyboard::paint(painter, keyboard_rect_computed, kb_w, kh, view, theme);
+    super::keyboard::paint(
+        painter,
+        keyboard_rect_computed,
+        kb_w,
+        kh,
+        view,
+        theme,
+        super::keyboard::KeyHighlights {
+            playing: playing_keys,
+            select: view.key_select,
+        },
+    );
+
+    // 在琴键上单击/拖拽 → 选择音域（双击清除）。
+    let keys_resp = ui.interact(
+        keyboard_rect_computed,
+        ui.scope_id().with("pr_key_select"),
+        egui::Sense::click_and_drag(),
+    );
+    if keys_resp.double_clicked() {
+        view.key_select = None;
+    } else if let Some(pos) = keys_resp.interact_pointer_pos() {
+        let local = if view.is_vertical() {
+            pos.x - keyboard_rect_computed.min.x
+        } else {
+            pos.y - keyboard_rect_computed.min.y
+        };
+        let key = view.cross_px_to_key(local);
+        let anchor_id = ui.scope_id().with("pr_key_anchor");
+        if keys_resp.clicked() || keys_resp.drag_started() {
+            ui.data_mut(|d| d.insert_temp(anchor_id, key));
+            view.key_select = Some((key, key));
+        } else if keys_resp.dragged() {
+            let anchor = ui.data_mut(|d| d.get_temp::<u8>(anchor_id)).unwrap_or(key);
+            view.key_select = Some((anchor.min(key), anchor.max(key)));
+        }
+    }
 
     // 纵向：底部键盘条上滚轮/触控板缩放音高轴（横向由 handle_input 的左区处理）。
     if view.is_vertical() {

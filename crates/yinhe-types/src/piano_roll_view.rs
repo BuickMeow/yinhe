@@ -56,6 +56,9 @@ pub struct PianoRollView {
     /// 音符自上而下落，键盘在底部 = 当前时刻），换算需要视口高度。
     /// `clamp_scroll` 每帧写入。
     pub main_size: f32,
+    /// 在琴键上拖出的音域（闭区间，key_select）。`None` = 未选择。
+    /// 仅影响键盘高亮，不参与 GPU 渲染。
+    pub key_select: Option<(u8, u8)>,
 }
 
 impl Default for PianoRollView {
@@ -77,6 +80,7 @@ impl Default for PianoRollView {
             viewport_h: 0.0,
             main_size: 0.0,
             orientation: Orientation::Horizontal,
+            key_select: None,
         }
     }
 }
@@ -510,6 +514,7 @@ mod tests {
             viewport_h: 0.0,
             main_size: 0.0,
             orientation: Orientation::Horizontal,
+            key_select: None,
         }
     }
 

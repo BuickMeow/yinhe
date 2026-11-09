@@ -754,6 +754,7 @@ fn cull_real_midi_vs_cpu() {
                 follow_anim_start: 0.0,
                 follow_anim_elapsed: 0.0,
             },
+            key_select: None,
         };
         let hidden = std::collections::HashSet::new();
         let track_visible: Vec<bool> = vec![true; model.tracks.len()];
@@ -2051,6 +2052,7 @@ fn cull_render_pixel_check() {
                 follow_anim_start: 0.0,
                 follow_anim_elapsed: 0.0,
             },
+            key_select: None,
         };
         let job = crate::pianoroll::build_render_job(
             pw,
@@ -2307,6 +2309,7 @@ fn cull_visible_buffer_content_check() {
             follow_anim_start: 0.0,
             follow_anim_elapsed: 0.0,
         },
+        key_select: None,
     };
     let mut cpu_instances = Vec::new();
     crate::pianoroll::build_notes(
@@ -2534,6 +2537,7 @@ fn cull_draw_c_lo_nonzero_minimal() {
                 follow_anim_start: 0.0,
                 follow_anim_elapsed: 0.0,
             },
+            key_select: None,
         };
         let job = crate::pianoroll::build_render_job(
             pw,
@@ -2792,6 +2796,7 @@ fn note_boundary_no_gap_large_tick() {
                 follow_anim_start: 0.0,
                 follow_anim_elapsed: 0.0,
             },
+            key_select: None,
         };
         let job = crate::pianoroll::build_render_job(
             pw,
@@ -3016,6 +3021,7 @@ fn cull_bench_vs_cpu_start_mid() {
                     follow_anim_start: 0.0,
                     follow_anim_elapsed: 0.0,
                 },
+                key_select: None,
             };
 
             // CPU 路径：暖机 1 次 + 3 次取最优（复用 Vec 避免分配噪声）。

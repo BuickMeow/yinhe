@@ -143,7 +143,6 @@ pub fn show(
     let panels_total_h = layout.panels_total_h;
     // 兼容旧局部变量命名，保持后续代码无需大改。
     let kb_w = view.keyboard_width();
-    let content_right_x = rect.max.x - crate::widgets::scrollbar::SCROLLBAR_W;
     let content_h = (content_bottom - content_y).max(0.0);
     let _ = content_h;
     let _ruler_band_y = rect.min.y;
@@ -337,17 +336,15 @@ pub fn show(
             content_rect.max,
         )
     };
-    let keyboard_rect = if view.is_vertical() {
-        let kb_bottom = rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H;
-        egui::Rect::from_min_max(
-            egui::pos2(content_rect.min.x, kb_bottom - kb_w),
-            egui::pos2(content_right_x, kb_bottom),
-        )
-    } else {
-        egui::Rect::from_min_max(
-            egui::pos2(content_rect.min.x, content_rect.min.y),
-            egui::pos2(content_rect.min.x + kb_w, content_rect.max.y),
-        )
+    // 正在演奏的键：播放时按播放头位置点亮键盘（只扫描可见音高与可见轨）。
+    let playing_keys = match (is_playing, midi, *cursor_tick) {
+        (true, Some(m), Some(tick)) => keyboard::playing_keys_at(
+            m,
+            tick,
+            track_visible,
+            view.visible_cross_range(view.cross_axis_len(w as f32, h as f32)),
+        ),
+        _ => [false; yinhe_types::KEY_COUNT],
     };
     let markers: &[yinhe_types::MarkerEvent] = midi_arc
         .map(|m| m.conductor.markers.as_slice())
@@ -372,7 +369,7 @@ pub fn show(
         pianoroll,
         pw,
         ph,
-        keyboard_rect,
+        &playing_keys,
         cursor_tick,
         effective_tool,
         sel_rect,
