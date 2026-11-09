@@ -115,6 +115,15 @@ pub(crate) fn single_note_move_frame(
                 }
             }
             let had_moved = state.single_note_had_moved;
+            // 单击未拖动 → 选中该音符（回归“单击选中音符”）。
+            if !had_moved && !alt {
+                selected.clear();
+                selected.add_rect_track(orig_start, orig_end, orig_key, orig_key, trk, trk);
+                state.preview_reqs.push(crate::piano_view::PreviewReq::Stop);
+                state.sel_note_move = None;
+                state.single_note_had_moved = false;
+                return;
+            }
             if alt {
                 if had_moved {
                     // Alt = 复制：先把该音符置为唯一选中，再走选区复制通道

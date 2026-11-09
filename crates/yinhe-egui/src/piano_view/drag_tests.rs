@@ -21,6 +21,7 @@ fn test_view() -> yinhe_types::PianoRollView {
         viewport_h: 0.0,
         main_size: 0.0,
         orientation: yinhe_types::Orientation::Horizontal,
+        key_select: None,
     }
 }
 
@@ -344,6 +345,50 @@ fn selection_handle_drag_does_not_add_second_rect() {
             assert!(out.scale_delta.is_none(), "不应提交整体变速");
         }
     }
+}
+
+/// 回归：选择工具单击未选中音符（不拖动）应选中它。
+#[test]
+fn click_note_selects_it_without_move() {
+    let ctx = egui::Context::default();
+    let mut view = test_view();
+    view.viewport_h = 600.0;
+    let midi = make_midi(vec![(100, 0, 480, 0, 100)]);
+    let mut selected = yinhe_core::Selection::default();
+    let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+    let mut cursor_tick: Option<f64> = None;
+    let mut note_drag_delta: Option<(i64, i32, bool)> = None;
+    let mut note_resize_delta: Option<(yinhe_editor_core::ResizeSide, i64)> = None;
+
+    let pos = egui::pos2(240.0, 275.0);
+    let _ = run_sel_frame(
+        &ctx,
+        press_event(pos),
+        &mut view,
+        &midi,
+        &mut selected,
+        &mut cursor_tick,
+        &mut note_drag_delta,
+        &mut note_resize_delta,
+        &mut sel_rect,
+        &std::collections::HashSet::new(),
+        Some(0),
+    );
+    let (_, _, pencil) = run_sel_frame(
+        &ctx,
+        release_event(pos),
+        &mut view,
+        &midi,
+        &mut selected,
+        &mut cursor_tick,
+        &mut note_drag_delta,
+        &mut note_resize_delta,
+        &mut sel_rect,
+        &std::collections::HashSet::new(),
+        Some(0),
+    );
+    assert!(pencil.is_none(), "单击不应提交移动");
+    assert!(selected.contains(0, 0, 100), "单击音符应把它加入选区");
 }
 
 /// 双击空白处 → 创建音符（选择工具）。
