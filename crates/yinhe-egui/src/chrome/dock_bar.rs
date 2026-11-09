@@ -77,8 +77,8 @@ fn instrument_targets(channel: u8) -> Vec<(AutomationTarget, String, f32)> {
         .collect()
 }
 
-/// 收起状态下的卡片高度（只留标题行）。
-const COLLAPSED_CARD_H: f32 = 40.0;
+/// 收起状态下的卡片宽度（竖排标题条）。
+const COLLAPSED_CARD_W: f32 = 26.0;
 /// 卡片标题行高度。
 const CARD_TITLE_H: f32 = 22.0;
 /// 折叠集合里表示「乐器卡片」的 key。
@@ -448,7 +448,7 @@ fn draw_dock(ui: &mut egui::Ui, state: &DockState, search: &mut String) -> Vec<D
     let mut open_instrument_picker: Option<u8> = None;
     let mut open_picker = false;
 
-    // ── 主体：最左乐器大卡片（固定不随选中变化）+ 每个效果器一张大卡片 + 「+」──
+    // ── 主体：最左乐器卡片 + 效果器链（+ 紧贴最后一个设备）──
     let mut inst_area = egui::Rect::NOTHING;
     let mut fx_area = egui::Rect::NOTHING;
     const CARD_W: f32 = 208.0;
@@ -457,86 +457,89 @@ fn draw_dock(ui: &mut egui::Ui, state: &DockState, search: &mut String) -> Vec<D
     let mut collapsed: std::collections::HashSet<usize> =
         ui.data_mut(|d| d.get_temp(collapse_id)).unwrap_or_default();
 
-    crate::widgets::grid::two_columns(ui, 6.0, CARD_W, |cells| {
-        // 乐器大卡片：永远在最左，固定显示乐器（XSynth 旋钮 / 插件入口）。
-        cells.cell(|ui| {
-            let h = if collapsed.contains(&INSTRUMENT_KEY) {
-                COLLAPSED_CARD_H
-            } else {
-                ui.available_height()
-            };
-            inst_area = ui
-                .allocate_ui_with_layout(
-                    egui::vec2(ui.available_width(), h),
-                    egui::Layout::top_down(egui::Align::LEFT),
-                    |ui| {
-                        let clicked = instrument_card(
-                            ui,
-                            state.context,
-                            state.instrument_plugin.as_deref(),
-                            &state.lane_current,
-                            search,
-                            state.inst_powered,
-                            &mut knob_actions,
-                            &mut open_params,
-                            &mut toggle_instrument,
-                            &mut open_gui,
-                            &mut open_instrument_picker,
-                            state.midi_channel,
-                            &mut collapsed,
-                        );
-                        if clicked {
-                            selected = Some(DockDevice::Instrument);
-                        }
-                    },
-                )
-                .response
-                .rect;
-        });
+    let body_h = ui.available_height();
+    let inst_w = if collapsed.contains(&INSTRUMENT_KEY) {
+        COLLAPSED_CARD_W
+    } else {
+        CARD_W
+    };
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
 
-        // 效果器大卡片（横向滚动）：插件效果器显示参数面板/原生界面入口。
-        // 「+」紧跟在最后一张卡片右侧（不贴整个面板的右缘）。
-        cells.cell(|ui| {
-            fx_area = ui.max_rect();
-            egui::ScrollArea::horizontal()
-                .id_salt("dock_fx_scroll")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    ui.horizontal_top(|ui| {
-                        ui.spacing_mut().item_spacing.x = 6.0;
-                        for (slot, ins) in state.inserts.iter().enumerate() {
-                            let h = if collapsed.contains(&slot) {
-                                COLLAPSED_CARD_H
-                            } else {
-                                ui.available_height()
-                            };
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(CARD_W, h),
-                                egui::Layout::top_down(egui::Align::LEFT),
-                                |ui| {
-                                    if effect_card(
-                                        ui,
-                                        slot,
-                                        ins,
-                                        selected,
-                                        &mut open_params,
-                                        &mut toggle_bypass,
-                                        &mut open_gui,
-                                        &mut remove_insert,
-                                        &mut collapsed,
-                                    ) {
-                                        selected = Some(DockDevice::Insert(slot));
-                                    }
-                                },
-                            );
-                        }
-                        // 「+」紧贴最后一个设备。
-                        if add_column(ui, ui.available_height()).clicked() {
-                            open_picker = true;
-                        }
+        // 乐器卡片：永远在最左，固定显示乐器（XSynth 旋钮 / 插件入口）。
+        ui.allocate_ui_with_layout(
+            egui::vec2(inst_w, body_h),
+            egui::Layout::top_down(egui::Align::LEFT),
+            |ui| {
+                inst_area = ui.max_rect();
+                let clicked = instrument_card(
+                    ui,
+                    state.context,
+                    state.instrument_plugin.as_deref(),
+                    &state.lane_current,
+                    search,
+                    state.inst_powered,
+                    &mut knob_actions,
+                    &mut open_params,
+                    &mut toggle_instrument,
+                    &mut open_gui,
+                    &mut open_instrument_picker,
+                    state.midi_channel,
+                    &mut collapsed,
+                    selected == Some(DockDevice::Instrument),
+                );
+                if clicked {
+                    selected = Some(DockDevice::Instrument);
+                }
+            },
+        );
+
+        // 效果器链（横向滚动）。
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), body_h),
+            egui::Layout::top_down(egui::Align::LEFT),
+            |ui| {
+                fx_area = ui.max_rect();
+                egui::ScrollArea::horizontal()
+                    .id_salt("dock_fx_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.horizontal_top(|ui| {
+                            ui.spacing_mut().item_spacing.x = 6.0;
+                            for (slot, ins) in state.inserts.iter().enumerate() {
+                                let w = if collapsed.contains(&slot) {
+                                    COLLAPSED_CARD_W
+                                } else {
+                                    CARD_W
+                                };
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(w, ui.available_height()),
+                                    egui::Layout::top_down(egui::Align::LEFT),
+                                    |ui| {
+                                        if effect_card(
+                                            ui,
+                                            slot,
+                                            ins,
+                                            selected,
+                                            &mut open_params,
+                                            &mut toggle_bypass,
+                                            &mut open_gui,
+                                            &mut remove_insert,
+                                            &mut collapsed,
+                                        ) {
+                                            selected = Some(DockDevice::Insert(slot));
+                                        }
+                                    },
+                                );
+                            }
+                            // 「+」紧贴最后一个设备。
+                            if add_column(ui, ui.available_height()).clicked() {
+                                open_picker = true;
+                            }
+                        });
                     });
-                });
-        });
+            },
+        );
     });
     ui.data_mut(|d| d.insert_temp(collapse_id, collapsed));
 
@@ -718,126 +721,183 @@ fn effect_card(
     collapsed: &mut std::collections::HashSet<usize>,
 ) -> bool {
     let is_selected = selected == Some(DockDevice::Insert(slot));
+    let is_collapsed = collapsed.contains(&slot);
     let mut clicked = false;
 
-    let mut frame = egui::Frame::new()
-        .fill(crate::theme::track_bg())
-        .corner_radius(4.0)
-        .inner_margin(egui::Margin::symmetric(10, 8));
-    if is_selected {
-        frame = frame.stroke(egui::Stroke::new(1.0, crate::theme::accent_active()));
-    }
-    frame.show(ui, |ui| {
-        ui.set_min_size(ui.available_size());
+    let rect = ui.max_rect();
+    let painter = ui.painter_at(rect);
+    paint_card_frame(&painter, rect, is_selected);
 
-        // ── 标题行：轻强调色底；单击选中，双击收起 ──
-        let title_rect = egui::Rect::from_min_size(
-            ui.cursor().min,
-            egui::vec2(ui.available_width(), CARD_TITLE_H),
-        );
-        ui.painter()
-            .rect_filled(title_rect, 3.0, crate::theme::selected_bg());
-        let title_resp = ui.interact(
-            title_rect,
-            ui.scope_id().with(("dock_card_title", slot)),
-            egui::Sense::click(),
-        );
-        if title_resp.double_clicked() {
-            if !collapsed.remove(&slot) {
-                collapsed.insert(slot);
-            }
-        } else if title_resp.clicked() {
-            clicked = true;
-        }
-        ui.allocate_ui_with_layout(
-            egui::vec2(title_rect.width(), CARD_TITLE_H),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                let power_color = if ins.bypassed {
-                    crate::theme::text_muted()
-                } else {
-                    crate::theme::accent_active()
-                };
-                if icon_button(
-                    ui,
-                    egui_material_icons::icons::ICON_POWER_SETTINGS_NEW,
-                    14.0,
-                    power_color,
-                    t!("hint.dock.insert_power"),
-                )
-                .clicked()
-                {
-                    *toggle_bypass = Some((slot, !ins.bypassed));
-                }
-
-                let name_resp = ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(&ins.name)
-                            .size(crate::theme::SMALL_FONT + 2.0)
-                            .color(crate::theme::text_primary()),
-                    )
-                    .sense(egui::Sense::click()),
-                );
-                crate::widgets::hint::hover(ui.ctx(), &name_resp, t!("hint.dock.insert_select"));
-                if name_resp.clicked() {
-                    clicked = true;
-                }
-
-                if icon_button(
-                    ui,
-                    egui_material_icons::icons::ICON_TUNE,
-                    13.0,
-                    crate::theme::text_secondary(),
-                    t!("dock.open_params"),
-                )
-                .clicked()
-                {
-                    *open_params = Some(DockDevice::Insert(slot));
-                }
-
-                if icon_button(
-                    ui,
-                    egui_material_icons::icons::ICON_HOME_STORAGE,
-                    13.0,
-                    crate::theme::text_secondary(),
-                    t!("mix.toggle_gui"),
-                )
-                .clicked()
-                {
-                    *open_gui = Some(DockDevice::Insert(slot));
-                }
-
-                if icon_button(
-                    ui,
-                    egui_material_icons::icons::ICON_DELETE,
-                    13.0,
-                    crate::theme::text_secondary(),
-                    t!("mix.remove_insert"),
-                )
-                .clicked()
-                {
-                    *remove_insert = Some(slot);
-                }
+    let title_rect = egui::Rect::from_min_size(
+        rect.min,
+        egui::vec2(
+            rect.width(),
+            if is_collapsed {
+                rect.height()
+            } else {
+                CARD_TITLE_H
             },
-        );
-        if collapsed.contains(&slot) {
-            return;
-        }
-        ui.add_space(6.0);
+        ),
+    );
+    paint_card_title(&painter, title_rect);
+    let title_fg = crate::theme::contrast_text(crate::theme::selected_bg());
 
-        // ── 内容：参数面板入口 + 提示 ──
-        if crate::widgets::flat::flat_button(ui, t!("dock.open_params")).clicked() {
-            *open_params = Some(DockDevice::Insert(slot));
+    let title_resp = ui.interact(
+        title_rect,
+        ui.scope_id().with(("dock_card_title", slot)),
+        egui::Sense::click(),
+    );
+    if title_resp.double_clicked() {
+        if !collapsed.remove(&slot) {
+            collapsed.insert(slot);
         }
-        ui.add_space(4.0);
-        ui.label(
-            egui::RichText::new(t!("dock.plugin_hint"))
-                .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::text_muted()),
-        );
-    });
+    } else if title_resp.clicked() {
+        clicked = true;
+    }
+
+    if is_collapsed {
+        paint_vertical_title(ui, title_rect, &ins.name, title_fg);
+        return clicked;
+    }
+
+    // 标题行内容（贴边，左右 6px 内缩）。
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(title_rect.shrink2(egui::vec2(6.0, 2.0)))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        |ui| {
+            let power_color = if ins.bypassed {
+                crate::theme::text_muted()
+            } else {
+                crate::theme::accent_active()
+            };
+            if icon_button(
+                ui,
+                egui_material_icons::icons::ICON_POWER_SETTINGS_NEW,
+                14.0,
+                power_color,
+                t!("hint.dock.insert_power"),
+            )
+            .clicked()
+            {
+                *toggle_bypass = Some((slot, !ins.bypassed));
+            }
+
+            let name_resp = ui.add(
+                egui::Label::new(
+                    egui::RichText::new(&ins.name)
+                        .size(crate::theme::SMALL_FONT + 2.0)
+                        .color(crate::theme::text_primary()),
+                )
+                .sense(egui::Sense::click()),
+            );
+            crate::widgets::hint::hover(ui.ctx(), &name_resp, t!("hint.dock.insert_select"));
+            if name_resp.clicked() {
+                clicked = true;
+            }
+
+            if icon_button(
+                ui,
+                egui_material_icons::icons::ICON_TUNE,
+                13.0,
+                crate::theme::text_secondary(),
+                t!("dock.open_params"),
+            )
+            .clicked()
+            {
+                *open_params = Some(DockDevice::Insert(slot));
+            }
+
+            if icon_button(
+                ui,
+                egui_material_icons::icons::ICON_HOME_STORAGE,
+                13.0,
+                crate::theme::text_secondary(),
+                t!("mix.toggle_gui"),
+            )
+            .clicked()
+            {
+                *open_gui = Some(DockDevice::Insert(slot));
+            }
+
+            if icon_button(
+                ui,
+                egui_material_icons::icons::ICON_DELETE,
+                13.0,
+                crate::theme::text_secondary(),
+                t!("mix.remove_insert"),
+            )
+            .clicked()
+            {
+                *remove_insert = Some(slot);
+            }
+        },
+    );
+
+    let content = card_content_rect(rect, title_rect);
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(content)
+            .layout(egui::Layout::top_down(egui::Align::LEFT)),
+    );
+    child.set_clip_rect(rect);
+    // ── 内容：参数面板入口 + 提示 ──
+    if crate::widgets::flat::flat_button(&mut child, t!("dock.open_params")).clicked() {
+        *open_params = Some(DockDevice::Insert(slot));
+    }
+    child.add_space(4.0);
+    child.label(
+        egui::RichText::new(t!("dock.plugin_hint"))
+            .size(crate::theme::SMALL_FONT)
+            .color(crate::theme::text_muted()),
+    );
 
     clicked
+}
+
+/// 卡片底：圆角背景 + 选中描边。
+fn paint_card_frame(painter: &egui::Painter, rect: egui::Rect, selected: bool) {
+    painter.rect_filled(rect, 4.0, crate::theme::track_bg());
+    if selected {
+        painter.rect_stroke(
+            rect,
+            4.0,
+            egui::Stroke::new(1.0, crate::theme::accent_active()),
+            egui::StrokeKind::Inside,
+        );
+    }
+}
+
+/// 标题栏：贴卡片上缘与左右边，只有上方两角圆角，下部直角。
+fn paint_card_title(painter: &egui::Painter, rect: egui::Rect) {
+    painter.rect_filled(
+        rect,
+        egui::CornerRadius {
+            nw: 4,
+            ne: 4,
+            sw: 0,
+            se: 0,
+        },
+        crate::theme::selected_bg(),
+    );
+}
+
+/// 卡片内容区（标题下方、左右/底部内缩 10/8px）。
+fn card_content_rect(card: egui::Rect, title: egui::Rect) -> egui::Rect {
+    egui::Rect::from_min_max(
+        egui::pos2(card.min.x + 10.0, title.max.y + 6.0),
+        egui::pos2(card.max.x - 10.0, card.max.y - 8.0),
+    )
+}
+
+/// 收起态标题：沿卡片长边竖排（旋转 -90°）。
+fn paint_vertical_title(ui: &egui::Ui, rect: egui::Rect, text: &str, color: egui::Color32) {
+    let font = egui::FontId::proportional(crate::theme::SMALL_FONT + 1.0);
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
+    ui.painter().add(
+        egui::epaint::TextShape::new(rect.center(), galley, color)
+            .with_angle_and_anchor(-std::f32::consts::FRAC_PI_2, egui::Align2::CENTER_CENTER),
+    );
 }
 
 /// 「+」添加效果器竖条（高度撑满主体区）。
@@ -885,195 +945,207 @@ fn instrument_card(
     open_instrument_picker: &mut Option<u8>,
     midi_channel: Option<u8>,
     collapsed: &mut std::collections::HashSet<usize>,
+    is_selected: bool,
 ) -> bool {
     let has_instrument = midi_channel.is_some();
     let use_xsynth = has_instrument && instrument_plugin.is_none();
+    let is_collapsed = collapsed.contains(&INSTRUMENT_KEY);
     let mut clicked = false;
-    egui::Frame::new()
-        .fill(crate::theme::track_bg())
-        .corner_radius(4.0)
-        .inner_margin(egui::Margin::symmetric(10, 8))
-        .show(ui, |ui| {
-            ui.set_min_size(ui.available_size());
+    let title_text = if has_instrument {
+        instrument_plugin
+            .map(str::to_string)
+            .unwrap_or_else(|| "XSynth".to_string())
+    } else {
+        context_label(context)
+    };
 
-            // ── 标题行：轻强调色底；单击选中，双击收起 ──
-            let title_rect = egui::Rect::from_min_size(
-                ui.cursor().min,
-                egui::vec2(ui.available_width(), CARD_TITLE_H),
-            );
-            ui.painter()
-                .rect_filled(title_rect, 3.0, crate::theme::selected_bg());
-            let title_resp = ui.interact(
-                title_rect,
-                ui.scope_id().with("dock_instrument_title"),
-                egui::Sense::click(),
-            );
-            if title_resp.double_clicked() {
-                if !collapsed.remove(&INSTRUMENT_KEY) {
-                    collapsed.insert(INSTRUMENT_KEY);
-                }
-            } else if title_resp.clicked() {
-                clicked = true;
-            }
-            ui.allocate_ui_with_layout(
-                egui::vec2(title_rect.width(), CARD_TITLE_H),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    if !has_instrument {
-                        ui.label(
-                            egui::RichText::new(context_label(context))
-                                .size(crate::theme::SMALL_FONT + 2.0)
-                                .color(crate::theme::text_primary()),
-                        );
-                        return;
-                    }
+    let rect = ui.max_rect();
+    let painter = ui.painter_at(rect);
+    paint_card_frame(&painter, rect, is_selected);
 
-                    let power_color = if inst_powered {
-                        crate::theme::accent_active()
-                    } else {
-                        crate::theme::text_muted()
-                    };
-                    if icon_button(
-                        ui,
-                        egui_material_icons::icons::ICON_POWER_SETTINGS_NEW,
-                        14.0,
-                        power_color,
-                        t!("hint.dock.instrument_power"),
-                    )
-                    .clicked()
-                    {
-                        // 目标 muted 值 = 当前是否开着（true→全 mute，false→全恢复）。
-                        *toggle_instrument = Some(inst_powered);
-                    }
+    let title_rect = egui::Rect::from_min_size(
+        rect.min,
+        egui::vec2(
+            rect.width(),
+            if is_collapsed {
+                rect.height()
+            } else {
+                CARD_TITLE_H
+            },
+        ),
+    );
+    paint_card_title(&painter, title_rect);
+    let title_fg = crate::theme::contrast_text(crate::theme::selected_bg());
 
-                    let name = instrument_plugin
-                        .map(str::to_string)
-                        .unwrap_or_else(|| "XSynth".to_string());
-                    let name_resp = ui.label(
-                        egui::RichText::new(name)
-                            .size(crate::theme::SMALL_FONT + 2.0)
-                            .color(crate::theme::text_primary()),
-                    );
-                    crate::widgets::hint::hover(
-                        ui.ctx(),
-                        &name_resp,
-                        t!("hint.dock.instrument_name"),
-                    );
+    let title_resp = ui.interact(
+        title_rect,
+        ui.scope_id().with("dock_instrument_title"),
+        egui::Sense::click(),
+    );
+    if title_resp.double_clicked() {
+        if !collapsed.remove(&INSTRUMENT_KEY) {
+            collapsed.insert(INSTRUMENT_KEY);
+        }
+    } else if title_resp.clicked() {
+        clicked = true;
+    }
 
-                    // 搜索（仅内置 XSynth 的旋钮参数列表）：默认只显示图标按钮，
-                    // 点击才展开输入框；失焦且为空自动收起。
-                    if use_xsynth {
-                        let open_id = ui.scope_id().with("dock_search_open");
-                        let mut open = ui
-                            .data_mut(|d| d.get_temp::<bool>(open_id))
-                            .unwrap_or(false);
-                        if open {
-                            let search_resp = crate::widgets::text_input::control_text_input(
-                                ui,
-                                search,
-                                88.0,
-                                "mix_search",
-                                Some(t!("mix.search").as_ref()),
-                            );
-                            crate::widgets::hint::hover(
-                                ui.ctx(),
-                                &search_resp,
-                                t!("hint.dock.search"),
-                            );
-                            if search_resp.lost_focus() && search.is_empty() {
-                                open = false;
-                            }
-                        } else if icon_button(
-                            ui,
-                            egui_material_icons::icons::ICON_SEARCH,
-                            14.0,
-                            crate::theme::text_secondary(),
-                            t!("hint.dock.search"),
-                        )
-                        .clicked()
-                        {
-                            open = true;
-                        }
-                        ui.data_mut(|d| d.insert_temp(open_id, open));
-                    }
+    if is_collapsed {
+        paint_vertical_title(ui, title_rect, &title_text, title_fg);
+        return clicked;
+    }
 
-                    // 界面按钮：插件设备打开原生 GUI；XSynth 打开音色库配置窗口。
-                    let (icon, hover) = if use_xsynth {
-                        (
-                            egui_material_icons::icons::ICON_LIBRARY_MUSIC,
-                            t!("hint.dock.instrument_gui").to_string(),
-                        )
-                    } else {
-                        (
-                            egui_material_icons::icons::ICON_HOME_STORAGE,
-                            t!("hint.dock.instrument_gui").to_string(),
-                        )
-                    };
-                    if icon_button(ui, icon, 14.0, crate::theme::text_secondary(), hover).clicked()
-                    {
-                        *open_gui = Some(DockDevice::Instrument);
-                    }
-
-                    // 插件乐器的参数面板入口。
-                    if !use_xsynth
-                        && icon_button(
-                            ui,
-                            egui_material_icons::icons::ICON_TUNE,
-                            14.0,
-                            crate::theme::text_secondary(),
-                            t!("dock.open_params"),
-                        )
-                        .clicked()
-                    {
-                        *open_params = Some(DockDevice::Instrument);
-                    }
-
-                    // 更换乐器：内置 XSynth 与 VST/CLAP 插件在同一个选择器里切换。
-                    if icon_button(
-                        ui,
-                        egui_material_icons::icons::ICON_SWAP_HORIZ,
-                        14.0,
-                        crate::theme::text_secondary(),
-                        t!("hint.dock.instrument_picker"),
-                    )
-                    .clicked()
-                    {
-                        *open_instrument_picker = midi_channel;
-                    }
-                },
-            );
-            if collapsed.contains(&INSTRUMENT_KEY) {
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(title_rect.shrink2(egui::vec2(6.0, 2.0)))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        |ui| {
+            if !has_instrument {
+                ui.label(
+                    egui::RichText::new(context_label(context))
+                        .size(crate::theme::SMALL_FONT + 2.0)
+                        .color(crate::theme::text_primary()),
+                );
                 return;
             }
-            ui.add_space(6.0);
 
-            // ── 内容 ──
-            if use_xsynth {
-                let needle = search.trim().to_lowercase();
-                let filtered: Vec<DockParam> = lane_current
-                    .iter()
-                    .filter(|p| needle.is_empty() || p.name.to_lowercase().contains(&needle))
-                    .cloned()
-                    .collect();
-                egui::ScrollArea::vertical()
-                    .id_salt("xsynth_knobs")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        param_knobs(ui, &filtered, knob_actions);
-                    });
+            let power_color = if inst_powered {
+                crate::theme::accent_active()
             } else {
-                // 插件乐器：参数面板入口 + 提示。
-                if crate::widgets::flat::flat_button(ui, t!("dock.open_params")).clicked() {
-                    *open_params = Some(DockDevice::Instrument);
-                }
-                ui.add_space(4.0);
-                ui.label(
-                    egui::RichText::new(t!("dock.plugin_hint"))
-                        .size(crate::theme::SMALL_FONT)
-                        .color(crate::theme::text_muted()),
-                );
+                crate::theme::text_muted()
+            };
+            if icon_button(
+                ui,
+                egui_material_icons::icons::ICON_POWER_SETTINGS_NEW,
+                14.0,
+                power_color,
+                t!("hint.dock.instrument_power"),
+            )
+            .clicked()
+            {
+                // 目标 muted 值 = 当前是否开着（true→全 mute，false→全恢复）。
+                *toggle_instrument = Some(inst_powered);
             }
-        });
+
+            let name_resp = ui.label(
+                egui::RichText::new(&title_text)
+                    .size(crate::theme::SMALL_FONT + 2.0)
+                    .color(crate::theme::text_primary()),
+            );
+            crate::widgets::hint::hover(ui.ctx(), &name_resp, t!("hint.dock.instrument_name"));
+
+            // 搜索（仅内置 XSynth 的旋钮参数列表）：默认只显示图标按钮，
+            // 点击才展开输入框；失焦且为空自动收起。
+            if use_xsynth {
+                let open_id = ui.scope_id().with("dock_search_open");
+                let mut open = ui
+                    .data_mut(|d| d.get_temp::<bool>(open_id))
+                    .unwrap_or(false);
+                if open {
+                    let search_resp = crate::widgets::text_input::control_text_input(
+                        ui,
+                        search,
+                        88.0,
+                        "mix_search",
+                        Some(t!("mix.search").as_ref()),
+                    );
+                    crate::widgets::hint::hover(ui.ctx(), &search_resp, t!("hint.dock.search"));
+                    if search_resp.lost_focus() && search.is_empty() {
+                        open = false;
+                    }
+                } else if icon_button(
+                    ui,
+                    egui_material_icons::icons::ICON_SEARCH,
+                    14.0,
+                    crate::theme::text_secondary(),
+                    t!("hint.dock.search"),
+                )
+                .clicked()
+                {
+                    open = true;
+                }
+                ui.data_mut(|d| d.insert_temp(open_id, open));
+            }
+
+            // 界面按钮：插件设备打开原生 GUI；XSynth 打开音色库配置窗口。
+            let (icon, hover) = if use_xsynth {
+                (
+                    egui_material_icons::icons::ICON_LIBRARY_MUSIC,
+                    t!("hint.dock.instrument_gui").to_string(),
+                )
+            } else {
+                (
+                    egui_material_icons::icons::ICON_HOME_STORAGE,
+                    t!("hint.dock.instrument_gui").to_string(),
+                )
+            };
+            if icon_button(ui, icon, 14.0, crate::theme::text_secondary(), hover).clicked() {
+                *open_gui = Some(DockDevice::Instrument);
+            }
+
+            // 插件乐器的参数面板入口。
+            if !use_xsynth
+                && icon_button(
+                    ui,
+                    egui_material_icons::icons::ICON_TUNE,
+                    14.0,
+                    crate::theme::text_secondary(),
+                    t!("dock.open_params"),
+                )
+                .clicked()
+            {
+                *open_params = Some(DockDevice::Instrument);
+            }
+
+            // 更换乐器：内置 XSynth 与 VST/CLAP 插件在同一个选择器里切换。
+            if icon_button(
+                ui,
+                egui_material_icons::icons::ICON_SWAP_HORIZ,
+                14.0,
+                crate::theme::text_secondary(),
+                t!("hint.dock.instrument_picker"),
+            )
+            .clicked()
+            {
+                *open_instrument_picker = midi_channel;
+            }
+        },
+    );
+
+    let content = card_content_rect(rect, title_rect);
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(content)
+            .layout(egui::Layout::top_down(egui::Align::LEFT)),
+    );
+    child.set_clip_rect(rect);
+
+    if use_xsynth {
+        let needle = search.trim().to_lowercase();
+        let filtered: Vec<DockParam> = lane_current
+            .iter()
+            .filter(|p| needle.is_empty() || p.name.to_lowercase().contains(&needle))
+            .cloned()
+            .collect();
+        egui::ScrollArea::vertical()
+            .id_salt("xsynth_knobs")
+            .auto_shrink([false, false])
+            .show(&mut child, |ui| {
+                param_knobs(ui, &filtered, knob_actions);
+            });
+    } else {
+        // 插件乐器：参数面板入口 + 提示。
+        if crate::widgets::flat::flat_button(&mut child, t!("dock.open_params")).clicked() {
+            *open_params = Some(DockDevice::Instrument);
+        }
+        child.add_space(4.0);
+        child.label(
+            egui::RichText::new(t!("dock.plugin_hint"))
+                .size(crate::theme::SMALL_FONT)
+                .color(crate::theme::text_muted()),
+        );
+    }
+
     clicked
 }
 
