@@ -80,6 +80,8 @@ pub(crate) fn handle_sel_marquee(
     cursor_tick: &mut Option<f64>,
     note_drag_delta: &Option<(i64, i32, bool)>,
     note_resize_delta: &Option<(yinhe_editor_core::ResizeSide, i64)>,
+    selection_scale_delta: &Option<u64>,
+    riff_repeat: &Option<(i64, i64)>,
     pencil_note_drag: &Option<yinhe_types::PencilNoteDrag>,
     selected: &mut yinhe_core::Selection,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
@@ -88,8 +90,12 @@ pub(crate) fn handle_sel_marquee(
     track_locked: &[bool],
     vertical: bool,
 ) {
+    // 选框右侧控制点（Riff / 变速 / 批量 gate）拖拽期间不得再启动 marquee：
+    // 否则同一次按下既拖控制点又拉出一个新选框，松手后选区里会多出第二个框。
     if state.note_drag_origin.is_some()
         || state.sel_resize_state.is_some()
+        || state.sel_scale_state.is_some()
+        || state.sel_riff_state.is_some()
         || state.sel_note_resize.is_some()
         || state.sel_note_move.is_some()
     {
@@ -99,8 +105,11 @@ pub(crate) fn handle_sel_marquee(
         });
         return;
     }
-    let release_was_drag =
-        note_drag_delta.is_some() || note_resize_delta.is_some() || pencil_note_drag.is_some();
+    let release_was_drag = note_drag_delta.is_some()
+        || note_resize_delta.is_some()
+        || selection_scale_delta.is_some()
+        || riff_repeat.is_some()
+        || pencil_note_drag.is_some();
     if can_marquee
         && let Some(result) = crate::piano_view::marquee::marquee_drag_frame(
             ui,

@@ -210,6 +210,8 @@ pub(crate) fn sel_drag_frame(
         cursor_tick,
         note_drag_delta,
         note_resize_delta,
+        selection_scale_delta,
+        riff_repeat,
         &pencil_note_drag,
         selected,
         sel_rect,

@@ -81,13 +81,59 @@ fn run_sel_frame(
     Vec<crate::piano_view::PreviewReq>,
     Option<yinhe_types::PencilNoteDrag>,
 ) {
-    let mut out: (
-        Option<(yinhe_core::NoteEvent, u16)>,
-        Vec<crate::piano_view::PreviewReq>,
-        Option<yinhe_types::PencilNoteDrag>,
-    ) = (None, Vec::new(), None);
     let mut selection_scale_delta = None;
     let mut riff_repeat = None;
+    let result = run_sel_frame_full(
+        ctx,
+        raw,
+        view,
+        midi,
+        selected,
+        cursor_tick,
+        note_drag_delta,
+        note_resize_delta,
+        &mut selection_scale_delta,
+        &mut riff_repeat,
+        sel_rect,
+        track_selected,
+        write_track,
+    );
+    (result.note_event, result.previews, result.pencil_drag)
+}
+
+/// run_sel_frame_full 的返回值：一帧的全部拖拽输出。
+struct SelFrameOutFull {
+    note_event: Option<(yinhe_core::NoteEvent, u16)>,
+    previews: Vec<crate::piano_view::PreviewReq>,
+    pencil_drag: Option<yinhe_types::PencilNoteDrag>,
+    scale_delta: Option<u64>,
+    riff_repeat: Option<(i64, i64)>,
+}
+
+/// run_sel_frame 的完整版：额外返回选框整体变速 / Riff 的提交结果。
+#[allow(clippy::too_many_arguments)]
+fn run_sel_frame_full(
+    ctx: &egui::Context,
+    raw: egui::RawInput,
+    view: &mut yinhe_types::PianoRollView,
+    midi: &dyn yinhe_types::NoteSource,
+    selected: &mut yinhe_core::Selection,
+    cursor_tick: &mut Option<f64>,
+    note_drag_delta: &mut Option<(i64, i32, bool)>,
+    note_resize_delta: &mut Option<(yinhe_editor_core::ResizeSide, i64)>,
+    selection_scale_delta: &mut Option<u64>,
+    riff_repeat: &mut Option<(i64, i64)>,
+    sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
+    track_selected: &std::collections::HashSet<u16>,
+    write_track: Option<u16>,
+) -> SelFrameOutFull {
+    let mut out = SelFrameOutFull {
+        note_event: None,
+        previews: Vec::new(),
+        pencil_drag: None,
+        scale_delta: None,
+        riff_repeat: None,
+    };
     // run_ui 返回的 FullOutput 含字体纹理 delta，丢弃前必须 clear（epaint 断言）。
     ctx.run_ui(raw, |ui| {
         let (_, _, previews, note_event, pencil_drag, _) = sel_drag_frame(
@@ -104,8 +150,8 @@ fn run_sel_frame(
             cursor_tick,
             note_drag_delta,
             note_resize_delta,
-            &mut selection_scale_delta,
-            &mut riff_repeat,
+            selection_scale_delta,
+            riff_repeat,
             sel_rect,
             &[[0.5, 0.5, 0.5, 1.0]],
             &[true],
@@ -117,7 +163,13 @@ fn run_sel_frame(
             yinhe_editor_core::audio_settings::QuickDeleteMode::Off,
             None,
         );
-        out = (note_event, previews, pencil_drag);
+        out = SelFrameOutFull {
+            note_event,
+            previews,
+            pencil_drag,
+            scale_delta: *selection_scale_delta,
+            riff_repeat: *riff_repeat,
+        };
     })
     .textures_delta
     .clear();
@@ -223,6 +275,75 @@ fn release_after_note_move_does_not_move_playhead() {
         "音符应移动 +120 tick"
     );
     assert_eq!(cursor_tick, None, "移动后松开不得把 playhead 跳到释放位置");
+}
+
+/// 回归测试：拖动选框右侧控制点（整体变速 / Riff）时不得再拉起第二个 marquee。
+///
+/// 曾因 `handle_sel_marquee` 的“拖拽进行中”判断只覆盖了音符移动/伸缩与 gate
+/// 批量缩放，漏掉 `sel_scale_state` / `sel_riff_state`：同一次按下既开始拖控制点，
+/// 又开始画新选框，松手后选区里会多出一个框。
+#[test]
+fn selection_handle_drag_does_not_add_second_rect() {
+    // (按下点, 释放点, 期望命中的控制点：true = 变速，false = Riff)
+    let cases = [
+        (egui::pos2(480.0, 225.0), egui::pos2(600.0, 225.0), true),
+        (egui::pos2(480.0, 280.0), egui::pos2(600.0, 300.0), false),
+    ];
+    for (press, release, expect_scale) in cases {
+        let ctx = egui::Context::default();
+        let mut view = test_view();
+        view.viewport_h = 600.0;
+        let midi = make_midi(vec![]);
+        // 选框 (0..480, key 100..=110)：右下角 (480,280)、右缘中点 (480,225)。
+        let mut selected = yinhe_core::Selection::default();
+        selected.add_rect_track(0, 480, 100, 110, 0, 0);
+        let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+        sel_rect.push_rect((0.0, 480.0, 100, 110), false);
+        let mut cursor_tick: Option<f64> = None;
+        let mut note_drag_delta: Option<(i64, i32, bool)> = None;
+        let mut note_resize_delta: Option<(yinhe_editor_core::ResizeSide, i64)> = None;
+        let mut selection_scale_delta: Option<u64> = None;
+        let mut riff_repeat: Option<(i64, i64)> = None;
+
+        let mut frame = |raw| {
+            run_sel_frame_full(
+                &ctx,
+                raw,
+                &mut view,
+                &midi,
+                &mut selected,
+                &mut cursor_tick,
+                &mut note_drag_delta,
+                &mut note_resize_delta,
+                &mut selection_scale_delta,
+                &mut riff_repeat,
+                &mut sel_rect,
+                &std::collections::HashSet::new(),
+                Some(0),
+            )
+        };
+        let _ = frame(press_event(press));
+        let _ = frame(drag_event(release));
+        let out = frame(release_event(release));
+        drop(frame);
+
+        assert_eq!(
+            sel_rect.rects.len(),
+            1,
+            "拖动控制点不得新增选框（press={press:?}）"
+        );
+        assert_eq!(
+            cursor_tick, None,
+            "拖动控制点后松开不得把 playhead 跳到释放位置"
+        );
+        if expect_scale {
+            assert!(out.scale_delta.is_some(), "应提交整体变速");
+            assert!(out.riff_repeat.is_none(), "不应提交 Riff");
+        } else {
+            assert!(out.riff_repeat.is_some(), "应提交 Riff");
+            assert!(out.scale_delta.is_none(), "不应提交整体变速");
+        }
+    }
 }
 
 /// 双击空白处 → 创建音符（选择工具）。
