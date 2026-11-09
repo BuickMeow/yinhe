@@ -157,6 +157,8 @@ fn paint_horizontal(
     let stroke_color = crate::theme::rgb_to_color32(theme.key_black);
     // 描边宽度随键高等比：kh=12（默认）时 1px
     let stroke = egui::Stroke::new((kh * 0.0833).clamp(0.5, 2.0), stroke_color);
+    // 所有相邻行之间留同样宽的空隙（折叠后细行也不会被描边糊住）。
+    let gap = stroke.width;
 
     let gutter_w = kb_w * LABEL_GUTTER_RATIO;
     let keys_x = keyboard_rect.min.x + gutter_w;
@@ -206,10 +208,14 @@ fn paint_horizontal(
         if !visible_row(screen_y, keyboard_rect, row_h) {
             continue;
         }
-        let key_rect =
-            egui::Rect::from_min_size(egui::pos2(keys_x, screen_y), egui::vec2(keys_w, row_h));
+        let key_rect = egui::Rect::from_min_size(
+            egui::pos2(keys_x, screen_y + gap * 0.5),
+            egui::vec2(keys_w, (row_h - gap).max(1.0)),
+        );
         painter.rect_filled(key_rect, 0.0, crate::theme::rgb_to_color32(theme.key_white));
-        painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
+        if row_h >= 3.0 {
+            painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
+        }
     }
 
     // Black keys on top
@@ -226,10 +232,14 @@ fn paint_horizontal(
         if !visible_row(screen_y, keyboard_rect, row_h) {
             continue;
         }
-        let key_rect =
-            egui::Rect::from_min_size(egui::pos2(keys_x, screen_y), egui::vec2(keys_w, row_h));
+        let key_rect = egui::Rect::from_min_size(
+            egui::pos2(keys_x, screen_y + gap * 0.5),
+            egui::vec2(keys_w, (row_h - gap).max(1.0)),
+        );
         painter.rect_filled(key_rect, 0.0, crate::theme::rgb_to_color32(theme.key_black));
-        painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
+        if row_h >= 3.0 {
+            painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
+        }
     }
 
     // 音域 / 演奏高亮（盖在黑白键之上）。
@@ -245,8 +255,10 @@ fn paint_horizontal(
         if !visible_row(screen_y, keyboard_rect, row_h) {
             continue;
         }
-        let key_rect =
-            egui::Rect::from_min_size(egui::pos2(keys_x, screen_y), egui::vec2(keys_w, row_h));
+        let key_rect = egui::Rect::from_min_size(
+            egui::pos2(keys_x, screen_y + gap * 0.5),
+            egui::vec2(keys_w, (row_h - gap).max(1.0)),
+        );
         let in_range = highlights
             .select
             .is_some_and(|(lo, hi)| key >= lo && key <= hi);
@@ -274,6 +286,7 @@ fn paint_vertical(
     let stroke_color = crate::theme::rgb_to_color32(theme.key_black);
     // 描边宽度随键宽（=kh）等比：kh=12（默认）时 1px
     let stroke = egui::Stroke::new((kh * 0.0833).clamp(0.5, 2.0), stroke_color);
+    let gap = stroke.width;
 
     // White keys
     for idx in 0..KEY_COUNT {
@@ -289,10 +302,14 @@ fn paint_vertical(
         if x + row_w < keyboard_rect.min.x || x > keyboard_rect.max.x {
             continue;
         }
-        let key_rect =
-            egui::Rect::from_min_size(egui::pos2(x, keyboard_rect.min.y), egui::vec2(row_w, kb_w));
+        let key_rect = egui::Rect::from_min_size(
+            egui::pos2(x + gap * 0.5, keyboard_rect.min.y),
+            egui::vec2((row_w - gap).max(1.0), kb_w),
+        );
         painter.rect_filled(key_rect, 0.0, crate::theme::rgb_to_color32(theme.key_white));
-        painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
+        if row_w >= 3.0 {
+            painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
+        }
 
         // C 位置标注音名（中央 C = C4 = key 60），竖排标注
         if key.is_multiple_of(12) {
@@ -325,10 +342,14 @@ fn paint_vertical(
         if x + row_w < keyboard_rect.min.x || x > keyboard_rect.max.x {
             continue;
         }
-        let key_rect =
-            egui::Rect::from_min_size(egui::pos2(x, keyboard_rect.min.y), egui::vec2(row_w, kb_w));
+        let key_rect = egui::Rect::from_min_size(
+            egui::pos2(x + gap * 0.5, keyboard_rect.min.y),
+            egui::vec2((row_w - gap).max(1.0), kb_w),
+        );
         painter.rect_filled(key_rect, 0.0, crate::theme::rgb_to_color32(theme.key_black));
-        painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
+        if row_w >= 3.0 {
+            painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
+        }
     }
 
     // 音域 / 演奏高亮。
@@ -344,8 +365,10 @@ fn paint_vertical(
         if x + row_w < keyboard_rect.min.x || x > keyboard_rect.max.x {
             continue;
         }
-        let key_rect =
-            egui::Rect::from_min_size(egui::pos2(x, keyboard_rect.min.y), egui::vec2(row_w, kb_w));
+        let key_rect = egui::Rect::from_min_size(
+            egui::pos2(x + gap * 0.5, keyboard_rect.min.y),
+            egui::vec2((row_w - gap).max(1.0), kb_w),
+        );
         let in_range = highlights
             .select
             .is_some_and(|(lo, hi)| key >= lo && key <= hi);

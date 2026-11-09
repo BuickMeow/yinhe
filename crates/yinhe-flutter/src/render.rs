@@ -1120,7 +1120,7 @@ fn upload_arrangement(
             &visible,
         );
         for inst in out.iter_mut() {
-            inst.packed |= yinhe_wgpu::NoteInstance::GHOST_BIT;
+            inst.set_ghost(true);
         }
     });
 

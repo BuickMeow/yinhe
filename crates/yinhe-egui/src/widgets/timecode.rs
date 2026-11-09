@@ -16,18 +16,18 @@ use rust_i18n::t;
 
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::quantize::QuantizePreset;
+use yinhe_types::ScaleType;
 use yinhe_types::time_format;
-use yinhe_types::{NOTE_NAMES, ScaleType};
 
-/// 时间码控件宽度（四列：BPM/拍号+PPQ、位置/时间、量化/调式、电平表）。
-pub const TIMECODE_WIDTH: f32 = 276.0;
+/// 时间码控件宽度（三列：BPM/拍号+PPQ、位置/时间、电平表）。
+pub const TIMECODE_WIDTH: f32 = 194.0;
 
 /// 时间码灰块与相邻控件的保底间距（左右两侧；见 `show_timecode_display` 占位
 /// 与 `chrome::transport_bar` 灰块后的 add_space）。
 pub const MIN_SIDE_GAP: f32 = 24.0;
 
-/// 四列宽度（内容宽，灰底外框与内容同宽）。
-const COL_WIDTHS: [f32; 4] = [78.0, 92.0, 82.0, 24.0];
+/// 三列宽度（内容宽，灰底外框与内容同宽）。调式列已迁到 PR 工具栏。
+const COL_WIDTHS: [f32; 3] = [78.0, 92.0, 24.0];
 /// 控件高度（上下两行各 18）。
 const RECT_H: f32 = 36.0;
 /// 单行高度。
@@ -46,8 +46,6 @@ pub enum TimecodeEvent {
     Ppq { value: u32, id: u64 },
     /// 光标位置跳转（位置/秒数输入）。
     CursorTick(f64),
-    /// 打开「调式（音阶）」对话框。
-    OpenScaleDialog,
     /// 量化预设（写入聚焦视图）。
     Quantize(QuantizePreset),
 }
@@ -86,20 +84,6 @@ pub(crate) fn current_key_sig(doc: &Document) -> Option<(u8, ScaleType)> {
         .or(Some((0, ScaleType::Major)))
 }
 
-/// 调式显示文本（如 `C Major`）；无调式 = `--`。
-fn key_sig_text(key: Option<(u8, ScaleType)>) -> String {
-    match key {
-        Some((root, scale)) => {
-            format!(
-                "{} {}",
-                NOTE_NAMES[(root % 12) as usize],
-                scale.english_name()
-            )
-        }
-        None => "--".to_string(),
-    }
-}
-
 /// 聚焦时全选文本：点击字段后直接输入即可覆盖原值（否则是追加，解析必失败）。
 fn select_all_on_focus(ui: &egui::Ui, resp: &egui::Response, id: egui::Id, text: &str) {
     if !resp.gained_focus() {
@@ -118,53 +102,19 @@ fn select_all_on_focus(ui: &egui::Ui, resp: &egui::Response, id: egui::Id, text:
 
 /// 无框单行输入（时间码字段共用样式，文字在格内垂直居中）。
 ///
-/// 必须用**等宽**字体：时间码是居中对齐的数字串，比例字体的数字宽度不等
-/// （例如 `0` 比 `1` 宽 2px），播放时每变一位整串都会重新居中 → 肉眼可见的
-/// 左右跳变。0.37 升级同时更换了字体栈（fontique），比例数字才暴露出来。
+/// 用**左对齐**而不是居中：比例字体数字宽度不等，居中时任何一位数字变化都会
+/// 让整串重新居中（0.37 换字体栈后数字变成比例宽度，跳变才暴露）。左对齐把
+/// 起始位置钉死，变化的只有尾部，肉眼看不到抖动。
 fn text_edit<'a>(id: egui::Id, buf: &'a mut String, width: f32, height: f32) -> egui::TextEdit<'a> {
     egui::TextEdit::singleline(buf)
         .id(id)
         .frame(egui::Frame::NONE)
-        .font(egui::FontId::monospace(crate::theme::TIMECODE_FONT))
+        .font(egui::FontId::proportional(crate::theme::TIMECODE_FONT))
         .text_color(crate::theme::accent_active())
-        .align(egui::Align2::CENTER_CENTER)
-        .margin(egui::Margin::symmetric(2, 0))
+        .align(egui::Align2::LEFT_CENTER)
+        .margin(egui::Margin::symmetric(6, 0))
         .min_size(egui::vec2(width, height))
         .desired_width(width)
-}
-
-/// 与 `hover::hover_button` 同款四态着色，但文字超过 `max_w` 时用**负字距**
-/// 横向压缩（字高不变，只让整体变窄）以塞进窄格——用于较长的调式名
-/// （如 `Double Harmonic Major`、`Combination Diminished`）。
-fn fit_hover_text(ui: &mut egui::Ui, text: &str, max_w: f32) -> egui::Response {
-    let font = egui::FontId::proportional(crate::theme::TIMECODE_FONT);
-    let natural =
-        ui.painter()
-            .layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::PLACEHOLDER);
-    let w = natural.size().x;
-    let spacing = if w > max_w {
-        -((w - max_w) / text.chars().count().max(1) as f32)
-    } else {
-        0.0
-    };
-    let mut job = egui::text::LayoutJob::default();
-    job.append(
-        text,
-        0.0,
-        egui::text::TextFormat {
-            font_id: font,
-            color: egui::Color32::PLACEHOLDER,
-            extra_letter_spacing: spacing,
-            ..Default::default()
-        },
-    );
-    let galley = ui.painter().layout_job(job);
-    let (rect, resp) = ui.allocate_exact_size(galley.size(), egui::Sense::click());
-    let color =
-        crate::widgets::hover::hover_button_color(&resp, crate::theme::accent_active(), false);
-    ui.painter()
-        .add(egui::epaint::TextShape::new(rect.min, galley, color));
-    resp
 }
 
 /// 传输栏时间码显示（四列居中）。返回控件矩形与编辑事件。
@@ -191,7 +141,6 @@ pub fn show_timecode_display(
     let bpm_str = time_format::format_bpm(bpm);
     let ts_str = time_format::format_time_sig(num, den_power);
     let ppq_str = ppq.to_string();
-    let key = current_key_sig(doc);
 
     // 居中占位（与旧两列实现一致：时间码把本栏分成左右两半）。
     // 保底 `MIN_SIDE_GAP`：窗口窄/左侧控件多时，灰块与左邻之间也留出间距。
@@ -366,36 +315,10 @@ pub fn show_timecode_display(
 
     // ── 量化（列 2 上）：入口已迁至传输栏时间码左侧的量化按钮 ──
 
-    // ── 调式（列 2 下）──
+    // ── 总输出电平表（列 2，跨两行；无刻度）──
     {
-        let text = key_sig_text(key);
-        let cell_rect = cell(2, 1);
-        ui.scope_builder(egui::UiBuilder::new().max_rect(cell_rect), |ui| {
-            ui.with_layout(
-                egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                |ui| {
-                    // 过长的调式名用负字距压缩到格宽内（留 4px 边距）。
-                    let resp = fit_hover_text(ui, &text, cell_rect.width() - 4.0);
-                    resp.widget_info(|| {
-                        egui::WidgetInfo::labeled(
-                            egui::Role::Button,
-                            ui.is_enabled(),
-                            t!("hint.timecode.keysig"),
-                        )
-                    });
-                    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.keysig"));
-                    if resp.clicked() {
-                        events.push(TimecodeEvent::OpenScaleDialog);
-                    }
-                },
-            );
-        });
-    }
-
-    // ── 总输出电平表（列 3，跨两行；无刻度）──
-    {
-        let top = cell(3, 0);
-        let bottom = cell(3, 1);
+        let top = cell(2, 0);
+        let bottom = cell(2, 1);
         let meter_rect = egui::Rect::from_min_max(
             egui::pos2(top.min.x + 4.0, rect.min.y + 4.0),
             egui::pos2(bottom.max.x - 4.0, rect.max.y - 4.0),

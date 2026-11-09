@@ -550,6 +550,7 @@ impl App {
             Vec::new();
         let mut velocity_edits: Vec<yinhe_types::VelocityEdit> = Vec::new();
 
+        let mut open_scale_dialog = false;
         let (
             piano_event,
             note_drag_delta,
@@ -575,16 +576,28 @@ impl App {
             let mut selection_scale_delta: Option<u64> = None;
             let mut riff_repeat: Option<(i64, i64)> = None;
             let mut preview_reqs: Vec<crate::piano_view::PreviewReq> = Vec::new();
-            // 顶部工具栏（需要文档视图状态：键数 / 调式折叠）。
-            let fold_mask = crate::widgets::timecode::current_key_sig(doc)
-                .map(|(root, scale)| scale.pitch_classes(root));
-            crate::chrome::tool_bar::show(
+            // 顶部工具栏（需要文档视图状态：键数 / Scale / 调式选择）。
+            let key_sig = crate::widgets::timecode::current_key_sig(doc);
+            let fold_mask = key_sig.map(|(root, scale)| scale.pitch_classes(root));
+            let scale_label = key_sig
+                .map(|(root, scale)| {
+                    format!(
+                        "{} {}",
+                        yinhe_types::NOTE_NAMES[(root % 12) as usize],
+                        scale.english_name()
+                    )
+                })
+                .unwrap_or_else(|| "--".to_string());
+            if crate::chrome::tool_bar::show(
                 ui,
                 tool_rect,
                 &mut self.active_tool,
                 &mut doc.edit.pianoroll_view,
                 fold_mask,
-            );
+                &scale_label,
+            ) {
+                open_scale_dialog = true;
+            }
             ui.scope_builder(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
                 let _piano_total_start = if yinhe_memtrace::perf_probe::enabled() {
                     Some(std::time::Instant::now())
@@ -788,6 +801,14 @@ impl App {
                 preview_reqs,
             )
         };
+
+        if open_scale_dialog {
+            let doc = &self.workspace.documents[idx];
+            let cur = crate::widgets::timecode::current_key_sig(doc);
+            let override_on = doc.edit.key_sig_override.is_some();
+            let use_events = doc.edit.key_sig_use_events;
+            self.scale_dialog.open_at(cur, override_on, use_events);
+        }
 
         // 音符听觉预览（铅笔新建/拖拽、选框拖拽触发）。
         // PR 拖动/铅笔：替换式预览（拖动时不叠加，只响当前组）。

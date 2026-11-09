@@ -3269,7 +3269,7 @@ fn cull_arr_mode_lane_height_vs_cpu() {
             continue; // 保守跳过，不漏（长音符跨左边界时 end >= ts_lo 仍保留）
         }
         let key = (n.packed & 0x1FF) as f32;
-        let track = ((n.packed >> 10) & 0x3FFF) as f32;
+        let track = ((n.packed >> 9) & 0xFFFF) as f32;
         let x_offset = kb_w - scroll_x;
         let pixel_x = x_offset + n.start_tick as f32 * ppu;
         let pixel_right = x_offset + n.end_tick as f32 * ppu;

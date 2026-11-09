@@ -484,7 +484,7 @@ pub(crate) fn show(
                     gpu_rect.height(),
                     &mut doc.edit.chan_ar_view.base.scroll_y,
                     &mut doc.edit.chan_ar_view.base.track_panel_row_height,
-                    cells,
+                    cells as f32,
                     yinhe_types::LANE_HEIGHT_MIN,
                     yinhe_types::LANE_HEIGHT_MAX,
                     Some(yinhe_types::LANE_HEIGHT_STEP),

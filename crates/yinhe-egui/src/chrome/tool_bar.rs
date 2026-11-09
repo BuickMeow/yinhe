@@ -21,7 +21,9 @@ pub fn show(
     active_tool: &mut Tool,
     view: &mut PianoRollView,
     fold_mask: Option<u16>,
-) {
+    scale_label: &str,
+) -> bool {
+    let mut open_scale_dialog = false;
     let btn_size = egui::vec2(
         crate::theme::PR_TOOL_BTN_SIZE,
         crate::theme::PR_TOOL_BTN_SIZE,
@@ -35,7 +37,9 @@ pub fn show(
         let pad_x = 6.0;
         let spacing_x = 2.0;
         let slot = btn_size.x + spacing_x;
-        let avail = (rect.width() - pad_x * 2.0).max(0.0);
+        // 右侧常驻开关（键数分段 + Scale + 调式名）预留宽度，避免窄窗口重叠。
+        let right_reserve = 34.0 * 3.0 + 48.0 + 120.0 + spacing_x * 5.0 + pad_x;
+        let avail = (rect.width() - pad_x * 2.0 - right_reserve).max(0.0);
         let fit = (((avail + spacing_x) / slot).floor() as usize).max(1);
         let n_visible = if fit >= ALL_TOOLS.len() {
             ALL_TOOLS.len()
@@ -65,29 +69,37 @@ pub fn show(
                         });
                     });
             }
-            // ── 右侧视图开关：键数 / 调式折叠 ──
+            // ── 右侧视图开关：键数 / Scale / 调式选择 ──
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(pad_x);
-                let w = 40.0;
-                let size = egui::vec2(w, btn_size.y);
+                let h = btn_size.y;
+                let font = normal_font();
+                let btn = |ui: &mut egui::Ui, text: &str, active: bool, salt: &str| {
+                    text_button(ui, text, egui::vec2(34.0, h), active, font.clone(), salt)
+                };
 
-                // 键数：88 → 128 → 256 → 88 循环。
-                let label = view.layout.count.to_string();
-                let resp = text_button(ui, &label, size, false, "pr_key_count");
-                crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.pr.key_count"));
-                if resp.clicked() {
-                    let next = match view.layout.count {
-                        88 => 128,
-                        128 => 256,
-                        _ => 88,
-                    };
-                    view.set_key_count(next);
+                // [88|128|256]：分段开关。
+                for count in [256u16, 128, 88] {
+                    let active = view.layout.count == count;
+                    let resp = btn(ui, &count.to_string(), active, &format!("pr_key_{count}"));
+                    if resp.clicked() {
+                        view.set_key_count(count);
+                    }
+                    if count == 88 {
+                        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.pr.key_count"));
+                    }
                 }
 
-                // FOLD：按当前调号折叠。
+                // Scale 开关。
                 let fold_on = view.layout.fold_mask != 0;
-                let enabled = fold_mask.is_some();
-                let resp = text_button(ui, "FOLD", size, fold_on, "pr_fold");
+                let resp = text_button(
+                    ui,
+                    "Scale",
+                    egui::vec2(48.0, h),
+                    fold_on,
+                    font.clone(),
+                    "pr_scale",
+                );
                 crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.pr.fold"));
                 if resp.clicked() {
                     if fold_on {
@@ -102,8 +114,22 @@ pub fn show(
                     // 调号变化时跟随（覆盖事件/手动调式都生效）。
                     view.set_fold(mask);
                 }
-                if !enabled {
-                    hovered_hint = Some(t!("hint.pr.fold_unavailable").to_string());
+
+                // 调式（根音 + 音阶）显示按钮，点击打开音阶对话框。
+                let resp = text_button(
+                    ui,
+                    scale_label,
+                    egui::vec2(
+                        (scale_label.chars().count() as f32 * 7.0 + 16.0).max(60.0),
+                        h,
+                    ),
+                    false,
+                    font,
+                    "pr_scale_select",
+                );
+                crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.keysig"));
+                if resp.clicked() {
+                    open_scale_dialog = true;
                 }
             });
         });
@@ -117,6 +143,7 @@ pub fn show(
     } else if over_bar {
         crate::widgets::hint::set_region(ui.ctx(), t!("hint.panel.tool_bar"));
     }
+    open_scale_dialog
 }
 
 /// 钢琴/滚动条交界处的两个宽按钮：左 = 显示自动化，右 = 新增自动化。
@@ -229,11 +256,16 @@ fn tool_more_button(ui: &mut egui::Ui, btn_size: egui::Vec2) -> egui::Response {
 }
 
 /// 纯文字小按钮（工具栏右侧的键数 / FOLD）。
+fn normal_font() -> egui::FontId {
+    egui::FontId::proportional(13.0)
+}
+
 fn text_button(
     ui: &mut egui::Ui,
     label: &str,
     size: egui::Vec2,
     active: bool,
+    font: egui::FontId,
     id_salt: &str,
 ) -> egui::Response {
     let color = if active {
@@ -245,9 +277,7 @@ fn text_button(
     ui.push_id(id_salt, |ui| {
         crate::widgets::flat::flat_button_filled_ghost(
             ui,
-            egui::RichText::new(label)
-                .size(crate::theme::PR_TOOL_BTN_FONT - 1.0)
-                .color(color),
+            egui::RichText::new(label).font(font).color(color),
             size,
             sel_bg,
             true,

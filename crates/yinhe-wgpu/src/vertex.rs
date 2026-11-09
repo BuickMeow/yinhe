@@ -121,14 +121,16 @@ pub struct DrawInstance {
 /// Layout:
 ///   d0 = start_tick (u32)
 ///   d1 = end_tick   (u32)
-///   d2 = packed: key(u9, bits 0..9) | ghost(bit9) | track(14, bits 10..24)
-///                | vel(7, bits 24..31) | selected(bit31)
+///   d2 = packed: key(u9, bits 0..9) | track(u16, bits 9..25) | vel(7, bits 25..32)
 ///
-/// 256 键（黑乐谱扩展音域）需要 9 位 key；ghost 标记挪到 bit9，
-/// track 收窄到 14 位（16384 轨，远超实际工程规模）。
+/// 256 键（黑乐谱扩展音域）需要 9 位 key，track 保持完整 16 位。
+/// 另两个标志位借用 tick 的最高位（tick 域 2^31，约 1037 小时 @480ppq/120bpm）：
+///   - selected → `start_tick` bit31（只有 CPU 构建层会置位）
+///   - ghost    → `end_tick` bit31（只有 ghost 层会置位）
 ///
-/// `vel` 字段：bit31 = 选中（渲染填充加深），bit24..31 的其余 7 位 = MIDI
-/// 力度（0..=127，渲染时向白变浅；127 = 原色）。见 [`NoteInstance::SELECTED_BIT`]。
+/// GPU cull 全曲层不带任何标志位，读取前统一掩码。
+///
+/// 力度 0..=127（`packed` bits 25..32），渲染时向白变浅；127 = 原色。
 /// GPU cull 全曲层的实例不带该位（不随选区重传），由 shader 用
 /// `SelectionUniform` 矩形判定实时补位。
 #[repr(C)]
@@ -136,22 +138,22 @@ pub struct DrawInstance {
 pub struct NoteInstance {
     pub start_tick: u32,
     pub end_tick: u32,
-    /// key(u9, bits 0..9) | ghost(bit9) | track(14, bits 10..24)
-    /// | vel(7, bits 24..31) | selected(bit31)
+    /// key(u9, bits 0..9) | track(u16, bits 9..25) | vel(7, bits 25..32)
     pub packed: u32,
 }
 
 impl NoteInstance {
-    /// packed 的 bit31（vel 字段最高位）：选中标记。
+    /// `start_tick` 的 bit31：选中标记（CPU 构建层精确成员态）。
     pub const SELECTED_BIT: u32 = 1 << 31;
-    /// bit9：ghost 层标记，顶点着色器据此叠加动画偏移。
-    pub const GHOST_BIT: u32 = 1 << 9;
+    /// `end_tick` 的 bit31：ghost 层标记，顶点着色器据此叠加动画偏移。
+    pub const GHOST_BIT: u32 = 1 << 31;
+    /// tick 真值掩码（去掉标志位）。
+    pub const TICK_MASK: u32 = 0x7FFF_FFFF;
 
-    /// 打包实例。`vel` 只取低 7 位（MIDI 力度语义），选中位由
-    /// [`NoteInstance::set_selected`] 控制。`track` 只有 14 位，超出时截断
-    /// （16384 轨，超过实际 MIDI 工程规模）。
+    /// 打包实例。`vel` 只取低 7 位（MIDI 力度语义），选中/ghost 位分别由
+    /// [`NoteInstance::set_selected`] / [`NoteInstance::set_ghost`] 控制。
     pub fn pack(key: u8, track: u16, vel: u8) -> u32 {
-        (key as u32) | (((track as u32) & 0x3FFF) << 10) | (((vel & 0x7F) as u32) << 24)
+        (key as u32) | ((track as u32) << 9) | (((vel & 0x7F) as u32) << 25)
     }
 
     /// 解出 key（0..255）。
@@ -159,32 +161,50 @@ impl NoteInstance {
         (self.packed & 0x1FF) as u8
     }
 
-    /// 解出 track（0..16383）。
+    /// 解出 track（0..65535）。
     pub fn track(&self) -> u16 {
-        ((self.packed >> 10) & 0x3FFF) as u16
+        ((self.packed >> 9) & 0xFFFF) as u16
     }
 
-    pub fn is_ghost(&self) -> bool {
-        self.packed & Self::GHOST_BIT != 0
-    }
-
-    /// 设置选中标记（填充加深）。CPU 可见层构建时按成员位图精确设置；
-    /// cull 全曲层不走这里（shader 用矩形 uniform 补位）。
+    /// 设置选中标记（`start_tick` bit31）。
     pub fn set_selected(&mut self, selected: bool) {
         if selected {
-            self.packed |= Self::SELECTED_BIT;
+            self.start_tick |= Self::SELECTED_BIT;
         } else {
-            self.packed &= !Self::SELECTED_BIT;
+            self.start_tick &= !Self::SELECTED_BIT;
         }
     }
 
     pub fn is_selected(&self) -> bool {
-        self.packed & Self::SELECTED_BIT != 0
+        self.start_tick & Self::SELECTED_BIT != 0
     }
 
-    /// MIDI 力度 0..=127（去掉选中位）。
+    /// 设置 ghost 标记（`end_tick` bit31）。
+    pub fn set_ghost(&mut self, ghost: bool) {
+        if ghost {
+            self.end_tick |= Self::GHOST_BIT;
+        } else {
+            self.end_tick &= !Self::GHOST_BIT;
+        }
+    }
+
+    pub fn is_ghost(&self) -> bool {
+        self.end_tick & Self::GHOST_BIT != 0
+    }
+
+    /// 真实 start tick（去掉标志位）。
+    pub fn start_tick(&self) -> u32 {
+        self.start_tick & Self::TICK_MASK
+    }
+
+    /// 真实 end tick（去掉标志位）。
+    pub fn end_tick(&self) -> u32 {
+        self.end_tick & Self::TICK_MASK
+    }
+
+    /// MIDI 力度 0..=127。
     pub fn velocity(&self) -> u8 {
-        ((self.packed >> 24) & 0x7F) as u8
+        ((self.packed >> 25) & 0x7F) as u8
     }
 }
 
@@ -481,7 +501,7 @@ mod tests {
         inst.set_selected(true);
         assert!(inst.is_selected());
         assert_eq!(inst.velocity(), 100, "选中位不得污染力度");
-        assert!(inst.packed & NoteInstance::SELECTED_BIT != 0);
+        assert!(inst.start_tick & NoteInstance::SELECTED_BIT != 0);
 
         inst.set_selected(false);
         assert!(!inst.is_selected());

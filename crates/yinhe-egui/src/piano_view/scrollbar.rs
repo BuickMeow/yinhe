@@ -158,7 +158,8 @@ pub(crate) fn show_scrollbars(
             egui::pos2(content_right_x, rect.max.y),
         );
         let cross_len = content_rect.width();
-        let cell_min = cross_len / 128.0;
+        let cross_units = view.layout.total_units().max(1.0);
+        let cell_min = cross_len / cross_units;
         let cell_max = cross_len / 12.0;
         let key_sb_drag = ui
             .push_id("piano_vscroll", |ui| {
@@ -168,7 +169,7 @@ pub(crate) fn show_scrollbars(
                     cross_len,
                     &mut view.base.scroll_x,
                     &mut view.key_height,
-                    128,
+                    cross_units,
                     cell_min,
                     cell_max,
                     None,
@@ -250,7 +251,8 @@ pub(crate) fn show_scrollbars(
             egui::pos2(content_right_x, content_y),
             egui::pos2(rect.max.x, content_y + content_h),
         );
-        let cell_min = content_rect.height() / 128.0;
+        let cross_units = view.layout.total_units().max(1.0);
+        let cell_min = content_rect.height() / cross_units;
         let cell_max = content_rect.height() / 12.0;
         let vsb_drag_dx = ui
             .push_id("piano_vscroll", |ui| {
@@ -260,7 +262,7 @@ pub(crate) fn show_scrollbars(
                     content_rect.height(),
                     &mut view.base.scroll_y,
                     &mut view.key_height,
-                    128,
+                    cross_units,
                     cell_min,
                     cell_max,
                     None,

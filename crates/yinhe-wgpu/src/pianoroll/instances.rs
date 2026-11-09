@@ -434,8 +434,9 @@ pub fn build_ghost_note(
     let mut inst = NoteInstance {
         start_tick,
         end_tick,
-        packed: NoteInstance::pack(key, track, 127) | NoteInstance::GHOST_BIT,
+        packed: NoteInstance::pack(key, track, 127),
     };
+    inst.set_ghost(true);
     inst.set_selected(selected);
     out.push(inst);
 }
@@ -753,7 +754,7 @@ mod tests {
             "只有成员音符带选中位"
         );
         let sel_inst = out.iter().find(|n| n.is_selected()).unwrap();
-        assert_eq!(sel_inst.start_tick, 0);
+        assert_eq!(sel_inst.start_tick(), 0);
         assert_eq!(sel_inst.velocity(), 100, "选中位不得污染力度字段");
         assert_eq!(
             out.iter().find(|n| !n.is_selected()).unwrap().velocity(),

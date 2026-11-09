@@ -699,7 +699,7 @@ pub fn show(
                     gpu_rect.height(),
                     &mut doc.edit.arrange_view.base.scroll_y,
                     &mut doc.edit.arrange_view.base.track_panel_row_height,
-                    row_layout.total_rows(),
+                    row_layout.total_rows() as f32,
                     yinhe_types::LANE_HEIGHT_MIN,
                     yinhe_types::LANE_HEIGHT_MAX,
                     Some(yinhe_types::LANE_HEIGHT_STEP),

@@ -181,12 +181,13 @@ fn main(
 
     if in_range {
         let inst = all_instances[index];
-        let start_tick = inst.start_tick;
-        let end_tick = inst.end_tick;
+        // tick 最高位可能是 selected/ghost 标志（ghost 层不进 cull，仍防御性掩码）。
+        let start_tick = inst.start_tick & 0x7FFFFFFFu;
+        let end_tick = inst.end_tick & 0x7FFFFFFFu;
         let packed = inst.packed;
-        // key 9 位（256 键）；ghost 在 bit9，track 是 14 位。
+        // key 9 位（256 键）| track 16 位。
         let key = packed & 0x1FFu;
-        let track = (packed >> 10u) & 0x3FFFu;
+        let track = (packed >> 9u) & 0xFFFFu;
         // Track 显隐 mask：隐藏轨道的音符直接跳过。mask 始终反映当前
         // track_visible（上传数据也按构建时的 track_visible 过滤过），
         // 双重过滤无害——这是「后台重建期间显示不闪错」的保证。

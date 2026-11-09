@@ -1132,7 +1132,6 @@ hint.arrange.corner_zoom: "Перетащите для масштаба по о�
 hint.pr.keyboard_zoom: "Колесо — масштабирование оси высоты тона"
 hint.pr.key_count: "Key count (click to cycle 88/128/256)"
 hint.pr.fold: "Scale folding: expand in-scale notes, compress out-of-scale rows"
-hint.pr.fold_unavailable: "No scale available for folding"
 hint.pr.auto_toggle: "Показать/скрыть панель автоматизации"
 hint.pr.auto_add: "Добавить панель автоматизации"
 hint.pr.auto_remove: "Удалить панель автоматизации"

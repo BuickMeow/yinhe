@@ -676,7 +676,8 @@ pub(crate) fn show_vertical(
     view_height: f32,
     scroll_y: &mut f32,
     cell_size: &mut f32,
-    num_cells: usize,
+    content_units: f32, // 内容总长度（单位 × cell_size = 总像素；折叠后行高不等，用浮点）
+
     cell_min: f32,
     cell_max: f32,
     cell_step: Option<f32>,
@@ -703,12 +704,11 @@ pub(crate) fn show_vertical(
     let drag_cross = |v: egui::Vec2| if transpose { v.y } else { v.x };
 
     let sb_h = along_len(rect);
-    if sb_h <= 0.0 || view_height <= 0.0 || num_cells == 0 {
+    if sb_h <= 0.0 || view_height <= 0.0 || content_units <= 0.0 {
         return 0.0;
     }
 
-    let num_cells_f = num_cells as f32;
-    let total_pixels = num_cells_f * *cell_size;
+    let total_pixels = content_units * *cell_size;
 
     // max_scroll：当 total_pixels <= view_height 时为 0（无滚动空间，但仍然绘制 thumb）
     let max_scroll = (total_pixels - view_height).max(0.0);
@@ -799,7 +799,7 @@ pub(crate) fn show_vertical(
 
     // ── Interaction ──
     // 像素空间核心公式：thumb_len × cell_size = view_height × sb_h / num_cells = K
-    let k_constant = view_height * sb_h / num_cells_f;
+    let k_constant = view_height * sb_h / content_units;
 
     // 缩放/平移一律从 thumb（或边缘）按下开始；背景区域拖拽不触发任何操作。
 
@@ -827,9 +827,9 @@ pub(crate) fn show_vertical(
             .clamp(0.0, rect_bottom - 2.0 * EDGE_WIDTH);
         let new_thumb_len_sb = (rect_bottom - new_thumb_start_sb).max(2.0 * EDGE_WIDTH);
         let new_cs = snap_cell_size(k_constant / new_thumb_len_sb, cell_min, cell_max, cell_step);
-        let new_scale = sb_h / (num_cells_f * new_cs);
+        let new_scale = sb_h / (content_units * new_cs);
         let new_scroll = rect_bottom / new_scale - view_height;
-        let new_total_pixels = num_cells_f * new_cs;
+        let new_total_pixels = content_units * new_cs;
         let max_sy = (new_total_pixels - view_height).max(0.0);
         *cell_size = new_cs;
         *scroll_y = new_scroll.clamp(0.0, max_sy);
@@ -844,9 +844,9 @@ pub(crate) fn show_vertical(
             .clamp(rect_top + 2.0 * EDGE_WIDTH, sb_h);
         let new_thumb_len_sb = (new_thumb_end_sb - rect_top).max(2.0 * EDGE_WIDTH);
         let new_cs = snap_cell_size(k_constant / new_thumb_len_sb, cell_min, cell_max, cell_step);
-        let new_scale = sb_h / (num_cells_f * new_cs);
+        let new_scale = sb_h / (content_units * new_cs);
         let new_scroll = rect_top / new_scale;
-        let new_total_pixels = num_cells_f * new_cs;
+        let new_total_pixels = content_units * new_cs;
         let max_sy = (new_total_pixels - view_height).max(0.0);
         *cell_size = new_cs;
         *scroll_y = new_scroll.clamp(0.0, max_sy);
@@ -1770,7 +1770,7 @@ mod tests {
                 100.0,
                 scroll_y,
                 cell_size,
-                200,
+                200.0,
                 0.5,
                 8.0,
                 None,
@@ -1891,7 +1891,7 @@ mod tests {
                 100.0,
                 scroll_y,
                 cell_size,
-                200,
+                200.0,
                 0.5,
                 8.0,
                 cell_step,

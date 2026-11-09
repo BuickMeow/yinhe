@@ -175,7 +175,7 @@ fn selection_filter_passes(key: u32, track: u32, vel: u32, gate: u32) -> bool {
 }
 
 // 排除表（binding 4）：成员态下「矩形内但不在成员位图」的音符键
-// （lo = key | track<<8，hi = start_tick），开放寻址、空槽 = u32::MAX。
+// （lo = key | track<<9，hi = start_tick），开放寻址、空槽 = u32::MAX。
 // 哈希函数必须与 CPU `exclude_hash` 一致。
 @group(0) @binding(4)
 var<storage, read> exclude_table: array<vec2<u32>>;
@@ -409,20 +409,23 @@ fn note_geometry(
 ) -> VertexOutput {
     var out: VertexOutput;
 
-    // bit9 = ghost 标记；key 9 位（256 键），track 14 位。
-    let is_ghost = (packed & 0x200u) != 0u;
+    // tick 最高位可能是 selected/ghost 标志：几何只看真 tick。
+    let is_ghost = (end_tick & 0x80000000u) != 0u;
+    let s_tick = start_tick & 0x7FFFFFFFu;
+    let e_tick = end_tick & 0x7FFFFFFFu;
+
+    // key 9 位（256 键）| track 16 位 | vel 7 位。
     let key = packed & 0x1FFu;
-    let track = (packed >> 10u) & 0x3FFFu;
+    let track = (packed >> 9u) & 0xFFFFu;
     // vel 字段拆位：bit7 = 选中（填充加深），bit0..7 = MIDI 力度。
-    let vel_raw = (packed >> 24u) & 0xFFu;
-    var selected = (vel_raw & 0x80u) != 0u;
-    let vel = vel_raw & 0x7Fu;
+    let vel = (packed >> 25u) & 0x7Fu;
+    var selected = (start_tick & 0x80000000u) != 0u;
     // GPU cull 全曲层的实例不随选区重传（bit31 恒 0）→ 用矩形选区 uniform
     // 实时补位；B 路径已带 CPU 精确位（含成员态）则取或。
     if u.mode == 1u && !selected {
-        let gate = end_tick - min(start_tick, end_tick);
-        selected = in_selection_rects(start_tick, key, track)
-            && !in_exclude_table(key | (track << 9u), start_tick)
+        let gate = e_tick - min(s_tick, e_tick);
+        selected = in_selection_rects(s_tick, key, track)
+            && !in_exclude_table(key | (track << 9u), s_tick)
             && selection_filter_passes(key, track, vel, gate);
     }
 
@@ -441,16 +444,16 @@ fn note_geometry(
         pixel_x = kpx.x - u.scroll_x;
         right = pixel_x + kpx.y;
         pixel_w = kpx.y;
-        let y_a = u.height - (f32(start_tick) * ppu - u.scroll_y);
-        let y_b = u.height - (f32(end_tick) * ppu - u.scroll_y);
+        let y_a = u.height - (f32(s_tick) * ppu - u.scroll_y);
+        let y_b = u.height - (f32(e_tick) * ppu - u.scroll_y);
         pixel_y = min(y_a, y_b);
         pixel_h = max(max(y_a, y_b) - pixel_y, 2.0);
     } else {
         let x_offset = u.keyboard_width - u.scroll_x;
 
         // 右边界直接算（与相邻音符的左边界完全相同的表达式），杜绝 1px 缝隙。
-        var raw_x = x_offset + f32(start_tick) * ppu;
-        var raw_right = x_offset + f32(end_tick) * ppu;
+        var raw_x = x_offset + f32(s_tick) * ppu;
+        var raw_right = x_offset + f32(e_tick) * ppu;
         // ghost 的时间轴偏移要先参与可见性判断（下面不再重复叠加 dx）。
         if is_ghost {
             raw_x += u.ghost_dx;
