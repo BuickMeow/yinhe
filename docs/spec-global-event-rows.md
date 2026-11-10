@@ -38,7 +38,7 @@ Pro Tools 的做法是把 Marker / Meter / Key / Chords / Lyrics 放到独立的
 - 默认不显示任何事件行；AR 左上角的 `Events ▾` 下拉菜单选择显示哪些。
 - 所有行共用一套布局、绘制、命中、编辑、undo 接口。
 - AR 与横向 PR 共用事件行；PR 默认额外显示 Clip 边界行。
-- 事件行显示后，AR 时间标尺可以从 30px 降为 24px，把高度让给事件/轨道区。
+- 时间标尺统一降为 14px；PR 标尺不再显示 Marker。
 - 事件密集时只绘制可见范围，标签自动稀疏化，不拖慢画面。
 - 为 Clip v1 提供稳定的 AR 网格/行布局，避免 Clip 和标尺重构互相牵连。
 
@@ -98,7 +98,7 @@ pub struct EventRowState {
 - 每行高度固定小行（建议 18–24 px），由主题/布局常量给出，用户可调。
 - 默认全部隐藏（`visible = false`），不占用音轨区域高度。
 - 行可见性由 AR / PR 的 `Events ▾` 下拉菜单控制；状态是会话态，暂不落盘。
-- PR 另有一条始终显示的 **Clip 边界行**，不进入 `EventRowKind`、不提供勾选。
+- PR 在 CLIP 模式下有一条 **Clip 边界行**，不进入 `EventRowKind`、不提供勾选；SONG 模式隐藏。
 - 行顺序数据结构支持重排；v1 UI 先不提供拖拽排序。
 - 行标题在左侧头部区域显示图标/名称；时间内容区与网格时间轴严格对齐。
 
@@ -143,9 +143,9 @@ EventRowsLayout   // 固定顶部：行高、可见行、行头矩形
 ArRowLayout       // 其下：现有音轨/自动化行，scroll_y 只作用于它
 ```
 
-PR 在标尺下方先放一条固定的 Clip 边界行（18px），其下才是可选事件行。
-PR 的 `Events ▾` 放在键盘列顶部；勾选 Marker 后，Marker 从 PR 标尺移到事件行，
-取消后再回到标尺。Clip 边界行用音轨代表色，左右边界可拖动，拖动时通过
+PR 在 CLIP 模式下标尺下方显示 Clip 边界行（18px），其下才是可选事件行。
+PR 的 `Events ▾` 放在键盘列顶部；Marker 只在事件行显示，PR 标尺不再绘制 Marker。
+Clip 边界行用音轨代表色，左右边界可拖动，拖动时通过
 `PianoViewEvent::ClipResize` 落到文档 undo。
 
 ### 纵向 PR（瀑布流）

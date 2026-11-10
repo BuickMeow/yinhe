@@ -295,6 +295,8 @@ UndoAction::Clips {
 - 在窗口内画音符：写入 Active Clip；gate 超出 `end_tick` 时扩展 Clip。
 - 不允许在窗口外画音符（窗口即 Clip 范围）。
 - 切换 Active Clip：通过 AR 选中/双击，或 PR 面包屑；灰音符点击不切换。
+- PR 在 CLIP 模式下显示固定 Clip 边界行，左右边界可拖动；SONG 模式隐藏该行。
+- CLIP 模式标尺右端提供量化入口，缩放/滚动限制在 Active Clip 左右边界内。
 - 进入方式：AR 双击 Clip 头部；退出：Esc、面包屑点击、或工具栏切回 SONG。
 - 进入/退出保存并恢复 PR 的滚动与缩放，避免视角丢失。
 - 坐标仍使用绝对 tick；不引入 Clip 局部坐标。标尺可以显示小节/拍，不做第二套 tick。

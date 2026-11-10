@@ -73,8 +73,7 @@ pub fn show(
             // ── 右侧视图开关：键数 / Scale / 调式选择 ──
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(pad_x);
-                let h = btn_size.y;
-                let small_h = 22.0;
+                let h = 22.0;
                 // [88|128|256]：分段开关（带背景，中缝为直角）。
                 let counts = [88u16, 128, 256];
                 let active = counts
@@ -110,17 +109,7 @@ pub fn show(
                 // Scale 开关（单段胶囊，矮按钮）。
                 let fold_on = view.layout.fold_mask != 0;
                 let scale_active = usize::from(fold_on);
-                if segmented(
-                    ui,
-                    &["Scale"],
-                    scale_active,
-                    48.0,
-                    small_h,
-                    11.0,
-                    "pr_scale",
-                )
-                .is_some()
-                {
+                if segmented(ui, &["Scale"], scale_active, 48.0, h, 11.0, "pr_scale").is_some() {
                     if fold_on {
                         view.set_fold(0);
                     } else if let Some(mask) = fold_mask {
@@ -136,17 +125,7 @@ pub fn show(
 
                 // 调式（根音 + 音阶）显示按钮（单段胶囊，矮按钮），点击打开音阶对话框。
                 let scale_w = (scale_label.chars().count() as f32 * 6.5 + 16.0).clamp(60.0, 120.0);
-                if segmented(
-                    ui,
-                    &[scale_label],
-                    0,
-                    scale_w,
-                    small_h,
-                    11.0,
-                    "pr_scale_select",
-                )
-                .is_some()
-                {
+                if segmented(ui, &[scale_label], 0, scale_w, h, 11.0, "pr_scale_select").is_some() {
                     open_scale_dialog = true;
                 }
             });

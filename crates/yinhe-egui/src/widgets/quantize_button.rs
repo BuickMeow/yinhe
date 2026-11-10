@@ -9,7 +9,7 @@ use yinhe_editor_core::quantize::QuantizePreset;
 
 /// 标尺右端紧凑控件的宽/高。
 pub const RULER_W: f32 = 46.0;
-pub const RULER_H: f32 = 18.0;
+pub const RULER_H: f32 = 14.0;
 /// 下拉三角宽/高。
 const TRI_W: f32 = 5.0;
 const TRI_H: f32 = 3.0;
@@ -46,6 +46,11 @@ pub(crate) fn show_ruler(
         crate::theme::text_secondary()
     };
     let painter = ui.painter();
+    painter.rect_filled(
+        rect,
+        egui::CornerRadius::same(2),
+        crate::theme::control_bg(),
+    );
     let text = label(current);
     let tri_left = rect.max.x - 8.0;
     let text_rect = egui::Rect::from_min_max(rect.min, egui::pos2(tri_left - 4.0, rect.max.y));

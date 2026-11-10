@@ -28,8 +28,6 @@ pub(crate) enum MarkerEdit {
 pub(crate) struct RulerOutcome {
     /// 本帧标尺被点击/拖动（用于清除选框）。
     pub jumped: bool,
-    /// 标签编辑动作（若本帧触发）。
-    pub marker_edit: Option<MarkerEdit>,
 }
 
 /// Marker 行/标签带的交互结果。可复用于时间标尺和独立事件行。
@@ -198,7 +196,6 @@ pub(crate) fn interactive_ruler(
     default_num: u8,
     default_den: u8,
     time_sig_events: &[TimeSigEvent],
-    markers: &[MarkerEvent],
     snap: impl Fn(f64) -> f64,
     id_salt: &str,
     cursor_tick: &mut Option<f64>,
@@ -208,7 +205,7 @@ pub(crate) fn interactive_ruler(
 
     // 主轴方向与两带中心：上行标签、下行小节号（纵向：外标签、内小节号）。
     let orientation = view.orientation();
-    let (labels_center, numbers_center) = cross_bands(ruler_rect, orientation);
+    let numbers_center = ruler_rect.center().y;
     paint_labels(
         &painter,
         ruler_rect,
@@ -240,25 +237,8 @@ pub(crate) fn interactive_ruler(
         egui::Sense::click_and_drag(),
     );
 
-    // 标签（marker）绘制与交互统一走 marker_band：这里和独立事件行共用同一实现。
-    // 必须在 ruler_resp 之后调用，保证标签命中优先级高于标尺本身。
-    let marker_band = marker_band(
-        ui,
-        ruler_rect,
-        view,
-        markers,
-        tpb,
-        default_num,
-        default_den,
-        time_sig_events,
-        labels_center,
-        &snap,
-        id_salt,
-        cursor_tick,
-    );
-    let pointer_over_label = marker_band.pointer_over_label;
-    let marker_edit = marker_band.edit;
-    let mut jumped = marker_band.jumped;
+    let pointer_over_label = false;
+    let mut jumped = false;
 
     // ── 按下标尺后沿副轴拖动 → 时间缩放（防误触：仅起点在标尺内才生效）──
     // 参考 scrollbar 的 press_origin 守卫，避免别处按下拖到标尺上误缩放。
@@ -353,10 +333,7 @@ pub(crate) fn interactive_ruler(
         }
     }
 
-    RulerOutcome {
-        jumped,
-        marker_edit,
-    }
+    RulerOutcome { jumped }
 }
 
 /// 绘制并交互 Marker 标签带。时间标尺和独立事件行共用。
@@ -457,21 +434,6 @@ pub(crate) fn marker_band(
 }
 
 // ── 标签（marker）辅助 ──
-
-/// 两带中心：返回 (标签带中心, 小节号带中心)。横向 = 上标签、下小节号；
-/// 纵向 = 外标签、内小节号。
-fn cross_bands(rect: egui::Rect, orientation: Orientation) -> (f32, f32) {
-    match orientation {
-        Orientation::Horizontal => (
-            rect.min.y + rect.height() * 0.28,
-            rect.min.y + rect.height() * 0.72,
-        ),
-        Orientation::Vertical => (
-            rect.min.x + rect.width() * 0.28,
-            rect.min.x + rect.width() * 0.72,
-        ),
-    }
-}
 
 fn marker_drag_preview(ui: &egui::Ui, id_salt: &str) -> Option<(u32, u32)> {
     ui.memory(|m| {

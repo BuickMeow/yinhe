@@ -127,6 +127,19 @@ pub fn show(
         midi.and_then(|m| m.tick_length()).unwrap_or(0),
         ppq,
     );
+    let clip_row = midi_arc.and_then(|m| {
+        let track = write_track?;
+        let tr = m.tracks.get(track as usize)?;
+        let tick = cursor_tick.map(|t| t.max(0.0) as u32).unwrap_or(0);
+        let clip = yinhe_core::clip_at(&tr.clips, tick)
+            .or_else(|| tr.clips.first())?
+            .clone();
+        let color = track_colors
+            .get(track as usize)
+            .copied()
+            .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
+        Some(super::piano_view::types::ClipRowView { track, clip, color })
+    });
     let layout: Layout = compute_layout(
         view,
         rect,
@@ -159,6 +172,22 @@ pub fn show(
     let content_h = (content_bottom - content_y).max(0.0);
     let _ = content_h;
     let _ruler_band_y = rect.min.y;
+    // CLIP 模式：缩放/滚动限制在 Active Clip 的左右边界内。
+    if clip_mode
+        && !view.is_vertical()
+        && let Some(row) = clip_row.as_ref()
+    {
+        let viewport_w = (w as f32 - kb_w).max(1.0);
+        let clip_len = (row.clip.end_tick.saturating_sub(row.clip.start_tick)).max(1) as f32;
+        let min_ppu = viewport_w / clip_len;
+        if view.base.pixels_per_tick < min_ppu {
+            view.base.pixels_per_tick = min_ppu;
+        }
+        let ppu = view.base.pixels_per_tick;
+        let min_scroll = row.clip.start_tick as f32 * ppu;
+        let max_scroll = (row.clip.end_tick as f32 * ppu - viewport_w).max(min_scroll);
+        view.base.scroll_x = view.base.scroll_x.clamp(min_scroll, max_scroll);
+    }
 
     // ── Perf probe (only when YIN_PERF=1) ──
     let perf_on = yinhe_memtrace::perf_probe::enabled();
@@ -360,25 +389,6 @@ pub fn show(
         _ => [None; yinhe_types::KEY_COUNT],
     };
     let conductor = midi_arc.map(|m| m.conductor.as_ref());
-    let markers_on_row = event_rows.is_visible(yinhe_types::EventRowKind::Marker);
-    let ruler_markers: &[yinhe_types::MarkerEvent] = if markers_on_row {
-        &[]
-    } else {
-        conductor.map(|c| c.markers.as_slice()).unwrap_or(&[])
-    };
-    let clip_row = midi_arc.and_then(|m| {
-        let track = write_track?;
-        let tr = m.tracks.get(track as usize)?;
-        let tick = cursor_tick.map(|t| t.max(0.0) as u32).unwrap_or(0);
-        let clip = yinhe_core::clip_at(&tr.clips, tick)
-            .or_else(|| tr.clips.first())?
-            .clone();
-        let color = track_colors
-            .get(track as usize)
-            .copied()
-            .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
-        Some(super::piano_view::types::ClipRowView { track, clip, color })
-    });
     let (sel_action, marker_edit, clip_resize) = overlay::draw_overlays(
         ui,
         &painter,
@@ -416,7 +426,6 @@ pub fn show(
         selected,
         pen_path.as_ref(),
         scissors_line.as_ref(),
-        ruler_markers,
     );
     let t_paint_end = if perf_on {
         Some(std::time::Instant::now())

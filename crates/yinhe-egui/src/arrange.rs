@@ -265,7 +265,6 @@ pub fn show(
         let tpb = model.meta.ppq;
         let (def_num, def_den) = model.tempo_map.time_sig_default;
         let sig_events = model.tempo_map.time_sig_events.as_slice();
-        let markers = &[]; // Marker 已移入固定事件行，标尺只负责时间
         // 量化档位解析：Auto（自适应）按当前 AR 缩放出具体网格。
         let ar_quantize = doc.edit.quantize_arrange.resolved_with_time_sig(
             doc.edit.arrange_view.base.pixels_per_tick,
@@ -282,7 +281,6 @@ pub fn show(
             def_num,
             def_den,
             sig_events,
-            markers,
             |tick| {
                 crate::view_interaction::snap_tick(
                     tick,
@@ -299,14 +297,11 @@ pub fn show(
             doc.edit.selected.clear();
             doc.edit.arr_sel_rect.clear();
         }
-        if let Some(edit) = outcome.marker_edit {
-            crate::marker_ops::apply_marker_edit(doc, edit);
-        }
         // 量化入口统一移到标尺最右侧。
         let q_rect = egui::Rect::from_min_size(
             egui::pos2(
                 ruler_rect.max.x - crate::widgets::quantize_button::RULER_W - 2.0,
-                ruler_rect.min.y + 3.0,
+                ruler_rect.min.y + 1.0,
             ),
             egui::vec2(
                 crate::widgets::quantize_button::RULER_W,
