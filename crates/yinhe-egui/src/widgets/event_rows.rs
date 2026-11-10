@@ -149,6 +149,38 @@ pub(crate) fn show(
                 egui::pos2(band.max.x + handle_w, band.max.y),
             );
 
+            // 整条循环带按住拖动 = 平移整个区间（长度不变）；
+            // 两端手柄在下方后注册，命中时优先，继续负责改边界。
+            let band_id = ui.scope_id().with((id_salt, "loop_band"));
+            let origin_id = band_id.with("origin");
+            let band_resp = ui.interact(band, band_id, egui::Sense::drag());
+            if band_resp.hovered() || band_resp.dragged() {
+                pointer_over_label = true;
+                ui.ctx().set_cursor_icon(if band_resp.dragged() {
+                    egui::CursorIcon::Grabbing
+                } else {
+                    egui::CursorIcon::Grab
+                });
+            }
+            if band_resp.drag_started() {
+                ui.data_mut(|d| d.insert_temp(origin_id, playback.loop_range()));
+            }
+            if band_resp.dragged()
+                && let Some((orig_start, orig_end)) =
+                    ui.data_mut(|d| d.get_temp::<(u32, u32)>(origin_id))
+            {
+                let dt = (band_resp.drag_delta().x / view.pixels_per_tick()) as f64;
+                let start = snap((f64::from(orig_start) + dt).max(0.0)).max(0.0) as u32;
+                let end = start.saturating_add(orig_end.saturating_sub(orig_start));
+                if playback.set_loop_range(start, end) {
+                    outcome.loop_changed = true;
+                    ui.ctx().request_repaint();
+                }
+            }
+            if band_resp.drag_stopped() {
+                ui.data_mut(|d| d.remove::<(u32, u32)>(origin_id));
+            }
+
             for (which, handle_rect) in [("left", left), ("right", right)] {
                 let resp = ui.interact(
                     handle_rect.expand2(egui::vec2(2.0, 0.0)),
