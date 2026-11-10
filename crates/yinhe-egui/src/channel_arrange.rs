@@ -89,7 +89,7 @@ pub(crate) fn show(
 
     // 全局事件行固定在标尺之下、通道行之上，不随通道行滚动。
     let event_rows_h = doc.edit.event_rows.visible_height();
-    let content_top = arr_rect.min.y + theme::RULER_H + event_rows_h;
+    let content_top = arr_rect.min.y + theme::AR_RULER_H + event_rows_h;
 
     // 左侧面板：从标尺 + 事件行下方到横向滚动条上方（与 GPU 行对齐）。
     let tp_rect = egui::Rect::from_min_max(
@@ -158,11 +158,11 @@ pub(crate) fn show(
                 arr_rect.min.x + tp_w + theme::SPLIT_HANDLE_W,
                 arr_rect.min.y,
             ),
-            egui::pos2(gpu_rect.max.x, arr_rect.min.y + theme::RULER_H),
+            egui::pos2(gpu_rect.max.x, arr_rect.min.y + theme::AR_RULER_H),
         );
         let corner_rect = egui::Rect::from_min_max(
             egui::pos2(gpu_rect.max.x, arr_rect.min.y),
-            egui::pos2(arr_rect.max.x, arr_rect.min.y + theme::RULER_H),
+            egui::pos2(arr_rect.max.x, arr_rect.min.y + theme::AR_RULER_H),
         );
         ui.painter()
             .rect_filled(corner_rect, 0.0, crate::theme::track_bg());
@@ -213,11 +213,11 @@ pub(crate) fn show(
     // ── 全局事件行（固定，不随通道行滚动）──
     {
         let event_full = egui::Rect::from_min_max(
-            egui::pos2(arr_rect.min.x, arr_rect.min.y + theme::RULER_H),
+            egui::pos2(arr_rect.min.x, arr_rect.min.y + theme::AR_RULER_H),
             egui::pos2(gpu_rect.max.x, content_top),
         );
         let row_corner = egui::Rect::from_min_max(
-            egui::pos2(gpu_rect.max.x, arr_rect.min.y + theme::RULER_H),
+            egui::pos2(gpu_rect.max.x, arr_rect.min.y + theme::AR_RULER_H),
             egui::pos2(arr_rect.max.x, content_top),
         );
         ui.painter()
@@ -239,7 +239,6 @@ pub(crate) fn show(
             &doc.edit.event_rows,
             crate::widgets::event_rows::EventRowsData {
                 markers: &model.conductor.markers,
-                tempo: &model.conductor.tempo,
                 time_sig: &model.conductor.time_sig,
                 key_sig: &model.conductor.key_sig,
                 chords: &model.conductor.chord,
@@ -583,14 +582,13 @@ pub(crate) fn show(
     }
 
     // ── 左上角角落（面板上方、标尺左侧）：仅铺背景 ──
-    ui.painter().rect_filled(
-        egui::Rect::from_min_size(
-            egui::pos2(arr_rect.min.x, arr_rect.min.y),
-            egui::vec2(tp_w, theme::RULER_H),
-        ),
-        0.0,
-        crate::theme::track_bg(),
+    let events_corner = egui::Rect::from_min_size(
+        egui::pos2(arr_rect.min.x, arr_rect.min.y),
+        egui::vec2(tp_w, theme::AR_RULER_H),
     );
+    ui.painter()
+        .rect_filled(events_corner, 0.0, crate::theme::track_bg());
+    crate::widgets::event_rows::controls(ui, events_corner, &mut doc.edit.event_rows);
     // 左下角（面板下方、水平滚动条左侧）铺背景。
     ui.painter().rect_filled(
         egui::Rect::from_min_max(

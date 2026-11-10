@@ -16,7 +16,7 @@ use yinhe_editor_core::quantize::QuantizePreset;
 
 /// Height of the time ruler band at the top of the arrangement view.
 use crate::theme;
-const RULER_H: f32 = theme::RULER_H;
+const RULER_H: f32 = theme::AR_RULER_H;
 
 /// Arrange 拖拽偏移量：(tick delta, track 行 delta, alt 复制标志)。
 pub(crate) type ArrDragDelta = (i64, i32, bool);
@@ -334,7 +334,6 @@ pub fn show(
             &doc.edit.event_rows,
             crate::widgets::event_rows::EventRowsData {
                 markers: &model.conductor.markers,
-                tempo: &model.conductor.tempo,
                 time_sig: &model.conductor.time_sig,
                 key_sig: &model.conductor.key_sig,
                 chords: &model.conductor.chord,
@@ -807,14 +806,13 @@ pub fn show(
 
     // ── 左上角角落（音轨面板上方、标尺左侧）：仅铺背景 ──
     // （量化按钮已移至 transport bar 时间码左侧，按聚焦视图显示 AR/PR 量化）
-    ui.painter().rect_filled(
-        egui::Rect::from_min_size(
-            egui::pos2(arr_rect.min.x, arr_rect.min.y),
-            egui::vec2(tp_w, RULER_H),
-        ),
-        0.0,
-        crate::theme::track_bg(),
+    let events_corner = egui::Rect::from_min_size(
+        egui::pos2(arr_rect.min.x, arr_rect.min.y),
+        egui::vec2(tp_w, RULER_H),
     );
+    ui.painter()
+        .rect_filled(events_corner, 0.0, crate::theme::track_bg());
+    crate::widgets::event_rows::controls(ui, events_corner, &mut doc.edit.event_rows);
 
     // ── "+" track add button in the corner (below track panel, left of scrollbar) ──
     {

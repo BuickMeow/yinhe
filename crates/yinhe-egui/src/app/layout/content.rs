@@ -745,7 +745,6 @@ impl App {
                     &mut self.render_ctx,
                     self.render_thread.as_ref(),
                     &mut doc.edit.pianoroll_view,
-                    &mut doc.edit.event_rows,
                     &mut self.last_cull_revision,
                     &mut self.last_cull_revision_only,
                     &mut self.last_hidden_hash,

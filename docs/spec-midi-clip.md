@@ -2,8 +2,8 @@
 
 状态：定稿 v1（2026-11-10）
 
-前置依赖：`docs/spec-global-event-rows.md`（Pro Tools 风格全局事件小行 + 纯时间标尺）
-先完成，Clip v1 的网格/行布局以该 spec 为准。
+前置依赖：`docs/spec-global-event-rows.md`（AR 专属全局事件小行 + 纯时间标尺）
+先完成，Clip v1 的 AR 网格/行布局以该 spec 为准；PR 不显示事件行。
 
 ## 背景
 
@@ -357,14 +357,15 @@ TrackMap {
 
 ## 分阶段实施
 
-### 前置阶段：全局事件行
+### 前置阶段：AR 全局事件行
 
 先完成 `docs/spec-global-event-rows.md`：
 
-- 标尺只负责时间；
-- Marker / Tempo / Meter / Key / Chord / Lyrics 移入网格上方的全局事件小行；
-- 通用行渲染、命中、编辑、undo；
-- Clip v1 的网格布局依赖该行系统。
+- AR 标尺只负责时间；
+- Marker / Meter / Key / Chord / Lyrics 移入 AR 网格上方的全局事件小行；
+- 默认不显示，由 AR 左上角 `Events ▾` 菜单开启；Tempo 仍视为自动化，不进入事件行；
+- PR 不显示事件行，PR 标尺保持原高度；
+- Clip v1 的 AR 网格布局依赖该行系统。
 
 ### 阶段 1：数据层
 

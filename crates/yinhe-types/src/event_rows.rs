@@ -7,7 +7,6 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum EventRowKind {
     Marker,
-    Tempo,
     Meter,
     Key,
     Chord,
@@ -16,9 +15,8 @@ pub enum EventRowKind {
 
 impl EventRowKind {
     /// 默认顺序：Marker → Tempo → Meter → Key → Chord → Lyrics。
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 5] = [
         Self::Marker,
-        Self::Tempo,
         Self::Meter,
         Self::Key,
         Self::Chord,
@@ -29,7 +27,6 @@ impl EventRowKind {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Marker => "MARKER",
-            Self::Tempo => "TEMPO",
             Self::Meter => "METER",
             Self::Key => "KEY",
             Self::Chord => "CHORD",
@@ -63,7 +60,8 @@ impl Default for EventRowsState {
                 .copied()
                 .map(|kind| EventRowState {
                     kind,
-                    visible: true,
+                    // v1 默认不展示任何事件行；通过 AR 左上角 Events 菜单开启。
+                    visible: false,
                 })
                 .collect(),
             row_height: 18.0,
@@ -98,6 +96,13 @@ impl EventRowsState {
             row.visible = !row.visible;
         }
     }
+
+    /// 直接设置某行显示状态。
+    pub fn set_visible(&mut self, kind: EventRowKind, visible: bool) {
+        if let Some(row) = self.rows.iter_mut().find(|r| r.kind == kind) {
+            row.visible = visible;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -105,31 +110,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_shows_all_rows_in_order() {
+    fn default_hides_all_rows() {
         let state = EventRowsState::default();
-        assert_eq!(state.visible_count(), EventRowKind::ALL.len());
-        assert_eq!(
-            state.visible_rows().collect::<Vec<_>>(),
-            EventRowKind::ALL.to_vec()
-        );
-        assert_eq!(state.visible_height(), 6.0 * state.row_height);
+        assert_eq!(state.visible_count(), 0);
+        assert_eq!(state.visible_height(), 0.0);
+        assert_eq!(state.rows.len(), EventRowKind::ALL.len());
     }
 
     #[test]
     fn toggle_hides_and_shows() {
         let mut state = EventRowsState::default();
         state.toggle(EventRowKind::Lyrics);
-        assert!(!state.is_visible(EventRowKind::Lyrics));
-        assert_eq!(state.visible_count(), 5);
-        state.toggle(EventRowKind::Lyrics);
         assert!(state.is_visible(EventRowKind::Lyrics));
+        assert_eq!(state.visible_count(), 1);
+        state.toggle(EventRowKind::Lyrics);
+        assert!(!state.is_visible(EventRowKind::Lyrics));
     }
 
     #[test]
     fn zero_height_when_all_hidden() {
         let mut state = EventRowsState::default();
         for kind in EventRowKind::ALL {
-            state.toggle(kind);
+            state.set_visible(kind, false);
         }
         assert_eq!(state.visible_height(), 0.0);
     }

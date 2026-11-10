@@ -11,8 +11,6 @@ pub(crate) struct Layout {
     pub music_rect: egui::Rect,
     pub keyboard_rect: egui::Rect,
     pub ruler_rect: egui::Rect,
-    /// 固定全局事件行区域（横向）。纵向 v1 为空矩形。
-    pub event_rows_rect: egui::Rect,
     pub content_y: f32,
     pub content_bottom: f32,
     pub w: u32,
@@ -33,12 +31,10 @@ pub(crate) fn compute_layout(
     view: &mut PianoRollView,
     rect: egui::Rect,
     panels_natural_h: f32,
-    event_rows_h: f32,
     ppp: f32,
     total_ticks: f64,
 ) -> Option<Layout> {
     let vertical = view.is_vertical();
-    let event_rows_h = if vertical { 0.0 } else { event_rows_h.max(0.0) };
     let kb_w = view.keyboard_width();
     let content_right_x = rect.max.x - crate::widgets::scrollbar::SCROLLBAR_W;
 
@@ -46,11 +42,7 @@ pub(crate) fn compute_layout(
     let avail_h = if vertical {
         (rect.height() - crate::widgets::scrollbar::SCROLLBAR_H - kb_w).max(0.0)
     } else {
-        (rect.height()
-            - super::types::RULER_H
-            - event_rows_h
-            - crate::widgets::scrollbar::SCROLLBAR_H)
-            .max(0.0)
+        (rect.height() - super::types::RULER_H - crate::widgets::scrollbar::SCROLLBAR_H).max(0.0)
     };
     let panels_max_h = (avail_h * 0.65).max(0.0);
     let panels_total_h = panels_natural_h.min(panels_max_h);
@@ -65,7 +57,7 @@ pub(crate) fn compute_layout(
         let left = rect.min.x + super::types::RULER_H; // 竖 ruler 列
         (top, bottom.max(top), left, left)
     } else {
-        let top = rect.min.y + super::types::RULER_H + event_rows_h;
+        let top = rect.min.y + super::types::RULER_H;
         let bottom = top + (avail_h - panels_total_h).max(0.0);
         (top, bottom, rect.min.x, rect.min.x + kb_w)
     };
@@ -114,24 +106,11 @@ pub(crate) fn compute_layout(
         )
     };
 
-    let event_rows_rect = if vertical || event_rows_h <= 0.0 {
-        egui::Rect::from_min_max(rect.min, rect.min)
-    } else {
-        egui::Rect::from_min_max(
-            egui::pos2(rect.min.x, ruler_band_y + super::types::RULER_H),
-            egui::pos2(
-                content_right_x,
-                ruler_band_y + super::types::RULER_H + event_rows_h,
-            ),
-        )
-    };
-
     Some(Layout {
         content_rect,
         music_rect,
         keyboard_rect,
         ruler_rect,
-        event_rows_rect,
         content_y,
         content_bottom,
         w,

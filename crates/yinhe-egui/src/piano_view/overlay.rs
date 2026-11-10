@@ -18,9 +18,6 @@ pub(crate) fn draw_overlays(
     music_rect: egui::Rect,
     rect: egui::Rect,
     view: &mut PianoRollView,
-    event_rows: &mut yinhe_types::EventRowsState,
-    event_rows_rect: egui::Rect,
-    conductor: Option<&yinhe_core::ConductorData>,
     theme: &yinhe_theme::GpuTheme,
     kh: f32,
     kb_w: f32,
@@ -56,49 +53,6 @@ pub(crate) fn draw_overlays(
 
     // ── Background（app_bg 一层，不透明不叠加；条纹/色块自行叠上）──
     painter.rect_filled(content_rect, 0.0, crate::theme::app_bg());
-
-    // ── 固定全局事件行（横向 PR）──
-    let mut marker_edit: Option<crate::widgets::time_ruler::MarkerEdit> = None;
-    if event_rows_rect.height() > 0.0
-        && let Some(c) = conductor
-        && let Some(tpb_val) = tpb
-    {
-        let (def_num, def_den) = midi.map(|m| m.time_sig_default()).unwrap_or((4, 2));
-        let sig_events = midi.map(|m| m.time_sig_events()).unwrap_or(&[]);
-        // 右侧滚动条占位（事件行不覆盖滚动条列）
-        let row_corner = egui::Rect::from_min_max(
-            egui::pos2(event_rows_rect.max.x, event_rows_rect.min.y),
-            egui::pos2(rect.max.x, event_rows_rect.max.y),
-        );
-        ui.painter()
-            .rect_filled(row_corner, 0.0, crate::theme::track_bg());
-        let rows = crate::widgets::event_rows::show(
-            ui,
-            event_rows,
-            crate::widgets::event_rows::EventRowsData {
-                markers: &c.markers,
-                tempo: &c.tempo,
-                time_sig: &c.time_sig,
-                key_sig: &c.key_sig,
-                chords: &c.chord,
-                lyrics: &c.lyrics,
-            },
-            view,
-            event_rows_rect,
-            tpb_val,
-            def_num,
-            def_den,
-            sig_events,
-            &|tick| crate::view_interaction::snap_tick(tick, quantize, ppq, bar_line_data),
-            "piano_event_rows",
-            cursor_tick,
-        );
-        marker_edit = rows.marker_edit;
-        if rows.jumped {
-            selected.clear();
-            sel_rect.clear();
-        }
-    }
 
     // ── Scale background + 八度横线（调号驱动的调内/调外/根音条带）──
     // bg::paint
@@ -255,6 +209,7 @@ pub(crate) fn draw_overlays(
 
     // ── Draw selection box on TOP of GPU content ──
     let mut sel_action = None;
+    let mut marker_edit: Option<crate::widgets::time_ruler::MarkerEdit> = None;
     // marquee::draw_marquee_box
     if effective_tool == crate::widgets::tools_panel::Tool::Select
         || effective_tool == crate::widgets::tools_panel::Tool::SelectVertical
@@ -508,9 +463,7 @@ pub(crate) fn draw_overlays(
             selected.clear();
             sel_rect.clear();
         }
-        if outcome.marker_edit.is_some() {
-            marker_edit = outcome.marker_edit;
-        }
+        marker_edit = outcome.marker_edit;
         let _ = tpb_val;
     }
 

@@ -1,6 +1,8 @@
 // ── Layout constants ──
 pub const TITLE_BAR_H: f32 = 32.0;
 pub const RULER_H: f32 = 30.0;
+/// AR / 通道 AR 标尺高度：事件行移出标尺后，AR 标尺可以更矮。
+pub const AR_RULER_H: f32 = 24.0;
 pub const SCROLLBAR_H: f32 = 24.0;
 /// 垂直滚动条宽度（与水平滚动条高度一致，对称设计）。
 pub const SCROLLBAR_W: f32 = 24.0;

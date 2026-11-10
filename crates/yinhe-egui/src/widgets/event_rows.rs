@@ -6,8 +6,7 @@
 use eframe::egui;
 
 use yinhe_types::{
-    AutomationLane, ChordEvent, EventRowKind, EventRowsState, KeySigEvent, LyricsEvent, NOTE_NAMES,
-    TimeSigEvent,
+    ChordEvent, EventRowKind, EventRowsState, KeySigEvent, LyricsEvent, NOTE_NAMES, TimeSigEvent,
 };
 
 use crate::widgets::time_ruler::{MarkerEdit, TimeRulerView};
@@ -15,7 +14,6 @@ use crate::widgets::time_ruler::{MarkerEdit, TimeRulerView};
 /// 全局事件行需要的数据。AR / 通道 AR / PR 共用。
 pub(crate) struct EventRowsData<'a> {
     pub markers: &'a [yinhe_types::MarkerEvent],
-    pub tempo: &'a AutomationLane,
     pub time_sig: &'a [TimeSigEvent],
     pub key_sig: &'a [KeySigEvent],
     pub chords: &'a [ChordEvent],
@@ -135,7 +133,6 @@ pub(crate) fn show(
             outcome.jumped |= marker.jumped;
         } else {
             match kind {
-                EventRowKind::Tempo => paint_tempo(&painter, content, view, data.tempo),
                 EventRowKind::Meter => paint_text_events(
                     &painter,
                     content,
@@ -180,87 +177,6 @@ pub(crate) fn show(
     }
 
     outcome
-}
-
-fn paint_tempo(
-    painter: &egui::Painter,
-    rect: egui::Rect,
-    view: &impl TimeRulerView,
-    lane: &AutomationLane,
-) {
-    let events = &lane.events;
-    if events.is_empty() {
-        return;
-    }
-    let mut min_v = f32::INFINITY;
-    let mut max_v = f32::NEG_INFINITY;
-    let mut any = false;
-    for e in events {
-        let x = rect.min.x + view.tick_to_main_px(e.tick as f64);
-        if x < rect.min.x {
-            continue;
-        }
-        if x > rect.max.x {
-            break;
-        }
-        any = true;
-        min_v = min_v.min(e.value);
-        max_v = max_v.max(e.value);
-    }
-    if !any {
-        return;
-    }
-    let (min_v, max_v) = if (max_v - min_v).abs() < 1e-6 {
-        (min_v - 1.0, max_v + 1.0)
-    } else {
-        (min_v, max_v)
-    };
-    let y_of = |v: f32| {
-        let t = ((v - min_v) / (max_v - min_v)).clamp(0.0, 1.0);
-        rect.max.y - 3.0 - t * (rect.height() - 6.0)
-    };
-
-    let stroke = egui::Stroke::new(1.0, crate::theme::text_secondary());
-    let mut prev: Option<(f32, f32)> = None;
-    for e in events {
-        let x = rect.min.x + view.tick_to_main_px(e.tick as f64);
-        if x < rect.min.x {
-            prev = Some((x, y_of(e.value)));
-            continue;
-        }
-        if x > rect.max.x {
-            break;
-        }
-        let y = y_of(e.value);
-        if let Some((px, py)) = prev
-            && px >= rect.min.x - 1.0
-        {
-            painter.line_segment(
-                [egui::pos2(px, py), egui::pos2(x, py)],
-                egui::Stroke::new(1.0, crate::theme::line_fg()),
-            );
-        }
-        painter.line_segment([egui::pos2(x, rect.min.y + 2.0), egui::pos2(x, y)], stroke);
-        painter.circle_filled(egui::pos2(x, y), 2.0, crate::theme::accent_active());
-        prev = Some((x, y));
-    }
-
-    // BPM 标签：只在有空间时画第一个可见点，避免密集时糊成一片。
-    if let Some(e) = events
-        .iter()
-        .find(|e| view.tick_to_main_px(e.tick as f64) + rect.min.x >= rect.min.x)
-    {
-        let x = rect.min.x + view.tick_to_main_px(e.tick as f64);
-        if x + 36.0 < rect.max.x {
-            painter.text(
-                egui::pos2(x + 4.0, rect.min.y + 2.0),
-                egui::Align2::LEFT_TOP,
-                format!("{:.1}", e.value),
-                egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT),
-                crate::theme::text_muted(),
-            );
-        }
-    }
 }
 
 fn paint_text_events(
@@ -310,4 +226,35 @@ fn format_key(e: &KeySigEvent) -> String {
         NOTE_NAMES[(e.root % 12) as usize],
         e.scale.english_name()
     )
+}
+
+/// AR 左上角（标尺与轨道面板交界）的 Events 下拉按钮。
+///
+/// 勾选控制事件行显示；默认全部关闭，不占用音轨区域高度。
+pub(crate) fn controls(ui: &mut egui::Ui, rect: egui::Rect, state: &mut EventRowsState) {
+    let button_rect = egui::Rect::from_min_size(
+        rect.min + egui::vec2(6.0, 2.0),
+        egui::vec2(
+            (rect.width() - 12.0).max(42.0),
+            (rect.height() - 4.0).max(16.0),
+        ),
+    );
+    let resp = ui.put(
+        button_rect,
+        egui::Button::new(
+            egui::RichText::new("Events ▾")
+                .size(crate::theme::SMALL_LABEL_FONT)
+                .color(crate::theme::text_secondary()),
+        )
+        .frame(false),
+    );
+    egui::Popup::from_toggle_button_response(&resp).show(|ui| {
+        ui.set_min_width(120.0);
+        for kind in EventRowKind::ALL {
+            let mut visible = state.is_visible(kind);
+            if ui.checkbox(&mut visible, kind.label()).changed() {
+                state.set_visible(kind, visible);
+            }
+        }
+    });
 }
