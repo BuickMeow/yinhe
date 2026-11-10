@@ -101,15 +101,25 @@ fn pr_total_units() -> f32 {
 fn pr_key_bottom(key: u32) -> f32 {
     let base = pr_units_before(u.key_offset);
     let rel_lo = pr_units_before(key) - base;
-    return (pr_total_units() * u.key_height - u.scroll_y) - rel_lo * u.key_height;
+    // 音高轴滚动量随方向取：横向 = scroll_y，纵向 = scroll_x。
+    let pitch_scroll = select(u.scroll_y, u.scroll_x, u.orientation == 1u);
+    return (pr_total_units() * u.key_height - pitch_scroll) - rel_lo * u.key_height;
 }
 
 /// PR 音高行 → `(top, height)` 像素（横向 y / 纵向 x）。
 fn pr_key_px(key: u32) -> vec2<f32> {
+    let base = pr_units_before(u.key_offset);
     let r = pr_row(key);
+    let rel_lo = r.x - base;
     let h_units = r.y - r.x;
+    let h_px = max(h_units * u.key_height, 1.0);
+    if u.orientation == 1u {
+        // 纵向：音高沿 X，key 0 在左，x = rel*kh - scroll_x（与键盘一致）。
+        let left = rel_lo * u.key_height - u.scroll_x;
+        return vec2<f32>(left, h_px);
+    }
     let bottom = pr_key_bottom(key);
-    return vec2<f32>(bottom - h_units * u.key_height, max(h_units * u.key_height, 1.0));
+    return vec2<f32>(bottom - h_units * u.key_height, h_px);
 }
 
 
@@ -198,7 +208,7 @@ fn main(
             if u.orientation == 1u {
                 // 纵向瀑布流：音高沿 X（折叠后的行位置），时间沿 Y。
                 let kpx = pr_key_px(key);
-                let key_x = kpx.x - u.scroll_x;
+                let key_x = kpx.x;
                 let key_x_right = key_x + kpx.y;
                 let tick_y = f32(start_tick) * u.pixels_per_tick - u.scroll_y;
                 let tick_y_bottom = f32(end_tick) * u.pixels_per_tick - u.scroll_y;

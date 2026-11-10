@@ -300,8 +300,6 @@ pub fn show(
         ppq,
     );
     view.clamp_scroll(w as f32, h as f32, total_ticks);
-    // 纵向滚轴保护：clamp / 其它处理器若动了未锁定轴，这里恢复到本帧原值。
-    crate::view_interaction::apply_pr_scroll_guard(ui, view);
 
     // ── Dirty detection ──
     // cursor_tick no longer affects rendering at all — the cursor is drawn

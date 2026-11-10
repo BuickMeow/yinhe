@@ -195,39 +195,15 @@ pub(crate) fn handle_input(
                 // 纵向滚轮 y→时间（scroll_y）/x→音高（scroll_x）。
                 // 纵向时间轴已镜像（tick0 在底部），时间平移方向随之取反。
                 let main_scroll = if vertical {
-                    // 纵向一次滚动可能同时带 x/y 分量（触控板与部分鼠标都是）。
-                    // 手势开始时选一根轴，并在整个手势内**冻结另一根轴**：
-                    // 每帧先恢复冻结值再只应用锁定轴，任何 clamp / 其它处理器
-                    // 造成的另一轴漂移都会在本帧被抹掉，不会出现 45° 斜移。
-                    let state_id = egui::Id::unique("pr_scroll_axis_state");
-                    if !ui.input(|i| i.is_scrolling()) {
-                        ui.data_mut(|d| d.remove::<(bool, f32, f32)>(state_id));
-                    }
-                    let mut state = ui.data_mut(|d| d.get_temp::<(bool, f32, f32)>(state_id));
-                    if state.is_none() {
-                        let pick = scroll.y.abs() >= scroll.x.abs();
-                        let s = (pick, *view.scroll_x(), *view.scroll_y());
-                        ui.data_mut(|d| d.insert_temp(state_id, s));
-                        state = Some(s);
-                    }
-                    let (main_axis, frozen_x, frozen_y) = state.unwrap_or((true, 0.0, 0.0));
-                    *view.scroll_x() = frozen_x;
-                    *view.scroll_y() = frozen_y;
-                    let applied = if main_axis {
+                    // 纵向：x/y 同时存在时只取主方向。音高轴（X）与时间轴（Y）
+                    // 各自绑定自己的滚动量，GPU 着色器也按方向取对应的音高滚动。
+                    if scroll.y.abs() >= scroll.x.abs() {
                         *view.scroll_y() += scroll.y;
                         scroll.y
                     } else {
                         *view.scroll_x() -= scroll.x;
                         0.0
-                    };
-                    // 帧末（clamp_scroll 之后）再次把冻结轴写回。
-                    ui.data_mut(|d| {
-                        d.insert_temp(
-                            egui::Id::unique("pr_scroll_axis_guard"),
-                            (frozen_x, frozen_y, main_axis),
-                        )
-                    });
-                    applied
+                    }
                 } else {
                     *view.scroll_x() -= scroll.x;
                     *view.scroll_y() -= scroll.y;
@@ -314,23 +290,6 @@ pub(crate) fn handle_input(
             *follow_mode = FollowMode::None;
         }
         ui.ctx().request_repaint();
-    }
-}
-
-/// 取出本帧纵向 PR 的滚轴保护状态（未锁定轴的原值 + 本次是否走时间轴）。
-fn take_pr_scroll_guard(ui: &egui::Ui) -> Option<(f32, f32, bool)> {
-    ui.data_mut(|d| d.remove_temp::<(f32, f32, bool)>(egui::Id::unique("pr_scroll_axis_guard")))
-}
-
-/// clamp_scroll / 其它处理器之后调用：把未锁定轴恢复到本帧滚动前的值。
-pub(crate) fn apply_pr_scroll_guard(ui: &egui::Ui, view: &mut impl ViewInteraction) {
-    if let Some((before_cross, before_main, main_axis)) = take_pr_scroll_guard(ui) {
-        if main_axis {
-            *view.scroll_x() = before_cross;
-        } else {
-            *view.scroll_y() = before_main;
-        }
-        *view.dirty() = true;
     }
 }
 
@@ -424,10 +383,9 @@ pub(crate) fn draw_hover_tooltip(ctx: &egui::Context, lines: &[String], x: f32, 
 mod tests {
     use super::*;
 
-    /// 回归：纵向 PR 的斜向滚动必须在手势开始时锁定单轴，
-    /// 不能逐帧按主方向切换，否则时间/音高同时移动成 45°。
+    /// 回归：纵向 PR 的纯垂直滚动只移动时间轴，音高轴（X）必须保持不动。
     #[test]
-    fn vertical_pr_locks_scroll_axis_within_gesture() {
+    fn vertical_pr_wheel_only_moves_time_axis() {
         let ctx = egui::Context::default();
         let mut view = yinhe_types::PianoRollView::default();
         view.set_orientation(yinhe_types::Orientation::Vertical);
@@ -468,21 +426,18 @@ mod tests {
             out.drop_without_applying_deltas();
         };
 
-        // 指针先进入区域（建立 hover）。
-        // 先模拟一帧布局 clamp，建立初始音高位置（真实 PR 首帧就会做）。
         run(vec![egui::Event::PointerMoved(screen.center())], &mut view);
         view.clamp_scroll(800.0, 600.0, 10_000_000.0);
         let initial_cross = view.base.scroll_x;
 
-        // 手势开始：y 略占优 → 锁定时间轴。
+        // 纯垂直分量：时间轴滚动，音高轴不能跟着动。
         run(
             vec![
-                wheel(60.0, 80.0, egui::TouchPhase::Start),
-                wheel(60.0, 80.0, egui::TouchPhase::Move),
+                wheel(0.0, 80.0, egui::TouchPhase::Start),
+                wheel(0.0, 80.0, egui::TouchPhase::Move),
             ],
             &mut view,
         );
-        // 模拟真实帧末 clamp（含 viewport 比例换算），确认不会引入另一轴位移。
         view.clamp_scroll(800.0, 600.0, 10_000_000.0);
         assert!(
             view.base.scroll_y != 0.0,
@@ -491,57 +446,8 @@ mod tests {
         );
         assert_eq!(
             view.base.scroll_x, initial_cross,
-            "手势第一帧不应同时移动音高轴"
+            "时间滚动不得带动音高轴（否则音符斜 45°）"
         );
-
-        // 模拟布局阶段的 clamp 先把音高轴推走：下一帧滚动必须把它拉回手势起点。
-        view.base.scroll_x += 50.0;
-        // 同一手势的后续帧 x 占优：仍应锁在时间轴，不能变成 45° 斜移。
-        run(vec![wheel(-160.0, 0.0, egui::TouchPhase::Move)], &mut view);
-        view.clamp_scroll(800.0, 600.0, 10_000_000.0);
-        assert_eq!(
-            view.base.scroll_x, initial_cross,
-            "同一手势内不得切换到音高轴（否则斜 45°）"
-        );
-
-        // 模拟别处也处理了同一次滚动的 x 分量：帧末保护必须把冻结轴抹回去。
-        let ctx2 = egui::Context::default();
-        ctx2.run_ui(Default::default(), |ui| {
-            ui.data_mut(|d| {
-                d.insert_temp(
-                    egui::Id::unique("pr_scroll_axis_guard"),
-                    (initial_cross, view.base.scroll_y, true),
-                )
-            });
-            view.base.scroll_x = initial_cross + 37.0;
-            super::apply_pr_scroll_guard(ui, &mut view);
-        })
-        .drop_without_applying_deltas();
-        assert_eq!(
-            view.base.scroll_x, initial_cross,
-            "帧末保护应抹掉其它路径对未锁定轴的改动"
-        );
-    }
-
-    /// 帧末保护：未锁定轴被其它路径改动时要恢复，避免两个轴同时移动。
-    #[test]
-    fn scroll_guard_restores_unlocked_axis() {
-        let ctx = egui::Context::default();
-        let mut view = yinhe_types::PianoRollView::default();
-        ctx.run_ui(Default::default(), |ui| {
-            ui.data_mut(|d| {
-                d.insert_temp(
-                    egui::Id::unique("pr_scroll_axis_guard"),
-                    (123.0f32, 456.0f32, true),
-                )
-            });
-            view.base.scroll_x = 999.0;
-            view.base.scroll_y = 777.0;
-            super::apply_pr_scroll_guard(ui, &mut view);
-        })
-        .drop_without_applying_deltas();
-        assert_eq!(view.base.scroll_x, 123.0, "未锁定的音高轴应恢复原值");
-        assert_eq!(view.base.scroll_y, 777.0, "时间轴不应被保护逻辑改写");
     }
 
     /// 回归：垂直/水平滚轮经 handle_input 应平移视图 scroll（AR 与通道 AR 共用路径）。

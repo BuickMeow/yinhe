@@ -121,9 +121,18 @@ fn pr_key_px(key: u32) -> vec2<f32> {
     let rel_lo = r.x - base;
     let h_units = r.y - r.x;
     let total = pr_total_units();
+    let h_px = max(h_units * u.key_height, 1.0);
+    if u.orientation == 1u {
+        // 纵向瀑布流：音高沿 X，key 0 在左（与键盘 key_to_cross_px 同向），
+        // x = rel * key_height - scroll_x。不能用横向的 total 反转公式，
+        // 否则音高会镜像且被时间滚动量 scroll_y 带偏 → 斜移。
+        let left = rel_lo * u.key_height - u.scroll_x;
+        return vec2<f32>(left, h_px);
+    }
+    // 横向：音高沿 Y，key 0 在底部（top-down），y = total*kh - scroll_y - rel*kh。
     let bottom = total * u.key_height - u.scroll_y;
     let top = bottom - (rel_lo + h_units) * u.key_height;
-    return vec2<f32>(top, max(h_units * u.key_height, 1.0));
+    return vec2<f32>(top, h_px);
 }
 
 
@@ -441,7 +450,7 @@ fn note_geometry(
         // 纵向瀑布流：音高沿 X（key * key_height - scroll_x，从 0 开始），
         // 时间沿 Y 反转（tick 0 在底部、越大越靠上，键盘在底部 = 当前时刻）。
         let kpx = pr_key_px(key);
-        pixel_x = kpx.x - u.scroll_x;
+        pixel_x = kpx.x;
         right = pixel_x + kpx.y;
         pixel_w = kpx.y;
         let y_a = u.height - (f32(s_tick) * ppu - u.scroll_y);
