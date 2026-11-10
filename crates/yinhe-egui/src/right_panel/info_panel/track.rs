@@ -14,6 +14,8 @@ use yinhe_editor_core::document::Document;
 
 use rust_i18n::t;
 
+mod instrument;
+
 /// 固定标签列 + 只读值（`BODY_FONT` + `text_bright`）。
 fn field_value(ui: &mut egui::Ui, label: &str, value: impl Into<String>) {
     crate::widgets::rows::form_row(ui, label, |ui| {
@@ -174,6 +176,13 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
                 td.port = new_port;
                 td.channel = new_ch;
             }
+            // A10（索引 9）默认鼓通道；显式关鼓会保存为 Bank 0，不会被覆盖。
+            if new_ch == 9 && model.channel_instruments[9].is_none() {
+                model.channel_instruments[9] = Some(yinhe_core::ChannelInstrument {
+                    bank_msb: 128,
+                    program: 0,
+                });
+            }
         }
         doc.data.rebuild_model();
         doc.edit.track_cache.rebuild_info(&doc.data);
@@ -183,10 +192,15 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
 
     ui.add_space(4.0);
 
+    // ── 通道默认乐器 / 鼓通道 ──
+    let instrument_changed = instrument::show(ui, doc, track_idx);
+
+    ui.add_space(4.0);
+
     // ── 颜色（行高一致的小色块 + 重置）──
     show_color_row(ui, doc, track_idx);
 
-    port_changed
+    port_changed || instrument_changed
 }
 
 /// 颜色行：色块（点击直接弹出取色器）+ 重置按钮。

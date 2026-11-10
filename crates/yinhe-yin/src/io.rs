@@ -275,9 +275,17 @@ fn load_yin_bytes_inner(
         tracks.push(Arc::new(td));
     }
 
+    // A10 默认鼓通道：旧存档缺省（None）时补上 Bank 128 / Standard Kit。
+    let mut channel_instruments = mapping.channel_instruments;
+    if channel_instruments[9].is_none() {
+        channel_instruments[9] = Some(yinhe_core::ChannelInstrument {
+            bank_msb: 128,
+            program: 0,
+        });
+    }
     let mut model = YinModel {
         conductor: Arc::new(model_data.conductor),
-        channel_instruments: mapping.channel_instruments,
+        channel_instruments,
         tracks,
         meta: ProjectMeta {
             name: project.name.clone(),

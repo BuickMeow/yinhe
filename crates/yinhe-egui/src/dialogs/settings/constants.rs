@@ -301,10 +301,10 @@ pub const SETTING_ITEMS: &[SettingItem] = &[
     },
     SettingItem {
         cat: 6,
-        zh: "启用 Clip",
-        en: "Enable Clips",
-        ja: "Clip を有効化",
-        ko: "Clip 활성화",
+        zh: "启用 Clip（实验性）",
+        en: "Enable Clips (Experimental)",
+        ja: "Clip を有効化（実験的）",
+        ko: "Clip 활성화(실험적)",
     },
     SettingItem {
         cat: 6,

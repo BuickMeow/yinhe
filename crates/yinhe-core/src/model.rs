@@ -618,9 +618,18 @@ impl YinModel {
             tracks.push(Arc::new(t));
         }
 
+        // A10（1-based 第 10 通道，索引 9）默认是鼓通道。用通道默认乐器
+        // 表示鼓：Bank MSB 128。任一 MIDI PC 仍可覆盖。
+        let mut channel_instruments = [None; 16];
+        channel_instruments[9] = Some(ChannelInstrument {
+            bank_msb: 128,
+            program: 0,
+        });
+
         Self {
             conductor,
             tracks,
+            channel_instruments,
             ..Default::default()
         }
     }
@@ -1966,6 +1975,21 @@ mod tests {
         info.apply_to(&mut meta);
         assert_eq!(meta.artist, "Fallback");
         assert_eq!(meta.copyright, "Keep");
+    }
+
+    #[test]
+    fn new_empty_project_makes_a10_drum() {
+        let m = YinModel::new_empty_with_16_tracks();
+        assert_eq!(
+            m.channel_instruments[9],
+            Some(ChannelInstrument {
+                bank_msb: 128,
+                program: 0
+            }),
+            "A10（索引 9）默认 Standard Kit"
+        );
+        assert_eq!(m.channel_instruments[8], None);
+        assert_eq!(m.channel_instruments[10], None);
     }
 
     #[test]

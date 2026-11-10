@@ -1905,7 +1905,7 @@ mod tests {
                     configs: Box::new(Vec::new()),
                 },
                 "SetSoundFonts",
-                false,
+                true,
             ),
             (
                 AudioCommand::SkipTracks { skip: Vec::new() },

@@ -177,7 +177,7 @@ pub fn show(ui: &mut egui::Ui, draft: &mut ProjectSettingsDraft) {
         t!("project.ppq_desc").as_ref(),
         |ui| {
             crate::widgets::stepper::stepper(&mut draft.ppq)
-                .range(1..=32767)
+                .range(1..=65535)
                 .step(1.0)
                 .width(110.0)
                 .show(ui);

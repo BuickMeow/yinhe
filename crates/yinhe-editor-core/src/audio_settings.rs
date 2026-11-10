@@ -73,7 +73,7 @@ fn default_ignore_velocity() -> u8 {
 pub use yinhe_types::{Interpolation, SynthEngine};
 
 fn default_clip_enabled() -> bool {
-    true
+    false
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -287,14 +287,14 @@ mod tests {
     }
 
     #[test]
-    fn clip_enabled_defaults_true_for_old_saves() {
-        // 旧存档缺字段必须能反序列化，且默认开启 Clip 功能
+    fn clip_enabled_defaults_false_for_old_saves() {
+        // 实验性 Clip 默认关闭；旧存档缺字段也必须能反序列化
         let mut v = serde_json::to_value(AudioSettings::default()).expect("serialize default");
         v.as_object_mut()
             .expect("settings serializes to object")
             .remove("clip_enabled");
         let s: AudioSettings = serde_json::from_value(v).expect("old save without flag loads");
-        assert!(s.clip_enabled);
+        assert!(!s.clip_enabled);
     }
 
     #[test]
