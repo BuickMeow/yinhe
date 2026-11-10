@@ -184,6 +184,9 @@ pub fn apply_to_ctx(ctx: &egui::Context) {
         visuals.widgets.noninteractive.weak_bg_fill = app_bg();
         visuals
     });
+    // 全局关闭 Label 文字选择：历史记录/设置项等点击行时不会误拖选文字。
+    // TextEdit 仍可正常选择输入内容（由 TextEdit 自己处理）。
+    ctx.all_styles_mut(|style| style.interaction.selectable_labels = false);
 }
 
 #[cfg(test)]

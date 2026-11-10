@@ -162,6 +162,20 @@ pub fn handle_interactions(
         let track_idx = track_info.get(idx).map(|t| t.index).unwrap_or(0);
         let is_conductor = conductor_track_idx == Some(track_idx);
 
+        if !is_conductor
+            && ui
+                .add(crate::widgets::menu::menu_item_button(
+                    ui,
+                    false,
+                    t!("arrange.rename_track").as_ref(),
+                ))
+                .clicked()
+        {
+            if let Some(info) = track_info.get(idx) {
+                crate::widgets::track_rename::begin(ui, idx, &info.name);
+            }
+            ui.close();
+        }
         if ui
             .add(crate::widgets::menu::menu_item_button(
                 ui,

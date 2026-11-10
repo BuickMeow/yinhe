@@ -295,32 +295,37 @@ fn segmented_icons(
     let mut clicked = None;
     ui.push_id(id_salt, |ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            for (i, icon) in icons.iter().enumerate() {
-                let radius = egui::CornerRadius {
-                    nw: if i == 0 { 3 } else { 0 },
-                    sw: if i == 0 { 3 } else { 0 },
-                    ne: if i + 1 == icons.len() { 3 } else { 0 },
-                    se: if i + 1 == icons.len() { 3 } else { 0 },
-                };
-                let resp = ui.add(
-                    egui::Button::new(icon.rich_text().size(14.0).color(if i == active {
-                        crate::theme::accent_active()
-                    } else {
-                        crate::theme::text_primary()
-                    }))
-                    .selected(i == active)
-                    .min_size(egui::vec2(seg_w, h))
-                    .corner_radius(radius),
-                );
-                if resp.hovered() {
-                    resp.clone().on_hover_cursor(egui::CursorIcon::PointingHand);
+        let width = seg_w * icons.len() as f32;
+        ui.allocate_ui_with_layout(
+            egui::vec2(width, h),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                for (i, icon) in icons.iter().enumerate() {
+                    let radius = egui::CornerRadius {
+                        nw: if i == 0 { 3 } else { 0 },
+                        sw: if i == 0 { 3 } else { 0 },
+                        ne: if i + 1 == icons.len() { 3 } else { 0 },
+                        se: if i + 1 == icons.len() { 3 } else { 0 },
+                    };
+                    let resp = ui.add(
+                        egui::Button::new(icon.rich_text().size(14.0).color(if i == active {
+                            crate::theme::accent_active()
+                        } else {
+                            crate::theme::text_primary()
+                        }))
+                        .selected(i == active)
+                        .min_size(egui::vec2(seg_w, h))
+                        .corner_radius(radius),
+                    );
+                    if resp.hovered() {
+                        resp.clone().on_hover_cursor(egui::CursorIcon::PointingHand);
+                    }
+                    if resp.clicked() {
+                        clicked = Some(i);
+                    }
                 }
-                if resp.clicked() {
-                    clicked = Some(i);
-                }
-            }
-        });
+            },
+        );
     });
     clicked
 }
@@ -341,34 +346,39 @@ fn segmented(
     let mut clicked = None;
     ui.push_id(id_salt, |ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            for (i, label) in labels.iter().enumerate() {
-                let radius = egui::CornerRadius {
-                    nw: if i == 0 { 3 } else { 0 },
-                    sw: if i == 0 { 3 } else { 0 },
-                    ne: if i + 1 == labels.len() { 3 } else { 0 },
-                    se: if i + 1 == labels.len() { 3 } else { 0 },
-                };
-                let resp = ui.add(
-                    egui::Button::new(egui::RichText::new(*label).size(font_size).color(
-                        if i == active {
-                            crate::theme::accent_active()
-                        } else {
-                            crate::theme::text_primary()
-                        },
-                    ))
-                    .selected(i == active)
-                    .min_size(egui::vec2(seg_w, h))
-                    .corner_radius(radius),
-                );
-                if resp.hovered() {
-                    resp.clone().on_hover_cursor(egui::CursorIcon::PointingHand);
+        let width = seg_w * labels.len() as f32;
+        ui.allocate_ui_with_layout(
+            egui::vec2(width, h),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                for (i, label) in labels.iter().enumerate() {
+                    let radius = egui::CornerRadius {
+                        nw: if i == 0 { 3 } else { 0 },
+                        sw: if i == 0 { 3 } else { 0 },
+                        ne: if i + 1 == labels.len() { 3 } else { 0 },
+                        se: if i + 1 == labels.len() { 3 } else { 0 },
+                    };
+                    let resp = ui.add(
+                        egui::Button::new(egui::RichText::new(*label).size(font_size).color(
+                            if i == active {
+                                crate::theme::accent_active()
+                            } else {
+                                crate::theme::text_primary()
+                            },
+                        ))
+                        .selected(i == active)
+                        .min_size(egui::vec2(seg_w, h))
+                        .corner_radius(radius),
+                    );
+                    if resp.hovered() {
+                        resp.clone().on_hover_cursor(egui::CursorIcon::PointingHand);
+                    }
+                    if resp.clicked() {
+                        clicked = Some(i);
+                    }
                 }
-                if resp.clicked() {
-                    clicked = Some(i);
-                }
-            }
-        });
+            },
+        );
     });
     clicked
 }
@@ -404,4 +414,89 @@ fn icon_button_at(
         .inner
     })
     .inner
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text_rects(ctx: &egui::Context, width: f32) -> Vec<(String, egui::Rect)> {
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(0.0, 0.0),
+            egui::vec2(width, crate::theme::PR_TOOL_BAR_H),
+        );
+        let mut view = PianoRollView::default();
+        let mut tool = Tool::Select;
+        let mut clip_mode = false;
+        let output = ctx.run_ui(Default::default(), |ui| {
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                show(
+                    ui,
+                    rect,
+                    &mut tool,
+                    &mut view,
+                    Some(0xFFF),
+                    "C Major",
+                    &mut clip_mode,
+                    true,
+                );
+            });
+        });
+        let mut out = Vec::new();
+        for cs in &output.shapes {
+            if let egui::Shape::Text(t) = &cs.shape {
+                let text = t.galley.text().to_owned();
+                if matches!(
+                    text.as_str(),
+                    "88" | "128" | "256" | "C Major" | "Scale" | "CLIP" | "SONG"
+                ) {
+                    out.push((text, egui::Rect::from_min_size(t.pos, t.galley.size())));
+                }
+            }
+        }
+        output.drop_without_applying_deltas();
+        out
+    }
+
+    /// 回归：右侧文字分段组不得互相压住，且必须完整落在工具栏内。
+    #[test]
+    fn right_text_groups_stay_separated() {
+        let ctx = egui::Context::default();
+        ctx.add_font(egui_material_icons::font_insert());
+        ctx.run_ui(Default::default(), |_| {})
+            .drop_without_applying_deltas();
+        for width in [1600.0, 1400.0, 1200.0, 1000.0, 900.0] {
+            let rects = text_rects(&ctx, width);
+
+            let find = |needle: &str| {
+                rects
+                    .iter()
+                    .find(|(t, _)| t == needle)
+                    .map(|(_, r)| *r)
+                    .unwrap_or_else(|| panic!("缺少文字 {needle}: {rects:?}"))
+            };
+            let a = find("88");
+            let b = find("128");
+            let c = find("256");
+            let scale = find("C Major");
+            assert!(
+                a.max.x <= b.min.x + 0.5,
+                "88/128 重叠 (width={width}): {a:?} {b:?}"
+            );
+            assert!(
+                b.max.x <= c.min.x + 0.5,
+                "128/256 重叠 (width={width}): {b:?} {c:?}"
+            );
+            assert!(
+                scale.max.x <= a.min.x + 0.5,
+                "Scale 与键数分段重叠 (width={width}): {scale:?} {a:?}"
+            );
+            for r in [a, b, c, scale] {
+                assert!(
+                    r.min.x >= 0.0 && r.max.x <= width,
+                    "文字超出工具栏 (width={width}): {r:?}"
+                );
+            }
+        }
+    }
 }

@@ -340,8 +340,18 @@ pub fn show(
         let cx_local = view.tick_to_x(ct);
         if cx_local >= lb_w && cx_local <= w as f32 {
             let cx = rect.min.x + cx_local;
+            // 暂停时只画选中音轨的一行；播放时全高，便于跟随时看整段。
+            let (y0, y1) = if cfg.is_playing {
+                (rect.min.y, rect.max.y)
+            } else if let Some(track) = edit.track_selected.iter().min().copied() {
+                let t = track as usize;
+                let top = rect.min.y + row_layout.track_y(t, lh) - scroll_y;
+                (top, (top + lh).min(rect.max.y))
+            } else {
+                (rect.min.y, rect.max.y)
+            };
             painter.line_segment(
-                [egui::pos2(cx, rect.min.y), egui::pos2(cx, rect.max.y)],
+                [egui::pos2(cx, y0), egui::pos2(cx, y1)],
                 egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::accent_active()),
             );
         }

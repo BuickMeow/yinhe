@@ -429,13 +429,30 @@ pub(crate) fn show(
 
             let name = &ti.name;
             let name_font = render::detail_font(*row_height);
-            painter.text(
-                egui::pos2(text_x, badge_rect.min.y + *row_height * 0.70),
-                egui::Align2::LEFT_CENTER,
-                name,
-                name_font,
-                crate::theme::text_primary(),
-            );
+            let name_y = badge_rect.min.y + *row_height * 0.70;
+            if crate::widgets::track_rename::active(ui, idx) {
+                let name_rect = egui::Rect::from_min_size(
+                    egui::pos2(text_x, name_y - name_font.size * 0.75),
+                    egui::vec2(
+                        (row_rect.max.x - text_x - 8.0).max(60.0),
+                        name_font.size * 1.5,
+                    ),
+                );
+                if let Some(new_name) = crate::widgets::track_rename::show(ui, idx, name_rect) {
+                    actions.push(TrackAction::RenameTrack {
+                        idx,
+                        name: new_name,
+                    });
+                }
+            } else {
+                painter.text(
+                    egui::pos2(text_x, name_y),
+                    egui::Align2::LEFT_CENTER,
+                    name,
+                    name_font,
+                    crate::theme::text_primary(),
+                );
+            }
 
             if !is_conductor {
                 let muted = track_overrides.get(idx).map(|o| o.muted).unwrap_or(false);
@@ -525,13 +542,29 @@ pub(crate) fn show(
 
             let name = &ti.name;
             let name_font = render::compact_font(*row_height);
-            painter.text(
-                egui::pos2(text_x + 40.0, badge_rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                name,
-                name_font,
-                crate::theme::text_primary(),
-            );
+            if crate::widgets::track_rename::active(ui, idx) {
+                let name_rect = egui::Rect::from_min_size(
+                    egui::pos2(text_x + 40.0, badge_rect.center().y - name_font.size * 0.75),
+                    egui::vec2(
+                        (row_rect.max.x - text_x - 48.0).max(60.0),
+                        name_font.size * 1.5,
+                    ),
+                );
+                if let Some(new_name) = crate::widgets::track_rename::show(ui, idx, name_rect) {
+                    actions.push(TrackAction::RenameTrack {
+                        idx,
+                        name: new_name,
+                    });
+                }
+            } else {
+                painter.text(
+                    egui::pos2(text_x + 40.0, badge_rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    name,
+                    name_font,
+                    crate::theme::text_primary(),
+                );
+            }
         }
     }
 

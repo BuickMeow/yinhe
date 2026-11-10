@@ -100,13 +100,68 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) -> bool {
             } else {
                 theme::text_secondary()
             };
-            ui.painter().text(
-                egui::pos2(swatch.max.x + icon_gap, rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                format!("{:03} {}", i, name),
-                egui::FontId::proportional(scaled_font(ui.ctx(), theme::SMALL_FONT)),
-                text_color,
-            );
+            let name_font = egui::FontId::proportional(scaled_font(ui.ctx(), theme::SMALL_FONT));
+            let name_x = swatch.max.x + icon_gap;
+            if crate::widgets::track_rename::active(ui, i) {
+                let name_rect = egui::Rect::from_min_size(
+                    egui::pos2(name_x, rect.center().y - name_font.size * 0.75),
+                    egui::vec2(
+                        (rect.max.x - name_x - scaled_font(ui.ctx(), 40.0)).max(80.0),
+                        name_font.size * 1.5,
+                    ),
+                );
+                if let Some(new_name) = crate::widgets::track_rename::show(ui, i, name_rect) {
+                    let before = doc.capture_snapshot();
+                    let info = doc.edit.track_cache.info[i].clone();
+                    let inst = doc
+                        .data
+                        .model
+                        .channel_instruments
+                        .get(info.channel as usize)
+                        .copied()
+                        .flatten();
+                    if let Some(action) =
+                        doc.set_track_info(i, new_name, info.port, info.channel, inst)
+                    {
+                        doc.push_undo(
+                            action,
+                            rust_i18n::t!("undo.edit_track_info").as_ref(),
+                            before,
+                        );
+                    }
+                }
+            } else {
+                ui.painter().text(
+                    egui::pos2(name_x, rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    format!("{:03} {}", i, name),
+                    name_font,
+                    text_color,
+                );
+            }
+
+            // 右键：重命名（Conductor 也可改名，同步歌曲标题）。
+            // 右侧锁定/可见图标有自己的右击语义（图层独奏），让开图标区。
+            let over_icons = ui.input(|inp| {
+                inp.pointer
+                    .hover_pos()
+                    .is_some_and(|p| p.x >= rect.max.x - row_h * 2.2)
+            });
+            if !over_icons {
+                resp.context_menu(|ui| {
+                    if ui
+                        .add(crate::widgets::menu::menu_item_button(
+                            ui,
+                            false,
+                            rust_i18n::t!("arrange.rename_track").as_ref(),
+                        ))
+                        .clicked()
+                    {
+                        crate::widgets::track_rename::begin(ui, i, &name);
+                        ui.close();
+                    }
+                });
+            }
 
             // 右侧 可见 / 锁定 图标（Conductor 轨不提供）。
             if Some(i as u16) != conductor_idx {

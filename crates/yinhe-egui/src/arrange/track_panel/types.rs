@@ -21,4 +21,6 @@ pub(crate) enum TrackAction {
     DeleteAutomation { idx: usize, lane_idx: usize },
     /// 右键「音轨属性」：选中该轨并请求打开属性浮窗（不改动模型）。
     ShowProperties { idx: usize },
+    /// 音轨面板内联重命名提交。
+    RenameTrack { idx: usize, name: String },
 }

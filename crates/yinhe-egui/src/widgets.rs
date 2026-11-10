@@ -33,3 +33,4 @@ pub mod time_ruler;
 pub mod timecode;
 pub mod toast;
 pub mod tools_panel;
+pub(crate) mod track_rename;

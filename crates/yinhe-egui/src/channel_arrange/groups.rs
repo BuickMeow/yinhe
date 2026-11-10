@@ -98,11 +98,12 @@ impl CaGroups {
         self.midi.iter().chain(self.audio.iter())
     }
 
-    /// 每轨道的显示色（通道 AR 统一色）：该轨道所属通道的首轨色；
+    /// 每轨道的显示色（通道 AR 统一色）：按通道行顺序依次取调色板；
     /// Conductor 轨用 conductor 色；不归任何通道的轨道保留自身色。
     ///
     /// 通道 AR 内「同一通道 = 同一颜色」：轨道行、音符、自动化曲线、
-    /// 音频片段全部走该表。
+    /// 音频片段全部走该表。按行序取色避免通道内多轨时首轨色跳号，
+    /// 导致视觉上颜色中间空档。
     pub fn track_colors_by_channel(
         &self,
         track_colors: &[[f32; 4]],
@@ -110,8 +111,9 @@ impl CaGroups {
         conductor_color: [f32; 4],
     ) -> Vec<[f32; 4]> {
         let mut out: Vec<[f32; 4]> = track_colors.to_vec();
-        for group in self.iter_all() {
-            let c = group.color(track_colors);
+        for (i, group) in self.iter_all().enumerate() {
+            let p = yinhe_types::TRACK_PALETTE[i % yinhe_types::TRACK_PALETTE.len()];
+            let c = [p[0], p[1], p[2], 1.0];
             for &t in &group.tracks {
                 if let Some(slot) = out.get_mut(t as usize) {
                     *slot = c;
@@ -189,9 +191,10 @@ mod tests {
             [0.0, 1.0, 0.0, 1.0],
         ];
         let uni = groups.track_colors_by_channel(&colors, Some(0), [0.9, 0.9, 0.9, 1.0]);
-        assert_eq!(uni[1], [1.0, 0.0, 0.0, 1.0], "A01 首轨色");
-        assert_eq!(uni[3], [1.0, 0.0, 0.0, 1.0], "A01 另一轨统一为首轨色");
-        assert_eq!(uni[2], [0.0, 0.0, 1.0, 1.0], "不同通道保持自身色");
+        let p0 = yinhe_types::TRACK_PALETTE[0];
+        assert_eq!(uni[1], [p0[0], p0[1], p0[2], 1.0], "A01 取调色板第 0 色");
+        assert_eq!(uni[3], uni[1], "A01 另一轨统一为通道色");
+        assert_ne!(uni[2], uni[1], "不同通道颜色不同");
         assert_eq!(uni[0], [0.9, 0.9, 0.9, 1.0], "Conductor 用主题色");
     }
 

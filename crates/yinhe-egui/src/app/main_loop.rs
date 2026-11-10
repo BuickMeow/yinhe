@@ -731,13 +731,8 @@ impl eframe::App for App {
                     .unwrap_or_default(),
                 quantize_arrange_auto_resolved: active_doc
                     .map(|d| {
-                        // MIX 主区域是通道 AR（chan_ar_view）：Auto 的解析必须
-                        // 跟随通道 AR 的缩放；其他模式跟随普通 AR 视口。
-                        let ppu = if self.view_mode == crate::chrome::mode_bar::ViewMode::Mix {
-                            d.edit.chan_ar_view.base.pixels_per_tick
-                        } else {
-                            d.edit.arrange_view.base.pixels_per_tick
-                        };
+                        // AR 与通道 AR（MIX）共用同一视口，Auto 统一跟随它。
+                        let ppu = d.edit.arrange_view.base.pixels_per_tick;
                         // Auto 会解析成的网格（弹窗内显示用，与当前档位无关）。
                         let (sig_num, sig_den) = d.data.model.tempo_map.time_sig_default;
                         yinhe_editor_core::quantize::auto_preset_with_time_sig(

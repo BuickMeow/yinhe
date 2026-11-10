@@ -113,7 +113,7 @@ pub(crate) fn show(
         gpu_rect.max,
     );
 
-    doc.edit.chan_ar_view.base.left_panel_width = tp_w + theme::SPLIT_HANDLE_W;
+    doc.edit.arrange_view.base.left_panel_width = tp_w + theme::SPLIT_HANDLE_W;
 
     let total_ticks = crate::view_interaction::total_ticks_padded(
         doc.data.model.tick_length,
@@ -142,11 +142,11 @@ pub(crate) fn show(
                     .map(|tr| tr.automation_lanes.len())
                     .unwrap_or(0)
             },
-            edit.chan_ar_view.lane_height(),
+            edit.arrange_view.lane_height(),
         )
     };
     let mut row_layout = build_layout(&doc.edit, &doc.data.model);
-    doc.edit.chan_ar_view.base.scroll_y = doc.edit.chan_ar_view.base.scroll_y.clamp(
+    doc.edit.arrange_view.base.scroll_y = doc.edit.arrange_view.base.scroll_y.clamp(
         0.0,
         (row_layout.total_height() - gpu_rect.height()).max(0.0),
     );
@@ -173,7 +173,7 @@ pub(crate) fn show(
         let sig_events = model.tempo_map.time_sig_events.as_slice();
         // 量化档位解析：Auto（自适应）按当前通道 AR 缩放出具体网格。
         let ca_quantize = doc.edit.quantize_arrange.resolved_with_time_sig(
-            doc.edit.chan_ar_view.base.pixels_per_tick,
+            doc.edit.arrange_view.base.pixels_per_tick,
             tpb,
             def_num,
             def_den,
@@ -182,7 +182,7 @@ pub(crate) fn show(
         let outcome = crate::widgets::time_ruler::interactive_ruler(
             ui,
             ruler_rect,
-            &mut doc.edit.chan_ar_view,
+            &mut doc.edit.arrange_view,
             tpb,
             def_num,
             def_den,
@@ -243,7 +243,7 @@ pub(crate) fn show(
         let (def_num, def_den) = model.tempo_map.time_sig_default;
         let sig_events = model.tempo_map.time_sig_events.as_slice();
         let ca_quantize = doc.edit.quantize_arrange.resolved_with_time_sig(
-            doc.edit.chan_ar_view.base.pixels_per_tick,
+            doc.edit.arrange_view.base.pixels_per_tick,
             tpb,
             def_num,
             def_den,
@@ -259,7 +259,7 @@ pub(crate) fn show(
                 chords: &model.conductor.chord,
                 lyrics: &model.conductor.lyrics,
             },
-            &mut doc.edit.chan_ar_view,
+            &mut doc.edit.arrange_view,
             event_full,
             tpb,
             def_num,
@@ -321,7 +321,7 @@ pub(crate) fn show(
         };
         let out = panel::show(
             ui,
-            &mut doc.edit.chan_ar_view,
+            &mut doc.edit.arrange_view,
             &row_layout,
             &groups,
             conductor_color,
@@ -345,7 +345,7 @@ pub(crate) fn show(
 
     // 展开状态可能刚变：重建行布局并重新 clamp。
     row_layout = build_layout(&doc.edit, &doc.data.model);
-    doc.edit.chan_ar_view.base.scroll_y = doc.edit.chan_ar_view.base.scroll_y.clamp(
+    doc.edit.arrange_view.base.scroll_y = doc.edit.arrange_view.base.scroll_y.clamp(
         0.0,
         (row_layout.total_height() - gpu_rect.height()).max(0.0),
     );
@@ -362,7 +362,7 @@ pub(crate) fn show(
             track_colors: &doc.edit.track_cache.colors,
             track_info: &doc.edit.track_cache.info,
             quantize: doc.edit.quantize_arrange.resolved_with_time_sig(
-                doc.edit.chan_ar_view.base.pixels_per_tick,
+                doc.edit.arrange_view.base.pixels_per_tick,
                 model.meta.ppq,
                 def_num,
                 def_den,
@@ -419,7 +419,7 @@ pub(crate) fn show(
             gpu_rect.size(),
             arr_renderer,
             arr_render_ctx,
-            &mut doc.edit.chan_ar_view,
+            &mut doc.edit.arrange_view,
             &row_layout,
             &groups,
             &data,
@@ -479,17 +479,17 @@ pub(crate) fn show(
             let k = 0.005;
             let anchor_x = corner_rect.center().x - arr_rect.min.x;
             let anchor_y = corner_rect.center().y - arr_rect.min.y;
-            doc.edit.chan_ar_view.zoom_around_x(anchor_x, 1.0 + d.x * k);
+            doc.edit.arrange_view.zoom_around_x(anchor_x, 1.0 + d.x * k);
             doc.edit
-                .chan_ar_view
+                .arrange_view
                 .zoom_lane_height(anchor_y, 1.0 + d.y * k);
             ui.ctx().request_repaint();
         } else if crate::widgets::scrollbar::double_clicked_in(ui, corner_rect) {
             doc.edit
-                .chan_ar_view
+                .arrange_view
                 .fit_time(music_rect.width(), total_ticks);
             doc.edit
-                .chan_ar_view
+                .arrange_view
                 .fit_lane_height(gpu_rect.height(), row_layout.total_rows());
             ui.ctx().request_repaint();
         }
@@ -515,12 +515,12 @@ pub(crate) fn show(
             ui,
             sb_rect,
             music_rect.width(),
-            &mut doc.edit.chan_ar_view.base.scroll_x,
-            &mut doc.edit.chan_ar_view.base.pixels_per_tick,
+            &mut doc.edit.arrange_view.base.scroll_x,
+            &mut doc.edit.arrange_view.base.pixels_per_tick,
             total_ticks,
             Some(&preview),
             doc.edit.cursor_tick,
-            &mut doc.edit.chan_ar_view.base.dirty,
+            &mut doc.edit.arrange_view.base.dirty,
             yinhe_types::Orientation::Horizontal,
         );
         if crate::view_interaction::pointer_hits(ui, sb_rect) {
@@ -529,12 +529,12 @@ pub(crate) fn show(
         if sb_drag_dy != 0.0 {
             let factor = 1.0 - sb_drag_dy * 0.005;
             let anchor_x = sb_rect.center().x - arr_rect.min.x;
-            doc.edit.chan_ar_view.zoom_around_x(anchor_x, factor);
+            doc.edit.arrange_view.zoom_around_x(anchor_x, factor);
             ui.ctx().request_repaint();
         }
         if crate::widgets::scrollbar::double_clicked_in(ui, sb_rect) {
             doc.edit
-                .chan_ar_view
+                .arrange_view
                 .fit_time(music_rect.width(), total_ticks);
             ui.ctx().request_repaint();
         }
@@ -543,7 +543,7 @@ pub(crate) fn show(
             if scroll_y.abs() > 0.5 {
                 let factor = if scroll_y > 0.0 { 1.0 / 1.1 } else { 1.1 };
                 let anchor_x = sb_rect.center().x - arr_rect.min.x;
-                doc.edit.chan_ar_view.zoom_around_x(anchor_x, factor);
+                doc.edit.arrange_view.zoom_around_x(anchor_x, factor);
                 ui.ctx().request_repaint();
             }
         }
@@ -562,13 +562,13 @@ pub(crate) fn show(
                     ui,
                     vsb_rect,
                     gpu_rect.height(),
-                    &mut doc.edit.chan_ar_view.base.scroll_y,
-                    &mut doc.edit.chan_ar_view.base.track_panel_row_height,
+                    &mut doc.edit.arrange_view.base.scroll_y,
+                    &mut doc.edit.arrange_view.base.track_panel_row_height,
                     cells as f32,
                     yinhe_types::LANE_HEIGHT_MIN,
                     yinhe_types::LANE_HEIGHT_MAX,
                     Some(yinhe_types::LANE_HEIGHT_STEP),
-                    &mut doc.edit.chan_ar_view.base.dirty,
+                    &mut doc.edit.arrange_view.base.dirty,
                     yinhe_types::Orientation::Horizontal,
                 )
             })
@@ -579,12 +579,12 @@ pub(crate) fn show(
         if vsb_drag_dx != 0.0 {
             let factor = 1.0 - vsb_drag_dx * 0.005;
             let anchor_y = vsb_rect.center().y - arr_rect.min.y;
-            doc.edit.chan_ar_view.zoom_lane_height(anchor_y, factor);
+            doc.edit.arrange_view.zoom_lane_height(anchor_y, factor);
             ui.ctx().request_repaint();
         }
         if crate::widgets::scrollbar::double_clicked_in(ui, vsb_rect) {
             doc.edit
-                .chan_ar_view
+                .arrange_view
                 .fit_lane_height(gpu_rect.height(), row_layout.total_rows());
             ui.ctx().request_repaint();
         }
@@ -593,7 +593,7 @@ pub(crate) fn show(
             if scroll_y.abs() > 0.5 {
                 let factor = if scroll_y > 0.0 { 1.0 / 1.1 } else { 1.1 };
                 let anchor_y = vsb_rect.center().y - arr_rect.min.y;
-                doc.edit.chan_ar_view.zoom_lane_height(anchor_y, factor);
+                doc.edit.arrange_view.zoom_lane_height(anchor_y, factor);
                 ui.ctx().request_repaint();
             }
         }

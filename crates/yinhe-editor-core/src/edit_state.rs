@@ -154,10 +154,9 @@ pub struct EditState {
     pub event_rows_pr: yinhe_types::EventRowsState,
     /// PR 的 CLIP/SONG 模式。true = Clip 模式。
     pub pr_clip_mode: bool,
-    /// AR 工程走带视口（滚动/缩放），每文档独立，不落盘。
+    /// AR / 通道 AR（MIX 主区域）共用的走带视口（滚动/缩放/行高）。
+    /// 每文档独立，不落盘。共用可保证两个视图切换时缩放与位置一致。
     pub arrange_view: yinhe_types::ArrangementView,
-    /// 通道 AR（MIX 主区域）视口（滚动/缩放/行高），每文档独立，不落盘。
-    pub chan_ar_view: yinhe_types::ArrangementView,
     /// 通道 AR：MIDI 通道展开状态（按 global channel 0..=255 索引）。
     /// 展开 = 通道行下方平铺该通道的轨道行与自动化行。
     pub chan_ar_expanded_midi: Vec<bool>,
@@ -211,7 +210,6 @@ impl Default for EditState {
             event_rows_pr: yinhe_types::EventRowsState::default(),
             pr_clip_mode: false,
             arrange_view: yinhe_types::ArrangementView::default(),
-            chan_ar_view: yinhe_types::ArrangementView::default(),
             chan_ar_expanded_midi: Vec::new(),
             chan_ar_expanded_audio: Vec::new(),
             key_sig_override: None,

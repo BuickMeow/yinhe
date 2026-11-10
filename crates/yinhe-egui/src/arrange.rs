@@ -543,6 +543,32 @@ pub fn show(
                     *right_tab = Some(crate::right_panel::RightTab::Info);
                     (None, String::new())
                 }
+                track_panel::TrackAction::RenameTrack { idx, name } => {
+                    structural = false;
+                    let info = doc.edit.track_cache.info.get(*idx).cloned();
+                    match info {
+                        Some(info) => {
+                            let inst = doc
+                                .data
+                                .model
+                                .channel_instruments
+                                .get(info.channel as usize)
+                                .copied()
+                                .flatten();
+                            (
+                                doc.set_track_info(
+                                    *idx,
+                                    name.clone(),
+                                    info.port,
+                                    info.channel,
+                                    inst,
+                                ),
+                                t!("undo.edit_track_info").to_string(),
+                            )
+                        }
+                        None => (None, String::new()),
+                    }
+                }
                 track_panel::TrackAction::DeleteAutomation { idx, lane_idx } => {
                     structural = false;
                     (

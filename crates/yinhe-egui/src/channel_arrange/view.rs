@@ -355,8 +355,19 @@ pub(crate) fn show(
         let cx_local = view.tick_to_x(ct);
         if cx_local >= lp && cx_local <= w as f32 {
             let cx = rect.min.x + cx_local;
+            // 暂停时只画选中轨道所在通道行；播放时全高。
+            let (y0, y1) = if cfg.is_playing {
+                (rect.min.y, rect.max.y)
+            } else if let Some(track) = edit.track_selected.iter().min().copied()
+                && let Some(row) = layout.track_row_of(track)
+            {
+                let top = rect.min.y + layout.y_top(row) - scroll_y;
+                (top, (top + layout.height(row)).min(rect.max.y))
+            } else {
+                (rect.min.y, rect.max.y)
+            };
             painter.line_segment(
-                [egui::pos2(cx, rect.min.y), egui::pos2(cx, rect.max.y)],
+                [egui::pos2(cx, y0), egui::pos2(cx, y1)],
                 egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::accent_active()),
             );
         }
