@@ -126,6 +126,77 @@ pub(crate) fn upload_note_layers(
     });
 }
 
+/// 绘制 MIDI Clip v1 的背景块（在 GPU 音符层之前，音符始终覆盖其上）。
+///
+/// 只画主音轨行；自动化子行不画 Clip 背景。
+pub(crate) fn draw_midi_clips(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    view: &ArrangementView,
+    row_layout: &ArRowLayout,
+    data: &crate::arrange::ArrangeData<'_>,
+) {
+    let lh = view.lane_height();
+    let scroll_y = view.base.scroll_y;
+    let (lo, hi) = view.visible_tick_range(rect.width());
+    let lo = lo.max(0.0) as u32;
+    let hi = hi.max(0.0) as u32;
+    if lo >= hi {
+        return;
+    }
+    for (track_idx, track) in data.tracks.iter().enumerate() {
+        if track.kind != yinhe_core::TrackKind::Midi || track.clips.is_empty() {
+            continue;
+        }
+        if !data.track_visible.get(track_idx).copied().unwrap_or(true) {
+            continue;
+        }
+        let y_top = rect.min.y + row_layout.track_y(track_idx, lh) - scroll_y;
+        if y_top >= rect.max.y || y_top + lh <= rect.min.y {
+            continue;
+        }
+        let tc = data
+            .track_colors
+            .get(track_idx)
+            .copied()
+            .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
+        let base = rgb(tc);
+        let band = egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), 28);
+        let header = egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), 96);
+        let header_h = 10.0_f32.min(lh - 2.0).max(0.0);
+        for clip in yinhe_core::clips_in_range(&track.clips, lo, hi) {
+            let x0 = rect.min.x + view.tick_to_x(clip.start_tick as f64);
+            let x1 = rect.min.x + view.tick_to_x(clip.end_tick as f64);
+            let x0 = x0.clamp(rect.min.x, rect.max.x);
+            let x1 = x1.clamp(rect.min.x, rect.max.x);
+            if x1 - x0 < 2.0 {
+                continue;
+            }
+            let body = egui::Rect::from_min_max(
+                egui::pos2(x0, y_top + 1.0),
+                egui::pos2(x1, y_top + lh - 1.0),
+            );
+            painter.rect_filled(body, 2.0, band);
+            if header_h > 0.0 {
+                let head = egui::Rect::from_min_max(
+                    body.min,
+                    egui::pos2(body.max.x, body.min.y + header_h),
+                );
+                painter.rect_filled(head, 2.0, header);
+            }
+            if body.width() > 40.0 && header_h >= 8.0 {
+                painter.text(
+                    egui::pos2(body.min.x + 4.0, body.min.y + header_h * 0.5),
+                    egui::Align2::LEFT_CENTER,
+                    clip.display_name(),
+                    egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT),
+                    crate::theme::contrast_fg(),
+                );
+            }
+        }
+    }
+}
+
 /// 绘制音频轨道片段：块背景 + 波形 + 淡入淡出斜线 + 素材名 + 选中高亮。
 ///
 /// 在 GPU 音符层贴图之后调用（音频轨没有音符，不与音符层冲突）。

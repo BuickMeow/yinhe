@@ -43,11 +43,16 @@ impl Document {
             }
         };
         Arc::make_mut(&mut self.data.model).insert_note(key, typed_note);
+        let clip_action = self.ensure_clips_for_notes(track_idx, std::slice::from_ref(&note));
         self.data.rebuild_model_dirty();
-        Some(UndoAction::Notes(NoteDelta {
+        let note_action = UndoAction::Notes(NoteDelta {
             before: vec![],
             after: vec![(typed_note, key)],
-        }))
+        });
+        Some(match clip_action {
+            Some(clips) => UndoAction::Composite(vec![clips, note_action]),
+            None => note_action,
+        })
     }
 
     /// 修改指定音符的 `end_tick`（MIDI 录音 NoteOff 时闭合 gate）。

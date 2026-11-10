@@ -70,7 +70,7 @@ pub use progress::{YinProgress, YinProgressStage};
 pub use project_meta::{ProjectFile, SfChannelOverride, SfEntryJson};
 
 pub const MAGIC: &[u8; 4] = b"YINH";
-pub const VERSION: u16 = 9;
+pub const VERSION: u16 = 10;
 
 /// 工程文件扩展名。
 pub const PROJECT_EXTENSIONS: &[&str] = &["yin"];

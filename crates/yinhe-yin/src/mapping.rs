@@ -57,6 +57,9 @@ pub struct TrackMap {
     /// data 段的 postcard 里：postcard 非自描述，追字段会让旧文件解析失败。
     #[serde(default)]
     pub audio_clips: Vec<yinhe_core::AudioClip>,
+    /// MIDI Clip v1（仅 MIDI 轨有意义）。
+    #[serde(default)]
+    pub clips: Vec<yinhe_core::Clip>,
 }
 
 fn default_track_color() -> [f32; 4] {
@@ -104,11 +107,12 @@ impl MappingFile {
                 kind: t.kind,
                 audio_channel: t.audio_channel,
                 audio_clips: t.audio_clips.clone(),
+                clips: t.clips.clone(),
             });
         }
 
         Self {
-            version: 2,
+            version: 3,
             ports,
             ..Default::default()
         }

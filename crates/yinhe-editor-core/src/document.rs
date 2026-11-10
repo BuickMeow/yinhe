@@ -24,6 +24,7 @@ pub mod arrange_edit;
 pub mod arrange_move;
 pub mod audio_clip_edit;
 pub mod automation_edit;
+pub mod clip_edit;
 pub mod conductor_edit;
 pub(crate) mod event_edit;
 pub mod event_list_edit;

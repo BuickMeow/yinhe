@@ -305,6 +305,7 @@ pub fn show(
         scroll_y,
     );
     render::draw_grid(&painter, rect, view, row_layout, &data);
+    render::draw_midi_clips(&painter, rect, view, row_layout, &data);
     render_ctx.paint(
         renderer,
         pw,

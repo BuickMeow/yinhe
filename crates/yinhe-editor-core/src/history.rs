@@ -232,6 +232,13 @@ pub enum UndoAction {
         bounds: (u64, u64, u8, u8),
         axis: crate::document::note_edit::FlipAxis,
     },
+    /// MIDI Clip v1 整体替换（创建/拆分/合并/重命名/移动/裁剪/删除共用）。
+    /// 只保存区间元数据，不涉及音符。
+    Clips {
+        track_idx: usize,
+        before: Vec<yinhe_core::Clip>,
+        after: Vec<yinhe_core::Clip>,
+    },
     /// 音频片段整体替换（移动/裁剪/分割/复制/删除/增益/淡入淡出/反向
     /// 等全部片段编辑共用）。片段数量少，整轨快照比逐片段 delta 更简单。
     AudioClips {
@@ -447,6 +454,18 @@ impl UndoAction {
             }
             // 两次镜像恒等：自逆，原样返回。
             UndoAction::FlipNotes { .. } => self,
+            UndoAction::Clips {
+                track_idx,
+                mut before,
+                mut after,
+            } => {
+                std::mem::swap(&mut before, &mut after);
+                UndoAction::Clips {
+                    track_idx,
+                    before,
+                    after,
+                }
+            }
             UndoAction::AudioClips {
                 track_idx,
                 mut before,

@@ -265,6 +265,7 @@ fn load_yin_bytes_inner(
             kind: tm.kind,
             audio_channel: tm.audio_channel,
             audio_clips: tm.audio_clips.clone(),
+            clips: tm.clips.clone(),
             notes: Vec::new(), // notes loaded via NoteLoader
             automation_lanes: payload.automation_lanes,
             program_change: payload.program_change,

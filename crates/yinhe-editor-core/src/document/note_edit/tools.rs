@@ -278,12 +278,28 @@ impl Document {
             after = batch_ops::flatten_by_key(&by_key);
             batch_ops::insert_batch(model, by_key);
         }
+        let clip_notes: Vec<NoteEvent> = after
+            .iter()
+            .map(|(n, _)| NoteEvent {
+                id: 0,
+                start_tick: n.start_tick,
+                end_tick: n.end_tick,
+                key: 0,
+                velocity: n.velocity,
+            })
+            .collect();
+        // key 不参与 Clip 归属，这里只借 NoteEvent 的 start/end。
+        let clip_action = self.ensure_clips_for_notes(track, &clip_notes);
         self.data.rebuild_model_dirty();
         self.data.bump_revision();
-        Some(UndoAction::Notes(NoteDelta {
+        let note_action = UndoAction::Notes(NoteDelta {
             before: vec![],
             after,
-        }))
+        });
+        Some(match clip_action {
+            Some(clips) => UndoAction::Composite(vec![clips, note_action]),
+            None => note_action,
+        })
     }
 
     /// 钢笔工具确认：曲线每经过一个整数音高行生成一个音符（gate = 一个量化

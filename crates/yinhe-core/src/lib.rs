@@ -11,6 +11,7 @@
 //! - 派生索引 (key_notes_cache 等) 在 rebuild() 时全量重建
 
 mod automation;
+mod clip;
 mod events;
 mod model;
 mod model_stats;
@@ -21,6 +22,7 @@ mod selection_highlight;
 mod source;
 mod tempo_map;
 
+pub use clip::{Clip, clip_at, clips_in_range, validate_clips};
 pub use events::NoteEvent;
 pub use model::DEFAULT_TRACK_COLOR;
 pub use model::{

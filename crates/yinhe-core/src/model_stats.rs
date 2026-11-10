@@ -496,6 +496,9 @@ pub struct NoteLoader {
     bucket_max_end: [u64; KEY_COUNT],
     max_id_seen: u32,
     next_note_id: u32,
+    /// 每轨第一个音符 start / 最后一个音符 end，用于初始化整轨 Clip。
+    track_min_start: Vec<u32>,
+    track_max_end: Vec<u64>,
 }
 
 impl NoteLoader {
@@ -512,6 +515,8 @@ impl NoteLoader {
             bucket_max_end: [0; KEY_COUNT],
             max_id_seen: 0,
             next_note_id,
+            track_min_start: vec![u32::MAX; track_count],
+            track_max_end: vec![0; track_count],
         }
     }
 
@@ -534,6 +539,10 @@ impl NoteLoader {
         self.note_count += 1;
         if (track as usize) < self.track_counts.len() {
             self.track_counts[track as usize] += 1;
+            self.track_min_start[track as usize] =
+                self.track_min_start[track as usize].min(start_tick);
+            self.track_max_end[track as usize] =
+                self.track_max_end[track as usize].max(end_tick as u64);
             if velocity > 1 {
                 self.track_audible[track as usize] += 1;
             }
@@ -597,5 +606,14 @@ impl NoteLoader {
             model.bucket_max_end_tick[k] = self.bucket_max_end[k];
             model.bucket_track_stats[k] = std::mem::take(&mut self.bucket_stats[k]);
         }
+        // Clip v1：映射里已带 Clip 的轨道保留原值；其余非空轨生成整轨 Clip。
+        let bounds: Vec<Option<(u32, u32)>> = self
+            .track_min_start
+            .iter()
+            .zip(self.track_max_end.iter())
+            .map(|(&s, &e)| (s != u32::MAX).then_some((s, e.min(u32::MAX as u64) as u32)))
+            .collect();
+        model.init_clips_from_bounds(&bounds);
+        model.sync_next_clip_id();
     }
 }

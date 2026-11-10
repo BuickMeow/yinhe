@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::clip::Clip;
 use crate::events::NoteEvent;
 use crate::tempo_map::{TempoMap, TempoSegment, mpq_from_bpm, recompute_tempo_start_times};
 use yinhe_types::{AutomationLane, AutomationTarget, KEY_COUNT, NoteBucket, PcEvent};
@@ -203,6 +204,9 @@ pub struct TrackData {
     /// 音频片段（仅音频轨有意义），按 start_seconds 排序由编辑命令维护。
     #[serde(default)]
     pub audio_clips: Vec<AudioClip>,
+    /// MIDI Clip v1：该轨的命名时间区间，按 start_tick 排序且互不重叠。
+    #[serde(default)]
+    pub clips: Vec<Clip>,
 
     /// Notes are stored in `YinModel.notes` (by-key store).
     /// This field is only used during parsing and is moved out
@@ -235,6 +239,7 @@ impl TrackData {
             kind: TrackKind::Midi,
             audio_channel: None,
             audio_clips: Vec::new(),
+            clips: Vec::new(),
             notes: Vec::new(),
             automation_lanes: Vec::new(),
             program_change: Vec::new(),
@@ -545,6 +550,8 @@ pub struct YinModel {
     /// 0 保留为"未分配"哨兵，实际 id 从 1 开始。
     /// 编辑时调 `alloc_note_id()`，加载时由 `load_track_notes` 统一分配。
     pub next_note_id: u32,
+    /// 全局 Clip id 发号器（0 保留哨兵，实际从 1 开始）。
+    pub next_clip_id: u32,
 
     /// 工程内嵌音频素材表（去重：一个素材可被多个片段引用）。
     /// `Arc` 共享，编辑模型时不做字节深拷贝。
@@ -578,6 +585,7 @@ impl Default for YinModel {
             bucket_max_end_tick: [0; KEY_COUNT],
             bucket_track_stats: core::array::from_fn(|_| HashMap::new()),
             next_note_id: 1,
+            next_clip_id: 1,
             audio_sources: Vec::new(),
             next_audio_clip_id: 1,
             next_automation_id: 1,

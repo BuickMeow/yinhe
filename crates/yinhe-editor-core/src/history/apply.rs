@@ -194,6 +194,17 @@ impl UndoAction {
                     doc.data.bump_revision();
                 }
             }
+            UndoAction::Clips {
+                track_idx,
+                before: _,
+                after,
+            } => {
+                let model = Arc::make_mut(&mut doc.data.model);
+                if let Some(track) = model.tracks.get_mut(*track_idx) {
+                    Arc::make_mut(track).clips = after.clone();
+                }
+                doc.data.bump_revision();
+            }
             UndoAction::AudioClips {
                 track_idx,
                 before: _,

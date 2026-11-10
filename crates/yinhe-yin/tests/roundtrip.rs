@@ -1092,3 +1092,19 @@ fn cover_section_roundtrip() {
     assert_eq!(&*cover.thumb, &[9, 9]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn midi_clips_roundtrip() {
+    let m = build_complex_model();
+    assert!(
+        m.tracks.iter().any(|t| !t.clips.is_empty()),
+        "loader 应生成初始 Clip"
+    );
+    let bytes = save_yin_bytes(&m).unwrap();
+    let loaded = load_yin_bytes(&bytes).unwrap();
+    assert_eq!(loaded.tracks.len(), m.tracks.len());
+    for (a, b) in m.tracks.iter().zip(loaded.tracks.iter()) {
+        assert_eq!(a.clips, b.clips, "Clip 元数据应随 .yin 往返");
+    }
+    assert_eq!(loaded.next_clip_id, m.next_clip_id);
+}
