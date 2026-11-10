@@ -411,6 +411,18 @@ pub fn show(
             if let Some(action) = doc.create_empty_clip(track_idx as u16, start, bar) {
                 doc.push_undo(action, "undo.move_notes", before);
             }
+        } else {
+            // 双击已有 Clip 标题区域：进入 CLIP 模式并切到 PR。
+            let hit = doc.data.model.tracks[track_idx]
+                .clips
+                .iter()
+                .find(|c| c.start_tick <= tick && tick < c.end_tick)
+                .map(|c| c.start_tick);
+            if let Some(clip_start) = hit {
+                doc.edit.pr_clip_mode = true;
+                doc.edit.cursor_tick = Some(clip_start as f64);
+                *request_pianoroll = true;
+            }
         }
     }
 

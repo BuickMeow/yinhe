@@ -5,11 +5,14 @@
 //! 空白矩形里，做成两个宽按钮，避免再占用工具区。
 
 use eframe::egui;
-use egui_material_icons::icons::{ICON_ADD_CHART, ICON_BAR_CHART, ICON_MORE_HORIZ};
+use egui_material_icons::icons::{
+    ICON_ADD_CHART, ICON_BAR_CHART, ICON_KEYBOARD_ARROW_DOWN, ICON_KEYBOARD_ARROW_RIGHT,
+    ICON_MORE_HORIZ,
+};
 use rust_i18n::t;
 
 use crate::widgets::tools_panel::{ALL_TOOLS, Tool};
-use yinhe_types::{AutomationPanelView, PianoRollView};
+use yinhe_types::{AutomationPanelView, Orientation, PianoRollView};
 
 /// 顶部横向工具栏（由 PR 布局扣出的整条顶部带）。
 ///
@@ -90,6 +93,23 @@ pub fn show(
                     "pr_key_seg",
                 ) {
                     view.set_key_count(counts[i]);
+                }
+
+                // [→|↓]：PR 方向双联按钮（取代 transport bar 的单按钮切换）。
+                let orient_active = usize::from(view.is_vertical());
+                if let Some(i) = segmented_icons(
+                    ui,
+                    &[ICON_KEYBOARD_ARROW_RIGHT, ICON_KEYBOARD_ARROW_DOWN],
+                    orient_active,
+                    26.0,
+                    h,
+                    "pr_orientation",
+                ) {
+                    view.set_orientation(if i == 0 {
+                        Orientation::Horizontal
+                    } else {
+                        Orientation::Vertical
+                    });
                 }
 
                 // [CLIP|SONG]：分段开关，小字号，带背景。
@@ -231,6 +251,9 @@ fn tool_button(
     if resp.clicked() {
         *active_tool = tool;
     }
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
     resp.hovered()
         .then(|| crate::chrome::transport_bar_actions::tool_hint(tool))
 }
@@ -252,6 +275,81 @@ fn tool_more_button(ui: &mut egui::Ui, btn_size: egui::Vec2) -> egui::Response {
     .inner
 }
 
+/// 双联图标分段开关（方向切换）。
+#[allow(clippy::too_many_arguments)]
+fn segmented_icons(
+    ui: &mut egui::Ui,
+    icons: &[egui_material_icons::MaterialIcon],
+    active: usize,
+    seg_w: f32,
+    h: f32,
+    id_salt: &str,
+) -> Option<usize> {
+    let total = egui::vec2(seg_w * icons.len() as f32, h);
+    let (rect, resp) = ui
+        .push_id(id_salt, |ui| {
+            ui.allocate_exact_size(total, egui::Sense::click())
+        })
+        .inner;
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    let painter = ui.painter();
+    painter.rect_filled(
+        rect,
+        egui::CornerRadius::same(3),
+        crate::theme::control_bg(),
+    );
+    let hover_idx = resp
+        .hovered()
+        .then(|| {
+            ui.input(|i| i.pointer.hover_pos())
+                .map(|p| (((p.x - rect.min.x) / seg_w).floor() as usize).min(icons.len() - 1))
+        })
+        .flatten();
+    for (i, icon) in icons.iter().enumerate() {
+        let seg = egui::Rect::from_min_size(
+            egui::pos2(rect.min.x + i as f32 * seg_w, rect.min.y),
+            egui::vec2(seg_w, h),
+        );
+        if i == active {
+            let radius = egui::CornerRadius {
+                nw: if i == 0 { 3 } else { 0 },
+                sw: if i == 0 { 3 } else { 0 },
+                ne: if i + 1 == icons.len() { 3 } else { 0 },
+                se: if i + 1 == icons.len() { 3 } else { 0 },
+            };
+            painter.rect_filled(seg, radius, crate::theme::selected_bg());
+        } else if hover_idx == Some(i) {
+            painter.rect_filled(seg, egui::CornerRadius::ZERO, crate::theme::btn_bg());
+        }
+        if i > 0 {
+            painter.line_segment(
+                [seg.min, egui::pos2(seg.min.x, seg.max.y)],
+                egui::Stroke::new(1.0, crate::theme::line_fg()),
+            );
+        }
+        painter.text(
+            seg.center(),
+            egui::Align2::CENTER_CENTER,
+            icon.codepoint,
+            egui::FontId::new(14.0, icon.font_family()),
+            if i == active {
+                crate::theme::accent_active()
+            } else {
+                crate::theme::text_primary()
+            },
+        );
+    }
+    if resp.clicked()
+        && let Some(pos) = resp.interact_pointer_pos()
+    {
+        let idx = (((pos.x - rect.min.x) / seg_w).floor() as usize).min(icons.len() - 1);
+        return Some(idx);
+    }
+    None
+}
+
 /// 分段开关：整组带背景，选中段填 selected_bg；段间竖线为直角，不随圆角弯曲。
 ///
 /// `labels` 从左到右排列；返回被点击的段下标。
@@ -271,12 +369,22 @@ fn segmented(
             ui.allocate_exact_size(total, egui::Sense::click())
         })
         .inner;
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
     let painter = ui.painter();
     painter.rect_filled(
         rect,
         egui::CornerRadius::same(3),
         crate::theme::control_bg(),
     );
+    let hover_idx = resp
+        .hovered()
+        .then(|| {
+            ui.input(|i| i.pointer.hover_pos())
+                .map(|p| (((p.x - rect.min.x) / seg_w).floor() as usize).min(labels.len() - 1))
+        })
+        .flatten();
     let font = egui::FontId::proportional(font_size);
     for (i, label) in labels.iter().enumerate() {
         let seg = egui::Rect::from_min_size(
@@ -291,6 +399,8 @@ fn segmented(
                 se: if i + 1 == labels.len() { 3 } else { 0 },
             };
             painter.rect_filled(seg, radius, crate::theme::selected_bg());
+        } else if hover_idx == Some(i) {
+            painter.rect_filled(seg, egui::CornerRadius::ZERO, crate::theme::btn_bg());
         }
         if i > 0 {
             painter.line_segment(
