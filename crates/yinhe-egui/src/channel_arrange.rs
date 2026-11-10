@@ -87,9 +87,13 @@ pub(crate) fn show(
         ),
     );
 
-    // 左侧面板：从标尺下方到横向滚动条上方（与 GPU 行对齐）。
+    // 全局事件行固定在标尺之下、通道行之上，不随通道行滚动。
+    let event_rows_h = doc.edit.event_rows.visible_height();
+    let content_top = arr_rect.min.y + theme::RULER_H + event_rows_h;
+
+    // 左侧面板：从标尺 + 事件行下方到横向滚动条上方（与 GPU 行对齐）。
     let tp_rect = egui::Rect::from_min_max(
-        egui::pos2(arr_rect.min.x, arr_rect.min.y + theme::RULER_H),
+        egui::pos2(arr_rect.min.x, content_top),
         egui::pos2(
             arr_rect.min.x + tp_w,
             arr_rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H,
@@ -98,17 +102,14 @@ pub(crate) fn show(
     // GPU 区：全宽纹理（含面板列；音符坐标以全宽左缘为原点，
     // 视口左边界由 shader clamp 排除）。
     let gpu_rect = egui::Rect::from_min_max(
-        egui::pos2(arr_rect.min.x, arr_rect.min.y + theme::RULER_H),
+        egui::pos2(arr_rect.min.x, content_top),
         egui::pos2(
             arr_rect.max.x - crate::widgets::scrollbar::SCROLLBAR_W,
             arr_rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H,
         ),
     );
     let music_rect = egui::Rect::from_min_max(
-        egui::pos2(
-            arr_rect.min.x + tp_w + theme::SPLIT_HANDLE_W,
-            arr_rect.min.y + theme::RULER_H,
-        ),
+        egui::pos2(arr_rect.min.x + tp_w + theme::SPLIT_HANDLE_W, content_top),
         gpu_rect.max,
     );
 
@@ -170,7 +171,7 @@ pub(crate) fn show(
         let tpb = model.meta.ppq;
         let (def_num, def_den) = model.tempo_map.time_sig_default;
         let sig_events = model.tempo_map.time_sig_events.as_slice();
-        let markers = model.conductor.markers.as_slice();
+        let markers = &[]; // Marker 已移入固定事件行
         // 量化档位解析：Auto（自适应）按当前通道 AR 缩放出具体网格。
         let ca_quantize = doc.edit.quantize_arrange.resolved_with_time_sig(
             doc.edit.chan_ar_view.base.pixels_per_tick,
@@ -205,6 +206,68 @@ pub(crate) fn show(
             doc.edit.chan_ar_sel.clear();
         }
         if let Some(edit) = outcome.marker_edit {
+            crate::marker_ops::apply_marker_edit(doc, edit);
+        }
+    }
+
+    // ── 全局事件行（固定，不随通道行滚动）──
+    {
+        let event_full = egui::Rect::from_min_max(
+            egui::pos2(arr_rect.min.x, arr_rect.min.y + theme::RULER_H),
+            egui::pos2(gpu_rect.max.x, content_top),
+        );
+        let row_corner = egui::Rect::from_min_max(
+            egui::pos2(gpu_rect.max.x, arr_rect.min.y + theme::RULER_H),
+            egui::pos2(arr_rect.max.x, content_top),
+        );
+        ui.painter()
+            .rect_filled(row_corner, 0.0, crate::theme::track_bg());
+
+        let model = &*doc.data.model;
+        let tpb = model.meta.ppq;
+        let (def_num, def_den) = model.tempo_map.time_sig_default;
+        let sig_events = model.tempo_map.time_sig_events.as_slice();
+        let ca_quantize = doc.edit.quantize_arrange.resolved_with_time_sig(
+            doc.edit.chan_ar_view.base.pixels_per_tick,
+            tpb,
+            def_num,
+            def_den,
+            false,
+        );
+        let rows = crate::widgets::event_rows::show(
+            ui,
+            &doc.edit.event_rows,
+            crate::widgets::event_rows::EventRowsData {
+                markers: &model.conductor.markers,
+                tempo: &model.conductor.tempo,
+                time_sig: &model.conductor.time_sig,
+                key_sig: &model.conductor.key_sig,
+                chords: &model.conductor.chord,
+                lyrics: &model.conductor.lyrics,
+            },
+            &mut doc.edit.chan_ar_view,
+            event_full,
+            tpb,
+            def_num,
+            def_den,
+            sig_events,
+            &|tick| {
+                crate::view_interaction::snap_tick(
+                    tick,
+                    ca_quantize,
+                    tpb,
+                    Some((tpb, def_num, def_den, sig_events)),
+                )
+            },
+            "ca_event_rows",
+            &mut doc.edit.cursor_tick,
+        );
+        if rows.jumped {
+            doc.edit.selected.clear();
+            doc.edit.arr_sel_rect.clear();
+            doc.edit.chan_ar_sel.clear();
+        }
+        if let Some(edit) = rows.marker_edit {
             crate::marker_ops::apply_marker_edit(doc, edit);
         }
     }
@@ -472,7 +535,7 @@ pub(crate) fn show(
     // ── 垂直滚动条（行数用等价均匀行数，行高不均时位置为近似）──
     {
         let vsb_rect = egui::Rect::from_min_max(
-            egui::pos2(gpu_rect.max.x, arr_rect.min.y + theme::RULER_H),
+            egui::pos2(gpu_rect.max.x, content_top),
             egui::pos2(arr_rect.max.x, gpu_rect.max.y),
         );
         let cells = row_layout.total_rows().max(1);

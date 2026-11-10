@@ -4,6 +4,7 @@ pub mod arr_row_layout;
 pub mod arrangement_view;
 pub mod automation;
 pub mod automation_panel_view;
+pub mod event_rows;
 pub mod fold;
 pub mod gm;
 mod hash;
@@ -31,6 +32,7 @@ pub use automation::{
     builtin_param, channel_dsp_param, xsynth_param, xsynth_param_id_for_midi,
 };
 pub use automation_panel_view::{AnchorSelRect, AutomationPanelView};
+pub use event_rows::{EventRowKind, EventRowState, EventRowsState};
 pub use fold::{KeyLayout, PIANO88_START, THIN_RATIO};
 pub use hash::*;
 pub use hidden_notes::{HiddenFilter, HiddenNotes, HiddenNotesBuilder};

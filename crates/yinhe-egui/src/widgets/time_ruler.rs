@@ -32,6 +32,13 @@ pub(crate) struct RulerOutcome {
     pub marker_edit: Option<MarkerEdit>,
 }
 
+/// Marker 行/标签带的交互结果。可复用于时间标尺和独立事件行。
+pub(crate) struct MarkerBandOutcome {
+    pub edit: Option<MarkerEdit>,
+    pub jumped: bool,
+    pub pointer_over_label: bool,
+}
+
 /// 一个已绘制的标签：命中测试用。
 struct MarkerLabel {
     tick: u32,
@@ -213,21 +220,6 @@ pub(crate) fn interactive_ruler(
         numbers_center,
     );
 
-    // 标签（marker）绘制 + 命中矩形。
-    let drag_preview = marker_drag_preview(ui, id_salt);
-    let labels = paint_marker_labels(
-        &painter,
-        ruler_rect,
-        view,
-        markers,
-        tpb,
-        default_num,
-        default_den,
-        time_sig_events,
-        labels_center,
-        drag_preview,
-    );
-
     // 相对主轴原点的主轴像素：横向 = 距左缘 X；纵向瀑布流 = 距**底缘** Y
     //（时间轴反转：tick 0 在底部、越大越靠上）。
     let main_px = |pos: egui::Pos2| -> f32 {
@@ -248,54 +240,25 @@ pub(crate) fn interactive_ruler(
         egui::Sense::click_and_drag(),
     );
 
-    // ── 标签（marker）交互：点击跳转、双击改名、右键删除、拖动移动 ──
-    // 标签在 ruler 之后注册 → 命中优先级更高；用 pointer_over_label 避免
-    // 与 ruler 自身的点击/缩放重复触发。
-    let mut marker_edit: Option<MarkerEdit> = None;
-    let mut jumped = false;
-    for label in &labels {
-        let resp = ui.interact(
-            label.rect,
-            ui.scope_id().with((id_salt, "marker", label.tick)),
-            egui::Sense::click_and_drag(),
-        );
-        let tick = label.tick;
-        resp.context_menu(|ui| {
-            if crate::widgets::flat::flat_button(ui, rust_i18n::t!("menu.delete_marker")).clicked()
-            {
-                marker_edit = Some(MarkerEdit::Delete { tick });
-                ui.close();
-            }
-        });
-        if resp.double_clicked() {
-            start_marker_rename(ui, id_salt, tick, markers);
-        } else if resp.dragged() {
-            if let Some(pos) = resp.interact_pointer_pos() {
-                let new_tick = snap(view.main_px_to_tick(main_px(pos))).max(0.0) as u32;
-                set_marker_drag_preview(ui, id_salt, tick, new_tick);
-            }
-        } else if resp.drag_stopped() {
-            if let Some((from, to)) = take_marker_drag_preview(ui, id_salt)
-                && from == tick
-                && from != to
-            {
-                marker_edit = Some(MarkerEdit::Move { from, to });
-            }
-        } else if resp.clicked() {
-            // 点击标签：光标跳到该标签 tick + 滚动到可见。
-            *cursor_tick = Some(tick as f64);
-            scroll_tick_into_view(view, tick as f64, view_size);
-            view.mark_dirty();
-            ui.ctx().request_repaint();
-            jumped = true;
-        }
-    }
-    if let Some(edit) = marker_rename_ui(ui, id_salt, &labels, markers) {
-        marker_edit = Some(edit);
-    }
-    let pointer_over_label = ui
-        .input(|i| i.pointer.hover_pos())
-        .is_some_and(|p| labels.iter().any(|l| l.rect.contains(p)));
+    // 标签（marker）绘制与交互统一走 marker_band：这里和独立事件行共用同一实现。
+    // 必须在 ruler_resp 之后调用，保证标签命中优先级高于标尺本身。
+    let marker_band = marker_band(
+        ui,
+        ruler_rect,
+        view,
+        markers,
+        tpb,
+        default_num,
+        default_den,
+        time_sig_events,
+        labels_center,
+        &snap,
+        id_salt,
+        cursor_tick,
+    );
+    let pointer_over_label = marker_band.pointer_over_label;
+    let marker_edit = marker_band.edit;
+    let mut jumped = marker_band.jumped;
 
     // ── 按下标尺后沿副轴拖动 → 时间缩放（防误触：仅起点在标尺内才生效）──
     // 参考 scrollbar 的 press_origin 守卫，避免别处按下拖到标尺上误缩放。
@@ -393,6 +356,103 @@ pub(crate) fn interactive_ruler(
     RulerOutcome {
         jumped,
         marker_edit,
+    }
+}
+
+/// 绘制并交互 Marker 标签带。时间标尺和独立事件行共用。
+///
+/// `rect` 是标签带（标尺的标签半带或事件行的整行）；
+/// `labels_center` 是标签 pill 的中心（主轴副轴方向）。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn marker_band(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    view: &mut impl TimeRulerView,
+    markers: &[MarkerEvent],
+    tpb: u32,
+    default_num: u8,
+    default_den: u8,
+    time_sig_events: &[TimeSigEvent],
+    labels_center: f32,
+    snap: &impl Fn(f64) -> f64,
+    id_salt: &str,
+    cursor_tick: &mut Option<f64>,
+) -> MarkerBandOutcome {
+    let painter = ui.painter_at(rect);
+    let drag_preview = marker_drag_preview(ui, id_salt);
+    let labels = paint_marker_labels(
+        &painter,
+        rect,
+        view,
+        markers,
+        tpb,
+        default_num,
+        default_den,
+        time_sig_events,
+        labels_center,
+        drag_preview,
+    );
+
+    let orientation = view.orientation();
+    let main_px = |pos: egui::Pos2| -> f32 {
+        match orientation {
+            Orientation::Horizontal => pos.x - rect.min.x,
+            Orientation::Vertical => rect.max.y - pos.y,
+        }
+    };
+    let view_size = match orientation {
+        Orientation::Horizontal => rect.width(),
+        Orientation::Vertical => rect.height(),
+    };
+
+    let mut edit: Option<MarkerEdit> = None;
+    let mut jumped = false;
+    for label in &labels {
+        let resp = ui.interact(
+            label.rect,
+            ui.scope_id().with((id_salt, "marker", label.tick)),
+            egui::Sense::click_and_drag(),
+        );
+        let tick = label.tick;
+        resp.context_menu(|ui| {
+            if crate::widgets::flat::flat_button(ui, rust_i18n::t!("menu.delete_marker")).clicked()
+            {
+                edit = Some(MarkerEdit::Delete { tick });
+                ui.close();
+            }
+        });
+        if resp.double_clicked() {
+            start_marker_rename(ui, id_salt, tick, markers);
+        } else if resp.dragged() {
+            if let Some(pos) = resp.interact_pointer_pos() {
+                let new_tick = snap(view.main_px_to_tick(main_px(pos))).max(0.0) as u32;
+                set_marker_drag_preview(ui, id_salt, tick, new_tick);
+            }
+        } else if resp.drag_stopped() {
+            if let Some((from, to)) = take_marker_drag_preview(ui, id_salt)
+                && from == tick
+                && from != to
+            {
+                edit = Some(MarkerEdit::Move { from, to });
+            }
+        } else if resp.clicked() {
+            *cursor_tick = Some(tick as f64);
+            scroll_tick_into_view(view, tick as f64, view_size);
+            view.mark_dirty();
+            ui.ctx().request_repaint();
+            jumped = true;
+        }
+    }
+    if let Some(rename) = marker_rename_ui(ui, id_salt, &labels, markers) {
+        edit = Some(rename);
+    }
+    let pointer_over_label = ui
+        .input(|i| i.pointer.hover_pos())
+        .is_some_and(|p| labels.iter().any(|l| l.rect.contains(p)));
+    MarkerBandOutcome {
+        edit,
+        jumped,
+        pointer_over_label,
     }
 }
 

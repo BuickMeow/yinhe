@@ -55,6 +55,8 @@ pub fn show(
     render_ctx: &mut super::render_context::RenderContext,
     render_thread: Option<&yinhe_wgpu::RenderThreadHandle>,
     view: &mut yinhe_types::PianoRollView,
+    // 固定全局事件行显示状态；横向 PR 使用，纵向 PR v1 走标尺 fallback。
+    event_rows: &mut yinhe_types::EventRowsState,
     last_cull_revision: &mut u64, // revision ^ hidden_hash — triggers all_notes re-upload
     last_cull_revision_only: &mut u64, // last revision for incremental detection
     last_hidden_hash: &mut u64,   // last hidden_hash for incremental detection
@@ -128,11 +130,17 @@ pub fn show(
         view,
         rect,
         panels_natural_h,
+        if view.is_vertical() || midi_arc.is_none() {
+            0.0
+        } else {
+            event_rows.visible_height()
+        },
         ui.ctx().pixels_per_point(),
         total_ticks,
     )?;
     let content_rect = layout.content_rect;
     let music_rect = layout.music_rect;
+    let event_rows_rect = layout.event_rows_rect;
     let content_y = layout.content_y;
     let content_bottom = layout.content_bottom;
     let w = layout.w;
@@ -346,9 +354,13 @@ pub fn show(
         ),
         _ => [None; yinhe_types::KEY_COUNT],
     };
-    let markers: &[yinhe_types::MarkerEvent] = midi_arc
-        .map(|m| m.conductor.markers.as_slice())
-        .unwrap_or(&[]);
+    let conductor = midi_arc.map(|m| m.conductor.as_ref());
+    // 横向 PR：Marker 在固定事件行中；纵向 PR v1 暂无事件行，保留标尺 fallback。
+    let ruler_markers: &[yinhe_types::MarkerEvent] = if view.is_vertical() {
+        conductor.map(|c| c.markers.as_slice()).unwrap_or(&[])
+    } else {
+        &[]
+    };
     let (sel_action, marker_edit) = overlay::draw_overlays(
         ui,
         &painter,
@@ -356,6 +368,9 @@ pub fn show(
         music_rect,
         rect,
         view,
+        event_rows,
+        event_rows_rect,
+        conductor,
         &theme,
         kh,
         kb_w,
@@ -380,7 +395,7 @@ pub fn show(
         selected,
         pen_path.as_ref(),
         scissors_line.as_ref(),
-        markers,
+        ruler_markers,
     );
     let t_paint_end = if perf_on {
         Some(std::time::Instant::now())

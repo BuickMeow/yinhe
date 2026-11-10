@@ -142,9 +142,13 @@ pub fn show(
         ),
     );
 
-    // ── Track panel: starts at RULER_H, ends at scrollbar top so rows align with GPU lanes ──
+    // 全局事件行固定在标尺之下、音轨之上，不随 track scroll_y 滚动。
+    let event_rows_h = doc.edit.event_rows.visible_height();
+    let content_top = arr_rect.min.y + RULER_H + event_rows_h;
+
+    // ── Track panel: starts after ruler + event rows, ends at scrollbar top so rows align with GPU lanes ──
     let tp_rect = egui::Rect::from_min_max(
-        egui::pos2(arr_rect.min.x, arr_rect.min.y + RULER_H),
+        egui::pos2(arr_rect.min.x, content_top),
         egui::pos2(
             arr_rect.min.x + tp_w,
             arr_rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H,
@@ -153,10 +157,10 @@ pub fn show(
 
     // ── GPU area: 全宽纹理（含轨道面板列，left_panel_width 同步为面板宽 +
     //    分屏条宽，音符坐标以全宽左缘为原点，视口左边界由 shader clamp 排除）。
-    //    y 方向：shifted down by RULER_H, shifted up by SCROLLBAR_H,
+    //    y 方向：shifted down by RULER_H + event rows, shifted up by SCROLLBAR_H,
     //    x 方向：shifted left by SCROLLBAR_W to leave room for the vertical scrollbar ──
     let gpu_rect = egui::Rect::from_min_max(
-        egui::pos2(arr_rect.min.x, arr_rect.min.y + RULER_H),
+        egui::pos2(arr_rect.min.x, content_top),
         egui::pos2(
             arr_rect.max.x - crate::widgets::scrollbar::SCROLLBAR_W,
             arr_rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H,
@@ -166,7 +170,7 @@ pub fn show(
     let music_rect = egui::Rect::from_min_max(
         egui::pos2(
             arr_rect.min.x + tp_w + crate::theme::SPLIT_HANDLE_W,
-            arr_rect.min.y + RULER_H,
+            content_top,
         ),
         gpu_rect.max,
     );
@@ -261,7 +265,7 @@ pub fn show(
         let tpb = model.meta.ppq;
         let (def_num, def_den) = model.tempo_map.time_sig_default;
         let sig_events = model.tempo_map.time_sig_events.as_slice();
-        let markers = model.conductor.markers.as_slice();
+        let markers = &[]; // Marker 已移入固定事件行，标尺只负责时间
         // 量化档位解析：Auto（自适应）按当前 AR 缩放出具体网格。
         let ar_quantize = doc.edit.quantize_arrange.resolved_with_time_sig(
             doc.edit.arrange_view.base.pixels_per_tick,
@@ -296,6 +300,68 @@ pub fn show(
             doc.edit.arr_sel_rect.clear();
         }
         if let Some(edit) = outcome.marker_edit {
+            crate::marker_ops::apply_marker_edit(doc, edit);
+        }
+    }
+
+    // ── 全局事件行（固定，不随 track scroll_y）──
+    {
+        let event_full = egui::Rect::from_min_max(
+            egui::pos2(arr_rect.min.x, arr_rect.min.y + RULER_H),
+            egui::pos2(gpu_rect.max.x, content_top),
+        );
+        // 右侧滚动条占位（事件行不覆盖滚动条列）
+        let row_corner = egui::Rect::from_min_max(
+            egui::pos2(gpu_rect.max.x, arr_rect.min.y + RULER_H),
+            egui::pos2(arr_rect.max.x, content_top),
+        );
+        ui.painter()
+            .rect_filled(row_corner, 0.0, crate::theme::track_bg());
+
+        let model = &*doc.data.model;
+        let tpb = model.meta.ppq;
+        let (def_num, def_den) = model.tempo_map.time_sig_default;
+        let sig_events = model.tempo_map.time_sig_events.as_slice();
+        let ar_quantize = doc.edit.quantize_arrange.resolved_with_time_sig(
+            doc.edit.arrange_view.base.pixels_per_tick,
+            tpb,
+            def_num,
+            def_den,
+            false,
+        );
+        let rows = crate::widgets::event_rows::show(
+            ui,
+            &doc.edit.event_rows,
+            crate::widgets::event_rows::EventRowsData {
+                markers: &model.conductor.markers,
+                tempo: &model.conductor.tempo,
+                time_sig: &model.conductor.time_sig,
+                key_sig: &model.conductor.key_sig,
+                chords: &model.conductor.chord,
+                lyrics: &model.conductor.lyrics,
+            },
+            &mut doc.edit.arrange_view,
+            event_full,
+            tpb,
+            def_num,
+            def_den,
+            sig_events,
+            &|tick| {
+                crate::view_interaction::snap_tick(
+                    tick,
+                    ar_quantize,
+                    tpb,
+                    Some((tpb, def_num, def_den, sig_events)),
+                )
+            },
+            "arrange_event_rows",
+            &mut doc.edit.cursor_tick,
+        );
+        if rows.jumped {
+            doc.edit.selected.clear();
+            doc.edit.arr_sel_rect.clear();
+        }
+        if let Some(edit) = rows.marker_edit {
             crate::marker_ops::apply_marker_edit(doc, edit);
         }
     }
@@ -688,7 +754,7 @@ pub fn show(
     //    像素空间：num_cells = num_tracks，cell_size = lane height (track_panel_row_height)
     {
         let vsb_rect = egui::Rect::from_min_max(
-            egui::pos2(gpu_rect.max.x, arr_rect.min.y + RULER_H),
+            egui::pos2(gpu_rect.max.x, content_top),
             egui::pos2(arr_rect.max.x, gpu_rect.max.y),
         );
         let vsb_drag_dx = ui

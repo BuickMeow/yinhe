@@ -5,6 +5,7 @@ pub(crate) mod checkbox;
 pub(crate) mod color_picker;
 pub(crate) mod combo;
 pub(crate) mod control;
+pub(crate) mod event_rows;
 pub(crate) mod flat;
 pub(crate) mod grid;
 pub mod grid_lines;

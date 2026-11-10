@@ -147,6 +147,9 @@ pub struct EditState {
     pub selected_audio_clips: HashSet<(u16, u32)>,
     /// PR 钢琴卷帘视口（滚动/缩放），每文档独立，不落盘。
     pub pianoroll_view: yinhe_types::PianoRollView,
+    /// 全局事件行显示状态（Marker/Tempo/Meter/Key/Chord/Lyrics）。
+    /// 会话态，不落盘，不进 undo。
+    pub event_rows: yinhe_types::EventRowsState,
     /// AR 工程走带视口（滚动/缩放），每文档独立，不落盘。
     pub arrange_view: yinhe_types::ArrangementView,
     /// 通道 AR（MIX 主区域）视口（滚动/缩放/行高），每文档独立，不落盘。
@@ -200,6 +203,7 @@ impl Default for EditState {
             arr_am_ms: HashMap::new(),
             selected_audio_clips: HashSet::new(),
             pianoroll_view: yinhe_types::PianoRollView::default(),
+            event_rows: yinhe_types::EventRowsState::default(),
             arrange_view: yinhe_types::ArrangementView::default(),
             chan_ar_view: yinhe_types::ArrangementView::default(),
             chan_ar_expanded_midi: Vec::new(),
