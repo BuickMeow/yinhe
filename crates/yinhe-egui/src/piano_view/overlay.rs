@@ -549,6 +549,16 @@ pub(crate) fn draw_overlays(
             );
         }
         if clip_mode && let Some(row) = clip_row {
+            // 预览跨帧复用（稳定 Id），松手后多保留一帧：resize 命令要等本帧
+            // 绘制之后才落地，立刻清预览会先闪回旧边界再跳到新边界。
+            let preview_id = egui::Id::unique(("pr_clip_preview", row.clip.id));
+            let sticky_id = egui::Id::unique(("pr_clip_preview_sticky", row.clip.id));
+            if ui.data(|d| d.get_temp::<bool>(sticky_id)).unwrap_or(false) {
+                ui.data_mut(|d| {
+                    d.remove::<(u32, u32)>(preview_id);
+                    d.remove::<bool>(sticky_id);
+                });
+            }
             // Clip 栏也允许缩放：指针在行内时滚轮/捏合沿时间轴缩放。
             if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
                 && clip_rect.contains(pos)
@@ -572,7 +582,6 @@ pub(crate) fn draw_overlays(
                 (row.color[1].clamp(0.0, 1.0) * 255.0) as u8,
                 (row.color[2].clamp(0.0, 1.0) * 255.0) as u8,
             );
-            let preview_id = ui.scope_id().with(("pr_clip_preview", row.clip.id));
             let preview: (u32, u32) = ui
                 .data(|d| d.get_temp(preview_id))
                 .unwrap_or((row.clip.start_tick, row.clip.end_tick));
@@ -650,7 +659,11 @@ pub(crate) fn draw_overlays(
                     let (s0, s1): (u32, u32) = ui
                         .data(|d| d.get_temp(preview_id))
                         .unwrap_or((row.clip.start_tick, row.clip.end_tick));
-                    ui.data_mut(|d| d.remove::<(u32, u32)>(preview_id));
+                    // 保留最终预览一帧，等模型更新后由下一帧开头清除。
+                    ui.data_mut(|d| {
+                        d.insert_temp(preview_id, (s0, s1));
+                        d.insert_temp(sticky_id, true);
+                    });
                     clip_resize = Some((row.track, row.clip.id, s0, s1));
                 }
             }

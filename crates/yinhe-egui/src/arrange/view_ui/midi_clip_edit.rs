@@ -128,15 +128,28 @@ pub(crate) fn frame(
             }
             return true;
         }
-        if let Some(pos) = pointer
-            && let Some(cmd) = finish_drag(&state, pos, rect, view, data)
-        {
-            edit.clip_commands.push(cmd);
+        if let Some(pos) = pointer {
+            // 松手帧也刷新一次预览：命令要等本帧绘制之后才落地，
+            // 若这里立刻清掉预览，会先闪回模型旧位置、下一帧才跳到新位置。
+            let (start_tick, end_tick) = target_range(&state, pos, rect, view, data);
+            ui.data_mut(|d| {
+                d.insert_temp(
+                    preview_id(),
+                    DragPreview {
+                        track: state.track,
+                        id: state.clip.id,
+                        start_tick,
+                        end_tick,
+                    },
+                )
+            });
+            if let Some(cmd) = finish_drag(&state, pos, rect, view, data) {
+                edit.clip_commands.push(cmd);
+            }
         }
-        ui.data_mut(|d| {
-            d.remove::<DragState>(drag_id());
-            d.remove::<DragPreview>(preview_id());
-        });
+        // 只清拖动状态，保留预览到下一帧：下一帧模型已更新，
+        // 开场处会清掉预览，视觉上不会出现「跳回原点」。
+        ui.data_mut(|d| d.remove::<DragState>(drag_id()));
         return true;
     }
     ui.data_mut(|d| d.remove::<DragPreview>(preview_id()));
