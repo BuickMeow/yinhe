@@ -181,6 +181,37 @@ fn test_render_dispatches_note_inside_large_buffer_at_exact_sample() {
 }
 
 #[test]
+fn transport_loop_wraps_at_exact_sample() {
+    let model = Arc::new(make_model_with_notes(vec![]));
+    let mut engine = AudioEngine::new(48000, ChannelLayout::from_mask(vec![true; 16]));
+    engine.load_model(&model);
+    engine.playing = true;
+
+    // 120 BPM、PPQ 480：1 tick = 50 samples；480 tick = 24000 samples。
+    engine.set_loop(true, 0, 480);
+    assert!(engine.loop_enabled);
+
+    let mut out = vec![0.0f32; 512 * 2];
+    // 46 块 = 23552 samples，尚未到 loop end。
+    for _ in 0..46 {
+        engine.render(&mut out);
+    }
+    assert_eq!(engine.sample_position(), 23552);
+
+    // 第 47 块：先渲染 448 帧到 24000，再回绕到 0 渲染剩余 64 帧。
+    engine.render(&mut out);
+    assert_eq!(engine.sample_position(), 64);
+    assert_eq!(engine.current_tick(), engine.sample_to_tick(64));
+}
+
+#[test]
+fn invalid_loop_range_disables_loop() {
+    let mut engine = AudioEngine::new(48000, ChannelLayout::from_mask(vec![true; 16]));
+    engine.set_loop(true, 480, 480);
+    assert!(!engine.loop_enabled);
+}
+
+#[test]
 fn test_active_mask_length() {
     let mask = vec![false; 16];
     let _engine = AudioEngine::new(44100, ChannelLayout::from_mask(mask));

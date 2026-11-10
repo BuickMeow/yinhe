@@ -170,8 +170,10 @@ impl eframe::App for App {
         let mut menu_stop = false;
         let mut menu_record = false;
         let mut menu_step = false;
+        let mut menu_toggle_loop = false;
+        let mut menu_loop_selection = false;
         // 视图菜单（macOS 原生）同步：卷帘方向、自动化面板显隐、有无活动文档。
-        let (pr_vertical, show_automation_panels) = self
+        let (pr_vertical, show_automation_panels, loop_enabled) = self
             .workspace
             .active_doc
             .and_then(|idx| self.workspace.documents.get(idx))
@@ -179,14 +181,16 @@ impl eframe::App for App {
                 (
                     d.edit.pianoroll_view.is_vertical(),
                     d.edit.show_controller_panels,
+                    d.edit.playback.loop_enabled(),
                 )
             })
-            .unwrap_or((false, false));
+            .unwrap_or((false, false, false));
         let has_active_doc = self.workspace.active_doc.is_some();
         let view_menu_state = crate::platform::ViewMenuState {
             pr_vertical,
             show_automation_panels,
             has_active_doc,
+            loop_enabled,
         };
         for action in self.menu_bar.poll(
             &self.audio_settings.keybindings,
@@ -372,6 +376,14 @@ impl eframe::App for App {
                 }
                 MenuAction::TapTempo => {
                     self.open_tap_tempo_dialog(ui.ctx());
+                    continue;
+                }
+                MenuAction::ToggleLoop => {
+                    menu_toggle_loop = true;
+                    continue;
+                }
+                MenuAction::LoopSelection => {
+                    menu_loop_selection = true;
                     continue;
                 }
                 MenuAction::SetFollowMode(mode) => {
@@ -757,6 +769,19 @@ impl eframe::App for App {
         } else {
             self.sys_monitor.mem_mb
         };
+
+        // ── 循环：菜单 / 走带按钮 / LOOP 行拖拽统一落到文档状态 ──
+        if menu_toggle_loop {
+            self.toggle_loop();
+        }
+        if let Some(enabled) = transport_response.set_loop {
+            self.set_loop_enabled(enabled);
+        }
+        if transport_response.loop_selection || menu_loop_selection {
+            self.loop_to_selection();
+        }
+        // 拖拽 LOOP 行会直接改 `doc.edit.playback`：每帧对比后推引擎。
+        self.sync_loop_to_engine();
 
         // ── Handle playback actions ──
         self.handle_playback(

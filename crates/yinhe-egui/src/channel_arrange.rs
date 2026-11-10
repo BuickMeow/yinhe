@@ -251,7 +251,8 @@ pub(crate) fn show(
         );
         let rows = crate::widgets::event_rows::show(
             ui,
-            &doc.edit.event_rows_ar,
+            &mut doc.edit.event_rows_ar,
+            &mut doc.edit.playback,
             crate::widgets::event_rows::EventRowsData {
                 markers: &model.conductor.markers,
                 time_sig: &model.conductor.time_sig,
@@ -606,7 +607,13 @@ pub(crate) fn show(
     );
     ui.painter()
         .rect_filled(events_corner, 0.0, crate::theme::track_bg());
-    crate::widgets::event_rows::controls(ui, events_corner, &mut doc.edit.event_rows_ar);
+    crate::widgets::event_rows::controls(
+        ui,
+        events_corner,
+        &mut doc.edit.event_rows_ar,
+        &mut doc.edit.playback,
+        doc.data.model.meta.ppq,
+    );
     // 左下角（面板下方、水平滚动条左侧）铺背景。
     ui.painter().rect_filled(
         egui::Rect::from_min_max(

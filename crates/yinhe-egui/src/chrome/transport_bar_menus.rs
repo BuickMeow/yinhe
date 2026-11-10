@@ -114,6 +114,10 @@ pub fn show_play_menu(
     actions: &mut PlayActions,
 ) {
     let has_active = ctx.doc.is_some();
+    let loop_enabled = ctx
+        .doc
+        .map(|d| d.edit.playback.loop_enabled())
+        .unwrap_or(false);
     let settings = &mut ctx.settings;
     let play_items = [
         PlayMenuAction::PlayPause {
@@ -130,6 +134,10 @@ pub fn show_play_menu(
         PlayMenuAction::AutomationWrite {
             enabled: settings.automation_write,
         },
+        PlayMenuAction::Loop {
+            enabled: loop_enabled,
+        },
+        PlayMenuAction::LoopSelection,
     ];
     let groups = [MenuGroup::titled("menu.play.group.control", &play_items)];
     let mut pending = None;
@@ -140,6 +148,8 @@ pub fn show_play_menu(
         settings.pinned_step_input,
         settings.pinned_tap_tempo,
         settings.pinned_automation_write,
+        settings.pinned_loop,
+        settings.pinned_loop_selection,
     ];
     if show_action_menu(
         button,
@@ -160,6 +170,8 @@ pub fn show_play_menu(
         settings.pinned_step_input = pinned[3];
         settings.pinned_tap_tempo = pinned[4];
         settings.pinned_automation_write = pinned[5];
+        settings.pinned_loop = pinned[6];
+        settings.pinned_loop_selection = pinned[7];
         settings.save();
     }
     if let Some(action) = pending {
@@ -178,6 +190,8 @@ pub fn show_play_menu(
             PlayMenuAction::AutomationWrite { enabled } => {
                 actions.set_automation_write = Some(!enabled);
             }
+            PlayMenuAction::Loop { enabled } => actions.set_loop = Some(!enabled),
+            PlayMenuAction::LoopSelection => actions.loop_selection = true,
         }
     }
 }

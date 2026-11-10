@@ -56,6 +56,7 @@ pub fn show(
     render_thread: Option<&yinhe_wgpu::RenderThreadHandle>,
     view: &mut yinhe_types::PianoRollView,
     event_rows: &mut yinhe_types::EventRowsState,
+    playback: &mut yinhe_editor_core::PlaybackState,
     clip_mode: bool,
     last_cull_revision: &mut u64, // revision ^ hidden_hash — triggers all_notes re-upload
     last_cull_revision_only: &mut u64, // last revision for incremental detection
@@ -405,6 +406,7 @@ pub fn show(
         rect,
         view,
         event_rows,
+        playback,
         event_rows_rect,
         conductor,
         clip_row.as_ref(),

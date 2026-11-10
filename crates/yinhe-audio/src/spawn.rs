@@ -81,6 +81,13 @@ pub enum AudioCommand {
     Seek {
         sample: u64,
     },
+    /// 设置走带循环区间（tick 域；`end_tick <= start_tick` 表示关闭）。
+    /// 引擎在块内跨过 end 时回绕到 start；状态的恢复见 `AudioEngine::set_loop`。
+    SetLoop {
+        enabled: bool,
+        start_tick: u32,
+        end_tick: u32,
+    },
     LoadModel {
         model: Arc<YinModel>,
     },
@@ -416,6 +423,7 @@ impl AudioCommand {
             AudioCommand::Pause => ("Pause", true),
             AudioCommand::Stop => ("Stop", true),
             AudioCommand::Seek { .. } => ("Seek", true),
+            AudioCommand::SetLoop { .. } => ("SetLoop", true),
             AudioCommand::LoadModel { .. } => ("LoadModel", true),
             AudioCommand::ReloadNotes { .. } => ("ReloadNotes", false),
             AudioCommand::UpdateNotes { .. } => ("UpdateNotes", false),
@@ -730,6 +738,13 @@ pub fn channels_for_model(model: &YinModel) -> ChannelLayout {
     ChannelLayout::from_model(model)
 }
 
+/// Chase 的用途：普通 seek 立即应用；loop 起点快照留给回绕。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ChasePurpose {
+    Seek,
+    Loop,
+}
+
 /// Internal command sent from the renderer thread to the worker thread.
 pub(crate) enum WorkerCmd {
     /// Full prepare: cc_events + audible_notes + duration (LoadModel / ReloadNotes).
@@ -745,6 +760,8 @@ pub(crate) enum WorkerCmd {
         model: Arc<YinModel>,
         target_tick: u32,
         generation: u64,
+        /// Seek = 立即应用；Loop = 存为 loop 起点快照，回绕时同步应用。
+        purpose: ChasePurpose,
         /// 当前 skip_track 快照，chase 时跳过 mute 轨道的 CC。
         skip_mask: Vec<bool>,
         /// AR 自动化 lane 的 M/S 试听旁通，chase 时同步过滤。
@@ -782,6 +799,8 @@ pub(crate) enum WorkerResult {
         states: Box<[Option<ChannelState>; 256]>,
         plugin_params: Vec<(u8, u64, u32, f32)>,
         generation: u64,
+        purpose: ChasePurpose,
+        target_tick: u32,
     },
     LoadedSoundFont {
         channels: Vec<u8>,
@@ -922,26 +941,36 @@ pub(crate) fn spawn_worker(
                         model,
                         target_tick,
                         generation,
+                        purpose,
                         skip_mask,
                         am_ms,
                     } => {
                         // 合并连续 PrepareChase，只保留最新（同 generation 或不同 generation 都只留最新）
-                        let (latest_model, latest_target, latest_gen, latest_mask, latest_am_ms) =
-                            merge_pending_commands(
-                                &cmd_rx,
-                                &mut pending,
-                                (model, target_tick, generation, skip_mask, am_ms),
-                                |cmd| match cmd {
-                                    WorkerCmd::PrepareChase {
-                                        model,
-                                        target_tick,
-                                        generation,
-                                        skip_mask,
-                                        am_ms,
-                                    } => Ok((model, target_tick, generation, skip_mask, am_ms)),
-                                    other => Err(other),
-                                },
-                            );
+                        let (
+                            latest_model,
+                            latest_target,
+                            latest_gen,
+                            latest_mask,
+                            latest_am_ms,
+                            latest_purpose,
+                        ) = merge_pending_commands(
+                            &cmd_rx,
+                            &mut pending,
+                            (model, target_tick, generation, skip_mask, am_ms, purpose),
+                            |cmd| match cmd {
+                                WorkerCmd::PrepareChase {
+                                    model,
+                                    target_tick,
+                                    generation,
+                                    skip_mask,
+                                    am_ms,
+                                    purpose,
+                                } => {
+                                    Ok((model, target_tick, generation, skip_mask, am_ms, purpose))
+                                }
+                                other => Err(other),
+                            },
+                        );
                         let (states, plugin_params) = compute_chase_states(
                             &latest_model,
                             latest_target,
@@ -952,6 +981,8 @@ pub(crate) fn spawn_worker(
                             states,
                             plugin_params,
                             generation: latest_gen,
+                            purpose: latest_purpose,
+                            target_tick: latest_target,
                         });
                     }
                     WorkerCmd::LoadSoundFont {

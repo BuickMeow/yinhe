@@ -68,6 +68,7 @@ pub(super) struct NativeMenu {
     pub(super) tool_checks: Vec<(crate::widgets::tools_panel::Tool, CheckMenuItem)>,
     pub(super) orientation_checks: Vec<(yinhe_types::Orientation, &'static str, CheckMenuItem)>,
     pub(super) panels_check: CheckMenuItem,
+    pub(super) loop_check: CheckMenuItem,
 }
 
 pub(super) trait MenuActionFrom {
@@ -277,6 +278,10 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
     map.insert(step_item.id().clone(), MenuAction::ToggleStepInput);
     let tap_item = Box::new(MenuItem::new(t!("menu.tap_tempo"), true, None));
     map.insert(tap_item.id().clone(), MenuAction::TapTempo);
+    let loop_item = Box::new(CheckMenuItem::new(t!("menu.loop"), true, false, None));
+    map.insert(loop_item.id().clone(), MenuAction::ToggleLoop);
+    let loop_selection_item = Box::new(MenuItem::new(t!("menu.loop_selection"), true, None));
+    map.insert(loop_selection_item.id().clone(), MenuAction::LoopSelection);
 
     const FOLLOW_MODES: [(FollowMode, &str); 4] = [
         (FollowMode::None, "follow.none"),
@@ -299,6 +304,8 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
         record_item.as_ref(),
         step_item.as_ref(),
         tap_item.as_ref(),
+        loop_item.as_ref(),
+        loop_selection_item.as_ref(),
     ];
     let play_menu = Submenu::with_items(t!("menu.playback"), true, &play_items)?;
 
@@ -399,6 +406,7 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
             tool_checks,
             orientation_checks,
             panels_check: panels_item,
+            loop_check: (*loop_item).clone(),
         });
     });
 

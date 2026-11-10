@@ -81,6 +81,8 @@ pub(super) fn refresh_view_checks(
             native
                 .panels_check
                 .set_enabled(view.has_active_doc && !view.pr_vertical);
+            native.loop_check.set_checked(view.loop_enabled);
+            native.loop_check.set_enabled(view.has_active_doc);
         }
     });
 }

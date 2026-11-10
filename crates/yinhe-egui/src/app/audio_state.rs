@@ -80,6 +80,9 @@ pub(crate) struct AudioState {
     /// Last known sample position from the audio engine, and the instant we read it.
     /// Used to interpolate cursor position between callback updates.
     pub playback_anchor: Option<(u64, std::time::Instant)>,
+    /// 最近一次推给音频引擎的 loop 状态 `(enabled, start_tick, end_tick)`。
+    /// 每帧与当前文档比较，变化才发 `SetLoop`（拖拽时也只发变化帧）。
+    pub loop_sent: Option<(bool, u32, u32)>,
     /// Set when Play/Resume is sent but the audio thread hasn't acknowledged yet.
     /// Ensures request_repaint() keeps firing until is_playing() returns true.
     pub pending_playback: bool,
@@ -152,6 +155,7 @@ impl AudioState {
             engine_sf_configs: Vec::new(),
             last_channel_layout: None,
             playback_anchor: None,
+            loop_sent: None,
             pending_playback: false,
             pending_playback_since: None,
             pending_insert_returns: None,

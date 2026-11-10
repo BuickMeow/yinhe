@@ -161,6 +161,23 @@ pub(crate) struct AudioEngine {
     pub(crate) gpu_backend_dirty: bool,
     /// GPU 通道超限（`midi_compacted > MAX_CHANNELS`）告警只报一次，避免刷屏。
     pub(crate) gpu_overflow_warned: bool,
+    /// 导出模式：忽略走带循环（导出必须线性跑完整时间轴）。
+    pub(crate) export_mode: bool,
+    /// 走带循环开关（tick 域；`loop_end_tick <= loop_start_tick` 视为关闭）。
+    pub(crate) loop_enabled: bool,
+    pub(crate) loop_start_tick: u32,
+    pub(crate) loop_end_tick: u32,
+    /// 循环起点 chase 快照：由 renderer 在 loop 变化/模型变化后异步预计算，
+    /// 回绕时在渲染线程同步应用（音频线程不查询事件流）。
+    pub(crate) loop_chase: Option<LoopChase>,
+}
+
+/// 循环回绕用的控制状态快照。
+pub(crate) struct LoopChase {
+    pub generation: u64,
+    pub start_tick: u32,
+    pub states: Box<[Option<crate::channel::ChannelState>; 256]>,
+    pub plugin_params: Vec<(u8, u64, u32, f32)>,
 }
 
 /// 插件预览的一条活动音符（引擎侧调度 NoteOn/NoteOff）。
@@ -261,6 +278,11 @@ impl AudioEngine {
                 segment_start_sample: 0,
                 gpu_backend_dirty: true,
                 gpu_overflow_warned: false,
+                export_mode: false,
+                loop_enabled: false,
+                loop_start_tick: 0,
+                loop_end_tick: 0,
+                loop_chase: None,
             }
         })
     }
@@ -462,6 +484,11 @@ impl AudioEngine {
                 self.seek_to(0);
             }
             AudioCommand::Seek { sample } => self.seek_to(sample),
+            AudioCommand::SetLoop {
+                enabled,
+                start_tick,
+                end_tick,
+            } => self.set_loop(enabled, start_tick, end_tick),
             AudioCommand::LoadModel { model } => {
                 self.playing = false;
                 self.load_model(&model);

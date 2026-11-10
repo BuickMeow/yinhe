@@ -26,6 +26,7 @@ pub(crate) fn draw_overlays(
     rect: egui::Rect,
     view: &mut PianoRollView,
     event_rows: &mut yinhe_types::EventRowsState,
+    playback: &mut yinhe_editor_core::PlaybackState,
     event_rows_rect: egui::Rect,
     conductor: Option<&yinhe_core::ConductorData>,
     clip_row: Option<&super::types::ClipRowView>,
@@ -665,6 +666,7 @@ pub(crate) fn draw_overlays(
             let rows = crate::widgets::event_rows::show(
                 ui,
                 event_rows,
+                playback,
                 crate::widgets::event_rows::EventRowsData {
                     markers: &c.markers,
                     time_sig: &c.time_sig,
@@ -697,7 +699,13 @@ pub(crate) fn draw_overlays(
             egui::pos2(rect.min.x, rect.min.y),
             egui::pos2(rect.min.x + view.keyboard_width(), rect.min.y + RULER_H),
         );
-        crate::widgets::event_rows::controls(ui, controls_rect, event_rows);
+        crate::widgets::event_rows::controls(
+            ui,
+            controls_rect,
+            event_rows,
+            playback,
+            tpb.unwrap_or(480),
+        );
     }
 
     (sel_action, marker_edit, clip_resize)

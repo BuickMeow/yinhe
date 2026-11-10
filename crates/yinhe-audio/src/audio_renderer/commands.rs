@@ -225,6 +225,26 @@ impl AudioRenderer {
                     self.play_timing = Some((Instant::now(), from_sample));
                 }
             }
+            AudioCommand::SetLoop {
+                enabled,
+                start_tick,
+                end_tick,
+            } => {
+                let before = self.engine.sample_position();
+                self.engine.handle_command(AudioCommand::SetLoop {
+                    enabled,
+                    start_tick,
+                    end_tick,
+                });
+                self.engine.loop_chase = None;
+                // set_loop 在播放头落到区间外时会 seek 一次：清 ring + chase。
+                // 区间内拖动不 seek，避免每帧清空音频。
+                if self.engine.sample_position() != before {
+                    self.clear_buffered_audio(self.engine.sample_position());
+                    self.request_chase(self.engine.current_tick());
+                }
+                self.request_loop_chase();
+            }
             AudioCommand::Seek { sample } => {
                 if self.export.is_some() {
                     // 导出中忽略 seek。
@@ -388,6 +408,7 @@ impl AudioRenderer {
         // mute 的轨道的 CC 不再参与。
         if self.engine.model_loaded() {
             self.request_chase(self.engine.current_tick());
+            self.request_loop_chase();
         }
     }
 
@@ -403,6 +424,7 @@ impl AudioRenderer {
         self.engine.chase_generation = self.engine.chase_generation.wrapping_add(1);
         if self.engine.model_loaded() {
             self.request_chase(self.engine.current_tick());
+            self.request_loop_chase();
         }
     }
 
@@ -410,6 +432,20 @@ impl AudioRenderer {
     /// worker 完成后回传 `ChaseResult`，`process_worker_results` 应用。
     /// `chase_generation` 用于丢弃过期结果（模型被 PrepareModel 替换后）。
     pub(super) fn request_chase(&self, target_tick: u32) {
+        self.request_chase_for(target_tick, crate::spawn::ChasePurpose::Seek);
+    }
+
+    /// 请求循环起点的控制状态快照；结果存为 `loop_chase`，回绕时同步应用。
+    pub(super) fn request_loop_chase(&self) {
+        if self.engine.loop_enabled {
+            self.request_chase_for(
+                self.engine.loop_start_tick,
+                crate::spawn::ChasePurpose::Loop,
+            );
+        }
+    }
+
+    fn request_chase_for(&self, target_tick: u32, purpose: crate::spawn::ChasePurpose) {
         let Some(model) = self.engine.yin_model.clone() else {
             return;
         };
@@ -420,6 +456,7 @@ impl AudioRenderer {
             model,
             target_tick,
             generation,
+            purpose,
             skip_mask,
             am_ms,
         });

@@ -25,28 +25,75 @@ impl AudioEngine {
             return;
         }
 
-        // GPU 路径：GpuSynth 渲染到混音台 planar 通道缓冲，之后与 CPU 路径
-        // 共用插件乐器 / 音频轨 / mixer.process（insert 效果器、总线、推子全部生效）。
-        // 块长变化（导出用 1024、实时 512）：与 CPU 路径同一逻辑。
-        if self.gpu_synth.is_some() {
-            if self.mixer.frames() != frames {
-                let strips = self.dense_strip_params();
-                let count = self.mixer.channel_count();
-                self.mixer.resize(count, frames, &strips);
-                self.channel_set.resize_scratches(frames);
-            }
-            let block_start_sample = self.sample_position;
-            let block_end_sample = block_start_sample + frames as u64;
-            let block_end_tick = self.sample_to_tick(block_end_sample);
-            self.block_start_sample = block_start_sample;
+        // 块长变化（导出用 1024、实时 512）：mixer 缓冲与通道暂存按实际块长
+        // 重建一次。循环拆块只改**输出内偏移**，不改 mixer 块长。
+        self.ensure_block_buffers(frames);
+        // 音频轨缓冲是覆盖写；整块只清一次，之后各 span 按 offset 写入。
+        self.clear_audio_buffers(frames);
 
-            // GPU 渲染（覆盖写 dense 0..MAX_CHANNELS，其余清零）。
-            // 实时块耗时诊断：超过本块时长预算（frames / sample_rate）即打印
-            // （限频每秒一条）——用于定位 GPU 后端断续是否由块超时（underrun）
-            // 引起，而非渲染语义差异。
+        let mut done = 0usize;
+        while done < frames {
+            let (span, wrapped) = self.next_loop_span(frames - done);
+            if span == 0 {
+                self.rewind_to_loop_start();
+                continue;
+            }
+            self.render_span(done, span);
+            done += span;
+            if wrapped {
+                self.rewind_to_loop_start();
+            }
+        }
+
+        // 试听预览与走带无关：整块混入一次。
+        self.inject_preview(frames);
+        // 内置音源通道处理段（CC7/10/11/71/74）在混音台 insert 链之前生效。
+        self.render_channel_dsp(frames);
+
+        let (master_l, master_r) = self.mixer.process();
+        write_master(output, master_l, master_r);
+    }
+
+    fn ensure_block_buffers(&mut self, frames: usize) {
+        if self.mixer.frames() != frames {
+            let strips = self.dense_strip_params();
+            let count = self.mixer.channel_count();
+            self.mixer.resize(count, frames, &strips);
+            self.channel_set.resize_scratches(frames);
+        }
+    }
+
+    /// 本块还能连续渲染多少帧，以及该 span 是否正好撞到 loop end。
+    fn next_loop_span(&self, remaining: usize) -> (usize, bool) {
+        if !self.loop_enabled || self.export_mode {
+            return (remaining, false);
+        }
+        let end = self.loop_end_sample();
+        let pos = self.sample_position;
+        if pos >= end {
+            return (0, true);
+        }
+        let span = (remaining as u64).min(end - pos) as usize;
+        let wrapped = pos + span as u64 >= end;
+        (span.max(1), wrapped)
+    }
+
+    /// 渲染一个连续 span 到输出缓冲的 `offset..offset+frames`。
+    fn render_span(&mut self, offset: usize, frames: usize) {
+        if frames == 0 {
+            return;
+        }
+        let block_start_sample = self.sample_position;
+        let block_end_sample = block_start_sample + frames as u64;
+        let block_end_tick = self.sample_to_tick(block_end_sample);
+        self.block_start_sample = block_start_sample;
+
+        if self.gpu_synth.is_some() {
+            // GPU 渲染（只写本 span 的 offset 区间，超出通道清零由 span 外的
+            // `mixer.process` 之前保证；ring 不足时按 span 帧数提交）。
             let t_gpu = std::time::Instant::now();
             if let Some(synth) = self.gpu_synth.as_mut() {
-                synth.render_to_mixer(self.mixer.buffers_mut());
+                synth.render_to_mixer_range(self.mixer.buffers_mut(), offset, frames);
             }
             let gpu_ms = t_gpu.elapsed().as_secs_f64() * 1000.0;
             let budget_ms = frames as f64 / self.sample_rate as f64 * 1000.0;
@@ -101,107 +148,64 @@ impl AudioEngine {
                     ));
                 }
             }
-            // 插件乐器事件：按块推进 tick（GPU 模式下非插件通道不喂 xsynth）。
+            // 插件乐器事件：按 span 结束 tick 推进（GPU 模式下非插件通道不喂 xsynth）。
             self.dispatch_block_events(block_end_tick);
             self.dispatch_plugin_previews(block_start_sample, frames);
-            self.render_instruments(block_start_sample, frames);
-            self.inject_preview(frames);
-            self.render_channel_dsp(frames);
-            self.render_audio_tracks(block_start_sample, frames);
+            self.render_instruments(block_start_sample, offset, frames);
+            self.render_audio_tracks(block_start_sample, offset, frames);
+        } else {
+            // CPU 路径：xsynth 逐段分发+渲染。事件比较全在 tick 域
+            // （dispatch 基准 = current_tick，块边界 = sample→tick 反查），
+            // 只有"渲染段边界"才转一次 sample（每块事件数量级）。
+            let mut rendered_until_sample = block_start_sample;
+            let mut rendered_until_tick = self.current_tick;
+            let mut offset_frames = offset;
 
-            let (master_l, master_r) = self.mixer.process();
-            write_master(output, master_l, master_r);
-            self.sample_position = block_end_sample;
-            self.current_tick = block_end_tick;
-            return;
-        }
-
-        // 块长变化（导出用 1024、实时 512）：mixer 缓冲与通道暂存按实际块长
-        // 重建一次。引擎生命周期内块长固定，之后不再进入此分支。
-        if self.mixer.frames() != frames {
-            let strips = self.dense_strip_params();
-            let count = self.mixer.channel_count();
-            self.mixer.resize(count, frames, &strips);
-            self.channel_set.resize_scratches(frames);
-        }
-
-        // CPU 路径：xsynth 逐段分发+渲染。事件比较全在 tick 域
-        // （dispatch 基准 = current_tick，块边界 = sample→tick 反查），
-        // 只有"渲染段边界"才转一次 sample（每块事件数量级）。
-        // 与旧路径的差异：各通道渲染进混音台的 planar 通道缓冲（而非直接
-        // 混成立体声），块末由 mixer 统一做增益/声像/mute/solo/insert。
-        let block_start_sample = self.sample_position;
-        let block_end_sample = block_start_sample + frames as u64;
-        let block_end_tick = self.sample_to_tick(block_end_sample);
-        self.block_start_sample = block_start_sample;
-        let mut rendered_until_sample = block_start_sample;
-        let mut rendered_until_tick = self.current_tick;
-        let mut offset_frames = 0usize;
-
-        while rendered_until_tick < block_end_tick {
-            // 单次 dispatch + find_next：候选是下一个未处理事件的 tick
-            //（严格 > rendered_until_tick，循环必然推进）。
-            let next_tick = self
-                .dispatch_and_find_next(rendered_until_tick, block_end_tick)
-                .unwrap_or(block_end_tick)
-                .min(block_end_tick);
-            // 块末边界直接对齐 block_end_sample；否则 tick→sample 得段边界。
-            // 极快 tempo 下多个 tick 可能映射同一 sample（零长段）：
-            // 不渲染、只推进 tick 继续 dispatch，事件不丢不重。
-            let next_sample = if next_tick >= block_end_tick {
-                block_end_sample
-            } else {
-                self.tick_to_sample(next_tick)
-            };
-            let segment_frames = (next_sample - rendered_until_sample) as usize;
-            if segment_frames > 0 {
-                // 本段的事件 sample 依据（dispatch 在下一轮循环开头使用）
-                {
+            while rendered_until_tick < block_end_tick {
+                // 单次 dispatch + find_next：候选是下一个未处理事件的 tick
+                //（严格 > rendered_until_tick，循环必然推进）。
+                let next_tick = self
+                    .dispatch_and_find_next(rendered_until_tick, block_end_tick)
+                    .unwrap_or(block_end_tick)
+                    .min(block_end_tick);
+                // 块末边界直接对齐 block_end_sample；否则 tick→sample 得段边界。
+                // 极快 tempo 下多个 tick 可能映射同一 sample（零长段）：
+                // 不渲染、只推进 tick 继续 dispatch，事件不丢不重。
+                let next_sample = if next_tick >= block_end_tick {
+                    block_end_sample
+                } else {
+                    self.tick_to_sample(next_tick)
+                };
+                let segment_frames = (next_sample - rendered_until_sample) as usize;
+                if segment_frames > 0 {
                     self.segment_start_sample = rendered_until_sample;
+                    self.render_cpu_segment(offset_frames, segment_frames);
+                    rendered_until_sample = next_sample;
+                    offset_frames += segment_frames;
                 }
-                self.render_cpu_segment(offset_frames, segment_frames);
-                rendered_until_sample = next_sample;
-                offset_frames += segment_frames;
+                rendered_until_tick = next_tick;
             }
-            rendered_until_tick = next_tick;
-        }
 
-        // 补齐剩余帧（浮点/块对齐：tick_to_sample(block_end_tick) 可能略小于
-        // block_end_sample，剩余段无事件）。
-        let remaining = block_end_sample - rendered_until_sample;
-        if remaining > 0 {
-            {
+            // 补齐剩余帧（浮点/块对齐：tick_to_sample(block_end_tick) 可能略小于
+            // block_end_sample，剩余段无事件）。
+            let remaining = block_end_sample - rendered_until_sample;
+            if remaining > 0 {
                 self.segment_start_sample = rendered_until_sample;
+                self.render_cpu_segment(offset_frames, remaining as usize);
             }
-            self.render_cpu_segment(offset_frames, remaining as usize);
+
+            // 乐器插件：把本 span 累积的事件喂给各自实例，输出写进对应乐器 dense 通道。
+            self.dispatch_plugin_previews(block_start_sample, frames);
+            self.render_instruments(block_start_sample, offset, frames);
+            // 音频片段回放：按绝对时间混进对应音频 dense 通道（无状态）。
+            self.render_audio_tracks(block_start_sample, offset, frames);
         }
-
-        // 乐器插件：把每块累积的事件喂给各自实例，输出写进对应乐器 dense 通道。
-        self.dispatch_plugin_previews(block_start_sample, frames);
-        self.render_instruments(block_start_sample, frames);
-
-        // 试听预览音频累加进对应 dense 通道（与播放共用同一条 DSP + mixer）。
-        self.inject_preview(frames);
-
-        // 内置音源通道处理段（CC7/10/11/71/74）在混音台 insert 链之前生效。
-        self.render_channel_dsp(frames);
-
-        // 音频片段回放：按绝对时间直接混进对应音频 dense 通道（无状态）。
-        self.render_audio_tracks(block_start_sample, frames);
-
-        // 混音：insert → 增益/声像斜坡 → mute/solo → master，然后交错输出。
-        let (master_l, master_r) = self.mixer.process();
-        write_master(output, master_l, master_r);
 
         self.sample_position = block_end_sample;
         self.current_tick = block_end_tick;
     }
 
-    /// 空闲渲染（停止/暂停）：不推进走带、不派发音符，只驱动乐器插件
-    ///（GUI 键盘、插件预览、插件尾音）与混音输出。
-    /// 存在已安装乐器时由渲染器持续调用（成熟 DAW 语义：乐器插件始终在跑）。
-    /// 渲染一个 CPU 段到混音台通道缓冲：yinhe `CpuSynth` 存在时走它，
-    /// 否则走 xsynth `ChannelSet`（GPU 模式不调用本方法）。
+    /// 渲染一个 CPU 段到混音台通道缓冲（`offset_frames` 是输出块内偏移）。
     fn render_cpu_segment(&mut self, offset_frames: usize, frames: usize) {
         if let Some(cs) = self.cpu_synth.as_mut() {
             cs.render_range(self.mixer.buffers_mut(), offset_frames, frames);
@@ -209,6 +213,18 @@ impl AudioEngine {
         }
         self.channel_set
             .render_segment(self.mixer.buffers_mut(), offset_frames, frames);
+    }
+
+    /// 音频通道缓冲是覆盖写（没有 xsynth/插件替它清零），整块清一次。
+    fn clear_audio_buffers(&mut self, frames: usize) {
+        for &ach in self.channel_layout.audio_channels() {
+            let dense = self.channel_layout.audio_dense_for(ach) as usize;
+            if let Some(cb) = self.mixer.channel_buffers_mut(dense) {
+                let n = frames.min(cb.left.len()).min(cb.right.len());
+                cb.left[..n].fill(0.0);
+                cb.right[..n].fill(0.0);
+            }
+        }
     }
 
     pub(crate) fn render_idle(&mut self, output: &mut [f32]) {
@@ -228,7 +244,7 @@ impl AudioEngine {
         self.block_start_sample = block_start;
         self.mixer.clear_channel_buffers();
         self.dispatch_plugin_previews(block_start, frames);
-        self.render_instruments(block_start, frames);
+        self.render_instruments(block_start, 0, frames);
         self.inject_preview(frames);
         let (master_l, master_r) = self.mixer.process();
         write_master(output, master_l, master_r);
@@ -282,7 +298,12 @@ impl AudioEngine {
     /// 音频轨片段回放：按块内**绝对时间**把每条音频轨的片段混进对应音频
     /// dense 通道缓冲。完全无状态（seek/暂停/导出天然正确），PDC 由混音台
     /// 统一补偿。音频通道是覆盖写（没有 xsynth/插件替它清零）。
-    pub(super) fn render_audio_tracks(&mut self, block_start_sample: u64, frames: usize) {
+    pub(super) fn render_audio_tracks(
+        &mut self,
+        block_start_sample: u64,
+        offset_frames: usize,
+        frames: usize,
+    ) {
         if self.channel_layout.audio_channels().is_empty() {
             return;
         }
@@ -294,14 +315,6 @@ impl AudioEngine {
         let Some(audio_model) = self.model.as_ref() else {
             return;
         };
-        for &ach in self.channel_layout.audio_channels() {
-            let dense = self.channel_layout.audio_dense_for(ach) as usize;
-            if let Some(cb) = self.mixer.channel_buffers_mut(dense) {
-                let n = frames.min(cb.left.len()).min(cb.right.len());
-                cb.left[..n].fill(0.0);
-                cb.right[..n].fill(0.0);
-            }
-        }
         let sr = self.sample_rate as f64;
         let block_start = block_start_sample as i64;
         let block_end = block_start + frames as i64;
@@ -357,9 +370,10 @@ impl AudioEngine {
                 let Some(cb) = self.mixer.channel_buffers_mut(dense) else {
                     continue;
                 };
+                let out_end = offset_frames + frames;
                 for g in from..to {
-                    let n = (g - block_start) as usize;
-                    if n >= frames {
+                    let n = offset_frames + (g - block_start) as usize;
+                    if n >= out_end {
                         break;
                     }
                     // 片段内已播时长（秒）；淡入淡出与素材偏移都以它为准。

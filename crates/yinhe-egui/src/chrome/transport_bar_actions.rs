@@ -377,6 +377,12 @@ pub enum PlayMenuAction {
     AutomationWrite {
         enabled: bool,
     },
+    /// 走带循环开关。
+    Loop {
+        enabled: bool,
+    },
+    /// 把循环区间设为当前选区。
+    LoopSelection,
 }
 
 impl PopupRow for PlayMenuAction {
@@ -388,6 +394,8 @@ impl PopupRow for PlayMenuAction {
             PlayMenuAction::StepInput { .. } => 3,
             PlayMenuAction::TapTempo => 4,
             PlayMenuAction::AutomationWrite { .. } => 5,
+            PlayMenuAction::Loop { .. } => 6,
+            PlayMenuAction::LoopSelection => 7,
         }
     }
 
@@ -413,6 +421,8 @@ impl PopupRow for PlayMenuAction {
             PlayMenuAction::StepInput { .. } => ICON_STEP,
             PlayMenuAction::TapTempo => ICON_SPEED,
             PlayMenuAction::AutomationWrite { .. } => ICON_EDIT_NOTE,
+            PlayMenuAction::Loop { .. } => ICON_REPEAT,
+            PlayMenuAction::LoopSelection => ICON_HIGHLIGHT,
         }
     }
 
@@ -424,6 +434,8 @@ impl PopupRow for PlayMenuAction {
             PlayMenuAction::StepInput { .. } => "menu.step_input",
             PlayMenuAction::TapTempo => "menu.tap_tempo",
             PlayMenuAction::AutomationWrite { .. } => "menu.automation_write",
+            PlayMenuAction::Loop { .. } => "menu.loop",
+            PlayMenuAction::LoopSelection => "menu.loop_selection",
         }
     }
 
@@ -434,6 +446,7 @@ impl PopupRow for PlayMenuAction {
             PlayMenuAction::AutomationWrite { enabled } if enabled => {
                 Some(crate::theme::accent_active())
             }
+            PlayMenuAction::Loop { enabled } if enabled => Some(crate::theme::accent_active()),
             _ => None,
         }
     }
@@ -443,6 +456,7 @@ impl PopupRow for PlayMenuAction {
             PlayMenuAction::Record { recording } => recording,
             PlayMenuAction::StepInput { active } => active,
             PlayMenuAction::AutomationWrite { enabled } => enabled,
+            PlayMenuAction::Loop { enabled } => enabled,
             _ => false,
         }
     }
@@ -535,6 +549,10 @@ pub struct PlayActions {
     pub tap_tempo: bool,
     /// 切换「写入自动化」开关（Some = 设为该值）。
     pub set_automation_write: Option<bool>,
+    /// 切换循环（Some = 设为该值）。
+    pub set_loop: Option<bool>,
+    /// 把循环区间设为当前选区。
+    pub loop_selection: bool,
 }
 
 /// 传输栏上下文与响应
@@ -575,6 +593,10 @@ pub struct TransportResponse {
     pub set_automation_panels: Option<bool>,
     /// 时间码编辑事件（BPM/拍号/PPQ/位置/调式/量化）。
     pub timecode_events: Vec<crate::widgets::timecode::TimecodeEvent>,
+    /// 循环开关（Some = 设为该值）。
+    pub set_loop: Option<bool>,
+    /// 循环区间设为当前选区。
+    pub loop_selection: bool,
     /// transport bar 上选择动作按钮的点击（删除/复制/移调/翻转；None = 未点击）。
     pub selection_action: Option<crate::widgets::selection_actions::SelectionAction>,
     pub pending_file_action: Option<FileAction>,

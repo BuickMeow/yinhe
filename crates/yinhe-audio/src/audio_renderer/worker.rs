@@ -30,6 +30,7 @@ impl AudioRenderer {
                     // 方案 B：apply_prepared_model 内部 seek_to 不再 chase，
                     // 这里发 PrepareChase 让 worker 异步算 channel state
                     self.request_chase(self.engine.current_tick());
+                    self.request_loop_chase();
                     // 模型已就绪且没有待加载音色库（无配置/已加载完）→ 音频就绪。
                     if self.gpu_sf_pending == 0 {
                         self.mark_audio_ready();
@@ -48,6 +49,7 @@ impl AudioRenderer {
                         .store(duration_samples, Ordering::Relaxed);
                     self.engine
                         .apply_notes_only(model, yin_model, audible_delta, duration_samples);
+                    self.request_loop_chase();
                     // GPU 路径：音符变化 → 事件列表失效（run 循环统一重建）
                     self.engine.invalidate_gpu_events();
                     // 注意：这里**不**清 ring。UpdateNotes 不 seek、不改 cc_events，
@@ -61,18 +63,36 @@ impl AudioRenderer {
                     states,
                     plugin_params,
                     generation,
+                    purpose,
+                    target_tick,
                 }) => {
                     let t_chase_apply = Instant::now();
                     // 丢弃过期结果：cc_events 已被新 PrepareModel 替换
                     if generation == self.engine.chase_generation {
-                        // GPU 路径的 chase 应用已并入 apply_chase_result 内部
-                        //（apply_gpu_chase），此处无需额外分支。
-                        self.engine.apply_chase_result(&states, &plugin_params);
-                        if self.play_timing.is_some() {
-                            play_log(&format!(
-                                "[play] chase 快照应用={:?}",
-                                t_chase_apply.elapsed()
-                            ));
+                        match purpose {
+                            crate::spawn::ChasePurpose::Loop => {
+                                if self.engine.loop_enabled
+                                    && target_tick == self.engine.loop_start_tick
+                                {
+                                    self.engine.loop_chase = Some(crate::engine::LoopChase {
+                                        generation,
+                                        start_tick: target_tick,
+                                        states,
+                                        plugin_params,
+                                    });
+                                }
+                            }
+                            crate::spawn::ChasePurpose::Seek => {
+                                // GPU 路径的 chase 应用已并入 apply_chase_result 内部
+                                //（apply_gpu_chase），此处无需额外分支。
+                                self.engine.apply_chase_result(&states, &plugin_params);
+                                if self.play_timing.is_some() {
+                                    play_log(&format!(
+                                        "[play] chase 快照应用={:?}",
+                                        t_chase_apply.elapsed()
+                                    ));
+                                }
+                            }
                         }
                         did_work = true;
                     }

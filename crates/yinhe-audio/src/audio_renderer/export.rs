@@ -69,6 +69,7 @@ impl AudioRenderer {
                 // 从头播放：render 仅在 playing 时产出内容。
                 self.engine
                     .handle_command(AudioCommand::Play { from_sample: 0 });
+                self.engine.export_mode = true;
                 self.export = Some(job);
                 self.export_prev_layer_count = Some(restore_layer_count);
                 // 让 UI 立即看到导出开始（停止外观）。
@@ -157,6 +158,7 @@ impl AudioRenderer {
                 tracing::info!("导出结束（未完成）: {e}");
             }
         }
+        self.engine.export_mode = false;
         // 回到干净停止态（导出期间未推 ring，这里确保停止后无残留），
         // 并恢复导出前的 xsynth 层数（导出设置不污染用户设置）。
         self.engine.handle_command(AudioCommand::Stop);

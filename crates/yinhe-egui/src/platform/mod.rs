@@ -63,6 +63,10 @@ pub enum MenuAction {
     ToggleStepInput,
     /// 播放菜单「敲击测速」，打开测 BPM 弹窗。
     TapTempo,
+    /// 播放菜单「循环」开关。
+    ToggleLoop,
+    /// 播放菜单「循环选区」。
+    LoopSelection,
     /// 播放菜单「播放跟随」四档单选。
     SetFollowMode(yinhe_editor_core::follow::FollowMode),
     /// 工具菜单：切换当前工具。
@@ -98,6 +102,8 @@ pub struct ViewMenuState {
     pub show_automation_panels: bool,
     /// 是否存在活动文档（无文档时方向/面板项禁用）。
     pub has_active_doc: bool,
+    /// 当前文档是否开启循环（macOS 播放菜单勾选同步）。
+    pub loop_enabled: bool,
 }
 
 /// Handle to the native menu bar and its action receiver.

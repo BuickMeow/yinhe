@@ -10,6 +10,7 @@ use yinhe_types::{
 };
 
 use crate::widgets::time_ruler::{MarkerEdit, TimeRulerView};
+use yinhe_editor_core::PlaybackState;
 
 /// 全局事件行需要的数据。AR / 通道 AR / PR 共用。
 pub(crate) struct EventRowsData<'a> {
@@ -23,6 +24,8 @@ pub(crate) struct EventRowsData<'a> {
 pub(crate) struct EventRowsOutcome {
     pub marker_edit: Option<MarkerEdit>,
     pub jumped: bool,
+    /// LOOP 行拖动或显隐发生变化（调用方需要把状态推给音频引擎）。
+    pub loop_changed: bool,
 }
 
 /// 绘制并交互固定事件行。
@@ -32,7 +35,8 @@ pub(crate) struct EventRowsOutcome {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn show(
     ui: &mut egui::Ui,
-    state: &EventRowsState,
+    state: &mut EventRowsState,
+    playback: &mut PlaybackState,
     data: EventRowsData<'_>,
     view: &mut impl TimeRulerView,
     full_rect: egui::Rect,
@@ -44,10 +48,13 @@ pub(crate) fn show(
     id_salt: &str,
     cursor_tick: &mut Option<f64>,
 ) -> EventRowsOutcome {
+    // LOOP 行是走带循环的镜像：循环开启自动出现；关闭自动隐藏。
+    state.sync_loop(playback.loop_enabled());
     if state.visible_count() == 0 || full_rect.height() <= 0.0 {
         return EventRowsOutcome {
             marker_edit: None,
             jumped: false,
+            loop_changed: false,
         };
     }
 
@@ -62,6 +69,7 @@ pub(crate) fn show(
     let mut outcome = EventRowsOutcome {
         marker_edit: None,
         jumped: false,
+        loop_changed: false,
     };
     for (row_idx, kind) in state.visible_rows().enumerate() {
         let y0 = full_rect.min.y + row_idx as f32 * state.row_height;
@@ -112,7 +120,67 @@ pub(crate) fn show(
         );
 
         let mut pointer_over_label = false;
-        if kind == EventRowKind::Marker {
+        if kind == EventRowKind::Loop {
+            let (start_tick, end_tick) = playback.loop_range();
+            let x0 = (content.min.x + view.tick_to_main_px(start_tick as f64))
+                .clamp(content.min.x, content.max.x);
+            let x1 = (content.min.x + view.tick_to_main_px(end_tick as f64))
+                .clamp(content.min.x, content.max.x);
+            let band = egui::Rect::from_min_max(
+                egui::pos2(x0, content.min.y + 2.0),
+                egui::pos2(x1.max(x0 + 1.0), content.max.y - 2.0),
+            );
+            let accent = crate::theme::accent_active();
+            painter.rect_filled(band, 2.0, accent.gamma_multiply(0.18));
+            painter.rect_stroke(
+                band,
+                2.0,
+                egui::Stroke::new(1.0, accent),
+                egui::StrokeKind::Inside,
+            );
+
+            let handle_w = 5.0;
+            let left = egui::Rect::from_min_max(
+                egui::pos2(band.min.x - handle_w, band.min.y),
+                egui::pos2(band.min.x + handle_w, band.max.y),
+            );
+            let right = egui::Rect::from_min_max(
+                egui::pos2(band.max.x - handle_w, band.min.y),
+                egui::pos2(band.max.x + handle_w, band.max.y),
+            );
+
+            for (which, handle_rect) in [("left", left), ("right", right)] {
+                let resp = ui.interact(
+                    handle_rect.expand2(egui::vec2(2.0, 0.0)),
+                    ui.scope_id().with((id_salt, "loop_handle", which)),
+                    egui::Sense::drag(),
+                );
+                if resp.hovered() || resp.dragged() {
+                    pointer_over_label = true;
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                }
+                if resp.dragged()
+                    && let Some(pos) = resp.interact_pointer_pos()
+                {
+                    let tick = snap(view.x_to_tick(pos.x - full_rect.min.x))
+                        .clamp(0.0, u32::MAX as f64) as u32;
+                    let (mut s0, mut s1) = playback.loop_range();
+                    if which == "left" {
+                        s0 = tick.min(s1.saturating_sub(1));
+                    } else {
+                        s1 = tick.max(s0.saturating_add(1));
+                    }
+                    if playback.set_loop_range(s0, s1) {
+                        outcome.loop_changed = true;
+                        ui.ctx().request_repaint();
+                    }
+                }
+            }
+            // 点击循环带内不跳动播放头（拖拽手柄优先）。
+            if band.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or(egui::Pos2::ZERO))) {
+                pointer_over_label = true;
+            }
+        } else if kind == EventRowKind::Marker {
             let marker = crate::widgets::time_ruler::marker_band(
                 ui,
                 content,
@@ -163,6 +231,7 @@ pub(crate) fn show(
                     crate::theme::text_muted(),
                 ),
                 EventRowKind::Marker => {}
+                EventRowKind::Loop => {}
             }
         }
 
@@ -232,7 +301,13 @@ fn format_key(e: &KeySigEvent) -> String {
 /// AR 左上角（标尺与轨道面板交界）的 Events 下拉按钮。
 ///
 /// 勾选控制事件行显示；默认全部关闭，不占用音轨区域高度。
-pub(crate) fn controls(ui: &mut egui::Ui, rect: egui::Rect, state: &mut EventRowsState) {
+pub(crate) fn controls(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    state: &mut EventRowsState,
+    playback: &mut PlaybackState,
+    tpb: u32,
+) {
     let button_rect = egui::Rect::from_min_size(
         rect.min + egui::vec2(6.0, 1.0),
         egui::vec2(
@@ -254,9 +329,27 @@ pub(crate) fn controls(ui: &mut egui::Ui, rect: egui::Rect, state: &mut EventRow
         .show(|ui| {
             ui.set_min_width(120.0);
             for kind in EventRowKind::ALL {
-                let mut visible = state.is_visible(kind);
+                let mut visible = if kind == EventRowKind::Loop {
+                    playback.loop_enabled()
+                } else {
+                    state.is_visible(kind)
+                };
                 if ui.checkbox(&mut visible, kind.label()).changed() {
-                    state.set_visible(kind, visible);
+                    if kind == EventRowKind::Loop {
+                        if visible {
+                            // Events 菜单直接开启时给一个四小节默认区间；
+                            // 播放菜单/走带按钮会用光标所在小节覆盖它。
+                            if playback.loop_range().1 <= playback.loop_range().0 {
+                                let _ = playback.set_loop_range(0, tpb.max(1) * 16);
+                            }
+                            let _ = playback.set_loop_enabled(true);
+                        } else {
+                            let _ = playback.set_loop_enabled(false);
+                        }
+                        state.sync_loop(playback.loop_enabled());
+                    } else {
+                        state.set_visible(kind, visible);
+                    }
                 }
             }
         });

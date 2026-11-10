@@ -352,7 +352,8 @@ pub fn show(
         );
         let rows = crate::widgets::event_rows::show(
             ui,
-            &doc.edit.event_rows_ar,
+            &mut doc.edit.event_rows_ar,
+            &mut doc.edit.playback,
             crate::widgets::event_rows::EventRowsData {
                 markers: &model.conductor.markers,
                 time_sig: &model.conductor.time_sig,
@@ -924,7 +925,13 @@ pub fn show(
     );
     ui.painter()
         .rect_filled(events_corner, 0.0, crate::theme::track_bg());
-    crate::widgets::event_rows::controls(ui, events_corner, &mut doc.edit.event_rows_ar);
+    crate::widgets::event_rows::controls(
+        ui,
+        events_corner,
+        &mut doc.edit.event_rows_ar,
+        &mut doc.edit.playback,
+        doc.data.model.meta.ppq,
+    );
 
     // ── "+" track add button in the corner (below track panel, left of scrollbar) ──
     {

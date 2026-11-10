@@ -21,6 +21,27 @@ impl GpuSynth {
             .first_mut()
             .map(|b| b.borrow_mut().left.len())
             .unwrap_or(0);
+        self.render_to_mixer_range(buffers, 0, frames);
+    }
+
+    /// 把 `frames` 帧渲染到 `buffers` 的 `offset..offset+frames`。
+    ///
+    /// 循环边界会把一个 callback 拆成多个 span；GPU 只覆盖本 span 的区间，
+    /// 不清空其他 span 已写入的音频。块长可变化（流水线按帧数提交）。
+    pub fn render_to_mixer_range<B: std::borrow::BorrowMut<yinhe_mixer::ChannelBuffers>>(
+        &mut self,
+        buffers: &mut [B],
+        offset: usize,
+        frames: usize,
+    ) {
+        let max_frames = buffers
+            .first_mut()
+            .map(|b| {
+                let b = b.borrow_mut();
+                b.left.len().min(b.right.len()).saturating_sub(offset)
+            })
+            .unwrap_or(0);
+        let frames = frames.min(max_frames);
         if frames == 0 {
             return;
         }
@@ -74,16 +95,16 @@ impl GpuSynth {
             if ch_idx < self.channel_count {
                 for f in 0..avail {
                     let base = f * per_frame + ch_idx * 2;
-                    buf.left[f] = self.ring[base];
-                    buf.right[f] = self.ring[base + 1];
+                    buf.left[offset + f] = self.ring[base];
+                    buf.right[offset + f] = self.ring[base + 1];
                 }
                 for f in avail..frames {
-                    buf.left[f] = 0.0;
-                    buf.right[f] = 0.0;
+                    buf.left[offset + f] = 0.0;
+                    buf.right[offset + f] = 0.0;
                 }
             } else {
-                buf.left.fill(0.0);
-                buf.right.fill(0.0);
+                buf.left[offset..offset + frames].fill(0.0);
+                buf.right[offset..offset + frames].fill(0.0);
             }
         }
         self.ring.drain(..avail * per_frame);

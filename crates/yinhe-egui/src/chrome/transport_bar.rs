@@ -1,6 +1,7 @@
 use eframe::egui;
 use egui_material_icons::icons::*;
 use rust_i18n::t;
+use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
 
 use crate::widgets::action_menu::pinned_action_buttons;
 use crate::widgets::timecode::show_timecode_display;
@@ -185,7 +186,11 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 }
                 show_play_menu(&play_menu_btn, ctx, is_playing, &mut play_actions);
 
-                let play_btn_actions: [PlayMenuAction; 6] = [
+                let loop_enabled = ctx
+                    .doc
+                    .map(|d| d.edit.playback.loop_enabled())
+                    .unwrap_or(false);
+                let play_btn_actions: [PlayMenuAction; 8] = [
                     PlayMenuAction::PlayPause {
                         playing: is_playing,
                     },
@@ -200,6 +205,10 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     PlayMenuAction::AutomationWrite {
                         enabled: ctx.settings.automation_write,
                     },
+                    PlayMenuAction::Loop {
+                        enabled: loop_enabled,
+                    },
+                    PlayMenuAction::LoopSelection,
                 ];
                 let play_btn_pins = [
                     ctx.settings.pinned_play_pause,
@@ -208,6 +217,8 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     ctx.settings.pinned_step_input,
                     ctx.settings.pinned_tap_tempo,
                     ctx.settings.pinned_automation_write,
+                    ctx.settings.pinned_loop,
+                    ctx.settings.pinned_loop_selection,
                 ];
                 let mut pending_play: Option<PlayMenuAction> = None;
                 pinned_action_buttons(
@@ -237,12 +248,62 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                         PlayMenuAction::AutomationWrite { enabled } => {
                             play_actions.set_automation_write = Some(!enabled);
                         }
+                        PlayMenuAction::Loop { enabled } => {
+                            play_actions.set_loop = Some(!enabled);
+                        }
+                        PlayMenuAction::LoopSelection => play_actions.loop_selection = true,
                     }
                 }
 
                 // ── 工具区已迁移到左侧工具栏（见 chrome::tool_bar）──
 
                 if let Some(doc) = ctx.doc {
+                    // ── 循环状态（走带栏实时同步；点击切换，拖拽在 LOOP 事件行完成）──
+                    {
+                        let enabled = doc.edit.playback.loop_enabled();
+                        let (start, end) = doc.edit.playback.loop_range();
+                        let model = &doc.data.model;
+                        let (num, den) = model.tempo_map.time_sig_default;
+                        let label = if enabled {
+                            let a = format_tick_bar_beat_with_time_sig(
+                                start as f64,
+                                model.meta.ppq,
+                                &model.tempo_map.time_sig_events,
+                                num,
+                                den,
+                            );
+                            let b = format_tick_bar_beat_with_time_sig(
+                                end as f64,
+                                model.meta.ppq,
+                                &model.tempo_map.time_sig_events,
+                                num,
+                                den,
+                            );
+                            format!("{} {a} – {b}", t!("menu.loop"))
+                        } else {
+                            t!("menu.loop").to_string()
+                        };
+                        let resp = ui.add(
+                            egui::Button::new(
+                                egui::RichText::new(label)
+                                    .size(crate::theme::SMALL_LABEL_FONT)
+                                    .color(if enabled {
+                                        crate::theme::accent_active()
+                                    } else {
+                                        crate::theme::text_secondary()
+                                    }),
+                            )
+                            .selected(enabled)
+                            .frame(true),
+                        );
+                        if resp.hovered() {
+                            hovered_hint = Some(t!("menu.loop").to_string());
+                        }
+                        if resp.clicked() {
+                            play_actions.set_loop = Some(!enabled);
+                        }
+                    }
+
                     // ── 时间码（四列居中：BPM/拍号+PPQ | 位置/时间 | 调式 | 总输出电平）──
                     if ctx.pr.is_some() {
                         let (tc_rect, tc_events) = show_timecode_display(
@@ -376,6 +437,8 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
         set_orientation,
         set_automation_panels,
         timecode_events,
+        set_loop: play_actions.set_loop,
+        loop_selection: play_actions.loop_selection,
         selection_action,
         pending_file_action,
         pending_edit_action,

@@ -340,6 +340,7 @@ impl App {
                 }
 
                 self.audio_state.handle = Some(audio);
+                self.audio_state.loop_sent = None;
                 self.audio_state.active_doc = Some(idx);
                 self.audio_state.last_channel_layout = pending_layout;
                 // 记录引擎创建快照：跨文档复用（try_adopt_engine）的判定依据。
@@ -789,6 +790,14 @@ impl App {
                     .error(t!("toast.audio_not_ready").to_string(), String::new());
             } else {
                 let mut tick = doc.edit.cursor_tick.unwrap_or(0.0);
+                // 循环开启且光标在区间外：从循环起点开始（DAW 常规行为）。
+                if doc.edit.playback.loop_enabled() {
+                    let (ls, le) = doc.edit.playback.loop_range();
+                    if tick < ls as f64 || tick >= le as f64 {
+                        tick = ls as f64;
+                        doc.edit.cursor_tick = Some(tick);
+                    }
+                }
                 // 上次播放停在了工程末尾：再按播放从头开始（常规播放器行为）。
                 let end_tick = doc.data.model.tick_length as f64;
                 if tick >= end_tick {

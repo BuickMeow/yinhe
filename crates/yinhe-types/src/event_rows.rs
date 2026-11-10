@@ -1,4 +1,4 @@
-//! 全局事件行（Marker / Tempo / Meter / Key / Chord / Lyrics）的视图状态。
+//! 全局事件行（Loop / Marker / Tempo / Meter / Key / Chord / Lyrics）的视图状态。
 //!
 //! 行本身不是音轨行：不进 `ArRowLayout`，不参与轨道行号计算，固定显示在
 //! 时间标尺与音轨/钢琴卷帘之间。详见 `docs/spec-global-event-rows.md`。
@@ -6,6 +6,9 @@
 /// 全局事件行的种类。顺序即默认显示顺序。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum EventRowKind {
+    /// 走带循环区间。可见性由 `PlaybackState.loop_enabled` 单向驱动：
+    /// 开启循环自动显示；在 Events 菜单取消勾选 = 关闭循环。
+    Loop,
     Marker,
     Meter,
     Key,
@@ -14,8 +17,9 @@ pub enum EventRowKind {
 }
 
 impl EventRowKind {
-    /// 默认顺序：Marker → Tempo → Meter → Key → Chord → Lyrics。
-    pub const ALL: [Self; 5] = [
+    /// 默认顺序：Loop → Marker → Meter → Key → Chord → Lyrics。
+    pub const ALL: [Self; 6] = [
+        Self::Loop,
         Self::Marker,
         Self::Meter,
         Self::Key,
@@ -26,6 +30,7 @@ impl EventRowKind {
     /// 行头短标签（UI 使用英文小标签，避免为每个行新增 15 语言 i18n key）。
     pub const fn label(self) -> &'static str {
         match self {
+            Self::Loop => "LOOP",
             Self::Marker => "MARKER",
             Self::Meter => "METER",
             Self::Key => "KEY",
@@ -103,6 +108,11 @@ impl EventRowsState {
             row.visible = visible;
         }
     }
+
+    /// LOOP 行跟随走带循环开关自动显隐（唯一数据源 = `PlaybackState`）。
+    pub fn sync_loop(&mut self, enabled: bool) {
+        self.set_visible(EventRowKind::Loop, enabled);
+    }
 }
 
 #[cfg(test)]
@@ -125,6 +135,17 @@ mod tests {
         assert_eq!(state.visible_count(), 1);
         state.toggle(EventRowKind::Lyrics);
         assert!(!state.is_visible(EventRowKind::Lyrics));
+    }
+
+    #[test]
+    fn sync_loop_only_touches_loop_row() {
+        let mut state = EventRowsState::default();
+        state.sync_loop(true);
+        assert!(state.is_visible(EventRowKind::Loop));
+        assert_eq!(state.visible_count(), 1);
+        state.sync_loop(false);
+        assert!(!state.is_visible(EventRowKind::Loop));
+        assert_eq!(state.visible_count(), 0);
     }
 
     #[test]

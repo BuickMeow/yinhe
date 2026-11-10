@@ -21,6 +21,7 @@ impl AudioEngine {
 
         self.cc_events = flatten_automation_to_cc_events(model, self.automation_density);
         self.chase_generation = self.chase_generation.wrapping_add(1);
+        self.loop_chase = None;
         self.cc_cursor = 0;
         self.dispatched_skip = ChaseSkip::default();
         self.active_notes.clear();
@@ -61,6 +62,7 @@ impl AudioEngine {
         self.cc_events = prepared.cc_events;
         // cc_events 变了，旧 generation 的 chase 结果必须丢弃
         self.chase_generation = self.chase_generation.wrapping_add(1);
+        self.loop_chase = None;
         self.duration_samples = prepared.duration_samples;
         // Skip is ignored here — we keep whatever the user set via SkipTracks.
         let yin_model = prepared.yin_model;

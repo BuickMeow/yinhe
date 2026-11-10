@@ -11,6 +11,12 @@ pub struct PlaybackState {
     play_start_time: f64,
     /// Playback speed multiplier (1.0 = normal).
     speed: f64,
+    /// 循环开关。与 Events 行的 LOOP 行同源：行隐藏 = 关闭。
+    loop_enabled: bool,
+    /// 循环起点（tick，含）。
+    loop_start_tick: u32,
+    /// 循环终点（tick，不含）。
+    loop_end_tick: u32,
 }
 
 impl Default for PlaybackState {
@@ -20,6 +26,9 @@ impl Default for PlaybackState {
             play_start_instant: None,
             play_start_time: 0.0,
             speed: 1.0,
+            loop_enabled: false,
+            loop_start_tick: 0,
+            loop_end_tick: 0,
         }
     }
 }
@@ -52,6 +61,35 @@ impl PlaybackState {
         }
     }
 
+    /// 循环是否开启。
+    pub fn loop_enabled(&self) -> bool {
+        self.loop_enabled
+    }
+
+    /// 当前循环区间 `[start, end)`（tick）。
+    pub fn loop_range(&self) -> (u32, u32) {
+        (self.loop_start_tick, self.loop_end_tick)
+    }
+
+    /// 设置循环区间。`end <= start` 时拒绝并返回 false（保留原值）。
+    pub fn set_loop_range(&mut self, start: u32, end: u32) -> bool {
+        if end <= start {
+            return false;
+        }
+        self.loop_start_tick = start;
+        self.loop_end_tick = end;
+        true
+    }
+
+    /// 开关循环。开启前区间必须有效（`end > start`），否则返回 false。
+    pub fn set_loop_enabled(&mut self, enabled: bool) -> bool {
+        if enabled && self.loop_end_tick <= self.loop_start_tick {
+            return false;
+        }
+        self.loop_enabled = enabled;
+        true
+    }
+
     /// Stop playback and reset to beginning.
     pub fn stop(&mut self) {
         self.playing = false;
@@ -72,7 +110,17 @@ impl PlaybackState {
             .unwrap_or(0.0);
         let current_time = self.play_start_time + elapsed;
 
-        let tick = model.tempo_map.tick_at_time(current_time);
+        let mut tick = model.tempo_map.tick_at_time(current_time);
+        // 循环开启：按区间长度取模，避免 UI 旋钮/时间码在循环外继续跑。
+        // 注意这是 tick 域近似；播放头本身由引擎 sample position 驱动。
+        if self.loop_enabled && self.loop_end_tick > self.loop_start_tick {
+            let start = f64::from(self.loop_start_tick);
+            let end = f64::from(self.loop_end_tick);
+            if tick >= end {
+                tick = start + (tick - start).rem_euclid(end - start);
+            }
+            return Some((tick.max(0.0), false));
+        }
         // Always provide at least one bar of playable range
         let min_end = model.tempo_map.bar_divide();
         let end_tick = (model.tick_length as f64).max(min_end);
@@ -114,6 +162,28 @@ mod tests {
         assert!((state.speed() - 0.1).abs() < f64::EPSILON);
         state.set_speed(0.0);
         assert!((state.speed() - 0.1).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn loop_range_requires_positive_length() {
+        let mut state = PlaybackState::default();
+        assert!(!state.set_loop_range(480, 480));
+        assert!(!state.set_loop_range(960, 480));
+        assert_eq!(state.loop_range(), (0, 0));
+        assert!(state.set_loop_range(0, 1920));
+        assert_eq!(state.loop_range(), (0, 1920));
+    }
+
+    #[test]
+    fn loop_cannot_enable_without_valid_range() {
+        let mut state = PlaybackState::default();
+        assert!(!state.set_loop_enabled(true));
+        assert!(!state.loop_enabled());
+        assert!(state.set_loop_range(0, 1920));
+        assert!(state.set_loop_enabled(true));
+        assert!(state.loop_enabled());
+        assert!(state.set_loop_enabled(false));
+        assert!(!state.loop_enabled());
     }
 
     #[test]

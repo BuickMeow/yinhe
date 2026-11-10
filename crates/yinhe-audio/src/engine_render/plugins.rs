@@ -185,7 +185,12 @@ impl AudioEngine {
     /// 在 xsynth 段渲染之后、mixer.process() 之前调用。
     /// 第一个乐器直接覆盖写入通道缓冲（该通道 xsynth 此时静音），后续乐器写入
     /// scratch 再累加。
-    pub(super) fn render_instruments(&mut self, block_start_sample: u64, frames: usize) {
+    pub(super) fn render_instruments(
+        &mut self,
+        block_start_sample: u64,
+        offset_frames: usize,
+        frames: usize,
+    ) {
         let n = self.instruments.len();
         for dense in 0..n {
             let Some(src) = &mut self.instruments[dense] else {
@@ -197,7 +202,10 @@ impl AudioEngine {
             // take 出的 Vec 处理完归还，保留容量（避免每块重新分配）。
             let mut events = std::mem::take(&mut src.events);
             if let Some(cb) = self.mixer.channel_buffers_mut(dense) {
-                let f = frames.min(cb.left.len()).min(cb.right.len());
+                let f = frames
+                    .min(cb.left.len().saturating_sub(offset_frames))
+                    .min(cb.right.len().saturating_sub(offset_frames));
+                let out = offset_frames;
                 if f > 0 {
                     if self.scratch_l.len() < f {
                         self.scratch_l.resize(f, 0.0);
@@ -225,8 +233,8 @@ impl AudioEngine {
                         if idx == 0 {
                             proc.processor.process(
                                 ev,
-                                &mut cb.left[..f],
-                                &mut cb.right[..f],
+                                &mut cb.left[out..out + f],
+                                &mut cb.right[out..out + f],
                                 block_start_sample,
                             );
                         } else {
@@ -239,8 +247,8 @@ impl AudioEngine {
                                 block_start_sample,
                             );
                             for i in 0..f {
-                                cb.left[i] += self.scratch_l[i];
-                                cb.right[i] += self.scratch_r[i];
+                                cb.left[out + i] += self.scratch_l[i];
+                                cb.right[out + i] += self.scratch_r[i];
                             }
                         }
                         proc.params.clear();

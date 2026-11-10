@@ -15,6 +15,7 @@ pub(crate) mod floating;
 pub(crate) mod insert;
 pub(crate) mod jobs;
 pub(crate) mod layout;
+pub(crate) mod loop_actions;
 pub(crate) mod main_loop;
 pub(crate) mod midi7z;
 pub(crate) mod midi_import;

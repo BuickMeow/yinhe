@@ -187,6 +187,12 @@ pub struct AudioSettings {
     /// 「写入自动化」图钉（显示在 transport bar）。
     #[serde(default)]
     pub pinned_automation_write: bool,
+    /// 「循环」图钉（显示在 transport bar）。
+    #[serde(default)]
+    pub pinned_loop: bool,
+    /// 「循环选区」图钉。
+    #[serde(default)]
+    pub pinned_loop_selection: bool,
     pub recent_files: Vec<String>,
     /// 「最近修改的文件」各自上次打开时间（Unix 秒）。旧配置无此项 → 空，
     /// 这些旧记录在讲解里只显示路径、不显示时间。
@@ -257,6 +263,8 @@ impl Default for AudioSettings {
             pinned_tap_tempo: false,
             automation_write: false,
             pinned_automation_write: false,
+            pinned_loop: false,
+            pinned_loop_selection: false,
             recent_files: Vec::new(),
             recent_file_times: std::collections::HashMap::new(),
             ui_session: SettingsUiSession::default(),

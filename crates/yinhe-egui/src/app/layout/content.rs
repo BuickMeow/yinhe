@@ -762,6 +762,7 @@ impl App {
                     self.render_thread.as_ref(),
                     &mut doc.edit.pianoroll_view,
                     &mut doc.edit.event_rows_pr,
+                    &mut doc.edit.playback,
                     doc.edit.pr_clip_mode,
                     &mut self.last_cull_revision,
                     &mut self.last_cull_revision_only,

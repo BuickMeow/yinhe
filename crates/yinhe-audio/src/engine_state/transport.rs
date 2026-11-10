@@ -66,7 +66,56 @@ impl AudioEngine {
         }
     }
 
+    /// 设置走带循环。区间无效（`end <= start`）时等价于关闭。
+    ///
+    /// 播放中且播放头落在区间外 → 立即 seek 到起点（只发生一次，不是每轮回绕）。
+    pub(crate) fn set_loop(&mut self, enabled: bool, start_tick: u32, end_tick: u32) {
+        self.loop_chase = None;
+        if !enabled || end_tick <= start_tick {
+            self.loop_enabled = false;
+            self.loop_start_tick = 0;
+            self.loop_end_tick = 0;
+            return;
+        }
+        self.loop_enabled = true;
+        self.loop_start_tick = start_tick;
+        self.loop_end_tick = end_tick;
+        if self.playing {
+            let start = self.tick_to_sample(start_tick);
+            let end = self.tick_to_sample(end_tick);
+            let pos = self.sample_position;
+            if pos < start || pos >= end {
+                self.seek_to(start);
+            }
+        }
+    }
+
+    /// 循环起点的绝对 sample。
+    pub(crate) fn loop_start_sample(&self) -> u64 {
+        self.tick_to_sample(self.loop_start_tick)
+    }
+
+    /// 循环终点的绝对 sample。
+    pub(crate) fn loop_end_sample(&self) -> u64 {
+        self.tick_to_sample(self.loop_end_tick)
+    }
+
+    /// 回绕到循环起点。
+    ///
+    /// 与用户 seek 不同：保留 insert / 通道 DSP / 乐器处理器的内部状态
+    ///（delay 尾音、滤波器历史），只清 voice、回退游标，并应用 loop 起点
+    /// 的 chase 快照。GPU 只 seek 不重建事件表。
+    pub(crate) fn rewind_to_loop_start(&mut self) {
+        let start = self.loop_start_sample();
+        self.relocate(start, RelocateMode::Loop);
+    }
+
     pub(crate) fn seek_to(&mut self, sample: u64) {
+        self.relocate(sample, RelocateMode::Seek);
+    }
+
+    fn relocate(&mut self, sample: u64, mode: RelocateMode) {
+        let is_seek = matches!(mode, RelocateMode::Seek);
         // GPU 模式下 ChannelSet 不参与渲染，重置/清音是死路径
         //（GPU 的状态重置由事件表在 seek_pos 重建完成）。
         if self.cpu_synth_active() {
@@ -86,22 +135,60 @@ impl AudioEngine {
             }
             self.segment_start_sample = sample;
         }
-        // insert 效果器（delay 尾音/envelope 等）随 seek 清空内部状态
-        self.mixer.reset_inserts();
-        // 内置音源通道处理段随 seek 清空内部状态（filter 历史等）
-        for chain in &mut self.channel_dsp {
-            chain.reset();
-        }
-        // 乐器实例随 seek 清空内部状态（尾音/envelope/挂音）与事件累积。
-        for inst in self.instruments.iter_mut().flatten() {
-            for p in &mut inst.chain {
-                p.processor.reset();
-                p.params.clear();
+        if is_seek {
+            // insert 效果器（delay 尾音/envelope 等）随用户 seek 清空内部状态。
+            self.mixer.reset_inserts();
+            // 内置音源通道处理段随 seek 清空内部状态（filter 历史等）。
+            for chain in &mut self.channel_dsp {
+                chain.reset();
             }
-            inst.events.clear();
+            // 乐器实例随 seek 清空内部状态（尾音/envelope/挂音）与事件累积。
+            for inst in self.instruments.iter_mut().flatten() {
+                for p in &mut inst.chain {
+                    p.processor.reset();
+                    p.params.clear();
+                }
+                inst.events.clear();
+            }
+            // 插件预览的 NoteOff 调度随 seek 作废（reset 已清插件挂音）。
+            self.plugin_previews.clear();
+        } else {
+            // Loop wrap：只给插件乐器发 NoteOff，不 reset 处理器（保留尾音），
+            // 并丢弃回绕前尚未处理的插件事件。
+            let all = std::mem::take(&mut self.active_notes);
+            for std::cmp::Reverse(an) in all {
+                if an.is_instrument
+                    && let Some(Some(slot)) = self.instruments.get_mut(an.dense as usize)
+                {
+                    slot.events.push(PluginEvent::NoteOff {
+                        time: 0,
+                        channel: an.clap_channel,
+                        key: an.key,
+                        velocity: 0.0,
+                    });
+                }
+            }
+            // 插件预览的挂音同样要释放，否则回绕后 NoteOn 被丢、NoteOff 永远不来。
+            for p in &self.plugin_previews {
+                if p.triggered
+                    && let Some(Some(slot)) = self.instruments.get_mut(p.dense)
+                {
+                    slot.events.push(PluginEvent::NoteOff {
+                        time: 0,
+                        channel: p.midi_channel,
+                        key: p.key,
+                        velocity: 0.0,
+                    });
+                }
+            }
+            self.plugin_previews.clear();
+            for inst in self.instruments.iter_mut().flatten() {
+                inst.events.clear();
+                for p in &mut inst.chain {
+                    p.params.clear();
+                }
+            }
         }
-        // 插件预览的 NoteOff 调度随 seek 作废（reset 已清插件挂音）。
-        self.plugin_previews.clear();
 
         self.sample_position = sample;
         self.current_tick = self.sample_to_tick(sample);
@@ -125,18 +212,18 @@ impl AudioEngine {
             let cursor = notes.partition_point(|n| n.start_tick < tick);
             self.note_cursor[key] = cursor;
 
-            // 扫描 seek 点之前开始、seek 点之后才结束的所有音符，全部重启（修 P2-10）。
-            // 桶按 start_tick 升序，但 end_tick 不保证有序，必须线性扫 [..cursor]。
-            // 黑乐谱叠层场景下 cursor 前通常有几十个跨点音符，O(cursor) 完全可接受。
-            // 先收集再逐条重启（避免借用冲突，`restart_note` 需 &mut self）。
-            let mut to_restart: Vec<AudibleNote> = Vec::new();
-            for n in &notes[..cursor] {
-                if n.end_tick > tick {
-                    to_restart.push(*n);
+            // 用户 seek：扫描 seek 点之前开始、seek 点之后才结束的音符，全部重启。
+            // Loop wrap 不重启跨点音符（循环区间内的长音在小节线处切断）。
+            if is_seek {
+                let mut to_restart: Vec<AudibleNote> = Vec::new();
+                for n in &notes[..cursor] {
+                    if n.end_tick > tick {
+                        to_restart.push(*n);
+                    }
                 }
-            }
-            for n in to_restart {
-                self.restart_note(key, &n);
+                for n in to_restart {
+                    self.restart_note(key, &n);
+                }
             }
         }
 
@@ -145,9 +232,28 @@ impl AudioEngine {
         // 由 apply_chase_result 应用。期间 channel state 是 ResetControl 后的初始值，
         // 渲染短暂静音 —— 比 renderer 线程同步阻塞几十万次 ChannelState::apply 更好。
 
-        // GPU 后端位置跳变：置位同步标志，渲染线程渲染前统一重建事件表 + seek。
-        {
+        if is_seek {
+            // GPU 后端位置跳变：置位同步标志，渲染线程渲染前统一重建事件表 + seek。
             self.gpu_backend_dirty = true;
+        } else {
+            // Loop wrap：GPU 只 seek 到循环起点，不重建全量事件表。
+            if let Some(synth) = self.gpu_synth.as_mut() {
+                synth.seek(sample);
+            }
+            // 应用预计算的循环起点控制状态（CC/PB/PC/RPN/插件参数）。
+            let chase = self.loop_chase.take();
+            if let Some(c) = chase {
+                if c.generation == self.chase_generation && c.start_tick == self.loop_start_tick {
+                    self.apply_chase_result(&c.states, &c.plugin_params);
+                }
+                self.loop_chase = Some(c);
+            }
         }
     }
+}
+
+#[derive(Clone, Copy)]
+enum RelocateMode {
+    Seek,
+    Loop,
 }
