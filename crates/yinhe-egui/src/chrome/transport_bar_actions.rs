@@ -538,6 +538,7 @@ pub struct PlayActions {
 }
 
 /// 传输栏上下文与响应
+#[allow(dead_code)]
 pub struct TransportContext<'a> {
     pub file_loader: &'a mut crate::file_loader::FileLoader,
     pub doc: Option<&'a yinhe_editor_core::document::Document>,

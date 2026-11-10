@@ -208,6 +208,26 @@ pub(crate) fn show(
         if let Some(edit) = outcome.marker_edit {
             crate::marker_ops::apply_marker_edit(doc, edit);
         }
+        let q_rect = egui::Rect::from_min_size(
+            egui::pos2(
+                ruler_rect.max.x - crate::widgets::quantize_button::RULER_W - 2.0,
+                ruler_rect.min.y + 3.0,
+            ),
+            egui::vec2(
+                crate::widgets::quantize_button::RULER_W,
+                crate::widgets::quantize_button::RULER_H,
+            ),
+        );
+        if let Some(q) = crate::widgets::quantize_button::show_ruler(
+            ui,
+            q_rect,
+            doc.edit.quantize_arrange,
+            tpb,
+            ca_quantize,
+            "ca_quantize",
+        ) {
+            doc.edit.quantize_arrange = q;
+        }
     }
 
     // ── 全局事件行（固定，不随通道行滚动）──

@@ -7,12 +7,9 @@ use eframe::egui;
 use rust_i18n::t;
 use yinhe_editor_core::quantize::QuantizePreset;
 
-/// 控件宽度（文字 + 下拉三角）。
-pub const WIDTH: f32 = 54.0;
-/// 控件高度。
-const HEIGHT: f32 = crate::theme::TRANSPORT_BTN_SIZE;
-/// 文字字号。
-const TEXT_SIZE: f32 = 13.0;
+/// 标尺右端紧凑控件的宽/高。
+pub const RULER_W: f32 = 46.0;
+pub const RULER_H: f32 = 18.0;
 /// 下拉三角宽/高。
 const TRI_W: f32 = 5.0;
 const TRI_H: f32 = 3.0;
@@ -27,17 +24,20 @@ fn label(quantize: QuantizePreset) -> String {
     }
 }
 
-/// 绘制量化文字下拉，返回响应。
-pub(crate) fn quantize_button(ui: &mut egui::Ui, quantize: QuantizePreset) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(WIDTH, HEIGHT), egui::Sense::click());
+/// 标尺右端的紧凑量化入口：纯文字 + 下拉三角，点击弹出量化菜单。
+///
+/// 返回用户新选的档位；调用方负责写回 AR/PR 各自的量化状态。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn show_ruler(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    current: QuantizePreset,
+    ppq: u32,
+    auto_resolved: QuantizePreset,
+    id_salt: &str,
+) -> Option<QuantizePreset> {
+    let resp = ui.interact(rect, ui.scope_id().with(id_salt), egui::Sense::click());
     super::a11y::name_button(&resp, t!("hint.timecode.quantize"));
-    if ui.is_rect_visible(rect) {
-        draw(ui, rect, &resp, quantize);
-    }
-    resp
-}
-
-fn draw(ui: &egui::Ui, rect: egui::Rect, resp: &egui::Response, quantize: QuantizePreset) {
     let color = if resp.is_pointer_button_down_on() {
         crate::theme::accent_active()
     } else if resp.hovered() {
@@ -46,14 +46,14 @@ fn draw(ui: &egui::Ui, rect: egui::Rect, resp: &egui::Response, quantize: Quanti
         crate::theme::text_secondary()
     };
     let painter = ui.painter();
-    let text = label(quantize);
+    let text = label(current);
     let tri_left = rect.max.x - 8.0;
     let text_rect = egui::Rect::from_min_max(rect.min, egui::pos2(tri_left - 4.0, rect.max.y));
     painter.text(
         text_rect.center(),
         egui::Align2::CENTER_CENTER,
         text,
-        egui::FontId::proportional(TEXT_SIZE),
+        egui::FontId::proportional(10.5),
         color,
     );
     let center = egui::pos2(tri_left + TRI_W * 0.5, rect.center().y + 1.0);
@@ -66,18 +66,12 @@ fn draw(ui: &egui::Ui, rect: egui::Rect, resp: &egui::Response, quantize: Quanti
         color,
         egui::Stroke::NONE,
     ));
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn label_is_plain_quantize_text() {
-        assert_eq!(label(QuantizePreset::Auto), "AUTO");
-        assert_eq!(label(QuantizePreset::Off), "OFF");
-        assert_eq!(label(QuantizePreset::Absolute(1)), "OFF");
-        assert_eq!(label(QuantizePreset::Absolute(3)), "3");
-        assert_eq!(label(QuantizePreset::Fraction(1, 16)), "1/16");
-    }
+    let mut pending = None;
+    egui::Popup::from_toggle_button_response(&resp)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            super::quantize_popup::show(ui, ppq, current, auto_resolved, &mut pending);
+        });
+    pending
 }

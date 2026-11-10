@@ -74,7 +74,7 @@ pub fn show(
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(pad_x);
                 let h = btn_size.y;
-                let font = normal_font();
+                let small_h = 22.0;
                 // [88|128|256]：分段开关（带背景，中缝为直角）。
                 let counts = [88u16, 128, 256];
                 let active = counts
@@ -107,18 +107,20 @@ pub fn show(
                     *clip_mode = i == 0;
                 }
 
-                // Scale 开关。
+                // Scale 开关（单段胶囊，矮按钮）。
                 let fold_on = view.layout.fold_mask != 0;
-                let resp = text_button(
+                let scale_active = usize::from(fold_on);
+                if segmented(
                     ui,
-                    "Scale",
-                    egui::vec2(48.0, h),
-                    fold_on,
-                    font.clone(),
+                    &["Scale"],
+                    scale_active,
+                    48.0,
+                    small_h,
+                    11.0,
                     "pr_scale",
-                );
-                crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.pr.fold"));
-                if resp.clicked() {
+                )
+                .is_some()
+                {
                     if fold_on {
                         view.set_fold(0);
                     } else if let Some(mask) = fold_mask {
@@ -132,20 +134,19 @@ pub fn show(
                     view.set_fold(mask);
                 }
 
-                // 调式（根音 + 音阶）显示按钮，点击打开音阶对话框。
-                let resp = text_button(
+                // 调式（根音 + 音阶）显示按钮（单段胶囊，矮按钮），点击打开音阶对话框。
+                let scale_w = (scale_label.chars().count() as f32 * 6.5 + 16.0).clamp(60.0, 120.0);
+                if segmented(
                     ui,
-                    scale_label,
-                    egui::vec2(
-                        (scale_label.chars().count() as f32 * 7.0 + 16.0).max(60.0),
-                        h,
-                    ),
-                    false,
-                    font,
+                    &[scale_label],
+                    0,
+                    scale_w,
+                    small_h,
+                    11.0,
                     "pr_scale_select",
-                );
-                crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.keysig"));
-                if resp.clicked() {
+                )
+                .is_some()
+                {
                     open_scale_dialog = true;
                 }
             });
@@ -272,11 +273,6 @@ fn tool_more_button(ui: &mut egui::Ui, btn_size: egui::Vec2) -> egui::Response {
     .inner
 }
 
-/// 纯文字小按钮（工具栏右侧的键数 / FOLD）。
-fn normal_font() -> egui::FontId {
-    egui::FontId::proportional(13.0)
-}
-
 /// 分段开关：整组带背景，选中段填 selected_bg；段间竖线为直角，不随圆角弯曲。
 ///
 /// `labels` 从左到右排列；返回被点击的段下标。
@@ -342,32 +338,6 @@ fn segmented(
         return Some(idx);
     }
     None
-}
-
-fn text_button(
-    ui: &mut egui::Ui,
-    label: &str,
-    size: egui::Vec2,
-    active: bool,
-    font: egui::FontId,
-    id_salt: &str,
-) -> egui::Response {
-    let color = if active {
-        crate::theme::accent_active()
-    } else {
-        crate::theme::text_primary()
-    };
-    let sel_bg = active.then(crate::theme::selected_bg);
-    ui.push_id(id_salt, |ui| {
-        crate::widgets::flat::flat_button_filled_ghost(
-            ui,
-            egui::RichText::new(label).font(font).color(color),
-            size,
-            sel_bg,
-            true,
-        )
-    })
-    .inner
 }
 
 /// 固定中心点的图标按钮：与工具按钮同款选中底 + 强调色图标。

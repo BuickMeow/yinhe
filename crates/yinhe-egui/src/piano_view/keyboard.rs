@@ -186,9 +186,10 @@ fn paint_horizontal(
         if !visible_row(screen_y, keyboard_rect, row_h) {
             continue;
         }
+        // 八度线画在 C 的底缘（B/C 之间），而不是 C 的顶缘（C/C# 之间）。
         painter.hline(
             egui::Rangef::new(gutter.min.x, gutter.max.x),
-            screen_y,
+            screen_y + row_h,
             egui::Stroke::new(1.0, line_color),
         );
         let octave = key as i32 / 12 - 1;

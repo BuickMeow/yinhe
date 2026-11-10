@@ -764,6 +764,7 @@ impl App {
                     &mut doc.edit.cursor_tick,
                     is_playing,
                     pr_quantize,
+                    &mut doc.edit.quantize_pianoroll,
                     tpb,
                     Some((tpb, ts_num, ts_den, &ts_events)),
                     &doc.data.model.conductor.key_sig,

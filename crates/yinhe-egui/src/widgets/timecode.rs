@@ -34,6 +34,7 @@ const RECT_H: f32 = 36.0;
 const ROW_H: f32 = RECT_H * 0.5;
 
 /// 时间码编辑事件（由 main_loop 应用）。
+#[allow(dead_code)]
 pub enum TimecodeEvent {
     /// BPM 直接输入。
     Bpm(f64),

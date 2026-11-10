@@ -74,6 +74,7 @@ pub fn show(
     cursor_tick: &mut Option<f64>,
     is_playing: bool,
     quantize: QuantizePreset,
+    quantize_raw: &mut QuantizePreset,
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     key_sig_events: &[yinhe_types::KeySigEvent],
@@ -133,7 +134,11 @@ pub fn show(
         if view.is_vertical() || midi_arc.is_none() {
             0.0
         } else {
-            crate::theme::CLIP_ROW_H + event_rows.visible_height()
+            (if clip_mode {
+                crate::theme::CLIP_ROW_H
+            } else {
+                0.0
+            }) + event_rows.visible_height()
         },
         ui.ctx().pixels_per_point(),
         total_ticks,
@@ -405,6 +410,7 @@ pub fn show(
         effective_tool,
         sel_rect,
         quantize,
+        quantize_raw,
         ppq,
         bar_line_data,
         selected,

@@ -258,7 +258,9 @@ fn paint_octave_lines(
             continue;
         }
         let key = key_idx as u8;
-        let screen_y = content_rect.min.y + view.key_to_y(key); // C 的顶部
+        // 八度线画在 C 的底缘（B/C 之间），而不是 C 的顶缘（C/C# 之间）。
+        let row_h = view.layout.row_units(key as u16) * view.key_height;
+        let screen_y = content_rect.min.y + view.key_to_y(key) + row_h;
         if screen_y < content_rect.min.y || screen_y > content_rect.max.y {
             continue;
         }

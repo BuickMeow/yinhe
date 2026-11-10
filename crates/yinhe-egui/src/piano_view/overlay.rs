@@ -49,6 +49,7 @@ pub(crate) fn draw_overlays(
     effective_tool: crate::widgets::tools_panel::Tool,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     quantize: yinhe_editor_core::quantize::QuantizePreset,
+    quantize_raw: &mut yinhe_editor_core::quantize::QuantizePreset,
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     selected: &mut yinhe_core::Selection,
@@ -67,7 +68,17 @@ pub(crate) fn draw_overlays(
     let mut marker_edit: Option<crate::widgets::time_ruler::MarkerEdit> = None;
     let mut clip_resize: Option<(u16, u32, u32, u32)> = None;
     if event_rows_rect.height() > 0.0 {
-        let clip_h = crate::theme::CLIP_ROW_H.min(event_rows_rect.height());
+        // 顶部固定行与垂直滚动条之间的夹角补底，避免露出窗口底色。
+        let row_corner = egui::Rect::from_min_max(
+            egui::pos2(event_rows_rect.max.x, event_rows_rect.min.y),
+            egui::pos2(rect.max.x, event_rows_rect.max.y),
+        );
+        painter.rect_filled(row_corner, 0.0, crate::theme::track_bg());
+        let clip_h = if clip_mode {
+            crate::theme::CLIP_ROW_H.min(event_rows_rect.height())
+        } else {
+            0.0
+        };
         let clip_rect = egui::Rect::from_min_max(
             event_rows_rect.min,
             egui::pos2(event_rows_rect.max.x, event_rows_rect.min.y + clip_h),
@@ -81,7 +92,7 @@ pub(crate) fn draw_overlays(
                 crate::theme::control_bg()
             },
         );
-        if let Some(row) = clip_row {
+        if clip_mode && let Some(row) = clip_row {
             let color = egui::Color32::from_rgb(
                 (row.color[0].clamp(0.0, 1.0) * 255.0) as u8,
                 (row.color[1].clamp(0.0, 1.0) * 255.0) as u8,
@@ -610,12 +621,35 @@ pub(crate) fn draw_overlays(
         if outcome.marker_edit.is_some() {
             marker_edit = outcome.marker_edit;
         }
+        // 量化入口统一移到标尺最右侧。
+        if !view.is_vertical() {
+            let q_rect = egui::Rect::from_min_size(
+                egui::pos2(
+                    ruler_rect.max.x - crate::widgets::quantize_button::RULER_W - 2.0,
+                    ruler_rect.min.y + 3.0,
+                ),
+                egui::vec2(
+                    crate::widgets::quantize_button::RULER_W,
+                    crate::widgets::quantize_button::RULER_H,
+                ),
+            );
+            if let Some(q) = crate::widgets::quantize_button::show_ruler(
+                ui,
+                q_rect,
+                *quantize_raw,
+                ppq,
+                quantize,
+                "pr_quantize",
+            ) {
+                *quantize_raw = q;
+            }
+        }
         let _ = tpb_val;
     }
 
     // Events 菜单放在键盘列顶部（标尺左端）；必须在 ruler 背景之后绘制，
     // 否则会被 ruler 的左下角补底覆盖。
-    if !view.is_vertical() && event_rows_rect.height() > 0.0 {
+    if !view.is_vertical() {
         let controls_rect = egui::Rect::from_min_max(
             egui::pos2(rect.min.x, rect.min.y),
             egui::pos2(rect.min.x + view.keyboard_width(), rect.min.y + RULER_H),

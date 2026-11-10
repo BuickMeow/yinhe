@@ -15,6 +15,7 @@ use yinhe_types::Orientation;
 pub(crate) const GAP: f32 = 4.0;
 
 /// PR 控制数据（只读：量化 / 和弦指示器）。
+#[allow(dead_code)]
 pub struct PrBarData {
     pub quantize: QuantizePreset,
     /// `Auto` 档在当前 PR 缩放下解析出的具体网格（量化弹窗内显示）。
