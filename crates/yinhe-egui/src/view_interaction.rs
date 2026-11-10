@@ -195,23 +195,24 @@ pub(crate) fn handle_input(
                 // 纵向滚轮 y→时间（scroll_y）/x→音高（scroll_x）。
                 // 纵向时间轴已镜像（tick0 在底部），时间平移方向随之取反。
                 let main_scroll = if vertical {
-                    // 触控板斜向手势只锁一个轴：在手势开始时按主方向选定，
-                    // 手势结束前不再切换（避免逐帧主方向抖动 → 45° 斜移）。
-                    // 固定 Id：不依赖 Ui scope / 布局尺寸（它们变化会让锁定
-                    // 状态每帧丢失，又退化成逐帧切轴）。
-                    let axis_id = egui::Id::unique("pr_scroll_axis_lock");
+                    // 纵向一次滚动可能同时带 x/y 分量（触控板与部分鼠标都是）。
+                    // 手势开始时选一根轴，并在整个手势内**冻结另一根轴**：
+                    // 每帧先恢复冻结值再只应用锁定轴，任何 clamp / 其它处理器
+                    // 造成的另一轴漂移都会在本帧被抹掉，不会出现 45° 斜移。
+                    let state_id = egui::Id::unique("pr_scroll_axis_state");
                     if !ui.input(|i| i.is_scrolling()) {
-                        ui.data_mut(|d| d.remove::<bool>(axis_id));
+                        ui.data_mut(|d| d.remove::<(bool, f32, f32)>(state_id));
                     }
-                    let mut locked = ui.data_mut(|d| d.get_temp::<bool>(axis_id));
-                    if locked.is_none() {
+                    let mut state = ui.data_mut(|d| d.get_temp::<(bool, f32, f32)>(state_id));
+                    if state.is_none() {
                         let pick = scroll.y.abs() >= scroll.x.abs();
-                        ui.data_mut(|d| d.insert_temp(axis_id, pick));
-                        locked = Some(pick);
+                        let s = (pick, *view.scroll_x(), *view.scroll_y());
+                        ui.data_mut(|d| d.insert_temp(state_id, s));
+                        state = Some(s);
                     }
-                    let before_cross = *view.scroll_x();
-                    let before_main = *view.scroll_y();
-                    let main_axis = locked.unwrap_or(true);
+                    let (main_axis, frozen_x, frozen_y) = state.unwrap_or((true, 0.0, 0.0));
+                    *view.scroll_x() = frozen_x;
+                    *view.scroll_y() = frozen_y;
                     let applied = if main_axis {
                         *view.scroll_y() += scroll.y;
                         scroll.y
@@ -219,12 +220,11 @@ pub(crate) fn handle_input(
                         *view.scroll_x() -= scroll.x;
                         0.0
                     };
-                    // 帧末（clamp_scroll 之后）恢复未锁定轴：即使别处也处理了
-                    // 同一次滚动的另一分量，也不会出现时间+音高同时移动。
+                    // 帧末（clamp_scroll 之后）再次把冻结轴写回。
                     ui.data_mut(|d| {
                         d.insert_temp(
                             egui::Id::unique("pr_scroll_axis_guard"),
-                            (before_cross, before_main, main_axis),
+                            (frozen_x, frozen_y, main_axis),
                         )
                     });
                     applied
@@ -494,12 +494,32 @@ mod tests {
             "手势第一帧不应同时移动音高轴"
         );
 
+        // 模拟布局阶段的 clamp 先把音高轴推走：下一帧滚动必须把它拉回手势起点。
+        view.base.scroll_x += 50.0;
         // 同一手势的后续帧 x 占优：仍应锁在时间轴，不能变成 45° 斜移。
         run(vec![wheel(-160.0, 0.0, egui::TouchPhase::Move)], &mut view);
         view.clamp_scroll(800.0, 600.0, 10_000_000.0);
         assert_eq!(
             view.base.scroll_x, initial_cross,
             "同一手势内不得切换到音高轴（否则斜 45°）"
+        );
+
+        // 模拟别处也处理了同一次滚动的 x 分量：帧末保护必须把冻结轴抹回去。
+        let ctx2 = egui::Context::default();
+        ctx2.run_ui(Default::default(), |ui| {
+            ui.data_mut(|d| {
+                d.insert_temp(
+                    egui::Id::unique("pr_scroll_axis_guard"),
+                    (initial_cross, view.base.scroll_y, true),
+                )
+            });
+            view.base.scroll_x = initial_cross + 37.0;
+            super::apply_pr_scroll_guard(ui, &mut view);
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(
+            view.base.scroll_x, initial_cross,
+            "帧末保护应抹掉其它路径对未锁定轴的改动"
         );
     }
 
