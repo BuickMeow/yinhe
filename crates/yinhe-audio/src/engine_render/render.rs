@@ -4,6 +4,24 @@ use crate::engine::AudioEngine;
 
 use super::STEREO_CHANNELS;
 
+/// 对一段缓冲应用 [start, end) 的淡入/淡出包络；越界自动裁剪。
+fn apply_fade_range(buf: &mut [f32], start: usize, end: usize, fade_in: bool) {
+    let end = end.min(buf.len());
+    let start = start.min(end);
+    let len = (end - start) as f32;
+    if len <= 0.0 {
+        return;
+    }
+    for (k, s) in buf[start..end].iter_mut().enumerate() {
+        let g = if fade_in {
+            (k + 1) as f32 / len
+        } else {
+            1.0 - (k + 1) as f32 / (len + 1.0)
+        };
+        *s *= g.clamp(0.0, 1.0);
+    }
+}
+
 /// 把 mixer 的 master 立体声输出交错写入输出缓冲。
 fn write_master(output: &mut [f32], master_l: &[f32], master_r: &[f32]) {
     for i in 0..output.len() / STEREO_CHANNELS {
@@ -30,6 +48,7 @@ impl AudioEngine {
         self.ensure_block_buffers(frames);
         // 音频轨缓冲是覆盖写；整块只清一次，之后各 span 按 offset 写入。
         self.clear_audio_buffers(frames);
+        self.loop_wrap_offsets.clear();
 
         let mut done = 0usize;
         while done < frames {
@@ -41,10 +60,13 @@ impl AudioEngine {
             self.render_span(done, span);
             done += span;
             if wrapped {
+                self.loop_wrap_offsets.push(done);
                 self.rewind_to_loop_start();
             }
         }
 
+        // 循环回绕点做极短淡出/淡入（去咔哒）；跨块时把剩余淡入带到下一块。
+        self.apply_loop_declick(frames);
         // 试听预览与走带无关：整块混入一次。
         self.inject_preview(frames);
         // 内置音源通道处理段（CC7/10/11/71/74）在混音台 insert 链之前生效。
@@ -60,6 +82,42 @@ impl AudioEngine {
             let count = self.mixer.channel_count();
             self.mixer.resize(count, frames, &strips);
             self.channel_set.resize_scratches(frames);
+        }
+    }
+
+    /// 循环回绕点的去咔哒包络：回绕前 1ms 淡出、回绕后 1ms 淡入。
+    ///
+    /// 回绕会清空 voice（保持各后端语义一致），硬切在持续音上会产生 click。
+    /// 这里在通道输入侧做极短包络，insert/发送的尾音仍按原样继续。
+    fn apply_loop_declick(&mut self, frames: usize) {
+        let n = (self.sample_rate as usize / 1000).max(1);
+        let pending = std::mem::take(&mut self.loop_fade_in_pending);
+        // 取出并复用 Vec，避免每块在音频线程分配。
+        let mut offsets = std::mem::take(&mut self.loop_wrap_offsets);
+        if pending == 0 && offsets.is_empty() {
+            self.loop_wrap_offsets = offsets;
+            return;
+        }
+        if let Some(&last) = offsets.last() {
+            self.loop_fade_in_pending = (last + n).saturating_sub(frames);
+        }
+        for chain in self.mixer.buffers_mut() {
+            let buffers: &mut yinhe_mixer::ChannelBuffers = &mut *chain;
+            for buf in [&mut buffers.left, &mut buffers.right] {
+                if pending > 0 {
+                    apply_fade_range(buf, 0, pending.min(frames), true);
+                }
+                for &at in &offsets {
+                    apply_fade_range(buf, at.saturating_sub(n), at, false);
+                    apply_fade_range(buf, at, (at + n).min(frames), true);
+                }
+            }
+        }
+        offsets.clear();
+        self.loop_wrap_offsets = offsets;
+        // 极短块（帧数小于淡入长度）时把未用完的淡入带到下一块。
+        if pending > frames {
+            self.loop_fade_in_pending = self.loop_fade_in_pending.max(pending - frames);
         }
     }
 
@@ -253,6 +311,8 @@ impl AudioEngine {
     /// 未播放时的纯预览渲染：清空 mixer 通道缓冲后写入预览音频，再走与播放
     /// 完全相同的通道 DSP + 混音台链路输出（推子/master/insert/mute-solo 全生效）。
     fn render_preview_only(&mut self, output: &mut [f32], frames: usize) {
+        self.loop_wrap_offsets.clear();
+        self.loop_fade_in_pending = 0;
         if !self.previewing() {
             output.fill(0.0);
             return;
@@ -404,5 +464,31 @@ impl AudioEngine {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_fade_range;
+
+    /// 回绕点：淡出末样本接近 0、淡入首样本接近 0，中间单调恢复。
+    #[test]
+    fn loop_declick_ramps_are_monotonic() {
+        let mut buf = vec![1.0f32; 96];
+        apply_fade_range(&mut buf, 48, 48 + 48, true);
+        assert!(buf[48] < 0.05, "淡入首样本应接近 0: {}", buf[48]);
+        assert!(buf[95] > 0.95, "淡入末样本应接近 1: {}", buf[95]);
+        assert!(
+            buf[48..].windows(2).all(|w| w[0] <= w[1] + 1e-6),
+            "淡入必须单调"
+        );
+
+        let mut buf = vec![1.0f32; 96];
+        apply_fade_range(&mut buf, 0, 48, false);
+        assert!(buf[47] < 0.05, "淡出末样本应接近 0: {}", buf[47]);
+        assert!(
+            buf[..48].windows(2).all(|w| w[0] >= w[1] - 1e-6),
+            "淡出必须单调"
+        );
     }
 }

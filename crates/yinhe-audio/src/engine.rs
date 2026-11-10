@@ -170,6 +170,10 @@ pub(crate) struct AudioEngine {
     /// 循环起点 chase 快照：由 renderer 在 loop 变化/模型变化后异步预计算，
     /// 回绕时在渲染线程同步应用（音频线程不查询事件流）。
     pub(crate) loop_chase: Option<LoopChase>,
+    /// 本块内发生循环回绕的输出帧偏移（渲染后统一做去咔哒淡出/淡入）。
+    pub(crate) loop_wrap_offsets: Vec<usize>,
+    /// 跨块延续的循环回绕淡入剩余帧数（回绕点正好落在块尾时用）。
+    pub(crate) loop_fade_in_pending: usize,
 }
 
 /// 循环回绕用的控制状态快照。
@@ -283,6 +287,8 @@ impl AudioEngine {
                 loop_start_tick: 0,
                 loop_end_tick: 0,
                 loop_chase: None,
+                loop_wrap_offsets: Vec::new(),
+                loop_fade_in_pending: 0,
             }
         })
     }

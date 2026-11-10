@@ -242,6 +242,8 @@ impl AudioRenderer {
                 if self.engine.sample_position() != before {
                     self.clear_buffered_audio(self.engine.sample_position());
                     self.request_chase(self.engine.current_tick());
+                    // 区间外开启循环会 seek 到起点：与显式 seek 一样做 10ms 淡入。
+                    self.fade_in_frames = super::pause_fade_frames(self.engine.sample_rate);
                 }
                 self.request_loop_chase();
             }
@@ -255,6 +257,8 @@ impl AudioRenderer {
                     self.clear_buffered_audio(self.engine.sample_position());
                     // 方案 B：seek 后异步 chase（current_tick 已由 seek 更新）
                     self.request_chase(self.engine.current_tick());
+                    // 显式 seek 后从新位置/新相位开始：首块 10ms 淡入。
+                    self.fade_in_frames = super::pause_fade_frames(self.engine.sample_rate);
                 }
             }
             AudioCommand::Stop => {
