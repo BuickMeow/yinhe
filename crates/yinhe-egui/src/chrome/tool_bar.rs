@@ -101,7 +101,7 @@ pub fn show(
                 if let Some(i) = segmented(
                     ui,
                     &["88", "128", "256"],
-                    active,
+                    Some(active),
                     KEY_SEG_MIN_W,
                     h,
                     KEY_SEG_FONT,
@@ -115,7 +115,7 @@ pub fn show(
                 if let Some(i) = segmented_icons(
                     ui,
                     &[ICON_KEYBOARD_ARROW_RIGHT, ICON_KEYBOARD_ARROW_DOWN],
-                    orient_active,
+                    Some(orient_active),
                     ORIENT_SEG_MIN_W,
                     h,
                     ORIENT_ICON_FONT,
@@ -134,7 +134,7 @@ pub fn show(
                     if let Some(i) = segmented(
                         ui,
                         &["CLIP", "SONG"],
-                        scope_active,
+                        Some(scope_active),
                         SCOPE_SEG_MIN_W,
                         h,
                         SCOPE_SEG_FONT,
@@ -148,11 +148,10 @@ pub fn show(
 
                 // Scale 开关（单段胶囊，矮按钮）。
                 let fold_on = view.layout.fold_mask != 0;
-                let scale_active = usize::from(fold_on);
                 if segmented(
                     ui,
                     &["Scale"],
-                    scale_active,
+                    fold_on.then_some(0),
                     SCALE_SEG_MIN_W,
                     h,
                     SCALE_SEG_FONT,
@@ -177,7 +176,7 @@ pub fn show(
                 if segmented(
                     ui,
                     &[scale_label],
-                    0,
+                    Some(0),
                     SCALE_LABEL_MIN_W,
                     h,
                     SCALE_SEG_FONT,
@@ -411,7 +410,7 @@ fn segmented_icons_width(
 fn segmented(
     ui: &mut egui::Ui,
     labels: &[&str],
-    active: usize,
+    active: Option<usize>,
     seg_w: f32,
     h: f32,
     font_size: f32,
@@ -421,7 +420,7 @@ fn segmented(
         .iter()
         .enumerate()
         .map(|(i, label)| {
-            let color = if i == active {
+            let color = if Some(i) == active {
                 crate::theme::accent_active()
             } else {
                 crate::theme::text_primary()
@@ -446,7 +445,7 @@ fn segmented(
 fn segmented_icons(
     ui: &mut egui::Ui,
     icons: &[egui_material_icons::MaterialIcon],
-    active: usize,
+    active: Option<usize>,
     seg_w: f32,
     h: f32,
     font_size: f32,
@@ -456,7 +455,7 @@ fn segmented_icons(
         .iter()
         .enumerate()
         .map(|(i, &icon)| {
-            let color = if i == active {
+            let color = if Some(i) == active {
                 crate::theme::accent_active()
             } else {
                 crate::theme::text_primary()
@@ -478,7 +477,7 @@ fn segmented_icons(
 fn segmented_widgets(
     ui: &mut egui::Ui,
     segments: &[(egui::WidgetText, f32)],
-    active: usize,
+    active: Option<usize>,
     h: f32,
     id_salt: &str,
     hints: &[String],
@@ -500,7 +499,7 @@ fn segmented_widgets(
                     };
                     let resp = ui.add(
                         egui::Button::new(text.clone())
-                            .selected(i == active)
+                            .selected(Some(i) == active)
                             .min_size(egui::vec2(*w, h))
                             .corner_radius(radius),
                     );
