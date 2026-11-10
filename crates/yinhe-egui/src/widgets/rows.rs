@@ -6,6 +6,7 @@
 //! [`crate::theme`] 的排版 token。
 
 use eframe::egui;
+use egui_extras::{Size, StripBuilder};
 
 use crate::scaling::scaled_font;
 use crate::theme;
@@ -101,21 +102,37 @@ fn row_impl(
     add_control: impl FnOnce(&mut egui::Ui),
 ) {
     if desc.is_empty() {
-        // 单行：先固定行高为控件高再布局，保证标题与右侧控件垂直居中对齐。
-        // （直接 horizontal 会因为标题先于控件落位、行高后变，导致标题偏上。）
+        // 单行：固定行高 + egui_extras 两列（标签固定宽、控件剩余宽）。
+        // 同一面板内所有行都走同一行高，避免控件高度不同导致行距参差。
         let h = super::control::h(ui.ctx());
+        let label_w = scaled_font(ui.ctx(), theme::FIELD_LABEL_W);
         ui.allocate_ui_with_layout(
             egui::vec2(ui.available_width(), h),
-            egui::Layout::left_to_right(egui::Align::Center),
+            egui::Layout::top_down(egui::Align::Min),
             |ui| {
-                ui.label(
-                    egui::RichText::new(title)
-                        .strong()
-                        .size(scaled_font(ui.ctx(), theme::SUB_TITLE_FONT)),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.name_inputs(title, add_control);
-                });
+                StripBuilder::new(ui)
+                    .size(Size::exact(label_w))
+                    .size(Size::remainder())
+                    .horizontal(|mut strip| {
+                        strip.cell(|ui| {
+                            ui.with_layout(
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.label(
+                                        egui::RichText::new(title)
+                                            .strong()
+                                            .size(scaled_font(ui.ctx(), theme::SUB_TITLE_FONT)),
+                                    );
+                                },
+                            );
+                        });
+                        strip.cell(|ui| {
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| ui.name_inputs(title, add_control),
+                            );
+                        });
+                    });
             },
         );
     } else {

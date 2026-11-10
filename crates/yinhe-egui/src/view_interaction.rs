@@ -194,17 +194,24 @@ pub(crate) fn handle_input(
                 // 右区纯滚轮: 平移。字段语义随方向成立：横向滚轮 x→时间/y→音高；
                 // 纵向滚轮 y→时间（scroll_y）/x→音高（scroll_x）。
                 // 纵向时间轴已镜像（tick0 在底部），时间平移方向随之取反。
-                *view.scroll_x() -= scroll.x;
-                if vertical {
-                    *view.scroll_y() += scroll.y;
+                let main_scroll = if vertical {
+                    // 触控板斜向手势只取主方向，避免时间/音高同时移动成 45°。
+                    if scroll.y.abs() >= scroll.x.abs() {
+                        *view.scroll_y() += scroll.y;
+                        scroll.y
+                    } else {
+                        *view.scroll_x() -= scroll.x;
+                        0.0
+                    }
                 } else {
+                    *view.scroll_x() -= scroll.x;
                     *view.scroll_y() -= scroll.y;
-                }
+                    scroll.x
+                };
                 *view.dirty() = true;
                 // Manual horizontal scroll during playback escapes follow mode.
                 // Pure vertical scroll does not break follow.
-                // 纵向时间轴是 Y，主轴位移取 scroll.y。
-                let main_scroll = if vertical { scroll.y } else { scroll.x };
+                // 纵向时间轴是 Y，主轴位移取实际应用的时间轴滚动量。
                 if is_playing && *follow_mode != FollowMode::None && main_scroll.abs() > 0.5 {
                     *follow_mode = FollowMode::None;
                 }

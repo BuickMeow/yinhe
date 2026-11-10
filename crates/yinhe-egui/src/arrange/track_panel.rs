@@ -438,7 +438,9 @@ pub(crate) fn show(
                         name_font.size * 1.5,
                     ),
                 );
-                if let Some(new_name) = crate::widgets::track_rename::show(ui, idx, name_rect) {
+                if let Some(new_name) =
+                    crate::widgets::track_rename::show(ui, idx, name_rect, name_font.size)
+                {
                     actions.push(TrackAction::RenameTrack {
                         idx,
                         name: new_name,
@@ -550,7 +552,9 @@ pub(crate) fn show(
                         name_font.size * 1.5,
                     ),
                 );
-                if let Some(new_name) = crate::widgets::track_rename::show(ui, idx, name_rect) {
+                if let Some(new_name) =
+                    crate::widgets::track_rename::show(ui, idx, name_rect, name_font.size)
+                {
                     actions.push(TrackAction::RenameTrack {
                         idx,
                         name: new_name,

@@ -39,19 +39,26 @@ pub(crate) fn active(ui: &egui::Ui, idx: usize) -> bool {
 }
 
 /// 在 `rect` 绘制重命名编辑框。提交时返回新名称（已 trim、非空）。
-pub(crate) fn show(ui: &mut egui::Ui, idx: usize, rect: egui::Rect) -> Option<String> {
+///
+/// 不画输入框边框/背景，看起来就是原文本原地进入编辑。
+pub(crate) fn show(
+    ui: &mut egui::Ui,
+    idx: usize,
+    rect: egui::Rect,
+    font_size: f32,
+) -> Option<String> {
     let mut state = ui.data(|d| d.get_temp::<RenameState>(state_id()))?;
     if state.idx != idx {
         return None;
     }
 
-    let font = egui::TextStyle::Body.resolve(ui.style());
     let resp = ui.put(
         rect,
         egui::TextEdit::singleline(&mut state.text)
-            .font(font)
+            .font(egui::FontId::proportional(font_size))
+            .frame(egui::Frame::NONE)
             .desired_width(rect.width())
-            .margin(egui::Margin::symmetric(4, 0)),
+            .margin(egui::Margin::same(0)),
     );
     let just_focused = state.focus;
     if just_focused {

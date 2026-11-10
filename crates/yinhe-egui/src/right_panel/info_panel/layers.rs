@@ -110,7 +110,9 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) -> bool {
                         name_font.size * 1.5,
                     ),
                 );
-                if let Some(new_name) = crate::widgets::track_rename::show(ui, i, name_rect) {
+                if let Some(new_name) =
+                    crate::widgets::track_rename::show(ui, i, name_rect, name_font.size)
+                {
                     let before = doc.capture_snapshot();
                     let info = doc.edit.track_cache.info[i].clone();
                     let inst = doc

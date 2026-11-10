@@ -128,8 +128,6 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
     }
     let ti = doc.edit.track_cache.info[track_idx].clone();
 
-    ui.add_space(4.0);
-
     // ── 端口 / 通道 ──
     let mut port_changed = false;
     let mut new_port = ti.port;
@@ -190,12 +188,8 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
         doc.data.bump_revision();
     }
 
-    ui.add_space(4.0);
-
     // ── 通道默认乐器 / 鼓通道 ──
     let instrument_changed = instrument::show(ui, doc, track_idx);
-
-    ui.add_space(4.0);
 
     // ── 颜色（行高一致的小色块 + 重置）──
     show_color_row(ui, doc, track_idx);

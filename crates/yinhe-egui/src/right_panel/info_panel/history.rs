@@ -50,6 +50,17 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &Document) -> Option<usize> {
                     target = Some(i + 1);
                 }
             }
+            // 最早状态：可直接回到所有操作之前。
+            if draw_row(
+                ui,
+                rust_i18n::t!("history.start").as_ref(),
+                false,
+                past.is_empty(),
+            )
+            .clicked()
+            {
+                target = Some(0);
+            }
         },
     );
     target

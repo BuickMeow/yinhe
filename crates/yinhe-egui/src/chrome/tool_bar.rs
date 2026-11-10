@@ -5,10 +5,7 @@
 //! 空白矩形里，做成两个宽按钮，避免再占用工具区。
 
 use eframe::egui;
-use egui_material_icons::icons::{
-    ICON_ADD_CHART, ICON_BAR_CHART, ICON_KEYBOARD_ARROW_DOWN, ICON_KEYBOARD_ARROW_RIGHT,
-    ICON_MORE_HORIZ,
-};
+use egui_material_icons::icons::{ICON_ADD_CHART, ICON_BAR_CHART, ICON_MORE_HORIZ};
 use rust_i18n::t;
 
 use crate::widgets::tools_panel::{ALL_TOOLS, Tool};
@@ -98,17 +95,27 @@ pub fn show(
                     view.set_key_count(counts[i]);
                 }
 
-                // [→|↓]：PR 方向双联按钮（取代 transport bar 的单按钮切换）。
-                let orient_active = usize::from(view.is_vertical());
-                if let Some(i) = segmented_icons(
-                    ui,
-                    &[ICON_KEYBOARD_ARROW_RIGHT, ICON_KEYBOARD_ARROW_DOWN],
-                    orient_active,
-                    26.0,
-                    h,
-                    "pr_orientation",
-                ) {
-                    view.set_orientation(if i == 0 {
+                // 卷帘方向：标准 Button 单键切换，避免自定义分段图标在不同字体下画坏。
+                let vertical = view.is_vertical();
+                let orient = ui.add(
+                    egui::Button::new(
+                        egui::RichText::new(if vertical { "↕" } else { "↔" }).size(14.0),
+                    )
+                    .selected(vertical)
+                    .min_size(egui::vec2(28.0, h)),
+                );
+                if orient.hovered() {
+                    orient
+                        .clone()
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text(t!(if vertical {
+                            "menu.orientation.vertical"
+                        } else {
+                            "menu.orientation.horizontal"
+                        }));
+                }
+                if orient.clicked() {
+                    view.set_orientation(if vertical {
                         Orientation::Horizontal
                     } else {
                         Orientation::Vertical
@@ -280,54 +287,6 @@ fn tool_more_button(ui: &mut egui::Ui, btn_size: egui::Vec2) -> egui::Response {
         )
     })
     .inner
-}
-
-/// 双联图标分段开关（方向切换）。
-#[allow(clippy::too_many_arguments)]
-fn segmented_icons(
-    ui: &mut egui::Ui,
-    icons: &[egui_material_icons::MaterialIcon],
-    active: usize,
-    seg_w: f32,
-    h: f32,
-    id_salt: &str,
-) -> Option<usize> {
-    let mut clicked = None;
-    ui.push_id(id_salt, |ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        let width = seg_w * icons.len() as f32;
-        ui.allocate_ui_with_layout(
-            egui::vec2(width, h),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                for (i, icon) in icons.iter().enumerate() {
-                    let radius = egui::CornerRadius {
-                        nw: if i == 0 { 3 } else { 0 },
-                        sw: if i == 0 { 3 } else { 0 },
-                        ne: if i + 1 == icons.len() { 3 } else { 0 },
-                        se: if i + 1 == icons.len() { 3 } else { 0 },
-                    };
-                    let resp = ui.add(
-                        egui::Button::new(icon.rich_text().size(14.0).color(if i == active {
-                            crate::theme::accent_active()
-                        } else {
-                            crate::theme::text_primary()
-                        }))
-                        .selected(i == active)
-                        .min_size(egui::vec2(seg_w, h))
-                        .corner_radius(radius),
-                    );
-                    if resp.hovered() {
-                        resp.clone().on_hover_cursor(egui::CursorIcon::PointingHand);
-                    }
-                    if resp.clicked() {
-                        clicked = Some(i);
-                    }
-                }
-            },
-        );
-    });
-    clicked
 }
 
 /// 分段开关：整组带背景，选中段填 selected_bg；段间竖线为直角，不随圆角弯曲。
