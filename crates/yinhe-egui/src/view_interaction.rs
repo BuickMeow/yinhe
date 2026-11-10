@@ -195,8 +195,19 @@ pub(crate) fn handle_input(
                 // 纵向滚轮 y→时间（scroll_y）/x→音高（scroll_x）。
                 // 纵向时间轴已镜像（tick0 在底部），时间平移方向随之取反。
                 let main_scroll = if vertical {
-                    // 触控板斜向手势只取主方向，避免时间/音高同时移动成 45°。
-                    if scroll.y.abs() >= scroll.x.abs() {
+                    // 触控板斜向手势只锁一个轴：在手势开始时按主方向选定，
+                    // 手势结束前不再切换（避免逐帧主方向抖动 → 45° 斜移）。
+                    let axis_id = ui.scope_id().with("pr_scroll_axis_lock");
+                    if !ui.input(|i| i.is_scrolling()) {
+                        ui.data_mut(|d| d.remove::<bool>(axis_id));
+                    }
+                    let mut locked = ui.data_mut(|d| d.get_temp::<bool>(axis_id));
+                    if locked.is_none() {
+                        let pick = scroll.y.abs() >= scroll.x.abs();
+                        ui.data_mut(|d| d.insert_temp(axis_id, pick));
+                        locked = Some(pick);
+                    }
+                    if locked.unwrap_or(true) {
                         *view.scroll_y() += scroll.y;
                         scroll.y
                     } else {
@@ -381,6 +392,75 @@ pub(crate) fn draw_hover_tooltip(ctx: &egui::Context, lines: &[String], x: f32, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 回归：纵向 PR 的斜向滚动必须在手势开始时锁定单轴，
+    /// 不能逐帧按主方向切换，否则时间/音高同时移动成 45°。
+    #[test]
+    fn vertical_pr_locks_scroll_axis_within_gesture() {
+        let ctx = egui::Context::default();
+        let mut view = yinhe_types::PianoRollView::default();
+        view.set_orientation(yinhe_types::Orientation::Vertical);
+        let mut cursor_tick: Option<f64> = None;
+        let mut follow = FollowMode::None;
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+
+        let wheel = |dx: f32, dy: f32, phase: egui::TouchPhase| egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(dx, dy),
+            phase,
+            source: egui::MouseWheelSource::Unknown,
+            modifiers: egui::Modifiers::NONE,
+        };
+
+        let mut run = |events: Vec<egui::Event>, view: &mut yinhe_types::PianoRollView| {
+            let raw = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            };
+            let out = ctx.run_ui(raw, |ui| {
+                let rect = ui.max_rect();
+                crate::view_interaction::handle_input(
+                    ui,
+                    rect,
+                    view,
+                    &mut cursor_tick,
+                    0.0,
+                    None,
+                    None,
+                    Some(rect),
+                    false,
+                    &mut follow,
+                    &Tool::Select,
+                );
+            });
+            out.drop_without_applying_deltas();
+        };
+
+        // 指针先进入区域（建立 hover）。
+        run(vec![egui::Event::PointerMoved(screen.center())], &mut view);
+        // 手势开始：y 略占优 → 锁定时间轴。
+        run(
+            vec![
+                wheel(60.0, -80.0, egui::TouchPhase::Start),
+                wheel(60.0, -80.0, egui::TouchPhase::Move),
+            ],
+            &mut view,
+        );
+        assert!(
+            view.base.scroll_y != 0.0,
+            "纵向滚动应移动时间轴 scroll_y，实际 {:.3}",
+            view.base.scroll_y
+        );
+        assert_eq!(view.base.scroll_x, 0.0, "手势第一帧不应同时移动音高轴");
+
+        // 同一手势的后续帧 x 占优：仍应锁在时间轴，不能变成 45° 斜移。
+        run(vec![wheel(160.0, 0.0, egui::TouchPhase::Move)], &mut view);
+        assert_eq!(
+            view.base.scroll_x, 0.0,
+            "同一手势内不得切换到音高轴（否则斜 45°）"
+        );
+    }
 
     /// 回归：垂直/水平滚轮经 handle_input 应平移视图 scroll（AR 与通道 AR 共用路径）。
     #[test]
