@@ -4,7 +4,7 @@ use yinhe_core::{ConductorData, NoteEvent, TrackData, YinModel};
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
 
 use crate::document::Document;
-use crate::history::UndoAction;
+use crate::history::{NoteDelta, UndoAction};
 
 use super::*;
 
@@ -15,6 +15,20 @@ mod humanize_cleanup;
 mod move_resize;
 mod tools;
 mod transform;
+
+fn note_delta(action: &UndoAction) -> &NoteDelta {
+    match action {
+        UndoAction::Notes(d) => d,
+        UndoAction::Composite(actions) => actions
+            .iter()
+            .find_map(|a| match a {
+                UndoAction::Notes(d) => Some(d),
+                _ => None,
+            })
+            .expect("Composite 中应包含 Notes"),
+        other => panic!("期望 Notes 或含 Notes 的 Composite，实际 {other:?}"),
+    }
+}
 
 fn make_doc_with_note() -> Document {
     let model = YinModel {

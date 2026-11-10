@@ -278,13 +278,9 @@ fn generate_pen_notes_per_row_with_memory_velocity_and_undo() {
     let n64 = doc.data.model.notes[64][0];
     assert_eq!((n64.start_tick, n64.end_tick), (480, 600));
 
-    match &action {
-        UndoAction::Notes(delta) => {
-            assert!(delta.before.is_empty());
-            assert_eq!(delta.after.len(), 3);
-        }
-        other => panic!("期望副本制 Notes，实际 {other:?}"),
-    }
+    let delta = note_delta(&action);
+    assert!(delta.before.is_empty());
+    assert_eq!(delta.after.len(), 3);
     doc.push_undo(action, "line", before_snap);
     assert!(doc.undo(), "undo 应成功");
     assert!(doc.data.model.notes[62].is_empty());
@@ -326,10 +322,7 @@ fn add_notes_batch_filters_overlap_when_disabled() {
     ];
     let action = doc.add_notes_batch(0, &notes).expect("应添加 1 个");
     assert_eq!(doc.data.model.notes[60].len(), 2);
-    match action {
-        UndoAction::Notes(delta) => assert_eq!(delta.after.len(), 1),
-        other => panic!("期望副本制 Notes，实际 {other:?}"),
-    }
+    assert_eq!(note_delta(&action).after.len(), 1);
 
     doc.edit.allow_overlapping_notes = true;
     assert!(doc.add_notes_batch(0, &notes).is_some());

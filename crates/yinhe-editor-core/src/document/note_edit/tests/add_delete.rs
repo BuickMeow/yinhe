@@ -50,10 +50,7 @@ fn set_note_end_tick_updates_gate_and_undo() {
             },
         )
         .expect("add_note 应成功");
-    let note_id = match &action {
-        crate::history::UndoAction::Notes(d) => d.after[0].0.id,
-        other => panic!("unexpected action {other:?}"),
-    };
+    let note_id = note_delta(&action).after[0].0.id;
 
     // NoteOff 闭合 gate
     let before = doc.capture_snapshot();
@@ -85,10 +82,7 @@ fn set_note_end_tick_clamps_below_start() {
             },
         )
         .expect("add_note 应成功");
-    let note_id = match &action {
-        crate::history::UndoAction::Notes(d) => d.after[0].0.id,
-        other => panic!("unexpected action {other:?}"),
-    };
+    let note_id = note_delta(&action).after[0].0.id;
     // 快速弹放：end_tick == start_tick → 钳制为 start+1（仍返回 Some）
     assert!(doc.set_note_end_tick(62, note_id, 1000).is_some());
     let n = doc.data.model.notes[62][0];
