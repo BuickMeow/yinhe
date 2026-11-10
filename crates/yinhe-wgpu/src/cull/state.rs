@@ -826,13 +826,21 @@ impl CullState {
             let Some(bg) = &self.per_key_bind_groups[key as usize] else {
                 continue;
             };
-            if info[key as usize * 64] == 0 {
+            let slot = key as usize * 64;
+            if info[slot] == 0 {
                 continue;
             }
             cull_pass.set_bind_group(0, bg, &[]);
-            // Dispatch args (wg_x, wg_y, 1, count, c_lo) were written above as
-            // one 32KB blob; the GPU reads them via dispatch_workgroups_indirect.
-            cull_pass.dispatch_workgroups_indirect(&self.dispatch_args_buffer, key as u64 * 256);
+            if self.use_indirect {
+                // Dispatch args (wg_x, wg_y, 1, count, c_lo) were written above
+                // as one 32KB blob; the GPU reads them indirectly.
+                cull_pass
+                    .dispatch_workgroups_indirect(&self.dispatch_args_buffer, key as u64 * 256);
+            } else {
+                // 无 INDIRECT usage 的设备（iOS 模拟器/部分驱动）直接 dispatch；
+                // wg_x/wg_y 与写入 args buffer 的值一致。
+                cull_pass.dispatch_workgroups(info[slot], info[slot + 1], 1);
+            }
         }
         drop(cull_pass);
 
@@ -1170,11 +1178,17 @@ impl CullState {
             let Some(bg) = &summary.per_key_bind_groups[key as usize] else {
                 continue;
             };
-            if summary.frame_chunks[key as usize] == 0 {
+            let chunks = summary.frame_chunks[key as usize];
+            if chunks == 0 {
                 continue;
             }
             cull_pass.set_bind_group(0, bg, &[]);
-            cull_pass.dispatch_workgroups_indirect(&self.dispatch_args_buffer, key as u64 * 256);
+            if self.use_indirect {
+                cull_pass
+                    .dispatch_workgroups_indirect(&self.dispatch_args_buffer, key as u64 * 256);
+            } else {
+                cull_pass.dispatch_workgroups(chunks.min(65535), chunks.div_ceil(65535), 1);
+            }
         }
         drop(cull_pass);
 
