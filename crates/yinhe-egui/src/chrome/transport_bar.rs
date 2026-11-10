@@ -1,7 +1,6 @@
 use eframe::egui;
 use egui_material_icons::icons::*;
 use rust_i18n::t;
-use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
 
 use crate::widgets::action_menu::pinned_action_buttons;
 use crate::widgets::timecode::show_timecode_display;
@@ -258,44 +257,28 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 // ── 工具区已迁移到左侧工具栏（见 chrome::tool_bar）──
 
                 if let Some(doc) = ctx.doc {
-                    // ── 循环状态（走带栏实时同步；点击切换，拖拽在 LOOP 事件行完成）──
+                    // ── 循环开关（与其它走带按钮同款图标按钮；不叠加文字）──
                     {
                         let enabled = doc.edit.playback.loop_enabled();
-                        let (start, end) = doc.edit.playback.loop_range();
-                        let model = &doc.data.model;
-                        let (num, den) = model.tempo_map.time_sig_default;
-                        let label = if enabled {
-                            let a = format_tick_bar_beat_with_time_sig(
-                                start as f64,
-                                model.meta.ppq,
-                                &model.tempo_map.time_sig_events,
-                                num,
-                                den,
-                            );
-                            let b = format_tick_bar_beat_with_time_sig(
-                                end as f64,
-                                model.meta.ppq,
-                                &model.tempo_map.time_sig_events,
-                                num,
-                                den,
-                            );
-                            format!("{} {a} – {b}", t!("menu.loop"))
-                        } else {
-                            t!("menu.loop").to_string()
-                        };
-                        let resp = ui.add(
-                            egui::Button::new(
-                                egui::RichText::new(label)
-                                    .size(crate::theme::SMALL_LABEL_FONT)
-                                    .color(if enabled {
-                                        crate::theme::accent_active()
-                                    } else {
-                                        crate::theme::text_secondary()
-                                    }),
-                            )
-                            .selected(enabled)
-                            .frame(true),
-                        );
+                        let resp = ui
+                            .push_id("transport_loop", |ui| {
+                                crate::widgets::flat::flat_button_filled(
+                                    ui,
+                                    ICON_REPEAT
+                                        .rich_text()
+                                        .size(crate::theme::TRANSPORT_BTN_FONT)
+                                        .color(if enabled {
+                                            crate::theme::accent_active()
+                                        } else {
+                                            crate::theme::text_primary()
+                                        }),
+                                    btn_size,
+                                    enabled.then(crate::theme::selected_bg),
+                                    true,
+                                )
+                            })
+                            .inner;
+                        crate::widgets::a11y::name_button(&resp, t!("menu.loop"));
                         if resp.hovered() {
                             hovered_hint = Some(t!("menu.loop").to_string());
                         }
