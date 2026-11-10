@@ -126,6 +126,9 @@ pub(crate) fn upload_note_layers(
     });
 }
 
+/// MIDI Clip 标题栏高度（px）。绘制与命中测试共用。
+pub(crate) const MIDI_CLIP_HEADER_H: f32 = 10.0;
+
 /// 绘制 MIDI Clip v1 的背景块（在 GPU 音符层之前，音符始终覆盖其上）。
 ///
 /// 只画主音轨行；自动化子行不画 Clip 背景。
@@ -163,7 +166,7 @@ pub(crate) fn draw_midi_clips(
         let base = rgb(tc);
         let band = egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), 28);
         let header = egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), 96);
-        let header_h = 10.0_f32.min(lh - 2.0).max(0.0);
+        let header_h = MIDI_CLIP_HEADER_H.min(lh - 2.0).max(0.0);
         for clip in yinhe_core::clips_in_range(&track.clips, lo, hi) {
             let x0 = rect.min.x + view.tick_to_x(clip.start_tick as f64);
             let x1 = rect.min.x + view.tick_to_x(clip.end_tick as f64);

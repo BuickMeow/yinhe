@@ -256,6 +256,248 @@ impl Document {
             None => action,
         }
     }
+    /// 收集某轨 Clip 区间内按 start 归属的音符。
+    fn notes_in_clip(&self, track: u16, start: u32, end: u32) -> Vec<(u8, yinhe_core::Note)> {
+        let mut out = Vec::new();
+        for (key, bucket) in self.data.model.notes.iter().enumerate() {
+            for n in bucket.range(start, end) {
+                if n.track == track {
+                    out.push((key as u8, *n));
+                }
+            }
+        }
+        out
+    }
+
+    fn write_note_action(
+        before: Vec<(yinhe_core::Note, u8)>,
+        after: Vec<(yinhe_core::Note, u8)>,
+    ) -> Option<UndoAction> {
+        if before.is_empty() && after.is_empty() {
+            None
+        } else {
+            Some(UndoAction::Notes(crate::history::NoteDelta {
+                before,
+                after,
+            }))
+        }
+    }
+
+    /// 按标题栏拖动整体移动 Clip（水平方向）。
+    pub fn move_clip(&mut self, track: u16, clip_id: u32, delta_ticks: i64) -> Option<UndoAction> {
+        if delta_ticks == 0 {
+            return None;
+        }
+        let t = track as usize;
+        let before_clips = self.clip_list(t)?;
+        let idx = before_clips.iter().position(|c| c.id == clip_id)?;
+        let clip = before_clips[idx].clone();
+        let notes = self.notes_in_clip(track, clip.start_tick, clip.end_tick);
+        let min_start = notes
+            .iter()
+            .map(|(_, n)| n.start_tick as i64)
+            .min()
+            .unwrap_or(clip.start_tick as i64);
+        let delta = delta_ticks.max(-min_start).max(-(clip.start_tick as i64));
+        if delta == 0 {
+            return None;
+        }
+        let new_start = (clip.start_tick as i64 + delta) as u32;
+        let new_end = (clip.end_tick as i64 + delta).max(new_start as i64 + 1) as u32;
+
+        let mut after_clips = before_clips.clone();
+        after_clips[idx].start_tick = new_start;
+        after_clips[idx].end_tick = new_end;
+
+        // 移动后与相邻 Clip 重叠：合并到被拖动的 Clip（保留其 id/name）。
+        after_clips.sort_by_key(|c| c.start_tick);
+        let mut merged: Vec<Clip> = Vec::with_capacity(after_clips.len());
+        for c in after_clips {
+            if let Some(last) = merged.last_mut()
+                && c.start_tick < last.end_tick
+            {
+                let keep_moved = c.id == clip_id;
+                if keep_moved {
+                    let id = c.id;
+                    let name = c.name.clone();
+                    last.id = id;
+                    last.name = name;
+                }
+                last.end_tick = last.end_tick.max(c.end_tick);
+                continue;
+            }
+            merged.push(c);
+        }
+        debug_assert!(yinhe_core::validate_clips(&merged).is_ok());
+
+        let mut before_notes = Vec::with_capacity(notes.len());
+        let mut after_notes = Vec::with_capacity(notes.len());
+        {
+            let model = Arc::make_mut(&mut self.data.model);
+            for (key, n) in &notes {
+                if let Some(removed) = model.remove_note_by_id(*key, n.id) {
+                    let moved = yinhe_core::Note {
+                        start_tick: (removed.start_tick as i64 + delta) as u32,
+                        end_tick: (removed.end_tick as i64 + delta).max(0) as u32,
+                        ..removed
+                    };
+                    model.insert_note(*key, moved);
+                    model.mark_dirty(*key);
+                    before_notes.push((removed, *key));
+                    after_notes.push((moved, *key));
+                }
+            }
+        }
+        let note_action = Self::write_note_action(before_notes, after_notes);
+        let clip_before = self.clip_list(t).unwrap_or_default();
+        {
+            let model = Arc::make_mut(&mut self.data.model);
+            if let Some(track_data) = model.tracks.get_mut(t) {
+                Arc::make_mut(track_data).clips = merged.clone();
+            }
+        }
+        self.data.rebuild_model_dirty();
+        self.data.bump_revision();
+        let clip_action = UndoAction::Clips {
+            track_idx: t,
+            before: clip_before,
+            after: merged,
+        };
+        Some(match note_action {
+            Some(n) => UndoAction::Composite(vec![clip_action, n]),
+            None => clip_action,
+        })
+    }
+
+    /// 向右拖动 Clip 边缘：把原内容按 Clip 长度循环复制到新范围。
+    pub fn loop_clip_right(
+        &mut self,
+        track: u16,
+        clip_id: u32,
+        new_end: u32,
+    ) -> Option<UndoAction> {
+        let t = track as usize;
+        let before_clips = self.clip_list(t)?;
+        let idx = before_clips.iter().position(|c| c.id == clip_id)?;
+        let clip = before_clips[idx].clone();
+        if new_end <= clip.end_tick {
+            return self.resize_clip(track, clip_id, clip.start_tick, new_end);
+        }
+        // 不允许穿过下一个 Clip；循环贴到它的起点为止。
+        let next_start = before_clips.get(idx + 1).map_or(u32::MAX, |c| c.start_tick);
+        let new_end = new_end.min(next_start);
+        if new_end <= clip.end_tick {
+            return None;
+        }
+        let base = self.notes_in_clip(track, clip.start_tick, clip.end_tick);
+        let len = clip.end_tick.saturating_sub(clip.start_tick).max(1);
+        let mut added: Vec<(yinhe_core::Note, u8)> = Vec::new();
+        let model = Arc::make_mut(&mut self.data.model);
+        let mut offset = clip.end_tick;
+        while offset < new_end {
+            for (key, n) in &base {
+                let start = n.start_tick.saturating_add(offset - clip.start_tick);
+                if start >= new_end {
+                    continue;
+                }
+                let mut copy = yinhe_core::Note {
+                    id: model.alloc_note_id(),
+                    start_tick: start,
+                    end_tick: n.end_tick.saturating_add(offset - clip.start_tick),
+                    ..*n
+                };
+                copy.start_tick = copy.start_tick.max(offset.saturating_sub(len));
+                model.insert_note(*key, copy);
+                model.mark_dirty(*key);
+                added.push((copy, *key));
+            }
+            offset = offset.saturating_add(len);
+        }
+        let mut after_clips = before_clips.clone();
+        after_clips[idx].end_tick = new_end;
+        if let Some(track_data) = model.tracks.get_mut(t) {
+            Arc::make_mut(track_data).clips = after_clips.clone();
+        }
+        self.data.rebuild_model_dirty();
+        self.data.bump_revision();
+        let clip_action = UndoAction::Clips {
+            track_idx: t,
+            before: before_clips,
+            after: after_clips,
+        };
+        let note_action = Self::write_note_action(Vec::new(), added);
+        Some(match note_action {
+            Some(n) => UndoAction::Composite(vec![clip_action, n]),
+            None => clip_action,
+        })
+    }
+
+    /// 向左拖动 Clip 边缘：把原内容反向循环复制到更早范围。
+    pub fn loop_clip_left(
+        &mut self,
+        track: u16,
+        clip_id: u32,
+        new_start: u32,
+    ) -> Option<UndoAction> {
+        let t = track as usize;
+        let before_clips = self.clip_list(t)?;
+        let idx = before_clips.iter().position(|c| c.id == clip_id)?;
+        let clip = before_clips[idx].clone();
+        if new_start >= clip.start_tick {
+            return self.resize_clip(track, clip_id, new_start, clip.end_tick);
+        }
+        let prev_end = idx.checked_sub(1).map_or(0, |i| before_clips[i].end_tick);
+        let new_start = new_start.max(prev_end);
+        if new_start >= clip.start_tick {
+            return None;
+        }
+        let base = self.notes_in_clip(track, clip.start_tick, clip.end_tick);
+        let len = clip.end_tick.saturating_sub(clip.start_tick).max(1);
+        let mut added: Vec<(yinhe_core::Note, u8)> = Vec::new();
+        let model = Arc::make_mut(&mut self.data.model);
+        let mut start_cursor = clip.start_tick;
+        while start_cursor > new_start {
+            let offset = start_cursor.saturating_sub(len);
+            for (key, n) in &base {
+                let shifted = n.start_tick.saturating_sub(clip.start_tick);
+                let start = offset.saturating_add(shifted);
+                if start >= clip.start_tick || start < new_start {
+                    continue;
+                }
+                let mut copy = yinhe_core::Note {
+                    id: model.alloc_note_id(),
+                    start_tick: start,
+                    end_tick: n
+                        .end_tick
+                        .saturating_sub(clip.start_tick)
+                        .saturating_add(offset),
+                    ..*n
+                };
+                copy.end_tick = copy.end_tick.max(copy.start_tick + 1);
+                model.insert_note(*key, copy);
+                model.mark_dirty(*key);
+                added.push((copy, *key));
+            }
+            start_cursor = offset;
+        }
+        let mut after_clips = before_clips.clone();
+        after_clips[idx].start_tick = new_start;
+        if let Some(track_data) = model.tracks.get_mut(t) {
+            Arc::make_mut(track_data).clips = after_clips.clone();
+        }
+        self.data.rebuild_model_dirty();
+        self.data.bump_revision();
+        let clip_action = UndoAction::Clips {
+            track_idx: t,
+            before: before_clips,
+            after: after_clips,
+        };
+        let note_action = Self::write_note_action(Vec::new(), added);
+        Some(match note_action {
+            Some(n) => UndoAction::Composite(vec![clip_action, n]),
+            None => clip_action,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -352,6 +594,91 @@ mod tests {
         assert_eq!(clips[0].name, "A");
         assert_eq!(clips[0].start_tick, 0);
         assert_eq!(clips[0].end_tick, 300);
+    }
+
+    fn track_notes(doc: &Document, track: u16) -> Vec<yinhe_core::Note> {
+        let mut out = Vec::new();
+        for bucket in doc.model().notes.iter() {
+            for n in bucket.range(0, u32::MAX) {
+                if n.track == track {
+                    out.push(*n);
+                }
+            }
+        }
+        out.sort_by_key(|n| n.start_tick);
+        out
+    }
+
+    #[test]
+    fn move_clip_moves_clip_and_notes_together() {
+        let mut doc = make_doc();
+        add_note(&mut doc, 1, 100, 200);
+        let id = doc.model().tracks[1].clips[0].id;
+        doc.move_clip(1, id, 50).unwrap();
+        let clips = &doc.model().tracks[1].clips;
+        assert_eq!(clips[0].start_tick, 150);
+        assert_eq!(clips[0].end_tick, 250);
+        let notes = track_notes(&doc, 1);
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].start_tick, 150);
+        assert_eq!(notes[0].end_tick, 250);
+    }
+
+    #[test]
+    fn move_clip_clamps_at_zero() {
+        let mut doc = make_doc();
+        add_note(&mut doc, 1, 100, 200);
+        let id = doc.model().tracks[1].clips[0].id;
+        doc.move_clip(1, id, -10_000).unwrap();
+        let clips = &doc.model().tracks[1].clips;
+        assert_eq!(clips[0].start_tick, 0);
+        assert_eq!(clips[0].end_tick, 100);
+        assert_eq!(track_notes(&doc, 1)[0].start_tick, 0);
+    }
+
+    #[test]
+    fn loop_clip_right_repeats_note_pattern() {
+        let mut doc = make_doc();
+        add_note(&mut doc, 1, 10, 110);
+        let id = doc.model().tracks[1].clips[0].id;
+        doc.loop_clip_right(1, id, 310).unwrap();
+        let clips = &doc.model().tracks[1].clips;
+        assert_eq!(clips[0].start_tick, 10);
+        assert_eq!(clips[0].end_tick, 310);
+        let starts: Vec<u32> = track_notes(&doc, 1).iter().map(|n| n.start_tick).collect();
+        assert_eq!(starts, vec![10, 110, 210]);
+    }
+
+    #[test]
+    fn loop_clip_left_repeats_note_pattern_backwards() {
+        let mut doc = make_doc();
+        add_note(&mut doc, 1, 100, 200);
+        let id = doc.model().tracks[1].clips[0].id;
+        doc.loop_clip_left(1, id, 0).unwrap();
+        let clips = &doc.model().tracks[1].clips;
+        assert_eq!(clips[0].start_tick, 0);
+        assert_eq!(clips[0].end_tick, 200);
+        let notes = track_notes(&doc, 1);
+        assert_eq!(
+            notes
+                .iter()
+                .map(|n| (n.start_tick, n.end_tick))
+                .collect::<Vec<_>>(),
+            vec![(0, 100), (100, 200)]
+        );
+    }
+
+    #[test]
+    fn loop_clip_right_stops_at_next_clip() {
+        let mut doc = make_doc();
+        add_note(&mut doc, 1, 0, 100);
+        doc.create_empty_clip(1, 300, 100).unwrap();
+        let id = doc.model().tracks[1].clips[0].id;
+        doc.loop_clip_right(1, id, 500).unwrap();
+        let clips = &doc.model().tracks[1].clips;
+        assert_eq!(clips[0].start_tick, 0);
+        assert_eq!(clips[0].end_tick, 300);
+        assert_eq!(clips[1].start_tick, 300);
     }
 
     #[test]

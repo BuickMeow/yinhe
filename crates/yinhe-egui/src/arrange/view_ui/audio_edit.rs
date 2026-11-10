@@ -24,7 +24,7 @@ const GHOST_ALPHA: u8 = 70;
 ///
 /// y 均为音乐坐标（未减 scroll_y）；只有「轨道音符行」参与命中，
 /// 通道合并行 / 自动化行 / Conductor 行返回 None（音频片段只画在轨道行上）。
-pub(crate) trait AudioRowGeom {
+pub(crate) trait TrackRowGeom {
     /// 音乐坐标 y 命中的音符行所属轨道。
     fn track_at_music_y(&self, music_y: f32) -> Option<u16>;
     /// 轨道音符行的 (y_top, height)（音乐坐标）。
@@ -32,12 +32,12 @@ pub(crate) trait AudioRowGeom {
 }
 
 /// 轨道 AR 的行几何适配器。
-pub(crate) struct ArAudioGeom<'a> {
+pub(crate) struct ArTrackGeom<'a> {
     pub layout: &'a ArRowLayout,
     pub lane_height: f32,
 }
 
-impl AudioRowGeom for ArAudioGeom<'_> {
+impl TrackRowGeom for ArTrackGeom<'_> {
     fn track_at_music_y(&self, music_y: f32) -> Option<u16> {
         match self.layout.hit_at_music_y(music_y, self.lane_height) {
             Some(yinhe_types::ArRow::Track(t)) => u16::try_from(t).ok(),
@@ -152,7 +152,7 @@ pub(crate) fn frame(
     rect: egui::Rect,
     music_rect: egui::Rect,
     view: &ArrangementView,
-    geom: &dyn AudioRowGeom,
+    geom: &dyn TrackRowGeom,
     data: &ArrangeData<'_>,
     edit: &mut ArrangeEdit<'_>,
 ) -> bool {
@@ -428,7 +428,7 @@ fn draw_drag_ghost(
     ui: &egui::Ui,
     rect: egui::Rect,
     view: &ArrangementView,
-    geom: &dyn AudioRowGeom,
+    geom: &dyn TrackRowGeom,
     data: &ArrangeData<'_>,
     state: &DragState,
     pos: egui::Pos2,
@@ -513,7 +513,7 @@ fn draw_drag_ghost(
 /// 命中测试：返回 (轨道索引, 片段克隆)。
 fn hit_test(
     view: &ArrangementView,
-    geom: &dyn AudioRowGeom,
+    geom: &dyn TrackRowGeom,
     data: &ArrangeData<'_>,
     pos: egui::Pos2,
     rect: egui::Rect,
@@ -545,7 +545,7 @@ fn hit_test(
 /// 细分命中区（边缘/淡入淡出手柄/主体）。
 fn hit_zone(
     view: &ArrangementView,
-    geom: &dyn AudioRowGeom,
+    geom: &dyn TrackRowGeom,
     data: &ArrangeData<'_>,
     pos: egui::Pos2,
     rect: egui::Rect,
@@ -783,7 +783,7 @@ mod tests {
         let view = test_view();
         let data = h.data();
         let layout = ArRowLayout::new([0]);
-        let geom = ArAudioGeom {
+        let geom = ArTrackGeom {
             layout: &layout,
             lane_height: view.lane_height(),
         };
@@ -836,7 +836,7 @@ mod tests {
         let view = test_view();
         let data = h.data();
         let layout = ArRowLayout::new([0, 0]);
-        let geom = ArAudioGeom {
+        let geom = ArTrackGeom {
             layout: &layout,
             lane_height: view.lane_height(),
         };

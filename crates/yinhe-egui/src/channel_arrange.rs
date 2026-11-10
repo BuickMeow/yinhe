@@ -387,6 +387,7 @@ pub(crate) fn show(
         let mut no_eraser: Option<(f64, f64, usize, usize)> = None;
         let mut no_scale: Option<u64> = None;
         let mut no_riff: Option<(i64, i64)> = None;
+        let mut clip_commands: Vec<crate::arrange::view_ui::ClipEditCmd> = Vec::new();
         let mut edit = crate::arrange::ArrangeEdit {
             selected: &mut doc.edit.selected,
             cursor_tick: &mut doc.edit.cursor_tick,
@@ -403,6 +404,7 @@ pub(crate) fn show(
             right_tab,
             selected_audio_clips: &mut doc.edit.selected_audio_clips,
             audio_commands: &mut audio_commands,
+            clip_commands: &mut clip_commands,
         };
         let mut cfg = view::CaViewCfg {
             is_playing: cfg.is_playing,

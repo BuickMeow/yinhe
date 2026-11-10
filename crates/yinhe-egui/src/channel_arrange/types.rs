@@ -114,8 +114,8 @@ pub(crate) fn point_in_sel_rects(
     })
 }
 
-/// 通道 AR 的 `CaRowLayout` 作为音频片段交互的行几何。
-impl crate::arrange::view_ui::audio_edit::AudioRowGeom for CaRowLayout {
+/// 通道 AR 的 `CaRowLayout` 作为片段交互的行几何。
+impl crate::arrange::view_ui::audio_edit::TrackRowGeom for CaRowLayout {
     fn track_at_music_y(&self, music_y: f32) -> Option<u16> {
         let row = self.hit_row(music_y)?;
         match self.row(row) {

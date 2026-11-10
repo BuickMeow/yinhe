@@ -72,6 +72,8 @@ pub(crate) struct ArrangeEdit<'a> {
     pub selected_audio_clips: &'a mut std::collections::HashSet<(u16, u32)>,
     /// 音频片段编辑命令（view_ui 产生，本模块统一应用 + undo）。
     pub audio_commands: &'a mut Vec<view_ui::AudioEditCmd>,
+    /// MIDI Clip 编辑命令（view_ui 产生，本模块统一应用 + undo）。
+    pub clip_commands: &'a mut Vec<view_ui::ClipEditCmd>,
 }
 
 /// Arrange 视图/播放/渲染配置（layout.rs 每帧构造）。
@@ -621,8 +623,9 @@ pub fn show(
     let gpu_size = gpu_rect.size();
     // AM lane 交互产生的编辑：GPU scope 内借用 doc.edit/model，出 scope 后统一应用。
     let mut am_edits: Vec<yinhe_types::AutomationEdit> = Vec::new();
-    // 音频片段交互命令：同一帧出 scope 后应用（含 undo）。
+    // 片段交互命令：同一帧出 scope 后应用（含 undo）。
     let mut audio_commands: Vec<view_ui::AudioEditCmd> = Vec::new();
+    let mut clip_commands: Vec<view_ui::ClipEditCmd> = Vec::new();
     ui.scope_builder(egui::UiBuilder::new().max_rect(gpu_rect), |ui| {
         let model = &*doc.data.model;
         let (def_num, def_den) = model.tempo_map.time_sig_default;
@@ -670,6 +673,7 @@ pub fn show(
             right_tab,
             selected_audio_clips: &mut doc.edit.selected_audio_clips,
             audio_commands: &mut audio_commands,
+            clip_commands: &mut clip_commands,
         };
         view_ui::show(
             ui,
@@ -694,6 +698,12 @@ pub fn show(
             t!("undo.edit_automation").as_ref(),
             before,
         );
+        *needs_audio_notify = true;
+    }
+
+    // 应用 MIDI Clip 编辑（移动/循环扩展）。
+    if !clip_commands.is_empty() {
+        apply_clip_edit_commands(doc, std::mem::take(&mut clip_commands));
         *needs_audio_notify = true;
     }
 
@@ -1027,6 +1037,35 @@ pub fn show(
         } else if arr_rect.contains(pos) {
             // 走带视图内但不在内容区（标尺/滚动条）→ 清空区域提示
             crate::widgets::hint::clear_region(ui.ctx());
+        }
+    }
+}
+
+/// 应用 MIDI Clip 编辑命令：逐条执行 Document 操作并 push undo。
+/// 每条命令一条 undo（一次拖动 = 一次撤销）。
+pub(crate) fn apply_clip_edit_commands(doc: &mut Document, commands: Vec<view_ui::ClipEditCmd>) {
+    for cmd in commands {
+        let before = doc.capture_snapshot();
+        let label = t!("undo.edit_clip").to_string();
+        let action = match cmd {
+            view_ui::ClipEditCmd::Move {
+                track,
+                id,
+                delta_ticks,
+            } => doc.move_clip(track, id, delta_ticks),
+            view_ui::ClipEditCmd::LoopLeft {
+                track,
+                id,
+                new_start_tick,
+            } => doc.loop_clip_left(track, id, new_start_tick),
+            view_ui::ClipEditCmd::LoopRight {
+                track,
+                id,
+                new_end_tick,
+            } => doc.loop_clip_right(track, id, new_end_tick),
+        };
+        if let Some(action) = action {
+            doc.push_undo(action, &label, before);
         }
     }
 }

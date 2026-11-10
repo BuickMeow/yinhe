@@ -1,10 +1,12 @@
 pub(crate) mod audio_edit;
 mod interaction;
+mod midi_clip_edit;
 pub(crate) mod render;
 pub(crate) mod types;
 
 /// 音频片段编辑命令（arrange.rs 应用 + undo 用）。
 pub(crate) use audio_edit::AudioEditCmd;
+pub(crate) use midi_clip_edit::ClipEditCmd;
 
 use std::collections::HashSet;
 
@@ -170,13 +172,15 @@ pub fn show(
     let mut ghost_notes;
     let hidden_notes;
     let drag_rect;
-    // 音频片段交互优先：拖动/命中时消费指针，避免与框选冲突。
-    let audio_geom = audio_edit::ArAudioGeom {
+    // 片段交互优先：拖动/命中时消费指针，避免与框选冲突。
+    let track_geom = audio_edit::ArTrackGeom {
         layout: row_layout,
         lane_height: view.lane_height(),
     };
-    let audio_consumed = audio_edit::frame(ui, rect, music_rect, view, &audio_geom, &data, edit);
-    if audio_consumed {
+    let clip_consumed = midi_clip_edit::frame(ui, rect, music_rect, view, &track_geom, &data, edit);
+    let audio_consumed =
+        !clip_consumed && audio_edit::frame(ui, rect, music_rect, view, &track_geom, &data, edit);
+    if clip_consumed || audio_consumed {
         ghost_notes = Vec::new();
         hidden_notes = HashSet::new();
         drag_rect = None;

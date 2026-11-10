@@ -5,7 +5,6 @@
 
 use eframe::egui;
 use rust_i18n::t;
-use yinhe_types::Orientation;
 
 use yinhe_editor_core::quantize::QuantizePreset;
 
@@ -27,8 +26,6 @@ fn chord_font() -> egui::FontId {
 pub(crate) fn show_right_group(
     ui: &mut egui::Ui,
     data: &PrBarData,
-    _vertical: bool,
-    _set_orientation: &mut Option<Orientation>,
     hovered_hint: &mut Option<String>,
 ) {
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

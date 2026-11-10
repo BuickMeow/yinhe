@@ -529,9 +529,9 @@ fn drag_on_hidden_button_does_not_start_drag() {
     release_at_state(&mut h, start + egui::vec2(10.0, 0.0), 2.15);
 }
 
-/// 回归：右侧 PR 控制组的文字/图标必须由统一的前景色着色。
-/// 曾出现预排版 galley 固化白色 glyph，导致（旋转的）方向图标与
-/// 和弦文字在浅色主题下整段发白（fallback 色被白色覆盖）。
+/// 回归：右侧 PR 控制组的文字必须由统一的前景色着色。
+/// 曾出现预排版 galley 固化白色 glyph，导致和弦文字在浅色主题下
+/// 整段发白（fallback 色被白色覆盖）。
 #[test]
 fn right_group_text_shapes_use_fallback_color() {
     let ctx = egui::Context::default();
@@ -547,15 +547,8 @@ fn right_group_text_shapes_use_fallback_color() {
         chord: Some("Cmaj7".to_string()),
     };
     let output = ctx.run_ui(Default::default(), |ui| {
-        let mut set_orientation = None;
         let mut hovered_hint = None;
-        crate::chrome::transport_bar_pr::show_right_group(
-            ui,
-            &data,
-            false,
-            &mut set_orientation,
-            &mut hovered_hint,
-        );
+        crate::chrome::transport_bar_pr::show_right_group(ui, &data, &mut hovered_hint);
     });
     let mut checked = 0;
     for cs in &output.shapes {
@@ -572,7 +565,7 @@ fn right_group_text_shapes_use_fallback_color() {
             checked += 1;
         }
     }
-    assert!(checked >= 2, "右侧组文字/图标数量异常: {checked}");
+    assert!(checked >= 1, "右侧组文字数量异常: {checked}");
     output.drop_without_applying_deltas();
 }
 
