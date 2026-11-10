@@ -62,6 +62,10 @@ pub struct PianoRollView {
     /// 在琴键上拖出的音域（闭区间，key_select）。`None` = 未选择。
     /// 仅影响键盘高亮，不参与 GPU 渲染。
     pub key_select: Option<(u8, u8)>,
+    /// CLIP 模式的时间范围 `(start_tick, end_tick)`；None = SONG 模式。
+    pub scope_ticks: Option<(f64, f64)>,
+    /// 设置 scope 时的 PR 视口宽度（含键盘列），用于立即夹紧缩放/滚动。
+    pub scope_viewport_w: f32,
 }
 
 impl Default for PianoRollView {
@@ -85,6 +89,8 @@ impl Default for PianoRollView {
             orientation: Orientation::Horizontal,
             layout: KeyLayout::default(),
             key_select: None,
+            scope_ticks: None,
+            scope_viewport_w: 0.0,
         }
     }
 }
@@ -483,6 +489,7 @@ impl PianoRollView {
         {
             self.base.dirty = true;
         }
+        self.clamp_scope();
     }
 
     /// Zoom around a pointer position on the horizontal axis (屏幕 X 轴)。
@@ -498,7 +505,30 @@ impl PianoRollView {
             self.zoom_cross_around(pointer_x, zoom_factor, cross_size);
         } else {
             self.base.zoom_around_x(pointer_x, zoom_factor);
+            self.clamp_scope();
         }
+    }
+
+    /// 把时间缩放/滚动立即夹紧到 CLIP 范围。
+    ///
+    /// 在 zoom/scroll 内部调用，避免越界后下一帧才跳回。
+    pub fn clamp_scope(&mut self) {
+        let Some((start, end)) = self.scope_ticks else {
+            return;
+        };
+        if self.is_vertical() || self.scope_viewport_w <= 0.0 {
+            return;
+        }
+        let len = (end - start).max(1.0) as f32;
+        let viewport = (self.scope_viewport_w - self.base.left_panel_width).max(1.0);
+        let min_ppu = viewport / len;
+        if self.base.pixels_per_tick < min_ppu {
+            self.base.pixels_per_tick = min_ppu;
+        }
+        let ppu = self.base.pixels_per_tick;
+        let min_scroll = (start as f32 * ppu).max(0.0);
+        let max_scroll = (end as f32 * ppu - viewport).max(min_scroll);
+        self.base.scroll_x = self.base.scroll_x.clamp(min_scroll, max_scroll);
     }
 
     /// Zoom around a pointer position on the vertical axis (屏幕 Y 轴)。
@@ -577,6 +607,8 @@ mod tests {
             orientation: Orientation::Horizontal,
             layout: KeyLayout::default(),
             key_select: None,
+            scope_ticks: None,
+            scope_viewport_w: 0.0,
         }
     }
 

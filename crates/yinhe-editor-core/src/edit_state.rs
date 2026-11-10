@@ -147,9 +147,11 @@ pub struct EditState {
     pub selected_audio_clips: HashSet<(u16, u32)>,
     /// PR 钢琴卷帘视口（滚动/缩放），每文档独立，不落盘。
     pub pianoroll_view: yinhe_types::PianoRollView,
-    /// 全局事件行显示状态（AR/PR 各自复用同一份会话态）。
+    /// AR 全局事件行显示状态（AR / 通道 AR 共用）。
     /// 会话态，不落盘，不进 undo。
-    pub event_rows: yinhe_types::EventRowsState,
+    pub event_rows_ar: yinhe_types::EventRowsState,
+    /// PR 全局事件行显示状态（独立于 AR）。
+    pub event_rows_pr: yinhe_types::EventRowsState,
     /// PR 的 CLIP/SONG 模式。true = Clip 模式。
     pub pr_clip_mode: bool,
     /// AR 工程走带视口（滚动/缩放），每文档独立，不落盘。
@@ -205,7 +207,8 @@ impl Default for EditState {
             arr_am_ms: HashMap::new(),
             selected_audio_clips: HashSet::new(),
             pianoroll_view: yinhe_types::PianoRollView::default(),
-            event_rows: yinhe_types::EventRowsState::default(),
+            event_rows_ar: yinhe_types::EventRowsState::default(),
+            event_rows_pr: yinhe_types::EventRowsState::default(),
             pr_clip_mode: false,
             arrange_view: yinhe_types::ArrangementView::default(),
             chan_ar_view: yinhe_types::ArrangementView::default(),

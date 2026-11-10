@@ -234,7 +234,7 @@ fn format_key(e: &KeySigEvent) -> String {
 /// 勾选控制事件行显示；默认全部关闭，不占用音轨区域高度。
 pub(crate) fn controls(ui: &mut egui::Ui, rect: egui::Rect, state: &mut EventRowsState) {
     let button_rect = egui::Rect::from_min_size(
-        rect.min + egui::vec2(6.0, 2.0),
+        rect.min + egui::vec2(6.0, 1.0),
         egui::vec2(
             (rect.width() - 12.0).max(42.0),
             (rect.height() - 4.0).max(16.0),

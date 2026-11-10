@@ -143,7 +143,7 @@ pub fn show(
     );
 
     // 全局事件行固定在标尺之下、音轨之上，不随 track scroll_y 滚动。
-    let event_rows_h = doc.edit.event_rows.visible_height();
+    let event_rows_h = doc.edit.event_rows_ar.visible_height();
     let content_top = arr_rect.min.y + RULER_H + event_rows_h;
 
     // ── Track panel: starts after ruler + event rows, ends at scrollbar top so rows align with GPU lanes ──
@@ -301,7 +301,7 @@ pub fn show(
         let q_rect = egui::Rect::from_min_size(
             egui::pos2(
                 ruler_rect.max.x - crate::widgets::quantize_button::RULER_W - 2.0,
-                ruler_rect.min.y + 1.0,
+                ruler_rect.min.y + 3.0,
             ),
             egui::vec2(
                 crate::widgets::quantize_button::RULER_W,
@@ -347,7 +347,7 @@ pub fn show(
         );
         let rows = crate::widgets::event_rows::show(
             ui,
-            &doc.edit.event_rows,
+            &doc.edit.event_rows_ar,
             crate::widgets::event_rows::EventRowsData {
                 markers: &model.conductor.markers,
                 time_sig: &model.conductor.time_sig,
@@ -828,7 +828,7 @@ pub fn show(
     );
     ui.painter()
         .rect_filled(events_corner, 0.0, crate::theme::track_bg());
-    crate::widgets::event_rows::controls(ui, events_corner, &mut doc.edit.event_rows);
+    crate::widgets::event_rows::controls(ui, events_corner, &mut doc.edit.event_rows_ar);
 
     // ── "+" track add button in the corner (below track panel, left of scrollbar) ──
     {

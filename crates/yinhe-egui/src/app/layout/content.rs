@@ -614,11 +614,21 @@ impl App {
                 // 提前计算避开后面的可变借用。
                 let write_track = main;
                 let pr_visible: Vec<bool> = doc.edit.pr_visible();
-                // PR 其他轨道去色：所有选中轨保留原色，未选中的轨道转黑白。
-                // 无选中轨时 helper 原样返回，避免没有“当前轨”却把整屏变灰。
-                let pr_colors = if self.audio_settings.gray_other_tracks {
+                // CLIP 模式：时间窗由 piano_view 夹到 Active Clip，其他轨灰显并锁定；
+                // 这样只有当前 Clip 所在轨可编辑，其他轨点击/框选直接被忽略。
+                let clip_mode = doc.edit.pr_clip_mode;
+                // PR 其他轨道去色：普通模式保留用户勾选轨；CLIP 模式只保留当前轨。
+                let gray_others = self.audio_settings.gray_other_tracks || clip_mode;
+                let pr_colors = if gray_others {
                     let keep: Vec<bool> = (0..doc.edit.track_cache.colors.len())
-                        .map(|i| doc.edit.track_selected.contains(&(i as u16)))
+                        .map(|i| {
+                            if clip_mode {
+                                // CLIP 模式统一灰度；只有当前轨可编辑，其他轨锁定。
+                                false
+                            } else {
+                                doc.edit.track_selected.contains(&(i as u16))
+                            }
+                        })
                         .collect();
                     yinhe_editor_core::document::gray_other_track_colors(
                         &doc.edit.track_cache.colors,
@@ -627,9 +637,12 @@ impl App {
                 } else {
                     doc.edit.track_cache.colors.clone()
                 };
-                // 锁定掩码：长度对齐轨道数，缺省 false。
+                // 锁定掩码：CLIP 模式下除当前轨外全部只读。
                 let pr_locked: Vec<bool> = (0..doc.data.model.tracks.len())
-                    .map(|i| doc.edit.track_locked.get(i).copied().unwrap_or(false))
+                    .map(|i| {
+                        (clip_mode && Some(i as u16) != write_track)
+                            || doc.edit.track_locked.get(i).copied().unwrap_or(false)
+                    })
                     .collect();
                 let tpb = doc.data.model.meta.ppq;
                 let ts_num = doc
@@ -746,7 +759,7 @@ impl App {
                     &mut self.render_ctx,
                     self.render_thread.as_ref(),
                     &mut doc.edit.pianoroll_view,
-                    &mut doc.edit.event_rows,
+                    &mut doc.edit.event_rows_pr,
                     doc.edit.pr_clip_mode,
                     &mut self.last_cull_revision,
                     &mut self.last_cull_revision_only,

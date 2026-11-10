@@ -88,7 +88,7 @@ pub(crate) fn show(
     );
 
     // 全局事件行固定在标尺之下、通道行之上，不随通道行滚动。
-    let event_rows_h = doc.edit.event_rows.visible_height();
+    let event_rows_h = doc.edit.event_rows_ar.visible_height();
     let content_top = arr_rect.min.y + theme::AR_RULER_H + event_rows_h;
 
     // 左侧面板：从标尺 + 事件行下方到横向滚动条上方（与 GPU 行对齐）。
@@ -206,7 +206,7 @@ pub(crate) fn show(
         let q_rect = egui::Rect::from_min_size(
             egui::pos2(
                 ruler_rect.max.x - crate::widgets::quantize_button::RULER_W - 2.0,
-                ruler_rect.min.y + 1.0,
+                ruler_rect.min.y + 3.0,
             ),
             egui::vec2(
                 crate::widgets::quantize_button::RULER_W,
@@ -251,7 +251,7 @@ pub(crate) fn show(
         );
         let rows = crate::widgets::event_rows::show(
             ui,
-            &doc.edit.event_rows,
+            &doc.edit.event_rows_ar,
             crate::widgets::event_rows::EventRowsData {
                 markers: &model.conductor.markers,
                 time_sig: &model.conductor.time_sig,
@@ -603,7 +603,7 @@ pub(crate) fn show(
     );
     ui.painter()
         .rect_filled(events_corner, 0.0, crate::theme::track_bg());
-    crate::widgets::event_rows::controls(ui, events_corner, &mut doc.edit.event_rows);
+    crate::widgets::event_rows::controls(ui, events_corner, &mut doc.edit.event_rows_ar);
     // 左下角（面板下方、水平滚动条左侧）铺背景。
     ui.painter().rect_filled(
         egui::Rect::from_min_max(

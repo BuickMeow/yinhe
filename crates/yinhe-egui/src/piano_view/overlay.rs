@@ -475,7 +475,7 @@ pub(crate) fn draw_overlays(
             let q_rect = egui::Rect::from_min_size(
                 egui::pos2(
                     ruler_rect.max.x - crate::widgets::quantize_button::RULER_W - 2.0,
-                    ruler_rect.min.y + 1.0,
+                    ruler_rect.min.y + 3.0,
                 ),
                 egui::vec2(
                     crate::widgets::quantize_button::RULER_W,

@@ -801,6 +801,8 @@ mod tests {
             main_size: 0.0,
             orientation: yinhe_types::Orientation::Horizontal,
             key_select: None,
+            scope_ticks: None,
+            scope_viewport_w: 0.0,
             base: yinhe_types::TimelineViewBase {
                 pixels_per_tick: 0.1,
                 scroll_x: 0.0,

@@ -1,8 +1,8 @@
 // ── Layout constants ──
 pub const TITLE_BAR_H: f32 = 32.0;
-pub const RULER_H: f32 = 16.0;
+pub const RULER_H: f32 = 20.0;
 /// AR / 通道 AR 标尺高度：事件行移出标尺后，AR 标尺可以更矮。
-pub const AR_RULER_H: f32 = 16.0;
+pub const AR_RULER_H: f32 = 20.0;
 /// PR 顶部固定 Clip 边界行高度。
 pub const CLIP_ROW_H: f32 = 18.0;
 pub const SCROLLBAR_H: f32 = 24.0;

@@ -84,6 +84,9 @@ pub(crate) trait TimeRulerView {
 
     /// 主轴滚动位置的可变引用（时间轴：横向=scroll_x，纵向=scroll_y）。
     fn scroll_main_mut(&mut self) -> &mut f32;
+
+    /// CLIP 模式立即夹紧（默认无操作；AR 无 scope）。
+    fn clamp_scope(&mut self) {}
 }
 
 impl TimeRulerView for yinhe_types::PianoRollView {
@@ -135,6 +138,10 @@ impl TimeRulerView for yinhe_types::PianoRollView {
         } else {
             &mut self.base.scroll_x
         }
+    }
+
+    fn clamp_scope(&mut self) {
+        yinhe_types::PianoRollView::clamp_scope(self);
     }
 }
 
@@ -333,6 +340,7 @@ pub(crate) fn interactive_ruler(
         }
     }
 
+    view.clamp_scope();
     RulerOutcome { jumped }
 }
 

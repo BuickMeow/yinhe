@@ -140,6 +140,14 @@ pub fn show(
             .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
         Some(super::piano_view::types::ClipRowView { track, clip, color })
     });
+    view.scope_ticks = if clip_mode {
+        clip_row
+            .as_ref()
+            .map(|r| (r.clip.start_tick as f64, r.clip.end_tick as f64))
+    } else {
+        None
+    };
+    view.scope_viewport_w = (rect.width() - crate::widgets::scrollbar::SCROLLBAR_W).max(1.0);
     let layout: Layout = compute_layout(
         view,
         rect,

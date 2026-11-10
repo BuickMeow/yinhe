@@ -755,6 +755,8 @@ fn cull_real_midi_vs_cpu() {
                 follow_anim_elapsed: 0.0,
             },
             key_select: None,
+            scope_ticks: None,
+            scope_viewport_w: 0.0,
             layout: yinhe_types::KeyLayout::default(),
         };
         let hidden = std::collections::HashSet::new();
@@ -2054,6 +2056,8 @@ fn cull_render_pixel_check() {
                 follow_anim_elapsed: 0.0,
             },
             key_select: None,
+            scope_ticks: None,
+            scope_viewport_w: 0.0,
             layout: yinhe_types::KeyLayout::default(),
         };
         let job = crate::pianoroll::build_render_job(
@@ -2312,6 +2316,8 @@ fn cull_visible_buffer_content_check() {
             follow_anim_elapsed: 0.0,
         },
         key_select: None,
+        scope_ticks: None,
+        scope_viewport_w: 0.0,
         layout: yinhe_types::KeyLayout::default(),
     };
     let mut cpu_instances = Vec::new();
@@ -2541,6 +2547,8 @@ fn cull_draw_c_lo_nonzero_minimal() {
                 follow_anim_elapsed: 0.0,
             },
             key_select: None,
+            scope_ticks: None,
+            scope_viewport_w: 0.0,
             layout: yinhe_types::KeyLayout::default(),
         };
         let job = crate::pianoroll::build_render_job(
@@ -2801,6 +2809,8 @@ fn note_boundary_no_gap_large_tick() {
                 follow_anim_elapsed: 0.0,
             },
             key_select: None,
+            scope_ticks: None,
+            scope_viewport_w: 0.0,
             layout: yinhe_types::KeyLayout::default(),
         };
         let job = crate::pianoroll::build_render_job(
@@ -3027,6 +3037,8 @@ fn cull_bench_vs_cpu_start_mid() {
                     follow_anim_elapsed: 0.0,
                 },
                 key_select: None,
+                scope_ticks: None,
+                scope_viewport_w: 0.0,
                 layout: yinhe_types::KeyLayout::default(),
             };
 

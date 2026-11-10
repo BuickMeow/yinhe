@@ -38,7 +38,7 @@ Pro Tools 的做法是把 Marker / Meter / Key / Chords / Lyrics 放到独立的
 - 默认不显示任何事件行；AR 左上角的 `Events ▾` 下拉菜单选择显示哪些。
 - 所有行共用一套布局、绘制、命中、编辑、undo 接口。
 - AR 与横向 PR 共用事件行；PR 默认额外显示 Clip 边界行。
-- 时间标尺统一降为 14px；PR 标尺不再显示 Marker。
+- 时间标尺统一为 20px；所有标尺内容垂直居中；PR 标尺不再显示 Marker。
 - 事件密集时只绘制可见范围，标签自动稀疏化，不拖慢画面。
 - 为 Clip v1 提供稳定的 AR 网格/行布局，避免 Clip 和标尺重构互相牵连。
 
@@ -97,7 +97,7 @@ pub struct EventRowState {
 - v1 默认顺序：Marker → Meter → Key → Chord → Lyrics。
 - 每行高度固定小行（建议 18–24 px），由主题/布局常量给出，用户可调。
 - 默认全部隐藏（`visible = false`），不占用音轨区域高度。
-- 行可见性由 AR / PR 的 `Events ▾` 下拉菜单控制；状态是会话态，暂不落盘。
+- 行可见性由 AR / PR 各自的 `Events ▾` 下拉菜单控制，两个视图状态独立；状态是会话态，暂不落盘。
 - PR 在 CLIP 模式下有一条 **Clip 边界行**，不进入 `EventRowKind`、不提供勾选；SONG 模式隐藏。
 - 行顺序数据结构支持重排；v1 UI 先不提供拖拽排序。
 - 行标题在左侧头部区域显示图标/名称；时间内容区与网格时间轴严格对齐。
