@@ -58,6 +58,20 @@ pub fn show_editing_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool
 
     setting_row(
         ui,
+        t!("settings.editing.clip_enabled").as_ref(),
+        t!("settings.editing.clip_enabled_desc").as_ref(),
+        |ui| {
+            if crate::widgets::switch::switch(ui, &mut settings.clip_enabled)
+                .on_hover_text(t!("settings.editing.clip_enabled_hint").as_ref())
+                .changed()
+            {
+                changed = true;
+            }
+        },
+    );
+
+    setting_row(
+        ui,
         t!("settings.editing.quick_delete").as_ref(),
         t!("settings.editing.quick_delete_desc").as_ref(),
         |ui| {

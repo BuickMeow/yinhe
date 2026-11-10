@@ -575,9 +575,14 @@ pub(crate) fn draw_overlays(
                 .unwrap_or((row.clip.start_tick, row.clip.end_tick));
             let x0 = rect.min.x + view.tick_to_x(preview.0 as f64);
             let x1 = rect.min.x + view.tick_to_x(preview.1 as f64);
-            // 色块贴满 Clip 行，与边框不留缝。
+            // 色块只铺在音乐区：左侧键盘列/CLIP 占位夹角不属于 Clip。
+            let music_left = if view.is_vertical() {
+                clip_rect.min.x
+            } else {
+                clip_rect.min.x + view.keyboard_width()
+            };
             let band = egui::Rect::from_min_max(
-                egui::pos2(x0.max(clip_rect.min.x), clip_rect.min.y),
+                egui::pos2(x0.max(music_left), clip_rect.min.y),
                 egui::pos2(x1.min(clip_rect.max.x), clip_rect.max.y),
             );
             if band.max.x > band.min.x {
@@ -588,7 +593,7 @@ pub(crate) fn draw_overlays(
                 );
             }
             for x in [x0, x1] {
-                if x >= clip_rect.min.x && x <= clip_rect.max.x {
+                if x >= music_left && x <= clip_rect.max.x {
                     ui.painter().line_segment(
                         [
                             egui::pos2(x, clip_rect.min.y),
@@ -599,7 +604,7 @@ pub(crate) fn draw_overlays(
                 }
             }
             ui.painter().text(
-                egui::pos2(band.min.x.max(clip_rect.min.x) + 4.0, clip_rect.center().y),
+                egui::pos2(band.min.x + 4.0, clip_rect.center().y),
                 egui::Align2::LEFT_CENTER,
                 row.clip.display_name(),
                 egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT),
@@ -608,6 +613,9 @@ pub(crate) fn draw_overlays(
 
             // 左右边界拖动：拖动期间用 memory 中的 preview，释放时回传 resize。
             for (side, x) in [(0usize, x0), (1usize, x1)] {
+                if !(music_left..=clip_rect.max.x).contains(&x) {
+                    continue;
+                }
                 let handle = egui::Rect::from_center_size(
                     egui::pos2(x, clip_rect.center().y),
                     egui::vec2(9.0, clip_rect.height().max(8.0)),

@@ -18,6 +18,7 @@ use yinhe_types::{AutomationPanelView, Orientation, PianoRollView};
 ///
 /// 右侧常驻两项视图开关：调式折叠（FOLD）与键数（88/128/256）。
 /// `fold_mask` = 当前调号对应的 12 位音级掩码；`None` = 无调式信息（折叠禁用）。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn show(
     ui: &mut egui::Ui,
     rect: egui::Rect,
@@ -26,6 +27,7 @@ pub fn show(
     fold_mask: Option<u16>,
     scale_label: &str,
     clip_mode: &mut bool,
+    clip_enabled: bool,
 ) -> bool {
     let mut open_scale_dialog = false;
     let btn_size = egui::vec2(
@@ -42,7 +44,8 @@ pub fn show(
         let spacing_x = 2.0;
         let slot = btn_size.x + spacing_x;
         // 右侧常驻开关（键数分段 + Scale + 调式名）预留宽度，避免窄窗口重叠。
-        let right_reserve = 30.0 * 3.0 + 42.0 * 2.0 + 48.0 + 120.0 + spacing_x * 6.0 + pad_x;
+        let clip_reserve = if clip_enabled { 42.0 * 2.0 } else { 0.0 };
+        let right_reserve = 30.0 * 3.0 + clip_reserve + 48.0 + 120.0 + spacing_x * 6.0 + pad_x;
         let avail = (rect.width() - pad_x * 2.0 - right_reserve).max(0.0);
         let fit = (((avail + spacing_x) / slot).floor() as usize).max(1);
         let n_visible = if fit >= ALL_TOOLS.len() {
@@ -112,18 +115,22 @@ pub fn show(
                     });
                 }
 
-                // [CLIP|SONG]：分段开关，小字号，带背景。
-                let scope_active = usize::from(!*clip_mode);
-                if let Some(i) = segmented(
-                    ui,
-                    &["CLIP", "SONG"],
-                    scope_active,
-                    42.0,
-                    h,
-                    10.5,
-                    "pr_scope_seg",
-                ) {
-                    *clip_mode = i == 0;
+                // [CLIP|SONG]：分段开关，小字号，带背景。总开关关闭时只保留 SONG。
+                if clip_enabled {
+                    let scope_active = usize::from(!*clip_mode);
+                    if let Some(i) = segmented(
+                        ui,
+                        &["CLIP", "SONG"],
+                        scope_active,
+                        42.0,
+                        h,
+                        10.5,
+                        "pr_scope_seg",
+                    ) {
+                        *clip_mode = i == 0;
+                    }
+                } else {
+                    *clip_mode = false;
                 }
 
                 // Scale 开关（单段胶囊，矮按钮）。
@@ -288,7 +295,7 @@ fn segmented_icons(
     let mut clicked = None;
     ui.push_id(id_salt, |ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
             for (i, icon) in icons.iter().enumerate() {
                 let radius = egui::CornerRadius {
                     nw: if i == 0 { 3 } else { 0 },
@@ -334,7 +341,7 @@ fn segmented(
     let mut clicked = None;
     ui.push_id(id_salt, |ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
             for (i, label) in labels.iter().enumerate() {
                 let radius = egui::CornerRadius {
                     nw: if i == 0 { 3 } else { 0 },

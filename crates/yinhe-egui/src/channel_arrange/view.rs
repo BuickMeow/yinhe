@@ -189,6 +189,7 @@ pub(crate) fn show(
         tempo_map: data.tempo_map,
         audio_library: data.audio_library,
         audio_sources: data.audio_sources,
+        clip_enabled: true,
     };
     let colors = row_colors(layout, groups, &channel_colors, cfg.conductor_color);
     let uniforms = Uniforms {

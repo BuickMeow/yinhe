@@ -383,6 +383,7 @@ pub(crate) fn show(
             tempo_map: &model.tempo_map,
             audio_library,
             audio_sources: &model.audio_sources,
+            clip_enabled: true,
         };
         let mut no_eraser: Option<(f64, f64, usize, usize)> = None;
         let mut no_scale: Option<u64> = None;

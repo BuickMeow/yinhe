@@ -674,6 +674,7 @@ mod tests {
                 tempo_map: &self.tempo_map,
                 audio_library: &self.library,
                 audio_sources: &[],
+                clip_enabled: true,
             }
         }
     }

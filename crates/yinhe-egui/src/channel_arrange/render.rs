@@ -391,6 +391,7 @@ mod tests {
             tempo_map: &tempo_map,
             audio_library: &library,
             audio_sources: &[],
+            clip_enabled: true,
         };
 
         let folded0 = collect_folded_am(&layout, &groups, visible.clone(), &data, 0.0);

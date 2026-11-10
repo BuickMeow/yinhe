@@ -188,7 +188,7 @@ impl Default for EditState {
             layer_solo: HashSet::new(),
             layer_solo_prev: Vec::new(),
             controller_panels: vec![yinhe_types::AutomationPanelView::default()],
-            show_controller_panels: true,
+            show_controller_panels: false,
             soundfont_selected_port: 0,
             project_sf: ProjectSfConfig::default(),
             pending_edits: PendingEdits::default(),

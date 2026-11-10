@@ -296,6 +296,7 @@ impl App {
                 active_tool: &arrange_tool,
                 min_border_width: self.audio_settings.min_border_width,
                 revision: guard.as_ref().data.revision,
+                clip_enabled: self.audio_settings.clip_enabled,
             };
             let (renderer, render_ctx) = if floating {
                 (&mut self.float_arr_renderer, &mut self.float_arr_render_ctx)
@@ -596,6 +597,7 @@ impl App {
                 fold_mask,
                 &scale_label,
                 &mut doc.edit.pr_clip_mode,
+                self.audio_settings.clip_enabled,
             ) {
                 open_scale_dialog = true;
             }

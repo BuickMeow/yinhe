@@ -131,14 +131,19 @@ pub(crate) const MIDI_CLIP_HEADER_H: f32 = 10.0;
 
 /// 绘制 MIDI Clip v1 的背景块（在 GPU 音符层之前，音符始终覆盖其上）。
 ///
-/// 只画主音轨行；自动化子行不画 Clip 背景。
+/// 只画主音轨行；自动化子行不画 Clip 背景。拖动中的 Clip 用目标区间
+/// 直接绘制（实时预览），不等到松手才刷新。
 pub(crate) fn draw_midi_clips(
     painter: &egui::Painter,
     rect: egui::Rect,
     view: &ArrangementView,
     row_layout: &ArRowLayout,
     data: &crate::arrange::ArrangeData<'_>,
+    preview: Option<super::midi_clip_edit::DragPreview>,
 ) {
+    if !data.clip_enabled {
+        return;
+    }
     let lh = view.lane_height();
     let scroll_y = view.base.scroll_y;
     let (lo, hi) = view.visible_tick_range(rect.width());
@@ -167,34 +172,77 @@ pub(crate) fn draw_midi_clips(
         let band = egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), 28);
         let header = egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), 96);
         let header_h = MIDI_CLIP_HEADER_H.min(lh - 2.0).max(0.0);
-        for clip in yinhe_core::clips_in_range(&track.clips, lo, hi) {
-            let x0 = rect.min.x + view.tick_to_x(clip.start_tick as f64);
-            let x1 = rect.min.x + view.tick_to_x(clip.end_tick as f64);
-            let x0 = x0.clamp(rect.min.x, rect.max.x);
-            let x1 = x1.clamp(rect.min.x, rect.max.x);
-            if x1 - x0 < 2.0 {
-                continue;
-            }
-            // 贴满音轨行，不留上下缝（用户要求 Clip 与音轨边界贴合）。
-            let body = egui::Rect::from_min_max(egui::pos2(x0, y_top), egui::pos2(x1, y_top + lh));
-            painter.rect_filled(body, 2.0, band);
-            if header_h > 0.0 {
-                let head = egui::Rect::from_min_max(
-                    body.min,
-                    egui::pos2(body.max.x, body.min.y + header_h),
+        let preview_here = preview.filter(|p| p.track as usize == track_idx);
+
+        if let Some(p) = preview_here {
+            // 预览期间遍历整轨：Clip 可能被移到当前可视区间之外。
+            for clip in &track.clips {
+                let (start, end) = if clip.id == p.id {
+                    (p.start_tick, p.end_tick)
+                } else {
+                    (clip.start_tick, clip.end_tick)
+                };
+                draw_clip_block(
+                    painter, rect, view, y_top, lh, header_h, band, header, clip, start, end,
                 );
-                painter.rect_filled(head, 2.0, header);
             }
-            if body.width() > 40.0 && header_h >= 8.0 {
-                painter.text(
-                    egui::pos2(body.min.x + 4.0, body.min.y + header_h * 0.5),
-                    egui::Align2::LEFT_CENTER,
-                    clip.display_name(),
-                    egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT),
-                    crate::theme::contrast_fg(),
+        } else {
+            for clip in yinhe_core::clips_in_range(&track.clips, lo, hi) {
+                draw_clip_block(
+                    painter,
+                    rect,
+                    view,
+                    y_top,
+                    lh,
+                    header_h,
+                    band,
+                    header,
+                    clip,
+                    clip.start_tick,
+                    clip.end_tick,
                 );
             }
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_clip_block(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    view: &ArrangementView,
+    y_top: f32,
+    lh: f32,
+    header_h: f32,
+    band: egui::Color32,
+    header: egui::Color32,
+    clip: &yinhe_core::Clip,
+    start_tick: u32,
+    end_tick: u32,
+) {
+    let x0 = rect.min.x + view.tick_to_x(start_tick as f64);
+    let x1 = rect.min.x + view.tick_to_x(end_tick as f64);
+    let x0 = x0.clamp(rect.min.x, rect.max.x);
+    let x1 = x1.clamp(rect.min.x, rect.max.x);
+    if x1 - x0 < 2.0 {
+        return;
+    }
+    // 贴满音轨行，不留上下缝（用户要求 Clip 与音轨边界贴合）。
+    let body = egui::Rect::from_min_max(egui::pos2(x0, y_top), egui::pos2(x1, y_top + lh));
+    painter.rect_filled(body, 2.0, band);
+    if header_h > 0.0 {
+        let head =
+            egui::Rect::from_min_max(body.min, egui::pos2(body.max.x, body.min.y + header_h));
+        painter.rect_filled(head, 2.0, header);
+    }
+    if body.width() > 40.0 && header_h >= 8.0 {
+        painter.text(
+            egui::pos2(body.min.x + 4.0, body.min.y + header_h * 0.5),
+            egui::Align2::LEFT_CENTER,
+            clip.display_name(),
+            egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT),
+            crate::theme::contrast_fg(),
+        );
     }
 }
 

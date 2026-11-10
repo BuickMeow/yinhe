@@ -45,6 +45,8 @@ pub(crate) struct ArrangeData<'a> {
     pub audio_library: &'a crate::app::audio_library::AudioLibrary,
     /// 工程内嵌音频素材表（片段显示名查询）。
     pub audio_sources: &'a [std::sync::Arc<yinhe_core::AudioSource>],
+    /// Clip 功能总开关（设置里可全局关闭）。
+    pub clip_enabled: bool,
 }
 
 /// Arrange 交互产生的可变编辑状态（out-params 聚合）。
@@ -83,6 +85,7 @@ pub(crate) struct ArrangeViewCfg<'a> {
     pub active_tool: &'a Tool,
     pub min_border_width: f32,
     pub revision: u64,
+    pub clip_enabled: bool,
 }
 
 /// Arrange 布局几何。
@@ -384,10 +387,12 @@ pub fn show(
     }
 
     // ── AR 空白处双击：在点击位置创建 1 小节空 Clip ──
-    if ui.input(|i| {
-        i.pointer
-            .button_double_clicked(egui::PointerButton::Primary)
-    }) && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
+    if cfg.clip_enabled
+        && ui.input(|i| {
+            i.pointer
+                .button_double_clicked(egui::PointerButton::Primary)
+        })
+        && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
         && music_rect.contains(pos)
         && let Some(yinhe_types::ArRow::Track(track_idx)) = row_layout.hit_at_music_y(
             pos.y - music_rect.min.y + doc.edit.arrange_view.base.scroll_y,
@@ -408,13 +413,21 @@ pub fn show(
                 .iter()
                 .any(|c| c.start_tick <= tick && tick < c.end_tick)
         });
+        // 只有 Clip 标题栏可以进入 CLIP；主体留给音符选择/框选。
+        let lane_h = doc.edit.arrange_view.lane_height();
+        let music_y = pos.y - music_rect.min.y + doc.edit.arrange_view.base.scroll_y;
+        let track_y = row_layout.track_y(track_idx, lane_h);
+        let header_h = view_ui::render::MIDI_CLIP_HEADER_H
+            .min(lane_h - 2.0)
+            .max(0.0);
+        let on_header = music_y >= track_y && music_y <= track_y + header_h;
         if !occupied {
             let before = doc.capture_snapshot();
             if let Some(action) = doc.create_empty_clip(track_idx as u16, start, bar) {
                 doc.push_undo(action, "undo.move_notes", before);
             }
-        } else {
-            // 双击已有 Clip 标题区域：进入 CLIP 模式并切到 PR。
+        } else if on_header {
+            // 双击已有 Clip 标题栏：进入 CLIP 模式并切到 PR。
             let hit = doc.data.model.tracks[track_idx]
                 .clips
                 .iter()
@@ -422,6 +435,7 @@ pub fn show(
                 .map(|c| c.start_tick);
             if let Some(clip_start) = hit {
                 doc.edit.pr_clip_mode = true;
+                doc.edit.show_controller_panels = false;
                 doc.edit.cursor_tick = Some(clip_start as f64);
                 *request_pianoroll = true;
             }
@@ -656,6 +670,7 @@ pub fn show(
             tempo_map: &model.tempo_map,
             audio_library,
             audio_sources: &model.audio_sources,
+            clip_enabled: cfg.clip_enabled,
         };
         let mut edit = ArrangeEdit {
             selected: &mut doc.edit.selected,

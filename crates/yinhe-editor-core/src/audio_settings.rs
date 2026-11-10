@@ -72,6 +72,10 @@ fn default_ignore_velocity() -> u8 {
 
 pub use yinhe_types::{Interpolation, SynthEngine};
 
+fn default_clip_enabled() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AudioSettings {
@@ -103,6 +107,9 @@ pub struct AudioSettings {
     pub allow_overlapping_notes: bool,
     pub overlap_blocked_behavior: OverlapBlockedBehavior,
     pub quick_delete_mode: QuickDeleteMode,
+    /// 总开关：关闭后隐藏 AR Clip 块并禁用 Clip 编辑/进入 CLIP。
+    #[serde(default = "default_clip_enabled")]
+    pub clip_enabled: bool,
     pub min_border_width: f32,
     pub midi_import_encoding: MidiImportEncoding,
     pub midi_export_encoding: MidiImportEncoding,
@@ -218,6 +225,7 @@ impl Default for AudioSettings {
             allow_overlapping_notes: true,
             overlap_blocked_behavior: OverlapBlockedBehavior::default(),
             quick_delete_mode: QuickDeleteMode::default(),
+            clip_enabled: default_clip_enabled(),
             synth_engine: SynthEngine::default(),
             interpolation: Interpolation::default(),
             use_gpu_cull: false,
@@ -276,6 +284,17 @@ mod tests {
             .remove("toast_enabled");
         let s: AudioSettings = serde_json::from_value(v).expect("old save without flag loads");
         assert!(s.toast_enabled);
+    }
+
+    #[test]
+    fn clip_enabled_defaults_true_for_old_saves() {
+        // 旧存档缺字段必须能反序列化，且默认开启 Clip 功能
+        let mut v = serde_json::to_value(AudioSettings::default()).expect("serialize default");
+        v.as_object_mut()
+            .expect("settings serializes to object")
+            .remove("clip_enabled");
+        let s: AudioSettings = serde_json::from_value(v).expect("old save without flag loads");
+        assert!(s.clip_enabled);
     }
 
     #[test]

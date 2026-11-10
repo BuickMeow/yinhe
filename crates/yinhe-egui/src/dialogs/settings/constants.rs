@@ -301,6 +301,13 @@ pub const SETTING_ITEMS: &[SettingItem] = &[
     },
     SettingItem {
         cat: 6,
+        zh: "启用 Clip",
+        en: "Enable Clips",
+        ja: "Clip を有効化",
+        ko: "Clip 활성화",
+    },
+    SettingItem {
+        cat: 6,
         zh: "快速删除音符方式",
         en: "Quick delete note",
         ja: "クイック削除",
