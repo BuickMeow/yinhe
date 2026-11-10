@@ -1,0 +1,261 @@
+# 全局事件行（Pro Tools 风格）Spec
+
+状态：草案 v1（2026-11-10）
+
+关系：本 spec 是 `docs/spec-midi-clip.md`（Clip v1）的前置阶段。
+先完成全局事件行与纯时间标尺，再做 Clip v1 的网格布局。
+
+## 背景
+
+当前全局事件在 UI 上比较分散：
+
+- Marker 的 pill 绘制、命中、重命名、拖动直接写在 `widgets/time_ruler.rs`；
+- Tempo 走 Conductor 的自动化 lane / AR 行；
+- 拍号参与标尺标签与网格计算；
+- 调号、歌词、和弦主要通过时间码、事件浏览器或轨道数据展示；
+- 每种事件都有自己的入口、命中逻辑和编辑路径。
+
+数据层其实已经分开了：
+
+- `ConductorData`：`tempo` / `time_sig` / `key_sig` / `markers` / `lyrics` / `chord`；
+- `TrackData`：per-track `lyrics` / `chord`。
+
+所以问题主要是 UI 与交互层：标尺承担了过多职责，事件类型各自特判，AR/PR 难以共享。
+Pro Tools 的做法是把 Marker / Tempo / Meter / Key / Chords / Lyrics 放到独立的
+Ruler 行里，时间标尺只负责时间。本 spec 沿用这个思路，但做成通用行系统，而不是
+为每种事件再写一套。
+
+## 目标
+
+- 时间标尺只负责：时间、小节/拍、播放头、缩放/滚动、点击定位。
+- 全局事件移入网格上方的独立小行：
+  - Marker（标签）
+  - Tempo（BPM）
+  - Meter（拍号）
+  - Key（调号）
+  - Chord（和弦）
+  - Lyrics（歌词）
+- 所有行共用一套布局、绘制、命中、编辑、undo 接口。
+- AR 与 PR 共用同一套行；横向与纵向 PR 都要有明确布局（纵向可后置）。
+- 事件密集时只绘制可见范围，标签自动稀疏化，不拖慢画面。
+- 为 Clip v1 提供稳定的网格/行布局，避免 Clip 和标尺重构互相牵连。
+
+## 非目标
+
+- 不改变事件数据模型；不改 `ConductorData` / `TrackData` 的字段语义。
+- 不把 Track 级 CC/PB/RPN/NRPN 自动化塞进全局事件行；它们仍是轨道自动化 lane。
+- 不做 Clip 的创建/编辑；Clip 是后续阶段。
+- 不做新的 MIDI 事件类型。
+- 不改变播放、导出逻辑；行的编辑仍落到现有文档 API。
+- 不要求 v1 支持所有行的自由拖拽排序；先固定默认顺序。
+
+## 数据来源
+
+| 行 | 数据 | 事件类型 | 说明 |
+|----|------|----------|------|
+| Marker | `ConductorData.markers` | `MarkerEvent { tick, text }` | 标签/标记 |
+| Tempo | `ConductorData.tempo` | `AutomationLane<AutomationTarget::Tempo>` | 值存 BPM；支持 Step/Curve |
+| Meter | `ConductorData.time_sig` | `TimeSigEvent` | 拍号变化 |
+| Key | `ConductorData.key_sig` | `KeySigEvent` | 调号变化 |
+| Chord | `ConductorData.chord` | `ChordEvent` | 全局和弦；per-track 和弦不进全局行 |
+| Lyrics | `ConductorData.lyrics` | `LyricsEvent` | track 0 歌词；per-track 歌词不进全局行 |
+
+明确的 v1 边界：
+
+- **全局事件行只展示 Conductor 级事件。**
+- `TrackData.lyrics` / `TrackData.chord` 保持现有展示路径，不混入全局行；
+  后续如需 per-track 事件行，另做“轨道级事件行”，复用同一行框架。
+- Program Change 是 per-track 离散事件，v1 不做全局行；后续可做轨道级行。
+- 轨道自动化（CC/PB/插件参数）仍由 AR 的自动化行 / PR 自动化面板负责。
+
+## 行模型
+
+```rust
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EventRowKind {
+    Marker,
+    Tempo,
+    Meter,
+    Key,
+    Chord,
+    Lyrics,
+}
+
+/// 会话态：行的显示/高度/顺序。不参与 undo，不写入事件数据。
+pub struct EventRowsState {
+    pub rows: Vec<EventRowState>,
+}
+
+pub struct EventRowState {
+    pub kind: EventRowKind,
+    pub visible: bool,
+    pub height: f32,
+}
+```
+
+- v1 默认顺序：Marker → Tempo → Meter → Key → Chord → Lyrics。
+- 每行高度固定小行（建议 18–24 px），由主题/布局常量给出，用户可调。
+- 行可见性由 View 菜单控制；状态是会话态，暂不落盘。
+- 行顺序数据结构支持重排；v1 UI 先不提供拖拽排序。
+- 行标题在左侧头部区域显示图标/名称；时间内容区与网格时间轴严格对齐。
+
+## 布局
+
+### 横向（AR / 横向 PR）
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ 时间标尺：小节 / 拍 / 播放头（只负责时间）                  │
+├──────────────┬──────────────────────────────────────────────┤
+│ 行头         │ Marker 行                                    │
+│ 行头         │ Tempo 行                                     │
+│ 行头         │ Meter 行                                     │
+│ ...          │ ...                                          │
+├──────────────┼──────────────────────────────────────────────┤
+│ 轨道/键盘    │ 音轨行 / 钢琴卷帘                            │
+└──────────────┴──────────────────────────────────────────────┘
+```
+
+- 全局事件行固定在轨道区域上方，不随轨道垂直滚动。
+- 行头宽度与轨道面板/钢琴键盘左栏一致（AR 的 `left_panel_width`、
+  PR 的键盘宽度），保证时间内容区起点一致。
+- 事件行消费的高度从轨道可视区域扣除；行折叠后轨道区域自动变高。
+- 播放头贯穿标尺 + 所有行 + 轨道区。
+
+### 纵向 PR（瀑布流）
+
+PR 支持纵向时间轴（时间沿 Y）。纵向模式下：
+
+- 全局事件行改为网格左侧的纵向列，行头在顶部；
+- 时间事件沿 Y 绘制，缩放/滚动与主轴一致；
+- v1 可以先将纵向模式下的全局事件行设为“折叠/暂不显示”，
+  但布局接口必须按主轴方向抽象，不能写死横向；
+- 具体纵向交互作为本 spec 的阶段 4，不阻塞 Clip v1。
+
+## 通用行接口
+
+每行只负责“内容怎么画、事件怎么命中、怎么编辑”，公共部分统一：
+
+```text
+EventRow:
+  - 背景、分隔线、hover、选中态、播放头穿越
+  - 事件查询：只取可见 tick 范围（二分）
+  - 标签稀疏化与 tooltip
+  - 右键菜单框架 / undo 接线
+```
+
+按 kind 分派到具体实现：
+
+- Marker：旗标 + 文本 pill；复用现有 marker 重命名/拖动/删除逻辑。
+- Tempo：点/线段 + BPM 标签；复用 Tempo automation lane 的渲染与编辑逻辑。
+- Meter：事件块 + “4/4 / 3/4”标签。
+- Key：事件块 + “C maj / A min”标签。
+- Chord：事件块 + 和弦文本。
+- Lyrics：文本片段，密度高时只画短横线/省略号，hover 显示全文。
+
+禁止：
+
+- 在 `time_ruler.rs` 里继续为每种事件加 `if kind == ...` 分支；
+- 把行状态塞进 `YinModel`；
+- 把行布局写进每个 view 各自实现，导致 AR/PR 漂移。
+
+## 交互
+
+### 公共
+
+- 点击行空白处：与点击标尺一致，定位播放头。
+- 点击事件：选中该事件；拖动改变 tick；双击编辑文本/值；右键菜单。
+- 右键空白处：在播放头处新增该行事件。
+- 拖动时与网格吸附；按住修饰键可临时关闭吸附（沿用现有约定）。
+- 所有增删改走现有 document API，并生成对应 undo：
+  - Marker：`UndoAction::EventList`
+  - Tempo：`UndoAction::Automation`
+  - Meter/Key/Lyrics/Chord：对应的事件列表 undo
+- 行内选中状态不跨行多选；v1 不做跨行框选。
+
+### 各行的最小编辑能力
+
+| 行 | 新增 | 编辑 | 删除 | 移动 |
+|----|------|------|------|------|
+| Marker | 播放头处新增 | 重命名 | 是 | 拖动 tick |
+| Tempo | 播放头处新增 | 改 BPM / 形状 | 是 | 拖动 tick |
+| Meter | 播放头处新增 | 改分子/分母 | 是 | 拖动 tick |
+| Key | 播放头处新增 | 改调/音阶 | 是 | 拖动 tick |
+| Chord | 播放头处新增 | 改和弦文本 | 是 | 拖动 tick |
+| Lyrics | 播放头处新增 | 改歌词文本 | 是 | 拖动 tick |
+
+- 同 tick 多事件：沿用各自数据结构的现有语义（如 Tempo lane 的 upsert）。
+- 行事件密集时，命中优先级：事件 > 空白；重叠事件按绘制顺序/最近命中。
+
+## 渲染与性能
+
+- 每行每帧只查询可见 tick 范围：
+
+```text
+lo = view.tick_at_content_left()
+hi = view.tick_at_content_right()
+events = events_in_range(lo, hi)
+```
+
+- 查询必须二分，不允许全量扫描。
+- 标签绘制：按像素间距稀疏化，放不下就不画文本，只画标记；hover 出 tooltip。
+- 行背景/分割线/播放头用同一套 painter，避免每个 row 重复。
+- 行数通常 < 10，每行可见事件通常很少；对音符 GPU 渲染无影响。
+- 极端密集 Tempo 自动化（黑乐壳少见）仍需保证滚动不卡；必要时只画采样点。
+
+## 代码触点（计划）
+
+| 位置 | 变化 |
+|------|------|
+| `crates/yinhe-egui/src/widgets/event_rows/` | 新增通用行框架 + 各 kind 实现（按文件拆分，不使用 `mod.rs`） |
+| `crates/yinhe-egui/src/widgets/time_ruler.rs` | 移除 Marker 绘制/命中/重命名；只保留时间标尺、播放头、缩放/滚动 |
+| `crates/yinhe-egui/src/arrange/` | 顶部接入全局事件行，轨道区域下移 |
+| `crates/yinhe-egui/src/piano_view/` | 顶部接入全局事件行，键盘/网格区域下移 |
+| `crates/yinhe-egui/src/app/` | View 菜单的显示/隐藏入口；行状态接入 `EditState` |
+| `crates/yinhe-editor-core/` | 沿用现有事件编辑 API；如缺批量接口，补在对应事件模块 |
+
+注意：
+
+- `time_ruler.rs` 目前已经很长，本 spec 的目标之一是让它变短，而不是继续加分支。
+- 行框架应保持高内聚：布局、绘制、命中、编辑各一层；不要把六种事件塞进一个上帝函数。
+- 事件行状态不进入 `YinModel`，不参与 undo；这是视图状态。
+
+## 持久化
+
+- v1：行可见性、行高、顺序为**会话态**，随文档 `EditState` 存活，不落盘。
+- 事件数据照旧由 `.yin` 的 conductor/tracks 段保存。
+- 后续如需保存行布局，放入项目视图状态或应用设置；不要写进音符数据段。
+
+## 与 Clip v1 的关系
+
+- Clip v1 的 AR/PR 布局依赖“标尺 + 全局事件行 + 轨道区”的固定结构。
+- 本 spec 完成后，Clip v1 不再需要改标尺/行布局，只需要在轨道区加 Clip 块与
+  `[CLIP | SONG]` 时间范围。
+- 实施顺序：
+
+```text
+全局事件行框架 + Marker 迁移
+→ Tempo / Meter / Key 行
+→ Chord / Lyrics 行
+→（纵向 PR 行布局，可与 Clip v1 并行后置）
+→ Clip v1
+```
+
+## 测试
+
+- 时间标尺不再绘制/命中 Marker；Marker 行仍支持点击、拖动、重命名、删除。
+- 每行事件查询只返回可见范围；缩放/滚动后位置正确。
+- 行头与内容区起点对齐；AR/PR 左栏宽度变化时不漂移。
+- Tempo/Meter/Key/Lyrics/Chord 的新增/编辑/删除/移动均进入正确 undo。
+- 密集事件下标签稀疏化、hover tooltip 正常。
+- 行折叠/展开后轨道区域高度正确，播放头贯穿所有行。
+- 横向/纵向 PR 行布局（若实现）不写死方向；未实现时纵向模式有明确 fallback。
+- 性能：每帧不全量扫描事件；Clip v1 前先跑一次 1 亿音符工程的滚动基线。
+
+## 开放问题（实施前定）
+
+1. 全局事件行的高度是固定 18/20/24px 还是允许用户逐行调整？
+2. 行顺序是否允许拖拽重排，还是固定默认顺序即可？
+3. Marker 行的“标签”是否需要区分 Section / Cue / Marker 子类型？
+4. 纵向 PR 的全局事件行是否在 v1 就实现，还是先折叠？
+5. per-track 歌词/和弦是否未来需要轨道级事件行？
