@@ -114,15 +114,6 @@ pub(crate) fn apply_reorder<T: Clone>(items: &mut Vec<T>, indices: &[usize], ins
 }
 
 /// 对 Vec 直接应用排序（不要求 Clone，用于 Document / MixerRack 等）。
-pub(crate) fn apply_reorder_noclone<T>(items: &mut Vec<T>, indices: &[usize], insert_at: usize) {
-    let order = plan_order(items.len(), indices, insert_at);
-    let mut old: Vec<Option<T>> = std::mem::take(items).into_iter().map(Some).collect();
-    let mut new = Vec::with_capacity(order.len());
-    for &idx in &order {
-        new.push(old[idx].take().expect("order 是排列"));
-    }
-    *items = new;
-}
 
 #[cfg(test)]
 mod tests {

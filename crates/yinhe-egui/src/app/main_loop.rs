@@ -505,9 +505,6 @@ impl eframe::App for App {
                     self.close_document(idx);
                 }
             }
-            Some(title_bar::TitleBarAction::ReorderTab { from, insert_at }) => {
-                self.reorder_tab(from, insert_at);
-            }
             Some(title_bar::TitleBarAction::DetachTab(idx)) => {
                 // 脏文档也直接 detach：临时保存包含未保存内容，不丢数据，不弹确认
                 self.detach_tab_to_new_window(idx);

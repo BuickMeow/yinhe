@@ -605,50 +605,6 @@ impl App {
         self.teardown_audio();
     }
 
-    /// 标题栏标签拖动排序：把 from 位置的工程移动到剩余列表的 insert_at 位置。
-    pub(crate) fn reorder_tab(&mut self, from: usize, insert_at: usize) {
-        let len = self.workspace.documents.len();
-        if from >= len {
-            return;
-        }
-        let order = crate::widgets::reorder::plan_order(len, &[from], insert_at);
-        let cur: Vec<usize> = (0..len).collect();
-        if order == cur {
-            return;
-        }
-        let old_active = self.workspace.active_doc;
-        let old_audio = self.audio_state.active_doc;
-        crate::widgets::reorder::apply_reorder_noclone(
-            &mut self.workspace.documents,
-            &[from],
-            insert_at,
-        );
-        crate::widgets::reorder::apply_reorder_noclone(&mut self.mixer_racks, &[from], insert_at);
-        crate::widgets::reorder::apply_reorder_noclone(
-            &mut self.instrument_racks,
-            &[from],
-            insert_at,
-        );
-        while self.controller_renderers.len() < len {
-            self.controller_renderers.push(Vec::new());
-        }
-        if !self.controller_renderers.is_empty() {
-            crate::widgets::reorder::apply_reorder_noclone(
-                &mut self.controller_renderers,
-                &[from],
-                insert_at,
-            );
-        }
-        if let Some(active) = old_active {
-            self.workspace.active_doc = order.iter().position(|&i| i == active);
-        }
-        if let Some(a) = old_audio {
-            self.audio_state.active_doc = order.iter().position(|&i| i == a);
-        }
-        // 只是索引重排，文档内容未变：对齐 prev 避免下一帧误触发切换检测
-        self.workspace.prev_active_doc = self.workspace.active_doc;
-    }
-
     /// 移除指定索引的文档及平行数组，修正 active/audio 索引。
     /// 关闭标签与拖出新窗口共用；返回被移除的三元组（关闭场景直接丢弃）。
     /// 绑定音频的文档在内部先 teardown。

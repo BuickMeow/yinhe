@@ -155,6 +155,9 @@ pub(super) fn paint_tabs(
     for (i, doc) in documents.iter().enumerate() {
         let is_active = active_doc == Some(i);
         let tab_rect = tab_rects[i];
+        if tab_rect.width() <= 0.0 || tab_rect.height() <= 0.0 {
+            continue;
+        }
 
         let is_visible = tab_rect.max.x >= m.bar_rect.min.x + m.left_padding
             && tab_rect.min.x <= m.bar_rect.max.x;

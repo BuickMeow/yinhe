@@ -285,69 +285,37 @@ fn segmented_icons(
     h: f32,
     id_salt: &str,
 ) -> Option<usize> {
-    let total = egui::vec2(seg_w * icons.len() as f32, h);
-    let (rect, resp) = ui
-        .push_id(id_salt, |ui| {
-            ui.allocate_exact_size(total, egui::Sense::click())
-        })
-        .inner;
-    if resp.hovered() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-    }
-    let painter = ui.painter();
-    painter.rect_filled(
-        rect,
-        egui::CornerRadius::same(3),
-        crate::theme::control_bg(),
-    );
-    let hover_idx = resp
-        .hovered()
-        .then(|| {
-            ui.input(|i| i.pointer.hover_pos())
-                .map(|p| (((p.x - rect.min.x) / seg_w).floor() as usize).min(icons.len() - 1))
-        })
-        .flatten();
-    for (i, icon) in icons.iter().enumerate() {
-        let seg = egui::Rect::from_min_size(
-            egui::pos2(rect.min.x + i as f32 * seg_w, rect.min.y),
-            egui::vec2(seg_w, h),
-        );
-        if i == active {
-            let radius = egui::CornerRadius {
-                nw: if i == 0 { 3 } else { 0 },
-                sw: if i == 0 { 3 } else { 0 },
-                ne: if i + 1 == icons.len() { 3 } else { 0 },
-                se: if i + 1 == icons.len() { 3 } else { 0 },
-            };
-            painter.rect_filled(seg, radius, crate::theme::selected_bg());
-        } else if hover_idx == Some(i) {
-            painter.rect_filled(seg, egui::CornerRadius::ZERO, crate::theme::btn_bg());
-        }
-        if i > 0 {
-            painter.line_segment(
-                [seg.min, egui::pos2(seg.min.x, seg.max.y)],
-                egui::Stroke::new(1.0, crate::theme::line_fg()),
-            );
-        }
-        painter.text(
-            seg.center(),
-            egui::Align2::CENTER_CENTER,
-            icon.codepoint,
-            egui::FontId::new(14.0, icon.font_family()),
-            if i == active {
-                crate::theme::accent_active()
-            } else {
-                crate::theme::text_primary()
-            },
-        );
-    }
-    if resp.clicked()
-        && let Some(pos) = resp.interact_pointer_pos()
-    {
-        let idx = (((pos.x - rect.min.x) / seg_w).floor() as usize).min(icons.len() - 1);
-        return Some(idx);
-    }
-    None
+    let mut clicked = None;
+    ui.push_id(id_salt, |ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        ui.horizontal(|ui| {
+            for (i, icon) in icons.iter().enumerate() {
+                let radius = egui::CornerRadius {
+                    nw: if i == 0 { 3 } else { 0 },
+                    sw: if i == 0 { 3 } else { 0 },
+                    ne: if i + 1 == icons.len() { 3 } else { 0 },
+                    se: if i + 1 == icons.len() { 3 } else { 0 },
+                };
+                let resp = ui.add(
+                    egui::Button::new(icon.rich_text().size(14.0).color(if i == active {
+                        crate::theme::accent_active()
+                    } else {
+                        crate::theme::text_primary()
+                    }))
+                    .selected(i == active)
+                    .min_size(egui::vec2(seg_w, h))
+                    .corner_radius(radius),
+                );
+                if resp.hovered() {
+                    resp.clone().on_hover_cursor(egui::CursorIcon::PointingHand);
+                }
+                if resp.clicked() {
+                    clicked = Some(i);
+                }
+            }
+        });
+    });
+    clicked
 }
 
 /// 分段开关：整组带背景，选中段填 selected_bg；段间竖线为直角，不随圆角弯曲。
@@ -363,70 +331,39 @@ fn segmented(
     font_size: f32,
     id_salt: &str,
 ) -> Option<usize> {
-    let total = egui::vec2(seg_w * labels.len() as f32, h);
-    let (rect, resp) = ui
-        .push_id(id_salt, |ui| {
-            ui.allocate_exact_size(total, egui::Sense::click())
-        })
-        .inner;
-    if resp.hovered() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-    }
-    let painter = ui.painter();
-    painter.rect_filled(
-        rect,
-        egui::CornerRadius::same(3),
-        crate::theme::control_bg(),
-    );
-    let hover_idx = resp
-        .hovered()
-        .then(|| {
-            ui.input(|i| i.pointer.hover_pos())
-                .map(|p| (((p.x - rect.min.x) / seg_w).floor() as usize).min(labels.len() - 1))
-        })
-        .flatten();
-    let font = egui::FontId::proportional(font_size);
-    for (i, label) in labels.iter().enumerate() {
-        let seg = egui::Rect::from_min_size(
-            egui::pos2(rect.min.x + i as f32 * seg_w, rect.min.y),
-            egui::vec2(seg_w, h),
-        );
-        if i == active {
-            let radius = egui::CornerRadius {
-                nw: if i == 0 { 3 } else { 0 },
-                sw: if i == 0 { 3 } else { 0 },
-                ne: if i + 1 == labels.len() { 3 } else { 0 },
-                se: if i + 1 == labels.len() { 3 } else { 0 },
-            };
-            painter.rect_filled(seg, radius, crate::theme::selected_bg());
-        } else if hover_idx == Some(i) {
-            painter.rect_filled(seg, egui::CornerRadius::ZERO, crate::theme::btn_bg());
-        }
-        if i > 0 {
-            painter.line_segment(
-                [seg.min, egui::pos2(seg.min.x, seg.max.y)],
-                egui::Stroke::new(1.0, crate::theme::line_fg()),
-            );
-        }
-        painter.text(
-            seg.center(),
-            egui::Align2::CENTER_CENTER,
-            *label,
-            font.clone(),
-            if i == active {
-                crate::theme::accent_active()
-            } else {
-                crate::theme::text_primary()
-            },
-        );
-    }
-    if resp.clicked()
-        && let Some(pos) = resp.interact_pointer_pos()
-    {
-        let idx = (((pos.x - rect.min.x) / seg_w).floor() as usize).min(labels.len() - 1);
-        return Some(idx);
-    }
-    None
+    let mut clicked = None;
+    ui.push_id(id_salt, |ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        ui.horizontal(|ui| {
+            for (i, label) in labels.iter().enumerate() {
+                let radius = egui::CornerRadius {
+                    nw: if i == 0 { 3 } else { 0 },
+                    sw: if i == 0 { 3 } else { 0 },
+                    ne: if i + 1 == labels.len() { 3 } else { 0 },
+                    se: if i + 1 == labels.len() { 3 } else { 0 },
+                };
+                let resp = ui.add(
+                    egui::Button::new(egui::RichText::new(*label).size(font_size).color(
+                        if i == active {
+                            crate::theme::accent_active()
+                        } else {
+                            crate::theme::text_primary()
+                        },
+                    ))
+                    .selected(i == active)
+                    .min_size(egui::vec2(seg_w, h))
+                    .corner_radius(radius),
+                );
+                if resp.hovered() {
+                    resp.clone().on_hover_cursor(egui::CursorIcon::PointingHand);
+                }
+                if resp.clicked() {
+                    clicked = Some(i);
+                }
+            }
+        });
+    });
+    clicked
 }
 
 /// 固定中心点的图标按钮：与工具按钮同款选中底 + 强调色图标。

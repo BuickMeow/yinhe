@@ -24,11 +24,6 @@ pub(crate) const TITLE_BAR_HEIGHT: f32 = crate::theme::TITLE_BAR_H;
 /// Action to be performed by the caller after title bar rendering.
 pub(crate) enum TitleBarAction {
     CloseDocument(usize),
-    /// 拖动单个标签排序：把 from 移动到剩余列表的 insert_at 位置
-    ReorderTab {
-        from: usize,
-        insert_at: usize,
-    },
     /// 拖出到新窗口：把标签 idx 的工程在新进程打开
     DetachTab(usize),
     /// 工程选择 popup：打开最近文件（追加为新文档）
@@ -89,8 +84,23 @@ pub(crate) fn show(
 
             // ── Precompute tab widths / rects for hit-testing and reorder ──
             // 标签宽度动态（按工程名实测，最长 MAX_TAB_W）
-            let tab_widths = paint::tab_widths(&painter, documents);
-            let tab_rects = paint::tab_rects(&m, *tab_scroll_offset, &tab_widths);
+            // 单标签模式：只显示当前工程；其他打开的工程通过点击该标签的
+            // 工程选择 popup 切换，不再横排多个标签。
+            let active_idx = active_doc.unwrap_or(0).min(n_docs.saturating_sub(1));
+            let active_slice = if n_docs == 0 {
+                &[][..]
+            } else {
+                &documents[active_idx..=active_idx]
+            };
+            let tab_widths = paint::tab_widths(&painter, active_slice);
+            let active_rect = paint::tab_rects(&m, 0.0, &tab_widths)
+                .into_iter()
+                .next()
+                .unwrap_or(egui::Rect::NOTHING);
+            let mut tab_rects = vec![egui::Rect::NOTHING; n_docs];
+            if n_docs > 0 {
+                tab_rects[active_idx] = active_rect;
+            }
             // 应用名「Yinhe」可点击矩形（打开欢迎窗口）
             let title_rect = paint::title_rect(&painter, &m);
 
@@ -284,22 +294,8 @@ pub(crate) fn show(
             // 拖拽中主键已抬起但没收到 release 事件（指针离开视口被吞）→ 视为释放
             let drag_stuck_release = drag.is_some() && !ui.input(|i| i.pointer.any_down());
             if any_released || drag_stuck_release {
-                if let Some(d) = drag.take() {
-                    if d.detached {
-                        action = Some(TitleBarAction::DetachTab(d.from));
-                    } else {
-                        let order =
-                            crate::widgets::reorder::plan_order(n_docs, &[d.from], d.insert_idx);
-                        let cur_order: Vec<usize> = (0..n_docs).collect();
-                        if order != cur_order {
-                            action = Some(TitleBarAction::ReorderTab {
-                                from: d.from,
-                                insert_at: d.insert_idx,
-                            });
-                        } else {
-                            *active_doc = Some(d.from);
-                        }
-                    }
+                if drag.take().is_some() {
+                    // 单标签模式不支持排序/拖出；拖动只当作普通点击。
                     press = None;
                 } else if button_released
                     && let Some(p) = press.take()
@@ -515,7 +511,6 @@ mod tests {
                     ) {
                         st.action = Some(match a {
                             TitleBarAction::CloseDocument(_) => "close",
-                            TitleBarAction::ReorderTab { .. } => "reorder",
                             TitleBarAction::DetachTab(_) => "detach",
                             TitleBarAction::OpenRecent(_) => "open_recent",
                             TitleBarAction::RemoveRecent(_) => "remove_recent",
