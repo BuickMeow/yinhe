@@ -1074,6 +1074,7 @@ impl App {
                 )
             };
             if let Some(action) = action {
+                let action = doc.with_clip_normalization(action);
                 doc.edit.pianoroll_view.base.dirty = true;
                 doc.push_undo(action, &label, before);
                 // 纯音符移动/复制：只更新 audible_notes，不重建 CC，不 chase
@@ -1105,6 +1106,7 @@ impl App {
             let min_gate = q.tick_interval(ppq).max(1);
             let before = doc.capture_snapshot();
             if let Some(action) = doc.resize_selected_notes_min_gate(side, dt, min_gate) {
+                let action = doc.with_clip_normalization(action);
                 doc.edit.pianoroll_view.base.dirty = true;
                 doc.push_undo(action, t!("undo.resize_notes").as_ref(), before);
                 self.notify_notes_changed();

@@ -381,6 +381,39 @@ pub fn show(
         }
     }
 
+    // ── AR 空白处双击：在点击位置创建 1 小节空 Clip ──
+    if ui.input(|i| {
+        i.pointer
+            .button_double_clicked(egui::PointerButton::Primary)
+    }) && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
+        && music_rect.contains(pos)
+        && let Some(yinhe_types::ArRow::Track(track_idx)) = row_layout.hit_at_music_y(
+            pos.y - music_rect.min.y + doc.edit.arrange_view.base.scroll_y,
+            doc.edit.arrange_view.lane_height(),
+        )
+    {
+        let tick = doc
+            .edit
+            .arrange_view
+            .x_to_tick(pos.x - gpu_rect.min.x)
+            .max(0.0) as u32;
+        let ppq = doc.data.model.meta.ppq;
+        let (num, den) = doc.data.model.tempo_map.time_sig_at_tick(tick);
+        let bar = yinhe_types::measure_ticks(ppq, num, den).max(1);
+        let start = (tick / bar) * bar;
+        let occupied = doc.data.model.tracks.get(track_idx).is_some_and(|t| {
+            t.clips
+                .iter()
+                .any(|c| c.start_tick <= tick && tick < c.end_tick)
+        });
+        if !occupied {
+            let before = doc.capture_snapshot();
+            if let Some(action) = doc.create_empty_clip(track_idx as u16, start, bar) {
+                doc.push_undo(action, "undo.move_notes", before);
+            }
+        }
+    }
+
     // ── Track panel content ──
     ui.scope_builder(egui::UiBuilder::new().max_rect(tp_rect), |ui| {
         ui.set_clip_rect(tp_rect);

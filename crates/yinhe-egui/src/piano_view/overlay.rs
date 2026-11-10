@@ -524,6 +524,27 @@ pub(crate) fn draw_overlays(
                 crate::theme::control_bg()
             },
         );
+        // Clip 栏左侧键盘列上方的占位：填充夹角，不留下空控件。
+        let clip_header = egui::Rect::from_min_max(
+            clip_rect.min,
+            egui::pos2(clip_rect.min.x + view.keyboard_width(), clip_rect.max.y),
+        );
+        ui.painter().rect_filled(
+            clip_header,
+            0.0,
+            if clip_mode {
+                crate::theme::control_selected_bg()
+            } else {
+                crate::theme::control_bg()
+            },
+        );
+        ui.painter().text(
+            clip_header.center(),
+            egui::Align2::CENTER_CENTER,
+            "CLIP",
+            egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT),
+            crate::theme::text_muted(),
+        );
         if clip_mode && let Some(row) = clip_row {
             // Clip 栏也允许缩放：指针在行内时滚轮/捏合沿时间轴缩放。
             if let Some(pos) = ui.input(|i| i.pointer.hover_pos())

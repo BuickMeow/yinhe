@@ -197,6 +197,65 @@ impl Document {
         debug_assert!(yinhe_core::validate_clips(&clips).is_ok());
         self.commit_clips(t, before, clips)
     }
+    /// 在 AR 空白处新建一个空 Clip（默认 1 小节）。
+    pub fn create_empty_clip(
+        &mut self,
+        track: u16,
+        start_tick: u32,
+        len_ticks: u32,
+    ) -> Option<UndoAction> {
+        let t = track as usize;
+        let before = self.clip_list(t)?;
+        let end_tick = start_tick.saturating_add(len_ticks.max(1));
+        if before
+            .iter()
+            .any(|c| c.start_tick < end_tick && c.end_tick > start_tick)
+        {
+            return None;
+        }
+        let id = {
+            let model = Arc::make_mut(&mut self.data.model);
+            model.alloc_clip_id()
+        };
+        let mut after = before.clone();
+        let pos = after.partition_point(|c| c.start_tick < start_tick);
+        after.insert(pos, Clip::new(id, String::new(), start_tick, end_tick));
+        self.commit_clips(t, before, after)
+    }
+
+    /// 把当前选区的音符纳入 Clip 归属（拖动/缩放/复制后调用）。
+    pub fn ensure_clips_for_selection(&mut self) -> Option<UndoAction> {
+        use std::collections::HashMap;
+        let mut by_track: HashMap<u16, Vec<NoteEvent>> = HashMap::new();
+        crate::batch_ops::for_each_selected(&self.data.model, &self.edit.selected, |n, key| {
+            by_track.entry(n.track).or_default().push(NoteEvent {
+                id: n.id,
+                start_tick: n.start_tick,
+                end_tick: n.end_tick,
+                key,
+                velocity: n.velocity,
+            });
+        });
+        let mut actions = Vec::new();
+        for (track, notes) in by_track {
+            if let Some(action) = self.ensure_clips_for_notes(track, &notes) {
+                actions.push(action);
+            }
+        }
+        match actions.len() {
+            0 => None,
+            1 => actions.pop(),
+            _ => Some(UndoAction::Composite(actions)),
+        }
+    }
+
+    /// 把音符编辑的 undo 与 Clip 扩展合并为一个 Composite。
+    pub fn with_clip_normalization(&mut self, action: UndoAction) -> UndoAction {
+        match self.ensure_clips_for_selection() {
+            Some(clip) => UndoAction::Composite(vec![clip, action]),
+            None => action,
+        }
+    }
 }
 
 #[cfg(test)]
