@@ -52,12 +52,12 @@ pub(crate) fn show(
     }
 
     let painter = ui.painter_at(full_rect);
-    painter.rect_filled(full_rect, 0.0, crate::theme::track_bg());
+    painter.rect_filled(full_rect, 0.0, crate::theme::control_bg());
 
     let content_left = (full_rect.min.x + view.content_left()).min(full_rect.max.x);
     let header_rect =
         egui::Rect::from_min_max(full_rect.min, egui::pos2(content_left, full_rect.max.y));
-    painter.rect_filled(header_rect, 0.0, crate::theme::track_bg());
+    painter.rect_filled(header_rect, 0.0, crate::theme::control_bg());
 
     let mut outcome = EventRowsOutcome {
         marker_edit: None,
@@ -82,13 +82,14 @@ pub(crate) fn show(
             egui::pos2(full_rect.max.x, y1),
         );
 
+        // 与时间标尺（track_bg）区分：事件行内容用 app_bg，行头用 control_bg。
         let content_bg = if row_idx.is_multiple_of(2) {
-            crate::theme::track_bg()
+            crate::theme::app_bg()
         } else {
-            crate::theme::stripe_bg()
+            crate::theme::control_bg()
         };
         painter.rect_filled(full_row, 0.0, content_bg);
-        painter.rect_filled(header, 0.0, crate::theme::track_bg());
+        painter.rect_filled(header, 0.0, crate::theme::control_bg());
         painter.hline(
             full_row.x_range(),
             y1 - 0.5,
@@ -248,13 +249,15 @@ pub(crate) fn controls(ui: &mut egui::Ui, rect: egui::Rect, state: &mut EventRow
         )
         .frame(false),
     );
-    egui::Popup::from_toggle_button_response(&resp).show(|ui| {
-        ui.set_min_width(120.0);
-        for kind in EventRowKind::ALL {
-            let mut visible = state.is_visible(kind);
-            if ui.checkbox(&mut visible, kind.label()).changed() {
-                state.set_visible(kind, visible);
+    egui::Popup::from_toggle_button_response(&resp)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.set_min_width(120.0);
+            for kind in EventRowKind::ALL {
+                let mut visible = state.is_visible(kind);
+                if ui.checkbox(&mut visible, kind.label()).changed() {
+                    state.set_visible(kind, visible);
+                }
             }
-        }
-    });
+        });
 }

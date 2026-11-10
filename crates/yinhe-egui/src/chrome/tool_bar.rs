@@ -22,6 +22,7 @@ pub fn show(
     view: &mut PianoRollView,
     fold_mask: Option<u16>,
     scale_label: &str,
+    clip_mode: &mut bool,
 ) -> bool {
     let mut open_scale_dialog = false;
     let btn_size = egui::vec2(
@@ -38,7 +39,7 @@ pub fn show(
         let spacing_x = 2.0;
         let slot = btn_size.x + spacing_x;
         // 右侧常驻开关（键数分段 + Scale + 调式名）预留宽度，避免窄窗口重叠。
-        let right_reserve = 34.0 * 3.0 + 48.0 + 120.0 + spacing_x * 5.0 + pad_x;
+        let right_reserve = 30.0 * 3.0 + 42.0 * 2.0 + 48.0 + 120.0 + spacing_x * 6.0 + pad_x;
         let avail = (rect.width() - pad_x * 2.0 - right_reserve).max(0.0);
         let fit = (((avail + spacing_x) / slot).floor() as usize).max(1);
         let n_visible = if fit >= ALL_TOOLS.len() {
@@ -74,20 +75,36 @@ pub fn show(
                 ui.add_space(pad_x);
                 let h = btn_size.y;
                 let font = normal_font();
-                let btn = |ui: &mut egui::Ui, text: &str, active: bool, salt: &str| {
-                    text_button(ui, text, egui::vec2(34.0, h), active, font.clone(), salt)
-                };
+                // [88|128|256]：分段开关（带背景，中缝为直角）。
+                let counts = [88u16, 128, 256];
+                let active = counts
+                    .iter()
+                    .position(|&c| c == view.layout.count)
+                    .unwrap_or(1);
+                if let Some(i) = segmented(
+                    ui,
+                    &["88", "128", "256"],
+                    active,
+                    30.0,
+                    h,
+                    12.0,
+                    "pr_key_seg",
+                ) {
+                    view.set_key_count(counts[i]);
+                }
 
-                // [88|128|256]：分段开关。
-                for count in [256u16, 128, 88] {
-                    let active = view.layout.count == count;
-                    let resp = btn(ui, &count.to_string(), active, &format!("pr_key_{count}"));
-                    if resp.clicked() {
-                        view.set_key_count(count);
-                    }
-                    if count == 88 {
-                        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.pr.key_count"));
-                    }
+                // [CLIP|SONG]：分段开关，小字号，带背景。
+                let scope_active = usize::from(!*clip_mode);
+                if let Some(i) = segmented(
+                    ui,
+                    &["CLIP", "SONG"],
+                    scope_active,
+                    42.0,
+                    h,
+                    10.5,
+                    "pr_scope_seg",
+                ) {
+                    *clip_mode = i == 0;
                 }
 
                 // Scale 开关。
@@ -258,6 +275,73 @@ fn tool_more_button(ui: &mut egui::Ui, btn_size: egui::Vec2) -> egui::Response {
 /// 纯文字小按钮（工具栏右侧的键数 / FOLD）。
 fn normal_font() -> egui::FontId {
     egui::FontId::proportional(13.0)
+}
+
+/// 分段开关：整组带背景，选中段填 selected_bg；段间竖线为直角，不随圆角弯曲。
+///
+/// `labels` 从左到右排列；返回被点击的段下标。
+#[allow(clippy::too_many_arguments)]
+fn segmented(
+    ui: &mut egui::Ui,
+    labels: &[&str],
+    active: usize,
+    seg_w: f32,
+    h: f32,
+    font_size: f32,
+    id_salt: &str,
+) -> Option<usize> {
+    let total = egui::vec2(seg_w * labels.len() as f32, h);
+    let (rect, resp) = ui
+        .push_id(id_salt, |ui| {
+            ui.allocate_exact_size(total, egui::Sense::click())
+        })
+        .inner;
+    let painter = ui.painter();
+    painter.rect_filled(
+        rect,
+        egui::CornerRadius::same(3),
+        crate::theme::control_bg(),
+    );
+    let font = egui::FontId::proportional(font_size);
+    for (i, label) in labels.iter().enumerate() {
+        let seg = egui::Rect::from_min_size(
+            egui::pos2(rect.min.x + i as f32 * seg_w, rect.min.y),
+            egui::vec2(seg_w, h),
+        );
+        if i == active {
+            let radius = egui::CornerRadius {
+                nw: if i == 0 { 3 } else { 0 },
+                sw: if i == 0 { 3 } else { 0 },
+                ne: if i + 1 == labels.len() { 3 } else { 0 },
+                se: if i + 1 == labels.len() { 3 } else { 0 },
+            };
+            painter.rect_filled(seg, radius, crate::theme::selected_bg());
+        }
+        if i > 0 {
+            painter.line_segment(
+                [seg.min, egui::pos2(seg.min.x, seg.max.y)],
+                egui::Stroke::new(1.0, crate::theme::line_fg()),
+            );
+        }
+        painter.text(
+            seg.center(),
+            egui::Align2::CENTER_CENTER,
+            *label,
+            font.clone(),
+            if i == active {
+                crate::theme::accent_active()
+            } else {
+                crate::theme::text_primary()
+            },
+        );
+    }
+    if resp.clicked()
+        && let Some(pos) = resp.interact_pointer_pos()
+    {
+        let idx = (((pos.x - rect.min.x) / seg_w).floor() as usize).min(labels.len() - 1);
+        return Some(idx);
+    }
+    None
 }
 
 fn text_button(

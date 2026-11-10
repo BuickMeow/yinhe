@@ -55,6 +55,8 @@ pub fn show(
     render_ctx: &mut super::render_context::RenderContext,
     render_thread: Option<&yinhe_wgpu::RenderThreadHandle>,
     view: &mut yinhe_types::PianoRollView,
+    event_rows: &mut yinhe_types::EventRowsState,
+    clip_mode: bool,
     last_cull_revision: &mut u64, // revision ^ hidden_hash — triggers all_notes re-upload
     last_cull_revision_only: &mut u64, // last revision for incremental detection
     last_hidden_hash: &mut u64,   // last hidden_hash for incremental detection
@@ -128,11 +130,17 @@ pub fn show(
         view,
         rect,
         panels_natural_h,
+        if view.is_vertical() || midi_arc.is_none() {
+            0.0
+        } else {
+            crate::theme::CLIP_ROW_H + event_rows.visible_height()
+        },
         ui.ctx().pixels_per_point(),
         total_ticks,
     )?;
     let content_rect = layout.content_rect;
     let music_rect = layout.music_rect;
+    let event_rows_rect = layout.event_rows_rect;
     let content_y = layout.content_y;
     let content_bottom = layout.content_bottom;
     let w = layout.w;
@@ -346,16 +354,38 @@ pub fn show(
         ),
         _ => [None; yinhe_types::KEY_COUNT],
     };
-    let markers: &[yinhe_types::MarkerEvent] = midi_arc
-        .map(|m| m.conductor.markers.as_slice())
-        .unwrap_or(&[]);
-    let (sel_action, marker_edit) = overlay::draw_overlays(
+    let conductor = midi_arc.map(|m| m.conductor.as_ref());
+    let markers_on_row = event_rows.is_visible(yinhe_types::EventRowKind::Marker);
+    let ruler_markers: &[yinhe_types::MarkerEvent] = if markers_on_row {
+        &[]
+    } else {
+        conductor.map(|c| c.markers.as_slice()).unwrap_or(&[])
+    };
+    let clip_row = midi_arc.and_then(|m| {
+        let track = write_track?;
+        let tr = m.tracks.get(track as usize)?;
+        let tick = cursor_tick.map(|t| t.max(0.0) as u32).unwrap_or(0);
+        let clip = yinhe_core::clip_at(&tr.clips, tick)
+            .or_else(|| tr.clips.first())?
+            .clone();
+        let color = track_colors
+            .get(track as usize)
+            .copied()
+            .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
+        Some(super::piano_view::types::ClipRowView { track, clip, color })
+    });
+    let (sel_action, marker_edit, clip_resize) = overlay::draw_overlays(
         ui,
         &painter,
         content_rect,
         music_rect,
         rect,
         view,
+        event_rows,
+        event_rows_rect,
+        conductor,
+        clip_row.as_ref(),
+        clip_mode,
         &theme,
         kh,
         kb_w,
@@ -380,7 +410,7 @@ pub fn show(
         selected,
         pen_path.as_ref(),
         scissors_line.as_ref(),
-        markers,
+        ruler_markers,
     );
     let t_paint_end = if perf_on {
         Some(std::time::Instant::now())
@@ -484,8 +514,16 @@ pub fn show(
         bar_line_data,
     );
 
-    marker_edit
-        .map(PianoViewEvent::MarkerEdit)
+    clip_resize
+        .map(
+            |(track, clip_id, start_tick, end_tick)| PianoViewEvent::ClipResize {
+                track,
+                clip_id,
+                start_tick,
+                end_tick,
+            },
+        )
+        .or(marker_edit.map(PianoViewEvent::MarkerEdit))
         .or(sel_action.map(PianoViewEvent::SelectionAction))
         .or(quick_delete_event)
         .or(quick_erase_event)

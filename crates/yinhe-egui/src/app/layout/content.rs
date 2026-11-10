@@ -595,6 +595,7 @@ impl App {
                 &mut doc.edit.pianoroll_view,
                 fold_mask,
                 &scale_label,
+                &mut doc.edit.pr_clip_mode,
             ) {
                 open_scale_dialog = true;
             }
@@ -745,6 +746,8 @@ impl App {
                     &mut self.render_ctx,
                     self.render_thread.as_ref(),
                     &mut doc.edit.pianoroll_view,
+                    &mut doc.edit.event_rows,
+                    doc.edit.pr_clip_mode,
                     &mut self.last_cull_revision,
                     &mut self.last_cull_revision_only,
                     &mut self.last_hidden_hash,
@@ -818,6 +821,21 @@ impl App {
         if let Some(event) = piano_event {
             use crate::piano_view::PianoViewEvent;
             match event {
+                PianoViewEvent::ClipResize {
+                    track,
+                    clip_id,
+                    start_tick,
+                    end_tick,
+                } => {
+                    if let Some(idx) = self.workspace.active_doc {
+                        let doc = &mut self.workspace.documents[idx];
+                        let before = doc.capture_snapshot();
+                        if let Some(action) = doc.resize_clip(track, clip_id, start_tick, end_tick)
+                        {
+                            doc.push_undo(action, "undo.move_notes", before);
+                        }
+                    }
+                }
                 PianoViewEvent::SelectionAction(action) => {
                     self.handle_selection_action(action);
                 }

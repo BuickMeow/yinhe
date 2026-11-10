@@ -37,6 +37,21 @@ pub enum PianoViewEvent {
     },
     /// 标尺标签（marker）编辑：由 App 层落地到文档（接入 undo）。
     MarkerEdit(crate::widgets::time_ruler::MarkerEdit),
+    /// PR Clip 边界拖动：由 App 层落地 resize_clip。
+    ClipResize {
+        track: u16,
+        clip_id: u32,
+        start_tick: u32,
+        end_tick: u32,
+    },
+}
+
+/// PR 顶部 Clip 边界行显示的 Active Clip。
+pub(crate) struct ClipRowView {
+    pub track: u16,
+    pub clip: yinhe_core::Clip,
+    /// 轨道颜色 RGBA（0..1）。
+    pub color: [f32; 4],
 }
 
 /// Automation panel 上下文（all-or-nothing：要么全 Some 要么全 None）。

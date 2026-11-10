@@ -3,7 +3,8 @@
 状态：草案 v1（2026-11-10）
 
 关系：本 spec 是 `docs/spec-midi-clip.md`（Clip v1）的前置阶段。
-全局事件行只属于 AR；PR 不显示事件行。先完成 AR 事件行与纯时间标尺，再做 Clip v1 的 AR 网格布局。
+AR 与横向 PR 都显示事件行；PR 额外固定一条不可选的 Clip 边界行。
+先完成事件行与纯时间标尺，再做 Clip v1 的网格布局。
 
 ## 背景
 
@@ -36,7 +37,7 @@ Pro Tools 的做法是把 Marker / Meter / Key / Chords / Lyrics 放到独立的
   - Lyrics（歌词）
 - 默认不显示任何事件行；AR 左上角的 `Events ▾` 下拉菜单选择显示哪些。
 - 所有行共用一套布局、绘制、命中、编辑、undo 接口。
-- 事件行只属于 AR；PR 不显示、不接入事件行。
+- AR 与横向 PR 共用事件行；PR 默认额外显示 Clip 边界行。
 - 事件行显示后，AR 时间标尺可以从 30px 降为 24px，把高度让给事件/轨道区。
 - 事件密集时只绘制可见范围，标签自动稀疏化，不拖慢画面。
 - 为 Clip v1 提供稳定的 AR 网格/行布局，避免 Clip 和标尺重构互相牵连。
@@ -45,7 +46,7 @@ Pro Tools 的做法是把 Marker / Meter / Key / Chords / Lyrics 放到独立的
 
 - 不改变事件数据模型；不改 `ConductorData` / `TrackData` 的字段语义。
 - 不把 Tempo / CC/PB/RPN/NRPN 自动化塞进全局事件行；它们仍是轨道自动化 lane。
-- PR 不显示事件行。
+- 纵向 PR 本期不接入事件行，保持现状。
 - 不做 Clip 的创建/编辑；Clip 是后续阶段。
 - 不做新的 MIDI 事件类型。
 - 不改变播放、导出逻辑；行的编辑仍落到现有文档 API。
@@ -96,13 +97,14 @@ pub struct EventRowState {
 - v1 默认顺序：Marker → Meter → Key → Chord → Lyrics。
 - 每行高度固定小行（建议 18–24 px），由主题/布局常量给出，用户可调。
 - 默认全部隐藏（`visible = false`），不占用音轨区域高度。
-- 行可见性由 AR 左上角 `Events ▾` 下拉菜单控制；状态是会话态，暂不落盘。
+- 行可见性由 AR / PR 的 `Events ▾` 下拉菜单控制；状态是会话态，暂不落盘。
+- PR 另有一条始终显示的 **Clip 边界行**，不进入 `EventRowKind`、不提供勾选。
 - 行顺序数据结构支持重排；v1 UI 先不提供拖拽排序。
 - 行标题在左侧头部区域显示图标/名称；时间内容区与网格时间轴严格对齐。
 
 ## 布局
 
-### 横向（仅 AR / 通道 AR）
+### 横向（AR / 通道 AR / 横向 PR）
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
@@ -141,13 +143,14 @@ EventRowsLayout   // 固定顶部：行高、可见行、行头矩形
 ArRowLayout       // 其下：现有音轨/自动化行，scroll_y 只作用于它
 ```
 
-PR 不显示事件行：PR 的标尺保持原高度，Marker 继续在标尺上绘制/编辑；
-事件行只占 AR / 通道 AR 的顶部固定区。
+PR 在标尺下方先放一条固定的 Clip 边界行（18px），其下才是可选事件行。
+PR 的 `Events ▾` 放在键盘列顶部；勾选 Marker 后，Marker 从 PR 标尺移到事件行，
+取消后再回到标尺。Clip 边界行用音轨代表色，左右边界可拖动，拖动时通过
+`PianoViewEvent::ClipResize` 落到文档 undo。
 
 ### 纵向 PR（瀑布流）
 
-PR 不显示事件行，因此纵向 PR 不涉及事件行布局；纵向 PR 的标尺保持现状。
-事件行只实现横向 AR / 通道 AR。
+纵向 PR 本期不显示事件行 / Clip 边界行，保持现状；事件行先实现横向 AR、通道 AR、横向 PR。
 
 ## 通用行接口
 
@@ -251,6 +254,7 @@ events = events_in_range(lo, hi)
 全局事件行框架 + Marker 迁移
 → Meter / Key 行
 → Chord / Lyrics 行
+→ 横向 PR 事件行 + Clip 边界行
 → Clip v1
 ```
 

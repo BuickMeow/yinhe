@@ -172,10 +172,8 @@ pub(crate) fn draw_midi_clips(
             if x1 - x0 < 2.0 {
                 continue;
             }
-            let body = egui::Rect::from_min_max(
-                egui::pos2(x0, y_top + 1.0),
-                egui::pos2(x1, y_top + lh - 1.0),
-            );
+            // 贴满音轨行，不留上下缝（用户要求 Clip 与音轨边界贴合）。
+            let body = egui::Rect::from_min_max(egui::pos2(x0, y_top), egui::pos2(x1, y_top + lh));
             painter.rect_filled(body, 2.0, band);
             if header_h > 0.0 {
                 let head = egui::Rect::from_min_max(

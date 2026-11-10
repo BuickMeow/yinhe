@@ -6,6 +6,13 @@ use yinhe_types::{KeySigEvent, PianoRollView, TimeSigEvent};
 use super::types::RULER_H;
 use crate::widgets::selection_actions::{BarButton, SelectionAction};
 
+type ClipResizeReq = (u16, u32, u32, u32);
+type OverlayOutcome = (
+    Option<SelectionAction>,
+    Option<crate::widgets::time_ruler::MarkerEdit>,
+    Option<ClipResizeReq>,
+);
+
 /// 覆盖层绘制：背景、音阶背景、网格线、wgpu 纹理、键盘、游标、选框、标尺。
 ///
 /// 抽取自 `piano_view.rs` 570-842 行（现 276-548 段），保持原绘制顺序与坐标系：
@@ -18,6 +25,11 @@ pub(crate) fn draw_overlays(
     music_rect: egui::Rect,
     rect: egui::Rect,
     view: &mut PianoRollView,
+    event_rows: &mut yinhe_types::EventRowsState,
+    event_rows_rect: egui::Rect,
+    conductor: Option<&yinhe_core::ConductorData>,
+    clip_row: Option<&super::types::ClipRowView>,
+    clip_mode: bool,
     theme: &yinhe_theme::GpuTheme,
     kh: f32,
     kb_w: f32,
@@ -43,16 +55,149 @@ pub(crate) fn draw_overlays(
     pen_path: Option<&yinhe_editor_core::pen::PenPath>,
     scissors_line: Option<&yinhe_editor_core::edit_state::AnchorLine>,
     markers: &[yinhe_types::MarkerEvent],
-) -> (
-    Option<crate::widgets::selection_actions::SelectionAction>,
-    Option<crate::widgets::time_ruler::MarkerEdit>,
-) {
+) -> OverlayOutcome {
     // 兼容任务要求的形参（部分由 midi 派生，此处透传占位，避免未使用警告）
     let _ = tpb;
     let _ = grid_rect;
 
     // ── Background（app_bg 一层，不透明不叠加；条纹/色块自行叠上）──
     painter.rect_filled(content_rect, 0.0, crate::theme::app_bg());
+
+    // ── 固定 Clip 边界行 + 可选事件行（横向 PR）──
+    let mut marker_edit: Option<crate::widgets::time_ruler::MarkerEdit> = None;
+    let mut clip_resize: Option<(u16, u32, u32, u32)> = None;
+    if event_rows_rect.height() > 0.0 {
+        let clip_h = crate::theme::CLIP_ROW_H.min(event_rows_rect.height());
+        let clip_rect = egui::Rect::from_min_max(
+            event_rows_rect.min,
+            egui::pos2(event_rows_rect.max.x, event_rows_rect.min.y + clip_h),
+        );
+        ui.painter().rect_filled(
+            clip_rect,
+            0.0,
+            if clip_mode {
+                crate::theme::control_selected_bg()
+            } else {
+                crate::theme::control_bg()
+            },
+        );
+        if let Some(row) = clip_row {
+            let color = egui::Color32::from_rgb(
+                (row.color[0].clamp(0.0, 1.0) * 255.0) as u8,
+                (row.color[1].clamp(0.0, 1.0) * 255.0) as u8,
+                (row.color[2].clamp(0.0, 1.0) * 255.0) as u8,
+            );
+            let preview_id = ui.scope_id().with(("pr_clip_preview", row.clip.id));
+            let preview: (u32, u32) = ui
+                .data(|d| d.get_temp(preview_id))
+                .unwrap_or((row.clip.start_tick, row.clip.end_tick));
+            let x0 = rect.min.x + view.tick_to_x(preview.0 as f64);
+            let x1 = rect.min.x + view.tick_to_x(preview.1 as f64);
+            let band = egui::Rect::from_min_max(
+                egui::pos2(x0.max(clip_rect.min.x), clip_rect.min.y + 1.0),
+                egui::pos2(x1.min(clip_rect.max.x), clip_rect.max.y - 1.0),
+            );
+            if band.max.x > band.min.x {
+                ui.painter().rect_filled(
+                    band,
+                    0.0,
+                    egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 32),
+                );
+            }
+            for x in [x0, x1] {
+                if x >= clip_rect.min.x && x <= clip_rect.max.x {
+                    ui.painter().line_segment(
+                        [
+                            egui::pos2(x, clip_rect.min.y),
+                            egui::pos2(x, clip_rect.max.y),
+                        ],
+                        egui::Stroke::new(2.0, color),
+                    );
+                }
+            }
+            ui.painter().text(
+                egui::pos2(band.min.x.max(clip_rect.min.x) + 4.0, clip_rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                row.clip.display_name(),
+                egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT),
+                crate::theme::contrast_fg(),
+            );
+
+            // 左右边界拖动：拖动期间用 memory 中的 preview，释放时回传 resize。
+            for (side, x) in [(0usize, x0), (1usize, x1)] {
+                let handle = egui::Rect::from_center_size(
+                    egui::pos2(x, clip_rect.center().y),
+                    egui::vec2(9.0, clip_rect.height().max(8.0)),
+                );
+                let resp = ui.interact(
+                    handle,
+                    ui.scope_id().with(("pr_clip_boundary", row.clip.id, side)),
+                    egui::Sense::drag(),
+                );
+                if resp.dragged()
+                    && let Some(pos) = resp.interact_pointer_pos()
+                {
+                    let t = crate::view_interaction::snap_tick(
+                        view.x_to_tick(pos.x - rect.min.x),
+                        quantize,
+                        ppq,
+                        bar_line_data,
+                    )
+                    .max(0.0) as u32;
+                    let mut next = preview;
+                    if side == 0 {
+                        next.0 = t;
+                    } else {
+                        next.1 = t;
+                    }
+                    ui.data_mut(|d| d.insert_temp(preview_id, next));
+                }
+                if resp.drag_stopped() {
+                    let (s0, s1): (u32, u32) = ui
+                        .data(|d| d.get_temp(preview_id))
+                        .unwrap_or((row.clip.start_tick, row.clip.end_tick));
+                    ui.data_mut(|d| d.remove::<(u32, u32)>(preview_id));
+                    clip_resize = Some((row.track, row.clip.id, s0, s1));
+                }
+            }
+        }
+        let rest = egui::Rect::from_min_max(
+            egui::pos2(event_rows_rect.min.x, event_rows_rect.min.y + clip_h),
+            event_rows_rect.max,
+        );
+        if rest.height() > 0.0
+            && let Some(c) = conductor
+            && let Some(tpb_val) = tpb
+        {
+            let (def_num, def_den) = midi.map(|m| m.time_sig_default()).unwrap_or((4, 2));
+            let sig_events = midi.map(|m| m.time_sig_events()).unwrap_or(&[]);
+            let rows = crate::widgets::event_rows::show(
+                ui,
+                event_rows,
+                crate::widgets::event_rows::EventRowsData {
+                    markers: &c.markers,
+                    time_sig: &c.time_sig,
+                    key_sig: &c.key_sig,
+                    chords: &c.chord,
+                    lyrics: &c.lyrics,
+                },
+                view,
+                rest,
+                tpb_val,
+                def_num,
+                def_den,
+                sig_events,
+                &|tick| crate::view_interaction::snap_tick(tick, quantize, ppq, bar_line_data),
+                "piano_event_rows",
+                cursor_tick,
+            );
+            marker_edit = rows.marker_edit;
+            if rows.jumped {
+                selected.clear();
+                sel_rect.clear();
+            }
+        }
+    }
 
     // ── Scale background + 八度横线（调号驱动的调内/调外/根音条带）──
     // bg::paint
@@ -209,7 +354,6 @@ pub(crate) fn draw_overlays(
 
     // ── Draw selection box on TOP of GPU content ──
     let mut sel_action = None;
-    let mut marker_edit: Option<crate::widgets::time_ruler::MarkerEdit> = None;
     // marquee::draw_marquee_box
     if effective_tool == crate::widgets::tools_panel::Tool::Select
         || effective_tool == crate::widgets::tools_panel::Tool::SelectVertical
@@ -463,11 +607,23 @@ pub(crate) fn draw_overlays(
             selected.clear();
             sel_rect.clear();
         }
-        marker_edit = outcome.marker_edit;
+        if outcome.marker_edit.is_some() {
+            marker_edit = outcome.marker_edit;
+        }
         let _ = tpb_val;
     }
 
-    (sel_action, marker_edit)
+    // Events 菜单放在键盘列顶部（标尺左端）；必须在 ruler 背景之后绘制，
+    // 否则会被 ruler 的左下角补底覆盖。
+    if !view.is_vertical() && event_rows_rect.height() > 0.0 {
+        let controls_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.min.x, rect.min.y),
+            egui::pos2(rect.min.x + view.keyboard_width(), rect.min.y + RULER_H),
+        );
+        crate::widgets::event_rows::controls(ui, controls_rect, event_rows);
+    }
+
+    (sel_action, marker_edit, clip_resize)
 }
 
 /// 纵向瀑布流：指针在底部键盘条上时，滚轮/触控板沿音高轴（屏幕 X）缩放。
