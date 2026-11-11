@@ -17,7 +17,7 @@ use yinhe_audio::InsertTarget;
 use yinhe_mixer::{MasterParams, SendParams, StripParams};
 
 use crate::app::App;
-use crate::widgets::knob::knob;
+use crate::widgets::knob::{knob, knob_centered};
 
 use super::plugin_instance::PluginEntry;
 use super::{MixAction, channel_label};
@@ -613,7 +613,7 @@ fn pan_knob(ui: &mut egui::Ui, pan: f32, width: f32) -> Option<f32> {
             egui::UiBuilder::new()
                 .max_rect(knob_rect)
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
-            |ui| knob(ui, &mut norm, KNOB_D),
+            |ui| knob_centered(ui, &mut norm, KNOB_D),
         )
         .inner;
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.pan"));
