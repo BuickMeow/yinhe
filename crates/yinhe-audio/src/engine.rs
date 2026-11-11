@@ -68,6 +68,10 @@ pub(crate) struct AudioEngine {
     pub(crate) sf_manager: SoundFontManager,
     pub(crate) sample_rate: u32,
     pub(crate) sample_position: u64,
+    /// 循环回绕累计的绝对位置偏移：`绝对 sample = 逻辑 sample + offset`。
+    /// UI 侧 cpal 回调用 `consumer_abs - offset` 得到逻辑播放位置，循环回绕
+    /// 后播放头才不会永久领先/落后一个 ring。seek/stop 时归零。
+    pub(crate) loop_wrap_offset: u64,
     /// 当前 per-key layer 设置（`SetLayerCount` 保存；worker 创建 yinhe
     /// CPU/GPU 合成器后据此应用——创建晚于命令，不能只在线应用）。
     pub(crate) layer_count: Option<usize>,
@@ -249,6 +253,7 @@ impl AudioEngine {
                 sf_manager: SoundFontManager::new(sample_rate),
                 sample_rate,
                 sample_position: 0,
+                loop_wrap_offset: 0,
                 layer_count: Some(4),
                 ignore_velocity: 1,
                 max_voices: crate::DEFAULT_MAX_VOICES,

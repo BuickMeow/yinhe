@@ -360,6 +360,8 @@ pub struct AudioHandle {
     /// 渲染线程已产出（推入 ring）的采样位置。UI 用它限制播放指示线
     /// 不能超过实际已渲染的音频（防止"准备播放"期间指示线空跑）。
     producer_sample_position: Arc<AtomicU64>,
+    /// 循环回绕累计绝对偏移（UI 据此把回绕初期的位置钳到循环起点）。
+    loop_wrap_offset: Arc<AtomicU64>,
     playing: Arc<AtomicBool>,
     /// 活跃 voice 数（含 release 尾音）：播放到末尾后用它判断何时暂停。
     voice_count: Arc<AtomicU64>,
@@ -530,6 +532,12 @@ impl AudioHandle {
     /// 没有可听的音频，指示线必须停在当前位置等待，不能按墙钟空跑。
     pub fn producer_sample_position(&self) -> u64 {
         self.producer_sample_position.load(Ordering::Relaxed)
+    }
+
+    /// 循环回绕累计偏移。>0 表示已经发生过回绕；回绕初期消费位置换算后
+    /// 会短暂小于循环起点，UI 应把播放头钳在起点等待声音追上。
+    pub fn loop_wrap_offset(&self) -> u64 {
+        self.loop_wrap_offset.load(Ordering::Relaxed)
     }
 
     pub fn sample_position_arc(&self) -> Arc<AtomicU64> {
@@ -1438,6 +1446,9 @@ struct StreamCallback {
     playing: Arc<AtomicBool>,
     renderer_playing: Arc<AtomicBool>,
     sample_position: Arc<AtomicU64>,
+    /// 循环回绕累计绝对偏移：回调上报 `consumer_abs - offset`，回绕后播放
+    /// 位置才不会永久领先/落后一个 ring。
+    loop_wrap_offset: Arc<AtomicU64>,
     duration_samples: Arc<AtomicU64>,
     renderer_duration: Arc<AtomicU64>,
     /// 录音监听缓冲（交错立体声）：输入回调 push、输出回调混入。
@@ -1449,6 +1460,8 @@ struct RendererStarted {
     handle: std::thread::JoinHandle<()>,
     /// UI 播放指示线的上限：渲染器已推入 ring 的采样位置（producer）。
     producer_sample_position: Arc<AtomicU64>,
+    /// 循环回绕累计绝对偏移（见 `RendererSharedState::loop_wrap_offset`）。
+    loop_wrap_offset: Arc<AtomicU64>,
     /// 活跃 voice 数（含 release 尾音）。
     voice_count: Arc<AtomicU64>,
     /// 已完成加载的音色库 port 数。
@@ -1497,6 +1510,7 @@ fn init_renderer(
     renderer_state.sf_progress = sf_progress;
 
     let producer_sample_position = Arc::clone(&renderer_state.producer_sample_position);
+    let loop_wrap_offset = Arc::clone(&renderer_state.loop_wrap_offset);
     let sf_loaded = Arc::clone(&renderer_state.sf_loaded);
     let sf_loading = Arc::clone(&renderer_state.sf_loading);
     let sf_total = Arc::clone(&renderer_state.sf_total);
@@ -1519,6 +1533,7 @@ fn init_renderer(
         playing,
         renderer_playing: Arc::clone(&renderer_state.playing),
         sample_position: Arc::clone(&sample_position),
+        loop_wrap_offset: Arc::clone(&renderer_state.loop_wrap_offset),
         duration_samples,
         renderer_duration: Arc::clone(&renderer_state.duration_samples),
         monitor: Arc::clone(&monitor),
@@ -1548,6 +1563,7 @@ fn init_renderer(
     Ok(RendererStarted {
         handle,
         producer_sample_position,
+        loop_wrap_offset,
         voice_count,
         sf_loaded,
         sf_loading,
@@ -1586,6 +1602,7 @@ fn build_output_stream(
         playing,
         renderer_playing,
         sample_position,
+        loop_wrap_offset,
         duration_samples,
         renderer_duration,
         monitor,
@@ -1629,7 +1646,12 @@ fn build_output_stream(
                     }
                 }
 
-                sample_position.store(consumer_sample_position, Ordering::Relaxed);
+                // 把“已消费绝对样本”换算成引擎逻辑位置（循环回绕后回退）。
+                let offset = loop_wrap_offset.load(Ordering::Acquire);
+                sample_position.store(
+                    consumer_sample_position.saturating_sub(offset),
+                    Ordering::Relaxed,
+                );
                 playing.store(renderer_playing.load(Ordering::Relaxed), Ordering::Relaxed);
                 duration_samples
                     .store(renderer_duration.load(Ordering::Relaxed), Ordering::Relaxed);
@@ -1761,6 +1783,7 @@ pub fn spawn_cpal_audio(
     let RendererStarted {
         handle: renderer_handle,
         producer_sample_position,
+        loop_wrap_offset,
         voice_count,
         sf_loaded,
         sf_loading,
@@ -1824,6 +1847,7 @@ pub fn spawn_cpal_audio(
             transport_tx,
             sample_position,
             producer_sample_position,
+            loop_wrap_offset,
             playing,
             voice_count,
             duration_samples,

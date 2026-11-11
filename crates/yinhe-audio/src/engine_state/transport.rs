@@ -107,6 +107,12 @@ impl AudioEngine {
     /// 的 chase 快照。GPU 只 seek 不重建事件表。
     pub(crate) fn rewind_to_loop_start(&mut self) {
         let start = self.loop_start_sample();
+        let end = self.loop_end_sample();
+        // 绝对位置保持连续：逻辑位置从 end 跳回 start，偏移量累加一圈长度。
+        // cpal 回调据此把“已消费绝对样本”换算成逻辑播放位置。
+        if end > start {
+            self.loop_wrap_offset = self.loop_wrap_offset.saturating_add(end - start);
+        }
         self.relocate(start, RelocateMode::Loop);
     }
 
@@ -116,6 +122,10 @@ impl AudioEngine {
 
     fn relocate(&mut self, sample: u64, mode: RelocateMode) {
         let is_seek = matches!(mode, RelocateMode::Seek);
+        if is_seek {
+            // 用户 seek/播放起点：消费位置被重新对齐到逻辑位置，偏移归零。
+            self.loop_wrap_offset = 0;
+        }
         // GPU 模式下 ChannelSet 不参与渲染，重置/清音是死路径
         //（GPU 的状态重置由事件表在 seek_pos 重建完成）。
         if self.cpu_synth_active() {

@@ -89,6 +89,9 @@ pub(crate) fn play_log(msg: &str) {
 
 pub(crate) struct RendererSharedState {
     pub(crate) producer_sample_position: Arc<AtomicU64>,
+    /// 循环回绕累计绝对偏移（`绝对 = 逻辑 + offset`）。cpal 回调用它把
+    /// 已消费绝对样本换算成逻辑播放位置。
+    pub(crate) loop_wrap_offset: Arc<AtomicU64>,
     pub(crate) playing: Arc<AtomicBool>,
     pub(crate) duration_samples: Arc<AtomicU64>,
     pub(crate) initialized: Arc<AtomicBool>,
@@ -136,6 +139,7 @@ impl RendererSharedState {
     pub(crate) fn new() -> Self {
         Self {
             producer_sample_position: Arc::new(AtomicU64::new(0)),
+            loop_wrap_offset: Arc::new(AtomicU64::new(0)),
             playing: Arc::new(AtomicBool::new(false)),
             duration_samples: Arc::new(AtomicU64::new(0)),
             initialized: Arc::new(AtomicBool::new(false)),
@@ -475,6 +479,10 @@ impl AudioRenderer {
         self.state
             .clear_ring_write
             .store(self.ring.write_position(), Ordering::Release);
+        // 消费位置被重定位到逻辑位置 base：回绕偏移必须归零，否则 cpal 回调
+        // 上报的逻辑位置会整体偏移一个循环长度。
+        self.engine.loop_wrap_offset = 0;
+        self.state.loop_wrap_offset.store(0, Ordering::Release);
         self.state.reset_generation.fetch_add(1, Ordering::AcqRel);
     }
 
@@ -494,6 +502,9 @@ impl AudioRenderer {
         self.state
             .producer_sample_position
             .store(self.engine.sample_position(), Ordering::Release);
+        self.state
+            .loop_wrap_offset
+            .store(self.engine.loop_wrap_offset, Ordering::Release);
         self.state
             .voice_count
             .store(self.engine.voice_count(), Ordering::Relaxed);

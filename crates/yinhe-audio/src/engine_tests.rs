@@ -202,6 +202,15 @@ fn transport_loop_wraps_at_exact_sample() {
     engine.render(&mut out);
     assert_eq!(engine.sample_position(), 64);
     assert_eq!(engine.current_tick(), engine.sample_to_tick(64));
+    // 回绕偏移 = 一圈长度：cpal 回调据此把绝对消费位置换算回逻辑位置。
+    assert_eq!(engine.loop_wrap_offset, 24000);
+
+    // 再跑一圈：偏移继续累加，绝对位置保持单调。
+    for _ in 0..47 {
+        engine.render(&mut out);
+    }
+    assert_eq!(engine.sample_position(), 128);
+    assert_eq!(engine.loop_wrap_offset, 48000);
 }
 
 #[test]

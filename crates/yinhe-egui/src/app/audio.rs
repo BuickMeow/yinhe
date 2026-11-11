@@ -941,7 +941,16 @@ impl App {
         let interpolated_sample = interpolated_sample.min(produced as f64);
 
         let time = interpolated_sample / sr;
-        let tick = doc.data.model.tempo_map.tick_at_time(time);
+        let mut tick = doc.data.model.tempo_map.tick_at_time(time);
+        let loop_enabled = doc.edit.playback.loop_enabled();
+        // 循环回绕后，消费位置换算成的逻辑位置会短暂小于循环起点（ring 里
+        // 还有回绕前的旧音频）。钳在起点等待声音追上，避免播放头先跑到 0。
+        if loop_enabled && handle.loop_wrap_offset() > 0 {
+            let (loop_start, _) = doc.edit.playback.loop_range();
+            if tick < loop_start as f64 {
+                tick = loop_start as f64;
+            }
+        }
         // 工程末尾取「MIDI 末尾 / 循环终点 / 引擎真实时长（含音频轨）」的最大值：
         // 只看音符 tick_length 会在音频片段还没播完、或循环终点超出曲末时
         // 提前 Pause，造成尾部被截断。
@@ -952,7 +961,6 @@ impl App {
             .tempo_map
             .tick_at_time(handle.duration_samples() as f64 / sr);
         end_tick = end_tick.max(audio_end_tick);
-        let loop_enabled = doc.edit.playback.loop_enabled();
         if loop_enabled {
             end_tick = end_tick.max(doc.edit.playback.loop_range().1 as f64);
         }
