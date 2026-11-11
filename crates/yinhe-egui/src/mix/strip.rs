@@ -1128,13 +1128,18 @@ fn picker_tab_bar(app: &mut App, ui: &mut egui::Ui) {
 /// 厂家分组标题行（列表按厂家分组时的组头）。
 fn vendor_header(ui: &mut egui::Ui, vendor: &str) {
     let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 20.0), egui::Sense::hover());
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 24.0), egui::Sense::hover());
     ui.painter().text(
         egui::pos2(rect.min.x + 6.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         vendor,
-        egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT),
-        crate::theme::text_label(),
+        egui::FontId::proportional(crate::theme::SUB_TITLE_FONT),
+        crate::theme::text_primary(),
+    );
+    ui.painter().hline(
+        rect.x_range(),
+        rect.max.y - 0.5,
+        egui::Stroke::new(1.0, crate::theme::line_fg()),
     );
 }
 
@@ -1152,42 +1157,52 @@ fn picker_list(
     let mut filter = app.mix.picker_filter.clone();
     let fav_only = app.mix.picker_fav_only;
     let mut next_fav = fav_only;
-    crate::widgets::grid::two_columns_right(ui, 6.0, star_w, |cells| {
-        cells.cell(|ui| {
-            let search_resp = crate::widgets::text_input::control_text_input(
-                ui,
-                &mut filter,
-                ui.available_width().max(1.0),
-                "mix_picker_search",
-                Some(&t!("mix.search")),
-            );
-            search_resp.on_hover_text(t!("hint.mix.picker_search"));
-        });
-        cells.cell(|ui| {
-            let (icon, color) = if fav_only {
-                (
-                    egui_material_icons::icons::ICON_STAR,
-                    crate::theme::warning_gold(),
+    let search_h = crate::widgets::control::h(ui.ctx());
+    crate::widgets::grid::fixed_columns(
+        ui,
+        6.0,
+        search_h,
+        &[
+            egui_extras::Size::remainder(),
+            egui_extras::Size::exact(star_w),
+        ],
+        |cells| {
+            cells.cell(|ui| {
+                let search_resp = crate::widgets::text_input::control_text_input(
+                    ui,
+                    &mut filter,
+                    ui.available_width().max(1.0),
+                    "mix_picker_search",
+                    Some(&t!("mix.search")),
+                );
+                search_resp.on_hover_text(t!("hint.mix.picker_search"));
+            });
+            cells.cell(|ui| {
+                let (icon, color) = if fav_only {
+                    (
+                        egui_material_icons::icons::ICON_STAR,
+                        crate::theme::warning_gold(),
+                    )
+                } else {
+                    (
+                        egui_material_icons::icons::ICON_STAR.outlined(),
+                        crate::theme::text_muted(),
+                    )
+                };
+                let star_resp = crate::widgets::flat::flat_button_filled_ghost(
+                    ui,
+                    icon.rich_text().size(crate::theme::ICON_FONT).color(color),
+                    egui::vec2(star_w, crate::widgets::control::h(ui.ctx())),
+                    None,
+                    true,
                 )
-            } else {
-                (
-                    egui_material_icons::icons::ICON_STAR.outlined(),
-                    crate::theme::text_muted(),
-                )
-            };
-            let star_resp = crate::widgets::flat::flat_button_filled_ghost(
-                ui,
-                icon.rich_text().size(crate::theme::ICON_FONT).color(color),
-                egui::vec2(star_w, crate::widgets::control::h(ui.ctx())),
-                None,
-                true,
-            )
-            .on_hover_text(t!("hint.mix.picker_fav_filter"));
-            if star_resp.clicked() {
-                next_fav = !fav_only;
-            }
-        });
-    });
+                .on_hover_text(t!("hint.mix.picker_fav_filter"));
+                if star_resp.clicked() {
+                    next_fav = !fav_only;
+                }
+            });
+        },
+    );
     app.mix.picker_filter = filter;
     app.mix.picker_fav_only = next_fav;
     ui.separator();

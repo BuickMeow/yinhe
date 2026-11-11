@@ -539,38 +539,48 @@ fn show_password_prompt(
 
             ui.add_space(6.0);
             // 密码输入框 + 眼睛切换按钮：回车确认，Esc 取消
-            crate::widgets::grid::two_columns_right(ui, 4.0, 28.0, |cells| {
-                cells.cell(|ui| {
-                    let resp = ui.add(
-                        eframe::egui::TextEdit::singleline(&mut prompt.password)
-                            .password(!prompt.show_password)
-                            .hint_text(t!("dialog.archive.password_hint").as_ref())
-                            .desired_width(ui.available_width().max(1.0)),
-                    );
-                    resp.request_focus();
-                });
-                cells.cell(|ui| {
-                    // 眼睛图标：切换明文/圆点显示
-                    use egui_material_icons::icons::{ICON_VISIBILITY, ICON_VISIBILITY_OFF};
-                    let icon = if prompt.show_password {
-                        ICON_VISIBILITY_OFF
-                    } else {
-                        ICON_VISIBILITY
-                    };
-                    let icon_color = ui.visuals().text_color();
-                    let btn_resp = ui.add(
-                        eframe::egui::Button::new(
-                            eframe::egui::RichText::new(icon)
-                                .size(crate::theme::ICON_FONT_LG)
-                                .color(icon_color),
-                        )
-                        .frame(false),
-                    );
-                    if btn_resp.clicked() {
-                        prompt.show_password = !prompt.show_password;
-                    }
-                });
-            });
+            let pass_h = crate::widgets::control::h(ui.ctx());
+            crate::widgets::grid::fixed_columns(
+                ui,
+                4.0,
+                pass_h,
+                &[
+                    egui_extras::Size::remainder(),
+                    egui_extras::Size::exact(28.0),
+                ],
+                |cells| {
+                    cells.cell(|ui| {
+                        let resp = ui.add(
+                            eframe::egui::TextEdit::singleline(&mut prompt.password)
+                                .password(!prompt.show_password)
+                                .hint_text(t!("dialog.archive.password_hint").as_ref())
+                                .desired_width(ui.available_width().max(1.0)),
+                        );
+                        resp.request_focus();
+                    });
+                    cells.cell(|ui| {
+                        // 眼睛图标：切换明文/圆点显示
+                        use egui_material_icons::icons::{ICON_VISIBILITY, ICON_VISIBILITY_OFF};
+                        let icon = if prompt.show_password {
+                            ICON_VISIBILITY_OFF
+                        } else {
+                            ICON_VISIBILITY
+                        };
+                        let icon_color = ui.visuals().text_color();
+                        let btn_resp = ui.add(
+                            eframe::egui::Button::new(
+                                eframe::egui::RichText::new(icon)
+                                    .size(crate::theme::ICON_FONT_LG)
+                                    .color(icon_color),
+                            )
+                            .frame(false),
+                        );
+                        if btn_resp.clicked() {
+                            prompt.show_password = !prompt.show_password;
+                        }
+                    });
+                },
+            );
 
             password_len_cb.set(prompt.password.len());
             ui.add_space(8.0);
