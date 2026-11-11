@@ -288,82 +288,96 @@ fn param_row(
         .unwrap_or(p.default);
     let mut am_clicked = false;
 
-    ui.horizontal(|ui| {
-        let label = if p.module.is_empty() {
-            p.name.clone()
-        } else {
-            format!("{}/{}", p.module, p.name)
-        };
-        ui.add_sized(
-            [170.0, row_h],
-            egui::Label::new(
-                egui::RichText::new(label)
-                    .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::text_primary()),
-            )
-            .truncate(),
-        );
-        let mut value = live;
-        let slider = ui
-            .add_enabled_ui(!p.read_only, |ui| {
-                crate::widgets::slider::control_slider(
-                    ui,
-                    &mut value,
-                    p.min..=p.max,
-                    ui.available_width().min(180.0),
-                    None,
-                    false,
+    let label = if p.module.is_empty() {
+        p.name.clone()
+    } else {
+        format!("{}/{}", p.module, p.name)
+    };
+    let mut sizes = vec![
+        egui_extras::Size::exact(170.0),
+        egui_extras::Size::remainder(),
+        egui_extras::Size::exact(90.0),
+    ];
+    if am_exists.is_some() {
+        sizes.push(egui_extras::Size::exact(24.0));
+    }
+    crate::widgets::grid::fixed_columns(ui, 4.0, row_h, &sizes, |cells| {
+        cells.cell(|ui| {
+            ui.add_sized(
+                [ui.available_width(), row_h],
+                egui::Label::new(
+                    egui::RichText::new(&label)
+                        .size(crate::theme::SMALL_FONT)
+                        .color(crate::theme::text_primary()),
                 )
-            })
-            .inner;
-        crate::widgets::hint::hover(ui.ctx(), &slider, t!("hint.mix.param_slider"));
-        if slider.changed() {
-            editing.insert(p.id, value);
-            // ParamQueue 统一归一化语义（与 AM 曲线一致）；按参数范围换算。
-            let norm = if p.max > p.min {
-                (value - p.min) / (p.max - p.min)
-            } else {
-                value
-            };
-            queue.push(p.id, norm.clamp(0.0, 1.0));
-            *wrote_params = true;
-        }
-        // 松手：丢弃本地值，下一帧从插件读回。
-        if slider.drag_stopped() || (slider.lost_focus() && !slider.has_focus()) {
-            editing.remove(&p.id);
-        }
-        let text = instance
-            .value_to_text(p.id, live)
-            .unwrap_or_else(|| format!("{live:.3}"));
-        ui.add_sized(
-            [90.0, row_h],
-            egui::Label::new(
-                egui::RichText::new(text)
-                    .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::text_secondary()),
-            )
-            .truncate(),
-        );
-        // 「显示自动化」：创建/定位该参数的 AM lane（已有 lane 时高亮）。
-        if let Some(exists) = am_exists {
-            let icon = egui_material_icons::icons::ICON_TIMELINE;
-            let color = if exists {
-                crate::theme::accent_active()
-            } else {
-                crate::theme::text_muted()
-            };
-            let resp = ui.add(
-                egui::Button::new(
-                    egui::RichText::new(icon.codepoint)
-                        .font(egui::FontId::new(14.0, icon.font_family()))
-                        .color(color),
-                )
-                .frame(false),
+                .truncate(),
             );
-            crate::widgets::hint::hover(ui.ctx(), &resp, t!("dock.show_automation"));
-            if resp.clicked() {
-                am_clicked = true;
+        });
+        cells.cell(|ui| {
+            let mut value = live;
+            let slider = ui
+                .add_enabled_ui(!p.read_only, |ui| {
+                    crate::widgets::slider::control_slider(
+                        ui,
+                        &mut value,
+                        p.min..=p.max,
+                        ui.available_width().max(1.0),
+                        None,
+                        false,
+                    )
+                })
+                .inner;
+            crate::widgets::hint::hover(ui.ctx(), &slider, t!("hint.mix.param_slider"));
+            if slider.changed() {
+                editing.insert(p.id, value);
+                let norm = if p.max > p.min {
+                    (value - p.min) / (p.max - p.min)
+                } else {
+                    value
+                };
+                queue.push(p.id, norm.clamp(0.0, 1.0));
+                *wrote_params = true;
             }
+            if slider.drag_stopped() || (slider.lost_focus() && !slider.has_focus()) {
+                editing.remove(&p.id);
+            }
+        });
+        cells.cell(|ui| {
+            let text = instance
+                .value_to_text(p.id, live)
+                .unwrap_or_else(|| format!("{live:.3}"));
+            ui.add_sized(
+                [ui.available_width(), row_h],
+                egui::Label::new(
+                    egui::RichText::new(text)
+                        .size(crate::theme::SMALL_FONT)
+                        .color(crate::theme::text_secondary()),
+                )
+                .truncate(),
+            );
+        });
+        if am_exists.is_some() {
+            cells.cell(|ui| {
+                let exists = am_exists == Some(true);
+                let icon = egui_material_icons::icons::ICON_TIMELINE;
+                let color = if exists {
+                    crate::theme::accent_active()
+                } else {
+                    crate::theme::text_muted()
+                };
+                let resp = ui.add(
+                    egui::Button::new(
+                        egui::RichText::new(icon.codepoint)
+                            .font(egui::FontId::new(14.0, icon.font_family()))
+                            .color(color),
+                    )
+                    .frame(false),
+                );
+                crate::widgets::hint::hover(ui.ctx(), &resp, t!("dock.show_automation"));
+                if resp.clicked() {
+                    am_clicked = true;
+                }
+            });
         }
     });
     am_clicked

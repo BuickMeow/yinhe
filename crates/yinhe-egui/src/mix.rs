@@ -606,20 +606,6 @@ pub(crate) fn update_track_meters(app: &mut App, dt: f32) {
     }
 }
 
-/// 混音主体几何：通道区 + 主输出区。主输出贴面板右缘（无右边距），
-/// 与通道区**无间隙**（边距彻底去掉：通道条与主输出直接相邻，靠主输出
-/// 自身的左描边分隔；滚动条把手浮动在通道区自身的视口右缘内）。
-pub(crate) fn body_layout(body: egui::Rect) -> (egui::Rect, egui::Rect) {
-    let master_w = strip::STRIP_WIDTH;
-    let mut channels_rect = body;
-    channels_rect.max.x = (body.max.x - master_w).max(body.min.x);
-    let master_rect = egui::Rect::from_min_max(
-        egui::pos2((body.max.x - master_w).max(body.min.x), body.min.y),
-        body.max,
-    );
-    (channels_rect, master_rect)
-}
-
 /// MIX 模式主入口（layout.rs 在 Mix 模式且已打开工程时调用）。
 pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
     let Some(idx) = app.workspace.active_doc else {
@@ -685,15 +671,9 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
             ))
             .layout(egui::Layout::top_down(egui::Align::LEFT)),
         |ui| {
-            // 主体：左侧横向滚动通道条 + 右侧固定 Master（贴面板右缘，无右边距）。
-            let body = ui.available_rect_before_wrap();
-            let (channels_rect, master_rect) = body_layout(body);
-
-            ui.scope_builder(
-                egui::UiBuilder::new()
-                    .max_rect(channels_rect)
-                    .layout(egui::Layout::left_to_right(egui::Align::TOP)),
-                |ui| {
+            // 主体：左剩余（横向滚动通道条）+ 右固定 Master（贴面板右缘，无间隙）。
+            crate::widgets::grid::two_columns_right(ui, 0.0, strip::STRIP_WIDTH, |cells| {
+                cells.cell(|ui| {
                     egui::ScrollArea::horizontal()
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
@@ -784,30 +764,23 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                                 }
                             });
                         });
-                },
-            );
-
-            // Master 条（分隔由 master 通道条自身的描边提供，无需再画 vline）。
-            // 电平弹道已由 main_loop 每帧更新一次（master_display），此处只读取。
-            let (master_level, master_hold) = app.mix.master_display;
-            ui.scope_builder(
-                egui::UiBuilder::new()
-                    .max_rect(master_rect)
-                    .layout(egui::Layout::top_down(egui::Align::Center)),
-                |ui| {
-                    // 极窄面板时条宽可能超出 master_rect：裁到区域，防画到通道区/工具栏
-                    ui.set_clip_rect(master_rect.intersect(ui.clip_rect()));
+                });
+                cells.cell(|ui| {
+                    // Master 条（分隔由 master 通道条自身的描边提供）。
+                    let (master_level, master_hold) = app.mix.master_display;
+                    let rect = ui.max_rect();
+                    ui.set_clip_rect(rect.intersect(ui.clip_rect()));
                     strip::master_strip(
                         app,
                         ui,
                         idx,
                         master_level,
                         master_hold,
-                        master_rect.height(),
+                        rect.height(),
                         &mut actions,
-                    )
-                },
-            );
+                    );
+                });
+            });
         },
     );
 
@@ -1181,8 +1154,19 @@ mod tests {
     /// 常规宽度下主输出条宽度 = 通道条宽度（不溢出、不居中留缝）。
     #[test]
     fn master_rect_is_flush_with_panel_right() {
+        let ctx = egui::Context::default();
         let body = egui::Rect::from_min_max(egui::pos2(44.0, 100.0), egui::pos2(1440.0, 700.0));
-        let (channels, master) = body_layout(body);
+        let mut channels = egui::Rect::NOTHING;
+        let mut master = egui::Rect::NOTHING;
+        ctx.run_ui(Default::default(), |ui| {
+            ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
+                crate::widgets::grid::two_columns_right(ui, 0.0, strip::STRIP_WIDTH, |cells| {
+                    cells.cell(|ui| channels = ui.max_rect());
+                    cells.cell(|ui| master = ui.max_rect());
+                });
+            });
+        })
+        .drop_without_applying_deltas();
         assert_eq!(master.max.x, body.max.x, "主输出应贴右缘");
         assert_eq!(master.width(), strip::STRIP_WIDTH, "条宽 = 通道条宽");
         assert_eq!(master.min.x, channels.max.x, "与通道区无间隙");

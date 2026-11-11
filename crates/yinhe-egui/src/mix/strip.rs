@@ -173,7 +173,7 @@ pub(crate) fn channel_strip(
         ui,
         idx,
         rect,
-        crate::chrome::dock_bar::DockContext::Midi(channel),
+        crate::chrome::device_chain::DockContext::Midi(channel),
         ("mix_header_dock_midi", channel),
     );
 }
@@ -232,7 +232,7 @@ pub(crate) fn audio_strip(
         ui,
         idx,
         rect,
-        crate::chrome::dock_bar::DockContext::Audio(channel),
+        crate::chrome::device_chain::DockContext::Audio(channel),
         ("mix_header_dock_audio", channel),
     );
 }
@@ -354,7 +354,7 @@ fn header_double_click_opens_dock(
     ui: &egui::Ui,
     idx: usize,
     rect: egui::Rect,
-    context: crate::chrome::dock_bar::DockContext,
+    context: crate::chrome::device_chain::DockContext,
     id_salt: impl std::hash::Hash + std::fmt::Debug,
 ) {
     let header = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), HEADER_H));
@@ -728,48 +728,53 @@ fn strip_controls(
 ) -> Option<StripParams> {
     let avail = ui.available_height();
     let module_h = METER_MODULE_H.min(avail).max(1.0);
-    if avail > module_h {
-        ui.add_space(avail - module_h);
-    }
-    section(
-        ui,
-        module_h,
-        egui::Layout::left_to_right(egui::Align::TOP),
-        |ui| {
-            let mut p = *params;
-            let mut changed = false;
-            if let Some(g) = gain_meter(ui, p.gain, level, hold, module_h) {
-                p.gain = g;
-                changed = true;
-            }
-            ui.add_space(GAP);
-            ui.allocate_ui_with_layout(
-                egui::vec2(CONTROLS_W, module_h),
-                egui::Layout::top_down(egui::Align::Center),
+    let mut out = None;
+    // 上方剩余空白 + 底部固定模块：与 master_controls 共用 content_footer。
+    crate::widgets::grid::content_footer(ui, 0.0, module_h, |cells| {
+        cells.cell(|_| {});
+        cells.cell(|ui| {
+            out = section(
+                ui,
+                module_h,
+                egui::Layout::left_to_right(egui::Align::TOP),
                 |ui| {
-                    if let Some(g) = db_row(ui, p.gain, CONTROLS_W) {
+                    let mut p = *params;
+                    let mut changed = false;
+                    if let Some(g) = gain_meter(ui, p.gain, level, hold, module_h) {
                         p.gain = g;
                         changed = true;
                     }
-                    if show_pan {
-                        ui.add_space(GAP);
-                        if let Some(pan) = pan_knob(ui, p.pan, CONTROLS_W) {
-                            p.pan = pan;
-                            changed = true;
-                        }
-                    }
-                    if show_ms {
-                        ui.add_space(GAP);
-                        if let Some(next) = ms_column(ui, &p, CONTROLS_W) {
-                            p = next;
-                            changed = true;
-                        }
-                    }
+                    ui.add_space(GAP);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(CONTROLS_W, module_h),
+                        egui::Layout::top_down(egui::Align::Center),
+                        |ui| {
+                            if let Some(g) = db_row(ui, p.gain, CONTROLS_W) {
+                                p.gain = g;
+                                changed = true;
+                            }
+                            if show_pan {
+                                ui.add_space(GAP);
+                                if let Some(pan) = pan_knob(ui, p.pan, CONTROLS_W) {
+                                    p.pan = pan;
+                                    changed = true;
+                                }
+                            }
+                            if show_ms {
+                                ui.add_space(GAP);
+                                if let Some(next) = ms_column(ui, &p, CONTROLS_W) {
+                                    p = next;
+                                    changed = true;
+                                }
+                            }
+                        },
+                    );
+                    changed.then_some(p)
                 },
             );
-            changed.then_some(p)
-        },
-    )
+        });
+    });
+    out
 }
 
 /// 主输出：只有电平表 + dB 读数，固定高度模块。
@@ -781,34 +786,38 @@ fn master_controls(
 ) -> Option<f32> {
     let avail = ui.available_height();
     let module_h = METER_MODULE_H.min(avail).max(1.0);
-    if avail > module_h {
-        ui.add_space(avail - module_h);
-    }
-    section(
-        ui,
-        module_h,
-        egui::Layout::left_to_right(egui::Align::TOP),
-        |ui| {
-            let mut g = gain;
-            let mut changed = false;
-            if let Some(v) = gain_meter(ui, g, level, hold, module_h) {
-                g = v;
-                changed = true;
-            }
-            ui.add_space(GAP);
-            ui.allocate_ui_with_layout(
-                egui::vec2(CONTROLS_W, module_h),
-                egui::Layout::top_down(egui::Align::Center),
+    let mut out = None;
+    crate::widgets::grid::content_footer(ui, 0.0, module_h, |cells| {
+        cells.cell(|_| {});
+        cells.cell(|ui| {
+            out = section(
+                ui,
+                module_h,
+                egui::Layout::left_to_right(egui::Align::TOP),
                 |ui| {
-                    if let Some(v) = db_row(ui, g, CONTROLS_W) {
+                    let mut g = gain;
+                    let mut changed = false;
+                    if let Some(v) = gain_meter(ui, g, level, hold, module_h) {
                         g = v;
                         changed = true;
                     }
+                    ui.add_space(GAP);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(CONTROLS_W, module_h),
+                        egui::Layout::top_down(egui::Align::Center),
+                        |ui| {
+                            if let Some(v) = db_row(ui, g, CONTROLS_W) {
+                                g = v;
+                                changed = true;
+                            }
+                        },
+                    );
+                    changed.then_some(g)
                 },
             );
-            changed.then_some(g)
-        },
-    )
+        });
+    });
+    out
 }
 
 /// 发送面板（某源通道对各总线的发送量 / 推子前推子后）。
@@ -1139,41 +1148,48 @@ fn picker_list(
 ) {
     // 列宽由外部 three_columns 分配，这里直接使用当前 cell。
     // 搜索行：自绘输入框 + 星标筛选开关（点亮 = 只看收藏）。
-    ui.horizontal(|ui| {
-        let star_w = 26.0;
-        let input_w = (ui.available_width() - star_w - 6.0).max(80.0);
-        let search_resp = crate::widgets::text_input::control_text_input(
-            ui,
-            &mut app.mix.picker_filter,
-            input_w,
-            "mix_picker_search",
-            Some(&t!("mix.search")),
-        );
-        search_resp.on_hover_text(t!("hint.mix.picker_search"));
-        let fav_only = app.mix.picker_fav_only;
-        let (icon, color) = if fav_only {
-            (
-                egui_material_icons::icons::ICON_STAR,
-                crate::theme::warning_gold(),
+    let star_w = 26.0;
+    let mut filter = app.mix.picker_filter.clone();
+    let fav_only = app.mix.picker_fav_only;
+    let mut next_fav = fav_only;
+    crate::widgets::grid::two_columns_right(ui, 6.0, star_w, |cells| {
+        cells.cell(|ui| {
+            let search_resp = crate::widgets::text_input::control_text_input(
+                ui,
+                &mut filter,
+                ui.available_width().max(1.0),
+                "mix_picker_search",
+                Some(&t!("mix.search")),
+            );
+            search_resp.on_hover_text(t!("hint.mix.picker_search"));
+        });
+        cells.cell(|ui| {
+            let (icon, color) = if fav_only {
+                (
+                    egui_material_icons::icons::ICON_STAR,
+                    crate::theme::warning_gold(),
+                )
+            } else {
+                (
+                    egui_material_icons::icons::ICON_STAR.outlined(),
+                    crate::theme::text_muted(),
+                )
+            };
+            let star_resp = crate::widgets::flat::flat_button_filled_ghost(
+                ui,
+                icon.rich_text().size(crate::theme::ICON_FONT).color(color),
+                egui::vec2(star_w, crate::widgets::control::h(ui.ctx())),
+                None,
+                true,
             )
-        } else {
-            (
-                egui_material_icons::icons::ICON_STAR.outlined(),
-                crate::theme::text_muted(),
-            )
-        };
-        let star_resp = crate::widgets::flat::flat_button_filled_ghost(
-            ui,
-            icon.rich_text().size(crate::theme::ICON_FONT).color(color),
-            egui::vec2(star_w, crate::widgets::control::h(ui.ctx())),
-            None,
-            true,
-        )
-        .on_hover_text(t!("hint.mix.picker_fav_filter"));
-        if star_resp.clicked() {
-            app.mix.picker_fav_only = !fav_only;
-        }
+            .on_hover_text(t!("hint.mix.picker_fav_filter"));
+            if star_resp.clicked() {
+                next_fav = !fav_only;
+            }
+        });
     });
+    app.mix.picker_filter = filter;
+    app.mix.picker_fav_only = next_fav;
     ui.separator();
     let filter = app.mix.picker_filter.to_lowercase();
     let favorites = app.audio_settings.favorite_plugins.clone();
@@ -1264,7 +1280,7 @@ fn picker_list(
 
 /// 右侧信息面板：选中插件的名称/厂商/格式/路径 + 收藏 star 开关。
 fn picker_info(app: &mut App, ui: &mut egui::Ui) {
-    let info_w = 190.0;
+    let info_w = ui.available_width().max(1.0);
     ui.allocate_ui_with_layout(
         egui::vec2(info_w, ui.available_height()),
         egui::Layout::top_down(egui::Align::LEFT),
