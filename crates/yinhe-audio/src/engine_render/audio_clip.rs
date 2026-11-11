@@ -151,7 +151,7 @@ impl AudioClipRenderer<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::cubic_sample;
+    use super::*;
 
     #[test]
     fn cubic_hits_integer_positions_exactly() {
@@ -173,5 +173,81 @@ mod tests {
         let buf = [0.0f32, 0.5, 1.0];
         assert!((cubic_sample(&buf, -10.0) - 0.0).abs() < 1e-5);
         assert!((cubic_sample(&buf, 99.0) - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn tempo_change_stretches_clip_end() {
+        use std::collections::HashMap;
+        use yinhe_core::{AudioClip, TrackData, TrackKind, YinModel};
+        use yinhe_mixer::MixerGraph;
+
+        let sr = 48_000u32;
+        let source_frames = (sr as usize) * 2;
+        let left: Arc<[f32]> = Arc::from(vec![1.0f32; source_frames]);
+        let right = Arc::clone(&left);
+        let decoded = Arc::new(DecodedAudio {
+            sample_rate: sr,
+            frames: source_frames,
+            left: Arc::clone(&left),
+            right,
+            peaks: crate::audio_source::WavePeaks::build(&left, &left),
+        });
+        let sources = HashMap::from([("s".to_string(), decoded)]);
+
+        let mut model = YinModel::default();
+        let mut track = TrackData::new(0, 0);
+        track.kind = TrackKind::Audio;
+        track.audio_channel = Some(0);
+        track.audio_clips.push(AudioClip {
+            id: 1,
+            source: "s".into(),
+            start_seconds: 0.0,
+            offset_seconds: 0.0,
+            duration_seconds: 2.0,
+            gain: 1.0,
+            fade_in_seconds: 0.0,
+            fade_out_seconds: 0.0,
+            reversed: false,
+            start_beat: None,
+            warp: None,
+        });
+        model.tracks.push(Arc::new(track));
+        model.rebuild_tempo_map(); // 120 BPM：2s = 4 beats
+
+        // 240 BPM：clip 缩成 1s。
+        Arc::make_mut(&mut model.conductor)
+            .tempo
+            .events
+            .push(yinhe_types::AutomationEvent {
+                id: 0,
+                tick: 0,
+                value: 240.0,
+                shape: yinhe_types::SegmentShape::Step,
+            });
+        model.rebuild_tempo_map();
+        assert!((model.tracks[0].audio_clips[0].duration_seconds - 1.0).abs() < 1e-6);
+
+        let layout = ChannelLayout::from_model(&model);
+        let audio_model = AudioModel {
+            track_channels: vec![0],
+            track_banks: vec![Vec::new()],
+            clip_fades: vec![vec![(0.0, 0.0)]],
+        };
+        let mut mixer = MixerGraph::new(64);
+        mixer.resize(layout.compacted_channels() as usize, 64, &[]);
+        let mut renderer = AudioClipRenderer {
+            model: &model,
+            audio_model: &audio_model,
+            sources: &sources,
+            mixer: &mut mixer,
+            layout: &layout,
+            skip_track: &[],
+            sample_rate: sr as f64,
+        };
+        // 在 1.0s 处：240 BPM 下 clip 已结束，不应再出声。
+        renderer.render_block(sr as u64, 0, 64);
+        let buf = mixer.channel_buffers_mut(0).unwrap();
+        let peak = buf.left.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        assert!(peak < 1e-6, "clip 结束后不应继续输出，peak={peak}");
     }
 }
