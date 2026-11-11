@@ -84,6 +84,11 @@ pub(crate) struct AudioEngine {
     /// seek/load 时由 sample→tick 初始化）。事件比较全在 tick 域。
     pub(crate) current_tick: u32,
     pub(crate) playing: bool,
+    /// 暂停/停止时的**输入侧**淡出：剩余帧数（0 = 无）。
+    /// 淡的是喂给 insert 链之前的干声，效果器尾音不会被一起淡掉。
+    pub(crate) pause_fade_remaining: usize,
+    /// 本次淡出的总帧数（用于计算线性增益）。
+    pub(crate) pause_fade_total: usize,
     pub(crate) duration_samples: u64,
 
     pub(crate) note_cursor: [usize; KEY_COUNT],
@@ -259,6 +264,8 @@ impl AudioEngine {
                 max_voices: crate::DEFAULT_MAX_VOICES,
                 current_tick: 0,
                 playing: false,
+                pause_fade_remaining: 0,
+                pause_fade_total: 0,
                 duration_samples: 0,
                 note_cursor: [0; KEY_COUNT],
                 yin_model: None,
@@ -332,6 +339,12 @@ impl AudioEngine {
 
     pub(crate) fn playing(&self) -> bool {
         self.playing
+    }
+
+    /// 设置暂停/停止前的输入侧淡出帧数（由渲染线程在 pause 前调用）。
+    pub(crate) fn set_pause_fade_out(&mut self, frames: usize) {
+        self.pause_fade_remaining = frames;
+        self.pause_fade_total = frames.max(1);
     }
 
     /// 每轨力度表共享读数端（句柄 clone 用）。
@@ -494,6 +507,7 @@ impl AudioEngine {
                 self.playing = false;
                 self.seek_to(0);
             }
+            AudioCommand::StopTransport => self.stop_transport(),
             AudioCommand::Seek { sample } => self.seek_to(sample),
             AudioCommand::SetLoop {
                 enabled,

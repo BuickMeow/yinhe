@@ -6266,3 +6266,68 @@ fn zero_sample_loop_does_not_spin() {
     engine.render(&mut out);
     assert_eq!(engine.sample_position, 512, "零 sample 循环必须照常前进");
 }
+
+/// 测试用 insert：持续输出一个按样本衰减的"尾音"，忽略输入。
+struct TailInsert {
+    value: f32,
+}
+
+impl yinhe_mixer::InsertProcessor for TailInsert {
+    fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
+        for i in 0..left.len().min(right.len()) {
+            left[i] += self.value;
+            right[i] += self.value;
+            self.value *= 0.999;
+        }
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+        self
+    }
+}
+
+fn tail_peak(engine: &mut AudioEngine) -> f32 {
+    let mut buf = vec![0.0f32; 512 * 2];
+    engine.render_tail(&mut buf);
+    buf.iter().fold(0.0_f32, |m, s| m.max(s.abs()))
+}
+
+/// 暂停后 insert 尾音仍由 render_tail 输出，且不推进走带。
+#[test]
+fn pause_keeps_insert_tail_and_transport_frozen() {
+    let model = make_model_with_notes(vec![(60, 0, 480, 100, 0)]);
+    let model = Arc::new(model);
+    let mut engine = AudioEngine::new(48000, ChannelLayout::from_mask(vec![true; 16]));
+    engine.load_model(&model);
+    engine.insert_add(
+        crate::spawn::InsertTarget::Channel(0),
+        0,
+        Box::new(TailInsert { value: 0.5 }),
+    );
+
+    let pos = engine.sample_position();
+    engine.handle_command(crate::spawn::AudioCommand::Pause);
+    let peak = tail_peak(&mut engine);
+
+    assert!(peak > 0.01, "暂停后应继续输出 insert 尾音，peak={peak}");
+    assert_eq!(engine.sample_position(), pos, "尾音渲染不得推进走带");
+}
+
+/// Stop 复位走带到 0，但不 reset insert，尾音继续。
+#[test]
+fn stop_keeps_insert_tail() {
+    let model = make_model_with_notes(vec![(60, 0, 480, 100, 0)]);
+    let model = Arc::new(model);
+    let mut engine = AudioEngine::new(48000, ChannelLayout::from_mask(vec![true; 16]));
+    engine.load_model(&model);
+    engine.insert_add(
+        crate::spawn::InsertTarget::Channel(0),
+        0,
+        Box::new(TailInsert { value: 0.5 }),
+    );
+
+    engine.handle_command(crate::spawn::AudioCommand::StopTransport);
+    assert_eq!(engine.sample_position(), 0, "Stop 应回到 0");
+    let peak = tail_peak(&mut engine);
+    assert!(peak > 0.01, "Stop 后应继续输出 insert 尾音，peak={peak}");
+}

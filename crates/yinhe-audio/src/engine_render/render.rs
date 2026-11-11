@@ -71,6 +71,9 @@ impl AudioEngine {
         self.inject_preview(frames);
         // 内置音源通道处理段（CC7/10/11/71/74）在混音台 insert 链之前生效。
         self.render_channel_dsp(frames);
+        // 暂停/停止的淡出作用在**干声输入**（insert 链之前）：效果器尾音
+        // 不会被一起淡掉，之后可继续自然衰减。
+        self.apply_pause_fade_out(frames);
 
         let (master_l, master_r) = self.mixer.process();
         write_master(output, master_l, master_r);
@@ -288,6 +291,55 @@ impl AudioEngine {
                 cb.right[..n].fill(0.0);
             }
         }
+    }
+
+    /// 暂停/停止前把干声输入线性淡出（效果器状态保留，尾音继续）。
+    fn apply_pause_fade_out(&mut self, frames: usize) {
+        if self.pause_fade_remaining == 0 {
+            return;
+        }
+        let total = self.pause_fade_total.max(1) as f32;
+        let mut remaining = self.pause_fade_remaining;
+        for ch in 0..self.mixer.channel_count() {
+            let Some(cb) = self.mixer.channel_buffers_mut(ch) else {
+                continue;
+            };
+            let n = frames.min(cb.left.len()).min(cb.right.len());
+            for f in 0..n {
+                let g = if remaining > 0 {
+                    remaining -= 1;
+                    remaining as f32 / total
+                } else {
+                    0.0
+                };
+                cb.left[f] *= g;
+                cb.right[f] *= g;
+            }
+        }
+        self.pause_fade_remaining = remaining;
+    }
+
+    /// 停止/暂停后的尾音渲染：不推进走带、不派发音符/音频，只让混音台
+    /// （通道 DSP / insert / send / bus / master）把已有状态自然衰减完。
+    pub(crate) fn render_tail(&mut self, output: &mut [f32]) {
+        let frames = output.len() / STEREO_CHANNELS;
+        if frames == 0 {
+            output.fill(0.0);
+            return;
+        }
+        if self.mixer.frames() != frames {
+            let strips = self.dense_strip_params();
+            let count = self.mixer.channel_count();
+            self.mixer.resize(count, frames, &strips);
+            self.channel_set.resize_scratches(frames);
+        }
+        self.block_start_sample = self.sample_position;
+        self.mixer.clear_channel_buffers();
+        // 通道 DSP 的滤波历史在空输入下继续衰减；insert/bus/master 尾音同理。
+        self.render_channel_dsp(frames);
+        let (master_l, master_r) = self.mixer.process();
+        write_master(output, master_l, master_r);
+        self.publish_track_levels();
     }
 
     pub(crate) fn render_idle(&mut self, output: &mut [f32]) {

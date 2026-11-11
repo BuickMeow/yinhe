@@ -77,7 +77,10 @@ pub enum AudioCommand {
     },
     Resume,
     Pause,
+    /// 硬停止：停走带 + 复位到 0，并重置混音/插件状态（加载、导出、teardown 用）。
     Stop,
+    /// 用户停止按钮：停走带 + 复位到 0，但保留 insert/DSP 状态，让尾音自然衰减。
+    StopTransport,
     Seek {
         sample: u64,
     },
@@ -424,6 +427,7 @@ impl AudioCommand {
             AudioCommand::Resume => ("Resume", true),
             AudioCommand::Pause => ("Pause", true),
             AudioCommand::Stop => ("Stop", true),
+            AudioCommand::StopTransport => ("StopTransport", true),
             AudioCommand::Seek { .. } => ("Seek", true),
             AudioCommand::SetLoop { .. } => ("SetLoop", true),
             AudioCommand::LoadModel { .. } => ("LoadModel", true),
@@ -1939,6 +1943,7 @@ mod tests {
             (AudioCommand::Resume, "Resume", true),
             (AudioCommand::Pause, "Pause", true),
             (AudioCommand::Stop, "Stop", true),
+            (AudioCommand::StopTransport, "StopTransport", true),
             (AudioCommand::Seek { sample: 0 }, "Seek", true),
             (
                 AudioCommand::LoadModel { model: model() },

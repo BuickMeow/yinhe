@@ -198,6 +198,8 @@ impl AudioRenderer {
                 if self.export.is_some() {
                     // 导出中忽略播放控制（取消用导出卡的停止按钮）。
                 } else if self.engine.model_loaded() {
+                    self.tailing = false;
+                    self.tail_silent_blocks = 0;
                     let t0 = Instant::now();
                     self.engine.stop_preview_all();
                     self.engine
@@ -244,6 +246,7 @@ impl AudioRenderer {
                     self.request_chase(self.engine.current_tick());
                     // 区间外开启循环会 seek 到起点：与显式 seek 一样做 10ms 淡入。
                     self.fade_in_frames = super::pause_fade_frames(self.engine.sample_rate);
+                    self.tailing = false;
                 }
                 self.request_loop_chase();
             }
@@ -251,6 +254,8 @@ impl AudioRenderer {
                 if self.export.is_some() {
                     // 导出中忽略 seek。
                 } else {
+                    self.tailing = false;
+                    self.tail_silent_blocks = 0;
                     self.engine.stop_preview_all();
                     self.engine.handle_command(AudioCommand::Seek { sample });
                     // 显式 seek：ring 清空锚定引擎当前（=seek 后）位置。
@@ -271,6 +276,23 @@ impl AudioRenderer {
                     self.clear_buffered_audio(self.engine.sample_position());
                     // 方案 B：Stop 也 seek 到 0，需要 chase 恢复初始 channel state
                     self.request_chase(0);
+                    self.tailing = false;
+                    self.tail_silent_blocks = 0;
+                }
+            }
+            AudioCommand::StopTransport => {
+                if self.export.is_some() {
+                    // 导出中忽略停止（取消用导出卡的停止按钮）。
+                } else {
+                    self.engine.stop_preview_all();
+                    // 先做输入侧淡出，再把走带复位到 0；insert 状态保留，
+                    // 尾音在 ring 里淡出块之后继续自然衰减。
+                    self.render_pause_fade_out();
+                    self.engine.handle_command(AudioCommand::StopTransport);
+                    // 方案 B：停止也 seek 到 0，需要 chase 恢复初始 channel state
+                    self.request_chase(0);
+                    self.tailing = true;
+                    self.tail_silent_blocks = 0;
                 }
             }
             AudioCommand::SetAutomationDensity { density } => {
@@ -379,15 +401,19 @@ impl AudioRenderer {
                 );
             }
             AudioCommand::Pause => {
-                // 先渲染 10ms 淡出推入 ring，再停渲染：否则 ring 里预渲染的
-                // 音频播完后与静音形成阶跃（暂停"滋"一下）。
+                // 先渲染 10ms 输入侧淡出推入 ring，再暂停走带；insert 尾音
+                // 继续由尾音渲染路径输出，直到自然消失。
                 self.render_pause_fade_out();
                 self.engine.handle_command(AudioCommand::Pause);
+                self.tailing = true;
+                self.tail_silent_blocks = 0;
             }
             AudioCommand::Resume => {
                 // 恢复后从静音跳到冻结相位有阶跃：第一块做 10ms 淡入。
                 self.fade_in_frames = super::pause_fade_frames(self.engine.sample_rate);
                 self.engine.handle_command(AudioCommand::Resume);
+                self.tailing = false;
+                self.tail_silent_blocks = 0;
             }
             other => self.engine.handle_command(other),
         }

@@ -45,6 +45,9 @@ const PREVIEW_TARGET_FRAMES: usize = 4096;
 #[cfg(all(not(target_os = "android"), not(target_env = "ohos")))]
 const PREVIEW_TARGET_FRAMES: usize = 512;
 const WAKE_SLEEP: Duration = Duration::from_millis(1);
+/// 尾音静音判定（约 -100 dBFS）：低于此值连续若干块即认为尾音结束。
+const TAIL_SILENCE_PEAK: f32 = 1e-5;
+const TAIL_SILENCE_BLOCKS: u32 = 4;
 
 /// 合并一批传输命令：只把**连续**的 `Seek` 折叠成最后一个（绝对位置，
 /// 中间值没有渲染意义）；其余命令保序。Play/Pause/Stop 不与 Seek 跨类合并。
@@ -174,6 +177,10 @@ struct AudioRenderer {
     scratch: Vec<f32>,
     /// 恢复/seek 后剩余淡入帧数（见 `pause_fade_frames`）。
     fade_in_frames: usize,
+    /// 暂停/停止后是否继续渲染 insert 尾音。
+    tailing: bool,
+    /// 连续静音块计数（尾音结束时停渲染）。
+    tail_silent_blocks: u32,
     /// 预览 Stop 快速路径标志（与 AudioHandle 共享）：每轮消费，通道满丢命令也必达。
     preview_stop_flag: Arc<AtomicBool>,
     /// cpal 回调已消费的采样位置（听音位置，由回调线程更新）。
@@ -250,6 +257,8 @@ impl AudioRenderer {
             shutdown,
             scratch: vec![0.0; render_chunk_frames * STEREO_CHANNELS],
             fade_in_frames: 0,
+            tailing: false,
+            tail_silent_blocks: 0,
             preview_stop_flag,
             consumer_position,
             pending_skip,
@@ -360,24 +369,30 @@ impl AudioRenderer {
         }
     }
 
-    /// 暂停前渲染一段 10ms 淡出推入 ring：pause 立即停渲染会让 ring 里
-    /// 预渲染的音频（最多 ~85ms）播完后与静音形成阶跃（"滋"）。
+    /// 暂停/停止前渲染一段 10ms **输入侧**淡出推入 ring：干声平滑收掉，
+    /// insert 链里已经积累的 delay/reverb 尾音保留下来继续衰减。
+    ///
+    /// 淡出块必须完整排进 ring（排在已预渲染的音频之后），否则暂停仍会
+    /// 在某个点硬切；音频线程会持续消费 ring，这里小睡等待空位（有上限）。
     fn render_pause_fade_out(&mut self) {
         if !self.engine.playing() || !self.state.initialized.load(Ordering::Acquire) {
             return;
         }
         let frames = pause_fade_frames(self.engine.sample_rate);
         let mut buf = vec![0.0f32; frames * STEREO_CHANNELS];
+        self.engine.set_pause_fade_out(frames);
         self.engine.render(&mut buf);
         self.limiter.limit(&mut buf);
-        let total = frames as f32;
-        for f in 0..frames {
-            let g = 1.0 - f as f32 / total;
-            let o = f * STEREO_CHANNELS;
-            buf[o] *= g;
-            buf[o + 1] *= g;
+        let deadline = Instant::now() + Duration::from_millis(250);
+        let mut offset = 0;
+        while offset < buf.len() && Instant::now() < deadline {
+            let n = self.ring.push_slice(&buf[offset..]);
+            if n == 0 {
+                thread::sleep(Duration::from_millis(1));
+            } else {
+                offset += n;
+            }
         }
-        let _ = self.ring.push_slice(&buf);
     }
 
     fn render_if_needed(&mut self) -> bool {
@@ -387,7 +402,11 @@ impl AudioRenderer {
         // 乐器插件空闲渲染：存在已安装乐器时停止状态也持续 process
         //（GUI 键盘、插件预览、插件尾音 —— 成熟 DAW 语义：乐器始终在跑）。
         let idle_instruments = !self.engine.playing() && self.engine.has_instruments();
-        if !self.engine.playing() && !previewing && !idle_instruments {
+        // 暂停/停止后的尾音渲染：继续跑混音链，直到 delay/reverb 自然消失。
+        let tailing = self.tailing
+            && !self.engine.playing()
+            && self.state.initialized.load(Ordering::Acquire);
+        if !self.engine.playing() && !previewing && !idle_instruments && !tailing {
             // 暂停时把待发的插件参数送达（否则调参数要等播放才生效）。
             // 不依赖 initialized：空工程挂乐器插件也要能立即调参数。
             self.engine.flush_pending_plugin_params();
@@ -400,7 +419,7 @@ impl AudioRenderer {
         // 预览/空闲乐器监听用更小的 ring 目标（512 帧 ≈ 10ms）：都是交互操作，
         // NoteOn 后要等 ring 里已有音频播完才出声，目标 4096 帧会带来约 85ms
         // 延迟，快速拖动/弹键盘时每个音都滞后、听感响应很慢。
-        let target_samples = if previewing || idle_instruments {
+        let target_samples = if previewing || idle_instruments || tailing {
             self.preview_target_frames * STEREO_CHANNELS
         } else {
             TARGET_BUFFER_FRAMES * STEREO_CHANNELS
@@ -429,6 +448,9 @@ impl AudioRenderer {
         } else if previewing {
             // 未播放的纯试听：预览音频走 engine 的同一 mixer + 通道 DSP。
             self.engine.render(&mut self.scratch);
+        } else if tailing {
+            // 暂停/停止尾音：不推进走带、不派发音符，只让 insert/bus/master 衰减。
+            self.engine.render_tail(&mut self.scratch);
         } else {
             // 未播放：主引擎不渲染，输出静音。
             self.scratch.fill(0.0);
@@ -452,6 +474,19 @@ impl AudioRenderer {
                 self.scratch[o + 1] *= g;
             }
             self.fade_in_frames -= n;
+        }
+
+        // 尾音结束判定：连续若干块低于静音阈值后停止渲染。
+        if self.tailing {
+            let peak = self.scratch.iter().fold(0.0_f32, |m, s| m.max(s.abs()));
+            if peak < TAIL_SILENCE_PEAK {
+                self.tail_silent_blocks += 1;
+                if self.tail_silent_blocks >= TAIL_SILENCE_BLOCKS {
+                    self.tailing = false;
+                }
+            } else {
+                self.tail_silent_blocks = 0;
+            }
         }
 
         let pushed = self.ring.push_slice(&self.scratch);

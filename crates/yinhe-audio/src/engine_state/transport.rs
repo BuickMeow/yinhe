@@ -17,6 +17,11 @@ impl AudioEngine {
     /// tick 未推进 → 音符未结束，恢复时按跨点音符重启。
     pub(crate) fn pause(&mut self) {
         self.playing = false;
+        // 丢掉尚未触发的插件 NoteOn，避免暂停/停止后它们又冒出来；
+        // 已经发声的音符在下面补 NoteOff，让 release 尾音正常收尾。
+        for inst in self.instruments.iter_mut().flatten() {
+            inst.events.clear();
+        }
         let all = std::mem::take(&mut self.active_notes);
         let mut remaining = std::collections::BinaryHeap::new();
         for std::cmp::Reverse(an) in all.into_iter() {
@@ -36,6 +41,13 @@ impl AudioEngine {
         self.active_notes = remaining;
         // 试听音同样停掉（暂停不该有预览在响）。
         self.preview_instrument_stop(None, None);
+    }
+
+    /// 停止（Stop）：先按暂停语义释放挂音，再回到 0；**不重置 insert /
+    /// 通道 DSP / 乐器处理器**，让 delay/reverb 尾音继续自然衰减。
+    pub(crate) fn stop_transport(&mut self) {
+        self.pause();
+        self.relocate(0, RelocateMode::Stop);
     }
 
     /// 恢复（Pause 后）：重启 pause 期间被杀掉的**乐器**跨点音符。
@@ -122,8 +134,10 @@ impl AudioEngine {
 
     fn relocate(&mut self, sample: u64, mode: RelocateMode) {
         let is_seek = matches!(mode, RelocateMode::Seek);
-        if is_seek {
-            // 用户 seek/播放起点：消费位置被重新对齐到逻辑位置，偏移归零。
+        let is_loop = matches!(mode, RelocateMode::Loop);
+        let is_stop = matches!(mode, RelocateMode::Stop);
+        if is_seek || is_stop {
+            // 用户 seek / Stop：消费位置被重新对齐到逻辑位置，偏移归零。
             self.loop_wrap_offset = 0;
         }
         // GPU 模式下 ChannelSet 不参与渲染，重置/清音是死路径
@@ -162,7 +176,7 @@ impl AudioEngine {
             }
             // 插件预览的 NoteOff 调度随 seek 作废（reset 已清插件挂音）。
             self.plugin_previews.clear();
-        } else {
+        } else if is_loop {
             // Loop wrap：只给插件乐器发 NoteOff，不 reset 处理器（保留尾音），
             // 并丢弃回绕前尚未处理的插件事件。
             let all = std::mem::take(&mut self.active_notes);
@@ -242,8 +256,8 @@ impl AudioEngine {
         // 由 apply_chase_result 应用。期间 channel state 是 ResetControl 后的初始值，
         // 渲染短暂静音 —— 比 renderer 线程同步阻塞几十万次 ChannelState::apply 更好。
 
-        if is_seek {
-            // GPU 后端位置跳变：置位同步标志，渲染线程渲染前统一重建事件表 + seek。
+        if is_seek || is_stop {
+            // 用户 seek / Stop：GPU 后端位置跳变，渲染前统一重建事件表 + seek。
             self.gpu_backend_dirty = true;
         } else {
             // Loop wrap：GPU 只 seek 到循环起点，不重建全量事件表。
@@ -266,4 +280,5 @@ impl AudioEngine {
 enum RelocateMode {
     Seek,
     Loop,
+    Stop,
 }

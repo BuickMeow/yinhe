@@ -831,7 +831,7 @@ impl App {
             doc.edit.playback.stop();
         }
         if stop_play {
-            handle.send(yinhe_audio::AudioCommand::Stop);
+            handle.send(yinhe_audio::AudioCommand::StopTransport);
             self.audio_state.pending_playback = false;
             doc.edit.cursor_tick = Some(0.0);
             doc.edit.playback.stop();
