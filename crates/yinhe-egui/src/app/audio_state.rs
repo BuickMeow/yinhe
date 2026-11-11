@@ -143,8 +143,9 @@ pub(crate) struct AudioState {
     pub spawn_rx: Option<
         std::sync::mpsc::Receiver<Result<(yinhe_audio::CpalAudioHandle, EngineSpawnKey), String>>,
     >,
-    /// 设备切换时保存的播放位置：spawn 完成后发送 Seek 恢复。
-    pub spawn_restore_sample: Option<u64>,
+    /// 设备切换时保存的播放位置（秒，而非 sample）：新设备协商出的采样率
+    /// 可能不同，用 sample 下标恢复会让位置按比例漂移。
+    pub spawn_restore_secs: Option<f64>,
     /// spawn 期间暂存的 layout 快照（flip 检测用），完成后写入 last_channel_layout。
     pub pending_layout: Option<ChannelLayout>,
 }
@@ -178,7 +179,7 @@ impl AudioState {
             spawn_error_doc: None,
             spawn_for_doc: None,
             spawn_rx: None,
-            spawn_restore_sample: None,
+            spawn_restore_secs: None,
             pending_layout: None,
         }
     }

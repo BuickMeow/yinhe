@@ -248,7 +248,7 @@ impl App {
 
         self.audio_state.spawn_for_doc = Some(idx);
         self.audio_state.spawn_rx = Some(rx);
-        // spawn_restore_sample 由 switch_audio_device 设置，这里不覆盖
+        // spawn_restore_secs 由 switch_audio_device 设置，这里不覆盖
         // layout_snapshot 在 spawn 完成后由 poll_audio_spawn 设置
         self.audio_state.pending_layout = Some(layout_snapshot);
     }
@@ -260,7 +260,7 @@ impl App {
             return;
         };
         let spawn_for = self.audio_state.spawn_for_doc.take();
-        let restore = self.audio_state.spawn_restore_sample.take();
+        let restore = self.audio_state.spawn_restore_secs.take();
         let pending_layout = self.audio_state.pending_layout.take();
         let result = match rx.try_recv() {
             Ok(r) => r,
@@ -268,7 +268,7 @@ impl App {
                 // 还在跑：放回状态，下帧再查
                 self.audio_state.spawn_rx = Some(rx);
                 self.audio_state.spawn_for_doc = spawn_for;
-                self.audio_state.spawn_restore_sample = restore;
+                self.audio_state.spawn_restore_secs = restore;
                 self.audio_state.pending_layout = pending_layout;
                 return;
             }
@@ -330,8 +330,9 @@ impl App {
                 let doc = &self.workspace.documents[idx];
                 self.send_initial_audio_state(&audio, doc, &port_configs);
 
-                // 设备切换：恢复播放位置，关对话框
-                if let Some(sample) = restore {
+                // 设备切换：按新引擎采样率恢复播放位置（秒 → sample），关对话框
+                if let Some(secs) = restore {
+                    let sample = (secs * audio.sample_rate as f64).round() as u64;
                     audio
                         .handle
                         .send(yinhe_audio::AudioCommand::Seek { sample });
@@ -741,14 +742,14 @@ impl App {
         // 清除之前的 spawn 失败状态，允许重试
         self.audio_state.spawn_error = None;
         self.audio_state.spawn_error_doc = None;
-        let saved_sample = self
+        let saved_secs = self
             .audio_state
             .handle
             .as_ref()
-            .map(|h| h.handle.sample_position())
-            .unwrap_or(0);
-        // 记录恢复位置：spawn 完成后由 poll_audio_spawn 发送 Seek。
-        self.audio_state.spawn_restore_sample = Some(saved_sample);
+            .map(|h| h.handle.sample_position() as f64 / h.sample_rate as f64)
+            .unwrap_or(0.0);
+        // 记录恢复位置（秒）：spawn 完成后按新采样率换算并发送 Seek。
+        self.audio_state.spawn_restore_secs = Some(saved_secs);
 
         // drop 旧 handle（teardown 会 join 渲染线程并把退回的 insert 处理器
         // 交还机架 deactivate），强制 rebuild
