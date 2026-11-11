@@ -960,7 +960,7 @@ impl eframe::App for App {
         let notif_area = ui.available_rect_before_wrap();
 
         // ── Bottom device dock（三视图通用；Panel::bottom 自动扣减可用区）──
-        crate::chrome::dock_bar::show(self, ui);
+        crate::chrome::device_chain::show(self, ui);
 
         // ── Main content area ──
         let layout = self.compute_layout(ui, right_panel_rect);

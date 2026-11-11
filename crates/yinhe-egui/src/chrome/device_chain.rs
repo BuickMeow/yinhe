@@ -1,4 +1,4 @@
-//! 三视图通用底部设备栏（Ableton 风格设备链）。
+//! 三视图通用设备链（Ableton 风格设备链）。
 //!
 //! 布局：上方设备链（乐器在最左 + 效果器链 + 「+」添加），下方选中设备的参数区。
 //! - 普通 MIDI 轨的乐器位显示 **XSynth 虚拟乐器**，参数区是音源面板：通道
@@ -151,7 +151,7 @@ const DOCK_MIN_H: f32 = 120.0;
 /// dock 内容水平内边距（等价旧 frame `inner_margin(8, 4)` 的横向值）。
 const DOCK_PAD_X: f32 = 8.0;
 
-/// 每帧绘制底部设备栏（mode_bar 之后、compute_layout 之前调用）。
+/// 每帧绘制设备链（mode_bar 之后、compute_layout 之前调用）。
 pub(crate) fn show(app: &mut App, ui: &mut egui::Ui) {
     if !app.show_bottom_dock {
         return;
@@ -210,7 +210,7 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui) {
             });
         });
 
-    // 点击设备栏以外的任何地方（卷帘/走带/混音台/其它面板）→ 取消设备选中。
+    // 点击设备链以外的任何地方（卷帘/走带/混音台/其它面板）→ 取消设备选中。
     clear_dock_selection_on_outside_click(app, ui, panel_resp.response.rect);
 }
 
@@ -479,89 +479,78 @@ fn draw_dock(ui: &mut egui::Ui, state: &DockState, search: &mut String) -> Vec<D
     let mut collapsed: std::collections::HashSet<usize> =
         ui.data_mut(|d| d.get_temp(collapse_id)).unwrap_or_default();
 
-    let body_h = ui.available_height();
     let inst_w = if collapsed.contains(&INSTRUMENT_KEY) {
         COLLAPSED_CARD_W
     } else {
         CARD_W
     };
-    ui.horizontal_top(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
-
+    crate::widgets::grid::two_columns(ui, 6.0, inst_w, |cells| {
         // 乐器卡片：永远在最左，固定显示乐器（XSynth 旋钮 / 插件入口）。
-        ui.allocate_ui_with_layout(
-            egui::vec2(inst_w, body_h),
-            egui::Layout::top_down(egui::Align::LEFT),
-            |ui| {
-                inst_area = ui.max_rect();
-                let clicked = instrument_card(
-                    ui,
-                    state.context,
-                    state.instrument_plugin.as_deref(),
-                    &state.lane_current,
-                    search,
-                    state.inst_powered,
-                    &mut knob_actions,
-                    &mut open_params,
-                    &mut toggle_instrument,
-                    &mut open_gui,
-                    &mut open_instrument_picker,
-                    state.midi_channel,
-                    &mut collapsed,
-                    selected == Some(DockDevice::Instrument),
-                );
-                if clicked {
-                    selected = Some(DockDevice::Instrument);
-                }
-            },
-        );
+        cells.cell(|ui| {
+            inst_area = ui.max_rect();
+            let clicked = instrument_card(
+                ui,
+                state.context,
+                state.instrument_plugin.as_deref(),
+                &state.lane_current,
+                search,
+                state.inst_powered,
+                &mut knob_actions,
+                &mut open_params,
+                &mut toggle_instrument,
+                &mut open_gui,
+                &mut open_instrument_picker,
+                state.midi_channel,
+                &mut collapsed,
+                selected == Some(DockDevice::Instrument),
+            );
+            if clicked {
+                selected = Some(DockDevice::Instrument);
+            }
+        });
 
         // 效果器链（横向滚动）。
-        ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), body_h),
-            egui::Layout::top_down(egui::Align::LEFT),
-            |ui| {
-                fx_area = ui.max_rect();
-                egui::ScrollArea::horizontal()
-                    .id_salt("dock_fx_scroll")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.horizontal_top(|ui| {
-                            ui.spacing_mut().item_spacing.x = 6.0;
-                            for (slot, ins) in state.inserts.iter().enumerate() {
-                                let w = if collapsed.contains(&slot) {
-                                    COLLAPSED_CARD_W
-                                } else {
-                                    CARD_W
-                                };
-                                ui.allocate_ui_with_layout(
-                                    egui::vec2(w, ui.available_height()),
-                                    egui::Layout::top_down(egui::Align::LEFT),
-                                    |ui| {
-                                        if effect_card(
-                                            ui,
-                                            slot,
-                                            ins,
-                                            selected,
-                                            &mut open_params,
-                                            &mut toggle_bypass,
-                                            &mut open_gui,
-                                            &mut remove_insert,
-                                            &mut collapsed,
-                                        ) {
-                                            selected = Some(DockDevice::Insert(slot));
-                                        }
-                                    },
-                                );
-                            }
-                            // 「+」紧贴最后一个设备。
-                            if add_column(ui, ui.available_height()).clicked() {
-                                open_picker = true;
-                            }
-                        });
+        cells.cell(|ui| {
+            fx_area = ui.max_rect();
+            egui::ScrollArea::horizontal()
+                .id_salt("dock_fx_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        for (slot, ins) in state.inserts.iter().enumerate() {
+                            let w = if collapsed.contains(&slot) {
+                                COLLAPSED_CARD_W
+                            } else {
+                                CARD_W
+                            };
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(w, ui.available_height()),
+                                egui::Layout::top_down(egui::Align::LEFT),
+                                |ui| {
+                                    if effect_card(
+                                        ui,
+                                        slot,
+                                        ins,
+                                        selected,
+                                        &mut open_params,
+                                        &mut toggle_bypass,
+                                        &mut open_gui,
+                                        &mut remove_insert,
+                                        &mut collapsed,
+                                    ) {
+                                        selected = Some(DockDevice::Insert(slot));
+                                    }
+                                },
+                            );
+                        }
+                        // 「+」紧贴最后一个设备。
+                        if add_column(ui, ui.available_height()).clicked() {
+                            open_picker = true;
+                        }
                     });
-            },
-        );
+                });
+        });
     });
     ui.data_mut(|d| d.insert_temp(collapse_id, collapsed));
 

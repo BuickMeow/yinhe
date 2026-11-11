@@ -81,11 +81,25 @@ fn animate_switch(ctx: &egui::Context, id: egui::Id, target: bool, animate: bool
     cur
 }
 
+/// 开关的标准宽度（随字体缩放），供 StripBuilder 等布局预留列宽。
+pub(crate) fn width(ctx: &egui::Context) -> f32 {
+    crate::scaling::scaled_font(ctx, 38.0)
+}
+
 /// iOS 风格开关。点击切换 `checked`，返回 `Response`（`changed()` 可判定是否切换）。
 pub fn switch(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
+    switch_impl(ui, checked, 38.0, 22.0)
+}
+
+/// 紧凑开关：用于右栏属性行等空间有限处（32×18）。
+pub(crate) fn switch_compact(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
+    switch_impl(ui, checked, 32.0, 18.0)
+}
+
+fn switch_impl(ui: &mut egui::Ui, checked: &mut bool, w: f32, h: f32) -> egui::Response {
     let ctx = ui.ctx().clone();
     let scale = |v: f32| crate::scaling::scaled_font(&ctx, v);
-    let desired = egui::vec2(scale(38.0), scale(22.0));
+    let desired = egui::vec2(scale(w), scale(h));
     let (rect, mut resp) = ui.allocate_exact_size(desired, egui::Sense::click());
     let mut toggled = false;
     if resp.clicked() {

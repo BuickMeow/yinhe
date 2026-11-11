@@ -242,7 +242,7 @@ impl App {
                         return;
                     }
                     let rect = float_content_rect(ui);
-                    crate::chrome::dock_bar::show_floating(self, idx, ui, rect);
+                    crate::chrome::device_chain::show_floating(self, idx, ui, rect);
                 });
             if close {
                 self.float_bottom_dock = false;

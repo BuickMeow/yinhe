@@ -159,13 +159,13 @@ pub struct App {
     /// 指针空闲后合并提交为一条 undo（一次拖动/一组连续操作 = 一条撤销）。
     pub(crate) mixer_undo_pending: Option<(u64, Box<yinhe_mixer::MixerParams>, String)>,
     /// dock 参数区当前选中的设备（不持久化）。
-    pub(crate) dock_selected: Option<crate::chrome::dock_bar::DockDevice>,
+    pub(crate) dock_selected: Option<crate::chrome::device_chain::DockDevice>,
     /// dock 当前通道语境（MIDI / 乐器 / 音频三套命名空间；不持久化）。
-    pub(crate) dock_context: Option<crate::chrome::dock_bar::DockContext>,
+    pub(crate) dock_context: Option<crate::chrome::device_chain::DockContext>,
     /// dock 上次跟随的选中轨（切换轨道时 dock 通道跟随）。
     pub(crate) dock_track: Option<u16>,
     /// dock 旋钮拖动会话（一次拖动 = 一条 undo，不持久化）。
-    pub(crate) knob_drag: Option<crate::chrome::dock_bar::KnobDrag>,
+    pub(crate) knob_drag: Option<crate::chrome::device_chain::KnobDrag>,
     /// dock 参数区搜索词（不持久化）。
     pub(crate) dock_param_search: String,
 
