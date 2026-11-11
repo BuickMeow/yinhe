@@ -72,19 +72,32 @@ impl App {
         let has_doc = self.workspace.active_doc.is_some();
         // 上方主视图：轨道 AR（Arrange）或通道 AR（Mix）。
         let has_arr = has_doc && (self.view_mode.show_transport() || is_mix);
+        // 底部混音台面板（仅 MIX；与 PR/dock 三选一）。
+        let has_mixer = has_doc && is_mix && self.show_mixer_panel;
+        // MIX 下混音台优先：ARRANGE 遗留的 PR 开关不应与混音台同时占同一块底部区域。
         let has_piano = self
             .view_mode
             .show_pianoroll(self.show_pianoroll_in_arrange)
-            && has_doc;
-        // 底部混音台面板（仅 MIX；与 PR/dock 三选一）。
-        let has_mixer = has_doc && is_mix && self.show_mixer_panel;
+            && has_doc
+            && !has_mixer;
         let has_bottom = has_piano || has_mixer;
 
         let total = remaining.size();
         let arr_h = if has_arr {
             if has_bottom {
                 if has_mixer {
-                    // MIX：底部混音台高度固定（px，可拖拽调整），上方通道 AR 占剩余。
+                    // MIX：混音台高度默认随总线数自动扩展（可拖拽转为手动）。
+                    if self.mix_height_auto {
+                        let bus_count = self
+                            .workspace
+                            .active_doc
+                            .map(|i| self.workspace.documents[i].mixer.buses.len())
+                            .unwrap_or(0);
+                        self.mix_height = crate::mix::auto_panel_height(bus_count);
+                    }
+                    let max_h = (total.y - crate::theme::MIN_ARR_HEIGHT - crate::theme::SPLIT_GAP)
+                        .max(crate::theme::MIN_ARR_HEIGHT);
+                    self.mix_height = self.mix_height.clamp(crate::theme::MIN_ARR_HEIGHT, max_h);
                     (total.y - self.mix_height - crate::theme::SPLIT_GAP)
                         .max(crate::theme::MIN_ARR_HEIGHT)
                 } else {

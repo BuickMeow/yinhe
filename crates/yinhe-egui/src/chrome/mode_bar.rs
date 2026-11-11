@@ -278,12 +278,17 @@ pub fn show(
                         ui.separator();
                         ui.add_space(6.0);
 
+                        // MIX 下混音台优先：ARRANGE 遗留的 PR 开关不算「正在显示」，
+                        // 否则图标亮着但点一下只是把开关关掉、界面毫无变化。
+                        let piano_visible = (*show_pianoroll_in_arrange
+                            && !(*view_mode == ViewMode::Mix && *show_mixer_panel))
+                            || *float_pianoroll;
                         let piano_resp = crate::widgets::hover::hover_button(
                             ui,
                             ICON_PIANO.codepoint,
                             egui::FontId::new(crate::theme::ICON_FONT, ICON_PIANO.font_family()),
                             crate::theme::mode_bar_text(),
-                            *show_pianoroll_in_arrange || *float_pianoroll,
+                            piano_visible,
                             t!("hint.pr_toggle").as_ref(),
                         );
                         if piano_resp.clicked() {
@@ -299,7 +304,7 @@ pub fn show(
                                     show_pianoroll_in_arrange,
                                     show_bottom_dock,
                                     show_mixer_panel,
-                                    !*show_pianoroll_in_arrange,
+                                    !piano_visible,
                                 );
                             }
                         }

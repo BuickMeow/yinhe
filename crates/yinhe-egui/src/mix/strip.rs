@@ -48,9 +48,24 @@ const SEND_ROW_H: f32 = KNOB_D;
 /// dB 读数行高（px）。
 const DB_ROW_H: f32 = 18.0;
 /// 电平表 + 右侧按钮的固定模块高度（px）。不再用剩余高度拉伸。
-const METER_MODULE_H: f32 = 168.0;
+const METER_MODULE_H: f32 = 140.0;
 /// 固定模块右侧控制列宽度：dB / 声像 / M / S。
 const CONTROLS_W: f32 = CONTENT_W - (SCALE_W + METER_W * 2.0 + METER_GAP) - GAP;
+/// 卡片上下内边距（色带下 4px、卡片底 6px）。
+const BODY_TOP_PAD: f32 = 4.0;
+const BODY_BOTTOM_PAD: f32 = 6.0;
+
+/// 发送区高度：每条总线一行，全部可见（总线多了面板随之上移）。
+fn send_height(bus_count: usize) -> f32 {
+    SEND_ROW_H * bus_count.max(1) as f32
+}
+
+/// 混音台的理想面板高度：基础布局 + 发送区按总线数扩展。
+///
+/// 这是「自动高度」模式下的高度；用户拖拽分割条后转为手动高度。
+pub(crate) fn auto_panel_height(bus_count: usize) -> f32 {
+    HEADER_H + BODY_TOP_PAD + send_height(bus_count) + GAP + METER_MODULE_H + BODY_BOTTOM_PAD
+}
 
 /// 电平表：线性增益 → 表内 y 坐标（top = 最大 dB）。
 fn gain_y(gain: f32, top: f32, bottom: f32) -> f32 {
@@ -92,8 +107,8 @@ fn strip_frame(
     );
 
     let content = egui::Rect::from_min_max(
-        egui::pos2(rect.min.x + PAD_X, header.max.y + 4.0),
-        egui::pos2(rect.max.x - PAD_X, rect.max.y - 6.0),
+        egui::pos2(rect.min.x + PAD_X, header.max.y + BODY_TOP_PAD),
+        egui::pos2(rect.max.x - PAD_X, rect.max.y - BODY_BOTTOM_PAD),
     );
     // 用 `new_child`（**不**推进父布局游标）排布内容：通道条宽度由上面的
     // `allocate_exact_size(STRIP_WIDTH)` 决定。若用 `scope_builder`，它会按子
@@ -156,7 +171,7 @@ pub(crate) fn channel_strip(
     let rect = strip_frame(ui, color, &title, height, |ui, _| {
         section(
             ui,
-            SEND_ROW_H,
+            send_height(bus_count),
             egui::Layout::top_down(egui::Align::Center),
             |ui| {
                 send_block(ui, SendSource::Channel(channel), &sends, bus_count, actions);
@@ -208,7 +223,7 @@ pub(crate) fn audio_strip(
         |ui, _| {
             section(
                 ui,
-                SEND_ROW_H,
+                send_height(bus_count),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     send_block(
@@ -272,7 +287,7 @@ pub(crate) fn bus_strip(
         |ui, _| {
             section(
                 ui,
-                SEND_ROW_H,
+                send_height(bus_count),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     send_block(ui, SendSource::Bus(bus), &bus_sends, bus_count, actions);
@@ -420,11 +435,12 @@ fn send_block(
         // 同一 id_salt：全部通道条共享滚动偏移，滚动即整排同步。
         .id_salt("mix_send_scroll")
         // 滚动条控件 id 派生自 id_salt；多个 ScrollArea 共享同一 id_salt 时，
-        // 同屏出现的滚动条会互相触发 egui 的 widget ID 冲突。send 区只有
-        // 一行高，隐藏滚动条并保留滚轮同步滚动（hover 任一通道条滚动即可）。
+        // 同屏出现的滚动条会互相触发 egui 的 widget ID 冲突。发送区高度已按
+        // 总线数展开（全部行可见），仅窗口过矮时需滚动，故隐藏滚动条并保留
+        // 滚轮同步滚动（hover 任一通道条滚动即可）。
         .scroll_bar_visibility(egui::containers::scroll_area::ScrollBarVisibility::AlwaysHidden)
-        // egui 默认 min_scrolled_size=64 会把一行高的发送区撑到 64px，
-        // 这里放开下限，让发送区严格保持 SEND_ROW_H（一行高）。
+        // egui 默认 min_scrolled_size=64 会把发送区撑高，这里放开下限，
+        // 让发送区严格等于「总线数 × 一行高」。
         .min_scrolled_height(0.0)
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -665,8 +681,8 @@ fn toggle_button(
     resp
 }
 
-/// 电平表 + 增益菱形：菱形贴在当前 dB 位置的 L/R 条中间，拖动改增益，
-/// 双击回 0dB。返回 `Some(新增益)`。
+/// 电平表 + 增益推子：推子贴在 L/R 条**左侧外侧**，是向右（指向音频）
+/// 的实心三角，拖动改增益，双击回 0dB。返回 `Some(新增益)`。
 fn gain_meter(
     ui: &mut egui::Ui,
     gain: f32,
@@ -679,26 +695,26 @@ fn gain_meter(
         ui.allocate_exact_size(egui::vec2(meter_w, height), egui::Sense::click_and_drag());
     crate::widgets::meter::paint_level_meter(ui.painter(), rect, level, hold);
 
-    let bars_w = METER_W * 2.0 + METER_GAP;
-    let x = rect.min.x + SCALE_W + bars_w * 0.5;
-    let y = gain_y(gain, rect.min.y, rect.max.y);
-    let half = 5.5;
+    // 推子：底边贴 L/R 条左缘外侧，尖端指向电平表（向右）。上下夹住，
+    // 满增益/静音时三角不越出模块。
+    let half = 5.0;
+    let y = gain_y(gain, rect.min.y, rect.max.y).clamp(rect.min.y + half, rect.max.y - half);
+    let tip_x = rect.min.x + SCALE_W - 1.0;
+    let base_x = tip_x - 7.0;
     let color = if resp.hovered() || resp.dragged() {
         crate::theme::accent_active()
     } else {
         crate::theme::text_primary()
     };
     let points = vec![
-        egui::pos2(x, y - half),
-        egui::pos2(x + half, y),
-        egui::pos2(x, y + half),
-        egui::pos2(x - half, y),
+        egui::pos2(base_x, y - half),
+        egui::pos2(base_x, y + half),
+        egui::pos2(tip_x, y),
     ];
-    // 只画边框不填充：透过菱形可以直接看到电平表。
     ui.painter().add(egui::Shape::convex_polygon(
         points,
-        egui::Color32::TRANSPARENT,
-        egui::Stroke::new(1.0, color),
+        color,
+        egui::Stroke::NONE,
     ));
 
     let resp = resp.on_hover_cursor(egui::CursorIcon::ResizeVertical);
@@ -1645,6 +1661,16 @@ mod tests {
             let back = gain_at_y(y, TOP, BOTTOM);
             assert!(approx(back, gain), "gain={gain} y={y} back={back}");
         }
+    }
+
+    /// 自动高度：基础布局随总线数按发送区行高线性增长，默认总线数下
+    /// 与 `LayoutSettings::default().mix_height` 一致。
+    #[test]
+    fn auto_height_tracks_bus_rows() {
+        let base = auto_panel_height(0);
+        assert!((base - 200.0).abs() < 1e-3, "基础高度 {base}");
+        assert!((auto_panel_height(1) - base).abs() < 1e-3);
+        assert!((auto_panel_height(4) - (base + 3.0 * SEND_ROW_H)).abs() < 1e-3);
     }
 
     /// 实验：两个通道条共享同一 `mix_send_scroll` 滚动位置时，

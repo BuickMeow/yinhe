@@ -15,8 +15,9 @@ pub(crate) type StereoMeter = ((f32, f32), (f32, f32));
 /// 电平表单条宽 + 条间距（px）。
 pub(crate) const METER_W: f32 = 6.0;
 pub(crate) const METER_GAP: f32 = 2.0;
-/// 电平表左侧 dB 数字刻度栏宽（px）。
-pub(crate) const SCALE_W: f32 = 20.0;
+/// 电平表左侧 dB 数字刻度栏宽（px）。推子三角贴在数字与 L/R 条之间，
+/// 因此比纯数字宽度略宽。
+pub(crate) const SCALE_W: f32 = 24.0;
 /// 推子/电平表 dB 范围。
 pub(crate) const DB_MIN: f32 = -60.0;
 pub(crate) const DB_MAX: f32 = 6.0;
@@ -86,7 +87,7 @@ pub(crate) fn paint_level_meter(
         );
         if labeled {
             painter.text(
-                egui::pos2(bars.min.x - 3.0, y),
+                egui::pos2(bars.min.x - 12.0, y),
                 egui::Align2::RIGHT_CENTER,
                 db_tick_label(db),
                 font.clone(),

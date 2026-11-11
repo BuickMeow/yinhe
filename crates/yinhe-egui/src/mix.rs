@@ -606,6 +606,11 @@ pub(crate) fn update_track_meters(app: &mut App, dt: f32) {
     }
 }
 
+/// 混音台自动高度：基础布局 + 发送区按总线数扩展。
+pub(crate) fn auto_panel_height(bus_count: usize) -> f32 {
+    strip::auto_panel_height(bus_count)
+}
+
 /// MIX 模式主入口（layout.rs 在 Mix 模式且已打开工程时调用）。
 pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
     let Some(idx) = app.workspace.active_doc else {

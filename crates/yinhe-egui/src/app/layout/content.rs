@@ -20,10 +20,11 @@ impl App {
     pub(in crate::app) fn show_main_content(&mut self, ui: &mut egui::Ui, layout: &LayoutInfo) {
         use crate::chrome::mode_bar::ViewMode;
         let is_mix = self.view_mode == ViewMode::Mix;
+        let has_mixer = is_mix && self.show_mixer_panel;
         let has_piano = self
             .view_mode
-            .show_pianoroll(self.show_pianoroll_in_arrange);
-        let has_mixer = is_mix && self.show_mixer_panel;
+            .show_pianoroll(self.show_pianoroll_in_arrange)
+            && !has_mixer;
 
         // MIX 无工程：只铺背景（原行为）。
         // 主区域绝不能是全透明（clear_color 为全透明，透明模式下会露出桌面）。
@@ -190,7 +191,8 @@ impl App {
                 let total_y = layout.remaining.size().y;
                 let delta = h_split_resp.drag_delta().y;
                 if has_mixer {
-                    // 底部混音台高度（px）：向上拖（delta < 0）变高。
+                    // 底部混音台高度（px）：向上拖（delta < 0）变高；拖拽后转为手动高度。
+                    self.mix_height_auto = false;
                     let max_h = (total_y - crate::theme::MIN_ARR_HEIGHT - crate::theme::SPLIT_GAP)
                         .max(crate::theme::MIN_ARR_HEIGHT);
                     self.mix_height = (total_y - (layout.arr_h + delta) - crate::theme::SPLIT_GAP)
@@ -204,7 +206,8 @@ impl App {
             if h_split_resp.double_clicked() {
                 // 双击分割线 → 还原默认分割
                 if has_mixer {
-                    self.mix_height = LayoutSettings::default().mix_height;
+                    // 混音台恢复「随总线数自动高度」。
+                    self.mix_height_auto = true;
                 } else {
                     self.arr_split = LayoutSettings::default().arr_split;
                 }
@@ -1374,6 +1377,7 @@ impl App {
         l.bottom_dock_height = self.bottom_dock_height;
         l.show_mixer_panel = self.show_mixer_panel;
         l.mix_height = self.mix_height;
+        l.mix_height_auto = self.mix_height_auto;
         l.float_pianoroll = yinhe_editor_core::audio_settings::FloatPanelState {
             floating: self.float_pianoroll,
             rect: self.float_pianoroll_rect.map(floating::rect_to_arr),

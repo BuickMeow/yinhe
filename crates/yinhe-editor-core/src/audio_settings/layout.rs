@@ -30,8 +30,13 @@ pub struct LayoutSettings {
     pub bottom_dock_height: f32,
     /// MIX 视图底部是否显示混音台面板（钢琴卷帘/设备链/混音台三选一之一）。
     pub show_mixer_panel: bool,
-    /// MIX 视图底部混音台面板高度（px）。
+    /// MIX 视图底部混音台面板高度（px）。仅在 `mix_height_auto == false`
+    /// （用户拖拽过分割条）时使用。
     pub mix_height: f32,
+    /// 混音台高度是否随总线数量自动扩展。用户拖拽分割条后转为手动，
+    /// 双击分割条恢复自动。
+    #[serde(default = "default_mix_height_auto")]
+    pub mix_height_auto: bool,
     /// 钢琴卷帘浮动窗口（泊出为独立窗口）。
     pub float_pianoroll: FloatPanelState,
     /// 底部设备栏浮动窗口。
@@ -46,6 +51,11 @@ pub struct LayoutSettings {
     pub pr_vertical: bool,
 }
 
+/// `mix_height_auto` 的 serde 默认值：旧配置文件没有该字段时默认开启自动高度。
+fn default_mix_height_auto() -> bool {
+    true
+}
+
 impl Default for LayoutSettings {
     fn default() -> Self {
         Self {
@@ -56,7 +66,8 @@ impl Default for LayoutSettings {
             show_bottom_dock: false,
             bottom_dock_height: 200.0,
             show_mixer_panel: true,
-            mix_height: 260.0,
+            mix_height: 200.0,
+            mix_height_auto: true,
             float_pianoroll: FloatPanelState::default(),
             float_bottom_dock: FloatPanelState::default(),
             float_mixer: FloatPanelState::default(),
