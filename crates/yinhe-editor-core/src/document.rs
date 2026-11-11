@@ -54,6 +54,9 @@ pub struct Document {
     pub mixer: MixerParams,
     /// 混音参数自上次保存以来是否被修改（并进 is_dirty）。
     pub mixer_dirty: bool,
+    /// 混音参数的单调修改计数：异步保存按“发起时计数”判断保存期间是否
+    /// 又改过混音，避免把新改动误标为已保存。会话内状态，不落盘。
+    pub mixer_revision: u64,
     /// 会话内稳定 id（自动保存文件命名与恢复关联用；不持久化、不参与界面对比）。
     pub doc_id: u64,
     /// 滚动条音符密度预览——AR/通道 AR 用（跟随 `track_visible` 显隐）。
@@ -100,15 +103,25 @@ impl Document {
     }
 
     pub fn mark_saved(&mut self) {
-        self.history.mark_saved();
-        self.mixer_dirty = false;
+        let marker = self.history.marker();
+        let mixer_revision = self.mixer_revision;
+        self.mark_saved_at(marker, mixer_revision);
     }
 
     /// 异步保存完成：按**发起保存时的状态标记**标记（保存期间的新编辑保持
     /// dirty）。
-    pub fn mark_saved_at(&mut self, marker: Option<u64>) {
+    pub fn mark_saved_at(&mut self, marker: Option<u64>, mixer_revision: u64) {
         self.history.mark_saved_at(marker);
-        self.mixer_dirty = false;
+        // 保存快照之后又改过混音：保持 dirty，等下一次保存落盘。
+        if self.mixer_revision == mixer_revision {
+            self.mixer_dirty = false;
+        }
+    }
+
+    /// 混音参数被修改：标脏并推进修改计数。
+    pub fn mark_mixer_dirty(&mut self) {
+        self.mixer_dirty = true;
+        self.mixer_revision = self.mixer_revision.wrapping_add(1);
     }
 
     /// 当前撤销栈的状态标记（发起异步保存时取，完成后原样传回）。
@@ -143,7 +156,7 @@ impl Document {
 
     /// 修改混音台参数的入口（MIX 界面）：写入并标脏，同时由调用方同步音频引擎。
     pub fn mixer_mut(&mut self) -> &mut MixerParams {
-        self.mixer_dirty = true;
+        self.mark_mixer_dirty();
         &mut self.mixer
     }
 
@@ -215,6 +228,7 @@ impl Document {
             mixer: Self::default_mixer(),
             doc_id: next_doc_id(),
             mixer_dirty: false,
+            mixer_revision: 0,
             density: Default::default(),
             density_pr: Default::default(),
         }
@@ -301,6 +315,7 @@ impl Document {
                 file_path: None,
                 mixer,
                 mixer_dirty: false,
+                mixer_revision: 0,
                 doc_id: next_doc_id(),
                 density: Default::default(),
                 density_pr: Default::default(),

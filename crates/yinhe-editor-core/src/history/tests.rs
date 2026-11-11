@@ -55,6 +55,7 @@ fn make_doc(name: &str) -> Document {
         file_path: None,
         mixer: Default::default(),
         mixer_dirty: false,
+        mixer_revision: 0,
         doc_id: 0,
         density: Default::default(),
         density_pr: Default::default(),
@@ -972,6 +973,27 @@ fn async_save_marker_does_not_swallow_later_edits() {
     push_rename(&mut doc, "b", "c");
 
     // 保存完成：按发起时的 marker 标记，保存期间的新编辑保持 dirty。
-    doc.mark_saved_at(marker);
+    doc.mark_saved_at(marker, doc.mixer_revision);
     assert!(doc.is_dirty());
+}
+
+#[test]
+fn mixer_edit_during_async_save_keeps_dirty() {
+    let mut doc = make_doc("a");
+    let rev = doc.mixer_revision;
+    doc.mark_saved_at(doc.undo_marker(), rev);
+    assert!(!doc.mixer_dirty);
+
+    // 保存进行期间改了混音台。
+    doc.mark_mixer_dirty();
+    assert!(doc.mixer_dirty);
+    let rev_after_edit = doc.mixer_revision;
+
+    // 旧快照完成：不能把这次修改误标为已保存。
+    doc.mark_saved_at(doc.undo_marker(), rev);
+    assert!(doc.mixer_dirty);
+
+    // 新快照完成：清脏。
+    doc.mark_saved_at(doc.undo_marker(), rev_after_edit);
+    assert!(!doc.mixer_dirty);
 }

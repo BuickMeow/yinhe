@@ -76,6 +76,7 @@ fn make_doc_with_note() -> Document {
         file_path: None,
         mixer: Default::default(),
         mixer_dirty: false,
+        mixer_revision: 0,
         doc_id: 0,
         density: Default::default(),
         density_pr: Default::default(),

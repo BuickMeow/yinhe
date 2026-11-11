@@ -219,7 +219,7 @@ impl UndoAction {
             UndoAction::MixerParams { after, .. } => {
                 // 全量替换混音台参数（引擎侧由 UI 层在 undo/redo 后整体推送）。
                 doc.mixer = (**after).clone();
-                doc.mixer_dirty = true;
+                doc.mark_mixer_dirty();
             }
             UndoAction::Composite(actions) => {
                 for action in actions {

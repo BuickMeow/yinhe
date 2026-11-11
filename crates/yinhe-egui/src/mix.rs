@@ -266,7 +266,7 @@ impl App {
             &label,
             snapshot,
         );
-        doc.mixer_dirty = true;
+        doc.mark_mixer_dirty();
     }
 
     /// 通道 AR 面板的通道电平显示值：`(MIDI 源通道 0..256, 音频通道)` 两组
@@ -441,7 +441,7 @@ impl App {
     fn migrate_builtin_inserts(&mut self, idx: usize) {
         let doc = &mut self.workspace.documents[idx];
         if strip_builtin_inserts(&mut doc.mixer) {
-            doc.mixer_dirty = true;
+            doc.mark_mixer_dirty();
         }
     }
 

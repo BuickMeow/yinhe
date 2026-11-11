@@ -1345,11 +1345,12 @@ impl App {
         let snap = self.take_save_snapshot(idx, true);
         let path_for_thread = path.clone();
         // 发起时的状态标记：保存期间的新编辑不应被误标为已保存
-        let saved_marker = self
+        let (saved_marker, saved_mixer_revision) = self
             .workspace
             .documents
             .get(idx)
-            .and_then(|d| d.undo_marker());
+            .map(|d| (d.undo_marker(), d.mixer_revision))
+            .unwrap_or((None, 0));
 
         let (tx, rx) = mpsc::channel();
         let (progress_tx, progress_rx) = mpsc::channel();
@@ -1370,7 +1371,13 @@ impl App {
             }
             // 回传 (目标文档, 版本快照, 路径, 结果)：失败不得标记已保存/
             // 不得改路径/不得执行延迟动作（此前失败被当成功，可能丢数据）。
-            let _ = tx.send((idx, saved_marker, path_for_thread, result));
+            let _ = tx.send((
+                idx,
+                saved_marker,
+                saved_mixer_revision,
+                path_for_thread,
+                result,
+            ));
         });
 
         self.jobs.save_rx = Some(rx);
