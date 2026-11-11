@@ -78,7 +78,7 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) -> b
     let mut selected = current;
     let mut instrument_changed = false;
     let drum = is_drum(current);
-    super::field_row(ui, t!("track.default_instrument").as_ref(), false, |ui| {
+    crate::widgets::rows::setting_row(ui, t!("track.default_instrument").as_ref(), "", |ui| {
         let options = if drum {
             drum_options(current)
         } else {
@@ -99,7 +99,7 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) -> b
     let mut next = selected;
     let mut drum_state = is_drum(next);
     let mut drum_changed = false;
-    super::field_row(ui, t!("track.drum_channel").as_ref(), true, |ui| {
+    crate::widgets::rows::setting_row(ui, t!("track.drum_channel").as_ref(), "", |ui| {
         let resp = ui
             .push_id(("track_drum_switch", channel), |ui| {
                 crate::widgets::switch::switch(ui, &mut drum_state)
