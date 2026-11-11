@@ -242,7 +242,7 @@ pub(crate) fn interact_all(
                 }
                 SelOp::ClearNoteSelection => {
                     // 三视图选框互斥：开始新框选时清空共享音符选区
-                    io.selected.clear();
+                    io.selected.clear_rects();
                 }
             }
         }

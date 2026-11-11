@@ -468,7 +468,7 @@ pub(crate) fn draw_overlays(
             cursor_tick,
         );
         if outcome.jumped {
-            selected.clear();
+            selected.clear_rects();
             sel_rect.clear();
         }
         // 量化入口统一移到标尺最右侧。
@@ -701,7 +701,7 @@ pub(crate) fn draw_overlays(
             );
             marker_edit = rows.marker_edit;
             if rows.jumped {
-                selected.clear();
+                selected.clear_rects();
                 sel_rect.clear();
             }
         }

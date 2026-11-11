@@ -299,7 +299,7 @@ pub fn show(
         );
         // 点击/拖动时间标尺跳转位置时，取消已选择的选框（含框选与全选）。
         if outcome.jumped {
-            doc.edit.selected.clear();
+            doc.edit.selected.clear_rects();
             doc.edit.arr_sel_rect.clear();
         }
         // 量化入口统一移到标尺最右侧。
@@ -379,7 +379,7 @@ pub fn show(
             &mut doc.edit.cursor_tick,
         );
         if rows.jumped {
-            doc.edit.selected.clear();
+            doc.edit.selected.clear_rects();
             doc.edit.arr_sel_rect.clear();
         }
         if let Some(edit) = rows.marker_edit {

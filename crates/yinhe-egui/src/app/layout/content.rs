@@ -463,10 +463,15 @@ impl App {
         let selection_cleared = doc.edit.selected.is_empty() && self.prev_selected_nonempty;
 
         // 新选框只可能来自一个视图（单鼠标交互），各清除条件互不重叠。
-        let clear_arr = selection_cleared || pr_gained || am_gained || chan_ar_gained;
+        // 例外：Ctrl+A 的 `select_all_ar` 会同时填充 AR 与通道 AR 两套框
+        //（程序性设置），不能把它们当作互相竞争的新选框清掉。
+        let select_all_both = arr_gained && chan_ar_gained;
+        let clear_arr =
+            selection_cleared || pr_gained || am_gained || (chan_ar_gained && !select_all_both);
         let clear_pr = selection_cleared || arr_gained || am_gained || chan_ar_gained;
         let clear_am = selection_cleared || arr_gained || pr_gained || chan_ar_gained;
-        let clear_chan_ar = selection_cleared || arr_gained || pr_gained || am_gained;
+        let clear_chan_ar =
+            selection_cleared || pr_gained || (arr_gained && !select_all_both) || am_gained;
 
         if clear_arr {
             doc.edit.arr_sel_rect.clear();

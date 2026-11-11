@@ -164,7 +164,7 @@ pub(crate) fn sel_drag_frame_arrange(
             drag = Some(((click_tick, start_track_y), local));
             if !additive {
                 edit.arr_sel_rect.clear();
-                edit.selected.clear();
+                edit.selected.clear_rects();
             }
         }
     }
@@ -429,7 +429,7 @@ pub(crate) fn sel_drag_frame_arrange(
                         data.ppq,
                         data.bar_line_data,
                     );
-                    edit.selected.clear();
+                    edit.selected.clear_rects();
                     edit.arr_sel_rect.clear();
                     *edit.cursor_tick = Some(snapped.max(0.0));
                     let track_arr_idx = start_music.1.floor() as usize;
@@ -444,7 +444,7 @@ pub(crate) fn sel_drag_frame_arrange(
                     arrange_snapped_bounds(start_pixel, end, view, row_layout, data, vertical)
                 {
                     if !additive {
-                        edit.selected.clear();
+                        edit.selected.clear_rects();
                         edit.arr_sel_rect.clear();
                     }
                     edit.selected.add_rect_track(
@@ -465,7 +465,7 @@ pub(crate) fn sel_drag_frame_arrange(
                     edit.arr_sel_rect
                         .push((b.t_start, b.t_end, b.track_lo, b.track_hi));
                 } else if !additive {
-                    edit.selected.clear();
+                    edit.selected.clear_rects();
                     edit.arr_sel_rect.clear();
                 }
                 view.base.dirty = true;

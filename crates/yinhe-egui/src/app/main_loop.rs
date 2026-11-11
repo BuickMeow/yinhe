@@ -459,16 +459,23 @@ impl eframe::App for App {
                     let edit = &self.workspace.documents[i].edit;
                     self.prev_arr_count = edit.arr_sel_rect.len();
                     self.prev_pr_count = edit.sel_rect.rects.len();
+                    self.prev_chan_ar_count = edit.chan_ar_sel.len();
                     self.prev_am_count = edit
                         .controller_panels
                         .iter()
                         .map(|p| p.anchor_sel_rects.len())
-                        .sum();
+                        .sum::<usize>()
+                        + edit
+                            .arr_am_views
+                            .values()
+                            .map(|v| v.anchor_sel_rects.len())
+                            .sum::<usize>();
                     self.prev_selected_nonempty = !edit.selected.is_empty();
                 }
                 None => {
                     self.prev_arr_count = 0;
                     self.prev_pr_count = 0;
+                    self.prev_chan_ar_count = 0;
                     self.prev_am_count = 0;
                     self.prev_selected_nonempty = false;
                 }

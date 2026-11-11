@@ -55,7 +55,7 @@ pub(crate) fn sel_press(
             // 未选音轨（无编辑目标）：按规则不允许选择/拖拽/缩放——
             // 不启动框选、不拖动选框；仅保留点击空白清空选区。
             if !in_sel_rect && !additive {
-                selected.clear();
+                selected.clear_rects();
                 sel_rect.clear();
             }
         } else {
@@ -198,7 +198,7 @@ pub(crate) fn sel_press(
                 } else if !additive {
                     // 单击选框外（非加选模式）→ 立即清空选框与选区。
                     // 比 on_press 回调更早触发，覆盖 click（< 3px）的场景。
-                    selected.clear();
+                    selected.clear_rects();
                     sel_rect.clear();
                 }
             }

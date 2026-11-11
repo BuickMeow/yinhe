@@ -221,7 +221,7 @@ pub fn show_panels(
                     panel.dirty = true;
                 }
                 SelOp::ClearNoteSelection => {
-                    edit.selected.clear();
+                    edit.selected.clear_rects();
                 }
             }
         }

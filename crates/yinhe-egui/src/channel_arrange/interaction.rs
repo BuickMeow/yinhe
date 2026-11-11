@@ -257,7 +257,7 @@ pub(crate) fn sel_drag_frame(
             drag = Some(((click_tick, click_music_y), local));
             if !additive {
                 chan_ar_sel.clear();
-                edit.selected.clear();
+                edit.selected.clear_rects();
             }
         }
     }
@@ -427,7 +427,7 @@ pub(crate) fn sel_drag_frame(
                         data.ppq,
                         data.bar_line_data,
                     );
-                    edit.selected.clear();
+                    edit.selected.clear_rects();
                     chan_ar_sel.clear();
                     *edit.cursor_tick = Some(snapped.max(0.0));
                     let row_tracks = layout
@@ -447,7 +447,7 @@ pub(crate) fn sel_drag_frame(
                     let tracks = rows_range_tracks(layout, b.row_lo..b.row_hi + 1, groups);
                     if !tracks.is_empty() {
                         if !additive {
-                            edit.selected.clear();
+                            edit.selected.clear_rects();
                             chan_ar_sel.clear();
                         }
                         for (lo, hi) in track_runs(&tracks) {
@@ -470,12 +470,12 @@ pub(crate) fn sel_drag_frame(
                             tracks,
                         });
                     } else if !additive {
-                        edit.selected.clear();
+                        edit.selected.clear_rects();
                         chan_ar_sel.clear();
                     }
                     view.base.dirty = true;
                 } else if !additive {
-                    edit.selected.clear();
+                    edit.selected.clear_rects();
                     chan_ar_sel.clear();
                 }
             }

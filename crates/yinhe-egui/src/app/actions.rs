@@ -529,18 +529,28 @@ impl App {
         let doc = &mut self.workspace.documents[idx];
         let mut changed = false;
         for panel in &mut doc.edit.controller_panels {
-            if !panel.anchor_sel_rects.is_empty() {
+            if !panel.anchor_sel_rects.is_empty() || panel.anchor_members.is_some() {
                 panel.anchor_sel_rects.clear();
+                panel.anchor_members = None;
+                panel.materialized_anchor_rects = 0;
                 panel.dirty = true;
                 changed = true;
             }
         }
         for view in doc.edit.arr_am_views.values_mut() {
-            if !view.anchor_sel_rects.is_empty() {
+            if !view.anchor_sel_rects.is_empty() || view.anchor_members.is_some() {
                 view.anchor_sel_rects.clear();
+                view.anchor_members = None;
+                view.materialized_anchor_rects = 0;
                 view.dirty = true;
                 changed = true;
             }
+        }
+        // AR 删除自动化走共享 Selection 的成员位图；只清面板选框会留下
+        // 不可见的“幽灵”自动化选择，Delete 仍会删掉它们。
+        if doc.edit.selected.has_explicit_automation_members() {
+            doc.edit.selected.clear_automation_selection();
+            changed = true;
         }
         if changed {
             doc.edit.pianoroll_view.base.dirty = true;

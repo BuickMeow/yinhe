@@ -168,6 +168,12 @@ impl Selection {
         self.members.is_some()
     }
 
+    /// 清除自动化锚点选择（“仅选择音符”用），不影响音符选区与筛选器。
+    pub fn clear_automation_selection(&mut self) {
+        self.automation_members = None;
+        self.materialized_automation_rects = 0;
+    }
+
     /// 成员位图是否包含该 id（矩形态恒 false）。
     pub fn members_contains(&self, id: u32) -> bool {
         self.members.as_ref().is_some_and(|bits| bits.contains(id))
