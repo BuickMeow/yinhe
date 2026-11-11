@@ -125,7 +125,7 @@ fn knob_impl(ui: &mut egui::Ui, value: &mut f32, diameter: f32, zero: ZeroMode) 
             crate::theme::accent_active()
         };
 
-        // 值弧：与刻度环同半径同线宽；居中归零时从中点向两侧延伸。
+        // 先画刻度环，再画值弧：值弧始终在普通环的上层。
         if let Some((from, to)) = arc_span(*value, zero) {
             let steps = 24;
             let mut pts = Vec::with_capacity(steps + 1);

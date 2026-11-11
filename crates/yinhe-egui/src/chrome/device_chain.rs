@@ -59,9 +59,10 @@ enum KnobAction {
 /// 通道处理（Volume/Expression/Pan/Cutoff/Resonance）已内置到音源的通道
 /// 处理段，与 XSynth 的 CC 绑定参数一样走低层 `CC lane`（回放广播给通道
 /// 处理段/合成器）；PB/RPN 无低层 lane 形态，保留设备参数
-/// （`ChannelInstrument`）。返回 (target, 显示名)，显示名取参数表自己的
-/// 名字（如 "Sustain"），不用 CC 目标的通用显示名（"CC 064 Sustain"）。
-fn instrument_targets(channel: u8) -> Vec<(AutomationTarget, String, f32)> {
+/// （`ChannelInstrument`）。返回 (target, 显示名, 默认值, 是否居中归零)，
+/// 显示名取参数表自己的名字（如 "Sustain"），不用 CC 目标的通用显示名
+/// （"CC 064 Sustain"）。居中归零来自参数表的 `center` 标记（Pan 等）。
+fn instrument_targets(channel: u8) -> Vec<(AutomationTarget, String, f32, bool)> {
     CHANNEL_DSP_PARAMS
         .iter()
         .chain(XSYNTH_PARAMS)
@@ -72,15 +73,16 @@ fn instrument_targets(channel: u8) -> Vec<(AutomationTarget, String, f32)> {
                 // 默认值取参数表（引擎无事件时的实际值，如 Volume/Expression
                 // 满增益 1.0）；不能用 CC 目标的通用默认值（CC7 会得 0）。
                 p.default,
+                p.center,
             )
         })
         .collect()
 }
 
+/// 卡片标题行高度。收起态卡片宽度与它相同：折叠后就是标题条本身。
+const CARD_TITLE_H: f32 = 24.0;
 /// 收起状态下的卡片宽度（竖排标题条）。
-const COLLAPSED_CARD_W: f32 = 26.0;
-/// 卡片标题行高度。
-const CARD_TITLE_H: f32 = 22.0;
+const COLLAPSED_CARD_W: f32 = CARD_TITLE_H;
 /// 折叠集合里表示「乐器卡片」的 key。
 const INSTRUMENT_KEY: usize = usize::MAX;
 
@@ -103,6 +105,8 @@ pub(crate) struct DockParam {
     default: f32,
     /// 光标处的当前值（None = 未设置，显示默认值；归一化 0..1）。
     current: Option<f32>,
+    /// 是否居中归零（参数表 `center`：Pan/Cutoff/Resonance 等）。
+    centered: bool,
 }
 
 /// 光标处应显示的值。
@@ -422,13 +426,14 @@ fn collect_dock_state(app: &mut App, idx: usize) -> Option<DockState> {
         .map(instrument_targets)
         .unwrap_or_default()
         .into_iter()
-        .map(|(target, name, default)| {
+        .map(|(target, name, default, centered)| {
             let current = lane_current_value(&model, &lane_track_tis, display_tick, &target);
             DockParam {
                 name,
                 default,
                 target,
                 current,
+                centered,
             }
         })
         .collect();
@@ -717,6 +722,44 @@ fn icon_button(
     resp
 }
 
+/// 收起态卡片顶部电源键：与展开态标题行同一个开关。
+/// 返回（是否点击，标题文字可用的剩余矩形）。
+fn collapsed_power(
+    ui: &mut egui::Ui,
+    title_rect: egui::Rect,
+    powered: bool,
+    hint: String,
+) -> (bool, egui::Rect) {
+    let color = if powered {
+        crate::theme::accent_active()
+    } else {
+        crate::theme::text_muted()
+    };
+    let btn_rect = egui::Rect::from_min_size(
+        title_rect.min,
+        egui::vec2(title_rect.width(), COLLAPSED_CARD_W),
+    );
+    let mut clicked = false;
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(btn_rect)
+            .layout(egui::Layout::top_down(egui::Align::Center)),
+        |ui| {
+            clicked = icon_button(
+                ui,
+                egui_material_icons::icons::ICON_POWER_SETTINGS_NEW,
+                14.0,
+                color,
+                hint,
+            )
+            .clicked();
+        },
+    );
+    let text_rect =
+        egui::Rect::from_min_max(egui::pos2(title_rect.min.x, btn_rect.max.y), title_rect.max);
+    (clicked, text_rect)
+}
+
 /// 效果器大卡片：插件效果器显示参数面板 / 原生界面入口。
 /// 返回 true = 卡片被点击（选中高亮）。
 #[allow(clippy::too_many_arguments)] // 设备链绘制上下文透传
@@ -769,7 +812,16 @@ fn effect_card(
     }
 
     if is_collapsed {
-        paint_vertical_title(ui, title_rect, &ins.name, title_fg);
+        let (power_clicked, text_rect) = collapsed_power(
+            ui,
+            title_rect,
+            !ins.bypassed,
+            t!("hint.dock.insert_power").to_string(),
+        );
+        if power_clicked {
+            *toggle_bypass = Some((slot, !ins.bypassed));
+        }
+        paint_vertical_title(ui, text_rect, &ins.name, title_fg);
         return clicked;
     }
 
@@ -901,9 +953,9 @@ fn card_content_rect(card: egui::Rect, title: egui::Rect) -> egui::Rect {
     )
 }
 
-/// 收起态标题：沿卡片长边竖排（旋转 -90°）。
+/// 收起态标题：沿卡片长边竖排（旋转 -90°），字号与展开态标题一致。
 fn paint_vertical_title(ui: &egui::Ui, rect: egui::Rect, text: &str, color: egui::Color32) {
-    let font = egui::FontId::proportional(crate::theme::SMALL_FONT + 1.0);
+    let font = egui::FontId::proportional(crate::theme::SMALL_FONT + 2.0);
     let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
     ui.painter().add(
         egui::epaint::TextShape::new(rect.center(), galley, color)
@@ -1004,7 +1056,21 @@ fn instrument_card(
     }
 
     if is_collapsed {
-        paint_vertical_title(ui, title_rect, &title_text, title_fg);
+        let text_rect = if has_instrument {
+            let (power_clicked, text_rect) = collapsed_power(
+                ui,
+                title_rect,
+                inst_powered,
+                t!("hint.dock.instrument_power").to_string(),
+            );
+            if power_clicked {
+                *toggle_instrument = Some(inst_powered);
+            }
+            text_rect
+        } else {
+            title_rect
+        };
+        paint_vertical_title(ui, text_rect, &title_text, title_fg);
         return clicked;
     }
 
@@ -1176,7 +1242,11 @@ fn knob_row(ui: &mut egui::Ui, param: &DockParam, actions: &mut Vec<KnobAction>)
     let target = &param.target;
 
     ui.horizontal(|ui| {
-        let resp = crate::widgets::knob::knob(ui, &mut norm, 28.0);
+        let resp = if param.centered {
+            crate::widgets::knob::knob_centered(ui, &mut norm, 28.0)
+        } else {
+            crate::widgets::knob::knob(ui, &mut norm, 28.0)
+        };
         crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.dock.knob"));
         if resp.drag_started() {
             actions.push(KnobAction::DragStart(target.clone()));
@@ -1421,13 +1491,15 @@ mod tests {
     fn instrument_targets_merge_channel_dsp_and_xsynth() {
         let params = instrument_targets(4);
         assert_eq!(params.len(), CHANNEL_DSP_PARAMS.len() + XSYNTH_PARAMS.len());
+        // Pan（下标 2）在参数表里是中心参考参数 → 居中归零。
+        assert!(params[2].3, "Pan 应居中归零");
 
         // 通道处理的 Volume/Expression 默认满增益（表默认 1.0），
         // 不能是 CC 通用默认值 0——否则面板无事件时显示 0。
         assert_eq!(params[0].2, 1.0, "Volume 默认应为满增益");
         assert_eq!(params[1].2, 1.0, "Expression 默认应为满增益");
 
-        let names: Vec<&str> = params.iter().map(|(_, name, _)| name.as_str()).collect();
+        let names: Vec<&str> = params.iter().map(|(_, name, _, _)| name.as_str()).collect();
         let expect: Vec<&str> = CHANNEL_DSP_PARAMS
             .iter()
             .chain(XSYNTH_PARAMS)
@@ -1436,7 +1508,7 @@ mod tests {
         assert_eq!(names, expect, "顺序应为通道处理参数在前、XSynth 在后");
 
         let targets: Vec<AutomationTarget> =
-            params.into_iter().map(|(target, _, _)| target).collect();
+            params.into_iter().map(|(target, _, _, _)| target).collect();
         // 通道处理参数全部是 CC 绑定（Volume=CC7 / Expression=CC11 / Pan=CC10 /
         // Cutoff=CC74 / Resonance=CC71）。
         for p in CHANNEL_DSP_PARAMS {
