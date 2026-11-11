@@ -743,18 +743,21 @@ fn collapsed_power(
     ui.scope_builder(
         egui::UiBuilder::new()
             .max_rect(btn_rect)
-            .layout(egui::Layout::centered_and_justified(
-                egui::Direction::TopDown,
-            )),
+            .layout(egui::Layout::top_down(egui::Align::Center)),
         |ui| {
-            clicked = icon_button(
-                ui,
-                egui_material_icons::icons::ICON_POWER_SETTINGS_NEW,
-                14.0,
+            // 直接画在整块槽的中心：不经过 Button 的 padding，保证和展开态
+            // 标题行的电源键位置一致。
+            let (rect, resp) = ui.allocate_exact_size(ui.available_size(), egui::Sense::click());
+            let icon = egui_material_icons::icons::ICON_POWER_SETTINGS_NEW;
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                icon.codepoint,
+                egui::FontId::new(14.0, icon.font_family()),
                 color,
-                hint,
-            )
-            .clicked();
+            );
+            crate::widgets::hint::hover(ui.ctx(), &resp, hint);
+            clicked = resp.clicked();
         },
     );
     let text_rect =
