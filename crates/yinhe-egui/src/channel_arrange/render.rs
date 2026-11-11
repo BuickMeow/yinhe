@@ -274,6 +274,7 @@ pub(crate) fn draw_audio_clips(
             };
             painter.rect_stroke(r, 2.0, stroke, egui::StrokeKind::Inside);
 
+            let (fade_in, fade_out) = yinhe_audio::effective_fades(&track.audio_clips, ci);
             crate::arrange::view_ui::render::draw_clip_waveform(
                 painter,
                 rect,
@@ -283,9 +284,9 @@ pub(crate) fn draw_audio_clips(
                 clip,
                 data.audio_library,
                 track_color,
+                fade_in,
+                fade_out,
             );
-
-            let (fade_in, fade_out) = yinhe_audio::effective_fades(&track.audio_clips, ci);
             let fade_stroke = egui::Stroke::new(1.0, track_color.gamma_multiply(1.6));
             if fade_in > 0.0 {
                 let fx = r.min.x + (fade_in / clip.duration_seconds) as f32 * r.width();

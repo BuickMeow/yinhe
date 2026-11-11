@@ -308,6 +308,10 @@ pub(crate) fn draw_audio_clips(
             };
             painter.rect_stroke(r, 2.0, stroke, egui::StrokeKind::Inside);
 
+            // 淡入淡出（自身 + 自动交叉淡化）先算好：波形与斜线共用同一份，
+            // 波形幅度也按 clip_fade_gain 收缩，和引擎听到的一致。
+            let (fade_in, fade_out) = yinhe_audio::effective_fades(&track.audio_clips, ci);
+
             // 波形（可见部分）。
             draw_clip_waveform(
                 painter,
@@ -318,10 +322,9 @@ pub(crate) fn draw_audio_clips(
                 clip,
                 data.audio_library,
                 track_color,
+                fade_in,
+                fade_out,
             );
-
-            // 淡入淡出斜线（自身 + 自动交叉淡化，与引擎渲染一致）。
-            let (fade_in, fade_out) = yinhe_audio::effective_fades(&track.audio_clips, ci);
             let fade_stroke = egui::Stroke::new(1.0, track_color.gamma_multiply(1.6));
             if fade_in > 0.0 {
                 let fx = r.min.x + (fade_in / clip.duration_seconds) as f32 * r.width();
@@ -389,6 +392,8 @@ pub(crate) fn draw_clip_waveform(
     clip: &yinhe_core::AudioClip,
     library: &crate::app::audio_library::AudioLibrary,
     color: egui::Color32,
+    fade_in: f64,
+    fade_out: f64,
 ) {
     let Some(decoded) = library.get(&clip.source) else {
         return;
@@ -407,7 +412,7 @@ pub(crate) fn draw_clip_waveform(
     }
     let mid = r.center().y;
     let amp = (r.height() * 0.5 - 2.0).max(1.0);
-    let frames_per_px = (clip.duration_seconds * sr) / (x1 - x0) as f64;
+    let frames_per_px = (clip.source_span_seconds() * sr) / (x1 - x0) as f64;
     let level = decoded.peaks.level_for(frames_per_px);
     let bucket_frames = decoded.peaks.bucket_frames(level).max(1) as f64;
     let stroke = egui::Stroke::new(1.0, color.gamma_multiply(1.8));
@@ -418,16 +423,20 @@ pub(crate) fn draw_clip_waveform(
         // 该像素列在片段内的归一化位置 → 素材内秒（考虑 offset/反向）。
         let frac = ((px - x0) / (x1 - x0)).clamp(0.0, 1.0) as f64;
         let t_in_clip = frac * clip.duration_seconds;
-        let src_t = if clip.reversed {
+        let legacy_src = if clip.reversed {
             clip.offset_seconds + (clip.duration_seconds - t_in_clip)
         } else {
             clip.offset_seconds + t_in_clip
         };
+        let src_t = clip
+            .source_seconds_at_progress(frac, clip.reversed)
+            .unwrap_or(legacy_src);
+        let gain = yinhe_core::clip_fade_gain(t_in_clip, clip.duration_seconds, fade_in, fade_out);
         let frame = (src_t * sr).max(0.0);
         let bucket = (frame / bucket_frames) as usize;
         let (mn, mx) = decoded.peaks.bucket(level, bucket);
-        let y0 = mid - mx.clamp(-1.0, 1.0) * amp;
-        let y1 = mid - mn.clamp(-1.0, 1.0) * amp;
+        let y0 = mid - mx.clamp(-1.0, 1.0) * gain * amp;
+        let y1 = mid - mn.clamp(-1.0, 1.0) * gain * amp;
         shapes.push(egui::Shape::line_segment(
             [egui::pos2(px, y0), egui::pos2(px, y1)],
             stroke,
