@@ -30,6 +30,45 @@ fn field_value(ui: &mut egui::Ui, label: &str, value: impl Into<String>) {
     });
 }
 
+/// 音轨属性专用表单行：标签固定列 + 控件列从同一 x 开始，控件不越过面板右缘。
+pub(super) fn field_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    align_right: bool,
+    add_control: impl FnOnce(&mut egui::Ui),
+) {
+    let h = crate::widgets::control::h(ui.ctx());
+    let total = ui.available_width().max(1.0);
+    let label_w = crate::scaling::scaled_font(ui.ctx(), crate::theme::FIELD_LABEL_W)
+        .min((total * 0.42).max(1.0));
+    let gap = crate::theme::GAP_SM;
+    let ctrl_w = (total - label_w - gap).max(1.0);
+    ui.allocate_ui_with_layout(
+        egui::vec2(total, h),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(label_w, h),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.label(egui::RichText::new(label).strong().size(
+                            crate::scaling::scaled_font(ui.ctx(), crate::theme::SUB_TITLE_FONT),
+                        ));
+                    },
+                );
+                ui.add_space(gap);
+                let layout = if align_right {
+                    egui::Layout::right_to_left(egui::Align::Center)
+                } else {
+                    egui::Layout::left_to_right(egui::Align::Center)
+                };
+                ui.allocate_ui_with_layout(egui::vec2(ctrl_w, h), layout, add_control);
+            });
+        },
+    );
+}
+
 /// 显示音轨属性（「音轨」选项卡）。返回 `true` 表示端口/通道改变。
 pub(crate) fn show_track_info(ui: &mut egui::Ui, doc: &mut Document) -> bool {
     crate::right_panel::region_hint(ui, t!("hint.panel.info_track"));
@@ -88,12 +127,12 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
     let mut name_resp_id: Option<egui::Id> = None;
     let mut name_gained_focus = false;
     let mut name_lost_focus = false;
-    crate::widgets::rows::panel_row(ui, t!("track.name").as_ref(), |ui| {
+    field_row(ui, t!("track.name").as_ref(), false, |ui| {
         let mut name = doc.data.model.tracks[track_idx].name.clone();
         let resp = crate::widgets::text_input::control_text_input(
             ui,
             &mut name,
-            ui.available_width().max(60.0),
+            ui.available_width().max(1.0),
             ("track_name", track_idx),
             None,
         );
@@ -132,21 +171,11 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
     let mut port_changed = false;
     let mut new_port = ti.port;
     let mut new_ch = ti.channel;
-    crate::widgets::rows::panel_row(ui, t!("track.port_channel").as_ref(), |ui| {
-        // right_to_left：先放右侧的通道，再放左侧的端口。
+    field_row(ui, t!("track.port_channel").as_ref(), false, |ui| {
         let ch_options: Vec<(usize, String)> =
             (0..16).map(|c| (c, format!("{:02}", c + 1))).collect();
-        let mut ch_sel = ti.channel as usize;
-        let ch_id = ui.scope_id().with("track_channel");
-        if crate::widgets::combo::combo_select(ui, "track_channel", &mut ch_sel, 60.0, &ch_options)
-        {
-            new_ch = ch_sel as u8;
-            port_changed = true;
-        }
-        if let Some(resp) = ui.ctx().read_response(ch_id) {
-            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.info.channel"));
-        }
-        ui.add_space(4.0);
+        let ch_w = 56.0;
+        let port_w = (ui.available_width() - ch_w - 4.0).max(60.0);
         let port_options: Vec<(usize, String)> = (0..16)
             .map(|p| (p, format!("Port {}", (b'A' + p as u8) as char)))
             .collect();
@@ -156,7 +185,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
             ui,
             "track_port",
             &mut port_sel,
-            120.0,
+            port_w,
             &port_options,
         ) {
             new_port = port_sel as u8;
@@ -164,6 +193,17 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
         }
         if let Some(resp) = ui.ctx().read_response(port_id) {
             crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.info.port"));
+        }
+        ui.add_space(4.0);
+        let mut ch_sel = ti.channel as usize;
+        let ch_id = ui.scope_id().with("track_channel");
+        if crate::widgets::combo::combo_select(ui, "track_channel", &mut ch_sel, ch_w, &ch_options)
+        {
+            new_ch = ch_sel as u8;
+            port_changed = true;
+        }
+        if let Some(resp) = ui.ctx().read_response(ch_id) {
+            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.info.channel"));
         }
     });
     if port_changed {
@@ -203,7 +243,7 @@ fn show_color_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
     let edit_id = ui.scope_id().with("track_color_edit");
     let was_editing = ui.data(|d| d.get_temp::<bool>(edit_id)).unwrap_or(false);
 
-    crate::widgets::rows::panel_row(ui, t!("track.color").as_ref(), |ui| {
+    field_row(ui, t!("track.color").as_ref(), false, |ui| {
         let cur = doc
             .edit
             .track_cache
@@ -212,7 +252,19 @@ fn show_color_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
             .copied()
             .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
         let stored_color = doc.data.model.tracks[track_idx].color;
-        // right_to_left：先放右侧的重置按钮，再放左侧的色块。
+        let mut srgba = crate::theme::rgba_to_color32((cur[0], cur[1], cur[2], cur[3]));
+        // 色块即取色器按钮：点击一次直接展开调色板。
+        let resp = crate::widgets::color_picker::color_edit_button(
+            ui,
+            &mut srgba,
+            egui::vec2(
+                36.0,
+                crate::scaling::scaled_font(ui.ctx(), crate::theme::ROW_H_COMPACT),
+            ),
+            t!("hint.info.color").as_ref(),
+        );
+        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.info.color"));
+        ui.add_space(crate::theme::GAP_SM);
         let reset_btn = ui
             .push_id(("track_color_reset", track_idx), |ui| {
                 crate::widgets::flat::flat_button_filled_auto(
@@ -228,19 +280,6 @@ fn show_color_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
             })
             .inner;
         crate::widgets::hint::hover(ui.ctx(), &reset_btn, t!("hint.info.reset_color"));
-        ui.add_space(crate::theme::GAP_SM);
-        let mut srgba = crate::theme::rgba_to_color32((cur[0], cur[1], cur[2], cur[3]));
-        // 色块即取色器按钮：点击一次直接展开调色板。
-        let resp = crate::widgets::color_picker::color_edit_button(
-            ui,
-            &mut srgba,
-            egui::vec2(
-                36.0,
-                crate::scaling::scaled_font(ui.ctx(), crate::theme::ROW_H_COMPACT),
-            ),
-            t!("hint.info.color").as_ref(),
-        );
-        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.info.color"));
         let changed = resp.changed();
 
         let editing = changed;
