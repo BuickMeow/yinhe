@@ -208,6 +208,65 @@ class RulerMarker {
   );
 }
 
+/// 走带循环状态。
+class LoopState {
+  const LoopState({
+    required this.enabled,
+    required this.start,
+    required this.end,
+  });
+
+  final bool enabled;
+  final int start;
+  final int end;
+
+  static const off = LoopState(enabled: false, start: 0, end: 0);
+
+  static LoopState fromJson(Map<String, dynamic> json) => LoopState(
+    enabled: json['enabled'] as bool? ?? false,
+    start: (json['start'] as num?)?.toInt() ?? 0,
+    end: (json['end'] as num?)?.toInt() ?? 0,
+  );
+
+  LoopState copyWith({bool? enabled, int? start, int? end}) => LoopState(
+    enabled: enabled ?? this.enabled,
+    start: start ?? this.start,
+    end: end ?? this.end,
+  );
+}
+
+/// 全局事件行数据（AR 固定行）。
+class EventRowsData {
+  const EventRowsData({
+    this.markers = const [],
+    this.meter = const [],
+    this.key = const [],
+    this.chord = const [],
+    this.lyrics = const [],
+  });
+
+  final List<RulerMarker> markers;
+  final List<RulerMarker> meter;
+  final List<RulerMarker> key;
+  final List<RulerMarker> chord;
+  final List<RulerMarker> lyrics;
+
+  static const empty = EventRowsData();
+
+  static List<RulerMarker> _list(dynamic raw) => [
+    for (final e in (raw as List<dynamic>? ?? const []))
+      if (e is Map<String, dynamic>) RulerMarker.fromJson(e),
+  ];
+
+  static EventRowsData fromJson(Map<String, dynamic> json) => EventRowsData(
+    markers: _list(json['markers']),
+    meter: _list(json['meter']),
+    key: _list(json['key']),
+    chord: _list(json['chord']),
+    lyrics: _list(json['lyrics']),
+  );
+}
+
 /// 长按空白处的位置指示（插入/粘贴落点）。
 class LongPressIndicator {
   const LongPressIndicator({

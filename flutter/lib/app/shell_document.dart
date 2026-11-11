@@ -409,6 +409,19 @@ mixin _ShellDocument on _ShellBase {
       if (!mounted) {
         return;
       }
+      final savedAt = (m['saved_at'] as num?)?.toInt() ?? 0;
+      final restore = await showAutosaveRecoveryDialog(
+        context,
+        name: name,
+        savedAt: savedAt,
+      );
+      if (!mounted) {
+        return;
+      }
+      if (!restore) {
+        rust.autosaveDiscard();
+        return;
+      }
       setState(() => _fileName = name.isNotEmpty ? name : 'Untitled');
       _startOpenPath(path, displayName: name);
     } catch (_) {

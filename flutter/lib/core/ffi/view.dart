@@ -14,6 +14,35 @@ final TickAtXDart tickAtX = bridge.lookupFunction<TickAtXNative, TickAtXDart>(
   'yinhe_tick_at_x',
 );
 
+/// 走带循环状态 JSON：`{"enabled","start","end"}`。
+final CStrDart loopJson = bridge.lookupFunction<CStrNative, CStrDart>(
+  'yinhe_loop_json',
+);
+
+/// 切换循环；返回 1 = 开启。
+final IntNoArgDart loopToggle = bridge
+    .lookupFunction<IntNoArgNative, IntNoArgDart>('yinhe_loop_toggle');
+
+/// 直接设置循环开关。
+final IntArgDart loopSetEnabled = bridge
+    .lookupFunction<IntArgNative, IntArgDart>('yinhe_loop_set_enabled');
+
+typedef LoopRangeNative = ffi.Int32 Function(ffi.Double, ffi.Double);
+typedef LoopRangeDart = int Function(double, double);
+
+/// 设置循环区间。
+final LoopRangeDart loopSetRange = bridge
+    .lookupFunction<LoopRangeNative, LoopRangeDart>('yinhe_loop_set_range');
+
+/// 全局事件行 JSON（markers/meter/key/chord/lyrics）。
+final CStrDart eventRowsJson = bridge.lookupFunction<CStrNative, CStrDart>(
+  'yinhe_event_rows_json',
+);
+
+/// 设置 PR 音域键数（88/128/256）。成功 1。
+final IntArgDart setPrKeyCount = bridge
+    .lookupFunction<IntArgNative, IntArgDart>('yinhe_pr_set_key_count');
+
 typedef MarkerInsertNative = ffi.Int32 Function(ffi.Double, ffi.Pointer<Utf8>);
 typedef MarkerInsertDart = int Function(double, ffi.Pointer<Utf8>);
 

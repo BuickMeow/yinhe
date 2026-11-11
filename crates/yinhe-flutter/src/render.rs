@@ -450,6 +450,9 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
             s.model_epoch,
             s.preview.clone(),
             (s.ghost_dx, s.ghost_dy),
+            s.document
+                .as_ref()
+                .map(|d| (d.edit.playback.loop_enabled(), d.edit.playback.loop_range())),
         )
     };
     let (
@@ -470,7 +473,13 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
         model_epoch,
         preview,
         preview_offset,
+        loop_state,
     ) = snapshot;
+
+    // 循环区间跟着文档走；每帧只在变化时下发，引擎重建后由 sync_loop 补发。
+    if let Some((enabled, (start, end))) = loop_state {
+        crate::audio::sync_loop(enabled, start, end);
+    }
 
     // 文档切换：旧摘要不能用于新文档，先清空再预热。
     if model_epoch != t.last_model_epoch {

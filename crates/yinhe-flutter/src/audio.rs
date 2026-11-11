@@ -418,9 +418,42 @@ fn apply_runtime_settings(st: &AudioState) {
 
 static AUDIO: OnceLock<Mutex<Option<AudioState>>> = OnceLock::new();
 static SOUNDFONTS: OnceLock<Mutex<Vec<SoundfontEntry>>> = OnceLock::new();
+/// 已下发给引擎的循环状态；引擎重建后清空，下一帧强制重发。
+static LOOP_SENT: OnceLock<Mutex<Option<(bool, u32, u32)>>> = OnceLock::new();
 
 fn state_slot() -> &'static Mutex<Option<AudioState>> {
     AUDIO.get_or_init(|| Mutex::new(None))
+}
+
+fn loop_sent_slot() -> &'static Mutex<Option<(bool, u32, u32)>> {
+    LOOP_SENT.get_or_init(|| Mutex::new(None))
+}
+
+/// 同步走带循环到音频引擎。区间无效时按关闭处理。
+///
+/// 只在状态变化时下发；引擎尚未创建时保留 `None`，等首次播放后补发。
+pub fn sync_loop(enabled: bool, start_tick: u32, end_tick: u32) {
+    let enabled = enabled && end_tick > start_tick;
+    let state = (enabled, start_tick, end_tick);
+    // 锁顺序 audio → loop_sent，与 spawn_audio 内重置缓存一致，避免反向等待。
+    let Some(mut guard) = lock_audio() else {
+        return;
+    };
+    let Some(st) = guard.as_mut() else {
+        return;
+    };
+    let Ok(mut sent) = loop_sent_slot().lock() else {
+        return;
+    };
+    if *sent == Some(state) {
+        return;
+    }
+    st.handle.handle.send(AudioCommand::SetLoop {
+        enabled,
+        start_tick,
+        end_tick,
+    });
+    *sent = Some(state);
 }
 
 fn soundfonts_slot() -> &'static Mutex<Vec<SoundfontEntry>> {
@@ -551,6 +584,10 @@ fn spawn_audio(layout: ChannelLayout, cursor_tick: f64, skip: Vec<bool>) -> Opti
             // 应用设置页配置（默认 ignore_velocity=1、max_voices=512：
             // 1024 在 tau 峰值段仍可能超过 512 帧的实时预算）。
             apply_runtime_settings(&st);
+            // 新引擎还没收到循环区间；下一帧由 sync_loop 补发。
+            if let Ok(mut sent) = loop_sent_slot().lock() {
+                *sent = None;
+            }
             Some(st)
         }
         Err(e) => {
@@ -995,6 +1032,10 @@ pub fn seek(tick: f64) -> bool {
 ///
 /// 返回 `Some(end_tick)` 表示本次调用了暂停，调用方应把 UI 光标设到末尾。
 pub fn auto_pause_at_end() -> Option<f64> {
+    // 循环开启时播放头会回绕，不能在工程末尾暂停。
+    if crate::scene::loop_enabled() {
+        return None;
+    }
     let model = current_model()?;
     let end_tick = model.tick_length as f64;
     if end_tick <= 0.0 {

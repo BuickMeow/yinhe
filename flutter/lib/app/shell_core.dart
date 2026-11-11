@@ -7,7 +7,7 @@ mixin _ShellCore on _ShellBase {
     if (rust.viewSnapshot(_snapPtr) == 0) {
       return _snap.value;
     }
-    return List<double>.generate(13, (i) => _snapPtr[i]);
+    return List<double>.generate(SnapField.length, (i) => _snapPtr[i]);
   }
 
   /// 视图快照是否与当前一致（避免无变化时触发整层重绘）。
@@ -189,10 +189,20 @@ mixin _ShellCore on _ShellBase {
     }
     // 吃掉当前 generation：菜单等主动刷新之后，ticker 不再重复刷一次。
     _docGeneration = rust.documentGeneration();
+    final eventRows = _readEventRows();
     setState(() {
       _recent = _readRecent();
       _tracks.value = _readTracks();
-      _markers = _readMarkers();
+      _eventRowsData = eventRows;
+      _markers = eventRows.markers;
+      _loop.value = _readLoop();
+      final snap = _readSnapshot();
+      if (snap.length > SnapField.keyCount) {
+        final count = snap[SnapField.keyCount].round();
+        if (count == 88 || count == 128 || count == 256) {
+          _keyCount = count;
+        }
+      }
     });
     // PR 专属面板（力度条/自动化条）不参与 AR 绘制。AR 下每次音符编辑
     // 都重扫全曲力度会卡住主线程，这里只在 PR 视图加载；AM 面板收起时
@@ -564,22 +574,90 @@ mixin _ShellCore on _ShellBase {
     }
   }
 
-  /// 标尺标签列表（marker_json）。
-  List<RulerMarker> _readMarkers() {
-    final ptr = rust.markersJson();
+  /// 全局事件行数据（markers/meter/key/chord/lyrics）。
+  EventRowsData _readEventRows() {
+    final ptr = rust.eventRowsJson();
     if (ptr == ffi.nullptr) {
-      return const [];
+      return EventRowsData.empty;
     }
     try {
-      final list = jsonDecode(ptr.toDartString()) as List<dynamic>;
-      return [
-        for (final e in list) RulerMarker.fromJson(e as Map<String, dynamic>),
-      ];
+      final json = jsonDecode(ptr.toDartString()) as Map<String, dynamic>;
+      return EventRowsData.fromJson(json);
     } catch (_) {
-      return const [];
+      return EventRowsData.empty;
     } finally {
       rust.freeString(ptr);
     }
+  }
+
+  /// 走带循环状态。
+  LoopState _readLoop() {
+    final ptr = rust.loopJson();
+    if (ptr == ffi.nullptr) {
+      return LoopState.off;
+    }
+    try {
+      final json = jsonDecode(ptr.toDartString()) as Map<String, dynamic>;
+      return LoopState.fromJson(json);
+    } catch (_) {
+      return LoopState.off;
+    } finally {
+      rust.freeString(ptr);
+    }
+  }
+
+  /// 切换循环（顶栏按钮）。
+  @override
+  void _toggleLoop() {
+    rust.loopToggle();
+    setState(() => _loop.value = _readLoop());
+  }
+
+  /// EVENT 菜单直接设置循环开关。
+  void _setLoopEnabled(bool enabled) {
+    rust.loopSetEnabled(enabled ? 1 : 0);
+    setState(() => _loop.value = _readLoop());
+  }
+
+  /// 选择 PR 音域键数。
+  @override
+  void _setKeyCount(int count) {
+    if (count == _keyCount) {
+      return;
+    }
+    if (rust.setPrKeyCount(count) == 1) {
+      setState(() => _keyCount = count);
+    }
+  }
+
+  /// 可见事件行（固定顺序；LOOP 跟随循环开关）。
+  @override
+  List<String> get _visibleEventRowKinds => [
+    if (_loop.value.enabled) 'loop',
+    for (final kind in const ['marker', 'meter', 'key', 'chord', 'lyrics'])
+      if (_eventRowKinds.contains(kind)) kind,
+  ];
+
+  /// AR 事件区高度：行 + 底部 EVENT 按钮条；PR 不显示。
+  @override
+  double get _eventRowsHeight => _viewMode == kViewArrangement
+      ? _visibleEventRowKinds.length * kEventRowHeight + kEventButtonHeight
+      : 0;
+
+  /// 事件行显示开关。
+  @override
+  void _setEventRowEnabled(String kind, bool enabled) {
+    if (kind == 'loop') {
+      _setLoopEnabled(enabled);
+      return;
+    }
+    setState(() {
+      if (enabled) {
+        _eventRowKinds.add(kind);
+      } else {
+        _eventRowKinds.remove(kind);
+      }
+    });
   }
 
   @override

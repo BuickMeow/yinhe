@@ -2437,6 +2437,90 @@ pub fn recent_json() -> String {
     out
 }
 
+/// 从最近列表移除一项（不删除磁盘文件）。成功 1。
+pub fn recent_remove(path: &str) -> i32 {
+    let removed = {
+        let Ok(mut list) = recent_slot().lock() else {
+            return 0;
+        };
+        let before = list.len();
+        list.retain(|e| e.path != path);
+        before != list.len()
+    };
+    if removed {
+        save_recent();
+        1
+    } else {
+        0
+    }
+}
+
+/// 重命名最近工程文件并同步列表 / 当前文档路径。成功 1。
+///
+/// 只允许改文件名，不允许带路径分隔符；`.yin` 后缀缺省时自动补齐。
+pub fn recent_rename(path: &str, new_name: &str) -> i32 {
+    let name = new_name.trim();
+    if name.is_empty() || name.contains('/') || name.contains('\\') || name == "." || name == ".." {
+        return 0;
+    }
+    let old = std::path::Path::new(path);
+    if !old.exists() {
+        return 0;
+    }
+    let mut file_name = name.to_string();
+    if old.extension().is_some_and(|e| e == "yin") && !file_name.ends_with(".yin") {
+        file_name.push_str(".yin");
+    }
+    let Some(parent) = old.parent() else {
+        return 0;
+    };
+    let new_path = parent.join(&file_name);
+    if new_path == old {
+        return 1;
+    }
+    if new_path.exists() {
+        return 0;
+    }
+    if std::fs::rename(old, &new_path).is_err() {
+        return 0;
+    }
+    let new_path_str = new_path.to_string_lossy().to_string();
+
+    // 列表里保留原来的打开时间，并把它置顶。
+    if let Ok(mut list) = recent_slot().lock() {
+        let opened = list
+            .iter()
+            .find(|e| e.path == path)
+            .map(|e| e.opened)
+            .unwrap_or_else(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+            });
+        list.retain(|e| e.path != path && e.path != new_path_str);
+        list.insert(
+            0,
+            RecentEntry {
+                path: new_path_str.clone(),
+                opened,
+            },
+        );
+        list.truncate(10);
+    }
+    save_recent();
+
+    // 改的是当前打开的工程：同步标题与后续保存路径。
+    if let Ok(mut s) = scene().lock()
+        && let Some(doc) = s.document.as_mut()
+        && doc.file_path.as_deref() == Some(path)
+    {
+        doc.file_path = Some(new_path_str);
+        doc.file_name = file_name;
+    }
+    1
+}
+
 /// 轨道面板 JSON：`[{"index","name","port","channel","color":[r,g,b,a],"muted","soloed"}]`。
 pub fn tracks_json() -> String {
     let Ok(s) = scene().lock() else {
@@ -2753,9 +2837,9 @@ pub fn time_grid_json() -> String {
 /// 视图快照（Dart 文本浮层用），固定 13 个 f32：
 /// `[mode, ppu, scroll_x, scroll_y, key_height, left_panel_w, lane_height,
 ///   total_ticks, ppq, key0_y, time_sig_num, time_sig_den]`
-pub fn view_snapshot() -> [f32; 13] {
+pub fn view_snapshot() -> [f32; 15] {
     let Ok(mut s) = scene().lock() else {
-        return [0.0; 13];
+        return [0.0; 15];
     };
     crate::selection_materializer::apply_pending(&mut s);
     let ppq = s.ppq as f32;
@@ -2785,6 +2869,8 @@ pub fn view_snapshot() -> [f32; 13] {
             f32::from(sig_num),
             f32::from(sig_den),
             bpm,
+            f32::from(s.pr_view.layout.start),
+            f32::from(s.pr_view.layout.count),
         ],
         ViewMode::Arrangement => [
             0.0,
@@ -2800,8 +2886,23 @@ pub fn view_snapshot() -> [f32; 13] {
             f32::from(sig_num),
             f32::from(sig_den),
             bpm,
+            0.0,
+            0.0,
         ],
     }
+}
+
+/// 设置 PR 音域键数（88/128/256）。成功 1。
+pub fn set_pr_key_count(count: u16) -> i32 {
+    if !matches!(count, 88 | 128 | 256) {
+        return 0;
+    }
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    s.pr_view.set_key_count(count);
+    refresh_snapshot(&mut s);
+    1
 }
 
 /// Tempo 曲线值域上界：当前最大 Tempo 事件（BPM），至少 1。
@@ -4599,6 +4700,158 @@ pub fn markers_json() -> String {
     }
     out.push(']');
     out
+}
+
+/// 走带循环状态：`{"enabled":bool,"start":tick,"end":tick}`。
+pub fn loop_json() -> String {
+    let Ok(s) = scene().lock() else {
+        return r#"{"enabled":false,"start":0,"end":0}"#.into();
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return r#"{"enabled":false,"start":0,"end":0}"#.into();
+    };
+    let playback = &doc.edit.playback;
+    let (start, end) = playback.loop_range();
+    serde_json::json!({
+        "enabled": playback.loop_enabled(),
+        "start": start,
+        "end": end,
+    })
+    .to_string()
+}
+
+/// 当前文档是否开启循环（播放到末尾时不要自动暂停）。
+pub fn loop_enabled() -> bool {
+    scene()
+        .lock()
+        .ok()
+        .and_then(|s| s.document.as_ref().map(|d| d.edit.playback.loop_enabled()))
+        .unwrap_or(false)
+}
+
+/// 切换走带循环。开启时若区间无效，以光标所在小节为起点生成四小节。
+/// 返回切换后的开关状态（1 = 开）。
+pub fn loop_toggle() -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let cursor = s.cursor_tick.max(0.0) as u32;
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let enabled = !doc.edit.playback.loop_enabled();
+    if enabled {
+        let (start, end) = doc.edit.playback.loop_range();
+        if end <= start {
+            let bar = doc.data.model.tempo_map.bar_divide().max(1.0) as u32;
+            let start = cursor / bar * bar;
+            let _ = doc
+                .edit
+                .playback
+                .set_loop_range(start, start.saturating_add(bar.saturating_mul(4)));
+        }
+    }
+    if doc.edit.playback.set_loop_enabled(enabled) {
+        i32::from(doc.edit.playback.loop_enabled())
+    } else {
+        0
+    }
+}
+
+/// 直接设置循环开关（EVENT 菜单用）。返回 1 = 成功。
+pub fn loop_set_enabled(enabled: bool) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let cursor = s.cursor_tick.max(0.0) as u32;
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    if enabled {
+        let (start, end) = doc.edit.playback.loop_range();
+        if end <= start {
+            let bar = doc.data.model.tempo_map.bar_divide().max(1.0) as u32;
+            let start = cursor / bar * bar;
+            let _ = doc
+                .edit
+                .playback
+                .set_loop_range(start, start.saturating_add(bar.saturating_mul(4)));
+        }
+    }
+    i32::from(doc.edit.playback.set_loop_enabled(enabled))
+}
+
+/// 设置循环区间（拖拽 LOOP 行）。成功 1。
+pub fn loop_set_range(start: f64, end: f64) -> i32 {
+    let Ok(mut s) = scene().lock() else {
+        return 0;
+    };
+    let Some(doc) = s.document.as_mut() else {
+        return 0;
+    };
+    let start = start.max(0.0).min(u32::MAX as f64) as u32;
+    let end = end.max(0.0).min(u32::MAX as f64) as u32;
+    i32::from(doc.edit.playback.set_loop_range(start, end))
+}
+
+/// 全局事件行数据（AR 固定行）：`{"markers":[…],"meter":[…],"key":[…],
+/// "chord":[…],"lyrics":[…]}`，每项 `{"tick","text"}`。
+///
+/// 拍号为空时补一个 tick 0 的工程默认拍号，保证 METER 行始终能显示。
+pub fn event_rows_json() -> String {
+    let Ok(s) = scene().lock() else {
+        return "{}".into();
+    };
+    let Some(doc) = s.document.as_ref() else {
+        return "{}".into();
+    };
+    let model = &doc.data.model;
+    let conductor = &model.conductor;
+    let text_events = |iter: &mut dyn Iterator<Item = (u32, String)>| {
+        iter.map(|(tick, text)| serde_json::json!({"tick": tick, "text": text}))
+            .collect::<Vec<_>>()
+    };
+
+    let meter = if conductor.time_sig.is_empty() {
+        let (num, den) = model.tempo_map.time_sig_default;
+        vec![serde_json::json!({
+            "tick": 0,
+            "text": format!("{num}/{}", 1u32 << u32::from(den.min(5))),
+        })]
+    } else {
+        text_events(&mut conductor.time_sig.iter().map(|e| {
+            (
+                e.tick,
+                format!(
+                    "{}/{}",
+                    e.numerator,
+                    1u32 << u32::from(e.denominator.min(5))
+                ),
+            )
+        }))
+    };
+    let key = text_events(&mut conductor.key_sig.iter().map(|e| {
+        (
+            e.tick,
+            format!(
+                "{} {}",
+                yinhe_types::NOTE_NAMES[(e.root % 12) as usize],
+                e.scale.english_name()
+            ),
+        )
+    }));
+    let markers = text_events(&mut conductor.markers.iter().map(|e| (e.tick, e.text.clone())));
+    let chord = text_events(&mut conductor.chord.iter().map(|e| (e.tick, e.text.clone())));
+    let lyrics = text_events(&mut conductor.lyrics.iter().map(|e| (e.tick, e.text.clone())));
+
+    serde_json::json!({
+        "markers": markers,
+        "meter": meter,
+        "key": key,
+        "chord": chord,
+        "lyrics": lyrics,
+    })
+    .to_string()
 }
 
 /// 在 tick 处插入一个标签（空文本 = 显示小节位置）。成功 1。

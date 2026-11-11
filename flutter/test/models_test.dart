@@ -101,6 +101,35 @@ void main() {
       expect(item.path, '');
       expect(item.time, 0);
     });
+
+    test('LoopState 解析与缺省', () {
+      final loop = LoopState.fromJson({
+        'enabled': true,
+        'start': 480,
+        'end': 2400,
+      });
+      expect(loop.enabled, isTrue);
+      expect(loop.start, 480);
+      expect(loop.end, 2400);
+      expect(LoopState.fromJson(const {}).enabled, isFalse);
+    });
+
+    test('EventRowsData 解析拍号/调号与缺省', () {
+      final rows = EventRowsData.fromJson({
+        'meter': [
+          {'tick': 0, 'text': '4/4'},
+          {'tick': 1920, 'text': '3/4'},
+        ],
+        'key': [
+          {'tick': 0, 'text': 'C major'},
+        ],
+      });
+      expect(rows.meter.length, 2);
+      expect(rows.meter[1].tick, 1920);
+      expect(rows.meter[1].text, '3/4');
+      expect(rows.key.single.text, 'C major');
+      expect(EventRowsData.fromJson(const {}).meter, isEmpty);
+    });
   });
 
   group('LongPressContext', () {

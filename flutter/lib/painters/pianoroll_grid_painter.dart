@@ -37,7 +37,13 @@ class PianorollGridPainter extends CustomPainter {
     final kh = s[SnapField.keyHeight];
     final kbW = s[SnapField.leftPanelW];
     final key0Y = s[SnapField.key0Y];
-    if (kh <= 0 || kbW <= 0) {
+    final keyStart = s.length > SnapField.keyStart
+        ? s[SnapField.keyStart].round()
+        : 0;
+    final keyCount = s.length > SnapField.keyCount
+        ? s[SnapField.keyCount].round()
+        : 128;
+    if (kh <= 0 || kbW <= 0 || keyCount <= 0) {
       return;
     }
 
@@ -45,7 +51,7 @@ class PianorollGridPainter extends CustomPainter {
     final white = Paint()..color = YinheTheme.keyWhite;
     final black = Paint()..color = YinheTheme.keyBlack;
     // 黑键行条纹铺满内容区，再在左列盖上不透明键盘，和 wgpu 之前的层级一致。
-    for (var key = 0; key < 128; key++) {
+    for (var key = keyStart; key < keyStart + keyCount; key++) {
       final y = key0Y - key * kh;
       if (y + kh < 0 || y > size.height) {
         continue;

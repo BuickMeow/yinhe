@@ -189,37 +189,34 @@ static DRAG: std::sync::Mutex<DragState> = std::sync::Mutex::new(DragState {
 struct PrGeom {
     ppu: f32,
     scroll_x: f32,
+    scroll_y: f32,
     kh: f32,
-    /// 键盘底边（key 0 行的底缘，含 scroll；与官方 `key_to_y` 同基准）。
-    bottom: f32,
+    layout: yinhe_types::KeyLayout,
     kbw: f32,
 }
 
 impl PrGeom {
     fn new(view: &yinhe_types::PianoRollView) -> Self {
-        let kh = view.key_height.max(0.001);
         Self {
             ppu: view.base.pixels_per_tick,
             scroll_x: view.base.scroll_x,
-            kh,
-            // key_to_y(0) = bottom - kh。
-            bottom: view.key_to_y(0) + kh,
+            scroll_y: view.base.scroll_y,
+            kh: view.key_height.max(0.001),
+            layout: view.layout,
             kbw: view.keyboard_width(),
         }
     }
     fn x_to_tick(&self, x: f32) -> f64 {
         f64::from((x - self.kbw + self.scroll_x) / self.ppu.max(0.0001))
     }
-    /// 与官方 `PianoRollView::y_to_key` 同式（ceil - 1）。
     fn y_to_key(&self, y: f32) -> u8 {
-        let key_f = ((self.bottom - y) / self.kh).clamp(0.0, 128.0);
-        (key_f.ceil() as u8).saturating_sub(1)
+        self.layout.y_to_key(y, self.kh, self.scroll_y) as u8
     }
     fn tick_to_x(&self, tick: f64) -> f32 {
         tick as f32 * self.ppu - self.scroll_x + self.kbw
     }
     fn key_to_y(&self, key: u8) -> f32 {
-        self.bottom - (f32::from(key) + 1.0) * self.kh
+        self.layout.key_to_y(u16::from(key), self.kh, self.scroll_y)
     }
 }
 
@@ -791,8 +788,8 @@ pub fn begin_note_resize(x: f32, y: f32) -> i32 {
     let Some((track, start_tick, end_tick, key, side, id)) = hit_note(&s, &geom, x, y) else {
         return 0;
     };
-    if side != 2 {
-        return 0; // 只有音符右端可以改长度
+    if side == 0 {
+        return 0; // 中部留给移动
     }
     // 按点不在选框内才会走到这里：取消旧选框，专心改这一颗音符。
     clear_selection_for_note_drag(&mut s);
@@ -1506,11 +1503,11 @@ fn preview_group(s: &RenderScene, d: &DragState, dt: i64, dk: i32) {
     let Some(drag) = d.drag.as_ref() else {
         return;
     };
-    let src_lo = (i32::from(key_lo) - dk).clamp(0, 127) as usize;
-    let src_hi = (i32::from(key_hi) - dk).clamp(0, 127) as usize;
+    let src_lo = (i32::from(key_lo) - dk).clamp(0, 255) as usize;
+    let src_hi = (i32::from(key_hi) - dk).clamp(0, 255) as usize;
     let mut notes = Vec::new();
     for src_key in src_lo..=src_hi {
-        let new_key = (src_key as i32 + dk).clamp(0, 127) as u8;
+        let new_key = (src_key as i32 + dk).clamp(0, 255) as u8;
         if new_key < key_lo || new_key > key_hi {
             continue;
         }
@@ -1836,7 +1833,7 @@ fn line_cells(d: &DragState, s: &RenderScene, x: f32, y: f32) -> Vec<(u32, u8)> 
         } else {
             (idx - start_idx) as f64 / span as f64
         };
-        let key = (k0 + (k1 - k0) * f).round().clamp(0.0, 127.0) as u8;
+        let key = (k0 + (k1 - k0) * f).round().clamp(0.0, 255.0) as u8;
         cells.push((idx as u32, key));
     }
     cells
@@ -1961,8 +1958,8 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                         return;
                     };
                     let geom = PrGeom::new(&s.pr_view);
-                    let klo2 = (i32::from(klo) + dk).clamp(0, 127) as u8;
-                    let khi2 = (i32::from(khi) + dk).clamp(0, 127) as u8;
+                    let klo2 = (i32::from(klo) + dk).clamp(0, 255) as u8;
+                    let khi2 = (i32::from(khi) + dk).clamp(0, 255) as u8;
                     s.set_box_target([
                         geom.tick_to_x(t0 + dt_f).max(geom.kbw),
                         geom.key_to_y(khi2),
@@ -1988,11 +1985,11 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                             .pr_view
                             .visible_cross_range(s.pr_view.cross_axis_len(lw, lh));
                         let mut ghost = Vec::new();
-                        let src_lo = (i32::from(key_lo) - dk).clamp(0, 127) as usize;
-                        let src_hi = (i32::from(key_hi) - dk).clamp(0, 127) as usize;
+                        let src_lo = (i32::from(key_lo) - dk).clamp(0, 255) as usize;
+                        let src_hi = (i32::from(key_hi) - dk).clamp(0, 255) as usize;
                         if let Some(drag) = d.drag.as_ref() {
                             for src_key in src_lo..=src_hi {
-                                let new_key = (src_key as i32 + dk).clamp(0, 127) as u8;
+                                let new_key = (src_key as i32 + dk).clamp(0, 255) as u8;
                                 for &(track, start, end, _vel) in &drag.by_key[src_key] {
                                     let new_start = (i64::from(start) + dt).max(0) as u32;
                                     let new_end =
@@ -2246,7 +2243,7 @@ fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
             let new_start = note_move_start_abs(s, q, d, x);
             let dt = i64::from(new_start) - i64::from(d.start_tick);
             let dk = i32::from(geom.y_to_key(y)) - i32::from(d.anchor_key);
-            let new_key = (i32::from(d.key) + dk).clamp(0, 127) as u8;
+            let new_key = (i32::from(d.key) + dk).clamp(0, 255) as u8;
             let len = d.end_tick.saturating_sub(d.start_tick);
             let stamp = (dt, dk, s.pr_view.render_hash());
             if d.last_ghost != Some(stamp) {
@@ -3018,8 +3015,8 @@ fn commit_move(
                 doc.push_undo(action, "undo.move_notes", before);
                 // 可视选框跟随移动（与桌面一致）。
                 for r in &mut doc.edit.sel_rect.rects {
-                    let klo = (i32::from(r.2) + dk).clamp(0, 127) as u8;
-                    let khi = (i32::from(r.3) + dk).clamp(0, 127) as u8;
+                    let klo = (i32::from(r.2) + dk).clamp(0, 255) as u8;
+                    let khi = (i32::from(r.3) + dk).clamp(0, 255) as u8;
                     r.0 += dt as f64;
                     r.1 += dt as f64;
                     r.2 = klo;
@@ -3207,7 +3204,7 @@ fn commit_note_move(
     if moved_note.is_some() {
         // 铅笔移动后选区跟随新位置，下一笔仍可直接拖这个音符。
         if PENCIL_PICK_ENABLED && matches!(s.tool, Tool::Pencil) {
-            let new_key = (i32::from(d.key) + dk).clamp(0, 127) as u8;
+            let new_key = (i32::from(d.key) + dk).clamp(0, 255) as u8;
             let new_end = new_start.saturating_add(d.end_tick.saturating_sub(d.start_tick));
             select_note(s, d.track, new_start, new_end, new_key);
         }
@@ -3433,7 +3430,7 @@ fn walk_line(from: (u32, u8), to: (u32, u8), add: &mut impl FnMut(u32, u8)) {
     let mut err = dx + dy;
     let (mut cx, mut cy) = (x0, y0);
     loop {
-        if cx >= 0 && (0..=127).contains(&cy) {
+        if cx >= 0 && (0..=255).contains(&cy) {
             add(cx as u32, cy as u8);
         }
         if cx == x1 && cy == y1 {
@@ -3528,6 +3525,18 @@ mod tests {
             None,
             "AR 没有批量 gate 控制点"
         );
+    }
+
+    #[test]
+    fn pr_geom_handles_88_key_range() {
+        let mut view = yinhe_types::PianoRollView::default();
+        view.set_key_count(88);
+        view.key_height = 10.0;
+        let geom = PrGeom::new(&view);
+        for key in 21..=108u8 {
+            let y = geom.key_to_y(key) + geom.kh * 0.5;
+            assert_eq!(geom.y_to_key(y), key, "key {key} roundtrip");
+        }
     }
 
     #[test]

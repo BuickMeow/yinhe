@@ -16,6 +16,7 @@ class TopBar extends StatelessWidget {
     required this.compact,
     required this.isPr,
     required this.playing,
+    required this.loopOn,
     required this.timecodeText,
     required this.editStatus,
     required this.quantizeLabel,
@@ -34,6 +35,7 @@ class TopBar extends StatelessWidget {
     required this.onBack,
     required this.onTogglePlay,
     required this.onStop,
+    required this.onToggleLoop,
     required this.onToggleTimecode,
     required this.onQuantize,
     required this.automationOpen,
@@ -55,6 +57,8 @@ class TopBar extends StatelessWidget {
     required this.onEditBpm,
     required this.onEditSig,
     required this.onDeselect,
+    required this.keyCount,
+    required this.onKeyCount,
   });
 
   /// 顶栏高度：横屏单行 42，竖屏双行 84。
@@ -65,6 +69,7 @@ class TopBar extends StatelessWidget {
 
   final bool isPr;
   final bool playing;
+  final bool loopOn;
   final ValueListenable<String> timecodeText;
 
   /// 拖动时的临时读数（力度/自动化/选框）；null = 常规显示。
@@ -97,6 +102,7 @@ class TopBar extends StatelessWidget {
   final VoidCallback onBack;
   final VoidCallback onTogglePlay;
   final VoidCallback onStop;
+  final VoidCallback onToggleLoop;
   final VoidCallback onToggleTimecode;
   final ValueChanged<String> onQuantize;
 
@@ -132,6 +138,10 @@ class TopBar extends StatelessWidget {
 
   /// 点击顶部栏空白区域：取消当前选区。
   final VoidCallback onDeselect;
+
+  /// PR 当前音域键数（88/128/256）。
+  final int keyCount;
+  final ValueChanged<int> onKeyCount;
 
   @override
   Widget build(BuildContext context) {
@@ -216,7 +226,20 @@ class TopBar extends StatelessWidget {
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
         ),
+        if (!compact) _buildLoopButton(),
       ],
+    );
+  }
+
+  Widget _buildLoopButton() {
+    return IconButton(
+      onPressed: onToggleLoop,
+      icon: const Icon(Icons.repeat),
+      color: loopOn ? YinheTheme.accent : YinheTheme.textSecondary,
+      tooltip: 'Loop',
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 36, minHeight: 40),
     );
   }
 
@@ -316,10 +339,36 @@ class TopBar extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (isPr) _buildKeyCountButton(),
         _buildQuantizeButton(context, l),
         if (isPr) _buildAutomationButton(l),
         _buildHistory(l),
       ],
+    );
+  }
+
+  /// PR 音域：单按钮下拉（88/128/256），避免三段开关挤占顶栏宽度。
+  Widget _buildKeyCountButton() {
+    return PopupMenuButton<int>(
+      color: YinheTheme.bg,
+      tooltip: '88 / 128 / 256',
+      padding: EdgeInsets.zero,
+      onSelected: onKeyCount,
+      itemBuilder: (_) => [
+        for (final count in const [88, 128, 256])
+          PopupMenuItem(value: count, child: Text('$count')),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+        child: Text(
+          '$keyCount',
+          style: TextStyle(
+            color: YinheTheme.textSecondary,
+            fontSize: 13,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+      ),
     );
   }
 
@@ -354,6 +403,8 @@ class TopBar extends StatelessWidget {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      _buildLoopButton(),
+                      if (isPr) _buildKeyCountButton(),
                       _buildQuantizeButton(context, l),
                       if (isPr) _buildAutomationButton(l),
                     ],

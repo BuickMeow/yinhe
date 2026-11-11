@@ -30,8 +30,10 @@ import '../core/models.dart';
 import '../core/snap_fields.dart';
 import 'system_bars.dart';
 import '../core/ui_settings.dart';
+import '../widgets/event_rows_bar.dart';
 import '../widgets/ruler_markers.dart';
 import '../dialogs/archive_dialogs.dart';
+import '../dialogs/autosave_recovery_dialog.dart';
 import '../dialogs/event_list_dialog.dart';
 import '../dialogs/export_dialogs.dart';
 import '../dialogs/unsaved_dialog.dart';
@@ -258,6 +260,18 @@ abstract class _ShellBase extends State<StudioShell>
   /// 标尺标签（marker）。
   List<RulerMarker> _markers = const [];
 
+  /// 走带循环（循环行随开关自动显隐）。
+  final ValueNotifier<LoopState> _loop = ValueNotifier(LoopState.off);
+
+  /// 全局事件行数据（AR 固定行）。
+  EventRowsData _eventRowsData = EventRowsData.empty;
+
+  /// 用户显示的事件行：loop 由循环开关驱动，其余按需开启。
+  final Set<String> _eventRowKinds = {'meter'};
+
+  /// PR 音域键数（88/128/256）。
+  int _keyCount = 128;
+
   /// 长按落点竖线（插入/粘贴位置）。
   final ValueNotifier<LongPressIndicator?> _lpIndicator = ValueNotifier(null);
   int _lpToken = 0;
@@ -268,7 +282,7 @@ abstract class _ShellBase extends State<StudioShell>
 
   final ValueNotifier<double> _playhead = ValueNotifier<double>(-1);
   final ValueNotifier<List<double>> _snap = ValueNotifier<List<double>>(
-    List<double>.filled(12, 0.0),
+    List<double>.filled(SnapField.length, 0.0),
   );
 
   /// 标尺标签（Rust 算，Dart 只画）。
@@ -537,6 +551,11 @@ abstract class _ShellBase extends State<StudioShell>
   void _syncArrPanelWidth();
   void _syncWorkSeconds();
   void _syncCanvasSizeForView(int mode);
+  void _toggleLoop();
+  void _setKeyCount(int count);
+  void _setEventRowEnabled(String kind, bool enabled);
+  List<String> get _visibleEventRowKinds;
+  double get _eventRowsHeight;
   void _finishAutoPanelResize();
   void _setView(int mode);
   void _showAddTrackDialog();
@@ -572,7 +591,7 @@ class _StudioShellState extends _ShellBase
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _snapPtr = calloc<ffi.Float>(13);
+    _snapPtr = calloc<ffi.Float>(SnapField.length);
     _statePtr = calloc<ffi.Int32>(3);
     _dragDtPtr = calloc<ffi.Int64>();
     _dragDkPtr = calloc<ffi.Int32>();

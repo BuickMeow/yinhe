@@ -102,9 +102,31 @@ final IntArgDart setDisplayTrack = bridge
 final IntArgDart setGrayOtherTracks = bridge
     .lookupFunction<IntArgNative, IntArgDart>('yinhe_set_gray_other_tracks');
 
-/// 启动时检查自动保存残留：`{"path","name"}` 或 `{}`。
+/// 启动时检查自动保存残留：`{"path","name","saved_at"}` 或 `{}`。
 final CStrDart autosavePendingJson = bridge
     .lookupFunction<CStrNative, CStrDart>('yinhe_autosave_pending_json');
+
+typedef VoidNative = ffi.Void Function();
+typedef VoidDart = void Function();
+
+/// 丢弃自动保存备份。
+final VoidDart autosaveDiscard = bridge.lookupFunction<VoidNative, VoidDart>(
+  'yinhe_autosave_discard',
+);
+
+/// 从最近列表移除（不删除文件）。成功 1。
+final CStrArgDart recentRemove = bridge
+    .lookupFunction<CStrArgNative, CStrArgDart>('yinhe_recent_remove');
+
+typedef TwoCStrNative = ffi.Int32 Function(
+  ffi.Pointer<Utf8>,
+  ffi.Pointer<Utf8>,
+);
+typedef TwoCStrDart = int Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>);
+
+/// 重命名最近工程文件。成功 1。
+final TwoCStrDart recentRename = bridge
+    .lookupFunction<TwoCStrNative, TwoCStrDart>('yinhe_recent_rename');
 
 /// 自动保存开关。
 final IntArgDart setAutoSaveEnabled = bridge

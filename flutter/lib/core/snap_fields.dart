@@ -1,7 +1,7 @@
 /// 视图快照字段索引。
 ///
-/// 与 `crates/yinhe-flutter/src/scene.rs::view_snapshot` 的 13 个 f32 一一对应；
-/// 加字段时两边必须同步，这里用命名常量替代 `s[0]…s[12]` 的魔法下标。
+/// 与 `crates/yinhe-flutter/src/scene.rs::view_snapshot` 的 15 个 f32 一一对应；
+/// 加字段时两边必须同步，这里用命名常量替代魔法下标。
 abstract final class SnapField {
   /// 0 = AR，1 = PR。
   static const mode = 0;
@@ -22,6 +22,12 @@ abstract final class SnapField {
   static const sigDen = 11;
   static const bpm = 12;
 
+  /// 当前音域起始键（88 键 = 21，128/256 = 0）。
+  static const keyStart = 13;
+
+  /// 当前音域键数（88/128/256）。
+  static const keyCount = 14;
+
   /// 快照总长度。
-  static const length = 13;
+  static const length = 15;
 }

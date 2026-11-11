@@ -81,6 +81,7 @@ pub fn pending_json() -> String {
     json!({
         "path": file,
         "name": m.get("name").and_then(Value::as_str).unwrap_or(""),
+        "saved_at": m.get("saved_at").and_then(Value::as_u64).unwrap_or(0),
     })
     .to_string()
 }

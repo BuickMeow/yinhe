@@ -201,11 +201,18 @@ class LabelsPainter extends CustomPainter {
     final kh = s[SnapField.keyHeight];
     final kbW = s[SnapField.leftPanelW];
     final key0Y = s[SnapField.key0Y];
-    if (kh < 10 || kbW <= 0) {
+    final keyStart = s.length > SnapField.keyStart
+        ? s[SnapField.keyStart].round()
+        : 0;
+    final keyCount = s.length > SnapField.keyCount
+        ? s[SnapField.keyCount].round()
+        : 128;
+    if (kh < 10 || kbW <= 0 || keyCount <= 0) {
       return;
     }
     final font = (kh * 0.5).clamp(7.0, 11.0).toDouble();
-    for (var key = 0; key <= 127; key += 12) {
+    final firstC = ((keyStart + 11) ~/ 12) * 12;
+    for (var key = firstC; key < keyStart + keyCount; key += 12) {
       final y = key0Y - key * kh;
       if (y + kh < 0 || y > size.height) {
         continue;

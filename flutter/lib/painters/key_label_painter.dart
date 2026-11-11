@@ -30,8 +30,14 @@ class KeyLabelPainter extends CustomPainter {
     final kh = s[SnapField.keyHeight];
     final keyboardW = s[SnapField.leftPanelW];
     final key0Top = s[SnapField.key0Y];
+    final keyStart = s.length > SnapField.keyStart
+        ? s[SnapField.keyStart].round()
+        : 0;
+    final keyCount = s.length > SnapField.keyCount
+        ? s[SnapField.keyCount].round()
+        : 128;
     // 与键盘列同一门槛/字号；行高太小时文字会糊成一片。
-    if (kh < 10 || keyboardW <= 0 || size.height <= 0) {
+    if (kh < 10 || keyboardW <= 0 || size.height <= 0 || keyCount <= 0) {
       return;
     }
     final fontSize = (kh * 0.5).clamp(7.0, 11.0);
@@ -40,7 +46,8 @@ class KeyLabelPainter extends CustomPainter {
       fontSize: fontSize,
       fontWeight: FontWeight.w500,
     );
-    for (var key = 0; key < 128; key += 12) {
+    final firstC = ((keyStart + 11) ~/ 12) * 12;
+    for (var key = firstC; key < keyStart + keyCount; key += 12) {
       final top = key0Top - key * kh;
       if (top + kh < 0 || top > size.height) {
         continue;

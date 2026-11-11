@@ -1095,7 +1095,7 @@ pub extern "C" fn yinhe_move_track(from: i32, to: i32) -> i32 {
     scene::move_track(from as usize, to as usize)
 }
 
-/// 视图快照（Dart 文本浮层用）：写入 12 个 f32，成功返回 1。
+/// 视图快照（Dart 文本浮层用）：写入 15 个 f32，成功返回 1。
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_view_snapshot(out: *mut f32) -> i32 {
@@ -1107,6 +1107,15 @@ pub extern "C" fn yinhe_view_snapshot(out: *mut f32) -> i32 {
         std::ptr::copy_nonoverlapping(snap.as_ptr(), out, snap.len());
     }
     1
+}
+
+/// 设置 PR 音域键数（88/128/256）。成功 1。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_pr_set_key_count(count: i32) -> i32 {
+    if !(0..=u16::MAX as i32).contains(&count) {
+        return 0;
+    }
+    scene::set_pr_key_count(count as u16)
 }
 
 /// 开始导出 WAV（路径 + 16/24/32 位深）。成功 1。
@@ -1203,6 +1212,38 @@ pub extern "C" fn yinhe_quantize_presets_json(ppq: f64) -> *mut std::ffi::c_char
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_recent_json() -> *mut std::ffi::c_char {
     to_c_string(scene::recent_json())
+}
+
+/// 从最近列表移除一项（不删文件）。成功 1。
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_recent_remove(path: *const std::ffi::c_char) -> i32 {
+    if path.is_null() {
+        return 0;
+    }
+    let path = unsafe { CStr::from_ptr(path) }
+        .to_string_lossy()
+        .into_owned();
+    scene::recent_remove(&path)
+}
+
+/// 重命名最近工程文件。成功 1。
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_recent_rename(
+    path: *const std::ffi::c_char,
+    new_name: *const std::ffi::c_char,
+) -> i32 {
+    if path.is_null() || new_name.is_null() {
+        return 0;
+    }
+    let path = unsafe { CStr::from_ptr(path) }
+        .to_string_lossy()
+        .into_owned();
+    let new_name = unsafe { CStr::from_ptr(new_name) }
+        .to_string_lossy()
+        .into_owned();
+    scene::recent_rename(&path, &new_name)
 }
 
 /// 轨道面板 JSON（堆分配，调用方用 `yinhe_free_string` 释放）。
@@ -1519,6 +1560,36 @@ pub extern "C" fn yinhe_marker_move(from: f64, x: f32) -> i32 {
     scene::marker_move(from, x)
 }
 
+/// 走带循环状态 JSON：`{"enabled","start","end"}`。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_loop_json() -> *mut std::ffi::c_char {
+    to_c_string(scene::loop_json())
+}
+
+/// 切换循环；返回 1 = 开启。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_loop_toggle() -> i32 {
+    scene::loop_toggle()
+}
+
+/// 直接设置循环开关；返回 1 = 成功。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_loop_set_enabled(enabled: i32) -> i32 {
+    scene::loop_set_enabled(enabled != 0)
+}
+
+/// 设置循环区间；返回 1 = 成功。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_loop_set_range(start: f64, end: f64) -> i32 {
+    scene::loop_set_range(start, end)
+}
+
+/// 全局事件行 JSON（markers/meter/key/chord/lyrics）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_event_rows_json() -> *mut std::ffi::c_char {
+    to_c_string(scene::event_rows_json())
+}
+
 /// 播放光标跳到 tick（标尺标签点击）。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_jump_to_tick(tick: f64) {
@@ -1617,10 +1688,16 @@ pub extern "C" fn yinhe_autosave_tick() {
     autosave::tick();
 }
 
-/// 启动时检查自动保存残留：`{"path","name"}` 或 `{}`。
+/// 启动时检查自动保存残留：`{"path","name","saved_at"}` 或 `{}`。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_autosave_pending_json() -> *mut std::ffi::c_char {
     to_c_string(autosave::pending_json())
+}
+
+/// 丢弃自动保存备份（用户选择“不恢复”）。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_autosave_discard() {
+    autosave::clear();
 }
 
 /// 自动保存开关。

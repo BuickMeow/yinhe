@@ -84,7 +84,14 @@ mixin _ShellBuild on _ShellBase {
       return;
     }
     // 自动化提手不参与布局：画布/卷帘/wgpu 始终铺到内容区底部。
-    final lh = (_canvasAreaH - RulerPainter.height).clamp(1.0, double.infinity);
+    // AR 事件行（含 EVENT 按钮条）夹在标尺与音轨之间，需要从高度里扣掉。
+    final eventH = mode == kViewArrangement
+        ? _visibleEventRowKinds.length * kEventRowHeight + kEventButtonHeight
+        : 0.0;
+    final lh = (_canvasAreaH - RulerPainter.height - eventH).clamp(
+      1.0,
+      double.infinity,
+    );
     final w = (_canvasAreaW * _canvasDpr).round();
     final h = (lh * _canvasDpr).round();
     final pixel = Size(w.toDouble(), h.toDouble());
@@ -122,7 +129,13 @@ mixin _ShellBuild on _ShellBase {
   void _showRecentFiles() {
     _scaffoldKey.currentState?.closeDrawer();
     unawaited(
-      showRecentFilesDialog(context, recent: _recent, onOpen: _openRecent),
+      showRecentFilesDialog(
+        context,
+        recent: _recent,
+        onOpen: _openRecent,
+        onChanged: _refreshDocumentMeta,
+        onCurrentRenamed: (name) => setState(() => _fileName = name),
+      ),
     );
   }
 
@@ -286,10 +299,17 @@ mixin _ShellBuild on _ShellBase {
                                       amMax,
                                     )
                                   : 0.0;
-                              // 内容画布 = 画布区减去标尺条。AM 提手只是浮层，
-                              // 不再让 PR/卷帘/wgpu 为它让出高度。
-                              final contentH = (canvasH - RulerPainter.height)
-                                  .clamp(1.0, double.infinity);
+                              // 内容画布 = 画布区减去标尺条；AR 再减去事件行区。
+                              // AM 提手只是浮层，不再让 PR/卷帘/wgpu 为它让出高度。
+                              final eventRowsH = _viewMode == kViewArrangement
+                                  ? _eventRowsHeight
+                                  : 0.0;
+                              final contentTop =
+                                  RulerPainter.height + eventRowsH;
+                              final contentH = (canvasH - contentTop).clamp(
+                                1.0,
+                                double.infinity,
+                              );
                               final dpr = MediaQuery.devicePixelRatioOf(
                                 context,
                               );
@@ -348,7 +368,7 @@ mixin _ShellBuild on _ShellBase {
                                             Positioned(
                                               left: 0,
                                               right: 0,
-                                              top: RulerPainter.height,
+                                              top: contentTop,
                                               bottom: 0,
                                               child: IgnorePointer(
                                                 child: CustomPaint(
@@ -365,7 +385,7 @@ mixin _ShellBuild on _ShellBase {
                                             Positioned(
                                               left: 0,
                                               right: 0,
-                                              top: RulerPainter.height,
+                                              top: contentTop,
                                               bottom: 0,
                                               child: IgnorePointer(
                                                 child: CustomPaint(
@@ -379,7 +399,7 @@ mixin _ShellBuild on _ShellBase {
                                           Positioned(
                                             left: 0,
                                             right: 0,
-                                            top: RulerPainter.height,
+                                            top: contentTop,
                                             bottom: 0,
                                             child: GestureDetector(
                                               behavior: HitTestBehavior.opaque,
@@ -420,13 +440,31 @@ mixin _ShellBuild on _ShellBase {
                                               ),
                                             ),
                                           ),
+                                          // AR 固定事件行：标尺下方、音轨上方；底部是 EVENT 开关。
+                                          if (_viewMode == kViewArrangement)
+                                            Positioned(
+                                              left: 0,
+                                              right: 0,
+                                              top: RulerPainter.height,
+                                              height: _eventRowsHeight,
+                                              child: EventRowsBar(
+                                                snap: _snap,
+                                                loop: _loop,
+                                                data: _eventRowsData,
+                                                visibleKinds:
+                                                    _visibleEventRowKinds,
+                                                enabledKinds: _eventRowKinds,
+                                                onToggleRow:
+                                                    _setEventRowEnabled,
+                                              ),
+                                            ),
                                           // 卷帘背景 C 音名：设置「显示键盘」开启时显示。
                                           if (_viewMode == kViewPianoroll &&
                                               !amVisible)
                                             Positioned(
                                               left: 0,
                                               right: 0,
-                                              top: RulerPainter.height,
+                                              top: contentTop,
                                               bottom: 0,
                                               child: IgnorePointer(
                                                 child: CustomPaint(
@@ -441,7 +479,7 @@ mixin _ShellBuild on _ShellBase {
                                           Positioned(
                                             left: 0,
                                             right: 0,
-                                            top: RulerPainter.height,
+                                            top: contentTop,
                                             bottom: 0,
                                             child: IgnorePointer(
                                               child: CustomPaint(
@@ -456,7 +494,7 @@ mixin _ShellBuild on _ShellBase {
                                           Positioned(
                                             left: 0,
                                             right: 0,
-                                            top: RulerPainter.height,
+                                            top: contentTop,
                                             bottom: 0,
                                             child: IgnorePointer(
                                               child: CustomPaint(
@@ -476,7 +514,7 @@ mixin _ShellBuild on _ShellBase {
                                           Positioned(
                                             left: 0,
                                             right: 0,
-                                            top: RulerPainter.height,
+                                            top: contentTop,
                                             bottom: 0,
                                             child: IgnorePointer(
                                               child: CustomPaint(
@@ -525,7 +563,7 @@ mixin _ShellBuild on _ShellBase {
                                           Positioned(
                                             left: 0,
                                             right: 0,
-                                            top: RulerPainter.height,
+                                            top: contentTop,
                                             bottom: 0,
                                             child: IgnorePointer(
                                               child: CustomPaint(
@@ -560,7 +598,7 @@ mixin _ShellBuild on _ShellBase {
                                           Positioned(
                                             left: 0,
                                             right: 0,
-                                            top: RulerPainter.height,
+                                            top: contentTop,
                                             bottom: 0,
                                             child: IgnorePointer(
                                               child: CustomPaint(
@@ -578,7 +616,7 @@ mixin _ShellBuild on _ShellBase {
                                           Positioned(
                                             left: 0,
                                             right: 0,
-                                            top: RulerPainter.height,
+                                            top: contentTop,
                                             bottom: 0,
                                             child: IgnorePointer(
                                               child: CustomPaint(
@@ -850,6 +888,7 @@ mixin _ShellBuild on _ShellBase {
       compact: compact,
       isPr: _viewMode == kViewPianoroll,
       playing: _playing,
+      loopOn: _loop.value.enabled,
       timecodeText: _timecodeText,
       editStatus: _editStatus,
       quantizeLabel: _quantizeLabel,
@@ -868,6 +907,7 @@ mixin _ShellBuild on _ShellBase {
       onBack: () => _setView(kViewArrangement),
       onTogglePlay: _togglePlay,
       onStop: _stopPlayback,
+      onToggleLoop: _toggleLoop,
       onToggleTimecode: () {
         setState(() => _timecodeBar = !_timecodeBar);
         _updateTimecode();
@@ -895,6 +935,8 @@ mixin _ShellBuild on _ShellBase {
         rust.clearSelection();
         setState(() => _amDeselectTick++);
       },
+      keyCount: _keyCount,
+      onKeyCount: _setKeyCount,
     );
   }
 

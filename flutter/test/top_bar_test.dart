@@ -11,6 +11,8 @@ Widget _app({
   double width = 800,
   double height = 42,
   bool compact = false,
+  bool isPr = false,
+  int keyCount = 128,
 }) {
   return MaterialApp(
     locale: const Locale('zh'),
@@ -24,8 +26,9 @@ Widget _app({
           child: TopBar(
             height: height,
             compact: compact,
-            isPr: false,
+            isPr: isPr,
             playing: false,
+            loopOn: false,
             timecodeText: timecode,
             editStatus: status,
             quantizeLabel: '自动',
@@ -44,6 +47,7 @@ Widget _app({
             onBack: () {},
             onTogglePlay: () {},
             onStop: () {},
+            onToggleLoop: () {},
             onToggleTimecode: () {},
             onQuantize: (_) {},
             automationOpen: false,
@@ -65,6 +69,8 @@ Widget _app({
             onEditBpm: () {},
             onEditSig: () {},
             onDeselect: () {},
+            keyCount: keyCount,
+            onKeyCount: (_) {},
           ),
         ),
       ),
@@ -96,6 +102,30 @@ void main() {
     expect(after.dy, closeTo(before.dy, 0.5));
   });
 
+  testWidgets('竖屏 PR 顶栏 360 宽不溢出，音域按钮显示当前键数', (tester) async {
+    final status = ValueNotifier<EditStatus?>(null);
+    final timecode = ValueNotifier<String>('1.0.000');
+    final docState = ValueNotifier<int>(4);
+
+    await tester.pumpWidget(
+      _app(
+        status: status,
+        timecode: timecode,
+        docState: docState,
+        width: 360,
+        height: 84,
+        compact: true,
+        isPr: true,
+        keyCount: 256,
+      ),
+    );
+
+    expect(tester.takeException(), isNull, reason: 'PR 竖屏顶栏不应溢出');
+    expect(find.text('256'), findsOneWidget);
+    expect(find.byIcon(Icons.repeat), findsOneWidget);
+    expect(find.byIcon(Icons.timeline), findsOneWidget);
+  });
+
   testWidgets('竖屏双行顶栏不溢出，左右两组按钮都在', (tester) async {
     final status = ValueNotifier<EditStatus?>(null);
     final timecode = ValueNotifier<String>('1.0.000');
@@ -114,6 +144,7 @@ void main() {
 
     expect(tester.takeException(), isNull, reason: '竖屏顶栏不应 RenderFlex 溢出');
     expect(find.byIcon(Icons.motion_photos_on), findsOneWidget);
+    expect(find.byIcon(Icons.repeat), findsOneWidget);
     expect(find.byIcon(Icons.undo), findsOneWidget);
     expect(find.byIcon(Icons.save_outlined), findsOneWidget);
     final bar = tester.getRect(find.byType(TopBar));
