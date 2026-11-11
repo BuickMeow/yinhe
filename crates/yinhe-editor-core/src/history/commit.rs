@@ -31,6 +31,9 @@ pub struct EditSnapshot {
     /// AR 展开 lane 的 AM 视图（选框 + 成员），按 (track, target) 键。
     pub arr_am_views:
         std::collections::HashMap<(u16, yinhe_types::AutomationTarget), AutomationPanelView>,
+    /// 快照时的 PPQ。undo/redo 涉及 PPQ rescale 时，按新旧 PPQ 比例缩放
+    /// 快照里的 tick，保证选框/游标与模型一致。0 = 未记录（不缩放）。
+    pub ppq: u32,
 }
 
 /// A single entry on the undo/redo stack.

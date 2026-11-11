@@ -212,6 +212,8 @@ impl App {
                     doc.data.bump_revision();
                     // tick 语义全变：密度预览桶坐标作废，全量重扫。
                     doc.density.reset();
+                    // 光标/选框/循环区间同步缩放，避免与模型脱节。
+                    doc.rescale_edit_ticks(old_ppq, new_ppq);
                     // 推 undo（带 rescale 标志）。
                     commit_ppq(doc, dragvalue_id, new_ppq, true); // rescale
                     if self.workspace.active_doc == Some(doc_idx) {

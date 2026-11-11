@@ -123,8 +123,14 @@ impl UndoAction {
             } => {
                 let model = Arc::make_mut(&mut doc.data.model);
                 if *rescale {
+                    let from = model.meta.ppq;
                     model.rescale_ppq(*new);
                     doc.data.bump_revision();
+                    // 光标/循环区间/选框不在全部在快照里，apply 时先按 PPQ
+                    // 比例缩放；选区随后由 undo/redo 的快照（含 ppq）恢复。
+                    if from != *new {
+                        doc.rescale_edit_ticks(from, *new);
+                    }
                 } else {
                     model.meta.ppq = *new;
                     model.rebuild_tempo_map();

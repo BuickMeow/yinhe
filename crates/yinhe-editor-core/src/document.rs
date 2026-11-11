@@ -401,6 +401,51 @@ impl Document {
 // Undo/redo
 // ---------------------------------------------------------------------------
 
+/// 按比例缩放快照里的所有 tick 字段（PPQ rescale 跨 undo/redo 用）。
+fn scale_snapshot_ticks(snapshot: &EditSnapshot, factor: f64) -> EditSnapshot {
+    fn tick_u32(v: u32, f: f64) -> u32 {
+        (v as f64 * f).round() as u32
+    }
+    fn rect_f64(r: &mut (f64, f64, u8, u8), f: f64) {
+        r.0 *= f;
+        r.1 *= f;
+    }
+    let mut out = snapshot.clone();
+    // 已换算成目标 PPQ，避免恢复时被再次缩放。
+    out.ppq = 0;
+    for r in &mut out.selected.rects {
+        r.0 = tick_u32(r.0, factor);
+        r.1 = tick_u32(r.1, factor);
+    }
+    if let Some((g0, g1)) = out.selected.filter.gate {
+        out.selected.filter.gate = Some((tick_u32(g0, factor), tick_u32(g1, factor)));
+    }
+    for r in &mut out.sel_rect.rects {
+        rect_f64(r, factor);
+    }
+    for r in &mut out.arr_sel_rect {
+        r.0 *= factor;
+        r.1 *= factor;
+    }
+    for r in &mut out.chan_ar_sel {
+        r.t_start *= factor;
+        r.t_end *= factor;
+    }
+    for rects in &mut out.anchor_sel_rects {
+        for r in rects {
+            r.tick_start *= factor;
+            r.tick_end *= factor;
+        }
+    }
+    for v in out.arr_am_views.values_mut() {
+        for r in &mut v.anchor_sel_rects {
+            r.tick_start *= factor;
+            r.tick_end *= factor;
+        }
+    }
+    out
+}
+
 impl Document {
     /// 捕获当前编辑状态快照（undo/redo 恢复用）。编辑**前**调用。
     pub fn capture_snapshot(&self) -> EditSnapshot {
@@ -423,6 +468,7 @@ impl Document {
                 .map(|p| p.anchor_members.clone())
                 .collect(),
             arr_am_views: self.edit.arr_am_views.clone(),
+            ppq: self.data.model.meta.ppq,
         }
     }
 
@@ -437,7 +483,15 @@ impl Document {
 
     /// 把快照恢复到 edit 状态（undo/redo 共用）。
     /// AM 选框/成员按面板索引对齐恢复，面板数量变化时防御跳过。
-    fn restore_snapshot(edit: &mut EditState, snapshot: &EditSnapshot) {
+    /// PPQ 不同（undo/redo 跨过 PPQ rescale）时先按比例缩放快照里的 tick。
+    fn restore_snapshot(edit: &mut EditState, snapshot: &EditSnapshot, current_ppq: u32) {
+        let scaled;
+        let snapshot = if snapshot.ppq != 0 && current_ppq != 0 && snapshot.ppq != current_ppq {
+            scaled = scale_snapshot_ticks(snapshot, current_ppq as f64 / snapshot.ppq as f64);
+            &scaled
+        } else {
+            snapshot
+        };
         edit.selected = snapshot.selected.clone();
         edit.track_selected = snapshot.track_selected.clone();
         edit.sel_rect = snapshot.sel_rect.clone();
@@ -461,6 +515,57 @@ impl Document {
             }
         }
         edit.arr_am_views = snapshot.arr_am_views.clone();
+    }
+
+    /// PPQ rescale 后把当前编辑态里的 tick 按比例缩放（光标、各种选框、
+    /// gate 筛选、循环区间）。临时绘制路径（钢笔/剪刀）直接清空。
+    pub fn rescale_edit_ticks(&mut self, old_ppq: u32, new_ppq: u32) {
+        if old_ppq == 0 || new_ppq == 0 || old_ppq == new_ppq {
+            return;
+        }
+        let factor = new_ppq as f64 / old_ppq as f64;
+        let tick_u32 = |v: u32| (v as f64 * factor).round() as u32;
+
+        if let Some(t) = self.edit.cursor_tick {
+            self.edit.cursor_tick = Some(t * factor);
+        }
+        for r in &mut self.edit.sel_rect.rects {
+            r.0 *= factor;
+            r.1 *= factor;
+        }
+        for r in &mut self.edit.selected.rects {
+            r.0 = tick_u32(r.0);
+            r.1 = tick_u32(r.1);
+        }
+        if let Some((g0, g1)) = self.edit.selected.filter.gate {
+            self.edit.selected.filter.gate = Some((tick_u32(g0), tick_u32(g1)));
+        }
+        for r in &mut self.edit.arr_sel_rect {
+            r.0 *= factor;
+            r.1 *= factor;
+        }
+        for r in &mut self.edit.chan_ar_sel {
+            r.t_start *= factor;
+            r.t_end *= factor;
+        }
+        for panel in &mut self.edit.controller_panels {
+            for r in &mut panel.anchor_sel_rects {
+                r.tick_start *= factor;
+                r.tick_end *= factor;
+            }
+            panel.dirty = true;
+        }
+        for view in self.edit.arr_am_views.values_mut() {
+            for r in &mut view.anchor_sel_rects {
+                r.tick_start *= factor;
+                r.tick_end *= factor;
+            }
+            view.dirty = true;
+        }
+        // 临时绘制路径的 tick 语义已变，直接丢弃，避免落笔到错误位置。
+        self.edit.pen_path = None;
+        self.edit.scissors_line = None;
+        self.edit.playback.rescale_ticks(factor);
     }
 
     /// 撤销栈内每步操作的标签（旧→新），供历史记录面板显示。
@@ -490,7 +595,8 @@ impl Document {
         reversed.redo(self);
 
         // Restore selection from the undo entry.
-        Self::restore_snapshot(&mut self.edit, &entry.snapshot);
+        let current_ppq = self.data.model.meta.ppq;
+        Self::restore_snapshot(&mut self.edit, &entry.snapshot, current_ppq);
 
         // Push reversed action onto the redo stack（沿用原状态 id：redo 后回到该状态）。
         self.history.put_future(
@@ -521,7 +627,8 @@ impl Document {
         reversed.redo(self);
 
         // Restore selection from the redo entry.
-        Self::restore_snapshot(&mut self.edit, &entry.snapshot);
+        let current_ppq = self.data.model.meta.ppq;
+        Self::restore_snapshot(&mut self.edit, &entry.snapshot, current_ppq);
 
         self.history.put_past(
             id,

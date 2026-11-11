@@ -71,6 +71,18 @@ impl PlaybackState {
         (self.loop_start_tick, self.loop_end_tick)
     }
 
+    /// PPQ rescale 后按比例缩放循环区间（关闭状态的区间也缩放，避免下次
+    /// 打开循环时落到错误位置）。
+    pub fn rescale_ticks(&mut self, factor: f64) {
+        if self.loop_end_tick <= self.loop_start_tick {
+            return;
+        }
+        let start = (self.loop_start_tick as f64 * factor).round() as u32;
+        let end = (self.loop_end_tick as f64 * factor).round() as u32;
+        self.loop_start_tick = start;
+        self.loop_end_tick = end.max(start + 1);
+    }
+
     /// 设置循环区间。`end <= start` 时拒绝并返回 false（保留原值）。
     pub fn set_loop_range(&mut self, start: u32, end: u32) -> bool {
         if end <= start {

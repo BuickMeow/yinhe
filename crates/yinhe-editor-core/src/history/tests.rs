@@ -997,3 +997,45 @@ fn mixer_edit_during_async_save_keeps_dirty() {
     doc.mark_saved_at(doc.undo_marker(), rev_after_edit);
     assert!(!doc.mixer_dirty);
 }
+
+#[test]
+fn ppq_rescale_undo_redo_scales_selection_and_cursor() {
+    let mut doc = make_doc("a");
+    let old = doc.data.model.meta.ppq;
+    let new = old * 2;
+
+    doc.edit.selected.add_rect_track(100, 200, 60, 60, 0, 0);
+    doc.edit.cursor_tick = Some(150.0);
+    doc.edit.playback.set_loop_range(100, 200);
+    let snapshot = doc.capture_snapshot();
+
+    // 模拟异步 rescale 完成：模型 + 编辑态一起缩放，再推 undo。
+    std::sync::Arc::make_mut(&mut doc.data.model).rescale_ppq(new);
+    doc.rescale_edit_ticks(old, new);
+    doc.push_undo(
+        UndoAction::ProjectPpq {
+            old,
+            new,
+            rescale: true,
+        },
+        "ppq",
+        snapshot,
+    );
+
+    assert_eq!(doc.data.model.meta.ppq, new);
+    assert_eq!(doc.edit.selected.rects[0].0, 200);
+    assert_eq!(doc.edit.cursor_tick, Some(300.0));
+    assert_eq!(doc.edit.playback.loop_range(), (200, 400));
+
+    assert!(doc.undo());
+    assert_eq!(doc.data.model.meta.ppq, old);
+    assert_eq!(doc.edit.selected.rects[0].0, 100, "选框随 undo 缩回");
+    assert_eq!(doc.edit.cursor_tick, Some(150.0), "光标随 undo 缩回");
+    assert_eq!(doc.edit.playback.loop_range(), (100, 200));
+
+    assert!(doc.redo());
+    assert_eq!(doc.data.model.meta.ppq, new);
+    assert_eq!(doc.edit.selected.rects[0].0, 200, "redo 后选框再次放大");
+    assert_eq!(doc.edit.cursor_tick, Some(300.0));
+    assert_eq!(doc.edit.playback.loop_range(), (200, 400));
+}
