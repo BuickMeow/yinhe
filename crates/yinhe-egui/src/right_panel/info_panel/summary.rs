@@ -1,4 +1,4 @@
-//! 「音轨属性」选项卡：当前选中轨的音符数 / 事件数 / 音色。
+//! 「音轨统计」选项卡：当前选中轨的音符数 / 事件数 / 音色。
 
 use eframe::egui;
 
@@ -6,7 +6,7 @@ use yinhe_editor_core::document::Document;
 
 use rust_i18n::t;
 
-/// 「音轨属性」选项卡入口。
+/// 「音轨统计」选项卡入口。
 pub(crate) fn show_summary_panel(ui: &mut egui::Ui, doc: &Document) {
     crate::right_panel::region_hint(ui, t!("hint.panel.summary"));
     let num_tracks = doc.data.model.tracks.len();
@@ -29,7 +29,7 @@ pub(crate) fn show_summary_panel(ui: &mut egui::Ui, doc: &Document) {
     show_summary(ui, doc, track_idx, ti);
 }
 
-/// 音轨属性页。
+/// 音轨统计页。
 fn show_summary(
     ui: &mut egui::Ui,
     doc: &Document,

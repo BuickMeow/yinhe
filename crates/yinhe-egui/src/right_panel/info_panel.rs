@@ -5,8 +5,8 @@
 //! - `Batch` → [`show_batch`]：选框批量改值/变速/翻转。
 //! - `Layers` → [`show_layers`]：每轨的选中 / 可见 / 锁定。
 //! - `History` → [`show_history`]：撤销/重做栈标签。
-//! - `Summary` → [`show_summary`]：当前选中轨的统计。
-//! - `Selection` → [`show_selection_info`]：选框只读属性。
+//! - `Summary` → [`show_summary`]：当前选中轨的音轨统计。
+//! - `Selection` → [`show_selection_info`]：选框统计。
 //!
 //! 工程设置只在独立浮窗（见 `dialogs::prop_panels`）。
 
@@ -29,7 +29,7 @@ use super::InfoContent;
 // re-export：arrange.rs 通过 `crate::right_panel::info_panel::send_skip_tracks` 调用
 pub(crate) use track::send_skip_tracks;
 
-/// 「音轨」选项卡。返回 `true` 表示端口/通道改变（需重建音频引擎）。
+/// 「音轨属性」选项卡。返回 `true` 表示端口/通道改变（需重建音频引擎）。
 ///
 /// 自动化锚点信息优先于音轨属性。
 pub(crate) fn show_track(
@@ -112,12 +112,12 @@ pub(crate) fn show_history(ui: &mut egui::Ui, doc: &mut Document) -> Option<usiz
     history::show(ui, doc)
 }
 
-/// 「音轨属性」选项卡。
+/// 「音轨统计」选项卡。
 pub(crate) fn show_summary(ui: &mut egui::Ui, doc: &mut Document) {
     summary::show_summary_panel(ui, doc);
 }
 
-/// 「选框属性」选项卡：选框位置/数量/跨度等只读信息。
+/// 「选框统计」选项卡：选框位置/数量/跨度等只读信息。
 pub(crate) fn show_selection_info(ui: &mut egui::Ui, doc: &Document) {
     selection::show_info(ui, doc);
 }

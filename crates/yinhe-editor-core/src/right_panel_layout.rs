@@ -24,11 +24,11 @@ pub enum PanelKind {
     EventBrowser,
     /// 历史记录。
     History,
-    /// 音轨属性概要。
+    /// 音轨统计（音符/事件/音色数量）。
     Summary,
-    /// 歌曲属性（工程名称/作者/PPQ/事件统计等）。
+    /// 歌曲统计（工程名称/作者/PPQ/事件统计等）。
     Song,
-    /// 选框属性（选框位置/数量/跨度等只读信息）。
+    /// 选框统计（选框位置/数量/跨度等只读信息）。
     Selection,
 }
 
@@ -101,7 +101,7 @@ pub struct RightPanelLayout {
 
 impl Default for RightPanelLayout {
     fn default() -> Self {
-        // 默认：上[音轨,批处理] / 中[树图,事件,图层] / 下[历史记录,音轨属性,歌曲属性,选框属性]。
+        // 默认：上[音轨属性,批处理] / 中[树图,事件,图层] / 下[历史记录,音轨统计,歌曲统计,选框统计]。
         Self {
             columns: vec![
                 PanelColumn {

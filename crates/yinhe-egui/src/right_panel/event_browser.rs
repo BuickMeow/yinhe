@@ -84,7 +84,7 @@ pub fn show_tree(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut Even
     });
 }
 
-/// 「歌曲属性」选项卡：工程名称 / 作者 / PPQ / 事件统计（原事件面板空态）。
+/// 「歌曲统计」选项卡：工程名称 / 作者 / PPQ / 事件统计（原事件面板空态）。
 pub fn show_song(ui: &mut egui::Ui, doc: Option<&Document>) {
     crate::right_panel::region_hint(ui, rust_i18n::t!("hint.panel.song"));
     let Some(doc) = doc else {
