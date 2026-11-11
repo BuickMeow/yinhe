@@ -618,8 +618,14 @@ impl App {
                 let main = doc.edit.main_track();
                 // PR 编辑目标轨 = 主音轨（= 选中集合最小者）。无选中 = None：
                 // 铅笔/选框/自动化一律不响应操作（不再回退到第一个非 Conductor 轨）。
-                // 提前计算避开后面的可变借用。
-                let write_track = main;
+                // 锁定轨不能作为编辑目标（铅笔/录音/粘贴都依赖 write_track）。
+                let write_track = main.filter(|&t| {
+                    !doc.edit
+                        .track_locked
+                        .get(t as usize)
+                        .copied()
+                        .unwrap_or(false)
+                });
                 let pr_visible: Vec<bool> = doc.edit.pr_visible();
                 // CLIP 模式：时间窗由 piano_view 夹到 Active Clip，其他轨灰显并锁定；
                 // 这样只有当前 Clip 所在轨可编辑，其他轨点击/框选直接被忽略。

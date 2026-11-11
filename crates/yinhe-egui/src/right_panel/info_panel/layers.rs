@@ -205,6 +205,19 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) -> bool {
                     );
                     if lock_resp.clicked() {
                         doc.edit.track_locked[i] = !locked;
+                        // 锁定后该轨不能再保留在选区里，否则 Delete/拖动仍会
+                        // 通过已有选择作用到它（"锁定"形同虚设）。
+                        if !locked {
+                            let t = i as u16;
+                            let touches = doc.edit.selected.has_explicit_members()
+                                || doc.edit.selected.rects.iter().any(|r| r.4 <= t && t <= r.5);
+                            if touches {
+                                doc.edit.selected.clear_rects();
+                                doc.edit.sel_rect.clear();
+                                doc.edit.arr_sel_rect.clear();
+                                doc.edit.chan_ar_sel.clear();
+                            }
+                        }
                     }
                 }
 

@@ -70,6 +70,7 @@ pub(crate) fn dispatch(
         music_rect,
         track_visible,
         track_selected,
+        track_locked,
         sel_rect,
         write_track,
         conductor_idx,
@@ -229,6 +230,7 @@ pub(crate) fn dispatch(
             midi,
             track_visible,
             track_selected,
+            track_locked,
         );
         (
             out.commit.map(|notes| PianoViewEvent::QuickErase { notes }),
@@ -261,6 +263,7 @@ pub(crate) fn update_hover_cursor(
     midi: Option<&dyn yinhe_types::NoteSource>,
     track_visible: &[bool],
     track_selected: &HashSet<u16>,
+    track_locked: &[bool],
     sel_rect: &yinhe_editor_core::edit_state::SelRectState,
     write_track: Option<u16>,
     conductor_idx: Option<u16>,
@@ -281,8 +284,14 @@ pub(crate) fn update_hover_cursor(
         let has_selection = !sel_rect.is_empty();
         if can_hover_edit
             && !has_selection
-            && let Some((mode, _, _, _, _)) =
-                super::drag::hit_test_note(midi, view, local, track_visible, track_selected)
+            && let Some((mode, _, _, _, _)) = super::drag::hit_test_note(
+                midi,
+                view,
+                local,
+                track_visible,
+                track_selected,
+                track_locked,
+            )
         {
             use super::pencil::HitMode;
             match mode {

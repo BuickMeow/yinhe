@@ -43,6 +43,7 @@ pub(crate) struct EraseOutput {
 }
 
 /// 每帧处理右键擦除。
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn frame(
     ui: &egui::Ui,
     view: &PianoRollView,
@@ -51,6 +52,7 @@ pub(crate) fn frame(
     midi: Option<&dyn yinhe_types::NoteSource>,
     track_visible: &[bool],
     track_selected: &HashSet<u16>,
+    track_locked: &[bool],
 ) -> EraseOutput {
     let (down, released, pos) = ui.input(|i| {
         (
@@ -84,6 +86,7 @@ pub(crate) fn frame(
                     midi,
                     track_visible,
                     track_selected,
+                    track_locked,
                     stroke,
                 );
                 stroke.last = Some(p);
@@ -122,6 +125,7 @@ fn sample_segment(
     midi: Option<&dyn yinhe_types::NoteSource>,
     track_visible: &[bool],
     track_selected: &HashSet<u16>,
+    track_locked: &[bool],
     stroke: &mut EraseStroke,
 ) {
     let delta = to - from;
@@ -130,9 +134,14 @@ fn sample_segment(
         let t = i as f32 / steps as f32;
         let p = from + delta * t;
         let local = egui::pos2(p.x - content_rect.min.x, p.y - content_rect.min.y);
-        if let Some((_, track, start_tick, end_tick, key)) =
-            super::drag::hit_test_note(midi, view, local, track_visible, track_selected)
-        {
+        if let Some((_, track, start_tick, end_tick, key)) = super::drag::hit_test_note(
+            midi,
+            view,
+            local,
+            track_visible,
+            track_selected,
+            track_locked,
+        ) {
             let note_id = (track, start_tick, key);
             if stroke.seen.insert(note_id) {
                 stroke.hits.push((track, start_tick, end_tick, key));

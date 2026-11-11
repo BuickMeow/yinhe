@@ -65,8 +65,14 @@ pub(crate) fn sel_press(
             // Bug 修复：存在选框时禁用单音符移动/缩放，选框整体操作优先。
             let has_selection = !sel_rect.is_empty();
             if !has_selection
-                && let Some((mode, track, start_tick, end_tick, key)) =
-                    hit_test_note(midi, view, local, track_visible, track_selected)
+                && let Some((mode, track, start_tick, end_tick, key)) = hit_test_note(
+                    midi,
+                    view,
+                    local,
+                    track_visible,
+                    track_selected,
+                    track_locked,
+                )
             {
                 match mode {
                     crate::piano_view::pencil::HitMode::ResizeLeft

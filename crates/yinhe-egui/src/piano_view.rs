@@ -264,6 +264,7 @@ pub fn show(
         midi,
         track_visible,
         track_selected,
+        track_locked,
         sel_rect,
         write_track,
         conductor_idx,

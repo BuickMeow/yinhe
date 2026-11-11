@@ -24,22 +24,28 @@ impl Document {
         }
 
         let conductor = self.edit.track_cache.conductor_idx;
-        let tracks: Vec<u16> = if self.edit.track_selected.is_empty() {
+        let mut tracks: Vec<u16> = if self.edit.track_selected.is_empty() {
             // 没有预选 track 时，全选所有非 conductor track
             let num_tracks = model.tracks.len() as u16;
             (0..num_tracks).filter(|&t| Some(t) != conductor).collect()
         } else {
             self.edit.track_selected.iter().copied().collect()
         };
+        tracks.retain(|&t| {
+            Some(t) != conductor
+                && !self
+                    .edit
+                    .track_locked
+                    .get(t as usize)
+                    .copied()
+                    .unwrap_or(false)
+        });
         if tracks.is_empty() {
             return;
         }
 
         self.edit.selected.clear();
         for &track_idx in &tracks {
-            if Some(track_idx) == conductor {
-                continue;
-            }
             self.edit
                 .selected
                 .add_rect_track(0, max_end + 1, 0, MAX_KEY, track_idx, track_idx);
@@ -67,32 +73,54 @@ impl Document {
         let num_tracks = model.tracks.len() as u16;
 
         self.edit.selected.clear();
-        // One rect per non-conductor track range is overkill; use a single
-        // broad rect and rely on conductor guard in add_note / move_selected.
-        // But to be precise, split into: tracks before conductor, tracks after.
-        match conductor {
-            Some(c) if c > 0 => {
-                self.edit
-                    .selected
-                    .add_rect_track(0, max_end + 1, 0, MAX_KEY, 0, c - 1);
+        // 锁定轨不参与全选；按连续轨道段生成矩形（Selection 的矩形是
+        // track_lo..=track_hi 的连续区间）。
+        let usable: Vec<u16> = (0..num_tracks)
+            .filter(|&t| {
+                Some(t) != conductor
+                    && !self
+                        .edit
+                        .track_locked
+                        .get(t as usize)
+                        .copied()
+                        .unwrap_or(false)
+            })
+            .collect();
+        let mut run_start: Option<u16> = None;
+        let mut run_end: u16 = 0;
+        for &t in &usable {
+            match run_start {
+                Some(_) if t == run_end + 1 => run_end = t,
+                Some(start) => {
+                    self.edit
+                        .selected
+                        .add_rect_track(0, max_end + 1, 0, MAX_KEY, start, run_end);
+                    run_start = Some(t);
+                    run_end = t;
+                }
+                None => {
+                    run_start = Some(t);
+                    run_end = t;
+                }
             }
-            _ => {}
         }
-        let after = conductor.map(|c| c + 1).unwrap_or(0);
-        if after < num_tracks {
+        if let Some(start) = run_start {
             self.edit
                 .selected
-                .add_rect_track(0, max_end + 1, 0, MAX_KEY, after, num_tracks - 1);
+                .add_rect_track(0, max_end + 1, 0, MAX_KEY, start, run_end);
+        }
+        if usable.is_empty() {
+            return;
         }
         // AR 选框：全范围单矩形（含 conductor track），供 AR 视图绘制。
         self.edit.sel_rect.clear();
         self.edit.track_selected.clear();
         self.edit.arr_sel_rect = vec![(0.0, (max_end + 1) as f64, 0, num_tracks as usize - 1)];
-        // 通道 AR 选框：全范围 + 全部非 Conductor 轨道。
+        // 通道 AR 选框：全范围 + 全部非 Conductor、非锁定轨道。
         self.edit.chan_ar_sel = vec![crate::edit_state::ChanSelRect {
             t_start: 0.0,
             t_end: (max_end + 1) as f64,
-            tracks: (0..num_tracks).filter(|&t| Some(t) != conductor).collect(),
+            tracks: usable,
         }];
     }
 
@@ -291,6 +319,46 @@ mod tests {
     /// 用当前文档模型 + 指定选框构造剪贴板快照。
     fn clipboard_with(doc: &Document, selection: yinhe_core::Selection) -> NotesClipboard {
         NotesClipboard::from_snapshot(doc.data.model.clone(), selection)
+    }
+
+    /// 锁定轨不参与全选（否则锁定后 Ctrl+A + Delete 仍能删掉它）。
+    #[test]
+    fn select_all_skips_locked_tracks() {
+        let mut doc = make_doc();
+        {
+            let model = Arc::make_mut(&mut doc.data.model);
+            model.tracks.push(Arc::new(TrackData::new(1, 1)));
+            model.rebuild();
+        }
+        doc.edit.track_visible = vec![true, true];
+        doc.edit.track_pianoroll_visible = vec![true, true];
+        doc.edit.track_locked = vec![false, true];
+        add(&mut doc, 100, 200, 60);
+        doc.add_note(
+            1,
+            NoteEvent {
+                id: 0,
+                start_tick: 100,
+                end_tick: 200,
+                key: 60,
+                velocity: 100,
+            },
+        );
+
+        doc.select_all_pr();
+
+        assert!(
+            doc.edit
+                .selected
+                .rects
+                .iter()
+                .all(|r| !(r.4 <= 1 && 1 <= r.5)),
+            "锁定轨不能被全选选中"
+        );
+        assert!(
+            doc.edit.selected.rects.iter().any(|r| r.4 <= 0 && 0 <= r.5),
+            "未锁定轨应被选中"
+        );
     }
 
     /// 与已有音符重叠的粘贴副本跳过，其余正常插入。

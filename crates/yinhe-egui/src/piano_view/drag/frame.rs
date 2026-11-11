@@ -70,6 +70,7 @@ pub(crate) fn sel_drag_frame(
         midi,
         track_visible,
         track_selected,
+        track_locked,
         quick_delete_mode,
     );
     sel_press(

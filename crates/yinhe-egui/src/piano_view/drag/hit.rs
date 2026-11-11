@@ -59,6 +59,7 @@ pub(crate) fn hit_test_note(
     local: egui::Pos2,
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
+    track_locked: &[bool],
 ) -> Option<(crate::piano_view::pencil::HitMode, u16, u32, u32, u8)> {
     const EDGE_THRESHOLD_PX: f32 = 6.0;
     let (main_px, cross_px) = main_cross_x_y(view, (local.x, local.y));
@@ -70,7 +71,11 @@ pub(crate) fn hit_test_note(
             && track_visible
                 .get(note.track as usize)
                 .copied()
-                .unwrap_or(true);
+                .unwrap_or(true)
+            && !track_locked
+                .get(note.track as usize)
+                .copied()
+                .unwrap_or(false);
         if !in_scope {
             continue;
         }
@@ -106,6 +111,7 @@ pub(crate) fn quick_delete_early(
     midi: Option<&dyn yinhe_types::NoteSource>,
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
+    track_locked: &[bool],
     quick_delete_mode: yinhe_editor_core::audio_settings::QuickDeleteMode,
 ) -> Option<(u16, u32, u8)> {
     // 右键单击删除已由 `quick_erase`（右键拖拽批量擦除）取代，这里只保留双击删除。
@@ -118,9 +124,14 @@ pub(crate) fn quick_delete_early(
         && music_rect.contains(pos)
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-        if let Some((_, track, start_tick, _, key)) =
-            hit_test_note(midi, view, local, track_visible, track_selected)
-        {
+        if let Some((_, track, start_tick, _, key)) = hit_test_note(
+            midi,
+            view,
+            local,
+            track_visible,
+            track_selected,
+            track_locked,
+        ) {
             return Some((track, start_tick, key));
         }
     }

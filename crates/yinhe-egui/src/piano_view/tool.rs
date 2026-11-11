@@ -27,6 +27,7 @@ pub(crate) fn effective_tool(
     music_rect: egui::Rect,
     track_visible: &[bool],
     track_selected: &HashSet<u16>,
+    track_locked: &[bool],
     sel_rect: &yinhe_editor_core::edit_state::SelRectState,
     write_track: Option<u16>,
     conductor_idx: Option<u16>,
@@ -55,8 +56,15 @@ pub(crate) fn effective_tool(
                     return false;
                 }
                 let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-                super::drag::hit_test_note(midi, view, local, track_visible, track_selected)
-                    .is_some()
+                super::drag::hit_test_note(
+                    midi,
+                    view,
+                    local,
+                    track_visible,
+                    track_selected,
+                    track_locked,
+                )
+                .is_some()
                     || sel_rect.effective_rects().iter().any(|&(t0, t1, k0, k1)| {
                         crate::selection::drag::music_sel_to_pixel_rect(view, t0, t1, k0, k1)
                             .contains(local)
