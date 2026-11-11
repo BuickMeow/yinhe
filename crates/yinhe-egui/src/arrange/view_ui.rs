@@ -57,7 +57,7 @@ pub fn show(
         w as f32,
         h as f32,
         data.total_ticks,
-        row_layout.total_rows(),
+        row_layout.total_rows() + 1,
     );
     let follow_active =
         cfg.is_playing && *cfg.follow_mode != crate::view_interaction::FollowMode::None;
@@ -82,7 +82,7 @@ pub fn show(
                     w as f32,
                     h as f32,
                     data.total_ticks,
-                    row_layout.total_rows(),
+                    row_layout.total_rows() + 1,
                 );
                 view.base.follow_target = None;
                 view.base.follow_anim_elapsed = 0.0;
@@ -116,7 +116,7 @@ pub fn show(
                     w as f32,
                     h as f32,
                     data.total_ticks,
-                    row_layout.total_rows(),
+                    row_layout.total_rows() + 1,
                 );
                 let done = view.base.follow_anim_elapsed
                     >= crate::view_interaction::FOLLOW_PAGE_DURATION
@@ -127,7 +127,7 @@ pub fn show(
                         w as f32,
                         h as f32,
                         data.total_ticks,
-                        row_layout.total_rows(),
+                        row_layout.total_rows() + 1,
                     );
                     view.base.follow_target = None;
                     view.base.follow_anim_elapsed = 0.0;
@@ -456,7 +456,7 @@ pub fn show(
         w as f32,
         h as f32,
         data.total_ticks,
-        row_layout.total_rows(),
+        row_layout.total_rows() + 1,
     );
     if let Some(t0) = _arrange_total_start {
         yinhe_memtrace::perf_probe::record_arrange_total(t0.elapsed());

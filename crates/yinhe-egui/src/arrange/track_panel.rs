@@ -80,7 +80,9 @@ pub(crate) fn show(
 
     // Clamp scroll_y（总行数含展开的 AM 子行）
     let total_rows = row_layout.total_rows();
-    let max_scroll = (total_rows as f32 * *row_height - panel_h).max(0.0);
+    // 末尾多一行「添加音轨」占位行：与移动端一致，按钮跟在最后一个轨道后面。
+    let scroll_rows = total_rows + 1;
+    let max_scroll = (scroll_rows as f32 * *row_height - panel_h).max(0.0);
     *scroll_y = scroll_y.clamp(0.0, max_scroll);
 
     // ── 滚轮垂直滚动 ──
@@ -100,7 +102,7 @@ pub(crate) fn show(
 
     // Visible row range（含展开的 AM 子行；行高均匀 = 音轨行高）
     let lh = *row_height;
-    let (first_row, last_row) = render::visible_range(*scroll_y, panel_h, lh, total_rows);
+    let (first_row, last_row) = render::visible_range(*scroll_y, panel_h, lh, scroll_rows);
 
     let painter = ui.painter().clone();
     let mut audio_dirty = false;
@@ -134,6 +136,43 @@ pub(crate) fn show(
         let y = panel_rect.min.y + row as f32 * lh - *scroll_y;
         let row_rect =
             egui::Rect::from_min_size(egui::pos2(panel_rect.min.x, y), egui::vec2(panel_w, lh));
+        // 最后一个轨道之后的占位行：整行都是「添加音轨」按钮。
+        if row == total_rows {
+            let color = crate::theme::stripe_bg();
+            render::draw_row_background(ui, &painter, row_rect, row, false, color);
+            let add_id = egui::Id::unique("arr_add_track_row");
+            let add_resp = ui.interact(row_rect, add_id, egui::Sense::click());
+            crate::widgets::hint::hover(ui.ctx(), &add_resp, t!("hint.arrange.add_track"));
+            let plus_center = egui::pos2(row_rect.min.x + 14.0, row_rect.center().y);
+            let icon_color = if add_resp.hovered() {
+                crate::theme::text_primary()
+            } else {
+                crate::theme::text_muted()
+            };
+            ui.painter().text(
+                plus_center,
+                egui::Align2::CENTER_CENTER,
+                ICON_ADD.codepoint,
+                egui::FontId::new(crate::theme::ICON_FONT, ICON_ADD.font_family()),
+                icon_color,
+            );
+            ui.painter().text(
+                egui::pos2(plus_center.x + 14.0, row_rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                t!("hint.arrange.add_track"),
+                egui::FontId::proportional(crate::theme::SMALL_FONT),
+                icon_color,
+            );
+            if add_resp.clicked() {
+                ui.ctx().data_mut(|d| {
+                    d.insert_temp(
+                        egui::Id::unique(crate::dialogs::new_track::OPEN_REQUEST_ID),
+                        true,
+                    )
+                });
+            }
+            continue;
+        }
         let Some(row_hit) = row_layout.row_hit(row) else {
             continue;
         };

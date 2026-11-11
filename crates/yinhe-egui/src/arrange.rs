@@ -244,7 +244,7 @@ pub fn show(
         gpu_rect.width(),
         gpu_rect.height(),
         total_ticks,
-        row_layout.total_rows(),
+        row_layout.total_rows() + 1,
     );
 
     // ── Ruler: top-right band, drawn with parent painter ──
@@ -654,7 +654,7 @@ pub fn show(
             gpu_rect.width(),
             gpu_rect.height(),
             total_ticks,
-            row_layout.total_rows(),
+            row_layout.total_rows() + 1,
         );
 
         doc.edit.arrange_view.base.scroll_y = doc.edit.arrange_view.base.track_panel_scroll_y;
@@ -877,7 +877,7 @@ pub fn show(
                     gpu_rect.height(),
                     &mut doc.edit.arrange_view.base.scroll_y,
                     &mut doc.edit.arrange_view.base.track_panel_row_height,
-                    row_layout.total_rows() as f32,
+                    row_layout.total_rows() as f32 + 1.0,
                     yinhe_types::LANE_HEIGHT_MIN,
                     yinhe_types::LANE_HEIGHT_MAX,
                     Some(yinhe_types::LANE_HEIGHT_STEP),
@@ -933,7 +933,8 @@ pub fn show(
         doc.data.model.meta.ppq,
     );
 
-    // ── "+" track add button in the corner (below track panel, left of scrollbar) ──
+    // ── 底部角落（音轨面板下方、横向滚动条左侧）：只铺背景 ──
+    // 「添加音轨」入口已移到音轨列表末尾的占位行（与移动端一致）。
     {
         let corner_rect = egui::Rect::from_min_max(
             egui::pos2(
@@ -942,46 +943,8 @@ pub fn show(
             ),
             egui::pos2(arr_rect.min.x + tp_w, arr_rect.max.y),
         );
-        // 角落背景：track panel 下方、水平滚动条左侧（未来可放其他控件）
         ui.painter()
             .rect_filled(corner_rect, 0.0, crate::theme::track_bg());
-
-        let btn_size = 20.0;
-        let btn_rect =
-            egui::Rect::from_center_size(corner_rect.center(), egui::vec2(btn_size, btn_size));
-        let btn_resp = ui.interact(
-            btn_rect,
-            egui::Id::unique("arr_add_track_btn"),
-            egui::Sense::click(),
-        );
-        crate::widgets::hint::hover(ui.ctx(), &btn_resp, t!("hint.arrange.add_track"));
-        let hovered = btn_resp.hovered();
-
-        use egui_material_icons::icons::ICON_ADD;
-        let icon_color = if hovered {
-            crate::theme::contrast_fg()
-        } else {
-            crate::theme::text_muted()
-        };
-        ui.painter().text(
-            btn_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            ICON_ADD.codepoint,
-            egui::FontId::new(crate::theme::ICON_FONT, ICON_ADD.font_family()),
-            icon_color,
-        );
-
-        if btn_resp.clicked() {
-            // 弹出新建音轨对话框：写 ctx memory 标志，由 dialog_dispatch
-            // 每帧检测并打开独立 viewport；确认后批量创建并 teardown 音频
-            // （方案 A 同原 add_track 路径，在 dialog_dispatch 内完成）。
-            ui.ctx().data_mut(|d| {
-                d.insert_temp(
-                    egui::Id::unique(crate::dialogs::new_track::OPEN_REQUEST_ID),
-                    true,
-                )
-            });
-        }
     }
 
     // ── Vertical splitter handle (drawn last so it sits on top) ──

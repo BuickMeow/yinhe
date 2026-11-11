@@ -180,7 +180,7 @@ pub(crate) fn auto_scroll_arrange(
     let full_w = content_rect.width();
     crate::selection::drag::auto_scroll_on_drag(ui, &mut view.base, hit_rect, pos, |base, _, h| {
         base.clamp_scroll_x(full_w, total_ticks);
-        let max_scroll_y = (row_layout.total_rows() as f32 * lh - h).max(0.0);
+        let max_scroll_y = ((row_layout.total_rows() + 1) as f32 * lh - h).max(0.0);
         base.scroll_y = base.scroll_y.clamp(0.0, max_scroll_y);
     });
 }
