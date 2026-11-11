@@ -257,36 +257,6 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 // ── 工具区已迁移到左侧工具栏（见 chrome::tool_bar）──
 
                 if let Some(doc) = ctx.doc {
-                    // ── 循环开关（与其它走带按钮同款图标按钮；不叠加文字）──
-                    {
-                        let enabled = doc.edit.playback.loop_enabled();
-                        let resp = ui
-                            .push_id("transport_loop", |ui| {
-                                crate::widgets::flat::flat_button_filled(
-                                    ui,
-                                    ICON_REPEAT
-                                        .rich_text()
-                                        .size(crate::theme::TRANSPORT_BTN_FONT)
-                                        .color(if enabled {
-                                            crate::theme::accent_active()
-                                        } else {
-                                            crate::theme::text_primary()
-                                        }),
-                                    btn_size,
-                                    enabled.then(crate::theme::selected_bg),
-                                    true,
-                                )
-                            })
-                            .inner;
-                        crate::widgets::a11y::name_button(&resp, t!("menu.loop"));
-                        if resp.hovered() {
-                            hovered_hint = Some(t!("menu.loop").to_string());
-                        }
-                        if resp.clicked() {
-                            play_actions.set_loop = Some(!enabled);
-                        }
-                    }
-
                     // ── 时间码（四列居中：BPM/拍号+PPQ | 位置/时间 | 调式 | 总输出电平）──
                     if ctx.pr.is_some() {
                         let (tc_rect, tc_events) = show_timecode_display(
