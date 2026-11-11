@@ -295,26 +295,33 @@ pub(crate) fn show_target_combo(
                             chosen = Some(SegmentShape::linear_curve());
                         }
                         ui.separator();
+                        let mut sizes = vec![egui_extras::Size::exact(
+                            crate::scaling::scaled_font(ui.ctx(), 52.0),
+                        )];
+                        sizes.extend(EASING_DIRECTIONS.iter().map(|_| {
+                            egui_extras::Size::exact(crate::scaling::scaled_font(ui.ctx(), 44.0))
+                        }));
                         for family in EASING_FAMILIES {
-                            ui.horizontal(|ui| {
-                                ui.add_sized(
-                                    [crate::scaling::scaled_font(ui.ctx(), 52.0), 18.0],
-                                    egui::Label::new(family.label()),
-                                );
+                            crate::widgets::grid::fixed_columns(ui, 2.0, 18.0, &sizes, |cells| {
+                                cells.cell(|ui| {
+                                    ui.label(family.label());
+                                });
                                 for direction in EASING_DIRECTIONS {
-                                    let Some(preset) = preset_of(family, direction) else {
-                                        continue;
-                                    };
-                                    if ui
-                                        .add_sized(
-                                            [crate::scaling::scaled_font(ui.ctx(), 44.0), 18.0],
-                                            egui::Button::new(direction.label())
-                                                .selected(current == preset.curve),
-                                        )
-                                        .clicked()
-                                    {
-                                        chosen = Some(preset.curve);
-                                    }
+                                    cells.cell(|ui| {
+                                        let Some(preset) = preset_of(family, direction) else {
+                                            return;
+                                        };
+                                        if ui
+                                            .add_sized(
+                                                [ui.available_width().max(1.0), 18.0],
+                                                egui::Button::new(direction.label())
+                                                    .selected(current == preset.curve),
+                                            )
+                                            .clicked()
+                                        {
+                                            chosen = Some(preset.curve);
+                                        }
+                                    });
                                 }
                             });
                         }

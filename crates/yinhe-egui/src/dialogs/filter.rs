@@ -290,27 +290,45 @@ fn bound_row(
     enabled: &mut bool,
     add_range: impl FnOnce(&mut egui::Ui),
 ) {
-    ui.horizontal(|ui| {
-        ui.name_inputs(title, |ui| {
-            crate::widgets::switch::switch(ui, enabled);
-        });
-        ui.add_space(4.0);
-        ui.label(
-            egui::RichText::new(title)
-                .size(crate::scaling::scaled_font(
-                    ui.ctx(),
-                    crate::theme::SMALL_FONT,
-                ))
-                .color(if *enabled {
-                    crate::theme::text_primary()
-                } else {
-                    crate::theme::text_muted()
-                }),
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.add_enabled_ui(*enabled, |ui| add_range(ui));
-        });
-    });
+    let sw_w = crate::widgets::switch::width(ui.ctx());
+    let label_w = crate::scaling::scaled_font(ui.ctx(), crate::theme::FIELD_LABEL_W);
+    let h = crate::widgets::control::h(ui.ctx());
+    crate::widgets::grid::fixed_columns(
+        ui,
+        4.0,
+        h,
+        &[
+            egui_extras::Size::exact(sw_w),
+            egui_extras::Size::exact(label_w),
+            egui_extras::Size::remainder(),
+        ],
+        |cells| {
+            cells.cell(|ui| {
+                ui.name_inputs(title, |ui| {
+                    crate::widgets::switch::switch(ui, enabled);
+                });
+            });
+            cells.cell(|ui| {
+                ui.label(
+                    egui::RichText::new(title)
+                        .size(crate::scaling::scaled_font(
+                            ui.ctx(),
+                            crate::theme::SMALL_FONT,
+                        ))
+                        .color(if *enabled {
+                            crate::theme::text_primary()
+                        } else {
+                            crate::theme::text_muted()
+                        }),
+                );
+            });
+            cells.cell(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_enabled_ui(*enabled, |ui| add_range(ui));
+                });
+            });
+        },
+    );
     ui.add_space(4.0);
     ui.separator();
     ui.add_space(4.0);
@@ -388,24 +406,41 @@ fn show_note_section(ui: &mut egui::Ui, state: &mut FilterDialogState, num_track
             );
         },
     );
-    ui.horizontal(|ui| {
-        ui.name_inputs(t!("dialog.filter.invert"), |ui| {
-            crate::widgets::switch::switch(ui, &mut state.invert);
-        });
-        ui.add_space(4.0);
-        ui.label(
-            egui::RichText::new(t!("dialog.filter.invert").as_ref())
-                .size(crate::scaling::scaled_font(
-                    ui.ctx(),
-                    crate::theme::SMALL_FONT,
-                ))
-                .color(if state.invert {
-                    crate::theme::text_primary()
-                } else {
-                    crate::theme::text_muted()
-                }),
-        );
-    });
+    let sw_w = crate::widgets::switch::width(ui.ctx());
+    let label_w = crate::scaling::scaled_font(ui.ctx(), crate::theme::FIELD_LABEL_W);
+    let h = crate::widgets::control::h(ui.ctx());
+    crate::widgets::grid::fixed_columns(
+        ui,
+        4.0,
+        h,
+        &[
+            egui_extras::Size::exact(sw_w),
+            egui_extras::Size::exact(label_w),
+            egui_extras::Size::remainder(),
+        ],
+        |cells| {
+            cells.cell(|ui| {
+                ui.name_inputs(t!("dialog.filter.invert"), |ui| {
+                    crate::widgets::switch::switch(ui, &mut state.invert);
+                });
+            });
+            cells.cell(|ui| {
+                ui.label(
+                    egui::RichText::new(t!("dialog.filter.invert").as_ref())
+                        .size(crate::scaling::scaled_font(
+                            ui.ctx(),
+                            crate::theme::SMALL_FONT,
+                        ))
+                        .color(if state.invert {
+                            crate::theme::text_primary()
+                        } else {
+                            crate::theme::text_muted()
+                        }),
+                );
+            });
+            cells.cell(|_| {});
+        },
+    );
 }
 
 fn show_automation_section(ui: &mut egui::Ui, state: &mut FilterDialogState) {

@@ -135,8 +135,7 @@ impl InsertBpmState {
                         .color(crate::theme::text_muted()),
                 );
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    ui.label(t!("menu.insert.bpm"));
+                crate::widgets::rows::form_row(ui, t!("menu.insert.bpm").as_ref(), |ui| {
                     ui.add(
                         egui::DragValue::new(&mut bpm)
                             .range(0.0..=60_000_000.0)
@@ -216,19 +215,23 @@ impl InsertTimeSigState {
                         .color(crate::theme::text_muted()),
                 );
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    ui.label(t!("quantize.numerator"));
-                    ui.add(egui::DragValue::new(&mut numerator).range(1..=32));
-                    ui.add_space(12.0);
-                    ui.label(t!("quantize.denominator"));
-                    egui::ComboBox::from_id_salt("insert_timesig_den")
-                        .selected_text(denominator.to_string())
-                        .show_ui(ui, |ui| {
-                            for d in DENOMINATORS {
-                                ui.selectable_value(&mut denominator, d, d.to_string());
-                            }
-                        });
-                });
+                crate::widgets::rows::form_row(
+                    ui,
+                    t!("dialog.insert_timesig.title").as_ref(),
+                    |ui| {
+                        ui.label(t!("quantize.numerator"));
+                        ui.add(egui::DragValue::new(&mut numerator).range(1..=32));
+                        ui.add_space(12.0);
+                        ui.label(t!("quantize.denominator"));
+                        egui::ComboBox::from_id_salt("insert_timesig_den")
+                            .selected_text(denominator.to_string())
+                            .show_ui(ui, |ui| {
+                                for d in DENOMINATORS {
+                                    ui.selectable_value(&mut denominator, d, d.to_string());
+                                }
+                            });
+                    },
+                );
             },
         );
         self.numerator = numerator;
@@ -301,10 +304,13 @@ impl InsertPcState {
                         .color(crate::theme::text_muted()),
                 );
                 ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    ui.label(t!("event_browser.header.program"));
-                    ui.add(egui::DragValue::new(&mut program).range(0..=127));
-                });
+                crate::widgets::rows::form_row(
+                    ui,
+                    t!("event_browser.header.program").as_ref(),
+                    |ui| {
+                        ui.add(egui::DragValue::new(&mut program).range(0..=127));
+                    },
+                );
                 ui.add_space(2.0);
                 ui.label(
                     egui::RichText::new(&self.targets)

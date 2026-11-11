@@ -65,7 +65,23 @@ pub(crate) fn two_columns(
     horizontal(ui, gap, &[Size::exact(left_w), Size::remainder()], add);
 }
 
-/// 固定行高的两列：左固定宽，右剩余宽。用于表单行，避免横向 strip 吃满剩余高度。
+/// 固定行高的任意列：`sizes` 定义每列宽度。用于表单行，避免横向 strip 吃满剩余高度。
+pub(crate) fn fixed_columns(
+    ui: &mut egui::Ui,
+    gap: f32,
+    h: f32,
+    sizes: &[Size],
+    add: impl for<'a, 'b> FnOnce(&mut Cells<'a, 'b>),
+) {
+    let total = ui.available_width().max(1.0);
+    ui.allocate_ui_with_layout(
+        egui::vec2(total, h),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| horizontal(ui, gap, sizes, add),
+    );
+}
+
+/// 固定行高的两列：左固定宽，右剩余宽。
 pub(crate) fn fixed_row(
     ui: &mut egui::Ui,
     gap: f32,
@@ -73,12 +89,7 @@ pub(crate) fn fixed_row(
     left_w: f32,
     add: impl for<'a, 'b> FnOnce(&mut Cells<'a, 'b>),
 ) {
-    let total = ui.available_width().max(1.0);
-    ui.allocate_ui_with_layout(
-        egui::vec2(total, h),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| two_columns(ui, gap, left_w, add),
-    );
+    fixed_columns(ui, gap, h, &[Size::exact(left_w), Size::remainder()], add);
 }
 
 /// 两列：左剩余宽，右固定宽（贴右）。用于“端口填满 + 通道固定”等行。

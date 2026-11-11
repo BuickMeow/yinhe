@@ -136,60 +136,71 @@ pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
                 .as_ref()
                 .is_some_and(|(a, idx)| a.as_str() == id && *idx == add_idx);
 
-            // 第一行：动作名 + 第一个快捷键 + ×（+ 追加按钮）
-            // 动作名标签用 Extend 撑满 150 宽，保证与后续缩进行精确对齐
-            ui.horizontal(|ui| {
-                let label_key = crate::shortcuts::action_label_key(id);
-                ui.add_sized(
-                    [150.0, 24.0],
-                    egui::Label::new(egui::RichText::new(t!(label_key).as_ref()))
-                        .selectable(false)
-                        .wrap_mode(egui::TextWrapMode::Extend),
-                );
-
-                if let Some(first) = combos.first() {
-                    changed |= shortcut_combo_ui(ui, rec_id, id, 0, first, &recording, settings);
-                }
-
-                // 追加新快捷键（录制中时末尾不再额外显示录制块，仅保留下一行的占位行）
-                let add_btn = crate::widgets::flat::flat_button_filled_stroked(
-                    ui,
-                    egui::RichText::new("+").strong(),
-                    egui::vec2(24.0, 24.0),
-                    None,
-                    !is_adding,
-                );
-                if add_btn
-                    .on_hover_text(t!("settings.shortcuts.add").as_ref())
-                    .clicked()
-                {
-                    ui.data_mut(|d| d.insert_temp(rec_id, (id.to_string(), add_idx)));
-                    settings.ui_session.shortcut_recording = true;
-                    ui.ctx().request_repaint();
-                }
+            // 动作名 + 快捷键列：标签列由 StripBuilder 固定，后续缩进行不再手算 150px。
+            let label_key = crate::shortcuts::action_label_key(id);
+            crate::widgets::grid::fixed_row(ui, 8.0, 24.0, 150.0, |cells| {
+                cells.cell(|ui| {
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(t!(label_key).as_ref()))
+                                .selectable(false)
+                                .wrap_mode(egui::TextWrapMode::Truncate),
+                        );
+                    });
+                });
+                cells.cell(|ui| {
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        if let Some(first) = combos.first() {
+                            changed |=
+                                shortcut_combo_ui(ui, rec_id, id, 0, first, &recording, settings);
+                        }
+                        let add_btn = crate::widgets::flat::flat_button_filled_stroked(
+                            ui,
+                            egui::RichText::new("+").strong(),
+                            egui::vec2(24.0, 24.0),
+                            None,
+                            !is_adding,
+                        );
+                        if add_btn
+                            .on_hover_text(t!("settings.shortcuts.add").as_ref())
+                            .clicked()
+                        {
+                            ui.data_mut(|d| d.insert_temp(rec_id, (id.to_string(), add_idx)));
+                            settings.ui_session.shortcut_recording = true;
+                            ui.ctx().request_repaint();
+                        }
+                    });
+                });
             });
 
-            // 其余快捷键各占一行（缩进对齐）。
-            // 用 allocate_exact_size 而非 add_space：add_space 推进后不再加
-            // item_spacing，会导致比第一行动作名标签（add_sized）少 8px 而错位。
+            // 其余快捷键各占一行，标签列留空。
             for (i, combo) in combos.iter().enumerate().skip(1) {
-                ui.horizontal(|ui| {
-                    ui.allocate_exact_size(egui::vec2(150.0, 24.0), egui::Sense::hover());
-                    changed |= shortcut_combo_ui(ui, rec_id, id, i, combo, &recording, settings);
+                crate::widgets::grid::fixed_row(ui, 8.0, 24.0, 150.0, |cells| {
+                    cells.cell(|_| {});
+                    cells.cell(|ui| {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            changed |=
+                                shortcut_combo_ui(ui, rec_id, id, i, combo, &recording, settings);
+                        });
+                    });
                 });
             }
 
             // 追加录制中：立即在下一行显示录制占位框（按完键后变为新快捷键）
             if is_adding {
-                ui.horizontal(|ui| {
-                    ui.allocate_exact_size(egui::vec2(150.0, 24.0), egui::Sense::hover());
-                    let _ = crate::widgets::flat::flat_button_filled_stroked(
-                        ui,
-                        t!("settings.shortcuts.recording").as_ref(),
-                        egui::vec2(140.0, 24.0),
-                        None,
-                        true,
-                    );
+                crate::widgets::grid::fixed_row(ui, 8.0, 24.0, 150.0, |cells| {
+                    cells.cell(|_| {});
+                    cells.cell(|ui| {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            let _ = crate::widgets::flat::flat_button_filled_stroked(
+                                ui,
+                                t!("settings.shortcuts.recording").as_ref(),
+                                egui::vec2(140.0, 24.0),
+                                None,
+                                true,
+                            );
+                        });
+                    });
                 });
             }
         }

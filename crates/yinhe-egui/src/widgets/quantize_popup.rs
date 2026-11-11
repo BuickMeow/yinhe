@@ -167,18 +167,17 @@ fn stepper_w(ui: &egui::Ui) -> f32 {
 fn labeled_stepper(ui: &mut egui::Ui, label: &str, add_control: impl FnOnce(&mut egui::Ui)) {
     let h = super::control::h(ui.ctx());
     let w = crate::scaling::scaled_font(ui.ctx(), 56.0);
-    ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), h),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(w, h),
+    crate::widgets::grid::fixed_row(ui, 4.0, h, w, |cells| {
+        cells.cell(|ui| {
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.label(label);
+            });
+        });
+        cells.cell(|ui| {
+            ui.with_layout(
                 egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    ui.label(label);
-                },
+                add_control,
             );
-            add_control(ui);
-        },
-    );
+        });
+    });
 }
