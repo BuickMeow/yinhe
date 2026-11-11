@@ -83,6 +83,7 @@ fn gain_at_y(y: f32, top: f32, bottom: f32) -> f32 {
 /// 返回整条卡片矩形（调用方可在色带行上叠加交互，如总线删除按钮）。
 fn strip_frame(
     ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
     color: egui::Color32,
     title: &str,
     height: f32,
@@ -113,8 +114,11 @@ fn strip_frame(
     // 用 `new_child`（**不**推进父布局游标）排布内容：通道条宽度由上面的
     // `allocate_exact_size(STRIP_WIDTH)` 决定。若用 `scope_builder`，它会按子
     // min_rect（被 PAD_X 内缩、更窄）回退父游标，导致下一张卡覆盖本卡右侧。
+    // 每条通道条必须有独立 id_salt：否则所有条的 M/S、旋钮、dB 等自动 Id
+    // 会重复，egui 只让其中一条真正可交互（其余条点击无反应）。
     let mut child = ui.new_child(
         egui::UiBuilder::new()
+            .id_salt(id_salt)
             .max_rect(content)
             .layout(egui::Layout::top_down(egui::Align::LEFT)),
     );
@@ -168,20 +172,27 @@ pub(crate) fn channel_strip(
         .unwrap_or_default();
     let title = channel_label(channel);
 
-    let rect = strip_frame(ui, color, &title, height, |ui, _| {
-        section(
-            ui,
-            send_height(bus_count),
-            egui::Layout::top_down(egui::Align::Center),
-            |ui| {
-                send_block(ui, SendSource::Channel(channel), &sends, bus_count, actions);
-            },
-        );
-        ui.add_space(GAP);
-        if let Some(p) = strip_controls(ui, &params, level, hold, true, true) {
-            actions.push(MixAction::SetStrip { channel, params: p });
-        }
-    });
+    let rect = strip_frame(
+        ui,
+        ("mix_strip_midi", channel),
+        color,
+        &title,
+        height,
+        |ui, _| {
+            section(
+                ui,
+                send_height(bus_count),
+                egui::Layout::top_down(egui::Align::Center),
+                |ui| {
+                    send_block(ui, SendSource::Channel(channel), &sends, bus_count, actions);
+                },
+            );
+            ui.add_space(GAP);
+            if let Some(p) = strip_controls(ui, &params, level, hold, true, true) {
+                actions.push(MixAction::SetStrip { channel, params: p });
+            }
+        },
+    );
     // 双击色带：打开底部设备链并选中该通道。
     header_double_click_opens_dock(
         app,
@@ -217,6 +228,7 @@ pub(crate) fn audio_strip(
 
     let rect = strip_frame(
         ui,
+        ("mix_strip_audio", channel),
         crate::theme::accent_active(),
         &title,
         height,
@@ -281,6 +293,7 @@ pub(crate) fn bus_strip(
 
     let rect = strip_frame(
         ui,
+        ("mix_strip_bus", bus),
         crate::theme::accent_active(),
         &title,
         height,
@@ -348,6 +361,7 @@ pub(crate) fn master_strip(
 
     strip_frame(
         ui,
+        "mix_strip_master",
         crate::theme::accent_active(),
         &title,
         height,
@@ -432,12 +446,10 @@ fn send_block(
 ) {
     let knobs = bus_count.max(1);
     egui::ScrollArea::vertical()
-        // 同一 id_salt：全部通道条共享滚动偏移，滚动即整排同步。
+        // 发送区各自滚动（id 在通道条自己的作用域内唯一）。滚动条 id 派生自
+        // id_salt，若整排共用同一 id 会触发 egui 的 widget ID 冲突；发送区高度
+        // 已按总线数展开（全部行可见），仅窗口过矮时需滚动，故隐藏滚动条。
         .id_salt("mix_send_scroll")
-        // 滚动条控件 id 派生自 id_salt；多个 ScrollArea 共享同一 id_salt 时，
-        // 同屏出现的滚动条会互相触发 egui 的 widget ID 冲突。发送区高度已按
-        // 总线数展开（全部行可见），仅窗口过矮时需滚动，故隐藏滚动条并保留
-        // 滚轮同步滚动（hover 任一通道条滚动即可）。
         .scroll_bar_visibility(egui::containers::scroll_area::ScrollBarVisibility::AlwaysHidden)
         // egui 默认 min_scrolled_size=64 会把发送区撑高，这里放开下限，
         // 让发送区严格等于「总线数 × 一行高」。

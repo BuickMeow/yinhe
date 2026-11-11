@@ -743,7 +743,9 @@ fn collapsed_power(
     ui.scope_builder(
         egui::UiBuilder::new()
             .max_rect(btn_rect)
-            .layout(egui::Layout::top_down(egui::Align::Center)),
+            .layout(egui::Layout::centered_and_justified(
+                egui::Direction::TopDown,
+            )),
         |ui| {
             clicked = icon_button(
                 ui,
@@ -795,7 +797,7 @@ fn effect_card(
             },
         ),
     );
-    paint_card_title(&painter, title_rect, is_selected);
+    paint_card_title(&painter, title_rect, is_selected, is_collapsed);
     let title_fg = crate::theme::contrast_text(crate::theme::selected_bg());
 
     let title_resp = ui.interact(
@@ -927,22 +929,25 @@ fn paint_card_frame(painter: &egui::Painter, rect: egui::Rect) {
 
 /// 标题栏：贴卡片上缘与左右边，只有上方两角圆角，下部直角。
 /// 普通卡片用很轻的强调底色，选中卡片加深一档。
-fn paint_card_title(painter: &egui::Painter, rect: egui::Rect, selected: bool) {
+fn paint_card_title(painter: &egui::Painter, rect: egui::Rect, selected: bool, collapsed: bool) {
     let fill = if selected {
         crate::theme::selected_bg()
     } else {
         crate::theme::control_selected_bg()
     };
-    painter.rect_filled(
-        rect,
+    // 展开态只有上方两角圆角（下缘接内容区）；收起态整张卡片就是标题条，
+    // 四角都圆。
+    let radius = if collapsed {
+        egui::CornerRadius::same(4)
+    } else {
         egui::CornerRadius {
             nw: 4,
             ne: 4,
             sw: 0,
             se: 0,
-        },
-        fill,
-    );
+        }
+    };
+    painter.rect_filled(rect, radius, fill);
 }
 
 /// 卡片内容区（标题下方、左右/底部内缩 10/8px）。
@@ -957,10 +962,21 @@ fn card_content_rect(card: egui::Rect, title: egui::Rect) -> egui::Rect {
 fn paint_vertical_title(ui: &egui::Ui, rect: egui::Rect, text: &str, color: egui::Color32) {
     let font = egui::FontId::proportional(crate::theme::SMALL_FONT + 2.0);
     let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
-    ui.painter().add(
-        egui::epaint::TextShape::new(rect.center(), galley, color)
-            .with_angle_and_anchor(-std::f32::consts::FRAC_PI_2, egui::Align2::CENTER_CENTER),
-    );
+    ui.painter().add(vertical_title_shape(rect, galley, color));
+}
+
+/// 竖排标题的 TextShape：旋转后可视中心严格落在 `rect.center()`。
+///
+/// `TextShape::new` 的 pos 是未旋转文字的左上角；`with_angle_and_anchor`
+/// 保持锚点在旋转前的屏幕位置，所以先取「未旋转居中时的左上角」。
+fn vertical_title_shape(
+    rect: egui::Rect,
+    galley: std::sync::Arc<egui::Galley>,
+    color: egui::Color32,
+) -> egui::epaint::TextShape {
+    let top_left = rect.center() - galley.rect.center().to_vec2();
+    egui::epaint::TextShape::new(top_left, galley, color)
+        .with_angle_and_anchor(-std::f32::consts::FRAC_PI_2, egui::Align2::CENTER_CENTER)
 }
 
 /// 「+」添加效果器竖条（高度撑满主体区）。
@@ -1039,7 +1055,7 @@ fn instrument_card(
             },
         ),
     );
-    paint_card_title(&painter, title_rect, is_selected);
+    paint_card_title(&painter, title_rect, is_selected, is_collapsed);
     let title_fg = crate::theme::contrast_text(crate::theme::selected_bg());
 
     let title_resp = ui.interact(
@@ -1608,5 +1624,23 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].value, 0.2, "undo 恢复旧值");
         assert_eq!(events[0].id, old_id);
+    }
+    /// 收起态竖排标题：旋转后的可视中心必须落在标题条矩形中心。
+    #[test]
+    fn vertical_title_is_centered() {
+        let ctx = egui::Context::default();
+        ctx.run_ui(Default::default(), |ui| {
+            let rect = egui::Rect::from_min_size(egui::pos2(20.0, 40.0), egui::vec2(24.0, 180.0));
+            let galley = ui.painter().layout_no_wrap(
+                "XSynth".to_owned(),
+                egui::FontId::proportional(13.0),
+                egui::Color32::WHITE,
+            );
+            let bb =
+                vertical_title_shape(rect, galley, egui::Color32::WHITE).visual_bounding_rect();
+            assert!((bb.center().x - rect.center().x).abs() < 1.0, "{bb:?}");
+            assert!((bb.center().y - rect.center().y).abs() < 1.0, "{bb:?}");
+        })
+        .drop_without_applying_deltas();
     }
 }
