@@ -84,6 +84,19 @@ pub fn show_tree(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut Even
     });
 }
 
+/// 「歌曲属性」选项卡：工程名称 / 作者 / PPQ / 事件统计（原事件面板空态）。
+pub fn show_song(ui: &mut egui::Ui, doc: Option<&Document>) {
+    crate::right_panel::region_hint(ui, rust_i18n::t!("hint.panel.song"));
+    let Some(doc) = doc else {
+        crate::widgets::hint::empty_hint(
+            ui,
+            "\u{ff08}\u{672a}\u{6253}\u{5f00}\u{6587}\u{6863}\u{ff09}",
+        );
+        return;
+    };
+    detail::show_overview(ui, &doc.data.model);
+}
+
 /// 「事件」选项卡：事件表格 / 详情（事件浏览器的下栏）。返回跳转请求。
 pub fn show_events(
     ui: &mut egui::Ui,
@@ -118,11 +131,16 @@ pub fn show_events(
                     if let Some(track) = model.tracks.get(idx as usize) {
                         detail::show_track_detail(ui, idx, track, model);
                     } else {
-                        detail::show_overview(ui, model);
+                        crate::widgets::hint::empty_hint(
+                            ui,
+                            rust_i18n::t!("panel.select_event_hint").as_ref(),
+                        );
                     }
                 } else {
-                    let model = &doc.data.model;
-                    detail::show_overview(ui, model);
+                    crate::widgets::hint::empty_hint(
+                        ui,
+                        rust_i18n::t!("panel.select_event_hint").as_ref(),
+                    );
                 }
             });
         });

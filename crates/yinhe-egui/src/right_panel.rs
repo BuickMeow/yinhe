@@ -193,6 +193,14 @@ pub fn show(
                         }
                     });
             }
+            PanelKind::Song => {
+                egui::ScrollArea::vertical()
+                    .id_salt("rpanel_song_scroll")
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        event_browser::show_song(ui, doc_ref.as_deref());
+                    });
+            }
             PanelKind::Selection => {
                 egui::ScrollArea::vertical()
                     .id_salt("rpanel_selection_scroll")

@@ -100,7 +100,12 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) -> b
     let mut drum_state = is_drum(next);
     let mut drum_changed = false;
     crate::widgets::rows::panel_row(ui, t!("track.drum_channel").as_ref(), |ui| {
-        if crate::widgets::switch::switch(ui, &mut drum_state).changed() {
+        let resp = ui
+            .push_id(("track_drum_switch", channel), |ui| {
+                crate::widgets::switch::switch(ui, &mut drum_state)
+            })
+            .inner;
+        if resp.changed() {
             drum_changed = true;
         }
     });

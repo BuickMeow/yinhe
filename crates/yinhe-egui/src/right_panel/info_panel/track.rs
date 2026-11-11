@@ -2,7 +2,7 @@
 //!
 //! 「音轨」选项卡：当前选中轨的名称 / 端口 / 通道 / 颜色。
 //!
-//! 图层 / 历史记录 / 属性概要已拆为独立顶层选项卡（见 [`super::layers`] /
+//! 图层 / 历史记录 / 音轨属性已拆为独立顶层选项卡（见 [`super::layers`] /
 //! [`super::history`] / [`super::summary`]），由右栏多栏布局统一停靠。
 
 use std::sync::Arc;
@@ -213,16 +213,20 @@ fn show_color_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
             .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
         let stored_color = doc.data.model.tracks[track_idx].color;
         // right_to_left：先放右侧的重置按钮，再放左侧的色块。
-        let reset_btn = crate::widgets::flat::flat_button_filled_auto(
-            ui,
-            crate::widgets::icon_text::icon_text(
-                ICON_FORMAT_COLOR_RESET,
-                t!("track.reset_color").as_ref(),
-                12.0,
-                crate::theme::text_label(),
-            ),
-            stored_color != yinhe_core::DEFAULT_TRACK_COLOR,
-        );
+        let reset_btn = ui
+            .push_id(("track_color_reset", track_idx), |ui| {
+                crate::widgets::flat::flat_button_filled_auto(
+                    ui,
+                    crate::widgets::icon_text::icon_text(
+                        ICON_FORMAT_COLOR_RESET,
+                        t!("track.reset_color").as_ref(),
+                        12.0,
+                        crate::theme::text_label(),
+                    ),
+                    stored_color != yinhe_core::DEFAULT_TRACK_COLOR,
+                )
+            })
+            .inner;
         crate::widgets::hint::hover(ui.ctx(), &reset_btn, t!("hint.info.reset_color"));
         ui.add_space(crate::theme::GAP_SM);
         let mut srgba = crate::theme::rgba_to_color32((cur[0], cur[1], cur[2], cur[3]));

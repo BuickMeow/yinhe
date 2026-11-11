@@ -127,10 +127,14 @@ fn row_impl(
                             );
                         });
                         strip.cell(|ui| {
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| ui.name_inputs(title, add_control),
-                            );
+                            // 每行一个稳定作用域：避免不同行的按钮/开关共用自动 Id，
+                            // 出现“点 A 命中 B、B 本身点不动”的错位。
+                            ui.push_id(title, |ui| {
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| ui.name_inputs(title, add_control),
+                                );
+                            });
                         });
                     });
             },

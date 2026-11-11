@@ -112,7 +112,7 @@ pub(crate) fn show_history(ui: &mut egui::Ui, doc: &mut Document) -> Option<usiz
     history::show(ui, doc)
 }
 
-/// 「属性概要」选项卡。
+/// 「音轨属性」选项卡。
 pub(crate) fn show_summary(ui: &mut egui::Ui, doc: &mut Document) {
     summary::show_summary_panel(ui, doc);
 }

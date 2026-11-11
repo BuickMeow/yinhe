@@ -24,15 +24,17 @@ pub enum PanelKind {
     EventBrowser,
     /// 历史记录。
     History,
-    /// 属性概要。
+    /// 音轨属性概要。
     Summary,
+    /// 歌曲属性（工程名称/作者/PPQ/事件统计等）。
+    Song,
     /// 选框属性（选框位置/数量/跨度等只读信息）。
     Selection,
 }
 
 impl PanelKind {
     /// 全部面板类型（用于旧布局迁移补齐）。
-    pub const ALL: [PanelKind; 8] = [
+    pub const ALL: [PanelKind; 9] = [
         PanelKind::Track,
         PanelKind::Batch,
         PanelKind::ProjectTree,
@@ -40,6 +42,7 @@ impl PanelKind {
         PanelKind::Layers,
         PanelKind::History,
         PanelKind::Summary,
+        PanelKind::Song,
         PanelKind::Selection,
     ];
 
@@ -53,6 +56,7 @@ impl PanelKind {
             PanelKind::EventBrowser => "panel.section.events",
             PanelKind::History => "panel.tab.history",
             PanelKind::Summary => "panel.tab.summary",
+            PanelKind::Song => "panel.tab.song",
             PanelKind::Selection => "panel.tab.selection",
         }
     }
@@ -97,7 +101,7 @@ pub struct RightPanelLayout {
 
 impl Default for RightPanelLayout {
     fn default() -> Self {
-        // 默认：上[音轨,批处理] / 中[树图,事件,图层] / 下[历史记录,属性概要,选框属性]。
+        // 默认：上[音轨,批处理] / 中[树图,事件,图层] / 下[历史记录,音轨属性,歌曲属性,选框属性]。
         Self {
             columns: vec![
                 PanelColumn {
@@ -115,7 +119,12 @@ impl Default for RightPanelLayout {
                     height_weight: 1.0,
                 },
                 PanelColumn {
-                    tabs: vec![PanelKind::History, PanelKind::Summary, PanelKind::Selection],
+                    tabs: vec![
+                        PanelKind::History,
+                        PanelKind::Summary,
+                        PanelKind::Song,
+                        PanelKind::Selection,
+                    ],
                     active: 0,
                     height_weight: 1.0,
                 },
@@ -144,9 +153,10 @@ impl RightPanelLayout {
                 None => {
                     let at = match kind {
                         PanelKind::Track | PanelKind::Batch => 0,
-                        PanelKind::History | PanelKind::Summary | PanelKind::Selection => {
-                            self.columns.len()
-                        }
+                        PanelKind::History
+                        | PanelKind::Summary
+                        | PanelKind::Song
+                        | PanelKind::Selection => self.columns.len(),
                         _ => self.columns.len().min(1),
                     };
                     self.split_new_column(kind, at);
@@ -162,9 +172,10 @@ impl RightPanelLayout {
         let siblings: &[PanelKind] = match kind {
             PanelKind::Layers => &[PanelKind::ProjectTree, PanelKind::EventBrowser],
             PanelKind::ProjectTree | PanelKind::EventBrowser => &[PanelKind::Layers],
-            PanelKind::History => &[PanelKind::Summary, PanelKind::Selection],
-            PanelKind::Summary => &[PanelKind::History, PanelKind::Selection],
-            PanelKind::Selection => &[PanelKind::Summary, PanelKind::History],
+            PanelKind::History => &[PanelKind::Summary, PanelKind::Song, PanelKind::Selection],
+            PanelKind::Summary => &[PanelKind::History, PanelKind::Song, PanelKind::Selection],
+            PanelKind::Song => &[PanelKind::History, PanelKind::Summary, PanelKind::Selection],
+            PanelKind::Selection => &[PanelKind::History, PanelKind::Summary, PanelKind::Song],
             PanelKind::Batch => &[PanelKind::Track],
             PanelKind::Track => &[PanelKind::Batch],
         };
@@ -275,7 +286,12 @@ mod tests {
         );
         assert_eq!(
             l.columns[2].tabs,
-            vec![PanelKind::History, PanelKind::Summary, PanelKind::Selection]
+            vec![
+                PanelKind::History,
+                PanelKind::Summary,
+                PanelKind::Song,
+                PanelKind::Selection,
+            ]
         );
     }
 
