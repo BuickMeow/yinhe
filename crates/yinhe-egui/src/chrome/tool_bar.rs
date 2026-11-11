@@ -221,37 +221,49 @@ pub fn show_auto_buttons(
         egui::pos2(rect.min.x + pad, rect.min.y + pad),
         egui::pos2(rect.max.x - pad, rect.max.y - pad),
     );
-    let w = ((inner.width() - gap) * 0.5).max(1.0);
-    let toggle_rect = egui::Rect::from_min_size(inner.min, egui::vec2(w, inner.height()));
-    let add_rect =
-        egui::Rect::from_min_max(egui::pos2(inner.min.x + w + gap, inner.min.y), inner.max);
-
-    let toggle = icon_button_at(
-        ui,
-        toggle_rect.center(),
-        toggle_rect.size(),
-        "pr_auto_toggle",
-        ICON_BAR_CHART,
-        *show_panels,
-    );
-    crate::widgets::hint::hover(ui.ctx(), &toggle, t!("hint.pr.auto_toggle"));
-    if toggle.clicked() {
+    let mut toggle_requested = false;
+    let mut add_requested = false;
+    ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+        crate::widgets::grid::weighted_columns(ui, gap, &[1.0, 1.0], |cells| {
+            cells.cell(|ui| {
+                let cell = ui.max_rect();
+                let toggle = icon_button_at(
+                    ui,
+                    cell.center(),
+                    cell.size(),
+                    "pr_auto_toggle",
+                    ICON_BAR_CHART,
+                    *show_panels,
+                );
+                crate::widgets::hint::hover(ui.ctx(), &toggle, t!("hint.pr.auto_toggle"));
+                if toggle.clicked() {
+                    toggle_requested = true;
+                }
+            });
+            cells.cell(|ui| {
+                let cell = ui.max_rect();
+                let add = icon_button_at(
+                    ui,
+                    cell.center(),
+                    cell.size(),
+                    "pr_auto_add",
+                    ICON_ADD_CHART,
+                    false,
+                );
+                crate::widgets::hint::hover(ui.ctx(), &add, t!("hint.pr.auto_add"));
+                if add.clicked() {
+                    add_requested = true;
+                }
+            });
+        });
+    });
+    if toggle_requested {
         *show_panels = !*show_panels;
         if *show_panels && panels.is_empty() {
             panels.push(AutomationPanelView::default());
         }
     }
-
-    let add = icon_button_at(
-        ui,
-        add_rect.center(),
-        add_rect.size(),
-        "pr_auto_add",
-        ICON_ADD_CHART,
-        false,
-    );
-    crate::widgets::hint::hover(ui.ctx(), &add, t!("hint.pr.auto_add"));
-    if add.clicked() {
+    if add_requested {
         *show_panels = true;
         panels.push(AutomationPanelView::default());
     }

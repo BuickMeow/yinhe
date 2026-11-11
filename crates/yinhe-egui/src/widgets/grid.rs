@@ -65,6 +65,32 @@ pub(crate) fn two_columns(
     horizontal(ui, gap, &[Size::exact(left_w), Size::remainder()], add);
 }
 
+/// 固定行高的两列：左固定宽，右剩余宽。用于表单行，避免横向 strip 吃满剩余高度。
+pub(crate) fn fixed_row(
+    ui: &mut egui::Ui,
+    gap: f32,
+    h: f32,
+    left_w: f32,
+    add: impl for<'a, 'b> FnOnce(&mut Cells<'a, 'b>),
+) {
+    let total = ui.available_width().max(1.0);
+    ui.allocate_ui_with_layout(
+        egui::vec2(total, h),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| two_columns(ui, gap, left_w, add),
+    );
+}
+
+/// 两列：左剩余宽，右固定宽（贴右）。用于“端口填满 + 通道固定”等行。
+pub(crate) fn two_columns_right(
+    ui: &mut egui::Ui,
+    gap: f32,
+    right_w: f32,
+    add: impl for<'a, 'b> FnOnce(&mut Cells<'a, 'b>),
+) {
+    horizontal(ui, gap, &[Size::remainder(), Size::exact(right_w)], add);
+}
+
 /// 三列：左固定、中间剩余、右固定。
 pub(crate) fn three_columns(
     ui: &mut egui::Ui,
@@ -85,8 +111,6 @@ pub(crate) fn three_columns(
 ///
 /// 先扣掉列间距，再按权重比例分配，避免 `Size::relative` 的总和与 gap 冲突。
 /// 权重必须为正数；全为 0 时退化为等分。
-/// 目前没有 1:2:4 的现成布局，先作为容器原语保留。
-#[allow(dead_code)]
 pub(crate) fn weighted_columns(
     ui: &mut egui::Ui,
     gap: f32,

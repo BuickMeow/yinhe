@@ -133,40 +133,49 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
     let mut new_port = ti.port;
     let mut new_ch = ti.channel;
     crate::widgets::rows::panel_row(ui, t!("track.port_channel").as_ref(), |ui| {
-        // right_to_left：先放右侧的通道，再放左侧的端口。
         let ch_options: Vec<(usize, String)> =
             (0..16).map(|c| (c, format!("{:02}", c + 1))).collect();
-        let ch_w = 60.0;
-        let port_w = (ui.available_width() - ch_w - 6.0).max(60.0);
-        let mut ch_sel = ti.channel as usize;
-        let ch_id = ui.scope_id().with("track_channel");
-        if crate::widgets::combo::combo_select(ui, "track_channel", &mut ch_sel, ch_w, &ch_options)
-        {
-            new_ch = ch_sel as u8;
-            port_changed = true;
-        }
-        if let Some(resp) = ui.ctx().read_response(ch_id) {
-            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.info.channel"));
-        }
-        ui.add_space(6.0);
         let port_options: Vec<(usize, String)> = (0..16)
             .map(|p| (p, format!("Port {}", (b'A' + p as u8) as char)))
             .collect();
-        let mut port_sel = ti.port as usize;
-        let port_id = ui.scope_id().with("track_port");
-        if crate::widgets::combo::combo_select(
-            ui,
-            "track_port",
-            &mut port_sel,
-            port_w,
-            &port_options,
-        ) {
-            new_port = port_sel as u8;
-            port_changed = true;
-        }
-        if let Some(resp) = ui.ctx().read_response(port_id) {
-            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.info.port"));
-        }
+        let channel = ti.channel;
+        let port = ti.port;
+        crate::widgets::grid::two_columns_right(ui, 6.0, 60.0, |cells| {
+            cells.cell(|ui| {
+                let mut port_sel = port as usize;
+                let port_id = ui.scope_id().with("track_port");
+                if crate::widgets::combo::combo_select(
+                    ui,
+                    "track_port",
+                    &mut port_sel,
+                    ui.available_width().max(1.0),
+                    &port_options,
+                ) {
+                    new_port = port_sel as u8;
+                    port_changed = true;
+                }
+                if let Some(resp) = ui.ctx().read_response(port_id) {
+                    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.info.port"));
+                }
+            });
+            cells.cell(|ui| {
+                let mut ch_sel = channel as usize;
+                let ch_id = ui.scope_id().with("track_channel");
+                if crate::widgets::combo::combo_select(
+                    ui,
+                    "track_channel",
+                    &mut ch_sel,
+                    ui.available_width().max(1.0),
+                    &ch_options,
+                ) {
+                    new_ch = ch_sel as u8;
+                    port_changed = true;
+                }
+                if let Some(resp) = ui.ctx().read_response(ch_id) {
+                    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.info.channel"));
+                }
+            });
+        });
     });
     if port_changed {
         {

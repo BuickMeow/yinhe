@@ -49,19 +49,23 @@ pub(crate) fn value_row(ui: &mut egui::Ui, label: impl Into<String>, value: impl
 pub(crate) fn form_row(ui: &mut egui::Ui, label: &str, add_control: impl FnOnce(&mut egui::Ui)) {
     let w = scaled_font(ui.ctx(), theme::FIELD_LABEL_W);
     let h = scaled_font(ui.ctx(), theme::ROW_H_COMPACT);
-    ui.horizontal(|ui| {
-        ui.allocate_ui_with_layout(
-            egui::vec2(w, h),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
+    // 左右列由 StripBuilder 分配，控件不会把标签列挤走。
+    crate::widgets::grid::fixed_row(ui, theme::GAP_SM, h, w, |cells| {
+        cells.cell(|ui| {
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.label(
                     egui::RichText::new(label)
                         .size(scaled_font(ui.ctx(), theme::SMALL_FONT))
                         .color(theme::text_label()),
                 );
-            },
-        );
-        add_control(ui);
+            });
+        });
+        cells.cell(|ui| {
+            ui.with_layout(
+                egui::Layout::left_to_right(egui::Align::Center),
+                add_control,
+            );
+        });
     });
 }
 
