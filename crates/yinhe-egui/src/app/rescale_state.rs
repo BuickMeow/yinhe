@@ -205,6 +205,7 @@ impl App {
 
         match result {
             Ok(new_model) => {
+                let mut applied = false;
                 if let Some(doc) = self.workspace.documents.get_mut(doc_idx) {
                     // 用新 model 替换 doc.data.model。
                     doc.data.model = std::sync::Arc::new(new_model);
@@ -216,6 +217,12 @@ impl App {
                     if self.workspace.active_doc == Some(doc_idx) {
                         self.invalidate_cull_state();
                     }
+                    applied = true;
+                }
+                // PPQ 改了 tick↔sample 映射：引擎必须按新基准重建，否则后续
+                // UpdateNotes 会用旧 tick 语义补发已播音符。
+                if applied {
+                    self.notify_audio_model_changed();
                 }
                 self.notifications.finish_progress(
                     crate::widgets::toast::RESCALE_PROGRESS_ID,

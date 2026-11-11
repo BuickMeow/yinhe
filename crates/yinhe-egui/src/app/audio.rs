@@ -860,7 +860,13 @@ impl App {
                     && t.elapsed() > std::time::Duration::from_secs(1)
                 {
                     tracing::warn!("[play] Play 命令 1s 未被音频线程确认（可能已被命令通道丢弃）");
+                    // 放弃等待：否则 content 会永久每帧 request_repaint（空转耗电），
+                    // 且走带图标与实际音频状态永久不一致。
+                    self.audio_state.pending_playback = false;
                     self.audio_state.pending_playback_since = None;
+                    if let Some(doc) = self.workspace.documents.get_mut(idx) {
+                        doc.edit.playback.stop();
+                    }
                 }
                 return;
             }
@@ -915,8 +921,21 @@ impl App {
 
         let time = interpolated_sample / sr;
         let tick = doc.data.model.tempo_map.tick_at_time(time);
-        let end_tick = doc.data.model.tick_length as f64;
-        if tick >= end_tick {
+        // 工程末尾取「MIDI 末尾 / 循环终点 / 引擎真实时长（含音频轨）」的最大值：
+        // 只看音符 tick_length 会在音频片段还没播完、或循环终点超出曲末时
+        // 提前 Pause，造成尾部被截断。
+        let mut end_tick = doc.data.model.tick_length as f64;
+        let audio_end_tick = doc
+            .data
+            .model
+            .tempo_map
+            .tick_at_time(handle.duration_samples() as f64 / sr);
+        end_tick = end_tick.max(audio_end_tick);
+        let loop_enabled = doc.edit.playback.loop_enabled();
+        if loop_enabled {
+            end_tick = end_tick.max(doc.edit.playback.loop_range().1 as f64);
+        }
+        if !loop_enabled && tick >= end_tick {
             // 到工程末尾不要立刻 Stop：最后一个音符的 release 还没播完。
             // 光标停在末尾继续渲染，等 voice 全部结束（含 release 尾音）
             // 再 Pause —— 停在末尾，不回开头。
@@ -1119,6 +1138,16 @@ impl App {
         self.audio_state.applied_ignore_velocity = None;
         self.audio_state.spawn_error = None;
         self.audio_state.spawn_error_doc = None;
+        // 引擎已销毁：复位播放等待态与走带状态，避免 pending_playback 永久为
+        // true 导致每帧重绘空转、图标停在播放中。
+        self.audio_state.pending_playback = false;
+        self.audio_state.pending_playback_since = None;
+        self.audio_state.playback_anchor = None;
+        if let Some(idx) = bound_doc.or(self.workspace.active_doc)
+            && let Some(doc) = self.workspace.documents.get_mut(idx)
+        {
+            doc.edit.playback.stop();
+        }
     }
 
     /// 每帧收取后台 teardown 回传的 insert 处理器，交回机架 deactivate

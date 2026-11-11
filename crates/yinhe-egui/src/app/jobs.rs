@@ -13,8 +13,8 @@ use crate::app::export_state::ExportState;
 use crate::app::rescale_state::RescaleState;
 use crate::dialogs::save_overlay::SharedSaveProgress;
 
-/// 异步保存结果通道：`(目标文档 idx, 发起时撤销栈长度, 路径, 结果)`。
-pub(crate) type SaveResultRx = mpsc::Receiver<(usize, usize, String, Result<(), String>)>;
+/// 异步保存结果通道：`(目标文档 idx, 发起时撤销状态标记, 路径, 结果)`。
+pub(crate) type SaveResultRx = mpsc::Receiver<(usize, Option<u64>, String, Result<(), String>)>;
 
 /// 所有异步任务的运行时状态。
 pub(crate) struct JobCenter {

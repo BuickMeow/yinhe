@@ -196,7 +196,7 @@ impl App {
         // Poll async save completion
         if let Some(rx) = self.jobs.save_rx.take() {
             match rx.try_recv() {
-                Ok((idx, past_len, path, result)) => {
+                Ok((idx, marker, path, result)) => {
                     self.jobs.save_rx = None;
                     self.jobs.save_progress_rx = None;
                     if let Ok(mut s) = self.jobs.save_progress.lock() {
@@ -215,7 +215,7 @@ impl App {
                                     {
                                         doc.file_name = stem.to_string();
                                     }
-                                    doc.mark_saved_at(past_len);
+                                    doc.mark_saved_at(marker);
                                     (doc.doc_id, doc.file_name.clone())
                                 } else {
                                     (0, String::new())

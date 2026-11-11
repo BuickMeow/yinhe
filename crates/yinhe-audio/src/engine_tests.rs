@@ -6241,3 +6241,19 @@ fn prof_tau_voice_caps() {
         );
     }
 }
+
+/// 循环区间映射到零 sample（极快 tempo 下 1 tick < 1 sample）时，回绕不能
+/// 让播放位置前进；必须按普通播放继续，而不是在音频线程里死循环。
+#[test]
+fn zero_sample_loop_does_not_spin() {
+    let model = make_model_with_tempo(vec![(0, 12000.0)], vec![]);
+    let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(vec![true; 16]));
+    engine.load_model(&model);
+    engine.playing = true;
+
+    // tick 0..1 在 12000 BPM 下都落在 sample 0。
+    engine.set_loop(true, 0, 1);
+    let mut out = vec![0.0f32; 512 * 2];
+    engine.render(&mut out);
+    assert_eq!(engine.sample_position, 512, "零 sample 循环必须照常前进");
+}

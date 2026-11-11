@@ -104,11 +104,16 @@ impl Document {
         self.mixer_dirty = false;
     }
 
-    /// 异步保存完成：按发起保存时的撤销栈长度标记（保存期间的新编辑保持
+    /// 异步保存完成：按**发起保存时的状态标记**标记（保存期间的新编辑保持
     /// dirty）。
-    pub fn mark_saved_at(&mut self, past_len: usize) {
-        self.history.mark_saved_at(past_len);
+    pub fn mark_saved_at(&mut self, marker: Option<u64>) {
+        self.history.mark_saved_at(marker);
         self.mixer_dirty = false;
+    }
+
+    /// 当前撤销栈的状态标记（发起异步保存时取，完成后原样传回）。
+    pub fn undo_marker(&self) -> Option<u64> {
+        self.history.marker()
     }
 
     /// 每帧预算内增量刷新滚动条密度预览。
@@ -455,7 +460,7 @@ impl Document {
 
     /// Undo the most recent operation. Returns true if something was undone.
     pub fn undo(&mut self) -> bool {
-        let Some(entry) = self.history.past.pop_back() else {
+        let Some((id, entry)) = self.history.take_past() else {
             return false;
         };
 
@@ -472,14 +477,17 @@ impl Document {
         // Restore selection from the undo entry.
         Self::restore_snapshot(&mut self.edit, &entry.snapshot);
 
-        // Push reversed action onto the redo stack.
-        self.history.future.push(UndoEntry {
-            action: reversed,
-            label: entry.label,
-            snapshot: current,
-        });
+        // Push reversed action onto the redo stack（沿用原状态 id：redo 后回到该状态）。
+        self.history.put_future(
+            id,
+            UndoEntry {
+                action: reversed,
+                label: entry.label,
+                snapshot: current,
+            },
+        );
         if irreversible {
-            self.history.future.clear();
+            self.history.clear_future();
         }
 
         true
@@ -487,7 +495,7 @@ impl Document {
 
     /// Redo the most recently undone operation. Returns true if something was redone.
     pub fn redo(&mut self) -> bool {
-        let Some(entry) = self.history.future.pop() else {
+        let Some((id, entry)) = self.history.take_future() else {
             return false;
         };
 
@@ -500,11 +508,14 @@ impl Document {
         // Restore selection from the redo entry.
         Self::restore_snapshot(&mut self.edit, &entry.snapshot);
 
-        self.history.past.push_back(UndoEntry {
-            action: reversed,
-            label: entry.label,
-            snapshot: current,
-        });
+        self.history.put_past(
+            id,
+            UndoEntry {
+                action: reversed,
+                label: entry.label,
+                snapshot: current,
+            },
+        );
 
         true
     }

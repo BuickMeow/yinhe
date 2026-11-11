@@ -128,6 +128,11 @@ impl AudioEngine {
         }
         let end = self.loop_end_sample();
         let pos = self.sample_position;
+        // 循环区间映射到零 sample（0 BPM 剪切段或极短区间）时，回绕无法让
+        // 位置前进；继续 `rewind → span==0` 会让音频线程死循环。按普通播放处理。
+        if end <= self.loop_start_sample() {
+            return (remaining, false);
+        }
         if pos >= end {
             return (0, true);
         }

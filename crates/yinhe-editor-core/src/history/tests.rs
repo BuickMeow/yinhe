@@ -916,3 +916,62 @@ fn flip_vertical_roundtrips_operationally() {
     assert!(doc.redo());
     assert_eq!(doc.data.model.notes[64].get(0).unwrap().start_tick, 100);
 }
+
+fn push_rename(doc: &mut Document, old: &str, new: &str) {
+    doc.history.push(UndoEntry {
+        action: UndoAction::TrackName {
+            track_idx: 0,
+            old: old.into(),
+            new: new.into(),
+        },
+        label: "rename".to_string(),
+        snapshot: EditSnapshot::default(),
+    });
+}
+
+#[test]
+fn dirty_is_not_lost_when_undo_stack_evicts_oldest() {
+    let mut doc = make_doc("a");
+    for _ in 0..MAX_DEPTH {
+        push_rename(&mut doc, "a", "b");
+    }
+    assert_eq!(doc.history.past_len(), MAX_DEPTH);
+    doc.mark_saved();
+    assert!(!doc.is_dirty());
+
+    // 栈已满：这次 push 会淘汰最旧条目，长度仍是 MAX_DEPTH。
+    push_rename(&mut doc, "b", "c");
+    assert_eq!(doc.history.past_len(), MAX_DEPTH);
+    assert!(doc.is_dirty(), "栈满淘汰后新编辑必须仍为脏");
+}
+
+#[test]
+fn undo_back_to_saved_marker_is_clean() {
+    let mut doc = make_doc("a");
+    push_rename(&mut doc, "a", "b");
+    push_rename(&mut doc, "b", "c");
+    doc.mark_saved();
+    assert!(!doc.is_dirty());
+
+    push_rename(&mut doc, "c", "d");
+    assert!(doc.is_dirty());
+
+    assert!(doc.undo());
+    assert!(!doc.is_dirty(), "undo 回保存点应恢复干净");
+    assert!(doc.undo());
+    assert!(doc.is_dirty(), "继续 undo 越过保存点应再次变脏");
+}
+
+#[test]
+fn async_save_marker_does_not_swallow_later_edits() {
+    let mut doc = make_doc("a");
+    push_rename(&mut doc, "a", "b");
+    let marker = doc.undo_marker();
+
+    // 保存进行期间又改了一次。
+    push_rename(&mut doc, "b", "c");
+
+    // 保存完成：按发起时的 marker 标记，保存期间的新编辑保持 dirty。
+    doc.mark_saved_at(marker);
+    assert!(doc.is_dirty());
+}

@@ -52,10 +52,15 @@ pub struct UndoStack {
     /// `VecDeque` 而非 `Vec`：`push` 超过 `MAX_DEPTH` 时需要弹出最旧条目，
     /// `VecDeque::pop_front` 是 O(1)，`Vec::remove(0)` 是 O(n)。
     pub(crate) past: VecDeque<UndoEntry>,
+    /// 与 `past` 一一对应的状态 id（单调递增，不因淘汰复用）。
+    /// 用于“保存点”判定：比较状态身份而不是栈长度——超过 `MAX_DEPTH`
+    /// 后每 push 都淘汰一条，长度恒定，用长度会把所有新编辑误判为未修改。
+    past_ids: VecDeque<u64>,
     pub(crate) future: Vec<UndoEntry>,
-    /// Length of `past` at the time of the last save.
-    /// `is_dirty()` compares current `past.len()` against this value.
-    pub(crate) saved_past_len: usize,
+    future_ids: Vec<u64>,
+    next_id: u64,
+    /// 上次保存时的状态 id（`None` = 栈底/初始状态）。
+    saved_id: Option<u64>,
     /// Whether the document has an established "saved base state".
     /// - `true` for a fresh empty document (closing without save is fine)
     /// - `false` after loading a file (closing without save should prompt)
@@ -67,30 +72,38 @@ impl UndoStack {
     pub fn new() -> Self {
         Self {
             past: VecDeque::new(),
+            past_ids: VecDeque::new(),
             future: Vec::new(),
-            saved_past_len: 0,
+            future_ids: Vec::new(),
+            next_id: 1,
+            saved_id: None,
             // New empty document is considered "saved base" — closing without save is fine.
             has_saved_base: true,
         }
     }
 
+    /// 当前状态的身份 id（撤销栈顶；空栈 = 初始状态 `None`）。
+    pub fn marker(&self) -> Option<u64> {
+        self.past_ids.back().copied()
+    }
+
     /// Whether the document has unsaved changes.
     /// Returns true if:
-    /// - There are edits since last save (`past.len() != saved_past_len`), OR
+    /// - The current state is not the last saved state, OR
     /// - The document was loaded from a file but never saved (`!has_saved_base`)
     pub fn is_dirty(&self) -> bool {
-        self.past.len() != self.saved_past_len || !self.has_saved_base
+        self.marker() != self.saved_id || !self.has_saved_base
     }
 
     /// Mark the current state as saved (called after a successful save).
     pub fn mark_saved(&mut self) {
-        self.mark_saved_at(self.past.len());
+        self.mark_saved_at(self.marker());
     }
 
-    /// 按**指定撤销栈长度**标记已保存（异步保存用：发起保存时的长度快照，
-    /// 保存期间的新编辑不应被误标为已保存）。
-    pub fn mark_saved_at(&mut self, past_len: usize) {
-        self.saved_past_len = past_len;
+    /// 按**发起保存时的状态标记**标记已保存（异步保存用：保存期间的新编辑
+    /// 不应被误标为已保存）。
+    pub fn mark_saved_at(&mut self, marker: Option<u64>) {
+        self.saved_id = marker;
         self.has_saved_base = true;
     }
 
@@ -98,7 +111,7 @@ impl UndoStack {
     /// Called after loading MIDI/.yin. Sets `has_saved_base = false` so that
     /// closing without save will prompt the user.
     pub fn mark_loaded(&mut self) {
-        self.saved_past_len = 0;
+        self.saved_id = None;
         self.has_saved_base = false;
     }
 
@@ -106,9 +119,46 @@ impl UndoStack {
     pub fn push(&mut self, entry: UndoEntry) {
         if self.past.len() >= super::MAX_DEPTH {
             self.past.pop_front();
+            self.past_ids.pop_front();
         }
+        let id = self.next_id;
+        self.next_id += 1;
         self.past.push_back(entry);
+        self.past_ids.push_back(id);
         self.future.clear();
+        self.future_ids.clear();
+    }
+
+    /// undo/redo 内部搬运：取出撤销栈顶（状态 id + 条目）。
+    pub(crate) fn take_past(&mut self) -> Option<(u64, UndoEntry)> {
+        let id = self.past_ids.pop_back()?;
+        let entry = self.past.pop_back()?;
+        Some((id, entry))
+    }
+
+    /// undo 后把“当前状态”放入 redo 栈，沿用被撤销条目的状态 id。
+    pub(crate) fn put_future(&mut self, id: u64, entry: UndoEntry) {
+        self.future.push(entry);
+        self.future_ids.push(id);
+    }
+
+    /// 取出 redo 栈顶（状态 id + 条目）。
+    pub(crate) fn take_future(&mut self) -> Option<(u64, UndoEntry)> {
+        let id = self.future_ids.pop()?;
+        let entry = self.future.pop()?;
+        Some((id, entry))
+    }
+
+    /// redo 后把条目放回撤销栈，沿用其状态 id。
+    pub(crate) fn put_past(&mut self, id: u64, entry: UndoEntry) {
+        self.past.push_back(entry);
+        self.past_ids.push_back(id);
+    }
+
+    /// 不可逆操作 undo 后清空 redo 栈。
+    pub(crate) fn clear_future(&mut self) {
+        self.future.clear();
+        self.future_ids.clear();
     }
 
     pub fn can_undo(&self) -> bool {
@@ -136,8 +186,10 @@ impl UndoStack {
 
     pub fn clear(&mut self) {
         self.past.clear();
+        self.past_ids.clear();
         self.future.clear();
-        self.saved_past_len = 0;
+        self.future_ids.clear();
+        self.saved_id = None;
         self.has_saved_base = true; // Reset to "fresh empty document" state
     }
 }

@@ -140,10 +140,12 @@ impl Document {
         //（原实现先 collect 判空、再 remove 遍历，全选删除会多物化一份 ~3GB）。
         let model = Arc::make_mut(&mut self.data.model);
         let removed = batch_ops::remove_selected(model, &self.edit.selected);
-        self.edit.selected.clear();
+        // 一个都没删掉（框内无音符 / 全被筛选器排除）时不要清空选择：
+        // 用户按 Delete 没删到东西不该顺手丢掉当前选择与筛选条件。
         if removed.is_empty() {
             return None;
         }
+        self.edit.selected.clear();
         self.data.rebuild_model_dirty();
         Some(UndoAction::Notes(NoteDelta {
             before: removed,

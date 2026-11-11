@@ -615,24 +615,32 @@ impl App {
 
     /// BPM 直接输入（单/相同 tempo 事件 → 改；多个不同 → 光标处插入），进 undo。
     fn apply_timecode_bpm(&mut self, idx: usize, bpm: f64) {
-        let doc = &mut self.workspace.documents[idx];
-        let at_tick = doc.edit.cursor_tick.unwrap_or(0.0).max(0.0) as u32;
-        let before = doc.data.model.conductor.tempo.events.clone();
-        let snapshot = doc.capture_snapshot();
-        if !doc.set_tempo_bpm(at_tick, bpm) {
-            return;
+        let changed = {
+            let doc = &mut self.workspace.documents[idx];
+            let at_tick = doc.edit.cursor_tick.unwrap_or(0.0).max(0.0) as u32;
+            let before = doc.data.model.conductor.tempo.events.clone();
+            let snapshot = doc.capture_snapshot();
+            if !doc.set_tempo_bpm(at_tick, bpm) {
+                false
+            } else {
+                let after = doc.data.model.conductor.tempo.events.clone();
+                crate::right_panel::automation_undo::push_automation_undo(
+                    doc,
+                    0,
+                    0,
+                    &yinhe_types::AutomationTarget::Tempo,
+                    before,
+                    after,
+                    t!("undo.edit_bpm").as_ref(),
+                    snapshot,
+                );
+                true
+            }
+        };
+        // tempo map 变了：音频引擎仍按旧 tempo 播放，必须重推模型。
+        if changed {
+            self.notify_audio_model_changed();
         }
-        let after = doc.data.model.conductor.tempo.events.clone();
-        crate::right_panel::automation_undo::push_automation_undo(
-            doc,
-            0,
-            0,
-            &yinhe_types::AutomationTarget::Tempo,
-            before,
-            after,
-            t!("undo.edit_bpm").as_ref(),
-            snapshot,
-        );
     }
 
     /// 拍号直接输入（单/相同 → 改；多个不同 → 光标处插入），进 undo。
@@ -662,29 +670,37 @@ impl App {
     /// PPQ 直接输入（时间码）：有音符直接 rescale（保留绝对时间），无音符直接提交。
     fn apply_timecode_ppq(&mut self, ctx: &egui::Context, idx: usize, value: u32, id: u64) {
         use yinhe_editor_core::history::{begin_edit, commit_ppq};
-        let doc = &mut self.workspace.documents[idx];
-        let old = doc.data.model.meta.ppq;
-        if old == value {
-            return;
+        let mut ppq_changed = false;
+        {
+            let doc = &mut self.workspace.documents[idx];
+            let old = doc.data.model.meta.ppq;
+            if old == value {
+                return;
+            }
+            begin_edit(&mut doc.edit.pending_edits, id, &old.to_string());
+            let has_notes = doc.data.model.note_count > 0;
+            if has_notes {
+                // 异步 rescale：meta.ppq 保持 old 作子线程基准，完成后 poll 里 commit。
+                ctx.data_mut(|d| {
+                    d.insert_temp(
+                        egui::Id::unique(crate::app::rescale_state::RESCALE_REQUEST_ID),
+                        crate::app::rescale_state::RescaleRequest {
+                            old_ppq: old,
+                            new_ppq: value,
+                            dragvalue_id: id,
+                        },
+                    )
+                });
+            } else {
+                std::sync::Arc::make_mut(&mut doc.data.model).meta.ppq = value;
+                doc.data.bump_revision();
+                commit_ppq(doc, id, value, false);
+                ppq_changed = true;
+            }
         }
-        begin_edit(&mut doc.edit.pending_edits, id, &old.to_string());
-        let has_notes = doc.data.model.note_count > 0;
-        if has_notes {
-            // 异步 rescale：meta.ppq 保持 old 作子线程基准，完成后 poll 里 commit。
-            ctx.data_mut(|d| {
-                d.insert_temp(
-                    egui::Id::unique(crate::app::rescale_state::RESCALE_REQUEST_ID),
-                    crate::app::rescale_state::RescaleRequest {
-                        old_ppq: old,
-                        new_ppq: value,
-                        dragvalue_id: id,
-                    },
-                )
-            });
-        } else {
-            std::sync::Arc::make_mut(&mut doc.data.model).meta.ppq = value;
-            doc.data.bump_revision();
-            commit_ppq(doc, id, value, false);
+        // PPQ 改了 tick↔sample 映射：空工程没有 rescale 任务，需立即重推音频模型。
+        if ppq_changed {
+            self.notify_audio_model_changed();
         }
     }
 
@@ -1260,13 +1276,12 @@ impl App {
         }
         let snap = self.take_save_snapshot(idx, true);
         let path_for_thread = path.clone();
-        // 发起时的撤销栈长度快照：保存期间的新编辑不应被误标为已保存
-        let saved_past_len = self
+        // 发起时的状态标记：保存期间的新编辑不应被误标为已保存
+        let saved_marker = self
             .workspace
             .documents
             .get(idx)
-            .map(|d| d.undo_past_len())
-            .unwrap_or(0);
+            .and_then(|d| d.undo_marker());
 
         let (tx, rx) = mpsc::channel();
         let (progress_tx, progress_rx) = mpsc::channel();
@@ -1287,7 +1302,7 @@ impl App {
             }
             // 回传 (目标文档, 版本快照, 路径, 结果)：失败不得标记已保存/
             // 不得改路径/不得执行延迟动作（此前失败被当成功，可能丢数据）。
-            let _ = tx.send((idx, saved_past_len, path_for_thread, result));
+            let _ = tx.send((idx, saved_marker, path_for_thread, result));
         });
 
         self.jobs.save_rx = Some(rx);
