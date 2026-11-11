@@ -88,15 +88,18 @@ pub(crate) fn content_with_bottom_buttons(
     content: impl FnOnce(&mut egui::Ui),
     buttons: impl FnOnce(&mut egui::Ui),
 ) {
+    let full_w = ui.available_width();
     ui.allocate_ui_with_layout(
-        egui::vec2(
-            ui.available_width(),
-            (ui.available_height() - btn_zone_h).max(0.0),
-        ),
+        egui::vec2(full_w, (ui.available_height() - btn_zone_h).max(0.0)),
         egui::Layout::top_down(egui::Align::Center),
         content,
     );
-    ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), buttons);
+    // 按钮区固定用内容区全宽：MIDI/音频选项切换不会改变右侧留白。
+    ui.allocate_ui_with_layout(
+        egui::vec2(full_w, btn_zone_h),
+        egui::Layout::bottom_up(egui::Align::Center),
+        buttons,
+    );
 }
 
 /// 绘制统一的 "X" 关闭按钮（对话框标题栏与文档 tab 共用）：

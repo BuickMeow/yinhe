@@ -47,6 +47,8 @@ pub(crate) struct NewTrackDialogState {
     manual_channel: u8,
     /// 手动起始音频通道（UI 显示 1 起，这里存的也是显示值）。
     manual_audio: usize,
+    /// 新建 MIDI 轨同时挂载的乐器插件 id（None = 跟随 MIDI/内置）。
+    instrument_id: Option<String>,
 }
 
 impl Default for NewTrackDialogState {
@@ -59,6 +61,7 @@ impl Default for NewTrackDialogState {
             manual_port: 0,
             manual_channel: 0,
             manual_audio: 1,
+            instrument_id: None,
         }
     }
 }
@@ -78,8 +81,11 @@ impl NewTrackDialogState {
 pub(crate) enum NewTrackAction {
     /// 用户还没做出选择（窗口仍打开）。
     None,
-    /// 确认：按 specs 批量创建。
-    Confirm(Vec<NewTrackSpec>),
+    /// 确认：按 specs 批量创建，并可选给 MIDI 通道挂载乐器插件。
+    Confirm {
+        specs: Vec<NewTrackSpec>,
+        instrument: Option<crate::mix::plugin_instance::PluginEntry>,
+    },
     /// 取消（含点窗口关闭按钮）。
     Cancel,
 }
@@ -197,6 +203,7 @@ pub(crate) fn show_viewport(
     ctx: &egui::Context,
     state: &mut NewTrackDialogState,
     tracks: &[Arc<yinhe_core::TrackData>],
+    plugins: &[crate::mix::plugin_instance::PluginEntry],
 ) -> NewTrackAction {
     let viewport_id = egui::ViewportId::from_hash_of("new_track_dialog");
 
@@ -243,6 +250,11 @@ pub(crate) fn show_viewport(
                             let plan_rc: std::rc::Rc<std::cell::RefCell<Option<Plan>>> =
                                 std::rc::Rc::new(std::cell::RefCell::new(None));
                             let plan_cb = plan_rc.clone();
+                            let instrument_rc: std::rc::Rc<std::cell::RefCell<Option<String>>> =
+                                std::rc::Rc::new(std::cell::RefCell::new(
+                                    state.instrument_id.clone(),
+                                ));
+                            let instrument_cb = instrument_rc.clone();
                             let btn_zone_h = crate::chrome::dialog_buttons::btn_zone_h(ui.ctx());
                             crate::chrome::dialog::content_with_bottom_buttons(
                                 ui,
@@ -272,6 +284,42 @@ pub(crate) fn show_viewport(
                                         }
                                     });
                                     ui.add_space(10.0);
+
+                                    // 乐器：仅 MIDI 轨；列出扫描到的乐器插件（与插件选择器同源）。
+                                    if state.kind == KindChoice::Midi {
+                                        let mut options: Vec<(Option<String>, String)> =
+                                            vec![(
+                                                None,
+                                                t!("track.instrument_follow_midi").to_string(),
+                                            )];
+                                        for p in plugins.iter().filter(|p| {
+                                            p.is_instrument && p.error.is_none()
+                                        }) {
+                                            options.push((
+                                                Some(p.id.clone()),
+                                                p.display_name(),
+                                            ));
+                                        }
+                                        crate::dialogs::settings::setting_row(
+                                            ui,
+                                            t!("track.default_instrument").as_ref(),
+                                            "",
+                                            |ui| {
+                                                let mut sel = state.instrument_id.clone();
+                                                let w = ui.available_width().max(1.0);
+                                                if crate::widgets::combo::combo_select(
+                                                    ui,
+                                                    "new_track_instrument",
+                                                    &mut sel,
+                                                    w,
+                                                    &options,
+                                                ) {
+                                                    state.instrument_id = sel.clone();
+                                                    *instrument_cb.borrow_mut() = sel;
+                                                }
+                                            },
+                                        );
+                                    }
 
                                     // 数量：1..=64
                                     crate::dialogs::settings::setting_row(
@@ -423,8 +471,22 @@ pub(crate) fn show_viewport(
                                                 Some(NewTrackAction::Cancel);
                                             close = true;
                                         } else if let Some(p) = plan_cell.take() {
+                                            let instrument = instrument_rc
+                                                .borrow()
+                                                .as_ref()
+                                                .and_then(|id| {
+                                                    plugins.iter().find(|pl| {
+                                                        pl.id == *id
+                                                            && pl.is_instrument
+                                                            && pl.error.is_none()
+                                                    })
+                                                })
+                                                .cloned();
                                             *action_cb.borrow_mut() =
-                                                Some(NewTrackAction::Confirm(p.specs));
+                                                Some(NewTrackAction::Confirm {
+                                                    specs: p.specs,
+                                                    instrument,
+                                                });
                                             close = true;
                                         }
                                     }

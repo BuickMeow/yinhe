@@ -991,37 +991,7 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
         }
         MixAction::OpenSends { channel } => app.mix.sends_for = Some(channel),
         MixAction::AssignInstrument { channel, plugin } => {
-            let uid;
-            {
-                let doc = &mut app.workspace.documents[idx];
-                let m = doc.mixer_mut();
-                m.ensure_len();
-                uid = m.alloc_instrument_uid();
-                m.instruments[channel as usize].push(yinhe_mixer::InsertRef {
-                    uid,
-                    plugin_path: plugin.path.clone(),
-                    plugin_id: plugin.id.clone(),
-                    name: plugin.name.clone(),
-                    format: plugin.format,
-                    bypassed: false,
-                    state: None,
-                });
-            }
-            if idx < app.instrument_racks.len() {
-                let rack = &mut app.instrument_racks[idx];
-                if let Err(e) = rack.add(
-                    channel,
-                    uid,
-                    plugin.format,
-                    &plugin.path,
-                    &plugin.id,
-                    &plugin.name,
-                    None,
-                ) {
-                    rack.last_error = Some(e.0);
-                }
-            }
-            app.push_mixer_state_to_engine(idx);
+            assign_instrument_plugin(app, idx, channel, &plugin);
             app.mix.instrument_picker_for = None;
         }
         MixAction::ClearInstruments { channel } => {
@@ -1059,6 +1029,46 @@ fn strip_builtin_inserts(mixer: &mut yinhe_mixer::MixerParams) -> bool {
         .retain(|r| r.format != PluginFormat::Builtin);
     removed |= mixer.master_inserts.len() != before;
     removed
+}
+
+/// 给通道挂载一个乐器插件（新建音轨对话框 / MixAction 共用）。
+pub(crate) fn assign_instrument_plugin(
+    app: &mut App,
+    idx: usize,
+    channel: u8,
+    plugin: &PluginEntry,
+) {
+    let uid;
+    {
+        let doc = &mut app.workspace.documents[idx];
+        let m = doc.mixer_mut();
+        m.ensure_len();
+        uid = m.alloc_instrument_uid();
+        m.instruments[channel as usize].push(yinhe_mixer::InsertRef {
+            uid,
+            plugin_path: plugin.path.clone(),
+            plugin_id: plugin.id.clone(),
+            name: plugin.name.clone(),
+            format: plugin.format,
+            bypassed: false,
+            state: None,
+        });
+    }
+    if idx < app.instrument_racks.len() {
+        let rack = &mut app.instrument_racks[idx];
+        if let Err(e) = rack.add(
+            channel,
+            uid,
+            plugin.format,
+            &plugin.path,
+            &plugin.id,
+            &plugin.name,
+            None,
+        ) {
+            rack.last_error = Some(e.0);
+        }
+    }
+    app.push_mixer_state_to_engine(idx);
 }
 
 /// 启动插件扫描子进程（不阻塞 UI）；已有扫描进行中则忽略。

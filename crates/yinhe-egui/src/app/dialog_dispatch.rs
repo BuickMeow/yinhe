@@ -469,19 +469,28 @@ impl App {
             return;
         };
 
+        let plugins = self.mix.scanned.clone().unwrap_or_default();
         let mut created = false;
+        let mut created_specs: Vec<yinhe_editor_core::NewTrackSpec> = Vec::new();
+        let mut instrument = None;
         if let Some(doc) = self.workspace.documents.get_mut(doc_idx) {
             let action = crate::dialogs::new_track::show_viewport(
                 ctx,
                 &mut self.new_track_dialog,
                 &doc.data.model.tracks,
+                &plugins,
             );
             match action {
-                crate::dialogs::new_track::NewTrackAction::Confirm(specs) => {
+                crate::dialogs::new_track::NewTrackAction::Confirm {
+                    specs,
+                    instrument: picked,
+                } => {
                     let before = doc.capture_snapshot();
                     if let Some(a) = doc.add_tracks_batch(&specs) {
                         doc.push_undo(a, rust_i18n::t!("undo.add_track").as_ref(), before);
                         created = true;
+                        created_specs = specs;
+                        instrument = picked;
                     }
                     self.new_track_dialog.open = false;
                 }
@@ -491,8 +500,19 @@ impl App {
                 crate::dialogs::new_track::NewTrackAction::None => {}
             }
         }
-        // teardown 借 &mut self，必须在 doc 借用的作用域外调用。
+        // 先挂乐器插件，再 teardown 重建音频引擎。
         if created {
+            if let Some(plugin) = instrument {
+                let mut seen = std::collections::HashSet::new();
+                for spec in &created_specs {
+                    if spec.kind == yinhe_core::TrackKind::Midi {
+                        let ch = spec.port * 16 + spec.channel;
+                        if seen.insert(ch) {
+                            crate::mix::assign_instrument_plugin(self, doc_idx, ch, &plugin);
+                        }
+                    }
+                }
+            }
             self.teardown_audio();
         }
     }
