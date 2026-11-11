@@ -608,6 +608,8 @@ mod tests {
             fade_in_seconds: 0.0,
             fade_out_seconds: 0.3,
             reversed: false,
+            start_beat: None,
+            warp: None,
         }
     }
 

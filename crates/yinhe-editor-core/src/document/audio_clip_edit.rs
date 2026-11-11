@@ -57,9 +57,13 @@ impl Document {
             fade_in_seconds: 0.0,
             fade_out_seconds: 0.0,
             reversed: false,
+            start_beat: None,
+            warp: None,
         });
         sort_clips(&mut track.audio_clips);
-        let after = track.audio_clips.clone();
+        // 用户编辑的是秒域时间：按当前 tempo 立刻写回 beat 锚点与 warp。
+        model.sync_audio_clip_beats();
+        let after = model.tracks[track_idx].audio_clips.clone();
         self.data.bump_revision();
         Some(UndoAction::AudioClips {
             track_idx,
@@ -84,7 +88,9 @@ impl Document {
         }
         track.audio_clips = new_clips;
         sort_clips(&mut track.audio_clips);
-        let after = track.audio_clips.clone();
+        // 用户编辑的是秒域时间：按当前 tempo 立刻写回 beat 锚点与 warp。
+        model.sync_audio_clip_beats();
+        let after = model.tracks[track_idx].audio_clips.clone();
         self.data.bump_revision();
         Some(UndoAction::AudioClips {
             track_idx,
@@ -114,7 +120,9 @@ impl Document {
             return None;
         }
         sort_clips(&mut track.audio_clips);
-        let after = track.audio_clips.clone();
+        // 移动只改起点：保留已有 warp 跨度。
+        model.sync_audio_clip_starts();
+        let after = model.tracks[track_idx].audio_clips.clone();
         self.data.bump_revision();
         Some(UndoAction::AudioClips {
             track_idx,
@@ -130,6 +138,8 @@ impl Document {
         id: u32,
         new_start_seconds: f64,
     ) -> Option<UndoAction> {
+        let tempo_map = Arc::clone(&self.data.model.tempo_map);
+        let ppq = self.data.model.meta.ppq;
         let model = Arc::make_mut(&mut self.data.model);
         let track = model.tracks.get_mut(track_idx)?;
         let track = Arc::make_mut(track);
@@ -142,11 +152,12 @@ impl Document {
         clip.start_seconds = new_start;
         clip.offset_seconds = (clip.offset_seconds + delta).max(0.0);
         clip.duration_seconds = (clip.duration_seconds - delta).max(MIN_CLIP_SECONDS);
+        clip.sync_beat_from_seconds(&tempo_map, ppq);
         if track.audio_clips == before {
             return None;
         }
         sort_clips(&mut track.audio_clips);
-        let after = track.audio_clips.clone();
+        let after = model.tracks[track_idx].audio_clips.clone();
         self.data.bump_revision();
         Some(UndoAction::AudioClips {
             track_idx,
@@ -172,6 +183,8 @@ impl Document {
             .and_then(|c| self.data.model.audio_source(&c.source))
             .map(|s| s.duration_seconds)
             .unwrap_or(f64::MAX);
+        let tempo_map = Arc::clone(&self.data.model.tempo_map);
+        let ppq = self.data.model.meta.ppq;
         let model = Arc::make_mut(&mut self.data.model);
         let track = model.tracks.get_mut(track_idx)?;
         let track = Arc::make_mut(track);
@@ -180,6 +193,7 @@ impl Document {
         let max_duration = (source_len - clip.offset_seconds).max(MIN_CLIP_SECONDS);
         clip.duration_seconds = (new_end_seconds - clip.start_seconds)
             .clamp(MIN_CLIP_SECONDS, max_duration.max(MIN_CLIP_SECONDS));
+        clip.sync_beat_from_seconds(&tempo_map, ppq);
         if track.audio_clips == before {
             return None;
         }
@@ -200,6 +214,8 @@ impl Document {
         id: u32,
         at_seconds: f64,
     ) -> Option<(UndoAction, u32)> {
+        let tempo_map = Arc::clone(&self.data.model.tempo_map);
+        let ppq = self.data.model.meta.ppq;
         let model = Arc::make_mut(&mut self.data.model);
         if track_idx >= model.tracks.len() {
             return None;
@@ -225,10 +241,12 @@ impl Document {
         right.offset_seconds += split_offset;
         right.duration_seconds -= split_offset;
         right.fade_in_seconds = right.fade_in_seconds.min(right.duration_seconds);
+        left.sync_beat_from_seconds(&tempo_map, ppq);
+        right.sync_beat_from_seconds(&tempo_map, ppq);
         track.audio_clips[pos] = left;
         track.audio_clips.insert(pos + 1, right);
         sort_clips(&mut track.audio_clips);
-        let after = track.audio_clips.clone();
+        let after = model.tracks[track_idx].audio_clips.clone();
         self.data.bump_revision();
         Some((
             UndoAction::AudioClips {
@@ -294,7 +312,9 @@ impl Document {
         let track = Arc::make_mut(&mut model.tracks[track_idx]);
         track.audio_clips.extend(new_clips);
         sort_clips(&mut track.audio_clips);
-        let after = track.audio_clips.clone();
+        // 复制只平移起点：保留 warp 跨度。
+        model.sync_audio_clip_starts();
+        let after = model.tracks[track_idx].audio_clips.clone();
         self.data.bump_revision();
         Some((
             UndoAction::AudioClips {
@@ -486,5 +506,37 @@ mod tests {
         // 删除
         doc.delete_audio_clips(1, &[id]).unwrap();
         assert!(doc.model().tracks[1].audio_clips.is_empty());
+    }
+    #[test]
+    fn audio_clip_gets_beat_anchor_and_follows_tempo() {
+        let (mut doc, uuid) = doc_with_source();
+        doc.add_audio_clip(1, &uuid, 0.0, 0.0, 4.0).unwrap();
+        let c = &doc.model().tracks[1].audio_clips[0];
+        assert!(c.is_warped(), "新片段应进入 beat 主时基");
+        // 默认 120 BPM：4s = 8 beats。
+        assert!((c.warp.as_ref().unwrap().beat_span() - 8.0).abs() < 1e-6);
+        assert!((c.duration_seconds - 4.0).abs() < 1e-6);
+
+        // 240 BPM：8 beats 缩成 2s，素材跨度保持 4s。
+        assert!(doc.set_tempo_bpm(0, 240.0));
+        let c = &doc.model().tracks[1].audio_clips[0];
+        assert!(
+            (c.duration_seconds - 2.0).abs() < 1e-6,
+            "{}",
+            c.duration_seconds
+        );
+        assert!((c.warp.as_ref().unwrap().source_span() - 4.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn moving_warped_clip_only_updates_start_beat() {
+        let (mut doc, uuid) = doc_with_source();
+        doc.add_audio_clip(1, &uuid, 0.0, 0.0, 4.0).unwrap();
+        let id = doc.model().tracks[1].audio_clips[0].id;
+        let warp_before = doc.model().tracks[1].audio_clips[0].warp.clone();
+        doc.move_audio_clips(1, &[id], 1.0).unwrap();
+        let c = &doc.model().tracks[1].audio_clips[0];
+        assert!((c.start_seconds - 1.0).abs() < 1e-6);
+        assert_eq!(c.warp, warp_before, "移动不得重置 warp 比例");
     }
 }

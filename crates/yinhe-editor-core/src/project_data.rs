@@ -157,7 +157,14 @@ impl ProjectData {
     ///
     /// 初始 `revision` 取全局唯一值（见 `NEXT_DOC_REVISION` 注释）：
     /// 新文档绝不能与任何已存在文档共享缓存键。
-    pub fn new(model: Arc<YinModel>, project_file: ProjectFile, mapping_file: MappingFile) -> Self {
+    pub fn new(
+        mut model: Arc<YinModel>,
+        project_file: ProjectFile,
+        mapping_file: MappingFile,
+    ) -> Self {
+        // 旧工程的音频片段只有秒域时间：打开时按当前 tempo 补一次 beat
+        // 锚点，之后改 BPM 才会跟随。无音频片段时是 O(tracks) 空扫。
+        Arc::make_mut(&mut model).sync_audio_clip_beats();
         let cover = project_file.cover.clone();
         let work_time_secs = model.meta.work_time_secs;
         Self {

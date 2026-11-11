@@ -10,6 +10,7 @@
 //! - C1 模式：tracks 为 Vec<Arc<TrackData>>，编辑时只 clone 受影响的 track
 //! - 派生索引 (key_notes_cache 等) 在 rebuild() 时全量重建
 
+mod audio_warp;
 mod automation;
 mod clip;
 mod events;
@@ -22,12 +23,13 @@ mod selection_highlight;
 mod source;
 mod tempo_map;
 
+pub use audio_warp::{WarpMap, WarpMarker};
 pub use clip::{Clip, clip_at, clips_in_range, validate_clips};
 pub use events::NoteEvent;
 pub use model::DEFAULT_TRACK_COLOR;
 pub use model::{
     ArtistRef, AudioClip, AudioSource, ChannelInstrument, ConductorData, CoverArt, ProjectMeta,
-    SongInfo, TrackData, TrackInfo, TrackKind, YinModel, effective_fades,
+    SongInfo, TrackData, TrackInfo, TrackKind, YinModel, clip_fade_gain, effective_fades,
 };
 pub use model_stats::{NoteLoader, RescaleProgress};
 pub use model_transform::remove_notes_by_id_range;

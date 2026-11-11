@@ -3,6 +3,7 @@ use xsynth_core::channel::{ChannelAudioEvent, ControlEvent};
 use crate::audio_model::AudioEvent;
 use crate::engine::AudioEngine;
 
+mod audio_clip;
 mod dispatch;
 mod plugins;
 mod render;

@@ -413,114 +413,29 @@ impl AudioEngine {
     }
 
     /// 音频轨片段回放：按块内**绝对时间**把每条音频轨的片段混进对应音频
-    /// dense 通道缓冲。完全无状态（seek/暂停/导出天然正确），PDC 由混音台
-    /// 统一补偿。音频通道是覆盖写（没有 xsynth/插件替它清零）。
+    /// dense 通道缓冲。实现见 `audio_clip::AudioClipRenderer`（M0 拆分）。
     pub(super) fn render_audio_tracks(
         &mut self,
         block_start_sample: u64,
         offset_frames: usize,
         frames: usize,
     ) {
-        if self.channel_layout.audio_channels().is_empty() {
-            return;
-        }
-        let Some(model) = self.yin_model.clone() else {
+        let Some(yin_model) = self.yin_model.clone() else {
             return;
         };
-        // `AudioModel` 与 `yin_model` 由同一次模型快照原子替换，clip_fades 索引对齐；
-        // 取不到（未加载模型）时与 yin_model 缺失同义，直接跳过音频轨。
         let Some(audio_model) = self.model.as_ref() else {
             return;
         };
-        let sr = self.sample_rate as f64;
-        let block_start = block_start_sample as i64;
-        let block_end = block_start + frames as i64;
-        for (track_idx, track) in model.tracks.iter().enumerate() {
-            if track.kind != yinhe_core::TrackKind::Audio || track.audio_clips.is_empty() {
-                continue;
-            }
-            if self.skip_track.get(track_idx).copied().unwrap_or(false) {
-                continue;
-            }
-            let Some(ach) = track.audio_channel else {
-                continue;
-            };
-            let dense = self.channel_layout.audio_dense_for(ach);
-            if dense == u32::MAX {
-                continue;
-            }
-            let dense = dense as usize;
-            for (ci, clip) in track.audio_clips.iter().enumerate() {
-                let Some(pcm) = self.audio_sources.get(&clip.source) else {
-                    continue;
-                };
-                if pcm.frames == 0 || clip.duration_seconds <= 0.0 {
-                    continue;
-                }
-                // 0 BPM 剪切：片段起点在剪切内 → 丢弃；跨剪切起点 → 截断；
-                // 剪切之后的片段整体左移，与 tick/音符使用同一时间轴。
-                let Some((adj_start, adj_end)) = model
-                    .tempo_map
-                    .cut_clip_times(clip.start_seconds, clip.end_seconds())
-                else {
-                    continue;
-                };
-                let adj_duration = adj_end - adj_start;
-                if adj_duration <= 0.0 {
-                    continue;
-                }
-                let clip_start = (adj_start * sr).round() as i64;
-                let clip_end = (adj_end * sr).round() as i64;
-                let from = clip_start.max(block_start);
-                let to = clip_end.min(block_end);
-                if to <= from {
-                    continue;
-                }
-                // 预计算的 (淡入, 淡出)：索引与 audio_clips 对齐，O(1) 无扫描。
-                let Some(&(fade_in, fade_out)) = audio_model
-                    .clip_fades
-                    .get(track_idx)
-                    .and_then(|f| f.get(ci))
-                else {
-                    continue;
-                };
-                let Some(cb) = self.mixer.channel_buffers_mut(dense) else {
-                    continue;
-                };
-                let out_end = offset_frames + frames;
-                for g in from..to {
-                    let n = offset_frames + (g - block_start) as usize;
-                    if n >= out_end {
-                        break;
-                    }
-                    // 片段内已播时长（秒）；淡入淡出与素材偏移都以它为准。
-                    let p = g as f64 / sr - adj_start;
-                    let mut gain = clip.gain;
-                    if fade_in > 0.0 && p < fade_in {
-                        gain *= (p / fade_in).clamp(0.0, 1.0) as f32;
-                    }
-                    let remain = adj_duration - p;
-                    if fade_out > 0.0 && remain < fade_out {
-                        gain *= (remain / fade_out).clamp(0.0, 1.0) as f32;
-                    }
-                    let src_sec = if clip.reversed {
-                        clip.offset_seconds + (adj_duration - p)
-                    } else {
-                        clip.offset_seconds + p
-                    };
-                    let src_frame = (src_sec * sr).floor();
-                    if src_frame < 0.0 {
-                        continue;
-                    }
-                    let si = src_frame as usize;
-                    if si >= pcm.frames {
-                        continue;
-                    }
-                    cb.left[n] += pcm.left[si] * gain;
-                    cb.right[n] += pcm.right[si] * gain;
-                }
-            }
-        }
+        let mut renderer = super::audio_clip::AudioClipRenderer {
+            model: &yin_model,
+            audio_model,
+            sources: &self.audio_sources,
+            mixer: &mut self.mixer,
+            layout: &self.channel_layout,
+            skip_track: &self.skip_track,
+            sample_rate: self.sample_rate as f64,
+        };
+        renderer.render_block(block_start_sample, offset_frames, frames);
     }
 }
 

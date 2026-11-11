@@ -1143,6 +1143,8 @@ mod tests {
             fade_in_seconds: fade_in,
             fade_out_seconds: fade_out,
             reversed: false,
+            start_beat: None,
+            warp: None,
         };
         let cases: Vec<Vec<yinhe_core::AudioClip>> = vec![
             vec![],

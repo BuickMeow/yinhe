@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::audio_warp::WarpMap;
 use crate::clip::Clip;
 use crate::events::NoteEvent;
 use crate::tempo_map::{TempoMap, TempoSegment, mpq_from_bpm, recompute_tempo_start_times};
@@ -123,6 +124,13 @@ pub struct AudioClip {
     /// 反向播放（只翻标志，不改 PCM）。
     #[serde(default)]
     pub reversed: bool,
+    /// 时间线起点（beat，工程起点为 0）。`Some` = beat 主时基；旧工程为 None
+    /// （秒域原样播放，加载后由 `rebuild_tempo_map` 自动迁移）。
+    #[serde(default)]
+    pub start_beat: Option<f64>,
+    /// beat ↔ 素材秒数的 warp 映射；`None` = 尚未迁移的旧工程。
+    #[serde(default)]
+    pub warp: Option<WarpMap>,
 }
 
 const fn default_audio_gain() -> f32 {
@@ -133,6 +141,88 @@ impl AudioClip {
     /// 时间线终点（秒）。
     pub fn end_seconds(&self) -> f64 {
         self.start_seconds + self.duration_seconds
+    }
+
+    /// 是否已进入 beat 主时基（M1 warp 生效）。
+    pub fn is_warped(&self) -> bool {
+        self.start_beat.is_some() && self.warp.is_some()
+    }
+
+    /// 素材内秒数总跨度（warp 前的主时基长度）。
+    pub fn source_span_seconds(&self) -> f64 {
+        self.warp
+            .as_ref()
+            .map(|w| w.source_span())
+            .unwrap_or(self.duration_seconds)
+    }
+
+    /// 只更新时间线起点（移动片段）：保留 warp 的 beat/source 跨度，
+    /// 不破坏已有的变速比例。
+    pub fn sync_start_beat(&mut self, tempo_map: &TempoMap, ppq: u32) {
+        let ppq = ppq.max(1) as f64;
+        self.start_beat = Some(tempo_map.tick_at_time(self.start_seconds.max(0.0)) / ppq);
+    }
+
+    /// 用当前 tempo map 把秒域时间（用户刚编辑过的值）写回 beat 锚点。
+    ///
+    /// 用于创建 / 裁剪 / 拆分等改变了时长的操作：自动 warp（`warp.auto`）
+    /// 会按新的时长重建两端点映射；自定义 marker 只更新起点，保留已有映射
+    /// （后续 warp marker UI 会负责细分编辑）。
+    pub fn sync_beat_from_seconds(&mut self, tempo_map: &TempoMap, ppq: u32) {
+        let ppq = ppq.max(1) as f64;
+        let start = self.start_seconds.max(0.0);
+        let end = self.end_seconds().max(start);
+        let start_beat = tempo_map.tick_at_time(start) / ppq;
+        let end_beat = tempo_map.tick_at_time(end) / ppq;
+        let beat_span = (end_beat - start_beat).max(f64::EPSILON);
+        self.start_beat = Some(start_beat);
+        match &self.warp {
+            Some(w) if !w.auto => {
+                // 自定义 warp：保留 marker，不在这里重塑。
+                let _ = w;
+            }
+            _ => {
+                self.warp = Some(WarpMap::identity(
+                    beat_span,
+                    self.offset_seconds.max(0.0),
+                    self.duration_seconds.max(0.0),
+                    true,
+                ));
+            }
+        }
+    }
+
+    /// 用 beat 锚点 + warp 重新计算秒域时间（tempo 变化后调用）。
+    pub fn sync_seconds_from_beat(&mut self, tempo_map: &TempoMap) {
+        let (Some(start_beat), Some(warp)) = (self.start_beat, &self.warp) else {
+            return;
+        };
+        let beat_span = warp.beat_span();
+        if beat_span <= 0.0 {
+            return;
+        }
+        let ppq = tempo_map.ticks_per_beat.max(1) as f64;
+        let start_tick = (start_beat.max(0.0) * ppq).round() as u64;
+        let end_tick = ((start_beat.max(0.0) + beat_span) * ppq).round() as u64;
+        let start_sec = tempo_map.tick_to_seconds(start_tick);
+        let end_sec = tempo_map.tick_to_seconds(end_tick.max(start_tick + 1));
+        self.start_seconds = start_sec;
+        self.duration_seconds = (end_sec - start_sec).max(0.001);
+        if let Some(first) = warp.markers.first() {
+            self.offset_seconds = first.sample_seconds;
+        }
+    }
+
+    /// 播放进度（0..1）→ 素材秒数（warp 生效时按 marker 分段映射）。
+    pub fn source_seconds_at_progress(&self, progress: f64, reversed: bool) -> Option<f64> {
+        let warp = self.warp.as_ref()?;
+        let p = progress.clamp(0.0, 1.0);
+        let beat = if reversed {
+            warp.beat_span() * (1.0 - p)
+        } else {
+            warp.beat_span() * p
+        };
+        Some(warp.source_seconds_at(beat))
     }
 }
 
@@ -169,6 +259,30 @@ pub fn effective_fades(clips: &[AudioClip], index: usize) -> (f64, f64) {
         fade_in.min(c.duration_seconds.max(0.0)),
         fade_out.min(c.duration_seconds.max(0.0)),
     )
+}
+
+/// 音频片段在播放进度 `position_seconds` 处的线性淡入淡出增益（0..1）。
+///
+/// 渲染、波形绘制与手柄拖动共用这一份端点语义（M0 统一实现）。
+pub fn clip_fade_gain(
+    position_seconds: f64,
+    duration_seconds: f64,
+    fade_in_seconds: f64,
+    fade_out_seconds: f64,
+) -> f32 {
+    if duration_seconds <= 0.0 {
+        return 0.0;
+    }
+    let p = position_seconds.clamp(0.0, duration_seconds);
+    let mut gain = 1.0;
+    if fade_in_seconds > 0.0 && p < fade_in_seconds {
+        gain *= (p / fade_in_seconds).clamp(0.0, 1.0);
+    }
+    let remain = duration_seconds - p;
+    if fade_out_seconds > 0.0 && remain < fade_out_seconds {
+        gain *= (remain / fade_out_seconds).clamp(0.0, 1.0);
+    }
+    gain as f32
 }
 
 /// One MIDI track's complete data.
@@ -790,6 +904,72 @@ impl YinModel {
     /// which also rescan note buckets.
     pub fn rebuild_tempo_map(&mut self) {
         self.tempo_map = Arc::new(self.build_tempo_map());
+        self.sync_audio_clip_seconds();
+    }
+
+    /// 用户编辑了音频片段的秒域**时长**（裁剪/拆分/新建）后，按当前 tempo
+    /// map 重建 beat 锚点。移动请用 [`Self::sync_audio_clip_starts`]。
+    pub fn sync_audio_clip_beats(&mut self) {
+        if self.tracks.iter().all(|t| t.audio_clips.is_empty()) {
+            return;
+        }
+        let tempo_map = Arc::clone(&self.tempo_map);
+        let ppq = self.meta.ppq.max(1);
+        for track in &mut self.tracks {
+            if track.audio_clips.is_empty() {
+                continue;
+            }
+            let track = Arc::make_mut(track);
+            for clip in &mut track.audio_clips {
+                // 已 warp 的片段不在这里重算：它们的时长编辑由具体操作
+                // 单独同步，避免把变速比例重置成 1:1。
+                if !clip.is_warped() {
+                    clip.sync_beat_from_seconds(&tempo_map, ppq);
+                }
+            }
+        }
+    }
+
+    /// 只同步起点（移动/复制）：保留每个片段已有的 warp 跨度。
+    pub fn sync_audio_clip_starts(&mut self) {
+        if self.tracks.iter().all(|t| t.audio_clips.is_empty()) {
+            return;
+        }
+        let tempo_map = Arc::clone(&self.tempo_map);
+        let ppq = self.meta.ppq.max(1);
+        for track in &mut self.tracks {
+            if track.audio_clips.is_empty() {
+                continue;
+            }
+            let track = Arc::make_mut(track);
+            for clip in &mut track.audio_clips {
+                clip.sync_start_beat(&tempo_map, ppq);
+            }
+        }
+    }
+
+    /// tempo 变化后：beat 主时基 → 秒域。旧工程（未迁移）在这里补上 beat
+    /// 锚点，之后就会跟随速度变化。
+    fn sync_audio_clip_seconds(&mut self) {
+        if self.tracks.iter().all(|t| t.audio_clips.is_empty()) {
+            return;
+        }
+        let tempo_map = Arc::clone(&self.tempo_map);
+        let ppq = self.meta.ppq.max(1);
+        for track in &mut self.tracks {
+            if track.audio_clips.is_empty() {
+                continue;
+            }
+            let track = Arc::make_mut(track);
+            for clip in &mut track.audio_clips {
+                if clip.is_warped() {
+                    clip.sync_seconds_from_beat(&tempo_map);
+                } else {
+                    // 旧工程：按当前速度锚定一次，之后跟随 tempo 变化。
+                    clip.sync_beat_from_seconds(&tempo_map, ppq);
+                }
+            }
+        }
     }
 
     /// 应用轨号重映射：`remap[旧轨号] = 新轨号`，`u16::MAX` = 删除该轨音符；
@@ -1004,6 +1184,8 @@ mod tests {
             fade_in_seconds: fade_in,
             fade_out_seconds: fade_out,
             reversed: false,
+            start_beat: None,
+            warp: None,
         }
     }
 
@@ -2011,6 +2193,69 @@ mod tests {
         };
         let info = SongInfo::from_meta(&meta);
         assert_eq!(info.artists.len(), 2, "派生合并文本不能再变成艺术家 3");
+    }
+
+    #[test]
+    fn audio_clip_warp_maps_progress_and_reverse() {
+        let mut c = clip(1, 0.0, 2.0, 0.0, 0.0);
+        c.offset_seconds = 0.25;
+        c.warp = Some(WarpMap::identity(4.0, 0.25, 2.0, true));
+        assert!((c.source_seconds_at_progress(0.0, false).unwrap() - 0.25).abs() < 1e-9);
+        assert!((c.source_seconds_at_progress(0.5, false).unwrap() - 1.25).abs() < 1e-9);
+        assert!((c.source_seconds_at_progress(1.0, false).unwrap() - 2.25).abs() < 1e-9);
+        // 反向：进度 0 从素材尾开始。
+        assert!((c.source_seconds_at_progress(0.0, true).unwrap() - 2.25).abs() < 1e-9);
+        assert!((c.source_seconds_at_progress(1.0, true).unwrap() - 0.25).abs() < 1e-9);
+    }
+
+    #[test]
+    fn clip_fade_gain_endpoints_and_midpoint() {
+        assert!((clip_fade_gain(0.0, 2.0, 0.5, 0.5) - 0.0).abs() < 1e-6);
+        assert!((clip_fade_gain(2.0, 2.0, 0.5, 0.5) - 0.0).abs() < 1e-6);
+        assert!((clip_fade_gain(1.0, 2.0, 0.5, 0.5) - 1.0).abs() < 1e-6);
+        assert!((clip_fade_gain(0.25, 2.0, 0.5, 0.0) - 0.5).abs() < 1e-6);
+        // 超长 fade 在位置 0.5 处按 0.5/10 线性，不会越界。
+        assert!((clip_fade_gain(0.5, 1.0, 10.0, 0.0) - 0.05).abs() < 1e-6);
+    }
+
+    #[test]
+    fn audio_clip_follows_tempo_change() {
+        let mut m = YinModel::default();
+        let mut track = TrackData::new(0, 0);
+        let mut c = clip(1, 0.0, 2.0, 0.0, 0.0);
+        c.offset_seconds = 0.25;
+        track.audio_clips.push(c);
+        m.tracks.push(Arc::new(track));
+        m.rebuild_tempo_map(); // 120 BPM 默认 → 2s = 4 beats
+
+        let c = &m.tracks[0].audio_clips[0];
+        assert!((c.start_beat.unwrap() - 0.0).abs() < 1e-6);
+        assert!((c.warp.as_ref().unwrap().beat_span() - 4.0).abs() < 1e-6);
+        assert!((c.warp.as_ref().unwrap().source_span() - 2.0).abs() < 1e-6);
+
+        // 240 BPM：同样 4 beats 应缩成 1s，素材跨度不变。
+        let conductor = Arc::make_mut(&mut m.conductor);
+        set_tempo_events(conductor, &[(0, 240.0)]);
+        m.rebuild_tempo_map();
+        let c = &m.tracks[0].audio_clips[0];
+        assert!((c.start_seconds - 0.0).abs() < 1e-6);
+        assert!(
+            (c.duration_seconds - 1.0).abs() < 1e-6,
+            "{}",
+            c.duration_seconds
+        );
+        assert!((c.warp.as_ref().unwrap().source_span() - 2.0).abs() < 1e-6);
+
+        // 用户移动片段到 2s：beat 锚点按 240 BPM 变成 8 beats。
+        let track = Arc::make_mut(&mut m.tracks[0]);
+        track.audio_clips[0].start_seconds = 2.0;
+        m.sync_audio_clip_starts();
+        let c = &m.tracks[0].audio_clips[0];
+        assert!(
+            (c.start_beat.unwrap() - 8.0).abs() < 1e-6,
+            "{:?}",
+            c.start_beat
+        );
     }
 }
 
