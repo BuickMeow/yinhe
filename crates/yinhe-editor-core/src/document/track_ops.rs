@@ -56,7 +56,79 @@ fn max_track_number(model: &yinhe_core::YinModel) -> u32 {
         .unwrap_or(0)
 }
 
+/// 找出 `0..target_len` 中没被 `remap` 指向的目标槽位（撤销删除轨时恢复的
+/// 那条轨）。没有缺失返回 `None`。
+pub(crate) fn missing_target_index(remap: &[u16], target_len: usize) -> Option<usize> {
+    let mut seen = vec![false; target_len];
+    for &t in remap {
+        if let Some(slot) = seen.get_mut(t as usize) {
+            *slot = true;
+        }
+    }
+    seen.iter().position(|&v| !v)
+}
+
 impl Document {
+    /// 轨道结构变化（插入/删除/移动）后，把按轨道索引的编辑态从旧索引
+    /// 重映射到新索引；`insert_idx` 非空时在新位置插入一条默认槽位。
+    ///
+    /// 选区一律清空：`Selection` 的矩形是 `track_lo..=track_hi` 连续区间，
+    /// 结构变化后无法可靠拆分/重映射，保留旧索引会指向错误轨道。
+    /// `track_selected` 由调用方按操作结果重新设置。
+    pub(crate) fn remap_edit_for_track_change(&mut self, remap: &[u16], insert_idx: Option<usize>) {
+        // 结构变化刚发生时，按轨数组可能还没补齐到旧轨数（新建空文档等）；
+        // 先按旧长度补默认值，remap_indexed 才能一一对应。
+        let old_len = remap.len();
+        while self.edit.track_visible.len() < old_len {
+            self.edit.track_visible.push(true);
+        }
+        while self.edit.track_pianoroll_visible.len() < old_len {
+            self.edit.track_pianoroll_visible.push(true);
+        }
+        while self.edit.track_locked.len() < old_len {
+            self.edit.track_locked.push(false);
+        }
+        while self.edit.track_overrides.len() < old_len {
+            self.edit.track_overrides.push(Default::default());
+        }
+        while self.edit.layer_solo_prev.len() < old_len {
+            self.edit.layer_solo_prev.push(false);
+        }
+
+        remap_indexed(&mut self.edit.track_visible, remap);
+        remap_indexed(&mut self.edit.track_pianoroll_visible, remap);
+        remap_indexed(&mut self.edit.track_locked, remap);
+        remap_indexed(&mut self.edit.track_overrides, remap);
+        remap_indexed(&mut self.edit.layer_solo_prev, remap);
+
+        if let Some(i) = insert_idx {
+            let i = i.min(self.edit.track_visible.len());
+            self.edit.track_visible.insert(i, true);
+            self.edit.track_pianoroll_visible.insert(i, true);
+            self.edit.track_locked.insert(i, false);
+            self.edit.track_overrides.insert(i, Default::default());
+            self.edit.layer_solo_prev.insert(i, false);
+        }
+
+        if let Some(t) = self.edit.editing_track {
+            self.edit.editing_track = remap.get(t as usize).copied().filter(|&v| v != u16::MAX);
+        }
+        self.edit
+            .remap_am_track_keys(|t| remap.get(t as usize).copied().filter(|&v| v != u16::MAX));
+        self.edit.layer_solo = self
+            .edit
+            .layer_solo
+            .iter()
+            .filter_map(|&t| remap.get(t as usize).copied().filter(|&v| v != u16::MAX))
+            .collect();
+
+        self.edit.selected.clear_rects();
+        self.edit.sel_rect.clear();
+        self.edit.arr_sel_rect.clear();
+        self.edit.chan_ar_sel.clear();
+        self.edit.selected_audio_clips.clear();
+    }
+
     /// Insert a new MIDI track after `after_idx`. Returns UndoAction.
     /// The new track gets port 0, channel = first unused channel on port 0.
     pub fn add_track(&mut self, after_idx: usize) -> Option<UndoAction> {
@@ -122,22 +194,10 @@ impl Document {
         self.data.bump_revision();
 
         // Update edit state
+        self.remap_edit_for_track_change(&note_remap, Some(insert_idx));
         self.sync_track_caches();
         self.edit.track_selected.clear();
         self.edit.track_selected.insert(insert_idx as u16);
-        // 新增 track 后，editing_track 后面的索引要 +1
-        if let Some(t) = self.edit.editing_track
-            && (t as usize) >= insert_idx
-        {
-            self.edit.editing_track = Some(t + 1);
-        }
-        // AM 试听键随轨道索引 +1 重映射（insert_idx 之后的轨）。
-        self.edit.remap_am_track_keys(|t| {
-            note_remap
-                .get(t as usize)
-                .copied()
-                .filter(|&v| v != u16::MAX)
-        });
 
         Some(UndoAction::TrackStructure {
             tracks_before,
@@ -183,8 +243,14 @@ impl Document {
         self.data.bump_revision();
 
         // Update edit state：选中本批新建的全部音轨。
-        // 追加在末尾，editing_track 无需调整。
+        // 追加在末尾，editing_track 无需调整；旧选区仍指向有效轨，但为了与
+        // 新增轨的选择保持一致，一并清空。
         self.sync_track_caches();
+        self.edit.selected.clear_rects();
+        self.edit.sel_rect.clear();
+        self.edit.arr_sel_rect.clear();
+        self.edit.chan_ar_sel.clear();
+        self.edit.selected_audio_clips.clear();
         self.edit.track_selected.clear();
         for i in insert_idx..total_tracks {
             self.edit.track_selected.insert(i as u16);
@@ -247,26 +313,14 @@ impl Document {
         self.data.bump_revision();
 
         // Update edit state
+        self.remap_edit_for_track_change(&note_remap, None);
         self.sync_track_caches();
         self.edit.track_selected.clear();
         // Select the track that took its place (or last track)
         let new_sel = idx.min(num_tracks - 1) as u16;
         self.edit.track_selected.insert(new_sel);
-        // 删除 track 后，editing_track 同步调整：
-        //  - 等于被删 track：清空
-        //  - 大于被删 track：-1
-        match self.edit.editing_track {
-            Some(t) if t as usize == idx => self.edit.editing_track = None,
-            Some(t) if (t as usize) > idx => self.edit.editing_track = Some(t - 1),
-            _ => {}
-        }
-        // AM 试听键重映射：被删轨丢弃，其后轨索引 -1。
-        self.edit.remap_am_track_keys(|t| {
-            note_remap
-                .get(t as usize)
-                .copied()
-                .filter(|&v| v != u16::MAX)
-        });
+        // 删除 track 后，editing_track 已由 remap_edit_for_track_change 处理。
+        // AM 试听键已按 remap 重映射：被删轨丢弃，其后轨索引 -1。
 
         Some(UndoAction::TrackStructure {
             tracks_before,
@@ -334,43 +388,10 @@ impl Document {
         self.data.bump_revision();
 
         // Update edit state
-        self.edit.track_cache.rebuild_info(&self.data);
-        // 按 track 索引的编辑态数组同样 remap，否则可见/锁定/覆盖会留在原位、
-        // 与重排后的音轨错位（图层/AR 面板显示会不一致）。
-        remap_indexed(&mut self.edit.track_visible, &note_remap);
-        remap_indexed(&mut self.edit.track_pianoroll_visible, &note_remap);
-        remap_indexed(&mut self.edit.track_locked, &note_remap);
-        remap_indexed(&mut self.edit.track_overrides, &note_remap);
-        remap_indexed(&mut self.edit.layer_solo_prev, &note_remap);
-        self.edit.layer_solo = self
-            .edit
-            .layer_solo
-            .iter()
-            .map(|&t| note_remap.get(t as usize).copied().unwrap_or(t))
-            .collect();
+        self.remap_edit_for_track_change(&note_remap, None);
+        self.sync_track_caches();
         self.edit.track_selected.clear();
         self.edit.track_selected.insert(to_idx as u16);
-        // 移动 track 后，editing_track 用同样的 remap 规则更新
-        if let Some(t) = self.edit.editing_track {
-            let t_usize = t as usize;
-            let new_t = if t_usize == from_idx {
-                to_idx
-            } else if from_idx < to_idx && t_usize > from_idx && t_usize <= to_idx {
-                t_usize - 1
-            } else if from_idx > to_idx && t_usize >= to_idx && t_usize < from_idx {
-                t_usize + 1
-            } else {
-                t_usize
-            };
-            self.edit.editing_track = Some(new_t as u16);
-        }
-        // AM 试听键按移动重映射（与音符 remap 同表）。
-        self.edit.remap_am_track_keys(|t| {
-            note_remap
-                .get(t as usize)
-                .copied()
-                .filter(|&v| v != u16::MAX)
-        });
 
         Some(UndoAction::TrackStructure {
             tracks_before,
@@ -682,5 +703,48 @@ impl Document {
             instrument_before,
             instrument_after,
         })
+    }
+}
+
+#[cfg(test)]
+mod edit_state_remap_tests {
+    use super::*;
+
+    #[test]
+    fn insert_track_remaps_visibility_and_lock() {
+        let mut doc = Document::empty();
+        let n = doc.data.model.tracks.len();
+        doc.edit.track_locked = (0..n).map(|i| i == 3).collect();
+        doc.edit.track_visible = (0..n).map(|i| i != 4).collect();
+
+        let insert_at = 3; // 插在锁定轨之前
+        assert!(doc.add_track(2).is_some());
+
+        assert!(
+            doc.edit.track_locked[insert_at + 1],
+            "原锁定轨后移一位仍锁定"
+        );
+        assert_eq!(
+            doc.edit.track_locked.iter().filter(|&&b| b).count(),
+            1,
+            "新轨不应继承锁定"
+        );
+        assert!(
+            !doc.edit.track_visible[insert_at + 2],
+            "原不可见轨后移仍不可见"
+        );
+        assert!(doc.edit.track_visible[insert_at], "新轨默认可见");
+    }
+
+    #[test]
+    fn remove_track_remaps_visibility_and_lock() {
+        let mut doc = Document::empty();
+        let n = doc.data.model.tracks.len();
+        doc.edit.track_locked = (0..n).map(|i| i == 4).collect();
+
+        assert!(doc.remove_track(3).is_some());
+
+        assert!(doc.edit.track_locked[3], "原索引 4 的锁定轨前移一位");
+        assert_eq!(doc.edit.track_locked.len(), n - 1);
     }
 }

@@ -159,15 +159,16 @@ impl UndoAction {
                 // 轨道重映射保序（track 非排序键），统计重建无需全量 sort。
                 model.rebuild_stats_only();
                 doc.data.bump_revision();
+                // 按轨道索引的编辑态（可见/锁定/覆盖/AM/editing_track）与
+                // 选区必须先按 note_remap 重映射；撤销“删除轨”时新恢复的
+                // 轨槽位缺失，用 missing_target_index 找出来插入默认值。
+                let insert_idx = if tracks_after.len() > tracks_before.len() {
+                    crate::document::track_ops::missing_target_index(note_remap, tracks_after.len())
+                } else {
+                    None
+                };
+                doc.remap_edit_for_track_change(note_remap, insert_idx);
                 doc.sync_track_caches();
-                // AM 试听/选中键随轨道结构同步重映射（undo/redo 方向由
-                // `reversed()` swap 后的 note_remap 方向决定）。
-                doc.edit.remap_am_track_keys(|t| {
-                    note_remap
-                        .get(t as usize)
-                        .copied()
-                        .filter(|&v| v != u16::MAX)
-                });
             }
             UndoAction::ImportMidi {
                 tracks_before,
