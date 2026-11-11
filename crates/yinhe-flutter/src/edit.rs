@@ -761,7 +761,7 @@ fn clear_selection_for_note_drag(s: &mut RenderScene) {
     bump(s);
 }
 
-/// 单指从音符右端起手：直接进入 NOTE_RESIZE（仅供 Flutter 在平移前尝试）。
+/// 单指从音符左/右端起手：直接进入 NOTE_RESIZE（仅供 Flutter 在平移前尝试）。
 pub fn begin_note_resize(x: f32, y: f32) -> i32 {
     let Ok(mut d) = DRAG.lock() else {
         return 0;
