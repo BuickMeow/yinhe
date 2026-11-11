@@ -237,4 +237,35 @@ mod tests {
 
         assert_eq!(data.mapping_file.channel_instruments[3], Some(inst));
     }
+    #[test]
+    fn new_project_data_migrates_legacy_audio_clips() {
+        use yinhe_core::{AudioClip, TrackData};
+        let mut model = YinModel::default();
+        let mut track = TrackData::new(0, 0);
+        track.kind = yinhe_core::TrackKind::Audio;
+        track.audio_channel = Some(0);
+        track.audio_clips.push(AudioClip {
+            id: 1,
+            source: "s".into(),
+            start_seconds: 1.0,
+            offset_seconds: 0.0,
+            duration_seconds: 2.0,
+            gain: 1.0,
+            fade_in_seconds: 0.0,
+            fade_out_seconds: 0.0,
+            reversed: false,
+            start_beat: None,
+            warp: None,
+        });
+        model.tracks.push(Arc::new(track));
+
+        let data = ProjectData::new(
+            Arc::new(model),
+            ProjectFile::default(),
+            MappingFile::default(),
+        );
+        let clip = &data.model().tracks[0].audio_clips[0];
+        assert!(clip.is_warped(), "旧工程加载时应迁移到 beat 主时基");
+        assert!(clip.warp.as_ref().unwrap().auto);
+    }
 }
