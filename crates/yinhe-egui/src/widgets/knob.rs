@@ -13,8 +13,8 @@ use eframe::egui;
 const START_DEG: f32 = 135.0;
 const SWEEP_DEG: f32 = 270.0;
 
-/// 轨道环 / 值弧的线宽（px）。两者共用同一半径、同一线宽，合成一条环。
-const RING_W: f32 = 2.0;
+/// 刻度环 / 值弧的线宽（px）。两者共用同一半径、同一线宽，合成一条环。
+const RING_W: f32 = 1.0;
 
 /// 归零点：最左端归零，或居中归零。
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -90,12 +90,13 @@ fn knob_impl(ui: &mut egui::Ui, value: &mut f32, diameter: f32, zero: ZeroMode) 
         let hovered = resp.hovered();
         let pressed = resp.is_pointer_button_down_on();
         // 注意：用 `ui.painter()`（裁剪到 ui 区域）而非 `painter_at(rect)`——
-        // 后者把绘制裁到 26×26 的方框内，会切掉外圈值弧、看起来像有个方框。
+        // 后者把绘制裁到 26×26 的方框内，会切掉环上的值弧、看起来像有个方框。
         let painter = ui.painter();
         let center = rect.center();
-        // 轨道环与值弧共用同一半径/线宽：值弧直接覆盖在环上，视觉上是一条环。
-        let r_ring = diameter / 2.0 - RING_W / 2.0;
-        let r_base = r_ring - RING_W / 2.0 - 1.5;
+        // 以原来的**内圈**为基准：刻度环与值弧共用同一半径、同一线宽，
+        // 值弧直接覆盖在内圈上；外圈值弧不再存在。
+        let r_base = diameter / 2.0 - 3.5;
+        let r_ring = r_base - 0.5;
 
         // 底座圆：hover/pressed 反馈与 switch 一致。
         let base = crate::theme::control_bg();
