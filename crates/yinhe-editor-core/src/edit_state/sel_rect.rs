@@ -20,6 +20,10 @@ pub struct SelRectState {
     resize_origins: Vec<(f64, f64, u8, u8)>,
     resize_side: Option<ResizeSide>,
     resize_dt: Option<i64>,
+    /// 上一次 `end_drag` / `end_resize` 之前的已提交选框。
+    /// 组件在松手帧就把 `rects` 更新到目标位置，而 undo 快照需要拖动前的
+    /// 位置；暂存一帧供 App 取走修正快照。
+    before_last_commit: Option<Vec<(f64, f64, u8, u8)>>,
 }
 
 impl SelRectState {
@@ -89,6 +93,7 @@ impl SelRectState {
     pub fn start_drag(&mut self) {
         self.drag_origins = self.rects.clone();
         self.drag_delta = None;
+        self.before_last_commit = None;
     }
 
     pub fn update_drag(&mut self, dt: i64, dk: i32) {
@@ -97,6 +102,7 @@ impl SelRectState {
 
     pub fn end_drag(&mut self) {
         if let Some((dt, dk)) = self.drag_delta {
+            self.before_last_commit = Some(self.rects.clone());
             self.rects = self
                 .drag_origins
                 .iter()
@@ -107,15 +113,22 @@ impl SelRectState {
         self.drag_delta = None;
     }
 
+    /// 取走上一次拖动/缩放前的选框（undo 快照修正用，一次消费）。
+    pub fn take_before_last_commit(&mut self) -> Option<Vec<(f64, f64, u8, u8)>> {
+        self.before_last_commit.take()
+    }
+
     pub fn cancel_drag(&mut self) {
         self.drag_origins.clear();
         self.drag_delta = None;
+        self.before_last_commit = None;
     }
 
     pub fn start_resize(&mut self, side: ResizeSide) {
         self.resize_origins = self.rects.clone();
         self.resize_side = Some(side);
         self.resize_dt = None;
+        self.before_last_commit = None;
     }
 
     pub fn update_resize(&mut self, dt: i64) {
@@ -124,6 +137,7 @@ impl SelRectState {
 
     pub fn end_resize(&mut self) {
         if let (Some(side), Some(dt)) = (self.resize_side, self.resize_dt) {
+            self.before_last_commit = Some(self.rects.clone());
             self.rects = self
                 .resize_origins
                 .iter()
@@ -139,5 +153,52 @@ impl SelRectState {
         self.resize_origins.clear();
         self.resize_side = None;
         self.resize_dt = None;
+        self.before_last_commit = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drag_exposes_pre_drag_rects_once() {
+        let mut state = SelRectState::default();
+        state.push_rect((100.0, 200.0, 60, 72), false);
+        state.start_drag();
+        state.update_drag(50, 3);
+        state.end_drag();
+
+        assert_eq!(state.rects, vec![(150.0, 250.0, 63, 75)]);
+        assert_eq!(
+            state.take_before_last_commit(),
+            Some(vec![(100.0, 200.0, 60, 72)])
+        );
+        assert_eq!(state.take_before_last_commit(), None, "只消费一次");
+    }
+
+    #[test]
+    fn resize_exposes_pre_resize_rects_once() {
+        let mut state = SelRectState::default();
+        state.push_rect((100.0, 200.0, 60, 72), false);
+        state.start_resize(ResizeSide::Right);
+        state.update_resize(40);
+        state.end_resize();
+
+        assert_eq!(state.rects, vec![(100.0, 240.0, 60, 72)]);
+        assert_eq!(
+            state.take_before_last_commit(),
+            Some(vec![(100.0, 200.0, 60, 72)])
+        );
+    }
+
+    #[test]
+    fn cancelled_drag_discards_pending_before_rects() {
+        let mut state = SelRectState::default();
+        state.push_rect((100.0, 200.0, 60, 72), false);
+        state.start_drag();
+        state.update_drag(50, 3);
+        state.cancel_drag();
+        assert_eq!(state.take_before_last_commit(), None);
     }
 }

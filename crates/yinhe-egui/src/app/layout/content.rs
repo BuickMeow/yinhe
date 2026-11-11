@@ -1064,7 +1064,12 @@ impl App {
                 return;
             };
             let doc = &mut self.workspace.documents[idx];
-            let before = doc.capture_snapshot();
+            let mut before = doc.capture_snapshot();
+            // 组件在松手帧已把可视选框移到新位置，快照必须用拖动前的位置，
+            // 否则 undo 后音符回到旧位置、选框却留在新位置。
+            if let Some(rects) = doc.edit.sel_rect.take_before_last_commit() {
+                before.sel_rect.rects = rects;
+            }
             let (action, label) = if alt {
                 (
                     doc.duplicate_selected_to(delta_ticks, delta_keys),
@@ -1107,7 +1112,10 @@ impl App {
                 true,
             );
             let min_gate = q.tick_interval(ppq).max(1);
-            let before = doc.capture_snapshot();
+            let mut before = doc.capture_snapshot();
+            if let Some(rects) = doc.edit.sel_rect.take_before_last_commit() {
+                before.sel_rect.rects = rects;
+            }
             if let Some(action) = doc.resize_selected_notes_min_gate(side, dt, min_gate) {
                 let action = doc.with_clip_normalization(action);
                 doc.edit.pianoroll_view.base.dirty = true;
@@ -1197,7 +1205,21 @@ impl App {
         };
         let doc = &mut self.workspace.documents[idx];
 
-        let before = doc.capture_snapshot();
+        let mut before = doc.capture_snapshot();
+        // AR 交互在松手帧已把选框移到目标位置；按 delta 反推拖动前的位置，
+        // 让 undo 后选框与音符一起回到原处。
+        before.arr_sel_rect = before
+            .arr_sel_rect
+            .iter()
+            .map(|&(t0, t1, lo, hi)| {
+                (
+                    t0 - delta_ticks as f64,
+                    t1 - delta_ticks as f64,
+                    lo.saturating_add_signed(-(delta_tracks as isize)),
+                    hi.saturating_add_signed(-(delta_tracks as isize)),
+                )
+            })
+            .collect();
         let (action, label) = if alt {
             (
                 doc.duplicate_selected_arrange(delta_ticks, delta_tracks),
