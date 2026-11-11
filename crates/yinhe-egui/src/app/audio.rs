@@ -851,6 +851,7 @@ impl App {
         let handle = &audio.handle;
         if !handle.is_playing() {
             self.audio_state.playback_anchor = None;
+            self.audio_state.last_playback_tick = None;
             // Clear pending flag once the audio thread has caught up
             if self.audio_state.pending_playback {
                 // Audio thread hasn't processed the Play command yet.
@@ -888,6 +889,26 @@ impl App {
             Some(doc) => doc,
             None => return,
         };
+
+        // 播放中用户改了播放头（点击标尺、输入时间码、点事件行）：向引擎发
+        // Seek；否则下一帧插值会立刻把光标覆盖回原位置，操作看起来无效。
+        // 录音推进光标是程序行为，不触发 seek。
+        if self.recording.is_none()
+            && let Some(last) = self.audio_state.last_playback_tick
+            && let Some(user_tick) = doc.edit.cursor_tick
+            && (user_tick - last).abs() > 1e-6
+        {
+            let sample = (doc
+                .data
+                .model
+                .tempo_map
+                .tick_to_seconds(user_tick.max(0.0) as u64)
+                * sr) as u64;
+            handle.send(yinhe_audio::AudioCommand::Seek { sample });
+            self.audio_state.playback_anchor = None;
+            self.audio_state.last_playback_tick = Some(user_tick);
+            return;
+        }
 
         let now = std::time::Instant::now();
         let engine_sample = handle.sample_position();
@@ -948,6 +969,8 @@ impl App {
         } else {
             doc.edit.cursor_tick = Some(tick.max(0.0));
         }
+        // 记录本帧写出的播放头，供下一帧区分“用户改的位置”与“播放推进”。
+        self.audio_state.last_playback_tick = doc.edit.cursor_tick;
     }
 
     /// 发送音符听觉预览请求（铅笔新建/拖拽、选框拖拽产生）。
@@ -1143,6 +1166,7 @@ impl App {
         self.audio_state.pending_playback = false;
         self.audio_state.pending_playback_since = None;
         self.audio_state.playback_anchor = None;
+        self.audio_state.last_playback_tick = None;
         if let Some(idx) = bound_doc.or(self.workspace.active_doc)
             && let Some(doc) = self.workspace.documents.get_mut(idx)
         {
