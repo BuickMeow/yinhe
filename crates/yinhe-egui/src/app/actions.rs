@@ -9,6 +9,16 @@ use crate::chrome::transport_bar::FileAction;
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::shortcuts;
 
+/// 退出保存队列的推进结果。
+enum ExitSaveStep {
+    /// 已发起保存（或等待上一个保存完成），保持 pending 等回调推进。
+    Started,
+    /// 所有脏文档都已保存，可以退出。
+    Done,
+    /// 无路径文档的另存为对话框被取消：取消退出。
+    Cancelled,
+}
+
 /// 离线保存所需的文档快照（用户保存与自动保存共用）。
 /// 抓取后不再借用 `App`，可整体移动到后台线程。
 pub(crate) struct SaveSnapshot {
@@ -1236,7 +1246,55 @@ impl App {
                 self.close_document(idx);
             }
             PendingFileAction::Exit => {
-                self.should_exit = true;
+                // 退出 = 保存所有脏文档，而不是只保存当前活动文档（此前其余
+                // 脏标签会被直接丢弃）。逐个保存，每次保存完成后由 poll 再次
+                // 进入这里推进队列。
+                match self.save_next_dirty_for_exit() {
+                    ExitSaveStep::Started => {
+                        self.pending_unsaved = Some(PendingFileAction::Exit);
+                    }
+                    ExitSaveStep::Done => {
+                        self.should_exit = true;
+                    }
+                    ExitSaveStep::Cancelled => {}
+                }
+            }
+        }
+    }
+
+    /// 用户明确选择“不保存”：直接执行目标动作，不做任何保存。
+    pub(crate) fn discard_pending_file_action(&mut self) {
+        let Some(pending) = self.pending_unsaved.take() else {
+            return;
+        };
+        match pending {
+            PendingFileAction::NewProject => self.new_project(),
+            PendingFileAction::CloseDocument(idx) => self.close_document(idx),
+            PendingFileAction::Exit => self.should_exit = true,
+        }
+    }
+
+    /// 退出流程：保存下一个脏文档。全部保存完返回 `Done`；无路径文档的
+    /// “另存为”被取消时返回 `Cancelled`（取消退出，避免死循环弹窗）。
+    fn save_next_dirty_for_exit(&mut self) -> ExitSaveStep {
+        // 上一个保存任务还没结束：保持 pending，等回调推进。
+        if self.jobs.is_saving() {
+            return ExitSaveStep::Started;
+        }
+        let Some(idx) = self.workspace.documents.iter().position(|d| d.is_dirty()) else {
+            return ExitSaveStep::Done;
+        };
+        match self.workspace.documents[idx].file_path.clone() {
+            Some(path) => {
+                self.save_project_async(idx, path);
+                ExitSaveStep::Started
+            }
+            None => {
+                if self.save_as_dialog_for(idx) {
+                    ExitSaveStep::Started
+                } else {
+                    ExitSaveStep::Cancelled
+                }
             }
         }
     }
@@ -1327,7 +1385,8 @@ impl App {
 
     /// 另存为（指定文档；未保存确认弹窗的目标可能是非 active 文档）。
     /// 路径/文件名在**保存成功后**才写入（见 poll 的保存完成处理）。
-    pub(crate) fn save_as_dialog_for(&mut self, idx: usize) {
+    /// 返回是否已发起保存（`false` = 用户取消了文件对话框）。
+    pub(crate) fn save_as_dialog_for(&mut self, idx: usize) -> bool {
         let default_name = if let Some(doc) = self.workspace.documents.get(idx) {
             format!("{}.yin", doc.file_name)
         } else {
@@ -1344,6 +1403,9 @@ impl App {
                 path_str.push_str(".yin");
             }
             self.save_project_async(idx, path_str);
+            true
+        } else {
+            false
         }
     }
 

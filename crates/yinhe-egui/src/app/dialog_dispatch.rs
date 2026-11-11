@@ -430,8 +430,9 @@ impl App {
                 }
             }
             crate::dialogs::unsaved::Action::Discard => {
-                let ctx = ui.ctx().clone();
-                self.execute_pending_file_action(&ctx);
+                // 用户明确选择不保存：直接执行关闭/退出，不能走会保存其他
+                // 文档的 execute 路径。
+                self.discard_pending_file_action();
             }
             crate::dialogs::unsaved::Action::Cancel => {
                 self.pending_unsaved = None;
