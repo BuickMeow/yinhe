@@ -480,7 +480,9 @@ fn paint_octave_lines_v(painter: &egui::Painter, content_rect: egui::Rect, view:
             continue;
         }
         let key = key_idx as u8;
-        let x = content_rect.min.x + view.key_to_cross_px(key); // C 的左缘
+        // 八度线画在 C 的右缘（B/C 之间），与键盘 gutter 的八度线一致。
+        let row_w = (view.layout.row_units(key as u16) * view.key_height).max(1.0);
+        let x = content_rect.min.x + view.key_to_cross_px(key) + row_w;
         if x < content_rect.min.x || x > content_rect.max.x {
             continue;
         }
