@@ -72,7 +72,8 @@ impl AudioSettings {
         let path = config_path();
         match serde_json::to_string_pretty(self) {
             Ok(json) => {
-                if let Err(e) = std::fs::write(&path, json) {
+                // 原子写：设置文件损坏会回退默认值，丢掉最近文件/音色库/设备配置。
+                if let Err(e) = yinhe_yin::write_file_atomic(&path, json.as_bytes()) {
                     tracing::error!("Failed to save settings: {}", e);
                 }
             }
