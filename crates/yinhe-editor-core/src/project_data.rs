@@ -129,6 +129,8 @@ impl ProjectData {
         self.project_file.description = meta.description.clone();
         self.project_file.ppq = meta.ppq;
         self.project_file.compression_level = meta.compression_level;
+        self.project_file.default_bpm = meta.default_bpm;
+        self.project_file.default_time_sig = meta.default_time_sig;
         self.project_file.album = meta.album.clone();
         self.project_file.album_artist = meta.album_artist.clone();
         self.project_file.genre = meta.genre.clone();
@@ -191,6 +193,23 @@ mod tests {
             data.project_file.work_time_secs, 99,
             "保存时写入 project.json"
         );
+    }
+
+    #[test]
+    fn sync_project_file_keeps_project_defaults() {
+        let mut model = YinModel::default();
+        model.meta.default_bpm = 90.0;
+        model.meta.default_time_sig = (3, 2);
+        let mut data = ProjectData::new(
+            Arc::new(model),
+            ProjectFile::default(),
+            MappingFile::default(),
+        );
+
+        data.sync_project_file();
+
+        assert_eq!(data.project_file.default_bpm, 90.0);
+        assert_eq!(data.project_file.default_time_sig, (3, 2));
     }
 
     #[test]

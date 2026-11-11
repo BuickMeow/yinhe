@@ -1252,6 +1252,12 @@ impl App {
 
     /// Spawn a background thread to save the project.
     pub(crate) fn save_project_async(&mut self, idx: usize, path: String) {
+        // 同一时刻只允许一个保存任务：否则两个后台线程会同时写同一路径，
+        // 且 `jobs.save_rx` 会被后来的覆盖，前一次结果丢失、脏标记错乱。
+        if self.jobs.is_saving() {
+            tracing::warn!("[save] 上一次保存尚未完成，忽略本次请求: {path}");
+            return;
+        }
         let snap = self.take_save_snapshot(idx, true);
         let path_for_thread = path.clone();
         // 发起时的撤销栈长度快照：保存期间的新编辑不应被误标为已保存

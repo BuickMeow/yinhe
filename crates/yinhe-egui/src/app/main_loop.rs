@@ -51,6 +51,10 @@ impl eframe::App for App {
         if self.jobs.autosave.lost_started {
             return;
         }
+        // 启动残留的恢复弹窗还没处理就退出：备份是唯一副本，删掉就再也找不回。
+        if self.jobs.autosave.recovery.is_some() {
+            return;
+        }
         self.clear_autosave();
     }
 

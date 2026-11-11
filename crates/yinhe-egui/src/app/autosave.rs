@@ -91,7 +91,10 @@ pub(crate) fn save_manifest(manifest: &Manifest) {
     }
     match serde_json::to_vec_pretty(manifest) {
         Ok(bytes) => {
-            let _ = std::fs::write(manifest_path(), bytes);
+            // 原子写：manifest 损坏会让所有崩溃备份变成孤儿（再也无法恢复）。
+            if let Err(e) = yinhe_yin::write_file_atomic(&manifest_path(), &bytes) {
+                tracing::warn!("[autosave] manifest 写入失败: {e}");
+            }
         }
         Err(e) => tracing::warn!("[autosave] manifest 序列化失败: {e}"),
     }

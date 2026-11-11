@@ -7,9 +7,10 @@
 //! 段编解码分散在同目录子模块：`data_section`（meta + 音符流）、
 //! `mixer_section`（混音台参数）、`audio_section`（内嵌音频素材）。
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use yinhe_core::{NoteLoader, ProjectMeta, TrackData, YinModel};
 use yinhe_mixer::MixerParams;
@@ -70,6 +71,51 @@ pub struct ProjectSoundFonts {
 // =========================================================
 //  Save
 // =========================================================
+
+/// 原子写文件：同目录临时文件 + `sync_all` + rename 覆盖。
+///
+/// `std::fs::write` 会先截断目标文件再写，保存中途崩溃/断电/磁盘满会把
+/// 原工程变成半截文件（旧内容也没了）。这里先写同目录临时文件（同一文件
+/// 系统，rename 才是原子的），落盘后再 rename；目标路径要么保持旧内容，
+/// 要么是完整的新内容。rename 失败（如 Windows 上目标被占用）时保留原文件。
+pub fn write_file_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    static NEXT_TMP: AtomicU64 = AtomicU64::new(0);
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let name = path.file_name().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "保存路径缺少文件名")
+    })?;
+    let tmp = parent.join(format!(
+        ".{}.{}.{}.tmp",
+        name.to_string_lossy(),
+        std::process::id(),
+        NEXT_TMP.fetch_add(1, Ordering::Relaxed)
+    ));
+
+    let write = || -> std::io::Result<()> {
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(bytes)?;
+        // 先把内容落盘，再让 rename 的元数据变更落盘；否则掉电后可能
+        // 出现“文件已改名但内容为空”的典型 ext4/APFS 场景。
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&tmp, path)
+    };
+
+    let result = write();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+        return result;
+    }
+    // 目录项也要 fsync，rename 才能扛住掉电（Unix 有效；Windows 无对应语义）。
+    #[cfg(unix)]
+    if let Ok(dir) = std::fs::File::open(parent) {
+        let _ = dir.sync_all();
+    }
+    Ok(())
+}
 
 /// Internal: serialize a model with optional SF state attached.
 fn save_yin_bytes_inner(
@@ -160,7 +206,7 @@ pub fn save_yin_bytes_with_sf(
 /// Save a `YinModel` to a file at `path` (no SoundFont state).
 pub fn save_yin(model: &YinModel, path: impl AsRef<Path>) -> Result<(), YinError> {
     let bytes = save_yin_bytes(model)?;
-    std::fs::write(path.as_ref(), &bytes)?;
+    write_file_atomic(path.as_ref(), &bytes)?;
     Ok(())
 }
 
@@ -171,7 +217,7 @@ pub fn save_yin_with_sf(
     sf: &ProjectSoundFonts,
 ) -> Result<(), YinError> {
     let bytes = save_yin_bytes_with_sf(model, sf)?;
-    std::fs::write(path.as_ref(), &bytes)?;
+    write_file_atomic(path.as_ref(), &bytes)?;
     Ok(())
 }
 
@@ -196,7 +242,7 @@ pub fn save_yin_with_files_progress(
     mut on_progress: impl FnMut(YinProgress) + Send,
 ) -> Result<(), YinError> {
     let bytes = save_yin_bytes_with_files_inner(model, project, mapping, mixer, &mut on_progress)?;
-    std::fs::write(path.as_ref(), &bytes)?;
+    write_file_atomic(path.as_ref(), &bytes)?;
     Ok(())
 }
 

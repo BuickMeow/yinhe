@@ -1108,3 +1108,27 @@ fn midi_clips_roundtrip() {
     }
     assert_eq!(loaded.next_clip_id, m.next_clip_id);
 }
+
+#[test]
+fn save_replaces_existing_file_atomically() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("project.yin");
+
+    // 旧文件（内容无意义）应被完整替换，而不是被截断后留下半截。
+    std::fs::write(&path, b"old contents").unwrap();
+
+    let model = build_complex_model();
+    save_yin(&model, &path).unwrap();
+
+    let loaded = load_yin(&path).unwrap();
+    assert_eq!(loaded.note_count, model.note_count);
+
+    // 同目录不应残留临时文件。
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".tmp"))
+        .collect();
+    assert!(leftovers.is_empty(), "残留临时文件: {leftovers:?}");
+}
