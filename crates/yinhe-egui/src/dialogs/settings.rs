@@ -138,8 +138,9 @@ pub fn show_content(
         |cells| {
             cells.cell(|ui| {
                 // ── 左侧：搜索框 + 分类导航（窄，独立滚动，撑满窗口高度） ──
+                let nav_card_w = ui.available_width();
                 card_frame().show(ui, |ui| {
-                    ui.set_width(ui.available_width());
+                    ui.set_width(nav_card_w);
                     ui.set_height(card_inner_h);
                     ui.spacing_mut().interact_size.y = crate::widgets::control::h(ui.ctx());
                     ui.spacing_mut().item_spacing.y = crate::theme::GAP_SM;
@@ -198,8 +199,13 @@ pub fn show_content(
             });
             cells.cell(|ui| {
                 // ── 右侧：搜索结果（搜索中）或当前分类内容（宽，独立滚动，撑满窗口高度） ──
+                // 卡片宽度取「本 cell 的可用宽度」并**只在这里量一次**：
+                // 后面所有内容（含 ScrollArea 内部）都以它为准，
+                // 避免 `set_width(available_width())` 在 ScrollArea 前后
+                // 语义不一致把卡片撑出窗口。
+                let card_w = ui.available_width();
                 card_frame().show(ui, |ui| {
-                    ui.set_width(ui.available_width());
+                    ui.set_width(card_w);
                     ui.set_height(card_inner_h);
                     // 右侧所有控件（按钮/输入框/滑块/combo/拖动值）统一控件高 + 小间隙
                     ui.spacing_mut().interact_size.y = crate::widgets::control::h(ui.ctx());
@@ -214,11 +220,12 @@ pub fn show_content(
                             ui.spacing_mut().item_spacing.y = crate::theme::GAP_SM;
                             ui.spacing_mut().item_spacing.x = crate::theme::GAP_SM;
                             // ScrollArea 的 inner ui 默认按**内容宽度**生长，
-                            // 不继承外层 set_width：行内两列（标签固定宽 + 控件剩余宽）
-                            // 会算成 0 额外空间，控件被推到面板右缘之外（通知/MIDI 页
-                            // 开关、步进器、下拉框只剩一半）。显式钉住内容宽度。
-                            ui.set_min_width(ui.available_width());
-                            ui.set_max_width(ui.available_width());
+                            // 不继承外层宽度约束：行内两列（标签固定宽 + 控件剩余宽）
+                            // 会算成 0 额外空间，控件被推到面板右缘之外。
+                            // 用扣掉「卡片内边距」与「滚动条」后的宽度钉住。
+                            let inner_w = ui.available_width();
+                            ui.set_min_width(inner_w);
+                            ui.set_max_width(inner_w);
                             changed |= show_search_results(ui, settings, main_ctx);
                             // 变高内容无法按行对齐，底部留白避免最后一项贴边。
                             ui.add_space(crate::theme::GAP);

@@ -118,11 +118,15 @@ fn row_impl(
     add_control: impl FnOnce(&mut egui::Ui),
 ) {
     let label_w = scaled_font(ui.ctx(), theme::FIELD_LABEL_W);
+    // 行宽固定取「父 ui 的 max_rect 宽度」，不用 `available_width()`：
+    // 后者在 ScrollArea / 嵌套布局里会随光标推进而收缩，导致同一页里
+    // 后面的行越来越窄、控件被推出右缘（设置页反复错位的根因）。
+    let row_w = ui.max_rect().width();
     if hint.is_empty() {
         // 单行：固定行高 + 两列（标签固定宽、控件剩余宽）。
         let h = super::control::h(ui.ctx());
         ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), h),
+            egui::vec2(row_w, h),
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
                 StripBuilder::new(ui)
@@ -162,7 +166,7 @@ fn row_impl(
         // 控件位置也与无说明的行完全一致。
         let h = super::control::h(ui.ctx());
         ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), h),
+            egui::vec2(row_w, h),
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
                 StripBuilder::new(ui)
@@ -199,7 +203,6 @@ fn row_impl(
         // 它们的 `max_rect` 收窄，直接 `ui.label` 会在残余宽度里换行 ——
         // 表现为说明被压成三四行、行高暴涨、控件跟着错位（用户截图即此）。
         // 因此这里显式按「父 ui 的 max_rect 宽度」分配一块新区域再画。
-        let row_w = ui.max_rect().width().max(ui.available_width());
         // 先按整行宽度排版出高度，再按该高度分配区域：
         // `allocate_ui_with_layout` 传 0 高度会让 egui 拿剩余整块高度，
         // 文字被垂直居中、行距被拉大（表现为行高异常）。

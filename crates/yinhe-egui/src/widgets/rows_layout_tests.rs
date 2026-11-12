@@ -188,3 +188,258 @@ fn short_hint_takes_one_line() {
         "说明多占了 {extra:.1}px（无说明 {bare:.1} / 有说明 {with_hint:.1}），被压成了多行"
     );
 }
+
+/// 关键回归：设置页真实结构（两列 + 卡片内边距 + ScrollArea + 宽度钉定）下，
+/// 右侧控件仍必须落在卡片内容区内。
+///
+/// 之前所有隔离测试都通过，但真实页面里控件被推出卡片——差别就在
+/// ScrollArea 这一层。这个测试把那一层也复现出来。
+#[test]
+fn control_fits_inside_scroll_area_card() {
+    let card_right = std::rc::Rc::new(std::cell::RefCell::new(0.0f32));
+    let ctrl_right = std::rc::Rc::new(std::cell::RefCell::new(0.0f32));
+    let cr = card_right.clone();
+    let tr = ctrl_right.clone();
+
+    let mut harness = egui_kittest::Harness::builder()
+        .allow_missing_glyphs()
+        .with_size(egui::vec2(1200.0, 800.0))
+        .build_ui(move |ui| {
+            let nav_w = crate::scaling::scaled_font(ui.ctx(), 148.0);
+            // 与 settings.rs 完全同构：two_columns → card_frame → ScrollArea。
+            crate::widgets::grid::two_columns(ui, 8.0, nav_w + 16.0, |cells| {
+                cells.cell(|_| {});
+                cells.cell(|ui| {
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin::same(8))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            egui::ScrollArea::vertical()
+                                .id_salt("probe_scroll")
+                                .auto_shrink([false; 2])
+                                .show(ui, |ui| {
+                                    ui.set_min_width(ui.available_width());
+                                    ui.set_max_width(ui.available_width());
+                                    *cr.borrow_mut() = ui.max_rect().max.x;
+                                    // 塞满高度，强制出现垂直滚动条（真实页面就是这样）。
+                                    for _ in 0..40 {
+                                        ui.add_space(20.0);
+                                    }
+                                    crate::widgets::rows::setting_row(
+                                        ui,
+                                        "允许重叠音符",
+                                        "允许新建或移动的音符与其他音符重叠",
+                                        |ui| {
+                                            let (r, _) = ui.allocate_exact_size(
+                                                egui::vec2(
+                                                    44.0,
+                                                    crate::widgets::control::h(ui.ctx()),
+                                                ),
+                                                egui::Sense::hover(),
+                                            );
+                                            *tr.borrow_mut() = r.max.x;
+                                        },
+                                    );
+                                });
+                        });
+                });
+            });
+        });
+    harness.step();
+    harness.step();
+
+    let card = *card_right.borrow();
+    let ctrl = *ctrl_right.borrow();
+    assert!(card > 0.0 && ctrl > 0.0, "未取到几何");
+    assert!(
+        ctrl <= card + 0.5,
+        "控件右缘 {ctrl:.1} 超出卡片内容右缘 {card:.1}（差 {:.1}px）",
+        ctrl - card
+    );
+}
+
+/// 同理，无说明的单行形态在 ScrollArea 里也要贴齐。
+#[test]
+fn plain_row_fits_inside_scroll_area_card() {
+    let card_right = std::rc::Rc::new(std::cell::RefCell::new(0.0f32));
+    let ctrl_right = std::rc::Rc::new(std::cell::RefCell::new(0.0f32));
+    let cr = card_right.clone();
+    let tr = ctrl_right.clone();
+
+    let mut harness = egui_kittest::Harness::builder()
+        .allow_missing_glyphs()
+        .with_size(egui::vec2(1200.0, 800.0))
+        .build_ui(move |ui| {
+            let nav_w = crate::scaling::scaled_font(ui.ctx(), 148.0);
+            crate::widgets::grid::two_columns(ui, 8.0, nav_w + 16.0, |cells| {
+                cells.cell(|_| {});
+                cells.cell(|ui| {
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin::same(8))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            egui::ScrollArea::vertical()
+                                .id_salt("probe_scroll2")
+                                .auto_shrink([false; 2])
+                                .show(ui, |ui| {
+                                    ui.set_min_width(ui.available_width());
+                                    ui.set_max_width(ui.available_width());
+                                    *cr.borrow_mut() = ui.max_rect().max.x;
+                                    crate::widgets::rows::setting_row_plain(
+                                        ui,
+                                        "允许重叠音符",
+                                        |ui| {
+                                            let (r, _) = ui.allocate_exact_size(
+                                                egui::vec2(
+                                                    44.0,
+                                                    crate::widgets::control::h(ui.ctx()),
+                                                ),
+                                                egui::Sense::hover(),
+                                            );
+                                            *tr.borrow_mut() = r.max.x;
+                                        },
+                                    );
+                                });
+                        });
+                });
+            });
+        });
+    harness.step();
+    harness.step();
+
+    let card = *card_right.borrow();
+    let ctrl = *ctrl_right.borrow();
+    assert!(card > 0.0 && ctrl > 0.0, "未取到几何");
+    assert!(
+        ctrl <= card + 0.5,
+        "控件右缘 {ctrl:.1} 超出卡片内容右缘 {card:.1}"
+    );
+}
+
+/// 同一页里连续多行时，**后面的行**也不能变窄。
+///
+/// 之前的反复错位就出在这里：行宽按 `available_width()` 算，
+/// 而它随光标推进收缩，越往后的行越窄、控件越容易越界。
+#[test]
+fn later_rows_do_not_shrink() {
+    let widths = std::rc::Rc::new(std::cell::RefCell::new(Vec::<f32>::new()));
+    let w_out = widths.clone();
+
+    let mut harness = egui_kittest::Harness::builder()
+        .allow_missing_glyphs()
+        .with_size(egui::vec2(1200.0, 900.0))
+        .build_ui(move |ui| {
+            let nav_w = crate::scaling::scaled_font(ui.ctx(), 148.0);
+            crate::widgets::grid::two_columns(ui, 8.0, nav_w + 16.0, |cells| {
+                cells.cell(|_| {});
+                cells.cell(|ui| {
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin::same(8))
+                        .show(ui, |ui| {
+                            let card_w = ui.available_width();
+                            ui.set_width(card_w);
+                            egui::ScrollArea::vertical()
+                                .id_salt("shrink_probe")
+                                .auto_shrink([false; 2])
+                                .show(ui, |ui| {
+                                    let inner = ui.available_width();
+                                    ui.set_min_width(inner);
+                                    ui.set_max_width(inner);
+                                    for i in 0..6 {
+                                        crate::widgets::rows::setting_row(
+                                            ui,
+                                            &format!("行 {i}"),
+                                            "",
+                                            |ui| {
+                                                let (r, _) = ui.allocate_exact_size(
+                                                    egui::vec2(
+                                                        44.0,
+                                                        crate::widgets::control::h(ui.ctx()),
+                                                    ),
+                                                    egui::Sense::hover(),
+                                                );
+                                                w_out.borrow_mut().push(r.max.x);
+                                            },
+                                        );
+                                    }
+                                });
+                        });
+                });
+            });
+        });
+    harness.step();
+    harness.step();
+
+    let all = widths.borrow().clone();
+    assert!(all.len() >= 6, "应至少渲染 6 行，实际 {}", all.len());
+    // kittest 可能跑多帧：只取最后一帧的 6 行。
+    let rights: Vec<f32> = all[all.len() - 6..].to_vec();
+    let first = rights[0];
+    for (i, r) in rights.iter().enumerate() {
+        assert!(
+            (r - first).abs() <= 1.0,
+            "第 {i} 行控件右缘 {r:.1} 与首行 {first:.1} 不一致：行宽在收缩"
+        );
+    }
+}
+
+/// 宽窗口下卡片与控件都不能超出窗口（用户截图是拉宽设置窗口后出现的）。
+#[test]
+fn wide_window_keeps_card_inside() {
+    for w in [760.0f32, 1200.0, 1750.0, 2400.0] {
+        let card_right = std::rc::Rc::new(std::cell::RefCell::new(0.0f32));
+        let ctrl_right = std::rc::Rc::new(std::cell::RefCell::new(0.0f32));
+        let cr = card_right.clone();
+        let tr = ctrl_right.clone();
+        let mut harness = egui_kittest::Harness::builder()
+            .allow_missing_glyphs()
+            .with_size(egui::vec2(w, 800.0))
+            .build_ui(move |ui| {
+                let nav_w = crate::scaling::scaled_font(ui.ctx(), 148.0);
+                crate::widgets::grid::two_columns(ui, 8.0, nav_w + 16.0, |cells| {
+                    cells.cell(|_| {});
+                    cells.cell(|ui| {
+                        egui::Frame::new()
+                            .inner_margin(egui::Margin::same(8))
+                            .show(ui, |ui| {
+                                let card_w = ui.available_width();
+                                ui.set_width(card_w);
+                                egui::ScrollArea::vertical()
+                                    .id_salt(("wide_probe", w as u32))
+                                    .auto_shrink([false; 2])
+                                    .show(ui, |ui| {
+                                        let inner = ui.available_width();
+                                        ui.set_min_width(inner);
+                                        ui.set_max_width(inner);
+                                        *cr.borrow_mut() = ui.max_rect().max.x;
+                                        crate::widgets::rows::setting_row(
+                                            ui,
+                                            "允许重叠音符",
+                                            "允许新建或移动的音符与其他音符重叠",
+                                            |ui| {
+                                                let (r, _) = ui.allocate_exact_size(
+                                                    egui::vec2(
+                                                        44.0,
+                                                        crate::widgets::control::h(ui.ctx()),
+                                                    ),
+                                                    egui::Sense::hover(),
+                                                );
+                                                *tr.borrow_mut() = r.max.x;
+                                            },
+                                        );
+                                    });
+                            });
+                    });
+                });
+            });
+        harness.step();
+        harness.step();
+        let card = *card_right.borrow();
+        let ctrl = *ctrl_right.borrow();
+        assert!(ctrl <= w - 4.0, "窗口宽 {w}: 控件右缘 {ctrl:.1} 超出窗口");
+        assert!(
+            ctrl <= card + 0.5,
+            "窗口宽 {w}: 控件右缘 {ctrl:.1} 超出卡片 {card:.1}"
+        );
+    }
+}
