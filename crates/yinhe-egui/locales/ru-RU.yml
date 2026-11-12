@@ -180,6 +180,8 @@ soundfont.add: "Добавить SoundFont"
 settings.cat.saving: "Сохранение"
 settings.shortcuts.title: "Горячие клавиши"
 settings.shortcuts.keyboard.unbound: "К этой клавише ничего не привязано"
+settings.shortcuts.keyboard.modifier_hint: "Нажмите, чтобы фильтровать по этому модификатору"
+settings.shortcuts.keyboard.clear_filter: "Сбросить фильтр модификатора"
 settings.shortcuts.keyboard.conflict: "Эта комбинация модификаторов конфликтует"
 
 settings.shortcuts.reset: "Сбросить по умолчанию"

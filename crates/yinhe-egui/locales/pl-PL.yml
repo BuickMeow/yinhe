@@ -180,6 +180,8 @@ soundfont.add: "Dodaj SoundFont"
 settings.cat.saving: "Zapisywanie"
 settings.shortcuts.title: "Skróty"
 settings.shortcuts.keyboard.unbound: "Do tego klawisza nic nie przypisano"
+settings.shortcuts.keyboard.modifier_hint: "Kliknij, aby filtrować według tego modyfikatora"
+settings.shortcuts.keyboard.clear_filter: "Wyczyść filtr modyfikatora"
 settings.shortcuts.keyboard.conflict: "Ta kombinacja modyfikatorów koliduje"
 
 settings.shortcuts.reset: "Przywróć domyślne"

@@ -197,6 +197,8 @@ soundfont.add: "Add SoundFont"
 settings.cat.saving: "Saving"
 settings.shortcuts.title: "Shortcuts"
 settings.shortcuts.keyboard.unbound: "No action is bound to this key"
+settings.shortcuts.keyboard.modifier_hint: "Click to filter by this modifier"
+settings.shortcuts.keyboard.clear_filter: "Clear modifier filter"
 settings.shortcuts.keyboard.conflict: "This modifier combination conflicts"
 
 settings.shortcuts.reset: "Reset defaults"

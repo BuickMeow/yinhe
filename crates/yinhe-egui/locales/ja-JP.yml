@@ -876,6 +876,8 @@ settings.editing.quick_delete.both: "両方"
 # ショートカット設定
 settings.shortcuts.title: "ショートカット"
 settings.shortcuts.keyboard.unbound: "このキーには何も割り当てられていません"
+settings.shortcuts.keyboard.modifier_hint: "クリックでこの修飾キーで絞り込み"
+settings.shortcuts.keyboard.clear_filter: "修飾キーの絞り込みを解除"
 settings.shortcuts.keyboard.conflict: "この修飾キーの組み合わせは競合しています"
 
 settings.shortcuts.reset: "デフォルトに戻す"

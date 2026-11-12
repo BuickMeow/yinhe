@@ -877,6 +877,8 @@ settings.editing.quick_delete.both: "둘 다"
 # ── 단축키 ──
 settings.shortcuts.title: "단축키"
 settings.shortcuts.keyboard.unbound: "이 키에는 아무것도 할당되지 않았습니다"
+settings.shortcuts.keyboard.modifier_hint: "클릭하면 이 보조키로 필터링"
+settings.shortcuts.keyboard.clear_filter: "보조키 필터 해제"
 settings.shortcuts.keyboard.conflict: "이 보조키 조합이 충돌합니다"
 
 settings.shortcuts.reset: "기본값 복원"

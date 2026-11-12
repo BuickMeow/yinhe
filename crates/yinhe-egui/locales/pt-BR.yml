@@ -180,6 +180,8 @@ soundfont.add: "Adicionar SoundFont"
 settings.cat.saving: "Salvamento"
 settings.shortcuts.title: "Atalhos"
 settings.shortcuts.keyboard.unbound: "Nenhuma ação atribuída a esta tecla"
+settings.shortcuts.keyboard.modifier_hint: "Clique para filtrar por este modificador"
+settings.shortcuts.keyboard.clear_filter: "Limpar filtro de modificador"
 settings.shortcuts.keyboard.conflict: "Esta combinação de modificadores entra em conflito"
 
 settings.shortcuts.reset: "Redefinir padrões"

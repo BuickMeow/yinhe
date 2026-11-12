@@ -180,6 +180,8 @@ soundfont.add: "Přidat SoundFont"
 settings.cat.saving: "Ukládání"
 settings.shortcuts.title: "Klávesové zkratky"
 settings.shortcuts.keyboard.unbound: "K této klávese není nic přiřazeno"
+settings.shortcuts.keyboard.modifier_hint: "Kliknutím filtrovat podle tohoto modifikátoru"
+settings.shortcuts.keyboard.clear_filter: "Zrušit filtr modifikátoru"
 settings.shortcuts.keyboard.conflict: "Tato kombinace modifikátorů koliduje"
 
 settings.shortcuts.reset: "Obnovit výchozí"

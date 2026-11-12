@@ -21,6 +21,8 @@ pub mod quantize_popup;
 pub(crate) mod radio;
 pub(crate) mod reorder;
 pub(crate) mod rows;
+#[cfg(test)]
+mod rows_layout_tests;
 pub(crate) mod scroll;
 pub mod scrollbar;
 pub mod selection_actions;

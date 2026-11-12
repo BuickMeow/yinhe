@@ -213,6 +213,12 @@ pub fn show_content(
                             ui.spacing_mut().interact_size.y = crate::widgets::control::h(ui.ctx());
                             ui.spacing_mut().item_spacing.y = crate::theme::GAP_SM;
                             ui.spacing_mut().item_spacing.x = crate::theme::GAP_SM;
+                            // ScrollArea 的 inner ui 默认按**内容宽度**生长，
+                            // 不继承外层 set_width：行内两列（标签固定宽 + 控件剩余宽）
+                            // 会算成 0 额外空间，控件被推到面板右缘之外（通知/MIDI 页
+                            // 开关、步进器、下拉框只剩一半）。显式钉住内容宽度。
+                            ui.set_min_width(ui.available_width());
+                            ui.set_max_width(ui.available_width());
                             changed |= show_search_results(ui, settings, main_ctx);
                             // 变高内容无法按行对齐，底部留白避免最后一项贴边。
                             ui.add_space(crate::theme::GAP);

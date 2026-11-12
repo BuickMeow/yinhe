@@ -70,8 +70,6 @@ pub(crate) struct KeyCap {
     pub label: &'static str,
     /// 相对宽度（1u = 普通键）。
     pub width: f32,
-    /// 视觉上的按键高度倍数（小键盘的 `+` / `Enter` 是 2u 高）。
-    pub height: f32,
 }
 
 impl KeyCap {
@@ -81,7 +79,6 @@ impl KeyCap {
             modifier: None,
             label,
             width: 1.0,
-            height: 1.0,
         }
     }
     const fn wide(key: Key, label: &'static str, width: f32) -> Self {
@@ -90,7 +87,6 @@ impl KeyCap {
             modifier: None,
             label,
             width,
-            height: 1.0,
         }
     }
     const fn modifier(m: Modifier, width: f32) -> Self {
@@ -99,7 +95,6 @@ impl KeyCap {
             modifier: Some(m),
             label: "",
             width,
-            height: 1.0,
         }
     }
     /// 空占位（布局对齐用）。
@@ -109,18 +104,16 @@ impl KeyCap {
             modifier: None,
             label: "",
             width,
-            height: 1.0,
         }
     }
     /// 只显示、不可绑定的键（小键盘：egui 没有独立的 Numpad Key，
     /// 它们与主键区共用同一个 `egui::Key`）。
-    const fn decorative(label: &'static str, width: f32, height: f32) -> Self {
+    const fn decorative(label: &'static str, width: f32) -> Self {
         Self {
             key: None,
             modifier: None,
             label,
             width,
-            height,
         }
     }
 }
@@ -217,15 +210,6 @@ static ANSI: [KeyRow; 6] = [
                 KeyCap::plain(Key::PageUp, "PgUp"),
             ],
         ),
-        seg(
-            BLOCK_GAP,
-            &[
-                KeyCap::decorative("Num", 1.0, 1.0),
-                KeyCap::decorative("/", 1.0, 1.0),
-                KeyCap::decorative("*", 1.0, 1.0),
-                KeyCap::decorative("-", 1.0, 1.0),
-            ],
-        ),
     ]),
     // ── Row 2：QWERTY + 导航区 + 小键盘 ──
     row(&[
@@ -256,45 +240,26 @@ static ANSI: [KeyRow; 6] = [
                 KeyCap::plain(Key::PageDown, "PgDn"),
             ],
         ),
-        seg(
-            BLOCK_GAP,
-            &[
-                KeyCap::decorative("7", 1.0, 1.0),
-                KeyCap::decorative("8", 1.0, 1.0),
-                KeyCap::decorative("9", 1.0, 1.0),
-                KeyCap::decorative("+", 1.0, 2.0),
-            ],
-        ),
     ]),
     // ── Row 3：ASDF ──
-    row(&[
-        seg(
-            0.0,
-            &[
-                KeyCap::decorative("Caps", 1.75, 1.0),
-                KeyCap::plain(Key::A, "A"),
-                KeyCap::plain(Key::S, "S"),
-                KeyCap::plain(Key::D, "D"),
-                KeyCap::plain(Key::F, "F"),
-                KeyCap::plain(Key::G, "G"),
-                KeyCap::plain(Key::H, "H"),
-                KeyCap::plain(Key::J, "J"),
-                KeyCap::plain(Key::K, "K"),
-                KeyCap::plain(Key::L, "L"),
-                KeyCap::plain(Key::Semicolon, ";"),
-                KeyCap::plain(Key::Quote, "'"),
-                KeyCap::wide(Key::Enter, "Enter", 2.25),
-            ],
-        ),
-        seg(
-            BLOCK_GAP,
-            &[
-                KeyCap::decorative("4", 1.0, 1.0),
-                KeyCap::decorative("5", 1.0, 1.0),
-                KeyCap::decorative("6", 1.0, 1.0),
-            ],
-        ),
-    ]),
+    row(&[seg(
+        0.0,
+        &[
+            KeyCap::decorative("Caps", 1.75),
+            KeyCap::plain(Key::A, "A"),
+            KeyCap::plain(Key::S, "S"),
+            KeyCap::plain(Key::D, "D"),
+            KeyCap::plain(Key::F, "F"),
+            KeyCap::plain(Key::G, "G"),
+            KeyCap::plain(Key::H, "H"),
+            KeyCap::plain(Key::J, "J"),
+            KeyCap::plain(Key::K, "K"),
+            KeyCap::plain(Key::L, "L"),
+            KeyCap::plain(Key::Semicolon, ";"),
+            KeyCap::plain(Key::Quote, "'"),
+            KeyCap::wide(Key::Enter, "Enter", 2.25),
+        ],
+    )]),
     // ── Row 4：左 Shift + ZXCV 行 + 右 Shift / 方向键 / 小键盘 ──
     row(&[
         seg(
@@ -323,28 +288,19 @@ static ANSI: [KeyRow; 6] = [
                 KeyCap::gap(1.0),
             ],
         ),
-        seg(
-            BLOCK_GAP,
-            &[
-                KeyCap::decorative("1", 1.0, 1.0),
-                KeyCap::decorative("2", 1.0, 1.0),
-                KeyCap::decorative("3", 1.0, 1.0),
-                KeyCap::decorative("Enter", 1.0, 2.0),
-            ],
-        ),
     ]),
     // ── Row 5：底行 + 方向键 ← ↓ → + 小键盘 ──
     row(&[
         seg(
             0.0,
             &[
-                KeyCap::modifier(Modifier::Ctrl, 1.25),
-                KeyCap::modifier(Modifier::Cmd, 1.25),
-                KeyCap::modifier(Modifier::Alt, 1.25),
+                KeyCap::modifier(Modifier::Ctrl, 1.5),
+                KeyCap::modifier(Modifier::Cmd, 2.0),
+                KeyCap::modifier(Modifier::Alt, 1.75),
                 KeyCap::wide(Key::Space, "Space", 6.25),
-                KeyCap::modifier(Modifier::Alt, 1.25),
-                KeyCap::modifier(Modifier::Cmd, 1.25),
-                KeyCap::modifier(Modifier::Ctrl, 1.25),
+                KeyCap::modifier(Modifier::Alt, 1.75),
+                KeyCap::modifier(Modifier::Cmd, 2.0),
+                KeyCap::modifier(Modifier::Ctrl, 1.5),
             ],
         ),
         seg(
@@ -353,13 +309,6 @@ static ANSI: [KeyRow; 6] = [
                 KeyCap::plain(Key::ArrowLeft, "←"),
                 KeyCap::plain(Key::ArrowDown, "↓"),
                 KeyCap::plain(Key::ArrowRight, "→"),
-            ],
-        ),
-        seg(
-            BLOCK_GAP,
-            &[
-                KeyCap::decorative("0", 2.0, 1.0),
-                KeyCap::decorative(".", 1.0, 1.0),
             ],
         ),
     ]),

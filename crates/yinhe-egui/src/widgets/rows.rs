@@ -83,11 +83,10 @@ pub(crate) fn inline_row(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui:
     );
 }
 
-/// 设置行：左侧标题、右侧控件；行尾分隔。与设置对话框同款。
+/// 设置行：左侧标题（+ 可选的说明文字），右侧控件；行尾分隔。
 ///
-/// `hint` **只做 hover tooltip，不渲染成标题下的小字**（AGENTS 界面红线：
-/// 禁止在标题/控件下写操作说明小字）。需要补充的信息挂在整行上，
-/// 不占视觉空间、不打断扫读。
+/// `hint` 会渲染在标题下方（设置页的既有风格）。快捷键页**不传**说明，
+/// 因为那一页信息密度高、说明会和键盘图抢空间，改用 [`setting_row_plain`]。
 pub(crate) fn setting_row(
     ui: &mut egui::Ui,
     title: &str,
@@ -97,7 +96,7 @@ pub(crate) fn setting_row(
     row_impl(ui, title, hint, true, add_control);
 }
 
-/// 无提示的便捷版本（行不需要任何解释时用）。
+/// 无说明文字的设置行（快捷键页用）。
 pub(crate) fn setting_row_plain(
     ui: &mut egui::Ui,
     title: &str,
@@ -118,49 +117,71 @@ fn row_impl(
     divider: bool,
     add_control: impl FnOnce(&mut egui::Ui),
 ) {
-    // 固定行高 + egui_extras 两列（标签固定宽、控件剩余宽）。
-    // 同一面板内所有行都走同一行高，避免控件高度不同导致行距参差。
-    let h = super::control::h(ui.ctx());
     let label_w = scaled_font(ui.ctx(), theme::FIELD_LABEL_W);
-    let row_resp = ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), h),
-        egui::Layout::top_down(egui::Align::Min),
-        |ui| {
-            StripBuilder::new(ui)
-                .size(Size::exact(label_w))
-                .size(Size::remainder())
-                .horizontal(|mut strip| {
-                    strip.cell(|ui| {
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            ui.label(
-                                egui::RichText::new(title)
-                                    .strong()
-                                    .size(scaled_font(ui.ctx(), theme::SUB_TITLE_FONT)),
-                            );
-                        });
-                    });
-                    strip.cell(|ui| {
-                        // 每行一个稳定作用域：避免不同行的按钮/开关共用自动 Id，
-                        // 出现“点 A 命中 B、B 本身点不动”的错位。
-                        ui.push_id(title, |ui| {
+    if hint.is_empty() {
+        // 单行：固定行高 + 两列（标签固定宽、控件剩余宽）。
+        let h = super::control::h(ui.ctx());
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), h),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                StripBuilder::new(ui)
+                    .size(Size::exact(label_w))
+                    .size(Size::remainder())
+                    .horizontal(|mut strip| {
+                        strip.cell(|ui| {
                             ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| ui.name_inputs(title, add_control),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.label(
+                                        egui::RichText::new(title)
+                                            .strong()
+                                            .size(scaled_font(ui.ctx(), theme::SUB_TITLE_FONT)),
+                                    );
+                                },
                             );
                         });
+                        strip.cell(|ui| {
+                            // 每行一个稳定作用域：避免不同行的按钮/开关共用自动 Id，
+                            // 出现“点 A 命中 B、B 本身点不动”的错位。
+                            ui.push_id(title, |ui| {
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| ui.name_inputs(title, add_control),
+                                );
+                            });
+                        });
                     });
+            },
+        );
+    } else {
+        // 双行：左列（标题 + 说明）+ 右列控件。
+        //
+        // 必须用固定两列布局而不是 `ui.horizontal` + `set_width`：
+        // 后者里左列会把可用宽度整个吃掉，右侧控件只能挤在剩余空间里、
+        // 甚至被推出面板右缘（外观页的开关只剩半个就是这个原因）。
+        // 行高由左列内容决定（标题 + 说明两行），右列垂直居中。
+        crate::widgets::grid::two_columns(ui, theme::GAP_SM, label_w, |cells| {
+            cells.cell(|ui| {
+                ui.label(
+                    egui::RichText::new(title)
+                        .strong()
+                        .size(scaled_font(ui.ctx(), theme::SUB_TITLE_FONT)),
+                );
+                ui.add_space(theme::GAP_TIGHT);
+                ui.label(
+                    egui::RichText::new(hint)
+                        .size(scaled_font(ui.ctx(), theme::SMALL_FONT))
+                        .color(theme::text_secondary()),
+                );
+            });
+            cells.cell(|ui| {
+                // 右列撑满该列宽度并把控件贴右。
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.push_id(title, |ui| ui.name_inputs(title, add_control));
                 });
-        },
-    );
-    // 说明只做 hover 提示：不渲染小字，但信息不丢。
-    // 挂在整个行区域上（含标签与控件），鼠标扫过任意位置都能看到。
-    if !hint.is_empty() {
-        ui.interact(
-            row_resp.response.rect,
-            ui.scope_id().with(("row_hint", title)),
-            egui::Sense::hover(),
-        )
-        .on_hover_text(hint);
+            });
+        });
     }
     if divider {
         ui.add_space(theme::GAP);

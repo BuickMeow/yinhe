@@ -860,6 +860,8 @@ settings.notification.enabled_desc: "關閉後不再彈出任何通知，新的�
 # ── 设置对话框 ──
 settings.shortcuts.title: "快捷鍵"
 settings.shortcuts.keyboard.unbound: "這個鍵還沒有綁定任何動作"
+settings.shortcuts.keyboard.modifier_hint: "修飾鍵提示"
+settings.shortcuts.keyboard.clear_filter: "清除修飾鍵篩選"
 settings.shortcuts.keyboard.conflict: "此修飾鍵組合有衝突"
 
 settings.shortcuts.reset: "恢復預設"

@@ -180,6 +180,8 @@ soundfont.add: "SoundFont Ekle"
 settings.cat.saving: "Kaydetme"
 settings.shortcuts.title: "Kısayollar"
 settings.shortcuts.keyboard.unbound: "Bu tuşa hiçbir eylem atanmadı"
+settings.shortcuts.keyboard.modifier_hint: "Bu değiştiriciye göre filtrelemek için tıkla"
+settings.shortcuts.keyboard.clear_filter: "Değiştirici filtresini temizle"
 settings.shortcuts.keyboard.conflict: "Bu değiştirici kombinasyonu çakışıyor"
 
 settings.shortcuts.reset: "Varsayılanlara sıfırla"

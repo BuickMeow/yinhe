@@ -15,7 +15,7 @@ use eframe::egui;
 use rust_i18n::t;
 use yinhe_editor_core::shortcuts::{self as sc, KeyCombo};
 
-use super::keyboard_layout::{KeyCap, ansi_layout, row_units};
+use super::keyboard_layout::{KeyCap, Modifier, ansi_layout, row_units};
 use crate::audio_settings::AudioSettings;
 
 /// 一条绑定：动作 + 完整组合键。
@@ -36,6 +36,9 @@ struct KeyboardViewState {
     recording_idx: usize,
     /// 正在为哪个物理键挑选动作（弹出动作列表）。
     picking_action: Option<egui::Key>,
+    /// 鼠标点选的修饰键（与真实键盘状态**叠加**）：
+    /// 点一下只看该修饰键下的绑定，点第二下取消。
+    sticky_mod: Option<Modifier>,
 }
 
 fn state_id() -> egui::Id {
@@ -72,6 +75,28 @@ pub(crate) fn show(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         } else {
             settings.ui_session.shortcut_recording = true;
         }
+    }
+
+    // ── 鼠标锁定的修饰键：提示当前筛选，避免"为什么列表少了"的困惑 ──
+    if let Some(m) = state.sticky_mod {
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(format!("{} +", m.label()))
+                    .color(crate::theme::accent_active()),
+            );
+            if crate::widgets::flat::flat_button_filled_ghost(
+                ui,
+                t!("settings.shortcuts.keyboard.clear_filter").as_ref(),
+                egui::vec2(0.0, 18.0),
+                None,
+                true,
+            )
+            .clicked()
+            {
+                state.sticky_mod = None;
+            }
+        });
     }
 
     // ── 选中键的绑定（只显示这个键，不显示别的）──
@@ -160,8 +185,6 @@ fn same_modifiers(a: &KeyCombo, b: &KeyCombo) -> bool {
 }
 
 fn draw_keyboard(ui: &mut egui::Ui, all: &[Binding], state: &mut KeyboardViewState) {
-    // 2u 高的键（小键盘 + / Enter）会伸到下一行，先画普通键、后画高键，
-    // 保证高键压在上层，不会被下一行的行背景盖住。
     let ctx = ui.ctx().clone();
     let gap = crate::scaling::scaled_font(&ctx, 3.0);
     let row_h = crate::scaling::scaled_font(&ctx, 26.0);
@@ -196,27 +219,17 @@ fn draw_keyboard(ui: &mut egui::Ui, all: &[Binding], state: &mut KeyboardViewSta
     for row in ansi_layout() {
         let (row_rect, _) = ui.allocate_exact_size(egui::vec2(avail, row_h), egui::Sense::hover());
         let mut x = row_rect.min.x;
-        let mut deferred: Vec<(&KeyCap, egui::Rect)> = Vec::new();
         for (si, segment) in row.segments.iter().enumerate() {
             if si > 0 {
                 x += segment.gap_before * unit_w;
             }
             for cap in segment.caps {
                 let w = unit_w * cap.width;
-                let h = row_h * cap.height.min(2.0);
                 let cap_rect =
-                    egui::Rect::from_min_size(egui::pos2(x, row_rect.min.y), egui::vec2(w, h));
-                // 高键延后绘制（见函数开头的层级说明）。
-                if cap.height <= 1.0 + f32::EPSILON {
-                    draw_cap_at(ui, cap, cap_rect, mods, all, state);
-                } else {
-                    deferred.push((cap, cap_rect));
-                }
+                    egui::Rect::from_min_size(egui::pos2(x, row_rect.min.y), egui::vec2(w, row_h));
+                draw_cap_at(ui, cap, cap_rect, mods, all, state);
                 x += w + gap;
             }
-        }
-        for (cap, rect) in deferred {
-            draw_cap_at(ui, cap, rect, mods, all, state);
         }
         ui.add_space(gap);
     }
@@ -241,10 +254,12 @@ fn draw_cap_at(
         egui::Sense::click(),
     );
 
-    // 纯修饰键：只按真实状态高亮，不可点选绑定。
+    // 纯修饰键：可点选（鼠标锁定）+ 跟随真实键盘状态。
     // 名称随平台变化（macOS 的 ⌘ Command / ⌥ Option vs Windows 的 Win / Alt）。
     if let Some(m) = cap.modifier {
-        let active = m.active(mods);
+        let pressed = m.active(mods);
+        let sticky = state.sticky_mod == Some(m);
+        let active = pressed || sticky;
         let bg = if active {
             crate::theme::accent_active().gamma_multiply(0.30)
         } else {
@@ -256,7 +271,20 @@ fn draw_cap_at(
             crate::theme::text_label()
         };
         ui.painter().rect_filled(rect, 4.0, bg);
+        if sticky {
+            // 鼠标锁定态加一圈描边，与"正在按着"区分开。
+            ui.painter().rect_stroke(
+                rect,
+                4.0,
+                egui::Stroke::new(1.0, crate::theme::accent_active()),
+                egui::StrokeKind::Inside,
+            );
+        }
         paint_cap_label(ui, rect, m.label(), w, fg);
+        if resp.clicked() {
+            state.sticky_mod = if sticky { None } else { Some(m) };
+        }
+        resp.on_hover_text(t!("settings.shortcuts.keyboard.modifier_hint").as_ref());
         return;
     }
 
@@ -268,7 +296,16 @@ fn draw_cap_at(
         return;
     };
 
-    let here = bindings_for_cap(key, all);
+    let all_here = bindings_for_cap(key, all);
+    // 鼠标锁定了修饰键时，只高亮「带这个修饰键」的键（其余视为空）。
+    let here: Vec<Binding> = match state.sticky_mod {
+        Some(m) => all_here
+            .iter()
+            .filter(|b| modifier_matches(m, &b.combo))
+            .cloned()
+            .collect(),
+        None => all_here.clone(),
+    };
     let conflicts = conflicting_combos(&here);
     let selected = state.selected == Some(key);
 
@@ -320,9 +357,37 @@ fn draw_cap_at(
     }
 }
 
+/// 组合键是否带指定修饰键。
+///
+/// `KeyCombo.command` 是跨平台的「主修饰键」：macOS = ⌘，其它平台 = Ctrl。
+/// 所以 Ctrl 与 Cmd 两个键帽都映射到同一个 `command` 标志——
+/// 这不是笔误，而是 egui 的修饰键语义（没有独立的 Ctrl 位）。
+fn modifier_matches(m: Modifier, combo: &KeyCombo) -> bool {
+    match m {
+        Modifier::Shift => combo.shift,
+        Modifier::Alt => combo.alt,
+        Modifier::Ctrl | Modifier::Cmd => combo.command,
+    }
+}
+
+/// 绑定列表的过滤（与键帽高亮同一规则）。
+fn filtered_bindings(bindings: &[Binding], sticky: Option<Modifier>) -> Vec<&Binding> {
+    match sticky {
+        Some(m) => bindings
+            .iter()
+            .filter(|b| modifier_matches(m, &b.combo))
+            .collect(),
+        None => bindings.iter().collect(),
+    }
+}
+
 fn paint_cap_label(ui: &egui::Ui, rect: egui::Rect, label: &str, w: f32, color: egui::Color32) {
+    // 字号随键宽收缩，且**必须裁剪到键帽内**：
+    // 「Command」「Option」这类长标签在 1.25u 键上会溢出压到相邻键
+    // （用户截图里 Ctrl/Command/Option 糊成一团就是这个）。
     let size = crate::scaling::scaled_font(ui.ctx(), 11.0).min(w * 0.40);
-    ui.painter().text(
+    let painter = ui.painter().with_clip_rect(rect.shrink(1.0));
+    painter.text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
         label,
@@ -340,7 +405,13 @@ fn draw_binding_list(
     state: &mut KeyboardViewState,
     changed: &mut bool,
 ) {
-    let here = bindings_for_cap(key, all);
+    // 鼠标锁定了修饰键时，列表也只显示该修饰键下的绑定
+    // （与键帽高亮同一规则，避免「键是亮的但列表里没有」的矛盾）。
+    let raw = bindings_for_cap(key, all);
+    let here: Vec<Binding> = filtered_bindings(&raw, state.sticky_mod)
+        .into_iter()
+        .cloned()
+        .collect();
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(crate::shortcuts::key_display(key))
