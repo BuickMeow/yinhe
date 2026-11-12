@@ -1,5 +1,6 @@
 import '../core/snap_fields.dart';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
@@ -10,11 +11,14 @@ import 'time_grid.dart';
 /// 只画轻量、随视口变化的部分；音符仍由 wgpu 纹理绘制在上层。
 /// 网格与选框现在同为 Flutter 浮层，缩放/平移时保持同一帧。
 class PianorollGridPainter extends CustomPainter {
-  PianorollGridPainter(this.snap, this.gridLines)
-    : super(repaint: Listenable.merge([snap, gridLines]));
+  PianorollGridPainter(this.snap, this.gridLines, this.showLabels)
+    : super(repaint: Listenable.merge([snap, gridLines, showLabels]));
 
   final ValueNotifier<List<double>> snap;
   final ValueNotifier<List<GridLine>> gridLines;
+
+  /// 是否在左侧音名栏显示 C 音名/八度线。
+  final ValueListenable<bool> showLabels;
 
   /// 黑键：每个八度内 C#、D#、F#、G#、A#。
   static bool isBlackKey(int key) {
@@ -50,7 +54,8 @@ class PianorollGridPainter extends CustomPainter {
     final stripe = Paint()..color = YinheTheme.stripeBg;
     final white = Paint()..color = YinheTheme.keyWhite;
     final black = Paint()..color = YinheTheme.keyBlack;
-    // 黑键行条纹铺满内容区，再在左列盖上不透明键盘，和 wgpu 之前的层级一致。
+    // 与桌面一致：键盘列左半是音名栏，右半才是黑白键。
+    final gutterW = kbW * 0.5;
     for (var key = keyStart; key < keyStart + keyCount; key++) {
       final y = key0Y - key * kh;
       if (y + kh < 0 || y > size.height) {
@@ -60,7 +65,37 @@ class PianorollGridPainter extends CustomPainter {
       if (isBlack) {
         canvas.drawRect(Rect.fromLTWH(0, y, size.width, kh), stripe);
       }
-      canvas.drawRect(Rect.fromLTWH(0, y, kbW, kh), isBlack ? black : white);
+      canvas.drawRect(
+        Rect.fromLTWH(gutterW, y, kbW - gutterW, kh),
+        isBlack ? black : white,
+      );
+    }
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, gutterW, size.height),
+      Paint()..color = YinheTheme.controlBg,
+    );
+    if (showLabels.value) {
+      final font = (kh * 0.5).clamp(7.0, 11.0);
+      final firstC = ((keyStart + 11) ~/ 12) * 12;
+      final line = Paint()..color = YinheTheme.lineFg;
+      for (var key = firstC; key < keyStart + keyCount; key += 12) {
+        final y = key0Y - key * kh;
+        if (y + kh < 0 || y > size.height) {
+          continue;
+        }
+        canvas.drawRect(Rect.fromLTWH(0, y, gutterW, 1), line);
+        final tp = TextPainter(
+          text: TextSpan(
+            text: 'C${key ~/ 12 - 1}',
+            style: TextStyle(color: YinheTheme.textMuted, fontSize: font),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        tp.paint(
+          canvas,
+          Offset((gutterW - tp.width) / 2, y + (kh - tp.height) / 2),
+        );
+      }
     }
     // 键盘右缘分隔线。
     canvas.drawRect(

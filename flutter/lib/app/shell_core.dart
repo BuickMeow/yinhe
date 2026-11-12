@@ -638,10 +638,10 @@ mixin _ShellCore on _ShellBase {
       if (_eventRowKinds.contains(kind)) kind,
   ];
 
-  /// AR 事件区高度：行 + 底部 EVENT 按钮条；PR 不显示。
+  /// AR 事件区高度：只包含事件行；EVENT 按钮固定在左上角。
   @override
   double get _eventRowsHeight => _viewMode == kViewArrangement
-      ? _visibleEventRowKinds.length * kEventRowHeight + kEventButtonHeight
+      ? _visibleEventRowKinds.length * kEventRowHeight
       : 0;
 
   /// 事件行显示开关。

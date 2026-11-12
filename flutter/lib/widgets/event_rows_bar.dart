@@ -5,9 +5,8 @@ import '../core/models.dart';
 import '../core/snap_fields.dart';
 import '../core/theme.dart';
 
-/// AR 事件行行高 / 底部 EVENT 按钮条高度（逻辑像素）。
+/// AR 事件行行高（逻辑像素）。
 const double kEventRowHeight = 18.0;
-const double kEventButtonHeight = 24.0;
 
 /// 事件行顺序与短标签（与桌面 `EventRowKind` 一致，英文标签避免新增 15 语言 key）。
 const List<String> kEventRowKinds = [
@@ -28,7 +27,7 @@ String eventRowLabel(String kind) => switch (kind) {
   _ => 'LYRIC',
 };
 
-/// 时间标尺与音轨之间的固定事件行 + 底部 EVENT 开关。
+/// 时间标尺与音轨之间的固定事件行。
 ///
 /// LOOP 行可整段拖动/两端改边界；其余行只读展示，点击定位播放头。
 class EventRowsBar extends StatefulWidget {
@@ -38,16 +37,12 @@ class EventRowsBar extends StatefulWidget {
     required this.loop,
     required this.data,
     required this.visibleKinds,
-    required this.enabledKinds,
-    required this.onToggleRow,
   });
 
   final ValueNotifier<List<double>> snap;
   final ValueNotifier<LoopState> loop;
   final EventRowsData data;
   final List<String> visibleKinds;
-  final Set<String> enabledKinds;
-  final void Function(String kind, bool enabled) onToggleRow;
 
   @override
   State<EventRowsBar> createState() => _EventRowsBarState();
@@ -62,64 +57,33 @@ class _EventRowsBarState extends State<EventRowsBar> {
   @override
   Widget build(BuildContext context) {
     final rows = widget.visibleKinds.length;
+    if (rows == 0) {
+      return const SizedBox.shrink();
+    }
     return SizedBox(
-      height: rows * kEventRowHeight + kEventButtonHeight,
-      child: Column(
-        children: [
-          if (rows > 0)
-            SizedBox(
-              height: rows * kEventRowHeight,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTapUp: _handleTap,
-                onHorizontalDragStart: _handleDragStart,
-                onHorizontalDragUpdate: _handleDragUpdate,
-                onHorizontalDragEnd: (_) => _endDrag(),
-                onHorizontalDragCancel: _endDrag,
-                child: ValueListenableBuilder<List<double>>(
-                  valueListenable: widget.snap,
-                  builder: (context, snap, _) =>
-                      ValueListenableBuilder<LoopState>(
-                        valueListenable: widget.loop,
-                        builder: (context, loop, _) => CustomPaint(
-                          painter: _EventRowsPainter(
-                            snap: snap,
-                            loop: loop,
-                            data: widget.data,
-                            kinds: widget.visibleKinds,
-                          ),
-                          child: const SizedBox.expand(),
-                        ),
-                      ),
-                ),
+      height: rows * kEventRowHeight,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapUp: _handleTap,
+        onHorizontalDragStart: _handleDragStart,
+        onHorizontalDragUpdate: _handleDragUpdate,
+        onHorizontalDragEnd: (_) => _endDrag(),
+        onHorizontalDragCancel: _endDrag,
+        child: ValueListenableBuilder<List<double>>(
+          valueListenable: widget.snap,
+          builder: (context, snap, _) => ValueListenableBuilder<LoopState>(
+            valueListenable: widget.loop,
+            builder: (context, loop, _) => CustomPaint(
+              painter: _EventRowsPainter(
+                snap: snap,
+                loop: loop,
+                data: widget.data,
+                kinds: widget.visibleKinds,
               ),
-            ),
-          SizedBox(
-            height: kEventButtonHeight,
-            child: Row(
-              children: [
-                const SizedBox(width: 8),
-                InkWell(
-                  onTap: _openMenu,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
-                    ),
-                    child: Text(
-                      'EVENT',
-                      style: TextStyle(
-                        color: YinheTheme.textSecondary,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+              child: const SizedBox.expand(),
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -225,10 +189,24 @@ class _EventRowsBarState extends State<EventRowsBar> {
   void _endDrag() {
     _dragMode = null;
   }
+}
 
-  Future<void> _openMenu() async {
-    var loopOn = widget.loop.value.enabled;
-    final enabled = Set<String>.of(widget.enabledKinds);
+/// 左上角（音轨面板/键盘与时间标尺夹角）的 EVENT 菜单按钮。
+class EventMenuButton extends StatelessWidget {
+  const EventMenuButton({
+    super.key,
+    required this.loop,
+    required this.enabledKinds,
+    required this.onToggleRow,
+  });
+
+  final ValueNotifier<LoopState> loop;
+  final Set<String> enabledKinds;
+  final void Function(String kind, bool enabled) onToggleRow;
+
+  Future<void> _openMenu(BuildContext context) async {
+    var loopOn = loop.value.enabled;
+    final enabled = Set<String>.of(enabledKinds);
     await showDialog<void>(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -266,7 +244,7 @@ class _EventRowsBarState extends State<EventRowsBar> {
                           enabled.remove(kind);
                         }
                       });
-                      widget.onToggleRow(kind, on);
+                      onToggleRow(kind, on);
                     },
                   ),
               ],
@@ -278,6 +256,24 @@ class _EventRowsBarState extends State<EventRowsBar> {
               child: const Text('OK'),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: () => _openMenu(context),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        child: Text(
+          'EVENT',
+          style: TextStyle(
+            color: YinheTheme.textSecondary,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ),
     );

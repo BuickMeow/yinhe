@@ -29,6 +29,7 @@ class MarkerLayer extends StatefulWidget {
     this.onInsertEnd,
     this.onScrub,
     this.onScrubEnd,
+    this.showMarkers = true,
   });
 
   final ValueNotifier<List<double>> snap;
@@ -43,6 +44,9 @@ class MarkerLayer extends StatefulWidget {
   /// 未进入长按插入前，水平拖动标尺：切换播放位置（tick 由调用方换算）。
   final ValueChanged<Offset>? onScrub;
   final VoidCallback? onScrubEnd;
+
+  /// 是否在标尺上绘制 marker pill；独立 Marker 事件行启用后置 false。
+  final bool showMarkers;
 
   @override
   State<MarkerLayer> createState() => _MarkerLayerState();
@@ -156,16 +160,17 @@ class _MarkerLayerState extends State<MarkerLayer> {
               : (d) => widget.onInsertEnd!(d.localPosition, d.globalPosition),
           child: Stack(
             children: [
-              for (final m in sorted)
-                if (_visible(xOf(m.tick), width))
-                  _pill(
-                    m,
-                    _dragTick == m.tick && _dragX != null
-                        ? _dragX!
-                        : xOf(m.tick),
-                    width,
-                    ppq,
-                  ),
+              if (widget.showMarkers)
+                for (final m in sorted)
+                  if (_visible(xOf(m.tick), width))
+                    _pill(
+                      m,
+                      _dragTick == m.tick && _dragX != null
+                          ? _dragX!
+                          : xOf(m.tick),
+                      width,
+                      ppq,
+                    ),
               // AR：面板上方的占位矩形（与时间标尺夹着），盖住跨入面板区域的
               // 标签 pill。只画在 AR（快照 mode 0）。
               if (s[SnapField.mode] == 0.0 && origin > 0)

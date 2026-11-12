@@ -84,9 +84,9 @@ mixin _ShellBuild on _ShellBase {
       return;
     }
     // 自动化提手不参与布局：画布/卷帘/wgpu 始终铺到内容区底部。
-    // AR 事件行（含 EVENT 按钮条）夹在标尺与音轨之间，需要从高度里扣掉。
+    // AR 事件行夹在标尺与音轨之间，需要从高度里扣掉；EVENT 按钮在左上角浮层。
     final eventH = mode == kViewArrangement
-        ? _visibleEventRowKinds.length * kEventRowHeight + kEventButtonHeight
+        ? _visibleEventRowKinds.length * kEventRowHeight
         : 0.0;
     final lh = (_canvasAreaH - RulerPainter.height - eventH).clamp(
       1.0,
@@ -392,6 +392,7 @@ mixin _ShellBuild on _ShellBase {
                                                   painter: PianorollGridPainter(
                                                     _snap,
                                                     _gridLines,
+                                                    showKeyboardLabels,
                                                   ),
                                                 ),
                                               ),
@@ -436,45 +437,12 @@ mixin _ShellBuild on _ShellBase {
                                                 painter: PlayheadPainter(
                                                   _playhead,
                                                   _snap,
+                                                  _playing,
+                                                  _activeTrack ?? -1,
                                                 ),
                                               ),
                                             ),
                                           ),
-                                          // AR 固定事件行：标尺下方、音轨上方；底部是 EVENT 开关。
-                                          if (_viewMode == kViewArrangement)
-                                            Positioned(
-                                              left: 0,
-                                              right: 0,
-                                              top: RulerPainter.height,
-                                              height: _eventRowsHeight,
-                                              child: EventRowsBar(
-                                                snap: _snap,
-                                                loop: _loop,
-                                                data: _eventRowsData,
-                                                visibleKinds:
-                                                    _visibleEventRowKinds,
-                                                enabledKinds: _eventRowKinds,
-                                                onToggleRow:
-                                                    _setEventRowEnabled,
-                                              ),
-                                            ),
-                                          // 卷帘背景 C 音名：设置「显示键盘」开启时显示。
-                                          if (_viewMode == kViewPianoroll &&
-                                              !amVisible)
-                                            Positioned(
-                                              left: 0,
-                                              right: 0,
-                                              top: contentTop,
-                                              bottom: 0,
-                                              child: IgnorePointer(
-                                                child: CustomPaint(
-                                                  painter: KeyLabelPainter(
-                                                    _snap,
-                                                    showKeyboardLabels,
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
                                           // 删除残影：在音符纹理之上、选框/锚点之下。
                                           Positioned(
                                             left: 0,
@@ -529,6 +497,21 @@ mixin _ShellBuild on _ShellBase {
                                               ),
                                             ),
                                           ),
+                                          // AR 固定事件行：标尺下方、音轨上方；EVENT 入口在左上角。
+                                          if (_viewMode == kViewArrangement)
+                                            Positioned(
+                                              left: 0,
+                                              right: 0,
+                                              top: RulerPainter.height,
+                                              height: _eventRowsHeight,
+                                              child: EventRowsBar(
+                                                snap: _snap,
+                                                loop: _loop,
+                                                data: _eventRowsData,
+                                                visibleKinds:
+                                                    _visibleEventRowKinds,
+                                              ),
+                                            ),
                                           Positioned(
                                             left: 0,
                                             right: 0,
@@ -592,6 +575,7 @@ mixin _ShellBuild on _ShellBase {
                                                   _handleRulerInsertEnd,
                                               onScrub: _handleRulerScrub,
                                               onScrubEnd: _handleRulerScrubEnd,
+                                              showMarkers: false,
                                             ),
                                           ),
                                           // 长按圆环/落点竖线最后画：盖在音轨面板与自动化栏之上。
@@ -672,6 +656,41 @@ mixin _ShellBuild on _ShellBase {
                                               ),
                                               onSeekEnd: _handleRulerScrubEnd,
                                             ),
+                                          ),
+                                          // EVENT 入口固定在音轨面板/键盘与时间标尺的夹角。
+                                          Positioned(
+                                            left: 0,
+                                            top: 0,
+                                            height: RulerPainter.height,
+                                            child:
+                                                ValueListenableBuilder<
+                                                  List<double>
+                                                >(
+                                                  valueListenable: _snap,
+                                                  builder: (context, s, _) {
+                                                    final w =
+                                                        s.length >
+                                                            SnapField.leftPanelW
+                                                        ? s[SnapField
+                                                              .leftPanelW]
+                                                        : 0.0;
+                                                    if (w <= 0) {
+                                                      return const SizedBox.shrink();
+                                                    }
+                                                    return SizedBox(
+                                                      width: w,
+                                                      child: Center(
+                                                        child: EventMenuButton(
+                                                          loop: _loop,
+                                                          enabledKinds:
+                                                              _eventRowKinds,
+                                                          onToggleRow:
+                                                              _setEventRowEnabled,
+                                                        ),
+                                                      ),
+                                                    );
+                                                  },
+                                                ),
                                           ),
                                         ],
                                       ),

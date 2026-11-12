@@ -32,8 +32,6 @@ class LabelsPainter extends CustomPainter {
     if (s[SnapField.mode] == 0.0) {
       _paintArrangement(canvas, size, s, tracks.value);
       _paintDrag(canvas, size, s, dragFrom.value, dragTo.value);
-    } else {
-      _paintKeyboardLabels(canvas, size, s);
     }
   }
 
@@ -195,39 +193,6 @@ class LabelsPainter extends CustomPainter {
       Rect.fromLTWH(0, lineY - 1, panelW, 2),
       Paint()..color = YinheTheme.accent,
     );
-  }
-
-  void _paintKeyboardLabels(Canvas canvas, Size size, List<double> s) {
-    final kh = s[SnapField.keyHeight];
-    final kbW = s[SnapField.leftPanelW];
-    final key0Y = s[SnapField.key0Y];
-    final keyStart = s.length > SnapField.keyStart
-        ? s[SnapField.keyStart].round()
-        : 0;
-    final keyCount = s.length > SnapField.keyCount
-        ? s[SnapField.keyCount].round()
-        : 128;
-    if (kh < 10 || kbW <= 0 || keyCount <= 0) {
-      return;
-    }
-    final font = (kh * 0.5).clamp(7.0, 11.0).toDouble();
-    final firstC = ((keyStart + 11) ~/ 12) * 12;
-    for (var key = firstC; key < keyStart + keyCount; key += 12) {
-      final y = key0Y - key * kh;
-      if (y + kh < 0 || y > size.height) {
-        continue;
-      }
-      final name = 'C${key ~/ 12 - 1}';
-      _text(
-        canvas,
-        name,
-        Offset(kbW - 6, y + kh / 2),
-        font,
-        YinheTheme.textMuted,
-        vCenter: true,
-        rightAlign: true,
-      );
-    }
   }
 
   void _msButton(
