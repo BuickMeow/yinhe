@@ -49,26 +49,5 @@ pub fn show_language_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> boo
         },
     );
 
-    setting_row(
-        ui,
-        t!("settings.midi_import.encoding").as_ref(),
-        t!("settings.midi_import.encoding_desc").as_ref(),
-        |ui| {
-            let enc_opt: Vec<(yinhe_midi::MidiImportEncoding, String)> =
-                yinhe_midi::MidiImportEncoding::ALL
-                    .iter()
-                    .map(|&e| (e, e.label().to_string()))
-                    .collect();
-            if crate::widgets::combo::combo_select_auto(
-                ui,
-                "midi_import_encoding",
-                &mut settings.midi_import_encoding,
-                &enc_opt,
-            ) {
-                changed = true;
-            }
-        },
-    );
-
     changed
 }

@@ -9,7 +9,7 @@
 use eframe::egui;
 
 /// 按钮高度（逻辑像素，随字体缩放）。
-const BTN_H: f32 = 30.0;
+pub(crate) const BTN_H: f32 = 30.0;
 /// 按钮最小宽度（逻辑像素，随字体缩放）。
 const BTN_MIN_W: f32 = 76.0;
 /// 按钮水平内边距（单侧，逻辑像素，随字体缩放）。

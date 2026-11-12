@@ -1,6 +1,8 @@
 pub mod device_chain;
 pub mod dialog;
 pub mod dialog_buttons;
+#[cfg(test)]
+mod dialog_layout_tests;
 pub mod insert_actions;
 pub mod mode_bar;
 pub mod title_bar;

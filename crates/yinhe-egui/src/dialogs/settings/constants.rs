@@ -15,6 +15,26 @@ pub const CATEGORY_KEYS: [&str; 12] = [
     "settings.cat.soundfont",
 ];
 
+/// 左栏导航的分组：`(组标题 i18n key, 该组包含的分类索引)`。
+///
+/// 12 个分类平铺太长，按「看起来怎样 / 听起来怎样 / 怎么编辑 / 程序行为」
+/// 分组后一眼能找到。索引必须覆盖全部 `CATEGORY_KEYS`（有测试保证），
+/// 且 `settings_tab` 的持久化索引不受分组影响。
+pub const CATEGORY_GROUPS: [(&str, &[usize]); 6] = [
+    // 主题 / 外观：界面看起来怎样
+    ("settings.group.look", &[0, 1]),
+    // 语言（含界面语言；MIDI 文本编码在 MIDI 组里）
+    ("settings.group.language", &[2]),
+    // 音频 / 渲染 / 音色库：听起来怎样
+    ("settings.group.sound", &[3, 4, 11]),
+    // MIDI 导入导出
+    ("settings.group.midi", &[5]),
+    // 编辑与快捷键
+    ("settings.group.editing", &[6, 7]),
+    // 通知 / 通用 / 保存：程序行为
+    ("settings.group.system", &[8, 9, 10]),
+];
+
 /// 设置项注册表（供搜索）：各语言名称均可直接检索。
 /// 中文额外支持拼音（由 `to_search_keys` 运行时折叠，无需手写转写）。
 pub struct SettingItem {

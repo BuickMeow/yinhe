@@ -61,6 +61,7 @@ mod audio;
 mod constants;
 mod editing;
 mod general;
+mod keyboard_layout;
 mod language;
 mod midi_export;
 mod notification;
@@ -68,6 +69,7 @@ mod render;
 mod saving;
 mod search;
 mod shortcuts;
+mod shortcuts_keyboard;
 mod soundfont;
 mod theme;
 
@@ -76,7 +78,7 @@ pub use appearance::show_appearance_tab;
 #[allow(unused_imports)]
 pub use audio::show_audio_tab;
 #[allow(unused_imports)]
-pub use constants::{CATEGORY_KEYS, SETTING_ITEMS, SettingItem};
+pub use constants::{CATEGORY_GROUPS, CATEGORY_KEYS, SETTING_ITEMS, SettingItem};
 #[allow(unused_imports)]
 pub use editing::show_editing_tab;
 #[allow(unused_imports)]
@@ -161,20 +163,34 @@ pub fn show_content(
                             // 搜索框与分类列表之间留出间距（自绘输入框自身无外边距）。
                             ui.add_space(crate::theme::GAP);
 
-                            for (i, key) in CATEGORY_KEYS.iter().enumerate() {
-                                let selected = settings.ui_session.settings_tab == i;
-                                let size = crate::scaling::scaled_font(
-                                    ui.ctx(),
-                                    crate::theme::FILE_MENU_FONT,
+                            for (group_key, indices) in CATEGORY_GROUPS {
+                                ui.add_space(crate::theme::GAP_TIGHT);
+                                ui.label(
+                                    egui::RichText::new(t!(group_key).as_ref())
+                                        .size(crate::scaling::scaled_font(
+                                            ui.ctx(),
+                                            crate::theme::SMALL_FONT,
+                                        ))
+                                        .color(crate::theme::text_label()),
                                 );
-                                let label = nav_label(CATEGORY_ICONS[i], t!(*key).as_ref(), size);
-                                if ui
-                                    .add(crate::widgets::menu::menu_item_button(
-                                        ui, selected, label,
-                                    ))
-                                    .clicked()
-                                {
-                                    settings.ui_session.settings_tab = i;
+                                ui.add_space(2.0);
+                                for &i in indices {
+                                    let key = &CATEGORY_KEYS[i];
+                                    let selected = settings.ui_session.settings_tab == i;
+                                    let size = crate::scaling::scaled_font(
+                                        ui.ctx(),
+                                        crate::theme::FILE_MENU_FONT,
+                                    );
+                                    let label =
+                                        nav_label(CATEGORY_ICONS[i], t!(*key).as_ref(), size);
+                                    if ui
+                                        .add(crate::widgets::menu::menu_item_button(
+                                            ui, selected, label,
+                                        ))
+                                        .clicked()
+                                    {
+                                        settings.ui_session.settings_tab = i;
+                                    }
                                 }
                             }
                         },
@@ -407,6 +423,19 @@ mod tests {
             (first_x - second_x).abs() < 0.5,
             "快捷键两行未对齐：第一行 x={first_x}，第二行 x={second_x}"
         );
+    }
+
+    /// 左栏分组必须完整覆盖 `CATEGORY_KEYS`，且每个分类只出现一次：
+    /// 漏一个分类 = 用户点不到（12 项平铺改成分组后最容易出的错）。
+    #[test]
+    fn category_groups_cover_all_categories() {
+        let mut all: Vec<usize> = Vec::new();
+        for (_, indices) in CATEGORY_GROUPS {
+            all.extend_from_slice(indices);
+        }
+        all.sort_unstable();
+        let expected: Vec<usize> = (0..CATEGORY_KEYS.len()).collect();
+        assert_eq!(all, expected, "分组必须是 CATEGORY_KEYS 的一个划分");
     }
 
     #[test]

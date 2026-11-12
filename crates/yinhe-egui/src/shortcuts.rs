@@ -7,7 +7,7 @@ use yinhe_editor_core::shortcuts::{KeyCombo, Keybindings};
 
 /// 全部可录制/显示的 egui 键（排除纯修饰键，它们在 `KeyCombo` 里以 flag 表示）。
 /// 顺序无关，仅用于设置页录制时的合法性判断。
-const RECORDABLE_KEYS: &[Key] = &[
+pub(crate) const RECORDABLE_KEYS: &[Key] = &[
     Key::Num0,
     Key::Num1,
     Key::Num2,
@@ -75,6 +75,9 @@ const RECORDABLE_KEYS: &[Key] = &[
     Key::Period,
     Key::Minus,
     Key::Plus,
+    Key::Equals,
+    Key::OpenBracket,
+    Key::CloseBracket,
     Key::Semicolon,
     Key::Quote,
     Key::Backtick,
@@ -153,6 +156,9 @@ pub fn str_to_key(s: &str) -> Option<Key> {
         "Period" => Period,
         "Minus" => Minus,
         "Plus" => Plus,
+        "Equals" => Equals,
+        "OpenBracket" => OpenBracket,
+        "CloseBracket" => CloseBracket,
         "Semicolon" => Semicolon,
         "Quote" => Quote,
         "Backtick" => Backtick,
@@ -237,6 +243,9 @@ fn str_to_key_rev(key: Key) -> &'static str {
         Period => "Period",
         Minus => "Minus",
         Plus => "Plus",
+        Equals => "Equals",
+        OpenBracket => "OpenBracket",
+        CloseBracket => "CloseBracket",
         Semicolon => "Semicolon",
         Quote => "Quote",
         Backtick => "Backtick",
@@ -247,7 +256,7 @@ fn str_to_key_rev(key: Key) -> &'static str {
 }
 
 /// 按键的短显示名（不含修饰键）。
-fn key_display(key: Key) -> String {
+pub fn key_display(key: Key) -> String {
     let s = key_to_str(key);
     match s.as_str() {
         "Space" => "Space".to_string(),
@@ -269,6 +278,9 @@ fn key_display(key: Key) -> String {
         "Period" => ".".to_string(),
         "Minus" => "-".to_string(),
         "Plus" => "+".to_string(),
+        "Equals" => "=".to_string(),
+        "OpenBracket" => "[".to_string(),
+        "CloseBracket" => "]".to_string(),
         "PageUp" => "PgUp".to_string(),
         "PageDown" => "PgDn".to_string(),
         _ => s,

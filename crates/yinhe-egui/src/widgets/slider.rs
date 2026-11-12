@@ -52,6 +52,11 @@ pub fn control_slider<Num: egui::emath::Numeric>(
         }
         v = nv.clamp(min, max);
     }
+    // 拖动结束时 `interact_pointer_pos()` 已是 None（指针可能已离开控件），
+    // 上面那段拿不到值，`*value` 会保持旧值 → 调用方的 `drag_stopped()` 分支
+    // 保存的是「松手前的值」，表现为「拖动完全没用、只有点击才生效」。
+    // 拖动期间的值必须持续写回 `value`（它本来就是即时反馈的绑定值），
+    // 由调用方在松开时决定是否生效。
     if v != value.to_f64() {
         *value = Num::from_f64(v);
         resp.mark_changed();

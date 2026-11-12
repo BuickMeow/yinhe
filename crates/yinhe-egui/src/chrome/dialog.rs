@@ -77,29 +77,52 @@ pub(crate) fn viewport_builder(
     vb
 }
 
-/// 对话框内容区标准布局：主体内容垂直居中占据按钮行以上的空间，
-/// 按钮行用 `bottom_up` 布局固定贴底。
+/// 对话框内容区标准布局：主体内容占满按钮行以上的空间，按钮行贴底。
 ///
-/// `btn_zone_h` 是底部按钮区预留高度（按钮行 + 间距）。
-/// `content` 在 `top_down(Center)` 布局中执行，`buttons` 在 `bottom_up(Center)` 中执行。
+/// `btn_zone_h` 是底部按钮区预留高度（按钮行 + 上方间距）。
+///
+/// **几何显式给出**，不依赖 `bottom_up` 的隐式落位：曾经用
+/// `allocate_ui_with_layout(bottom_up)` 时，按钮行被顶到预留区的顶部，
+/// 于是右边距 0、下边距却多出一大截（未保存弹窗的按钮"贴右不贴下"）。
+/// 这里把按钮行的 rect 直接算出来：底部与内容区底缘对齐、宽度占满，
+/// 右/下留白因此都由调用方的内边距统一决定，天然相等。
 pub(crate) fn content_with_bottom_buttons(
     ui: &mut egui::Ui,
     btn_zone_h: f32,
     content: impl FnOnce(&mut egui::Ui),
     buttons: impl FnOnce(&mut egui::Ui),
 ) {
-    let full_w = ui.available_width();
-    ui.allocate_ui_with_layout(
-        egui::vec2(full_w, (ui.available_height() - btn_zone_h).max(0.0)),
-        egui::Layout::top_down(egui::Align::Center),
+    let avail = ui.available_rect_before_wrap();
+    if avail.width() <= 0.0 || avail.height() <= 0.0 {
+        return;
+    }
+    let btn_h = crate::scaling::scaled_font(ui.ctx(), crate::chrome::dialog_buttons::BTN_H)
+        .min(avail.height());
+    let zone_h = btn_zone_h.min(avail.height());
+
+    // 按钮行贴在预留区的最底部：行底 = 内容区底缘。
+    let row_top = (avail.max.y - btn_h).max(avail.min.y);
+    let content_bottom = (avail.max.y - zone_h).max(avail.min.y);
+    let content_rect = egui::Rect::from_min_max(avail.min, egui::pos2(avail.max.x, content_bottom));
+    let row_rect = egui::Rect::from_min_max(
+        egui::pos2(avail.min.x, row_top),
+        egui::pos2(avail.max.x, avail.max.y),
+    );
+
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(content_rect)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
         content,
     );
-    // 按钮区固定用内容区全宽：MIDI/音频选项切换不会改变右侧留白。
-    ui.allocate_ui_with_layout(
-        egui::vec2(full_w, btn_zone_h),
-        egui::Layout::bottom_up(egui::Align::Center),
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(row_rect)
+            .layout(egui::Layout::right_to_left(egui::Align::Center)),
         buttons,
     );
+    // 让父容器知道这段高度已被消费。
+    ui.advance_cursor_after_rect(avail);
 }
 
 /// 绘制统一的 "X" 关闭按钮（对话框标题栏与文档 tab 共用）：
