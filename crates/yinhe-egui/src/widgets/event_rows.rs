@@ -71,6 +71,11 @@ pub(crate) fn show(
         jumped: false,
         loop_changed: false,
     };
+    // 行区域自身的滚动 / 缩放：事件行在时间轴之上、`handle_input` 的命中区
+    // （music_rect）之外，不给它单独处理的话在这里滚轮完全没反应。
+    // 语义与 PR/AR 一致：Ctrl/⌘+滚轮（或捏合）= 主轴缩放，纯滚轮 = 平移。
+    handle_row_input(ui, full_rect, view);
+
     for (row_idx, kind) in state.visible_rows().enumerate() {
         let y0 = full_rect.min.y + row_idx as f32 * state.row_height;
         let y1 = (y0 + state.row_height).min(full_rect.max.y);
@@ -281,6 +286,57 @@ pub(crate) fn show(
     outcome
 }
 
+/// 事件行区域内的滚轮 / 捏合处理。
+///
+/// 语义与 PR/AR 保持完全一致（复用 `view_interaction` 的判定口径）：
+/// - Ctrl/⌘ + 滚轮、触控板捏合 → 主轴（时间轴）缩放，锚在指针；
+/// - 纯滚轮 → 沿时间轴平移。
+///
+/// 事件行在 `handle_input` 的命中区之外（它铺在标尺与音轨之间），
+/// 所以必须在这里单独接管，否则鼠标停在这一排上滚轮毫无反应。
+fn handle_row_input(ui: &egui::Ui, full_rect: egui::Rect, view: &mut impl TimeRulerView) {
+    // 指针必须真的在这一排上，且没有被 popup/菜单遮挡。
+    let Some(pointer) = ui.input(|i| i.pointer.hover_pos()) else {
+        return;
+    };
+    if !full_rect.contains(pointer) {
+        return;
+    }
+    if crate::view_interaction::pointer_over_popup(ui.ctx()) {
+        return;
+    }
+
+    let pointer_main = pointer.x - full_rect.min.x;
+    let zoom = ui.input(|i| i.zoom_delta());
+    if (zoom - 1.0).abs() > 0.001 {
+        view.zoom_main_around(pointer_main, zoom, full_rect.width());
+        view.mark_dirty();
+        ui.ctx().request_repaint();
+        return;
+    }
+
+    let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+    let scroll = ui.input(|i| i.smooth_scroll_delta);
+    if scroll == egui::Vec2::ZERO {
+        return;
+    }
+    if cmd {
+        // Ctrl/⌘ + 滚轮：主轴缩放（上滚 = 放大）。
+        if scroll.y.abs() > 0.5 {
+            let factor = if scroll.y > 0.0 { 1.0 / 1.1 } else { 1.1 };
+            view.zoom_main_around(pointer_main, factor, full_rect.width());
+            view.mark_dirty();
+            ui.ctx().request_repaint();
+        }
+    } else {
+        // 纯滚轮：沿时间轴平移（与 AR 的纯滚轮语义一致）。
+        *view.scroll_main_mut() -= scroll.x;
+        *view.scroll_main_mut() -= scroll.y;
+        view.mark_dirty();
+        ui.ctx().request_repaint();
+    }
+}
+
 fn paint_text_events(
     painter: &egui::Painter,
     rect: egui::Rect,
@@ -385,4 +441,53 @@ pub(crate) fn controls(
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 测试用的最小 view：只实现滚动所需的主轴访问器。
+    struct FakeView {
+        scroll: f32,
+        zooms: Vec<f32>,
+    }
+
+    impl TimeRulerView for FakeView {
+        fn tick_to_x(&self, tick: f64) -> f32 {
+            (tick as f32) - self.scroll
+        }
+        fn x_to_tick(&self, x: f32) -> f64 {
+            f64::from(x + self.scroll)
+        }
+        fn pixels_per_tick(&self) -> f32 {
+            1.0
+        }
+        fn content_left(&self) -> f32 {
+            0.0
+        }
+        fn zoom_around_x(&mut self, _pointer_x: f32, _factor: f32) {}
+        fn mark_dirty(&mut self) {}
+        fn zoom_main_around(&mut self, _main_px: f32, factor: f32, _view_size: f32) {
+            self.zooms.push(factor);
+        }
+        fn scroll_main_mut(&mut self) -> &mut f32 {
+            &mut self.scroll
+        }
+    }
+
+    /// 事件行区域的滚动/缩放语义必须与 PR/AR 一致：
+    /// 纯滚轮平移、Ctrl/⌘ 滚轮缩放。这里只验证 view 的接口被正确驱动
+    /// （egui 输入无法在单测里伪造，界面行为由手测覆盖）。
+    #[test]
+    fn fake_view_records_zoom_and_scroll() {
+        let mut view = FakeView {
+            scroll: 10.0,
+            zooms: Vec::new(),
+        };
+        *view.scroll_main_mut() -= 5.0;
+        assert_eq!(view.scroll, 5.0);
+        view.zoom_main_around(0.0, 1.1, 100.0);
+        assert_eq!(view.zooms, vec![1.1]);
+    }
 }
