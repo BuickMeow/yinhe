@@ -481,7 +481,8 @@ fn render_leaf_item(
     if resp.clicked() {
         state.selected_item = Some(item);
         state.selected_track = None;
-        state.event_page = 0;
+        // 切换事件类型：行高保留（用户偏好），滚动归零。
+        state.list_layout.pending_scroll = Some(0.0);
         // 切换选中条目时清空行多选状态
         state.selected_ticks.clear();
         state.last_clicked_tick = None;

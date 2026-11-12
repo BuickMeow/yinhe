@@ -33,9 +33,9 @@ use super::state::{
     EditRequest, EventBrowserState, JumpRequest, NoteRef, SelectedItem, TextEventKind,
 };
 use super::table::{
-    AutomationEventOwned, build_table, cell_editable, cell_position, cell_row_header, cell_text,
-    curve_points_text, empty_state_add_button, handle_delete_key, paginate, render_pager,
-    shape_text, take_row_click, total_pages,
+    AutomationEventOwned, TickIndex, build_table, cell_editable, cell_position, cell_row_header,
+    cell_text, curve_points_text, empty_state_add_button, handle_delete_key, shape_text,
+    take_row_click,
 };
 
 /// 根据选中的 item 渲染详情面板，返回可能的跳转请求。
@@ -337,9 +337,12 @@ fn with_text_cache<R>(
 
 /// 事件详情表格骨架：标题 + 翻页 + 空状态/表格 + 删除键。
 ///
-/// `tick_of` 提供每行 tick（页内多选锚点）；`row_cb` 接收
-/// `(页内行号, row, click_key, state, 当前行, 页内 tick 列表, 页起始索引)`。
-/// 返回 `(page_start, page_len)`，调用方用 `events[page_start + i]` 取点击行。
+/// 事件表格公共骨架：标题 + 虚拟滚动表格（行高可缩放）。
+///
+/// `tick_of` 提供每行 tick（Shift 范围选择用）；`row_cb` 接收
+/// `(行号, row, click_key, state, 当前行, tick 索引)`。
+///
+/// **不在这里套外层 ScrollArea**：表格内部有纵向滚动，外层再套一层会争抢滚轮。
 #[allow(clippy::too_many_arguments)] // 表格透传上下文，见 table.rs 同款约定
 fn event_table_section<T>(
     ui: &mut egui::Ui,
@@ -349,11 +352,10 @@ fn event_table_section<T>(
     events: &[T],
     headers: &[(&str, f32)],
     tick_of: impl Fn(&T) -> u32,
-    mut row_cb: impl FnMut(usize, &mut TableRow, egui::Id, &mut EventBrowserState, &T, &[u32], usize),
-) -> (usize, usize) {
-    crate::right_panel::region_hint(ui, t!("hint.panel.event_table"));
+    mut row_cb: impl FnMut(usize, &mut TableRow, egui::Id, &mut EventBrowserState, &T, &TickIndex<'_>),
+) {
+    crate::right_panel::region_hint(ui, t!("hint.eb.list_zoom"));
     let edit_salt = format!("{}_edit", table_id);
-    let (page, page_start, page_items) = paginate(state, events);
     let total = events.len();
     ui.add_space(4.0);
     crate::widgets::rows::inline_row(ui, |ui| {
@@ -370,29 +372,29 @@ fn event_table_section<T>(
             ))
             .color(crate::theme::text_bright()),
         );
-        if let Some(np) = render_pager(ui, page, total_pages(total)) {
-            state.event_page = np;
-        }
     });
     ui.add_space(crate::theme::GAP_TIGHT);
     if total == 0 {
         empty_state_add_button(ui, &edit_salt);
-    } else {
-        let page_ticks: Vec<u32> = page_items.iter().map(tick_of).collect();
-        build_table(
-            ui,
-            table_id,
-            headers,
-            page_items.len(),
-            |i, row, click_key| {
-                let item = &page_items[i];
-                row.set_selected(state.selected_ticks.contains(&page_ticks[i]));
-                row_cb(i, row, click_key, state, item, &page_ticks, page_start);
-            },
-        );
-        handle_delete_key(ui, &edit_salt, !state.selected_ticks.is_empty());
+        return;
     }
-    (page_start, page_items.len())
+    let tick_at = |i: usize| tick_of(&events[i]);
+    let ticks = TickIndex::new(total, &tick_at);
+    let mut layout = state.list_layout;
+    build_table(
+        ui,
+        table_id,
+        headers,
+        total,
+        &mut layout,
+        |i, row, click_key| {
+            let item = &events[i];
+            row.set_selected(state.selected_ticks.contains(&ticks.get(i)));
+            row_cb(i, row, click_key, state, item, &ticks);
+        },
+    );
+    state.list_layout = layout;
+    handle_delete_key(ui, &edit_salt, !state.selected_ticks.is_empty());
 }
 
 // ── Automation（统一 CC/PB/RPN/NRPN/Tempo） ──
@@ -412,7 +414,7 @@ fn show_automation_detail(
         Some((track, 0))
     };
     with_automation_cache(doc, track, target, |doc, events, lane_idx| {
-        let (page_start, _) = event_table_section(
+        event_table_section(
             ui,
             state,
             "eb_auto",
@@ -430,17 +432,8 @@ fn show_automation_detail(
                 (t!("event_browser.header.shape").as_ref(), 90.0),
             ],
             |e| e.tick,
-            |i, row, click_key, state, e, page_ticks, page_start| {
-                cell_row_header(
-                    row,
-                    state,
-                    "eb_auto_edit",
-                    i,
-                    page_start,
-                    e.tick,
-                    page_ticks,
-                    click_key,
-                );
+            |i, row, click_key, state, e, page_ticks| {
+                cell_row_header(row, state, "eb_auto_edit", i, e.tick, page_ticks, click_key);
                 cell_editable(
                     row,
                     "eb_auto_edit",
@@ -498,7 +491,7 @@ fn show_automation_detail(
         apply_automation_ops(ui, doc, state, "eb_auto_edit", track, target);
 
         take_row_click(ui, "eb_auto").map(|i| JumpRequest {
-            tick: events[page_start + i].tick,
+            tick: events[i].tick,
             note,
         })
     })
@@ -515,7 +508,7 @@ fn show_timesig_detail(
     // 先 clone 出 owned 数据，避免不可变借用阻塞后续 &mut doc 编辑
     let mut sorted: Vec<yinhe_types::TimeSigEvent> = doc.data.model.conductor.time_sig.clone();
     sorted.sort_by_key(|e| e.tick);
-    let (page_start, _) = event_table_section(
+    event_table_section(
         ui,
         state,
         "eb_ts",
@@ -529,18 +522,9 @@ fn show_timesig_detail(
             (t!("event_browser.header.denominator").as_ref(), 50.0),
         ],
         |e| e.tick,
-        |i, row, click_key, state, e, page_ticks, page_start| {
+        |i, row, click_key, state, e, page_ticks| {
             let denom = 1u32 << e.denominator as u32;
-            cell_row_header(
-                row,
-                state,
-                "eb_ts_edit",
-                i,
-                page_start,
-                e.tick,
-                page_ticks,
-                click_key,
-            );
+            cell_row_header(row, state, "eb_ts_edit", i, e.tick, page_ticks, click_key);
             cell_editable(
                 row,
                 "eb_ts_edit",
@@ -579,7 +563,7 @@ fn show_timesig_detail(
     apply_timesig_popups(ui, doc, "eb_ts_edit", bar_lookup);
     apply_timesig_ops(ui, doc, state, "eb_ts_edit");
     take_row_click(ui, "eb_ts").map(|i| JumpRequest {
-        tick: sorted[page_start + i].tick,
+        tick: sorted[i].tick,
         note: None,
     })
 }
@@ -595,7 +579,7 @@ fn show_keysig_detail(
     // 先 clone 出 owned 数据，避免不可变借用阻塞后续 &mut doc 编辑
     let mut sorted: Vec<yinhe_types::KeySigEvent> = doc.data.model.conductor.key_sig.clone();
     sorted.sort_by_key(|e| e.tick);
-    let (page_start, _) = event_table_section(
+    event_table_section(
         ui,
         state,
         "eb_ks",
@@ -610,17 +594,8 @@ fn show_keysig_detail(
             (t!("event_browser.header.scale").as_ref(), 80.0),
         ],
         |e| e.tick,
-        |i, row, click_key, state, e, page_ticks, page_start| {
-            cell_row_header(
-                row,
-                state,
-                "eb_ks_edit",
-                i,
-                page_start,
-                e.tick,
-                page_ticks,
-                click_key,
-            );
+        |i, row, click_key, state, e, page_ticks| {
+            cell_row_header(row, state, "eb_ks_edit", i, e.tick, page_ticks, click_key);
             cell_editable(
                 row,
                 "eb_ks_edit",
@@ -660,7 +635,7 @@ fn show_keysig_detail(
     apply_keysig_popups(ui, doc, "eb_ks_edit", bar_lookup);
     apply_keysig_ops(ui, doc, state, "eb_ks_edit");
     take_row_click(ui, "eb_ks").map(|i| JumpRequest {
-        tick: sorted[page_start + i].tick,
+        tick: sorted[i].tick,
         note: None,
     })
 }
@@ -689,7 +664,7 @@ fn show_text_events_detail(
 ) -> Option<JumpRequest> {
     with_text_cache(doc, kind, |doc, events| {
         let edit_salt = format!("{}_edit", table_id);
-        let (page_start, _) = event_table_section(
+        event_table_section(
             ui,
             state,
             table_id,
@@ -702,11 +677,9 @@ fn show_text_events_detail(
                 (label, 200.0),
             ],
             |item| item.0,
-            |i, row, click_key, state, item, page_ticks, page_start| {
+            |i, row, click_key, state, item, page_ticks| {
                 let (tick, text) = item;
-                cell_row_header(
-                    row, state, &edit_salt, i, page_start, *tick, page_ticks, click_key,
-                );
+                cell_row_header(row, state, &edit_salt, i, *tick, page_ticks, click_key);
                 cell_editable(
                     row,
                     &edit_salt,
@@ -746,7 +719,7 @@ fn show_text_events_detail(
             TextEventKind::Chord { track } => apply_chord_ops(ui, doc, state, &edit_salt, track),
         }
         take_row_click(ui, table_id).map(|i| JumpRequest {
-            tick: events[page_start + i].0,
+            tick: events[i].0,
             note: None,
         })
     })
@@ -795,7 +768,7 @@ fn show_notes_detail(
     }
     // 短暂取出 owned 数据，避免与 `&mut state`（分页/行选择）借用冲突。
     let (cache_doc, cache_track, cache_rev, notes) = state.notes_cache.take()?;
-    let (page_start, _) = event_table_section(
+    event_table_section(
         ui,
         state,
         "eb_notes",
@@ -813,7 +786,7 @@ fn show_notes_detail(
             (t!("event_browser.header.velocity").as_ref(), 50.0),
         ],
         |n| n.start_tick,
-        |i, row, click_key, state, n, page_ticks, page_start| {
+        |i, row, click_key, state, n, page_ticks| {
             let note_ref = NoteRef {
                 id: n.id,
                 start_tick: n.start_tick,
@@ -828,7 +801,6 @@ fn show_notes_detail(
                 state,
                 "eb_notes_edit",
                 i,
-                page_start,
                 n.start_tick,
                 page_ticks,
                 click_key,
@@ -908,7 +880,7 @@ fn show_notes_detail(
     );
     // 音符：切到音符所在 track
     let jump = take_row_click(ui, "eb_notes").map(|i| {
-        let n = &notes[page_start + i];
+        let n = &notes[i];
         JumpRequest {
             tick: n.start_tick,
             note: Some((track, n.key)),
@@ -930,7 +902,7 @@ fn show_pc_detail(
     track: u16,
 ) -> Option<JumpRequest> {
     with_pc_cache(doc, track, |doc, events| {
-        let (page_start, _) = event_table_section(
+        event_table_section(
             ui,
             state,
             "eb_pc",
@@ -943,17 +915,8 @@ fn show_pc_detail(
                 (t!("event_browser.header.program").as_ref(), 50.0),
             ],
             |e| e.tick,
-            |i, row, click_key, state, e, page_ticks, page_start| {
-                cell_row_header(
-                    row,
-                    state,
-                    "eb_pc_edit",
-                    i,
-                    page_start,
-                    e.tick,
-                    page_ticks,
-                    click_key,
-                );
+            |i, row, click_key, state, e, page_ticks| {
+                cell_row_header(row, state, "eb_pc_edit", i, e.tick, page_ticks, click_key);
                 cell_editable(
                     row,
                     "eb_pc_edit",
@@ -985,7 +948,7 @@ fn show_pc_detail(
         apply_pc_ops(ui, doc, state, "eb_pc_edit", track);
         // PC：切到所在 track，仅跳转不闪烁
         take_row_click(ui, "eb_pc").map(|i| JumpRequest {
-            tick: events[page_start + i].tick,
+            tick: events[i].tick,
             note: Some((track, 0)),
         })
     })
@@ -1366,7 +1329,6 @@ pub(super) fn show_track_detail(
 
 #[cfg(test)]
 mod tests {
-    use super::super::table::EVENT_PAGE_SIZE;
     use super::*;
     use yinhe_types::SegmentShape;
     use yinhe_types::automation::AutomationEvent;
@@ -1386,47 +1348,16 @@ mod tests {
         }
     }
 
+    /// 行号 → tick 索引越界安全（虚拟滚动会请求超出末尾的行号）。
     #[test]
-    fn total_pages_rounds_up_and_is_at_least_one() {
-        assert_eq!(total_pages(0), 1);
-        assert_eq!(total_pages(1), 1);
-        assert_eq!(total_pages(EVENT_PAGE_SIZE), 1);
-        assert_eq!(total_pages(EVENT_PAGE_SIZE + 1), 2);
-    }
-
-    #[test]
-    fn paginate_clamps_out_of_range_page() {
-        let mut state = EventBrowserState::default();
-        let items: Vec<u32> = (0..(EVENT_PAGE_SIZE * 3)).map(|i| i as u32).collect();
-        state.event_page = 99;
-        let (page, start, slice) = paginate(&mut state, &items);
-        assert_eq!(page, 2);
-        assert_eq!(state.event_page, 2);
-        assert_eq!(start, EVENT_PAGE_SIZE * 2);
-        assert_eq!(slice.len(), EVENT_PAGE_SIZE);
-        assert_eq!(slice[0], (EVENT_PAGE_SIZE * 2) as u32);
-    }
-
-    #[test]
-    fn paginate_slices_tail_page() {
-        let mut state = EventBrowserState::default();
-        let items: Vec<u32> = (0..(EVENT_PAGE_SIZE + 7)).map(|i| i as u32).collect();
-        state.event_page = 1;
-        let (page, start, slice) = paginate(&mut state, &items);
-        assert_eq!(page, 1);
-        assert_eq!(start, EVENT_PAGE_SIZE);
-        assert_eq!(slice.len(), 7);
-        assert_eq!(slice[6], (EVENT_PAGE_SIZE + 6) as u32);
-    }
-
-    #[test]
-    fn paginate_empty_list_is_first_page() {
-        let mut state = EventBrowserState::default();
-        let items: Vec<u32> = Vec::new();
-        let (page, start, slice) = paginate(&mut state, &items);
-        assert_eq!(page, 0);
-        assert_eq!(start, 0);
-        assert!(slice.is_empty());
+    fn tick_index_is_bounds_safe() {
+        let data = [10u32, 20, 30];
+        let f = |i: usize| data[i];
+        let ticks = TickIndex::new(data.len(), &f);
+        assert_eq!(ticks.len, 3);
+        assert_eq!(ticks.get(0), 10);
+        assert_eq!(ticks.get(2), 30);
+        assert_eq!(ticks.get(9), 0, "越界返回 0 而不是 panic");
     }
 
     #[test]

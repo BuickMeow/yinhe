@@ -18,8 +18,8 @@ pub struct EventBrowserState {
     pub expanded_keys: std::collections::HashSet<ArchiveKey>,
     pub selected_item: Option<SelectedItem>,
     pub selected_track: Option<u16>,
-    /// 事件列表当前页码（0-based）。切换 selected_item 时重置为 0。
-    pub event_page: usize,
+    /// 事件表格的行高 / 滚动偏移（缩放与虚拟滚动状态）。
+    pub list_layout: super::table::EventListLayout,
     /// 表格行多选：选中的事件 tick 集合。切换 selected_item 时自动清空。
     pub selected_ticks: std::collections::HashSet<u32>,
     /// 上次单击的 tick（用于 Shift 范围选择锚点）。
