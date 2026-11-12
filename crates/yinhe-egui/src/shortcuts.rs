@@ -333,7 +333,10 @@ fn shortcut_text_cache_id() -> egui::Id {
 /// 每帧刷新快捷键显示文本（`App` 调用；键位设置变化后自动跟上）。
 pub fn publish_shortcut_text(ctx: &egui::Context, keybindings: &Keybindings) {
     let mut map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    for &id in yinhe_editor_core::shortcuts::ALL_ACTION_IDS {
+    let ids = yinhe_editor_core::shortcuts::ALL_ACTION_IDS
+        .iter()
+        .chain(yinhe_editor_core::shortcuts::CONTEXT_ACTION_IDS);
+    for &id in ids {
         // 只显示第一个快捷键：菜单项右栏宽度有限，多个组合会挤掉主文本。
         if let Some(combo) = keybindings.get(id).first() {
             map.insert(id.to_string(), display_combo(combo));
@@ -414,6 +417,30 @@ pub fn action_label_key(action_id: &str) -> &'static str {
         sc::ACTION_TOOL_ERASER => "shortcuts.tool_eraser",
         sc::ACTION_TOOL_LINE => "shortcuts.tool_line",
         sc::ACTION_TOOL_BRUSH => "shortcuts.tool_brush",
+        // 轨道操作（菜单可达，默认无快捷键）
+        sc::ACTION_TRACK_ADD_BELOW => "arrange.add_below",
+        sc::ACTION_TRACK_ADD_ABOVE => "arrange.add_above",
+        sc::ACTION_TRACK_MOVE_UP => "arrange.move_up",
+        sc::ACTION_TRACK_MOVE_DOWN => "arrange.move_down",
+        sc::ACTION_TRACK_DELETE => "arrange.delete_track",
+        sc::ACTION_TRACK_RENAME => "arrange.rename_track",
+        sc::ACTION_TRACK_PROPERTIES => "arrange.track_properties",
+        sc::ACTION_ADD_AUTOMATION => "arrange.add_automation",
+        sc::ACTION_DELETE_AUTOMATION => "arrange.delete_automation",
+        // 音频片段操作
+        sc::ACTION_AUDIO_SPLIT => "arrange.audio_split",
+        sc::ACTION_AUDIO_DUPLICATE => "arrange.audio_duplicate",
+        sc::ACTION_AUDIO_REVERSE => "arrange.audio_reverse",
+        sc::ACTION_AUDIO_NORMALIZE => "arrange.audio_normalize",
+        sc::ACTION_AUDIO_GAIN_UP => "arrange.audio_gain_up",
+        sc::ACTION_AUDIO_GAIN_DOWN => "arrange.audio_gain_down",
+        sc::ACTION_AUDIO_GAIN_RESET => "arrange.audio_gain_reset",
+        sc::ACTION_AUDIO_DELETE => "arrange.audio_delete",
+        // 事件 / 标记
+        sc::ACTION_EVENT_INSERT_ABOVE => "event_browser.menu.insert_above",
+        sc::ACTION_EVENT_INSERT_BELOW => "event_browser.menu.insert_below",
+        sc::ACTION_DELETE_MARKER => "menu.delete_marker",
+        sc::ACTION_INSERT_MARKER => "menu.insert_marker",
         _ => "shortcuts.unknown",
     }
 }

@@ -81,6 +81,63 @@ pub const ACTION_TOOL_ERASER: &str = "tool_eraser";
 pub const ACTION_TOOL_LINE: &str = "tool_line";
 pub const ACTION_TOOL_BRUSH: &str = "tool_brush";
 
+// ── 轨道操作（右键菜单，默认无快捷键，可分配）──
+pub const ACTION_TRACK_ADD_BELOW: &str = "track_add_below";
+pub const ACTION_TRACK_ADD_ABOVE: &str = "track_add_above";
+pub const ACTION_TRACK_MOVE_UP: &str = "track_move_up";
+pub const ACTION_TRACK_MOVE_DOWN: &str = "track_move_down";
+pub const ACTION_TRACK_DELETE: &str = "track_delete";
+pub const ACTION_TRACK_RENAME: &str = "track_rename";
+pub const ACTION_TRACK_PROPERTIES: &str = "track_properties";
+pub const ACTION_ADD_AUTOMATION: &str = "add_automation";
+pub const ACTION_DELETE_AUTOMATION: &str = "delete_automation";
+
+// ── 音频片段操作（右键菜单，默认无快捷键，可分配）──
+pub const ACTION_AUDIO_SPLIT: &str = "audio_split";
+pub const ACTION_AUDIO_DUPLICATE: &str = "audio_duplicate";
+pub const ACTION_AUDIO_REVERSE: &str = "audio_reverse";
+pub const ACTION_AUDIO_NORMALIZE: &str = "audio_normalize";
+pub const ACTION_AUDIO_GAIN_UP: &str = "audio_gain_up";
+pub const ACTION_AUDIO_GAIN_DOWN: &str = "audio_gain_down";
+pub const ACTION_AUDIO_GAIN_RESET: &str = "audio_gain_reset";
+pub const ACTION_AUDIO_DELETE: &str = "audio_delete";
+
+// ── 事件 / 标记（右键菜单，默认无快捷键，可分配）──
+pub const ACTION_EVENT_INSERT_ABOVE: &str = "event_insert_above";
+pub const ACTION_EVENT_INSERT_BELOW: &str = "event_insert_below";
+pub const ACTION_DELETE_MARKER: &str = "delete_marker";
+/// 在光标处插入标签（插入菜单项）。
+pub const ACTION_INSERT_MARKER: &str = "insert_marker";
+
+/// 上下文动作（右键菜单可达，默认不分配快捷键）。
+///
+/// 与 `ALL_ACTION_IDS` 的区别：这些动作作用对象是「当前选中的轨道 / 音频片段 /
+/// 光标位置」，不是音符选区。默认留空（不与既有键位打架），但用户可以在设置页
+/// 自行分配；`handle_keyboard_shortcuts` 也认这一组。
+pub const CONTEXT_ACTION_IDS: &[&str] = &[
+    ACTION_TRACK_ADD_BELOW,
+    ACTION_TRACK_ADD_ABOVE,
+    ACTION_TRACK_MOVE_UP,
+    ACTION_TRACK_MOVE_DOWN,
+    ACTION_TRACK_DELETE,
+    ACTION_TRACK_RENAME,
+    ACTION_TRACK_PROPERTIES,
+    ACTION_ADD_AUTOMATION,
+    ACTION_DELETE_AUTOMATION,
+    ACTION_AUDIO_SPLIT,
+    ACTION_AUDIO_DUPLICATE,
+    ACTION_AUDIO_REVERSE,
+    ACTION_AUDIO_NORMALIZE,
+    ACTION_AUDIO_GAIN_UP,
+    ACTION_AUDIO_GAIN_DOWN,
+    ACTION_AUDIO_GAIN_RESET,
+    ACTION_AUDIO_DELETE,
+    ACTION_EVENT_INSERT_ABOVE,
+    ACTION_EVENT_INSERT_BELOW,
+    ACTION_DELETE_MARKER,
+    ACTION_INSERT_MARKER,
+];
+
 /// 全部可配置动作（设置页展示与默认值完整性检查共用）。
 pub const ALL_ACTION_IDS: &[&str] = &[
     ACTION_NEW_PROJECT,
@@ -128,6 +185,30 @@ pub const ALL_ACTION_IDS: &[&str] = &[
     ACTION_TOOL_ERASER,
     ACTION_TOOL_LINE,
     ACTION_TOOL_BRUSH,
+    // 轨道操作（菜单可达，默认无快捷键）
+    ACTION_TRACK_ADD_BELOW,
+    ACTION_TRACK_ADD_ABOVE,
+    ACTION_TRACK_MOVE_UP,
+    ACTION_TRACK_MOVE_DOWN,
+    ACTION_TRACK_DELETE,
+    ACTION_TRACK_RENAME,
+    ACTION_TRACK_PROPERTIES,
+    ACTION_ADD_AUTOMATION,
+    ACTION_DELETE_AUTOMATION,
+    // 音频片段操作
+    ACTION_AUDIO_SPLIT,
+    ACTION_AUDIO_DUPLICATE,
+    ACTION_AUDIO_REVERSE,
+    ACTION_AUDIO_NORMALIZE,
+    ACTION_AUDIO_GAIN_UP,
+    ACTION_AUDIO_GAIN_DOWN,
+    ACTION_AUDIO_GAIN_RESET,
+    ACTION_AUDIO_DELETE,
+    // 事件 / 标记
+    ACTION_EVENT_INSERT_ABOVE,
+    ACTION_EVENT_INSERT_BELOW,
+    ACTION_DELETE_MARKER,
+    ACTION_INSERT_MARKER,
 ];
 
 /// 快捷键表：动作 id → 快捷键列表（空列表 = 无快捷键）。
@@ -360,5 +441,40 @@ mod tests {
         // 移除其中一个，另一个保留
         kb.remove(ACTION_SAVE, &combo(true, false, "S"));
         assert_eq!(kb.get(ACTION_SAVE), vec![combo(false, true, "F2")]);
+    }
+
+    /// 上下文动作（轨道/片段/事件）默认不分配快捷键：
+    /// 它们菜单可达，用户可自行分配，但强塞默认键会和现有键位打架。
+    #[test]
+    fn context_actions_have_no_default_combo() {
+        let kb = Keybindings::default();
+        for &id in CONTEXT_ACTION_IDS {
+            assert!(
+                kb.get(id).is_empty(),
+                "上下文动作 {id} 不应有默认快捷键（菜单可达，留给用户分配）"
+            );
+        }
+        // 但必须能正常分配 / 撤销。
+        let mut kb = Keybindings::default();
+        let combo = KeyCombo {
+            command: true,
+            shift: true,
+            alt: false,
+            key: "T".to_string(),
+        };
+        kb.set(ACTION_TRACK_DELETE, vec![combo.clone()]);
+        assert_eq!(kb.get(ACTION_TRACK_DELETE), vec![combo]);
+    }
+
+    /// 上下文动作必须是 `ALL_ACTION_IDS` 的子集：设置页列得出来，
+    /// `publish_shortcut_text` 才会给菜单提供快捷键文本。
+    #[test]
+    fn context_actions_subset_of_all() {
+        for &id in CONTEXT_ACTION_IDS {
+            assert!(
+                ALL_ACTION_IDS.contains(&id),
+                "{id} 必须在 ALL_ACTION_IDS 里，否则设置页看不到"
+            );
+        }
     }
 }

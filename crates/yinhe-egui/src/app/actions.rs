@@ -40,6 +40,9 @@ pub(crate) struct KeyboardActions {
     pub stop_play: bool,
     /// 编辑动作（删除/复制/移调/变速/翻转/人性化/填缝/合并/网格切割/去重…）。
     pub edit_action: Option<EditAction>,
+    /// 上下文动作 id（轨道/片段/事件类，见 `ACTION_TRACK_*` 等）。
+    /// 这些动作默认没有快捷键，用户分配后走这里。
+    pub context_action: Option<&'static str>,
     /// 工具切换快捷键触发的目标工具（None = 本帧未触发）。
     pub tool_to_activate: Option<crate::widgets::tools_panel::Tool>,
     /// 文件菜单动作（非 macOS 平台由键盘触发；macOS 走原生菜单栏）。
@@ -132,6 +135,17 @@ impl App {
                 if !id.is_empty() && matches(id, key, modifiers) {
                     actions.edit_action = Some(action);
                     break;
+                }
+            }
+
+            // ── 上下文动作（轨道 / 片段 / 事件，默认无快捷键）──
+            // 用户若在设置页分配了键位，这里才能触发；未分配时 `kb.get` 返回空列表。
+            if actions.edit_action.is_none() {
+                for &id in yinhe_editor_core::shortcuts::CONTEXT_ACTION_IDS {
+                    if matches(id, key, modifiers) {
+                        actions.context_action = Some(id);
+                        break;
+                    }
                 }
             }
 
@@ -837,6 +851,142 @@ impl App {
 }
 
 impl App {
+    /// 上下文动作（右键菜单可达，用户可自行分配快捷键）。
+    ///
+    /// 这些动作不在 `EditAction` 里：它们作用的对象是「当前选中的轨道 / 音频片段 /
+    /// 光标位置」，而不是音符选区，硬塞进 `EditAction` 会让分发语义变糊。
+    /// 键盘和右键菜单都调用这一个入口，保证两边行为一致。
+    ///
+    /// 返回是否真的执行了（`false` = 当前上下文不适用，例如没选中轨道）。
+    pub(crate) fn handle_context_action(&mut self, action_id: &str) -> bool {
+        use yinhe_editor_core::shortcuts as sc;
+        let Some(idx) = self.workspace.active_doc else {
+            return false;
+        };
+        match action_id {
+            sc::ACTION_TRACK_ADD_BELOW | sc::ACTION_TRACK_ADD_ABOVE => {
+                let doc = &mut self.workspace.documents[idx];
+                // 「下方」= 当前选中轨之后；「上方」= 之前。
+                let after = doc.edit.track_selected.iter().min().copied();
+                let last = doc.data.model.tracks.len().saturating_sub(1);
+                let after_idx = match (action_id, after) {
+                    (sc::ACTION_TRACK_ADD_ABOVE, Some(i)) => i.saturating_sub(1) as usize,
+                    (_, Some(i)) => i as usize,
+                    (_, None) => last,
+                };
+                let before = doc.capture_snapshot();
+                if let Some(undo) = doc.add_track(after_idx) {
+                    doc.push_undo(undo, t!("undo.add_track").as_ref(), before);
+                }
+                self.notify_audio_model_changed();
+                true
+            }
+            sc::ACTION_TRACK_MOVE_UP | sc::ACTION_TRACK_MOVE_DOWN => {
+                let doc = &mut self.workspace.documents[idx];
+                let Some(&sel) = doc.edit.track_selected.iter().min() else {
+                    return false;
+                };
+                let idx = sel as usize;
+                let label = if action_id == sc::ACTION_TRACK_MOVE_UP {
+                    t!("undo.move_track_up")
+                } else {
+                    t!("undo.move_track_down")
+                };
+                let target = if action_id == sc::ACTION_TRACK_MOVE_UP {
+                    idx.checked_sub(1)
+                } else {
+                    Some(idx + 1).filter(|&n| n < doc.data.model.tracks.len())
+                };
+                let Some(target) = target else {
+                    return false;
+                };
+                let before = doc.capture_snapshot();
+                if let Some(undo) = doc.move_track(idx, target) {
+                    doc.push_undo(undo, label.as_ref(), before);
+                }
+                self.notify_audio_model_changed();
+                true
+            }
+            sc::ACTION_TRACK_DELETE => {
+                let doc = &mut self.workspace.documents[idx];
+                let Some(&sel) = doc.edit.track_selected.iter().min() else {
+                    return false;
+                };
+                let before = doc.capture_snapshot();
+                if let Some(undo) = doc.remove_track(sel as usize) {
+                    doc.push_undo(undo, t!("undo.remove_track").as_ref(), before);
+                }
+                self.notify_audio_model_changed();
+                true
+            }
+            sc::ACTION_TRACK_PROPERTIES => {
+                let doc = &mut self.workspace.documents[idx];
+                if doc.edit.track_selected.is_empty() {
+                    return false;
+                }
+                self.right_tab = Some(crate::right_panel::RightTab::Info);
+                self.info_content = Some(crate::right_panel::InfoContent::Track);
+                true
+            }
+            sc::ACTION_ADD_AUTOMATION => {
+                // 需要用户挑参数：记下请求，由主循环（有 `ui.ctx()`）打开选择器。
+                let doc = &mut self.workspace.documents[idx];
+                let Some(&sel) = doc.edit.track_selected.iter().min() else {
+                    return false;
+                };
+                self.pending_automation_picker = Some(sel as usize);
+                true
+            }
+            sc::ACTION_DELETE_AUTOMATION => {
+                let doc = &mut self.workspace.documents[idx];
+                let Some(&sel) = doc.edit.track_selected.iter().min() else {
+                    return false;
+                };
+                let Some(lane) = doc
+                    .data
+                    .model
+                    .tracks
+                    .get(sel as usize)
+                    .and_then(|t| t.automation_lanes.len().checked_sub(1))
+                else {
+                    return false;
+                };
+                let before = doc.capture_snapshot();
+                if let Some(undo) = doc.remove_automation_lane(sel as usize, lane) {
+                    doc.push_undo(undo, t!("undo.delete_automation_lane").as_ref(), before);
+                }
+                self.notify_audio_model_changed();
+                true
+            }
+            sc::ACTION_AUDIO_DELETE => self.delete_selected_audio_clips(),
+            sc::ACTION_INSERT_MARKER => {
+                self.insert_marker_at_cursor();
+                true
+            }
+            sc::ACTION_DELETE_MARKER => {
+                let doc = &mut self.workspace.documents[idx];
+                let Some(tick) = doc.edit.cursor_tick.map(|t| t.max(0.0) as u32) else {
+                    return false;
+                };
+                let has = doc
+                    .data
+                    .model
+                    .conductor
+                    .markers
+                    .iter()
+                    .any(|m| m.tick == tick);
+                if !has {
+                    return false;
+                }
+                doc.delete_marker_with_undo(tick, t!("undo.delete_marker_event").as_ref());
+                true
+            }
+            // 其余音频片段操作（分割/复制/反向/归一化/增益）需要指针位置或片段
+            // 上下文，只在右键菜单里提供；这里不猜测用户意图。
+            _ => false,
+        }
+    }
+
     /// 处理编辑动作（transport bar 编辑 popup / 图钉与 macOS 菜单共用）。
     /// 与选择按钮共用的动作（删除/重复/移调/变速/翻转/人性化/填缝/合并/
     /// 网格切割）统一转发 `handle_selection_action`，避免两套实现漂移；

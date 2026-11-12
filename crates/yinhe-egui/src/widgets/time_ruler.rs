@@ -401,10 +401,11 @@ pub(crate) fn marker_band(
         let tick = label.tick;
         resp.context_menu(|ui| {
             if ui
-                .add(crate::widgets::menu::menu_item_button(
+                .add(crate::widgets::menu::menu_item_action(
                     ui,
                     false,
                     rust_i18n::t!("menu.delete_marker").as_ref(),
+                    yinhe_editor_core::shortcuts::ACTION_DELETE_MARKER,
                 ))
                 .clicked()
             {

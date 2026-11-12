@@ -878,6 +878,7 @@ settings.shortcuts.add: "ショートカットを追加"
 settings.shortcuts.group_file: "ファイル"
 settings.shortcuts.group_edit: "編集"
 settings.shortcuts.group_operation: "操作"
+settings.shortcuts.group_context: "トラックとクリップ"
 settings.shortcuts.group_play: "再生"
 settings.shortcuts.group_tools: "ツール"
 

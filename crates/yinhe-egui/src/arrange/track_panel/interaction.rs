@@ -7,6 +7,7 @@ use yinhe_core::TrackInfo;
 use yinhe_types::{ArRow, ArRowLayout, AutomationTarget};
 
 use super::types::TrackAction;
+use yinhe_editor_core::shortcuts;
 
 /// 处理行点击、右键菜单、拖拽排序与键盘导航
 /// 从 `track_panel::show` 尾部抽取，保持 `show` 高内聚为布局+渲染
@@ -164,10 +165,11 @@ pub fn handle_interactions(
 
         if !is_conductor
             && ui
-                .add(crate::widgets::menu::menu_item_button(
+                .add(crate::widgets::menu::menu_item_action(
                     ui,
                     false,
                     t!("arrange.rename_track").as_ref(),
+                    shortcuts::ACTION_TRACK_RENAME,
                 ))
                 .clicked()
         {
@@ -177,10 +179,11 @@ pub fn handle_interactions(
             ui.close();
         }
         if ui
-            .add(crate::widgets::menu::menu_item_button(
+            .add(crate::widgets::menu::menu_item_action(
                 ui,
                 false,
                 t!("arrange.track_properties").as_ref(),
+                shortcuts::ACTION_TRACK_PROPERTIES,
             ))
             .clicked()
         {
@@ -191,10 +194,11 @@ pub fn handle_interactions(
 
         if let Some(lane_idx) = sub {
             if ui
-                .add(crate::widgets::menu::menu_item_button(
+                .add(crate::widgets::menu::menu_item_action(
                     ui,
                     false,
                     t!("arrange.delete_automation"),
+                    shortcuts::ACTION_DELETE_AUTOMATION,
                 ))
                 .clicked()
             {
@@ -206,10 +210,11 @@ pub fn handle_interactions(
 
         if !is_conductor {
             if ui
-                .add(crate::widgets::menu::menu_item_button(
+                .add(crate::widgets::menu::menu_item_action(
                     ui,
                     false,
                     t!("arrange.add_below"),
+                    shortcuts::ACTION_TRACK_ADD_BELOW,
                 ))
                 .clicked()
             {
@@ -219,10 +224,11 @@ pub fn handle_interactions(
                 ui.close();
             }
             if ui
-                .add(crate::widgets::menu::menu_item_button(
+                .add(crate::widgets::menu::menu_item_action(
                     ui,
                     false,
                     t!("arrange.add_above"),
+                    shortcuts::ACTION_TRACK_ADD_ABOVE,
                 ))
                 .clicked()
             {
@@ -235,10 +241,11 @@ pub fn handle_interactions(
             if idx > 0
                 && conductor_track_idx != Some((idx - 1) as u16)
                 && ui
-                    .add(crate::widgets::menu::menu_item_button(
+                    .add(crate::widgets::menu::menu_item_action(
                         ui,
                         false,
                         t!("arrange.move_up"),
+                        shortcuts::ACTION_TRACK_MOVE_UP,
                     ))
                     .clicked()
             {
@@ -247,10 +254,11 @@ pub fn handle_interactions(
             }
             if idx < num_tracks - 1
                 && ui
-                    .add(crate::widgets::menu::menu_item_button(
+                    .add(crate::widgets::menu::menu_item_action(
                         ui,
                         false,
                         t!("arrange.move_down"),
+                        shortcuts::ACTION_TRACK_MOVE_DOWN,
                     ))
                     .clicked()
             {
@@ -259,10 +267,11 @@ pub fn handle_interactions(
             }
             ui.separator();
             if ui
-                .add(crate::widgets::menu::menu_item_button(
+                .add(crate::widgets::menu::menu_item_action(
                     ui,
                     false,
                     t!("arrange.delete_track"),
+                    shortcuts::ACTION_TRACK_DELETE,
                 ))
                 .clicked()
             {
@@ -273,10 +282,11 @@ pub fn handle_interactions(
             // 「添加自动化」：自动化属于**乐器设备**（XSynth / 插件），不属于音轨。
             // 设备参数统一在独立窗口里选择（XSynth 十几个、插件可达数千个）。
             if ui
-                .add(crate::widgets::menu::menu_item_button(
+                .add(crate::widgets::menu::menu_item_action(
                     ui,
                     false,
                     t!("arrange.add_automation"),
+                    shortcuts::ACTION_ADD_AUTOMATION,
                 ))
                 .clicked()
             {
@@ -284,10 +294,11 @@ pub fn handle_interactions(
                 ui.close();
             }
         } else if ui
-            .add(crate::widgets::menu::menu_item_button(
+            .add(crate::widgets::menu::menu_item_action(
                 ui,
                 false,
                 t!("arrange.add_below"),
+                shortcuts::ACTION_TRACK_ADD_BELOW,
             ))
             .clicked()
         {

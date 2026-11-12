@@ -231,10 +231,11 @@ pub(super) fn cell_row_header(
             ui.set_min_width(160.0);
             ui.set_max_width(160.0);
             if ui
-                .add(crate::widgets::menu::menu_item_button(
+                .add(crate::widgets::menu::menu_item_action(
                     ui,
                     false,
                     t!("event_browser.menu.insert_above").to_string(),
+                    yinhe_editor_core::shortcuts::ACTION_EVENT_INSERT_ABOVE,
                 ))
                 .clicked()
             {
@@ -245,10 +246,11 @@ pub(super) fn cell_row_header(
                 ui.close();
             }
             if ui
-                .add(crate::widgets::menu::menu_item_button(
+                .add(crate::widgets::menu::menu_item_action(
                     ui,
                     false,
                     t!("event_browser.menu.insert_below").to_string(),
+                    yinhe_editor_core::shortcuts::ACTION_EVENT_INSERT_BELOW,
                 ))
                 .clicked()
             {

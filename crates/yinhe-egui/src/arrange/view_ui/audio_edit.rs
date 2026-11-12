@@ -187,10 +187,11 @@ pub(crate) fn frame(
         let selected_ids = selected_ids_for(edit, track, clip.id);
         resp.context_menu(|ui| {
             if ui
-                .add(crate::widgets::menu::menu_item_button(
+                .add(crate::widgets::menu::menu_item_action(
                     ui,
                     false,
                     rust_i18n::t!("arrange.audio_split").as_ref(),
+                    yinhe_editor_core::shortcuts::ACTION_AUDIO_SPLIT,
                 ))
                 .clicked()
             {
@@ -206,10 +207,11 @@ pub(crate) fn frame(
                 ui.close();
             }
             if ui
-                .add(crate::widgets::menu::menu_item_button(
+                .add(crate::widgets::menu::menu_item_action(
                     ui,
                     false,
                     rust_i18n::t!("arrange.audio_duplicate").as_ref(),
+                    yinhe_editor_core::shortcuts::ACTION_AUDIO_DUPLICATE,
                 ))
                 .clicked()
             {
@@ -227,10 +229,11 @@ pub(crate) fn frame(
                 ui.close();
             }
             if ui
-                .add(crate::widgets::menu::menu_item_button(
+                .add(crate::widgets::menu::menu_item_action(
                     ui,
                     false,
                     rust_i18n::t!("arrange.audio_reverse").as_ref(),
+                    yinhe_editor_core::shortcuts::ACTION_AUDIO_REVERSE,
                 ))
                 .clicked()
             {
@@ -241,10 +244,11 @@ pub(crate) fn frame(
                 ui.close();
             }
             if ui
-                .add(crate::widgets::menu::menu_item_button(
+                .add(crate::widgets::menu::menu_item_action(
                     ui,
                     false,
                     rust_i18n::t!("arrange.audio_normalize").as_ref(),
+                    yinhe_editor_core::shortcuts::ACTION_AUDIO_NORMALIZE,
                 ))
                 .clicked()
             {
@@ -254,10 +258,11 @@ pub(crate) fn frame(
             }
             ui.separator();
             if ui
-                .add(crate::widgets::menu::menu_item_button(
+                .add(crate::widgets::menu::menu_item_action(
                     ui,
                     false,
                     rust_i18n::t!("arrange.audio_gain_up").as_ref(),
+                    yinhe_editor_core::shortcuts::ACTION_AUDIO_GAIN_UP,
                 ))
                 .clicked()
             {
@@ -269,10 +274,11 @@ pub(crate) fn frame(
                 ui.close();
             }
             if ui
-                .add(crate::widgets::menu::menu_item_button(
+                .add(crate::widgets::menu::menu_item_action(
                     ui,
                     false,
                     rust_i18n::t!("arrange.audio_gain_down").as_ref(),
+                    yinhe_editor_core::shortcuts::ACTION_AUDIO_GAIN_DOWN,
                 ))
                 .clicked()
             {
@@ -284,10 +290,11 @@ pub(crate) fn frame(
                 ui.close();
             }
             if ui
-                .add(crate::widgets::menu::menu_item_button(
+                .add(crate::widgets::menu::menu_item_action(
                     ui,
                     false,
                     rust_i18n::t!("arrange.audio_gain_reset").as_ref(),
+                    yinhe_editor_core::shortcuts::ACTION_AUDIO_GAIN_RESET,
                 ))
                 .clicked()
             {
@@ -301,7 +308,7 @@ pub(crate) fn frame(
                     ui,
                     false,
                     rust_i18n::t!("arrange.audio_delete").as_ref(),
-                    yinhe_editor_core::shortcuts::ACTION_DELETE,
+                    yinhe_editor_core::shortcuts::ACTION_AUDIO_DELETE,
                 ))
                 .clicked()
             {

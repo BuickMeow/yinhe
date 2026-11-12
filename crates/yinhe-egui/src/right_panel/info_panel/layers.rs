@@ -152,10 +152,11 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) -> bool {
             if !over_icons {
                 resp.context_menu(|ui| {
                     if ui
-                        .add(crate::widgets::menu::menu_item_button(
+                        .add(crate::widgets::menu::menu_item_action(
                             ui,
                             false,
                             rust_i18n::t!("arrange.rename_track").as_ref(),
+                            yinhe_editor_core::shortcuts::ACTION_TRACK_RENAME,
                         ))
                         .clicked()
                     {

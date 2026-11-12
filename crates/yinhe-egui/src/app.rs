@@ -255,6 +255,9 @@ pub struct App {
     pub(crate) new_track_dialog: crate::dialogs::new_track::NewTrackDialogState,
     /// 「添加自动化」窗口（自动属于设备：XSynth / 插件）。
     pub(crate) automation_picker: crate::dialogs::automation_picker::AutomationPickerState,
+    /// 「添加自动化」的待办请求（轨道索引）：快捷键触发时由主循环带 `ui.ctx()`
+    /// 打开选择器——深层动作层拿不到 egui 上下文。
+    pub(crate) pending_automation_picker: Option<usize>,
 
     // ── 敲击测速对话框状态（播放菜单触发）──
     pub(crate) tap_tempo_dialog: crate::dialogs::tap_tempo::TapTempoDialogState,
@@ -381,6 +384,7 @@ impl App {
             should_exit: false,
             new_track_dialog: crate::dialogs::new_track::NewTrackDialogState::default(),
             automation_picker: crate::dialogs::automation_picker::AutomationPickerState::default(),
+            pending_automation_picker: None,
             tap_tempo_dialog: crate::dialogs::tap_tempo::TapTempoDialogState::default(),
             filter_dialog: crate::dialogs::filter::FilterDialogState::default(),
             scale_dialog: crate::dialogs::scale::ScaleDialogState::default(),

@@ -66,6 +66,34 @@ const TOOL_ACTIONS: [&str; 8] = [
     shortcuts::ACTION_TOOL_BRUSH,
 ];
 
+/// 轨道 / 音频 / 事件操作（右键菜单可达，默认不分配快捷键）。
+///
+/// 列进设置页是为了让用户自己分配：这些操作在右键菜单里天天用，
+/// 但每个都强塞一个默认键会和现有键位打架。
+const CONTEXT_ACTIONS: [&str; 21] = [
+    shortcuts::ACTION_TRACK_ADD_BELOW,
+    shortcuts::ACTION_TRACK_ADD_ABOVE,
+    shortcuts::ACTION_TRACK_MOVE_UP,
+    shortcuts::ACTION_TRACK_MOVE_DOWN,
+    shortcuts::ACTION_TRACK_DELETE,
+    shortcuts::ACTION_TRACK_RENAME,
+    shortcuts::ACTION_TRACK_PROPERTIES,
+    shortcuts::ACTION_ADD_AUTOMATION,
+    shortcuts::ACTION_DELETE_AUTOMATION,
+    shortcuts::ACTION_AUDIO_SPLIT,
+    shortcuts::ACTION_AUDIO_DUPLICATE,
+    shortcuts::ACTION_AUDIO_REVERSE,
+    shortcuts::ACTION_AUDIO_NORMALIZE,
+    shortcuts::ACTION_AUDIO_GAIN_UP,
+    shortcuts::ACTION_AUDIO_GAIN_DOWN,
+    shortcuts::ACTION_AUDIO_GAIN_RESET,
+    shortcuts::ACTION_AUDIO_DELETE,
+    shortcuts::ACTION_EVENT_INSERT_ABOVE,
+    shortcuts::ACTION_EVENT_INSERT_BELOW,
+    shortcuts::ACTION_DELETE_MARKER,
+    shortcuts::ACTION_INSERT_MARKER,
+];
+
 /// 快捷键配置页：列出全部可配置动作。
 /// 每个动作可绑定多个快捷键：第一个快捷键与动作名同行，其余各占一行；
 /// 点击快捷键按钮重新录制，点击 + 追加一个，点击 × 移除。
@@ -133,10 +161,11 @@ pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
     // 分组只决定「显示在哪个小标题下」，条目不手写：直接按动作 id 归类，
     // 任何新增到 `ALL_ACTION_IDS` 的动作都会自动出现在设置页（漏列=快捷键
     // 无法配置，是之前 12 个动作缺失的根因）。
-    let groups: [(&str, &[&str]); 5] = [
+    let groups: [(&str, &[&str]); 6] = [
         ("settings.shortcuts.group_file", &FILE_ACTIONS),
         ("settings.shortcuts.group_edit", &EDIT_ACTIONS),
         ("settings.shortcuts.group_operation", &OPERATION_ACTIONS),
+        ("settings.shortcuts.group_context", &CONTEXT_ACTIONS),
         ("settings.shortcuts.group_play", &PLAY_ACTIONS),
         ("settings.shortcuts.group_tools", &TOOL_ACTIONS),
     ];
@@ -324,6 +353,7 @@ mod tests {
         all.extend(FILE_ACTIONS);
         all.extend(EDIT_ACTIONS);
         all.extend(OPERATION_ACTIONS);
+        all.extend(CONTEXT_ACTIONS);
         all.extend(PLAY_ACTIONS);
         all.extend(TOOL_ACTIONS);
         all.sort_unstable();

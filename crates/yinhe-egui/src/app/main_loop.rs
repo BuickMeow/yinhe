@@ -573,6 +573,13 @@ impl eframe::App for App {
         if let Some(action) = kb.edit_action {
             self.handle_edit_action(action);
         }
+        if let Some(action_id) = kb.context_action {
+            self.handle_context_action(action_id);
+        }
+        // 上下文动作请求了自动化参数选择器：这里才有 `ui.ctx()`。
+        if let Some(track_idx) = self.pending_automation_picker.take() {
+            self.open_automation_picker(ui.ctx(), track_idx);
+        }
         if let Some(tool) = kb.tool_to_activate {
             self.active_tool = tool;
         }
