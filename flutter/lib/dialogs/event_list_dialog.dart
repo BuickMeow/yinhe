@@ -64,19 +64,6 @@ class _EventListDialogState extends State<EventListDialog> {
 
   static const int _pageSize = 300;
 
-  /// 行高缩放范围与默认值（逻辑像素）。与桌面端事件表同量级：
-  /// 紧凑时一行只放标题，最大时标题 + 副标题都宽松。
-  static const double _rowHeightMin = 32;
-  static const double _rowHeightMax = 72;
-  double _rowHeight = 44;
-  double? _rowScaleStart;
-
-  /// ListTile 自身内容约占 30~38px，剩下的用垂直 padding 补齐到目标行高。
-  double get _rowExtraPadding => ((_rowHeight - 34) / 2).clamp(0.0, 20.0);
-
-  /// 标题字号随行高轻微变化，避免放大后大片空白。
-  double get _titleFontSize => (13 + (_rowHeight - _rowHeightMin) / 8).clamp(13.0, 18.0);
-
   /// 已加载的页（0-based）；翻回上一页直接复用，不重新请求。
   final Map<int, List<Map<String, dynamic>>> _pages = {};
   final TextEditingController _pageCtrl = TextEditingController(text: '1');
@@ -675,105 +662,45 @@ class _EventListDialogState extends State<EventListDialog> {
                               ),
                             ),
                     )
-                  : GestureDetector(
-                      // 双指捏合缩放行高（与 PR/AR 的捏合缩放同一手势语义）。
-                      onScaleStart: (_) => _rowScaleStart = _rowHeight,
-                      onScaleUpdate: (d) {
-                        final start = _rowScaleStart;
-                        if (start == null || d.scale == 1.0) {
-                          return;
-                        }
-                        final next = (start * d.scale).clamp(
-                          _rowHeightMin,
-                          _rowHeightMax,
-                        );
-                        if ((next - _rowHeight).abs() > 0.5) {
-                          setState(() => _rowHeight = next);
-                        }
-                      },
-                      onScaleEnd: (_) => _rowScaleStart = null,
-                      child: ListView.builder(
-                        key: ValueKey(_page),
-                        itemCount: rows.length,
-                        itemBuilder: (context, i) {
-                          final row = rows[i];
-                          final d = _describe(row);
-                          return GestureDetector(
-                            behavior: HitTestBehavior.translucent,
-                            onLongPressStart: (e) =>
-                                _openActions(row, e.globalPosition),
-                            child: ListTile(
-                              dense: true,
-                              minVerticalPadding: 0,
-                              // 行高随捏合缩放：ListTile 没有显式高度，
-                              // 用 vertical padding 撑出目标行高。
-                              contentPadding: EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: _rowExtraPadding,
-                              ),
-                              leading: Icon(
-                                d.icon,
-                                size: 18,
-                                color: YinheTheme.textSecondary,
-                              ),
-                              title: Text(
-                                d.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: _titleFontSize,
-                                ),
-                              ),
-                              subtitle: Text(
-                                d.subtitle,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: YinheTheme.textDisabled,
-                                  fontSize: 11,
-                                ),
+                  : ListView.builder(
+                      key: ValueKey(_page),
+                      itemCount: rows.length,
+                      itemBuilder: (context, i) {
+                        final row = rows[i];
+                        final d = _describe(row);
+                        return GestureDetector(
+                          behavior: HitTestBehavior.translucent,
+                          onLongPressStart: (e) =>
+                              _openActions(row, e.globalPosition),
+                          child: ListTile(
+                            dense: true,
+                            leading: Icon(
+                              d.icon,
+                              size: 18,
+                              color: YinheTheme.textSecondary,
+                            ),
+                            title: Text(
+                              d.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 14),
+                            ),
+                            subtitle: Text(
+                              d.subtitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: YinheTheme.textDisabled,
+                                fontSize: 11,
                               ),
                             ),
-                          );
-                        },
-                      ),
+                          ),
+                        );
+                      },
                     ),
             ),
-            if (rows.isNotEmpty) _zoomBar(),
           ],
         ),
-      ),
-    );
-  }
-
-  /// 底部缩放条：与桌面端「滚轮 + Ctrl/⌘ 缩放行高」对应，
-  /// 移动端没有滚轮，给一个显式的连续滑杆。
-  Widget _zoomBar() {
-    return Container(
-      height: 34,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      color: YinheTheme.controlBg,
-      child: Row(
-        children: [
-          Icon(
-            Icons.compress,
-            size: 16,
-            color: YinheTheme.textDisabled,
-          ),
-          Expanded(
-            child: Slider(
-              value: _rowHeight.clamp(_rowHeightMin, _rowHeightMax),
-              min: _rowHeightMin,
-              max: _rowHeightMax,
-              onChanged: (v) => setState(() => _rowHeight = v),
-            ),
-          ),
-          Icon(
-            Icons.expand,
-            size: 16,
-            color: YinheTheme.textDisabled,
-          ),
-        ],
       ),
     );
   }

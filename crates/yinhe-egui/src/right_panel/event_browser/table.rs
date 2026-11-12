@@ -11,7 +11,9 @@
 
 use eframe::egui;
 use egui_extras::{Column, TableBuilder, TableRow};
-use egui_material_icons::icons::ICON_ADD;
+use egui_material_icons::icons::{
+    ICON_ADD, ICON_CHEVRON_LEFT as ICON_PREV, ICON_CHEVRON_RIGHT as ICON_NEXT,
+};
 
 use yinhe_types::SegmentShape;
 
@@ -28,104 +30,49 @@ pub(super) struct AutomationEventOwned {
     pub shape: SegmentShape,
 }
 
-/// 事件表格的行高 / 滚动布局状态。
-///
-/// 独立成小结构：构建表格时从 `EventBrowserState` 取出来单独借用，
-/// 表格闭包里还要用 `state` 做选中态与右键请求，不能双重可变借用。
-#[derive(Clone, Copy, Debug)]
-pub struct EventListLayout {
-    /// 行高（像素）。0 = 用主题默认（`ROW_H_COMPACT`）。
-    pub row_h: f32,
-    /// 纵向滚动偏移（像素）。单一真源：每帧从表格内部读回，下一帧回灌。
-    pub scroll_y: f32,
-    /// 一次性回灌的滚动偏移（切换事件类型时归零用）。取走即清空。
-    pub pending_scroll: Option<f32>,
-    /// 上一帧测得的视口高度与顶部 y（缩放锚点计算用）。
-    pub view_h: f32,
-    pub view_top: f32,
-}
-
-impl Default for EventListLayout {
-    fn default() -> Self {
-        Self {
-            row_h: 0.0,
-            scroll_y: 0.0,
-            pending_scroll: None,
-            view_h: 0.0,
-            view_top: 0.0,
-        }
-    }
-}
-
 /// 构建表格。
 ///
-/// `row_cb` 接收 `(行号, row, click_key)`，cell 函数用 `click_key`
+/// `row_cb` 接收 `(row_idx, row, click_key)`，cell 函数用 `click_key`
 /// 记录左键点击到 memory，由 `take_row_click` 取出。
-///
-/// `layout` 持有行高与滚动偏移：滚轮 + Ctrl/Cmd（或触控板捏合）改行高，
-/// 与 PR/AR 的时间轴缩放操作一致；行高变了按指针位置做锚点补偿，
-/// 否则缩放时列表会往上/往下“跑”。
 pub(super) fn build_table<F>(
     ui: &mut egui::Ui,
     id_salt: &str,
     headers: &[(&str, f32)],
     rows: usize,
-    layout: &mut EventListLayout,
     mut row_cb: F,
 ) where
     F: FnMut(usize, &mut TableRow, egui::Id),
 {
     let click_key = ui.scope_id().with(("row_click", id_salt));
-    let mut row_h = if layout.row_h > 0.0 {
-        layout.row_h
-    } else {
-        crate::scaling::scaled_font(ui.ctx(), crate::theme::ROW_H_COMPACT)
-    };
-    let mut scroll_y = layout.scroll_y;
-
-    // 表格占满剩余高度：事件列表要像 PR/AR 一样整块可滚动，
-    // 不能按内容高度撑开（那样外层滚动条会把内部滚动吃掉）。
-    let area = ui.available_rect_before_wrap();
-    apply_zoom(ui, area, &mut row_h, &mut scroll_y);
-    let pending = layout.pending_scroll.take();
-
+    let row_h = crate::scaling::scaled_font(ui.ctx(), crate::theme::ROW_H_COMPACT);
     let mut tb = TableBuilder::new(ui)
         .id_salt(id_salt)
         .striped(true)
         .resizable(true)
-        .auto_shrink([false, false])
-        .max_scroll_height(f32::INFINITY)
-        .min_scrolled_height(0.0)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center));
-    if let Some(offset) = pending {
-        tb = tb.vertical_scroll_offset(offset.max(0.0));
-    }
     for (_, min_w) in headers {
         tb = tb.column(Column::initial(*min_w).at_least(40.0).clip(true));
     }
-    let out = tb
-        .header(row_h, |mut h| {
-            for (label, _) in headers {
-                h.col(|ui| {
-                    ui.label(egui::RichText::new(*label).strong().size(
-                        crate::scaling::scaled_font(ui.ctx(), crate::theme::SMALL_FONT),
-                    ));
-                });
-            }
-        })
-        .body(move |body| {
-            body.rows(row_h, rows, move |mut row| {
-                let i = row.index();
-                row_cb(i, &mut row, click_key);
+    tb.header(row_h, |mut h| {
+        for (label, _) in headers {
+            h.col(|ui| {
+                ui.label(
+                    egui::RichText::new(*label)
+                        .strong()
+                        .size(crate::scaling::scaled_font(
+                            ui.ctx(),
+                            crate::theme::SMALL_FONT,
+                        )),
+                );
             });
+        }
+    })
+    .body(move |body| {
+        body.rows(row_h, rows, move |mut row| {
+            let i = row.index();
+            row_cb(i, &mut row, click_key);
         });
-
-    // 单一真源：读回实际偏移与视口，供下一帧缩放锚点使用。
-    layout.row_h = row_h;
-    layout.scroll_y = out.state.clamped_offset().y;
-    layout.view_h = out.inner_rect.height();
-    layout.view_top = out.inner_rect.top();
-
+    });
     // 列边界拖拽：TableBuilder 未直接暴露 resize Response，从其内部 id
     // 读取本帧响应，指针命中列边界时补讲解行。
     let state_id = ui.scope_id().with(id_salt);
@@ -136,54 +83,6 @@ pub(super) fn build_table<F>(
         {
             crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.eb.column_resize"));
         }
-    }
-}
-
-/// 行高缩放范围（像素）。下限保证两行文字仍可读，上限避免单行占满整屏。
-const ROW_H_MIN: f32 = 16.0;
-const ROW_H_MAX: f32 = 48.0;
-
-/// 按指针位置缩放行高（锚点补偿）。
-fn apply_zoom(ui: &egui::Ui, area: egui::Rect, row_h: &mut f32, scroll_y: &mut f32) {
-    let (zoom, hover) = ui.ctx().input(|i| (i.zoom_delta(), i.pointer.hover_pos()));
-    if (zoom - 1.0).abs() < 1e-4 {
-        return;
-    }
-    let Some(pointer) = hover else {
-        return;
-    };
-    if !area.contains(pointer) {
-        return;
-    }
-    let base = *row_h;
-    let new_h = (base * zoom).clamp(ROW_H_MIN, ROW_H_MAX);
-    if (new_h - base).abs() < 1e-4 {
-        return;
-    }
-    // 指针下的内容位置在缩放前后保持不变。
-    let local_y = (pointer.y - area.top()).max(0.0);
-    let frac = (*scroll_y + local_y) / base;
-    *row_h = new_h;
-    *scroll_y = (frac * new_h - local_y).max(0.0);
-}
-
-/// 行号 → tick 的只读索引。
-///
-/// 用回调而不是 `Vec<u32>`：事件列表可能有上百万行，每帧物化一份 tick 数组
-/// 既费内存也费时间；Shift 范围选择只在真正点击时线性扫一次。
-#[derive(Clone, Copy)]
-pub(super) struct TickIndex<'a> {
-    pub len: usize,
-    tick_at: &'a dyn Fn(usize) -> u32,
-}
-
-impl<'a> TickIndex<'a> {
-    pub fn new(len: usize, tick_at: &'a dyn Fn(usize) -> u32) -> Self {
-        Self { len, tick_at }
-    }
-
-    pub fn get(&self, i: usize) -> u32 {
-        if i < self.len { (self.tick_at)(i) } else { 0 }
     }
 }
 
@@ -274,15 +173,16 @@ pub(super) fn cell_position(
 /// - 右键：弹出菜单（在上方插入 / 在下方插入 / 删除该行），同时选中该行
 ///
 /// `tick`：该行事件 tick（用于多选状态记录）
-/// `ticks`：所有行的 tick 索引（用于 Shift 范围选择）
+/// `all_ticks`：当前页所有行的 tick（用于 Shift 范围选择）
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(super) fn cell_row_header(
     row: &mut TableRow,
     state: &mut EventBrowserState,
     id_salt: &str,
     row_idx: usize,
+    page_start: usize,
     tick: u32,
-    ticks: &TickIndex<'_>,
+    all_ticks: &[u32],
     click_key: egui::Id,
 ) {
     row.col(|ui| {
@@ -294,7 +194,7 @@ pub(super) fn cell_row_header(
         };
         ui.add(
             egui::Label::new(
-                egui::RichText::new(format!("{}", row_idx + 1))
+                egui::RichText::new(format!("{}", page_start + row_idx + 1))
                     .size(crate::scaling::scaled_font(
                         ui.ctx(),
                         crate::theme::SMALL_FONT,
@@ -317,14 +217,14 @@ pub(super) fn cell_row_header(
         // 左键：行选择（Ctrl/Shift 多选）
         if resp.clicked() {
             let modifiers = ui.ctx().input(|i| i.modifiers);
-            handle_row_click(state, tick, ticks, modifiers);
+            handle_row_click(state, tick, all_ticks, modifiers);
             ui.ctx()
                 .memory_mut(|m| m.data.insert_temp(click_key, row_idx));
         }
 
         // 右键：选中该行 + 弹出菜单
         if resp.secondary_clicked() && !state.selected_ticks.contains(&tick) {
-            handle_row_click(state, tick, ticks, egui::Modifiers::NONE);
+            handle_row_click(state, tick, all_ticks, egui::Modifiers::NONE);
         }
         let edit_key = egui::Id::unique((id_salt, "edit"));
         resp.context_menu(|ui| {
@@ -381,7 +281,7 @@ pub(super) fn cell_row_header(
 fn handle_row_click(
     state: &mut EventBrowserState,
     tick: u32,
-    ticks: &TickIndex<'_>,
+    all_ticks: &[u32],
     modifiers: egui::Modifiers,
 ) {
     if modifiers.ctrl || modifiers.command {
@@ -400,9 +300,8 @@ fn handle_row_click(
             } else {
                 (tick, anchor)
             };
-            // 在可见范围内找所有 tick（Shift 范围选择只在点击时扫一次）。
-            for i in 0..ticks.len {
-                let t = ticks.get(i);
+            // 在 all_ticks 中找范围内的所有 tick
+            for &t in all_ticks {
                 if t >= lo && t <= hi {
                     state.selected_ticks.insert(t);
                 }
@@ -589,4 +488,116 @@ pub(super) fn curve_points_text(shape: SegmentShape) -> [String; 4] {
             format!("{:.2}", y2),
         ],
     }
+}
+
+/// 每页行数。100 行在常规字体下约填满半屏~一屏，翻页频率适中。
+pub(super) const EVENT_PAGE_SIZE: usize = 100;
+
+/// 计算总页数（至少 1 页）。
+pub(super) fn total_pages(total: usize) -> usize {
+    total.div_ceil(EVENT_PAGE_SIZE).max(1)
+}
+
+/// 根据当前 `state.event_page` 切片出当前页。
+///
+/// 返回 `(page, page_start, page_slice)`：
+/// - `page`：0-based 页码（已做越界保护，删除数据后自动夹回末页）
+/// - `page_start`：当前页起始索引
+/// - `page_slice`：当前页的切片
+pub(super) fn paginate<'a, T>(
+    state: &mut super::EventBrowserState,
+    items: &'a [T],
+) -> (usize, usize, &'a [T]) {
+    let total = items.len();
+    let tp = total_pages(total);
+    if state.event_page >= tp {
+        state.event_page = tp - 1;
+    }
+    let page = state.event_page;
+    let start = page * EVENT_PAGE_SIZE;
+    let end = (start + EVENT_PAGE_SIZE).min(total);
+    (page, start, &items[start..end])
+}
+
+/// 渲染翻页控件（右对齐），返回 `Some(新页码)` 如果用户改变了页码（0-based）。
+pub(super) fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -> Option<usize> {
+    let mut new_page = None;
+    let mem_key = ui.scope_id().with("eb_page_input");
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let next_enabled = page + 1 < total_pages;
+        let next_resp = ui.add_enabled(
+            next_enabled,
+            egui::Label::new(
+                ICON_NEXT
+                    .rich_text()
+                    .size(crate::scaling::scaled_font(
+                        ui.ctx(),
+                        crate::theme::ICON_FONT,
+                    ))
+                    .color(crate::theme::text_bright()),
+            )
+            .sense(egui::Sense::click()),
+        );
+        crate::widgets::hint::hover(ui.ctx(), &next_resp, t!("hint.eb.pager"));
+        if next_resp.clicked() {
+            new_page = Some(page + 1);
+        }
+        ui.label(
+            egui::RichText::new(format!("/ {}", total_pages))
+                .size(crate::scaling::scaled_font(
+                    ui.ctx(),
+                    crate::theme::SMALL_FONT,
+                ))
+                .color(crate::theme::text_label()),
+        );
+        let buf: String = ui.memory(|m| {
+            m.data
+                .get_temp(mem_key)
+                .unwrap_or_else(|| (page + 1).to_string())
+        });
+        let mut buf = buf;
+        let resp = ui.add(
+            egui::TextEdit::singleline(&mut buf)
+                .desired_width(28.0)
+                .font(egui::FontId::proportional(crate::scaling::scaled_font(
+                    ui.ctx(),
+                    crate::theme::SMALL_FONT,
+                )))
+                .align(egui::Align2::CENTER_TOP),
+        );
+        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.eb.pager"));
+        let edited_buf = buf.clone();
+        if resp.has_focus() {
+            ui.memory_mut(|m| m.data.insert_temp(mem_key, buf));
+        }
+        if resp.lost_focus() {
+            if let Ok(n) = edited_buf.trim().parse::<usize>()
+                && n >= 1
+                && n <= total_pages
+                && n - 1 != page
+            {
+                new_page = Some(n - 1);
+            }
+            ui.memory_mut(|m| m.data.remove::<String>(mem_key));
+        }
+        let prev_enabled = page > 0;
+        let prev_resp = ui.add_enabled(
+            prev_enabled,
+            egui::Label::new(
+                ICON_PREV
+                    .rich_text()
+                    .size(crate::scaling::scaled_font(
+                        ui.ctx(),
+                        crate::theme::ICON_FONT,
+                    ))
+                    .color(crate::theme::text_bright()),
+            )
+            .sense(egui::Sense::click()),
+        );
+        crate::widgets::hint::hover(ui.ctx(), &prev_resp, t!("hint.eb.pager"));
+        if prev_resp.clicked() {
+            new_page = Some(page - 1);
+        }
+    });
+    new_page
 }

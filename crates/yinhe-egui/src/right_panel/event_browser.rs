@@ -24,7 +24,7 @@ use eframe::egui;
 use yinhe_core::YinModel;
 use yinhe_editor_core::document::Document;
 
-use state::{ArchiveKey, SelectedItem};
+use state::ArchiveKey;
 
 // 对外暴露的公共类型（right_panel 通过 `event_browser::` 引用）
 pub use state::{EventBrowserState, JumpRequest};
@@ -116,56 +116,34 @@ pub fn show_events(
     // 不画背景（right_panel 已铺 app_bg，再 fill 叠两层）；边距由 dock 统一施加
     let frame_bg = egui::Frame::NONE;
     let mut jump_request: Option<JumpRequest> = None;
-    // 事件表格自己内部虚拟滚动；其它详情（JSON 键值、轨道摘要）内容高度不定，
-    // 需要外层滚动。两者同时存在会抢滚轮，所以按选中项二选一。
-    let has_table = matches!(
-        state.selected_item,
-        Some(
-            SelectedItem::TimeSig
-                | SelectedItem::KeySig
-                | SelectedItem::Markers
-                | SelectedItem::ConductorLyrics
-                | SelectedItem::ConductorChord
-                | SelectedItem::Notes { .. }
-                | SelectedItem::ProgramChange { .. }
-                | SelectedItem::Automation { .. }
-                | SelectedItem::Lyrics { .. }
-                | SelectedItem::Chord { .. }
-        )
-    );
-    let mut draw = |ui: &mut egui::Ui, jump: &mut Option<JumpRequest>| {
-        frame_bg.show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            let sel = state.selected_item.clone();
-            let track_idx = state.selected_track;
-            if let Some(ref sel) = sel {
-                *jump = detail::show_event_detail(ui, sel, doc, &bar_lookup, state);
-            } else if let Some(idx) = track_idx {
-                let model = &doc.data.model;
-                if let Some(track) = model.tracks.get(idx as usize) {
-                    detail::show_track_detail(ui, idx, track, model);
+    egui::ScrollArea::both()
+        .id_salt("eb_detail")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            frame_bg.show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                let sel = state.selected_item.clone();
+                let track_idx = state.selected_track;
+                if let Some(ref sel) = sel {
+                    jump_request = detail::show_event_detail(ui, sel, doc, &bar_lookup, state);
+                } else if let Some(idx) = track_idx {
+                    let model = &doc.data.model;
+                    if let Some(track) = model.tracks.get(idx as usize) {
+                        detail::show_track_detail(ui, idx, track, model);
+                    } else {
+                        crate::widgets::hint::empty_hint(
+                            ui,
+                            rust_i18n::t!("panel.select_event_hint").as_ref(),
+                        );
+                    }
                 } else {
                     crate::widgets::hint::empty_hint(
                         ui,
                         rust_i18n::t!("panel.select_event_hint").as_ref(),
                     );
                 }
-            } else {
-                crate::widgets::hint::empty_hint(
-                    ui,
-                    rust_i18n::t!("panel.select_event_hint").as_ref(),
-                );
-            }
+            });
         });
-    };
-    if has_table {
-        draw(ui, &mut jump_request);
-    } else {
-        egui::ScrollArea::both()
-            .id_salt("eb_detail")
-            .auto_shrink([false, false])
-            .show(ui, |ui| draw(ui, &mut jump_request));
-    }
     jump_request
 }
 
