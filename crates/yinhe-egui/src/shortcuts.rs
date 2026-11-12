@@ -83,6 +83,10 @@ pub(crate) const RECORDABLE_KEYS: &[Key] = &[
     Key::Backtick,
     Key::Backslash,
     Key::Slash,
+    // 打印键区：可作为快捷键（如 PrtSc 截图），放这里才能在键盘上绑定。
+    Key::PrintScreen,
+    Key::ScrollLock,
+    Key::Pause,
 ];
 
 /// 键名 → egui 键。与 [`key_to_str`] 互逆。
@@ -164,6 +168,9 @@ pub fn str_to_key(s: &str) -> Option<Key> {
         "Backtick" => Backtick,
         "Backslash" => Backslash,
         "Slash" => Slash,
+        "PrintScreen" => PrintScreen,
+        "ScrollLock" => ScrollLock,
+        "Pause" => Pause,
         _ => return None,
     })
 }
@@ -251,6 +258,9 @@ fn str_to_key_rev(key: Key) -> &'static str {
         Backtick => "Backtick",
         Backslash => "Backslash",
         Slash => "Slash",
+        PrintScreen => "PrintScreen",
+        ScrollLock => "ScrollLock",
+        Pause => "Pause",
         _ => "Unknown",
     }
 }

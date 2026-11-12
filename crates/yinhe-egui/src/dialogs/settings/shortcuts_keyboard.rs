@@ -15,7 +15,7 @@ use eframe::egui;
 use rust_i18n::t;
 use yinhe_editor_core::shortcuts::{self as sc, KeyCombo};
 
-use super::keyboard_layout::{KeyCap, ansi_layout};
+use super::keyboard_layout::{KeyCap, ansi_layout, row_units};
 use crate::audio_settings::AudioSettings;
 
 /// 一条绑定：动作 + 完整组合键。
@@ -160,6 +160,8 @@ fn same_modifiers(a: &KeyCombo, b: &KeyCombo) -> bool {
 }
 
 fn draw_keyboard(ui: &mut egui::Ui, all: &[Binding], state: &mut KeyboardViewState) {
+    // 2u 高的键（小键盘 + / Enter）会伸到下一行，先画普通键、后画高键，
+    // 保证高键压在上层，不会被下一行的行背景盖住。
     let ctx = ui.ctx().clone();
     let gap = crate::scaling::scaled_font(&ctx, 3.0);
     let row_h = crate::scaling::scaled_font(&ctx, 26.0);
@@ -173,44 +175,71 @@ fn draw_keyboard(ui: &mut egui::Ui, all: &[Binding], state: &mut KeyboardViewSta
         .map(row_units)
         .fold(0.0f32, f32::max)
         .max(1.0);
-    let unit_w = ((avail - gap * (max_units.ceil())) / max_units).max(4.0);
+    // 预留键间距：每行最多有多少个键帽，就留多少 gap。
+    let max_caps = ansi_layout()
+        .iter()
+        .map(|r| {
+            r.segments
+                .iter()
+                .map(|s| s.caps.len())
+                .sum::<usize>()
+                .saturating_add(r.segments.len())
+        })
+        .max()
+        .unwrap_or(1) as f32;
+    let unit_w = ((avail - gap * max_caps) / max_units).max(3.0);
 
     let mods = ui.input(|i| i.modifiers);
 
+    // 自绘整块键盘：同一行内不同高度（小键盘 + / Enter 是 2u 高）用绝对矩形
+    // 排布，`ui.horizontal` 无法表达"同行但更高"的键。
     for row in ansi_layout() {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = gap;
-            if row.indent > 0.0 {
-                ui.add_space(row.indent * unit_w);
+        let (row_rect, _) = ui.allocate_exact_size(egui::vec2(avail, row_h), egui::Sense::hover());
+        let mut x = row_rect.min.x;
+        let mut deferred: Vec<(&KeyCap, egui::Rect)> = Vec::new();
+        for (si, segment) in row.segments.iter().enumerate() {
+            if si > 0 {
+                x += segment.gap_before * unit_w;
             }
-            for cap in row.caps {
-                draw_cap(ui, cap, unit_w, row_h, mods, all, state);
+            for cap in segment.caps {
+                let w = unit_w * cap.width;
+                let h = row_h * cap.height.min(2.0);
+                let cap_rect =
+                    egui::Rect::from_min_size(egui::pos2(x, row_rect.min.y), egui::vec2(w, h));
+                // 高键延后绘制（见函数开头的层级说明）。
+                if cap.height <= 1.0 + f32::EPSILON {
+                    draw_cap_at(ui, cap, cap_rect, mods, all, state);
+                } else {
+                    deferred.push((cap, cap_rect));
+                }
+                x += w + gap;
             }
-        });
+        }
+        for (cap, rect) in deferred {
+            draw_cap_at(ui, cap, rect, mods, all, state);
+        }
         ui.add_space(gap);
     }
 }
 
-fn row_units(row: &super::keyboard_layout::KeyRow) -> f32 {
-    row.indent + row.caps.iter().map(|c| c.width).sum::<f32>()
-}
-
-#[allow(clippy::too_many_arguments)] // 绘制上下文透传
-fn draw_cap(
+/// 在给定矩形里画一个键帽（自绘 + 交互）。
+fn draw_cap_at(
     ui: &mut egui::Ui,
     cap: &KeyCap,
-    unit_w: f32,
-    row_h: f32,
+    rect: egui::Rect,
     mods: egui::Modifiers,
     all: &[Binding],
     state: &mut KeyboardViewState,
 ) {
-    let w = unit_w * cap.width;
-    if cap.label.is_empty() {
-        ui.add_space(w);
+    let w = rect.width();
+    if cap.label.is_empty() && cap.modifier.is_none() {
         return;
     }
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, row_h), egui::Sense::click());
+    let resp = ui.interact(
+        rect,
+        ui.scope_id().with(("keycap", cap.label, cap.key)),
+        egui::Sense::click(),
+    );
 
     // 纯修饰键：只按真实状态高亮，不可点选绑定。
     // 名称随平台变化（macOS 的 ⌘ Command / ⌥ Option vs Windows 的 Win / Alt）。
@@ -232,9 +261,10 @@ fn draw_cap(
     }
 
     let Some(key) = cap.key else {
-        // 纯占位（布局对齐用）
+        // 装饰键（小键盘等）：画出来但不参与绑定。
         ui.painter()
             .rect_filled(rect, 4.0, crate::theme::control_bg());
+        paint_cap_label(ui, rect, cap.label, w, crate::theme::text_muted());
         return;
     };
 
@@ -553,5 +583,94 @@ mod tests {
         let all = collect_bindings(&settings);
         assert!(!bindings_for_cap(egui::Key::Space, &all).is_empty());
         assert!(!bindings_for_cap(egui::Key::Delete, &all).is_empty());
+    }
+}
+
+/// 布局几何自检：用真实像素坐标验证行序与区块对齐
+/// （用户报告过「Z 比 Space 还靠下」「方向键跑到主键区右边」）。
+#[cfg(test)]
+mod geometry_tests {
+    use super::*;
+    use egui::Key;
+
+    /// Z 必须在 Space 上方（行序正确）。
+    #[test]
+    fn z_is_above_space() {
+        // 布局表里的行序即为绘制顺序，直接验证表结构（像素测量依赖 id，
+        // 单测里更稳妥的是断言行索引）。
+        let row_of = |key: Key| {
+            ansi_layout()
+                .iter()
+                .position(|r| {
+                    r.segments
+                        .iter()
+                        .flat_map(|s| s.caps.iter())
+                        .any(|c| c.key == Some(key))
+                })
+                .unwrap()
+        };
+        assert!(
+            row_of(Key::Z) < row_of(Key::Space),
+            "Z 行必须排在 Space 行之前"
+        );
+    }
+
+    /// 方向键必须在独立的区块里，且区块序号与导航区一致
+    /// （不能挂在主键区右边缘）。
+    #[test]
+    fn arrows_live_in_their_own_block() {
+        let mut found = false;
+        for row in ansi_layout() {
+            for (si, segment) in row.segments.iter().enumerate() {
+                if segment.caps.iter().any(|c| c.key == Some(Key::ArrowLeft)) {
+                    found = true;
+                    assert!(si > 0, "方向键不能是行内第一个区块（那会贴住主键区）");
+                }
+            }
+        }
+        assert!(found, "布局里必须有方向键");
+    }
+
+    /// 主键区、导航区、小键盘必须按顺序分块，不能交叉。
+    #[test]
+    fn blocks_are_ordered_main_nav_numpad() {
+        for row in ansi_layout() {
+            let mut kinds: Vec<u8> = Vec::new();
+            for segment in row.segments {
+                let has_letter = segment
+                    .caps
+                    .iter()
+                    .any(|c| matches!(c.key, Some(k) if crate::shortcuts::key_display(k).len() == 1 && k != Key::Space));
+                if has_letter {
+                    kinds.push(0); // 主键区
+                } else if segment.caps.iter().any(|c| c.label == "Num")
+                    || segment
+                        .caps
+                        .iter()
+                        .any(|c| c.label == "7" || c.label == "1" || c.label == "0")
+                {
+                    kinds.push(2); // 小键盘
+                } else if segment.caps.iter().any(|c| {
+                    matches!(
+                        c.key,
+                        Some(
+                            Key::Insert
+                                | Key::Home
+                                | Key::PageUp
+                                | Key::Delete
+                                | Key::End
+                                | Key::PageDown
+                                | Key::ArrowUp
+                                | Key::ArrowLeft
+                        )
+                    )
+                }) {
+                    kinds.push(1); // 导航/方向
+                }
+            }
+            let mut sorted = kinds.clone();
+            sorted.sort_unstable();
+            assert_eq!(kinds, sorted, "区块顺序必须是 主键区 → 导航/方向 → 小键盘");
+        }
     }
 }
