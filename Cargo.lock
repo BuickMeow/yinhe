@@ -7883,7 +7883,9 @@ dependencies = [
  "egui_extras",
  "egui_kittest",
  "egui_material_icons",
+ "egui_system_font_provider",
  "embed-resource",
+ "fontique",
  "image",
  "muda",
  "objc2 0.6.4",
@@ -7895,6 +7897,7 @@ dependencies = [
  "rust-i18n",
  "serde",
  "serde_json",
+ "skrifa",
  "sysinfo",
  "tracing",
  "tracing-subscriber",
@@ -7906,7 +7909,6 @@ dependencies = [
  "yinhe-core",
  "yinhe-dsp",
  "yinhe-editor-core",
- "yinhe-fonts",
  "yinhe-memtrace",
  "yinhe-midi",
  "yinhe-midi-io",
@@ -7941,15 +7943,6 @@ dependencies = [
  "yinhe-types",
  "yinhe-wgpu",
  "yinhe-yin",
-]
-
-[[package]]
-name = "yinhe-fonts"
-version = "0.1.0"
-dependencies = [
- "egui",
- "fontique",
- "skrifa",
 ]
 
 [[package]]

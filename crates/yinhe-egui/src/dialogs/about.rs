@@ -139,7 +139,7 @@ mod tests {
                         egui_extras::install_image_loaders(ui.ctx());
                         crate::fonts::install(
                             ui.ctx(),
-                            yinhe_fonts::WEIGHT_MEDIUM,
+                            crate::fonts::WEIGHT_MEDIUM,
                             rust_i18n::locale().as_ref(),
                         );
                         return;

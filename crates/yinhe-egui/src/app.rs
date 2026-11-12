@@ -309,7 +309,7 @@ impl App {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Ui, || {
             crate::fonts::install(
                 &cc.egui_ctx,
-                yinhe_fonts::WEIGHT_MEDIUM,
+                crate::fonts::WEIGHT_MEDIUM,
                 &audio_settings.locale,
             );
         });

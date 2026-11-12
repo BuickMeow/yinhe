@@ -18,7 +18,6 @@ members = [
     "crates/yinhe-mixer",
     "crates/yinhe-vst3",
     "crates/yinhe-memtrace",
-    "crates/yinhe-fonts",
     "crates/yinhe-tests",
     "crates/yinhe-test-helpers",
     "crates/yinhe-theme",
@@ -52,7 +51,6 @@ tempfile = "3"
 memmap2 = "0.9"
 libc = "0.2"
 chrono = "0.4"
-fontique = { version = "0.11.1", default-features = false, features = ["system", "fontconfig-dlopen"] }
 
 # 跨 crate 共享依赖
 serde = { version = "1", features = ["derive", "rc"] }

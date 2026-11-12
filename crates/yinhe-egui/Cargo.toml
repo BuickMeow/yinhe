@@ -21,7 +21,6 @@ yinhe-archive = { path = "../yinhe-archive" }
 yinhe-wgpu = { path = "../yinhe-wgpu" }
 yinhe-audio = { path = "../yinhe-audio" }
 yinhe-memtrace = { path = "../yinhe-memtrace" }
-yinhe-fonts = { path = "../yinhe-fonts" }
 yinhe-editor-core = { path = "../yinhe-editor-core" }
 yinhe-mixer = { path = "../yinhe-mixer" }
 yinhe-dsp = { path = "../yinhe-dsp" }
@@ -42,6 +41,10 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 sysinfo = { workspace = true }
 egui_material_icons = { workspace = true }
+# 主字体按系统 UI 字体 + Medium 字重查询（CJK / emoji 回退由 eframe 的字体 provider 负责）。
+fontique = { version = "0.11.1", default-features = false, features = ["system", "fontconfig-dlopen"] }
+# 系统字体按需回退（CJK / emoji / 任意文字系统），与 eframe 内置的是同一个 provider。
+egui_system_font_provider = "0.37"
 chrono = { workspace = true }
 image = { workspace = true }
 bytemuck = { workspace = true }
@@ -57,6 +60,8 @@ yinhe-test-helpers = { path = "../yinhe-test-helpers" }
 pollster = { workspace = true }
 # UI 回归测试（无头模拟鼠标事件）：transport bar 双击最大化等交互
 egui_kittest = { version = "0.37.0", features = ["wgpu"] }
+# 字体测试：确认主字体 PostScript 名带 Medium。
+skrifa = "0.44"
 
 [build-dependencies]
 embed-resource = "3"
