@@ -17,8 +17,11 @@ use xsynth_soundfonts::FilterType;
 /// Butterworth Q 值（与 xsynth 一致，来自 biquad crate）。
 const Q_BUTTERWORTH: f32 = std::f32::consts::FRAC_1_SQRT_2;
 
+pub mod extra;
 mod sf2;
 mod sfz;
+
+pub use extra::{CcGate, GateCtx, GateResult, LayerExtra, Lfo, OnGate, evaluate};
 
 /// 滤波器类型 → 渲染器编码（WGSL/CPU voice 共用；shader `filter_type` 字段）。
 pub(crate) fn filter_type_code(ft: FilterType) -> u32 {
@@ -86,6 +89,18 @@ pub struct KeyInfo {
     /// 等功率声像增益（`pan` 的 cos/sin 预计算，与 CpuVoice::new 原公式一致）。
     pub pan_l: f32,
     pub pan_r: f32,
+
+    /// 运行期附加行为在 `KeyMapEntry.extras` 中的索引（`u32::MAX` = 无）。
+    /// 门控/round-robin/release 触发/LFO 都放侧表，避免每 (key,vel) 快照膨胀。
+    pub extra: u32,
+}
+
+impl KeyInfo {
+    /// 侧表索引（`u32::MAX` → None）。
+    #[inline]
+    pub fn extra_index(&self) -> Option<usize> {
+        (self.extra != u32::MAX).then_some(self.extra as usize)
+    }
 }
 
 /// 加载期烘焙：等功率声像增益（`CpuVoice::new` 原公式的预计算）。
@@ -153,6 +168,7 @@ impl Default for KeyInfo {
             biquad: None,
             pan_l: 1.0,
             pan_r: 1.0,
+            extra: u32::MAX,
         }
     }
 }
@@ -176,14 +192,48 @@ pub struct KeyMapEntry {
 struct KeyMapEntryInner {
     /// 展开结果（SFZ 构造时即填好；SF2 首次查询时惰性填充）。
     map: OnceLock<Vec<Vec<KeyInfo>>>,
+    /// `trigger=release` 层（音符结束时发声；SF2 无此概念，恒空）。
+    release: Vec<Vec<KeyInfo>>,
     /// 惰性展开源（SF2 多 preset 用；SFZ 为 None）。
     expand: Option<Box<dyn Fn() -> Vec<Vec<KeyInfo>> + Send + Sync>>,
+    /// 运行期门控侧表（`KeyInfo.extra` 索引；SF2 为空）。
+    extras: Vec<LayerExtra>,
+    /// `<control> set_ccN=v`：加载音色库时写入通道初始 CC。
+    cc_defaults: Vec<(u8, u8)>,
 }
 
 impl KeyMapEntry {
     /// 预展开条目（SFZ：整个文件一个条目，无惰性收益）。
-    pub(crate) fn expanded(bank: u8, preset: u8, mut map: Vec<Vec<KeyInfo>>) -> Self {
+    #[allow(dead_code)] // 便捷构造：测试与单条目场景
+    pub(crate) fn expanded(bank: u8, preset: u8, map: Vec<Vec<KeyInfo>>) -> Self {
+        Self::expanded_with(bank, preset, map, Vec::new(), Vec::new())
+    }
+
+    /// 预展开条目（带运行期侧表与通道默认 CC）。
+    #[allow(dead_code)] // 便捷构造：不含释放层时使用
+    pub(crate) fn expanded_with(
+        bank: u8,
+        preset: u8,
+        map: Vec<Vec<KeyInfo>>,
+        extras: Vec<LayerExtra>,
+        cc_defaults: Vec<(u8, u8)>,
+    ) -> Self {
+        Self::expanded_full(bank, preset, map, Vec::new(), extras, cc_defaults)
+    }
+
+    /// 预展开条目（含释放层）。
+    pub(crate) fn expanded_full(
+        bank: u8,
+        preset: u8,
+        mut map: Vec<Vec<KeyInfo>>,
+        mut release: Vec<Vec<KeyInfo>>,
+        extras: Vec<LayerExtra>,
+        cc_defaults: Vec<(u8, u8)>,
+    ) -> Self {
         merge_stereo_pairs(&mut map);
+        if !release.is_empty() {
+            merge_stereo_pairs(&mut release);
+        }
         let map_cell = OnceLock::new();
         let _ = map_cell.set(map);
         Self {
@@ -191,7 +241,10 @@ impl KeyMapEntry {
             preset,
             inner: Arc::new(KeyMapEntryInner {
                 map: map_cell,
+                release,
                 expand: None,
+                extras,
+                cc_defaults,
             }),
         }
     }
@@ -207,9 +260,27 @@ impl KeyMapEntry {
             preset,
             inner: Arc::new(KeyMapEntryInner {
                 map: OnceLock::new(),
+                release: Vec::new(),
                 expand: Some(Box::new(expand)),
+                extras: Vec::new(),
+                cc_defaults: Vec::new(),
             }),
         }
+    }
+
+    /// `trigger=release` 层（(key, vel) 展开；空 = 该库无释放采样）。
+    pub fn release_map(&self) -> &[Vec<KeyInfo>] {
+        &self.inner.release
+    }
+
+    /// 运行期附加行为侧表（与 `KeyInfo.extra` 配套）。
+    pub fn extras(&self) -> &[LayerExtra] {
+        &self.inner.extras
+    }
+
+    /// `<control> set_ccN=v` 通道初始值。
+    pub fn cc_defaults(&self) -> &[(u8, u8)] {
+        &self.inner.cc_defaults
     }
 
     /// (key, vel) 展开后的参数快照；首次调用触发惰性展开。
@@ -267,11 +338,18 @@ pub fn build_key_maps_with_progress(
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase());
     let mut entries = match ext.as_deref() {
-        Some("sfz") => vec![KeyMapEntry::expanded(
-            0,
-            0,
-            sfz::build_key_map_from_sfz_with_progress(path, sample_rate, interp, on_progress)?,
-        )],
+        Some("sfz") => {
+            let built =
+                sfz::build_key_map_from_sfz_with_progress(path, sample_rate, interp, on_progress)?;
+            vec![KeyMapEntry::expanded_full(
+                0,
+                0,
+                built.attack,
+                built.release,
+                built.extras,
+                built.cc_defaults,
+            )]
+        }
         Some("sf2") => {
             on_progress(0.05);
             let out = sf2::build_key_maps_from_sf2(path, sample_rate, interp)?;
@@ -318,6 +396,87 @@ pub fn select_key_infos_multi(
     // GM SF2 有 bank 128，上面的查询已经命中，不会走到这里。
     if bank == 128 && !entries.iter().any(|e| e.bank == 128) {
         return select_in_program(entries, 0, preset, key, velocity);
+    }
+    None
+}
+
+/// 命中层的切片 + 所属条目的侧表（门控/轮次/释放触发）。
+#[derive(Clone, Copy)]
+pub struct Selected<'a> {
+    pub infos: &'a [KeyInfo],
+    pub extras: &'a [LayerExtra],
+}
+
+/// 多音色库 + program 选择，返回层列表与其运行期侧表。
+///
+/// 与 [`select_key_infos_multi`] 的兜底顺序完全一致；调用方用 `extras`
+/// 配合 `KeyInfo.extra` 做门控求值。
+pub fn select_layers_multi(
+    entries: &[KeyMapEntry],
+    bank: u8,
+    preset: u8,
+    key: u8,
+    velocity: u8,
+) -> Option<Selected<'_>> {
+    select_layers_inner(entries, bank, preset, key, velocity, false)
+}
+
+/// `trigger=release` 层（音符结束时发声）。
+pub fn select_release_layers_multi(
+    entries: &[KeyMapEntry],
+    bank: u8,
+    preset: u8,
+    key: u8,
+    velocity: u8,
+) -> Option<Selected<'_>> {
+    select_layers_inner(entries, bank, preset, key, velocity, true)
+}
+
+fn select_layers_inner(
+    entries: &[KeyMapEntry],
+    bank: u8,
+    preset: u8,
+    key: u8,
+    velocity: u8,
+    release: bool,
+) -> Option<Selected<'_>> {
+    if let Some(s) = select_in_program_ex(entries, bank, preset, key, velocity, release) {
+        return Some(s);
+    }
+    let (rb, rp) = if bank == 128 { (128, 0) } else { (0, preset) };
+    if let Some(s) = select_in_program_ex(entries, rb, rp, key, velocity, release) {
+        return Some(s);
+    }
+    if bank == 128 && !entries.iter().any(|e| e.bank == 128) {
+        return select_in_program_ex(entries, 0, preset, key, velocity, release);
+    }
+    None
+}
+
+fn select_in_program_ex(
+    entries: &[KeyMapEntry],
+    bank: u8,
+    preset: u8,
+    key: u8,
+    velocity: u8,
+    release: bool,
+) -> Option<Selected<'_>> {
+    let lo = entries.partition_point(|e| (e.bank, e.preset) < (bank, preset));
+    for e in &entries[lo..] {
+        if e.bank != bank || e.preset != preset {
+            break;
+        }
+        let map = if release {
+            e.release_map()
+        } else {
+            e.map().as_slice()
+        };
+        if let Some(infos) = select_key_infos(map, key, velocity) {
+            return Some(Selected {
+                infos,
+                extras: e.extras(),
+            });
+        }
     }
     None
 }

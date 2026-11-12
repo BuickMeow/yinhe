@@ -27,6 +27,19 @@ impl GpuSynth {
         paths: &[std::path::PathBuf],
     ) -> Result<(), String> {
         let maps = load_key_maps_merged(paths, self.sample_rate, self.interpolation)?;
+        // `<control> set_ccN=v` 与 keyswitch 区间：note_on 热路径直接读缓存。
+        let cc_defaults: Vec<(u8, u8)> = maps
+            .iter()
+            .flat_map(|e| e.cc_defaults().iter().copied())
+            .collect();
+        let mut sw_ranges: Vec<(u8, u8)> = Vec::new();
+        for entry in maps.iter() {
+            for extra in entry.extras() {
+                if extra.has_sw {
+                    sw_ranges.push((extra.sw_lokey, extra.sw_hikey));
+                }
+            }
+        }
         let mut any = false;
         let mut max_slot = 0usize;
         for &dense in denses {
@@ -38,6 +51,15 @@ impl GpuSynth {
             max_slot = max_slot.max(slot + 1);
             self.port_key_maps[slot] = Arc::clone(&maps);
             self.channel_port[slot] = slot as u8;
+            if !cc_defaults.is_empty() {
+                self.channel_cc_defaults[slot] = cc_defaults.clone();
+                for &(cc, v) in &cc_defaults {
+                    self.channels[slot].cc[cc as usize] = v;
+                }
+            }
+            if !sw_ranges.is_empty() {
+                self.sw_ranges[slot] = sw_ranges.clone();
+            }
         }
         if any {
             // 每通道只累加一次路径（rebuild_sample_upload 内部去重）

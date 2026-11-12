@@ -72,7 +72,11 @@ impl SoundFontManager {
         let options = SoundfontInitOptions {
             interpolator: match self.interp {
                 Interpolation::Nearest => xsynth_core::soundfont::Interpolator::Nearest,
-                Interpolation::Linear => xsynth_core::soundfont::Interpolator::Linear,
+                // xsynth 只有最近邻/线性；Cubic 在 xsynth 后端退化为 Linear
+                // （yc 自研后端才有多点插值）。
+                Interpolation::Linear | Interpolation::Cubic => {
+                    xsynth_core::soundfont::Interpolator::Linear
+                }
             },
             ..SoundfontInitOptions::default()
         };

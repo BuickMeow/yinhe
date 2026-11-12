@@ -840,6 +840,7 @@ settings.audio.synth_engine_desc: "選擇 CPU (XSynth) 或 GPU (Yinhe-Synth) 合
 settings.audio.interpolation: "插值方式"
 settings.audio.interp_nearest: "最近鄰（快）"
 settings.audio.interp_linear: "線性（音質好）"
+settings.audio.interp_cubic: "四點（高移調乾淨）"
 settings.audio.interpolation_desc: "變調（pitch bend）時的取樣插值：最近鄰最快，線性音質更乾淨"
 settings.language_desc: "選擇介面顯示語言，重啟後生效"
 settings.midi_import.encoding_desc: "匯入 MIDI 時解析音軌名 / 標記 / 歌詞 / 版權等文字的編碼。多數現代 MIDI 使用 UTF-8；舊檔案常是 GBK 或 Shift-JIS。"

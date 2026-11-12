@@ -954,6 +954,7 @@ settings.audio.synth_engine_desc: "Выберите движок CPU (XSynth) и
 settings.audio.interpolation: "Интерполяция"
 settings.audio.interp_nearest: "Ближайшая (быстро)"
 settings.audio.interp_linear: "Линейная (чисто)"
+settings.audio.interp_cubic: "Кубическая (4 точки)"
 settings.audio.interpolation_desc: "Интерполяция сэмплов для питч-бендов: «Ближайшая» быстрее, «Линейная» чище"
 settings.language_desc: "Язык интерфейса, вступает в силу после перезапуска"
 settings.midi_import.encoding_desc: "Кодировка названий дорожек, маркеров, текста песен и копирайта при импорте MIDI. Современные файлы обычно в UTF-8."

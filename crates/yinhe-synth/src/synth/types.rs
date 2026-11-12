@@ -76,6 +76,16 @@ pub struct GpuVoiceState {
     pub flt_x2r: f32,
     pub flt_y1r: f32,
     pub flt_y2r: f32,
+    // ── SFZ LFO（amplfo_* / pitchlfo_*）──
+    /// 深度：振幅 dB / 音高 cents（0 = 该 LFO 不启用）
+    pub amp_lfo_depth: f32,
+    pub pitch_lfo_depth: f32,
+    /// 频率（Hz）
+    pub lfo_freq: f32,
+    /// 起始相位（周期 0..1，来自 SFZ `phase`）
+    pub lfo_phase: f32,
+    /// 自起音以来已渲染帧数（LFO 唯一时间基准，与 CPU 同语义）
+    pub lfo_frames: u32,
     /// 完全重复 NoteOn 合批引用数（增益 ×dup；note_off 逐个递减，归 1 才 release）。
     /// 与 CpuSynth 的 `dup` 同语义（线性系统里 N 个同相位同参数 voice 之和 =
     /// 单个 ×N）：黑乐谱重复 NoteOn 常态下省 voice 且对齐 CPU 能量。

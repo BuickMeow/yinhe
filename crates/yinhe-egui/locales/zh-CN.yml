@@ -971,6 +971,7 @@ settings.audio.synth_engine_desc: "选择 CPU (XSynth) 或 GPU (Yinhe-Synth) 合
 settings.audio.interpolation: "插值方式"
 settings.audio.interp_nearest: "最近邻（快）"
 settings.audio.interp_linear: "线性（音质好）"
+settings.audio.interp_cubic: "四点（高移调干净）"
 settings.audio.interpolation_desc: "变调（pitch bend）时的采样插值：最近邻最快，线性音质更干净"
 settings.language_desc: "选择界面显示语言，重启后生效"
 settings.midi_import.encoding_desc: "导入 MIDI 时解析音轨名 / 标记 / 歌词 / 版权等文本的编码。多数现代 MIDI 用 UTF-8；旧文件常是 GBK 或 Shift-JIS。"

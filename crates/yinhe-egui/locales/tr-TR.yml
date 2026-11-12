@@ -954,6 +954,7 @@ settings.audio.synth_engine_desc: "CPU (XSynth) veya GPU (Yinhe-Synth) motorunu 
 settings.audio.interpolation: "Enterpolasyon"
 settings.audio.interp_nearest: "En Yakın (hızlı)"
 settings.audio.interp_linear: "Doğrusal (temiz)"
+settings.audio.interp_cubic: "Kübik (4 nokta)"
 settings.audio.interpolation_desc: "Perde bükülmeleri için örnek enterpolasyonu: En Yakın en hızlısı, Doğrusal daha temiz"
 settings.language_desc: "Arayüz dili, yeniden başlatmadan sonra etkin olur"
 settings.midi_import.encoding_desc: "MIDI içe aktarırken kanal adı, işaret, şarkı sözü ve telif metinlerini çözmek için kodlama. Yeni dosyalar genellikle UTF-8."

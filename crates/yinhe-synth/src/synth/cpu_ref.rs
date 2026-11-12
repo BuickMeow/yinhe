@@ -59,6 +59,11 @@ fn release_cmd_advances_envelope() {
         flt_x2r: 0.0,
         flt_y1r: 0.0,
         flt_y2r: 0.0,
+        amp_lfo_depth: 0.0,
+        pitch_lfo_depth: 0.0,
+        lfo_freq: 0.0,
+        lfo_phase: 0.0,
+        lfo_frames: 0,
         dup: 1,
     };
     let releases = [ReleaseCmd {
@@ -152,6 +157,11 @@ fn release_progress_advances_full_block() {
         flt_x2r: 0.0,
         flt_y1r: 0.0,
         flt_y2r: 0.0,
+        amp_lfo_depth: 0.0,
+        pitch_lfo_depth: 0.0,
+        lfo_freq: 0.0,
+        lfo_phase: 0.0,
+        lfo_frames: 0,
         dup: 1,
     };
     let mut voices = vec![make_voice(0), make_voice(1)];

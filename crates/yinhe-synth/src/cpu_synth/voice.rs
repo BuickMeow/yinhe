@@ -14,7 +14,10 @@
 use std::sync::Arc;
 
 use crate::channel_state::{ChannelState, env_curve_frames};
-use crate::sf_parser::KeyInfo;
+use crate::sf_parser::{KeyInfo, LayerExtra, Lfo};
+
+/// LFO 增益/音高的重算网格（帧）。与块长无关是 CPU/GPU 一致的前提。
+pub(super) const LFO_GRID: u32 = 64;
 
 /// 包络结束阶段。
 pub(super) const ENV_FINISHED: u32 = 6;
@@ -101,6 +104,33 @@ pub(super) struct CpuVoice {
     loop_mode: u32,
     loop_start: u32,
     loop_end: u32,
+
+    // ── SFZ 运行期附加行为 ──
+    /// `trigger=release` 层：由音符结束/踏板松开创建，自己不再触发释放层。
+    pub(super) is_release_trigger: bool,
+    /// `one_shot`：忽略 note_off/踏板，播到采样结束。
+    pub(super) one_shot: bool,
+    /// SFZ `group`（`off_by` 按它掐音；0 = 不参与）。
+    pub(super) off_group: u16,
+    /// 该 voice 的释放层是否已创建（避免重复触发）。
+    pub(super) release_spawned: bool,
+    /// 振幅 LFO（dB 深度，正弦）；None = 无。
+    amp_lfo: Option<Lfo>,
+    /// 音高 LFO（cents 深度）；None = 无。
+    pitch_lfo: Option<Lfo>,
+    /// LFO 起始相位（0..1，来自 SFZ `phase`）。
+    lfo_phase0: f32,
+    /// 自 voice 起音以来已渲染的帧数（LFO 的时间基准）。
+    ///
+    /// **必须以"已渲染帧数"为唯一时间基准**：块长、分段边界、CPU/GPU 后端
+    /// 都不影响结果，离线导出与实时回放逐样本一致。
+    lfo_frames: u32,
+    /// 本网格的振幅 LFO 增益（线性；无 LFO 时 1.0）。
+    lfo_gain: f32,
+    /// 弯音/调音倍率（`set_speed` 写入；与 LFO 倍率相乘得到最终 speed）。
+    pitch_mult: f32,
+    /// 采样率（LFO 时间基准换算）。
+    sample_rate: u32,
 }
 
 mod render;
@@ -181,6 +211,17 @@ impl CpuVoice {
             loop_mode: p.loop_mode,
             loop_start: p.loop_start,
             loop_end: p.loop_end,
+            is_release_trigger: false,
+            one_shot: false,
+            off_group: 0,
+            release_spawned: false,
+            amp_lfo: None,
+            pitch_lfo: None,
+            lfo_phase0: 0.0,
+            lfo_frames: 0,
+            lfo_gain: 1.0,
+            pitch_mult: ch.pitch_multiplier(),
+            sample_rate,
         };
         // 播放长度（帧）：min(采样帧数, stop) - offset（stop=u32::MAX 表示无）。
         let total = frame_count(info);
@@ -237,11 +278,61 @@ impl CpuVoice {
         self.dup += 1;
     }
 
+    /// 应用 SFZ 门控结果（`xfin/xfout` 增益、`pitch_random` 音高）。
+    ///
+    /// 改写 voice 自身的 speed/base_gain，而不是 `KeyInfo` 快照：快照是
+    /// 按 (key, vel) 共享的，门控只对本次 note_on 生效。
+    pub(super) fn apply_gate(&mut self, speed_scale: f32, volume: f32) {
+        self.base_gain = volume;
+        self.base_speed *= speed_scale;
+        self.speed = self.base_speed * self.pitch_mult;
+    }
+
+    /// 挂上 SFZ LFO（`amplfo_*` / `pitchlfo_*`）。
+    pub(super) fn apply_lfo(&mut self, extra: &LayerExtra) {
+        self.amp_lfo = extra.amplfo;
+        self.pitch_lfo = extra.pitchlfo;
+        self.lfo_phase0 = extra
+            .amplfo
+            .or(extra.pitchlfo)
+            .map(|l| l.phase / 360.0)
+            .unwrap_or(0.0);
+    }
+
+    /// 是否有振幅 LFO（热路径跳过判定）。
+    #[inline]
+    pub(super) fn has_lfo(&self) -> bool {
+        self.amp_lfo.is_some()
+    }
+
+    /// 网格边界处重算振幅 LFO 增益。
+    ///
+    /// 网格锚定在 voice 起音（`lfo_frames` 只按已渲染帧累加）：块长与分段边界
+    /// 都不影响结果，这是 CPU 与 GPU 逐样本一致（离线导出 = 实时回放）的前提。
+    /// LFO 频率远低于网格率（0.5Hz vs 64 帧 ≈ 750Hz），阶梯不可闻。
+    ///
+    /// 音高 LFO 只解析不施加（见 `docs/spec-sfz-coverage.md` 的取舍：需要与
+    /// 弯音共用同一条换速路径，留待与 pitch envelope 一起做）。
+    #[inline]
+    pub(super) fn refresh_lfo(&mut self) -> f32 {
+        let t = f64::from(self.lfo_frames) / f64::from(self.sample_rate);
+        self.lfo_gain = match self.amp_lfo {
+            Some(l) => {
+                let phase =
+                    std::f64::consts::TAU * (f64::from(l.phase) / 360.0 + f64::from(l.freq) * t);
+                10.0f32.powf(l.depth * phase.sin() as f32 / 20.0)
+            }
+            None => 1.0,
+        };
+        self.lfo_gain
+    }
+
     /// 段边界换速（弯音/调音/音色切换）：复刻 WGSL 的 time 校正，
     /// 保持"上一帧末 + 新速度"的位置连续（`(n−1)(old−new)` 逐字保留）。
     /// 锚点版：把校正结果记为新的 `(anchor_abs = 块首, anchor_time)`。
     pub(super) fn set_speed(&mut self, multiplier: f32, block_frame: u32, sample_start: u64) {
         let new_speed = self.base_speed * multiplier;
+        self.pitch_mult = multiplier;
         if new_speed == self.speed {
             return;
         }

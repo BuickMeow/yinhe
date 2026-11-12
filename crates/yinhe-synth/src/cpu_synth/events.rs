@@ -24,7 +24,9 @@ impl CpuSynth {
                 frame,
                 block_start_abs,
             ),
-            SynthEvent::NoteOff { channel, key, .. } => self.note_off(*channel, *key),
+            SynthEvent::NoteOff { channel, key, .. } => {
+                self.note_off(*channel, *key, frame, block_start_abs)
+            }
             SynthEvent::Control { channel, event, .. } => {
                 self.process_control_channel(*channel, *event, frame, block_start_abs);
             }
@@ -46,10 +48,16 @@ impl CpuSynth {
         let Some(ch_idx) = dense_channel(channel as usize) else {
             return;
         };
+        // SFZ keyswitch：落在开关区间的键不发声，只记录 `sw_last`。
+        // 必须在 select 之前处理，否则开关键会按普通音触发。
+        if self.update_keyswitch(ch_idx, key) {
+            return;
+        }
         let ch = self.channels[ch_idx];
-        let entries = self.port_key_maps[ch_idx].as_slice();
+        let maps = Arc::clone(&self.port_key_maps[ch_idx]);
+        let entries = maps.as_slice();
         let t_sel = std::time::Instant::now();
-        let Some(infos) = sf_parser::select_key_infos_multi(entries, ch.bank, ch.program, key, vel)
+        let Some(sel) = sf_parser::select_layers_multi(entries, ch.bank, ch.program, key, vel)
         else {
             return;
         };
@@ -57,7 +65,19 @@ impl CpuSynth {
             t_sel.elapsed().as_nanos() as u64,
             std::sync::atomic::Ordering::Relaxed,
         );
+        // 轮次计数（round-robin）：每 key 每次 note_on +1，先取后加。
         let slot = Self::key_slot(channel, key);
+        let seq_counter = self.seq_counters[slot];
+        self.seq_counters[slot] = seq_counter.wrapping_add(1);
+        let rand = sf_parser::extra::hash_rand(channel, key, seq_counter);
+        let gate_ctx = sf_parser::GateCtx {
+            cc: &ch.cc,
+            sw_last: ch.sw_last,
+            seq_counter,
+            rand,
+        };
+        let infos = sel.infos;
+        let extras = sel.extras;
         let group = self.next_group;
         self.next_group = self.next_group.wrapping_add(1);
         // 完全重复合批：单层时先在最近创建的活跃 voice 里找同参数者（黑乐谱重复
@@ -66,8 +86,27 @@ impl CpuSynth {
         let batchable = infos.len() == 1;
         let mut spawned = 0usize;
         for info in infos {
+            // SFZ 门控（xfin/xfout/on_cc/seq/sw/rand）：不命中则整层不发声。
+            // pitch_random 以音分形式并入播放倍率（确定性，离线=实时）。
+            let extra = info.extra_index().and_then(|i| extras.get(i));
+            // 只改 region 基础倍率；通道弯音/调音倍率由 voice 内部乘上，
+            // 不能被门控覆盖（否则 CPU 会丢弯音、与 GPU 不一致）。
+            let mut gate_speed_scale = 1.0f32;
+            let mut info_volume = info.volume;
+            if let Some(extra) = extra {
+                let Some(gate) = sf_parser::evaluate(extra, key, &gate_ctx) else {
+                    continue;
+                };
+                info_volume *= gate.gain;
+                if gate.pitch_cents != 0.0 {
+                    gate_speed_scale = 2.0f32.powf(gate.pitch_cents / 1200.0);
+                }
+                if extra.off_by != 0 {
+                    self.cut_group(extra.off_by, group);
+                }
+            }
             if batchable {
-                let speed = info.speed_mult * ch.pitch_multiplier();
+                let speed = info.speed_mult * gate_speed_scale * ch.pitch_multiplier();
                 let scan = self.key_indices[slot].len().min(16);
                 let hit = self.key_indices[slot]
                     .iter()
@@ -77,7 +116,7 @@ impl CpuSynth {
                         self.voices[i as usize].matches_batch(
                             &info.sample_data,
                             info.offset,
-                            info.speed_mult,
+                            info.speed_mult * gate_speed_scale,
                             speed,
                             vel,
                             end_sample,
@@ -91,7 +130,7 @@ impl CpuSynth {
                 }
             }
             let t_new = std::time::Instant::now();
-            let voice = CpuVoice::new(
+            let mut voice = CpuVoice::new(
                 info,
                 channel,
                 key,
@@ -103,6 +142,13 @@ impl CpuSynth {
                 &ch,
                 block_start_abs,
             );
+            // 门控增益/音高：只缩放 region 基础倍率（不动通道弯音倍率）
+            voice.apply_gate(gate_speed_scale, info_volume);
+            if let Some(extra) = extra {
+                voice.one_shot = extra.one_shot;
+                voice.off_group = extra.group;
+                voice.apply_lfo(extra);
+            }
             PROF_ON_NEW_NS.fetch_add(
                 t_new.elapsed().as_nanos() as u64,
                 std::sync::atomic::Ordering::Relaxed,
@@ -126,8 +172,88 @@ impl CpuSynth {
         );
     }
 
-    /// 该 key 活跃 voice 超过 `max` 时，反复杀 velocity 最低的**组**
-    /// （xsynth `pop_quietest_voice_group` 语义；`keep_group` = 刚加入的组不参与）。
+    /// SFZ `off_by`：新音触发时掐掉同组的旧音（鼓组/断音互斥）。
+    ///
+    /// 只在该 region 声明了 `off_by` 时调用，热路径不扫描。组标签在 SFZ 里是
+    /// 全局的（跨 channel 生效），因此按 voice 的 `off_group` 扫描。
+    fn cut_group(&mut self, off_by: u16, keep_group: u32) {
+        for i in 0..self.voices.len() {
+            let v = &self.voices[i];
+            if v.off_group == off_by && v.group != keep_group && !v.finished() && !v.is_killed() {
+                self.voices[i].signal_kill(self.sample_rate);
+            }
+        }
+    }
+
+    /// 把音色库的 `<control> set_ccN=v` 写进各通道的初始 CC。
+    ///
+    /// 必需：Starry 的琴键/锤/踏板三层全部由 `xfin_locc14/15/20` 门控，
+    /// 初始 CC 为 0 时三层都会静音（或只剩一层），用户调 CC 也无效。
+    pub(super) fn apply_cc_defaults(&mut self) {
+        for (ch_idx, defaults) in self.channel_cc_defaults.iter().enumerate() {
+            for &(cc, v) in defaults {
+                self.channels[ch_idx].cc[cc as usize] = v;
+            }
+        }
+    }
+
+    /// SFZ keyswitch：`sw_lokey..sw_hikey` 区间内的键只切换 `sw_last` 不发声。
+    ///
+    /// 返回 true 表示该键是开关键、已吞掉。区间在加载音色库时缓存
+    /// （`sw_ranges`），热路径只做最多几次区间比较。
+    fn update_keyswitch(&mut self, ch_idx: usize, key: u8) -> bool {
+        let hit = self.sw_ranges[ch_idx]
+            .iter()
+            .any(|&(lo, hi)| key >= lo && key <= hi);
+        if hit {
+            self.channels[ch_idx].sw_last = key;
+        }
+        hit
+    }
+
+    /// SFZ `trigger=release`：扫描块内到期（`end_sample` 落在本块）的音符，
+    /// 为其创建释放层。
+    ///
+    /// 引擎事件表不生成 NoteOff（由 `end_sample` 取代），所以释放层只能在这里
+    /// 按到期声音补齐。`release_spawned` 保证一个音符只触发一次。
+    pub(super) fn spawn_due_release_layers(&mut self, block_start: u64, frames: usize) {
+        let block_end = block_start + frames as u64;
+        // 先收集（避免迭代 voices 时 push 触发 Vec 重分配/借用冲突）。
+        // 同一组只取第一条：同一次 NoteOn 的多层共享 end_sample，重复触发会
+        // 叠出多份释放声。
+        let mut due: Vec<(u8, u8, u8, u32, u32)> = Vec::new();
+        let mut seen: Vec<u32> = Vec::new();
+        for v in &self.voices {
+            if v.is_release_trigger
+                || v.release_spawned
+                || v.finished()
+                || v.killed
+                || v.end_sample < block_start
+                || v.end_sample >= block_end
+                || seen.contains(&v.group)
+            {
+                continue;
+            }
+            seen.push(v.group);
+            due.push((
+                v.channel,
+                v.key,
+                v.velocity,
+                (v.end_sample - block_start) as u32,
+                v.group,
+            ));
+        }
+        for (channel, key, vel, frame, group) in due {
+            for v in self.voices.iter_mut() {
+                if v.group == group {
+                    v.release_spawned = true;
+                }
+            }
+            self.spawn_release_layers(channel, key, vel, frame, block_start);
+        }
+    }
+
+    /// 该 key 活跃 voice 超过 `max` 时，反复杀 velocity 最低的**组**    /// （xsynth `pop_quietest_voice_group` 语义；`keep_group` = 刚加入的组不参与）。
     /// 经 `key_indices` 只扫该 key 的 voice（O(layer)，非 O(V)）。
     ///
     /// 候选**不排除已 release 的组**：xsynth 的 `pop_quietest_voice_group`
@@ -257,7 +383,10 @@ impl CpuSynth {
     /// NoteOff：释放该 (channel, key) 最老的未释放**层组**（延音踏板按住时只
     /// 标记）。同一次 NoteOn 展开的所有层共享组号，必须整组释放，否则鼓的
     /// L/R 层会被拆开（右声道提前消失）。
-    fn note_off(&mut self, channel: u8, key: u8) {
+    ///
+    /// `one_shot` 层（SFZ `loop_mode=one_shot`）忽略 NoteOff：踏板/琴键噪声要
+    /// 播到采样末尾，否则会被硬切。
+    fn note_off(&mut self, channel: u8, key: u8, frame: u32, block_start_abs: u64) {
         let t_prof = std::time::Instant::now();
         let Some(ch_idx) = dense_channel(channel as usize) else {
             return;
@@ -277,6 +406,9 @@ impl CpuSynth {
                 if v.group != group || v.finished() || v.released || v.held_by_damper {
                     continue;
                 }
+                if v.one_shot {
+                    continue;
+                }
                 // 合批 voice：每个 NoteOff 只消耗一个引用，归 1 才真正释放
                 if v.dup > 1 {
                     v.dup -= 1;
@@ -286,12 +418,105 @@ impl CpuSynth {
                     v.signal_release(ENV_RELEASE);
                 }
             }
+            // SFZ `trigger=release`：音符结束才发声（钢琴踏板/键释放噪声）。
+            self.spawn_release_layers(
+                channel,
+                key,
+                self.velocity_of(group),
+                frame,
+                block_start_abs,
+            );
         }
         self.key_indices[slot] = idxs;
         PROF_NOTE_OFF_NS.fetch_add(
             t_prof.elapsed().as_nanos() as u64,
             std::sync::atomic::Ordering::Relaxed,
         );
+    }
+
+    /// 该组首次 NoteOn 的力度（释放层沿用；找不到返回 0 = 用默认）。
+    fn velocity_of(&self, group: u32) -> u8 {
+        self.voices
+            .iter()
+            .find(|v| v.group == group)
+            .map(|v| v.velocity)
+            .unwrap_or(0)
+    }
+
+    /// 创建 `trigger=release` 层（该 (channel, key) 的全部释放 region 各一个 voice）。
+    ///
+    /// 门控（`on_locc64` 等）在**释放时刻**求值——踏板噪声按当时的踏板状态选层，
+    /// 这是 SFZ 的语义，也是它比 note_on 时刻求值更正确的地方。
+    fn spawn_release_layers(
+        &mut self,
+        channel: u8,
+        key: u8,
+        vel: u8,
+        frame: u32,
+        block_start_abs: u64,
+    ) {
+        let Some(ch_idx) = dense_channel(channel as usize) else {
+            return;
+        };
+        let ch = self.channels[ch_idx];
+        let maps = Arc::clone(&self.port_key_maps[ch_idx]);
+        let entries = maps.as_slice();
+        let Some(sel) =
+            sf_parser::select_release_layers_multi(entries, ch.bank, ch.program, key, vel)
+        else {
+            return;
+        };
+        let rand = sf_parser::extra::hash_rand(
+            channel,
+            key,
+            self.seq_counters[ch_idx * 128 + key as usize],
+        );
+        let gate_ctx = sf_parser::GateCtx {
+            cc: &ch.cc,
+            sw_last: ch.sw_last,
+            seq_counter: 0,
+            rand,
+        };
+        let group = self.next_group;
+        self.next_group = self.next_group.wrapping_add(1);
+        let slot = Self::key_slot(channel, key);
+        for info in sel.infos {
+            let extra = info.extra_index().and_then(|i| sel.extras.get(i));
+            let mut speed_scale = 1.0f32;
+            let mut volume = info.volume;
+            if let Some(extra) = extra {
+                let Some(gate) = sf_parser::evaluate(extra, key, &gate_ctx) else {
+                    continue;
+                };
+                volume *= gate.gain;
+                if gate.pitch_cents != 0.0 {
+                    speed_scale = 2.0f32.powf(gate.pitch_cents / 1200.0);
+                }
+            }
+            let mut voice = CpuVoice::new(
+                info,
+                channel,
+                key,
+                if vel == 0 { info.lovel } else { vel },
+                group,
+                u64::MAX,
+                frame,
+                self.sample_rate,
+                &ch,
+                block_start_abs,
+            );
+            voice.apply_gate(speed_scale, volume);
+            voice.is_release_trigger = true;
+            voice.release_spawned = true;
+            if let Some(extra) = extra {
+                voice.one_shot = extra.one_shot;
+                voice.off_group = extra.group;
+                voice.apply_lfo(extra);
+            }
+            let idx = self.voices.len();
+            self.voices.push(voice);
+            self.key_indices[slot].push(idx as u32);
+        }
     }
 
     /// 控制事件：更新通道状态并把变化传播到该通道的活跃 voice。
@@ -307,12 +532,21 @@ impl CpuSynth {
         };
         let damper_released = self.channels[ch_idx].process_control(event);
         if damper_released {
-            // 松开延音踏板：释放被保持的 voice（与 GpuSynth apply_chase 同语义）
+            // 松开延音踏板：释放被保持的 voice（与 GpuSynth apply_chase 同语义），
+            // 并为其补上 SFZ `trigger=release` 层（踏板噪声正是在这一刻发声）。
+            let mut held: Vec<(u8, u8, u8)> = Vec::new();
             for v in self.voices.iter_mut() {
                 if v.channel == channel && v.held_by_damper && !v.finished() {
                     v.held_by_damper = false;
                     v.signal_release(ENV_RELEASE);
+                    if !v.is_release_trigger && !v.release_spawned {
+                        v.release_spawned = true;
+                        held.push((v.key, v.velocity, 0));
+                    }
                 }
+            }
+            for (key, vel, _) in held {
+                self.spawn_release_layers(channel, key, vel, frame, block_start_abs);
             }
         }
         // 弯音/调音变化：更新该通道活跃 voice 的速度（含 time 校正）。

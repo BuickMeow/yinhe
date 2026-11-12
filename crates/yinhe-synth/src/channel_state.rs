@@ -35,6 +35,11 @@ pub(crate) struct ChannelState {
     pub(crate) env_attack: Option<u8>,
     /// CC72 release 时长倍率（u8，None = 用 region 原始值）
     pub(crate) env_release: Option<u8>,
+    /// 全部 128 个 CC 的当前值。SFZ 门控（`xfin_*` / `on_loccN`）与
+    /// `<control> set_ccN=v` 默认值都读写这里。
+    pub(crate) cc: [u8; 128],
+    /// keyswitch 当前值（SFZ `sw_last`；0xFF = 未设置）。
+    pub(crate) sw_last: u8,
 }
 
 impl ChannelState {
@@ -56,6 +61,8 @@ impl ChannelState {
             sample_rate,
             env_attack: None,
             env_release: None,
+            cc: [0; 128],
+            sw_last: 0xFF,
         }
     }
 
@@ -74,6 +81,11 @@ impl ChannelState {
             ControlEvent::Raw(controller, value) => {
                 // 整数量语义的 CC（bank/RPN 选择与数据/包络倍率）取整；damper 用阈值。
                 let vi = value.round() as u8;
+                // 全部 CC 原值存档：SFZ 的 `xfin_*` / `on_loccN` 门控与
+                // `<control> set_ccN` 默认值都从这里取。
+                if (controller as usize) < 128 {
+                    self.cc[controller as usize] = vi;
+                }
                 match controller {
                     0x00 => {
                         // Bank select MSB：鼓组通道（bank==128）锁定不变（xsynth set_bank）

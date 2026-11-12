@@ -954,6 +954,7 @@ settings.audio.synth_engine_desc: "Zvolte engine CPU (XSynth) nebo GPU (Yinhe-Sy
 settings.audio.interpolation: "Interpolace"
 settings.audio.interp_nearest: "Nejbližší (rychlé)"
 settings.audio.interp_linear: "Lineární (čisté)"
+settings.audio.interp_cubic: "Kubická (4 body)"
 settings.audio.interpolation_desc: "Vzorkovací interpolace pro ohyby výšky: Nejbližší je nejrychlejší, Lineární je čistší"
 settings.language_desc: "Jazyk rozhraní, projeví se po restartu"
 settings.midi_import.encoding_desc: "Kódování názvů stop, značek, textu a copyrightu při importu MIDI. Novější soubory bývají UTF-8."

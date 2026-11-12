@@ -954,6 +954,7 @@ settings.audio.synth_engine_desc: "Escolha o motor CPU (XSynth) ou GPU (Yinhe-Sy
 settings.audio.interpolation: "Interpolação"
 settings.audio.interp_nearest: "Mais próximo (rápido)"
 settings.audio.interp_linear: "Linear (limpo)"
+settings.audio.interp_cubic: "Cúbica (4 pontos)"
 settings.audio.interpolation_desc: "Interpolação de amostra para pitch bends: Mais próximo é o mais rápido, Linear é mais limpo"
 settings.language_desc: "Idioma da interface, entra em vigor após reiniciar"
 settings.midi_import.encoding_desc: "Codificação de nomes de faixas, marcadores, letras e copyright ao importar MIDI. Arquivos recentes usam UTF-8."

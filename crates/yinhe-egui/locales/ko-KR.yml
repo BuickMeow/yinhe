@@ -846,6 +846,7 @@ settings.audio.synth_engine_desc: "CPU (XSynth) 또는 GPU (Yinhe-Synth) 엔진 
 settings.audio.interpolation: "보간 방식"
 settings.audio.interp_nearest: "최근접 (빠름)"
 settings.audio.interp_linear: "선형 (고음질)"
+settings.audio.interp_cubic: "4점 (고품질)"
 settings.audio.interpolation_desc: "피치 벤드 시 샘플 보간: 최근접이 가장 빠르고, 선형이 더 깨끗합니다"
 settings.language_desc: "인터페이스 언어, 재시작 후 적용"
 settings.midi_import.encoding_desc: "MIDI를 가져올 때 트랙 이름·마커·가사·저작권을 해석하는 인코딩. 최신 파일은 UTF-8, 오래된 파일은 GBK나 Shift-JIS가 많습니다."

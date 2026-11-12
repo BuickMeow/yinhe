@@ -117,6 +117,12 @@ pub struct CpuSynth {
     key_indices: Vec<Vec<u32>>,
     /// 下一次 NoteOn 的层组号（同一次 NoteOn 展开的所有 voice 共享）。
     next_group: u32,
+    /// 每 (channel, key) 的 note_on 次数：SFZ round-robin（`seq_*`）的轮次基准。
+    seq_counters: Vec<u32>,
+    /// 每 dense 通道的 `<control> set_ccN=v` 默认 CC（加载音色库时写入）。
+    channel_cc_defaults: Vec<Vec<(u8, u8)>>,
+    /// 每 dense 通道的 keyswitch 键区间（`sw_lokey..sw_hikey`），加载时缓存。
+    sw_ranges: Vec<Vec<(u8, u8)>>,
     /// CpuSynth 专用 rayon 池（线程数 = 性能核数，见 `render_thread_count`）。
     /// 专用池不影响其他 rayon 使用者；构建失败（资源不足）为 None，回退全局池。
     par_pool: Option<rayon::ThreadPool>,
@@ -141,6 +147,9 @@ impl CpuSynth {
             par_scratch: Vec::new(),
             key_indices: vec![Vec::new(); MAX_CHANNELS * 128],
             next_group: 1,
+            seq_counters: vec![0; MAX_CHANNELS * 128],
+            channel_cc_defaults: vec![Vec::new(); MAX_CHANNELS],
+            sw_ranges: vec![Vec::new(); MAX_CHANNELS],
             par_pool: rayon::ThreadPoolBuilder::new()
                 .num_threads(render_thread_count())
                 .thread_name(|i| format!("yinhe-synth-{i}"))
@@ -177,12 +186,35 @@ impl CpuSynth {
     ) -> Result<(), String> {
         let maps =
             crate::sf_cache::load_key_maps_merged(paths, self.sample_rate, self.interpolation)?;
+        // 通道默认 CC（`<control> set_ccN=v`）：必须在 note_on 之前生效。
+        let cc_defaults: Vec<(u8, u8)> = maps
+            .iter()
+            .flat_map(|e| e.cc_defaults().iter().copied())
+            .collect();
+        // keyswitch 键区间（`sw_lokey..sw_hikey`）：note_on 热路径据此吞掉开关键。
+        let mut sw_ranges: Vec<(u8, u8)> = Vec::new();
+        for entry in maps.iter() {
+            for extra in entry.extras() {
+                if extra.has_sw {
+                    sw_ranges.push((extra.sw_lokey, extra.sw_hikey));
+                }
+            }
+        }
         for &dense in denses {
             let slot = dense as usize;
             if slot >= MAX_CHANNELS {
                 continue;
             }
             self.port_key_maps[slot] = Arc::clone(&maps);
+            if !cc_defaults.is_empty() {
+                self.channel_cc_defaults[slot] = cc_defaults.clone();
+                for &(cc, v) in &cc_defaults {
+                    self.channels[slot].cc[cc as usize] = v;
+                }
+            }
+            if !sw_ranges.is_empty() {
+                self.sw_ranges[slot] = sw_ranges.clone();
+            }
         }
         Ok(())
     }
@@ -207,6 +239,7 @@ impl CpuSynth {
         self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
         self.sample_position = 0;
         self.chase_base = 0;
+        self.apply_cc_defaults();
     }
 
     pub fn sample_position(&self) -> u64 {
@@ -258,6 +291,7 @@ impl CpuSynth {
             v.clear();
         }
         self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
+        self.apply_cc_defaults();
     }
 
     /// chase 跳过掩码（seek 后已实时处理的控制事件区间 `[chase_base, cursor)`）。
@@ -311,6 +345,11 @@ impl CpuSynth {
         for i in 0..MAX_CHANNELS {
             self.damper_flags[i] = self.channels[i].damper;
         }
+
+        // SFZ `trigger=release`：块内到期的音符在此刻生成释放层。
+        // 与 `render_block` 内部的到期释放同帧（start_offset = 到期帧），
+        // 保证释放声与主音尾对齐；`release_spawned` 防重复。
+        self.spawn_due_release_layers(sample_start, frames);
 
         // 区间内按事件分段：事件在各自 sample 的帧生效（段 = 相邻事件之间）
         let range_end = sample_start + frames as u64;

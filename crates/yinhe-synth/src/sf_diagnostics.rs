@@ -1,55 +1,12 @@
-//! SFZ 兼容性诊断：列出 `xsynth-soundfonts` 不会识别的 opcode。
+//! SFZ 兼容性诊断：列出引擎尚不支持的 opcode。
 //!
-//! 解析本身委托 xsynth；未知 opcode 会被静默忽略，用户只能听到"不对劲"。
-//! 这里在加载前扫描源文件（含 `#include` 递归），把会被忽略的 opcode 汇总
-//! 出来，供设置页提示。
+//! 解析器是自有实现（`crate::sfz`），未识别的键本来就记在
+//! `SfzFile.unknown_opcodes` 里——这里只做措辞与排序，不再维护一份手写白名单
+//! （那样会和解析器各自漂移）。
 
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-/// `xsynth-soundfonts 0.4` 实际会解析的 opcode（与 `sfz/parse.rs` 对齐）。
-const SUPPORTED: &[&str] = &[
-    "lokey",
-    "hikey",
-    "lovel",
-    "hivel",
-    "volume",
-    "pan",
-    "pitch_keycenter",
-    "key",
-    "cutoff",
-    "resonance",
-    "amp_keycenter",
-    "amp_keytrack",
-    "amp_veltrack",
-    "pan_keycenter",
-    "pan_keytrack",
-    "pan_veltrack",
-    "fil_veltrack",
-    "fil_keytrack",
-    "fil_keycenter",
-    "fil_type",
-    "loop_mode",
-    "loopmode",
-    "loop_start",
-    "loopstart",
-    "loop_end",
-    "loopend",
-    "offset",
-    "default_path",
-    "tune",
-    "ampeg_delay",
-    "ampeg_start",
-    "ampeg_attack",
-    "ampeg_hold",
-    "ampeg_decay",
-    "ampeg_sustain",
-    "ampeg_release",
-    "ampeg_vel2release",
-    "sample",
-];
-
-/// 一条诊断：某个 opcode 会被忽略，以及它通常影响什么。
+/// 一条诊断：某个 opcode 尚不被引擎消费，以及它通常影响什么。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SfzIssue {
     pub opcode: String,
@@ -68,11 +25,11 @@ impl SfzIssue {
 ///
 /// 读取失败或非 SFZ 路径返回空（诊断不应影响加载）。
 pub fn scan(path: &Path) -> Vec<SfzIssue> {
-    let mut counts: HashMap<String, usize> = HashMap::new();
-    let mut seen: HashSet<PathBuf> = HashSet::new();
-    scan_file(path, &mut counts, &mut seen, 0);
-
-    let mut issues: Vec<SfzIssue> = counts
+    let Ok(file) = crate::sfz::parse(path) else {
+        return Vec::new();
+    };
+    let mut issues: Vec<SfzIssue> = file
+        .unknown_opcodes
         .into_iter()
         .map(|(opcode, count)| SfzIssue {
             hint: hint_for(&opcode),
@@ -84,101 +41,48 @@ pub fn scan(path: &Path) -> Vec<SfzIssue> {
     issues
 }
 
-fn scan_file(
-    path: &Path,
-    counts: &mut HashMap<String, usize>,
-    seen: &mut HashSet<PathBuf>,
-    depth: usize,
-) {
-    // 深度上限防止畸形 include 链拖住 UI。
-    if depth > 8 {
-        return;
-    }
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return;
-    };
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-
-    for line in text.lines() {
-        let line = strip_comment(line);
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix("#include") {
-            let inc = rest.trim().trim_matches('"').trim_matches('\'');
-            // 含 `$` 的路径依赖当前 `#define`，不展开（避免误报）。
-            if !inc.is_empty() && !inc.contains('$') {
-                let inc_path = dir.join(inc);
-                if seen.insert(inc_path.clone()) {
-                    scan_file(&inc_path, counts, seen, depth + 1);
-                }
-            }
-            continue;
-        }
-        if line.starts_with('#') {
-            continue;
-        }
-
-        // 同一行可能既有 `<region>` 又有多个 `opcode=value`。
-        let stripped = strip_tags(line);
-        for token in stripped.split_whitespace() {
-            let Some((opcode, _)) = token.split_once('=') else {
-                continue;
-            };
-            let opcode = opcode.trim().to_ascii_lowercase();
-            if opcode.is_empty() || SUPPORTED.contains(&opcode.as_str()) {
-                continue;
-            }
-            *counts.entry(opcode).or_insert(0) += 1;
-        }
-    }
-}
-
-/// 去掉 `//` 注释（SFZ 的注释语法）。
-fn strip_comment(line: &str) -> &str {
-    match line.find("//") {
-        Some(i) => &line[..i],
-        None => line,
-    }
-}
-
-/// 把 `<region>` / `<group>` 等标签替换成空格，保留后面的 opcode。
-fn strip_tags(line: &str) -> String {
-    let mut out = String::with_capacity(line.len());
-    let mut rest = line;
-    while let Some(start) = rest.find('<') {
-        out.push_str(&rest[..start]);
-        match rest[start..].find('>') {
-            Some(end) => {
-                out.push(' ');
-                rest = &rest[start + end + 1..];
-            }
-            None => {
-                rest = "";
-                break;
-            }
-        }
-    }
-    out.push_str(rest);
-    out
+/// 缺失采样数（音色库引用了读不到的 wav）。
+pub fn missing_samples(path: &Path) -> usize {
+    crate::sfz::parse(path)
+        .map(|f| f.missing_samples)
+        .unwrap_or(0)
 }
 
 fn hint_for(opcode: &str) -> &'static str {
-    if matches!(opcode, "group" | "off_by") {
-        "鼓组/断音互斥不会生效"
-    } else if matches!(opcode, "seq_position" | "seq_length" | "lorand" | "hirand") {
-        "round-robin 不会轮换"
-    } else if opcode.starts_with("sw_") {
-        "keyswitch 不会切换"
-    } else if opcode == "trigger" {
-        "release/legato 触发不会生效"
-    } else if matches!(opcode, "on_locc" | "on_hicc" | "on_loch" | "on_hicch") {
-        "CC 触发的 articulation 不会生效"
-    } else if opcode.starts_with("eg2") || opcode.starts_with("lfo") {
-        "第二包络/LFO 不会生效"
-    } else {
-        "未识别的 opcode 会被忽略"
+    match opcode {
+        "sustain_sw" => "延音踏板开关语义未实现（CC64 仍按标准工作）",
+        "pitch_keytrack" => "键位音高跟踪未实现（按 region 的 key 变调）",
+        "transpose" => "整体移调未实现",
+        "sw_last" | "sw_default" | "sw_label" => "keyswitch 默认值未完全实现",
+        o if o.starts_with("sw_") => "keyswitch 变体未实现",
+        "off_mode" => "off_by 的快速/正常释放模式未区分",
+        "loop_crossfade" => "循环点交叉淡化未实现",
+        "note_off_velocity" => "note-off 力度未接入",
+        "width" | "position" | "direction" => "立体声宽度/读取位置未实现",
+        "delay" | "end" | "start" | "count" => "采样区间偏移变体未实现",
+        o if o.starts_with("fileg_") => "第二滤波包络未实现",
+        o if o.starts_with("pitcheg_") => "音高包络未实现",
+        o if o.starts_with("rt_") => "释放触发（rt_*）变体未实现",
+        o if o.starts_with("eg") => "扩展包络未实现",
+        o if o.starts_with("velocity_") => "力度曲线变体未实现",
+        o if o.starts_with("controller_") => "CC 曲线变体未实现",
+        o if o.starts_with("label_") || o.starts_with("hint_") => "UI 提示信息（不影响发声）",
+        o if o.starts_with("xfin_lokey")
+            || o.starts_with("xfin_hikey")
+            || o.starts_with("xfout_lokey")
+            || o.starts_with("xfout_hikey") =>
+        {
+            "键位区间的淡入淡出未实现"
+        }
+        o if o.starts_with("xfin_lovel")
+            || o.starts_with("xfin_hivel")
+            || o.starts_with("xfout_lovel")
+            || o.starts_with("xfout_hivel") =>
+        {
+            "力度区间的淡入淡出未实现"
+        }
+        "bend_up" | "bend_down" => "弯音范围（region 级）未实现",
+        _ => "未识别的 opcode 会被忽略",
     }
 }
 
@@ -188,43 +92,49 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn reports_unsupported_and_ignores_supported() {
+    fn reports_unimplemented_and_skips_supported() {
         let dir = tempfile::tempdir().unwrap();
         let sfz = dir.path().join("kit.sfz");
+        fs::write(dir.path().join("a.wav"), b"RIFF").unwrap();
         fs::write(
             &sfz,
-            "<control>\ndefault_path=Samples/\n\
-             <group> group=1 off_by=1\n\
-             <region> sample=a.wav key=60 lokey=60 hikey=60 ampeg_attack=0.01 seq_position=1 seq_length=4\n\
-             // <region> sample=commented.wav group=9\n",
+            "<region>\nsample=a.wav key=60 lokey=60 hikey=60 ampeg_attack=0.01\n\
+             sustain_sw=off\nloop_crossfade=0.01\n",
         )
         .unwrap();
 
         let issues = scan(&sfz);
         let names: Vec<&str> = issues.iter().map(|i| i.opcode.as_str()).collect();
-        assert!(names.contains(&"group"));
-        assert!(names.contains(&"off_by"));
-        assert!(names.contains(&"seq_position"));
-        assert_eq!(names.iter().filter(|n| **n == "group").count(), 1);
+        assert!(names.contains(&"sustain_sw"));
+        assert!(names.contains(&"loop_crossfade"));
         assert!(!names.contains(&"sample"));
         assert!(!names.contains(&"ampeg_attack"));
-        assert!(!names.contains(&"default_path"));
+        assert!(!names.contains(&"key"));
     }
 
     #[test]
     fn follows_includes() {
         let dir = tempfile::tempdir().unwrap();
         let inc = dir.path().join("inc.sfz");
-        fs::write(&inc, "<region> sample=b.wav sw_last=60\n").unwrap();
+        fs::write(dir.path().join("b.wav"), b"RIFF").unwrap();
+        fs::write(&inc, "<region> sample=b.wav sustain_sw=off\n").unwrap();
         let root = dir.path().join("root.sfz");
         fs::write(&root, "#include \"inc.sfz\"\n").unwrap();
 
         let issues = scan(&root);
-        assert!(issues.iter().any(|i| i.opcode == "sw_last"));
+        assert!(issues.iter().any(|i| i.opcode == "sustain_sw"));
     }
 
     #[test]
     fn missing_file_is_empty() {
         assert!(scan(Path::new("/nonexistent/definitely.sfz")).is_empty());
+    }
+
+    #[test]
+    fn counts_missing_samples() {
+        let dir = tempfile::tempdir().unwrap();
+        let sfz = dir.path().join("t.sfz");
+        fs::write(&sfz, "<region>\nsample=nope.wav\n").unwrap();
+        assert_eq!(missing_samples(&sfz), 1);
     }
 }

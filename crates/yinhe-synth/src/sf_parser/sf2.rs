@@ -155,6 +155,7 @@ fn expand_preset(
                     biquad,
                     pan_l,
                     pan_r,
+                    extra: u32::MAX,
                 });
             }
         }

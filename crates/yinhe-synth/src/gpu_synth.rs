@@ -175,6 +175,12 @@ pub struct GpuSynth {
     /// 每 key 同时活跃 voice 上限（`SetLayerCount`；None = 不限制）。
     /// xsynth 默认 4；超限时按 xsynth 语义杀该 key velocity 最低的 voice。
     max_layers: Option<usize>,
+    /// 每 (dense 通道 × 128 key) 的 note_on 次数：SFZ round-robin 轮次基准。
+    seq_counters: Box<[u32]>,
+    /// 每 dense 通道的 `<control> set_ccN=v` 默认 CC。
+    channel_cc_defaults: Vec<Vec<(u8, u8)>>,
+    /// 每 dense 通道的 keyswitch 键区间（`sw_lokey..sw_hikey`）。
+    sw_ranges: Vec<Vec<(u8, u8)>>,
     /// 每 (dense 通道 × 128 key) 的活跃 voice 计数（per-key layer 限制用）。
     /// 增量维护：note_on +1，kill / GPU 确认结束 -1——替代每音一次 O(V) 全扫。
     layer_counts: Box<[u32]>,
@@ -289,6 +295,9 @@ impl GpuSynth {
             max_voices: crate::DEFAULT_MAX_VOICES,
             max_layers: Some(crate::DEFAULT_MAX_LAYERS),
             layer_counts: vec![0u32; MAX_CHANNELS * 128].into_boxed_slice(),
+            seq_counters: vec![0u32; MAX_CHANNELS * 128].into_boxed_slice(),
+            channel_cc_defaults: (0..MAX_CHANNELS).map(|_| Vec::new()).collect(),
+            sw_ranges: (0..MAX_CHANNELS).map(|_| Vec::new()).collect(),
             key_slots: (0..MAX_CHANNELS * 128)
                 .map(|_| Vec::new())
                 .collect::<Vec<_>>()
@@ -334,12 +343,23 @@ impl GpuSynth {
             q.clear();
         }
         self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
+        self.apply_cc_defaults();
         self.channel_speed_cache = [0.0; MAX_CHANNELS];
         self.drain_pending(false);
         self.ring.clear();
         self.sample_position = 0;
         self.render_position = 0;
         self.chase_base = 0;
+    }
+
+    /// 把音色库的 `<control> set_ccN=v` 写回各通道（通道状态重置后必须调用，
+    /// 否则 `xfin_*` 门控在 CC=0 时会把整层静音——与 CPU 同语义）。
+    fn apply_cc_defaults(&mut self) {
+        for (ch_idx, defaults) in self.channel_cc_defaults.iter().enumerate() {
+            for &(cc, v) in defaults {
+                self.channels[ch_idx].cc[cc as usize] = v;
+            }
+        }
     }
 
     /// 当前渲染位置
@@ -563,6 +583,7 @@ impl GpuSynth {
         }
         // 通道状态在 seek 时重置（chase 由 yinhe-audio 的 cc_events 重建保证）
         self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
+        self.apply_cc_defaults();
         // speed 缓存清空：下一块起点重新下发全部通道的 pitch_multiplier。
         self.channel_speed_cache = [0.0; MAX_CHANNELS];
     }

@@ -96,6 +96,14 @@ struct VoiceState {
     flt_x2r: f32,
     flt_y1r: f32,
     flt_y2r: f32,
+    // SFZ LFO（amplfo_* / pitchlfo_*）：深度 dB / cents，共用一条相位。
+    amp_lfo_depth: f32,
+    pitch_lfo_depth: f32,
+    lfo_freq: f32,
+    /// 起始相位（来自 SFZ `phase`，单位：周期 0..1）
+    lfo_phase: f32,
+    /// 自起音以来已渲染帧数（LFO 唯一时间基准，与 CPU 同语义）
+    lfo_frames: u32,
     // 完全重复 NoteOn 合批引用数（增益 ×dup；与 CpuSynth 的 dup 同语义）
     dup: u32,
 };
@@ -219,6 +227,51 @@ fn mono_at(global_idx: u32, cursor: ptr<function, u32>) -> f32 {
     return select(p.y, p.x, (global_idx & 1u) == 0u);
 }
 
+/// SFZ 振幅 LFO 的重算网格（帧）：与 CPU `LFO_GRID` 同值。
+const LFO_GRID: u32 = 64u;
+
+/// 4 点 Catmull-Rom（与 CPU `catmull_rom` 同式）。
+fn catmull_rom(p0: f32, p1: f32, p2: f32, p3: f32, t: f32) -> f32 {
+    let t2 = t * t;
+    let t3 = t2 * t;
+    return 0.5 * ((2.0 * p1)
+        + (-p0 + p2) * t
+        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+        + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3);
+}
+
+/// 按帧索引读一个采样（立体声返回 (l, r)）；循环启用时先回绕。
+fn read_frame(
+    sample_off: u32,
+    scale: u32,
+    is_stereo: bool,
+    frame: u32,
+    loop_active: bool,
+    loop_start: u32,
+    loop_end: u32,
+    sample_length: u32,
+    cursor: ptr<function, u32>,
+) -> vec2<f32> {
+    var frame_v = frame;
+    if loop_active && loop_end > loop_start {
+        let loop_len = loop_end - loop_start;
+        if frame_v > loop_end {
+            frame_v = (frame_v - loop_end - 1u) % loop_len + loop_start;
+        } else if frame_v < loop_start {
+            frame_v = (frame_v + loop_len - loop_start) % loop_len + loop_start;
+        }
+    }
+    if frame_v >= sample_length {
+        return vec2<f32>(0.0, 0.0);
+    }
+    let i = sample_off + frame_v * scale;
+    if is_stereo {
+        return sample_pair(i, cursor);
+    }
+    let l = mono_at(i, cursor);
+    return vec2<f32>(l, l);
+}
+
 /// 推进 1 帧 envelope（与 CPU 参考实现 cpu_ref::advance_env_cpu 逐帧等价）。
 /// WGSL 无指针，返回推进后的整个 VoiceState。
 fn advance_env(st: VoiceState) -> VoiceState {
@@ -328,6 +381,7 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
     var seg_idx = 0u;
     var sample_cursor = 0u;
 
+
     for (var fi: u32 = 0u; fi < fc; fi++) {
         // 跨段：应用该段边界的通道状态更新
         while seg_idx + 1u < params.seg_count && fi >= segs[seg_idx + 1u].start_frame {
@@ -399,7 +453,15 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
         if is_active && st.env_stage < 6u && fi >= st.start_offset {
             // 通道音量/声像（CC7/10/11）已迁至 yinhe-dsp 效果器，
             // 此处只用音色库基础增益/声像。
-            let ch_gain = st.base_gain * f32(st.dup);
+            // SFZ 振幅 LFO：网格锚定在 voice 起音（与 CPU `refresh_lfo` 同式、
+            // 同网格），因此任意块长/分段下逐样本一致。
+            var lfo_gain = 1.0;
+            if is_active && st.amp_lfo_depth != 0.0 {
+                let elapsed = f32(st.lfo_frames) / f32(params.sample_rate);
+                let phase = 6.28318530718 * (st.lfo_phase + st.lfo_freq * elapsed);
+                lfo_gain = pow(10.0, st.amp_lfo_depth * sin(phase) / 20.0);
+            }
+            let ch_gain = st.base_gain * f32(st.dup) * lfo_gain;
             let ch_pan_l = st.base_pan_l;
             let ch_pan_r = st.base_pan_r;
 
@@ -439,7 +501,30 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
                     l0 = mono_at(i, &sample_cursor);
                     r0 = l0;
                 }
-                if st.interp == 1u && idx < max_idx {
+                if st.interp == 2u {
+                    // 4 点 Catmull-Rom（与 CPU 同式）：邻居沿循环回绕。
+                    let p0 = read_frame(
+                        st.sample_offset, scale, st.is_stereo == 1u,
+                        idx - 1u, has_loop, st.loop_start, st.loop_end, st.sample_length,
+                        &sample_cursor,
+                    );
+                    let p2 = read_frame(
+                        st.sample_offset, scale, st.is_stereo == 1u,
+                        idx + 1u, has_loop, st.loop_start, st.loop_end, st.sample_length,
+                        &sample_cursor,
+                    );
+                    let p3 = read_frame(
+                        st.sample_offset, scale, st.is_stereo == 1u,
+                        idx + 2u, has_loop, st.loop_start, st.loop_end, st.sample_length,
+                        &sample_cursor,
+                    );
+                    l0 = catmull_rom(p0.x, l0, p2.x, p3.x, frac);
+                    if st.is_stereo == 1u {
+                        r0 = catmull_rom(p0.y, r0, p2.y, p3.y, frac);
+                    } else {
+                        r0 = l0;
+                    }
+                } else if st.interp == 1u && idx < max_idx {
                     if st.is_stereo == 1u {
                         let p1 = sample_pair(i + scale, &sample_cursor);
                         l0 = mix(l0, p1.x, frac);
@@ -510,6 +595,9 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
             st.start_offset = 0u;
             if st.env_stage < 6u {
                 st.time += st.speed * f32(act_frames);
+                // LFO 相位只按**实际渲染帧数**推进（与 CPU `advance_lfo` 同语义）：
+                // 尚未开始的 voice 不推进，保证不同块长下相位一致。
+                st.lfo_frames += act_frames;
                 // 跨块推进后回绕（与 xsynth 同一点：> loop_end），避免 f32 time
                 // 无限增长（2^24 采样 ≈ 6 分钟后丢精度，黑乐谱长曲必须回绕）。
                 // LoopSustain release 后不回绕：从当前位置继续播到尾。

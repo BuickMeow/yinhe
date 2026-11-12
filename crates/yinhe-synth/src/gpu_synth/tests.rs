@@ -553,6 +553,10 @@ fn test_voice(stage: u32) -> Voice {
         orig_release_frames: 0.0,
         held_by_damper: false,
         release_pending: false,
+        off_group: 0,
+        one_shot: false,
+        is_release_trigger: false,
+        release_spawned: false,
         slot_gen: 1,
     }
 }

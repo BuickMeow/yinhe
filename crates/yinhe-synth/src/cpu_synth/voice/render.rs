@@ -41,16 +41,21 @@ impl CpuVoice {
             return;
         }
         self.started = true;
-        // 锚点解析出块首进度（替代块末 advance_block 的逐 voice 累加）
-        let time0 =
-            self.anchor_time + (sample_start - self.anchor_abs) as f64 * f64::from(self.speed);
+        // 锚点解析出偏离（替代块末 advance_block 的逐 voice 累加）：
+        // `time0` 每次换速后重算，所以放在循环里（见下）。
+        // 用 i64 差值：释放层在块首预创建（start_offset 落在块内），其起点之后
+        // 的段可能仍早于 anchor_abs，u64 相减会下溢。
+        let time0_at = |v: &Self| {
+            v.anchor_time + (sample_start as i64 - v.anchor_abs as i64) as f64 * f64::from(v.speed)
+        };
         // 到期释放的段内帧（未释放且未被踏板保持时有效；<= 段首表示段首已到期）。
         // 释放点在包络切片边界应用——取代逐帧 O(V×frames) 的到期扫描
         //（8139 voice × 512 帧 × 1723 块 = 72 亿次比较，实测主导成本）。
         // 触发后置 `usize::MAX`：局部变量不随 `self.released` 更新，不置位会
         // 每帧重复 `signal_release`（progress 反复清零 → release 曲线退化为
         // 乘法累积，与 GPU/xsynth 的逐帧 release 不一致）。
-        let mut release_at: usize = if !self.released && !self.held_by_damper {
+        // `one_shot` 忽略 note_off 与到期释放（播到采样末尾），与 GPU 一致。
+        let mut release_at: usize = if !self.released && !self.held_by_damper && !self.one_shot {
             self.end_sample.saturating_sub(sample_start) as usize
         } else {
             usize::MAX
@@ -65,7 +70,15 @@ impl CpuVoice {
             release_at = usize::MAX;
         }
         while done < frames {
+            // SFZ LFO：网格（每 `LFO_GRID` 帧）锚定在 voice 起音，子段在网格
+            // 边界处切开，因此增益/音高只与"已渲染帧数"有关，与块长和后端无关。
+            let lfo_on = self.has_lfo();
             let (mut sub, constant) = self.env_slice(frames - done);
+            if lfo_on {
+                let next_grid = (self.lfo_frames / LFO_GRID + 1) * LFO_GRID;
+                let to_grid = (next_grid - self.lfo_frames) as usize;
+                sub = sub.min(to_grid.max(1));
+            }
             if sub == 0 {
                 break;
             }
@@ -74,7 +87,15 @@ impl CpuVoice {
                 sub = release_at.saturating_sub(done).max(1);
                 do_release = true;
             }
+            if lfo_on {
+                // 网格起点处重算振幅增益（音高 LFO 暂不施加，见 refresh_lfo）。
+                self.refresh_lfo();
+            }
+            let time0 = time0_at(self);
             self.render_sub(out, done, sub, fi_start, time0, constant, profile_mode);
+            if lfo_on {
+                self.lfo_frames += sub as u32;
+            }
             done += sub;
             if do_release {
                 if damper {
@@ -162,7 +183,7 @@ impl CpuVoice {
         constant_env: bool,
         profile_mode: u8,
     ) {
-        let gain = self.base_gain * self.dup as f32;
+        let gain = self.base_gain * self.dup as f32 * self.lfo_gain;
         // 循环不变量提出：self 是 &mut 且循环内有 advance_env 调用，
         // LLVM 无法证明这些字段不被改，逐帧字段 load 全部省掉。
         let max_idx = self.sample_length.saturating_sub(1);
@@ -177,6 +198,7 @@ impl CpuVoice {
         let sample_length = self.sample_length;
         let is_stereo = self.is_stereo;
         let linear = self.interp == 1;
+        let cubic = self.interp == 2;
         let cutoff_on = self.cutoff > 0.0;
         let speed = f64::from(self.speed);
         let pan_l = self.pan_l;
@@ -221,7 +243,50 @@ impl CpuVoice {
                     } else {
                         l0
                     };
-                    if linear && idx < max_idx as u64 {
+                    if cubic {
+                        // 4 点 Catmull-Rom：邻居沿循环回绕（否则每个 loop 周期在
+                        // 接缝处出现一次咔哒）。`l0/r0` 已是 idx 处的值，只需补
+                        // idx-1 / idx+1 / idx+2 三个邻居。
+                        let p0 = read_frame(
+                            sample,
+                            sample_offset as u64,
+                            scale,
+                            is_stereo,
+                            idx.wrapping_sub(1),
+                            loop_active,
+                            loop_start,
+                            loop_end,
+                            sample_length,
+                        );
+                        let p2 = read_frame(
+                            sample,
+                            sample_offset as u64,
+                            scale,
+                            is_stereo,
+                            idx + 1,
+                            loop_active,
+                            loop_start,
+                            loop_end,
+                            sample_length,
+                        );
+                        let p3 = read_frame(
+                            sample,
+                            sample_offset as u64,
+                            scale,
+                            is_stereo,
+                            idx + 2,
+                            loop_active,
+                            loop_start,
+                            loop_end,
+                            sample_length,
+                        );
+                        l0 = catmull_rom(p0.0, l0, p2.0, p3.0, frac);
+                        r0 = if is_stereo {
+                            catmull_rom(p0.1, r0, p2.1, p3.1, frac)
+                        } else {
+                            l0
+                        };
+                    } else if linear && idx < max_idx as u64 {
                         let i1 = si + scale as usize;
                         let l1 = sample.get(i1).copied().unwrap_or(0.0);
                         let r1 = if is_stereo {
@@ -306,7 +371,47 @@ impl CpuVoice {
                 } else {
                     l0
                 };
-                if linear && idx < max_idx as u64 {
+                if cubic {
+                    let p0 = read_frame(
+                        &self.sample,
+                        sample_offset as u64,
+                        scale,
+                        is_stereo,
+                        idx.wrapping_sub(1),
+                        has_loop,
+                        loop_start,
+                        loop_end,
+                        sample_length,
+                    );
+                    let p2 = read_frame(
+                        &self.sample,
+                        sample_offset as u64,
+                        scale,
+                        is_stereo,
+                        idx + 1,
+                        has_loop,
+                        loop_start,
+                        loop_end,
+                        sample_length,
+                    );
+                    let p3 = read_frame(
+                        &self.sample,
+                        sample_offset as u64,
+                        scale,
+                        is_stereo,
+                        idx + 2,
+                        has_loop,
+                        loop_start,
+                        loop_end,
+                        sample_length,
+                    );
+                    l0 = catmull_rom(p0.0, l0, p2.0, p3.0, frac);
+                    r0 = if is_stereo {
+                        catmull_rom(p0.1, r0, p2.1, p3.1, frac)
+                    } else {
+                        l0
+                    };
+                } else if linear && idx < max_idx as u64 {
                     let i1 = si + scale as usize;
                     let l1 = self.sample.get(i1).copied().unwrap_or(0.0);
                     let r1 = if is_stereo {
@@ -350,4 +455,59 @@ impl CpuVoice {
             }
         }
     }
+}
+
+/// 按帧索引读一个采样（立体声返回 (l, r)）；循环启用时先回绕到循环区。
+///
+/// 越界（含 cubic 在采样末尾探测 idx+1/idx+2）返回 0：只在最后两帧发生，
+/// 听感可忽略。
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn read_frame(
+    sample: &[f32],
+    sample_offset: u64,
+    scale: u32,
+    is_stereo: bool,
+    frame: u64,
+    loop_active: bool,
+    loop_start: u32,
+    loop_end: u32,
+    sample_length: u32,
+) -> (f32, f32) {
+    // 循环区内双向回绕：上界 `> loop_end` 与下界 `< loop_start` 都要落回循环区，
+    // 否则接缝处取到循环区外的样本（每个周期一次咔哒）。
+    let frame = if loop_active && loop_end > loop_start {
+        let loop_len = (loop_end - loop_start) as u64;
+        if frame > loop_end as u64 {
+            (frame - loop_end as u64 - 1) % loop_len + loop_start as u64
+        } else if frame < loop_start as u64 {
+            (frame + loop_len - loop_start as u64) % loop_len + loop_start as u64
+        } else {
+            frame
+        }
+    } else {
+        frame
+    };
+    if frame >= sample_length as u64 {
+        return (0.0, 0.0);
+    }
+    let si = (sample_offset + frame * scale as u64) as usize;
+    let l = sample.get(si).copied().unwrap_or(0.0);
+    let r = if is_stereo {
+        sample.get(si + 1).copied().unwrap_or(0.0)
+    } else {
+        l
+    };
+    (l, r)
+}
+
+/// 4 点 Catmull-Rom（与音频素材取帧同款，`t` ∈ 0..1，p1 为当前点）。
+#[inline]
+fn catmull_rom(p0: f32, p1: f32, p2: f32, p3: f32, t: f32) -> f32 {
+    let t2 = t * t;
+    let t3 = t2 * t;
+    0.5 * ((2.0 * p1)
+        + (-p0 + p2) * t
+        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+        + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3)
 }

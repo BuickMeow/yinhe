@@ -249,7 +249,8 @@ mod tests {
         let mut s = mk();
         s.interpolation = match s.interpolation {
             Interpolation::Nearest => Interpolation::Linear,
-            _ => Interpolation::Nearest,
+            Interpolation::Linear => Interpolation::Cubic,
+            Interpolation::Cubic => Interpolation::Nearest,
         };
         assert_ne!(
             EngineSpawnKey::of(&s),

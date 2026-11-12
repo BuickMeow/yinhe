@@ -845,6 +845,7 @@ settings.audio.synth_engine_desc: "CPU (XSynth) または GPU (Yinhe-Synth) エ�
 settings.audio.interpolation: "補間方式"
 settings.audio.interp_nearest: "最近傍（高速）"
 settings.audio.interp_linear: "線形（高音質）"
+settings.audio.interp_cubic: "4点（高音質）"
 settings.audio.interpolation_desc: "ピッチベンド時のサンプル補間：最近傍は最速、線形はよりクリーン"
 settings.language_desc: "UI 言語を選択，再起動後に反映"
 settings.midi_import.encoding_desc: "MIDI 読み込み時にトラック名・マーカー・歌詞・著作権を解釈する文字コード。最近のファイルは UTF-8、古いものは GBK や Shift-JIS が多いです。"

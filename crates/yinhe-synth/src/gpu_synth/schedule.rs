@@ -58,6 +58,14 @@ pub(super) struct Voice {
     /// 不预置 env_stage：预置会让 shader 在指令应用前就按 release 阶段推进
     /// （旧 env_start=0 会把 envelope 清零）。
     pub(super) release_pending: bool,
+    /// SFZ `group`（`off_by` 按它掐音；0 = 不参与）。
+    pub(super) off_group: u16,
+    /// `one_shot`：忽略 note_off/踏板，播到采样结束。
+    pub(super) one_shot: bool,
+    /// `trigger=release` 层（自身不再触发释放层）。
+    pub(super) is_release_trigger: bool,
+    /// 该组的释放层是否已创建（防重复）。
+    pub(super) release_spawned: bool,
     /// 槽位复用代号：harvest 状态回读的身份校验。读回状态属于"提交该块时的
     /// voice"——若槽位已被 note_on 复用为新 voice（代号不同），读回的是旧
     /// voice 的（可能已死亡）状态，必须丢弃而不是覆盖新 voice 的镜像
@@ -243,6 +251,10 @@ impl GpuSynth {
             let Some(ch_idx) = dense_channel(v.channel as usize) else {
                 continue;
             };
+            if v.one_shot {
+                // `loop_mode=one_shot`：忽略踏板与 note_off，播到采样结束。
+                continue;
+            }
             if dampers[ch_idx] {
                 v.held_by_damper = true;
             } else {
@@ -250,6 +262,9 @@ impl GpuSynth {
                 releases.push(release_cmd((v.end_sample - block_start) as u32, i));
             }
         }
+
+        // SFZ `trigger=release`：为块内到期的音符补释放层（与 CPU 同语义）。
+        self.spawn_due_release_layers(block_start, block_end, seg_base, releases);
 
         // 段末统一做一次全局超限淘汰（原先每个音符一次，见 enforce_voice_limit）
         self.enforce_voice_limit(0, block_start, releases);
@@ -365,6 +380,149 @@ impl GpuSynth {
         }
     }
 
+    /// SFZ `trigger=release`：为块内到期的音符创建释放层。
+    ///
+    /// 走同一个 `note_on` 入口（start_sample = 到期位置），因此释放层也是
+    /// 普通 voice：门控（`on_locc64`）在**释放时刻**求值（踏板噪声按当时
+    /// 踏板状态选层）。`release_spawned` 防重复。
+    fn spawn_due_release_layers(
+        &mut self,
+        block_start: u64,
+        block_end: u64,
+        seg_base: u32,
+        releases: &mut Vec<ReleaseCmd>,
+    ) {
+        let mut due: Vec<(u8, u8, u8, u32, u32)> = Vec::new();
+        let mut seen: Vec<u32> = Vec::new();
+        for v in &self.voices {
+            if v.is_release_trigger
+                || v.release_spawned
+                || v.state.env_stage >= 6
+                || v.kill_pending
+                || v.end_sample < block_start
+                || v.end_sample >= block_end
+                || seen.contains(&v.group)
+            {
+                continue;
+            }
+            seen.push(v.group);
+            due.push((
+                v.channel,
+                v.key,
+                v.velocity,
+                (v.end_sample - block_start) as u32,
+                v.group,
+            ));
+        }
+        for (channel, key, vel, frame, group) in due {
+            for v in self.voices.iter_mut() {
+                if v.group == group {
+                    v.release_spawned = true;
+                }
+            }
+            // 释放层用同一 note_on 路径创建（门控在释放时刻求值）。
+            // `start_sample` 必须是**到期位置**（block_start + 段内帧），
+            // 不能用渲染游标 `sample_position`（流水线中它与提交位置不同）。
+            self.spawn_release_voices(channel, key, vel, block_start, frame, seg_base, releases);
+        }
+    }
+
+    /// 创建 `trigger=release` 层（内部：选层 → 展开门控 → spawn_layer）。
+    #[allow(clippy::too_many_arguments)] // 渲染上下文透传，见 AGENTS 约定
+    fn spawn_release_voices(
+        &mut self,
+        channel: u8,
+        key: u8,
+        vel: u8,
+        block_start: u64,
+        block_frame: u32,
+        seg_base: u32,
+        releases: &mut Vec<ReleaseCmd>,
+    ) {
+        let Some(ch_idx) = dense_channel(channel as usize) else {
+            return;
+        };
+        let ch = self.channels[ch_idx];
+        let maps = Arc::clone(&self.port_key_maps[self.channel_port[ch_idx] as usize]);
+        let Some(sel) =
+            sf_parser::select_release_layers_multi(&maps, ch.bank, ch.program, key, vel)
+        else {
+            return;
+        };
+        let bucket = channel as usize * 128 + key as usize;
+        let rand = sf_parser::extra::hash_rand(channel, key, self.seq_counters[bucket]);
+        let gate_ctx = sf_parser::GateCtx {
+            cc: &ch.cc,
+            sw_last: ch.sw_last,
+            seq_counter: 0,
+            rand,
+        };
+        let group = self.next_group;
+        self.next_group = self.next_group.wrapping_add(1);
+        let start_sample = block_start + block_frame as u64;
+        for info in sel.infos {
+            let extra = info.extra_index().and_then(|i| sel.extras.get(i));
+            let (speed_scale, gain_scale) = match extra {
+                Some(extra) => match sf_parser::evaluate(extra, key, &gate_ctx) {
+                    Some(gate) => (2.0f32.powf(gate.pitch_cents / 1200.0), gate.gain),
+                    None => continue,
+                },
+                None => (1.0, 1.0),
+            };
+            self.spawn_layer(
+                channel,
+                ch_idx,
+                key,
+                if vel == 0 { info.lovel } else { vel },
+                u64::MAX,
+                start_sample,
+                block_frame,
+                seg_base,
+                info,
+                group,
+                false,
+                speed_scale,
+                gain_scale,
+                extra,
+            );
+        }
+        let _ = releases;
+    }
+
+    /// SFZ keyswitch：`sw_lokey..sw_hikey` 内的键只切 `sw_last` 不发声。
+    fn update_keyswitch(&mut self, ch_idx: usize, key: u8) -> bool {
+        let hit = self.sw_ranges[ch_idx]
+            .iter()
+            .any(|&(lo, hi)| key >= lo && key <= hi);
+        if hit {
+            self.channels[ch_idx].sw_last = key;
+        }
+        hit
+    }
+
+    /// SFZ `off_by`：掐掉同组的旧音（与 CPU `cut_group` 同语义，用 kill 指令）。
+    fn cut_group(
+        &mut self,
+        off_by: u16,
+        keep_group: u32,
+        block_frame: u32,
+        releases: &mut Vec<ReleaseCmd>,
+    ) {
+        for i in 0..self.voices.len() {
+            let v = &self.voices[i];
+            if v.off_group != off_by || v.group == keep_group {
+                continue;
+            }
+            if v.state.env_stage >= 6 || v.kill_pending {
+                continue;
+            }
+            self.voices[i].state.env_stage = 6;
+            self.voices[i].kill_pending = true;
+            self.voices[i].held_by_damper = false;
+            releases.push(kill_cmd(block_frame, i));
+        }
+    }
+
     /// NoteOn（block_frame = 块内起始帧）。
     /// key_map 已按 (key, vel) 展开为最终参数快照，这里零公式计算直接消费。
     /// 该 (key,vel) 的每个 region 层创建一个 voice，同组号绑定生命周期
@@ -387,14 +545,29 @@ impl GpuSynth {
         let Some(ch_idx) = dense_channel(channel as usize) else {
             return;
         };
+        // SFZ keyswitch：开关键只切换 `sw_last`，不发声。
+        if self.update_keyswitch(ch_idx, key) {
+            return;
+        }
         let ch = self.channels[ch_idx];
         // Arc 克隆避免在循环内借住 `port_key_maps`（`spawn_layer` 需要 &mut self）。
         let maps = Arc::clone(&self.port_key_maps[self.channel_port[ch_idx] as usize]);
-        let Some(infos) = sf_parser::select_key_infos_multi(&maps, ch.bank, ch.program, key, vel)
-        else {
+        let Some(sel) = sf_parser::select_layers_multi(&maps, ch.bank, ch.program, key, vel) else {
             // 选不到 region（如 key≥128 的扩展键）：静默，与 CPU 一致
             return;
         };
+        // 轮次计数（round-robin）与确定性随机（与 CPU 同哈希，保证两后端一致）。
+        let bucket = channel as usize * 128 + key as usize;
+        let seq_counter = self.seq_counters[bucket];
+        self.seq_counters[bucket] = seq_counter.wrapping_add(1);
+        let rand = sf_parser::extra::hash_rand(channel, key, seq_counter);
+        let gate_ctx = sf_parser::GateCtx {
+            cc: &ch.cc,
+            sw_last: ch.sw_last,
+            seq_counter,
+            rand,
+        };
+        let infos = sel.infos;
         let group = self.next_group;
         self.next_group = self.next_group.wrapping_add(1);
         // 多层组不参与合批（各层独立命中会让组内层数不一致，note_off 整组
@@ -402,6 +575,20 @@ impl GpuSynth {
         let batchable = infos.len() == 1;
         let mut spawned = false;
         for info in infos {
+            // SFZ 门控：不命中整层不发声；命中则改写增益/音高（pitch_random）。
+            let extra = info.extra_index().and_then(|i| sel.extras.get(i));
+            let (speed_scale, gain_scale) = match extra {
+                Some(extra) => match sf_parser::evaluate(extra, key, &gate_ctx) {
+                    Some(gate) => {
+                        if extra.off_by != 0 {
+                            self.cut_group(extra.off_by, group, block_frame, releases);
+                        }
+                        (2.0f32.powf(gate.pitch_cents / 1200.0), gate.gain)
+                    }
+                    None => continue,
+                },
+                None => (1.0, 1.0),
+            };
             spawned |= self.spawn_layer(
                 channel,
                 ch_idx,
@@ -414,6 +601,9 @@ impl GpuSynth {
                 info,
                 group,
                 batchable,
+                speed_scale,
+                gain_scale,
+                extra,
             );
         }
         // per-key layer 上限：超限时按 xsynth 语义杀最弱的整组（跳过刚加入的组）。
@@ -439,6 +629,9 @@ impl GpuSynth {
         info: &sf_parser::KeyInfo,
         group: u32,
         batchable: bool,
+        speed_scale: f32,
+        gain_scale: f32,
+        extra: Option<&sf_parser::LayerExtra>,
     ) -> bool {
         // 容量上限：**有空闲槽位（free list）时不算满**——结束的 voice 槽位
         // 由 harvest 即时回收、note_on 复用，不再依赖 compact 清墓碑。
@@ -476,7 +669,13 @@ impl GpuSynth {
 
         // 展开共享参数（speed/增益/声像/滤波/包络时长；公式唯一实现在
         // `voice_params::VoiceParams`，与 CPU 同源同值，CC72/73 修正也在其中）。
-        let p = crate::voice_params::VoiceParams::from_key_info(info, &ch, self.sample_rate);
+        // SFZ 门控（xfin/xfout 增益、pitch_random 音高）在此并入。
+        let mut p = crate::voice_params::VoiceParams::from_key_info(info, &ch, self.sample_rate);
+        if speed_scale != 1.0 {
+            p.speed *= speed_scale;
+            p.base_speed *= speed_scale;
+        }
+        p.base_gain *= gain_scale;
 
         // 完全重复 NoteOn 合批（对齐 CpuSynth `matches_batch`）：本块内创建的、
         // 尚未渲染的、参数完全相同的活跃 voice 直接 dup+1 复用（线性系统里
@@ -561,6 +760,10 @@ impl GpuSynth {
             end_sample,
             orig_attack_frames: p.orig_attack_frames,
             orig_release_frames: p.orig_release_frames,
+            off_group: extra.map(|e| e.group).unwrap_or(0),
+            one_shot: extra.map(|e| e.one_shot).unwrap_or(false),
+            is_release_trigger: false,
+            release_spawned: false,
             held_by_damper: false,
             release_pending: false,
             slot_gen: self.next_gen,
@@ -619,6 +822,14 @@ impl GpuSynth {
                 flt_y1r: 0.0,
                 flt_y2r: 0.0,
                 dup: 1,
+                amp_lfo_depth: extra.and_then(|e| e.amplfo).map(|l| l.depth).unwrap_or(0.0),
+                pitch_lfo_depth: 0.0,
+                lfo_freq: extra.and_then(|e| e.amplfo).map(|l| l.freq).unwrap_or(0.0),
+                lfo_phase: extra
+                    .and_then(|e| e.amplfo)
+                    .map(|l| l.phase / 360.0)
+                    .unwrap_or(0.0),
+                lfo_frames: 0,
             },
         };
         self.next_gen = self.next_gen.wrapping_add(1);
@@ -910,6 +1121,7 @@ impl GpuSynth {
                 || v.state.env_stage >= 5
                 || v.held_by_damper
                 || v.release_pending
+                || v.one_shot
             {
                 continue;
             }

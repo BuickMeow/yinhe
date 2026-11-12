@@ -324,6 +324,10 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                     Interpolation::Linear,
                     t!("settings.audio.interp_linear").to_string(),
                 ),
+                (
+                    Interpolation::Cubic,
+                    t!("settings.audio.interp_cubic").to_string(),
+                ),
             ];
             if crate::widgets::combo::combo_select_auto(
                 ui,
