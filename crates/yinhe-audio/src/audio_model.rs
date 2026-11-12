@@ -170,6 +170,11 @@ pub(crate) struct AudioModel {
     /// `YinModel.tracks[].audio_clips` 索引对齐。模型准备阶段一次性算好，
     /// 播放线程按索引 O(1) 查询。随 AudioModel 快照整体替换而失效。
     pub clip_fades: Vec<Vec<(f64, f64)>>,
+    /// 通道级「默认乐器」的鼓通道声明（源通道 0..16，port A）：
+    /// `Some(true)` = 鼓组，`Some(false)` = 显式旋律通道，`None` = 未声明。
+    /// 这是界面上「鼓通道」开关的唯一去路——没有它，关鼓会被 GM 默认值
+    /// 和 `bank == 128` 锁定语义吃掉（鼓通道改为旋律时声音不变）。
+    pub channel_percussion: [Option<bool>; 16],
 }
 
 impl AudioModel {
@@ -208,16 +213,59 @@ impl AudioModel {
             .iter()
             .map(|t| effective_fades_all(&t.audio_clips))
             .collect();
+        // 通道级默认乐器里的鼓声明：Bank MSB >= 128 = 鼓组，其它 = 旋律。
+        // 未设置（None）= 不表态，交给 GM 约定（每 port 的 9 通道默认鼓）。
+        let channel_percussion = core::array::from_fn(|ch| {
+            model
+                .channel_instruments
+                .get(ch)
+                .copied()
+                .flatten()
+                .map(|inst| inst.bank_msb >= 128)
+        });
         Self {
             track_channels,
             track_banks,
             clip_fades,
+            channel_percussion,
         }
     }
 
     /// Global channel for a track index, or 0 if out of range.
     pub(crate) fn track_channel(&self, track_idx: usize) -> u8 {
         self.track_channels.get(track_idx).copied().unwrap_or(0)
+    }
+
+    /// 逐通道鼓组模式声明，按「后写覆盖先写」的顺序展开。
+    ///
+    /// 覆盖顺序（与 MIDI 实际语义一致）：
+    /// 1. GM 约定：每 port 的第 9 通道（索引 9/25/…）默认鼓组；
+    /// 2. 通道级默认乐器（界面上的「鼓通道」开关 + 默认乐器行）；
+    /// 3. 轨内 Bank Select 声明（CC0 自动化 lane / PC 折叠的 bank_msb）。
+    ///
+    /// CPU（`ChannelSet` / `CpuSynth`）与 GPU（`GpuSynth` 事件表）共用这一份，
+    /// 避免三条路径各写一遍、某个后端漏掉某个来源（鼓通道开关此前就只在
+    /// CC0 事件流里生效，被 bank==128 锁定语义吃掉）。
+    pub(crate) fn percussion_declarations(&self) -> Vec<(u16, bool)> {
+        let mut out: Vec<(u16, bool)> = Vec::new();
+        for port in 0..16u16 {
+            out.push((port * 16 + 9, true));
+        }
+        for (ch, declared) in self.channel_percussion.iter().enumerate() {
+            if let Some(on) = declared {
+                out.push((ch as u16, *on));
+            }
+        }
+        for (track_idx, banks) in self.track_banks.iter().enumerate() {
+            if banks.is_empty() || track_idx >= self.track_channels.len() {
+                continue;
+            }
+            let src = u16::from(self.track_channels[track_idx]);
+            for &(_, value) in banks {
+                out.push((src, value >= 120));
+            }
+        }
+        out
     }
 }
 
@@ -477,12 +525,21 @@ pub(crate) fn flatten_automation_to_cc_events(
 
     // 通道级默认乐器：先于所有 MIDI 事件下发（tick 0），任一 MIDI PC 覆盖它。
     // track 用 u16::MAX：通道级配置不被任何单轨的 skip_track 过滤。
+    //
+    // bank_msb >= 128 是「鼓组」约定，不是真 bank 号：xsynth 的 set_bank 会把
+    // 它夹到 127，导致查不到鼓组而静音。鼓组模式统一由
+    // `AudioModel::percussion_declarations` 的 PercussionMode 事件声明，
+    // 这里不再下发这会泄漏成 CC0 的假 bank。
     for (ch, inst) in model.channel_instruments.iter().enumerate() {
         if let Some(inst) = inst {
             let pc = yinhe_types::PcEvent {
                 tick: 0,
                 program: inst.program,
-                bank_msb: inst.bank_msb,
+                bank_msb: if inst.bank_msb >= 128 {
+                    0xFF
+                } else {
+                    inst.bank_msb
+                },
                 bank_lsb: 0,
             };
             push_program_change(&pc, ch as u32, u16::MAX, &mut cc_events);
@@ -951,6 +1008,65 @@ mod tests {
         assert_eq!(audio.track_banks[0], vec![(100, 0)]);
         assert_eq!(audio.track_banks[1], vec![(200, 0), (400, 121)]);
         assert!(audio.track_banks[2].is_empty());
+    }
+
+    /// 鼓组声明表：GM 默认 → 通道默认乐器（界面「鼓通道」开关）→ 轨内 bank，
+    /// 后者覆盖前者；且 `channel_instruments` 的鼓声明不再泄漏成 CC0。
+    #[test]
+    fn percussion_declarations_follow_precedence() {
+        let mut model = model_with_lanes(vec![]);
+        // 轨道 0 用通道 9（GM 默认鼓）；UI 关掉鼓 → 必须能覆盖。
+        model.channel_instruments[9] = Some(yinhe_core::ChannelInstrument {
+            bank_msb: 0,
+            program: 0,
+        });
+        let decl = AudioModel::from_model(&model).percussion_declarations();
+        fn of(decl: &[(u16, bool)], ch: u16) -> Option<bool> {
+            decl.iter().rev().find(|(c, _)| *c == ch).map(|(_, on)| *on)
+        }
+        assert_eq!(of(&decl, 9), Some(false), "UI 关鼓必须压过 GM 默认鼓");
+        assert_eq!(of(&decl, 25), Some(true), "其它 port 的 9 通道仍是 GM 鼓");
+
+        // 打开鼓 = bank 128。
+        model.channel_instruments[9] = Some(yinhe_core::ChannelInstrument {
+            bank_msb: 128,
+            program: 0,
+        });
+        let decl = AudioModel::from_model(&model).percussion_declarations();
+        assert_eq!(of(&decl, 9), Some(true));
+
+        // 轨内 bank 声明压过通道默认乐器。
+        let mut t = TrackData::new(0, 9);
+        t.program_change = vec![yinhe_types::PcEvent {
+            tick: 0,
+            program: 0,
+            bank_msb: 0,
+            bank_lsb: 0xFF,
+        }];
+        model.tracks.push(Arc::new(t));
+        model.channel_instruments[9] = Some(yinhe_core::ChannelInstrument {
+            bank_msb: 128,
+            program: 0,
+        });
+        let decl = AudioModel::from_model(&model).percussion_declarations();
+        assert_eq!(
+            of(&decl, 9),
+            Some(false),
+            "轨内 bank 声明优先于通道默认乐器"
+        );
+
+        // 鼓组 bank 128 不得作为 CC0 下发（会被 xsynth 夹到 127 → 静音）。
+        let events = flatten_automation_to_cc_events(&model, 1);
+        assert!(
+            !events.iter().any(|e| matches!(
+                e.event,
+                AudioEvent::Cc {
+                    controller: 0,
+                    value,
+                } if value >= 128.0
+            )),
+            "鼓组 bank 128 不能泄漏成 CC0"
+        );
     }
 
     /// 插件乐器参数 lane 展平成 plugin_param 事件：占位 event 不参与 xsynth 语义，

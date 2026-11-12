@@ -124,80 +124,56 @@ impl AudioEngine {
     }
 
     fn setup_percussion(&mut self, model: &AudioModel) {
+        let declarations = model.percussion_declarations();
+        self.apply_percussion_declarations(&declarations);
+    }
+
+    /// 把鼓组/乐器模式声明注入当前后端。
+    ///
+    /// 必须在**每次状态复位之后**重新调用：`ChannelState::new` / xsynth 的
+    /// `ResetControl` / `CpuSynth::seek` 都会把 bank 打回 0，只靠"模型加载时
+    /// 注入一次"会让播放/seek 后鼓组失效（关鼓开关也因此看起来没反应）。
+    fn apply_percussion_declarations(&mut self, declarations: &[(u16, bool)]) {
         // GPU 模式的鼓组/乐器模式在 `build_gpu_events` 的 seek 注入中处理；
         // yinhe CPU 后端经 `PercussionMode` 控制事件直接生效。
-        {
-            if self.cpu_synth.is_some() {
-                self.setup_percussion_cpu_synth(model);
-                return;
-            }
+        if self.cpu_synth.is_some() {
+            self.setup_percussion_cpu_synth(declarations);
+            return;
         }
         if !self.cpu_synth_active() {
             return;
         }
-        // Drum channels in GM are channel 9 of each port (port*16 + 9).
-        for src_ch in (9..256).step_by(16) {
-            let dense = self.channel_layout.dense_for(src_ch);
+        for &(src_ch, on) in declarations {
+            let dense = self.channel_layout.dense_for(src_ch as usize);
             if dense == u32::MAX {
                 continue;
             }
             self.channel_set.send_event(SynthEvent::Channel(
                 dense,
-                ChannelEvent::Config(ChannelConfigEvent::SetPercussionMode(true)),
+                ChannelEvent::Config(ChannelConfigEvent::SetPercussionMode(on)),
             ));
-        }
-        // Honour Bank Select MSB declarations (>= 120 = drum kit, GS/XG
-        // convention): standalone CC0 automation lanes and CC0 folded into
-        // PcEvent.bank_msb, merged per track in tick order. Last declaration
-        // per channel wins, matching the legacy MidiFile path.
-        for (track_idx, banks) in model.track_banks.iter().enumerate() {
-            if banks.is_empty() {
-                continue;
-            }
-            let src_ch = model.track_channel(track_idx) as usize;
-            if src_ch >= 256 {
-                continue;
-            }
-            let dense = self.channel_layout.dense_for(src_ch);
-            if dense == u32::MAX {
-                continue;
-            }
-            for &(_, value) in banks {
-                self.channel_set.send_event(SynthEvent::Channel(
-                    dense,
-                    ChannelEvent::Config(ChannelConfigEvent::SetPercussionMode(value >= 120)),
-                ));
-            }
         }
     }
 
-    /// yinhe CPU 后端的鼓组/乐器模式注入（与 ChannelSet 路径同序：
-    /// 先 GM 鼓通道，再模型 bank 声明，后者覆盖前者）。
-    fn setup_percussion_cpu_synth(&mut self, model: &AudioModel) {
-        let mut events: Vec<(u32, bool)> = Vec::new();
-        for src_ch in (9..256).step_by(16) {
-            let dense = self.channel_layout.dense_for(src_ch);
-            if dense != u32::MAX {
-                events.push((dense, true));
-            }
-        }
-        for (track_idx, banks) in model.track_banks.iter().enumerate() {
-            if banks.is_empty() {
-                continue;
-            }
-            let src_ch = model.track_channel(track_idx) as usize;
-            if src_ch >= 256 {
-                continue;
-            }
-            let dense = self.channel_layout.dense_for(src_ch);
-            if dense == u32::MAX {
-                continue;
-            }
-            for &(_, value) in banks {
-                events.push((dense, value >= 120));
-            }
-        }
+    /// 复位后重新声明鼓组模式（seek / stop / loop 回绕调用）。
+    pub(crate) fn reapply_percussion(&mut self) {
+        let Some(model) = self.model.as_ref() else {
+            return;
+        };
+        let declarations = model.percussion_declarations();
+        self.apply_percussion_declarations(&declarations);
+    }
+
+    /// yinhe CPU 后端的鼓组/乐器模式注入（与 ChannelSet 路径同一份声明表）。
+    fn setup_percussion_cpu_synth(&mut self, declarations: &[(u16, bool)]) {
         let sample = self.sample_position;
+        let mut events: Vec<(u32, bool)> = Vec::new();
+        for &(src_ch, on) in declarations {
+            let dense = self.channel_layout.dense_for(src_ch as usize);
+            if dense != u32::MAX {
+                events.push((dense, on));
+            }
+        }
         if let Some(cs) = self.cpu_synth.as_mut() {
             for (dense, on) in events {
                 cs.send_event(yinhe_synth::SynthEvent::Control {

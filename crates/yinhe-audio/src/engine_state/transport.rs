@@ -159,6 +159,9 @@ impl AudioEngine {
             }
             self.segment_start_sample = sample;
         }
+        // 复位会把每通道 bank 打回 0：重新声明鼓组/旋律模式，
+        // 否则 seek/循环回绕后鼓通道变回钢琴（「鼓通道开关无效」的表象之一）。
+        self.reapply_percussion();
         if is_seek {
             // insert 效果器（delay 尾音/envelope 等）随用户 seek 清空内部状态。
             self.mixer.reset_inserts();

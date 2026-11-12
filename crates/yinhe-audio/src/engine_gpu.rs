@@ -27,40 +27,20 @@ impl AudioEngine {
 
         let mut events: Vec<yinhe_synth::SynthEvent> = Vec::new();
 
-        // ── 鼓组/乐器模式初始状态（渲染起点注入；与 CPU setup_percussion 同序）──
-        // 先 GM 鼓通道（每 port 的 9 通道），再模型 bank 声明（>=120 鼓组），
-        // 同通道多条声明后者覆盖前者。
-        for p in 0..16u8 {
-            let src = p as usize * 16 + 9;
-            let dense = self.channel_layout.dense_for(src);
-            // GPU 合成器只支持前 MAX_CHANNELS 个 dense 槽位。
-            if dense != u32::MAX && (dense as usize) < yinhe_synth::MAX_CHANNELS {
-                events.push(yinhe_synth::SynthEvent::Control {
-                    sample: seek_pos,
-                    channel: dense as u8,
-                    event: yinhe_synth::ControlEvent::PercussionMode(true),
-                });
-            }
-        }
-        for (track_idx, banks) in audio_model.track_banks.iter().enumerate() {
-            if banks.is_empty() {
-                continue;
-            }
-            let src = audio_model.track_channel(track_idx) as usize;
-            if src >= 256 {
-                continue;
-            }
-            let dense = self.channel_layout.dense_for(src);
+        // ── 鼓组/乐器模式初始状态（渲染起点注入）──
+        // 与 CPU 共用 `percussion_declarations`：GM 鼓通道 → 通道默认乐器
+        // （界面「鼓通道」开关）→ 轨内 bank 声明，后者覆盖前者。
+        // GPU 合成器只支持前 MAX_CHANNELS 个 dense 槽位。
+        for (src, on) in audio_model.percussion_declarations() {
+            let dense = self.channel_layout.dense_for(src as usize);
             if dense == u32::MAX || (dense as usize) >= yinhe_synth::MAX_CHANNELS {
                 continue;
             }
-            for &(_, value) in banks {
-                events.push(yinhe_synth::SynthEvent::Control {
-                    sample: seek_pos,
-                    channel: dense as u8,
-                    event: yinhe_synth::ControlEvent::PercussionMode(value >= 120),
-                });
-            }
+            events.push(yinhe_synth::SynthEvent::Control {
+                sample: seek_pos,
+                channel: dense as u8,
+                event: yinhe_synth::ControlEvent::PercussionMode(on),
+            });
         }
 
         // ── 通道控制事件（CC/pitch bend/RPN），tick 域转 sample 域 ──
