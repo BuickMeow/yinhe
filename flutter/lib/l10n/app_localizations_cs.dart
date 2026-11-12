@@ -525,6 +525,18 @@ class AppLocalizationsCs extends AppLocalizations {
   String get ppqError => 'PPQ musí být celé číslo 1–32767';
 
   @override
+  String get bankMsb => 'Bank MSB';
+
+  @override
+  String get bankLsb => 'Bank LSB';
+
+  @override
+  String get program => 'Program';
+
+  @override
+  String get drumChannel => 'Drum Channel';
+
+  @override
   String channelInstrumentValue(String name, int bank, int program) {
     return 'Výchozí nástroj kanálu: $name (banka $bank / program $program)';
   }

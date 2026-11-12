@@ -188,7 +188,7 @@ final ActionDart longPressTrack = bridge
 final CStrDart longPressContextJson = bridge
     .lookupFunction<CStrNative, CStrDart>('yinhe_long_press_context_json');
 
-/// 通道级默认乐器 JSON（16 项：`[bank, program]` 或 null）。
+/// 通道级默认乐器 JSON（16 项：`[bank_msb, bank_lsb, program, is_drum]` 或 null）。
 final CStrDart channelInstrumentsJson = bridge
     .lookupFunction<CStrNative, CStrDart>('yinhe_channel_instruments_json');
 
@@ -200,10 +200,14 @@ typedef SetTrackInfoNative = ffi.Int32 Function(
   ffi.Int32,
   ffi.Int32,
   ffi.Int32,
+  ffi.Int32,
+  ffi.Int32,
 );
 typedef SetTrackInfoDart = int Function(
   int,
   ffi.Pointer<Utf8>,
+  int,
+  int,
   int,
   int,
   int,

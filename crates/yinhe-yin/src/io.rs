@@ -321,12 +321,18 @@ fn load_yin_bytes_inner(
         tracks.push(Arc::new(td));
     }
 
-    // A10 默认鼓通道：旧存档缺省（None）时补上 Bank 128 / Standard Kit。
+    // A10 默认鼓通道：旧存档缺省（None）时补上 Standard Kit。
+    // 历史工程用 bank_msb == 128 表示鼓，这里统一迁移成显式 is_drum。
     let mut channel_instruments = mapping.channel_instruments;
+    for inst in channel_instruments.iter_mut().flatten() {
+        inst.normalize_legacy_bank();
+    }
     if channel_instruments[9].is_none() {
         channel_instruments[9] = Some(yinhe_core::ChannelInstrument {
-            bank_msb: 128,
+            bank_msb: 0,
+            bank_lsb: 0,
             program: 0,
+            is_drum: true,
         });
     }
     let mut model = YinModel {

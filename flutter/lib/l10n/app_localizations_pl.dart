@@ -525,6 +525,18 @@ class AppLocalizationsPl extends AppLocalizations {
   String get ppqError => 'PPQ musi być liczbą całkowitą 1–32767';
 
   @override
+  String get bankMsb => 'Bank MSB';
+
+  @override
+  String get bankLsb => 'Bank LSB';
+
+  @override
+  String get program => 'Program';
+
+  @override
+  String get drumChannel => 'Drum Channel';
+
+  @override
   String channelInstrumentValue(String name, int bank, int program) {
     return 'Domyślny instrument kanału: $name (bank $bank / program $program)';
   }

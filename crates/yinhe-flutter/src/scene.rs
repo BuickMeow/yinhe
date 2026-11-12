@@ -4266,7 +4266,7 @@ pub fn paste_selection(x: f32) -> i32 {
     )
 }
 
-/// 通道级默认乐器 JSON：16 项，`[bank, program]` 或 null。
+/// 通道级默认乐器 JSON：16 项，`[bank_msb, bank_lsb, program, is_drum]` 或 null。
 pub fn channel_instruments_json() -> String {
     let Ok(s) = scene().lock() else {
         return "[]".into();
@@ -4280,7 +4280,13 @@ pub fn channel_instruments_json() -> String {
             out.push(',');
         }
         match inst {
-            Some(v) => out.push_str(&format!("[{},{}]", v.bank_msb, v.program)),
+            Some(v) => out.push_str(&format!(
+                "[{},{},{},{}]",
+                v.bank_msb,
+                v.bank_lsb,
+                v.program,
+                u8::from(v.is_drum)
+            )),
             None => out.push_str("null"),
         }
     }
@@ -4393,8 +4399,10 @@ pub fn set_track_info(
     name: String,
     port: u8,
     channel: u8,
-    bank: u8,
+    bank_msb: u8,
+    bank_lsb: u8,
     program: u8,
+    is_drum: bool,
     use_instrument: bool,
 ) -> i32 {
     let Ok(mut s) = scene().lock() else {
@@ -4404,8 +4412,10 @@ pub fn set_track_info(
         return 0;
     };
     let instrument = use_instrument.then_some(yinhe_core::ChannelInstrument {
-        bank_msb: bank,
+        bank_msb,
+        bank_lsb,
         program,
+        is_drum,
     });
     let before = doc.capture_snapshot();
     let Some(action) = doc.set_track_info(track, name, port, channel, instrument) else {

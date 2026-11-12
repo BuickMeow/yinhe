@@ -1136,6 +1136,30 @@ abstract class AppLocalizations {
   /// **'PPQ must be an integer 1–32767'**
   String get ppqError;
 
+  /// No description provided for @bankMsb.
+  ///
+  /// In en, this message translates to:
+  /// **'Bank MSB'**
+  String get bankMsb;
+
+  /// No description provided for @bankLsb.
+  ///
+  /// In en, this message translates to:
+  /// **'Bank LSB'**
+  String get bankLsb;
+
+  /// No description provided for @program.
+  ///
+  /// In en, this message translates to:
+  /// **'Program'**
+  String get program;
+
+  /// No description provided for @drumChannel.
+  ///
+  /// In en, this message translates to:
+  /// **'Drum Channel'**
+  String get drumChannel;
+
   /// No description provided for @channelInstrumentValue.
   ///
   /// In en, this message translates to:

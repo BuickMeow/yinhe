@@ -6,6 +6,56 @@ import '../l10n/app_localizations.dart';
 import '../core/theme.dart';
 import 'frame.dart';
 
+/// 通道级默认乐器：Bank MSB / Bank LSB / Program / 鼓通道。
+///
+/// 与桌面端同语义：三个分量对应 MIDI 的 Bank Select + Program Change，
+/// 鼓通道是独立的通道模式开关（不占用 bank 号）。
+class ChannelInstrumentValue {
+  const ChannelInstrumentValue({
+    this.bankMsb = 0,
+    this.bankLsb = 0,
+    this.program = 0,
+    this.isDrum = false,
+  });
+
+  final int bankMsb;
+  final int bankLsb;
+  final int program;
+  final bool isDrum;
+
+  ChannelInstrumentValue copyWith({
+    int? bankMsb,
+    int? bankLsb,
+    int? program,
+    bool? isDrum,
+  }) {
+    return ChannelInstrumentValue(
+      bankMsb: bankMsb ?? this.bankMsb,
+      bankLsb: bankLsb ?? this.bankLsb,
+      program: program ?? this.program,
+      isDrum: isDrum ?? this.isDrum,
+    );
+  }
+
+  /// Rust 侧 `channel_instruments_json` → `[bank_msb, bank_lsb, program, is_drum]`。
+  static ChannelInstrumentValue? fromJson(dynamic raw) {
+    if (raw is! List || raw.length < 3) {
+      return null;
+    }
+    return ChannelInstrumentValue(
+      bankMsb: (raw[0] as num).toInt(),
+      bankLsb: (raw[1] as num).toInt(),
+      program: (raw[2] as num).toInt(),
+      // 旧后端只给两个分量；缺字段时按非鼓处理。
+      isDrum: raw.length > 3 && (raw[3] as num).toInt() != 0,
+    );
+  }
+
+  /// Program 的 GM 名字（鼓通道走鼓组表）。越界返回空串。
+  String get programName =>
+      MidiNames.instance.gmProgramLabel(isDrum ? 128 : 0, program);
+}
+
 /// 音轨信息对话框：名称 / 端口 / 通道 / 通道级默认乐器。
 ///
 /// Master（Conductor）轨只允许改名称（= 歌曲标题），其余字段忽略。
@@ -25,14 +75,15 @@ class TrackInfoDialog extends StatefulWidget {
   final int initialChannel;
   final bool isMaster;
 
-  /// 16 个通道的默认乐器 `(bank, program)`；null = 未设置。
-  final List<(int, int)?> channelInstruments;
+  /// 16 个通道的默认乐器；null = 未设置（跟随 MIDI）。
+  final List<ChannelInstrumentValue?> channelInstruments;
+
+  /// `instrument == null` = 跟随 MIDI。
   final void Function(
     String name,
     int port,
     int channel,
-    int? bank,
-    int? program,
+    ChannelInstrumentValue? instrument,
   )
   onSave;
 
@@ -48,9 +99,9 @@ class _TrackInfoDialogState extends State<TrackInfoDialog> {
   );
   late int _port = widget.initialPort.clamp(0, 15);
   late int _channel = widget.initialChannel.clamp(0, 15);
-  late (int, int)? _instrument = _instrumentOf(_channel);
+  late ChannelInstrumentValue? _instrument = _instrumentOf(_channel);
 
-  (int, int)? _instrumentOf(int channel) {
+  ChannelInstrumentValue? _instrumentOf(int channel) {
     if (channel < 0 || channel >= widget.channelInstruments.length) {
       return null;
     }
@@ -64,7 +115,7 @@ class _TrackInfoDialogState extends State<TrackInfoDialog> {
   }
 
   Future<void> _pickInstrument() async {
-    final picked = await showDialog<(int, int)?>(
+    final picked = await showDialog<ChannelInstrumentValue?>(
       context: context,
       builder: (_) => _InstrumentPickerDialog(current: _instrument),
     );
@@ -75,7 +126,7 @@ class _TrackInfoDialogState extends State<TrackInfoDialog> {
 
   void _save() {
     final name = _name.text.trim();
-    widget.onSave(name, _port, _channel, _instrument?.$1, _instrument?.$2);
+    widget.onSave(name, _port, _channel, _instrument);
     Navigator.of(context).pop();
   }
 
@@ -164,11 +215,8 @@ class _TrackInfoDialogState extends State<TrackInfoDialog> {
                   child: Text(
                     inst == null
                         ? l.defaultInstrumentFollowPc
-                        : l.channelInstrumentValue(
-                            MidiNames.instance.gmProgramLabel(inst.$1, inst.$2),
-                            inst.$1,
-                            inst.$2,
-                          ),
+                        : '${inst.programName} · Bank ${inst.bankMsb}/'
+                              '${inst.bankLsb} · Program ${inst.program}',
                     style: TextStyle(color: YinheTheme.textLabel, fontSize: 13),
                   ),
                 ),
@@ -200,11 +248,12 @@ class _TrackInfoDialogState extends State<TrackInfoDialog> {
   }
 }
 
-/// 乐器选择：先选 Bank（旋律/鼓组），再选 Program。
+/// 乐器选择：Bank MSB / Bank LSB / Program 三个独立输入 + 鼓通道开关，
+/// 下方列表按当前 Program 高亮（鼓通道时显示鼓组名）。
 class _InstrumentPickerDialog extends StatefulWidget {
   const _InstrumentPickerDialog({required this.current});
 
-  final (int, int)? current;
+  final ChannelInstrumentValue? current;
 
   @override
   State<_InstrumentPickerDialog> createState() =>
@@ -214,8 +263,8 @@ class _InstrumentPickerDialog extends StatefulWidget {
 class _InstrumentPickerDialogState extends State<_InstrumentPickerDialog> {
   AppLocalizations get l => AppLocalizations.of(context);
 
-  late int _bank = widget.current?.$1 == 128 ? 128 : 0;
-  late int _program = widget.current?.$2.clamp(0, 127) ?? 0;
+  late ChannelInstrumentValue _value =
+      widget.current ?? const ChannelInstrumentValue();
 
   @override
   Widget build(BuildContext context) {
@@ -228,31 +277,68 @@ class _InstrumentPickerDialogState extends State<_InstrumentPickerDialog> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            SegmentedButton<int>(
-              segments: [
-                ButtonSegment(value: 0, label: Text(l.melodicBank)),
-                ButtonSegment(value: 128, label: Text(l.drumBank)),
+            // Bank MSB / Bank LSB / Program：三个独立数字输入。
+            Row(
+              children: [
+                Expanded(
+                  child: _NumberField(
+                    label: l.bankMsb,
+                    value: _value.bankMsb,
+                    onChanged: (v) =>
+                        setState(() => _value = _value.copyWith(bankMsb: v)),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _NumberField(
+                    label: l.bankLsb,
+                    value: _value.bankLsb,
+                    onChanged: (v) =>
+                        setState(() => _value = _value.copyWith(bankLsb: v)),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _NumberField(
+                    label: l.program,
+                    value: _value.program,
+                    onChanged: (v) =>
+                        setState(() => _value = _value.copyWith(program: v)),
+                  ),
+                ),
               ],
-              selected: {_bank},
-              onSelectionChanged: (s) => setState(() => _bank = s.first),
             ),
             const SizedBox(height: 8),
+            SwitchListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(l.drumChannel, style: const TextStyle(fontSize: 13)),
+              value: _value.isDrum,
+              onChanged: (v) =>
+                  setState(() => _value = _value.copyWith(isDrum: v)),
+            ),
+            const SizedBox(height: 4),
             Expanded(
               child: ListView.builder(
                 itemCount: 128,
                 itemBuilder: (context, i) {
-                  final selected = i == _program;
+                  final selected = i == _value.program;
+                  final name = MidiNames.instance.gmProgramLabel(
+                    _value.isDrum ? 128 : 0,
+                    i,
+                  );
                   return ListTile(
                     dense: true,
                     selected: selected,
                     title: Text(
-                      '$i  ${MidiNames.instance.gmProgramLabel(_bank, i)}',
+                      '$i  $name',
                       style: TextStyle(
                         fontSize: 13,
                         color: selected ? YinheTheme.accent : YinheTheme.text,
                       ),
                     ),
-                    onTap: () => setState(() => _program = i),
+                    onTap: () =>
+                        setState(() => _value = _value.copyWith(program: i)),
                   );
                 },
               ),
@@ -266,10 +352,70 @@ class _InstrumentPickerDialogState extends State<_InstrumentPickerDialog> {
           child: Text(l.cancel),
         ),
         FilledButton(
-          onPressed: () => Navigator.of(context).pop((_bank, _program)),
+          onPressed: () => Navigator.of(context).pop(_value),
           child: Text(l.ok),
         ),
       ],
+    );
+  }
+}
+
+/// 0..127 的数字输入：带标签 + 校验，失焦/回车提交。
+class _NumberField extends StatefulWidget {
+  const _NumberField({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  @override
+  State<_NumberField> createState() => _NumberFieldState();
+}
+
+class _NumberFieldState extends State<_NumberField> {
+  late final TextEditingController _controller = TextEditingController(
+    text: '${widget.value}',
+  );
+
+  @override
+  void didUpdateWidget(_NumberField old) {
+    super.didUpdateWidget(old);
+    // 外部值变化（切换鼓通道等）时同步输入框，避免显示旧值。
+    if (_controller.text != '${widget.value}') {
+      _controller.text = '${widget.value}';
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _commit(String raw) {
+    final parsed = int.tryParse(raw.trim());
+    final clamped = (parsed ?? widget.value).clamp(0, 127);
+    _controller.text = '$clamped';
+    widget.onChanged(clamped);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: _controller,
+      keyboardType: TextInputType.number,
+      style: const TextStyle(fontSize: 13),
+      decoration: InputDecoration(
+        labelText: widget.label,
+        border: const OutlineInputBorder(),
+        isDense: true,
+      ),
+      onSubmitted: _commit,
+      onTapOutside: (_) => _commit(_controller.text),
     );
   }
 }

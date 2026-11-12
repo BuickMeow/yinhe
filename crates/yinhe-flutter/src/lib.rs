@@ -1385,7 +1385,8 @@ pub extern "C" fn yinhe_add_tracks(count: i32, port: i32, channel: i32, cycle: i
     )
 }
 
-/// 编辑音轨信息：名称/端口/通道 + 通道默认乐器。成功 1。
+/// 编辑音轨信息：名称/端口/通道 + 通道默认乐器（Bank MSB / Bank LSB / Program /
+/// 鼓通道）。成功 1。
 #[allow(clippy::not_unsafe_ptr_arg_deref, clippy::too_many_arguments)]
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_set_track_info(
@@ -1393,8 +1394,10 @@ pub extern "C" fn yinhe_set_track_info(
     name: *const std::ffi::c_char,
     port: i32,
     channel: i32,
-    bank: i32,
+    bank_msb: i32,
+    bank_lsb: i32,
     program: i32,
+    is_drum: i32,
     use_instrument: i32,
 ) -> i32 {
     if track < 0 || name.is_null() {
@@ -1408,8 +1411,10 @@ pub extern "C" fn yinhe_set_track_info(
         name,
         port.clamp(0, 15) as u8,
         channel.clamp(0, 15) as u8,
-        bank.clamp(0, 128) as u8,
+        bank_msb.clamp(0, 127) as u8,
+        bank_lsb.clamp(0, 127) as u8,
         program.clamp(0, 127) as u8,
+        is_drum != 0,
         use_instrument != 0,
     )
 }

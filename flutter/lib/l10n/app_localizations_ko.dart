@@ -522,6 +522,18 @@ class AppLocalizationsKo extends AppLocalizations {
   String get ppqError => 'PPQ는 1–32767의 정수여야 합니다';
 
   @override
+  String get bankMsb => 'Bank MSB';
+
+  @override
+  String get bankLsb => 'Bank LSB';
+
+  @override
+  String get program => '음색';
+
+  @override
+  String get drumChannel => '드럼 채널';
+
+  @override
   String channelInstrumentValue(String name, int bank, int program) {
     return '이 채널 기본 악기: $name (Bank $bank / Program $program)';
   }

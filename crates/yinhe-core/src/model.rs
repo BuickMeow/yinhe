@@ -597,11 +597,39 @@ impl Default for ProjectMeta {
 /// a track changes. tempo_map is derived from conductor.
 /// 通道级默认乐器：没有 MIDI PC 时生效的全局 PC。
 /// 同一 MIDI 通道的所有音轨共享；任一 PC 事件都会覆盖它。
+///
+/// 三个分量对应 MIDI 的 Bank Select + Program Change 三元组：
+/// 很多 SF2/SFZ 音色库用 bank 区分同一 program 的不同音色，
+/// 因此 bank 的 MSB / LSB 必须能独立设置，不能绑在 program 下拉上。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChannelInstrument {
-    /// 音色库 bank MSB（0 = 旋律，128 = 鼓组）。
+    /// Bank Select MSB（CC0，0..=127）。
+    #[serde(default)]
     pub bank_msb: u8,
+    /// Bank Select LSB（CC32，0..=127）。
+    #[serde(default)]
+    pub bank_lsb: u8,
+    /// Program / Preset（0..=127）。
     pub program: u8,
+    /// 鼓通道：GM percussion（bank 128 语义），由合成器的 PercussionMode 声明。
+    ///
+    /// 独立成字段而不是复用 `bank_msb == 128`：bank 是音色库维度，
+    /// 鼓是通道模式，二者混在一起会让「用 bank 128 的非鼓音色」无法表达。
+    #[serde(default)]
+    pub is_drum: bool,
+}
+
+impl ChannelInstrument {
+    /// 旧工程的兼容读法：历史上鼓通道用 `bank_msb == 128` 表示。
+    ///
+    /// 加载 mapping 时调用一次即可迁移到显式 `is_drum`，
+    /// 迁移后 `bank_msb` 归 0（鼓组不占用真实 bank 号）。
+    pub fn normalize_legacy_bank(&mut self) {
+        if self.bank_msb >= 128 {
+            self.is_drum = true;
+            self.bank_msb = 0;
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -732,12 +760,14 @@ impl YinModel {
             tracks.push(Arc::new(t));
         }
 
-        // A10（1-based 第 10 通道，索引 9）默认是鼓通道。用通道默认乐器
-        // 表示鼓：Bank MSB 128。任一 MIDI PC 仍可覆盖。
+        // A10（1-based 第 10 通道，索引 9）默认是鼓通道。用显式 `is_drum`
+        // 表示鼓，不占用 bank 号。任一 MIDI PC 仍可覆盖。
         let mut channel_instruments = [None; 16];
         channel_instruments[9] = Some(ChannelInstrument {
-            bank_msb: 128,
+            bank_msb: 0,
+            bank_lsb: 0,
             program: 0,
+            is_drum: true,
         });
 
         Self {
@@ -2165,13 +2195,44 @@ mod tests {
         assert_eq!(
             m.channel_instruments[9],
             Some(ChannelInstrument {
-                bank_msb: 128,
-                program: 0
+                bank_msb: 0,
+                bank_lsb: 0,
+                program: 0,
+                is_drum: true,
             }),
             "A10（索引 9）默认 Standard Kit"
         );
         assert_eq!(m.channel_instruments[8], None);
         assert_eq!(m.channel_instruments[10], None);
+    }
+
+    /// 旧工程用 `bank_msb == 128` 表示鼓：加载时迁移到显式 `is_drum`，
+    /// 并把 bank 归 0（鼓组不占真实 bank 号）。
+    #[test]
+    fn legacy_drum_bank_migrates_to_explicit_flag() {
+        let mut inst = ChannelInstrument {
+            bank_msb: 128,
+            bank_lsb: 0,
+            program: 3,
+            is_drum: false,
+        };
+        inst.normalize_legacy_bank();
+        assert!(inst.is_drum);
+        assert_eq!((inst.bank_msb, inst.program), (0, 3));
+
+        // 真实 bank（< 128）原样保留，不当鼓。
+        let mut melodic = ChannelInstrument {
+            bank_msb: 17,
+            bank_lsb: 2,
+            program: 40,
+            is_drum: false,
+        };
+        melodic.normalize_legacy_bank();
+        assert!(!melodic.is_drum);
+        assert_eq!(
+            (melodic.bank_msb, melodic.bank_lsb, melodic.program),
+            (17, 2, 40)
+        );
     }
 
     #[test]

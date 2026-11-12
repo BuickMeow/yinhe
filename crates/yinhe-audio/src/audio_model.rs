@@ -213,7 +213,7 @@ impl AudioModel {
             .iter()
             .map(|t| effective_fades_all(&t.audio_clips))
             .collect();
-        // 通道级默认乐器里的鼓声明：Bank MSB >= 128 = 鼓组，其它 = 旋律。
+        // 通道级默认乐器里的鼓声明：显式 `is_drum`。
         // 未设置（None）= 不表态，交给 GM 约定（每 port 的 9 通道默认鼓）。
         let channel_percussion = core::array::from_fn(|ch| {
             model
@@ -221,7 +221,7 @@ impl AudioModel {
                 .get(ch)
                 .copied()
                 .flatten()
-                .map(|inst| inst.bank_msb >= 128)
+                .map(|inst| inst.is_drum)
         });
         Self {
             track_channels,
@@ -526,21 +526,16 @@ pub(crate) fn flatten_automation_to_cc_events(
     // 通道级默认乐器：先于所有 MIDI 事件下发（tick 0），任一 MIDI PC 覆盖它。
     // track 用 u16::MAX：通道级配置不被任何单轨的 skip_track 过滤。
     //
-    // bank_msb >= 128 是「鼓组」约定，不是真 bank 号：xsynth 的 set_bank 会把
-    // 它夹到 127，导致查不到鼓组而静音。鼓组模式统一由
-    // `AudioModel::percussion_declarations` 的 PercussionMode 事件声明，
-    // 这里不再下发这会泄漏成 CC0 的假 bank。
+    // 鼓通道模式由 `AudioModel::percussion_declarations` 的 PercussionMode
+    // 事件声明，这里只下发 bank + program；鼓通道不下发 bank
+    // （鼓组不占真实 bank 号，随便发会被 xsynth 当成普通 bank 查不到音色）。
     for (ch, inst) in model.channel_instruments.iter().enumerate() {
         if let Some(inst) = inst {
             let pc = yinhe_types::PcEvent {
                 tick: 0,
                 program: inst.program,
-                bank_msb: if inst.bank_msb >= 128 {
-                    0xFF
-                } else {
-                    inst.bank_msb
-                },
-                bank_lsb: 0,
+                bank_msb: if inst.is_drum { 0xFF } else { inst.bank_msb },
+                bank_lsb: if inst.is_drum { 0xFF } else { inst.bank_lsb },
             };
             push_program_change(&pc, ch as u32, u16::MAX, &mut cc_events);
         }
@@ -1018,7 +1013,9 @@ mod tests {
         // 轨道 0 用通道 9（GM 默认鼓）；UI 关掉鼓 → 必须能覆盖。
         model.channel_instruments[9] = Some(yinhe_core::ChannelInstrument {
             bank_msb: 0,
+            bank_lsb: 0,
             program: 0,
+            is_drum: false,
         });
         let decl = AudioModel::from_model(&model).percussion_declarations();
         fn of(decl: &[(u16, bool)], ch: u16) -> Option<bool> {
@@ -1027,10 +1024,12 @@ mod tests {
         assert_eq!(of(&decl, 9), Some(false), "UI 关鼓必须压过 GM 默认鼓");
         assert_eq!(of(&decl, 25), Some(true), "其它 port 的 9 通道仍是 GM 鼓");
 
-        // 打开鼓 = bank 128。
+        // 打开鼓 = is_drum。
         model.channel_instruments[9] = Some(yinhe_core::ChannelInstrument {
-            bank_msb: 128,
+            bank_msb: 0,
+            bank_lsb: 0,
             program: 0,
+            is_drum: true,
         });
         let decl = AudioModel::from_model(&model).percussion_declarations();
         assert_eq!(of(&decl, 9), Some(true));
@@ -1045,8 +1044,10 @@ mod tests {
         }];
         model.tracks.push(Arc::new(t));
         model.channel_instruments[9] = Some(yinhe_core::ChannelInstrument {
-            bank_msb: 128,
+            bank_msb: 0,
+            bank_lsb: 0,
             program: 0,
+            is_drum: true,
         });
         let decl = AudioModel::from_model(&model).percussion_declarations();
         assert_eq!(
@@ -1055,18 +1056,42 @@ mod tests {
             "轨内 bank 声明优先于通道默认乐器"
         );
 
-        // 鼓组 bank 128 不得作为 CC0 下发（会被 xsynth 夹到 127 → 静音）。
+        // 鼓通道不得下发 bank：鼓组不占真实 bank 号，发出去会被当成普通 bank
+        // （鼓通道的 PC 事件 track = u16::MAX，与轨内事件区分）。
         let events = flatten_automation_to_cc_events(&model, 1);
-        assert!(
-            !events.iter().any(|e| matches!(
-                e.event,
-                AudioEvent::Cc {
-                    controller: 0,
-                    value,
-                } if value >= 128.0
-            )),
-            "鼓组 bank 128 不能泄漏成 CC0"
-        );
+        let channel_level_bank = |cc: u8| {
+            events.iter().any(|e| {
+                e.track == u16::MAX
+                    && matches!(
+                        e.event,
+                        AudioEvent::Cc {
+                            controller,
+                            ..
+                        } if controller == cc
+                    )
+            })
+        };
+        assert!(!channel_level_bank(0), "鼓通道不能下发 Bank MSB");
+        assert!(!channel_level_bank(32), "鼓通道不能下发 Bank LSB");
+
+        // 旋律通道仍要下发 bank（MSB + LSB 都要）。
+        model.channel_instruments[4] = Some(yinhe_core::ChannelInstrument {
+            bank_msb: 17,
+            bank_lsb: 3,
+            program: 40,
+            is_drum: false,
+        });
+        let events = flatten_automation_to_cc_events(&model, 1);
+        let bank_of = |ch: u32, cc: u8| {
+            events.iter().find_map(|e| match e.event {
+                AudioEvent::Cc { controller, value } if controller == cc && e.channel == ch => {
+                    Some(value)
+                }
+                _ => None,
+            })
+        };
+        assert_eq!(bank_of(4, 0), Some(17.0), "Bank MSB");
+        assert_eq!(bank_of(4, 32), Some(3.0), "Bank LSB");
     }
 
     /// 插件乐器参数 lane 展平成 plugin_param 事件：占位 event 不参与 xsynth 语义，
@@ -1124,7 +1149,9 @@ mod tests {
         }];
         model.channel_instruments[0] = Some(yinhe_core::ChannelInstrument {
             bank_msb: 0,
+            bank_lsb: 0,
             program: 42,
+            is_drum: false,
         });
         let events = flatten_automation_to_cc_events(&model, 1);
         let pcs: Vec<u8> = events

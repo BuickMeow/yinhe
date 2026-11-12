@@ -525,6 +525,18 @@ class AppLocalizationsRu extends AppLocalizations {
   String get ppqError => 'PPQ должен быть целым числом 1–32767';
 
   @override
+  String get bankMsb => 'Bank MSB';
+
+  @override
+  String get bankLsb => 'Bank LSB';
+
+  @override
+  String get program => 'Program';
+
+  @override
+  String get drumChannel => 'Drum Channel';
+
+  @override
   String channelInstrumentValue(String name, int bank, int program) {
     return 'Инструмент канала по умолчанию: $name (банк $bank / программа $program)';
   }

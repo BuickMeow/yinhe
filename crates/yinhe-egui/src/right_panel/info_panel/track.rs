@@ -185,11 +185,13 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
                 td.port = new_port;
                 td.channel = new_ch;
             }
-            // A10（索引 9）默认鼓通道；显式关鼓会保存为 Bank 0，不会被覆盖。
+            // A10（索引 9）默认鼓通道；显式关鼓会保存 is_drum=false，不会被覆盖。
             if new_ch == 9 && model.channel_instruments[9].is_none() {
                 model.channel_instruments[9] = Some(yinhe_core::ChannelInstrument {
-                    bank_msb: 128,
+                    bank_msb: 0,
+                    bank_lsb: 0,
                     program: 0,
+                    is_drum: true,
                 });
             }
         }

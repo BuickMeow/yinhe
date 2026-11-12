@@ -522,6 +522,18 @@ class AppLocalizationsJa extends AppLocalizations {
   String get ppqError => 'PPQ は 1–32767 の整数で指定してください';
 
   @override
+  String get bankMsb => 'Bank MSB';
+
+  @override
+  String get bankLsb => 'Bank LSB';
+
+  @override
+  String get program => '音色';
+
+  @override
+  String get drumChannel => 'ドラムチャンネル';
+
+  @override
   String channelInstrumentValue(String name, int bank, int program) {
     return 'このチャンネルの既定音色：$name（Bank $bank / Program $program）';
   }

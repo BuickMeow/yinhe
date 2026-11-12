@@ -926,11 +926,15 @@ fn channel_instruments_roundtrip() {
     let mut m = build_complex_model();
     m.channel_instruments[3] = Some(yinhe_core::ChannelInstrument {
         bank_msb: 0,
+        bank_lsb: 0,
         program: 42,
+        is_drum: false,
     });
     m.channel_instruments[9] = Some(yinhe_core::ChannelInstrument {
-        bank_msb: 128,
+        bank_msb: 0,
+        bank_lsb: 0,
         program: 0,
+        is_drum: true,
     });
     let bytes = save_yin_bytes(&m).unwrap();
     let loaded = load_yin_bytes(&bytes).unwrap();
@@ -938,14 +942,18 @@ fn channel_instruments_roundtrip() {
         loaded.channel_instruments[3],
         Some(yinhe_core::ChannelInstrument {
             bank_msb: 0,
-            program: 42
+            bank_lsb: 0,
+            program: 42,
+            is_drum: false,
         })
     );
     assert_eq!(
         loaded.channel_instruments[9],
         Some(yinhe_core::ChannelInstrument {
-            bank_msb: 128,
-            program: 0
+            bank_msb: 0,
+            bank_lsb: 0,
+            program: 0,
+            is_drum: true,
         })
     );
     assert_eq!(loaded.channel_instruments[0], None);

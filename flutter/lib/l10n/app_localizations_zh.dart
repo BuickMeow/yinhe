@@ -520,6 +520,18 @@ class AppLocalizationsZh extends AppLocalizations {
   String get ppqError => 'PPQ 需为 1–32767 的整数';
 
   @override
+  String get bankMsb => 'Bank MSB';
+
+  @override
+  String get bankLsb => 'Bank LSB';
+
+  @override
+  String get program => '音色';
+
+  @override
+  String get drumChannel => '鼓通道';
+
+  @override
   String channelInstrumentValue(String name, int bank, int program) {
     return '本通道默认乐器：$name（Bank $bank / Program $program）';
   }
@@ -1166,6 +1178,18 @@ class AppLocalizationsZhHk extends AppLocalizationsZh {
   String get ppqError => 'PPQ 需為 1–32767 的整數';
 
   @override
+  String get bankMsb => 'Bank MSB';
+
+  @override
+  String get bankLsb => 'Bank LSB';
+
+  @override
+  String get program => '音色';
+
+  @override
+  String get drumChannel => '鼓通道';
+
+  @override
   String channelInstrumentValue(String name, int bank, int program) {
     return '本通道預設樂器：$name（Bank $bank / Program $program）';
   }
@@ -1810,6 +1834,18 @@ class AppLocalizationsZhTw extends AppLocalizationsZh {
 
   @override
   String get ppqError => 'PPQ 需為 1–32767 的整數';
+
+  @override
+  String get bankMsb => 'Bank MSB';
+
+  @override
+  String get bankLsb => 'Bank LSB';
+
+  @override
+  String get program => '音色';
+
+  @override
+  String get drumChannel => '鼓通道';
 
   @override
   String channelInstrumentValue(String name, int bank, int program) {

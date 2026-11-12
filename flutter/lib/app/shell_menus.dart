@@ -385,19 +385,13 @@ mixin _ShellMenus on _ShellBase {
     }
     _resetInteraction();
     final row = rows[track];
-    var instruments = const <(int, int)?>[];
+    var instruments = const <ChannelInstrumentValue?>[];
     final instPtr = rust.channelInstrumentsJson();
     if (instPtr != ffi.nullptr) {
       try {
         final list = jsonDecode(instPtr.toDartString()) as List<dynamic>;
         instruments = [
-          for (final e in list)
-            e == null
-                ? null
-                : (
-                    ((e as List<dynamic>)[0] as num).toInt(),
-                    (e[1] as num).toInt(),
-                  ),
+          for (final e in list) ChannelInstrumentValue.fromJson(e),
         ];
       } catch (_) {
         instruments = const [];
@@ -413,7 +407,7 @@ mixin _ShellMenus on _ShellBase {
         initialChannel: row.channel,
         isMaster: row.master,
         channelInstruments: instruments,
-        onSave: (name, port, channel, bank, program) {
+        onSave: (name, port, channel, instrument) {
           final p = name.toNativeUtf8();
           var ok = 0;
           try {
@@ -422,9 +416,11 @@ mixin _ShellMenus on _ShellBase {
               p,
               port,
               channel,
-              bank ?? 0,
-              program ?? 0,
-              bank != null ? 1 : 0,
+              instrument?.bankMsb ?? 0,
+              instrument?.bankLsb ?? 0,
+              instrument?.program ?? 0,
+              (instrument?.isDrum ?? false) ? 1 : 0,
+              instrument != null ? 1 : 0,
             );
           } finally {
             calloc.free(p);
