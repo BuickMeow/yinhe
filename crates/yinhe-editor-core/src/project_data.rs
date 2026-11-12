@@ -223,7 +223,9 @@ mod tests {
     fn sync_mapping_file_keeps_channel_instruments() {
         let inst = ChannelInstrument {
             bank_msb: 0,
+            bank_lsb: 0,
             program: 24,
+            is_drum: false,
         };
         let mut model = YinModel::default();
         model.channel_instruments[3] = Some(inst);
