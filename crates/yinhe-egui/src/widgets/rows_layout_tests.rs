@@ -220,9 +220,6 @@ fn control_fits_inside_scroll_area_card() {
                                 .show(ui, |ui| {
                                     ui.set_min_width(ui.available_width());
                                     ui.set_max_width(ui.available_width());
-                                    let _rw = crate::widgets::rows::page_row_width_scope(
-                                        ui.available_width(),
-                                    );
                                     *cr.borrow_mut() = ui.max_rect().max.x;
                                     // 塞满高度，强制出现垂直滚动条（真实页面就是这样）。
                                     for _ in 0..40 {
@@ -352,7 +349,6 @@ fn later_rows_do_not_shrink() {
                                     let inner = ui.available_width();
                                     ui.set_min_width(inner);
                                     ui.set_max_width(inner);
-                                    let _rw = crate::widgets::rows::page_row_width_scope(inner);
                                     for i in 0..6 {
                                         crate::widgets::rows::setting_row(
                                             ui,
