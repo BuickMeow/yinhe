@@ -165,7 +165,7 @@ fn connect(options: &Options) -> Result<(), String> {
             ApkKind::Release => RELEASE_APK,
             ApkKind::Debug => DEBUG_APK,
         };
-        install_and_launch(&adb, &serial, &workspace_root().join(apk), kind)?;
+        install_and_launch(&adb, &serial, &crate::cmd::workspace_root().join(apk), kind)?;
     } else if options.launch {
         launch(&adb, &serial)?;
     }
@@ -432,14 +432,6 @@ fn print_log_tail(log: Option<&Path>) {
     if file.read_to_string(&mut tail).is_ok() && !tail.is_empty() {
         println!("\n--- 模拟器日志末尾 ({}) ---\n{tail}", log.display());
     }
-}
-
-/// 仓库根目录（xtask 的上一级），保证从子目录运行也能找到 APK。
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 #[cfg(test)]

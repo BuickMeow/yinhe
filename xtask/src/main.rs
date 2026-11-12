@@ -3,6 +3,7 @@
 //! 用法：
 //!   cargo xtask bundle-macos              # 打包 macOS .app + .dmg
 //!   cargo xtask verify [crate..]          # fmt --check + clippy + test + release
+//!   cargo xtask layers                    # crate 分层与 egui 泄漏审计
 //!
 //! 依赖仅限标准库：xtask 自身编译要快，不应拉入任何第三方 crate。
 //!
@@ -14,6 +15,7 @@ mod bundle_macos;
 mod cmd;
 mod emulator;
 mod ios;
+mod layers;
 mod ohos;
 mod verify;
 
@@ -29,6 +31,7 @@ fn main() -> ExitCode {
         Some("bundle-macos") => bundle_macos::run(),
         Some("emulator") => emulator::run(&args[1..]),
         Some("ios") => ios::run(&args[1..]),
+        Some("layers") => layers::run(&args[1..]),
         Some("ohos") => ohos::run(&args[1..]),
         Some("verify") => verify::run(&args[1..]),
         Some("help") | Some("-h") | Some("--help") | None => {

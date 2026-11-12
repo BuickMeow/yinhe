@@ -50,7 +50,7 @@ pub fn run(args: &[String]) -> ExitCode {
 }
 
 fn build(release: bool, install: bool) -> Result<(), ExitCode> {
-    let root = workspace_root();
+    let root = crate::cmd::workspace_root();
     let ohos_dir = root.join("flutter/ohos");
     let libs = ohos_dir.join("entry/libs").join(ABI);
 
@@ -395,11 +395,4 @@ fn find_sdk() -> Option<Sdk> {
 fn deveco_hvigorw() -> Option<PathBuf> {
     let p = PathBuf::from("/Applications/DevEco-Studio.app/Contents/tools/hvigor/bin/hvigorw");
     p.is_file().then_some(p)
-}
-
-fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("xtask 应在 <repo>/xtask 下")
-        .to_path_buf()
 }

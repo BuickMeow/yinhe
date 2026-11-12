@@ -12,7 +12,7 @@
 //!   cargo xtask android --install  # 构建后 adb install + 启动
 
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 
 use crate::cmd;
@@ -52,7 +52,7 @@ pub fn run(args: &[String]) -> ExitCode {
 }
 
 fn build(debug: bool, install: bool) -> Result<(), ExitCode> {
-    let root = workspace_root();
+    let root = crate::cmd::workspace_root();
     let jni_libs = root.join("flutter/android/app/src/main/jniLibs");
     let jni = jni_libs.join("arm64-v8a");
 
@@ -234,11 +234,4 @@ fn find_tool(name: &str) -> Option<PathBuf> {
             .map(|dir| dir.join(&exe))
             .find(|c| c.is_file())
     })
-}
-
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."))
 }

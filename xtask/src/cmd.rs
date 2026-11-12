@@ -51,3 +51,14 @@ pub fn cargo() -> Command {
 pub fn cmd(program: &str) -> Command {
     Command::new(program)
 }
+
+/// 仓库根目录：`xtask` 的上一级。
+///
+/// 编译期常量，从任意子目录运行 xtask 都指向仓库根；
+/// 各平台打包模块共用这一份，避免每个模块各写一遍。
+pub fn workspace_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("xtask 必须位于 workspace 子目录")
+        .to_path_buf()
+}

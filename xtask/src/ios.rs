@@ -12,8 +12,7 @@
 //!   cargo xtask ios --device        # 真机包（需要签名）
 //!   cargo xtask ios --install       # 构建后装到已启动的模拟器并启动
 
-use std::env;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::ExitCode;
 
 use crate::cmd;
@@ -52,7 +51,7 @@ pub fn run(args: &[String]) -> ExitCode {
 }
 
 fn build(release: bool, device: bool, install: bool) -> Result<(), ExitCode> {
-    let root = workspace_root();
+    let root = crate::cmd::workspace_root();
     let engine_dir = root.join("flutter/ios/yinhe_engine");
     std::fs::create_dir_all(&engine_dir).map_err(|e| {
         eprintln!("创建 {} 失败: {e}", engine_dir.display());
@@ -167,12 +166,4 @@ fn write_exports(archive: &Path, dest: &Path) -> Result<(), ExitCode> {
     })?;
     println!("导出符号: {} 个 -> {}", symbols.len(), dest.display());
     Ok(())
-}
-
-fn workspace_root() -> PathBuf {
-    // xtask 的 CARGO_MANIFEST_DIR 是 <root>/xtask。
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("xtask 必须位于 workspace 子目录")
-        .to_path_buf()
 }
