@@ -303,8 +303,12 @@ fn write_note_track<W: Write>(
             same_tick.sort_unstable();
             for &(idx, is_off) in &same_tick {
                 let n = notes[idx as usize];
+                // NoteOff 写成 NoteOn(vel=0)：两者语义等价（SMF 规范明确允许），
+                // 但状态字节与 NoteOn 相同，running status 才能跨 NoteOn/NoteOff
+                // 连续省略。用 0x8n 时状态字节在 On/Off 之间交替，几乎无法压缩
+                // （实测 555 万音符的黑乐谱导出小 17%）。
                 let message = if is_off {
-                    MidiMessage::NoteOff {
+                    MidiMessage::NoteOn {
                         key: u7::new(n.key & 0x7F),
                         vel: u7::new(0),
                     }

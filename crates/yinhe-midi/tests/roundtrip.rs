@@ -998,20 +998,68 @@ fn same_tick_note_off_precedes_next_note_on() {
         }
     }
     assert_eq!(at_100.len(), 2, "tick 100 应有一个 Off 和一个 On");
-    assert!(matches!(
-        at_100[0],
-        midly::TrackEventKind::Midi {
-            message: midly::MidiMessage::NoteOff { .. },
-            ..
-        }
-    ));
+    // NoteOff 以 NoteOn(vel=0) 编码（running status 可跨 On/Off 连续省略）。
+    assert!(
+        matches!(
+            at_100[0],
+            midly::TrackEventKind::Midi {
+                message: midly::MidiMessage::NoteOn { vel, .. },
+                ..
+            } if vel.as_int() == 0
+        ),
+        "前一个音符的 Off（NoteOn vel=0）必须先于后一个 On"
+    );
     assert!(matches!(
         at_100[1],
         midly::TrackEventKind::Midi {
-            message: midly::MidiMessage::NoteOn { .. },
+            message: midly::MidiMessage::NoteOn { vel, .. },
             ..
-        }
+        } if vel.as_int() > 0
     ));
+}
+
+/// 导出把 NoteOff 写成 NoteOn(vel=0)：状态字节一致，running status 才能
+/// 跨 On/Off 连续省略（黑乐谱导出体积差异的主要来源）。
+#[test]
+fn exported_track_uses_running_status_across_note_on_off() {
+    let mut track = TrackData::new(0, 0);
+    track.name = "RS".to_string();
+    let mut model = YinModel {
+        conductor: Arc::new(empty_conductor()),
+        tracks: vec![Arc::new(track)],
+        meta: ProjectMeta {
+            ppq: 480,
+            ..ProjectMeta::default()
+        },
+        ..Default::default()
+    };
+    // 一串同通道、音高各异的音符：Off 与 On 交替出现。
+    model.load_track_notes(vec![vec![
+        cut_note(0, 100, 60),
+        cut_note(100, 200, 61),
+        cut_note(200, 300, 62),
+        cut_note(300, 400, 63),
+    ]]);
+
+    let bytes = write_to_bytes(&model).unwrap();
+    let smf = midly::Smf::parse(&bytes).unwrap();
+    let mut note_on = 0;
+    let mut note_off = 0;
+    for ev in &smf.tracks[1] {
+        match ev.kind {
+            midly::TrackEventKind::Midi {
+                message: midly::MidiMessage::NoteOn { .. },
+                ..
+            } => note_on += 1,
+            midly::TrackEventKind::Midi {
+                message: midly::MidiMessage::NoteOff { .. },
+                ..
+            } => note_off += 1,
+            _ => {}
+        }
+    }
+    assert_eq!(note_on, 8, "4 个音符 On + 4 个 Off 全部编码为 NoteOn");
+    assert_eq!(note_off, 0, "导出不应再写 0x8n 状态字节");
 }
 
 /// `dedup_overlaps` 丢弃同 key 上与上一个音符重叠的音符。
