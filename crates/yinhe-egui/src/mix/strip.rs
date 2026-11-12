@@ -1253,6 +1253,7 @@ fn picker_list(
                 let selected = app.mix.picker_selected.as_deref() == Some(XS_SELECTED_ID);
                 let resp = plugin_row(
                     ui,
+                    egui_material_icons::icons::ICON_PIANO,
                     "XSynth",
                     yinhe_mixer::PluginFormat::Builtin,
                     true,
@@ -1285,7 +1286,14 @@ fn picker_list(
                     any = true;
                     let enabled = p.error.is_none() && kind.can_pick(p);
                     let selected = app.mix.picker_selected.as_deref() == Some(p.id.as_str());
-                    let resp = plugin_row(ui, &p.display_name(), p.format, enabled, selected);
+                    let resp = plugin_row(
+                        ui,
+                        plugin_kind_icon(p),
+                        &p.display_name(),
+                        p.format,
+                        enabled,
+                        selected,
+                    );
                     if let Some(err) = &p.error {
                         // 加载失败的插件：灰色不可选，hover 显示原因。
                         resp.on_hover_text(err);
@@ -1472,60 +1480,68 @@ fn picker_window(
                             bottom: 12,
                         })
                         .show(ui, |ui| {
-                            // 主体（左栏 + 列表 + 信息）占满按钮行以上；底部按钮固定行高。
+                            // 左栏分类 + 中间列表上下贯通到窗口底缘；只有右栏
+                            // （插件信息）带底部按钮行，按钮只占右侧栏宽度。
                             let btn_zone = crate::chrome::dialog_buttons::btn_zone_h(ui.ctx());
-                            crate::widgets::grid::content_footer(
+                            crate::widgets::grid::three_columns(
                                 ui,
-                                0.0,
-                                btn_zone,
+                                12.0,
+                                crate::theme::TOOL_BAR_W,
+                                190.0,
                                 |cells| {
+                                    cells.cell(|ui| picker_tab_bar(app, ui));
                                     cells.cell(|ui| {
-                                        crate::widgets::grid::three_columns(
-                                            ui,
-                                            12.0,
-                                            crate::theme::TOOL_BAR_W,
-                                            190.0,
-                                            |cells| {
-                                                cells.cell(|ui| picker_tab_bar(app, ui));
-                                                cells.cell(|ui| {
-                                                    picker_list(app, ui, kind, actions, &mut close)
-                                                });
-                                                cells.cell(|ui| picker_info(app, ui));
-                                            },
-                                        );
+                                        picker_list(app, ui, kind, actions, &mut close)
                                     });
                                     cells.cell(|ui| {
-                                        // 底部按钮贴底（bottom_up）：下边距与右边距一致。
-                                        ui.with_layout(
-                                            egui::Layout::bottom_up(egui::Align::Center),
-                                            |ui| {
-                                                let ok_text = t!("mix.picker_ok");
-                                                let cancel_text = t!("mix.picker_cancel");
-                                                let ok_enabled =
-                                                    app.mix.picker_selected.is_some();
-                                                if let Some(idx) =
-                                                    crate::chrome::dialog_buttons::dialog_button_row(
-                                                        ui,
-                                                        &[
-                                                            crate::chrome::dialog_buttons::DialogButton::secondary(
-                                                                cancel_text.as_ref(),
-                                                            ),
-                                                            crate::chrome::dialog_buttons::DialogButton::primary(
-                                                                ok_text.as_ref(),
-                                                            )
-                                                            .enabled(ok_enabled),
-                                                        ],
-                                                    )
-                                                {
-                                                    match idx {
-                                                        0 => close = true,
-                                                        1 => {
-                                                            pick_selected(app, kind, actions);
-                                                            close = true;
-                                                        }
-                                                        _ => {}
-                                                    }
-                                                }
+                                        crate::widgets::grid::content_footer(
+                                            ui,
+                                            0.0,
+                                            btn_zone,
+                                            |cells| {
+                                                cells.cell(|ui| picker_info(app, ui));
+                                                cells.cell(|ui| {
+                                                    // 底部按钮贴底（bottom_up）：下边距与右边距一致。
+                                                    ui.with_layout(
+                                                        egui::Layout::bottom_up(
+                                                            egui::Align::Center,
+                                                        ),
+                                                        |ui| {
+                                                            let ok_text = t!("mix.picker_ok");
+                                                            let cancel_text =
+                                                                t!("mix.picker_cancel");
+                                                            let ok_enabled = app
+                                                                .mix
+                                                                .picker_selected
+                                                                .is_some();
+                                                            if let Some(idx) =
+                                                                crate::chrome::dialog_buttons::dialog_button_row(
+                                                                    ui,
+                                                                    &[
+                                                                        crate::chrome::dialog_buttons::DialogButton::secondary(
+                                                                            cancel_text.as_ref(),
+                                                                        ),
+                                                                        crate::chrome::dialog_buttons::DialogButton::primary(
+                                                                            ok_text.as_ref(),
+                                                                        )
+                                                                        .enabled(ok_enabled),
+                                                                    ],
+                                                                )
+                                                            {
+                                                                match idx {
+                                                                    0 => close = true,
+                                                                    1 => {
+                                                                        pick_selected(
+                                                                            app, kind, actions,
+                                                                        );
+                                                                        close = true;
+                                                                    }
+                                                                    _ => {}
+                                                                }
+                                                            }
+                                                        },
+                                                    );
+                                                });
                                             },
                                         );
                                     });
@@ -1566,12 +1582,27 @@ pub(crate) fn instrument_picker(
     picker_window(app, ctx, PickerKind::Instrument { channel }, actions);
 }
 
-/// 插件选择器的一行：左名称（超宽裁剪）+ 右格式标签（CLAP / VST3）。
+/// 插件分类图标：乐器 / 效果器 / 扩展（VST/CLAP 但不声明类型时）。
+///
+/// 列表行用它做视觉分类标识；XSynth 是内置采样器，按乐器显示。
+fn plugin_kind_icon(plugin: &PluginEntry) -> egui_material_icons::MaterialIcon {
+    use egui_material_icons::icons::*;
+    if plugin.is_instrument {
+        ICON_PIANO
+    } else if plugin.is_effect {
+        ICON_GRADIENT
+    } else {
+        ICON_EXTENSION
+    }
+}
+
+/// 插件选择器的一行：左分类图标 + 名称（超宽裁剪）+ 右格式标签（CLAP / VST3）。
 ///
 /// `enabled = false`（加载失败/语境不支持）时灰色且不响应点击；
 /// `selected` 时整行选中底色；hover 提示由调用方追加。
 fn plugin_row(
     ui: &mut egui::Ui,
+    icon: egui_material_icons::MaterialIcon,
     name: &str,
     format: yinhe_mixer::PluginFormat,
     enabled: bool,
@@ -1598,15 +1629,16 @@ fn plugin_row(
         );
     }
     let font = egui::FontId::proportional(crate::theme::SMALL_FONT);
-    // 名称（左侧，超宽裁剪；右侧留 56px 给格式标签）。
+    // 名称（左侧，超宽裁剪；右侧留 56px 给格式标签）。图标与文字同一 LayoutJob，
+    // 保证基线与行高一致；图标用 Material 家族，避免被正文私有字形抢占。
     let name_rect = egui::Rect::from_min_max(rect.min, egui::pos2(rect.max.x - 56.0, rect.max.y));
-    ui.painter().with_clip_rect(name_rect).text(
-        egui::pos2(rect.min.x + 6.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        name,
-        font.clone(),
-        text_color,
-    );
+    let job =
+        crate::widgets::icon_text::icon_text(icon, name, crate::theme::SMALL_FONT, text_color);
+    let galley = ui.painter().layout_job(job);
+    let pos = egui::pos2(rect.min.x + 6.0, rect.center().y - galley.size().y * 0.5);
+    ui.painter()
+        .with_clip_rect(name_rect)
+        .galley(pos, galley, text_color);
     // 格式标签（右对齐）。
     let fmt = match format {
         yinhe_mixer::PluginFormat::Clap => "CLAP",
