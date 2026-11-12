@@ -2,7 +2,7 @@ use eframe::egui;
 use rust_i18n::t;
 
 use crate::audio_settings::AudioSettings;
-use crate::dialogs::settings::setting_row;
+use crate::dialogs::settings::{setting_row, setting_row_plain};
 
 pub fn show_saving_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     let mut changed = false;
@@ -24,7 +24,7 @@ pub fn show_saving_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool 
     let current = settings.auto_save_interval_secs;
     let enabled = settings.auto_save_enabled;
     let current_label = t!("settings.auto_save.interval_minutes", n = current / 60).to_string();
-    setting_row(ui, t!("settings.auto_save_interval").as_ref(), "", |ui| {
+    setting_row_plain(ui, t!("settings.auto_save_interval").as_ref(), |ui| {
         ui.add_enabled_ui(enabled, |ui| {
             crate::widgets::combo::combo_box(
                 ui,

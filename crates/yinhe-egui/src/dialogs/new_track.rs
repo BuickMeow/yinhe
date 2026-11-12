@@ -300,10 +300,9 @@ pub(crate) fn show_viewport(
                                                 p.display_name(),
                                             ));
                                         }
-                                        crate::dialogs::settings::setting_row(
+                                        crate::dialogs::settings::setting_row_plain(
                                             ui,
                                             t!("track.default_instrument").as_ref(),
-                                            "",
                                             |ui| {
                                                 let mut sel = state.instrument_id.clone();
                                                 let w = ui.available_width().max(1.0);
@@ -322,10 +321,9 @@ pub(crate) fn show_viewport(
                                     }
 
                                     // 数量：1..=64
-                                    crate::dialogs::settings::setting_row(
+                                    crate::dialogs::settings::setting_row_plain(
                                         ui,
                                         t!("dialog.new_track.count").as_ref(),
-                                        "",
                                         |ui| {
                                             ui.add(
                                                 crate::widgets::numeric_input::decimal_drag_value(
@@ -337,10 +335,9 @@ pub(crate) fn show_viewport(
                                     );
 
                                     // 通道分配：自动 / 指定起点
-                                    crate::dialogs::settings::setting_row(
+                                    crate::dialogs::settings::setting_row_plain(
                                         ui,
                                         t!("dialog.new_track.assign").as_ref(),
-                                        "",
                                         |ui| {
                                             crate::widgets::flat::flat_selectable_value(
                                             ui,
@@ -361,10 +358,9 @@ pub(crate) fn show_viewport(
                                     if state.mode == AssignMode::Manual {
                                         match state.kind {
                                             KindChoice::Midi => {
-                                                crate::dialogs::settings::setting_row(
+                                                crate::dialogs::settings::setting_row_plain(
                                                     ui,
                                                     t!("dialog.new_track.port").as_ref(),
-                                                    "",
                                                     |ui| {
                                                         crate::widgets::combo::combo_box(
                                                             ui,
@@ -391,10 +387,9 @@ pub(crate) fn show_viewport(
                                                         );
                                                     },
                                                 );
-                                                crate::dialogs::settings::setting_row(
+                                                crate::dialogs::settings::setting_row_plain(
                                                     ui,
                                                     t!("dialog.new_track.channel").as_ref(),
-                                                    "",
                                                     |ui| {
                                                         crate::widgets::combo::combo_box(
                                                             ui,
@@ -422,10 +417,9 @@ pub(crate) fn show_viewport(
                                                 );
                                             }
                                             KindChoice::Audio => {
-                                                crate::dialogs::settings::setting_row(
+                                                crate::dialogs::settings::setting_row_plain(
                                                     ui,
                                                     t!("dialog.new_track.audio_start").as_ref(),
-                                                    "",
                                                     |ui| {
                                                         ui.add(
                                                             crate::widgets::numeric_input::decimal_drag_value(

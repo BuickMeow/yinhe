@@ -83,14 +83,27 @@ pub(crate) fn inline_row(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui:
     );
 }
 
-/// 设置行：左侧标题（+可选描述），右侧控件；行尾分隔。与设置对话框同款。
+/// 设置行：左侧标题、右侧控件；行尾分隔。与设置对话框同款。
+///
+/// `hint` **只做 hover tooltip，不渲染成标题下的小字**（AGENTS 界面红线：
+/// 禁止在标题/控件下写操作说明小字）。需要补充的信息挂在整行上，
+/// 不占视觉空间、不打断扫读。
 pub(crate) fn setting_row(
     ui: &mut egui::Ui,
     title: &str,
-    desc: &str,
+    hint: &str,
     add_control: impl FnOnce(&mut egui::Ui),
 ) {
-    row_impl(ui, title, desc, true, add_control);
+    row_impl(ui, title, hint, true, add_control);
+}
+
+/// 无提示的便捷版本（行不需要任何解释时用）。
+pub(crate) fn setting_row_plain(
+    ui: &mut egui::Ui,
+    title: &str,
+    add_control: impl FnOnce(&mut egui::Ui),
+) {
+    row_impl(ui, title, "", true, add_control);
 }
 
 /// 面板行：左侧标题、右侧控件、垂直居中；**无**行间分隔线（右栏面板用，省空间）。
@@ -101,67 +114,53 @@ pub(crate) fn panel_row(ui: &mut egui::Ui, title: &str, add_control: impl FnOnce
 fn row_impl(
     ui: &mut egui::Ui,
     title: &str,
-    desc: &str,
+    hint: &str,
     divider: bool,
     add_control: impl FnOnce(&mut egui::Ui),
 ) {
-    if desc.is_empty() {
-        // 单行：固定行高 + egui_extras 两列（标签固定宽、控件剩余宽）。
-        // 同一面板内所有行都走同一行高，避免控件高度不同导致行距参差。
-        let h = super::control::h(ui.ctx());
-        let label_w = scaled_font(ui.ctx(), theme::FIELD_LABEL_W);
-        ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), h),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| {
-                StripBuilder::new(ui)
-                    .size(Size::exact(label_w))
-                    .size(Size::remainder())
-                    .horizontal(|mut strip| {
-                        strip.cell(|ui| {
-                            ui.with_layout(
-                                egui::Layout::left_to_right(egui::Align::Center),
-                                |ui| {
-                                    ui.label(
-                                        egui::RichText::new(title)
-                                            .strong()
-                                            .size(scaled_font(ui.ctx(), theme::SUB_TITLE_FONT)),
-                                    );
-                                },
+    // 固定行高 + egui_extras 两列（标签固定宽、控件剩余宽）。
+    // 同一面板内所有行都走同一行高，避免控件高度不同导致行距参差。
+    let h = super::control::h(ui.ctx());
+    let label_w = scaled_font(ui.ctx(), theme::FIELD_LABEL_W);
+    let row_resp = ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), h),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            StripBuilder::new(ui)
+                .size(Size::exact(label_w))
+                .size(Size::remainder())
+                .horizontal(|mut strip| {
+                    strip.cell(|ui| {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.label(
+                                egui::RichText::new(title)
+                                    .strong()
+                                    .size(scaled_font(ui.ctx(), theme::SUB_TITLE_FONT)),
                             );
                         });
-                        strip.cell(|ui| {
-                            // 每行一个稳定作用域：避免不同行的按钮/开关共用自动 Id，
-                            // 出现“点 A 命中 B、B 本身点不动”的错位。
-                            ui.push_id(title, |ui| {
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| ui.name_inputs(title, add_control),
-                                );
-                            });
+                    });
+                    strip.cell(|ui| {
+                        // 每行一个稳定作用域：避免不同行的按钮/开关共用自动 Id，
+                        // 出现“点 A 命中 B、B 本身点不动”的错位。
+                        ui.push_id(title, |ui| {
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| ui.name_inputs(title, add_control),
+                            );
                         });
                     });
-            },
-        );
-    } else {
-        ui.horizontal(|ui| {
-            ui.vertical(|ui| {
-                ui.label(
-                    egui::RichText::new(title)
-                        .strong()
-                        .size(scaled_font(ui.ctx(), theme::SUB_TITLE_FONT)),
-                );
-                ui.add_space(theme::GAP_TIGHT);
-                ui.label(
-                    egui::RichText::new(desc)
-                        .size(scaled_font(ui.ctx(), theme::SMALL_FONT))
-                        .color(theme::text_secondary()),
-                );
-            });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.name_inputs(title, add_control);
-            });
-        });
+                });
+        },
+    );
+    // 说明只做 hover 提示：不渲染小字，但信息不丢。
+    // 挂在整个行区域上（含标签与控件），鼠标扫过任意位置都能看到。
+    if !hint.is_empty() {
+        ui.interact(
+            row_resp.response.rect,
+            ui.scope_id().with(("row_hint", title)),
+            egui::Sense::hover(),
+        )
+        .on_hover_text(hint);
     }
     if divider {
         ui.add_space(theme::GAP);

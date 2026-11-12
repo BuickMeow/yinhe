@@ -5,7 +5,7 @@ use yinhe_core::{CoverArt, SongInfo};
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::history::{begin_edit, commit_compression_level, commit_ppq};
 
-use crate::dialogs::settings::setting_row;
+use crate::dialogs::settings::{setting_row, setting_row_plain};
 
 /// 单个艺术家的 egui 编辑形态。
 #[derive(Clone, Default)]
@@ -123,7 +123,7 @@ pub fn show(ui: &mut egui::Ui, draft: &mut ProjectSettingsDraft) {
     let mut remove_artist: Option<usize> = None;
     for i in 0..draft.artists.len() {
         let label = format!("{} {}", t!("project.artist").as_ref(), i + 1);
-        setting_row(ui, &label, t!("project.artist_desc").as_ref(), |ui| {
+        setting_row_plain(ui, &label, |ui| {
             ui.horizontal(|ui| {
                 crate::widgets::text_input::control_text_input(
                     ui,

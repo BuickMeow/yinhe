@@ -1,148 +1,180 @@
 //! 快捷键的「键盘视图」：反向查看每个按键被哪些动作占用。
 //!
-//! 与设置页逐行动作的列表互补：列表回答「这个动作绑了什么键」，
-//! 键盘回答「这个键上有什么」。后者才能一眼看出键位冲突与空缺。
+//! 与逐动作列表互补：列表回答「这个动作绑了什么键」，键盘回答「这个键上有什么」。
 //!
-//! 交互约束：
-//! - 键帽上的修饰键状态**只读真实输入**（`i.modifiers`），不自己维护一份状态，
-//!   永远不可能显示与实际输入不一致；
-//! - 点击有绑定的键 = 在下方列出占用它的动作，可跳到对应动作行；
-//! - 这里**不直接编辑绑定**：改键仍走列表里的录制器，避免两套编辑逻辑漂移。
+//! 设计约束（按用户要求）：
+//! - 键盘**常驻页面顶部**，不是二级菜单；
+//! - 点键位后只在下方显示该键绑定的动作 + 一个「添加」按钮，不显示别的键；
+//! - 修饰键（Ctrl/Alt/Shift/Cmd）**各自独立计数**：同一个字母键配了 ⌘K 和 ⌥K
+//!   是两个不同绑定，不算冲突；
+//! - 修改绑定直接在下方完成（录制 / 删除），不再跳回列表。
+//!
+//! 修饰键状态只读真实输入（`i.modifiers`），不自己维护第二份状态。
 
 use eframe::egui;
 use rust_i18n::t;
+use yinhe_editor_core::shortcuts::{self as sc, KeyCombo};
 
 use super::keyboard_layout::{KeyCap, ansi_layout};
 use crate::audio_settings::AudioSettings;
 
-/// 键盘视图状态（存在 egui 临时数据里，不需要进设置结构体）。
+/// 一条绑定：动作 + 完整组合键。
+#[derive(Clone)]
+struct Binding {
+    action_id: String,
+    combo: KeyCombo,
+}
+
+/// 键盘视图状态（存 egui 临时数据，不进设置结构体）。
 #[derive(Clone, Default)]
 struct KeyboardViewState {
-    /// 当前选中的键（点击后下方列出占用它的动作）。
-    selected: Option<eframe::egui::Key>,
+    /// 当前选中的物理键。
+    selected: Option<egui::Key>,
+    /// 正在为哪个动作录制（None = 未录制）。
+    recording_action: Option<String>,
+    /// 录制中替换的下标；== 列表长度表示追加。
+    recording_idx: usize,
+    /// 正在为哪个物理键挑选动作（弹出动作列表）。
+    picking_action: Option<egui::Key>,
 }
 
 fn state_id() -> egui::Id {
     egui::Id::unique("settings_keyboard_view_state")
 }
 
-/// 绘制整块键盘视图。返回被点击、需要跳转的动作 id（若有）。
-pub(crate) fn show(ui: &mut egui::Ui, settings: &AudioSettings) -> Option<String> {
-    let mut jump: Option<String> = None;
+pub(crate) fn show(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
+    let mut changed = false;
     let mut state: KeyboardViewState = ui
         .data(|d| d.get_temp::<KeyboardViewState>(state_id()))
         .unwrap_or_default();
 
-    // 键位 → 占用它的动作（一个键可被多个动作绑定，允许冲突）。
-    let bound = collect_bindings(settings);
+    // 键帽 → 绑定列表（按"物理键 + 修饰键"区分，见 `bindings_for_cap`）。
+    let all = collect_bindings(settings);
 
-    ui.heading(t!("settings.shortcuts.keyboard.title").as_ref());
-    ui.add_space(2.0);
-    ui.label(
-        egui::RichText::new(t!("settings.shortcuts.keyboard.hint").as_ref())
-            .color(crate::theme::text_secondary()),
-    );
-    ui.add_space(6.0);
+    draw_keyboard(ui, &all, &mut state);
 
-    draw_keyboard(ui, &bound, &mut state, &mut jump);
-
-    // ── 选中键的详情 ──
-    ui.add_space(8.0);
-    match state.selected {
-        Some(key) => {
-            let label = crate::shortcuts::key_display(key);
-            let actions = bound.get(&key).cloned().unwrap_or_default();
-            ui.label(
-                egui::RichText::new(
-                    t!("settings.shortcuts.keyboard.bound_to", key = label).to_string(),
-                )
-                .strong()
-                .color(crate::theme::text_bright()),
-            );
-            if actions.is_empty() {
-                ui.label(
-                    egui::RichText::new(t!("settings.shortcuts.keyboard.unbound").as_ref())
-                        .color(crate::theme::text_muted()),
-                );
-            } else {
-                for action_id in actions {
-                    let name = t!(crate::shortcuts::action_label_key(&action_id)).to_string();
-                    // 显示「动作名 · 完整快捷键」，冲突时一眼能看出差在修饰键。
-                    let combo = settings
-                        .keybindings
-                        .get(&action_id)
-                        .iter()
-                        .filter(|c| crate::shortcuts::str_to_key(&c.key) == Some(key))
-                        .map(crate::shortcuts::display_combo)
-                        .collect::<Vec<_>>()
-                        .join(" / ");
-                    let text = if combo.is_empty() {
-                        name
-                    } else {
-                        format!("{name} · {combo}")
-                    };
-                    if ui
-                        .add(crate::widgets::menu::menu_item_button(ui, false, text))
-                        .on_hover_text(t!("settings.shortcuts.keyboard.jump").as_ref())
-                        .clicked()
-                    {
-                        jump = Some(action_id);
-                    }
+    // ── 录制：捕获本帧按键（Esc 取消）──
+    if let Some(action_id) = state.recording_action.clone() {
+        let captured = capture_combo(ui);
+        if let Some(combo) = captured {
+            if let Some(combo) = combo {
+                let mut combos = settings.keybindings.get(&action_id);
+                if state.recording_idx < combos.len() {
+                    combos[state.recording_idx] = combo;
+                } else {
+                    combos.push(combo);
                 }
+                settings.keybindings.set(&action_id, combos);
+                changed = true;
             }
+            state.recording_action = None;
+            settings.ui_session.shortcut_recording = false;
+        } else {
+            settings.ui_session.shortcut_recording = true;
         }
-        None => {
-            ui.label(
-                egui::RichText::new(t!("settings.shortcuts.keyboard.select_hint").as_ref())
-                    .color(crate::theme::text_muted()),
-            );
-        }
+    }
+
+    // ── 选中键的绑定（只显示这个键，不显示别的）──
+    if let Some(key) = state.selected {
+        ui.add_space(8.0);
+        draw_binding_list(ui, settings, key, &all, &mut state, &mut changed);
     }
 
     ui.data_mut(|d| d.insert_temp(state_id(), state));
-    jump
+    changed
 }
 
-/// 键 → 绑定它的动作 id（保持 `ALL_ACTION_IDS` 顺序，便于稳定显示）。
-fn collect_bindings(settings: &AudioSettings) -> std::collections::HashMap<egui::Key, Vec<String>> {
-    let mut map: std::collections::HashMap<egui::Key, Vec<String>> =
-        std::collections::HashMap::new();
-    let ids = yinhe_editor_core::shortcuts::ALL_ACTION_IDS
-        .iter()
-        .chain(yinhe_editor_core::shortcuts::CONTEXT_ACTION_IDS);
-    for &id in ids {
-        for combo in settings.keybindings.get(id) {
-            if let Some(key) = crate::shortcuts::str_to_key(&combo.key) {
-                let list = map.entry(key).or_default();
-                if !list.iter().any(|e| e == id) {
-                    list.push(id.to_string());
-                }
+/// 从本帧输入捕获一个组合键；`None` = 本帧还没按。
+fn capture_combo(ui: &egui::Ui) -> Option<Option<KeyCombo>> {
+    let events = ui.input(|i| i.events.clone());
+    for ev in &events {
+        if let egui::Event::Key {
+            key,
+            pressed: true,
+            modifiers,
+            ..
+        } = ev
+        {
+            if *key == egui::Key::Escape {
+                return Some(None);
+            }
+            if crate::shortcuts::is_recordable_key(*key) {
+                return Some(Some(KeyCombo {
+                    command: modifiers.command || modifiers.ctrl,
+                    shift: modifiers.shift,
+                    alt: modifiers.alt,
+                    key: crate::shortcuts::key_to_str(*key),
+                }));
             }
         }
     }
-    map
+    None
 }
 
-fn draw_keyboard(
-    ui: &mut egui::Ui,
-    bound: &std::collections::HashMap<egui::Key, Vec<String>>,
-    state: &mut KeyboardViewState,
-    jump: &mut Option<String>,
-) {
+/// 全部绑定：动作 id → 组合键（保持 ALL_ACTION_IDS 顺序，显示稳定）。
+fn collect_bindings(settings: &AudioSettings) -> Vec<Binding> {
+    let mut out = Vec::new();
+    let ids = sc::ALL_ACTION_IDS.iter().chain(sc::CONTEXT_ACTION_IDS);
+    for &id in ids {
+        for combo in settings.keybindings.get(id) {
+            out.push(Binding {
+                action_id: id.to_string(),
+                combo,
+            });
+        }
+    }
+    out
+}
+
+/// 某个物理键帽上的绑定。
+///
+/// **按修饰键区分**：`⌘K`、`⌥K`、`K` 是三条不同绑定，都挂在这个 K 键帽上，
+/// 但它们互不冲突。冲突只在「修饰键完全相同」时才算。
+fn bindings_for_cap(cap_key: egui::Key, all: &[Binding]) -> Vec<Binding> {
+    let mut keys = vec![cap_key];
+    keys.extend_from_slice(super::keyboard_layout::alias_keys(cap_key));
+    all.iter()
+        .filter(|b| crate::shortcuts::str_to_key(&b.combo.key).is_some_and(|k| keys.contains(&k)))
+        .cloned()
+        .collect()
+}
+
+/// 同一物理键上，修饰键完全相同且属于不同动作的组合 —— 真正的冲突。
+fn conflicting_combos(here: &[Binding]) -> Vec<KeyCombo> {
+    let mut out: Vec<KeyCombo> = Vec::new();
+    for (i, a) in here.iter().enumerate() {
+        for b in &here[i + 1..] {
+            if a.action_id != b.action_id
+                && same_modifiers(&a.combo, &b.combo)
+                && !out.contains(&a.combo)
+            {
+                out.push(a.combo.clone());
+            }
+        }
+    }
+    out
+}
+
+fn same_modifiers(a: &KeyCombo, b: &KeyCombo) -> bool {
+    a.command == b.command && a.shift == b.shift && a.alt == b.alt && a.key == b.key
+}
+
+fn draw_keyboard(ui: &mut egui::Ui, all: &[Binding], state: &mut KeyboardViewState) {
     let ctx = ui.ctx().clone();
-    let base = crate::scaling::scaled_font(&ctx, 30.0);
-    let gap = crate::scaling::scaled_font(&ctx, 4.0);
-    let row_h = base * 0.8;
+    let gap = crate::scaling::scaled_font(&ctx, 3.0);
+    let row_h = crate::scaling::scaled_font(&ctx, 26.0);
     let avail = ui.available_width();
-    // 以最长行为基准换算基础键宽，保证整块键盘不超出面板宽度。
+
+    // 国际标准的键位单位：普通键 1u、Tab 1.5u、Caps 1.75u、Enter 2.25u、
+    // 左右 Shift 2.25u/2.75u、Ctrl/Alt/Cmd 各 1.25u、Space 6.25u。
+    // 以最长一行为基准换算 1u 的像素宽度，保证不超出面板。
     let max_units = ansi_layout()
         .iter()
-        .map(|r| r.indent + r.caps.iter().map(|c| c.width).sum::<f32>())
+        .map(row_units)
         .fold(0.0f32, f32::max)
         .max(1.0);
-    let unit_w = ((avail - gap * (max_units - 1.0)) / max_units).max(4.0);
+    let unit_w = ((avail - gap * (max_units.ceil())) / max_units).max(4.0);
 
-    // 只读真实修饰键状态（不自己维护一份）。
     let mods = ui.input(|i| i.modifiers);
 
     for row in ansi_layout() {
@@ -152,10 +184,15 @@ fn draw_keyboard(
                 ui.add_space(row.indent * unit_w);
             }
             for cap in row.caps {
-                draw_cap(ui, cap, unit_w, row_h, mods, bound, state, jump);
+                draw_cap(ui, cap, unit_w, row_h, mods, all, state);
             }
         });
+        ui.add_space(gap);
     }
+}
+
+fn row_units(row: &super::keyboard_layout::KeyRow) -> f32 {
+    row.indent + row.caps.iter().map(|c| c.width).sum::<f32>()
 }
 
 #[allow(clippy::too_many_arguments)] // 绘制上下文透传
@@ -165,9 +202,8 @@ fn draw_cap(
     unit_w: f32,
     row_h: f32,
     mods: egui::Modifiers,
-    bound: &std::collections::HashMap<egui::Key, Vec<String>>,
+    all: &[Binding],
     state: &mut KeyboardViewState,
-    jump: &mut Option<String>,
 ) {
     let w = unit_w * cap.width;
     if cap.label.is_empty() {
@@ -175,134 +211,347 @@ fn draw_cap(
         return;
     }
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, row_h), egui::Sense::click());
-    let selected = cap.key.is_some() && state.selected == cap.key;
-    // 别名键（如 `=` 同时代表 `+`）也计入这个键帽的占用。
-    let mut here: Vec<String> = Vec::new();
-    if let Some(k) = cap.key {
-        if let Some(ids) = bound.get(&k) {
-            here.extend(ids.iter().cloned());
-        }
-        for &alias in super::keyboard_layout::alias_keys(k) {
-            if let Some(more) = bound.get(&alias) {
-                for id in more {
-                    if !here.contains(id) {
-                        here.push(id.clone());
-                    }
-                }
-            }
-        }
+
+    // 纯修饰键：只按真实状态高亮，不可点选绑定。
+    // 名称随平台变化（macOS 的 ⌘ Command / ⌥ Option vs Windows 的 Win / Alt）。
+    if let Some(m) = cap.modifier {
+        let active = m.active(mods);
+        let bg = if active {
+            crate::theme::accent_active().gamma_multiply(0.30)
+        } else {
+            crate::theme::control_bg()
+        };
+        let fg = if active {
+            crate::theme::accent_active()
+        } else {
+            crate::theme::text_label()
+        };
+        ui.painter().rect_filled(rect, 4.0, bg);
+        paint_cap_label(ui, rect, m.label(), w, fg);
+        return;
     }
-    let occupied = here.len() == 1;
-    // 冲突：同一个键被两个及以上动作绑定。
-    let conflict = here.len() > 1;
-    // 修饰键高亮跟随真实输入状态。
-    let mod_active = matches!(cap.label, "Shift" | "Ctrl" | "Alt" | "Cmd")
-        && (mods.shift || mods.ctrl || mods.alt || mods.command);
+
+    let Some(key) = cap.key else {
+        // 纯占位（布局对齐用）
+        ui.painter()
+            .rect_filled(rect, 4.0, crate::theme::control_bg());
+        return;
+    };
+
+    let here = bindings_for_cap(key, all);
+    let conflicts = conflicting_combos(&here);
+    let selected = state.selected == Some(key);
 
     let bg = if selected {
         crate::theme::selected_bg()
-    } else if conflict {
-        crate::theme::warning_gold().gamma_multiply(0.28)
-    } else if occupied {
+    } else if !conflicts.is_empty() {
+        crate::theme::warning_gold().gamma_multiply(0.30)
+    } else if !here.is_empty() {
         crate::theme::accent_active().gamma_multiply(0.22)
-    } else if mod_active {
-        crate::theme::control_bg().gamma_multiply(1.4)
     } else if resp.hovered() {
         crate::theme::hover_color(crate::theme::app_bg())
     } else {
         crate::theme::control_bg()
     };
-    let fg = if conflict {
+    let fg = if !conflicts.is_empty() {
         crate::theme::warning_gold()
-    } else if occupied || selected {
+    } else if !here.is_empty() || selected {
         crate::theme::accent_active()
     } else {
         crate::theme::text_label()
     };
     ui.painter().rect_filled(rect, 4.0, bg);
-    // 键帽文字：宽度不足以显示完整标签时缩小字号，避免溢出到邻键。
-    let font_size = crate::scaling::scaled_font(ui.ctx(), 11.0).min(w * 0.42);
+    paint_cap_label(ui, rect, cap.label, w, fg);
+    // 有多个绑定时右下角画个小点，提示"这个键上不止一个"。
+    if here.len() > 1 {
+        ui.painter()
+            .circle_filled(egui::pos2(rect.max.x - 4.0, rect.max.y - 4.0), 1.8, fg);
+    }
+
+    if !here.is_empty() {
+        let mut lines: Vec<String> = here
+            .iter()
+            .map(|b| {
+                format!(
+                    "{} · {}",
+                    t!(crate::shortcuts::action_label_key(&b.action_id)),
+                    crate::shortcuts::display_combo(&b.combo)
+                )
+            })
+            .collect();
+        if !conflicts.is_empty() {
+            lines.push(t!("settings.shortcuts.keyboard.conflict").to_string());
+        }
+        resp.clone().on_hover_text(lines.join("\n"));
+    }
+
+    if resp.clicked() {
+        state.selected = Some(key);
+    }
+}
+
+fn paint_cap_label(ui: &egui::Ui, rect: egui::Rect, label: &str, w: f32, color: egui::Color32) {
+    let size = crate::scaling::scaled_font(ui.ctx(), 11.0).min(w * 0.40);
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
-        cap.label,
-        egui::FontId::proportional(font_size),
-        fg,
+        label,
+        egui::FontId::proportional(size),
+        color,
     );
+}
 
-    if !here.is_empty() {
-        let names: Vec<String> = here
-            .iter()
-            .map(|id| t!(crate::shortcuts::action_label_key(id)).to_string())
-            .collect();
-        resp.clone().on_hover_text(names.join("\n"));
-    }
+/// 选中键的绑定列表 + 添加。
+fn draw_binding_list(
+    ui: &mut egui::Ui,
+    settings: &mut AudioSettings,
+    key: egui::Key,
+    all: &[Binding],
+    state: &mut KeyboardViewState,
+    changed: &mut bool,
+) {
+    let here = bindings_for_cap(key, all);
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(crate::shortcuts::key_display(key))
+                .strong()
+                .color(crate::theme::text_bright()),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // 「添加」= 给这个键新增一条绑定：先选动作，再录组合键。
+            let adding = state.recording_action.is_some();
+            if crate::widgets::flat::flat_button_filled_stroked(
+                ui,
+                t!("settings.shortcuts.add").as_ref(),
+                egui::vec2(72.0, 24.0),
+                None,
+                !adding,
+            )
+            .clicked()
+            {
+                state.picking_action = Some(key);
+            }
+        });
+    });
 
-    if resp.clicked()
-        && let Some(key) = cap.key
+    // 动作选择：在弹窗里挑一个动作，挑完立刻进入录制。
+    if state.picking_action == Some(key)
+        && let Some(action_id) = pick_action_list(ui, key, &here)
     {
-        state.selected = Some(key);
-        // 只有一个动作时直接跳转，省一次点击。
-        if let [only] = here.as_slice() {
-            *jump = Some(only.clone());
+        state.picking_action = None;
+        if !action_id.is_empty() {
+            state.recording_action = Some(action_id);
+            state.recording_idx = usize::MAX;
+            settings.ui_session.shortcut_recording = true;
+            ui.ctx().request_repaint();
         }
     }
+
+    if here.is_empty() {
+        ui.label(
+            egui::RichText::new(t!("settings.shortcuts.keyboard.unbound").as_ref())
+                .color(crate::theme::text_muted()),
+        );
+        return;
+    }
+
+    let conflicts = conflicting_combos(&here);
+    for b in &here {
+        let name = t!(crate::shortcuts::action_label_key(&b.action_id)).to_string();
+        let combo = crate::shortcuts::display_combo(&b.combo);
+        let is_conflict = conflicts.contains(&b.combo);
+        ui.horizontal(|ui| {
+            let mut text = egui::RichText::new(format!("{name} · {combo}"));
+            if is_conflict {
+                text = text.color(crate::theme::warning_gold());
+            }
+            ui.label(text);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // 删除这条绑定
+                if crate::widgets::flat::flat_button_filled_stroked(
+                    ui,
+                    egui::RichText::new("×").strong(),
+                    egui::vec2(24.0, 24.0),
+                    None,
+                    true,
+                )
+                .on_hover_text(t!("settings.shortcuts.clear").as_ref())
+                .clicked()
+                    && let Some(pos) = settings
+                        .keybindings
+                        .get(&b.action_id)
+                        .iter()
+                        .position(|c| same_modifiers(c, &b.combo))
+                {
+                    let mut combos = settings.keybindings.get(&b.action_id);
+                    combos.remove(pos);
+                    settings.keybindings.set(&b.action_id, combos);
+                    *changed = true;
+                }
+            });
+        });
+    }
+}
+
+// `Modifier::active` 定义在布局表里，避免这里重复判断平台修饰键。
+
+/// 动作选择列表（行内展开，不用 popup：设置页本身就在滚动区里，
+/// 行内列表能跟着滚、不遮挡，也不需要处理 popup 生命周期）。
+///
+/// 返回 `Some("")` = 取消；`Some(action_id)` = 选中；`None` = 仍在选择中。
+fn pick_action_list(ui: &mut egui::Ui, key: egui::Key, here: &[Binding]) -> Option<String> {
+    let mut result: Option<String> = None;
+    let key_label = crate::shortcuts::key_display(key);
+
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(&key_label)
+                .strong()
+                .color(crate::theme::text_bright()),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .add(crate::widgets::menu::menu_item_button(
+                    ui,
+                    false,
+                    t!("common.cancel").as_ref(),
+                ))
+                .clicked()
+            {
+                result = Some(String::new());
+            }
+        });
+    });
+    ui.separator();
+
+    // 只列这个键上**还没有**的动作，避免重复添加。
+    let bound: Vec<&str> = here.iter().map(|b| b.action_id.as_str()).collect();
+    egui::ScrollArea::vertical()
+        .id_salt("pick_action_scroll")
+        .max_height(280.0)
+        .show(ui, |ui| {
+            for (group_key, ids) in super::shortcuts::action_groups() {
+                let candidates: Vec<&str> = ids
+                    .iter()
+                    .copied()
+                    .filter(|id| !bound.contains(id))
+                    .collect();
+                if candidates.is_empty() {
+                    continue;
+                }
+                ui.label(
+                    egui::RichText::new(t!(group_key).as_ref())
+                        .size(crate::scaling::scaled_font(
+                            ui.ctx(),
+                            crate::theme::SMALL_FONT,
+                        ))
+                        .color(crate::theme::text_label()),
+                );
+                for id in candidates {
+                    let name = t!(crate::shortcuts::action_label_key(id)).to_string();
+                    if ui
+                        .add(crate::widgets::menu::menu_item_button(ui, false, name))
+                        .clicked()
+                    {
+                        result = Some(id.to_string());
+                    }
+                }
+            }
+        });
+    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yinhe_editor_core::shortcuts::{self as sc, KeyCombo, Keybindings};
+    use yinhe_editor_core::shortcuts::Keybindings;
 
-    fn combo(key: &str) -> KeyCombo {
+    fn combo(cmd: bool, shift: bool, alt: bool, key: &str) -> KeyCombo {
         KeyCombo {
-            command: false,
-            shift: false,
-            alt: false,
+            command: cmd,
+            shift,
+            alt,
             key: key.to_string(),
         }
     }
 
-    /// 一个键被多个动作绑定时要全部收集（允许键位冲突，这正是键盘视图的意义）。
-    #[test]
-    fn collects_conflicting_bindings() {
+    fn settings_with(pairs: &[(&str, Vec<KeyCombo>)]) -> AudioSettings {
         let mut settings = crate::audio_settings::AudioSettings::default();
         let mut kb = Keybindings::default();
-        kb.set(sc::ACTION_DELETE, vec![combo("K")]);
-        kb.set(sc::ACTION_DUPLICATE, vec![combo("K")]);
+        for (id, combos) in pairs {
+            kb.set(id, combos.clone());
+        }
         settings.keybindings = kb;
-
-        let bound = collect_bindings(&settings);
-        let actions = bound.get(&egui::Key::K).expect("K 应被占用");
-        assert!(actions.iter().any(|a| a == sc::ACTION_DELETE));
-        assert!(actions.iter().any(|a| a == sc::ACTION_DUPLICATE));
+        settings
     }
 
-    /// 同一个动作绑两个键时，两个键都要显示它。
+    /// 同一个字母键上的 ⌘K / ⌥K / K 是三条独立绑定，**不算冲突**。
+    /// 这是用户明确要求的「修饰键分开算」。
     #[test]
-    fn one_action_many_keys_shows_on_each_key() {
-        let mut settings = crate::audio_settings::AudioSettings::default();
-        let mut kb = Keybindings::default();
-        kb.set(sc::ACTION_SAVE, vec![combo("S"), combo("F2")]);
-        settings.keybindings = kb;
+    fn modifier_variants_are_not_conflicts() {
+        let settings = settings_with(&[
+            (sc::ACTION_SAVE, vec![combo(true, false, false, "K")]),
+            (sc::ACTION_OPEN, vec![combo(false, false, true, "K")]),
+            (sc::ACTION_DELETE, vec![combo(false, false, false, "K")]),
+        ]);
+        let all = collect_bindings(&settings);
+        let here = bindings_for_cap(egui::Key::K, &all);
+        assert_eq!(here.len(), 3, "三个修饰键变体都应算在这个键上");
+        assert!(
+            conflicting_combos(&here).is_empty(),
+            "不同修饰键组合不构成冲突"
+        );
+    }
 
-        let bound = collect_bindings(&settings);
+    /// 同一个修饰键组合被两个动作占用 = 真冲突。
+    #[test]
+    fn identical_combos_conflict() {
+        let settings = settings_with(&[
+            (sc::ACTION_SAVE, vec![combo(true, false, false, "K")]),
+            (sc::ACTION_OPEN, vec![combo(true, false, false, "K")]),
+        ]);
+        let all = collect_bindings(&settings);
+        let here = bindings_for_cap(egui::Key::K, &all);
+        let conflicts = conflicting_combos(&here);
+        assert_eq!(conflicts.len(), 1, "完全相同的组合应判为冲突");
+    }
+
+    /// 同一个动作绑两个键时，两个键帽上都应出现（不是冲突）。
+    #[test]
+    fn one_action_many_keys() {
+        let settings = settings_with(&[(
+            sc::ACTION_SAVE,
+            vec![
+                combo(true, false, false, "S"),
+                combo(false, false, false, "F2"),
+            ],
+        )]);
+        let all = collect_bindings(&settings);
         for key in [egui::Key::S, egui::Key::F2] {
+            let here = bindings_for_cap(key, &all);
             assert!(
-                bound
-                    .get(&key)
-                    .is_some_and(|v| v.iter().any(|a| a == sc::ACTION_SAVE)),
-                "{key:?} 上应能看到保存"
+                here.iter().any(|b| b.action_id == sc::ACTION_SAVE),
+                "{key:?} 上应有保存"
             );
         }
     }
 
-    /// 默认配置里 Space（播放）与 Delete 都应可见，说明默认值真的被收集。
+    /// `=` 键帽同时代表 `+`（Shift+`=`），别名绑定要一起显示。
+    #[test]
+    fn alias_key_shares_cap() {
+        let settings =
+            settings_with(&[(sc::ACTION_SAVE, vec![combo(false, false, false, "Plus")])]);
+        let all = collect_bindings(&settings);
+        let here = bindings_for_cap(egui::Key::Equals, &all);
+        assert_eq!(here.len(), 1, "Plus 的绑定应显示在 = 键帽上");
+    }
+
+    /// 默认配置里 Space（播放）与 Delete（删除）都应可见。
     #[test]
     fn default_bindings_are_visible() {
         let settings = crate::audio_settings::AudioSettings::default();
-        let bound = collect_bindings(&settings);
-        assert!(bound.contains_key(&egui::Key::Space), "Space 默认绑播放");
-        assert!(bound.contains_key(&egui::Key::Delete), "Delete 默认绑删除");
+        let all = collect_bindings(&settings);
+        assert!(!bindings_for_cap(egui::Key::Space, &all).is_empty());
+        assert!(!bindings_for_cap(egui::Key::Delete, &all).is_empty());
     }
 }

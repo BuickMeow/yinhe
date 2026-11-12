@@ -859,16 +859,9 @@ settings.notification.enabled_desc: "關閉後不再彈出任何通知，新的�
 
 # ── 設定對話框（快速鍵、MIDI 匯出）──
 settings.shortcuts.title: "快速鍵"
-settings.shortcuts.view_list: "列表"
-settings.shortcuts.view_keyboard: "鍵盤"
-settings.shortcuts.keyboard.title: "鍵盤"
-settings.shortcuts.keyboard.hint: "按鍵盤查看佔用；點鍵位看它綁了什麼。"
-settings.shortcuts.keyboard.bound_to: "{key}"
 settings.shortcuts.keyboard.unbound: "這個鍵還沒有綁定任何動作"
-settings.shortcuts.keyboard.select_hint: "點擊上方鍵盤上的按鍵查看它綁定了什麼"
-settings.shortcuts.keyboard.jump: "跳到該動作"
+settings.shortcuts.keyboard.conflict: "此修飾鍵組合有衝突"
 
-settings.shortcuts.hint: "點擊快速鍵按鈕後按下新的組合鍵即可修改；+ 可為一個操作新增多組快速鍵，× 移除；Esc 取消。"
 settings.shortcuts.reset: "恢復預設"
 settings.shortcuts.clear: "清除"
 settings.shortcuts.none: "無"

@@ -875,16 +875,9 @@ settings.editing.quick_delete.both: "両方"
 
 # ショートカット設定
 settings.shortcuts.title: "ショートカット"
-settings.shortcuts.view_list: "リスト"
-settings.shortcuts.view_keyboard: "キーボード"
-settings.shortcuts.keyboard.title: "キーボード"
-settings.shortcuts.keyboard.hint: "キーごとに割り当てを表示。キーを押すと内容が見えます。"
-settings.shortcuts.keyboard.bound_to: "{key}"
 settings.shortcuts.keyboard.unbound: "このキーには何も割り当てられていません"
-settings.shortcuts.keyboard.select_hint: "上のキーボードのキーを押すと割り当てが表示されます"
-settings.shortcuts.keyboard.jump: "その動作へ移動"
+settings.shortcuts.keyboard.conflict: "この修飾キーの組み合わせは競合しています"
 
-settings.shortcuts.hint: "ショートカットボタンをクリックして新しい組み合わせキーを押すと変更できます。+ で 1 つの操作に複数のショートカットを追加、× で削除；Esc でキャンセル。"
 settings.shortcuts.reset: "デフォルトに戻す"
 settings.shortcuts.clear: "クリア"
 settings.shortcuts.none: "なし"

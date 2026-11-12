@@ -2,7 +2,7 @@ use eframe::egui;
 use rust_i18n::t;
 
 use crate::audio_settings::{AudioSettings, Interpolation, SynthEngine};
-use crate::dialogs::settings::setting_row;
+use crate::dialogs::settings::{setting_row, setting_row_plain};
 
 pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     let mut changed = false;
@@ -357,7 +357,7 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     );
 
     // 设备列表变更（热插拔等）后手动刷新
-    setting_row(ui, t!("settings.refresh_devices").as_ref(), "", |ui| {
+    setting_row_plain(ui, t!("settings.refresh_devices").as_ref(), |ui| {
         if crate::widgets::flat::flat_button_filled_auto(ui, t!("settings.refresh").as_ref(), true)
             .clicked()
         {

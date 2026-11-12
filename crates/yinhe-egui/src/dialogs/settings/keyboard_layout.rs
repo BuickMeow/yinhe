@@ -1,23 +1,72 @@
 //! ANSI 104 物理键盘布局表（快捷键设置的键盘视图用）。
 //!
-//! 这份表只描述「键在键盘上的位置与外观」，不含任何快捷键逻辑；
-//! 每个键通过 `key()` 映射回 `egui::Key`，再交给 `Keybindings` 查绑定。
+//! 只描述「键在键盘上的位置与外观」，不含快捷键逻辑；每个键通过 `key()`
+//! 映射回 `egui::Key`，再交给 `Keybindings` 查绑定。
 //!
-//! 与 [`crate::shortcuts::RECORDABLE_KEYS`] 的一致性由测试保证：
-//! 布局里出现的键必须全部可录制，反之可录制的键也不该在键盘上找不到
-//! （否则用户能在录制器里录到、却永远看不到它的占用情况）。
+//! 尺寸遵循 ANSI 104 的国际标准键位单位（1u = 普通字母键宽）：
+//! Tab 1.5u、Caps 1.75u、Enter 2.25u、Backspace 2u、左右 Shift 2.25u/2.75u、
+//! Ctrl/Alt/Cmd 各 1.25u、Space 6.25u。
+//!
+//! 修饰键的**称呼随平台变化**（macOS 是 ⌘ Command / ⌥ Option / ⌃ Control，
+//! Windows/Linux 是 Ctrl / Alt / Win），见 [`Modifier::label`]。
 
 use eframe::egui::Key;
+
+/// 纯修饰键（不参与绑定，只占位并按真实状态高亮）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Modifier {
+    Shift,
+    Ctrl,
+    Alt,
+    /// macOS 的 ⌘ / Windows 的 Win 键。
+    Cmd,
+}
+
+impl Modifier {
+    /// 该修饰键在当前输入状态下是否按下。
+    pub(crate) fn active(self, mods: egui::Modifiers) -> bool {
+        match self {
+            Modifier::Shift => mods.shift,
+            Modifier::Ctrl => mods.ctrl,
+            Modifier::Alt => mods.alt,
+            Modifier::Cmd => mods.command || mods.mac_cmd,
+        }
+    }
+
+    /// 平台相关称呼。
+    pub(crate) fn label(self) -> &'static str {
+        let mac = cfg!(target_os = "macos");
+        match self {
+            Modifier::Shift => "Shift",
+            Modifier::Ctrl => "Ctrl",
+            Modifier::Alt => {
+                if mac {
+                    "Option"
+                } else {
+                    "Alt"
+                }
+            }
+            Modifier::Cmd => {
+                if mac {
+                    "Command"
+                } else {
+                    "Win"
+                }
+            }
+        }
+    }
+}
 
 /// 一个物理按键。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct KeyCap {
-    /// 键位对应的 egui 键；`None` = 纯修饰键（Shift/Ctrl/Alt/Cmd），
-    /// 它们不参与绑定，但要在图上占位并随真实状态高亮。
+    /// 键位对应的 egui 键；`None` = 纯修饰键或占位。
     pub key: Option<Key>,
-    /// 键帽主标签（`A`、`1`、`F1`、`Esc`…）。
+    /// 纯修饰键（不参与绑定）。
+    pub modifier: Option<Modifier>,
+    /// 键帽主标签（修饰键用 `Modifier::label()`，这里留空）。
     pub label: &'static str,
-    /// 相对宽度（单位 = 基础键宽）。普通键 1.0，`Backspace` 2.0，`Space` 6.25 等。
+    /// 相对宽度（1u = 普通键）。
     pub width: f32,
 }
 
@@ -25,6 +74,7 @@ impl KeyCap {
     const fn plain(key: Key, label: &'static str) -> Self {
         Self {
             key: Some(key),
+            modifier: None,
             label,
             width: 1.0,
         }
@@ -32,22 +82,24 @@ impl KeyCap {
     const fn wide(key: Key, label: &'static str, width: f32) -> Self {
         Self {
             key: Some(key),
+            modifier: None,
             label,
             width,
         }
     }
-    /// 纯修饰键占位（不参与绑定）。
-    const fn modifier(label: &'static str, width: f32) -> Self {
+    const fn modifier(m: Modifier, width: f32) -> Self {
         Self {
             key: None,
-            label,
+            modifier: Some(m),
+            label: "",
             width,
         }
     }
-    /// 空占位（对齐用，例如 ANSI 布局里 ISO 才有的键位置）。
+    /// 空占位（布局对齐用）。
     const fn gap(width: f32) -> Self {
         Self {
             key: None,
+            modifier: None,
             label: "",
             width,
         }
@@ -58,7 +110,7 @@ impl KeyCap {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct KeyRow {
     pub caps: &'static [KeyCap],
-    /// 该行在整块键盘里的左侧缩进（单位 = 基础键宽）。
+    /// 该行左侧缩进（单位 u）。
     pub indent: f32,
 }
 
@@ -66,7 +118,7 @@ const fn row(indent: f32, caps: &'static [KeyCap]) -> KeyRow {
     KeyRow { indent, caps }
 }
 
-/// ANSI 104 布局（美式），5 行主键区 + 功能键行。
+/// ANSI 104 布局（美式全键盘）。
 pub(crate) fn ansi_layout() -> &'static [KeyRow] {
     &ANSI
 }
@@ -94,7 +146,7 @@ static ANSI: [KeyRow; 6] = [
             KeyCap::plain(Key::F12, "F12"),
         ],
     ),
-    // ── 数字行 ──
+    // ── 数字行（右侧为导航区）──
     row(
         0.0,
         &[
@@ -110,11 +162,8 @@ static ANSI: [KeyRow; 6] = [
             KeyCap::plain(Key::Num9, "9"),
             KeyCap::plain(Key::Num0, "0"),
             KeyCap::plain(Key::Minus, "-"),
-            // `=` 与 `+` 共用一个物理键（Shift+`=`），键帽只画一次；
-            // `plus_alias` 让它同时统计 `Plus` 的绑定。
             KeyCap::plain(Key::Equals, "="),
-            KeyCap::wide(Key::Backspace, "Backspace", 1.5),
-            // 导航区（与主键区之间留半键宽）
+            KeyCap::wide(Key::Backspace, "Backspace", 2.0),
             KeyCap::gap(0.5),
             KeyCap::plain(Key::Insert, "Ins"),
             KeyCap::plain(Key::Home, "Home"),
@@ -149,7 +198,7 @@ static ANSI: [KeyRow; 6] = [
     row(
         0.0,
         &[
-            KeyCap::modifier("Caps", 1.75),
+            KeyCap::modifier(Modifier::Shift, 2.25),
             KeyCap::plain(Key::A, "A"),
             KeyCap::plain(Key::S, "S"),
             KeyCap::plain(Key::D, "D"),
@@ -168,7 +217,22 @@ static ANSI: [KeyRow; 6] = [
     row(
         0.0,
         &[
-            KeyCap::modifier("Shift", 2.25),
+            KeyCap::modifier(Modifier::Ctrl, 1.25),
+            KeyCap::modifier(Modifier::Alt, 1.25),
+            KeyCap::modifier(Modifier::Cmd, 1.25),
+            KeyCap::wide(Key::Space, "Space", 6.25),
+            KeyCap::modifier(Modifier::Cmd, 1.25),
+            KeyCap::modifier(Modifier::Alt, 1.25),
+            KeyCap::plain(Key::ArrowLeft, "←"),
+            KeyCap::plain(Key::ArrowUp, "↑"),
+            KeyCap::plain(Key::ArrowDown, "↓"),
+            KeyCap::plain(Key::ArrowRight, "→"),
+        ],
+    ),
+    // ── 字母区最后一行（Z 行）──
+    row(
+        1.5,
+        &[
             KeyCap::plain(Key::Z, "Z"),
             KeyCap::plain(Key::X, "X"),
             KeyCap::plain(Key::C, "C"),
@@ -179,23 +243,6 @@ static ANSI: [KeyRow; 6] = [
             KeyCap::plain(Key::Comma, ","),
             KeyCap::plain(Key::Period, "."),
             KeyCap::plain(Key::Slash, "/"),
-            KeyCap::modifier("Shift", 2.75),
-        ],
-    ),
-    // ── 底行 ──
-    row(
-        0.0,
-        &[
-            KeyCap::modifier("Ctrl", 1.25),
-            KeyCap::modifier("Alt", 1.25),
-            KeyCap::modifier("Cmd", 1.25),
-            KeyCap::wide(Key::Space, "Space", 6.25),
-            KeyCap::modifier("Cmd", 1.25),
-            KeyCap::modifier("Alt", 1.25),
-            KeyCap::plain(Key::ArrowLeft, "←"),
-            KeyCap::plain(Key::ArrowUp, "↑"),
-            KeyCap::plain(Key::ArrowDown, "↓"),
-            KeyCap::plain(Key::ArrowRight, "→"),
         ],
     ),
 ];
@@ -208,7 +255,7 @@ pub(crate) fn alias_keys(key: Key) -> &'static [Key] {
     }
 }
 
-/// 布局里出现过的全部可绑定键（去重，供一致性测试与「全部按键」遍历）。
+/// 布局里出现过的全部可绑定键（去重，供一致性测试与遍历）。
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn layout_keys() -> Vec<Key> {
     let mut out: Vec<Key> = Vec::new();
@@ -229,8 +276,7 @@ mod tests {
     use super::*;
     use crate::shortcuts::RECORDABLE_KEYS;
 
-    /// 布局里的可绑定键必须都在 `RECORDABLE_KEYS` 里：
-    /// 否则用户按这个键录制时会被判成「不可录制」，键盘图却画着它。
+    /// 布局里的可绑定键必须都在 `RECORDABLE_KEYS` 里。
     #[test]
     fn layout_keys_are_all_recordable() {
         for key in layout_keys() {
@@ -241,26 +287,24 @@ mod tests {
         }
     }
 
-    /// 反向：`RECORDABLE_KEYS` 里的键都应该能在键盘上找到，
-    /// 否则它占用情况永远不可见（例如 F13 之类）。
+    /// 反向：可录制的键都应该能在键盘上找到（别名键也算）。
     #[test]
     fn recordable_keys_are_all_on_layout() {
         let mut on_layout = layout_keys();
-        // 别名键（如 Plus 借 `=` 的物理键位）也算"在布局上"。
         for &key in &on_layout.clone() {
             on_layout.extend_from_slice(alias_keys(key));
         }
         for &key in RECORDABLE_KEYS {
             assert!(
                 on_layout.contains(&key),
-                "RECORDABLE_KEYS 里的 {key:?} 没有出现在 ANSI 布局上"
+                "RECORDABLE_KEYS 里的 {key:?} 没有出现在布局上"
             );
         }
     }
 
-    /// 同一个键不能在布局里出现两次（左右修饰键是纯占位，不参与绑定）。
+    /// 同一个键不能出现两次（左右修饰键是纯占位，不参与绑定）。
     #[test]
-    fn layout_has_no_unexpected_duplicates() {
+    fn layout_has_no_duplicate_bindable_keys() {
         let mut seen: Vec<Key> = Vec::new();
         for row in ansi_layout() {
             for cap in row.caps {
@@ -269,5 +313,26 @@ mod tests {
                 seen.push(key);
             }
         }
+    }
+
+    /// 修饰键称呼随平台变化：macOS 用 Command / Option。
+    #[test]
+    fn modifier_labels_are_platform_specific() {
+        let mac = cfg!(target_os = "macos");
+        assert_eq!(Modifier::Cmd.label(), if mac { "Command" } else { "Win" });
+        assert_eq!(Modifier::Alt.label(), if mac { "Option" } else { "Alt" });
+        // Shift 两个平台同名。
+        assert_eq!(Modifier::Shift.label(), "Shift");
+    }
+
+    /// Space 必须是国际标准的 6.25u（用户反馈键盘错位的主要来源）。
+    #[test]
+    fn space_is_six_and_quarter_units() {
+        let space = ansi_layout()
+            .iter()
+            .flat_map(|r| r.caps.iter())
+            .find(|c| c.key == Some(Key::Space))
+            .expect("布局里应有空格键");
+        assert!((space.width - 6.25).abs() < 1e-6, "Space 应为 6.25u");
     }
 }

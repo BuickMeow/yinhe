@@ -876,16 +876,9 @@ settings.editing.quick_delete.both: "둘 다"
 
 # ── 단축키 ──
 settings.shortcuts.title: "단축키"
-settings.shortcuts.view_list: "목록"
-settings.shortcuts.view_keyboard: "키보드"
-settings.shortcuts.keyboard.title: "키보드"
-settings.shortcuts.keyboard.hint: "키별로 할당을 봅니다. 키를 누르면 무엇이 할당됐는지 보입니다."
-settings.shortcuts.keyboard.bound_to: "{key}"
 settings.shortcuts.keyboard.unbound: "이 키에는 아무것도 할당되지 않았습니다"
-settings.shortcuts.keyboard.select_hint: "위 키보드에서 키를 눌러 할당을 확인하세요"
-settings.shortcuts.keyboard.jump: "해당 동작으로 이동"
+settings.shortcuts.keyboard.conflict: "이 보조키 조합이 충돌합니다"
 
-settings.shortcuts.hint: "단축키 버튼을 클릭한 뒤 새 조합키를 누르면 변경됩니다. + 로 한 동작에 단축키를 여러 개 추가하고, × 로 제거하며, Esc 로 취소합니다."
 settings.shortcuts.reset: "기본값 복원"
 settings.shortcuts.clear: "지우기"
 settings.shortcuts.none: "없음"

@@ -4,11 +4,6 @@ use yinhe_editor_core::shortcuts::{self, KeyCombo};
 
 use crate::audio_settings::AudioSettings;
 
-/// 从键盘视图跳转过来的目标动作（列表视图会高亮它）。
-fn focus_action_id() -> egui::Id {
-    egui::Id::unique("settings_shortcuts_focus_action")
-}
-
 /// 文件类动作（11）。
 const FILE_ACTIONS: [&str; 11] = [
     shortcuts::ACTION_NEW_PROJECT,
@@ -103,59 +98,25 @@ const CONTEXT_ACTIONS: [&str; 21] = [
 /// 每个动作可绑定多个快捷键：第一个快捷键与动作名同行，其余各占一行；
 /// 点击快捷键按钮重新录制，点击 + 追加一个，点击 × 移除。
 /// 录制期间 `settings.ui_session.shortcut_recording` 置位，让全局快捷键让位给录制器。
-/// 快捷键页的两种视图：逐动作列表 / 键盘反向视图。
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ViewMode {
-    List,
-    Keyboard,
-}
-
-fn view_mode_id() -> egui::Id {
-    egui::Id::unique("settings_shortcuts_view_mode")
+/// 动作分组（列表视图与"给键位挑动作"共用同一份划分）。
+pub(crate) fn action_groups() -> [(&'static str, &'static [&'static str]); 6] {
+    [
+        ("settings.shortcuts.group_file", &FILE_ACTIONS),
+        ("settings.shortcuts.group_edit", &EDIT_ACTIONS),
+        ("settings.shortcuts.group_operation", &OPERATION_ACTIONS),
+        ("settings.shortcuts.group_context", &CONTEXT_ACTIONS),
+        ("settings.shortcuts.group_play", &PLAY_ACTIONS),
+        ("settings.shortcuts.group_tools", &TOOL_ACTIONS),
+    ]
 }
 
 pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
-    let mut mode: ViewMode = ui
-        .data(|d| d.get_temp::<ViewMode>(view_mode_id()))
-        .unwrap_or(ViewMode::List);
-
-    // ── 视图切换：列表 / 键盘 ──
-    ui.horizontal(|ui| {
-        ui.heading(t!("settings.shortcuts.title").as_ref());
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            for (m, key) in [
-                (ViewMode::Keyboard, "settings.shortcuts.view_keyboard"),
-                (ViewMode::List, "settings.shortcuts.view_list"),
-            ] {
-                let selected = mode == m;
-                if ui
-                    .add(crate::widgets::menu::menu_item_button(
-                        ui,
-                        selected,
-                        t!(key).as_ref(),
-                    ))
-                    .clicked()
-                {
-                    mode = m;
-                }
-            }
-        });
-    });
-    ui.data_mut(|d| d.insert_temp(view_mode_id(), mode));
+    // 键盘常驻顶部（不是二级视图）：先按键盘扫一眼占用情况，
+    // 下面的列表用来逐个动作精确配置。
+    ui.heading(t!("settings.shortcuts.title").as_ref());
     ui.add_space(2.0);
-
-    if mode == ViewMode::Keyboard {
-        // 画键盘（点键位跳到对应动作行：把跳转目标写进录制目标位置，列表视图
-        // 下一帧会滚到并高亮那一行——这里简化为切回列表并选中动作）。
-        if let Some(action_id) = super::shortcuts_keyboard::show(ui, settings) {
-            ui.data_mut(|d| d.insert_temp(focus_action_id(), action_id));
-            ui.data_mut(|d| d.insert_temp(view_mode_id(), ViewMode::List));
-            ui.ctx().request_repaint();
-        }
-        return false;
-    }
-
-    let mut changed = false;
+    let mut changed = super::shortcuts_keyboard::show(ui, settings);
+    ui.add_space(8.0);
 
     let rec_id = egui::Id::unique("kb_recording_action");
     // 录制目标：(动作 id, 快捷键索引)；索引 == 列表长度表示追加新快捷键
@@ -204,25 +165,11 @@ pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
         }
     }
 
-    // ── 提示 ──
-    ui.label(
-        egui::RichText::new(t!("settings.shortcuts.hint").as_ref())
-            .color(crate::theme::text_secondary()),
-    );
-    ui.add_space(6.0);
-
     // ── 分组列表 ──
     // 分组只决定「显示在哪个小标题下」，条目不手写：直接按动作 id 归类，
     // 任何新增到 `ALL_ACTION_IDS` 的动作都会自动出现在设置页（漏列=快捷键
     // 无法配置，是之前 12 个动作缺失的根因）。
-    let groups: [(&str, &[&str]); 6] = [
-        ("settings.shortcuts.group_file", &FILE_ACTIONS),
-        ("settings.shortcuts.group_edit", &EDIT_ACTIONS),
-        ("settings.shortcuts.group_operation", &OPERATION_ACTIONS),
-        ("settings.shortcuts.group_context", &CONTEXT_ACTIONS),
-        ("settings.shortcuts.group_play", &PLAY_ACTIONS),
-        ("settings.shortcuts.group_tools", &TOOL_ACTIONS),
-    ];
+    let groups = action_groups();
     // 自检：分组必须覆盖全部动作，漏一个就在 debug 下炸出来。
     debug_assert_eq!(
         groups.iter().map(|(_, ids)| ids.len()).sum::<usize>(),
@@ -238,9 +185,6 @@ pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
                 .color(crate::theme::text_secondary()),
         );
         for &id in ids {
-            let focused = ui
-                .data(|d| d.get_temp::<String>(focus_action_id()))
-                .is_some_and(|f| f == id);
             let combos = settings.keybindings.get(id);
             let add_idx = combos.len();
             // 是否正在为该动作追加新快捷键（录制中）
@@ -253,13 +197,8 @@ pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
             crate::widgets::grid::fixed_row(ui, 8.0, 24.0, 150.0, |cells| {
                 cells.cell(|ui| {
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        let mut text = egui::RichText::new(t!(label_key).as_ref());
-                        if focused {
-                            // 从键盘视图跳转过来：高亮该动作，便于在长列表里定位。
-                            text = text.color(crate::theme::accent_active()).strong();
-                        }
                         ui.add(
-                            egui::Label::new(text)
+                            egui::Label::new(egui::RichText::new(t!(label_key).as_ref()))
                                 .selectable(false)
                                 .wrap_mode(egui::TextWrapMode::Truncate),
                         );

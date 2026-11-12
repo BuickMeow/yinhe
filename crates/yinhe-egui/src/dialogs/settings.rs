@@ -103,7 +103,7 @@ pub use theme::show_theme_tab;
 
 /// Zed 风格设置行（标题+描述左、控件右、行间分割线）——统一下沉到
 /// [`crate::widgets::rows::setting_row`]，设置页与右栏面板共用同一实现。
-pub(crate) use crate::widgets::rows::setting_row;
+pub(crate) use crate::widgets::rows::{setting_row, setting_row_plain};
 
 /// Show the settings dialog content inside an existing Ui.
 /// Returns `true` if settings were changed.
@@ -470,11 +470,7 @@ mod tests {
         ] {
             let it = SETTING_ITEMS.iter().find(|i| i.zh == zh);
             assert!(it.is_some(), "渲染设置项 {zh} 应存在");
-            assert_eq!(
-                it.unwrap().cat,
-                1,
-                "{zh} 是纯视觉选项，应归入外观（cat=1）"
-            );
+            assert_eq!(it.unwrap().cat, 1, "{zh} 是纯视觉选项，应归入外观（cat=1）");
         }
     }
 }
