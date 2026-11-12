@@ -3,7 +3,7 @@
 //! 数据模型（`KeyCombo`/`Keybindings`）在 `yinhe-editor-core::shortcuts`。
 
 use eframe::egui::{Key, Modifiers};
-use yinhe_editor_core::shortcuts::KeyCombo;
+use yinhe_editor_core::shortcuts::{KeyCombo, Keybindings};
 
 /// 全部可录制/显示的 egui 键（排除纯修饰键，它们在 `KeyCombo` 里以 flag 表示）。
 /// 顺序无关，仅用于设置页录制时的合法性判断。
@@ -319,6 +319,36 @@ pub fn matches_combo(combo: &KeyCombo, modifiers: Modifiers, key: Key) -> bool {
     }
     let command = modifiers.command || modifiers.ctrl;
     command == combo.command && modifiers.shift == combo.shift && modifiers.alt == combo.alt
+}
+
+/// 快捷键显示文本在 egui 临时数据里的键。
+///
+/// 右键菜单分布在很深的调用栈里（事件表、图层、时间标尺……），
+/// 为了让菜单项显示快捷键而把整个 `App` 一路透传下去不值得；
+/// 由 `App` 每帧写一份 `action_id → 显示文本` 的快照，菜单按需查。
+fn shortcut_text_cache_id() -> egui::Id {
+    egui::Id::unique("yinhe_shortcut_text_cache")
+}
+
+/// 每帧刷新快捷键显示文本（`App` 调用；键位设置变化后自动跟上）。
+pub fn publish_shortcut_text(ctx: &egui::Context, keybindings: &Keybindings) {
+    let mut map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for &id in yinhe_editor_core::shortcuts::ALL_ACTION_IDS {
+        // 只显示第一个快捷键：菜单项右栏宽度有限，多个组合会挤掉主文本。
+        if let Some(combo) = keybindings.get(id).first() {
+            map.insert(id.to_string(), display_combo(combo));
+        }
+    }
+    ctx.data_mut(|d| d.insert_temp(shortcut_text_cache_id(), map));
+}
+
+/// 查某动作的快捷键显示文本（未绑定返回 None）。
+pub fn shortcut_text_for(ctx: &egui::Context, action_id: &str) -> Option<String> {
+    if action_id.is_empty() {
+        return None;
+    }
+    ctx.data(|d| d.get_temp::<std::collections::HashMap<String, String>>(shortcut_text_cache_id()))
+        .and_then(|map| map.get(action_id).cloned())
 }
 
 /// macOS 原生菜单是否负责处理该快捷键组合。

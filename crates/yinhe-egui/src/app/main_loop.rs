@@ -564,72 +564,14 @@ impl eframe::App for App {
         }
 
         // ── Keyboard shortcuts ──
+        // 先把快捷键显示文本发布到 egui 临时数据：右键菜单/Popup 按需查，
+        // 避免把 App 一路透传到深层菜单调用点。设置页改键位后自动跟上。
+        crate::shortcuts::publish_shortcut_text(ui.ctx(), &self.audio_settings.keybindings);
         let kb = self.handle_keyboard_shortcuts(ui);
-        // 路由：Select/SelectVertical 工具且有锚点选中时，copy/cut/duplicate/delete
-        // 作用于自动化锚点；paste 由剪贴板内容类型决定（见 paste_clipboard）。
-        let route_to_automation = self.has_selected_automation_anchors();
-        let ar_auto = self.has_selected_ar_automation();
-        if kb.delete_selected {
-            if ar_auto {
-                self.delete_ar_selection();
-            } else if route_to_automation {
-                self.delete_automation_anchors();
-            } else {
-                self.delete_selected_notes();
-            }
-        }
-        if kb.duplicate_selected {
-            if ar_auto {
-                self.duplicate_ar_selection();
-            } else if route_to_automation {
-                self.duplicate_automation_anchors();
-            } else {
-                self.duplicate_selected_notes();
-            }
-        }
-        if kb.transpose_up {
-            self.transpose_selected_notes(12);
-        }
-        if kb.transpose_down {
-            self.transpose_selected_notes(-12);
-        }
-        if kb.undo {
-            self.undo();
-        }
-        if kb.redo {
-            self.redo();
-        }
-        if kb.copy {
-            if route_to_automation {
-                self.copy_automation_anchors();
-            } else {
-                self.copy_selection();
-            }
-        }
-        if kb.cut {
-            if route_to_automation {
-                self.cut_automation_anchors();
-            } else {
-                self.cut_selection();
-            }
-        }
-        if kb.paste {
-            self.paste_clipboard();
-        }
-        if kb.paste_at_original {
-            self.paste_clipboard_with_mode(yinhe_editor_core::clipboard::PasteMode::AtOriginal);
-        }
-        if kb.paste_flipped {
-            self.paste_clipboard_with_mode(yinhe_editor_core::clipboard::PasteMode::Flipped);
-        }
-        if kb.select_all {
-            self.select_all();
-        }
-        if kb.select_notes_only {
-            self.select_notes_only();
-        }
-        if kb.filter_selection {
-            self.open_filter_dialog();
+        // 编辑动作用与顶栏菜单 / macOS 原生菜单同一条分发路径。
+        // 自动化锚点 / AR 选择的路由在 `handle_edit_action` 内部处理。
+        if let Some(action) = kb.edit_action {
+            self.handle_edit_action(action);
         }
         if let Some(tool) = kb.tool_to_activate {
             self.active_tool = tool;

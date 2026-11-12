@@ -4,6 +4,68 @@ use yinhe_editor_core::shortcuts::{self, KeyCombo};
 
 use crate::audio_settings::AudioSettings;
 
+/// 文件类动作（11）。
+const FILE_ACTIONS: [&str; 11] = [
+    shortcuts::ACTION_NEW_PROJECT,
+    shortcuts::ACTION_OPEN,
+    shortcuts::ACTION_IMPORT_AUDIO,
+    shortcuts::ACTION_SAVE,
+    shortcuts::ACTION_SAVE_AS,
+    shortcuts::ACTION_CLOSE_DOCUMENT,
+    shortcuts::ACTION_EXPORT_AUDIO,
+    shortcuts::ACTION_EXPORT_MIDI,
+    shortcuts::ACTION_SETTINGS,
+    shortcuts::ACTION_PROJECT_SETTINGS,
+    shortcuts::ACTION_EXIT,
+];
+
+/// 编辑类动作（历史 / 剪贴板 / 选择，12）。
+const EDIT_ACTIONS: [&str; 12] = [
+    shortcuts::ACTION_UNDO,
+    shortcuts::ACTION_REDO,
+    shortcuts::ACTION_CUT,
+    shortcuts::ACTION_COPY,
+    shortcuts::ACTION_PASTE,
+    shortcuts::ACTION_PASTE_AT_ORIGINAL,
+    shortcuts::ACTION_PASTE_FLIPPED,
+    shortcuts::ACTION_SELECT_ALL,
+    shortcuts::ACTION_SELECT_NOTES_ONLY,
+    shortcuts::ACTION_FILTER_SELECTION,
+    shortcuts::ACTION_DUPLICATE,
+    shortcuts::ACTION_DELETE,
+];
+
+/// 操作类动作（框选后的批量变换，12）。
+const OPERATION_ACTIONS: [&str; 12] = [
+    shortcuts::ACTION_TRANSPOSE_UP,
+    shortcuts::ACTION_TRANSPOSE_DOWN,
+    shortcuts::ACTION_LENGTH_DOUBLE,
+    shortcuts::ACTION_LENGTH_HALF,
+    shortcuts::ACTION_FLIP_HORIZONTAL,
+    shortcuts::ACTION_FLIP_VERTICAL,
+    shortcuts::ACTION_HUMANIZE,
+    shortcuts::ACTION_FILL_GAPS,
+    shortcuts::ACTION_MERGE_NOTES,
+    shortcuts::ACTION_GRID_SPLIT,
+    shortcuts::ACTION_DEDUP_WITHIN_TRACK,
+    shortcuts::ACTION_DEDUP_ACROSS_TRACKS,
+];
+
+/// 播放类动作（2）。
+const PLAY_ACTIONS: [&str; 2] = [shortcuts::ACTION_TOGGLE_PLAY, shortcuts::ACTION_STOP];
+
+/// 工具切换动作（8）。
+const TOOL_ACTIONS: [&str; 8] = [
+    shortcuts::ACTION_TOOL_SELECT,
+    shortcuts::ACTION_TOOL_SELECT_VERTICAL,
+    shortcuts::ACTION_TOOL_PAN,
+    shortcuts::ACTION_TOOL_PENCIL,
+    shortcuts::ACTION_TOOL_SCISSORS,
+    shortcuts::ACTION_TOOL_ERASER,
+    shortcuts::ACTION_TOOL_LINE,
+    shortcuts::ACTION_TOOL_BRUSH,
+];
+
 /// 快捷键配置页：列出全部可配置动作。
 /// 每个动作可绑定多个快捷键：第一个快捷键与动作名同行，其余各占一行；
 /// 点击快捷键按钮重新录制，点击 + 追加一个，点击 × 移除。
@@ -68,58 +130,22 @@ pub fn show_shortcuts_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
     ui.add_space(6.0);
 
     // ── 分组列表 ──
-    let groups: [(&str, &[&str]); 4] = [
-        (
-            "settings.shortcuts.group_file",
-            &[
-                shortcuts::ACTION_NEW_PROJECT,
-                shortcuts::ACTION_OPEN,
-                shortcuts::ACTION_SAVE,
-                shortcuts::ACTION_SAVE_AS,
-                shortcuts::ACTION_CLOSE_DOCUMENT,
-                shortcuts::ACTION_EXPORT_AUDIO,
-                shortcuts::ACTION_EXPORT_MIDI,
-                shortcuts::ACTION_SETTINGS,
-                shortcuts::ACTION_EXIT,
-            ],
-        ),
-        (
-            "settings.shortcuts.group_edit",
-            &[
-                shortcuts::ACTION_UNDO,
-                shortcuts::ACTION_REDO,
-                shortcuts::ACTION_CUT,
-                shortcuts::ACTION_COPY,
-                shortcuts::ACTION_PASTE,
-                shortcuts::ACTION_PASTE_AT_ORIGINAL,
-                shortcuts::ACTION_PASTE_FLIPPED,
-                shortcuts::ACTION_SELECT_ALL,
-                shortcuts::ACTION_SELECT_NOTES_ONLY,
-                shortcuts::ACTION_FILTER_SELECTION,
-                shortcuts::ACTION_DUPLICATE,
-                shortcuts::ACTION_DELETE,
-                shortcuts::ACTION_TRANSPOSE_UP,
-                shortcuts::ACTION_TRANSPOSE_DOWN,
-            ],
-        ),
-        (
-            "settings.shortcuts.group_play",
-            &[shortcuts::ACTION_TOGGLE_PLAY, shortcuts::ACTION_STOP],
-        ),
-        (
-            "settings.shortcuts.group_tools",
-            &[
-                shortcuts::ACTION_TOOL_SELECT,
-                shortcuts::ACTION_TOOL_SELECT_VERTICAL,
-                shortcuts::ACTION_TOOL_PAN,
-                shortcuts::ACTION_TOOL_PENCIL,
-                shortcuts::ACTION_TOOL_SCISSORS,
-                shortcuts::ACTION_TOOL_ERASER,
-                shortcuts::ACTION_TOOL_LINE,
-                shortcuts::ACTION_TOOL_BRUSH,
-            ],
-        ),
+    // 分组只决定「显示在哪个小标题下」，条目不手写：直接按动作 id 归类，
+    // 任何新增到 `ALL_ACTION_IDS` 的动作都会自动出现在设置页（漏列=快捷键
+    // 无法配置，是之前 12 个动作缺失的根因）。
+    let groups: [(&str, &[&str]); 5] = [
+        ("settings.shortcuts.group_file", &FILE_ACTIONS),
+        ("settings.shortcuts.group_edit", &EDIT_ACTIONS),
+        ("settings.shortcuts.group_operation", &OPERATION_ACTIONS),
+        ("settings.shortcuts.group_play", &PLAY_ACTIONS),
+        ("settings.shortcuts.group_tools", &TOOL_ACTIONS),
     ];
+    // 自检：分组必须覆盖全部动作，漏一个就在 debug 下炸出来。
+    debug_assert_eq!(
+        groups.iter().map(|(_, ids)| ids.len()).sum::<usize>(),
+        shortcuts::ALL_ACTION_IDS.len(),
+        "快捷键设置页的分组必须是 ALL_ACTION_IDS 的一个划分"
+    );
 
     for (group_key, ids) in groups {
         ui.add_space(6.0);
@@ -284,4 +310,25 @@ fn shortcut_combo_ui(
     }
 
     changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 分组必须完整覆盖 `ALL_ACTION_IDS`，且不能重复。
+    /// 之前设置页只列了 45 个动作里的 33 个，用户无法给缺失的动作配快捷键。
+    #[test]
+    fn groups_cover_all_actions_exactly_once() {
+        let mut all: Vec<&str> = Vec::new();
+        all.extend(FILE_ACTIONS);
+        all.extend(EDIT_ACTIONS);
+        all.extend(OPERATION_ACTIONS);
+        all.extend(PLAY_ACTIONS);
+        all.extend(TOOL_ACTIONS);
+        all.sort_unstable();
+        let mut expected = shortcuts::ALL_ACTION_IDS.to_vec();
+        expected.sort_unstable();
+        assert_eq!(all, expected, "设置页分组必须与 ALL_ACTION_IDS 完全一致");
+    }
 }

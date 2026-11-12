@@ -5,7 +5,7 @@ use rust_i18n::t;
 
 use crate::app::{App, PasteChain, PendingFileAction};
 use crate::chrome::transport_bar;
-use crate::chrome::transport_bar::FileAction;
+use crate::chrome::transport_bar::{EditAction, FileAction};
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::shortcuts;
 
@@ -29,25 +29,17 @@ pub(crate) struct SaveSnapshot {
 }
 
 /// Actions detected from keyboard input in the current frame.
+///
+/// 编辑类动作收敛成单个 `edit_action`（与顶栏菜单 / macOS 原生菜单同一条分发路径
+/// `App::handle_edit_action`）：否则每加一个动作都要在键盘分发里补一段 if，
+/// 漏补就会「表里有快捷键但按了没反应」。
 #[derive(Default)]
 pub(crate) struct KeyboardActions {
     pub toggle_play: bool,
     pub pause_return: bool,
     pub stop_play: bool,
-    pub delete_selected: bool,
-    pub duplicate_selected: bool,
-    pub transpose_up: bool,
-    pub transpose_down: bool,
-    pub undo: bool,
-    pub redo: bool,
-    pub copy: bool,
-    pub cut: bool,
-    pub paste: bool,
-    pub paste_at_original: bool,
-    pub paste_flipped: bool,
-    pub select_all: bool,
-    pub select_notes_only: bool,
-    pub filter_selection: bool,
+    /// 编辑动作（删除/复制/移调/变速/翻转/人性化/填缝/合并/网格切割/去重…）。
+    pub edit_action: Option<EditAction>,
     /// 工具切换快捷键触发的目标工具（None = 本帧未触发）。
     pub tool_to_activate: Option<crate::widgets::tools_panel::Tool>,
     /// 文件菜单动作（非 macOS 平台由键盘触发；macOS 走原生菜单栏）。
@@ -131,48 +123,16 @@ impl App {
                 actions.stop_play = true;
             }
 
-            // ── 编辑 ──
-            if matches(shortcuts::ACTION_DELETE, key, modifiers) {
-                actions.delete_selected = true;
-            }
-            if matches(shortcuts::ACTION_DUPLICATE, key, modifiers) {
-                actions.duplicate_selected = true;
-            }
-            if matches(shortcuts::ACTION_TRANSPOSE_UP, key, modifiers) {
-                actions.transpose_up = true;
-            }
-            if matches(shortcuts::ACTION_TRANSPOSE_DOWN, key, modifiers) {
-                actions.transpose_down = true;
-            }
-            if matches(shortcuts::ACTION_UNDO, key, modifiers) {
-                actions.undo = true;
-            }
-            if matches(shortcuts::ACTION_REDO, key, modifiers) {
-                actions.redo = true;
-            }
-            if matches(shortcuts::ACTION_CUT, key, modifiers) {
-                actions.cut = true;
-            }
-            if matches(shortcuts::ACTION_COPY, key, modifiers) {
-                actions.copy = true;
-            }
-            if matches(shortcuts::ACTION_PASTE, key, modifiers) {
-                actions.paste = true;
-            }
-            if matches(shortcuts::ACTION_PASTE_AT_ORIGINAL, key, modifiers) {
-                actions.paste_at_original = true;
-            }
-            if matches(shortcuts::ACTION_PASTE_FLIPPED, key, modifiers) {
-                actions.paste_flipped = true;
-            }
-            if matches(shortcuts::ACTION_SELECT_ALL, key, modifiers) {
-                actions.select_all = true;
-            }
-            if matches(shortcuts::ACTION_SELECT_NOTES_ONLY, key, modifiers) {
-                actions.select_notes_only = true;
-            }
-            if matches(shortcuts::ACTION_FILTER_SELECTION, key, modifiers) {
-                actions.filter_selection = true;
+            // ── 编辑动作 ──
+            // 全部走 `EditAction::ALL` + `handle_edit_action`：单一分发路径，
+            // 不会出现「配置表里有这个动作、键盘却没人检查」的漏项。
+            // macOS：第一个快捷键由原生菜单加速键处理（上面的 matches 已跳过）。
+            for action in EditAction::ALL {
+                let id = action.action_id();
+                if !id.is_empty() && matches(id, key, modifiers) {
+                    actions.edit_action = Some(action);
+                    break;
+                }
             }
 
             // ── 工具切换 ──
@@ -194,12 +154,12 @@ impl App {
         ui.input(|i| {
             // Backspace 等同 Delete
             if i.key_pressed(egui::Key::Backspace) {
-                actions.delete_selected = true;
+                actions.edit_action = Some(EditAction::Delete);
             }
             // Cmd/Ctrl+Y 也触发重做
             let cmd = i.modifiers.command || i.modifiers.ctrl;
             if cmd && i.key_pressed(egui::Key::Y) {
-                actions.redo = true;
+                actions.edit_action = Some(EditAction::Redo);
             }
         });
 

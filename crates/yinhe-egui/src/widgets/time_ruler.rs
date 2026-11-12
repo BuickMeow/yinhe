@@ -400,7 +400,13 @@ pub(crate) fn marker_band(
         );
         let tick = label.tick;
         resp.context_menu(|ui| {
-            if crate::widgets::flat::flat_button(ui, rust_i18n::t!("menu.delete_marker")).clicked()
+            if ui
+                .add(crate::widgets::menu::menu_item_button(
+                    ui,
+                    false,
+                    rust_i18n::t!("menu.delete_marker").as_ref(),
+                ))
+                .clicked()
             {
                 edit = Some(MarkerEdit::Delete { tick });
                 ui.close();

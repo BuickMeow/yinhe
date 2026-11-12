@@ -26,6 +26,24 @@ pub(crate) fn menu_item_button(
     }
 }
 
+/// 命令层菜单项：与 [`menu_item_button`] 相同，但按动作 id 自动补上快捷键文本。
+///
+/// 快捷键从 `egui::Context` 的临时数据读取（由 `App` 每帧写入一份），
+/// 这样深层的右键菜单不必为了显示一个快捷键而把整个 `App` 透传下来。
+/// 没有绑定快捷键的动作不显示右侧文本。
+pub(crate) fn menu_item_action(
+    ui: &egui::Ui,
+    selected: bool,
+    text: impl Into<egui::WidgetText>,
+    action_id: &str,
+) -> MenuItemButton {
+    let item = menu_item_button(ui, selected, text);
+    match crate::shortcuts::shortcut_text_for(ui.ctx(), action_id) {
+        Some(label) => item.shortcut_text(label),
+        None => item,
+    }
+}
+
 pub(crate) struct MenuItemButton {
     selected: bool,
     text: egui::WidgetText,

@@ -186,7 +186,13 @@ pub(crate) fn frame(
         let resp = ui.interact(rect, id, egui::Sense::click());
         let selected_ids = selected_ids_for(edit, track, clip.id);
         resp.context_menu(|ui| {
-            if crate::widgets::flat::flat_button(ui, rust_i18n::t!("arrange.audio_split")).clicked()
+            if ui
+                .add(crate::widgets::menu::menu_item_button(
+                    ui,
+                    false,
+                    rust_i18n::t!("arrange.audio_split").as_ref(),
+                ))
+                .clicked()
             {
                 let at =
                     pointer_seconds(pos.x - rect.min.x, view, data).max(clip.start_seconds + 0.001);
@@ -200,7 +206,11 @@ pub(crate) fn frame(
                 ui.close();
             }
             if ui
-                .button(rust_i18n::t!("arrange.audio_duplicate"))
+                .add(crate::widgets::menu::menu_item_button(
+                    ui,
+                    false,
+                    rust_i18n::t!("arrange.audio_duplicate").as_ref(),
+                ))
                 .clicked()
             {
                 // 复制到播放光标处（光标不可用则平移一个片段长度）。
@@ -216,7 +226,12 @@ pub(crate) fn frame(
                 });
                 ui.close();
             }
-            if crate::widgets::flat::flat_button(ui, rust_i18n::t!("arrange.audio_reverse"))
+            if ui
+                .add(crate::widgets::menu::menu_item_button(
+                    ui,
+                    false,
+                    rust_i18n::t!("arrange.audio_reverse").as_ref(),
+                ))
                 .clicked()
             {
                 edit.audio_commands.push(AudioEditCmd::Reverse {
@@ -226,7 +241,11 @@ pub(crate) fn frame(
                 ui.close();
             }
             if ui
-                .button(rust_i18n::t!("arrange.audio_normalize"))
+                .add(crate::widgets::menu::menu_item_button(
+                    ui,
+                    false,
+                    rust_i18n::t!("arrange.audio_normalize").as_ref(),
+                ))
                 .clicked()
             {
                 edit.audio_commands
@@ -234,7 +253,12 @@ pub(crate) fn frame(
                 ui.close();
             }
             ui.separator();
-            if crate::widgets::flat::flat_button(ui, rust_i18n::t!("arrange.audio_gain_up"))
+            if ui
+                .add(crate::widgets::menu::menu_item_button(
+                    ui,
+                    false,
+                    rust_i18n::t!("arrange.audio_gain_up").as_ref(),
+                ))
                 .clicked()
             {
                 edit.audio_commands.push(AudioEditCmd::GainDelta {
@@ -245,7 +269,11 @@ pub(crate) fn frame(
                 ui.close();
             }
             if ui
-                .button(rust_i18n::t!("arrange.audio_gain_down"))
+                .add(crate::widgets::menu::menu_item_button(
+                    ui,
+                    false,
+                    rust_i18n::t!("arrange.audio_gain_down").as_ref(),
+                ))
                 .clicked()
             {
                 edit.audio_commands.push(AudioEditCmd::GainDelta {
@@ -256,7 +284,11 @@ pub(crate) fn frame(
                 ui.close();
             }
             if ui
-                .button(rust_i18n::t!("arrange.audio_gain_reset"))
+                .add(crate::widgets::menu::menu_item_button(
+                    ui,
+                    false,
+                    rust_i18n::t!("arrange.audio_gain_reset").as_ref(),
+                ))
                 .clicked()
             {
                 edit.audio_commands
@@ -264,7 +296,13 @@ pub(crate) fn frame(
                 ui.close();
             }
             ui.separator();
-            if crate::widgets::flat::flat_button(ui, rust_i18n::t!("arrange.audio_delete"))
+            if ui
+                .add(crate::widgets::menu::menu_item_action(
+                    ui,
+                    false,
+                    rust_i18n::t!("arrange.audio_delete").as_ref(),
+                    yinhe_editor_core::shortcuts::ACTION_DELETE,
+                ))
                 .clicked()
             {
                 edit.audio_commands.push(AudioEditCmd::Delete {

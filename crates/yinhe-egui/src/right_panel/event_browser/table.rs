@@ -360,10 +360,11 @@ pub(super) fn cell_row_header(
             }
             ui.separator();
             if ui
-                .add(crate::widgets::menu::menu_item_button(
+                .add(crate::widgets::menu::menu_item_action(
                     ui,
                     false,
                     t!("common.delete").to_string(),
+                    yinhe_editor_core::shortcuts::ACTION_DELETE,
                 ))
                 .clicked()
             {
