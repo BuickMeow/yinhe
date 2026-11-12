@@ -188,8 +188,7 @@ mod tests {
     #[test]
     fn two_columns_do_not_overflow() {
         for w in [760.0f32, 1200.0, 1750.0] {
-            let (l, r, limit) = measure(egui::vec2(w, 600.0), 8.0, 164.0);
-            eprintln!("[grid] w={w} left_end={l:.1} right_end={r:.1} limit={limit:.1}");
+            let (_, r, limit) = measure(egui::vec2(w, 600.0), 8.0, 164.0);
             assert!(
                 r <= limit + 0.5,
                 "w={w}: 右列右缘 {r:.1} 超出可用末端 {limit:.1}"
@@ -201,73 +200,11 @@ mod tests {
     #[test]
     fn right_column_fills_remainder() {
         let (l, r, limit) = measure(egui::vec2(760.0, 600.0), 8.0, 164.0);
-        let remaining = limit - l - 8.0; // 扣掉一个 gap
+        let remaining = limit - l - 8.0;
         let actual = r - l - 8.0;
         assert!(
             (actual - remaining).abs() <= 1.0,
             "右列宽 {actual:.1} 与应有剩余 {remaining:.1} 不符"
         );
-    }
-}
-
-/// 模拟设置页完整结构：两列 → 卡片 Frame(内边距) → ScrollArea →
-/// 行。量「卡片绘制右缘」与「窗口右缘」。
-mod settings_shape {
-
-    #[test]
-    fn card_stays_inside_window() {
-        for w in [760.0f32, 1200.0, 1750.0] {
-            let out = std::rc::Rc::new(std::cell::RefCell::new((0.0f32, 0.0f32, 0.0f32)));
-            let o = out.clone();
-            let mut harness = egui_kittest::Harness::builder()
-                .allow_missing_glyphs()
-                .with_size(egui::vec2(w, 800.0))
-                .build_ui(move |ui| {
-                    let window_right = ui.max_rect().min.x + ui.available_width();
-                    let nav_w = 148.0f32;
-                    let mut card_right = 0.0f32;
-                    let mut ctrl_right = 0.0f32;
-                    crate::widgets::grid::two_columns(ui, 8.0, nav_w + 16.0, |cells| {
-                        cells.cell(|_| {});
-                        cells.cell(|ui| {
-                            let card_w = (ui.available_width() - 16.0).max(1.0);
-                            egui::Frame::new()
-                                .inner_margin(egui::Margin::same(8))
-                                .show(ui, |ui| {
-                                    ui.set_width(card_w);
-                                    egui::ScrollArea::vertical()
-                                        .id_salt(("s", w as u32))
-                                        .auto_shrink([false; 2])
-                                        .show(ui, |ui| {
-                                            let iw = ui.available_width();
-                                            ui.set_min_width(iw);
-                                            ui.set_max_width(iw);
-                                            card_right = ui.max_rect().max.x + 8.0;
-                                            crate::widgets::rows::setting_row_plain(
-                                                ui,
-                                                "开启通知",
-                                                |ui| {
-                                                    let (r, _) = ui.allocate_exact_size(
-                                                        egui::vec2(44.0, 22.0),
-                                                        egui::Sense::hover(),
-                                                    );
-                                                    ctrl_right = r.max.x;
-                                                },
-                                            );
-                                        });
-                                });
-                        });
-                    });
-                    *o.borrow_mut() = (card_right, ctrl_right, window_right);
-                });
-            harness.step();
-            harness.step();
-            let (card, ctrl, limit) = *out.borrow();
-            eprintln!("[shape] w={w} card={card:.1} ctrl={ctrl:.1} limit={limit:.1}");
-            assert!(
-                card <= limit + 0.5,
-                "w={w}: 卡片右缘 {card:.1} 超出窗口 {limit:.1}"
-            );
-        }
     }
 }

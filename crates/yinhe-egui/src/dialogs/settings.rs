@@ -230,6 +230,10 @@ pub fn show_content(
                             let inner_w = ui.available_width();
                             ui.set_min_width(inner_w);
                             ui.set_max_width(inner_w);
+                            // 把页面级固定行宽发布出去：`setting_row` 用它作为
+                            // 行宽，而不是自己读 `ui.available_width()`。
+                            // 否则行宽会随上一行内容宽度漂移，控件逐行右移。
+                            let _row_w = crate::widgets::rows::page_row_width_scope(inner_w);
                             changed |= show_search_results(ui, settings, main_ctx);
                             // 变高内容无法按行对齐，底部留白避免最后一项贴边。
                             ui.add_space(crate::theme::GAP);
@@ -561,5 +565,42 @@ mod a11y_tests {
             );
         harness.step();
         harness.step();
+    }
+}
+
+#[cfg(test)]
+mod width_tests {
+    use super::*;
+
+    /// 真实设置页里，每行右侧控件必须落在同一竖直线上（不能逐行右移）。
+    #[test]
+    fn real_tab_rows_align() {
+        for tab in [1usize, 4, 7] {
+            let mut harness = egui_kittest::Harness::builder()
+                .allow_missing_glyphs()
+                .with_size(egui::vec2(1200.0, 1000.0))
+                .build_ui_state(
+                    move |ui, settings: &mut AudioSettings| {
+                        let ctx = ui.ctx().clone();
+                        settings.ui_session.settings_tab = tab;
+                        let _ = show_content(ui, settings, &ctx);
+                    },
+                    AudioSettings::default(),
+                );
+            harness.step();
+            harness.step();
+
+            crate::widgets::rows::take_row_probe(); // 丢弃之前帧
+            harness.step();
+            let probe = crate::widgets::rows::take_row_probe();
+            assert!(!probe.is_empty(), "tab {tab}: 未采集到行");
+            let first = probe[0].1;
+            for (title, right, row_w) in &probe {
+                assert!(
+                    (right - first).abs() <= 1.0,
+                    "tab {tab}: 「{title}」控件列右缘 {right:.1} ≠ 首行 {first:.1}（行宽 {row_w:.1}）"
+                );
+            }
+        }
     }
 }

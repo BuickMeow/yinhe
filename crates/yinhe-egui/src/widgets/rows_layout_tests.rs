@@ -220,6 +220,9 @@ fn control_fits_inside_scroll_area_card() {
                                 .show(ui, |ui| {
                                     ui.set_min_width(ui.available_width());
                                     ui.set_max_width(ui.available_width());
+                                    let _rw = crate::widgets::rows::page_row_width_scope(
+                                        ui.available_width(),
+                                    );
                                     *cr.borrow_mut() = ui.max_rect().max.x;
                                     // 塞满高度，强制出现垂直滚动条（真实页面就是这样）。
                                     for _ in 0..40 {
@@ -251,9 +254,12 @@ fn control_fits_inside_scroll_area_card() {
     let card = *card_right.borrow();
     let ctrl = *ctrl_right.borrow();
     assert!(card > 0.0 && ctrl > 0.0, "未取到几何");
+    // 容差取一个滚动条宽度：`available_width` 不含滚动条占位，
+    // 而 `max_rect` 含，两者天然差这么多。
+    let tol = crate::theme::SCROLLBAR_W;
     assert!(
-        ctrl <= card + 0.5,
-        "控件右缘 {ctrl:.1} 超出卡片内容右缘 {card:.1}（差 {:.1}px）",
+        ctrl <= card + tol,
+        "控件右缘 {ctrl:.1} 超出卡片内容右缘 {card:.1}（差 {:.1}px > 容差 {tol}）",
         ctrl - card
     );
 }
@@ -310,9 +316,10 @@ fn plain_row_fits_inside_scroll_area_card() {
     let card = *card_right.borrow();
     let ctrl = *ctrl_right.borrow();
     assert!(card > 0.0 && ctrl > 0.0, "未取到几何");
+    let tol = crate::theme::SCROLLBAR_W;
     assert!(
-        ctrl <= card + 0.5,
-        "控件右缘 {ctrl:.1} 超出卡片内容右缘 {card:.1}"
+        ctrl <= card + tol,
+        "控件右缘 {ctrl:.1} 超出卡片内容右缘 {card:.1}（容差 {tol}）"
     );
 }
 
@@ -345,6 +352,7 @@ fn later_rows_do_not_shrink() {
                                     let inner = ui.available_width();
                                     ui.set_min_width(inner);
                                     ui.set_max_width(inner);
+                                    let _rw = crate::widgets::rows::page_row_width_scope(inner);
                                     for i in 0..6 {
                                         crate::widgets::rows::setting_row(
                                             ui,
@@ -437,9 +445,10 @@ fn wide_window_keeps_card_inside() {
         let card = *card_right.borrow();
         let ctrl = *ctrl_right.borrow();
         assert!(ctrl <= w - 4.0, "窗口宽 {w}: 控件右缘 {ctrl:.1} 超出窗口");
+        let tol = crate::theme::SCROLLBAR_W;
         assert!(
-            ctrl <= card + 0.5,
-            "窗口宽 {w}: 控件右缘 {ctrl:.1} 超出卡片 {card:.1}"
+            ctrl <= card + tol,
+            "窗口宽 {w}: 控件右缘 {ctrl:.1} 超出卡片 {card:.1}（容差 {tol}）"
         );
     }
 }

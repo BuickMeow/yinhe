@@ -110,6 +110,51 @@ pub(crate) fn panel_row(ui: &mut egui::Ui, title: &str, add_control: impl FnOnce
     row_impl(ui, title, "", false, add_control);
 }
 
+thread_local! {
+    /// 页面级固定行宽（由滚动容器在进入页面时设定）。
+    ///
+    /// `setting_row` 用它作为行宽，而不是自己读 `ui.available_width()`：
+    /// 后者会被上一行的内容宽度污染，导致右侧控件逐行右移。
+    static PAGE_ROW_WIDTH: std::cell::Cell<Option<f32>> = const { std::cell::Cell::new(None) };
+}
+
+/// 设定页面级固定行宽（滚动容器用）。
+///
+/// 返回守卫，**离开作用域时自动还原**——避免中途早退/提前 return 时
+/// 行宽残留在全局状态里，污染下一个页面。
+pub(crate) fn page_row_width_scope(width: f32) -> PageRowWidthScope {
+    PAGE_ROW_WIDTH.with(|w| w.set(Some(width)));
+    PageRowWidthScope
+}
+
+/// [`page_row_width_scope`] 的作用域守卫。
+pub(crate) struct PageRowWidthScope;
+
+impl Drop for PageRowWidthScope {
+    fn drop(&mut self) {
+        PAGE_ROW_WIDTH.with(|w| w.set(None));
+    }
+}
+
+/// 测试用：记录每个设置行里控件右缘与行右缘（`(标题, 控件右缘, 行右缘)`）。
+#[cfg(test)]
+pub(crate) fn take_row_probe() -> Vec<(String, f32, f32)> {
+    ROW_PROBE
+        .lock()
+        .map(|mut g| std::mem::take(&mut *g))
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+fn record_row_probe(title: &str, cell_right: f32, row_w: f32) {
+    if let Ok(mut g) = ROW_PROBE.lock() {
+        g.push((title.to_owned(), cell_right, row_w));
+    }
+}
+
+#[cfg(test)]
+static ROW_PROBE: std::sync::Mutex<Vec<(String, f32, f32)>> = std::sync::Mutex::new(Vec::new());
+
 fn row_impl(
     ui: &mut egui::Ui,
     title: &str,
@@ -118,10 +163,15 @@ fn row_impl(
     add_control: impl FnOnce(&mut egui::Ui),
 ) {
     let label_w = scaled_font(ui.ctx(), theme::FIELD_LABEL_W);
-    // 行宽固定取「父 ui 的 max_rect 宽度」，不用 `available_width()`：
-    // 后者在 ScrollArea / 嵌套布局里会随光标推进而收缩，导致同一页里
-    // 后面的行越来越窄、控件被推出右缘（设置页反复错位的根因）。
-    let row_w = ui.max_rect().width();
+    // 行宽取当前可用宽度。
+    //
+    // **不能**改用 `ui.max_rect().width()`：ScrollArea 内部用
+    // `set_max_width` 收窄过内容宽度时，`max_rect` 仍是视口原始宽度，
+    // 行会比容器宽、控件被顶到卡片外面（开关跑到右边界外就是这个）。
+    // 行宽优先用页面级固定值；没有时退回当前可用宽度。
+    let row_w = PAGE_ROW_WIDTH
+        .with(|w| w.get())
+        .unwrap_or_else(|| ui.available_width());
     if hint.is_empty() {
         // 单行：固定行高 + 两列（标签固定宽、控件剩余宽）。
         let h = super::control::h(ui.ctx());
@@ -148,12 +198,21 @@ fn row_impl(
                         strip.cell(|ui| {
                             // 每行一个稳定作用域：避免不同行的按钮/开关共用自动 Id，
                             // 出现“点 A 命中 B、B 本身点不动”的错位。
+                            // 控件列宽 = 行宽 − 标签列宽 − 一个列间距。
+                            // **不能**用 `ui.available_width()`：它会被上一次
+                            // 绘制残留的 `max_rect` 影响，逐行漂移（每行右移
+                            // 17.8px 那种累加误差就是这么来的）。
+                            let cell_w = (row_w - label_w - theme::GAP_SM).max(1.0);
+                            ui.set_max_width(cell_w);
                             ui.push_id(title, |ui| {
+                                ui.set_max_width(cell_w);
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| ui.name_inputs(title, add_control),
                                 );
                             });
+                            #[cfg(test)]
+                            record_row_probe(title, cell_w, row_w);
                         });
                     });
             },
@@ -186,12 +245,26 @@ fn row_impl(
                             );
                         });
                         strip.cell(|ui| {
+                            // 把 cell 的宽度**钉死**：`right_to_left` 布局里
+                            // 控件若比 cell 宽（长下拉文字、步进器等），会把
+                            // cell 的 `max_rect` 撑大，`StripBuilder` 按
+                            // `rect.right()` 推进光标，于是下一行整体右移 ——
+                            // 表现为「每行右侧控件都比上一行更靠右」。
+                            // 控件列宽 = 行宽 − 标签列宽 − 一个列间距。
+                            // **不能**用 `ui.available_width()`：它会被上一次
+                            // 绘制残留的 `max_rect` 影响，逐行漂移（每行右移
+                            // 17.8px 那种累加误差就是这么来的）。
+                            let cell_w = (row_w - label_w - theme::GAP_SM).max(1.0);
+                            ui.set_max_width(cell_w);
                             ui.push_id(title, |ui| {
+                                ui.set_max_width(cell_w);
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| ui.name_inputs(title, add_control),
                                 );
                             });
+                            #[cfg(test)]
+                            record_row_probe(title, cell_w, row_w);
                         });
                     });
             },
