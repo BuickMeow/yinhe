@@ -138,7 +138,7 @@ pub fn show_content(
         |cells| {
             cells.cell(|ui| {
                 // ── 左侧：搜索框 + 分类导航（窄，独立滚动，撑满窗口高度） ──
-                let nav_card_w = ui.available_width();
+                let nav_card_w = (ui.available_width() - 2.0 * crate::theme::GAP).max(1.0);
                 card_frame().show(ui, |ui| {
                     ui.set_width(nav_card_w);
                     ui.set_height(card_inner_h);
@@ -203,7 +203,11 @@ pub fn show_content(
                 // 后面所有内容（含 ScrollArea 内部）都以它为准，
                 // 避免 `set_width(available_width())` 在 ScrollArea 前后
                 // 语义不一致把卡片撑出窗口。
-                let card_w = ui.available_width();
+                // `Frame::inner_margin` 是在 `set_width` 的内容宽度之外**再向外**扩的，
+                // 所以这里必须扣掉左右内边距，否则卡片总宽比分配到的 cell 宽
+                // 多出 2×margin，右侧一路挤出窗口。
+                let card_pad = crate::theme::GAP;
+                let card_w = (ui.available_width() - 2.0 * card_pad).max(1.0);
                 card_frame().show(ui, |ui| {
                     ui.set_width(card_w);
                     ui.set_height(card_inner_h);
