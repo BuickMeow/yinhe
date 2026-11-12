@@ -155,33 +155,76 @@ fn row_impl(
             },
         );
     } else {
-        // 双行：左列（标题 + 说明）+ 右列控件。
+        // 带说明的行：标题行（左标题 + 右控件）在上，说明文字独占一行在下。
         //
-        // 必须用固定两列布局而不是 `ui.horizontal` + `set_width`：
-        // 后者里左列会把可用宽度整个吃掉，右侧控件只能挤在剩余空间里、
-        // 甚至被推出面板右缘（外观页的开关只剩半个就是这个原因）。
-        // 行高由左列内容决定（标题 + 说明两行），右列垂直居中。
-        crate::widgets::grid::two_columns(ui, theme::GAP_SM, label_w, |cells| {
-            cells.cell(|ui| {
-                ui.label(
-                    egui::RichText::new(title)
-                        .strong()
-                        .size(scaled_font(ui.ctx(), theme::SUB_TITLE_FONT)),
+        // 不能把「标题 + 说明」塞进固定宽的标签列（那是 72px）：说明会被
+        // 挤成三四行，行高暴涨、控件也跟着错位。说明跨整行宽度才读得顺，
+        // 控件位置也与无说明的行完全一致。
+        let h = super::control::h(ui.ctx());
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), h),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                StripBuilder::new(ui)
+                    .size(Size::exact(label_w))
+                    .size(Size::remainder())
+                    .horizontal(|mut strip| {
+                        strip.cell(|ui| {
+                            ui.with_layout(
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.label(
+                                        egui::RichText::new(title)
+                                            .strong()
+                                            .size(scaled_font(ui.ctx(), theme::SUB_TITLE_FONT)),
+                                    );
+                                },
+                            );
+                        });
+                        strip.cell(|ui| {
+                            ui.push_id(title, |ui| {
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| ui.name_inputs(title, add_control),
+                                );
+                            });
+                        });
+                    });
+            },
+        );
+        ui.add_space(theme::GAP_TIGHT);
+        // 说明必须**独占整行宽度**。
+        //
+        // 坑：上面 `StripBuilder` 的两列 cell 执行完后，父 ui 的可用宽度已被
+        // 它们的 `max_rect` 收窄，直接 `ui.label` 会在残余宽度里换行 ——
+        // 表现为说明被压成三四行、行高暴涨、控件跟着错位（用户截图即此）。
+        // 因此这里显式按「父 ui 的 max_rect 宽度」分配一块新区域再画。
+        let row_w = ui.max_rect().width().max(ui.available_width());
+        // 先按整行宽度排版出高度，再按该高度分配区域：
+        // `allocate_ui_with_layout` 传 0 高度会让 egui 拿剩余整块高度，
+        // 文字被垂直居中、行距被拉大（表现为行高异常）。
+        let galley = ui.painter().layout(
+            hint.to_owned(),
+            egui::FontId::proportional(scaled_font(ui.ctx(), theme::SMALL_FONT)),
+            theme::text_secondary(),
+            row_w,
+        );
+        let text_h = galley.size().y;
+        ui.allocate_ui_with_layout(
+            egui::vec2(row_w, text_h),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.set_max_width(row_w);
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(hint)
+                            .size(scaled_font(ui.ctx(), theme::SMALL_FONT))
+                            .color(theme::text_secondary()),
+                    )
+                    .wrap_mode(egui::TextWrapMode::Wrap),
                 );
-                ui.add_space(theme::GAP_TIGHT);
-                ui.label(
-                    egui::RichText::new(hint)
-                        .size(scaled_font(ui.ctx(), theme::SMALL_FONT))
-                        .color(theme::text_secondary()),
-                );
-            });
-            cells.cell(|ui| {
-                // 右列撑满该列宽度并把控件贴右。
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.push_id(title, |ui| ui.name_inputs(title, add_control));
-                });
-            });
-        });
+            },
+        );
     }
     if divider {
         ui.add_space(theme::GAP);
