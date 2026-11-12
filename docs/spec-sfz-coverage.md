@@ -44,6 +44,12 @@
 > 实现状态：CPU / GPU 双后端均已完成并通过测试；`Starry Studio Grand` 实测
 > 5250 region 中 `xfin` 5250、`trigger=release` 2、`on_cc` 2、`one_shot` 642、
 > `pitch_random` 5250、`amplfo` 4608 全部进入引擎，缺失采样 0。
+>
+> 实施中与设计不同的两处：
+> - **音高 LFO 只解析不施加**：需要与弯音/pitch envelope 共用换速路径，
+>   否则会破坏 CPU/GPU 的 `set_speed` 一致性；振幅 LFO 已生效。
+> - **默认插值改为 Linear**（原计划保持 Nearest）：Nearest 在高移调黑乐谱里
+>   是持续可闻的沙粒感，且这是本次"塑料感"里唯一独立于音色库的成因。
 
 ### 3.1 自有 SFZ 解析器（`yinhe-synth/src/sfz/`）
 
@@ -99,9 +105,9 @@ src/sfz/region.rs     # 层级继承 control<global<master<group<region>
 
 release 层沿用 note_on 的力度；没有力度信息时用组内主 voice 的力度。
 
-### 3.5 插值：新增 4 点 Hermite
+### 3.5 插值：新增 4 点 Catmull-Rom
 
-`Interpolation` 增加 `Cubic`（CPU + GPU/WGSL 同步），设置页可选项。默认仍为 `Linear`（黑乐谱 1.4 万 voice 下 +2 次读采样，需实测后再决定是否改默认）。
+`Interpolation` 增加 `Cubic`（CPU + GPU/WGSL 同步），设置页可选项；默认从 `Nearest` 改为 `Linear`。`Cubic` 每样本多 3 次读采样，密集段需实测再决定是否设为默认。
 
 4 点取帧在循环内要对邻居做回绕（否则每个 loop 周期在接缝处出现一次咔哒）。
 
