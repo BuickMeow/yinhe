@@ -9,27 +9,6 @@ pub fn show_midi_export_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> 
     ui.heading(t!("settings.midi_export.heading").as_ref());
     ui.add_space(8.0);
 
-    setting_row(
-        ui,
-        t!("settings.midi_export.encoding").as_ref(),
-        t!("settings.midi_export.encoding_desc").as_ref(),
-        |ui| {
-            let enc_opt: Vec<(yinhe_midi::MidiImportEncoding, String)> =
-                yinhe_midi::MidiImportEncoding::ALL
-                    .iter()
-                    .map(|&e| (e, e.label().to_string()))
-                    .collect();
-            if crate::widgets::combo::combo_select_auto(
-                ui,
-                "midi_export_encoding",
-                &mut settings.midi_export_encoding,
-                &enc_opt,
-            ) {
-                changed = true;
-            }
-        },
-    );
-
     // 导入编码与导出编码成对出现：同一个编码概念，用户不该去"语言"页找。
     setting_row(
         ui,
@@ -45,6 +24,27 @@ pub fn show_midi_export_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> 
                 ui,
                 "midi_import_encoding",
                 &mut settings.midi_import_encoding,
+                &enc_opt,
+            ) {
+                changed = true;
+            }
+        },
+    );
+
+    setting_row(
+        ui,
+        t!("settings.midi_export.encoding").as_ref(),
+        t!("settings.midi_export.encoding_desc").as_ref(),
+        |ui| {
+            let enc_opt: Vec<(yinhe_midi::MidiImportEncoding, String)> =
+                yinhe_midi::MidiImportEncoding::ALL
+                    .iter()
+                    .map(|&e| (e, e.label().to_string()))
+                    .collect();
+            if crate::widgets::combo::combo_select_auto(
+                ui,
+                "midi_export_encoding",
+                &mut settings.midi_export_encoding,
                 &enc_opt,
             ) {
                 changed = true;

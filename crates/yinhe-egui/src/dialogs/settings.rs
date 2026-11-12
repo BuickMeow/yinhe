@@ -4,19 +4,18 @@ use rust_i18n::t;
 use crate::audio_settings::AudioSettings;
 
 /// 设置左栏分类图标（与 `CATEGORY_KEYS` 一一对应）。
-const CATEGORY_ICONS: [egui_material_icons::MaterialIcon; 12] = [
+const CATEGORY_ICONS: [egui_material_icons::MaterialIcon; 11] = [
     egui_material_icons::icons::ICON_PALETTE,       // theme
-    egui_material_icons::icons::ICON_DASHBOARD,     // appearance
+    egui_material_icons::icons::ICON_DASHBOARD,     // appearance（含渲染）
     egui_material_icons::icons::ICON_LANGUAGE,      // language
     egui_material_icons::icons::ICON_SPEAKER,       // audio
-    egui_material_icons::icons::ICON_MOVIE,         // render
     egui_material_icons::icons::ICON_FILE_DOWNLOAD, // midi_export
     egui_material_icons::icons::ICON_EDIT,          // editing
     egui_material_icons::icons::ICON_KEYBOARD,      // shortcuts
     egui_material_icons::icons::ICON_NOTIFICATIONS, // notification
-    egui_material_icons::icons::ICON_SETTINGS,      // general
     egui_material_icons::icons::ICON_SAVE,          // saving
     egui_material_icons::icons::ICON_LIBRARY_MUSIC, // soundfont
+    egui_material_icons::icons::ICON_SETTINGS,      // reset（恢复）
 ];
 
 /// 左栏导航文本：Material 图标 + 分类名，颜色交给菜单项按选中/悬停统一着色。
@@ -438,27 +437,45 @@ mod tests {
         assert_eq!(all, expected, "分组必须是 CATEGORY_KEYS 的一个划分");
     }
 
+    /// 「恢复」必须是最后一个分类：破坏性操作不该夹在常用分类中间。
     #[test]
-    fn notification_before_general_and_saving_appended() {
-        // 用户要求：通知移到通用之前；「保存」作为新分类追加在最后。
-        // settings_tab 持久化值会随顺序调整错位（落回相邻分类，无害）。
-        assert_eq!(CATEGORY_KEYS[8], "settings.cat.notification");
-        assert_eq!(CATEGORY_KEYS[9], "settings.cat.general");
-        assert_eq!(CATEGORY_KEYS[10], "settings.cat.saving");
-        // 两条自动收起已搬到通知分类，新增总开关也在通知分类
-        for zh in ["完成通知自动收起", "可操作通知自动收起", "开启通知"] {
-            assert_eq!(item(zh).cat, 8);
-        }
-        // 自动保存两项在「保存」分类
-        for zh in ["自动保存", "自动保存间隔"] {
-            assert_eq!(item(zh).cat, 10);
-        }
-        // 搜索“开启通知”能命中通知分类条目
-        assert!(
-            SETTING_ITEMS
-                .iter()
-                .any(|i| i.cat == 8 && item_matches(i, "开启通知"))
+    fn reset_is_the_last_category() {
+        assert_eq!(
+            *CATEGORY_KEYS.last().unwrap(),
+            "settings.cat.reset",
+            "恢复出厂设置必须在最后"
         );
+        // 通知 / 保存仍在「系统」组内
+        assert_eq!(CATEGORY_KEYS[7], "settings.cat.notification");
+        assert_eq!(CATEGORY_KEYS[8], "settings.cat.saving");
+        assert_eq!(CATEGORY_KEYS[9], "settings.cat.soundfont");
+        for zh in ["完成通知自动收起", "可操作通知自动收起", "开启通知"] {
+            assert_eq!(item(zh).cat, 7, "{zh} 应在通知分类");
+        }
+        for zh in ["自动保存", "自动保存间隔"] {
+            assert_eq!(item(zh).cat, 8, "{zh} 应在保存分类");
+        }
+    }
+
+    /// 渲染是纯视觉选项，必须归到「外观」，不能单独占一个「渲染」分类。
+    #[test]
+    fn render_options_live_under_appearance() {
+        for zh in [
+            "音符描边",
+            "最小边框宽度",
+            "GPU 裁剪",
+            "其他轨道变灰",
+            "细节层次",
+            "滚动模式",
+        ] {
+            let it = SETTING_ITEMS.iter().find(|i| i.zh == zh);
+            assert!(it.is_some(), "渲染设置项 {zh} 应存在");
+            assert_eq!(
+                it.unwrap().cat,
+                1,
+                "{zh} 是纯视觉选项，应归入外观（cat=1）"
+            );
+        }
     }
 }
 

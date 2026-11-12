@@ -6,7 +6,7 @@ use crate::dialogs::settings::setting_row;
 
 pub fn show_general_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     let mut changed = false;
-    ui.heading(t!("settings.general.heading").as_ref());
+    ui.heading(t!("settings.cat.reset").as_ref());
     ui.add_space(8.0);
 
     setting_row(

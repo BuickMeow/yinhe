@@ -1,18 +1,18 @@
 // ── 设置分类（左侧导航，顺序即 settings_tab 索引） ──
 
-pub const CATEGORY_KEYS: [&str; 12] = [
+pub const CATEGORY_KEYS: [&str; 11] = [
     "settings.cat.theme",
     "settings.cat.appearance",
     "settings.cat.language",
     "settings.cat.audio",
-    "settings.cat.render",
     "settings.cat.midi_export",
     "settings.cat.editing",
     "settings.cat.shortcuts",
     "settings.cat.notification",
-    "settings.cat.general",
     "settings.cat.saving",
     "settings.cat.soundfont",
+    // 「恢复」放最后：破坏性操作不该出现在常用分类中间。
+    "settings.cat.reset",
 ];
 
 /// 左栏导航的分组：`(组标题 i18n key, 该组包含的分类索引)`。
@@ -21,18 +21,18 @@ pub const CATEGORY_KEYS: [&str; 12] = [
 /// 分组后一眼能找到。索引必须覆盖全部 `CATEGORY_KEYS`（有测试保证），
 /// 且 `settings_tab` 的持久化索引不受分组影响。
 pub const CATEGORY_GROUPS: [(&str, &[usize]); 6] = [
-    // 主题 / 外观：界面看起来怎样
+    // 主题 / 外观（含全部渲染视觉选项）
     ("settings.group.look", &[0, 1]),
-    // 语言（含界面语言；MIDI 文本编码在 MIDI 组里）
+    // 界面语言
     ("settings.group.language", &[2]),
-    // 音频 / 渲染 / 音色库：听起来怎样
-    ("settings.group.sound", &[3, 4, 11]),
+    // 音频 / 音色库：听起来怎样
+    ("settings.group.sound", &[3, 9]),
     // MIDI 导入导出
-    ("settings.group.midi", &[5]),
+    ("settings.group.midi", &[4]),
     // 编辑与快捷键
-    ("settings.group.editing", &[6, 7]),
-    // 通知 / 通用 / 保存：程序行为
-    ("settings.group.system", &[8, 9, 10]),
+    ("settings.group.editing", &[5, 6]),
+    // 通知 / 保存 / 恢复
+    ("settings.group.system", &[7, 8, 10]),
 ];
 
 /// 设置项注册表（供搜索）：各语言名称均可直接检索。
@@ -47,14 +47,14 @@ pub struct SettingItem {
 
 pub const SETTING_ITEMS: &[SettingItem] = &[
     SettingItem {
-        cat: 11,
+        cat: 9,
         zh: "全局音色库",
         en: "Global SoundFont",
         ja: "グローバルサウンドフォント",
         ko: "전역 사운드폰트",
     },
     SettingItem {
-        cat: 11,
+        cat: 9,
         zh: "音色库",
         en: "SoundFont",
         ja: "サウンドフォント",
@@ -159,35 +159,49 @@ pub const SETTING_ITEMS: &[SettingItem] = &[
         ko: "신스 엔진",
     },
     SettingItem {
-        cat: 4,
+        cat: 1,
         zh: "滚动模式",
         en: "Scroll mode",
         ja: "スクロールモード",
         ko: "스크롤 모드",
     },
     SettingItem {
-        cat: 4,
+        cat: 1,
         zh: "音符描边",
         en: "Note outline",
         ja: "ノート枠線",
         ko: "노트 외곽선",
     },
     SettingItem {
-        cat: 4,
+        cat: 1,
         zh: "最小边框宽度",
         en: "Min border width",
         ja: "最小枠線幅",
         ko: "최소 테두리 폭",
     },
     SettingItem {
-        cat: 4,
+        cat: 1,
         zh: "GPU 裁剪",
         en: "GPU culling",
         ja: "GPU カリング",
         ko: "GPU 컬링",
     },
     SettingItem {
-        cat: 2,
+        cat: 1,
+        zh: "其他轨道变灰",
+        en: "Gray other tracks",
+        ja: "他のトラックをグレー表示",
+        ko: "다른 트랙 회색 표시",
+    },
+    SettingItem {
+        cat: 1,
+        zh: "细节层次",
+        en: "Level of detail",
+        ja: "詳細レベル",
+        ko: "세부 수준",
+    },
+    SettingItem {
+        cat: 4,
         zh: "MIDI 导入编码",
         en: "MIDI import encoding",
         ja: "MIDI インポートエンコーディング",
@@ -208,112 +222,112 @@ pub const SETTING_ITEMS: &[SettingItem] = &[
         ko: "자동화 밀도",
     },
     SettingItem {
-        cat: 5,
+        cat: 4,
         zh: "MIDI导出编码",
         en: "MIDI export encoding",
         ja: "MIDIエクスポートエンコーディング",
         ko: "MIDI 내보내기 인코딩",
     },
     SettingItem {
-        cat: 5,
+        cat: 4,
         zh: "曲线插值",
         en: "Curve interpolate",
         ja: "カーブ補間",
         ko: "커브 보간",
     },
     SettingItem {
-        cat: 5,
+        cat: 4,
         zh: "曲线密度",
         en: "Curve density",
         ja: "カーブ密度",
         ko: "커브 밀도",
     },
     SettingItem {
-        cat: 5,
+        cat: 4,
         zh: "RPN完整展开",
         en: "RPN full expand",
         ja: "RPN完全展開",
         ko: "RPN 전체 전개",
     },
     SettingItem {
-        cat: 5,
+        cat: 4,
         zh: "删除空轨",
         en: "Strip empty tracks",
         ja: "空トラック削除",
         ko: "빈 트랙 제거",
     },
     SettingItem {
-        cat: 5,
+        cat: 4,
         zh: "去重重叠音符",
         en: "Dedup overlaps",
         ja: "重なり削除",
         ko: "겹침 제거",
     },
     SettingItem {
-        cat: 7,
+        cat: 6,
         zh: "快捷键",
         en: "Shortcuts",
         ja: "ショートカット",
         ko: "단축키",
     },
     SettingItem {
-        cat: 7,
+        cat: 6,
         zh: "恢复默认快捷键",
         en: "Reset shortcuts",
         ja: "ショートカット初期化",
         ko: "단축키 초기화",
     },
     SettingItem {
-        cat: 9,
+        cat: 10,
         zh: "恢复出厂设置",
         en: "Factory reset",
         ja: "工場出荷時リセット",
         ko: "공장 초기화",
     },
     SettingItem {
-        cat: 8,
+        cat: 7,
         zh: "完成通知自动收起",
         en: "Auto-collapse finished notifications",
         ja: "完了通知の自動格納",
         ko: "완료 알림 자동 접기",
     },
     SettingItem {
-        cat: 8,
+        cat: 7,
         zh: "可操作通知自动收起",
         en: "Auto-collapse actionable notifications",
         ja: "操作可能な通知の自動格納",
         ko: "작업 가능 알림 자동 접기",
     },
     SettingItem {
-        cat: 8,
+        cat: 7,
         zh: "开启通知",
         en: "Enable notifications",
         ja: "通知を有効化",
         ko: "알림 활성화",
     },
     SettingItem {
-        cat: 10,
+        cat: 8,
         zh: "自动保存",
         en: "Auto save",
         ja: "自動保存",
         ko: "자동 저장",
     },
     SettingItem {
-        cat: 10,
+        cat: 8,
         zh: "自动保存间隔",
         en: "Auto-save interval",
         ja: "自動保存の間隔",
         ko: "자동 저장 간격",
     },
     SettingItem {
-        cat: 6,
+        cat: 5,
         zh: "允许重叠音符",
         en: "Allow overlapping notes",
         ja: "重なりノートを許可",
         ko: "겹치는 노트 허용",
     },
     SettingItem {
-        cat: 6,
+        cat: 5,
         zh: "重叠时移动策略",
         en: "Overlap move behavior",
         ja: "重なり時の移動動作",

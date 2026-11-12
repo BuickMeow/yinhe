@@ -13,7 +13,6 @@ use super::general::show_general_tab;
 use super::language::show_language_tab;
 use super::midi_export::show_midi_export_tab;
 use super::notification::show_notification_tab;
-use super::render::show_render_tab;
 use super::saving::show_saving_tab;
 use super::shortcuts::show_shortcuts_tab;
 use super::soundfont::show_soundfont_tab;
@@ -102,13 +101,13 @@ pub fn show_search_results(
             1 => show_appearance_tab(ui, settings, main_ctx),
             2 => show_language_tab(ui, settings),
             3 => show_audio_tab(ui, settings),
-            4 => show_render_tab(ui, settings),
-            5 => show_midi_export_tab(ui, settings),
-            6 => show_editing_tab(ui, settings),
-            7 => show_shortcuts_tab(ui, settings),
-            8 => show_notification_tab(ui, settings),
-            10 => show_saving_tab(ui, settings),
-            11 => show_soundfont_tab(ui, settings),
+            4 => show_midi_export_tab(ui, settings),
+            5 => show_editing_tab(ui, settings),
+            6 => show_shortcuts_tab(ui, settings),
+            7 => show_notification_tab(ui, settings),
+            8 => show_saving_tab(ui, settings),
+            9 => show_soundfont_tab(ui, settings),
+            // 10 = 恢复（通用页只剩恢复出厂设置）
             _ => show_general_tab(ui, settings),
         };
     }

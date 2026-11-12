@@ -104,5 +104,12 @@ pub fn show_appearance_tab(
         },
     );
 
+
+    // ── 渲染（全部是纯视觉选项，与"声音"无关）──
+    ui.add_space(12.0);
+    if crate::dialogs::settings::show_render_tab(ui, settings) {
+        changed = true;
+    }
+
     changed
 }
