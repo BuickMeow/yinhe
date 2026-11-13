@@ -272,7 +272,7 @@ struct ParamOverride {
 
 | 项 | 状态 |
 |---|---|
-| CC74 曲线 | ✅ 已逐值对齐（±4800 cents，8 kHz 可听 cap，SF2 范围钳制） |
+| CC74 曲线 | ✅ 已逐值对齐（±4800 cents，8 kHz 可听 cap，SF2 范围钳制；库无滤波器时 CC 无效） |
 | CC71 曲线 | ✅ Q=0 预设误差 <0.5 dB；Q=12 dB 预设正方向极端 127 差约 3 dB |
 | CC71<64 | ✅ 与 BASSMIDI 一致：不把 Q 压到库值以下 |
 | 力度→cutoff | ✅ 已抵消 xsynth 默认调制（BASSMIDI 不应用） |

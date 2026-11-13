@@ -10,9 +10,6 @@
 use crate::channel_state::{ChannelState, env_curve_frames};
 use crate::sf_parser::KeyInfo;
 
-/// SF2 `initialFilterFc` 全开值（绝对音分）换算成 Hz：8.176 × 2^(13500/1200)。
-/// 音色库没有声明滤波器时，CC74 从这个"全开"位置往下降。
-const FILTER_OPEN_HZ: f32 = 19_912.0;
 /// SF2 规范允许的 cutoff 范围（绝对音分）：约 20.6 Hz .. 19.912 kHz。
 const FILTER_MIN_CENTS: f32 = 1_500.0;
 const FILTER_MAX_CENTS: f32 = 13_500.0;
@@ -74,9 +71,11 @@ pub(crate) fn resonance_db_offset(cc: u8) -> f32 {
 /// 按通道 CC71/74 计算一个 voice 的最终滤波器系数与实际 cutoff。
 ///
 /// 语义对齐 BASSMIDI（实测）：
-/// - 64 = 中性；CC71/74 都只做**相对偏移**。
+/// - 64 = 中性；CC71/74 都只做**相对偏移**，且**只作用于音色库本身
+///   声明了低通滤波器的音色**。没有滤波器的音色，CC71/74 完全无效
+///   （实测 program 48 Strings：CC74 0..127、CC71 64..127 频谱逐 dB 不变）。
 /// - CC71>64 或 CC74<64 时，先把音色库 cutoff 限制到 8 kHz 以内，
-///   保证滤波器始终可听。
+///   保证滤波器可听（Ian @ un4seen 原话 + 实测）。
 /// - cutoff 最终 clamp 到 SF2 范围 [1500, 13500] 绝对音分。
 /// - CC71 的负偏移不能把 Q 压到音色库原始值以下（以 0 dB 为下限）。
 ///
@@ -92,11 +91,15 @@ pub(crate) fn filter_coeffs(
     let db = resonance_db_offset(ch.filter_resonance_cc) + ch.synth.resonance_db;
     let wants_darken = cents < 0.0;
     let wants_resonance = db > 0.0;
+    // 音色库没有滤波器：MIDI CC71/74 没有可偏移的对象 → 旁路（实测 BASSMIDI
+    // 对 program 48 Strings 的 CC 完全不响应）；但工程级旋钮是用户显式意图，
+    // 从 8 kHz 的可听位置启用滤波器，保证旋钮不会"拧了没反应"。
+    let project_wants = ch.synth.brightness_cents != 0.0 || ch.synth.resonance_db != 0.0;
+    if base_cutoff_hz <= 0.0 && !project_wants {
+        return (None, 0.0);
+    }
     // 中性 CC：完全按音色库原值（不做 cents 往返，保证与旧行为逐值一致）。
     if cents == 0.0 && db == 0.0 {
-        if base_cutoff_hz <= 0.0 {
-            return (None, 0.0);
-        }
         let (b0, b1, b2, a1, a2) = crate::synth::biquad_coeffs(
             filter_type,
             base_cutoff_hz,
@@ -105,14 +108,10 @@ pub(crate) fn filter_coeffs(
         );
         return (Some([b0, b1, b2, a1, a2]), base_cutoff_hz);
     }
-    // 库无滤波 + 两个 CC 都没有"需要可听"的意图：保持旁路。
-    if base_cutoff_hz <= 0.0 && !wants_darken && !wants_resonance {
-        return (None, 0.0);
-    }
     let mut base_hz = if base_cutoff_hz > 0.0 {
         base_cutoff_hz
     } else {
-        FILTER_OPEN_HZ
+        FILTER_AUDIBLE_CAP_HZ
     };
     if wants_darken || wants_resonance {
         base_hz = base_hz.min(FILTER_AUDIBLE_CAP_HZ);
@@ -240,19 +239,23 @@ mod tests {
         assert!((c[3] - reference.3).abs() < 1e-6);
     }
 
-    /// 音色库没有滤波器 + CC74 中性 = 旁路；CC74 < 64 才生成滤波器
-    /// （BASSMIDI 的"让亮度控制始终可听"取向）。
+    /// 音色库没有滤波器：CC74/CC71 一律无效（实测 BASSMIDI program 48
+    /// Strings 的频谱在 CC74 0..127、CC71 64..127 下逐 dB 不变）。
     #[test]
-    fn no_filter_library_responds_to_darkening_only() {
-        let (coeffs, cutoff) = filter_coeffs(0.0, 0.707, 0, &ch_with(64, 64), 48_000);
-        assert!(coeffs.is_none() && cutoff == 0.0);
-        let (coeffs, cutoff) = filter_coeffs(0.0, 0.707, 0, &ch_with(48, 64), 48_000);
+    fn no_filter_library_ignores_filter_cc() {
+        for (cc74, cc71) in [(64, 64), (0, 64), (32, 64), (48, 64), (127, 64), (64, 127)] {
+            let (coeffs, cutoff) = filter_coeffs(0.0, 0.707, 0, &ch_with(cc74, cc71), 48_000);
+            assert!(
+                coeffs.is_none() && cutoff == 0.0,
+                "cc74={cc74} cc71={cc71} 不应生成滤波器"
+            );
+        }
+        // 工程级旋钮是显式意图：从 8 kHz 启用，不能让旋钮"拧了没反应"。
+        let mut ch = ch_with(64, 64);
+        ch.synth.brightness_cents = 1200.0;
+        let (coeffs, cutoff) = filter_coeffs(0.0, 1.0, 0, &ch, 48_000);
         assert!(coeffs.is_some());
-        // CC74=48 → -1200 cents；无滤波库先压到 8 kHz → 4 kHz。
-        assert!((cutoff - 4_000.0).abs() < 5.0, "cutoff={cutoff}");
-        // 变亮（>64）不改变"无滤波器"。
-        let (coeffs, _) = filter_coeffs(0.0, 0.707, 0, &ch_with(127, 64), 48_000);
-        assert!(coeffs.is_none());
+        assert!((cutoff - 16_000.0).abs() < 5.0, "cutoff={cutoff}");
     }
 
     /// CC74 是双极相对偏移：0 = -9600 cents，127 = +9450 cents。
@@ -276,12 +279,12 @@ mod tests {
         assert!((neutral.1 - lowered.1).abs() < 1e-6);
     }
 
-    /// 音色库无滤波 + CC71>64：BASSMIDI 会启用一个 8 kHz 的共振滤波。
+    /// 有滤波器的音色 + CC71>64：cutoff 先压到 8 kHz 再加共振。
     #[test]
-    fn cc71_alone_engages_audible_filter_at_8k() {
-        let (coeffs, cutoff) = filter_coeffs(0.0, 1.0, 0, &ch_with(64, 96), 48_000);
+    fn cc71_caps_library_cutoff_at_8k() {
+        let (coeffs, cutoff) = filter_coeffs(19_912.0, 1.0, 0, &ch_with(64, 96), 48_000);
         assert!(coeffs.is_some());
-        assert!((cutoff - 8_000.0).abs() < 1e-3);
+        assert!((cutoff - 8_000.0).abs() < 1e-3, "cutoff={cutoff}");
     }
 
     /// CC74<64 时音色库 cutoff 先压到 8 kHz（否则高截止音色听不出变化）。

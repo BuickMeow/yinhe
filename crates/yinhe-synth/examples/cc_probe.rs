@@ -14,11 +14,17 @@ fn main() {
     let cc74: f32 = args.next().unwrap_or_else(|| "64".into()).parse().unwrap();
     let cc71: f32 = args.next().unwrap_or_else(|| "64".into()).parse().unwrap();
     let vel: u8 = args.next().unwrap_or_else(|| "100".into()).parse().unwrap();
+    let program: u8 = args.next().unwrap_or_else(|| "0".into()).parse().unwrap();
     let mut synth = CpuSynth::new(SR);
     synth
         .load_dense_soundfonts(0, std::slice::from_ref(&sf2))
         .unwrap();
     synth.load_events(vec![
+        SynthEvent::Control {
+            sample: 0,
+            channel: 0,
+            event: ControlEvent::ProgramChange(program),
+        },
         SynthEvent::Control {
             sample: 0,
             channel: 0,
