@@ -41,14 +41,13 @@ impl AudioRenderer {
                 Ok(WorkerResult::PreparedNotes {
                     model,
                     yin_model,
-                    audible_delta,
                     duration_samples,
                 }) => {
                     self.state
                         .duration_samples
                         .store(duration_samples, Ordering::Relaxed);
                     self.engine
-                        .apply_notes_only(model, yin_model, audible_delta, duration_samples);
+                        .apply_notes_only(model, yin_model, duration_samples);
                     self.request_loop_chase();
                     // GPU 路径：音符变化 → 事件列表失效（run 循环统一重建）
                     self.engine.invalidate_gpu_events();

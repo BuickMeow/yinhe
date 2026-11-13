@@ -92,8 +92,16 @@ impl AudioEngine {
         }
 
         // ── 音符事件（带 dense channel）──
+        let Some(yin_model) = self.yin_model.clone() else {
+            return events;
+        };
         for key in 0..128usize {
-            for note in self.audible_notes[key].iter() {
+            for note in yin_model.notes[key].iter() {
+                let Some(end_tick) =
+                    crate::prepare_model::audible_end(&yin_model, note, self.ignore_velocity)
+                else {
+                    continue;
+                };
                 let track = note.track as usize;
                 if self.skip_track.get(track).copied().unwrap_or(false) {
                     continue;
@@ -109,7 +117,7 @@ impl AudioEngine {
                 }
 
                 let start_sample = self.tick_to_sample(note.start_tick);
-                let end_sample = self.tick_to_sample(note.end_tick);
+                let end_sample = self.tick_to_sample(end_tick);
                 // 跨 seek 点的音符：在 seek 点重启（CPU seek_to 同语义）
                 let on_sample = if start_sample < seek_pos && end_sample > seek_pos {
                     seek_pos

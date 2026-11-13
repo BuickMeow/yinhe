@@ -6,7 +6,7 @@ use xsynth_core::channel::{ChannelAudioEvent, ControlEvent};
 use yinhe_core::YinModel;
 
 use yinhe_types::automation::{MidiBinding, ParamDevice, binding_max, builtin_param};
-use yinhe_types::{AutomationLane, AutomationTarget, KEY_COUNT, SegmentShape};
+use yinhe_types::{AutomationLane, AutomationTarget, SegmentShape};
 
 /// 播放事件流里的一条通道控制事件。
 ///
@@ -114,28 +114,6 @@ impl Ord for ActiveNote {
     }
 }
 
-/// 音频线程消费的可听音事件（力度 > 忽略阈值），时刻存 **tick**（u32，与模型一致）。
-/// 桶内按 `start_tick` 严格升序（YinModel.notes[key] 本身按 start_tick 排序，
-/// tick 天然单调，**无需再 sort**）。
-///
-/// `key` 不存（桶索引即 key），`id` 不存（音频 dispatch/seek 不需要，
-/// 主模型的 `NoteBucket` 已持有同一 `Arc`）。
-///
-/// tick 域化：1 亿音符下每条约 24→12 字节，且 dispatch 比较
-/// 不再需要 tick→sample 转换；只有"渲染段边界"才转 sample（每块少量）。
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub(crate) struct AudibleNote {
-    pub start_tick: u32,
-    pub end_tick: u32,
-    pub track: u16,
-    pub velocity: u8,
-}
-
-/// `PrepareNotes` 的增量结果：`[key] = Some(新桶)` 表示该 key 桶需要替换，
-/// `None` 表示桶未变化（音频线程保留旧数据与旧 cursor）。
-pub(crate) type AudibleDelta = Box<[Option<Vec<AudibleNote>>; KEY_COUNT]>;
-
 /// Pre-computed model data, built on a worker thread and applied
 /// atomically on the audio thread.
 pub(crate) struct PreparedModel {
@@ -145,9 +123,6 @@ pub(crate) struct PreparedModel {
     /// (for seek/chase dispatch) and the worker thread (for chase computation)
     /// without cloning the (potentially hundreds of thousands of) events.
     pub cc_events: Arc<Vec<SortedCC>>,
-    /// KEY_COUNT 个 key 桶的可听音（vel > 1），时刻为 tick（u32）。
-    /// 音频线程的 seek / dispatch 只读这份列表，不再访问 YinModel.notes。
-    pub audible_notes: Box<[Vec<AudibleNote>; KEY_COUNT]>,
     pub duration_samples: u64,
 }
 

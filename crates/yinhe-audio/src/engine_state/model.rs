@@ -12,7 +12,6 @@ use yinhe_types::KEY_COUNT;
 use crate::audio_model::{AudioModel, PreparedModel, flatten_automation_to_cc_events};
 use crate::channel::ChaseSkip;
 use crate::engine::AudioEngine;
-use crate::prepare_model::build_audible_notes;
 
 impl AudioEngine {
     pub(crate) fn load_model(&mut self, model: &Arc<YinModel>) {
@@ -34,21 +33,19 @@ impl AudioEngine {
             (crate::prepare_model::model_duration_seconds(model) * self.sample_rate as f64) as u64;
 
         // skip 的唯一来源：音频轨没有片段（无可听内容，note_count 恒为 0，
-        // 不能按音符数判定）。MIDI 轨不按 audible_count 跳过：空轨的音符本来
-        // 就不在 audible_notes 里（无需过滤），而自动化（CC/PB/RPN）必须照常
-        // 发送——此前用 audible_count==0 过滤会误杀挂在无音符轨上的全部
-        // 自动化事件（cyber-night 全部 17 万 CC/PB 被丢弃的根因）。
+        // 不能按音符数判定）。空轨的音符本来就不会被 dispatch（没有音符），
+        // 而自动化（CC/PB/RPN）必须照常发送——此前用 audible_count==0 过滤会
+        // 误杀挂在无音符轨上的全部自动化事件（cyber-night 的根因）。
         self.skip_track = model
             .tracks
             .iter()
             .map(|t| t.kind == yinhe_core::TrackKind::Audio && t.audio_clips.is_empty())
             .collect();
 
-        self.note_cursor = [0; KEY_COUNT];
+        self.note_cursor = [yinhe_types::NoteCursor::default(); KEY_COUNT];
         self.current_tick = 0;
         self.loop_wrap_offset = 0;
         self.yin_model = Some(Arc::clone(model));
-        self.audible_notes = build_audible_notes(model, self.ignore_velocity);
         self.model = Some(audio_model);
         self.apply_all_synth_params(model);
     }
@@ -89,7 +86,6 @@ impl AudioEngine {
         self.duration_samples = prepared.duration_samples;
         // Skip is ignored here — we keep whatever the user set via SkipTracks.
         let yin_model = prepared.yin_model;
-        self.audible_notes = prepared.audible_notes;
         self.model = Some(prepared.model);
 
         // 用当前 AM M/S 旁通集重建 lane 跳过掩码（模型可能是新结构）。
@@ -122,31 +118,26 @@ impl AudioEngine {
 
     /// 方案 A：只应用音符更新（`UpdateNotes` 路径）。
     /// 不重建 cc_events，不 seek，不 chase —— 保持当前播放位置和 channel state。
-    /// 只替换 `audible_delta` 中 dirty 桶并重置对应 note_cursor；
-    /// 干净桶保留旧数据与旧 cursor（增量语义，1 亿音符工程编辑不再全量重扫）。
+    ///
+    /// 音符本体就在 `YinModel.notes[key]` 里，直接换模型引用即可；游标按当前
+    /// tick 重新定位（256 次二分，O(log N)），不需要 worker 预构建任何增量。
     pub(crate) fn apply_notes_only(
         &mut self,
         model: AudioModel,
         yin_model: Arc<YinModel>,
-        audible_delta: crate::audio_model::AudibleDelta,
         duration_samples: u64,
     ) {
         self.setup_percussion(&model);
         self.duration_samples = duration_samples;
-        self.yin_model = Some(yin_model);
         self.model = Some(model);
 
-        // 只替换 dirty 桶：重置该桶的 note_cursor（保持当前播放位置，
-        // 重新找游标）。不需要 AllNotesOff / ResetControl / chase ——
-        // 当前活跃音符和 channel state 不变。
+        // 块末重定位：`<= current_tick` 的音符已经派发完，用 cursor_after
+        // 跳过同一 tick 上的音符，避免块边界上的音符被重复触发。
         let tick = self.current_tick;
-        for (key, bucket) in audible_delta.into_iter().enumerate() {
-            if let Some(bucket) = bucket {
-                self.audible_notes[key] = bucket;
-                self.note_cursor[key] =
-                    self.audible_notes[key].partition_point(|n| n.start_tick < tick);
-            }
+        for key in 0..KEY_COUNT {
+            self.note_cursor[key] = yin_model.notes[key].cursor_after(tick);
         }
+        self.yin_model = Some(yin_model);
     }
 
     fn setup_percussion(&mut self, model: &AudioModel) {

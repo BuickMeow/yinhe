@@ -1002,7 +1002,7 @@ impl App {
         if let Some(action) = doc.set_notes_velocity(&filtered) {
             doc.edit.pianoroll_view.base.dirty = true;
             doc.push_undo(action, t!("undo.edit_velocity").as_ref(), before);
-            // 纯音符 velocity 修改：只更新 audible_notes，不重建 CC，不 chase
+            // 纯音符 velocity 修改：只换模型引用，不重建 CC，不 chase
             self.notify_notes_changed();
         }
     }
@@ -1099,7 +1099,7 @@ impl App {
                 let action = doc.with_clip_normalization(action);
                 doc.edit.pianoroll_view.base.dirty = true;
                 doc.push_undo(action, &label, before);
-                // 纯音符移动/复制：只更新 audible_notes，不重建 CC，不 chase
+                // 纯音符移动/复制：只换模型引用，不重建 CC，不 chase
                 self.notify_notes_changed();
             }
         }
@@ -1203,7 +1203,7 @@ impl App {
                 _ => t!("undo.resize_note").to_string(),
             };
             doc.push_undo(action, &label, before);
-            // 纯音符拖动/缩放：只更新 audible_notes，不重建 CC，不 chase
+            // 纯音符拖动/缩放：只换模型引用，不重建 CC，不 chase
             self.notify_notes_changed();
         }
     }

@@ -12,7 +12,6 @@ use yinhe_mixer::{
     StripParams,
 };
 use yinhe_types::Interpolation;
-use yinhe_types::KEY_COUNT;
 use yinhe_types::SynthEngine;
 
 /// insert 链的目标位置。
@@ -96,15 +95,15 @@ pub enum AudioCommand {
     },
     /// Like LoadModel but does NOT stop playback.
     /// Replaces the model reference and resets note cursors.
-    /// Full rebuild: cc_events + audible_notes + chase.
+    /// Full rebuild: cc_events (+ chase).
     /// Used for automation edits / undo / redo / arrange drag (notes+automation).
     ReloadNotes {
         model: Arc<YinModel>,
     },
-    /// Only rebuild `audible_notes` — no CC rebuild, no chase.
+    /// Only swap the model reference — no CC rebuild, no chase.
     /// Used for pure note edits (move/drag/add/delete/paste/duplicate/transpose)
     /// where automation lanes are untouched. Keeps current playback position and
-    /// channel state intact, only affects future note dispatch.
+    /// channel state intact, only repositions note cursors for future dispatch.
     UpdateNotes {
         model: Arc<YinModel>,
     },
@@ -131,7 +130,7 @@ pub enum AudioCommand {
     SetLayerCount {
         count: Option<usize>,
     },
-    /// 忽略力度 ≤ threshold 的音符（0 = 不忽略）。触发 audible_notes 重建。
+    /// 忽略力度 ≤ threshold 的音符（0 = 不忽略）。dispatch 时实时判断，立即生效。
     SetIgnoreVelocity {
         threshold: u8,
     },
@@ -720,7 +719,7 @@ impl CpalAudioHandle {
     }
 
     /// Notify the audio thread that the MIDI model has changed (full rebuild:
-    /// cc_events + audible_notes + chase). Use for automation edits / undo / redo.
+    /// cc_events + chase). Use for automation edits / undo / redo.
     /// AM lane M/S 旁通独立于模型存在，由 [`Self::set_am_ms`] 维护。
     pub fn reload_notes(&self, model: Arc<YinModel>) {
         self.handle.send(AudioCommand::ReloadNotes { model });
@@ -765,11 +764,10 @@ pub(crate) enum ChasePurpose {
 
 /// Internal command sent from the renderer thread to the worker thread.
 pub(crate) enum WorkerCmd {
-    /// Full prepare: cc_events + audible_notes + duration (LoadModel / ReloadNotes).
-    PrepareModel(Arc<YinModel>, u32, u8),
-    /// Notes-only prepare: audible_notes + duration (UpdateNotes). No cc_events rebuild.
-    /// 末位为 `ignore_velocity`：与上次不同则强制全量重建全部 key 桶。
-    PrepareNotes(Arc<YinModel>, u8),
+    /// Full prepare: cc_events + duration (LoadModel / ReloadNotes).
+    PrepareModel(Arc<YinModel>, u32),
+    /// Notes-only prepare: 换模型引用 + duration（UpdateNotes），不重建 cc_events。
+    PrepareNotes(Arc<YinModel>),
     /// Compute channel-state snapshot at `target_tick` by **querying the model
     /// automation lanes**（每 lane 二分 + 曲线实时插值，不再从曲首逐条累计）。
     /// `generation` matches `AudioEngine::chase_generation` so the renderer can
@@ -802,12 +800,10 @@ pub(crate) enum WorkerCmd {
 
 pub(crate) enum WorkerResult {
     PreparedModel(PreparedModel),
-    /// Result of `PrepareNotes` — 只包含 dirty 桶的 audible_notes 增量 + duration + model refs。
-    /// `audible_delta[key] == None` 表示该桶未变化，音频线程保留旧桶和旧 cursor。
+    /// Result of `PrepareNotes` — 模型引用 + 派生快照 + duration。
     PreparedNotes {
         model: crate::audio_model::AudioModel,
         yin_model: Arc<YinModel>,
-        audible_delta: crate::audio_model::AudibleDelta,
         duration_samples: u64,
     },
     /// Result of `PrepareChase` — 256-channel state snapshot.
@@ -874,12 +870,6 @@ pub(crate) fn spawn_worker(
             // 下次循环优先从 pending 取，避免饿死后续命令。
             let mut pending: std::collections::VecDeque<WorkerCmd> =
                 std::collections::VecDeque::new();
-            // 上次 prepare 时的 note_revisions 快照：对比当前 model 得出 dirty 桶，
-            // 使 PrepareNotes 只重建变化的 key 桶（1 亿音符工程编辑不再全量扫描）。
-            // None = 尚未同步过（首次 PrepareNotes 全量）。
-            let mut last_synced_revisions: Option<[u64; KEY_COUNT]> = None;
-            // 上次 prepare 时的力度忽略阈值：与本次不同则所有桶都可能变化，强制全量。
-            let mut last_ignore_velocity: Option<u8> = None;
             loop {
                 let cmd = match pending.pop_front() {
                     Some(c) => c,
@@ -889,14 +879,14 @@ pub(crate) fn spawn_worker(
                     },
                 };
                 match cmd {
-                    WorkerCmd::PrepareModel(model, density, ignore_velocity) => {
+                    WorkerCmd::PrepareModel(model, density) => {
                         // 合并连续 PrepareModel，只保留最新
-                        let (latest, latest_density, latest_ignore) = merge_pending_commands(
+                        let (latest, latest_density) = merge_pending_commands(
                             &cmd_rx,
                             &mut pending,
-                            (model, density, ignore_velocity),
+                            (model, density),
                             |cmd| match cmd {
-                                WorkerCmd::PrepareModel(m, d, iv) => Ok((m, d, iv)),
+                                WorkerCmd::PrepareModel(m, d) => Ok((m, d)),
                                 other => Err(other),
                             },
                         );
@@ -905,52 +895,32 @@ pub(crate) fn spawn_worker(
                             &latest,
                             sample_rate,
                             latest_density,
-                            latest_ignore,
                         );
                         crate::audio_renderer::play_log(&format!(
                             "[play] worker prepare_model={:?}",
                             t_prepare.elapsed()
                         ));
-                        last_synced_revisions = Some(latest.note_revisions);
-                        last_ignore_velocity = Some(latest_ignore);
                         let _ = result_tx.send(WorkerResult::PreparedModel(prepared));
-                        // 构建 audible_notes/cc_events 的临时内存已释放：归还空闲页，
+                        // 构建 cc_events 的临时内存已释放：归还空闲页，
                         // 避免 RSS 跨阶段累积（大工程峰值内存只涨不跌的根因之一）。
                         yinhe_memtrace::purge_free_pages();
                     }
-                    WorkerCmd::PrepareNotes(model, ignore_velocity) => {
+                    WorkerCmd::PrepareNotes(model) => {
                         // 合并连续 PrepareNotes，只保留最新
-                        let (latest, latest_ignore) = merge_pending_commands(
+                        let (latest,) = merge_pending_commands(
                             &cmd_rx,
                             &mut pending,
-                            (model, ignore_velocity),
+                            (model,),
                             |cmd| match cmd {
-                                WorkerCmd::PrepareNotes(m, iv) => Ok((m, iv)),
+                                WorkerCmd::PrepareNotes(m) => Ok((m,)),
                                 other => Err(other),
                             },
                         );
-                        // 对比 note_revisions 算 dirty 桶：只重建变化的 key 桶。
-                        // rebuild() 会 bump 全部 KEY_COUNT 个 revision（全量变化），
-                        // 与模型侧 dirty 语义一致。阈值变化时所有桶都可能变，强制全量。
-                        let dirty: [bool; KEY_COUNT] = match &last_synced_revisions {
-                            Some(prev) if last_ignore_velocity == Some(latest_ignore) => {
-                                core::array::from_fn(|k| prev[k] != latest.note_revisions[k])
-                            }
-                            _ => [true; KEY_COUNT], // 首次同步或阈值变化：全量
-                        };
-                        let (audio_model, yin_model, audible_delta, duration_samples) =
-                            crate::prepare_model::prepare_notes_dirty(
-                                &latest,
-                                sample_rate,
-                                &dirty,
-                                latest_ignore,
-                            );
-                        last_synced_revisions = Some(latest.note_revisions);
-                        last_ignore_velocity = Some(latest_ignore);
+                        let (audio_model, yin_model, duration_samples) =
+                            crate::prepare_model::prepare_notes(&latest, sample_rate);
                         let _ = result_tx.send(WorkerResult::PreparedNotes {
                             model: audio_model,
                             yin_model,
-                            audible_delta,
                             duration_samples,
                         });
                         yinhe_memtrace::purge_free_pages();
@@ -2213,27 +2183,29 @@ mod tests {
         let (tx, rx) = unbounded::<WorkerCmd>();
         let m_old = Arc::new(yinhe_core::YinModel::default());
         let m_new = Arc::new(yinhe_core::YinModel::default());
-        tx.send(WorkerCmd::PrepareModel(Arc::clone(&m_old), 1, 1))
+        tx.send(WorkerCmd::PrepareModel(Arc::clone(&m_old), 1))
             .unwrap();
-        tx.send(WorkerCmd::PrepareModel(Arc::clone(&m_new), 2, 2))
+        tx.send(WorkerCmd::PrepareModel(Arc::clone(&m_new), 2))
             .unwrap();
-        tx.send(WorkerCmd::PrepareNotes(Arc::clone(&m_old), 3))
+        tx.send(WorkerCmd::PrepareNotes(Arc::clone(&m_old)))
             .unwrap();
 
         let mut pending = std::collections::VecDeque::new();
-        let (latest, density, ignore) =
-            merge_pending_commands(&rx, &mut pending, (Arc::clone(&m_old), 0u32, 0u8), |cmd| {
-                match cmd {
-                    WorkerCmd::PrepareModel(m, d, iv) => Ok((m, d, iv)),
-                    other => Err(other),
-                }
-            });
+        let (latest, density) = merge_pending_commands(
+            &rx,
+            &mut pending,
+            (Arc::clone(&m_old), 0u32),
+            |cmd| match cmd {
+                WorkerCmd::PrepareModel(m, d) => Ok((m, d)),
+                other => Err(other),
+            },
+        );
 
         assert!(
             Arc::ptr_eq(&latest, &m_new),
             "latest 必须被最新的 PrepareModel 覆盖"
         );
-        assert_eq!((density, ignore), (2, 2));
+        assert_eq!(density, 2);
         assert_eq!(pending.len(), 1, "异类命令应回填 pending");
         assert!(matches!(pending[0], WorkerCmd::PrepareNotes(..)));
         assert!(rx.is_empty(), "合并应取尽通道内命令");

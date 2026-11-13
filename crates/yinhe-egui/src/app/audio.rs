@@ -8,7 +8,7 @@ use crate::widgets::toast::state::ENGINE_PROGRESS_ID;
 
 impl App {
     /// Notify the audio engine that the active document's model has changed (full
-    /// rebuild: cc_events + audible_notes + chase). Use for automation edits,
+    /// rebuild: cc_events + chase). Use for automation edits,
     /// undo / redo, or any edit that may have touched automation lanes.
     ///
     /// 若 channel 激活状态翻转（首/末发声音符添加/删除，或 automation/PC 增删），
@@ -202,7 +202,7 @@ impl App {
         // 走 teardown_audio：渲染线程关机退回的 insert 处理器要交还机架
         // deactivate，不能直接丢句柄。
         self.teardown_audio();
-        // 旧引擎的 audible_notes/cc_events 已释放：归还空闲页，切文档后 RSS 不累积。
+        // 旧引擎的模型引用/cc_events 已释放：归还空闲页，切文档后 RSS 不累积。
         yinhe_memtrace::purge_free_pages();
 
         let doc = &self.workspace.documents[idx];

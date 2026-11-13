@@ -25,6 +25,16 @@ use crate::Note;
 /// （索引 0..=65535 是 u16 完整定义域）。
 pub const BUCKET_CHUNK_CAP: usize = 65536;
 
+/// 桶内游标：`chunk` 块下标 + `idx` 块内下标。
+///
+/// 音频线程顺序消费音符时只前进、不回退，因此不需要为整曲维护一份
+/// 平铺副本（旧 `audible_notes`）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NoteCursor {
+    pub chunk: u32,
+    pub idx: u32,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct NoteBucket {
     /// 块间有序（见模块不变量）。
@@ -113,6 +123,59 @@ impl NoteBucket {
     /// 跨块顺序迭代。
     pub fn iter(&self) -> impl Iterator<Item = &Note> + '_ {
         self.chunks.iter().flat_map(|c| c.iter())
+    }
+
+    /// 游标处的音符（自动跨块、跳过空块），返回**规范化后**的游标。
+    ///
+    /// 音频 dispatch 用它顺序消费整曲音符：光标单调前进，每个音符只碰一次，
+    /// 不需要预构建一份 `audible_notes` 副本。
+    #[inline]
+    pub fn peek(&self, mut c: NoteCursor) -> Option<(NoteCursor, &Note)> {
+        loop {
+            let chunk = self.chunks.get(c.chunk as usize)?;
+            if let Some(note) = chunk.get(c.idx as usize) {
+                return Some((c, note));
+            }
+            c.chunk += 1;
+            c.idx = 0;
+        }
+    }
+
+    /// 游标前进一个音符（越界由 [`Self::peek`] 负责跨块/收尾）。
+    #[inline]
+    pub fn advance(&self, c: &mut NoteCursor) {
+        c.idx += 1;
+    }
+
+    /// 第一个 `start_tick >= tick` 的游标位置（块间 + 块内二分）。
+    /// 第一个 `start_tick > tick` 的游标位置。
+    ///
+    /// 用于"`<= tick` 的音符已经派发完毕"的场景（块末重定位）：与
+    /// [`Self::cursor_at`] 的区别是同一 tick 上的音符不会重复触发。
+    #[inline]
+    pub fn cursor_after(&self, tick: u32) -> NoteCursor {
+        let next = self.starts.partition_point(|&s| s <= tick);
+        let Some(ci) = next.checked_sub(1) else {
+            return NoteCursor::default();
+        };
+        let idx = self.chunks[ci].partition_point(|n| n.start_tick <= tick);
+        NoteCursor {
+            chunk: ci as u32,
+            idx: idx as u32,
+        }
+    }
+
+    #[inline]
+    pub fn cursor_at(&self, tick: u32) -> NoteCursor {
+        let next = self.starts.partition_point(|&s| s < tick);
+        let Some(ci) = next.checked_sub(1) else {
+            return NoteCursor::default();
+        };
+        let idx = self.chunks[ci].partition_point(|n| n.start_tick < tick);
+        NoteCursor {
+            chunk: ci as u32,
+            idx: idx as u32,
+        }
     }
 
     /// 跨块顺序可变迭代。逐块 `Arc::make_mut`：模型被共享时，每个块都会
@@ -652,6 +715,94 @@ mod tests {
         b.sort();
         assert_sorted(&b);
         assert_eq!(b.first().unwrap().id, 2);
+    }
+
+    /// 游标顺序遍历：整曲每个音符恰好访问一次，跨块/空块都安全。
+    #[test]
+    fn cursor_walks_every_note_once() {
+        let notes: Vec<Note> = (0..(BUCKET_CHUNK_CAP * 2 + 7) as u32)
+            .map(|i| note(i, i * 3))
+            .collect();
+        let total = notes.len();
+        let b = NoteBucket::from_sorted(notes);
+        let mut c = NoteCursor::default();
+        let mut seen = 0usize;
+        while let Some((nc, n)) = b.peek(c) {
+            assert_eq!(n.id as usize, seen);
+            c = nc;
+            b.advance(&mut c);
+            seen += 1;
+        }
+        assert_eq!(seen, total);
+
+        // 全空桶 / 空桶在中间：peek 必须跳过。
+        let empty = NoteBucket::default();
+        assert!(empty.peek(NoteCursor::default()).is_none());
+        let mut b = NoteBucket::from_sorted(vec![note(1, 10)]);
+        b.chunks.push(Arc::new(Vec::new()));
+        b.starts.push(20);
+        b.chunks.push(Arc::new(vec![note(2, 30)]));
+        b.starts.push(30);
+        let mut c = NoteCursor::default();
+        let mut ids = Vec::new();
+        while let Some((nc, n)) = b.peek(c) {
+            ids.push(n.id);
+            c = nc;
+            b.advance(&mut c);
+        }
+        assert_eq!(ids, vec![1, 2]);
+    }
+
+    /// `cursor_at(tick)` = 第一个 `start_tick >= tick` 的位置。
+    #[test]
+    fn cursor_at_is_first_not_before_tick() {
+        let notes: Vec<Note> = [0u32, 5, 5, 9, 30, 1000]
+            .iter()
+            .enumerate()
+            .map(|(i, &t)| note(i as u32, t))
+            .collect();
+        let b = NoteBucket::from_sorted(notes);
+        for (tick, want) in [
+            (0u32, 0u32),
+            (1, 1),
+            (5, 1),
+            (6, 3),
+            (9, 3),
+            (10, 4),
+            (1000, 5),
+            (1001, 6),
+        ] {
+            let (_, n) = match b.peek(b.cursor_at(tick)) {
+                Some(v) => v,
+                None => {
+                    assert_eq!(want, 6, "tick={tick} 应到桶尾");
+                    continue;
+                }
+            };
+            assert_eq!(
+                n.start_tick,
+                [0, 5, 5, 9, 30, 1000][want as usize],
+                "tick={tick}"
+            );
+        }
+    }
+
+    /// `cursor_after` 跳过同一 tick 的全部音符（块末重定位不重复派发）。
+    #[test]
+    fn cursor_after_skips_notes_on_the_same_tick() {
+        let notes: Vec<Note> = [0u32, 5, 5, 9, 30]
+            .iter()
+            .enumerate()
+            .map(|(i, &t)| note(i as u32, t))
+            .collect();
+        let b = NoteBucket::from_sorted(notes);
+        let mut c = b.cursor_after(5);
+        let (_, n) = b.peek(c).unwrap();
+        assert_eq!(n.start_tick, 9);
+        c = b.cursor_after(30);
+        assert!(b.peek(c).is_none(), "越过最后一个音符");
+        c = b.cursor_after(100);
+        assert!(b.peek(c).is_none());
     }
 
     #[test]

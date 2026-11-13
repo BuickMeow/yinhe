@@ -5,7 +5,6 @@ use xsynth_core::channel_group::SynthEvent;
 use yinhe_mixer::PluginEvent;
 use yinhe_types::KEY_COUNT;
 
-use crate::audio_model::AudibleNote;
 use crate::channel::ChaseSkip;
 use crate::engine::AudioEngine;
 
@@ -219,7 +218,7 @@ impl AudioEngine {
 
         self.sample_position = sample;
         self.current_tick = self.sample_to_tick(sample);
-        self.note_cursor = [0; KEY_COUNT];
+        self.note_cursor = [yinhe_types::NoteCursor::default(); KEY_COUNT];
         self.cc_cursor = 0;
         self.active_notes.clear();
         self.clear_track_vel();
@@ -231,26 +230,21 @@ impl AudioEngine {
         //（跳过掩码为空，应用 chase 时不跳过任何控制器）。
         self.dispatched_skip = ChaseSkip::default();
 
-        // Reset note cursors to the correct position based on pre-built audible_notes.
-        // 桶内 start_tick 严格升序，partition_point 谓词单调，结果正确（修 P0-2）。
+        // 游标直接定位到模型桶里第一个 start_tick >= 当前位置的音符。
         let tick = self.current_tick;
-        for key in 0..KEY_COUNT {
-            let notes = self.audible_notes[key].as_slice();
-            let cursor = notes.partition_point(|n| n.start_tick < tick);
-            self.note_cursor[key] = cursor;
+        if let Some(model) = self.yin_model.clone() {
+            for key in 0..KEY_COUNT {
+                self.note_cursor[key] = model.notes[key].cursor_at(tick);
+            }
+        } else {
+            self.note_cursor = [yinhe_types::NoteCursor::default(); KEY_COUNT];
+        }
 
-            // 用户 seek：扫描 seek 点之前开始、seek 点之后才结束的音符，全部重启。
-            // Loop wrap 不重启跨点音符（循环区间内的长音在小节线处切断）。
-            if is_seek {
-                let mut to_restart: Vec<AudibleNote> = Vec::new();
-                for n in &notes[..cursor] {
-                    if n.end_tick > tick {
-                        to_restart.push(*n);
-                    }
-                }
-                for n in to_restart {
-                    self.restart_note(key, &n);
-                }
+        // 用户 seek：扫描 seek 点之前开始、seek 点之后才结束的音符，全部重启。
+        // Loop wrap 不重启跨点音符（循环区间内的长音在小节线处切断）。
+        if is_seek {
+            for (key, n, end_tick) in self.crossing_notes(tick) {
+                self.restart_note(key, &n, end_tick);
             }
         }
 

@@ -175,7 +175,7 @@ fn test_render_dispatches_note_inside_large_buffer_at_exact_sample() {
     // NoteOff at tick 1440 > block_end 1200, so no next event in range.
     assert_eq!(next, None);
 
-    assert_eq!(engine.note_cursor[60], 1);
+    assert_eq!(engine.note_cursor[60].idx, 1);
     assert_eq!(engine.active_notes.len(), 1);
     assert_eq!(engine.sample_position(), 0);
 }
@@ -297,19 +297,18 @@ fn test_audible_index_filters_vel_and_inactive_channel() {
     let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(mask));
     engine.load_model(&model);
 
-    assert_eq!(engine.note_cursor[60], 0);
+    assert_eq!(engine.note_cursor[60].idx, 0);
     // Note at key 60, start_tick=960, velocity=100 → should dispatch at tick 960
     //（44100 Hz：1 tick = 45.94 sample，960 tick = 44100 sample）。
     let next = engine.dispatch_and_find_next(960, 1306);
     // Next note (other track) starts at tick1440 = 66150 sample > block_end, so no next event.
     assert_eq!(next, None);
-    // audible_notes 桶里只有 vel>1 的音符（哑音在 worker 线程已剔除）。
-    // key 60 桶：1 个 vel=100 音符（start=44100），dispatch 后 cursor=1。
-    assert_eq!(engine.note_cursor[60], 1);
+    // key 60 桶有 3 个音符：vel 0/1 在 dispatch 时被跳过，vel=100 已派发。
+    assert_eq!(engine.note_cursor[60].idx, 3);
     assert_eq!(engine.active_notes.len(), 1);
     for key in 0..128usize {
         if key != 60 {
-            assert_eq!(engine.note_cursor[key], 0);
+            assert_eq!(engine.note_cursor[key].idx, 0);
         }
     }
 }
@@ -327,9 +326,9 @@ fn test_audible_index_empty_when_all_filtered() {
     // All notes have velocity ≤ 1 → no events should dispatch.
     let next = engine.dispatch_and_find_next(0, 60000);
     assert_eq!(next, None);
-    // audible_notes 桶为空（哑音在 worker 线程已剔除），cursor 保持 0。
-    assert_eq!(engine.note_cursor[60], 0);
-    assert_eq!(engine.note_cursor[61], 0);
+    // 力度 ≤1 的音符在 dispatch 时被跳过（游标越过它们），不产生事件。
+    assert_eq!(engine.note_cursor[60].idx, 1);
+    assert_eq!(engine.note_cursor[61].idx, 1);
 }
 
 #[test]
@@ -397,7 +396,7 @@ fn test_audible_index_uses_per_key_tempo_cursor() {
     let next = engine.dispatch_and_find_next(480, 2500);
     // NoteOff at end_tick=960 是下一个事件（早于 key 0 的 NoteOn at 2000）。
     assert_eq!(next, Some(960));
-    assert_eq!(engine.note_cursor[60], 1);
+    assert_eq!(engine.note_cursor[60].idx, 1);
     assert_eq!(engine.active_notes.len(), 1);
 
     let next = engine.dispatch_and_find_next(960, 2500);
@@ -409,7 +408,7 @@ fn test_audible_index_uses_per_key_tempo_cursor() {
     let next = engine.dispatch_and_find_next(2000, 2500);
     // key 0 NoteOn 后，NoteOff at end_tick=2480。
     assert_eq!(next, Some(2480));
-    assert_eq!(engine.note_cursor[0], 1);
+    assert_eq!(engine.note_cursor[0].idx, 1);
     // key 0 is active.
     assert_eq!(engine.active_notes.len(), 1);
 
@@ -943,7 +942,7 @@ fn test_track_existence_activates_channel() {
     // NoteOff at tick 480 = 1 beat @ 120 BPM @ 44100 Hz = 22050 samples.
     let next = engine.dispatch_and_find_next(0, 60000);
     assert_eq!(next, Some(480));
-    assert_eq!(engine.note_cursor[60], 1);
+    assert_eq!(engine.note_cursor[60].idx, 1);
     assert_eq!(engine.active_notes.len(), 1);
 }
 
@@ -994,16 +993,14 @@ fn test_first_note_on_fresh_document_dispatches_without_rebuild() {
 
     let next = engine.dispatch_and_find_next(0, 60000);
     assert_eq!(next, Some(480));
-    assert_eq!(engine.note_cursor[60], 1);
+    assert_eq!(engine.note_cursor[60].idx, 1);
     assert_eq!(engine.active_notes.len(), 1);
 }
 
-/// 增量 UpdateNotes 回归测试：
-/// 1. 编辑只 bump 对应 key 桶的 note_revisions（worker dirty 计算的前提）
-/// 2. `prepare_notes_dirty` 只重建 dirty 桶，其余桶 None
-/// 3. `apply_notes_only` 增量应用：dirty 桶新音符可 dispatch，干净桶 cursor 保留
+/// 增量 UpdateNotes 回归：换模型引用 + 按当前 tick 重定位游标后，
+/// 已派发的音符不会被重复触发，新音符正常进入 dispatch。
 #[test]
-fn test_notes_delta_incremental_apply_keeps_clean_bucket_cursor() {
+fn test_notes_update_repositions_cursors_without_replaying() {
     let sample_rate = 44100u32;
     let mut doc = Document::empty();
     doc.add_note(
@@ -1031,15 +1028,13 @@ fn test_notes_delta_incremental_apply_keeps_clean_bucket_cursor() {
     let mut engine = spawn_engine_for_doc(&doc, sample_rate);
     engine.playing = true;
 
-    // 播放推进一帧（512 帧 = 1024 samples）：两个音符 NoteOn，cursor 推进
+    // 播放推进一块：两个音符 NoteOn，游标越过它们
     let mut out = vec![0.0f32; 1024];
     engine.render(&mut out);
-    assert_eq!(engine.sample_position, 512);
-    assert_eq!(engine.note_cursor[60], 1);
-    assert_eq!(engine.note_cursor[64], 1);
+    assert_eq!(engine.note_cursor[60].idx, 1);
+    assert_eq!(engine.note_cursor[64].idx, 1);
 
-    // 编辑：key 60 桶加一个更晚的音符 → 只有 note_revisions[60] bump
-    let revs_before = doc.data.model.note_revisions;
+    // 编辑：key 60 桶加一个更晚的音符
     doc.add_note(
         1,
         NoteEvent {
@@ -1051,35 +1046,16 @@ fn test_notes_delta_incremental_apply_keeps_clean_bucket_cursor() {
         },
     );
     doc.data.bump_revision();
-    let revs_after = doc.data.model.note_revisions;
-    assert_ne!(revs_before[60], revs_after[60], "dirty 桶 revision bump");
-    assert_eq!(revs_before[64], revs_after[64], "干净桶 revision 不变");
 
-    // worker 语义：dirty = revisions 对比 → 只有 key 60
-    let dirty: [bool; KEY_COUNT] = core::array::from_fn(|k| revs_before[k] != revs_after[k]);
-    assert!(dirty[60]);
-    assert!(!dirty[64]);
+    let (audio_model, yin_model, duration) =
+        crate::prepare_model::prepare_notes(&doc.data.model, sample_rate);
+    engine.apply_notes_only(audio_model, yin_model, duration);
 
-    let (audio_model, yin_model, delta, _dur) =
-        crate::prepare_model::prepare_notes_dirty(&doc.data.model, sample_rate, &dirty, 1);
-    assert_eq!(
-        delta[60].as_ref().map(|b| b.len()),
-        Some(2),
-        "dirty 桶含新旧音符"
-    );
-    for key in 0..KEY_COUNT {
-        if key != 60 {
-            assert!(delta[key].is_none(), "非 dirty 桶不应重建");
-        }
-    }
+    // 两个桶都按当前 tick 重定位：已派发的 0..480 音符不会被重复派发
+    assert_eq!(engine.note_cursor[64].idx, 1, "干净桶游标越过已派发音符");
+    assert_eq!(engine.note_cursor[60].idx, 1, "新音符排在已派发音符之后");
 
-    engine.apply_notes_only(audio_model, yin_model, delta, 0);
-
-    // 干净桶（key 64）cursor 保留 = 1；dirty 桶（key 60）按 sample_position 重算 = 1
-    assert_eq!(engine.note_cursor[64], 1, "干净桶 cursor 保留");
-    assert_eq!(engine.note_cursor[60], 1, "dirty 桶 cursor 重算");
-
-    // 继续 dispatch：480 = 两个 NoteOff，960 = 新音符（960 tick）的 NoteOn
+    // 继续 dispatch：480 = 两个 NoteOff，960 = 新音符的 NoteOn
     let next = engine.dispatch_and_find_next(480, 60000);
     assert_eq!(next, Some(960), "新音符 NoteOn 位置");
     assert_eq!(
@@ -1091,7 +1067,7 @@ fn test_notes_delta_incremental_apply_keeps_clean_bucket_cursor() {
     assert_eq!(next, Some(1440), "新音符 NoteOff = 1440 tick");
     assert_eq!(engine.active_notes.len(), 1, "新音符已 NoteOn");
 }
-///
+
 /// 空 Document 已用满 0-15 通道，所以先 remove_track(16) 释放 channel 15，
 /// 再 add_track 让新 track 分配到 channel 15。
 #[test]
@@ -1136,7 +1112,7 @@ fn test_add_track_then_rebuild_activates_new_channel() {
     engine.playing = true;
     let next = engine.dispatch_and_find_next(0, 60000);
     assert_eq!(next, Some(480));
-    assert_eq!(engine.note_cursor[60], 1);
+    assert_eq!(engine.note_cursor[60].idx, 1);
     assert_eq!(engine.active_notes.len(), 1);
 }
 
@@ -1190,8 +1166,8 @@ fn test_remove_track_then_rebuild_deactivates_channel() {
     engine.playing = true;
     let next = engine.dispatch_and_find_next(0, 60000);
     assert_eq!(next, Some(480));
-    assert_eq!(engine.note_cursor[60], 1);
-    assert_eq!(engine.note_cursor[64], 0);
+    assert_eq!(engine.note_cursor[60].idx, 1);
+    assert_eq!(engine.note_cursor[64].idx, 0);
     assert_eq!(engine.active_notes.len(), 1);
 }
 
@@ -1816,8 +1792,12 @@ fn test_full_render_all_events_exactly_once() {
     assert!(max_active >= 2, "渲染过程中应存在叠层音符");
     for key in 0..128usize {
         assert_eq!(
-            engine.note_cursor[key],
-            engine.audible_notes[key].len(),
+            engine.note_cursor[key].idx as usize,
+            engine
+                .yin_model
+                .as_ref()
+                .map(|m| m.notes[key].len())
+                .unwrap_or(0),
             "key {key} 的桶应全部 dispatch"
         );
     }
@@ -1854,8 +1834,8 @@ fn test_fast_tempo_zero_length_segments_no_hang() {
     engine.render(&mut out);
     assert_eq!(engine.sample_position, 512, "整块渲染完成，无死循环");
     assert_eq!(engine.active_notes.len(), 0, "两个音符都 NoteOff");
-    assert_eq!(engine.note_cursor[60], 1);
-    assert_eq!(engine.note_cursor[64], 1);
+    assert_eq!(engine.note_cursor[60].idx, 1);
+    assert_eq!(engine.note_cursor[64].idx, 1);
 }
 
 /// seek 到任意位置后 dispatch：跨 seek 点的音符不重复 NoteOn
@@ -1887,48 +1867,58 @@ fn test_seek_then_dispatch_no_duplicate_note_on() {
     assert_eq!(engine.active_notes.len(), 0);
 }
 
-/// audible_notes 免 sort 依赖：模型桶乱序插入、rebuild 排序后，
-/// 音频桶保持 start_tick 严格升序（dispatch 单调 cursor 的前提）。
+/// dispatch 直接读模型桶，依赖桶内 start_tick 升序：乱序插入 + rebuild 后
+/// 模型桶必须已排序（游标单调前进的前提）。
 #[test]
-fn test_audible_buckets_sorted_without_sort() {
+fn test_model_buckets_sorted_for_dispatch() {
     let model = make_model_with_tempo(
         vec![(0, 120.0)],
         vec![(60, 960, 1440), (60, 0, 480), (60, 480, 960)], // 乱序插入
     );
-    let audible = crate::prepare_model::build_audible_notes(&model, 1);
     for key in 0..128usize {
-        let bucket = &audible[key];
-        for w in bucket.windows(2) {
-            assert!(
-                w[0].start_tick < w[1].start_tick,
-                "key {key} 桶必须严格升序（免 sort 依赖模型桶顺序）"
-            );
+        let bucket = &model.notes[key];
+        let mut prev: Option<u32> = None;
+        for n in bucket.iter() {
+            if let Some(p) = prev {
+                assert!(p <= n.start_tick, "key {key} 桶必须按 start_tick 升序");
+            }
+            prev = Some(n.start_tick);
         }
     }
-    assert_eq!(audible[60].len(), 3, "三个音符都进桶");
-    assert_eq!(audible[60][0].start_tick, 0);
-    assert_eq!(audible[60][2].start_tick, 960);
+    let starts: Vec<u32> = model.notes[60].iter().map(|n| n.start_tick).collect();
+    assert_eq!(starts, vec![0, 480, 960]);
 }
 
-/// 力度忽略阈值：0 = 全保留；2 = 过滤力度 ≤2；默认 1 = 过滤力度 ≤1。
+/// 力度阈值在 dispatch 时生效：阈值 1 只派发 vel>1 的音符。
 #[test]
-fn test_audible_notes_respect_ignore_velocity() {
-    let model = make_model_with_notes(vec![
+fn test_dispatch_filters_velocity_threshold() {
+    let model = Arc::new(make_model_with_notes(vec![
         (60, 0, 480, 1, 0),
         (60, 480, 960, 2, 0),
         (60, 960, 1440, 3, 0),
-    ]);
+    ]));
+    let mut engine = AudioEngine::new(48000, ChannelLayout::from_mask(vec![true; 16]));
+    engine.load_model(&model);
+    engine.playing = true;
+    engine.ignore_velocity = 1;
 
-    let v0 = crate::prepare_model::build_audible_notes(&model, 0);
-    assert_eq!(v0[60].len(), 3, "阈值 0 不忽略任何音符");
+    // tick 0：vel=1 被过滤 → 没有 NoteOn，下一个边界是 480
+    let next = engine.dispatch_and_find_next(0, 2000);
+    assert_eq!(next, Some(480), "vel=1 不派发，边界跳到下一个音符");
+    assert_eq!(engine.active_notes.len(), 0);
 
-    let v1 = crate::prepare_model::build_audible_notes(&model, 1);
-    assert_eq!(v1[60].len(), 2, "阈值 1 过滤力度 ≤1");
-    assert_eq!(v1[60][0].velocity, 2);
+    // tick 480：vel=2 派发
+    let next = engine.dispatch_and_find_next(480, 2000);
+    assert_eq!(next, Some(960));
+    assert_eq!(engine.active_notes.len(), 1);
 
-    let v2 = crate::prepare_model::build_audible_notes(&model, 2);
-    assert_eq!(v2[60].len(), 1, "阈值 2 过滤力度 ≤2");
-    assert_eq!(v2[60][0].velocity, 3);
+    // 阈值改为 0 → vel=1 的音符重新可听（不影响已经过去的 0 tick，
+    // 但说明阈值只是 dispatch 期的判断，无缓存可失效）
+    engine.ignore_velocity = 0;
+    let next = engine.dispatch_and_find_next(960, 2000);
+    assert_eq!(next, Some(1440));
+    // vel=2 在 960 结束（NoteOff），vel=3 同时 NoteOn → 活跃数仍为 1。
+    assert_eq!(engine.active_notes.len(), 1, "vel=3 已派发、vel=2 已结束");
 }
 
 // ---------------------------------------------------------------------------
@@ -4405,6 +4395,32 @@ fn prof_blackmidi_cost_breakdown() {
             });
             probe.tick_to_sample(peak_tick)
         };
+
+        {
+            let beat_secs = model
+                .tempo_map
+                .tick_to_seconds((peak_beat + 1) as u64 * ppq as u64)
+                - model
+                    .tempo_map
+                    .tick_to_seconds(peak_beat as u64 * ppq as u64);
+            let probe = {
+                let mut p = AudioEngine::new(sr, layout.clone());
+                p.handle_command(AudioCommand::LoadModel {
+                    model: Arc::clone(&model),
+                });
+                p
+            };
+            let start_tick = probe.sample_to_tick(start_sample);
+            let end_tick = probe.sample_to_tick(start_sample + (prof_secs * sr as f64) as u64);
+            let mut count = 0usize;
+            for key in 0..256 {
+                count += model.notes[key].range(start_tick, end_tick).count();
+            }
+            eprintln!(
+                "  峰值拍时长={beat_secs:.3}s bpm≈{:.0} 渲染窗口=[{start_tick},{end_tick}) 音符数={count}",
+                60.0 / beat_secs.max(1e-9)
+            );
+        }
 
         // 渲染 prof_secs 秒（调用方负责 Play/重置）
         let render_secs =

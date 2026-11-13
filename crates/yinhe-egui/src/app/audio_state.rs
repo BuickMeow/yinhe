@@ -121,8 +121,8 @@ pub(crate) struct AudioState {
     /// "本轮起点之后的完成数"（`sf_loaded_count - sf_loaded_base`）。
     pub sf_loaded_base: usize,
     /// 引擎当前已应用的力度忽略阈值（`SetIgnoreVelocity` 发送后更新）。
-    /// `None` = 引擎未就绪。阈值变化要全量重建 audible_notes，必须去重：
-    /// 仅在真正变化时发送，避免每次关闭设置都重扫 1 亿音符。
+    /// `None` = 引擎未就绪。阈值现在是 dispatch 期实时判断，仍做去重：
+    /// 避免每次关闭设置都白发一条命令。
     pub applied_ignore_velocity: Option<u8>,
     /// 引擎重建/切换的等待 toast 起始时刻（`Some` = 进行中）。
     /// `rebuild_audio_if_needed` 建卡时置位，音频就绪/失败时收尾清空。

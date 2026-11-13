@@ -1,11 +1,8 @@
 use std::sync::Arc;
 
 use yinhe_core::YinModel;
-use yinhe_types::KEY_COUNT;
 
-use crate::audio_model::{
-    AudibleDelta, AudibleNote, AudioModel, PreparedModel, flatten_automation_to_cc_events,
-};
+use crate::audio_model::{AudioModel, PreparedModel, flatten_automation_to_cc_events};
 
 /// 全曲时长（秒）：MIDI/自动化末尾与音频片段末尾取大者。
 pub(crate) fn model_duration_seconds(model: &YinModel) -> f64 {
@@ -31,112 +28,57 @@ pub(crate) fn model_duration_seconds(model: &YinModel) -> f64 {
 /// This is the expensive part; the result is applied cheaply on the audio thread.
 ///
 /// `density`: Linear/Curve 自动化段的中间事件 tick 间隔。
-/// `ignore_velocity`：忽略力度 ≤ 该值的音符（0 = 不忽略）。
 /// 不接收 AM M/S 旁通：所有 lane 全量展平，旁通由 dispatch 动态掩码负责。
 pub(crate) fn prepare_model(
     model: &Arc<YinModel>,
     sample_rate: u32,
     density: u32,
-    ignore_velocity: u8,
 ) -> PreparedModel {
     let cc_events = flatten_automation_to_cc_events(model, density);
 
     let duration_samples = (model_duration_seconds(model) * sample_rate as f64) as u64;
 
-    let audible_notes = build_audible_notes(model, ignore_velocity);
-
     PreparedModel {
         model: AudioModel::from_model(model),
         yin_model: Arc::clone(model),
         cc_events,
-        audible_notes,
         duration_samples,
     }
 }
 
-/// Notes-only 增量准备：只重建 `dirty` 掩码标记的 key 桶，其余桶保持不动。
+/// Notes-only 准备：只换模型引用与派生快照，不再构建任何音符副本。
 ///
-/// 用于 `UpdateNotes` 纯音符编辑：1 亿音符工程每次编辑只扫变化的桶，
-/// 而不是全量重扫 KEY_COUNT 桶 × 全部音符。`dirty` 由 worker 对比前后
-/// `note_revisions` 得出（全 true = 全量，首次同步/全量 rebuild 后）。
-pub(crate) fn prepare_notes_dirty(
+/// 旧的「dirty 桶 + `audible_notes` 增量」整条链已删除：dispatch 直接从
+/// `YinModel.notes[key]` 顺序读，力度过滤/0 BPM 剪切在派发时逐音符现算。
+pub(crate) fn prepare_notes(
     model: &Arc<YinModel>,
     sample_rate: u32,
-    dirty: &[bool; KEY_COUNT],
-    ignore_velocity: u8,
-) -> (AudioModel, Arc<YinModel>, AudibleDelta, u64) {
+) -> (AudioModel, Arc<YinModel>, u64) {
     let duration_samples = (model_duration_seconds(model) * sample_rate as f64) as u64;
-
-    let mut delta: AudibleDelta = Box::new(core::array::from_fn(|_| None));
-    for key in 0..KEY_COUNT {
-        if dirty[key] {
-            delta[key] = Some(build_bucket(model, key, ignore_velocity));
-        }
-    }
     (
         AudioModel::from_model(model),
         Arc::clone(model),
-        delta,
         duration_samples,
     )
 }
 
-/// 单桶构建：key 桶内 vel > `ignore_velocity` 的音符，时刻存 tick（u32）。
-/// 模型桶按 start_tick 排序，tick 天然单调，**无需 sort**（旧 sample 域因
-/// tempo 变速段的局部非单调才需要保险性 sort）。
-fn build_bucket(model: &YinModel, key: usize, ignore_velocity: u8) -> Vec<AudibleNote> {
-    let mut dst: Vec<AudibleNote> =
-        Vec::with_capacity(audible_capacity(model, key, ignore_velocity));
-    for n in model.notes[key].iter() {
-        if n.velocity <= ignore_velocity {
-            continue;
-        }
-        // 0 BPM 剪切：落在剪切区间的音符不发声；跨过剪切起点的音符在起点截断。
-        let Some(end_tick) = model.tempo_map.playable_note_end(n.start_tick, n.end_tick) else {
-            continue;
-        };
-        dst.push(AudibleNote {
-            start_tick: n.start_tick,
-            end_tick,
-            track: n.track,
-            velocity: n.velocity,
-        });
-    }
-    dst
-}
-
-/// `build_bucket` 的容量上界。
+/// dispatch 时的可听性判定：力度过滤 + 0 BPM 剪切。
 ///
-/// 按全部音符预留时，力度 ≤ 阈值的哑音（黑乐谱常见 vel=1 视觉音符）会白占
-/// 内存。默认阈值 1 直接复用模型已维护的桶内可听统计（O(桶内轨道数)）；
-/// 阈值 0 等价于全部音符；其它阈值逐音符计数。0 BPM 剪切掉的音符会让容量
-/// 略大于实际，仍然是安全上界。
-fn audible_capacity(model: &YinModel, key: usize, ignore_velocity: u8) -> usize {
-    match ignore_velocity {
-        0 => model.notes[key].len(),
-        1 => model.bucket_track_stats[key]
-            .values()
-            .map(|&(_, audible)| audible as usize)
-            .sum(),
-        threshold => model.notes[key]
-            .iter()
-            .filter(|n| n.velocity > threshold)
-            .count(),
-    }
-}
-
-/// 遍历 YinModel KEY_COUNT 个 key 桶，过滤力度 ≤ `ignore_velocity` 的音符
-///（时刻存 tick）。桶内天然升序（YinModel.notes[key] 按 start_tick 升序）。
-pub(crate) fn build_audible_notes(
+/// 返回截断后的 `end_tick`；`None` = 这个音符不发声。
+/// 逐音符现算的成本 = 一次比较 + 一次 skip-range 查找（通常为空），
+/// 整曲只随光标顺序扫一遍，不需要预构建 `audible_notes` 副本。
+#[inline]
+pub(crate) fn audible_end(
     model: &YinModel,
+    note: &yinhe_types::Note,
     ignore_velocity: u8,
-) -> Box<[Vec<AudibleNote>; KEY_COUNT]> {
-    let mut buckets: Box<[Vec<AudibleNote>; KEY_COUNT]> =
-        Box::new(std::array::from_fn(|_| Vec::new()));
-    for key in 0..KEY_COUNT {
-        buckets[key] = build_bucket(model, key, ignore_velocity);
+) -> Option<u32> {
+    if note.velocity <= ignore_velocity {
+        return None;
     }
-    buckets
+    model
+        .tempo_map
+        .playable_note_end(note.start_tick, note.end_tick)
 }
 
 #[cfg(test)]
@@ -146,53 +88,49 @@ mod tests {
     use yinhe_core::{ConductorData, NoteEvent, YinModel};
     use yinhe_types::{AutomationEvent, SegmentShape};
 
-    use super::build_bucket;
+    use super::audible_end;
 
-    fn note(start: u32, end: u32, key: u8) -> NoteEvent {
+    fn note(start: u32, end: u32, key: u8, velocity: u8) -> NoteEvent {
         NoteEvent {
             id: 0,
             start_tick: start,
             end_tick: end,
             key,
-            velocity: 100,
+            velocity,
         }
     }
 
-    /// 容量按可听音符数而非全部音符数预留：哑音多的工程不再白占内存。
-    #[test]
-    fn build_bucket_reserves_audible_capacity() {
+    fn model_with(notes: Vec<NoteEvent>) -> YinModel {
         let mut m = YinModel::default();
-        m.load_track_notes(vec![vec![
-            NoteEvent {
-                velocity: 0,
-                ..note(0, 10, 60)
-            },
-            NoteEvent {
-                velocity: 1,
-                ..note(10, 20, 60)
-            },
-            note(20, 30, 60),
-            note(30, 40, 60),
-        ]]);
+        m.load_track_notes(vec![notes]);
         m.rebuild();
+        m
+    }
 
-        let audible = build_bucket(&m, 60, 1);
-        assert_eq!(audible.len(), 2);
-        assert_eq!(
-            audible.capacity(),
-            2,
-            "容量应等于可听音符数，而不是全部音符数"
-        );
-        assert_eq!(
-            build_bucket(&m, 60, 0).capacity(),
-            4,
-            "阈值 0 = 不忽略，容量为全部音符数"
-        );
-        assert_eq!(
-            build_bucket(&m, 60, 2).capacity(),
-            2,
-            "阈值 > 1 走逐音符计数"
-        );
+    fn first(model: &YinModel, key: usize) -> yinhe_types::Note {
+        model.notes[key].iter().next().copied().expect("note")
+    }
+
+    /// 力度 ≤ 阈值不发声；> 阈值按原样发声。
+    #[test]
+    fn velocity_threshold_filters_at_dispatch() {
+        let m = model_with(vec![
+            note(0, 10, 60, 0),
+            note(10, 20, 60, 1),
+            note(20, 30, 60, 2),
+            note(30, 40, 60, 100),
+        ]);
+        assert_eq!(audible_end(&m, &first(&m, 60), 1), None, "vel 0 被过滤");
+        // 第二个音符 vel=1 同样被过滤
+        let second = m.notes[60].iter().nth(1).copied().unwrap();
+        assert_eq!(audible_end(&m, &second, 1), None);
+        let third = m.notes[60].iter().nth(2).copied().unwrap();
+        assert_eq!(audible_end(&m, &third, 1), Some(30));
+        // 阈值 0：只有 vel 0 被过滤
+        assert_eq!(audible_end(&m, &second, 0), Some(20));
+        // 阈值 100：全部过滤
+        let last = m.notes[60].iter().nth(3).copied().unwrap();
+        assert_eq!(audible_end(&m, &last, 100), None);
     }
 
     #[test]
@@ -211,25 +149,17 @@ mod tests {
             ..Default::default()
         };
         m.load_track_notes(vec![vec![
-            note(0, 1000, 60),   // 跨剪切起点 → 截断到 480
-            note(600, 700, 61),  // 剪切内 → 不发声
-            note(960, 1440, 62), // 剪切后 → 保留
+            note(0, 1000, 60, 100),   // 跨剪切起点 → 截断到 480
+            note(600, 700, 61, 100),  // 剪切内 → 不发声
+            note(960, 1440, 62, 100), // 剪切后 → 保留
         ]]);
         m.rebuild();
 
-        let cross = build_bucket(&m, 60, 0);
-        assert_eq!(cross.len(), 1);
-        assert_eq!(cross[0].start_tick, 0);
-        assert_eq!(cross[0].end_tick, 480);
-
-        assert!(build_bucket(&m, 61, 0).is_empty());
-
-        let after = build_bucket(&m, 62, 0);
-        assert_eq!(after.len(), 1);
-        assert_eq!(after[0].end_tick, 1440);
+        let cross = m.notes[60].iter().next().copied().unwrap();
+        assert_eq!(audible_end(&m, &cross, 0), Some(480));
+        let cut = m.notes[61].iter().next().copied().unwrap();
+        assert_eq!(audible_end(&m, &cut, 0), None);
+        let after = m.notes[62].iter().next().copied().unwrap();
+        assert_eq!(audible_end(&m, &after, 0), Some(1440));
     }
 }
-
-#[cfg(test)]
-#[path = "prepare_model_tests.rs"]
-mod perf_tests;

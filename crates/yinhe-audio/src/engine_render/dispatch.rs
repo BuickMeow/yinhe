@@ -9,7 +9,7 @@ use crate::audio_model::ActiveNote;
 use crate::engine::AudioEngine;
 
 /// 把一个通道事件路由到当前 CPU 后端（字段级展开，避免 `&mut self` 与
-/// dispatch 循环持有的 `cc_events`/`audible_notes` 不可变借用冲突）：
+/// dispatch 循环持有的 `cc_events`/模型音符不可变借用冲突）：
 /// - yinhe `CpuSynth` 存在 → 转 `yinhe_synth::SynthEvent` 投递（按 sample 生效）；
 /// - GPU 模式 → no-op（事件由 `build_gpu_events` 在 seek/模型变化时重建）；
 /// - 否则 → xsynth `ChannelSet`。
@@ -193,22 +193,41 @@ impl AudioEngine {
         }
 
         // ── NoteOn + 找下一个 NoteOn 边界（单次 KEY_COUNT 桶扫描）──
-        // audible_notes 桶内 start_tick 升序（模型桶有序，无需 sort），
-        // 桶里只有 vel>1 的音符，无需运行时过滤。
+        // 直接读模型桶：游标单调前进，整曲每个音符只碰一次；力度阈值与
+        // 0 BPM 剪切在这里逐音符现算，不再维护 `audible_notes` 副本。
+        let Some(model) = self.yin_model.clone() else {
+            return next;
+        };
         for key in 0..yinhe_types::KEY_COUNT {
-            let notes = self.audible_notes[key].as_slice();
+            let bucket = &model.notes[key];
             let mut cursor = self.note_cursor[key];
 
-            while cursor < notes.len() {
-                let note = &notes[cursor];
+            while let Some((nc, note)) = bucket.peek(cursor) {
+                cursor = nc;
+                // 先做可听性判断：被力度阈值过滤的音符不是事件边界，
+                // 否则每个哑音都会多触发一次 dispatch（每次都要扫 256 个 key）。
+                let audible = crate::prepare_model::audible_end(&model, note, self.ignore_velocity);
                 if note.start_tick > tick {
-                    // 该桶下一个待处理音符 → 记录为边界候选
+                    if audible.is_none() {
+                        // 哑音不是边界：本块内直接越过；到块尾就停，
+                        // 留给下一块继续（避免一次调用一路扫到曲尾）。
+                        if note.start_tick >= block_end_tick {
+                            break;
+                        }
+                        bucket.advance(&mut cursor);
+                        continue;
+                    }
+                    // 该桶下一个待处理**可听**音符 → 记录为边界候选
                     if note.start_tick < block_end_tick {
                         next = Some(next.map_or(note.start_tick, |t| t.min(note.start_tick)));
                     }
                     break;
                 }
-                // start_tick ≤ tick → dispatch NoteOn
+                // start_tick ≤ tick 且可听 → dispatch NoteOn；被过滤则前进。
+                let Some(end_tick) = audible else {
+                    bucket.advance(&mut cursor);
+                    continue;
+                };
                 let track = note.track as usize;
                 let ch = self
                     .model
@@ -221,7 +240,7 @@ impl AudioEngine {
                         // 力度表记账（所有后端统一；GPU 模式音符不入 active_notes，
                         // 故此处独立于后端分支，保证各后端力度表一致）。
                         self.meter_notes.push(std::cmp::Reverse((
-                            note.end_tick,
+                            end_tick,
                             track as u16,
                             note.velocity,
                         )));
@@ -256,7 +275,7 @@ impl AudioEngine {
                                     dense,
                                     clap_channel: clap_ch,
                                     is_instrument: true,
-                                    end_tick: note.end_tick,
+                                    end_tick,
                                     track: track as u16,
                                 }));
                             }
@@ -266,7 +285,7 @@ impl AudioEngine {
                             // 自身的 end_tick），voice 到期自释 + damper 快照，无需
                             // NoteOff；xsynth 回退路径才走 `route_cpu_event!`。
                             let sample = self.segment_start_sample;
-                            let end_sample = self.tick_to_sample(note.end_tick);
+                            let end_sample = self.tick_to_sample(end_tick);
                             let vel = note.velocity;
                             if let Some(cs) = self.cpu_synth.as_mut() {
                                 cs.send_event(yinhe_synth::SynthEvent::NoteOn {
@@ -293,13 +312,13 @@ impl AudioEngine {
                                 dense,
                                 clap_channel: 0,
                                 is_instrument: false,
-                                end_tick: note.end_tick,
+                                end_tick,
                                 track: track as u16,
                             }));
                         }
                     }
                 }
-                cursor += 1;
+                bucket.advance(&mut cursor);
             }
             self.note_cursor[key] = cursor;
         }

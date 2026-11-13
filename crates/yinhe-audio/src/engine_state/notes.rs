@@ -7,39 +7,54 @@ use xsynth_core::channel_group::SynthEvent;
 use yinhe_mixer::PluginEvent;
 use yinhe_types::KEY_COUNT;
 
-use crate::audio_model::{ActiveNote, AudibleNote};
+use crate::audio_model::ActiveNote;
 use crate::engine::AudioEngine;
 
 impl AudioEngine {
+    /// 扫描与 `tick` 相交的可听音符（`start < tick < end`）。
+    ///
+    /// 只扫 `[tick - max_note_len, tick)` 这段有界窗口——旧实现扫 `notes[..cursor]`
+    /// 是从曲首开始的 O(N) 全量前缀扫描，seek 越晚越慢。返回
+    /// `(key, note, 0 BPM 截断后的 end_tick)`。
+    pub(super) fn crossing_notes(&self, tick: u32) -> Vec<(usize, yinhe_types::Note, u32)> {
+        let Some(model) = self.yin_model.as_ref() else {
+            return Vec::new();
+        };
+        let lo = tick.saturating_sub(model.max_note_len);
+        let mut out = Vec::new();
+        for key in 0..KEY_COUNT {
+            for n in model.notes[key].range(lo, tick) {
+                if let Some(end_tick) =
+                    crate::prepare_model::audible_end(model, n, self.ignore_velocity)
+                    && end_tick > tick
+                {
+                    out.push((key, *n, end_tick));
+                }
+            }
+        }
+        out
+    }
+
     /// 重启当前 tick 处仍有效的乐器跨点音符（pause→resume 用）。
     pub(super) fn restart_crossing_instrument_notes(&mut self) {
         let tick = self.current_tick;
-        for key in 0..KEY_COUNT {
-            let notes = self.audible_notes[key].as_slice();
-            let cursor = notes.partition_point(|n| n.start_tick < tick);
-            let mut to_restart: Vec<AudibleNote> = Vec::new();
-            for n in &notes[..cursor] {
-                if n.end_tick > tick {
-                    let ch = self
-                        .model
-                        .as_ref()
-                        .map(|m| m.track_channel(n.track as usize))
-                        .unwrap_or(0);
-                    if self.channel_plugin_dense(ch).is_some() {
-                        to_restart.push(*n);
-                    }
-                }
-            }
-            for n in to_restart {
-                self.restart_note(key, &n);
+        for (key, n, end_tick) in self.crossing_notes(tick) {
+            let ch = self
+                .model
+                .as_ref()
+                .map(|m| m.track_channel(n.track as usize))
+                .unwrap_or(0);
+            if self.channel_plugin_dense(ch).is_some() {
+                self.restart_note(key, &n, end_tick);
             }
         }
     }
 
     /// 重启一个跨点音符（seek / unmute 复用）：NoteOn + 记入 active_notes。
-    /// `key`：桶索引。`n`：audible_notes 里的源音符（已是当前 tick 之前的跨点音符，
-    /// 由调用方过滤 end_tick > tick）。同步检查 skip_track（mute 轨跳过不重启）。
-    pub(super) fn restart_note(&mut self, key: usize, n: &AudibleNote) {
+    /// `key`：桶索引。`n`：源音符（已是当前 tick 之前的跨点音符，由调用方过滤
+    /// `end_tick > tick`）；`end_tick` 为 0 BPM 截断后的实际结束 tick。
+    /// 同步检查 skip_track（mute 轨跳过不重启）。
+    pub(super) fn restart_note(&mut self, key: usize, n: &yinhe_types::Note, end_tick: u32) {
         let track = n.track as usize;
         let ch = self
             .model
@@ -63,7 +78,7 @@ impl AudioEngine {
                     dense: dense as u32,
                     clap_channel: (ch & 0x0F) as u8,
                     is_instrument: true,
-                    end_tick: n.end_tick,
+                    end_tick,
                     track: track as u16,
                 }));
             }
@@ -79,7 +94,7 @@ impl AudioEngine {
             return;
         }
         let sample = self.sample_position;
-        let end_sample = self.tick_to_sample(n.end_tick);
+        let end_sample = self.tick_to_sample(end_tick);
         if let Some(cs) = self.cpu_synth.as_mut() {
             cs.send_event(yinhe_synth::SynthEvent::NoteOn {
                 sample,
@@ -102,7 +117,7 @@ impl AudioEngine {
             dense,
             clap_channel: 0,
             is_instrument: false,
-            end_tick: n.end_tick,
+            end_tick,
             track: track as u16,
         }));
     }
@@ -146,20 +161,12 @@ impl AudioEngine {
     }
 
     /// 即时 unmute：重启该轨的跨点音符（start < current_tick < end）。
-    /// 代价 O(该轨在各 key 桶 [..cursor] 的音符数)，只扫受影响轨道。
+    /// 只扫 `max_note_len` 窗口，并按轨道过滤。
     pub(super) fn restart_track_crossing_notes(&mut self, track: u16) {
         let tick = self.current_tick;
-        for key in 0..KEY_COUNT {
-            let notes = self.audible_notes[key].as_slice();
-            let cursor = notes.partition_point(|n| n.start_tick < tick);
-            let mut to_restart: Vec<AudibleNote> = Vec::new();
-            for n in &notes[..cursor] {
-                if n.track == track && n.end_tick > tick {
-                    to_restart.push(*n);
-                }
-            }
-            for n in to_restart {
-                self.restart_note(key, &n);
+        for (key, n, end_tick) in self.crossing_notes(tick) {
+            if n.track == track {
+                self.restart_note(key, &n, end_tick);
             }
         }
     }
