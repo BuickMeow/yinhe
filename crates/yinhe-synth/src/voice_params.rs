@@ -125,7 +125,7 @@ pub(crate) fn filter_coeffs(
     let q_base = base_resonance.max(1e-3);
     let q = (q_base * 10.0f32.powf(db / 20.0)).max(q_base.min(1.0));
     // 上限防止极端参数让 biquad 数值不稳定（自激啸叫）；
-    // BASSMIDI 在 12 dB 预设 + CC71=127 时 Q≈25，上限必须高于它。
+    // 上限取 40：再高只会让 127 档的峰值更窄、频带均值反而更低。
     let q = q.clamp(0.1, 40.0);
     let (b0, b1, b2, a1, a2) =
         crate::synth::biquad_coeffs(filter_type, cutoff, q, sample_rate as f32);
