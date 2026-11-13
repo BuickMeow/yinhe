@@ -169,7 +169,7 @@ LGPL-3.0 在静态链接场景要求：
 3. **覆盖层落在工程里，库文件只读**
    覆盖值存 `.yin`（类比现有 `SfChannelOverride`），可导出/分享为独立的 `.sfypreset` 小文件。库文件保持只读 → 可校验、可分享、不会被误改。
 
-**必须先解决的一个技术点**：`cutoff` 现在是**加载期烘焙 biquad 系数**（`bake_biquad`）。要让“亮度”实时生效，系数必须移到 **note_on 时计算**：
+**必须先解决的一个技术点**（2026-11-13 已解决）：`cutoff` 曾经是**加载期烘焙 biquad 系数**（`bake_biquad`）。现在系数已移到 **note_on 时计算**（`voice_params::filter_coeffs`，含 CC71/74 相对偏移），见提交 `1e0ff952` 与 `spec-yinhe-dsp.md` D24。：
 - CPU：每音符一次 `tan`，成本可接受；
 - GPU：本来就在上传 per-voice 状态，直接带上。
 

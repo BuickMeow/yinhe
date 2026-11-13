@@ -383,7 +383,6 @@ pub struct VoiceChannel {
     stream_params: AudioStreamParams,
     control_event_data: ControlEventData,
     voice_control_data: VoiceControlData,
-    cutoff_filter: MultiChannelBiQuad,  // 通道级 CC74 cutoff
 }
 
 impl VoiceChannel {
@@ -403,15 +402,15 @@ pub struct ControlEventData {
     pub volume: ValueLerp,    // CC7, 0.0-1.0
     pub pan: ValueLerp,       // CC10
     pub expression: ValueLerp, // CC11
-    pub cutoff: Option<f32>,  // CC74
-    pub resonance: Option<f32>, // CC71
+    pub cutoff: u8,      // CC74（64 = 中性；per-voice 相对偏移）
+    pub resonance: u8,   // CC71（64 = 中性）
 }
 
 // CC 处理（与 xsynth 一致）:
 // CC0=Bank, CC6/26/100/101=RPN, CC7=Volume, CC8/10=Pan,
 // CC11=Expression, CC64=Damper, CC71=Resonance, CC72=Release,
-// CC73=Attack, CC74=Cutoff, CC120=AllSoundsOff,
-// CC121=ResetAllControllers, CC123=AllNotesOff
+// CC73=Attack, CC71/74=Balance/Brightness（per-voice 滤波偏移）,
+// CC120=AllSoundsOff, CC121=ResetAllControllers, CC123=AllNotesOff
 ```
 
 ```rust
@@ -620,7 +619,7 @@ hound = "3.5"
 - [ ] `soundfont/loader.rs` — SFZ 加载
 - [ ] `channel/control.rs` — 完整 CC（CC71/72/73/74）
 - [ ] RPN 完整实现（pitch bend sensitivity, fine tune, coarse tune）
-- [ ] 通道效果完善（volume x expression 平滑、pan 等功率、cutoff 滤波）
+- [ ] 通道效果完善（volume x expression 平滑、pan 等功率）；CC71/74 已改为 per-voice（见 spec-yinhe-dsp D24）
 
 ### Phase 4: 优化与打磨（2-3 天）
 
