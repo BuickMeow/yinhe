@@ -229,3 +229,7 @@ mod tests {
         assert_eq!(after[0].end_tick, 1440);
     }
 }
+
+#[cfg(test)]
+#[path = "prepare_model_tests.rs"]
+mod perf_tests;
