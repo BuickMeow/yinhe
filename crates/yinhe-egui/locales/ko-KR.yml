@@ -1310,3 +1310,13 @@ track.drum_channel: "드럼 채널"
 undo.edit_track_info: "트랙 정보 편집"
 arrange.rename_track: "트랙 이름 변경"
 history.start: "시작"
+
+# 内置音源参数窗口
+synth_params.title: "Instrument Parameters"
+synth_params.all: "All"
+synth_params.tone: "Tone"
+synth_params.level: "Level"
+synth_params.envelope: "Envelope"
+synth_params.pitch: "Pitch"
+synth_params.reset_hint: "Reset all parameters"
+synth_params.reset_one: "Reset this parameter"

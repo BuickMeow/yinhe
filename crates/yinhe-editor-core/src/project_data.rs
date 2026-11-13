@@ -149,8 +149,20 @@ impl ProjectData {
     /// 从轨道重建；保存前必须从 model 补回，否则通道默认乐器会被清空。
     pub fn sync_mapping_file(&mut self) {
         let channel_instruments = self.model.channel_instruments;
+        let synth_params: Vec<_> = self
+            .model
+            .synth_params
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| !p.is_default())
+            .map(|(ch, p)| yinhe_yin::ChannelSynthParams {
+                channel: ch.min(255) as u8,
+                params: *p,
+            })
+            .collect();
         self.mapping_file = MappingFile::from_tracks(&self.model.tracks);
         self.mapping_file.channel_instruments = channel_instruments;
+        self.mapping_file.synth_params = synth_params;
     }
 
     /// Construct a `ProjectData` with a given model and file structures.

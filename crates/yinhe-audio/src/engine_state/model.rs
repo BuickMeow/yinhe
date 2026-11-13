@@ -50,6 +50,28 @@ impl AudioEngine {
         self.yin_model = Some(Arc::clone(model));
         self.audible_notes = build_audible_notes(model, self.ignore_velocity);
         self.model = Some(audio_model);
+        self.apply_all_synth_params(model);
+    }
+
+    /// 应用某全局通道的工程级音源参数（含默认值，确保换工程时清空旧覆盖）。
+    pub(crate) fn apply_synth_params(&mut self, channel: u8, params: yinhe_types::SynthParams) {
+        let dense = self.channel_layout.dense_for(channel as usize);
+        if dense == u32::MAX {
+            return;
+        }
+        if let Some(cs) = self.cpu_synth.as_mut() {
+            cs.set_synth_params(dense, params);
+        }
+        if let Some(gs) = self.gpu_synth.as_mut() {
+            gs.set_synth_params(dense, params);
+        }
+    }
+
+    /// 全量应用工程里的音源参数（加载/切歌后调用）。
+    pub(crate) fn apply_all_synth_params(&mut self, model: &YinModel) {
+        for ch in 0..model.synth_params.len().min(256) {
+            self.apply_synth_params(ch as u8, model.synth_params[ch]);
+        }
     }
 
     /// Apply a `PreparedModel` computed on a worker thread.
@@ -75,6 +97,10 @@ impl AudioEngine {
         self.yin_model = Some(yin_model);
         let track_count = self.yin_model.as_ref().map(|m| m.tracks.len()).unwrap_or(0);
         self.reset_track_vel(track_count);
+        let model = self.yin_model.clone();
+        if let Some(model) = model {
+            self.apply_all_synth_params(&model);
+        }
 
         // Seek to the audible position to avoid triggering all notes
         // before the current position (which would cause voice stealing).

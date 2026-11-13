@@ -1305,3 +1305,13 @@ track.drum_channel: "Canal de bateria"
 undo.edit_track_info: "Editar informações da faixa"
 arrange.rename_track: "Renomear faixa"
 history.start: "Início"
+
+# 内置音源参数窗口
+synth_params.title: "Instrument Parameters"
+synth_params.all: "All"
+synth_params.tone: "Tone"
+synth_params.level: "Level"
+synth_params.envelope: "Envelope"
+synth_params.pitch: "Pitch"
+synth_params.reset_hint: "Reset all parameters"
+synth_params.reset_one: "Reset this parameter"

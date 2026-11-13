@@ -1306,3 +1306,13 @@ track.drum_channel: "鼓通道"
 undo.edit_track_info: "編輯音軌資訊"
 arrange.rename_track: "重新命名音軌"
 history.start: "開始"
+
+# 内置音源参数窗口
+synth_params.title: "乐器参数"
+synth_params.all: "全部"
+synth_params.tone: "音色"
+synth_params.level: "音量"
+synth_params.envelope: "包络"
+synth_params.pitch: "音高"
+synth_params.reset_hint: "重置全部参数"
+synth_params.reset_one: "重置此参数"

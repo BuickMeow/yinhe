@@ -560,3 +560,19 @@ fn cc123_releases_voices() {
     synth.render_to_mixer(&mut bufs);
     assert_eq!(synth.voice_count(), 0, "All Notes Off 后尾音应结束");
 }
+
+/// 工程级音源参数必须在 load_events / seek 的通道重置中保留。
+#[test]
+fn synth_params_survive_channel_reset() {
+    let mut synth = CpuSynth::new(48_000);
+    let params = yinhe_types::SynthParams {
+        brightness_cents: 1200.0,
+        volume_db: -6.0,
+        ..Default::default()
+    };
+    synth.set_synth_params(0, params);
+    synth.load_events(Vec::new());
+    assert_eq!(synth.channels[0].synth, params);
+    synth.seek(0);
+    assert_eq!(synth.channels[0].synth, params);
+}

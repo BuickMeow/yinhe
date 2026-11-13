@@ -84,6 +84,8 @@ pub(crate) struct PreviewNoteIn {
     pub(crate) duration: Option<u64>,
     /// 目标位置自动化状态。
     pub(crate) state: ChannelState,
+    /// 工程级内置音源参数（预览也跟随旋钮）。
+    pub(crate) synth_params: yinhe_types::SynthParams,
     /// 目标位置 sample（组内相对时值依据）。
     pub(crate) target_sample: u64,
 }
@@ -529,6 +531,7 @@ mod tests {
             velocity: 100,
             duration: None,
             state: ChannelState::default(),
+            synth_params: Default::default(),
             target_sample: 0,
         };
         engine.preview_notes(vec![note(60)], true);
@@ -619,6 +622,7 @@ mod tests {
                 velocity: 100,
                 duration: None,
                 state: ChannelState::default(),
+                synth_params: Default::default(),
                 target_sample: 1000,
             },
             PreviewNoteIn {
@@ -627,6 +631,7 @@ mod tests {
                 velocity: 90,
                 duration: None,
                 state: ChannelState::default(),
+                synth_params: Default::default(),
                 target_sample: 5800,
             },
         ]);
@@ -666,6 +671,7 @@ mod tests {
                 velocity: 100,
                 duration: None,
                 state: ChannelState::default(),
+                synth_params: Default::default(),
                 target_sample: 0,
             },
             PreviewNoteIn {
@@ -674,6 +680,7 @@ mod tests {
                 velocity: 90,
                 duration: None,
                 state: ChannelState::default(),
+                synth_params: Default::default(),
                 target_sample: 100_000, // 真实时值差 100000 帧（> 2 秒）
             },
         ]);
@@ -752,6 +759,7 @@ mod tests {
                 velocity: 100,
                 duration: None,
                 state: ChannelState::default(),
+                synth_params: Default::default(),
                 target_sample: 5000,
             },
             PreviewNoteIn {
@@ -760,6 +768,7 @@ mod tests {
                 velocity: 90,
                 duration: None,
                 state: ChannelState::default(),
+                synth_params: Default::default(),
                 target_sample: 10000,
             },
         ]);
@@ -792,6 +801,7 @@ mod tests {
                 velocity: 100,
                 duration: Some(48_000), // 1s gate
                 state: ChannelState::default(),
+                synth_params: Default::default(),
                 target_sample: 0,
             }]);
         }
@@ -825,6 +835,7 @@ mod tests {
                 velocity: 100,
                 duration: None,
                 state: ChannelState::default(),
+                synth_params: Default::default(),
                 target_sample: 0,
             },
             PreviewNoteIn {
@@ -833,6 +844,7 @@ mod tests {
                 velocity: 90,
                 duration: Some(300),
                 state: ChannelState::default(),
+                synth_params: Default::default(),
                 target_sample: 1000,
             },
         ]);
@@ -870,6 +882,7 @@ mod tests {
                 velocity: 100,
                 duration: Some(48_000),
                 state: ChannelState::default(),
+                synth_params: Default::default(),
                 target_sample: 0,
             },
             PreviewNoteIn {
@@ -878,6 +891,7 @@ mod tests {
                 velocity: 90,
                 duration: Some(48_000),
                 state: ChannelState::default(),
+                synth_params: Default::default(),
                 target_sample: 100_000, // 延迟音符：尚未触发
             },
         ]);
@@ -891,6 +905,7 @@ mod tests {
             velocity: 100,
             duration: Some(48_000),
             state: ChannelState::default(),
+            synth_params: Default::default(),
             target_sample: 0,
         }]);
         assert!(engine.pending.is_empty(), "旧组待触发音符被清掉");

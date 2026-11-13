@@ -48,6 +48,8 @@ pub(crate) struct ChannelState {
     pub(crate) filter_resonance_cc: u8,
     /// 滤波器 CC 已变化、活跃 voice 尚未重算系数（块内首个段边界消费）。
     pub(crate) filter_dirty: bool,
+    /// 工程级内置音源参数（默认 = 不改变音色库）。
+    pub(crate) synth: yinhe_types::SynthParams,
     // RPN 选择器状态（CC100/101）
     rpn_msb: i8,
     rpn_lsb: i8,
@@ -82,6 +84,7 @@ impl ChannelState {
             filter_cutoff_cc: 64,
             filter_resonance_cc: 64,
             filter_dirty: false,
+            synth: yinhe_types::SynthParams::default(),
             rpn_msb: -1,
             rpn_lsb: -1,
             sample_rate,
@@ -189,10 +192,12 @@ impl ChannelState {
                         let bank = self.bank;
                         let bank_lsb = self.bank_lsb;
                         let program = self.program;
+                        let synth = self.synth;
                         *self = ChannelState::new(self.sample_rate);
                         self.bank = bank;
                         self.bank_lsb = bank_lsb;
                         self.program = program;
+                        self.synth = synth;
                         self.filter_dirty = true;
                         action.damper_released = true;
                         action.filter_changed = true;

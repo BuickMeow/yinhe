@@ -481,6 +481,24 @@ fn track_order_preserved_when_ports_interleave() {
     assert!(m2.tracks[1..].iter().all(|t| t.automation_lanes.is_empty()));
 }
 
+/// 工程级内置音源参数：只落非默认项，加载后按通道恢复。
+#[test]
+fn synth_params_roundtrip() {
+    let mut m = YinModel::default();
+    m.synth_params_mut(3).brightness_cents = 1200.0;
+    m.synth_params_mut(3).volume_db = -6.0;
+    m.synth_params_mut(3).attack_scale = 2.0;
+
+    let bytes = save_yin_bytes(&m).unwrap();
+    // 未修改的通道不应膨胀 project 文件（只存非默认项）。
+    let m2 = load_yin_bytes(&bytes).unwrap();
+    let p = m2.synth_params_at(3);
+    assert_eq!(p.brightness_cents, 1200.0);
+    assert_eq!(p.volume_db, -6.0);
+    assert_eq!(p.attack_scale, 2.0);
+    assert!(m2.synth_params_at(0).is_default());
+}
+
 #[test]
 fn empty_model_roundtrips() {
     let m1 = YinModel::default();

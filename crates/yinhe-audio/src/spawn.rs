@@ -108,6 +108,11 @@ pub enum AudioCommand {
     UpdateNotes {
         model: Arc<YinModel>,
     },
+    /// 设置某全局通道的内置音源参数（工程级覆盖，实时生效）。
+    SetSynthParams {
+        channel: u8,
+        params: yinhe_types::SynthParams,
+    },
     /// 全量设置各源通道（0..256）的音色库（批量；只含需要加载的非空配置）。
     /// 每个通道独立；未列出的通道保持当前音色库（通常是全局默认）。
     SetSoundFonts {
@@ -434,6 +439,7 @@ impl AudioCommand {
             AudioCommand::ReloadNotes { .. } => ("ReloadNotes", false),
             AudioCommand::UpdateNotes { .. } => ("UpdateNotes", false),
             AudioCommand::SetSoundFonts { .. } => ("SetSoundFonts", true),
+            AudioCommand::SetSynthParams { .. } => ("SetSynthParams", false),
             AudioCommand::SkipTracks { .. } => ("SkipTracks", false),
             AudioCommand::SetAmMs { .. } => ("SetAmMs", false),
             AudioCommand::SetLayerCount { .. } => ("SetLayerCount", true),

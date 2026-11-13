@@ -130,6 +130,16 @@ fn save_yin_bytes_inner(
     };
     let mut mapping = MappingFile::from_tracks(&model.tracks);
     mapping.channel_instruments = model.channel_instruments;
+    mapping.synth_params = model
+        .synth_params
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| !p.is_default())
+        .map(|(ch, p)| crate::mapping::ChannelSynthParams {
+            channel: ch.min(255) as u8,
+            params: *p,
+        })
+        .collect();
     save_yin_bytes_with_files_inner(model, &project, &mapping, None, on_progress)
 }
 
@@ -335,9 +345,14 @@ fn load_yin_bytes_inner(
             is_drum: true,
         });
     }
+    let mut synth_params = vec![yinhe_types::SynthParams::default(); 256];
+    for entry in &mapping.synth_params {
+        synth_params[entry.channel as usize] = entry.params;
+    }
     let mut model = YinModel {
         conductor: Arc::new(model_data.conductor),
         channel_instruments,
+        synth_params,
         tracks,
         meta: ProjectMeta {
             name: project.name.clone(),

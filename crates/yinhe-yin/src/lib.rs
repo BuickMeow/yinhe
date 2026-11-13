@@ -66,7 +66,7 @@ pub use io::{
     save_yin_bytes_with_sf, save_yin_with_files, save_yin_with_files_progress, save_yin_with_sf,
     write_file_atomic,
 };
-pub use mapping::{ChannelMap, MappingFile, PortMap, TrackMap};
+pub use mapping::{ChannelMap, ChannelSynthParams, MappingFile, PortMap, TrackMap};
 pub use progress::{YinProgress, YinProgressStage};
 pub use project_meta::{ProjectFile, SfChannelOverride, SfEntryJson};
 

@@ -28,6 +28,12 @@ fn cents_to_hz(cents: f32) -> f32 {
     8.176 * 2.0f32.powf(cents / 1200.0)
 }
 
+/// 工程级声像偏移的左右增益（pan=0 时恰为 1.0，不改变原始声像）。
+fn pan_offset_gains(pan: f32) -> (f32, f32) {
+    let angle = (pan.clamp(-1.0, 1.0) + 1.0) * std::f32::consts::FRAC_PI_4;
+    ((angle.cos() * 1.42).min(1.0), (angle.sin() * 1.42).min(1.0))
+}
+
 /// CC72/73 修正后的 attack/release 帧数（region 原始值 + 通道当前 CC）。
 pub(crate) fn env_frames_for(
     ch: &ChannelState,
@@ -82,8 +88,8 @@ pub(crate) fn filter_coeffs(
     ch: &ChannelState,
     sample_rate: u32,
 ) -> (Option<[f32; 5]>, f32) {
-    let cents = cutoff_cents_offset(ch.filter_cutoff_cc);
-    let db = resonance_db_offset(ch.filter_resonance_cc);
+    let cents = cutoff_cents_offset(ch.filter_cutoff_cc) + ch.synth.brightness_cents;
+    let db = resonance_db_offset(ch.filter_resonance_cc) + ch.synth.resonance_db;
     let wants_darken = cents < 0.0;
     let wants_resonance = db > 0.0;
     // 中性 CC：完全按音色库原值（不做 cents 往返，保证与旧行为逐值一致）。
@@ -170,19 +176,24 @@ impl VoiceParams {
     /// 由 (key, vel) 快照 + 通道状态展开（与 xsynth spawner 语义对齐）。
     pub(crate) fn from_key_info(info: &KeyInfo, ch: &ChannelState, sample_rate: u32) -> Self {
         let sr = sample_rate as f32;
-        let orig_attack_frames = info.ampeg_attack * sr;
-        let orig_release_frames = info.ampeg_release * sr;
+        let synth = ch.synth;
+        let attack_scale = synth.attack_scale.clamp(0.1, 10.0);
+        let release_scale = synth.release_scale.clamp(0.1, 10.0);
+        let orig_attack_frames = info.ampeg_attack * sr * attack_scale;
+        let orig_release_frames = info.ampeg_release * sr * release_scale;
         let (attack_frames, release_frames) =
             env_frames_for(ch, orig_attack_frames, orig_release_frames, sample_rate);
         let filter_type = crate::sf_parser::filter_type_code(info.filter_type);
         let (biquad, cutoff) =
             filter_coeffs(info.cutoff, info.resonance, filter_type, ch, sample_rate);
+        let tune_mult = 2.0f32.powf(synth.tune_cents / 1200.0);
+        let (pan_l, pan_r) = pan_offset_gains(synth.pan);
         Self {
-            speed: info.speed_mult * ch.pitch_multiplier(),
-            base_speed: info.speed_mult,
-            base_gain: info.volume,
-            pan_l: info.pan_l,
-            pan_r: info.pan_r,
+            speed: info.speed_mult * ch.pitch_multiplier() * tune_mult,
+            base_speed: info.speed_mult * tune_mult,
+            base_gain: info.volume * 10.0f32.powf(synth.volume_db / 20.0),
+            pan_l: info.pan_l * pan_l,
+            pan_r: info.pan_r * pan_r,
             biquad,
             cutoff,
             base_cutoff: info.cutoff,
@@ -281,6 +292,35 @@ mod tests {
         // 同时 CC74 不能把 cutoff 压到 SF2 下限（1500 cents ≈ 19.4 Hz）以下。
         let (_, cutoff) = filter_coeffs(262.0, 1.0, 0, &ch_with(0, 64), 48_000);
         assert!(cutoff > 19.0 && cutoff < 20.0, "cutoff={cutoff}");
+    }
+
+    /// 工程级参数：亮度是相对 cutoff 偏移；中性时与库值一致。
+    #[test]
+    fn synth_brightness_offsets_cutoff() {
+        let mut ch = ch_with(64, 64);
+        ch.synth.brightness_cents = 1200.0;
+        let (_, cutoff) = filter_coeffs(1_000.0, 1.0, 0, &ch, 48_000);
+        assert!((cutoff - 2_000.0).abs() < 0.5, "cutoff={cutoff}");
+    }
+
+    /// 工程级参数：音量/音高/包络倍率进入 per-voice 展开。
+    #[test]
+    fn synth_params_apply_to_voice() {
+        let info = KeyInfo::default();
+        let mut ch = ChannelState::new(48_000);
+        let neutral = VoiceParams::from_key_info(&info, &ch, 48_000);
+
+        ch.synth.volume_db = 6.0;
+        ch.synth.tune_cents = 1200.0;
+        ch.synth.attack_scale = 2.0;
+        let p = VoiceParams::from_key_info(&info, &ch, 48_000);
+
+        let gain_ratio = p.base_gain / neutral.base_gain;
+        assert!((gain_ratio - 10f32.powf(6.0 / 20.0)).abs() < 1e-3);
+        let speed_ratio = p.base_speed / neutral.base_speed;
+        assert!((speed_ratio - 2.0).abs() < 1e-4);
+        assert!((p.attack_frames / neutral.attack_frames - 2.0).abs() < 1e-4);
+        assert!((p.orig_attack_frames / neutral.orig_attack_frames - 2.0).abs() < 1e-4);
     }
 
     /// CC71 只改 Q：cutoff 不变，系数变化。

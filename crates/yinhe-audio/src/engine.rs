@@ -529,6 +529,9 @@ impl AudioEngine {
                 // 这里只在直接 handle_command 时退化成 load_model（测试路径）。
                 self.load_model(&model);
             }
+            AudioCommand::SetSynthParams { channel, params } => {
+                self.apply_synth_params(channel, params);
+            }
             AudioCommand::SetSoundFonts { configs } => {
                 for (channel, paths) in configs.iter() {
                     self.load_soundfont_for_channel(*channel, paths);

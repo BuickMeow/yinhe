@@ -642,6 +642,10 @@ pub struct YinModel {
     /// 16 个 MIDI 通道的默认乐器（None = 不覆盖，按 MIDI 内 PC / program 0）。
     pub channel_instruments: [Option<ChannelInstrument>; 16],
 
+    /// 内置音源的可调参数（按全局通道 0..256）。默认 = 不改变音色库。
+    /// 持久化在 `mapping.json`（自描述 JSON），不进 data 段的 postcard。
+    pub synth_params: Vec<yinhe_types::SynthParams>,
+
     /// Single authoritative note store: `notes[key]` = all notes at that key,
     /// sorted by start_tick (chunked, 65536 notes/chunk). Each note carries
     /// its track index and全局唯一 id。
@@ -715,6 +719,7 @@ impl Default for YinModel {
             tempo_map: Arc::new(TempoMap::default()),
             meta: ProjectMeta::default(),
             channel_instruments: [None; 16],
+            synth_params: vec![yinhe_types::SynthParams::default(); 256],
             notes: Box::new(core::array::from_fn(|_| Arc::new(NoteBucket::default()))),
             note_count: 0,
             tick_length: 0,
@@ -776,6 +781,20 @@ impl YinModel {
             channel_instruments,
             ..Default::default()
         }
+    }
+
+    /// 全局通道的内置音源参数（越界 = 默认值）。
+    pub fn synth_params_at(&self, channel: usize) -> yinhe_types::SynthParams {
+        self.synth_params.get(channel).copied().unwrap_or_default()
+    }
+
+    /// 可变的全局通道参数；通道越界时自动扩展。
+    pub fn synth_params_mut(&mut self, channel: usize) -> &mut yinhe_types::SynthParams {
+        if channel >= self.synth_params.len() {
+            self.synth_params
+                .resize(channel + 1, yinhe_types::SynthParams::default());
+        }
+        &mut self.synth_params[channel]
     }
 
     /// Build TempoMap from conductor.tempo / conductor.time_sig.

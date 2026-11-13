@@ -1311,3 +1311,13 @@ track.drum_channel: "ドラムチャンネル"
 undo.edit_track_info: "トラック情報を編集"
 arrange.rename_track: "トラック名を変更"
 history.start: "開始"
+
+# 内置音源参数窗口
+synth_params.title: "Instrument Parameters"
+synth_params.all: "All"
+synth_params.tone: "Tone"
+synth_params.level: "Level"
+synth_params.envelope: "Envelope"
+synth_params.pitch: "Pitch"
+synth_params.reset_hint: "Reset all parameters"
+synth_params.reset_one: "Reset this parameter"

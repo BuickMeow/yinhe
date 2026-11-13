@@ -9,6 +9,13 @@ use serde::{Deserialize, Serialize};
 
 use yinhe_core::TrackData;
 
+/// 一个全局通道的内置音源参数（仅非默认值落盘）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelSynthParams {
+    pub channel: u8,
+    pub params: yinhe_types::SynthParams,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MappingFile {
     pub version: u16,
@@ -20,6 +27,9 @@ pub struct MappingFile {
     /// 无 MIDI PC 时生效；任一 PC 事件覆盖它。
     #[serde(default)]
     pub channel_instruments: [Option<yinhe_core::ChannelInstrument>; 16],
+    /// 内置音源参数覆盖（只存非默认项；旧存档缺省为空）。
+    #[serde(default)]
+    pub synth_params: Vec<ChannelSynthParams>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

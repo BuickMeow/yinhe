@@ -1301,3 +1301,13 @@ track.drum_channel: "Canal de batterie"
 undo.edit_track_info: "Modifier les infos de piste"
 arrange.rename_track: "Renommer la piste"
 history.start: "Début"
+
+# 内置音源参数窗口
+synth_params.title: "Instrument Parameters"
+synth_params.all: "All"
+synth_params.tone: "Tone"
+synth_params.level: "Level"
+synth_params.envelope: "Envelope"
+synth_params.pitch: "Pitch"
+synth_params.reset_hint: "Reset all parameters"
+synth_params.reset_one: "Reset this parameter"

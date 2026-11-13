@@ -347,12 +347,19 @@ impl AudioRenderer {
                         } else {
                             None
                         };
+                        let synth_params = self
+                            .engine
+                            .yin_model
+                            .as_ref()
+                            .map(|m| m.synth_params_at(n.channel as usize))
+                            .unwrap_or_default();
                         inputs.push(crate::preview_engine::PreviewNoteIn {
                             channel: n.channel,
                             key: n.key,
                             velocity: n.velocity,
                             duration,
                             state: *state,
+                            synth_params,
                             target_sample: target,
                         });
                     }

@@ -81,6 +81,14 @@ impl YinhePreview {
         if exclusive {
             self.stop_all();
         }
+        // 先同步工程级音源参数（旋钮调完立即试听也要生效）。
+        for n in &notes {
+            if let Some(&dense) = self.dense_map.get(n.channel as usize)
+                && dense != u32::MAX
+            {
+                self.synth.set_synth_params(dense, n.synth_params);
+            }
+        }
         self.pending.clear();
         let min = notes.iter().map(|n| n.target_sample).min().unwrap_or(0);
         let base = self.position;
@@ -328,6 +336,7 @@ mod tests {
                 velocity: 100,
                 duration: None,
                 state: ChannelState::default(),
+                synth_params: Default::default(),
                 target_sample: 0,
             }],
             true,

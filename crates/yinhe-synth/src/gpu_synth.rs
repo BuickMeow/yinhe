@@ -342,7 +342,7 @@ impl GpuSynth {
         for q in self.key_slots.iter_mut() {
             q.clear();
         }
-        self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
+        self.reset_channels();
         self.apply_cc_defaults();
         self.channel_speed_cache = [0.0; MAX_CHANNELS];
         self.drain_pending(false);
@@ -565,6 +565,26 @@ impl GpuSynth {
     }
 
     /// Seek 到指定位置
+    /// 重置通道状态但保留工程级音源参数。
+    fn reset_channels(&mut self) {
+        let synths: [yinhe_types::SynthParams; MAX_CHANNELS] =
+            core::array::from_fn(|i| self.channels[i].synth);
+        self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
+        for (ch, synth) in self.channels.iter_mut().zip(synths) {
+            ch.synth = synth;
+        }
+    }
+
+    /// 设置某 dense 通道的工程级音源参数（滤波器类参数实时生效）。
+    pub fn set_synth_params(&mut self, dense: u32, params: yinhe_types::SynthParams) {
+        if let Some(ch) = self.channels.get_mut(dense as usize)
+            && ch.synth != params
+        {
+            ch.synth = params;
+            ch.filter_dirty = true;
+        }
+    }
+
     pub fn seek(&mut self, sample: u64) {
         // 丢弃在途块与 ring（seek 后不再输出旧内容）
         self.drain_pending(false);
@@ -582,7 +602,7 @@ impl GpuSynth {
             q.clear();
         }
         // 通道状态在 seek 时重置（chase 由 yinhe-audio 的 cc_events 重建保证）
-        self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
+        self.reset_channels();
         self.apply_cc_defaults();
         // speed 缓存清空：下一块起点重新下发全部通道的 pitch_multiplier。
         self.channel_speed_cache = [0.0; MAX_CHANNELS];

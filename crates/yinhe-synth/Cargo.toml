@@ -12,6 +12,7 @@ pollster = { workspace = true }
 xsynth-soundfonts = "0.4"
 hound = "3.5"
 yinhe-mixer = { path = "../yinhe-mixer" }
+yinhe-types = { path = "../yinhe-types" }
 
 [dev-dependencies]
 yinhe-midi = { path = "../yinhe-midi" }

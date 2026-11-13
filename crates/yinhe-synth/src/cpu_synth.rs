@@ -236,7 +236,7 @@ impl CpuSynth {
         for v in self.key_indices.iter_mut() {
             v.clear();
         }
-        self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
+        self.reset_channels();
         self.sample_position = 0;
         self.chase_base = 0;
         self.apply_cc_defaults();
@@ -290,8 +290,28 @@ impl CpuSynth {
         for v in self.key_indices.iter_mut() {
             v.clear();
         }
-        self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
+        self.reset_channels();
         self.apply_cc_defaults();
+    }
+
+    /// 重置通道状态但**保留工程级音源参数**（切歌/seek 不应丢失用户调音）。
+    fn reset_channels(&mut self) {
+        let synths: [yinhe_types::SynthParams; MAX_CHANNELS] =
+            core::array::from_fn(|i| self.channels[i].synth);
+        self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
+        for (ch, synth) in self.channels.iter_mut().zip(synths) {
+            ch.synth = synth;
+        }
+    }
+
+    /// 设置某 dense 通道的工程级音源参数（滤波器类参数实时生效）。
+    pub fn set_synth_params(&mut self, dense: u32, params: yinhe_types::SynthParams) {
+        if let Some(ch) = self.channels.get_mut(dense as usize)
+            && ch.synth != params
+        {
+            ch.synth = params;
+            ch.filter_dirty = true;
+        }
     }
 
     /// chase 跳过掩码（seek 后已实时处理的控制事件区间 `[chase_base, cursor)`）。

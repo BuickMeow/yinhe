@@ -8004,6 +8004,7 @@ dependencies = [
  "xsynth-soundfonts",
  "yinhe-midi",
  "yinhe-mixer",
+ "yinhe-types",
 ]
 
 [[package]]

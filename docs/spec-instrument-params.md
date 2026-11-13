@@ -1,6 +1,6 @@
 # 乐器参数目录与「音色参数」子窗口设计
 
-> 状态：设计稿（2026-11-13）。回答两个问题：
+> 状态：设计稿 + 首批落地（2026-11-13）。回答两个问题：
 > (1) SF2 / SFZ 应该开放哪些可调参数；(2) 是否需要独立的参数子窗口、如何分类。
 > 对齐基准与实测见 `eval-synth-params-and-xsynth.md`。
 
@@ -174,6 +174,21 @@
 
 ---
 
+## 1.4 首批已落地（2026-11-13）
+
+以下参数已进入工程模型 `SynthParams`（按全局通道存 `mapping.json`），
+并通过独立窗口「乐器参数」提供旋钮：
+
+- Brightness（音分偏移，叠加到 voice cutoff）
+- Resonance（dB 偏移）
+- Volume（dB 偏移）
+- Pan（-1..1）
+- Attack / Release（倍率，0.1x..10x）
+- Tune（音分）
+
+滤波类参数对**正在发声**的 voice 实时生效；音量/声像/包络/音高对之后
+的新音符生效。PR 试听（预览合成器）也跟随这些参数。
+
 ## 二、子窗口设计
 
 ### 2.1 结论
@@ -241,6 +256,7 @@ struct ParamOverride {
 
 | 参数类型 | 生效方式 |
 |---|---|
+| Brightness / Resonance | `voice_params::filter_coeffs`（实时） |
 | cutoff / resonance | `voice_params::filter_coeffs`（已有实时路径） |
 | volume / pan | 通道 DSP（已有）或 voice 增益 |
 | attack / release | 已有 `env_frames_for` + CC72/73 传播路径 |

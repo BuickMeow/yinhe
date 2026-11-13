@@ -300,6 +300,7 @@ enum DockAction {
     ToggleInstrument(bool),
     ToggleBypass(usize, bool),
     OpenGui(DockDevice),
+    OpenSynthParams(u8),
     RemoveInsert(usize),
 }
 
@@ -473,6 +474,7 @@ fn draw_dock(ui: &mut egui::Ui, state: &DockState, search: &mut String) -> Vec<D
     let mut open_gui: Option<DockDevice> = None;
     let mut remove_insert: Option<usize> = None;
     let mut open_instrument_picker: Option<u8> = None;
+    let mut open_synth_params: Option<u8> = None;
     let mut open_picker = false;
 
     // ── 主体：最左乐器卡片 + 效果器链（+ 紧贴最后一个设备）──
@@ -505,6 +507,7 @@ fn draw_dock(ui: &mut egui::Ui, state: &DockState, search: &mut String) -> Vec<D
                 &mut toggle_instrument,
                 &mut open_gui,
                 &mut open_instrument_picker,
+                &mut open_synth_params,
                 state.midi_channel,
                 &mut collapsed,
                 selected == Some(DockDevice::Instrument),
@@ -570,6 +573,9 @@ fn draw_dock(ui: &mut egui::Ui, state: &DockState, search: &mut String) -> Vec<D
     if let Some(ch) = open_instrument_picker {
         actions.push(DockAction::OpenInstrumentPicker(ch));
     }
+    if let Some(ch) = open_synth_params {
+        actions.push(DockAction::OpenSynthParams(ch));
+    }
     if let Some(muted) = toggle_instrument {
         actions.push(DockAction::ToggleInstrument(muted));
     }
@@ -617,6 +623,10 @@ fn apply_dock_actions(app: &mut App, idx: usize, state: &DockState, actions: Vec
                 }
             }
             DockAction::OpenInstrumentPicker(ch) => app.mix.instrument_picker_for = Some(ch),
+            DockAction::OpenSynthParams(ch) => {
+                app.mix.synth_params_panel =
+                    Some(crate::dialogs::instrument_params::InstrumentParamsPanel::new(ch));
+            }
             DockAction::ToggleInstrument(muted) => {
                 // 旁通 = 该通道所有轨道 mute（AR 读 track_overrides，自动同步）。
                 let doc = &mut app.workspace.documents[idx];
@@ -1025,6 +1035,7 @@ fn instrument_card(
     toggle_instrument: &mut Option<bool>,
     open_gui: &mut Option<DockDevice>,
     open_instrument_picker: &mut Option<u8>,
+    open_synth_params: &mut Option<u8>,
     midi_channel: Option<u8>,
     collapsed: &mut std::collections::HashSet<usize>,
     is_selected: bool,
@@ -1181,18 +1192,22 @@ fn instrument_card(
                 *open_gui = Some(DockDevice::Instrument);
             }
 
-            // 插件乐器的参数面板入口。
-            if !use_xsynth
-                && icon_button(
-                    ui,
-                    egui_material_icons::icons::ICON_TUNE,
-                    14.0,
-                    crate::theme::text_secondary(),
-                    t!("dock.open_params"),
-                )
-                .clicked()
+            // 参数面板入口：内置 XSynth 打开工程级音源参数窗口，
+            // 插件乐器打开插件参数列表。
+            if icon_button(
+                ui,
+                egui_material_icons::icons::ICON_TUNE,
+                14.0,
+                crate::theme::text_secondary(),
+                t!("dock.open_params"),
+            )
+            .clicked()
             {
-                *open_params = Some(DockDevice::Instrument);
+                if use_xsynth {
+                    *open_synth_params = midi_channel;
+                } else {
+                    *open_params = Some(DockDevice::Instrument);
+                }
             }
 
             // 更换乐器：内置 XSynth 与 VST/CLAP 插件在同一个选择器里切换。
