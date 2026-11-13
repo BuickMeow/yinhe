@@ -107,7 +107,8 @@ impl KeyInfo {
 }
 
 /// 加载期烘焙：等功率声像增益（`CpuVoice::new` 原公式的预计算）。
-fn pan_gains(pan: f32) -> (f32, f32) {
+pub(crate) fn pan_gains(pan: f32) -> (f32, f32) {
+    // pan ∈ 0..1（0=左，0.5=中心，1=右）；中心经 1.42 补偿后钳到 1.0。
     let angle = pan * std::f32::consts::FRAC_PI_2;
     ((angle.cos() * 1.42).min(1.0), (angle.sin() * 1.42).min(1.0))
 }

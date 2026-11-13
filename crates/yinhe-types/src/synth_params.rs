@@ -153,7 +153,7 @@ pub const SYNTH_PARAMS: &[SynthParamInfo] = &[
         name: "Brightness",
         unit: "ct",
         min: -4800.0,
-        max: 4725.0,
+        max: 4800.0,
         log: false,
         decimals: 0,
     },
@@ -241,6 +241,16 @@ mod tests {
                 "{} 默认值应中性",
                 info.name
             );
+        }
+    }
+
+    /// 全部参数必须是双极性的：默认值落在旋钮正中（`knob_centered` 的
+    /// 0.5 = 归零），否则中位看起来归零、实际不是。
+    #[test]
+    fn defaults_sit_at_knob_center() {
+        for info in SYNTH_PARAMS {
+            let t = info.normalize(SynthParams::default().get(info.id));
+            assert!((t - 0.5).abs() < 1e-6, "{} 默认值不在正中: {t}", info.name);
         }
     }
 
