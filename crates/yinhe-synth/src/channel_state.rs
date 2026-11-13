@@ -481,8 +481,8 @@ mod tests {
         assert_eq!(ch.filter_cutoff_cc, 64);
         assert_eq!(ch.filter_resonance_cc, 64);
         assert_eq!(cutoff_cents_offset(64), 0.0);
-        assert!(cutoff_cents_offset(0) < -9000.0);
-        assert!(cutoff_cents_offset(127) > 9000.0);
+        assert!((cutoff_cents_offset(0) + 4800.0).abs() < 1e-3);
+        assert!((cutoff_cents_offset(127) - 4725.0).abs() < 1e-3);
         assert_eq!(resonance_db_offset(64), 0.0);
         assert!(resonance_db_offset(0) < 0.0);
         assert!(resonance_db_offset(127) > 0.0);

@@ -514,8 +514,8 @@ fn cc74_updates_sounding_voice_cutoff() {
     synth.render_to_mixer(&mut bufs);
     let cutoff = synth.voices[0].cutoff;
     assert!(
-        (cutoff - 8_000.0 / 256.0).abs() < 0.5,
-        "CC74=0 应把 8kHz 压到 1/256（实际 {cutoff}）"
+        (cutoff - 8_000.0 / 16.0).abs() < 0.5,
+        "CC74=0 应把 8kHz 压到 1/16（实际 {cutoff}）"
     );
 }
 

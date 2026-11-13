@@ -65,7 +65,7 @@ yinhe 已有效果器链（`yinhe-mixer` 的 `InsertProcessor`，每通道/bus/m
 | D21 | 值域归一化 | 自动化值一律归一化 0..1（除 Tempo）：CC、RPN0/2 除 127，PB、RPN1、NRPN 除 16383；导入归一化，回放/导出边界取整还原（无损可逆）；音符 velocity/gate 本次不归一化（保持整数） |
 | D22 | 设备寻址 | `ParamDevice::{ChannelInstrument, PluginInstrument, ChannelDsp}` 均只带通道号：不用槽位序号、不用实例 uuid，导入数据先归属，挂/删/重排效果器不影响自动化；第三方插入效果器实例寻址（uuid）将来以 `Insert { target, instance }` 扩展 |
 | D23 | 工程格式 | `.yin` 容器版本 6 → 7（`AutomationTarget` 序列化变更），不兼容 v6：旧档不迁移，重新导入 MIDI |
-| D24 | CC71/74 归音源层（2026-11-13 修订 D14/D15） | CC71（共振）/CC74（亮度）是 GM2 的 **per-voice 滤波偏移**（64 = 中性，双极），不是通道总线低通。已从 `DSP_CHANNEL_CCS` 移除、删除 `ChannelFilter`；语义改由 `yinhe-synth::voice_params::filter_coeffs` 在 note_on 与 CC 变化时按 voice 计算（BASSMIDI 对齐）。通道处理段只剩 Gain/Pan（CC7/10/11） |
+| D24 | CC71/74 归音源层（2026-11-13 修订 D14/D15） | CC71（共振）/CC74（亮度）是 GM2 的 **per-voice 滤波偏移**（64 = 中性，双极），不是通道总线低通。已从 `DSP_CHANNEL_CCS` 移除、删除 `ChannelFilter`；语义改由 `yinhe-synth::voice_params::filter_coeffs` 在 note_on 与 CC 变化时按 voice 计算。**已用 BASSMIDI dylib 实测标定**：CC74 = `(v-64)×75 cents`（±4800），CC71 = `(v-64)/64×25 dB` 且 Q 不低于音色库原值；CC71>64 或 CC74<64 时先把库 cutoff 压到 8 kHz；最终 cutoff clamp 到 SF2 [1500,13500] cents。BASSMIDI 不应用 SF2 默认的 velocity→filterFc 调制（已在 SF2 加载器里抵消）。通道处理段只剩 Gain/Pan（CC7/10/11） |
 
 ---
 

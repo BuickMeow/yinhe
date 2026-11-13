@@ -114,12 +114,24 @@ fn expand_preset(
                         / 1200.0,
                 );
 
+                // BASSMIDI 不应用 SF2 默认的 velocity→initialFilterFc 调制
+                // （实测：显式滤波音色在 vel 1..127 下亮度不变）。xsynth 会
+                // 应用它，这里加回去抵消；自定义 velocity→filter 调制器仍保留。
+                let default_vel_filter_cents = -2400.0 * (1.0 - f32::from(vel) / 127.0);
                 let cutoff = np
                     .cutoff
+                    .map(|c| {
+                        let cents = 1200.0 * (c / 8.176).log2() - default_vel_filter_cents;
+                        // SF2 生成器范围：1500..13500 绝对音分。
+                        let cents = cents.clamp(1500.0, 13_500.0);
+                        8.176 * 2.0f32.powf(cents / 1200.0)
+                    })
                     .map(|c| c.clamp(1.0, sample_rate as f32 / 2.0 - 100.0))
                     .unwrap_or(0.0);
                 let pan = ((np.pan as f32 / 500.0) + 1.0) / 2.0;
-                let resonance = 10.0f32.powf(np.resonance / 20.0) * Q_BUTTERWORTH;
+                // SF2 `initialFilterQ` 是峰值高度（0 dB = 无共振 → Q = 1.0）。
+                // BASSMIDI 实测不乘 Butterworth 系数（0 dB 时 Q≈1）。
+                let resonance = 10.0f32.powf(np.resonance / 20.0);
                 let filter_type = FilterType::LowPass;
                 let (pan_l, pan_r) = pan_gains(pan);
                 let loop_mode = if region.loop_start == region.loop_end {

@@ -13,55 +13,19 @@ use crate::sf_parser::KeyInfo;
 /// SF2 `initialFilterFc` 全开值（绝对音分）换算成 Hz：8.176 × 2^(13500/1200)。
 /// 音色库没有声明滤波器时，CC74 从这个"全开"位置往下降。
 const FILTER_OPEN_HZ: f32 = 19_912.0;
+/// SF2 规范允许的 cutoff 范围（绝对音分）：约 20.6 Hz .. 19.912 kHz。
+const FILTER_MIN_CENTS: f32 = 1_500.0;
+const FILTER_MAX_CENTS: f32 = 13_500.0;
+/// BASSMIDI 在 CC71>64 或 CC74<64 时把音色库 cutoff 压到这个上限，
+/// 保证滤波/共振一定可听（Ian 在 un4seen 论坛的原话；实测行为一致）。
+const FILTER_AUDIBLE_CAP_HZ: f32 = 8_000.0;
 
-/// CC74 亮度 → cutoff 的相对偏移（音分）。
-///
-/// GM2 / BASSMIDI 语义：双极线性，64 = 不改变，0 = -9600 cents（8 个八度），
-/// 127 = +9450 cents。不是绝对频率，也不是"低于 64 才滤波"。
-#[inline]
-pub(crate) fn cutoff_cents_offset(cc: u8) -> f32 {
-    (f32::from(cc) - 64.0) / 64.0 * 9600.0
+fn hz_to_cents(hz: f32) -> f32 {
+    1200.0 * (hz / 8.176).log2()
 }
 
-/// CC71 共振 → Q 的相对偏移（dB）。同样以 64 为中心，±25 dB。
-#[inline]
-pub(crate) fn resonance_db_offset(cc: u8) -> f32 {
-    (f32::from(cc) - 64.0) / 64.0 * 25.0
-}
-
-/// 按通道 CC71/74 计算一个 voice 的最终滤波器系数与实际 cutoff。
-///
-/// - `base_cutoff_hz == 0`：音色库没声明滤波器（SF2 默认 initialFilterFc
-///   13500 cents ≈ 全开）。此时只有 **变暗**（CC74 < 64）才生成滤波器，
-///   与 BASSMIDI "让滤波控制始终可听"的取向一致。
-/// - `base_cutoff_hz > 0`：在库自身 cutoff 上叠加 CC74 的相对偏移。
-///
-/// 返回 `(系数, 实际 cutoff Hz)`；`cutoff == 0` 表示旁路。
-pub(crate) fn filter_coeffs(
-    base_cutoff_hz: f32,
-    base_resonance: f32,
-    filter_type: u32,
-    ch: &ChannelState,
-    sample_rate: u32,
-) -> (Option<[f32; 5]>, f32) {
-    let cents = cutoff_cents_offset(ch.filter_cutoff_cc);
-    let db = resonance_db_offset(ch.filter_resonance_cc);
-    // 库无滤波 + 不变暗：保持"无滤波"（最省 CPU，且与旧行为一致）。
-    if base_cutoff_hz <= 0.0 && cents >= 0.0 {
-        return (None, 0.0);
-    }
-    let base_hz = if base_cutoff_hz > 0.0 {
-        base_cutoff_hz
-    } else {
-        FILTER_OPEN_HZ
-    };
-    let cutoff =
-        (base_hz * 2.0f32.powf(cents / 1200.0)).clamp(1.0, sample_rate as f32 / 2.0 - 100.0);
-    // Q 上限防止 CC71 拉满 + 库自身高 Q 时 biquad 数值不稳定（自激啸叫）。
-    let q = (base_resonance * 10.0f32.powf(db / 20.0)).clamp(0.1, 20.0);
-    let (b0, b1, b2, a1, a2) =
-        crate::synth::biquad_coeffs(filter_type, cutoff, q, sample_rate as f32);
-    (Some([b0, b1, b2, a1, a2]), cutoff)
+fn cents_to_hz(cents: f32) -> f32 {
+    8.176 * 2.0f32.powf(cents / 1200.0)
 }
 
 /// CC72/73 修正后的 attack/release 帧数（region 原始值 + 通道当前 CC）。
@@ -80,6 +44,92 @@ pub(crate) fn env_frames_for(
         None => orig_release_frames,
     };
     (attack_frames, release_frames)
+}
+
+/// CC74 亮度 → cutoff 的相对偏移（音分）。
+///
+/// 实测 BASSMIDI：`(cc - 64) * 75`（±4800 cents），不是 SF2 2.04 默认
+/// modulator 的 ±9600。旧实现按 ±9600 走，扫频比 BASSMIDI 陡一倍。
+#[inline]
+pub(crate) fn cutoff_cents_offset(cc: u8) -> f32 {
+    (f32::from(cc) - 64.0) * 75.0
+}
+
+/// CC71 共振 → Q 的相对偏移（dB）。
+///
+/// BASSMIDI 对齐 SF2.04 默认 modulator 的 250 cB 双极量程：
+/// `(cc - 64) / 64 * 25 dB`（±25 dB），实测峰值与之一致。
+/// 最终 Q 不允许低于音色库原始值（CC71<64 在无共振音色上完全无效）。
+#[inline]
+pub(crate) fn resonance_db_offset(cc: u8) -> f32 {
+    (f32::from(cc) - 64.0) / 64.0 * 25.0
+}
+
+/// 按通道 CC71/74 计算一个 voice 的最终滤波器系数与实际 cutoff。
+///
+/// 语义对齐 BASSMIDI（实测）：
+/// - 64 = 中性；CC71/74 都只做**相对偏移**。
+/// - CC71>64 或 CC74<64 时，先把音色库 cutoff 限制到 8 kHz 以内，
+///   保证滤波器始终可听。
+/// - cutoff 最终 clamp 到 SF2 范围 [1500, 13500] 绝对音分。
+/// - CC71 的负偏移不能把 Q 压到音色库原始值以下（以 0 dB 为下限）。
+///
+/// 返回 `(系数, 实际 cutoff Hz)`；`cutoff == 0` 表示旁路。
+pub(crate) fn filter_coeffs(
+    base_cutoff_hz: f32,
+    base_resonance: f32,
+    filter_type: u32,
+    ch: &ChannelState,
+    sample_rate: u32,
+) -> (Option<[f32; 5]>, f32) {
+    let cents = cutoff_cents_offset(ch.filter_cutoff_cc);
+    let db = resonance_db_offset(ch.filter_resonance_cc);
+    let wants_darken = cents < 0.0;
+    let wants_resonance = db > 0.0;
+    // 中性 CC：完全按音色库原值（不做 cents 往返，保证与旧行为逐值一致）。
+    if cents == 0.0 && db == 0.0 {
+        if base_cutoff_hz <= 0.0 {
+            return (None, 0.0);
+        }
+        let (b0, b1, b2, a1, a2) = crate::synth::biquad_coeffs(
+            filter_type,
+            base_cutoff_hz,
+            base_resonance,
+            sample_rate as f32,
+        );
+        return (Some([b0, b1, b2, a1, a2]), base_cutoff_hz);
+    }
+    // 库无滤波 + 两个 CC 都没有"需要可听"的意图：保持旁路。
+    if base_cutoff_hz <= 0.0 && !wants_darken && !wants_resonance {
+        return (None, 0.0);
+    }
+    let mut base_hz = if base_cutoff_hz > 0.0 {
+        base_cutoff_hz
+    } else {
+        FILTER_OPEN_HZ
+    };
+    if wants_darken || wants_resonance {
+        base_hz = base_hz.min(FILTER_AUDIBLE_CAP_HZ);
+    }
+    let nyquist = sample_rate as f32 / 2.0;
+    let cutoff = if cents == 0.0 {
+        base_hz
+    } else {
+        let base_cents = hz_to_cents(base_hz);
+        let cutoff_cents = (base_cents + cents).clamp(FILTER_MIN_CENTS, FILTER_MAX_CENTS);
+        cents_to_hz(cutoff_cents)
+    }
+    .clamp(1.0, (nyquist - 100.0).max(1.0));
+    // CC71 负偏移只能把 Q 降到音色库原始值，不能更低（BASSMIDI 实测：
+    // 无共振音色上 CC71<64 完全无效；有共振音色降到 Q≈1 后停止）。
+    let q_base = base_resonance.max(1e-3);
+    let q = (q_base * 10.0f32.powf(db / 20.0)).max(q_base.min(1.0));
+    // 上限防止极端参数让 biquad 数值不稳定（自激啸叫）；
+    // BASSMIDI 在 12 dB 预设 + CC71=127 时 Q≈25，上限必须高于它。
+    let q = q.clamp(0.1, 40.0);
+    let (b0, b1, b2, a1, a2) =
+        crate::synth::biquad_coeffs(filter_type, cutoff, q, sample_rate as f32);
+    (Some([b0, b1, b2, a1, a2]), cutoff)
 }
 
 /// 展开后的 per-voice 参数（CPU/GPU 共用）。
@@ -187,8 +237,8 @@ mod tests {
         assert!(coeffs.is_none() && cutoff == 0.0);
         let (coeffs, cutoff) = filter_coeffs(0.0, 0.707, 0, &ch_with(48, 64), 48_000);
         assert!(coeffs.is_some());
-        // CC74=48 → -2400 cents = /4。
-        assert!((cutoff - 19_912.0 / 4.0).abs() < 2.0, "cutoff={cutoff}");
+        // CC74=48 → -1200 cents；无滤波库先压到 8 kHz → 4 kHz。
+        assert!((cutoff - 4_000.0).abs() < 5.0, "cutoff={cutoff}");
         // 变亮（>64）不改变"无滤波器"。
         let (coeffs, _) = filter_coeffs(0.0, 0.707, 0, &ch_with(127, 64), 48_000);
         assert!(coeffs.is_none());
@@ -201,8 +251,36 @@ mod tests {
         assert!((cutoff_cents_offset(64)).abs() < 1e-6);
         let (_, dark) = filter_coeffs(base, 0.707, 0, &ch_with(0, 64), 48_000);
         let (_, bright) = filter_coeffs(base, 0.707, 0, &ch_with(127, 64), 48_000);
-        assert!((dark - base / 256.0).abs() < 0.01, "dark={dark}");
+        // 1 kHz + (-4800 cents) = 62.5 Hz。
+        assert!((dark - base / 16.0).abs() < 0.05, "dark={dark}");
         assert!(bright > base * 2.0, "bright={bright}");
+    }
+
+    /// CC71<64 不能把 Q 压到音色库原始值以下（BASSMIDI 实测）。
+    #[test]
+    fn cc71_negative_never_lowers_library_q() {
+        let neutral = filter_coeffs(4_000.0, 1.0, 0, &ch_with(64, 64), 48_000);
+        let lowered = filter_coeffs(4_000.0, 1.0, 0, &ch_with(64, 0), 48_000);
+        assert_eq!(neutral.0, lowered.0, "无共振音色上 CC71<64 必须完全无效");
+        assert!((neutral.1 - lowered.1).abs() < 1e-6);
+    }
+
+    /// 音色库无滤波 + CC71>64：BASSMIDI 会启用一个 8 kHz 的共振滤波。
+    #[test]
+    fn cc71_alone_engages_audible_filter_at_8k() {
+        let (coeffs, cutoff) = filter_coeffs(0.0, 1.0, 0, &ch_with(64, 96), 48_000);
+        assert!(coeffs.is_some());
+        assert!((cutoff - 8_000.0).abs() < 1e-3);
+    }
+
+    /// CC74<64 时音色库 cutoff 先压到 8 kHz（否则高截止音色听不出变化）。
+    #[test]
+    fn darken_caps_library_cutoff_at_8k() {
+        let (_, cutoff) = filter_coeffs(19_912.0, 1.0, 0, &ch_with(48, 64), 48_000);
+        assert!((cutoff - 4_000.0).abs() < 1e-3, "cutoff={cutoff}");
+        // 同时 CC74 不能把 cutoff 压到 SF2 下限（1500 cents ≈ 19.4 Hz）以下。
+        let (_, cutoff) = filter_coeffs(262.0, 1.0, 0, &ch_with(0, 64), 48_000);
+        assert!(cutoff > 19.0 && cutoff < 20.0, "cutoff={cutoff}");
     }
 
     /// CC71 只改 Q：cutoff 不变，系数变化。
