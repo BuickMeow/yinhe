@@ -4327,7 +4327,10 @@ fn prof_blackmidi_cost_breakdown() {
     use std::sync::atomic::Ordering;
     use std::time::Instant;
 
-    let sfz = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
+    let sfz = std::env::var("YINHE_PROF_SF").unwrap_or_else(|_| {
+        "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz".into()
+    });
+    let sfz = sfz.as_str();
     let sr = 48_000u32;
     // 渲染秒数可配（`YINHE_PROF_SECS`，默认 3）：峰值段实时倍率低时
     // 用 1 秒快速迭代（AGENTS 五-7 单项测试 ≤120s）。
@@ -4336,17 +4339,22 @@ fn prof_blackmidi_cost_breakdown() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(3.0);
 
-    for midi in [
-        "/Users/jieneng/Music/MIDIs/tau2.5.9.mid",
-        "/Users/jieneng/Music/MIDIs/cyber-night.mid",
-    ] {
+    let midis: Vec<String> = std::env::var("YINHE_PROF_MIDIS")
+        .map(|s| s.split(',').map(str::to_string).collect())
+        .unwrap_or_else(|_| {
+            vec![
+                "/Users/jieneng/Music/MIDIs/tau2.5.9.mid".into(),
+                "/Users/jieneng/Music/MIDIs/cyber-night.mid".into(),
+            ]
+        });
+    for midi in &midis {
         let t_parse = Instant::now();
         let model = Arc::new(yinhe_midi::parse_path(midi).expect("parse"));
-        let total: usize = (0..128).map(|k| model.notes[k].len()).sum();
+        let total: usize = (0..256).map(|k| model.notes[k].len()).sum();
         let ppq = model.meta.ppq;
         // 密度峰值（每拍音符数）
         let mut per_beat: std::collections::BTreeMap<u32, usize> = Default::default();
-        for k in 0..128 {
+        for k in 0..256 {
             for n in model.notes[k].iter() {
                 *per_beat.entry(n.start_tick / ppq).or_default() += 1;
             }
@@ -4363,10 +4371,31 @@ fn prof_blackmidi_cost_breakdown() {
             peak_beat / 4 + 1
         );
         let layout = crate::spawn::channels_for_model(&model);
-        let active: Vec<u8> = (0..16u8)
+        // 多 port 工程：源通道最多 256 个，dense 索引与源通道不是一回事。
+        let active: Vec<u8> = (0..256u16)
             .filter(|c| layout.is_active(*c as usize))
+            .map(|c| c as u8)
             .collect();
+        let denses: Vec<u32> = (0..layout.num_channels()).collect();
         let peak_tick = peak_beat.saturating_mul(ppq).saturating_sub(ppq * 2);
+        {
+            // 峰值拍的门长：黑乐谱大量极短音符，决定"同时发声数"的上限。
+            let lo = peak_beat * ppq;
+            let hi = lo + ppq;
+            let (mut n, mut sum) = (0u64, 0u64);
+            for k in 0..256 {
+                for note in model.notes[k].iter() {
+                    if note.start_tick >= lo && note.start_tick < hi {
+                        n += 1;
+                        sum += note.end_tick.saturating_sub(note.start_tick) as u64;
+                    }
+                }
+            }
+            eprintln!(
+                "  峰值拍门长：note_on={n} 平均 gate={:.1} tick",
+                sum as f64 / n.max(1) as f64
+            );
+        }
         // tick→sample 必须用**加载模型后**的引擎（tempo map 来自模型；
         // 空引擎会退化成默认 120BPM，seek 到错误位置）。
         let start_sample = {
@@ -4378,32 +4407,40 @@ fn prof_blackmidi_cost_breakdown() {
         };
 
         // 渲染 prof_secs 秒（调用方负责 Play/重置）
-        let render_secs = |engine: &mut AudioEngine, backend: u8, secs: f64| -> (f64, u64, f64) {
-            let frames = if backend == 2 { 4096 } else { 512 };
-            let mut buf = vec![0.0f32; frames * 2];
-            let target: u64 = (secs * sr as f64) as u64;
-            let mut rendered = 0u64;
-            let mut peak_voice = 0u64;
-            let mut max_chunk = 0.0f64;
-            if backend == 2 {
-                engine.sync_gpu_backend(); // 事件表构建（计时外）
-            }
-            let t0 = Instant::now();
-            while rendered < target {
+        let render_secs =
+            |engine: &mut AudioEngine, backend: u8, secs: f64| -> (f64, u64, f64, f32) {
+                let frames = if backend == 2 { 4096 } else { 512 };
+                let mut buf = vec![0.0f32; frames * 2];
+                let target: u64 = (secs * sr as f64) as u64;
+                let mut rendered = 0u64;
+                let mut peak_voice = 0u64;
+                let mut peak_sample = 0.0f32;
+                let mut max_chunk = 0.0f64;
                 if backend == 2 {
-                    engine.sync_gpu_backend();
+                    engine.sync_gpu_backend(); // 事件表构建（计时外）
                 }
-                let tc = Instant::now();
-                engine.render(&mut buf);
-                let dt = tc.elapsed().as_secs_f64() * 1000.0;
-                rendered += frames as u64;
-                peak_voice = peak_voice.max(engine.voice_count());
-                if rendered > sr as u64 {
-                    max_chunk = max_chunk.max(dt);
+                let t0 = Instant::now();
+                while rendered < target {
+                    if backend == 2 {
+                        engine.sync_gpu_backend();
+                    }
+                    let tc = Instant::now();
+                    engine.render(&mut buf);
+                    let dt = tc.elapsed().as_secs_f64() * 1000.0;
+                    rendered += frames as u64;
+                    peak_voice = peak_voice.max(engine.voice_count());
+                    peak_sample = buf.iter().fold(peak_sample, |m, s| m.max(s.abs()));
+                    if rendered > sr as u64 {
+                        max_chunk = max_chunk.max(dt);
+                    }
                 }
-            }
-            (t0.elapsed().as_secs_f64(), peak_voice, max_chunk)
-        };
+                (
+                    t0.elapsed().as_secs_f64(),
+                    peak_voice,
+                    max_chunk,
+                    peak_sample,
+                )
+            };
 
         // ── baseline：三后端 ──
         for (name, backend) in [("xsynth-cpu", 0u8), ("yinhe-cpu", 1), ("yinhe-gpu", 2)] {
@@ -4421,18 +4458,14 @@ fn prof_blackmidi_cost_breakdown() {
                 }
                 1 => {
                     let mut cs = yinhe_synth::CpuSynth::new(sr);
-                    for c in &active {
-                        cs.load_dense_soundfonts(*c as u32, &[std::path::PathBuf::from(sfz)])
-                            .expect("cpu sf");
-                    }
+                    cs.load_dense_soundfonts_many(&denses, &[std::path::PathBuf::from(sfz)])
+                        .expect("cpu sf");
                     engine.cpu_synth = Some(cs);
                 }
                 _ => {
                     let mut gs = yinhe_synth::GpuSynth::new_default(sr).expect("gpu");
-                    for c in &active {
-                        gs.load_dense_soundfonts(*c as u32, &[std::path::PathBuf::from(sfz)])
-                            .expect("gpu sf");
-                    }
+                    gs.load_dense_soundfonts_many(&denses, &[std::path::PathBuf::from(sfz)])
+                        .expect("gpu sf");
                     gs.finish_soundfont_load();
                     engine.gpu_synth = Some(gs);
                 }
@@ -4440,23 +4473,25 @@ fn prof_blackmidi_cost_breakdown() {
             engine.handle_command(AudioCommand::Play {
                 from_sample: start_sample,
             });
-            let (el, pv, mc) = render_secs(&mut engine, backend, prof_secs);
+            let (el, pv, mc, ps) = render_secs(&mut engine, backend, prof_secs);
             eprintln!(
-                "  {name:<12} {prof_secs}s音频={el:>6.2}s ({:.2}x) peak_voice={pv:>6} max_chunk={mc:>7.1}ms",
+                "  {name:<12} {prof_secs}s音频={el:>6.2}s ({:.2}x) peak_voice={pv:>6} max_chunk={mc:>7.1}ms peak_sample={ps:.3}",
                 prof_secs / el.max(1e-9)
             );
         }
 
         // ── CpuSynth 降级分解（同一引擎，模式间 Play 重置）──
+        // 超大工程可跳过（`YINHE_PROF_SKIP_BREAKDOWN=1`）：解析与渲染本身就够慢。
+        if std::env::var("YINHE_PROF_SKIP_BREAKDOWN").is_ok_and(|v| v == "1") {
+            continue;
+        }
         let mut cs_engine = AudioEngine::new(sr, layout.clone());
         cs_engine.handle_command(AudioCommand::LoadModel {
             model: Arc::clone(&model),
         });
         let mut cs = yinhe_synth::CpuSynth::new(sr);
-        for c in &active {
-            cs.load_dense_soundfonts(*c as u32, &[std::path::PathBuf::from(sfz)])
-                .expect("cpu sf");
-        }
+        cs.load_dense_soundfonts_many(&denses, &[std::path::PathBuf::from(sfz)])
+            .expect("cpu sf");
         cs_engine.cpu_synth = Some(cs);
         for (name, mode) in [("全功能", 0u8), ("无滤波", 1), ("无采样", 2), ("仅包络", 3)]
         {
@@ -4475,7 +4510,7 @@ fn prof_blackmidi_cost_breakdown() {
             cs_engine.handle_command(AudioCommand::Play {
                 from_sample: start_sample,
             });
-            let (el, pv, mc) = render_secs(&mut cs_engine, 1, prof_secs);
+            let (el, pv, mc, _ps) = render_secs(&mut cs_engine, 1, prof_secs);
             let d_on = base(&yinhe_synth::cpu_synth::PROF_NOTE_ON_NS) - b_on;
             let d_off = base(&yinhe_synth::cpu_synth::PROF_NOTE_OFF_NS) - b_off;
             let d_render = base(&yinhe_synth::cpu_synth::PROF_RENDER_NS) - b_render;
