@@ -303,6 +303,17 @@ mod tests {
         assert!((cutoff - 2_000.0).abs() < 0.5, "cutoff={cutoff}");
     }
 
+    /// 工程级声像：0 = 中性（左右都不衰减），两端各自压到另一侧。
+    #[test]
+    fn pan_offset_is_unity_at_center() {
+        let (l, r) = pan_offset_gains(0.0);
+        assert!((l - 1.0).abs() < 1e-6 && (r - 1.0).abs() < 1e-6);
+        let (l, r) = pan_offset_gains(-1.0);
+        assert!(l > 0.99 && r < 0.01, "l={l} r={r}");
+        let (l, r) = pan_offset_gains(1.0);
+        assert!(r > 0.99 && l < 0.01, "l={l} r={r}");
+    }
+
     /// 工程级参数：音量/音高/包络倍率进入 per-voice 展开。
     #[test]
     fn synth_params_apply_to_voice() {
