@@ -24,7 +24,6 @@ impl AudioEngine {
         self.cc_cursor = 0;
         self.dispatched_skip = ChaseSkip::default();
         self.active_notes.clear();
-        self.reset_track_vel(model.tracks.len());
 
         // 用当前 AM M/S 旁通集重建 lane 跳过掩码（模型已是新结构）。
         self.am_lane_skip = crate::audio_model::build_am_lane_skip(model, &self.am_ms);
@@ -88,8 +87,6 @@ impl AudioEngine {
         // 用当前 AM M/S 旁通集重建 lane 跳过掩码（模型可能是新结构）。
         self.am_lane_skip = crate::audio_model::build_am_lane_skip(&yin_model, &self.am_ms);
         self.yin_model = Some(yin_model);
-        let track_count = self.yin_model.as_ref().map(|m| m.tracks.len()).unwrap_or(0);
-        self.reset_track_vel(track_count);
         let model = self.yin_model.clone();
         if let Some(model) = model {
             self.apply_all_synth_params(&model);

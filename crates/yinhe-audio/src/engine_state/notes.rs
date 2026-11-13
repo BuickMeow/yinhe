@@ -92,6 +92,7 @@ impl AudioEngine {
         let end_sample = self.tick_to_sample(end_tick);
         if let Some(cs) = self.cpu_synth.as_mut() {
             cs.send_event(yinhe_synth::SynthEvent::NoteOn {
+                track: track as u16,
                 sample,
                 channel: dense as u8,
                 key: key as u8,

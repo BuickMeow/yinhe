@@ -23,9 +23,9 @@ pub(crate) use types::TrackAction;
 const BADGE_ICON_BOTTOM_INSET: f32 = 9.0;
 
 /// 每轨力度表：条宽 / 贴边距（上右下相同）/ 与 M/S 的间隙（px）。
-const VEL_METER_W: f32 = 5.0;
-const VEL_METER_MARGIN: f32 = 3.0;
-const VEL_METER_GAP: f32 = 5.0;
+const LEVEL_METER_W: f32 = 5.0;
+const LEVEL_METER_MARGIN: f32 = 3.0;
+const LEVEL_METER_GAP: f32 = 5.0;
 
 /// Render the track list using a painter (unified component for both
 /// pianoroll and transport contexts).
@@ -251,9 +251,9 @@ pub(crate) fn show(
                 let gap = 2.0;
                 let total_btn_w = 2.0 * btn_size.x + gap;
                 // 自动化表贴右缘，M/S 让位到其左侧（与普通轨的「力度表 + M/S」布局一致）。
-                let meter_right = row_rect.max.x - VEL_METER_MARGIN;
-                let meter_left = meter_right - VEL_METER_W;
-                let btn_x_start = meter_left - VEL_METER_GAP - total_btn_w;
+                let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
+                let meter_left = meter_right - LEVEL_METER_W;
+                let btn_x_start = meter_left - LEVEL_METER_GAP - total_btn_w;
                 let btn_y = badge_rect.center().y - btn_size.y * 0.5;
                 let m_rect = egui::Rect::from_min_size(egui::pos2(btn_x_start, btn_y), btn_size);
                 let s_rect = egui::Rect::from_min_size(
@@ -297,8 +297,8 @@ pub(crate) fn show(
                 }
                 // 自动化表：编辑/播放光标处该 lane 的值（基线依种类）。
                 let meter_rect = egui::Rect::from_min_max(
-                    egui::pos2(meter_left, row_rect.min.y + VEL_METER_MARGIN),
-                    egui::pos2(meter_right, row_rect.max.y - VEL_METER_MARGIN),
+                    egui::pos2(meter_left, row_rect.min.y + LEVEL_METER_MARGIN),
+                    egui::pos2(meter_right, row_rect.max.y - LEVEL_METER_MARGIN),
                 );
                 crate::widgets::meter::automation_meter(
                     &painter,
@@ -502,9 +502,9 @@ pub(crate) fn show(
                 let gap = 2.0;
                 let total_btn_w = 2.0 * btn_size.x + gap;
                 // 力度表贴右缘（上右下等边距），M/S 让位到其左侧。
-                let meter_right = row_rect.max.x - VEL_METER_MARGIN;
-                let meter_left = meter_right - VEL_METER_W;
-                let btn_x_start = meter_left - VEL_METER_GAP - total_btn_w;
+                let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
+                let meter_left = meter_right - LEVEL_METER_W;
+                let btn_x_start = meter_left - LEVEL_METER_GAP - total_btn_w;
                 let btn_y = badge_rect.center().y - btn_size.y * 0.5;
 
                 let m_rect = egui::Rect::from_min_size(egui::pos2(btn_x_start, btn_y), btn_size);
@@ -548,20 +548,20 @@ pub(crate) fn show(
                     audio_dirty = true;
                 }
 
-                // 力度表（向下单条；仅播放时非零）。
+                // 每轨电平表（向上、dB 刻度；仅播放时非零）。
                 let meter_rect = egui::Rect::from_min_max(
-                    egui::pos2(meter_left, row_rect.min.y + VEL_METER_MARGIN),
-                    egui::pos2(meter_right, row_rect.max.y - VEL_METER_MARGIN),
+                    egui::pos2(meter_left, row_rect.min.y + LEVEL_METER_MARGIN),
+                    egui::pos2(meter_right, row_rect.max.y - LEVEL_METER_MARGIN),
                 );
                 let (level, hold) = track_meters.get(idx).copied().unwrap_or((0.0, 0.0));
-                crate::widgets::meter::velocity_meter(&painter, meter_rect, level, hold);
+                crate::widgets::meter::track_level_meter(&painter, meter_rect, level, hold);
             } else {
                 // Conductor 行：Tempo 自动化表（贴右缘；光标处 BPM 按动态上限归一化）。
-                let meter_right = row_rect.max.x - VEL_METER_MARGIN;
-                let meter_left = meter_right - VEL_METER_W;
+                let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
+                let meter_left = meter_right - LEVEL_METER_W;
                 let meter_rect = egui::Rect::from_min_max(
-                    egui::pos2(meter_left, row_rect.min.y + VEL_METER_MARGIN),
-                    egui::pos2(meter_right, row_rect.max.y - VEL_METER_MARGIN),
+                    egui::pos2(meter_left, row_rect.min.y + LEVEL_METER_MARGIN),
+                    egui::pos2(meter_right, row_rect.max.y - LEVEL_METER_MARGIN),
                 );
                 crate::widgets::meter::automation_meter(
                     &painter,

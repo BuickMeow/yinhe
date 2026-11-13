@@ -15,6 +15,8 @@ pub enum SynthEvent {
         key: u8,
         velocity: u8,
         end_sample: u64,
+        /// 来源音轨（AR 每轨电平表用；预览/测试可填 0）。
+        track: u16,
     },
     /// 立即释放该 (channel, key) 最老的未释放 voice。
     /// 引擎事件表不使用（NoteOn 自带 end 取代）；保留给实时 MIDI 输入/提前释放。

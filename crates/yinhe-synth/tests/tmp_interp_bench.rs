@@ -27,6 +27,7 @@ fn bench_render_interp() {
     for k in 21..109u8 {
         for layer in 0..4u8 {
             events.push(SynthEvent::NoteOn {
+                track: 0,
                 sample: 0,
                 channel: 0,
                 key: k,

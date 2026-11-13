@@ -113,9 +113,9 @@ pub(crate) struct MixUiState {
     pub(crate) master_display: ((f32, f32), (f32, f32)),
     /// 总线条电平表弹道状态（key = "bus{n}"，增删总线时旧键闲置无害）。
     smoothed_buses: std::collections::HashMap<String, MeterState>,
-    /// 每轨力度表弹道状态（索引 = 音轨；仅播放时有值）。
+    /// 每轨电平表弹道状态（索引 = 音轨；仅播放时有值）。
     smoothed_tracks: Vec<MeterState>,
-    /// 本帧每轨力度表显示值 `(level, hold)`，main_loop 每帧更新（仅播放时非零）。
+    /// 本帧每轨电平表显示值 `(level, hold)`，main_loop 每帧更新（仅播放时非零）。
     pub(crate) track_display: Vec<(f32, f32)>,
     /// 插件扫描结果（后台线程填充；None = 尚未完成首次扫描）。
     pub(crate) scanned: Option<Vec<PluginEntry>>,
@@ -584,7 +584,7 @@ pub(crate) fn update_master_meter(app: &mut App, dt: f32) -> ((f32, f32), (f32, 
     app.mix.master_display
 }
 
-/// 更新每轨力度表弹道（每帧一次，main_loop 在走带栏/编排视图之前调用）。
+/// 更新每轨电平表弹道（每帧一次，main_loop 在走带栏/编排视图之前调用）。
 /// 读数来自引擎（仅播放时非零），结果存入 [`MixUiState::track_display`]。
 pub(crate) fn update_track_meters(app: &mut App, dt: f32) {
     let n = app

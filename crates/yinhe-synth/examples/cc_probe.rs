@@ -36,6 +36,7 @@ fn main() {
             event: ControlEvent::Raw(71, cc71),
         },
         SynthEvent::NoteOn {
+            track: 0,
             sample: 0,
             channel: 0,
             key: 60,

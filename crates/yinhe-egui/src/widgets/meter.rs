@@ -2,7 +2,7 @@
 //!
 //! - [`level_meter`]：混音台通道条用，向上 L/R 双条 + dB 数字刻度；
 //! - [`compact_meter`]：走带栏时间码第四栏用，向上 L/R 双条、无刻度；
-//! - [`velocity_meter`]：音轨面板每轨用，**向下**单条（归一化力度），与电平表
+//! - [`track_level_meter`]：音轨面板每轨用，**向上**单条（dB 刻度，峰值），与电平表
 //!   以方向区分。
 //!
 //! 三者共用同一套 dB 映射/着色（[`db_frac`] / [`meter_color`]）。
@@ -169,27 +169,20 @@ pub(crate) fn compact_meter(
     }
 }
 
-/// 力度表（向下单条）：自顶边起向下填充，`level`/`hold` 为归一化力度 0..1。
-/// 与电平表（向上、L/R 双条）以方向区分；仅播放时非零。
-pub(crate) fn velocity_meter(painter: &egui::Painter, rect: egui::Rect, level: f32, hold: f32) {
+/// 每轨电平表（窄条、向上、dB 刻度）：AR / 通道 AR 的轨道行右侧。
+/// `level`/`hold` 为线性峰值（0..∞），与混音台电平表同一套 dB 映射。
+pub(crate) fn track_level_meter(painter: &egui::Painter, rect: egui::Rect, level: f32, hold: f32) {
     painter.rect_filled(rect, 0.0, crate::theme::track_bg());
-    let frac = level.clamp(0.0, 1.0);
+    let frac = db_frac(gain_to_db(level));
     if frac > 0.0 {
         let h = rect.height() * frac;
-        painter.rect_filled(
-            egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), h)),
-            0.0,
-            velocity_color(level),
-        );
+        let fill = egui::Rect::from_min_max(egui::pos2(rect.min.x, rect.max.y - h), rect.max);
+        painter.rect_filled(fill, 0.0, meter_color(level));
     }
-    let hf = hold.clamp(0.0, 1.0);
+    let hf = db_frac(gain_to_db(hold));
     if hf > frac + 1e-4 {
-        let y = rect.min.y + rect.height() * hf;
-        painter.hline(
-            rect.x_range(),
-            y,
-            egui::Stroke::new(1.0, velocity_color(hold)),
-        );
+        let y = rect.max.y - rect.height() * hf;
+        painter.hline(rect.x_range(), y, egui::Stroke::new(1.0, meter_color(hold)));
     }
 }
 
@@ -241,17 +234,6 @@ fn meter_color(p: f32) -> egui::Color32 {
     if p >= 1.0 {
         crate::theme::danger_text()
     } else if gain_to_db(p) > -6.0 {
-        crate::theme::warning_gold()
-    } else {
-        crate::theme::accent_active()
-    }
-}
-
-/// 力度着色：接近满力度红、>0.75 金、其余强调色。
-fn velocity_color(v: f32) -> egui::Color32 {
-    if v >= 0.96 {
-        crate::theme::danger_text()
-    } else if v > 0.75 {
         crate::theme::warning_gold()
     } else {
         crate::theme::accent_active()

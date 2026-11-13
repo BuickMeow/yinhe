@@ -31,6 +31,8 @@ fn frame_count(info: &KeyInfo) -> u32 {
 
 pub(super) struct CpuVoice {
     pub(super) channel: u8,
+    /// 来源音轨（AR 每轨电平表按它汇总；与音频输出无关）。
+    pub(super) track: u16,
     pub(super) key: u8,
     /// NoteOn 力度（per-key layer 超限时按 xsynth 语义杀最弱 voice）。
     pub(super) velocity: u8,
@@ -148,6 +150,7 @@ impl CpuVoice {
     pub(super) fn new(
         info: &KeyInfo,
         channel: u8,
+        track: u16,
         key: u8,
         velocity: u8,
         group: u32,
@@ -167,6 +170,7 @@ impl CpuVoice {
 
         let mut voice = Self {
             channel,
+            track,
             key,
             velocity,
             group,

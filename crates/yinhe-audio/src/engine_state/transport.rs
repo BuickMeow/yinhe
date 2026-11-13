@@ -220,7 +220,6 @@ impl AudioEngine {
         self.note_cursor = [yinhe_types::NoteCursor::default(); KEY_COUNT];
         self.cc_cursor = 0;
         self.active_notes.clear();
-        self.clear_track_vel();
 
         self.cc_cursor = self
             .cc_events

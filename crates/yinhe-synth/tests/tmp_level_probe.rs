@@ -26,6 +26,7 @@ fn probe_dense_chord_peak() {
         for k in 21..109u8 {
             for layer in 0..layers {
                 events.push(SynthEvent::NoteOn {
+                    track: 0,
                     sample: 0,
                     channel: 0,
                     key: k,

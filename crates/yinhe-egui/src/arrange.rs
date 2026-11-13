@@ -128,7 +128,7 @@ pub fn show(
     sel_hint: Option<&crate::app::layout::SelHintInfo>,
     // 「添加自动化」：请求打开设备参数选择窗口（由调用方落地）。
     automation_picker_req: &mut Option<usize>,
-    // 每轨力度表显示值 `(level, hold)`（仅播放时非零；索引 = 音轨）。
+    // 每轨电平表显示值 `(level, hold)`（仅播放时非零；索引 = 音轨）。
     track_meters: &[(f32, f32)],
 ) {
     *last_cursor_tick = doc.edit.cursor_tick;

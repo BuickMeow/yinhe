@@ -15,9 +15,11 @@ impl CpuSynth {
                 key,
                 velocity,
                 end_sample,
+                track,
                 ..
             } => self.note_on(
                 *channel,
+                *track,
                 *key,
                 *velocity,
                 *end_sample,
@@ -35,15 +37,18 @@ impl CpuSynth {
 
     /// NoteOn：从 key map 快照创建 voice（该 (key,vel) 的每个 region 层一个
     /// voice，同组号绑定生命周期）；超限淘汰最老的 release 中组。
+    #[allow(clippy::too_many_arguments)] // 事件字段 + 渲染上下文透传
     fn note_on(
         &mut self,
         channel: u8,
+        track: u16,
         key: u8,
         vel: u8,
         end_sample: u64,
         frame: u32,
         block_start_abs: u64,
     ) {
+        self.register_track(track, channel);
         let t_prof = std::time::Instant::now();
         let Some(ch_idx) = dense_channel(channel as usize) else {
             return;
@@ -138,6 +143,7 @@ impl CpuSynth {
             let mut voice = CpuVoice::new(
                 info,
                 channel,
+                track,
                 key,
                 vel,
                 group,
@@ -240,7 +246,7 @@ impl CpuSynth {
         // 先收集（避免迭代 voices 时 push 触发 Vec 重分配/借用冲突）。
         // 同一组只取第一条：同一次 NoteOn 的多层共享 end_sample，重复触发会
         // 叠出多份释放声。
-        let mut due: Vec<(u8, u8, u8, u32, u32)> = Vec::new();
+        let mut due: Vec<(u8, u16, u8, u8, u32, u32)> = Vec::new();
         let mut seen: Vec<u32> = Vec::new();
         for v in &self.voices {
             if v.is_release_trigger
@@ -256,19 +262,20 @@ impl CpuSynth {
             seen.push(v.group);
             due.push((
                 v.channel,
+                v.track,
                 v.key,
                 v.velocity,
                 (v.end_sample - block_start) as u32,
                 v.group,
             ));
         }
-        for (channel, key, vel, frame, group) in due {
+        for (channel, track, key, vel, frame, group) in due {
             for v in self.voices.iter_mut() {
                 if v.group == group {
                     v.release_spawned = true;
                 }
             }
-            self.spawn_release_layers(channel, key, vel, frame, block_start);
+            self.spawn_release_layers(channel, track, key, vel, frame, block_start);
         }
     }
 
@@ -440,6 +447,7 @@ impl CpuSynth {
             // SFZ `trigger=release`：音符结束才发声（钢琴踏板/键释放噪声）。
             self.spawn_release_layers(
                 channel,
+                self.track_of(group),
                 key,
                 self.velocity_of(group),
                 frame,
@@ -462,6 +470,15 @@ impl CpuSynth {
             .unwrap_or(0)
     }
 
+    /// 该组首个 voice 的来源音轨（释放层沿用；找不到返回 0）。
+    fn track_of(&self, group: u32) -> u16 {
+        self.voices
+            .iter()
+            .find(|v| v.group == group)
+            .map(|v| v.track)
+            .unwrap_or(0)
+    }
+
     /// 创建 `trigger=release` 层（该 (channel, key) 的全部释放 region 各一个 voice）。
     ///
     /// 门控（`on_locc64` 等）在**释放时刻**求值——踏板噪声按当时的踏板状态选层，
@@ -469,6 +486,7 @@ impl CpuSynth {
     fn spawn_release_layers(
         &mut self,
         channel: u8,
+        track: u16,
         key: u8,
         vel: u8,
         frame: u32,
@@ -520,6 +538,7 @@ impl CpuSynth {
             let mut voice = CpuVoice::new(
                 info,
                 channel,
+                track,
                 key,
                 if vel == 0 { info.lovel } else { vel },
                 group,
@@ -574,19 +593,19 @@ impl CpuSynth {
         if action.damper_released {
             // 松开延音踏板：释放被保持的 voice（与 GpuSynth apply_chase 同语义），
             // 并为其补上 SFZ `trigger=release` 层（踏板噪声正是在这一刻发声）。
-            let mut held: Vec<(u8, u8, u8)> = Vec::new();
+            let mut held: Vec<(u8, u8, u8, u16)> = Vec::new();
             for v in self.voices.iter_mut() {
                 if v.channel == channel && v.held_by_damper && !v.finished() {
                     v.held_by_damper = false;
                     v.signal_release(ENV_RELEASE);
                     if !v.is_release_trigger && !v.release_spawned {
                         v.release_spawned = true;
-                        held.push((v.key, v.velocity, 0));
+                        held.push((v.key, v.velocity, 0, v.track));
                     }
                 }
             }
-            for (key, vel, _) in held {
-                self.spawn_release_layers(channel, key, vel, frame, block_start_abs);
+            for (key, vel, _, track) in held {
+                self.spawn_release_layers(channel, track, key, vel, frame, block_start_abs);
             }
         }
         // 弯音/调音变化：更新该通道活跃 voice 的速度（含 time 校正）。

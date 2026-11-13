@@ -58,37 +58,45 @@ fn make_model_with_notes(notes: Vec<(u8, u32, u32, u8, u8)>) -> YinModel {
     model
 }
 
-/// 每轨力度表：NoteOn 后该轨有值，NoteOff 后回落，停止播放发布 0。
-/// 力度表记账独立于后端——这里用最轻的
-/// dispatch 路径直接验证记账/回落/发布三段。
+/// 每轨电平：渲染后发声轨道有峰值；停止播放发布 0。
 #[test]
-fn track_velocity_meter_tracks_active_and_releases() {
-    let model = make_model_with_notes(vec![(60, 0, 480, 100, 0)]);
-    let model = Arc::new(model);
-    let mask = vec![true; 16];
-    let mut engine = AudioEngine::new(48000, ChannelLayout::from_mask(mask));
-    engine.load_model(&model);
-    engine.playing = true;
+#[ignore = "需要 SoundFont"]
+fn track_level_meter_reads_synth_peak_per_track() {
+    let sfz = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
+    let sr = 48_000u32;
+    let model = make_model_with_notes(vec![(60, 0, 4_800, 100, 0)]);
+    let layout = crate::spawn::channels_for_model(&model);
+    let mut engine = AudioEngine::new(sr, layout);
+    engine.handle_command(AudioCommand::LoadModel {
+        model: Arc::new(model),
+    });
+    let mut synth = yinhe_synth::CpuSynth::new(sr);
+    synth
+        .load_dense_soundfonts(0, &[std::path::PathBuf::from(sfz)])
+        .expect("音色库加载");
+    engine.cpu_synth = Some(synth);
+    engine.handle_command(AudioCommand::Play { from_sample: 0 });
 
-    assert_eq!(engine.track_vel_max.len(), 1, "一轨一个力度表槽");
-
-    // dispatch NoteOn（start_tick=0 ≤ tick=0）→ 该轨力度 = 100。
-    engine.dispatch_and_find_next(0, 240);
-    assert_eq!(engine.track_vel_max[0], 100);
+    let mut out = vec![0.0f32; 512 * 2];
+    for _ in 0..10 {
+        engine.render(&mut out);
+    }
     engine.publish_track_levels();
-    let lv = engine.track_levels.lock().unwrap()[0];
-    assert!((lv - 100.0 / 127.0).abs() < 1e-6);
+    let levels = engine.track_levels.lock().unwrap().clone();
+    assert_eq!(levels.len(), 1, "一轨一个电平表槽");
+    assert!(levels[0] > 0.0, "发声轨道应有电平（{}）", levels[0]);
 
-    // 推进过 end_tick=480 → 收音回落 0。
-    engine.dispatch_and_find_next(960, 1200);
-    assert_eq!(engine.track_vel_max[0], 0, "音符结束后回落");
-    engine.publish_track_levels();
-    assert_eq!(engine.track_levels.lock().unwrap()[0], 0.0);
-
-    // 停止播放 → 发布 0（仅播放时非零）。
+    // 停止播放 → 全部 0。
     engine.playing = false;
     engine.publish_track_levels();
-    assert_eq!(engine.track_levels.lock().unwrap()[0], 0.0);
+    assert!(
+        engine
+            .track_levels
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|&v| v == 0.0)
+    );
 }
 
 #[test]
@@ -2210,10 +2218,6 @@ fn yinhe_cpu_engine_render_smoke() {
     assert!(peak > 0.0, "yinhe CPU 后端应渲染出输出（peak={peak}）");
 }
 
-/// 画像（本地 MIDI + SoundFont，ignored）：cyber-night 第 92 小节密集段，
-/// 三合成后端（xsynth CPU / yinhe CPU / yinhe GPU）的实时倍数与峰值 voice。
-///
-/// 输出可直接用于选择黑乐谱的优化方向（并行/分页/流水线）。
 /// 画像（本地 MIDI + SoundFont，ignored）：经典黑乐谱成本分解。
 ///
 /// - `tau2.5.9.mid`：628 万音符，经典布局（音符为主）

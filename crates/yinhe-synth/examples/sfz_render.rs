@@ -47,6 +47,7 @@ fn main() {
         let key = 55 + i as u8;
         let vel = 40 + (i as u8) * 7;
         events.push(SynthEvent::NoteOn {
+            track: 0,
             sample: t,
             channel: 0,
             key,

@@ -25,6 +25,7 @@ macro_rules! route_cpu_event {
                 ) => {
                     // CPU 路径沿用显式 NoteOff（与 xsynth 同语义）；end_sample 不自行到期。
                     cs.send_event(yinhe_synth::SynthEvent::NoteOn {
+                        track: 0,
                         sample,
                         channel: dense as u8,
                         key,
@@ -220,19 +221,6 @@ impl AudioEngine {
                 if !self.skip_track.get(track).copied().unwrap_or(false) {
                     let dense = self.channel_layout.dense_for(ch as usize);
                     if dense != u32::MAX {
-                        // 力度表记账（独立于后端分支，保证各后端一致）。
-                        self.meter_notes.push(std::cmp::Reverse((
-                            end_tick,
-                            track as u16,
-                            note.velocity,
-                        )));
-                        if let Some(h) = self.track_vel_hist.get_mut(track) {
-                            let v = (note.velocity & 0x7f) as usize;
-                            h[v] = h[v].saturating_add(1);
-                            if note.velocity > self.track_vel_max[track] {
-                                self.track_vel_max[track] = note.velocity;
-                            }
-                        }
                         let has_plugin = self
                             .instruments
                             .get(dense as usize)
@@ -270,6 +258,7 @@ impl AudioEngine {
                             let vel = note.velocity;
                             if let Some(cs) = self.cpu_synth.as_mut() {
                                 cs.send_event(yinhe_synth::SynthEvent::NoteOn {
+                                    track: track as u16,
                                     sample,
                                     channel: dense as u8,
                                     key: key as u8,
@@ -315,14 +304,6 @@ impl AudioEngine {
             }
             self.ended_notes.push(*an);
             self.active_notes.pop();
-        }
-        // 力度表：收音记账（所有后端统一，与 active_notes 独立）。
-        while let Some(&std::cmp::Reverse((end, track, vel))) = self.meter_notes.peek() {
-            if end > tick {
-                break;
-            }
-            self.meter_notes.pop();
-            self.track_vel_off(track, vel);
         }
         // peek 堆顶（最早结束的未结束音符）作为下一 NoteOff 边界候选
         if let Some(Reverse(an)) = self.active_notes.peek()

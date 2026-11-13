@@ -73,6 +73,7 @@ fn xfin_gate_scales_layer_with_cc() {
         .load_dense_soundfonts(0, std::slice::from_ref(&sfz))
         .unwrap();
     quiet.load_events(vec![SynthEvent::NoteOn {
+        track: 0,
         sample: 0,
         channel: 0,
         key: 60,
@@ -91,6 +92,7 @@ fn xfin_gate_scales_layer_with_cc() {
             event: ControlEvent::Raw(20, 127.0),
         },
         SynthEvent::NoteOn {
+            track: 0,
             sample: 0,
             channel: 0,
             key: 60,
@@ -123,6 +125,7 @@ fn set_cc_defaults_enable_gated_layers() {
     let mut synth = CpuSynth::new(SR);
     synth.load_dense_soundfonts(0, &[sfz]).unwrap();
     synth.load_events(vec![SynthEvent::NoteOn {
+        track: 0,
         sample: 0,
         channel: 0,
         key: 60,
@@ -153,6 +156,7 @@ fn release_trigger_sounds_after_note_end() {
     let mut synth = CpuSynth::new(SR);
     synth.load_dense_soundfonts(0, &[sfz]).unwrap();
     synth.load_events(vec![SynthEvent::NoteOn {
+        track: 0,
         sample: 0,
         channel: 0,
         key: 60,
@@ -194,6 +198,7 @@ fn one_shot_ignores_note_off() {
     synth.load_dense_soundfonts(0, &[sfz]).unwrap();
     synth.load_events(vec![
         SynthEvent::NoteOn {
+            track: 0,
             sample: 0,
             channel: 0,
             key: 60,
@@ -235,6 +240,7 @@ fn off_by_cuts_previous_voice_in_same_group() {
     synth.load_dense_soundfonts(0, &[sfz]).unwrap();
     synth.load_events(vec![
         SynthEvent::NoteOn {
+            track: 0,
             sample: 0,
             channel: 0,
             key: 60,
@@ -242,6 +248,7 @@ fn off_by_cuts_previous_voice_in_same_group() {
             end_sample: SR as u64,
         },
         SynthEvent::NoteOn {
+            track: 0,
             sample: 4800,
             channel: 0,
             key: 60,
@@ -279,6 +286,7 @@ fn seq_position_rotates_layers() {
     // 两次 note_on（间隔很长，前一音早已结束）
     synth.load_events(vec![
         SynthEvent::NoteOn {
+            track: 0,
             sample: 0,
             channel: 0,
             key: 60,
@@ -286,6 +294,7 @@ fn seq_position_rotates_layers() {
             end_sample: 4800,
         },
         SynthEvent::NoteOn {
+            track: 0,
             sample: 48_000,
             channel: 0,
             key: 60,
@@ -333,6 +342,7 @@ fn pitch_random_varies_speed_deterministically() {
     b.load_dense_soundfonts(0, &[sfz]).unwrap();
     for s in [&mut a, &mut b] {
         s.load_events(vec![SynthEvent::NoteOn {
+            track: 0,
             sample: 0,
             channel: 0,
             key: 60,
@@ -357,6 +367,7 @@ fn pitch_random_varies_speed_deterministically() {
     let mut c = CpuSynth::new(SR);
     c.load_dense_soundfonts(0, &[plain]).unwrap();
     c.load_events(vec![SynthEvent::NoteOn {
+        track: 0,
         sample: 0,
         channel: 0,
         key: 60,
@@ -384,6 +395,7 @@ fn cubic_interpolation_is_finite_and_differs() {
         s.load_dense_soundfonts(0, std::slice::from_ref(&sfz))
             .unwrap();
         s.load_events(vec![SynthEvent::NoteOn {
+            track: 0,
             sample: 0,
             channel: 0,
             key: 63,
@@ -421,6 +433,7 @@ fn keyswitch_key_is_swallowed() {
     let mut synth = CpuSynth::new(SR);
     synth.load_dense_soundfonts(0, &[sfz]).unwrap();
     synth.load_events(vec![SynthEvent::NoteOn {
+        track: 0,
         sample: 0,
         channel: 0,
         key: 26,

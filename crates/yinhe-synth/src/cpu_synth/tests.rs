@@ -18,6 +18,7 @@ fn buffers(frames: usize) -> Vec<ChannelBuffers> {
 fn note_on_without_soundfont_is_silent() {
     let mut synth = CpuSynth::new(48_000);
     synth.load_events(vec![SynthEvent::NoteOn {
+        track: 0,
         sample: 0,
         channel: 0,
         key: 60,
@@ -41,6 +42,7 @@ fn note_on_starts_at_event_frame() {
         .load_dense_soundfonts(0, &[PathBuf::from(sfz)])
         .expect("load soundfont");
     synth.load_events(vec![SynthEvent::NoteOn {
+        track: 0,
         sample: 256,
         channel: 0,
         key: 60,
@@ -67,6 +69,7 @@ fn overlapping_notes_end_precisely() {
         .expect("load soundfont");
     synth.load_events(vec![
         SynthEvent::NoteOn {
+            track: 0,
             sample: 0,
             channel: 0,
             key: 60,
@@ -74,6 +77,7 @@ fn overlapping_notes_end_precisely() {
             end_sample: 48_000,
         },
         SynthEvent::NoteOn {
+            track: 0,
             sample: 0,
             channel: 0,
             key: 60,
@@ -111,6 +115,7 @@ fn duplicate_note_on_batches_into_one_voice() {
         synth
     };
     let on = |velocity: u8, end_sample: u64| SynthEvent::NoteOn {
+        track: 0,
         sample: 0,
         channel: 0,
         key: 60,
@@ -157,6 +162,7 @@ fn batched_voice_needs_all_note_offs_to_release() {
         synth
     };
     let on = SynthEvent::NoteOn {
+        track: 0,
         sample: 0,
         channel: 0,
         key: 60,
@@ -200,6 +206,7 @@ fn layer_limit_kills_quietest() {
     let mut events = Vec::new();
     for i in 0..5u8 {
         events.push(SynthEvent::NoteOn {
+            track: 0,
             sample: 0,
             channel: 0,
             key: 60,
@@ -301,6 +308,7 @@ fn multi_layer_note_on_spawns_one_voice_per_region_and_off_releases_group() {
 
     synth.load_events(vec![
         SynthEvent::NoteOn {
+            track: 0,
             sample: 0,
             channel: 0,
             key: 60,
@@ -358,6 +366,7 @@ fn global_evict_kills_whole_layer_group() {
     synth.load_dense_soundfonts_many(&[0], &[sfz]).unwrap();
     synth.set_max_voices(1);
     synth.load_events(vec![SynthEvent::NoteOn {
+        track: 0,
         sample: 0,
         channel: 0,
         key: 60,
@@ -402,6 +411,7 @@ fn channel_above_32_sounds() {
     let mut synth = CpuSynth::new(sr);
     synth.load_dense_soundfonts(40, &[sfz]).unwrap();
     synth.load_events(vec![SynthEvent::NoteOn {
+        track: 0,
         sample: 0,
         channel: 40,
         key: 60,
@@ -443,6 +453,7 @@ fn two_hat_layers(exclusive: u8) -> CpuSynth {
 fn exclusive_class_chokes_previous_voice() {
     let mut synth = two_hat_layers(1);
     synth.send_event(SynthEvent::NoteOn {
+        track: 0,
         sample: 0,
         channel: 0,
         key: 42,
@@ -450,6 +461,7 @@ fn exclusive_class_chokes_previous_voice() {
         end_sample: 48_000,
     });
     synth.send_event(SynthEvent::NoteOn {
+        track: 0,
         sample: 512,
         channel: 0,
         key: 46,
@@ -467,6 +479,7 @@ fn exclusive_class_chokes_previous_voice() {
 fn no_exclusive_class_keeps_both_voices() {
     let mut synth = two_hat_layers(0);
     synth.send_event(SynthEvent::NoteOn {
+        track: 0,
         sample: 0,
         channel: 0,
         key: 42,
@@ -474,6 +487,7 @@ fn no_exclusive_class_keeps_both_voices() {
         end_sample: 48_000,
     });
     synth.send_event(SynthEvent::NoteOn {
+        track: 0,
         sample: 512,
         channel: 0,
         key: 46,
@@ -499,6 +513,7 @@ fn cc74_updates_sounding_voice_cutoff() {
     }];
     synth.port_key_maps[0] = Arc::new(vec![KeyMapEntry::expanded(0, 0, map)]);
     synth.send_event(SynthEvent::NoteOn {
+        track: 0,
         sample: 0,
         channel: 0,
         key: 60,
@@ -524,6 +539,7 @@ fn cc74_updates_sounding_voice_cutoff() {
 fn cc120_all_sound_off_kills_voices() {
     let mut synth = two_hat_layers(0);
     synth.send_event(SynthEvent::NoteOn {
+        track: 0,
         sample: 0,
         channel: 0,
         key: 42,
@@ -545,6 +561,7 @@ fn cc120_all_sound_off_kills_voices() {
 fn cc123_releases_voices() {
     let mut synth = two_hat_layers(0);
     synth.send_event(SynthEvent::NoteOn {
+        track: 0,
         sample: 0,
         channel: 0,
         key: 42,

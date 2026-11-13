@@ -1,5 +1,5 @@
 //! 通道 AR 左侧通道面板：Conductor 行、通道行（含展开 chevron）、
-//! 轨道音符行（M/S + 力度表）、自动化子行（lane 名 + 试听 M/S + 添加加号）。
+//! 轨道音符行（M/S + 电平表）、自动化子行（lane 名 + 试听 M/S + 添加加号）。
 //!
 //! 复用轨道 AR 轨道面板的绘制原语（行背景 / 色带 / 内联按钮）。
 
@@ -24,10 +24,10 @@ use crate::arrange::track_panel::render::{
 /// 色带图标（chevron / 加号）命中区高 16px，其底边距行底（色带底）1px，
 /// 因此中心距行底 16 / 2 + 1 = 9px（与轨道面板一致）。
 const BADGE_ICON_BOTTOM_INSET: f32 = 9.0;
-/// 每轨力度表：条宽 / 贴边距 / 与 M/S 的间隙（px）。
-const VEL_METER_W: f32 = 5.0;
-const VEL_METER_MARGIN: f32 = 3.0;
-const VEL_METER_GAP: f32 = 5.0;
+/// 每轨电平表：条宽 / 贴边距 / 与 M/S 的间隙（px）。
+const LEVEL_METER_W: f32 = 5.0;
+const LEVEL_METER_MARGIN: f32 = 3.0;
+const LEVEL_METER_GAP: f32 = 5.0;
 /// 面板内联按钮尺寸。
 const BTN_SIZE: f32 = 18.0;
 const BTN_GAP: f32 = 2.0;
@@ -126,11 +126,11 @@ fn draw_lane_meter(
     if !show_details {
         return;
     }
-    let meter_right = row_rect.max.x - VEL_METER_MARGIN;
-    let meter_left = meter_right - VEL_METER_W;
+    let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
+    let meter_left = meter_right - LEVEL_METER_W;
     let meter_rect = egui::Rect::from_min_max(
-        egui::pos2(meter_left, row_rect.min.y + VEL_METER_MARGIN),
-        egui::pos2(meter_right, row_rect.max.y - VEL_METER_MARGIN),
+        egui::pos2(meter_left, row_rect.min.y + LEVEL_METER_MARGIN),
+        egui::pos2(meter_right, row_rect.max.y - LEVEL_METER_MARGIN),
     );
     crate::widgets::meter::automation_meter(
         painter,
@@ -431,7 +431,7 @@ pub(crate) fn show(
                 }
             }
             CaRow::Track(t) => {
-                // 轨道行：编号 + 通道标签 + 轨名 + M/S + 力度表（对齐轨道 AR）。
+                // 轨道行：编号 + 通道标签 + 轨名 + M/S + 电平表（对齐轨道 AR）。
                 let ti = io.track_info.get(t as usize);
                 let num_text = format!("{:03}", ti.map(|i| i.index).unwrap_or(t));
                 let chan_text = match ti {
@@ -495,9 +495,9 @@ pub(crate) fn show(
                         .map(|o| o.soloed)
                         .unwrap_or(false);
                     let total_btn_w = 2.0 * BTN_SIZE + BTN_GAP;
-                    let meter_right = row_rect.max.x - VEL_METER_MARGIN;
-                    let meter_left = meter_right - VEL_METER_W;
-                    let btn_x_start = meter_left - VEL_METER_GAP - total_btn_w;
+                    let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
+                    let meter_left = meter_right - LEVEL_METER_W;
+                    let btn_x_start = meter_left - LEVEL_METER_GAP - total_btn_w;
                     let btn_y = badge_rect.center().y - BTN_SIZE * 0.5;
                     // 两个 18px 按钮（与原 AR 相同尺寸/间距）。
                     let m_rect = egui::Rect::from_min_size(
@@ -542,15 +542,15 @@ pub(crate) fn show(
                     }
 
                     let meter_rect = egui::Rect::from_min_max(
-                        egui::pos2(meter_left, row_rect.min.y + VEL_METER_MARGIN),
-                        egui::pos2(meter_right, row_rect.max.y - VEL_METER_MARGIN),
+                        egui::pos2(meter_left, row_rect.min.y + LEVEL_METER_MARGIN),
+                        egui::pos2(meter_right, row_rect.max.y - LEVEL_METER_MARGIN),
                     );
                     let (level, hold) = io
                         .track_meters
                         .get(t as usize)
                         .copied()
                         .unwrap_or((0.0, 0.0));
-                    crate::widgets::meter::velocity_meter(&painter, meter_rect, level, hold);
+                    crate::widgets::meter::track_level_meter(&painter, meter_rect, level, hold);
                 } else {
                     painter.text(
                         egui::pos2(text_x, badge_rect.center().y),
@@ -626,9 +626,9 @@ pub(crate) fn show(
                     let key = (track, lane.target.clone());
                     let st = io.arr_am_ms.get(&key).copied().unwrap_or_default();
                     let total_btn_w = 2.0 * BTN_SIZE + BTN_GAP;
-                    let meter_right = row_rect.max.x - VEL_METER_MARGIN;
-                    let meter_left = meter_right - VEL_METER_W;
-                    let btn_x_start = meter_left - VEL_METER_GAP - total_btn_w;
+                    let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
+                    let meter_left = meter_right - LEVEL_METER_W;
+                    let btn_x_start = meter_left - LEVEL_METER_GAP - total_btn_w;
                     let btn_y = badge_rect.center().y - BTN_SIZE * 0.5;
                     let m_rect = egui::Rect::from_min_size(
                         egui::pos2(btn_x_start, btn_y),
@@ -675,8 +675,8 @@ pub(crate) fn show(
                     }
                     // 自动化表：光标处 lane 值（基线依种类：法线/折叠由 target 决定）。
                     let meter_rect = egui::Rect::from_min_max(
-                        egui::pos2(meter_left, row_rect.min.y + VEL_METER_MARGIN),
-                        egui::pos2(meter_right, row_rect.max.y - VEL_METER_MARGIN),
+                        egui::pos2(meter_left, row_rect.min.y + LEVEL_METER_MARGIN),
+                        egui::pos2(meter_right, row_rect.max.y - LEVEL_METER_MARGIN),
                     );
                     crate::widgets::meter::automation_meter(
                         &painter,

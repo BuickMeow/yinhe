@@ -237,6 +237,7 @@ impl YinhePreview {
             .map(|d| sample.saturating_add(d))
             .unwrap_or(u64::MAX);
         self.synth.send_event(SynthEvent::NoteOn {
+            track: 0,
             sample,
             channel: dense as u8,
             key,

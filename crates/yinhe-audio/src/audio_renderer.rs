@@ -432,7 +432,7 @@ impl AudioRenderer {
             self.scratch.fill(0.0);
         }
 
-        // 每轨力度表读数发布（所有分支统一；未播放 → 0）。
+        // 每轨电平读数发布（所有分支统一；未播放 → 0）。
         self.engine.publish_track_levels();
 
         // 输出限幅（GPU/CPU 路径统一在此处理；合成器内部不做 DSP）。

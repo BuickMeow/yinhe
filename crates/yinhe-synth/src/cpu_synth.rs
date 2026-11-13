@@ -106,8 +106,20 @@ pub struct CpuSynth {
     peak_voices: usize,
     /// 块内 damper 快照（voice 循环读取，避免借用冲突）。
     damper_flags: [bool; MAX_CHANNELS],
-    /// 并行渲染的每分片输出 scratch（分片 × MAX_CHANNELS × frames × 2，复用）。
+    /// 并行渲染的每分片输出 scratch（分片 × 活跃轨 × frames × 2，复用）。
     par_scratch: Vec<f32>,
+    /// 音轨数（已见到的最大 track + 1）。
+    track_count: usize,
+    /// track → dense 通道（u8::MAX = 未登记）。
+    track_channel: Vec<u8>,
+    /// track → 本块 slot（u16::MAX = 本块无 voice）。
+    track_slot: Vec<u16>,
+    /// 本块 slot → track（紧凑编号，scratch 只按活跃轨道分配）。
+    slot_track: Vec<u16>,
+    /// 每轨上一块的峰值（AR 电平表读取；无 voice 的轨道为 0）。
+    track_peaks: Vec<f32>,
+    /// 每轨混音临时区（slot × frames × 2）。
+    track_mix: Vec<f32>,
     /// 每 (channel, key) 的活跃 voice 索引表（MAX_CHANNELS × 128 个 Vec）。
     /// note_on/note_off/enforce 的查找从 O(V) 降为 O(layer)（成本分解实测
     /// note_on+note_off 占 91% 渲染时间）；块末 retain 后重建。
@@ -142,6 +154,12 @@ impl CpuSynth {
             peak_voices: 0,
             damper_flags: [false; MAX_CHANNELS],
             par_scratch: Vec::new(),
+            track_count: 0,
+            track_channel: Vec::new(),
+            track_slot: Vec::new(),
+            slot_track: Vec::new(),
+            track_peaks: Vec::new(),
+            track_mix: Vec::new(),
             key_indices: vec![Vec::new(); MAX_CHANNELS * 128],
             next_group: 1,
             seq_counters: vec![0; MAX_CHANNELS * 128],
@@ -234,6 +252,7 @@ impl CpuSynth {
             v.clear();
         }
         self.reset_channels();
+        self.reset_track_meters();
         self.sample_position = 0;
         self.chase_base = 0;
         self.apply_cc_defaults();
@@ -274,6 +293,60 @@ impl CpuSynth {
         self.peak_voices
     }
 
+    /// 登记一个音轨的归属通道（note_on 热路径调用；只在首次/变化时扩容）。
+    fn register_track(&mut self, track: u16, channel: u8) {
+        let t = track as usize;
+        if t >= self.track_count {
+            self.track_count = t + 1;
+            self.track_channel.resize(self.track_count, u8::MAX);
+            self.track_slot.resize(self.track_count, u16::MAX);
+            self.track_peaks.resize(self.track_count, 0.0);
+        }
+        self.track_channel[t] = channel;
+    }
+
+    /// 某轨上一块的峰值（0 = 无发声）。AR 每轨电平表用。
+    pub fn track_peak(&self, track: usize) -> f32 {
+        self.track_peaks.get(track).copied().unwrap_or(0.0)
+    }
+
+    /// 清空轨道记账（换事件表/seek 时调用；新音符会重新登记）。
+    fn reset_track_meters(&mut self) {
+        self.track_count = 0;
+        self.track_channel.clear();
+        self.track_slot.clear();
+        self.slot_track.clear();
+        self.track_peaks.clear();
+        self.track_mix.clear();
+    }
+
+    /// 为当前 voices 分配紧凑 slot，返回活跃轨道数。
+    ///
+    /// 同时把上一块的轨道峰值清零（无 voice 的轨道要落回 0）。
+    fn build_track_slots(&mut self) -> usize {
+        for &t in &self.slot_track {
+            let t = t as usize;
+            if let Some(slot) = self.track_slot.get_mut(t) {
+                *slot = u16::MAX;
+            }
+            if let Some(peak) = self.track_peaks.get_mut(t) {
+                *peak = 0.0;
+            }
+        }
+        self.slot_track.clear();
+        for v in &self.voices {
+            let t = v.track as usize;
+            let Some(slot) = self.track_slot.get_mut(t) else {
+                continue;
+            };
+            if *slot == u16::MAX {
+                *slot = self.slot_track.len() as u16;
+                self.slot_track.push(v.track);
+            }
+        }
+        self.slot_track.len()
+    }
+
     /// Seek 到指定位置：清 voice、重置通道状态，并**清空事件队列**。
     ///
     /// CpuSynth 的事件由
@@ -288,6 +361,7 @@ impl CpuSynth {
             v.clear();
         }
         self.reset_channels();
+        self.reset_track_meters();
         self.apply_cc_defaults();
     }
 
@@ -481,8 +555,15 @@ impl CpuSynth {
         }
         // 并行策略：voice 按物理顺序 `par_chunks_mut` 分片（分片间 voice 数相同、
         // 单 voice 工作量近似 → 天然负载均衡，不依赖通道分布，黑乐谱通道集中
-        // 也不失衡）。每分片累加到私有 scratch（分片 × 通道 × 帧 × 2），随后归约。
-        // 分片数 = 线程数（实测细分反而因归约开销略降）。线程数 = 性能核数。
+        // 也不失衡）。每分片累加到私有 scratch（分片 × 活跃轨 × 帧 × 2），随后
+        // 按轨归约、汇总进通道缓冲，并顺手发布每轨峰值。
+        //
+        // 按**活跃轨**（而不是全部轨道/通道）分配 scratch：799 轨但只有 30 轨
+        // 在发声时只为 30 轨付内存；slot 编号每块重建。
+        let k = self.build_track_slots();
+        if k == 0 {
+            return;
+        }
         let threads = self
             .par_pool
             .as_ref()
@@ -491,14 +572,13 @@ impl CpuSynth {
             .max(1);
         let chunk = self.voices.len().div_ceil(threads).max(1);
         let n_chunks = self.voices.len().div_ceil(chunk);
-        // scratch 按**实际输出通道数**分配（工程用 16 通道就只付 16 通道的内存），
-        // 上限是 MAX_CHANNELS（256 = 16 port 全集）。
         let channels = buffers.len().min(MAX_CHANNELS);
-        let stride = channels * frames * 2;
+        let stride = k * frames * 2;
         self.par_scratch.clear();
         self.par_scratch.resize(n_chunks * stride, 0.0);
 
         let damper_flags = self.damper_flags;
+        let track_slot = &self.track_slot;
         let profile_mode = CPU_PROFILE_MODE.load(std::sync::atomic::Ordering::Relaxed);
         // 非规格化数抑制：MXCSR 是 per-thread，rayon worker 在闭包内各自设置
         // （幂等；黑乐谱长尾衰减到 -100dB 后 x86 denormal 会拖慢 10~100 倍）。
@@ -517,17 +597,16 @@ impl CpuSynth {
                             // 防御：事件通道应 < buffers.len()（调用方按 layout 分配）
                             continue;
                         }
+                        let Some(slot) = track_slot.get(v.track as usize).copied() else {
+                            continue;
+                        };
+                        if slot == u16::MAX {
+                            continue;
+                        }
                         let damper = damper_flags[v.channel as usize];
-                        let ch_base = v.channel as usize * frames * 2;
-                        let ch_out = &mut out[ch_base..ch_base + frames * 2];
-                        v.render_block(
-                            ch_out,
-                            frames,
-                            fi_start,
-                            sample_start,
-                            damper,
-                            profile_mode,
-                        );
+                        let base = slot as usize * frames * 2;
+                        let out = &mut out[base..base + frames * 2];
+                        v.render_block(out, frames, fi_start, sample_start, damper, profile_mode);
                     }
                 });
         };
@@ -540,18 +619,43 @@ impl CpuSynth {
             std::sync::atomic::Ordering::Relaxed,
         );
 
-        // 归约：分片 scratch 按通道求和写入目标缓冲（调用方已清零本段区间）。
+        // 归约：分片 scratch → 每轨（slot）合计。
         let t_red = std::time::Instant::now();
-        let n = buffers.len().min(MAX_CHANNELS);
-        for (ch, buf) in buffers.iter_mut().enumerate().take(n) {
-            let buf = buf.borrow_mut();
-            let ch_base = ch * frames * 2;
-            for b in 0..n_chunks {
-                let base = b * stride + ch_base;
+        self.track_mix.clear();
+        self.track_mix.resize(stride, 0.0);
+        for b in 0..n_chunks {
+            let base = b * stride;
+            let src = &self.par_scratch[base..base + stride];
+            for (dst, &v) in self.track_mix.iter_mut().zip(src) {
+                *dst += v;
+            }
+        }
+
+        // 每轨：峰值发布 + 汇总进所属通道（多轨共享通道时相加）。
+        let n = channels;
+        for slot in 0..k {
+            let track = self.slot_track[slot] as usize;
+            let ch = self.track_channel[track] as usize;
+            let base = slot * frames * 2;
+            let mut peak = 0.0f32;
+            if ch < n {
+                let buf = buffers[ch].borrow_mut();
                 for i in 0..frames {
-                    buf.left[out_offset + i] += self.par_scratch[base + i * 2];
-                    buf.right[out_offset + i] += self.par_scratch[base + i * 2 + 1];
+                    let l = self.track_mix[base + i * 2];
+                    let r = self.track_mix[base + i * 2 + 1];
+                    buf.left[out_offset + i] += l;
+                    buf.right[out_offset + i] += r;
+                    peak = peak.max(l.abs()).max(r.abs());
                 }
+            } else {
+                for i in 0..frames {
+                    peak = peak
+                        .max(self.track_mix[base + i * 2].abs())
+                        .max(self.track_mix[base + i * 2 + 1].abs());
+                }
+            }
+            if let Some(slot_peak) = self.track_peaks.get_mut(track) {
+                *slot_peak = peak;
             }
         }
         PROF_REDUCE_NS.fetch_add(
