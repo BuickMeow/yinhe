@@ -7,7 +7,7 @@
 use eframe::egui;
 use rust_i18n::t;
 
-use yinhe_types::{SYNTH_PARAMS, SynthParamCategory, SynthParamId, SynthParams, synth_param_info};
+use yinhe_types::{SYNTH_PARAMS, SynthParamCategory, SynthParams};
 
 use crate::app::App;
 
@@ -222,10 +222,4 @@ fn param_row(
         });
     });
     changed
-}
-
-/// 参数 id 的显示名（测试/诊断用）。
-#[allow(dead_code)]
-pub(crate) fn param_name(id: SynthParamId) -> &'static str {
-    synth_param_info(id).name
 }
