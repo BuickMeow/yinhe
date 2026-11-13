@@ -54,7 +54,7 @@ impl GpuSynth {
             if !cc_defaults.is_empty() {
                 self.channel_cc_defaults[slot] = cc_defaults.clone();
                 for &(cc, v) in &cc_defaults {
-                    self.channels[slot].cc[cc as usize] = v;
+                    self.channels[slot].set_cc_default(cc, v);
                 }
             }
             if !sw_ranges.is_empty() {

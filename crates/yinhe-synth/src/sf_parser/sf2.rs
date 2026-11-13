@@ -36,7 +36,7 @@ pub(super) fn build_key_maps_from_sf2(
     // preset 不再生成巨量 KeyInfo（GM 库常含数百个 preset，工程通常只用几个）。
     let mut entries = Vec::with_capacity(presets.len());
     for (i, preset) in presets.iter().enumerate() {
-        let bank = preset.bank as u8;
+        let bank = preset.bank;
         let preset_num = preset.preset as u8;
         let presets = Arc::clone(&presets);
         let stereo_cache = Arc::clone(&stereo_cache);
@@ -122,7 +122,6 @@ fn expand_preset(
                 let resonance = 10.0f32.powf(np.resonance / 20.0) * Q_BUTTERWORTH;
                 let filter_type = FilterType::LowPass;
                 let (pan_l, pan_r) = pan_gains(pan);
-                let biquad = bake_biquad(cutoff, resonance, filter_type, sample_rate);
                 let loop_mode = if region.loop_start == region.loop_end {
                     LoopMode::NoLoop
                 } else {
@@ -152,7 +151,7 @@ fn expand_preset(
                     cutoff,
                     resonance,
                     filter_type,
-                    biquad,
+                    exclusive_class: region.exclusive_class.unwrap_or(0),
                     pan_l,
                     pan_r,
                     extra: u32::MAX,

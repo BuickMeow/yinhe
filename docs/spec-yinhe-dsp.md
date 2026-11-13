@@ -56,8 +56,8 @@ yinhe 已有效果器链（`yinhe-mixer` 的 `InsertProcessor`，每通道/bus/m
 | D12 | CC91/93 目标 bus | 自动识别（bus 链上挂 Gm2Reverb/Gm2Chorus 者） |
 | D13 | 效果器优先级 | GM2 完成后才启动 XG/GS |
 | D14 | DSP 迁移方向 | yinhe-dsp 的 Gain/Pan/Filter 作为**内置音源通道处理段**（`ChannelDspChain`），在合成器输出后、insert 链前处理；xsynth/GpuSynth 保持纯音源（无通道 DSP），`channel_set.rs` 硬切断保留 |
-| D15 | 接管语义 | CC 归音源：内置音源通道的 CC7/10/11/71/74 由通道处理段消费；插件音源通道 CC 原样透传插件（自行响应）；外挂 insert 效果器不接收 CC（无广播/无双发）；不改 xsynth 源码 |
-| D16 | 参数粒度 | 按功能组：Gain(Volume/Expression)、Pan、Filter(Cutoff/Resonance)，绑定见 §4.1；CC8 不采用 |
+| D15 | 接管语义 | CC 归音源：内置音源通道的 CC7/10/11 由通道处理段消费（CC71/74 由合成器按 voice 消费，见 D24）；插件音源通道 CC 原样透传插件（自行响应）；外挂 insert 效果器不接收 CC（无广播/无双发）；不改 xsynth 源码 |
+| D16 | 参数粒度 | 按功能组：Gain(Volume/Expression)、Pan，绑定见 §4.1；CC8 不采用 |
 | D17 | CPU DSP 依赖 | yinhe-dsp 不依赖 wgpu/yinhe-synth；GPU 与 CPU 实现独立 |
 | D18 | GPU/CPU 分工 | GPU 只做高并发 voice 发声；效果器链保持 CPU（数据量小、串行依赖、需与 CLAP/VST3 混合） |
 | D19 | CC 补齐策略 | 先迁移 xsynth 已有通道级 CC；通道级缺失（94、标准 Balance）顺带补；voice 级缺失（Vibrato/Portamento 等）不承诺，属远期 |
@@ -65,6 +65,7 @@ yinhe 已有效果器链（`yinhe-mixer` 的 `InsertProcessor`，每通道/bus/m
 | D21 | 值域归一化 | 自动化值一律归一化 0..1（除 Tempo）：CC、RPN0/2 除 127，PB、RPN1、NRPN 除 16383；导入归一化，回放/导出边界取整还原（无损可逆）；音符 velocity/gate 本次不归一化（保持整数） |
 | D22 | 设备寻址 | `ParamDevice::{ChannelInstrument, PluginInstrument, ChannelDsp}` 均只带通道号：不用槽位序号、不用实例 uuid，导入数据先归属，挂/删/重排效果器不影响自动化；第三方插入效果器实例寻址（uuid）将来以 `Insert { target, instance }` 扩展 |
 | D23 | 工程格式 | `.yin` 容器版本 6 → 7（`AutomationTarget` 序列化变更），不兼容 v6：旧档不迁移，重新导入 MIDI |
+| D24 | CC71/74 归音源层（2026-11-13 修订 D14/D15） | CC71（共振）/CC74（亮度）是 GM2 的 **per-voice 滤波偏移**（64 = 中性，双极），不是通道总线低通。已从 `DSP_CHANNEL_CCS` 移除、删除 `ChannelFilter`；语义改由 `yinhe-synth::voice_params::filter_coeffs` 在 note_on 与 CC 变化时按 voice 计算（BASSMIDI 对齐）。通道处理段只剩 Gain/Pan（CC7/10/11） |
 
 ---
 
@@ -83,7 +84,8 @@ yinhe 已有效果器链（`yinhe-mixer` 的 `InsertProcessor`，每通道/bus/m
 - 音频引擎用 `ChannelSet`（`crates/yinhe-audio/src/channel_set.rs`）自建"分通道渲染版 ChannelGroup"：每 MIDI 通道一个 xsynth `VoiceChannel`，输出 planar 进混音台通道缓冲。
 - **xsynth-core 0.4 只有 `filter.rs` / `limiter.rs` 两个 effect，没有 reverb/chorus**——GM2 效果必须由 yinhe-dsp 新做。
 - xsynth 的 CC 处理分两层（`channel/mod.rs:154-190` `apply_channel_effects`）：
-  - **通道级音频处理**（可迁移）：CC7/11 增益、CC8/10 等功率声像、CC71/74 通道 biquad 低通。
+  - **通道级音频处理**（可迁移）：CC7/11 增益、CC10 等功率声像。
+  - CC71/74 虽在 xsynth 里是通道 biquad，但 GM2/BASSMIDI 语义是 per-voice 偏移，**不迁移**（D24）。
   - **voice 级**（不可迁移）：ADSR（CC72/73/75）、Sustain 等事件层、PitchBend/Tuning、Portamento、Vibrato、Bank/PC。
 - GPU 合成器路径（`GpuSynth`）：voice 级 CC 状态机与 per-voice 滤波（`gpu_synth.rs`、`synth/filter.rs`）；已按 §5.6 精简并接入混音台（§5.7），通道级 CC 走 CPU 效果器链。
 
@@ -162,7 +164,7 @@ pub enum ParamDevice {
     ChannelInstrument { channel: u8 },
     /// 通道乐器插件（VST3/CLAP）参数（id 为插件原生 ParamID/clap_id）。
     PluginInstrument { channel: u8 },
-    /// 通道内置 DSP（ChannelGain / ChannelPan / ChannelFilter，id 见 CHANNEL_DSP_PARAMS）。
+    /// 通道内置 DSP（ChannelGain / ChannelPan，id 见 CHANNEL_DSP_PARAMS）。
     ChannelDsp { channel: u8 },
     // 将来扩展：Insert { target, instance } —— 第三方插入效果器的实例寻址（uuid）。
 }
@@ -183,7 +185,7 @@ pub enum AutomationTarget {
 **设备寻址约定**：
 
 - **不用槽位序号、不用实例 uuid**：三个 `ParamDevice` 变体都只带通道号。导入的 MIDI 数据在挂效果器之前就已有归属（CC/PB/RPN 天生属于通道），挂/删/重排效果器不影响既有 lane。
-- 通道 CC 的**回放交给音源侧**：内置音源通道由通道处理段消费 CC7/10/11/71/74（合成器输出后、insert 链前）；插件音源通道原样透传。外挂 effect 链与 CC 完全解耦。
+- 通道 CC 的**回放交给音源侧**：内置音源通道由通道处理段消费 CC7/10/11（合成器输出后、insert 链前）；CC71/74 由合成器按 voice 消费；插件音源通道原样透传。外挂 effect 链与 CC 完全解耦。
 - 内置与第三方分开：`ChannelInstrument` 是内置 XSynth（id 见下表），`PluginInstrument` 是第三方乐器插件（id 为插件自身的 ParamID/clap_id，不在内置表中）。
 - 第三方插入效果器的实例级参数（需要 uuid 区分）不在本期；将来新增 `ParamDevice::Insert { target, instance }` 扩展。
 
@@ -222,7 +224,7 @@ pub enum AutomationTarget {
 | Tempo | 不变（`ConductorData.tempo`，BPM 原值） |
 
 - 值域统一归一化 0..1（Tempo 除外）；引擎 flatten 边界按绑定还原整数（无损）。
-- **回放（CC 归音源）**：内置音源通道（未挂插件乐器）→ CC7/10/11/71/74 由通道处理段（`ChannelDspChain`）消费，其余 CC 走合成器；插件音源通道 → CC 原样透传插件。**两层互斥，无广播、无双发**；外挂 insert 效果器不接收 CC。
+- **回放（CC 归音源）**：内置音源通道（未挂插件乐器）→ CC7/10/11 由通道处理段（`ChannelDspChain`）消费，CC71/74 与其他 CC 走合成器（per-voice）；插件音源通道 → CC 原样透传插件。**两层互斥，无广播、无双发**；外挂 insert 效果器不接收 CC。
 - **chase/seek 回填**：按 `DSP_CHANNEL_CCS` 把 `ChannelState` 当前值写回内置音源通道处理段（已 dispatch 的 CC 跳过，避免旧值覆盖新值）。
 - 为什么 CC 不转设备参数：CC 是事件（谁订阅谁消费）；设备参数（`Param`）是无 MIDI 信道参数（GM2 SysEx、插件原生参数）的载体。不做"CC ↔ 参数"身份转换，避免"转回来才能透传"的往返。
 - 为什么 CC 不转设备参数：CC 是事件（音源侧消费）；设备参数（`Param`）是无 MIDI 信道参数（GM2 SysEx、插件原生参数）的载体。
@@ -248,8 +250,8 @@ ChannelDsp（`ParamDevice::ChannelDsp`）：
 | 0 | Volume | CC7 | 0..127 | 127 |
 | 1 | Expression | CC11 | 0..127 | 127 |
 | 2 | Pan | CC10 | 0..127 | 64（中心） |
-| 3 | Cutoff | CC74 | 0..127 | 64（中心） |
-| 4 | Resonance | CC71 | 0..127 | 64（中心） |
+| 3 | ~~Cutoff~~ | ~~CC74~~ | — | 归音源层（D24）：per-voice 相对偏移 |
+| 4 | ~~Resonance~~ | ~~CC71~~ | — | 归音源层（D24）：per-voice Q 偏移 |
 
 **与阶段 B（GM2）的关系**：GM2 效果参数同样遵循"设备 + 参数 id + 归一化值"，但它是 bus/master 级设备，其 `ParamDevice` 变体随阶段 B 定义（路由统一由 target 类型决定）；SysEx 编解码（§3）与导入/导出流程（§4.7/§4.8）不变。
 
@@ -325,7 +327,6 @@ crates/yinhe-dsp/
   src/gm2/chorus.rs     # Gm2Chorus（阶段 B）
   src/cc/gain.rs        # ChannelGain  （阶段 A，CC7/11，已实现）
   src/cc/pan.rs         # ChannelPan   （阶段 A，CC10，已实现）
-  src/cc/filter.rs      # ChannelFilter（阶段 A，CC71/74，已实现）
   src/dsp/delay.rs      # 延迟线
   src/dsp/comb.rs       # 梳状/全通（混响用）
   src/dsp/lfo.rs        # 正弦 LFO
@@ -367,7 +368,7 @@ impl MixerGraph {
   - `Param { device: PluginInstrument { .. } }` → 占位事件 + `plugin_param`（值保持归一化，dispatch 走 `PluginEvent::ParamValue`）。
   - `CC`/`Rpn`/`Nrpn` → 低层事件还原。
 - `engine_render.rs::dispatch_and_find_next`（CC 归音源）：
-  - 内置音源通道（未挂插件乐器）：CC7/10/11/71/74 → 通道处理段（`ChannelDspChain::apply_cc`，在合成器输出后、insert 链前处理）；其余 CC 走合成器。
+  - 内置音源通道（未挂插件乐器）：CC7/10/11 → 通道处理段（`ChannelDspChain::apply_cc`，在合成器输出后、insert 链前处理）；CC71/74 等其余 CC 走合成器。
   - 插件音源通道：CC 原样透传插件（转 MIDI 字节），插件自行响应。
   - 插件参数（`Param{PluginInstrument}` 的占位事件）→ `PluginEvent::ParamValue`。
   - GM2 参数 → 按设备定位目标链后精确投递（阶段 B）。
@@ -432,7 +433,7 @@ impl MixerGraph {
   2. 通过现有 undo 体系记录；
   3. 触发重 flatten，引擎块级生效。
 - Type 参数用下拉（枚举值显示名称），其余为原始值域滑块（0..127 / 0..8 / 0..5）。
-- 内置 DSP 模块（ChannelDsp）参数面板同理：lane 目标为 `Param { device: ChannelDsp { channel }, id }`，显示 Volume/Expression/Pan/Cutoff/Resonance 原始值。
+- 内置 DSP 模块（ChannelDsp）参数面板同理：lane 目标为 `Param { device: ChannelDsp { channel }, id }`，显示 Volume/Expression/Pan 原始值。
 - 也可通过现有 PR/AR 自动化面板直接编辑 lane（两条编辑路径共用模型）。
 
 ### 4.11 GM2 参数 id 约定
@@ -462,8 +463,8 @@ xsynth-core 0.4 的 `VoiceChannel::apply_channel_effects`（`channel/mod.rs:154-
 | 7 | Volume | `out *= (volume)^2`（通道输出增益） | 精确等价 |
 | 11 | Expression | 与 Volume 相乘后平方 | 精确等价 |
 | 10 | Pan | 通道输出等功率声像 | 精确等价 |
-| 74 | Cutoff | 通道输出 `MultiChannelBiQuad` 低通（`value<64` 启用，查表映射） | 精确等价（映射表可复刻） |
-| 71 | Resonance | 同上 biquad 的 Q（`value>64` 启用） | 精确等价 |
+| 74 | Cutoff | xsynth：通道输出 `MultiChannelBiQuad` 低通（`value<64` 启用，查表映射） | **不迁移**：GM2/BASSMIDI 是 per-voice 相对偏移（64 中性），通道滤波语义错误（D24） |
+| 71 | Resonance | xsynth：同上 biquad 的 Q（`value>64` 启用） | **不迁移**：同上 |
 
 > CC8（Balance，xsynth 也当 Pan）**不纳入白名单**（用户不采用该 CC），继续走原路径。
 
@@ -479,7 +480,7 @@ xsynth-core 0.4 的 `VoiceChannel::apply_channel_effects`（`channel/mod.rs:154-
 | 120/121/123 | All Sound Off/Reset/All Notes Off | 事件层 |
 | PitchBend / RPN | 调音 | voice 音高 |
 
-> SF2/SFZ 音色自带的 filter（`cutoff`/`resonance` opcode）与 voice 包络属 voice 级，继续由 xsynth 处理；CC71/74 的通道滤波迁移后与之串联，不冲突。
+> SF2/SFZ 音色自带的 filter（`cutoff`/`resonance` opcode）与 voice 包络属 voice 级；CC71/74 是**叠加到它的相对偏移**（同一套系数），不是再加一级通道滤波。串联≠叠加，旧文档的"串联不冲突"结论已作废（D24）。
 
 ### 5.2 模块清单
 
@@ -487,7 +488,6 @@ xsynth-core 0.4 的 `VoiceChannel::apply_channel_effects`（`channel/mod.rs:154-
 |---|---|---|
 | `ChannelGain` | 7, 11 | `(vol/128 * expr/128)^2` 通道增益，10ms 参数平滑 |
 | `ChannelPan` | 10 | 等功率声像（`pan=CC10/128`，与 xsynth 一致） |
-| `ChannelFilter` | 71, 74 | RBJ cookbook 低通（cutoff 复刻 xsynth FREQS 键频表，Q 复刻 `10^((v-64)/48)×1/√2`），块级系数更新 |
 
 - 全部实现 `InsertProcessor`，可在任意通道 insert 链中与 CLAP/VST3 效果任意排列。
 - CC91/93 不做成模块（它是混音台 send 语义，见 §4.6）。
@@ -503,7 +503,7 @@ xsynth-core 0.4 的 `VoiceChannel::apply_channel_effects`（`channel/mod.rs:154-
    /// 接收被接管的 CC 值（0..127）。
    fn apply_cc(&mut self, _cc: u8, _value: u8) {}
    ```
-2. **通道处理段**：`yinhe-audio` 的 `ChannelDspChain`（Gain/Pan/Filter 三个模块，复用 yinhe-dsp）作为**内置音源的一部分**，在合成器输出后、insert 链前处理 CC7/10/11/71/74。挂插件乐器的通道跳过（CC 透传插件）。
+2. **通道处理段**：`yinhe-audio` 的 `ChannelDspChain`（Gain/Pan 两个模块，复用 yinhe-dsp）作为**内置音源的一部分**，在合成器输出后、insert 链前处理 CC7/10/11。挂插件乐器的通道跳过（CC 透传插件）。
 3. **两层互斥**：一个通道要么内置音源（处理段消费 CC）、要么插件音源（透传插件）——**不存在广播/双发**；外挂 insert 效果器不接收 CC。
 4. **消费集合**：即 `DSP_CHANNEL_CCS`（= 模块 `handled_ccs` 并集，由 yinhe-dsp 测试锁定），不按 CC 号在 dispatch 里硬编码判断路由。
 5. **chase 回填**：seek 后把 `ChannelState` 当前值写回通道处理段
@@ -512,7 +512,7 @@ xsynth-core 0.4 的 `VoiceChannel::apply_channel_effects`（`channel/mod.rs:154-
    Filter 采用块级系数更新（CC 事件本身以块为粒度）。
 7. **音源层参数**：`Sustain/ADSR/调音` 等属 `ChannelInstrument` 参数（§4.1），回放还原为 MIDI 后继续走 xsynth/乐器插件路径；`Portamento/Vibrato/Bank/PC` 等无内置绑定，保持原始变体。
 
-> `DSP_CHANNEL_CCS`（[7, 10, 11, 71, 74]）用于通道处理段的消费集合、合成器硬切断（`channel_set.rs`）与模块一致性校验（`yinhe-dsp` 测试）。
+> `DSP_CHANNEL_CCS`（[7, 10, 11]）用于通道处理段的消费集合、合成器硬切断（`channel_set.rs`）与模块一致性校验（`yinhe-dsp` 测试）。CC71/74 不在其中（D24）。
 
 ### 5.4 自由组合语义与边界
 
@@ -524,7 +524,7 @@ xsynth-core 0.4 的 `VoiceChannel::apply_channel_effects`（`channel/mod.rs:154-
 ### 5.5 迁移路线与验收
 
 1. 阶段 A（本阶段）已落地，不依赖 GM2；GM2 效果（阶段 B）在统一参数模型（§4.1）之上继续。
-2. 按 `ChannelGain → ChannelPan → ChannelFilter` 顺序迁移（从简单到复杂）。
+2. 按 `ChannelGain → ChannelPan` 顺序迁移；CC71/74 不入通道处理段（D24）。
 3. 验收：同一 MIDI 文件在"xsynth 处理"与"模块处理"两种配置下 A/B 对比，音量/声像/滤波听感一致（参数语义对即可，不要求样本级一致）。
 4. 全部通道迁移完成后，xsynth 侧只剩采样播放 + voice 级事件；远期再评估 fork/替换 xsynth 为纯采样器（保持 ADSR/音高处理）。
 
@@ -532,7 +532,7 @@ xsynth-core 0.4 的 `VoiceChannel::apply_channel_effects`（`channel/mod.rs:154-
 
 GPU 合成器（`GpuSynth`）已按"只做音源层"精简：
 
-- **移除**：CC7/10/11/71/74 的通道音量/声像/滤波处理（含 shader 内的通道渐变与
+- **移除**：CC7/10/11 的通道音量/声像处理（含 shader 内的通道渐变与
   `GpuVoiceState.ch_vol/ch_expr/ch_pan`）、通道级 CC74/71 biquad（`apply_cutoff_filter`）、
   内部 `VolumeLimiter` 限幅、`ChannelState` 的对应状态与 `ValueLerp`。
 - **保留**：采样播放、7 阶段 ADSR 包络、pitch bend/RPN 调音、damper（CC64）、
@@ -588,7 +588,7 @@ xsynth-core 0.4 实际处理的 CC：`0, 6, 7, 8, 10, 11, 38, 64, 71, 72, 73, 74
 
 ### 5.9 GPU DSP 参考点
 
-- `crates/yinhe-synth/src/synth/filter.rs::biquad_coeffs`：CPU biquad 系数计算，`ChannelFilter` 可参考/复用（复用方式见 §10-6；两选项都不引入 wgpu 依赖）。
+- `crates/yinhe-synth/src/synth/filter.rs::biquad_coeffs`：CPU biquad 系数计算，per-voice 滤波器直接使用（D24）。
 - `crates/yinhe-synth/src/gpu_synth.rs::ValueLerp`：10ms 参数平滑实现（私有类型，按模式自实现），`ChannelGain/Pan/Filter` 参考。
 - GPU 合成器（`GpuSynth`）已接入混音台（§5.7），其事件流按 §5.6 丢弃 DSP 白名单 CC，DSP 模块照常生效；CPU/GPU 的 voice 级差异属已知限制。
 
@@ -612,7 +612,7 @@ xsynth-core 0.4 实际处理的 CC：`0, 6, 7, 8, 10, 11, 38, 64, 71, 72, 73, 74
 ### yinhe-dsp（新）
 - [ ] crate 骨架 + `Gm2Reverb`/`Gm2Chorus` + DSP 基础件 + 单测。
 - [x] `registry.rs`：`EffectParamInfo` 与 `yinhe-types` 绑定表一致性测试（名称/cc 绑定/默认值，`params_match_types_binding_table`）。
-- [x] 阶段 A：`ChannelGain`/`ChannelPan`/`ChannelFilter` 已实现；biquad 各持一份（见 §10-6）；`Smoothed` 按 `ValueLerp` 模式自实现。
+- [x] 阶段 A：`ChannelGain`/`ChannelPan` 已实现；`ChannelFilter` 已删除（CC71/74 归音源层，D24）；`Smoothed` 按 `ValueLerp` 模式自实现。
 
 ### yinhe-midi
 - [x] `parser.rs`：CC 保留低层事件 + PB/RPN 0/1/2 ↔ `Param`（已落地）+ `writer.rs` `Param` 还原（含 roundtrip 测试）。
@@ -660,7 +660,7 @@ xsynth-core 0.4 实际处理的 CC：`0, 6, 7, 8, 10, 11, 38, 64, 71, 72, 73, 74
 | yinhe-types | 新变体方法（值域/默认值/显示名）、lane 唯一性；统一参数模型：绑定表完备（id 唯一、覆盖全部内置参数）、归一化全值域往返（0..127 / 0..16383 边界无损）、Tempo/velocity/gate 不归一化 |
 | yinhe-midi | 导入映射：已知 CC/PB/RPN/NRPN → `Param`、未知 → 原始变体；导出还原：`Param` → MIDI 消息；SysEx 解析/生成单测（7 参数 × 边界值 + 非 GM2 丢弃）；roundtrip：构造含 SysEx 的 SMF → 模型 → 导出 → 字节比对；master 展开（2 通道 + master CC，断言两通道都有且同 tick 通道自身覆盖）；空轨 strip 后的展开集合 |
 | yinhe-audio | flatten：master CC 复制到所有激活通道；`Param` 边界还原/占位事件；dispatch 按设备投递到 mixer（用测试用 InsertProcessor 记录）；CC91/93 设 send；seek chase 回填 |
-| yinhe-audio（阶段 A/A′） | CC 归音源：内置通道处理段消费 CC7/10/11/71/74、插件透传；chase 回填写回处理段；`events_to_send` 不再包含 DSP CC |
+| yinhe-audio（阶段 A/A′） | CC 归音源：内置通道处理段消费 CC7/10/11、插件透传；CC71/74 走合成器；chase 回填写回处理段；`events_to_send` 不再包含 DSP CC |
 | yinhe-dsp | 各效果器：参数生效、无 NaN/爆音、reset 清尾、块长/采样率无关性 |
 | yinhe-dsp（阶段 A） | Gain/Pan/Filter 单测（默认值、CC 生效、平滑、稳定性）；与 xsynth `apply_channel_effects` 的 A/B 听感对比（手工） |
 | yinhe-editor-core | master 轨保护（删除/移动/音符）、剪贴板序列化 tag（统一参数变体） |
@@ -676,7 +676,7 @@ xsynth-core 0.4 实际处理的 CC：`0, 6, 7, 8, 10, 11, 38, 64, 71, 72, 73, 74
 1. ~~P1 yinhe-dsp crate + `ChannelGain`~~ ✅
 2. ~~P2 混音台接入：`PluginFormat::Builtin` + `PluginInstance::Builtin` + `BuiltinInsert` + picker~~ ✅
 3. ~~P3 分发机制：白名单直发 + `broadcast_channel_cc` + chase 回填~~ ✅
-4. ~~P4 `ChannelPan` / `ChannelFilter`~~ ✅
+4. ~~P4 `ChannelPan`~~ ✅（`ChannelFilter` 已删除，D24）
 5. 后续（P5）：手工 A/B 验收、按需补 dispatch 单测、参数面板对内置模块的说明文案。
 
 **阶段 A′：统一参数模型（已落地）**
@@ -722,6 +722,6 @@ xsynth-core 0.4 实际处理的 CC：`0, 6, 7, 8, 10, 11, 38, 64, 71, 72, 73, 74
 4. **conductor 改名**：本稿建议 conductor badge 从 `"Master"` 改为 `"Conductor"`。
 5. **GM2 参数设备**：bus/master 级内置效果器的 `ParamDevice` 变体命名（及同一效果挂多个实例时的寻址）随阶段 B 定稿；本稿只锁定"设备 + 参数 id、不广播"原则。
 6. ~~CC 模块与 xsynth 的 biquad 复用~~（已定：各自一份）：
-   `yinhe-dsp::dsp::biquad`（ChannelFilter 的通道低通）与
+   `yinhe-dsp::dsp::biquad`（已随 ChannelFilter 删除）与
    `yinhe-synth::synth::filter`（per-voice 音色 filter，音源层保留）
    用途已分离，各持约 30 行 RBJ 系数实现，注释互指；都不引入 wgpu 依赖。

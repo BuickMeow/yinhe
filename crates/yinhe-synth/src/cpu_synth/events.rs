@@ -57,7 +57,8 @@ impl CpuSynth {
         let maps = Arc::clone(&self.port_key_maps[ch_idx]);
         let entries = maps.as_slice();
         let t_sel = std::time::Instant::now();
-        let Some(sel) = sf_parser::select_layers_multi(entries, ch.bank, ch.program, key, vel)
+        let Some(sel) =
+            sf_parser::select_layers_multi(entries, ch.bank, ch.bank_lsb, ch.program, key, vel)
         else {
             return;
         };
@@ -86,6 +87,10 @@ impl CpuSynth {
         let batchable = infos.len() == 1;
         let mut spawned = 0usize;
         for info in infos {
+            // SF2 exclusiveClass：同通道同类新音符掐掉旧 voice（鼓组闭镲/开镲互斥）。
+            if info.exclusive_class != 0 {
+                self.cut_exclusive(channel, info.exclusive_class);
+            }
             // SFZ 门控（xfin/xfout/on_cc/seq/sw/rand）：不命中则整层不发声。
             // pitch_random 以音分形式并入播放倍率（确定性，离线=实时）。
             let extra = info.extra_index().and_then(|i| extras.get(i));
@@ -185,6 +190,20 @@ impl CpuSynth {
         }
     }
 
+    /// SF2 `exclusiveClass`：同通道（同 class）的新音符掐掉旧 voice。
+    ///
+    /// 只在 region 声明了 exclusive class 时调用（鼓组），热路径不扫描；
+    /// 与 SFZ `off_by` 的区别是 **按通道** 隔离（SF2 语义）。
+    fn cut_exclusive(&mut self, channel: u8, class: u8) {
+        for i in 0..self.voices.len() {
+            let v = &self.voices[i];
+            if v.channel == channel && v.exclusive_class == class && !v.finished() && !v.is_killed()
+            {
+                self.voices[i].signal_kill(self.sample_rate);
+            }
+        }
+    }
+
     /// 把音色库的 `<control> set_ccN=v` 写进各通道的初始 CC。
     ///
     /// 必需：Starry 的琴键/锤/踏板三层全部由 `xfin_locc14/15/20` 门控，
@@ -192,7 +211,7 @@ impl CpuSynth {
     pub(super) fn apply_cc_defaults(&mut self) {
         for (ch_idx, defaults) in self.channel_cc_defaults.iter().enumerate() {
             for &(cc, v) in defaults {
-                self.channels[ch_idx].cc[cc as usize] = v;
+                self.channels[ch_idx].set_cc_default(cc, v);
             }
         }
     }
@@ -461,9 +480,14 @@ impl CpuSynth {
         let ch = self.channels[ch_idx];
         let maps = Arc::clone(&self.port_key_maps[ch_idx]);
         let entries = maps.as_slice();
-        let Some(sel) =
-            sf_parser::select_release_layers_multi(entries, ch.bank, ch.program, key, vel)
-        else {
+        let Some(sel) = sf_parser::select_release_layers_multi(
+            entries,
+            ch.bank,
+            ch.bank_lsb,
+            ch.program,
+            key,
+            vel,
+        ) else {
             return;
         };
         let rand = sf_parser::extra::hash_rand(
@@ -530,8 +554,24 @@ impl CpuSynth {
         let Some(ch_idx) = dense_channel(channel as usize) else {
             return;
         };
-        let damper_released = self.channels[ch_idx].process_control(event);
-        if damper_released {
+        let action = self.channels[ch_idx].process_control(event);
+        // CC120 All Sound Off：立即结束该通道全部 voice（1ms 淡出）。
+        if action.all_sound_off {
+            for v in self.voices.iter_mut() {
+                if v.channel == channel && !v.finished() && !v.is_killed() {
+                    v.signal_kill(self.sample_rate);
+                }
+            }
+        }
+        // CC123 All Notes Off：释放非踏板保持的 voice（held 等踏板松开）。
+        if action.all_notes_off {
+            for v in self.voices.iter_mut() {
+                if v.channel == channel && !v.finished() && !v.held_by_damper {
+                    v.signal_release(ENV_RELEASE);
+                }
+            }
+        }
+        if action.damper_released {
             // 松开延音踏板：释放被保持的 voice（与 GpuSynth apply_chase 同语义），
             // 并为其补上 SFZ `trigger=release` 层（踏板噪声正是在这一刻发声）。
             let mut held: Vec<(u8, u8, u8)> = Vec::new();
@@ -576,6 +616,27 @@ impl CpuSynth {
             for v in self.voices.iter_mut() {
                 if v.channel == channel && !v.finished() {
                     v.apply_env_update(&ch, sr);
+                }
+            }
+        }
+        // CC71/74：按新值重算活跃 voice 的滤波器系数。
+        // 延迟到段边界由 `apply_filter_dirty` 统一消费（同一段内多次 CC 只算一次）。
+        let _ = action.filter_changed;
+    }
+
+    /// 消费 CC71/74 的脏标记：对每个变化过的通道重算活跃 voice 的滤波器。
+    /// 每段边界调用一次（同段内多次 CC 只重算一次，避免 O(V) × 事件数）。
+    pub(super) fn apply_filter_dirty(&mut self) {
+        for ch_idx in 0..MAX_CHANNELS {
+            if !self.channels[ch_idx].filter_dirty {
+                continue;
+            }
+            self.channels[ch_idx].filter_dirty = false;
+            let ch = self.channels[ch_idx];
+            let sr = self.sample_rate;
+            for v in self.voices.iter_mut() {
+                if v.channel as usize == ch_idx && !v.finished() {
+                    v.apply_filter_cc(&ch, sr);
                 }
             }
         }

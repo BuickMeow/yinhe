@@ -439,7 +439,7 @@ impl GpuSynth {
     }
 
     /// 诊断：某 port 的音色库条目摘要：总条目数 + 鼓组（bank 128）条目。
-    pub fn port_entries(&self, port: usize) -> (usize, Vec<(u8, u8, usize)>) {
+    pub fn port_entries(&self, port: usize) -> (usize, Vec<(u16, u8, usize)>) {
         self.port_key_maps
             .get(port)
             .map(|m| {

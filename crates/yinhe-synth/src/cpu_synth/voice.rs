@@ -89,7 +89,11 @@ pub(super) struct CpuVoice {
     pan_r: f32,
 
     // per-voice biquad（Transposed DirectForm2；cutoff > 0 启用，状态 2 个/声道）
-    cutoff: f32,
+    pub(in crate::cpu_synth) cutoff: f32,
+    /// 音色库自身 cutoff/resonance/filter_type（CC71/74 重算的基准）。
+    base_cutoff: f32,
+    base_resonance: f32,
+    filter_type: u32,
     flt_b0: f32,
     flt_b1: f32,
     flt_b2: f32,
@@ -110,8 +114,10 @@ pub(super) struct CpuVoice {
     pub(super) is_release_trigger: bool,
     /// `one_shot`：忽略 note_off/踏板，播到采样结束。
     pub(super) one_shot: bool,
-    /// SFZ `group`（`off_by` 按它掐音；0 = 不参与）。
+    /// SFZ `off_by` 按它掐音（0 = 不参与）。
     pub(super) off_group: u16,
+    /// SF2 `exclusiveClass`（0 = 不参与）：同通道同类新音符掐掉旧 voice。
+    pub(super) exclusive_class: u8,
     /// 该 voice 的释放层是否已创建（避免重复触发）。
     pub(super) release_spawned: bool,
     /// 振幅 LFO（dB 深度，正弦）；None = 无。
@@ -198,7 +204,10 @@ impl CpuVoice {
             orig_release_frames: p.orig_release_frames,
             pan_l: p.pan_l,
             pan_r: p.pan_r,
-            cutoff: info.cutoff,
+            cutoff: p.cutoff,
+            base_cutoff: p.base_cutoff,
+            base_resonance: p.base_resonance,
+            filter_type: p.filter_type,
             flt_b0: 0.0,
             flt_b1: 0.0,
             flt_b2: 0.0,
@@ -214,6 +223,7 @@ impl CpuVoice {
             is_release_trigger: false,
             one_shot: false,
             off_group: 0,
+            exclusive_class: info.exclusive_class,
             release_spawned: false,
             amp_lfo: None,
             pitch_lfo: None,
@@ -236,6 +246,27 @@ impl CpuVoice {
             voice.flt_a2 = a2;
         }
         voice
+    }
+
+    /// CC71/74 变化：按新值重算该 voice 的滤波器系数（保留滤波器状态，
+    /// 与 BASSMIDI 的"对正在发声的音符也生效"一致）。
+    pub(super) fn apply_filter_cc(&mut self, ch: &ChannelState, sample_rate: u32) {
+        let (coeffs, cutoff) = crate::voice_params::filter_coeffs(
+            self.base_cutoff,
+            self.base_resonance,
+            self.filter_type,
+            ch,
+            sample_rate,
+        );
+        self.cutoff = cutoff;
+        let (b0, b1, b2, a1, a2) = coeffs
+            .map(|b| (b[0], b[1], b[2], b[3], b[4]))
+            .unwrap_or((0.0, 0.0, 0.0, 0.0, 0.0));
+        self.flt_b0 = b0;
+        self.flt_b1 = b1;
+        self.flt_b2 = b2;
+        self.flt_a1 = a1;
+        self.flt_a2 = a2;
     }
 
     pub(in crate::cpu_synth) fn finished(&self) -> bool {

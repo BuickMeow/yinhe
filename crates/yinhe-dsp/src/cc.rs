@@ -1,13 +1,15 @@
 //! CC 驱动的通道级效果模块。
 //!
 //! 效果器参数在工程底层**伪装成 MIDI CC**（用 CC lane 存储、导出 MIDI 时按
-//! CC 写出），但它们是效果器自己的参数（Volume/Pan/Cutoff/…），
+//! CC 写出），但它们是效果器自己的参数（Volume/Pan/…），
 //! UI 与命名不得称其为"CC"。
 //!
 //! 每个模块声明自己接管的伪 CC（[`yinhe_mixer::InsertProcessor::handled_ccs`]），
 //! 宿主把对应的事件分流到模块（`apply_cc`），使 xsynth 只保留音源层参数。
+//!
+//! CC71（共振）/CC74（亮度）**不在**这里：它们是 GM2 的 per-voice 滤波偏移，
+//! 归音源层（`yinhe-synth` 的 `voice_params::filter_coeffs`）。
 
-pub mod filter;
 pub mod gain;
 pub mod pan;
 
@@ -19,12 +21,10 @@ pub const CC_RAMP_SECONDS: f32 = 0.01;
 /// dispatch 对这些 CC 不再下发合成器/乐器插件，而是交给"内置音源通道处理段"
 /// （`yinhe-audio` 的 `ChannelDspChain`，在合成器输出后、insert 链前处理）；
 /// 挂插件乐器的通道由插件自己响应（CC 透传）。
-/// 音源层 CC（ADSR、Sustain、Portamento、Vibrato、Bank/PC、RPN 等）
-/// 仍由合成器处理——那些必须对 voice 动刀。
+/// 音源层 CC（ADSR、Sustain、Portamento、Vibrato、Bank/PC、RPN、
+/// **CC71/74 滤波器**等）仍由合成器处理——那些必须对 voice 动刀。
 pub const DSP_CHANNEL_CCS: &[u8] = &[
     7,  // ChannelGain::Volume
     10, // ChannelPan::Pan
     11, // ChannelGain::Expression
-    71, // ChannelFilter::Resonance
-    74, // ChannelFilter::Cutoff
 ];

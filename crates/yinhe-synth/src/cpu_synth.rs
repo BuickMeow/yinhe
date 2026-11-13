@@ -363,6 +363,9 @@ impl CpuSynth {
                 self.event_cursor += 1;
                 self.dispatch_event(&ev, fi as u32, sample_start);
             }
+            // CC71/74 变化：段边界统一重算该通道活跃 voice 的滤波器系数
+            // （同段内多次 CC 只算一次）。
+            self.apply_filter_dirty();
             let next = self
                 .events
                 .get(self.event_cursor)

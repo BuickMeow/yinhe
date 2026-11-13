@@ -470,7 +470,7 @@ pub mod xsynth_param {
     pub const COARSE_TUNE: u32 = 6;
 }
 
-/// 通道 DSP 参数（ChannelGain/Pan/Filter）的 id 与 MIDI 绑定表。
+/// 通道 DSP 参数（ChannelGain/Pan）的 id 与 MIDI 绑定表。
 ///
 /// 无 `ParamDevice` 承载：CC 广播方案下它们作为低层 `CC` 事件存储，
 /// 本表供 UI 把 CC 号映射为参数名（如 CC7 ↔ "Volume"）与 dsp 一致性校验。
@@ -481,10 +481,10 @@ pub mod channel_dsp_param {
     pub const EXPRESSION: u32 = 1;
     /// 声像（CC10，中心 64）。
     pub const PAN: u32 = 2;
-    /// 低通截止（CC74，中心 64）。
-    pub const CUTOFF: u32 = 3;
-    /// 共振（CC71，中心 64）。
-    pub const RESONANCE: u32 = 4;
+    //
+    // 注：CC71/74（共振/亮度）不在通道 DSP 参数表里——它们是 GM2 的
+    // per-voice 滤波偏移，归音源层（`yinhe-synth`）。作为普通 CC lane
+    // 存储/导出，`AutomationTarget::CC` 的中心线语义仍然成立。
 }
 
 /// XSynth 内置参数表（权威唯一：导入/导出/引擎/UI 共用）。
@@ -576,23 +576,11 @@ pub const CHANNEL_DSP_PARAMS: &[BuiltinParamInfo] = &[
         center: true,
         step: false,
     },
-    BuiltinParamInfo {
-        id: channel_dsp_param::CUTOFF,
-        name: "Cutoff",
-        midi: MidiBinding::Cc(74),
-        default: 64.0 / 127.0,
-        center: true,
-        step: false,
-    },
-    BuiltinParamInfo {
-        id: channel_dsp_param::RESONANCE,
-        name: "Resonance",
-        midi: MidiBinding::Cc(71),
-        default: 64.0 / 127.0,
-        center: true,
-        step: false,
-    },
 ];
+
+/// CC71/74（共振/亮度）是音源层参数：作为普通 CC 目标存在，但不在
+/// 通道 DSP 参数表内（`channel_dsp_param` 只列 Gain/Pan）。
+pub const FILTER_CCS: [u8; 2] = [71, 74];
 
 impl ParamDevice {
     /// 设备的内置参数表（第三方插件返回空表，参数由插件定义）。

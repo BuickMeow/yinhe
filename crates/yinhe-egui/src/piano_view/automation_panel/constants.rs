@@ -79,8 +79,9 @@ mod tests {
         let builtin = XSYNTH_PARAMS.len() + CHANNEL_DSP_PARAMS.len();
         assert_eq!(targets.len(), 1 + builtin);
 
-        // XSynth（64/72/73）与通道 DSP（7/11/10/74/71）都列低层 CC。
-        for cc in [64u8, 72, 73, 7, 11, 10, 74, 71] {
+        // XSynth（64/72/73）与通道 DSP（7/11/10）都列低层 CC。
+        // CC71/74 归音源层，不在内置参数表里（仍可作为普通 CC lane 添加）。
+        for cc in [64u8, 72, 73, 7, 11, 10] {
             assert!(
                 targets.contains(&AutomationTarget::CC { controller: cc }),
                 "CC{cc} 应列出"

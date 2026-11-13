@@ -14,7 +14,7 @@ use std::sync::{Arc, OnceLock};
 
 use xsynth_soundfonts::FilterType;
 
-/// Butterworth Q 值（与 xsynth 一致，来自 biquad crate）。
+/// 与 xsynth 一致的 Butterworth Q（低通基准）。
 const Q_BUTTERWORTH: f32 = std::f32::consts::FRAC_1_SQRT_2;
 
 pub mod extra;
@@ -79,13 +79,16 @@ pub struct KeyInfo {
     pub loop_end: u32,
 
     // ── 滤波器（cutoff=0 表示无滤波器，与 xsynth `use_effects` 一致）──
-    pub cutoff: f32,    // Hz，已含 fil_veltrack/keytrack 修正并 clamp
-    pub resonance: f32, // 线性（db_to_amp(dB) × Q_BUTTERWORTH）
+    /// 音色库自身的截止频率（Hz，已含 fil_veltrack/keytrack 修正并 clamp）。
+    /// CC74 在 note_on 时以**相对音分**叠加到它上面（64 = 不变）。
+    pub cutoff: f32,
+    /// 音色库自身的共振（线性 Q = db_to_amp(dB) × Q_BUTTERWORTH）。
+    pub resonance: f32,
     pub filter_type: FilterType,
+    /// SF2 `exclusiveClass`（0 = 无）。新音符触发时掐掉同通道同类旧 voice
+    /// （鼓组闭镲/开镲互斥）。
+    pub exclusive_class: u8,
 
-    // ── 加载期烘焙（运行期每 note_on 零三角函数）──
-    /// per-voice biquad 系数 `[b0,b1,b2,a1,a2]`（cutoff<=0 时 None）。
-    pub biquad: Option<[f32; 5]>,
     /// 等功率声像增益（`pan` 的 cos/sin 预计算，与 CpuVoice::new 原公式一致）。
     pub pan_l: f32,
     pub pan_r: f32,
@@ -107,24 +110,6 @@ impl KeyInfo {
 fn pan_gains(pan: f32) -> (f32, f32) {
     let angle = pan * std::f32::consts::FRAC_PI_2;
     ((angle.cos() * 1.42).min(1.0), (angle.sin() * 1.42).min(1.0))
-}
-
-/// 加载期烘焙：biquad 系数（cutoff<=0 → None，与 `CpuVoice::new` 一致）。
-fn bake_biquad(
-    cutoff: f32,
-    resonance: f32,
-    filter_type: FilterType,
-    sample_rate: u32,
-) -> Option<[f32; 5]> {
-    (cutoff > 0.0).then(|| {
-        let (b0, b1, b2, a1, a2) = crate::synth::biquad_coeffs(
-            filter_type_code(filter_type),
-            cutoff,
-            resonance,
-            sample_rate as f32,
-        );
-        [b0, b1, b2, a1, a2]
-    })
 }
 
 /// 采样循环模式
@@ -165,7 +150,7 @@ impl Default for KeyInfo {
             cutoff: 0.0,
             resonance: Q_BUTTERWORTH,
             filter_type: FilterType::default(),
-            biquad: None,
+            exclusive_class: 0,
             pan_l: 1.0,
             pan_r: 1.0,
             extra: u32::MAX,
@@ -184,7 +169,8 @@ impl Default for KeyInfo {
 /// （GeneralUser 287 preset ≈ 670 万条 / ~800MB），而工程通常只用其中几个。
 #[derive(Clone)]
 pub struct KeyMapEntry {
-    pub bank: u8,
+    /// SF2 preset 的 bank（原样保留 16-bit；GS 用低 7 位，XG 用 14-bit 组合）。
+    pub bank: u16,
     pub preset: u8,
     inner: Arc<KeyMapEntryInner>,
 }
@@ -205,14 +191,14 @@ struct KeyMapEntryInner {
 impl KeyMapEntry {
     /// 预展开条目（SFZ：整个文件一个条目，无惰性收益）。
     #[allow(dead_code)] // 便捷构造：测试与单条目场景
-    pub(crate) fn expanded(bank: u8, preset: u8, map: Vec<Vec<KeyInfo>>) -> Self {
+    pub(crate) fn expanded(bank: u16, preset: u8, map: Vec<Vec<KeyInfo>>) -> Self {
         Self::expanded_with(bank, preset, map, Vec::new(), Vec::new())
     }
 
     /// 预展开条目（带运行期侧表与通道默认 CC）。
     #[allow(dead_code)] // 便捷构造：不含释放层时使用
     pub(crate) fn expanded_with(
-        bank: u8,
+        bank: u16,
         preset: u8,
         map: Vec<Vec<KeyInfo>>,
         extras: Vec<LayerExtra>,
@@ -223,7 +209,7 @@ impl KeyMapEntry {
 
     /// 预展开条目（含释放层）。
     pub(crate) fn expanded_full(
-        bank: u8,
+        bank: u16,
         preset: u8,
         mut map: Vec<Vec<KeyInfo>>,
         mut release: Vec<Vec<KeyInfo>>,
@@ -251,7 +237,7 @@ impl KeyMapEntry {
 
     /// 惰性条目（SF2：首次查询命中该 preset 时才调用 `expand`）。
     pub(crate) fn lazy(
-        bank: u8,
+        bank: u16,
         preset: u8,
         expand: impl Fn() -> Vec<Vec<KeyInfo>> + Send + Sync + 'static,
     ) -> Self {
@@ -380,24 +366,42 @@ pub fn build_key_maps_with_progress(
 pub fn select_key_infos_multi(
     entries: &[KeyMapEntry],
     bank: u8,
+    bank_lsb: u8,
     preset: u8,
     key: u8,
     velocity: u8,
 ) -> Option<&[KeyInfo]> {
-    if let Some(infos) = select_in_program(entries, bank, preset, key, velocity) {
+    if let Some(infos) = select_in_program(
+        entries,
+        bank_candidates(bank, bank_lsb),
+        preset,
+        key,
+        velocity,
+    ) {
         return Some(infos);
     }
     let (rb, rp) = if bank == 128 { (128, 0) } else { (0, preset) };
-    if let Some(infos) = select_in_program(entries, rb, rp, key, velocity) {
+    if let Some(infos) = select_in_program(entries, [rb, rb], rp, key, velocity) {
         return Some(infos);
     }
     // 整个音色库没有鼓 bank（典型：SFZ 单乐器库只有一个 (0, 0) 条目）：
     // 通道 10 被置成 bank 128 后不该直接静音，回退到普通 bank 的同 program。
     // GM SF2 有 bank 128，上面的查询已经命中，不会走到这里。
     if bank == 128 && !entries.iter().any(|e| e.bank == 128) {
-        return select_in_program(entries, 0, preset, key, velocity);
+        return select_in_program(entries, [0, 0], preset, key, velocity);
     }
     None
+}
+
+/// bank 候选：先 MSB（GS/GM 常见语义），再 14-bit 组合（XG / SF2 的
+/// `(msb << 7) | lsb`）。LSB 为 0 时组合没有意义，只查一次。
+fn bank_candidates(bank: u8, bank_lsb: u8) -> [u16; 2] {
+    let msb = u16::from(bank);
+    if bank_lsb == 0 {
+        [msb, msb]
+    } else {
+        [msb, (msb << 7) | u16::from(bank_lsb)]
+    }
 }
 
 /// 命中层的切片 + 所属条目的侧表（门控/轮次/释放触发）。
@@ -414,68 +418,80 @@ pub struct Selected<'a> {
 pub fn select_layers_multi(
     entries: &[KeyMapEntry],
     bank: u8,
+    bank_lsb: u8,
     preset: u8,
     key: u8,
     velocity: u8,
 ) -> Option<Selected<'_>> {
-    select_layers_inner(entries, bank, preset, key, velocity, false)
+    select_layers_inner(entries, bank, bank_lsb, preset, key, velocity, false)
 }
 
 /// `trigger=release` 层（音符结束时发声）。
 pub fn select_release_layers_multi(
     entries: &[KeyMapEntry],
     bank: u8,
+    bank_lsb: u8,
     preset: u8,
     key: u8,
     velocity: u8,
 ) -> Option<Selected<'_>> {
-    select_layers_inner(entries, bank, preset, key, velocity, true)
+    select_layers_inner(entries, bank, bank_lsb, preset, key, velocity, true)
 }
 
 fn select_layers_inner(
     entries: &[KeyMapEntry],
     bank: u8,
+    bank_lsb: u8,
     preset: u8,
     key: u8,
     velocity: u8,
     release: bool,
 ) -> Option<Selected<'_>> {
-    if let Some(s) = select_in_program_ex(entries, bank, preset, key, velocity, release) {
+    if let Some(s) = select_in_program_ex(
+        entries,
+        bank_candidates(bank, bank_lsb),
+        preset,
+        key,
+        velocity,
+        release,
+    ) {
         return Some(s);
     }
     let (rb, rp) = if bank == 128 { (128, 0) } else { (0, preset) };
-    if let Some(s) = select_in_program_ex(entries, rb, rp, key, velocity, release) {
+    if let Some(s) = select_in_program_ex(entries, [rb, rb], rp, key, velocity, release) {
         return Some(s);
     }
     if bank == 128 && !entries.iter().any(|e| e.bank == 128) {
-        return select_in_program_ex(entries, 0, preset, key, velocity, release);
+        return select_in_program_ex(entries, [0, 0], preset, key, velocity, release);
     }
     None
 }
 
 fn select_in_program_ex(
     entries: &[KeyMapEntry],
-    bank: u8,
+    banks: [u16; 2],
     preset: u8,
     key: u8,
     velocity: u8,
     release: bool,
 ) -> Option<Selected<'_>> {
-    let lo = entries.partition_point(|e| (e.bank, e.preset) < (bank, preset));
-    for e in &entries[lo..] {
-        if e.bank != bank || e.preset != preset {
-            break;
-        }
-        let map = if release {
-            e.release_map()
-        } else {
-            e.map().as_slice()
-        };
-        if let Some(infos) = select_key_infos(map, key, velocity) {
-            return Some(Selected {
-                infos,
-                extras: e.extras(),
-            });
+    for bank in banks {
+        let lo = entries.partition_point(|e| (e.bank, e.preset) < (bank, preset));
+        for e in &entries[lo..] {
+            if e.bank != bank || e.preset != preset {
+                break;
+            }
+            let map = if release {
+                e.release_map()
+            } else {
+                e.map().as_slice()
+            };
+            if let Some(infos) = select_key_infos(map, key, velocity) {
+                return Some(Selected {
+                    infos,
+                    extras: e.extras(),
+                });
+            }
         }
     }
     None
@@ -485,18 +501,20 @@ fn select_in_program_ex(
 /// 的条目的层列表（保持原"首个命中条目胜出"语义；条目内所有层都返回）。
 fn select_in_program(
     entries: &[KeyMapEntry],
-    bank: u8,
+    banks: [u16; 2],
     preset: u8,
     key: u8,
     velocity: u8,
 ) -> Option<&[KeyInfo]> {
-    let lo = entries.partition_point(|e| (e.bank, e.preset) < (bank, preset));
-    for e in &entries[lo..] {
-        if e.bank != bank || e.preset != preset {
-            break;
-        }
-        if let Some(infos) = select_key_infos(e.map(), key, velocity) {
-            return Some(infos);
+    for bank in banks {
+        let lo = entries.partition_point(|e| (e.bank, e.preset) < (bank, preset));
+        for e in &entries[lo..] {
+            if e.bank != bank || e.preset != preset {
+                break;
+            }
+            if let Some(infos) = select_key_infos(e.map(), key, velocity) {
+                return Some(infos);
+            }
         }
     }
     None
@@ -506,11 +524,12 @@ fn select_in_program(
 pub fn select_key_info_multi(
     entries: &[KeyMapEntry],
     bank: u8,
+    bank_lsb: u8,
     preset: u8,
     key: u8,
     velocity: u8,
 ) -> Option<&KeyInfo> {
-    select_key_infos_multi(entries, bank, preset, key, velocity).and_then(|s| s.first())
+    select_key_infos_multi(entries, bank, bank_lsb, preset, key, velocity).and_then(|s| s.first())
 }
 
 /// 根据 key 和 velocity 选择对应的全部 KeyInfo 层（力度分层）。
@@ -646,7 +665,9 @@ fn same_layer_params(a: &KeyInfo, b: &KeyInfo) -> bool {
         && a.loop_start == b.loop_start
         && a.loop_end == b.loop_end
         && filter_type_code(a.filter_type) == filter_type_code(b.filter_type)
-        && a.biquad == b.biquad
+        && (a.cutoff - b.cutoff).abs() <= EPS
+        && (a.resonance - b.resonance).abs() <= EPS
+        && a.exclusive_class == b.exclusive_class
         && (a.speed_mult - b.speed_mult).abs() <= EPS
         && (a.volume - b.volume).abs() <= EPS
         && (a.ampeg_start - b.ampeg_start).abs() <= EPS
@@ -656,8 +677,6 @@ fn same_layer_params(a: &KeyInfo, b: &KeyInfo) -> bool {
         && (a.ampeg_decay - b.ampeg_decay).abs() <= EPS
         && (a.ampeg_sustain - b.ampeg_sustain).abs() <= EPS
         && (a.ampeg_release - b.ampeg_release).abs() <= EPS
-        && (a.cutoff - b.cutoff).abs() <= EPS
-        && (a.resonance - b.resonance).abs() <= EPS
 }
 
 // ── SFZ ──
@@ -781,13 +800,35 @@ mod tests {
         }
     }
 
-    fn entry(bank: u8, preset: u8, key: u8, vol: f32) -> KeyMapEntry {
+    fn entry(bank: u16, preset: u8, key: u8, vol: f32) -> KeyMapEntry {
         let mut map = vec![Vec::new(); 128];
         map[key as usize] = vec![KeyInfo {
             volume: vol,
             ..Default::default()
         }];
         KeyMapEntry::expanded(bank, preset, map)
+    }
+
+    /// CC32 bank LSB：先按 MSB（GS/GM 语义），MSB 无命中才用 14-bit 组合
+    /// （XG / SF2 的 `(msb << 7) | lsb`）。
+    #[test]
+    fn bank_lsb_uses_combined_bank_as_second_candidate() {
+        let mut entries = vec![
+            entry(0, 0, 60, 1.0),
+            entry(1, 0, 60, 2.0),
+            entry(257, 0, 60, 3.0), // (msb=2 << 7) | lsb=1
+        ];
+        entries.sort_by_key(|e| (e.bank, e.preset));
+
+        // LSB=0：只用 MSB，命中 bank 0。
+        let hit = select_key_info_multi(&entries, 0, 0, 0, 60, 100).expect("bank 0");
+        assert_eq!(hit.volume, 1.0);
+        // LSB=1 但 MSB=0 有命中：优先 MSB（GS 文件 CC32 非 0 时不改音色）。
+        let hit = select_key_info_multi(&entries, 0, 1, 0, 60, 100).expect("bank 0");
+        assert_eq!(hit.volume, 1.0);
+        // MSB 无命中、组合 bank 有：走 14-bit。
+        let hit = select_key_info_multi(&entries, 2, 1, 0, 60, 100).expect("combined 257");
+        assert_eq!(hit.volume, 3.0);
     }
 
     /// G 回归：`select_key_info_multi` 改为按 (bank, preset) 二分后，命中、
@@ -803,16 +844,16 @@ mod tests {
         ];
         entries.sort_by_key(|e| (e.bank, e.preset));
 
-        let hit = select_key_info_multi(&entries, 0, 5, 60, 100).expect("(0,5) key60");
+        let hit = select_key_info_multi(&entries, 0, 0, 5, 60, 100).expect("(0,5) key60");
         assert_eq!(hit.volume, 1.0, "同 (bank,preset) 同 key 应首个命中胜出");
-        assert!(select_key_info_multi(&entries, 0, 5, 64, 100).is_some());
+        assert!(select_key_info_multi(&entries, 0, 0, 5, 64, 100).is_some());
         assert!(
-            select_key_info_multi(&entries, 0, 9, 60, 100).is_none(),
+            select_key_info_multi(&entries, 0, 0, 9, 60, 100).is_none(),
             "旋律兜底 (0,9) 不存在 → 静音"
         );
-        let drum = select_key_info_multi(&entries, 128, 9, 38, 100).expect("鼓组兜底 (128,0)");
+        let drum = select_key_info_multi(&entries, 128, 0, 9, 38, 100).expect("鼓组兜底 (128,0)");
         assert_eq!(drum.volume, 4.0);
-        assert!(select_key_info_multi(&entries, 128, 9, 60, 100).is_none());
+        assert!(select_key_info_multi(&entries, 128, 0, 9, 60, 100).is_none());
     }
 
     /// 回归：Polyphone 导出的 SFZ 用 L/R 两个 mono region 拼立体声；
@@ -958,7 +999,7 @@ mod tests {
         }];
         let sfz_only = vec![KeyMapEntry::expanded(0, 0, sfz_map.clone())];
         assert!(
-            select_key_infos_multi(&sfz_only, 128, 0, 60, 100).is_some(),
+            select_key_infos_multi(&sfz_only, 128, 0, 0, 60, 100).is_some(),
             "SFZ 鼓通道应回退到 bank 0"
         );
 
@@ -975,7 +1016,7 @@ mod tests {
             KeyMapEntry::expanded(128, 0, drum_map),
         ];
         let infos =
-            select_key_infos_multi(&with_drum, 128, 0, 60, 100).expect("GM 库的鼓 bank 应命中");
+            select_key_infos_multi(&with_drum, 128, 0, 0, 60, 100).expect("GM 库的鼓 bank 应命中");
         assert_eq!(infos[0].volume, 0.5, "有真鼓 bank 时不应回退到 bank 0");
     }
 }

@@ -134,7 +134,6 @@ pub(super) fn build_key_map_from_sfz_with_progress(
                 };
 
                 let (pan_l, pan_r) = pan_gains(pan);
-                let biquad = bake_biquad(cutoff, resonance, region.filter_type, sample_rate);
                 let info = KeyInfo {
                     sample_data: samples.clone(),
                     is_stereo,
@@ -158,7 +157,7 @@ pub(super) fn build_key_map_from_sfz_with_progress(
                     cutoff,
                     resonance,
                     filter_type: region.filter_type,
-                    biquad,
+                    exclusive_class: 0,
                     pan_l,
                     pan_r,
                     extra: extra_idx,

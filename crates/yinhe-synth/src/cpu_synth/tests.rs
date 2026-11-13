@@ -420,3 +420,143 @@ fn channel_above_32_sounds() {
     assert!(energy > 0.0, "通道 40 应有输出");
     assert!(bufs[0].left.iter().all(|&v| v == 0.0), "通道 0 不应被串音");
 }
+
+/// 三小节：合成 voice 的最小音色（单层、常量样本）。
+fn two_hat_layers(exclusive: u8) -> CpuSynth {
+    let mut synth = CpuSynth::new(48_000);
+    let mut map = vec![Vec::new(); 128];
+    for key in [42u8, 46u8] {
+        map[key as usize] = vec![crate::sf_parser::KeyInfo {
+            sample_data: Arc::from(vec![0.5f32; 4_800]),
+            lovel: 0,
+            hivel: 127,
+            exclusive_class: exclusive,
+            ..Default::default()
+        }];
+    }
+    synth.port_key_maps[0] = Arc::new(vec![KeyMapEntry::expanded(0, 0, map)]);
+    synth
+}
+
+/// SF2 exclusiveClass：同通道同类新音符掐掉旧 voice（闭镲/开镲互斥）。
+#[test]
+fn exclusive_class_chokes_previous_voice() {
+    let mut synth = two_hat_layers(1);
+    synth.send_event(SynthEvent::NoteOn {
+        sample: 0,
+        channel: 0,
+        key: 42,
+        velocity: 100,
+        end_sample: 48_000,
+    });
+    synth.send_event(SynthEvent::NoteOn {
+        sample: 512,
+        channel: 0,
+        key: 46,
+        velocity: 100,
+        end_sample: 48_000,
+    });
+    let mut bufs = buffers(1024);
+    synth.render_to_mixer(&mut bufs);
+    assert_eq!(synth.voice_count(), 1, "先前的闭镲应被开镲掐掉");
+    assert_eq!(synth.voices[0].key, 46, "留下的是新音符");
+}
+
+/// exclusiveClass == 0（或不同 class）不互相掐音。
+#[test]
+fn no_exclusive_class_keeps_both_voices() {
+    let mut synth = two_hat_layers(0);
+    synth.send_event(SynthEvent::NoteOn {
+        sample: 0,
+        channel: 0,
+        key: 42,
+        velocity: 100,
+        end_sample: 48_000,
+    });
+    synth.send_event(SynthEvent::NoteOn {
+        sample: 512,
+        channel: 0,
+        key: 46,
+        velocity: 100,
+        end_sample: 48_000,
+    });
+    let mut bufs = buffers(1024);
+    synth.render_to_mixer(&mut bufs);
+    assert_eq!(synth.voice_count(), 2);
+}
+
+/// CC74 对**正在发声**的 voice 生效（per-voice 相对偏移，不是新建音符才生效）。
+#[test]
+fn cc74_updates_sounding_voice_cutoff() {
+    let mut synth = CpuSynth::new(48_000);
+    let mut map = vec![Vec::new(); 128];
+    map[60] = vec![crate::sf_parser::KeyInfo {
+        sample_data: Arc::from(vec![0.5f32; 48_000]),
+        lovel: 0,
+        hivel: 127,
+        cutoff: 8_000.0,
+        ..Default::default()
+    }];
+    synth.port_key_maps[0] = Arc::new(vec![KeyMapEntry::expanded(0, 0, map)]);
+    synth.send_event(SynthEvent::NoteOn {
+        sample: 0,
+        channel: 0,
+        key: 60,
+        velocity: 100,
+        end_sample: 96_000,
+    });
+    synth.send_event(SynthEvent::Control {
+        sample: 512,
+        channel: 0,
+        event: ControlEvent::Raw(74, 0.0),
+    });
+    let mut bufs = buffers(1024);
+    synth.render_to_mixer(&mut bufs);
+    let cutoff = synth.voices[0].cutoff;
+    assert!(
+        (cutoff - 8_000.0 / 256.0).abs() < 0.5,
+        "CC74=0 应把 8kHz 压到 1/256（实际 {cutoff}）"
+    );
+}
+
+/// CC120 All Sound Off 立即结束该通道全部 voice。
+#[test]
+fn cc120_all_sound_off_kills_voices() {
+    let mut synth = two_hat_layers(0);
+    synth.send_event(SynthEvent::NoteOn {
+        sample: 0,
+        channel: 0,
+        key: 42,
+        velocity: 100,
+        end_sample: 48_000,
+    });
+    synth.send_event(SynthEvent::Control {
+        sample: 256,
+        channel: 0,
+        event: ControlEvent::Raw(120, 0.0),
+    });
+    let mut bufs = buffers(1024);
+    synth.render_to_mixer(&mut bufs);
+    assert_eq!(synth.voice_count(), 0);
+}
+
+/// CC123 All Notes Off：释放（而非立即杀掉）非踏板保持的 voice。
+#[test]
+fn cc123_releases_voices() {
+    let mut synth = two_hat_layers(0);
+    synth.send_event(SynthEvent::NoteOn {
+        sample: 0,
+        channel: 0,
+        key: 42,
+        velocity: 100,
+        end_sample: 48_000,
+    });
+    synth.send_event(SynthEvent::Control {
+        sample: 256,
+        channel: 0,
+        event: ControlEvent::Raw(123, 0.0),
+    });
+    let mut bufs = buffers(2048);
+    synth.render_to_mixer(&mut bufs);
+    assert_eq!(synth.voice_count(), 0, "All Notes Off 后尾音应结束");
+}

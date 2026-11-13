@@ -60,6 +60,12 @@ pub(super) struct Voice {
     pub(super) release_pending: bool,
     /// SFZ `group`（`off_by` 按它掐音；0 = 不参与）。
     pub(super) off_group: u16,
+    /// SF2 `exclusiveClass`（0 = 不参与）：同通道同类新音符掐掉旧 voice。
+    pub(super) exclusive_class: u8,
+    /// 音色库自身 cutoff/resonance/filter_type（CC71/74 重算的基准）。
+    pub(super) base_cutoff: f32,
+    pub(super) base_resonance: f32,
+    pub(super) filter_type: u32,
     /// `one_shot`：忽略 note_off/踏板，播到采样结束。
     pub(super) one_shot: bool,
     /// `trigger=release` 层（自身不再触发释放层）。
@@ -303,55 +309,95 @@ impl GpuSynth {
                     let Some(ch_idx) = dense_channel(channel as usize) else {
                         continue;
                     };
-                    match event {
-                        // All Sounds Off (CC78)：结束所有 voice；
-                        // All Notes Off (CC7B)：结束所有非 held voice（held 等 damper 松开）
-                        ControlEvent::Raw(cc @ (0x78 | 0x7B), v) if v < 0.5 => {
-                            let all = cc == 0x78;
-                            for (i, v) in self.voices.iter_mut().enumerate() {
-                                if v.state.env_stage < 6 && (all || !v.held_by_damper) {
-                                    v.state.env_stage = 6;
-                                    // 与淘汰 kill 同语义：等待 GPU 确认 1ms 淡出结束，
-                                    // 期间 harvest 不得用旧状态覆盖（否则 voice 复活）。
-                                    v.kill_pending = true;
-                                    let b = v.channel as usize * 128 + v.key as usize;
-                                    self.layer_counts[b] = self.layer_counts[b].saturating_sub(1);
-                                    releases.push(kill_cmd(frame, i));
-                                }
+                    let action = self.channels[ch_idx].process_control(event);
+                    // CC120 All Sound Off / CC123 All Notes Off（与 CPU 同语义）。
+                    if action.all_sound_off || action.all_notes_off {
+                        for (i, v) in self.voices.iter_mut().enumerate() {
+                            if v.channel != channel || v.state.env_stage >= 6 {
+                                continue;
                             }
-                        }
-                        _ => {
-                            let damper_released = self.channels[ch_idx].process_control(event);
-                            if damper_released {
-                                // 松开延音踏板：释放该通道所有被保持的 voice
-                                for (i, v) in self.voices.iter_mut().enumerate() {
-                                    if v.channel == channel {
-                                        if v.held_by_damper
-                                            && v.state.env_stage < 5
-                                            && !v.release_pending
-                                        {
-                                            v.release_pending = true;
-                                            releases.push(release_cmd(frame, i));
-                                        }
-                                        v.held_by_damper = false;
-                                    }
-                                }
+                            if action.all_sound_off {
+                                v.state.env_stage = 6;
+                                // 与淘汰 kill 同语义：等待 GPU 确认 1ms 淡出结束，
+                                // 期间 harvest 不得用旧状态覆盖（否则 voice 复活）。
+                                v.kill_pending = true;
+                                let b = v.channel as usize * 128 + v.key as usize;
+                                self.layer_counts[b] = self.layer_counts[b].saturating_sub(1);
+                                releases.push(kill_cmd(frame, i));
+                            } else if !v.held_by_damper {
+                                // All Notes Off = 全部键抬起：走正常 release。
+                                v.release_pending = true;
+                                releases.push(release_cmd(frame, i));
                             }
-                            // CC72/73 修改包络时长、CC121 重置包络：传播到该通道活跃 voice
-                            if is_env_effect_cc(&event) {
-                                self.propagate_env_controls_to_cmds(ch_idx, frame, env_cmds);
-                            }
-                            // 记录该通道的段边界状态（shader 段边界应用）
-                            let ch = self.channels[ch_idx];
-                            ch_updates.push(ChState {
-                                ch: ch_idx as u32,
-                                speed_mult: ch.pitch_multiplier(),
-                            });
                         }
                     }
+                    if action.damper_released {
+                        // 松开延音踏板：释放该通道所有被保持的 voice
+                        for (i, v) in self.voices.iter_mut().enumerate() {
+                            if v.channel == channel {
+                                if v.held_by_damper && v.state.env_stage < 5 && !v.release_pending {
+                                    v.release_pending = true;
+                                    releases.push(release_cmd(frame, i));
+                                }
+                                v.held_by_damper = false;
+                            }
+                        }
+                    }
+                    // CC72/73 修改包络时长、CC121 重置包络：传播到该通道活跃 voice
+                    if is_env_effect_cc(&event) {
+                        self.propagate_env_controls_to_cmds(ch_idx, frame, env_cmds);
+                    }
+                    // 记录该通道的段边界状态（shader 段边界应用）
+                    let ch = self.channels[ch_idx];
+                    ch_updates.push(ChState {
+                        ch: ch_idx as u32,
+                        speed_mult: ch.pitch_multiplier(),
+                    });
                 }
             }
             self.event_cursor += 1;
+        }
+        // CC71/74 变化：段边界统一重算脏通道的滤波器系数（写回 GPU voice 状态）。
+        self.apply_filter_dirty(frame);
+    }
+
+    /// CC71/74 变化：对脏通道的活跃 voice 重算滤波器系数并写回 GPU 状态。
+    /// 在段边界调用（同段内多次 CC 只重算一次）。与 CPU `apply_filter_dirty` 同语义。
+    fn apply_filter_dirty(&mut self, _frame: u32) {
+        for ch_idx in 0..self.channel_count.min(MAX_CHANNELS) {
+            if !self.channels[ch_idx].filter_dirty {
+                continue;
+            }
+            self.channels[ch_idx].filter_dirty = false;
+            let ch = self.channels[ch_idx];
+            let sr = self.sample_rate;
+            for i in 0..self.voices.len() {
+                if self.voices[i].channel as usize != ch_idx || self.voices[i].state.env_stage >= 6
+                {
+                    continue;
+                }
+                {
+                    let v = &mut self.voices[i];
+                    let (coeffs, cutoff) = crate::voice_params::filter_coeffs(
+                        v.base_cutoff,
+                        v.base_resonance,
+                        v.filter_type,
+                        &ch,
+                        sr,
+                    );
+                    v.state.cutoff = cutoff;
+                    let (b0, b1, b2, a1, a2) = coeffs
+                        .map(|b| (b[0], b[1], b[2], b[3], b[4]))
+                        .unwrap_or((0.0, 0.0, 0.0, 0.0, 0.0));
+                    v.state.flt_b0 = b0;
+                    v.state.flt_b1 = b1;
+                    v.state.flt_b2 = b2;
+                    v.state.flt_a1 = a1;
+                    v.state.flt_a2 = a2;
+                }
+                let st = self.voices[i].state;
+                self.renderer.write_voice_state(i as u32, &st);
+            }
         }
     }
 
@@ -444,9 +490,14 @@ impl GpuSynth {
         };
         let ch = self.channels[ch_idx];
         let maps = Arc::clone(&self.port_key_maps[self.channel_port[ch_idx] as usize]);
-        let Some(sel) =
-            sf_parser::select_release_layers_multi(&maps, ch.bank, ch.program, key, vel)
-        else {
+        let Some(sel) = sf_parser::select_release_layers_multi(
+            &maps,
+            ch.bank,
+            ch.bank_lsb,
+            ch.program,
+            key,
+            vel,
+        ) else {
             return;
         };
         let bucket = channel as usize * 128 + key as usize;
@@ -487,6 +538,32 @@ impl GpuSynth {
             );
         }
         let _ = releases;
+    }
+
+    /// SF2 `exclusiveClass`：同通道同 class 的新音符掐掉旧 voice（按通道隔离，
+    /// 与 SFZ `off_by` 的全局组语义不同）。
+    fn cut_exclusive(
+        &mut self,
+        channel: u8,
+        class: u8,
+        block_frame: u32,
+        releases: &mut Vec<ReleaseCmd>,
+    ) {
+        for i in 0..self.voices.len() {
+            let v = &mut self.voices[i];
+            if v.channel != channel || v.exclusive_class != class {
+                continue;
+            }
+            if v.state.env_stage >= 6 || v.kill_pending {
+                continue;
+            }
+            v.state.env_stage = 6;
+            v.kill_pending = true;
+            v.held_by_damper = false;
+            let b = v.channel as usize * 128 + v.key as usize;
+            self.layer_counts[b] = self.layer_counts[b].saturating_sub(1);
+            releases.push(kill_cmd(block_frame, i));
+        }
     }
 
     /// SFZ keyswitch：`sw_lokey..sw_hikey` 内的键只切 `sw_last` 不发声。
@@ -552,7 +629,9 @@ impl GpuSynth {
         let ch = self.channels[ch_idx];
         // Arc 克隆避免在循环内借住 `port_key_maps`（`spawn_layer` 需要 &mut self）。
         let maps = Arc::clone(&self.port_key_maps[self.channel_port[ch_idx] as usize]);
-        let Some(sel) = sf_parser::select_layers_multi(&maps, ch.bank, ch.program, key, vel) else {
+        let Some(sel) =
+            sf_parser::select_layers_multi(&maps, ch.bank, ch.bank_lsb, ch.program, key, vel)
+        else {
             // 选不到 region（如 key≥128 的扩展键）：静默，与 CPU 一致
             return;
         };
@@ -575,6 +654,10 @@ impl GpuSynth {
         let batchable = infos.len() == 1;
         let mut spawned = false;
         for info in infos {
+            // SF2 exclusiveClass：同通道同类新音符掐掉旧 voice（鼓组闭镲/开镲互斥）。
+            if info.exclusive_class != 0 {
+                self.cut_exclusive(channel, info.exclusive_class, block_frame, releases);
+            }
             // SFZ 门控：不命中整层不发声；命中则改写增益/音高（pitch_random）。
             let extra = info.extra_index().and_then(|i| sel.extras.get(i));
             let (speed_scale, gain_scale) = match extra {
@@ -761,6 +844,10 @@ impl GpuSynth {
             orig_attack_frames: p.orig_attack_frames,
             orig_release_frames: p.orig_release_frames,
             off_group: extra.map(|e| e.group).unwrap_or(0),
+            exclusive_class: info.exclusive_class,
+            base_cutoff: p.base_cutoff,
+            base_resonance: p.base_resonance,
+            filter_type: p.filter_type,
             one_shot: extra.map(|e| e.one_shot).unwrap_or(false),
             is_release_trigger: false,
             release_spawned: false,
@@ -805,9 +892,9 @@ impl GpuSynth {
                 loop_mode: p.loop_mode,
                 is_stereo: p.is_stereo as u32,
                 interp: p.interp,
-                cutoff: info.cutoff,
+                cutoff: p.cutoff,
                 resonance: info.resonance,
-                filter_type: crate::sf_parser::filter_type_code(info.filter_type),
+                filter_type: p.filter_type,
                 flt_b0: p.biquad.map(|b| b[0]).unwrap_or(0.0),
                 flt_b1: p.biquad.map(|b| b[1]).unwrap_or(0.0),
                 flt_b2: p.biquad.map(|b| b[2]).unwrap_or(0.0),
@@ -1166,8 +1253,27 @@ impl GpuSynth {
         // 被修改的 voice 槽位（状态常驻 GPU，改完需写回）。
         let mut dirty: Vec<u32> = Vec::new();
         for &ev in events {
-            let damper_released = self.channels[ch_idx].process_control(ev);
-            if damper_released {
+            let action = self.channels[ch_idx].process_control(ev);
+            if action.all_sound_off || action.all_notes_off {
+                for (i, v) in self.voices.iter_mut().enumerate() {
+                    if v.channel != dense as u8 || v.state.env_stage >= 6 {
+                        continue;
+                    }
+                    if action.all_sound_off {
+                        v.state.env_stage = 6;
+                        v.kill_pending = true;
+                        let b = v.channel as usize * 128 + v.key as usize;
+                        self.layer_counts[b] = self.layer_counts[b].saturating_sub(1);
+                    } else if !v.held_by_damper {
+                        v.release_pending = true;
+                        v.state.env_start = v.state.envelope;
+                        v.state.env_stage = 5;
+                        v.state.stage_progress = 0.0;
+                    }
+                    dirty.push(i as u32);
+                }
+            }
+            if action.damper_released {
                 // 松开延音踏板：释放该通道所有被保持的 voice（与 shader release 指令同语义）
                 for (i, v) in self.voices.iter_mut().enumerate() {
                     if v.channel == dense as u8
@@ -1209,6 +1315,32 @@ impl GpuSynth {
                         }
                         _ => {}
                     }
+                    dirty.push(i as u32);
+                }
+            }
+            // CC71/74：chase 后按当前值重算滤波器（写回 voice 状态）。
+            if action.filter_changed {
+                let ch = self.channels[ch_idx];
+                for (i, v) in self.voices.iter_mut().enumerate() {
+                    if v.channel as usize != ch_idx || v.state.env_stage >= 6 {
+                        continue;
+                    }
+                    let (coeffs, cutoff) = crate::voice_params::filter_coeffs(
+                        v.base_cutoff,
+                        v.base_resonance,
+                        v.filter_type,
+                        &ch,
+                        self.sample_rate,
+                    );
+                    v.state.cutoff = cutoff;
+                    let (b0, b1, b2, a1, a2) = coeffs
+                        .map(|b| (b[0], b[1], b[2], b[3], b[4]))
+                        .unwrap_or((0.0, 0.0, 0.0, 0.0, 0.0));
+                    v.state.flt_b0 = b0;
+                    v.state.flt_b1 = b1;
+                    v.state.flt_b2 = b2;
+                    v.state.flt_a1 = a1;
+                    v.state.flt_a2 = a2;
                     dirty.push(i as u32);
                 }
             }

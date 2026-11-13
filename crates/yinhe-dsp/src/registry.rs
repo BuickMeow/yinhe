@@ -5,7 +5,6 @@
 
 use yinhe_mixer::InsertProcessor;
 
-use crate::cc::filter::ChannelFilter;
 use crate::cc::gain::ChannelGain;
 use crate::cc::pan::ChannelPan;
 
@@ -33,8 +32,6 @@ pub enum BuiltinEffectKind {
     ChannelGain,
     /// 通道声像。
     ChannelPan,
-    /// 通道低通滤波。
-    ChannelFilter,
 }
 
 impl BuiltinEffectKind {
@@ -42,7 +39,6 @@ impl BuiltinEffectKind {
     pub const ALL: &'static [BuiltinEffectKind] = &[
         BuiltinEffectKind::ChannelGain,
         BuiltinEffectKind::ChannelPan,
-        BuiltinEffectKind::ChannelFilter,
     ];
 
     /// 持久化标识（`InsertRef.plugin_id`）。
@@ -50,7 +46,6 @@ impl BuiltinEffectKind {
         match self {
             BuiltinEffectKind::ChannelGain => "channel_gain",
             BuiltinEffectKind::ChannelPan => "channel_pan",
-            BuiltinEffectKind::ChannelFilter => "channel_filter",
         }
     }
 
@@ -64,7 +59,6 @@ impl BuiltinEffectKind {
         match self {
             BuiltinEffectKind::ChannelGain => "Channel Gain",
             BuiltinEffectKind::ChannelPan => "Channel Pan",
-            BuiltinEffectKind::ChannelFilter => "Channel Filter",
         }
     }
 
@@ -73,7 +67,6 @@ impl BuiltinEffectKind {
         match self {
             BuiltinEffectKind::ChannelGain => "Channel volume & expression",
             BuiltinEffectKind::ChannelPan => "Equal-power pan",
-            BuiltinEffectKind::ChannelFilter => "Channel low-pass filter",
         }
     }
 
@@ -100,20 +93,6 @@ impl BuiltinEffectKind {
                 max: 127.0,
                 default: 64.0,
             }],
-            BuiltinEffectKind::ChannelFilter => &[
-                EffectParamInfo {
-                    name: "Cutoff",
-                    cc: 74,
-                    max: 127.0,
-                    default: 64.0,
-                },
-                EffectParamInfo {
-                    name: "Resonance",
-                    cc: 71,
-                    max: 127.0,
-                    default: 64.0,
-                },
-            ],
         }
     }
 
@@ -123,7 +102,6 @@ impl BuiltinEffectKind {
         match self {
             BuiltinEffectKind::ChannelGain => &[7, 11],
             BuiltinEffectKind::ChannelPan => &[10],
-            BuiltinEffectKind::ChannelFilter => &[71, 74],
         }
     }
 
@@ -132,7 +110,6 @@ impl BuiltinEffectKind {
         match self {
             BuiltinEffectKind::ChannelGain => Box::new(ChannelGain::new(sample_rate)),
             BuiltinEffectKind::ChannelPan => Box::new(ChannelPan::new(sample_rate)),
-            BuiltinEffectKind::ChannelFilter => Box::new(ChannelFilter::new(sample_rate)),
         }
     }
 }

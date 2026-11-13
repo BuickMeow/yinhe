@@ -10,7 +10,20 @@ use crate::gpu_synth::ControlEvent;
 /// `ChannelLayout` 压缩后的 dense 通道数决定；这里只是数组容量上限。
 pub const MAX_CHANNELS: usize = 256;
 
-/// 单通道 MIDI 控制状态（仅音源层参数；音量/声像/滤波已迁至 yinhe-dsp）。
+/// `process_control` 的处理结果（CPU/GPU 共用语义）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ControlAction {
+    /// 延音踏板松开（CC64 抬起或 CC121 重置）：需要释放被踏板保持的 voice。
+    pub damper_released: bool,
+    /// CC120 All Sound Off：立即结束该通道全部 voice（1ms 淡出）。
+    pub all_sound_off: bool,
+    /// CC123 All Notes Off：释放该通道全部未踏板保持的 voice。
+    pub all_notes_off: bool,
+    /// CC71/74 变化：需要按新值重算该通道活跃 voice 的滤波器系数。
+    pub filter_changed: bool,
+}
+
+/// 单通道 MIDI 控制状态（仅音源层参数；音量/声像在 yinhe-dsp 通道处理段）。
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ChannelState {
     pub(crate) damper: bool,                // CC64 >= 64
@@ -23,9 +36,18 @@ pub(crate) struct ChannelState {
     pub(crate) fine_tune_lsb: u8,           // RPN1 data lsb（CC38）
     pub(crate) coarse_tune: f32,            // 半音（RPN2）
     pub(crate) program: u8,
-    /// 音色库 bank（xsynth `ProgramDescriptor.bank` 语义）：CC0 设置（鼓组 128 锁定），
-    /// `PercussionMode` 直接置 128/0。note_on 时与 program 一起选择音色库条目。
+    /// 音色库 bank MSB（CC0）：note_on 时与 program 一起选择音色库条目。
+    /// 鼓组通道固定 128（`PercussionMode`），CC0 不能改。
     pub(crate) bank: u8,
+    /// 音色库 bank LSB（CC32）。与 MSB 组合成 14-bit bank 优先匹配；
+    /// 库里没有组合 bank 时回退到 MSB（GS/GM 的常见语义）。
+    pub(crate) bank_lsb: u8,
+    /// CC74 亮度（0..127，64 = 不改变音色库自身 cutoff）。
+    pub(crate) filter_cutoff_cc: u8,
+    /// CC71 共振（0..127，64 = 不改变音色库自身 Q）。
+    pub(crate) filter_resonance_cc: u8,
+    /// 滤波器 CC 已变化、活跃 voice 尚未重算系数（块内首个段边界消费）。
+    pub(crate) filter_dirty: bool,
     // RPN 选择器状态（CC100/101）
     rpn_msb: i8,
     rpn_lsb: i8,
@@ -56,6 +78,10 @@ impl ChannelState {
             coarse_tune: 0.0,
             program: 0,
             bank: 0,
+            bank_lsb: 0,
+            filter_cutoff_cc: 64,
+            filter_resonance_cc: 64,
+            filter_dirty: false,
             rpn_msb: -1,
             rpn_lsb: -1,
             sample_rate,
@@ -74,9 +100,11 @@ impl ChannelState {
         2.0f32.powf(combined / 12.0)
     }
 
-    /// 处理一个控制事件（语义对齐 xsynth `process_control_event`）。
-    /// 返回是否触发了 damper 松开（需要释放 held voices）。
-    pub(crate) fn process_control(&mut self, event: ControlEvent) -> bool {
+    /// 处理一个控制事件（音源层语义）。
+    /// 返回本次事件触发的通道级动作（踏板松开 / All Sound Off / All Notes Off /
+    /// 滤波器参数变化），由调用方决定如何处理活跃 voice。
+    pub(crate) fn process_control(&mut self, event: ControlEvent) -> ControlAction {
+        let mut action = ControlAction::default();
         match event {
             ControlEvent::Raw(controller, value) => {
                 // 整数量语义的 CC（bank/RPN 选择与数据/包络倍率）取整；damper 用阈值。
@@ -93,6 +121,7 @@ impl ChannelState {
                             self.bank = vi;
                         }
                     }
+                    0x20 => self.bank_lsb = vi,
                     0x64 => self.rpn_lsb = vi as i8,
                     0x65 => self.rpn_msb = vi as i8,
                     0x06 | 0x26 => {
@@ -129,20 +158,49 @@ impl ChannelState {
                     }
                     0x48 => self.env_release = Some(vi),
                     0x49 => self.env_attack = Some(vi),
+                    // CC71 共振 / CC74 亮度：GM2/BASSMIDI 语义，64 = 中性。
+                    // 实际作用在 note_on / 段边界的 per-voice 滤波器上
+                    // （见 `voice_params::filter_coeffs`），不是通道总线滤波。
+                    0x47 => {
+                        if self.filter_resonance_cc != vi {
+                            self.filter_resonance_cc = vi;
+                            self.filter_dirty = true;
+                            action.filter_changed = true;
+                        }
+                    }
+                    0x4A => {
+                        if self.filter_cutoff_cc != vi {
+                            self.filter_cutoff_cc = vi;
+                            self.filter_dirty = true;
+                            action.filter_changed = true;
+                        }
+                    }
                     0x40 => {
                         let damper = value >= 64.0;
                         let released = self.damper && !damper;
                         self.damper = damper;
-                        return released;
+                        action.damper_released = released;
                     }
-                    0x79 if value < 0.5 => {
-                        // Reset All Controllers。
-                        // xsynth 的 reset_control 不重置 program.bank，这里保留 bank。
+                    // CC121 Reset All Controllers。
+                    // 标准语义：控制器回默认值，但**不改变** program/bank。
+                    // GM2 默认 CC71/74 = 64（中性），由 `ChannelState::new` 保证；
+                    // 重置后活跃 voice 需要按新值重算滤波器（filter_dirty）。
+                    0x79 => {
                         let bank = self.bank;
+                        let bank_lsb = self.bank_lsb;
+                        let program = self.program;
                         *self = ChannelState::new(self.sample_rate);
                         self.bank = bank;
-                        return true; // damper 松开语义
+                        self.bank_lsb = bank_lsb;
+                        self.program = program;
+                        self.filter_dirty = true;
+                        action.damper_released = true;
+                        action.filter_changed = true;
                     }
+                    // CC120 All Sound Off：立即结束该通道全部 voice。
+                    0x78 => action.all_sound_off = true,
+                    // CC123 All Notes Off：释放非踏板保持的 voice（held 等踏板松开）。
+                    0x7B => action.all_notes_off = true,
                     _ => {}
                 }
             }
@@ -156,7 +214,21 @@ impl ChannelState {
             ControlEvent::ProgramChange(value) => self.program = value,
             ControlEvent::PercussionMode(set) => self.bank = if set { 128 } else { 0 },
         }
-        false
+        action
+    }
+
+    /// 加载音色库的 `<control> set_ccN=v`：写入通道初始 CC（含 bank LSB 与
+    /// 滤波器 CC 的语义字段）。
+    pub(crate) fn set_cc_default(&mut self, cc: u8, value: u8) {
+        if (cc as usize) < 128 {
+            self.cc[cc as usize] = value;
+        }
+        match cc {
+            0x20 => self.bank_lsb = value,
+            0x47 => self.filter_resonance_cc = value,
+            0x4A => self.filter_cutoff_cc = value,
+            _ => {}
+        }
     }
 
     /// 原生 RPN（归一化 f32 0..=1）→ 内部参数。0/1/2 是 MIDI 标准：
@@ -267,18 +339,27 @@ pub(crate) fn is_env_effect_cc(event: &ControlEvent) -> bool {
 mod tests {
     use super::*;
 
-    /// 通道状态机（音源层）：CC64 damper 阈值、RPN、CC79 重置。
-    /// 通道音量/声像/滤波已迁至 yinhe-dsp，这里不再涉及。
+    /// 通道状态机（音源层）：CC64 damper 阈值、RPN、CC121 重置。
+    /// 通道音量/声像在 yinhe-dsp 处理段，CC71/74 在这里（per-voice 滤波）。
     #[test]
     fn channel_cc_semantics() {
         let mut ch = ChannelState::new(44100);
 
         // CC64：<64 关，>=64 开；松开返回 true
-        assert!(!ch.process_control(ControlEvent::Raw(64, 63.0)));
+        assert!(
+            !ch.process_control(ControlEvent::Raw(64, 63.0))
+                .damper_released
+        );
         assert!(!ch.damper);
-        assert!(!ch.process_control(ControlEvent::Raw(64, 127.0)));
+        assert!(
+            !ch.process_control(ControlEvent::Raw(64, 127.0))
+                .damper_released
+        );
         assert!(ch.damper);
-        assert!(ch.process_control(ControlEvent::Raw(64, 0.0)));
+        assert!(
+            ch.process_control(ControlEvent::Raw(64, 0.0))
+                .damper_released
+        );
         assert!(!ch.damper);
 
         // RPN0 弯音灵敏度（默认 2.0）：CC101/100 选择 RPN0，CC6 设 msb，CC38 设 lsb
@@ -312,7 +393,10 @@ mod tests {
         );
 
         // CC79 重置全部控制器
-        assert!(ch.process_control(ControlEvent::Raw(0x79, 0.0)));
+        assert!(
+            ch.process_control(ControlEvent::Raw(0x79, 0.0))
+                .damper_released
+        );
         assert_eq!(ch.pitch_bend_sensitivity, 2.0);
         assert_eq!(ch.coarse_tune, 0.0);
     }
@@ -386,5 +470,69 @@ mod tests {
         ];
         let skip = chase_skip(&events);
         assert!(skip.pbs[0] && skip.fine_tune[0] && skip.coarse_tune[0]);
+    }
+
+    /// CC71/74 是 GM2/BASSMIDI 的双极相对偏移：64 = 中性，
+    /// 两侧都要有值（旧实现 >=64 直接旁路）。
+    #[test]
+    fn filter_cc_is_bipolar_and_marks_dirty() {
+        use crate::voice_params::{cutoff_cents_offset, resonance_db_offset};
+        let mut ch = ChannelState::new(44100);
+        assert_eq!(ch.filter_cutoff_cc, 64);
+        assert_eq!(ch.filter_resonance_cc, 64);
+        assert_eq!(cutoff_cents_offset(64), 0.0);
+        assert!(cutoff_cents_offset(0) < -9000.0);
+        assert!(cutoff_cents_offset(127) > 9000.0);
+        assert_eq!(resonance_db_offset(64), 0.0);
+        assert!(resonance_db_offset(0) < 0.0);
+        assert!(resonance_db_offset(127) > 0.0);
+
+        let a = ch.process_control(ControlEvent::Raw(74, 0.0));
+        assert!(a.filter_changed && ch.filter_dirty);
+        assert_eq!(ch.filter_cutoff_cc, 0);
+        ch.filter_dirty = false;
+        let a = ch.process_control(ControlEvent::Raw(71, 127.0));
+        assert!(a.filter_changed && ch.filter_dirty);
+        assert_eq!(ch.filter_resonance_cc, 127);
+        // 值不变不重复置脏。
+        ch.filter_dirty = false;
+        let a = ch.process_control(ControlEvent::Raw(71, 127.0));
+        assert!(!a.filter_changed && !ch.filter_dirty);
+    }
+
+    /// CC120/123 产生通道动作；CC121 重置控制器但保留 program/bank/bank_lsb。
+    #[test]
+    fn channel_mode_cc_actions() {
+        let mut ch = ChannelState::new(44100);
+        ch.process_control(ControlEvent::ProgramChange(42));
+        ch.process_control(ControlEvent::Raw(0, 8.0));
+        ch.process_control(ControlEvent::Raw(32, 3.0));
+        assert_eq!((ch.bank, ch.bank_lsb, ch.program), (8, 3, 42));
+
+        assert!(
+            ch.process_control(ControlEvent::Raw(0x78, 0.0))
+                .all_sound_off
+        );
+        assert!(
+            ch.process_control(ControlEvent::Raw(0x7B, 0.0))
+                .all_notes_off
+        );
+
+        ch.process_control(ControlEvent::Raw(74, 0.0));
+        let a = ch.process_control(ControlEvent::Raw(121, 0.0));
+        assert!(a.damper_released && a.filter_changed);
+        assert_eq!(ch.filter_cutoff_cc, 64);
+        assert_eq!((ch.bank, ch.bank_lsb, ch.program), (8, 3, 42));
+    }
+
+    /// 乐器库 `<control> set_ccN=v` 必须同步语义字段（否则门控与滤波器对不上）。
+    #[test]
+    fn cc_defaults_update_semantic_fields() {
+        let mut ch = ChannelState::new(44100);
+        ch.set_cc_default(74, 20);
+        assert_eq!(ch.filter_cutoff_cc, 20);
+        assert_eq!(ch.cc[74], 20);
+        ch.set_cc_default(32, 5);
+        assert_eq!(ch.bank_lsb, 5);
     }
 }

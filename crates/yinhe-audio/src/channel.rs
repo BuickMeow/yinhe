@@ -28,7 +28,7 @@ use crate::channel_set::ChannelSet;
 /// Default values match xsynth-core's internal defaults and GM spec:
 ///   - Volume 127, Pan 64, Expression 127
 ///   - Pitch bend sensitivity 2 semitones
-///   - Sustain 0 (damper off), Cutoff 64 (disabled)
+///   - Sustain 0 (damper off)
 ///   - Attack/Release are `None` in xsynth → only sent when MIDI file sets them
 #[derive(Clone, Copy)]
 pub(crate) struct ChannelState {
@@ -39,8 +39,6 @@ pub(crate) struct ChannelState {
     pub(crate) pan: u8,
     pub(crate) expression: u8,
     pub(crate) sustain: u8,
-    pub(crate) cutoff: u8,
-    pub(crate) resonance: u8,
     pub(crate) attack: u8,
     pub(crate) release: u8,
     pub(crate) pitch_bend: f32,
@@ -83,8 +81,6 @@ impl Default for ChannelState {
             pan: 64,
             expression: 127,
             sustain: 0,
-            cutoff: 64,
-            resonance: 0,
             attack: 0,
             release: 0,
             pitch_bend: 0.0,
@@ -240,7 +236,6 @@ impl ChannelState {
                 self.resolve_rpn();
             }
             64 => self.sustain = val,
-            71 => self.resonance = val,
             72 => {
                 self.release = val;
                 self.env_set = true;
@@ -249,7 +244,6 @@ impl ChannelState {
                 self.attack = val;
                 self.env_set = true;
             }
-            74 => self.cutoff = val,
             100 => self.rpn_lsb = Some(val),
             101 => self.rpn_msb = Some(val),
             _ => {}
@@ -330,10 +324,10 @@ impl ChannelState {
         }
 
         // 通用 CC：发送未被特定字段覆盖、未被 dispatch 覆盖且非 0 的控制器。
-        // CCs already sent: 0, 7, 10, 11, 32, 64, 71, 72, 73, 74.
+        // CCs already sent: 0, 7, 10, 11, 32, 64, 72, 73。
         // RPN-related CCs (100, 101, 6, 38) are carried by the native RPN
         // events above (never replayed as raw CC).
-        const ALREADY_SENT: [u8; 12] = [0, 6, 7, 10, 11, 32, 38, 64, 71, 72, 73, 74];
+        const ALREADY_SENT: [u8; 10] = [0, 6, 7, 10, 11, 32, 38, 64, 72, 73];
         for cc in 0u8..128u8 {
             let val = self.cc_values[cc as usize];
             if val != 0
@@ -366,8 +360,6 @@ impl ChannelState {
             7 => self.volume,
             10 => self.pan,
             11 => self.expression,
-            71 => self.resonance,
-            74 => self.cutoff,
             other => self.cc_values[other as usize],
         }
     }
