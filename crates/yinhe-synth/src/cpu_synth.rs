@@ -1,16 +1,13 @@
-//! CPU 合成器：对等 `GpuSynth` 的纯 CPU 渲染路径。
+//! CPU 合成器。
 //!
-//! 目标：行为对齐 xsynth（`parity` 测试逐样本对比），日后替代 xsynth 承担
-//! CPU 合成。与 GPU 路径共用：
+//! 行为对齐 xsynth（`parity` 语义），与其余音源层共用：
 //! - `sf_parser`：音色库解析与 (key, vel) 参数快照（`KeyInfo`）；
 //! - `ChannelState`/`ChaseSkip`：CC/RPN/弯音/鼓组状态机与 chase 跳过；
 //! - `SynthEvent`/`ControlEvent` 事件模型；
-//! - `voice_render.wgsl` 的逐帧算法（CPU `voice.rs` 逐行复刻）。
+//! - `voice_params`：per-voice 参数展开（speed/增益/声像/滤波/包络）。
 //!
-//! 与 GPU 路径的差异（有意）：
 //! - `CpuVoice::time` 用 f64（对齐 xsynth `position: f64`，长曲无漂移）；
-//! - 采样长度按帧计算（修正 GPU 立体声样本的 frames/elements 混用）；
-//! - 事件按帧边界分段同步渲染（无 GPU 的段/指令流水线）；并行留待后续分片。
+//! - 事件按帧边界分段同步渲染；分片并行（Rayon）。
 
 // 渐进重构：SoA 内核接入渲染路径后删除这些 allow（见模块文档）
 mod voice;
@@ -26,7 +23,7 @@ use crate::channel_state::{
     ChannelState, ChaseSkip, MAX_CHANNELS, dense_channel, is_env_effect_cc,
 };
 use crate::cpu_synth::voice::{CpuVoice, ENV_RELEASE};
-use crate::gpu_synth::{ControlEvent, SynthEvent};
+use crate::events::{ControlEvent, SynthEvent};
 use crate::sf_parser::{self, KeyMapEntry};
 use crate::{DEFAULT_MAX_LAYERS, DEFAULT_MAX_VOICES};
 
@@ -51,11 +48,11 @@ pub static PROF_ON_SELECT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::
 pub static PROF_ON_NEW_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static PROF_ON_PUSH_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 // 默认全局 voice 上限 / layer 上限见 `crate::{DEFAULT_MAX_VOICES,
-// DEFAULT_MAX_LAYERS}`（与 GpuSynth 共用）。超限在**块末摊销淘汰**（优先
+// DEFAULT_MAX_LAYERS}`。超限在**块末摊销淘汰**（优先
 // 已在 release/kill 中的 voice），淘汰走 1ms 淡出（ENV_KILL）听感无咔哒；
 // 不在 note_on 热路径 O(V) 扫描，块内允许短暂超出（上限是软约束）。
 
-/// 纯 CPU 合成器（API 与 GpuSynth 对等）。
+/// 纯 CPU 合成器。
 /// 渲染并行线程数：macOS 取**性能核（P 核）数**——实测 M 系列 10 核
 /// (4P+6E) 下 4 线程比 10 线程快 15~25%（E 核分片成为长尾），6~10 线程
 /// 反而不如 4；其余平台用逻辑核数（不区分大小核，避免误伤全 P 核机器）。
@@ -90,7 +87,7 @@ pub struct CpuSynth {
     sample_rate: u32,
     /// 采样插值方式（`Interpolation::code()`；加载音色库时写入 KeyInfo）。
     interpolation: u32,
-    /// 每 dense 通道的音色库条目列表（dense 即槽位；与 GpuSynth 同结构）。
+    /// 每 dense 通道的音色库条目列表（dense 即槽位）。
     /// `Arc` 共享：单音色库时直接指向进程级解析缓存，多通道零克隆。
     port_key_maps: Vec<Arc<Vec<KeyMapEntry>>>,
     channels: [ChannelState; MAX_CHANNELS],
@@ -177,7 +174,7 @@ impl CpuSynth {
     /// 一组 dense 槽位共享同一份 key map（多库只合并一次、Arc 共享）。
     /// 逐通道调用会重复深拷贝合并整份 KeyMapEntry（每通道 128×力度层个
     /// KeyInfo），同一组 paths 时应一次登记。
-    /// 走进程级缓存（与 GPU 路径共用）：worker 已预热的音色库在此只查缓存，
+    /// 走进程级缓存：worker 已预热的音色库在此只查缓存，
     /// 避免在音频线程解析 400MB 级音色库阻塞命令处理（Play 延迟数秒）。
     pub fn load_dense_soundfonts_many(
         &mut self,
@@ -219,7 +216,7 @@ impl CpuSynth {
         Ok(())
     }
 
-    /// 与 GpuSynth 对等的收尾钩子（CPU 无上传，保留以统一调用方流程）。
+    /// 音色库加载收尾钩子（CPU 无上传，保留以统一调用方流程）。
     pub fn finish_soundfont_load(&mut self) {}
 
     /// 批量加载事件（**要求按 sample 有序**，调用方负责），重置渲染位置到 0。
@@ -279,7 +276,7 @@ impl CpuSynth {
 
     /// Seek 到指定位置：清 voice、重置通道状态，并**清空事件队列**。
     ///
-    /// 与 GpuSynth（事件表预算好、seek 只定位 cursor）不同：CpuSynth 的事件由
+    /// CpuSynth 的事件由
     /// 引擎 dispatch 增量投递；seek 后引擎会从新位置重放事件，清空队列保证不重复。
     pub fn seek(&mut self, sample: u64) {
         self.sample_position = sample;
@@ -460,7 +457,7 @@ impl CpuSynth {
         }
     }
 
-    /// 渲染一整块（offset = 0；对等 GpuSynth 的 `render_to_mixer`）。
+    /// 渲染一整块（offset = 0）。
     pub fn render_to_mixer<B: BorrowMut<ChannelBuffers>>(&mut self, buffers: &mut [B]) {
         let frames = buffers
             .first_mut()

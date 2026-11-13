@@ -52,12 +52,12 @@ impl AudioEngine {
                         .as_ref()
                         .map(|c| c.chase_skip())
                         .unwrap_or_default();
-                    crate::engine_gpu::translate_backend_skip(&self.channel_layout, &backend_skip)
+                    crate::synth_events::translate_backend_skip(&self.channel_layout, &backend_skip)
                 };
                 let events: Vec<yinhe_synth::ControlEvent> = state
                     .events_to_send(ch as usize, &skip)
                     .iter()
-                    .filter_map(crate::engine_gpu::to_backend_control_event)
+                    .filter_map(crate::synth_events::to_backend_control_event)
                     .collect();
                 if !events.is_empty()
                     && let Some(cs) = self.cpu_synth.as_mut()
@@ -99,7 +99,5 @@ impl AudioEngine {
                 });
             }
         }
-        // GPU 后端：同一份快照应用到 GpuSynth（skip 翻译与 dense 索引见 apply_gpu_chase）。
-        self.apply_gpu_chase(states);
     }
 }

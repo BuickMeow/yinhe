@@ -407,7 +407,7 @@ impl XsynthPreview {
 /// 预览合成器后端：跟随主引擎的引擎族。
 ///
 /// - 主引擎 `XSynthCpu` → xsynth 预览（与主引擎共享 `Arc<dyn SoundfontBase>`）；
-/// - 主引擎 `YinheCpu` / `YinheGpu` → yinhe CPU 预览（与主引擎共享 key map 音色）。
+/// - 主引擎 `YinheCpu` → yinhe CPU 预览（与主引擎共享 key map 音色）。
 ///
 /// 预览因此与主引擎用**同一套音色数据**：主引擎是 yinhe 时不再额外加载 xsynth
 /// 版音色库，省掉一份 GB 级内存，也保证试听与播放音色一致。

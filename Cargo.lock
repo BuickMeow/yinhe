@@ -7994,12 +7994,9 @@ name = "yinhe-synth"
 version = "0.1.0"
 dependencies = [
  "biquad",
- "bytemuck",
  "hound",
- "pollster 1.0.1",
  "rayon",
  "tempfile",
- "wgpu",
  "xsynth-core",
  "xsynth-soundfonts",
  "yinhe-midi",

@@ -17,7 +17,8 @@
 - 叠加音色库样本重采样缓冲、以及预览曾额外加载的 xsynth 版音色库，整体可到 GB 级。
 
 `KeyInfo` 定义：`crates/yinhe-synth/src/sf_parser.rs:40`；展开循环：`sf_parser/sf2.rs`、`sf_parser/sfz.rs`；
-唯一参数展开点（CPU/GPU 共用）：`crates/yinhe-synth/src/voice_params.rs:61`。
+唯一参数展开点（CPU 共用）：`crates/yinhe-synth/src/voice_params.rs:61`。
+（GPU 后端已于 2026-11-13 删除；下文提到 GPU 的条目为历史记录。）
 
 ## 二、实测数据（基线）
 
@@ -117,7 +118,7 @@ cargo run --release -p yinhe-synth --example keymap_size -- \
 
 ### G. note_on 侧批处理 / SIMD
 
-- 黑乐谱同段大量 NoteOn；GPU 路径已有"完全重复 NoteOn 合批（dup+1）"（`gpu_synth/schedule.rs`）。
+- 黑乐谱同段大量 NoteOn；CPU 路径已有"完全重复 NoteOn 合批（dup+1）"。
 - CPU 侧可批量化/向量化，把每音符公式求值摊到多条（项目已有 `yinhe-dsp` SIMD 经验）。
 - 收益取决于触发密度；实现量中等。
 

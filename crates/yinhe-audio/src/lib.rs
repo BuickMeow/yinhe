@@ -10,7 +10,6 @@ pub mod channel_layout;
 mod channel_set;
 pub mod clap_insert;
 pub mod engine;
-mod engine_gpu;
 mod engine_mixer;
 mod engine_preview;
 mod engine_render;
@@ -21,8 +20,9 @@ mod prepare_model;
 mod preview_engine;
 pub mod soundfont;
 pub mod spawn;
+mod synth_events;
 
-// GPU 合成器从 yinhe-synth re-export
+// 音源 crate re-export
 pub use yinhe_synth as synth;
 pub use yinhe_synth::DEFAULT_MAX_VOICES;
 

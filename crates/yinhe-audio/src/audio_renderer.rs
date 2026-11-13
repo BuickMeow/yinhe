@@ -26,14 +26,9 @@ fn pause_fade_frames(sample_rate: u32) -> usize {
     (sample_rate as usize / 100).max(1)
 }
 const RENDER_CHUNK_FRAMES: usize = 512;
-/// GPU 合成器模式的渲染块（帧）：GPU 每块有一次 submit + voice 状态读回
-/// 的 CPU↔GPU 往返，块越小往返越频繁、音符多时抖动越明显。
-/// 4096 帧把往返次数降低 8 倍（代价：输出批延迟增大，GPU 模式可接受）。
-const GPU_RENDER_CHUNK_FRAMES: usize = crate::engine::MAX_ENGINE_BLOCK_FRAMES;
 
 // 引擎任何路径的块长都不得超过 MAX_ENGINE_BLOCK_FRAMES（插件激活值依据）。
 const _: () = assert!(RENDER_CHUNK_FRAMES <= crate::engine::MAX_ENGINE_BLOCK_FRAMES);
-const _: () = assert!(GPU_RENDER_CHUNK_FRAMES <= crate::engine::MAX_ENGINE_BLOCK_FRAMES);
 const TARGET_BUFFER_FRAMES: usize = 4096;
 /// 预览激活时的 ring 目标（帧数）：降低输出延迟（≈10ms @48k）。
 /// 安卓：MIUI 等 ROM 对后台线程调度抖动大（线程 sleep 实际延迟可达 10ms+），
@@ -112,7 +107,7 @@ pub(crate) struct RendererSharedState {
     /// 已加载完成的通道音色库数（每通道一条 `LoadedSoundFont` 结果 +1）。
     /// UI 据此驱动"加载音色库"stage 的真实进度（完成计数，不预填）。
     pub(crate) sf_loaded: Arc<AtomicUsize>,
-    /// 音频完全就绪：LoadModel 相关的全部初始化完成（GPU 路径含 GpuSynth
+    /// 音频完全就绪：LoadModel 相关的全部初始化完成（
     /// 初始化 + 采样上传 + 管线预热）。UI 用它 gate"加载完成"提示，
     /// 保证用户看到加载完成时点播放能立即响应。
     pub(crate) audio_ready: Arc<AtomicBool>,
@@ -198,10 +193,9 @@ struct AudioRenderer {
     insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
     /// 被替换/移除的乐器处理器退回 UI 线程（渲染线程不做 deactivate）。
     instrument_return_tx: Sender<(u64, Box<dyn yinhe_mixer::InstrumentProcessor>)>,
-    /// 合成后端（spawn 时已收敛：不可用后端回退 XSynthCpu）。
-    /// `YinheGpu` 时加载音色库会初始化 GpuSynth，渲染走 engine.gpu_synth。
+    /// 合成后端（spawn 时已收敛）。
     synth_engine: SynthEngine,
-    /// 采样插值方式（初始化 CpuSynth/GpuSynth 时写入）。
+    /// 采样插值方式（初始化 CpuSynth 时写入）。
     interpolation: Interpolation,
     /// 播放启动诊断：Play 时刻与目标位置（首块渲染完成后打印一次耗时）。
     play_timing: Option<(Instant, u64)>,
@@ -209,8 +203,6 @@ struct AudioRenderer {
     export: Option<ExportJob>,
     /// 导出结束后要恢复的 xsynth 层数（导出设置不污染用户设置）。
     export_prev_layer_count: Option<Option<usize>>,
-    /// GPU 模式待加载音色库的通道数（全部完成后统一上传样本）。
-    gpu_sf_pending: usize,
 }
 
 impl AudioRenderer {
@@ -235,12 +227,7 @@ impl AudioRenderer {
         synth_engine: SynthEngine,
         interpolation: Interpolation,
     ) -> Self {
-        // GPU 模式用更大的渲染块（见 GPU_RENDER_CHUNK_FRAMES）。
-        let render_chunk_frames = if synth_engine == SynthEngine::YinheGpu {
-            GPU_RENDER_CHUNK_FRAMES
-        } else {
-            RENDER_CHUNK_FRAMES
-        };
+        let render_chunk_frames = RENDER_CHUNK_FRAMES;
         let sample_rate = engine.sample_rate;
         Self {
             engine,
@@ -250,7 +237,6 @@ impl AudioRenderer {
             transport_rx,
             export: None,
             export_prev_layer_count: None,
-            gpu_sf_pending: 0,
             cmd_rx,
             worker_tx,
             prepared_rx,
@@ -270,13 +256,6 @@ impl AudioRenderer {
             interpolation,
             play_timing: None,
         }
-    }
-
-    /// 合成后端是否为 GPU 引擎（spawn 时已把不可用后端收敛掉，只可能是
-    /// `XSynthCpu`、`YinheCpu` 或 `YinheGpu`）。块长/事件表同步等 GPU 专用路径用它。
-    #[inline]
-    fn gpu_engine(&self) -> bool {
-        self.synth_engine == SynthEngine::YinheGpu
     }
 
     /// 合成后端是否为 yinhe CPU 引擎（key map 预解析等 yinhe 后端共用路径）。
@@ -322,9 +301,6 @@ impl AudioRenderer {
                 self.engine.stop_preview_all();
                 did_work = true;
             }
-            // GPU 后端统一同步：命令/worker 结果可能改变位置或使事件表失效，
-            // 渲染（或导出）前消费一次 dirty 标志。CPU 模式下是 no-op。
-            self.engine.sync_gpu_backend();
             if self.export.is_some() {
                 // 导出模式：不推 ring、不发布播放状态（UI 保持停止外观），
                 // 连续离线渲染；每轮仍处理命令（取消/参数/编辑）。
@@ -632,31 +608,6 @@ pub(crate) fn spawn_renderer(
         })
 }
 
-/// GPU 模式「待加载音色库」通道计数。
-///
-/// 计数条件必须与 `LoadedSoundFont` 分支的递减条件（GPU 引擎且 dense
-/// 槽位有效）严格一致：多计一个不递减的通道，`gpu_sf_pending` 永远归不了零，
-/// `mark_audio_ready` 不触发，启动页卡在"初始化音频"（CPU 模式曾因此无法进入）。
-fn count_gpu_sf_pending(
-    configs: &[(u8, Vec<String>)],
-    layout: &crate::channel_layout::ChannelLayout,
-    gpu_engine: bool,
-) -> usize {
-    if !gpu_engine {
-        return 0;
-    }
-    // 按分组计：每组只在最后一个有效通道登记完时触发一次样本上传。
-    group_sf_configs(configs)
-        .iter()
-        .filter(|(channels, _)| {
-            channels.iter().any(|ch| {
-                let dense = layout.dense_for(*ch as usize);
-                dense != u32::MAX && (dense as usize) < yinhe_synth::MAX_CHANNELS
-            })
-        })
-        .count()
-}
-
 /// 把 `(channel, paths)` 配置按 paths 分组：相同音色库集合的通道合并为一条
 /// `LoadSoundFont`（worker 只加载一次，key map Arc 跨通道共享）。
 pub(crate) fn group_sf_configs(configs: &[(u8, Vec<String>)]) -> Vec<(Vec<u8>, Vec<String>)> {
@@ -707,24 +658,5 @@ mod tests {
     #[test]
     fn merge_transport_empty() {
         assert!(merge_transport_batch(Vec::new()).is_empty());
-    }
-
-    /// 回归：CPU 模式必须为 0（曾无条件计数，导致 gpu_sf_pending 永不归零、
-    /// 音频就绪不触发、启动页卡死）；未激活通道与空配置不计数。
-    #[test]
-    fn gpu_sf_pending_only_counts_gpu_eligible_channels() {
-        use crate::channel_layout::ChannelLayout;
-
-        let configs = vec![
-            (0u8, vec!["a.sfz".to_string()]),
-            (1u8, vec!["b.sfz".to_string()]),
-            (2u8, vec!["c.sfz".to_string()]),
-            (3u8, Vec::new()),
-        ];
-        // ch0 激活；ch1 未激活（dense = u32::MAX）；ch2/3 不在 mask 内。
-        let layout = ChannelLayout::from_mask(vec![true, false]);
-
-        assert_eq!(count_gpu_sf_pending(&configs, &layout, false), 0);
-        assert_eq!(count_gpu_sf_pending(&configs, &layout, true), 1);
     }
 }

@@ -90,7 +90,9 @@
 
 注意：`SynthEngine::default()` 目前是 `XSynthCpu`。也就是说：
 
-> **本次 CC71/74 的语义修正只在 YinheCpu / YinheGpu 后端生效。
+> **2026-11-13：YinheGpu 后端已删除（实测 CPU 快约 2 倍）。以下提到 GPU 的内容均为当时记录。**
+>
+> **本次 CC71/74 的语义修正只在 YinheCpu 后端生效。
 > XSynthCpu 后端仍然用它自己的通道级低通（旧的错误语义）。**
 
 这是当前最需要拍板的一致性问题。两个可行方向：

@@ -59,7 +59,7 @@ yinhe 已有效果器链（`yinhe-mixer` 的 `InsertProcessor`，每通道/bus/m
 | D15 | 接管语义 | CC 归音源：内置音源通道的 CC7/10/11 由通道处理段消费（CC71/74 由合成器按 voice 消费，见 D24）；插件音源通道 CC 原样透传插件（自行响应）；外挂 insert 效果器不接收 CC（无广播/无双发）；不改 xsynth 源码 |
 | D16 | 参数粒度 | 按功能组：Gain(Volume/Expression)、Pan，绑定见 §4.1；CC8 不采用 |
 | D17 | CPU DSP 依赖 | yinhe-dsp 不依赖 wgpu/yinhe-synth；GPU 与 CPU 实现独立 |
-| D18 | GPU/CPU 分工 | GPU 只做高并发 voice 发声；效果器链保持 CPU（数据量小、串行依赖、需与 CLAP/VST3 混合） |
+| D18 | GPU/CPU 分工 | GPU 只做高并发 voice 发声；效果器链保持 CPU（数据量小、串行依赖、需与 CLAP/VST3 混合）。**2026-11-13：GPU 后端已删除，仅保留 CPU** |
 | D19 | CC 补齐策略 | 先迁移 xsynth 已有通道级 CC；通道级缺失（94、标准 Balance）顺带补；voice 级缺失（Vibrato/Portamento 等）不承诺，属远期 |
 | D20 | 参数模型 | `AutomationTarget::Param { device: ParamDevice, id: u32, name: String }` 统一"设备参数"（u32 id 对齐 VST3/CLAP）；`CC`/`Rpn`/`Nrpn` 保留为无设备归属的低层变体；`Tempo` 是唯一不归一化的量（§4.1） |
 | D21 | 值域归一化 | 自动化值一律归一化 0..1（除 Tempo）：CC、RPN0/2 除 127，PB、RPN1、NRPN 除 16383；导入归一化，回放/导出边界取整还原（无损可逆）；音符 velocity/gate 本次不归一化（保持整数） |
@@ -544,6 +544,11 @@ GPU 合成器（`GpuSynth`）已按"只做音源层"精简：
 - parity 测试的 `cc_plan` 只保留音源层 CC；多端口折叠回归测试改用 PitchBend。
 
 ### 5.7 GPU 与 CPU 的分工
+
+> **2026-11-13：`YinheGpu` 后端已删除。** 实测在 Echoes（40 万音符）与
+> start.mid（1.64 亿音符）上，`YinheCpu` 比 GPU 快约 2 倍（19.2x vs 9.1x、
+> 17.2x vs 9.0x 实时），且 GPU 的块抖动（最差单块 44ms vs CPU 1.4ms）更大。
+> 本节以下内容保留为历史设计记录。
 
 **结论：GPU 只做高并发发声（voice），效果器链保持 CPU；GPU 输出已接入混音台（D10 完成）。**
 

@@ -88,11 +88,6 @@ impl AudioEngine {
         if dense == u32::MAX {
             return;
         }
-        // GPU 模式：非插件音符的复活由事件表在 seek_pos 重建时完成，
-        // 这里不写 CPU 后端、也不入 active_notes（GPU 的 NoteOff 来自事件表）。
-        if self.gpu_synth.is_some() {
-            return;
-        }
         let sample = self.sample_position;
         let end_sample = self.tick_to_sample(end_tick);
         if let Some(cs) = self.cpu_synth.as_mut() {
@@ -123,7 +118,7 @@ impl AudioEngine {
     }
 
     /// 即时 mute：从 active_notes 精确移除该轨在响音符并发 NoteOff
-    ///（不误伤同通道其他轨道；CPU/GPU 路径统一为即时静音语义）。
+    ///（不误伤同通道其他轨道；即时静音语义）。
     pub(super) fn kill_track_notes(&mut self, track: u16) {
         let all = std::mem::take(&mut self.active_notes);
         let mut remaining = BinaryHeap::new();
@@ -141,7 +136,7 @@ impl AudioEngine {
                         velocity: 0.0,
                     });
                 }
-            } else if an.dense != u32::MAX && !self.gpu_synth_active() {
+            } else if an.dense != u32::MAX {
                 let sample = self.sample_position;
                 if let Some(cs) = self.cpu_synth.as_mut() {
                     cs.send_event(yinhe_synth::SynthEvent::NoteOff {

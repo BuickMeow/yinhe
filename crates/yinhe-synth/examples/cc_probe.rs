@@ -2,7 +2,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 use yinhe_mixer::ChannelBuffers;
-use yinhe_synth::gpu_synth::ControlEvent;
+use yinhe_synth::ControlEvent;
 use yinhe_synth::{CpuSynth, SynthEvent};
 
 const SR: u32 = 48_000;

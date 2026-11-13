@@ -38,8 +38,6 @@ impl AudioRenderer {
         self.clear_buffered_audio(0);
         self.engine.set_layer_count(layer_count);
         self.request_chase(0);
-        // GPU 路径：事件列表按 seek 后位置（0）重建（与 AudioCommand::Stop 同语义）。
-        self.engine.sync_gpu_backend();
         let main_duration = self.engine.duration_samples();
         if !self.engine.model_loaded() || main_duration == 0 {
             if let Ok(mut p) = progress.lock() {
@@ -49,12 +47,7 @@ impl AudioRenderer {
             }
             return;
         }
-        // 导出块长与实时渲染块一致（GPU 模式大块可显著减少提交/读回次数）。
-        let export_chunk_frames = if self.gpu_engine() {
-            super::GPU_RENDER_CHUNK_FRAMES
-        } else {
-            crate::engine::ENGINE_BLOCK_FRAMES
-        };
+        let export_chunk_frames = crate::engine::ENGINE_BLOCK_FRAMES;
         match ExportJob::new(
             &path,
             bit_depth,

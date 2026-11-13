@@ -218,7 +218,7 @@ impl AudioModel {
     /// 2. 通道级默认乐器（界面上的「鼓通道」开关 + 默认乐器行）；
     /// 3. 轨内 Bank Select 声明（CC0 自动化 lane / PC 折叠的 bank_msb）。
     ///
-    /// CPU（`ChannelSet` / `CpuSynth`）与 GPU（`GpuSynth` 事件表）共用这一份，
+    /// CPU（`ChannelSet` / `CpuSynth`）共用这一份，
     /// 避免三条路径各写一遍、某个后端漏掉某个来源（鼓通道开关此前就只在
     /// CC0 事件流里生效，被 bank==128 锁定语义吃掉）。
     pub(crate) fn percussion_declarations(&self) -> Vec<(u16, bool)> {

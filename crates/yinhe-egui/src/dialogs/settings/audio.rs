@@ -255,10 +255,6 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                     SynthEngine::YinheCpu,
                     t!("settings.audio.engine_yinhe_cpu").to_string(),
                 ),
-                (
-                    SynthEngine::YinheGpu,
-                    t!("settings.audio.engine_gpu").to_string(),
-                ),
             ];
             if crate::widgets::combo::combo_select_auto(
                 ui,
@@ -271,7 +267,7 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         },
     );
 
-    if settings.synth_engine == SynthEngine::YinheGpu {
+    if settings.synth_engine == SynthEngine::YinheCpu {
         setting_row(
             ui,
             t!("settings.audio.max_voices").as_ref(),

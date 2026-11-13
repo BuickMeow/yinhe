@@ -1,8 +1,8 @@
 //! 音源层通道状态机（CC/RPN/弯音/鼓组）与 chase 跳过信息。
 //!
-//! CPU（`cpu_synth`）与 GPU（`gpu_synth`）两条渲染路径共用的纯状态逻辑。
+//! CPU 渲染路径与预览引擎共用的纯状态逻辑。
 
-use crate::gpu_synth::ControlEvent;
+use crate::events::ControlEvent;
 
 /// 合成器通道数上限（dense 通道槽位；两条渲染路径一致）。
 ///

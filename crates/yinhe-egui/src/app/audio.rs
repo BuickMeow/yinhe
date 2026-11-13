@@ -174,7 +174,7 @@ impl App {
         }
 
         // 文档切换但引擎可复用（设置/布局/音色库都覆盖、机架无插件）：
-        // 过户给新文档——不重开 cpal 流、不重建 GpuSynth、不重传采样。
+        // 过户给新文档——不重开 cpal 流、不重建音源、不重传采样。
         if self.try_adopt_engine(idx) {
             return;
         }

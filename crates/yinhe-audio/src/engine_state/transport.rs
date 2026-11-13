@@ -139,8 +139,7 @@ impl AudioEngine {
             // 用户 seek / Stop：消费位置被重新对齐到逻辑位置，偏移归零。
             self.loop_wrap_offset = 0;
         }
-        // GPU 模式下 ChannelSet 不参与渲染，重置/清音是死路径
-        //（GPU 的状态重置由事件表在 seek_pos 重建完成）。
+        // yinhe CPU 后端启用时 ChannelSet 不参与渲染，重置/清音是死路径。
         if self.cpu_synth_active() {
             self.channel_set
                 .send_event(SynthEvent::AllChannels(ChannelEvent::Audio(
@@ -253,15 +252,8 @@ impl AudioEngine {
         // 由 apply_chase_result 应用。期间 channel state 是 ResetControl 后的初始值，
         // 渲染短暂静音 —— 比 renderer 线程同步阻塞几十万次 ChannelState::apply 更好。
 
-        if is_seek || is_stop {
-            // 用户 seek / Stop：GPU 后端位置跳变，渲染前统一重建事件表 + seek。
-            self.gpu_backend_dirty = true;
-        } else {
-            // Loop wrap：GPU 只 seek 到循环起点，不重建全量事件表。
-            if let Some(synth) = self.gpu_synth.as_mut() {
-                synth.seek(sample);
-            }
-            // 应用预计算的循环起点控制状态（CC/PB/PC/RPN/插件参数）。
+        if !(is_seek || is_stop) {
+            // Loop wrap：应用预计算的循环起点控制状态（CC/PB/PC/RPN/插件参数）。
             let chase = self.loop_chase.take();
             if let Some(c) = chase {
                 if c.generation == self.chase_generation && c.start_tick == self.loop_start_tick {

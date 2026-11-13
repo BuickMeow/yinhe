@@ -27,7 +27,7 @@ pub(crate) const ENGINE_BLOCK_FRAMES: usize = 512;
 ///
 /// **插件激活契约**：所有 insert/乐器插件必须按此能力激活（`yinhe-egui` 的
 /// `activate` 调用），否则插件内部按小块分配的缓冲会被更大的块越界
-/// （GPU 合成模式 4096 块曾让 512 激活的插件每块只处理前 512 帧）。
+/// （此前的 4096 大块曾让 512 激活的插件每块只处理前 512 帧）。
 /// 引擎任何路径（实时/导出）的块长都不得超过该值。
 pub const MAX_ENGINE_BLOCK_FRAMES: usize = 4096;
 
@@ -73,7 +73,7 @@ pub(crate) struct AudioEngine {
     /// 后播放头才不会永久领先/落后一个 ring。seek/stop 时归零。
     pub(crate) loop_wrap_offset: u64,
     /// 当前 per-key layer 设置（`SetLayerCount` 保存；worker 创建 yinhe
-    /// CPU/GPU 合成器后据此应用——创建晚于命令，不能只在线应用）。
+    /// 合成器后据此应用——创建晚于命令，不能只在线应用）。
     pub(crate) layer_count: Option<usize>,
     /// 忽略力度 ≤ 该值的音符（0 = 不忽略）。dispatch 时逐音符实时判断，
     /// 改阈值不需要重建任何缓存。
@@ -111,7 +111,7 @@ pub(crate) struct AudioEngine {
     pub(crate) active_notes: BinaryHeap<Reverse<ActiveNote>>,
     pub(crate) ended_notes: Vec<ActiveNote>,
     /// 力度表（每轨，仅播放时）：发声音符按 `end_tick` 排队的记账堆。
-    /// 与 `active_notes` **独立**——GPU 模式下普通音符不入 `active_notes`，
+    /// 与 `active_notes` **独立**——
     /// 但本堆在 dispatch 的音符循环里对**所有后端**入队，故各后端一致。
     pub(crate) meter_notes: BinaryHeap<Reverse<(u32, u16, u8)>>,
     /// 每轨发声音符力度直方图（`[vel] = 计数`）。
@@ -154,20 +154,12 @@ pub(crate) struct AudioEngine {
     /// 由 `init_engine` 在创建引擎后按后端注入（测试可不设置）。
     pub(crate) preview: Option<crate::preview_engine::PreviewEngine>,
 
-    /// GPU 合成器 — 启用后渲染走 GpuSynth 而非 xsynth
-    pub(crate) gpu_synth: Option<yinhe_synth::GpuSynth>,
-    /// yinhe-synth CPU 合成器 — 启用后渲染走 CpuSynth 而非 xsynth。
-    /// 与 GPU 后端互斥；两者都未创建时走 xsynth ChannelSet。
+    /// yinhe-synth CPU 合成器 — 启用后渲染走 CpuSynth 而非 xsynth；
+    /// 未创建时走 xsynth ChannelSet。
     pub(crate) cpu_synth: CpuSynthSlot,
     /// 当前 dispatch 段起点的绝对 sample：CpuSynth 的事件按 sample 生效，
     /// dispatch 用它作为事件的 sample 依据（每段渲染前由 render 循环更新）。
     pub(crate) segment_start_sample: u64,
-    /// GPU 后端需要与引擎状态重新同步（`seek_to` 位置跳变或事件表失效时置位）。
-    /// 渲染线程每轮渲染前由 `sync_gpu_backend` 消费一次，幂等；
-    /// 取代过去散落在 renderer 命令处理点上的显式 `sync_gpu_synth_events` 调用。
-    pub(crate) gpu_backend_dirty: bool,
-    /// GPU 通道超限（`midi_compacted > MAX_CHANNELS`）告警只报一次，避免刷屏。
-    pub(crate) gpu_overflow_warned: bool,
     /// 导出模式：忽略走带循环（导出必须线性跑完整时间轴）。
     pub(crate) export_mode: bool,
     /// 走带循环开关（tick 域；`loop_end_tick <= loop_start_tick` 视为关闭）。
@@ -286,11 +278,8 @@ impl AudioEngine {
                 chase_generation: 0,
                 plugin_previews: Vec::new(),
                 preview: None,
-                gpu_synth: None,
                 cpu_synth: None,
                 segment_start_sample: 0,
-                gpu_backend_dirty: true,
-                gpu_overflow_warned: false,
                 export_mode: false,
                 loop_enabled: false,
                 loop_start_tick: 0,
@@ -411,28 +400,16 @@ impl AudioEngine {
     /// 当前活跃 voice 数（当前合成后端）。
     /// 导出尾音判定用它（`export.rs`）：后端切换后语义保持不变。
     pub(crate) fn voice_count(&self) -> u64 {
-        {
-            if let Some(synth) = &self.gpu_synth {
-                return synth.voice_count() as u64;
-            }
-            if let Some(synth) = &self.cpu_synth {
-                return synth.voice_count() as u64;
-            }
+        if let Some(synth) = &self.cpu_synth {
+            return synth.voice_count() as u64;
         }
         self.channel_set.voice_count()
     }
 
-    /// CPU 合成器（xsynth `ChannelSet`）当前是否参与渲染。
-    ///
-    /// GPU 合成激活时 ChannelSet 永不渲染，对它的状态写入（NoteOn/NoteOff、
-    /// AllNotesOff/ResetControl、鼓组模式等）全是死路径——GPU 的等价状态由
-    /// `build_gpu_events` 在 seek 时重建。集中在这一个判据上，避免
-    /// `gpu_synth.is_some()` 散落到状态管理各分支。
-    ///
-    /// Step 2 后端收口后，这些写入会移入各自的 CPU 后端实现，本判据随之退场。
+    /// xsynth `ChannelSet` 当前是否参与渲染（yinhe CPU 后端启用时不参与）。
     #[inline]
     pub(crate) fn cpu_synth_active(&self) -> bool {
-        !self.gpu_synth_active() && !self.yinhe_cpu_active()
+        !self.yinhe_cpu_active()
     }
 
     /// yinhe-synth CPU 后端是否启用（`CpuSynth`）。
@@ -452,17 +429,12 @@ impl AudioEngine {
         self.mixer.has_inserts() || self.instruments.iter().any(|i| i.is_some())
     }
 
-    /// 最大复音数：0/None → 系统推荐（`DEFAULT_MAX_VOICES`）。GPU/CPU 合成器
+    /// 最大复音数：0/None → 系统推荐（`DEFAULT_MAX_VOICES`）。合成器
     /// 创建晚于命令，worker 创建后会补应用本字段。
     pub(crate) fn set_max_voices(&mut self, max: Option<usize>) {
         self.max_voices = max.unwrap_or(crate::DEFAULT_MAX_VOICES);
-        {
-            if let Some(cs) = self.cpu_synth.as_mut() {
-                cs.set_max_voices(self.max_voices);
-            }
-            if let Some(gs) = self.gpu_synth.as_mut() {
-                gs.set_max_voices(self.max_voices);
-            }
+        if let Some(cs) = self.cpu_synth.as_mut() {
+            cs.set_max_voices(self.max_voices);
         }
     }
 
@@ -471,7 +443,7 @@ impl AudioEngine {
     }
 
     pub(crate) fn set_layer_count(&mut self, count: Option<usize>) {
-        // 保存设置：yinhe CPU/GPU 合成器在 worker 里**异步创建**（音色库加载
+        // 保存设置：yinhe CPU 合成器在 worker 里**异步创建**（音色库加载
         // 完成时），创建时刻晚于本命令 → 必须在创建后重新应用（否则设置被
         // 静默丢弃、合成器永远用默认 layer=4；xsynth 因内部立即应用而无此问题）。
         self.layer_count = count;
@@ -481,14 +453,9 @@ impl AudioEngine {
             .send_event(SynthEvent::AllChannels(ChannelEvent::Config(
                 ChannelConfigEvent::SetLayerCount(count),
             )));
-        // yinhe 后端（GPU/CPU）各自的 per-key layer 语义（对齐 xsynth）
-        {
-            if let Some(cs) = self.cpu_synth.as_mut() {
-                cs.set_layer_count(count);
-            }
-            if let Some(gs) = self.gpu_synth.as_mut() {
-                gs.set_layer_count(count);
-            }
+        // yinhe CPU 后端的 per-key layer 语义（对齐 xsynth）
+        if let Some(cs) = self.cpu_synth.as_mut() {
+            cs.set_layer_count(count);
         }
     }
 

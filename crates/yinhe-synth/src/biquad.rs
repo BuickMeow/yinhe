@@ -1,4 +1,4 @@
-//! RBJ cookbook biquad 系数。
+//! RBJ cookbook biquad 系数（CPU voice 滤波器共用）。
 
 /// RBJ cookbook biquad 系数（与 xsynth 的 biquad crate 完全一致）。
 /// 返回 (b0, b1, b2, a1, a2)，用于 DirectForm1：

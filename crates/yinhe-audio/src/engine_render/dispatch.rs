@@ -11,15 +11,12 @@ use crate::engine::AudioEngine;
 /// 把一个通道事件路由到当前 CPU 后端（字段级展开，避免 `&mut self` 与
 /// dispatch 循环持有的 `cc_events`/模型音符不可变借用冲突）：
 /// - yinhe `CpuSynth` 存在 → 转 `yinhe_synth::SynthEvent` 投递（按 sample 生效）；
-/// - GPU 模式 → no-op（事件由 `build_gpu_events` 在 seek/模型变化时重建）；
 /// - 否则 → xsynth `ChannelSet`。
 ///
 /// 事件 sample 取 `segment_start_sample`（每段渲染前由 render 循环更新）。
 macro_rules! route_cpu_event {
     ($engine:ident, $dense:expr, $event:expr) => {{
-        if $engine.gpu_synth.is_some() {
-            // GPU：事件表管理，不投递。
-        } else if let Some(cs) = $engine.cpu_synth.as_mut() {
+        if let Some(cs) = $engine.cpu_synth.as_mut() {
             let sample = $engine.segment_start_sample;
             let dense = $dense;
             match $event {
@@ -46,7 +43,7 @@ macro_rules! route_cpu_event {
                 other => {
                     // 原生 RPN/NRPN 由 `to_backend_control_event` 映射为
                     // yinhe-synth 的一等 `ControlEvent::Rpn/Nrpn`。
-                    if let Some(ev) = $crate::engine_gpu::to_backend_control_event(&other) {
+                    if let Some(ev) = $crate::synth_events::to_backend_control_event(&other) {
                         cs.send_event(yinhe_synth::SynthEvent::Control {
                             sample,
                             channel: dense as u8,
@@ -72,20 +69,6 @@ macro_rules! route_cpu_event {
 use super::{MidiMessages, event_to_midi, raw_cc};
 
 impl AudioEngine {
-    /// GPU 路径：把一整块的事件派发到插件乐器并推进 `current_tick`。
-    /// CPU 路径在分段渲染循环里逐段 dispatch；GPU 由合成器自管音符/CC，
-    /// 这里只需把插件事件推完（`dispatch_and_find_next` 内部在 GPU 模式下
-    /// 跳过 xsynth 发送）。
-    pub(super) fn dispatch_block_events(&mut self, block_end_tick: u32) {
-        let mut t = self.current_tick;
-        while t < block_end_tick {
-            t = self
-                .dispatch_and_find_next(t, block_end_tick)
-                .unwrap_or(block_end_tick)
-                .min(block_end_tick);
-        }
-    }
-
     /// 合并了原来 `next_event_sample`、`dispatch_cc_until`、`dispatch_notes_at`
     /// 三个函数的职责，KEY_COUNT 桶只扫描一次。所有比较都在 tick 域，无需转换。
     ///
@@ -176,7 +159,7 @@ impl AudioEngine {
                     } else {
                         let dense = self.channel_layout.dense_for(cc.channel as usize);
                         if dense != u32::MAX {
-                            // 路由到当前 CPU 后端（GPU 模式 no-op：事件由事件表管理）。
+                            // 路由到当前 CPU 后端。
                             route_cpu_event!(self, dense, cc.event);
                             self.dispatched_skip.mark(&cc.event, cc.channel as usize);
                         }
@@ -237,8 +220,7 @@ impl AudioEngine {
                 if !self.skip_track.get(track).copied().unwrap_or(false) {
                     let dense = self.channel_layout.dense_for(ch as usize);
                     if dense != u32::MAX {
-                        // 力度表记账（所有后端统一；GPU 模式音符不入 active_notes，
-                        // 故此处独立于后端分支，保证各后端力度表一致）。
+                        // 力度表记账（独立于后端分支，保证各后端一致）。
                         self.meter_notes.push(std::cmp::Reverse((
                             end_tick,
                             track as u16,
@@ -279,8 +261,7 @@ impl AudioEngine {
                                     track: track as u16,
                                 }));
                             }
-                        } else if !self.gpu_synth_active() {
-                            // GPU 路径：音符由 GpuSynth 事件列表处理（不喂 CPU 后端）。
+                        } else {
                             // yinhe CPU：直接投递带精确 `end_sample` 的 NoteOn（该音符
                             // 自身的 end_tick），voice 到期自释 + damper 快照，无需
                             // NoteOff；xsynth 回退路径才走 `route_cpu_event!`。
@@ -365,8 +346,7 @@ impl AudioEngine {
                 }
             } else {
                 let dense = an.dense;
-                if dense != u32::MAX && !self.gpu_synth_active() {
-                    // GPU 路径：音符由 GpuSynth 事件列表处理（不喂 CPU 后端）。
+                if dense != u32::MAX {
                     route_cpu_event!(
                         self,
                         dense,

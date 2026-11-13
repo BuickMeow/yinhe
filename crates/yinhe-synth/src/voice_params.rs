@@ -1,7 +1,7 @@
 //! per-voice 合成参数展开：从 `KeyInfo` + `ChannelState` 产出 CPU/GPU 共用的
 //! 参数快照（speed/增益/声像/滤波/包络时长/循环）。
 //!
-//! 此前 CPU `CpuVoice::new` 与 GPU `GpuSynth::note_on` 各自展开同一套公式
+//! 此前每条渲染路径各自展开同一套公式
 //! （约 60~80 行重复，改一处忘另一处就会产生后端差异）；本模块是唯一展开点。
 //!
 //! 采样定位（CPU 的 `Arc` 切片 / GPU 的拼接 `offset`）与 `sample_length`
@@ -100,7 +100,7 @@ pub(crate) fn filter_coeffs(
     }
     // 中性 CC：完全按音色库原值（不做 cents 往返，保证与旧行为逐值一致）。
     if cents == 0.0 && db == 0.0 {
-        let (b0, b1, b2, a1, a2) = crate::synth::biquad_coeffs(
+        let (b0, b1, b2, a1, a2) = crate::biquad::biquad_coeffs(
             filter_type,
             base_cutoff_hz,
             base_resonance,
@@ -133,7 +133,7 @@ pub(crate) fn filter_coeffs(
     // 上限取 40：再高只会让 127 档的峰值更窄、频带均值反而更低。
     let q = q.clamp(0.1, 40.0);
     let (b0, b1, b2, a1, a2) =
-        crate::synth::biquad_coeffs(filter_type, cutoff, q, sample_rate as f32);
+        crate::biquad::biquad_coeffs(filter_type, cutoff, q, sample_rate as f32);
     (Some([b0, b1, b2, a1, a2]), cutoff)
 }
 
@@ -232,7 +232,7 @@ mod tests {
     fn neutral_cc_keeps_library_filter() {
         let ch = ch_with(64, 64);
         let (coeffs, cutoff) = filter_coeffs(8_000.0, 0.707, 0, &ch, 48_000);
-        let reference = crate::synth::biquad_coeffs(0, 8_000.0, 0.707, 48_000.0);
+        let reference = crate::biquad::biquad_coeffs(0, 8_000.0, 0.707, 48_000.0);
         assert!((cutoff - 8_000.0).abs() < 1e-3);
         let c = coeffs.expect("有滤波器");
         assert!((c[0] - reference.0).abs() < 1e-6, "系数必须与原实现一致");

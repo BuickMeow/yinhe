@@ -237,7 +237,7 @@ mod tests {
 
         let mut s = mk();
         s.synth_engine = match s.synth_engine {
-            SynthEngine::XSynthCpu => SynthEngine::YinheGpu,
+            SynthEngine::XSynthCpu => SynthEngine::YinheCpu,
             _ => SynthEngine::XSynthCpu,
         };
         assert_ne!(
@@ -284,7 +284,7 @@ mod tests {
 
         let mut changed = settings.clone();
         changed.synth_engine = match changed.synth_engine {
-            SynthEngine::XSynthCpu => SynthEngine::YinheGpu,
+            SynthEngine::XSynthCpu => SynthEngine::YinheCpu,
             _ => SynthEngine::XSynthCpu,
         };
         assert!(

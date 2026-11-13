@@ -23,8 +23,6 @@ impl AudioRenderer {
                     // 锚定听音位置（非显式 reload 不移动播放位置）。
                     let anchor = self.consumer_position.load(Ordering::Acquire);
                     self.engine.apply_prepared_model(prepared, anchor);
-                    // GPU 路径：模型变化 → 事件列表失效（run 循环统一重建）
-                    self.engine.invalidate_gpu_events();
                     self.clear_buffered_audio(anchor);
                     self.state.initialized.store(true, Ordering::Release);
                     // 方案 B：apply_prepared_model 内部 seek_to 不再 chase，
@@ -32,9 +30,7 @@ impl AudioRenderer {
                     self.request_chase(self.engine.current_tick());
                     self.request_loop_chase();
                     // 模型已就绪且没有待加载音色库（无配置/已加载完）→ 音频就绪。
-                    if self.gpu_sf_pending == 0 {
-                        self.mark_audio_ready();
-                    }
+                    self.mark_audio_ready();
                     play_log(&format!("[play] 应用模型结果={:?}", t_prepared.elapsed()));
                     did_work = true;
                 }
@@ -49,8 +45,6 @@ impl AudioRenderer {
                     self.engine
                         .apply_notes_only(model, yin_model, duration_samples);
                     self.request_loop_chase();
-                    // GPU 路径：音符变化 → 事件列表失效（run 循环统一重建）
-                    self.engine.invalidate_gpu_events();
                     // 注意：这里**不**清 ring。UpdateNotes 不 seek、不改 cc_events，
                     // 已渲染的 ring 内容是"过去时"音频（新音符只影响未来 dispatch），
                     // 清空会把正在播放的预览余音/当前音频丢掉 → 松手停顿。
@@ -121,7 +115,7 @@ impl AudioRenderer {
                     // 预览引擎跟随主引擎：xsynth 后端共享 Arc（零拷贝）；yinhe 后端
                     // 在下方按 key map 路径加载（与主引擎共享同一份，不额外加载
                     // xsynth 版音色库）。
-                    let use_xsynth_preview = !self.gpu_engine() && !self.yinhe_cpu_engine();
+                    let use_xsynth_preview = !self.yinhe_cpu_engine();
                     if use_xsynth_preview {
                         for channel in &channels {
                             self.engine
@@ -135,7 +129,7 @@ impl AudioRenderer {
                     // yinhe 后端不消费 xsynth 的 channel_set（渲染走 cpu_synth/gpu_synth），
                     // 跳过 `SetSoundfonts`——它会触发 xsynth 的 `rebuild_matrix`
                     // （128×128 key/vel 查询 + Box 分配），逐通道是启动卡顿主因。
-                    if self.gpu_engine() || self.yinhe_cpu_engine() {
+                    if self.yinhe_cpu_engine() {
                         let _ = soundfonts;
                     } else {
                         for (channel, dense) in &dense_list {
@@ -192,80 +186,7 @@ impl AudioRenderer {
                     }
                     // GPU 路径：首次加载音色库时初始化 GpuSynth，逐通道登记；
                     // 样本统一在最后一组完成时上传一次（避免逐通道全量重传）。
-                    if self.gpu_engine() {
-                        let sr = self.engine.sample_rate;
-                        let gpu_paths: Vec<std::path::PathBuf> =
-                            paths.iter().map(std::path::PathBuf::from).collect();
-                        // 一次登记全部 dense（多库只合并一次、Arc 共享）
-                        let denses: Vec<u32> = dense_list
-                            .iter()
-                            .map(|(_, dense)| *dense)
-                            .filter(|d| *d != u32::MAX && (*d as usize) < yinhe_synth::MAX_CHANNELS)
-                            .collect();
-                        let any_valid = !denses.is_empty();
-                        if any_valid {
-                            // 预览跟随：YinheGpu 主引擎时预览用 yinhe CPU，共享同一份 key map。
-                            if let Err(e) = self
-                                .engine
-                                .load_preview_yinhe_soundfonts(&denses, &gpu_paths)
-                            {
-                                eprintln!("[gpu] preview 音色加载失败: {e}");
-                            }
-                            if self.engine.gpu_synth.is_none() {
-                                let t_init = Instant::now();
-                                match yinhe_synth::GpuSynth::new_default(sr) {
-                                    Ok(mut synth) => {
-                                        synth.set_interpolation(self.interpolation.code());
-                                        // 创建晚于 SetLayerCount 命令：补应用当前设置
-                                        synth.set_layer_count(self.engine.layer_count);
-                                        synth.set_max_voices(self.engine.max_voices);
-                                        let t_load = Instant::now();
-                                        if let Err(e) =
-                                            synth.load_dense_soundfonts_many(&denses, &gpu_paths)
-                                        {
-                                            eprintln!("[gpu] Failed to load soundfonts: {e}");
-                                        }
-                                        let dt_load = t_load.elapsed();
-                                        self.engine.gpu_synth = Some(synth);
-                                        // 新后端实例：置位 dirty 后立即同步（构建事件表 + seek）。
-                                        self.engine.invalidate_gpu_events();
-                                        self.engine.sync_gpu_backend();
-                                        play_log(&format!(
-                                            "[play] GpuSynth 初始化：new={:?} 音色库解析={dt_load:?} 总={:?}",
-                                            t_load.duration_since(t_init),
-                                            t_init.elapsed()
-                                        ));
-                                    }
-                                    Err(e) => {
-                                        eprintln!("[gpu] Failed to init GpuSynth: {e}");
-                                    }
-                                }
-                            } else if let Some(synth) = self.engine.gpu_synth.as_mut()
-                                && let Err(e) =
-                                    synth.load_dense_soundfonts_many(&denses, &gpu_paths)
-                            {
-                                eprintln!("[gpu] Failed to load channel soundfonts: {e}");
-                            }
-                        }
-                        if any_valid {
-                            self.gpu_sf_pending = self.gpu_sf_pending.saturating_sub(1);
-                            if self.gpu_sf_pending == 0
-                                && let Some(synth) = self.engine.gpu_synth.as_mut()
-                            {
-                                let t_upload = Instant::now();
-                                synth.finish_soundfont_load();
-                                // 预热 GPU 缓冲（满 voice 容量 + 段长）：把首次分配
-                                // 从播放阶段（第一个音符触发扩容）移到加载阶段。
-                                synth.prewarm(super::GPU_RENDER_CHUNK_FRAMES as u32);
-                                play_log(&format!(
-                                    "[play] GPU 采样上传完成：{:?}",
-                                    t_upload.elapsed()
-                                ));
-                                self.mark_audio_ready();
-                            }
-                        }
-                    }
-                    // 主引擎/预览/GPU 都已切到新音色库：清理进程级 key map 缓存里
+                    // 主引擎/预览都已切到新音色库：清理进程级 key map 缓存里
                     // 已无引用的旧库（含整库样本），避免切换音色库后内存只增不减。
                     yinhe_synth::sweep_key_map_cache();
                     // 把释放的空闲页归还 OS（jemalloc/mimalloc）：否则 RSS 只涨不降，
@@ -275,8 +196,7 @@ impl AudioRenderer {
                         && self.state.sf_done.load(Ordering::Relaxed)
                             >= self.state.sf_total.load(Ordering::Relaxed)
                     {
-                        // 应用 + GPU 上传/预热已完成才报 100%，避免进度条先满、
-                        // 声音还没准备好。
+                        // 音色库应用完成才报 100%，避免进度条先满、声音还没准备好。
                         self.state.sf_progress.store(1000, Ordering::Relaxed);
                         self.state.sf_loading.store(false, Ordering::Relaxed);
                     }

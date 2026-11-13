@@ -7,19 +7,20 @@ use serde::{Deserialize, Serialize};
 /// 合成后端选择（设置/UI 层）。
 ///
 /// - `XSynthCpu`：xsynth-core 的 CPU 引擎（当前默认，成熟）；
-/// - `YinheCpu`：yinhe-synth 的 CPU 引擎（自研，对等 GpuSynth）；
-/// - `YinheGpu`：yinhe-synth 的 wgpu GPU 引擎（块长 4096）。
+/// - `YinheCpu`：yinhe-synth 的 CPU 引擎（自研）。
+///
+/// 旧的 `YinheGpu` 后端已删除（实测 CPU 反而快约 2 倍）；旧配置里的
+/// `"YinheGpu"` 通过 serde alias 落到 `YinheCpu`，不会丢设置。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SynthEngine {
     #[default]
     XSynthCpu,
+    #[serde(alias = "YinheGpu")]
     YinheCpu,
-    YinheGpu,
 }
 
 impl SynthEngine {
-    /// 实际可渲染的后端。三个后端均已实现，选择即实际后端；
-    /// 编译期可用性（无 `gpu` feature 时无 yinhe-synth）由 spawn 入口收敛。
+    /// 实际可渲染的后端。两个 CPU 后端均已实现，选择即实际后端。
     pub fn resolved(self) -> Self {
         self
     }
@@ -60,8 +61,16 @@ mod tests {
     #[test]
     fn resolved_is_identity() {
         assert_eq!(SynthEngine::YinheCpu.resolved(), SynthEngine::YinheCpu);
-        assert_eq!(SynthEngine::YinheGpu.resolved(), SynthEngine::YinheGpu);
         assert_eq!(SynthEngine::XSynthCpu.resolved(), SynthEngine::XSynthCpu);
+    }
+
+    /// 旧工程的 `"YinheGpu"` 必须还能读，映射到 CPU 后端。
+    #[test]
+    fn legacy_gpu_engine_maps_to_cpu() {
+        let e: SynthEngine = serde_json::from_str("\"YinheGpu\"").unwrap();
+        assert_eq!(e, SynthEngine::YinheCpu);
+        let e: SynthEngine = serde_json::from_str("\"YinheCpu\"").unwrap();
+        assert_eq!(e, SynthEngine::YinheCpu);
     }
 
     #[test]

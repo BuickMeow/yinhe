@@ -1,4 +1,4 @@
-//! 进程级音色库缓存：key map 解析结果 + 采样拼接数据。
+//! 进程级音色库缓存：key map 解析结果。
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
@@ -15,7 +15,7 @@ static KEY_MAP_CACHE: LazyLock<Mutex<HashMap<KeyMapCacheKey, KeyMapCacheValue>>>
 
 /// 清理进程级 key map 缓存中**已无引擎引用**的条目（`strong_count == 1`，
 /// 仅缓存自己持有）。切换/移除音色库后调用，避免旧库（含整库样本）常驻导致
-/// 内存只增不减。正在使用（主引擎/预览/GPU 持有 Arc）的条目不受影响。
+/// 内存只增不减。正在使用（主引擎/预览持有 Arc）的条目不受影响。
 pub fn sweep_key_map_cache() {
     let mut cache = KEY_MAP_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     // 保留：缓存 Arc 被外部持有（单库直接共享），或任一条目的 `inner` 被外部
@@ -119,39 +119,4 @@ pub(crate) fn load_key_maps(
         .entry(key)
         .or_insert(built)
         .clone())
-}
-
-/// 采样拼接结果缓存（只保留最近一份）：key = 排序去重后的音色库路径集合 + 采样率。
-/// 反复加载相同音色库的工程（引擎重建会新建 GpuSynth）不再重新拼接
-/// 500MB 级连续缓冲（~2.3s）；`data` 为 Arc 共享，与渲染器引用同一份内存
-/// （总内存不增加，换音色库组合时旧数据自然释放）。
-pub(super) type SampleBundleKey = (Vec<std::path::PathBuf>, u32);
-/// 拼接后的连续采样数据（Arc 与渲染器共享同一份内存）。
-pub(super) type SampleData = Arc<Vec<f32>>;
-/// 按样本 Arc 身份（指针 as usize）索引的 (offset, len) 表。
-pub(super) type SampleOffsets = HashMap<usize, (u32, u32)>;
-pub(super) struct SampleBundle {
-    pub(super) data: SampleData,
-    pub(super) offsets: SampleOffsets,
-}
-static SAMPLE_BUNDLE_CACHE: LazyLock<Mutex<Option<(SampleBundleKey, SampleBundle)>>> =
-    LazyLock::new(|| Mutex::new(None));
-
-/// 命中拼接缓存时取回 (data, offsets)；未命中返回 None。
-pub(super) fn cached_sample_bundle(key: &SampleBundleKey) -> Option<(SampleData, SampleOffsets)> {
-    let cache = SAMPLE_BUNDLE_CACHE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    match &*cache {
-        Some((k, bundle)) if k == key => Some((Arc::clone(&bundle.data), bundle.offsets.clone())),
-        _ => None,
-    }
-}
-
-/// 存入拼接缓存（只保留最近一份，旧数据自然释放）。
-pub(super) fn store_sample_bundle(key: SampleBundleKey, bundle: SampleBundle) {
-    let mut cache = SAMPLE_BUNDLE_CACHE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    *cache = Some((key, bundle));
 }

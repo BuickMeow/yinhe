@@ -819,7 +819,7 @@ pub(crate) enum WorkerResult {
     LoadedSoundFont {
         channels: Vec<u8>,
         soundfonts: Vec<Arc<dyn SoundfontBase>>,
-        /// 原始路径列表 — GPU 路径用其初始化 GpuPlayer
+        /// 原始路径列表 — 供音源/诊断定位音色库
         paths: Vec<String>,
         /// 音色库切换代次（renderer 丢弃过期结果）。
         generation: u64,
@@ -999,7 +999,7 @@ pub(crate) fn spawn_worker(
                             });
                             continue;
                         }
-                        // GPU 路径的 key map 解析（重采样 SFZ，未命中缓存时 3-4s）
+                        // yinhe 路径的 key map 解析（重采样 SFZ，未命中缓存时 3-4s）
                         // 移到 worker：音频线程随后只做缓存命中 + 登记。
                         if prefetch_keymaps {
                             let t_prefetch = std::time::Instant::now();
@@ -1381,7 +1381,7 @@ fn init_engine(
     let engine = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut engine = crate::engine::AudioEngine::new(sample_rate, layout);
         engine.set_interpolation(interpolation);
-        // 预览后端跟随主引擎：XSynthCpu → xsynth；YinheCpu/YinheGpu → yinhe CPU。
+        // 预览后端跟随主引擎：XSynthCpu → xsynth；YinheCpu → yinhe CPU。
         let preview = crate::preview_engine::PreviewEngine::new(
             synth_engine,
             &engine.channel_layout,

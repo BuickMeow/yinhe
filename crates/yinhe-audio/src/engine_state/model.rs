@@ -59,9 +59,6 @@ impl AudioEngine {
         if let Some(cs) = self.cpu_synth.as_mut() {
             cs.set_synth_params(dense, params);
         }
-        if let Some(gs) = self.gpu_synth.as_mut() {
-            gs.set_synth_params(dense, params);
-        }
     }
 
     /// 全量应用工程里的音源参数（加载/切歌后调用）。
@@ -151,7 +148,6 @@ impl AudioEngine {
     /// `ResetControl` / `CpuSynth::seek` 都会把 bank 打回 0，只靠"模型加载时
     /// 注入一次"会让播放/seek 后鼓组失效（关鼓开关也因此看起来没反应）。
     fn apply_percussion_declarations(&mut self, declarations: &[(u16, bool)]) {
-        // GPU 模式的鼓组/乐器模式在 `build_gpu_events` 的 seek 注入中处理；
         // yinhe CPU 后端经 `PercussionMode` 控制事件直接生效。
         if self.cpu_synth.is_some() {
             self.setup_percussion_cpu_synth(declarations);

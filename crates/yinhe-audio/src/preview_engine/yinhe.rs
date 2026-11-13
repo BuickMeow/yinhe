@@ -2,7 +2,7 @@
 //!
 //! 与 `XsynthPreview` 语义对齐（替换式/叠加式提交、块内精确触发与到期、
 //! 余音自然衰减），但合成后端是 yinhe-synth 的 `CpuSynth`，音色走进程级
-//! key map 缓存（与主引擎 `YinheCpu`/`YinheGpu` 共享同一份 `Arc`，不重复解析）。
+//! key map 缓存（与主引擎 `YinheCpu` 共享同一份 `Arc`，不重复解析）。
 //!
 //! 主引擎为 yinhe 时，预览不再额外加载 xsynth 版音色库（省一份 ~GB 级内存）。
 
@@ -225,7 +225,7 @@ impl YinhePreview {
         // 目标位置自动化状态：ChannelState → yinhe 控制事件（含 Program/RPN/CC）。
         let skip = ChaseSkip::default();
         for ev in state.events_to_send(channel as usize, &skip) {
-            if let Some(ce) = crate::engine_gpu::to_backend_control_event(&ev) {
+            if let Some(ce) = crate::synth_events::to_backend_control_event(&ev) {
                 self.synth.send_event(SynthEvent::Control {
                     sample,
                     channel: dense as u8,

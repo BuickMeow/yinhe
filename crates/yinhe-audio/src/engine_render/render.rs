@@ -154,118 +154,51 @@ impl AudioEngine {
         let block_end_tick = self.sample_to_tick(block_end_sample);
         self.block_start_sample = block_start_sample;
 
-        if self.gpu_synth.is_some() {
-            // GPU 渲染（只写本 span 的 offset 区间，超出通道清零由 span 外的
-            // `mixer.process` 之前保证；ring 不足时按 span 帧数提交）。
-            let t_gpu = std::time::Instant::now();
-            if let Some(synth) = self.gpu_synth.as_mut() {
-                synth.render_to_mixer_range(self.mixer.buffers_mut(), offset, frames);
-            }
-            let gpu_ms = t_gpu.elapsed().as_secs_f64() * 1000.0;
-            let budget_ms = frames as f64 / self.sample_rate as f64 * 1000.0;
-            if gpu_ms > budget_ms {
-                static LAST_LOG: std::sync::atomic::AtomicU64 =
-                    std::sync::atomic::AtomicU64::new(0);
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(0);
-                let last = LAST_LOG.load(std::sync::atomic::Ordering::Relaxed);
-                if now.saturating_sub(last) >= 1000 {
-                    LAST_LOG.store(now, std::sync::atomic::Ordering::Relaxed);
-                    let now_sample = self.sample_position;
-                    use yinhe_synth::gpu_synth::{
-                        EVICT_VEL_HI, EVICT_VEL_LO, EVICT_VEL_MID, NOTE_ON_REJECTED, REJECT_VEL_HI,
-                        REJECT_VEL_LO, REJECT_VEL_MID,
-                    };
-                    let ak = |v: &std::sync::atomic::AtomicU64| {
-                        v.load(std::sync::atomic::Ordering::Relaxed)
-                    };
-                    let (d, alive, blocks, hist, aged, topk) = match self.gpu_synth.as_ref() {
-                        Some(s) => (
-                            s.diag_ms,
-                            s.diag_alive,
-                            s.diag_blocks,
-                            s.velocity_histogram(),
-                            s.long_lived_voices(now_sample, self.sample_rate as u64 * 10),
-                            s.top_keys(3),
-                        ),
-                        None => ([0.0; 8], 0, 0, [0u32; 8], 0, Vec::new()),
-                    };
-                    crate::audio_renderer::play_log(&format!(
-                        "[gpu] 块超时：{gpu_ms:.2}ms > 预算 {budget_ms:.2}ms（frames={frames}）\
-                         collect={:.1} submit={:.1} harvest={:.1} ring={:.1} out={:.1} compact={:.1} active={:.1} upload={:.1} alive={alive} blocks={blocks} 力度[127-112/111-96/95-80/79-64/63-48/47-32/31-16/15-0]={:?} 长寿(>10s)={aged} top键={topk:?} 淘汰力度累计[小/中/大]={:?} 累计{} 拒绝[小/中/大]={:?} 累计={} flush={}次/{}槽/{}us",
-                        d[0],
-                        d[1],
-                        d[2],
-                        d[3],
-                        d[4],
-                        d[5],
-                        d[6],
-                        d[7],
-                        hist,
-                        [ak(&EVICT_VEL_LO), ak(&EVICT_VEL_MID), ak(&EVICT_VEL_HI)],
-                        ak(&EVICT_VEL_LO) + ak(&EVICT_VEL_MID) + ak(&EVICT_VEL_HI),
-                        [ak(&REJECT_VEL_LO), ak(&REJECT_VEL_MID), ak(&REJECT_VEL_HI)],
-                        ak(&NOTE_ON_REJECTED),
-                        ak(&yinhe_synth::gpu_synth::FLUSH_WRITES),
-                        ak(&yinhe_synth::gpu_synth::FLUSH_SLOTS),
-                        ak(&yinhe_synth::gpu_synth::FLUSH_US)
-                    ));
-                }
-            }
-            // 插件乐器事件：按 span 结束 tick 推进（GPU 模式下非插件通道不喂 xsynth）。
-            self.dispatch_block_events(block_end_tick);
-            self.dispatch_plugin_previews(block_start_sample, frames);
-            self.render_instruments(block_start_sample, offset, frames);
-            self.render_audio_tracks(block_start_sample, offset, frames);
-        } else {
-            // CPU 路径：xsynth 逐段分发+渲染。事件比较全在 tick 域
-            // （dispatch 基准 = current_tick，块边界 = sample→tick 反查），
-            // 只有"渲染段边界"才转一次 sample（每块事件数量级）。
-            let mut rendered_until_sample = block_start_sample;
-            let mut rendered_until_tick = self.current_tick;
-            let mut offset_frames = offset;
+        // CPU 路径：xsynth 逐段分发+渲染。事件比较全在 tick 域
+        // （dispatch 基准 = current_tick，块边界 = sample→tick 反查），
+        // 只有"渲染段边界"才转一次 sample（每块事件数量级）。
+        let mut rendered_until_sample = block_start_sample;
+        let mut rendered_until_tick = self.current_tick;
+        let mut offset_frames = offset;
 
-            while rendered_until_tick < block_end_tick {
-                // 单次 dispatch + find_next：候选是下一个未处理事件的 tick
-                //（严格 > rendered_until_tick，循环必然推进）。
-                let next_tick = self
-                    .dispatch_and_find_next(rendered_until_tick, block_end_tick)
-                    .unwrap_or(block_end_tick)
-                    .min(block_end_tick);
-                // 块末边界直接对齐 block_end_sample；否则 tick→sample 得段边界。
-                // 极快 tempo 下多个 tick 可能映射同一 sample（零长段）：
-                // 不渲染、只推进 tick 继续 dispatch，事件不丢不重。
-                let next_sample = if next_tick >= block_end_tick {
-                    block_end_sample
-                } else {
-                    self.tick_to_sample(next_tick)
-                };
-                let segment_frames = (next_sample - rendered_until_sample) as usize;
-                if segment_frames > 0 {
-                    self.segment_start_sample = rendered_until_sample;
-                    self.render_cpu_segment(offset_frames, segment_frames);
-                    rendered_until_sample = next_sample;
-                    offset_frames += segment_frames;
-                }
-                rendered_until_tick = next_tick;
-            }
-
-            // 补齐剩余帧（浮点/块对齐：tick_to_sample(block_end_tick) 可能略小于
-            // block_end_sample，剩余段无事件）。
-            let remaining = block_end_sample - rendered_until_sample;
-            if remaining > 0 {
+        while rendered_until_tick < block_end_tick {
+            // 单次 dispatch + find_next：候选是下一个未处理事件的 tick
+            //（严格 > rendered_until_tick，循环必然推进）。
+            let next_tick = self
+                .dispatch_and_find_next(rendered_until_tick, block_end_tick)
+                .unwrap_or(block_end_tick)
+                .min(block_end_tick);
+            // 块末边界直接对齐 block_end_sample；否则 tick→sample 得段边界。
+            // 极快 tempo 下多个 tick 可能映射同一 sample（零长段）：
+            // 不渲染、只推进 tick 继续 dispatch，事件不丢不重。
+            let next_sample = if next_tick >= block_end_tick {
+                block_end_sample
+            } else {
+                self.tick_to_sample(next_tick)
+            };
+            let segment_frames = (next_sample - rendered_until_sample) as usize;
+            if segment_frames > 0 {
                 self.segment_start_sample = rendered_until_sample;
-                self.render_cpu_segment(offset_frames, remaining as usize);
+                self.render_cpu_segment(offset_frames, segment_frames);
+                rendered_until_sample = next_sample;
+                offset_frames += segment_frames;
             }
-
-            // 乐器插件：把本 span 累积的事件喂给各自实例，输出写进对应乐器 dense 通道。
-            self.dispatch_plugin_previews(block_start_sample, frames);
-            self.render_instruments(block_start_sample, offset, frames);
-            // 音频片段回放：按绝对时间混进对应音频 dense 通道（无状态）。
-            self.render_audio_tracks(block_start_sample, offset, frames);
+            rendered_until_tick = next_tick;
         }
+
+        // 补齐剩余帧（浮点/块对齐：tick_to_sample(block_end_tick) 可能略小于
+        // block_end_sample，剩余段无事件）。
+        let remaining = block_end_sample - rendered_until_sample;
+        if remaining > 0 {
+            self.segment_start_sample = rendered_until_sample;
+            self.render_cpu_segment(offset_frames, remaining as usize);
+        }
+
+        // 乐器插件：把本 span 累积的事件喂给各自实例，输出写进对应乐器 dense 通道。
+        self.dispatch_plugin_previews(block_start_sample, frames);
+        self.render_instruments(block_start_sample, offset, frames);
+        // 音频片段回放：按绝对时间混进对应音频 dense 通道（无状态）。
+        self.render_audio_tracks(block_start_sample, offset, frames);
 
         self.sample_position = block_end_sample;
         self.current_tick = block_end_tick;

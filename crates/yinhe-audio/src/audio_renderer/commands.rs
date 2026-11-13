@@ -140,16 +140,9 @@ impl AudioRenderer {
                 // 结果逐个应用时不再清，避免频繁打断输出。
                 let anchor = self.consumer_position.load(Ordering::Acquire);
                 self.clear_buffered_audio(anchor);
-                {
-                    self.gpu_sf_pending = super::count_gpu_sf_pending(
-                        &configs,
-                        &self.engine.channel_layout,
-                        self.gpu_engine(),
-                    );
-                }
-                // yinhe 后端（GPU 或 CPU）都在 worker 预热 key map 解析缓存；
+                // yinhe CPU 后端在 worker 预热 key map 解析缓存；
                 // xsynth 后端不需要（自己的 GLOBAL_SF_CACHE 在 worker 里加载）。
-                let prefetch_keymaps = self.gpu_engine() || self.yinhe_cpu_engine();
+                let prefetch_keymaps = self.yinhe_cpu_engine();
                 // latest-wins：每次切换推进代次，worker 只处理最新代次；
                 // 旧代次在队列里直接跳过，不会被大音色库的加载拖住新请求。
                 let generation = self.state.sf_gen.fetch_add(1, Ordering::AcqRel) + 1;
@@ -417,14 +410,6 @@ impl AudioRenderer {
         //（递增 generation），否则快速连续切换时旧结果可能晚到并
         // 覆盖新状态——GPU 路径的通道状态依赖 chase 恢复，影响更大。
         self.engine.chase_generation = self.engine.chase_generation.wrapping_add(1);
-        // GPU 路径：事件列表按新 skip mask 重建（mute/solo 即时生效，
-        // 不再需要重启引擎）；位置不移动（与 CPU 路径第 4 层语义一致）。
-        // 事件重建 + seek 由 run 循环消费 dirty 标志时统一执行。
-        if self.engine.gpu_synth.is_some() && self.engine.model_loaded() {
-            self.engine.invalidate_gpu_events();
-            let anchor = self.consumer_position.load(Ordering::Acquire);
-            self.clear_buffered_audio(anchor);
-        }
         // mute 状态变了，chase 结果需要更新：unmute 的轨道的 CC 需要恢复，
         // mute 的轨道的 CC 不再参与。
         if self.engine.model_loaded() {
