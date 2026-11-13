@@ -11,6 +11,11 @@ use yinhe_types::{SYNTH_PARAMS, SynthParamCategory, SynthParams};
 
 use crate::app::App;
 
+/// 窗口 id（打开动作与窗口声明共用同一来源，保证 `raise_viewport` 命中）。
+pub(crate) fn viewport_id() -> egui::ViewportId {
+    egui::ViewportId::from_hash_of("synth_params_panel")
+}
+
 pub(crate) struct InstrumentParamsPanel {
     channel: u8,
     /// 0 = 全部；1..=4 = 分类下标 + 1。
@@ -49,7 +54,7 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
         return;
     };
 
-    let id = egui::ViewportId::from_hash_of("synth_params_panel");
+    let id = viewport_id();
     crate::chrome::dialog::raise_on_open(ctx, id);
     let title = format!(
         "{} — {}",
@@ -87,68 +92,7 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
                                 return;
                             }
                             let mut params = doc.data.model.synth_params_at(panel.channel as usize);
-                            let mut changed = false;
-
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    if reset_icon(ui, t!("synth_params.reset_hint").as_ref())
-                                        .clicked()
-                                    {
-                                        params = SynthParams::default();
-                                        changed = true;
-                                    }
-                                },
-                            );
-                            ui.separator();
-
-                            // 左分类 / 右参数。
-                            ui.horizontal_top(|ui| {
-                                ui.vertical(|ui| {
-                                    ui.set_width(118.0);
-                                    ui.selectable_value(
-                                        &mut panel.page,
-                                        0,
-                                        t!("synth_params.all").to_string(),
-                                    );
-                                    for (i, cat) in SynthParamCategory::ALL.iter().enumerate() {
-                                        ui.selectable_value(
-                                            &mut panel.page,
-                                            i + 1,
-                                            category_name(*cat),
-                                        );
-                                    }
-                                });
-                                ui.separator();
-                                egui::ScrollArea::vertical()
-                                    .auto_shrink([false, false])
-                                    .show(ui, |ui| {
-                                        let cats: Vec<SynthParamCategory> = if panel.page == 0 {
-                                            SynthParamCategory::ALL.to_vec()
-                                        } else {
-                                            vec![SynthParamCategory::ALL[panel.page - 1]]
-                                        };
-                                        for cat in cats {
-                                            if panel.page == 0 {
-                                                ui.add_space(4.0);
-                                                ui.label(
-                                                    egui::RichText::new(category_name(cat))
-                                                        .size(crate::theme::SMALL_FONT + 1.0)
-                                                        .color(crate::theme::text_secondary()),
-                                                );
-                                            }
-                                            for info in
-                                                SYNTH_PARAMS.iter().filter(|p| p.category == cat)
-                                            {
-                                                if param_row(ui, info, &mut params) {
-                                                    changed = true;
-                                                }
-                                            }
-                                        }
-                                    });
-                            });
-
-                            if changed {
+                            if body(ui, &mut params, &mut panel.page) {
                                 let model = std::sync::Arc::make_mut(&mut doc.data.model);
                                 *model.synth_params_mut(panel.channel as usize) = params;
                                 doc.mark_mixer_dirty();
@@ -173,6 +117,76 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
     }
 }
 
+/// 窗口主体（从 `show` 拆出，便于布局回归测试）。返回是否修改。
+///
+/// 每一行都用固定高度的 `allocate_ui_with_layout`：若直接把
+/// `right_to_left` 挂在页面顶层，它会吃掉剩余全部高度，后续的分类与
+/// 旋钮被排到窗口下方——窗口看起来就是"空的"。
+fn body(ui: &mut egui::Ui, params: &mut SynthParams, page: &mut usize) -> bool {
+    let mut changed = false;
+
+    let btn_h = crate::widgets::control::h(ui.ctx());
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), btn_h),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if reset_icon(ui, t!("synth_params.reset_hint").as_ref()).clicked() {
+                    *params = SynthParams::default();
+                    changed = true;
+                }
+            });
+        },
+    );
+    ui.separator();
+
+    // 左分类 / 右参数。
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            ui.set_width(118.0);
+            ui.selectable_value(page, 0, t!("synth_params.all").to_string());
+            for (i, cat) in SynthParamCategory::ALL.iter().enumerate() {
+                ui.selectable_value(page, i + 1, category_name(*cat));
+            }
+        });
+        ui.separator();
+        // 显式给纵向布局：`ScrollArea` 会继承父 ui 的布局方向，直接挂在
+        // `horizontal_top` 下会把所有参数行排成一行（超出窗口）。
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), ui.available_height()),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        let cats: Vec<SynthParamCategory> = if *page == 0 {
+                            SynthParamCategory::ALL.to_vec()
+                        } else {
+                            vec![SynthParamCategory::ALL[*page - 1]]
+                        };
+                        for cat in cats {
+                            if *page == 0 {
+                                ui.add_space(4.0);
+                                ui.label(
+                                    egui::RichText::new(category_name(cat))
+                                        .size(crate::theme::SMALL_FONT + 1.0)
+                                        .color(crate::theme::text_secondary()),
+                                );
+                            }
+                            for info in SYNTH_PARAMS.iter().filter(|p| p.category == cat) {
+                                if param_row(ui, info, params) {
+                                    changed = true;
+                                }
+                            }
+                        }
+                    });
+            },
+        );
+    });
+
+    changed
+}
+
 fn reset_icon(ui: &mut egui::Ui, hint: &str) -> egui::Response {
     let icon = egui_material_icons::icons::ICON_RESTART_ALT;
     ui.add(
@@ -192,34 +206,107 @@ fn param_row(
     info: &yinhe_types::SynthParamInfo,
     params: &mut SynthParams,
 ) -> bool {
+    const KNOB_D: f32 = 34.0;
     let mut changed = false;
     let mut value = params.get(info.id);
     let mut norm = info.normalize(value);
-    ui.horizontal(|ui| {
-        let resp = crate::widgets::knob::knob_centered(ui, &mut norm, 34.0);
-        if resp.changed() {
-            value = info.denormalize(norm);
-            params.set(info.id, value);
-            changed = true;
-        }
-        ui.vertical(|ui| {
-            ui.label(
-                egui::RichText::new(info.name)
-                    .size(crate::theme::SMALL_FONT + 1.0)
-                    .color(crate::theme::text_primary()),
-            );
-            ui.label(
-                egui::RichText::new(value_text(info, value))
-                    .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::text_secondary()),
-            );
-        });
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if reset_icon(ui, t!("synth_params.reset_one").as_ref()).clicked() {
-                params.set(info.id, SynthParams::default().get(info.id));
+
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), KNOB_D + 4.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            let resp = crate::widgets::knob::knob_centered(ui, &mut norm, KNOB_D);
+            crate::widgets::a11y::name_slider(&resp, info.name);
+            if resp.changed() {
+                value = info.denormalize(norm);
+                params.set(info.id, value);
                 changed = true;
             }
-        });
-    });
+            ui.vertical(|ui| {
+                ui.label(
+                    egui::RichText::new(info.name)
+                        .size(crate::theme::SMALL_FONT + 1.0)
+                        .color(crate::theme::text_primary()),
+                );
+                ui.label(
+                    egui::RichText::new(value_text(info, value))
+                        .size(crate::theme::SMALL_FONT)
+                        .color(crate::theme::text_secondary()),
+                );
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if reset_icon(ui, t!("synth_params.reset_one").as_ref()).clicked() {
+                    params.set(info.id, SynthParams::default().get(info.id));
+                    changed = true;
+                }
+            });
+        },
+    );
+
     changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui_kittest::kittest::Queryable as _;
+
+    /// 回归：所有参数、分类与重置按钮都必须落在窗口可视区内。
+    ///
+    /// 曾经页面顶层直接用 `ui.with_layout(right_to_left)`，它吃掉剩余高度，
+    /// 参数列表整体被排到窗口下方，用户看到的是"空窗口 + 一个重置图标"。
+    #[test]
+    fn body_lays_out_every_control_inside_the_panel() {
+        const W: f32 = 520.0;
+        const H: f32 = 560.0;
+        let mut params = SynthParams::default();
+        let mut page = 0usize;
+        let mut harness = egui_kittest::Harness::builder()
+            .allow_missing_glyphs()
+            .with_size(egui::vec2(W, H))
+            .build_ui(move |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    body(ui, &mut params, &mut page);
+                });
+            });
+        harness.step();
+
+        // 名称文本与旋钮都带同一个可见名，两处都必须在窗口内。
+        let mut prev_bottom = f32::NEG_INFINITY;
+        for info in SYNTH_PARAMS {
+            let nodes: Vec<_> = harness.get_all_by_label(info.name).collect();
+            assert!(!nodes.is_empty(), "{} 没有渲染", info.name);
+            let mut top = f32::INFINITY;
+            for node in &nodes {
+                let rect = node.rect();
+                assert!(
+                    rect.min.y >= 0.0 && rect.max.y <= H,
+                    "{} 不在窗口内: {rect:?}",
+                    info.name
+                );
+                top = top.min(rect.min.y);
+            }
+            assert!(
+                top > prev_bottom,
+                "{} 必须纵向排在上一行之后（y={top}，上一行底部 {prev_bottom}）",
+                info.name
+            );
+            prev_bottom = nodes
+                .iter()
+                .map(|n| n.rect().max.y)
+                .fold(f32::NEG_INFINITY, f32::max);
+        }
+        for cat in SynthParamCategory::ALL {
+            let name = category_name(cat);
+            let nodes: Vec<_> = harness.get_all_by_label(&name).collect();
+            assert!(!nodes.is_empty(), "分类 {name} 没有渲染");
+            for node in nodes {
+                let rect = node.rect();
+                assert!(
+                    rect.min.y >= 0.0 && rect.max.y <= H,
+                    "分类 {name} 不在窗口内: {rect:?}"
+                );
+            }
+        }
+    }
 }

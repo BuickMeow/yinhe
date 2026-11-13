@@ -14,6 +14,11 @@ use yinhe_editor_core::config::SfEntry;
 
 use crate::app::App;
 
+/// 配置窗口 id：每个源通道一个（可同时打开多个通道的配置）。
+pub(crate) fn viewport_id(channel: u8) -> egui::ViewportId {
+    egui::ViewportId::from_hash_of(("xsynth_config_dialog", channel))
+}
+
 /// 显示 XSynth 配置窗口；返回 true = 配置有变更（调用方需重载音频）。
 pub(crate) fn show_viewport(app: &mut App, ctx: &egui::Context) -> bool {
     let Some(channel) = app.mix.xsynth_config_for else {
@@ -33,7 +38,8 @@ pub(crate) fn show_viewport(app: &mut App, ctx: &egui::Context) -> bool {
     let label = crate::mix::channel_label(channel);
     let title = format!("XSynth · {label}");
 
-    let viewport_id = egui::ViewportId::from_hash_of(("xsynth_config_dialog", channel));
+    let viewport_id = viewport_id(channel);
+    crate::chrome::dialog::raise_on_open(ctx, viewport_id);
     let open_rc = Rc::new(RefCell::new(true));
     let open_out = Rc::clone(&open_rc);
     let changed_rc = Rc::new(RefCell::new(false));

@@ -33,6 +33,7 @@ use crate::widgets::meter::{db_to_gain, gain_to_db};
 pub(crate) use instrument_rack::InstrumentRack;
 pub(crate) use param_panel::ParamPanel;
 pub(crate) use rack::MixerRack;
+pub(crate) use strip::{picker_viewport_id, sends_viewport_id};
 
 /// 源通道总数（16 port × 16 通道）。
 const SOURCE_CHANNELS: usize = yinhe_mixer::CHANNEL_COUNT;
@@ -797,7 +798,7 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
 
     // 统一应用本帧动作。
     for action in actions {
-        apply_action(app, idx, action);
+        apply_action(app, ui.ctx(), idx, action);
     }
 
     // 电平表动画：播放中或衰减未归零时保持约 30fps 重绘。
@@ -838,7 +839,7 @@ pub(crate) fn show_global_overlays(app: &mut App, ctx: &egui::Context) {
         strip::send_popup(app, ctx, ch, &mut actions);
     }
     for action in actions {
-        apply_action(app, idx, action);
+        apply_action(app, ctx, idx, action);
     }
     param_panel::show(app, ctx);
     crate::dialogs::instrument_params::show(app, ctx);
@@ -862,7 +863,7 @@ pub(crate) fn insert_refs(
     }
 }
 
-fn apply_action(app: &mut App, idx: usize, action: MixAction) {
+fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixAction) {
     match action {
         MixAction::SetStrip { channel, params } => {
             app.note_mixer_edit(t!("undo.mix_param").as_ref());
@@ -997,7 +998,10 @@ fn apply_action(app: &mut App, idx: usize, action: MixAction) {
             }
             app.sync_bus_config_to_engine(idx);
         }
-        MixAction::OpenSends { channel } => app.mix.sends_for = Some(channel),
+        MixAction::OpenSends { channel } => {
+            app.mix.sends_for = Some(channel);
+            crate::chrome::dialog::raise_viewport(ctx, sends_viewport_id());
+        }
         MixAction::AssignInstrument { channel, plugin } => {
             assign_instrument_plugin(app, idx, channel, &plugin);
             app.mix.instrument_picker_for = None;

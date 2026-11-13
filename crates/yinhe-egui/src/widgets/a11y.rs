@@ -14,6 +14,13 @@ pub(crate) fn name_button(resp: &egui::Response, name: impl Into<String>) {
     });
 }
 
+/// 给自绘输入控件（旋钮等滑块）注册可读名称。
+pub(crate) fn name_slider(resp: &egui::Response, name: impl Into<String>) {
+    let name = name.into();
+    resp.ctx
+        .accesskit_node_builder(resp.id, |node| node.set_label(name));
+}
+
 /// 注册一个还没有名称的输入控件；外层可用 [`egui::Ui::name_inputs`] 补名称。
 pub(crate) fn unnamed_input(resp: &egui::Response, role: egui::Role) {
     resp.widget_info(|| egui::WidgetInfo {

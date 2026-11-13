@@ -317,7 +317,7 @@ fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
         return;
     };
     let actions = draw_dock(ui, &state, &mut app.dock_param_search);
-    apply_dock_actions(app, idx, &state, actions);
+    apply_dock_actions(app, ui.ctx(), idx, &state, actions);
 }
 
 /// 收集阶段：同步选中轨语境，读出设备链/参数/通道选择数据。
@@ -592,19 +592,35 @@ fn draw_dock(ui: &mut egui::Ui, state: &DockState, search: &mut String) -> Vec<D
 }
 
 /// 应用阶段：按绘制收集的动作顺序统一写回 app。
-fn apply_dock_actions(app: &mut App, idx: usize, state: &DockState, actions: Vec<DockAction>) {
+///
+/// 弹窗类动作在**打开动作处**调 `raise_viewport`：窗口已存在则拉回前台
+/// （只靠渲染处的 `raise_on_open` 做不到——窗口一直声明着，不会重建）。
+fn apply_dock_actions(
+    app: &mut App,
+    ctx: &egui::Context,
+    idx: usize,
+    state: &DockState,
+    actions: Vec<DockAction>,
+) {
     for action in actions {
         match action {
             DockAction::SetSelected(selected) => app.dock_selected = selected,
             DockAction::OpenInsertPicker => {
                 app.mix.picker_for = Some(state.insert_target);
+                crate::chrome::dialog::raise_viewport(ctx, crate::mix::picker_viewport_id());
             }
             DockAction::Knob(action) => {
                 apply_knob_action(app, idx, &state.lane_track_tis, state.tick, action);
             }
             DockAction::OpenParams(device) => {
                 match open_param_panel(app, idx, device, state.insert_target, state.midi_channel) {
-                    Some(panel) => app.mix.param_panel = Some(panel),
+                    Some(panel) => {
+                        app.mix.param_panel = Some(panel);
+                        crate::chrome::dialog::raise_viewport(
+                            ctx,
+                            crate::mix::param_panel::viewport_id(),
+                        );
+                    }
                     None => {
                         // 实例不可用（未加载成功）：在 MIX 状态行提示，避免"点了没反应"。
                         let msg = t!("dock.plugin_unavailable").to_string();
@@ -622,10 +638,17 @@ fn apply_dock_actions(app: &mut App, idx: usize, state: &DockState, actions: Vec
                     }
                 }
             }
-            DockAction::OpenInstrumentPicker(ch) => app.mix.instrument_picker_for = Some(ch),
+            DockAction::OpenInstrumentPicker(ch) => {
+                app.mix.instrument_picker_for = Some(ch);
+                crate::chrome::dialog::raise_viewport(ctx, crate::mix::picker_viewport_id());
+            }
             DockAction::OpenSynthParams(ch) => {
                 app.mix.synth_params_panel =
                     Some(crate::dialogs::instrument_params::InstrumentParamsPanel::new(ch));
+                crate::chrome::dialog::raise_viewport(
+                    ctx,
+                    crate::dialogs::instrument_params::viewport_id(),
+                );
             }
             DockAction::ToggleInstrument(muted) => {
                 // 旁通 = 该通道所有轨道 mute（AR 读 track_overrides，自动同步）。
@@ -695,6 +718,10 @@ fn apply_dock_actions(app: &mut App, idx: usize, state: &DockState, actions: Vec
                     } else {
                         // 内置 XSynth 的"界面"就是音色库配置窗口。
                         app.mix.xsynth_config_for = Some(ch);
+                        crate::chrome::dialog::raise_viewport(
+                            ctx,
+                            crate::dialogs::xsynth_config::viewport_id(ch),
+                        );
                     }
                 }
             },

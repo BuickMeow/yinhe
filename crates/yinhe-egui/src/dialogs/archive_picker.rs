@@ -306,6 +306,7 @@ pub(crate) fn show_viewport(
         return ArchivePickerAction::None;
     }
     let viewport_id = eframe::egui::ViewportId::from_hash_of("archive_picker_dialog");
+    crate::chrome::dialog::raise_on_open(ctx, viewport_id);
 
     let taken_state = std::rc::Rc::new(std::cell::RefCell::new(std::mem::replace(
         state.as_mut().unwrap(),
@@ -423,6 +424,7 @@ pub(crate) fn show_password_prompt_viewport(
         return PasswordPromptAction::None;
     }
     let viewport_id = eframe::egui::ViewportId::from_hash_of("archive_password_prompt_dialog");
+    crate::chrome::dialog::raise_on_open(ctx, viewport_id);
 
     let taken_state = std::rc::Rc::new(std::cell::RefCell::new(
         state.as_mut().unwrap().clone_state(),

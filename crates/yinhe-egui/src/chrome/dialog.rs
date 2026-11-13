@@ -25,21 +25,39 @@ pub(crate) fn raise_viewport(ctx: &egui::Context, id: egui::ViewportId) {
 /// custom chrome style (no native title bar).
 /// viewport 首帧（上次未打开）时拉到前台。
 ///
-/// `show_viewport_immediate` 每帧重建窗口、状态不保留，用 `ctx.data`
-/// 记录"上帧是否打开"来检测打开瞬间；关闭时用 [`mark_viewport_closed`] 复位。
+/// `show_viewport_immediate` 只在"打开"的帧声明窗口，停止调用即销毁原生
+/// 窗口。因此用**上一帧是否还在声明**来判定重新打开：记录上次声明的帧号，
+/// 若与当前帧不连续（隔了至少一帧）或从未声明过，就拉一次前台。
+///
+/// 不能只在 `ctx.data` 里记一个永不复位的 bool：那样第二次打开时
+/// 窗口会留在后台（用户点"打开"看起来毫无反应）。
 pub(crate) fn raise_on_open(ctx: &egui::Context, id: egui::ViewportId) {
     let key = egui::Id::unique(("viewport_was_open", id));
-    let was = ctx.data_mut(|d| d.get_temp::<bool>(key).unwrap_or(false));
-    if !was {
+    let now = ctx.cumulative_frame_nr();
+    let reopened = was_reopened(ctx.data(|d| d.get_temp::<u64>(key)), now);
+    if reopened {
         raise_viewport(ctx, id);
     }
-    ctx.data_mut(|d| d.insert_temp(key, true));
+    ctx.data_mut(|d| d.insert_temp(key, now));
 }
 
-/// 复位的"上帧已打开"标记（窗口关闭时调用）。
+/// 上次声明的帧号 → 本次是否算"重新打开"。
+///
+/// 连续帧（`now == last + 1`）说明窗口一直声明着，不能抢焦点；隔帧或
+/// 从未声明过（`None` / `u64::MAX` 关闭标记）都视为重新打开。
+fn was_reopened(last: Option<u64>, now: u64) -> bool {
+    // `u64::MAX` 是关闭标记：`checked_add` 溢出成 None，直接判为重新打开。
+    match last.and_then(|last| last.checked_add(1)) {
+        Some(next) => now > next,
+        None => true,
+    }
+}
+
+/// 复位"上帧已打开"标记（窗口关闭时调用）。
 pub(crate) fn mark_viewport_closed(ctx: &egui::Context, id: egui::ViewportId) {
+    // 写入一个不可能与下一帧连续的帧号：下次声明必然被判定为重新打开。
     ctx.data_mut(|d| {
-        d.insert_temp(egui::Id::unique(("viewport_was_open", id)), false);
+        d.insert_temp(egui::Id::unique(("viewport_was_open", id)), u64::MAX);
     });
 }
 
@@ -155,6 +173,27 @@ pub(crate) fn paint_close_button(
             crate::theme::text_muted()
         },
     );
+}
+
+#[cfg(test)]
+mod raise_tests {
+    use super::was_reopened;
+
+    /// 连续声明 = 窗口仍开着，不能每帧抢焦点。
+    #[test]
+    fn consecutive_frames_do_not_raise() {
+        assert!(!was_reopened(Some(10), 11));
+        assert!(!was_reopened(Some(10), 10));
+    }
+
+    /// 中间断帧 = 原生窗口已销毁；再次声明必须拉回前台。
+    #[test]
+    fn gap_means_reopened() {
+        assert!(was_reopened(Some(10), 12));
+        assert!(was_reopened(None, 12));
+        // 关闭标记
+        assert!(was_reopened(Some(u64::MAX), 12));
+    }
 }
 
 /// Draw a custom title bar for a dialog window.

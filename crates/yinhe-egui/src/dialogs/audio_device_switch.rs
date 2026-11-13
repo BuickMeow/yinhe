@@ -25,7 +25,7 @@ pub(crate) enum AudioDeviceSwitchAction {
 /// 流还活着）；= false 时不显示（stream_error 场景，流已死必须切换）。
 ///
 /// 对话框不能被标题栏关闭按钮关掉 —— 用户必须选一个设备、保持当前或点"退出"。
-/// 每帧 `raise_viewport` 会把它重新拉到前台。
+/// 首次（重新）打开时拉到前台；不每帧抢焦点，否则用户无法操作主窗口。
 pub(crate) fn show_viewport(
     ctx: &egui::Context,
     devices: &[String],
@@ -33,6 +33,7 @@ pub(crate) fn show_viewport(
     allow_keep_current: bool,
 ) -> AudioDeviceSwitchAction {
     let viewport_id = egui::ViewportId::from_hash_of("audio_device_switch_dialog");
+    crate::chrome::dialog::raise_on_open(ctx, viewport_id);
 
     let action_rc = std::rc::Rc::new(std::cell::RefCell::new(AudioDeviceSwitchAction::None));
     let action_capture = action_rc.clone();

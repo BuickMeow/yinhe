@@ -848,6 +848,18 @@ fn master_controls(
     out
 }
 
+/// 插件选择器窗口 id（打开动作与窗口声明共用一个来源）。
+///
+/// 乐器/效果器两个入口互斥，共用同一个窗口。
+pub(crate) fn picker_viewport_id() -> egui::ViewportId {
+    egui::ViewportId::from_hash_of("mix_plugin_picker")
+}
+
+/// 发送面板窗口 id（打开动作与窗口声明共用一个来源）。
+pub(crate) fn sends_viewport_id() -> egui::ViewportId {
+    egui::ViewportId::from_hash_of("mix_send_popup")
+}
+
 /// 发送面板（某源通道对各总线的发送量 / 推子前推子后）。
 pub(crate) fn send_popup(
     app: &mut App,
@@ -872,7 +884,7 @@ pub(crate) fn send_popup(
         .collect();
 
     // 独立 OS 窗口（viewport）：发送面板。
-    let id = egui::ViewportId::from_hash_of("mix_send_popup");
+    let id = sends_viewport_id();
     crate::chrome::dialog::raise_on_open(ctx, id);
     let title = format!("{} {}", t!("mix.sends"), crate::mix::channel_label(channel));
     let mut close = false;
@@ -1038,7 +1050,7 @@ enum PickerKind {
 impl PickerKind {
     fn viewport_id(self) -> egui::ViewportId {
         // 统一窗口：乐器/效果器共用（两入口互斥，同一时刻只开一个）。
-        egui::ViewportId::from_hash_of("mix_plugin_picker")
+        picker_viewport_id()
     }
 
     /// 语境是否允许加载该插件（效果器语境不接受乐器插件）。

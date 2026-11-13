@@ -30,6 +30,7 @@ pub(crate) fn show_viewport(
         return RecoveryAction::None;
     }
     let viewport_id = egui::ViewportId::from_hash_of("autosave_recovery_dialog");
+    crate::chrome::dialog::raise_on_open(ctx, viewport_id);
     let title = t!("dialog.autosave_recovery.title");
     let mut action = RecoveryAction::None;
 

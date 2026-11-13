@@ -28,6 +28,11 @@ pub(crate) enum ParamTarget {
     Instrument { channel: u8, index: usize, uid: u64 },
 }
 
+/// 参数面板窗口 id（打开动作与窗口声明共用一个来源）。
+pub(crate) fn viewport_id() -> egui::ViewportId {
+    egui::ViewportId::from_hash_of("mix_param_panel")
+}
+
 /// 参数面板状态（打开时枚举一次；插件 rescan 时重枚举）。
 pub(crate) struct ParamPanel {
     target: ParamTarget,
@@ -131,7 +136,7 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
     let mut lane_requests: Vec<(u32, String)> = Vec::new();
 
     // 独立 OS 窗口（viewport）：插件参数面板。
-    let id = egui::ViewportId::from_hash_of("mix_param_panel");
+    let id = viewport_id();
     crate::chrome::dialog::raise_on_open(ctx, id);
     let title = format!("{} — {}", t!("mix.params_title"), panel.title);
     let mut close = false;
