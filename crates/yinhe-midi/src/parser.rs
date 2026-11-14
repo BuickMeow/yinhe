@@ -97,7 +97,7 @@ pub fn parse_bytes_with_encoding(
         // 克隆一个惰性迭代器逐事件扫描，扫完即丢，常驻 O(1)。
         // 同时统计每个 key 的 NoteOn 数，给 NoteLoader 精确预分配（上界：
         // 未配对的 NoteOn 也计入，容量略大不会影响正确性）。
-        let (conductor, cond_meta, per_key_count) =
+        let (conductor, cond_meta, per_key_count, per_track_count) =
             collect_conductor(track_iter.clone(), encoding)?;
 
         // Pass 2: per-track parse → TrackData, run in parallel across tracks.
@@ -135,7 +135,9 @@ pub fn parse_bytes_with_encoding(
                 .into_par_iter()
                 .enumerate()
                 .map(|(i, events)| {
-                    let r = parse_track(events, base_track + i, encoding);
+                    let expected =
+                        per_track_count.get(base_track + i).copied().unwrap_or(0) as usize;
+                    let r = parse_track(events, base_track + i, encoding, expected);
                     let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                     if let Ok(mut p) = progress.lock() {
                         p(LoadProgress {
@@ -245,7 +247,7 @@ struct ConductorMeta {
 fn collect_conductor(
     track_iter: midly::TrackIter,
     encoding: MidiImportEncoding,
-) -> Result<(ConductorData, ConductorMeta, [u32; KEY_COUNT]), MidiError> {
+) -> Result<(ConductorData, ConductorMeta, [u32; KEY_COUNT], Vec<u32>), MidiError> {
     let mut tempo_events: Vec<AutomationEvent> = Vec::new();
     let mut time_sig: Vec<TimeSigEvent> = Vec::new();
     let mut key_sig: Vec<yinhe_types::KeySigEvent> = Vec::new();
@@ -255,8 +257,13 @@ fn collect_conductor(
     let mut artists: Vec<String> = Vec::new();
     // 每个 key 的 NoteOn 数（含未配对）：NoteLoader 精确预分配容量的上界。
     let mut per_key_count = [0u32; KEY_COUNT];
+    // 每条轨的 NoteOn 数：parse_track 的 `td.notes` 上界，避免 Vec 翻倍扩容。
+    let mut per_track_count: Vec<u32> = Vec::new();
 
     for (track_idx, track_result) in track_iter.enumerate() {
+        if per_track_count.len() <= track_idx {
+            per_track_count.resize(track_idx + 1, 0);
+        }
         let events = track_result?;
         let mut tick: u32 = 0;
         for ev in events {
@@ -341,6 +348,7 @@ fn collect_conductor(
                     ..
                 } if vel.as_int() > 0 => {
                     per_key_count[key.as_int() as usize] += 1;
+                    per_track_count[track_idx] += 1;
                 }
                 _ => {}
             }
@@ -371,6 +379,7 @@ fn collect_conductor(
             artists,
         },
         per_key_count,
+        per_track_count,
     ))
 }
 
@@ -448,9 +457,12 @@ fn parse_track(
     events: midly::EventIter,
     track_idx: usize,
     encoding: MidiImportEncoding,
+    expected_notes: usize,
 ) -> Result<Option<TrackData>, MidiError> {
     let mut td = TrackData::new(0, 0);
     td.uuid = uuid::Uuid::new_v4().to_string();
+    // NoteOn 数作上界（未配对 NoteOn 不会被计入音符），避免大轨 Vec 翻倍扩容。
+    td.notes = Vec::with_capacity(expected_notes);
 
     let mut current_tick: u32 = 0;
     let mut current_port: u8 = 0;
