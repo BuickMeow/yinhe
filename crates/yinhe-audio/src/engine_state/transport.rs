@@ -138,6 +138,9 @@ impl AudioEngine {
         if is_seek || is_stop {
             // 用户 seek / Stop：消费位置被重新对齐到逻辑位置，偏移归零。
             self.loop_wrap_offset = 0;
+            // 旧位置算出的 chase 结果不得应用到新位置（否则可能带回
+            // 旧位置的 CC7/Program 状态，听起来像"没声音/音色不对"）。
+            self.chase_generation = self.chase_generation.wrapping_add(1);
         }
         // yinhe CPU 后端启用时 ChannelSet 不参与渲染，重置/清音是死路径。
         if self.cpu_synth_active() {

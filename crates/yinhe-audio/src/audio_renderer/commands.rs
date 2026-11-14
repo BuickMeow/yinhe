@@ -190,11 +190,14 @@ impl AudioRenderer {
                     // 方案 B：seek 后异步 chase（current_tick 已由 seek 更新）
                     let t3 = Instant::now();
                     self.request_chase(self.engine.current_tick());
+                    self.request_loop_chase();
                     let dt_chase = t3.elapsed();
                     play_log(&format!(
-                        "[play] engine.seek={dt_engine:?} clear_ring={dt_clear:?} chase_req={dt_chase:?} 命令处理总计={:?}",
+                        "[play] from={:.3}s engine.seek={dt_engine:?} clear_ring={dt_clear:?} chase_req={dt_chase:?} 命令处理总计={:?}",
+                        from_sample as f64 / self.engine.sample_rate as f64,
                         t0.elapsed()
                     ));
+                    self.play_probe = 20;
                     // seek 后从新位置/新相位开始：首块 10ms 淡入。
                     self.fade_in_frames = super::pause_fade_frames(self.engine.sample_rate);
                     self.play_timing = Some((t0, from_sample));
@@ -239,6 +242,7 @@ impl AudioRenderer {
                     self.clear_buffered_audio(self.engine.sample_position());
                     // 方案 B：seek 后异步 chase（current_tick 已由 seek 更新）
                     self.request_chase(self.engine.current_tick());
+                    self.request_loop_chase();
                     // 显式 seek 后从新位置/新相位开始：首块 10ms 淡入。
                     self.fade_in_frames = super::pause_fade_frames(self.engine.sample_rate);
                 }
@@ -253,6 +257,7 @@ impl AudioRenderer {
                     self.clear_buffered_audio(self.engine.sample_position());
                     // 方案 B：Stop 也 seek 到 0，需要 chase 恢复初始 channel state
                     self.request_chase(0);
+                    self.request_loop_chase();
                     self.tailing = false;
                     self.tail_silent_blocks = 0;
                 }
@@ -268,6 +273,7 @@ impl AudioRenderer {
                     self.engine.handle_command(AudioCommand::StopTransport);
                     // 方案 B：停止也 seek 到 0，需要 chase 恢复初始 channel state
                     self.request_chase(0);
+                    self.request_loop_chase();
                     self.tailing = true;
                     self.tail_silent_blocks = 0;
                 }

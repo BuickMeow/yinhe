@@ -459,6 +459,30 @@ fn test_engine_handle_command_seek() {
     assert_eq!(engine.sample_position(), 44100);
 }
 
+/// 用户 seek 必须作废旧位置算出的 chase（否则会把旧位置的 CC7/Program
+/// 带回新位置）；loop 回绕不能作废，否则 loop_chase 永远应用不上。
+#[test]
+fn seek_invalidates_chase_but_loop_wrap_keeps_it() {
+    let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(vec![true; 16]));
+    let before = engine.chase_generation;
+    engine.handle_command(AudioCommand::Seek { sample: 44100 });
+    assert_eq!(
+        engine.chase_generation,
+        before.wrapping_add(1),
+        "seek 应推进 chase 代次"
+    );
+
+    engine.loop_enabled = true;
+    engine.loop_start_tick = 0;
+    engine.loop_end_tick = 480;
+    let before = engine.chase_generation;
+    engine.rewind_to_loop_start();
+    assert_eq!(
+        engine.chase_generation, before,
+        "loop 回绕不得作废 loop_chase"
+    );
+}
+
 #[test]
 fn test_engine_handle_command_skip_tracks() {
     let mask = vec![true; 16];

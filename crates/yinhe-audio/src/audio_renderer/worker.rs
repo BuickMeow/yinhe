@@ -199,6 +199,9 @@ impl AudioRenderer {
                         // 音色库应用完成才报 100%，避免进度条先满、声音还没准备好。
                         self.state.sf_progress.store(1000, Ordering::Relaxed);
                         self.state.sf_loading.store(false, Ordering::Relaxed);
+                        // 模型可能先于音色库就绪（mark_audio_ready 当时被
+                        // sf_loading 挡住）；这里补最后一次放行。
+                        self.mark_audio_ready();
                     }
                     did_work = true;
                 }

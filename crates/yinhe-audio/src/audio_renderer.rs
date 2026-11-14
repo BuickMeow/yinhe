@@ -199,6 +199,8 @@ struct AudioRenderer {
     interpolation: Interpolation,
     /// 播放启动诊断：Play 时刻与目标位置（首块渲染完成后打印一次耗时）。
     play_timing: Option<(Instant, u64)>,
+    /// 播放启动诊断：还要记录多少个输出块的峰值（Play 后前 20 块 ≈ 200ms）。
+    play_probe: u32,
     /// 导出任务（Some = 导出模式：不推 ring、不发布播放状态，连续离线渲染写 WAV）。
     export: Option<ExportJob>,
     /// 导出结束后要恢复的 xsynth 层数（导出设置不污染用户设置）。
@@ -255,6 +257,7 @@ impl AudioRenderer {
             synth_engine,
             interpolation,
             play_timing: None,
+            play_probe: 0,
         }
     }
 
@@ -266,6 +269,18 @@ impl AudioRenderer {
 
     /// 标记音频就绪（幂等）：UI 的"加载完成"提示以此为准。
     fn mark_audio_ready(&self) {
+        // 音色库仍在加载（worker 解析 key map / 上传样本）时不能提前放行：
+        // 此时 yinhe CPU 的 CpuSynth 还没创建，按 Play 会渲染成静音，
+        // 用户听到的是"加载完成后还要再等几秒"。
+        if self.state.sf_loading.load(Ordering::Acquire) {
+            return;
+        }
+        if self.yinhe_cpu_engine()
+            && self.state.sf_total.load(Ordering::Relaxed) > 0
+            && self.engine.cpu_synth.is_none()
+        {
+            return;
+        }
         if !self.state.audio_ready.swap(true, Ordering::AcqRel) {
             play_log("[play] 音频就绪（模型+音色库+采样上传+管线预热完成）");
         }
@@ -450,6 +465,18 @@ impl AudioRenderer {
                 self.scratch[o + 1] *= g;
             }
             self.fade_in_frames -= n;
+        }
+
+        if self.play_probe > 0 {
+            self.play_probe -= 1;
+            let peak = self.scratch.iter().fold(0.0_f32, |m, s| m.max(s.abs()));
+            play_log(&format!(
+                "[play] probe peak={peak:.4} pos={:.3}s tick={} voices={} ring={}",
+                self.engine.sample_position() as f64 / self.engine.sample_rate as f64,
+                self.engine.current_tick(),
+                self.engine.voice_count(),
+                self.ring.len(),
+            ));
         }
 
         // 尾音结束判定：连续若干块低于静音阈值后停止渲染。
