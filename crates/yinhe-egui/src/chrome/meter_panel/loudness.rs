@@ -143,7 +143,7 @@ impl MeterModule for LoudnessModule {
             ui.painter().vline(
                 x,
                 meter_rect.y_range(),
-                egui::Stroke::new(1.0, crate::theme::text_primary().gamma_multiply(0.35)),
+                egui::Stroke::new(1.0, crate::theme::text_primary().gamma_multiply(0.55)),
             );
             small_label(
                 ui,

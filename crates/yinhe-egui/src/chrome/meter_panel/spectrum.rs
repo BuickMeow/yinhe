@@ -11,7 +11,6 @@ const MIN_DB: f32 = -90.0;
 pub(super) struct SpectrumModule {
     analyzer: SpectrumAnalyzer,
     smooth: Vec<f32>,
-    points: Vec<egui::Pos2>,
     outline: Vec<egui::Pos2>,
     last_dt: f32,
 }
@@ -21,7 +20,6 @@ impl SpectrumModule {
         Self {
             analyzer: SpectrumAnalyzer::new(sample_rate, DEFAULT_FFT_SIZE),
             smooth: vec![MIN_DB; COLUMNS],
-            points: Vec::with_capacity(COLUMNS + 2),
             outline: Vec::with_capacity(COLUMNS),
             last_dt: 1.0 / 60.0,
         }
@@ -47,7 +45,6 @@ impl MeterModule for SpectrumModule {
         if body.width() < 20.0 || body.height() < 16.0 {
             return;
         }
-        grid(ui.painter(), body, 6, 4);
         for f in [100.0, 1_000.0, 10_000.0] {
             let x = Self::x_for_freq(body, f);
             small_label(
@@ -84,29 +81,31 @@ impl MeterModule for SpectrumModule {
             self.smooth[i] += (target - self.smooth[i]) * alpha;
         }
 
-        self.points.clear();
+        // 逐列画矩形而不是一个凹多边形：egui 对凹多边形填充会从首个顶点
+        // 扇形三角化，出现大量从左下角发散的斜线。
         self.outline.clear();
-        self.points.push(egui::pos2(body.min.x, body.max.y));
+        let col_w = body.width() / COLUMNS as f32 + 0.5;
+        let fill = crate::theme::accent_active().gamma_multiply(0.20);
         for i in 0..COLUMNS {
-            let x = body.min.x + body.width() * i as f32 / (COLUMNS - 1) as f32;
             let db = self.smooth[i].clamp(MIN_DB, 0.0);
             let y = body.max.y - body.height() * (db - MIN_DB) / -MIN_DB;
-            let p = egui::pos2(x, y);
-            self.outline.push(p);
-            self.points.push(p);
+            let x = body.min.x + body.width() * i as f32 / (COLUMNS - 1) as f32;
+            ui.painter().rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(x, y),
+                    egui::pos2((x + col_w).min(body.max.x), body.max.y),
+                ),
+                0.0,
+                fill,
+            );
+            self.outline.push(egui::pos2(x, y));
         }
-        self.points.push(egui::pos2(body.max.x, body.max.y));
-        ui.painter().add(egui::Shape::Path(egui::epaint::PathShape {
-            points: std::mem::take(&mut self.points),
-            closed: true,
-            fill: crate::theme::accent_active().gamma_multiply(0.22),
-            stroke: egui::Stroke::NONE.into(),
-        }));
+        // 网格画在填充之上：浅色主题下填充会盖住底部网格。
+        grid(ui.painter(), body, 6, 4);
         ui.painter().add(egui::Shape::line(
             std::mem::take(&mut self.outline),
             egui::Stroke::new(1.0, crate::theme::accent_active()),
         ));
-        self.points.reserve(COLUMNS + 2);
         self.outline.reserve(COLUMNS);
     }
 

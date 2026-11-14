@@ -21,6 +21,8 @@ const DEFAULT_PANEL_H: f32 = 220.0;
 const MODULE_HEADER_H: f32 = 22.0;
 const MODULE_MIN_W: f32 = 128.0;
 const MODULE_GAP: f32 = 2.0;
+/// 末尾「+」和「更多」两列占用的宽度。
+const TOOLBAR_W: f32 = 28.0 + 4.0 + 24.0;
 
 pub(super) trait MeterModule {
     fn update(&mut self, samples: &[f32], sample_rate: u32, dt: f32);
@@ -198,7 +200,6 @@ impl MeterPanelState {
         if height <= MODULE_HEADER_H {
             return false;
         }
-        let available = rect.width();
         if self.layout.is_empty() {
             let add_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(120.0, 28.0));
             let resp = ui.interact(
@@ -220,6 +221,16 @@ impl MeterPanelState {
             return false;
         }
 
+        // 右侧固定工具栏：不放进横向滚动区，保证「+」和「更多」永远可点。
+        let toolbar_rect = egui::Rect::from_min_max(
+            egui::pos2((rect.max.x - TOOLBAR_W).max(rect.min.x), rect.min.y),
+            rect.max,
+        );
+        let modules_rect = egui::Rect::from_min_max(
+            rect.min,
+            egui::pos2(toolbar_rect.min.x - MODULE_GAP, rect.max.y),
+        );
+        let available = modules_rect.width().max(1.0);
         let weights: f32 = self.layout.iter().map(|s| s.weight.max(0.01)).sum();
         let natural: Vec<f32> = self
             .layout
@@ -230,121 +241,124 @@ impl MeterPanelState {
         let total_w: f32 = widths.iter().sum::<f32>() + MODULE_GAP * (self.layout.len() - 1) as f32;
         let content_w = total_w.max(available);
 
-        egui::ScrollArea::horizontal()
-            .id_salt("meter_modules_scroll")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                let (content_rect, _) =
-                    ui.allocate_exact_size(egui::vec2(content_w, height), egui::Sense::hover());
-                let mut x = content_rect.min.x;
-                let mut rects = Vec::with_capacity(self.layout.len());
-                for (idx, slot) in self.layout.iter().enumerate() {
-                    let w = widths[idx];
-                    let module_rect = egui::Rect::from_min_size(
-                        egui::pos2(x, content_rect.min.y),
-                        egui::vec2(w, height),
-                    );
-                    rects.push((slot.kind, module_rect));
-                    x += w + MODULE_GAP;
-                }
-                self.last_rects = rects.clone();
+        ui.scope_builder(egui::UiBuilder::new().max_rect(modules_rect), |ui| {
+            egui::ScrollArea::horizontal()
+                .id_salt("meter_modules_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let (content_rect, _) =
+                        ui.allocate_exact_size(egui::vec2(content_w, height), egui::Sense::hover());
+                    let mut x = content_rect.min.x;
+                    let mut rects = Vec::with_capacity(self.layout.len());
+                    for (idx, slot) in self.layout.iter().enumerate() {
+                        let w = widths[idx];
+                        let module_rect = egui::Rect::from_min_size(
+                            egui::pos2(x, content_rect.min.y),
+                            egui::vec2(w, height),
+                        );
+                        rects.push((slot.kind, module_rect));
+                        x += w + MODULE_GAP;
+                    }
+                    self.last_rects = rects.clone();
 
-                // 先处理拖动排序，再画模块：拖动时实时换位，松手落盘。
-                if let Some(dragging) = self.dragging {
-                    if let Some(pointer) = ui.input(|i| i.pointer.interact_pos()) {
-                        let target = rects
-                            .iter()
-                            .position(|(_, r)| pointer.x < r.center().x)
-                            .unwrap_or(rects.len().saturating_sub(1));
-                        if let Some(from) = self.layout.iter().position(|s| s.kind == dragging)
-                            && from != target
-                            && target < self.layout.len()
-                        {
-                            let slot = self.layout.remove(from);
-                            self.layout.insert(target, slot);
+                    // 先处理拖动排序，再画模块：拖动时实时换位，松手落盘。
+                    if let Some(dragging) = self.dragging {
+                        if let Some(pointer) = ui.input(|i| i.pointer.interact_pos()) {
+                            let target = rects
+                                .iter()
+                                .position(|(_, r)| pointer.x < r.center().x)
+                                .unwrap_or(rects.len().saturating_sub(1));
+                            if let Some(from) = self.layout.iter().position(|s| s.kind == dragging)
+                                && from != target
+                                && target < self.layout.len()
+                            {
+                                let slot = self.layout.remove(from);
+                                self.layout.insert(target, slot);
+                                changed = true;
+                            }
+                        }
+                        if ui.input(|i| i.pointer.any_released()) {
+                            self.dragging = None;
                             changed = true;
                         }
                     }
-                    if ui.input(|i| i.pointer.any_released()) {
-                        self.dragging = None;
-                        changed = true;
+
+                    for idx in 0..self.layout.len() {
+                        let slot = self.layout[idx];
+                        let Some((_, module_rect)) = rects.get(idx).copied() else {
+                            continue;
+                        };
+                        let (next_changed, remove, drag) =
+                            self.draw_module(ui, slot.kind, module_rect, idx);
+                        changed |= next_changed;
+                        if let Some(kind) = drag {
+                            self.dragging = Some(kind);
+                        }
+                        if remove {
+                            self.layout.retain(|s| s.kind != slot.kind);
+                            self.modules.remove(&slot.kind);
+                            changed = true;
+                            break;
+                        }
                     }
-                }
 
-                for idx in 0..self.layout.len() {
-                    let slot = self.layout[idx];
-                    let Some((_, module_rect)) = rects.get(idx).copied() else {
-                        continue;
-                    };
-                    let (next_changed, remove, drag) =
-                        self.draw_module(ui, slot.kind, module_rect, idx);
-                    changed |= next_changed;
-                    if let Some(kind) = drag {
-                        self.dragging = Some(kind);
+                    // 拖动插入指示线。
+                    if let Some(dragging) = self.dragging
+                        && let Some(pointer) = ui.input(|i| i.pointer.interact_pos())
+                        && let Some((_, r)) = rects
+                            .iter()
+                            .find(|(kind, r)| *kind == dragging || pointer.x < r.center().x)
+                    {
+                        let line_x = r.min.x - MODULE_GAP * 0.5;
+                        ui.painter().vline(
+                            line_x,
+                            r.y_range(),
+                            egui::Stroke::new(2.0, crate::theme::accent_active()),
+                        );
                     }
-                    if remove {
-                        self.layout.retain(|s| s.kind != slot.kind);
-                        self.modules.remove(&slot.kind);
-                        changed = true;
-                        break;
-                    }
-                }
+                });
+        });
 
-                // 拖动插入指示线。
-                if let Some(dragging) = self.dragging
-                    && let Some(pointer) = ui.input(|i| i.pointer.interact_pos())
-                    && let Some((_, r)) = rects
-                        .iter()
-                        .find(|(kind, r)| *kind == dragging || pointer.x < r.center().x)
-                {
-                    let line_x = r.min.x - MODULE_GAP * 0.5;
-                    ui.painter().vline(
-                        line_x,
-                        r.y_range(),
-                        egui::Stroke::new(2.0, crate::theme::accent_active()),
-                    );
-                }
+        // 「+」添加模块。
+        let add_rect = egui::Rect::from_center_size(
+            egui::pos2(toolbar_rect.center().x, toolbar_rect.center().y - 14.0),
+            egui::vec2(24.0, 24.0),
+        );
+        let add_resp = ui.interact(
+            add_rect,
+            ui.scope_id().with("meter_add_end"),
+            egui::Sense::click(),
+        );
+        if add_resp.hovered() {
+            ui.painter().rect_filled(
+                add_rect,
+                3.0,
+                crate::theme::hover_color(crate::theme::line_fg()),
+            );
+        }
+        icon_at(
+            ui,
+            add_rect,
+            egui_material_icons::icons::ICON_ADD,
+            if add_resp.hovered() {
+                crate::theme::text_primary()
+            } else {
+                crate::theme::text_muted()
+            },
+        );
+        crate::widgets::hint::hover(ui.ctx(), &add_resp, t!("hint.meter.add"));
+        if add_resp.clicked() {
+            self.open_add_menu(ui, &add_resp);
+        }
 
-                // 末尾「+」：添加模块。
-                let add_rect = egui::Rect::from_min_size(
-                    egui::pos2(x, content_rect.min.y),
-                    egui::vec2(28.0, height),
-                );
-                let add_resp = ui.interact(
-                    add_rect,
-                    ui.scope_id().with("meter_add_end"),
-                    egui::Sense::click(),
-                );
-                ui.painter().text(
-                    add_rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    egui_material_icons::icons::ICON_ADD.codepoint,
-                    egui::FontId::new(
-                        crate::theme::ICON_FONT_SM,
-                        egui_material_icons::icons::ICON_ADD.font_family(),
-                    ),
-                    if add_resp.hovered() {
-                        crate::theme::text_primary()
-                    } else {
-                        crate::theme::text_muted()
-                    },
-                );
-                crate::widgets::hint::hover(ui.ctx(), &add_resp, t!("hint.meter.add"));
-                if add_resp.clicked() {
-                    self.open_add_menu(ui, &add_resp);
-                }
-
-                // 末尾菜单：恢复默认布局。
-                let menu_rect = egui::Rect::from_min_size(
-                    egui::pos2(x + 32.0, content_rect.min.y),
-                    egui::vec2(24.0, height),
-                );
-                if (menu_rect.max.x <= content_rect.max.x || content_w <= available)
-                    && let Some(changed_layout) = self.draw_reset_menu(ui, menu_rect)
-                {
-                    changed |= changed_layout;
-                }
-            });
+        // 「更多」：恢复默认布局 / 重置全部数据。
+        let menu_rect = egui::Rect::from_center_size(
+            egui::pos2(toolbar_rect.center().x, toolbar_rect.center().y + 14.0),
+            egui::vec2(24.0, 24.0),
+        );
+        if let Some(changed_layout) = self.draw_reset_menu(ui, menu_rect) {
+            changed |= changed_layout;
+        }
         changed
     }
 
@@ -435,7 +449,7 @@ impl MeterPanelState {
     }
 
     fn open_add_menu(&mut self, _ui: &mut egui::Ui, resp: &egui::Response) {
-        egui::Popup::from_response(resp)
+        egui::Popup::from_toggle_button_response(resp)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
                 ui.set_min_width(150.0);
@@ -467,7 +481,7 @@ impl MeterPanelState {
         );
         crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.meter.more"));
         let mut changed = false;
-        egui::Popup::from_response(&resp)
+        egui::Popup::from_toggle_button_response(&resp)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
             .show(|ui| {
                 if ui.button(t!("meter.reset_layout").to_string()).clicked() {
@@ -531,7 +545,7 @@ pub(super) fn plot_bg(ui: &egui::Ui, rect: egui::Rect) {
 }
 
 pub(super) fn grid(painter: &egui::Painter, rect: egui::Rect, x_lines: usize, y_lines: usize) {
-    let stroke = egui::Stroke::new(1.0, crate::theme::line_fg().gamma_multiply(0.22));
+    let stroke = egui::Stroke::new(1.0, crate::theme::text_muted().gamma_multiply(0.5));
     for i in 1..x_lines {
         let x = rect.min.x + rect.width() * i as f32 / x_lines as f32;
         painter.vline(x, rect.y_range(), stroke);
