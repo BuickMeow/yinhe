@@ -63,6 +63,7 @@ impl AudioRenderer {
                 self.engine
                     .handle_command(AudioCommand::Play { from_sample: 0 });
                 self.engine.export_mode = true;
+                self.engine.mixer.set_master_sample_tap_enabled(false);
                 self.export = Some(job);
                 self.export_prev_layer_count = Some(restore_layer_count);
                 // 让 UI 立即看到导出开始（停止外观）。
@@ -152,6 +153,7 @@ impl AudioRenderer {
             }
         }
         self.engine.export_mode = false;
+        self.engine.mixer.set_master_sample_tap_enabled(true);
         // 回到干净停止态（导出期间未推 ring，这里确保停止后无残留），
         // 并恢复导出前的 xsynth 层数（导出设置不污染用户设置）。
         self.engine.handle_command(AudioCommand::Stop);

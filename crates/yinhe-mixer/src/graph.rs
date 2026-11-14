@@ -10,7 +10,7 @@
 //! 缓冲与处理状态，[`MixerGraph`] 只聚合 master + 通道 + 总线。通道缓冲仍是
 //! 一段连续内存（[`MixerGraph::buffers_mut`] 整体借出做跨通道并行渲染）。
 
-use crate::meter::{MeterReading, MeterTap};
+use crate::meter::{MeterReading, MeterTap, SampleReading, SampleTap};
 use crate::params::{MasterParams, SendParams, StripParams};
 use crate::strip::StripState;
 
@@ -275,11 +275,14 @@ struct MasterChain {
     inserts: Vec<Box<dyn InsertProcessor>>,
     meter: MeterTap,
     reading: MeterReading,
+    sample_tap: SampleTap,
+    sample_reading: SampleReading,
 }
 
 impl MasterChain {
     fn new(frames: usize) -> Self {
         let (meter, reading) = MeterTap::new();
+        let (sample_tap, sample_reading) = SampleTap::new();
         Self {
             l: vec![0.0; frames],
             r: vec![0.0; frames],
@@ -288,6 +291,8 @@ impl MasterChain {
             inserts: Vec::new(),
             meter,
             reading,
+            sample_tap,
+            sample_reading,
         }
     }
 
@@ -626,6 +631,16 @@ impl MixerGraph {
         self.master.meter.clone()
     }
 
+    /// Master 推子/插件后的立体声样本读数端（供电平/频谱分析）。
+    pub fn master_sample_reading(&self) -> SampleReading {
+        self.master.sample_reading.clone()
+    }
+
+    /// 导出/离线渲染期间关闭样本 tap，避免实时表被离线渲染喂数据。
+    pub fn set_master_sample_tap_enabled(&self, enabled: bool) {
+        self.master.sample_tap.set_enabled(enabled);
+    }
+
     /// seek 后清空所有 insert 的处理状态（delay 尾音/envelope 等）
     /// 与 PDC 延迟线内容。
     pub fn reset_inserts(&mut self) {
@@ -910,6 +925,7 @@ impl MixerGraph {
         master.prev_gain = master.gain;
 
         master.meter.publish(&master.l, &master.r);
+        master.sample_tap.publish(&master.l, &master.r);
     }
 }
 

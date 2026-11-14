@@ -8,8 +8,8 @@ use xsynth_core::soundfont::SoundfontBase;
 use crate::audio_out::{self, BufferSize, Device, OutputFormat, Stream, StreamErrorKind};
 use yinhe_core::YinModel;
 use yinhe_mixer::{
-    InsertProcessor, InstrumentProcessor, MasterParams, MeterReading, MixerParams, SendParams,
-    StripParams,
+    InsertProcessor, InstrumentProcessor, MasterParams, MeterReading, MixerParams, SampleReading,
+    SendParams, StripParams,
 };
 use yinhe_types::Interpolation;
 use yinhe_types::SynthEngine;
@@ -293,6 +293,8 @@ struct MixerMeters {
     channels: Vec<MeterReading>,
     /// 主输出读数端。
     master: MeterReading,
+    /// 主输出立体声样本（供电平/频谱分析）。
+    master_samples: SampleReading,
     /// 总线读数端（动态：增删总线由渲染线程更新此槽）。
     buses: Arc<Mutex<Vec<MeterReading>>>,
     /// 每轨电平读数端（线性峰值，渲染线程写、UI 读）。
@@ -308,6 +310,7 @@ impl MixerMeters {
                 .filter_map(|i| engine.mixer.channel_meter_reading(i))
                 .collect(),
             master: engine.mixer.master_meter_reading(),
+            master_samples: engine.mixer.master_sample_reading(),
             buses: Arc::new(Mutex::new(
                 (0..engine.mixer.bus_count())
                     .filter_map(|i| engine.mixer.bus_meter_reading(i))
@@ -344,6 +347,11 @@ impl MixerMeters {
     /// 读主输出电平。
     fn master_read(&self) -> (f32, f32) {
         self.master.read()
+    }
+
+    /// 取走主输出样本（交错立体声）。
+    fn master_samples_drain(&self, out: &mut Vec<f32>) -> usize {
+        self.master_samples.drain_into(out)
     }
 
     /// 读某轨电平（线性峰值；不存在返回 0）。
@@ -614,6 +622,11 @@ impl AudioHandle {
     /// 读主输出电平。
     pub fn master_meter_read(&self) -> (f32, f32) {
         self.meters.master_read()
+    }
+
+    /// 取走主输出样本（交错立体声）。UI 每帧 drain 一次。
+    pub fn master_samples_drain(&self, out: &mut Vec<f32>) -> usize {
+        self.meters.master_samples_drain(out)
     }
 
     /// 读某轨电平 L/R（线性峰值，仅播放时非零；不存在返回 0）。

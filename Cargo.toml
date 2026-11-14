@@ -16,6 +16,7 @@ members = [
     "crates/yinhe-flutter",
     "crates/yinhe-clap",
     "crates/yinhe-mixer",
+    "crates/yinhe-meter",
     "crates/yinhe-vst3",
     "crates/yinhe-memtrace",
     "crates/yinhe-tests",
@@ -51,6 +52,9 @@ tempfile = "3"
 memmap2 = "0.9"
 libc = "0.2"
 chrono = "0.4"
+rtrb = "0.3"
+ebur128 = "0.1"
+realfft = "3"
 
 # 跨 crate 共享依赖
 serde = { version = "1", features = ["derive", "rc"] }

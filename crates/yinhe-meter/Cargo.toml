@@ -1,0 +1,11 @@
+[package]
+name = "yinhe-meter"
+version.workspace = true
+license.workspace = true
+edition = "2024"
+
+[dependencies]
+ebur128 = { workspace = true }
+realfft = { workspace = true }
+
+[dev-dependencies]
