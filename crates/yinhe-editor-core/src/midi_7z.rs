@@ -8,7 +8,8 @@ use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
-use sevenz_rust2::{ArchiveEntry, ArchiveWriter};
+use sevenz_rust2::encoder_options::Lzma2Options;
+use sevenz_rust2::{ArchiveEntry, ArchiveWriter, EncoderConfiguration};
 use yinhe_core::YinModel;
 use yinhe_midi::MidiExportOptions;
 
@@ -85,6 +86,18 @@ impl MidiArchiveFormat {
     }
 }
 
+/// 7z 压缩线程数：桌面最多 8 线程，移动端最多 2（LZMA2 每线程约百 MB 级内存）。
+fn compression_threads() -> u32 {
+    let available = std::thread::available_parallelism()
+        .map(|n| n.get() as u32)
+        .unwrap_or(4);
+    if cfg!(any(target_os = "android", target_env = "ohos")) {
+        available.min(2)
+    } else {
+        available.min(8)
+    }
+}
+
 fn write_7z(
     file: File,
     out_path: &Path,
@@ -95,6 +108,12 @@ fn write_7z(
     let mut writer = ArchiveWriter::create(out_path).map_err(|e| format!("创建 7z 失败: {e}"))?;
     // 不加密头：目标只是压缩分享，加密会让兼容性变差。
     writer.set_encrypt_header(false);
+    // LZMA2 多线程：单线程 LZMA2 在几千 MB 的 MIDI 上要跑很久。
+    // 8MB chunk = preset 6 的字典大小，保证每个 worker 都能吃满一个块；
+    // 移动端限制 2 线程，避免峰值内存过高。
+    writer.set_content_methods(vec![EncoderConfiguration::from(
+        Lzma2Options::from_level_mt(6, compression_threads(), 8 << 20),
+    )]);
     let reader = ProgressReader {
         inner: file,
         total,
