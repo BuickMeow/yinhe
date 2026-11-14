@@ -444,6 +444,8 @@ impl MeterPanelState {
     fn open_add_menu(&mut self, _ui: &mut egui::Ui, resp: &egui::Response) -> bool {
         let mut added = false;
         egui::Popup::from_toggle_button_response(resp)
+            .align(egui::RectAlign::TOP_END)
+            .gap(4.0)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
                 ui.set_min_width(150.0);
@@ -478,6 +480,8 @@ impl MeterPanelState {
         crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.meter.more"));
         let mut changed = false;
         egui::Popup::from_toggle_button_response(&resp)
+            .align(egui::RectAlign::TOP_END)
+            .gap(4.0)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
             .show(|ui| {
                 if ui.button(t!("meter.reset_layout").to_string()).clicked() {
@@ -636,5 +640,53 @@ mod tests {
         assert_eq!(state.layout()[0].kind, MeterModuleKind::Spectrum);
         assert_eq!(state.layout()[1].kind, MeterModuleKind::Vu);
         run_strip(&mut state);
+    }
+}
+
+#[cfg(test)]
+mod click_tests {
+    use super::*;
+
+    #[test]
+    fn plus_click_opens_add_popup() {
+        let ctx = egui::Context::default();
+        let mut state = MeterPanelState::default();
+        let size = egui::vec2(1000.0, 220.0);
+        let plus = egui::pos2(970.0, 96.0);
+        let input = |events: Vec<egui::Event>| egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+            events,
+            ..Default::default()
+        };
+        let run = |state: &mut MeterPanelState, events| {
+            ctx.run_ui(input(events), |ui| {
+                state.update_from_audio(None, 1.0 / 60.0);
+                state.show_strip(ui, ui.max_rect());
+            })
+            .drop_without_applying_deltas();
+        };
+        run(&mut state, vec![egui::Event::PointerMoved(plus)]);
+        run(
+            &mut state,
+            vec![egui::Event::PointerButton {
+                pos: plus,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::default(),
+            }],
+        );
+        run(
+            &mut state,
+            vec![egui::Event::PointerButton {
+                pos: plus,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::default(),
+            }],
+        );
+        assert!(
+            egui::Popup::is_any_open(&ctx),
+            "点击 + 后应打开添加模块菜单"
+        );
     }
 }

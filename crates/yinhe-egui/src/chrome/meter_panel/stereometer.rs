@@ -40,8 +40,10 @@ impl MeterModule for StereometerModule {
         );
         let center = scope.center();
         let radius = scope.width().min(scope.height()) * 0.46;
-        let circle = egui::Stroke::new(1.0, crate::theme::line_fg().gamma_multiply(0.35));
+        let circle = egui::Stroke::new(1.0, crate::theme::text_muted().gamma_multiply(0.55));
+        let grid = egui::Stroke::new(1.0, crate::theme::text_muted().gamma_multiply(0.28));
         ui.painter().circle_stroke(center, radius, circle);
+        ui.painter().circle_stroke(center, radius * 0.5, grid);
         ui.painter().vline(
             center.x,
             egui::Rangef::new(center.y - radius, center.y + radius),
@@ -51,6 +53,15 @@ impl MeterModule for StereometerModule {
             egui::Rangef::new(center.x - radius, center.x + radius),
             center.y,
             circle,
+        );
+        let d = radius * std::f32::consts::FRAC_1_SQRT_2;
+        ui.painter().line_segment(
+            [center + egui::vec2(-d, -d), center + egui::vec2(d, d)],
+            grid,
+        );
+        ui.painter().line_segment(
+            [center + egui::vec2(-d, d), center + egui::vec2(d, -d)],
+            grid,
         );
 
         self.analyzer.points(512, &mut self.points);

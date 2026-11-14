@@ -1,9 +1,11 @@
 use eframe::egui;
-use yinhe_meter::{SpectrumAnalyzer, spectrum::DEFAULT_FFT_SIZE};
+use yinhe_meter::SpectrumAnalyzer;
 
 use super::{MeterModule, grid, plot_bg, small_label};
 
 const COLUMNS: usize = 256;
+/// 频谱默认用更长窗口换取低频分辨率；谱线本身仍由 FFT 分辨率决定。
+const FFT_SIZE: usize = 8192;
 const MIN_FREQ: f32 = 20.0;
 const MAX_FREQ: f32 = 20_000.0;
 const MIN_DB: f32 = -90.0;
@@ -18,7 +20,7 @@ pub(super) struct SpectrumModule {
 impl SpectrumModule {
     pub(super) fn new(sample_rate: u32) -> Self {
         Self {
-            analyzer: SpectrumAnalyzer::new(sample_rate, DEFAULT_FFT_SIZE),
+            analyzer: SpectrumAnalyzer::new(sample_rate, FFT_SIZE),
             smooth: vec![MIN_DB; COLUMNS],
             outline: Vec::with_capacity(COLUMNS),
             last_dt: 1.0 / 60.0,
@@ -66,17 +68,19 @@ impl MeterModule for SpectrumModule {
         }
         let alpha = 1.0 - (-self.last_dt / 0.08).exp();
         for i in 0..COLUMNS {
-            let f0 = MIN_FREQ * (MAX_FREQ / MIN_FREQ).powf(i as f32 / COLUMNS as f32);
-            let f1 = MIN_FREQ * (MAX_FREQ / MIN_FREQ).powf((i + 1) as f32 / COLUMNS as f32);
-            let b0 = ((f0 / self.analyzer.sample_rate() as f32) * self.analyzer.fft_size() as f32)
-                .floor() as usize;
-            let b1 = ((f1 / self.analyzer.sample_rate() as f32) * self.analyzer.fft_size() as f32)
-                .ceil() as usize;
-            let b1 = b1.min(bins.len()).max(b0 + 1).min(bins.len());
-            let target = if b0 < bins.len() {
-                bins[b0..b1].iter().copied().fold(MIN_DB, f32::max)
+            // 取每列中心频率，在对数轴/FFT 线性轴之间做插值：
+            // 低频列间距常常小于一个 FFT bin，直接取整会画出很长的水平台阶。
+            let f = MIN_FREQ * (MAX_FREQ / MIN_FREQ).powf((i as f32 + 0.5) / COLUMNS as f32);
+            let exact_bin =
+                f * self.analyzer.fft_size() as f32 / self.analyzer.sample_rate() as f32;
+            let b0 = exact_bin.floor() as usize;
+            let target = if b0 + 1 < bins.len() {
+                let frac = exact_bin - b0 as f32;
+                let a = bins[b0];
+                let b = bins[b0 + 1];
+                a + (b - a) * frac
             } else {
-                MIN_DB
+                bins.get(b0).copied().unwrap_or(MIN_DB)
             };
             self.smooth[i] += (target - self.smooth[i]) * alpha;
         }
