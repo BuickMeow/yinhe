@@ -377,6 +377,8 @@ pub struct AudioHandle {
     producer_sample_position: Arc<AtomicU64>,
     /// 循环回绕累计绝对偏移（UI 据此把回绕初期的位置钳到循环起点）。
     loop_wrap_offset: Arc<AtomicU64>,
+    /// seek/reload 等清空 ring 的代次（主输出表重置历史用）。
+    reset_generation: Arc<AtomicU64>,
     playing: Arc<AtomicBool>,
     /// 活跃 voice 数（含 release 尾音）：播放到末尾后用它判断何时暂停。
     voice_count: Arc<AtomicU64>,
@@ -632,6 +634,11 @@ impl AudioHandle {
     /// 读某轨电平 L/R（线性峰值，仅播放时非零；不存在返回 0）。
     pub fn track_meter_read(&self, track: usize) -> (f32, f32) {
         self.meters.track_read(track)
+    }
+
+    /// seek/reload 等清空 ring 的代次；变化表示表历史应重置。
+    pub fn reset_generation(&self) -> u64 {
+        self.reset_generation.load(Ordering::Relaxed)
     }
 
     /// 取回渲染线程退回的 insert 处理器（每帧轮询；插件 deactivate 在 UI 线程做）。
@@ -1455,6 +1462,8 @@ struct RendererStarted {
     producer_sample_position: Arc<AtomicU64>,
     /// 循环回绕累计绝对偏移（见 `RendererSharedState::loop_wrap_offset`）。
     loop_wrap_offset: Arc<AtomicU64>,
+    /// seek/reload 等清空 ring 的代次（UI 用它重置表历史）。
+    reset_generation: Arc<AtomicU64>,
     /// 活跃 voice 数（含 release 尾音）。
     voice_count: Arc<AtomicU64>,
     /// 已完成加载的音色库 port 数。
@@ -1504,6 +1513,7 @@ fn init_renderer(
 
     let producer_sample_position = Arc::clone(&renderer_state.producer_sample_position);
     let loop_wrap_offset = Arc::clone(&renderer_state.loop_wrap_offset);
+    let reset_generation = Arc::clone(&renderer_state.reset_generation);
     let sf_loaded = Arc::clone(&renderer_state.sf_loaded);
     let sf_loading = Arc::clone(&renderer_state.sf_loading);
     let sf_total = Arc::clone(&renderer_state.sf_total);
@@ -1557,6 +1567,7 @@ fn init_renderer(
         handle,
         producer_sample_position,
         loop_wrap_offset,
+        reset_generation,
         voice_count,
         sf_loaded,
         sf_loading,
@@ -1777,6 +1788,7 @@ pub fn spawn_cpal_audio(
         handle: renderer_handle,
         producer_sample_position,
         loop_wrap_offset,
+        reset_generation,
         voice_count,
         sf_loaded,
         sf_loading,
@@ -1841,6 +1853,7 @@ pub fn spawn_cpal_audio(
             sample_position,
             producer_sample_position,
             loop_wrap_offset,
+            reset_generation,
             playing,
             voice_count,
             duration_samples,

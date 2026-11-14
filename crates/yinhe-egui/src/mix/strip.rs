@@ -288,6 +288,51 @@ pub(crate) fn master_strip(
             }
         },
     );
+    header_double_click_opens_master_dock(app, ui, idx, ui.max_rect());
+}
+
+/// Master 条双击色带：打开设备链并切到主输出效果链（选中 Conductor 轨，
+/// 让 dock 的“跟随选中轨”逻辑下一帧不会把语境覆盖回普通通道）。
+fn header_double_click_opens_master_dock(
+    app: &mut App,
+    ui: &egui::Ui,
+    idx: usize,
+    rect: egui::Rect,
+) {
+    let header = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), HEADER_H));
+    let resp = ui.interact(
+        header,
+        ui.scope_id().with("mix_strip_master_header"),
+        egui::Sense::click(),
+    );
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.header_double_click"));
+    if !resp.double_clicked() {
+        return;
+    }
+    let split_hit_pad = crate::theme::SPLIT_GAP + 4.0;
+    if ui
+        .input(|i| i.pointer.interact_pos())
+        .is_some_and(|p| p.y < rect.min.y + split_hit_pad)
+    {
+        return;
+    }
+    crate::chrome::mode_bar::set_dock_visible(
+        &mut app.show_pianoroll_in_arrange,
+        &mut app.show_bottom_dock,
+        &mut app.show_mixer_panel,
+        &mut app.show_meter_panel,
+        true,
+    );
+    app.layout_needs_save = true;
+    let conductor = app.workspace.documents[idx].edit.track_cache.conductor_idx;
+    let doc = &mut app.workspace.documents[idx];
+    doc.edit.track_selected.clear();
+    if let Some(ci) = conductor {
+        doc.edit.track_selected.insert(ci);
+    }
+    app.dock_track = conductor;
+    app.dock_context = Some(crate::chrome::device_chain::DockContext::Master);
+    app.dock_selected = None;
 }
 
 /// 色带双击：打开底部设备链（dock）并选中该通道（通道条 / 音频条共用）。
@@ -322,6 +367,7 @@ fn header_double_click_opens_dock(
         &mut app.show_pianoroll_in_arrange,
         &mut app.show_bottom_dock,
         &mut app.show_mixer_panel,
+        &mut app.show_meter_panel,
         true,
     );
     app.layout_needs_save = true;

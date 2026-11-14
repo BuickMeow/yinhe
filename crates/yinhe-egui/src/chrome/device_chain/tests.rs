@@ -145,3 +145,11 @@ fn vertical_title_is_centered() {
     })
     .drop_without_applying_deltas();
 }
+
+/// Conductor/Master 轨映射到主输出设备链，而不是继续留在上一个通道语境。
+#[test]
+fn master_track_maps_to_master_dock_context() {
+    let doc = Document::empty();
+    let master = &doc.data.model.tracks[0];
+    assert_eq!(track_context(master), Some(DockContext::Master));
+}

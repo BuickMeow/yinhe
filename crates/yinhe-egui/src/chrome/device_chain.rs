@@ -225,14 +225,16 @@ pub(crate) enum DockContext {
     Midi(u8),
     /// 音频通道（0 起）。
     Audio(u16),
+    /// 主输出（Conductor/Master 轨的音频侧）。
+    Master,
 }
 
-/// 选中轨 → dock 通道语境。Master/Conductor 轨没有通道语境（返回 None）。
+/// 选中轨 → dock 通道语境。Master/Conductor 轨映射到主输出效果链。
 fn track_context(t: &yinhe_core::TrackData) -> Option<DockContext> {
     match t.kind {
         TrackKind::Audio => Some(DockContext::Audio(t.audio_channel.unwrap_or(0))),
         TrackKind::Midi => Some(DockContext::Midi(t.global_channel())),
-        TrackKind::Master => None,
+        TrackKind::Master => Some(DockContext::Master),
     }
 }
 
@@ -319,6 +321,7 @@ fn collect_dock_state(app: &mut App, idx: usize) -> Option<DockState> {
     let insert_target = match context {
         DockContext::Midi(ch) => yinhe_audio::InsertTarget::Channel(ch),
         DockContext::Audio(ach) => yinhe_audio::InsertTarget::Audio(ach),
+        DockContext::Master => yinhe_audio::InsertTarget::Master,
     };
     // 该 MIDI 通道挂载的插件乐器名（None = 默认内置 XSynth）。
     let instrument_plugin: Option<String> = midi_channel.and_then(|ch| {
@@ -345,6 +348,7 @@ fn collect_dock_state(app: &mut App, idx: usize) -> Option<DockState> {
     let belongs = |t: &std::sync::Arc<yinhe_core::TrackData>| match context {
         DockContext::Midi(ch) => t.global_channel() == ch,
         DockContext::Audio(ach) => t.audio_channel == Some(ach),
+        DockContext::Master => false,
     };
     // lane 归属轨：该通道的所有轨（导入的自动化挂在独立 "CC xx" 轨上，
     // 不能用"第一条轨"定位）。
@@ -696,6 +700,7 @@ fn context_label(context: DockContext) -> String {
     match context {
         DockContext::Midi(ch) => crate::mix::channel_label(ch),
         DockContext::Audio(ach) => crate::mix::audio_label(ach),
+        DockContext::Master => t!("mix.master").to_string(),
     }
 }
 
