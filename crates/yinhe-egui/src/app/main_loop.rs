@@ -508,6 +508,7 @@ impl eframe::App for App {
             &mut self.tab_scroll_offset,
             &self.audio_settings.recent_files,
             &self.audio_settings.recent_file_times,
+            &mut self.notifications,
         );
         match title_bar_action {
             Some(title_bar::TitleBarAction::CloseDocument(idx)) => {
@@ -874,7 +875,6 @@ impl eframe::App for App {
             self.fps,
             self.pianoroll.lod_block(),
             &mut self.show_mem_breakdown,
-            &mut self.notifications,
         );
         // PR/dock/mixer 显示切换 → 布局设置写盘（帧末 sync_layout_settings 统一落盘）
         if self.show_pianoroll_in_arrange != self.audio_settings.layout.show_pianoroll_in_arrange {
@@ -911,11 +911,6 @@ impl eframe::App for App {
         // dock 只能在右栏左侧展开（与 PR 同规则）。
         let right_panel_rect = self.right_panel_placeholder(ui);
 
-        // 通知区 = transport bar 下沿到底栏（mode bar）之上的中央内容区。
-        // 必须在 dock show 之前取：通知是浮层，与钢琴一致地浮在 dock 之上，
-        // 不因 dock 展开被推高；上裁剪线由 transport bar 掩护。
-        let notif_area = ui.available_rect_before_wrap();
-
         // ── Bottom device dock（三视图通用；Panel::bottom 自动扣减可用区）──
         crate::chrome::device_chain::show(self, ui);
         // ── 主输出表（同样用 Panel::bottom，自动扣减可用区）──
@@ -935,17 +930,12 @@ impl eframe::App for App {
         self.show_dialogs(ui);
         self.show_unsaved_dialog(ui);
 
-        // ── Toasts + 通知中心（浮空在内容之上，右下→右上）──
-        // 自动收起时长每帧同步（新建/完成时按当时值定档）；0 = 不自动收起。
-        let secs = |s: f32| (s > 0.0).then_some(s);
-        self.notifications.set_collapse_durations(
-            secs(self.audio_settings.toast_collapse_secs),
-            secs(self.audio_settings.toast_action_collapse_secs),
-        );
-        self.notifications
-            .set_enabled(self.audio_settings.toast_enabled);
-        self.notifications.show_toasts(ui.ctx(), notif_area);
-        self.notifications.show_center(ui.ctx(), notif_area);
+        // ── 阻塞式错误窗口（队列逐条确认；取消/中止不属于错误）──
+        if let Some(err) = self.notifications.front_error().cloned()
+            && crate::dialogs::error_modal::show(ui.ctx(), &err)
+        {
+            self.notifications.pop_error();
+        }
 
         // ── 帧末提交统一悬停提示（写入值快照给下一帧 mode bar 渲染）──
         crate::widgets::hint::commit(ui.ctx());

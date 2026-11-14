@@ -4,7 +4,7 @@ use rust_i18n::t;
 use crate::audio_settings::AudioSettings;
 
 /// 设置左栏分类图标（与 `CATEGORY_KEYS` 一一对应）。
-const CATEGORY_ICONS: [egui_material_icons::MaterialIcon; 11] = [
+const CATEGORY_ICONS: [egui_material_icons::MaterialIcon; 10] = [
     egui_material_icons::icons::ICON_PALETTE,       // theme
     egui_material_icons::icons::ICON_DASHBOARD,     // appearance（含渲染）
     egui_material_icons::icons::ICON_LANGUAGE,      // language
@@ -12,7 +12,6 @@ const CATEGORY_ICONS: [egui_material_icons::MaterialIcon; 11] = [
     egui_material_icons::icons::ICON_FILE_DOWNLOAD, // midi_export
     egui_material_icons::icons::ICON_EDIT,          // editing
     egui_material_icons::icons::ICON_KEYBOARD,      // shortcuts
-    egui_material_icons::icons::ICON_NOTIFICATIONS, // notification
     egui_material_icons::icons::ICON_SAVE,          // saving
     egui_material_icons::icons::ICON_LIBRARY_MUSIC, // soundfont
     egui_material_icons::icons::ICON_SETTINGS,      // reset（恢复）
@@ -63,7 +62,6 @@ mod general;
 mod keyboard_layout;
 mod language;
 mod midi_export;
-mod notification;
 mod render;
 mod saving;
 mod search;
@@ -86,8 +84,6 @@ pub use general::show_general_tab;
 pub use language::show_language_tab;
 #[allow(unused_imports)]
 pub use midi_export::show_midi_export_tab;
-#[allow(unused_imports)]
-pub use notification::show_notification_tab;
 #[allow(unused_imports)]
 pub use render::show_render_tab;
 #[allow(unused_imports)]
@@ -462,15 +458,12 @@ mod tests {
             "settings.cat.reset",
             "恢复出厂设置必须在最后"
         );
-        // 通知 / 保存仍在「系统」组内
-        assert_eq!(CATEGORY_KEYS[7], "settings.cat.notification");
-        assert_eq!(CATEGORY_KEYS[8], "settings.cat.saving");
-        assert_eq!(CATEGORY_KEYS[9], "settings.cat.soundfont");
-        for zh in ["完成通知自动收起", "可操作通知自动收起", "开启通知"] {
-            assert_eq!(item(zh).cat, 7, "{zh} 应在通知分类");
-        }
+        // 保存 / 恢复仍在「系统」组内
+        assert_eq!(CATEGORY_KEYS[7], "settings.cat.saving");
+        assert_eq!(CATEGORY_KEYS[8], "settings.cat.soundfont");
+        assert_eq!(CATEGORY_KEYS[9], "settings.cat.reset");
         for zh in ["自动保存", "自动保存间隔"] {
-            assert_eq!(item(zh).cat, 8, "{zh} 应在保存分类");
+            assert_eq!(item(zh).cat, 7, "{zh} 应在保存分类");
         }
     }
 
@@ -506,7 +499,6 @@ mod a11y_tests {
             ("editing", show_editing_tab),
             ("render", show_render_tab),
             ("midi_export", show_midi_export_tab),
-            ("notification", show_notification_tab),
             ("saving", show_saving_tab),
             ("language", show_language_tab),
             ("shortcuts", show_shortcuts_tab),

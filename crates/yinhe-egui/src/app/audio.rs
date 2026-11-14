@@ -2,9 +2,9 @@ use crate::app::App;
 use rust_i18n::t;
 use yinhe_editor_core::progress;
 
+use crate::widgets::toast::ENGINE_PROGRESS_ID;
 use crate::widgets::toast::kind::ToastKind;
 use crate::widgets::toast::model::ProgressOutcome;
-use crate::widgets::toast::state::ENGINE_PROGRESS_ID;
 
 impl App {
     /// Notify the audio engine that the active document's model has changed (full
@@ -667,7 +667,7 @@ impl App {
             if self.audio_state.engine_toast.take().is_some() {
                 self.notifications.finish_progress(
                     ENGINE_PROGRESS_ID,
-                    ProgressOutcome::Aborted,
+                    ProgressOutcome::Failed,
                     t!("toast.engine_failed").to_string(),
                     String::new(),
                     None,

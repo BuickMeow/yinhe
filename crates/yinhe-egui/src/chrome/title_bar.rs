@@ -18,6 +18,8 @@ use rust_i18n::t;
 use paint::BarMetrics;
 use yinhe_editor_core::document::Document;
 
+use crate::widgets::toast::Notifications;
+
 /// Height of the custom title bar.
 pub(crate) const TITLE_BAR_HEIGHT: f32 = crate::theme::TITLE_BAR_H;
 
@@ -65,6 +67,7 @@ pub(crate) fn show(
     tab_scroll_offset: &mut f32,
     recent: &[String],
     recent_times: &std::collections::HashMap<String, i64>,
+    notifications: &mut Notifications,
 ) -> Option<TitleBarAction> {
     let mut action = None;
     egui::Panel::top("title_bar")
@@ -103,6 +106,28 @@ pub(crate) fn show(
             }
             // 应用名「Yinhe」可点击矩形（打开欢迎窗口）
             let title_rect = paint::title_rect(&painter, &m);
+
+            // ── 工程名右侧的通知条（相对于当前工程的操作反馈）──
+            // 避开中央应用名与右侧窗口按钮；宽度不足时由通知层自动隐藏。
+            let reserve_right = if cfg!(target_os = "macos") {
+                8.0
+            } else {
+                138.0
+            };
+            let notif_left = if n_docs > 0 {
+                active_rect.max.x + 8.0
+            } else {
+                m.bar_rect.min.x + m.left_padding
+            }
+            .max(title_rect.max.x + 8.0);
+            let notif_area = egui::Rect::from_min_max(
+                egui::pos2(notif_left, m.tab_y),
+                egui::pos2(
+                    (m.bar_rect.max.x - reserve_right).max(notif_left),
+                    m.tab_y + m.tab_h,
+                ),
+            );
+            let notif_rect = notifications.show_title_bar(ui, notif_area);
 
             // ── Handle mouse wheel / trackpad scroll for tab overflow ──
             let pointer_in_bar = ui.input(|i| {
@@ -169,7 +194,10 @@ pub(crate) fn show(
                 m.bar_rect.max.x - 138.0
             };
             let in_blank_area = |pos: egui::Pos2| {
-                pos.x >= blank_left && pos.x <= blank_right && m.bar_rect.y_range().contains(pos.y)
+                pos.x >= blank_left
+                    && pos.x <= blank_right
+                    && m.bar_rect.y_range().contains(pos.y)
+                    && !notif_rect.contains(pos)
             };
 
             // 记录按下起点（标题栏任意位置；标签上额外记下索引）
@@ -177,6 +205,7 @@ pub(crate) fn show(
                 && button_pressed
                 && let Some(pos) = pointer_pos
                 && m.bar_rect.contains(pos)
+                && !notif_rect.contains(pos)
             {
                 let idx = tab_rects.iter().position(|r| r.contains(pos));
                 press = Some(TitlePress {
@@ -484,6 +513,7 @@ mod tests {
         action: Option<&'static str>,
         active_doc: Option<usize>,
         scroll: f32,
+        notifications: Notifications,
     }
 
     /// macOS left_padding=80、标签宽度动态（短名 "test.mid" 取最小宽度 120）
@@ -508,6 +538,7 @@ mod tests {
                         &mut st.scroll,
                         recent,
                         &times,
+                        &mut st.notifications,
                     ) {
                         st.action = Some(match a {
                             TitleBarAction::CloseDocument(_) => "close",

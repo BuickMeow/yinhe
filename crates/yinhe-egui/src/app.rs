@@ -303,11 +303,11 @@ pub struct App {
 }
 
 impl App {
-    /// 弹出错误 toast（无进度卡的错误场景；有进度卡的由 finish_progress 收尾）。
+    /// 弹出阻塞式错误窗口（无进度卡的错误场景；有进度卡的由 finish_progress 收尾）。
     /// `title` 按场景给（打开失败/文件不存在/…），`message` 为具体错误描述，
     /// 两者都应为已翻译文案。
     pub(crate) fn show_error(&mut self, title: impl Into<String>, message: impl Into<String>) {
-        self.notifications.error(title, message);
+        self.notifications.report_error(title, message);
     }
 
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {

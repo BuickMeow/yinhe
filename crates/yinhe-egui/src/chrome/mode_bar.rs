@@ -226,7 +226,6 @@ pub fn show(
     // 当前 PR 音符 LOD 块宽（tick）；None = 原始音符层。
     lod_block: Option<u32>,
     show_mem_breakdown: &mut bool,
-    notifications: &mut crate::widgets::toast::Notifications,
 ) {
     // 面板按钮本帧信息（浮动气泡锚点/触发用；Panel 闭包内收集，闭包外消费）。
     let mut panel_buttons: Vec<PanelButtonInfo> = Vec::new();
@@ -486,34 +485,7 @@ pub fn show(
                             let mut icon_hint: Option<String> = None;
 
                             // Right-most first (from right to left):
-                            //  1. Notifications (bell)
-                            //  2. ICON_INFO
-
-                            // 通知铃铛：最右侧第一个，不与右侧栏联动；总开关关闭时隐藏
-                            if notifications.is_enabled() {
-                                let has_unread = notifications.has_unread();
-                                let icon = if has_unread {
-                                    ICON_NOTIFICATIONS_UNREAD
-                                } else {
-                                    ICON_NOTIFICATIONS
-                                };
-                                let was_open = notifications.center_open;
-                                if right_icon_button(
-                                    ui,
-                                    icon,
-                                    was_open,
-                                    t!("hint.notifications").as_ref(),
-                                    || {
-                                        notifications.center_open = !was_open;
-                                        if notifications.center_open {
-                                            notifications.mark_all_read();
-                                        }
-                                    },
-                                ) {
-                                    icon_hint = Some(t!("hint.notifications").to_string());
-                                }
-                                ui.add_space(4.0);
-                            }
+                            //  1. ICON_INFO（右栏信息面板）
 
                             if right_icon_button(
                                 ui,

@@ -215,7 +215,7 @@ impl App {
         // 若 toast 正在离开（用户点了 X/取消），不再 upsert，避免复活
         if self
             .notifications
-            .is_leaving(crate::widgets::toast::LOADING_PROGRESS_ID)
+            .is_dismissed(crate::widgets::toast::LOADING_PROGRESS_ID)
         {
             // 检测取消：toast 的 stop 按钮置位 cancel flag 则真正取消加载
             if let Some(flag) = self
@@ -252,7 +252,7 @@ impl App {
         // “准备中…”由 source 在状态缺失时自行返回，卡片只建一次，进度渲染时 pull
         if self
             .notifications
-            .is_leaving(crate::widgets::toast::SAVE_PROGRESS_ID)
+            .is_dismissed(crate::widgets::toast::SAVE_PROGRESS_ID)
         {
         } else if self.jobs.is_saving() {
             let src = std::sync::Arc::new(crate::dialogs::save_overlay::SaveToastSource {
@@ -315,7 +315,7 @@ impl App {
         // ── MIDI export progress toast（后台线程，与音频播放互不影响）──
         if self
             .notifications
-            .is_leaving(crate::widgets::toast::MIDI_EXPORT_PROGRESS_ID)
+            .is_dismissed(crate::widgets::toast::MIDI_EXPORT_PROGRESS_ID)
         {
             // 用户收起卡片只翻可见性，任务继续跑；完成后 poll 会转完成卡。
         } else if self.jobs.is_midi_exporting() {
@@ -339,7 +339,7 @@ impl App {
         // ── Export progress toast（替代 export_progress viewport）──
         if self
             .notifications
-            .is_leaving(crate::widgets::toast::EXPORT_PROGRESS_ID)
+            .is_dismissed(crate::widgets::toast::EXPORT_PROGRESS_ID)
         {
             // 用户点了 X（»）只是收起卡片，不置 cancel 标志，任务继续后台跑；
             // 只有 stop 按钮才会置位 cancel flag（下一帧 poll 线程退出）。
@@ -366,7 +366,7 @@ impl App {
         // ── PPQ rescale progress toast（替代 rescale_overlay viewport）──
         if self
             .notifications
-            .is_leaving(crate::widgets::toast::RESCALE_PROGRESS_ID)
+            .is_dismissed(crate::widgets::toast::RESCALE_PROGRESS_ID)
         {
         } else if self.jobs.is_rescaling() {
             let cancelled = self

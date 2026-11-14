@@ -31,27 +31,6 @@ pub const PINNED_INSERT_ACTIONS_LEN: usize = 9;
 /// 操作菜单图钉数组长度：复用 `EditAction::pinned_index()` 的全量索引。
 pub const PINNED_OPERATION_ACTIONS_LEN: usize = 24;
 
-fn default_toast_collapse_secs() -> f32 {
-    5.0
-}
-
-fn default_toast_action_collapse_secs() -> f32 {
-    60.0
-}
-
-/// 旧配置里自动收起是 `Option<u32>`（null = 不自动收起）。迁移到 `f32` 秒：
-/// null 视为 `0.0`（不自动收起），字段缺失则由 `default` 函数给默认值。
-fn de_toast_secs<'de, D>(deserializer: D) -> Result<f32, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Ok(Option::<f32>::deserialize(deserializer)?.unwrap_or(0.0))
-}
-
-fn default_toast_enabled() -> bool {
-    true
-}
-
 fn default_lod_enabled() -> bool {
     true
 }
@@ -144,21 +123,6 @@ pub struct AudioSettings {
     /// PR 其他轨道去色：仅选中轨保留彩色（不影响 AR）。
     #[serde(default)]
     pub gray_other_tracks: bool,
-    /// 完成通知自动收起秒数（0 = 不自动收起，支持小数）
-    #[serde(
-        default = "default_toast_collapse_secs",
-        deserialize_with = "de_toast_secs"
-    )]
-    pub toast_collapse_secs: f32,
-    /// 可操作通知自动收起秒数（0 = 不自动收起，支持小数）
-    #[serde(
-        default = "default_toast_action_collapse_secs",
-        deserialize_with = "de_toast_secs"
-    )]
-    pub toast_action_collapse_secs: f32,
-    /// 是否开启通知（关闭后不再弹出任何通知，新的也不再记入历史）
-    #[serde(default = "default_toast_enabled")]
-    pub toast_enabled: bool,
     /// 自动保存：定时把脏文档备份到配置目录的 autosave/（不覆盖原文件）
     #[serde(default = "default_auto_save_enabled")]
     pub auto_save_enabled: bool,
@@ -247,9 +211,6 @@ impl Default for AudioSettings {
             font_scale: 1.0,
             lod_enabled: true,
             gray_other_tracks: false,
-            toast_collapse_secs: default_toast_collapse_secs(),
-            toast_action_collapse_secs: default_toast_action_collapse_secs(),
-            toast_enabled: default_toast_enabled(),
             auto_save_enabled: default_auto_save_enabled(),
             auto_save_interval_secs: default_auto_save_interval_secs(),
             layout: LayoutSettings::default(),
@@ -286,17 +247,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn toast_enabled_defaults_true_for_old_saves() {
-        // 旧存档缺字段必须能反序列化，且默认为开启
-        let mut v = serde_json::to_value(AudioSettings::default()).expect("serialize default");
-        v.as_object_mut()
-            .expect("settings serializes to object")
-            .remove("toast_enabled");
-        let s: AudioSettings = serde_json::from_value(v).expect("old save without flag loads");
-        assert!(s.toast_enabled);
-    }
-
-    #[test]
     fn clip_enabled_defaults_false_for_old_saves() {
         // 实验性 Clip 默认关闭；旧存档缺字段也必须能反序列化
         let mut v = serde_json::to_value(AudioSettings::default()).expect("serialize default");
@@ -328,17 +278,6 @@ mod tests {
         s.ignore_velocity = 2;
         assert!(!s.is_velocity_audible(2), "忽略力度 ≤2");
         assert!(s.is_velocity_audible(3));
-    }
-
-    #[test]
-    fn toast_enabled_roundtrips_when_off() {
-        let s = AudioSettings {
-            toast_enabled: false,
-            ..Default::default()
-        };
-        let json = serde_json::to_string(&s).expect("serialize");
-        let back: AudioSettings = serde_json::from_str(&json).expect("deserialize");
-        assert!(!back.toast_enabled);
     }
 
     /// 旧配置（`use_gpu_synth: bool` 字段）加载：未知字段忽略，synth_engine 取默认。

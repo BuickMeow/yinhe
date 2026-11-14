@@ -1,6 +1,6 @@
 // ── 设置分类（左侧导航，顺序即 settings_tab 索引） ──
 
-pub const CATEGORY_KEYS: [&str; 11] = [
+pub const CATEGORY_KEYS: [&str; 10] = [
     "settings.cat.theme",
     "settings.cat.appearance",
     "settings.cat.language",
@@ -8,7 +8,6 @@ pub const CATEGORY_KEYS: [&str; 11] = [
     "settings.cat.midi_export",
     "settings.cat.editing",
     "settings.cat.shortcuts",
-    "settings.cat.notification",
     "settings.cat.saving",
     "settings.cat.soundfont",
     // 「恢复」放最后：破坏性操作不该出现在常用分类中间。
@@ -26,13 +25,13 @@ pub const CATEGORY_GROUPS: [(&str, &[usize]); 6] = [
     // 界面语言
     ("settings.group.language", &[2]),
     // 音频 / 音色库：听起来怎样
-    ("settings.group.sound", &[3, 9]),
+    ("settings.group.sound", &[3, 8]),
     // MIDI 导入导出
     ("settings.group.midi", &[4]),
     // 编辑与快捷键
     ("settings.group.editing", &[5, 6]),
-    // 通知 / 保存 / 恢复
-    ("settings.group.system", &[7, 8, 10]),
+    // 保存 / 恢复
+    ("settings.group.system", &[7, 9]),
 ];
 
 /// 设置项注册表（供搜索）：各语言名称均可直接检索。
@@ -47,14 +46,14 @@ pub struct SettingItem {
 
 pub const SETTING_ITEMS: &[SettingItem] = &[
     SettingItem {
-        cat: 9,
+        cat: 8,
         zh: "全局音色库",
         en: "Global SoundFont",
         ja: "グローバルサウンドフォント",
         ko: "전역 사운드폰트",
     },
     SettingItem {
-        cat: 9,
+        cat: 8,
         zh: "音色库",
         en: "SoundFont",
         ja: "サウンドフォント",
@@ -278,7 +277,7 @@ pub const SETTING_ITEMS: &[SettingItem] = &[
         ko: "단축키 초기화",
     },
     SettingItem {
-        cat: 10,
+        cat: 9,
         zh: "恢复出厂设置",
         en: "Factory reset",
         ja: "工場出荷時リセット",
@@ -286,34 +285,13 @@ pub const SETTING_ITEMS: &[SettingItem] = &[
     },
     SettingItem {
         cat: 7,
-        zh: "完成通知自动收起",
-        en: "Auto-collapse finished notifications",
-        ja: "完了通知の自動格納",
-        ko: "완료 알림 자동 접기",
-    },
-    SettingItem {
-        cat: 7,
-        zh: "可操作通知自动收起",
-        en: "Auto-collapse actionable notifications",
-        ja: "操作可能な通知の自動格納",
-        ko: "작업 가능 알림 자동 접기",
-    },
-    SettingItem {
-        cat: 7,
-        zh: "开启通知",
-        en: "Enable notifications",
-        ja: "通知を有効化",
-        ko: "알림 활성화",
-    },
-    SettingItem {
-        cat: 8,
         zh: "自动保存",
         en: "Auto save",
         ja: "自動保存",
         ko: "자동 저장",
     },
     SettingItem {
-        cat: 8,
+        cat: 7,
         zh: "自动保存间隔",
         en: "Auto-save interval",
         ja: "自動保存の間隔",

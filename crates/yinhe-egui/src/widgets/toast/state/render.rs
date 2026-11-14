@@ -1,285 +1,394 @@
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, atomic::AtomicBool};
 
 use eframe::egui;
+use egui_material_icons::icons::{ICON_FOLDER_OPEN, ICON_PAUSE, ICON_PLAY_ARROW, ICON_STOP};
 
-use super::super::layout::{is_fully_outside, stack_ys};
-use super::super::model::Notification;
-use super::super::{anim, card};
+use super::super::kind::ToastKind;
+use super::super::model::{Notification, ToastAction, ToastActionKind};
 use super::Notifications;
 
-const CARD_W: f32 = 360.0;
-const GAP: f32 = 8.0;
-/// 浮卡底边距中央区域底部的呼吸间隙。
-const BOTTOM_GAP: f32 = 8.0;
-const RIGHT_PAD: f32 = 32.0;
-/// 浮卡堆叠顶部保留（不压顶部工具栏）。
-const TOP_PAD: f32 = 24.0;
-const EST_H: f32 = 110.0;
-const CLOSE_ANIM: Duration = Duration::from_millis(350);
+/// 标题栏通知条的固定高度（标题栏 32px，上下各留 5px）。
+const BAR_H: f32 = 22.0;
+const MIN_W: f32 = 160.0;
+const MAX_W: f32 = 480.0;
+const SIDE_PAD: f32 = 8.0;
+const TASKS_W: f32 = 340.0;
+
+/// 一帧的渲染快照：避免在闭包里与 `&mut self` 打架。
+struct Row {
+    id: u64,
+    kind: ToastKind,
+    title: String,
+    message: String,
+    progress: Option<f32>,
+    cancel: Option<Arc<AtomicBool>>,
+    pause: Option<Arc<AtomicBool>>,
+    action: Option<ToastAction>,
+    cancelling: bool,
+    running: bool,
+}
+
+impl Row {
+    fn new(n: &Notification) -> Self {
+        let (title, message, progress, _detail) = n.resolve();
+        Self {
+            id: n.id,
+            kind: n.kind,
+            title,
+            message,
+            progress,
+            cancel: n.cancel_flag(),
+            pause: n.pause_flag(),
+            action: n.action.clone(),
+            cancelling: n.cancelling,
+            running: n.source.is_some(),
+        }
+    }
+
+    fn text(&self) -> String {
+        if self.message.is_empty() {
+            self.title.clone()
+        } else {
+            format!("{} · {}", self.title, self.message)
+        }
+    }
+}
+
+fn perform_action(action: &ToastAction) {
+    match &action.kind {
+        ToastActionKind::RevealInFolder(path) => crate::platform::open_containing_folder(path),
+    }
+}
 
 impl Notifications {
-    /// 通知中心列表带 `(bottom_gap, max_h)`：完整使用中央内容区，
-    /// 顶边贴内容区顶、底边贴内容区底（标题栏/底栏之上）——裁剪线与界面
-    /// 边缘重合，列表内部不再出现悬空的裁剪线。
-    fn center_band(ctx: &egui::Context, area: egui::Rect) -> (f32, f32) {
-        let viewport = ctx.viewport_rect();
-        let bottom = area.max.y.min(viewport.max.y);
-        let bottom_gap = (viewport.max.y - bottom).max(0.0);
-        // max_h 即区域全高：Area 顶 = area.max.y - max_h = area.min.y。
-        // （曾再减一次 bottom_gap，导致顶部凭空少掉一个底栏的高度）
-        let max_h = area.height().max(120.0);
-        (bottom_gap, max_h)
+    fn primary_row(&self) -> Option<Row> {
+        self.primary
+            .and_then(|id| self.items.iter().find(|n| n.id == id && !n.dismissed))
+            .map(Row::new)
     }
 
-    /// 浮卡带 `(bottom_gap, max_h)`：底边距内容区底 BOTTOM_GAP，顶边留 TOP_PAD。
-    fn toast_band(ctx: &egui::Context, area: egui::Rect) -> (f32, f32) {
-        let viewport = ctx.viewport_rect();
-        let bottom = area.max.y.min(viewport.max.y);
-        let bottom_gap = (viewport.max.y - bottom + BOTTOM_GAP).max(BOTTOM_GAP);
-        let max_h = (area.height() - TOP_PAD - BOTTOM_GAP).max(120.0);
-        (bottom_gap, max_h)
+    fn task_rows(&self) -> Vec<Row> {
+        self.items
+            .iter()
+            .filter(|n| n.source.is_some() && !n.dismissed)
+            .map(Row::new)
+            .collect()
     }
 
-    /// 条目是否由通知中心列表接管渲染：列表展开时全部接管；
-    /// 关闭退场窗口内，关闭前已存在的条目随列表整列滑出（之后新 push 的走浮卡）。
-    fn center_takes(
-        n: &Notification,
-        center_open: bool,
-        closed_at: Option<Instant>,
-        now: Instant,
-    ) -> bool {
-        if center_open {
-            return true;
-        }
-        closed_at.is_some_and(|t| now.duration_since(t) <= CLOSE_ANIM && n.created <= t)
-    }
-
-    // ── 浮卡渲染：右下角 → 右上角堆叠，浮于内容之上 ──
-    // 每个 toast 独立 Area，避免父 Area+ScrollArea 宽度异常导致右侧溢出。
-    pub fn show_toasts(&mut self, ctx: &egui::Context, area: egui::Rect) {
-        self.tick(ctx);
-        let now = Instant::now();
-        let needs_float = self.items.iter().any(|n| {
-            n.on_screen && !Self::center_takes(n, self.center_open, self.center_closed_at, now)
-        });
-        if !needs_float {
-            return;
-        }
-        let (bottom_gap, max_h) = Self::toast_band(ctx, area);
-        // 最大 y 偏移（相对底边）：底留白 + 可见高
-        let max_y = bottom_gap + max_h;
-
-        // 浮动堆叠目标 y：最新在底，按每张卡实测高度累加
-        let ids: Vec<u64> = self
+    /// 在标题栏可用区 `area`（工程 tab 右缘 → 右侧窗口按钮之前）内绘制通知。
+    /// 返回实际占用的矩形；没有通知时返回 `Rect::NOTHING`。
+    pub fn show_title_bar(&mut self, ui: &mut egui::Ui, area: egui::Rect) -> egui::Rect {
+        let now = std::time::Instant::now();
+        self.tick(now);
+        // 进行中的任务需要持续刷新百分比；结果通知到点后需要一次重绘来消失。
+        let next_repaint = self
             .items
             .iter()
-            .rev()
-            .filter(|n| {
-                n.on_screen && !Self::center_takes(n, self.center_open, self.center_closed_at, now)
-            })
-            .map(|n| n.id)
-            .collect();
-        let ys = stack_ys(&self.card_h, &ids, bottom_gap, GAP, EST_H);
-        let mut toast_y_map: HashMap<u64, f32> = HashMap::new();
-        for (id, y) in ids.iter().zip(ys) {
-            toast_y_map.insert(*id, y);
-        }
-
-        let mut to_dismiss: Vec<u64> = Vec::new();
-        for idx in (0..self.items.len()).rev() {
-            if !self.items[idx].on_screen {
-                continue;
-            }
-            if Self::center_takes(
-                &self.items[idx],
-                self.center_open,
-                self.center_closed_at,
-                now,
-            ) {
-                continue;
-            }
-            let tid = self.items[idx].id;
-            let target_y = toast_y_map.get(&tid).copied().unwrap_or(bottom_gap);
-            let card_h = self.measured_h(tid, EST_H);
-            // 自有 ease-out y 插值（与 x 飞行动画同族曲线），堆叠重排不线性
-            let y_off = self.y_for(tid, target_y, now);
-            // 用“显示位置”判可见性：快速重排时目标先出带、动画仍在滑出，
-            // 若按目标裁会未滑完就消失（提前消失）；显示位置完全出带才跳过
-            if is_fully_outside(y_off, card_h, bottom_gap, max_y) {
-                self.items[idx].hovered = false;
-                continue;
-            }
-            let x_off = anim::fly_anim(&self.items[idx]);
-            let cancel_flag = self.items[idx].cancel_flag();
-            let action_opt = self.items[idx].action.clone();
-            let mut outcome = super::super::model::CardOutcome::default();
-            let area_id = egui::Id::unique(("yinhe_notif", tid));
-            let area_resp = egui::Area::new(area_id)
-                .anchor(
-                    egui::Align2::RIGHT_BOTTOM,
-                    egui::vec2(-RIGHT_PAD + x_off, -y_off),
-                )
-                .order(egui::Order::Tooltip)
-                .movable(false)
-                .interactable(true)
-                // 允许飞出视口：否则 egui 默认 constrain 会把屏外的起点拉回窗内，
-                // 卡片看起来就是“右侧贴窗”而不是“从窗外滑入”
-                .constrain(false)
-                // 关 egui Area 自带 fade-in（默认 true，0.2s 透明度动画）：位移只走自有飞入
-                .fade_in(false)
-                .show(ctx, |ui| {
-                    outcome = card::toast_card(ui, &self.items[idx], CARD_W, true);
-                    ui.min_rect().height()
-                });
-            self.card_h.insert(tid, area_resp.inner);
-            self.items[idx].hovered = outcome.hovered;
-            if outcome.hovered {
-                crate::widgets::hint::set_region(ctx, rust_i18n::t!("hint.panel.toast"));
-            }
-            if outcome.cancel {
-                // stop：只置 flag + 中止态，卡片留着等 abort 确认，不进退场
-                if let Some(c) = cancel_flag {
-                    c.store(true, std::sync::atomic::Ordering::Relaxed);
+            .filter_map(|n| {
+                if n.source.is_some() {
+                    Some(now + std::time::Duration::from_millis(50))
+                } else {
+                    n.expires_at
                 }
-                self.items[idx].cancelling = true;
-            } else if outcome.dismiss {
-                to_dismiss.push(tid);
-            }
-            // 操作按钮只执行不收卡（收起交给自动计时）
-            if outcome.action
-                && let Some(a) = action_opt
-            {
-                Self::perform_action(&a);
-            }
-        }
-        if !to_dismiss.is_empty() {
-            // 去重，避免同一 id 既 dismiss 又 cancel 重复
-            to_dismiss.sort_unstable();
-            to_dismiss.dedup();
-            for id in to_dismiss {
-                self.dismiss(id);
-            }
-        }
-    }
-
-    // ── 通知中心列表：ScrollArea 从底部向上堆积，打开/关闭整列滑入滑出 ──
-    pub fn show_center(&mut self, ctx: &egui::Context, area: egui::Rect) {
-        if !self.enabled {
-            return;
-        }
-        let now = Instant::now();
-        let closing = !self.center_open;
-        if closing {
-            let Some(closed_at) = self.center_closed_at else {
-                return;
-            };
-            if now.duration_since(closed_at) > CLOSE_ANIM {
-                return;
-            }
-        }
-        let taken: Vec<usize> = (0..self.items.len())
-            .filter(|&i| {
-                Self::center_takes(&self.items[i], self.center_open, self.center_closed_at, now)
             })
-            .collect();
-        if taken.is_empty() {
-            return;
+            .min();
+        if let Some(at) = next_repaint {
+            ui.ctx()
+                .request_repaint_after(at.saturating_duration_since(now));
         }
-
-        let (bottom_gap, max_h) = Self::center_band(ctx, area);
-        // 打开：无停顿整列从右侧滑入；关闭：入场的严格反向滑出
-        let x_off = if closing {
-            let closed_at = self.center_closed_at.unwrap_or(now);
-            anim::exit_x(now.duration_since(closed_at).as_secs_f32())
-        } else if let Some(opened_at) = self.center_opened_at {
-            anim::enter_x(now.duration_since(opened_at).as_secs_f32())
-        } else {
-            0.0
+        let Some(row) = self.primary_row() else {
+            return egui::Rect::NOTHING;
         };
-        // 内容不足一屏时顶部补白，让最新消息贴底（stick_to_bottom 只管滚动位置）
-        let mut total: f32 = 0.0;
-        for &i in &taken {
-            total += self.card_h.get(&self.items[i].id).copied().unwrap_or(EST_H) + GAP;
-        }
-        total -= GAP;
-        let pad_top = (max_h - total).max(0.0);
+        let tasks = self.task_rows();
+        let task_count = tasks.len();
+        let extra = if row.running {
+            task_count.saturating_sub(1)
+        } else {
+            task_count
+        };
 
-        // 卡片交互结果（闭包内不能 &mut self，收集后回写）
-        let mut outcomes: Vec<(u64, super::super::model::CardOutcome)> = Vec::new();
-        // 打开边沿：首帧把滚动定位到最新（底部），不依赖 stick 状态
-        let scroll_bottom = self.center_bottom_pending;
-        self.center_bottom_pending = false;
-        egui::Area::new(egui::Id::unique("yinhe_notif_center"))
-            .anchor(
-                egui::Align2::RIGHT_BOTTOM,
-                egui::vec2(-RIGHT_PAD + x_off, -bottom_gap),
-            )
-            // 显式给出列宽与可见高：Area 首帧默认尺寸极小，ScrollArea 会被压扁成
-            // 1px 宽只剩滚动条，default_size 是首帧 Ui max_rect 的依据
-            .default_size(egui::vec2(CARD_W + 8.0, max_h))
-            .order(egui::Order::Tooltip)
-            .movable(false)
-            .interactable(true)
-            .constrain(false)
-            .fade_in(false)
-            .show(ctx, |ui| {
-                ui.set_max_width(CARD_W + 8.0);
-                ui.style_mut().spacing.scroll = egui::style::ScrollStyle::thin();
-                let scroll_out = egui::ScrollArea::vertical()
-                    .id_salt("yinhe_notif_center_scroll")
-                    .max_width(CARD_W + 8.0)
-                    .max_height(max_h)
-                    .auto_shrink([false, false])
-                    .stick_to_bottom(true)
-                    // 打开列表的“定位到最新”即时生效，不做滚动动画
-                    .animated(false)
-                    .show(ui, |ui| {
-                        ui.set_width(CARD_W);
-                        if pad_top > 0.0 {
-                            ui.add_space(pad_top);
-                        }
-                        for &i in &taken {
-                            let n = &self.items[i];
-                            // 浮动层的卡在列表里仍可 stop/pause/操作（无 X）；已收起卡只读
-                            if n.on_screen {
-                                let outcome = card::toast_card(ui, n, CARD_W, false);
-                                outcomes.push((n.id, outcome));
-                            } else {
-                                card::history_card(ui, n, CARD_W);
-                            }
-                            ui.add_space(GAP);
-                        }
-                        if scroll_bottom {
-                            ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
-                        }
-                    });
-                if ui.rect_contains_pointer(scroll_out.inner_rect) {
-                    crate::widgets::hint::set_region(
+        let w = area.width().min(MAX_W);
+        if w < MIN_W {
+            return egui::Rect::NOTHING;
+        }
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(area.min.x, area.center().y - BAR_H / 2.0),
+            egui::vec2(w, BAR_H),
+        );
+
+        let hovered = ui.rect_contains_pointer(rect);
+        if hovered {
+            ui.painter()
+                .rect_filled(rect, 4.0, crate::theme::hover_color(crate::theme::app_bg()));
+            crate::widgets::hint::set(ui.ctx(), rust_i18n::t!("hint.title_bar.notification"));
+        }
+
+        // 右侧控件宽度：stop / action / +N / 百分比。
+        let stop_w = (row.running && row.cancel.is_some()).then_some(18.0);
+        let action_w = row.action.is_some().then_some(18.0);
+        let extra_w = (extra > 0).then_some(26.0);
+        let pct_w = (row.progress.is_some() && row.running).then_some(34.0);
+        let ctrl_w = [stop_w, action_w, extra_w, pct_w]
+            .into_iter()
+            .flatten()
+            .sum::<f32>()
+            + if stop_w.is_some() || action_w.is_some() || extra_w.is_some() {
+                6.0
+            } else {
+                0.0
+            };
+        let text_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.min.x + SIDE_PAD, rect.min.y),
+            egui::pos2(
+                rect.max.x - SIDE_PAD - ctrl_w - pct_w.unwrap_or(0.0),
+                rect.max.y,
+            ),
+        );
+        let ctrl_rect = egui::Rect::from_min_max(
+            egui::pos2(text_rect.max.x, rect.min.y),
+            egui::pos2(rect.max.x - SIDE_PAD, rect.max.y),
+        );
+
+        // ── 左侧：图标 + 标题/详情（单行截断）──
+        if text_rect.width() > 24.0 {
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(text_rect)
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                |ui| {
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(row.kind.icon().codepoint)
+                                .family(row.kind.icon().font_family())
+                                .size(crate::theme::ICON_FONT_SM)
+                                .color(row.kind.color()),
+                        )
+                        .selectable(false),
+                    );
+                    ui.add_space(6.0);
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(row.text())
+                                .size(crate::theme::SMALL_FONT)
+                                .color(crate::theme::text_primary()),
+                        )
+                        .truncate()
+                        .selectable(false),
+                    );
+                },
+            );
+        }
+
+        // ── 右侧：百分比 + 取消/多任务/操作 ──
+        let mut toggle_tasks = false;
+        let mut dismiss = false;
+        let mut run_action = false;
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(ctrl_rect)
+                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+            |ui| {
+                if let Some(cancel) = &row.cancel
+                    && row.running
+                {
+                    let resp = crate::widgets::hover::hover_button(
+                        ui,
+                        ICON_STOP.codepoint,
+                        egui::FontId::new(crate::theme::ICON_FONT_SM, ICON_STOP.font_family()),
+                        crate::theme::text_muted(),
+                        false,
+                        rust_i18n::t!("hint.toast.cancel").as_ref(),
+                    );
+                    crate::widgets::hint::hover(
                         ui.ctx(),
-                        rust_i18n::t!("hint.panel.notification_center"),
+                        &resp,
+                        rust_i18n::t!("hint.toast.cancel"),
+                    );
+                    if resp.clicked() && !row.cancelling {
+                        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                        dismiss = true;
+                    }
+                }
+                if let Some(action) = &row.action {
+                    let icon = action.icon.unwrap_or(ICON_FOLDER_OPEN);
+                    let resp = crate::widgets::hover::hover_button(
+                        ui,
+                        icon.codepoint,
+                        egui::FontId::new(crate::theme::ICON_FONT_SM, icon.font_family()),
+                        crate::theme::text_muted(),
+                        false,
+                        &action.label,
+                    );
+                    crate::widgets::hint::hover(ui.ctx(), &resp, &action.label);
+                    if resp.clicked() {
+                        run_action = true;
+                    }
+                }
+                if extra > 0 {
+                    let resp = ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(format!("+{extra}"))
+                                .size(crate::theme::SMALL_LABEL_FONT)
+                                .color(crate::theme::text_muted()),
+                        )
+                        .sense(egui::Sense::click())
+                        .selectable(false),
+                    );
+                    crate::widgets::hint::hover(
+                        ui.ctx(),
+                        &resp,
+                        rust_i18n::t!("hint.title_bar.notification_tasks"),
+                    );
+                    if resp.clicked() {
+                        toggle_tasks = true;
+                    }
+                }
+                if let Some(p) = pct_w.and(row.progress) {
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(format!("{:.0}%", p * 100.0))
+                                .size(crate::theme::SMALL_LABEL_FONT)
+                                .color(crate::theme::text_muted()),
+                        )
+                        .selectable(false),
                     );
                 }
-            });
-        // 交互结果在闭包外回写：stop → 中止态；操作按钮 → 执行
-        for (id, outcome) in outcomes {
-            if let Some(n) = self.items.iter_mut().find(|n| n.id == id) {
-                n.hovered = outcome.hovered;
-                if outcome.cancel {
-                    n.cancelling = true;
-                }
-            }
-            if outcome.action {
-                let action = self
-                    .items
-                    .iter()
-                    .find(|n| n.id == id)
-                    .and_then(|n| n.action.clone());
-                if let Some(a) = action {
-                    Self::perform_action(&a);
-                }
-            }
+            },
+        );
+
+        if toggle_tasks {
+            self.tasks_open = !self.tasks_open;
         }
-        ctx.request_repaint_after(Duration::from_millis(16));
+        if dismiss {
+            self.dismiss(row.id);
+        }
+        if run_action && let Some(action) = &row.action {
+            perform_action(action);
+        }
+
+        // 进度条贴底边（只在进行中显示）。
+        if row.running && row.progress.is_some_and(|p| p < 0.999) {
+            let y = rect.max.y - 1.5;
+            let bar = egui::Rect::from_min_max(
+                egui::pos2(rect.min.x + 4.0, y),
+                egui::pos2(rect.max.x - 4.0, y + 1.5),
+            );
+            ui.painter()
+                .rect_filled(bar, 0.0, row.kind.color().gamma_multiply(0.85));
+        }
+
+        if self.tasks_open && task_count > 0 {
+            self.show_tasks_popover(ui, rect);
+        }
+
+        // 仅图标在极窄时可点：让窗口拖动区让位由 title_bar 处理。
+        rect
+    }
+
+    fn show_tasks_popover(&mut self, ui: &egui::Ui, anchor: egui::Rect) {
+        let rows = self.task_rows();
+        if rows.is_empty() {
+            self.tasks_open = false;
+            return;
+        }
+        let mut cancel_id = None;
+        let area = egui::Area::new(egui::Id::unique("yinhe_notify_tasks"))
+            .fixed_pos(egui::pos2(anchor.min.x, anchor.max.y + 4.0))
+            .order(egui::Order::Foreground)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::new()
+                    .fill(crate::theme::control_bg())
+                    .stroke(egui::Stroke::new(
+                        1.0,
+                        crate::theme::line_fg().gamma_multiply(0.35),
+                    ))
+                    .corner_radius(egui::CornerRadius::same(8))
+                    .inner_margin(egui::Margin::same(10))
+                    .show(ui, |ui| {
+                        ui.set_width(TASKS_W);
+                        for (i, row) in rows.iter().enumerate() {
+                            if i > 0 {
+                                ui.add_space(6.0);
+                            }
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(row.kind.icon().codepoint)
+                                            .family(row.kind.icon().font_family())
+                                            .size(crate::theme::ICON_FONT_SM)
+                                            .color(row.kind.color()),
+                                    )
+                                    .selectable(false),
+                                );
+                                ui.add_space(6.0);
+                                ui.add_sized(
+                                    egui::vec2(TASKS_W - 96.0, 18.0),
+                                    egui::Label::new(
+                                        egui::RichText::new(row.text())
+                                            .size(crate::theme::SMALL_FONT)
+                                            .color(crate::theme::text_primary()),
+                                    )
+                                    .truncate()
+                                    .selectable(false),
+                                );
+                                if let Some(p) = row.progress {
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(format!("{:.0}%", p * 100.0))
+                                                .size(crate::theme::SMALL_LABEL_FONT)
+                                                .color(crate::theme::text_muted()),
+                                        )
+                                        .selectable(false),
+                                    );
+                                }
+                                if let Some(pause) = &row.pause {
+                                    let paused = pause.load(std::sync::atomic::Ordering::Relaxed);
+                                    let icon = if paused { ICON_PLAY_ARROW } else { ICON_PAUSE };
+                                    let resp = crate::widgets::hover::hover_button(
+                                        ui,
+                                        icon.codepoint,
+                                        egui::FontId::new(
+                                            crate::theme::ICON_FONT_SM,
+                                            icon.font_family(),
+                                        ),
+                                        crate::theme::text_muted(),
+                                        false,
+                                        rust_i18n::t!("hint.toast.pause").as_ref(),
+                                    );
+                                    if resp.clicked() {
+                                        pause.store(!paused, std::sync::atomic::Ordering::Relaxed);
+                                    }
+                                }
+                                if let Some(cancel) = &row.cancel {
+                                    let resp = crate::widgets::hover::hover_button(
+                                        ui,
+                                        ICON_STOP.codepoint,
+                                        egui::FontId::new(
+                                            crate::theme::ICON_FONT_SM,
+                                            ICON_STOP.font_family(),
+                                        ),
+                                        crate::theme::text_muted(),
+                                        false,
+                                        rust_i18n::t!("hint.toast.cancel").as_ref(),
+                                    );
+                                    if resp.clicked() && !row.cancelling {
+                                        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                                        cancel_id = Some(row.id);
+                                    }
+                                }
+                            });
+                        }
+                    });
+            });
+
+        if let Some(id) = cancel_id {
+            self.dismiss(id);
+        }
+        let pointer = ui.input(|i| i.pointer.interact_pos());
+        let clicked_outside = ui.input(|i| i.pointer.any_pressed())
+            && pointer.is_some_and(|p| !area.response.rect.contains(p) && !anchor.contains(p));
+        if clicked_outside || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.tasks_open = false;
+        }
     }
 }

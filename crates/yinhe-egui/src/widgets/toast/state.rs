@@ -1,45 +1,14 @@
-use std::collections::HashMap;
+use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use eframe::egui;
+use super::kind::ToastKind;
+use super::model::{ErrorReport, Notification, ProgressOutcome, ProgressSource};
 
-use super::anim::{YAnim, y_anim_value};
-use super::model::Notification;
-
-mod progress;
-mod push;
 mod render;
 
 #[cfg(test)]
 mod tests;
-
-// ── 统一通知中心（单一数据源：浮动卡与列表是同一列表的两个视图）──
-pub struct Notifications {
-    next_id: u64,
-    /// 唯一数据源：浮动卡与通知中心列表都是这个列表的视图。
-    items: Vec<Notification>,
-    /// 通知列表是否展开（由 mode_bar 铃铛切换）。
-    pub center_open: bool,
-    /// 列表打开边沿置位：首帧把滚动定位到最新（底部），
-    /// 不依赖 stick 状态（用户上次滚到中间后重开也应先看最新）。
-    center_bottom_pending: bool,
-    max_history: usize,
-    center_opened_at: Option<Instant>,
-    center_closed_at: Option<Instant>,
-    prev_center_open: bool,
-    /// 完成通知自动收起秒数（None=不自动收起；设置页同步，每帧覆盖）。
-    collapse_secs: Option<f32>,
-    /// 可操作通知自动收起秒数（None=不自动收起；设置页同步，每帧覆盖）。
-    action_collapse_secs: Option<f32>,
-    /// 是否开启通知（设置页同步，每帧覆盖；关闭时不再建卡、不再记入历史）。
-    enabled: bool,
-    /// 上次 tick 时刻（悬停暂停按帧间隔顺延 deadline 用）。
-    last_tick: Option<Instant>,
-    /// 每张卡上帧实测高度（`ui.min_rect().height()`），堆叠按真实高度累加。
-    card_h: HashMap<u64, f32>,
-    /// Y 轴自有 ease-out 动画状态（id → 起点/终点/起始时刻，时长 0.35s）。
-    y_anim: HashMap<u64, YAnim>,
-}
 
 pub const LOADING_PROGRESS_ID: u64 = 0x4C4F4144; // "LOAD"
 pub const SAVE_PROGRESS_ID: u64 = 0x53415645; // "SAVE"
@@ -47,6 +16,25 @@ pub const EXPORT_PROGRESS_ID: u64 = 0x45585054; // "EXPT"
 pub const MIDI_EXPORT_PROGRESS_ID: u64 = 0x4D455849; // "MEXI"
 pub const RESCALE_PROGRESS_ID: u64 = 0x5253434C; // "RSCL"
 pub const ENGINE_PROGRESS_ID: u64 = 0x454E474E; // "ENGN"
+
+/// 结果通知（完成/中止）在标题栏停留时长；进行中的任务常驻。
+const RESULT_TTL: Duration = Duration::from_secs(5);
+/// 错误队列上限：阻塞窗口逐条确认，异常情况下也不能无限堆积。
+const MAX_ERRORS: usize = 32;
+
+/// 标题栏通知：最多 6 个进行中的任务 + 1 条结果通知，不保存历史。
+/// 错误不在这里展示，单独进阻塞队列（`front_error` / `pop_error`）。
+pub struct Notifications {
+    next_id: u64,
+    /// 进行中的任务 + 至多一条结果通知。
+    items: Vec<Notification>,
+    /// 主槽显示的条目；失效时自动回退到最后一个活动任务/结果通知。
+    primary: Option<u64>,
+    /// 多任务弹窗是否展开（点击 `+N`）。
+    tasks_open: bool,
+    /// 阻塞式错误队列，一次显示一条。
+    errors: VecDeque<ErrorReport>,
+}
 
 impl Default for Notifications {
     fn default() -> Self {
@@ -59,271 +47,261 @@ impl Notifications {
         Self {
             next_id: 1,
             items: Vec::new(),
-            center_open: false,
-            center_bottom_pending: false,
-            max_history: 100,
-            center_opened_at: None,
-            center_closed_at: None,
-            prev_center_open: false,
-            collapse_secs: Some(5.0),
-            action_collapse_secs: Some(60.0),
-            enabled: true,
-            last_tick: None,
-            card_h: HashMap::new(),
-            y_anim: HashMap::new(),
+            primary: None,
+            tasks_open: false,
+            errors: VecDeque::new(),
         }
     }
 
-    /// 从设置同步自动收起时长（main_loop 每帧调一次，两次 f32 拷贝）。
-    pub fn set_collapse_durations(
-        &mut self,
-        collapse_secs: Option<f32>,
-        action_collapse_secs: Option<f32>,
-    ) {
-        self.collapse_secs = collapse_secs;
-        self.action_collapse_secs = action_collapse_secs;
-    }
-
-    /// 从设置同步通知总开关（main_loop 每帧调一次）。
-    /// 关闭时已有卡走正常退场动画（不再立即清空），历史保留。
-    pub fn set_enabled(&mut self, enabled: bool) {
-        if self.enabled && !enabled {
-            // 防卡死：关闭总开关时自动 resume 已暂停任务，否则任务永远暂停且无 UI 可恢复。
-            for n in &self.items {
-                if let Some(p) = n.pause_flag() {
-                    p.store(false, std::sync::atomic::Ordering::Relaxed);
-                }
-            }
-            let ids: Vec<u64> = self
-                .items
-                .iter()
-                .filter(|n| n.on_screen && n.leaving_since.is_none())
-                .map(|n| n.id)
-                .collect();
-            for id in ids {
-                self.dismiss(id);
-            }
-        }
-        self.enabled = enabled;
-    }
-
-    /// 通知总开关是否开启（关闭时 mode_bar 铃铛隐藏）。
-    pub fn is_enabled(&self) -> bool {
-        self.enabled
-    }
-
-    /// 分配下一个通知 id。
     pub(super) fn alloc_id(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         id
     }
 
-    /// 按 id 找条目。
     pub(super) fn get(&self, id: u64) -> Option<&Notification> {
         self.items.iter().find(|n| n.id == id)
     }
 
-    fn collapse_deadline(&self, secs: Option<f32>) -> Option<Instant> {
-        secs.map(|s| Instant::now() + Duration::from_secs_f32(s.max(0.0)))
+    // ── 普通通知（结果反馈）──
+
+    pub fn success(&mut self, title: impl Into<String>, message: impl Into<String>) -> u64 {
+        self.push(ToastKind::Success, title, message)
     }
 
-    /// 该卡上帧实测高度；无实测（首帧）回退固定估算。
-    fn measured_h(&self, id: u64, fallback: f32) -> f32 {
-        self.card_h.get(&id).copied().unwrap_or(fallback)
+    /// 错误统一进阻塞队列，不再作为一条会自动消失的通知。
+    pub fn error(&mut self, title: impl Into<String>, message: impl Into<String>) -> u64 {
+        self.report_error(title, message);
+        0
     }
 
-    /// Y 轴 ease-out 显示值：无记录或目标变更时从当前显示值重起，保证不断裂。
-    fn y_for(&mut self, id: u64, target: f32, now: Instant) -> f32 {
-        let need_reset = match self.y_anim.get(&id) {
-            None => true,
-            Some(a) => a.to != target,
-        };
-        if need_reset {
-            let cur = match self.y_anim.get(&id) {
-                Some(a) => y_anim_value(a, now),
-                None => target,
-            };
-            self.y_anim.insert(
+    pub fn push(
+        &mut self,
+        kind: ToastKind,
+        title: impl Into<String>,
+        message: impl Into<String>,
+    ) -> u64 {
+        if kind == ToastKind::Error {
+            self.report_error(title, message);
+            return 0;
+        }
+        // 结果通知只保留最新一条；进行中的任务不受影响。
+        self.items.retain(|n| n.source.is_some());
+        let id = self.alloc_id();
+        self.items.push(Notification {
+            id,
+            kind,
+            title: title.into(),
+            message: message.into(),
+            progress: None,
+            progress_label: String::new(),
+            cancel: None,
+            source: None,
+            action: None,
+            cancelling: false,
+            dismissed: false,
+            expires_at: Some(Instant::now() + RESULT_TTL),
+        });
+        self.primary = Some(id);
+        id
+    }
+
+    // ── 进度任务 ──
+
+    /// 确保进度任务存在：同一 key（如 LOADING_PROGRESS_ID）复用同一 id。
+    /// 只换数据源（Arc 交换，无文案拷贝），进度文案渲染时 pull。
+    /// 用户取消后（dismissed）只更新数据、不再显示。
+    pub fn ensure_progress(&mut self, id: u64, kind: ToastKind, source: Arc<dyn ProgressSource>) {
+        let title = source.title();
+        let mut promote = false;
+        if let Some(n) = self.items.iter_mut().find(|n| n.id == id) {
+            let was_done = n.source.is_none();
+            n.kind = kind;
+            n.source = Some(source);
+            n.cancel = n.source.as_ref().and_then(|s| s.cancel());
+            n.cancelling = false;
+            n.expires_at = None;
+            if was_done {
+                // 上一任务已结束，同一 key 被重新使用：重置为进行中。
+                n.title = title;
+                n.message.clear();
+                n.progress = None;
+                n.progress_label.clear();
+                n.dismissed = false;
+                promote = true;
+            }
+        } else {
+            self.items.push(Notification {
                 id,
-                YAnim {
-                    from: cur,
-                    to: target,
-                    t0: now,
-                },
-            );
-            cur
-        } else if let Some(a) = self.y_anim.get(&id) {
-            y_anim_value(a, now)
-        } else {
-            target
+                kind,
+                title,
+                message: String::new(),
+                progress: None,
+                progress_label: String::new(),
+                cancel: source.cancel(),
+                source: Some(source),
+                action: None,
+                cancelling: false,
+                dismissed: false,
+                expires_at: None,
+            });
+            promote = true;
+        }
+        if promote {
+            self.primary = Some(id);
         }
     }
 
-    fn perform_action(action: &super::model::ToastAction) {
-        match &action.kind {
-            super::model::ToastActionKind::RevealInFolder(path) => {
-                crate::platform::open_containing_folder(path);
-            }
-        }
-    }
-
-    /// 收起浮卡：标记退场（320ms 后翻 off-screen），不动列表数据。
-    /// 进行中任务收起时自动 resume 暂停（防卡死）：卡片消失后若仍 paused
-    /// 任务永停且无 UI 可恢复；翻 off-screen 后 ensure 不重建卡，防复活。
-    pub fn dismiss(&mut self, id: u64) {
-        let Some(n) = self.items.iter_mut().find(|n| n.id == id) else {
-            return;
+    /// 进度任务收尾：
+    /// - 完成/中止 → 原地转成一条结果通知（5s 后消失），返回新 id 供 set_action 用。
+    /// - 失败 → 移除任务并把错误推入阻塞队列，返回 0。
+    pub fn finish_progress(
+        &mut self,
+        id: u64,
+        outcome: ProgressOutcome,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        detail: Option<String>,
+    ) -> u64 {
+        let Some(idx) = self.items.iter().position(|n| n.id == id) else {
+            // 条目不存在（被取消清理等）：回退普通通知/错误。
+            return match outcome {
+                ProgressOutcome::Completed => self.push(ToastKind::Success, title, message),
+                ProgressOutcome::Aborted => self.push(ToastKind::Warning, title, message),
+                ProgressOutcome::Failed => {
+                    self.report_error(title, message);
+                    0
+                }
+            };
         };
-        if !n.on_screen {
-            return;
-        }
-        if let Some(p) = n.pause_flag() {
-            p.store(false, std::sync::atomic::Ordering::Relaxed);
-        }
-        if n.leaving_since.is_none() {
-            n.leaving_since = Some(Instant::now());
-        }
-    }
-
-    /// 历史上限：只裁已收起的旧条目，屏幕上的浮卡不动。
-    pub(super) fn prune_overflow(&mut self) {
-        let archived = self.items.iter().filter(|n| !n.on_screen).count();
-        if archived <= self.max_history {
-            return;
-        }
-        let mut excess = archived - self.max_history;
-        self.items.retain(|n| {
-            if excess > 0 && !n.on_screen {
-                excess -= 1;
-                false
-            } else {
-                true
+        if outcome == ProgressOutcome::Failed {
+            self.items.remove(idx);
+            if self.primary == Some(id) {
+                self.primary = None;
             }
-        });
-    }
+            self.report_error(title, message);
+            return 0;
+        }
 
-    fn tick(&mut self, ctx: &egui::Context) {
+        let promoted = self.alloc_id();
         let now = Instant::now();
-        if self.center_open != self.prev_center_open {
-            let was_open = self.prev_center_open;
-            if self.center_open {
-                self.center_opened_at = Some(now);
-                self.center_closed_at = None;
-                self.center_bottom_pending = true;
-                // 开列表边沿：旧未读清零（列表开着时新条目直接已读，见 push 系列）。
-                self.mark_all_read();
-            } else {
-                self.center_opened_at = None;
-                self.center_closed_at = Some(now);
-            }
-            self.prev_center_open = self.center_open;
-            ctx.request_repaint();
-            // 列表关闭瞬间：屏幕上所有卡全部走退场动画，进行中顺带防复活+resume（见 dismiss）
-            if was_open && !self.center_open {
-                let ids: Vec<u64> = self
-                    .items
-                    .iter()
-                    .filter(|n| n.on_screen && n.leaving_since.is_none())
-                    .map(|n| n.id)
-                    .collect();
-                for id in ids {
-                    self.dismiss(id);
-                }
-            }
+        {
+            let n = &mut self.items[idx];
+            n.id = promoted;
+            n.kind = match outcome {
+                ProgressOutcome::Completed => ToastKind::Success,
+                ProgressOutcome::Aborted => ToastKind::Warning,
+                ProgressOutcome::Failed => unreachable!(),
+            };
+            n.title = title.into();
+            n.message = message.into();
+            // 完成满格；中止保留中断时刻快照。
+            n.progress = match outcome {
+                ProgressOutcome::Completed => Some(1.0),
+                ProgressOutcome::Aborted => n.snapshot_fraction(),
+                ProgressOutcome::Failed => None,
+            };
+            n.progress_label = detail.unwrap_or_else(|| match outcome {
+                ProgressOutcome::Completed => rust_i18n::t!("toast.completed").to_string(),
+                ProgressOutcome::Aborted => rust_i18n::t!("toast.aborted").to_string(),
+                ProgressOutcome::Failed => rust_i18n::t!("toast.failed").to_string(),
+            });
+            n.cancel = None;
+            n.source = None;
+            n.cancelling = false;
+            n.dismissed = false;
+            n.expires_at = Some(now + RESULT_TTL);
         }
-        let mut needs_repaint = false;
-        // 悬停/窗口失焦暂停：上帧悬停的卡或窗口失焦时，deadline 按本帧间隔顺延
-        // （精确暂停，不断计时；raw.focused 在无输入状态时默认 true）
-        let window_focused = ctx.input(|i| i.raw.focused);
-        let dt = self
-            .last_tick
-            .map(|t| now.duration_since(t))
-            .unwrap_or(Duration::ZERO)
-            .min(Duration::from_secs(1));
-        self.last_tick = Some(now);
-        if dt > Duration::ZERO {
-            for n in self.items.iter_mut() {
-                if (n.hovered || !window_focused)
-                    && n.leaving_since.is_none()
-                    && let Some(at) = n.collapse_at
-                {
-                    n.collapse_at = Some(at + dt);
-                }
+        self.primary = Some(promoted);
+        promoted
+    }
+
+    /// 给通知挂操作按钮（如“打开文件夹”）。
+    pub fn set_action_with_icon(
+        &mut self,
+        id: u64,
+        label: impl Into<String>,
+        kind: super::model::ToastActionKind,
+        icon: Option<egui_material_icons::MaterialIcon>,
+    ) {
+        if let Some(n) = self.items.iter_mut().find(|n| n.id == id) {
+            n.action = Some(super::model::ToastAction {
+                label: label.into(),
+                kind,
+                icon,
+            });
+        }
+    }
+
+    /// 用户取消/收起：不再渲染，但保留源数据直到任务真正结束。
+    /// 进行中的暂停任务需要 resume，避免卡片消失后永远暂停。
+    pub fn dismiss(&mut self, id: u64) {
+        if let Some(n) = self.items.iter_mut().find(|n| n.id == id) {
+            if let Some(p) = n.pause_flag() {
+                p.store(false, std::sync::atomic::Ordering::Relaxed);
             }
+            n.dismissed = true;
         }
-        // 退场动画播完：翻 off-screen（条目保留在列表里）
-        let mut retired = false;
-        for n in self.items.iter_mut() {
-            if n.leaving_since
-                .is_some_and(|since| now.duration_since(since) >= Duration::from_millis(320))
-            {
-                n.leaving_since = None;
-                n.on_screen = false;
-                retired = true;
-            }
+        if self.primary == Some(id) {
+            self.primary = None;
         }
-        if retired {
-            self.prune_overflow();
-            needs_repaint = true;
+    }
+
+    pub fn is_dismissed(&self, id: u64) -> bool {
+        self.get(id).is_some_and(|n| n.dismissed)
+    }
+
+    pub fn get_cancel_flag(&self, id: u64) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+        self.get(id).and_then(|n| n.cancel_flag())
+    }
+
+    // ── 错误队列（阻塞窗口）──
+
+    pub fn report_error(&mut self, title: impl Into<String>, message: impl Into<String>) {
+        let title = title.into();
+        let message = message.into();
+        // 同一错误连续上报（例如后台每帧重试）只保留一条。
+        if self
+            .errors
+            .back()
+            .is_some_and(|e| e.title == title && e.message == message)
+        {
+            return;
         }
-        // 实测高度/y 动画只保留还存在的条目，防 map 无限涨（量级小，直接查）。
-        self.card_h
-            .retain(|id, _| self.items.iter().any(|n| n.id == *id));
-        self.y_anim
-            .retain(|id, _| self.items.iter().any(|n| n.id == *id));
-        // 自动收起到期：走正常退场，只收浮动卡，列表数据保留；
-        // 列表开着时跳过（deadline 自然过期不管它）
-        let expired: Vec<u64> = if self.center_open {
-            Vec::new()
-        } else {
-            self.items
+        if self.errors.len() >= MAX_ERRORS {
+            self.errors.pop_front();
+        }
+        self.errors.push_back(ErrorReport { title, message });
+    }
+
+    pub fn front_error(&self) -> Option<&ErrorReport> {
+        self.errors.front()
+    }
+
+    pub fn pop_error(&mut self) {
+        self.errors.pop_front();
+    }
+
+    // ── 帧内维护 ──
+
+    /// 清理过期结果、修正主槽指向。每帧由标题栏渲染调用一次。
+    pub(super) fn tick(&mut self, now: Instant) {
+        self.items
+            .retain(|n| n.source.is_some() || n.expires_at.is_some_and(|t| t > now));
+        if self
+            .primary
+            .is_some_and(|id| !self.items.iter().any(|n| n.id == id && !n.dismissed))
+        {
+            self.primary = None;
+        }
+        if self.primary.is_none() {
+            self.primary = self
+                .items
                 .iter()
-                .filter(|n| {
-                    n.on_screen
-                        && n.leaving_since.is_none()
-                        && n.collapse_at.is_some_and(|at| at <= now)
-                })
-                .map(|n| n.id)
-                .collect()
-        };
-        for id in expired {
-            self.dismiss(id);
-            needs_repaint = true;
-        }
-        let has_anim = self.items.iter().any(|n| {
-            n.leaving_since.is_some()
-                || n.source.is_some()
-                || now.duration_since(n.created) < Duration::from_millis(400)
-                || n.progress.is_some_and(|p| p < 0.999)
-        });
-        if has_anim || needs_repaint {
-            ctx.request_repaint_after(Duration::from_millis(16));
-        } else if !self.items.is_empty() {
-            // 常驻通知无动画时仍需偶尔重绘以响应 hover
-            ctx.request_repaint_after(Duration::from_millis(500));
-        }
-        // 有未到期的自动收起则准时唤醒（精度±500ms 内可接受，不另起 timer）
-        if let Some(wait) = self
-            .items
-            .iter()
-            .filter(|n| n.leaving_since.is_none())
-            .filter_map(|n| n.collapse_at)
-            .filter(|at| *at > now)
-            .min()
-            .and_then(|at| at.checked_duration_since(now))
-        {
-            ctx.request_repaint_after(wait.min(Duration::from_secs(3600)));
-        }
-        // history 展开时也需动画（兜底：toast 回退也需）以及重排动画
-        if self.center_open && !self.items.is_empty() {
-            ctx.request_repaint_after(Duration::from_millis(16));
-        }
-        // 列表关闭退场动画进行中也需重绘
-        if let Some(closed) = self.center_closed_at
-            && now.duration_since(closed) < Duration::from_millis(400)
-        {
-            ctx.request_repaint_after(Duration::from_millis(16));
+                .rev()
+                .find(|n| n.source.is_some() && !n.dismissed)
+                .or_else(|| self.items.iter().rev().find(|n| !n.dismissed))
+                .map(|n| n.id);
         }
     }
 }
