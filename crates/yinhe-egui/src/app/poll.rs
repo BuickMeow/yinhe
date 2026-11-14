@@ -303,14 +303,14 @@ impl App {
                             let id = self.notifications.finish_progress(
                                 crate::widgets::toast::MIDI_EXPORT_PROGRESS_ID,
                                 crate::widgets::toast::ProgressOutcome::Completed,
-                                "MIDI导出完成",
+                                t!("toast.midi_export_done").to_string(),
                                 fname,
                                 None,
                             );
                             if !path.is_empty() {
                                 self.notifications.set_action_with_icon(
                                     id,
-                                    "打开文件夹",
+                                    t!("dialog.export.open_folder").to_string(),
                                     crate::widgets::toast::model::ToastActionKind::RevealInFolder(
                                         std::path::PathBuf::from(path),
                                     ),
@@ -323,7 +323,7 @@ impl App {
                             self.notifications.finish_progress(
                                 crate::widgets::toast::MIDI_EXPORT_PROGRESS_ID,
                                 crate::widgets::toast::ProgressOutcome::Failed,
-                                "MIDI导出失败",
+                                t!("toast.midi_export_failed").to_string(),
                                 e,
                                 None,
                             );
@@ -337,8 +337,8 @@ impl App {
                     self.notifications.finish_progress(
                         crate::widgets::toast::MIDI_EXPORT_PROGRESS_ID,
                         crate::widgets::toast::ProgressOutcome::Failed,
-                        "MIDI导出失败",
-                        "导出线程异常退出".to_string(),
+                        t!("toast.midi_export_failed").to_string(),
+                        t!("toast.export_thread_exited").to_string(),
                         None,
                     );
                 }

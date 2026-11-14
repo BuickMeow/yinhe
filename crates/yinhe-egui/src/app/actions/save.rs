@@ -191,8 +191,10 @@ impl App {
             if let Err(e) = spawned {
                 self.jobs.midi_export.running = false;
                 self.jobs.midi_export.rx = None;
-                self.notifications
-                    .error("导出MIDI失败", format!("无法启动导出线程: {e}"));
+                self.notifications.error(
+                    t!("toast.midi_export_failed"),
+                    t!("toast.export_thread_start_failed", e = e),
+                );
             }
         }
     }
@@ -250,10 +252,10 @@ impl App {
         // 插件实例按设备采样率激活，无法在不重载插件的情况下换采样率。
         if sr != self.audio_settings.sample_rate {
             self.notifications.error(
-                "导出采样率不匹配",
-                format!(
-                    "当前设备采样率为 {} Hz，含插件链的导出只能使用设备采样率；请在音频设置中切换采样率后重试。",
-                    self.audio_settings.sample_rate
+                t!("toast.export_sample_rate_mismatch"),
+                t!(
+                    "toast.export_sample_rate_mismatch_desc",
+                    sr = self.audio_settings.sample_rate
                 ),
             );
             return;

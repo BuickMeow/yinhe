@@ -10,6 +10,8 @@
 
 use std::sync::mpsc;
 
+use rust_i18n::t;
+
 use yinhe_editor_core::ClipboardContent;
 use yinhe_editor_core::clipboard_file;
 
@@ -179,7 +181,8 @@ impl App {
             match event {
                 ClipboardSyncEvent::Exported => {}
                 ClipboardSyncEvent::ExportFailed(err) => {
-                    self.notifications.error("跨实例剪贴板写入失败", err);
+                    self.notifications
+                        .error(t!("toast.clipboard_sync_failed"), err);
                 }
             }
         }

@@ -109,7 +109,8 @@ impl App {
             Ok(clip) => clip,
             Err(e) => {
                 tracing::debug!("Domino 剪贴板解码失败: {e}");
-                self.notifications.error("粘贴 Domino 剪贴板失败", e);
+                self.notifications
+                    .error(t!("toast.clipboard_paste_failed"), e);
                 return false;
             }
         };
