@@ -72,6 +72,8 @@ impl App {
 
         let (tx, rx) = mpsc::channel();
         let (progress_tx, progress_rx) = mpsc::channel();
+        let pause = self.jobs.save_pause.clone();
+        pause.store(false, std::sync::atomic::Ordering::Relaxed);
         std::thread::spawn(move || {
             let result = yinhe_yin::save_yin_with_files_progress(
                 &snap.model,
@@ -80,6 +82,9 @@ impl App {
                 &snap.mapping_file,
                 Some(&snap.mixer),
                 |p| {
+                    while pause.load(std::sync::atomic::Ordering::Relaxed) {
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                    }
                     let _ = progress_tx.send(p);
                 },
             );
@@ -175,11 +180,16 @@ impl App {
             self.jobs.midi_export.rx = Some(rx);
             self.jobs.midi_export.running = true;
             let path_buf = path.clone();
+            let pause = self.jobs.midi_export.pause.clone();
+            pause.store(false, std::sync::atomic::Ordering::Relaxed);
             let spawned = std::thread::Builder::new()
                 .name("midi-export".into())
                 .spawn(move || {
                     let result = yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Midi, || {
                         yinhe_midi::write_to_file_with_progress(&model, &path_buf, &opts, |p| {
+                            while pause.load(std::sync::atomic::Ordering::Relaxed) {
+                                std::thread::sleep(std::time::Duration::from_millis(20));
+                            }
                             if let Ok(mut l) = live.lock() {
                                 l.progress = Some(p);
                             }

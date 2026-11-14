@@ -257,6 +257,7 @@ impl App {
         } else if self.jobs.is_saving() {
             let src = std::sync::Arc::new(crate::dialogs::save_overlay::SaveToastSource {
                 state: self.jobs.save_progress.clone(),
+                pause: self.jobs.save_pause.clone(),
             });
             self.notifications.ensure_progress(
                 crate::widgets::toast::SAVE_PROGRESS_ID,
@@ -321,6 +322,7 @@ impl App {
         } else if self.jobs.is_midi_exporting() {
             let src = std::sync::Arc::new(crate::app::export_state::MidiExportToastSource {
                 live: std::sync::Arc::clone(&self.jobs.midi_export.live),
+                pause: self.jobs.midi_export.pause.clone(),
             });
             self.notifications.ensure_progress(
                 crate::widgets::toast::MIDI_EXPORT_PROGRESS_ID,
@@ -370,6 +372,7 @@ impl App {
                 let src = std::sync::Arc::new(crate::app::rescale_state::RescaleToastSource {
                     progress: self.jobs.rescale.progress.clone(),
                     cancel: self.jobs.rescale.cancel.clone(),
+                    pause: self.jobs.rescale.pause.clone(),
                 });
                 self.notifications.ensure_progress(
                     crate::widgets::toast::RESCALE_PROGRESS_ID,

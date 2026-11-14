@@ -9,13 +9,12 @@ use super::Notifications;
 
 /// 通知条高度（标题栏 32px，上下各留 3px）。
 const BAR_H: f32 = 26.0;
-/// 进度条高度：比普通细线更醒目。
-const BAR_LINE_H: f32 = 4.0;
+/// 左侧全高进度条的宽度（要放得下 100%）。
+const PROGRESS_W: f32 = 46.0;
 const MIN_W: f32 = 132.0;
 const MAX_W: f32 = 360.0;
 const PAD_X: f32 = 8.0;
 const BTN_W: f32 = 18.0;
-const PCT_W: f32 = 34.0;
 const TASKS_W: f32 = 300.0;
 const TASKS_ROW_H: f32 = 24.0;
 
@@ -68,6 +67,31 @@ fn perform_action(action: &ToastAction) {
     }
 }
 
+/// 单行截断文本：`max_rows = 1` + 省略号，绝不产生第二行。
+fn one_line(
+    ui: &egui::Ui,
+    text: &str,
+    font: egui::FontId,
+    color: egui::Color32,
+    max_w: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::single_section(
+        text.to_owned(),
+        egui::TextFormat {
+            font_id: font,
+            color,
+            ..Default::default()
+        },
+    );
+    job.wrap = egui::text::TextWrapping {
+        max_width: max_w.max(0.0),
+        max_rows: 1,
+        break_anywhere: true,
+        overflow_character: Some('…'),
+    };
+    ui.painter().layout_job(job)
+}
+
 /// 通知条右侧图标按钮：自绘 + `ui.interact`，不参与布局。
 #[allow(clippy::too_many_arguments)]
 fn draw_button(
@@ -101,31 +125,6 @@ fn draw_button(
     resp
 }
 
-/// 单行截断文本：`max_rows = 1` + 省略号，绝不产生第二行。
-fn one_line(
-    ui: &egui::Ui,
-    text: &str,
-    font: egui::FontId,
-    color: egui::Color32,
-    max_w: f32,
-) -> std::sync::Arc<egui::Galley> {
-    let mut job = egui::text::LayoutJob::single_section(
-        text.to_owned(),
-        egui::TextFormat {
-            font_id: font,
-            color,
-            ..Default::default()
-        },
-    );
-    job.wrap = egui::text::TextWrapping {
-        max_width: max_w.max(0.0),
-        max_rows: 1,
-        break_anywhere: true,
-        overflow_character: Some('…'),
-    };
-    ui.painter().layout_job(job)
-}
-
 impl Notifications {
     fn primary_row(&self) -> Option<Row> {
         self.primary
@@ -141,7 +140,7 @@ impl Notifications {
             .collect()
     }
 
-    /// 在标题栏可用区 `area`（应用名右侧 → 窗口按钮之前）内绘制一行状态。
+    /// 在歌曲标题右侧的可用区 `area` 内绘制一行状态。
     /// 只用 painter 自绘，不注册布局控件，不会撑高标题栏。
     pub fn show_title_bar(&mut self, ui: &mut egui::Ui, area: egui::Rect) -> egui::Rect {
         let now = std::time::Instant::now();
@@ -187,17 +186,15 @@ impl Notifications {
             .layout_no_wrap(row.title.clone(), font.clone(), text_color)
             .size()
             .x;
-        let pct_w = if row.running && row.progress.is_some() {
-            PCT_W
-        } else {
-            0.0
-        };
+        let has_progress = row.progress.is_some();
+        let progress_w = if has_progress { PROGRESS_W + 8.0 } else { 0.0 };
         let extra = if row.running {
             task_count.saturating_sub(1)
         } else {
             task_count
         };
         let btn_count = usize::from(row.running && row.cancel.is_some())
+            + usize::from(row.running && row.pause.is_some())
             + usize::from(row.action.is_some())
             + usize::from(extra > 0);
         let btn_w = if btn_count > 0 {
@@ -208,7 +205,7 @@ impl Notifications {
         if area.width() < MIN_W {
             return egui::Rect::NOTHING;
         }
-        let w = (PAD_X * 2.0 + text_w + pct_w + btn_w)
+        let w = (PAD_X * 2.0 + progress_w + text_w + btn_w)
             .clamp(MIN_W, MAX_W)
             .min(area.width());
         let rect = egui::Rect::from_min_size(
@@ -223,9 +220,40 @@ impl Notifications {
             crate::widgets::hint::set(ui.ctx(), rust_i18n::t!("hint.title_bar.notification"));
         }
 
-        // 文本区：从左侧内边距到百分比/按钮之前。
-        let text_left = rect.min.x + PAD_X;
-        let text_right = rect.max.x - PAD_X - pct_w - btn_w;
+        // 左侧全高进度条：淡强调色底 + 实心进度 + 百分比居中。
+        let text_left = if let Some(p) = row.progress {
+            let bar_rect = egui::Rect::from_min_size(
+                egui::pos2(rect.min.x + 4.0, rect.min.y + 2.0),
+                egui::vec2(PROGRESS_W, rect.height() - 4.0),
+            );
+            let accent = match row.kind {
+                ToastKind::Warning => crate::theme::warning_gold(),
+                ToastKind::Error => crate::theme::danger_text(),
+                _ => crate::theme::accent_active(),
+            };
+            ui.painter()
+                .rect_filled(bar_rect, 4.0, accent.gamma_multiply(0.12));
+            let fg = egui::Rect::from_min_size(
+                bar_rect.min,
+                egui::vec2(bar_rect.width() * p.clamp(0.0, 1.0), bar_rect.height()),
+            );
+            if fg.width() > 0.0 {
+                ui.painter()
+                    .rect_filled(fg, 4.0, accent.gamma_multiply(0.35));
+            }
+            ui.painter().text(
+                bar_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                format!("{:.0}%", p.clamp(0.0, 1.0) * 100.0),
+                egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT),
+                crate::theme::text_primary(),
+            );
+            bar_rect.max.x + 8.0
+        } else {
+            rect.min.x + PAD_X
+        };
+
+        let text_right = rect.max.x - PAD_X - btn_w;
         let galley = one_line(
             ui,
             &row.title,
@@ -233,7 +261,7 @@ impl Notifications {
             text_color,
             (text_right - text_left).max(0.0),
         );
-        let text_y = rect.min.y + (BAR_H - galley.size().y) / 2.0 - 1.0;
+        let text_y = rect.min.y + (BAR_H - galley.size().y) / 2.0;
         ui.painter()
             .galley(egui::pos2(text_left, text_y), galley, text_color);
         // 自绘文本不在 AccessKit 树里：给文本区注册一个 Label 名称（供测试/读屏）。
@@ -249,27 +277,12 @@ impl Notifications {
         label_resp
             .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, row.title.clone()));
 
-        // 百分比（只在进行中显示，避免结果通知占宽）。
+        // 右侧按钮：从右到左依次是中止、暂停、操作、+N。
+        let mut cursor_x = rect.max.x - PAD_X;
         let mut dismiss = false;
         let mut run_action = false;
         let mut toggle_tasks = false;
-        let mut cursor_x = rect.max.x - PAD_X;
-        if let Some(p) = row.progress.filter(|_| row.running) {
-            let pct = format!("{:.0}%", p * 100.0);
-            let galley = ui.painter().layout_no_wrap(
-                pct,
-                egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT),
-                crate::theme::text_muted(),
-            );
-            ui.painter().galley(
-                egui::pos2(cursor_x - galley.size().x, text_y + 1.0),
-                galley,
-                crate::theme::text_muted(),
-            );
-            cursor_x -= PCT_W;
-        }
 
-        // 右侧按钮：从右到左：取消、操作、+N。
         if let Some(cancel) = &row.cancel.filter(|_| row.running) {
             let resp = draw_button(
                 ui,
@@ -284,6 +297,23 @@ impl Notifications {
             if resp.clicked() && !row.cancelling {
                 cancel.store(true, std::sync::atomic::Ordering::Relaxed);
                 dismiss = true;
+            }
+        }
+        if let Some(pause) = &row.pause.filter(|_| row.running) {
+            let paused = pause.load(std::sync::atomic::Ordering::Relaxed);
+            let icon = if paused { ICON_PLAY_ARROW } else { ICON_PAUSE };
+            let resp = draw_button(
+                ui,
+                &mut cursor_x,
+                rect.center().y,
+                icon.codepoint,
+                egui::FontId::new(crate::theme::ICON_FONT_SM, icon.font_family()),
+                crate::theme::text_muted(),
+                rust_i18n::t!("hint.toast.pause").as_ref(),
+                "pause",
+            );
+            if resp.clicked() {
+                pause.store(!paused, std::sync::atomic::Ordering::Relaxed);
             }
         }
         if let Some(action) = &row.action {
@@ -338,26 +368,6 @@ impl Notifications {
             if resp.clicked() {
                 toggle_tasks = true;
             }
-        }
-
-        // 粗进度条贴底：进行中实时走，完成满格，中止保留快照。
-        if let Some(p) = row.progress {
-            let track = egui::Rect::from_min_max(
-                egui::pos2(rect.min.x + 4.0, rect.max.y - BAR_LINE_H - 1.0),
-                egui::pos2(rect.max.x - 4.0, rect.max.y - 1.0),
-            );
-            ui.painter()
-                .rect_filled(track, 0.0, crate::theme::line_fg().gamma_multiply(0.18));
-            let fg = egui::Rect::from_min_max(
-                track.min,
-                egui::pos2(track.min.x + track.width() * p.clamp(0.0, 1.0), track.max.y),
-            );
-            let color = if row.running || row.kind == ToastKind::Success {
-                crate::theme::accent_active()
-            } else {
-                row.kind.color()
-            };
-            ui.painter().rect_filled(fg, 0.0, color);
         }
 
         if toggle_tasks {
@@ -461,6 +471,17 @@ impl Notifications {
                         crate::widgets::hint::hover(ui.ctx(), &resp, hint);
                         resp
                     };
+                    if let Some(cancel) = &row.cancel {
+                        let resp = icon_at(
+                            ICON_STOP,
+                            crate::theme::text_muted(),
+                            rust_i18n::t!("hint.toast.cancel").as_ref(),
+                        );
+                        if resp.clicked() && !row.cancelling {
+                            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                            cancel_id = Some(row.id);
+                        }
+                    }
                     if let Some(pause) = &row.pause {
                         let paused = pause.load(std::sync::atomic::Ordering::Relaxed);
                         let icon = if paused { ICON_PLAY_ARROW } else { ICON_PAUSE };
@@ -471,17 +492,6 @@ impl Notifications {
                         );
                         if resp.clicked() {
                             pause.store(!paused, std::sync::atomic::Ordering::Relaxed);
-                        }
-                    }
-                    if let Some(cancel) = &row.cancel {
-                        let resp = icon_at(
-                            ICON_STOP,
-                            crate::theme::text_muted(),
-                            rust_i18n::t!("hint.toast.cancel").as_ref(),
-                        );
-                        if resp.clicked() && !row.cancelling {
-                            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-                            cancel_id = Some(row.id);
                         }
                     }
                 }

@@ -102,6 +102,8 @@ pub(crate) struct MidiExportState {
     pub rx: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
     /// 输出路径（完成 toast 的"打开文件夹"用）。
     pub path: String,
+    /// 暂停标志：导出线程在进度回调处等待。
+    pub pause: Arc<std::sync::atomic::AtomicBool>,
 }
 
 pub(crate) struct MidiExportLive {
@@ -115,6 +117,7 @@ impl MidiExportState {
             live: Arc::new(Mutex::new(MidiExportLive { progress: None })),
             rx: None,
             path: String::new(),
+            pause: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 }
@@ -122,6 +125,7 @@ impl MidiExportState {
 /// MIDI 导出进度数据源。
 pub(crate) struct MidiExportToastSource {
     pub live: Arc<Mutex<MidiExportLive>>,
+    pub pause: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl MidiExportToastSource {
@@ -142,6 +146,10 @@ impl ProgressSource for MidiExportToastSource {
     fn cancel(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
         None
     }
+
+    fn pause(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+        Some(self.pause.clone())
+    }
 }
 
 #[cfg(test)]
@@ -153,6 +161,7 @@ mod midi_export_tests {
         let live = Arc::new(Mutex::new(MidiExportLive { progress: None }));
         let src = MidiExportToastSource {
             live: Arc::clone(&live),
+            pause: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         assert_eq!(src.fraction(), 0.0);
 

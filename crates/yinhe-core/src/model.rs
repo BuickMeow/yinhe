@@ -2108,8 +2108,14 @@ mod tests {
             crate::model_stats::RescaleProgress::default(),
         ));
         let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let m =
-            YinModel::rescale_ppq_with_progress(m, 960, progress, cancel).expect("rescale 应成功");
+        let m = YinModel::rescale_ppq_with_progress(
+            m,
+            960,
+            progress,
+            cancel,
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .expect("rescale 应成功");
         assert_eq!(m.conductor.time_sig[0].tick, 480);
         assert_eq!(m.conductor.key_sig[0].tick, 960);
         assert_eq!(m.conductor.markers[0].tick, 1200);

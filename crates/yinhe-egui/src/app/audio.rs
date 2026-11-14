@@ -193,6 +193,7 @@ impl App {
                 std::sync::Arc::new(crate::file_loader::LoadToastSource {
                     progress: self.jobs.load_progress.clone(),
                     cancel: None,
+                    pause: None,
                     title: t!("toast.engine_switching").to_string(),
                 }),
             );

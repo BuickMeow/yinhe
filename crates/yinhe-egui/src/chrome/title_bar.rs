@@ -107,25 +107,17 @@ pub(crate) fn show(
             // 应用名「Yinhe」可点击矩形（打开欢迎窗口）
             let title_rect = paint::title_rect(&painter, &m);
 
-            // ── 工程名右侧的通知条（相对于当前工程的操作反馈）──
-            // 避开中央应用名与右侧窗口按钮；宽度不足时由通知层自动隐藏。
-            let reserve_right = if cfg!(target_os = "macos") {
-                8.0
-            } else {
-                138.0
-            };
+            // ── 歌曲标题右侧的通知条（相对于当前工程的操作反馈）──
+            // 右界停在中央应用名左侧，避免盖住「Yinhe」欢迎入口。
             let notif_left = if n_docs > 0 {
                 active_rect.max.x + 8.0
             } else {
                 m.bar_rect.min.x + m.left_padding
-            }
-            .max(title_rect.max.x + 8.0);
+            };
+            let notif_right = (title_rect.min.x - 8.0).max(notif_left);
             let notif_area = egui::Rect::from_min_max(
                 egui::pos2(notif_left, m.tab_y),
-                egui::pos2(
-                    (m.bar_rect.max.x - reserve_right).max(notif_left),
-                    m.tab_y + m.tab_h,
-                ),
+                egui::pos2(notif_right, m.tab_y + m.tab_h),
             );
             let notif_rect = notifications.show_title_bar(ui, notif_area);
 

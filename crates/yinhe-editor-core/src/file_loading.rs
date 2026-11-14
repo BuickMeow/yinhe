@@ -129,6 +129,8 @@ pub struct FileLoader {
     archive_loader: Option<ArchiveLoader>,
     load_progress: SharedProgress,
     labels: LoadStageLabels,
+    /// 暂停标志：后台解析/加载线程在进度回调处等待。
+    pause: Arc<AtomicBool>,
     /// 本次加载的起始时刻（加载完成 toast 显示“加载时间”用）。
     /// 压缩包选条目/密码重试会重新打点，只统计实际加载耗时。
     started_at: Option<Instant>,
@@ -142,6 +144,7 @@ impl FileLoader {
             archive_loader: None,
             load_progress,
             labels,
+            pause: Arc::new(AtomicBool::new(false)),
             started_at: None,
         }
     }
@@ -164,12 +167,17 @@ impl FileLoader {
         self.midi_loader.as_ref().map(|l| l.cancel.clone())
     }
 
+    pub fn pause_flag(&self) -> Arc<AtomicBool> {
+        self.pause.clone()
+    }
+
     /// Cancel any in-progress loading. Sets the cancel flag so background
     /// threads stop reporting progress, and clears the loader state.
     pub fn cancel_loading(&mut self) {
         if let Some(ref loader) = self.midi_loader {
             loader.cancel.store(true, Ordering::Relaxed);
         }
+        self.pause.store(false, Ordering::Relaxed);
         self.midi_loader = None;
         self.yin_loader = None;
         self.archive_loader = None;
@@ -191,6 +199,7 @@ impl FileLoader {
             .unwrap_or_default();
 
         progress::set_visible(&self.load_progress, true);
+        self.pause.store(false, Ordering::Relaxed);
         self.started_at = Some(Instant::now());
 
         match ext.as_str() {
@@ -205,6 +214,7 @@ impl FileLoader {
         let (tx, rx) = mpsc::channel();
         let path_for_thread = path_str.clone();
         let progress = self.load_progress.clone();
+        let pause = self.pause.clone();
         let LoadStageLabels {
             yin,
             yin_decompress,
@@ -216,6 +226,9 @@ impl FileLoader {
             progress::set_stage_label(&progress, 0, yin);
             progress::set_stage(&progress, 0, StageStatus::Active);
             let result = yinhe_yin::load_yin_with_sf_progress(&path_for_thread, |p| {
+                while pause.load(Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
                 let detail = match p.stage {
                     yinhe_yin::YinProgressStage::Decompress => yin_decompress.clone(),
                     yinhe_yin::YinProgressStage::Rebuild => yin_rebuild.clone(),
@@ -275,6 +288,7 @@ impl FileLoader {
         let progress = self.load_progress.clone();
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_for_thread = cancel.clone();
+        let pause = self.pause.clone();
         std::thread::spawn(move || {
             Self::parse_midi_file_and_report(
                 &path_for_thread,
@@ -282,6 +296,7 @@ impl FileLoader {
                 tx,
                 progress,
                 cancel_for_thread,
+                pause,
             );
         });
         self.midi_loader = Some(MidiLoader {
@@ -300,10 +315,17 @@ impl FileLoader {
         tx: mpsc::Sender<MidiLoadEvent>,
         progress: SharedProgress,
         cancel: Arc<AtomicBool>,
+        pause: Arc<AtomicBool>,
     ) {
         progress::set_stage(&progress, 0, StageStatus::Active);
         let tx_inner = tx.clone();
         let result = yinhe_midi::parse_file_with_encoding(path, encoding, |p| {
+            while pause.load(Ordering::Relaxed) {
+                if cancel.load(Ordering::Relaxed) {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
             if cancel.load(Ordering::Relaxed) {
                 return;
             }
@@ -319,11 +341,18 @@ impl FileLoader {
         tx: mpsc::Sender<MidiLoadEvent>,
         progress: SharedProgress,
         cancel: Arc<AtomicBool>,
+        pause: Arc<AtomicBool>,
     ) {
         progress::set_stage(&progress, 0, StageStatus::Active);
         let tx_inner = tx.clone();
         let result = yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Midi, || {
             yinhe_midi::parse_bytes_with_encoding(&data, encoding, |p| {
+                while pause.load(Ordering::Relaxed) {
+                    if cancel.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
                 if cancel.load(Ordering::Relaxed) {
                     return;
                 }
@@ -488,7 +517,9 @@ impl FileLoader {
         let entry_name = entry.name.clone();
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_for_thread = cancel.clone();
+        let pause = self.pause.clone();
         progress::set_visible(&self.load_progress, true);
+        self.pause.store(false, Ordering::Relaxed);
         self.started_at = Some(Instant::now());
         std::thread::spawn(move || {
             let data = match archive.read_file(&entry_name) {
@@ -506,6 +537,7 @@ impl FileLoader {
                 tx,
                 progress,
                 cancel_for_thread,
+                pause,
             );
         });
         self.midi_loader = Some(MidiLoader {

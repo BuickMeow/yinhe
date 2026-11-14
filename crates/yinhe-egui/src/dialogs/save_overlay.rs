@@ -16,6 +16,7 @@ pub(crate) type SharedSaveProgress = Arc<Mutex<Option<(YinProgressStage, f32)>>>
 /// 保存进度数据源：渲染时读共享状态，不再每帧拷贝文案。
 pub(crate) struct SaveToastSource {
     pub state: SharedSaveProgress,
+    pub pause: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl SaveToastSource {
@@ -33,5 +34,8 @@ impl ProgressSource for SaveToastSource {
     }
     fn cancel(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
         None
+    }
+    fn pause(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        Some(self.pause.clone())
     }
 }

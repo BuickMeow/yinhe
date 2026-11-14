@@ -165,6 +165,7 @@ pub fn set_project_meta_json(json: &str) -> i32 {
                     ppq,
                     job.progress(),
                     job.cancel_flag(),
+                    std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 ) {
                     Ok(rescaled) => doc.data.model = std::sync::Arc::new(rescaled),
                     // 取消：文档保持原样（元数据也不提交）。

@@ -43,6 +43,8 @@ pub(crate) struct RescaleState {
     pub progress: Arc<Mutex<RescaleProgress>>,
     /// 取消标志。设为 true 后子线程在下个 bucket 开始前退出。
     pub cancel: Arc<std::sync::atomic::AtomicBool>,
+    /// 暂停标志：子线程在 bucket 开始前等待。
+    pub pause: Arc<std::sync::atomic::AtomicBool>,
     /// rescale 完成后 commit undo 所需的上下文：
     /// `(old_ppq, new_ppq, dragvalue_id, doc_idx)`
     pub pending: Option<(u32, u32, u64, usize)>,
@@ -54,6 +56,7 @@ impl RescaleState {
             rx: None,
             progress: Arc::new(Mutex::new(RescaleProgress::default())),
             cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            pause: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pending: None,
         }
     }
@@ -68,6 +71,7 @@ impl RescaleState {
 pub(crate) struct RescaleToastSource {
     pub progress: Arc<Mutex<RescaleProgress>>,
     pub cancel: Arc<std::sync::atomic::AtomicBool>,
+    pub pause: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl RescaleToastSource {
@@ -97,6 +101,9 @@ impl ProgressSource for RescaleToastSource {
     }
     fn cancel(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
         Some(self.cancel.clone())
+    }
+    fn pause(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+        Some(self.pause.clone())
     }
 }
 
@@ -135,13 +142,19 @@ impl App {
             .rescale
             .cancel
             .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.jobs
+            .rescale
+            .pause
+            .store(false, std::sync::atomic::Ordering::Relaxed);
 
         let progress = self.jobs.rescale.progress.clone();
         let cancel = self.jobs.rescale.cancel.clone();
+        let pause = self.jobs.rescale.pause.clone();
         let (tx, rx) = mpsc::channel();
 
         std::thread::spawn(move || {
-            let result = YinModel::rescale_ppq_with_progress(model, new_ppq, progress, cancel);
+            let result =
+                YinModel::rescale_ppq_with_progress(model, new_ppq, progress, cancel, pause);
             // tx send 失败说明主线程已关闭 rx，忽略即可。
             let _ = tx.send(result);
         });

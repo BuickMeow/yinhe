@@ -27,6 +27,8 @@ pub(crate) struct JobCenter {
     pub save_progress: SharedSaveProgress,
     /// 保存线程进度推送端。
     pub save_progress_rx: Option<mpsc::Receiver<yinhe_yin::YinProgress>>,
+    /// 保存暂停标志：线程在进度回调处等待。
+    pub save_pause: std::sync::Arc<std::sync::atomic::AtomicBool>,
 
     // ── 多阶段加载进度（文件 / 音频 / 插件共用）──
     pub load_progress: SharedProgress,
@@ -50,6 +52,7 @@ impl JobCenter {
             save_rx: None,
             save_progress: Default::default(),
             save_progress_rx: None,
+            save_pause: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             load_progress: yinhe_editor_core::progress::new_shared(),
             autosave: AutoSaveState::new(),
             export: ExportState::new(),

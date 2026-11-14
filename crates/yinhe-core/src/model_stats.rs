@@ -350,6 +350,7 @@ impl YinModel {
         new_ppq: u32,
         progress: std::sync::Arc<std::sync::Mutex<RescaleProgress>>,
         cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        pause: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<YinModel, String> {
         use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -374,7 +375,14 @@ impl YinModel {
         let done = std::sync::Arc::new(AtomicU32::new(0));
         let progress_clone = progress.clone();
         let cancel_clone = cancel.clone();
+        let pause_clone = pause.clone();
         model.notes.par_iter_mut().for_each(|bucket| {
+            while pause_clone.load(Ordering::Relaxed) {
+                if cancel_clone.load(Ordering::Relaxed) {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
             if cancel_clone.load(Ordering::Relaxed) {
                 return;
             }
@@ -393,6 +401,16 @@ impl YinModel {
                 p.label = format!("缩放音符 {}/{KEY_COUNT}", d);
             }
         });
+        if cancel.load(Ordering::Relaxed) {
+            return Err("已取消".to_string());
+        }
+
+        while pause.load(Ordering::Relaxed) {
+            if cancel.load(Ordering::Relaxed) {
+                return Err("已取消".to_string());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
         if cancel.load(Ordering::Relaxed) {
             return Err("已取消".to_string());
         }
@@ -428,6 +446,16 @@ impl YinModel {
         if let Ok(mut p) = progress.lock() {
             p.progress = 0.95;
             p.label = "缩放 conductor".to_string();
+        }
+
+        while pause.load(Ordering::Relaxed) {
+            if cancel.load(Ordering::Relaxed) {
+                return Err("已取消".to_string());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        if cancel.load(Ordering::Relaxed) {
+            return Err("已取消".to_string());
         }
 
         // ── 阶段 3：缩放 track automation + PC（99%）──
