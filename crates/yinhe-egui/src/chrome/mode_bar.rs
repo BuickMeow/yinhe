@@ -45,12 +45,14 @@ pub(crate) fn set_pianoroll_visible(
     show_pianoroll_in_arrange: &mut bool,
     show_bottom_dock: &mut bool,
     show_mixer_panel: &mut bool,
+    show_meter_panel: &mut bool,
     visible: bool,
 ) {
     *show_pianoroll_in_arrange = visible;
     if visible {
         *show_bottom_dock = false;
         *show_mixer_panel = false;
+        *show_meter_panel = false;
     }
 }
 
@@ -59,12 +61,14 @@ pub(crate) fn set_dock_visible(
     show_pianoroll_in_arrange: &mut bool,
     show_bottom_dock: &mut bool,
     show_mixer_panel: &mut bool,
+    show_meter_panel: &mut bool,
     visible: bool,
 ) {
     *show_bottom_dock = visible;
     if visible {
         *show_pianoroll_in_arrange = false;
         *show_mixer_panel = false;
+        *show_meter_panel = false;
     }
 }
 
@@ -73,12 +77,30 @@ pub(crate) fn set_mixer_visible(
     show_pianoroll_in_arrange: &mut bool,
     show_bottom_dock: &mut bool,
     show_mixer_panel: &mut bool,
+    show_meter_panel: &mut bool,
     visible: bool,
 ) {
     *show_mixer_panel = visible;
     if visible {
         *show_pianoroll_in_arrange = false;
         *show_bottom_dock = false;
+        *show_meter_panel = false;
+    }
+}
+
+/// 设置主输出表可见性；展开时与钢琴卷帘/设备链/混音台互斥。
+pub(crate) fn set_meter_visible(
+    show_pianoroll_in_arrange: &mut bool,
+    show_bottom_dock: &mut bool,
+    show_mixer_panel: &mut bool,
+    show_meter_panel: &mut bool,
+    visible: bool,
+) {
+    *show_meter_panel = visible;
+    if visible {
+        *show_pianoroll_in_arrange = false;
+        *show_bottom_dock = false;
+        *show_mixer_panel = false;
     }
 }
 
@@ -191,9 +213,11 @@ pub fn show(
     show_pianoroll_in_arrange: &mut bool,
     show_bottom_dock: &mut bool,
     show_mixer_panel: &mut bool,
+    show_meter_panel: &mut bool,
     float_pianoroll: &mut bool,
     float_bottom_dock: &mut bool,
     float_mixer: &mut bool,
+    float_meter: &mut bool,
     float_arrange: &mut bool,
     right_tab: &mut Option<RightTab>,
     cpu_usage: f32,
@@ -304,6 +328,7 @@ pub fn show(
                                     show_pianoroll_in_arrange,
                                     show_bottom_dock,
                                     show_mixer_panel,
+                                    show_meter_panel,
                                     !piano_visible,
                                 );
                             }
@@ -349,6 +374,7 @@ pub fn show(
                                     show_pianoroll_in_arrange,
                                     show_bottom_dock,
                                     show_mixer_panel,
+                                    show_meter_panel,
                                     !*show_bottom_dock,
                                 );
                             }
@@ -362,6 +388,46 @@ pub fn show(
                             rect: dock_resp.rect,
                             hovered: dock_resp.hovered(),
                             secondary_clicked: dock_resp.secondary_clicked(),
+                        });
+                    }
+
+                    // ── Master meter toggle（三视图通用主输出表；紧贴设备链）──
+                    {
+                        let meter_icon = egui_material_icons::icons::ICON_ANALYTICS;
+                        let meter_resp = crate::widgets::hover::hover_button(
+                            ui,
+                            meter_icon.codepoint,
+                            egui::FontId::new(crate::theme::ICON_FONT, meter_icon.font_family()),
+                            crate::theme::mode_bar_text(),
+                            *show_meter_panel || *float_meter,
+                            t!("hint.meter_toggle").as_ref(),
+                        );
+                        if meter_resp.clicked() {
+                            if *float_meter {
+                                *float_meter = false;
+                                crate::chrome::dialog::close_viewport(
+                                    ui.ctx(),
+                                    crate::app::floating::meter_id(),
+                                );
+                            } else {
+                                set_meter_visible(
+                                    show_pianoroll_in_arrange,
+                                    show_bottom_dock,
+                                    show_mixer_panel,
+                                    show_meter_panel,
+                                    !*show_meter_panel,
+                                );
+                            }
+                        }
+                        if meter_resp.hovered() {
+                            hovered_hint = Some(t!("hint.meter_toggle").to_string());
+                        }
+                        panel_buttons.push(PanelButtonInfo {
+                            button: BubbleButton::MeterIcon,
+                            kind: PanelKind::Meter,
+                            rect: meter_resp.rect,
+                            hovered: meter_resp.hovered(),
+                            secondary_clicked: meter_resp.secondary_clicked(),
                         });
                     }
 
@@ -391,6 +457,7 @@ pub fn show(
                                     show_pianoroll_in_arrange,
                                     show_bottom_dock,
                                     show_mixer_panel,
+                                    show_meter_panel,
                                     !*show_mixer_panel,
                                 );
                             }
@@ -542,6 +609,8 @@ pub fn show(
         float_bottom_dock,
         show_mixer_panel,
         float_mixer,
+        show_meter_panel,
+        float_meter,
         float_arrange,
     );
 }
@@ -554,6 +623,7 @@ pub(crate) enum PanelKind {
     Pianoroll,
     Dock,
     Mixer,
+    Meter,
 }
 
 /// 浮动开关的借用集合（`App` 字段或模式栏参数）。
@@ -565,6 +635,8 @@ pub(crate) struct FloatSwitches<'a> {
     pub float_dock: &'a mut bool,
     pub show_mixer: &'a mut bool,
     pub float_mixer: &'a mut bool,
+    pub show_meter: &'a mut bool,
+    pub float_meter: &'a mut bool,
     /// 工程走带视图浮动（视图由模式决定，没有独立停靠开关）。
     pub float_arrange: &'a mut bool,
     /// 当前视图模式：收回停靠时切到该视图所在模式；
@@ -580,6 +652,7 @@ impl FloatSwitches<'_> {
             PanelKind::Pianoroll => *self.float_pianoroll,
             PanelKind::Dock => *self.float_dock,
             PanelKind::Mixer => *self.float_mixer,
+            PanelKind::Meter => *self.float_meter,
         }
     }
 
@@ -605,6 +678,11 @@ impl FloatSwitches<'_> {
                 *self.float_mixer = true;
                 crate::chrome::dialog::raise_viewport(ctx, crate::app::floating::mixer_id());
             }
+            PanelKind::Meter => {
+                *self.show_meter = false;
+                *self.float_meter = true;
+                crate::chrome::dialog::raise_viewport(ctx, crate::app::floating::meter_id());
+            }
         }
     }
 
@@ -626,6 +704,7 @@ impl FloatSwitches<'_> {
                         self.show_pianoroll,
                         self.show_dock,
                         self.show_mixer,
+                        self.show_meter,
                         true,
                     );
                 }
@@ -633,15 +712,38 @@ impl FloatSwitches<'_> {
             }
             PanelKind::Dock => {
                 *self.float_dock = false;
-                set_dock_visible(self.show_pianoroll, self.show_dock, self.show_mixer, true);
+                set_dock_visible(
+                    self.show_pianoroll,
+                    self.show_dock,
+                    self.show_mixer,
+                    self.show_meter,
+                    true,
+                );
                 crate::chrome::dialog::close_viewport(ctx, crate::app::floating::dock_id());
             }
             PanelKind::Mixer => {
                 *self.float_mixer = false;
-                set_mixer_visible(self.show_pianoroll, self.show_dock, self.show_mixer, true);
+                set_mixer_visible(
+                    self.show_pianoroll,
+                    self.show_dock,
+                    self.show_mixer,
+                    self.show_meter,
+                    true,
+                );
                 crate::chrome::dialog::close_viewport(ctx, crate::app::floating::mixer_id());
                 // 混音台面板只在 MIX 模式停靠显示：收回即切到 MIX。
                 *self.view_mode = ViewMode::Mix;
+            }
+            PanelKind::Meter => {
+                *self.float_meter = false;
+                set_meter_visible(
+                    self.show_pianoroll,
+                    self.show_dock,
+                    self.show_mixer,
+                    self.show_meter,
+                    true,
+                );
+                crate::chrome::dialog::close_viewport(ctx, crate::app::floating::meter_id());
             }
         }
     }
@@ -659,6 +761,7 @@ enum BubbleButton {
     PrIcon,
     DockIcon,
     MixerIcon,
+    MeterIcon,
 }
 
 /// 面板按钮本帧信息（气泡触发与锚点定位用）。
@@ -718,6 +821,8 @@ fn float_bubble(
     float_bottom_dock: &mut bool,
     show_mixer_panel: &mut bool,
     float_mixer: &mut bool,
+    show_meter_panel: &mut bool,
+    float_meter: &mut bool,
     float_arrange: &mut bool,
 ) {
     let state_id = egui::Id::unique("mode_bar_float_bubble");
@@ -785,6 +890,8 @@ fn float_bubble(
             float_dock: &mut *float_bottom_dock,
             show_mixer: &mut *show_mixer_panel,
             float_mixer: &mut *float_mixer,
+            show_meter: &mut *show_meter_panel,
+            float_meter: &mut *float_meter,
             float_arrange: &mut *float_arrange,
             view_mode: &mut *view_mode,
         };
@@ -927,21 +1034,37 @@ mod tests {
     /// 收起动作不产生互斥副作用。
     #[test]
     fn pianoroll_dock_mixer_are_mutually_exclusive() {
-        let (mut piano, mut dock, mut mixer) = (false, true, false);
-        set_pianoroll_visible(&mut piano, &mut dock, &mut mixer, true);
-        assert!(piano && !dock && !mixer, "打开钢琴应收起 dock 与混音台");
+        let (mut piano, mut dock, mut mixer, mut meter) = (false, true, false, false);
+        set_pianoroll_visible(&mut piano, &mut dock, &mut mixer, &mut meter, true);
+        assert!(
+            piano && !dock && !mixer && !meter,
+            "打开钢琴应收起 dock 与混音台"
+        );
 
-        let (mut piano, mut dock, mut mixer) = (true, false, false);
-        set_dock_visible(&mut piano, &mut dock, &mut mixer, true);
-        assert!(!piano && dock && !mixer, "打开 dock 应收起钢琴与混音台");
+        let (mut piano, mut dock, mut mixer, mut meter) = (true, false, false, false);
+        set_dock_visible(&mut piano, &mut dock, &mut mixer, &mut meter, true);
+        assert!(
+            !piano && dock && !mixer && !meter,
+            "打开 dock 应收起钢琴与混音台"
+        );
 
-        let (mut piano, mut dock, mut mixer) = (true, false, false);
-        set_mixer_visible(&mut piano, &mut dock, &mut mixer, true);
-        assert!(!piano && !dock && mixer, "打开混音台应收起钢琴与 dock");
+        let (mut piano, mut dock, mut mixer, mut meter) = (true, false, false, false);
+        set_mixer_visible(&mut piano, &mut dock, &mut mixer, &mut meter, true);
+        assert!(
+            !piano && !dock && mixer && !meter,
+            "打开混音台应收起钢琴与 dock"
+        );
 
-        let (mut piano, mut dock, mut mixer) = (false, true, false);
-        set_pianoroll_visible(&mut piano, &mut dock, &mut mixer, false);
-        assert!(!piano && dock && !mixer, "收起钢琴不应动 dock");
+        let (mut piano, mut dock, mut mixer, mut meter) = (false, true, false, false);
+        set_meter_visible(&mut piano, &mut dock, &mut mixer, &mut meter, true);
+        assert!(
+            !piano && !dock && !mixer && meter,
+            "打开主输出表应收起钢琴/dock/混音台"
+        );
+
+        let (mut piano, mut dock, mut mixer, mut meter) = (false, true, false, false);
+        set_pianoroll_visible(&mut piano, &mut dock, &mut mixer, &mut meter, false);
+        assert!(!piano && dock && !mixer && !meter, "收起钢琴不应动 dock");
     }
 
     /// MIX 的钢琴卷帘显示跟随用户偏好（底部三选一之一），EDIT 恒全屏。
@@ -968,9 +1091,9 @@ mod tests {
             );
         })
         .drop_without_applying_deltas();
-        let (mut sp, mut fp, mut sd, mut fd, mut sm, mut fm) =
-            (false, false, false, false, false, false);
-        let mut fa = false;
+        let (mut sp, mut fp, mut sd, mut fd, mut sm, mut fm, mut sx) =
+            (false, false, false, false, false, false, false);
+        let (mut fx, mut fa) = (false, false);
         let mut vm = ViewMode::Arrange;
         let rect = egui::Rect::from_min_size(egui::pos2(100.0, 700.0), egui::vec2(20.0, 20.0));
         let mut buttons = vec![PanelButtonInfo {
@@ -997,6 +1120,8 @@ mod tests {
                     &mut fd,
                     &mut sm,
                     &mut fm,
+                    &mut sx,
+                    &mut fx,
                     &mut fa,
                 );
             })
@@ -1051,9 +1176,9 @@ mod tests {
         })
         .drop_without_applying_deltas();
 
-        let (mut sp, mut fp, mut sd, mut fd, mut sm, mut fm) =
-            (false, false, false, false, false, false);
-        let mut fa = false;
+        let (mut sp, mut fp, mut sd, mut fd, mut sm, mut fm, mut sx) =
+            (false, false, false, false, false, false, false);
+        let (mut fx, mut fa) = (false, false);
         let mut vm = ViewMode::Arrange;
         // 按钮位于视口局部 x≈100；窗口在显示器 x=300 处（inner_rect 为显示器坐标）。
         let btn_rect = egui::Rect::from_min_size(egui::pos2(90.0, 700.0), egui::vec2(20.0, 20.0));
@@ -1090,6 +1215,8 @@ mod tests {
                     &mut fd,
                     &mut sm,
                     &mut fm,
+                    &mut sx,
+                    &mut fx,
                     &mut fa,
                 );
             })
@@ -1111,9 +1238,9 @@ mod tests {
     #[test]
     fn float_switches_arrange_roundtrip() {
         let ctx = egui::Context::default();
-        let (mut sp, mut fp, mut sd, mut fd, mut sm, mut fm) =
-            (false, false, false, false, false, false);
-        let mut fa = false;
+        let (mut sp, mut fp, mut sd, mut fd, mut sm, mut fm, mut sx) =
+            (false, false, false, false, false, false, false);
+        let (mut fx, mut fa) = (false, false);
         let mut vm = ViewMode::Mix;
         let mut sw = FloatSwitches {
             show_pianoroll: &mut sp,
@@ -1122,6 +1249,8 @@ mod tests {
             float_dock: &mut fd,
             show_mixer: &mut sm,
             float_mixer: &mut fm,
+            show_meter: &mut sx,
+            float_meter: &mut fx,
             float_arrange: &mut fa,
             view_mode: &mut vm,
         };
@@ -1145,6 +1274,7 @@ mod tests {
         let (mut sp, mut fp) = (false, true);
         let (mut sd, mut fd) = (true, false);
         let (mut sm, mut fm) = (false, false);
+        let (mut sx, mut fx) = (false, false);
         let mut fa = false;
         let mut vm = ViewMode::Edit;
         let mut sw = FloatSwitches {
@@ -1154,6 +1284,8 @@ mod tests {
             float_dock: &mut fd,
             show_mixer: &mut sm,
             float_mixer: &mut fm,
+            show_meter: &mut sx,
+            float_meter: &mut fx,
             float_arrange: &mut fa,
             view_mode: &mut vm,
         };
@@ -1175,9 +1307,9 @@ mod tests {
         })
         .drop_without_applying_deltas();
 
-        let (mut sp, mut fp, mut sd, mut fd, mut sm, mut fm) =
-            (false, false, false, false, false, false);
-        let mut fa = false;
+        let (mut sp, mut fp, mut sd, mut fd, mut sm, mut fm, mut sx) =
+            (false, false, false, false, false, false, false);
+        let (mut fx, mut fa) = (false, false);
         let mut vm = ViewMode::Mix;
         // EDIT 模式按钮（左，未悬停）与钢琴图标（右，悬停）：同一 PanelKind::Pianoroll。
         let edit_rect = egui::Rect::from_min_size(egui::pos2(300.0, 700.0), egui::vec2(50.0, 20.0));
@@ -1215,6 +1347,8 @@ mod tests {
                     &mut fd,
                     &mut sm,
                     &mut fm,
+                    &mut sx,
+                    &mut fx,
                     &mut fa,
                 );
             })

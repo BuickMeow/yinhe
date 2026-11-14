@@ -66,7 +66,7 @@ pub(crate) struct MeterState {
 }
 
 impl MeterState {
-    fn update(&mut self, raw: (f32, f32), dt: f32) {
+    pub(crate) fn update(&mut self, raw: (f32, f32), dt: f32) {
         let drop_db = METER_DB_PER_SEC * dt;
         let raw = [raw.0, raw.1];
         for (i, &r) in raw.iter().enumerate() {
@@ -92,11 +92,11 @@ impl MeterState {
         }
     }
 
-    fn level(&self) -> (f32, f32) {
+    pub(crate) fn level(&self) -> (f32, f32) {
         (self.level[0], self.level[1])
     }
 
-    fn hold(&self) -> (f32, f32) {
+    pub(crate) fn hold(&self) -> (f32, f32) {
         (self.hold[0], self.hold[1])
     }
 }

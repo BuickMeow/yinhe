@@ -170,6 +170,7 @@ impl App {
                     &mut self.show_pianoroll_in_arrange,
                     &mut self.show_bottom_dock,
                     &mut self.show_mixer_panel,
+                    &mut self.show_meter_panel,
                     true,
                 );
             }
@@ -347,6 +348,9 @@ impl App {
         l.bottom_dock_height = self.bottom_dock_height;
         l.show_mixer_panel = self.show_mixer_panel;
         l.mix_height = self.mix_height;
+        l.show_meter_panel = self.show_meter_panel;
+        l.meter_height = self.meter_height;
+        l.meter_modules = self.meter_panel.layout().to_vec();
         l.mix_height_auto = self.mix_height_auto;
         l.float_pianoroll = yinhe_editor_core::audio_settings::FloatPanelState {
             floating: self.float_pianoroll,
@@ -363,6 +367,10 @@ impl App {
         l.float_arrange = yinhe_editor_core::audio_settings::FloatPanelState {
             floating: self.float_arrange,
             rect: self.float_arrange_rect.map(floating::rect_to_arr),
+        };
+        l.float_meter = yinhe_editor_core::audio_settings::FloatPanelState {
+            floating: self.float_meter,
+            rect: self.float_meter_rect.map(floating::rect_to_arr),
         };
         l.right_panel_layout = self.right_panel_layout.clone();
         if self.layout_needs_save {

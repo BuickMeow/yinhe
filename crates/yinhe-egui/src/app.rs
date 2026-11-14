@@ -145,17 +145,26 @@ pub struct App {
     pub(crate) mix_height: f32,
     /// 混音台高度自动随总线数扩展；用户拖拽分割条后转为手动。
     pub(crate) mix_height_auto: bool,
+    // ── 三视图通用主输出表 ──
+    /// 是否展开（mode_bar 的主输出表按钮切换，持久化）。
+    pub(crate) show_meter_panel: bool,
+    /// 主输出表高度（px，拖拽调整后持久化）。
+    pub(crate) meter_height: f32,
+    /// 主输出表运行时状态（模块顺序来自 LayoutSettings）。
+    pub(crate) meter_panel: crate::chrome::meter_panel::MeterPanelState,
     // ── 浮动面板窗口（泊出为独立 OS 窗口）──
     /// 浮动形态开关；与对应 `show_*` 停靠开关互斥（泊出时 `show_*` 置 false）。
     pub(crate) float_pianoroll: bool,
     pub(crate) float_bottom_dock: bool,
     pub(crate) float_mixer: bool,
+    pub(crate) float_meter: bool,
     /// 工程走带主视图浮动（ARRANGE）。
     pub(crate) float_arrange: bool,
     /// 浮动窗口最近稳定矩形（窗口移动停稳一帧后写入，持久化到 LayoutSettings）。
     pub(crate) float_pianoroll_rect: Option<egui::Rect>,
     pub(crate) float_bottom_dock_rect: Option<egui::Rect>,
     pub(crate) float_mixer_rect: Option<egui::Rect>,
+    pub(crate) float_meter_rect: Option<egui::Rect>,
     pub(crate) float_arrange_rect: Option<egui::Rect>,
     /// 混音台编辑的 undo 暂存：首次变更记录 (文档 id, 起点快照, 标签)，
     /// 指针空闲后合并提交为一条 undo（一次拖动/一组连续操作 = 一条撤销）。
@@ -400,9 +409,21 @@ impl App {
             show_mixer_panel: audio_settings.layout.show_mixer_panel,
             mix_height: audio_settings.layout.mix_height,
             mix_height_auto: audio_settings.layout.mix_height_auto,
+            show_meter_panel: audio_settings.layout.show_meter_panel
+                && !audio_settings.layout.show_bottom_dock
+                && !audio_settings.layout.show_mixer_panel
+                && !audio_settings.layout.show_pianoroll_in_arrange
+                && !audio_settings.layout.float_meter.floating,
+            meter_height: audio_settings.layout.meter_height,
+            meter_panel: {
+                let mut meter = crate::chrome::meter_panel::MeterPanelState::default();
+                meter.load_layout(&audio_settings.layout.meter_modules);
+                meter
+            },
             float_pianoroll: audio_settings.layout.float_pianoroll.floating,
             float_bottom_dock: audio_settings.layout.float_bottom_dock.floating,
             float_mixer: audio_settings.layout.float_mixer.floating,
+            float_meter: audio_settings.layout.float_meter.floating,
             float_arrange: audio_settings.layout.float_arrange.floating,
             float_pianoroll_rect: audio_settings
                 .layout
@@ -417,6 +438,11 @@ impl App {
             float_mixer_rect: audio_settings
                 .layout
                 .float_mixer
+                .rect
+                .map(floating::arr_to_rect),
+            float_meter_rect: audio_settings
+                .layout
+                .float_meter
                 .rect
                 .map(floating::arr_to_rect),
             float_arrange_rect: audio_settings

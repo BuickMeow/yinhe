@@ -93,6 +93,7 @@ impl App {
                 &mut self.show_pianoroll_in_arrange,
                 &mut self.show_bottom_dock,
                 &mut self.show_mixer_panel,
+                &mut self.show_meter_panel,
                 true,
             );
         }

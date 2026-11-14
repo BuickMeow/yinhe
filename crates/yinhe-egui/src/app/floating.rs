@@ -29,6 +29,11 @@ pub(crate) fn mixer_id() -> egui::ViewportId {
     egui::ViewportId::from_hash_of("float_mixer")
 }
 
+/// 浮动主输出表窗口 id。
+pub(crate) fn meter_id() -> egui::ViewportId {
+    egui::ViewportId::from_hash_of("float_meter")
+}
+
 /// 浮动工程走带（ARRANGE 主视图）窗口 id。
 pub(crate) fn arrange_id() -> egui::ViewportId {
     egui::ViewportId::from_hash_of("float_arrange")
@@ -64,6 +69,7 @@ impl App {
         self.show_float_pianoroll(ctx);
         self.show_float_dock(ctx);
         self.show_float_mixer(ctx);
+        self.show_float_meter(ctx);
     }
 
     /// 浮动工程走带窗口。
@@ -309,6 +315,55 @@ impl App {
             id,
             cur_rect,
             &mut self.float_mixer_rect,
+            &mut self.layout_needs_save,
+        );
+    }
+
+    /// 浮动主输出表窗口。
+    fn show_float_meter(&mut self, ctx: &egui::Context) {
+        if !self.float_meter {
+            return;
+        }
+        let id = meter_id();
+        let title = t!("float.meter").to_string();
+        let builder = float_window_builder(
+            ctx,
+            &title,
+            self.float_meter_rect,
+            egui::vec2(1100.0, 260.0),
+        );
+        let mut close = false;
+        let mut cur_rect: Option<egui::Rect> = None;
+        ctx.show_viewport_immediate(id, builder, |ui, _class| {
+            crate::theme::apply_to_ctx(ui.ctx());
+            cur_rect = ui.input(|i| i.viewport().inner_rect);
+            if ui.input(|i| i.viewport().close_requested()) {
+                close = true;
+            }
+            egui::CentralPanel::default()
+                .frame(egui::Frame::new().fill(crate::theme::app_bg()))
+                .show(ui, |ui| {
+                    let mut title_close = false;
+                    crate::chrome::dialog::title_bar(ui, &title, &mut title_close, true);
+                    if title_close {
+                        close = true;
+                    }
+                    if close {
+                        return;
+                    }
+                    let rect = float_content_rect(ui);
+                    crate::chrome::meter_panel::show_content(self, ui, rect);
+                });
+            if close {
+                self.float_meter = false;
+                crate::chrome::dialog::close_viewport(ui.ctx(), id);
+            }
+        });
+        sync_window_rect(
+            ctx,
+            id,
+            cur_rect,
+            &mut self.float_meter_rect,
             &mut self.layout_needs_save,
         );
     }

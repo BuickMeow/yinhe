@@ -4,6 +4,7 @@ pub mod dialog_buttons;
 #[cfg(test)]
 mod dialog_layout_tests;
 pub mod insert_actions;
+pub mod meter_panel;
 pub mod mode_bar;
 pub mod title_bar;
 pub mod tool_bar;

@@ -862,9 +862,11 @@ impl eframe::App for App {
             &mut self.show_pianoroll_in_arrange,
             &mut self.show_bottom_dock,
             &mut self.show_mixer_panel,
+            &mut self.show_meter_panel,
             &mut self.float_pianoroll,
             &mut self.float_bottom_dock,
             &mut self.float_mixer,
+            &mut self.float_meter,
             &mut self.float_arrange,
             &mut self.right_tab,
             self.sys_monitor.cpu_usage,
@@ -884,6 +886,9 @@ impl eframe::App for App {
         if self.show_mixer_panel != self.audio_settings.layout.show_mixer_panel {
             self.layout_needs_save = true;
         }
+        if self.show_meter_panel != self.audio_settings.layout.show_meter_panel {
+            self.layout_needs_save = true;
+        }
         // 浮动形态切换（气泡泊出/收回、窗口关闭）→ 同样需要写盘。
         if self.float_pianoroll != self.audio_settings.layout.float_pianoroll.floating {
             self.layout_needs_save = true;
@@ -892,6 +897,9 @@ impl eframe::App for App {
             self.layout_needs_save = true;
         }
         if self.float_mixer != self.audio_settings.layout.float_mixer.floating {
+            self.layout_needs_save = true;
+        }
+        if self.float_meter != self.audio_settings.layout.float_meter.floating {
             self.layout_needs_save = true;
         }
         if self.float_arrange != self.audio_settings.layout.float_arrange.floating {
@@ -910,6 +918,8 @@ impl eframe::App for App {
 
         // ── Bottom device dock（三视图通用；Panel::bottom 自动扣减可用区）──
         crate::chrome::device_chain::show(self, ui);
+        // ── 主输出表（同样用 Panel::bottom，自动扣减可用区）──
+        crate::chrome::meter_panel::show(self, ui);
 
         // ── Main content area ──
         let layout = self.compute_layout(ui, right_panel_rect);
