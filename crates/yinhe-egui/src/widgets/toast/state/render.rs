@@ -117,7 +117,13 @@ fn draw_button(
         ui.scope_id().with((id_salt, rect.min.x as i32)),
         egui::Sense::click(),
     );
-    if resp.hovered() || resp.is_pointer_button_down_on() {
+    if resp.is_pointer_button_down_on() {
+        ui.painter().rect_filled(
+            rect,
+            3.0,
+            crate::theme::pressed_color(crate::theme::app_bg()),
+        );
+    } else if resp.hovered() {
         ui.painter()
             .rect_filled(rect, 3.0, crate::theme::hover_color(crate::theme::app_bg()));
     }
@@ -339,7 +345,20 @@ impl Notifications {
                 ui.scope_id().with(("notify_tasks", rect.min.x as i32)),
                 egui::Sense::click(),
             );
-            let c = if resp.hovered() {
+            if resp.is_pointer_button_down_on() {
+                ui.painter().rect_filled(
+                    rect,
+                    3.0,
+                    crate::theme::pressed_color(crate::theme::app_bg()),
+                );
+            } else if resp.hovered() {
+                ui.painter().rect_filled(
+                    rect,
+                    3.0,
+                    crate::theme::hover_color(crate::theme::app_bg()),
+                );
+            }
+            let c = if resp.hovered() || resp.is_pointer_button_down_on() {
                 crate::theme::text_primary()
             } else {
                 crate::theme::text_muted()
