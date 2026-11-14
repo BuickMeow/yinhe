@@ -547,6 +547,11 @@ fn draw_density_image(
 /// 横向：x = 主轴列（左→右），y = 副轴行（顶 = 高音，底 = 低音）。
 /// 纵向：x = 副轴行（左 = 低音），y = 主轴列（时间轴镜像：内容起点在底部）。
 ///
+/// 每列按与桶的重叠权重累加计数：桶比列宽时该桶铺满其覆盖的所有列
+/// （旧实现把桶只画到"跨越桶边界"的那一列，其余列留空 → 周期性虚线），
+/// 列比桶宽时列内所有桶按重叠比例累加。权重除以两者中较小的跨度，
+/// 保证整桶/整列都按 1 计，亮度不随缩放变化。
+///
 /// 每格取格子内计数最大的 `(key, 桶)` 的主导轨色（与 AR 画布轨色一致），
 /// 计数经 ln 压缩映射到 alpha；0 计数留透明。
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
@@ -571,39 +576,49 @@ fn fill_density_pixels(
     {
         return;
     }
-    let bucket = d.bucket_ticks.max(1) as u64;
+    let bucket = d.bucket_ticks.max(1) as f64;
     let inv_scale = 1.0 / scale; // 主轴像素 → tick
     let max_ln = (d.max_count as f32).ln_1p().max(f32::EPSILON);
     let fallback = theme::accent_active();
     let cols = if vertical { h } else { w }; // 主轴像素数
-    let mut b = 0usize; // 单调推进的桶游标（列与列 tick 区间连续）
+    // 每列覆盖的桶区间与重叠权重（复用缓冲）。
+    let mut weights: Vec<f64> = Vec::new();
     for col in 0..cols {
-        let tick_end = ((col + 1) as f64 * inv_scale).ceil() as u64;
-        let b_end = (tick_end.div_ceil(bucket) as usize).min(n);
-        if b_end <= b {
-            continue;
+        let t0 = col as f64 * inv_scale;
+        let t1 = (col + 1) as f64 * inv_scale;
+        let b0 = (t0 / bucket) as usize;
+        if b0 >= n {
+            break; // 后续列的 tick 更大，全部在桶覆盖范围外
         }
+        let b1 = ((t1 / bucket).ceil() as usize).clamp(b0 + 1, n);
+        // 桶宽与列宽取较小者作分母：整桶或整列都按 1 计。
+        let unit = bucket.min(t1 - t0).max(f64::EPSILON);
+        weights.clear();
+        weights.extend((b0..b1).map(|i| {
+            let (bs, be) = (i as f64 * bucket, (i + 1) as f64 * bucket);
+            ((t1.min(be) - t0.max(bs)) / unit).clamp(0.0, 1.0)
+        }));
         for r in 0..px_rows {
             let k0 = r * PREVIEW_KEYS / px_rows;
             let k1 = ((r + 1) * PREVIEW_KEYS / px_rows).min(PREVIEW_KEYS);
             if k1 <= k0 {
                 continue;
             }
-            let mut count = 0u64;
+            let mut count = 0.0f64;
             let mut best_cell = 0u32;
             let mut best_track = NO_TRACK;
             for k in k0..k1 {
                 let base = k * n;
-                for i in b..b_end {
-                    let c = d.rows[base + i];
-                    count += c as u64;
+                for (wi, &weight) in weights.iter().enumerate() {
+                    let c = d.rows[base + b0 + wi];
+                    count += c as f64 * weight;
                     if c > best_cell {
                         best_cell = c;
-                        best_track = d.dominant[base + i];
+                        best_track = d.dominant[base + b0 + wi];
                     }
                 }
             }
-            if count == 0 {
+            if count <= 0.0 {
                 continue;
             }
             let color = track_color(best_track, track_colors).unwrap_or(fallback);
@@ -619,7 +634,6 @@ fn fill_density_pixels(
             };
             out[idx] = px;
         }
-        b = b_end;
     }
 }
 
@@ -1230,6 +1244,51 @@ mod tests {
             "pixels_per_point 变化（HiDPI）应重建纹理"
         );
         assert_eq!(run(2, 350.0, &colors_b), 0, "HiDPI 后继续稳态");
+    }
+
+    /// 回归：桶宽大于一个像素列时，相邻桶之间不得出现整列空白。
+    /// 旧实现把每个桶只画到"跨越桶边界"的那一列，其余列留空，
+    /// 预览呈周期 = 桶宽 × 缩放的虚线（曲长/PPQ 不同则间距不同）。
+    #[test]
+    fn density_preview_has_no_periodic_gaps() {
+        let n_buckets = 100usize;
+        let cols = 200usize;
+        let bucket_ticks = 1024u32;
+        let total_ticks = n_buckets as u64 * bucket_ticks as u64; // 每桶跨 2 列
+        let mut rows = vec![0u32; PREVIEW_KEYS * n_buckets];
+        let mut dominant = vec![NO_TRACK; PREVIEW_KEYS * n_buckets];
+        for b in 0..n_buckets {
+            // 每个桶都有音符：任何整列空白都只能是绘制映射的 bug。
+            rows[60 * n_buckets + b] = 1;
+            dominant[60 * n_buckets + b] = 0;
+        }
+        let view = NoteDensityView {
+            rows: &rows,
+            dominant: &dominant,
+            n_buckets,
+            bucket_ticks,
+            max_count: 1,
+            version: 1,
+        };
+        let colors = vec![[1.0, 0.0, 0.0, 1.0]];
+        let mut pixels = vec![egui::Color32::TRANSPARENT; cols];
+        fill_density_pixels(
+            &mut pixels,
+            cols,
+            1,
+            false,
+            cols as f32,
+            1,
+            cols as f64 / total_ticks as f64,
+            &view,
+            &colors,
+        );
+        let blank: Vec<usize> = pixels
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| (*p == egui::Color32::TRANSPARENT).then_some(i))
+            .collect();
+        assert!(blank.is_empty(), "桶间不应出现空白列：{blank:?}");
     }
 
     /// 密度预览：有数据时逐格绘制不 panic（含超出桶覆盖范围的尾部、
