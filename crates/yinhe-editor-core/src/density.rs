@@ -25,10 +25,24 @@ fn next_density_version() -> u64 {
     NEXT_DENSITY_VERSION.fetch_add(1, Ordering::Relaxed)
 }
 
-/// 初始桶宽（tick）。
-const INITIAL_BUCKET_TICKS: u32 = 1024;
+/// 初始桶宽（tick）：1 tick 起步，`ensure_layout` 按曲长收放到
+/// 「桶数不超过 [`MAX_BUCKETS`] 的最小 2 的幂」，让横向分辨率随曲长提高。
+const INITIAL_BUCKET_TICKS: u32 = 1;
 /// 桶数上限（2 的幂保证翻倍不改变对齐）。超出后桶宽翻倍。
 const MAX_BUCKETS: usize = 8192;
+
+/// 曲长对应的桶宽（tick）：桶数不超过 [`MAX_BUCKETS`] 的最小 2 的幂。
+///
+/// 固定桶宽（旧版 1024 tick）会让短曲的有效列数远小于滚动条像素宽度，
+/// 预览出现周期空白；自适应后常见曲长都能用满横向分辨率，且桶宽只依赖
+/// 曲长，与 PPQ 无关。
+fn bucket_ticks_for(tick_len: u64) -> u32 {
+    let mut bucket = 1u32;
+    while tick_len.max(1).div_ceil(bucket as u64) > MAX_BUCKETS as u64 {
+        bucket = bucket.saturating_mul(2);
+    }
+    bucket
+}
 /// 每帧默认重扫预算：显著低于一帧的渲染开销，编辑期不掉帧。
 pub const SYNC_BUDGET: Duration = Duration::from_millis(4);
 
@@ -168,14 +182,12 @@ impl NoteDensityMap {
         self.reset();
     }
 
-    /// 桶宽/桶数维护：曲长超出桶数上限时桶宽翻倍（旧坐标作废 → 全量重扫）；
-    /// 桶数按需增长（1.5x 摊还，曲尾连续加音符不频繁重排）。
+    /// 桶宽/桶数维护：桶宽取「桶数不超过上限的最小 2 的幂」（分辨率随曲长
+    /// 自动提高，且只依赖曲长，与 PPQ 无关）；桶数按需增长（1.5x 摊还，
+    /// 曲尾连续加音符不频繁重排）。
     fn ensure_layout(&mut self, tick_len: u64) {
         let tick_len = tick_len.max(1);
-        let mut bucket = self.bucket_ticks.max(1);
-        while tick_len.div_ceil(bucket as u64) > MAX_BUCKETS as u64 {
-            bucket *= 2;
-        }
+        let bucket = bucket_ticks_for(tick_len);
         if bucket != self.bucket_ticks {
             self.bucket_ticks = bucket;
             self.reset();
@@ -463,6 +475,26 @@ mod tests {
         v.rows[key * v.n_buckets + bucket]
     }
 
+    /// tick 所在的桶下标（按当前桶宽）。
+    fn bucket_of(d: &NoteDensityMap, tick: u32) -> usize {
+        tick as usize / d.view().bucket_ticks as usize
+    }
+
+    /// 桶宽：给定曲长总是用满桶数预算（不超过上限的最小 2 的幂）。
+    #[test]
+    fn bucket_width_uses_full_resolution_budget() {
+        assert_eq!(bucket_ticks_for(1), 1);
+        assert_eq!(bucket_ticks_for(MAX_BUCKETS as u64), 1);
+        assert_eq!(bucket_ticks_for(MAX_BUCKETS as u64 + 1), 2);
+        assert_eq!(bucket_ticks_for(MAX_BUCKETS as u64 * 1024), 1024);
+        assert_eq!(bucket_ticks_for(MAX_BUCKETS as u64 * 1024 + 1), 2048);
+        for len in [1u64, 1000, 8193, 230_400, 4_000_000, u32::MAX as u64] {
+            let b = bucket_ticks_for(len);
+            assert!(b.is_power_of_two(), "桶宽应是 2 的幂：{b}");
+            assert!(len.div_ceil(b as u64) <= MAX_BUCKETS as u64);
+        }
+    }
+
     #[test]
     fn counts_notes_per_key_and_bucket() {
         let mut m = model();
@@ -473,11 +505,12 @@ mod tests {
         let mut d = NoteDensityMap::new();
         d.sync(&m, &visible(), FULL);
         let v = d.view();
-        assert_eq!(v.bucket_ticks, INITIAL_BUCKET_TICKS);
-        // tick 100 → 桶 0；tick 3000 → 桶 2。
-        assert_eq!(cell(&d, 60, 0), 1);
-        assert_eq!(cell(&d, 60, 2), 1);
-        assert_eq!(cell(&d, 30, 0), 1, "低音有独立的 key 行");
+        assert_eq!(v.bucket_ticks, 1, "曲长 3100 tick 应每 tick 一桶");
+        let b100 = bucket_of(&d, 100);
+        let b3000 = bucket_of(&d, 3000);
+        assert_eq!(cell(&d, 60, b100), 1);
+        assert_eq!(cell(&d, 60, b3000), 1);
+        assert_eq!(cell(&d, 30, b100), 1, "低音有独立的 key 行");
         assert_eq!(v.max_count, 1);
         let sum: u32 = v.rows.iter().sum();
         assert_eq!(sum, 3);
@@ -491,13 +524,13 @@ mod tests {
         m.rebuild_dirty();
         let mut d = NoteDensityMap::new();
         d.sync(&m, &visible(), FULL);
-        assert_eq!(cell(&d, 60, 0), 1);
+        assert_eq!(cell(&d, 60, bucket_of(&d, 100)), 1);
 
         m.insert_note(64, note(2, 100, 200, 0));
         m.rebuild_dirty();
         d.sync(&m, &visible(), FULL);
-        assert_eq!(cell(&d, 60, 0), 1, "未动的 key 行保持不变");
-        assert_eq!(cell(&d, 64, 0), 1, "新 key 计入自己的行");
+        assert_eq!(cell(&d, 60, bucket_of(&d, 100)), 1, "未动的 key 行保持不变");
+        assert_eq!(cell(&d, 64, bucket_of(&d, 100)), 1, "新 key 计入自己的行");
         assert_eq!(d.view().max_count, 1);
     }
 
@@ -510,13 +543,13 @@ mod tests {
         m.rebuild_dirty();
         let mut d = NoteDensityMap::new();
         d.sync(&m, &visible(), FULL);
-        assert_eq!(cell(&d, 60, 0), 2);
+        assert_eq!(cell(&d, 60, bucket_of(&d, 100)), 2);
         assert_eq!(d.view().max_count, 2);
 
         m.remove_note_by_id(60, 1);
         m.rebuild_dirty();
         d.sync(&m, &visible(), FULL);
-        assert_eq!(cell(&d, 60, 0), 1);
+        assert_eq!(cell(&d, 60, bucket_of(&d, 100)), 1);
         assert_eq!(d.view().max_count, 1);
     }
 
@@ -530,17 +563,18 @@ mod tests {
         let mut d = NoteDensityMap::new();
         let mut vis = visible();
         d.sync(&m, &vis, FULL);
-        assert_eq!(cell(&d, 60, 0), 1);
-        assert_eq!(cell(&d, 62, 0), 1);
+        let b = bucket_of(&d, 100);
+        assert_eq!(cell(&d, 60, b), 1);
+        assert_eq!(cell(&d, 62, b), 1);
 
         vis[1] = false;
         d.sync(&m, &vis, FULL);
-        assert_eq!(cell(&d, 60, 0), 1);
-        assert_eq!(cell(&d, 62, 0), 0, "隐藏 track 1 后其音符消失");
+        assert_eq!(cell(&d, 60, b), 1);
+        assert_eq!(cell(&d, 62, b), 0, "隐藏 track 1 后其音符消失");
 
         vis[1] = true;
         d.sync(&m, &vis, FULL);
-        assert_eq!(cell(&d, 62, 0), 1, "恢复显隐后计数回来");
+        assert_eq!(cell(&d, 62, b), 1, "恢复显隐后计数回来");
     }
 
     /// 曲长增长：桶数自动扩容且旧计数保留。
@@ -559,15 +593,14 @@ mod tests {
         m.rebuild_dirty();
         d.sync(&m, &visible(), FULL);
         assert!(d.n_buckets > n_before, "桶数应增长");
-        let v = d.view();
-        assert_eq!(cell(&d, 60, 0), 1, "旧音符仍在桶 0");
-        let b = 4_000_000 / v.bucket_ticks as u64;
-        assert_eq!(cell(&d, 60, b as usize), 1, "新音符落在其桶");
-        let sum: u32 = v.rows.iter().sum();
+        let b = bucket_of(&d, 4_000_000);
+        assert_eq!(cell(&d, 60, bucket_of(&d, 100)), 1, "旧音符仍在原桶");
+        assert_eq!(cell(&d, 60, b), 1, "新音符落在其桶");
+        let sum: u32 = d.view().rows.iter().sum();
         assert_eq!(sum, 2);
     }
 
-    /// 曲长超出桶数上限 → 桶宽翻倍（保持对齐），计数仍正确。
+    /// 曲长超出桶数上限 → 桶宽按 2 的幂增长，计数仍正确。
     #[test]
     fn bucket_width_doubles_beyond_max_buckets() {
         let mut m = model();
@@ -578,11 +611,11 @@ mod tests {
         let mut d = NoteDensityMap::new();
         d.sync(&m, &visible(), FULL);
         let v = d.view();
-        assert_eq!(v.bucket_ticks, INITIAL_BUCKET_TICKS * 2, "桶宽应翻倍");
+        // 曲长约 18k tick：4 tick/桶 → 约 4.6k 桶（= 上限内最小 2 的幂）。
+        assert_eq!(v.bucket_ticks, 4, "桶宽应随曲长增长");
         assert!(v.n_buckets <= MAX_BUCKETS, "桶数不超上限");
-        assert_eq!(cell(&d, 60, 0), 1);
-        let b = far as u64 / v.bucket_ticks as u64;
-        assert_eq!(cell(&d, 60, b as usize), 1);
+        assert_eq!(cell(&d, 60, bucket_of(&d, 100)), 1);
+        assert_eq!(cell(&d, 60, bucket_of(&d, far)), 1);
     }
 
     /// 全量重建（首次/换代）一次完成不依赖预算；增量编辑零预算分帧，
@@ -627,15 +660,19 @@ mod tests {
         m1.rebuild_dirty();
         let mut d = NoteDensityMap::new();
         d.sync(&m1, &visible(), FULL);
-        assert_eq!(cell(&d, 60, 0), 1);
+        assert_eq!(cell(&d, 60, bucket_of(&d, 100)), 1);
 
         let mut m2 = model();
         m2.insert_note(64, note(9, 5000, 5100, 0));
         m2.insert_note(64, note(10, 5000, 5100, 0));
         m2.rebuild_dirty();
         d.sync(&m2, &visible(), FULL);
-        assert_eq!(cell(&d, 60, 0), 0, "旧模型的计数不得残留");
-        assert_eq!(cell(&d, 64, 4), 2, "tick 5000 → 桶 4");
+        assert_eq!(cell(&d, 60, bucket_of(&d, 100)), 0, "旧模型的计数不得残留");
+        assert_eq!(
+            cell(&d, 64, bucket_of(&d, 5000)),
+            2,
+            "两条音符落在 tick 5000 的桶"
+        );
         assert_eq!(d.view().max_count, 2);
     }
 
@@ -644,9 +681,10 @@ mod tests {
     fn extended_key_range_excluded() {
         let mut m = model();
         m.insert_note(60, note(1, 100, 200, 0));
+        m.rebuild_dirty();
         let mut d = NoteDensityMap::new();
         d.sync(&m, &visible(), FULL);
-        assert_eq!(cell(&d, 60, 0), 1);
+        assert_eq!(cell(&d, 60, bucket_of(&d, 100)), 1);
 
         m.insert_note(130, note(2, 100, 200, 0));
         m.rebuild_dirty();
@@ -721,24 +759,30 @@ mod tests {
     #[test]
     fn dominant_track_per_bucket() {
         let mut m = model();
-        // 桶 0：track 0 两个 + track 1 一个 → 主导 = 0。
+        // tick 100：track 0 两个 + track 1 一个 → 主导 = 0。
         m.insert_note(60, note(1, 100, 200, 0));
-        m.insert_note(60, note(2, 110, 210, 0));
-        m.insert_note(60, note(3, 120, 220, 1));
-        // 桶 1（tick ≥ 1024）：只有 track 1 → 主导 = 1。
+        m.insert_note(60, note(2, 100, 210, 0));
+        m.insert_note(60, note(3, 100, 220, 1));
+        // tick 1500：只有 track 1 → 主导 = 1。
         m.insert_note(60, note(4, 1500, 1600, 1));
         m.rebuild_dirty();
         let mut d = NoteDensityMap::new();
         let mut vis = visible();
         d.sync(&m, &vis, FULL);
         let nb = d.n_buckets;
-        assert_eq!(d.view().dominant[60 * nb], 0);
-        assert_eq!(d.view().dominant[60 * nb + 1], 1);
-        assert_eq!(d.view().dominant[60 * nb + 2], NO_TRACK, "空桶无主导轨");
+        let b100 = bucket_of(&d, 100);
+        let b1500 = bucket_of(&d, 1500);
+        assert_eq!(d.view().dominant[60 * nb + b100], 0);
+        assert_eq!(d.view().dominant[60 * nb + b1500], 1);
+        assert_eq!(
+            d.view().dominant[60 * nb + bucket_of(&d, 300)],
+            NO_TRACK,
+            "空桶无主导轨"
+        );
 
         // 隐藏 track 0 → 桶 0 主导变为 track 1。
         vis[0] = false;
         d.sync(&m, &vis, FULL);
-        assert_eq!(d.view().dominant[60 * nb], 1);
+        assert_eq!(d.view().dominant[60 * nb + b100], 1);
     }
 }
