@@ -8,6 +8,7 @@ pub mod config;
 pub mod cover;
 pub mod density;
 pub mod document;
+pub mod domino_clipboard;
 pub mod edit_state;
 pub mod file_loading;
 pub mod follow;

@@ -12,6 +12,7 @@ yinhe-midi = { path = "../yinhe-midi" }
 yinhe-yin = { path = "../yinhe-yin" }
 sevenz-rust2 = { workspace = true }
 zip = { workspace = true }
+flate2 = { workspace = true }
 yinhe-mixer = { path = "../yinhe-mixer" }
 yinhe-memtrace = { path = "../yinhe-memtrace" }
 yinhe-theme = { path = "../yinhe-theme" }

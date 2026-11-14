@@ -110,6 +110,19 @@ impl ClipboardSync {
         event
     }
 
+    /// 读取 Windows 剪贴板里的 Domino `MidiPortalSequence` 原始载荷。
+    /// 非 Windows 平台没有该自定义格式，直接返回 None。
+    #[cfg(windows)]
+    pub fn domino_payload(&self) -> Option<Vec<u8>> {
+        let fmt = clipboard_win::register_format("MidiPortalSequence")?;
+        clipboard_win::get_clipboard::<Vec<u8>, _>(clipboard_win::formats::RawData(fmt.get())).ok()
+    }
+
+    #[cfg(not(windows))]
+    pub fn domino_payload(&self) -> Option<Vec<u8>> {
+        None
+    }
+
     /// 粘贴前解析系统剪贴板；必要时把 `content` 更新为其他实例的数据。
     /// 返回 false 表示内部剪贴板已失效（外部内容或不兼容）。
     pub fn resolve_paste(&mut self, content: &mut ClipboardContent) -> bool {
@@ -121,6 +134,12 @@ impl ClipboardSync {
             return true; // 无系统剪贴板：退回纯内部
         };
         let Ok(text) = system.get_text() else {
+            // 自定义格式（Domino）没有文本表示；有 Domino 数据时交给
+            // `paste_clipboard_with_mode` 的 Domino 路径，不能保留旧内部剪贴板。
+            if self.domino_payload().is_some() {
+                *content = ClipboardContent::Empty;
+                return false;
+            }
             return true; // 读失败/为空：不破坏内部剪贴板
         };
         let Some(id) = clipboard_file::parse_clip_ref(&text) else {

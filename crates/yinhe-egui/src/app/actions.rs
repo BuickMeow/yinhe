@@ -391,17 +391,20 @@ impl App {
     ) {
         use yinhe_editor_core::clipboard::PasteMode;
 
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+
         // 系统剪贴板是剪贴板内容的唯一真相：外部内容使内部剪贴板失效；
         // 其他实例的引用则从临时文件加载。已是最新内容时零开销。
-        if !self.clipboard_sync.resolve_paste(&mut self.clipboard) {
+        if !self.clipboard_sync.resolve_paste(&mut self.clipboard)
+            && !self.load_domino_clipboard(idx)
+        {
             return;
         }
 
         let clipboard = self.clipboard.clone();
         let chained = mode == PasteMode::AtCursor;
-        let Some(idx) = self.workspace.active_doc else {
-            return;
-        };
         let cursor_tick = self.workspace.documents[idx]
             .edit
             .cursor_tick
@@ -436,6 +439,40 @@ impl App {
                 }
             }
         }
+    }
+
+    /// 系统剪贴板里是 Domino `MidiPortalSequence` 时，解码成 yinhe 音符剪贴板。
+    /// 返回 false = 没有 Domino 数据或解析失败（调用方按普通外部剪贴板处理）。
+    fn load_domino_clipboard(&mut self, idx: usize) -> bool {
+        let Some(raw) = self.clipboard_sync.domino_payload() else {
+            return false;
+        };
+        let notes = match yinhe_editor_core::domino_clipboard::decode_domino_clipboard(&raw) {
+            Ok(notes) => notes,
+            Err(e) => {
+                tracing::debug!("Domino 剪贴板解码失败: {e}");
+                self.notifications.error("粘贴 Domino 剪贴板失败", e);
+                return false;
+            }
+        };
+        let doc = &self.workspace.documents[idx];
+        let Some(track) = doc.edit.write_track() else {
+            return false;
+        };
+        let ppq = doc.data.model.meta.ppq;
+        self.clipboard = yinhe_editor_core::ClipboardContent::Notes(
+            yinhe_editor_core::domino_clipboard::to_notes_clipboard(&notes, ppq, track),
+        );
+        // Domino 数据是绝对 tick，粘贴时按 yinhe 惯例对齐到光标；不要接上一次
+        // 连续粘贴链的偏移，否则第二次粘贴会莫名向后跳。
+        self.paste_chain = None;
+        tracing::info!(
+            "已从 Domino 剪贴板载入 {} 个音符（{} PPQ → {} PPQ）",
+            notes.len(),
+            yinhe_editor_core::domino_clipboard::DOMINO_PPQ,
+            ppq
+        );
+        true
     }
 
     /// 连续粘贴链的当前偏移（光标未动时非零）。

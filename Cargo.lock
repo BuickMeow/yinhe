@@ -7849,6 +7849,7 @@ name = "yinhe-editor-core"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "flate2",
  "jni 0.22.4",
  "ndk-context",
  "rayon",
@@ -7875,6 +7876,7 @@ dependencies = [
  "arboard",
  "bytemuck",
  "chrono",
+ "clipboard-win",
  "cpal",
  "deunicode",
  "dirs",
