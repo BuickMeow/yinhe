@@ -344,9 +344,10 @@ fn dedup_note_index(notes: &mut Vec<NoteRef>) {
     if notes.len() <= 1 {
         return;
     }
-    // 桶内只保证 start_tick 有序，同 start 的 end 顺序不定；旧实现按
-    // `(key, start, end)` 稳定排序，这里保持同样的语义。
-    notes.sort_by_key(|n| (n.key, n.start_tick, n.end_tick));
+    // 桶内只保证 start_tick 有序，同 start 的 end 顺序不定；按
+    // `(key, start, end)` 排序后重叠判定与旧实现一致。相同三元组的
+    // 音符互相重叠，保留哪一个都不影响结果，用不稳定排序省临时缓冲。
+    notes.sort_unstable_by_key(|n| (n.key, n.start_tick, n.end_tick));
     let mut write = 0;
     let mut last_key = 0u8;
     let mut last_end = 0u32;
