@@ -45,7 +45,8 @@ pub struct Uniforms {
     /// ghost 层整体像素偏移：选区跳跃时从旧位置缓动到量化目标。
     pub ghost_dx: f32,
     pub ghost_dy: f32,
-    /// PR 音高范围：键总数（88/128/256）与起始键（88 键钢琴从 A0=21 开始）。
+    /// 纵向键数：PR = 键总数（88/128/256）；AR = lane 音域（128/256，
+    /// 含扩展音域音符时 256）。PR 还使用 `key_offset`（88 键从 A0=21 开始）。
     pub key_count: u32,
     pub key_offset: u32,
 

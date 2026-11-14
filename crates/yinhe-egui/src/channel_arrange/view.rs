@@ -211,6 +211,11 @@ pub(crate) fn show(
         value_scroll: 0.0,
         orientation: 0,
         dark_theme: u32::from(yinhe_theme::current_gpu_theme().dark_mode),
+        // AR lane 纵向音域：项目含扩展音域音符时 256，否则 128。
+        key_count: data
+            .midi
+            .map(|m| m.display_key_count() as u32)
+            .unwrap_or(128),
         ..Default::default()
     };
     view.base.dirty = false;

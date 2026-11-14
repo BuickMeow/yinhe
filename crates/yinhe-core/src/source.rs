@@ -34,11 +34,58 @@ impl NoteSource for YinModel {
         self.max_note_len
     }
 
+    fn display_key_count(&self) -> u16 {
+        // 黑乐谱扩展音域：项目里只要有任何 key ≥ 128 的音符，AR lane
+        // 就用 256 键纵向范围，否则这些音符会画到 lane 外面（压到上一条轨）。
+        // O(128) 的空桶检查，每帧调用一次，不需要维护缓存。
+        if self.notes[yinhe_types::KEY_COUNT / 2..]
+            .iter()
+            .any(|bucket| !bucket.is_empty())
+        {
+            256
+        } else {
+            128
+        }
+    }
+
     fn time_sig_default(&self) -> (u8, u8) {
         self.tempo_map.time_sig_default
     }
 
     fn time_sig_events(&self) -> &[TimeSigEvent] {
         &self.tempo_map.time_sig_events
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yinhe_types::Note;
+
+    fn note(id: u32, start: u32) -> Note {
+        Note {
+            id,
+            start_tick: start,
+            end_tick: start + 120,
+            velocity: 100,
+            track: 0,
+        }
+    }
+
+    /// AR lane 音域：常规 128；出现 key ≥ 128 的音符后切到 256，
+    /// 删除扩展音符后恢复 128。
+    #[test]
+    fn display_key_count_follows_extended_notes() {
+        let mut model = YinModel::new_empty_with_16_tracks();
+        assert_eq!(model.display_key_count(), 128);
+
+        model.insert_note(60, note(1, 0));
+        assert_eq!(model.display_key_count(), 128);
+
+        model.insert_note(200, note(2, 0));
+        assert_eq!(model.display_key_count(), 256);
+
+        model.remove_note_by_id(200, 2);
+        assert_eq!(model.display_key_count(), 128);
     }
 }

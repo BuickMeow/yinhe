@@ -236,8 +236,9 @@ fn main(
                         pixel_y = pr_key_px(key).x;
                     } else {
                         // AR: lane_height based
+                        // 音域与 shader.wgsl 一致：常规 128，扩展音域 256。
                         let lh = u.lane_height;
-                        let lh_per_key = lh / 128.0;
+                        let lh_per_key = lh / max(f32(u.key_count), 1.0);
                         pixel_bottom = -u.scroll_y + lh - f32(key) * lh_per_key + f32(track) * lh;
                         pixel_y = -u.scroll_y + lh - (f32(key) + 1.0) * lh_per_key + f32(track) * lh;
                     }

@@ -40,6 +40,12 @@ pub trait NoteSource: Sync {
         u32::MAX
     }
 
+    /// AR 每条轨道 lane 的纵向音域键数：常规 128，含扩展音域（key ≥ 128）
+    /// 音符时为 256。PR 使用自己的 `KeyLayout`，不读这个值。
+    fn display_key_count(&self) -> u16 {
+        128
+    }
+
     /// Iterate the notes for `key` that may intersect `[tick_start, tick_end]`.
     ///
     /// The right bound is exact (start < tick_end); the left bound is

@@ -20,8 +20,8 @@ use wgpu::rwh::{OhosDisplayHandle, OhosNdkWindowHandle, RawWindowHandle};
 
 use yinhe_core::{Selection, TrackKind, YinModel};
 use yinhe_types::{
-    ArrangementView, AutomationLane, AutomationPanelView, AutomationTarget, PianoRollView,
-    TimelineViewBase,
+    ArrangementView, AutomationLane, AutomationPanelView, AutomationTarget, NoteSource,
+    PianoRollView, TimelineViewBase,
 };
 use yinhe_wgpu::pianoroll::build_render_job;
 use yinhe_wgpu::vertex::NoteInstance;
@@ -1065,6 +1065,8 @@ fn upload_arrangement(
         orientation: 0,
         ghost_dx: preview_offset.0,
         ghost_dy: preview_offset.1,
+        // AR lane 纵向音域：项目含扩展音域音符时 256，否则 128。
+        key_count: model.display_key_count() as u32,
         ..Default::default()
     };
     t.renderer.upload_uniforms(uniforms);

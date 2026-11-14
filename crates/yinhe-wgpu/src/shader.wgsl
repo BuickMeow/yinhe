@@ -494,9 +494,11 @@ fn note_geometry(
             // AR (mode == 2u): lane_height based vertical layout
             // 行高 per-row（通道 AR 的窄合并行）：`row_heights[track]`；
             // 轨道 AR 由 CPU 上传全 lane_height，行为不变。
+            // 音域 = key_count（常规 128；项目含扩展音域音符时 256），
+            // 否则 key ≥ 128 的音符会画出 lane 外压到上一条轨。
             let row_idx = min(track, arrayLength(&row_heights) - 1u);
             let lh = row_heights[row_idx];
-            let lh_per_key = lh / 128.0;
+            let lh_per_key = lh / max(f32(u.key_count), 1.0);
             let track_y = track_offsets[min(track, arrayLength(&track_offsets) - 1u)];
             pixel_y = -u.scroll_y + track_y + lh - (f32(key) + 1.0) * lh_per_key;
             pixel_h = max(lh_per_key, 1.0);
