@@ -197,7 +197,12 @@ impl AudioRenderer {
                         from_sample as f64 / self.engine.sample_rate as f64,
                         t0.elapsed()
                     ));
-                    self.play_probe = 20;
+                    self.play_probe = 200;
+                    self.play_from_sample = from_sample;
+                    self.play_peak_max = 0.0;
+                    self.play_zero_chunks = 0;
+                    self.play_nonzero_chunks = 0;
+                    self.play_voices_max = 0;
                     // seek 后从新位置/新相位开始：首块 10ms 淡入。
                     self.fade_in_frames = super::pause_fade_frames(self.engine.sample_rate);
                     self.play_timing = Some((t0, from_sample));

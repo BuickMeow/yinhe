@@ -160,6 +160,12 @@ impl AudioEngine {
             }
             self.segment_start_sample = sample;
         }
+        // 先落定新位置，再补鼓组声明：`reapply_percussion` 会往 CpuSynth
+        // 事件队列里按 `sample_position` 投 PercussionMode。若仍用旧位置，
+        // 向后 seek 时这些"未来"事件会排在跨点 NoteOn 前面，事件游标被
+        // 第一个未来事件卡住 → 新位置一直不发声，直到播放头追上旧位置。
+        self.sample_position = sample;
+        self.current_tick = self.sample_to_tick(sample);
         // 复位会把每通道 bank 打回 0：重新声明鼓组/旋律模式，
         // 否则 seek/循环回绕后鼓通道变回钢琴（「鼓通道开关无效」的表象之一）。
         self.reapply_percussion();
@@ -218,8 +224,6 @@ impl AudioEngine {
             }
         }
 
-        self.sample_position = sample;
-        self.current_tick = self.sample_to_tick(sample);
         self.note_cursor = [yinhe_types::NoteCursor::default(); KEY_COUNT];
         self.cc_cursor = 0;
         self.active_notes.clear();
@@ -244,7 +248,13 @@ impl AudioEngine {
         // 用户 seek：扫描 seek 点之前开始、seek 点之后才结束的音符，全部重启。
         // Loop wrap 不重启跨点音符（循环区间内的长音在小节线处切断）。
         if is_seek {
-            for (key, n, end_tick) in self.crossing_notes(tick) {
+            let crossings = self.crossing_notes(tick);
+            crate::audio_renderer::play_log(&format!(
+                "[play] seek tick={tick} crossing={} max_note_len={}",
+                crossings.len(),
+                self.yin_model.as_ref().map(|m| m.max_note_len).unwrap_or(0)
+            ));
+            for (key, n, end_tick) in crossings {
                 self.restart_note(key, &n, end_tick);
             }
         }

@@ -199,8 +199,14 @@ struct AudioRenderer {
     interpolation: Interpolation,
     /// 播放启动诊断：Play 时刻与目标位置（首块渲染完成后打印一次耗时）。
     play_timing: Option<(Instant, u64)>,
-    /// 播放启动诊断：还要记录多少个输出块的峰值（Play 后前 20 块 ≈ 200ms）。
+    /// 播放启动诊断：还要统计多少个输出块（Play 后 200 块 ≈ 2s）。
     play_probe: u32,
+    /// 播放启动诊断：Play 的起点采样 + 2s 窗口内的输出统计。
+    play_from_sample: u64,
+    play_peak_max: f32,
+    play_zero_chunks: u32,
+    play_nonzero_chunks: u32,
+    play_voices_max: u64,
     /// 导出任务（Some = 导出模式：不推 ring、不发布播放状态，连续离线渲染写 WAV）。
     export: Option<ExportJob>,
     /// 导出结束后要恢复的 xsynth 层数（导出设置不污染用户设置）。
@@ -258,6 +264,11 @@ impl AudioRenderer {
             interpolation,
             play_timing: None,
             play_probe: 0,
+            play_from_sample: 0,
+            play_peak_max: 0.0,
+            play_zero_chunks: 0,
+            play_nonzero_chunks: 0,
+            play_voices_max: 0,
         }
     }
 
@@ -470,13 +481,32 @@ impl AudioRenderer {
         if self.play_probe > 0 {
             self.play_probe -= 1;
             let peak = self.scratch.iter().fold(0.0_f32, |m, s| m.max(s.abs()));
-            play_log(&format!(
-                "[play] probe peak={peak:.4} pos={:.3}s tick={} voices={} ring={}",
-                self.engine.sample_position() as f64 / self.engine.sample_rate as f64,
-                self.engine.current_tick(),
-                self.engine.voice_count(),
-                self.ring.len(),
-            ));
+            self.play_peak_max = self.play_peak_max.max(peak);
+            self.play_voices_max = self.play_voices_max.max(self.engine.voice_count());
+            if peak == 0.0 {
+                self.play_zero_chunks += 1;
+            } else {
+                self.play_nonzero_chunks += 1;
+            }
+            if self.play_probe == 199 {
+                // 首块单独打一行：确认 Play 是否立刻有输出。
+                play_log(&format!(
+                    "[play] 首块 peak={peak:.4} pos={:.3}s tick={} voices={}",
+                    self.engine.sample_position() as f64 / self.engine.sample_rate as f64,
+                    self.engine.current_tick(),
+                    self.engine.voice_count()
+                ));
+            }
+            if self.play_probe == 0 {
+                play_log(&format!(
+                    "[play] 2s 总结 from={:.3}s peak_max={:.4} 非静音块={}/{} voices_max={}",
+                    self.play_from_sample as f64 / self.engine.sample_rate as f64,
+                    self.play_peak_max,
+                    self.play_nonzero_chunks,
+                    self.play_nonzero_chunks + self.play_zero_chunks,
+                    self.play_voices_max,
+                ));
+            }
         }
 
         // 尾音结束判定：连续若干块低于静音阈值后停止渲染。

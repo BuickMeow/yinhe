@@ -434,6 +434,11 @@ impl CpuSynth {
         self.events.push(event);
     }
 
+    /// 诊断/回归：事件队列首个事件的 sample（无事件返回 None）。
+    pub fn debug_first_event_sample(&self) -> Option<u64> {
+        self.events.first().map(|e| e.sample())
+    }
+
     /// 增量渲染 `[offset, offset + frames)` 到混音台 planar 缓冲（覆盖写本段区间）。
     ///
     /// 与 `render_to_mixer` 的差异：由调用方（engine 的逐段 dispatch）提供区间，

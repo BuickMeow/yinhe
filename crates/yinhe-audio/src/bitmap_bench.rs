@@ -473,10 +473,11 @@ fn b7_pause_seek_play() {
         .expect("sf");
     engine.cpu_synth = Some(cs);
     eprintln!(
-        "\n[B7] Echoes 时长={:.1}s 轨道={} 通道={}",
+        "\n[B7] Echoes 时长={:.1}s 轨道={} 通道={} 音符={}",
         engine.duration_samples() as f64 / sr as f64,
         model.tracks.len(),
-        layout.num_channels()
+        layout.num_channels(),
+        model.note_count
     );
 
     let mut buf = vec![0.0f32; 512 * 2];
@@ -497,7 +498,7 @@ fn b7_pause_seek_play() {
         engine.sample_position() as f64 / sr as f64
     );
 
-    for secs in [10.0f64, 30.0, 60.0, 120.0] {
+    for secs in [1.263f64, 2.842, 3.474, 10.737, 7.579, 13.579, 30.0] {
         let target = (secs * sr as f64) as u64;
         if target >= engine.duration_samples() {
             continue;
@@ -521,4 +522,162 @@ fn b7_pause_seek_play() {
             "跳转到 {secs}s 后 1s 内应有声"
         );
     }
+}
+
+#[test]
+#[ignore = "诊断"]
+fn b9c_early_channels() {
+    let model = parse("/Users/jieneng/Music/MIDIs/Echoes of Memoria v1.0.5Fixed.mid");
+    for (a, b) in [
+        (1.2, 1.4),
+        (1.4, 2.0),
+        (2.0, 2.9),
+        (3.0, 3.6),
+        (7.0, 8.0),
+        (13.0, 14.0),
+    ] {
+        let lo = (a * 1000.0) as u64;
+        let hi = (b * 1000.0) as u64;
+        let mut counts = std::collections::BTreeMap::new();
+        for key in 0..256 {
+            for n in model.notes[key].iter() {
+                if n.velocity <= 1 {
+                    continue;
+                }
+                let ms = (model.tempo_map.tick_to_seconds(n.start_tick as u64) * 1000.0) as u64;
+                if ms >= lo && ms < hi {
+                    let ch = model.tracks[n.track as usize].global_channel();
+                    *counts.entry(ch).or_insert(0u32) += 1;
+                }
+            }
+        }
+        eprintln!("  [{a},{b})s 可听音符按通道={counts:?}");
+    }
+    let layout = crate::spawn::channels_for_model(&model);
+    eprintln!(
+        "  channels_for_model={} 活跃源通道={:?}",
+        layout.num_channels(),
+        (0..64).filter(|c| layout.is_active(*c)).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+#[ignore = "诊断"]
+fn b10_max_note_len_zero() {
+    const ECHOES: &str = "/Users/jieneng/Music/MIDIs/Echoes of Memoria v1.0.5Fixed.mid";
+    const GRAND: &str = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
+    let base = parse(ECHOES);
+    let sr = 48_000u32;
+    let mut engine = crate::engine::AudioEngine::new(sr, crate::spawn::channels_for_model(&base));
+    let mut m = (*base).clone();
+    m.max_note_len = 0;
+    let model = std::sync::Arc::new(m);
+    engine.handle_command(crate::spawn::AudioCommand::LoadModel {
+        model: std::sync::Arc::clone(&model),
+    });
+    let mut cs = yinhe_synth::CpuSynth::new(sr);
+    let denses: Vec<u32> = (0..crate::spawn::channels_for_model(&model).num_channels()).collect();
+    cs.load_dense_soundfonts_many(&denses, &[std::path::PathBuf::from(GRAND)])
+        .expect("sf");
+    engine.cpu_synth = Some(cs);
+    let mut buf = vec![0.0f32; 512 * 2];
+    for secs in [1.263f64, 2.842, 3.474, 10.737] {
+        let target = (secs * sr as f64) as u64;
+        engine.handle_command(crate::spawn::AudioCommand::Seek { sample: target });
+        engine.handle_command(crate::spawn::AudioCommand::Play {
+            from_sample: target,
+        });
+        let mut peaks = Vec::new();
+        for _ in 0..5 {
+            let mut peak = 0.0f32;
+            for _ in 0..10 {
+                engine.render(&mut buf);
+                peak = buf.iter().fold(peak, |m, s| m.max(s.abs()));
+            }
+            peaks.push(peak);
+        }
+        eprintln!(
+            "  max_note_len=0 跳转 {secs}s: peaks={peaks:.3?} voices={}",
+            engine.voice_count()
+        );
+    }
+}
+
+#[test]
+#[ignore = "诊断"]
+fn b9d_velocity_profile() {
+    let model = parse("/Users/jieneng/Music/MIDIs/Echoes of Memoria v1.0.5Fixed.mid");
+    for (a, b) in [(1.2, 2.0), (2.0, 2.9), (3.0, 3.6), (7.0, 8.0), (13.0, 14.0)] {
+        let lo = (a * 1000.0) as u64;
+        let hi = (b * 1000.0) as u64;
+        let mut vels: Vec<u8> = Vec::new();
+        for key in 0..256 {
+            for n in model.notes[key].iter() {
+                let ms = (model.tempo_map.tick_to_seconds(n.start_tick as u64) * 1000.0) as u64;
+                if ms >= lo && ms < hi {
+                    vels.push(n.velocity);
+                }
+            }
+        }
+        vels.sort_unstable();
+        let n = vels.len();
+        let quiet = vels.iter().filter(|&&v| v <= 30).count();
+        let mid = vels.iter().filter(|&&v| v > 30 && v <= 80).count();
+        let loud = vels.iter().filter(|&&v| v > 80).count();
+        eprintln!(
+            "  [{a},{b})s n={n} min={:?} med={:?} max={:?} <=30:{quiet} 31..80:{mid} >80:{loud}",
+            vels.first(),
+            vels.get(n / 2),
+            vels.last()
+        );
+    }
+}
+
+#[test]
+#[ignore = "诊断：真实 cpal/renderer 路径（会出声）"]
+fn b11_real_renderer_sequence() {
+    const ECHOES: &str = "/Users/jieneng/Music/MIDIs/Echoes of Memoria v1.0.5Fixed.mid";
+    const GRAND: &str = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
+    let model = parse(ECHOES);
+    let layout = crate::spawn::channels_for_model(&model);
+    let audio = crate::spawn::spawn_cpal_audio(
+        48_000,
+        layout.clone(),
+        crate::BufferSize::Default,
+        None,
+        yinhe_types::SynthEngine::YinheCpu,
+        yinhe_types::Interpolation::Linear,
+    )
+    .expect("spawn audio");
+    audio.handle.send(crate::spawn::AudioCommand::LoadModel {
+        model: std::sync::Arc::clone(&model),
+    });
+    let configs: Vec<(u8, Vec<String>)> = (0..layout.num_channels().min(256) as usize)
+        .filter(|c| layout.is_active(*c))
+        .map(|c| (c as u8, vec![GRAND.to_string()]))
+        .collect();
+    audio
+        .handle
+        .send(crate::spawn::AudioCommand::SetSoundFonts {
+            configs: Box::new(configs),
+        });
+    let t0 = std::time::Instant::now();
+    while !audio.handle.audio_ready() {
+        assert!(t0.elapsed().as_secs() < 15, "音频就绪超时");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    eprintln!("[B11] 音频就绪 {:.2}s", t0.elapsed().as_secs_f64());
+    let sr = 48_000u64;
+    let seq = [13.579f64, 2.842, 1.263, 3.474, 7.579];
+    for secs in seq {
+        let target = (secs * sr as f64) as u64;
+        audio.handle.send(crate::spawn::AudioCommand::Pause);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        audio.handle.send(crate::spawn::AudioCommand::Play {
+            from_sample: target,
+        });
+        std::thread::sleep(std::time::Duration::from_millis(2500));
+    }
+    audio.handle.send(crate::spawn::AudioCommand::Pause);
+    eprintln!("[B11] 完成");
 }

@@ -492,6 +492,30 @@ fn test_engine_handle_command_skip_tracks() {
     assert_eq!(engine.skip_track, vec![false, true, false]);
 }
 
+/// 回归：向后 seek 时鼓组声明必须落在新位置，不能是旧位置。
+/// 旧位置会作为"未来事件"排在跨点 NoteOn 前面，卡住 CpuSynth 事件游标，
+/// 表现为向后跳转后一直无声、等播放头追上旧位置才恢复。
+#[test]
+fn backward_seek_keeps_synth_event_queue_in_past() {
+    let model = Arc::new(make_model_with_notes(vec![(60, 0, 480, 100, 0)]));
+    let mut engine = AudioEngine::new(48_000, ChannelLayout::from_mask(vec![true; 16]));
+    engine.load_model(&model);
+    engine.cpu_synth = Some(yinhe_synth::CpuSynth::new(48_000));
+
+    engine.seek_to(100_000);
+    engine.seek_to(50_000);
+
+    let first = engine
+        .cpu_synth
+        .as_ref()
+        .and_then(|cs| cs.debug_first_event_sample());
+    assert!(first.is_some(), "seek 后应有鼓组声明事件");
+    assert!(
+        first.unwrap() <= 50_000,
+        "向后 seek 后事件样本必须 <= 新位置（实际 {first:?}）"
+    );
+}
+
 #[test]
 fn test_engine_render_not_playing() {
     let mask = vec![true; 16];
