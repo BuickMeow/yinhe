@@ -2244,7 +2244,15 @@ fn prof_blackmidi_cost_breakdown() {
         .unwrap_or(3.0);
 
     let midis: Vec<String> = std::env::var("YINHE_PROF_MIDIS")
-        .map(|s| s.split(',').map(str::to_string).collect())
+        .map(|s| {
+            // 单个路径里可能有逗号（如 "44,444,444 Notes"），优先整体判定；
+            // 多文件用 ';' 分隔。
+            if std::path::Path::new(&s).exists() {
+                vec![s]
+            } else {
+                s.split(';').map(str::to_string).collect()
+            }
+        })
         .unwrap_or_else(|_| {
             vec![
                 "/Users/jieneng/Music/MIDIs/tau2.5.9.mid".into(),
@@ -2256,24 +2264,11 @@ fn prof_blackmidi_cost_breakdown() {
         let model = Arc::new(yinhe_midi::parse_path(midi).expect("parse"));
         let total: usize = (0..256).map(|k| model.notes[k].len()).sum();
         let ppq = model.meta.ppq;
-        // 密度峰值（每拍音符数）
-        let mut per_beat: std::collections::BTreeMap<u32, usize> = Default::default();
-        for k in 0..256 {
-            for n in model.notes[k].iter() {
-                *per_beat.entry(n.start_tick / ppq).or_default() += 1;
-            }
-        }
-        let (peak_beat, peak_count) = per_beat
-            .iter()
-            .max_by_key(|(_, v)| **v)
-            .map(|(b, c)| (*b, *c))
-            .expect("non-empty");
-        eprintln!(
-            "\n=== {}\n  parse={:.1}s notes={total} ppq={ppq} 峰值拍={peak_beat}（约第 {} 小节）count={peak_count}",
-            midi.rsplit('/').next().unwrap_or(midi),
-            t_parse.elapsed().as_secs_f64(),
-            peak_beat / 4 + 1
-        );
+        // 固定起点（`YINHE_PROF_START_SECS`）：两个版本的同一段对比时跳过
+        // 峰值拍统计（否则 4400 万音符的直方图要扫一遍）。
+        let fixed_start: Option<f64> = std::env::var("YINHE_PROF_START_SECS")
+            .ok()
+            .and_then(|s| s.parse().ok());
         let layout = crate::spawn::channels_for_model(&model);
         // 多 port 工程：源通道最多 256 个，dense 索引与源通道不是一回事。
         let active: Vec<u8> = (0..256u16)
@@ -2281,42 +2276,15 @@ fn prof_blackmidi_cost_breakdown() {
             .map(|c| c as u8)
             .collect();
         let denses: Vec<u32> = (0..layout.num_channels()).collect();
-        let peak_tick = peak_beat.saturating_mul(ppq).saturating_sub(ppq * 2);
-        {
-            // 峰值拍的门长：黑乐谱大量极短音符，决定"同时发声数"的上限。
-            let lo = peak_beat * ppq;
-            let hi = lo + ppq;
-            let (mut n, mut sum) = (0u64, 0u64);
-            for k in 0..256 {
-                for note in model.notes[k].iter() {
-                    if note.start_tick >= lo && note.start_tick < hi {
-                        n += 1;
-                        sum += note.end_tick.saturating_sub(note.start_tick) as u64;
-                    }
-                }
-            }
-            eprintln!(
-                "  峰值拍门长：note_on={n} 平均 gate={:.1} tick",
-                sum as f64 / n.max(1) as f64
-            );
-        }
-        // tick→sample 必须用**加载模型后**的引擎（tempo map 来自模型；
-        // 空引擎会退化成默认 120BPM，seek 到错误位置）。
-        let start_sample = {
-            let mut probe = AudioEngine::new(sr, layout.clone());
-            probe.handle_command(AudioCommand::LoadModel {
-                model: Arc::clone(&model),
-            });
-            probe.tick_to_sample(peak_tick)
-        };
 
-        {
-            let beat_secs = model
-                .tempo_map
-                .tick_to_seconds((peak_beat + 1) as u64 * ppq as u64)
-                - model
-                    .tempo_map
-                    .tick_to_seconds(peak_beat as u64 * ppq as u64);
+        let start_sample = if let Some(secs) = fixed_start {
+            let start_sample = (secs * sr as f64) as u64;
+            eprintln!(
+                "\n=== {}\n  parse={:.1}s notes={total}（模型≈{:.0}MB） ppq={ppq} 固定起点={secs}s",
+                midi.rsplit('/').next().unwrap_or(midi),
+                t_parse.elapsed().as_secs_f64(),
+                total as f64 * std::mem::size_of::<yinhe_types::Note>() as f64 / (1024.0 * 1024.0),
+            );
             let probe = {
                 let mut p = AudioEngine::new(sr, layout.clone());
                 p.handle_command(AudioCommand::LoadModel {
@@ -2327,14 +2295,99 @@ fn prof_blackmidi_cost_breakdown() {
             let start_tick = probe.sample_to_tick(start_sample);
             let end_tick = probe.sample_to_tick(start_sample + (prof_secs * sr as f64) as u64);
             let mut count = 0usize;
+            let mut audible = 0usize;
             for key in 0..256 {
-                count += model.notes[key].range(start_tick, end_tick).count();
+                for n in model.notes[key].range(start_tick, end_tick) {
+                    count += 1;
+                    if crate::prepare_model::audible_end(&model, n, 1).is_some() {
+                        audible += 1;
+                    }
+                }
             }
+            eprintln!("  渲染窗口=[{start_tick},{end_tick}) 音符数={count} 可听={audible}");
+            start_sample
+        } else {
+            // 密度峰值（每拍音符数）
+            let mut per_beat: std::collections::BTreeMap<u32, usize> = Default::default();
+            for k in 0..256 {
+                for n in model.notes[k].iter() {
+                    *per_beat.entry(n.start_tick / ppq).or_default() += 1;
+                }
+            }
+            let (peak_beat, peak_count) = per_beat
+                .iter()
+                .max_by_key(|(_, v)| **v)
+                .map(|(b, c)| (*b, *c))
+                .expect("non-empty");
             eprintln!(
-                "  峰值拍时长={beat_secs:.3}s bpm≈{:.0} 渲染窗口=[{start_tick},{end_tick}) 音符数={count}",
-                60.0 / beat_secs.max(1e-9)
+                "\n=== {}\n  parse={:.1}s notes={total}（模型≈{:.0}MB） ppq={ppq} 峰值拍={peak_beat}（约第 {} 小节）count={peak_count}",
+                midi.rsplit('/').next().unwrap_or(midi),
+                t_parse.elapsed().as_secs_f64(),
+                total as f64 * std::mem::size_of::<yinhe_types::Note>() as f64 / (1024.0 * 1024.0),
+                peak_beat / 4 + 1
             );
-        }
+            let peak_tick = peak_beat.saturating_mul(ppq).saturating_sub(ppq * 2);
+            {
+                // 峰值拍的门长：黑乐谱大量极短音符，决定"同时发声数"的上限。
+                let lo = peak_beat * ppq;
+                let hi = lo + ppq;
+                let (mut n, mut sum) = (0u64, 0u64);
+                for k in 0..256 {
+                    for note in model.notes[k].iter() {
+                        if note.start_tick >= lo && note.start_tick < hi {
+                            n += 1;
+                            sum += note.end_tick.saturating_sub(note.start_tick) as u64;
+                        }
+                    }
+                }
+                eprintln!(
+                    "  峰值拍门长：note_on={n} 平均 gate={:.1} tick",
+                    sum as f64 / n.max(1) as f64
+                );
+            }
+            // tick→sample 必须用**加载模型后**的引擎（tempo map 来自模型；
+            // 空引擎会退化成默认 120BPM，seek 到错误位置）。
+            let start_sample = {
+                let mut probe = AudioEngine::new(sr, layout.clone());
+                probe.handle_command(AudioCommand::LoadModel {
+                    model: Arc::clone(&model),
+                });
+                probe.tick_to_sample(peak_tick)
+            };
+            {
+                let beat_secs = model
+                    .tempo_map
+                    .tick_to_seconds((peak_beat + 1) as u64 * ppq as u64)
+                    - model
+                        .tempo_map
+                        .tick_to_seconds(peak_beat as u64 * ppq as u64);
+                let probe = {
+                    let mut p = AudioEngine::new(sr, layout.clone());
+                    p.handle_command(AudioCommand::LoadModel {
+                        model: Arc::clone(&model),
+                    });
+                    p
+                };
+                let start_tick = probe.sample_to_tick(start_sample);
+                let end_tick = probe.sample_to_tick(start_sample + (prof_secs * sr as f64) as u64);
+                let mut count = 0usize;
+                let mut audible = 0usize;
+                for key in 0..256 {
+                    for n in model.notes[key].range(start_tick, end_tick) {
+                        count += 1;
+                        if crate::prepare_model::audible_end(&model, n, 1).is_some() {
+                            audible += 1;
+                        }
+                    }
+                }
+                eprintln!(
+                    "  峰值拍时长={beat_secs:.3}s bpm≈{:.0} 起点={:.2}s 渲染窗口=[{start_tick},{end_tick}) 音符数={count} 可听={audible}",
+                    60.0 / beat_secs.max(1e-9),
+                    start_sample as f64 / sr as f64
+                );
+            }
+            start_sample
+        };
 
         // 渲染 prof_secs 秒（调用方负责 Play/重置）
         let render_secs = |engine: &mut AudioEngine, secs: f64| -> (f64, u64, f64, f32) {
@@ -2368,9 +2421,11 @@ fn prof_blackmidi_cost_breakdown() {
         // ── baseline：两个 CPU 后端 ──
         for (name, backend) in [("xsynth-cpu", 0u8), ("yinhe-cpu", 1)] {
             let mut engine = AudioEngine::new(sr, layout.clone());
+            let t_load = Instant::now();
             engine.handle_command(AudioCommand::LoadModel {
                 model: Arc::clone(&model),
             });
+            let load_ms = t_load.elapsed().as_secs_f64() * 1000.0;
             match backend {
                 0 => {
                     let configs: Vec<(u8, Vec<String>)> =
@@ -2393,7 +2448,7 @@ fn prof_blackmidi_cost_breakdown() {
             let _ = backend;
             let (el, pv, mc, ps) = render_secs(&mut engine, prof_secs);
             eprintln!(
-                "  {name:<12} {prof_secs}s音频={el:>6.2}s ({:.2}x) peak_voice={pv:>6} max_chunk={mc:>7.1}ms peak_sample={ps:.3}",
+                "  {name:<12} {prof_secs}s音频={el:>6.2}s ({:.2}x) peak_voice={pv:>6} max_chunk={mc:>7.1}ms peak_sample={ps:.3} LoadModel={load_ms:.1}ms",
                 prof_secs / el.max(1e-9)
             );
         }
