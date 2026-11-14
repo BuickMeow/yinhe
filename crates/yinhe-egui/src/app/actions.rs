@@ -447,8 +447,8 @@ impl App {
         let Some(raw) = self.clipboard_sync.domino_payload() else {
             return false;
         };
-        let notes = match yinhe_editor_core::domino_clipboard::decode_domino_clipboard(&raw) {
-            Ok(notes) => notes,
+        let clip = match yinhe_editor_core::domino_clipboard::decode_domino_clipboard(&raw) {
+            Ok(clip) => clip,
             Err(e) => {
                 tracing::debug!("Domino 剪贴板解码失败: {e}");
                 self.notifications.error("粘贴 Domino 剪贴板失败", e);
@@ -460,16 +460,19 @@ impl App {
             return false;
         };
         let ppq = doc.data.model.meta.ppq;
+        let note_count: usize = clip.tracks.iter().map(Vec::len).sum();
+        let track_count = doc.data.model.tracks.len();
         self.clipboard = yinhe_editor_core::ClipboardContent::Notes(
-            yinhe_editor_core::domino_clipboard::to_notes_clipboard(&notes, ppq, track),
+            yinhe_editor_core::domino_clipboard::to_notes_clipboard(&clip, ppq, track, track_count),
         );
-        // Domino 数据是绝对 tick，粘贴时按 yinhe 惯例对齐到光标；不要接上一次
-        // 连续粘贴链的偏移，否则第二次粘贴会莫名向后跳。
+        // Domino 数据是相对复制起点的 tick；粘贴时按 yinhe 惯例对齐到光标；
+        // 不要接上一次连续粘贴链的偏移，否则第二次粘贴会莫名向后跳。
         self.paste_chain = None;
         tracing::info!(
-            "已从 Domino 剪贴板载入 {} 个音符（{} PPQ → {} PPQ）",
-            notes.len(),
-            yinhe_editor_core::domino_clipboard::DOMINO_PPQ,
+            "已从 Domino 剪贴板载入 {} 个音符 / {} 轨（{} PPQ → {} PPQ）",
+            note_count,
+            clip.tracks.len(),
+            clip.ppq,
             ppq
         );
         true
