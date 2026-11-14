@@ -25,6 +25,7 @@ pub mod right_panel_layout;
 pub mod sel_hint;
 pub mod selection_handle;
 pub mod shortcuts;
+pub mod track_activity;
 pub mod workspace;
 
 pub use clipboard::{
