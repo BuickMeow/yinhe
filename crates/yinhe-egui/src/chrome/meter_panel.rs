@@ -340,9 +340,8 @@ impl MeterPanelState {
             },
         );
         crate::widgets::hint::hover(ui.ctx(), &add_resp, t!("hint.meter.add"));
-        if add_resp.clicked() {
-            changed |= self.open_add_menu(ui, &add_resp);
-        }
+        // Popup 必须每帧声明才能保持打开；只在点击帧调用会让菜单只活一帧。
+        changed |= self.open_add_menu(ui, &add_resp);
 
         // 「更多」：恢复默认布局 / 重置全部数据。
         let menu_rect = egui::Rect::from_center_size(
@@ -687,6 +686,12 @@ mod click_tests {
         assert!(
             egui::Popup::is_any_open(&ctx),
             "点击 + 后应打开添加模块菜单"
+        );
+        // 菜单必须跨帧保持打开（旧实现只在点击帧调用 Popup::show，第二帧就没了）。
+        run(&mut state, vec![]);
+        assert!(
+            egui::Popup::is_any_open(&ctx),
+            "添加模块菜单应在后续帧保持打开"
         );
     }
 }

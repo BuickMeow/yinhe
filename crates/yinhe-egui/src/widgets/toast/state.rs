@@ -1,6 +1,5 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use super::kind::ToastKind;
 use super::model::{ErrorReport, Notification, ProgressOutcome, ProgressSource};
@@ -17,8 +16,6 @@ pub const MIDI_EXPORT_PROGRESS_ID: u64 = 0x4D455849; // "MEXI"
 pub const RESCALE_PROGRESS_ID: u64 = 0x5253434C; // "RSCL"
 pub const ENGINE_PROGRESS_ID: u64 = 0x454E474E; // "ENGN"
 
-/// 结果通知（完成/中止）在标题栏停留时长；进行中的任务常驻。
-const RESULT_TTL: Duration = Duration::from_secs(5);
 /// 错误队列上限：阻塞窗口逐条确认，异常情况下也不能无限堆积。
 const MAX_ERRORS: usize = 32;
 
@@ -99,7 +96,6 @@ impl Notifications {
             action: None,
             cancelling: false,
             dismissed: false,
-            expires_at: Some(Instant::now() + RESULT_TTL),
         });
         self.primary = Some(id);
         id
@@ -119,7 +115,6 @@ impl Notifications {
             n.source = Some(source);
             n.cancel = n.source.as_ref().and_then(|s| s.cancel());
             n.cancelling = false;
-            n.expires_at = None;
             if was_done {
                 // 上一任务已结束，同一 key 被重新使用：重置为进行中。
                 n.title = title;
@@ -140,7 +135,6 @@ impl Notifications {
                 action: None,
                 cancelling: false,
                 dismissed: false,
-                expires_at: None,
             });
             promote = true;
         }
@@ -181,7 +175,6 @@ impl Notifications {
         }
 
         let promoted = self.alloc_id();
-        let now = Instant::now();
         {
             let n = &mut self.items[idx];
             n.id = promoted;
@@ -202,7 +195,6 @@ impl Notifications {
             n.source = None;
             n.cancelling = false;
             n.dismissed = false;
-            n.expires_at = Some(now + RESULT_TTL);
         }
         self.primary = Some(promoted);
         promoted
@@ -276,10 +268,8 @@ impl Notifications {
 
     // ── 帧内维护 ──
 
-    /// 清理过期结果、修正主槽指向。每帧由标题栏渲染调用一次。
-    pub(super) fn tick(&mut self, now: Instant) {
-        self.items
-            .retain(|n| n.source.is_some() || n.expires_at.is_some_and(|t| t > now));
+    /// 修正主槽指向。每帧由标题栏渲染调用一次。
+    pub(super) fn tick(&mut self) {
         if self
             .primary
             .is_some_and(|id| !self.items.iter().any(|n| n.id == id && !n.dismissed))

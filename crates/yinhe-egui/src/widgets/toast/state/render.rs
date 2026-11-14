@@ -8,13 +8,13 @@ use super::super::model::{Notification, ToastAction, ToastActionKind};
 use super::Notifications;
 
 /// 通知条高度（标题栏 32px，上下各留 3px）。
-const BAR_H: f32 = 26.0;
+const BAR_H: f32 = 28.0;
 /// 左侧全高进度条的宽度（要放得下 100%）。
-const PROGRESS_W: f32 = 46.0;
+const PROGRESS_W: f32 = 56.0;
 const MIN_W: f32 = 132.0;
 const MAX_W: f32 = 360.0;
 const PAD_X: f32 = 8.0;
-const BTN_W: f32 = 18.0;
+const BTN_W: f32 = 22.0;
 const TASKS_W: f32 = 300.0;
 const TASKS_ROW_H: f32 = 24.0;
 
@@ -143,23 +143,11 @@ impl Notifications {
     /// 在歌曲标题右侧的可用区 `area` 内绘制一行状态。
     /// 只用 painter 自绘，不注册布局控件，不会撑高标题栏。
     pub fn show_title_bar(&mut self, ui: &mut egui::Ui, area: egui::Rect) -> egui::Rect {
-        let now = std::time::Instant::now();
-        self.tick(now);
-        // 进行中的任务需要持续刷新百分比；结果通知到点后需要一次重绘来消失。
-        let next_repaint = self
-            .items
-            .iter()
-            .filter_map(|n| {
-                if n.source.is_some() {
-                    Some(now + std::time::Duration::from_millis(50))
-                } else {
-                    n.expires_at
-                }
-            })
-            .min();
-        if let Some(at) = next_repaint {
+        self.tick();
+        // 进行中的任务需要持续刷新百分比。
+        if self.items.iter().any(|n| n.source.is_some()) {
             ui.ctx()
-                .request_repaint_after(at.saturating_duration_since(now));
+                .request_repaint_after(std::time::Duration::from_millis(50));
         }
 
         let Some(row) = self.primary_row() else {
@@ -174,11 +162,11 @@ impl Notifications {
 
         let font = egui::FontId::proportional(crate::theme::BODY_FONT);
         let text_color = if row.running {
-            crate::theme::text_primary()
+            crate::theme::text_secondary()
         } else {
             match row.kind {
                 ToastKind::Warning => crate::theme::warning_gold(),
-                _ => crate::theme::text_secondary(),
+                _ => crate::theme::text_muted(),
             }
         };
         let text_w = ui
@@ -223,8 +211,8 @@ impl Notifications {
         // 左侧全高进度条：淡强调色底 + 实心进度 + 百分比居中。
         let text_left = if let Some(p) = row.progress {
             let bar_rect = egui::Rect::from_min_size(
-                egui::pos2(rect.min.x + 4.0, rect.min.y + 2.0),
-                egui::vec2(PROGRESS_W, rect.height() - 4.0),
+                egui::pos2(rect.min.x + 1.0, rect.min.y + 1.0),
+                egui::vec2(PROGRESS_W, rect.height() - 2.0),
             );
             let accent = match row.kind {
                 ToastKind::Warning => crate::theme::warning_gold(),
@@ -246,7 +234,7 @@ impl Notifications {
                 egui::Align2::CENTER_CENTER,
                 format!("{:.0}%", p.clamp(0.0, 1.0) * 100.0),
                 egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT),
-                crate::theme::text_primary(),
+                crate::theme::text_secondary(),
             );
             bar_rect.max.x + 8.0
         } else {
@@ -289,7 +277,7 @@ impl Notifications {
                 &mut cursor_x,
                 rect.center().y,
                 ICON_STOP.codepoint,
-                egui::FontId::new(crate::theme::ICON_FONT_SM, ICON_STOP.font_family()),
+                egui::FontId::new(crate::theme::ICON_FONT, ICON_STOP.font_family()),
                 crate::theme::text_muted(),
                 rust_i18n::t!("hint.toast.cancel").as_ref(),
                 "stop",
@@ -307,7 +295,7 @@ impl Notifications {
                 &mut cursor_x,
                 rect.center().y,
                 icon.codepoint,
-                egui::FontId::new(crate::theme::ICON_FONT_SM, icon.font_family()),
+                egui::FontId::new(crate::theme::ICON_FONT, icon.font_family()),
                 crate::theme::text_muted(),
                 rust_i18n::t!("hint.toast.pause").as_ref(),
                 "pause",
@@ -323,7 +311,7 @@ impl Notifications {
                 &mut cursor_x,
                 rect.center().y,
                 icon.codepoint,
-                egui::FontId::new(crate::theme::ICON_FONT_SM, icon.font_family()),
+                egui::FontId::new(crate::theme::ICON_FONT, icon.font_family()),
                 crate::theme::text_muted(),
                 &action.label,
                 "action",
@@ -465,7 +453,7 @@ impl Notifications {
                             r.center(),
                             egui::Align2::CENTER_CENTER,
                             icon.codepoint,
-                            egui::FontId::new(crate::theme::ICON_FONT_SM, icon.font_family()),
+                            egui::FontId::new(crate::theme::ICON_FONT, icon.font_family()),
                             c,
                         );
                         crate::widgets::hint::hover(ui.ctx(), &resp, hint);

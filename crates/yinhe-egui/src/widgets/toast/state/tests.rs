@@ -1,5 +1,4 @@
 use std::sync::{Arc, atomic::AtomicBool};
-use std::time::{Duration, Instant};
 
 use super::super::kind::ToastKind;
 use super::super::model::{ProgressOutcome, ProgressSource};
@@ -64,14 +63,15 @@ fn push_replaces_previous_result() {
 }
 
 #[test]
-fn success_expires_after_ttl() {
+fn result_stays_until_replaced() {
     let mut n = Notifications::new();
-    let id = n.success("a", "1");
-    n.items[0].expires_at = Some(Instant::now() - Duration::from_secs(1));
-    n.tick(Instant::now());
-    assert!(n.items.is_empty(), "过期的结果通知应被清理");
-    assert_eq!(n.primary, None);
-    let _ = id;
+    let first = n.success("a", "1");
+    n.tick();
+    assert_eq!(n.items.len(), 1, "结果通知常驻，不自动过期");
+    let second = n.success("b", "2");
+    assert_ne!(first, second);
+    assert_eq!(n.items.len(), 1, "新结果替换旧结果");
+    assert_eq!(n.primary, Some(second));
 }
 
 #[test]
@@ -102,7 +102,6 @@ fn finish_completed_promotes_to_result() {
     assert_eq!(r.kind, ToastKind::Success);
     assert_eq!(r.progress, Some(1.0));
     assert!(r.source.is_none());
-    assert!(r.expires_at.is_some());
 }
 
 #[test]
@@ -233,7 +232,7 @@ fn primary_falls_back_to_active_task() {
     assert_eq!(n.primary, Some(LOADING_PROGRESS_ID));
     n.dismiss(LOADING_PROGRESS_ID);
     assert_eq!(n.primary, None);
-    n.tick(Instant::now());
+    n.tick();
     assert_eq!(n.primary, Some(result), "任务收起后回退到结果通知");
 }
 

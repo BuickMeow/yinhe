@@ -226,11 +226,16 @@ impl App {
                             if self.audio_settings.push_recent_file(&path) {
                                 self.audio_settings.save();
                             }
+                            let saved_file = std::path::Path::new(&path)
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or(&saved_name)
+                                .to_string();
                             self.notifications.finish_progress(
                                 crate::widgets::toast::SAVE_PROGRESS_ID,
                                 crate::widgets::toast::ProgressOutcome::Completed,
-                                t!("toast.save_done").to_string(),
-                                saved_name,
+                                t!("toast.saved_to", name = saved_file).to_string(),
+                                String::new(),
                                 None,
                             );
                             // 保存成功才执行延迟动作（关闭/退出等）

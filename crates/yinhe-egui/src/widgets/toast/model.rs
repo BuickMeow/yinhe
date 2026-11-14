@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 use std::sync::{Arc, atomic::AtomicBool};
-use std::time::Instant;
 
 use super::kind::ToastKind;
 
@@ -69,8 +68,6 @@ pub(crate) struct Notification {
     pub(crate) cancelling: bool,
     /// 用户已取消/收起：不再渲染，但保留到任务真正结束。
     pub(crate) dismissed: bool,
-    /// 结果通知的过期时刻（None=进行中的任务，常驻）。
-    pub(crate) expires_at: Option<Instant>,
 }
 
 impl Notification {
