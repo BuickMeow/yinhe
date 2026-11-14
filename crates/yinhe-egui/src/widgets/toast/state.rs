@@ -94,7 +94,6 @@ impl Notifications {
             title: title.into(),
             message: message.into(),
             progress: None,
-            progress_label: String::new(),
             cancel: None,
             source: None,
             action: None,
@@ -126,7 +125,6 @@ impl Notifications {
                 n.title = title;
                 n.message.clear();
                 n.progress = None;
-                n.progress_label.clear();
                 n.dismissed = false;
                 promote = true;
             }
@@ -137,7 +135,6 @@ impl Notifications {
                 title,
                 message: String::new(),
                 progress: None,
-                progress_label: String::new(),
                 cancel: source.cancel(),
                 source: Some(source),
                 action: None,
@@ -161,7 +158,7 @@ impl Notifications {
         outcome: ProgressOutcome,
         title: impl Into<String>,
         message: impl Into<String>,
-        detail: Option<String>,
+        _detail: Option<String>,
     ) -> u64 {
         let Some(idx) = self.items.iter().position(|n| n.id == id) else {
             // 条目不存在（被取消清理等）：回退普通通知/错误。
@@ -201,11 +198,6 @@ impl Notifications {
                 ProgressOutcome::Aborted => n.snapshot_fraction(),
                 ProgressOutcome::Failed => None,
             };
-            n.progress_label = detail.unwrap_or_else(|| match outcome {
-                ProgressOutcome::Completed => rust_i18n::t!("toast.completed").to_string(),
-                ProgressOutcome::Aborted => rust_i18n::t!("toast.aborted").to_string(),
-                ProgressOutcome::Failed => rust_i18n::t!("toast.failed").to_string(),
-            });
             n.cancel = None;
             n.source = None;
             n.cancelling = false;

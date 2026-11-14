@@ -59,14 +59,13 @@ pub(crate) struct Notification {
     pub(crate) message: String,
     /// 进度：None=普通通知，Some(0.0..1.0)=进度条
     pub(crate) progress: Option<f32>,
-    pub(crate) progress_label: String,
     /// 取消句柄快照（进行中由 source 提供 live 句柄）。
     pub(crate) cancel: Option<Arc<AtomicBool>>,
     /// 进度任务进行中为 Some，渲染时 pull；结束后快照并清空。
     pub(crate) source: Option<Arc<dyn ProgressSource>>,
     /// 操作按钮（如“打开文件夹”）。
     pub(crate) action: Option<ToastAction>,
-    /// stop 已点、中止确认中（按钮置灰，detail 显示“正在中止…”）。
+    /// stop 已点、中止确认中（标题显示“正在中止…”）。
     pub(crate) cancelling: bool,
     /// 用户已取消/收起：不再渲染，但保留到任务真正结束。
     pub(crate) dismissed: bool,
