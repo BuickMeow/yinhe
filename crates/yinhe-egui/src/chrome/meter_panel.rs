@@ -36,7 +36,6 @@ pub(crate) struct MeterPanelState {
     samples: Vec<f32>,
     sample_rate: u32,
     last_generation: u64,
-    was_playing: bool,
     /// 正在拖动排序的模块。
     dragging: Option<MeterModuleKind>,
     /// 本帧各模块矩形（下一帧用它计算拖拽插入位置）。
@@ -51,7 +50,6 @@ impl Default for MeterPanelState {
             samples: Vec::new(),
             sample_rate: 48_000,
             last_generation: 0,
-            was_playing: false,
             dragging: None,
             last_rects: Vec::new(),
         }
@@ -98,19 +96,14 @@ impl MeterPanelState {
         if sample_rate != self.sample_rate {
             self.recreate_all(sample_rate);
             self.last_generation = 0;
-            self.was_playing = false;
         }
-        let playing = handle.map(|h| h.handle.is_playing()).unwrap_or(false);
+        // seek / 播放 / 停止都会 bump generation；暂停→恢复不会，
+        // 因此积分响度只在“新的一次播放”里累积。
         let generation = handle.map(|h| h.handle.reset_generation()).unwrap_or(0);
         if generation != self.last_generation {
             self.reset_all();
             self.last_generation = generation;
         }
-        // 停止→播放 = 新的一次播放；暂停→继续不重置。
-        if playing && !self.was_playing {
-            self.reset_all();
-        }
-        self.was_playing = playing;
 
         self.samples.clear();
         if let Some(handle) = handle {
@@ -216,7 +209,7 @@ impl MeterPanelState {
             );
             crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.meter.add"));
             if resp.clicked() {
-                self.open_add_menu(ui, &resp);
+                return self.open_add_menu(ui, &resp);
             }
             return false;
         }
@@ -348,7 +341,7 @@ impl MeterPanelState {
         );
         crate::widgets::hint::hover(ui.ctx(), &add_resp, t!("hint.meter.add"));
         if add_resp.clicked() {
-            self.open_add_menu(ui, &add_resp);
+            changed |= self.open_add_menu(ui, &add_resp);
         }
 
         // 「更多」：恢复默认布局 / 重置全部数据。
@@ -448,7 +441,8 @@ impl MeterPanelState {
         (false, remove, drag)
     }
 
-    fn open_add_menu(&mut self, _ui: &mut egui::Ui, resp: &egui::Response) {
+    fn open_add_menu(&mut self, _ui: &mut egui::Ui, resp: &egui::Response) -> bool {
+        let mut added = false;
         egui::Popup::from_toggle_button_response(resp)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
@@ -461,10 +455,12 @@ impl MeterPanelState {
                         self.layout.push(MeterModuleSlot { kind, weight: 1.0 });
                         self.modules
                             .insert(kind, new_module(kind, self.sample_rate));
+                        added = true;
                         egui::Popup::close_all(ui.ctx());
                     }
                 }
             });
+        added
     }
 
     fn draw_reset_menu(&mut self, ui: &mut egui::Ui, rect: egui::Rect) -> Option<bool> {
