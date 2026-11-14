@@ -3,6 +3,8 @@ mod audio_out;
 mod audio_renderer;
 mod audio_ring;
 pub mod audio_source;
+#[cfg(test)]
+mod bitmap_bench;
 mod builtin_insert;
 mod channel;
 mod channel_dsp;
