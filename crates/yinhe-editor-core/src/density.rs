@@ -1,7 +1,9 @@
 //! 滚动条音符密度预览的派生数据。
 //!
 //! 全曲可见音符按 `(key, tick 桶)` 计数：**每个 key 一行**（全分辨率，
-//! 只含当前可见轨道的音符）。绘制端按滚动条的实际像素高度把 key 行聚合
+//! 只含当前可见轨道的音符）。行数随项目音域取 128（常规）或 256
+//! （含扩展音域 key ≥ 128 的音符）——与 AR lane 的纵向音域一致。
+//! 绘制端按滚动条的实际像素高度把 key 行聚合
 //! 成像素行（24px 高 → 24 行 × 5.3 key/行；滚动条加高则自动更细），
 //! 每帧绘制成本 O(桶数 × key 行)，与音符数无关——1 亿音符也只是"计数更大"。
 //!
@@ -14,6 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use yinhe_core::YinModel;
+use yinhe_types::NoteSource;
 
 /// 全局单调版本源：密度内容每次变化取一个新值，供绘制端纹理缓存失效判定。
 ///
@@ -46,22 +49,26 @@ fn bucket_ticks_for(tick_len: u64) -> u32 {
 /// 每帧默认重扫预算：显著低于一帧的渲染开销，编辑期不掉帧。
 pub const SYNC_BUDGET: Duration = Duration::from_millis(4);
 
-/// 预览统计的显示域（= PR 显示键数）。扩展音域（key ≥ 128）不统计、
-/// 不绘制——与 PR 画布语义一致，同时省一半内存。
-pub const PREVIEW_KEYS: usize = 128;
+/// 预览统计的键数上限（128 = 常规，256 = 含扩展音域）。实际行数由
+/// 模型是否含 key ≥ 128 的音符决定，见 [`NoteDensityMap::ensure_key_span`]。
+pub const PREVIEW_KEYS: usize = 256;
+/// 常规音域键数（无 key ≥ 128 音符时的预览行数）。
+const REGULAR_KEYS: usize = 128;
 
 /// `dominant` 数组中的"无数据"哨兵。
 pub const NO_TRACK: u32 = u32::MAX;
 
 /// 滚动条绘制的只读视图。
 pub struct NoteDensityView<'a> {
-    /// `PREVIEW_KEYS × n_buckets` 行主序：`rows[key * n_buckets + bucket]`
+    /// `n_keys × n_buckets` 行主序：`rows[key * n_buckets + bucket]`
     /// = 该 key 在该 tick 桶的可见音符数。tick 覆盖
     /// `[0, n_buckets * bucket_ticks)`，之外（滚动条 padding 区）视为 0。
     pub rows: &'a [u32],
     /// 与 `rows` 同形状：每格计数最大的轨道 id（[`NO_TRACK`] = 无数据）。
     /// 绘制端用它按轨道色着色；并列取 track id 小者。
     pub dominant: &'a [u32],
+    /// 行数（128 = 常规，256 = 含扩展音域）。
+    pub n_keys: usize,
     /// 每行的桶数。
     pub n_buckets: usize,
     /// 每桶覆盖的 tick 数。
@@ -77,24 +84,25 @@ pub struct NoteDensityView<'a> {
 pub struct NoteDensityMap {
     bucket_ticks: u32,
     n_buckets: usize,
-    /// `PREVIEW_KEYS × n_buckets` 行主序计数（已按可见轨道过滤）。
+    /// 行数（128 / 256），由模型的扩展音域决定。
+    n_keys: usize,
+    /// `n_keys × n_buckets` 行主序计数（已按可见轨道过滤）。
     rows: Vec<u32>,
     /// 与 `rows` 同形状的主导轨（每格计数最大的 track，`NO_TRACK` = 无）。
     dominant: Vec<u32>,
     /// 每行的最大格计数（维护全局 `max_count` 用，避免全量扫描）。
-    row_max: [u32; PREVIEW_KEYS],
+    row_max: Vec<u32>,
     max_count: u32,
     /// 内容版本（见 [`NoteDensityView::version`]）。
     version: u64,
     /// 每个 key 上次重扫时的 revision；`None` = 必须重扫（新模型/桶宽变化）。
-    /// 只追踪显示域 key（≥ 128 无关预览）。
-    rev_snapshot: [Option<u64>; PREVIEW_KEYS],
+    rev_snapshot: Vec<Option<u64>>,
     visible_snapshot: Vec<bool>,
     model_ptr: usize,
     /// 待重扫 key（配合 `pending_mask` 去重）。
     pending: Vec<u8>,
-    pending_mask: [bool; PREVIEW_KEYS],
-    /// 下一次 `sync` 需要全量并行重建（模型换代/桶宽变化）。
+    pending_mask: Vec<bool>,
+    /// 下一次 `sync` 需要全量并行重建（模型换代/桶宽变化/音域变化）。
     full_rebuild_due: bool,
     /// `rescan_key` 的复用缓冲，避免每次分配。
     scratch: Vec<u32>,
@@ -113,16 +121,17 @@ impl NoteDensityMap {
         Self {
             bucket_ticks: INITIAL_BUCKET_TICKS,
             n_buckets: 0,
+            n_keys: REGULAR_KEYS,
             rows: Vec::new(),
             dominant: Vec::new(),
-            row_max: [0; PREVIEW_KEYS],
+            row_max: vec![0; REGULAR_KEYS],
             max_count: 0,
             version: next_density_version(),
-            rev_snapshot: [None; PREVIEW_KEYS],
+            rev_snapshot: vec![None; REGULAR_KEYS],
             visible_snapshot: Vec::new(),
             model_ptr: 0,
             pending: Vec::new(),
-            pending_mask: [false; PREVIEW_KEYS],
+            pending_mask: vec![false; REGULAR_KEYS],
             full_rebuild_due: true,
             scratch: Vec::new(),
             track_scratch: Vec::new(),
@@ -134,6 +143,7 @@ impl NoteDensityMap {
         NoteDensityView {
             rows: &self.rows,
             dominant: &self.dominant,
+            n_keys: self.n_keys,
             n_buckets: self.n_buckets,
             bucket_ticks: self.bucket_ticks.max(1),
             max_count: self.max_count,
@@ -145,6 +155,7 @@ impl NoteDensityMap {
     /// （预算再小也不会饿死），其余留到下帧。
     pub fn sync(&mut self, model: &YinModel, track_visible: &[bool], budget: Duration) {
         self.ensure_model(model);
+        self.ensure_key_span(model);
         self.ensure_layout(model.tick_length);
         if self.full_rebuild_due {
             self.full_rebuild_due = false;
@@ -163,10 +174,10 @@ impl NoteDensityMap {
     /// 全变）；其余模型替换由 [`Self::ensure_model`] 的指针检测兜底。
     pub fn reset(&mut self) {
         self.reset_counts();
-        self.rev_snapshot = [None; PREVIEW_KEYS];
+        self.rev_snapshot.fill(None);
         self.visible_snapshot.clear();
         self.pending.clear();
-        self.pending_mask = [false; PREVIEW_KEYS];
+        self.pending_mask.fill(false);
         self.full_rebuild_due = true;
     }
 
@@ -180,6 +191,26 @@ impl NoteDensityMap {
         }
         self.model_ptr = ptr;
         self.reset();
+    }
+
+    /// 预览行数：常规 128；项目出现 key ≥ 128 的音符时切成 256。
+    /// 行数变化会让旧的行主序布局作废，必须重新分配并全量重建。
+    fn ensure_key_span(&mut self, model: &YinModel) {
+        let n_keys = model.display_key_count() as usize;
+        if n_keys == self.n_keys {
+            return;
+        }
+        self.n_keys = n_keys;
+        self.rows.clear();
+        self.dominant.clear();
+        self.n_buckets = 0; // 强制 grow 按新行数重新分配
+        self.row_max = vec![0; n_keys];
+        self.rev_snapshot = vec![None; n_keys];
+        self.pending_mask = vec![false; n_keys];
+        self.visible_snapshot.clear();
+        self.pending.clear();
+        self.full_rebuild_due = true;
+        self.version = next_density_version();
     }
 
     /// 桶宽/桶数维护：桶宽取「桶数不超过上限的最小 2 的幂」（分辨率随曲长
@@ -202,10 +233,11 @@ impl NoteDensityMap {
     fn grow(&mut self, need: usize) {
         let old_n = self.n_buckets;
         let n = need.max(old_n + old_n / 2).max(16);
-        let mut new_rows = vec![0u32; PREVIEW_KEYS * n];
-        let mut new_dominant = vec![NO_TRACK; PREVIEW_KEYS * n];
+        let n_keys = self.n_keys;
+        let mut new_rows = vec![0u32; n_keys * n];
+        let mut new_dominant = vec![NO_TRACK; n_keys * n];
         if old_n > 0 {
-            for k in 0..PREVIEW_KEYS {
+            for k in 0..n_keys {
                 new_rows[k * n..k * n + old_n]
                     .copy_from_slice(&self.rows[k * old_n..k * old_n + old_n]);
                 new_dominant[k * n..k * n + old_n]
@@ -222,13 +254,13 @@ impl NoteDensityMap {
     fn reset_counts(&mut self) {
         self.rows.fill(0);
         self.dominant.fill(NO_TRACK);
-        self.row_max = [0; PREVIEW_KEYS];
+        self.row_max.fill(0);
         self.max_count = 0;
         self.version = next_density_version();
     }
 
     fn mark(&mut self, key: usize) {
-        if key >= PREVIEW_KEYS {
+        if key >= self.n_keys {
             return;
         }
         if !self.pending_mask[key] {
@@ -251,7 +283,7 @@ impl NoteDensityMap {
                 continue;
             }
             let track = t as u16;
-            for k in 0..PREVIEW_KEYS {
+            for k in 0..self.n_keys {
                 if model.bucket_track_stats[k].contains_key(&track) {
                     self.mark(k);
                 }
@@ -263,7 +295,7 @@ impl NoteDensityMap {
     /// revision 变化（编辑/undo/批量，由 note_write 统一 bump）→ 标脏。
     /// 分帧期间已扫过的 key 快照已更新，不会重复入队。
     fn collect_revision_changes(&mut self, model: &YinModel) {
-        for k in 0..PREVIEW_KEYS {
+        for k in 0..self.n_keys {
             if self.rev_snapshot[k] != Some(model.note_revisions[k]) {
                 self.mark(k);
             }
@@ -303,9 +335,10 @@ impl NoteDensityMap {
     fn rebuild_all(&mut self, model: &YinModel, visible: &[bool]) {
         use rayon::prelude::*;
         let n = self.n_buckets;
-        if n == 0 {
+        if n == 0 || self.n_keys == 0 {
             return;
         }
+        debug_assert_eq!(self.rows.len(), self.n_keys * n);
         let bucket = self.bucket_ticks.max(1);
         let Self {
             rows,
@@ -346,7 +379,7 @@ impl NoteDensityMap {
     /// 重扫一个 key：统计可见音符，覆盖该行、更新行最大与主导轨。
     fn rescan_key(&mut self, model: &YinModel, visible: &[bool], key: usize) {
         let n = self.n_buckets;
-        if n == 0 || key >= PREVIEW_KEYS {
+        if n == 0 || key >= self.n_keys {
             return;
         }
         let bucket = self.bucket_ticks.max(1);
@@ -676,23 +709,31 @@ mod tests {
         assert_eq!(d.view().max_count, 2);
     }
 
-    /// 扩展音域（key ≥ 128）不进预览：不统计、也不占用重扫预算。
+    /// 扩展音域（key ≥ 128）出现后预览行数切到 256，音符计入并参与归一化；
+    /// 删除后行数回到 128。
     #[test]
-    fn extended_key_range_excluded() {
+    fn extended_key_range_switches_preview_rows() {
         let mut m = model();
         m.insert_note(60, note(1, 100, 200, 0));
         m.rebuild_dirty();
         let mut d = NoteDensityMap::new();
         d.sync(&m, &visible(), FULL);
+        assert_eq!(d.view().n_keys, 128);
         assert_eq!(cell(&d, 60, bucket_of(&d, 100)), 1);
 
         m.insert_note(130, note(2, 100, 200, 0));
         m.rebuild_dirty();
         d.sync(&m, &visible(), FULL);
         let v = d.view();
-        assert_eq!(v.max_count, 1, "扩展音域不参与归一化");
+        assert_eq!(v.n_keys, 256, "有扩展音域音符后预览应为 256 行");
+        assert_eq!(v.max_count, 1);
         let sum: u32 = v.rows.iter().sum();
-        assert_eq!(sum, 1);
+        assert_eq!(sum, 2, "常规与扩展音域音符都应计入");
+
+        m.remove_note_by_id(130, 2);
+        m.rebuild_dirty();
+        d.sync(&m, &visible(), FULL);
+        assert_eq!(d.view().n_keys, 128, "删掉扩展音符后回到 128 行");
     }
 
     /// 性能标定（手动运行）：

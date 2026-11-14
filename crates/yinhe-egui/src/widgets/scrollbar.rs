@@ -1,5 +1,5 @@
 use eframe::egui;
-use yinhe_editor_core::density::{NO_TRACK, NoteDensityView, PREVIEW_KEYS};
+use yinhe_editor_core::density::{NO_TRACK, NoteDensityView};
 
 use crate::theme;
 
@@ -568,11 +568,12 @@ fn fill_density_pixels(
 ) {
     let n = d.n_buckets;
     if n == 0
+        || d.n_keys == 0
         || px_rows == 0
         || scale <= 0.0
         || sb_w <= 0.0
-        || d.rows.len() < PREVIEW_KEYS * n
-        || d.dominant.len() < PREVIEW_KEYS * n
+        || d.rows.len() < d.n_keys * n
+        || d.dominant.len() < d.n_keys * n
     {
         return;
     }
@@ -599,8 +600,8 @@ fn fill_density_pixels(
             ((t1.min(be) - t0.max(bs)) / unit).clamp(0.0, 1.0)
         }));
         for r in 0..px_rows {
-            let k0 = r * PREVIEW_KEYS / px_rows;
-            let k1 = ((r + 1) * PREVIEW_KEYS / px_rows).min(PREVIEW_KEYS);
+            let k0 = r * d.n_keys / px_rows;
+            let k1 = ((r + 1) * d.n_keys / px_rows).min(d.n_keys);
             if k1 <= k0 {
                 continue;
             }
@@ -1110,8 +1111,9 @@ mod tests {
         let mut ppt = 0.0002f32; // 2000px 视口 ≈ 全曲 1000 万 tick
         let mut dirty = false;
         let n_buckets = 9766; // 10_000_000 / 1024
-        let mut rows = vec![0u32; PREVIEW_KEYS * n_buckets];
-        let mut dominant = vec![NO_TRACK; PREVIEW_KEYS * n_buckets];
+        let n_keys = 128;
+        let mut rows = vec![0u32; n_keys * n_buckets];
+        let mut dominant = vec![NO_TRACK; n_keys * n_buckets];
         for (i, v) in rows.iter_mut().enumerate() {
             if i % 2 == 0 {
                 *v = (i % 200) as u32 + 1;
@@ -1131,6 +1133,7 @@ mod tests {
                 let view = NoteDensityView {
                     rows: &rows,
                     dominant: &dominant,
+                    n_keys,
                     n_buckets,
                     bucket_ticks: 1024,
                     max_count: 200,
@@ -1180,10 +1183,9 @@ mod tests {
         let mut ppt = 1.0f32;
         let mut dirty = false;
         let n_buckets = 100;
-        let rows: Vec<u32> = (0..PREVIEW_KEYS * n_buckets)
-            .map(|i| (i % 5) as u32)
-            .collect();
-        let dominant: Vec<u32> = vec![0; PREVIEW_KEYS * n_buckets];
+        let n_keys = 128;
+        let rows: Vec<u32> = (0..n_keys * n_buckets).map(|i| (i % 5) as u32).collect();
+        let dominant: Vec<u32> = vec![0; n_keys * n_buckets];
         let colors_a: Vec<[f32; 4]> = vec![[1.0, 0.5, 0.2, 1.0]];
         let colors_b: Vec<[f32; 4]> = vec![[0.2, 0.5, 1.0, 1.0]];
 
@@ -1191,6 +1193,7 @@ mod tests {
             let view = NoteDensityView {
                 rows: &rows,
                 dominant: &dominant,
+                n_keys,
                 n_buckets,
                 bucket_ticks: 10,
                 max_count: 2,
@@ -1255,8 +1258,9 @@ mod tests {
         let cols = 200usize;
         let bucket_ticks = 1024u32;
         let total_ticks = n_buckets as u64 * bucket_ticks as u64; // 每桶跨 2 列
-        let mut rows = vec![0u32; PREVIEW_KEYS * n_buckets];
-        let mut dominant = vec![NO_TRACK; PREVIEW_KEYS * n_buckets];
+        let n_keys = 128;
+        let mut rows = vec![0u32; n_keys * n_buckets];
+        let mut dominant = vec![NO_TRACK; n_keys * n_buckets];
         for b in 0..n_buckets {
             // 每个桶都有音符：任何整列空白都只能是绘制映射的 bug。
             rows[60 * n_buckets + b] = 1;
@@ -1265,6 +1269,7 @@ mod tests {
         let view = NoteDensityView {
             rows: &rows,
             dominant: &dominant,
+            n_keys,
             n_buckets,
             bucket_ticks,
             max_count: 1,
@@ -1301,11 +1306,12 @@ mod tests {
         let mut ppt = 1.0f32;
         let mut dirty = false;
         let n_buckets = 100;
-        let rows: Vec<u32> = (0..PREVIEW_KEYS * n_buckets)
+        let n_keys = 128;
+        let rows: Vec<u32> = (0..n_keys * n_buckets)
             .map(|i| (i % 7) as u32 * 50)
             .collect();
         // 0..3 轮流当主导轨（3 越界 → 回退路径），部分桶无主导轨。
-        let dominant: Vec<u32> = (0..PREVIEW_KEYS * n_buckets)
+        let dominant: Vec<u32> = (0..n_keys * n_buckets)
             .map(|i| {
                 if i % 11 == 0 {
                     NO_TRACK
@@ -1317,6 +1323,7 @@ mod tests {
         let view = NoteDensityView {
             rows: &rows,
             dominant: &dominant,
+            n_keys,
             n_buckets,
             bucket_ticks: 10,
             max_count: 300,
