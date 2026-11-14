@@ -25,7 +25,7 @@ use crate::arrange::track_panel::render::{
 /// 因此中心距行底 16 / 2 + 1 = 9px（与轨道面板一致）。
 const BADGE_ICON_BOTTOM_INSET: f32 = 9.0;
 /// 每轨电平表：条宽 / 贴边距 / 与 M/S 的间隙（px）。
-const LEVEL_METER_W: f32 = 5.0;
+const LEVEL_METER_W: f32 = 8.0;
 const LEVEL_METER_MARGIN: f32 = 3.0;
 const LEVEL_METER_GAP: f32 = 5.0;
 /// 面板内联按钮尺寸。
@@ -38,7 +38,7 @@ pub(crate) struct CaPanelIo<'a> {
     /// 每轨显示色（= 通道 AR 统一后的通道色；Conductor 为主题色）。
     pub track_colors: &'a [[f32; 4]],
     pub track_visible: &'a [bool],
-    pub track_meters: &'a [(f32, f32)],
+    pub track_meters: &'a [crate::widgets::meter::StereoMeter],
     pub track_overrides: &'a mut [yinhe_editor_core::document::TrackOverride],
     pub track_selected: &'a mut HashSet<u16>,
     pub selection_anchor: &'a mut Option<u16>,
@@ -549,8 +549,8 @@ pub(crate) fn show(
                         .track_meters
                         .get(t as usize)
                         .copied()
-                        .unwrap_or((0.0, 0.0));
-                    crate::widgets::meter::track_level_meter(&painter, meter_rect, level, hold);
+                        .unwrap_or(((0.0, 0.0), (0.0, 0.0)));
+                    crate::widgets::meter::compact_meter(&painter, meter_rect, level, hold);
                 } else {
                     painter.text(
                         egui::pos2(text_x, badge_rect.center().y),
@@ -622,7 +622,7 @@ pub(crate) fn show(
                         crate::theme::text_primary(),
                     );
                     // 自动化表（贴右缘）+ AM 试听 M/S（M/S 让位到表的左侧，
-                    // 与轨道行的「力度表 + M/S」布局一致）。
+                    // 与轨道行的「电平表 + M/S」布局一致）。
                     let key = (track, lane.target.clone());
                     let st = io.arr_am_ms.get(&key).copied().unwrap_or_default();
                     let total_btn_w = 2.0 * BTN_SIZE + BTN_GAP;

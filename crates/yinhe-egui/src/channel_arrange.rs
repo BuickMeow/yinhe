@@ -64,7 +64,7 @@ pub(crate) fn show(
     right_tab: &mut Option<crate::right_panel::RightTab>,
     needs_audio_notify: &mut bool,
     automation_picker_req: &mut Option<usize>,
-    track_meters: &[(f32, f32)],
+    track_meters: &[crate::widgets::meter::StereoMeter],
     // 通道电平显示值（L/R，独立衰减；见 App::ca_channel_levels）。
     midi_levels: &[crate::widgets::meter::StereoMeter],
     audio_levels: &[crate::widgets::meter::StereoMeter],

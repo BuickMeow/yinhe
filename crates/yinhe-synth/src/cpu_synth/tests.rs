@@ -31,6 +31,70 @@ fn note_on_without_soundfont_is_silent() {
     assert!(bufs.iter().all(|b| b.left.iter().all(|&v| v == 0.0)));
 }
 
+/// 块内结束的 voice 仍要标记"本块出过声"：混音台空闲通道跳过否则会
+/// 把整颗短音符（或 release 尾音）当静音丢掉。
+#[test]
+fn channel_mask_keeps_voices_that_finish_in_block() {
+    let Some(sfz) = std::env::var_os("YINHE_TEST_SFZ") else {
+        return; // 无测试音色库时跳过（CI）
+    };
+    let mut synth = CpuSynth::new(48_000);
+    synth
+        .load_dense_soundfonts(1, &[PathBuf::from(sfz)])
+        .expect("load soundfont");
+    synth.load_events(vec![SynthEvent::NoteOn {
+        track: 0,
+        sample: 0,
+        channel: 1,
+        key: 60,
+        velocity: 100,
+        end_sample: 240,
+    }]);
+    // 一块足够长，保证整颗音符（含 release）在块内结束。
+    let mut bufs = buffers(48_000 * 3);
+    synth.render_to_mixer(&mut bufs);
+    assert_eq!(synth.voice_count(), 0, "音符应已在块内结束");
+    synth.refresh_channel_mask();
+    assert!(
+        synth.channel_mask()[0] & (1 << 1) != 0,
+        "块内结束的通道必须标记为出过声"
+    );
+    synth.clear_channel_mask();
+    assert_eq!(synth.channel_mask(), &[0; 4]);
+}
+
+/// 每轨峰值按输出块累积：后续事件段没有 voice 时不能把整块读数清零。
+#[test]
+fn track_peak_accumulates_across_segments() {
+    let Some(sfz) = std::env::var_os("YINHE_TEST_SFZ") else {
+        return; // 无测试音色库时跳过（CI）
+    };
+    let mut synth = CpuSynth::new(48_000);
+    synth
+        .load_dense_soundfonts(0, &[PathBuf::from(sfz)])
+        .expect("load soundfont");
+    synth.load_events(vec![SynthEvent::NoteOn {
+        track: 0,
+        sample: 0,
+        channel: 0,
+        key: 60,
+        velocity: 100,
+        end_sample: 240,
+    }]);
+    let mut bufs = buffers(48_000 + 512);
+    // 第一段：整颗音符（含 release）渲染完。
+    synth.render_range(&mut bufs, 0, 48_000);
+    let first = synth.track_peak(0);
+    assert!(first.0 > 0.0 || first.1 > 0.0, "音符应有峰值");
+    assert_eq!(synth.voice_count(), 0, "音符应已结束");
+    // 第二段：本块已无 voice，峰值必须保留第一段的结果。
+    synth.render_range(&mut bufs, 48_000, 512);
+    assert_eq!(synth.track_peak(0), first, "段末无 voice 不得清零峰值");
+    // 新块开始才清零。
+    synth.reset_track_peaks();
+    assert_eq!(synth.track_peak(0), (0.0, 0.0));
+}
+
 /// 事件在正确帧生效：NoteOn 在块中间（sample 256）时前半块静音。
 #[test]
 fn note_on_starts_at_event_frame() {

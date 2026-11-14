@@ -1,11 +1,10 @@
-//! 自绘电平/力度表。
+//! 自绘电平表。
 //!
 //! - [`level_meter`]：混音台通道条用，向上 L/R 双条 + dB 数字刻度；
-//! - [`compact_meter`]：走带栏时间码第四栏用，向上 L/R 双条、无刻度；
-//! - [`track_level_meter`]：音轨面板每轨用，**向上**单条（dB 刻度，峰值），与电平表
-//!   以方向区分。
+//! - [`compact_meter`]：走带栏时间码第四栏、音轨面板每轨用，向上 L/R 双条，
+//!   无数字刻度。
 //!
-//! 三者共用同一套 dB 映射/着色（[`db_frac`] / [`meter_color`]）。
+//! 两者共用同一套 dB 映射/着色（[`db_frac`] / [`meter_color`]）。
 
 use eframe::egui;
 
@@ -166,23 +165,6 @@ pub(crate) fn compact_meter(
             y,
             egui::Stroke::new(1.0, meter_color(h)),
         );
-    }
-}
-
-/// 每轨电平表（窄条、向上、dB 刻度）：AR / 通道 AR 的轨道行右侧。
-/// `level`/`hold` 为线性峰值（0..∞），与混音台电平表同一套 dB 映射。
-pub(crate) fn track_level_meter(painter: &egui::Painter, rect: egui::Rect, level: f32, hold: f32) {
-    painter.rect_filled(rect, 0.0, crate::theme::track_bg());
-    let frac = db_frac(gain_to_db(level));
-    if frac > 0.0 {
-        let h = rect.height() * frac;
-        let fill = egui::Rect::from_min_max(egui::pos2(rect.min.x, rect.max.y - h), rect.max);
-        painter.rect_filled(fill, 0.0, meter_color(level));
-    }
-    let hf = db_frac(gain_to_db(hold));
-    if hf > frac + 1e-4 {
-        let y = rect.max.y - rect.height() * hf;
-        painter.hline(rect.x_range(), y, egui::Stroke::new(1.0, meter_color(hold)));
     }
 }
 

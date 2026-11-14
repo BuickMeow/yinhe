@@ -665,6 +665,19 @@ impl MixerGraph {
     /// PDC：按通道最长路径对齐（乐器/insert 延迟）。总线 insert 的延迟暂不参与
     /// 对齐（总线通常挂不要求严格相位对齐的效果，如混响）。
     pub fn process(&mut self) -> (&[f32], &[f32]) {
+        self.process_with_active(None)
+    }
+
+    /// 同 [`Self::process`]，但可传入每通道"本块有输入信号"的掩码。
+    ///
+    /// `active[c] == false` 且该通道没有 insert 链时，跳过整条 strip
+    ///（insert/延迟/推子/send/master 累加），只把电平发布为 0。
+    /// 大型工程常用上百个 MIDI 通道，但同一时刻只有十几条在发声；
+    /// 跳过空闲 strip 能把混音台成本按活跃通道数收缩。
+    ///
+    /// 注意：带 insert 的通道必须照常处理（delay/reverb 尾音）；调用方
+    /// 负责把"有插件/音频片段/试听"的通道置为 active。
+    pub fn process_with_active(&mut self, active: Option<&[bool]>) -> (&[f32], &[f32]) {
         let frames = self.frames;
         for bus in &mut self.buses {
             bus.buffers.clear();
@@ -683,6 +696,7 @@ impl MixerGraph {
             &mut self.master.r,
             frames,
             any_solo,
+            active,
         );
         Self::process_buses(&mut self.buses, &mut self.master, frames, any_solo);
         Self::process_master(&mut self.master, frames);
@@ -698,8 +712,17 @@ impl MixerGraph {
         master_r: &mut [f32],
         frames: usize,
         any_solo: bool,
+        active: Option<&[bool]>,
     ) {
-        for chain in channels.iter_mut() {
+        for (ci, chain) in channels.iter_mut().enumerate() {
+            // 空闲通道跳过：没有 insert 时缓冲为全零，insert/推子/send/
+            // master 累加都不会产生输出，只把表清零。
+            if active.is_some_and(|a| !a.get(ci).copied().unwrap_or(true))
+                && chain.inserts.is_empty()
+            {
+                chain.meter.publish(&[], &[]);
+                continue;
+            }
             // insert 链 → PDC 延迟线。
             for insert in &mut chain.inserts {
                 // 插件能力可能小于引擎块长（按 512 激活的插件遇到 4096 的块）：
@@ -1151,6 +1174,38 @@ mod tests {
         let (l, _r) = g.process();
         let expect = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
         assert!((l[3] - expect).abs() < 1e-6);
+    }
+
+    /// 空闲通道跳过：全零通道被跳过时输出与完整处理逐样本一致。
+    #[test]
+    fn idle_channel_skip_matches_full_process() {
+        let params = [StripParams::default(), StripParams::default()];
+        let (full_l, full_r) = {
+            let mut g = graph_with(&params, 4);
+            fill(&mut g, 0, 0.5);
+            let (l, r) = g.process();
+            (l.to_vec(), r.to_vec())
+        };
+        let mut g = graph_with(&params, 4);
+        fill(&mut g, 0, 0.5);
+        // 通道 1 缓冲全零 → 跳过。
+        let (l, r) = g.process_with_active(Some(&[true, false]));
+        assert_eq!(l, &full_l[..]);
+        assert_eq!(r, &full_r[..]);
+    }
+
+    /// 带 insert 的空闲通道不能跳过：insert 的延迟/混响尾音可能还在响。
+    #[test]
+    fn idle_channel_with_insert_is_still_processed() {
+        let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
+        fill(&mut g, 1, 0.25);
+        g.set_inserts(1, vec![Box::new(Doubler)]);
+        let (l, _r) = g.process_with_active(Some(&[true, false]));
+        let expect = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
+        assert!(
+            (l[3] - expect).abs() < 1e-6,
+            "带 insert 的空闲通道必须照常处理"
+        );
     }
 
     #[test]

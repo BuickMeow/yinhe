@@ -296,7 +296,7 @@ struct MixerMeters {
     /// 总线读数端（动态：增删总线由渲染线程更新此槽）。
     buses: Arc<Mutex<Vec<MeterReading>>>,
     /// 每轨电平读数端（线性峰值，渲染线程写、UI 读）。
-    tracks: Arc<Mutex<Vec<f32>>>,
+    tracks: Arc<Mutex<Vec<(f32, f32)>>>,
 }
 
 impl MixerMeters {
@@ -347,12 +347,12 @@ impl MixerMeters {
     }
 
     /// 读某轨电平（线性峰值；不存在返回 0）。
-    fn track_read(&self, track: usize) -> f32 {
+    fn track_read(&self, track: usize) -> (f32, f32) {
         self.tracks
             .lock()
             .ok()
             .and_then(|g| g.get(track).copied())
-            .unwrap_or(0.0)
+            .unwrap_or((0.0, 0.0))
     }
 }
 
@@ -616,8 +616,8 @@ impl AudioHandle {
         self.meters.master_read()
     }
 
-    /// 读某轨电平（线性峰值，仅播放时非零；不存在返回 0）。
-    pub fn track_meter_read(&self, track: usize) -> f32 {
+    /// 读某轨电平 L/R（线性峰值，仅播放时非零；不存在返回 0）。
+    pub fn track_meter_read(&self, track: usize) -> (f32, f32) {
         self.meters.track_read(track)
     }
 

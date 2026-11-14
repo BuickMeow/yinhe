@@ -65,12 +65,17 @@ impl AudioEngine {
     }
 
     /// 把预览音频累加进 mixer 通道缓冲（在合成器写入之后、通道 DSP 之前调用）。
-    pub(crate) fn inject_preview(&mut self, frames: usize) {
+    /// 混入试听预览；返回 true 表示本块写了预览音频（调用方据此保守地把
+    /// 混音台通道置为活跃，避免空闲通道跳过误伤预览）。
+    pub(crate) fn inject_preview(&mut self, frames: usize) -> bool {
         let Some(preview) = self.preview.as_mut() else {
-            return;
+            return false;
         };
         if preview.previewing() {
             preview.render_add(self.mixer.buffers_mut(), frames);
+            true
+        } else {
+            false
         }
     }
 }

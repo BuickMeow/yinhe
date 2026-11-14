@@ -22,8 +22,8 @@ pub(crate) use types::TrackAction;
 /// 因此中心距行底 16 / 2 + 1 = 9px。
 const BADGE_ICON_BOTTOM_INSET: f32 = 9.0;
 
-/// 每轨力度表：条宽 / 贴边距（上右下相同）/ 与 M/S 的间隙（px）。
-const LEVEL_METER_W: f32 = 5.0;
+/// 每轨电平表：条宽 / 贴边距（上右下相同）/ 与 M/S 的间隙（px）。
+const LEVEL_METER_W: f32 = 8.0;
 const LEVEL_METER_MARGIN: f32 = 3.0;
 const LEVEL_METER_GAP: f32 = 5.0;
 
@@ -58,8 +58,8 @@ pub(crate) fn show(
     am_lane_selected: &mut HashSet<(u16, AutomationTarget)>,
     // AR 自动化 lane 的 M/S 试听状态（子行按钮切换，切后需重载音频）。
     am_ms: &mut std::collections::HashMap<(u16, AutomationTarget), yinhe_types::AmMsState>,
-    // 每轨力度表显示值 `(level, hold)`（索引 = 音轨；仅播放时非零）。
-    track_meters: &[(f32, f32)],
+    // 每轨电平表显示值 `((L,R), (holdL,holdR))`（索引 = 音轨；仅播放时非零）。
+    track_meters: &[crate::widgets::meter::StereoMeter],
     // 编辑/播放光标 tick（自动化表显示光标处的 lane 值）。
     cursor_tick: Option<f64>,
     // Conductor 的 Tempo lane（Conductor 行自动化表）。
@@ -250,7 +250,7 @@ pub(crate) fn show(
                 let st = am_ms.get(&key).copied().unwrap_or_default();
                 let gap = 2.0;
                 let total_btn_w = 2.0 * btn_size.x + gap;
-                // 自动化表贴右缘，M/S 让位到其左侧（与普通轨的「力度表 + M/S」布局一致）。
+                // 自动化表贴右缘，M/S 让位到其左侧（与普通轨的「电平表 + M/S」布局一致）。
                 let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
                 let meter_left = meter_right - LEVEL_METER_W;
                 let btn_x_start = meter_left - LEVEL_METER_GAP - total_btn_w;
@@ -501,7 +501,7 @@ pub(crate) fn show(
 
                 let gap = 2.0;
                 let total_btn_w = 2.0 * btn_size.x + gap;
-                // 力度表贴右缘（上右下等边距），M/S 让位到其左侧。
+                // 电平表贴右缘（上右下等边距），M/S 让位到其左侧。
                 let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
                 let meter_left = meter_right - LEVEL_METER_W;
                 let btn_x_start = meter_left - LEVEL_METER_GAP - total_btn_w;
@@ -548,13 +548,16 @@ pub(crate) fn show(
                     audio_dirty = true;
                 }
 
-                // 每轨电平表（向上、dB 刻度；仅播放时非零）。
+                // 每轨电平表（L/R 双条、向上、dB 刻度；仅播放时非零）。
                 let meter_rect = egui::Rect::from_min_max(
                     egui::pos2(meter_left, row_rect.min.y + LEVEL_METER_MARGIN),
                     egui::pos2(meter_right, row_rect.max.y - LEVEL_METER_MARGIN),
                 );
-                let (level, hold) = track_meters.get(idx).copied().unwrap_or((0.0, 0.0));
-                crate::widgets::meter::track_level_meter(&painter, meter_rect, level, hold);
+                let (level, hold) = track_meters
+                    .get(idx)
+                    .copied()
+                    .unwrap_or(((0.0, 0.0), (0.0, 0.0)));
+                crate::widgets::meter::compact_meter(&painter, meter_rect, level, hold);
             } else {
                 // Conductor 行：Tempo 自动化表（贴右缘；光标处 BPM 按动态上限归一化）。
                 let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;

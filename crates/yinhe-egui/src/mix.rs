@@ -115,8 +115,9 @@ pub(crate) struct MixUiState {
     smoothed_buses: std::collections::HashMap<String, MeterState>,
     /// 每轨电平表弹道状态（索引 = 音轨；仅播放时有值）。
     smoothed_tracks: Vec<MeterState>,
-    /// 本帧每轨电平表显示值 `(level, hold)`，main_loop 每帧更新（仅播放时非零）。
-    pub(crate) track_display: Vec<(f32, f32)>,
+    /// 本帧每轨电平表显示值 `((L,R), (holdL,holdR))`，main_loop 每帧更新
+    ///（仅播放时非零）。
+    pub(crate) track_display: Vec<crate::widgets::meter::StereoMeter>,
     /// 插件扫描结果（后台线程填充；None = 尚未完成首次扫描）。
     pub(crate) scanned: Option<Vec<PluginEntry>>,
     /// 扫描中失败的包数量（诊断展示）。
@@ -602,10 +603,10 @@ pub(crate) fn update_track_meters(app: &mut App, dt: f32) {
             .handle
             .as_ref()
             .map(|a| a.handle.track_meter_read(i))
-            .unwrap_or(0.0);
+            .unwrap_or((0.0, 0.0));
         let s = &mut app.mix.smoothed_tracks[i];
-        s.update((raw, raw), dt);
-        app.mix.track_display.push((s.level().0, s.hold().0));
+        s.update(raw, dt);
+        app.mix.track_display.push((s.level(), s.hold()));
     }
 }
 

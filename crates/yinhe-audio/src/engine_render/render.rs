@@ -46,6 +46,10 @@ impl AudioEngine {
         // 块长变化（导出用 1024、实时 512）：mixer 缓冲与通道暂存按实际块长
         // 重建一次。循环拆块只改**输出内偏移**，不改 mixer 块长。
         self.ensure_block_buffers(frames);
+        // 每轨峰值按输出块统计（块内按事件分段，段间取最大）。
+        if let Some(cs) = self.cpu_synth.as_mut() {
+            cs.reset_track_peaks();
+        }
         // 音频轨缓冲是覆盖写；整块只清一次，之后各 span 按 offset 写入。
         self.clear_audio_buffers(frames);
         self.loop_wrap_offsets.clear();
@@ -68,14 +72,23 @@ impl AudioEngine {
         // 循环回绕点做极短淡出/淡入（去咔哒）；跨块时把剩余淡入带到下一块。
         self.apply_loop_declick(frames);
         // 试听预览与走带无关：整块混入一次。
-        self.inject_preview(frames);
+        let preview_active = self.inject_preview(frames);
+        // 本块有信号的通道（混音台空闲 strip 跳过）。复用引擎里的掩码
+        // 缓冲，避免音频线程每块分配。
+        let mut active = std::mem::take(&mut self.channel_active);
+        self.channel_activity(&mut active);
+        if preview_active {
+            // 预览可能落在任意通道：保守全开。
+            active.fill(true);
+        }
         // 内置音源通道处理段（CC7/10/11/71/74）在混音台 insert 链之前生效。
-        self.render_channel_dsp(frames);
+        self.render_channel_dsp(frames, &active);
         // 暂停/停止的淡出作用在**干声输入**（insert 链之前）：效果器尾音
         // 不会被一起淡掉，之后可继续自然衰减。
         self.apply_pause_fade_out(frames);
 
-        let (master_l, master_r) = self.mixer.process();
+        let (master_l, master_r) = self.mixer.process_with_active(Some(&active));
+        self.channel_active = active;
         write_master(output, master_l, master_r);
     }
 
@@ -269,7 +282,7 @@ impl AudioEngine {
         self.block_start_sample = self.sample_position;
         self.mixer.clear_channel_buffers();
         // 通道 DSP 的滤波历史在空输入下继续衰减；insert/bus/master 尾音同理。
-        self.render_channel_dsp(frames);
+        self.render_channel_dsp(frames, &[]);
         let (master_l, master_r) = self.mixer.process();
         write_master(output, master_l, master_r);
         self.publish_track_levels();
@@ -316,7 +329,7 @@ impl AudioEngine {
         }
         self.mixer.clear_channel_buffers();
         self.inject_preview(frames);
-        self.render_channel_dsp(frames);
+        self.render_channel_dsp(frames, &[]);
         let (master_l, master_r) = self.mixer.process();
         write_master(output, master_l, master_r);
     }
@@ -324,7 +337,7 @@ impl AudioEngine {
     /// 内置音源通道处理段：合成器输出之后、`mixer.process()` 之前，
     /// 对所有内置音源 MIDI 通道应用 CC7/10/11/71/74 的当前值。
     /// 插件乐器通道跳过（CC 已透传插件，插件自行处理）。
-    pub(super) fn render_channel_dsp(&mut self, frames: usize) {
+    pub(super) fn render_channel_dsp(&mut self, frames: usize, active: &[bool]) {
         let midi_count = self.channel_layout.midi_compacted() as usize;
         // 字段级借用拆分：mixer 缓冲 / 处理段 / 乐器表互不相交。
         let Self {
@@ -334,6 +347,10 @@ impl AudioEngine {
             ..
         } = self;
         for (dense, chain) in mixer.buffers_mut().iter_mut().enumerate().take(midi_count) {
+            if !active.get(dense).copied().unwrap_or(true) {
+                // 空闲通道：缓冲全零，DSP 无输入可处理（恢复时平滑段会补上）。
+                continue;
+            }
             if instruments.get(dense).is_some_and(|s| s.is_some()) {
                 continue;
             }

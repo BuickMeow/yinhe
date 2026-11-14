@@ -1,6 +1,7 @@
 use xsynth_core::channel::{ChannelAudioEvent, ControlEvent};
 
 use crate::audio_model::AudioEvent;
+use crate::engine::AudioEngine;
 
 mod audio_clip;
 mod dispatch;
@@ -9,6 +10,37 @@ mod render;
 
 /// Number of output channels (stereo).
 const STEREO_CHANNELS: usize = 2;
+
+impl AudioEngine {
+    /// 本块有输入信号的 dense 通道（混音台空闲通道跳过用）。
+    ///
+    /// yinhe CPU 用合成器的活跃 voice 位图；xsynth 没有可用的通道级信号，
+    /// 保守全开（不做跳过）。插件乐器/音频通道一律置活跃（可能带尾音）。
+    pub(crate) fn channel_activity(&mut self, active: &mut Vec<bool>) {
+        let n = self.mixer.channel_count();
+        active.clear();
+        active.resize(n, true);
+        if let Some(cs) = self.cpu_synth.as_mut() {
+            cs.refresh_channel_mask();
+            let mask = *cs.channel_mask();
+            cs.clear_channel_mask();
+            for (c, a) in active.iter_mut().enumerate() {
+                *a = c < yinhe_synth::MAX_CHANNELS && mask[c / 64] & (1u64 << (c % 64)) != 0;
+            }
+        }
+        for (dense, slot) in self.instruments.iter().enumerate() {
+            if slot.is_some() && dense < n {
+                active[dense] = true;
+            }
+        }
+        for &ach in self.channel_layout.audio_channels() {
+            let d = self.channel_layout.audio_dense_for(ach) as usize;
+            if d < n {
+                active[d] = true;
+            }
+        }
+    }
+}
 
 /// 提取原始 CC（号 + 值 f32，0..127）；非 CC 事件返回 None。
 pub(crate) fn raw_cc(event: &AudioEvent) -> Option<(u8, f32)> {

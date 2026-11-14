@@ -110,8 +110,10 @@ pub(crate) struct AudioEngine {
     /// NoteOff 检测从 O(V) retain 全扫降到 O(ended × log V) 逐个 pop。
     pub(crate) active_notes: BinaryHeap<Reverse<ActiveNote>>,
     pub(crate) ended_notes: Vec<ActiveNote>,
-    /// 每轨电平读数端（峰值，0..∞）：渲染线程每块写、UI 读。
-    pub(crate) track_levels: Arc<Mutex<Vec<f32>>>,
+    /// 每轨电平读数端（L/R 峰值，0..∞）：渲染线程每块写、UI 读。
+    pub(crate) track_levels: Arc<Mutex<Vec<(f32, f32)>>>,
+    /// 空闲通道跳过的活跃掩码（每块复用，避免音频线程分配）。
+    pub(crate) channel_active: Vec<bool>,
     pub(crate) model: Option<AudioModel>,
     pub(crate) skip_track: Vec<bool>,
     /// 已解码音频素材（uuid → PCM + 峰值）。由 UI 后台解码后经
@@ -257,6 +259,7 @@ impl AudioEngine {
                 active_notes: BinaryHeap::new(),
                 ended_notes: Vec::new(),
                 track_levels: Arc::new(Mutex::new(Vec::new())),
+                channel_active: Vec::new(),
                 model: None,
                 skip_track: Vec::new(),
                 audio_sources: std::collections::HashMap::new(),
@@ -323,7 +326,7 @@ impl AudioEngine {
     }
 
     /// 每轨电平表共享读数端（句柄 clone 用）。
-    pub(crate) fn track_levels(&self) -> Arc<Mutex<Vec<f32>>> {
+    pub(crate) fn track_levels(&self) -> Arc<Mutex<Vec<(f32, f32)>>> {
         Arc::clone(&self.track_levels)
     }
 
@@ -342,15 +345,15 @@ impl AudioEngine {
         };
         let n = model.track_channels.len();
         if g.len() != n {
-            g.resize(n, 0.0);
+            g.resize(n, (0.0, 0.0));
         }
         if !self.playing {
-            g.fill(0.0);
+            g.fill((0.0, 0.0));
             return;
         }
         for (i, slot) in g.iter_mut().enumerate() {
             if self.skip_track.get(i).copied().unwrap_or(false) {
-                *slot = 0.0;
+                *slot = (0.0, 0.0);
                 continue;
             }
             *slot = if let Some(cs) = self.cpu_synth.as_ref() {
@@ -360,15 +363,12 @@ impl AudioEngine {
                     .channel_layout
                     .dense_for(model.track_channel(i) as usize);
                 if dense == u32::MAX {
-                    0.0
+                    (0.0, 0.0)
                 } else {
                     self.mixer
                         .channel_meter_reading(dense as usize)
-                        .map(|m| {
-                            let (l, r) = m.read();
-                            l.max(r)
-                        })
-                        .unwrap_or(0.0)
+                        .map(|m| m.read())
+                        .unwrap_or((0.0, 0.0))
                 }
             };
         }

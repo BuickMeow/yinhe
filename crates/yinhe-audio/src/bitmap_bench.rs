@@ -56,11 +56,11 @@ fn b1_mixer_idle_channels() {
         engine.render(&mut out);
         rendered += 512;
         let mut n = 0usize;
-        for c in 0..channels {
+        for (c, e) in ever.iter_mut().enumerate() {
             if let Some(m) = engine.mixer.channel_meter_reading(c) {
                 let (l, r) = m.read();
                 if l.max(r) > 0.0 {
-                    ever[c] = true;
+                    *e = true;
                     n += 1;
                 }
             }
@@ -308,8 +308,8 @@ fn b4_lane_coverage_bitmap() {
         let (ca, cb) = ((a / CELL) as usize, (b / CELL) as usize);
         let (wa, wb) = (ca / 64, (cb / 64).min(words - 1));
         let mut found = false;
-        for wi in wa..=wb {
-            let mut word = w[wi];
+        for (wi, &src) in w.iter().enumerate().take(wb + 1).skip(wa) {
+            let mut word = src;
             if wi == wa {
                 word &= !0u64 << (ca % 64);
             }
@@ -326,7 +326,7 @@ fn b4_lane_coverage_bitmap() {
     let bit_ns = t.elapsed().as_nanos() as f64 / q.len() as f64;
     // 防止优化器把未读的 lanes 去掉
     for l in &mut lanes {
-        l.truncate(0);
+        l.clear();
     }
     eprintln!(
         "\n[B4] 自动化 lane 覆盖位图（{LANES} lane × {EVENTS} 事件，区间 20000 tick）\n  二分 {bin_ns:.0}ns/次（命中 {hit}） vs 位图 {bit_ns:.0}ns/次（命中 {hit2}） 位图内存={:.2}MB",

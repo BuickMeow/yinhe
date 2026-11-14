@@ -84,7 +84,8 @@ fn track_level_meter_reads_synth_peak_per_track() {
     engine.publish_track_levels();
     let levels = engine.track_levels.lock().unwrap().clone();
     assert_eq!(levels.len(), 1, "一轨一个电平表槽");
-    assert!(levels[0] > 0.0, "发声轨道应有电平（{}）", levels[0]);
+    let (l, r) = levels[0];
+    assert!(l > 0.0 || r > 0.0, "发声轨道应有电平（{l}/{r}）");
 
     // 停止播放 → 全部 0。
     engine.playing = false;
@@ -95,7 +96,36 @@ fn track_level_meter_reads_synth_peak_per_track() {
             .lock()
             .unwrap()
             .iter()
-            .all(|&v| v == 0.0)
+            .all(|&(l, r)| l == 0.0 && r == 0.0)
+    );
+}
+
+/// 空闲通道跳过回归：整颗音符（含 release）落在单个块内时，不能因为
+/// "渲染后没有存活 voice"把这块当成静音跳过。
+#[test]
+#[ignore = "需要 SoundFont"]
+fn idle_skip_keeps_note_that_ends_inside_block() {
+    let sfz = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
+    let sr = 48_000u32;
+    let model = make_model_with_notes(vec![(60, 0, 1, 100, 0)]);
+    let layout = crate::spawn::channels_for_model(&model);
+    let mut engine = AudioEngine::new(sr, layout);
+    engine.handle_command(AudioCommand::LoadModel {
+        model: Arc::new(model),
+    });
+    let mut synth = yinhe_synth::CpuSynth::new(sr);
+    synth
+        .load_dense_soundfonts(0, &[std::path::PathBuf::from(sfz)])
+        .expect("音色库加载");
+    engine.cpu_synth = Some(synth);
+    engine.handle_command(AudioCommand::Play { from_sample: 0 });
+
+    // 一块 3 秒：音符与 release 都在块内结束（渲染后无存活 voice）。
+    let mut out = vec![0.0f32; sr as usize * 3 * 2];
+    engine.render(&mut out);
+    assert!(
+        out.iter().any(|s| s.abs() > 0.0),
+        "块内结束的音符不能被空闲跳过吞掉"
     );
 }
 

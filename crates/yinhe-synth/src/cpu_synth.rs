@@ -116,8 +116,10 @@ pub struct CpuSynth {
     track_slot: Vec<u16>,
     /// 本块 slot → track（紧凑编号，scratch 只按活跃轨道分配）。
     slot_track: Vec<u16>,
-    /// 每轨上一块的峰值（AR 电平表读取；无 voice 的轨道为 0）。
-    track_peaks: Vec<f32>,
+    /// 每轨上一块的峰值 L/R（AR 电平表读取；无 voice 的轨道为 0）。
+    track_peaks: Vec<(f32, f32)>,
+    /// 本块有活跃 voice 的 dense 通道位图（混音台空闲通道跳过用）。
+    channel_mask: [u64; 4],
     /// 每轨混音临时区（slot × frames × 2）。
     track_mix: Vec<f32>,
     /// 每 (channel, key) 的活跃 voice 索引表（MAX_CHANNELS × 128 个 Vec）。
@@ -159,6 +161,7 @@ impl CpuSynth {
             track_slot: Vec::new(),
             slot_track: Vec::new(),
             track_peaks: Vec::new(),
+            channel_mask: [0; 4],
             track_mix: Vec::new(),
             key_indices: vec![Vec::new(); MAX_CHANNELS * 128],
             next_group: 1,
@@ -300,14 +303,46 @@ impl CpuSynth {
             self.track_count = t + 1;
             self.track_channel.resize(self.track_count, u8::MAX);
             self.track_slot.resize(self.track_count, u16::MAX);
-            self.track_peaks.resize(self.track_count, 0.0);
+            self.track_peaks.resize(self.track_count, (0.0, 0.0));
         }
         self.track_channel[t] = channel;
     }
 
-    /// 某轨上一块的峰值（0 = 无发声）。AR 每轨电平表用。
-    pub fn track_peak(&self, track: usize) -> f32 {
-        self.track_peaks.get(track).copied().unwrap_or(0.0)
+    /// 把当前仍存活的 voice 并入"本块出过声"位图（每块渲染后调用）。
+    ///
+    /// 位图是**累积**的：块内结束的 voice 在 retain 时已标记（它们本块
+    /// 仍写出了音频），这里再补上仍存活的 voice。调用方读完位图后必须
+    /// [`Self::clear_channel_mask`]，否则下一块会保守地多算通道。
+    pub fn refresh_channel_mask(&mut self) {
+        for v in &self.voices {
+            if v.finished() {
+                continue;
+            }
+            let c = v.channel as usize;
+            if c < MAX_CHANNELS {
+                self.channel_mask[c / 64] |= 1u64 << (c % 64);
+            }
+        }
+    }
+
+    /// 有出过声的通道位图（`refresh_channel_mask` 之后有效，调用方负责清空）。
+    pub fn channel_mask(&self) -> &[u64; 4] {
+        &self.channel_mask
+    }
+
+    /// 清空累积的通道位图（每块读取后调用）。
+    pub fn clear_channel_mask(&mut self) {
+        self.channel_mask = [0; 4];
+    }
+
+    /// 某轨上一块的峰值 L/R（0 = 无发声）。AR 每轨电平表用。
+    pub fn track_peak(&self, track: usize) -> (f32, f32) {
+        self.track_peaks.get(track).copied().unwrap_or((0.0, 0.0))
+    }
+
+    /// 清空每轨峰值（每个输出块开始时调用；块内各渲染段取最大）。
+    pub fn reset_track_peaks(&mut self) {
+        self.track_peaks.fill((0.0, 0.0));
     }
 
     /// 清空轨道记账（换事件表/seek 时调用；新音符会重新登记）。
@@ -321,16 +356,11 @@ impl CpuSynth {
     }
 
     /// 为当前 voices 分配紧凑 slot，返回活跃轨道数。
-    ///
-    /// 同时把上一块的轨道峰值清零（无 voice 的轨道要落回 0）。
     fn build_track_slots(&mut self) -> usize {
         for &t in &self.slot_track {
             let t = t as usize;
             if let Some(slot) = self.track_slot.get_mut(t) {
                 *slot = u16::MAX;
-            }
-            if let Some(peak) = self.track_peaks.get_mut(t) {
-                *peak = 0.0;
             }
         }
         self.slot_track.clear();
@@ -486,7 +516,23 @@ impl CpuSynth {
         );
         let t_ret = std::time::Instant::now();
         let before = self.voices.len();
-        self.voices.retain(|v| !v.finished());
+        // 块内结束的 voice 本块仍写出了音频（release 尾音/整颗短音符），
+        // 必须先标记通道再移除，否则混音台的空闲通道跳班会丢掉这块。
+        let mut died = [0u64; 4];
+        self.voices.retain(|v| {
+            if v.finished() {
+                let c = v.channel as usize;
+                if c < MAX_CHANNELS {
+                    died[c / 64] |= 1u64 << (c % 64);
+                }
+                false
+            } else {
+                true
+            }
+        });
+        for (mask, bits) in self.channel_mask.iter_mut().zip(died) {
+            *mask |= bits;
+        }
         // 全局 voice 上限：块末摊销淘汰（O(V) 一次/块，不在 note_on 热路径）。
         let excess = self.voices.len().saturating_sub(self.max_voices);
         if excess > 0 {
@@ -637,7 +683,7 @@ impl CpuSynth {
             let track = self.slot_track[slot] as usize;
             let ch = self.track_channel[track] as usize;
             let base = slot * frames * 2;
-            let mut peak = 0.0f32;
+            let (mut peak_l, mut peak_r) = (0.0f32, 0.0f32);
             if ch < n {
                 let buf = buffers[ch].borrow_mut();
                 for i in 0..frames {
@@ -645,17 +691,20 @@ impl CpuSynth {
                     let r = self.track_mix[base + i * 2 + 1];
                     buf.left[out_offset + i] += l;
                     buf.right[out_offset + i] += r;
-                    peak = peak.max(l.abs()).max(r.abs());
+                    peak_l = peak_l.max(l.abs());
+                    peak_r = peak_r.max(r.abs());
                 }
             } else {
                 for i in 0..frames {
-                    peak = peak
-                        .max(self.track_mix[base + i * 2].abs())
-                        .max(self.track_mix[base + i * 2 + 1].abs());
+                    peak_l = peak_l.max(self.track_mix[base + i * 2].abs());
+                    peak_r = peak_r.max(self.track_mix[base + i * 2 + 1].abs());
                 }
             }
             if let Some(slot_peak) = self.track_peaks.get_mut(track) {
-                *slot_peak = peak;
+                // 一个输出块内会按事件切成很多段：峰值取整块最大，
+                // 不能只保留最后一段（否则段末无 voice 时表会瞬间掉 0）。
+                slot_peak.0 = slot_peak.0.max(peak_l);
+                slot_peak.1 = slot_peak.1.max(peak_r);
             }
         }
         PROF_REDUCE_NS.fetch_add(
