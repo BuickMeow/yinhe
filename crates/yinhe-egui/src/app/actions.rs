@@ -1570,13 +1570,14 @@ impl App {
             let spawned = std::thread::Builder::new()
                 .name("midi-export".into())
                 .spawn(move || {
-                    let result =
+                    let result = yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Midi, || {
                         yinhe_midi::write_to_file_with_progress(&model, &path_buf, &opts, |p| {
                             if let Ok(mut l) = live.lock() {
                                 l.progress = Some(p);
                             }
                         })
-                        .map_err(|e| e.to_string());
+                    })
+                    .map_err(|e| e.to_string());
                     let _ = tx.send(result);
                 });
             if let Err(e) = spawned {
