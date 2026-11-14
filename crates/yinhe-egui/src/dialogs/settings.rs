@@ -110,6 +110,12 @@ pub fn show_content(
 ) -> bool {
     let mut changed = false;
 
+    // 删除通知分类后旧的持久化索引可能越界，打开设置时收敛到最后一个分类。
+    settings.ui_session.settings_tab = settings
+        .ui_session
+        .settings_tab
+        .min(CATEGORY_KEYS.len().saturating_sub(1));
+
     // WPF 风格两列：左导航固定宽，右内容吃掉剩余空间。
     // 卡片圆角/描边负责视觉分区，不再用分隔线。
     let ctx = ui.ctx().clone();

@@ -646,6 +646,16 @@ mod tests {
         release_at(&mut h, start + egui::vec2(10.0, 0.0), 2.15);
     }
 
+    /// 标题栏通知：工程 tab 右侧渲染结果文本，不进入历史/通知中心。
+    #[test]
+    fn notification_renders_next_to_tab() {
+        let docs = vec![yinhe_test_helpers::make_test_document()];
+        let mut h = make_harness(&docs, &[]);
+        h.state_mut().notifications.success("加载完成", "a.mid");
+        h.step();
+        h.get_by_label_contains("加载完成");
+    }
+
     /// 单击标签打开工程选择 popup；再点一次关闭（不直接切换文档）。
     #[test]
     fn click_tab_toggles_popup() {

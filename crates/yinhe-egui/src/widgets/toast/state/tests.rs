@@ -54,10 +54,6 @@ fn src(fraction: f32) -> Arc<dyn ProgressSource> {
     Arc::new(Src::new(fraction))
 }
 
-fn paused_src(fraction: f32) -> Arc<dyn ProgressSource> {
-    Arc::new(Src::with_pause(fraction))
-}
-
 fn find<'a>(n: &'a Notifications, id: u64) -> &'a Notification {
     n.items.iter().find(|x| x.id == id).expect("entry exists")
 }
