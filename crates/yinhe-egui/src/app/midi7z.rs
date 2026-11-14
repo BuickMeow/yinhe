@@ -26,6 +26,8 @@ pub(crate) struct Midi7zState {
     pub choose: bool,
     pub format: MidiArchiveFormat,
     job: Option<Job>,
+    /// 进度子窗口是否仍显示（用户关掉后不再强制弹出）。
+    progress_open: bool,
 }
 
 impl App {
@@ -91,9 +93,11 @@ impl App {
                 let _ = tx.send(result);
             });
         if spawn.is_err() {
+            self.midi7z.progress_open = false;
             self.show_error(t!("midi7z.failed"), t!("midi7z.thread_failed"));
             return;
         }
+        self.midi7z.progress_open = true;
         self.midi7z.job = Some(Job { path, rx, progress });
     }
 
@@ -101,9 +105,17 @@ impl App {
         let Some(job) = self.midi7z.job.take() else {
             return;
         };
-        let mut keep = true;
+        // 只有“还在跑”才把 job 放回去。旧实现默认 keep=true，成功/失败后
+        // 仍把 job 塞回状态，下一帧 `try_recv` 变成 Disconnected，于是每帧
+        // 都弹一次“后台线程创建失败”，直到永远。
+        let mut keep = false;
         match job.rx.try_recv() {
             Ok(Ok(())) => {
+                self.midi7z.progress_open = false;
+                crate::chrome::dialog::close_viewport(
+                    ctx,
+                    egui::ViewportId::from_hash_of("midi7z_export"),
+                );
                 self.notifications.success(
                     t!("midi7z.done"),
                     job.path
@@ -113,8 +125,20 @@ impl App {
                         .to_string(),
                 );
             }
-            Ok(Err(e)) => self.show_error(t!("midi7z.failed"), e),
+            Ok(Err(e)) => {
+                self.midi7z.progress_open = false;
+                crate::chrome::dialog::close_viewport(
+                    ctx,
+                    egui::ViewportId::from_hash_of("midi7z_export"),
+                );
+                self.show_error(t!("midi7z.failed"), e);
+            }
             Err(TryRecvError::Disconnected) => {
+                self.midi7z.progress_open = false;
+                crate::chrome::dialog::close_viewport(
+                    ctx,
+                    egui::ViewportId::from_hash_of("midi7z_export"),
+                );
                 self.show_error(t!("midi7z.failed"), t!("midi7z.thread_failed"));
             }
             Err(TryRecvError::Empty) => {
@@ -128,40 +152,103 @@ impl App {
     }
 
     pub(crate) fn show_midi7z_ui(&mut self, ctx: &egui::Context) {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
         if self.midi7z.choose {
-            let mut chosen = None;
-            let mut cancel = false;
-            let response = egui::Modal::new(egui::Id::unique("midi7z_choose")).show(ctx, |ui| {
-                ui.set_width(360.0);
-                ui.heading(t!("midi7z.choose_title"));
-                ui.label(t!("midi7z.choose_hint"));
-                ui.radio_value(
-                    &mut self.midi7z.format,
-                    MidiArchiveFormat::SevenZ,
-                    t!("midi7z.format_7z"),
-                );
-                ui.radio_value(
-                    &mut self.midi7z.format,
-                    MidiArchiveFormat::Zip,
-                    t!("midi7z.format_zip"),
-                );
-                ui.separator();
-                ui.horizontal(|ui| {
-                    if ui.button(t!("common.cancel")).clicked() {
-                        cancel = true;
+            let viewport_id = egui::ViewportId::from_hash_of("midi7z_choose");
+            crate::chrome::dialog::raise_on_open(ctx, viewport_id);
+            let title = t!("midi7z.choose_title").to_string();
+            let format = Rc::new(Cell::new(self.midi7z.format));
+            let chosen = Rc::new(Cell::new(None::<MidiArchiveFormat>));
+            let cancelled = Rc::new(Cell::new(false));
+            let open = Rc::new(Cell::new(true));
+            let ctx_clone = ctx.clone();
+            let format_cb = Rc::clone(&format);
+            let chosen_cb = Rc::clone(&chosen);
+            let cancelled_cb = Rc::clone(&cancelled);
+            let open_cb = Rc::clone(&open);
+            let title_cb = title.clone();
+            ctx_clone.show_viewport_immediate(
+                viewport_id,
+                crate::chrome::dialog::viewport_builder(&title, [360.0, 250.0], false),
+                move |vctx, _class| {
+                    let mut close = vctx.input(|i| i.viewport().close_requested());
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame {
+                            fill: crate::theme::app_bg(),
+                            ..Default::default()
+                        })
+                        .show(vctx, |ui| {
+                            crate::chrome::dialog::title_bar(ui, &title_cb, &mut close, false);
+                            egui::Frame::new()
+                                .inner_margin(egui::Margin {
+                                    left: 12,
+                                    right: 12,
+                                    top: 0,
+                                    bottom: 12,
+                                })
+                                .show(ui, |ui| {
+                                    let btn_zone_h =
+                                        crate::chrome::dialog_buttons::btn_zone_h(ui.ctx());
+                                    crate::chrome::dialog::content_with_bottom_buttons(
+                                        ui,
+                                        btn_zone_h,
+                                        |ui| {
+                                            ui.add_space(8.0);
+                                            ui.label(t!("midi7z.choose_hint").as_ref());
+                                            ui.add_space(8.0);
+                                            let mut f = format_cb.get();
+                                            ui.radio_value(
+                                                &mut f,
+                                                MidiArchiveFormat::SevenZ,
+                                                t!("midi7z.format_7z").as_ref(),
+                                            );
+                                            ui.radio_value(
+                                                &mut f,
+                                                MidiArchiveFormat::Zip,
+                                                t!("midi7z.format_zip").as_ref(),
+                                            );
+                                            format_cb.set(f);
+                                        },
+                                        |ui| {
+                                            use crate::chrome::dialog_buttons::{
+                                                DialogButton, dialog_button_row,
+                                            };
+                                            let cancel = t!("common.cancel");
+                                            let export = t!("midi7z.export");
+                                            if let Some(idx) = dialog_button_row(
+                                                ui,
+                                                &[
+                                                    DialogButton::secondary(cancel.as_ref()),
+                                                    DialogButton::primary(export.as_ref()),
+                                                ],
+                                            ) {
+                                                if idx == 1 {
+                                                    chosen_cb.set(Some(format_cb.get()));
+                                                } else {
+                                                    cancelled_cb.set(true);
+                                                }
+                                                close = true;
+                                            }
+                                        },
+                                    );
+                                });
+                        });
+                    if close {
+                        vctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                        open_cb.set(false);
                     }
-                    if ui.button(t!("midi7z.export")).clicked() {
-                        chosen = Some(self.midi7z.format);
-                    }
-                });
-            });
-            if response.should_close() {
-                cancel = true;
+                },
+            );
+            if !open.get() {
+                cancelled.set(true);
             }
-            if let Some(format) = chosen {
+            self.midi7z.format = format.get();
+            if let Some(f) = chosen.get() {
                 self.midi7z.choose = false;
-                self.start_midi_archive_export(format);
-            } else if cancel {
+                self.start_midi_archive_export(f);
+            } else if cancelled.get() {
                 self.midi7z.choose = false;
             }
             return;
@@ -170,25 +257,62 @@ impl App {
         let Some(job) = &self.midi7z.job else {
             return;
         };
-        let f = job
-            .progress
-            .lock()
-            .map(|p| p.clamp(0.0, 1.0))
-            .unwrap_or(0.0);
+        if !self.midi7z.progress_open {
+            return;
+        }
+        let viewport_id = egui::ViewportId::from_hash_of("midi7z_export");
+        crate::chrome::dialog::raise_on_open(ctx, viewport_id);
+        let title = t!("midi7z.working").to_string();
+        let progress = Arc::clone(&job.progress);
         let path = job.path.clone();
-        egui::Modal::new(egui::Id::unique("midi7z_export")).show(ctx, |ui| {
-            ui.set_width(380.0);
-            ui.heading(t!("midi7z.working"));
-            ui.label(
-                path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or_default(),
-            );
-            ui.add(
-                egui::ProgressBar::new(f)
-                    .show_percentage()
-                    .desired_width(340.0),
-            );
-        });
+        let open = Rc::new(Cell::new(true));
+        let ctx_clone = ctx.clone();
+        let open_cb = Rc::clone(&open);
+        let title_cb = title.clone();
+        ctx_clone.show_viewport_immediate(
+            viewport_id,
+            crate::chrome::dialog::viewport_builder(&title, [420.0, 170.0], false),
+            move |vctx, _class| {
+                let mut close = vctx.input(|i| i.viewport().close_requested());
+                egui::CentralPanel::default()
+                    .frame(egui::Frame {
+                        fill: crate::theme::app_bg(),
+                        ..Default::default()
+                    })
+                    .show(vctx, |ui| {
+                        crate::chrome::dialog::title_bar(ui, &title_cb, &mut close, false);
+                        egui::Frame::new()
+                            .inner_margin(egui::Margin {
+                                left: 16,
+                                right: 16,
+                                top: 0,
+                                bottom: 16,
+                            })
+                            .show(ui, |ui| {
+                                ui.add_space(8.0);
+                                ui.label(
+                                    path.file_name()
+                                        .and_then(|n| n.to_str())
+                                        .unwrap_or_default(),
+                                );
+                                ui.add_space(6.0);
+                                let f = progress.lock().map(|p| p.clamp(0.0, 1.0)).unwrap_or(0.0);
+                                ui.add(
+                                    egui::ProgressBar::new(f)
+                                        .show_percentage()
+                                        .desired_width(360.0),
+                                );
+                            });
+                    });
+                if close {
+                    vctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                    open_cb.set(false);
+                }
+            },
+        );
+        if !open.get() {
+            // 用户关掉进度窗口：任务继续，完成后出通知。
+            self.midi7z.progress_open = false;
+        }
     }
 }
