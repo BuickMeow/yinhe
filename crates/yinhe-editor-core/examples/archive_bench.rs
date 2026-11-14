@@ -42,6 +42,8 @@ fn main() {
         &path,
         MidiArchiveFormat::SevenZ,
         &MidiExportOptions::default(),
+        &std::sync::atomic::AtomicBool::new(false),
+        &std::sync::atomic::AtomicBool::new(false),
         |p| last = p,
     )
     .expect("export");

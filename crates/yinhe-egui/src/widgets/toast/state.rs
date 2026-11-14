@@ -15,6 +15,7 @@ pub const EXPORT_PROGRESS_ID: u64 = 0x45585054; // "EXPT"
 pub const MIDI_EXPORT_PROGRESS_ID: u64 = 0x4D455849; // "MEXI"
 pub const RESCALE_PROGRESS_ID: u64 = 0x5253434C; // "RSCL"
 pub const ENGINE_PROGRESS_ID: u64 = 0x454E474E; // "ENGN"
+pub const ARCHIVE_PROGRESS_ID: u64 = 0x41524348; // "ARCH"
 
 /// 错误队列上限：阻塞窗口逐条确认，异常情况下也不能无限堆积。
 const MAX_ERRORS: usize = 32;

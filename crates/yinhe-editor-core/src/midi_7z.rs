@@ -7,6 +7,7 @@
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use sevenz_rust2::encoder_options::Lzma2Options;
 use sevenz_rust2::{ArchiveEntry, ArchiveWriter, EncoderConfiguration};
@@ -39,11 +40,36 @@ struct ProgressReader<'a, R: Read> {
     total: u64,
     done: u64,
     last_report: u64,
+    pause: &'a AtomicBool,
+    cancel: &'a AtomicBool,
     progress: &'a mut dyn FnMut(f32),
+}
+
+/// 暂停等待；取消返回 interrupted。
+fn wait_if_paused(pause: &AtomicBool, cancel: &AtomicBool) -> Result<(), String> {
+    while pause.load(Ordering::Relaxed) {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("已取消".to_string());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    if cancel.load(Ordering::Relaxed) {
+        return Err("已取消".to_string());
+    }
+    Ok(())
 }
 
 impl<R: Read> Read for ProgressReader<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        while self.pause.load(Ordering::Relaxed) {
+            if self.cancel.load(Ordering::Relaxed) {
+                return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        if self.cancel.load(Ordering::Relaxed) {
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
+        }
         let n = self.inner.read(buf)?;
         self.done = self.done.saturating_add(n as u64);
         // 1MB 粒度上报，避免 4KB 读循环频繁抢进度锁。
@@ -103,6 +129,8 @@ fn write_7z(
     out_path: &Path,
     entry_name: &str,
     total: u64,
+    pause: &AtomicBool,
+    cancel: &AtomicBool,
     progress: &mut dyn FnMut(f32),
 ) -> Result<(), String> {
     let mut writer = ArchiveWriter::create(out_path).map_err(|e| format!("创建 7z 失败: {e}"))?;
@@ -119,6 +147,8 @@ fn write_7z(
         total,
         done: 0,
         last_report: 0,
+        pause,
+        cancel,
         progress,
     };
     writer
@@ -133,6 +163,8 @@ fn write_zip(
     out_path: &Path,
     entry_name: &str,
     total: u64,
+    pause: &AtomicBool,
+    cancel: &AtomicBool,
     progress: &mut dyn FnMut(f32),
 ) -> Result<(), String> {
     let out = File::create(out_path).map_err(|e| format!("创建 zip 失败: {e}"))?;
@@ -146,6 +178,8 @@ fn write_zip(
         total,
         done: 0,
         last_report: 0,
+        pause,
+        cancel,
         progress,
     };
     std::io::copy(&mut reader, &mut zip).map_err(|e| format!("写入 zip 失败: {e}"))?;
@@ -161,6 +195,8 @@ pub fn export_midi_archive(
     out_path: &Path,
     format: MidiArchiveFormat,
     opts: &MidiExportOptions,
+    pause: &AtomicBool,
+    cancel: &AtomicBool,
     mut progress: impl FnMut(f32),
 ) -> Result<(), String> {
     let parent = out_path.parent().unwrap_or_else(|| Path::new("."));
@@ -172,7 +208,18 @@ pub fn export_midi_archive(
     let tmp_guard = TempGuard(tmp.clone());
 
     progress(0.02);
-    yinhe_midi::write_to_file(model, &tmp, opts).map_err(|e| format!("生成 MIDI 失败: {e}"))?;
+    wait_if_paused(pause, cancel)?;
+    yinhe_midi::write_to_file_with_progress(model, &tmp, opts, |p| {
+        while pause.load(Ordering::Relaxed) {
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        progress(p.fraction() * 0.5);
+    })
+    .map_err(|e| format!("生成 MIDI 失败: {e}"))?;
+    wait_if_paused(pause, cancel)?;
     progress(0.5);
 
     let total = fs::metadata(&tmp)
@@ -182,8 +229,24 @@ pub fn export_midi_archive(
     let entry_name = midi_entry_name(out_path);
 
     let result = match format {
-        MidiArchiveFormat::SevenZ => write_7z(file, out_path, &entry_name, total, &mut progress),
-        MidiArchiveFormat::Zip => write_zip(file, out_path, &entry_name, total, &mut progress),
+        MidiArchiveFormat::SevenZ => write_7z(
+            file,
+            out_path,
+            &entry_name,
+            total,
+            pause,
+            cancel,
+            &mut progress,
+        ),
+        MidiArchiveFormat::Zip => write_zip(
+            file,
+            out_path,
+            &entry_name,
+            total,
+            pause,
+            cancel,
+            &mut progress,
+        ),
     };
 
     drop(tmp_guard);
@@ -200,9 +263,19 @@ pub fn export_midi_7z(
     model: &YinModel,
     out_path: &Path,
     opts: &MidiExportOptions,
+    pause: &AtomicBool,
+    cancel: &AtomicBool,
     progress: impl FnMut(f32),
 ) -> Result<(), String> {
-    export_midi_archive(model, out_path, MidiArchiveFormat::SevenZ, opts, progress)
+    export_midi_archive(
+        model,
+        out_path,
+        MidiArchiveFormat::SevenZ,
+        opts,
+        pause,
+        cancel,
+        progress,
+    )
 }
 
 #[cfg(test)]
@@ -244,6 +317,8 @@ mod tests {
             &tiny_model(),
             &archive,
             &MidiExportOptions::default(),
+            &std::sync::atomic::AtomicBool::new(false),
+            &std::sync::atomic::AtomicBool::new(false),
             |p| last = p,
         )
         .expect("export");
@@ -296,6 +371,8 @@ mod zip_tests {
             &archive,
             MidiArchiveFormat::Zip,
             &MidiExportOptions::default(),
+            &std::sync::atomic::AtomicBool::new(false),
+            &std::sync::atomic::AtomicBool::new(false),
             |_| {},
         )
         .expect("export");

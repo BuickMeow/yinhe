@@ -4,6 +4,7 @@
 //! 不影响本次导出。
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, TryRecvError};
 use std::sync::{Arc, Mutex};
 
@@ -18,6 +19,33 @@ struct Job {
     path: PathBuf,
     rx: mpsc::Receiver<Result<(), String>>,
     progress: Arc<Mutex<f32>>,
+    pause: Arc<AtomicBool>,
+    cancel: Arc<AtomicBool>,
+}
+
+/// 压缩包导出进度数据源：标题栏通知条渲染时 pull。
+struct ArchiveToastSource {
+    progress: Arc<Mutex<f32>>,
+    pause: Arc<AtomicBool>,
+    cancel: Arc<AtomicBool>,
+}
+
+impl crate::widgets::toast::model::ProgressSource for ArchiveToastSource {
+    fn title(&self) -> String {
+        t!("toast.exporting_archive").to_string()
+    }
+    fn fraction(&self) -> f32 {
+        self.progress
+            .lock()
+            .map(|p| p.clamp(0.0, 1.0))
+            .unwrap_or(0.0)
+    }
+    fn cancel(&self) -> Option<Arc<AtomicBool>> {
+        Some(self.cancel.clone())
+    }
+    fn pause(&self) -> Option<Arc<AtomicBool>> {
+        Some(self.pause.clone())
+    }
 }
 
 #[derive(Default)]
@@ -26,8 +54,6 @@ pub(crate) struct Midi7zState {
     pub choose: bool,
     pub format: MidiArchiveFormat,
     job: Option<Job>,
-    /// 进度子窗口是否仍显示（用户关掉后不再强制弹出）。
-    progress_open: bool,
 }
 
 impl App {
@@ -78,68 +104,116 @@ impl App {
             dedup_overlaps: self.audio_settings.midi_export_dedup_overlaps,
         };
         let progress = Arc::new(Mutex::new(0.0));
+        let pause = Arc::new(AtomicBool::new(false));
+        let cancel = Arc::new(AtomicBool::new(false));
         let p = Arc::clone(&progress);
+        let pause_thread = Arc::clone(&pause);
+        let cancel_thread = Arc::clone(&cancel);
         let (tx, rx) = mpsc::channel();
         let out = path.clone();
         let spawn = std::thread::Builder::new()
             .name("yinhe-midi-archive".into())
             .stack_size(8 * 1024 * 1024)
             .spawn(move || {
-                let result = export_midi_archive(&model, &out, format, &opts, |f| {
-                    if let Ok(mut p) = p.lock() {
-                        *p = f;
-                    }
-                });
+                let result = export_midi_archive(
+                    &model,
+                    &out,
+                    format,
+                    &opts,
+                    &pause_thread,
+                    &cancel_thread,
+                    |f| {
+                        if let Ok(mut p) = p.lock() {
+                            *p = f;
+                        }
+                    },
+                );
                 let _ = tx.send(result);
             });
         if spawn.is_err() {
-            self.midi7z.progress_open = false;
             self.show_error(t!("midi7z.failed"), t!("midi7z.thread_failed"));
             return;
         }
-        self.midi7z.progress_open = true;
-        self.midi7z.job = Some(Job { path, rx, progress });
+        self.midi7z.job = Some(Job {
+            path,
+            rx,
+            progress,
+            pause,
+            cancel,
+        });
     }
 
     pub(crate) fn poll_midi7z(&mut self, ctx: &egui::Context) {
         let Some(job) = self.midi7z.job.take() else {
             return;
         };
-        // 只有“还在跑”才把 job 放回去。旧实现默认 keep=true，成功/失败后
-        // 仍把 job 塞回状态，下一帧 `try_recv` 变成 Disconnected，于是每帧
-        // 都弹一次“后台线程创建失败”，直到永远。
+        let id = crate::widgets::toast::ARCHIVE_PROGRESS_ID;
+        if !self.notifications.is_dismissed(id) {
+            self.notifications.ensure_progress(
+                id,
+                crate::widgets::toast::ToastKind::Info,
+                Arc::new(ArchiveToastSource {
+                    progress: Arc::clone(&job.progress),
+                    pause: Arc::clone(&job.pause),
+                    cancel: Arc::clone(&job.cancel),
+                }),
+            );
+        }
+
+        let fname = job
+            .path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
         let mut keep = false;
         match job.rx.try_recv() {
             Ok(Ok(())) => {
-                self.midi7z.progress_open = false;
-                crate::chrome::dialog::close_viewport(
-                    ctx,
-                    egui::ViewportId::from_hash_of("midi7z_export"),
+                let done = self.notifications.finish_progress(
+                    id,
+                    crate::widgets::toast::ProgressOutcome::Completed,
+                    t!("midi7z.done").to_string(),
+                    fname,
+                    None,
                 );
-                self.notifications.success(
-                    t!("midi7z.done"),
-                    job.path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or_default()
-                        .to_string(),
-                );
+                if done != 0 {
+                    self.notifications.set_action_with_icon(
+                        done,
+                        t!("dialog.export.open_folder").to_string(),
+                        crate::widgets::toast::model::ToastActionKind::RevealInFolder(
+                            job.path.clone(),
+                        ),
+                        Some(egui_material_icons::icons::ICON_FOLDER_OPEN),
+                    );
+                }
             }
             Ok(Err(e)) => {
-                self.midi7z.progress_open = false;
-                crate::chrome::dialog::close_viewport(
-                    ctx,
-                    egui::ViewportId::from_hash_of("midi7z_export"),
-                );
-                self.show_error(t!("midi7z.failed"), e);
+                if job.cancel.load(Ordering::Relaxed) {
+                    self.notifications.finish_progress(
+                        id,
+                        crate::widgets::toast::ProgressOutcome::Aborted,
+                        t!("toast.export_aborted").to_string(),
+                        fname,
+                        None,
+                    );
+                } else {
+                    self.notifications.finish_progress(
+                        id,
+                        crate::widgets::toast::ProgressOutcome::Failed,
+                        t!("midi7z.failed").to_string(),
+                        e,
+                        None,
+                    );
+                }
             }
             Err(TryRecvError::Disconnected) => {
-                self.midi7z.progress_open = false;
-                crate::chrome::dialog::close_viewport(
-                    ctx,
-                    egui::ViewportId::from_hash_of("midi7z_export"),
+                self.notifications.finish_progress(
+                    id,
+                    crate::widgets::toast::ProgressOutcome::Failed,
+                    t!("midi7z.failed").to_string(),
+                    t!("midi7z.thread_failed").to_string(),
+                    None,
                 );
-                self.show_error(t!("midi7z.failed"), t!("midi7z.thread_failed"));
             }
             Err(TryRecvError::Empty) => {
                 keep = true;
@@ -251,68 +325,6 @@ impl App {
             } else if cancelled.get() {
                 self.midi7z.choose = false;
             }
-            return;
-        }
-
-        let Some(job) = &self.midi7z.job else {
-            return;
-        };
-        if !self.midi7z.progress_open {
-            return;
-        }
-        let viewport_id = egui::ViewportId::from_hash_of("midi7z_export");
-        crate::chrome::dialog::raise_on_open(ctx, viewport_id);
-        let title = t!("midi7z.working").to_string();
-        let progress = Arc::clone(&job.progress);
-        let path = job.path.clone();
-        let open = Rc::new(Cell::new(true));
-        let ctx_clone = ctx.clone();
-        let open_cb = Rc::clone(&open);
-        let title_cb = title.clone();
-        ctx_clone.show_viewport_immediate(
-            viewport_id,
-            crate::chrome::dialog::viewport_builder(&title, [420.0, 170.0], false),
-            move |vctx, _class| {
-                let mut close = vctx.input(|i| i.viewport().close_requested());
-                egui::CentralPanel::default()
-                    .frame(egui::Frame {
-                        fill: crate::theme::app_bg(),
-                        ..Default::default()
-                    })
-                    .show(vctx, |ui| {
-                        crate::chrome::dialog::title_bar(ui, &title_cb, &mut close, false);
-                        egui::Frame::new()
-                            .inner_margin(egui::Margin {
-                                left: 16,
-                                right: 16,
-                                top: 0,
-                                bottom: 16,
-                            })
-                            .show(ui, |ui| {
-                                ui.add_space(8.0);
-                                ui.label(
-                                    path.file_name()
-                                        .and_then(|n| n.to_str())
-                                        .unwrap_or_default(),
-                                );
-                                ui.add_space(6.0);
-                                let f = progress.lock().map(|p| p.clamp(0.0, 1.0)).unwrap_or(0.0);
-                                ui.add(
-                                    egui::ProgressBar::new(f)
-                                        .show_percentage()
-                                        .desired_width(360.0),
-                                );
-                            });
-                    });
-                if close {
-                    vctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-                    open_cb.set(false);
-                }
-            },
-        );
-        if !open.get() {
-            // 用户关掉进度窗口：任务继续，完成后出通知。
-            self.midi7z.progress_open = false;
         }
     }
 }

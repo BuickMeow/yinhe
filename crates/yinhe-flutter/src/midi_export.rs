@@ -91,6 +91,8 @@ pub fn start_archive(path: String, opts_json: &str, format: i32) -> i32 {
                 yinhe_editor_core::midi_7z::MidiArchiveFormat::SevenZ
             },
             &opts,
+            &std::sync::atomic::AtomicBool::new(false),
+            &std::sync::atomic::AtomicBool::new(false),
             |f| {
                 if let Ok(mut st) = status_slot().lock() {
                     st.progress = f.clamp(0.0, 1.0);

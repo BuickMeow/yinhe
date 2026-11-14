@@ -10,7 +10,10 @@ use super::Notifications;
 /// 通知条高度（标题栏 32px，上下各留 3px）。
 const BAR_H: f32 = 28.0;
 /// 左侧全高进度条的宽度（要放得下 100%）。
-const PROGRESS_W: f32 = 56.0;
+const PROGRESS_W: f32 = 64.0;
+/// 与歌曲标题标签卡一致的高度与圆角。
+const PROGRESS_H: f32 = 24.0;
+const PROGRESS_RADIUS: f32 = 4.0;
 const MIN_W: f32 = 132.0;
 const MAX_W: f32 = 360.0;
 const PAD_X: f32 = 8.0;
@@ -114,7 +117,11 @@ fn draw_button(
         ui.scope_id().with((id_salt, rect.min.x as i32)),
         egui::Sense::click(),
     );
-    let c = if resp.hovered() {
+    if resp.hovered() || resp.is_pointer_button_down_on() {
+        ui.painter()
+            .rect_filled(rect, 3.0, crate::theme::hover_color(crate::theme::app_bg()));
+    }
+    let c = if resp.hovered() || resp.is_pointer_button_down_on() {
         crate::theme::text_primary()
     } else {
         color
@@ -201,18 +208,15 @@ impl Notifications {
             egui::vec2(w, BAR_H),
         );
 
-        let hovered = ui.rect_contains_pointer(rect);
-        if hovered {
-            ui.painter()
-                .rect_filled(rect, 4.0, crate::theme::hover_color(crate::theme::app_bg()));
+        if ui.rect_contains_pointer(rect) {
             crate::widgets::hint::set(ui.ctx(), rust_i18n::t!("hint.title_bar.notification"));
         }
 
         // 左侧全高进度条：淡强调色底 + 实心进度 + 百分比居中。
         let text_left = if let Some(p) = row.progress {
             let bar_rect = egui::Rect::from_min_size(
-                egui::pos2(rect.min.x + 1.0, rect.min.y + 1.0),
-                egui::vec2(PROGRESS_W, rect.height() - 2.0),
+                egui::pos2(rect.min.x + 2.0, rect.center().y - PROGRESS_H / 2.0),
+                egui::vec2(PROGRESS_W, PROGRESS_H),
             );
             let accent = match row.kind {
                 ToastKind::Warning => crate::theme::warning_gold(),
@@ -220,14 +224,14 @@ impl Notifications {
                 _ => crate::theme::accent_active(),
             };
             ui.painter()
-                .rect_filled(bar_rect, 4.0, accent.gamma_multiply(0.12));
+                .rect_filled(bar_rect, PROGRESS_RADIUS, accent.gamma_multiply(0.12));
             let fg = egui::Rect::from_min_size(
                 bar_rect.min,
                 egui::vec2(bar_rect.width() * p.clamp(0.0, 1.0), bar_rect.height()),
             );
             if fg.width() > 0.0 {
                 ui.painter()
-                    .rect_filled(fg, 4.0, accent.gamma_multiply(0.35));
+                    .rect_filled(fg, PROGRESS_RADIUS, accent.gamma_multiply(0.35));
             }
             ui.painter().text(
                 bar_rect.center(),
