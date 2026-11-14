@@ -4,6 +4,10 @@ version.workspace = true
 license.workspace = true
 edition = "2024"
 
+[features]
+# 启用 yinhe-memtrace 的分类内存追踪（诊断用，有性能开销）。
+memtrace = ["yinhe-memtrace/memtrace"]
+
 [dependencies]
 yinhe-core = { path = "../yinhe-core" }
 yinhe-types = { path = "../yinhe-types" }

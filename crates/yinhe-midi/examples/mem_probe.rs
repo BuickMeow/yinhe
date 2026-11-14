@@ -23,10 +23,32 @@ fn main() {
     eprintln!("[mem-probe] loading: {path}");
     snap("before anything");
 
-    // Phase 1: parse
+    // Phase 1: parse（并行采样峰值）
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let sampler = {
+        let stop = std::sync::Arc::clone(&stop);
+        std::thread::spawn(move || {
+            let mut peak_midi = 0isize;
+            let mut peak_total = 0isize;
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                let s = yinhe_memtrace::Snapshot::capture();
+                peak_midi = peak_midi.max(s.get(yinhe_memtrace::AllocTag::Midi));
+                peak_total = peak_total.max(s.total_tracked());
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            (peak_midi, peak_total)
+        })
+    };
     let t0 = std::time::Instant::now();
     let model = yinhe_midi::parse_path(&path);
     let parse_dur = t0.elapsed();
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let (peak_midi, peak_total) = sampler.join().unwrap();
+    eprintln!(
+        "[mem-probe] parse peak midi={:.1} MB  total={:.1} MB",
+        peak_midi as f64 / 1_048_576.0,
+        peak_total as f64 / 1_048_576.0
+    );
     match &model {
         Ok(m) => {
             eprintln!(

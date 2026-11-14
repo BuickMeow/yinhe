@@ -41,6 +41,42 @@ impl Default for MidiExportOptions {
     }
 }
 
+/// 导出进度阶段。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MidiExportStage {
+    /// 扫描模型、按轨道收集紧凑音符索引。
+    Indexing,
+    /// 逐轨排序并写出事件。
+    Writing,
+}
+
+/// MIDI 导出进度快照。
+///
+/// `notes_done / notes_total` 在索引阶段是"已扫描音符"，写出阶段是
+/// "已写出 NoteOn 数"。回调按 [`PROGRESS_NOTE_INTERVAL`] 音符节流。
+#[derive(Clone, Copy, Debug)]
+pub struct MidiExportProgress {
+    pub stage: MidiExportStage,
+    pub notes_done: u64,
+    pub notes_total: u64,
+    pub track_index: usize,
+    pub total_tracks: usize,
+}
+
+impl MidiExportProgress {
+    /// 0..1 进度：索引占前 40%，写出占后 60%。
+    pub fn fraction(self) -> f32 {
+        let ratio = (self.notes_done as f32 / self.notes_total.max(1) as f32).min(1.0);
+        match self.stage {
+            MidiExportStage::Indexing => ratio * 0.4,
+            MidiExportStage::Writing => 0.4 + ratio * 0.6,
+        }
+    }
+}
+
+/// 进度回调的音符节流间隔：每帧 UI 拉取一次即可，过密只会增加锁竞争。
+const PROGRESS_NOTE_INTERVAL: u64 = 65_536;
+
 fn encode_text(encoding: MidiImportEncoding, s: &str) -> Vec<u8> {
     if encoding == MidiImportEncoding::Utf8 {
         s.as_bytes().to_vec()
@@ -77,9 +113,21 @@ pub fn write_to_file(
     path: impl AsRef<std::path::Path>,
     opts: &MidiExportOptions,
 ) -> Result<(), MidiError> {
+    write_to_file_with_progress(model, path, opts, |_| {})
+}
+
+/// 流式导出到文件，并在扫描/写出过程中回调进度。
+///
+/// 与 [`write_to_file`] 的输出逐字节一致，只是多了进度通知。
+pub fn write_to_file_with_progress(
+    model: &YinModel,
+    path: impl AsRef<std::path::Path>,
+    opts: &MidiExportOptions,
+    progress: impl FnMut(MidiExportProgress),
+) -> Result<(), MidiError> {
     let file = std::fs::File::create(path.as_ref())?;
     let mut out = BufWriter::new(file);
-    write_to_writer(model, opts, &mut out)?;
+    write_to_writer_with_progress(model, opts, &mut out, progress)?;
     out.flush()?;
     Ok(())
 }
@@ -90,8 +138,30 @@ pub fn write_to_writer<W: Write>(
     opts: &MidiExportOptions,
     out: &mut W,
 ) -> Result<(), MidiError> {
+    write_to_writer_with_progress(model, opts, out, |_| {})
+}
+
+/// 流式导出的通用 writer 版本，带进度回调。
+pub fn write_to_writer_with_progress<W: Write>(
+    model: &YinModel,
+    opts: &MidiExportOptions,
+    out: &mut W,
+    mut progress: impl FnMut(MidiExportProgress),
+) -> Result<(), MidiError> {
     let ppq = model.meta.ppq;
-    let mut per_track_notes = build_note_index(model);
+    let total_tracks = model.tracks.len();
+    let mut per_track_notes = build_note_index(model, total_tracks, &mut progress);
+    // 索引阶段用 `model.note_count` 作总数为上界；收集完再以实际入轨数校正
+    // （极少见：音符的 track 越界会被丢弃）。取两者较大值，保证进度不回退。
+    let actual_notes: u64 = per_track_notes.iter().map(|v| v.len() as u64).sum();
+    let notes_total = model.note_count.max(actual_notes);
+    progress(MidiExportProgress {
+        stage: MidiExportStage::Indexing,
+        notes_done: notes_total,
+        notes_total,
+        track_index: 0,
+        total_tracks,
+    });
 
     if opts.dedup_overlaps {
         for notes in &mut per_track_notes {
@@ -159,14 +229,34 @@ pub fn write_to_writer<W: Write>(
     }
     write_chunk(out, conductor.finish())?;
 
+    let mut written = 0u64;
     for (i, t) in model.tracks.iter().enumerate() {
         if !included[i] {
             continue;
         }
         // 取走本轨索引，写完立即释放；不让已导出的轨继续占内存。
         let notes = std::mem::take(&mut per_track_notes[i]);
-        write_note_track(out, t, &notes, color_payloads[i].as_deref(), opts)?;
+        write_note_track(
+            out,
+            t,
+            &notes,
+            color_payloads[i].as_deref(),
+            opts,
+            &mut written,
+            notes_total,
+            i,
+            total_tracks,
+            &mut progress,
+        )?;
     }
+    // 空轨被 strip 掉时 notes_total 已是实际总数；这里保证进度能到 100%。
+    progress(MidiExportProgress {
+        stage: MidiExportStage::Writing,
+        notes_done: notes_total,
+        notes_total,
+        track_index: total_tracks,
+        total_tracks,
+    });
     Ok(())
 }
 
@@ -186,10 +276,39 @@ struct NoteRef {
 ///
 /// 遍历顺序是 key 桶升序、桶内 `start_tick` 升序，因此每条轨的索引天然按
 /// `(key, start_tick)` 有序；去重和归并都依赖这个顺序。
-fn build_note_index(model: &YinModel) -> Vec<Vec<NoteRef>> {
-    let mut per_track: Vec<Vec<NoteRef>> = vec![Vec::new(); model.tracks.len()];
+///
+/// 每轨容量直接用 `track_note_count` 预分配：黑乐谱常见"单轨几千万音符"，
+/// `Vec::push` 的翻倍扩容会让峰值容量达到实际音符数的 1.5~2 倍。
+fn build_note_index(
+    model: &YinModel,
+    total_tracks: usize,
+    progress: &mut impl FnMut(MidiExportProgress),
+) -> Vec<Vec<NoteRef>> {
+    let notes_total = model.note_count;
+    let mut per_track: Vec<Vec<NoteRef>> = (0..total_tracks)
+        .map(|i| {
+            Vec::with_capacity(
+                model
+                    .track_note_count
+                    .get(i)
+                    .copied()
+                    .unwrap_or(0)
+                    .min(usize::MAX as u64) as usize,
+            )
+        })
+        .collect();
+    let mut scanned = 0u64;
+    let mut next_report = PROGRESS_NOTE_INTERVAL;
+    progress(MidiExportProgress {
+        stage: MidiExportStage::Indexing,
+        notes_done: 0,
+        notes_total,
+        track_index: 0,
+        total_tracks,
+    });
     for (key, bucket) in model.notes.iter().enumerate() {
         for n in bucket.iter() {
+            scanned += 1;
             if let Some(notes) = per_track.get_mut(n.track as usize) {
                 notes.push(NoteRef {
                     key: key as u8,
@@ -198,8 +317,25 @@ fn build_note_index(model: &YinModel) -> Vec<Vec<NoteRef>> {
                     end_tick: n.end_tick,
                 });
             }
+            if scanned >= next_report {
+                next_report = scanned + PROGRESS_NOTE_INTERVAL;
+                progress(MidiExportProgress {
+                    stage: MidiExportStage::Indexing,
+                    notes_done: scanned,
+                    notes_total,
+                    track_index: 0,
+                    total_tracks,
+                });
+            }
         }
     }
+    progress(MidiExportProgress {
+        stage: MidiExportStage::Indexing,
+        notes_done: scanned.max(notes_total),
+        notes_total: notes_total.max(scanned),
+        track_index: 0,
+        total_tracks,
+    });
     per_track
 }
 
@@ -228,32 +364,49 @@ fn dedup_note_index(notes: &mut Vec<NoteRef>) {
 }
 
 /// 逐轨流式写一条音符轨：音符与非音符事件按 tick 归并，边归并边编码。
+///
+/// 内存：本轨紧凑索引（12B/音符）+ NoteOff 顺序表（4B/音符）。旧实现另建
+/// 两份 `(tick, index)`（各 8B/音符）并在同 tick 收 `same_tick` 向量；
+/// 黑乐谱单个 tick 叠几百万音符时会多出几十 MB。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn write_note_track<W: Write>(
     out: &mut W,
     track: &TrackData,
     notes: &[NoteRef],
     color_payload: Option<&[u8]>,
     opts: &MidiExportOptions,
+    written: &mut u64,
+    notes_total: u64,
+    track_index: usize,
+    total_tracks: usize,
+    progress: &mut impl FnMut(MidiExportProgress),
 ) -> Result<(), MidiError> {
     let ch = u4::new(track.channel & 0x0F);
     let aux = build_aux_events(track, color_payload, opts);
+    progress(MidiExportProgress {
+        stage: MidiExportStage::Writing,
+        notes_done: *written,
+        notes_total,
+        track_index,
+        total_tracks,
+    });
 
-    // NoteOn 按 start、NoteOff 按 end 各排一份下标。索引只有 4 字节/音符，
-    // 比整轨 `TrackEvent` 数组小一个数量级。
-    let mut on_ticks: Vec<(u32, u32)> = notes
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.start_tick, i as u32))
-        .collect();
-    on_ticks.sort_unstable();
-    let mut off_ticks: Vec<(u32, u32)> = notes
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.end_tick, i as u32))
-        .collect();
-    off_ticks.sort_unstable();
+    // 索引按 `(tick, 原音符下标)` 排序，同一 tick 内下标升序；归并时按
+    // 下标比较即可重现旧的 "On 先于 Off、同下标 On 先于 Off" 顺序。
+    let mut on_order: Vec<u32> = (0..notes.len() as u32).collect();
+    on_order.sort_unstable_by_key(|&i| (notes[i as usize].start_tick, i));
+    let mut off_order: Vec<u32> = (0..notes.len() as u32).collect();
+    off_order.sort_unstable_by_key(|&i| (notes[i as usize].end_tick, i));
 
-    let mut buf = EventBuf::new();
+    // 预留输出缓冲：running status 下每音符约 6 字节（On + Off），
+    // 自动化/音色等 aux 事件按 8 字节/条估算。避免 Vec 翻倍扩容在峰值时
+    // 同时持有新旧两份。
+    let buf_capacity = notes
+        .len()
+        .saturating_mul(6)
+        .saturating_add(aux.len().saturating_mul(8))
+        .saturating_add(4096);
+    let mut buf = EventBuf::with_capacity(buf_capacity);
     if !track.name.is_empty() {
         if opts.encoding == MidiImportEncoding::Utf8 {
             buf.push(
@@ -266,18 +419,18 @@ fn write_note_track<W: Write>(
         }
     }
 
-    let mut on_pos = 0;
-    let mut off_pos = 0;
-    let mut aux_pos = 0;
-    let mut same_tick: Vec<(u32, bool)> = Vec::new();
+    let mut on_pos = 0usize;
+    let mut off_pos = 0usize;
+    let mut aux_pos = 0usize;
+    let mut last_report = *written;
 
     loop {
         let mut tick = u32::MAX;
-        if let Some(&(t, _)) = on_ticks.get(on_pos) {
-            tick = tick.min(t);
+        if let Some(&i) = on_order.get(on_pos) {
+            tick = tick.min(notes[i as usize].start_tick);
         }
-        if let Some(&(t, _)) = off_ticks.get(off_pos) {
-            tick = tick.min(t);
+        if let Some(&i) = off_order.get(off_pos) {
+            tick = tick.min(notes[i as usize].end_tick);
         }
         if let Some((t, _)) = aux.get(aux_pos) {
             tick = tick.min(*t);
@@ -286,45 +439,64 @@ fn write_note_track<W: Write>(
             break;
         }
 
-        // 旧实现是「音符先插入、其它事件后插入」再稳定排序，所以同 tick
-        // 永远是音符在前；音符内部按原索引、On 先于 Off。
-        if on_ticks.get(on_pos).map(|x| x.0) == Some(tick)
-            || off_ticks.get(off_pos).map(|x| x.0) == Some(tick)
-        {
-            same_tick.clear();
-            while on_ticks.get(on_pos).map(|x| x.0) == Some(tick) {
-                same_tick.push((on_ticks[on_pos].1, false));
-                on_pos += 1;
-            }
-            while off_ticks.get(off_pos).map(|x| x.0) == Some(tick) {
-                same_tick.push((off_ticks[off_pos].1, true));
+        // 归并同 tick 的 NoteOn / NoteOff：下标小者先写；同一下标 On 先于 Off。
+        loop {
+            let next_on = on_order
+                .get(on_pos)
+                .copied()
+                .filter(|&i| notes[i as usize].start_tick == tick);
+            let next_off = off_order
+                .get(off_pos)
+                .copied()
+                .filter(|&i| notes[i as usize].end_tick == tick);
+            let (idx, is_off) = match (next_on, next_off) {
+                (Some(on), Some(off)) if off < on => (off, true),
+                (Some(on), Some(_)) => (on, false),
+                (Some(on), None) => (on, false),
+                (None, Some(off)) => (off, true),
+                (None, None) => break,
+            };
+            let n = notes[idx as usize];
+            if is_off {
                 off_pos += 1;
-            }
-            same_tick.sort_unstable();
-            for &(idx, is_off) in &same_tick {
-                let n = notes[idx as usize];
                 // NoteOff 写成 NoteOn(vel=0)：两者语义等价（SMF 规范明确允许），
                 // 但状态字节与 NoteOn 相同，running status 才能跨 NoteOn/NoteOff
                 // 连续省略。用 0x8n 时状态字节在 On/Off 之间交替，几乎无法压缩
                 // （实测 555 万音符的黑乐谱导出小 17%）。
-                let message = if is_off {
-                    MidiMessage::NoteOn {
-                        key: u7::new(n.key & 0x7F),
-                        vel: u7::new(0),
-                    }
-                } else {
-                    MidiMessage::NoteOn {
-                        key: u7::new(n.key & 0x7F),
-                        vel: u7::new(n.velocity & 0x7F),
-                    }
-                };
                 buf.push(
                     tick,
                     &TrackEventKind::Midi {
                         channel: ch,
-                        message,
+                        message: MidiMessage::NoteOn {
+                            key: u7::new(n.key & 0x7F),
+                            vel: u7::new(0),
+                        },
                     },
                 );
+            } else {
+                on_pos += 1;
+                *written += 1;
+                buf.push(
+                    tick,
+                    &TrackEventKind::Midi {
+                        channel: ch,
+                        message: MidiMessage::NoteOn {
+                            key: u7::new(n.key & 0x7F),
+                            vel: u7::new(n.velocity & 0x7F),
+                        },
+                    },
+                );
+                // 同 tick 叠几百万音符的黑乐谱：不能等整批写完才更新进度。
+                if *written - last_report >= PROGRESS_NOTE_INTERVAL {
+                    last_report = *written;
+                    progress(MidiExportProgress {
+                        stage: MidiExportStage::Writing,
+                        notes_done: *written,
+                        notes_total,
+                        track_index,
+                        total_tracks,
+                    });
+                }
             }
         }
 
@@ -332,9 +504,28 @@ fn write_note_track<W: Write>(
             buf.push(tick, &aux[aux_pos].1);
             aux_pos += 1;
         }
+
+        if *written - last_report >= PROGRESS_NOTE_INTERVAL {
+            last_report = *written;
+            progress(MidiExportProgress {
+                stage: MidiExportStage::Writing,
+                notes_done: *written,
+                notes_total,
+                track_index,
+                total_tracks,
+            });
+        }
     }
 
-    write_chunk(out, buf.finish())
+    write_chunk(out, buf.finish())?;
+    progress(MidiExportProgress {
+        stage: MidiExportStage::Writing,
+        notes_done: *written,
+        notes_total,
+        track_index,
+        total_tracks,
+    });
+    Ok(())
 }
 
 fn build_conductor_events<'a>(
@@ -668,6 +859,14 @@ impl EventBuf {
     fn new() -> Self {
         Self {
             buf: Vec::new(),
+            running_status: None,
+            last_tick: 0,
+        }
+    }
+
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            buf: Vec::with_capacity(capacity),
             running_status: None,
             last_tick: 0,
         }

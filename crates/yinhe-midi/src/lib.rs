@@ -14,5 +14,7 @@ pub use parser::{
     LoadProgress, parse_bytes, parse_bytes_with_encoding, parse_file_with_encoding, parse_path,
 };
 pub use writer::{
-    MidiExportOptions, write_to_bytes, write_to_file, write_to_writer, write_with_options,
+    MidiExportOptions, MidiExportProgress, MidiExportStage, write_to_bytes, write_to_file,
+    write_to_file_with_progress, write_to_writer, write_to_writer_with_progress,
+    write_with_options,
 };

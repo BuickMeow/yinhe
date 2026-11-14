@@ -1090,3 +1090,65 @@ fn dedup_overlaps_drops_overlapping_same_key_notes() {
     let parsed = parse_bytes(&bytes).unwrap();
     assert_eq!(parsed.note_count, 2, "重叠音符应被丢弃");
 }
+
+/// 导出进度回调：索引/写出两个阶段都有中间值，且单调推进到 100%。
+#[test]
+fn export_progress_callback_is_monotonic_and_complete() {
+    let mut model = YinModel::new_empty_with_16_tracks();
+    let notes: Vec<NoteEvent> = (0..100_000u32)
+        .map(|i| NoteEvent {
+            id: 0,
+            start_tick: i * 10,
+            end_tick: i * 10 + 5,
+            key: 60 + (i % 12) as u8,
+            velocity: 100,
+        })
+        .collect();
+    model.load_track_notes(vec![notes]);
+    model.rebuild();
+
+    let mut out = std::io::Cursor::new(Vec::new());
+    let mut samples = Vec::new();
+    yinhe_midi::write_to_writer_with_progress(
+        &model,
+        &MidiExportOptions::default(),
+        &mut out,
+        |p| samples.push(p),
+    )
+    .expect("export");
+
+    assert!(!samples.is_empty());
+    assert_eq!(
+        samples.first().unwrap().stage,
+        yinhe_midi::MidiExportStage::Indexing
+    );
+    assert_eq!(
+        samples.last().unwrap().stage,
+        yinhe_midi::MidiExportStage::Writing
+    );
+    assert_eq!(samples.last().unwrap().notes_total, 100_000);
+    assert_eq!(samples.last().unwrap().notes_done, 100_000);
+    assert_eq!(samples.last().unwrap().fraction(), 1.0);
+    assert!(
+        samples
+            .windows(2)
+            .all(|w| w[1].fraction() >= w[0].fraction()),
+        "进度必须单调不减：{samples:?}"
+    );
+    assert!(
+        samples.iter().any(|p| {
+            p.stage == yinhe_midi::MidiExportStage::Indexing
+                && p.notes_done > 0
+                && p.notes_done < p.notes_total
+        }),
+        "索引阶段应有中间进度：{samples:?}"
+    );
+    assert!(
+        samples.iter().any(|p| {
+            p.stage == yinhe_midi::MidiExportStage::Writing
+                && p.notes_done > 0
+                && p.notes_done < p.notes_total
+        }),
+        "写出阶段应有中间进度：{samples:?}"
+    );
+}
