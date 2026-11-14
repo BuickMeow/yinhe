@@ -280,6 +280,72 @@ impl App {
             }
         }
 
+        // MIDI 导出完成轮询（后台线程；不经过音频引擎，播放不受影响）。
+        if self.jobs.is_midi_exporting() {
+            let recv = self
+                .jobs
+                .midi_export
+                .rx
+                .as_ref()
+                .map(std::sync::mpsc::Receiver::try_recv);
+            match recv {
+                Some(Ok(result)) => {
+                    self.jobs.midi_export.running = false;
+                    self.jobs.midi_export.rx = None;
+                    let path = self.jobs.midi_export.path.clone();
+                    let fname = std::path::Path::new(&path)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map(str::to_string)
+                        .unwrap_or_else(|| path.clone());
+                    match result {
+                        Ok(()) => {
+                            let id = self.notifications.finish_progress(
+                                crate::widgets::toast::MIDI_EXPORT_PROGRESS_ID,
+                                crate::widgets::toast::ProgressOutcome::Completed,
+                                "MIDI导出完成",
+                                fname,
+                                None,
+                            );
+                            if !path.is_empty() {
+                                self.notifications.set_action_with_icon(
+                                    id,
+                                    "打开文件夹",
+                                    crate::widgets::toast::model::ToastActionKind::RevealInFolder(
+                                        std::path::PathBuf::from(path),
+                                    ),
+                                    Some(egui_material_icons::icons::ICON_FOLDER_OPEN),
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to export MIDI: {e}");
+                            self.notifications.finish_progress(
+                                crate::widgets::toast::MIDI_EXPORT_PROGRESS_ID,
+                                crate::widgets::toast::ProgressOutcome::Failed,
+                                "MIDI导出失败",
+                                e,
+                                None,
+                            );
+                        }
+                    }
+                }
+                Some(Err(std::sync::mpsc::TryRecvError::Empty)) => {}
+                Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
+                    self.jobs.midi_export.running = false;
+                    self.jobs.midi_export.rx = None;
+                    self.notifications.finish_progress(
+                        crate::widgets::toast::MIDI_EXPORT_PROGRESS_ID,
+                        crate::widgets::toast::ProgressOutcome::Failed,
+                        "MIDI导出失败",
+                        "导出线程异常退出".to_string(),
+                        None,
+                    );
+                }
+                None => {}
+            }
+        }
+
         // 导出完成轮询（复用实时引擎，含混音台/PDC）：
         // `progress.finished` 置位即收尾（取消/失败/成功三态）。
         if self.jobs.is_exporting() {

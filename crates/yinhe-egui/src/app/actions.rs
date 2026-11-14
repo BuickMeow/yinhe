@@ -1527,6 +1527,9 @@ impl App {
     }
 
     fn export_midi_dialog(&mut self) {
+        if self.jobs.is_midi_exporting() {
+            return;
+        }
         let default_name = if let Some(idx) = self.workspace.active_doc {
             format!("{}.mid", self.workspace.documents[idx].file_name)
         } else {
@@ -1537,31 +1540,50 @@ impl App {
             .set_file_name(&default_name)
             .save_file()
         {
+            let Some(idx) = self.workspace.active_doc else {
+                return;
+            };
             let path_str = path.to_string_lossy().to_string();
-            if let Some(idx) = self.workspace.active_doc {
+            let (model, opts) = {
                 let doc = &self.workspace.documents[idx];
-                let opts = yinhe_midi::MidiExportOptions {
-                    encoding: self.audio_settings.midi_export_encoding,
-                    rpn_full: self.audio_settings.midi_export_rpn_full,
-                    curve_interpolate: self.audio_settings.midi_export_curve_interpolate,
-                    curve_density: self.audio_settings.midi_export_curve_density,
-                    strip_empty_tracks: self.audio_settings.midi_export_strip_empty_tracks,
-                    dedup_overlaps: self.audio_settings.midi_export_dedup_overlaps,
-                };
-                match yinhe_midi::write_to_file(&doc.data.model, &path_str, &opts) {
-                    Ok(()) => {
-                        let fname = std::path::Path::new(&path_str)
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or(&path_str)
-                            .to_string();
-                        self.notifications.success("导出MIDI完成", fname);
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to export MIDI: {}", e);
-                        self.notifications.error("导出MIDI失败", e.to_string());
-                    }
-                }
+                (
+                    std::sync::Arc::clone(&doc.data.model),
+                    yinhe_midi::MidiExportOptions {
+                        encoding: self.audio_settings.midi_export_encoding,
+                        rpn_full: self.audio_settings.midi_export_rpn_full,
+                        curve_interpolate: self.audio_settings.midi_export_curve_interpolate,
+                        curve_density: self.audio_settings.midi_export_curve_density,
+                        strip_empty_tracks: self.audio_settings.midi_export_strip_empty_tracks,
+                        dedup_overlaps: self.audio_settings.midi_export_dedup_overlaps,
+                    },
+                )
+            };
+            let live = std::sync::Arc::new(std::sync::Mutex::new(
+                crate::app::export_state::MidiExportLive { progress: None },
+            ));
+            self.jobs.midi_export.live = std::sync::Arc::clone(&live);
+            self.jobs.midi_export.path = path_str;
+            let (tx, rx) = mpsc::channel();
+            self.jobs.midi_export.rx = Some(rx);
+            self.jobs.midi_export.running = true;
+            let path_buf = path.clone();
+            let spawned = std::thread::Builder::new()
+                .name("midi-export".into())
+                .spawn(move || {
+                    let result =
+                        yinhe_midi::write_to_file_with_progress(&model, &path_buf, &opts, |p| {
+                            if let Ok(mut l) = live.lock() {
+                                l.progress = Some(p);
+                            }
+                        })
+                        .map_err(|e| e.to_string());
+                    let _ = tx.send(result);
+                });
+            if let Err(e) = spawned {
+                self.jobs.midi_export.running = false;
+                self.jobs.midi_export.rx = None;
+                self.notifications
+                    .error("导出MIDI失败", format!("无法启动导出线程: {e}"));
             }
         }
     }

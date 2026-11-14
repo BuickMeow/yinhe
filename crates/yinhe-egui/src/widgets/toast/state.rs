@@ -44,6 +44,7 @@ pub struct Notifications {
 pub const LOADING_PROGRESS_ID: u64 = 0x4C4F4144; // "LOAD"
 pub const SAVE_PROGRESS_ID: u64 = 0x53415645; // "SAVE"
 pub const EXPORT_PROGRESS_ID: u64 = 0x45585054; // "EXPT"
+pub const MIDI_EXPORT_PROGRESS_ID: u64 = 0x4D455849; // "MEXI"
 pub const RESCALE_PROGRESS_ID: u64 = 0x5253434C; // "RSCL"
 pub const ENGINE_PROGRESS_ID: u64 = 0x454E474E; // "ENGN"
 

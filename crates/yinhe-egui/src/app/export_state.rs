@@ -111,3 +111,123 @@ impl ProgressSource for ExportToastSource {
         Some(self.pause.clone())
     }
 }
+
+// ── MIDI 导出（后台线程 + 进度 toast）──
+
+/// 后台 MIDI 导出任务状态。MIDI 导出不碰音频引擎，可以独立于播放运行。
+pub(crate) struct MidiExportState {
+    pub running: bool,
+    /// 导出线程写入、toast 每帧 pull 的实时进度。
+    pub live: Arc<Mutex<MidiExportLive>>,
+    /// 完成信号：`Ok(())` / 错误文本。
+    pub rx: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    /// 输出路径（完成 toast 的"打开文件夹"用）。
+    pub path: String,
+}
+
+pub(crate) struct MidiExportLive {
+    pub progress: Option<yinhe_midi::MidiExportProgress>,
+}
+
+impl MidiExportState {
+    pub fn new() -> Self {
+        Self {
+            running: false,
+            live: Arc::new(Mutex::new(MidiExportLive { progress: None })),
+            rx: None,
+            path: String::new(),
+        }
+    }
+}
+
+/// MIDI 导出进度数据源。
+pub(crate) struct MidiExportToastSource {
+    pub live: Arc<Mutex<MidiExportLive>>,
+    pub file_name: String,
+}
+
+impl MidiExportToastSource {
+    fn snapshot(&self) -> Option<yinhe_midi::MidiExportProgress> {
+        self.live.lock().ok().and_then(|l| l.progress)
+    }
+}
+
+impl ProgressSource for MidiExportToastSource {
+    fn title(&self) -> String {
+        "正在导出 MIDI".to_string()
+    }
+
+    fn message(&self) -> String {
+        let Some(p) = self.snapshot() else {
+            return "准备中…".to_string();
+        };
+        match p.stage {
+            yinhe_midi::MidiExportStage::Indexing => {
+                format!("扫描音符 {}/{}", p.notes_done, p.notes_total)
+            }
+            yinhe_midi::MidiExportStage::Writing => {
+                format!("写出音符 {}/{}", p.notes_done, p.notes_total)
+            }
+        }
+    }
+
+    fn fraction(&self) -> f32 {
+        self.snapshot().map(|p| p.fraction()).unwrap_or(0.0)
+    }
+
+    fn detail(&self) -> String {
+        let Some(p) = self.snapshot() else {
+            return self.file_name.clone();
+        };
+        match p.stage {
+            yinhe_midi::MidiExportStage::Indexing => self.file_name.clone(),
+            yinhe_midi::MidiExportStage::Writing => format!(
+                "第 {}/{} 轨 · {}",
+                (p.track_index + 1).min(p.total_tracks),
+                p.total_tracks,
+                self.file_name
+            ),
+        }
+    }
+
+    fn cancel(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+        None
+    }
+}
+
+#[cfg(test)]
+mod midi_export_tests {
+    use super::*;
+
+    #[test]
+    fn midi_toast_pulls_live_progress() {
+        let live = Arc::new(Mutex::new(MidiExportLive { progress: None }));
+        let src = MidiExportToastSource {
+            live: Arc::clone(&live),
+            file_name: "song.mid".to_string(),
+        };
+        assert_eq!(src.fraction(), 0.0);
+        assert_eq!(src.message(), "准备中…");
+
+        live.lock().expect("lock").progress = Some(yinhe_midi::MidiExportProgress {
+            stage: yinhe_midi::MidiExportStage::Indexing,
+            notes_done: 50,
+            notes_total: 100,
+            track_index: 0,
+            total_tracks: 4,
+        });
+        assert!((src.fraction() - 0.2).abs() < 1e-6);
+        assert_eq!(src.message(), "扫描音符 50/100");
+
+        live.lock().expect("lock").progress = Some(yinhe_midi::MidiExportProgress {
+            stage: yinhe_midi::MidiExportStage::Writing,
+            notes_done: 50,
+            notes_total: 100,
+            track_index: 1,
+            total_tracks: 4,
+        });
+        assert!((src.fraction() - 0.7).abs() < 1e-6);
+        assert_eq!(src.message(), "写出音符 50/100");
+        assert!(src.detail().contains("第 2/4 轨"));
+    }
+}

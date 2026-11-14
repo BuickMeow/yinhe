@@ -312,6 +312,30 @@ impl App {
             ctx.request_repaint();
         }
 
+        // ── MIDI export progress toast（后台线程，与音频播放互不影响）──
+        if self
+            .notifications
+            .is_leaving(crate::widgets::toast::MIDI_EXPORT_PROGRESS_ID)
+        {
+            // 用户收起卡片只翻可见性，任务继续跑；完成后 poll 会转完成卡。
+        } else if self.jobs.is_midi_exporting() {
+            let path = &self.jobs.midi_export.path;
+            let file_name = std::path::Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(path)
+                .to_string();
+            let src = std::sync::Arc::new(crate::app::export_state::MidiExportToastSource {
+                live: std::sync::Arc::clone(&self.jobs.midi_export.live),
+                file_name,
+            });
+            self.notifications.ensure_progress(
+                crate::widgets::toast::MIDI_EXPORT_PROGRESS_ID,
+                crate::widgets::toast::ToastKind::Info,
+                src,
+            );
+        }
+
         // ── Export progress toast（替代 export_progress viewport）──
         if self
             .notifications

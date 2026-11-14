@@ -37,6 +37,9 @@ pub(crate) struct JobCenter {
     // ── 异步音频导出 ──
     pub export: ExportState,
 
+    // ── 后台 MIDI 导出（独立于音频引擎）──
+    pub midi_export: crate::app::export_state::MidiExportState,
+
     // ── 异步 PPQ 重采样 ──
     pub rescale: RescaleState,
 }
@@ -50,6 +53,7 @@ impl JobCenter {
             load_progress: yinhe_editor_core::progress::new_shared(),
             autosave: AutoSaveState::new(),
             export: ExportState::new(),
+            midi_export: crate::app::export_state::MidiExportState::new(),
             rescale: RescaleState::new(),
         }
     }
@@ -62,6 +66,11 @@ impl JobCenter {
     /// 是否有音频导出进行中。
     pub fn is_exporting(&self) -> bool {
         self.export.running
+    }
+
+    /// 是否有后台 MIDI 导出进行中。
+    pub fn is_midi_exporting(&self) -> bool {
+        self.midi_export.running
     }
 
     /// 是否有 PPQ 重采样进行中。
