@@ -235,11 +235,11 @@ pub fn write_to_writer_with_progress<W: Write>(
             continue;
         }
         // 取走本轨索引，写完立即释放；不让已导出的轨继续占内存。
-        let notes = std::mem::take(&mut per_track_notes[i]);
+        let mut notes = std::mem::take(&mut per_track_notes[i]);
         write_note_track(
             out,
             t,
-            &notes,
+            &mut notes,
             color_payloads[i].as_deref(),
             opts,
             &mut written,
@@ -373,7 +373,7 @@ fn dedup_note_index(notes: &mut Vec<NoteRef>) {
 fn write_note_track<W: Write>(
     out: &mut W,
     track: &TrackData,
-    notes: &[NoteRef],
+    notes: &mut [NoteRef],
     color_payload: Option<&[u8]>,
     opts: &MidiExportOptions,
     written: &mut u64,
@@ -392,10 +392,9 @@ fn write_note_track<W: Write>(
         total_tracks,
     });
 
-    // 索引按 `(tick, 原音符下标)` 排序，同一 tick 内下标升序；归并时按
-    // 下标比较即可重现旧的 "On 先于 Off、同下标 On 先于 Off" 顺序。
-    let mut on_order: Vec<u32> = (0..notes.len() as u32).collect();
-    on_order.sort_unstable_by_key(|&i| (notes[i as usize].start_tick, i));
+    // NoteOn 直接按 start_tick 排序（原地，省一份 4B/音符的索引表）；
+    // NoteOff 另建 4B 下标表。同 tick 的音符相对顺序不影响音乐内容。
+    notes.sort_unstable_by_key(|n| n.start_tick);
     let mut off_order: Vec<u32> = (0..notes.len() as u32).collect();
     off_order.sort_unstable_by_key(|&i| (notes[i as usize].end_tick, i));
 
@@ -427,8 +426,8 @@ fn write_note_track<W: Write>(
 
     loop {
         let mut tick = u32::MAX;
-        if let Some(&i) = on_order.get(on_pos) {
-            tick = tick.min(notes[i as usize].start_tick);
+        if let Some(n) = notes.get(on_pos) {
+            tick = tick.min(n.start_tick);
         }
         if let Some(&i) = off_order.get(off_pos) {
             tick = tick.min(notes[i as usize].end_tick);
@@ -442,10 +441,10 @@ fn write_note_track<W: Write>(
 
         // 归并同 tick 的 NoteOn / NoteOff：下标小者先写；同一下标 On 先于 Off。
         loop {
-            let next_on = on_order
+            let next_on = notes
                 .get(on_pos)
-                .copied()
-                .filter(|&i| notes[i as usize].start_tick == tick);
+                .filter(|n| n.start_tick == tick)
+                .map(|_| on_pos as u32);
             let next_off = off_order
                 .get(off_pos)
                 .copied()

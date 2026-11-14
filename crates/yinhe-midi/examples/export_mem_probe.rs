@@ -14,17 +14,23 @@ use yinhe_core::{NoteEvent, TrackData, YinModel};
 use yinhe_memtrace::{AllocTag, Snapshot};
 
 fn main() {
-    let n: u32 = std::env::args()
-        .nth(1)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(5_000_000);
-    let mut track = TrackData::new(0, 0);
-    track.name = "Probe".into();
-    let mut model = YinModel {
-        tracks: vec![Arc::new(track)],
-        ..Default::default()
-    };
+    let arg = std::env::args().nth(1);
+    let model = if let Some(path) = arg
+        .as_deref()
+        .filter(|p| p.ends_with(".mid") || p.ends_with(".midi"))
     {
+        let t = std::time::Instant::now();
+        let model = yinhe_midi::parse_path(path).expect("parse midi");
+        eprintln!("[export-probe] parsed in {:?}", t.elapsed());
+        model
+    } else {
+        let n: u32 = arg.and_then(|s| s.parse().ok()).unwrap_or(5_000_000);
+        let mut track = TrackData::new(0, 0);
+        track.name = "Probe".into();
+        let mut model = YinModel {
+            tracks: vec![Arc::new(track)],
+            ..Default::default()
+        };
         let notes: Vec<NoteEvent> = (0..n)
             .map(|i| NoteEvent {
                 id: 0,
@@ -35,8 +41,9 @@ fn main() {
             })
             .collect();
         model.load_track_notes(vec![notes]);
-    }
-    model.rebuild();
+        model.rebuild();
+        model
+    };
     let base = Snapshot::capture();
     eprintln!(
         "[export-probe] notes={}  baseline total={:.1} MB  midi={:.1} MB",
