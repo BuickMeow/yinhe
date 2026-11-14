@@ -181,12 +181,13 @@ impl ProgressSource for MidiExportToastSource {
         };
         match p.stage {
             yinhe_midi::MidiExportStage::Indexing => self.file_name.clone(),
-            yinhe_midi::MidiExportStage::Writing => format!(
+            yinhe_midi::MidiExportStage::Writing if p.total_tracks > 0 => format!(
                 "第 {}/{} 轨 · {}",
                 (p.track_index + 1).min(p.total_tracks),
                 p.total_tracks,
                 self.file_name
             ),
+            yinhe_midi::MidiExportStage::Writing => self.file_name.clone(),
         }
     }
 

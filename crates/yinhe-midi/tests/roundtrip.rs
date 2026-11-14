@@ -1152,3 +1152,39 @@ fn export_progress_callback_is_monotonic_and_complete() {
         "写出阶段应有中间进度：{samples:?}"
     );
 }
+
+/// 同一 tick 叠 70k 音符（黑乐谱和弦）时，写出阶段也必须有中间进度，
+/// 不能等整批和弦写完才从 0 跳到 100%。
+#[test]
+fn export_progress_advances_within_same_tick_chord() {
+    let mut model = YinModel::new_empty_with_16_tracks();
+    let notes: Vec<NoteEvent> = (0..70_000u32)
+        .map(|i| NoteEvent {
+            id: 0,
+            start_tick: 0,
+            end_tick: 10,
+            key: 60 + (i % 12) as u8,
+            velocity: 100,
+        })
+        .collect();
+    model.load_track_notes(vec![notes]);
+    model.rebuild();
+
+    let mut out = std::io::Cursor::new(Vec::new());
+    let mut samples = Vec::new();
+    yinhe_midi::write_to_writer_with_progress(
+        &model,
+        &MidiExportOptions::default(),
+        &mut out,
+        |p| samples.push(p),
+    )
+    .expect("export");
+    assert!(
+        samples.iter().any(|p| {
+            p.stage == yinhe_midi::MidiExportStage::Writing
+                && p.notes_done > 0
+                && p.notes_done < p.notes_total
+        }),
+        "同 tick 大和弦也应有中间进度：{samples:?}"
+    );
+}
