@@ -97,10 +97,14 @@ impl Notifications {
                 .request_repaint_after(at.saturating_duration_since(now));
         }
         let Some(row) = self.primary_row() else {
+            self.tasks_open = false;
             return egui::Rect::NOTHING;
         };
         let tasks = self.task_rows();
         let task_count = tasks.len();
+        if task_count == 0 {
+            self.tasks_open = false;
+        }
         let extra = if row.running {
             task_count.saturating_sub(1)
         } else {
