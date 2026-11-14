@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use yinhe_audio::export::WavBitDepth;
 
-use crate::dialogs::export::{ExportProgress, format_duration};
+use crate::dialogs::export::ExportProgress;
 use crate::widgets::toast::model::ProgressSource;
 
 /// All audio-export-related state, extracted from `App` to reduce the God Object.
@@ -78,31 +78,10 @@ impl ExportToastSource {
 
 impl ProgressSource for ExportToastSource {
     fn title(&self) -> String {
-        "正在导出".to_string()
-    }
-    fn message(&self) -> String {
-        self.snapshot().1
+        rust_i18n::t!("toast.exporting").to_string()
     }
     fn fraction(&self) -> f32 {
         self.snapshot().0
-    }
-    fn detail(&self) -> String {
-        // 第二行与第一行去重：渲染中显示已渲染时长与当前倍率，准备阶段回退 status
-        self.progress
-            .lock()
-            .ok()
-            .map(|st| {
-                if st.render_speed > 0.0 {
-                    format!(
-                        "已渲染{} · 当前{:.2}x",
-                        format_duration(st.rendered_secs),
-                        st.render_speed
-                    )
-                } else {
-                    st.status.clone()
-                }
-            })
-            .unwrap_or_default()
     }
     fn cancel(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
         Some(self.cancel.clone())
@@ -143,7 +122,6 @@ impl MidiExportState {
 /// MIDI 导出进度数据源。
 pub(crate) struct MidiExportToastSource {
     pub live: Arc<Mutex<MidiExportLive>>,
-    pub file_name: String,
 }
 
 impl MidiExportToastSource {
@@ -154,41 +132,11 @@ impl MidiExportToastSource {
 
 impl ProgressSource for MidiExportToastSource {
     fn title(&self) -> String {
-        "正在导出 MIDI".to_string()
-    }
-
-    fn message(&self) -> String {
-        let Some(p) = self.snapshot() else {
-            return "准备中…".to_string();
-        };
-        match p.stage {
-            yinhe_midi::MidiExportStage::Indexing => {
-                format!("扫描音符 {}/{}", p.notes_done, p.notes_total)
-            }
-            yinhe_midi::MidiExportStage::Writing => {
-                format!("写出音符 {}/{}", p.notes_done, p.notes_total)
-            }
-        }
+        rust_i18n::t!("toast.exporting_midi").to_string()
     }
 
     fn fraction(&self) -> f32 {
         self.snapshot().map(|p| p.fraction()).unwrap_or(0.0)
-    }
-
-    fn detail(&self) -> String {
-        let Some(p) = self.snapshot() else {
-            return self.file_name.clone();
-        };
-        match p.stage {
-            yinhe_midi::MidiExportStage::Indexing => self.file_name.clone(),
-            yinhe_midi::MidiExportStage::Writing if p.total_tracks > 0 => format!(
-                "第 {}/{} 轨 · {}",
-                (p.track_index + 1).min(p.total_tracks),
-                p.total_tracks,
-                self.file_name
-            ),
-            yinhe_midi::MidiExportStage::Writing => self.file_name.clone(),
-        }
     }
 
     fn cancel(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
@@ -205,10 +153,8 @@ mod midi_export_tests {
         let live = Arc::new(Mutex::new(MidiExportLive { progress: None }));
         let src = MidiExportToastSource {
             live: Arc::clone(&live),
-            file_name: "song.mid".to_string(),
         };
         assert_eq!(src.fraction(), 0.0);
-        assert_eq!(src.message(), "准备中…");
 
         live.lock().expect("lock").progress = Some(yinhe_midi::MidiExportProgress {
             stage: yinhe_midi::MidiExportStage::Indexing,
@@ -218,7 +164,6 @@ mod midi_export_tests {
             total_tracks: 4,
         });
         assert!((src.fraction() - 0.2).abs() < 1e-6);
-        assert_eq!(src.message(), "扫描音符 50/100");
 
         live.lock().expect("lock").progress = Some(yinhe_midi::MidiExportProgress {
             stage: yinhe_midi::MidiExportStage::Writing,
@@ -228,7 +173,5 @@ mod midi_export_tests {
             total_tracks: 4,
         });
         assert!((src.fraction() - 0.7).abs() < 1e-6);
-        assert_eq!(src.message(), "写出音符 50/100");
-        assert!(src.detail().contains("第 2/4 轨"));
     }
 }

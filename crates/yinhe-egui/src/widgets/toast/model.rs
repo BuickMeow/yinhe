@@ -23,14 +23,10 @@ pub(crate) struct ToastAction {
 // ── 进度数据源（pull 式）：标题栏渲染时实时读取，后台任务只管写自己的共享状态，
 // 不再每帧往通知层拷贝文案。完成/失败/中止时快照进 title/message，source 清空转静态。
 pub(crate) trait ProgressSource: Send + Sync {
-    /// 通知标题（各任务固定，如“正在加载”）。
+    /// 通知标题（核心动作文案，如“正在导出 MIDI”）。
     fn title(&self) -> String;
-    /// 第二行：当前阶段文案。
-    fn message(&self) -> String;
     /// 进度 0.0~1.0。
     fn fraction(&self) -> f32;
-    /// 第三行：详情/百分比。
-    fn detail(&self) -> String;
     /// 取消句柄（保存任务不支持取消，给 None）。
     fn cancel(&self) -> Option<Arc<AtomicBool>>;
     /// 暂停句柄（仅导出任务给 Some，其余默认 None → 暂停按钮自动只出现在导出任务）。
@@ -85,56 +81,6 @@ impl Notification {
             .as_ref()
             .map(|s| s.fraction().clamp(0.0, 1.0))
             .or(self.progress)
-    }
-
-    /// 渲染用解析值：有 source 读 live，无则读快照。
-    /// 中止中 detail 覆盖为“正在中止…”（仍 1 行，高度不变）。
-    /// 已暂停 detail 覆盖为“已暂停”（优先级低于“正在中止…”；仍 1 行，高度不变）。
-    /// 返回 (标题, 正文, 进度, 详情)。
-    pub(crate) fn resolve(&self) -> (String, String, Option<f32>, String) {
-        if self.cancelling {
-            if let Some(s) = &self.source {
-                (
-                    s.title(),
-                    s.message(),
-                    Some(s.fraction().clamp(0.0, 1.0)),
-                    rust_i18n::t!("toast.cancelling").to_string(),
-                )
-            } else {
-                (
-                    self.title.clone(),
-                    self.message.clone(),
-                    self.progress,
-                    rust_i18n::t!("toast.cancelling").to_string(),
-                )
-            }
-        } else if let Some(s) = &self.source {
-            // 已暂停覆盖 detail（进度条本身冻结，无需处理；仍 1 行高度不变）
-            if s.pause()
-                .is_some_and(|p| p.load(std::sync::atomic::Ordering::Relaxed))
-            {
-                (
-                    s.title(),
-                    s.message(),
-                    Some(s.fraction().clamp(0.0, 1.0)),
-                    rust_i18n::t!("toast.paused").to_string(),
-                )
-            } else {
-                (
-                    s.title(),
-                    s.message(),
-                    Some(s.fraction().clamp(0.0, 1.0)),
-                    s.detail(),
-                )
-            }
-        } else {
-            (
-                self.title.clone(),
-                self.message.clone(),
-                self.progress,
-                self.progress_label.clone(),
-            )
-        }
     }
 
     /// 取消句柄解析：有 source 读 live（换任务时句柄会换），无则读快照。

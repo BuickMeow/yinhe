@@ -194,14 +194,8 @@ impl ProgressSource for LoadToastSource {
     fn title(&self) -> String {
         self.title.clone()
     }
-    fn message(&self) -> String {
-        self.active_stage().map(|s| s.label).unwrap_or_default()
-    }
     fn fraction(&self) -> f32 {
         self.active_stage().map(|s| s.progress).unwrap_or(0.0)
-    }
-    fn detail(&self) -> String {
-        self.active_stage().map(|s| s.detail).unwrap_or_default()
     }
     fn cancel(&self) -> Option<Arc<AtomicBool>> {
         self.cancel.clone()

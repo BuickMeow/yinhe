@@ -1,5 +1,4 @@
 use eframe::egui;
-use egui_material_icons::icons::*;
 
 // ── Toast 种类 ──
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -11,15 +10,6 @@ pub enum ToastKind {
 }
 
 impl ToastKind {
-    pub(crate) fn icon(self) -> egui_material_icons::MaterialIcon {
-        match self {
-            Self::Info => ICON_INFO,
-            Self::Success => ICON_CHECK_CIRCLE,
-            Self::Warning => ICON_WARNING,
-            Self::Error => ICON_ERROR,
-        }
-    }
-
     pub(crate) fn color(self) -> egui::Color32 {
         match self {
             Self::Info => crate::theme::text_secondary(),

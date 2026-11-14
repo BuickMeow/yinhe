@@ -7,49 +7,57 @@ use super::super::kind::ToastKind;
 use super::super::model::{Notification, ToastAction, ToastActionKind};
 use super::Notifications;
 
-/// 标题栏通知条的固定高度（标题栏 32px，上下各留 5px）。
-const BAR_H: f32 = 22.0;
-const MIN_W: f32 = 160.0;
-const MAX_W: f32 = 480.0;
-const SIDE_PAD: f32 = 8.0;
-const TASKS_W: f32 = 340.0;
+/// 通知条高度（标题栏 32px，上下各留 3px）。
+const BAR_H: f32 = 26.0;
+/// 进度条高度：比普通细线更醒目。
+const BAR_LINE_H: f32 = 4.0;
+const MIN_W: f32 = 132.0;
+const MAX_W: f32 = 360.0;
+const PAD_X: f32 = 8.0;
+const BTN_W: f32 = 18.0;
+const PCT_W: f32 = 34.0;
+const TASKS_W: f32 = 300.0;
+const TASKS_ROW_H: f32 = 24.0;
 
-/// 一帧的渲染快照：避免在闭包里与 `&mut self` 打架。
+/// 一帧的渲染快照：避免在绘制闭包里与 `&mut self` 打架。
 struct Row {
     id: u64,
     kind: ToastKind,
     title: String,
-    message: String,
     progress: Option<f32>,
+    running: bool,
+    cancelling: bool,
     cancel: Option<Arc<AtomicBool>>,
     pause: Option<Arc<AtomicBool>>,
     action: Option<ToastAction>,
-    cancelling: bool,
-    running: bool,
 }
 
 impl Row {
     fn new(n: &Notification) -> Self {
-        let (title, message, progress, _detail) = n.resolve();
+        let paused = n
+            .pause_flag()
+            .is_some_and(|p| p.load(std::sync::atomic::Ordering::Relaxed));
+        let title = if n.cancelling {
+            rust_i18n::t!("toast.cancelling").to_string()
+        } else if let Some(s) = &n.source {
+            if paused {
+                rust_i18n::t!("toast.paused").to_string()
+            } else {
+                s.title()
+            }
+        } else {
+            n.title.clone()
+        };
         Self {
             id: n.id,
             kind: n.kind,
             title,
-            message,
-            progress,
+            progress: n.snapshot_fraction(),
+            running: n.source.is_some(),
+            cancelling: n.cancelling,
             cancel: n.cancel_flag(),
             pause: n.pause_flag(),
             action: n.action.clone(),
-            cancelling: n.cancelling,
-            running: n.source.is_some(),
-        }
-    }
-
-    fn text(&self) -> String {
-        if self.message.is_empty() {
-            self.title.clone()
-        } else {
-            format!("{} · {}", self.title, self.message)
         }
     }
 }
@@ -58,6 +66,64 @@ fn perform_action(action: &ToastAction) {
     match &action.kind {
         ToastActionKind::RevealInFolder(path) => crate::platform::open_containing_folder(path),
     }
+}
+
+/// 通知条右侧图标按钮：自绘 + `ui.interact`，不参与布局。
+#[allow(clippy::too_many_arguments)]
+fn draw_button(
+    ui: &mut egui::Ui,
+    cursor_x: &mut f32,
+    center_y: f32,
+    icon: &str,
+    font: egui::FontId,
+    color: egui::Color32,
+    hint: &str,
+    id_salt: &str,
+) -> egui::Response {
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(*cursor_x - BTN_W, center_y - BTN_W / 2.0),
+        egui::vec2(BTN_W, BTN_W),
+    );
+    *cursor_x -= BTN_W + 4.0;
+    let resp = ui.interact(
+        rect,
+        ui.scope_id().with((id_salt, rect.min.x as i32)),
+        egui::Sense::click(),
+    );
+    let c = if resp.hovered() {
+        crate::theme::text_primary()
+    } else {
+        color
+    };
+    ui.painter()
+        .text(rect.center(), egui::Align2::CENTER_CENTER, icon, font, c);
+    crate::widgets::hint::hover(ui.ctx(), &resp, hint);
+    resp
+}
+
+/// 单行截断文本：`max_rows = 1` + 省略号，绝不产生第二行。
+fn one_line(
+    ui: &egui::Ui,
+    text: &str,
+    font: egui::FontId,
+    color: egui::Color32,
+    max_w: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::single_section(
+        text.to_owned(),
+        egui::TextFormat {
+            font_id: font,
+            color,
+            ..Default::default()
+        },
+    );
+    job.wrap = egui::text::TextWrapping {
+        max_width: max_w.max(0.0),
+        max_rows: 1,
+        break_anywhere: true,
+        overflow_character: Some('…'),
+    };
+    ui.painter().layout_job(job)
 }
 
 impl Notifications {
@@ -75,8 +141,8 @@ impl Notifications {
             .collect()
     }
 
-    /// 在标题栏可用区 `area`（工程 tab 右缘 → 右侧窗口按钮之前）内绘制通知。
-    /// 返回实际占用的矩形；没有通知时返回 `Rect::NOTHING`。
+    /// 在标题栏可用区 `area`（应用名右侧 → 窗口按钮之前）内绘制一行状态。
+    /// 只用 painter 自绘，不注册布局控件，不会撑高标题栏。
     pub fn show_title_bar(&mut self, ui: &mut egui::Ui, area: egui::Rect) -> egui::Rect {
         let now = std::time::Instant::now();
         self.tick(now);
@@ -96,6 +162,7 @@ impl Notifications {
             ui.ctx()
                 .request_repaint_after(at.saturating_duration_since(now));
         }
+
         let Some(row) = self.primary_row() else {
             self.tasks_open = false;
             return egui::Rect::NOTHING;
@@ -105,16 +172,45 @@ impl Notifications {
         if task_count == 0 {
             self.tasks_open = false;
         }
+
+        let font = egui::FontId::proportional(crate::theme::BODY_FONT);
+        let text_color = if row.running {
+            crate::theme::text_primary()
+        } else {
+            match row.kind {
+                ToastKind::Warning => crate::theme::warning_gold(),
+                _ => crate::theme::text_secondary(),
+            }
+        };
+        let text_w = ui
+            .painter()
+            .layout_no_wrap(row.title.clone(), font.clone(), text_color)
+            .size()
+            .x;
+        let pct_w = if row.running && row.progress.is_some() {
+            PCT_W
+        } else {
+            0.0
+        };
         let extra = if row.running {
             task_count.saturating_sub(1)
         } else {
             task_count
         };
-
-        let w = area.width().min(MAX_W);
-        if w < MIN_W {
+        let btn_count = usize::from(row.running && row.cancel.is_some())
+            + usize::from(row.action.is_some())
+            + usize::from(extra > 0);
+        let btn_w = if btn_count > 0 {
+            btn_count as f32 * (BTN_W + 4.0)
+        } else {
+            0.0
+        };
+        if area.width() < MIN_W {
             return egui::Rect::NOTHING;
         }
+        let w = (PAD_X * 2.0 + text_w + pct_w + btn_w)
+            .clamp(MIN_W, MAX_W)
+            .min(area.width());
         let rect = egui::Rect::from_min_size(
             egui::pos2(area.min.x, area.center().y - BAR_H / 2.0),
             egui::vec2(w, BAR_H),
@@ -127,138 +223,142 @@ impl Notifications {
             crate::widgets::hint::set(ui.ctx(), rust_i18n::t!("hint.title_bar.notification"));
         }
 
-        // 右侧控件宽度：stop / action / +N / 百分比。
-        let stop_w = (row.running && row.cancel.is_some()).then_some(18.0);
-        let action_w = row.action.is_some().then_some(18.0);
-        let extra_w = (extra > 0).then_some(26.0);
-        let pct_w = (row.progress.is_some() && row.running).then_some(34.0);
-        let ctrl_w = [stop_w, action_w, extra_w, pct_w]
-            .into_iter()
-            .flatten()
-            .sum::<f32>()
-            + if stop_w.is_some() || action_w.is_some() || extra_w.is_some() {
-                6.0
-            } else {
-                0.0
-            };
-        let text_rect = egui::Rect::from_min_max(
-            egui::pos2(rect.min.x + SIDE_PAD, rect.min.y),
-            egui::pos2(
-                rect.max.x - SIDE_PAD - ctrl_w - pct_w.unwrap_or(0.0),
-                rect.max.y,
-            ),
+        // 文本区：从左侧内边距到百分比/按钮之前。
+        let text_left = rect.min.x + PAD_X;
+        let text_right = rect.max.x - PAD_X - pct_w - btn_w;
+        let galley = one_line(
+            ui,
+            &row.title,
+            font,
+            text_color,
+            (text_right - text_left).max(0.0),
         );
-        let ctrl_rect = egui::Rect::from_min_max(
-            egui::pos2(text_rect.max.x, rect.min.y),
-            egui::pos2(rect.max.x - SIDE_PAD, rect.max.y),
+        let text_y = rect.min.y + (BAR_H - galley.size().y) / 2.0 - 1.0;
+        ui.painter()
+            .galley(egui::pos2(text_left, text_y), galley, text_color);
+        // 自绘文本不在 AccessKit 树里：给文本区注册一个 Label 名称（供测试/读屏）。
+        let label_rect = egui::Rect::from_min_max(
+            egui::pos2(text_left, rect.min.y),
+            egui::pos2(text_right.max(text_left + 1.0), rect.max.y),
         );
+        let label_resp = ui.interact(
+            label_rect,
+            ui.scope_id().with(("notify_label", row.id)),
+            egui::Sense::hover(),
+        );
+        label_resp
+            .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, row.title.clone()));
 
-        // ── 左侧：图标 + 标题/详情（单行截断）──
-        if text_rect.width() > 24.0 {
-            ui.scope_builder(
-                egui::UiBuilder::new()
-                    .max_rect(text_rect)
-                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
-                |ui| {
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(row.kind.icon().codepoint)
-                                .family(row.kind.icon().font_family())
-                                .size(crate::theme::ICON_FONT_SM)
-                                .color(row.kind.color()),
-                        )
-                        .selectable(false),
-                    );
-                    ui.add_space(6.0);
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(row.text())
-                                .size(crate::theme::SMALL_FONT)
-                                .color(crate::theme::text_primary()),
-                        )
-                        .truncate()
-                        .selectable(false),
-                    );
-                },
-            );
-        }
-
-        // ── 右侧：百分比 + 取消/多任务/操作 ──
-        let mut toggle_tasks = false;
+        // 百分比（只在进行中显示，避免结果通知占宽）。
         let mut dismiss = false;
         let mut run_action = false;
-        ui.scope_builder(
-            egui::UiBuilder::new()
-                .max_rect(ctrl_rect)
-                .layout(egui::Layout::right_to_left(egui::Align::Center)),
-            |ui| {
-                if let Some(cancel) = &row.cancel
-                    && row.running
-                {
-                    let resp = crate::widgets::hover::hover_button(
-                        ui,
-                        ICON_STOP.codepoint,
-                        egui::FontId::new(crate::theme::ICON_FONT_SM, ICON_STOP.font_family()),
-                        crate::theme::text_muted(),
-                        false,
-                        rust_i18n::t!("hint.toast.cancel").as_ref(),
-                    );
-                    crate::widgets::hint::hover(
-                        ui.ctx(),
-                        &resp,
-                        rust_i18n::t!("hint.toast.cancel"),
-                    );
-                    if resp.clicked() && !row.cancelling {
-                        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-                        dismiss = true;
-                    }
-                }
-                if let Some(action) = &row.action {
-                    let icon = action.icon.unwrap_or(ICON_FOLDER_OPEN);
-                    let resp = crate::widgets::hover::hover_button(
-                        ui,
-                        icon.codepoint,
-                        egui::FontId::new(crate::theme::ICON_FONT_SM, icon.font_family()),
-                        crate::theme::text_muted(),
-                        false,
-                        &action.label,
-                    );
-                    crate::widgets::hint::hover(ui.ctx(), &resp, &action.label);
-                    if resp.clicked() {
-                        run_action = true;
-                    }
-                }
-                if extra > 0 {
-                    let resp = ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(format!("+{extra}"))
-                                .size(crate::theme::SMALL_LABEL_FONT)
-                                .color(crate::theme::text_muted()),
-                        )
-                        .sense(egui::Sense::click())
-                        .selectable(false),
-                    );
-                    crate::widgets::hint::hover(
-                        ui.ctx(),
-                        &resp,
-                        rust_i18n::t!("hint.title_bar.notification_tasks"),
-                    );
-                    if resp.clicked() {
-                        toggle_tasks = true;
-                    }
-                }
-                if let Some(p) = pct_w.and(row.progress) {
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(format!("{:.0}%", p * 100.0))
-                                .size(crate::theme::SMALL_LABEL_FONT)
-                                .color(crate::theme::text_muted()),
-                        )
-                        .selectable(false),
-                    );
-                }
-            },
-        );
+        let mut toggle_tasks = false;
+        let mut cursor_x = rect.max.x - PAD_X;
+        if let Some(p) = row.progress.filter(|_| row.running) {
+            let pct = format!("{:.0}%", p * 100.0);
+            let galley = ui.painter().layout_no_wrap(
+                pct,
+                egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT),
+                crate::theme::text_muted(),
+            );
+            ui.painter().galley(
+                egui::pos2(cursor_x - galley.size().x, text_y + 1.0),
+                galley,
+                crate::theme::text_muted(),
+            );
+            cursor_x -= PCT_W;
+        }
+
+        // 右侧按钮：从右到左：取消、操作、+N。
+        if let Some(cancel) = &row.cancel.filter(|_| row.running) {
+            let resp = draw_button(
+                ui,
+                &mut cursor_x,
+                rect.center().y,
+                ICON_STOP.codepoint,
+                egui::FontId::new(crate::theme::ICON_FONT_SM, ICON_STOP.font_family()),
+                crate::theme::text_muted(),
+                rust_i18n::t!("hint.toast.cancel").as_ref(),
+                "stop",
+            );
+            if resp.clicked() && !row.cancelling {
+                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                dismiss = true;
+            }
+        }
+        if let Some(action) = &row.action {
+            let icon = action.icon.unwrap_or(ICON_FOLDER_OPEN);
+            let resp = draw_button(
+                ui,
+                &mut cursor_x,
+                rect.center().y,
+                icon.codepoint,
+                egui::FontId::new(crate::theme::ICON_FONT_SM, icon.font_family()),
+                crate::theme::text_muted(),
+                &action.label,
+                "action",
+            );
+            if resp.clicked() {
+                run_action = true;
+            }
+        }
+        if extra > 0 {
+            let text = format!("+{extra}");
+            let font = egui::FontId::proportional(crate::theme::SMALL_FONT);
+            let galley = ui
+                .painter()
+                .layout_no_wrap(text, font, crate::theme::text_muted());
+            let rect = egui::Rect::from_min_size(
+                egui::pos2(cursor_x - BTN_W, rect.center().y - BTN_W / 2.0),
+                egui::vec2(BTN_W, BTN_W),
+            );
+            let resp = ui.interact(
+                rect,
+                ui.scope_id().with(("notify_tasks", rect.min.x as i32)),
+                egui::Sense::click(),
+            );
+            let c = if resp.hovered() {
+                crate::theme::text_primary()
+            } else {
+                crate::theme::text_muted()
+            };
+            ui.painter().galley(
+                egui::pos2(
+                    rect.center().x - galley.size().x / 2.0,
+                    rect.center().y - galley.size().y / 2.0,
+                ),
+                galley,
+                c,
+            );
+            crate::widgets::hint::hover(
+                ui.ctx(),
+                &resp,
+                rust_i18n::t!("hint.title_bar.notification_tasks"),
+            );
+            if resp.clicked() {
+                toggle_tasks = true;
+            }
+        }
+
+        // 粗进度条贴底：进行中实时走，完成满格，中止保留快照。
+        if let Some(p) = row.progress {
+            let track = egui::Rect::from_min_max(
+                egui::pos2(rect.min.x + 4.0, rect.max.y - BAR_LINE_H - 1.0),
+                egui::pos2(rect.max.x - 4.0, rect.max.y - 1.0),
+            );
+            ui.painter()
+                .rect_filled(track, 0.0, crate::theme::line_fg().gamma_multiply(0.18));
+            let fg = egui::Rect::from_min_max(
+                track.min,
+                egui::pos2(track.min.x + track.width() * p.clamp(0.0, 1.0), track.max.y),
+            );
+            let color = if row.running || row.kind == ToastKind::Success {
+                crate::theme::accent_active()
+            } else {
+                row.kind.color()
+            };
+            ui.painter().rect_filled(fg, 0.0, color);
+        }
 
         if toggle_tasks {
             self.tasks_open = !self.tasks_open;
@@ -270,22 +370,10 @@ impl Notifications {
             perform_action(action);
         }
 
-        // 进度条贴底边（只在进行中显示）。
-        if row.running && row.progress.is_some_and(|p| p < 0.999) {
-            let y = rect.max.y - 1.5;
-            let bar = egui::Rect::from_min_max(
-                egui::pos2(rect.min.x + 4.0, y),
-                egui::pos2(rect.max.x - 4.0, y + 1.5),
-            );
-            ui.painter()
-                .rect_filled(bar, 0.0, row.kind.color().gamma_multiply(0.85));
-        }
-
         if self.tasks_open && task_count > 0 {
             self.show_tasks_popover(ui, rect);
         }
 
-        // 仅图标在极窄时可点：让窗口拖动区让位由 title_bar 处理。
         rect
     }
 
@@ -299,90 +387,104 @@ impl Notifications {
         let area = egui::Area::new(egui::Id::unique("yinhe_notify_tasks"))
             .fixed_pos(egui::pos2(anchor.min.x, anchor.max.y + 4.0))
             .order(egui::Order::Foreground)
+            .fade_in(false)
             .show(ui.ctx(), |ui| {
-                egui::Frame::new()
-                    .fill(crate::theme::control_bg())
-                    .stroke(egui::Stroke::new(
-                        1.0,
-                        crate::theme::line_fg().gamma_multiply(0.35),
-                    ))
-                    .corner_radius(egui::CornerRadius::same(8))
-                    .inner_margin(egui::Margin::same(10))
-                    .show(ui, |ui| {
-                        ui.set_width(TASKS_W);
-                        for (i, row) in rows.iter().enumerate() {
-                            if i > 0 {
-                                ui.add_space(6.0);
-                            }
-                            ui.horizontal(|ui| {
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(row.kind.icon().codepoint)
-                                            .family(row.kind.icon().font_family())
-                                            .size(crate::theme::ICON_FONT_SM)
-                                            .color(row.kind.color()),
-                                    )
-                                    .selectable(false),
-                                );
-                                ui.add_space(6.0);
-                                ui.add_sized(
-                                    egui::vec2(TASKS_W - 96.0, 18.0),
-                                    egui::Label::new(
-                                        egui::RichText::new(row.text())
-                                            .size(crate::theme::SMALL_FONT)
-                                            .color(crate::theme::text_primary()),
-                                    )
-                                    .truncate()
-                                    .selectable(false),
-                                );
-                                if let Some(p) = row.progress {
-                                    ui.add(
-                                        egui::Label::new(
-                                            egui::RichText::new(format!("{:.0}%", p * 100.0))
-                                                .size(crate::theme::SMALL_LABEL_FONT)
-                                                .color(crate::theme::text_muted()),
-                                        )
-                                        .selectable(false),
-                                    );
-                                }
-                                if let Some(pause) = &row.pause {
-                                    let paused = pause.load(std::sync::atomic::Ordering::Relaxed);
-                                    let icon = if paused { ICON_PLAY_ARROW } else { ICON_PAUSE };
-                                    let resp = crate::widgets::hover::hover_button(
-                                        ui,
-                                        icon.codepoint,
-                                        egui::FontId::new(
-                                            crate::theme::ICON_FONT_SM,
-                                            icon.font_family(),
-                                        ),
-                                        crate::theme::text_muted(),
-                                        false,
-                                        rust_i18n::t!("hint.toast.pause").as_ref(),
-                                    );
-                                    if resp.clicked() {
-                                        pause.store(!paused, std::sync::atomic::Ordering::Relaxed);
-                                    }
-                                }
-                                if let Some(cancel) = &row.cancel {
-                                    let resp = crate::widgets::hover::hover_button(
-                                        ui,
-                                        ICON_STOP.codepoint,
-                                        egui::FontId::new(
-                                            crate::theme::ICON_FONT_SM,
-                                            ICON_STOP.font_family(),
-                                        ),
-                                        crate::theme::text_muted(),
-                                        false,
-                                        rust_i18n::t!("hint.toast.cancel").as_ref(),
-                                    );
-                                    if resp.clicked() && !row.cancelling {
-                                        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-                                        cancel_id = Some(row.id);
-                                    }
-                                }
-                            });
+                let h = 8.0 + rows.len() as f32 * TASKS_ROW_H;
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(TASKS_W, h), egui::Sense::hover());
+                ui.painter()
+                    .rect_filled(rect, 8.0, crate::theme::control_bg());
+                for (i, row) in rows.iter().enumerate() {
+                    let top = rect.min.y + 4.0 + i as f32 * TASKS_ROW_H;
+                    let row_rect = egui::Rect::from_min_size(
+                        egui::pos2(rect.min.x + 8.0, top),
+                        egui::vec2(TASKS_W - 16.0, TASKS_ROW_H),
+                    );
+                    let text_color = if row.running {
+                        crate::theme::text_primary()
+                    } else {
+                        crate::theme::text_secondary()
+                    };
+                    let galley = one_line(
+                        ui,
+                        &row.title,
+                        egui::FontId::proportional(crate::theme::BODY_FONT),
+                        text_color,
+                        row_rect.width() - 88.0,
+                    );
+                    ui.painter().galley(
+                        egui::pos2(row_rect.min.x, row_rect.center().y - galley.size().y / 2.0),
+                        galley,
+                        text_color,
+                    );
+                    let mut cx = row_rect.max.x;
+                    if let Some(p) = row.progress {
+                        let pct = format!("{:.0}%", p * 100.0);
+                        let g = ui.painter().layout_no_wrap(
+                            pct,
+                            egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT),
+                            crate::theme::text_muted(),
+                        );
+                        ui.painter().galley(
+                            egui::pos2(cx - g.size().x, row_rect.center().y - g.size().y / 2.0),
+                            g,
+                            crate::theme::text_muted(),
+                        );
+                        cx -= 38.0;
+                    }
+                    let mut icon_at = |icon: egui_material_icons::MaterialIcon,
+                                       color: egui::Color32,
+                                       hint: &str|
+                     -> egui::Response {
+                        let r = egui::Rect::from_min_size(
+                            egui::pos2(cx - 16.0, row_rect.center().y - 8.0),
+                            egui::vec2(16.0, 16.0),
+                        );
+                        cx -= 18.0;
+                        let resp = ui.interact(
+                            r,
+                            ui.scope_id().with(("task_btn", row.id, r.min.x as i32)),
+                            egui::Sense::click(),
+                        );
+                        let c = if resp.hovered() {
+                            crate::theme::text_primary()
+                        } else {
+                            color
+                        };
+                        ui.painter().text(
+                            r.center(),
+                            egui::Align2::CENTER_CENTER,
+                            icon.codepoint,
+                            egui::FontId::new(crate::theme::ICON_FONT_SM, icon.font_family()),
+                            c,
+                        );
+                        crate::widgets::hint::hover(ui.ctx(), &resp, hint);
+                        resp
+                    };
+                    if let Some(pause) = &row.pause {
+                        let paused = pause.load(std::sync::atomic::Ordering::Relaxed);
+                        let icon = if paused { ICON_PLAY_ARROW } else { ICON_PAUSE };
+                        let resp = icon_at(
+                            icon,
+                            crate::theme::text_muted(),
+                            rust_i18n::t!("hint.toast.pause").as_ref(),
+                        );
+                        if resp.clicked() {
+                            pause.store(!paused, std::sync::atomic::Ordering::Relaxed);
                         }
-                    });
+                    }
+                    if let Some(cancel) = &row.cancel {
+                        let resp = icon_at(
+                            ICON_STOP,
+                            crate::theme::text_muted(),
+                            rust_i18n::t!("hint.toast.cancel").as_ref(),
+                        );
+                        if resp.clicked() && !row.cancelling {
+                            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                            cancel_id = Some(row.id);
+                        }
+                    }
+                }
             });
 
         if let Some(id) = cancel_id {

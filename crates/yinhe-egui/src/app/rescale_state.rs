@@ -92,21 +92,8 @@ impl ProgressSource for RescaleToastSource {
     fn title(&self) -> String {
         t!("toast.rescale_working").to_string()
     }
-    fn message(&self) -> String {
-        let (_, label) = self.snapshot();
-        if label.is_empty() {
-            t!("toast.rescale_preparing").to_string()
-        } else {
-            label
-        }
-    }
     fn fraction(&self) -> f32 {
         self.snapshot().0
-    }
-    fn detail(&self) -> String {
-        // 与 message 去重：第二行显示百分比
-        let (frac, _) = self.snapshot();
-        format!("{:.0}%", frac.clamp(0.0, 1.0) * 100.0)
     }
     fn cancel(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
         Some(self.cancel.clone())

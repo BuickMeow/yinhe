@@ -33,14 +33,8 @@ impl ProgressSource for Src {
     fn title(&self) -> String {
         "任务".to_string()
     }
-    fn message(&self) -> String {
-        "阶段".to_string()
-    }
     fn fraction(&self) -> f32 {
         self.fraction
-    }
-    fn detail(&self) -> String {
-        format!("{:.0}%", self.fraction * 100.0)
     }
     fn cancel(&self) -> Option<Arc<AtomicBool>> {
         self.cancel.clone()

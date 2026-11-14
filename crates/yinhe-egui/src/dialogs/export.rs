@@ -222,18 +222,3 @@ pub(crate) fn show_settings_viewport(
 
     *started.borrow()
 }
-
-pub(crate) fn format_duration(secs: f64) -> String {
-    if secs < 0.0 {
-        return "—".into();
-    }
-    let total = secs as u64;
-    let h = total / 3600;
-    let m = (total % 3600) / 60;
-    let s = total % 60;
-    if h > 0 {
-        format!("{:02}:{:02}:{:02}", h, m, s)
-    } else {
-        format!("{:02}:{:02}", m, s)
-    }
-}
