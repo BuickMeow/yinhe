@@ -2269,7 +2269,14 @@ fn prof_blackmidi_cost_breakdown() {
         let fixed_start: Option<f64> = std::env::var("YINHE_PROF_START_SECS")
             .ok()
             .and_then(|s| s.parse().ok());
-        let layout = crate::spawn::channels_for_model(&model);
+        let layout = if let Some(n) = std::env::var("YINHE_PROF_CHANNELS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+        {
+            crate::channel_layout::ChannelLayout::from_mask(vec![true; n.min(256)])
+        } else {
+            crate::spawn::channels_for_model(&model)
+        };
         // 多 port 工程：源通道最多 256 个，dense 索引与源通道不是一回事。
         let active: Vec<u8> = (0..256u16)
             .filter(|c| layout.is_active(*c as usize))
@@ -2304,7 +2311,12 @@ fn prof_blackmidi_cost_breakdown() {
                     }
                 }
             }
-            eprintln!("  渲染窗口=[{start_tick},{end_tick}) 音符数={count} 可听={audible}");
+            eprintln!(
+                "  渲染窗口=[{start_tick},{end_tick}) 音符数={count} 可听={audible} 源通道={} dense={} 轨道={}",
+                active.len(),
+                layout.num_channels(),
+                model.tracks.len()
+            );
             start_sample
         } else {
             // 密度峰值（每拍音符数）
@@ -2691,7 +2703,14 @@ mod compare_tests {
         let sr = 48_000u32;
         let seconds = 300u64;
         let model = Arc::new(yinhe_midi::parse_path(midi).expect("parse"));
-        let layout = crate::spawn::channels_for_model(&model);
+        let layout = if let Some(n) = std::env::var("YINHE_PROF_CHANNELS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+        {
+            crate::channel_layout::ChannelLayout::from_mask(vec![true; n.min(256)])
+        } else {
+            crate::spawn::channels_for_model(&model)
+        };
         let active: Vec<u8> = (0..16u8)
             .filter(|c| layout.is_active(*c as usize))
             .collect();
