@@ -53,7 +53,7 @@ impl FileLoader {
         LoadToastSource {
             progress: self.load_progress().clone(),
             cancel: self.cancel_flag(),
-            pause: Some(self.core.pause_flag()),
+            pause: self.core.pause_flag(),
             title: t!("toast.loading").to_string(),
         }
     }

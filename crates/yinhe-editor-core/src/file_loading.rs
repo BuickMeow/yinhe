@@ -167,8 +167,10 @@ impl FileLoader {
         self.midi_loader.as_ref().map(|l| l.cancel.clone())
     }
 
-    pub fn pause_flag(&self) -> Arc<AtomicBool> {
-        self.pause.clone()
+    /// 只有 MIDI / .yin 解析线程会在进度回调处响应暂停；
+    /// 归档打开没有回调，不提供暂停句柄（避免假暂停）。
+    pub fn pause_flag(&self) -> Option<Arc<AtomicBool>> {
+        (self.midi_loader.is_some() || self.yin_loader.is_some()).then(|| self.pause.clone())
     }
 
     /// Cancel any in-progress loading. Sets the cancel flag so background
