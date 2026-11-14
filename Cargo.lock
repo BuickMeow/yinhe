@@ -7939,6 +7939,7 @@ dependencies = [
  "yinhe-dsp",
  "yinhe-editor-core",
  "yinhe-memtrace",
+ "yinhe-meter",
  "yinhe-midi",
  "yinhe-midi-io",
  "yinhe-mixer",

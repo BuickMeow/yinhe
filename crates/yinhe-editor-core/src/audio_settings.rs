@@ -11,7 +11,9 @@ pub mod theme;
 pub mod ui_session;
 
 pub use edit::{OverlapBlockedBehavior, QuickDeleteMode};
-pub use layout::{FloatPanelState, LayoutSettings};
+pub use layout::{
+    FloatPanelState, LayoutSettings, MeterModuleKind, MeterModuleSlot, default_meter_modules,
+};
 pub use theme::CustomTheme;
 pub use ui_session::SettingsUiSession;
 

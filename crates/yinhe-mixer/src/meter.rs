@@ -89,7 +89,7 @@ mod tests {
         let mut out = Vec::new();
         let n = reading.drain_into(&mut out);
         assert_eq!(n, MASTER_SAMPLE_CAPACITY);
-        assert!(out.chunks_exact(2).all(|p| p == [1.0, 1.0]));
+        assert!(out.as_chunks::<2>().0.iter().all(|p| p == &[1.0, 1.0]));
     }
 
     #[test]
