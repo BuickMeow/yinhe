@@ -709,8 +709,9 @@ fn parse_track(
     //   2. key 升序
     //   3. end_tick 降序（长度从大到小）
     //   4. velocity 降序
-    //   5. 全都相同则保持原顺序（稳定排序，平级）
-    td.notes.sort_by(|a, b| {
+    // 平级音符的相对顺序不影响音乐内容；用不稳定排序避免几千万音符时
+    // 稳定排序申请 O(N) 的临时缓冲（黑乐谱单轨可达数百 MB）。
+    td.notes.sort_unstable_by(|a, b| {
         a.start_tick
             .cmp(&b.start_tick)
             .then_with(|| a.key.cmp(&b.key))

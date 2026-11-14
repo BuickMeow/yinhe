@@ -588,7 +588,9 @@ impl NoteLoader {
         for key in 0..KEY_COUNT {
             let mut v = std::mem::take(&mut self.key_notes[key]);
             // 加载路径统一在此排序（乱序输入），随后按 65536 切块。
-            v.sort_by_key(|n| n.start_tick);
+            // 同 start_tick 的音符顺序不影响音乐/渲染；不稳定排序避免为
+            // 数千万音符再申请一份 O(N) 的稳定排序临时缓冲。
+            v.sort_unstable_by_key(|n| n.start_tick);
             model.notes[key] = Arc::new(NoteBucket::from_sorted(v));
         }
         model.note_count = self.note_count;
