@@ -6,7 +6,7 @@ use realfft::RealFftPlanner;
 use realfft::RealToComplex;
 
 /// 支持的 FFT 尺寸（与常见表头一致）。
-pub const FFT_SIZES: &[usize] = &[1024, 2048, 4096, 8192, 16384];
+pub const FFT_SIZES: &[usize] = &[1024, 2048, 4096, 8192, 16384, 32768, 65536];
 /// 默认 FFT 尺寸。
 pub const DEFAULT_FFT_SIZE: usize = 4096;
 /// 频谱显示下限。
@@ -167,6 +167,6 @@ mod tests {
     fn normalizes_fft_size() {
         assert_eq!(normalize_fft_size(1), 1024);
         assert_eq!(normalize_fft_size(3000), 4096);
-        assert_eq!(normalize_fft_size(99_999), 16_384);
+        assert_eq!(normalize_fft_size(99_999), 65_536);
     }
 }

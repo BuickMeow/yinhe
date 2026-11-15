@@ -4,9 +4,10 @@ use yinhe_meter::SpectrumAnalyzer;
 
 use super::{MeterModule, grid, plot_bg, small_label};
 
-const COLUMNS: usize = 256;
+/// 默认显示列数；列数越多，低音区插值台阶越细。
+const DEFAULT_COLUMNS: usize = 512;
 /// 频谱默认用更长窗口换取低频分辨率；谱线本身仍由 FFT 分辨率决定。
-const FFT_SIZE: usize = 16_384;
+const FFT_SIZE: usize = 32_768;
 const MIN_FREQ: f32 = 20.0;
 const MAX_FREQ: f32 = 20_000.0;
 const MIN_DB: f32 = -90.0;
@@ -18,16 +19,18 @@ pub(super) struct SpectrumModule {
     last_dt: f32,
     /// 左端显示频率：捏合/滚轮放大时下探到更低频段。
     min_freq: f32,
+    columns: usize,
 }
 
 impl SpectrumModule {
     pub(super) fn new(sample_rate: u32) -> Self {
         Self {
             analyzer: SpectrumAnalyzer::new(sample_rate, FFT_SIZE),
-            smooth: vec![MIN_DB; COLUMNS],
-            outline: Vec::with_capacity(COLUMNS),
+            smooth: vec![MIN_DB; DEFAULT_COLUMNS],
+            outline: Vec::with_capacity(DEFAULT_COLUMNS),
             last_dt: 1.0 / 60.0,
             min_freq: MIN_FREQ,
+            columns: DEFAULT_COLUMNS,
         }
     }
 
@@ -92,11 +95,11 @@ impl MeterModule for SpectrumModule {
             return;
         }
         let alpha = 1.0 - (-self.last_dt / 0.08).exp();
-        for i in 0..COLUMNS {
+        for i in 0..self.columns {
             // 取每列中心频率，在对数轴/FFT 线性轴之间做插值：
             // 低频列间距常常小于一个 FFT bin，直接取整会画出很长的水平台阶。
-            let f =
-                self.min_freq * (MAX_FREQ / self.min_freq).powf((i as f32 + 0.5) / COLUMNS as f32);
+            let f = self.min_freq
+                * (MAX_FREQ / self.min_freq).powf((i as f32 + 0.5) / self.columns as f32);
             let exact_bin =
                 f * self.analyzer.fft_size() as f32 / self.analyzer.sample_rate() as f32;
             let b0 = exact_bin.floor() as usize;
@@ -114,12 +117,12 @@ impl MeterModule for SpectrumModule {
         // 逐列画矩形而不是一个凹多边形：egui 对凹多边形填充会从首个顶点
         // 扇形三角化，出现大量从左下角发散的斜线。
         self.outline.clear();
-        let col_w = body.width() / COLUMNS as f32 + 0.5;
+        let col_w = body.width() / self.columns as f32 + 0.5;
         let fill = crate::theme::accent_active().gamma_multiply(0.20);
-        for i in 0..COLUMNS {
+        for i in 0..self.columns {
             let db = self.smooth[i].clamp(MIN_DB, 0.0);
             let y = body.max.y - body.height() * (db - MIN_DB) / -MIN_DB;
-            let x = body.min.x + body.width() * i as f32 / (COLUMNS - 1) as f32;
+            let x = body.min.x + body.width() * i as f32 / (self.columns - 1) as f32;
             ui.painter().rect_filled(
                 egui::Rect::from_min_max(
                     egui::pos2(x, y),
@@ -136,7 +139,7 @@ impl MeterModule for SpectrumModule {
             std::mem::take(&mut self.outline),
             egui::Stroke::new(1.0, crate::theme::accent_active()),
         ));
-        self.outline.reserve(COLUMNS);
+        self.outline.reserve(self.columns);
     }
 
     fn reset(&mut self) {
@@ -160,6 +163,23 @@ impl MeterModule for SpectrumModule {
                             self.analyzer =
                                 SpectrumAnalyzer::new(self.analyzer.sample_rate(), candidate);
                             self.smooth.fill(MIN_DB);
+                        }
+                    }
+                });
+        });
+        ui.horizontal(|ui| {
+            ui.label(t!("meter.columns"));
+            let mut columns = self.columns;
+            egui::ComboBox::from_id_salt("meter_spectrum_columns")
+                .selected_text(columns.to_string())
+                .show_ui(ui, |ui| {
+                    for candidate in [256_usize, 512, 1024] {
+                        if ui
+                            .selectable_value(&mut columns, candidate, candidate.to_string())
+                            .changed()
+                        {
+                            self.columns = candidate;
+                            self.smooth = vec![MIN_DB; candidate];
                         }
                     }
                 });
