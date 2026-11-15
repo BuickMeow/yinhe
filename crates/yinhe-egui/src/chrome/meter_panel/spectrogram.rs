@@ -15,6 +15,8 @@ pub(super) struct SpectrogramModule {
     sample_rate: u32,
     texture: Option<egui::TextureHandle>,
     dirty: bool,
+    /// 时间轴放大倍率：>1 只看最近一段历史。
+    zoom: f32,
 }
 
 impl SpectrogramModule {
@@ -24,6 +26,7 @@ impl SpectrogramModule {
             sample_rate,
             texture: None,
             dirty: true,
+            zoom: 1.0,
         }
     }
 
@@ -90,6 +93,21 @@ impl MeterModule for SpectrogramModule {
     }
 
     fn draw(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
+        if ui.rect_contains_pointer(rect) {
+            let zoom_delta = ui.input(|i| i.zoom_delta());
+            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+            let factor = zoom_delta * (1.0 + scroll * 0.002);
+            if (factor - 1.0).abs() > 1e-4 {
+                self.zoom = (self.zoom * factor).clamp(1.0, 50.0);
+            }
+            if ui.input(|i| {
+                i.pointer
+                    .button_double_clicked(egui::PointerButton::Primary)
+            }) {
+                self.zoom = 1.0;
+            }
+        }
+
         plot_bg(ui, rect);
         if self.dirty {
             self.rebuild_texture(ui.ctx());
@@ -99,10 +117,11 @@ impl MeterModule for SpectrogramModule {
             return;
         }
         if let Some(texture) = &self.texture {
+            let u0 = 1.0 - (1.0 / self.zoom).clamp(0.0, 1.0);
             ui.painter().image(
                 texture.id(),
                 body,
-                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                egui::Rect::from_min_max(egui::pos2(u0, 0.0), egui::pos2(1.0, 1.0)),
                 egui::Color32::WHITE,
             );
         }

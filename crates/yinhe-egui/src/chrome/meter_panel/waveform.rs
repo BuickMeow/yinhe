@@ -15,7 +15,8 @@ pub(super) struct WaveformModule {
 impl WaveformModule {
     pub(super) fn new(sample_rate: u32) -> Self {
         Self {
-            history: WaveformHistory::default_for(sample_rate),
+            // 历史保留 20 秒，缩放缩小时仍能看到更长时间。
+            history: WaveformHistory::new(sample_rate, 20.0, 512),
             sample_rate,
             window_secs: 5.0,
             zoom: 1.0,
@@ -36,8 +37,16 @@ impl MeterModule for WaveformModule {
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
             let factor = zoom_delta * (1.0 + scroll * 0.002);
             if (factor - 1.0).abs() > 1e-4 {
-                self.zoom = (self.zoom * factor).clamp(0.2, 20.0);
+                self.zoom = (self.zoom * factor).clamp(0.01, 1000.0);
             }
+        }
+        if ui.rect_contains_pointer(rect)
+            && ui.input(|i| {
+                i.pointer
+                    .button_double_clicked(egui::PointerButton::Primary)
+            })
+        {
+            self.zoom = 1.0;
         }
 
         plot_bg(ui, rect);
@@ -52,8 +61,9 @@ impl MeterModule for WaveformModule {
             center,
             egui::Stroke::new(1.0, crate::theme::line_fg().gamma_multiply(0.45)),
         );
+        let visible_secs = (self.window_secs / self.zoom).clamp(0.05, 20.0);
         let max_columns = self.history.max_columns();
-        let visible = ((max_columns as f32 / self.zoom).round() as usize).max(8);
+        let visible = ((max_columns as f32 * visible_secs / 20.0).round() as usize).max(1);
         let cols = self.history.columns();
         let n = cols.len();
         if n == 0 {
@@ -82,7 +92,11 @@ impl MeterModule for WaveformModule {
             ui,
             egui::pos2(body.min.x + 2.0, body.min.y + 1.0),
             egui::Align2::LEFT_TOP,
-            format!("{:.1} s", self.window_secs / self.zoom),
+            if visible_secs >= 1.0 {
+                format!("{visible_secs:.1} s")
+            } else {
+                format!("{:.0} ms", visible_secs * 1000.0)
+            },
             crate::theme::text_muted(),
         );
     }
@@ -98,7 +112,7 @@ impl MeterModule for WaveformModule {
             egui::ComboBox::from_id_salt("meter_waveform_window")
                 .selected_text(format!("{secs:.0} s"))
                 .show_ui(ui, |ui| {
-                    for candidate in [2.0_f32, 5.0, 10.0] {
+                    for candidate in [2.0_f32, 5.0, 10.0, 20.0] {
                         if ui
                             .selectable_value(&mut secs, candidate, format!("{candidate:.0} s"))
                             .changed()

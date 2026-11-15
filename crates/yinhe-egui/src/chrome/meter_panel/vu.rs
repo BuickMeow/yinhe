@@ -31,46 +31,52 @@ impl MeterModule for VuModule {
         }
         let db = gain_to_db(self.analyzer.reading().rms_mid);
         let t = ((db + 20.0) / 23.0).clamp(0.0, 1.0);
-        // 表盘顺时针旋转 90°：中心在左侧中点，弧线从下（-90°）到上（+90°）。
-        let center = egui::pos2(body.min.x + 6.0, body.center().y);
-        let radius = body.height().min(body.width() * 1.4) * 0.42;
-        let angle = -std::f32::consts::FRAC_PI_2 + std::f32::consts::PI * t;
-        let arc_color = crate::theme::line_fg().gamma_multiply(0.5);
-        let steps = 32;
-        let mut prev = None;
-        for i in 0..=steps {
-            let a = -std::f32::consts::FRAC_PI_2 + std::f32::consts::PI * i as f32 / steps as f32;
-            let p = egui::pos2(center.x + radius * a.cos(), center.y - radius * a.sin());
-            if let Some(q) = prev {
-                ui.painter()
-                    .line_segment([q, p], egui::Stroke::new(1.0, arc_color));
-            }
-            prev = Some(p);
-        }
-        for (i, label) in ["-20", "-10", "-6", "-3", "0", "+3"].iter().enumerate() {
-            let a = -std::f32::consts::FRAC_PI_2 + std::f32::consts::PI * i as f32 / 5.0;
-            let p = egui::pos2(
-                center.x + (radius - 7.0) * a.cos(),
-                center.y - (radius - 7.0) * a.sin(),
+
+        // 水平 VU：刻度线横贯底部，指针轴心在左下，从左侧刻度扫向右侧。
+        let base_y = body.max.y - 10.0;
+        let pivot = egui::pos2(body.min.x + body.width() * 0.18, base_y + 6.0);
+        let radius = body.width() * 0.74;
+        let line_color = crate::theme::line_fg().gamma_multiply(0.5);
+        ui.painter()
+            .hline(body.x_range(), base_y, egui::Stroke::new(1.0, line_color));
+
+        for (i, label) in [
+            "20", "10", "7", "5", "4", "3", "2", "1", "0", "+1", "+2", "+3",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let tt = i as f32 / 11.0;
+            let x = pivot.x + (body.max.x - pivot.x) * tt;
+            let hot = i >= 8;
+            let color = if hot {
+                crate::theme::danger_text()
+            } else {
+                crate::theme::text_muted()
+            };
+            ui.painter().vline(
+                x,
+                egui::Rangef::new(base_y - 4.0, base_y),
+                egui::Stroke::new(1.0, color),
             );
             small_label(
                 ui,
-                p,
-                egui::Align2::CENTER_CENTER,
+                egui::pos2(x, base_y - 6.0),
+                egui::Align2::CENTER_BOTTOM,
                 *label,
-                crate::theme::text_muted(),
+                color,
             );
         }
+
+        let angle = std::f32::consts::FRAC_PI_2 + 0.25 - 1.05 * t;
         let needle = egui::pos2(
-            center.x + radius * angle.cos(),
-            center.y - radius * angle.sin(),
+            pivot.x + radius * angle.cos(),
+            pivot.y - radius * angle.sin(),
         );
         ui.painter().line_segment(
-            [center, needle],
-            egui::Stroke::new(1.6, crate::theme::text_primary()),
+            [pivot, needle],
+            egui::Stroke::new(1.8, crate::theme::text_primary()),
         );
-        ui.painter()
-            .circle_filled(center, 3.0, crate::theme::text_secondary());
         small_label(
             ui,
             egui::pos2(body.max.x - 2.0, body.min.y + 1.0),

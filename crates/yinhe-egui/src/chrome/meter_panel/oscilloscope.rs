@@ -63,15 +63,17 @@ impl MeterModule for OscilloscopeModule {
         for (i, frame) in self.samples.as_chunks::<2>().0.iter().enumerate() {
             let x = body.min.x + body.width() * i as f32 / (frames - 1) as f32;
             self.left
-                .push(egui::pos2(x, center - frame[0].clamp(-1.5, 1.5) * amp));
+                .push(egui::pos2(x, center - frame[0].clamp(-1.0, 1.0) * amp));
             self.right
-                .push(egui::pos2(x, center - frame[1].clamp(-1.5, 1.5) * amp));
+                .push(egui::pos2(x, center - frame[1].clamp(-1.0, 1.0) * amp));
         }
-        ui.painter().add(egui::Shape::line(
+        // 波形必须裁在模块内容区内，不能画到标题栏/相邻面板上。
+        let painter = ui.painter().with_clip_rect(body);
+        painter.add(egui::Shape::line(
             std::mem::take(&mut self.left),
             egui::Stroke::new(1.2, crate::theme::accent_active()),
         ));
-        ui.painter().add(egui::Shape::line(
+        painter.add(egui::Shape::line(
             std::mem::take(&mut self.right),
             egui::Stroke::new(1.0, crate::theme::text_secondary().gamma_multiply(0.8)),
         ));

@@ -55,6 +55,14 @@ impl MeterModule for SpectrumModule {
                 self.min_freq = (self.min_freq / factor).clamp(MIN_FREQ, 2_000.0);
             }
         }
+        if ui.rect_contains_pointer(rect)
+            && ui.input(|i| {
+                i.pointer
+                    .button_double_clicked(egui::PointerButton::Primary)
+            })
+        {
+            self.min_freq = MIN_FREQ;
+        }
 
         plot_bg(ui, rect);
         let body = rect.shrink2(egui::vec2(6.0, 4.0));
