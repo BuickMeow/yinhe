@@ -41,6 +41,8 @@ pub(crate) enum TrackAction {
     },
     /// 双击固定总线行：打开该总线的设备链。
     OpenBusDock { bus: u16 },
-    /// 双击 Master 行：打开 Master 设备链。
+    /// 右键固定总线行：删除该总线。
+    RemoveBus { bus: u16 },
+    /// 右键 Master 轨：打开 Master 设备链。
     OpenMasterDock,
 }

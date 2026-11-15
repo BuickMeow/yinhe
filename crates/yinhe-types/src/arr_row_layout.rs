@@ -14,8 +14,6 @@ pub enum ArRow {
     Automation(usize, usize),
     /// 固定总线行（MIX 总线投影到 AR）。
     Bus(usize),
-    /// 固定 Master 输出行。
-    Master,
 }
 
 /// 每帧由“各轨展开的 lane 数”构建的行布局。
@@ -67,13 +65,11 @@ impl ArRowLayout {
         }
     }
 
-    /// 在普通音轨行之后追加固定 Bus / Master 行。
-    pub fn with_fixed_rows(mut self, bus_count: usize, master: bool) -> Self {
+    /// 在普通音轨行之后追加固定 Bus 行。Master 是唯一 Master 轨本身，
+    /// 不再额外追加固定行。
+    pub fn with_fixed_rows(mut self, bus_count: usize) -> Self {
         for bus in 0..bus_count {
             self.rows.push(ArRow::Bus(bus));
-        }
-        if master {
-            self.rows.push(ArRow::Master);
         }
         self.total_rows = self.rows.len() as u32;
         self
@@ -194,17 +190,17 @@ impl ArRow {
         self.track_opt().unwrap_or(0)
     }
 
-    /// 普通音轨行返回轨道下标；固定 Bus/Master 行返回 None。
+    /// 普通音轨行返回轨道下标；固定 Bus 行返回 None。
     pub fn track_opt(self) -> Option<usize> {
         match self {
             ArRow::Track(t) | ArRow::Automation(t, _) => Some(t),
-            ArRow::Bus(_) | ArRow::Master => None,
+            ArRow::Bus(_) => None,
         }
     }
 
-    /// 是否固定行（Bus/Master）。
+    /// 是否固定行（Bus）。
     pub fn is_fixed(self) -> bool {
-        matches!(self, ArRow::Bus(_) | ArRow::Master)
+        matches!(self, ArRow::Bus(_))
     }
 }
 
@@ -286,15 +282,13 @@ mod tests {
     }
 
     #[test]
-    fn fixed_bus_and_master_rows_follow_tracks() {
-        let l = layout().with_fixed_rows(2, true);
-        assert_eq!(l.total_rows(), 9);
+    fn fixed_bus_rows_follow_tracks() {
+        let l = layout().with_fixed_rows(2);
+        assert_eq!(l.total_rows(), 8);
         assert_eq!(l.row_hit(6), Some(ArRow::Bus(0)));
         assert_eq!(l.row_hit(7), Some(ArRow::Bus(1)));
-        assert_eq!(l.row_hit(8), Some(ArRow::Master));
         assert_eq!(ArRow::Bus(0).track_opt(), None);
-        assert_eq!(ArRow::Master.track_opt(), None);
-        assert!(ArRow::Master.is_fixed());
+        assert!(ArRow::Bus(1).is_fixed());
     }
 
     #[test]

@@ -133,11 +133,12 @@ pub fn show(
     // 固定总线条参数与电平（索引 = 总线；MIX 的总线投影到 AR）。
     bus_strips: &[yinhe_mixer::StripParams],
     bus_meters: &[crate::widgets::meter::StereoMeter],
-    master_meter: crate::widgets::meter::StereoMeter,
     // 固定行 M/S 改混音参数：调用方推送引擎并标记工程脏。
     mixer_dirty: &mut bool,
-    // 双击固定 Bus/Master 行：请求打开设备链（调用方落地）。
+    // 双击固定 Bus 行：请求打开设备链（调用方落地）。
     dock_req: &mut Option<crate::chrome::device_chain::DockContext>,
+    // 右键固定 Bus 行：请求删除总线（调用方清理机架并推引擎）。
+    bus_remove_req: &mut Option<u16>,
 ) {
     *last_cursor_tick = doc.edit.cursor_tick;
 
@@ -227,8 +228,7 @@ pub fn show(
             })
             .collect();
         let visible = model.folder_visible_mask();
-        yinhe_types::ArRowLayout::new_with_visible(&counts, &visible)
-            .with_fixed_rows(bus_count, true)
+        yinhe_types::ArRowLayout::new_with_visible(&counts, &visible).with_fixed_rows(bus_count)
     };
     let mut row_layout = build_row_layout(&doc.edit, &doc.data.model);
     // 清理已删除 lane 的残留视图状态（undo 删除 lane 后）
@@ -498,7 +498,6 @@ pub fn show(
             track_meters,
             bus_strips,
             bus_meters,
-            master_meter,
             doc.edit.cursor_tick,
             &doc.data.model.conductor.tempo,
         );
@@ -640,6 +639,11 @@ pub fn show(
                 track_panel::TrackAction::OpenBusDock { bus } => {
                     structural = false;
                     *dock_req = Some(crate::chrome::device_chain::DockContext::Bus(*bus));
+                    (None, String::new())
+                }
+                track_panel::TrackAction::RemoveBus { bus } => {
+                    structural = false;
+                    *bus_remove_req = Some(*bus);
                     (None, String::new())
                 }
                 track_panel::TrackAction::OpenMasterDock => {
@@ -1073,7 +1077,6 @@ pub fn show(
                 }
                 Some(yinhe_types::ArRow::Track(t)) => track_str(t),
                 Some(yinhe_types::ArRow::Bus(b)) => format!("BUS {}", b + 1),
-                Some(yinhe_types::ArRow::Master) => "Master".to_string(),
                 None => track_str(num_tracks.saturating_sub(1)),
             }
         };

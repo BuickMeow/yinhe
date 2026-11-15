@@ -25,55 +25,6 @@ const BADGE_ICON_BOTTOM_INSET: f32 = 9.0;
 /// 每轨电平表：条宽 / 贴边距（上右下相同）/ 与 M/S 的间隙（px）。
 const LEVEL_METER_W: f32 = 8.0;
 const LEVEL_METER_MARGIN: f32 = 3.0;
-/// 在缩进槽里画祖先文件夹色带：每个 Folder 一条竖线，子轨继承所有祖先。
-/// 不使用边框，只填充 2.5px 宽的颜色条，不影响音轨自身颜色。
-fn draw_folder_bands(
-    painter: &egui::Painter,
-    tracks: &[Arc<yinhe_core::TrackData>],
-    idx: usize,
-    row_rect: egui::Rect,
-    track_colors: &[[f32; 4]],
-) {
-    let Some(track) = tracks.get(idx) else {
-        return;
-    };
-    let depth = track.folder_depth;
-    if depth == 0 && track.kind != TrackKind::Folder {
-        return;
-    }
-    let mut bands: Vec<usize> = Vec::with_capacity(usize::from(depth) + 1);
-    // 每个层级找最近的前置 Folder；合法树中这就是当前轨的祖先。
-    for d in 0..depth {
-        if let Some(j) = (0..idx).rev().find(|&j| {
-            tracks
-                .get(j)
-                .is_some_and(|t| t.kind == TrackKind::Folder && t.folder_depth == d)
-        }) {
-            bands.push(j);
-        }
-    }
-    if track.kind == TrackKind::Folder {
-        bands.push(idx);
-    }
-    for folder_idx in bands {
-        let folder = &tracks[folder_idx];
-        let color = track_colors
-            .get(folder_idx)
-            .copied()
-            .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
-        let x = row_rect.min.x + f32::from(folder.folder_depth) * 14.0 + 2.0;
-        painter.rect_filled(
-            egui::Rect::from_min_max(
-                egui::pos2(x, row_rect.min.y),
-                egui::pos2(x + 2.5, row_rect.max.y),
-            ),
-            0.0,
-            crate::theme::rgba_to_color32((color[0], color[1], color[2], color[3]))
-                .gamma_multiply(0.8),
-        );
-    }
-}
-
 const LEVEL_METER_GAP: f32 = 5.0;
 
 /// AR 轨道头 M/S 手势的 before 快照（egui 临时数据，跨帧保存）。
@@ -125,8 +76,6 @@ pub(crate) fn show(
     bus_strips: &[yinhe_mixer::StripParams],
     // 固定总线电平表显示值。
     bus_meters: &[crate::widgets::meter::StereoMeter],
-    // Master 电平表显示值。
-    master_meter: crate::widgets::meter::StereoMeter,
     // 编辑/播放光标 tick（自动化表显示光标处的 lane 值）。
     cursor_tick: Option<f64>,
     // Conductor 的 Tempo lane（Conductor 行自动化表）。
@@ -248,44 +197,19 @@ pub(crate) fn show(
             if y > panel_rect.max.y || y + lh < panel_rect.min.y {
                 continue;
             }
-            let (label, level, hold, strip) = match row_hit {
-                ArRow::Bus(bus) => (
-                    format!("BUS {}", bus + 1),
-                    bus_meters.get(bus).map(|m| m.0).unwrap_or((0.0, 0.0)),
-                    bus_meters.get(bus).map(|m| m.1).unwrap_or((0.0, 0.0)),
-                    bus_strips.get(bus).copied().unwrap_or_default(),
-                ),
-                ArRow::Master => (
-                    "Master".to_string(),
-                    master_meter.0,
-                    master_meter.1,
-                    Default::default(),
-                ),
-                _ => unreachable!(),
+            let ArRow::Bus(bus) = row_hit else {
+                continue;
             };
-            // 固定行不做缩进，左侧画一条通道色带（总线 = accent，Master = 主题文字色）。
-            let accent = if matches!(row_hit, ArRow::Master) {
-                crate::theme::text_primary()
-            } else {
-                crate::theme::accent_active()
-            };
-            painter.rect_filled(
-                egui::Rect::from_min_max(
-                    egui::pos2(row_rect.min.x + 2.0, row_rect.min.y + 2.0),
-                    egui::pos2(row_rect.min.x + 4.5, row_rect.max.y - 2.0),
-                ),
-                0.0,
-                accent,
-            );
-            let label_y = if show_details {
-                row_rect.min.y + lh * 0.5
-            } else {
-                row_rect.center().y
-            };
+            let level = bus_meters.get(bus).map(|m| m.0).unwrap_or((0.0, 0.0));
+            let hold = bus_meters.get(bus).map(|m| m.1).unwrap_or((0.0, 0.0));
+            let strip = bus_strips.get(bus).copied().unwrap_or_default();
+            // 固定行使用与普通音轨相同的 14px 色带，不做细线。
+            let accent = crate::theme::accent_active();
+            let badge_rect = render::draw_badge(&painter, row_rect, lh, accent);
             painter.text(
-                egui::pos2(row_rect.min.x + 10.0, label_y),
+                egui::pos2(badge_rect.max.x + 6.0, row_rect.center().y),
                 egui::Align2::LEFT_CENTER,
-                label,
+                format!("BUS {}", bus + 1),
                 egui::FontId::proportional(crate::theme::SMALL_FONT),
                 crate::theme::text_primary(),
             );
@@ -297,73 +221,56 @@ pub(crate) fn show(
                 let meter_left = meter_right - LEVEL_METER_W;
                 let btn_x_start = meter_left - LEVEL_METER_GAP - total_btn_w;
                 let btn_y = row_rect.center().y - btn_size.y * 0.5;
-                if let ArRow::Bus(bus) = row_hit {
-                    let m_rect =
-                        egui::Rect::from_min_size(egui::pos2(btn_x_start, btn_y), btn_size);
-                    let s_rect = egui::Rect::from_min_size(
-                        egui::pos2(btn_x_start + btn_size.x + gap, btn_y),
-                        btn_size,
-                    );
-                    no_drag_rects.push(m_rect);
-                    no_drag_rects.push(s_rect);
-                    let m_resp = draw::draw_inline_button(
-                        ui,
-                        &painter,
-                        m_rect,
-                        "M",
-                        strip.mute,
-                        crate::theme::mute_active(),
-                        egui::Id::unique(("arr_bus_m", bus)),
-                    );
-                    let s_resp = draw::draw_inline_button(
-                        ui,
-                        &painter,
-                        s_rect,
-                        "S",
-                        strip.solo,
-                        crate::theme::solo_active(),
-                        egui::Id::unique(("arr_bus_s", bus)),
-                    );
-                    crate::widgets::hint::hover(ui.ctx(), &m_resp, t!("hint.arrange.track_mute"));
-                    crate::widgets::hint::hover(ui.ctx(), &s_resp, t!("hint.arrange.track_solo"));
-                    if m_resp.clicked() {
-                        actions.push(TrackAction::SetBusStrip {
-                            bus: bus as u16,
-                            params: yinhe_mixer::StripParams {
-                                mute: !strip.mute,
-                                ..strip
-                            },
-                        });
-                    }
-                    if s_resp.clicked() {
-                        actions.push(TrackAction::SetBusStrip {
-                            bus: bus as u16,
-                            params: yinhe_mixer::StripParams {
-                                solo: !strip.solo,
-                                ..strip
-                            },
-                        });
-                    }
+                let m_rect = egui::Rect::from_min_size(egui::pos2(btn_x_start, btn_y), btn_size);
+                let s_rect = egui::Rect::from_min_size(
+                    egui::pos2(btn_x_start + btn_size.x + gap, btn_y),
+                    btn_size,
+                );
+                no_drag_rects.push(m_rect);
+                no_drag_rects.push(s_rect);
+                let m_resp = draw::draw_inline_button(
+                    ui,
+                    &painter,
+                    m_rect,
+                    "M",
+                    strip.mute,
+                    crate::theme::mute_active(),
+                    egui::Id::unique(("arr_bus_m", bus)),
+                );
+                let s_resp = draw::draw_inline_button(
+                    ui,
+                    &painter,
+                    s_rect,
+                    "S",
+                    strip.solo,
+                    crate::theme::solo_active(),
+                    egui::Id::unique(("arr_bus_s", bus)),
+                );
+                crate::widgets::hint::hover(ui.ctx(), &m_resp, t!("hint.arrange.track_mute"));
+                crate::widgets::hint::hover(ui.ctx(), &s_resp, t!("hint.arrange.track_solo"));
+                if m_resp.clicked() {
+                    actions.push(TrackAction::SetBusStrip {
+                        bus: bus as u16,
+                        params: yinhe_mixer::StripParams {
+                            mute: !strip.mute,
+                            ..strip
+                        },
+                    });
+                }
+                if s_resp.clicked() {
+                    actions.push(TrackAction::SetBusStrip {
+                        bus: bus as u16,
+                        params: yinhe_mixer::StripParams {
+                            solo: !strip.solo,
+                            ..strip
+                        },
+                    });
                 }
                 let meter_rect = egui::Rect::from_min_max(
                     egui::pos2(meter_left, row_rect.min.y + LEVEL_METER_MARGIN),
                     egui::pos2(meter_right, row_rect.max.y - LEVEL_METER_MARGIN),
                 );
                 crate::widgets::meter::compact_meter(&painter, meter_rect, level, hold);
-            }
-
-            // 双击固定行：打开设备链（总线效果器 / Master 效果器）。
-            let fix_id = match row_hit {
-                ArRow::Bus(bus) => egui::Id::unique(("arr_bus_row", bus)),
-                _ => egui::Id::unique("arr_master_row"),
-            };
-            let fix_resp = ui.interact(row_rect, fix_id, egui::Sense::click());
-            crate::widgets::hint::hover(ui.ctx(), &fix_resp, t!("hint.mix.header_double_click"));
-            if fix_resp.double_clicked() {
-                match row_hit {
-                    ArRow::Bus(bus) => actions.push(TrackAction::OpenBusDock { bus: bus as u16 }),
-                    _ => actions.push(TrackAction::OpenMasterDock),
-                }
             }
             continue;
         }
@@ -394,7 +301,6 @@ pub(crate) fn show(
                 am_lane_selected.contains(&lane_key),
                 lane_even,
             );
-            draw_folder_bands(&painter, tracks, track, row_rect, track_colors);
             let color = track_colors
                 .get(track)
                 .copied()
@@ -545,7 +451,6 @@ pub(crate) fn show(
         let is_conductor = Some(ti.index) == conductor_track_idx;
         let selected = track_selected.contains(&ti.index);
         render::draw_row_background(ui, &painter, row_rect, row, selected, lane_even);
-        draw_folder_bands(&painter, tracks, idx, row_rect, track_colors);
 
         let color = if is_conductor {
             crate::theme::conductor_color_f32()
