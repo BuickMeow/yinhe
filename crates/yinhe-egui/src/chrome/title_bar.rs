@@ -119,7 +119,7 @@ pub(crate) fn show(
                 egui::pos2(notif_left, m.tab_y),
                 egui::pos2(notif_right, m.tab_y + m.tab_h),
             );
-            let notif_rect = notifications.show_title_bar(ui, notif_area);
+            let notif_rect = notifications.show_title_bar(ui, notif_area, title_rect.height());
 
             // ── Handle mouse wheel / trackpad scroll for tab overflow ──
             let pointer_in_bar = ui.input(|i| {

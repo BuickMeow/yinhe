@@ -75,6 +75,10 @@ impl WaveformHistory {
         }
     }
 
+    pub fn max_columns(&self) -> usize {
+        self.max_columns
+    }
+
     pub fn columns(&self) -> &VecDeque<WaveColumn> {
         &self.columns
     }

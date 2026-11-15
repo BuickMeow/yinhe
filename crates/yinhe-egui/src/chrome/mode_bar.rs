@@ -392,7 +392,7 @@ pub fn show(
 
                     // ── Master meter toggle（三视图通用主输出表；紧贴设备链）──
                     {
-                        let meter_icon = egui_material_icons::icons::ICON_ANALYTICS;
+                        let meter_icon = egui_material_icons::icons::ICON_GRAPHIC_EQ;
                         let meter_resp = crate::widgets::hover::hover_button(
                             ui,
                             meter_icon.codepoint,

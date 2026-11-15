@@ -31,14 +31,15 @@ impl MeterModule for VuModule {
         }
         let db = gain_to_db(self.analyzer.reading().rms_mid);
         let t = ((db + 20.0) / 23.0).clamp(0.0, 1.0);
-        let center = egui::pos2(body.center().x, body.max.y - 4.0);
-        let radius = body.width().min(body.height() * 1.6) * 0.42;
-        let angle = std::f32::consts::PI - 0.9 + 1.8 * t;
+        // 表盘顺时针旋转 90°：中心在左侧中点，弧线从下（-90°）到上（+90°）。
+        let center = egui::pos2(body.min.x + 6.0, body.center().y);
+        let radius = body.height().min(body.width() * 1.4) * 0.42;
+        let angle = -std::f32::consts::FRAC_PI_2 + std::f32::consts::PI * t;
         let arc_color = crate::theme::line_fg().gamma_multiply(0.5);
         let steps = 32;
         let mut prev = None;
         for i in 0..=steps {
-            let a = std::f32::consts::PI - 0.9 + 1.8 * i as f32 / steps as f32;
+            let a = -std::f32::consts::FRAC_PI_2 + std::f32::consts::PI * i as f32 / steps as f32;
             let p = egui::pos2(center.x + radius * a.cos(), center.y - radius * a.sin());
             if let Some(q) = prev {
                 ui.painter()
@@ -47,10 +48,10 @@ impl MeterModule for VuModule {
             prev = Some(p);
         }
         for (i, label) in ["-20", "-10", "-6", "-3", "0", "+3"].iter().enumerate() {
-            let a = std::f32::consts::PI - 0.9 + 1.8 * i as f32 / 5.0;
+            let a = -std::f32::consts::FRAC_PI_2 + std::f32::consts::PI * i as f32 / 5.0;
             let p = egui::pos2(
-                center.x + (radius - 6.0) * a.cos(),
-                center.y - (radius - 6.0) * a.sin(),
+                center.x + (radius - 7.0) * a.cos(),
+                center.y - (radius - 7.0) * a.sin(),
             );
             small_label(
                 ui,
@@ -72,8 +73,8 @@ impl MeterModule for VuModule {
             .circle_filled(center, 3.0, crate::theme::text_secondary());
         small_label(
             ui,
-            egui::pos2(body.center().x, body.min.y + 1.0),
-            egui::Align2::CENTER_TOP,
+            egui::pos2(body.max.x - 2.0, body.min.y + 1.0),
+            egui::Align2::RIGHT_TOP,
             format!("{} dB", db_text(db)),
             crate::theme::text_secondary(),
         );

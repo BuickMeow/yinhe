@@ -28,6 +28,8 @@ pub(super) trait MeterModule {
     fn update(&mut self, samples: &[f32], sample_rate: u32, dt: f32);
     fn draw(&mut self, ui: &mut egui::Ui, rect: egui::Rect);
     fn reset(&mut self);
+    /// 面板内设置层；默认无设置。
+    fn settings_ui(&mut self, _ui: &mut egui::Ui) {}
 }
 
 pub(crate) struct MeterPanelState {
@@ -40,6 +42,8 @@ pub(crate) struct MeterPanelState {
     dragging: Option<MeterModuleKind>,
     /// 本帧各模块矩形（下一帧用它计算拖拽插入位置）。
     last_rects: Vec<(MeterModuleKind, egui::Rect)>,
+    /// 当前打开设置层的模块。
+    open_settings: Option<MeterModuleKind>,
 }
 
 impl Default for MeterPanelState {
@@ -52,6 +56,7 @@ impl Default for MeterPanelState {
             last_generation: 0,
             dragging: None,
             last_rects: Vec::new(),
+            open_settings: None,
         }
     }
 }
@@ -66,6 +71,7 @@ impl MeterPanelState {
     pub(crate) fn load_layout(&mut self, layout: &[MeterModuleSlot]) {
         self.layout = layout.to_vec();
         self.modules.clear();
+        self.open_settings = None;
     }
 
     fn ensure_modules(&mut self, sample_rate: u32) {
@@ -290,6 +296,9 @@ impl MeterPanelState {
                         if remove {
                             self.layout.retain(|s| s.kind != slot.kind);
                             self.modules.remove(&slot.kind);
+                            if self.open_settings == Some(slot.kind) {
+                                self.open_settings = None;
+                            }
                             changed = true;
                             break;
                         }
@@ -311,6 +320,19 @@ impl MeterPanelState {
                     }
                 });
         });
+
+        if self.open_settings.is_some()
+            && !egui::Popup::is_any_open(ui.ctx())
+            && ui.input(|i| i.pointer.any_pressed())
+        {
+            let pos = ui.input(|i| i.pointer.interact_pos());
+            let inside = self.last_rects.iter().any(|(kind, r)| {
+                self.open_settings == Some(*kind) && pos.is_some_and(|p| r.contains(p))
+            });
+            if !inside {
+                self.open_settings = None;
+            }
+        }
 
         // 「+」添加模块。
         let add_rect = egui::Rect::from_center_size(
@@ -371,41 +393,69 @@ impl MeterPanelState {
             crate::widgets::hint::set_region(ui.ctx(), t!("hint.panel.meter"));
         }
 
-        let drag_rect = egui::Rect::from_min_size(header.min, egui::vec2(22.0, MODULE_HEADER_H));
+        let settings_rect = egui::Rect::from_min_size(
+            egui::pos2(header.max.x - 40.0, header.min.y),
+            egui::vec2(20.0, MODULE_HEADER_H),
+        );
+        let close_rect = egui::Rect::from_min_size(
+            egui::pos2(header.max.x - 20.0, header.min.y),
+            egui::vec2(20.0, MODULE_HEADER_H),
+        );
+        // 整个标题（除设置/关闭按钮）都可拖动排序，不再保留左侧拖动把手。
+        let drag_rect = egui::Rect::from_min_max(
+            header.min,
+            egui::pos2(settings_rect.min.x - 2.0, header.max.y),
+        );
         let drag_resp = ui.interact(
             drag_rect,
             ui.scope_id().with((kind, "meter_drag")),
             egui::Sense::click_and_drag(),
         );
-        if drag_resp.dragged() {
+        if self.open_settings != Some(kind) && drag_resp.dragged() {
             drag = Some(kind);
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         }
-        icon_at(
-            ui,
-            drag_rect,
-            egui_material_icons::icons::ICON_DRAG_INDICATOR,
-            if drag_resp.hovered() {
-                crate::theme::text_primary()
-            } else {
-                crate::theme::text_muted()
-            },
-        );
         crate::widgets::hint::hover(ui.ctx(), &drag_resp, t!("hint.meter.drag"));
 
         let title = module_title(kind);
         ui.painter().text(
-            egui::pos2(header.min.x + 24.0, header.center().y),
+            egui::pos2(header.min.x + 6.0, header.center().y),
             egui::Align2::LEFT_CENTER,
             title,
             egui::FontId::proportional(crate::theme::SMALL_FONT),
             crate::theme::text_secondary(),
         );
 
-        let close_rect = egui::Rect::from_min_size(
-            egui::pos2(header.max.x - 20.0, header.min.y),
-            egui::vec2(20.0, MODULE_HEADER_H),
+        let settings_resp = ui.interact(
+            settings_rect,
+            ui.scope_id().with((kind, "meter_settings")),
+            egui::Sense::click(),
         );
+        if settings_resp.hovered() {
+            ui.painter().rect_filled(
+                settings_rect.shrink(3.0),
+                3.0,
+                crate::theme::hover_color(crate::theme::line_fg()),
+            );
+        }
+        icon_at(
+            ui,
+            settings_rect,
+            egui_material_icons::icons::ICON_SETTINGS,
+            if settings_resp.hovered() {
+                crate::theme::text_primary()
+            } else {
+                crate::theme::text_muted()
+            },
+        );
+        crate::widgets::hint::hover(ui.ctx(), &settings_resp, t!("hint.meter.settings"));
+        if settings_resp.clicked() {
+            self.open_settings = if self.open_settings == Some(kind) {
+                None
+            } else {
+                Some(kind)
+            };
+        }
         let close_resp = ui.interact(
             close_rect,
             ui.scope_id().with((kind, "meter_close")),
@@ -436,6 +486,27 @@ impl MeterPanelState {
         let body = egui::Rect::from_min_max(egui::pos2(rect.min.x, header.max.y), rect.max);
         if let Some(module) = self.modules.get_mut(&kind) {
             module.draw(ui, body);
+        }
+
+        if self.open_settings == Some(kind)
+            && let Some(module) = self.modules.get_mut(&kind)
+        {
+            let bg = crate::theme::app_bg();
+            ui.painter().rect_filled(
+                rect,
+                0.0,
+                egui::Color32::from_rgba_unmultiplied(bg.r(), bg.g(), bg.b(), 220),
+            );
+            let panel = rect.shrink2(egui::vec2(10.0, 8.0));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(panel), |ui| {
+                ui.label(
+                    egui::RichText::new(t!("meter.settings"))
+                        .size(crate::theme::SMALL_FONT)
+                        .color(crate::theme::text_secondary()),
+                );
+                ui.add_space(4.0);
+                module.settings_ui(ui);
+            });
         }
         (false, remove, drag)
     }

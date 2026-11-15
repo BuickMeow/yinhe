@@ -1,4 +1,5 @@
 use eframe::egui;
+use rust_i18n::t;
 use yinhe_meter::SpectrogramAnalyzer;
 
 use super::{MeterModule, plot_bg, small_label};
@@ -133,6 +134,28 @@ impl MeterModule for SpectrogramModule {
             "Hz",
             crate::theme::text_muted(),
         );
+    }
+
+    fn settings_ui(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label(t!("meter.fft_size"));
+            let mut size = self.analyzer.fft_size();
+            egui::ComboBox::from_id_salt("meter_spectrogram_fft")
+                .selected_text(size.to_string())
+                .show_ui(ui, |ui| {
+                    for &candidate in yinhe_meter::spectrum::FFT_SIZES {
+                        if ui
+                            .selectable_value(&mut size, candidate, candidate.to_string())
+                            .changed()
+                        {
+                            self.analyzer =
+                                SpectrogramAnalyzer::new(self.sample_rate, candidate, 512);
+                            self.texture = None;
+                            self.dirty = true;
+                        }
+                    }
+                });
+        });
     }
 
     fn reset(&mut self) {

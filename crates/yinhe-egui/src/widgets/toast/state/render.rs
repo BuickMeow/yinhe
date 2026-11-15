@@ -155,7 +155,12 @@ impl Notifications {
 
     /// 在歌曲标题右侧的可用区 `area` 内绘制一行状态。
     /// 只用 painter 自绘，不注册布局控件，不会撑高标题栏。
-    pub fn show_title_bar(&mut self, ui: &mut egui::Ui, area: egui::Rect) -> egui::Rect {
+    pub fn show_title_bar(
+        &mut self,
+        ui: &mut egui::Ui,
+        area: egui::Rect,
+        progress_h: f32,
+    ) -> egui::Rect {
         self.tick();
         // 进行中的任务需要持续刷新百分比。
         if self.items.iter().any(|n| n.source.is_some()) {
@@ -220,9 +225,11 @@ impl Notifications {
 
         // 左侧全高进度条：淡强调色底 + 实心进度 + 百分比居中。
         let text_left = if let Some(p) = row.progress {
+            let bar_h = progress_h.clamp(12.0, PROGRESS_H);
+            let bar_pad = (BAR_H - bar_h) / 2.0;
             let bar_rect = egui::Rect::from_min_size(
-                egui::pos2(rect.min.x + 2.0, rect.center().y - PROGRESS_H / 2.0),
-                egui::vec2(PROGRESS_W, PROGRESS_H),
+                egui::pos2(rect.min.x + bar_pad, rect.center().y - bar_h / 2.0),
+                egui::vec2(PROGRESS_W, bar_h),
             );
             let accent = match row.kind {
                 ToastKind::Warning => crate::theme::warning_gold(),

@@ -1,11 +1,12 @@
 use eframe::egui;
+use rust_i18n::t;
 use yinhe_meter::SpectrumAnalyzer;
 
 use super::{MeterModule, grid, plot_bg, small_label};
 
 const COLUMNS: usize = 256;
 /// 频谱默认用更长窗口换取低频分辨率；谱线本身仍由 FFT 分辨率决定。
-const FFT_SIZE: usize = 8192;
+const FFT_SIZE: usize = 16_384;
 const MIN_FREQ: f32 = 20.0;
 const MAX_FREQ: f32 = 20_000.0;
 const MIN_DB: f32 = -90.0;
@@ -15,6 +16,8 @@ pub(super) struct SpectrumModule {
     smooth: Vec<f32>,
     outline: Vec<egui::Pos2>,
     last_dt: f32,
+    /// 左端显示频率：捏合/滚轮放大时下探到更低频段。
+    min_freq: f32,
 }
 
 impl SpectrumModule {
@@ -24,11 +27,13 @@ impl SpectrumModule {
             smooth: vec![MIN_DB; COLUMNS],
             outline: Vec::with_capacity(COLUMNS),
             last_dt: 1.0 / 60.0,
+            min_freq: MIN_FREQ,
         }
     }
 
-    fn x_for_freq(rect: egui::Rect, freq: f32) -> f32 {
-        let t = (freq.clamp(MIN_FREQ, MAX_FREQ) / MIN_FREQ).ln() / (MAX_FREQ / MIN_FREQ).ln();
+    fn x_for_freq(&self, rect: egui::Rect, freq: f32) -> f32 {
+        let t = (freq.clamp(self.min_freq, MAX_FREQ) / self.min_freq).ln()
+            / (MAX_FREQ / self.min_freq).ln();
         rect.min.x + rect.width() * t
     }
 }
@@ -42,13 +47,25 @@ impl MeterModule for SpectrumModule {
     }
 
     fn draw(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
+        if ui.rect_contains_pointer(rect) {
+            let zoom_delta = ui.input(|i| i.zoom_delta());
+            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+            let factor = zoom_delta * (1.0 + scroll * 0.002);
+            if (factor - 1.0).abs() > 1e-4 {
+                self.min_freq = (self.min_freq / factor).clamp(MIN_FREQ, 2_000.0);
+            }
+        }
+
         plot_bg(ui, rect);
         let body = rect.shrink2(egui::vec2(6.0, 4.0));
         if body.width() < 20.0 || body.height() < 16.0 {
             return;
         }
         for f in [100.0, 1_000.0, 10_000.0] {
-            let x = Self::x_for_freq(body, f);
+            if f < self.min_freq {
+                continue;
+            }
+            let x = self.x_for_freq(body, f);
             small_label(
                 ui,
                 egui::pos2(x + 2.0, body.max.y - 1.0),
@@ -70,7 +87,8 @@ impl MeterModule for SpectrumModule {
         for i in 0..COLUMNS {
             // 取每列中心频率，在对数轴/FFT 线性轴之间做插值：
             // 低频列间距常常小于一个 FFT bin，直接取整会画出很长的水平台阶。
-            let f = MIN_FREQ * (MAX_FREQ / MIN_FREQ).powf((i as f32 + 0.5) / COLUMNS as f32);
+            let f =
+                self.min_freq * (MAX_FREQ / self.min_freq).powf((i as f32 + 0.5) / COLUMNS as f32);
             let exact_bin =
                 f * self.analyzer.fft_size() as f32 / self.analyzer.sample_rate() as f32;
             let b0 = exact_bin.floor() as usize;
@@ -116,5 +134,27 @@ impl MeterModule for SpectrumModule {
     fn reset(&mut self) {
         self.analyzer.reset();
         self.smooth.fill(MIN_DB);
+        self.min_freq = MIN_FREQ;
+    }
+
+    fn settings_ui(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label(t!("meter.fft_size"));
+            let mut size = self.analyzer.fft_size();
+            egui::ComboBox::from_id_salt("meter_spectrum_fft")
+                .selected_text(size.to_string())
+                .show_ui(ui, |ui| {
+                    for &candidate in yinhe_meter::spectrum::FFT_SIZES {
+                        if ui
+                            .selectable_value(&mut size, candidate, candidate.to_string())
+                            .changed()
+                        {
+                            self.analyzer =
+                                SpectrumAnalyzer::new(self.analyzer.sample_rate(), candidate);
+                            self.smooth.fill(MIN_DB);
+                        }
+                    }
+                });
+        });
     }
 }

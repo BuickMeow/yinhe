@@ -1,11 +1,14 @@
 use eframe::egui;
+use rust_i18n::t;
 use yinhe_meter::ScopeBuffer;
 
 use super::{MeterModule, grid, plot_bg};
 
 pub(super) struct OscilloscopeModule {
     buffer: ScopeBuffer,
+    sample_rate: u32,
     window_frames: usize,
+    window_ms: f32,
     samples: Vec<f32>,
     left: Vec<egui::Pos2>,
     right: Vec<egui::Pos2>,
@@ -15,7 +18,9 @@ impl OscilloscopeModule {
     pub(super) fn new(sample_rate: u32) -> Self {
         Self {
             buffer: ScopeBuffer::default_for(sample_rate),
+            sample_rate,
             window_frames: ((sample_rate as usize * 20) / 1000).max(64),
+            window_ms: 20.0,
             samples: Vec::new(),
             left: Vec::new(),
             right: Vec::new(),
@@ -77,5 +82,27 @@ impl MeterModule for OscilloscopeModule {
         self.samples.clear();
         self.left.clear();
         self.right.clear();
+    }
+
+    fn settings_ui(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label(t!("meter.time_window"));
+            let mut ms = self.window_ms;
+            egui::ComboBox::from_id_salt("meter_scope_window")
+                .selected_text(format!("{ms:.0} ms"))
+                .show_ui(ui, |ui| {
+                    for candidate in [5.0_f32, 10.0, 20.0, 50.0] {
+                        if ui
+                            .selectable_value(&mut ms, candidate, format!("{candidate:.0} ms"))
+                            .changed()
+                        {
+                            self.window_ms = candidate;
+                            self.window_frames =
+                                ((self.sample_rate as f32 * candidate) / 1000.0) as usize;
+                            self.window_frames = self.window_frames.max(64);
+                        }
+                    }
+                });
+        });
     }
 }
