@@ -19,8 +19,10 @@ pub enum ArRow {
 pub struct ArRowLayout {
     /// 每轨第一行的行号（前缀和），len = num_tracks。
     row_starts: Vec<u32>,
-    /// 每轨的行数（1 + 展开的 lane 数），len = num_tracks。
+    /// 每轨的行数（1 + 展开的 lane 数；折叠隐藏时为 0），len = num_tracks。
     row_counts: Vec<u32>,
+    /// 可见行序列（折叠子轨不进入）。
+    rows: Vec<ArRow>,
     /// 总行数。
     total_rows: u32,
 }
@@ -29,18 +31,34 @@ impl ArRowLayout {
     /// 从每轨展开的 lane 数构建（未展开的轨传 0）。
     /// 展开轨 = 1 主行 + lane 数 行，不加占位行（加号内嵌在自动化行右侧）。
     pub fn new(expanded_lane_counts: impl IntoIterator<Item = u32>) -> Self {
+        let counts: Vec<u32> = expanded_lane_counts.into_iter().collect();
+        Self::new_with_visible(&counts, &vec![true; counts.len()])
+    }
+
+    /// 带可见性构造：折叠文件夹的子轨 `visible=false`，不占行。
+    pub fn new_with_visible(expanded_lane_counts: &[u32], visible: &[bool]) -> Self {
         let mut row_starts = Vec::new();
         let mut row_counts = Vec::new();
+        let mut rows = Vec::new();
         let mut acc = 0u32;
-        for lanes in expanded_lane_counts {
+        for (i, &lanes) in expanded_lane_counts.iter().enumerate() {
             row_starts.push(acc);
-            let rows = 1 + lanes;
-            row_counts.push(rows);
-            acc += rows;
+            if !visible.get(i).copied().unwrap_or(true) {
+                row_counts.push(0);
+                continue;
+            }
+            let count = 1 + lanes;
+            row_counts.push(count);
+            rows.push(ArRow::Track(i));
+            for sub in 0..lanes as usize {
+                rows.push(ArRow::Automation(i, sub));
+            }
+            acc += count;
         }
         Self {
             row_starts,
             row_counts,
+            rows,
             total_rows: acc,
         }
     }
@@ -81,17 +99,7 @@ impl ArRowLayout {
 
     /// 行号 → 命中结果。越界行号返回 None。
     pub fn row_hit(&self, row: usize) -> Option<ArRow> {
-        if row >= self.total_rows as usize {
-            return None;
-        }
-        // 最后一个 row_start <= row 的轨。
-        let track = self.row_starts.partition_point(|&s| s as usize <= row) - 1;
-        let sub = row - self.row_starts[track] as usize;
-        if sub == 0 {
-            Some(ArRow::Track(track))
-        } else {
-            Some(ArRow::Automation(track, sub - 1))
-        }
+        self.rows.get(row).copied()
     }
 
     /// 音乐坐标 y（未减 scroll_y）→ 命中行。
@@ -119,7 +127,14 @@ impl ArRowLayout {
     pub fn track_offsets(&self, lane_height: f32) -> Vec<f32> {
         self.row_starts
             .iter()
-            .map(|&s| s as f32 * lane_height)
+            .zip(&self.row_counts)
+            .map(|(&s, &count)| {
+                if count == 0 {
+                    -1.0e6
+                } else {
+                    s as f32 * lane_height
+                }
+            })
             .collect()
     }
 
@@ -237,5 +252,15 @@ mod tests {
         // 空布局。
         let empty = ArRowLayout::new([]);
         assert_eq!(empty.visible_track_range(0.0, 100.0, lh), (0, 0));
+    }
+
+    #[test]
+    fn hidden_rows_are_skipped() {
+        let l = ArRowLayout::new_with_visible(&[0, 0, 0], &[true, false, true]);
+        assert_eq!(l.total_rows(), 2);
+        assert_eq!(l.row_hit(0), Some(ArRow::Track(0)));
+        assert_eq!(l.row_hit(1), Some(ArRow::Track(2)));
+        assert_eq!(l.track_rows(1), 0);
+        assert!(l.track_offsets(10.0)[1] < 0.0);
     }
 }

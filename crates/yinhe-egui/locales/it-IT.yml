@@ -1306,6 +1306,11 @@ track.drum_channel: "Canale batteria"
 undo.edit_track_info: "Modifica info traccia"
 undo.track_mute_solo: "Regola mute/solo"
 arrange.rename_track: "Rinomina traccia"
+hint.arrange.folder_toggle: "Espandi/comprimi cartella"
+arrange.group_tracks: "Raggruppa tracce selezionate"
+arrange.ungroup_folder: "Separa cartella"
+undo.group_folder: "Raggruppa in cartella"
+undo.ungroup_folder: "Separa cartella"
 history.start: "Inizio"
 
 # 内置音源参数窗口

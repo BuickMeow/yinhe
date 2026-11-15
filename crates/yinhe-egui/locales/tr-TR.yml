@@ -1307,6 +1307,11 @@ track.drum_channel: "Davul kanalı"
 undo.edit_track_info: "Parça bilgilerini düzenle"
 undo.track_mute_solo: "Sessiz/solo ayarla"
 arrange.rename_track: "Parçayı yeniden adlandır"
+hint.arrange.folder_toggle: "Klasörü aç/kapat"
+arrange.group_tracks: "Seçili parçaları grupla"
+arrange.ungroup_folder: "Klasör grubunu çöz"
+undo.group_folder: "Klasöre grupla"
+undo.ungroup_folder: "Klasör grubunu çöz"
 history.start: "Başlangıç"
 
 # 内置音源参数窗口

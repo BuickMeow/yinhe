@@ -62,7 +62,7 @@ impl CaGroups {
                     .entry(track.audio_channel.unwrap_or(0))
                     .or_default()
                     .push(i),
-                TrackKind::Master => {}
+                TrackKind::Folder | TrackKind::Master => {}
             }
         }
         let midi = midi_map

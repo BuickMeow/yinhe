@@ -103,6 +103,7 @@ impl Document {
         }
         let conductor = self.edit.track_cache.conductor_idx;
         let num_tracks = model.tracks.len() as u16;
+        let folder_visible = model.folder_visible_mask();
 
         self.edit.selected.clear();
         // 锁定轨不参与全选；按连续轨道段生成矩形（Selection 的矩形是
@@ -110,6 +111,7 @@ impl Document {
         let usable: Vec<u16> = (0..num_tracks)
             .filter(|&t| {
                 Some(t) != conductor
+                    && folder_visible.get(t as usize).copied().unwrap_or(true)
                     && !self
                         .edit
                         .track_locked

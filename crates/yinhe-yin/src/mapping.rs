@@ -60,6 +60,12 @@ pub struct TrackMap {
     /// 音轨种类（旧存档无此字段，默认 Midi）。
     #[serde(default)]
     pub kind: yinhe_core::TrackKind,
+    /// 文件夹嵌套深度（0 = 根层）。
+    #[serde(default)]
+    pub folder_depth: u8,
+    /// 文件夹是否折叠（仅 Folder 轨有意义）。
+    #[serde(default)]
+    pub collapsed: bool,
     /// 音频通道号（仅音频轨有意义）。
     #[serde(default)]
     pub audio_channel: Option<u16>,
@@ -115,6 +121,8 @@ impl MappingFile {
                 muted: t.muted,
                 soloed: t.soloed,
                 kind: t.kind,
+                folder_depth: t.folder_depth,
+                collapsed: t.collapsed,
                 audio_channel: t.audio_channel,
                 audio_clips: t.audio_clips.clone(),
                 clips: t.clips.clone(),

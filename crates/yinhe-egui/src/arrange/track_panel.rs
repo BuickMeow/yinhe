@@ -5,7 +5,7 @@ use eframe::egui;
 use egui_material_icons::icons::{ICON_ADD, ICON_KEYBOARD_ARROW_DOWN, ICON_KEYBOARD_ARROW_RIGHT};
 use rust_i18n::t;
 
-use yinhe_core::TrackInfo;
+use yinhe_core::{TrackInfo, TrackKind};
 use yinhe_types::{ArRow, ArRowLayout, AutomationLane, AutomationTarget};
 
 use yinhe_editor_core::document::TrackOverride;
@@ -220,7 +220,13 @@ pub(crate) fn show(
                 .copied()
                 .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
             let color32 = crate::theme::rgba_to_color32((color[0], color[1], color[2], color[3]));
-            let badge_rect = render::draw_badge(&painter, row_rect, lh, color32);
+            let depth = tracks.get(track).map(|t| t.folder_depth).unwrap_or(0);
+            let indent = f32::from(depth) * 14.0;
+            let content_rect = egui::Rect::from_min_size(
+                row_rect.min + egui::vec2(indent, 0.0),
+                egui::vec2((row_rect.width() - indent).max(80.0), row_rect.height()),
+            );
+            let badge_rect = render::draw_badge(&painter, content_rect, lh, color32);
 
             // 完全复刻普通轨的字号与几何：详情模式两行（×0.25，y 0.30/0.70，均 primary），
             // 紧凑模式单行（×0.45 居中）；唯一差异是文本内容（自动化名 / 所属音轨）。
@@ -369,79 +375,138 @@ pub(crate) fn show(
                 .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR)
         };
         let color32 = crate::theme::rgba_to_color32((color[0], color[1], color[2], color[3]));
-        let badge_rect = render::draw_badge(&painter, row_rect, lh, color32);
+        let is_folder = tracks.get(idx).is_some_and(|t| t.kind == TrackKind::Folder);
+        let folder_depth = tracks.get(idx).map(|t| t.folder_depth).unwrap_or(0);
+        let indent = f32::from(folder_depth) * 14.0;
+        let content_rect = egui::Rect::from_min_size(
+            row_rect.min + egui::vec2(indent, 0.0),
+            egui::vec2((row_rect.width() - indent).max(80.0), row_rect.height()),
+        );
+        let badge_rect = render::draw_badge(&painter, content_rect, lh, color32);
 
         if !is_conductor {
-            let expanded = arr_am_expanded.get(idx).copied().unwrap_or(false);
-            // 未展开且完全没有任何自动化 → 直接在色带上给「+」，点击弹创建自动化菜单
-            //（无需先展开）；否则照常显示展开/收起 chevron。
-            let has_any_lane = tracks
-                .get(idx)
-                .is_some_and(|t| !t.automation_lanes.is_empty());
-            let icon_color = hover::icon_contrast_color(color);
-            // 兄弟轨道联动：本轨任意行（主/自动化）被悬停时，图标一并显示。
-            let family_hovered = hover_track == Some(idx);
-            if !expanded && !has_any_lane {
-                // 无自动化未展开：色带同一图标位给无边框「+」，点击直接打开
-                // 「添加自动化」窗口（设备维度）；仅悬浮显示。
-                let plus_center = egui::pos2(
-                    badge_rect.center().x,
-                    badge_rect.max.y - BADGE_ICON_BOTTOM_INSET,
-                );
-                let plus_rect = egui::Rect::from_center_size(plus_center, egui::vec2(12.0, 16.0));
-                if family_hovered && pointer_pos.is_some_and(|p| plus_rect.contains(p)) {
-                    crate::widgets::hint::set(ui.ctx(), t!("hint.arrange.add_automation"));
-                }
-                if family_hovered {
-                    no_drag_rects.push(plus_rect);
-                    if badge::badge_icon_button(
-                        ui,
-                        plus_center,
-                        ICON_ADD.codepoint,
-                        ICON_ADD.font_family(),
-                        icon_color,
-                        idx,
-                    ) {
-                        actions.push(TrackAction::OpenAutomationPicker { idx });
-                    }
-                }
-            } else {
-                let icon = if expanded {
-                    ICON_KEYBOARD_ARROW_DOWN
-                } else {
+            if is_folder {
+                let collapsed = tracks.get(idx).is_some_and(|t| t.collapsed);
+                let icon = if collapsed {
                     ICON_KEYBOARD_ARROW_RIGHT
+                } else {
+                    ICON_KEYBOARD_ARROW_DOWN
                 };
-                // chevron 仅在该轨家族被悬浮时显示；颜色按音轨颜色亮度选黑/白保证对比度。
-                let icon_rect = egui::Rect::from_center_size(
+                let icon_color = hover::icon_contrast_color(color);
+                // 文件夹图标放色带中上部，折叠箭头固定在底部（与普通轨 chevron 同位）。
+                if lh >= 28.0 {
+                    painter.text(
+                        egui::pos2(badge_rect.center().x, badge_rect.center().y - 4.0),
+                        egui::Align2::CENTER_CENTER,
+                        egui_material_icons::icons::ICON_FOLDER_OPEN.codepoint,
+                        egui::FontId::new(
+                            crate::theme::ICON_FONT_SM,
+                            egui_material_icons::icons::ICON_FOLDER_OPEN.font_family(),
+                        ),
+                        icon_color,
+                    );
+                }
+                let toggle_rect = egui::Rect::from_center_size(
                     egui::pos2(
                         badge_rect.center().x,
                         badge_rect.max.y - BADGE_ICON_BOTTOM_INSET,
                     ),
                     egui::vec2(12.0, lh.min(16.0)),
                 );
-                let chev_resp = ui.interact(
-                    icon_rect,
-                    egui::Id::unique(("am_chevron", idx)),
+                let resp = ui.interact(
+                    toggle_rect,
+                    egui::Id::unique(("folder_toggle", idx)),
                     egui::Sense::click(),
                 );
-                crate::widgets::hint::hover(ui.ctx(), &chev_resp, t!("hint.arrange.am_expand"));
-                if family_hovered {
-                    no_drag_rects.push(icon_rect);
-                    painter.text(
-                        icon_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        icon.codepoint,
-                        egui::FontId::new(crate::theme::ICON_FONT, icon.font_family()),
-                        icon_color,
-                    );
-                } else if has_any_lane {
-                    // Bitwig 风格占位：不显示 chevron 时用淡点提示该轨有自动化。
-                    painter.circle_filled(icon_rect.center(), 2.0, icon_color.gamma_multiply(0.3));
+                no_drag_rects.push(toggle_rect);
+                crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.arrange.folder_toggle"));
+                painter.text(
+                    toggle_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    icon.codepoint,
+                    egui::FontId::new(crate::theme::ICON_FONT, icon.font_family()),
+                    icon_color,
+                );
+                if resp.clicked() {
+                    actions.push(TrackAction::ToggleFolder { idx });
                 }
-                if chev_resp.clicked()
-                    && let Some(e) = arr_am_expanded.get_mut(idx)
-                {
-                    *e = !*e;
+            } else {
+                let expanded = arr_am_expanded.get(idx).copied().unwrap_or(false);
+                // 未展开且完全没有任何自动化 → 直接在色带上给「+」，点击弹创建自动化菜单
+                //（无需先展开）；否则照常显示展开/收起 chevron。
+                let has_any_lane = tracks
+                    .get(idx)
+                    .is_some_and(|t| !t.automation_lanes.is_empty());
+                let icon_color = hover::icon_contrast_color(color);
+                // 兄弟轨道联动：本轨任意行（主/自动化）被悬停时，图标一并显示。
+                let family_hovered = hover_track == Some(idx);
+                if !expanded && !has_any_lane {
+                    // 无自动化未展开：色带同一图标位给无边框「+」，点击直接打开
+                    // 「添加自动化」窗口（设备维度）；仅悬浮显示。
+                    let plus_center = egui::pos2(
+                        badge_rect.center().x,
+                        badge_rect.max.y - BADGE_ICON_BOTTOM_INSET,
+                    );
+                    let plus_rect =
+                        egui::Rect::from_center_size(plus_center, egui::vec2(12.0, 16.0));
+                    if family_hovered && pointer_pos.is_some_and(|p| plus_rect.contains(p)) {
+                        crate::widgets::hint::set(ui.ctx(), t!("hint.arrange.add_automation"));
+                    }
+                    if family_hovered {
+                        no_drag_rects.push(plus_rect);
+                        if badge::badge_icon_button(
+                            ui,
+                            plus_center,
+                            ICON_ADD.codepoint,
+                            ICON_ADD.font_family(),
+                            icon_color,
+                            idx,
+                        ) {
+                            actions.push(TrackAction::OpenAutomationPicker { idx });
+                        }
+                    }
+                } else {
+                    let icon = if expanded {
+                        ICON_KEYBOARD_ARROW_DOWN
+                    } else {
+                        ICON_KEYBOARD_ARROW_RIGHT
+                    };
+                    // chevron 仅在该轨家族被悬浮时显示；颜色按音轨颜色亮度选黑/白保证对比度。
+                    let icon_rect = egui::Rect::from_center_size(
+                        egui::pos2(
+                            badge_rect.center().x,
+                            badge_rect.max.y - BADGE_ICON_BOTTOM_INSET,
+                        ),
+                        egui::vec2(12.0, lh.min(16.0)),
+                    );
+                    let chev_resp = ui.interact(
+                        icon_rect,
+                        egui::Id::unique(("am_chevron", idx)),
+                        egui::Sense::click(),
+                    );
+                    crate::widgets::hint::hover(ui.ctx(), &chev_resp, t!("hint.arrange.am_expand"));
+                    if family_hovered {
+                        no_drag_rects.push(icon_rect);
+                        painter.text(
+                            icon_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            icon.codepoint,
+                            egui::FontId::new(crate::theme::ICON_FONT, icon.font_family()),
+                            icon_color,
+                        );
+                    } else if has_any_lane {
+                        // Bitwig 风格占位：不显示 chevron 时用淡点提示该轨有自动化。
+                        painter.circle_filled(
+                            icon_rect.center(),
+                            2.0,
+                            icon_color.gamma_multiply(0.3),
+                        );
+                    }
+                    if chev_resp.clicked()
+                        && let Some(e) = arr_am_expanded.get_mut(idx)
+                    {
+                        *e = !*e;
+                    }
                 }
             }
         }
@@ -463,6 +528,7 @@ pub(crate) fn show(
                 "Master".to_string()
             } else {
                 match tracks.get(idx) {
+                    Some(t) if t.kind == TrackKind::Folder => "Folder".to_string(),
                     // 音频轨显示音频通道。
                     Some(t) if t.kind == yinhe_core::TrackKind::Audio => t
                         .audio_channel
@@ -510,7 +576,7 @@ pub(crate) fn show(
                 );
             }
 
-            if !is_conductor {
+            if !is_conductor && !is_folder {
                 let muted = track_overrides.get(idx).map(|o| o.muted).unwrap_or(false);
                 let soloed = track_overrides.get(idx).map(|o| o.soloed).unwrap_or(false);
 
@@ -585,7 +651,7 @@ pub(crate) fn show(
                     .copied()
                     .unwrap_or(((0.0, 0.0), (0.0, 0.0)));
                 crate::widgets::meter::compact_meter(&painter, meter_rect, level, hold);
-            } else {
+            } else if is_conductor {
                 // Conductor 行：Tempo 自动化表（贴右缘；光标处 BPM 按动态上限归一化）。
                 let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
                 let meter_left = meter_right - LEVEL_METER_W;

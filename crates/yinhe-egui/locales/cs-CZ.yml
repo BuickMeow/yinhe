@@ -1307,6 +1307,11 @@ track.drum_channel: "Bicí kanál"
 undo.edit_track_info: "Upravit informace o stopě"
 undo.track_mute_solo: "Upravit ztlumení/solo"
 arrange.rename_track: "Přejmenovat stopu"
+hint.arrange.folder_toggle: "Rozbalit/sbalit složku"
+arrange.group_tracks: "Seskupit vybrané stopy"
+arrange.ungroup_folder: "Zrušit skupinu složky"
+undo.group_folder: "Seskupit do složky"
+undo.ungroup_folder: "Zrušit skupinu složky"
 history.start: "Začátek"
 
 # 内置音源参数窗口

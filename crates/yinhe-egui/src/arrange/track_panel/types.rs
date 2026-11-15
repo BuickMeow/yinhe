@@ -28,4 +28,10 @@ pub(crate) enum TrackAction {
         before: Vec<yinhe_editor_core::document::TrackOverride>,
         after: Vec<yinhe_editor_core::document::TrackOverride>,
     },
+    /// 展开/折叠文件夹。
+    ToggleFolder { idx: usize },
+    /// 把选中轨归入新文件夹。
+    GroupTracks { indices: Vec<usize> },
+    /// 解散文件夹。
+    UngroupTrack { idx: usize },
 }

@@ -71,8 +71,9 @@ pub enum TrackKind {
     #[default]
     Midi,
     Audio,
-    /// 非 MIDI 的 Master/Conductor 轨：只承载 Tempo、拍号等全局事件，
-    /// 不能有音符、不能挂非 Tempo 自动化，不参与混音的 MIDI 通道路由。
+    /// 文件夹轨：不装音符，按 `folder_depth` 包含后续子轨。
+    Folder,
+    /// Master：全局事件 + 音频总输出，强制唯一，不能装音符。
     Master,
 }
 
@@ -315,6 +316,12 @@ pub struct TrackData {
     /// 多条音频轨共享同一音频通道 = 共享同一条混音 strip/insert 链。
     #[serde(default)]
     pub audio_channel: Option<u16>,
+    /// 文件夹嵌套深度（0 = 根层）。Folder 轨本身也占一层。
+    #[serde(default)]
+    pub folder_depth: u8,
+    /// 文件夹是否折叠（仅 Folder 轨有意义）。
+    #[serde(default)]
+    pub collapsed: bool,
     /// 音频片段（仅音频轨有意义），按 start_seconds 排序由编辑命令维护。
     #[serde(default)]
     pub audio_clips: Vec<AudioClip>,
@@ -351,6 +358,8 @@ impl TrackData {
             muted: false,
             soloed: false,
             kind: TrackKind::Midi,
+            folder_depth: 0,
+            collapsed: false,
             audio_channel: None,
             audio_clips: Vec::new(),
             clips: Vec::new(),
@@ -1141,6 +1150,65 @@ impl YinModel {
         }
         self.tracks.insert(0, Arc::new(conductor));
         true
+    }
+
+    /// 规整文件夹深度：非法深度钳到当前允许的层级（旧工程/手工编辑防御）。
+    /// Master 永远在根层；Folder 的下一层允许其子轨。
+    pub fn normalize_folder_structure(&mut self) {
+        let mut allowed = 0u8;
+        for track in self.tracks.iter_mut() {
+            let track = Arc::make_mut(track);
+            if track.kind == TrackKind::Master {
+                track.folder_depth = 0;
+                track.collapsed = false;
+                allowed = 0;
+                continue;
+            }
+            let depth = track.folder_depth.min(allowed);
+            track.folder_depth = depth;
+            if track.kind == TrackKind::Folder {
+                allowed = depth.saturating_add(1);
+            } else {
+                allowed = depth;
+            }
+        }
+    }
+
+    /// 当前折叠状态下，每条轨是否应在 AR 中显示。
+    pub fn folder_visible_mask(&self) -> Vec<bool> {
+        let mut visible = vec![true; self.tracks.len()];
+        let mut stack: Vec<(u8, bool)> = Vec::new();
+        for (i, track) in self.tracks.iter().enumerate() {
+            let depth = track.folder_depth;
+            while let Some(&(d, _)) = stack.last() {
+                if d >= depth {
+                    stack.pop();
+                } else {
+                    break;
+                }
+            }
+            visible[i] = stack.iter().all(|(_, collapsed)| !*collapsed);
+            if track.kind == TrackKind::Folder {
+                stack.push((depth, track.collapsed));
+            }
+        }
+        visible
+    }
+
+    /// Folder 的子树结束下标（不含）。非 Folder 返回 `idx + 1`。
+    pub fn subtree_end(&self, idx: usize) -> usize {
+        let Some(track) = self.tracks.get(idx) else {
+            return idx;
+        };
+        if track.kind != TrackKind::Folder {
+            return idx + 1;
+        }
+        let depth = track.folder_depth;
+        let mut end = idx + 1;
+        while end < self.tracks.len() && self.tracks[end].folder_depth > depth {
+            end += 1;
+        }
+        end
     }
 
     /// Iterate all notes belonging to a specific track.

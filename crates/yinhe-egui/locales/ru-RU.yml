@@ -1306,6 +1306,11 @@ track.drum_channel: "Канал ударных"
 undo.edit_track_info: "Изменение информации дорожки"
 undo.track_mute_solo: "Изменить mute/solo"
 arrange.rename_track: "Переименовать дорожку"
+hint.arrange.folder_toggle: "Развернуть/свернуть папку"
+arrange.group_tracks: "Сгруппировать выбранные дорожки"
+arrange.ungroup_folder: "Разгруппировать папку"
+undo.group_folder: "Сгруппировать в папку"
+undo.ungroup_folder: "Разгруппировать папку"
 history.start: "Начало"
 
 # 内置音源参数窗口

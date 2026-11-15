@@ -202,19 +202,23 @@ pub fn show(
     let conductor_idx = doc.edit.track_cache.conductor_idx;
     let build_row_layout = |edit: &yinhe_editor_core::edit_state::EditState,
                             model: &yinhe_core::YinModel| {
-        yinhe_types::ArRowLayout::new((0..num_tracks).map(|i| {
-            if edit.arr_am_expanded.get(i).copied().unwrap_or(false)
-                && Some(i as u16) != conductor_idx
-            {
-                model
-                    .tracks
-                    .get(i)
-                    .map(|t| t.automation_lanes.len())
-                    .unwrap_or(0) as u32
-            } else {
-                0
-            }
-        }))
+        let counts: Vec<u32> = (0..num_tracks)
+            .map(|i| {
+                if edit.arr_am_expanded.get(i).copied().unwrap_or(false)
+                    && Some(i as u16) != conductor_idx
+                {
+                    model
+                        .tracks
+                        .get(i)
+                        .map(|t| t.automation_lanes.len())
+                        .unwrap_or(0) as u32
+                } else {
+                    0
+                }
+            })
+            .collect();
+        let visible = model.folder_visible_mask();
+        yinhe_types::ArRowLayout::new_with_visible(&counts, &visible)
     };
     let mut row_layout = build_row_layout(&doc.edit, &doc.data.model);
     // 清理已删除 lane 的残留视图状态（undo 删除 lane 后）
@@ -587,6 +591,31 @@ pub fn show(
                         (None, String::new())
                     }
                 }
+                track_panel::TrackAction::ToggleFolder { idx } => {
+                    structural = false;
+                    let model = std::sync::Arc::make_mut(&mut doc.data.model);
+                    if let Some(track) = model.tracks.get_mut(*idx) {
+                        std::sync::Arc::make_mut(track).collapsed ^= true;
+                    }
+                    // 折叠后隐藏子轨：清掉 AR 选框，避免后续删除/移动波及不可见音符。
+                    doc.edit.arr_sel_rect.clear();
+                    doc.edit.selected.clear_rects();
+                    (None, String::new())
+                }
+                track_panel::TrackAction::GroupTracks { indices } => {
+                    structural = false;
+                    (
+                        doc.group_tracks(indices),
+                        t!("undo.group_folder").to_string(),
+                    )
+                }
+                track_panel::TrackAction::UngroupTrack { idx } => {
+                    structural = false;
+                    (
+                        doc.ungroup_track(*idx),
+                        t!("undo.ungroup_folder").to_string(),
+                    )
+                }
                 track_panel::TrackAction::CommitMuteSolo { before, after } => {
                     structural = false;
                     (
@@ -656,12 +685,21 @@ pub fn show(
     // 片段交互命令：同一帧出 scope 后应用（含 undo）。
     let mut audio_commands: Vec<view_ui::AudioEditCmd> = Vec::new();
     let mut clip_commands: Vec<view_ui::ClipEditCmd> = Vec::new();
+    // 折叠文件夹的子轨对 GPU/命中测试不可见；与用户手动 eye 显隐合并。
+    let folder_visible = doc.data.model.folder_visible_mask();
+    let effective_visible: Vec<bool> = doc
+        .edit
+        .track_visible
+        .iter()
+        .zip(folder_visible.iter())
+        .map(|(user, folder)| *user && *folder)
+        .collect();
     ui.scope_builder(egui::UiBuilder::new().max_rect(gpu_rect), |ui| {
         let model = &*doc.data.model;
         let (def_num, def_den) = model.tempo_map.time_sig_default;
         let data = ArrangeData {
             midi: Some(model as &dyn yinhe_types::NoteSource),
-            track_visible: &doc.edit.track_visible,
+            track_visible: &effective_visible,
             track_colors: &doc.edit.track_cache.colors,
             track_info: &doc.edit.track_cache.info,
             quantize: doc.edit.quantize_arrange.resolved_with_time_sig(

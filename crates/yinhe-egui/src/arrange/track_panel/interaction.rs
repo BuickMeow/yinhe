@@ -52,13 +52,21 @@ pub fn handle_interactions(
         if let Some(pos) = resp.interact_pointer_pos()
             && let Some(idx) = hit(pos)
         {
-            // 双击：选中该行（track_selected = {该行}，即成为主音轨）并打开 PR。
-            let track_idx = track_info[idx].index;
-            track_selected.clear();
-            track_selected.insert(track_idx);
-            *selection_anchor = Some(track_idx);
-            *request_pianoroll = true;
-            am_lane_selected.clear();
+            // 双击文件夹 = 折叠/展开，不打开 PR（文件夹没有音符）。
+            if tracks
+                .get(idx)
+                .is_some_and(|t| t.kind == yinhe_core::TrackKind::Folder)
+            {
+                actions.push(TrackAction::ToggleFolder { idx });
+            } else {
+                // 双击：选中该行（track_selected = {该行}，即成为主音轨）并打开 PR。
+                let track_idx = track_info[idx].index;
+                track_selected.clear();
+                track_selected.insert(track_idx);
+                *selection_anchor = Some(track_idx);
+                *request_pianoroll = true;
+                am_lane_selected.clear();
+            }
         }
     } else if resp.clicked()
         && !dragging
@@ -190,6 +198,40 @@ pub fn handle_interactions(
             actions.push(TrackAction::ShowProperties { idx });
             ui.close();
         }
+        let track_kind = tracks.get(idx).map(|t| t.kind);
+        let is_folder = track_kind == Some(yinhe_core::TrackKind::Folder);
+        if is_folder
+            && ui
+                .add(crate::widgets::menu::menu_item_action(
+                    ui,
+                    false,
+                    t!("arrange.ungroup_folder").as_ref(),
+                    "",
+                ))
+                .clicked()
+        {
+            actions.push(TrackAction::UngroupTrack { idx });
+            ui.close();
+        } else if !is_folder && !is_conductor && !track_selected.is_empty() {
+            let mut indices: Vec<usize> = track_selected.iter().map(|&t| t as usize).collect();
+            if !indices.contains(&idx) {
+                indices.push(idx);
+            }
+            indices.sort_unstable();
+            indices.dedup();
+            if ui
+                .add(crate::widgets::menu::menu_item_action(
+                    ui,
+                    false,
+                    t!("arrange.group_tracks").as_ref(),
+                    "",
+                ))
+                .clicked()
+            {
+                actions.push(TrackAction::GroupTracks { indices });
+                ui.close();
+            }
+        }
         ui.separator();
 
         if let Some(lane_idx) = sub {
@@ -208,7 +250,10 @@ pub fn handle_interactions(
             return;
         }
 
-        if !is_conductor {
+        if !is_conductor && !is_folder {
+            let folder_blocks_reorder = tracks
+                .iter()
+                .any(|t| t.kind == yinhe_core::TrackKind::Folder);
             if ui
                 .add(crate::widgets::menu::menu_item_action(
                     ui,
@@ -238,7 +283,8 @@ pub fn handle_interactions(
                 ui.close();
             }
             ui.separator();
-            if idx > 0
+            if !folder_blocks_reorder
+                && idx > 0
                 && conductor_track_idx != Some((idx - 1) as u16)
                 && ui
                     .add(crate::widgets::menu::menu_item_action(
@@ -252,7 +298,8 @@ pub fn handle_interactions(
                 actions.push(TrackAction::MoveUp { idx });
                 ui.close();
             }
-            if idx < num_tracks - 1
+            if !folder_blocks_reorder
+                && idx < num_tracks - 1
                 && ui
                     .add(crate::widgets::menu::menu_item_action(
                         ui,
@@ -313,6 +360,9 @@ pub fn handle_interactions(
     // 起点落在 M/S、chevron、加号等按钮上时不排序，只有行内空白区可拖拽。
     if resp.drag_started()
         && !dragging
+        && !tracks
+            .iter()
+            .any(|t| t.kind == yinhe_core::TrackKind::Folder)
         && let Some(pos) = resp.interact_pointer_pos()
         && !no_drag_rects.iter().any(|r| r.contains(pos))
         && matches!(

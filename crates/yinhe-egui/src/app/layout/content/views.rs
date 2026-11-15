@@ -282,6 +282,12 @@ impl App {
                         .get(t as usize)
                         .copied()
                         .unwrap_or(false)
+                        && doc
+                            .data
+                            .model
+                            .tracks
+                            .get(t as usize)
+                            .is_some_and(|tr| tr.kind == yinhe_core::TrackKind::Midi)
                 });
                 let pr_visible: Vec<bool> = doc.edit.pr_visible();
                 // CLIP 模式：时间窗由 piano_view 夹到 Active Clip，其他轨灰显并锁定；

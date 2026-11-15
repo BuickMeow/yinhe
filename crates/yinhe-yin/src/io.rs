@@ -319,6 +319,8 @@ fn load_yin_bytes_inner(
             muted: tm.muted,
             soloed: tm.soloed,
             kind: tm.kind,
+            folder_depth: tm.folder_depth,
+            collapsed: tm.collapsed,
             audio_channel: tm.audio_channel,
             audio_clips: tm.audio_clips.clone(),
             clips: tm.clips.clone(),

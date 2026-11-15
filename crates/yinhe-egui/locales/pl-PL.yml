@@ -1307,6 +1307,11 @@ track.drum_channel: "Kanał perkusji"
 undo.edit_track_info: "Edytuj informacje ścieżki"
 undo.track_mute_solo: "Dostosuj wyciszenie/solo"
 arrange.rename_track: "Zmień nazwę ścieżki"
+hint.arrange.folder_toggle: "Rozwiń/zwiń folder"
+arrange.group_tracks: "Grupuj wybrane ścieżki"
+arrange.ungroup_folder: "Rozgrupuj folder"
+undo.group_folder: "Grupuj w folderze"
+undo.ungroup_folder: "Rozgrupuj folder"
 history.start: "Początek"
 
 # 内置音源参数窗口

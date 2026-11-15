@@ -1305,6 +1305,11 @@ track.drum_channel: "Drum Channel"
 undo.edit_track_info: "Edit track info"
 undo.track_mute_solo: "Mute/solo tracks"
 arrange.rename_track: "Rename Track"
+hint.arrange.folder_toggle: "Expand/collapse folder"
+arrange.group_tracks: "Group selected tracks"
+arrange.ungroup_folder: "Ungroup folder"
+undo.group_folder: "Group into folder"
+undo.ungroup_folder: "Ungroup folder"
 history.start: "Start"
 
 # 内置音源参数窗口

@@ -150,6 +150,12 @@ impl Document {
         let channel = (0..16u8).find(|c| !used_channels.contains(c)).unwrap_or(0);
 
         let mut new_track = yinhe_core::TrackData::new(0, channel);
+        // 新轨跟随插入位置的层级：插在子轨后仍是子轨，插在文件夹后是同级。
+        new_track.folder_depth = model
+            .tracks
+            .get(after_idx)
+            .map(|t| t.folder_depth)
+            .unwrap_or(0);
         // 命名规则说明见 max_track_number。
         new_track.name = format!("Track {}", max_track_number(model) + 1);
 
@@ -208,6 +214,135 @@ impl Document {
         })
     }
 
+    /// 把一段连续选中轨归入新建文件夹。选中区间必须完整覆盖其中的文件夹子树。
+    pub fn group_tracks(&mut self, indices: &[usize]) -> Option<UndoAction> {
+        if indices.is_empty() {
+            return None;
+        }
+        let model = &self.data.model;
+        let num_tracks = model.tracks.len();
+        if indices.iter().any(|&i| i >= num_tracks) {
+            return None;
+        }
+        if indices
+            .iter()
+            .any(|&i| model.tracks[i].kind == yinhe_core::TrackKind::Master)
+        {
+            return None;
+        }
+        // 选中的 Folder 自动带上整个子树。
+        let mut selected = vec![false; num_tracks];
+        for &i in indices {
+            let end = model.subtree_end(i);
+            for flag in &mut selected[i..end] {
+                *flag = true;
+            }
+        }
+        let first = selected.iter().position(|&b| b)?;
+        let last = selected.iter().rposition(|&b| b)?;
+        if !selected[first..=last].iter().all(|&b| b) {
+            return None;
+        }
+        let base_depth = model.tracks[first].folder_depth;
+        let folder_color = model.tracks[first].color;
+
+        let tracks_before: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
+        let model = Arc::make_mut(&mut self.data.model);
+        let mut folder = yinhe_core::TrackData::new(0, 0);
+        folder.name = "Folder".to_string();
+        folder.kind = yinhe_core::TrackKind::Folder;
+        folder.folder_depth = base_depth;
+        folder.color = folder_color;
+        model.tracks.insert(first, Arc::new(folder));
+
+        let note_remap: Vec<u16> = (0..tracks_before.len())
+            .map(|i| if i < first { i as u16 } else { (i + 1) as u16 })
+            .collect();
+        let note_remap_inverse: Vec<u16> = (0..model.tracks.len())
+            .map(|i| {
+                if i == first {
+                    u16::MAX
+                } else if i < first {
+                    i as u16
+                } else {
+                    (i - 1) as u16
+                }
+            })
+            .collect();
+
+        if first == tracks_before.len() {
+            model.push_empty_track_stats(1);
+        } else {
+            model.apply_track_remap(&note_remap);
+            model.remap_track_stats(&note_remap);
+        }
+        // 原选中区间整体成为新文件夹的子轨，深度 +1。
+        for track in &mut model.tracks[first + 1..=last + 1] {
+            let track = Arc::make_mut(track);
+            track.folder_depth = track.folder_depth.saturating_add(1);
+        }
+        model.normalize_folder_structure();
+        let tracks_after: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
+        self.data.bump_revision();
+        self.remap_edit_for_track_change(&note_remap, Some(first));
+        self.sync_track_caches();
+        self.edit.track_selected.clear();
+        self.edit.track_selected.insert(first as u16);
+
+        Some(UndoAction::TrackStructure {
+            tracks_before,
+            tracks_after,
+            note_remap,
+            note_remap_inverse,
+            deleted_notes: Vec::new(),
+        })
+    }
+
+    /// 解散文件夹：删除 Folder 行，子轨整体上移一层。
+    pub fn ungroup_track(&mut self, idx: usize) -> Option<UndoAction> {
+        let model = &self.data.model;
+        if model.tracks.get(idx)?.kind != yinhe_core::TrackKind::Folder {
+            return None;
+        }
+        let end = model.subtree_end(idx);
+        let tracks_before: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
+        let model = Arc::make_mut(&mut self.data.model);
+        model.tracks.remove(idx);
+        for track in &mut model.tracks[idx..end.saturating_sub(1)] {
+            let track = Arc::make_mut(track);
+            track.folder_depth = track.folder_depth.saturating_sub(1);
+        }
+        let note_remap: Vec<u16> = (0..tracks_before.len())
+            .map(|i| {
+                if i < idx {
+                    i as u16
+                } else if i == idx {
+                    u16::MAX
+                } else {
+                    (i - 1) as u16
+                }
+            })
+            .collect();
+        let note_remap_inverse: Vec<u16> = (0..model.tracks.len())
+            .map(|i| if i < idx { i as u16 } else { (i + 1) as u16 })
+            .collect();
+        let deleted_notes = model.apply_track_remap_collect(&note_remap);
+        model.normalize_folder_structure();
+        model.rebuild_stats_only();
+        let tracks_after: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
+        self.data.bump_revision();
+        self.remap_edit_for_track_change(&note_remap, None);
+        self.sync_track_caches();
+
+        Some(UndoAction::TrackStructure {
+            tracks_before,
+            tracks_after,
+            note_remap,
+            note_remap_inverse,
+            deleted_notes,
+        })
+    }
+
     /// 批量新建音轨：按 `specs` 追加到最后一条轨之后，整个批次只产生
     /// 一个 UndoAction（撤销一次全撤）。命名沿用「Track N = 现有最大编号 + 1」
     /// 递增（见 max_track_number）。通道分配规则（自动/手动顺延）由调用方用
@@ -218,6 +353,13 @@ impl Document {
         }
         let insert_idx = self.data.model.tracks.len();
         let next_num = max_track_number(&self.data.model) + 1;
+        let append_depth = self
+            .data
+            .model
+            .tracks
+            .last()
+            .map(|t| t.folder_depth)
+            .unwrap_or(0);
 
         let tracks_before: Vec<Arc<yinhe_core::TrackData>> = self.data.model.tracks.clone();
 
@@ -225,6 +367,7 @@ impl Document {
         for (num, spec) in (next_num..).zip(specs.iter()) {
             let mut new_track = yinhe_core::TrackData::new(spec.port, spec.channel);
             new_track.kind = spec.kind;
+            new_track.folder_depth = append_depth;
             new_track.audio_channel = spec.audio_channel;
             new_track.name = format!("Track {}", num);
             model.tracks.push(Arc::new(new_track));
@@ -273,6 +416,10 @@ impl Document {
         }
         // Don't remove conductor track
         if self.edit.track_cache.conductor_idx == Some(idx as u16) {
+            return None;
+        }
+        // 文件夹请走 ungroup_track，直接删除会让子轨层级断裂。
+        if model.tracks[idx].kind == yinhe_core::TrackKind::Folder {
             return None;
         }
         // Don't remove if only 2 tracks (conductor + 1)
@@ -336,6 +483,14 @@ impl Document {
         let model = &self.data.model;
         let num_tracks = model.tracks.len();
         if from_idx >= num_tracks || to_idx >= num_tracks || from_idx == to_idx {
+            return None;
+        }
+        // v1 文件夹：子树拖拽尚未实现，存在 Folder 时禁止普通换位，避免层级断裂。
+        if model
+            .tracks
+            .iter()
+            .any(|t| t.kind == yinhe_core::TrackKind::Folder)
+        {
             return None;
         }
         // Don't move conductor track
@@ -417,6 +572,58 @@ mod tests {
         assert!(doc.add_automation_lane(2, target).is_some());
         assert!(doc.remove_track(1).is_some());
         assert_eq!(doc.data.model.tracks[1].automation_lanes[0].track, 1);
+    }
+
+    #[test]
+    fn group_and_ungroup_folder_restores_track_layout() {
+        let mut doc = Document::empty(); // Master + Track 1..16
+        let before = doc.data.model.tracks.len();
+        let action = doc.group_tracks(&[1, 2]).expect("group succeeds");
+        assert!(matches!(
+            action,
+            crate::history::UndoAction::TrackStructure { .. }
+        ));
+        assert_eq!(doc.data.model.tracks.len(), before + 1);
+        assert_eq!(doc.data.model.tracks[1].kind, yinhe_core::TrackKind::Folder);
+        assert_eq!(doc.data.model.tracks[2].folder_depth, 1);
+        assert_eq!(doc.data.model.tracks[3].folder_depth, 1);
+
+        assert!(doc.ungroup_track(1).is_some());
+        assert_eq!(doc.data.model.tracks.len(), before);
+        assert_eq!(doc.data.model.tracks[1].folder_depth, 0);
+        assert_eq!(doc.data.model.tracks[2].folder_depth, 0);
+    }
+
+    #[test]
+    fn group_folder_undo_restores_layout() {
+        let mut doc = Document::empty();
+        let before = doc.data.model.tracks.len();
+        let action = doc.group_tracks(&[1, 2]).expect("group succeeds");
+        assert_eq!(doc.data.model.tracks.len(), before + 1);
+        action.reversed().redo(&mut doc);
+        assert_eq!(doc.data.model.tracks.len(), before);
+        assert_eq!(doc.data.model.tracks[1].kind, yinhe_core::TrackKind::Midi);
+        assert_eq!(doc.data.model.tracks[1].folder_depth, 0);
+    }
+
+    #[test]
+    fn collapsed_folder_hides_children_only() {
+        let mut doc = Document::empty();
+        doc.group_tracks(&[1, 2]).expect("group succeeds");
+        assert_eq!(doc.data.model.tracks[1].kind, yinhe_core::TrackKind::Folder);
+        let model = std::sync::Arc::make_mut(&mut doc.data.model);
+        std::sync::Arc::make_mut(&mut model.tracks[1]).collapsed = true;
+        let visible = doc.data.model.folder_visible_mask();
+        assert!(visible[0], "Master 始终可见");
+        assert!(visible[1], "文件夹行本身可见");
+        assert!(!visible[2] && !visible[3], "子轨隐藏");
+        assert!(visible[4], "文件夹之后的根轨可见");
+    }
+
+    #[test]
+    fn non_contiguous_group_is_rejected() {
+        let mut doc = Document::empty();
+        assert!(doc.group_tracks(&[1, 3]).is_none());
     }
 
     /// 新音轨编号 = 已有音轨数 + 1，而不是插入位置：

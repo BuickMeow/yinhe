@@ -267,6 +267,7 @@ impl Document {
             } else {
                 detect_conductor_from_model(&model)
             };
+            model.normalize_folder_structure();
 
             let num_tracks = model.tracks.len();
             let track_colors_cache = (0..num_tracks)

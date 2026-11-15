@@ -1312,6 +1312,11 @@ track.drum_channel: "ドラムチャンネル"
 undo.edit_track_info: "トラック情報を編集"
 undo.track_mute_solo: "ミュート/ソロを調整"
 arrange.rename_track: "トラック名を変更"
+hint.arrange.folder_toggle: "フォルダーを展開/折りたたむ"
+arrange.group_tracks: "選択トラックをグループ化"
+arrange.ungroup_folder: "フォルダーを解除"
+undo.group_folder: "フォルダーにまとめる"
+undo.ungroup_folder: "フォルダーを解除"
 history.start: "開始"
 
 # 内置音源参数窗口

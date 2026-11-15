@@ -1158,3 +1158,25 @@ fn save_replaces_existing_file_atomically() {
         .collect();
     assert!(leftovers.is_empty(), "残留临时文件: {leftovers:?}");
 }
+
+#[test]
+fn folder_fields_roundtrip() {
+    let mut model = YinModel::new_empty_with_16_tracks();
+    {
+        let t = Arc::make_mut(&mut model.tracks[1]);
+        t.kind = yinhe_core::TrackKind::Folder;
+        t.name = "Folder".into();
+        t.folder_depth = 0;
+        t.collapsed = true;
+    }
+    Arc::make_mut(&mut model.tracks[2]).folder_depth = 1;
+    Arc::make_mut(&mut model.tracks[3]).folder_depth = 1;
+
+    let bytes = save_yin_bytes(&model).expect("save");
+    let loaded = load_yin_bytes(&bytes).expect("load");
+    assert_eq!(loaded.tracks[1].kind, yinhe_core::TrackKind::Folder);
+    assert!(loaded.tracks[1].collapsed);
+    assert_eq!(loaded.tracks[2].folder_depth, 1);
+    assert_eq!(loaded.tracks[3].folder_depth, 1);
+    assert_eq!(loaded.tracks[0].kind, yinhe_core::TrackKind::Master);
+}

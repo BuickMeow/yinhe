@@ -195,6 +195,14 @@ pub fn write_to_writer_with_progress<W: Write>(
         .iter()
         .enumerate()
         .map(|(i, t)| {
+            // Folder / Audio 不写 SMF；Master 通常是空的，但保留其上的
+            // 异常音符以免旧工程数据在导出时丢失。
+            if matches!(
+                t.kind,
+                yinhe_core::TrackKind::Folder | yinhe_core::TrackKind::Audio
+            ) {
+                return false;
+            }
             let notes = &per_track_notes[i];
             !opts.strip_empty_tracks
                 || !(notes.is_empty()

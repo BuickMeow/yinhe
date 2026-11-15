@@ -234,6 +234,7 @@ fn track_context(t: &yinhe_core::TrackData) -> Option<DockContext> {
     match t.kind {
         TrackKind::Audio => Some(DockContext::Audio(t.audio_channel.unwrap_or(0))),
         TrackKind::Midi => Some(DockContext::Midi(t.global_channel())),
+        TrackKind::Folder => None,
         TrackKind::Master => Some(DockContext::Master),
     }
 }

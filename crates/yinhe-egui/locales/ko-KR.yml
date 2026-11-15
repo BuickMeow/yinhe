@@ -1311,6 +1311,11 @@ track.drum_channel: "드럼 채널"
 undo.edit_track_info: "트랙 정보 편집"
 undo.track_mute_solo: "음소거/솔로 조정"
 arrange.rename_track: "트랙 이름 변경"
+hint.arrange.folder_toggle: "폴더 펼치기/접기"
+arrange.group_tracks: "선택 트랙 그룹화"
+arrange.ungroup_folder: "폴더 해제"
+undo.group_folder: "폴더로 그룹화"
+undo.ungroup_folder: "폴더 해제"
 history.start: "시작"
 
 # 内置音源参数窗口

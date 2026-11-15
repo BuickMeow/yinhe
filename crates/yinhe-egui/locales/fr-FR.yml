@@ -1302,6 +1302,11 @@ track.drum_channel: "Canal de batterie"
 undo.edit_track_info: "Modifier les infos de piste"
 undo.track_mute_solo: "Régler mute/solo"
 arrange.rename_track: "Renommer la piste"
+hint.arrange.folder_toggle: "Développer/réduire le dossier"
+arrange.group_tracks: "Grouper les pistes sélectionnées"
+arrange.ungroup_folder: "Dégrouper le dossier"
+undo.group_folder: "Grouper dans un dossier"
+undo.ungroup_folder: "Dégrouper le dossier"
 history.start: "Début"
 
 # 内置音源参数窗口
