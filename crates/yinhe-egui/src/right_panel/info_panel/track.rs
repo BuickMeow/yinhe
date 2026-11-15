@@ -199,6 +199,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
         doc.edit.track_cache.rebuild_info(&doc.data);
         doc.edit.track_cache.rebuild_pc_map(&doc.data);
         doc.data.bump_revision();
+        doc.sync_folder_routing();
     }
 
     // ── 混音输出通道（Track→MixerChannel）──
@@ -302,6 +303,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
 
     if routing_changed {
         doc.data.bump_revision();
+        doc.sync_folder_routing();
     }
 
     // ── 通道默认乐器 / 鼓通道 ──
