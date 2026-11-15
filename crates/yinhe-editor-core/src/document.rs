@@ -322,9 +322,8 @@ impl Document {
                 density: Default::default(),
                 density_pr: Default::default(),
             };
-            // 加载后补齐文件夹总线并推导路由；不把派生过程算作用户修改。
-            let report = doc.sync_folder_routing();
-            doc.mixer_dirty = report.buses_changed;
+            // 加载后补齐文件夹总线并推导路由；派生过程不标记工程为已修改。
+            let _ = doc.sync_folder_routing();
             Ok(doc)
         })
     }
