@@ -10,6 +10,7 @@ use std::rc::Rc;
 
 use eframe::egui;
 use rust_i18n::t;
+use yinhe_editor_core::audio_settings::FileDialogKind;
 use yinhe_editor_core::config::SfEntry;
 
 use crate::app::App;
@@ -35,6 +36,10 @@ pub(crate) fn show_viewport(app: &mut App, ctx: &egui::Context) -> bool {
         .overrides
         .clone();
     let global_entries = app.audio_settings.global_sf_config.entries.clone();
+    let soundfont_dir = app
+        .audio_settings
+        .dialog_dir(FileDialogKind::SoundFont)
+        .map(str::to_owned);
     let label = crate::mix::channel_label(channel);
     let title = format!("XSynth · {label}");
 
@@ -166,9 +171,10 @@ pub(crate) fn show_viewport(app: &mut App, ctx: &egui::Context) -> bool {
                                         true,
                                     )
                                     .clicked()
-                                        && let Some(paths) = rfd::FileDialog::new()
-                                            .add_filter("SoundFont", &["sf2", "sfz"])
-                                            .pick_files()
+                                        && let Some(paths) =
+                                            crate::file_dialog::with_dir(soundfont_dir.as_deref())
+                                                .add_filter("SoundFont", &["sf2", "sfz"])
+                                                .pick_files()
                                     {
                                         for path in paths {
                                             let name = path

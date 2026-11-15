@@ -4,6 +4,7 @@
 
 use eframe::egui;
 use rust_i18n::t;
+use yinhe_editor_core::audio_settings::FileDialogKind;
 use yinhe_editor_core::config::SfEntry;
 
 use crate::audio_settings::AudioSettings;
@@ -23,7 +24,7 @@ pub fn show_soundfont_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bo
     ui.horizontal(|ui| {
         if crate::widgets::flat::flat_button_filled_auto(ui, t!("soundfont.add").as_ref(), true)
             .clicked()
-            && let Some(paths) = rfd::FileDialog::new()
+            && let Some(paths) = crate::file_dialog::dialog(settings, FileDialogKind::SoundFont)
                 .add_filter("SoundFont", &["sf2", "sfz"])
                 .pick_files()
         {

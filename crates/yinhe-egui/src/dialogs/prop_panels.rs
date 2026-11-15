@@ -18,6 +18,7 @@ pub(crate) fn show_project_settings_viewport(
     ctx: &egui::Context,
     doc: &mut Document,
     open: &mut bool,
+    cover_dir: Option<&str>,
 ) {
     if !*open {
         return;
@@ -82,7 +83,9 @@ pub(crate) fn show_project_settings_viewport(
                                         .show(ui, |ui| {
                                             ui.spacing_mut().interact_size.y = 24.0;
                                             ui.spacing_mut().item_spacing.y = 4.0;
-                                            crate::dialogs::project_info::show(ui, &mut draft);
+                                            crate::dialogs::project_info::show(
+                                                ui, &mut draft, cover_dir,
+                                            );
                                         });
                                 },
                                 |ui| {

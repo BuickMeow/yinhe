@@ -17,6 +17,47 @@ pub use layout::{
 pub use theme::CustomTheme;
 pub use ui_session::SettingsUiSession;
 
+/// 文件对话框类别：每类可单独配置默认起始目录。
+///
+/// 键名会写进设置 JSON，重命名会丢失旧配置，因此保持稳定。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileDialogKind {
+    /// 打开工程 / MIDI / 压缩包。
+    Open,
+    /// 导入音频到当前工程。
+    ImportAudio,
+    /// 导入 MIDI 到当前工程。
+    ImportMidi,
+    /// 选择工程封面图。
+    CoverImage,
+    /// 添加音色库（SoundFont）。
+    SoundFont,
+    /// 工程另存为。
+    SaveProject,
+    /// 导出 MIDI。
+    ExportMidi,
+    /// 导出音频。
+    ExportAudio,
+    /// 导出 MIDI 压缩包。
+    ExportArchive,
+}
+
+impl FileDialogKind {
+    /// 设置页按此顺序展示。
+    pub const ALL: [Self; 9] = [
+        Self::Open,
+        Self::ImportAudio,
+        Self::ImportMidi,
+        Self::CoverImage,
+        Self::SoundFont,
+        Self::SaveProject,
+        Self::ExportMidi,
+        Self::ExportAudio,
+        Self::ExportArchive,
+    ];
+}
+
 /// "最近修改的文件"列表上限
 pub const RECENT_FILES_LIMIT: usize = 10;
 
@@ -160,6 +201,9 @@ pub struct AudioSettings {
     #[serde(default)]
     pub pinned_loop_selection: bool,
     pub recent_files: Vec<String>,
+    /// 各类文件对话框的默认起始目录；空 = 跟随系统上次打开的目录。
+    #[serde(default)]
+    pub dialog_dirs: std::collections::HashMap<FileDialogKind, String>,
     /// 「最近修改的文件」各自上次打开时间（Unix 秒）。旧配置无此项 → 空，
     /// 这些旧记录在讲解里只显示路径、不显示时间。
     #[serde(default)]
@@ -229,6 +273,7 @@ impl Default for AudioSettings {
             pinned_loop: false,
             pinned_loop_selection: false,
             recent_files: Vec::new(),
+            dialog_dirs: std::collections::HashMap::new(),
             recent_file_times: std::collections::HashMap::new(),
             ui_session: SettingsUiSession::default(),
         }
@@ -239,6 +284,14 @@ impl AudioSettings {
     /// 力度是否可听：≤ `ignore_velocity` 的音符不发声（播放与编辑器试听一致）。
     pub fn is_velocity_audible(&self, velocity: u8) -> bool {
         velocity > self.ignore_velocity
+    }
+
+    /// 某个文件对话框配置的默认目录；未配置或清零时返回 `None`。
+    pub fn dialog_dir(&self, kind: FileDialogKind) -> Option<&str> {
+        self.dialog_dirs
+            .get(&kind)
+            .map(String::as_str)
+            .filter(|s| !s.is_empty())
     }
 }
 
@@ -290,5 +343,27 @@ mod tests {
         let s: AudioSettings =
             serde_json::from_value(v).expect("old save with use_gpu_synth loads");
         assert_eq!(s.synth_engine, SynthEngine::XSynthCpu);
+    }
+
+    #[test]
+    fn dialog_dirs_roundtrip_and_defaults_empty_for_old_saves() {
+        let mut s = AudioSettings::default();
+        s.dialog_dirs
+            .insert(FileDialogKind::ExportAudio, "/tmp/yinhe-export".to_string());
+        let json = serde_json::to_string(&s).expect("serialize settings");
+        let back: AudioSettings = serde_json::from_str(&json).expect("load settings");
+        assert_eq!(
+            back.dialog_dir(FileDialogKind::ExportAudio),
+            Some("/tmp/yinhe-export")
+        );
+        assert_eq!(back.dialog_dir(FileDialogKind::ExportMidi), None);
+
+        // 旧配置没有 dialog_dirs 字段也要能加载。
+        let mut v = serde_json::to_value(AudioSettings::default()).expect("serialize default");
+        v.as_object_mut()
+            .expect("settings serializes to object")
+            .remove("dialog_dirs");
+        let old: AudioSettings = serde_json::from_value(v).expect("old save loads");
+        assert!(old.dialog_dirs.is_empty());
     }
 }

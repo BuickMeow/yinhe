@@ -2,10 +2,12 @@ use std::sync::{Arc, atomic::AtomicBool};
 
 use rust_i18n::t;
 // re-export，让 app/poll.rs 的 use 不变
+use yinhe_editor_core::audio_settings::FileDialogKind;
 pub(crate) use yinhe_editor_core::file_loading::LoadResult;
 use yinhe_editor_core::progress::{SharedProgress, StageInfo, StageStatus};
 use yinhe_midi::MidiImportEncoding;
 
+use crate::audio_settings::AudioSettings;
 use crate::dialogs::archive_picker::{ArchivePickerState, PasswordPrompt};
 use crate::widgets::toast::model::ProgressSource;
 
@@ -77,12 +79,12 @@ impl FileLoader {
     }
 
     /// Show file dialog and start loading in a background thread.
-    pub fn pick_file(&mut self, encoding: MidiImportEncoding) {
+    pub fn pick_file(&mut self, encoding: MidiImportEncoding, settings: &AudioSettings) {
         if self.is_loading() {
             return;
         }
 
-        if let Some(path) = rfd::FileDialog::new()
+        if let Some(path) = crate::file_dialog::dialog(settings, FileDialogKind::Open)
             .add_filter(
                 t!("file_dialog.all_supported").as_ref(),
                 &[

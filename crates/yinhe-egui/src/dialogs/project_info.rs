@@ -83,7 +83,8 @@ impl ProjectSettingsDraft {
 ///
 /// 排版对齐设置窗口：标题 + 描述在左、控件靠右、行间分割线。
 /// 顶部不加 heading（窗口标题栏已有「工程设置」）。
-pub fn show(ui: &mut egui::Ui, draft: &mut ProjectSettingsDraft) {
+/// `cover_dir` 是「选择封面」对话框的默认目录（设置里配置）。
+pub fn show(ui: &mut egui::Ui, draft: &mut ProjectSettingsDraft, cover_dir: Option<&str>) {
     ui.add_space(8.0);
 
     // ── Project name ──
@@ -293,7 +294,7 @@ pub fn show(ui: &mut egui::Ui, draft: &mut ProjectSettingsDraft) {
         |ui| {
             ui.horizontal(|ui| {
                 if ui.button(t!("project.cover_pick")).clicked()
-                    && let Some(path) = rfd::FileDialog::new()
+                    && let Some(path) = crate::file_dialog::with_dir(cover_dir)
                         .add_filter("Image", &["jpg", "jpeg", "png", "webp"])
                         .pick_file()
                 {

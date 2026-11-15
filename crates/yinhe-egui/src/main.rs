@@ -13,6 +13,7 @@ mod audio_settings;
 mod channel_arrange;
 mod chrome;
 mod dialogs;
+mod file_dialog;
 mod file_loader;
 mod fonts;
 #[cfg(test)]

@@ -4,7 +4,7 @@ use rust_i18n::t;
 use crate::audio_settings::AudioSettings;
 
 /// 设置左栏分类图标（与 `CATEGORY_KEYS` 一一对应）。
-const CATEGORY_ICONS: [egui_material_icons::MaterialIcon; 10] = [
+const CATEGORY_ICONS: [egui_material_icons::MaterialIcon; 11] = [
     egui_material_icons::icons::ICON_PALETTE,       // theme
     egui_material_icons::icons::ICON_DASHBOARD,     // appearance（含渲染）
     egui_material_icons::icons::ICON_LANGUAGE,      // language
@@ -14,6 +14,7 @@ const CATEGORY_ICONS: [egui_material_icons::MaterialIcon; 10] = [
     egui_material_icons::icons::ICON_KEYBOARD,      // shortcuts
     egui_material_icons::icons::ICON_SAVE,          // saving
     egui_material_icons::icons::ICON_LIBRARY_MUSIC, // soundfont
+    egui_material_icons::icons::ICON_FOLDER_OPEN,   // files
     egui_material_icons::icons::ICON_SETTINGS,      // reset（恢复）
 ];
 
@@ -58,6 +59,7 @@ mod appearance;
 mod audio;
 mod constants;
 mod editing;
+mod files;
 mod general;
 mod keyboard_layout;
 mod language;
@@ -78,6 +80,8 @@ pub use audio::show_audio_tab;
 pub use constants::{CATEGORY_GROUPS, CATEGORY_KEYS, SETTING_ITEMS, SettingItem};
 #[allow(unused_imports)]
 pub use editing::show_editing_tab;
+#[allow(unused_imports)]
+pub use files::show_files_tab;
 #[allow(unused_imports)]
 pub use general::show_general_tab;
 #[allow(unused_imports)]
@@ -464,10 +468,11 @@ mod tests {
             "settings.cat.reset",
             "恢复出厂设置必须在最后"
         );
-        // 保存 / 恢复仍在「系统」组内
+        // 保存 / 文件位置 / 恢复仍在「系统」组内
         assert_eq!(CATEGORY_KEYS[7], "settings.cat.saving");
         assert_eq!(CATEGORY_KEYS[8], "settings.cat.soundfont");
-        assert_eq!(CATEGORY_KEYS[9], "settings.cat.reset");
+        assert_eq!(CATEGORY_KEYS[9], "settings.cat.files");
+        assert_eq!(CATEGORY_KEYS[10], "settings.cat.reset");
         for zh in ["自动保存", "自动保存间隔"] {
             assert_eq!(item(zh).cat, 7, "{zh} 应在保存分类");
         }

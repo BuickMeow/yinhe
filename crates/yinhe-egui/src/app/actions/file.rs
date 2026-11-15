@@ -134,8 +134,10 @@ impl App {
             transport_bar::FileAction::Open => {
                 // 打开意图是"进入编辑"，关闭可能显示中的欢迎页面。
                 self.show_welcome_page = false;
-                self.file_loader
-                    .pick_file(self.audio_settings.midi_import_encoding);
+                self.file_loader.pick_file(
+                    self.audio_settings.midi_import_encoding,
+                    &self.audio_settings,
+                );
             }
             transport_bar::FileAction::ImportAudio => {
                 self.import_audio_dialog();

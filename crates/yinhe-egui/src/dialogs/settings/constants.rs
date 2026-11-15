@@ -1,6 +1,6 @@
 // ── 设置分类（左侧导航，顺序即 settings_tab 索引） ──
 
-pub const CATEGORY_KEYS: [&str; 10] = [
+pub const CATEGORY_KEYS: [&str; 11] = [
     "settings.cat.theme",
     "settings.cat.appearance",
     "settings.cat.language",
@@ -10,6 +10,7 @@ pub const CATEGORY_KEYS: [&str; 10] = [
     "settings.cat.shortcuts",
     "settings.cat.saving",
     "settings.cat.soundfont",
+    "settings.cat.files",
     // 「恢复」放最后：破坏性操作不该出现在常用分类中间。
     "settings.cat.reset",
 ];
@@ -30,8 +31,8 @@ pub const CATEGORY_GROUPS: [(&str, &[usize]); 6] = [
     ("settings.group.midi", &[4]),
     // 编辑与快捷键
     ("settings.group.editing", &[5, 6]),
-    // 保存 / 恢复
-    ("settings.group.system", &[7, 9]),
+    // 保存 / 文件位置 / 恢复
+    ("settings.group.system", &[7, 9, 10]),
 ];
 
 /// 设置项注册表（供搜索）：各语言名称均可直接检索。
@@ -324,5 +325,12 @@ pub const SETTING_ITEMS: &[SettingItem] = &[
         en: "Quick delete note",
         ja: "クイック削除",
         ko: "빠른 삭제",
+    },
+    SettingItem {
+        cat: 9,
+        zh: "文件对话框默认位置",
+        en: "File dialog folders",
+        ja: "ファイルダイアログの既定フォルダー",
+        ko: "파일 대화 상자 기본 폴더",
     },
 ];

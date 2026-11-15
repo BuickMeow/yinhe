@@ -10,6 +10,7 @@ use std::sync::mpsc::{self, TryRecvError};
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_core::YinModel;
+use yinhe_editor_core::audio_settings::FileDialogKind;
 use yinhe_editor_core::history::EditSnapshot;
 use yinhe_editor_core::midi_import::{
     ImportChannelMode, MidiImportMerged, MidiImportOptions, MidiImportSummary,
@@ -54,9 +55,10 @@ fn frac(progress: &AtomicU32) -> f32 {
 impl App {
     /// 文件菜单入口：选文件并开始后台解析。
     pub(crate) fn import_midi_dialog(&mut self, _ctx: &egui::Context) {
-        let Some(path) = rfd::FileDialog::new()
-            .add_filter("MIDI", &["mid", "midi"])
-            .pick_file()
+        let Some(path) =
+            crate::file_dialog::dialog(&self.audio_settings, FileDialogKind::ImportMidi)
+                .add_filter("MIDI", &["mid", "midi"])
+                .pick_file()
         else {
             return;
         };

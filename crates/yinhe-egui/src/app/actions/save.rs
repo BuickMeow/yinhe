@@ -4,6 +4,7 @@ use std::sync::mpsc;
 
 use eframe::egui;
 use rust_i18n::t;
+use yinhe_editor_core::audio_settings::FileDialogKind;
 
 use crate::app::App;
 
@@ -122,10 +123,11 @@ impl App {
         } else {
             t!("file_dialog.untitled").to_string()
         };
-        if let Some(path) = rfd::FileDialog::new()
-            .add_filter(t!("file_dialog.yinhe_project").as_ref(), &["yin"])
-            .set_file_name(&default_name)
-            .save_file()
+        if let Some(path) =
+            crate::file_dialog::dialog(&self.audio_settings, FileDialogKind::SaveProject)
+                .add_filter(t!("file_dialog.yinhe_project").as_ref(), &["yin"])
+                .set_file_name(&default_name)
+                .save_file()
         {
             let mut path_str = path.to_string_lossy().to_string();
             // Ensure .yin extension
@@ -148,10 +150,11 @@ impl App {
         } else {
             t!("file_dialog.export_mid").to_string()
         };
-        if let Some(path) = rfd::FileDialog::new()
-            .add_filter("MIDI", &["mid", "midi"])
-            .set_file_name(&default_name)
-            .save_file()
+        if let Some(path) =
+            crate::file_dialog::dialog(&self.audio_settings, FileDialogKind::ExportMidi)
+                .add_filter("MIDI", &["mid", "midi"])
+                .set_file_name(&default_name)
+                .save_file()
         {
             let Some(idx) = self.workspace.active_doc else {
                 return;
@@ -240,14 +243,15 @@ impl App {
         // 真实计时起点：点击「开始导出」按钮的瞬间（包含后续文件对话框等待）。
         let button_time = std::time::Instant::now();
         let default_name = format!("{}.wav", self.workspace.documents[idx].file_name);
-        let path = match rfd::FileDialog::new()
-            .add_filter("WAV", &["wav"])
-            .set_file_name(&default_name)
-            .save_file()
-        {
-            Some(p) => p,
-            None => return,
-        };
+        let path =
+            match crate::file_dialog::dialog(&self.audio_settings, FileDialogKind::ExportAudio)
+                .add_filter("WAV", &["wav"])
+                .set_file_name(&default_name)
+                .save_file()
+            {
+                Some(p) => p,
+                None => return,
+            };
         let mut path_str = path.to_string_lossy().to_string();
         if !path_str.ends_with(".wav") {
             path_str.push_str(".wav");

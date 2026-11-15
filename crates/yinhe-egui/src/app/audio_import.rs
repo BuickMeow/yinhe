@@ -10,6 +10,7 @@ use rust_i18n::t;
 
 use yinhe_core::{AudioSource, TrackKind};
 use yinhe_editor_core::NewTrackSpec;
+use yinhe_editor_core::audio_settings::FileDialogKind;
 use yinhe_editor_core::channel_alloc;
 use yinhe_editor_core::history::UndoAction;
 
@@ -26,7 +27,7 @@ impl App {
         if self.workspace.active_doc.is_none() {
             return;
         }
-        let files = rfd::FileDialog::new()
+        let files = crate::file_dialog::dialog(&self.audio_settings, FileDialogKind::ImportAudio)
             .add_filter(t!("file_dialog.audio").as_ref(), AUDIO_EXTENSIONS)
             .pick_files();
         let Some(files) = files else {

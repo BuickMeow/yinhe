@@ -893,6 +893,11 @@ impl App {
         let Some(idx) = self.workspace.active_doc else {
             return;
         };
+        // 快照封面对话框目录，避免与后面的 doc 可变借用冲突。
+        let cover_dir = self
+            .audio_settings
+            .dialog_dir(yinhe_editor_core::audio_settings::FileDialogKind::CoverImage)
+            .map(str::to_owned);
         let doc = &mut self.workspace.documents[idx];
         let audio = self.audio_state.handle.as_ref();
         let mut open = true;
@@ -901,7 +906,12 @@ impl App {
         use crate::right_panel::FloatPanel;
         match panel {
             FloatPanel::ProjectSettings => {
-                crate::dialogs::prop_panels::show_project_settings_viewport(ctx, doc, &mut open);
+                crate::dialogs::prop_panels::show_project_settings_viewport(
+                    ctx,
+                    doc,
+                    &mut open,
+                    cover_dir.as_deref(),
+                );
             }
         }
 

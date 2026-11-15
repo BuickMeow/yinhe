@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use eframe::egui;
 use rust_i18n::t;
+use yinhe_editor_core::audio_settings::FileDialogKind;
 use yinhe_editor_core::midi_7z::{MidiArchiveFormat, export_midi_archive};
 use yinhe_midi::MidiExportOptions;
 
@@ -86,10 +87,11 @@ impl App {
         } else {
             "7z"
         };
-        let Some(path) = rfd::FileDialog::new()
-            .add_filter(filter_name, &[format.extension()])
-            .set_file_name(&default_name)
-            .save_file()
+        let Some(path) =
+            crate::file_dialog::dialog(&self.audio_settings, FileDialogKind::ExportArchive)
+                .add_filter(filter_name, &[format.extension()])
+                .set_file_name(&default_name)
+                .save_file()
         else {
             return;
         };

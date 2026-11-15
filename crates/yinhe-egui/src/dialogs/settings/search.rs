@@ -9,6 +9,7 @@ use super::appearance::show_appearance_tab;
 use super::audio::show_audio_tab;
 use super::constants::{CATEGORY_KEYS, SETTING_ITEMS, SettingItem};
 use super::editing::show_editing_tab;
+use super::files::show_files_tab;
 use super::general::show_general_tab;
 use super::language::show_language_tab;
 use super::midi_export::show_midi_export_tab;
@@ -105,7 +106,8 @@ pub fn show_search_results(
             6 => show_shortcuts_tab(ui, settings),
             7 => show_saving_tab(ui, settings),
             8 => show_soundfont_tab(ui, settings),
-            // 9 = 恢复（通用页只剩恢复出厂设置）
+            9 => show_files_tab(ui, settings),
+            // 10 = 恢复（通用页只剩恢复出厂设置）
             _ => show_general_tab(ui, settings),
         };
     }
