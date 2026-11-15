@@ -169,7 +169,7 @@ impl Document {
     /// 新工程的默认混音台：自带一条总线（FX 1），使发送开箱可用。
     fn default_mixer() -> MixerParams {
         let mut m = MixerParams::default();
-        m.add_bus();
+        let _ = m.add_bus();
         m
     }
 

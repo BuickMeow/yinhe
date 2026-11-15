@@ -427,10 +427,13 @@ mod tests {
     /// 88 键 + SCALE 折叠下，选框的副轴边界必须与 key 行实际位置一致。
     #[test]
     fn selection_rect_respects_fold_and_88_key_start() {
-        let mut view = yinhe_types::PianoRollView::default();
-        view.layout = yinhe_types::KeyLayout::for_key_count(88);
-        view.layout.fold_mask = 0b1010_1011_0101; // C 大调
-        view.key_height = 10.0;
+        let mut layout = yinhe_types::KeyLayout::for_key_count(88);
+        layout.fold_mask = 0b1010_1011_0101; // C 大调
+        let view = yinhe_types::PianoRollView {
+            layout,
+            key_height: 10.0,
+            ..Default::default()
+        };
         let rect = music_sel_to_pixel_rect(&view, 0.0, 100.0, 60, 64);
         let lo = view.key_to_cross_px(60);
         let hi = view.key_to_cross_px(64) + view.layout.row_units(64) * view.key_height;
