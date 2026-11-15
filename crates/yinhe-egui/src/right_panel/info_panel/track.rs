@@ -201,13 +201,97 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
         doc.data.bump_revision();
     }
 
+    // ── 混音输出通道（Track→MixerChannel）──
+    let mut routing_changed = false;
+    let kind = doc.data.model.tracks[track_idx].kind;
+    match kind {
+        yinhe_core::TrackKind::Midi => {
+            let current = doc.data.model.tracks[track_idx]
+                .mixer_channel()
+                .unwrap_or(yinhe_types::MixerChannelId::Midi(ti.port * 16 + ti.channel));
+            let current_ch = match current {
+                yinhe_types::MixerChannelId::Midi(ch) => ch as usize,
+                _ => (ti.port * 16 + ti.channel) as usize,
+            };
+            let options: Vec<(usize, String)> = (0..256)
+                .map(|ch| (ch, crate::mix::midi_label((ch / 16) as u8, (ch % 16) as u8)))
+                .collect();
+            crate::widgets::rows::panel_row(ui, t!("track.output").as_ref(), |ui| {
+                let mut sel = current_ch;
+                if crate::widgets::combo::combo_select(
+                    ui,
+                    "track_midi_output",
+                    &mut sel,
+                    ui.available_width().max(1.0),
+                    &options,
+                ) {
+                    let target = yinhe_types::MixerChannelId::Midi(sel as u8);
+                    let default = yinhe_types::MixerChannelId::Midi(
+                        doc.data.model.tracks[track_idx].global_channel(),
+                    );
+                    let routing = if target == default {
+                        None
+                    } else {
+                        Some(target)
+                    };
+                    if let Some(td) = Arc::make_mut(&mut doc.data.model).tracks.get_mut(track_idx) {
+                        Arc::make_mut(td).channel_routing = routing;
+                    }
+                    routing_changed = true;
+                }
+            });
+        }
+        yinhe_core::TrackKind::Audio => {
+            let default_ch = doc.data.model.tracks[track_idx].audio_channel.unwrap_or(0);
+            let current_ch = match doc.data.model.tracks[track_idx].mixer_channel() {
+                Some(yinhe_types::MixerChannelId::Audio(ch)) => ch,
+                _ => default_ch,
+            };
+            let max_ch = current_ch.max(31);
+            let options: Vec<(usize, String)> = (0..=max_ch as usize)
+                .map(|ch| (ch, crate::mix::audio_label(ch as u16)))
+                .collect();
+            crate::widgets::rows::panel_row(ui, t!("track.output").as_ref(), |ui| {
+                let mut sel = current_ch as usize;
+                if crate::widgets::combo::combo_select(
+                    ui,
+                    "track_audio_output",
+                    &mut sel,
+                    ui.available_width().max(1.0),
+                    &options,
+                ) {
+                    let target = yinhe_types::MixerChannelId::Audio(sel as u16);
+                    let routing = if sel as u16 == default_ch {
+                        None
+                    } else {
+                        Some(target)
+                    };
+                    if let Some(td) = Arc::make_mut(&mut doc.data.model).tracks.get_mut(track_idx) {
+                        Arc::make_mut(td).channel_routing = routing;
+                    }
+                    routing_changed = true;
+                }
+            });
+        }
+        yinhe_core::TrackKind::Folder => {
+            field_value(ui, t!("track.output").as_ref(), t!("track.output.none"));
+        }
+        yinhe_core::TrackKind::Master => {
+            field_value(ui, t!("track.output").as_ref(), "Master");
+        }
+    }
+
+    if routing_changed {
+        doc.data.bump_revision();
+    }
+
     // ── 通道默认乐器 / 鼓通道 ──
     let instrument_changed = instrument::show(ui, doc, track_idx);
 
     // ── 颜色（行高一致的小色块 + 重置）──
     show_color_row(ui, doc, track_idx);
 
-    port_changed || instrument_changed
+    port_changed || instrument_changed || routing_changed
 }
 
 /// 颜色行：色块（点击直接弹出取色器）+ 重置按钮。
