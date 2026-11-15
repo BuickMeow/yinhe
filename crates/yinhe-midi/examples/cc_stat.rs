@@ -27,6 +27,7 @@ fn main() {
                     AutomationTarget::Rpn { parameter } => format!("RPN{parameter}"),
                     AutomationTarget::Nrpn { parameter } => format!("NRPN{parameter}"),
                     AutomationTarget::Tempo => "Tempo".into(),
+                    AutomationTarget::BusGain { bus } => format!("BusGain{bus}"),
                 };
                 let e = per_target.entry(key).or_insert((0, 0));
                 e.0 += lane.events.len();
