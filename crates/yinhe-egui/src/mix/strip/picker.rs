@@ -99,7 +99,7 @@ pub(crate) fn send_popup(
                                     if slider.changed() {
                                         actions.push(MixAction::SetSend {
                                             channel,
-                                            bus: b as u8,
+                                            bus: b as u16,
                                             amount: val,
                                             pre_fader: *pre,
                                         });
@@ -124,7 +124,7 @@ pub(crate) fn send_popup(
                                     if pre_resp.changed() {
                                         actions.push(MixAction::SetSend {
                                             channel,
-                                            bus: b as u8,
+                                            bus: b as u16,
                                             amount: val,
                                             pre_fader: pre_flag,
                                         });

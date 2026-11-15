@@ -178,11 +178,11 @@ pub(crate) enum MixAction {
     AddBus,
     /// 删除总线 `bus`（其 send 清理、更高索引前移）。
     RemoveBus {
-        bus: u8,
+        bus: u16,
     },
     /// 更新某总线的 strip 参数。
     SetBusStrip {
-        bus: u8,
+        bus: u16,
         params: StripParams,
     },
     /// 打开某源通道的发送面板。
@@ -192,21 +192,21 @@ pub(crate) enum MixAction {
     /// 更新某源通道对某总线的发送。
     SetSend {
         channel: u8,
-        bus: u8,
+        bus: u16,
         amount: f32,
         pre_fader: bool,
     },
     /// 更新某音频通道对某总线的发送。
     SetAudioSend {
         channel: u16,
-        bus: u8,
+        bus: u16,
         amount: f32,
         pre_fader: bool,
     },
     /// 更新某总线对某总线的发送（含自发送；总线发送统一推子后）。
     SetBusSend {
-        bus: u8,
-        target_bus: u8,
+        bus: u16,
+        target_bus: u16,
         amount: f32,
     },
     /// 为 MIDI 通道**追加**一个插件乐器到链尾（InsertRef 入持久化层 +
@@ -333,7 +333,7 @@ impl App {
     }
 
     /// 更新某总线的 strip 参数：写持久化层 + 推引擎（高频路径）。
-    pub(crate) fn apply_bus_strip(&mut self, idx: usize, bus: u8, params: StripParams) {
+    pub(crate) fn apply_bus_strip(&mut self, idx: usize, bus: u16, params: StripParams) {
         if let Some(slot) = self.workspace.documents[idx]
             .mixer_mut()
             .buses
@@ -416,7 +416,7 @@ impl App {
         for (b, chain) in mixer.bus_inserts.iter().enumerate() {
             for r in chain {
                 let _ = rack.load_plugin(
-                    InsertTarget::Bus(b as u8),
+                    InsertTarget::Bus(b as u16),
                     r.format,
                     &r.plugin_path,
                     &r.plugin_id,
@@ -767,7 +767,7 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                                             app,
                                             ui,
                                             idx,
-                                            b as u8,
+                                            b as u16,
                                             level,
                                             hold,
                                             strip_h,
@@ -912,8 +912,11 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
             app.mix.picker_for = None;
         }
         MixAction::AddBus => {
+            if app.workspace.documents[idx].mixer.bus_count() > usize::from(u16::MAX) {
+                return;
+            }
             app.note_mixer_edit(t!("undo.mix_bus").as_ref());
-            app.workspace.documents[idx].mixer_mut().add_bus();
+            let _ = app.workspace.documents[idx].mixer_mut().add_bus();
             app.sync_bus_config_to_engine(idx);
         }
         MixAction::RemoveBus { bus } => {

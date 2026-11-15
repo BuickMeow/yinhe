@@ -51,14 +51,18 @@ pub fn auto_midi_channel_start(tracks: &[Arc<yinhe_core::TrackData>]) -> Option<
 
 /// 音频轨自动分配起点（0 起）：现有音频轨最大 audio_channel + 1；
 /// 没有音频轨时从 0（UI 显示「A01」）开始。
-pub fn auto_audio_channel_start(tracks: &[Arc<yinhe_core::TrackData>]) -> u16 {
-    tracks
+/// 已用满 `u16::MAX` 时返回 `None`，调用方应禁止创建而不是回绕。
+pub fn auto_audio_channel_start(tracks: &[Arc<yinhe_core::TrackData>]) -> Option<u16> {
+    let max = tracks
         .iter()
         .filter(|t| t.kind == yinhe_core::TrackKind::Audio)
         .filter_map(|t| t.audio_channel)
-        .max()
-        .map(|m| m.saturating_add(1))
-        .unwrap_or(0)
+        .max();
+    match max {
+        None => Some(0),
+        Some(m) if m < u16::MAX => Some(m + 1),
+        Some(_) => None,
+    }
 }
 
 #[cfg(test)]
@@ -127,6 +131,16 @@ mod tests {
     fn auto_midi_start_ignores_audio_tracks() {
         let tracks = vec![audio_track(3), midi_track(0, 4)]; // A5
         assert_eq!(auto_midi_channel_start(&tracks), Some(5)); // A6
+    }
+
+    /// 音频通道自动分配：没有轨从 0 开始，满 65535 返回 None。
+    #[test]
+    fn auto_audio_start_boundaries() {
+        assert_eq!(auto_audio_channel_start(&[]), Some(0));
+        let tracks = vec![audio_track(65534)];
+        assert_eq!(auto_audio_channel_start(&tracks), Some(65535));
+        let tracks = vec![audio_track(65535)];
+        assert_eq!(auto_audio_channel_start(&tracks), None);
     }
 }
 

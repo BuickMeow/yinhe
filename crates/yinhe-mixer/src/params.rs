@@ -101,7 +101,7 @@ pub struct InsertRef {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SendParams {
     /// 目标总线索引（`MixerParams::buses` 下标）。
-    pub bus: u8,
+    pub bus: u16,
     /// 发送量（线性增益；0.0 = 关闭）。
     #[serde(default)]
     pub amount: f32,
@@ -252,18 +252,23 @@ impl MixerParams {
         }
     }
 
-    /// 新增一条总线，返回其索引。
-    pub fn add_bus(&mut self) -> u8 {
+    /// 新增一条总线，返回其索引；到达 `u16` 索引上限时返回 `None`。
+    pub fn add_bus(&mut self) -> Option<u16> {
+        // 索引 0..=u16::MAX，最多 65_536 条；不静默回绕。
+        if self.buses.len() > usize::from(u16::MAX) {
+            return None;
+        }
+        let idx = self.buses.len() as u16;
         self.buses.push(StripParams::default());
         self.bus_inserts.push(Vec::new());
         self.bus_sends.push(Vec::new());
-        (self.buses.len() - 1) as u8
+        Some(idx)
     }
 
     /// 删除总线 `bus`：移除其参数与 insert 链，清理指向它的 send、
     /// 并把更高索引的 send 目标前移一位（保持路由语义）。
     /// MIDI 通道 / 音频通道 / 总线三张发送表统一维护。
-    pub fn remove_bus(&mut self, bus: u8) {
+    pub fn remove_bus(&mut self, bus: u16) {
         let idx = bus as usize;
         if idx >= self.buses.len() {
             return;
@@ -348,9 +353,9 @@ mod tests {
     fn remove_bus_remaps_send_targets() {
         let mut p = MixerParams::default();
         p.ensure_len();
-        p.add_bus();
-        p.add_bus();
-        p.add_bus();
+        let _ = p.add_bus();
+        let _ = p.add_bus();
+        let _ = p.add_bus();
         p.sends[0] = vec![
             SendParams {
                 bus: 1,
@@ -375,8 +380,8 @@ mod tests {
     fn remove_bus_drops_sends_to_it() {
         let mut p = MixerParams::default();
         p.ensure_len();
-        p.add_bus();
-        p.add_bus();
+        let _ = p.add_bus();
+        let _ = p.add_bus();
         p.sends[3] = vec![SendParams {
             bus: 0,
             amount: 1.0,
@@ -405,9 +410,9 @@ mod tests {
     fn bus_sends_follow_bus_add_remove() {
         let mut p = MixerParams::default();
         p.ensure_len();
-        p.add_bus();
-        p.add_bus();
-        p.add_bus();
+        let _ = p.add_bus();
+        let _ = p.add_bus();
+        let _ = p.add_bus();
         // bus0 → bus1；bus2 → bus0；音频通道 0 → bus2
         p.bus_sends[0].push(SendParams {
             bus: 1,
@@ -438,8 +443,8 @@ mod tests {
     fn bus_self_send_survives_other_bus_removal() {
         let mut p = MixerParams::default();
         p.ensure_len();
-        p.add_bus();
-        p.add_bus();
+        let _ = p.add_bus();
+        let _ = p.add_bus();
         p.bus_sends[1].push(SendParams {
             bus: 1,
             amount: 1.0,
@@ -456,7 +461,7 @@ mod tests {
     fn ensure_len_prunes_all_send_tables() {
         let mut p = MixerParams::default();
         p.ensure_len();
-        p.add_bus();
+        let _ = p.add_bus();
         p.sends[0].push(SendParams {
             bus: 5,
             amount: 1.0,

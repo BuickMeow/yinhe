@@ -22,7 +22,7 @@ pub enum InsertTarget {
     /// 音频通道（0 起，与 `TrackData::audio_channel` 对齐）。
     Audio(u16),
     /// 总线（bus / return）。
-    Bus(u8),
+    Bus(u16),
     /// 主输出。
     Master,
 }
@@ -212,7 +212,7 @@ pub enum AudioCommand {
     },
     /// 更新某总线的 strip 参数（推子拖动高频路径，幂等）。
     SetBusStrip {
-        bus: u8,
+        bus: u16,
         params: StripParams,
     },
     /// 全量同步总线配置（增删总线 / 改发送后推一次）：

@@ -110,7 +110,7 @@ pub(super) fn section<R>(
 pub(super) enum SendSource {
     Channel(u8),
     Audio(u16),
-    Bus(u8),
+    Bus(u16),
 }
 
 /// 效果发送区（独占一区，竖向滚动）：**每条总线一行**（旋钮 + 「BUS n」），
@@ -142,7 +142,7 @@ pub(super) fn send_block(
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
             for b in 0..knobs {
-                let target = b as u8;
+                let target = b as u16;
                 ui.horizontal(|ui| {
                     let send = sends.iter().find(|s| s.bus == target);
                     let (amount, pre_fader) = send

@@ -185,7 +185,7 @@ pub(crate) fn bus_strip(
     app: &mut App,
     ui: &mut egui::Ui,
     idx: usize,
-    bus: u8,
+    bus: u16,
     level: (f32, f32),
     hold: (f32, f32),
     height: f32,

@@ -75,7 +75,7 @@ impl AudioEngine {
     }
 
     /// 更新某总线的 strip 参数（高频路径）。
-    pub(crate) fn set_bus_strip(&mut self, bus: u8, params: StripParams) {
+    pub(crate) fn set_bus_strip(&mut self, bus: u16, params: StripParams) {
         let idx = bus as usize;
         if let Some(slot) = self.mixer_params.buses.get_mut(idx) {
             *slot = params;

@@ -122,9 +122,15 @@ impl App {
             Some(t) => t,
             None => {
                 // 无音频轨：新建一条（自动音频通道）。
-                let start = channel_alloc::auto_audio_channel_start(
+                let Some(start) = channel_alloc::auto_audio_channel_start(
                     &self.workspace.documents[idx].data.model.tracks,
-                );
+                ) else {
+                    self.show_error(
+                        t!("dialog.new_track.audio_full"),
+                        t!("dialog.new_track.audio_full"),
+                    );
+                    return;
+                };
                 let specs = [NewTrackSpec {
                     kind: TrackKind::Audio,
                     port: 0,

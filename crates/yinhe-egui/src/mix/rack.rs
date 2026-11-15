@@ -59,7 +59,7 @@ pub(crate) struct MixerRack {
     /// 源通道 → 槽位实例（稀疏：只有挂插件的通道有条目）。
     pub channels: HashMap<u8, Vec<SlotRuntime>>,
     /// 总线（bus/return）→ 槽位实例（稀疏）。
-    pub buses: HashMap<u8, Vec<SlotRuntime>>,
+    pub buses: HashMap<u16, Vec<SlotRuntime>>,
     /// 音频通道 insert 链（键 = 音频通道号）。
     pub audios: HashMap<u16, Vec<SlotRuntime>>,
     pub master: Vec<SlotRuntime>,
@@ -436,7 +436,7 @@ impl MixerRack {
     ///
     /// 已发送的槽位移入 orphan，等处理器退回后 deactivate（bus 号已失效，
     /// 按 owner 匹配）。
-    pub fn remove_bus_chain(&mut self, bus: u8, handle: Option<&AudioHandle>) {
+    pub fn remove_bus_chain(&mut self, bus: u16, handle: Option<&AudioHandle>) {
         if let Some(chain) = self.buses.remove(&bus) {
             for (slot, rt) in chain.into_iter().enumerate() {
                 if rt.sent {
@@ -451,8 +451,8 @@ impl MixerRack {
                 // 未发送的槽位直接 drop（插件从未进入引擎）。
             }
         }
-        let mut moved: Vec<(u8, Vec<SlotRuntime>)> = Vec::new();
-        let keys: Vec<u8> = self.buses.keys().copied().filter(|b| *b > bus).collect();
+        let mut moved: Vec<(u16, Vec<SlotRuntime>)> = Vec::new();
+        let keys: Vec<u16> = self.buses.keys().copied().filter(|b| *b > bus).collect();
         for b in keys {
             if let Some(chain) = self.buses.remove(&b) {
                 moved.push((b - 1, chain));

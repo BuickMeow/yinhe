@@ -182,18 +182,34 @@ fn plan(state: &NewTrackDialogState, tracks: &[Arc<yinhe_core::TrackData>]) -> P
         }
         KindChoice::Audio => {
             let start = match state.mode {
-                AssignMode::Auto => channel_alloc::auto_audio_channel_start(tracks),
+                AssignMode::Auto => match channel_alloc::auto_audio_channel_start(tracks) {
+                    Some(start) => start,
+                    None => {
+                        return Plan {
+                            specs: Vec::new(),
+                            error: Some(t!("dialog.new_track.audio_full").to_string()),
+                        };
+                    }
+                },
                 AssignMode::Manual => state.manual_audio.saturating_sub(1) as u16,
             };
             let specs = (0..state.count)
-                .map(|i| NewTrackSpec {
-                    kind: yinhe_core::TrackKind::Audio,
-                    port: 0,
-                    channel: 0,
-                    audio_channel: Some(start.saturating_add(i as u16)),
+                .filter_map(|i| {
+                    let audio_channel = start.checked_add(i as u16)?;
+                    Some(NewTrackSpec {
+                        kind: yinhe_core::TrackKind::Audio,
+                        port: 0,
+                        channel: 0,
+                        audio_channel: Some(audio_channel),
+                    })
                 })
                 .collect::<Vec<_>>();
-            Plan { specs, error: None }
+            let error = if specs.len() < state.count {
+                Some(t!("dialog.new_track.truncated", n = specs.len()).to_string())
+            } else {
+                None
+            };
+            Plan { specs, error }
         }
     }
 }
