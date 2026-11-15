@@ -51,6 +51,8 @@ pub enum MenuAction {
     FlipVertical,
     /// 编辑菜单「网格切割」：按当前量化切分选框内音符。
     GridSplit,
+    /// 轨道菜单「编组选中轨」。
+    TrackGroup,
     /// 插入菜单动作（透传；含弹窗类）。
     Insert(crate::chrome::insert_actions::InsertAction),
     /// 播放菜单「播放/暂停」（Space）。

@@ -348,6 +348,10 @@ impl eframe::App for App {
                     self.handle_edit_action(transport_bar::EditAction::GridSplit);
                     continue;
                 }
+                MenuAction::TrackGroup => {
+                    self.handle_context_action(yinhe_editor_core::shortcuts::ACTION_TRACK_GROUP);
+                    continue;
+                }
                 MenuAction::Insert(action) => {
                     self.handle_insert_action(action, ui.ctx());
                     continue;

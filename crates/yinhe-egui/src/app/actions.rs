@@ -81,7 +81,7 @@ impl App {
         // 处理（AppKit 拦截，egui 收不到那个键），这里跳过它避免双触发；
         // 无修饰键的快捷键（如 Space）AppKit 不会拦截菜单加速键，必须由 egui
         // 处理，否则按键会失效。其余快捷键（第二个及以后）同样由 egui 处理。
-        let matches = |id: &str, key: egui::Key, modifiers: egui::Modifiers| {
+        let matches_app_menu = |id: &str, key: egui::Key, modifiers: egui::Modifiers| {
             kb.get(id).iter().enumerate().any(|(i, c)| {
                 #[cfg(target_os = "macos")]
                 {
@@ -92,26 +92,33 @@ impl App {
                 crate::shortcuts::matches_combo(c, modifiers, key)
             })
         };
+        // 上下文动作不一定在原生菜单里（例如编组），第一快捷键不能按
+        // “原生菜单已处理”跳过，否则 Cmd+G 会两头落空。
+        let matches_context = |id: &str, key: egui::Key, modifiers: egui::Modifiers| {
+            kb.get(id)
+                .iter()
+                .any(|c| crate::shortcuts::matches_combo(c, modifiers, key))
+        };
 
         if let Some((key, modifiers)) = pressed {
             // ── 文件动作 ──
             // macOS：第一个快捷键走原生菜单；其余快捷键在这里分发。
             for action in FileAction::ALL {
-                if matches(action.action_id(), key, modifiers) {
+                if matches_app_menu(action.action_id(), key, modifiers) {
                     actions.file_action = Some(action);
                     break;
                 }
             }
 
             // ── 播放/停止 ──
-            if matches(shortcuts::ACTION_TOGGLE_PLAY, key, modifiers) {
+            if matches_app_menu(shortcuts::ACTION_TOGGLE_PLAY, key, modifiers) {
                 if is_playing_any {
                     actions.pause_return = true;
                 } else {
                     actions.toggle_play = true;
                 }
             }
-            if matches(shortcuts::ACTION_STOP, key, modifiers) {
+            if matches_app_menu(shortcuts::ACTION_STOP, key, modifiers) {
                 actions.stop_play = true;
             }
 
@@ -121,7 +128,7 @@ impl App {
             // macOS：第一个快捷键由原生菜单加速键处理（上面的 matches 已跳过）。
             for action in EditAction::ALL {
                 let id = action.action_id();
-                if !id.is_empty() && matches(id, key, modifiers) {
+                if !id.is_empty() && matches_app_menu(id, key, modifiers) {
                     actions.edit_action = Some(action);
                     break;
                 }
@@ -131,7 +138,7 @@ impl App {
             // 用户若在设置页分配了键位，这里才能触发；未分配时 `kb.get` 返回空列表。
             if actions.edit_action.is_none() {
                 for &id in yinhe_editor_core::shortcuts::CONTEXT_ACTION_IDS {
-                    if matches(id, key, modifiers) {
+                    if matches_context(id, key, modifiers) {
                         actions.context_action = Some(id);
                         break;
                     }

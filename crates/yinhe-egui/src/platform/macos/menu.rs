@@ -235,6 +235,17 @@ pub(super) fn init_native_menu() -> muda::Result<()> {
         &crate::chrome::transport_bar::EDIT_GROUPS,
         &default_kb,
     )?;
+    // 轨道编组不在 EditAction 里（它是上下文动作），单独挂到编辑菜单末尾。
+    let group_item = Box::new(MenuItem::new(
+        t!("arrange.group_tracks"),
+        true,
+        Some(Accelerator::new(Some(cmd), Code::KeyG)),
+    ));
+    map.insert(group_item.id().clone(), MenuAction::TrackGroup);
+    let group_sep = Box::new(PredefinedMenuItem::separator());
+    edit_menu.append(group_sep.as_ref())?;
+    edit_menu.append(group_item.as_ref())?;
+    items.push(("arrange.group_tracks", group_item));
 
     // 操作菜单：框选后的批量修改动作（从编辑菜单分离）。
     let operation_menu = build_action_submenu(
