@@ -154,7 +154,14 @@ pub(crate) struct AudioModel {
 
 impl AudioModel {
     pub(crate) fn from_model(model: &YinModel) -> Self {
-        let track_channels: Vec<u8> = model.tracks.iter().map(|t| t.global_channel()).collect();
+        let track_channels: Vec<u8> = model
+            .tracks
+            .iter()
+            .map(|t| {
+                t.midi_target_channel()
+                    .unwrap_or_else(|| t.global_channel())
+            })
+            .collect();
         let track_banks: Vec<Vec<(u32, u8)>> = model
             .tracks
             .iter()
@@ -518,7 +525,10 @@ pub(crate) fn flatten_automation_to_cc_events(
 
     for (track_idx, track) in model.tracks.iter().enumerate() {
         let track_idx_u16 = track_idx as u16;
-        let channel = track.global_channel() as u32;
+        let channel = track
+            .midi_target_channel()
+            .map(u32::from)
+            .unwrap_or_else(|| u32::from(track.global_channel()));
 
         for (lane_idx, lane) in track.automation_lanes.iter().enumerate() {
             let lane_idx_u16 = lane_idx as u16;

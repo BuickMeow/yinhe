@@ -6,7 +6,9 @@
 //! `ChannelLayout` 在 `AudioEngine` 创建时一次性定型，生命周期内不可变。
 //! 若 model 结构变化（增减音轨、改 channel/port），必须 teardown + 重建引擎。
 
-use yinhe_core::{TrackKind, YinModel};
+#[cfg(test)]
+use yinhe_core::TrackKind;
+use yinhe_core::YinModel;
 
 /// dense 通道所属的命名空间（strip/insert/send 反查路由用）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,13 +58,12 @@ impl ChannelLayout {
         let mut ch_active = [false; 256];
         let mut audio_channels: Vec<u16> = Vec::new();
         for track in model.tracks.iter() {
-            if track.kind == TrackKind::Midi {
-                let ch = track.global_channel() as usize;
+            if let Some(ch) = track.midi_target_channel() {
+                let ch = ch as usize;
                 if ch < 256 {
                     ch_active[ch] = true;
                 }
-            } else if track.kind == TrackKind::Audio
-                && let Some(ach) = track.audio_channel
+            } else if let Some(ach) = track.audio_target_channel()
                 && !audio_channels.contains(&ach)
             {
                 audio_channels.push(ach);
@@ -190,13 +191,12 @@ impl ChannelLayout {
     /// 成本 O(tracks)，与音符总数无关。
     pub fn covers_model(&self, model: &YinModel) -> bool {
         for track in model.tracks.iter() {
-            if track.kind == TrackKind::Midi {
-                let ch = track.global_channel() as usize;
+            if let Some(ch) = track.midi_target_channel() {
+                let ch = ch as usize;
                 if ch < 256 && !self.is_active(ch) {
                     return false;
                 }
-            } else if track.kind == TrackKind::Audio
-                && let Some(ach) = track.audio_channel
+            } else if let Some(ach) = track.audio_target_channel()
                 && self.audio_dense_for(ach) == u32::MAX
             {
                 return false;
@@ -652,6 +652,34 @@ mod tests {
         assert_eq!(layout.dense_for(3), 1);
         assert!(!layout.is_audio_dense(0));
         assert!(!layout.is_audio_dense(1));
+    }
+
+    /// 显式 channel_routing 决定引擎实际激活的源通道。
+    #[test]
+    fn explicit_track_routing_activates_target_channels() {
+        use yinhe_types::MixerChannelId;
+
+        let mut midi = TrackData::new(0, 0); // 原本 A01
+        midi.channel_routing = Some(MixerChannelId::Midi(5));
+        let mut audio = TrackData::new(0, 0);
+        audio.kind = TrackKind::Audio;
+        audio.audio_channel = Some(2);
+        audio.channel_routing = Some(MixerChannelId::Audio(9));
+        let mut model = YinModel {
+            conductor: Arc::new(ConductorData::default()),
+            tracks: vec![Arc::new(midi), Arc::new(audio)],
+            meta: ProjectMeta {
+                ppq: 480,
+                ..ProjectMeta::default()
+            },
+            ..Default::default()
+        };
+        model.rebuild();
+        let layout = ChannelLayout::from_model(&model);
+        assert!(layout.is_active(5), "MIDI 轨应激活显式目标通道");
+        assert!(!layout.is_active(0), "原 A01 不应再被激活");
+        assert_eq!(layout.audio_channels(), &[9], "音频轨路由到显式通道");
+        assert!(layout.covers_model(&model));
     }
 
     /// 音频通道 dense 从 midi_compacted 起，MIDI 通道数不受影响。

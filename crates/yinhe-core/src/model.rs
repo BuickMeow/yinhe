@@ -398,6 +398,29 @@ impl TrackData {
         self.channel_routing
             .or_else(|| self.default_mixer_channel())
     }
+
+    /// 引擎实际使用的 MIDI 源通道。显式路由只有 `Midi(_)` 有效；
+    /// 指向 Bus/Master 等不兼容目标时回退原 port/channel，避免丢声。
+    pub fn midi_target_channel(&self) -> Option<u8> {
+        if self.kind != TrackKind::Midi {
+            return None;
+        }
+        match self.mixer_channel() {
+            Some(yinhe_types::MixerChannelId::Midi(ch)) => Some(ch),
+            _ => Some(self.global_channel()),
+        }
+    }
+
+    /// 引擎实际使用的音频通道。显式路由只有 `Audio(_)` 有效。
+    pub fn audio_target_channel(&self) -> Option<u16> {
+        if self.kind != TrackKind::Audio {
+            return None;
+        }
+        match self.mixer_channel() {
+            Some(yinhe_types::MixerChannelId::Audio(ch)) => Some(ch),
+            _ => self.audio_channel,
+        }
+    }
 }
 
 // =========================================================

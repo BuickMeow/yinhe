@@ -66,7 +66,7 @@ impl AudioClipRenderer<'_> {
             if self.skip_track.get(track_idx).copied().unwrap_or(false) {
                 continue;
             }
-            let Some(ach) = track.audio_channel else {
+            let Some(ach) = track.audio_target_channel() else {
                 continue;
             };
             let dense = self.layout.audio_dense_for(ach);

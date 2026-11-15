@@ -1142,7 +1142,10 @@ fn compute_chase_states(
         if skip_mask.get(track_idx).copied().unwrap_or(false) {
             continue; // mute 轨道不参与 chase
         }
-        let ch = track.global_channel() as usize;
+        let Some(ch) = track.midi_target_channel() else {
+            continue;
+        };
+        let ch = ch as usize;
         if ch >= 256 {
             continue;
         }
