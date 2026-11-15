@@ -389,7 +389,7 @@ mod tests {
             "锁定轨不能被全选选中"
         );
         assert!(
-            doc.edit.selected.rects.iter().any(|r| r.4 <= 0 && 0 <= r.5),
+            doc.edit.selected.rects.iter().any(|r| r.4 == 0),
             "未锁定轨应被选中"
         );
     }
