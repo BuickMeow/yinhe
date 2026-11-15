@@ -123,8 +123,8 @@ pub(crate) fn show(
     let item_rects =
         render::build_item_rects(row_layout, panel_rect, panel_w, lh, *scroll_y, num_tracks);
 
-    // chevron 命中区：按下在 chevron 上不触发排序/选择（只翻转展开状态）。
-    let mut chevron_rects: Vec<egui::Rect> = Vec::new();
+    // 行内按钮命中区：按下在这些区域只操作按钮，不触发轨道排序。
+    let mut no_drag_rects: Vec<egui::Rect> = Vec::new();
 
     // 兄弟轨道联动：鼠标落在某音轨的主行/任意自动化行上，视为悬停整个
     // 「兄弟轨道」（该音轨及其全部自动化轨），它们的 chevron/加号一并显示。
@@ -260,6 +260,8 @@ pub(crate) fn show(
                     egui::pos2(btn_x_start + btn_size.x + gap, btn_y),
                     btn_size,
                 );
+                no_drag_rects.push(m_rect);
+                no_drag_rects.push(s_rect);
                 let m_resp = draw::draw_inline_button(
                     ui,
                     &painter,
@@ -320,6 +322,7 @@ pub(crate) fn show(
                     badge_rect.max.y - BADGE_ICON_BOTTOM_INSET,
                 );
                 let plus_rect = egui::Rect::from_center_size(plus_center, egui::vec2(12.0, 16.0));
+                no_drag_rects.push(plus_rect);
                 if pointer_pos.is_some_and(|p| plus_rect.contains(p)) {
                     crate::widgets::hint::set(ui.ctx(), t!("hint.arrange.add_automation"));
                 }
@@ -377,17 +380,18 @@ pub(crate) fn show(
                 if family_hovered && pointer_pos.is_some_and(|p| plus_rect.contains(p)) {
                     crate::widgets::hint::set(ui.ctx(), t!("hint.arrange.add_automation"));
                 }
-                if family_hovered
-                    && badge::badge_icon_button(
+                if family_hovered {
+                    no_drag_rects.push(plus_rect);
+                    if badge::badge_icon_button(
                         ui,
                         plus_center,
                         ICON_ADD.codepoint,
                         ICON_ADD.font_family(),
                         icon_color,
                         idx,
-                    )
-                {
-                    actions.push(TrackAction::OpenAutomationPicker { idx });
+                    ) {
+                        actions.push(TrackAction::OpenAutomationPicker { idx });
+                    }
                 }
             } else {
                 let icon = if expanded {
@@ -410,7 +414,7 @@ pub(crate) fn show(
                 );
                 crate::widgets::hint::hover(ui.ctx(), &chev_resp, t!("hint.arrange.am_expand"));
                 if family_hovered {
-                    chevron_rects.push(icon_rect);
+                    no_drag_rects.push(icon_rect);
                     painter.text(
                         icon_rect.center(),
                         egui::Align2::CENTER_CENTER,
@@ -418,6 +422,9 @@ pub(crate) fn show(
                         egui::FontId::new(crate::theme::ICON_FONT, icon.font_family()),
                         icon_color,
                     );
+                } else if has_any_lane {
+                    // Bitwig 风格占位：不显示 chevron 时用淡点提示该轨有自动化。
+                    painter.circle_filled(icon_rect.center(), 2.0, icon_color.gamma_multiply(0.5));
                 }
                 if chev_resp.clicked()
                     && let Some(e) = arr_am_expanded.get_mut(idx)
@@ -513,6 +520,8 @@ pub(crate) fn show(
                     btn_size,
                 );
 
+                no_drag_rects.push(m_rect);
+                no_drag_rects.push(s_rect);
                 let m_resp = draw::draw_inline_button(
                     ui,
                     &painter,
@@ -635,7 +644,7 @@ pub(crate) fn show(
         num_tracks,
         am_lane_selected,
         &resp,
-        &chevron_rects,
+        &no_drag_rects,
         &item_rects,
         &mut drag,
         drag_id,

@@ -27,7 +27,7 @@ pub fn handle_interactions(
     num_tracks: usize,
     am_lane_selected: &mut HashSet<(u16, AutomationTarget)>,
     resp: &egui::Response,
-    chevron_rects: &[egui::Rect],
+    no_drag_rects: &[egui::Rect],
     item_rects: &[egui::Rect],
     drag: &mut Option<crate::widgets::reorder::DragReorder>,
     drag_id: egui::Id,
@@ -310,10 +310,11 @@ pub fn handle_interactions(
     });
 
     // ── 拖拽排序 ──
+    // 起点落在 M/S、chevron、加号等按钮上时不排序，只有行内空白区可拖拽。
     if resp.drag_started()
         && !dragging
         && let Some(pos) = resp.interact_pointer_pos()
-        && !chevron_rects.iter().any(|r| r.contains(pos))
+        && !no_drag_rects.iter().any(|r| r.contains(pos))
         && matches!(
             row_layout.hit_at_music_y(pos.y - panel_rect.min.y + *scroll_y, lh),
             Some(ArRow::Track(_))
