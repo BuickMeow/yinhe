@@ -19,7 +19,7 @@ pub fn hover_track(
     let pos = ui.input(|i| i.pointer.hover_pos())?;
     row_layout
         .hit_at_music_y(pos.y - panel_rect.min.y + scroll_y, lh)
-        .map(|h| h.track())
+        .and_then(|h| h.track_opt())
 }
 
 /// 行级悬停：是否 hover 在 `rect` 上且未被 popup 遮挡。

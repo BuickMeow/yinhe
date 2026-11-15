@@ -25,6 +25,11 @@ impl App {
             .map(|a| a.handle.is_playing())
             .unwrap_or(false);
         let sel_hint = Self::compute_sel_hint(&self.workspace.documents[idx]);
+        // AR 固定总线行：参数快照 + 与 MIX 同源的平滑电平。
+        let bus_strips = self.workspace.documents[idx].mixer.buses.clone();
+        let dt = ui.ctx().input(|i| i.stable_dt).min(0.1);
+        let bus_meters = crate::mix::bus_meter_display(self, dt);
+        let master_meter = self.mix.master_display;
 
         let mut request_pianoroll = false;
         let mut arr_drag_delta: Option<crate::arrange::ArrDragDelta> = None;
@@ -39,6 +44,10 @@ impl App {
         let mut needs_audio_rebuild = false;
         // AR 自动化 lane 增删/编辑 → notify_audio_model_changed（不重建引擎）。
         let mut needs_audio_notify = false;
+        // AR 固定 Bus 行 M/S → 推送混音参数。
+        let mut mixer_dirty = false;
+        // 双击固定 Bus/Master 行 → 打开设备链。
+        let mut dock_req: Option<crate::chrome::device_chain::DockContext> = None;
         {
             let mut guard =
                 crate::app::main_loop::ReplaceGuard::new(&mut self.workspace.documents[idx]);
@@ -85,6 +94,11 @@ impl App {
                 sel_hint.as_ref(),
                 &mut automation_picker_req,
                 &self.mix.track_display,
+                &bus_strips,
+                &bus_meters,
+                master_meter,
+                &mut mixer_dirty,
+                &mut dock_req,
             );
             // guard dropped here
         }
@@ -108,6 +122,32 @@ impl App {
         // 自动化内容变化（AR lane 增删）：通知音频引擎 model 已变。
         if needs_audio_notify {
             self.notify_audio_model_changed();
+        }
+        // AR 固定总线条 M/S：写回参数并推给引擎（推子类参数不进 undo）。
+        if mixer_dirty {
+            self.note_mixer_edit(t!("undo.mix_param").as_ref());
+            self.workspace.documents[idx].mark_mixer_dirty();
+            self.push_mixer_state_to_engine(idx);
+        }
+        // 双击固定 Bus/Master 行：展开底部设备链并切换语境。
+        if let Some(context) = dock_req {
+            crate::chrome::mode_bar::set_dock_visible(
+                &mut self.show_pianoroll_in_arrange,
+                &mut self.show_bottom_dock,
+                &mut self.show_mixer_panel,
+                &mut self.show_meter_panel,
+                true,
+            );
+            self.layout_needs_save = true;
+            let selected_track = self.workspace.documents[idx]
+                .edit
+                .track_selected
+                .iter()
+                .min()
+                .copied();
+            self.dock_track = selected_track;
+            self.dock_context = Some(context);
+            self.dock_selected = None;
         }
         // AR 橡皮擦（guard 已释放，可借 &mut self）。
         if let Some((t_start, t_end, track_lo, track_hi)) = arr_eraser_rect {

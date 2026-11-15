@@ -481,6 +481,8 @@ impl App {
 
     /// 引擎 spawn 完成后：全量同步混音台（参数 + 各 insert 处理器补发 + 乐器安装）。
     pub(crate) fn push_mixer_state_to_engine(&mut self, idx: usize) {
+        // 文件夹/通道路由可能已变化（归组、撤销、删总线）：推送前统一同步。
+        let _ = self.workspace.documents[idx].sync_folder_routing();
         let Self {
             audio_state,
             workspace,
@@ -587,6 +589,32 @@ pub(crate) fn update_master_meter(app: &mut App, dt: f32) -> ((f32, f32), (f32, 
     s.update(raw, dt);
     app.mix.master_display = (s.level(), s.hold());
     app.mix.master_display
+}
+
+/// AR 固定总线条的电平快照（与 MIX 共用同一套平滑峰值）。
+pub(crate) fn bus_meter_display(app: &mut App, dt: f32) -> Vec<crate::widgets::meter::StereoMeter> {
+    let count = app
+        .workspace
+        .active_doc
+        .map(|idx| app.workspace.documents[idx].mixer.buses.len())
+        .unwrap_or(0);
+    (0..count)
+        .map(|bus| {
+            let raw = app
+                .audio_state
+                .handle
+                .as_ref()
+                .map(|a| a.handle.bus_meter_read(bus))
+                .unwrap_or((0.0, 0.0));
+            let slot = app
+                .mix
+                .smoothed_buses
+                .entry(format!("bus{bus}"))
+                .or_default();
+            slot.update(raw, dt);
+            (slot.level(), slot.hold())
+        })
+        .collect()
 }
 
 /// 更新每轨电平表弹道（每帧一次，main_loop 在走带栏/编排视图之前调用）。
@@ -921,7 +949,7 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
         }
         MixAction::RemoveBus { bus } => {
             app.note_mixer_edit(t!("undo.mix_bus").as_ref());
-            app.workspace.documents[idx].mixer_mut().remove_bus(bus);
+            app.workspace.documents[idx].remove_bus(bus);
             let handle = app.audio_state.handle.as_ref().map(|a| &a.handle);
             if idx < app.mixer_racks.len() {
                 app.mixer_racks[idx].remove_bus_chain(bus, handle);

@@ -34,4 +34,13 @@ pub(crate) enum TrackAction {
     GroupTracks { indices: Vec<usize> },
     /// 解散文件夹。
     UngroupTrack { idx: usize },
+    /// 固定总线行 M/S：写入总线 strip 参数。
+    SetBusStrip {
+        bus: u16,
+        params: yinhe_mixer::StripParams,
+    },
+    /// 双击固定总线行：打开该总线的设备链。
+    OpenBusDock { bus: u16 },
+    /// 双击 Master 行：打开 Master 设备链。
+    OpenMasterDock,
 }

@@ -121,6 +121,12 @@ pub(crate) fn show(
     am_ms: &mut std::collections::HashMap<(u16, AutomationTarget), yinhe_types::AmMsState>,
     // 每轨电平表显示值 `((L,R), (holdL,holdR))`（索引 = 音轨；仅播放时非零）。
     track_meters: &[crate::widgets::meter::StereoMeter],
+    // 固定总线条的持久化参数（索引 = 总线）。
+    bus_strips: &[yinhe_mixer::StripParams],
+    // 固定总线电平表显示值。
+    bus_meters: &[crate::widgets::meter::StereoMeter],
+    // Master 电平表显示值。
+    master_meter: crate::widgets::meter::StereoMeter,
     // 编辑/播放光标 tick（自动化表显示光标处的 lane 值）。
     cursor_tick: Option<f64>,
     // Conductor 的 Tempo lane（Conductor 行自动化表）。
@@ -239,18 +245,126 @@ pub(crate) fn show(
         };
         if row_hit.is_fixed() {
             render::draw_row_background(ui, &painter, row_rect, row, false, lane_even);
-            let label = match row_hit {
-                ArRow::Bus(bus) => format!("BUS {}", bus + 1),
-                ArRow::Master => "Master".to_string(),
-                _ => String::new(),
+            if y > panel_rect.max.y || y + lh < panel_rect.min.y {
+                continue;
+            }
+            let (label, level, hold, strip) = match row_hit {
+                ArRow::Bus(bus) => (
+                    format!("BUS {}", bus + 1),
+                    bus_meters.get(bus).map(|m| m.0).unwrap_or((0.0, 0.0)),
+                    bus_meters.get(bus).map(|m| m.1).unwrap_or((0.0, 0.0)),
+                    bus_strips.get(bus).copied().unwrap_or_default(),
+                ),
+                ArRow::Master => (
+                    "Master".to_string(),
+                    master_meter.0,
+                    master_meter.1,
+                    Default::default(),
+                ),
+                _ => unreachable!(),
+            };
+            // 固定行不做缩进，左侧画一条通道色带（总线 = accent，Master = 主题文字色）。
+            let accent = if matches!(row_hit, ArRow::Master) {
+                crate::theme::text_primary()
+            } else {
+                crate::theme::accent_active()
+            };
+            painter.rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(row_rect.min.x + 2.0, row_rect.min.y + 2.0),
+                    egui::pos2(row_rect.min.x + 4.5, row_rect.max.y - 2.0),
+                ),
+                0.0,
+                accent,
+            );
+            let label_y = if show_details {
+                row_rect.min.y + lh * 0.5
+            } else {
+                row_rect.center().y
             };
             painter.text(
-                egui::pos2(row_rect.min.x + 8.0, row_rect.center().y),
+                egui::pos2(row_rect.min.x + 10.0, label_y),
                 egui::Align2::LEFT_CENTER,
                 label,
                 egui::FontId::proportional(crate::theme::SMALL_FONT),
-                crate::theme::text_muted(),
+                crate::theme::text_primary(),
             );
+
+            if show_details {
+                let gap = 2.0;
+                let total_btn_w = 2.0 * btn_size.x + gap;
+                let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
+                let meter_left = meter_right - LEVEL_METER_W;
+                let btn_x_start = meter_left - LEVEL_METER_GAP - total_btn_w;
+                let btn_y = row_rect.center().y - btn_size.y * 0.5;
+                if let ArRow::Bus(bus) = row_hit {
+                    let m_rect =
+                        egui::Rect::from_min_size(egui::pos2(btn_x_start, btn_y), btn_size);
+                    let s_rect = egui::Rect::from_min_size(
+                        egui::pos2(btn_x_start + btn_size.x + gap, btn_y),
+                        btn_size,
+                    );
+                    no_drag_rects.push(m_rect);
+                    no_drag_rects.push(s_rect);
+                    let m_resp = draw::draw_inline_button(
+                        ui,
+                        &painter,
+                        m_rect,
+                        "M",
+                        strip.mute,
+                        crate::theme::mute_active(),
+                        egui::Id::unique(("arr_bus_m", bus)),
+                    );
+                    let s_resp = draw::draw_inline_button(
+                        ui,
+                        &painter,
+                        s_rect,
+                        "S",
+                        strip.solo,
+                        crate::theme::solo_active(),
+                        egui::Id::unique(("arr_bus_s", bus)),
+                    );
+                    crate::widgets::hint::hover(ui.ctx(), &m_resp, t!("hint.arrange.track_mute"));
+                    crate::widgets::hint::hover(ui.ctx(), &s_resp, t!("hint.arrange.track_solo"));
+                    if m_resp.clicked() {
+                        actions.push(TrackAction::SetBusStrip {
+                            bus: bus as u16,
+                            params: yinhe_mixer::StripParams {
+                                mute: !strip.mute,
+                                ..strip
+                            },
+                        });
+                    }
+                    if s_resp.clicked() {
+                        actions.push(TrackAction::SetBusStrip {
+                            bus: bus as u16,
+                            params: yinhe_mixer::StripParams {
+                                solo: !strip.solo,
+                                ..strip
+                            },
+                        });
+                    }
+                }
+                let meter_rect = egui::Rect::from_min_max(
+                    egui::pos2(meter_left, row_rect.min.y + LEVEL_METER_MARGIN),
+                    egui::pos2(meter_right, row_rect.max.y - LEVEL_METER_MARGIN),
+                );
+                crate::widgets::meter::compact_meter(&painter, meter_rect, level, hold);
+            }
+
+            // 双击固定行：打开设备链（总线效果器 / Master 效果器）。
+            let fix_id = match row_hit {
+                ArRow::Bus(bus) => egui::Id::unique(("arr_bus_row", bus)),
+                _ => egui::Id::unique("arr_master_row"),
+            };
+            let fix_resp = ui.interact(row_rect, fix_id, egui::Sense::click());
+            crate::widgets::hint::hover(ui.ctx(), &fix_resp, t!("hint.mix.header_double_click"));
+            if fix_resp.double_clicked() {
+                match row_hit {
+                    ArRow::Bus(bus) => actions.push(TrackAction::OpenBusDock { bus: bus as u16 }),
+                    _ => actions.push(TrackAction::OpenMasterDock),
+                }
+            }
             continue;
         }
         let idx = row_hit.track();
@@ -615,6 +729,14 @@ pub(crate) fn show(
             );
 
             let name = &ti.name;
+            // 文件夹名后标注它拥有的总线，明确“文件夹即总线”。
+            let folder_bus_label = tracks
+                .get(idx)
+                .filter(|t| t.kind == TrackKind::Folder)
+                .and_then(|t| t.folder_bus)
+                .map(|bus| format!(" · BUS {}", bus + 1))
+                .unwrap_or_default();
+            let display_name = format!("{name}{folder_bus_label}");
             let name_font = render::detail_font(*row_height);
             let name_y = badge_rect.min.y + *row_height * 0.70;
             if crate::widgets::track_rename::active(ui, idx) {
@@ -637,7 +759,7 @@ pub(crate) fn show(
                 painter.text(
                     egui::pos2(text_x, name_y),
                     egui::Align2::LEFT_CENTER,
-                    name,
+                    &display_name,
                     name_font,
                     crate::theme::text_primary(),
                 );
@@ -745,6 +867,13 @@ pub(crate) fn show(
             );
 
             let name = &ti.name;
+            let folder_bus_label = tracks
+                .get(idx)
+                .filter(|t| t.kind == TrackKind::Folder)
+                .and_then(|t| t.folder_bus)
+                .map(|bus| format!(" · BUS {}", bus + 1))
+                .unwrap_or_default();
+            let display_name = format!("{name}{folder_bus_label}");
             let name_font = render::compact_font(*row_height);
             if crate::widgets::track_rename::active(ui, idx) {
                 let name_rect = egui::Rect::from_min_size(
@@ -766,7 +895,7 @@ pub(crate) fn show(
                 painter.text(
                     egui::pos2(text_x + 40.0, badge_rect.center().y),
                     egui::Align2::LEFT_CENTER,
-                    name,
+                    &display_name,
                     name_font,
                     crate::theme::text_primary(),
                 );

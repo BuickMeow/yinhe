@@ -130,6 +130,14 @@ pub fn show(
     automation_picker_req: &mut Option<usize>,
     // 每轨电平表显示值 `((L,R), (holdL,holdR))`（仅播放时非零；索引 = 音轨）。
     track_meters: &[crate::widgets::meter::StereoMeter],
+    // 固定总线条参数与电平（索引 = 总线；MIX 的总线投影到 AR）。
+    bus_strips: &[yinhe_mixer::StripParams],
+    bus_meters: &[crate::widgets::meter::StereoMeter],
+    master_meter: crate::widgets::meter::StereoMeter,
+    // 固定行 M/S 改混音参数：调用方推送引擎并标记工程脏。
+    mixer_dirty: &mut bool,
+    // 双击固定 Bus/Master 行：请求打开设备链（调用方落地）。
+    dock_req: &mut Option<crate::chrome::device_chain::DockContext>,
 ) {
     *last_cursor_tick = doc.edit.cursor_tick;
 
@@ -488,6 +496,9 @@ pub fn show(
             &mut doc.edit.arr_am_selected,
             &mut doc.edit.arr_am_ms,
             track_meters,
+            bus_strips,
+            bus_meters,
+            master_meter,
             doc.edit.cursor_tick,
             &doc.data.model.conductor.tempo,
         );
@@ -617,6 +628,24 @@ pub fn show(
                         doc.ungroup_track(*idx),
                         t!("undo.ungroup_folder").to_string(),
                     )
+                }
+                track_panel::TrackAction::SetBusStrip { bus, params } => {
+                    structural = false;
+                    if let Some(slot) = doc.mixer.buses.get_mut(*bus as usize) {
+                        *slot = *params;
+                    }
+                    *mixer_dirty = true;
+                    (None, String::new())
+                }
+                track_panel::TrackAction::OpenBusDock { bus } => {
+                    structural = false;
+                    *dock_req = Some(crate::chrome::device_chain::DockContext::Bus(*bus));
+                    (None, String::new())
+                }
+                track_panel::TrackAction::OpenMasterDock => {
+                    structural = false;
+                    *dock_req = Some(crate::chrome::device_chain::DockContext::Master);
+                    (None, String::new())
                 }
                 track_panel::TrackAction::CommitMuteSolo { before, after } => {
                     structural = false;

@@ -59,11 +59,14 @@ pub(crate) fn arrange_snapped_bounds(
         if row_lo >= row_layout.total_rows() {
             return None;
         }
-        let track_lo = row_layout.row_hit(row_lo).map(|h| h.track()).unwrap_or(0);
+        let track_lo = row_layout
+            .row_hit(row_lo)
+            .and_then(|h| h.track_opt())
+            .unwrap_or_else(|| data.num_tracks.saturating_sub(1));
         let track_hi = row_layout
             .row_hit(row_hi.min(row_layout.total_rows().saturating_sub(1)))
-            .map(|h| h.track())
-            .unwrap_or(0);
+            .and_then(|h| h.track_opt())
+            .unwrap_or_else(|| data.num_tracks.saturating_sub(1));
         let view_sy = row_layout.track_y(track_lo, lh) - scroll_y;
         let view_ey =
             row_layout.track_y(track_hi, lh) + row_layout.track_height(track_hi, lh) - scroll_y;

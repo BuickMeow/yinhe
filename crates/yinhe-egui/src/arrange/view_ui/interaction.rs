@@ -112,8 +112,9 @@ pub(crate) fn sel_drag_frame_arrange(
         let click_tick = view.x_to_tick(local.x);
         let click_track_f = row_layout
             .hit_at_music_y(local.y + view.base.scroll_y, view.lane_height())
-            .map(|h| h.track() as f32)
-            .unwrap_or(0.0);
+            .and_then(|h| h.track_opt())
+            .map(|t| t as f32)
+            .unwrap_or_else(|| data.num_tracks.saturating_sub(1) as f32);
         let handle_hit = if scale_state.is_some() || riff_state.is_some() {
             None
         } else if !additive {
@@ -237,8 +238,9 @@ pub(crate) fn sel_drag_frame_arrange(
             };
             let row = row_layout
                 .hit_at_music_y(local.y + view.base.scroll_y, view.lane_height())
-                .map(|h| h.track() as i64)
-                .unwrap_or(r1 as i64);
+                .and_then(|h| h.track_opt())
+                .map(|t| t as i64)
+                .unwrap_or_else(|| data.num_tracks.saturating_sub(1) as i64);
             let extent_y = if row > r1 as i64 {
                 row - r1 as i64
             } else if row < r0 as i64 {
@@ -262,8 +264,9 @@ pub(crate) fn sel_drag_frame_arrange(
         let current_tick = view.x_to_tick(local.x);
         let current_track_f = row_layout
             .hit_at_music_y(local.y + view.base.scroll_y, view.lane_height())
-            .map(|h| h.track() as f32)
-            .unwrap_or(0.0);
+            .and_then(|h| h.track_opt())
+            .map(|t| t as f32)
+            .unwrap_or_else(|| data.num_tracks.saturating_sub(1) as f32);
         move_drag = Some((origin, (current_tick, current_track_f), alt));
         {
             let dt = super::types::snapped_selection_delta(
