@@ -302,8 +302,8 @@ impl App {
                 // 右栏改动（改 port/channel、图层拖动排序）→ 统一走 notify：
                 // 通道集合真的变了才 teardown 重建，重排等只 reload_notes。
                 self.notify_audio_model_changed();
-                // 通道归属变化也可能改变文件夹总线路由（通道集合不变时
-                // notify 只重载音符，这里补一次混音全量推送）。
+                // 通道归属/总线输出变化在通道集合不变时只走 notify，
+                // 这里补一次混音全量推送，保证引擎输出路由同步。
                 if let Some(idx) = self.workspace.active_doc {
                     self.push_mixer_state_to_engine(idx);
                 }

@@ -69,9 +69,6 @@ pub struct TrackMap {
     /// 显式混音通道路由（旧工程无此字段 = 按源通道推导）。
     #[serde(default)]
     pub channel_routing: Option<yinhe_types::MixerChannelId>,
-    /// 文件夹总线（仅 Folder）。
-    #[serde(default)]
-    pub folder_bus: Option<u16>,
     /// 音频通道号（仅音频轨有意义）。
     #[serde(default)]
     pub audio_channel: Option<u16>,
@@ -130,7 +127,6 @@ impl MappingFile {
                 folder_depth: t.folder_depth,
                 collapsed: t.collapsed,
                 channel_routing: t.channel_routing,
-                folder_bus: t.folder_bus,
                 audio_channel: t.audio_channel,
                 audio_clips: t.audio_clips.clone(),
                 clips: t.clips.clone(),

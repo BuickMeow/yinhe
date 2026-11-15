@@ -199,12 +199,14 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
         doc.edit.track_cache.rebuild_info(&doc.data);
         doc.edit.track_cache.rebuild_pc_map(&doc.data);
         doc.data.bump_revision();
-        doc.sync_folder_routing();
     }
 
     // ── 混音输出通道（Track→MixerChannel）──
     let mut routing_changed = false;
     let kind = doc.data.model.tracks[track_idx].kind;
+    let bus_options: Vec<(usize, String)> = std::iter::once((0, "Master".to_string()))
+        .chain((0..doc.mixer.buses.len()).map(|bus| (bus + 1, format!("BUS {}", bus + 1))))
+        .collect();
     match kind {
         yinhe_core::TrackKind::Midi => {
             let current = doc.data.model.tracks[track_idx]
@@ -241,6 +243,37 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
                     routing_changed = true;
                 }
             });
+            // 通道主输出：整条 MIDI 通道 → Master / 某条总线。
+            let current_out = doc
+                .mixer
+                .midi_outputs
+                .get(current_ch)
+                .copied()
+                .flatten()
+                .map(|bus| bus as usize + 1)
+                .unwrap_or(0);
+            crate::widgets::rows::panel_row(ui, t!("track.output").as_ref(), |ui| {
+                let mut sel = current_out;
+                if crate::widgets::combo::combo_select(
+                    ui,
+                    "track_midi_bus_output",
+                    &mut sel,
+                    ui.available_width().max(1.0),
+                    &bus_options,
+                ) {
+                    let outputs = &mut doc.mixer.midi_outputs;
+                    if outputs.len() <= current_ch {
+                        outputs.resize(current_ch + 1, None);
+                    }
+                    outputs[current_ch] = if sel == 0 {
+                        None
+                    } else {
+                        Some((sel - 1) as u16)
+                    };
+                    doc.mark_mixer_dirty();
+                    routing_changed = true;
+                }
+            });
         }
         yinhe_core::TrackKind::Audio => {
             let default_ch = doc.data.model.tracks[track_idx].audio_channel.unwrap_or(0);
@@ -273,37 +306,47 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
                     routing_changed = true;
                 }
             });
-        }
-        yinhe_core::TrackKind::Folder | yinhe_core::TrackKind::Master => {}
-    }
-
-    // ── 主输出：文件夹总线 / Master（Studio One 的 Channel→Bus 一层）──
-    let split_channels = doc.split_folder_channels();
-    let bus_output = match kind {
-        yinhe_core::TrackKind::Folder => doc.data.model.tracks[track_idx]
-            .folder_bus
-            .map(|bus| format!("BUS {}", bus + 1)),
-        yinhe_core::TrackKind::Master => Some("Master".to_string()),
-        _ => doc.data.model.tracks[track_idx]
-            .mixer_channel()
-            .and_then(|channel| {
-                if split_channels.contains(&channel) {
-                    return Some(t!("track.output.split").to_string());
+            // 通道主输出：整条音频通道 → Master / 某条总线。
+            let current_out = doc
+                .mixer
+                .audio_outputs
+                .get(current_ch as usize)
+                .copied()
+                .flatten()
+                .map(|bus| bus as usize + 1)
+                .unwrap_or(0);
+            crate::widgets::rows::panel_row(ui, t!("track.output").as_ref(), |ui| {
+                let mut sel = current_out;
+                if crate::widgets::combo::combo_select(
+                    ui,
+                    "track_audio_bus_output",
+                    &mut sel,
+                    ui.available_width().max(1.0),
+                    &bus_options,
+                ) {
+                    let idx = current_ch as usize;
+                    let outputs = &mut doc.mixer.audio_outputs;
+                    if outputs.len() <= idx {
+                        outputs.resize(idx + 1, None);
+                    }
+                    outputs[idx] = if sel == 0 {
+                        None
+                    } else {
+                        Some((sel - 1) as u16)
+                    };
+                    doc.mark_mixer_dirty();
+                    routing_changed = true;
                 }
-                doc.channel_bus_output(channel)
-                    .map(|bus| format!("BUS {}", bus + 1))
-            })
-            .or_else(|| Some("Master".to_string())),
-    };
-    field_value(
-        ui,
-        t!("track.output").as_ref(),
-        bus_output.unwrap_or_else(|| "Master".to_string()),
-    );
+            });
+        }
+        yinhe_core::TrackKind::Folder => {}
+        yinhe_core::TrackKind::Master => {
+            field_value(ui, t!("track.output").as_ref(), "Master");
+        }
+    }
 
     if routing_changed {
         doc.data.bump_revision();
-        doc.sync_folder_routing();
     }
 
     // ── 通道默认乐器 / 鼓通道 ──

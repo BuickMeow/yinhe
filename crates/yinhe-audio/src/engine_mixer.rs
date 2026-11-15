@@ -33,8 +33,8 @@ impl AudioEngine {
         self.sync_sends_to_graph();
     }
 
-    /// 把持久化的通道/总线主输出路由推到混音图。
-    /// 源通道按 dense 映射；总线输出用于文件夹总线嵌套。
+    /// 把持久化的通道主输出路由推到混音图。
+    /// 源通道按 dense 映射到 Master 或某条总线。
     fn sync_output_routing(&mut self) {
         let bus_count = self.mixer.bus_count();
         let count = self.channel_set.channel_count();
@@ -51,17 +51,6 @@ impl AudioEngine {
             .map(usize::from)
             .filter(|&bus| bus < bus_count);
             self.mixer.set_channel_output(dense, dest);
-        }
-        for bus in 0..bus_count {
-            let parent = self
-                .mixer_params
-                .bus_outputs
-                .get(bus)
-                .copied()
-                .flatten()
-                .map(usize::from)
-                .filter(|&parent| parent < bus_count && parent != bus);
-            self.mixer.set_bus_output(bus, parent);
         }
     }
 

@@ -72,6 +72,7 @@ pub enum TrackKind {
     Midi,
     Audio,
     /// 文件夹轨：不装音符，按 `folder_depth` 包含后续子轨。
+    /// 只是轨道组织容器（折叠/色带/批量操作），没有混音通道，不参与音频路由。
     Folder,
     /// Master：全局事件 + 音频总输出，强制唯一，不能装音符。
     Master,
@@ -323,12 +324,9 @@ pub struct TrackData {
     #[serde(default)]
     pub collapsed: bool,
     /// 显式混音通道路由；None = 按轨道种类/MIDI/音频通道推导。
-    /// 当前引擎仍按源通道混音，此字段为 Track→MixerChannel 解耦预留。
+    /// Track 只提供内容，声音进入该 MixerChannel（Rack）；文件夹不参与该路由。
     #[serde(default)]
     pub channel_routing: Option<yinhe_types::MixerChannelId>,
-    /// 文件夹轨拥有的总线（仅 Folder 有意义）。子轨按通道整体路由到该总线。
-    #[serde(default)]
-    pub folder_bus: Option<u16>,
     /// 音频片段（仅音频轨有意义），按 start_seconds 排序由编辑命令维护。
     #[serde(default)]
     pub audio_clips: Vec<AudioClip>,
@@ -368,7 +366,6 @@ impl TrackData {
             folder_depth: 0,
             collapsed: false,
             channel_routing: None,
-            folder_bus: None,
             audio_channel: None,
             audio_clips: Vec::new(),
             clips: Vec::new(),

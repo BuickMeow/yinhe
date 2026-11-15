@@ -795,6 +795,11 @@ fn mixer_section_roundtrips() {
 
     let m = build_complex_model();
     let mut mixer = MixerParams::default();
+    mixer.ensure_len();
+    mixer.add_bus();
+    mixer.midi_outputs[3] = Some(0);
+    mixer.audio_outputs.resize(2, None);
+    mixer.audio_outputs[1] = Some(0);
     mixer.channels[3] = StripParams {
         gain: 0.7,
         pan: -0.5,
@@ -833,6 +838,8 @@ fn mixer_section_roundtrips() {
     assert_eq!(mixer2.master, mixer.master);
     assert_eq!(mixer2.channel_inserts[3], mixer.channel_inserts[3]);
     assert_eq!(mixer2.master_inserts, mixer.master_inserts);
+    assert_eq!(mixer2.midi_outputs[3], Some(0));
+    assert_eq!(mixer2.audio_outputs.get(1), Some(&Some(0)));
 }
 
 #[test]
@@ -1169,7 +1176,6 @@ fn folder_fields_roundtrip() {
         t.folder_depth = 0;
         t.collapsed = true;
         t.channel_routing = Some(yinhe_types::MixerChannelId::Bus(7));
-        t.folder_bus = Some(3);
     }
     Arc::make_mut(&mut model.tracks[2]).folder_depth = 1;
     Arc::make_mut(&mut model.tracks[3]).folder_depth = 1;
@@ -1182,7 +1188,6 @@ fn folder_fields_roundtrip() {
         loaded.tracks[1].channel_routing,
         Some(yinhe_types::MixerChannelId::Bus(7))
     );
-    assert_eq!(loaded.tracks[1].folder_bus, Some(3));
     assert_eq!(loaded.tracks[2].folder_depth, 1);
     assert_eq!(loaded.tracks[3].folder_depth, 1);
     assert_eq!(loaded.tracks[0].kind, yinhe_core::TrackKind::Master);

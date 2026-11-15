@@ -225,7 +225,7 @@ pub(crate) enum DockContext {
     Midi(u8),
     /// 音频通道（0 起）。
     Audio(u16),
-    /// 总线 / 文件夹总线。
+    /// 总线 / Return 通道。
     Bus(u16),
     /// 主输出（Conductor/Master 轨的音频侧）。
     Master,

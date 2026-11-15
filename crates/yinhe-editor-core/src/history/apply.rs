@@ -227,8 +227,6 @@ impl UndoAction {
                 // 全量替换混音台参数（引擎侧由 UI 层在 undo/redo 后整体推送）。
                 doc.mixer = (**after).clone();
                 doc.mark_mixer_dirty();
-                // 混音参数里的总线表可能来自旧快照：重新认领/推导文件夹总线。
-                doc.sync_folder_routing();
             }
             UndoAction::TrackMuteSolo { after, .. } => {
                 // 仅替换轨道头 M/S 覆盖；音频 skip mask 由 UI 层在 undo/redo 后同步。

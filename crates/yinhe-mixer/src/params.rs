@@ -173,18 +173,12 @@ pub struct MixerParams {
     #[serde(default)]
     pub sends: Vec<Vec<SendParams>>,
     /// MIDI 源通道的主输出目标（索引 = 源通道，`Some(bus)` = 输出到该总线，
-    /// `None` = 直接进 Master）。文件夹总线路由由工程结构推导后写入。
+    /// `None` = 直接进 Master）。由通道输出选择 UI 显式写入。
     #[serde(default)]
     pub midi_outputs: Vec<Option<u16>>,
     /// 音频通道的主输出目标（索引 = 音频通道号）。
     #[serde(default)]
     pub audio_outputs: Vec<Option<u16>>,
-    /// 总线的主输出目标（索引 = 总线；`Some(parent)` = 送入父文件夹总线）。
-    #[serde(default)]
-    pub bus_outputs: Vec<Option<u16>>,
-    /// 总线是否由文件夹拥有（下标与 `buses` 对齐；随文件夹增删自动维护）。
-    #[serde(default)]
-    pub folder_buses: Vec<bool>,
 }
 
 impl Default for MixerParams {
@@ -205,8 +199,6 @@ impl Default for MixerParams {
             sends: Vec::new(),
             midi_outputs: Vec::new(),
             audio_outputs: Vec::new(),
-            bus_outputs: Vec::new(),
-            folder_buses: Vec::new(),
         }
     }
 }
@@ -227,12 +219,8 @@ impl MixerParams {
         self.bus_inserts.truncate(self.buses.len());
         self.bus_sends.resize(self.buses.len(), Vec::new());
         self.bus_sends.truncate(self.buses.len());
-        self.folder_buses.resize(self.buses.len(), false);
-        self.folder_buses.truncate(self.buses.len());
         self.midi_outputs.resize(CHANNEL_COUNT, None);
         self.midi_outputs.truncate(CHANNEL_COUNT);
-        self.bus_outputs.resize(self.buses.len(), None);
-        self.bus_outputs.truncate(self.buses.len());
         // 防御：清理指向不存在总线的 send（工程被手工编辑/版本迁移残留）。
         // MIDI / 音频 / 总线三张发送表一视同仁。
         let bus_count = self.buses.len();
@@ -285,26 +273,7 @@ impl MixerParams {
         self.buses.push(StripParams::default());
         self.bus_inserts.push(Vec::new());
         self.bus_sends.push(Vec::new());
-        self.folder_buses.push(false);
-        self.bus_outputs.push(None);
         Some(idx)
-    }
-
-    /// 新建一条**文件夹总线**（标记为文件夹拥有，随文件夹结构自动回收）。
-    pub fn add_folder_bus(&mut self) -> Option<u16> {
-        let idx = self.add_bus()?;
-        if let Some(flag) = self.folder_buses.get_mut(idx as usize) {
-            *flag = true;
-        }
-        Some(idx)
-    }
-
-    /// 该总线是否由文件夹拥有。
-    pub fn is_folder_bus(&self, bus: u16) -> bool {
-        self.folder_buses
-            .get(bus as usize)
-            .copied()
-            .unwrap_or(false)
     }
 
     /// 删除总线 `bus`：移除其参数与 insert 链，清理指向它的 send、
@@ -321,23 +290,6 @@ impl MixerParams {
         }
         if idx < self.bus_sends.len() {
             self.bus_sends.remove(idx);
-        }
-        if idx < self.folder_buses.len() {
-            self.folder_buses.remove(idx);
-        }
-        if idx < self.bus_outputs.len() {
-            self.bus_outputs.remove(idx);
-        }
-        for target in self.bus_outputs.iter_mut() {
-            if let Some(b) = *target {
-                *target = if b == bus {
-                    None
-                } else if b > bus {
-                    Some(b - 1)
-                } else {
-                    Some(b)
-                };
-            }
         }
         for list in self
             .sends
@@ -457,19 +409,14 @@ mod tests {
     fn remove_bus_remaps_output_routing() {
         let mut p = MixerParams::default();
         p.ensure_len();
-        let _ = p.add_folder_bus();
-        let _ = p.add_folder_bus();
-        let _ = p.add_folder_bus();
+        let _ = p.add_bus();
+        let _ = p.add_bus();
+        let _ = p.add_bus();
         p.midi_outputs[0] = Some(1);
         p.midi_outputs[1] = Some(2);
-        p.bus_outputs[0] = Some(2);
-        p.bus_outputs[2] = Some(1);
         p.remove_bus(1);
         assert_eq!(p.midi_outputs[0], None, "指向被删总线的输出回到 Master");
         assert_eq!(p.midi_outputs[1], Some(1), "更高索引前移");
-        assert_eq!(p.bus_outputs[0], Some(1), "父总线索引前移");
-        assert_eq!(p.bus_outputs[1], None, "父总线被删时清空");
-        assert_eq!(p.folder_buses.len(), 2);
     }
 
     #[test]

@@ -729,14 +729,6 @@ pub(crate) fn show(
             );
 
             let name = &ti.name;
-            // 文件夹名后标注它拥有的总线，明确“文件夹即总线”。
-            let folder_bus_label = tracks
-                .get(idx)
-                .filter(|t| t.kind == TrackKind::Folder)
-                .and_then(|t| t.folder_bus)
-                .map(|bus| format!(" · BUS {}", bus + 1))
-                .unwrap_or_default();
-            let display_name = format!("{name}{folder_bus_label}");
             let name_font = render::detail_font(*row_height);
             let name_y = badge_rect.min.y + *row_height * 0.70;
             if crate::widgets::track_rename::active(ui, idx) {
@@ -759,7 +751,7 @@ pub(crate) fn show(
                 painter.text(
                     egui::pos2(text_x, name_y),
                     egui::Align2::LEFT_CENTER,
-                    &display_name,
+                    name,
                     name_font,
                     crate::theme::text_primary(),
                 );
@@ -867,13 +859,6 @@ pub(crate) fn show(
             );
 
             let name = &ti.name;
-            let folder_bus_label = tracks
-                .get(idx)
-                .filter(|t| t.kind == TrackKind::Folder)
-                .and_then(|t| t.folder_bus)
-                .map(|bus| format!(" · BUS {}", bus + 1))
-                .unwrap_or_default();
-            let display_name = format!("{name}{folder_bus_label}");
             let name_font = render::compact_font(*row_height);
             if crate::widgets::track_rename::active(ui, idx) {
                 let name_rect = egui::Rect::from_min_size(
@@ -895,7 +880,7 @@ pub(crate) fn show(
                 painter.text(
                     egui::pos2(text_x + 40.0, badge_rect.center().y),
                     egui::Align2::LEFT_CENTER,
-                    &display_name,
+                    name,
                     name_font,
                     crate::theme::text_primary(),
                 );
