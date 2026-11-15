@@ -22,7 +22,6 @@ fn test_view() -> yinhe_types::PianoRollView {
         main_size: 0.0,
         orientation: yinhe_types::Orientation::Horizontal,
         layout: yinhe_types::KeyLayout::default(),
-        key_select: None,
         scope_ticks: None,
         scope_viewport_w: 0.0,
     }

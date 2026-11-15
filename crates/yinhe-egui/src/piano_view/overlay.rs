@@ -145,6 +145,13 @@ pub(crate) fn draw_overlays(
             egui::pos2(content_rect.min.x + kb_w, content_rect.max.y),
         )
     };
+    // 键盘高亮直接跟随 PR 当前选框：选框清除/移动时键色同步消失/跟随，
+    // 不再单独维护一份 key_select 状态。
+    let select_ranges: Vec<(u8, u8)> = sel_rect
+        .effective_rects()
+        .iter()
+        .map(|r| (r.2, r.3))
+        .collect();
     super::keyboard::paint(
         painter,
         keyboard_rect_computed,
@@ -154,7 +161,7 @@ pub(crate) fn draw_overlays(
         theme,
         super::keyboard::KeyHighlights {
             playing: playing_keys,
-            select: view.key_select,
+            select: &select_ranges,
             track_colors,
         },
     );
@@ -167,7 +174,6 @@ pub(crate) fn draw_overlays(
         egui::Sense::click_and_drag(),
     );
     if keys_resp.double_clicked() {
-        view.key_select = None;
         key_select_req = Some(KeySelectReq::Clear);
     } else if let Some(pos) = keys_resp.interact_pointer_pos() {
         let local = if view.is_vertical() {
@@ -178,21 +184,17 @@ pub(crate) fn draw_overlays(
         let key = view.cross_px_to_key(local);
         let anchor_id = ui.scope_id().with("pr_key_anchor");
         if keys_resp.clicked() || keys_resp.drag_started() {
-            if keys_resp.clicked()
-                && !keys_resp.drag_started()
-                && view.key_select == Some((key, key))
-            {
-                view.key_select = None;
+            let selection_is_this_key = !sel_rect.rects.is_empty()
+                && sel_rect.rects.iter().all(|r| r.2 == key && r.3 == key);
+            if keys_resp.clicked() && !keys_resp.drag_started() && selection_is_this_key {
                 key_select_req = Some(KeySelectReq::Clear);
             } else {
                 ui.data_mut(|d| d.insert_temp(anchor_id, key));
-                view.key_select = Some((key, key));
                 key_select_req = Some(KeySelectReq::Select(key, key));
             }
         } else if keys_resp.dragged() {
             let anchor = ui.data_mut(|d| d.get_temp::<u8>(anchor_id)).unwrap_or(key);
             let range = (anchor.min(key), anchor.max(key));
-            view.key_select = Some(range);
             key_select_req = Some(KeySelectReq::Select(range.0, range.1));
         }
     }

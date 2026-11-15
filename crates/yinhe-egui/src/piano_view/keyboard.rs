@@ -17,7 +17,8 @@ const LABEL_GUTTER_RATIO: f32 = 0.5;
 #[derive(Clone, Copy)]
 pub struct KeyHighlights<'a> {
     pub playing: &'a [Option<u16>; KEY_COUNT],
-    pub select: Option<(u8, u8)>,
+    /// 当前 PR 选框覆盖的多个音高区间（闭区间）。
+    pub select: &'a [(u8, u8)],
     pub track_colors: &'a [[f32; 4]],
 }
 
@@ -36,7 +37,7 @@ impl KeyHighlights<'_> {
 /// - `kb_w`：键盘厚度（横向 = 宽，纵向 = 高）
 /// - `kh`：单键尺寸（横向 = 键高，纵向 = 键宽）
 /// - `playing_keys`：正在演奏的键（按播放头位置点亮）
-/// - `key_select`：在琴键上拖出的音域（闭区间），高亮显示
+/// - `select`：当前 PR 选框覆盖的音高范围（闭区间），半透明高亮显示
 /// - 键位置统一用 `view.key_to_cross_px(key)`（相对键盘条起点）计算。
 pub fn paint(
     painter: &egui::Painter,
@@ -224,6 +225,13 @@ fn paint_key_faces(
     }
 
     let sel_bg = crate::theme::selected_bg();
+    // 半透明覆盖：保留黑白键本身底色，仍能辨认键位。
+    let sel_overlay = egui::Color32::from_rgba_unmultiplied(
+        sel_bg.r(),
+        sel_bg.g(),
+        sel_bg.b(),
+        (f32::from(sel_bg.a()) * 0.4) as u8,
+    );
     for (idx, &playing) in highlights.playing.iter().enumerate() {
         let key = idx as u8;
         let Some(key_rect) = key_face_rect(horizontal, keyboard_rect, keys_area, kh, view, key)
@@ -232,9 +240,10 @@ fn paint_key_faces(
         };
         let in_range = highlights
             .select
-            .is_some_and(|(lo, hi)| key >= lo && key <= hi);
+            .iter()
+            .any(|&(lo, hi)| key >= lo && key <= hi);
         if in_range {
-            painter.rect_filled(key_rect, 0.0, sel_bg);
+            painter.rect_filled(key_rect, 0.0, sel_overlay);
         }
         if let Some(track) = playing {
             painter.rect_filled(key_rect, 0.0, highlights.playing_color(track));

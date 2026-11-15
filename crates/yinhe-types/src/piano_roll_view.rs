@@ -59,9 +59,6 @@ pub struct PianoRollView {
     pub main_size: f32,
     /// 音高轴布局：键数（88/128/256）、起始键、调式折叠掩码。
     pub layout: KeyLayout,
-    /// 在琴键上拖出的音域（闭区间，key_select）。`None` = 未选择。
-    /// 仅影响键盘高亮，不参与 GPU 渲染。
-    pub key_select: Option<(u8, u8)>,
     /// CLIP 模式的时间范围 `(start_tick, end_tick)`；None = SONG 模式。
     pub scope_ticks: Option<(f64, f64)>,
     /// 设置 scope 时的 PR 视口宽度（含键盘列），用于立即夹紧缩放/滚动。
@@ -88,7 +85,6 @@ impl Default for PianoRollView {
             main_size: 0.0,
             orientation: Orientation::Horizontal,
             layout: KeyLayout::default(),
-            key_select: None,
             scope_ticks: None,
             scope_viewport_w: 0.0,
         }
@@ -568,7 +564,6 @@ impl PianoRollView {
             return;
         }
         self.layout = KeyLayout::for_key_count(count);
-        self.key_select = None;
         self.base.dirty = true;
     }
 
@@ -578,7 +573,6 @@ impl PianoRollView {
             return;
         }
         self.layout.fold_mask = mask;
-        self.key_select = None;
         self.base.dirty = true;
     }
 }
@@ -606,7 +600,6 @@ mod tests {
             main_size: 0.0,
             orientation: Orientation::Horizontal,
             layout: KeyLayout::default(),
-            key_select: None,
             scope_ticks: None,
             scope_viewport_w: 0.0,
         }
