@@ -311,6 +311,10 @@ pub struct MixerGraph {
     master: MasterChain,
     channels: Vec<ChannelChain>,
     buses: Vec<BusChain>,
+    /// 每个 dense 通道的主输出总线（None = Master）。
+    channel_outputs: Vec<Option<usize>>,
+    /// 每条总线的主输出父总线（None = Master）。
+    bus_outputs: Vec<Option<usize>>,
     frames: usize,
 }
 
@@ -321,6 +325,8 @@ impl MixerGraph {
             master: MasterChain::new(frames),
             channels: Vec::new(),
             buses: Vec::new(),
+            channel_outputs: Vec::new(),
+            bus_outputs: Vec::new(),
             frames,
         }
     }
@@ -350,6 +356,8 @@ impl MixerGraph {
                 strips.get(i).copied().unwrap_or_default(),
             ));
         }
+        self.channel_outputs.resize(channel_count, None);
+        self.channel_outputs.truncate(channel_count);
         self.refresh_pdc();
     }
 
@@ -491,6 +499,22 @@ impl MixerGraph {
                 frames,
                 params.get(i).copied().unwrap_or_default(),
             ));
+        }
+        self.bus_outputs.resize(count, None);
+        self.bus_outputs.truncate(count);
+    }
+
+    /// 设置某通道（dense）的主输出总线；`None` = 直接进 Master。
+    pub fn set_channel_output(&mut self, channel: usize, bus: Option<usize>) {
+        if let Some(slot) = self.channel_outputs.get_mut(channel) {
+            *slot = bus;
+        }
+    }
+
+    /// 设置某总线的主输出父总线；`None` = 直接进 Master。
+    pub fn set_bus_output(&mut self, bus: usize, parent: Option<usize>) {
+        if let Some(slot) = self.bus_outputs.get_mut(bus) {
+            *slot = parent;
         }
     }
 
@@ -707,22 +731,31 @@ impl MixerGraph {
         Self::process_channels(
             &mut self.channels,
             &mut self.buses,
+            &self.channel_outputs,
             &mut self.master.l,
             &mut self.master.r,
             frames,
             any_solo,
             active,
         );
-        Self::process_buses(&mut self.buses, &mut self.master, frames, any_solo);
+        Self::process_buses(
+            &mut self.buses,
+            &self.bus_outputs,
+            &mut self.master,
+            frames,
+            any_solo,
+        );
         Self::process_master(&mut self.master, frames);
         (&self.master.l, &self.master.r)
     }
 
     /// 通道段：insert 链 → PDC → 电平表 → 推子前 send → 推子 → 推子后
     /// send → master 累加。
+    #[allow(clippy::too_many_arguments)] // 混音处理上下文透传
     fn process_channels(
         channels: &mut [ChannelChain],
         buses: &mut [BusChain],
+        channel_outputs: &[Option<usize>],
         master_l: &mut [f32],
         master_r: &mut [f32],
         frames: usize,
@@ -790,7 +823,7 @@ impl MixerGraph {
                 .strip
                 .apply_fader(&mut chain.buffers.left, &mut chain.buffers.right);
 
-            // 推子后 send 与 master 累加。
+            // 推子后 send 与主输出。
             route_send(
                 false,
                 &chain.buffers,
@@ -800,11 +833,33 @@ impl MixerGraph {
                 buses,
                 frames,
             );
-            if to_master {
-                let src = &chain.buffers;
-                for f in 0..frames {
-                    master_l[f] += src.left[f];
-                    master_r[f] += src.right[f];
+            let dest = channel_outputs
+                .get(ci)
+                .copied()
+                .flatten()
+                .filter(|&b| b < buses.len());
+            match dest {
+                Some(bus) => {
+                    // 主输出 → 总线：与 master 累加同一可听性规则；
+                    // 目标总线 solo 时也允许汇入（总线 solo 语义）。
+                    let bus_solo = buses[bus].strip.params.solo;
+                    if !p.mute && (!any_solo || p.solo || bus_solo) {
+                        let src = &chain.buffers;
+                        let dst = &mut buses[bus].buffers;
+                        for f in 0..frames {
+                            dst.left[f] += src.left[f];
+                            dst.right[f] += src.right[f];
+                        }
+                    }
+                }
+                None => {
+                    if to_master {
+                        let src = &chain.buffers;
+                        for f in 0..frames {
+                            master_l[f] += src.left[f];
+                            master_r[f] += src.right[f];
+                        }
+                    }
                 }
             }
         }
@@ -816,8 +871,10 @@ impl MixerGraph {
     /// 总线发送（bus → bus）：目标索引大于自身时直接累加**当前块**输出（目标在
     /// 本块稍后处理，信号进入其 insert 链之前）；自发送与逆序目标读取**上一块
     /// 输出快照**（块级延迟），既避免自反馈代数环，也保证任意发送图无顺序依赖。
+    /// 总线主输出（父文件夹总线）遵循同一顺序规则。
     fn process_buses(
         buses: &mut [BusChain],
+        bus_outputs: &[Option<usize>],
         master: &mut MasterChain,
         frames: usize,
         any_solo: bool,
@@ -826,9 +883,15 @@ impl MixerGraph {
 
         // ① 延迟发送（自发送 / 逆序目标）：源上一块输出 → 目标本块输入。
         //    先于任何总线处理，保证目标处理时已包含汇入信号。
+        //    总线主输出到父文件夹总线同样走这里（父索引更小 = 已处理）。
         for src_i in 0..n {
             let sends = buses[src_i].sends.clone();
-            if sends.is_empty() {
+            let output = bus_outputs
+                .get(src_i)
+                .copied()
+                .flatten()
+                .filter(|&dst| dst < n && dst < src_i);
+            if sends.is_empty() && output.is_none() {
                 continue;
             }
             let src_params = buses[src_i].strip.params;
@@ -838,12 +901,17 @@ impl MixerGraph {
                 }
                 let dst_i = send.bus as usize;
                 if dst_i >= n || dst_i > src_i {
-                    continue; // 顺序发送在 ③ 处理
+                    continue; // 顺序发送在 ② 处理
                 }
                 if !bus_send_allowed(any_solo, &src_params, buses[dst_i].strip.params.solo) {
                     continue;
                 }
                 route_bus_send(buses, src_i, dst_i, true, send.amount, frames);
+            }
+            if let Some(dst_i) = output
+                && bus_send_allowed(any_solo, &src_params, buses[dst_i].strip.params.solo)
+            {
+                route_bus_send(buses, src_i, dst_i, true, 1.0, frames);
             }
         }
 
@@ -887,12 +955,26 @@ impl MixerGraph {
                 }
             }
             let p = buses[i].strip.params;
-            let audible = !p.mute && (!any_solo || p.solo);
-            if audible {
-                let src = &buses[i].buffers;
-                for f in 0..frames {
-                    master.l[f] += src.left[f];
-                    master.r[f] += src.right[f];
+            let output = bus_outputs
+                .get(i)
+                .copied()
+                .flatten()
+                .filter(|&dst| dst < n && dst != i);
+            match output {
+                Some(dst_i) => {
+                    if dst_i > i && bus_send_allowed(any_solo, &p, buses[dst_i].strip.params.solo) {
+                        route_bus_send(buses, i, dst_i, false, 1.0, frames);
+                    }
+                }
+                None => {
+                    let audible = !p.mute && (!any_solo || p.solo);
+                    if audible {
+                        let src = &buses[i].buffers;
+                        for f in 0..frames {
+                            master.l[f] += src.left[f];
+                            master.r[f] += src.right[f];
+                        }
+                    }
                 }
             }
         }
@@ -1475,6 +1557,56 @@ mod tests {
         let single = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
         let expect = single * core::f32::consts::FRAC_1_SQRT_2;
         assert!((l[3] - expect).abs() < 1e-6);
+    }
+
+    /// 通道主输出指向总线时不再直达 master，信号只经总线一次。
+    #[test]
+    fn channel_main_output_replaces_master_path() {
+        let mut g = graph_with(&[StripParams::default()], 4);
+        g.resize_buses(1, 4, &[StripParams::default()]);
+        g.set_channel_output(0, Some(0));
+        fill(&mut g, 0, 0.5);
+        let (l, _r) = g.process();
+        // 通道声像 → bus0 输入；bus0 声像 → master。直达路径必须消失。
+        let single = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
+        let expect = single * core::f32::consts::FRAC_1_SQRT_2;
+        assert!((l[3] - expect).abs() < 1e-6, "got {}", l[3]);
+    }
+
+    /// 文件夹总线嵌套：bus0 → bus1（父总线索引更大），同块到达且只输出一次。
+    #[test]
+    fn bus_main_output_forward_is_same_block() {
+        let mut g = graph_with(&[StripParams::default()], 4);
+        g.resize_buses(2, 4, &[StripParams::default(), StripParams::default()]);
+        g.set_channel_output(0, Some(0));
+        g.set_bus_output(0, Some(1));
+        fill(&mut g, 0, 0.5);
+        let (l, _r) = g.process();
+        let ch = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
+        let bus0 = ch * core::f32::consts::FRAC_1_SQRT_2;
+        let bus1 = bus0 * core::f32::consts::FRAC_1_SQRT_2;
+        assert!((l[3] - bus1).abs() < 1e-6, "got {}", l[3]);
+    }
+
+    /// 文件夹总线嵌套：父总线索引更小时读取上一块快照（块级延迟）。
+    #[test]
+    fn bus_main_output_backward_is_delayed_one_block() {
+        let mut g = graph_with(&[StripParams::default()], 4);
+        g.resize_buses(2, 4, &[StripParams::default(), StripParams::default()]);
+        g.set_channel_output(0, Some(1));
+        g.set_bus_output(1, Some(0));
+        let ch = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
+        let bus1 = ch * core::f32::consts::FRAC_1_SQRT_2;
+        let bus0 = bus1 * core::f32::consts::FRAC_1_SQRT_2;
+        fill(&mut g, 0, 0.5);
+        let (l, _r) = g.process();
+        assert!(l.iter().all(|&v| v == 0.0), "第一块无父总线输出");
+        let (l, _r) = g.process();
+        assert!(
+            (l[3] - bus0).abs() < 1e-6,
+            "第二块经上一块快照到达: {}",
+            l[3]
+        );
     }
 
     /// 总线顺序发送（bus0 → bus1）：同一块到达，汇入信号会经过 bus1 的推子。

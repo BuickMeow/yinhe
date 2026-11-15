@@ -1169,6 +1169,7 @@ fn folder_fields_roundtrip() {
         t.folder_depth = 0;
         t.collapsed = true;
         t.channel_routing = Some(yinhe_types::MixerChannelId::Bus(7));
+        t.folder_bus = Some(3);
     }
     Arc::make_mut(&mut model.tracks[2]).folder_depth = 1;
     Arc::make_mut(&mut model.tracks[3]).folder_depth = 1;
@@ -1181,6 +1182,7 @@ fn folder_fields_roundtrip() {
         loaded.tracks[1].channel_routing,
         Some(yinhe_types::MixerChannelId::Bus(7))
     );
+    assert_eq!(loaded.tracks[1].folder_bus, Some(3));
     assert_eq!(loaded.tracks[2].folder_depth, 1);
     assert_eq!(loaded.tracks[3].folder_depth, 1);
     assert_eq!(loaded.tracks[0].kind, yinhe_core::TrackKind::Master);

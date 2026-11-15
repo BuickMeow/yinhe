@@ -216,7 +216,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
             let options: Vec<(usize, String)> = (0..256)
                 .map(|ch| (ch, crate::mix::midi_label((ch / 16) as u8, (ch % 16) as u8)))
                 .collect();
-            crate::widgets::rows::panel_row(ui, t!("track.output").as_ref(), |ui| {
+            crate::widgets::rows::panel_row(ui, t!("track.mixer_channel").as_ref(), |ui| {
                 let mut sel = current_ch;
                 if crate::widgets::combo::combo_select(
                     ui,
@@ -251,7 +251,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
             let options: Vec<(usize, String)> = (0..=max_ch as usize)
                 .map(|ch| (ch, crate::mix::audio_label(ch as u16)))
                 .collect();
-            crate::widgets::rows::panel_row(ui, t!("track.output").as_ref(), |ui| {
+            crate::widgets::rows::panel_row(ui, t!("track.mixer_channel").as_ref(), |ui| {
                 let mut sel = current_ch as usize;
                 if crate::widgets::combo::combo_select(
                     ui,
@@ -273,13 +273,32 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
                 }
             });
         }
-        yinhe_core::TrackKind::Folder => {
-            field_value(ui, t!("track.output").as_ref(), t!("track.output.none"));
-        }
-        yinhe_core::TrackKind::Master => {
-            field_value(ui, t!("track.output").as_ref(), "Master");
-        }
+        yinhe_core::TrackKind::Folder | yinhe_core::TrackKind::Master => {}
     }
+
+    // ── 主输出：文件夹总线 / Master（Studio One 的 Channel→Bus 一层）──
+    let split_channels = doc.split_folder_channels();
+    let bus_output = match kind {
+        yinhe_core::TrackKind::Folder => doc.data.model.tracks[track_idx]
+            .folder_bus
+            .map(|bus| format!("BUS {}", bus + 1)),
+        yinhe_core::TrackKind::Master => Some("Master".to_string()),
+        _ => doc.data.model.tracks[track_idx]
+            .mixer_channel()
+            .and_then(|channel| {
+                if split_channels.contains(&channel) {
+                    return Some(t!("track.output.split").to_string());
+                }
+                doc.channel_bus_output(channel)
+                    .map(|bus| format!("BUS {}", bus + 1))
+            })
+            .or_else(|| Some("Master".to_string())),
+    };
+    field_value(
+        ui,
+        t!("track.output").as_ref(),
+        bus_output.unwrap_or_else(|| "Master".to_string()),
+    );
 
     if routing_changed {
         doc.data.bump_revision();

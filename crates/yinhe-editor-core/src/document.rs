@@ -28,6 +28,7 @@ pub mod clip_edit;
 pub mod conductor_edit;
 pub(crate) mod event_edit;
 pub mod event_list_edit;
+pub mod folder_routing;
 pub mod midi_import;
 pub mod note_edit;
 pub mod note_pencil;
@@ -294,7 +295,7 @@ impl Document {
                 })
                 .collect();
 
-            Ok(Document {
+            let mut doc = Document {
                 data,
                 edit: EditState {
                     quantize_arrange,
@@ -320,7 +321,11 @@ impl Document {
                 doc_id: next_doc_id(),
                 density: Default::default(),
                 density_pr: Default::default(),
-            })
+            };
+            // 加载后补齐文件夹总线并推导路由；不把派生过程算作用户修改。
+            let report = doc.sync_folder_routing();
+            doc.mixer_dirty = report.buses_changed;
+            Ok(doc)
         })
     }
 
@@ -672,6 +677,12 @@ impl Document {
     /// Called after track structure changes (add/remove/move/undo/redo).
     pub(crate) fn sync_track_caches(&mut self) {
         self.sync_track_caches_with_dark(true);
+        // 文件夹即总线：轨道结构变化后确保每个文件夹有总线，并重算
+        // 通道/总线主输出（A01 跨文件夹规则在这里统一裁决）。
+        let report = self.sync_folder_routing();
+        if report.buses_changed {
+            self.mark_mixer_dirty();
+        }
     }
 
     /// `sync_track_caches` with explicit dark/light theme for Conductor color.

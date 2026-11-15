@@ -253,6 +253,9 @@ impl Document {
         folder.kind = yinhe_core::TrackKind::Folder;
         folder.folder_depth = base_depth;
         folder.color = folder_color;
+        // 文件夹即总线：新文件夹立刻拥有一条混音总线（上限耗尽时留空，
+        // sync_folder_routing 会再次尝试分配）。
+        folder.folder_bus = self.mixer.add_folder_bus();
         model.tracks.insert(first, Arc::new(folder));
 
         let note_remap: Vec<u16> = (0..tracks_before.len())

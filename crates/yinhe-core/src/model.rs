@@ -326,6 +326,9 @@ pub struct TrackData {
     /// 当前引擎仍按源通道混音，此字段为 Track→MixerChannel 解耦预留。
     #[serde(default)]
     pub channel_routing: Option<yinhe_types::MixerChannelId>,
+    /// 文件夹轨拥有的总线（仅 Folder 有意义）。子轨按通道整体路由到该总线。
+    #[serde(default)]
+    pub folder_bus: Option<u16>,
     /// 音频片段（仅音频轨有意义），按 start_seconds 排序由编辑命令维护。
     #[serde(default)]
     pub audio_clips: Vec<AudioClip>,
@@ -365,6 +368,7 @@ impl TrackData {
             folder_depth: 0,
             collapsed: false,
             channel_routing: None,
+            folder_bus: None,
             audio_channel: None,
             audio_clips: Vec::new(),
             clips: Vec::new(),

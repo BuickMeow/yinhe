@@ -29,7 +29,40 @@ impl AudioEngine {
         for (i, p) in buses.into_iter().enumerate() {
             self.mixer.set_bus_strip(i, p);
         }
+        self.sync_output_routing();
         self.sync_sends_to_graph();
+    }
+
+    /// 把持久化的通道/总线主输出路由推到混音图。
+    /// 源通道按 dense 映射；总线输出用于文件夹总线嵌套。
+    fn sync_output_routing(&mut self) {
+        let bus_count = self.mixer.bus_count();
+        let count = self.channel_set.channel_count();
+        for dense in 0..count {
+            let dest = match self.dense_to_namespace(dense) {
+                Some(ChannelNamespace::Midi(src)) => {
+                    self.mixer_params.midi_outputs.get(src).copied().flatten()
+                }
+                Some(ChannelNamespace::Audio(ach)) => {
+                    self.mixer_params.audio_outputs.get(ach).copied().flatten()
+                }
+                None => None,
+            }
+            .map(usize::from)
+            .filter(|&bus| bus < bus_count);
+            self.mixer.set_channel_output(dense, dest);
+        }
+        for bus in 0..bus_count {
+            let parent = self
+                .mixer_params
+                .bus_outputs
+                .get(bus)
+                .copied()
+                .flatten()
+                .map(usize::from)
+                .filter(|&parent| parent < bus_count && parent != bus);
+            self.mixer.set_bus_output(bus, parent);
+        }
     }
 
     /// 把按通道命名空间索引的发送列表映射到 dense 通道并推给混音图；
@@ -101,6 +134,7 @@ impl AudioEngine {
         for (i, p) in buses.into_iter().enumerate() {
             self.mixer.set_bus_strip(i, p);
         }
+        self.sync_output_routing();
         self.sync_sends_to_graph();
     }
 
