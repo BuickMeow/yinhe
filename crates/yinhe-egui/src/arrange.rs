@@ -200,6 +200,7 @@ pub fn show(
     // Conductor 不展开（主行直显 Tempo）。
     doc.edit.arr_am_expanded.resize(num_tracks, false);
     let conductor_idx = doc.edit.track_cache.conductor_idx;
+    let bus_count = doc.mixer.bus_count();
     let build_row_layout = |edit: &yinhe_editor_core::edit_state::EditState,
                             model: &yinhe_core::YinModel| {
         let counts: Vec<u32> = (0..num_tracks)
@@ -219,6 +220,7 @@ pub fn show(
             .collect();
         let visible = model.folder_visible_mask();
         yinhe_types::ArRowLayout::new_with_visible(&counts, &visible)
+            .with_fixed_rows(bus_count, true)
     };
     let mut row_layout = build_row_layout(&doc.edit, &doc.data.model);
     // 清理已删除 lane 的残留视图状态（undo 删除 lane 后）
@@ -1041,6 +1043,8 @@ pub fn show(
                     }
                 }
                 Some(yinhe_types::ArRow::Track(t)) => track_str(t),
+                Some(yinhe_types::ArRow::Bus(b)) => format!("BUS {}", b + 1),
+                Some(yinhe_types::ArRow::Master) => "Master".to_string(),
                 None => track_str(num_tracks.saturating_sub(1)),
             }
         };

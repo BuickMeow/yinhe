@@ -45,7 +45,9 @@ pub fn handle_interactions(
     // 行命中 → 音轨（AM 子行归到所属音轨；双击/单击子行等效于主行）。
     let hit = |pos: egui::Pos2| -> Option<usize> {
         let rel_y = pos.y - panel_rect.min.y + *scroll_y;
-        row_layout.hit_at_music_y(rel_y, lh).map(|h| h.track())
+        row_layout
+            .hit_at_music_y(rel_y, lh)
+            .and_then(|h| h.track_opt())
     };
 
     if resp.double_clicked() && !dragging {
@@ -138,6 +140,7 @@ pub fn handle_interactions(
         let (idx, sub) = match row_hit {
             ArRow::Track(t) => (t, None),
             ArRow::Automation(t, s) => (t, Some(s)),
+            ArRow::Bus(_) | ArRow::Master => return,
         };
         let track_idx = track_info[idx].index;
         if let Some(s) = sub {

@@ -12,6 +12,10 @@ pub enum ArRow {
     Track(usize),
     /// 音轨的自动化子行，usize 是该轨 automation_lanes 的下标。
     Automation(usize, usize),
+    /// 固定总线行（MIX 总线投影到 AR）。
+    Bus(usize),
+    /// 固定 Master 输出行。
+    Master,
 }
 
 /// 每帧由“各轨展开的 lane 数”构建的行布局。
@@ -61,6 +65,18 @@ impl ArRowLayout {
             rows,
             total_rows: acc,
         }
+    }
+
+    /// 在普通音轨行之后追加固定 Bus / Master 行。
+    pub fn with_fixed_rows(mut self, bus_count: usize, master: bool) -> Self {
+        for bus in 0..bus_count {
+            self.rows.push(ArRow::Bus(bus));
+        }
+        if master {
+            self.rows.push(ArRow::Master);
+        }
+        self.total_rows = self.rows.len() as u32;
+        self
     }
 
     /// 总行数（所有轨的主行 + 展开的自动化子行）。
@@ -157,10 +173,14 @@ impl ArRowLayout {
         }
         let first_row = (scroll_y / lane_height).floor().max(0.0) as usize;
         let last_row = ((scroll_y + height) / lane_height).ceil().max(0.0) as usize;
-        let first = self.row_hit(first_row).map(|h| h.track()).unwrap_or(0);
+        let first = self
+            .row_hit(first_row)
+            .and_then(ArRow::track_opt)
+            .unwrap_or(0);
         let last = self
             .row_hit(last_row.min(self.total_rows as usize).saturating_sub(1))
-            .map(|h| h.track() + 1)
+            .and_then(ArRow::track_opt)
+            .map(|t| t + 1)
             .unwrap_or(num_tracks)
             .min(num_tracks);
         (first.min(last), last)
@@ -171,9 +191,20 @@ impl ArRow {
     /// 所属音轨索引。
     #[inline]
     pub fn track(self) -> usize {
+        self.track_opt().unwrap_or(0)
+    }
+
+    /// 普通音轨行返回轨道下标；固定 Bus/Master 行返回 None。
+    pub fn track_opt(self) -> Option<usize> {
         match self {
-            ArRow::Track(t) | ArRow::Automation(t, _) => t,
+            ArRow::Track(t) | ArRow::Automation(t, _) => Some(t),
+            ArRow::Bus(_) | ArRow::Master => None,
         }
+    }
+
+    /// 是否固定行（Bus/Master）。
+    pub fn is_fixed(self) -> bool {
+        matches!(self, ArRow::Bus(_) | ArRow::Master)
     }
 }
 
@@ -252,6 +283,18 @@ mod tests {
         // 空布局。
         let empty = ArRowLayout::new([]);
         assert_eq!(empty.visible_track_range(0.0, 100.0, lh), (0, 0));
+    }
+
+    #[test]
+    fn fixed_bus_and_master_rows_follow_tracks() {
+        let l = layout().with_fixed_rows(2, true);
+        assert_eq!(l.total_rows(), 9);
+        assert_eq!(l.row_hit(6), Some(ArRow::Bus(0)));
+        assert_eq!(l.row_hit(7), Some(ArRow::Bus(1)));
+        assert_eq!(l.row_hit(8), Some(ArRow::Master));
+        assert_eq!(ArRow::Bus(0).track_opt(), None);
+        assert_eq!(ArRow::Master.track_opt(), None);
+        assert!(ArRow::Master.is_fixed());
     }
 
     #[test]

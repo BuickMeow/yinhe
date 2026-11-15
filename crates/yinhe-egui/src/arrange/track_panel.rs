@@ -237,6 +237,22 @@ pub(crate) fn show(
         let Some(row_hit) = row_layout.row_hit(row) else {
             continue;
         };
+        if row_hit.is_fixed() {
+            render::draw_row_background(ui, &painter, row_rect, row, false, lane_even);
+            let label = match row_hit {
+                ArRow::Bus(bus) => format!("BUS {}", bus + 1),
+                ArRow::Master => "Master".to_string(),
+                _ => String::new(),
+            };
+            painter.text(
+                egui::pos2(row_rect.min.x + 8.0, row_rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                label,
+                egui::FontId::proportional(crate::theme::SMALL_FONT),
+                crate::theme::text_muted(),
+            );
+            continue;
+        }
         let idx = row_hit.track();
         if !track_visible.get(idx).copied().unwrap_or(true) {
             continue;
