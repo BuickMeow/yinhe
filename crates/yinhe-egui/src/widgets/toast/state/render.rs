@@ -180,7 +180,7 @@ impl Notifications {
 
         let font = egui::FontId::proportional(crate::theme::BODY_FONT);
         let text_color = if row.running {
-            crate::theme::text_secondary()
+            crate::theme::text_muted()
         } else {
             match row.kind {
                 ToastKind::Warning => crate::theme::warning_gold(),
@@ -251,7 +251,7 @@ impl Notifications {
                 egui::Align2::CENTER_CENTER,
                 format!("{:.0}%", p.clamp(0.0, 1.0) * 100.0),
                 egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT),
-                crate::theme::text_secondary(),
+                crate::theme::text_muted(),
             );
             bar_rect.max.x + 8.0
         } else {
