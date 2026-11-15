@@ -264,15 +264,22 @@ fn ms_column(ui: &mut egui::Ui, params: &StripParams, width: f32) -> Option<Stri
             let mut changed = false;
             let m_resp = toggle_button(ui, "M", p.mute, crate::theme::mute_active());
             crate::widgets::hint::hover(ui.ctx(), &m_resp, t!("hint.mix.mute"));
-            if m_resp.clicked() {
-                p.mute = !p.mute;
+            let slide_id = egui::Id::unique("mix_ms_slide");
+            if let Some(target) =
+                crate::widgets::slide_toggle::slide_toggle(ui, slide_id, 0, m_resp.rect, p.mute)
+                && p.mute != target
+            {
+                p.mute = target;
                 changed = true;
             }
             ui.add_space(GAP);
             let s_resp = toggle_button(ui, "S", p.solo, crate::theme::solo_active());
             crate::widgets::hint::hover(ui.ctx(), &s_resp, t!("hint.mix.solo"));
-            if s_resp.clicked() {
-                p.solo = !p.solo;
+            if let Some(target) =
+                crate::widgets::slide_toggle::slide_toggle(ui, slide_id, 1, s_resp.rect, p.solo)
+                && p.solo != target
+            {
+                p.solo = target;
                 changed = true;
             }
             changed.then_some(p)

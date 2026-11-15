@@ -26,6 +26,7 @@ mod rows_layout_tests;
 pub(crate) mod scroll;
 pub mod scrollbar;
 pub mod selection_actions;
+pub(crate) mod slide_toggle;
 pub(crate) mod slider;
 pub mod split_handle;
 pub(crate) mod stepper;

@@ -535,16 +535,22 @@ pub(crate) fn show(
                 crate::widgets::hint::hover(ui.ctx(), &m_resp, t!("hint.arrange.track_mute"));
                 crate::widgets::hint::hover(ui.ctx(), &s_resp, t!("hint.arrange.track_solo"));
 
-                if m_resp.clicked()
+                // 按住 M/S 滑过多个轨道：统一套用按下瞬间的目标状态。
+                let slide_id = egui::Id::unique("arr_track_ms_slide");
+                if let Some(target) =
+                    crate::widgets::slide_toggle::slide_toggle(ui, slide_id, 0, m_rect, muted)
+                    && muted != target
                     && let Some(ov) = track_overrides.get_mut(idx)
                 {
-                    ov.muted = !ov.muted;
+                    ov.muted = target;
                     audio_dirty = true;
                 }
-                if s_resp.clicked()
+                if let Some(target) =
+                    crate::widgets::slide_toggle::slide_toggle(ui, slide_id, 1, s_rect, soloed)
+                    && soloed != target
                     && let Some(ov) = track_overrides.get_mut(idx)
                 {
-                    ov.soloed = !ov.soloed;
+                    ov.soloed = target;
                     audio_dirty = true;
                 }
 
