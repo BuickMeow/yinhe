@@ -38,7 +38,8 @@ fn screen_pos(content_rect: egui::Rect, p: egui::Pos2) -> egui::Pos2 {
 /// 锚点 → content-relative 像素（行中心）。
 pub(crate) fn point_px(view: &PianoRollView, tick: f64, key: u8) -> egui::Pos2 {
     let main_px = super::drag::tick_to_main_px_dir(view, tick);
-    let cross_px = view.key_to_cross_px(key) + view.key_height * 0.5;
+    let cross_px =
+        view.key_to_cross_px(key) + view.layout.row_units(u16::from(key)) * view.key_height * 0.5;
     if view.is_vertical() {
         egui::pos2(cross_px, main_px)
     } else {

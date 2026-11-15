@@ -59,14 +59,20 @@ enum PenHit {
 
 // ── 坐标转换（content-local） ──
 
-/// key（f64）→ 副轴像素（行中心）。
+/// 单个 key 行的副轴中心像素（折叠时按 row_units 压缩）。
+fn row_center_px(view: &PianoRollView, key: u8) -> f32 {
+    view.key_to_cross_px(key) + view.layout.row_units(u16::from(key)) * view.key_height * 0.5
+}
+
+/// key（f64）→ 副轴像素（行中心之间线性插值）。
 fn key_px(view: &PianoRollView, key: f64) -> f32 {
-    let k = key as f32 + 0.5;
-    if view.is_vertical() {
-        k * view.key_height - view.base.scroll_x
-    } else {
-        view.total_key_height() - view.base.scroll_y - k * view.key_height
-    }
+    let key = key.clamp(0.0, 127.0);
+    let k0 = key.floor() as u8;
+    let k1 = (k0 + 1).min(127);
+    let f = (key - f64::from(k0)) as f32;
+    let c0 = row_center_px(view, k0);
+    let c1 = row_center_px(view, k1);
+    c0 + (c1 - c0) * f
 }
 
 /// `(tick, key)` → content-local 像素。
@@ -88,14 +94,30 @@ fn local_of(content_rect: egui::Rect, pos: egui::Pos2) -> egui::Pos2 {
     egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y)
 }
 
-/// 副轴像素 → key（f64，连续，行中心）。
+/// 副轴像素 → key（f64，连续，行中心之间线性插值）。
 fn key_at_px(view: &PianoRollView, cross_px: f32) -> f64 {
-    if view.is_vertical() {
-        (((cross_px + view.base.scroll_x) / view.key_height) - 0.5).clamp(0.0, 127.0) as f64
+    let key = view.cross_px_to_key(cross_px);
+    let center = row_center_px(view, key);
+    // 指针在行中心哪一侧，就向相邻键插值；折叠时相邻行高不同也能正确落位。
+    let neighbor = if view.is_vertical() {
+        if cross_px >= center {
+            (key + 1).min(127)
+        } else {
+            key.saturating_sub(1)
+        }
+    } else if cross_px >= center {
+        key.saturating_sub(1)
     } else {
-        let bottom = view.total_key_height() - view.base.scroll_y;
-        (((bottom - cross_px) / view.key_height) - 0.5).clamp(0.0, 127.0) as f64
-    }
+        (key + 1).min(127)
+    };
+    let neighbor_center = row_center_px(view, neighbor);
+    let denom = neighbor_center - center;
+    let f = if denom.abs() < 1e-4 {
+        0.0
+    } else {
+        ((cross_px - center) / denom).clamp(0.0, 1.0)
+    };
+    (f64::from(key) + (f64::from(neighbor) - f64::from(key)) * f64::from(f)).clamp(0.0, 127.0)
 }
 
 /// 吸附后的 `(tick, key)`（锚点用：tick 走量化，key 取整数行）。

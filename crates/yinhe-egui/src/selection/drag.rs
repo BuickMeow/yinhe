@@ -83,24 +83,22 @@ pub fn music_sel_to_pixel_rect(
         tick_to_main_px_dir(view, t_start),
         tick_to_main_px_dir(view, t_end),
     );
+    // 副轴统一走 key_to_cross_px + row_units：正确处理 88 键起点和 SCALE 折叠。
+    // key_lo 的副轴起点在下/左，key_hi 的终点在上/右；min/max 抹平方向差异。
+    let lo_px = view.key_to_cross_px(key_lo);
+    let hi_px =
+        view.key_to_cross_px(key_hi) + view.layout.row_units(u16::from(key_hi)) * view.key_height;
+    let cross_a = lo_px.min(hi_px);
+    let cross_b = lo_px.max(hi_px);
     if view.is_vertical() {
-        // 纵向瀑布流：key→X（key0 在左、增大向右），tick→Y（tick0 在顶、向下增大）。
-        // 副轴覆盖 key_lo..=key_hi 各含一个小边界：左 = key_lo 左缘，右 = key_hi 右缘。
-        let x0 = view.key_to_cross_px(key_lo);
-        let x1 = view.key_to_cross_px(key_hi) + view.key_height;
         egui::Rect::from_min_max(
-            egui::pos2(x0.min(x1), sx.min(ex)),
-            egui::pos2(x0.max(x1), sx.max(ex)),
+            egui::pos2(cross_a, sx.min(ex)),
+            egui::pos2(cross_b, sx.max(ex)),
         )
     } else {
-        // 横向（必须与旧代码逐像素等价）：tick→X、key→Y（key127 在顶）。
-        let kh = view.key_height;
-        let scroll_y = view.base.scroll_y;
-        let sy = (127.0 - key_hi as f32) * kh - scroll_y;
-        let ey = (127.0 - key_lo as f32 + 1.0) * kh - scroll_y;
         egui::Rect::from_min_max(
-            egui::pos2(sx.min(ex), sy.min(ey)),
-            egui::pos2(sx.max(ex), sy.max(ey)),
+            egui::pos2(sx.min(ex), cross_a),
+            egui::pos2(sx.max(ex), cross_b),
         )
     }
 }
@@ -424,5 +422,19 @@ mod tests {
         assert_eq!(hit(corner), Some(SelHandleKind::Riff));
         assert_eq!(hit(scale), Some(SelHandleKind::Scale));
         assert_eq!(hit(gate.expect("gate handle")), Some(SelHandleKind::Gate));
+    }
+
+    /// 88 键 + SCALE 折叠下，选框的副轴边界必须与 key 行实际位置一致。
+    #[test]
+    fn selection_rect_respects_fold_and_88_key_start() {
+        let mut view = yinhe_types::PianoRollView::default();
+        view.layout = yinhe_types::KeyLayout::for_key_count(88);
+        view.layout.fold_mask = 0b1010_1011_0101; // C 大调
+        view.key_height = 10.0;
+        let rect = music_sel_to_pixel_rect(&view, 0.0, 100.0, 60, 64);
+        let lo = view.key_to_cross_px(60);
+        let hi = view.key_to_cross_px(64) + view.layout.row_units(64) * view.key_height;
+        assert_eq!(rect.min.y, lo.min(hi));
+        assert_eq!(rect.max.y, lo.max(hi));
     }
 }

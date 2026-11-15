@@ -173,7 +173,8 @@ pub(crate) fn pencil_frame(
                 let a = super::drag::tick_to_main_px_dir(view, note.start_tick as f64) - tick_shift;
                 let b = super::drag::tick_to_main_px_dir(view, note.end_tick as f64) - tick_shift;
                 let c = view.key_to_cross_px(key);
-                let note_rect = super::drag::orient_rect(view, a, b, c, c + view.key_height);
+                let row_h = view.layout.row_units(u16::from(key)) * view.key_height;
+                let note_rect = super::drag::orient_rect(view, a, b, c, c + row_h);
                 if !note_rect.contains(egui::pos2(mouse_local_x, mouse_local_y)) {
                     continue;
                 }
@@ -230,7 +231,8 @@ pub(crate) fn pencil_frame(
             let a = super::drag::tick_to_main_px_dir(view, note.start_tick as f64) - tick_shift;
             let b = super::drag::tick_to_main_px_dir(view, note.end_tick as f64) - tick_shift;
             let c = view.key_to_cross_px(key);
-            let note_rect = super::drag::orient_rect(view, a, b, c, c + view.key_height);
+            let row_h = view.layout.row_units(u16::from(key)) * view.key_height;
+            let note_rect = super::drag::orient_rect(view, a, b, c, c + row_h);
             if !note_rect.contains(egui::pos2(mouse_local_x, mouse_local_y)) {
                 continue;
             }

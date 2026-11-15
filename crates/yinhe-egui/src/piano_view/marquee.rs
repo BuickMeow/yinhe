@@ -306,29 +306,16 @@ pub(crate) fn piano_snapped_bounds(
 
     // 副轴 key 范围 + 对齐整键单元的屏幕边界。横向保持旧数学（key127 在顶）；
     // 纵向 key0 在左：左 = key_lo 左缘，右 = key_hi 右缘。
-    let (key_lo, key_hi, cross_snap0, cross_snap1) = if view.is_vertical() {
-        let k0 = view.cross_px_to_key(cross0);
-        let k1 = view.cross_px_to_key(cross1);
-        let (lo, hi) = (k0.min(k1), k0.max(k1));
-        (
-            lo,
-            hi,
-            view.key_to_cross_px(lo),
-            view.key_to_cross_px(hi) + view.key_height,
-        )
-    } else {
-        let kh = view.key_height;
-        let scroll_y = view.base.scroll_y;
-        let lo = (127.0 - ((scroll_y + cross1) / kh))
-            .ceil()
-            .clamp(0.0, 127.0) as u8;
-        let hi = (127.0 - ((scroll_y + cross0) / kh))
-            .ceil()
-            .clamp(0.0, 127.0) as u8;
-        let top = (127.0 - hi as f32) * kh - scroll_y;
-        let bottom = (127.0 - lo as f32 + 1.0) * kh - scroll_y;
-        (lo, hi, top, bottom)
-    };
+    // 横向/纵向统一：key 范围用 cross_px_to_key（含 88 键起点、折叠薄行），
+    // 像素边界用 key_to_cross_px + row_units，避免旧的 127-key 线性公式错位。
+    let k0 = view.cross_px_to_key(cross0);
+    let k1 = view.cross_px_to_key(cross1);
+    let (key_lo, key_hi) = (k0.min(k1), k0.max(k1));
+    let lo_px = view.key_to_cross_px(key_lo);
+    let hi_px =
+        view.key_to_cross_px(key_hi) + view.layout.row_units(u16::from(key_hi)) * view.key_height;
+    let cross_snap0 = lo_px.min(hi_px);
+    let cross_snap1 = lo_px.max(hi_px);
 
     // 主轴对齐量化网格后的像素：横向 x / 纵向 y
     let main_snap0 = super::drag::tick_to_main_px_dir(view, t_start);
