@@ -4,17 +4,43 @@ use yinhe_meter::VuAnalyzer;
 use super::{MeterModule, db_text, plot_bg, small_label};
 use crate::widgets::meter::gain_to_db;
 
-/// VU 表盘刻度（dB）：从 -20 到 +3，0 之后为红色过载区。
-const MARKS: &[(f32, &str)] = &[
-    (-20.0, "20"),
-    (-10.0, "10"),
-    (-7.0, "7"),
-    (-5.0, "5"),
-    (-3.0, "3"),
-    (-1.0, "1"),
-    (0.0, "0"),
-    (3.0, "+3"),
+/// 标准 VU 表刻度：`(dB, 标签, 归一化弧位置)`。
+/// 刻度按 VU 表的非线性刻度分布，不是 dB 线性映射：
+/// -20 到 0 占约 72% 弧长，0 到 +3 只占最后约 21%。
+const VU_MARKS: &[(f32, &str, f32)] = &[
+    (-20.0, "20", 0.00),
+    (-10.0, "10", 0.25),
+    (-7.0, "7", 0.36),
+    (-5.0, "5", 0.44),
+    (-3.0, "3", 0.54),
+    (-1.0, "1", 0.64),
+    (0.0, "0", 0.72),
+    (1.0, "+1", 0.79),
+    (2.0, "+2", 0.86),
+    (3.0, "+3", 0.93),
 ];
+
+/// dB → VU 弧位置（在标准刻度点之间线性插值）。
+fn vu_position(db: f32) -> f32 {
+    let db = if db.is_nan() {
+        -20.0
+    } else {
+        db.clamp(-20.0, 3.0)
+    };
+    for pair in VU_MARKS.windows(2) {
+        let (d0, _, t0) = pair[0];
+        let (d1, _, t1) = pair[1];
+        if db <= d1 {
+            let f = if (d1 - d0).abs() > f32::EPSILON {
+                ((db - d0) / (d1 - d0)).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            return t0 + (t1 - t0) * f;
+        }
+    }
+    1.0
+}
 
 pub(super) struct VuModule {
     analyzer: VuAnalyzer,
@@ -42,7 +68,7 @@ impl MeterModule for VuModule {
             return;
         }
         let db = gain_to_db(self.analyzer.reading().rms_mid);
-        let t = ((db + 20.0) / 23.0).clamp(0.0, 1.0);
+        let t = vu_position(db);
 
         // 标准 VU：底部中央为轴心，刻度沿上半圆弧分布。
         let center = egui::pos2(body.center().x, body.max.y - 6.0);
@@ -64,8 +90,8 @@ impl MeterModule for VuModule {
             }
             prev = Some(p);
         }
-        // 0 到 +3 的过载弧段用红色。
-        let zero_t = 20.0 / 23.0;
+        // 0 到弧末端的过载段用红色。
+        let zero_t = 0.72;
         let mut prev = None;
         for i in 0..=12 {
             let tt = zero_t + (1.0 - zero_t) * i as f32 / 12.0;
@@ -78,8 +104,7 @@ impl MeterModule for VuModule {
             prev = Some(p);
         }
 
-        for &(mark_db, label) in MARKS {
-            let tt = ((mark_db + 20.0) / 23.0).clamp(0.0, 1.0);
+        for &(mark_db, label, tt) in VU_MARKS {
             let a = angle_at(tt);
             let inner = egui::pos2(
                 center.x + (radius - 5.0) * a.cos(),
@@ -125,5 +150,19 @@ impl MeterModule for VuModule {
 
     fn reset(&mut self) {
         self.analyzer.reset();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::vu_position;
+
+    #[test]
+    fn scale_is_non_linear() {
+        assert!((vu_position(-20.0) - 0.0).abs() < 1e-6);
+        assert!((vu_position(0.0) - 0.72).abs() < 1e-6);
+        assert!((vu_position(3.0) - 0.93).abs() < 1e-6);
+        // 标准 VU：-10..0 占的弧长远大于 0..+3。
+        assert!(vu_position(0.0) - vu_position(-10.0) > vu_position(3.0) - vu_position(0.0));
     }
 }
