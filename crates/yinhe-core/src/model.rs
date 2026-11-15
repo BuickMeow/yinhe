@@ -322,6 +322,10 @@ pub struct TrackData {
     /// 文件夹是否折叠（仅 Folder 轨有意义）。
     #[serde(default)]
     pub collapsed: bool,
+    /// 显式混音通道路由；None = 按轨道种类/MIDI/音频通道推导。
+    /// 当前引擎仍按源通道混音，此字段为 Track→MixerChannel 解耦预留。
+    #[serde(default)]
+    pub channel_routing: Option<yinhe_types::MixerChannelId>,
     /// 音频片段（仅音频轨有意义），按 start_seconds 排序由编辑命令维护。
     #[serde(default)]
     pub audio_clips: Vec<AudioClip>,
@@ -360,6 +364,7 @@ impl TrackData {
             kind: TrackKind::Midi,
             folder_depth: 0,
             collapsed: false,
+            channel_routing: None,
             audio_channel: None,
             audio_clips: Vec::new(),
             clips: Vec::new(),
@@ -374,6 +379,24 @@ impl TrackData {
     /// Global channel = port * 16 + channel (0..255).
     pub fn global_channel(&self) -> u8 {
         (self.port & 0x0F) << 4 | (self.channel & 0x0F)
+    }
+
+    /// 按轨道种类推导的默认混音通道（不读显式覆盖）。
+    pub fn default_mixer_channel(&self) -> Option<yinhe_types::MixerChannelId> {
+        match self.kind {
+            TrackKind::Midi => Some(yinhe_types::MixerChannelId::Midi(self.global_channel())),
+            TrackKind::Audio => Some(yinhe_types::MixerChannelId::Audio(
+                self.audio_channel.unwrap_or(0),
+            )),
+            TrackKind::Master => Some(yinhe_types::MixerChannelId::Master),
+            TrackKind::Folder => None,
+        }
+    }
+
+    /// Track→Channel 路由目标：显式覆盖优先，否则按种类推导。
+    pub fn mixer_channel(&self) -> Option<yinhe_types::MixerChannelId> {
+        self.channel_routing
+            .or_else(|| self.default_mixer_channel())
     }
 }
 
@@ -1835,6 +1858,29 @@ mod tests {
         let t = TrackData::new(2, 5);
         // (port=2 << 4) | (channel=5) = 0x25
         assert_eq!(t.global_channel(), 0x25);
+    }
+
+    #[test]
+    fn track_mixer_channel_routing_derives_and_overrides() {
+        use yinhe_types::MixerChannelId;
+
+        let mut midi = TrackData::new(2, 5);
+        assert_eq!(midi.mixer_channel(), Some(MixerChannelId::Midi(0x25)));
+        midi.channel_routing = Some(MixerChannelId::Bus(7));
+        assert_eq!(midi.mixer_channel(), Some(MixerChannelId::Bus(7)));
+
+        let mut audio = TrackData::new(0, 0);
+        audio.kind = TrackKind::Audio;
+        audio.audio_channel = Some(9);
+        assert_eq!(audio.mixer_channel(), Some(MixerChannelId::Audio(9)));
+
+        let mut master = TrackData::new(0, 0);
+        master.kind = TrackKind::Master;
+        assert_eq!(master.mixer_channel(), Some(MixerChannelId::Master));
+
+        let mut folder = TrackData::new(0, 0);
+        folder.kind = TrackKind::Folder;
+        assert_eq!(folder.mixer_channel(), None);
     }
 
     #[test]
