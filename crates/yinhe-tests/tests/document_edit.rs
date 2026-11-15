@@ -35,7 +35,7 @@ fn first_note_key48(doc: &Document) -> (u16, u32, u8, u32) {
 fn document_empty_has_conductor_and_16_tracks() {
     let doc = Document::empty();
     assert_eq!(doc.data.model.tracks.len(), 17);
-    assert_eq!(doc.data.model.tracks[0].name, "Conductor");
+    assert_eq!(doc.data.model.tracks[0].name, "Master");
     assert_eq!(doc.data.model.tracks[1].name, "Track 1");
     assert_eq!(doc.data.model.tracks[16].name, "Track 16");
 }
@@ -70,7 +70,7 @@ fn document_track_info_cache() {
     let doc = doc_with_notes();
     // After from_midi: track 0 = Conductor, track 1+ = original tracks
     assert!(doc.track_info_cache().len() >= 3);
-    assert_eq!(doc.track_info_cache()[0].name, "Conductor");
+    assert_eq!(doc.track_info_cache()[0].name, "Master");
 }
 
 #[test]

@@ -754,7 +754,7 @@ impl YinModel {
 
         let mut tracks: Vec<Arc<TrackData>> = Vec::with_capacity(17);
         let mut t = TrackData::new(0, 0);
-        t.name = "Conductor".to_string();
+        t.name = "Master".to_string();
         t.kind = TrackKind::Master;
         tracks.push(Arc::new(t));
         for ch in 0..16u8 {
@@ -1101,15 +1101,20 @@ impl YinModel {
                 .is_some_and(|t| t.automation_lanes.is_empty() && t.program_change.is_empty())
     }
 
-    /// 确保头部有 conductor 轨：无则在 0 号位插入「Conductor」，并把所有
-    /// 音符与自动化 lane 的轨号 +1（幂等；空模型不插入）。已有 conductor
-    /// （含旧存档的启发式判定）则补上 `TrackKind::Master` 角色标记。
+    /// 确保头部有 Master 轨（同时承载全局事件与音频总输出）：无则在 0 号位
+    /// 插入「Master」，并把所有音符与自动化 lane 的轨号 +1（幂等；空模型
+    /// 也会插入，Master 是强制唯一轨）。已有 Master（含旧存档的启发式判定）
+    /// 则补齐 `TrackKind::Master` 角色标记。
     ///
     /// 返回是否真的插入了（调用方据此决定是否 `rebuild`；与
     /// [`YinModel::apply_track_remap`] 一致不自动 rebuild）。
     pub fn ensure_conductor_track(&mut self) -> bool {
         if self.tracks.is_empty() {
-            return false;
+            let mut master = TrackData::new(0, 0);
+            master.name = "Master".to_string();
+            master.kind = TrackKind::Master;
+            self.tracks.push(Arc::new(master));
+            return true;
         }
         if self.has_conductor_track() {
             // 已在 0 号位（旧存档无显式标记）：补齐角色，不改动任何数据。
@@ -1117,7 +1122,7 @@ impl YinModel {
             return false;
         }
         let mut conductor = TrackData::new(0, 0);
-        conductor.name = "Conductor".to_string();
+        conductor.name = "Master".to_string();
         conductor.kind = TrackKind::Master;
         for bucket in self.notes.iter_mut() {
             for n in Arc::make_mut(bucket).iter_mut() {
@@ -1435,12 +1440,14 @@ mod tests {
         m.rebuild();
         assert!(m.has_conductor_track());
         assert_eq!(m.tracks.len(), 2);
-        assert_eq!(m.tracks[0].name, "Conductor");
+        assert_eq!(m.tracks[0].name, "Master");
         assert_eq!(m.notes[60][0].track, 1, "原音符轨号 +1");
         assert!(!m.ensure_conductor_track(), "幂等：已有 conductor 不再插入");
 
         let mut empty = YinModel::default();
-        assert!(!empty.ensure_conductor_track(), "空模型不插入");
+        assert!(empty.ensure_conductor_track(), "空模型也必须插入 Master");
+        assert_eq!(empty.tracks.len(), 1);
+        assert_eq!(empty.tracks[0].kind, TrackKind::Master);
     }
 
     /// Master 角色：旧存档（头部 Midi 但空）加载时补齐为 `TrackKind::Master`；
@@ -2156,7 +2163,7 @@ mod tests {
         let mut m = YinModel::new_empty_with_16_tracks();
         m.rebuild();
         assert_eq!(m.tracks.len(), 17);
-        assert_eq!(m.tracks[0].name, "Conductor");
+        assert_eq!(m.tracks[0].name, "Master");
         assert_eq!(m.tracks[1].name, "Track 1");
         assert_eq!(m.tracks[16].name, "Track 16");
         // Conductor 应在 ch 0

@@ -36,7 +36,7 @@ pub mod track_meta_edit;
 pub mod track_ops;
 
 /// Per-track mutable overrides (mute, solo).
-#[derive(Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TrackOverride {
     pub muted: bool,
     pub soloed: bool,
@@ -915,7 +915,7 @@ mod tests {
     fn empty_creates_valid_document_with_conductor_and_16_tracks() {
         let doc = Document::empty();
         assert_eq!(doc.model().tracks.len(), 17);
-        assert_eq!(doc.model().tracks[0].name, "Conductor");
+        assert_eq!(doc.model().tracks[0].name, "Master");
         assert_eq!(doc.model().tracks[1].name, "Track 1");
         assert_eq!(doc.model().tracks[16].name, "Track 16");
         assert_eq!(doc.edit.track_cache.conductor_idx, Some(0));
@@ -949,7 +949,7 @@ mod tests {
     fn empty_conductor_only_has_single_master_track() {
         let doc = Document::empty_conductor_only();
         assert_eq!(doc.model().tracks.len(), 1);
-        assert_eq!(doc.model().tracks[0].name, "Conductor");
+        assert_eq!(doc.model().tracks[0].name, "Master");
         assert!(doc.model().tracks[0].kind == yinhe_core::TrackKind::Master);
         assert_eq!(doc.edit.track_cache.conductor_idx, Some(0));
         assert_eq!(doc.edit.track_visible.len(), 1);
@@ -1077,7 +1077,7 @@ mod tests {
     #[test]
     fn detect_conductor_some_when_track0_has_no_notes_and_no_ctrl() {
         let mut t1 = TrackData::new(0, 0);
-        t1.name = "Conductor".into();
+        t1.name = "Master".into();
         let mut t2 = TrackData::new(0, 0);
         t2.name = "Piano".into();
         let mut model = YinModel {
