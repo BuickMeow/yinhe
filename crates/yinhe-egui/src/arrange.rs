@@ -587,6 +587,16 @@ pub fn show(
                         (None, String::new())
                     }
                 }
+                track_panel::TrackAction::CommitMuteSolo { before, after } => {
+                    structural = false;
+                    (
+                        Some(yinhe_editor_core::history::UndoAction::TrackMuteSolo {
+                            before: before.clone(),
+                            after: after.clone(),
+                        }),
+                        t!("undo.track_mute_solo").to_string(),
+                    )
+                }
                 track_panel::TrackAction::MoveTracks { indices, insert_at } => {
                     // 重排不改变通道集合 → 走 notify 而非 teardown 重建。
                     structural = false;

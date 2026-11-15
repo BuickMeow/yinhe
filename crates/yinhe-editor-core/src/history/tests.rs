@@ -1039,3 +1039,46 @@ fn ppq_rescale_undo_redo_scales_selection_and_cursor() {
     assert_eq!(doc.edit.cursor_tick, Some(300.0));
     assert_eq!(doc.edit.playback.loop_range(), (200, 400));
 }
+
+#[test]
+fn track_mute_solo_undo_redo_restores_overrides() {
+    use crate::document::TrackOverride;
+
+    let mut doc = make_doc("a");
+    doc.edit.track_overrides = vec![TrackOverride::default(), TrackOverride::default()];
+    let before = vec![
+        TrackOverride {
+            muted: false,
+            soloed: false,
+        },
+        TrackOverride {
+            muted: false,
+            soloed: true,
+        },
+    ];
+    let after = vec![
+        TrackOverride {
+            muted: true,
+            soloed: false,
+        },
+        TrackOverride {
+            muted: true,
+            soloed: true,
+        },
+    ];
+    doc.edit.track_overrides = after.clone();
+
+    let action = UndoAction::TrackMuteSolo {
+        before: before.clone(),
+        after: after.clone(),
+    };
+    let reversed = action.reversed();
+    reversed.redo(&mut doc);
+    assert_eq!(doc.edit.track_overrides, before, "undo 恢复手势前状态");
+    let again = UndoAction::TrackMuteSolo {
+        before: before.clone(),
+        after: after.clone(),
+    };
+    again.redo(&mut doc);
+    assert_eq!(doc.edit.track_overrides, after, "redo 恢复手势后状态");
+}

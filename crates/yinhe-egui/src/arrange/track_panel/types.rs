@@ -23,4 +23,9 @@ pub(crate) enum TrackAction {
     ShowProperties { idx: usize },
     /// 音轨面板内联重命名提交。
     RenameTrack { idx: usize, name: String },
+    /// AR 轨道头 M/S 手势结束：before/after 已应用，只需补一条 undo。
+    CommitMuteSolo {
+        before: Vec<yinhe_editor_core::document::TrackOverride>,
+        after: Vec<yinhe_editor_core::document::TrackOverride>,
+    },
 }

@@ -539,6 +539,7 @@ panel.pop_out: "Vysunout"
 panel.dock_to_side: "Připnout do postranního panelu"
 panel.no_selection: "Nic není vybráno"
 dialog.new_track.full: "Všech 256 MIDI kanálů (A1-P16) je obsazeno; nelze vytvořit"
+dialog.new_track.audio_full: "Nejsou dostupné žádné zvukové kanály"
 
 # ── PPQ rescale progress ──
 dialog.rescale.title: "Přepočet PPQ"
@@ -1304,6 +1305,7 @@ track.bank_msb: "Bank MSB"
 track.bank_lsb: "Bank LSB"
 track.drum_channel: "Bicí kanál"
 undo.edit_track_info: "Upravit informace o stopě"
+undo.track_mute_solo: "Upravit ztlumení/solo"
 arrange.rename_track: "Přejmenovat stopu"
 history.start: "Začátek"
 

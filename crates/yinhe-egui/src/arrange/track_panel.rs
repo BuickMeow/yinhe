@@ -27,6 +27,18 @@ const LEVEL_METER_W: f32 = 8.0;
 const LEVEL_METER_MARGIN: f32 = 3.0;
 const LEVEL_METER_GAP: f32 = 5.0;
 
+/// AR 轨道头 M/S 手势的 before 快照（egui 临时数据，跨帧保存）。
+fn ms_undo_id() -> egui::Id {
+    egui::Id::unique("arr_track_ms_undo_before")
+}
+
+fn ensure_ms_undo_snapshot(ui: &egui::Ui, overrides: &[TrackOverride]) {
+    if ui.data(|d| d.get_temp::<Vec<TrackOverride>>(ms_undo_id()).is_some()) {
+        return;
+    }
+    ui.data_mut(|d| d.insert_temp(ms_undo_id(), overrides.to_vec()));
+}
+
 /// Render the track list using a painter (unified component for both
 /// pianoroll and transport contexts).
 ///
@@ -545,18 +557,22 @@ pub(crate) fn show(
                 if let Some(target) =
                     crate::widgets::slide_toggle::slide_toggle(ui, slide_id, 0, m_rect, muted)
                     && muted != target
-                    && let Some(ov) = track_overrides.get_mut(idx)
                 {
-                    ov.muted = target;
-                    audio_dirty = true;
+                    ensure_ms_undo_snapshot(ui, track_overrides);
+                    if let Some(ov) = track_overrides.get_mut(idx) {
+                        ov.muted = target;
+                        audio_dirty = true;
+                    }
                 }
                 if let Some(target) =
                     crate::widgets::slide_toggle::slide_toggle(ui, slide_id, 1, s_rect, soloed)
                     && soloed != target
-                    && let Some(ov) = track_overrides.get_mut(idx)
                 {
-                    ov.soloed = target;
-                    audio_dirty = true;
+                    ensure_ms_undo_snapshot(ui, track_overrides);
+                    if let Some(ov) = track_overrides.get_mut(idx) {
+                        ov.soloed = target;
+                        audio_dirty = true;
+                    }
                 }
 
                 // 每轨电平表（L/R 双条、向上、dB 刻度；仅播放时非零）。
@@ -650,6 +666,18 @@ pub(crate) fn show(
         &mut actions,
         max_scroll,
     );
+
+    // M/S 手势结束（松开鼠标）：把整段滑动合并成一条 undo。
+    if ui.data(|d| d.get_temp::<Vec<TrackOverride>>(ms_undo_id()).is_some())
+        && !ui.input(|i| i.pointer.primary_down())
+        && let Some(before) = ui.data_mut(|d| d.remove_temp::<Vec<TrackOverride>>(ms_undo_id()))
+        && before != track_overrides
+    {
+        actions.push(TrackAction::CommitMuteSolo {
+            before,
+            after: track_overrides.to_vec(),
+        });
+    }
 
     (audio_dirty, am_ms_dirty, actions)
 }

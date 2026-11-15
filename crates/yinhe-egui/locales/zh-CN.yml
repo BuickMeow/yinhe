@@ -556,6 +556,7 @@ panel.pop_out: "弹出为窗口"
 panel.dock_to_side: "停靠到侧栏"
 panel.no_selection: "未选择任何内容"
 dialog.new_track.full: "256 个 MIDI 通道（A1–P16）已全部占用，无法新建"
+dialog.new_track.audio_full: "音频通道已满"
 
 # ── PPQ 缩放进度 ──
 dialog.rescale.title: "PPQ 缩放中"
@@ -1302,6 +1303,7 @@ track.bank_msb: "Bank MSB"
 track.bank_lsb: "Bank LSB"
 track.drum_channel: "鼓通道"
 undo.edit_track_info: "编辑音轨信息"
+undo.track_mute_solo: "调整静音/独奏"
 arrange.rename_track: "重命名音轨"
 history.start: "开始"
 

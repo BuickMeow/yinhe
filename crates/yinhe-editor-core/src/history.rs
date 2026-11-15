@@ -253,6 +253,12 @@ pub enum UndoAction {
         before: Box<yinhe_mixer::MixerParams>,
         after: Box<yinhe_mixer::MixerParams>,
     },
+    /// AR 轨道头 M/S 整体替换（一次点击或一次滑动一条 undo）。
+    /// 只存 `track_overrides`，不触碰模型/音符；音频 skip mask 由 UI 层同步。
+    TrackMuteSolo {
+        before: Vec<crate::document::TrackOverride>,
+        after: Vec<crate::document::TrackOverride>,
+    },
     /// Multiple actions applied atomically (undo/redo as a single step).
     Composite(Vec<UndoAction>),
 }
@@ -484,6 +490,13 @@ impl UndoAction {
             } => {
                 std::mem::swap(&mut before, &mut after);
                 UndoAction::MixerParams { before, after }
+            }
+            UndoAction::TrackMuteSolo {
+                mut before,
+                mut after,
+            } => {
+                std::mem::swap(&mut before, &mut after);
+                UndoAction::TrackMuteSolo { before, after }
             }
             UndoAction::Composite(actions) => {
                 // Reverse order so that reversed().redo() undoes in reverse order,

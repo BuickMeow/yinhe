@@ -228,6 +228,10 @@ impl UndoAction {
                 doc.mixer = (**after).clone();
                 doc.mark_mixer_dirty();
             }
+            UndoAction::TrackMuteSolo { after, .. } => {
+                // 仅替换轨道头 M/S 覆盖；音频 skip mask 由 UI 层在 undo/redo 后同步。
+                doc.edit.track_overrides = after.clone();
+            }
             UndoAction::Composite(actions) => {
                 for action in actions {
                     action.redo(doc);

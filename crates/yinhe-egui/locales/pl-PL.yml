@@ -539,6 +539,7 @@ panel.pop_out: "Wysuń"
 panel.dock_to_side: "Zadokuj w panelu bocznym"
 panel.no_selection: "Nic nie zaznaczono"
 dialog.new_track.full: "Wszystkie 256 kanałów MIDI (A1-P16) są używane; nie można utworzyć"
+dialog.new_track.audio_full: "Brak wolnych kanałów audio"
 
 # ── PPQ rescale progress ──
 dialog.rescale.title: "Przeskalowywanie PPQ"
@@ -1304,6 +1305,7 @@ track.bank_msb: "Bank MSB"
 track.bank_lsb: "Bank LSB"
 track.drum_channel: "Kanał perkusji"
 undo.edit_track_info: "Edytuj informacje ścieżki"
+undo.track_mute_solo: "Dostosuj wyciszenie/solo"
 arrange.rename_track: "Zmień nazwę ścieżki"
 history.start: "Początek"
 

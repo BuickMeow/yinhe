@@ -944,6 +944,7 @@ panel.pop_out: "새 창으로 분리"
 panel.dock_to_side: "사이드바에 고정"
 panel.no_selection: "선택된 항목이 없습니다"
 dialog.new_track.full: "256개 MIDI 채널(A1–P16)이 모두 사용 중이라 새로 만들 수 없습니다"
+dialog.new_track.audio_full: "오디오 채널이 가득 찼습니다"
 
 # ── 환영 페이지 ──
 welcome.open_project: "파일 열기…"
@@ -1308,6 +1309,7 @@ track.bank_msb: "Bank MSB"
 track.bank_lsb: "Bank LSB"
 track.drum_channel: "드럼 채널"
 undo.edit_track_info: "트랙 정보 편집"
+undo.track_mute_solo: "음소거/솔로 조정"
 arrange.rename_track: "트랙 이름 변경"
 history.start: "시작"
 

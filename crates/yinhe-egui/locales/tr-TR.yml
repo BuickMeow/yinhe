@@ -539,6 +539,7 @@ panel.pop_out: "Ayrı Pencere"
 panel.dock_to_side: "Kenar Çubuğuna Yerleştir"
 panel.no_selection: "Hiçbir şey seçilmedi"
 dialog.new_track.full: "256 MIDI kanalının tümü (A1-P16) kullanımda; oluşturulamıyor"
+dialog.new_track.audio_full: "Ses kanalı kalmadı"
 
 # ── PPQ rescale progress ──
 dialog.rescale.title: "PPQ Yeniden Ölçekleniyor"
@@ -1304,6 +1305,7 @@ track.bank_msb: "Bank MSB"
 track.bank_lsb: "Bank LSB"
 track.drum_channel: "Davul kanalı"
 undo.edit_track_info: "Parça bilgilerini düzenle"
+undo.track_mute_solo: "Sessiz/solo ayarla"
 arrange.rename_track: "Parçayı yeniden adlandır"
 history.start: "Başlangıç"
 

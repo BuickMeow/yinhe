@@ -56,6 +56,12 @@ impl App {
             doc.data.bump_revision();
             doc.edit.pianoroll_view.base.dirty = true;
             self.notify_audio_model_changed();
+            // M/S undo/redo 只改了 track_overrides，不会触发音符重载；
+            // 这里统一重发 skip mask，保证静音/独奏立即回到音频引擎。
+            let skip = self.workspace.documents[idx].compute_skip_mask();
+            if let Some(audio) = &self.audio_state.handle {
+                audio.handle.set_skip_tracks(skip);
+            }
             if self.workspace.documents[idx].mixer != before_mixer {
                 self.push_mixer_state_to_engine(idx);
             }

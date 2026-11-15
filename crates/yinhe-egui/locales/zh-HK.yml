@@ -925,6 +925,7 @@ panel.pop_out: "彈出為視窗"
 panel.dock_to_side: "停靠到側欄"
 panel.no_selection: "未選擇任何內容"
 dialog.new_track.full: "256 個 MIDI Channel（A1–P16）已全部佔用，無法新增"
+dialog.new_track.audio_full: "音訊通道已滿"
 
 # ── 歡迎頁 ──
 welcome.open_project: "開啟檔案…"
@@ -1304,6 +1305,7 @@ track.bank_msb: "Bank MSB"
 track.bank_lsb: "Bank LSB"
 track.drum_channel: "鼓通道"
 undo.edit_track_info: "編輯音軌資訊"
+undo.track_mute_solo: "調整靜音/獨奏"
 arrange.rename_track: "重新命名音軌"
 history.start: "開始"
 

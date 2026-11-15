@@ -539,6 +539,7 @@ panel.pop_out: "Détacher"
 panel.dock_to_side: "Ancrer à la barre latérale"
 panel.no_selection: "Rien de sélectionné"
 dialog.new_track.full: "Les 256 canaux MIDI (A1-P16) sont utilisés ; impossible de créer"
+dialog.new_track.audio_full: "Plus de canaux audio disponibles"
 
 # ── PPQ rescale progress ──
 dialog.rescale.title: "Remise à l'échelle du PPQ"
@@ -1299,6 +1300,7 @@ track.bank_msb: "Bank MSB"
 track.bank_lsb: "Bank LSB"
 track.drum_channel: "Canal de batterie"
 undo.edit_track_info: "Modifier les infos de piste"
+undo.track_mute_solo: "Régler mute/solo"
 arrange.rename_track: "Renommer la piste"
 history.start: "Début"
 
