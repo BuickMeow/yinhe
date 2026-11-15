@@ -424,7 +424,7 @@ pub(crate) fn show(
                     );
                 } else if has_any_lane {
                     // Bitwig 风格占位：不显示 chevron 时用淡点提示该轨有自动化。
-                    painter.circle_filled(icon_rect.center(), 2.0, icon_color.gamma_multiply(0.5));
+                    painter.circle_filled(icon_rect.center(), 2.0, icon_color.gamma_multiply(0.3));
                 }
                 if chev_resp.clicked()
                     && let Some(e) = arr_am_expanded.get_mut(idx)
@@ -458,11 +458,7 @@ pub(crate) fn show(
                         .unwrap_or_else(|| "Audio--".to_string()),
                     // MIDI 轨：port 字母（A..P）+ 通道号。乐器（XSynth/插件）
                     // 挂在该通道上，MIX/dock 里显示。
-                    _ => format!(
-                        "MIDI-{}{:02}",
-                        (b'A' + ti.port.min(15)) as char,
-                        ti.channel + 1
-                    ),
+                    _ => crate::mix::midi_label(ti.port, ti.channel),
                 }
             };
             painter.text(

@@ -106,7 +106,7 @@ fn toggle_expanded(ch: CaChannel, io: &mut CaPanelIo<'_>) {
     }
 }
 
-/// 通道显示名（"MIDI-A01" / "Audio-01"）。
+/// 通道显示名（"A01" / "Audio-01"）。
 fn channel_name(ch: CaChannel) -> String {
     match ch {
         CaChannel::Midi(c) => crate::mix::channel_label(c),
@@ -447,11 +447,7 @@ pub(crate) fn show(
                             .map(crate::mix::audio_label)
                             .unwrap_or_else(|| "Audio--".to_string())
                     }
-                    Some(i) => format!(
-                        "MIDI-{}{:02}",
-                        (b'A' + i.port.min(15)) as char,
-                        i.channel.saturating_add(1)
-                    ),
+                    Some(i) => crate::mix::midi_label(i.port, i.channel),
                     None => String::new(),
                 };
                 let font = if show_details {

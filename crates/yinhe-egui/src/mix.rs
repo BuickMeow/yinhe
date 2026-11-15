@@ -38,10 +38,14 @@ pub(crate) use strip::{picker_viewport_id, sends_viewport_id};
 /// 源通道总数（16 port × 16 通道）。
 const SOURCE_CHANNELS: usize = yinhe_mixer::CHANNEL_COUNT;
 
-/// 源通道号 → 显示标签（0 → "MIDI-A01"，255 → "MIDI-P16"）。
+/// MIDI 端口 + 通道 → 显示标签（port 0/channel 0 → "A01"，port 15/channel 15 → "P16"）。
+pub(crate) fn midi_label(port: u8, channel: u8) -> String {
+    format!("{}{:02}", (b'A' + port.min(15)) as char, channel % 16 + 1)
+}
+
+/// 源通道号 → 显示标签（0 → "A01"，255 → "P16"）。
 pub(crate) fn channel_label(ch: u8) -> String {
-    let port = (b'A' + ch / 16) as char;
-    format!("MIDI-{}{:02}", port, ch % 16 + 1)
+    midi_label(ch / 16, ch % 16)
 }
 
 /// 音频通道号 → 显示标签（0 → "Audio-01"）。

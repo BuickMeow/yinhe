@@ -695,7 +695,7 @@ fn apply_dock_actions(
     }
 }
 
-/// 语境标签（MIDI-A01 / Audio-01）。
+/// 语境标签（A01 / Audio-01）。
 fn context_label(context: DockContext) -> String {
     match context {
         DockContext::Midi(ch) => crate::mix::channel_label(ch),
