@@ -343,6 +343,105 @@ impl Document {
         })
     }
 
+    /// 按新的轨顺序重排（order[new] = old）；只用于归组前的块移动。
+    fn reorder_tracks_to(&mut self, order: &[usize]) -> Option<UndoAction> {
+        let model = &self.data.model;
+        let n = model.tracks.len();
+        if order.len() != n {
+            return None;
+        }
+        let mut seen = vec![false; n];
+        for &old in order {
+            if old >= n || seen[old] {
+                return None;
+            }
+            seen[old] = true;
+        }
+        if order.iter().copied().eq(0..n) {
+            return None;
+        }
+        let tracks_before: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
+        let mut old_to_new = vec![0u16; n];
+        for (new, &old) in order.iter().enumerate() {
+            old_to_new[old] = new as u16;
+        }
+        let new_to_old: Vec<u16> = order.iter().map(|&old| old as u16).collect();
+        let model = Arc::make_mut(&mut self.data.model);
+        model.tracks = order
+            .iter()
+            .map(|&old| Arc::clone(&tracks_before[old]))
+            .collect();
+        model.apply_track_remap(&old_to_new);
+        model.remap_track_stats(&old_to_new);
+        let tracks_after: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
+        self.data.bump_revision();
+        self.remap_edit_for_track_change(&old_to_new, None);
+        self.sync_track_caches();
+        Some(UndoAction::TrackStructure {
+            tracks_before,
+            tracks_after,
+            note_remap: old_to_new,
+            note_remap_inverse: new_to_old,
+            deleted_notes: Vec::new(),
+        })
+    }
+
+    /// Ctrl/Cmd+G：把选中轨归组。允许选中轨之间有未选中轨：先把选中块
+    /// 按原相对顺序移到最前选中位置，再连续归组。仅支持根层块，避免跨父级
+    /// 移动破坏层级。
+    pub fn group_tracks_reordered(&mut self, indices: &[usize]) -> Option<UndoAction> {
+        if indices.is_empty() {
+            return None;
+        }
+        let model = &self.data.model;
+        let n = model.tracks.len();
+        if indices.iter().any(|&i| i >= n) {
+            return None;
+        }
+        if indices
+            .iter()
+            .any(|&i| model.tracks[i].kind == yinhe_core::TrackKind::Master)
+        {
+            return None;
+        }
+        let mut selected = vec![false; n];
+        for &i in indices {
+            let end = model.subtree_end(i);
+            for flag in &mut selected[i..end] {
+                *flag = true;
+            }
+        }
+        // 根层块才做重排；含子轨的选区交给连续归组，失败则拒绝。
+        if (0..n).any(|i| selected[i] && model.tracks[i].folder_depth > 0) {
+            return self.group_tracks(indices);
+        }
+        let first = selected.iter().position(|&b| b)?;
+        let last = selected.iter().rposition(|&b| b)?;
+        if selected[first..=last].iter().all(|&b| b) {
+            return self.group_tracks(indices);
+        }
+
+        let selected_indices: Vec<usize> = (0..n).filter(|&i| selected[i]).collect();
+        let mut order: Vec<usize> = Vec::with_capacity(n);
+        order.extend(0..first);
+        order.extend(selected_indices.iter().copied());
+        order.extend((first..=last).filter(|&i| !selected[i]));
+        order.extend(last + 1..n);
+
+        let reorder = self.reorder_tracks_to(&order);
+        let group = self.group_tracks(&(first..first + selected_indices.len()).collect::<Vec<_>>());
+        match (reorder, group) {
+            (Some(a), Some(b)) => Some(UndoAction::Composite(vec![a, b])),
+            (None, Some(b)) => Some(b),
+            (Some(a), None) => {
+                // 归组失败：回滚重排，避免只移动不归组。
+                a.reversed().redo(self);
+                None
+            }
+            (None, None) => None,
+        }
+    }
+
     /// 批量新建音轨：按 `specs` 追加到最后一条轨之后，整个批次只产生
     /// 一个 UndoAction（撤销一次全撤）。命名沿用「Track N = 现有最大编号 + 1」
     /// 递增（见 max_track_number）。通道分配规则（自动/手动顺延）由调用方用
@@ -618,6 +717,37 @@ mod tests {
         assert!(visible[1], "文件夹行本身可见");
         assert!(!visible[2] && !visible[3], "子轨隐藏");
         assert!(visible[4], "文件夹之后的根轨可见");
+    }
+
+    #[test]
+    fn group_with_gap_moves_selected_blocks_together() {
+        let mut doc = Document::empty();
+        let before_names: Vec<String> = doc
+            .data
+            .model
+            .tracks
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+        let action = doc
+            .group_tracks_reordered(&[1, 3])
+            .expect("non-contiguous group succeeds");
+        assert_eq!(doc.data.model.tracks[1].kind, yinhe_core::TrackKind::Folder);
+        assert_eq!(doc.data.model.tracks[2].name, before_names[1]);
+        assert_eq!(doc.data.model.tracks[3].name, before_names[3]);
+        assert_eq!(
+            doc.data.model.tracks[4].name, before_names[2],
+            "夹在中间的轨移到组后"
+        );
+        action.reversed().redo(&mut doc);
+        let after_names: Vec<String> = doc
+            .data
+            .model
+            .tracks
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+        assert_eq!(after_names, before_names, "undo 恢复原顺序");
     }
 
     #[test]

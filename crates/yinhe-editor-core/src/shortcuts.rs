@@ -88,6 +88,7 @@ pub const ACTION_TRACK_MOVE_UP: &str = "track_move_up";
 pub const ACTION_TRACK_MOVE_DOWN: &str = "track_move_down";
 pub const ACTION_TRACK_DELETE: &str = "track_delete";
 pub const ACTION_TRACK_RENAME: &str = "track_rename";
+pub const ACTION_TRACK_GROUP: &str = "track_group";
 pub const ACTION_TRACK_PROPERTIES: &str = "track_properties";
 pub const ACTION_ADD_AUTOMATION: &str = "add_automation";
 pub const ACTION_DELETE_AUTOMATION: &str = "delete_automation";
@@ -121,6 +122,7 @@ pub const CONTEXT_ACTION_IDS: &[&str] = &[
     ACTION_TRACK_MOVE_DOWN,
     ACTION_TRACK_DELETE,
     ACTION_TRACK_RENAME,
+    ACTION_TRACK_GROUP,
     ACTION_TRACK_PROPERTIES,
     ACTION_ADD_AUTOMATION,
     ACTION_DELETE_AUTOMATION,
@@ -192,6 +194,7 @@ pub const ALL_ACTION_IDS: &[&str] = &[
     ACTION_TRACK_MOVE_DOWN,
     ACTION_TRACK_DELETE,
     ACTION_TRACK_RENAME,
+    ACTION_TRACK_GROUP,
     ACTION_TRACK_PROPERTIES,
     ACTION_ADD_AUTOMATION,
     ACTION_DELETE_AUTOMATION,
@@ -290,6 +293,7 @@ fn default_combo(action_id: &str) -> Option<KeyCombo> {
         ACTION_MERGE_NOTES => None,
         ACTION_TOGGLE_PLAY => combo(false, false, false, "Space"),
         ACTION_STOP => combo(false, false, false, "Escape"),
+        ACTION_TRACK_GROUP => combo(true, false, false, "G"),
         // 工具切换默认用主键盘数字键 1-9、0（按工具栏显示顺序）。
         ACTION_TOOL_SELECT => combo(false, false, false, "1"),
         ACTION_TOOL_SELECT_VERTICAL => combo(false, false, false, "2"),
@@ -449,6 +453,11 @@ mod tests {
     fn context_actions_have_no_default_combo() {
         let kb = Keybindings::default();
         for &id in CONTEXT_ACTION_IDS {
+            if id == ACTION_TRACK_GROUP {
+                // 唯一例外：编组是高频操作，默认 Cmd/Ctrl+G。
+                assert_eq!(kb.get(id).len(), 1, "编组应有默认快捷键");
+                continue;
+            }
             assert!(
                 kb.get(id).is_empty(),
                 "上下文动作 {id} 不应有默认快捷键（菜单可达，留给用户分配）"

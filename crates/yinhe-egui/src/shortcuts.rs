@@ -446,6 +446,7 @@ pub fn action_label_key(action_id: &str) -> &'static str {
         sc::ACTION_TRACK_MOVE_DOWN => "arrange.move_down",
         sc::ACTION_TRACK_DELETE => "arrange.delete_track",
         sc::ACTION_TRACK_RENAME => "arrange.rename_track",
+        sc::ACTION_TRACK_GROUP => "arrange.group_tracks",
         sc::ACTION_TRACK_PROPERTIES => "arrange.track_properties",
         sc::ACTION_ADD_AUTOMATION => "arrange.add_automation",
         sc::ACTION_DELETE_AUTOMATION => "arrange.delete_automation",

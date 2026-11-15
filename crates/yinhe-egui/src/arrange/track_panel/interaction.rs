@@ -224,7 +224,7 @@ pub fn handle_interactions(
                     ui,
                     false,
                     t!("arrange.group_tracks").as_ref(),
-                    "",
+                    shortcuts::ACTION_TRACK_GROUP,
                 ))
                 .clicked()
             {

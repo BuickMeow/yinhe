@@ -62,6 +62,25 @@ impl App {
                 self.notify_audio_model_changed();
                 true
             }
+            sc::ACTION_TRACK_GROUP => {
+                let doc = &mut self.workspace.documents[idx];
+                if doc.edit.track_selected.is_empty() {
+                    return false;
+                }
+                let mut indices: Vec<usize> = doc
+                    .edit
+                    .track_selected
+                    .iter()
+                    .map(|&t| t as usize)
+                    .collect();
+                indices.sort_unstable();
+                let before = doc.capture_snapshot();
+                if let Some(undo) = doc.group_tracks_reordered(&indices) {
+                    doc.push_undo(undo, t!("undo.group_folder").as_ref(), before);
+                }
+                self.notify_audio_model_changed();
+                true
+            }
             sc::ACTION_TRACK_DELETE => {
                 let doc = &mut self.workspace.documents[idx];
                 let Some(&sel) = doc.edit.track_selected.iter().min() else {

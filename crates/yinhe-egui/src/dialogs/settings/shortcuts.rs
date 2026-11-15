@@ -70,13 +70,14 @@ const TOOL_ACTIONS: [&str; 8] = [
 ///
 /// 列进设置页是为了让用户自己分配：这些操作在右键菜单里天天用，
 /// 但每个都强塞一个默认键会和现有键位打架。
-const CONTEXT_ACTIONS: [&str; 21] = [
+const CONTEXT_ACTIONS: [&str; 22] = [
     shortcuts::ACTION_TRACK_ADD_BELOW,
     shortcuts::ACTION_TRACK_ADD_ABOVE,
     shortcuts::ACTION_TRACK_MOVE_UP,
     shortcuts::ACTION_TRACK_MOVE_DOWN,
     shortcuts::ACTION_TRACK_DELETE,
     shortcuts::ACTION_TRACK_RENAME,
+    shortcuts::ACTION_TRACK_GROUP,
     shortcuts::ACTION_TRACK_PROPERTIES,
     shortcuts::ACTION_ADD_AUTOMATION,
     shortcuts::ACTION_DELETE_AUTOMATION,

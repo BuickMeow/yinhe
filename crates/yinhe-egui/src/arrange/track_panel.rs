@@ -25,6 +25,55 @@ const BADGE_ICON_BOTTOM_INSET: f32 = 9.0;
 /// 每轨电平表：条宽 / 贴边距（上右下相同）/ 与 M/S 的间隙（px）。
 const LEVEL_METER_W: f32 = 8.0;
 const LEVEL_METER_MARGIN: f32 = 3.0;
+/// 在缩进槽里画祖先文件夹色带：每个 Folder 一条竖线，子轨继承所有祖先。
+/// 不使用边框，只填充 2.5px 宽的颜色条，不影响音轨自身颜色。
+fn draw_folder_bands(
+    painter: &egui::Painter,
+    tracks: &[Arc<yinhe_core::TrackData>],
+    idx: usize,
+    row_rect: egui::Rect,
+    track_colors: &[[f32; 4]],
+) {
+    let Some(track) = tracks.get(idx) else {
+        return;
+    };
+    let depth = track.folder_depth;
+    if depth == 0 && track.kind != TrackKind::Folder {
+        return;
+    }
+    let mut bands: Vec<usize> = Vec::with_capacity(usize::from(depth) + 1);
+    // 每个层级找最近的前置 Folder；合法树中这就是当前轨的祖先。
+    for d in 0..depth {
+        if let Some(j) = (0..idx).rev().find(|&j| {
+            tracks
+                .get(j)
+                .is_some_and(|t| t.kind == TrackKind::Folder && t.folder_depth == d)
+        }) {
+            bands.push(j);
+        }
+    }
+    if track.kind == TrackKind::Folder {
+        bands.push(idx);
+    }
+    for folder_idx in bands {
+        let folder = &tracks[folder_idx];
+        let color = track_colors
+            .get(folder_idx)
+            .copied()
+            .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
+        let x = row_rect.min.x + f32::from(folder.folder_depth) * 14.0 + 2.0;
+        painter.rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(x, row_rect.min.y),
+                egui::pos2(x + 2.5, row_rect.max.y),
+            ),
+            0.0,
+            crate::theme::rgba_to_color32((color[0], color[1], color[2], color[3]))
+                .gamma_multiply(0.8),
+        );
+    }
+}
+
 const LEVEL_METER_GAP: f32 = 5.0;
 
 /// AR 轨道头 M/S 手势的 before 快照（egui 临时数据，跨帧保存）。
@@ -215,6 +264,7 @@ pub(crate) fn show(
                 am_lane_selected.contains(&lane_key),
                 lane_even,
             );
+            draw_folder_bands(&painter, tracks, track, row_rect, track_colors);
             let color = track_colors
                 .get(track)
                 .copied()
@@ -365,6 +415,7 @@ pub(crate) fn show(
         let is_conductor = Some(ti.index) == conductor_track_idx;
         let selected = track_selected.contains(&ti.index);
         render::draw_row_background(ui, &painter, row_rect, row, selected, lane_even);
+        draw_folder_bands(&painter, tracks, idx, row_rect, track_colors);
 
         let color = if is_conductor {
             crate::theme::conductor_color_f32()
