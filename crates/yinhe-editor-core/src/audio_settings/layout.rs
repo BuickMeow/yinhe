@@ -110,8 +110,6 @@ pub struct LayoutSettings {
     pub meter_modules: Vec<MeterModuleSlot>,
     /// 右栏多栏选项卡布局。
     pub right_panel_layout: RightPanelLayout,
-    /// PR 视图方向是否为纵向瀑布流（跨会话持久化，打开新文档时沿用）。
-    pub pr_vertical: bool,
 }
 
 /// `mix_height_auto` 的 serde 默认值：旧配置文件没有该字段时默认开启自动高度。
@@ -140,7 +138,6 @@ impl Default for LayoutSettings {
             float_meter: FloatPanelState::default(),
             meter_modules: default_meter_modules(),
             right_panel_layout: RightPanelLayout::default(),
-            pr_vertical: false,
         }
     }
 }

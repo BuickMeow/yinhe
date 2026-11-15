@@ -606,16 +606,6 @@ impl App {
         self.workspace.should_replace_initial_untitled()
     }
 
-    /// 新打开的文档沿用用户上次选择的 PR 方向（横向/纵向瀑布流）。
-    pub(crate) fn apply_saved_pr_orientation(&self, doc: &mut Document) {
-        let o = if self.audio_settings.layout.pr_vertical {
-            yinhe_types::Orientation::Vertical
-        } else {
-            yinhe_types::Orientation::Horizontal
-        };
-        doc.edit.pianoroll_view.set_orientation(o);
-    }
-
     /// 新建空白工程（仅 Conductor，其余音轨由 AR 的「+」创建）并切换为活跃标签页。
     /// `execute_file_action::NewProject` 与 `execute_pending_file_action::NewProject`
     /// 共用此实现，避免两处重复 push + setup 代码。
@@ -623,7 +613,6 @@ impl App {
         // 欢迎页面显示中：新建意图是"进入编辑"，关闭页面。
         self.show_welcome_page = false;
         let mut doc = Document::empty_conductor_only();
-        self.apply_saved_pr_orientation(&mut doc);
         doc.sync_track_caches_with_conductor_color(crate::theme::conductor_color_f32());
         self.workspace.documents.push(doc);
         let idx = self.workspace.documents.len() - 1;

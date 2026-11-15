@@ -307,14 +307,9 @@ impl App {
         }
     }
 
-    /// 钢琴卷帘方向落地（transport bar 方向按钮 / 视图菜单共用）：
-    /// 持久化到 layout 设置（新文档沿用），并写入当前文档视口。
+    /// 钢琴卷帘方向落地（PR 工具栏 / 视图菜单共用）：只切换当前文档视口。
+    /// 新文档始终以横向为默认，不再跨会话沿用上次方向。
     pub(crate) fn set_pr_orientation(&mut self, orientation: yinhe_types::Orientation) {
-        let vertical = orientation == yinhe_types::Orientation::Vertical;
-        if self.audio_settings.layout.pr_vertical != vertical {
-            self.audio_settings.layout.pr_vertical = vertical;
-            self.audio_settings.save();
-        }
         if let Some(doc) = self.workspace.active_doc_mut() {
             doc.edit.pianoroll_view.set_orientation(orientation);
         }
