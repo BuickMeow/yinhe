@@ -1117,8 +1117,12 @@ impl YinModel {
             return true;
         }
         if self.has_conductor_track() {
-            // 已在 0 号位（旧存档无显式标记）：补齐角色，不改动任何数据。
-            Arc::make_mut(&mut self.tracks[0]).kind = TrackKind::Master;
+            // 已在 0 号位（旧存档无显式标记）：补齐角色；旧默认名统一为 Master。
+            let track = Arc::make_mut(&mut self.tracks[0]);
+            track.kind = TrackKind::Master;
+            if track.name == "Conductor" {
+                track.name = "Master".to_string();
+            }
             return false;
         }
         let mut conductor = TrackData::new(0, 0);
