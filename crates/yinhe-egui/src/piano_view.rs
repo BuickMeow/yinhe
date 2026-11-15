@@ -75,7 +75,6 @@ pub fn show(
     cursor_tick: &mut Option<f64>,
     is_playing: bool,
     quantize: QuantizePreset,
-    quantize_raw: &mut QuantizePreset,
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     key_sig_events: &[yinhe_types::KeySigEvent],
@@ -399,7 +398,7 @@ pub fn show(
         _ => [None; yinhe_types::KEY_COUNT],
     };
     let conductor = midi_arc.map(|m| m.conductor.as_ref());
-    let (sel_action, marker_edit, clip_resize) = overlay::draw_overlays(
+    let (sel_action, marker_edit, clip_resize, key_select_req) = overlay::draw_overlays(
         ui,
         &painter,
         content_rect,
@@ -431,7 +430,6 @@ pub fn show(
         effective_tool,
         sel_rect,
         quantize,
-        quantize_raw,
         ppq,
         bar_line_data,
         selected,
@@ -540,15 +538,27 @@ pub fn show(
         bar_line_data,
     );
 
-    clip_resize
-        .map(
+    let key_event = match key_select_req {
+        Some(overlay::KeySelectReq::Clear) => Some(PianoViewEvent::ClearKeySelection),
+        Some(overlay::KeySelectReq::Select(lo, hi)) => {
+            write_track.map(|track| PianoViewEvent::SelectKeys {
+                track,
+                key_lo: lo,
+                key_hi: hi,
+            })
+        }
+        None => None,
+    };
+
+    key_event
+        .or(clip_resize.map(
             |(track, clip_id, start_tick, end_tick)| PianoViewEvent::ClipResize {
                 track,
                 clip_id,
                 start_tick,
                 end_tick,
             },
-        )
+        ))
         .or(marker_edit.map(PianoViewEvent::MarkerEdit))
         .or(sel_action.map(PianoViewEvent::SelectionAction))
         .or(quick_delete_event)

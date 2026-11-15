@@ -644,42 +644,6 @@ impl eframe::App for App {
             .workspace
             .active_doc
             .and_then(|idx| self.workspace.documents.get(idx));
-        let is_playing = self
-            .audio_state
-            .handle
-            .as_ref()
-            .map(|a| a.handle.is_playing())
-            .unwrap_or(false);
-        // PR 控制组数据（量化 / 音轨 / 幽灵 / 和弦），随文档只读借用。
-        let pr_bar = active_doc.map(|doc| {
-            let main = doc.edit.main_track();
-            // 和弦识别用「PR 实际可见集合」（主音轨强制可见，与渲染一致）。
-            let pr_visible: Vec<bool> = (0..doc.edit.track_pianoroll_visible.len())
-                .map(|i| doc.edit.track_pianoroll_visible[i] || main == Some(i as u16))
-                .collect();
-            let chord = crate::app::layout::chord::chord_indicator_text(
-                &self.midi_thru_keys,
-                is_playing,
-                doc.edit.cursor_tick,
-                Some(&*doc.data.model),
-                main,
-                &pr_visible,
-                &doc.edit.track_overrides,
-                doc.edit.track_cache.conductor_idx,
-            );
-            let (sig_num, sig_den) = doc.data.model.tempo_map.time_sig_default;
-            transport_bar::PrBarData {
-                quantize: doc.edit.quantize_pianoroll,
-                quantize_auto_resolved: yinhe_editor_core::quantize::auto_preset_with_time_sig(
-                    doc.edit.pianoroll_view.base.pixels_per_tick,
-                    doc.data.model.meta.ppq,
-                    sig_num,
-                    sig_den,
-                    true,
-                ),
-                chord,
-            }
-        });
         // 选择动作按钮可用性：PR 框选 / AR 框选 / 通道 AR 框选 / 自动化锚点选中。
         let selection_available = active_doc.is_some_and(|d| {
             !d.edit.sel_rect.effective_rects().is_empty()
@@ -698,26 +662,6 @@ impl eframe::App for App {
                 step_input: self.step_input,
                 orientation_vertical: active_doc
                     .is_some_and(|d| d.edit.pianoroll_view.is_vertical()),
-                focus_is_pianoroll: self.view_focus == crate::app::ViewFocus::Pianoroll,
-                quantize_arrange: active_doc
-                    .map(|d| d.edit.quantize_arrange)
-                    .unwrap_or_default(),
-                quantize_arrange_auto_resolved: active_doc
-                    .map(|d| {
-                        // AR 与通道 AR（MIX）共用同一视口，Auto 统一跟随它。
-                        let ppu = d.edit.arrange_view.base.pixels_per_tick;
-                        // Auto 会解析成的网格（弹窗内显示用，与当前档位无关）。
-                        let (sig_num, sig_den) = d.data.model.tempo_map.time_sig_default;
-                        yinhe_editor_core::quantize::auto_preset_with_time_sig(
-                            ppu,
-                            d.data.model.meta.ppq,
-                            sig_num,
-                            sig_den,
-                            false,
-                        )
-                    })
-                    .unwrap_or_default(),
-                pr: pr_bar,
                 master_meter,
                 selection_available,
             },

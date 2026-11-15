@@ -12,6 +12,7 @@ use egui_material_icons::icons::{
 use rust_i18n::t;
 
 use crate::widgets::tools_panel::{ALL_TOOLS, Tool};
+use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::{AutomationPanelView, Orientation, PianoRollView};
 
 /// 右侧分段开关的字体与最小段宽。
@@ -40,6 +41,10 @@ pub fn show(
     scale_label: &str,
     clip_mode: &mut bool,
     clip_enabled: bool,
+    chord: Option<&str>,
+    quantize_raw: &mut QuantizePreset,
+    quantize_auto_resolved: QuantizePreset,
+    ppq: u32,
 ) -> bool {
     let mut open_scale_dialog = false;
     let btn_size = egui::vec2(
@@ -55,9 +60,11 @@ pub fn show(
         let pad_x = 6.0;
         let spacing_x = 2.0;
         let slot = btn_size.x + spacing_x;
-        // 右侧常驻开关（键数 / 方向 / CLIP·SONG / Scale / 调式名）按实际字形宽度预留，
+        // 右侧常驻开关（键数 / 方向 / CLIP·SONG / Scale / 调式名 / AUTO / 和弦）
+        // 按实际字形宽度预留，
         // 避免窄窗口下工具按钮与右侧分组重叠。
-        let right_reserve = right_group_width(ui, scale_label, clip_enabled, spacing_x, pad_x);
+        let right_reserve =
+            right_group_width(ui, scale_label, clip_enabled, chord, spacing_x, pad_x);
         let avail = (rect.width() - pad_x * 2.0 - right_reserve).max(0.0);
         let fit = (((avail + spacing_x) / slot).floor() as usize).max(1);
         let n_visible = if fit >= ALL_TOOLS.len() {
@@ -185,6 +192,32 @@ pub fn show(
                 .is_some()
                 {
                     open_scale_dialog = true;
+                }
+
+                // AUTO 量化：右起倒数第二个（调式名右侧、和弦左侧）。
+                if let Some(q) = crate::widgets::quantize_button::show_toolbar(
+                    ui,
+                    *quantize_raw,
+                    ppq,
+                    quantize_auto_resolved,
+                    "pr_quantize_toolbar",
+                ) {
+                    *quantize_raw = q;
+                }
+
+                // 和弦指示器：右起最后一个（最靠中间，只读文本）。
+                // 用无边框按钮而不是 Label：Label 在 right_to_left 布局里
+                // 会从剩余区左缘向右排，压到 AUTO 按钮上。
+                if let Some(chord) = chord {
+                    let resp = ui.add(
+                        egui::Button::new(
+                            egui::RichText::new(chord)
+                                .size(crate::theme::BODY_FONT)
+                                .color(crate::theme::text_primary()),
+                        )
+                        .frame(false),
+                    );
+                    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.chord_indicator"));
                 }
             });
         });
@@ -325,13 +358,14 @@ fn tool_more_button(ui: &mut egui::Ui, btn_size: egui::Vec2) -> egui::Response {
     .inner
 }
 
-/// 右侧整组（键数 / 方向 / CLIP·SONG / Scale / 调式名）占用的宽度。
+/// 右侧整组（键数 / 方向 / CLIP·SONG / Scale / 调式名 / AUTO / 和弦）占用的宽度。
 ///
 /// 与绘制共用同一套实测宽度，工具区据此计算还能放几个按钮，避免两组重叠。
 fn right_group_width(
     ui: &egui::Ui,
     scale_label: &str,
     clip_enabled: bool,
+    chord: Option<&str>,
     spacing_x: f32,
     pad_x: f32,
 ) -> f32 {
@@ -349,9 +383,24 @@ fn right_group_width(
     };
     let scale_w = segmented_labels_width(ui, &["Scale"], SCALE_SEG_FONT, SCALE_SEG_MIN_W);
     let label_w = segment_label_width(ui, scale_label, SCALE_SEG_FONT, SCALE_LABEL_MIN_W);
+    let quantize_w = crate::widgets::quantize_button::TOOL_W;
+    let chord_w = chord
+        .map(|text| segment_label_width(ui, text, crate::theme::BODY_FONT, 0.0))
+        .unwrap_or(0.0);
     // 组内间隔数 = 项数 - 1，额外留一格作为工具区与右侧分组之间的保底间距。
-    let items = 3.0 + if clip_enabled { 1.0 } else { 0.0 };
-    key_w + orient_w + scope_w + scale_w + label_w + spacing_x * (items + 1.0) + pad_x
+    let mut items = 3.0 + if clip_enabled { 1.0 } else { 0.0 } + 1.0;
+    if chord.is_some() {
+        items += 1.0;
+    }
+    key_w
+        + orient_w
+        + scope_w
+        + scale_w
+        + label_w
+        + quantize_w
+        + chord_w
+        + spacing_x * (items + 1.0)
+        + pad_x
 }
 
 /// 实测一段文字所需宽度（含按钮内边距，向上取整并留 1px 余量）。
@@ -587,6 +636,10 @@ mod tests {
                     "C Major",
                     &mut clip_mode,
                     true,
+                    Some("Cmaj7"),
+                    &mut QuantizePreset::Auto,
+                    QuantizePreset::Auto,
+                    480,
                 );
             });
         });
@@ -636,7 +689,18 @@ mod tests {
                 scale.max.x <= a.min.x + 0.5,
                 "Scale 与键数分段重叠 (width={width}): {scale:?} {a:?}"
             );
-            for r in [a, b, c, scale] {
+            // 右起顺序：和弦（最靠中间）→ AUTO → 调式名。
+            let auto = find("AUTO ▾");
+            let chord = find("Cmaj7");
+            assert!(
+                chord.max.x <= auto.min.x + 0.5,
+                "和弦应在 AUTO 左侧 (width={width}): {chord:?} {auto:?}"
+            );
+            assert!(
+                auto.max.x <= scale.min.x + 0.5,
+                "AUTO 应在调式名左侧 (width={width}): {auto:?} {scale:?}"
+            );
+            for r in [a, b, c, scale, auto, chord] {
                 assert!(
                     r.min.x >= 0.0 && r.max.x <= width,
                     "文字超出工具栏 (width={width}): {r:?}"

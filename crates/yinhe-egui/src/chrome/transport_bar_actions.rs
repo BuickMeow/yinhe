@@ -566,14 +566,6 @@ pub struct TransportContext<'a> {
     pub settings: &'a mut crate::audio_settings::AudioSettings,
     /// 当前文档 PR 是否为纵向瀑布流（只读，切换由 main_loop 落地到文档视口）。
     pub orientation_vertical: bool,
-    /// 当前聚焦视图是否为 PR（量化按钮显示/写入聚焦视图的量化）。
-    pub focus_is_pianoroll: bool,
-    /// AR 量化（PR 量化在 `pr.quantize`）。
-    pub quantize_arrange: yinhe_editor_core::quantize::QuantizePreset,
-    /// `Auto` 档在当前 AR 缩放下解析出的具体网格（量化弹窗内显示）。
-    pub quantize_arrange_auto_resolved: yinhe_editor_core::quantize::QuantizePreset,
-    /// PR 控制组数据（量化/和弦；无活动文档 = None，右侧组不显示）。
-    pub pr: Option<super::transport_bar_pr::PrBarData>,
     /// 总输出电平显示值 `((level L,R), (hold L,R))`（时间码第四栏竖表）。
     pub master_meter: ((f32, f32), (f32, f32)),
     /// 当前是否存在 PR 框选（决定选择动作按钮是否可用；None 文档 = false）。

@@ -302,27 +302,6 @@ pub fn show(
             doc.edit.selected.clear_rects();
             doc.edit.arr_sel_rect.clear();
         }
-        // 量化入口统一移到标尺最右侧。
-        let q_rect = egui::Rect::from_min_size(
-            egui::pos2(
-                ruler_rect.max.x - crate::widgets::quantize_button::RULER_W - 2.0,
-                ruler_rect.min.y + 3.0,
-            ),
-            egui::vec2(
-                crate::widgets::quantize_button::RULER_W,
-                crate::widgets::quantize_button::RULER_H,
-            ),
-        );
-        if let Some(q) = crate::widgets::quantize_button::show_ruler(
-            ui,
-            q_rect,
-            doc.edit.quantize_arrange,
-            tpb,
-            ar_quantize,
-            "arr_quantize",
-        ) {
-            doc.edit.quantize_arrange = q;
-        }
     }
 
     // ── 全局事件行（固定，不随 track scroll_y）──
@@ -925,12 +904,27 @@ pub fn show(
     );
     ui.painter()
         .rect_filled(events_corner, 0.0, crate::theme::track_bg());
+    let tpb = doc.data.model.meta.ppq;
+    let (sig_num, sig_den) = doc.data.model.tempo_map.time_sig_default;
+    let ar_quantize = doc.edit.quantize_arrange.resolved_with_time_sig(
+        doc.edit.arrange_view.base.pixels_per_tick,
+        tpb,
+        sig_num,
+        sig_den,
+        false,
+    );
     crate::widgets::event_rows::controls(
         ui,
         events_corner,
         &mut doc.edit.event_rows_ar,
         &mut doc.edit.playback,
-        doc.data.model.meta.ppq,
+        tpb,
+        Some(crate::widgets::event_rows::QuantizeControl {
+            current: &mut doc.edit.quantize_arrange,
+            ppq: tpb,
+            auto_resolved: ar_quantize,
+            id_salt: "arr_quantize",
+        }),
     );
 
     // ── 底部角落（音轨面板下方、横向滚动条左侧）：只铺背景 ──

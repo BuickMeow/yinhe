@@ -10,6 +10,10 @@ use yinhe_editor_core::quantize::QuantizePreset;
 /// 标尺右端紧凑控件的宽/高。
 pub const RULER_W: f32 = 46.0;
 pub const RULER_H: f32 = 14.0;
+/// PR 工具栏里的量化下拉（与右侧分段开关同高同圆角）。
+pub const TOOL_W: f32 = 56.0;
+pub const TOOL_H: f32 = 22.0;
+const TOOL_FONT: f32 = 11.0;
 /// 下拉三角宽/高。
 const TRI_W: f32 = 5.0;
 const TRI_H: f32 = 3.0;
@@ -71,6 +75,41 @@ pub(crate) fn show_ruler(
         color,
         egui::Stroke::NONE,
     ));
+
+    let mut pending = None;
+    egui::Popup::from_toggle_button_response(&resp)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            super::quantize_popup::show(ui, ppq, current, auto_resolved, &mut pending);
+        });
+    pending
+}
+
+/// PR 工具栏里的量化入口：按钮风格与右侧 [88|128|256] 等分段开关一致。
+pub(crate) fn show_toolbar(
+    ui: &mut egui::Ui,
+    current: QuantizePreset,
+    ppq: u32,
+    auto_resolved: QuantizePreset,
+    id_salt: &str,
+) -> Option<QuantizePreset> {
+    let resp = ui
+        .push_id(id_salt, |ui| {
+            ui.add(
+                egui::Button::new(
+                    egui::RichText::new(format!("{} ▾", label(current)))
+                        .size(TOOL_FONT)
+                        .color(crate::theme::text_primary()),
+                )
+                .min_size(egui::vec2(TOOL_W, TOOL_H))
+                .corner_radius(3),
+            )
+        })
+        .inner;
+    super::a11y::name_button(&resp, t!("hint.timecode.quantize"));
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
 
     let mut pending = None;
     egui::Popup::from_toggle_button_response(&resp)

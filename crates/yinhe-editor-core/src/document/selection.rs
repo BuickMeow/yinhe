@@ -61,6 +61,38 @@ impl Document {
         self.edit.chan_ar_sel.clear();
     }
 
+    /// PR 点击/拖动钢琴键：选中指定音轨上音高落在 `[key_lo, key_hi]` 的全部音符。
+    ///
+    /// 与 [`Self::select_all_pr`] 一样用矩形选择表示：tick 覆盖全曲、track 限定为
+    /// 当前编辑轨，避免把其他可见轨的同音高音符一起选中。
+    pub fn select_key_range_pr(&mut self, track: u16, key_lo: u8, key_hi: u8) {
+        let model = &self.data.model;
+        let max_end = model.tick_length as u32;
+        if max_end == 0 {
+            return;
+        }
+        if Some(track) == self.edit.track_cache.conductor_idx
+            || self
+                .edit
+                .track_locked
+                .get(track as usize)
+                .copied()
+                .unwrap_or(false)
+        {
+            return;
+        }
+        let (lo, hi) = (key_lo.min(key_hi), key_lo.max(key_hi));
+        self.edit.selected.clear();
+        self.edit
+            .selected
+            .add_rect_track(0, max_end.saturating_add(1), lo, hi, track, track);
+        // 键盘音域选框覆盖全曲：视觉上与「全选」一致，但只命中这一条轨。
+        self.edit.sel_rect.rects = vec![(0.0, max_end as f64 + 1.0, lo, hi)];
+        self.edit.sel_rect.auto_vertical = vec![false];
+        self.edit.arr_sel_rect.clear();
+        self.edit.chan_ar_sel.clear();
+    }
+
     /// Select all notes across all tracks for Arrange.
     /// Range: tick 0 → global last note end, keys 0–MAX_KEY, all tracks except conductor.
     pub fn select_all_ar(&mut self) {
@@ -360,6 +392,43 @@ mod tests {
             doc.edit.selected.rects.iter().any(|r| r.4 <= 0 && 0 <= r.5),
             "未锁定轨应被选中"
         );
+    }
+
+    #[test]
+    fn key_range_selection_targets_one_track_and_key_range() {
+        let mut doc = make_doc();
+        {
+            let model = Arc::make_mut(&mut doc.data.model);
+            model.tracks.push(Arc::new(TrackData::new(1, 1)));
+            model.rebuild();
+        }
+        doc.edit.track_visible = vec![true, true];
+        doc.edit.track_pianoroll_visible = vec![true, true];
+        doc.edit.track_locked = vec![false, false];
+        add(&mut doc, 0, 100, 60);
+        add(&mut doc, 0, 100, 72); // 音高范围外
+        doc.add_note(
+            1,
+            NoteEvent {
+                id: 0,
+                start_tick: 0,
+                end_tick: 100,
+                key: 60,
+                velocity: 100,
+            },
+        );
+
+        doc.select_key_range_pr(0, 64, 60);
+
+        assert_eq!(doc.edit.selected.rects.len(), 1);
+        let (t0, t1, lo, hi, track_lo, track_hi) = doc.edit.selected.rects[0];
+        assert_eq!((lo, hi), (60, 64), "键范围应按 lo/hi 归一化");
+        assert_eq!((track_lo, track_hi), (0, 0), "只选中点击的编辑轨");
+        assert_eq!(t0, 0);
+        assert!(t1 > 100, "选择范围应覆盖全曲");
+        assert_eq!(doc.edit.sel_rect.rects.len(), 1);
+        assert_eq!(doc.edit.sel_rect.rects[0].2, 60);
+        assert_eq!(doc.edit.sel_rect.rects[0].3, 64);
     }
 
     /// 与已有音符重叠的粘贴副本跳过，其余正常插入。

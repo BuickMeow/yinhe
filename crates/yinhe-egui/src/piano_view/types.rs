@@ -37,6 +37,14 @@ pub enum PianoViewEvent {
     },
     /// 标尺标签（marker）编辑：由 App 层落地到文档（接入 undo）。
     MarkerEdit(crate::widgets::time_ruler::MarkerEdit),
+    /// PR 点击/拖动钢琴键：选中该音轨上此音高范围内的全部音符。
+    SelectKeys {
+        track: u16,
+        key_lo: u8,
+        key_hi: u8,
+    },
+    /// PR 双击钢琴键：取消键选择与 PR 选中。
+    ClearKeySelection,
     /// PR Clip 边界拖动：由 App 层落地 resize_clip。
     ClipResize {
         track: u16,

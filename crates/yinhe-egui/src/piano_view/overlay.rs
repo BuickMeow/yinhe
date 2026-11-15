@@ -7,10 +7,16 @@ use super::types::RULER_H;
 use crate::widgets::selection_actions::{BarButton, SelectionAction};
 
 type ClipResizeReq = (u16, u32, u32, u32);
+/// 钢琴键点击/拖动产生的选择请求；由调用方结合当前编辑轨落地到文档。
+pub(crate) enum KeySelectReq {
+    Select(u8, u8),
+    Clear,
+}
 type OverlayOutcome = (
     Option<SelectionAction>,
     Option<crate::widgets::time_ruler::MarkerEdit>,
     Option<ClipResizeReq>,
+    Option<KeySelectReq>,
 );
 
 /// 覆盖层绘制：背景、音阶背景、网格线、wgpu 纹理、键盘、游标、选框、标尺。
@@ -50,7 +56,6 @@ pub(crate) fn draw_overlays(
     effective_tool: crate::widgets::tools_panel::Tool,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     quantize: yinhe_editor_core::quantize::QuantizePreset,
-    quantize_raw: &mut yinhe_editor_core::quantize::QuantizePreset,
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     selected: &mut yinhe_core::Selection,
@@ -154,7 +159,8 @@ pub(crate) fn draw_overlays(
         },
     );
 
-    // 在琴键上单击/拖拽 → 选择音域（双击清除）。
+    // 在琴键上单击/拖拽 → 选中该音域内当前轨的全部音符；双击 / 再点同一键取消。
+    let mut key_select_req = None;
     let keys_resp = ui.interact(
         keyboard_rect_computed,
         ui.scope_id().with("pr_key_select"),
@@ -162,6 +168,7 @@ pub(crate) fn draw_overlays(
     );
     if keys_resp.double_clicked() {
         view.key_select = None;
+        key_select_req = Some(KeySelectReq::Clear);
     } else if let Some(pos) = keys_resp.interact_pointer_pos() {
         let local = if view.is_vertical() {
             pos.x - keyboard_rect_computed.min.x
@@ -171,11 +178,22 @@ pub(crate) fn draw_overlays(
         let key = view.cross_px_to_key(local);
         let anchor_id = ui.scope_id().with("pr_key_anchor");
         if keys_resp.clicked() || keys_resp.drag_started() {
-            ui.data_mut(|d| d.insert_temp(anchor_id, key));
-            view.key_select = Some((key, key));
+            if keys_resp.clicked()
+                && !keys_resp.drag_started()
+                && view.key_select == Some((key, key))
+            {
+                view.key_select = None;
+                key_select_req = Some(KeySelectReq::Clear);
+            } else {
+                ui.data_mut(|d| d.insert_temp(anchor_id, key));
+                view.key_select = Some((key, key));
+                key_select_req = Some(KeySelectReq::Select(key, key));
+            }
         } else if keys_resp.dragged() {
             let anchor = ui.data_mut(|d| d.get_temp::<u8>(anchor_id)).unwrap_or(key);
-            view.key_select = Some((anchor.min(key), anchor.max(key)));
+            let range = (anchor.min(key), anchor.max(key));
+            view.key_select = Some(range);
+            key_select_req = Some(KeySelectReq::Select(range.0, range.1));
         }
     }
 
@@ -471,29 +489,6 @@ pub(crate) fn draw_overlays(
             selected.clear_rects();
             sel_rect.clear();
         }
-        // 量化入口统一移到标尺最右侧。
-        if !view.is_vertical() {
-            let q_rect = egui::Rect::from_min_size(
-                egui::pos2(
-                    ruler_rect.max.x - crate::widgets::quantize_button::RULER_W - 2.0,
-                    ruler_rect.min.y + 3.0,
-                ),
-                egui::vec2(
-                    crate::widgets::quantize_button::RULER_W,
-                    crate::widgets::quantize_button::RULER_H,
-                ),
-            );
-            if let Some(q) = crate::widgets::quantize_button::show_ruler(
-                ui,
-                q_rect,
-                *quantize_raw,
-                ppq,
-                quantize,
-                "pr_quantize",
-            ) {
-                *quantize_raw = q;
-            }
-        }
         let _ = tpb_val;
     }
 
@@ -720,10 +715,11 @@ pub(crate) fn draw_overlays(
             event_rows,
             playback,
             tpb.unwrap_or(480),
+            None,
         );
     }
 
-    (sel_action, marker_edit, clip_resize)
+    (sel_action, marker_edit, clip_resize, key_select_req)
 }
 
 /// 纵向瀑布流：指针在底部键盘条上时，滚轮/触控板沿音高轴（屏幕 X）缩放。

@@ -7,18 +7,6 @@ use crate::widgets::action_menu::{MenuGroup, PopupRowSpec, measure_menu_width, p
 use egui_kittest::kittest::Queryable;
 use yinhe_editor_core::document::Document;
 
-/// 为测试文档构造 PR 控制组数据（与 main_loop 组装一致）。
-fn pr_bar_data(doc: Option<&Document>) -> Option<crate::chrome::transport_bar_pr::PrBarData> {
-    doc.map(|doc| crate::chrome::transport_bar_pr::PrBarData {
-        quantize: doc.edit.quantize_pianoroll,
-        quantize_auto_resolved: yinhe_editor_core::quantize::auto_preset(
-            doc.edit.pianoroll_view.base.pixels_per_tick,
-            doc.data.model.meta.ppq,
-        ),
-        chord: None,
-    })
-}
-
 /// 回归测试：三个动作菜单宽度按内容测量（不同菜单各自定宽），
 /// 中文环境实测 文件≈141 / 编辑≈133 / 播放≈160（旧固定值 220），
 /// 长标签语言会自动撑宽。断言落在合理范围，防止测量逻辑回归
@@ -45,7 +33,7 @@ fn menu_widths_are_content_aware() {
     ];
     let play = [MenuGroup::titled("menu.play.group.control", &play_items)];
     let w_play = measure_menu_width(&ctx, &play, kbs);
-    // 视图菜单：跟随（视图组）+ 方向/面板（PR 控制组）。
+    // 视图菜单：跟随 / 方向 / 面板（视图组）。
     let follow_items = [ViewAction::Follow(FollowMode::None, true)];
     let control_items = [
         ViewAction::Orientation(yinhe_types::Orientation::Horizontal, true),
@@ -170,10 +158,6 @@ fn make_transport_harness<'a>(doc: Option<&'a Document>) -> Harness<'a, ()> {
                     is_recording: false,
                     step_input: false,
                     orientation_vertical: false,
-                    focus_is_pianoroll: false,
-                    quantize_arrange: Default::default(),
-                    quantize_arrange_auto_resolved: Default::default(),
-                    pr: pr_bar_data(doc),
                     master_meter: ((0.0, 0.0), (0.0, 0.0)),
                     selection_available: false,
                 };
@@ -210,10 +194,6 @@ fn make_harness_with_hidden_button<'a>(doc: Option<&'a Document>) -> Harness<'a,
                     is_recording: false,
                     step_input: false,
                     orientation_vertical: false,
-                    focus_is_pianoroll: false,
-                    quantize_arrange: Default::default(),
-                    quantize_arrange_auto_resolved: Default::default(),
-                    pr: pr_bar_data(doc),
                     master_meter: ((0.0, 0.0), (0.0, 0.0)),
                     selection_available: false,
                 };
@@ -527,46 +507,6 @@ fn drag_on_hidden_button_does_not_start_drag() {
         "隐藏按钮上拖动不应启动窗口拖动"
     );
     release_at_state(&mut h, start + egui::vec2(10.0, 0.0), 2.15);
-}
-
-/// 回归：右侧 PR 控制组的文字必须由统一的前景色着色。
-/// 曾出现预排版 galley 固化白色 glyph，导致和弦文字在浅色主题下
-/// 整段发白（fallback 色被白色覆盖）。
-#[test]
-fn right_group_text_shapes_use_fallback_color() {
-    let ctx = egui::Context::default();
-    ctx.add_font(egui_material_icons::font_insert());
-    // 先跑两帧：add_font 下一 pass 才生效，且 fonts 需 run() 初始化
-    ctx.run_ui(Default::default(), |_| {})
-        .drop_without_applying_deltas();
-    ctx.run_ui(Default::default(), |_| {})
-        .drop_without_applying_deltas();
-    let data = crate::chrome::transport_bar_pr::PrBarData {
-        quantize: yinhe_editor_core::quantize::QuantizePreset::default(),
-        quantize_auto_resolved: yinhe_editor_core::quantize::QuantizePreset::default(),
-        chord: Some("Cmaj7".to_string()),
-    };
-    let output = ctx.run_ui(Default::default(), |ui| {
-        let mut hovered_hint = None;
-        crate::chrome::transport_bar_pr::show_right_group(ui, &data, &mut hovered_hint);
-    });
-    let mut checked = 0;
-    for cs in &output.shapes {
-        if let egui::Shape::Text(t) = &cs.shape {
-            for section in &t.galley.job.sections {
-                assert!(
-                    section.format.color == t.fallback_color
-                        || section.format.color == egui::Color32::PLACEHOLDER,
-                    "glyph 颜色固化为 {:?}，覆盖 fallback {:?}（应相同或 PLACEHOLDER）",
-                    section.format.color,
-                    t.fallback_color
-                );
-            }
-            checked += 1;
-        }
-    }
-    assert!(checked >= 1, "右侧组文字数量异常: {checked}");
-    output.drop_without_applying_deltas();
 }
 
 /// 回归测试：transport bar 上的选择动作按钮不得压到时间码（尤其第 4 列电平表）。

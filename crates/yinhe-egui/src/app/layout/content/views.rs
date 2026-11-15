@@ -186,6 +186,30 @@ impl App {
         let mut velocity_edits: Vec<yinhe_types::VelocityEdit> = Vec::new();
 
         let mut open_scale_dialog = false;
+        // 和弦指示器 / AUTO 量化的解析结果：都依赖文档只读状态，
+        // 在拿到可变 guard 之前算好，避免和后面的 `ReplaceGuard` 借用冲突。
+        let (chord, quantize_auto_resolved) = {
+            let doc = &self.workspace.documents[idx];
+            let chord = crate::app::layout::chord::chord_indicator_text(
+                &self.midi_thru_keys,
+                is_playing,
+                doc.edit.cursor_tick,
+                Some(&*doc.data.model),
+                doc.edit.main_track(),
+                &doc.edit.pr_visible(),
+                &doc.edit.track_overrides,
+                doc.edit.track_cache.conductor_idx,
+            );
+            let (sig_num, sig_den) = doc.data.model.tempo_map.time_sig_default;
+            let quantize = yinhe_editor_core::quantize::auto_preset_with_time_sig(
+                doc.edit.pianoroll_view.base.pixels_per_tick,
+                doc.data.model.meta.ppq,
+                sig_num,
+                sig_den,
+                true,
+            );
+            (chord, quantize)
+        };
         let (
             piano_event,
             note_drag_delta,
@@ -232,6 +256,10 @@ impl App {
                 &scale_label,
                 &mut doc.edit.pr_clip_mode,
                 self.audio_settings.clip_enabled,
+                chord.as_deref(),
+                &mut doc.edit.quantize_pianoroll,
+                quantize_auto_resolved,
+                doc.data.model.meta.ppq,
             ) {
                 open_scale_dialog = true;
             }
@@ -420,7 +448,6 @@ impl App {
                     &mut doc.edit.cursor_tick,
                     is_playing,
                     pr_quantize,
-                    &mut doc.edit.quantize_pianoroll,
                     tpb,
                     Some((tpb, ts_num, ts_den, &ts_events)),
                     &doc.data.model.conductor.key_sig,
@@ -495,6 +522,22 @@ impl App {
                 }
                 PianoViewEvent::SelectionAction(action) => {
                     self.handle_selection_action(action);
+                }
+                PianoViewEvent::SelectKeys {
+                    track,
+                    key_lo,
+                    key_hi,
+                } => {
+                    if let Some(idx) = self.workspace.active_doc {
+                        self.workspace.documents[idx].select_key_range_pr(track, key_lo, key_hi);
+                    }
+                }
+                PianoViewEvent::ClearKeySelection => {
+                    if let Some(idx) = self.workspace.active_doc {
+                        let doc = &mut self.workspace.documents[idx];
+                        doc.edit.selected.clear();
+                        doc.edit.sel_rect.clear();
+                    }
                 }
                 PianoViewEvent::AddNote { track, note } => {
                     // 新音符默认力度 = 该音轨最近一次 velocity 修改值（无记录 100）。

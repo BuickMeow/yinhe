@@ -14,8 +14,6 @@ use super::transport_bar_actions::{PlayActions, PlayMenuAction};
 use super::transport_bar_menus::{
     show_edit_menu, show_file_menu, show_operation_menu, show_play_menu, show_view_menu,
 };
-use super::transport_bar_pr;
-pub use super::transport_bar_pr::PrBarData;
 pub(crate) use super::transport_bar_recent::recent_display_name;
 pub use crate::widgets::action_menu::PopupRow;
 
@@ -258,7 +256,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
                 if let Some(doc) = ctx.doc {
                     // ── 时间码（四列居中：BPM/拍号+PPQ | 位置/时间 | 调式 | 总输出电平）──
-                    if ctx.pr.is_some() {
+                    if has_active {
                         let (tc_rect, tc_events) = show_timecode_display(
                             ui,
                             crate::widgets::timecode::TimecodeData {
@@ -277,7 +275,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
                     // ── 选择动作按钮（timecode 右侧、左起）：常驻显示，框选后才可用 ──
                     // 与灰块之间留出保底间距（外框外的边距）。
-                    if ctx.pr.is_some() {
+                    if has_active {
                         ui.add_space(crate::widgets::timecode::MIN_SIDE_GAP);
                         if let Some(action) =
                             crate::widgets::selection_actions::show_transport_buttons(
@@ -288,11 +286,6 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                         {
                             selection_action = Some(action);
                         }
-                    }
-
-                    if let Some(pr) = ctx.pr.as_ref() {
-                        // ── 右侧 PR 控制组（靠右，永不收缩）：和弦 ──
-                        transport_bar_pr::show_right_group(ui, pr, &mut hovered_hint);
                     }
                 }
             });

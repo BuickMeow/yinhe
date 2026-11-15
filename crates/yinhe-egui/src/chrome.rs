@@ -11,5 +11,4 @@ pub mod tool_bar;
 pub mod transport_bar;
 pub mod transport_bar_actions;
 pub mod transport_bar_menus;
-pub mod transport_bar_pr;
 pub mod transport_bar_recent;

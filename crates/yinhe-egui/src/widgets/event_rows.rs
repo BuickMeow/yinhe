@@ -11,6 +11,7 @@ use yinhe_types::{
 
 use crate::widgets::time_ruler::{MarkerEdit, TimeRulerView};
 use yinhe_editor_core::PlaybackState;
+use yinhe_editor_core::quantize::QuantizePreset;
 
 /// 全局事件行需要的数据。AR / 通道 AR / PR 共用。
 pub(crate) struct EventRowsData<'a> {
@@ -389,17 +390,33 @@ fn format_key(e: &KeySigEvent) -> String {
 /// AR 左上角（标尺与轨道面板交界）的 Events 下拉按钮。
 ///
 /// 勾选控制事件行显示；默认全部关闭，不占用音轨区域高度。
+/// Events 选择器右侧的量化下拉（AR / 通道 AR）。
+pub(crate) struct QuantizeControl<'a> {
+    pub current: &'a mut QuantizePreset,
+    pub ppq: u32,
+    pub auto_resolved: QuantizePreset,
+    pub id_salt: &'a str,
+}
+
 pub(crate) fn controls(
     ui: &mut egui::Ui,
     rect: egui::Rect,
     state: &mut EventRowsState,
     playback: &mut PlaybackState,
     tpb: u32,
+    quantize: Option<QuantizeControl<'_>>,
 ) {
+    // 角落太窄时优先保证 Events 选择器可读，量化入口暂时隐藏。
+    let show_quantize = quantize.is_some() && rect.width() >= 110.0;
+    let q_w = if show_quantize {
+        crate::widgets::quantize_button::RULER_W + 4.0
+    } else {
+        0.0
+    };
     let button_rect = egui::Rect::from_min_size(
         rect.min + egui::vec2(6.0, 1.0),
         egui::vec2(
-            (rect.width() - 12.0).max(42.0),
+            (rect.width() - 12.0 - q_w).max(42.0),
             (rect.height() - 4.0).max(16.0),
         ),
     );
@@ -441,6 +458,29 @@ pub(crate) fn controls(
                 }
             }
         });
+
+    if show_quantize && let Some(qc) = quantize {
+        let q_rect = egui::Rect::from_min_size(
+            egui::pos2(
+                rect.max.x - 6.0 - crate::widgets::quantize_button::RULER_W,
+                rect.center().y - crate::widgets::quantize_button::RULER_H / 2.0,
+            ),
+            egui::vec2(
+                crate::widgets::quantize_button::RULER_W,
+                crate::widgets::quantize_button::RULER_H,
+            ),
+        );
+        if let Some(q) = crate::widgets::quantize_button::show_ruler(
+            ui,
+            q_rect,
+            *qc.current,
+            qc.ppq,
+            qc.auto_resolved,
+            qc.id_salt,
+        ) {
+            *qc.current = q;
+        }
+    }
 }
 
 #[cfg(test)]
