@@ -268,6 +268,9 @@ impl Document {
                 detect_conductor_from_model(&model)
             };
             model.normalize_folder_structure();
+            // 权限清理：Folder 不承载任何内容，Master 不承载音符/音频片段；
+            // 历史版本误拖入的内容在加载时一次性移除。
+            model.sanitize_track_content();
 
             let num_tracks = model.tracks.len();
             let track_colors_cache = (0..num_tracks)

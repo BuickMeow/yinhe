@@ -15,7 +15,7 @@ impl Document {
         if t >= self.data.model.tracks.len() {
             return None;
         }
-        if Some(track_idx) == self.edit.track_cache.conductor_idx {
+        if !self.data.model.tracks[t].can_hold(yinhe_core::TrackContent::Notes) {
             return None;
         }
         let key = note.key;

@@ -377,19 +377,21 @@ pub(crate) fn apply_arrange_note_shift(
     if delta_ticks == 0 && delta_tracks == 0 {
         return;
     }
-    let conductor = doc.edit.track_cache.conductor_idx;
-    let num_tracks = doc.data.model.tracks.len() as i32;
+    let note_capable: Vec<bool> = doc
+        .data
+        .model
+        .tracks
+        .iter()
+        .map(|t| t.can_hold(yinhe_core::TrackContent::Notes))
+        .collect();
     let model = Arc::make_mut(&mut doc.data.model);
     let any = crate::batch_ops::update_selected_in_place(model, selection, |n, _k| {
         let length = n.end_tick - n.start_tick;
         n.start_tick = (n.start_tick as i64 + delta_ticks).max(0) as u32;
         n.end_tick = n.start_tick + length;
-        n.track = crate::document::arrange_move::offset_track_skip_conductor(
-            n.track as i32 + delta_tracks,
-            delta_tracks,
-            num_tracks,
-            conductor,
-        );
+        n.track = yinhe_core::resolve_capable_track(&note_capable, n.track as usize, delta_tracks)
+            .map(|t| t as u16)
+            .unwrap_or(n.track);
     });
     if any {
         model.rebuild_dirty();

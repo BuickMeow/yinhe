@@ -63,6 +63,32 @@ impl Default for ConductorData {
 /// RGBA，alpha 默认不透明。
 pub const DEFAULT_TRACK_COLOR: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
 
+/// 音轨可承载的内容种类（权限模型的唯一判定入口）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrackContent {
+    Notes,
+    AudioClips,
+    Automation,
+}
+
+/// 一种音轨能承载哪些内容。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TrackCapabilities {
+    pub notes: bool,
+    pub audio_clips: bool,
+    pub automation: bool,
+}
+
+impl TrackCapabilities {
+    pub const fn allows(self, content: TrackContent) -> bool {
+        match content {
+            TrackContent::Notes => self.notes,
+            TrackContent::AudioClips => self.audio_clips,
+            TrackContent::Automation => self.automation,
+        }
+    }
+}
+
 /// 音轨种类。MIDI 轨按 port/channel（A01..P16，256 通道）路由到该通道的乐器：
 /// 默认 XSynth（内置），可挂载 CLAP/VST3 插件乐器覆盖；
 /// 音频轨走内嵌音频素材的片段回放（按 audio_channel 路由，独立命名空间）。
@@ -76,6 +102,40 @@ pub enum TrackKind {
     Folder,
     /// Master：全局事件 + 音频总输出，强制唯一，不能装音符。
     Master,
+}
+
+impl TrackKind {
+    /// 三档权限：内容轨（音符/音频 + 自动化）、仅自动化（Master）、无内容（Folder）。
+    pub const fn capabilities(self) -> TrackCapabilities {
+        match self {
+            Self::Midi => TrackCapabilities {
+                notes: true,
+                audio_clips: false,
+                automation: true,
+            },
+            Self::Audio => TrackCapabilities {
+                notes: false,
+                audio_clips: true,
+                automation: true,
+            },
+            // Master 的自动化是 Conductor 主行上的 Tempo（全局唯一），
+            // 不在 TrackData.automation_lanes 里；轨道 lane 迁移时视为不可承载。
+            Self::Master => TrackCapabilities {
+                notes: false,
+                audio_clips: false,
+                automation: false,
+            },
+            Self::Folder => TrackCapabilities {
+                notes: false,
+                audio_clips: false,
+                automation: false,
+            },
+        }
+    }
+
+    pub const fn allows(self, content: TrackContent) -> bool {
+        self.capabilities().allows(content)
+    }
 }
 
 // =========================================================
@@ -351,7 +411,68 @@ pub struct TrackData {
     pub chord: Vec<yinhe_types::ChordEvent>,
 }
 
+/// 解析跨轨移动的落点：跳过不能承载该内容的轨道（Folder/Master/错误种类）。
+///
+/// `source` 是事件当前所在轨，`delta` 是用户拖动的轨偏移。先按 `source+delta`
+/// 钳制到合法范围；若落点不允许，则沿拖动方向继续找第一个允许的轨道；
+/// 到边界后反向找最近允许轨（等价于夹到第一个/最后一个合法轨）。
+/// 全工程没有可承载轨道时返回 `None`。
+pub fn resolve_track_content(
+    tracks: &[std::sync::Arc<TrackData>],
+    source: usize,
+    delta: i32,
+    content: TrackContent,
+) -> Option<usize> {
+    resolve_index(tracks.len(), source, delta, |i| tracks[i].can_hold(content))
+}
+
+/// [`resolve_track_content`] 的布尔表版本：批量移动前预计算权限，避免
+/// 每个音符都查 `TrackKind`。
+pub fn resolve_capable_track(capable: &[bool], source: usize, delta: i32) -> Option<usize> {
+    resolve_index(capable.len(), source, delta, |i| capable[i])
+}
+
+fn resolve_index(
+    len: usize,
+    source: usize,
+    delta: i32,
+    capable: impl Fn(usize) -> bool,
+) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    if delta == 0 {
+        return (source < len && capable(source)).then_some(source);
+    }
+    let raw = (source as i32 + delta).clamp(0, len as i32 - 1);
+    let step = delta.signum();
+    let mut t = raw;
+    loop {
+        if t >= 0 && (t as usize) < len && capable(t as usize) {
+            return Some(t as usize);
+        }
+        t += step;
+        if t < 0 || t as usize >= len {
+            break;
+        }
+    }
+    // 方向尽头没有合法轨：反向找最近合法轨（夹到边界）。
+    let mut t = raw - step;
+    while t >= 0 && (t as usize) < len {
+        if capable(t as usize) {
+            return Some(t as usize);
+        }
+        t -= step;
+    }
+    None
+}
+
 impl TrackData {
+    /// 该轨是否允许承载某类内容（权限唯一入口）。
+    pub fn can_hold(&self, content: TrackContent) -> bool {
+        self.kind.allows(content)
+    }
+
     pub fn new(port: u8, channel: u8) -> Self {
         Self {
             uuid: uuid::Uuid::new_v4().to_string(),
@@ -1221,6 +1342,73 @@ impl YinModel {
         }
     }
 
+    /// 清理非法轨道内容（加载/结构变更后调用）。
+    ///
+    /// 权限唯一规则见 [`TrackKind::capabilities`]：Folder 什么都不承载，
+    /// Master 只承载全局事件/自动化；非音频轨不承载音频片段，非 MIDI 轨
+    /// 不承载 MIDI Clip。历史上误拖入 Folder 的音符/自动化会在这里被清除。
+    pub fn sanitize_track_content(&mut self) -> bool {
+        let mut changed = false;
+        let forbidden: Vec<bool> = self
+            .tracks
+            .iter()
+            .map(|t| !t.can_hold(TrackContent::Notes))
+            .collect();
+        let has_stray_notes = forbidden
+            .iter()
+            .enumerate()
+            .any(|(i, &f)| f && self.track_note_count.get(i).copied().unwrap_or(0) > 0);
+        if has_stray_notes {
+            for key in 0..KEY_COUNT {
+                let bucket = &mut self.notes[key];
+                if bucket
+                    .iter()
+                    .any(|n| forbidden.get(n.track as usize).copied().unwrap_or(false))
+                {
+                    Arc::make_mut(bucket)
+                        .retain(|n| !forbidden.get(n.track as usize).copied().unwrap_or(false));
+                    changed = true;
+                }
+            }
+        }
+        for track in &mut self.tracks {
+            let track = Arc::make_mut(track);
+            let caps = track.kind.capabilities();
+            if !caps.audio_clips && !track.audio_clips.is_empty() {
+                track.audio_clips.clear();
+                changed = true;
+            }
+            if !caps.notes {
+                if !track.clips.is_empty() {
+                    track.clips.clear();
+                    changed = true;
+                }
+                if !track.automation_lanes.is_empty() {
+                    track.automation_lanes.clear();
+                    changed = true;
+                }
+            }
+            if track.kind == TrackKind::Folder {
+                if !track.program_change.is_empty() {
+                    track.program_change.clear();
+                    changed = true;
+                }
+                if !track.lyrics.is_empty() {
+                    track.lyrics.clear();
+                    changed = true;
+                }
+                if !track.chord.is_empty() {
+                    track.chord.clear();
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.rebuild();
+        }
+        changed
+    }
+
     /// 当前折叠状态下，每条轨是否应在 AR 中显示。
     pub fn folder_visible_mask(&self) -> Vec<bool> {
         let mut visible = vec![true; self.tracks.len()];
@@ -1882,6 +2070,78 @@ mod tests {
         let t = TrackData::new(2, 5);
         // (port=2 << 4) | (channel=5) = 0x25
         assert_eq!(t.global_channel(), 0x25);
+    }
+
+    #[test]
+    fn track_capability_tiers_are_explicit() {
+        assert!(
+            TrackKind::Midi.allows(TrackContent::Notes)
+                && TrackKind::Midi.allows(TrackContent::Automation)
+        );
+        assert!(
+            TrackKind::Audio.allows(TrackContent::AudioClips)
+                && TrackKind::Audio.allows(TrackContent::Automation)
+        );
+        assert!(!TrackKind::Audio.allows(TrackContent::Notes));
+        assert!(!TrackKind::Master.allows(TrackContent::Automation));
+        assert!(!TrackKind::Master.allows(TrackContent::Notes));
+        let folder = TrackKind::Folder.capabilities();
+        assert!(!folder.notes && !folder.audio_clips && !folder.automation);
+    }
+
+    #[test]
+    fn resolve_track_content_skips_folders() {
+        let tracks = vec![
+            Arc::new(TrackData::new(0, 0)), // 0 Master-ish? new() = Midi
+        ];
+        let mut tracks = tracks;
+        let mut folder = TrackData::new(0, 0);
+        folder.kind = TrackKind::Folder;
+        tracks.push(Arc::new(folder));
+        tracks.push(Arc::new(TrackData::new(0, 1)));
+        // 从 MIDI 0 向下拖 1 轨：跳过 Folder，落到 MIDI 2。
+        assert_eq!(
+            resolve_track_content(&tracks, 0, 1, TrackContent::Notes),
+            Some(2)
+        );
+        // 从 MIDI 2 向上拖 1 轨：跳过 Folder，回到 MIDI 0。
+        assert_eq!(
+            resolve_track_content(&tracks, 2, -1, TrackContent::Notes),
+            Some(0)
+        );
+        // Folder 本身不允许承载任何内容。
+        assert_eq!(
+            resolve_track_content(&tracks, 1, 0, TrackContent::Notes),
+            None
+        );
+    }
+
+    #[test]
+    fn sanitize_removes_folder_content() {
+        use yinhe_types::{AutomationLane, AutomationTarget};
+        let mut m = YinModel::new_empty_with_16_tracks();
+        Arc::make_mut(&mut m.tracks[1]).kind = TrackKind::Folder;
+        Arc::make_mut(&mut m.tracks[1])
+            .automation_lanes
+            .push(AutomationLane {
+                target: AutomationTarget::CC { controller: 1 },
+                track: 1,
+                events: Vec::new(),
+            });
+        m.insert_note(
+            60,
+            yinhe_types::Note {
+                id: 1,
+                start_tick: 0,
+                end_tick: 10,
+                velocity: 100,
+                track: 1,
+            },
+        );
+        m.rebuild();
+        assert!(m.sanitize_track_content());
+        assert!(!m.notes[60].iter().any(|n| n.track == 1));
+        assert!(m.tracks[1].automation_lanes.is_empty());
     }
 
     #[test]

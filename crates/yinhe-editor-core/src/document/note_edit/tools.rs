@@ -242,7 +242,7 @@ impl Document {
         if notes.is_empty() || track as usize >= self.data.model.tracks.len() {
             return None;
         }
-        if Some(track) == self.edit.track_cache.conductor_idx {
+        if !self.data.model.tracks[track as usize].can_hold(yinhe_core::TrackContent::Notes) {
             return None;
         }
         let allow_overlap = self.edit.allow_overlapping_notes;

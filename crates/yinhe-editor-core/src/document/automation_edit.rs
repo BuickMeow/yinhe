@@ -181,8 +181,8 @@ impl Document {
         }
         let model = Arc::make_mut(&mut self.data.model);
         let track = model.tracks.get_mut(track_idx)?;
-        // Master（Conductor）轨不能挂非 Tempo 自动化。
-        if track.kind == yinhe_core::TrackKind::Master {
+        // 权限唯一入口：Master 只承载 Tempo，Folder 不承载任何自动化。
+        if !track.can_hold(yinhe_core::TrackContent::Automation) {
             return None;
         }
         let track = Arc::make_mut(track);

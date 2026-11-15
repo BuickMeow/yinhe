@@ -41,7 +41,8 @@ impl Document {
             return None;
         }
         let model = Arc::make_mut(&mut self.data.model);
-        if track_idx >= model.tracks.len() {
+        let target = model.tracks.get(track_idx)?;
+        if !target.can_hold(yinhe_core::TrackContent::AudioClips) {
             return None;
         }
         let id = model.alloc_audio_clip_id();
@@ -432,6 +433,13 @@ mod tests {
 
     fn doc_with_source() -> (Document, String) {
         let mut doc = Document::empty();
+        {
+            let track = std::sync::Arc::make_mut(
+                &mut std::sync::Arc::make_mut(&mut doc.data.model).tracks[1],
+            );
+            track.kind = yinhe_core::TrackKind::Audio;
+            track.audio_channel = Some(0);
+        }
         let source = doc.add_audio_source(AudioSource {
             uuid: "src-1".into(),
             name: "test.wav".into(),

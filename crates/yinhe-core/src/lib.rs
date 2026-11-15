@@ -29,7 +29,8 @@ pub use events::NoteEvent;
 pub use model::DEFAULT_TRACK_COLOR;
 pub use model::{
     ArtistRef, AudioClip, AudioSource, ChannelInstrument, ConductorData, CoverArt, ProjectMeta,
-    SongInfo, TrackData, TrackInfo, TrackKind, YinModel, clip_fade_gain, effective_fades,
+    SongInfo, TrackCapabilities, TrackContent, TrackData, TrackInfo, TrackKind, YinModel,
+    clip_fade_gain, effective_fades, resolve_capable_track, resolve_track_content,
 };
 pub use model_stats::{NoteLoader, RescaleProgress};
 pub use model_transform::remove_notes_by_id_range;

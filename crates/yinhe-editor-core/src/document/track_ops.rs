@@ -113,6 +113,30 @@ impl Document {
         if let Some(t) = self.edit.editing_track {
             self.edit.editing_track = remap.get(t as usize).copied().filter(|&v| v != u16::MAX);
         }
+        // AR 自动化展开状态按音轨索引保存：插入/删除文件夹后必须同步重映射，
+        // 否则 lane 会整体挂到相邻轨，表现为自动化行错位一整条音轨。
+        if self.edit.arr_am_expanded.len() < old_len {
+            self.edit.arr_am_expanded.resize(old_len, false);
+        }
+        if self.edit.arr_am_expanded.len() == old_len {
+            let old_expanded = std::mem::take(&mut self.edit.arr_am_expanded);
+            let new_len = remap
+                .iter()
+                .copied()
+                .filter(|&i| i != u16::MAX)
+                .max()
+                .map(|m| m as usize + 1)
+                .unwrap_or(old_len);
+            let mut expanded = vec![false; new_len];
+            for (old, &new) in remap.iter().enumerate() {
+                if new != u16::MAX
+                    && let Some(slot) = expanded.get_mut(new as usize)
+                {
+                    *slot = old_expanded.get(old).copied().unwrap_or(false);
+                }
+            }
+            self.edit.arr_am_expanded = expanded;
+        }
         self.edit
             .remap_am_track_keys(|t| remap.get(t as usize).copied().filter(|&v| v != u16::MAX));
         self.edit.layer_solo = self
@@ -748,6 +772,26 @@ mod tests {
             .map(|t| t.name.clone())
             .collect();
         assert_eq!(after_names, before_names, "undo 恢复原顺序");
+    }
+
+    #[test]
+    fn grouping_remaps_automation_expansion_state() {
+        let mut doc = Document::empty();
+        let n = doc.data.model.tracks.len();
+        doc.edit.arr_am_expanded = vec![false; n];
+        doc.edit.arr_am_expanded[2] = true;
+        let action = doc.group_tracks(&[1, 2]).expect("group succeeds");
+        assert_eq!(doc.data.model.tracks[1].kind, yinhe_core::TrackKind::Folder);
+        assert_eq!(
+            doc.edit.arr_am_expanded.len(),
+            n + 1,
+            "展开状态数组随插入延长"
+        );
+        assert!(doc.edit.arr_am_expanded[3], "原轨 2 的展开状态跟到新索引 3");
+        assert!(!doc.edit.arr_am_expanded[1], "文件夹默认收起");
+        action.reversed().redo(&mut doc);
+        assert_eq!(doc.edit.arr_am_expanded.len(), n);
+        assert!(doc.edit.arr_am_expanded[2], "undo 后恢复原索引");
     }
 
     #[test]

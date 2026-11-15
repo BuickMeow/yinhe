@@ -9,26 +9,6 @@ use crate::history::{AutomationDelta, NoteDelta, UndoAction};
 
 use super::Document;
 
-/// 把轨道索引偏移 `delta`（clamp 到合法范围），并跳过 conductor 轨
-/// （音符/自动化事件不能落在它上面：向上移动时夹到第一条普通轨，向下时夹回前一条）。
-pub(crate) fn offset_track_skip_conductor(
-    raw: i32,
-    delta: i32,
-    num_tracks: i32,
-    conductor_track_idx: Option<u16>,
-) -> u16 {
-    let raw_track = raw.clamp(0, num_tracks - 1);
-    if Some(raw_track as u16) == conductor_track_idx {
-        if delta < 0 {
-            (raw_track + 1).min(num_tracks - 1) as u16
-        } else {
-            (raw_track - 1).max(0) as u16
-        }
-    } else {
-        raw_track as u16
-    }
-}
-
 impl Document {
     /// Move all selected notes and automation events by `(delta_ticks, delta_tracks)`.
     ///
@@ -56,7 +36,20 @@ impl Document {
         let num_tracks = self.data.model.tracks.len() as i32;
         let selection = self.edit.selected.clone();
         let allow_overlap = self.edit.allow_overlapping_notes;
-        let conductor = self.edit.track_cache.conductor_idx;
+        let note_capable: Vec<bool> = self
+            .data
+            .model
+            .tracks
+            .iter()
+            .map(|t| t.can_hold(yinhe_core::TrackContent::Notes))
+            .collect();
+        let automation_capable: Vec<bool> = self
+            .data
+            .model
+            .tracks
+            .iter()
+            .map(|t| t.can_hold(yinhe_core::TrackContent::Automation))
+            .collect();
 
         // ── 0. 快速路径判定（流式只读，不物化）──
         // 条件：无 tick clamp、轨道未被夹取/跳过 conductor、目标无重叠。
@@ -73,13 +66,13 @@ impl Document {
                     ok = false;
                     return;
                 }
-                let nt = offset_track_skip_conductor(
-                    n.track as i32 + delta_tracks,
+                let nt = yinhe_core::resolve_capable_track(
+                    &note_capable,
+                    n.track as usize,
                     delta_tracks,
-                    num_tracks,
-                    conductor,
                 );
-                if nt as i32 != n.track as i32 + delta_tracks {
+                let expected = n.track as i32 + delta_tracks;
+                if expected < 0 || expected >= num_tracks || nt != Some(expected as usize) {
                     ok = false;
                 }
             });
@@ -104,12 +97,13 @@ impl Document {
                 let length = n.end_tick - n.start_tick;
                 n.start_tick = (n.start_tick as i64 + delta_ticks) as u32;
                 n.end_tick = n.start_tick + length;
-                n.track = offset_track_skip_conductor(
-                    n.track as i32 + delta_tracks,
+                n.track = yinhe_core::resolve_capable_track(
+                    &note_capable,
+                    n.track as usize,
                     delta_tracks,
-                    num_tracks,
-                    conductor,
-                );
+                )
+                .map(|t| t as u16)
+                .unwrap_or(n.track);
             });
             if hit_any {
                 sub_actions.push(UndoAction::ArrangeMoveNotes {
@@ -125,14 +119,20 @@ impl Document {
                 let behavior = self.edit.overlap_blocked_behavior;
                 let mut tally = batch_ops::MoveTally::default();
                 for (note, old_key) in &originals {
-                    let new_tick = (note.start_tick as i64 + delta_ticks).max(0) as u32;
-                    // Skip over conductor track: notes cannot land on it.
-                    let new_track = offset_track_skip_conductor(
-                        note.track as i32 + delta_tracks,
+                    // 权限解析：跳过 Folder/Master 等不能承载音符的轨；
+                    // 没有任何合法落点（例如从第一条 MIDI 向上拖到 Master）
+                    // 时保持原位置，绝不删除音符。
+                    let (new_tick, new_track) = match yinhe_core::resolve_capable_track(
+                        &note_capable,
+                        note.track as usize,
                         delta_tracks,
-                        num_tracks,
-                        self.edit.track_cache.conductor_idx,
-                    );
+                    ) {
+                        Some(track) => (
+                            (note.start_tick as i64 + delta_ticks).max(0) as u32,
+                            track as u16,
+                        ),
+                        None => (note.start_tick, note.track),
+                    };
                     let original = (*note, *old_key);
                     // 「允许新重叠音符」关闭：目标位置与非本次移动的已有音符重叠
                     // （移动集合已先移除，检查看不到它们）→ 按 behavior 处理。
@@ -239,13 +239,13 @@ impl Document {
         if delta_tracks != 0 {
             // Cross-track: add moved events to destination tracks
             for lm in &lane_moves {
-                // Skip over conductor track: automation cannot land on it.
-                let dst_track_idx = offset_track_skip_conductor(
-                    lm.src_track as i32 + delta_tracks,
+                // 权限解析：跳过 Folder 等不能承载自动化的轨。
+                let dst_track_idx = yinhe_core::resolve_capable_track(
+                    &automation_capable,
+                    lm.src_track,
                     delta_tracks,
-                    num_tracks,
-                    self.edit.track_cache.conductor_idx,
-                ) as usize;
+                )
+                .unwrap_or(lm.src_track);
                 if dst_track_idx == lm.src_track {
                     // 被夹回原轨：phase 1 已把被拖事件从源 lane 剔除（换成 remaining），
                     // 必须把它们加回源 lane，否则事件蒸发。补一个 AutomationDelta
@@ -322,8 +322,21 @@ impl Document {
         }
 
         let mut sub_actions: Vec<UndoAction> = Vec::new();
+        let note_capable: Vec<bool> = self
+            .data
+            .model
+            .tracks
+            .iter()
+            .map(|t| t.can_hold(yinhe_core::TrackContent::Notes))
+            .collect();
+        let automation_capable: Vec<bool> = self
+            .data
+            .model
+            .tracks
+            .iter()
+            .map(|t| t.can_hold(yinhe_core::TrackContent::Automation))
+            .collect();
         let model = Arc::make_mut(&mut self.data.model);
-        let num_tracks = model.tracks.len() as i32;
         let selection = self.edit.selected.clone();
 
         // ── 1. 复制音符（原音符保留，副本平移到新 tick/新轨）──
@@ -335,13 +348,15 @@ impl Document {
                 std::collections::HashMap::new();
             for (note, old_key) in &selected_data {
                 let new_tick = (note.start_tick as i64 + delta_ticks).max(0) as u32;
-                // Skip over conductor track: notes cannot land on it.
-                let new_track = offset_track_skip_conductor(
-                    note.track as i32 + delta_tracks,
+                // 权限解析：副本不能落到 Folder/Master。
+                let Some(new_track) = yinhe_core::resolve_capable_track(
+                    &note_capable,
+                    note.track as usize,
                     delta_tracks,
-                    num_tracks,
-                    self.edit.track_cache.conductor_idx,
-                );
+                ) else {
+                    continue;
+                };
+                let new_track = new_track as u16;
                 let length = note.end_tick - note.start_tick;
                 // 「允许新重叠音符」关闭：副本与已有音符重叠 → 跳过该副本。
                 if !allow_overlap
@@ -445,12 +460,13 @@ impl Document {
                 }));
             } else {
                 // Cross-track: append copies to the destination lane (create if missing).
-                let dst_track_idx = offset_track_skip_conductor(
-                    lc.src_track as i32 + delta_tracks,
+                let Some(dst_track_idx) = yinhe_core::resolve_capable_track(
+                    &automation_capable,
+                    lc.src_track,
                     delta_tracks,
-                    num_tracks,
-                    self.edit.track_cache.conductor_idx,
-                ) as usize;
+                ) else {
+                    continue;
+                };
                 let dst_track = Arc::make_mut(&mut model.tracks[dst_track_idx]);
                 let dst_lane_idx = match dst_track
                     .automation_lanes
@@ -714,6 +730,30 @@ mod tests {
             doc.data.model.notes[60]
                 .iter()
                 .any(|n| n.start_tick == 150 && n.end_tick == 250)
+        );
+    }
+
+    /// 跨轨拖动跳过 Folder：音符落到文件夹后的第一条 MIDI 轨，不进入 Folder。
+    #[test]
+    fn move_selected_arrange_skips_folder_track() {
+        let mut doc = make_doc_tracks(3);
+        Arc::make_mut(&mut doc.data.model).tracks[1] = Arc::new({
+            let mut folder = TrackData::new(0, 0);
+            folder.kind = yinhe_core::TrackKind::Folder;
+            folder
+        });
+        add(&mut doc, 100, 200, 60);
+        doc.edit.selected.add_rect_track(100, 201, 60, 60, 0, 0);
+        doc.move_selected_arrange(0, 1).expect("move");
+
+        let note = doc.data.model.notes[60]
+            .iter()
+            .find(|n| n.start_tick == 100)
+            .expect("note");
+        assert_eq!(note.track, 2, "跳过 Folder，落到后面的 MIDI 轨");
+        assert!(
+            doc.data.model.tracks[1].automation_lanes.is_empty()
+                && doc.data.model.tracks[1].clips.is_empty()
         );
     }
 
