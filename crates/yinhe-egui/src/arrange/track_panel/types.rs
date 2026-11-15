@@ -45,4 +45,6 @@ pub(crate) enum TrackAction {
     RemoveBus { bus: u16 },
     /// 右键 Master 轨：打开 Master 设备链。
     OpenMasterDock,
+    /// 右键固定 Bus 行：添加总线增益自动化。
+    AddBusAutomation { bus: u16 },
 }

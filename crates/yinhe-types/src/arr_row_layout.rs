@@ -14,6 +14,8 @@ pub enum ArRow {
     Automation(usize, usize),
     /// 固定总线行（MIX 总线投影到 AR）。
     Bus(usize),
+    /// 固定总线的自动化子行：`(bus, master_lane_idx)`。
+    BusAutomation(usize, usize),
 }
 
 /// 每帧由“各轨展开的 lane 数”构建的行布局。
@@ -65,11 +67,15 @@ impl ArRowLayout {
         }
     }
 
-    /// 在普通音轨行之后追加固定 Bus 行。Master 是唯一 Master 轨本身，
-    /// 不再额外追加固定行。
-    pub fn with_fixed_rows(mut self, bus_count: usize) -> Self {
-        for bus in 0..bus_count {
+    /// 在普通音轨行之后追加固定 Bus 行及其自动化子行。
+    /// `bus_lanes[bus]` = 该总线在 Master 轨上的 lane 索引列表；Master 是
+    /// 唯一 Master 轨本身，不再额外追加固定行。
+    pub fn with_fixed_rows(mut self, bus_lanes: &[Vec<usize>]) -> Self {
+        for (bus, lanes) in bus_lanes.iter().enumerate() {
             self.rows.push(ArRow::Bus(bus));
+            for &lane in lanes {
+                self.rows.push(ArRow::BusAutomation(bus, lane));
+            }
         }
         self.total_rows = self.rows.len() as u32;
         self
@@ -194,13 +200,13 @@ impl ArRow {
     pub fn track_opt(self) -> Option<usize> {
         match self {
             ArRow::Track(t) | ArRow::Automation(t, _) => Some(t),
-            ArRow::Bus(_) => None,
+            ArRow::Bus(_) | ArRow::BusAutomation(_, _) => None,
         }
     }
 
-    /// 是否固定行（Bus）。
+    /// 是否固定行（Bus 及其自动化子行）。
     pub fn is_fixed(self) -> bool {
-        matches!(self, ArRow::Bus(_))
+        matches!(self, ArRow::Bus(_) | ArRow::BusAutomation(_, _))
     }
 }
 
@@ -283,12 +289,13 @@ mod tests {
 
     #[test]
     fn fixed_bus_rows_follow_tracks() {
-        let l = layout().with_fixed_rows(2);
-        assert_eq!(l.total_rows(), 8);
+        let l = layout().with_fixed_rows(&[vec![2], vec![]]);
+        assert_eq!(l.total_rows(), 9);
         assert_eq!(l.row_hit(6), Some(ArRow::Bus(0)));
-        assert_eq!(l.row_hit(7), Some(ArRow::Bus(1)));
+        assert_eq!(l.row_hit(7), Some(ArRow::BusAutomation(0, 2)));
+        assert_eq!(l.row_hit(8), Some(ArRow::Bus(1)));
         assert_eq!(ArRow::Bus(0).track_opt(), None);
-        assert!(ArRow::Bus(1).is_fixed());
+        assert!(ArRow::BusAutomation(0, 2).is_fixed());
     }
 
     #[test]

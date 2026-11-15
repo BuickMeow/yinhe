@@ -518,6 +518,15 @@ impl MixerGraph {
         }
     }
 
+    /// 自动化直接写总线增益（保留 mute/solo/pan，只改 gain）。
+    pub fn set_bus_gain(&mut self, bus: usize, gain: f32) {
+        if let Some(chain) = self.buses.get_mut(bus) {
+            let mut params = chain.strip.params;
+            params.gain = gain;
+            chain.strip.set_params(params);
+        }
+    }
+
     /// 总线电平表读数端（UI 线程持有克隆）。
     pub fn bus_meter_reading(&self, bus: usize) -> Option<MeterReading> {
         self.buses.get(bus).map(|b| b.reading.clone())
@@ -1525,6 +1534,20 @@ mod tests {
         // 通道声像 → bus0 输入；bus0 声像 → master。直达路径必须消失。
         let single = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
         let expect = single * core::f32::consts::FRAC_1_SQRT_2;
+        assert!((l[3] - expect).abs() < 1e-6, "got {}", l[3]);
+    }
+
+    /// 自动化直接写总线增益：只改 gain，不动 mute/solo/pan。
+    #[test]
+    fn bus_gain_automation_scales_bus_output() {
+        let mut g = graph_with(&[StripParams::default()], 4);
+        g.resize_buses(1, 4, &[StripParams::default()]);
+        g.set_channel_output(0, Some(0));
+        g.set_bus_gain(0, 0.5);
+        fill(&mut g, 0, 0.5);
+        let (l, _r) = g.process();
+        let single = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
+        let expect = single * core::f32::consts::FRAC_1_SQRT_2 * 0.5;
         assert!((l[3] - expect).abs() < 1e-6, "got {}", l[3]);
     }
 

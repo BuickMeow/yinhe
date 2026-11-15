@@ -166,11 +166,10 @@ impl Document {
         self.history.mark_loaded();
     }
 
-    /// 新工程的默认混音台：自带一条总线（FX 1），使发送开箱可用。
+    /// 新工程/导入 MIDI 的默认混音台：不预设任何总线，降低学习曲线；
+    /// 需要总线时由用户在 MIX 或 AR 手动添加。
     fn default_mixer() -> MixerParams {
-        let mut m = MixerParams::default();
-        let _ = m.add_bus();
-        m
+        MixerParams::default()
     }
 
     pub fn empty() -> Self {
@@ -278,8 +277,7 @@ impl Document {
                 .collect();
 
             // 无混音数据的导入（.mid / 压缩包内 MIDI / 老 .yin 无混音段）走新工程
-            // 默认混音台：自带一条总线（FX 1），使通道条发送旋钮开箱可用；
-            // .yin 工程自带混音数据（Some）时原样保留，不重复加总线。
+            // 默认混音台：不预设总线；.yin 工程自带混音数据（Some）时原样保留。
             let mut mixer = mixer.unwrap_or_else(Self::default_mixer);
             mixer.ensure_len();
             let mut data = ProjectData::new(Arc::new(model), project_file, mapping_file);
@@ -1026,11 +1024,10 @@ mod tests {
         assert_eq!(doc.density_pr.view().rows.iter().sum::<u32>(), 1);
     }
 
-    /// 导入无混音数据的 MIDI（`from_model(..., None)`）应与新工程一致：自带一条
-    /// 总线，使通道条发送旋钮（FX 1）开箱可用；.yin 工程自带混音数据（Some）时
-    /// 原样保留，不重复加总线。
+    /// 导入无混音数据的 MIDI / 新建工程不预设总线；.yin 工程自带混音数据
+    /// （Some）时原样保留。
     #[test]
-    fn from_model_defaults_to_one_bus_only_without_mixer() {
+    fn from_model_new_projects_have_no_default_bus() {
         let make = |mixer: Option<MixerParams>| {
             let mut model = YinModel::new_empty_with_16_tracks();
             model.rebuild();
@@ -1047,11 +1044,7 @@ mod tests {
         };
 
         let imported = make(None);
-        assert_eq!(
-            imported.mixer.bus_count(),
-            1,
-            "导入 MIDI 应自动创建一条总线（FX 1）"
-        );
+        assert_eq!(imported.mixer.bus_count(), 0, "导入 MIDI 不再自动创建总线");
 
         let with_saved_mixer = make(Some(MixerParams::default()));
         assert_eq!(

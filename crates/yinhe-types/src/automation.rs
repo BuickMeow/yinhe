@@ -646,6 +646,9 @@ pub enum AutomationTarget {
     /// Tempo（BPM）。全局唯一一条 lane，存于 `ConductorData.tempo`。
     /// `value` 直接装 bpm（f32），是唯一不归一化的量。
     Tempo,
+    /// 总线主输出增益（线性 0..1，1.0 = 0 dB）。lane 存于 Master 轨的
+    /// automation_lanes，但渲染/交互落在 AR 固定 Bus 行的子行上。
+    BusGain { bus: u16 },
 }
 
 impl AutomationTarget {
@@ -668,7 +671,7 @@ impl AutomationTarget {
             AutomationTarget::PitchBend => Some(16383.0),
             AutomationTarget::Rpn { parameter } => Some(rpn_max(*parameter)),
             AutomationTarget::Nrpn { .. } => Some(16383.0),
-            AutomationTarget::Tempo => None,
+            AutomationTarget::Tempo | AutomationTarget::BusGain { .. } => None,
         }
     }
 
@@ -685,6 +688,7 @@ impl AutomationTarget {
             AutomationTarget::PitchBend => 0.5,
             AutomationTarget::Rpn { .. } | AutomationTarget::Nrpn { .. } => 0.0,
             AutomationTarget::Tempo => 120.0,
+            AutomationTarget::BusGain { .. } => 1.0,
         }
     }
 
@@ -796,6 +800,7 @@ impl AutomationTarget {
             }
             AutomationTarget::Nrpn { parameter } => format!("NRPN {:03}", parameter),
             AutomationTarget::Tempo => "Tempo".into(),
+            AutomationTarget::BusGain { bus } => format!("BUS {} Gain", bus + 1),
         }
     }
 }

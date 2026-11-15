@@ -1378,17 +1378,15 @@ impl YinModel {
                 track.audio_clips.clear();
                 changed = true;
             }
-            if !caps.notes {
-                if !track.clips.is_empty() {
-                    track.clips.clear();
-                    changed = true;
-                }
+            if !caps.notes && !track.clips.is_empty() {
+                track.clips.clear();
+                changed = true;
+            }
+            if track.kind == TrackKind::Folder {
                 if !track.automation_lanes.is_empty() {
                     track.automation_lanes.clear();
                     changed = true;
                 }
-            }
-            if track.kind == TrackKind::Folder {
                 if !track.program_change.is_empty() {
                     track.program_change.clear();
                     changed = true;
@@ -1401,6 +1399,14 @@ impl YinModel {
                     track.chord.clear();
                     changed = true;
                 }
+            }
+            // Master 上只保留 BusGain lane（固定 Bus 行的自动化宿主）。
+            if track.kind == TrackKind::Master {
+                let before = track.automation_lanes.len();
+                track.automation_lanes.retain(|lane| {
+                    matches!(lane.target, yinhe_types::AutomationTarget::BusGain { .. })
+                });
+                changed |= track.automation_lanes.len() != before;
             }
         }
         if changed {

@@ -947,7 +947,7 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
         }
         MixAction::RemoveBus { bus } => {
             app.note_mixer_edit(t!("undo.mix_bus").as_ref());
-            app.workspace.documents[idx].mixer_mut().remove_bus(bus);
+            app.workspace.documents[idx].remove_bus(bus);
             let handle = app.audio_state.handle.as_ref().map(|a| &a.handle);
             if idx < app.mixer_racks.len() {
                 app.mixer_racks[idx].remove_bus_chain(bus, handle);

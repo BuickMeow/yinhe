@@ -14,6 +14,7 @@ use yinhe_editor_core::shortcuts;
 enum RowMenuTarget {
     Track(usize, Option<usize>),
     Bus(u16),
+    BusAutomation(u16, usize),
 }
 
 impl Default for RowMenuTarget {
@@ -341,7 +342,12 @@ pub fn handle_interactions(
         let shift = ui.input(|i| i.modifiers.shift);
         let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
 
-        if let ArRow::Automation(t, s) = row_hit {
+        let lane_hit = match row_hit {
+            ArRow::Automation(t, s) => Some((t, s)),
+            ArRow::BusAutomation(_, s) => conductor_track_idx.map(|m| (m as usize, s)),
+            _ => None,
+        };
+        if let Some((t, s)) = lane_hit {
             if let Some(lane) = tracks.get(t).and_then(|tr| tr.automation_lanes.get(s)) {
                 let key = (track_info[t].index, lane.target.clone());
                 if cmd {
@@ -408,6 +414,14 @@ pub fn handle_interactions(
                     ui.ctx()
                         .data_mut(|d| d.insert_temp(ctx_target_id, RowMenuTarget::Bus(bus as u16)));
                 }
+                ArRow::BusAutomation(bus, lane) => {
+                    ui.ctx().data_mut(|d| {
+                        d.insert_temp(
+                            ctx_target_id,
+                            RowMenuTarget::BusAutomation(bus as u16, lane),
+                        )
+                    });
+                }
                 ArRow::Track(idx) => {
                     prepare_track_menu(
                         idx,
@@ -467,6 +481,18 @@ pub fn handle_interactions(
                         actions.push(TrackAction::OpenBusDock { bus });
                         ui.close();
                     }
+                    if ui
+                        .add(crate::widgets::menu::menu_item_action(
+                            ui,
+                            false,
+                            t!("arrange.add_bus_automation").as_ref(),
+                            "",
+                        ))
+                        .clicked()
+                    {
+                        actions.push(TrackAction::AddBusAutomation { bus });
+                        ui.close();
+                    }
                     ui.separator();
                     if ui
                         .add(crate::widgets::menu::menu_item_action(
@@ -480,6 +506,26 @@ pub fn handle_interactions(
                         actions.push(TrackAction::RemoveBus { bus });
                         ui.close();
                     }
+                }
+                Some(RowMenuTarget::BusAutomation(bus, lane_idx)) => {
+                    if ui
+                        .add(crate::widgets::menu::menu_item_action(
+                            ui,
+                            false,
+                            t!("arrange.delete_automation").as_ref(),
+                            shortcuts::ACTION_DELETE_AUTOMATION,
+                        ))
+                        .clicked()
+                    {
+                        if let Some(master) = conductor_track_idx {
+                            actions.push(TrackAction::DeleteAutomation {
+                                idx: master as usize,
+                                lane_idx,
+                            });
+                        }
+                        ui.close();
+                    }
+                    let _ = bus;
                 }
                 Some(RowMenuTarget::Track(idx, sub)) => {
                     track_context_menu(

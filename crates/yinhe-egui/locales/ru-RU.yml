@@ -1313,6 +1313,7 @@ arrange.group_tracks: "Сгруппировать выбранные дорож�
 arrange.ungroup_folder: "Разгруппировать папку"
 arrange.open_device_chain: "Открыть цепочку устройств"
 arrange.remove_bus: "Удалить шину"
+arrange.add_bus_automation: "Добавить автоматизацию громкости"
 undo.group_folder: "Сгруппировать в папку"
 undo.ungroup_folder: "Разгруппировать папку"
 history.start: "Начало"

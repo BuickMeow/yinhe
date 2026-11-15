@@ -232,6 +232,7 @@ mod tests {
             track_channels: vec![0],
             track_banks: vec![Vec::new()],
             clip_fades: vec![vec![(0.0, 0.0)]],
+            bus_gains: Vec::new(),
             channel_percussion: [None; 16],
         };
         let mut mixer = MixerGraph::new(64);

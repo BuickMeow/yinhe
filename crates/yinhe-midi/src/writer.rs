@@ -849,7 +849,7 @@ fn push_lane_event<'a>(
         AutomationTarget::Nrpn { parameter } => {
             push_data_entry(events, tick, ch, true, *parameter, value, rpn_full);
         }
-        AutomationTarget::Tempo => {}
+        AutomationTarget::Tempo | AutomationTarget::BusGain { .. } => {}
     }
 }
 

@@ -192,6 +192,74 @@ pub(crate) fn show(
         let Some(row_hit) = row_layout.row_hit(row) else {
             continue;
         };
+        if let ArRow::BusAutomation(bus, sub) = row_hit {
+            let Some(master_idx) = conductor_track_idx.map(usize::from) else {
+                continue;
+            };
+            let Some(lane) = tracks
+                .get(master_idx)
+                .and_then(|t| t.automation_lanes.get(sub))
+            else {
+                continue;
+            };
+            render::draw_row_background(ui, &painter, row_rect, row, false, lane_even);
+            if y > panel_rect.max.y || y + lh < panel_rect.min.y {
+                continue;
+            }
+            let color32 = crate::theme::accent_active();
+            let badge_rect = render::draw_badge(&painter, row_rect, lh, color32);
+            let text_x = badge_rect.max.x + 6.0;
+            let label = super::am_lanes::lane_label(&lane.target);
+            if show_details {
+                let font = render::detail_font(lh);
+                painter.text(
+                    egui::pos2(text_x, badge_rect.min.y + lh * 0.30),
+                    egui::Align2::LEFT_CENTER,
+                    label,
+                    font.clone(),
+                    crate::theme::text_primary(),
+                );
+                painter.text(
+                    egui::pos2(text_x, badge_rect.min.y + lh * 0.70),
+                    egui::Align2::LEFT_CENTER,
+                    format!("BUS {}", bus + 1),
+                    font,
+                    crate::theme::text_primary(),
+                );
+            } else {
+                painter.text(
+                    egui::pos2(text_x, badge_rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    format!("{} · BUS {}", label, bus + 1),
+                    render::compact_font(lh),
+                    crate::theme::text_primary(),
+                );
+            }
+            // 自动化值表贴右缘（无 M/S：总线 lane 不走 MIDI 试听）。
+            let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
+            let meter_left = meter_right - LEVEL_METER_W;
+            let meter_rect = egui::Rect::from_min_max(
+                egui::pos2(meter_left, row_rect.min.y + LEVEL_METER_MARGIN),
+                egui::pos2(meter_right, row_rect.max.y - LEVEL_METER_MARGIN),
+            );
+            crate::widgets::meter::automation_meter(
+                &painter,
+                meter_rect,
+                super::am_lanes::lane_cursor_value(lane, cursor_tick),
+                lane.target.bar_baseline(),
+                color32,
+            );
+            let key = (master_idx as u16, lane.target.clone());
+            if am_lane_selected.contains(&key) {
+                painter.rect_stroke(
+                    row_rect,
+                    0.0,
+                    egui::Stroke::new(1.0, crate::theme::accent_active()),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            continue;
+        }
         if row_hit.is_fixed() {
             render::draw_row_background(ui, &painter, row_rect, row, false, lane_even);
             if y > panel_rect.max.y || y + lh < panel_rect.min.y {

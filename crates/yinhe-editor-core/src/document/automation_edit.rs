@@ -181,8 +181,10 @@ impl Document {
         }
         let model = Arc::make_mut(&mut self.data.model);
         let track = model.tracks.get_mut(track_idx)?;
-        // 权限唯一入口：Master 只承载 Tempo，Folder 不承载任何自动化。
-        if !track.can_hold(yinhe_core::TrackContent::Automation) {
+        // 权限唯一入口：Folder 不承载任何自动化；Master 只额外承载 BusGain。
+        let master_bus_lane = track.kind == yinhe_core::TrackKind::Master
+            && matches!(target, AutomationTarget::BusGain { .. });
+        if !track.can_hold(yinhe_core::TrackContent::Automation) && !master_bus_lane {
             return None;
         }
         let track = Arc::make_mut(track);
@@ -207,6 +209,77 @@ impl Document {
                 after: Some(lane),
             },
         ))
+    }
+
+    /// 为固定 Bus 行创建一条增益自动化 lane（存于 Master 轨）。
+    /// 已存在时返回 None；初始事件写在 tick 0，值为当前总线增益，
+    /// 保证引擎一开始就能求值且不会突然改变音量。
+    pub fn add_bus_automation_lane(&mut self, bus: u16) -> Option<UndoAction> {
+        if bus as usize >= self.mixer.buses.len() {
+            return None;
+        }
+        let track_idx = self.edit.track_cache.conductor_idx? as usize;
+        let gain = self.mixer.buses[bus as usize].gain.clamp(0.0, 1.0);
+        let target = AutomationTarget::BusGain { bus };
+        let event_id = Arc::make_mut(&mut self.data.model).alloc_automation_id();
+        let model = Arc::make_mut(&mut self.data.model);
+        let track = Arc::make_mut(model.tracks.get_mut(track_idx)?);
+        if track.automation_lanes.iter().any(|l| l.target == target) {
+            return None;
+        }
+        let lane = yinhe_types::AutomationLane {
+            target,
+            track: track_idx as u16,
+            events: vec![yinhe_types::AutomationEvent {
+                id: event_id,
+                tick: 0,
+                value: gain,
+                shape: yinhe_types::SegmentShape::linear_curve(),
+            }],
+        };
+        track.automation_lanes.push(lane.clone());
+        let lane_idx = track.automation_lanes.len() - 1;
+        self.data.bump_revision();
+        Some(UndoAction::AutomationLane {
+            track_idx,
+            lane_idx,
+            before: None,
+            after: Some(lane),
+        })
+    }
+
+    /// 删除总线并同步清理/重映射 Master 上的 BusGain 自动化 lane。
+    /// 总线索引是位置索引：删除 bus 后，更高 bus 的 lane target 必须前移，
+    /// 否则自动化会作用到错误的总线上。
+    pub fn remove_bus(&mut self, bus: u16) {
+        if bus as usize >= self.mixer.buses.len() {
+            return;
+        }
+        self.mixer.remove_bus(bus);
+        let Some(master_idx) = self.edit.track_cache.conductor_idx.map(usize::from) else {
+            return;
+        };
+        let model = Arc::make_mut(&mut self.data.model);
+        let Some(track) = model.tracks.get_mut(master_idx) else {
+            return;
+        };
+        let track = Arc::make_mut(track);
+        let before = track.automation_lanes.len();
+        track.automation_lanes.retain_mut(|lane| {
+            let AutomationTarget::BusGain { bus: target } = &mut lane.target else {
+                return true;
+            };
+            if *target == bus {
+                return false;
+            }
+            if *target > bus {
+                *target -= 1;
+            }
+            true
+        });
+        if track.automation_lanes.len() != before {
+            self.data.bump_revision();
+        }
     }
 
     /// 删除整条 automation lane。返回 UndoAction（before 含完整 lane 供 undo 恢复）。
@@ -1081,5 +1154,32 @@ mod tests {
             lane.events.iter().any(|e| e.id == 2 && e.tick == 200),
             "id2 应留在原处"
         );
+    }
+
+    #[test]
+    fn bus_gain_lane_lives_on_master_and_accepts_events() {
+        use yinhe_types::{AutomationEvent, AutomationTarget, SegmentShape};
+        let mut doc = Document::empty();
+        assert!(doc.mixer.add_bus().is_some());
+        let master = doc.edit.track_cache.conductor_idx.unwrap() as usize;
+        doc.add_bus_automation_lane(0).expect("bus lane");
+        assert!(matches!(
+            doc.data.model.tracks[master].automation_lanes[0].target,
+            AutomationTarget::BusGain { bus: 0 }
+        ));
+        doc.add_automation_event(
+            master,
+            AutomationTarget::BusGain { bus: 0 },
+            AutomationEvent {
+                id: 0,
+                tick: 480,
+                value: 0.5,
+                shape: SegmentShape::linear_curve(),
+            },
+        )
+        .expect("event");
+        let lane = &doc.data.model.tracks[master].automation_lanes[0];
+        assert_eq!(lane.events.last().map(|e| e.value), Some(0.5));
+        assert_eq!(lane.track, master as u16);
     }
 }

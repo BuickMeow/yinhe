@@ -127,6 +127,30 @@ impl AudioEngine {
         self.sync_sends_to_graph();
     }
 
+    /// 按 tick 求值 BusGain 自动化并写入总线 strip。
+    /// 没有 lane 的总线保持用户推子值；lane 存在但事件尚未开始时用 1.0。
+    pub(crate) fn apply_bus_automation(&mut self, tick: u32) {
+        let Some(model) = &self.model else {
+            return;
+        };
+        if model.bus_gains.is_empty() {
+            return;
+        }
+        for (bus, lane) in &model.bus_gains {
+            let value = lane
+                .value_at(tick)
+                .map(|(v, _)| v)
+                .unwrap_or(1.0)
+                .clamp(0.0, 1.0);
+            if let Some(params) = self.mixer_params.buses.get_mut(*bus as usize)
+                && (params.gain - value).abs() > f32::EPSILON
+            {
+                params.gain = value;
+                self.mixer.set_bus_gain(*bus as usize, value);
+            }
+        }
+    }
+
     /// 更新某源通道的 strip（推子/声像/M/S 拖动的高频路径，幂等）。
     pub(crate) fn set_channel_strip(&mut self, channel: u8, params: StripParams) {
         if let Some(slot) = self.mixer_params.channels.get_mut(channel as usize) {

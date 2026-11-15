@@ -42,6 +42,7 @@ pub(crate) fn visible_am_rows(
     first_row: usize,
     last_row: usize,
     conductor: Option<u16>,
+    tracks: &[Arc<yinhe_core::TrackData>],
     lane_height: f32,
 ) -> Vec<AmRowRef> {
     let mut out = Vec::new();
@@ -60,6 +61,25 @@ pub(crate) fn visible_am_rows(
                 y_top,
                 height: lane_height,
             }),
+            Some(ArRow::BusAutomation(bus, lane_idx)) => {
+                let Some(master) = conductor.map(usize::from) else {
+                    continue;
+                };
+                let valid = tracks
+                    .get(master)
+                    .and_then(|t| t.automation_lanes.get(lane_idx))
+                    .is_some_and(|lane| {
+                        lane.target == AutomationTarget::BusGain { bus: bus as u16 }
+                    });
+                if valid {
+                    out.push(AmRowRef {
+                        track: master,
+                        sub: Some(lane_idx),
+                        y_top,
+                        height: lane_height,
+                    });
+                }
+            }
             _ => {}
         }
     }

@@ -41,6 +41,7 @@ fn target_hash(target: &AutomationTarget) -> u64 {
         AutomationTarget::Rpn { parameter } => 0x2_0000 + u64::from(*parameter),
         AutomationTarget::Nrpn { parameter } => 0x3_0000 + u64::from(*parameter),
         AutomationTarget::Tempo => u64::MAX,
+        AutomationTarget::BusGain { bus } => 0x6_0000 + u64::from(*bus),
         AutomationTarget::Param { device, id, .. } => match device {
             // 内置设备：通道级。
             ParamDevice::ChannelInstrument { channel } => {

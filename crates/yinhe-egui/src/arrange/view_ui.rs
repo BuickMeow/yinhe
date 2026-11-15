@@ -250,6 +250,7 @@ pub fn show(
         first_row,
         last_row,
         data.conductor_track_idx,
+        data.tracks,
         view.lane_height(),
     );
     let mut am_ghost: Option<(yinhe_wgpu::AutomationGhost, f32, f32, f32)> = None;

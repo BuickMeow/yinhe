@@ -127,7 +127,7 @@ impl App {
         // 右键固定 Bus 行：删除总线并清理机架（send/输出由 MixerParams 统一重映射）。
         if let Some(bus) = bus_remove_req {
             self.note_mixer_edit(t!("undo.mix_bus").as_ref());
-            self.workspace.documents[idx].mixer_mut().remove_bus(bus);
+            self.workspace.documents[idx].remove_bus(bus);
             let handle = self.audio_state.handle.as_ref().map(|a| &a.handle);
             if idx < self.mixer_racks.len() {
                 self.mixer_racks[idx].remove_bus_chain(bus, handle);

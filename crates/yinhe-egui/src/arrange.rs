@@ -210,6 +210,26 @@ pub fn show(
     doc.edit.arr_am_expanded.resize(num_tracks, false);
     let conductor_idx = doc.edit.track_cache.conductor_idx;
     let bus_count = doc.mixer.bus_count();
+    // 固定 Bus 行的自动化子行：BusGain lane 存在 Master 轨上。
+    let bus_lanes: Vec<Vec<usize>> = (0..bus_count)
+        .map(|bus| {
+            conductor_idx
+                .and_then(|idx| doc.data.model.tracks.get(idx as usize))
+                .map(|track| {
+                    track
+                        .automation_lanes
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, lane)| {
+                            lane.target
+                                == yinhe_types::AutomationTarget::BusGain { bus: bus as u16 }
+                        })
+                        .map(|(idx, _)| idx)
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+        .collect();
     let build_row_layout = |edit: &yinhe_editor_core::edit_state::EditState,
                             model: &yinhe_core::YinModel| {
         let counts: Vec<u32> = (0..num_tracks)
@@ -228,7 +248,7 @@ pub fn show(
             })
             .collect();
         let visible = model.folder_visible_mask();
-        yinhe_types::ArRowLayout::new_with_visible(&counts, &visible).with_fixed_rows(bus_count)
+        yinhe_types::ArRowLayout::new_with_visible(&counts, &visible).with_fixed_rows(&bus_lanes)
     };
     let mut row_layout = build_row_layout(&doc.edit, &doc.data.model);
     // 清理已删除 lane 的残留视图状态（undo 删除 lane 后）
@@ -650,6 +670,13 @@ pub fn show(
                     structural = false;
                     *dock_req = Some(crate::chrome::device_chain::DockContext::Master);
                     (None, String::new())
+                }
+                track_panel::TrackAction::AddBusAutomation { bus } => {
+                    structural = false;
+                    (
+                        doc.add_bus_automation_lane(*bus),
+                        t!("undo.create_automation").to_string(),
+                    )
                 }
                 track_panel::TrackAction::CommitMuteSolo { before, after } => {
                     structural = false;
@@ -1073,6 +1100,16 @@ pub fn show(
                             format!("{} · {}", track_str(t), am_lanes::lane_label(&lane.target))
                         }
                         None => track_str(t),
+                    }
+                }
+                Some(yinhe_types::ArRow::BusAutomation(b, sub)) => {
+                    let label = conductor_idx
+                        .and_then(|idx| doc.data.model.tracks.get(idx as usize))
+                        .and_then(|tr| tr.automation_lanes.get(sub))
+                        .map(|lane| am_lanes::lane_label(&lane.target));
+                    match label {
+                        Some(label) => format!("BUS {} · {}", b + 1, label),
+                        None => format!("BUS {}", b + 1),
                     }
                 }
                 Some(yinhe_types::ArRow::Track(t)) => track_str(t),
