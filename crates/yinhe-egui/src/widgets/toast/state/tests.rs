@@ -100,7 +100,7 @@ fn finish_completed_promotes_to_result() {
     assert_eq!(n.primary, Some(id));
     let r = find(&n, id);
     assert_eq!(r.kind, ToastKind::Success);
-    assert_eq!(r.progress, Some(1.0));
+    assert_eq!(r.progress, None, "完成通知不再保留 100% 进度条");
     assert!(r.source.is_none());
 }
 

@@ -186,9 +186,9 @@ impl Notifications {
             };
             n.title = title.into();
             n.message = message.into();
-            // 完成满格；中止保留中断时刻快照。
+            // 完成后不再显示进度条（100% 即结果通知）；中止保留中断时刻快照。
             n.progress = match outcome {
-                ProgressOutcome::Completed => Some(1.0),
+                ProgressOutcome::Completed => None,
                 ProgressOutcome::Aborted => n.snapshot_fraction(),
                 ProgressOutcome::Failed => None,
             };
