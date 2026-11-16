@@ -1,9 +1,8 @@
 //! 通道 AR 的通道分组。
 //!
-//! 通道 AR 以「通道」为组织单位（而非轨道）：MIDI 源通道按
-//! `TrackData::global_channel()`（A01..P16，0..=255）归组，音频轨按
-//! `audio_channel` 归组（与混音台的 Audio-XX 一致）。Conductor（Master）
-//! 轨单独成行，不归入任何通道。
+//! 通道 AR 以「通道」为组织单位（而非轨道）：按实际混音通道
+//! （`midi_target_channel` / `audio_target_channel`）归组，显式改道的轨道
+//! 跟到目标通道，与混音台条一致。Conductor（Master）轨单独成行，不归入任何通道。
 //!
 //! 只列出「active」通道（工程中至少有一条轨道使用的通道），与混音台一致。
 
@@ -56,10 +55,24 @@ impl CaGroups {
                 continue;
             }
             match track.kind {
-                TrackKind::Midi => midi_map.entry(track.global_channel()).or_default().push(i),
+                // 按实际混音通道归组：显式改道的轨道跟随目标通道，
+                // 否则回退到源端口/通道（或音频通道）。
+                TrackKind::Midi => midi_map
+                    .entry(
+                        track
+                            .midi_target_channel()
+                            .unwrap_or_else(|| track.global_channel()),
+                    )
+                    .or_default()
+                    .push(i),
                 // 旧工程音频轨未分配 audio_channel 时兜底归入 0。
                 TrackKind::Audio => audio_map
-                    .entry(track.audio_channel.unwrap_or(0))
+                    .entry(
+                        track
+                            .audio_target_channel()
+                            .or(track.audio_channel)
+                            .unwrap_or(0),
+                    )
                     .or_default()
                     .push(i),
                 TrackKind::Folder | TrackKind::Master => {}
@@ -177,6 +190,18 @@ mod tests {
         assert_eq!(groups.audio[1].tracks, vec![3]);
         // Conductor（索引 0）不归组。
         assert!(groups.iter_all().all(|g| !g.tracks.contains(&0u16)));
+    }
+
+    /// 显式改道的音轨按目标混音通道归组，不再留在源通道下。
+    #[test]
+    fn routing_moves_track_to_target_channel() {
+        let mut routed = midi_track(0, 0);
+        routed.channel_routing = Some(yinhe_types::MixerChannelId::Midi(16)); // B01
+        let model = model_with(vec![routed, midi_track(1, 0)]);
+        let groups = CaGroups::from_model(&model, Some(0));
+        assert_eq!(groups.midi.len(), 1, "轨道应合并到 B01 一组");
+        assert_eq!(groups.midi[0].channel, CaChannel::Midi(16));
+        assert_eq!(groups.midi[0].tracks, vec![1, 2]);
     }
 
     /// 同通道轨道统一为通道色（首轨色）；Conductor 用主题色。

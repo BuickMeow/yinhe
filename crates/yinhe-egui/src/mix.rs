@@ -678,7 +678,8 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
         .iter()
         .map(|&ch| {
             let first_track = model.tracks.iter().enumerate().find_map(|(ti, t)| {
-                (Some(ti as u16) != conductor_idx && t.global_channel() == ch).then_some(ti)
+                (Some(ti as u16) != conductor_idx && t.midi_target_channel() == Some(ch))
+                    .then_some(ti)
             });
             let c = first_track
                 .and_then(|ti| track_colors.get(ti).copied())
