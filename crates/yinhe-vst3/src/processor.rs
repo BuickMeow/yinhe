@@ -2,7 +2,7 @@
 //!
 //! 管理线程 `Vst3PluginInstance::activate_audio` 产出本类型（`Send`），
 //! move 进渲染线程后每块调用 [`Vst3Processor::process`]。
-//! 第一版只支持主音频端口（立体声进/出）+ 单事件总线；其余总线不激活。
+//! 支持多输出总线（按插件声明的输出 bus 分配缓冲）；输入只激活主总线。
 
 use std::ptr;
 use std::sync::Arc;
@@ -44,12 +44,12 @@ pub struct Vst3Processor {
     /// 输出参数变化对象（持有引用计数；第一版不消费）。
     _out_params: ComWrapper<HostParamChanges>,
     out_param_ptr: ComPtr<IParameterChanges>,
-    // 音频缓冲：主端口立体声 planar（ch0 = [0..frames]，ch1 = [frames..2*frames]）。
+    // 音频缓冲：主输入立体声 planar；输出按 bus/channel 分配。
     in_buf: Vec<f32>,
-    out_buf: Vec<f32>,
-    /// 每 bus 的 channel data 指针数组（指向 in_buf/out_buf 的堆数据）。
+    out_bufs: Vec<Vec<Vec<f32>>>,
+    /// 每 bus 的 channel data 指针数组（指向 in_buf/out_bufs 的堆数据）。
     in_channels: Vec<*mut f32>,
-    out_channels: Vec<*mut f32>,
+    out_channels: Vec<Vec<*mut f32>>,
     buses_in: Vec<AudioBusBuffers>,
     buses_out: Vec<AudioBusBuffers>,
     context: Box<ProcessContext>,
@@ -70,6 +70,7 @@ impl Vst3Processor {
         processor: ComPtr<IAudioProcessor>,
         sample_rate: f64,
         frames: usize,
+        out_bus_channels: Vec<u16>,
         param_queue: Arc<ParamQueue>,
     ) -> Option<Self> {
         let in_events = ComWrapper::new(HostEventList::new());
@@ -82,13 +83,22 @@ impl Vst3Processor {
         let out_param_ptr = out_params.to_com_ptr::<IParameterChanges>()?;
 
         let mut in_buf = vec![0.0f32; frames * 2];
-        let mut out_buf = vec![0.0f32; frames * 2];
         let mut in_channels = vec![in_buf.as_mut_ptr(), unsafe {
             in_buf.as_mut_ptr().add(frames)
         }];
-        let mut out_channels = vec![out_buf.as_mut_ptr(), unsafe {
-            out_buf.as_mut_ptr().add(frames)
-        }];
+        let out_bus_channels = if out_bus_channels.is_empty() {
+            vec![2]
+        } else {
+            out_bus_channels
+        };
+        let mut out_bufs: Vec<Vec<Vec<f32>>> = out_bus_channels
+            .iter()
+            .map(|&ch| (0..ch.max(1)).map(|_| vec![0.0f32; frames]).collect())
+            .collect();
+        let mut out_channels: Vec<Vec<*mut f32>> = out_bufs
+            .iter_mut()
+            .map(|bus| bus.iter_mut().map(|ch| ch.as_mut_ptr()).collect())
+            .collect();
         let buses_in = vec![AudioBusBuffers {
             numChannels: 2,
             silenceFlags: 0,
@@ -96,13 +106,17 @@ impl Vst3Processor {
                 channelBuffers32: in_channels.as_mut_ptr(),
             },
         }];
-        let buses_out = vec![AudioBusBuffers {
-            numChannels: 2,
-            silenceFlags: 0,
-            __field0: AudioBusBuffers__type0 {
-                channelBuffers32: out_channels.as_mut_ptr(),
-            },
-        }];
+        let buses_out = out_channels
+            .iter_mut()
+            .zip(out_bus_channels.iter())
+            .map(|(ptrs, &ch)| AudioBusBuffers {
+                numChannels: i32::from(ch.max(1)),
+                silenceFlags: 0,
+                __field0: AudioBusBuffers__type0 {
+                    channelBuffers32: ptrs.as_mut_ptr(),
+                },
+            })
+            .collect();
         let context = Box::new(unsafe { std::mem::zeroed::<ProcessContext>() });
 
         Some(Self {
@@ -117,7 +131,7 @@ impl Vst3Processor {
             _out_params: out_params,
             out_param_ptr,
             in_buf,
-            out_buf,
+            out_bufs,
             in_channels,
             out_channels,
             buses_in,
@@ -216,10 +230,38 @@ impl Vst3Processor {
         Ok(())
     }
 
-    /// 主端口输出（planar 立体声）。
+    /// 主输出总线（planar 立体声/单声道）。
     pub fn output(&self) -> (&[f32], &[f32]) {
+        self.output_bus(0)
+    }
+
+    /// 第 `bus` 个输出总线（planar）。
+    pub fn output_bus(&self, bus: usize) -> (&[f32], &[f32]) {
         let frames = self.frames;
-        (&self.out_buf[..frames], &self.out_buf[frames..frames * 2])
+        let Some(bus) = self.out_bufs.get(bus) else {
+            return (&[], &[]);
+        };
+        let left = bus.first().map(|ch| &ch[..frames]).unwrap_or(&[]);
+        let right = bus.get(1).map(|ch| &ch[..frames]).unwrap_or(left);
+        (left, right)
+    }
+
+    /// 多输出：一次 process 后把全部输出总线拷贝到调用方缓冲。
+    pub fn write_outputs(&self, outputs: &mut [yinhe_mixer::ChannelBuffers]) {
+        for (i, out) in outputs.iter_mut().enumerate() {
+            let n = self.frames.min(out.left.len()).min(out.right.len());
+            let (left, right) = self.output_bus(i);
+            if left.len() >= n {
+                out.left[..n].copy_from_slice(&left[..n]);
+            } else {
+                out.left[..n].fill(0.0);
+            }
+            if right.len() >= n {
+                out.right[..n].copy_from_slice(&right[..n]);
+            } else {
+                out.right[..n].fill(0.0);
+            }
+        }
     }
 
     /// 取出插件输出事件（当前仅保留，供后续 NoteEnd/CC 回传使用）。
@@ -267,6 +309,23 @@ impl yinhe_mixer::InstrumentProcessor for Vst3Processor {
         out_r[..n].copy_from_slice(&or[..n]);
         out_l[n..].fill(0.0);
         out_r[n..].fill(0.0);
+    }
+
+    fn process_outputs(
+        &mut self,
+        events: &[PluginEvent],
+        outputs: &mut [yinhe_mixer::ChannelBuffers],
+        position_samples: u64,
+    ) {
+        if let Err(e) = self.process_block(events, position_samples, None) {
+            tracing::warn!(target: "vst3-instrument", "多输出乐器处理失败，本块静音: {e}");
+            for out in outputs {
+                out.left.fill(0.0);
+                out.right.fill(0.0);
+            }
+            return;
+        }
+        self.write_outputs(outputs);
     }
 
     fn reset(&mut self) {

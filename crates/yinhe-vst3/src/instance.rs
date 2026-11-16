@@ -416,9 +416,11 @@ impl Vst3PluginInstance {
                     .component
                     .activateBus(kAudio as i32, kInput as i32, 0, 1);
             }
-            let _ = self
-                .component
-                .activateBus(kAudio as i32, kOutput as i32, 0, 1);
+            for i in 0..n_out {
+                let _ = self
+                    .component
+                    .activateBus(kAudio as i32, kOutput as i32, i, 1);
+            }
         }
 
         let r = unsafe { self.component.setActive(1) };
@@ -438,11 +440,17 @@ impl Vst3PluginInstance {
             )));
         }
 
+        let out_bus_channels: Vec<u16> = self
+            .audio_outputs()
+            .into_iter()
+            .map(|(_, channels)| channels.max(1))
+            .collect();
         let processor = Vst3Processor::new(
             self.component.clone(),
             processor,
             sample_rate,
             max_frames as usize,
+            out_bus_channels,
             Arc::clone(&self.param_queue),
         )
         .ok_or_else(|| InstanceError::Initialize("音频缓冲/宿主对象构造失败".into()))?;
@@ -454,28 +462,30 @@ impl Vst3PluginInstance {
         Ok(processor)
     }
 
-    /// 当前宿主实际路由的音频输出。
-    ///
-    /// VST3 第一版只激活/分配主输出总线，因此这里始终返回一个输出；
-    /// 插件声明的其他输出总线尚未接入宿主（见 `Vst3Processor` 文档）。
+    /// 插件声明的音频输出总线（名称 + 声道数）。
     pub fn audio_outputs(&self) -> Vec<(String, u16)> {
         let n_out = unsafe { self.component.getBusCount(kAudio as i32, kOutput as i32) };
         if n_out <= 0 {
             return vec![("Main".into(), 2)];
         }
-        let mut info = std::mem::MaybeUninit::<vst3::Steinberg::Vst::BusInfo>::uninit();
-        let r = unsafe {
-            self.component
-                .getBusInfo(kAudio as i32, kOutput as i32, 0, info.as_mut_ptr())
-        };
-        if r != kResultOk {
-            return vec![("Main".into(), 2)];
+        let mut out = Vec::with_capacity(n_out as usize);
+        for i in 0..n_out {
+            let mut info = std::mem::MaybeUninit::<vst3::Steinberg::Vst::BusInfo>::uninit();
+            let r = unsafe {
+                self.component
+                    .getBusInfo(kAudio as i32, kOutput as i32, i, info.as_mut_ptr())
+            };
+            if r == kResultOk {
+                let info = unsafe { info.assume_init() };
+                out.push((
+                    utf16_str(&info.name),
+                    info.channelCount.clamp(0, u16::MAX as i32) as u16,
+                ));
+            } else {
+                out.push((format!("Out {}", i + 1), 2));
+            }
         }
-        let info = unsafe { info.assume_init() };
-        vec![(
-            "Main".into(),
-            info.channelCount.clamp(0, u16::MAX as i32) as u16,
-        )]
+        out
     }
 
     /// 参数列表（创建时枚举；插件请求重扫后由 [`refresh_params`](Self::refresh_params) 更新）。
