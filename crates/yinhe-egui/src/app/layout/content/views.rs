@@ -26,7 +26,7 @@ impl App {
             .unwrap_or(false);
         let sel_hint = Self::compute_sel_hint(&self.workspace.documents[idx]);
         // AR 固定总线行：参数快照 + 与 MIX 同源的平滑电平。
-        let bus_strips = self.workspace.documents[idx].mixer.buses.clone();
+        let bus_strips = self.workspace.documents[idx].mixer.bus_strips();
         let dt = ui.ctx().input(|i| i.stable_dt).min(0.1);
         let bus_meters = crate::mix::bus_meter_display(self, dt);
 

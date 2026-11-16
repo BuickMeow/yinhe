@@ -216,7 +216,7 @@ pub fn show(
     // Conductor 不展开（主行直显 Tempo）。
     doc.edit.arr_am_expanded.resize(num_tracks, false);
     let conductor_idx = doc.edit.track_cache.conductor_idx;
-    let bus_ids = doc.mixer.bus_ids.clone();
+    let bus_ids = doc.mixer.bus_ids();
     // 固定 Bus 行的自动化子行：BusGain lane 存在 Master 轨上。
     let bus_lanes: Vec<Vec<usize>> = bus_ids
         .iter()
@@ -661,7 +661,7 @@ pub fn show(
                     if let Some(index) = doc.mixer.bus_index(*bus)
                         && let Some(slot) = doc.mixer.buses.get_mut(index)
                     {
-                        *slot = *params;
+                        slot.strip = *params;
                     }
                     *mixer_dirty = true;
                     (None, String::new())
@@ -792,7 +792,7 @@ pub fn show(
             num_tracks,
             tracks: &model.tracks,
             tempo_lane: &model.conductor.tempo,
-            bus_ids: &doc.mixer.bus_ids,
+            bus_ids: &bus_ids,
             conductor_track_idx: doc.edit.track_cache.conductor_idx,
             tempo_map: &model.tempo_map,
             audio_library,

@@ -3,7 +3,7 @@
 //! 相加。空链时该通道使用内置 XSynth。
 //!
 //! 数据流：
-//! - 选择插件：InsertRef 追加到 doc.mixer.instruments[channel]（持久化）→ rack.add
+//! - 选择插件：InsertRef 追加到 doc.mixer.racks[channel].instruments（持久化）→ rack.add
 //!   加载实例（不激活、不发送）→ ensure_all_sent 激活并发 SetInstrumentSlot 安装；
 //! - 移除/替换：rack.remove → 已安装的送 SetInstrumentSlot{slot_id, None}，旧实例
 //!   移入 pending_return，旧处理器退回后按 slot_id 匹配 deactivate；
@@ -436,7 +436,7 @@ impl InstrumentRack {
         }
     }
 
-    /// 保存前把实例状态写回持久化层（mixer.instruments[channel][index].state）。
+    /// 保存前把实例状态写回持久化层（mixer.racks[channel].instruments[index].state）。
     /// 槽位顺序与持久化链顺序一致（都是挂载顺序）。
     pub fn sync_states_to(&mut self, mixer: &mut MixerParams) {
         let mut counter: std::collections::HashMap<u8, usize> = std::collections::HashMap::new();
@@ -444,8 +444,7 @@ impl InstrumentRack {
             let index = *counter.entry(slot.channel).or_insert(0);
             *counter.get_mut(&slot.channel).unwrap() += 1;
             let Some(r) = mixer
-                .instruments
-                .get_mut(slot.channel as usize)
+                .rack_instruments_mut(yinhe_types::RackId::from_midi_channel(slot.channel))
                 .and_then(|refs| refs.get_mut(index))
             else {
                 continue;
@@ -490,7 +489,7 @@ mod tests {
             gui_window: None,
         });
         let mut mixer = MixerParams::default();
-        mixer.instruments[3] = vec![yinhe_mixer::InsertRef {
+        mixer.racks[3].instruments = vec![yinhe_mixer::InsertRef {
             uid: 1,
             format: yinhe_mixer::PluginFormat::Clap,
             plugin_path: std::path::PathBuf::from("/tmp/x.clap"),
@@ -500,7 +499,7 @@ mod tests {
             state: Some(vec![1, 2, 3]),
         }];
         rack.sync_states_to(&mut mixer);
-        assert_eq!(mixer.instruments[3][0].state, Some(vec![1, 2, 3]));
+        assert_eq!(mixer.racks[3].instruments[0].state, Some(vec![1, 2, 3]));
     }
 
     #[test]

@@ -31,14 +31,13 @@ pub(crate) fn send_popup(
     let Some(idx) = app.workspace.active_doc else {
         return;
     };
-    let bus_ids = app.workspace.documents[idx].mixer.bus_ids.clone();
+    let bus_ids = app.workspace.documents[idx].mixer.bus_ids();
     let current: Vec<(yinhe_types::BusId, f32, bool)> = bus_ids
         .iter()
         .map(|&bus_id| {
             let (amount, pre_fader) = app.workspace.documents[idx]
                 .mixer
-                .sends
-                .get(channel as usize)
+                .node_sends(yinhe_types::MixerChannelId::Midi(channel))
                 .and_then(|list| list.iter().find(|s| s.bus == bus_id))
                 .map(|s| (s.amount, s.pre_fader))
                 .unwrap_or((0.0, false));

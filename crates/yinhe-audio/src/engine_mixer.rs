@@ -23,12 +23,19 @@ impl AudioEngine {
         for (dense, p) in strips.into_iter().enumerate() {
             self.mixer.set_strip(dense, p);
         }
-        self.mixer.set_master(self.mixer_params.master);
+        self.mixer.set_master(MasterParams {
+            gain: self.mixer_params.master.gain,
+        });
         // 总线与发送：全量同步（数量变化走 resize_buses）。
-        let buses = self.mixer_params.buses.clone();
+        let bus_strips: Vec<StripParams> = self
+            .mixer_params
+            .buses
+            .iter()
+            .map(|node| node.strip)
+            .collect();
         self.mixer
-            .resize_buses(buses.len(), self.mixer.frames(), &buses);
-        for (i, p) in buses.into_iter().enumerate() {
+            .resize_buses(bus_strips.len(), self.mixer.frames(), &bus_strips);
+        for (i, p) in bus_strips.into_iter().enumerate() {
             self.mixer.set_bus_strip(i, p);
         }
         self.sync_output_routing();
@@ -41,12 +48,12 @@ impl AudioEngine {
         let count = self.channel_set.channel_count();
         for dense in 0..count {
             let dest = match self.dense_to_namespace(dense) {
-                Some(ChannelNamespace::Midi(src)) => {
-                    self.mixer_params.midi_outputs.get(src).copied().flatten()
-                }
-                Some(ChannelNamespace::Audio(ach)) => {
-                    self.mixer_params.audio_outputs.get(ach).copied().flatten()
-                }
+                Some(ChannelNamespace::Midi(src)) => self
+                    .mixer_params
+                    .node_output(MixerChannelId::Midi(src as u8)),
+                Some(ChannelNamespace::Audio(ach)) => self
+                    .mixer_params
+                    .node_output(MixerChannelId::Audio(ach as u16)),
                 None => None,
             }
             .and_then(|id| self.mixer_params.bus_index(id));
@@ -58,8 +65,18 @@ impl AudioEngine {
     /// 总线发送（bus → bus）按总线索引直接推。
     /// 未激活通道的 send 暂存于持久化层，引擎重建/激活后由全量同步补上。
     fn sync_sends_to_graph(&mut self) {
-        let sends = self.mixer_params.sends.clone();
-        let audio_sends = self.mixer_params.audio_sends.clone();
+        let sends: Vec<Vec<SendParams>> = self
+            .mixer_params
+            .channels
+            .iter()
+            .map(|node| node.sends.clone())
+            .collect();
+        let audio_sends: Vec<Vec<SendParams>> = self
+            .mixer_params
+            .audio_channels
+            .iter()
+            .map(|node| node.sends.clone())
+            .collect();
         let count = self.channel_set.channel_count();
         for dense in 0..count {
             let list = self
@@ -72,7 +89,12 @@ impl AudioEngine {
                 .unwrap_or_default();
             self.mixer.set_sends(dense, list);
         }
-        let bus_sends = self.mixer_params.bus_sends.clone();
+        let bus_sends: Vec<Vec<SendParams>> = self
+            .mixer_params
+            .buses
+            .iter()
+            .map(|node| node.sends.clone())
+            .collect();
         for (i, list) in bus_sends.into_iter().enumerate() {
             let resolved = self.resolve_sends(&list);
             self.mixer.set_bus_sends(i, resolved);
@@ -119,8 +141,8 @@ impl AudioEngine {
             MixerChannelId::Audio(ch) => self.set_audio_strip(ch, params),
             MixerChannelId::Bus(bus) => self.set_bus_strip(bus, params),
             MixerChannelId::Master => {
-                self.mixer_params.master.gain = params.gain;
-                self.mixer.set_master(self.mixer_params.master);
+                self.mixer_params.master.strip.gain = params.gain;
+                self.mixer.set_master(MasterParams { gain: params.gain });
             }
         }
     }
@@ -130,7 +152,7 @@ impl AudioEngine {
         let Some(idx) = self.mixer_params.bus_index(bus) else {
             return;
         };
-        self.mixer_params.buses[idx] = params;
+        self.mixer_params.buses[idx].strip = params;
         self.mixer.set_bus_strip(idx, params);
     }
 
@@ -142,14 +164,39 @@ impl AudioEngine {
         bus_sends: Vec<Vec<SendParams>>,
         audio_sends: Vec<Vec<SendParams>>,
     ) {
-        self.mixer_params.buses = buses;
-        self.mixer_params.sends = sends;
-        self.mixer_params.bus_sends = bus_sends;
-        self.mixer_params.audio_sends = audio_sends;
-        let buses = self.mixer_params.buses.clone();
+        // 旧命令仍按「总线条 / 源通道发送 / 音频发送」三张表传递；
+        // 这里落到 v10 的节点表，保持命令层不用一次性改完。
+        for (i, strip) in buses.into_iter().enumerate() {
+            if let Some(node) = self.mixer_params.buses.get_mut(i) {
+                node.strip = strip;
+            }
+        }
+        self.mixer_params.ensure_channel_tables(audio_sends.len());
+        for (i, list) in sends.into_iter().enumerate() {
+            if let Some(node) = self.mixer_params.channels.get_mut(i) {
+                node.sends = list;
+            }
+        }
+        self.mixer_params.ensure_channel_tables(audio_sends.len());
+        for (i, list) in audio_sends.into_iter().enumerate() {
+            if let Some(node) = self.mixer_params.audio_channels.get_mut(i) {
+                node.sends = list;
+            }
+        }
+        for (i, list) in bus_sends.into_iter().enumerate() {
+            if let Some(node) = self.mixer_params.buses.get_mut(i) {
+                node.sends = list;
+            }
+        }
+        let bus_strips: Vec<StripParams> = self
+            .mixer_params
+            .buses
+            .iter()
+            .map(|node| node.strip)
+            .collect();
         self.mixer
-            .resize_buses(buses.len(), self.mixer.frames(), &buses);
-        for (i, p) in buses.into_iter().enumerate() {
+            .resize_buses(bus_strips.len(), self.mixer.frames(), &bus_strips);
+        for (i, p) in bus_strips.into_iter().enumerate() {
             self.mixer.set_bus_strip(i, p);
         }
         self.sync_output_routing();
@@ -174,10 +221,10 @@ impl AudioEngine {
             let Some(idx) = self.mixer_params.bus_index(*bus) else {
                 continue;
             };
-            if let Some(params) = self.mixer_params.buses.get_mut(idx)
-                && (params.gain - value).abs() > f32::EPSILON
+            if let Some(node) = self.mixer_params.buses.get_mut(idx)
+                && (node.strip.gain - value).abs() > f32::EPSILON
             {
-                params.gain = value;
+                node.strip.gain = value;
                 self.mixer.set_bus_gain(idx, value);
             }
         }
@@ -186,7 +233,7 @@ impl AudioEngine {
     /// 更新某源通道的 strip（推子/声像/M/S 拖动的高频路径，幂等）。
     pub(crate) fn set_channel_strip(&mut self, channel: u8, params: StripParams) {
         if let Some(slot) = self.mixer_params.channels.get_mut(channel as usize) {
-            *slot = params;
+            slot.strip = params;
         }
         let dense = self.channel_layout.dense_for(channel as usize);
         if dense != u32::MAX {
@@ -195,14 +242,16 @@ impl AudioEngine {
     }
 
     pub(crate) fn set_master_params(&mut self, params: MasterParams) {
-        self.mixer_params.master = params;
+        self.mixer_params.master.strip.gain = params.gain;
         self.mixer.set_master(params);
     }
 
     /// 更新某音频通道的 strip（推子/声像/M/S 拖动的高频路径，幂等）。
     pub(crate) fn set_audio_strip(&mut self, channel: u16, params: StripParams) {
+        self.mixer_params
+            .ensure_channel_tables(channel as usize + 1);
         if let Some(slot) = self.mixer_params.audio_channels.get_mut(channel as usize) {
-            *slot = params;
+            slot.strip = params;
         }
         let dense = self.channel_layout.audio_dense_for(channel);
         if dense != u32::MAX {

@@ -296,8 +296,18 @@ pub(crate) fn show(
             tracks: &doc.data.model.tracks,
             arr_am_ms: &mut doc.edit.arr_am_ms,
             request_pianoroll,
-            midi_strips: &doc.mixer.channels,
-            audio_strips: &doc.mixer.audio_channels,
+            midi_strips: &doc
+                .mixer
+                .channels
+                .iter()
+                .map(|node| node.strip)
+                .collect::<Vec<_>>(),
+            audio_strips: &doc
+                .mixer
+                .audio_channels
+                .iter()
+                .map(|node| node.strip)
+                .collect::<Vec<_>>(),
             midi_levels,
             audio_levels,
             cursor_tick: doc.edit.cursor_tick,
@@ -371,7 +381,7 @@ pub(crate) fn show(
             num_tracks: doc.edit.track_visible.len(),
             tracks: &model.tracks,
             tempo_lane: &model.conductor.tempo,
-            bus_ids: &doc.mixer.bus_ids,
+            bus_ids: &doc.mixer.bus_ids(),
             conductor_track_idx: doc.edit.track_cache.conductor_idx,
             tempo_map: &model.tempo_map,
             audio_library,

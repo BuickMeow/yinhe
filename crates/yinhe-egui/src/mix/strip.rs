@@ -81,12 +81,11 @@ pub(crate) fn channel_strip(
     let params = app.workspace.documents[idx]
         .mixer
         .node_strip(MixerChannelId::Midi(channel));
-    let bus_ids = app.workspace.documents[idx].mixer.bus_ids.clone();
+    let bus_ids = app.workspace.documents[idx].mixer.bus_ids();
     let sends = app.workspace.documents[idx]
         .mixer
-        .sends
-        .get(channel as usize)
-        .cloned()
+        .node_sends(MixerChannelId::Midi(channel))
+        .map(<[_]>::to_vec)
         .unwrap_or_default();
     let title = channel_label(channel);
 
@@ -153,11 +152,10 @@ pub(crate) fn audio_strip(
     let title = crate::mix::audio_label(channel);
     let audio_sends = app.workspace.documents[idx]
         .mixer
-        .audio_sends
-        .get(channel as usize)
-        .cloned()
+        .node_sends(MixerChannelId::Audio(channel))
+        .map(<[_]>::to_vec)
         .unwrap_or_default();
-    let bus_ids = app.workspace.documents[idx].mixer.bus_ids.clone();
+    let bus_ids = app.workspace.documents[idx].mixer.bus_ids();
 
     let rect = strip_frame(
         ui,
@@ -223,13 +221,14 @@ pub(crate) fn bus_strip(
     actions: &mut Vec<MixAction>,
 ) {
     let mixer = &app.workspace.documents[idx].mixer;
-    let Some(bus_index) = mixer.bus_index(bus) else {
-        return;
-    };
-    let params = mixer.buses.get(bus_index).copied().unwrap_or_default();
+    let node = MixerChannelId::Bus(bus);
+    let params = mixer.node_strip(node);
     let title = format!("BUS {}", bus.index() + 1);
-    let bus_sends = mixer.bus_sends.get(bus_index).cloned().unwrap_or_default();
-    let bus_ids = mixer.bus_ids.clone();
+    let bus_sends = mixer
+        .node_sends(node)
+        .map(<[_]>::to_vec)
+        .unwrap_or_default();
+    let bus_ids = mixer.bus_ids();
 
     let rect = strip_frame(
         ui,
@@ -323,7 +322,7 @@ pub(crate) fn master_strip(
     height: f32,
     actions: &mut Vec<MixAction>,
 ) {
-    let params = app.workspace.documents[idx].mixer.master;
+    let params = app.workspace.documents[idx].mixer.master.strip;
     let title = t!("mix.master").to_string();
 
     let rect = strip_frame(

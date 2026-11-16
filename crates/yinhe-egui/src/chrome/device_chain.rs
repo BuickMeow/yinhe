@@ -319,9 +319,9 @@ fn collect_dock_state(app: &mut App, idx: usize) -> Option<DockState> {
     let instrument_plugin: Option<String> = midi_channel.and_then(|ch| {
         app.workspace.documents[idx]
             .mixer
-            .instruments
+            .racks
             .get(ch as usize)
-            .and_then(|v| v.first())
+            .and_then(|rack| rack.instruments.first())
             .map(|r| r.name.clone())
     });
     let inserts: Vec<DockInsert> =
@@ -716,9 +716,9 @@ fn open_param_panel(
             let title = instance.name().to_string();
             let uid = app.workspace.documents[idx]
                 .mixer
-                .instruments
+                .racks
                 .get(ch as usize)
-                .and_then(|v| v.first())
+                .and_then(|rack| rack.instruments.first())
                 .map(|r| r.uid)
                 .unwrap_or(0);
             Some(ParamPanel::open(

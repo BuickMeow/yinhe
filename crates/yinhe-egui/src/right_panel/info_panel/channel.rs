@@ -74,10 +74,9 @@ fn show_midi(ui: &mut egui::Ui, doc: &mut Document, ch: u8) -> ChannelInfoOut {
     header(ui, crate::mix::channel_label(ch), &tracks);
 
     let mut strip = doc.mixer.strip(ch);
-    if strip_controls(ui, &mut strip)
-        && let Some(slot) = doc.mixer_mut().channels.get_mut(ch as usize)
-    {
-        *slot = strip;
+    if strip_controls(ui, &mut strip) {
+        doc.mixer_mut()
+            .set_node_strip(MixerChannelId::Midi(ch), strip);
         out.mixer_changed = true;
     }
 
@@ -97,15 +96,15 @@ fn show_midi(ui: &mut egui::Ui, doc: &mut Document, ch: u8) -> ChannelInfoOut {
     show_instrument_summary(ui, doc, ch);
 
     section_header(ui, t!("mix.sends").as_ref());
-    show_sends(ui, doc.mixer.sends.get(ch as usize).map(Vec::as_slice));
+    show_sends(ui, doc.mixer.node_sends(MixerChannelId::Midi(ch)));
 
     section_header(ui, t!("channel.inserts").as_ref());
     show_inserts(
         ui,
         doc.mixer
-            .channel_inserts
+            .channels
             .get(ch as usize)
-            .map(Vec::as_slice),
+            .map(|node| node.inserts.as_slice()),
     );
     out
 }
@@ -117,13 +116,8 @@ fn show_audio(ui: &mut egui::Ui, doc: &mut Document, ch: u16) -> ChannelInfoOut 
 
     let mut strip = doc.mixer.audio_strip(ch);
     if strip_controls(ui, &mut strip) {
-        let mixer = doc.mixer_mut();
-        if mixer.audio_channels.len() <= ch as usize {
-            mixer
-                .audio_channels
-                .resize(ch as usize + 1, StripParams::default());
-        }
-        mixer.audio_channels[ch as usize] = strip;
+        doc.mixer_mut()
+            .set_node_strip(MixerChannelId::Audio(ch), strip);
         out.mixer_changed = true;
     }
 
@@ -133,15 +127,15 @@ fn show_audio(ui: &mut egui::Ui, doc: &mut Document, ch: u16) -> ChannelInfoOut 
     }
 
     section_header(ui, t!("mix.sends").as_ref());
-    show_sends(
-        ui,
-        doc.mixer.audio_sends.get(ch as usize).map(Vec::as_slice),
-    );
+    show_sends(ui, doc.mixer.node_sends(MixerChannelId::Audio(ch)));
 
     section_header(ui, t!("channel.inserts").as_ref());
     show_inserts(
         ui,
-        doc.mixer.audio_inserts.get(ch as usize).map(Vec::as_slice),
+        doc.mixer
+            .audio_channels
+            .get(ch as usize)
+            .map(|node| node.inserts.as_slice()),
     );
     out
 }
@@ -153,20 +147,23 @@ fn show_bus(ui: &mut egui::Ui, doc: &mut Document, bus: yinhe_types::BusId) -> C
     let Some(index) = doc.mixer.bus_index(bus) else {
         return out;
     };
-    let mut strip = doc.mixer.buses[index];
-    if strip_controls(ui, &mut strip)
-        && let Some(slot) = doc.mixer_mut().buses.get_mut(index)
-    {
-        *slot = strip;
+    let node = MixerChannelId::Bus(bus);
+    let mut strip = doc.mixer.node_strip(node);
+    if strip_controls(ui, &mut strip) {
+        doc.mixer_mut().set_node_strip(node, strip);
         out.mixer_changed = true;
     }
 
-    let sends = doc.mixer.bus_sends.get(index).cloned().unwrap_or_default();
+    let sends = doc
+        .mixer
+        .node_sends(node)
+        .map(<[_]>::to_vec)
+        .unwrap_or_default();
     let inserts = doc
         .mixer
-        .bus_inserts
+        .buses
         .get(index)
-        .cloned()
+        .map(|node| node.inserts.clone())
         .unwrap_or_default();
     section_header(ui, t!("mix.sends").as_ref());
     show_sends(ui, Some(&sends));
@@ -196,7 +193,7 @@ fn show_master(ui: &mut egui::Ui, doc: &mut Document) -> ChannelInfoOut {
     }
 
     section_header(ui, t!("channel.inserts").as_ref());
-    show_inserts(ui, Some(doc.mixer.master_inserts.as_slice()));
+    show_inserts(ui, Some(doc.mixer.master.inserts.as_slice()));
     out
 }
 
@@ -254,7 +251,7 @@ fn tracks_on_channel(doc: &Document, ch: MixerChannelId) -> Vec<u16> {
 
 /// 通道主输出（Master / BUS n）。返回是否改动。
 fn output_selector(ui: &mut egui::Ui, doc: &mut Document, ch: MixerChannelId) -> bool {
-    let bus_ids = doc.mixer.bus_ids.clone();
+    let bus_ids = doc.mixer.bus_ids();
     let bus_options: Vec<(usize, String)> = std::iter::once((0, "Master".to_string()))
         .chain(
             bus_ids
@@ -263,15 +260,9 @@ fn output_selector(ui: &mut egui::Ui, doc: &mut Document, ch: MixerChannelId) ->
                 .map(|(i, id)| (i + 1, format!("BUS {}", id.index() + 1))),
         )
         .collect();
-    let (outputs, index) = match ch {
-        MixerChannelId::Midi(ch) => (&mut doc.mixer.midi_outputs, ch as usize),
-        MixerChannelId::Audio(ch) => (&mut doc.mixer.audio_outputs, ch as usize),
-        _ => return false,
-    };
-    if outputs.len() <= index {
-        outputs.resize(index + 1, None);
-    }
-    let mut sel = outputs[index]
+    let mut sel = doc
+        .mixer
+        .node_output(ch)
         .and_then(|id| bus_ids.iter().position(|&x| x == id))
         .map(|i| i + 1)
         .unwrap_or(0);
@@ -288,11 +279,14 @@ fn output_selector(ui: &mut egui::Ui, doc: &mut Document, ch: MixerChannelId) ->
         }
     });
     if changed {
-        outputs[index] = if sel == 0 {
-            None
-        } else {
-            bus_ids.get(sel - 1).copied()
-        };
+        doc.mixer_mut().set_node_output(
+            ch,
+            if sel == 0 {
+                None
+            } else {
+                bus_ids.get(sel - 1).copied()
+            },
+        );
         doc.mark_mixer_dirty();
     }
     changed
@@ -301,10 +295,7 @@ fn output_selector(ui: &mut egui::Ui, doc: &mut Document, ch: MixerChannelId) ->
 fn show_instrument_summary(ui: &mut egui::Ui, doc: &Document, ch: u8) {
     let chain = doc
         .mixer
-        .instruments
-        .get(ch as usize)
-        .map(Vec::as_slice)
-        .unwrap_or(&[]);
+        .rack_instruments(yinhe_types::RackId::from_midi_channel(ch));
     if chain.is_empty() {
         return;
     }

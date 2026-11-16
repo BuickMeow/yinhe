@@ -39,7 +39,7 @@ impl App {
             if let Some(rack) = self.mixer_racks.get_mut(idx) {
                 rack.sync_states_to(&mut self.workspace.documents[idx].mixer);
             }
-            // 乐器插件：同样把实例 state 写回 mixer.instruments[channel]。
+            // 乐器插件：同样把实例 state 写回 mixer.racks[channel].instruments。
             if let Some(irack) = self.instrument_racks.get_mut(idx) {
                 irack.sync_states_to(&mut self.workspace.documents[idx].mixer);
             }

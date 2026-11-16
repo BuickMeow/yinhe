@@ -584,9 +584,14 @@ impl App {
             // 该通道的乐器链（可多个）：空 = 内置 XSynth。
             let instruments: Vec<(u64, String)> = doc
                 .mixer
-                .instruments
+                .racks
                 .get(ch as usize)
-                .map(|refs| refs.iter().map(|r| (r.uid, r.name.clone())).collect())
+                .map(|rack| {
+                    rack.instruments
+                        .iter()
+                        .map(|r| (r.uid, r.name.clone()))
+                        .collect()
+                })
                 .unwrap_or_default();
             if instruments.is_empty() {
                 // XSynth 设备：内置参数（音源 + 通道 DSP；跳过 Tempo，那是工程级）。

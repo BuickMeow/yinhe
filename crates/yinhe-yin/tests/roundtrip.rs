@@ -792,31 +792,37 @@ fn sf_empty_overrides_roundtrip() {
 #[test]
 fn mixer_section_roundtrips() {
     use yinhe_mixer::{InsertRef, MixerParams, StripParams};
+    use yinhe_types::MixerChannelId;
 
     let m = build_complex_model();
     let mut mixer = MixerParams::default();
     mixer.ensure_len();
-    mixer.add_bus();
-    mixer.midi_outputs[3] = Some(yinhe_types::BusId(0));
-    mixer.audio_outputs.resize(2, None);
-    mixer.audio_outputs[1] = Some(yinhe_types::BusId(0));
-    mixer.channels[3] = StripParams {
-        gain: 0.7,
-        pan: -0.5,
-        mute: true,
-        solo: false,
-    };
+    let bus = mixer.add_bus().expect("bus");
+    mixer.set_node_output(MixerChannelId::Midi(3), Some(bus));
+    mixer.set_node_output(MixerChannelId::Audio(1), Some(bus));
+    mixer.set_node_strip(
+        MixerChannelId::Midi(3),
+        StripParams {
+            gain: 0.7,
+            pan: -0.5,
+            mute: true,
+            solo: false,
+        },
+    );
     mixer.master.gain = 0.8;
-    mixer.channel_inserts[3].push(InsertRef {
-        uid: 0,
-        format: yinhe_mixer::PluginFormat::Clap,
-        plugin_path: "/Library/Audio/Plug-Ins/CLAP/Example.clap".into(),
-        plugin_id: "com.example.effect".into(),
-        name: "Example FX".into(),
-        bypassed: true,
-        state: Some(vec![1, 2, 3, 4, 5]),
-    });
-    mixer.master_inserts.push(InsertRef {
+    mixer
+        .node_inserts_mut(MixerChannelId::Midi(3))
+        .expect("channel inserts")
+        .push(InsertRef {
+            uid: 0,
+            format: yinhe_mixer::PluginFormat::Clap,
+            plugin_path: "/Library/Audio/Plug-Ins/CLAP/Example.clap".into(),
+            plugin_id: "com.example.effect".into(),
+            name: "Example FX".into(),
+            bypassed: true,
+            state: Some(vec![1, 2, 3, 4, 5]),
+        });
+    mixer.master.inserts.push(InsertRef {
         uid: 0,
         format: yinhe_mixer::PluginFormat::Clap,
         plugin_path: "/x.clap".into(),
@@ -833,16 +839,23 @@ fn mixer_section_roundtrips() {
     yinhe_yin::save_yin_with_files(&m, &path, &project, &mapping, Some(&mixer)).unwrap();
 
     let (_m2, _sf, _mapping, mixer2) = yinhe_yin::load_yin_with_sf(&path).unwrap();
-    let mixer2 = mixer2.expect("mixer section should round-trip");
-    assert_eq!(mixer2.channels[3], mixer.channels[3]);
-    assert_eq!(mixer2.master, mixer.master);
-    assert_eq!(mixer2.channel_inserts[3], mixer.channel_inserts[3]);
-    assert_eq!(mixer2.master_inserts, mixer.master_inserts);
-    assert_eq!(mixer2.midi_outputs[3], Some(yinhe_types::BusId(0)));
+    let mut mixer2 = mixer2.expect("mixer section should round-trip");
     assert_eq!(
-        mixer2.audio_outputs.get(1),
-        Some(&Some(yinhe_types::BusId(0)))
+        mixer2.node_strip(MixerChannelId::Midi(3)),
+        mixer.node_strip(MixerChannelId::Midi(3))
     );
+    assert_eq!(mixer2.master.strip, mixer.master.strip);
+    assert_eq!(
+        mixer2
+            .node_inserts_mut(MixerChannelId::Midi(3))
+            .expect("channel inserts"),
+        mixer
+            .node_inserts_mut(MixerChannelId::Midi(3))
+            .expect("channel inserts")
+    );
+    assert_eq!(mixer2.master.inserts, mixer.master.inserts);
+    assert_eq!(mixer2.node_output(MixerChannelId::Midi(3)), Some(bus));
+    assert_eq!(mixer2.node_output(MixerChannelId::Audio(1)), Some(bus));
 }
 
 #[test]

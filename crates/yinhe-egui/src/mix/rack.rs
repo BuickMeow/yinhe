@@ -1,6 +1,6 @@
 //! 混音台插件机架：CLAP insert 实例的生命周期管理（UI/管理线程持有）。
 //!
-//! 与 `MixerParams` 的关系：`MixerParams.channel_inserts[ch]` / `master_inserts`
+//! 与 `MixerParams` 的关系：`MixerParams.channels[ch].inserts` / `master.inserts`
 //! 是持久化的槽位列表（顺序即链顺序），本机架持有对应的运行时实例。
 //! 不变量：机架链与 params 引用链**顺序一致**（移除槽位时 params 先删、机架
 //! 等处理器退回后才删，过渡期机架用 `pending_remove` 跳过对齐）。
@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use yinhe_audio::{AudioCommand, AudioHandle, BuiltinInsert, ClapInsert, InsertTarget};
 use yinhe_clap::{ClapProcessor, HostInfo};
 use yinhe_mixer::{InsertProcessor, MixerParams, PluginFormat};
-use yinhe_types::BusId;
+use yinhe_types::{BusId, MixerChannelId};
 use yinhe_vst3::Vst3Insert;
 
 use super::plugin_instance::{PluginEntry, PluginInstance};
@@ -635,21 +635,18 @@ impl MixerRack {
     /// pending_remove 槽位跳过（其 InsertRef 已在移除时先删，保持两边顺序对齐）。
     pub fn sync_states_to(&mut self, mixer: &mut MixerParams) {
         for (ch, chain) in self.channels.iter_mut() {
-            let Some(refs) = mixer.channel_inserts.get_mut(*ch as usize) else {
+            let Some(refs) = mixer.node_inserts_mut(MixerChannelId::Midi(*ch)) else {
                 continue;
             };
             sync_chain(chain.iter_mut(), refs.iter_mut());
         }
         for (bus, chain) in self.buses.iter_mut() {
-            let Some(index) = mixer.bus_index(*bus) else {
-                continue;
-            };
-            let Some(refs) = mixer.bus_inserts.get_mut(index) else {
+            let Some(refs) = mixer.node_inserts_mut(MixerChannelId::Bus(*bus)) else {
                 continue;
             };
             sync_chain(chain.iter_mut(), refs.iter_mut());
         }
-        sync_chain(self.master.iter_mut(), mixer.master_inserts.iter_mut());
+        sync_chain(self.master.iter_mut(), mixer.master.inserts.iter_mut());
     }
 }
 

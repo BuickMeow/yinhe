@@ -14,6 +14,7 @@
 
 mod graph;
 mod meter;
+mod node;
 mod param_queue;
 mod params;
 mod plugin;
@@ -23,6 +24,7 @@ mod strip;
 pub use graph::ChannelChain;
 pub use graph::{ChannelBuffers, InsertProcessor, MixerGraph, ResolvedSend};
 pub use meter::{MeterReading, MeterTap, SampleReading, SampleTap};
+pub use node::{MixerNode, RackParams};
 pub use param_queue::ParamQueue;
 pub use params::{
     CHANNEL_COUNT, InsertRef, MasterParams, MixerParams, PluginFormat, SendParams, StripParams,
