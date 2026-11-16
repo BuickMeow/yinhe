@@ -23,6 +23,7 @@ use rust_i18n::t;
 use yinhe_audio::InsertTarget;
 use yinhe_audio::channel_layout::ChannelLayout;
 use yinhe_mixer::{MasterParams, StripParams};
+use yinhe_types::MixerChannelId;
 
 use self::plugin_instance::PluginEntry;
 use crate::plugin_scan::ScanProgress;
@@ -158,13 +159,9 @@ pub(crate) struct MixUiState {
 
 /// 一帧内 strip 交互产出的动作（渲染完统一应用，避开借用冲突）。
 pub(crate) enum MixAction {
-    SetStrip {
-        channel: u8,
-        params: StripParams,
-    },
-    /// 更新某音频通道的 strip 参数（推子/声像/M/S 高频路径）。
-    SetAudioStrip {
-        channel: u16,
+    /// 更新任意混音节点（MIDI / 音频 / Bus）的 strip 参数。
+    SetNodeStrip {
+        node: MixerChannelId,
         params: StripParams,
     },
     SetMaster {
@@ -179,11 +176,6 @@ pub(crate) enum MixAction {
     /// 删除总线 `bus`（清理指向它的 send/输出，其他总线不受影响）。
     RemoveBus {
         bus: yinhe_types::BusId,
-    },
-    /// 更新某总线的 strip 参数。
-    SetBusStrip {
-        bus: yinhe_types::BusId,
-        params: StripParams,
     },
     /// 打开某源通道的发送面板。
     OpenSends {
@@ -331,47 +323,20 @@ impl App {
         (midi, audio)
     }
 
-    /// 更新某源通道的 strip 参数：写持久化层 + 推引擎。
-    pub(crate) fn apply_strip(&mut self, idx: usize, channel: u8, params: StripParams) {
-        self.workspace.documents[idx].mixer_mut().channels[channel as usize] = params;
+    /// 更新任意混音节点的 strip：写持久化层 + 推引擎（高频路径）。
+    pub(crate) fn apply_node_strip(
+        &mut self,
+        idx: usize,
+        node: MixerChannelId,
+        params: StripParams,
+    ) {
+        self.workspace.documents[idx]
+            .mixer_mut()
+            .set_node_strip(node, params);
         if let Some(audio) = &self.audio_state.handle {
             audio
                 .handle
-                .send(yinhe_audio::AudioCommand::SetChannelStrip { channel, params });
-        }
-    }
-
-    /// 更新某总线的 strip 参数：写持久化层 + 推引擎（高频路径）。
-    pub(crate) fn apply_bus_strip(
-        &mut self,
-        idx: usize,
-        bus: yinhe_types::BusId,
-        params: StripParams,
-    ) {
-        let mixer = self.workspace.documents[idx].mixer_mut();
-        if let Some(index) = mixer.bus_index(bus)
-            && let Some(slot) = mixer.buses.get_mut(index)
-        {
-            *slot = params;
-        }
-        if let Some(a) = &self.audio_state.handle {
-            a.handle
-                .send(yinhe_audio::AudioCommand::SetBusStrip { bus, params });
-        }
-    }
-
-    /// 更新某音频通道的 strip 参数：写持久化层 + 推引擎（高频路径）。
-    pub(crate) fn apply_audio_strip(&mut self, idx: usize, channel: u16, params: StripParams) {
-        let mixer = self.workspace.documents[idx].mixer_mut();
-        if mixer.audio_channels.len() <= channel as usize {
-            mixer
-                .audio_channels
-                .resize(channel as usize + 1, StripParams::default());
-        }
-        mixer.audio_channels[channel as usize] = params;
-        if let Some(a) = &self.audio_state.handle {
-            a.handle
-                .send(yinhe_audio::AudioCommand::SetAudioStrip { channel, params });
+                .send(yinhe_audio::AudioCommand::SetNodeStrip { node, params });
         }
     }
 
@@ -900,30 +865,14 @@ pub(crate) fn insert_refs(
     mixer: &mut yinhe_mixer::MixerParams,
     target: InsertTarget,
 ) -> Option<&mut Vec<yinhe_mixer::InsertRef>> {
-    match target {
-        InsertTarget::Midi(ch) => mixer.channel_inserts.get_mut(ch as usize),
-        InsertTarget::Audio(ch) => {
-            if mixer.audio_inserts.len() <= ch as usize {
-                mixer.audio_inserts.resize(ch as usize + 1, Vec::new());
-            }
-            mixer.audio_inserts.get_mut(ch as usize)
-        }
-        InsertTarget::Bus(bus) => mixer
-            .bus_index(bus)
-            .and_then(|idx| mixer.bus_inserts.get_mut(idx)),
-        InsertTarget::Master => Some(&mut mixer.master_inserts),
-    }
+    mixer.node_inserts_mut(target)
 }
 
 fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixAction) {
     match action {
-        MixAction::SetStrip { channel, params } => {
+        MixAction::SetNodeStrip { node, params } => {
             app.note_mixer_edit(t!("undo.mix_param").as_ref());
-            app.apply_strip(idx, channel, params);
-        }
-        MixAction::SetAudioStrip { channel, params } => {
-            app.note_mixer_edit(t!("undo.mix_param").as_ref());
-            app.apply_audio_strip(idx, channel, params);
+            app.apply_node_strip(idx, node, params);
         }
         MixAction::SetMaster { params } => {
             app.note_mixer_edit(t!("undo.mix_param").as_ref());
@@ -974,10 +923,6 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
                 app.mixer_racks[idx].remove_bus_chain(bus, handle);
             }
             app.sync_bus_config_to_engine(idx);
-        }
-        MixAction::SetBusStrip { bus, params } => {
-            app.note_mixer_edit(t!("undo.mix_param").as_ref());
-            app.apply_bus_strip(idx, bus, params);
         }
         MixAction::SetSend {
             channel,

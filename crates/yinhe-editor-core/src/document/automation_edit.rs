@@ -214,9 +214,7 @@ impl Document {
     /// 保证引擎一开始就能求值且不会突然改变音量。
     pub fn add_bus_automation_lane(&mut self, bus: yinhe_types::BusId) -> Option<UndoAction> {
         let gain = self.mixer.bus_strip(bus).gain.clamp(0.0, 1.0);
-        if self.mixer.bus_index(bus).is_none() {
-            return None;
-        }
+        self.mixer.bus_index(bus)?;
         let track_idx = self.edit.track_cache.conductor_idx? as usize;
         let target = AutomationTarget::BusGain { bus };
         let event_id = Arc::make_mut(&mut self.data.model).alloc_automation_id();

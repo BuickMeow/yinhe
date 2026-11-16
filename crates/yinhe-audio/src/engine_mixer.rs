@@ -5,7 +5,7 @@ use yinhe_mixer::{
     InsertProcessor, InstrumentProcessor, MasterParams, MixerParams, ResolvedSend, SendParams,
     StripParams,
 };
-use yinhe_types::BusId;
+use yinhe_types::{BusId, MixerChannelId};
 
 use crate::channel_layout::ChannelNamespace;
 use crate::engine::AudioEngine;
@@ -109,6 +109,19 @@ impl AudioEngine {
                 .iter()
                 .position(|&x| x as usize == dense)
                 .map(ChannelNamespace::Midi)
+        }
+    }
+
+    /// 更新任意混音节点的 strip（推子/声像/M/S 高频路径，幂等）。
+    pub(crate) fn set_node_strip(&mut self, node: MixerChannelId, params: StripParams) {
+        match node {
+            MixerChannelId::Midi(ch) => self.set_channel_strip(ch, params),
+            MixerChannelId::Audio(ch) => self.set_audio_strip(ch, params),
+            MixerChannelId::Bus(bus) => self.set_bus_strip(bus, params),
+            MixerChannelId::Master => {
+                self.mixer_params.master.gain = params.gain;
+                self.mixer.set_master(self.mixer_params.master);
+            }
         }
     }
 

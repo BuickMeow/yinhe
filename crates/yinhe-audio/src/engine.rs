@@ -506,11 +506,8 @@ impl AudioEngine {
                 self.automation_density = density.max(1);
             }
             AudioCommand::SetMixerParams { params } => self.set_mixer_params(*params),
-            AudioCommand::SetChannelStrip { channel, params } => {
-                self.set_channel_strip(channel, params);
-            }
-            AudioCommand::SetAudioStrip { channel, params } => {
-                self.set_audio_strip(channel, params);
+            AudioCommand::SetNodeStrip { node, params } => {
+                self.set_node_strip(node, params);
             }
             AudioCommand::SetMasterParams { params } => self.set_master_params(params),
             AudioCommand::InsertAdd {
@@ -524,7 +521,6 @@ impl AudioEngine {
                 slot,
                 processor,
             } => self.insert_replace(target, slot, processor),
-            AudioCommand::SetBusStrip { bus, params } => self.set_bus_strip(bus, params),
             AudioCommand::SyncBusConfig {
                 buses,
                 sends,

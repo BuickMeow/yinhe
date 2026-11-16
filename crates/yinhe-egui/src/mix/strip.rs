@@ -78,7 +78,9 @@ pub(crate) fn channel_strip(
     height: f32,
     actions: &mut Vec<MixAction>,
 ) {
-    let params = app.workspace.documents[idx].mixer.strip(channel);
+    let params = app.workspace.documents[idx]
+        .mixer
+        .node_strip(MixerChannelId::Midi(channel));
     let bus_ids = app.workspace.documents[idx].mixer.bus_ids.clone();
     let sends = app.workspace.documents[idx]
         .mixer
@@ -114,7 +116,10 @@ pub(crate) fn channel_strip(
                 controls::StripAutomationTarget::Midi(channel),
                 actions,
             ) {
-                actions.push(MixAction::SetStrip { channel, params: p });
+                actions.push(MixAction::SetNodeStrip {
+                    node: MixerChannelId::Midi(channel),
+                    params: p,
+                });
             }
         },
     );
@@ -142,7 +147,9 @@ pub(crate) fn audio_strip(
     height: f32,
     actions: &mut Vec<MixAction>,
 ) {
-    let params = app.workspace.documents[idx].mixer.audio_strip(channel);
+    let params = app.workspace.documents[idx]
+        .mixer
+        .node_strip(MixerChannelId::Audio(channel));
     let title = crate::mix::audio_label(channel);
     let audio_sends = app.workspace.documents[idx]
         .mixer
@@ -184,7 +191,10 @@ pub(crate) fn audio_strip(
                 controls::StripAutomationTarget::Audio,
                 actions,
             ) {
-                actions.push(MixAction::SetAudioStrip { channel, params: p });
+                actions.push(MixAction::SetNodeStrip {
+                    node: MixerChannelId::Audio(channel),
+                    params: p,
+                });
             }
         },
     );
@@ -247,7 +257,10 @@ pub(crate) fn bus_strip(
                 controls::StripAutomationTarget::Bus(bus),
                 actions,
             ) {
-                actions.push(MixAction::SetBusStrip { bus, params: p });
+                actions.push(MixAction::SetNodeStrip {
+                    node: MixerChannelId::Bus(bus),
+                    params: p,
+                });
             }
         },
     );
@@ -592,17 +605,26 @@ fn reset_gain_action(app: &App, idx: usize, ch: MixerChannelId) -> MixAction {
         MixerChannelId::Midi(channel) => {
             let mut params = mixer.strip(channel);
             params.gain = 1.0;
-            MixAction::SetStrip { channel, params }
+            MixAction::SetNodeStrip {
+                node: MixerChannelId::Midi(channel),
+                params,
+            }
         }
         MixerChannelId::Audio(channel) => {
             let mut params = mixer.audio_strip(channel);
             params.gain = 1.0;
-            MixAction::SetAudioStrip { channel, params }
+            MixAction::SetNodeStrip {
+                node: MixerChannelId::Audio(channel),
+                params,
+            }
         }
         MixerChannelId::Bus(bus) => {
             let mut params = mixer.bus_strip(bus);
             params.gain = 1.0;
-            MixAction::SetBusStrip { bus, params }
+            MixAction::SetNodeStrip {
+                node: MixerChannelId::Bus(bus),
+                params,
+            }
         }
         MixerChannelId::Master => MixAction::SetMaster {
             params: MasterParams { gain: 1.0 },
@@ -616,17 +638,26 @@ fn reset_pan_action(app: &App, idx: usize, ch: MixerChannelId) -> Option<MixActi
         MixerChannelId::Midi(channel) => {
             let mut params = mixer.strip(channel);
             params.pan = 0.0;
-            Some(MixAction::SetStrip { channel, params })
+            Some(MixAction::SetNodeStrip {
+                node: MixerChannelId::Midi(channel),
+                params,
+            })
         }
         MixerChannelId::Audio(channel) => {
             let mut params = mixer.audio_strip(channel);
             params.pan = 0.0;
-            Some(MixAction::SetAudioStrip { channel, params })
+            Some(MixAction::SetNodeStrip {
+                node: MixerChannelId::Audio(channel),
+                params,
+            })
         }
         MixerChannelId::Bus(bus) => {
             let mut params = mixer.bus_strip(bus);
             params.pan = 0.0;
-            Some(MixAction::SetBusStrip { bus, params })
+            Some(MixAction::SetNodeStrip {
+                node: MixerChannelId::Bus(bus),
+                params,
+            })
         }
         MixerChannelId::Master => None,
     }

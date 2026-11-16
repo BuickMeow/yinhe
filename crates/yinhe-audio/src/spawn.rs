@@ -11,8 +11,7 @@ use yinhe_mixer::{
     InsertProcessor, InstrumentProcessor, MasterParams, MeterReading, MixerParams, SampleReading,
     SendParams, StripParams,
 };
-use yinhe_types::Interpolation;
-use yinhe_types::SynthEngine;
+use yinhe_types::{Interpolation, MixerChannelId, SynthEngine};
 
 /// insert 链的目标位置 = 混音通道身份。
 ///
@@ -163,14 +162,10 @@ pub enum AudioCommand {
     SetMixerParams {
         params: Box<MixerParams>,
     },
-    /// 更新某源通道（0..=255，A01..P16）的 strip 参数（推子拖动高频路径，幂等）。
-    SetChannelStrip {
-        channel: u8,
-        params: StripParams,
-    },
-    /// 更新某音频通道的 strip 参数（推子拖动高频路径，幂等）。
-    SetAudioStrip {
-        channel: u16,
+    /// 更新任意混音节点的 strip 参数（推子拖动高频路径，幂等）。
+    /// MIDI / 音频 / Bus / Master 走同一个入口，引擎内部再映射到 dense 通道。
+    SetNodeStrip {
+        node: MixerChannelId,
         params: StripParams,
     },
     /// 更新主输出参数。
@@ -193,11 +188,6 @@ pub enum AudioCommand {
         target: InsertTarget,
         slot: usize,
         processor: Box<dyn InsertProcessor>,
-    },
-    /// 更新某总线的 strip 参数（推子拖动高频路径，幂等）。
-    SetBusStrip {
-        bus: yinhe_types::BusId,
-        params: StripParams,
     },
     /// 全量同步总线配置（增删总线 / 改发送后推一次）：
     /// `buses` 为总线参数、`sends` 为按源通道索引的发送列表、
@@ -445,13 +435,11 @@ impl AudioCommand {
             AudioCommand::PreviewInstrumentNotes { .. } => ("PreviewInstrumentNotes", false),
             AudioCommand::PreviewInstrumentStop { .. } => ("PreviewInstrumentStop", false),
             AudioCommand::SetMixerParams { .. } => ("SetMixerParams", true),
-            AudioCommand::SetChannelStrip { .. } => ("SetChannelStrip", false),
-            AudioCommand::SetAudioStrip { .. } => ("SetAudioStrip", false),
+            AudioCommand::SetNodeStrip { .. } => ("SetNodeStrip", false),
             AudioCommand::SetMasterParams { .. } => ("SetMasterParams", false),
             AudioCommand::InsertAdd { .. } => ("InsertAdd", true),
             AudioCommand::InsertRemove { .. } => ("InsertRemove", true),
             AudioCommand::InsertReplace { .. } => ("InsertReplace", true),
-            AudioCommand::SetBusStrip { .. } => ("SetBusStrip", false),
             AudioCommand::SyncBusConfig { .. } => ("SyncBusConfig", true),
             AudioCommand::SetInstrumentSlot { .. } => ("SetInstrumentSlot", true),
             AudioCommand::SetAudioSource { .. } => ("SetAudioSource", false),
@@ -2027,19 +2015,11 @@ mod tests {
                 true,
             ),
             (
-                AudioCommand::SetChannelStrip {
-                    channel: 0,
+                AudioCommand::SetNodeStrip {
+                    node: MixerChannelId::Midi(0),
                     params: StripParams::default(),
                 },
-                "SetChannelStrip",
-                false,
-            ),
-            (
-                AudioCommand::SetAudioStrip {
-                    channel: 0,
-                    params: StripParams::default(),
-                },
-                "SetAudioStrip",
+                "SetNodeStrip",
                 false,
             ),
             (
@@ -2074,14 +2054,6 @@ mod tests {
                 },
                 "InsertReplace",
                 true,
-            ),
-            (
-                AudioCommand::SetBusStrip {
-                    bus: yinhe_types::BusId(0),
-                    params: StripParams::default(),
-                },
-                "SetBusStrip",
-                false,
             ),
             (
                 AudioCommand::SyncBusConfig {

@@ -152,11 +152,11 @@ impl App {
             // 通道行 M/S（混音台通道）：与混音台同一 undo 合并路径。
             for (ch, params) in ca_set_strips {
                 self.note_mixer_edit(t!("undo.mix_param").as_ref());
-                self.apply_strip(idx, ch, params);
+                self.apply_node_strip(idx, yinhe_types::MixerChannelId::Midi(ch), params);
             }
             for (ach, params) in ca_set_audio_strips {
                 self.note_mixer_edit(t!("undo.mix_param").as_ref());
-                self.apply_audio_strip(idx, ach, params);
+                self.apply_node_strip(idx, yinhe_types::MixerChannelId::Audio(ach), params);
             }
             // 通道电平动画：播放中或衰减未归零时保持约 30fps 重绘。
             let ca_any_level = ca_midi_levels

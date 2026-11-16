@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use yinhe_types::BusId;
+use yinhe_types::{BusId, MixerChannelId};
 
 /// 源 MIDI 通道总数：A01..P16（16 port × 16 通道）。
 pub const CHANNEL_COUNT: usize = 256;
@@ -333,7 +333,7 @@ impl MixerParams {
     /// 新增一条总线，返回其稳定 ID；到达 `u16` ID 上限时返回 `None`。
     pub fn add_bus(&mut self) -> Option<BusId> {
         // ID 空间 0..=u16::MAX，共 65_536 条；不静默回绕/复用。
-        if self.buses.len() >= usize::from(u16::MAX) + 1 {
+        if self.buses.len() > usize::from(u16::MAX) {
             return None;
         }
         self.ensure_bus_ids();
@@ -394,6 +394,150 @@ impl MixerParams {
             .get(ch as usize)
             .copied()
             .unwrap_or_default()
+    }
+
+    /// 统一节点读取：MIDI / 音频 / Bus / Master 走同一入口。
+    ///
+    /// Master 目前只有 gain，pan/mute/solo 返回默认值；这是过渡期的
+    /// 能力差异，目标 B 会把 Master 也变成完整 `MixerNode`。
+    pub fn node_strip(&self, node: MixerChannelId) -> StripParams {
+        match node {
+            MixerChannelId::Midi(ch) => self.strip(ch),
+            MixerChannelId::Audio(ch) => self.audio_strip(ch),
+            MixerChannelId::Bus(bus) => self.bus_strip(bus),
+            MixerChannelId::Master => StripParams {
+                gain: self.master.gain,
+                ..StripParams::default()
+            },
+        }
+    }
+
+    /// 统一节点写入。返回是否找到了目标；音频通道会按需扩容。
+    ///
+    /// Master 只写 gain（pan/mute/solo 尚未建模），其余字段忽略。
+    pub fn set_node_strip(&mut self, node: MixerChannelId, params: StripParams) -> bool {
+        match node {
+            MixerChannelId::Midi(ch) => {
+                if let Some(slot) = self.channels.get_mut(ch as usize) {
+                    *slot = params;
+                    true
+                } else {
+                    false
+                }
+            }
+            MixerChannelId::Audio(ch) => {
+                let idx = ch as usize;
+                if self.audio_channels.len() <= idx {
+                    self.audio_channels.resize(idx + 1, StripParams::default());
+                }
+                self.audio_channels[idx] = params;
+                true
+            }
+            MixerChannelId::Bus(bus) => match self.bus_index(bus) {
+                Some(index) => {
+                    self.buses[index] = params;
+                    true
+                }
+                None => false,
+            },
+            MixerChannelId::Master => {
+                self.master.gain = params.gain;
+                true
+            }
+        }
+    }
+
+    /// 统一节点 insert 链（可变）。目标 B 的 LC 就是当前通道条。
+    pub fn node_inserts_mut(&mut self, node: MixerChannelId) -> Option<&mut Vec<InsertRef>> {
+        match node {
+            MixerChannelId::Midi(ch) => self.channel_inserts.get_mut(ch as usize),
+            MixerChannelId::Audio(ch) => {
+                let idx = ch as usize;
+                if self.audio_inserts.len() <= idx {
+                    self.audio_inserts.resize(idx + 1, Vec::new());
+                }
+                self.audio_inserts.get_mut(idx)
+            }
+            MixerChannelId::Bus(bus) => {
+                let index = self.bus_index(bus)?;
+                self.bus_inserts.get_mut(index)
+            }
+            MixerChannelId::Master => Some(&mut self.master_inserts),
+        }
+    }
+
+    /// 统一节点发送列表。
+    pub fn node_sends(&self, node: MixerChannelId) -> Option<&[SendParams]> {
+        match node {
+            MixerChannelId::Midi(ch) => self.sends.get(ch as usize).map(Vec::as_slice),
+            MixerChannelId::Audio(ch) => self.audio_sends.get(ch as usize).map(Vec::as_slice),
+            MixerChannelId::Bus(bus) => {
+                let index = self.bus_index(bus)?;
+                self.bus_sends.get(index).map(Vec::as_slice)
+            }
+            MixerChannelId::Master => None,
+        }
+    }
+
+    /// 统一节点发送列表写入。
+    pub fn set_node_sends(&mut self, node: MixerChannelId, sends: Vec<SendParams>) -> bool {
+        match node {
+            MixerChannelId::Midi(ch) => match self.sends.get_mut(ch as usize) {
+                Some(slot) => {
+                    *slot = sends;
+                    true
+                }
+                None => false,
+            },
+            MixerChannelId::Audio(ch) => {
+                let idx = ch as usize;
+                if self.audio_sends.len() <= idx {
+                    self.audio_sends.resize(idx + 1, Vec::new());
+                }
+                self.audio_sends[idx] = sends;
+                true
+            }
+            MixerChannelId::Bus(bus) => match self.bus_index(bus) {
+                Some(index) => {
+                    self.bus_sends[index] = sends;
+                    true
+                }
+                None => false,
+            },
+            MixerChannelId::Master => false,
+        }
+    }
+
+    /// 统一节点主输出（仅 MIDI / 音频源通道有主输出）。
+    pub fn node_output(&self, node: MixerChannelId) -> Option<BusId> {
+        match node {
+            MixerChannelId::Midi(ch) => self.midi_outputs.get(ch as usize).copied().flatten(),
+            MixerChannelId::Audio(ch) => self.audio_outputs.get(ch as usize).copied().flatten(),
+            MixerChannelId::Bus(_) | MixerChannelId::Master => None,
+        }
+    }
+
+    /// 统一节点主输出写入。返回是否支持该节点。
+    pub fn set_node_output(&mut self, node: MixerChannelId, output: Option<BusId>) -> bool {
+        match node {
+            MixerChannelId::Midi(ch) => {
+                let idx = ch as usize;
+                if self.midi_outputs.len() <= idx {
+                    self.midi_outputs.resize(idx + 1, None);
+                }
+                self.midi_outputs[idx] = output;
+                true
+            }
+            MixerChannelId::Audio(ch) => {
+                let idx = ch as usize;
+                if self.audio_outputs.len() <= idx {
+                    self.audio_outputs.resize(idx + 1, None);
+                }
+                self.audio_outputs[idx] = output;
+                true
+            }
+            MixerChannelId::Bus(_) | MixerChannelId::Master => false,
+        }
     }
 
     /// 把音频通道相关表补齐到 `count` 条（通道数变化时调用，只增不减：
@@ -568,6 +712,59 @@ mod tests {
         p.ensure_len();
         assert_eq!(p.bus_ids, vec![BusId(7), BusId(8)]);
         assert_eq!(p.next_bus_id, BusId(9));
+    }
+
+    /// 统一节点入口：MIDI / 音频 / Bus / Master 各走各的存储，但 API 一致。
+    #[test]
+    fn node_strip_routes_each_namespace() {
+        let mut p = MixerParams::default();
+        p.ensure_len();
+        let bus = p.add_bus().expect("bus");
+
+        for (node, gain) in [
+            (MixerChannelId::Midi(3), 0.3),
+            (MixerChannelId::Audio(7), 0.7),
+            (MixerChannelId::Bus(bus), 0.5),
+            (MixerChannelId::Master, 0.9),
+        ] {
+            let params = StripParams {
+                gain,
+                ..StripParams::default()
+            };
+            assert!(p.set_node_strip(node, params));
+            assert_eq!(p.node_strip(node).gain, gain);
+        }
+
+        assert!(!p.set_node_strip(MixerChannelId::Bus(BusId(99)), StripParams::default()));
+        assert_eq!(p.strip(3).gain, 0.3);
+        assert_eq!(p.audio_strip(7).gain, 0.7);
+        assert_eq!(p.bus_strip(bus).gain, 0.5);
+        assert_eq!(p.master.gain, 0.9);
+    }
+
+    #[test]
+    fn node_inserts_sends_and_output_route_each_namespace() {
+        let mut p = MixerParams::default();
+        p.ensure_len();
+        let bus = p.add_bus().expect("bus");
+
+        assert!(p.node_inserts_mut(MixerChannelId::Midi(1)).is_some());
+        assert!(p.node_inserts_mut(MixerChannelId::Audio(2)).is_some());
+        assert!(p.node_inserts_mut(MixerChannelId::Bus(bus)).is_some());
+        assert!(p.node_inserts_mut(MixerChannelId::Master).is_some());
+
+        let send = SendParams {
+            bus,
+            amount: 0.5,
+            pre_fader: false,
+        };
+        assert!(p.set_node_sends(MixerChannelId::Midi(1), vec![send]));
+        assert_eq!(p.node_sends(MixerChannelId::Midi(1)), Some(&[send][..]));
+        assert!(!p.set_node_sends(MixerChannelId::Master, vec![send]));
+
+        assert!(p.set_node_output(MixerChannelId::Midi(1), Some(bus)));
+        assert_eq!(p.node_output(MixerChannelId::Midi(1)), Some(bus));
+        assert!(!p.set_node_output(MixerChannelId::Bus(bus), Some(bus)));
     }
 
     #[test]
