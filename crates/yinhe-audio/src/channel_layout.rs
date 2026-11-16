@@ -654,34 +654,6 @@ mod tests {
         assert!(!layout.is_audio_dense(1));
     }
 
-    /// 显式 channel_routing 决定引擎实际激活的源通道。
-    #[test]
-    fn explicit_track_routing_activates_target_channels() {
-        use yinhe_types::MixerChannelId;
-
-        let mut midi = TrackData::new(0, 0); // 原本 A01
-        midi.channel_routing = Some(MixerChannelId::Midi(5));
-        let mut audio = TrackData::new(0, 0);
-        audio.kind = TrackKind::Audio;
-        audio.audio_channel = Some(2);
-        audio.channel_routing = Some(MixerChannelId::Audio(9));
-        let mut model = YinModel {
-            conductor: Arc::new(ConductorData::default()),
-            tracks: vec![Arc::new(midi), Arc::new(audio)],
-            meta: ProjectMeta {
-                ppq: 480,
-                ..ProjectMeta::default()
-            },
-            ..Default::default()
-        };
-        model.rebuild();
-        let layout = ChannelLayout::from_model(&model);
-        assert!(layout.is_active(5), "MIDI 轨应激活显式目标通道");
-        assert!(!layout.is_active(0), "原 A01 不应再被激活");
-        assert_eq!(layout.audio_channels(), &[9], "音频轨路由到显式通道");
-        assert!(layout.covers_model(&model));
-    }
-
     /// 音频通道 dense 从 midi_compacted 起，MIDI 通道数不受影响。
     #[test]
     fn audio_channels_follow_midi_segment() {

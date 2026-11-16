@@ -383,10 +383,6 @@ pub struct TrackData {
     /// 文件夹是否折叠（仅 Folder 轨有意义）。
     #[serde(default)]
     pub collapsed: bool,
-    /// 显式混音通道路由；None = 按轨道种类/MIDI/音频通道推导。
-    /// Track 只提供内容，声音进入该 MixerChannel（Rack）；文件夹不参与该路由。
-    #[serde(default)]
-    pub channel_routing: Option<yinhe_types::MixerChannelId>,
     /// 音频片段（仅音频轨有意义），按 start_seconds 排序由编辑命令维护。
     #[serde(default)]
     pub audio_clips: Vec<AudioClip>,
@@ -486,7 +482,6 @@ impl TrackData {
             kind: TrackKind::Midi,
             folder_depth: 0,
             collapsed: false,
-            channel_routing: None,
             audio_channel: None,
             audio_clips: Vec::new(),
             clips: Vec::new(),
@@ -503,8 +498,9 @@ impl TrackData {
         (self.port & 0x0F) << 4 | (self.channel & 0x0F)
     }
 
-    /// 按轨道种类推导的默认混音通道（不读显式覆盖）。
-    pub fn default_mixer_channel(&self) -> Option<yinhe_types::MixerChannelId> {
+    /// 混音通道：由轨道种类直接推导，不另设覆盖字段。
+    /// MIDI 轨 = 端口/通道，音频轨 = 音频通道，Master = 主输出。
+    pub fn mixer_channel(&self) -> Option<yinhe_types::MixerChannelId> {
         match self.kind {
             TrackKind::Midi => Some(yinhe_types::MixerChannelId::Midi(self.global_channel())),
             TrackKind::Audio => Some(yinhe_types::MixerChannelId::Audio(
@@ -515,33 +511,16 @@ impl TrackData {
         }
     }
 
-    /// Track→Channel 路由目标：显式覆盖优先，否则按种类推导。
-    pub fn mixer_channel(&self) -> Option<yinhe_types::MixerChannelId> {
-        self.channel_routing
-            .or_else(|| self.default_mixer_channel())
-    }
-
-    /// 引擎实际使用的 MIDI 源通道。显式路由只有 `Midi(_)` 有效；
-    /// 指向 Bus/Master 等不兼容目标时回退原 port/channel，避免丢声。
+    /// 引擎实际使用的 MIDI 通道 = 端口/通道。
     pub fn midi_target_channel(&self) -> Option<u8> {
-        if self.kind != TrackKind::Midi {
-            return None;
-        }
-        match self.mixer_channel() {
-            Some(yinhe_types::MixerChannelId::Midi(ch)) => Some(ch),
-            _ => Some(self.global_channel()),
-        }
+        (self.kind == TrackKind::Midi).then(|| self.global_channel())
     }
 
-    /// 引擎实际使用的音频通道。显式路由只有 `Audio(_)` 有效。
+    /// 引擎实际使用的音频通道。
     pub fn audio_target_channel(&self) -> Option<u16> {
-        if self.kind != TrackKind::Audio {
-            return None;
-        }
-        match self.mixer_channel() {
-            Some(yinhe_types::MixerChannelId::Audio(ch)) => Some(ch),
-            _ => self.audio_channel,
-        }
+        (self.kind == TrackKind::Audio)
+            .then_some(self.audio_channel)
+            .flatten()
     }
 }
 
@@ -2151,13 +2130,11 @@ mod tests {
     }
 
     #[test]
-    fn track_mixer_channel_routing_derives_and_overrides() {
+    fn track_mixer_channel_derives_from_source_channel() {
         use yinhe_types::MixerChannelId;
 
-        let mut midi = TrackData::new(2, 5);
+        let midi = TrackData::new(2, 5);
         assert_eq!(midi.mixer_channel(), Some(MixerChannelId::Midi(0x25)));
-        midi.channel_routing = Some(MixerChannelId::Bus(7));
-        assert_eq!(midi.mixer_channel(), Some(MixerChannelId::Bus(7)));
 
         let mut audio = TrackData::new(0, 0);
         audio.kind = TrackKind::Audio;

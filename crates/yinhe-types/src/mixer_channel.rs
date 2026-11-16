@@ -1,8 +1,8 @@
-//! 混音通道身份：Track 与 Mixer/Rack 解耦后的稳定路由目标。
+//! 混音通道身份。
 //!
-//! Track 通过 `channel_routing` 指向源通道（Midi/Audio），源通道再通过
-//! `MixerParams` 的主输出表进入 Bus 或 Master。文件夹只是轨道组织容器，
-//! 不属于混音通道，也不参与音频路由。
+//! MIDI 轨的混音通道就是它的端口/通道，音频轨就是音频通道；两者不再有
+//! 独立的覆盖字段。通道再通过 `MixerParams` 的主输出表进入 Bus 或 Master。
+//! 文件夹只是轨道组织容器，不属于混音通道，也不参与音频路由。
 
 use serde::{Deserialize, Serialize};
 

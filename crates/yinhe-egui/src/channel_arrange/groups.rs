@@ -1,8 +1,8 @@
 //! 通道 AR 的通道分组。
 //!
 //! 通道 AR 以「通道」为组织单位（而非轨道）：按实际混音通道
-//! （`midi_target_channel` / `audio_target_channel`）归组，显式改道的轨道
-//! 跟到目标通道，与混音台条一致。Conductor（Master）轨单独成行，不归入任何通道。
+//! （MIDI = 端口/通道，音频 = 音频通道）归组，与混音台条一致。
+//! Conductor（Master）轨单独成行，不归入任何通道。
 //!
 //! 只列出「active」通道（工程中至少有一条轨道使用的通道），与混音台一致。
 
@@ -190,18 +190,6 @@ mod tests {
         assert_eq!(groups.audio[1].tracks, vec![3]);
         // Conductor（索引 0）不归组。
         assert!(groups.iter_all().all(|g| !g.tracks.contains(&0u16)));
-    }
-
-    /// 显式改道的音轨按目标混音通道归组，不再留在源通道下。
-    #[test]
-    fn routing_moves_track_to_target_channel() {
-        let mut routed = midi_track(0, 0);
-        routed.channel_routing = Some(yinhe_types::MixerChannelId::Midi(16)); // B01
-        let model = model_with(vec![routed, midi_track(1, 0)]);
-        let groups = CaGroups::from_model(&model, Some(0));
-        assert_eq!(groups.midi.len(), 1, "轨道应合并到 B01 一组");
-        assert_eq!(groups.midi[0].channel, CaChannel::Midi(16));
-        assert_eq!(groups.midi[0].tracks, vec![1, 2]);
     }
 
     /// 同通道轨道统一为通道色（首轨色）；Conductor 用主题色。
