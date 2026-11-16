@@ -151,8 +151,6 @@ fn volume_context_menu(
     target: StripAutomationTarget,
     actions: &mut Vec<MixAction>,
 ) -> bool {
-    ui.set_min_width(168.0);
-    ui.set_max_width(180.0);
     let mut reset = false;
     if let Some(action) = volume_automation_action(target)
         && ui
@@ -188,8 +186,6 @@ fn pan_context_menu(
     target: StripAutomationTarget,
     actions: &mut Vec<MixAction>,
 ) -> bool {
-    ui.set_min_width(168.0);
-    ui.set_max_width(180.0);
     let mut reset = false;
     if let Some(action) = pan_automation_action(target)
         && ui
@@ -271,9 +267,7 @@ pub(super) fn send_block(
                             &knob_resp,
                             t!("hint.mix.send_amount"),
                         );
-                        knob_resp.context_menu(|ui| {
-                            ui.set_min_width(168.0);
-                            ui.set_max_width(180.0);
+                        crate::widgets::menu::context_menu(&knob_resp, 180.0, |ui| {
                             let label = if amount > 0.0 {
                                 t!("mix.send_disable")
                             } else {
@@ -340,9 +334,7 @@ pub(super) fn send_block(
                         }
                     }
                     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.send_amount"));
-                    resp.context_menu(|ui| {
-                        ui.set_min_width(168.0);
-                        ui.set_max_width(180.0);
+                    crate::widgets::menu::context_menu(&resp, 180.0, |ui| {
                         let enable_label = if amount > 0.0 {
                             t!("mix.send_disable")
                         } else {
@@ -546,7 +538,7 @@ fn pan_knob(
         .inner;
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.pan"));
     let mut reset = false;
-    resp.context_menu(|ui| {
+    crate::widgets::menu::context_menu(&resp, 180.0, |ui| {
         reset = pan_context_menu(ui, target, actions);
     });
     if reset {
@@ -594,7 +586,7 @@ fn db_row(
     );
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.fader"));
     let mut reset = false;
-    resp.context_menu(|ui| {
+    crate::widgets::menu::context_menu(&resp, 180.0, |ui| {
         reset = volume_context_menu(ui, target, actions);
     });
     if reset {
@@ -686,7 +678,7 @@ fn gain_meter(
     let resp = resp.on_hover_cursor(egui::CursorIcon::ResizeVertical);
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.fader"));
     let mut reset = false;
-    resp.context_menu(|ui| {
+    crate::widgets::menu::context_menu(&resp, 180.0, |ui| {
         reset = volume_context_menu(ui, target, actions);
     });
     if reset {

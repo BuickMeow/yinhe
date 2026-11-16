@@ -492,9 +492,7 @@ fn header_context_menu(
     actions: &mut Vec<MixAction>,
 ) {
     let ch = dock_mixer_id(context);
-    resp.context_menu(|ui| {
-        ui.set_min_width(168.0);
-        ui.set_max_width(200.0);
+    crate::widgets::menu::context_menu(resp, 180.0, |ui| {
         if ui
             .add(crate::widgets::menu::menu_item_action(
                 ui,

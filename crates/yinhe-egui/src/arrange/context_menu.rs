@@ -110,9 +110,6 @@ pub(crate) fn show(
     ctx: &TimelineMenuCtx,
     actions: &mut Vec<TimelineMenuAction>,
 ) {
-    ui.set_min_width(168.0);
-    ui.set_max_width(200.0);
-
     if ctx.inside_selection && ctx.has_selection {
         edit_item(ui, t!("menu.cut"), EditAction::Cut, ctx, actions);
         edit_item(ui, t!("menu.copy"), EditAction::Copy, ctx, actions);
@@ -222,8 +219,6 @@ pub(crate) fn show(
     ui.separator();
 
     ui.menu_button(t!("menu.insert").as_ref(), |ui| {
-        ui.set_min_width(168.0);
-        ui.set_max_width(220.0);
         for action in InsertAction::ALL {
             if ui
                 .add(crate::widgets::menu::menu_item_button(

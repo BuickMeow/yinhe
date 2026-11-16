@@ -430,9 +430,7 @@ pub(crate) fn show(
                     crate::widgets::hint::set(ui.ctx(), t!("hint.ca.channel_row"));
                 }
 
-                resp.context_menu(|ui| {
-                    ui.set_min_width(168.0);
-                    ui.set_max_width(200.0);
+                crate::widgets::menu::context_menu(&resp, 180.0, |ui| {
                     if menu_item(ui, t!("panel.section.channel").as_ref(), "") {
                         *io.info_content = Some(channel_info(ch));
                         *io.right_tab = Some(crate::right_panel::RightTab::Info);
@@ -602,9 +600,7 @@ pub(crate) fn show(
                         out.audio_dirty = true;
                     }
 
-                    resp.context_menu(|ui| {
-                        ui.set_min_width(168.0);
-                        ui.set_max_width(200.0);
+                    crate::widgets::menu::context_menu(&resp, 180.0, |ui| {
                         if menu_item(ui, t!("arrange.track_properties").as_ref(), "") {
                             io.track_selected.clear();
                             io.track_selected.insert(t);
@@ -810,9 +806,7 @@ pub(crate) fn show(
                     );
                 }
 
-                resp.context_menu(|ui| {
-                    ui.set_min_width(168.0);
-                    ui.set_max_width(200.0);
+                crate::widgets::menu::context_menu(&resp, 180.0, |ui| {
                     if menu_item(ui, t!("arrange.track_properties").as_ref(), "") {
                         io.track_selected.clear();
                         io.track_selected.insert(track);

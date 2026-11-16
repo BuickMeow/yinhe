@@ -541,7 +541,7 @@ fn arrange_context_menu(
         };
         ui.data_mut(|d| d.insert_temp(cid, ctx));
     }
-    resp.container_context_menu(|ui| {
+    crate::widgets::menu::container_context_menu(&resp, 180.0, |ui| {
         let ctx = ui
             .data(|d| d.get_temp::<TimelineMenuCtx>(cid))
             .unwrap_or(TimelineMenuCtx {

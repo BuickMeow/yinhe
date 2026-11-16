@@ -185,7 +185,7 @@ pub(crate) fn frame(
         let id = egui::Id::unique(("arr_audio_ctx", track, clip.id));
         let resp = ui.interact(rect, id, egui::Sense::click());
         let selected_ids = selected_ids_for(edit, track, clip.id);
-        resp.context_menu(|ui| {
+        crate::widgets::menu::context_menu(&resp, 180.0, |ui| {
             if ui
                 .add(crate::widgets::menu::menu_item_action(
                     ui,

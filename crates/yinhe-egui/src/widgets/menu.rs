@@ -14,10 +14,7 @@ pub(crate) fn menu_item_button(
     selected: bool,
     text: impl Into<egui::WidgetText>,
 ) -> MenuItemButton {
-    // 右键菜单的 popup 在 egui 0.37 不再读取 `spacing.menu_width`，`available_width`
-    // 会是整个屏幕宽，导致菜单被撑到接近全屏。这里统一限制菜单项宽度
-    // （子菜单/普通按钮仍可通过 `set_max_width` 单独放宽到同一上限附近）。
-    let width = ui.available_width().min(180.0);
+    let width = ui.available_width();
     let text = text.into();
     MenuItemButton {
         selected,
@@ -45,6 +42,49 @@ pub(crate) fn menu_item_action(
         Some(label) => item.shortcut_text(label),
         None => item,
     }
+}
+
+/// 固定宽度的右键菜单。
+///
+/// egui 0.37 的 `Response::context_menu` 不再读取 `spacing.menu_width`，弹窗内容
+/// 会按 `available_width`（通常是整块屏幕）铺开。这里与 transport bar 的
+/// `Popup::width(menu_w)` 一致，在 popup 层直接给定宽度，菜单项仍铺满菜单。
+pub(crate) fn context_menu(
+    response: &egui::Response,
+    width: f32,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    egui::Popup::context_menu(response).width(width).show(|ui| {
+        ui.set_min_width(width);
+        ui.set_max_width(width);
+        add_contents(ui);
+    });
+}
+
+/// 固定宽度的容器右键菜单（等价 `Response::container_context_menu`，
+/// 但在 popup 层给定宽度，避免 egui 0.37 按屏幕宽度铺开）。
+pub(crate) fn container_context_menu(
+    response: &egui::Response,
+    width: f32,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    use egui::SetOpenCommand;
+    let open = if response.container_secondary_clicked() {
+        Some(SetOpenCommand::Bool(true))
+    } else if response.container_clicked() {
+        Some(SetOpenCommand::Bool(false))
+    } else {
+        None
+    };
+    egui::Popup::menu(response)
+        .open_memory(open)
+        .at_pointer_fixed()
+        .width(width)
+        .show(|ui| {
+            ui.set_min_width(width);
+            ui.set_max_width(width);
+            add_contents(ui);
+        });
 }
 
 pub(crate) struct MenuItemButton {
