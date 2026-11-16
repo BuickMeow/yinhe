@@ -7,8 +7,8 @@
 一句话：
 
 > 默认每条 Track 都是普通 DAW 通道（独立 LC）；AP 编组是可选的共享 MIDI
-> 源。AP 和 LC 是并列的通道类型，不是上下级。导出时把独立 LC 自动分配到
-> 剩余的 MIDI 通道。
+> 源。AP 展开出的 **AP 通道** 和 LC 是并列的音频通道类型，不是上下级。
+> 导出时把独立 LC 自动分配到剩余的 MIDI 通道。
 
 ---
 
@@ -18,22 +18,35 @@
 |---|---|
 | Track | 内容容器：音符、音频片段、轨道级自动化 |
 | LC | Logical Channel，普通 DAW 通道；拥有独立音频路径、推子、insert、send、automation、freeze |
-| AP 通道 / AP 编组 | A01..P16 的 MIDI 源编组；拥有共享 Rack、共享乐器、共享通道级自动化、共享输出 LC |
+| AP 编组 | A01..P16 的 MIDI 源编组：共享 Rack、共享 MIDI 身份；本身不是音频通道 |
+| AP 通道 | AP 编组展开出的音频通道（`MixerNode`）；单输出 1 条，多输出 N 条；与 LC 并列 |
 | AP Rack | 一个 AP 编组里的共享乐器链 |
 | 私有 Rack | 一条独立 Track/LC 自己的乐器链 |
-| Owner | 自动化/CC 的归属者：TrackLc、ApRack、ApLc、Bus、Master |
+| Owner | 自动化/CC 的归属者：TrackLc、ApRack、ApChannel、Bus、Master |
 
 AP 不是“父通道”，LC 不是“子通道”。它们是 Track 音频源的两种并列选择：
 
 ```text
 Track 1 ──> LC 100（默认，独立）
 Track 2 ──> LC 101（默认，独立）
-Track 3 ──> AP A01 ──> LC 200（共享输出）
-Track 4 ──> AP A01 ──┘
+Track 3 ──> AP A01 通道 200（共享）
+Track 4 ──> AP A01 通道 200
 ```
 
-AP 编组也可以只有一条 LC，多输出插件则一个输出一条 LC。AP 的输出 LC
-和普通 Track 的 LC 使用同一种 `MixerNode`，没有两套通道条实现。
+关键区分：
+
+- **AP 编组**是共享 Rack + MIDI 身份，本身不是通道；
+- **AP 通道**是 AP 的音频输出通道，和普通 LC 一样是 `MixerNode`；
+- 单输出 AP 展开 1 条 AP 通道，多输出 AP 展开 N 条 AP 通道；
+- Track 只指向一条音频通道：普通 LC 或某条 AP 通道。
+
+所以链路永远是：
+
+```text
+Track -> Channel（LC 或 AP 通道）-> (Bus) -> Master
+```
+
+不存在 `AP -> LC` 的额外上下级。
 
 ---
 
@@ -45,7 +58,7 @@ A 和 B 不是用户提出的两套方案，而是旧文档里的历史编号：
 |---|---|---|---|
 | 目标 A | 当时的实现快照 / 产品约束 | Track -> MIDI 通道条（共享乐器/推子/insert/发送）-> Bus/Master | 旧实现 |
 | 目标 B | 上一轮重构的目标模型 | Track -> Rack（按 MIDI 通道共享）-> LC（Rack 输出的一条音频流）-> Bus/Master | 已在 v10..v14 落地 |
-| 方案 C | 用户这次提出的新组织方式 | Track -> 自己的私有 Rack + LC（默认），或 Track -> AP 编组/共享 Rack -> AP 的 LC | 本文设计提案 |
+| 方案 C | 用户这次提出的新组织方式 | Track -> 自己的私有 Rack + LC（默认），或 Track -> AP 编组/共享 Rack -> AP 通道 | 本文设计提案 |
 
 三者的关键区别：
 
@@ -56,7 +69,7 @@ A 和 B 不是用户提出的两套方案，而是旧文档里的历史编号：
 | 乐器归谁 | MIDI 通道 | Rack（按 MIDI 通道） | 私有 Rack（Track）/ 共享 Rack（AP） |
 | 轨道有独立推子吗 | 没有 | 只有 per-track/multi-output LC 有 | 默认有 |
 | MIDI 通道的角色 | 混音身份 | Rack 的触发源 | 可选的 AP 编组 / 导出通道 |
-| 自动化 owner | MIDI 通道 | Rack / LC | TrackLc / ApRack / ApLc |
+| 自动化 owner | MIDI 通道 | Rack / LC | TrackLc / ApRack / ApChannel |
 | 导出 | 轨道 channel 直接写出 | 同左 | 独立 LC 自动分配剩余 MIDI 通道 |
 | 主要取舍 | 省资源，牺牲每轨独立 | 分出音频通道，但默认仍按 MIDI 通道共享 | 默认像普通 DAW，代价是每轨 LC/私有 Rack 成本 |
 
@@ -102,13 +115,14 @@ Track 3 ─┘
 ```text
 Track 1 ──> 私有 Rack + LC 100（默认）
 Track 2 ──> 私有 Rack + LC 101（默认）
-Track 3 ──> AP A01 / 共享 Rack ──> AP 的 LC 200
-Track 4 ──> AP A01 / 共享 Rack ──┘
+Track 3 ──> AP A01 通道 200（共享 Rack）
+Track 4 ──> AP A01 通道 200
 ```
 
 - 默认每条 Track 有自己的 LC（外部插件时也有自己的私有 Rack）；
 - 只有显式链接 A01 时才进入共享 AP；
-- AP 和 LC 并列，不是 Rack -> LC 的固定上下级；
+- AP 的音频出口就是 AP 通道，它和普通 LC 并列；
+- 不存在 `AP -> LC` 的额外层级；
 - 导出时独立 LC 自动占剩余 MIDI 通道。
 
 因此 C 不是 B 的回滚：B 把「乐器资源」和「音频通道」拆开了，C 继续沿用这个拆分，
@@ -128,15 +142,35 @@ MIDI 通道 Rack。
 方案 C 的链路：
 
 ```text
-Track ──> 私有 Rack -> 自己的 LC ──> Bus/Master     （默认）
-   └────> AP 编组/共享 Rack -> AP 的 LC ──> Bus/Master（手动链接）
+Track ──> 私有 Rack -> 自己的 LC ──> Bus/Master       （默认）
+   └────> AP 共享 Rack -> AP 通道 ──> Bus/Master       （手动链接）
 ```
 
 变化只在「Track 的音频源归谁」：
 
 - 默认 Track 有自己的私有 Rack + LC；
 - 只有显式链接到 A01 时，Track 才加入 A01 的共享 Rack 和共享自动化；
-- AP 和 LC 都可以直接进 Bus/Master，二者没有父子关系。
+- AP 通道和 LC 都可以直接进 Bus/Master，二者没有父子关系；
+- AP 编组只是共享 Rack 和 MIDI 身份的组织单位，不是音频通道。
+
+### 3.1 和 Cubase / Studio One 的类比
+
+方案 C 不是单纯的「Studio One 改回 Cubase」，而是两者的混合：
+
+| DAW | 模型 | 和方案 C 的关系 |
+|---|---|---|
+| Cubase | MIDI Track、Instrument Rack、Audio/Group/FX Channel 分开；多输出乐器展开成多条音频通道；文件夹只做组织 | AP 编组接近 Instrument Rack，AP 通道接近多输出乐器展开出的音频通道 |
+| Studio One | Track 自带乐器/通道条；多乐器可共享；Bus/FX Channel 做汇总 | 默认的 `OwnLc + 私有 Rack` 接近 Studio One 的 Track |
+| 方案 C | 默认 Track 独立 LC；需要共享乐器时链接 AP | 默认像 Studio One，链接后像 Cubase 的 Instrument Rack |
+
+所以：
+
+- 如果绝大多数 Track 都是 `OwnLc`，它更像 Studio One；
+- 如果大量 Track 链接到 A01..P16，它更像 Cubase 的「MIDI 轨 + 乐器机架」；
+- AP 通道和 Cubase 的乐器输出通道一样，是真正的音频通道，不是虚拟容器。
+
+真正的区别是：Cubase 的 Instrument Rack 通常先创建机架再让 MIDI 轨指向它；
+方案 C 允许先有普通 Track，再一键「发送到 A01 编组」，迁移成本更低。
 
 这不是回滚。可以复用的部分：
 
@@ -152,7 +186,7 @@ Track ──> 私有 Rack -> 自己的 LC ──> Bus/Master     （默认）
 - `TrackData` 的音频目标从「隐式等于 MIDI 通道」变成显式的
   `TrackAudioTarget`；
 - 默认不再有 256 条常驻 MIDI 通道 Rack/LC，改为按需创建 AP 和 Track LC；
-- 自动化 owner 从「MIDI 通道」改为「TrackLc / ApRack / ApLc」；
+- 自动化 owner 从「MIDI 通道」改为「TrackLc / ApRack / ApChannel」；
 - 导出时增加「独立 LC → 剩余 MIDI 通道」的分配器；
 - MIDI 导入时自动建立 AP 编组。
 
@@ -174,10 +208,11 @@ enum TrackAudioTarget {
         lc: LogicalChannelId,
         rack: RackId,
     },
-    /// 手动链接到 AP 编组：MIDI 进共享 Rack，音频走 AP 的 LC。
+    /// 手动链接到 AP 编组：MIDI 进共享 Rack，音频走 AP 的某条通道。
     Ap {
         ap: ApGroupId,
         /// 该轨在 AP 多输出里的输出索引（单输出 = 0）。
+        /// 实际音频通道 = ap.channels[output]。
         output: u16,
     },
 }
@@ -186,7 +221,7 @@ enum TrackAudioTarget {
 说明：
 
 - `OwnLc` 是默认值；新建 MIDI 轨/音频轨时创建或复用自己的 LC。
-- `Ap` 不拥有私有 LC；它的音频路径就是 AP 的输出 LC。
+- `Ap` 不拥有私有 LC；它的音频路径就是 AP 编组里的某条 AP 通道。
 - 从 AP 解链回 `OwnLc` 时保留原来的私有 LC/私有 Rack 状态，
   避免解链后所有设置丢失。
 - 音频轨（Audio Track）通常只用 `OwnLc`，不参与 AP 编组。
@@ -199,10 +234,12 @@ struct ApGroup {
     /// 对应 MIDI 通道；None = 用户手工建的无 MIDI 编组（可选）。
     midi: Option<(u8 /*port*/, u8 /*channel*/)>,
     rack: RackParams,
-    /// 单输出 = 1 条；多输出插件 = 每个输出一条。
-    output_lcs: Vec<LogicalChannelId>,
-    /// AP 级自动化（CC / 乐器参数 / AP LC 的 gain/pan/send/insert）。
-    automation: Vec<AutomationLane>,
+    /// AP 展开出的音频通道：单输出 = 1 条，多输出 = 每个输出一条。
+    /// 这些是并列的 `MixerNode`，不是 AP 的子节点。
+    channels: Vec<MixerChannelId>,
+    /// AP Rack 级自动化（CC / 乐器参数）。
+    /// 每条 AP 通道自己的 gain/pan/send/insert 自动化仍在 `MixerNode.automation`。
+    rack_automation: Vec<AutomationLane>,
     enabled: bool,
 }
 ```
@@ -215,8 +252,8 @@ MIDI 通道只是 AP 的一个属性，用户可以把 A01 编组改名、解绑
 
 ```rust
 struct MixerParams {
-    /// 所有 LC：普通 Track LC + AP 输出 LC + 每轨 LC。
-    lcs: Vec<MixerNode>,
+    /// 所有音频通道：普通 Track LC + AP 通道 + 每轨 LC。
+    channels: Vec<MixerNode>,
     /// AP 编组；只有用到的通道才创建。
     aps: Vec<ApGroup>,
     /// 私有 Rack；Track 解链后仍保留。
@@ -224,35 +261,69 @@ struct MixerParams {
     buses: Vec<MixerNode>,
     master: MixerNode,
 }
+
+struct MixerNode {
+    id: MixerChannelId,
+    /// LC 的音频来源；AP 通道的来源是共享 AP Rack。
+    source: ChannelSource,
+    strip: StripParams,
+    inserts: Vec<InsertRef>,
+    sends: Vec<SendParams>,
+    output: Option<BusId>,
+    automation: Vec<AutomationLane>,
+    freeze: Option<FrozenAudio>,
+}
+
+enum ChannelSource {
+    PrivateRack(RackId),
+    ApRack(ApGroupId),
+    AudioInput,
+}
 ```
 
 和当前 v14 的 `channels[0..256]` 不同：不再保证 256 条 MIDI 通道条常驻。
-`lcs` 按需增长，空工程可以只有 Master + Conductor。
+`channels` 按需增长，空工程可以只有 Master + Conductor。
 
 ---
 
 ## 5. AP 与 LC 的职责边界
 
-| 项目 | 普通 LC | AP 编组 |
-|---|---|---|
-| 默认存在 | 是，每条 Track 一条 | 否，手动链接/导入时创建 |
-| 乐器/Rack | 私有 Rack | 共享 AP Rack |
-| MIDI 输入 | 只属于本 Track | 所有链接到该 AP 的 Track |
-| gain/pan/M/S | 本 LC | AP 输出 LC |
-| insert | 本 LC | AP 输出 LC |
-| send | 本 LC | AP 输出 LC |
-| CC/PB/RPN | 本 Track 的 LC owner | AP owner |
-| 乐器参数自动化 | 私有 Rack owner | AP Rack owner |
-| freeze | 本 LC | AP 输出 LC |
-| 多输出插件 | 可以是一轨一条 LC | 每个输出一条 LC |
-| 导出 MIDI | 分配剩余通道 | 固定/绑定的 MIDI 通道 |
+| 项目 | 普通 LC | AP 通道 | AP Rack / 编组 |
+|---|---|---|---|
+| 默认存在 | 是，每条 Track 一条 | 否，链接/导入 AP 时创建 | 否，按需创建 |
+| 乐器/Rack | 私有 Rack | 共享 AP Rack | 共享乐器链 |
+| MIDI 输入 | 只属于本 Track | 所有链接到该 AP 的 Track | 接收 AP 的 MIDI |
+| gain/pan/M/S | 本 LC | 本 AP 通道 | 不装推子/insert |
+| insert | 本 LC | 本 AP 通道 | 不装推子/insert |
+| send | 本 LC | 本 AP 通道 | 不装推子/insert |
+| CC/PB/RPN | 本 Track 的 LC owner | AP Rack owner | 共享 MIDI 自动化 |
+| 乐器参数自动化 | 私有 Rack owner | AP Rack owner | 共享乐器参数 |
+| freeze | 本 LC | 本 AP 通道 | 不冻结（冻结在 AP 通道） |
+| 多输出插件 | 可以是一轨一条 LC | 每个输出一条 AP 通道 | 一个 Rack 展开多条通道 |
+| 导出 MIDI | 分配剩余通道 | 按 AP 的 MIDI 通道 | 固定 MIDI 身份 |
 
 关键规则：
 
-1. **AP 是一条共享音频流**；链接到 AP 的 Track 不能再假装有独立推子。
-2. **AP 冻结的是整组输出**；链接的 Track 不能单独冻结自己的 AP 部分。
-3. **AP 的 automation 是组级 owner**；多个 Track 的同名自动化在 AP 上合并。
-4. **普通 LC 是完整独立通道**；默认行为与成熟 DAW 的普通音轨一致。
+1. **每个音频出口都是一条通道**：普通 Track 的 LC 或 AP 的 AP 通道；
+2. **AP 编组不是通道**，它只持有共享 Rack、MIDI 身份和 AP 通道列表；
+3. **AP 通道是共享音频流**；链接到该 AP 输出的 Track 不能再假装有独立推子；
+4. **M/S/freeze 按通道分配**：AP 通道的 mute/solo/freeze 影响所有链接到该输出的 Track；
+5. **Track M/S 是内容门**：只停该轨后续 MIDI，不等于通道 M/S；
+6. **普通 LC 是完整独立通道**；默认行为与成熟 DAW 的普通音轨一致。
+
+### 5.1 M / S / freeze 的作用单位
+
+| 操作 | 作用单位 | 说明 |
+|---|---|---|
+| LC mute/solo | 该 LC | 只影响这条 Track 的音频 |
+| LC freeze | 该 LC | 冻结这条 Track 的音频流 |
+| AP 通道 mute/solo | 该 AP 通道 | 影响链接到该输出的所有 Track |
+| AP 通道 freeze | 该 AP 通道 | 冻结这个共享输出；不按单条 Track 拆 |
+| AP “全部冻结” | AP 的所有通道 | 只是 UI 批量操作，不是新的 owner |
+| Track M/S | Track 内容 | 只停该轨 MIDI，不能抽走已混入 AP 的音频 |
+
+所以“M/S/freeze 按 LC 分配”更准确的说法是：**按音频通道分配**。
+普通 Track 的音频通道是 LC；AP 的音频通道是 AP 通道。二者同级。
 
 ---
 
@@ -268,7 +339,7 @@ Channel 级：CC、Pitch Bend、RPN/NRPN、乐器参数、LC gain/pan/send/inser
 Track 级始终属于 Track；Channel 级属于当前音频目标的 owner：
 
 - `OwnLc` -> `TrackLc(lc)`
-- `Ap` -> `ApRack(ap)` + `ApLc(ap)`
+- `Ap` -> `ApRack(ap)` + `ApChannel(ap, output)`
 - Bus/Master 不变
 
 ### 6.2 同名自动化允许存在，但渲染只认 owner
@@ -420,10 +491,10 @@ Track 3   [AP A01]      ← 已链接
 ### 9.3 MIX 视图
 
 - 普通 LC 按 Track 顺序显示；
-- AP 编组单独显示为共享通道，条带上标明「A01 · 4 条轨共享」；
-- 链接到 AP 的 Track 不再显示独立 LC 条，只显示 AP 条；
-- AP 多输出时显示每个输出的 LC 条；
-- AP 的 freeze/mute/solo 明确提示作用范围。
+- AP 通道单独显示为共享通道，条带上标明「A01 · 4 条轨共享」；
+- 链接到 AP 的 Track 不再显示独立 LC 条，只显示它对应的 AP 通道；
+- AP 多输出时每条 AP 通道各一条 strip；
+- AP 通道的 freeze/mute/solo 明确提示作用范围。
 
 ### 9.4 自动化面板
 
@@ -433,13 +504,73 @@ Track 3   [AP A01]      ← 已链接
 
 ---
 
+### 9.5 文件夹、AP、Bus 不要混为一谈
+
+这四个东西解决的是不同问题：
+
+| 概念 | 作用 | 是否产生音频通道 |
+|---|---|---|
+| Folder | 视觉组织、折叠、批量选择/移动 | 否 |
+| AP 编组 | 共享 MIDI 源/乐器/Rack | 是，展开成 AP 通道 |
+| Bus | 音频汇总、insert、send | 是，Bus 通道 |
+| Send | 把音频送到另一个 Bus | 否，是路由 |
+
+**不建议让文件夹强制共用通道。** 原因：
+
+1. 文件夹是组织工具，用户放 100 条轨进一个文件夹可能只是为了折叠；
+2. 强制共用通道会把“组织”变成“混音路由”，很难解释；
+3. 发送轨比 AP 更灵活：send 可以把同一份音频送到多个 Bus，而 AP 是
+   MIDI 源的共享身份，两者不能互相替代；
+4. 一旦“文件夹 = 通道”，就会被迫限制文件夹层数，否则层级和通道路由
+   会纠缠不清。
+
+推荐策略：
+
+- 文件夹默认只做视觉组织，**不限层数**；
+- 可选「文件夹作为 AP 编组」开关，默认关闭；开启后文件夹头就是 AP 头，
+  子轨链接到该 AP，但文件夹本身不额外产生一条通道；
+- 需要音频分组时，显式把文件夹/多条轨发送到 Bus；
+- 需要共享乐器时，显式链接 AP。
+
+### 9.6 通道分配要像 Domino 一样方便
+
+默认每条 Track 独立 LC 以后，“我的音符到底在哪个通道”必须一眼可见，
+而且改起来要快：
+
+- 轨道列表增加 `MIDI Out` 列（Port + Channel），支持排序/筛选；
+- 多选轨道后一次改通道，或使用「下一个空闲通道」；
+- 显示每个通道的占用数（`A01 · 12 轨`）和冲突警告；
+- 提供「通道地图」面板：16 个通道 × 若干轨，拖拽分配；
+- AP 编组头可以一键把选中轨链接到当前 AP；
+- 导出前显示「独立通道 X / 可用 16」，不足时提前提示。
+
+“烘焙通道”不建议自动做。它应该是显式命令：
+
+```text
+Bake to AP / Bake to LC
+```
+
+作用是把一组轨的共享关系固化、清理未使用 LC、或为导出/冻结做准备；
+默认编辑过程中不做烘焙，避免用户失去“这条轨到底在哪”的控制权。
+
+100 轨但只有 16 个 MIDI 通道并不矛盾：
+
+- 16 个 Web MIDI 通道可以对应多个 AP 编组，但每个 AP 只占一个 MIDI 通道；
+- 独立 LC 数量不受 16 限制，**导出时**才需要把它们压到 16/256 个通道；
+- 如果确实需要 100 条独立通道同时导出，就用 Port A..P 扩展到 256 个，
+  或者接受导出通道复用并在导出前解决 CC 冲突。
+
+关键不是“把通道烘焙掉”，而是把 **轨道身份（Track/LC）** 和
+**MIDI 导出身份（port/channel）** 分开。编辑时允许很多独立 LC，
+导出时再按剩余通道自动排列。
+
 ## 10. 冻结、静音和独奏
 
 | 操作 | 普通 LC | AP |
 |---|---|---|
-| 冻结 | 冻结本 LC | 冻结 AP 输出（整组） |
-| mute | 本 LC 静音 | AP 静音（所有链接轨） |
-| solo | 本 LC solo | AP solo |
+| 冻结 | 冻结本 LC | 冻结该 AP 通道（该输出组） |
+| mute | 本 LC 静音 | AP 通道静音（链接到该输出的所有轨） |
+| solo | 本 LC solo | AP 通道 solo |
 | Track M/S | 内容门，停止该轨后续 MIDI | 同样只能停该轨 MIDI，不能抽走已混入 AP 的音频 |
 
 这和当前目标 B 的语义一致，只是 LC 的默认归属从“MIDI 通道”变成“Track”。
@@ -453,10 +584,10 @@ Track 3   [AP A01]      ← 已链接
 旧工程的行为必须保持不变：
 
 1. 旧工程里每个实际使用的 MIDI 通道 -> 创建一个 AP 编组；
-2. 旧 `MixerParams.channels[ch]` -> AP 的输出 LC；
+2. 旧 `MixerParams.channels[ch]` -> AP 通道；
 3. 旧 `racks[ch]` -> AP 的共享 Rack；
 4. 旧 `TrackData.port/channel` 对应的 Track 全部链接到 AP；
-5. 旧 `TrackData.lc`（per-track / multi-output）-> `OwnLc` 或 AP 多输出 LC；
+5. 旧 `TrackData.lc`（per-track / multi-output）-> `OwnLc` 或 AP 多输出通道；
 6. 旧 `rack_output` -> AP 多输出索引；
 7. 空通道不创建 AP，避免 256 条空编组；
 8. 旧工程的冻结/自动化/insert/发送原样搬到 AP。
@@ -492,7 +623,7 @@ Track 3   [AP A01]      ← 已链接
   - 默认使用内置音源（XSynth/YinheCpu）的 per-track 输出；
   - 只有用户手动选择外部插件时才创建私有插件实例；
   - AP 编组共享一个插件实例，是省资源路径。
-- 多输出 AP 的每个输出一条 LC，仍然比每轨一个插件实例便宜。
+- 多输出 AP 的每个输出一条 AP 通道，仍然比每轨一个插件实例便宜。
 
 这是方案 C 最大的工程风险：**默认独立通道 + 外部插件 = 实例数量增长**。
 需要产品上明确默认音源策略，不能假装所有轨都能无成本挂独立插件。
@@ -503,13 +634,13 @@ Track 3   [AP A01]      ← 已链接
 
 | 现有模块 | 方案 C 是否复用 | 说明 |
 |---|---|---|
-| `MixerNode` / `StripParams` | 复用 | LC/AP 输出/Bus/Master 共用 |
-| `LogicalChannelId` | 复用 | 每轨/AP 输出都是稳定 ID |
+| `MixerNode` / `StripParams` | 复用 | LC/AP 通道/Bus/Master 共用 |
+| `LogicalChannelId` | 复用 | 每轨/AP 通道都是稳定 ID |
 | `RackParams` | 复用 | AP 共享 Rack、Track 私有 Rack |
-| `FrozenAudio` | 复用 | 普通 LC/AP 输出均可冻结 |
-| `MixerGain/Pan/Send/InsertParam` | 复用 | owner 从 MIDI 通道改为 TrackLc/Ap |
+| `FrozenAudio` | 复用 | 普通 LC/AP 通道均可冻结 |
+| `MixerGain/Pan/Send/InsertParam` | 复用 | owner 从 MIDI 通道改为 TrackLc/ApChannel |
 | `ChannelLayout` | 复用 | dense 通道、每轨 LC、多输出已具备 |
-| CLAP/VST3 多输出 | 复用 | AP 多输出直接使用 |
+| CLAP/VST3 多输出 | 复用 | AP 多输出展开多条 AP 通道 |
 | Bus 嵌套 | 复用 | AP/LC 都走同一 Bus |
 | MIDI 导入/导出 | 改造 | 导入建 AP，导出分配剩余通道 |
 | Track `port/channel` | 降级为属性 | 不再是混音路由的唯一依据 |
@@ -518,7 +649,7 @@ Track 3   [AP A01]      ← 已链接
 
 ## 14. 分阶段实现建议
 
-1. **数据模型 v15**：`TrackAudioTarget`、`ApGroup`、`MixerParams.lcs/aps`；
+1. **数据模型 v15**：`TrackAudioTarget`、`ApGroup`、`MixerParams.channels/aps`；
    v14 迁移为 AP。
 2. **默认 OwnLc**：新建工程/新建轨分配私有 LC；空轨懒分配。
 3. **AP 链接 UI**：Track 头选择器、拖拽链接、MIX 共享条。
