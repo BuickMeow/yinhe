@@ -358,6 +358,12 @@ pub(crate) fn show(
     ui.scope_builder(egui::UiBuilder::new().max_rect(gpu_rect), |ui| {
         let model = &*doc.data.model;
         let (def_num, def_den) = model.tempo_map.time_sig_default;
+        let bus_automation: Vec<Vec<yinhe_types::AutomationLane>> = doc
+            .mixer
+            .buses
+            .iter()
+            .map(|node| node.automation.clone())
+            .collect();
         let data = crate::arrange::ArrangeData {
             midi: Some(model as &dyn yinhe_types::NoteSource),
             track_visible: &doc.edit.track_visible,
@@ -382,6 +388,7 @@ pub(crate) fn show(
             tracks: &model.tracks,
             tempo_lane: &model.conductor.tempo,
             bus_ids: &doc.mixer.bus_ids(),
+            bus_automation: &bus_automation,
             conductor_track_idx: doc.edit.track_cache.conductor_idx,
             tempo_map: &model.tempo_map,
             audio_library,

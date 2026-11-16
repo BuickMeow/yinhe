@@ -763,15 +763,6 @@ impl AutomationTarget {
         }
     }
 
-    /// 是否 Bus 增益 lane。
-    ///
-    /// BusGain 是当前唯一「不挂在内容轨上」的自动化目标：它的宿主是
-    /// Master（Conductor）轨，但作用点是固定 Bus 行。权限判断统一走
-    /// [`TrackData::allows_automation_target`]，不要在各处手写这个特例。
-    pub fn is_bus_gain(&self) -> bool {
-        matches!(self, AutomationTarget::BusGain { .. })
-    }
-
     /// lane 的归属层。
     ///
     /// `track` 是 lane 当前所在的轨道索引，只对 MIDI 原生目标有意义；
@@ -953,7 +944,7 @@ pub struct AutomationEvent {
 }
 
 /// A sorted lane of automation events for one parameter on one track.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AutomationLane {
     pub target: AutomationTarget,
     /// Track index (matches `TrackData` position in `YinModel.tracks`).
@@ -1096,6 +1087,48 @@ pub enum AutomationEdit {
     /// 删除已有事件。
     Delete {
         track_idx: u16,
+        lane_idx: usize,
+        target: AutomationTarget,
+        tick: u32,
+    },
+
+    // ── Bus 节点 automation（BusGain 等，owner = MixerNode）──
+    BusAdd {
+        bus: crate::BusId,
+        target: AutomationTarget,
+        tick: u32,
+        value: f32,
+        shape: SegmentShape,
+    },
+    BusMove {
+        bus: crate::BusId,
+        lane_idx: usize,
+        target: AutomationTarget,
+        old_tick: u32,
+        new_tick: u32,
+        new_value: f32,
+    },
+    BusMoveBatch {
+        bus: crate::BusId,
+        lane_idx: usize,
+        target: AutomationTarget,
+        moves: Vec<(u32, u32, f32)>,
+    },
+    BusCycleShape {
+        bus: crate::BusId,
+        lane_idx: usize,
+        target: AutomationTarget,
+        tick: u32,
+    },
+    BusSetShape {
+        bus: crate::BusId,
+        lane_idx: usize,
+        target: AutomationTarget,
+        tick: u32,
+        shape: SegmentShape,
+    },
+    BusDelete {
+        bus: crate::BusId,
         lane_idx: usize,
         target: AutomationTarget,
         tick: u32,

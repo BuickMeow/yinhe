@@ -25,10 +25,12 @@ use crate::right_panel::{InfoContent, RightTab};
 /// 一条需要交互/渲染的 AM 行。
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AmRowRef {
-    /// 所属音轨索引。
+    /// 所属音轨索引（Bus lane 时是 Conductor 索引，仅用于视图状态）。
     pub track: usize,
     /// 该轨 automation_lanes 的下标；None = Conductor 主行（Tempo 直显）。
     pub sub: Option<usize>,
+    /// Some = 这条 lane 属于 Bus 节点的 automation。
+    pub bus: Option<yinhe_types::BusId>,
     /// 行顶部 y（音乐坐标，未减 scroll_y）。通道 AR 行高不均，必须显式携带。
     pub y_top: f32,
     /// 行高（px）。
@@ -42,8 +44,8 @@ pub(crate) fn visible_am_rows(
     first_row: usize,
     last_row: usize,
     conductor: Option<u16>,
-    tracks: &[Arc<yinhe_core::TrackData>],
     bus_ids: &[yinhe_types::BusId],
+    bus_automation: &[Vec<AutomationLane>],
     lane_height: f32,
 ) -> Vec<AmRowRef> {
     let mut out = Vec::new();
@@ -53,12 +55,14 @@ pub(crate) fn visible_am_rows(
             Some(ArRow::Automation(track, sub)) => out.push(AmRowRef {
                 track,
                 sub: Some(sub),
+                bus: None,
                 y_top,
                 height: lane_height,
             }),
             Some(ArRow::Track(track)) if conductor == Some(track as u16) => out.push(AmRowRef {
                 track,
                 sub: None,
+                bus: None,
                 y_top,
                 height: lane_height,
             }),
@@ -66,19 +70,18 @@ pub(crate) fn visible_am_rows(
                 let Some(master) = conductor.map(usize::from) else {
                     continue;
                 };
-                let bus_id = bus_ids.get(bus).copied();
-                let valid = bus_id.is_some_and(|bus_id| {
-                    tracks
-                        .get(master)
-                        .and_then(|t| t.automation_lanes.get(lane_idx))
-                        .is_some_and(|lane| {
-                            lane.target == AutomationTarget::BusGain { bus: bus_id }
-                        })
-                });
-                if valid {
+                let Some(bus_id) = bus_ids.get(bus).copied() else {
+                    continue;
+                };
+                let Some(lane) = bus_automation.get(bus).and_then(|l| l.get(lane_idx)) else {
+                    continue;
+                };
+                if matches!(lane.target, AutomationTarget::BusGain { bus: target } if target == bus_id)
+                {
                     out.push(AmRowRef {
                         track: master,
                         sub: Some(lane_idx),
+                        bus: Some(bus_id),
                         y_top,
                         height: lane_height,
                     });
@@ -88,6 +91,87 @@ pub(crate) fn visible_am_rows(
         }
     }
     out
+}
+
+/// 把 track 形态的编辑转换成 Bus owner 形态。
+fn to_bus_edit(bus: yinhe_types::BusId, edit: AutomationEdit) -> AutomationEdit {
+    match edit {
+        AutomationEdit::Add {
+            target,
+            tick,
+            value,
+            shape,
+            ..
+        } => AutomationEdit::BusAdd {
+            bus,
+            target,
+            tick,
+            value,
+            shape,
+        },
+        AutomationEdit::Move {
+            lane_idx,
+            target,
+            old_tick,
+            new_tick,
+            new_value,
+            ..
+        } => AutomationEdit::BusMove {
+            bus,
+            lane_idx,
+            target,
+            old_tick,
+            new_tick,
+            new_value,
+        },
+        AutomationEdit::MoveBatch {
+            lane_idx,
+            target,
+            moves,
+            ..
+        } => AutomationEdit::BusMoveBatch {
+            bus,
+            lane_idx,
+            target,
+            moves,
+        },
+        AutomationEdit::CycleShape {
+            lane_idx,
+            target,
+            tick,
+            ..
+        } => AutomationEdit::BusCycleShape {
+            bus,
+            lane_idx,
+            target,
+            tick,
+        },
+        AutomationEdit::SetShape {
+            lane_idx,
+            target,
+            tick,
+            shape,
+            ..
+        } => AutomationEdit::BusSetShape {
+            bus,
+            lane_idx,
+            target,
+            tick,
+            shape,
+        },
+        AutomationEdit::Delete {
+            lane_idx,
+            target,
+            tick,
+            ..
+        } => AutomationEdit::BusDelete {
+            bus,
+            lane_idx,
+            target,
+            tick,
+        },
+        other => other,
+    }
 }
 
 /// AM lane 的值域上限：Tempo 由实际事件动态计算（与 PR 的 panel_max_val 一致），
@@ -149,6 +233,8 @@ pub(crate) fn lane_highlight_ticks(
 /// 交互所需的外部状态（view_ui 每帧组装）。
 pub(crate) struct AmLanesIo<'a> {
     pub tracks: &'a [Arc<yinhe_core::TrackData>],
+    pub bus_ids: &'a [yinhe_types::BusId],
+    pub bus_automation: &'a [Vec<AutomationLane>],
     pub tempo_lane: &'a AutomationLane,
     pub track_colors: &'a [[f32; 4]],
     pub selected: &'a mut yinhe_core::Selection,
@@ -191,8 +277,20 @@ pub(crate) fn interact_all(
             &[AutomationLane],
             Option<&AutomationLane>,
             AutomationTarget,
-        ) = match r.sub {
-            Some(sub) => {
+        ) = match (r.bus, r.sub) {
+            (Some(bus), Some(sub)) => {
+                let Some(index) = io.bus_ids.iter().position(|id| *id == bus) else {
+                    continue;
+                };
+                let Some(lanes) = io.bus_automation.get(index) else {
+                    continue;
+                };
+                let Some(lane) = lanes.get(sub) else {
+                    continue;
+                };
+                (lanes.as_slice(), None, lane.target.clone())
+            }
+            (None, Some(sub)) => {
                 let Some(track) = io.tracks.get(r.track) else {
                     continue;
                 };
@@ -201,11 +299,12 @@ pub(crate) fn interact_all(
                 };
                 (track.automation_lanes.as_slice(), None, lane.target.clone())
             }
-            None => (
+            (None, None) => (
                 &[] as &[AutomationLane],
                 Some(io.tempo_lane),
                 AutomationTarget::Tempo,
             ),
+            (Some(_), None) => continue,
         };
 
         let y_top = r.y_top - scroll_y; // 纹理坐标
@@ -247,7 +346,17 @@ pub(crate) fn interact_all(
                 io.right_tab,
                 suppress_blank,
             );
-        io.edits.extend(edits);
+        if let Some(bus) = r.bus {
+            // 锚点信息面板目前只按 track/lane 定位；Bus lane 先不打开，
+            // 避免显示 Master 轨上不存在的 lane。
+            if matches!(io.info_content, Some(InfoContent::Anchor { .. })) {
+                *io.info_content = None;
+            }
+            io.edits
+                .extend(edits.into_iter().map(|edit| to_bus_edit(bus, edit)));
+        } else {
+            io.edits.extend(edits);
+        }
         if let Some(tick) = blank_click_tick {
             out.cursor_tick = Some(tick);
         }
@@ -277,14 +386,22 @@ pub(crate) fn interact_all(
 
         if let Some(g) = ghost {
             // Move ghost 携带整条 lane，渲染时按 y_offset 重建，无需平移。
-            let max_val = match r.sub {
-                Some(sub) => io
+            let max_val = match (r.bus, r.sub) {
+                (Some(bus), Some(sub)) => io
+                    .bus_ids
+                    .iter()
+                    .position(|id| *id == bus)
+                    .and_then(|i| io.bus_automation.get(i))
+                    .and_then(|lanes| lanes.get(sub))
+                    .map(lane_max_val)
+                    .unwrap_or(1.0),
+                (None, Some(sub)) => io
                     .tracks
                     .get(r.track)
                     .and_then(|t| t.automation_lanes.get(sub))
                     .map(lane_max_val)
                     .unwrap_or(1.0),
-                None => lane_max_val(io.tempo_lane),
+                _ => lane_max_val(io.tempo_lane),
             };
             out.ghost = Some((g, y_top, r.height, max_val));
         }

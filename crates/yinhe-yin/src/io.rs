@@ -267,7 +267,7 @@ fn load_yin_bytes_inner(
     on_progress: &mut dyn FnMut(YinProgress),
 ) -> Result<(YinModel, ProjectFile, MappingFile, Option<MixerParams>), YinError> {
     let sections = unpack(bytes)?;
-    let mixer = sections.mixer.as_deref().and_then(decode_mixer_section);
+    let mut mixer = sections.mixer.as_deref().and_then(decode_mixer_section);
     let audio_sources = sections
         .audio
         .as_deref()
@@ -392,9 +392,53 @@ fn load_yin_bytes_inner(
         .max()
         .map(|m| m.saturating_add(1))
         .unwrap_or(1);
+    // v12 迁移：BusGain lane 从 Master 轨搬到 Bus 节点。
+    // 没有混音段的旧文件也清掉 Master 上的孤儿 BusGain lane（工程里没有 Bus）。
+    if let Some(mixer) = mixer.as_mut() {
+        migrate_bus_gain_lanes(&mut model, mixer);
+    } else {
+        let mut empty = yinhe_mixer::MixerParams::default();
+        migrate_bus_gain_lanes(&mut model, &mut empty);
+    }
     // 流式加载的帧缓冲/装载临时内存已释放，把空闲页归还 OS。
     yinhe_memtrace::purge_free_pages();
     Ok((model, project, mapping, mixer))
+}
+
+/// 把旧工程 Master 轨上的 BusGain lane 搬到对应 Bus 节点的 automation。
+///
+/// v11 及更早把 Bus 自动化寄宿在 Master 轨（`AutomationTarget::BusGain`）；
+/// v12 起 Bus 自己的 `MixerNode.automation` 才是 owner。找不到目标 Bus 的
+/// lane 会被丢弃（工程里已经没有这条总线，保留只会指向幽灵对象）。
+fn migrate_bus_gain_lanes(model: &mut YinModel, mixer: &mut yinhe_mixer::MixerParams) {
+    use std::sync::Arc;
+
+    let Some(master_idx) = model
+        .tracks
+        .iter()
+        .position(|track| track.kind == yinhe_core::TrackKind::Master)
+    else {
+        return;
+    };
+    let master = Arc::make_mut(&mut model.tracks[master_idx]);
+    if master.automation_lanes.is_empty() {
+        return;
+    }
+    let mut remaining = Vec::with_capacity(master.automation_lanes.len());
+    for lane in master.automation_lanes.drain(..) {
+        let yinhe_types::AutomationTarget::BusGain { bus } = lane.target else {
+            remaining.push(lane);
+            continue;
+        };
+        if let Some(node) = mixer
+            .buses
+            .iter_mut()
+            .find(|node| node.id == yinhe_types::MixerNodeId::Bus(bus))
+        {
+            node.automation.push(lane);
+        }
+    }
+    master.automation_lanes = remaining;
 }
 
 /// Parse `.yin` bytes into a `YinModel` (SoundFont state, if any, is dropped).
@@ -450,4 +494,65 @@ pub fn load_yin_with_sf_progress(
         overrides: project.sf_channel_overrides,
     };
     Ok((model, sf, mapping, mixer, project.cover))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use yinhe_mixer::MixerParams;
+    use yinhe_types::{
+        AutomationEvent, AutomationLane, AutomationTarget, BusId, MixerNodeId, SegmentShape,
+    };
+
+    fn lane(bus: BusId) -> AutomationLane {
+        AutomationLane {
+            target: AutomationTarget::BusGain { bus },
+            track: 0,
+            events: vec![AutomationEvent {
+                id: 1,
+                tick: 0,
+                value: 0.5,
+                shape: SegmentShape::Step,
+            }],
+        }
+    }
+
+    #[test]
+    fn bus_gain_lanes_move_from_master_to_bus_nodes() {
+        let mut model = YinModel::new_empty_with_16_tracks();
+        assert_eq!(model.tracks[0].kind, yinhe_core::TrackKind::Master);
+        Arc::make_mut(&mut model.tracks[0])
+            .automation_lanes
+            .push(lane(BusId(2)));
+
+        let mut mixer = MixerParams::default();
+        let _ = mixer.add_bus();
+        let _ = mixer.add_bus();
+        let bus = mixer.add_bus().expect("bus 2");
+        assert_eq!(bus, BusId(2));
+
+        migrate_bus_gain_lanes(&mut model, &mut mixer);
+
+        assert!(model.tracks[0].automation_lanes.is_empty());
+        let node = mixer
+            .buses
+            .iter()
+            .find(|node| node.id == MixerNodeId::Bus(bus))
+            .expect("bus node");
+        assert_eq!(node.automation.len(), 1);
+        assert_eq!(node.automation[0].target, AutomationTarget::BusGain { bus });
+    }
+
+    #[test]
+    fn orphan_bus_gain_lane_is_dropped() {
+        let mut model = YinModel::new_empty_with_16_tracks();
+        Arc::make_mut(&mut model.tracks[0])
+            .automation_lanes
+            .push(lane(BusId(99)));
+        let mut mixer = MixerParams::default();
+        migrate_bus_gain_lanes(&mut model, &mut mixer);
+        assert!(model.tracks[0].automation_lanes.is_empty());
+        assert!(mixer.buses.iter().all(|node| node.automation.is_empty()));
+    }
 }

@@ -475,13 +475,10 @@ impl TrackData {
 
     /// 该轨是否允许承载某个自动化目标。
     ///
-    /// 普通内容轨可以承载任意自动化；Master 是唯一例外——它不承载普通
-    /// lane，只承载 BusGain（Bus 自动化的宿主）。Folder 什么都不承载。
-    /// 所有「加 lane / 找 lane」的入口都必须调用本方法，不要各自手写
-    /// `kind == Master && BusGain` 特例。
-    pub fn allows_automation_target(&self, target: &AutomationTarget) -> bool {
+    /// Master / Folder 不承载轨道 automation；Bus 自动化属于 Bus 节点，
+    /// 不再寄宿 Master。
+    pub fn allows_automation_target(&self, _target: &AutomationTarget) -> bool {
         self.can_hold(TrackContent::Automation)
-            || (self.kind == TrackKind::Master && target.is_bus_gain())
     }
 
     pub fn new(port: u8, channel: u8) -> Self {
@@ -1402,13 +1399,10 @@ impl YinModel {
                     changed = true;
                 }
             }
-            // Master 上只保留 BusGain lane（固定 Bus 行的自动化宿主）。
-            if track.kind == TrackKind::Master {
-                let before = track.automation_lanes.len();
-                track.automation_lanes.retain(|lane| {
-                    matches!(lane.target, yinhe_types::AutomationTarget::BusGain { .. })
-                });
-                changed |= track.automation_lanes.len() != before;
+            // Master 不承载轨道 automation；BusGain 已迁到 Bus 节点。
+            if track.kind == TrackKind::Master && !track.automation_lanes.is_empty() {
+                track.automation_lanes.clear();
+                changed = true;
             }
         }
         if changed {
@@ -2174,15 +2168,17 @@ mod tests {
     }
 
     #[test]
-    fn master_only_accepts_bus_gain_automation() {
+    fn master_and_folder_reject_track_automation() {
         use yinhe_types::AutomationTarget;
 
         let mut master = TrackData::new(0, 0);
         master.kind = TrackKind::Master;
         assert!(!master.allows_automation_target(&AutomationTarget::CC { controller: 7 }));
-        assert!(master.allows_automation_target(&AutomationTarget::BusGain {
-            bus: yinhe_types::BusId(0)
-        }));
+        assert!(
+            !master.allows_automation_target(&AutomationTarget::BusGain {
+                bus: yinhe_types::BusId(0)
+            })
+        );
 
         let midi = TrackData::new(0, 0);
         assert!(midi.allows_automation_target(&AutomationTarget::CC { controller: 7 }));

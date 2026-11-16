@@ -76,6 +76,8 @@ pub(crate) fn show(
     bus_strips: &[yinhe_mixer::StripParams],
     // 固定总线条的稳定 BusId（与 `bus_strips` 等长）。
     bus_ids: &[yinhe_types::BusId],
+    // 固定总线条的 automation（与 `bus_ids` 等长）。
+    bus_automation: &[Vec<yinhe_types::AutomationLane>],
     // 固定总线电平表显示值。
     bus_meters: &[crate::widgets::meter::StereoMeter],
     // 编辑/播放光标 tick（自动化表显示光标处的 lane 值）。
@@ -198,10 +200,7 @@ pub(crate) fn show(
             let Some(master_idx) = conductor_track_idx.map(usize::from) else {
                 continue;
             };
-            let Some(lane) = tracks
-                .get(master_idx)
-                .and_then(|t| t.automation_lanes.get(sub))
-            else {
+            let Some(lane) = bus_automation.get(bus).and_then(|lanes| lanes.get(sub)) else {
                 continue;
             };
             render::draw_row_background(ui, &painter, row_rect, row, false, lane_even);

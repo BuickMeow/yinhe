@@ -3335,3 +3335,43 @@ fn stop_keeps_insert_tail() {
     let peak = tail_peak(&mut engine);
     assert!(peak > 0.01, "Stop 后应继续输出 insert 尾音，peak={peak}");
 }
+
+/// BusGain 自动化从 Bus 节点的 automation 求值，不再依赖 Master 轨。
+#[test]
+fn bus_gain_automation_reads_bus_node_lanes() {
+    use yinhe_mixer::MixerParams;
+    use yinhe_types::{
+        AutomationEvent, AutomationLane, AutomationTarget, MixerNodeId, SegmentShape,
+    };
+
+    let layout = ChannelLayout::from_mask(vec![true]);
+    let mut engine = AudioEngine::new(48_000, layout);
+    let mut mixer = MixerParams::default();
+    let bus = mixer.add_bus().expect("bus");
+    let node = mixer
+        .buses
+        .iter_mut()
+        .find(|node| node.id == MixerNodeId::Bus(bus))
+        .expect("bus node");
+    node.automation.push(AutomationLane {
+        target: AutomationTarget::BusGain { bus },
+        track: 0,
+        events: vec![AutomationEvent {
+            id: 1,
+            tick: 0,
+            value: 0.5,
+            shape: SegmentShape::Step,
+        }],
+    });
+    engine.mixer_params = mixer;
+    engine.apply_bus_automation(1);
+    let gain = engine
+        .mixer_params
+        .buses
+        .iter()
+        .find(|node| node.id == MixerNodeId::Bus(bus))
+        .expect("bus node")
+        .strip
+        .gain;
+    assert!((gain - 0.5).abs() < f32::EPSILON);
+}

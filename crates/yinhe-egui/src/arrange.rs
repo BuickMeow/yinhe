@@ -41,6 +41,8 @@ pub(crate) struct ArrangeData<'a> {
     pub tempo_lane: &'a yinhe_types::AutomationLane,
     /// 固定 Bus 行的稳定 ID（与 AR 行布局的 bus 下标对应）。
     pub bus_ids: &'a [yinhe_types::BusId],
+    /// 固定 Bus 行的 automation（与 bus_ids 等长）。
+    pub bus_automation: &'a [Vec<yinhe_types::AutomationLane>],
     pub conductor_track_idx: Option<u16>,
     /// Tempo 映射（音频片段秒 ↔ tick 换算）。
     pub tempo_map: &'a yinhe_core::TempoMap,
@@ -217,15 +219,21 @@ pub fn show(
     doc.edit.arr_am_expanded.resize(num_tracks, false);
     let conductor_idx = doc.edit.track_cache.conductor_idx;
     let bus_ids = doc.mixer.bus_ids();
-    // 固定 Bus 行的自动化子行：BusGain lane 存在 Master 轨上。
+    let bus_automation: Vec<Vec<yinhe_types::AutomationLane>> = doc
+        .mixer
+        .buses
+        .iter()
+        .map(|node| node.automation.clone())
+        .collect();
+    // 固定 Bus 行的自动化子行：BusGain lane 存在 Bus 节点上。
     let bus_lanes: Vec<Vec<usize>> = bus_ids
         .iter()
-        .map(|&bus_id| {
-            conductor_idx
-                .and_then(|idx| doc.data.model.tracks.get(idx as usize))
-                .map(|track| {
-                    track
-                        .automation_lanes
+        .enumerate()
+        .map(|(i, &bus_id)| {
+            bus_automation
+                .get(i)
+                .map(|lanes| {
+                    lanes
                         .iter()
                         .enumerate()
                         .filter(|(_, lane)| {
@@ -525,6 +533,7 @@ pub fn show(
             track_meters,
             bus_strips,
             &bus_ids,
+            &bus_automation,
             bus_meters,
             doc.edit.cursor_tick,
             &doc.data.model.conductor.tempo,
@@ -597,6 +606,14 @@ pub fn show(
                     structural = false;
                     (
                         doc.remove_automation_lane(*idx, *lane_idx),
+                        t!("undo.delete_automation_lane").to_string(),
+                    )
+                }
+                track_panel::TrackAction::DeleteBusAutomation { bus, lane_idx } => {
+                    structural = false;
+                    *mixer_dirty = true;
+                    (
+                        doc.remove_bus_automation_lane(*bus, *lane_idx),
                         t!("undo.delete_automation_lane").to_string(),
                     )
                 }
@@ -683,6 +700,7 @@ pub fn show(
                 }
                 track_panel::TrackAction::AddBusAutomation { bus } => {
                     structural = false;
+                    *mixer_dirty = true;
                     (
                         doc.add_bus_automation_lane(*bus),
                         t!("undo.create_automation").to_string(),
@@ -793,6 +811,7 @@ pub fn show(
             tracks: &model.tracks,
             tempo_lane: &model.conductor.tempo,
             bus_ids: &bus_ids,
+            bus_automation: &bus_automation,
             conductor_track_idx: doc.edit.track_cache.conductor_idx,
             tempo_map: &model.tempo_map,
             audio_library,
@@ -835,6 +854,15 @@ pub fn show(
     if !am_edits.is_empty() {
         let before = doc.capture_snapshot();
         let actions = doc.apply_automation_edits(std::mem::take(&mut am_edits));
+        if actions.iter().any(|action| {
+            matches!(
+                action,
+                yinhe_editor_core::history::UndoAction::BusAutomation(_)
+                    | yinhe_editor_core::history::UndoAction::BusAutomationLane { .. }
+            )
+        }) {
+            *mixer_dirty = true;
+        }
         crate::right_panel::automation_undo::push_automation_actions(
             doc,
             actions,

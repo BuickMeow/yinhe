@@ -146,8 +146,6 @@ pub(crate) struct AudioModel {
     /// `YinModel.tracks[].audio_clips` 索引对齐。模型准备阶段一次性算好，
     /// 播放线程按索引 O(1) 查询。随 AudioModel 快照整体替换而失效。
     pub clip_fades: Vec<Vec<(f64, f64)>>,
-    /// 总线增益自动化 lane（存于 Master 轨；按稳定 BusId 索引）。
-    pub bus_gains: Vec<(yinhe_types::BusId, yinhe_types::AutomationLane)>,
     /// 通道级「默认乐器」的鼓通道声明（按源 MIDI 通道 0..256）：
     /// `Some(true)` = 鼓组，`Some(false)` = 显式旋律通道，`None` = 未声明。
     /// 这是界面上「鼓通道」开关的唯一去路——没有它，关鼓会被 GM 默认值
@@ -207,26 +205,10 @@ impl AudioModel {
                     .map(|inst| inst.is_drum)
             })
             .collect();
-        let bus_gains = model
-            .tracks
-            .iter()
-            .find(|t| t.kind == yinhe_core::TrackKind::Master)
-            .map(|track| {
-                track
-                    .automation_lanes
-                    .iter()
-                    .filter_map(|lane| match lane.target {
-                        yinhe_types::AutomationTarget::BusGain { bus } => Some((bus, lane.clone())),
-                        _ => None,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
         Self {
             track_channels,
             track_banks,
             clip_fades,
-            bus_gains,
             channel_percussion,
         }
     }
@@ -1983,29 +1965,5 @@ mod tests {
         assert_eq!(reps.len(), 2, "同参数取 max，不同参数各自保留");
         let vals: Vec<f32> = reps.iter().map(|&i| agg_value(&events[i])).collect();
         assert_eq!(vals, vec![0.9, 0.4]);
-    }
-
-    #[test]
-    fn bus_gain_lanes_are_extracted_from_master_track() {
-        let mut model = YinModel::new_empty_with_16_tracks();
-        assert_eq!(model.tracks[0].kind, yinhe_core::TrackKind::Master);
-        Arc::make_mut(&mut model.tracks[0])
-            .automation_lanes
-            .push(AutomationLane {
-                target: AutomationTarget::BusGain {
-                    bus: yinhe_types::BusId(2),
-                },
-                track: 0,
-                events: vec![AutomationEvent {
-                    id: 1,
-                    tick: 0,
-                    value: 0.5,
-                    shape: SegmentShape::linear_curve(),
-                }],
-            });
-        let audio = AudioModel::from_model(&model);
-        assert_eq!(audio.bus_gains.len(), 1);
-        assert_eq!(audio.bus_gains[0].0, yinhe_types::BusId(2));
-        assert_eq!(audio.bus_gains[0].1.events[0].value, 0.5);
     }
 }

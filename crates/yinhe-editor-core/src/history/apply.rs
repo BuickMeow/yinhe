@@ -54,6 +54,20 @@ impl UndoAction {
                 before: _,
                 after,
             } => apply_automation_lane_delta(doc, *track_idx, *lane_idx, after.as_ref()),
+            UndoAction::BusAutomation(delta) => apply_bus_automation_delta(
+                doc,
+                delta.bus,
+                delta.lane_idx,
+                &delta.target,
+                &delta.before,
+                &delta.after,
+            ),
+            UndoAction::BusAutomationLane {
+                bus,
+                lane_idx,
+                before: _,
+                after,
+            } => apply_bus_automation_lane_delta(doc, *bus, *lane_idx, after.as_ref()),
             UndoAction::TrackName {
                 track_idx,
                 old: _,
@@ -506,6 +520,63 @@ fn apply_automation_lane_delta(
                 if lane_idx < track.automation_lanes.len() {
                     track.automation_lanes.remove(lane_idx);
                 }
+            }
+        }
+    }
+    doc.data.bump_revision();
+}
+
+fn apply_bus_automation_delta(
+    doc: &mut Document,
+    bus: yinhe_types::BusId,
+    lane_idx: usize,
+    target: &yinhe_types::AutomationTarget,
+    remove: &[AutomationEvent],
+    insert: &[AutomationEvent],
+) {
+    let Some(node) = doc
+        .mixer
+        .buses
+        .iter_mut()
+        .find(|node| node.id == yinhe_types::MixerNodeId::Bus(bus))
+    else {
+        return;
+    };
+    let idx = node
+        .automation
+        .iter()
+        .position(|lane| lane.target == *target)
+        .unwrap_or(lane_idx);
+    if let Some(lane) = node.automation.get_mut(idx) {
+        apply_event_diff(&mut lane.events, remove, insert);
+    }
+    doc.data.bump_revision();
+}
+
+fn apply_bus_automation_lane_delta(
+    doc: &mut Document,
+    bus: yinhe_types::BusId,
+    lane_idx: usize,
+    after: Option<&yinhe_types::AutomationLane>,
+) {
+    let Some(node) = doc
+        .mixer
+        .buses
+        .iter_mut()
+        .find(|node| node.id == yinhe_types::MixerNodeId::Bus(bus))
+    else {
+        return;
+    };
+    match after {
+        Some(lane) => {
+            let mut lane = lane.clone();
+            lane.track = 0;
+            let idx = lane_idx.min(node.automation.len());
+            node.automation.insert(idx, lane);
+        }
+        None => {
+            if lane_idx < node.automation.len() {
+                node.automation.remove(lane_idx);
             }
         }
     }

@@ -237,21 +237,27 @@ impl AudioEngine {
     /// 按 tick 求值 BusGain 自动化并写入总线 strip。
     /// 没有 lane 的总线保持用户推子值；lane 存在但事件尚未开始时用 1.0。
     pub(crate) fn apply_bus_automation(&mut self, tick: u32) {
-        let Some(model) = &self.model else {
-            return;
-        };
-        if model.bus_gains.is_empty() {
-            return;
-        }
-        for (bus, lane) in &model.bus_gains {
-            let value = lane
-                .value_at(tick)
-                .map(|(v, _)| v)
-                .unwrap_or(1.0)
-                .clamp(0.0, 1.0);
-            let Some(idx) = self.mixer_params.bus_index(*bus) else {
-                continue;
-            };
+        let updates: Vec<(usize, f32)> = self
+            .mixer_params
+            .buses
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, node)| {
+                let yinhe_types::MixerNodeId::Bus(bus_id) = node.id else {
+                    return None;
+                };
+                let lane = node.automation.iter().find(|lane| {
+                    lane.target == yinhe_types::AutomationTarget::BusGain { bus: bus_id }
+                })?;
+                let value = lane
+                    .value_at(tick)
+                    .map(|(v, _)| v)
+                    .unwrap_or(1.0)
+                    .clamp(0.0, 1.0);
+                Some((idx, value))
+            })
+            .collect();
+        for (idx, value) in updates {
             if let Some(node) = self.mixer_params.buses.get_mut(idx)
                 && (node.strip.gain - value).abs() > f32::EPSILON
             {

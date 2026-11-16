@@ -19,6 +19,11 @@ pub(crate) enum TrackAction {
     OpenAutomationPicker { idx: usize },
     /// AM 子行右键「删除自动化」：删除 idx 轨的第 lane_idx 条 lane。
     DeleteAutomation { idx: usize, lane_idx: usize },
+    /// 固定 Bus 自动化子行右键「删除自动化」。
+    DeleteBusAutomation {
+        bus: yinhe_types::BusId,
+        lane_idx: usize,
+    },
     /// 右键「音轨属性」：选中该轨并请求打开属性浮窗（不改动模型）。
     ShowProperties { idx: usize },
     /// 音轨面板内联重命名提交。

@@ -232,7 +232,6 @@ mod tests {
             track_channels: vec![None],
             track_banks: vec![Vec::new()],
             clip_fades: vec![vec![(0.0, 0.0)]],
-            bus_gains: Vec::new(),
             channel_percussion: vec![None; yinhe_types::MIDI_CHANNEL_COUNT],
         };
         let mut mixer = MixerGraph::new(64);

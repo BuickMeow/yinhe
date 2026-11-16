@@ -13,7 +13,7 @@
 use std::ops::{Deref, DerefMut};
 
 use serde::{Deserialize, Serialize};
-use yinhe_types::{BusId, LogicalChannelId, MixerNodeId, RackId, RackOutputMode};
+use yinhe_types::{AutomationLane, BusId, LogicalChannelId, MixerNodeId, RackId, RackOutputMode};
 
 use crate::params::{InsertRef, SendParams, StripParams};
 
@@ -61,6 +61,10 @@ pub struct MixerNode {
     /// 字段为空。目标 B 的 Bus 嵌套会复用同一个字段。
     #[serde(default)]
     pub output: Option<BusId>,
+    /// 节点自己的自动化 lane。BusGain 等混音自动化按 owner 存在这里，
+    /// 不再寄宿 Master 轨。
+    #[serde(default)]
+    pub automation: Vec<AutomationLane>,
 }
 
 impl MixerNode {
@@ -71,6 +75,7 @@ impl MixerNode {
             inserts: Vec::new(),
             sends: Vec::new(),
             output: None,
+            automation: Vec::new(),
         }
     }
 

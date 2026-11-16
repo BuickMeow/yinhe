@@ -521,15 +521,9 @@ pub fn handle_interactions(
                         ))
                         .clicked()
                     {
-                        if let Some(master) = conductor_track_idx {
-                            actions.push(TrackAction::DeleteAutomation {
-                                idx: master as usize,
-                                lane_idx,
-                            });
-                        }
+                        actions.push(TrackAction::DeleteBusAutomation { bus, lane_idx });
                         ui.close();
                     }
-                    let _ = bus;
                 }
                 Some(RowMenuTarget::Track(idx, sub)) => {
                     track_context_menu(
