@@ -3685,3 +3685,56 @@ fn multi_output_instrument_writes_separate_lc_buffers() {
     let out2 = engine.mixer.channel_buffers(2).expect("out 2");
     assert!(out2.left.iter().all(|&v| v == 2.0));
 }
+
+/// 冻结端到端：真实 CpuSynth 音源 → FreezeJob 捕获 → 结果非静音。
+#[test]
+fn freeze_job_renders_real_lc_audio() {
+    use std::sync::Arc;
+    use yinhe_mixer::MixerParams;
+    use yinhe_types::MixerChannelId;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let wav_path = dir.path().join("tone.wav");
+    let sfz_path = dir.path().join("tone.sfz");
+    let samples = vec![0.25f32; 4_800];
+    let bytes =
+        crate::audio_source::encode_wav_bytes(&samples, &samples, 48_000).expect("encode wav");
+    std::fs::write(&wav_path, bytes).expect("write wav");
+    std::fs::write(&sfz_path, "<region>\nsample=tone.wav key=60\n").expect("write sfz");
+
+    let sr = 48_000u32;
+    let model = make_model_with_notes(vec![(60, 0, 2_000, 100, 0)]);
+    let layout = crate::spawn::channels_for_model(&model);
+    let mut engine = AudioEngine::new(sr, layout);
+    engine.handle_command(AudioCommand::LoadModel {
+        model: Arc::new(model),
+    });
+    let mut synth = yinhe_synth::CpuSynth::new(sr);
+    synth
+        .load_dense_soundfonts(0, &[sfz_path])
+        .expect("load soundfont");
+    engine.cpu_synth = Some(synth);
+    engine.mixer_params = MixerParams::default();
+    engine.handle_command(AudioCommand::Play { from_sample: 0 });
+
+    engine.begin_freeze_capture(0);
+    let progress = crate::freeze::FreezeProgress::new();
+    let mut job = crate::freeze::FreezeJob::new(
+        MixerChannelId::Midi(0),
+        sr,
+        4_800,
+        512,
+        Arc::clone(&progress),
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
+    while job.step(&mut engine).expect("freeze step") {}
+    job.complete(&mut engine);
+
+    let p = progress.lock().expect("progress");
+    let result = p.result.as_ref().expect("freeze result");
+    assert_eq!(result.frames(), 4_800);
+    assert!(
+        result.left.iter().any(|s| s.abs() > 1e-5),
+        "冻结结果不应是静音"
+    );
+}

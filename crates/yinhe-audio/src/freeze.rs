@@ -70,6 +70,7 @@ impl FrozenRender {
 }
 
 /// 冻结失败原因（仅取消；其他错误在任务启动前已挡住）。
+#[derive(Debug)]
 pub(crate) enum FreezeError {
     Cancelled,
 }
