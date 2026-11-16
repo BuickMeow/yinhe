@@ -254,6 +254,68 @@ impl App {
 
     /// 找插件 GUI 改参对应的 AM lane：`(track_idx, lane_idx, target)`。
     ///
+    /// ParamPanel 的「显示自动化」：为 insert 槽位创建参数 lane。
+    pub(crate) fn toggle_insert_param_lane(
+        &mut self,
+        idx: usize,
+        target: yinhe_audio::InsertTarget,
+        slot: usize,
+        param_id: u32,
+        name: &str,
+        value: f32,
+    ) {
+        let node = target.node_id();
+        let lane_target = AutomationTarget::InsertParam {
+            target,
+            slot,
+            id: param_id,
+            name: name.to_string(),
+        };
+        let exists = self.workspace.documents[idx]
+            .mixer
+            .node(node)
+            .is_some_and(|node| node.automation.iter().any(|l| l.target == lane_target));
+        if exists {
+            return;
+        }
+        let snapshot = self.workspace.documents[idx].capture_snapshot();
+        let Some(action) = self.workspace.documents[idx].add_mixer_automation_lane(
+            node,
+            lane_target,
+            value.clamp(0.0, 1.0),
+        ) else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
+        doc.push_undo(action, t!("undo.create_automation").as_ref(), snapshot);
+        doc.mark_mixer_dirty();
+        // 展开对应轨道（Bus/Master 没有轨道）。
+        let track_idx = match target {
+            yinhe_types::MixerChannelId::TrackLc(id) => {
+                doc.data.model.tracks.iter().position(|t| t.lc == Some(id))
+            }
+            yinhe_types::MixerChannelId::Midi(ch) => doc
+                .data
+                .model
+                .tracks
+                .iter()
+                .position(|t| t.global_channel() == ch),
+            yinhe_types::MixerChannelId::Audio(ch) => doc
+                .data
+                .model
+                .tracks
+                .iter()
+                .position(|t| t.audio_channel == Some(ch)),
+            yinhe_types::MixerChannelId::Bus(_) | yinhe_types::MixerChannelId::Master => None,
+        };
+        if let Some(track_idx) = track_idx
+            && let Some(expanded) = doc.edit.arr_am_expanded.get_mut(track_idx)
+        {
+            *expanded = true;
+        }
+        self.push_mixer_state_to_engine(idx);
+    }
+
     /// 匹配规则：lane 的 target 是同乐器（uid 唯一）同 param_id 的
     /// `PluginInstrument`（name 不参与匹配，换插件显示名变化不影响）。
     fn plugin_param_lane(

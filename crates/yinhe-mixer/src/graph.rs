@@ -52,6 +52,9 @@ pub trait InsertProcessor: Send {
     /// 仅对 `handled_ccs` 中的 CC 调用。
     fn apply_cc(&mut self, _cc: u8, _value: f32) {}
 
+    /// 写入一个插件/内置参数（归一化 0..1）。用于 insert 参数自动化。
+    fn set_param(&mut self, _id: u32, _value: f64) {}
+
     /// 回收时还原为具体类型（如插件处理器需要 deactivate 回实例）。
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
 }
@@ -493,6 +496,31 @@ impl MixerGraph {
         p: Box<dyn InsertProcessor>,
     ) -> Option<Box<dyn InsertProcessor>> {
         replace_processor(&mut self.master.inserts, slot, p)
+    }
+
+    /// 写入通道 insert 槽位的参数（归一化 0..1）。
+    pub fn set_channel_insert_param(&mut self, channel: usize, slot: usize, id: u32, value: f64) {
+        if let Some(chain) = self.channels.get_mut(channel)
+            && let Some(insert) = chain.inserts.get_mut(slot)
+        {
+            insert.set_param(id, value);
+        }
+    }
+
+    /// 写入总线 insert 槽位的参数。
+    pub fn set_bus_insert_param(&mut self, bus: usize, slot: usize, id: u32, value: f64) {
+        if let Some(chain) = self.buses.get_mut(bus)
+            && let Some(insert) = chain.inserts.get_mut(slot)
+        {
+            insert.set_param(id, value);
+        }
+    }
+
+    /// 写入 Master insert 槽位的参数。
+    pub fn set_master_insert_param(&mut self, slot: usize, id: u32, value: f64) {
+        if let Some(insert) = self.master.inserts.get_mut(slot) {
+            insert.set_param(id, value);
+        }
     }
 
     /// 重建总线数量/块长（增删总线或块长变化时调用；会分配内存）。

@@ -264,6 +264,11 @@ impl ClapProcessor {
     }
 
     /// 是否有待发参数变化（暂停 flush 前的快速检查）。
+    /// 写入一个参数（归一化 0..1），由渲染线程的 process 消费。
+    pub fn set_param(&self, id: u32, value: f64) {
+        self.param_queue.push(id, value.clamp(0.0, 1.0));
+    }
+
     pub fn has_pending_params(&self) -> bool {
         !self.param_queue.is_empty()
     }

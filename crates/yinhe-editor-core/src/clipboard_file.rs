@@ -289,6 +289,20 @@ fn write_target(w: &mut impl Write, target: &AutomationTarget) -> io::Result<()>
             write_mixer_channel(w, *node)?;
             w.write_all(&bus.0.to_le_bytes())
         }
+        AutomationTarget::InsertParam {
+            target,
+            slot,
+            id,
+            name,
+        } => {
+            w.write_all(&[10])?;
+            write_mixer_channel(w, *target)?;
+            w.write_all(&(*slot as u32).to_le_bytes())?;
+            w.write_all(&id.to_le_bytes())?;
+            let bytes = name.as_bytes();
+            w.write_all(&(bytes.len() as u32).to_le_bytes())?;
+            w.write_all(bytes)
+        }
     }
 }
 
@@ -392,6 +406,12 @@ fn read_target(r: &mut impl Read) -> io::Result<AutomationTarget> {
         9 => AutomationTarget::MixerSend {
             node: read_mixer_channel(r)?,
             bus: yinhe_types::BusId(read_u16(r)?),
+        },
+        10 => AutomationTarget::InsertParam {
+            target: read_mixer_channel(r)?,
+            slot: read_u32(r)? as usize,
+            id: read_u32(r)?,
+            name: read_string(r)?,
         },
         _ => return Err(invalid("unknown automation target")),
     })

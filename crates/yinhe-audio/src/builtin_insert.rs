@@ -72,6 +72,11 @@ impl InsertProcessor for BuiltinInsert {
         self.inner.process(left, right);
     }
 
+    fn set_param(&mut self, id: u32, value: f64) {
+        // 内置效果器参数通过 CC id 驱动；queue 在 process 里 drain。
+        self.queue.push(id, value.clamp(0.0, 1.0));
+    }
+
     fn reset(&mut self) {
         self.inner.reset();
     }

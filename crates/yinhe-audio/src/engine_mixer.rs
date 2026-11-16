@@ -240,6 +240,7 @@ impl AudioEngine {
 
         let mut updates: Vec<(MixerChannelId, Option<f32>, Option<f32>)> = Vec::new();
         let mut send_updates: Vec<(MixerChannelId, BusId, f32)> = Vec::new();
+        let mut insert_updates: Vec<(MixerChannelId, usize, u32, f64)> = Vec::new();
         let mut collect = |node: &yinhe_mixer::MixerNode| {
             let Some(channel) = node.id.channel_id() else {
                 return;
@@ -283,6 +284,23 @@ impl AudioEngine {
                     .clamp(0.0, 1.0);
                 send_updates.push((channel, bus, value * 2.0));
             }
+            for lane in &node.automation {
+                let AutomationTarget::InsertParam {
+                    target, slot, id, ..
+                } = lane.target
+                else {
+                    continue;
+                };
+                if target != channel {
+                    continue;
+                }
+                let value = lane
+                    .value_at(tick)
+                    .map(|(v, _)| f64::from(v))
+                    .unwrap_or(0.0)
+                    .clamp(0.0, 1.0);
+                insert_updates.push((channel, slot, id, value));
+            }
         };
         for node in &self.mixer_params.channels {
             collect(node);
@@ -307,6 +325,38 @@ impl AudioEngine {
                 params.pan = pan;
             }
             self.set_node_strip(channel, params);
+        }
+        for (channel, slot, id, value) in insert_updates {
+            match channel {
+                MixerChannelId::Midi(ch) => {
+                    if let Some(dense) = self.dense_of(ch) {
+                        self.mixer.set_channel_insert_param(dense, slot, id, value);
+                    }
+                }
+                MixerChannelId::Audio(ch) => {
+                    let dense = self.channel_layout.audio_dense_for(ch);
+                    if dense != u32::MAX {
+                        self.mixer
+                            .set_channel_insert_param(dense as usize, slot, id, value);
+                    }
+                }
+                MixerChannelId::TrackLc(id_lc) => {
+                    if let Some((_, dense)) = self.channel_layout.track_lc_dense_for(id_lc)
+                        && dense != u32::MAX
+                    {
+                        self.mixer
+                            .set_channel_insert_param(dense as usize, slot, id, value);
+                    }
+                }
+                MixerChannelId::Bus(bus) => {
+                    if let Some(idx) = self.mixer_params.bus_index(bus) {
+                        self.mixer.set_bus_insert_param(idx, slot, id, value);
+                    }
+                }
+                MixerChannelId::Master => {
+                    self.mixer.set_master_insert_param(slot, id, value);
+                }
+            }
         }
         for (channel, bus, amount) in send_updates {
             let Some(node) = self.mixer_params.node_mut(channel.node_id()) else {

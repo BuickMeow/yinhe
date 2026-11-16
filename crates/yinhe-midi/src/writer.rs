@@ -853,7 +853,8 @@ fn push_lane_event<'a>(
         | AutomationTarget::BusGain { .. }
         | AutomationTarget::MixerGain { .. }
         | AutomationTarget::MixerPan { .. }
-        | AutomationTarget::MixerSend { .. } => {}
+        | AutomationTarget::MixerSend { .. }
+        | AutomationTarget::InsertParam { .. } => {}
     }
 }
 

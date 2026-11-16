@@ -221,7 +221,8 @@ impl MixerParams {
             node.automation.retain(|lane| match &lane.target {
                 yinhe_types::AutomationTarget::MixerGain { channel: c }
                 | yinhe_types::AutomationTarget::MixerPan { channel: c }
-                | yinhe_types::AutomationTarget::MixerSend { node: c, .. } => *c == channel,
+                | yinhe_types::AutomationTarget::MixerSend { node: c, .. }
+                | yinhe_types::AutomationTarget::InsertParam { target: c, .. } => *c == channel,
                 yinhe_types::AutomationTarget::BusGain { .. } => {
                     node.id
                         == yinhe_types::MixerNodeId::Bus(match channel {

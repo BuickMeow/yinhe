@@ -130,6 +130,11 @@ impl Vst3Processor {
         })
     }
 
+    /// 写入一个参数（归一化 0..1），由渲染线程的 process 消费。
+    pub fn set_param(&self, id: u32, value: f64) {
+        self.param_queue.push(id, value.clamp(0.0, 1.0));
+    }
+
     /// 处理一块。
     ///
     /// `input`：效果器用法时为主端口立体声输入；乐器传 `None`（输入静音）。
@@ -327,6 +332,10 @@ impl yinhe_mixer::InsertProcessor for Vst3Insert {
         let n = left.len().min(right.len()).min(ol.len()).min(or.len());
         left[..n].copy_from_slice(&ol[..n]);
         right[..n].copy_from_slice(&or[..n]);
+    }
+
+    fn set_param(&mut self, id: u32, value: f64) {
+        self.processor.set_param(id, value);
     }
 
     fn reset(&mut self) {

@@ -33,6 +33,18 @@ pub(crate) fn viewport_id() -> egui::ViewportId {
     egui::ViewportId::from_hash_of("mix_param_panel")
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ParamLaneTarget {
+    Instrument {
+        channel: u8,
+        uid: u64,
+    },
+    Insert {
+        target: yinhe_audio::InsertTarget,
+        slot: usize,
+    },
+}
+
 /// 参数面板状态（打开时枚举一次；插件 rescan 时重枚举）。
 pub(crate) struct ParamPanel {
     target: ParamTarget,
@@ -108,14 +120,15 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
         return;
     };
 
-    // 「显示自动化」按钮状态：该乐器实例已有的插件参数 lane 集
-    //（只遍历该 uid 的 lane；参数可达数千个，逐参数查会太贵）。
+    // 「显示自动化」按钮状态：乐器参数按 uid 查，insert 参数按目标槽位查。
     let am_target = match panel.target {
-        ParamTarget::Instrument { channel, uid, .. } => Some((channel, uid)),
-        ParamTarget::Insert { .. } => None,
+        ParamTarget::Instrument { channel, uid, .. } => {
+            Some(ParamLaneTarget::Instrument { channel, uid })
+        }
+        ParamTarget::Insert { target, slot } => Some(ParamLaneTarget::Insert { target, slot }),
     };
-    let am_lanes: std::collections::HashSet<(u64, u32)> = am_target
-        .map(|(_channel, target_uid)| {
+    let am_lanes: std::collections::HashSet<(u64, u32)> = match am_target {
+        Some(ParamLaneTarget::Instrument { uid, .. }) => {
             let doc = &app.workspace.documents[idx];
             doc.data
                 .model
@@ -124,16 +137,42 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
                 .flat_map(|t| t.automation_lanes.iter())
                 .filter_map(|l| match &l.target {
                     yinhe_types::AutomationTarget::Param {
-                        device: yinhe_types::automation::ParamDevice::PluginInstrument { uid, .. },
+                        device:
+                            yinhe_types::automation::ParamDevice::PluginInstrument {
+                                uid: lane_uid, ..
+                            },
                         id,
                         ..
-                    } if *uid == target_uid => Some((*uid, *id)),
+                    } if *lane_uid == uid => Some((*lane_uid, *id)),
                     _ => None,
                 })
                 .collect()
-        })
-        .unwrap_or_default();
-    let mut lane_requests: Vec<(u32, String)> = Vec::new();
+        }
+        _ => Default::default(),
+    };
+    let insert_lanes: std::collections::HashSet<(usize, u32)> = match am_target {
+        Some(ParamLaneTarget::Insert { target, slot }) => {
+            let doc = &app.workspace.documents[idx];
+            doc.mixer
+                .node(target.node_id())
+                .map(|node| {
+                    node.automation
+                        .iter()
+                        .filter_map(|lane| match &lane.target {
+                            yinhe_types::AutomationTarget::InsertParam {
+                                slot: lane_slot,
+                                id,
+                                ..
+                            } if *lane_slot == slot => Some((slot, *id)),
+                            _ => None,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+        _ => Default::default(),
+    };
+    let mut lane_requests: Vec<(u32, String, f32)> = Vec::new();
 
     // 独立 OS 窗口（viewport）：插件参数面板。
     let id = viewport_id();
@@ -227,9 +266,16 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
                                 .max_height(list_h)
                                 .show_rows(ui, row_h, panel.filtered.len(), |ui, range| {
                                     for &pi in &panel.filtered[range] {
-                                        let am_exists = am_target.map(|(_ch, uid)| {
-                                            am_lanes.contains(&(uid, panel.params[pi].id))
-                                        });
+                                        let am_exists = match am_target {
+                                            Some(ParamLaneTarget::Instrument { uid, .. }) => {
+                                                Some(am_lanes.contains(&(uid, panel.params[pi].id)))
+                                            }
+                                            Some(ParamLaneTarget::Insert { slot, .. }) => Some(
+                                                insert_lanes.contains(&(slot, panel.params[pi].id)),
+                                            ),
+                                            None => None,
+                                        };
+                                        let mut am_value = None;
                                         if param_row(
                                             ui,
                                             row_h,
@@ -239,10 +285,15 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
                                             &panel.queue,
                                             &mut panel.wrote_params,
                                             am_exists,
+                                            &mut am_value,
                                         ) && am_target.is_some()
                                         {
                                             let p = &panel.params[pi];
-                                            lane_requests.push((p.id, p.name.clone()));
+                                            lane_requests.push((
+                                                p.id,
+                                                p.name.clone(),
+                                                am_value.unwrap_or(0.0),
+                                            ));
                                         }
                                     }
                                 });
@@ -254,9 +305,16 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
         },
     );
     // 「显示自动化」：创建/定位该参数的 AM lane（窗口内无法借 app，攒到外部处理）。
-    if let Some((channel, uid)) = am_target {
-        for (param_id, name) in lane_requests {
-            app.toggle_plugin_param_lane(idx, channel, uid, param_id, &name);
+    if let Some(am_target) = am_target {
+        for (param_id, name, value) in lane_requests {
+            match am_target {
+                ParamLaneTarget::Instrument { channel, uid } => {
+                    app.toggle_plugin_param_lane(idx, channel, uid, param_id, &name);
+                }
+                ParamLaneTarget::Insert { target, slot } => {
+                    app.toggle_insert_param_lane(idx, target, slot, param_id, &name, value);
+                }
+            }
         }
     }
     if panel.wrote_params {
@@ -282,8 +340,9 @@ fn param_row(
     editing: &mut HashMap<u32, f64>,
     queue: &ParamQueue,
     wrote_params: &mut bool,
-    // Some(lane 已存在) = 显示「显示自动化」按钮（仅乐器通道插件）。
+    // Some(lane 已存在) = 显示「显示自动化」按钮。
     am_exists: Option<bool>,
+    am_value: &mut Option<f32>,
 ) -> bool {
     // 拖动中优先本地值；否则读插件当前值；读不到退回默认值。
     let live = editing
@@ -381,6 +440,12 @@ fn param_row(
                 crate::widgets::hint::hover(ui.ctx(), &resp, t!("dock.show_automation"));
                 if resp.clicked() {
                     am_clicked = true;
+                    let norm = if p.max > p.min {
+                        (live - p.min) / (p.max - p.min)
+                    } else {
+                        live
+                    };
+                    *am_value = Some(norm.clamp(0.0, 1.0) as f32);
                 }
             });
         }

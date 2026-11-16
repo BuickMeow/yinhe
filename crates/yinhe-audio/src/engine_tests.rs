@@ -3459,3 +3459,64 @@ fn bus_gain_automation_reads_bus_node_lanes() {
         .gain;
     assert!((gain - 0.5).abs() < f32::EPSILON);
 }
+
+/// InsertParam 自动化把归一化值送进对应 insert 处理器。
+#[test]
+fn insert_param_automation_writes_processor_param() {
+    use std::sync::{Arc, Mutex};
+    use yinhe_mixer::{InsertProcessor, MixerParams};
+    use yinhe_types::{
+        AutomationEvent, AutomationLane, AutomationTarget, MixerChannelId, SegmentShape,
+    };
+
+    struct Recorder {
+        params: Arc<Mutex<Vec<(u32, f64)>>>,
+    }
+    impl InsertProcessor for Recorder {
+        fn process(&mut self, _left: &mut [f32], _right: &mut [f32]) {}
+        fn set_param(&mut self, id: u32, value: f64) {
+            if let Ok(mut p) = self.params.lock() {
+                p.push((id, value));
+            }
+        }
+        fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+            self
+        }
+    }
+
+    let layout = ChannelLayout::from_mask(vec![true]);
+    let mut engine = AudioEngine::new(48_000, layout);
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    engine.mixer.insert_insert(
+        0,
+        0,
+        Box::new(Recorder {
+            params: Arc::clone(&recorded),
+        }),
+    );
+
+    let mut mixer = MixerParams::default();
+    let channel = MixerChannelId::Midi(0);
+    mixer.channels[0].automation.push(AutomationLane {
+        target: AutomationTarget::InsertParam {
+            target: channel,
+            slot: 0,
+            id: 42,
+            name: "Cutoff".into(),
+        },
+        track: 0,
+        events: vec![AutomationEvent {
+            id: 1,
+            tick: 0,
+            value: 0.6,
+            shape: SegmentShape::Step,
+        }],
+    });
+    engine.mixer_params = mixer;
+    engine.apply_mixer_automation(1);
+
+    let params = recorded.lock().expect("params");
+    let (id, value) = params.last().copied().expect("param");
+    assert_eq!(id, 42);
+    assert!((value - 0.6).abs() < 1e-6);
+}

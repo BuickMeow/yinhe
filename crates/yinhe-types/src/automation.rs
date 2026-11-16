@@ -657,6 +657,13 @@ pub enum AutomationTarget {
         node: crate::MixerChannelId,
         bus: crate::BusId,
     },
+    /// 某个 insert 槽位的插件参数（值归一化 0..1）。
+    InsertParam {
+        target: crate::MixerChannelId,
+        slot: usize,
+        id: u32,
+        name: String,
+    },
 }
 
 impl AutomationTarget {
@@ -683,7 +690,8 @@ impl AutomationTarget {
             | AutomationTarget::BusGain { .. }
             | AutomationTarget::MixerGain { .. }
             | AutomationTarget::MixerPan { .. }
-            | AutomationTarget::MixerSend { .. } => None,
+            | AutomationTarget::MixerSend { .. }
+            | AutomationTarget::InsertParam { .. } => None,
         }
     }
 
@@ -702,7 +710,7 @@ impl AutomationTarget {
             AutomationTarget::Tempo => 120.0,
             AutomationTarget::BusGain { .. } | AutomationTarget::MixerGain { .. } => 1.0,
             AutomationTarget::MixerPan { .. } => 0.5,
-            AutomationTarget::MixerSend { .. } => 0.0,
+            AutomationTarget::MixerSend { .. } | AutomationTarget::InsertParam { .. } => 0.0,
         }
     }
 
@@ -761,7 +769,7 @@ impl AutomationTarget {
         match self {
             AutomationTarget::PitchBend => 0.5,
             AutomationTarget::MixerPan { .. } => 0.5,
-            AutomationTarget::MixerSend { .. } => 0.0,
+            AutomationTarget::MixerSend { .. } | AutomationTarget::InsertParam { .. } => 0.0,
             AutomationTarget::CC { controller: 10 } => 0.5,
             // 标准 RPN 0/1/2 = PB Sensitivity / Fine Tune / Coarse Tune（对称量）。
             AutomationTarget::Rpn { parameter } if *parameter <= 2 => 0.5,
@@ -798,7 +806,10 @@ impl AutomationTarget {
             AutomationTarget::BusGain { bus } => crate::AutomationOwner::Bus(*bus),
             AutomationTarget::MixerGain { channel }
             | AutomationTarget::MixerPan { channel }
-            | AutomationTarget::MixerSend { node: channel, .. } => channel
+            | AutomationTarget::MixerSend { node: channel, .. }
+            | AutomationTarget::InsertParam {
+                target: channel, ..
+            } => channel
                 .logical_channel_id()
                 .map(crate::AutomationOwner::LogicalChannel)
                 .unwrap_or(match channel {
@@ -855,6 +866,18 @@ impl AutomationTarget {
             }
             AutomationTarget::MixerSend { node, bus } => {
                 format!("Mixer Send {:?} -> BUS {}", node, bus.index() + 1)
+            }
+            AutomationTarget::InsertParam {
+                target,
+                slot,
+                id,
+                name,
+            } => {
+                if name.is_empty() {
+                    format!("Insert {:?}#{} Param {}", target, slot, id)
+                } else {
+                    format!("Insert {:?}#{} {}", target, slot, name)
+                }
             }
         }
     }

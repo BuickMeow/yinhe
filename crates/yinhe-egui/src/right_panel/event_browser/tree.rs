@@ -344,7 +344,8 @@ fn automation_icon(target: &AutomationTarget) -> egui_material_icons::MaterialIc
         AutomationTarget::BusGain { .. }
         | AutomationTarget::MixerGain { .. }
         | AutomationTarget::MixerPan { .. }
-        | AutomationTarget::MixerSend { .. } => ICON_TUNE,
+        | AutomationTarget::MixerSend { .. }
+        | AutomationTarget::InsertParam { .. } => ICON_TUNE,
     }
 }
 

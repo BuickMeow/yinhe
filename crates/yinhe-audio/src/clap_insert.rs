@@ -52,6 +52,10 @@ impl InsertProcessor for ClapInsert {
         }
     }
 
+    fn set_param(&mut self, id: u32, value: f64) {
+        self.processor.set_param(id, value);
+    }
+
     fn reset(&mut self) {
         self.processor.reset();
     }

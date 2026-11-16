@@ -46,7 +46,8 @@ impl TargetSummary {
             AutomationTarget::BusGain { .. }
             | AutomationTarget::MixerGain { .. }
             | AutomationTarget::MixerPan { .. }
-            | AutomationTarget::MixerSend { .. } => self.param_total += n,
+            | AutomationTarget::MixerSend { .. }
+            | AutomationTarget::InsertParam { .. } => self.param_total += n,
         }
     }
 
