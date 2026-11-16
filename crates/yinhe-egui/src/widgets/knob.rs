@@ -1,7 +1,7 @@
 //! 自绘旋钮（Knob）：垂直拖动改变归一化值 0..1。
 //!
 //! 风格与 [`crate::widgets::switch`] 对齐：主题化、hover/pressed 反馈、
-//! 无缓存无阈值；一条环表达刻度，强调色值弧覆盖在环上。
+//! 无缓存无阈值；内圈大扇形表示当前值，外圈刻度环压在扇形之上。
 //!
 //! 两种归零点：
 //! - [`knob`]：最左侧（值 0）归零，值弧从起点向右延伸；
@@ -13,9 +13,10 @@ use eframe::egui;
 const START_DEG: f32 = 135.0;
 const SWEEP_DEG: f32 = 270.0;
 
-/// 刻度环 / 值弧的线宽（px）。两者共用同一半径、同一线宽，合成一条环。
-/// 比旧版略粗，强调色弧直接在环上覆盖。
+/// 刻度环线宽（px）。刻度环画在最上层，扇形在其下方。
 const RING_W: f32 = 1.5;
+/// 扇形强调色相对 accent 的淡化系数（略淡，避免盖过外圈）。
+const SECTOR_DIM: f32 = 0.7;
 
 /// 归零点：最左端归零，或居中归零。
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -111,12 +112,6 @@ fn knob_impl(ui: &mut egui::Ui, value: &mut f32, diameter: f32, zero: ZeroMode) 
             base
         };
         painter.circle_filled(center, r_base, base);
-        // 刻度环：完整一圈（字体色系），值弧覆盖其上。
-        painter.circle_stroke(
-            center,
-            r_ring,
-            egui::Stroke::new(RING_W, crate::theme::text_secondary()),
-        );
 
         let start = START_DEG.to_radians();
         let sweep = SWEEP_DEG.to_radians();
@@ -126,23 +121,31 @@ fn knob_impl(ui: &mut egui::Ui, value: &mut f32, diameter: f32, zero: ZeroMode) 
             crate::theme::accent_active()
         };
 
-        // 先画刻度环，再画值弧：值弧始终在同一环的上层。
-        //
-        // epaint 的 `circle_stroke` 用 `PathStroke::outside()`：圆环以
-        // `r_ring` 为内边界向外描边，笔画中心线在 `r_ring + RING_W/2`。
-        // 值弧的折线笔画是居中描边，必须放到同一中心线，否则会像
-        // 半径偏小一样缩在圆环内侧（视觉上不重合）。
+        // 值指示：外圈内的大扇形（从中心铺到刻度环内缘），使用稍淡的
+        // 强调色；外圈最后绘制，始终压在扇形上。
         if let Some((from, to)) = arc_span(*value, zero) {
-            let r_arc = r_ring + RING_W * 0.5;
-            let steps = 48;
-            let mut pts = Vec::with_capacity(steps + 1);
+            let steps = 64;
+            let mut mesh = egui::Mesh::default();
+            let sector_color = accent.gamma_multiply(SECTOR_DIM);
+            mesh.colored_vertex(center, sector_color);
             for i in 0..=steps {
                 let t = from + (to - from) * (i as f32 / steps as f32);
                 let ang = start + sweep * t;
-                pts.push(center + egui::vec2(ang.cos(), ang.sin()) * r_arc);
+                let pos = center + egui::vec2(ang.cos(), ang.sin()) * r_ring;
+                mesh.colored_vertex(pos, sector_color);
             }
-            painter.add(egui::Shape::line(pts, egui::Stroke::new(RING_W, accent)));
+            for i in 1..=steps as u32 {
+                mesh.add_triangle(0, i, i + 1);
+            }
+            painter.add(egui::Shape::mesh(mesh));
         }
+
+        // 刻度环：完整一圈（字体色系），在扇形之上。
+        painter.circle_stroke(
+            center,
+            r_ring,
+            egui::Stroke::new(RING_W, crate::theme::text_secondary()),
+        );
 
         // 指针（底座内）。
         let ang = start + sweep * *value;
