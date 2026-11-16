@@ -43,6 +43,7 @@ pub(crate) struct CaPanelIo<'a> {
     pub track_selected: &'a mut HashSet<u16>,
     pub selection_anchor: &'a mut Option<u16>,
     pub info_content: &'a mut Option<crate::right_panel::InfoContent>,
+    pub right_tab: &'a mut Option<crate::right_panel::RightTab>,
     pub expanded_midi: &'a mut Vec<bool>,
     pub expanded_audio: &'a mut Vec<bool>,
     pub tracks: &'a [Arc<yinhe_core::TrackData>],
@@ -76,6 +77,24 @@ pub(crate) struct CaPanelOut {
     pub set_strips: Vec<(u8, yinhe_mixer::StripParams)>,
     /// 通道行 M/S 变更（音频通道 → 新 strip 参数）。
     pub set_audio_strips: Vec<(u16, yinhe_mixer::StripParams)>,
+    /// 自动化行右键：删除该 lane。
+    pub remove_automation: Option<(u16, usize)>,
+}
+
+/// 通道 → 右栏通道属性标识。
+fn channel_info(ch: CaChannel) -> crate::right_panel::InfoContent {
+    crate::right_panel::InfoContent::Channel(match ch {
+        CaChannel::Midi(c) => yinhe_types::MixerChannelId::Midi(c),
+        CaChannel::Audio(c) => yinhe_types::MixerChannelId::Audio(c),
+    })
+}
+
+/// 右键菜单项的通用行。
+fn menu_item(ui: &mut egui::Ui, label: &str, action_id: &str) -> bool {
+    ui.add(crate::widgets::menu::menu_item_action(
+        ui, false, label, action_id,
+    ))
+    .clicked()
 }
 
 /// 通道是否展开。
@@ -411,6 +430,51 @@ pub(crate) fn show(
                     crate::widgets::hint::set(ui.ctx(), t!("hint.ca.channel_row"));
                 }
 
+                resp.context_menu(|ui| {
+                    ui.set_min_width(168.0);
+                    ui.set_max_width(200.0);
+                    if menu_item(ui, t!("panel.section.channel").as_ref(), "") {
+                        *io.info_content = Some(channel_info(ch));
+                        *io.right_tab = Some(crate::right_panel::RightTab::Info);
+                        ui.close();
+                    }
+                    let toggle_label = if expanded {
+                        t!("ca.collapse")
+                    } else {
+                        t!("ca.expand")
+                    };
+                    if menu_item(ui, toggle_label.as_ref(), "") {
+                        toggle_expanded(ch, io);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if menu_item(ui, t!("mix.mute").as_ref(), "") {
+                        let mut next = strip;
+                        next.mute = !next.mute;
+                        match ch {
+                            CaChannel::Midi(c) => out.set_strips.push((c, next)),
+                            CaChannel::Audio(c) => out.set_audio_strips.push((c, next)),
+                        }
+                        ui.close();
+                    }
+                    if menu_item(ui, t!("mix.solo").as_ref(), "") {
+                        let mut next = strip;
+                        next.solo = !next.solo;
+                        match ch {
+                            CaChannel::Midi(c) => out.set_strips.push((c, next)),
+                            CaChannel::Audio(c) => out.set_audio_strips.push((c, next)),
+                        }
+                        ui.close();
+                    }
+                    if let Some(g) = groups.group(ch)
+                        && let Some(&first) = g.tracks.first()
+                        && menu_item(ui, t!("arrange.add_automation").as_ref(), "")
+                    {
+                        out.automation_picker = Some(first);
+                        ui.close();
+                    }
+                });
+
                 if resp.double_clicked() {
                     // 双击通道行：展开/收起（与单击 chevron 等效，else 分支防第二击重复处理）。
                     toggle_expanded(ch, io);
@@ -426,7 +490,8 @@ pub(crate) fn show(
                             io.track_selected.insert(t);
                         }
                         *io.selection_anchor = g.tracks.first().copied();
-                        *io.info_content = Some(crate::right_panel::InfoContent::Track);
+                        *io.info_content = Some(channel_info(ch));
+                        *io.right_tab = Some(crate::right_panel::RightTab::Info);
                     }
                 }
             }
@@ -537,6 +602,66 @@ pub(crate) fn show(
                         out.audio_dirty = true;
                     }
 
+                    resp.context_menu(|ui| {
+                        ui.set_min_width(168.0);
+                        ui.set_max_width(200.0);
+                        if menu_item(ui, t!("arrange.track_properties").as_ref(), "") {
+                            io.track_selected.clear();
+                            io.track_selected.insert(t);
+                            *io.selection_anchor = Some(t);
+                            *io.info_content = Some(crate::right_panel::InfoContent::Track);
+                            *io.right_tab = Some(crate::right_panel::RightTab::Info);
+                            ui.close();
+                        }
+                        if menu_item(ui, t!("float.pianoroll").as_ref(), "") {
+                            io.track_selected.clear();
+                            io.track_selected.insert(t);
+                            *io.selection_anchor = Some(t);
+                            *io.info_content = Some(crate::right_panel::InfoContent::Track);
+                            *io.right_tab = Some(crate::right_panel::RightTab::Info);
+                            *io.request_pianoroll = true;
+                            ui.close();
+                        }
+                        if let Some(ch) = io.tracks.get(t as usize).and_then(|tr| match tr.kind {
+                            yinhe_core::TrackKind::Midi => {
+                                tr.midi_target_channel().map(CaChannel::Midi)
+                            }
+                            yinhe_core::TrackKind::Audio => {
+                                tr.audio_target_channel().map(CaChannel::Audio)
+                            }
+                            _ => None,
+                        }) {
+                            let toggle_label = if is_expanded(ch, io) {
+                                t!("ca.collapse")
+                            } else {
+                                t!("ca.expand")
+                            };
+                            if menu_item(ui, toggle_label.as_ref(), "") {
+                                toggle_expanded(ch, io);
+                                ui.close();
+                            }
+                        }
+                        ui.separator();
+                        if menu_item(ui, t!("mix.mute").as_ref(), "") {
+                            if let Some(ov) = io.track_overrides.get_mut(t as usize) {
+                                ov.muted = !ov.muted;
+                                out.audio_dirty = true;
+                            }
+                            ui.close();
+                        }
+                        if menu_item(ui, t!("mix.solo").as_ref(), "") {
+                            if let Some(ov) = io.track_overrides.get_mut(t as usize) {
+                                ov.soloed = !ov.soloed;
+                                out.audio_dirty = true;
+                            }
+                            ui.close();
+                        }
+                        if menu_item(ui, t!("arrange.add_automation").as_ref(), "") {
+                            out.automation_picker = Some(t);
+                            ui.close();
+                        }
+                    });
+
                     let meter_rect = egui::Rect::from_min_max(
                         egui::pos2(meter_left, row_rect.min.y + LEVEL_METER_MARGIN),
                         egui::pos2(meter_right, row_rect.max.y - LEVEL_METER_MARGIN),
@@ -575,12 +700,14 @@ pub(crate) fn show(
                     io.track_selected.insert(t);
                     *io.selection_anchor = Some(t);
                     *io.info_content = Some(crate::right_panel::InfoContent::Track);
+                    *io.right_tab = Some(crate::right_panel::RightTab::Info);
                     *io.request_pianoroll = true;
                 } else if resp.clicked() && !over_popup {
                     io.track_selected.clear();
                     io.track_selected.insert(t);
                     *io.selection_anchor = Some(t);
                     *io.info_content = Some(crate::right_panel::InfoContent::Track);
+                    *io.right_tab = Some(crate::right_panel::RightTab::Info);
                 }
             }
             CaRow::Automation { track, sub } => {
@@ -682,6 +809,27 @@ pub(crate) fn show(
                         color32,
                     );
                 }
+
+                resp.context_menu(|ui| {
+                    ui.set_min_width(168.0);
+                    ui.set_max_width(200.0);
+                    if menu_item(ui, t!("arrange.track_properties").as_ref(), "") {
+                        io.track_selected.clear();
+                        io.track_selected.insert(track);
+                        *io.selection_anchor = Some(track);
+                        *io.info_content = Some(crate::right_panel::InfoContent::Track);
+                        *io.right_tab = Some(crate::right_panel::RightTab::Info);
+                        ui.close();
+                    }
+                    if menu_item(ui, t!("arrange.add_automation").as_ref(), "") {
+                        out.automation_picker = Some(track);
+                        ui.close();
+                    }
+                    if menu_item(ui, t!("arrange.delete_automation").as_ref(), "") {
+                        out.remove_automation = Some((track, sub));
+                        ui.close();
+                    }
+                });
 
                 // 最后一条自动化行：悬停显示加号（再次添加自动化）。
                 let is_last_lane = io

@@ -430,9 +430,8 @@ pub(crate) fn sel_drag_frame(
                     edit.selected.clear_rects();
                     chan_ar_sel.clear();
                     *edit.cursor_tick = Some(snapped.max(0.0));
-                    let row_tracks = layout
-                        .hit_row(start_music.1)
-                        .and_then(|r| layout.row(r))
+                    let hit_row = layout.hit_row(start_music.1).and_then(|r| layout.row(r));
+                    let row_tracks = hit_row
                         .map(|row| row_tracks(row, groups))
                         .unwrap_or_default();
                     if !row_tracks.is_empty() {
@@ -441,7 +440,20 @@ pub(crate) fn sel_drag_frame(
                             edit.track_selected.insert(t);
                         }
                         *edit.selection_anchor = Some(row_tracks[0]);
-                        *edit.info_content = Some(crate::right_panel::InfoContent::Track);
+                        *edit.info_content = Some(match hit_row {
+                            Some(super::rows::CaRow::Channel(ch)) => {
+                                crate::right_panel::InfoContent::Channel(match ch {
+                                    super::groups::CaChannel::Midi(c) => {
+                                        yinhe_types::MixerChannelId::Midi(c)
+                                    }
+                                    super::groups::CaChannel::Audio(c) => {
+                                        yinhe_types::MixerChannelId::Audio(c)
+                                    }
+                                })
+                            }
+                            _ => crate::right_panel::InfoContent::Track,
+                        });
+                        *edit.right_tab = Some(crate::right_panel::RightTab::Info);
                     }
                 } else if let Some(b) = snapped_bounds(start_pixel, end, view, layout, data) {
                     let tracks = rows_range_tracks(layout, b.row_lo..b.row_hi + 1, groups);
@@ -490,4 +502,140 @@ pub(crate) fn sel_drag_frame(
     ui.data_mut(|d| d.insert_persisted(move_notes_id, move_notes));
     ui.data_mut(|d| d.insert_persisted(move_min_tick_id, move_min_tick));
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    fn track(port: u8, channel: u8) -> Arc<yinhe_core::TrackData> {
+        Arc::new(yinhe_core::TrackData::new(port, channel))
+    }
+
+    /// 通道 AR 框选：按下 → 拖过两行 → 松开，必须提交选框。
+    #[test]
+    fn marquee_commits_selection() {
+        let model = yinhe_core::YinModel {
+            tracks: vec![track(0, 0), track(0, 0)],
+            ..Default::default()
+        };
+        let groups = CaGroups::from_model(&model, None);
+        let layout = CaRowLayout::build(false, &groups, |_| false, |_| 0, 40.0);
+        let track_rows = crate::channel_arrange::render::build_track_rows(
+            &layout,
+            &groups,
+            0..layout.total_rows(),
+        );
+        let mut view = ArrangementView::default();
+        view.base.pixels_per_tick = 0.1;
+        view.base.left_panel_width = 0.0;
+        let mut selected = yinhe_core::Selection::default();
+        let mut cursor_tick = None;
+        let mut arr_sel_rect = Vec::new();
+        let mut drag_delta = None;
+        let mut eraser = None;
+        let mut scale = None;
+        let mut riff = None;
+        let mut track_selected = HashSet::new();
+        let mut anchor = None;
+        let mut info = None;
+        let mut am_views = std::collections::HashMap::new();
+        let mut am_edits = Vec::new();
+        let mut right_tab = None;
+        let mut audio_clips = HashSet::new();
+        let mut audio_commands = Vec::new();
+        let mut clip_commands = Vec::new();
+        let mut menu_actions = Vec::new();
+        let mut edit = ArrangeEdit {
+            selected: &mut selected,
+            cursor_tick: &mut cursor_tick,
+            arr_sel_rect: &mut arr_sel_rect,
+            arr_drag_delta: &mut drag_delta,
+            arr_eraser_rect: &mut eraser,
+            arr_scale_span: &mut scale,
+            arr_riff_steps: &mut riff,
+            track_selected: &mut track_selected,
+            selection_anchor: &mut anchor,
+            info_content: &mut info,
+            arr_am_views: &mut am_views,
+            am_edits: &mut am_edits,
+            right_tab: &mut right_tab,
+            selected_audio_clips: &mut audio_clips,
+            audio_commands: &mut audio_commands,
+            clip_commands: &mut clip_commands,
+            menu_actions: &mut menu_actions,
+        };
+        let tempo_lane = yinhe_types::AutomationLane {
+            target: yinhe_types::AutomationTarget::CC { controller: 1 },
+            track: 0,
+            events: Vec::new(),
+        };
+        let tempo_map = yinhe_core::TempoMap::default();
+        let library = crate::app::audio_library::AudioLibrary::new();
+        let data = ArrangeData {
+            midi: None,
+            track_visible: &[true, true],
+            track_colors: &[[1.0; 4]; 2],
+            track_info: &[],
+            quantize: yinhe_editor_core::quantize::QuantizePreset::Fraction(1, 4),
+            ppq: 480,
+            bar_line_data: None,
+            total_ticks: 100_000.0,
+            num_tracks: 2,
+            tracks: &model.tracks,
+            tempo_lane: &tempo_lane,
+            conductor_track_idx: None,
+            tempo_map: &tempo_map,
+            audio_library: &library,
+            audio_sources: &[],
+            clip_enabled: true,
+        };
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(400.0, 300.0));
+        let mut chan_ar_sel = Vec::new();
+        let ctx = egui::Context::default();
+        let mut frame = |events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(rect),
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                sel_drag_frame(
+                    ui,
+                    rect,
+                    rect,
+                    &mut view,
+                    &layout,
+                    &groups,
+                    &track_rows,
+                    &data,
+                    &mut edit,
+                    &mut chan_ar_sel,
+                );
+            });
+            output.textures_delta.clear();
+            output
+        };
+        let move_to = |x: f32, y: f32| egui::Event::PointerMoved(egui::pos2(x, y));
+        let button = |pos: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        frame(vec![
+            move_to(20.0, 20.0),
+            button(egui::pos2(20.0, 20.0), true),
+        ]);
+        frame(vec![move_to(200.0, 60.0)]);
+        frame(vec![
+            move_to(200.0, 60.0),
+            button(egui::pos2(200.0, 60.0), false),
+        ]);
+        assert!(
+            !chan_ar_sel.is_empty(),
+            "拖过两行应提交通道 AR 选框，实际为空"
+        );
+    }
 }

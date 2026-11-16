@@ -14,6 +14,7 @@
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_mixer::MasterParams;
+use yinhe_types::MixerChannelId;
 
 use crate::app::App;
 use crate::widgets::meter::{METER_GAP, METER_W, SCALE_W};
@@ -125,6 +126,7 @@ pub(crate) fn channel_strip(
         rect,
         crate::chrome::device_chain::DockContext::Midi(channel),
         ("mix_header_dock_midi", channel),
+        actions,
     );
 }
 
@@ -194,6 +196,7 @@ pub(crate) fn audio_strip(
         rect,
         crate::chrome::device_chain::DockContext::Audio(channel),
         ("mix_header_dock_audio", channel),
+        actions,
     );
 }
 
@@ -258,6 +261,21 @@ pub(crate) fn bus_strip(
     // 色带行右侧：删除总线按钮（与标题同一行）。图标取色与色带文字同源
     // （色带对比色），悬停转危险色。
     let header = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), HEADER_H));
+    let header_resp = ui.interact(
+        header,
+        ui.scope_id().with(("mix_bus_header", bus)),
+        egui::Sense::click(),
+    );
+    header_context_menu(
+        app,
+        &header_resp,
+        idx,
+        crate::chrome::device_chain::DockContext::Bus(bus),
+        actions,
+    );
+    if header_resp.clicked() {
+        focus_channel_info(app, MixerChannelId::Bus(bus));
+    }
     let del_rect = egui::Rect::from_center_size(
         egui::pos2(header.max.x - PAD_X - 6.0, header.center().y),
         egui::vec2(14.0, 14.0),
@@ -315,7 +333,7 @@ pub(crate) fn master_strip(
             }
         },
     );
-    header_double_click_opens_master_dock(app, ui, idx, ui.max_rect());
+    header_double_click_opens_master_dock(app, ui, idx, ui.max_rect(), actions);
 }
 
 /// Master 条双击色带：打开设备链并切到主输出效果链（选中 Conductor 轨，
@@ -325,6 +343,7 @@ fn header_double_click_opens_master_dock(
     ui: &egui::Ui,
     idx: usize,
     rect: egui::Rect,
+    actions: &mut Vec<MixAction>,
 ) {
     let header = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), HEADER_H));
     let resp = ui.interact(
@@ -333,6 +352,16 @@ fn header_double_click_opens_master_dock(
         egui::Sense::click(),
     );
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.header_double_click"));
+    header_context_menu(
+        app,
+        &resp,
+        idx,
+        crate::chrome::device_chain::DockContext::Master,
+        actions,
+    );
+    if resp.clicked() {
+        focus_channel_info(app, MixerChannelId::Master);
+    }
     if !resp.double_clicked() {
         return;
     }
@@ -372,10 +401,15 @@ fn header_double_click_opens_dock(
     rect: egui::Rect,
     context: crate::chrome::device_chain::DockContext,
     id_salt: impl std::hash::Hash + std::fmt::Debug,
+    actions: &mut Vec<MixAction>,
 ) {
     let header = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), HEADER_H));
     let resp = ui.interact(header, ui.scope_id().with(id_salt), egui::Sense::click());
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.header_double_click"));
+    header_context_menu(app, &resp, idx, context, actions);
+    if resp.clicked() {
+        focus_channel_info(app, dock_mixer_id(context));
+    }
     if !resp.double_clicked() {
         return;
     }
@@ -407,4 +441,212 @@ fn header_double_click_opens_dock(
     app.dock_track = selected_track;
     app.dock_context = Some(context);
     app.dock_selected = None;
+}
+
+/// `DockContext` → 混音通道身份（右键菜单用）。
+fn dock_mixer_id(context: crate::chrome::device_chain::DockContext) -> MixerChannelId {
+    use crate::chrome::device_chain::DockContext;
+    match context {
+        DockContext::Midi(ch) => MixerChannelId::Midi(ch),
+        DockContext::Audio(ch) => MixerChannelId::Audio(ch),
+        DockContext::Bus(bus) => MixerChannelId::Bus(bus),
+        DockContext::Master => MixerChannelId::Master,
+    }
+}
+
+/// 把右侧栏切到该通道的属性面板。
+fn focus_channel_info(app: &mut App, ch: MixerChannelId) {
+    app.info_content = Some(crate::right_panel::InfoContent::Channel(ch));
+    app.right_tab = Some(crate::right_panel::RightTab::Info);
+    app.right_panel_layout
+        .focus_tab(yinhe_editor_core::right_panel_layout::PanelKind::Channel);
+}
+
+/// 展开底部设备链并定位到通道语境（双击/右键共用）。
+fn open_dock_context(app: &mut App, idx: usize, context: crate::chrome::device_chain::DockContext) {
+    crate::chrome::mode_bar::set_dock_visible(
+        &mut app.show_pianoroll_in_arrange,
+        &mut app.show_bottom_dock,
+        &mut app.show_mixer_panel,
+        &mut app.show_meter_panel,
+        true,
+    );
+    app.layout_needs_save = true;
+    let selected_track = app.workspace.documents[idx]
+        .edit
+        .track_selected
+        .iter()
+        .min()
+        .copied();
+    app.dock_track = selected_track;
+    app.dock_context = Some(context);
+    app.dock_selected = None;
+}
+
+/// 通道条色带右键菜单：通道属性 / 设备链 / 自动化 / 重置 / 删除总线。
+fn header_context_menu(
+    app: &mut App,
+    resp: &egui::Response,
+    idx: usize,
+    context: crate::chrome::device_chain::DockContext,
+    actions: &mut Vec<MixAction>,
+) {
+    let ch = dock_mixer_id(context);
+    resp.context_menu(|ui| {
+        ui.set_min_width(168.0);
+        ui.set_max_width(200.0);
+        if ui
+            .add(crate::widgets::menu::menu_item_action(
+                ui,
+                false,
+                t!("panel.section.channel").as_ref(),
+                "",
+            ))
+            .clicked()
+        {
+            focus_channel_info(app, ch);
+            ui.close();
+        }
+        if ui
+            .add(crate::widgets::menu::menu_item_action(
+                ui,
+                false,
+                t!("arrange.open_device_chain").as_ref(),
+                "",
+            ))
+            .clicked()
+        {
+            open_dock_context(app, idx, context);
+            ui.close();
+        }
+        ui.separator();
+        if let Some(action) = volume_automation(ch)
+            && ui
+                .add(crate::widgets::menu::menu_item_action(
+                    ui,
+                    false,
+                    t!("mix.add_volume_automation").as_ref(),
+                    "",
+                ))
+                .clicked()
+        {
+            actions.push(action);
+            ui.close();
+        }
+        if let MixerChannelId::Midi(channel) = ch
+            && ui
+                .add(crate::widgets::menu::menu_item_action(
+                    ui,
+                    false,
+                    t!("mix.add_pan_automation").as_ref(),
+                    "",
+                ))
+                .clicked()
+        {
+            actions.push(MixAction::AddChannelAutomation {
+                channel,
+                controller: 10,
+            });
+            ui.close();
+        }
+        ui.separator();
+        if ui
+            .add(crate::widgets::menu::menu_item_action(
+                ui,
+                false,
+                t!("mix.reset_gain").as_ref(),
+                "",
+            ))
+            .clicked()
+        {
+            actions.push(reset_gain_action(app, idx, ch));
+            ui.close();
+        }
+        if ch != MixerChannelId::Master
+            && ui
+                .add(crate::widgets::menu::menu_item_action(
+                    ui,
+                    false,
+                    t!("mix.reset_pan").as_ref(),
+                    "",
+                ))
+                .clicked()
+            && let Some(action) = reset_pan_action(app, idx, ch)
+        {
+            actions.push(action);
+            ui.close();
+        }
+        if let MixerChannelId::Bus(bus) = ch {
+            ui.separator();
+            if ui
+                .add(crate::widgets::menu::menu_item_action(
+                    ui,
+                    false,
+                    t!("arrange.remove_bus").as_ref(),
+                    "",
+                ))
+                .clicked()
+            {
+                actions.push(MixAction::RemoveBus { bus });
+                ui.close();
+            }
+        }
+    });
+}
+
+fn volume_automation(ch: MixerChannelId) -> Option<MixAction> {
+    match ch {
+        MixerChannelId::Midi(channel) => Some(MixAction::AddChannelAutomation {
+            channel,
+            controller: 7,
+        }),
+        MixerChannelId::Bus(bus) => Some(MixAction::AddBusGainAutomation { bus }),
+        _ => None,
+    }
+}
+
+fn reset_gain_action(app: &App, idx: usize, ch: MixerChannelId) -> MixAction {
+    let mixer = &app.workspace.documents[idx].mixer;
+    match ch {
+        MixerChannelId::Midi(channel) => {
+            let mut params = mixer.strip(channel);
+            params.gain = 1.0;
+            MixAction::SetStrip { channel, params }
+        }
+        MixerChannelId::Audio(channel) => {
+            let mut params = mixer.audio_strip(channel);
+            params.gain = 1.0;
+            MixAction::SetAudioStrip { channel, params }
+        }
+        MixerChannelId::Bus(bus) => {
+            let mut params = mixer.buses.get(bus as usize).copied().unwrap_or_default();
+            params.gain = 1.0;
+            MixAction::SetBusStrip { bus, params }
+        }
+        MixerChannelId::Master => MixAction::SetMaster {
+            params: MasterParams { gain: 1.0 },
+        },
+    }
+}
+
+fn reset_pan_action(app: &App, idx: usize, ch: MixerChannelId) -> Option<MixAction> {
+    let mixer = &app.workspace.documents[idx].mixer;
+    match ch {
+        MixerChannelId::Midi(channel) => {
+            let mut params = mixer.strip(channel);
+            params.pan = 0.0;
+            Some(MixAction::SetStrip { channel, params })
+        }
+        MixerChannelId::Audio(channel) => {
+            let mut params = mixer.audio_strip(channel);
+            params.pan = 0.0;
+            Some(MixAction::SetAudioStrip { channel, params })
+        }
+        MixerChannelId::Bus(bus) => {
+            let mut params = mixer.buses.get(bus as usize).copied().unwrap_or_default();
+            params.pan = 0.0;
+            Some(MixAction::SetBusStrip { bus, params })
+        }
+        MixerChannelId::Master => None,
+    }
 }

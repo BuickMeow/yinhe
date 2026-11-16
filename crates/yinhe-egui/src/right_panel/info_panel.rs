@@ -11,6 +11,7 @@
 //! 工程设置只在独立浮窗（见 `dialogs::prop_panels`）。
 
 mod anchor;
+mod channel;
 mod history;
 mod layers;
 mod layers_mix;
@@ -93,8 +94,24 @@ fn render_track(
             }
             false
         }
-        Some(InfoContent::Track) | None => track::show_track_info(ui, doc),
+        // 通道焦点不影响「音轨属性」选项卡：它仍显示当前选中轨。
+        Some(InfoContent::Track) | Some(InfoContent::Channel(_)) | None => {
+            track::show_track_info(ui, doc)
+        }
     }
+}
+
+/// 「通道属性」选项卡。返回本帧通道级改动。
+pub(crate) fn show_channel(
+    ui: &mut egui::Ui,
+    doc: Option<&mut Document>,
+    info_content: &mut Option<InfoContent>,
+) -> channel::ChannelInfoOut {
+    let Some(doc) = doc else {
+        crate::widgets::hint::empty_hint(ui, t!("common.no_document").as_ref());
+        return channel::ChannelInfoOut::default();
+    };
+    channel::show_channel_info(ui, doc, info_content)
 }
 
 /// 「图层」选项卡。`is_mix` 时显示 MIX 通道级图层（MIX 图层面板），

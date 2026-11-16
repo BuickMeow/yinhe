@@ -14,8 +14,6 @@ use yinhe_editor_core::document::Document;
 
 use rust_i18n::t;
 
-mod instrument;
-
 /// 固定标签列 + 只读值（`BODY_FONT` + `text_bright`）。
 fn field_value(ui: &mut egui::Ui, label: &str, value: impl Into<String>) {
     crate::widgets::rows::form_row(ui, label, |ui| {
@@ -39,11 +37,12 @@ pub(crate) fn show_track_info(ui: &mut egui::Ui, doc: &mut Document) -> bool {
         return false;
     }
 
+    // MIX 通道行会一次选中整组轨道；取最小索引保证面板稳定。
     let track_idx = doc
         .edit
         .track_selected
         .iter()
-        .next()
+        .min()
         .copied()
         .map(|i| (i as usize).min(num_tracks - 1));
     if let Some(track_idx) = track_idx {
@@ -204,9 +203,6 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
     // ── 混音输出通道（Track→MixerChannel）──
     let mut routing_changed = false;
     let kind = doc.data.model.tracks[track_idx].kind;
-    let bus_options: Vec<(usize, String)> = std::iter::once((0, "Master".to_string()))
-        .chain((0..doc.mixer.buses.len()).map(|bus| (bus + 1, format!("BUS {}", bus + 1))))
-        .collect();
     match kind {
         yinhe_core::TrackKind::Midi => {
             let current = doc.data.model.tracks[track_idx]
@@ -243,37 +239,6 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
                     routing_changed = true;
                 }
             });
-            // 通道主输出：整条 MIDI 通道 → Master / 某条总线。
-            let current_out = doc
-                .mixer
-                .midi_outputs
-                .get(current_ch)
-                .copied()
-                .flatten()
-                .map(|bus| bus as usize + 1)
-                .unwrap_or(0);
-            crate::widgets::rows::panel_row(ui, t!("track.output").as_ref(), |ui| {
-                let mut sel = current_out;
-                if crate::widgets::combo::combo_select(
-                    ui,
-                    "track_midi_bus_output",
-                    &mut sel,
-                    ui.available_width().max(1.0),
-                    &bus_options,
-                ) {
-                    let outputs = &mut doc.mixer.midi_outputs;
-                    if outputs.len() <= current_ch {
-                        outputs.resize(current_ch + 1, None);
-                    }
-                    outputs[current_ch] = if sel == 0 {
-                        None
-                    } else {
-                        Some((sel - 1) as u16)
-                    };
-                    doc.mark_mixer_dirty();
-                    routing_changed = true;
-                }
-            });
         }
         yinhe_core::TrackKind::Audio => {
             let default_ch = doc.data.model.tracks[track_idx].audio_channel.unwrap_or(0);
@@ -306,38 +271,6 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
                     routing_changed = true;
                 }
             });
-            // 通道主输出：整条音频通道 → Master / 某条总线。
-            let current_out = doc
-                .mixer
-                .audio_outputs
-                .get(current_ch as usize)
-                .copied()
-                .flatten()
-                .map(|bus| bus as usize + 1)
-                .unwrap_or(0);
-            crate::widgets::rows::panel_row(ui, t!("track.output").as_ref(), |ui| {
-                let mut sel = current_out;
-                if crate::widgets::combo::combo_select(
-                    ui,
-                    "track_audio_bus_output",
-                    &mut sel,
-                    ui.available_width().max(1.0),
-                    &bus_options,
-                ) {
-                    let idx = current_ch as usize;
-                    let outputs = &mut doc.mixer.audio_outputs;
-                    if outputs.len() <= idx {
-                        outputs.resize(idx + 1, None);
-                    }
-                    outputs[idx] = if sel == 0 {
-                        None
-                    } else {
-                        Some((sel - 1) as u16)
-                    };
-                    doc.mark_mixer_dirty();
-                    routing_changed = true;
-                }
-            });
         }
         yinhe_core::TrackKind::Folder => {}
         yinhe_core::TrackKind::Master => {
@@ -349,13 +282,10 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
         doc.data.bump_revision();
     }
 
-    // ── 通道默认乐器 / 鼓通道 ──
-    let instrument_changed = instrument::show(ui, doc, track_idx);
-
     // ── 颜色（行高一致的小色块 + 重置）──
     show_color_row(ui, doc, track_idx);
 
-    port_changed || instrument_changed || routing_changed
+    port_changed || routing_changed
 }
 
 /// 颜色行：色块（点击直接弹出取色器）+ 重置按钮。

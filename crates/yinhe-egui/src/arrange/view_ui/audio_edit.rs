@@ -556,7 +556,7 @@ fn draw_drag_ghost(
 }
 
 /// 命中测试：返回 (轨道索引, 片段克隆)。
-fn hit_test(
+pub(crate) fn hit_test(
     view: &ArrangementView,
     geom: &dyn TrackRowGeom,
     data: &ArrangeData<'_>,

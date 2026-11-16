@@ -14,6 +14,7 @@ mod note_edit;
 mod save;
 mod selection;
 mod timecode;
+mod timeline_menu;
 
 pub(crate) use save::SaveSnapshot;
 

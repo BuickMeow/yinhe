@@ -420,6 +420,19 @@ pub(crate) fn show(
         );
     }
 
+    // ── 音乐区右键菜单（音频片段有自己的菜单，命中时让位）──
+    ca_context_menu(
+        ui,
+        rect,
+        music_rect,
+        view,
+        layout,
+        groups,
+        &data_uni,
+        edit,
+        chan_ar_sel,
+    );
+
     // ── 输入：滚轮/缩放/光标 ──
     ui.push_id("ca_content_interaction", |ui| {
         crate::view_interaction::handle_input(
@@ -444,4 +457,97 @@ pub(crate) fn show(
         data.total_ticks,
         layout.total_height(),
     );
+}
+
+/// 通道 AR 音乐区右键菜单。
+#[allow(clippy::too_many_arguments)]
+fn ca_context_menu(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    music_rect: egui::Rect,
+    view: &ArrangementView,
+    layout: &CaRowLayout,
+    groups: &CaGroups,
+    data: &crate::arrange::ArrangeData<'_>,
+    edit: &mut crate::arrange::ArrangeEdit<'_>,
+    chan_ar_sel: &[yinhe_editor_core::edit_state::ChanSelRect],
+) {
+    use crate::arrange::context_menu::{self, TimelineMenuCtx};
+    use crate::channel_arrange::rows::CaRow;
+
+    let id = ui.scope_id().with("ca_main_context_menu");
+    let resp = ui.interact(music_rect, id, egui::Sense::hover());
+    let cid = id.with("ctx");
+    if resp.container_secondary_clicked()
+        && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
+    {
+        if crate::arrange::view_ui::audio_edit::hit_test(view, layout, data, pos, rect).is_some() {
+            ui.data_mut(|d| d.remove::<TimelineMenuCtx>(cid));
+            return;
+        }
+        let local = egui::pos2(pos.x - rect.min.x, pos.y - rect.min.y);
+        let tick = view.x_to_tick(local.x);
+        let tick =
+            crate::view_interaction::snap_tick(tick, data.quantize, data.ppq, data.bar_line_data);
+        let row = super::types::row_at_local_y(layout, view.base.scroll_y, local.y)
+            .and_then(|r| layout.row(r));
+        let (track, channel_tracks) = match row {
+            Some(CaRow::Channel(ch)) => {
+                let tracks = groups
+                    .group(ch)
+                    .map(|g| g.tracks.clone())
+                    .unwrap_or_default();
+                (tracks.first().copied(), tracks)
+            }
+            Some(CaRow::Track(t) | CaRow::Automation { track: t, .. }) => (Some(t), Vec::new()),
+            Some(CaRow::Conductor) | None => (None, Vec::new()),
+        };
+        let can_new_clip = data.clip_enabled
+            && track.is_some_and(|t| {
+                data.tracks
+                    .get(t as usize)
+                    .is_some_and(|tr| tr.kind == yinhe_core::TrackKind::Midi)
+            });
+        let inside_selection = super::types::point_in_sel_rects(chan_ar_sel, layout, view, local);
+        if !inside_selection {
+            if !channel_tracks.is_empty() {
+                if !channel_tracks
+                    .iter()
+                    .any(|t| edit.track_selected.contains(t))
+                {
+                    edit.track_selected.clear();
+                    edit.track_selected.extend(channel_tracks.iter().copied());
+                    *edit.selection_anchor = channel_tracks.first().copied();
+                    *edit.info_content = Some(crate::right_panel::InfoContent::Track);
+                }
+            } else if let Some(t) = track
+                && !edit.track_selected.contains(&t)
+            {
+                edit.track_selected.clear();
+                edit.track_selected.insert(t);
+                *edit.selection_anchor = Some(t);
+                *edit.info_content = Some(crate::right_panel::InfoContent::Track);
+            }
+        }
+        let ctx = TimelineMenuCtx {
+            inside_selection,
+            has_selection: !edit.selected.is_empty(),
+            track,
+            can_new_clip,
+            tick,
+        };
+        ui.data_mut(|d| d.insert_temp(cid, ctx));
+    }
+    resp.container_context_menu(|ui| {
+        let ctx = ui
+            .data(|d| d.get_temp::<TimelineMenuCtx>(cid))
+            .unwrap_or(TimelineMenuCtx {
+                inside_selection: false,
+                has_selection: false,
+                track: None,
+                can_new_clip: false,
+                tick: 0.0,
+            });
+        context_menu::show(ui, &ctx, edit.menu_actions);
+    });
 }

@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 pub enum PanelKind {
     /// 音轨属性。
     Track,
+    /// 通道属性（MIX：音量/声像/输出/乐器/发送）。
+    Channel,
     /// 选框批处理（力度/键位/变速/翻转等）。
     Batch,
     /// 图层（每轨选中/可见/锁定）。
@@ -34,8 +36,9 @@ pub enum PanelKind {
 
 impl PanelKind {
     /// 全部面板类型（用于旧布局迁移补齐）。
-    pub const ALL: [PanelKind; 9] = [
+    pub const ALL: [PanelKind; 10] = [
         PanelKind::Track,
+        PanelKind::Channel,
         PanelKind::Batch,
         PanelKind::ProjectTree,
         PanelKind::EventBrowser,
@@ -50,6 +53,7 @@ impl PanelKind {
     pub fn label_key(self) -> &'static str {
         match self {
             PanelKind::Track => "panel.section.track",
+            PanelKind::Channel => "panel.section.channel",
             PanelKind::Batch => "panel.tab.batch",
             PanelKind::Layers => "panel.section.layers",
             PanelKind::ProjectTree => "panel.section.tree",
@@ -101,11 +105,11 @@ pub struct RightPanelLayout {
 
 impl Default for RightPanelLayout {
     fn default() -> Self {
-        // 默认：上[音轨属性,批处理] / 中[树图,事件,图层] / 下[历史记录,音轨统计,歌曲统计,选框统计]。
+        // 默认：上[音轨属性,通道属性,批处理] / 中[树图,事件,图层] / 下[历史记录,音轨统计,歌曲统计,选框统计]。
         Self {
             columns: vec![
                 PanelColumn {
-                    tabs: vec![PanelKind::Track, PanelKind::Batch],
+                    tabs: vec![PanelKind::Track, PanelKind::Channel, PanelKind::Batch],
                     active: 0,
                     height_weight: 1.0,
                 },
@@ -152,7 +156,7 @@ impl RightPanelLayout {
                 Some(i) => self.move_tab(kind, i, usize::MAX),
                 None => {
                     let at = match kind {
-                        PanelKind::Track | PanelKind::Batch => 0,
+                        PanelKind::Track | PanelKind::Channel | PanelKind::Batch => 0,
                         PanelKind::History
                         | PanelKind::Summary
                         | PanelKind::Song
@@ -176,8 +180,9 @@ impl RightPanelLayout {
             PanelKind::Summary => &[PanelKind::History, PanelKind::Song, PanelKind::Selection],
             PanelKind::Song => &[PanelKind::History, PanelKind::Summary, PanelKind::Selection],
             PanelKind::Selection => &[PanelKind::History, PanelKind::Summary, PanelKind::Song],
-            PanelKind::Batch => &[PanelKind::Track],
-            PanelKind::Track => &[PanelKind::Batch],
+            PanelKind::Batch => &[PanelKind::Track, PanelKind::Channel],
+            PanelKind::Track => &[PanelKind::Channel, PanelKind::Batch],
+            PanelKind::Channel => &[PanelKind::Track, PanelKind::Batch],
         };
         self.columns
             .iter()
@@ -275,7 +280,10 @@ mod tests {
     fn default_has_three_columns_with_expected_tabs() {
         let l = RightPanelLayout::default();
         assert_eq!(l.columns.len(), 3);
-        assert_eq!(l.columns[0].tabs, vec![PanelKind::Track, PanelKind::Batch]);
+        assert_eq!(
+            l.columns[0].tabs,
+            vec![PanelKind::Track, PanelKind::Channel, PanelKind::Batch]
+        );
         assert_eq!(
             l.columns[1].tabs,
             vec![

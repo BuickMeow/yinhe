@@ -440,6 +440,9 @@ pub fn show(
             col,
         );
     }
+    // ── 音乐区右键菜单（音频片段有自己的菜单，命中时让位）──
+    arrange_context_menu(ui, rect, music_rect, view, row_layout, &data, edit);
+
     // push_id 隔离 AR 内容交互的内部 id（`__content_drag__`）：AR 与 PR 同帧
     // 渲染，若共用同一 id，egui 的 WidgetRects 会把两者合并成一个 widget，
     // 导致抓手拖动互相干扰（只能拖 PR，且拖 PR 会带着 AR 视角一起动）。
@@ -467,4 +470,87 @@ pub fn show(
     if let Some(t0) = _arrange_total_start {
         yinhe_memtrace::perf_probe::record_arrange_total(t0.elapsed());
     }
+}
+
+/// AR 音乐区右键菜单：右键落在音频片段上时由片段菜单接管，其余位置打开
+/// 时间线菜单（粘贴 / 插入 / 选区编辑）。
+fn arrange_context_menu(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    music_rect: egui::Rect,
+    view: &yinhe_types::ArrangementView,
+    row_layout: &yinhe_types::ArRowLayout,
+    data: &super::ArrangeData<'_>,
+    edit: &mut super::ArrangeEdit<'_>,
+) {
+    use super::context_menu::{self, TimelineMenuCtx};
+
+    let id = ui.scope_id().with("arr_main_context_menu");
+    let resp = ui.interact(music_rect, id, egui::Sense::hover());
+    let cid = id.with("ctx");
+    if resp.container_secondary_clicked()
+        && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
+    {
+        let track_geom = audio_edit::ArTrackGeom {
+            layout: row_layout,
+            lane_height: view.lane_height(),
+        };
+        // 音频片段右键有专用菜单（分割/增益等），通用菜单不抢。
+        if audio_edit::hit_test(view, &track_geom, data, pos, rect).is_some() {
+            ui.data_mut(|d| d.remove::<TimelineMenuCtx>(cid));
+            return;
+        }
+        let local = egui::pos2(pos.x - rect.min.x, pos.y - rect.min.y);
+        let tick = view.x_to_tick(local.x);
+        let tick =
+            crate::view_interaction::snap_tick(tick, data.quantize, data.ppq, data.bar_line_data);
+        let row = row_layout.hit_at_music_y(local.y + view.base.scroll_y, view.lane_height());
+        let track = row
+            .and_then(|r| r.track_opt())
+            .filter(|&t| Some(t as u16) != data.conductor_track_idx)
+            .map(|t| t as u16);
+        let can_new_clip = data.clip_enabled
+            && track.is_some_and(|t| {
+                data.tracks
+                    .get(t as usize)
+                    .is_some_and(|tr| tr.kind == yinhe_core::TrackKind::Midi)
+            });
+        let inside_selection = super::view_ui::types::is_inside_sel_rect(
+            edit.arr_sel_rect,
+            Some(pos),
+            rect,
+            view,
+            row_layout,
+        );
+        // 非选区内右键：命中轨不在多选里才切换焦点（与左键空白一致）。
+        if !inside_selection
+            && let Some(t) = track
+            && !edit.track_selected.contains(&t)
+        {
+            edit.track_selected.clear();
+            edit.track_selected.insert(t);
+            *edit.selection_anchor = Some(t);
+            *edit.info_content = Some(crate::right_panel::InfoContent::Track);
+        }
+        let ctx = TimelineMenuCtx {
+            inside_selection,
+            has_selection: !edit.selected.is_empty(),
+            track,
+            can_new_clip,
+            tick,
+        };
+        ui.data_mut(|d| d.insert_temp(cid, ctx));
+    }
+    resp.container_context_menu(|ui| {
+        let ctx = ui
+            .data(|d| d.get_temp::<TimelineMenuCtx>(cid))
+            .unwrap_or(TimelineMenuCtx {
+                inside_selection: false,
+                has_selection: false,
+                track: None,
+                can_new_clip: false,
+                tick: 0.0,
+            });
+        context_menu::show(ui, &ctx, edit.menu_actions);
+    });
 }

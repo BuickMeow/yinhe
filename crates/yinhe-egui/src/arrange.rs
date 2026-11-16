@@ -1,5 +1,6 @@
 pub(crate) mod am_lanes;
 pub(crate) use am_lanes::lane_label;
+pub(crate) mod context_menu;
 pub(crate) mod track_panel;
 pub(crate) mod view_ui;
 
@@ -76,6 +77,8 @@ pub(crate) struct ArrangeEdit<'a> {
     pub audio_commands: &'a mut Vec<view_ui::AudioEditCmd>,
     /// MIDI Clip 编辑命令（view_ui 产生，本模块统一应用 + undo）。
     pub clip_commands: &'a mut Vec<view_ui::ClipEditCmd>,
+    /// 时间线右键菜单动作（由调用方 `App` 落地）。
+    pub menu_actions: &'a mut Vec<context_menu::TimelineMenuAction>,
 }
 
 /// Arrange 视图/播放/渲染配置（layout.rs 每帧构造）。
@@ -139,6 +142,8 @@ pub fn show(
     dock_req: &mut Option<crate::chrome::device_chain::DockContext>,
     // 右键固定 Bus 行：请求删除总线（调用方清理机架并推引擎）。
     bus_remove_req: &mut Option<u16>,
+    // 音乐区右键菜单动作（调用方 `App` 落地）。
+    menu_actions: &mut Vec<context_menu::TimelineMenuAction>,
 ) {
     *last_cursor_tick = doc.edit.cursor_tick;
 
@@ -805,6 +810,7 @@ pub fn show(
             selected_audio_clips: &mut doc.edit.selected_audio_clips,
             audio_commands: &mut audio_commands,
             clip_commands: &mut clip_commands,
+            menu_actions,
         };
         view_ui::show(
             ui,

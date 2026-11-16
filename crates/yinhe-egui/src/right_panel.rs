@@ -38,6 +38,8 @@ pub enum InfoContent {
     },
     /// 选中的音轨（由 doc.edit.track_selected 决定哪些音轨）
     Track,
+    /// 选中的混音通道（MIX 通道 AR / 通道条点击）。
+    Channel(yinhe_types::MixerChannelId),
 }
 
 /// 面板区低优先级讲解：仅当指针悬停在该面板可见区域（`clip_rect`）时写入。
@@ -78,9 +80,10 @@ pub fn show(
     Option<event_browser::JumpRequest>,
     Option<usize>,
     bool,
+    bool,
 ) {
     let Some(tab) = *right_tab else {
-        return (false, None, None, false);
+        return (false, None, None, false, false);
     };
     // 旧入口（右键/快捷键 focus Info/EventBrowser）→ 仅在切换的那一帧定位选项卡，
     // 避免每帧重置用户手动选择的选项卡。
@@ -88,9 +91,32 @@ pub fn show(
     let last: Option<RightTab> = ui.data_mut(|d| d.get_temp(focus_id));
     if last != Some(tab) {
         match tab {
-            RightTab::Info => layout.focus_tab(PanelKind::Track),
+            // MIX 语境下「属性」默认指向通道属性，其它视图指向音轨属性。
+            RightTab::Info => layout.focus_tab(if is_mix {
+                PanelKind::Channel
+            } else {
+                PanelKind::Track
+            }),
         }
         ui.data_mut(|d| d.insert_temp(focus_id, tab));
+    }
+
+    // 通道/音轨焦点切换：点击 MIX 通道行时自动切到「通道属性」，
+    // 点击轨道行时切回「音轨属性」。只在判别式变化的那一帧 focus。
+    let content_focus_id = ui.scope_id().with("rpanel_content_focus");
+    let content_tag = match info_content {
+        Some(InfoContent::Channel(_)) => 1u8,
+        Some(InfoContent::Track) => 2,
+        _ => 0,
+    };
+    let last_tag: Option<u8> = ui.data_mut(|d| d.get_temp(content_focus_id));
+    if last_tag != Some(content_tag) {
+        match content_tag {
+            1 => layout.focus_tab(PanelKind::Channel),
+            2 if is_mix => layout.focus_tab(PanelKind::Track),
+            _ => {}
+        }
+        ui.data_mut(|d| d.insert_temp(content_focus_id, content_tag));
     }
 
     // 状态栏讲解行：悬停右栏面板本身（控件提示由各控件以高优先级覆盖）
@@ -129,6 +155,8 @@ pub fn show(
     );
 
     let mut port_changed = false;
+    // 通道属性面板的混音参数改动（单独推送，避免重建音频模型）。
+    let mut mixer_changed = false;
     // 图层拖动排序等音轨结构变化 → 需 drop 引擎重建（与 port_changed 同路径）。
     let mut structural_changed = false;
     let mut jump_request: Option<event_browser::JumpRequest> = None;
@@ -154,6 +182,17 @@ pub fn show(
                             info_content,
                             automation_drag_ghost,
                         );
+                    });
+            }
+            PanelKind::Channel => {
+                egui::ScrollArea::vertical()
+                    .id_salt("rpanel_channel_scroll")
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        let out =
+                            info_panel::show_channel(ui, doc_ref.as_deref_mut(), info_content);
+                        port_changed |= out.model_changed;
+                        mixer_changed |= out.mixer_changed;
                     });
             }
             PanelKind::Batch => {
@@ -220,5 +259,6 @@ pub fn show(
         jump_request,
         history_jump,
         width_drag_ended || layout_changed,
+        mixer_changed,
     )
 }

@@ -95,6 +95,8 @@ impl App {
             let mut ca_notify = false;
             let mut ca_set_strips: Vec<(u8, yinhe_mixer::StripParams)> = Vec::new();
             let mut ca_set_audio_strips: Vec<(u16, yinhe_mixer::StripParams)> = Vec::new();
+            let mut ca_menu_actions: Vec<crate::arrange::context_menu::TimelineMenuAction> =
+                Vec::new();
             // 通道电平显示值（独立衰减；见 App::ca_channel_levels）。
             let ca_dt = ui.ctx().input(|i| i.stable_dt).min(0.1);
             let (ca_midi_levels, ca_audio_levels) = self.ca_channel_levels(idx, ca_dt);
@@ -133,9 +135,11 @@ impl App {
                     &ca_audio_levels,
                     &mut ca_set_strips,
                     &mut ca_set_audio_strips,
+                    &mut ca_menu_actions,
                 );
                 // guard dropped here
             }
+            self.apply_timeline_menu_actions(ui.ctx(), ca_menu_actions);
             if ca_notify {
                 self.notify_audio_model_changed();
             }
@@ -285,19 +289,20 @@ impl App {
                 .workspace
                 .active_doc
                 .and_then(|idx| self.workspace.documents.get_mut(idx));
-            let (changed, jump_request, history_jump, width_drag_ended) = crate::right_panel::show(
-                ui,
-                right_rect,
-                &mut self.right_panel_width,
-                &mut self.right_tab,
-                &mut self.right_panel_layout,
-                self.view_mode == crate::chrome::mode_bar::ViewMode::Mix,
-                doc,
-                self.audio_state.handle.as_ref(),
-                &mut self.event_browser_state,
-                &mut self.info_content,
-                self.automation_drag_ghost,
-            );
+            let (changed, jump_request, history_jump, width_drag_ended, mixer_changed) =
+                crate::right_panel::show(
+                    ui,
+                    right_rect,
+                    &mut self.right_panel_width,
+                    &mut self.right_tab,
+                    &mut self.right_panel_layout,
+                    self.view_mode == crate::chrome::mode_bar::ViewMode::Mix,
+                    doc,
+                    self.audio_state.handle.as_ref(),
+                    &mut self.event_browser_state,
+                    &mut self.info_content,
+                    self.automation_drag_ghost,
+                );
             if changed {
                 // 右栏改动（改 port/channel、图层拖动排序）→ 统一走 notify：
                 // 通道集合真的变了才 teardown 重建，重排等只 reload_notes。
@@ -305,6 +310,15 @@ impl App {
                 // 通道归属/总线输出变化在通道集合不变时只走 notify，
                 // 这里补一次混音全量推送，保证引擎输出路由同步。
                 if let Some(idx) = self.workspace.active_doc {
+                    self.push_mixer_state_to_engine(idx);
+                }
+            }
+            if mixer_changed && !changed {
+                // 通道属性面板：推子/声像/M/S/主输出等只改混音参数，
+                // 不需要重建音频模型（与混音台 apply_strip 同一 undo 合并路径）。
+                if let Some(idx) = self.workspace.active_doc {
+                    self.note_mixer_edit(t!("undo.mix_param").as_ref());
+                    self.workspace.documents[idx].mark_mixer_dirty();
                     self.push_mixer_state_to_engine(idx);
                 }
             }

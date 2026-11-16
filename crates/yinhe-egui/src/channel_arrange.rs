@@ -71,6 +71,7 @@ pub(crate) fn show(
     // 通道行 M/S 变更输出（由调用方 note_mixer_edit + apply_*）。
     set_strips: &mut Vec<(u8, yinhe_mixer::StripParams)>,
     set_audio_strips: &mut Vec<(u16, yinhe_mixer::StripParams)>,
+    menu_actions: &mut Vec<crate::arrange::context_menu::TimelineMenuAction>,
 ) {
     let arr_total_w = layout.remaining.width();
     crate::widgets::hint::set_region(ui.ctx(), t!("hint.panel.mix"));
@@ -269,6 +270,7 @@ pub(crate) fn show(
 
     // ── 左侧通道面板 ──
     let mut picker_track: Option<u16> = None;
+    let mut panel_remove_automation: Option<(u16, usize)> = None;
     let mut panel_audio_dirty = false;
     let mut panel_am_ms_dirty = false;
     // 面板色带统一为通道色（与 GPU 层同源）。
@@ -288,6 +290,7 @@ pub(crate) fn show(
             track_selected: &mut doc.edit.track_selected,
             selection_anchor,
             info_content,
+            right_tab,
             expanded_midi: &mut doc.edit.chan_ar_expanded_midi,
             expanded_audio: &mut doc.edit.chan_ar_expanded_audio,
             tracks: &doc.data.model.tracks,
@@ -311,11 +314,19 @@ pub(crate) fn show(
         panel_audio_dirty = out.audio_dirty;
         panel_am_ms_dirty = out.am_ms_dirty;
         picker_track = out.automation_picker;
+        panel_remove_automation = out.remove_automation;
         set_strips.extend(out.set_strips);
         set_audio_strips.extend(out.set_audio_strips);
     });
     if let Some(t) = picker_track {
         *automation_picker_req = Some(t as usize);
+    }
+    if let Some((track, lane)) = panel_remove_automation {
+        let before = doc.capture_snapshot();
+        if let Some(action) = doc.remove_automation_lane(track as usize, lane) {
+            doc.push_undo(action, t!("undo.delete_automation_lane").as_ref(), before);
+            *needs_audio_notify = true;
+        }
     }
     if panel_audio_dirty {
         crate::right_panel::info_panel::send_skip_tracks(doc, audio);
@@ -387,6 +398,7 @@ pub(crate) fn show(
             selected_audio_clips: &mut doc.edit.selected_audio_clips,
             audio_commands: &mut audio_commands,
             clip_commands: &mut clip_commands,
+            menu_actions,
         };
         let mut cfg = view::CaViewCfg {
             is_playing: cfg.is_playing,

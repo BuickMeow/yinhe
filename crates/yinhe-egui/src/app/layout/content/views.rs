@@ -49,6 +49,8 @@ impl App {
         let mut dock_req: Option<crate::chrome::device_chain::DockContext> = None;
         // 右键固定 Bus 行 → 删除总线。
         let mut bus_remove_req: Option<u16> = None;
+        // 音乐区右键菜单动作。
+        let mut menu_actions: Vec<crate::arrange::context_menu::TimelineMenuAction> = Vec::new();
         {
             let mut guard =
                 crate::app::main_loop::ReplaceGuard::new(&mut self.workspace.documents[idx]);
@@ -100,9 +102,11 @@ impl App {
                 &mut mixer_dirty,
                 &mut dock_req,
                 &mut bus_remove_req,
+                &mut menu_actions,
             );
             // guard dropped here
         }
+        self.apply_timeline_menu_actions(ui.ctx(), menu_actions);
         if request_pianoroll {
             crate::chrome::mode_bar::set_pianoroll_visible(
                 &mut self.show_pianoroll_in_arrange,
