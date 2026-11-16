@@ -45,6 +45,9 @@ pub struct Theme {
     pub mode_bar_text: Color32,
     // ── 强调 / 选中 / hover ──
     pub accent_active: Color32,
+    /// 稍淡的强调色（背景混强调色 50%）：用于需要比 `selected_bg` 更醒目的
+    /// 大面积填充（如旋钮扇形），仍跟随主题亮暗与色相。
+    pub accent_soft: Color32,
     pub selected_bg: Color32,
     pub contrast_fg: Color32,
     // ── 按钮 / 边框 ──
@@ -209,6 +212,8 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
 
     // 色系设计：选中底 = 强调色混背景（暗主题深蓝、亮主题中浅蓝，同色相）
     let selected_bg = mix(bg, accent, 0.30);
+    // 稍强的大面积强调填充：比 selected_bg 更接近 accent，但仍保留背景底。
+    let accent_soft = mix(bg, accent, 0.50);
 
     Theme {
         app_bg: bg,
@@ -224,6 +229,7 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         text_faint,
         mode_bar_text: text_label,
         accent_active: accent,
+        accent_soft,
         selected_bg,
         contrast_fg: contrast,
         btn_bg: mix_btn_bg,
@@ -264,6 +270,8 @@ mod tests {
         assert_eq!(t.accent_active, Color32::from_rgb(100, 180, 255));
         // 选中底 = 背景混强调色（同色相）：25,25,28 混 (100,180,255) 30%
         assert_eq!(t.selected_bg, Color32::from_rgb(47, 71, 96));
+        // 大面积强调填充：同一混合 50%，比 selected_bg 更醒目
+        assert_eq!(t.accent_soft, Color32::from_rgb(62, 102, 141));
         assert_eq!(t.danger, Color32::from_rgb(232, 17, 35));
         // 线条统一色 = 背景混主文字 18%：25 + (220-25)×0.18 ≈ 60
         assert_eq!(t.line_fg, Color32::from_rgb(60, 60, 62));

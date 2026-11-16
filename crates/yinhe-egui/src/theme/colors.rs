@@ -60,6 +60,7 @@ theme_getters! {
     text_disabled => text_disabled,
     mode_bar_text => mode_bar_text,
     accent_active => accent_active,
+    accent_soft => accent_soft,
     selected_bg => selected_bg,
     contrast_fg => contrast_fg,
     btn_bg => btn_bg,

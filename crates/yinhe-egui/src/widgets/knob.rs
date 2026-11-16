@@ -114,13 +114,13 @@ fn knob_impl(ui: &mut egui::Ui, value: &mut f32, diameter: f32, zero: ZeroMode) 
         let start = START_DEG.to_radians();
         let sweep = SWEEP_DEG.to_radians();
         // 值指示：外圈内的大扇形（从中心铺到刻度环内缘）。
-        // 扇形色直接取主题的 `selected_bg`（背景与 accent 的统一混合色），
-        // 不在组件里硬编码淡化系数；外圈最后绘制，始终压在扇形上。
+        // 扇形色直接取主题的 `accent_soft`（背景与 accent 以 50% 混合），
+        // 比 selected_bg 更醒目，且不在组件里硬编码系数。
         if let Some((from, to)) = arc_span(*value, zero) {
             let steps = 64;
             let mut mesh = egui::Mesh::default();
             let sector_color = if enabled {
-                crate::theme::selected_bg()
+                crate::theme::accent_soft()
             } else {
                 crate::theme::text_disabled().gamma_multiply(0.4)
             };
