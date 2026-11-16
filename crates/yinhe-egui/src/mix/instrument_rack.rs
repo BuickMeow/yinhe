@@ -16,6 +16,7 @@ use std::path::Path;
 use yinhe_audio::{AudioCommand, AudioHandle};
 use yinhe_clap::ClapProcessor;
 use yinhe_mixer::{InstrumentProcessor, MixerParams, PluginFormat};
+use yinhe_types::{RackOutput, RackOutputTopology};
 use yinhe_vst3::Vst3Processor;
 
 use super::plugin_instance::{PluginEntry, PluginInstance};
@@ -57,6 +58,8 @@ pub(crate) struct InstrumentRack {
     /// 正在 GUI 编辑（beginEdit 后未 endEdit）的乐器 uid 集：
     /// 一次拖动合并为一条 undo 的分组依据。
     pub gui_param_editing: std::collections::HashSet<u64>,
+    /// 输出拓扑可能变化的通道（restart / I/O 变化后由 UI 重查一次）。
+    pub topology_dirty: std::collections::HashSet<u8>,
 }
 
 impl InstrumentRack {
@@ -72,6 +75,30 @@ impl InstrumentRack {
             .iter_mut()
             .filter(|s| s.channel == channel)
             .nth(index)
+    }
+
+    /// 某通道第一个可用实例的输出拓扑；无实例返回 None。
+    pub fn output_topology(&mut self, channel: u8) -> Option<RackOutputTopology> {
+        let rt = self
+            .slots
+            .iter_mut()
+            .find(|s| s.channel == channel && s.instance.is_some())?;
+        let instance = rt.instance.as_mut()?;
+        let dynamic = instance.outputs_dynamic();
+        let outputs: Vec<RackOutput> = instance
+            .audio_outputs()
+            .into_iter()
+            .map(|(name, channels)| RackOutput { name, channels })
+            .collect();
+        if outputs.is_empty() {
+            return None;
+        }
+        Some(RackOutputTopology { outputs, dynamic })
+    }
+
+    /// 取出本帧拓扑变化的通道。
+    pub fn take_topology_dirty(&mut self) -> Vec<u8> {
+        self.topology_dirty.drain().collect()
     }
 
     /// 该通道的槽位数量（UI 列表长度 / 设备链乐器段长度）。
@@ -360,6 +387,9 @@ impl InstrumentRack {
             }
             if requests.restart && rt.sent {
                 restarts.push((rt.channel, rt.slot_id));
+            }
+            if requests.restart {
+                self.topology_dirty.insert(rt.channel);
             }
         }
         for (uid, editing) in editing_now {

@@ -201,6 +201,33 @@ impl ClapPluginInstance {
         ))
     }
 
+    /// 查询插件声明的输出端口拓扑（名称 + 声道数）。
+    ///
+    /// 只在实例化/重扫时调用；不支持 audio-ports 扩展时按一个立体声输出。
+    pub fn audio_outputs(&mut self) -> Vec<(String, u16)> {
+        use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
+        let mut handle = self.instance.plugin_handle();
+        let Some(ports) = handle.get_extension::<PluginAudioPorts>() else {
+            return vec![("Main".into(), 2)];
+        };
+        let count = ports.count(&mut handle, false);
+        let mut buf = AudioPortInfoBuffer::new();
+        let mut out = Vec::with_capacity(count as usize);
+        for i in 0..count {
+            let Some(info) = ports.get(&mut handle, i, false, &mut buf) else {
+                continue;
+            };
+            out.push((
+                String::from_utf8_lossy(info.name).into_owned(),
+                info.channel_count.min(u16::MAX as u32) as u16,
+            ));
+        }
+        if out.is_empty() {
+            out.push(("Main".into(), 2));
+        }
+        out
+    }
+
     /// 查询插件声明的 audio ports 布局；插件不支持 audio-ports 扩展时
     /// 回退到「一进一出各立体声」的最小布局。
     fn query_port_layout(&mut self) -> crate::processor::PortLayout {

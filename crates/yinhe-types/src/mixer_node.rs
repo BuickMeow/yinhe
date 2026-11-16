@@ -27,6 +27,24 @@ pub enum RackOutputMode {
     /// 内置音源按 Track 拆分音频；每条 Track 有自己的 LC。
     /// 外部单输出插件不支持该模式。
     PerTrack,
+    /// 外部多输出插件按输出端口拆分；每条 Track 映射到一个输出。
+    PerOutput,
+}
+
+/// 插件声明的一个音频输出。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RackOutput {
+    pub name: String,
+    /// 该输出的声道数（宿主按立体声取前两声道）。
+    pub channels: u16,
+}
+
+/// Rack 的插件输出拓扑（实例化/重扫时查询一次，不每帧轮询）。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RackOutputTopology {
+    pub outputs: Vec<RackOutput>,
+    /// 插件是否可能通过 rescan / IoChanged 改变输出数量。
+    pub dynamic: bool,
 }
 
 /// 共享乐器 Rack 的稳定身份。

@@ -29,8 +29,15 @@ impl AudioEngine {
             }
         }
         for (dense, slot) in self.instruments.iter().enumerate() {
-            if slot.is_some() && dense < n {
-                active[dense] = true;
+            if let Some(slot) = slot {
+                if dense < n {
+                    active[dense] = true;
+                }
+                for &out in &slot.output_dense {
+                    if out != u32::MAX as usize && out < n {
+                        active[out] = true;
+                    }
+                }
             }
         }
         for &ach in self.channel_layout.audio_channels() {

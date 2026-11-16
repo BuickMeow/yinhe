@@ -48,6 +48,7 @@ impl AudioEngine {
         self.model = Some(audio_model);
         self.apply_all_synth_params(model);
         self.sync_track_lc_routing();
+        self.sync_rack_outputs();
     }
 
     /// 应用某全局通道的工程级音源参数（含默认值，确保换工程时清空旧覆盖）。
@@ -93,6 +94,7 @@ impl AudioEngine {
             self.apply_all_synth_params(&model);
         }
         self.sync_track_lc_routing();
+        self.sync_rack_outputs();
 
         // Seek to the audible position to avoid triggering all notes
         // before the current position (which would cause voice stealing).
@@ -135,6 +137,7 @@ impl AudioEngine {
         }
         self.yin_model = Some(yin_model);
         self.sync_track_lc_routing();
+        self.sync_rack_outputs();
     }
 
     fn setup_percussion(&mut self, model: &AudioModel) {

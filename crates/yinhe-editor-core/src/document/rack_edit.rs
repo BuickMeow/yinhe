@@ -4,12 +4,13 @@
 //! 内置音源可以切到 `PerTrack`：每条 MIDI Track 分配一个稳定 LC，
 //! 引擎按轨拆分音频后分别进入各自的 LC。
 //!
-//! 外部插件（Rack 里有 `instruments`）不支持按轨拆分，切换会被拒绝。
+//! 外部单输出插件（Rack 里有 `instruments`）不支持按轨拆分；
+//! 多输出插件使用 `PerOutput`，每个输出一条 LC，Track 显式映射到输出。
 
 use std::sync::Arc;
 
 use yinhe_core::TrackKind;
-use yinhe_types::RackOutputMode;
+use yinhe_types::{RackOutputMode, RackOutputTopology};
 
 use crate::document::Document;
 
@@ -37,6 +38,15 @@ impl Document {
         if mode == RackOutputMode::PerTrack && !rack.instruments.is_empty() {
             return false;
         }
+        if mode == RackOutputMode::PerOutput {
+            // PerOutput 只由 set_rack_outputs 按检测到的拓扑设置。
+            return false;
+        }
+        // 关闭 PerOutput 时释放按输出分配的 LC。
+        let old_output_lcs = std::mem::take(&mut self.mixer.racks[channel as usize].output_lcs);
+        for lc in old_output_lcs {
+            self.mixer.remove_track_lc(lc);
+        }
 
         self.mixer.racks[channel as usize].output_mode = mode;
         let model = Arc::make_mut(&mut self.data.model);
@@ -61,12 +71,104 @@ impl Document {
                 }
                 RackOutputMode::Shared => {
                     let track = Arc::make_mut(track);
+                    track.rack_output = None;
                     if let Some(id) = track.lc.take() {
                         self.mixer.remove_track_lc(id);
                     }
                 }
+                RackOutputMode::PerOutput => {}
             }
         }
+        self.data.bump_revision();
+        self.mark_mixer_dirty();
+        true
+    }
+
+    /// 写入插件检测到的输出拓扑；多输出时分配每个输出一条 LC。
+    ///
+    /// 返回是否有变化。`PerOutput` 下每条 Track 的 `rack_output` 选择输出，
+    /// `lc` 指向该输出的共享 LC。单输出/无输出回到 `Shared`。
+    pub fn set_rack_outputs(&mut self, channel: u8, topology: RackOutputTopology) -> bool {
+        let Some(rack) = self.mixer.racks.get(channel as usize) else {
+            return false;
+        };
+        let count = topology.outputs.len();
+        let old_count = rack.output_lcs.len();
+        if rack.outputs == topology && (count <= 1 || old_count == count) {
+            return false;
+        }
+        // 旧输出 LC 全部释放；稍后按新拓扑重建。
+        let old_lcs = std::mem::take(&mut self.mixer.racks[channel as usize].output_lcs);
+        for lc in old_lcs {
+            self.mixer.remove_track_lc(lc);
+        }
+        self.mixer.racks[channel as usize].outputs = topology.clone();
+        if count <= 1 {
+            self.mixer.racks[channel as usize].output_mode = RackOutputMode::Shared;
+            let model = Arc::make_mut(&mut self.data.model);
+            for track in model.tracks.iter_mut() {
+                if track.kind == TrackKind::Midi && track.global_channel() == channel {
+                    let track = Arc::make_mut(track);
+                    track.rack_output = None;
+                    track.lc = None;
+                }
+            }
+        } else {
+            self.mixer.racks[channel as usize].output_mode = RackOutputMode::PerOutput;
+            let source = self.mixer.channels[channel as usize].clone();
+            let mut lcs = Vec::with_capacity(count);
+            for _ in 0..count {
+                let id = self.mixer.add_track_lc();
+                if let Some(node) = self.mixer.track_node_mut(id) {
+                    node.strip = source.strip;
+                    node.inserts = source.inserts.clone();
+                    node.sends = source.sends.clone();
+                    node.output = source.output;
+                }
+                lcs.push(id);
+            }
+            let model = Arc::make_mut(&mut self.data.model);
+            for track in model.tracks.iter_mut() {
+                if track.kind != TrackKind::Midi || track.global_channel() != channel {
+                    continue;
+                }
+                let out = track.rack_output.unwrap_or(0).min(count as u16 - 1);
+                let track = Arc::make_mut(track);
+                track.rack_output = Some(out);
+                track.lc = Some(lcs[out as usize]);
+            }
+            self.mixer.racks[channel as usize].output_lcs = lcs;
+        }
+        self.data.bump_revision();
+        self.mark_mixer_dirty();
+        true
+    }
+
+    /// 修改某轨在多输出 Rack 中的输出映射（0 起）。
+    pub fn set_track_rack_output(&mut self, track_idx: usize, output: u16) -> bool {
+        let model = Arc::make_mut(&mut self.data.model);
+        let Some(track) = model.tracks.get(track_idx) else {
+            return false;
+        };
+        if track.kind != TrackKind::Midi {
+            return false;
+        }
+        let channel = track.global_channel();
+        let Some(rack) = self.mixer.racks.get(channel as usize) else {
+            return false;
+        };
+        let Some(lc) = rack.output_lcs.get(output as usize).copied() else {
+            return false;
+        };
+        if self.mixer.track_node(lc).is_none() {
+            self.mixer.add_track_lc_with_id(lc);
+        }
+        let track = Arc::make_mut(&mut model.tracks[track_idx]);
+        if track.rack_output == Some(output) && track.lc == Some(lc) {
+            return false;
+        }
+        track.rack_output = Some(output);
+        track.lc = Some(lc);
         self.data.bump_revision();
         self.mark_mixer_dirty();
         true
@@ -92,24 +194,52 @@ impl Document {
                 .get(channel as usize)
                 .map(|rack| rack.output_mode)
                 .unwrap_or_default();
-            match (mode, track.lc) {
-                (RackOutputMode::PerTrack, None) => {
-                    let id = self.mixer.add_track_lc();
-                    Arc::make_mut(track).lc = Some(id);
-                    changed = true;
-                }
-                (RackOutputMode::PerTrack, Some(id)) => {
+            match mode {
+                RackOutputMode::PerOutput => {
+                    let count = self.mixer.racks[channel as usize]
+                        .output_lcs
+                        .len()
+                        .max(self.mixer.racks[channel as usize].outputs.outputs.len());
+                    if count == 0 {
+                        continue;
+                    }
+                    while self.mixer.racks[channel as usize].output_lcs.len() < count {
+                        let id = self.mixer.add_track_lc();
+                        self.mixer.racks[channel as usize].output_lcs.push(id);
+                        changed = true;
+                    }
+                    let out = track.rack_output.unwrap_or(0).min(count as u16 - 1) as usize;
+                    let id = self.mixer.racks[channel as usize].output_lcs[out];
                     if self.mixer.track_node(id).is_none() {
                         self.mixer.add_track_lc_with_id(id);
                         changed = true;
                     }
+                    if track.lc != Some(id) || track.rack_output != Some(out as u16) {
+                        let track = Arc::make_mut(track);
+                        track.lc = Some(id);
+                        track.rack_output = Some(out as u16);
+                        changed = true;
+                    }
                 }
-                (RackOutputMode::Shared, Some(id)) => {
-                    Arc::make_mut(track).lc = None;
-                    self.mixer.remove_track_lc(id);
-                    changed = true;
+                RackOutputMode::PerTrack => match track.lc {
+                    None => {
+                        let id = self.mixer.add_track_lc();
+                        Arc::make_mut(track).lc = Some(id);
+                        changed = true;
+                    }
+                    Some(id) => {
+                        if self.mixer.track_node(id).is_none() {
+                            self.mixer.add_track_lc_with_id(id);
+                            changed = true;
+                        }
+                    }
+                },
+                RackOutputMode::Shared => {
+                    let track = Arc::make_mut(track);
+                    if track.lc.take().is_some() || track.rack_output.take().is_some() {
+                        changed = true;
+                    }
                 }
-                (RackOutputMode::Shared, None) => {}
             }
         }
         if changed {
@@ -138,6 +268,39 @@ mod tests {
         assert!(doc.set_rack_output_mode(0, RackOutputMode::Shared));
         assert!(doc.data.model.tracks[1].lc.is_none());
         assert!(doc.mixer.track_node(lc).is_none());
+    }
+
+    #[test]
+    fn multi_output_topology_allocates_output_lcs_and_maps_tracks() {
+        use yinhe_types::{RackOutput, RackOutputTopology};
+        let mut doc = Document::empty();
+        let topology = RackOutputTopology {
+            outputs: vec![
+                RackOutput {
+                    name: "Out 1".into(),
+                    channels: 2,
+                },
+                RackOutput {
+                    name: "Out 2".into(),
+                    channels: 2,
+                },
+            ],
+            dynamic: true,
+        };
+        assert!(doc.set_rack_outputs(0, topology));
+        let lcs = doc.mixer.racks[0].output_lcs.clone();
+        assert_eq!(lcs.len(), 2);
+        assert_eq!(doc.rack_output_mode(0), RackOutputMode::PerOutput);
+        assert_eq!(doc.data.model.tracks[1].lc, Some(lcs[0]));
+        assert_eq!(doc.data.model.tracks[1].rack_output, Some(0));
+
+        assert!(doc.set_track_rack_output(1, 1));
+        assert_eq!(doc.data.model.tracks[1].lc, Some(lcs[1]));
+        assert_eq!(doc.data.model.tracks[1].rack_output, Some(1));
+
+        assert!(doc.set_rack_output_mode(0, RackOutputMode::Shared));
+        assert!(doc.data.model.tracks[1].lc.is_none());
+        assert!(doc.mixer.track_node(lcs[0]).is_none());
     }
 
     #[test]

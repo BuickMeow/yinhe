@@ -13,7 +13,10 @@
 use std::ops::{Deref, DerefMut};
 
 use serde::{Deserialize, Serialize};
-use yinhe_types::{AutomationLane, BusId, LogicalChannelId, MixerNodeId, RackId, RackOutputMode};
+use yinhe_types::{
+    AutomationLane, BusId, LogicalChannelId, MixerNodeId, RackId, RackOutputMode,
+    RackOutputTopology,
+};
 
 use crate::params::{InsertRef, SendParams, StripParams};
 
@@ -30,6 +33,12 @@ pub struct RackParams {
     /// 输出拓扑：共享一条 LC，或内置音源按 Track 拆分。
     #[serde(default)]
     pub output_mode: RackOutputMode,
+    /// 插件声明的输出拓扑（实例化/重扫时更新；内置音源为空）。
+    #[serde(default)]
+    pub outputs: RackOutputTopology,
+    /// 多输出插件每个输出对应的 LC。`len` = `outputs.outputs.len()`。
+    #[serde(default)]
+    pub output_lcs: Vec<LogicalChannelId>,
 }
 
 impl RackParams {
@@ -38,6 +47,8 @@ impl RackParams {
             id,
             instruments: Vec::new(),
             output_mode: RackOutputMode::Shared,
+            outputs: RackOutputTopology::default(),
+            output_lcs: Vec::new(),
         }
     }
 }

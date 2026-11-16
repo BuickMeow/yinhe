@@ -3581,3 +3581,107 @@ fn frozen_lc_forces_channel_active() {
     engine.channel_activity(&mut active);
     assert_eq!(active.first().copied(), Some(true));
 }
+
+/// Rack 多输出：每个输出 LC 映射到自己的 dense，插件渲染时写入对应缓冲。
+#[test]
+fn rack_output_lcs_map_to_plugin_output_dense() {
+    use std::sync::Arc;
+    use yinhe_core::YinModel;
+    use yinhe_mixer::MixerParams;
+    use yinhe_types::{LogicalChannelId, TRACK_LC_BASE};
+
+    let mut model = YinModel::new_empty_with_16_tracks();
+    let lc_a = LogicalChannelId(TRACK_LC_BASE);
+    let lc_b = LogicalChannelId(TRACK_LC_BASE + 1);
+    {
+        let track = Arc::make_mut(&mut model.tracks[1]);
+        track.lc = Some(lc_a);
+    }
+    {
+        let track = Arc::make_mut(&mut model.tracks[2]);
+        track.channel = 0;
+        track.port = 0;
+        track.lc = Some(lc_b);
+    }
+    model.rebuild();
+    let layout = ChannelLayout::from_model(&model);
+    let dense = layout.dense_for(0);
+    let dense_a = layout.track_lc_dense_for(lc_a).expect("a").1;
+    let dense_b = layout.track_lc_dense_for(lc_b).expect("b").1;
+
+    let mut engine = AudioEngine::new(48_000, layout);
+    let mut mixer = MixerParams::default();
+    mixer.racks[0].output_lcs = vec![lc_a, lc_b];
+    mixer.racks[0].outputs.outputs = vec![
+        yinhe_types::RackOutput {
+            name: "Out 1".into(),
+            channels: 2,
+        },
+        yinhe_types::RackOutput {
+            name: "Out 2".into(),
+            channels: 2,
+        },
+    ];
+    engine.mixer_params = mixer;
+    engine.instruments[dense as usize] = Some(crate::instrument::InstrumentSource::new());
+    engine.sync_rack_outputs();
+    assert_eq!(
+        engine.instruments[dense as usize]
+            .as_ref()
+            .expect("slot")
+            .output_dense,
+        vec![dense_a as usize, dense_b as usize]
+    );
+}
+
+/// 多输出乐器：Out 1 / Out 2 分别写入两条 LC 的 dense 缓冲。
+#[test]
+fn multi_output_instrument_writes_separate_lc_buffers() {
+    use yinhe_mixer::{ChannelBuffers, InstrumentProcessor, PluginEvent};
+    struct MultiOut;
+    impl InstrumentProcessor for MultiOut {
+        fn process(
+            &mut self,
+            _events: &[PluginEvent],
+            out_l: &mut [f32],
+            out_r: &mut [f32],
+            _position: u64,
+        ) {
+            out_l.fill(1.0);
+            out_r.fill(1.0);
+        }
+        fn process_outputs(
+            &mut self,
+            _events: &[PluginEvent],
+            outputs: &mut [ChannelBuffers],
+            _position: u64,
+        ) {
+            for (i, out) in outputs.iter_mut().enumerate() {
+                out.left.fill((i + 1) as f32);
+                out.right.fill((i + 1) as f32);
+            }
+        }
+        fn into_any(self: Box<Self>) -> Box<dyn std::any::Any + Send> {
+            self
+        }
+    }
+
+    let layout = ChannelLayout::from_mask(vec![true, true, true]);
+    let mut engine = AudioEngine::new(48_000, layout);
+    engine.mixer.resize(3, 8, &[]);
+    engine.instruments[0] = Some(crate::instrument::InstrumentSource {
+        chain: vec![crate::instrument::InstrumentProc {
+            slot_id: 1,
+            params: Vec::new(),
+            processor: Box::new(MultiOut),
+        }],
+        events: Vec::new(),
+        output_dense: vec![1, 2],
+    });
+    engine.render_instruments(0, 0, 8);
+
+    let out1 = engine.mixer.channel_buffers(1).expect("out 1");
+    assert!(out1.left.iter().all(|&v| v == 1.0));
+    let out2 = engine.mixer.channel_buffers(2).expect("out 2");
+    assert!(out2.left.iter().all(|&v| v == 2.0));
+}

@@ -96,11 +96,68 @@ fn show_midi(
     let rack = RackId::from_midi_channel(ch);
     let plugin = !doc.mixer.rack_instruments(rack).is_empty();
     if plugin {
-        value_row(
-            ui,
-            t!("rack.output.shared").to_string(),
-            t!("rack.output.plugin_disabled").to_string(),
-        );
+        let outputs = doc
+            .mixer
+            .racks
+            .get(ch as usize)
+            .map(|rack| rack.outputs.outputs.clone())
+            .unwrap_or_default();
+        if outputs.len() <= 1 {
+            let name = outputs
+                .first()
+                .map(|o| o.name.as_str())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("Main");
+            value_row(
+                ui,
+                t!("rack.output.single").to_string(),
+                format!("{} · {}ch", name, outputs.first().map_or(2, |o| o.channels)),
+            );
+        } else {
+            value_row(
+                ui,
+                t!("rack.output.multi", count = outputs.len()).to_string(),
+                t!("rack.output.per_output").to_string(),
+            );
+            let track_list = tracks_on_channel(doc, MixerChannelId::Midi(ch));
+            let options: Vec<(usize, String)> = outputs
+                .iter()
+                .enumerate()
+                .map(|(i, out)| {
+                    let label = if out.name.is_empty() {
+                        format!("Out {}", i + 1)
+                    } else {
+                        format!("Out {} · {}", i + 1, out.name)
+                    };
+                    (i, label)
+                })
+                .collect();
+            for track_idx in track_list {
+                let Some(track) = doc.data.model.tracks.get(track_idx as usize) else {
+                    continue;
+                };
+                let name = track.name.clone();
+                let mut sel = track
+                    .rack_output
+                    .unwrap_or(0)
+                    .min(options.len().saturating_sub(1) as u16)
+                    as usize;
+                let mut changed = false;
+                panel_row(ui, &name, |ui| {
+                    changed = crate::widgets::combo::combo_select(
+                        ui,
+                        ("rack_track_output", track_idx),
+                        &mut sel,
+                        ui.available_width().max(1.0),
+                        &options,
+                    );
+                });
+                if changed && doc.set_track_rack_output(track_idx as usize, sel as u16) {
+                    out.model_changed = true;
+                    out.mixer_changed = true;
+                }
+            }
+        }
     } else if !per_track_supported {
         value_row(
             ui,
@@ -333,7 +390,14 @@ fn tracks_on_channel(doc: &Document, ch: MixerChannelId) -> Vec<u16> {
         .tracks
         .iter()
         .enumerate()
-        .filter(|(_, tr)| tr.mixer_channel() == Some(ch))
+        .filter(|(_, tr)| match ch {
+            MixerChannelId::Midi(ch) => {
+                tr.kind == yinhe_core::TrackKind::Midi && tr.global_channel() == ch
+            }
+            MixerChannelId::Audio(ch) => tr.audio_channel == Some(ch),
+            MixerChannelId::TrackLc(id) => tr.lc == Some(id),
+            MixerChannelId::Bus(_) | MixerChannelId::Master => false,
+        })
         .map(|(i, _)| i as u16)
         .collect()
 }

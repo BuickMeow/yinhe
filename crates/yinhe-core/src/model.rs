@@ -381,6 +381,9 @@ pub struct TrackData {
     /// 只有 Rack 输出模式为 PerTrack 的内置音源轨才会有值。
     #[serde(default)]
     pub lc: Option<yinhe_types::LogicalChannelId>,
+    /// 多输出插件：该轨映射到 Rack 的第几个输出（0 起，None = 0）。
+    #[serde(default)]
+    pub rack_output: Option<u16>,
     /// 文件夹嵌套深度（0 = 根层）。Folder 轨本身也占一层。
     #[serde(default)]
     pub folder_depth: u8,
@@ -496,6 +499,7 @@ impl TrackData {
             collapsed: false,
             audio_channel: None,
             lc: None,
+            rack_output: None,
             audio_clips: Vec::new(),
             clips: Vec::new(),
             notes: Vec::new(),

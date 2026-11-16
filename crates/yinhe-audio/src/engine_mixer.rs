@@ -40,6 +40,7 @@ impl AudioEngine {
         }
         self.sync_output_routing();
         self.sync_sends_to_graph();
+        self.sync_rack_outputs();
     }
 
     /// 把持久化的通道主输出路由推到混音图。
@@ -657,6 +658,7 @@ impl AudioEngine {
         if let Some(old) = old {
             self.instrument_returns.push((slot_id, old));
         }
+        self.sync_rack_outputs();
         self.refresh_channel_latency(dense);
     }
 

@@ -289,6 +289,20 @@ impl PluginInstance {
         }
     }
 
+    /// 当前宿主实际路由的音频输出（名称 + 声道数）。
+    pub fn audio_outputs(&mut self) -> Vec<(String, u16)> {
+        match self {
+            Self::Clap(inst) => inst.audio_outputs(),
+            Self::Vst3 { instance, .. } => instance.audio_outputs(),
+            Self::Builtin { .. } => Vec::new(),
+        }
+    }
+
+    /// 输出拓扑是否可能随插件 rescan 变化。
+    pub fn outputs_dynamic(&self) -> bool {
+        matches!(self, Self::Clap(_))
+    }
+
     pub fn param_queue(&self) -> Arc<ParamQueue> {
         match self {
             Self::Clap(inst) => inst.param_queue(),

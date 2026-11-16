@@ -454,6 +454,30 @@ impl Vst3PluginInstance {
         Ok(processor)
     }
 
+    /// 当前宿主实际路由的音频输出。
+    ///
+    /// VST3 第一版只激活/分配主输出总线，因此这里始终返回一个输出；
+    /// 插件声明的其他输出总线尚未接入宿主（见 `Vst3Processor` 文档）。
+    pub fn audio_outputs(&self) -> Vec<(String, u16)> {
+        let n_out = unsafe { self.component.getBusCount(kAudio as i32, kOutput as i32) };
+        if n_out <= 0 {
+            return vec![("Main".into(), 2)];
+        }
+        let mut info = std::mem::MaybeUninit::<vst3::Steinberg::Vst::BusInfo>::uninit();
+        let r = unsafe {
+            self.component
+                .getBusInfo(kAudio as i32, kOutput as i32, 0, info.as_mut_ptr())
+        };
+        if r != kResultOk {
+            return vec![("Main".into(), 2)];
+        }
+        let info = unsafe { info.assume_init() };
+        vec![(
+            "Main".into(),
+            info.channelCount.clamp(0, u16::MAX as i32) as u16,
+        )]
+    }
+
     /// 参数列表（创建时枚举；插件请求重扫后由 [`refresh_params`](Self::refresh_params) 更新）。
     pub fn params(&self) -> &[Vst3ParamInfo] {
         &self.params

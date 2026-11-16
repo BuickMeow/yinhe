@@ -323,6 +323,7 @@ fn load_yin_bytes_inner(
             collapsed: tm.collapsed,
             audio_channel: tm.audio_channel,
             lc: tm.lc,
+            rack_output: tm.rack_output,
             audio_clips: tm.audio_clips.clone(),
             clips: tm.clips.clone(),
             notes: Vec::new(), // notes loaded via NoteLoader

@@ -7,6 +7,8 @@ use yinhe_editor_core::quantize::QuantizePreset;
 impl App {
     /// Poll all async operations: file loading, save completion, export completion.
     pub(in crate::app) fn poll_async_operations(&mut self) {
+        // 插件输出拓扑：restart / I/O rescan 后重查一次。
+        self.poll_rack_topologies();
         // 音频素材：后台解码轮询（无素材时开销可忽略）。
         self.poll_audio_library();
         // 录音：引擎丢失（切设备/关工程）时停止，避免输入流悬空。

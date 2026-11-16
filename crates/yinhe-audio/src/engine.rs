@@ -54,6 +54,8 @@ pub(crate) struct AudioEngine {
     /// 乐器求和用的临时缓冲：链内第 2 个及以后的乐器输出先写这里再累加。按需增长。
     pub(crate) scratch_l: Vec<f32>,
     pub(crate) scratch_r: Vec<f32>,
+    /// 多输出乐器的每输出临时缓冲（复用，避免每块分配）。
+    pub(crate) multi_scratch: Vec<yinhe_mixer::ChannelBuffers>,
     /// 乐器事件合并用的临时缓冲（广播事件 + 定向参数事件）。每块复用。
     pub(crate) event_scratch: Vec<yinhe_mixer::PluginEvent>,
     /// 内置音源通道处理段（CC7/10/11/71/74），索引 = dense 通道。
@@ -269,6 +271,7 @@ impl AudioEngine {
                 instruments: (0..compacted).map(|_| None).collect(),
                 scratch_l: Vec::new(),
                 scratch_r: Vec::new(),
+                multi_scratch: Vec::new(),
                 event_scratch: Vec::new(),
                 channel_dsp: (0..compacted)
                     .map(|_| crate::channel_dsp::ChannelDspChain::new(sample_rate))
@@ -451,6 +454,49 @@ impl AudioEngine {
             .map(|track| self.channel_layout.track_lc_dense(track))
             .collect();
         cs.set_track_output_dense(map);
+        self.sync_rack_outputs();
+    }
+
+    /// 按 Rack 输出拓扑同步插件乐器的多输出目标 dense。
+    ///
+    /// `RackParams.output_lcs[i]` 是第 i 个输出的 LC；映射到 ChannelLayout 的
+    /// dense 后写入对应 `InstrumentSource`。缺失的 LC（没有轨道映射到该输出）
+    /// 用 `u32::MAX` 占位，渲染时跳过。
+    pub(crate) fn sync_rack_outputs(&mut self) {
+        for slot in self.instruments.iter_mut().flatten() {
+            slot.output_dense.clear();
+        }
+        for ch in 0..256usize {
+            let Some(rack) = self.mixer_params.racks.get(ch) else {
+                continue;
+            };
+            if rack.output_lcs.len() <= 1 {
+                continue;
+            }
+            let dense = self.channel_layout.dense_for(ch);
+            if dense == u32::MAX {
+                continue;
+            }
+            let Some(slot) = self
+                .instruments
+                .get_mut(dense as usize)
+                .and_then(Option::as_mut)
+            else {
+                continue;
+            };
+            slot.output_dense = rack
+                .output_lcs
+                .iter()
+                .enumerate()
+                .map(|(i, lc)| {
+                    self.channel_layout
+                        .track_lc_dense_for(*lc)
+                        .map(|(_, d)| d)
+                        .unwrap_or_else(|| if i == 0 { dense } else { u32::MAX })
+                })
+                .map(|d| d as usize)
+                .collect();
+        }
     }
 
     pub(crate) fn model_loaded(&self) -> bool {

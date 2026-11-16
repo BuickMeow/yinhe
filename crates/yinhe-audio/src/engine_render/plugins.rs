@@ -185,7 +185,7 @@ impl AudioEngine {
     /// 在 xsynth 段渲染之后、mixer.process() 之前调用。
     /// 第一个乐器直接覆盖写入通道缓冲（该通道 xsynth 此时静音），后续乐器写入
     /// scratch 再累加。
-    pub(super) fn render_instruments(
+    pub(crate) fn render_instruments(
         &mut self,
         block_start_sample: u64,
         offset_frames: usize,
@@ -193,14 +193,33 @@ impl AudioEngine {
     ) {
         let n = self.instruments.len();
         for dense in 0..n {
-            let Some(src) = &mut self.instruments[dense] else {
-                continue;
+            let (mut events, output_dense) = {
+                let Some(src) = self.instruments[dense].as_mut() else {
+                    continue;
+                };
+                if src.chain.is_empty() {
+                    continue;
+                }
+                (
+                    std::mem::take(&mut src.events),
+                    std::mem::take(&mut src.output_dense),
+                )
             };
-            if src.chain.is_empty() {
+            if output_dense.len() > 1 {
+                self.render_instruments_multi(
+                    dense,
+                    &events,
+                    &output_dense,
+                    block_start_sample,
+                    offset_frames,
+                    frames,
+                );
+                if let Some(src) = self.instruments[dense].as_mut() {
+                    src.output_dense = output_dense;
+                    src.events = events;
+                }
                 continue;
             }
-            // take 出的 Vec 处理完归还，保留容量（避免每块重新分配）。
-            let mut events = std::mem::take(&mut src.events);
             if let Some(cb) = self.mixer.channel_buffers_mut(dense) {
                 let f = frames
                     .min(cb.left.len().saturating_sub(offset_frames))
@@ -213,7 +232,13 @@ impl AudioEngine {
                     if self.scratch_r.len() < f {
                         self.scratch_r.resize(f, 0.0);
                     }
-                    for (idx, proc) in src.chain.iter_mut().enumerate() {
+                    for (idx, proc) in self.instruments[dense]
+                        .as_mut()
+                        .expect("instrument source")
+                        .chain
+                        .iter_mut()
+                        .enumerate()
+                    {
                         // 乐器不做隐式分段（携带事件与时间戳）：引擎块长必须 ≤
                         // 插件激活能力（见 MAX_ENGINE_BLOCK_FRAMES 契约），越界是宿主 bug。
                         debug_assert!(
@@ -256,7 +281,98 @@ impl AudioEngine {
                 }
             }
             events.clear();
-            src.events = events;
+            if let Some(src) = self.instruments[dense].as_mut() {
+                src.events = events;
+            }
+        }
+    }
+
+    /// 多输出乐器：链首处理器一次 process 写全部输出端口；后续乐器只叠到 Out 1。
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn render_instruments_multi(
+        &mut self,
+        dense: usize,
+        events: &[PluginEvent],
+        output_dense: &[usize],
+        block_start_sample: u64,
+        offset_frames: usize,
+        frames: usize,
+    ) {
+        let count = output_dense.len();
+        let f = frames;
+        if f == 0 || count == 0 {
+            return;
+        }
+        if self.scratch_l.len() < f {
+            self.scratch_l.resize(f, 0.0);
+        }
+        if self.scratch_r.len() < f {
+            self.scratch_r.resize(f, 0.0);
+        }
+        if self.multi_scratch.len() < count {
+            self.multi_scratch
+                .resize_with(count, || yinhe_mixer::ChannelBuffers {
+                    left: vec![0.0; f],
+                    right: vec![0.0; f],
+                });
+        }
+        for buf in &mut self.multi_scratch[..count] {
+            if buf.left.len() < f {
+                buf.left.resize(f, 0.0);
+            }
+            if buf.right.len() < f {
+                buf.right.resize(f, 0.0);
+            }
+            buf.left[..f].fill(0.0);
+            buf.right[..f].fill(0.0);
+        }
+        if let Some(src) = self.instruments[dense].as_mut() {
+            for (idx, proc) in src.chain.iter_mut().enumerate() {
+                let ev: &[PluginEvent] = if proc.params.is_empty() {
+                    events
+                } else {
+                    self.event_scratch.clear();
+                    self.event_scratch.extend_from_slice(events);
+                    self.event_scratch.extend_from_slice(&proc.params);
+                    &self.event_scratch
+                };
+                if idx == 0 {
+                    proc.processor.process_outputs(
+                        ev,
+                        &mut self.multi_scratch[..count],
+                        block_start_sample,
+                    );
+                } else {
+                    self.scratch_l[..f].fill(0.0);
+                    self.scratch_r[..f].fill(0.0);
+                    proc.processor.process(
+                        ev,
+                        &mut self.scratch_l[..f],
+                        &mut self.scratch_r[..f],
+                        block_start_sample,
+                    );
+                    for i in 0..f {
+                        self.multi_scratch[0].left[i] += self.scratch_l[i];
+                        self.multi_scratch[0].right[i] += self.scratch_r[i];
+                    }
+                }
+                proc.params.clear();
+            }
+        }
+        for (i, target) in output_dense.iter().enumerate() {
+            if *target == u32::MAX as usize {
+                continue;
+            }
+            let Some(cb) = self.mixer.channel_buffers_mut(*target) else {
+                continue;
+            };
+            let n = f
+                .min(cb.left.len().saturating_sub(offset_frames))
+                .min(cb.right.len().saturating_sub(offset_frames));
+            for j in 0..n {
+                cb.left[offset_frames + j] += self.multi_scratch[i].left[j];
+                cb.right[offset_frames + j] += self.multi_scratch[i].right[j];
+            }
         }
     }
 }

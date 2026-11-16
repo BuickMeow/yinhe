@@ -30,6 +30,8 @@ pub(crate) struct InstrumentSource {
     /// 当前块累积的输入事件（带块内 sample offset）。`process` 前填充、
     /// 处理后清空。同一份事件广播给链内每个处理器的 `process`。
     pub events: Vec<PluginEvent>,
+    /// 多输出插件的目标 dense 通道（按输出顺序）。空 = 单输出到本通道。
+    pub output_dense: Vec<usize>,
 }
 
 impl InstrumentSource {
@@ -37,6 +39,7 @@ impl InstrumentSource {
         Self {
             chain: Vec::new(),
             events: Vec::new(),
+            output_dense: Vec::new(),
         }
     }
 }
