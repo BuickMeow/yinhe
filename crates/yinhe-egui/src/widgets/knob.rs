@@ -1,7 +1,7 @@
 //! 自绘旋钮（Knob）：垂直拖动改变归一化值 0..1。
 //!
 //! 风格与 [`crate::widgets::switch`] 对齐：主题化、hover/pressed 反馈、
-//! 无缓存无阈值；内圈细刻度环 + 外圈强调色值弧，两层分开避免重合。
+//! 无缓存无阈值；一条环表达刻度，强调色值弧覆盖在环上。
 //!
 //! 两种归零点：
 //! - [`knob`]：最左侧（值 0）归零，值弧从起点向右延伸；
@@ -13,10 +13,9 @@ use eframe::egui;
 const START_DEG: f32 = 135.0;
 const SWEEP_DEG: f32 = 270.0;
 
-/// 刻度环线宽（px）。
+/// 刻度环 / 值弧的线宽（px）。两者共用同一半径、同一线宽，合成一条环。
+/// 比旧版略粗，强调色弧直接在环上覆盖。
 const RING_W: f32 = 1.5;
-/// 值弧线宽（px）：比刻度环略粗，外圈独立绘制，避免和黑色圆圈重合。
-const ARC_W: f32 = 2.2;
 
 /// 归零点：最左端归零，或居中归零。
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -95,11 +94,10 @@ fn knob_impl(ui: &mut egui::Ui, value: &mut f32, diameter: f32, zero: ZeroMode) 
         // 后者把绘制裁到 26×26 的方框内，会切掉环上的值弧、看起来像有个方框。
         let painter = ui.painter();
         let center = rect.center();
-        // 刻度环放内圈、值弧放外圈：两者不同半径，避免强调色弧和
-        // 黑色刻度圆重合；外圈仍在直径范围内。
+        // 刻度环与值弧共用同一半径、同一线宽，合成一条环；
+        // 值弧在环上覆盖显示。
         let r_base = diameter / 2.0 - 3.5;
-        let r_ring = r_base - 2.0;
-        let r_arc = r_base + 1.0;
+        let r_ring = r_base - 0.5;
 
         // 底座圆：hover/pressed 反馈与 switch 一致。
         let base = crate::theme::control_bg();
@@ -128,21 +126,21 @@ fn knob_impl(ui: &mut egui::Ui, value: &mut f32, diameter: f32, zero: ZeroMode) 
             crate::theme::accent_active()
         };
 
-        // 值弧在外圈独立绘制，不与刻度环重合。
+        // 先画刻度环，再画值弧：值弧始终在同一环的上层。
         if let Some((from, to)) = arc_span(*value, zero) {
             let steps = 24;
             let mut pts = Vec::with_capacity(steps + 1);
             for i in 0..=steps {
                 let t = from + (to - from) * (i as f32 / steps as f32);
                 let ang = start + sweep * t;
-                pts.push(center + egui::vec2(ang.cos(), ang.sin()) * r_arc);
+                pts.push(center + egui::vec2(ang.cos(), ang.sin()) * r_ring);
             }
-            painter.add(egui::Shape::line(pts, egui::Stroke::new(ARC_W, accent)));
+            painter.add(egui::Shape::line(pts, egui::Stroke::new(RING_W, accent)));
         }
 
         // 指针（底座内）。
         let ang = start + sweep * *value;
-        let tip = center + egui::vec2(ang.cos(), ang.sin()) * (r_base - 3.0);
+        let tip = center + egui::vec2(ang.cos(), ang.sin()) * (r_base - 2.0);
         let pointer_color = if enabled {
             crate::theme::text_primary()
         } else {
@@ -154,7 +152,7 @@ fn knob_impl(ui: &mut egui::Ui, value: &mut f32, diameter: f32, zero: ZeroMode) 
         if resp.has_focus() {
             painter.circle_stroke(
                 center,
-                r_arc + 1.5,
+                r_ring + 1.5,
                 egui::Stroke::new(1.5, crate::theme::accent_active().gamma_multiply(0.9)),
             );
         }
