@@ -336,7 +336,23 @@ fn db_row(ui: &mut egui::Ui, gain: f32, width: f32) -> Option<f32> {
         egui::DragValue::new(&mut db)
             .speed(0.2)
             .range(DB_MIN..=DB_MAX)
-            .max_decimals(1),
+            .max_decimals(1)
+            // 推子底部是静音，不显示 -60.0；直接显示 -∞。
+            .custom_formatter(|db, _| {
+                if db <= f64::from(DB_MIN) + 1e-6 {
+                    "-∞".to_string()
+                } else {
+                    format!("{db:.1}")
+                }
+            })
+            .custom_parser(|s| {
+                let t = s.trim();
+                if matches!(t, "-∞" | "-inf" | "-infinity") {
+                    Some(f64::from(DB_MIN))
+                } else {
+                    t.parse().ok()
+                }
+            }),
     );
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.fader"));
     if resp.changed() {
