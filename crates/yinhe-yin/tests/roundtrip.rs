@@ -797,9 +797,9 @@ fn mixer_section_roundtrips() {
     let mut mixer = MixerParams::default();
     mixer.ensure_len();
     mixer.add_bus();
-    mixer.midi_outputs[3] = Some(0);
+    mixer.midi_outputs[3] = Some(yinhe_types::BusId(0));
     mixer.audio_outputs.resize(2, None);
-    mixer.audio_outputs[1] = Some(0);
+    mixer.audio_outputs[1] = Some(yinhe_types::BusId(0));
     mixer.channels[3] = StripParams {
         gain: 0.7,
         pan: -0.5,
@@ -838,8 +838,11 @@ fn mixer_section_roundtrips() {
     assert_eq!(mixer2.master, mixer.master);
     assert_eq!(mixer2.channel_inserts[3], mixer.channel_inserts[3]);
     assert_eq!(mixer2.master_inserts, mixer.master_inserts);
-    assert_eq!(mixer2.midi_outputs[3], Some(0));
-    assert_eq!(mixer2.audio_outputs.get(1), Some(&Some(0)));
+    assert_eq!(mixer2.midi_outputs[3], Some(yinhe_types::BusId(0)));
+    assert_eq!(
+        mixer2.audio_outputs.get(1),
+        Some(&Some(yinhe_types::BusId(0)))
+    );
 }
 
 #[test]

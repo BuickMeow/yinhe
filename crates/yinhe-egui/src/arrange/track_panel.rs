@@ -72,8 +72,10 @@ pub(crate) fn show(
     am_ms: &mut std::collections::HashMap<(u16, AutomationTarget), yinhe_types::AmMsState>,
     // 每轨电平表显示值 `((L,R), (holdL,holdR))`（索引 = 音轨；仅播放时非零）。
     track_meters: &[crate::widgets::meter::StereoMeter],
-    // 固定总线条的持久化参数（索引 = 总线）。
+    // 固定总线条的持久化参数（索引 = 总线行）。
     bus_strips: &[yinhe_mixer::StripParams],
+    // 固定总线条的稳定 BusId（与 `bus_strips` 等长）。
+    bus_ids: &[yinhe_types::BusId],
     // 固定总线电平表显示值。
     bus_meters: &[crate::widgets::meter::StereoMeter],
     // 编辑/播放光标 tick（自动化表显示光标处的 lane 值）。
@@ -222,7 +224,10 @@ pub(crate) fn show(
                 painter.text(
                     egui::pos2(text_x, badge_rect.min.y + lh * 0.70),
                     egui::Align2::LEFT_CENTER,
-                    format!("BUS {}", bus + 1),
+                    format!(
+                        "BUS {}",
+                        bus_ids.get(bus).map_or(bus + 1, |id| id.index() + 1)
+                    ),
                     font,
                     crate::theme::text_primary(),
                 );
@@ -230,7 +235,11 @@ pub(crate) fn show(
                 painter.text(
                     egui::pos2(text_x, badge_rect.center().y),
                     egui::Align2::LEFT_CENTER,
-                    format!("{} · BUS {}", label, bus + 1),
+                    format!(
+                        "{} · BUS {}",
+                        label,
+                        bus_ids.get(bus).map_or(bus + 1, |id| id.index() + 1)
+                    ),
                     render::compact_font(lh),
                     crate::theme::text_primary(),
                 );
@@ -271,13 +280,19 @@ pub(crate) fn show(
             let level = bus_meters.get(bus).map(|m| m.0).unwrap_or((0.0, 0.0));
             let hold = bus_meters.get(bus).map(|m| m.1).unwrap_or((0.0, 0.0));
             let strip = bus_strips.get(bus).copied().unwrap_or_default();
+            let Some(&bus_id) = bus_ids.get(bus) else {
+                continue;
+            };
             // 固定行使用与普通音轨相同的 14px 色带，不做细线。
             let accent = crate::theme::accent_active();
             let badge_rect = render::draw_badge(&painter, row_rect, lh, accent);
             painter.text(
                 egui::pos2(badge_rect.max.x + 6.0, row_rect.center().y),
                 egui::Align2::LEFT_CENTER,
-                format!("BUS {}", bus + 1),
+                format!(
+                    "BUS {}",
+                    bus_ids.get(bus).map_or(bus + 1, |id| id.index() + 1)
+                ),
                 egui::FontId::proportional(crate::theme::SMALL_FONT),
                 crate::theme::text_primary(),
             );
@@ -318,7 +333,7 @@ pub(crate) fn show(
                 crate::widgets::hint::hover(ui.ctx(), &s_resp, t!("hint.arrange.track_solo"));
                 if m_resp.clicked() {
                     actions.push(TrackAction::SetBusStrip {
-                        bus: bus as u16,
+                        bus: bus_id,
                         params: yinhe_mixer::StripParams {
                             mute: !strip.mute,
                             ..strip
@@ -327,7 +342,7 @@ pub(crate) fn show(
                 }
                 if s_resp.clicked() {
                     actions.push(TrackAction::SetBusStrip {
-                        bus: bus as u16,
+                        bus: bus_id,
                         params: yinhe_mixer::StripParams {
                             solo: !strip.solo,
                             ..strip
@@ -883,6 +898,7 @@ pub(crate) fn show(
         info_content,
         request_pianoroll,
         tracks,
+        bus_ids,
         &mut actions,
         max_scroll,
     );

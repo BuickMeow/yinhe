@@ -21,7 +21,7 @@ mod strip;
 
 #[doc(hidden)]
 pub use graph::ChannelChain;
-pub use graph::{ChannelBuffers, InsertProcessor, MixerGraph};
+pub use graph::{ChannelBuffers, InsertProcessor, MixerGraph, ResolvedSend};
 pub use meter::{MeterReading, MeterTap, SampleReading, SampleTap};
 pub use param_queue::ParamQueue;
 pub use params::{

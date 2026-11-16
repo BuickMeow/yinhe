@@ -3,6 +3,7 @@
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_mixer::{SendParams, StripParams};
+use yinhe_types::BusId;
 
 use crate::widgets::knob::{knob, knob_centered};
 use crate::widgets::meter::{DB_MAX, DB_MIN, db_to_gain, gain_at_frac, gain_frac, gain_to_db};
@@ -110,7 +111,7 @@ pub(super) fn section<R>(
 pub(super) enum SendSource {
     Channel(u8),
     Audio(u16),
-    Bus(u16),
+    Bus(BusId),
 }
 
 /// 当前 strip 对应的自动化宿主：决定右键菜单里能加哪种自动化。
@@ -118,7 +119,7 @@ pub(super) enum SendSource {
 pub(super) enum StripAutomationTarget {
     Midi(u8),
     Audio,
-    Bus(u16),
+    Bus(BusId),
     Master,
 }
 
@@ -227,10 +228,10 @@ pub(super) fn send_block(
     ui: &mut egui::Ui,
     source: SendSource,
     sends: &[SendParams],
-    bus_count: usize,
+    bus_ids: &[BusId],
     actions: &mut Vec<MixAction>,
 ) {
-    let knobs = bus_count.max(1);
+    let knobs = bus_ids.len().max(1);
     egui::ScrollArea::vertical()
         // 发送区各自滚动（id 在通道条自己的作用域内唯一）。滚动条 id 派生自
         // id_salt，若整排共用同一 id 会触发 egui 的 widget ID 冲突；发送区高度
@@ -244,7 +245,8 @@ pub(super) fn send_block(
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
             for b in 0..knobs {
-                let target = b as u16;
+                // 没有总线时保留一个占位旋钮；用户转动后先 AddBus。
+                let target = bus_ids.get(b).copied().unwrap_or_default();
                 ui.horizontal(|ui| {
                     let send = sends.iter().find(|s| s.bus == target);
                     let (amount, pre_fader) = send
@@ -306,7 +308,7 @@ pub(super) fn send_block(
                     if resp.changed() {
                         match source {
                             SendSource::Channel(channel) => {
-                                if bus_count == 0 {
+                                if bus_ids.is_empty() {
                                     actions.push(MixAction::AddBus);
                                 }
                                 actions.push(MixAction::SetSend {

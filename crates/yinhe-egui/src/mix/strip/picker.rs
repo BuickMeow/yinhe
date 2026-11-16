@@ -31,16 +31,18 @@ pub(crate) fn send_popup(
     let Some(idx) = app.workspace.active_doc else {
         return;
     };
-    let bus_count = app.workspace.documents[idx].mixer.buses.len();
-    let current: Vec<(f32, bool)> = (0..bus_count)
-        .map(|b| {
-            app.workspace.documents[idx]
+    let bus_ids = app.workspace.documents[idx].mixer.bus_ids.clone();
+    let current: Vec<(yinhe_types::BusId, f32, bool)> = bus_ids
+        .iter()
+        .map(|&bus_id| {
+            let (amount, pre_fader) = app.workspace.documents[idx]
                 .mixer
                 .sends
                 .get(channel as usize)
-                .and_then(|list| list.iter().find(|s| s.bus as usize == b))
+                .and_then(|list| list.iter().find(|s| s.bus == bus_id))
                 .map(|s| (s.amount, s.pre_fader))
-                .unwrap_or((0.0, false))
+                .unwrap_or((0.0, false));
+            (bus_id, amount, pre_fader)
         })
         .collect();
 
@@ -72,16 +74,16 @@ pub(crate) fn send_popup(
                             bottom: 12,
                         })
                         .show(ui, |ui| {
-                            if bus_count == 0 {
+                            if current.is_empty() {
                                 ui.label(
                                     egui::RichText::new(t!("mix.no_buses"))
                                         .color(crate::theme::text_muted()),
                                 );
                                 return;
                             }
-                            for (b, (amount, pre)) in current.iter().enumerate() {
+                            for (bus_id, amount, pre) in &current {
                                 crate::widgets::rows::inline_row(ui, |ui| {
-                                    ui.label(format!("BUS {}", b + 1));
+                                    ui.label(format!("BUS {}", bus_id.index() + 1));
                                     let mut val = *amount;
                                     let slider = crate::widgets::slider::control_slider(
                                         ui,
@@ -99,7 +101,7 @@ pub(crate) fn send_popup(
                                     if slider.changed() {
                                         actions.push(MixAction::SetSend {
                                             channel,
-                                            bus: b as u16,
+                                            bus: *bus_id,
                                             amount: val,
                                             pre_fader: *pre,
                                         });
@@ -124,7 +126,7 @@ pub(crate) fn send_popup(
                                     if pre_resp.changed() {
                                         actions.push(MixAction::SetSend {
                                             channel,
-                                            bus: b as u16,
+                                            bus: *bus_id,
                                             amount: val,
                                             pre_fader: pre_flag,
                                         });

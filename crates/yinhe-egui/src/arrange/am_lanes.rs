@@ -43,6 +43,7 @@ pub(crate) fn visible_am_rows(
     last_row: usize,
     conductor: Option<u16>,
     tracks: &[Arc<yinhe_core::TrackData>],
+    bus_ids: &[yinhe_types::BusId],
     lane_height: f32,
 ) -> Vec<AmRowRef> {
     let mut out = Vec::new();
@@ -65,12 +66,15 @@ pub(crate) fn visible_am_rows(
                 let Some(master) = conductor.map(usize::from) else {
                     continue;
                 };
-                let valid = tracks
-                    .get(master)
-                    .and_then(|t| t.automation_lanes.get(lane_idx))
-                    .is_some_and(|lane| {
-                        lane.target == AutomationTarget::BusGain { bus: bus as u16 }
-                    });
+                let bus_id = bus_ids.get(bus).copied();
+                let valid = bus_id.is_some_and(|bus_id| {
+                    tracks
+                        .get(master)
+                        .and_then(|t| t.automation_lanes.get(lane_idx))
+                        .is_some_and(|lane| {
+                            lane.target == AutomationTarget::BusGain { bus: bus_id }
+                        })
+                });
                 if valid {
                     out.push(AmRowRef {
                         track: master,

@@ -36,15 +36,15 @@ pub(crate) enum TrackAction {
     UngroupTrack { idx: usize },
     /// 固定总线行 M/S：写入总线 strip 参数。
     SetBusStrip {
-        bus: u16,
+        bus: yinhe_types::BusId,
         params: yinhe_mixer::StripParams,
     },
     /// 双击固定总线行：打开该总线的设备链。
-    OpenBusDock { bus: u16 },
+    OpenBusDock { bus: yinhe_types::BusId },
     /// 右键固定总线行：删除该总线。
-    RemoveBus { bus: u16 },
+    RemoveBus { bus: yinhe_types::BusId },
     /// 右键 Master 轨：打开 Master 设备链。
     OpenMasterDock,
     /// 右键固定 Bus 行：添加总线增益自动化。
-    AddBusAutomation { bus: u16 },
+    AddBusAutomation { bus: yinhe_types::BusId },
 }

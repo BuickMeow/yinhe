@@ -11,7 +11,7 @@
 //! 一段连续内存（[`MixerGraph::buffers_mut`] 整体借出做跨通道并行渲染）。
 
 use crate::meter::{MeterReading, MeterTap, SampleReading, SampleTap};
-use crate::params::{MasterParams, SendParams, StripParams};
+use crate::params::{MasterParams, StripParams};
 use crate::strip::StripState;
 
 /// insert 效果器抽象。由 yinhe-audio 把 CLAP（未来 VST3）处理器适配进来。
@@ -54,6 +54,17 @@ pub trait InsertProcessor: Send {
 
     /// 回收时还原为具体类型（如插件处理器需要 deactivate 回实例）。
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
+}
+
+/// 已解析到总线下标的发送（渲染线程只认下标，不认稳定 BusId）。
+///
+/// `MixerParams` 的 `ResolvedSend` 存稳定 `BusId`；进入混音图前由
+/// `yinhe-audio` 用当前总线表解析成下标，渲染线程不再查表。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ResolvedSend {
+    pub bus: usize,
+    pub amount: f32,
+    pub pre_fader: bool,
 }
 
 /// 单通道延迟线（PDC 对齐）：先读后写，`delay` 个样本后输出输入，
@@ -168,7 +179,7 @@ pub struct ChannelChain {
     /// 与 meter 一一对应的 UI 侧读数端（引擎创建时被上层取走克隆）。
     reading: MeterReading,
     /// 该通道（dense）的发送列表（源通道 → 总线）。
-    sends: Vec<SendParams>,
+    sends: Vec<ResolvedSend>,
 }
 
 impl ChannelChain {
@@ -231,7 +242,7 @@ struct BusChain {
     meter: MeterTap,
     reading: MeterReading,
     /// 总线发送列表（bus → bus）。
-    sends: Vec<SendParams>,
+    sends: Vec<ResolvedSend>,
     /// 上一块 post-fader 输出快照（延迟发送读取）。
     prev_out_l: Vec<f32>,
     prev_out_r: Vec<f32>,
@@ -533,14 +544,14 @@ impl MixerGraph {
     }
 
     /// 设置某通道（dense）的发送列表（结构性变化时全量推）。
-    pub fn set_sends(&mut self, channel: usize, sends: Vec<SendParams>) {
+    pub fn set_sends(&mut self, channel: usize, sends: Vec<ResolvedSend>) {
         if let Some(chain) = self.channels.get_mut(channel) {
             chain.sends = sends;
         }
     }
 
     /// 设置某总线的发送列表（结构性变化时全量推）。
-    pub fn set_bus_sends(&mut self, bus: usize, sends: Vec<SendParams>) {
+    pub fn set_bus_sends(&mut self, bus: usize, sends: Vec<ResolvedSend>) {
         if let Some(chain) = self.buses.get_mut(bus) {
             chain.sends = sends;
         }
@@ -882,7 +893,7 @@ impl MixerGraph {
                 if send.amount == 0.0 {
                     continue;
                 }
-                let dst_i = send.bus as usize;
+                let dst_i = send.bus;
                 if dst_i >= n || dst_i > src_i {
                     continue; // 顺序发送在 ② 处理
                 }
@@ -922,7 +933,7 @@ impl MixerGraph {
                     if send.amount == 0.0 {
                         continue;
                     }
-                    let dst_i = send.bus as usize;
+                    let dst_i = send.bus;
                     if dst_i >= n || dst_i <= i {
                         continue; // 延迟发送已在 ① 处理
                     }
@@ -982,7 +993,7 @@ impl MixerGraph {
 fn route_send(
     pre_fader: bool,
     src: &ChannelBuffers,
-    sends: &[SendParams],
+    sends: &[ResolvedSend],
     strip: &StripState,
     any_solo: bool,
     buses: &mut [BusChain],
@@ -992,13 +1003,11 @@ fn route_send(
         if send.pre_fader != pre_fader || send.amount == 0.0 {
             continue;
         }
-        let bus_solo = buses
-            .get(send.bus as usize)
-            .is_some_and(|b| b.strip.params.solo);
+        let bus_solo = buses.get(send.bus).is_some_and(|b| b.strip.params.solo);
         if strip.params.mute || (any_solo && !strip.params.solo && !bus_solo) {
             continue;
         }
-        let Some(bus) = buses.get_mut(send.bus as usize) else {
+        let Some(bus) = buses.get_mut(send.bus) else {
             continue;
         };
         for f in 0..frames {
@@ -1431,7 +1440,7 @@ mod tests {
         assert!(l.iter().all(|&v| v == 0.0), "reset 后延迟线应清空");
     }
 
-    fn bus_graph(strip: StripParams, send: SendParams) -> MixerGraph {
+    fn bus_graph(strip: StripParams, send: ResolvedSend) -> MixerGraph {
         let mut g = graph_with(&[StripParams::default()], 4);
         g.resize_buses(1, 4, &[strip]);
         g.set_sends(0, vec![send]);
@@ -1443,7 +1452,7 @@ mod tests {
         // 通道直达 master + 推子后送 bus（bus 再进 master）= 2 份。
         let mut g = bus_graph(
             StripParams::default(),
-            SendParams {
+            ResolvedSend {
                 bus: 0,
                 amount: 1.0,
                 pre_fader: false,
@@ -1463,7 +1472,7 @@ mod tests {
         // 通道 gain=0：直达静音，推子前 send 不受影响（只有 bus 路径）。
         let mut g = bus_graph(
             StripParams::default(),
-            SendParams {
+            ResolvedSend {
                 bus: 0,
                 amount: 1.0,
                 pre_fader: true,
@@ -1489,7 +1498,7 @@ mod tests {
                 mute: true,
                 ..StripParams::default()
             },
-            SendParams {
+            ResolvedSend {
                 bus: 0,
                 amount: 1.0,
                 pre_fader: false,
@@ -1509,7 +1518,7 @@ mod tests {
                 solo: true,
                 ..StripParams::default()
             },
-            SendParams {
+            ResolvedSend {
                 bus: 0,
                 amount: 1.0,
                 pre_fader: false,
@@ -1559,7 +1568,7 @@ mod tests {
         // 通道 → bus0；bus0 → bus1（目标索引更大 = 顺序发送，无延迟）。
         g.set_sends(
             0,
-            vec![SendParams {
+            vec![ResolvedSend {
                 bus: 0,
                 amount: 1.0,
                 pre_fader: false,
@@ -1567,7 +1576,7 @@ mod tests {
         );
         g.set_bus_sends(
             0,
-            vec![SendParams {
+            vec![ResolvedSend {
                 bus: 1,
                 amount: 1.0,
                 pre_fader: false,
@@ -1592,7 +1601,7 @@ mod tests {
         g.resize_buses(1, 4, &[StripParams::default()]);
         g.set_sends(
             0,
-            vec![SendParams {
+            vec![ResolvedSend {
                 bus: 0,
                 amount: 1.0,
                 pre_fader: false,
@@ -1600,7 +1609,7 @@ mod tests {
         );
         g.set_bus_sends(
             0,
-            vec![SendParams {
+            vec![ResolvedSend {
                 bus: 0,
                 amount: 1.0,
                 pre_fader: false,
@@ -1634,7 +1643,7 @@ mod tests {
         // 通道 → bus1；bus1 → bus0（逆序）。
         g.set_sends(
             0,
-            vec![SendParams {
+            vec![ResolvedSend {
                 bus: 1,
                 amount: 1.0,
                 pre_fader: false,
@@ -1642,7 +1651,7 @@ mod tests {
         );
         g.set_bus_sends(
             1,
-            vec![SendParams {
+            vec![ResolvedSend {
                 bus: 0,
                 amount: 1.0,
                 pre_fader: false,
@@ -1672,7 +1681,7 @@ mod tests {
         // bus 上挂倍增 insert：直达 1 份 + bus 2 份 = 3 份。
         let mut g = bus_graph(
             StripParams::default(),
-            SendParams {
+            ResolvedSend {
                 bus: 0,
                 amount: 1.0,
                 pre_fader: false,
@@ -1714,7 +1723,7 @@ mod tests {
         g.resize_buses(1, 512, &[StripParams::default()]);
         g.set_sends(
             0,
-            vec![SendParams {
+            vec![ResolvedSend {
                 bus: 0,
                 amount: 1.0,
                 pre_fader: false,

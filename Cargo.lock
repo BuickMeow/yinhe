@@ -8026,6 +8026,7 @@ dependencies = [
  "rtrb",
  "serde",
  "serde_json",
+ "yinhe-types",
 ]
 
 [[package]]

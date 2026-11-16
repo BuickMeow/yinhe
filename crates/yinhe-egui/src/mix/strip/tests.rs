@@ -67,13 +67,29 @@ fn send_blocks_shared_scroll_no_id_clash() {
                     ui,
                     SEND_ROW_H,
                     egui::Layout::top_down(egui::Align::Center),
-                    |ui| send_block(ui, SendSource::Channel(0), &[], 4, &mut actions),
+                    |ui| {
+                        send_block(
+                            ui,
+                            SendSource::Channel(0),
+                            &[],
+                            &[yinhe_types::BusId(0); 4],
+                            &mut actions,
+                        )
+                    },
                 );
                 section(
                     ui,
                     SEND_ROW_H,
                     egui::Layout::top_down(egui::Align::Center),
-                    |ui| send_block(ui, SendSource::Channel(1), &[], 4, &mut actions),
+                    |ui| {
+                        send_block(
+                            ui,
+                            SendSource::Channel(1),
+                            &[],
+                            &[yinhe_types::BusId(0); 4],
+                            &mut actions,
+                        )
+                    },
                 );
             });
         });

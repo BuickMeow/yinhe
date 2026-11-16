@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use yinhe_types::BusId;
+
 /// 源 MIDI 通道总数：A01..P16（16 port × 16 通道）。
 pub const CHANNEL_COUNT: usize = 256;
 
@@ -100,8 +102,8 @@ pub struct InsertRef {
 /// 发送参数：源通道 → 总线（bus / return）。
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SendParams {
-    /// 目标总线索引（`MixerParams::buses` 下标）。
-    pub bus: u16,
+    /// 目标总线的稳定 ID（不是 `MixerParams::buses` 下标）。
+    pub bus: BusId,
     /// 发送量（线性增益；0.0 = 关闭）。
     #[serde(default)]
     pub amount: f32,
@@ -114,7 +116,7 @@ pub struct SendParams {
 impl Default for SendParams {
     fn default() -> Self {
         Self {
-            bus: 0,
+            bus: BusId::default(),
             amount: 0.0,
             pre_fader: false,
         }
@@ -162,6 +164,13 @@ pub struct MixerParams {
     /// 总线（bus / return）通道参数：每元素一条总线（与源通道同语义）。
     #[serde(default)]
     pub buses: Vec<StripParams>,
+    /// 每条总线的稳定 ID（与 `buses` 等长，元素不随删除/重排变化）。
+    /// 旧工程缺省为空，加载时按原索引 0..n 生成，行为与旧版一致。
+    #[serde(default)]
+    pub bus_ids: Vec<BusId>,
+    /// 下一个可分配的 BusId（持久化，避免删除后复用导致自动化串线）。
+    #[serde(default)]
+    pub next_bus_id: BusId,
     /// 每条总线的 insert 链（与 `buses` 等长）。
     #[serde(default)]
     pub bus_inserts: Vec<Vec<InsertRef>>,
@@ -175,10 +184,10 @@ pub struct MixerParams {
     /// MIDI 源通道的主输出目标（索引 = 源通道，`Some(bus)` = 输出到该总线，
     /// `None` = 直接进 Master）。由通道输出选择 UI 显式写入。
     #[serde(default)]
-    pub midi_outputs: Vec<Option<u16>>,
+    pub midi_outputs: Vec<Option<BusId>>,
     /// 音频通道的主输出目标（索引 = 音频通道号）。
     #[serde(default)]
-    pub audio_outputs: Vec<Option<u16>>,
+    pub audio_outputs: Vec<Option<BusId>>,
 }
 
 impl Default for MixerParams {
@@ -194,6 +203,8 @@ impl Default for MixerParams {
             audio_inserts: Vec::new(),
             audio_sends: Vec::new(),
             buses: Vec::new(),
+            bus_ids: Vec::new(),
+            next_bus_id: BusId::default(),
             bus_inserts: Vec::new(),
             bus_sends: Vec::new(),
             sends: Vec::new(),
@@ -219,25 +230,81 @@ impl MixerParams {
         self.bus_inserts.truncate(self.buses.len());
         self.bus_sends.resize(self.buses.len(), Vec::new());
         self.bus_sends.truncate(self.buses.len());
+        self.ensure_bus_ids();
         self.midi_outputs.resize(CHANNEL_COUNT, None);
         self.midi_outputs.truncate(CHANNEL_COUNT);
-        // 防御：清理指向不存在总线的 send（工程被手工编辑/版本迁移残留）。
+        // 防御：清理指向不存在总线的 send / 主输出（工程被手工编辑/版本迁移残留）。
         // MIDI / 音频 / 总线三张发送表一视同仁。
-        let bus_count = self.buses.len();
+        let known = self.bus_ids.clone();
         for list in &mut self.sends {
-            list.retain(|s| (s.bus as usize) < bus_count);
+            list.retain(|s| known.contains(&s.bus));
         }
         for list in &mut self.audio_sends {
-            list.retain(|s| (s.bus as usize) < bus_count);
+            list.retain(|s| known.contains(&s.bus));
         }
         for list in &mut self.bus_sends {
-            list.retain(|s| (s.bus as usize) < bus_count);
+            list.retain(|s| known.contains(&s.bus));
         }
+        for target in self
+            .midi_outputs
+            .iter_mut()
+            .chain(self.audio_outputs.iter_mut())
+        {
+            if target.is_some_and(|id| !known.contains(&id)) {
+                *target = None;
+            }
+        }
+    }
+
+    /// 补齐并修复总线 ID 表。
+    ///
+    /// - 旧工程没有 `bus_ids`：按原索引 0..n 生成，听感/路由与旧版一致；
+    /// - 表比总线短：给新增总线分配新 ID；
+    /// - 表比总线长：截断；
+    /// - 重复 ID：后面的重复项重新分配，避免自动化/发送指向同一条总线。
+    fn ensure_bus_ids(&mut self) {
+        self.bus_ids.truncate(self.buses.len());
+        for i in 0..self.bus_ids.len() {
+            if self.bus_ids[..i].contains(&self.bus_ids[i]) {
+                let id = self.alloc_bus_id();
+                self.bus_ids[i] = id;
+            }
+        }
+        while self.bus_ids.len() < self.buses.len() {
+            let id = self.alloc_bus_id();
+            self.bus_ids.push(id);
+        }
+        if let Some(max) = self.bus_ids.iter().map(|id| id.0).max() {
+            self.next_bus_id = BusId(self.next_bus_id.0.max(max.saturating_add(1)));
+        }
+    }
+
+    fn alloc_bus_id(&mut self) -> BusId {
+        let id = self.next_bus_id;
+        self.next_bus_id = BusId(self.next_bus_id.0.saturating_add(1));
+        id
     }
 
     /// 总线数量。
     pub fn bus_count(&self) -> usize {
         self.buses.len()
+    }
+
+    /// 第 `index` 条总线的稳定 ID（越界返回 `None`）。
+    pub fn bus_id_at(&self, index: usize) -> Option<BusId> {
+        self.bus_ids.get(index).copied()
+    }
+
+    /// 稳定 BusId → `buses` 下标（不存在返回 `None`）。
+    pub fn bus_index(&self, id: BusId) -> Option<usize> {
+        self.bus_ids.iter().position(|&x| x == id)
+    }
+
+    /// 某条总线的 strip 参数（按稳定 ID，越界给默认值）。
+    pub fn bus_strip(&self, id: BusId) -> StripParams {
+        self.bus_index(id)
+            .and_then(|i| self.buses.get(i).copied())
+            .unwrap_or_default()
     }
 
     /// 分配一个新的乐器实例 uid（恒 ≥1）。
@@ -263,28 +330,31 @@ impl MixerParams {
         }
     }
 
-    /// 新增一条总线，返回其索引；到达 `u16` 索引上限时返回 `None`。
-    pub fn add_bus(&mut self) -> Option<u16> {
-        // 索引 0..=u16::MAX，最多 65_536 条；不静默回绕。
-        if self.buses.len() > usize::from(u16::MAX) {
+    /// 新增一条总线，返回其稳定 ID；到达 `u16` ID 上限时返回 `None`。
+    pub fn add_bus(&mut self) -> Option<BusId> {
+        // ID 空间 0..=u16::MAX，共 65_536 条；不静默回绕/复用。
+        if self.buses.len() >= usize::from(u16::MAX) + 1 {
             return None;
         }
-        let idx = self.buses.len() as u16;
+        self.ensure_bus_ids();
+        let id = self.alloc_bus_id();
         self.buses.push(StripParams::default());
+        self.bus_ids.push(id);
         self.bus_inserts.push(Vec::new());
         self.bus_sends.push(Vec::new());
-        Some(idx)
+        Some(id)
     }
 
-    /// 删除总线 `bus`：移除其参数与 insert 链，清理指向它的 send、
-    /// 并把更高索引的 send 目标前移一位（保持路由语义）。
-    /// MIDI 通道 / 音频通道 / 总线三张发送表统一维护。
-    pub fn remove_bus(&mut self, bus: u16) {
-        let idx = bus as usize;
-        if idx >= self.buses.len() {
+    /// 删除总线 `id`：移除其参数、insert 链与 ID，清理指向它的 send 和主输出。
+    ///
+    /// 因为发送/输出存的是稳定 BusId，删除后**不需要**把更高索引前移；
+    /// 其他总线的路由保持原样，这是与旧索引实现最大的行为差异（也是修复点）。
+    pub fn remove_bus(&mut self, id: BusId) {
+        let Some(idx) = self.bus_index(id) else {
             return;
-        }
+        };
         self.buses.remove(idx);
+        self.bus_ids.remove(idx);
         if idx < self.bus_inserts.len() {
             self.bus_inserts.remove(idx);
         }
@@ -297,26 +367,15 @@ impl MixerParams {
             .chain(self.audio_sends.iter_mut())
             .chain(self.bus_sends.iter_mut())
         {
-            list.retain(|s| s.bus != bus);
-            for s in list.iter_mut() {
-                if s.bus > bus {
-                    s.bus -= 1;
-                }
-            }
+            list.retain(|s| s.bus != id);
         }
         for target in self
             .midi_outputs
             .iter_mut()
             .chain(self.audio_outputs.iter_mut())
         {
-            if let Some(b) = *target {
-                *target = if b == bus {
-                    None
-                } else if b > bus {
-                    Some(b - 1)
-                } else {
-                    Some(b)
-                };
+            if *target == Some(id) {
+                *target = None;
             }
         }
     }
@@ -378,125 +437,108 @@ mod tests {
         assert!(p.channels[1..].iter().all(|s| *s == StripParams::default()));
     }
 
-    #[test]
-    fn remove_bus_remaps_send_targets() {
-        let mut p = MixerParams::default();
-        p.ensure_len();
-        let _ = p.add_bus();
-        let _ = p.add_bus();
-        let _ = p.add_bus();
-        p.sends[0] = vec![
-            SendParams {
-                bus: 1,
-                amount: 0.5,
-                pre_fader: false,
-            },
-            SendParams {
-                bus: 2,
-                amount: 0.5,
-                pre_fader: true,
-            },
-        ];
-        p.remove_bus(0);
-        assert_eq!(p.buses.len(), 2);
-        let s = &p.sends[0];
-        assert_eq!(s.len(), 2, "指向其他 bus 的 send 保留");
-        assert_eq!(s[0].bus, 0, "bus 1 → 0 前移");
-        assert_eq!(s[1].bus, 1, "bus 2 → 1 前移");
+    fn add_buses(p: &mut MixerParams, n: usize) -> Vec<BusId> {
+        (0..n).filter_map(|_| p.add_bus()).collect()
     }
 
+    fn send(bus: BusId, amount: f32, pre_fader: bool) -> SendParams {
+        SendParams {
+            bus,
+            amount,
+            pre_fader,
+        }
+    }
+
+    /// 删除一条总线不改变其他总线的 ID；指向它的 send/输出被清理。
     #[test]
-    fn remove_bus_remaps_output_routing() {
+    fn remove_bus_keeps_other_ids() {
         let mut p = MixerParams::default();
         p.ensure_len();
-        let _ = p.add_bus();
-        let _ = p.add_bus();
-        let _ = p.add_bus();
-        p.midi_outputs[0] = Some(1);
-        p.midi_outputs[1] = Some(2);
-        p.remove_bus(1);
-        assert_eq!(p.midi_outputs[0], None, "指向被删总线的输出回到 Master");
-        assert_eq!(p.midi_outputs[1], Some(1), "更高索引前移");
+        let ids = add_buses(&mut p, 3);
+        p.sends[0] = vec![send(ids[1], 0.5, false), send(ids[2], 0.5, true)];
+        p.midi_outputs[0] = Some(ids[2]);
+
+        p.remove_bus(ids[1]);
+
+        assert_eq!(p.buses.len(), 2);
+        assert_eq!(p.bus_ids, vec![ids[0], ids[2]]);
+        assert_eq!(p.sends[0].len(), 1, "指向被删总线的 send 清理");
+        assert_eq!(p.sends[0][0].bus, ids[2], "其他总线 ID 不前移");
+        assert_eq!(p.midi_outputs[0], Some(ids[2]), "主输出保持原 ID");
     }
 
     #[test]
     fn remove_bus_drops_sends_to_it() {
         let mut p = MixerParams::default();
         p.ensure_len();
-        let _ = p.add_bus();
-        let _ = p.add_bus();
-        p.sends[3] = vec![SendParams {
-            bus: 0,
-            amount: 1.0,
-            pre_fader: false,
-        }];
-        p.remove_bus(0);
+        let ids = add_buses(&mut p, 2);
+        p.sends[3] = vec![send(ids[0], 1.0, false)];
+        p.remove_bus(ids[0]);
         assert!(p.sends[3].is_empty(), "指向被删 bus 的 send 应清理");
     }
 
+    /// 旧工程没有 bus_ids：按原索引 0..n 生成，发送/输出保持不变。
     #[test]
-    fn ensure_len_prunes_dangling_sends() {
-        let mut p = MixerParams::default();
+    fn ensure_len_migrates_legacy_bus_indices_to_ids() {
+        let mut p = MixerParams {
+            buses: vec![StripParams::default(); 3],
+            ..MixerParams::default()
+        };
         p.ensure_len();
-        p.sends[0] = vec![SendParams {
-            bus: 5,
-            amount: 1.0,
-            pre_fader: false,
-        }];
+        // 模拟旧工程：总线在，但没有 bus_ids/next_bus_id。
+        p.bus_ids.clear();
+        p.next_bus_id = BusId::default();
+        p.sends[0] = vec![send(BusId(1), 1.0, false)];
+        p.midi_outputs[0] = Some(BusId(2));
         p.ensure_len();
-        assert!(p.sends[0].is_empty(), "越界 bus 的 send 应被清理");
+
+        assert_eq!(p.bus_ids, vec![BusId(0), BusId(1), BusId(2)]);
+        assert_eq!(p.next_bus_id, BusId(3));
+        assert_eq!(p.sends[0][0].bus, BusId(1));
+        assert_eq!(p.midi_outputs[0], Some(BusId(2)));
     }
 
-    /// 总线发送表随增删总线维护（清理指向被删总线、目标索引前移）；
-    /// 音频通道发送表同步维护（回归：旧实现漏了 audio_sends）。
+    /// 删除后新增总线不复用旧 ID，避免自动化/发送串到新总线。
+    #[test]
+    fn new_bus_does_not_reuse_deleted_id() {
+        let mut p = MixerParams::default();
+        p.ensure_len();
+        let ids = add_buses(&mut p, 3);
+        p.remove_bus(ids[1]);
+        let new_id = p.add_bus().expect("add bus");
+        assert_ne!(new_id, ids[1]);
+        assert_eq!(p.bus_ids, vec![ids[0], ids[2], new_id]);
+    }
+
+    /// 总线发送表随增删总线维护；音频通道发送表同步清理。
     #[test]
     fn bus_sends_follow_bus_add_remove() {
         let mut p = MixerParams::default();
         p.ensure_len();
-        let _ = p.add_bus();
-        let _ = p.add_bus();
-        let _ = p.add_bus();
-        // bus0 → bus1；bus2 → bus0；音频通道 0 → bus2
-        p.bus_sends[0].push(SendParams {
-            bus: 1,
-            amount: 1.0,
-            pre_fader: false,
-        });
-        p.bus_sends[2].push(SendParams {
-            bus: 0,
-            amount: 1.0,
-            pre_fader: false,
-        });
-        p.audio_sends = vec![vec![SendParams {
-            bus: 2,
-            amount: 1.0,
-            pre_fader: false,
-        }]];
+        let ids = add_buses(&mut p, 3);
+        // bus0 → bus2；bus2 → bus0；音频通道 0 → bus2
+        p.bus_sends[0].push(send(ids[2], 1.0, false));
+        p.bus_sends[2].push(send(ids[0], 1.0, false));
+        p.audio_sends = vec![vec![send(ids[2], 1.0, false)]];
 
-        p.remove_bus(1);
-        assert!(p.bus_sends[0].is_empty(), "指向被删总线的发送应清理");
+        p.remove_bus(ids[1]);
         assert_eq!(p.bus_sends.len(), 2);
-        assert_eq!(p.bus_sends[1].len(), 1, "高索引总线前移保留");
-        assert_eq!(p.bus_sends[1][0].bus, 0);
-        assert_eq!(p.audio_sends[0][0].bus, 1, "音频发送目标随索引前移");
+        assert_eq!(p.bus_sends[0].len(), 1, "其他总线的发送保留");
+        assert_eq!(p.bus_sends[0][0].bus, ids[2], "目标 ID 不变");
+        assert_eq!(p.audio_sends[0][0].bus, ids[2]);
     }
 
-    /// 总线自发送随其他总线删除保持指向自己（索引前移）。
+    /// 总线自发送随其他总线删除保持指向自己。
     #[test]
     fn bus_self_send_survives_other_bus_removal() {
         let mut p = MixerParams::default();
         p.ensure_len();
-        let _ = p.add_bus();
-        let _ = p.add_bus();
-        p.bus_sends[1].push(SendParams {
-            bus: 1,
-            amount: 1.0,
-            pre_fader: false,
-        });
-        p.remove_bus(0);
+        let ids = add_buses(&mut p, 2);
+        p.bus_sends[1].push(send(ids[1], 1.0, false));
+        p.remove_bus(ids[0]);
         assert_eq!(p.bus_sends.len(), 1);
         assert_eq!(p.bus_sends[0].len(), 1, "自发送应保留");
-        assert_eq!(p.bus_sends[0][0].bus, 0, "目标随索引前移保持指向自己");
+        assert_eq!(p.bus_sends[0][0].bus, ids[1], "仍指向自己");
     }
 
     /// ensure_len 清理三张发送表里指向不存在总线的条目。
@@ -505,25 +547,27 @@ mod tests {
         let mut p = MixerParams::default();
         p.ensure_len();
         let _ = p.add_bus();
-        p.sends[0].push(SendParams {
-            bus: 5,
-            amount: 1.0,
-            pre_fader: false,
-        });
-        p.audio_sends = vec![vec![SendParams {
-            bus: 5,
-            amount: 1.0,
-            pre_fader: false,
-        }]];
-        p.bus_sends[0].push(SendParams {
-            bus: 5,
-            amount: 1.0,
-            pre_fader: false,
-        });
+        p.sends[0].push(send(BusId(5), 1.0, false));
+        p.audio_sends = vec![vec![send(BusId(5), 1.0, false)]];
+        p.bus_sends[0].push(send(BusId(5), 1.0, false));
         p.ensure_len();
         assert!(p.sends[0].is_empty());
         assert!(p.audio_sends[0].is_empty());
         assert!(p.bus_sends[0].is_empty());
+    }
+
+    /// 重复 BusId 修复：后面的重复项重新分配，避免两条总线共享自动化。
+    #[test]
+    fn duplicate_bus_ids_are_reassigned() {
+        let mut p = MixerParams {
+            buses: vec![StripParams::default(); 2],
+            bus_ids: vec![BusId(7), BusId(7)],
+            next_bus_id: BusId(8),
+            ..MixerParams::default()
+        };
+        p.ensure_len();
+        assert_eq!(p.bus_ids, vec![BusId(7), BusId(8)]);
+        assert_eq!(p.next_bus_id, BusId(9));
     }
 
     #[test]

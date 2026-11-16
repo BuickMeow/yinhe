@@ -648,7 +648,7 @@ pub enum AutomationTarget {
     Tempo,
     /// 总线主输出增益（线性 0..1，1.0 = 0 dB）。lane 存于 Master 轨的
     /// automation_lanes，但渲染/交互落在 AR 固定 Bus 行的子行上。
-    BusGain { bus: u16 },
+    BusGain { bus: crate::BusId },
 }
 
 impl AutomationTarget {
@@ -772,6 +772,25 @@ impl AutomationTarget {
         matches!(self, AutomationTarget::BusGain { .. })
     }
 
+    /// lane 的归属层。
+    ///
+    /// `track` 是 lane 当前所在的轨道索引，只对 MIDI 原生目标有意义；
+    /// 乐器参数归 Rack，推子类归 LC/Bus/Master，Tempo 归 Conductor。
+    /// 目标 B 迁移时，按这个归属把 lane 从轨道里搬到对应 owner。
+    pub fn owner(&self, track: u16) -> crate::AutomationOwner {
+        match self {
+            AutomationTarget::Param { device, .. } => {
+                crate::AutomationOwner::Rack(crate::RackId::from_midi_channel(device.channel()))
+            }
+            AutomationTarget::CC { .. }
+            | AutomationTarget::PitchBend
+            | AutomationTarget::Rpn { .. }
+            | AutomationTarget::Nrpn { .. } => crate::AutomationOwner::Track(track),
+            AutomationTarget::Tempo => crate::AutomationOwner::Conductor,
+            AutomationTarget::BusGain { bus } => crate::AutomationOwner::Bus(*bus),
+        }
+    }
+
     /// 显示名（下拉/AR/事件浏览器共用）。
     pub fn display_name(&self) -> String {
         match self {
@@ -809,7 +828,7 @@ impl AutomationTarget {
             }
             AutomationTarget::Nrpn { parameter } => format!("NRPN {:03}", parameter),
             AutomationTarget::Tempo => "Tempo".into(),
-            AutomationTarget::BusGain { bus } => format!("BUS {} Gain", bus + 1),
+            AutomationTarget::BusGain { bus } => format!("BUS {} Gain", bus.index() + 1),
         }
     }
 }

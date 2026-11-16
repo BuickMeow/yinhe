@@ -176,13 +176,13 @@ pub(crate) enum MixAction {
     },
     /// 新增一条总线（追加到末尾）。
     AddBus,
-    /// 删除总线 `bus`（其 send 清理、更高索引前移）。
+    /// 删除总线 `bus`（清理指向它的 send/输出，其他总线不受影响）。
     RemoveBus {
-        bus: u16,
+        bus: yinhe_types::BusId,
     },
     /// 更新某总线的 strip 参数。
     SetBusStrip {
-        bus: u16,
+        bus: yinhe_types::BusId,
         params: StripParams,
     },
     /// 打开某源通道的发送面板。
@@ -192,21 +192,21 @@ pub(crate) enum MixAction {
     /// 更新某源通道对某总线的发送。
     SetSend {
         channel: u8,
-        bus: u16,
+        bus: yinhe_types::BusId,
         amount: f32,
         pre_fader: bool,
     },
     /// 更新某音频通道对某总线的发送。
     SetAudioSend {
         channel: u16,
-        bus: u16,
+        bus: yinhe_types::BusId,
         amount: f32,
         pre_fader: bool,
     },
     /// 更新某总线对某总线的发送（含自发送；总线发送统一推子后）。
     SetBusSend {
-        bus: u16,
-        target_bus: u16,
+        bus: yinhe_types::BusId,
+        target_bus: yinhe_types::BusId,
         amount: f32,
     },
     /// 给 MIDI 通道添加一条内置音量/声像自动化 lane（CC7/CC10）。
@@ -216,7 +216,7 @@ pub(crate) enum MixAction {
     },
     /// 给固定 Bus 添加音量自动化 lane。
     AddBusGainAutomation {
-        bus: u16,
+        bus: yinhe_types::BusId,
     },
     /// 为 MIDI 通道**追加**一个插件乐器到链尾（InsertRef 入持久化层 +
     /// 机架加载 + 安装引擎）。
@@ -342,11 +342,15 @@ impl App {
     }
 
     /// 更新某总线的 strip 参数：写持久化层 + 推引擎（高频路径）。
-    pub(crate) fn apply_bus_strip(&mut self, idx: usize, bus: u16, params: StripParams) {
-        if let Some(slot) = self.workspace.documents[idx]
-            .mixer_mut()
-            .buses
-            .get_mut(bus as usize)
+    pub(crate) fn apply_bus_strip(
+        &mut self,
+        idx: usize,
+        bus: yinhe_types::BusId,
+        params: StripParams,
+    ) {
+        let mixer = self.workspace.documents[idx].mixer_mut();
+        if let Some(index) = mixer.bus_index(bus)
+            && let Some(slot) = mixer.buses.get_mut(index)
         {
             *slot = params;
         }
@@ -422,10 +426,10 @@ impl App {
                 );
             }
         }
-        for (b, chain) in mixer.bus_inserts.iter().enumerate() {
+        for (&bus_id, chain) in mixer.bus_ids.iter().zip(mixer.bus_inserts.iter()) {
             for r in chain {
                 let _ = rack.load_plugin(
-                    InsertTarget::Bus(b as u16),
+                    InsertTarget::Bus(bus_id),
                     r.format,
                     &r.plugin_path,
                     &r.plugin_id,
@@ -786,6 +790,11 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                                 if bus_count > 0 {
                                     ui.separator();
                                     for b in 0..bus_count {
+                                        let Some(bus_id) =
+                                            app.workspace.documents[idx].mixer.bus_id_at(b)
+                                        else {
+                                            continue;
+                                        };
                                         let raw = app
                                             .audio_state
                                             .handle
@@ -803,7 +812,7 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                                             app,
                                             ui,
                                             idx,
-                                            b as u16,
+                                            bus_id,
                                             level,
                                             hold,
                                             strip_h,
@@ -899,7 +908,9 @@ pub(crate) fn insert_refs(
             }
             mixer.audio_inserts.get_mut(ch as usize)
         }
-        InsertTarget::Bus(bus) => mixer.bus_inserts.get_mut(bus as usize),
+        InsertTarget::Bus(bus) => mixer
+            .bus_index(bus)
+            .and_then(|idx| mixer.bus_inserts.get_mut(idx)),
         InsertTarget::Master => Some(&mut mixer.master_inserts),
     }
 }
@@ -1027,7 +1038,10 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
             app.note_mixer_edit(t!("undo.mix_send").as_ref());
             {
                 let mixer = app.workspace.documents[idx].mixer_mut();
-                if let Some(list) = mixer.bus_sends.get_mut(bus as usize) {
+                let Some(bus_index) = mixer.bus_index(bus) else {
+                    return;
+                };
+                if let Some(list) = mixer.bus_sends.get_mut(bus_index) {
                     if let Some(send) = list.iter_mut().find(|s| s.bus == target_bus) {
                         send.amount = amount;
                     } else if amount > 0.0 {

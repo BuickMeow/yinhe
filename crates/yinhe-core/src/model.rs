@@ -2171,7 +2171,9 @@ mod tests {
         let mut master = TrackData::new(0, 0);
         master.kind = TrackKind::Master;
         assert!(!master.allows_automation_target(&AutomationTarget::CC { controller: 7 }));
-        assert!(master.allows_automation_target(&AutomationTarget::BusGain { bus: 0 }));
+        assert!(master.allows_automation_target(&AutomationTarget::BusGain {
+            bus: yinhe_types::BusId(0)
+        }));
 
         let midi = TrackData::new(0, 0);
         assert!(midi.allows_automation_target(&AutomationTarget::CC { controller: 7 }));
@@ -2179,7 +2181,11 @@ mod tests {
         let mut folder = TrackData::new(0, 0);
         folder.kind = TrackKind::Folder;
         assert!(!folder.allows_automation_target(&AutomationTarget::CC { controller: 7 }));
-        assert!(!folder.allows_automation_target(&AutomationTarget::BusGain { bus: 0 }));
+        assert!(
+            !folder.allows_automation_target(&AutomationTarget::BusGain {
+                bus: yinhe_types::BusId(0)
+            })
+        );
     }
 
     #[test]

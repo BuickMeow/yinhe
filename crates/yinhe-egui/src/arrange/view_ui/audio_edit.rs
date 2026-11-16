@@ -717,6 +717,7 @@ mod tests {
                 num_tracks: self.tracks.len(),
                 tracks: &self.tracks,
                 tempo_lane: &self.tempo_lane,
+                bus_ids: &[],
                 conductor_track_idx: None,
                 tempo_map: &self.tempo_map,
                 audio_library: &self.library,

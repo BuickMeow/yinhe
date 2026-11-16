@@ -371,6 +371,7 @@ pub(crate) fn show(
             num_tracks: doc.edit.track_visible.len(),
             tracks: &model.tracks,
             tempo_lane: &model.conductor.tempo,
+            bus_ids: &doc.mixer.bus_ids,
             conductor_track_idx: doc.edit.track_cache.conductor_idx,
             tempo_map: &model.tempo_map,
             audio_library,

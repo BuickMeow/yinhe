@@ -146,31 +146,33 @@ fn show_audio(ui: &mut egui::Ui, doc: &mut Document, ch: u16) -> ChannelInfoOut 
     out
 }
 
-fn show_bus(ui: &mut egui::Ui, doc: &mut Document, bus: u16) -> ChannelInfoOut {
+fn show_bus(ui: &mut egui::Ui, doc: &mut Document, bus: yinhe_types::BusId) -> ChannelInfoOut {
     let mut out = ChannelInfoOut::default();
-    header(ui, format!("BUS {}", bus + 1), &[]);
+    header(ui, format!("BUS {}", bus.index() + 1), &[]);
 
-    let mut strip = doc
-        .mixer
-        .buses
-        .get(bus as usize)
-        .copied()
-        .unwrap_or_default();
+    let Some(index) = doc.mixer.bus_index(bus) else {
+        return out;
+    };
+    let mut strip = doc.mixer.buses[index];
     if strip_controls(ui, &mut strip)
-        && let Some(slot) = doc.mixer_mut().buses.get_mut(bus as usize)
+        && let Some(slot) = doc.mixer_mut().buses.get_mut(index)
     {
         *slot = strip;
         out.mixer_changed = true;
     }
 
+    let sends = doc.mixer.bus_sends.get(index).cloned().unwrap_or_default();
+    let inserts = doc
+        .mixer
+        .bus_inserts
+        .get(index)
+        .cloned()
+        .unwrap_or_default();
     section_header(ui, t!("mix.sends").as_ref());
-    show_sends(ui, doc.mixer.bus_sends.get(bus as usize).map(Vec::as_slice));
+    show_sends(ui, Some(&sends));
 
     section_header(ui, t!("channel.inserts").as_ref());
-    show_inserts(
-        ui,
-        doc.mixer.bus_inserts.get(bus as usize).map(Vec::as_slice),
-    );
+    show_inserts(ui, Some(&inserts));
     out
 }
 
@@ -252,8 +254,14 @@ fn tracks_on_channel(doc: &Document, ch: MixerChannelId) -> Vec<u16> {
 
 /// 通道主输出（Master / BUS n）。返回是否改动。
 fn output_selector(ui: &mut egui::Ui, doc: &mut Document, ch: MixerChannelId) -> bool {
+    let bus_ids = doc.mixer.bus_ids.clone();
     let bus_options: Vec<(usize, String)> = std::iter::once((0, "Master".to_string()))
-        .chain((0..doc.mixer.buses.len()).map(|bus| (bus + 1, format!("BUS {}", bus + 1))))
+        .chain(
+            bus_ids
+                .iter()
+                .enumerate()
+                .map(|(i, id)| (i + 1, format!("BUS {}", id.index() + 1))),
+        )
         .collect();
     let (outputs, index) = match ch {
         MixerChannelId::Midi(ch) => (&mut doc.mixer.midi_outputs, ch as usize),
@@ -263,7 +271,10 @@ fn output_selector(ui: &mut egui::Ui, doc: &mut Document, ch: MixerChannelId) ->
     if outputs.len() <= index {
         outputs.resize(index + 1, None);
     }
-    let mut sel = outputs[index].map(|b| b as usize + 1).unwrap_or(0);
+    let mut sel = outputs[index]
+        .and_then(|id| bus_ids.iter().position(|&x| x == id))
+        .map(|i| i + 1)
+        .unwrap_or(0);
     let mut changed = false;
     panel_row(ui, t!("track.output").as_ref(), |ui| {
         if crate::widgets::combo::combo_select(
@@ -280,7 +291,7 @@ fn output_selector(ui: &mut egui::Ui, doc: &mut Document, ch: MixerChannelId) ->
         outputs[index] = if sel == 0 {
             None
         } else {
-            Some((sel - 1) as u16)
+            bus_ids.get(sel - 1).copied()
         };
         doc.mark_mixer_dirty();
     }
@@ -316,7 +327,7 @@ fn show_sends(ui: &mut egui::Ui, sends: Option<&[yinhe_mixer::SendParams]>) {
         };
         value_row(
             ui,
-            format!("BUS {}", send.bus + 1),
+            format!("BUS {}", send.bus.index() + 1),
             format!("{:.0}% · {}", send.amount * 100.0, mode),
         );
     }

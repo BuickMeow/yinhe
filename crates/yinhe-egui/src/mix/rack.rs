@@ -21,6 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use yinhe_audio::{AudioCommand, AudioHandle, BuiltinInsert, ClapInsert, InsertTarget};
 use yinhe_clap::{ClapProcessor, HostInfo};
 use yinhe_mixer::{InsertProcessor, MixerParams, PluginFormat};
+use yinhe_types::BusId;
 use yinhe_vst3::Vst3Insert;
 
 use super::plugin_instance::{PluginEntry, PluginInstance};
@@ -59,7 +60,7 @@ pub(crate) struct MixerRack {
     /// 源通道 → 槽位实例（稀疏：只有挂插件的通道有条目）。
     pub channels: HashMap<u8, Vec<SlotRuntime>>,
     /// 总线（bus/return）→ 槽位实例（稀疏）。
-    pub buses: HashMap<u16, Vec<SlotRuntime>>,
+    pub buses: HashMap<BusId, Vec<SlotRuntime>>,
     /// 音频通道 insert 链（键 = 音频通道号）。
     pub audios: HashMap<u16, Vec<SlotRuntime>>,
     pub master: Vec<SlotRuntime>,
@@ -431,12 +432,11 @@ impl MixerRack {
         Err(PluginLoadError("当前平台暂不支持插件界面".into()))
     }
 
-    /// 删除总线的机架侧处理：发 InsertRemove 回收处理器、更高 bus 键前移一位
-    /// （与 `MixerParams::remove_bus` 的路由语义保持一致）。
+    /// 删除总线的机架侧处理：发 InsertRemove 回收处理器。
     ///
-    /// 已发送的槽位移入 orphan，等处理器退回后 deactivate（bus 号已失效，
-    /// 按 owner 匹配）。
-    pub fn remove_bus_chain(&mut self, bus: u16, handle: Option<&AudioHandle>) {
+    /// BusId 稳定，其他总线的机架链不需要重排。已发送的槽位移入 orphan，
+    /// 等处理器退回后 deactivate（总线已删除，按 owner 匹配）。
+    pub fn remove_bus_chain(&mut self, bus: BusId, handle: Option<&AudioHandle>) {
         if let Some(chain) = self.buses.remove(&bus) {
             for (slot, rt) in chain.into_iter().enumerate() {
                 if rt.sent {
@@ -450,16 +450,6 @@ impl MixerRack {
                 }
                 // 未发送的槽位直接 drop（插件从未进入引擎）。
             }
-        }
-        let mut moved: Vec<(u16, Vec<SlotRuntime>)> = Vec::new();
-        let keys: Vec<u16> = self.buses.keys().copied().filter(|b| *b > bus).collect();
-        for b in keys {
-            if let Some(chain) = self.buses.remove(&b) {
-                moved.push((b - 1, chain));
-            }
-        }
-        for (b, chain) in moved {
-            self.buses.insert(b, chain);
         }
     }
 
@@ -651,7 +641,10 @@ impl MixerRack {
             sync_chain(chain.iter_mut(), refs.iter_mut());
         }
         for (bus, chain) in self.buses.iter_mut() {
-            let Some(refs) = mixer.bus_inserts.get_mut(*bus as usize) else {
+            let Some(index) = mixer.bus_index(*bus) else {
+                continue;
+            };
+            let Some(refs) = mixer.bus_inserts.get_mut(index) else {
                 continue;
             };
             sync_chain(chain.iter_mut(), refs.iter_mut());

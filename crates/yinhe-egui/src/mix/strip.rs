@@ -14,7 +14,7 @@
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_mixer::MasterParams;
-use yinhe_types::MixerChannelId;
+use yinhe_types::{BusId, MixerChannelId};
 
 use crate::app::App;
 use crate::widgets::meter::{METER_GAP, METER_W, SCALE_W};
@@ -79,7 +79,7 @@ pub(crate) fn channel_strip(
     actions: &mut Vec<MixAction>,
 ) {
     let params = app.workspace.documents[idx].mixer.strip(channel);
-    let bus_count = app.workspace.documents[idx].mixer.bus_count();
+    let bus_ids = app.workspace.documents[idx].mixer.bus_ids.clone();
     let sends = app.workspace.documents[idx]
         .mixer
         .sends
@@ -97,10 +97,10 @@ pub(crate) fn channel_strip(
         |ui, _| {
             section(
                 ui,
-                send_height(bus_count),
+                send_height(bus_ids.len()),
                 egui::Layout::top_down(egui::Align::Center),
                 |ui| {
-                    send_block(ui, SendSource::Channel(channel), &sends, bus_count, actions);
+                    send_block(ui, SendSource::Channel(channel), &sends, &bus_ids, actions);
                 },
             );
             ui.add_space(GAP);
@@ -150,7 +150,7 @@ pub(crate) fn audio_strip(
         .get(channel as usize)
         .cloned()
         .unwrap_or_default();
-    let bus_count = app.workspace.documents[idx].mixer.bus_count();
+    let bus_ids = app.workspace.documents[idx].mixer.bus_ids.clone();
 
     let rect = strip_frame(
         ui,
@@ -161,14 +161,14 @@ pub(crate) fn audio_strip(
         |ui, _| {
             section(
                 ui,
-                send_height(bus_count),
+                send_height(bus_ids.len()),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     send_block(
                         ui,
                         SendSource::Audio(channel),
                         &audio_sends,
-                        bus_count,
+                        &bus_ids,
                         actions,
                     );
                 },
@@ -206,26 +206,20 @@ pub(crate) fn bus_strip(
     app: &mut App,
     ui: &mut egui::Ui,
     idx: usize,
-    bus: u16,
+    bus: BusId,
     level: (f32, f32),
     hold: (f32, f32),
     height: f32,
     actions: &mut Vec<MixAction>,
 ) {
-    let params = app.workspace.documents[idx]
-        .mixer
-        .buses
-        .get(bus as usize)
-        .copied()
-        .unwrap_or_default();
-    let title = format!("BUS {}", bus + 1);
-    let bus_sends = app.workspace.documents[idx]
-        .mixer
-        .bus_sends
-        .get(bus as usize)
-        .cloned()
-        .unwrap_or_default();
-    let bus_count = app.workspace.documents[idx].mixer.bus_count();
+    let mixer = &app.workspace.documents[idx].mixer;
+    let Some(bus_index) = mixer.bus_index(bus) else {
+        return;
+    };
+    let params = mixer.buses.get(bus_index).copied().unwrap_or_default();
+    let title = format!("BUS {}", bus.index() + 1);
+    let bus_sends = mixer.bus_sends.get(bus_index).cloned().unwrap_or_default();
+    let bus_ids = mixer.bus_ids.clone();
 
     let rect = strip_frame(
         ui,
@@ -236,10 +230,10 @@ pub(crate) fn bus_strip(
         |ui, _| {
             section(
                 ui,
-                send_height(bus_count),
+                send_height(bus_ids.len()),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
-                    send_block(ui, SendSource::Bus(bus), &bus_sends, bus_count, actions);
+                    send_block(ui, SendSource::Bus(bus), &bus_sends, &bus_ids, actions);
                 },
             );
             ui.add_space(GAP);
@@ -606,7 +600,7 @@ fn reset_gain_action(app: &App, idx: usize, ch: MixerChannelId) -> MixAction {
             MixAction::SetAudioStrip { channel, params }
         }
         MixerChannelId::Bus(bus) => {
-            let mut params = mixer.buses.get(bus as usize).copied().unwrap_or_default();
+            let mut params = mixer.bus_strip(bus);
             params.gain = 1.0;
             MixAction::SetBusStrip { bus, params }
         }
@@ -630,7 +624,7 @@ fn reset_pan_action(app: &App, idx: usize, ch: MixerChannelId) -> Option<MixActi
             Some(MixAction::SetAudioStrip { channel, params })
         }
         MixerChannelId::Bus(bus) => {
-            let mut params = mixer.buses.get(bus as usize).copied().unwrap_or_default();
+            let mut params = mixer.bus_strip(bus);
             params.pan = 0.0;
             Some(MixAction::SetBusStrip { bus, params })
         }

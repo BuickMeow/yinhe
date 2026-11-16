@@ -212,12 +212,12 @@ impl Document {
     /// 为固定 Bus 行创建一条增益自动化 lane（存于 Master 轨）。
     /// 已存在时返回 None；初始事件写在 tick 0，值为当前总线增益，
     /// 保证引擎一开始就能求值且不会突然改变音量。
-    pub fn add_bus_automation_lane(&mut self, bus: u16) -> Option<UndoAction> {
-        if bus as usize >= self.mixer.buses.len() {
+    pub fn add_bus_automation_lane(&mut self, bus: yinhe_types::BusId) -> Option<UndoAction> {
+        let gain = self.mixer.bus_strip(bus).gain.clamp(0.0, 1.0);
+        if self.mixer.bus_index(bus).is_none() {
             return None;
         }
         let track_idx = self.edit.track_cache.conductor_idx? as usize;
-        let gain = self.mixer.buses[bus as usize].gain.clamp(0.0, 1.0);
         let target = AutomationTarget::BusGain { bus };
         let event_id = Arc::make_mut(&mut self.data.model).alloc_automation_id();
         let model = Arc::make_mut(&mut self.data.model);
@@ -246,11 +246,10 @@ impl Document {
         })
     }
 
-    /// 删除总线并同步清理/重映射 Master 上的 BusGain 自动化 lane。
-    /// 总线索引是位置索引：删除 bus 后，更高 bus 的 lane target 必须前移，
-    /// 否则自动化会作用到错误的总线上。
-    pub fn remove_bus(&mut self, bus: u16) {
-        if bus as usize >= self.mixer.buses.len() {
+    /// 删除总线并清理 Master 上指向它的 BusGain 自动化 lane。
+    /// BusId 稳定，其他总线的 lane 不需要重映射。
+    pub fn remove_bus(&mut self, bus: yinhe_types::BusId) {
+        if self.mixer.bus_index(bus).is_none() {
             return;
         }
         self.mixer.remove_bus(bus);
@@ -263,17 +262,8 @@ impl Document {
         };
         let track = Arc::make_mut(track);
         let before = track.automation_lanes.len();
-        track.automation_lanes.retain_mut(|lane| {
-            let AutomationTarget::BusGain { bus: target } = &mut lane.target else {
-                return true;
-            };
-            if *target == bus {
-                return false;
-            }
-            if *target > bus {
-                *target -= 1;
-            }
-            true
+        track.automation_lanes.retain(|lane| {
+            !matches!(&lane.target, AutomationTarget::BusGain { bus: target } if *target == bus)
         });
         if track.automation_lanes.len() != before {
             self.data.bump_revision();
@@ -1160,14 +1150,19 @@ mod tests {
         let mut doc = Document::empty();
         assert!(doc.mixer.add_bus().is_some());
         let master = doc.edit.track_cache.conductor_idx.unwrap() as usize;
-        doc.add_bus_automation_lane(0).expect("bus lane");
+        doc.add_bus_automation_lane(yinhe_types::BusId(0))
+            .expect("bus lane");
         assert!(matches!(
             doc.data.model.tracks[master].automation_lanes[0].target,
-            AutomationTarget::BusGain { bus: 0 }
+            AutomationTarget::BusGain {
+                bus: yinhe_types::BusId(0)
+            }
         ));
         doc.add_automation_event(
             master,
-            AutomationTarget::BusGain { bus: 0 },
+            AutomationTarget::BusGain {
+                bus: yinhe_types::BusId(0),
+            },
             AutomationEvent {
                 id: 0,
                 tick: 480,

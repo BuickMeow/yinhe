@@ -692,7 +692,7 @@ fn context_label(context: DockContext) -> String {
     match context {
         DockContext::Midi(ch) => crate::mix::channel_label(ch),
         DockContext::Audio(ach) => crate::mix::audio_label(ach),
-        DockContext::Bus(bus) => format!("BUS {}", bus + 1),
+        DockContext::Bus(bus) => format!("BUS {}", bus.index() + 1),
         DockContext::Master => t!("mix.master").to_string(),
     }
 }

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_core::TrackInfo;
-use yinhe_types::{ArRow, ArRowLayout, AutomationTarget};
+use yinhe_types::{ArRow, ArRowLayout, AutomationTarget, BusId};
 
 use super::types::TrackAction;
 use yinhe_editor_core::shortcuts;
@@ -13,13 +13,13 @@ use yinhe_editor_core::shortcuts;
 #[derive(Clone, Copy)]
 enum RowMenuTarget {
     Track(usize, Option<usize>),
-    Bus(u16),
-    BusAutomation(u16, usize),
+    Bus(BusId),
+    BusAutomation(BusId, usize),
 }
 
 impl Default for RowMenuTarget {
     fn default() -> Self {
-        Self::Bus(0)
+        Self::Bus(BusId(0))
     }
 }
 
@@ -293,6 +293,7 @@ pub fn handle_interactions(
     info_content: &mut Option<crate::right_panel::InfoContent>,
     request_pianoroll: &mut bool,
     tracks: &[Arc<yinhe_core::TrackData>],
+    bus_ids: &[BusId],
     actions: &mut Vec<TrackAction>,
     max_scroll: f32,
 ) {
@@ -314,8 +315,10 @@ pub fn handle_interactions(
             && let Some(row_hit) =
                 row_layout.hit_at_music_y(pos.y - panel_rect.min.y + *scroll_y, lh)
         {
-            if let ArRow::Bus(bus) = row_hit {
-                actions.push(TrackAction::OpenBusDock { bus: bus as u16 });
+            if let ArRow::Bus(bus) = row_hit
+                && let Some(&bus_id) = bus_ids.get(bus)
+            {
+                actions.push(TrackAction::OpenBusDock { bus: bus_id });
             } else if let Some(idx) = row_hit.track_opt() {
                 // 双击文件夹 = 折叠/展开，不打开 PR（文件夹没有音符）。
                 if tracks
@@ -411,16 +414,17 @@ pub fn handle_interactions(
         {
             match row_hit {
                 ArRow::Bus(bus) => {
-                    ui.ctx()
-                        .data_mut(|d| d.insert_temp(ctx_target_id, RowMenuTarget::Bus(bus as u16)));
+                    if let Some(&bus_id) = bus_ids.get(bus) {
+                        ui.ctx()
+                            .data_mut(|d| d.insert_temp(ctx_target_id, RowMenuTarget::Bus(bus_id)));
+                    }
                 }
                 ArRow::BusAutomation(bus, lane) => {
-                    ui.ctx().data_mut(|d| {
-                        d.insert_temp(
-                            ctx_target_id,
-                            RowMenuTarget::BusAutomation(bus as u16, lane),
-                        )
-                    });
+                    if let Some(&bus_id) = bus_ids.get(bus) {
+                        ui.ctx().data_mut(|d| {
+                            d.insert_temp(ctx_target_id, RowMenuTarget::BusAutomation(bus_id, lane))
+                        });
+                    }
                 }
                 ArRow::Track(idx) => {
                     prepare_track_menu(

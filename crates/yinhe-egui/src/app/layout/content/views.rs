@@ -48,7 +48,7 @@ impl App {
         // 双击固定 Bus 行 → 打开设备链。
         let mut dock_req: Option<crate::chrome::device_chain::DockContext> = None;
         // 右键固定 Bus 行 → 删除总线。
-        let mut bus_remove_req: Option<u16> = None;
+        let mut bus_remove_req: Option<yinhe_types::BusId> = None;
         // 音乐区右键菜单动作。
         let mut menu_actions: Vec<crate::arrange::context_menu::TimelineMenuAction> = Vec::new();
         {

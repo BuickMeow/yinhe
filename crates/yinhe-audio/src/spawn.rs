@@ -196,7 +196,7 @@ pub enum AudioCommand {
     },
     /// 更新某总线的 strip 参数（推子拖动高频路径，幂等）。
     SetBusStrip {
-        bus: u16,
+        bus: yinhe_types::BusId,
         params: StripParams,
     },
     /// 全量同步总线配置（增删总线 / 改发送后推一次）：
@@ -2077,7 +2077,7 @@ mod tests {
             ),
             (
                 AudioCommand::SetBusStrip {
-                    bus: 0,
+                    bus: yinhe_types::BusId(0),
                     params: StripParams::default(),
                 },
                 "SetBusStrip",

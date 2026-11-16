@@ -2,8 +2,10 @@
 //! insert 命令处理与处理器回收。
 
 use yinhe_mixer::{
-    InsertProcessor, InstrumentProcessor, MasterParams, MixerParams, SendParams, StripParams,
+    InsertProcessor, InstrumentProcessor, MasterParams, MixerParams, ResolvedSend, SendParams,
+    StripParams,
 };
+use yinhe_types::BusId;
 
 use crate::channel_layout::ChannelNamespace;
 use crate::engine::AudioEngine;
@@ -36,7 +38,6 @@ impl AudioEngine {
     /// 把持久化的通道主输出路由推到混音图。
     /// 源通道按 dense 映射到 Master 或某条总线。
     fn sync_output_routing(&mut self) {
-        let bus_count = self.mixer.bus_count();
         let count = self.channel_set.channel_count();
         for dense in 0..count {
             let dest = match self.dense_to_namespace(dense) {
@@ -48,8 +49,7 @@ impl AudioEngine {
                 }
                 None => None,
             }
-            .map(usize::from)
-            .filter(|&bus| bus < bus_count);
+            .and_then(|id| self.mixer_params.bus_index(id));
             self.mixer.set_channel_output(dense, dest);
         }
     }
@@ -68,14 +68,30 @@ impl AudioEngine {
                     ChannelNamespace::Midi(src) => sends.get(src),
                     ChannelNamespace::Audio(ach) => audio_sends.get(ach),
                 })
-                .cloned()
+                .map(|list| self.resolve_sends(list))
                 .unwrap_or_default();
             self.mixer.set_sends(dense, list);
         }
         let bus_sends = self.mixer_params.bus_sends.clone();
         for (i, list) in bus_sends.into_iter().enumerate() {
-            self.mixer.set_bus_sends(i, list);
+            let resolved = self.resolve_sends(&list);
+            self.mixer.set_bus_sends(i, resolved);
         }
+    }
+
+    /// 持久化层用稳定 BusId；渲染图只认 `buses` 下标。
+    /// 指向已删除总线的 send 在 `ensure_len` 已清理，这里再防御一次。
+    fn resolve_sends(&self, sends: &[SendParams]) -> Vec<ResolvedSend> {
+        sends
+            .iter()
+            .filter_map(|s| {
+                self.mixer_params.bus_index(s.bus).map(|bus| ResolvedSend {
+                    bus,
+                    amount: s.amount,
+                    pre_fader: s.pre_fader,
+                })
+            })
+            .collect()
     }
 
     /// dense 索引 → 所属通道命名空间（仅结构性操作时调用，O(1)）。
@@ -97,11 +113,11 @@ impl AudioEngine {
     }
 
     /// 更新某总线的 strip 参数（高频路径）。
-    pub(crate) fn set_bus_strip(&mut self, bus: u16, params: StripParams) {
-        let idx = bus as usize;
-        if let Some(slot) = self.mixer_params.buses.get_mut(idx) {
-            *slot = params;
-        }
+    pub(crate) fn set_bus_strip(&mut self, bus: BusId, params: StripParams) {
+        let Some(idx) = self.mixer_params.bus_index(bus) else {
+            return;
+        };
+        self.mixer_params.buses[idx] = params;
         self.mixer.set_bus_strip(idx, params);
     }
 
@@ -142,11 +158,14 @@ impl AudioEngine {
                 .map(|(v, _)| v)
                 .unwrap_or(1.0)
                 .clamp(0.0, 1.0);
-            if let Some(params) = self.mixer_params.buses.get_mut(*bus as usize)
+            let Some(idx) = self.mixer_params.bus_index(*bus) else {
+                continue;
+            };
+            if let Some(params) = self.mixer_params.buses.get_mut(idx)
                 && (params.gain - value).abs() > f32::EPSILON
             {
                 params.gain = value;
-                self.mixer.set_bus_gain(*bus as usize, value);
+                self.mixer.set_bus_gain(idx, value);
             }
         }
     }
@@ -216,7 +235,10 @@ impl AudioEngine {
                     self.insert_returns.push(processor);
                 }
             }
-            InsertTarget::Bus(bus) => self.mixer.insert_bus_insert(bus as usize, slot, processor),
+            InsertTarget::Bus(bus) => match self.mixer_params.bus_index(bus) {
+                Some(idx) => self.mixer.insert_bus_insert(idx, slot, processor),
+                None => self.insert_returns.push(processor),
+            },
             InsertTarget::Master => self.mixer.insert_master_insert(slot, processor),
         }
     }
@@ -232,7 +254,10 @@ impl AudioEngine {
                     .then(|| self.mixer.remove_insert(dense as usize, slot))
                     .flatten()
             }
-            InsertTarget::Bus(bus) => self.mixer.remove_bus_insert(bus as usize, slot),
+            InsertTarget::Bus(bus) => self
+                .mixer_params
+                .bus_index(bus)
+                .and_then(|idx| self.mixer.remove_bus_insert(idx, slot)),
             InsertTarget::Master => self.mixer.remove_master_insert(slot),
         };
         if let Some(p) = removed {
@@ -256,7 +281,10 @@ impl AudioEngine {
                     .then(|| self.mixer.replace_insert(dense as usize, slot, processor))
                     .flatten()
             }
-            InsertTarget::Bus(bus) => self.mixer.replace_bus_insert(bus as usize, slot, processor),
+            InsertTarget::Bus(bus) => self
+                .mixer_params
+                .bus_index(bus)
+                .and_then(|idx| self.mixer.replace_bus_insert(idx, slot, processor)),
             InsertTarget::Master => self.mixer.replace_master_insert(slot, processor),
         };
         if let Some(p) = old {

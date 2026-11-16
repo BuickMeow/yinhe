@@ -39,6 +39,8 @@ pub(crate) struct ArrangeData<'a> {
     pub tracks: &'a [std::sync::Arc<yinhe_core::TrackData>],
     /// Conductor 的 Tempo lane（Conductor 主行直显/直编）。
     pub tempo_lane: &'a yinhe_types::AutomationLane,
+    /// 固定 Bus 行的稳定 ID（与 AR 行布局的 bus 下标对应）。
+    pub bus_ids: &'a [yinhe_types::BusId],
     pub conductor_track_idx: Option<u16>,
     /// Tempo 映射（音频片段秒 ↔ tick 换算）。
     pub tempo_map: &'a yinhe_core::TempoMap,
@@ -141,7 +143,7 @@ pub fn show(
     // 双击固定 Bus 行：请求打开设备链（调用方落地）。
     dock_req: &mut Option<crate::chrome::device_chain::DockContext>,
     // 右键固定 Bus 行：请求删除总线（调用方清理机架并推引擎）。
-    bus_remove_req: &mut Option<u16>,
+    bus_remove_req: &mut Option<yinhe_types::BusId>,
     // 音乐区右键菜单动作（调用方 `App` 落地）。
     menu_actions: &mut Vec<context_menu::TimelineMenuAction>,
 ) {
@@ -214,10 +216,11 @@ pub fn show(
     // Conductor 不展开（主行直显 Tempo）。
     doc.edit.arr_am_expanded.resize(num_tracks, false);
     let conductor_idx = doc.edit.track_cache.conductor_idx;
-    let bus_count = doc.mixer.bus_count();
+    let bus_ids = doc.mixer.bus_ids.clone();
     // 固定 Bus 行的自动化子行：BusGain lane 存在 Master 轨上。
-    let bus_lanes: Vec<Vec<usize>> = (0..bus_count)
-        .map(|bus| {
+    let bus_lanes: Vec<Vec<usize>> = bus_ids
+        .iter()
+        .map(|&bus_id| {
             conductor_idx
                 .and_then(|idx| doc.data.model.tracks.get(idx as usize))
                 .map(|track| {
@@ -226,8 +229,7 @@ pub fn show(
                         .iter()
                         .enumerate()
                         .filter(|(_, lane)| {
-                            lane.target
-                                == yinhe_types::AutomationTarget::BusGain { bus: bus as u16 }
+                            lane.target == yinhe_types::AutomationTarget::BusGain { bus: bus_id }
                         })
                         .map(|(idx, _)| idx)
                         .collect()
@@ -522,6 +524,7 @@ pub fn show(
             &mut doc.edit.arr_am_ms,
             track_meters,
             bus_strips,
+            &bus_ids,
             bus_meters,
             doc.edit.cursor_tick,
             &doc.data.model.conductor.tempo,
@@ -655,7 +658,9 @@ pub fn show(
                 }
                 track_panel::TrackAction::SetBusStrip { bus, params } => {
                     structural = false;
-                    if let Some(slot) = doc.mixer.buses.get_mut(*bus as usize) {
+                    if let Some(index) = doc.mixer.bus_index(*bus)
+                        && let Some(slot) = doc.mixer.buses.get_mut(index)
+                    {
                         *slot = *params;
                     }
                     *mixer_dirty = true;
@@ -787,6 +792,7 @@ pub fn show(
             num_tracks,
             tracks: &model.tracks,
             tempo_lane: &model.conductor.tempo,
+            bus_ids: &doc.mixer.bus_ids,
             conductor_track_idx: doc.edit.track_cache.conductor_idx,
             tempo_map: &model.tempo_map,
             audio_library,
