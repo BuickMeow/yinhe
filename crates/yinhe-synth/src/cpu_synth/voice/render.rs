@@ -236,7 +236,7 @@ impl CpuVoice {
                 }
                 let frac = (t - idx as f64) as f32;
                 if idx < sample_length as u64 {
-                    let si = (sample_offset as u64 + idx * scale as u64) as usize;
+                    let si = ((sample_offset as u64 + idx) * scale as u64) as usize;
                     let mut l0 = sample.get(si).copied().unwrap_or(0.0);
                     let mut r0 = if is_stereo {
                         sample.get(si + 1).copied().unwrap_or(0.0)
@@ -364,7 +364,7 @@ impl CpuVoice {
             }
 
             if idx < sample_length as u64 {
-                let si = (sample_offset as u64 + idx * scale as u64) as usize;
+                let si = ((sample_offset as u64 + idx) * scale as u64) as usize;
                 let mut l0 = self.sample.get(si).copied().unwrap_or(0.0);
                 let mut r0 = if is_stereo {
                     self.sample.get(si + 1).copied().unwrap_or(0.0)
@@ -491,7 +491,7 @@ fn read_frame(
     if frame >= sample_length as u64 {
         return (0.0, 0.0);
     }
-    let si = (sample_offset + frame * scale as u64) as usize;
+    let si = ((sample_offset + frame) * scale as u64) as usize;
     let l = sample.get(si).copied().unwrap_or(0.0);
     let r = if is_stereo {
         sample.get(si + 1).copied().unwrap_or(0.0)

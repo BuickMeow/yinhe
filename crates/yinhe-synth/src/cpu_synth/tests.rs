@@ -31,6 +31,48 @@ fn note_on_without_soundfont_is_silent() {
     assert!(bufs.iter().all(|b| b.left.iter().all(|&v| v == 0.0)));
 }
 
+/// 立体声采样起始 offset 以**帧**为单位：索引必须乘 2 转成交错下标。
+/// 旧实现把 offset 当成交错下标，offset 为奇数时会把右声道当左声道读，
+/// 表现为某个乐器只剩一边。
+#[test]
+fn stereo_sample_offset_is_frame_based() {
+    let mut synth = CpuSynth::new(48_000);
+    let mut map = vec![Vec::new(); 128];
+    // 帧 0：L=1,R=0；帧 1..：L=0.5,R=0.25。offset=1 应跳过帧 0。
+    let mut interleaved = Vec::with_capacity(4_800 * 2);
+    interleaved.push(1.0);
+    interleaved.push(0.0);
+    for _ in 1..4_800 {
+        interleaved.push(0.5);
+        interleaved.push(0.25);
+    }
+    map[60] = vec![crate::sf_parser::KeyInfo {
+        sample_data: Arc::from(interleaved),
+        is_stereo: true,
+        offset: 1,
+        lovel: 0,
+        hivel: 127,
+        ..Default::default()
+    }];
+    synth.port_key_maps[0] = Arc::new(vec![KeyMapEntry::expanded(0, 0, map)]);
+    synth.send_event(SynthEvent::NoteOn {
+        track: 0,
+        sample: 0,
+        channel: 0,
+        key: 60,
+        velocity: 100,
+        end_sample: 96_000,
+    });
+    let mut bufs = buffers(1024);
+    synth.render_to_mixer(&mut bufs);
+    let left: f32 = bufs[0].left.iter().map(|v| v.abs()).sum();
+    let right: f32 = bufs[0].right.iter().map(|v| v.abs()).sum();
+    assert!(
+        left > right * 1.5,
+        "左声道应约为右声道 2 倍: {left} vs {right}"
+    );
+}
+
 /// 块内结束的 voice 仍要标记"本块出过声"：混音台空闲通道跳过否则会
 /// 把整颗短音符（或 release 尾音）当静音丢掉。
 #[test]

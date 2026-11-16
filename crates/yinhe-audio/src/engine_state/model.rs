@@ -165,6 +165,127 @@ impl AudioEngine {
         }
     }
 
+    /// 同步恢复目标 tick 的 program/bank 状态（seek / play 起点）。
+    ///
+    /// chase 的完整 CC/RPN 状态由 worker 异步回填，但 program/bank 决定音色；
+    /// 若等异步结果，seek 后第一批音符会先用默认 program 0（钢琴）发声，
+    /// 鼓通道也会暂时变回钢琴。这里在清音/重定位后同步应用最后一次
+    /// bank+program，保证第一批音符就是正确音色。完整 CC 仍由异步 chase 补齐。
+    pub(crate) fn apply_program_state_at(&mut self, tick: u32) {
+        let Some(model) = self.yin_model.as_ref() else {
+            return;
+        };
+
+        #[derive(Clone, Copy)]
+        struct PcAt {
+            tick: u32,
+            bank_msb: Option<u8>,
+            bank_lsb: Option<u8>,
+            program: u8,
+        }
+
+        let mut events: Vec<Vec<PcAt>> = (0..256).map(|_| Vec::new()).collect();
+        for (ch, inst) in model.channel_instruments.iter().enumerate() {
+            if let Some(inst) = inst {
+                events[ch].push(PcAt {
+                    tick: 0,
+                    // 鼓通道的 bank 由 PercussionMode 固定为 128，不重复下发。
+                    bank_msb: (!inst.is_drum).then_some(inst.bank_msb),
+                    bank_lsb: (!inst.is_drum).then_some(inst.bank_lsb),
+                    program: inst.program,
+                });
+            }
+        }
+        for (track_idx, track) in model.tracks.iter().enumerate() {
+            if self.skip_track.get(track_idx).copied().unwrap_or(false) {
+                continue;
+            }
+            let Some(ch) = track.midi_target_channel() else {
+                continue;
+            };
+            for pc in &track.program_change {
+                events[ch as usize].push(PcAt {
+                    tick: pc.tick,
+                    bank_msb: (pc.bank_msb != 0xFF).then_some(pc.bank_msb),
+                    bank_lsb: (pc.bank_lsb != 0xFF).then_some(pc.bank_lsb),
+                    program: pc.program,
+                });
+            }
+        }
+
+        let sample = self.sample_position;
+        for (ch, list) in events.iter_mut().enumerate() {
+            list.sort_by_key(|e| e.tick);
+            let mut bank_msb = None;
+            let mut bank_lsb = None;
+            let mut program = None;
+            for e in list.iter() {
+                if e.tick > tick {
+                    break;
+                }
+                if let Some(v) = e.bank_msb {
+                    bank_msb = Some(v);
+                }
+                if let Some(v) = e.bank_lsb {
+                    bank_lsb = Some(v);
+                }
+                program = Some(e.program);
+            }
+            let Some(program) = program else {
+                continue;
+            };
+            let dense = self.channel_layout.dense_for(ch);
+            if dense == u32::MAX {
+                continue;
+            }
+            if let Some(cs) = self.cpu_synth.as_mut() {
+                if let Some(value) = bank_msb {
+                    cs.send_event(yinhe_synth::SynthEvent::Control {
+                        sample,
+                        channel: dense as u8,
+                        event: yinhe_synth::ControlEvent::Raw(0, f32::from(value)),
+                    });
+                }
+                if let Some(value) = bank_lsb {
+                    cs.send_event(yinhe_synth::SynthEvent::Control {
+                        sample,
+                        channel: dense as u8,
+                        event: yinhe_synth::ControlEvent::Raw(32, f32::from(value)),
+                    });
+                }
+                cs.send_event(yinhe_synth::SynthEvent::Control {
+                    sample,
+                    channel: dense as u8,
+                    event: yinhe_synth::ControlEvent::ProgramChange(program),
+                });
+            } else if self.cpu_synth_active() {
+                use xsynth_core::channel::{ChannelAudioEvent, ChannelEvent, ControlEvent};
+                use xsynth_core::channel_group::SynthEvent;
+                let send =
+                    |event: ChannelAudioEvent, channel_set: &mut crate::channel_set::ChannelSet| {
+                        channel_set
+                            .send_event(SynthEvent::Channel(dense, ChannelEvent::Audio(event)));
+                    };
+                if let Some(value) = bank_msb {
+                    send(
+                        ChannelAudioEvent::Control(ControlEvent::Raw(0, value)),
+                        &mut self.channel_set,
+                    );
+                }
+                if let Some(value) = bank_lsb {
+                    send(
+                        ChannelAudioEvent::Control(ControlEvent::Raw(32, value)),
+                        &mut self.channel_set,
+                    );
+                }
+                send(
+                    ChannelAudioEvent::ProgramChange(program),
+                    &mut self.channel_set,
+                );
+            }
+        }
+    }
+
     /// 复位后重新声明鼓组模式（seek / stop / loop 回绕调用）。
     pub(crate) fn reapply_percussion(&mut self) {
         let Some(model) = self.model.as_ref() else {
