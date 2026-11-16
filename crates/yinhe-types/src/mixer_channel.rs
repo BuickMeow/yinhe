@@ -47,9 +47,10 @@ impl MixerChannelId {
     /// 混音图中的节点身份。
     pub fn node_id(self) -> MixerNodeId {
         match self {
-            Self::Midi(_) | Self::Audio(_) => {
-                MixerNodeId::LogicalChannel(self.logical_channel_id().unwrap_or_default())
-            }
+            Self::Midi(ch) => MixerNodeId::LogicalChannel(LogicalChannelId(u32::from(ch))),
+            Self::Audio(ch) => MixerNodeId::LogicalChannel(LogicalChannelId(
+                crate::MIDI_CHANNEL_COUNT as u32 + u32::from(ch),
+            )),
             Self::Bus(bus) => MixerNodeId::Bus(bus),
             Self::Master => MixerNodeId::Master,
         }
