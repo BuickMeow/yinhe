@@ -167,6 +167,7 @@ impl AudioEngine {
         let block_end_tick = self.sample_to_tick(block_end_sample);
         self.block_start_sample = block_start_sample;
         // 总线增益自动化按本段起始 tick 求值（与 MIDI 事件分段同粒度）。
+        self.apply_mixer_automation(self.current_tick);
         self.apply_bus_automation(self.current_tick);
 
         // CPU 路径：xsynth 逐段分发+渲染。事件比较全在 tick 域

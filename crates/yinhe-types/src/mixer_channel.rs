@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::{LogicalChannelId, MixerNodeId};
 
 /// 一条混音通道（Rack 设备）的身份。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MixerChannelId {
     /// MIDI 源通道（global = port*16 + channel，0..256）。

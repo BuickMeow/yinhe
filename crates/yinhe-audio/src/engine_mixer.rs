@@ -234,6 +234,68 @@ impl AudioEngine {
         self.sync_sends_to_graph();
     }
 
+    /// 按 tick 求值 LC / Bus / Master 的 MixerGain / MixerPan 自动化。
+    pub(crate) fn apply_mixer_automation(&mut self, tick: u32) {
+        use yinhe_types::AutomationTarget;
+
+        let mut updates: Vec<(MixerChannelId, Option<f32>, Option<f32>)> = Vec::new();
+        let mut collect = |node: &yinhe_mixer::MixerNode| {
+            let Some(channel) = node.id.channel_id() else {
+                return;
+            };
+            let gain = node
+                .automation
+                .iter()
+                .find(|lane| lane.target == AutomationTarget::MixerGain { channel });
+            let pan = node
+                .automation
+                .iter()
+                .find(|lane| lane.target == AutomationTarget::MixerPan { channel });
+            if gain.is_none() && pan.is_none() {
+                return;
+            }
+            let gain = gain.map(|lane| {
+                lane.value_at(tick)
+                    .map(|(v, _)| v)
+                    .unwrap_or(1.0)
+                    .clamp(0.0, 1.0)
+            });
+            let pan = pan.map(|lane| {
+                let v = lane
+                    .value_at(tick)
+                    .map(|(v, _)| v)
+                    .unwrap_or(0.5)
+                    .clamp(0.0, 1.0);
+                v * 2.0 - 1.0
+            });
+            updates.push((channel, gain, pan));
+        };
+        for node in &self.mixer_params.channels {
+            collect(node);
+        }
+        for node in &self.mixer_params.audio_channels {
+            collect(node);
+        }
+        for node in &self.mixer_params.track_channels {
+            collect(node);
+        }
+        for node in &self.mixer_params.buses {
+            collect(node);
+        }
+        collect(&self.mixer_params.master);
+
+        for (channel, gain, pan) in updates {
+            let mut params = self.mixer_params.node_strip(channel);
+            if let Some(gain) = gain {
+                params.gain = gain;
+            }
+            if let Some(pan) = pan {
+                params.pan = pan;
+            }
+            self.set_node_strip(channel, params);
+        }
+    }
+
     /// 按 tick 求值 BusGain 自动化并写入总线 strip。
     /// 没有 lane 的总线保持用户推子值；lane 存在但事件尚未开始时用 1.0。
     pub(crate) fn apply_bus_automation(&mut self, tick: u32) {

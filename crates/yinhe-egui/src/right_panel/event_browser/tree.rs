@@ -341,7 +341,9 @@ fn automation_icon(target: &AutomationTarget) -> egui_material_icons::MaterialIc
         AutomationTarget::PitchBend => ICON_SETTINGS,
         AutomationTarget::Rpn { .. } | AutomationTarget::Nrpn { .. } => ICON_TUNE,
         AutomationTarget::Tempo => ICON_SPEED,
-        AutomationTarget::BusGain { .. } => ICON_TUNE,
+        AutomationTarget::BusGain { .. }
+        | AutomationTarget::MixerGain { .. }
+        | AutomationTarget::MixerPan { .. } => ICON_TUNE,
     }
 }
 

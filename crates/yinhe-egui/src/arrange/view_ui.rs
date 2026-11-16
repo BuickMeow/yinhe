@@ -250,8 +250,10 @@ pub fn show(
         first_row,
         last_row,
         data.conductor_track_idx,
+        data.tracks,
         data.bus_ids,
         data.bus_automation,
+        data.track_mixer_lanes,
         view.lane_height(),
     );
     let mut am_ghost: Option<(yinhe_wgpu::AutomationGhost, f32, f32, f32)> = None;
@@ -268,6 +270,7 @@ pub fn show(
             tracks: data.tracks,
             bus_ids: data.bus_ids,
             bus_automation: data.bus_automation,
+            track_mixer_lanes: data.track_mixer_lanes,
             tempo_lane: data.tempo_lane,
             track_colors: data.track_colors,
             selected: &mut *edit.selected,

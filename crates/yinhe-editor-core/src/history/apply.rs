@@ -68,6 +68,20 @@ impl UndoAction {
                 before: _,
                 after,
             } => apply_bus_automation_lane_delta(doc, *bus, *lane_idx, after.as_ref()),
+            UndoAction::MixerAutomation(delta) => apply_mixer_automation_delta(
+                doc,
+                delta.node,
+                delta.lane_idx,
+                &delta.target,
+                &delta.before,
+                &delta.after,
+            ),
+            UndoAction::MixerAutomationLane {
+                node,
+                lane_idx,
+                before: _,
+                after,
+            } => apply_mixer_automation_lane_delta(doc, *node, *lane_idx, after.as_ref()),
             UndoAction::TrackName {
                 track_idx,
                 old: _,
@@ -565,6 +579,53 @@ fn apply_bus_automation_lane_delta(
         .iter_mut()
         .find(|node| node.id == yinhe_types::MixerNodeId::Bus(bus))
     else {
+        return;
+    };
+    match after {
+        Some(lane) => {
+            let mut lane = lane.clone();
+            lane.track = 0;
+            let idx = lane_idx.min(node.automation.len());
+            node.automation.insert(idx, lane);
+        }
+        None => {
+            if lane_idx < node.automation.len() {
+                node.automation.remove(lane_idx);
+            }
+        }
+    }
+    doc.data.bump_revision();
+}
+
+fn apply_mixer_automation_delta(
+    doc: &mut Document,
+    node: yinhe_types::MixerNodeId,
+    lane_idx: usize,
+    target: &yinhe_types::AutomationTarget,
+    remove: &[AutomationEvent],
+    insert: &[AutomationEvent],
+) {
+    let Some(node) = doc.mixer.node_mut(node) else {
+        return;
+    };
+    let idx = node
+        .automation
+        .iter()
+        .position(|lane| lane.target == *target)
+        .unwrap_or(lane_idx);
+    if let Some(lane) = node.automation.get_mut(idx) {
+        apply_event_diff(&mut lane.events, remove, insert);
+    }
+    doc.data.bump_revision();
+}
+
+fn apply_mixer_automation_lane_delta(
+    doc: &mut Document,
+    node: yinhe_types::MixerNodeId,
+    lane_idx: usize,
+    after: Option<&yinhe_types::AutomationLane>,
+) {
+    let Some(node) = doc.mixer.node_mut(node) else {
         return;
     };
     match after {

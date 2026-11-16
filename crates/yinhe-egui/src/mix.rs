@@ -208,14 +208,13 @@ pub(crate) enum MixAction {
         target_bus: yinhe_types::BusId,
         amount: f32,
     },
-    /// 给 MIDI 通道添加一条内置音量/声像自动化 lane（CC7/CC10）。
-    AddChannelAutomation {
-        channel: u8,
-        controller: u8,
+    /// 给任意混音节点添加 MixerGain 自动化 lane。
+    AddMixerGainAutomation {
+        channel: MixerChannelId,
     },
-    /// 给固定 Bus 添加音量自动化 lane。
-    AddBusGainAutomation {
-        bus: yinhe_types::BusId,
+    /// 给任意混音节点添加 MixerPan 自动化 lane。
+    AddMixerPanAutomation {
+        channel: MixerChannelId,
     },
     /// 为 MIDI 通道**追加**一个插件乐器到链尾（InsertRef 入持久化层 +
     /// 机架加载 + 安装引擎）。
@@ -1109,35 +1108,39 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
             }
             app.sync_bus_config_to_engine(idx);
         }
-        MixAction::AddChannelAutomation {
-            channel,
-            controller,
-        } => {
-            let doc = &mut app.workspace.documents[idx];
-            let track_idx = doc.data.model.tracks.iter().position(|t| {
-                t.midi_target_channel() == Some(channel)
-                    && t.can_hold(yinhe_core::TrackContent::Automation)
-            });
-            if let Some(track_idx) = track_idx {
-                let before = doc.capture_snapshot();
-                if let Some((_, action)) = doc.add_automation_lane(
-                    track_idx,
-                    yinhe_types::AutomationTarget::CC { controller },
-                ) {
-                    doc.push_undo(action, t!("undo.create_automation").as_ref(), before);
-                    app.notify_audio_model_changed();
-                }
-            }
-        }
-        MixAction::AddBusGainAutomation { bus } => {
+        MixAction::AddMixerGainAutomation { channel } => {
+            let value = app.workspace.documents[idx]
+                .mixer
+                .node_strip(channel)
+                .gain
+                .clamp(0.0, 1.0);
             let doc = &mut app.workspace.documents[idx];
             let before = doc.capture_snapshot();
-            if let Some(action) = doc.add_bus_automation_lane(bus) {
+            if let Some(action) = doc.add_mixer_automation_lane(
+                channel.node_id(),
+                yinhe_types::AutomationTarget::MixerGain { channel },
+                value,
+            ) {
                 doc.push_undo(action, t!("undo.create_automation").as_ref(), before);
-                app.notify_audio_model_changed();
+                app.workspace.documents[idx].mark_mixer_dirty();
+                app.push_mixer_state_to_engine(idx);
             }
         }
-
+        MixAction::AddMixerPanAutomation { channel } => {
+            let pan = app.workspace.documents[idx].mixer.node_strip(channel).pan;
+            let value = (pan.clamp(-1.0, 1.0) + 1.0) * 0.5;
+            let doc = &mut app.workspace.documents[idx];
+            let before = doc.capture_snapshot();
+            if let Some(action) = doc.add_mixer_automation_lane(
+                channel.node_id(),
+                yinhe_types::AutomationTarget::MixerPan { channel },
+                value,
+            ) {
+                doc.push_undo(action, t!("undo.create_automation").as_ref(), before);
+                app.workspace.documents[idx].mark_mixer_dirty();
+                app.push_mixer_state_to_engine(idx);
+            }
+        }
         MixAction::OpenSends { channel } => {
             app.mix.sends_for = Some(channel);
             crate::chrome::dialog::raise_viewport(ctx, sends_viewport_id());

@@ -78,6 +78,8 @@ pub(crate) fn show(
     bus_ids: &[yinhe_types::BusId],
     // 固定总线条的 automation（与 `bus_ids` 等长）。
     bus_automation: &[Vec<yinhe_types::AutomationLane>],
+    // 每轨 LC / 音频 LC 节点的 automation。
+    track_mixer_lanes: &[Vec<(yinhe_types::MixerNodeId, Vec<yinhe_types::AutomationLane>)>],
     // 固定总线电平表显示值。
     bus_meters: &[crate::widgets::meter::StereoMeter],
     // 编辑/播放光标 tick（自动化表显示光标处的 lane 值）。
@@ -371,7 +373,24 @@ pub(crate) fn show(
         // ── AM 行：复用普通轨的行样式（两条文本：第一行 = 自动化名，第二行 = 所属音轨）。
         // 色条同宽、M/S 按钮同位置；无 chevron（像 tempo 一样）。
         if let ArRow::Automation(track, sub) = row_hit {
-            let Some(lane) = tracks.get(track).and_then(|t| t.automation_lanes.get(sub)) else {
+            let track_data = tracks.get(track);
+            let lane = track_data
+                .and_then(|t| t.automation_lanes.get(sub))
+                .or_else(|| {
+                    let t = track_data?;
+                    let track_lanes = t.automation_lanes.len();
+                    let (node, lane_idx) = super::am_lanes::track_mixer_lane_at(
+                        track_mixer_lanes.get(track)?,
+                        track_lanes,
+                        sub,
+                    )?;
+                    track_mixer_lanes
+                        .get(track)?
+                        .iter()
+                        .find(|(id, _)| *id == node)
+                        .and_then(|(_, lanes)| lanes.get(lane_idx))
+                });
+            let Some(lane) = lane else {
                 continue;
             };
             let lane_key = (track_info[track].index, lane.target.clone());
@@ -604,7 +623,10 @@ pub(crate) fn show(
                 //（无需先展开）；否则照常显示展开/收起 chevron。
                 let has_any_lane = tracks
                     .get(idx)
-                    .is_some_and(|t| !t.automation_lanes.is_empty());
+                    .is_some_and(|t| !t.automation_lanes.is_empty())
+                    || track_mixer_lanes
+                        .get(idx)
+                        .is_some_and(|lanes| !lanes.is_empty());
                 let icon_color = hover::icon_contrast_color(color);
                 // 兄弟轨道联动：本轨任意行（主/自动化）被悬停时，图标一并显示。
                 let family_hovered = hover_track == Some(idx);

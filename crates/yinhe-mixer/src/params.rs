@@ -203,6 +203,34 @@ impl MixerParams {
         self.ensure_master();
         self.ensure_instrument_uids();
         self.sanitize_routing();
+        self.sanitize_automation();
+    }
+
+    fn sanitize_automation(&mut self) {
+        for node in self
+            .channels
+            .iter_mut()
+            .chain(self.audio_channels.iter_mut())
+            .chain(self.track_channels.iter_mut())
+            .chain(self.buses.iter_mut())
+            .chain(std::iter::once(&mut self.master))
+        {
+            let Some(channel) = node.id.channel_id() else {
+                continue;
+            };
+            node.automation.retain(|lane| match &lane.target {
+                yinhe_types::AutomationTarget::MixerGain { channel: c }
+                | yinhe_types::AutomationTarget::MixerPan { channel: c } => *c == channel,
+                yinhe_types::AutomationTarget::BusGain { .. } => {
+                    node.id
+                        == yinhe_types::MixerNodeId::Bus(match channel {
+                            MixerChannelId::Bus(bus) => bus,
+                            _ => return false,
+                        })
+                }
+                _ => true,
+            });
+        }
     }
 
     fn ensure_racks(&mut self) {
@@ -486,6 +514,42 @@ impl MixerParams {
         self.racks.get_mut(rack.index()).map(|r| &mut r.instruments)
     }
 
+    /// 按稳定 ID 查任意混音节点。
+    pub fn node(&self, id: MixerNodeId) -> Option<&MixerNode> {
+        match id {
+            MixerNodeId::LogicalChannel(lc) => lc_match(self.channels.iter(), lc)
+                .or_else(|| lc_match(self.audio_channels.iter(), lc))
+                .or_else(|| self.track_node(lc)),
+            MixerNodeId::Bus(bus) => self.bus_index(bus).and_then(|idx| self.buses.get(idx)),
+            MixerNodeId::Master => Some(&self.master),
+        }
+    }
+
+    /// 按稳定 ID 查任意混音节点（可变）。
+    pub fn node_mut(&mut self, id: MixerNodeId) -> Option<&mut MixerNode> {
+        match id {
+            MixerNodeId::LogicalChannel(lc) => {
+                if let Some(idx) = self
+                    .channels
+                    .iter()
+                    .position(|node| node.id == MixerNodeId::LogicalChannel(lc))
+                {
+                    return self.channels.get_mut(idx);
+                }
+                if let Some(idx) = self
+                    .audio_channels
+                    .iter()
+                    .position(|node| node.id == MixerNodeId::LogicalChannel(lc))
+                {
+                    return self.audio_channels.get_mut(idx);
+                }
+                self.track_node_mut(lc)
+            }
+            MixerNodeId::Bus(bus) => self.bus_index(bus).and_then(|idx| self.buses.get_mut(idx)),
+            MixerNodeId::Master => Some(&mut self.master),
+        }
+    }
+
     /// 某源 MIDI 通道的 strip 参数（越界给默认值，防御性）。
     pub fn strip(&self, channel: u8) -> StripParams {
         self.channels
@@ -697,6 +761,15 @@ impl MixerParams {
     pub fn ensure_channel_tables(&mut self, audio_count: usize) {
         self.ensure_audio_len(audio_count);
     }
+}
+
+fn lc_match<'a>(
+    nodes: impl Iterator<Item = &'a MixerNode>,
+    lc: LogicalChannelId,
+) -> Option<&'a MixerNode> {
+    nodes
+        .into_iter()
+        .find(|node| node.id == MixerNodeId::LogicalChannel(lc))
 }
 
 fn alloc_bus_id(next: &mut BusId) -> BusId {

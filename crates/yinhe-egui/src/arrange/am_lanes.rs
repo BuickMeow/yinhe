@@ -29,8 +29,8 @@ pub(crate) struct AmRowRef {
     pub track: usize,
     /// 该轨 automation_lanes 的下标；None = Conductor 主行（Tempo 直显）。
     pub sub: Option<usize>,
-    /// Some = 这条 lane 属于 Bus 节点的 automation。
-    pub bus: Option<yinhe_types::BusId>,
+    /// Some = 这条 lane 属于 MixerNode 的 automation。
+    pub node: Option<yinhe_types::MixerNodeId>,
     /// 行顶部 y（音乐坐标，未减 scroll_y）。通道 AR 行高不均，必须显式携带。
     pub y_top: f32,
     /// 行高（px）。
@@ -39,30 +39,56 @@ pub(crate) struct AmRowRef {
 
 /// 收集可视范围内的 AM 行（展开 lane + Conductor 主行）。
 /// 轨道 AR 行高均匀：y_top = row * lane_height、height = lane_height。
+#[allow(clippy::too_many_arguments)] // 行布局上下文透传
 pub(crate) fn visible_am_rows(
     layout: &ArRowLayout,
     first_row: usize,
     last_row: usize,
     conductor: Option<u16>,
+    tracks: &[Arc<yinhe_core::TrackData>],
     bus_ids: &[yinhe_types::BusId],
     bus_automation: &[Vec<AutomationLane>],
+    track_mixer_lanes: &[Vec<(yinhe_types::MixerNodeId, Vec<AutomationLane>)>],
     lane_height: f32,
 ) -> Vec<AmRowRef> {
     let mut out = Vec::new();
     for row in first_row..last_row.min(layout.total_rows()) {
         let y_top = row as f32 * lane_height;
         match layout.row_hit(row) {
-            Some(ArRow::Automation(track, sub)) => out.push(AmRowRef {
-                track,
-                sub: Some(sub),
-                bus: None,
-                y_top,
-                height: lane_height,
-            }),
+            Some(ArRow::Automation(track, sub)) => {
+                let track_lane_count = tracks
+                    .get(track)
+                    .map(|t| t.automation_lanes.len())
+                    .unwrap_or(0);
+                if sub < track_lane_count {
+                    out.push(AmRowRef {
+                        track,
+                        sub: Some(sub),
+                        node: None,
+                        y_top,
+                        height: lane_height,
+                    });
+                } else if let Some((node, lane_idx)) = track_mixer_lane_at(
+                    track_mixer_lanes
+                        .get(track)
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]),
+                    track_lane_count,
+                    sub,
+                ) {
+                    out.push(AmRowRef {
+                        track,
+                        sub: Some(lane_idx),
+                        node: Some(node),
+                        y_top,
+                        height: lane_height,
+                    });
+                }
+            }
             Some(ArRow::Track(track)) if conductor == Some(track as u16) => out.push(AmRowRef {
                 track,
                 sub: None,
-                bus: None,
+                node: None,
                 y_top,
                 height: lane_height,
             }),
@@ -81,7 +107,7 @@ pub(crate) fn visible_am_rows(
                     out.push(AmRowRef {
                         track: master,
                         sub: Some(lane_idx),
-                        bus: Some(bus_id),
+                        node: Some(yinhe_types::MixerNodeId::Bus(bus_id)),
                         y_top,
                         height: lane_height,
                     });
@@ -93,8 +119,47 @@ pub(crate) fn visible_am_rows(
     out
 }
 
-/// 把 track 形态的编辑转换成 Bus owner 形态。
-fn to_bus_edit(bus: yinhe_types::BusId, edit: AutomationEdit) -> AutomationEdit {
+/// 每轨可显示的 MixerNode automation（per-track LC / 音频 LC）。
+pub(crate) fn track_mixer_lanes(
+    track: &yinhe_core::TrackData,
+    mixer: &yinhe_mixer::MixerParams,
+) -> Vec<(yinhe_types::MixerNodeId, Vec<AutomationLane>)> {
+    let node_id = if let Some(lc) = track.lc {
+        Some(yinhe_types::MixerNodeId::LogicalChannel(lc))
+    } else if track.kind == yinhe_core::TrackKind::Audio {
+        track.audio_channel.map(|ch| {
+            yinhe_types::MixerNodeId::LogicalChannel(yinhe_types::LogicalChannelId(
+                yinhe_types::MIDI_CHANNEL_COUNT as u32 + u32::from(ch),
+            ))
+        })
+    } else {
+        None
+    };
+    node_id
+        .and_then(|id| mixer.node(id))
+        .filter(|node| !node.automation.is_empty())
+        .map(|node| vec![(node.id, node.automation.clone())])
+        .unwrap_or_default()
+}
+
+/// `sub` = 该轨 automation 行索引；先轨道 lane，再 MixerNode lane。
+pub(crate) fn track_mixer_lane_at(
+    lanes: &[(yinhe_types::MixerNodeId, Vec<AutomationLane>)],
+    track_lane_count: usize,
+    sub: usize,
+) -> Option<(yinhe_types::MixerNodeId, usize)> {
+    let mut remain = sub.checked_sub(track_lane_count)?;
+    for (node, lanes) in lanes {
+        if remain < lanes.len() {
+            return Some((*node, remain));
+        }
+        remain -= lanes.len();
+    }
+    None
+}
+
+/// 把 track 形态的编辑转换成 MixerNode owner 形态。
+fn to_node_edit(node: yinhe_types::MixerNodeId, edit: AutomationEdit) -> AutomationEdit {
     match edit {
         AutomationEdit::Add {
             target,
@@ -102,8 +167,8 @@ fn to_bus_edit(bus: yinhe_types::BusId, edit: AutomationEdit) -> AutomationEdit 
             value,
             shape,
             ..
-        } => AutomationEdit::BusAdd {
-            bus,
+        } => AutomationEdit::NodeAdd {
+            node,
             target,
             tick,
             value,
@@ -116,8 +181,8 @@ fn to_bus_edit(bus: yinhe_types::BusId, edit: AutomationEdit) -> AutomationEdit 
             new_tick,
             new_value,
             ..
-        } => AutomationEdit::BusMove {
-            bus,
+        } => AutomationEdit::NodeMove {
+            node,
             lane_idx,
             target,
             old_tick,
@@ -129,8 +194,8 @@ fn to_bus_edit(bus: yinhe_types::BusId, edit: AutomationEdit) -> AutomationEdit 
             target,
             moves,
             ..
-        } => AutomationEdit::BusMoveBatch {
-            bus,
+        } => AutomationEdit::NodeMoveBatch {
+            node,
             lane_idx,
             target,
             moves,
@@ -140,8 +205,8 @@ fn to_bus_edit(bus: yinhe_types::BusId, edit: AutomationEdit) -> AutomationEdit 
             target,
             tick,
             ..
-        } => AutomationEdit::BusCycleShape {
-            bus,
+        } => AutomationEdit::NodeCycleShape {
+            node,
             lane_idx,
             target,
             tick,
@@ -152,8 +217,8 @@ fn to_bus_edit(bus: yinhe_types::BusId, edit: AutomationEdit) -> AutomationEdit 
             tick,
             shape,
             ..
-        } => AutomationEdit::BusSetShape {
-            bus,
+        } => AutomationEdit::NodeSetShape {
+            node,
             lane_idx,
             target,
             tick,
@@ -164,8 +229,8 @@ fn to_bus_edit(bus: yinhe_types::BusId, edit: AutomationEdit) -> AutomationEdit 
             target,
             tick,
             ..
-        } => AutomationEdit::BusDelete {
-            bus,
+        } => AutomationEdit::NodeDelete {
+            node,
             lane_idx,
             target,
             tick,
@@ -235,6 +300,8 @@ pub(crate) struct AmLanesIo<'a> {
     pub tracks: &'a [Arc<yinhe_core::TrackData>],
     pub bus_ids: &'a [yinhe_types::BusId],
     pub bus_automation: &'a [Vec<AutomationLane>],
+    /// 每轨 LC / 音频 LC 节点的 automation（与 Track 索引对齐）。
+    pub track_mixer_lanes: &'a [Vec<(yinhe_types::MixerNodeId, Vec<AutomationLane>)>],
     pub tempo_lane: &'a AutomationLane,
     pub track_colors: &'a [[f32; 4]],
     pub selected: &'a mut yinhe_core::Selection,
@@ -277,18 +344,28 @@ pub(crate) fn interact_all(
             &[AutomationLane],
             Option<&AutomationLane>,
             AutomationTarget,
-        ) = match (r.bus, r.sub) {
-            (Some(bus), Some(sub)) => {
-                let Some(index) = io.bus_ids.iter().position(|id| *id == bus) else {
-                    continue;
+        ) = match (r.node, r.sub) {
+            (Some(node), Some(sub)) => {
+                let lanes = if let yinhe_types::MixerNodeId::Bus(bus) = node {
+                    io.bus_ids
+                        .iter()
+                        .position(|id| *id == bus)
+                        .and_then(|i| io.bus_automation.get(i))
+                        .map(Vec::as_slice)
+                } else {
+                    io.track_mixer_lanes
+                        .iter()
+                        .flat_map(|lanes| lanes.iter())
+                        .find(|(id, _)| *id == node)
+                        .map(|(_, lanes)| lanes.as_slice())
                 };
-                let Some(lanes) = io.bus_automation.get(index) else {
+                let Some(lanes) = lanes else {
                     continue;
                 };
                 let Some(lane) = lanes.get(sub) else {
                     continue;
                 };
-                (lanes.as_slice(), None, lane.target.clone())
+                (lanes, None, lane.target.clone())
             }
             (None, Some(sub)) => {
                 let Some(track) = io.tracks.get(r.track) else {
@@ -346,14 +423,13 @@ pub(crate) fn interact_all(
                 io.right_tab,
                 suppress_blank,
             );
-        if let Some(bus) = r.bus {
-            // 锚点信息面板目前只按 track/lane 定位；Bus lane 先不打开，
-            // 避免显示 Master 轨上不存在的 lane。
+        if let Some(node) = r.node {
+            // 锚点信息面板目前只按 track/lane 定位；节点 lane 先不打开。
             if matches!(io.info_content, Some(InfoContent::Anchor { .. })) {
                 *io.info_content = None;
             }
             io.edits
-                .extend(edits.into_iter().map(|edit| to_bus_edit(bus, edit)));
+                .extend(edits.into_iter().map(|edit| to_node_edit(node, edit)));
         } else {
             io.edits.extend(edits);
         }
@@ -386,15 +462,26 @@ pub(crate) fn interact_all(
 
         if let Some(g) = ghost {
             // Move ghost 携带整条 lane，渲染时按 y_offset 重建，无需平移。
-            let max_val = match (r.bus, r.sub) {
-                (Some(bus), Some(sub)) => io
-                    .bus_ids
-                    .iter()
-                    .position(|id| *id == bus)
-                    .and_then(|i| io.bus_automation.get(i))
-                    .and_then(|lanes| lanes.get(sub))
-                    .map(lane_max_val)
-                    .unwrap_or(1.0),
+            let max_val = match (r.node, r.sub) {
+                (Some(node), Some(sub)) => {
+                    let lanes = if let yinhe_types::MixerNodeId::Bus(bus) = node {
+                        io.bus_ids
+                            .iter()
+                            .position(|id| *id == bus)
+                            .and_then(|i| io.bus_automation.get(i))
+                            .map(Vec::as_slice)
+                    } else {
+                        io.track_mixer_lanes
+                            .iter()
+                            .flat_map(|lanes| lanes.iter())
+                            .find(|(id, _)| *id == node)
+                            .map(|(_, lanes)| lanes.as_slice())
+                    };
+                    lanes
+                        .and_then(|lanes| lanes.get(sub))
+                        .map(lane_max_val)
+                        .unwrap_or(1.0)
+                }
                 (None, Some(sub)) => io
                     .tracks
                     .get(r.track)
@@ -450,4 +537,37 @@ pub(crate) fn interact_all(
 /// （CC/RPN 带零填充编号 + 名称，如 "CC 010 Pan"、"RPN 000 PB Sensitivity"）。
 pub(crate) fn lane_label(target: &AutomationTarget) -> String {
     target.display_name()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yinhe_mixer::MixerParams;
+
+    #[test]
+    fn track_mixer_lane_offsets_after_track_lanes() {
+        let lc = yinhe_types::LogicalChannelId(yinhe_types::TRACK_LC_BASE);
+        let mut track = yinhe_core::TrackData::new(0, 0);
+        track.lc = Some(lc);
+        let mut mixer = MixerParams::default();
+        assert!(mixer.add_track_lc_with_id(lc));
+        mixer
+            .track_node_mut(lc)
+            .expect("track lc")
+            .automation
+            .push(yinhe_types::AutomationLane {
+                target: yinhe_types::AutomationTarget::MixerGain {
+                    channel: yinhe_types::MixerChannelId::TrackLc(lc),
+                },
+                track: 0,
+                events: Vec::new(),
+            });
+
+        let lanes = track_mixer_lanes(&track, &mixer);
+        assert_eq!(
+            track_mixer_lane_at(&lanes, 0, 0),
+            Some((yinhe_types::MixerNodeId::LogicalChannel(lc), 0))
+        );
+        assert_eq!(track_mixer_lane_at(&lanes, 1, 0), None);
+    }
 }

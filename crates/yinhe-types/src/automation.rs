@@ -646,9 +646,12 @@ pub enum AutomationTarget {
     /// Tempo（BPM）。全局唯一一条 lane，存于 `ConductorData.tempo`。
     /// `value` 直接装 bpm（f32），是唯一不归一化的量。
     Tempo,
-    /// 总线主输出增益（线性 0..1，1.0 = 0 dB）。lane 存于 Master 轨的
-    /// automation_lanes，但渲染/交互落在 AR 固定 Bus 行的子行上。
+    /// 总线主输出增益（线性 0..1，1.0 = 0 dB）。lane 存于 Bus 节点。
     BusGain { bus: crate::BusId },
+    /// 任意混音节点的推子增益（归一化 0..1，1.0 = 0 dB）。
+    MixerGain { channel: crate::MixerChannelId },
+    /// 任意混音节点的声像（归一化 0..1，0.5 = 居中）。
+    MixerPan { channel: crate::MixerChannelId },
 }
 
 impl AutomationTarget {
@@ -671,7 +674,10 @@ impl AutomationTarget {
             AutomationTarget::PitchBend => Some(16383.0),
             AutomationTarget::Rpn { parameter } => Some(rpn_max(*parameter)),
             AutomationTarget::Nrpn { .. } => Some(16383.0),
-            AutomationTarget::Tempo | AutomationTarget::BusGain { .. } => None,
+            AutomationTarget::Tempo
+            | AutomationTarget::BusGain { .. }
+            | AutomationTarget::MixerGain { .. }
+            | AutomationTarget::MixerPan { .. } => None,
         }
     }
 
@@ -688,7 +694,8 @@ impl AutomationTarget {
             AutomationTarget::PitchBend => 0.5,
             AutomationTarget::Rpn { .. } | AutomationTarget::Nrpn { .. } => 0.0,
             AutomationTarget::Tempo => 120.0,
-            AutomationTarget::BusGain { .. } => 1.0,
+            AutomationTarget::BusGain { .. } | AutomationTarget::MixerGain { .. } => 1.0,
+            AutomationTarget::MixerPan { .. } => 0.5,
         }
     }
 
@@ -700,6 +707,7 @@ impl AutomationTarget {
             }
             AutomationTarget::CC { controller } => matches!(controller, 10 | 71 | 72 | 73 | 74),
             AutomationTarget::PitchBend => true,
+            AutomationTarget::MixerPan { .. } => true,
             _ => false,
         }
     }
@@ -745,6 +753,7 @@ impl AutomationTarget {
     pub fn bar_baseline(&self) -> f32 {
         match self {
             AutomationTarget::PitchBend => 0.5,
+            AutomationTarget::MixerPan { .. } => 0.5,
             AutomationTarget::CC { controller: 10 } => 0.5,
             // 标准 RPN 0/1/2 = PB Sensitivity / Fine Tune / Coarse Tune（对称量）。
             AutomationTarget::Rpn { parameter } if *parameter <= 2 => 0.5,
@@ -779,6 +788,16 @@ impl AutomationTarget {
             | AutomationTarget::Nrpn { .. } => crate::AutomationOwner::Track(track),
             AutomationTarget::Tempo => crate::AutomationOwner::Conductor,
             AutomationTarget::BusGain { bus } => crate::AutomationOwner::Bus(*bus),
+            AutomationTarget::MixerGain { channel } | AutomationTarget::MixerPan { channel } => {
+                channel
+                    .logical_channel_id()
+                    .map(crate::AutomationOwner::LogicalChannel)
+                    .unwrap_or(match channel {
+                        crate::MixerChannelId::Bus(bus) => crate::AutomationOwner::Bus(*bus),
+                        crate::MixerChannelId::Master => crate::AutomationOwner::Master,
+                        _ => crate::AutomationOwner::Master,
+                    })
+            }
         }
     }
 
@@ -820,6 +839,12 @@ impl AutomationTarget {
             AutomationTarget::Nrpn { parameter } => format!("NRPN {:03}", parameter),
             AutomationTarget::Tempo => "Tempo".into(),
             AutomationTarget::BusGain { bus } => format!("BUS {} Gain", bus.index() + 1),
+            AutomationTarget::MixerGain { channel } => {
+                format!("Mixer Gain {:?}", channel)
+            }
+            AutomationTarget::MixerPan { channel } => {
+                format!("Mixer Pan {:?}", channel)
+            }
         }
     }
 }
@@ -1129,6 +1154,48 @@ pub enum AutomationEdit {
     },
     BusDelete {
         bus: crate::BusId,
+        lane_idx: usize,
+        target: AutomationTarget,
+        tick: u32,
+    },
+
+    // ── 任意 MixerNode automation（LC / Bus / Master）──
+    NodeAdd {
+        node: crate::MixerNodeId,
+        target: AutomationTarget,
+        tick: u32,
+        value: f32,
+        shape: SegmentShape,
+    },
+    NodeMove {
+        node: crate::MixerNodeId,
+        lane_idx: usize,
+        target: AutomationTarget,
+        old_tick: u32,
+        new_tick: u32,
+        new_value: f32,
+    },
+    NodeMoveBatch {
+        node: crate::MixerNodeId,
+        lane_idx: usize,
+        target: AutomationTarget,
+        moves: Vec<(u32, u32, f32)>,
+    },
+    NodeCycleShape {
+        node: crate::MixerNodeId,
+        lane_idx: usize,
+        target: AutomationTarget,
+        tick: u32,
+    },
+    NodeSetShape {
+        node: crate::MixerNodeId,
+        lane_idx: usize,
+        target: AutomationTarget,
+        tick: u32,
+        shape: SegmentShape,
+    },
+    NodeDelete {
+        node: crate::MixerNodeId,
         lane_idx: usize,
         target: AutomationTarget,
         tick: u32,
@@ -1588,6 +1655,30 @@ mod easing_presets_tests {
         };
         assert_eq!(custom.ui_index(), None);
         assert_eq!(SegmentShape::from_ui_index(99), None);
+    }
+
+    #[test]
+    fn mixer_targets_map_to_node_owners_and_defaults() {
+        let midi = AutomationTarget::MixerGain {
+            channel: crate::MixerChannelId::Midi(3),
+        };
+        assert_eq!(
+            midi.owner(9),
+            crate::AutomationOwner::LogicalChannel(crate::LogicalChannelId(3))
+        );
+        assert_eq!(midi.default_value(), 1.0);
+
+        let bus = AutomationTarget::MixerGain {
+            channel: crate::MixerChannelId::Bus(crate::BusId(2)),
+        };
+        assert_eq!(bus.owner(0), crate::AutomationOwner::Bus(crate::BusId(2)));
+
+        let pan = AutomationTarget::MixerPan {
+            channel: crate::MixerChannelId::Master,
+        };
+        assert_eq!(pan.owner(0), crate::AutomationOwner::Master);
+        assert_eq!(pan.default_value(), 0.5);
+        assert!(pan.has_center_line());
     }
 
     /// 曲线两端必须精确落在 0 / 1，否则相邻段会跳变。

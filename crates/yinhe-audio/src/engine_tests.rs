@@ -3336,6 +3336,49 @@ fn stop_keeps_insert_tail() {
     assert!(peak > 0.01, "Stop 后应继续输出 insert 尾音，peak={peak}");
 }
 
+/// MixerGain/MixerPan 从 LC 节点 automation 求值。
+#[test]
+fn mixer_gain_pan_automation_reads_lc_nodes() {
+    use yinhe_mixer::MixerParams;
+    use yinhe_types::{
+        AutomationEvent, AutomationLane, AutomationTarget, LogicalChannelId, MixerChannelId,
+        MixerNodeId, SegmentShape,
+    };
+
+    let layout = ChannelLayout::from_mask(vec![true]);
+    let mut engine = AudioEngine::new(48_000, layout);
+    let mut mixer = MixerParams::default();
+    let channel = MixerChannelId::Midi(0);
+    let node = mixer.channels.first_mut().expect("midi lc");
+    node.automation.push(AutomationLane {
+        target: AutomationTarget::MixerGain { channel },
+        track: 0,
+        events: vec![AutomationEvent {
+            id: 1,
+            tick: 0,
+            value: 0.25,
+            shape: SegmentShape::Step,
+        }],
+    });
+    node.automation.push(AutomationLane {
+        target: AutomationTarget::MixerPan { channel },
+        track: 0,
+        events: vec![AutomationEvent {
+            id: 2,
+            tick: 0,
+            value: 0.75,
+            shape: SegmentShape::Step,
+        }],
+    });
+    let _ = MixerNodeId::LogicalChannel(LogicalChannelId(0));
+    engine.mixer_params = mixer;
+    engine.apply_mixer_automation(1);
+
+    let node = engine.mixer_params.channels.first().expect("midi lc");
+    assert!((node.gain - 0.25).abs() < f32::EPSILON);
+    assert!((node.pan - 0.5).abs() < f32::EPSILON);
+}
+
 /// BusGain 自动化从 Bus 节点的 automation 求值，不再依赖 Master 轨。
 #[test]
 fn bus_gain_automation_reads_bus_node_lanes() {

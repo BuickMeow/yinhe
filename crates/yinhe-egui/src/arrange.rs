@@ -43,6 +43,9 @@ pub(crate) struct ArrangeData<'a> {
     pub bus_ids: &'a [yinhe_types::BusId],
     /// 固定 Bus 行的 automation（与 bus_ids 等长）。
     pub bus_automation: &'a [Vec<yinhe_types::AutomationLane>],
+    /// 每轨 LC / 音频 LC 节点的 automation（与 Track 索引对齐）。
+    pub track_mixer_lanes:
+        &'a [Vec<(yinhe_types::MixerNodeId, Vec<yinhe_types::AutomationLane>)>],
     pub conductor_track_idx: Option<u16>,
     /// Tempo 映射（音频片段秒 ↔ tick 换算）。
     pub tempo_map: &'a yinhe_core::TempoMap,
@@ -225,6 +228,13 @@ pub fn show(
         .iter()
         .map(|node| node.automation.clone())
         .collect();
+    let track_mixer_lanes: Vec<Vec<(yinhe_types::MixerNodeId, Vec<yinhe_types::AutomationLane>)>> =
+        doc.data
+            .model
+            .tracks
+            .iter()
+            .map(|track| am_lanes::track_mixer_lanes(track, &doc.mixer))
+            .collect();
     // 固定 Bus 行的自动化子行：BusGain lane 存在 Bus 节点上。
     let bus_lanes: Vec<Vec<usize>> = bus_ids
         .iter()
@@ -255,7 +265,13 @@ pub fn show(
                     model
                         .tracks
                         .get(i)
-                        .map(|t| t.automation_lanes.len())
+                        .map(|t| {
+                            t.automation_lanes.len()
+                                + track_mixer_lanes
+                                    .get(i)
+                                    .map(|lanes| lanes.iter().map(|(_, l)| l.len()).sum::<usize>())
+                                    .unwrap_or(0)
+                        })
                         .unwrap_or(0) as u32
                 } else {
                     0
@@ -267,28 +283,28 @@ pub fn show(
     };
     let mut row_layout = build_row_layout(&doc.edit, &doc.data.model);
     // 清理已删除 lane 的残留视图状态（undo 删除 lane 后）
-    doc.edit.arr_am_views.retain(|&(t, ref target), _| {
+    let lane_exists = |t: u16, target: &yinhe_types::AutomationTarget| {
         doc.data
             .model
             .tracks
             .get(t as usize)
             .is_some_and(|tr| tr.automation_lanes.iter().any(|l| &l.target == target))
-    });
+            || track_mixer_lanes.get(t as usize).is_some_and(|lanes| {
+                lanes
+                    .iter()
+                    .any(|(_, l)| l.iter().any(|x| &x.target == target))
+            })
+    };
+    doc.edit
+        .arr_am_views
+        .retain(|&(t, ref target), _| lane_exists(t, target));
     // AM M/S 试听/选中键同样只保留仍存在的 lane（删除 lane / undo 后兜底）。
-    doc.edit.arr_am_ms.retain(|&(t, ref target), _| {
-        doc.data
-            .model
-            .tracks
-            .get(t as usize)
-            .is_some_and(|tr| tr.automation_lanes.iter().any(|l| &l.target == target))
-    });
-    doc.edit.arr_am_selected.retain(|&(t, ref target)| {
-        doc.data
-            .model
-            .tracks
-            .get(t as usize)
-            .is_some_and(|tr| tr.automation_lanes.iter().any(|l| &l.target == target))
-    });
+    doc.edit
+        .arr_am_ms
+        .retain(|&(t, ref target), _| lane_exists(t, target));
+    doc.edit
+        .arr_am_selected
+        .retain(|&(t, ref target)| lane_exists(t, target));
     doc.edit.arrange_view.clamp_scroll(
         gpu_rect.width(),
         gpu_rect.height(),
@@ -534,6 +550,7 @@ pub fn show(
             bus_strips,
             &bus_ids,
             &bus_automation,
+            &track_mixer_lanes,
             bus_meters,
             doc.edit.cursor_tick,
             &doc.data.model.conductor.tempo,
@@ -812,6 +829,7 @@ pub fn show(
             tempo_lane: &model.conductor.tempo,
             bus_ids: &bus_ids,
             bus_automation: &bus_automation,
+            track_mixer_lanes: &track_mixer_lanes,
             conductor_track_idx: doc.edit.track_cache.conductor_idx,
             tempo_map: &model.tempo_map,
             audio_library,

@@ -34,6 +34,16 @@ const EMPTY_GHOST_KEY: u64 = 0x9e37_0000_0000_0001;
 /// 编码：CC `[0x1_0000, 0x1_007F]`；PitchBend `0x5_0000`；Rpn `[0x2_0000, 0x2_FFFF]`；
 /// Nrpn `[0x3_0000, 0x3_FFFF]`；Tempo `u64::MAX`；
 /// Param `[0x4_0000_0000, ...]`（内置设备：channel @32 + id；插件乐器：uid @32 + id）。
+fn mix_channel_key(channel: yinhe_types::MixerChannelId) -> u64 {
+    match channel {
+        yinhe_types::MixerChannelId::Midi(ch) => u64::from(ch),
+        yinhe_types::MixerChannelId::Audio(ch) => 0x100 + u64::from(ch),
+        yinhe_types::MixerChannelId::TrackLc(id) => 0x1_0000 + u64::from(id.0),
+        yinhe_types::MixerChannelId::Bus(bus) => 0x2_0000 + u64::from(bus.0),
+        yinhe_types::MixerChannelId::Master => 0x3_0000,
+    }
+}
+
 fn target_hash(target: &AutomationTarget) -> u64 {
     match target {
         AutomationTarget::CC { controller } => 0x1_0000 + u64::from(*controller),
@@ -42,6 +52,8 @@ fn target_hash(target: &AutomationTarget) -> u64 {
         AutomationTarget::Nrpn { parameter } => 0x3_0000 + u64::from(*parameter),
         AutomationTarget::Tempo => u64::MAX,
         AutomationTarget::BusGain { bus } => 0x6_0000 + u64::from(bus.0),
+        AutomationTarget::MixerGain { channel } => 0x7_0000 + mix_channel_key(*channel),
+        AutomationTarget::MixerPan { channel } => 0x8_0000 + mix_channel_key(*channel),
         AutomationTarget::Param { device, id, .. } => match device {
             // 内置设备：通道级。
             ParamDevice::ChannelInstrument { channel } => {

@@ -186,7 +186,7 @@ pub(crate) fn audio_strip(
                 hold,
                 true,
                 true,
-                controls::StripAutomationTarget::Audio,
+                controls::StripAutomationTarget::Audio(channel),
                 actions,
             ) {
                 actions.push(MixAction::SetNodeStrip {
@@ -269,7 +269,7 @@ pub(crate) fn track_lc_strip(
                 hold,
                 true,
                 true,
-                controls::StripAutomationTarget::TrackLc,
+                controls::StripAutomationTarget::TrackLc(lc),
                 actions,
             ) {
                 actions.push(MixAction::SetNodeStrip { node, params: p });
@@ -605,7 +605,8 @@ fn header_context_menu(
             actions.push(action);
             ui.close();
         }
-        if let MixerChannelId::Midi(channel) = ch
+        if ch != MixerChannelId::Master
+            && let Some(action) = pan_automation(ch)
             && ui
                 .add(crate::widgets::menu::menu_item_action(
                     ui,
@@ -615,10 +616,7 @@ fn header_context_menu(
                 ))
                 .clicked()
         {
-            actions.push(MixAction::AddChannelAutomation {
-                channel,
-                controller: 10,
-            });
+            actions.push(action);
             ui.close();
         }
         ui.separator();
@@ -667,14 +665,11 @@ fn header_context_menu(
 }
 
 fn volume_automation(ch: MixerChannelId) -> Option<MixAction> {
-    match ch {
-        MixerChannelId::Midi(channel) => Some(MixAction::AddChannelAutomation {
-            channel,
-            controller: 7,
-        }),
-        MixerChannelId::Bus(bus) => Some(MixAction::AddBusGainAutomation { bus }),
-        _ => None,
-    }
+    Some(MixAction::AddMixerGainAutomation { channel: ch })
+}
+
+fn pan_automation(ch: MixerChannelId) -> Option<MixAction> {
+    (ch != MixerChannelId::Master).then_some(MixAction::AddMixerPanAutomation { channel: ch })
 }
 
 fn reset_gain_action(app: &App, idx: usize, ch: MixerChannelId) -> MixAction {

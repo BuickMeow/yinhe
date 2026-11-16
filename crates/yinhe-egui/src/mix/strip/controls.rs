@@ -119,35 +119,34 @@ pub(super) enum SendSource {
 #[derive(Clone, Copy)]
 pub(super) enum StripAutomationTarget {
     Midi(u8),
-    Audio,
-    TrackLc,
+    Audio(u16),
+    TrackLc(LogicalChannelId),
     Bus(BusId),
     Master,
 }
 
-/// 音量自动化目标：MIDI 通道用 CC7，总线用 BusGain；音频/Master 暂无。
-fn volume_automation_action(target: StripAutomationTarget) -> Option<MixAction> {
+fn target_channel(target: StripAutomationTarget) -> MixerChannelId {
     match target {
-        StripAutomationTarget::Midi(channel) => Some(MixAction::AddChannelAutomation {
-            channel,
-            controller: 7,
-        }),
-        StripAutomationTarget::Bus(bus) => Some(MixAction::AddBusGainAutomation { bus }),
-        StripAutomationTarget::Audio
-        | StripAutomationTarget::TrackLc
-        | StripAutomationTarget::Master => None,
+        StripAutomationTarget::Midi(ch) => MixerChannelId::Midi(ch),
+        StripAutomationTarget::Audio(ch) => MixerChannelId::Audio(ch),
+        StripAutomationTarget::TrackLc(id) => MixerChannelId::TrackLc(id),
+        StripAutomationTarget::Bus(bus) => MixerChannelId::Bus(bus),
+        StripAutomationTarget::Master => MixerChannelId::Master,
     }
 }
 
-/// 声像自动化目标：只有 MIDI 通道的 CC10。
+/// 音量自动化目标：LC / Bus / Master 统一走 MixerGain。
+fn volume_automation_action(target: StripAutomationTarget) -> Option<MixAction> {
+    Some(MixAction::AddMixerGainAutomation {
+        channel: target_channel(target),
+    })
+}
+
+/// 声像自动化目标：LC / Bus 统一走 MixerPan；Master 暂不支持声像。
 fn pan_automation_action(target: StripAutomationTarget) -> Option<MixAction> {
-    match target {
-        StripAutomationTarget::Midi(channel) => Some(MixAction::AddChannelAutomation {
-            channel,
-            controller: 10,
-        }),
-        _ => None,
-    }
+    (target_channel(target) != MixerChannelId::Master).then_some(MixAction::AddMixerPanAutomation {
+        channel: target_channel(target),
+    })
 }
 
 /// 音量控件的右键菜单：添加自动化 + 重置 0 dB。

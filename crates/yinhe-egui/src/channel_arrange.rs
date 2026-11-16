@@ -364,6 +364,15 @@ pub(crate) fn show(
             .iter()
             .map(|node| node.automation.clone())
             .collect();
+        let track_mixer_lanes: Vec<
+            Vec<(yinhe_types::MixerNodeId, Vec<yinhe_types::AutomationLane>)>,
+        > = doc
+            .data
+            .model
+            .tracks
+            .iter()
+            .map(|track| crate::arrange::am_lanes::track_mixer_lanes(track, &doc.mixer))
+            .collect();
         let data = crate::arrange::ArrangeData {
             midi: Some(model as &dyn yinhe_types::NoteSource),
             track_visible: &doc.edit.track_visible,
@@ -389,6 +398,7 @@ pub(crate) fn show(
             tempo_lane: &model.conductor.tempo,
             bus_ids: &doc.mixer.bus_ids(),
             bus_automation: &bus_automation,
+            track_mixer_lanes: &track_mixer_lanes,
             conductor_track_idx: doc.edit.track_cache.conductor_idx,
             tempo_map: &model.tempo_map,
             audio_library,

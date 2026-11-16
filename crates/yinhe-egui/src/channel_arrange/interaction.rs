@@ -587,6 +587,7 @@ mod tests {
             tempo_lane: &tempo_lane,
             bus_ids: &[],
             bus_automation: &[],
+            track_mixer_lanes: &[],
             conductor_track_idx: None,
             tempo_map: &tempo_map,
             audio_library: &library,

@@ -58,6 +58,16 @@ pub struct AutomationDelta {
     pub after: Vec<AutomationEvent>,
 }
 
+/// 任意 MixerNode 上的自动化增量（LC / Bus / Master）。
+#[derive(Clone, Debug)]
+pub struct MixerAutomationDelta {
+    pub node: yinhe_types::MixerNodeId,
+    pub lane_idx: usize,
+    pub target: yinhe_types::AutomationTarget,
+    pub before: Vec<AutomationEvent>,
+    pub after: Vec<AutomationEvent>,
+}
+
 /// Bus 节点上的自动化增量（BusGain 等）。
 #[derive(Clone, Debug)]
 pub struct BusAutomationDelta {
@@ -128,6 +138,15 @@ pub enum UndoAction {
     /// Bus 节点自动化 lane 结构变化。
     BusAutomationLane {
         bus: yinhe_types::BusId,
+        lane_idx: usize,
+        before: Option<yinhe_types::AutomationLane>,
+        after: Option<yinhe_types::AutomationLane>,
+    },
+    /// 任意 MixerNode 的自动化事件变化。
+    MixerAutomation(MixerAutomationDelta),
+    /// 任意 MixerNode 的自动化 lane 结构变化。
+    MixerAutomationLane {
+        node: yinhe_types::MixerNodeId,
         lane_idx: usize,
         before: Option<yinhe_types::AutomationLane>,
         after: Option<yinhe_types::AutomationLane>,
@@ -331,6 +350,24 @@ impl UndoAction {
                 std::mem::swap(&mut before, &mut after);
                 UndoAction::BusAutomationLane {
                     bus,
+                    lane_idx,
+                    before,
+                    after,
+                }
+            }
+            UndoAction::MixerAutomation(mut delta) => {
+                std::mem::swap(&mut delta.before, &mut delta.after);
+                UndoAction::MixerAutomation(delta)
+            }
+            UndoAction::MixerAutomationLane {
+                node,
+                lane_idx,
+                mut before,
+                mut after,
+            } => {
+                std::mem::swap(&mut before, &mut after);
+                UndoAction::MixerAutomationLane {
+                    node,
                     lane_idx,
                     before,
                     after,
