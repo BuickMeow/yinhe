@@ -127,13 +127,19 @@ fn knob_impl(ui: &mut egui::Ui, value: &mut f32, diameter: f32, zero: ZeroMode) 
         };
 
         // 先画刻度环，再画值弧：值弧始终在同一环的上层。
+        //
+        // epaint 的 `circle_stroke` 用 `PathStroke::outside()`：圆环以
+        // `r_ring` 为内边界向外描边，笔画中心线在 `r_ring + RING_W/2`。
+        // 值弧的折线笔画是居中描边，必须放到同一中心线，否则会像
+        // 半径偏小一样缩在圆环内侧（视觉上不重合）。
         if let Some((from, to)) = arc_span(*value, zero) {
-            let steps = 24;
+            let r_arc = r_ring + RING_W * 0.5;
+            let steps = 48;
             let mut pts = Vec::with_capacity(steps + 1);
             for i in 0..=steps {
                 let t = from + (to - from) * (i as f32 / steps as f32);
                 let ang = start + sweep * t;
-                pts.push(center + egui::vec2(ang.cos(), ang.sin()) * r_ring);
+                pts.push(center + egui::vec2(ang.cos(), ang.sin()) * r_arc);
             }
             painter.add(egui::Shape::line(pts, egui::Stroke::new(RING_W, accent)));
         }
