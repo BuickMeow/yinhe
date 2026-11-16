@@ -13,10 +13,8 @@ use eframe::egui;
 const START_DEG: f32 = 135.0;
 const SWEEP_DEG: f32 = 270.0;
 
-/// 刻度环线宽（px）。刻度环画在最上层，扇形在其下方。
-const RING_W: f32 = 1.5;
-/// 扇形强调色相对 accent 的淡化系数（略淡，避免盖过外圈）。
-const SECTOR_DIM: f32 = 0.7;
+/// 刻度环线宽（px）。保持原有细环；刻度环画在最上层，扇形在其下方。
+const RING_W: f32 = 1.0;
 
 /// 归零点：最左端归零，或居中归零。
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -115,18 +113,17 @@ fn knob_impl(ui: &mut egui::Ui, value: &mut f32, diameter: f32, zero: ZeroMode) 
 
         let start = START_DEG.to_radians();
         let sweep = SWEEP_DEG.to_radians();
-        let accent = if !enabled {
-            crate::theme::text_disabled().gamma_multiply(0.6)
-        } else {
-            crate::theme::accent_active()
-        };
-
-        // 值指示：外圈内的大扇形（从中心铺到刻度环内缘），使用稍淡的
-        // 强调色；外圈最后绘制，始终压在扇形上。
+        // 值指示：外圈内的大扇形（从中心铺到刻度环内缘）。
+        // 扇形色直接取主题的 `selected_bg`（背景与 accent 的统一混合色），
+        // 不在组件里硬编码淡化系数；外圈最后绘制，始终压在扇形上。
         if let Some((from, to)) = arc_span(*value, zero) {
             let steps = 64;
             let mut mesh = egui::Mesh::default();
-            let sector_color = accent.gamma_multiply(SECTOR_DIM);
+            let sector_color = if enabled {
+                crate::theme::selected_bg()
+            } else {
+                crate::theme::text_disabled().gamma_multiply(0.4)
+            };
             mesh.colored_vertex(center, sector_color);
             for i in 0..=steps {
                 let t = from + (to - from) * (i as f32 / steps as f32);
