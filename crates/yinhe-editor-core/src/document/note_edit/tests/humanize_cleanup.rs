@@ -169,7 +169,7 @@ fn dedup_overlapping_notes_cross_track_scope() {
     assert!(doc.data.revision > rev, "去重应 bump revision");
 }
 
-// ── 框选填缝 / 框选合并（见 docs/spec-note-fill-merge.md）──
+// ── 框选填缝 / 框选合并（见 docs/2026-10/spec-note-fill-merge.md）──
 
 /// 填缝：断续音符终点逐个贴合下一个起点；同一轨道内跨 key 共享起音网格。
 #[test]

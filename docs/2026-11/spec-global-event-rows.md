@@ -2,7 +2,7 @@
 
 状态：草案 v1（2026-11-10）
 
-关系：本 spec 是 `docs/spec-midi-clip.md`（Clip v1）的前置阶段。
+关系：本 spec 是 `docs/2026-11/spec-midi-clip.md`（Clip v1）的前置阶段。
 AR 与横向 PR 都显示事件行；PR 额外固定一条不可选的 Clip 边界行。
 先完成事件行与纯时间标尺，再做 Clip v1 的网格布局。
 

@@ -346,7 +346,7 @@ impl CpuVoice {
     /// 都不影响结果，这是 CPU 与 GPU 逐样本一致（离线导出 = 实时回放）的前提。
     /// LFO 频率远低于网格率（0.5Hz vs 64 帧 ≈ 750Hz），阶梯不可闻。
     ///
-    /// 音高 LFO 只解析不施加（见 `docs/spec-sfz-coverage.md` 的取舍：需要与
+    /// 音高 LFO 只解析不施加（见 `docs/2026-11/spec-sfz-coverage.md` 的取舍：需要与
     /// 弯音共用同一条换速路径，留待与 pitch envelope 一起做）。
     #[inline]
     pub(super) fn refresh_lfo(&mut self) -> f32 {

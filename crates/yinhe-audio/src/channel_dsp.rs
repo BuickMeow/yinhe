@@ -11,7 +11,7 @@
 //! - **插件乐器通道** → CC 原样透传插件（插件自己响应），处理段跳过。
 //!
 //! 两层互斥，CC 的消费者只有音源一侧：不存在"外挂效果器广播 CC"的
-//! 双发语义（见 docs/spec-yinhe-dsp.md D14/D15 修订）。
+//! 双发语义（见 docs/2026-11/spec-yinhe-dsp.md D14/D15 修订）。
 
 use yinhe_dsp::cc::gain::ChannelGain;
 use yinhe_dsp::cc::pan::ChannelPan;

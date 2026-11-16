@@ -1,7 +1,7 @@
 //! 全局事件行（Loop / Marker / Tempo / Meter / Key / Chord / Lyrics）的视图状态。
 //!
 //! 行本身不是音轨行：不进 `ArRowLayout`，不参与轨道行号计算，固定显示在
-//! 时间标尺与音轨/钢琴卷帘之间。详见 `docs/spec-global-event-rows.md`。
+//! 时间标尺与音轨/钢琴卷帘之间。详见 `docs/2026-11/spec-global-event-rows.md`。
 
 /// 全局事件行的种类。顺序即默认显示顺序。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

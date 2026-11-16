@@ -2,7 +2,7 @@
 //!
 //! 这些参数不改音色库文件，只作为**相对偏移/倍率**叠加到 `KeyInfo` 的
 //! per-voice 展开上；默认值全部是"不改变"。参数目录与 UI 见
-//! `docs/spec-instrument-params.md`。
+//! `docs/2026-11/spec-instrument-params.md`。
 
 use serde::{Deserialize, Serialize};
 

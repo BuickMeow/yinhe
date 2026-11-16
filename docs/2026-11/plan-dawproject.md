@@ -2,7 +2,7 @@
 
 > 目标：让 yinhe 能与其他 DAW（Bitwig、Studio One 等）交换工程。
 >
-> 关联：`docs/plan-audio.md`（Warp / 音频功能路线）。DAWproject 的 `Warps` 与本项目规划的 `WarpMap` 语义一致，后者落地后可直接对齐。
+> 关联：`docs/2026-11/plan-audio.md`（Warp / 音频功能路线）。DAWproject 的 `Warps` 与本项目规划的 `WarpMap` 语义一致，后者落地后可直接对齐。
 >
 > 约束前提：1 亿音符工程、桌面 + 移动端、不引入缓存、不 vendor、不做无意义中间模型。
 

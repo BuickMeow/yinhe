@@ -43,7 +43,7 @@ pub trait InsertProcessor: Send {
 
     /// 本处理器接管的 MIDI CC 号（默认空）。挂在通道 insert 链上时生效：
     /// 宿主把被接管的 CC 分流到 [`InsertProcessor::apply_cc`]，
-    /// 不再下发给合成器/乐器插件（见 `docs/spec-yinhe-dsp.md` §5.3）。
+    /// 不再下发给合成器/乐器插件（见 `docs/2026-11/spec-yinhe-dsp.md` §5.3）。
     fn handled_ccs(&self) -> &'static [u8] {
         &[]
     }

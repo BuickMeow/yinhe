@@ -1,7 +1,7 @@
 //! MIDI Clip v1：单轨命名时间区间。
 //!
 //! Clip 只是音符归属的元数据，不保存音符副本。音符仍存放在
-//! `YinModel.notes` 的 per-key 桶里；归属规则见 `docs/spec-midi-clip.md`。
+//! `YinModel.notes` 的 per-key 桶里；归属规则见 `docs/2026-11/spec-midi-clip.md`。
 
 use serde::{Deserialize, Serialize};
 

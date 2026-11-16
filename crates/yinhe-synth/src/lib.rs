@@ -3,7 +3,7 @@
 //! 独立的合成器 crate，**只负责音源层**：采样播放、voice 包络（ADSR）、
 //! 音高（pitch bend/RPN 调音）、延音踏板、音色选择。
 //! 通道级 DSP（音量/声像/滤波/效果/输出限幅）全部由 yinhe-dsp 与混音台负责
-//! （见 `docs/spec-yinhe-dsp.md`）。
+//! （见 `docs/2026-11/spec-yinhe-dsp.md`）。
 //!
 //! - CpuSynth（播放/导出统一接口，多线程分片渲染）
 //! - SFZ/SF2 解析器（委托 xsynth-soundfonts）

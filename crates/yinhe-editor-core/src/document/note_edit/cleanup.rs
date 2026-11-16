@@ -73,7 +73,7 @@ impl Document {
     /// - 只改终点（起点/key/轨道/力度/id 不动），顺带消除「起始不同却重叠」
     ///   与「同起点终点不一致」；框外音符不参与（既不被改、也不作为贴合目标）；
     /// - 被属性筛选排除的音符视同未选中；
-    /// - 详情见 `docs/spec-note-fill-merge.md`。返回 `None` 表示无变化。
+    /// - 详情见 `docs/2026-10/spec-note-fill-merge.md`。返回 `None` 表示无变化。
     pub fn fill_gaps_selected(&mut self) -> Option<UndoAction> {
         if self.edit.selected.is_empty() {
             return None;
@@ -155,7 +155,7 @@ impl Document {
     /// - 保留链首音符的 id/力度/轨道，终点取链尾终点，删除链内其余音符；
     /// - 1 tick 空隙或重叠都断开；链上所有音符都必须被框选（被属性筛选
     ///   排除的音符视同未选中会断开链）；框外音符不参与判定；
-    /// - 详情见 `docs/spec-note-fill-merge.md`。返回 `None` 表示无可合并链。
+    /// - 详情见 `docs/2026-10/spec-note-fill-merge.md`。返回 `None` 表示无可合并链。
     pub fn merge_adjacent_selected(&mut self) -> Option<UndoAction> {
         if self.edit.selected.is_empty() {
             return None;

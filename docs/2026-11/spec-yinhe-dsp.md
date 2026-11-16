@@ -2,7 +2,7 @@
 
 > 状态：设计稿（待评审）
 > 范围：阶段 A（已落地）= xsynth 通道级 DSP 向 yinhe-dsp 模块迁移（CC 模块化）+ 统一参数模型 + 通道处理回归音源（见 §4.1）；阶段 B = GM2 Reverb/Chorus + master 轨 + SysEx 全链
-> 关联：`spec-xsynth-integration.md`（效果器链预留架构）、`docs/GMLevel2.xml`（参数词典）
+> 关联：`docs/2026-06/spec-xsynth-integration.md`（效果器链预留架构）、`docs/GMLevel2.xml`（参数词典）
 
 ---
 

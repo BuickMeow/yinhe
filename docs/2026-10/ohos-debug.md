@@ -24,7 +24,7 @@ hdc shell hilog -r && hdc shell aa start -b com.jieneng.yinhe -a EntryAbility
 | 无声 | `OHAudio ... failed` | 模拟器音频输出被宿主机占用、采样率不支持（后端固定 48k） |
 | 设置/最近文件不保存 | `set_files_dir` 之后有没有写盘错误 | `HOME`/filesDir 没传进来（`yinhe_ohos_init` 参数为空） |
 | 打开工程/选音色库没反应 | `pick_failed`、Dart 侧异常 | DocumentViewPicker 权限/取消、复制沙箱失败 |
-| 打包时 hvigor 报 SDK 版本 | — | `build-profile.json5` 与 SDK 目录名不一致（见 `docs/ohos-build.md`） |
+| 打包时 hvigor 报 SDK 版本 | — | `build-profile.json5` 与 SDK 目录名不一致（见 `docs/2026-10/ohos-build.md`） |
 
 ## 三、模拟器的已知限制
 

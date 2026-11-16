@@ -2,7 +2,7 @@
 
 状态：定稿 v1（2026-11-10）
 
-前置依赖：`docs/spec-global-event-rows.md`（AR 专属全局事件小行 + 纯时间标尺）
+前置依赖：`docs/2026-11/spec-global-event-rows.md`（AR 专属全局事件小行 + 纯时间标尺）
 先完成，Clip v1 的 AR 网格/行布局以该 spec 为准；PR 不显示事件行。
 
 ## 背景
@@ -361,7 +361,7 @@ TrackMap {
 
 ### 前置阶段：AR 全局事件行
 
-先完成 `docs/spec-global-event-rows.md`：
+先完成 `docs/2026-11/spec-global-event-rows.md`：
 
 - AR 标尺只负责时间；
 - Marker / Meter / Key / Chord / Lyrics 移入 AR 网格上方的全局事件小行；
