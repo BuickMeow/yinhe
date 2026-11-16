@@ -216,6 +216,14 @@ pub(crate) enum MixAction {
     AddMixerPanAutomation {
         channel: MixerChannelId,
     },
+    /// 冻结一条 LC（离线渲染整条时间轴）。
+    FreezeChannel {
+        channel: MixerChannelId,
+    },
+    /// 解除某节点的冻结。
+    UnfreezeChannel {
+        node: yinhe_types::MixerNodeId,
+    },
     /// 给任意混音节点到某 Bus 的发送量添加自动化 lane。
     AddMixerSendAutomation {
         node: MixerChannelId,
@@ -527,10 +535,14 @@ impl App {
         let Some(audio) = audio_state.handle.as_ref() else {
             return;
         };
+        // 失效冻结保留在工程里（UI 可显示/重新冻结），但推给引擎的副本剔除，
+        // 播放回退到实时输出。
+        let mut params = workspace.documents[idx].mixer.clone();
+        params.strip_stale_freezes(workspace.documents[idx].data.revision);
         audio
             .handle
             .send(yinhe_audio::AudioCommand::SetMixerParams {
-                params: Box::new(workspace.documents[idx].mixer.clone()),
+                params: Box::new(params),
             });
         if idx >= mixer_racks.len() {
             mixer_racks.resize_with(idx + 1, MixerRack::default);
@@ -977,6 +989,7 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
                     state: None,
                 });
             }
+            app.workspace.documents[idx].data.bump_revision();
             let rack = app.mixer_rack_mut(idx);
             if let Err(e) = rack.load_plugin(
                 target,
@@ -1113,6 +1126,17 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
             }
             app.sync_bus_config_to_engine(idx);
         }
+        MixAction::FreezeChannel { channel } => {
+            app.start_lc_freeze(idx, channel);
+        }
+        MixAction::UnfreezeChannel { node } => {
+            let doc = &mut app.workspace.documents[idx];
+            let before = doc.capture_snapshot();
+            if let Some(action) = doc.set_node_freeze(node, None) {
+                doc.push_undo(action, t!("undo.freeze_lc").as_ref(), before);
+                app.push_mixer_state_to_engine(idx);
+            }
+        }
         MixAction::AddMixerGainAutomation { channel } => {
             let value = app.workspace.documents[idx]
                 .mixer
@@ -1178,6 +1202,7 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
             app.workspace.documents[idx].mixer_mut().racks[channel as usize]
                 .instruments
                 .clear();
+            app.workspace.documents[idx].data.bump_revision();
             if idx < app.instrument_racks.len() {
                 let handle = app.audio_state.handle.as_ref().map(|a| &a.handle);
                 let rack = &mut app.instrument_racks[idx];
@@ -1253,6 +1278,7 @@ pub(crate) fn assign_instrument_plugin(
             rack.last_error = Some(e.0);
         }
     }
+    app.workspace.documents[idx].data.bump_revision();
     app.push_mixer_state_to_engine(idx);
 }
 

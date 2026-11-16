@@ -28,9 +28,14 @@ impl App {
         }
         if self.channel_layout_flipped_for_doc(idx) {
             self.teardown_audio();
-        } else if let Some(audio) = &self.audio_state.handle {
-            // AM lane M/S 试听状态独立于模型，由 `set_am_ms` 动态掩码维护。
-            audio.reload_notes(self.workspace.documents[idx].data.model.clone());
+        } else {
+            if self.workspace.documents[idx].has_stale_freezes() {
+                self.push_mixer_state_to_engine(idx);
+            }
+            if let Some(audio) = &self.audio_state.handle {
+                // AM lane M/S 试听状态独立于模型，由 `set_am_ms` 动态掩码维护。
+                audio.reload_notes(self.workspace.documents[idx].data.model.clone());
+            }
         }
     }
 
@@ -54,8 +59,13 @@ impl App {
         }
         if self.channel_layout_flipped_for_doc(idx) {
             self.teardown_audio();
-        } else if let Some(audio) = &self.audio_state.handle {
-            audio.update_notes(self.workspace.documents[idx].data.model.clone());
+        } else {
+            if self.workspace.documents[idx].has_stale_freezes() {
+                self.push_mixer_state_to_engine(idx);
+            }
+            if let Some(audio) = &self.audio_state.handle {
+                audio.update_notes(self.workspace.documents[idx].data.model.clone());
+            }
         }
     }
 

@@ -10,6 +10,7 @@ use yinhe_types::Interpolation;
 use yinhe_types::SynthEngine;
 
 use crate::export::ExportJob;
+use crate::freeze::FreezeJob;
 
 use crate::audio_ring::AudioRingProducer;
 use crate::engine::AudioEngine;
@@ -17,6 +18,7 @@ use crate::spawn::{AmMsMap, AudioCommand, WorkerCmd, WorkerResult};
 
 mod commands;
 mod export;
+mod freeze;
 mod worker;
 
 const STEREO_CHANNELS: usize = 2;
@@ -211,6 +213,8 @@ struct AudioRenderer {
     export: Option<ExportJob>,
     /// 导出结束后要恢复的 xsynth 层数（导出设置不污染用户设置）。
     export_prev_layer_count: Option<Option<usize>>,
+    /// 冻结任务（Some = 冻结离线渲染模式）。
+    freeze: Option<FreezeJob>,
 }
 
 impl AudioRenderer {
@@ -245,6 +249,7 @@ impl AudioRenderer {
             transport_rx,
             export: None,
             export_prev_layer_count: None,
+            freeze: None,
             cmd_rx,
             worker_tx,
             prepared_rx,
@@ -331,6 +336,14 @@ impl AudioRenderer {
                 // 导出模式：不推 ring、不发布播放状态（UI 保持停止外观），
                 // 连续离线渲染；每轮仍处理命令（取消/参数/编辑）。
                 self.step_export();
+                if !did_work {
+                    thread::sleep(WAKE_SLEEP);
+                }
+                continue;
+            }
+            if self.freeze.is_some() {
+                // 冻结离线渲染：与导出相同，不推 ring。
+                self.step_freeze();
                 if !did_work {
                     thread::sleep(WAKE_SLEEP);
                 }

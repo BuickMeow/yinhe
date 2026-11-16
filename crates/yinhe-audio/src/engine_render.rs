@@ -39,6 +39,36 @@ impl AudioEngine {
                 active[d] = true;
             }
         }
+        // 冻结的 LC 即使没有活跃 voice 也必须参与混音（推子/insert/send），
+        // 否则冻结音频会被空通道跳过。
+        for node in self
+            .mixer_params
+            .channels
+            .iter()
+            .chain(self.mixer_params.audio_channels.iter())
+            .chain(self.mixer_params.track_channels.iter())
+        {
+            if node.freeze.is_none() {
+                continue;
+            }
+            let dense = match node.id.channel_id() {
+                Some(yinhe_types::MixerChannelId::Midi(ch)) => {
+                    self.channel_layout.dense_for(ch as usize)
+                }
+                Some(yinhe_types::MixerChannelId::Audio(ch)) => {
+                    self.channel_layout.audio_dense_for(ch)
+                }
+                Some(yinhe_types::MixerChannelId::TrackLc(id)) => self
+                    .channel_layout
+                    .track_lc_dense_for(id)
+                    .map(|(_, dense)| dense)
+                    .unwrap_or(u32::MAX),
+                _ => u32::MAX,
+            };
+            if dense != u32::MAX && (dense as usize) < n {
+                active[dense as usize] = true;
+            }
+        }
     }
 }
 

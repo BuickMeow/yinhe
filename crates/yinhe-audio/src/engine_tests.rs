@@ -3520,3 +3520,64 @@ fn insert_param_automation_writes_processor_param() {
     assert_eq!(id, 42);
     assert!((value - 0.6).abs() < 1e-6);
 }
+
+/// 冻结 LC 播放：清空合成器写入并覆盖冻结 PCM。
+#[test]
+fn frozen_lc_overwrites_target_channel_buffer() {
+    use crate::audio_source::{DecodedAudio, WavePeaks};
+    use std::sync::Arc;
+    use yinhe_mixer::{FrozenAudio, MixerParams};
+
+    let layout = ChannelLayout::from_mask(vec![true]);
+    let mut engine = AudioEngine::new(48_000, layout);
+    engine.mixer.resize(1, 8, &[]);
+    let mut mixer = MixerParams::default();
+    mixer.channels[0].freeze = Some(FrozenAudio {
+        source: "freeze-a".into(),
+        source_revision: 1,
+        sample_rate: 48_000,
+        frames: 8,
+    });
+    engine.mixer_params = mixer;
+    engine.audio_sources.insert(
+        "freeze-a".into(),
+        Arc::new(DecodedAudio {
+            sample_rate: 48_000,
+            frames: 8,
+            left: Arc::from([0.25f32; 8]),
+            right: Arc::from([0.5f32; 8]),
+            peaks: WavePeaks::build(&[0.25; 8], &[0.5; 8]),
+        }),
+    );
+    // 先写入合成器残留，确认会被覆盖。
+    if let Some(cb) = engine.mixer.channel_buffers_mut(0) {
+        cb.left.fill(0.9);
+        cb.right.fill(0.9);
+    }
+    engine.render_frozen_lcs(0, 0, 8);
+    let cb = engine.mixer.channel_buffers_mut(0).expect("channel");
+    assert!(cb.left.iter().all(|&v| (v - 0.25).abs() < f32::EPSILON));
+    assert!(cb.right.iter().all(|&v| (v - 0.5).abs() < f32::EPSILON));
+}
+
+/// 冻结 LC 即使没有活跃 voice，也必须标记为 active，否则混音图会跳过它。
+#[test]
+fn frozen_lc_forces_channel_active() {
+    use yinhe_mixer::{FrozenAudio, MixerParams};
+
+    let layout = ChannelLayout::from_mask(vec![true]);
+    let mut engine = AudioEngine::new(48_000, layout);
+    engine.mixer.resize(1, 512, &[]);
+    engine.cpu_synth = Some(yinhe_synth::CpuSynth::new(48_000));
+    let mut mixer = MixerParams::default();
+    mixer.channels[0].freeze = Some(FrozenAudio {
+        source: "freeze".into(),
+        source_revision: 0,
+        sample_rate: 48_000,
+        frames: 8,
+    });
+    engine.mixer_params = mixer;
+    let mut active = Vec::new();
+    engine.channel_activity(&mut active);
+    assert_eq!(active.first().copied(), Some(true));
+}

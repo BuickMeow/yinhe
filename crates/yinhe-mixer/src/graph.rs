@@ -400,6 +400,11 @@ impl MixerGraph {
         self.channels.get_mut(channel).map(|c| &mut c.buffers)
     }
 
+    /// 只读通道缓冲（冻结捕获用）。
+    pub fn channel_buffers(&self, channel: usize) -> Option<&ChannelBuffers> {
+        self.channels.get(channel).map(|c| &c.buffers)
+    }
+
     /// 清空全部通道缓冲。空闲渲染（停止状态驱动乐器插件）用：
     /// 该路径没有 xsynth/音频轨覆盖写，只有插件写自己的通道缓冲。
     pub fn clear_channel_buffers(&mut self) {

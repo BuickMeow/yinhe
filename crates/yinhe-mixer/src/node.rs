@@ -42,6 +42,18 @@ impl RackParams {
     }
 }
 
+/// 冻结音频引用：播放时用这段离线渲染音频替代该 LC 的实时输出。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FrozenAudio {
+    /// 工程内嵌音频素材的 uuid（`YinModel.audio_sources`）。
+    pub source: String,
+    /// 冻结时工程 `ProjectData::revision`；revision 变化即视为失效。
+    pub source_revision: u64,
+    pub sample_rate: u32,
+    /// 冻结从工程 sample 0 开始，长度 = 整曲。
+    pub frames: u64,
+}
+
 /// 一条 LC / Bus / Master 的持久化参数。
 ///
 /// `Deref` 到 [`StripParams`] 让推子/声像/M/S 的读写保持
@@ -65,6 +77,9 @@ pub struct MixerNode {
     /// 不再寄宿 Master 轨。
     #[serde(default)]
     pub automation: Vec<AutomationLane>,
+    /// 冻结音频；`Some` 时播放用冻结源替代实时输出。仅 LC 使用。
+    #[serde(default)]
+    pub freeze: Option<FrozenAudio>,
 }
 
 impl MixerNode {
@@ -76,6 +91,7 @@ impl MixerNode {
             sends: Vec::new(),
             output: None,
             automation: Vec::new(),
+            freeze: None,
         }
     }
 

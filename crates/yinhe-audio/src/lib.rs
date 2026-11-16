@@ -17,6 +17,7 @@ mod engine_preview;
 mod engine_render;
 mod engine_state;
 pub mod export;
+pub mod freeze;
 mod instrument;
 mod prepare_model;
 mod preview_engine;

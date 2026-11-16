@@ -12,6 +12,7 @@ pub(crate) mod clipboard_sync;
 pub(crate) mod dialog_dispatch;
 pub(crate) mod export_state;
 pub(crate) mod floating;
+mod freeze;
 pub(crate) mod insert;
 pub(crate) mod jobs;
 pub(crate) mod layout;

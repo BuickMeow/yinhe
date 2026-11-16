@@ -3,6 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use yinhe_audio::export::WavBitDepth;
+use yinhe_audio::freeze::FreezeProgress;
 
 use crate::dialogs::export::ExportProgress;
 use crate::widgets::toast::model::ProgressSource;
@@ -88,6 +89,67 @@ impl ProgressSource for ExportToastSource {
     }
     fn pause(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
         Some(self.pause.clone())
+    }
+}
+
+// ── LC 冻结（离线渲染 + 进度 toast）──
+
+/// LC 冻结任务状态。冻结复用实时引擎，在渲染线程离线跑完整条时间轴。
+pub(crate) struct FreezeState {
+    pub running: bool,
+    pub progress: Arc<Mutex<FreezeProgress>>,
+    pub cancel: Arc<std::sync::atomic::AtomicBool>,
+    /// 发起冻结的节点（完成时写回）。
+    pub node: Option<yinhe_types::MixerNodeId>,
+    /// 发起时的工程 revision（期间有编辑则丢弃本次冻结）。
+    pub revision: u64,
+}
+
+impl FreezeState {
+    pub fn new() -> Self {
+        Self {
+            running: false,
+            progress: FreezeProgress::new(),
+            cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            node: None,
+            revision: 0,
+        }
+    }
+}
+
+/// 冻结进度数据源：toast 渲染时 pull。
+pub(crate) struct FreezeToastSource {
+    pub progress: Arc<Mutex<FreezeProgress>>,
+    pub cancel: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl FreezeToastSource {
+    fn snapshot(&self) -> (f32, String) {
+        self.progress
+            .lock()
+            .ok()
+            .map(|st| {
+                let frac = st.progress.clamp(0.0, 1.0);
+                let label = if st.status.is_empty() {
+                    format!("{:.0}%", frac * 100.0)
+                } else {
+                    st.status.clone()
+                };
+                (frac, label)
+            })
+            .unwrap_or((0.0, String::new()))
+    }
+}
+
+impl ProgressSource for FreezeToastSource {
+    fn title(&self) -> String {
+        rust_i18n::t!("toast.freezing").to_string()
+    }
+    fn fraction(&self) -> f32 {
+        self.snapshot().0
+    }
+    fn cancel(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+        Some(self.cancel.clone())
     }
 }
 

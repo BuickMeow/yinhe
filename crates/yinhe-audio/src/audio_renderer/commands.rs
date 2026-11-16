@@ -397,6 +397,13 @@ impl AudioRenderer {
                     pause,
                 );
             }
+            AudioCommand::FreezeStart {
+                node,
+                progress,
+                cancel,
+            } => {
+                self.start_freeze(node, progress, cancel);
+            }
             AudioCommand::Pause => {
                 // 先渲染 10ms 输入侧淡出推入 ring，再暂停走带；insert 尾音
                 // 继续由尾音渲染路径输出，直到自然消失。

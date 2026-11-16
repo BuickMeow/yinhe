@@ -28,6 +28,7 @@ pub mod clip_edit;
 pub mod conductor_edit;
 pub(crate) mod event_edit;
 pub mod event_list_edit;
+pub mod freeze_edit;
 pub mod midi_import;
 pub mod note_edit;
 pub mod note_pencil;
@@ -324,6 +325,7 @@ impl Document {
                 density_pr: Default::default(),
             };
             doc.ensure_rack_track_lcs();
+            doc.adopt_loaded_freezes();
             Ok(doc)
         })
     }

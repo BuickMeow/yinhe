@@ -87,6 +87,34 @@ impl AudioEngine {
         // 不会被一起淡掉，之后可继续自然衰减。
         self.apply_pause_fade_out(frames);
 
+        // 冻结捕获取 pre-LC 干声（通道 DSP 之后、LC gain/insert/send 之前）。
+        if self.freeze_capture.is_some() {
+            let (dense, active_channel) = match self.freeze_capture.as_ref() {
+                Some(cap) => (cap.dense, active.get(cap.dense).copied().unwrap_or(false)),
+                None => (0, false),
+            };
+            let source = if active_channel {
+                self.mixer
+                    .channel_buffers(dense)
+                    .map(|cb| (&cb.left, &cb.right))
+            } else {
+                None
+            };
+            if let Some(cap) = self.freeze_capture.as_mut() {
+                match source {
+                    Some((left, right)) => {
+                        let n = frames.min(left.len()).min(right.len());
+                        cap.left.extend_from_slice(&left[..n]);
+                        cap.right.extend_from_slice(&right[..n]);
+                    }
+                    None => {
+                        cap.left.resize(cap.left.len() + frames, 0.0);
+                        cap.right.resize(cap.right.len() + frames, 0.0);
+                    }
+                }
+            }
+        }
+
         let (master_l, master_r) = self.mixer.process_with_active(Some(&active));
         self.channel_active = active;
         write_master(output, master_l, master_r);
@@ -215,6 +243,8 @@ impl AudioEngine {
         self.render_instruments(block_start_sample, offset, frames);
         // 音频片段回放：按绝对时间混进对应音频 dense 通道（无状态）。
         self.render_audio_tracks(block_start_sample, offset, frames);
+        // 冻结 LC：用离线渲染音频覆盖该 dense 通道，跳过实时音源输出。
+        self.render_frozen_lcs(block_start_sample, offset, frames);
 
         self.sample_position = block_end_sample;
         self.current_tick = block_end_tick;
@@ -228,6 +258,76 @@ impl AudioEngine {
         }
         self.channel_set
             .render_segment(self.mixer.buffers_mut(), offset_frames, frames);
+    }
+
+    /// 冻结 LC：清空目标 dense 通道并用冻结 PCM 覆盖。
+    ///
+    /// 冻结源从工程 sample 0 开始，长度 = 整曲；`block_start_sample + offset`
+    /// 是当前输出块的绝对采样位置。
+    pub(crate) fn render_frozen_lcs(
+        &mut self,
+        block_start_sample: u64,
+        offset: usize,
+        frames: usize,
+    ) {
+        use yinhe_types::MixerNodeId;
+
+        let frozen: Vec<(usize, String)> = self
+            .mixer_params
+            .channels
+            .iter()
+            .chain(self.mixer_params.audio_channels.iter())
+            .chain(self.mixer_params.track_channels.iter())
+            .filter_map(|node| {
+                let freeze = node.freeze.as_ref()?;
+                if self.freeze_capture.is_some() {
+                    return None;
+                }
+                let MixerNodeId::LogicalChannel(id) = node.id else {
+                    return None;
+                };
+                let dense = match node.id.channel_id()? {
+                    yinhe_types::MixerChannelId::Midi(ch) => {
+                        self.channel_layout.dense_for(ch as usize)
+                    }
+                    yinhe_types::MixerChannelId::Audio(ch) => {
+                        self.channel_layout.audio_dense_for(ch)
+                    }
+                    yinhe_types::MixerChannelId::TrackLc(_) => self
+                        .channel_layout
+                        .track_lc_dense_for(id)
+                        .map(|(_, dense)| dense)
+                        .unwrap_or(u32::MAX),
+                    _ => u32::MAX,
+                };
+                (dense != u32::MAX).then(|| (dense as usize, freeze.source.clone()))
+            })
+            .collect();
+
+        for (dense, source_id) in frozen {
+            // 素材尚未解码完成时保留实时输出，等 SetAudioSource 到达后再切换，
+            // 避免打开工程瞬间冻结通道静音。
+            let Some(source) = self.audio_sources.get(&source_id).cloned() else {
+                continue;
+            };
+            let Some(cb) = self.mixer.channel_buffers_mut(dense) else {
+                continue;
+            };
+            let n = frames
+                .min(cb.left.len().saturating_sub(offset))
+                .min(cb.right.len().saturating_sub(offset));
+            cb.left[offset..offset + n].fill(0.0);
+            cb.right[offset..offset + n].fill(0.0);
+            let start = block_start_sample as usize + offset;
+            for i in 0..n {
+                let idx = start + i;
+                if idx >= source.frames || idx >= source.left.len() {
+                    break;
+                }
+                cb.left[offset + i] = source.left[idx];
+                cb.right[offset + i] = source.right[idx];
+            }
+        }
     }
 
     /// 音频通道缓冲是覆盖写（没有 xsynth/插件替它清零），整块清一次。

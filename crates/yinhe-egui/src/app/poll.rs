@@ -349,6 +349,9 @@ impl App {
             }
         }
 
+        // LC 冻结完成轮询：写回工程素材与节点 freeze。
+        self.poll_lc_freeze();
+
         // 导出完成轮询（复用实时引擎，含混音台/PDC）：
         // `progress.finished` 置位即收尾（取消/失败/成功三态）。
         if self.jobs.is_exporting() {

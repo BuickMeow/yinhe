@@ -358,6 +358,29 @@ impl App {
             }
         }
 
+        // ── LC 冻结进度 toast ──
+        if self
+            .notifications
+            .is_dismissed(crate::widgets::toast::FREEZE_PROGRESS_ID)
+        {
+        } else if self.jobs.is_freezing() {
+            let cancelled = self
+                .notifications
+                .get_cancel_flag(crate::widgets::toast::FREEZE_PROGRESS_ID)
+                .is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed));
+            if !cancelled {
+                let src = std::sync::Arc::new(crate::app::export_state::FreezeToastSource {
+                    progress: self.jobs.freeze.progress.clone(),
+                    cancel: self.jobs.freeze.cancel.clone(),
+                });
+                self.notifications.ensure_progress(
+                    crate::widgets::toast::FREEZE_PROGRESS_ID,
+                    crate::widgets::toast::ToastKind::Info,
+                    src,
+                );
+            }
+        }
+
         // ── PPQ rescale progress toast（替代 rescale_overlay viewport）──
         if self
             .notifications

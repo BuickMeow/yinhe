@@ -619,6 +619,48 @@ fn header_context_menu(
             actions.push(action);
             ui.close();
         }
+        if matches!(
+            ch,
+            MixerChannelId::Midi(_) | MixerChannelId::Audio(_) | MixerChannelId::TrackLc(_)
+        ) {
+            let node = ch.node_id();
+            let frozen = app.workspace.documents[idx]
+                .mixer
+                .node(node)
+                .is_some_and(|node| node.freeze.is_some());
+            let stale = app.workspace.documents[idx].freeze_is_stale(node);
+            ui.separator();
+            if frozen
+                && ui
+                    .add(crate::widgets::menu::menu_item_action(
+                        ui,
+                        false,
+                        t!("mix.unfreeze").as_ref(),
+                        "",
+                    ))
+                    .clicked()
+            {
+                actions.push(MixAction::UnfreezeChannel { node });
+                ui.close();
+            }
+            let label = if stale {
+                t!("mix.refreeze")
+            } else {
+                t!("mix.freeze")
+            };
+            if ui
+                .add(crate::widgets::menu::menu_item_action(
+                    ui,
+                    false,
+                    label.as_ref(),
+                    "",
+                ))
+                .clicked()
+            {
+                actions.push(MixAction::FreezeChannel { channel: ch });
+                ui.close();
+            }
+        }
         ui.separator();
         if ui
             .add(crate::widgets::menu::menu_item_action(

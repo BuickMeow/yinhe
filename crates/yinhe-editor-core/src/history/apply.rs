@@ -82,6 +82,16 @@ impl UndoAction {
                 before: _,
                 after,
             } => apply_mixer_automation_lane_delta(doc, *node, *lane_idx, after.as_ref()),
+            UndoAction::Freeze {
+                node,
+                before: _,
+                after,
+            } => {
+                if let Some(node) = doc.mixer.node_mut(*node) {
+                    node.freeze = after.clone();
+                }
+                doc.data.bump_revision();
+            }
             UndoAction::TrackName {
                 track_idx,
                 old: _,

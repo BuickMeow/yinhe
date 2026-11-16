@@ -20,8 +20,9 @@ use crate::error::YinError;
 /// - v9：稳定 BusId，但仍是并行分表；
 /// - v10：Rack + MixerNode 节点表；
 /// - v11：每轨 LC（track_channels / next_lc_id）与 Rack 输出拓扑；
-/// - v12：MixerNode 拥有自己的 automation（BusGain 不再寄宿 Master）。
-const MIXER_SECTION_VERSION: u32 = 12;
+/// - v12：MixerNode 拥有自己的 automation（BusGain 不再寄宿 Master）；
+/// - v13：LC freeze 音频引用。
+const MIXER_SECTION_VERSION: u32 = 13;
 
 /// v8 及更早的发送参数（总线是 Vec 下标，没有稳定 ID）。
 /// postcard 非自描述，字段顺序必须与旧 `MixerParams` 完全一致。
@@ -100,6 +101,7 @@ impl MixerNodeV10 {
             sends: self.sends,
             output: self.output,
             automation: Vec::new(),
+            freeze: None,
         }
     }
 }
@@ -179,6 +181,7 @@ impl MixerNodeV11 {
             sends: self.sends,
             output: self.output,
             automation: Vec::new(),
+            freeze: None,
         }
     }
 }
@@ -228,6 +231,92 @@ impl MixerParamsV11 {
                 .buses
                 .into_iter()
                 .map(MixerNodeV11::into_current)
+                .collect(),
+            master: self.master.into_current(),
+            next_instrument_uid: self.next_instrument_uid,
+            next_bus_id: self.next_bus_id,
+            next_lc_id: self.next_lc_id,
+        }
+    }
+}
+
+/// v12 的 Rack 快照。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct RackParamsV12 {
+    id: RackId,
+    instruments: Vec<InsertRef>,
+    output_mode: RackOutputMode,
+}
+
+/// v12 的 MixerNode 快照（已有 automation，还没有 freeze）。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MixerNodeV12 {
+    id: MixerNodeId,
+    strip: StripParams,
+    inserts: Vec<InsertRef>,
+    sends: Vec<SendParams>,
+    output: Option<BusId>,
+    automation: Vec<yinhe_types::AutomationLane>,
+}
+
+impl MixerNodeV12 {
+    fn into_current(self) -> MixerNode {
+        MixerNode {
+            id: self.id,
+            strip: self.strip,
+            inserts: self.inserts,
+            sends: self.sends,
+            output: self.output,
+            automation: self.automation,
+            freeze: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MixerParamsV12 {
+    racks: Vec<RackParamsV12>,
+    channels: Vec<MixerNodeV12>,
+    track_channels: Vec<MixerNodeV12>,
+    audio_channels: Vec<MixerNodeV12>,
+    buses: Vec<MixerNodeV12>,
+    master: MixerNodeV12,
+    next_instrument_uid: u64,
+    next_bus_id: BusId,
+    next_lc_id: LogicalChannelId,
+}
+
+impl MixerParamsV12 {
+    fn into_current(self) -> MixerParams {
+        MixerParams {
+            racks: self
+                .racks
+                .into_iter()
+                .map(|rack| RackParams {
+                    id: rack.id,
+                    instruments: rack.instruments,
+                    output_mode: rack.output_mode,
+                })
+                .collect(),
+            channels: self
+                .channels
+                .into_iter()
+                .map(MixerNodeV12::into_current)
+                .collect(),
+            track_channels: self
+                .track_channels
+                .into_iter()
+                .map(MixerNodeV12::into_current)
+                .collect(),
+            audio_channels: self
+                .audio_channels
+                .into_iter()
+                .map(MixerNodeV12::into_current)
+                .collect(),
+            buses: self
+                .buses
+                .into_iter()
+                .map(MixerNodeV12::into_current)
                 .collect(),
             master: self.master.into_current(),
             next_instrument_uid: self.next_instrument_uid,
@@ -317,6 +406,7 @@ impl MixerParamsV9 {
                 sends: self.sends.get(i).cloned().unwrap_or_default(),
                 output: self.midi_outputs.get(i).copied().flatten(),
                 automation: Vec::new(),
+                freeze: None,
             })
             .collect();
         let audio_channels = (0..audio_count)
@@ -327,6 +417,7 @@ impl MixerParamsV9 {
                 sends: self.audio_sends.get(i).cloned().unwrap_or_default(),
                 output: self.audio_outputs.get(i).copied().flatten(),
                 automation: Vec::new(),
+                freeze: None,
             })
             .collect();
         let buses = self
@@ -345,6 +436,7 @@ impl MixerParamsV9 {
                 sends: self.bus_sends.get(i).cloned().unwrap_or_default(),
                 output: None,
                 automation: Vec::new(),
+                freeze: None,
             })
             .collect();
         let master = MixerNode {
@@ -357,6 +449,7 @@ impl MixerParamsV9 {
             sends: Vec::new(),
             output: None,
             automation: Vec::new(),
+            freeze: None,
         };
         MixerParams {
             racks,
@@ -389,6 +482,11 @@ pub(crate) fn decode_mixer_section(section: &[u8]) -> Option<MixerParams> {
         MIXER_SECTION_VERSION => deserialize_postcard::<MixerParams>(&payload)
             .map_err(|e| tracing::warn!("混音段解析失败，忽略混音设置: {e}"))
             .ok()?,
+        // v12：已有节点 automation，还没有 freeze。
+        12 => deserialize_postcard::<MixerParamsV12>(&payload)
+            .map_err(|e| tracing::warn!("v12 混音段解析失败，忽略混音设置: {e}"))
+            .ok()?
+            .into_current(),
         // v11：已有每轨 LC，但节点还没有 automation。
         11 => deserialize_postcard::<MixerParamsV11>(&payload)
             .map_err(|e| tracing::warn!("v11 混音段解析失败，忽略混音设置: {e}"))
@@ -610,6 +708,43 @@ mod tests {
     }
 
     #[test]
+    fn v12_nodes_migrate_to_v13_without_freeze() {
+        let old = MixerParamsV12 {
+            racks: vec![RackParamsV12 {
+                id: RackId(0),
+                instruments: Vec::new(),
+                output_mode: RackOutputMode::Shared,
+            }],
+            channels: vec![MixerNodeV12 {
+                id: MixerNodeId::LogicalChannel(LogicalChannelId(0)),
+                strip: StripParams::default(),
+                inserts: Vec::new(),
+                sends: Vec::new(),
+                output: None,
+                automation: Vec::new(),
+            }],
+            track_channels: Vec::new(),
+            audio_channels: Vec::new(),
+            buses: Vec::new(),
+            master: MixerNodeV12 {
+                id: MixerNodeId::Master,
+                strip: StripParams::default(),
+                inserts: Vec::new(),
+                sends: Vec::new(),
+                output: None,
+                automation: Vec::new(),
+            },
+            next_instrument_uid: 1,
+            next_bus_id: BusId::default(),
+            next_lc_id: LogicalChannelId(TRACK_LC_BASE),
+        };
+        let payload = serialize_postcard(&old).expect("serialize v12");
+        let section = encode_versioned_section(12, &payload, 0).expect("encode v12");
+        let loaded = decode_mixer_section(&section).expect("decode v12");
+        assert_eq!(loaded.channels[0].freeze, None);
+    }
+
+    #[test]
     fn current_version_roundtrips_nodes() {
         let mut mixer = MixerParams::default();
         mixer.ensure_len();
@@ -631,6 +766,12 @@ mod tests {
                 value: 0.75,
                 shape: yinhe_types::SegmentShape::Step,
             }],
+        });
+        mixer.channels[0].freeze = Some(yinhe_mixer::FrozenAudio {
+            source: "frozen-lc".into(),
+            source_revision: 7,
+            sample_rate: 48_000,
+            frames: 1234,
         });
         let track_lc = mixer.add_track_lc();
         mixer.track_node_mut(track_lc).expect("track lc").strip.gain = 0.25;

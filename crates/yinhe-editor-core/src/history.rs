@@ -144,6 +144,12 @@ pub enum UndoAction {
     },
     /// 任意 MixerNode 的自动化事件变化。
     MixerAutomation(MixerAutomationDelta),
+    /// LC 冻结状态变化。
+    Freeze {
+        node: yinhe_types::MixerNodeId,
+        before: Option<yinhe_mixer::FrozenAudio>,
+        after: Option<yinhe_mixer::FrozenAudio>,
+    },
     /// 任意 MixerNode 的自动化 lane 结构变化。
     MixerAutomationLane {
         node: yinhe_types::MixerNodeId,
@@ -358,6 +364,18 @@ impl UndoAction {
             UndoAction::MixerAutomation(mut delta) => {
                 std::mem::swap(&mut delta.before, &mut delta.after);
                 UndoAction::MixerAutomation(delta)
+            }
+            UndoAction::Freeze {
+                node,
+                mut before,
+                mut after,
+            } => {
+                std::mem::swap(&mut before, &mut after);
+                UndoAction::Freeze {
+                    node,
+                    before,
+                    after,
+                }
             }
             UndoAction::MixerAutomationLane {
                 node,

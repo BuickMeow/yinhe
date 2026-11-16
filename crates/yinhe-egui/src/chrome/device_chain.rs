@@ -644,6 +644,7 @@ fn apply_dock_actions(
                 {
                     chain.remove(slot);
                 }
+                app.workspace.documents[idx].data.bump_revision();
                 let handle = app.audio_state.handle.as_ref().map(|a| &a.handle);
                 if idx < app.mixer_racks.len() {
                     app.mixer_racks[idx].remove_slot(state.insert_target, slot, handle);

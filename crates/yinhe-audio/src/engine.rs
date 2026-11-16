@@ -156,6 +156,8 @@ pub(crate) struct AudioEngine {
     pub(crate) segment_start_sample: u64,
     /// 导出模式：忽略走带循环（导出必须线性跑完整时间轴）。
     pub(crate) export_mode: bool,
+    /// 冻结离线渲染的捕获状态；Some 时每块复制目标 dense 的干声。
+    pub(crate) freeze_capture: Option<FreezeCapture>,
     /// 走带循环开关（tick 域；`loop_end_tick <= loop_start_tick` 视为关闭）。
     pub(crate) loop_enabled: bool,
     pub(crate) loop_start_tick: u32,
@@ -192,6 +194,40 @@ pub(crate) struct PluginPreviewNote {
     pub off_sample: Option<u64>,
     /// 是否已发 NoteOn（未触发的音符在新组到来时被替换）。
     pub triggered: bool,
+}
+
+/// 冻结离线渲染的捕获状态：目标 dense 通道的干声逐块累积。
+pub(crate) struct FreezeCapture {
+    pub dense: usize,
+    pub left: Vec<f32>,
+    pub right: Vec<f32>,
+}
+
+impl FreezeCapture {
+    fn new(dense: usize) -> Self {
+        Self {
+            dense,
+            left: Vec::new(),
+            right: Vec::new(),
+        }
+    }
+}
+
+impl AudioEngine {
+    /// 开始捕获某条 LC 的 pre-LC 干声（冻结离线渲染用）。
+    pub(crate) fn begin_freeze_capture(&mut self, dense: usize) {
+        self.freeze_capture = Some(FreezeCapture::new(dense));
+    }
+
+    /// 结束捕获并取回 PCM。未开始捕获返回 None。
+    pub(crate) fn finish_freeze_capture(&mut self) -> Option<FreezeCapture> {
+        self.freeze_capture.take()
+    }
+
+    /// 放弃捕获（取消冻结）。
+    pub(crate) fn cancel_freeze_capture(&mut self) {
+        self.freeze_capture = None;
+    }
 }
 
 impl AudioEngine {
@@ -273,6 +309,7 @@ impl AudioEngine {
                 cpu_synth: None,
                 segment_start_sample: 0,
                 export_mode: false,
+                freeze_capture: None,
                 loop_enabled: false,
                 loop_start_tick: 0,
                 loop_end_tick: 0,
@@ -572,6 +609,9 @@ impl AudioEngine {
                 self.preview_instrument_stop(channel, key);
             }
             // 导出由渲染器执行（导出模式状态机 + WAV 写盘），引擎层忽略。
+            AudioCommand::FreezeStart { .. } => {
+                // 冻结是渲染线程离线任务，引擎内不处理。
+            }
             AudioCommand::ExportStart { .. } => {}
         }
     }

@@ -236,6 +236,13 @@ pub enum AudioCommand {
         cancel: Arc<AtomicBool>,
         pause: Arc<AtomicBool>,
     },
+    /// 开始冻结一条 LC：离线渲染整条时间轴，只捕获该 LC 的 pre-LC 干声。
+    /// 结果经 `progress.result` 交回 UI（UI 负责写入工程并设置节点 freeze）。
+    FreezeStart {
+        node: MixerChannelId,
+        progress: Arc<Mutex<crate::freeze::FreezeProgress>>,
+        cancel: Arc<AtomicBool>,
+    },
 }
 
 /// 单个预览音符的参数（tick 域，与编辑层一致；渲染线程转 sample 差喂预览引擎）。
@@ -447,6 +454,7 @@ impl AudioCommand {
             AudioCommand::SetAudioSource { .. } => ("SetAudioSource", false),
             AudioCommand::RefreshLatency => ("RefreshLatency", false),
             AudioCommand::ExportStart { .. } => ("ExportStart", false),
+            AudioCommand::FreezeStart { .. } => ("FreezeStart", true),
         };
         CmdMeta { reliable, name }
     }
@@ -2110,6 +2118,15 @@ mod tests {
                 },
                 "ExportStart",
                 false,
+            ),
+            (
+                AudioCommand::FreezeStart {
+                    node: MixerChannelId::Midi(0),
+                    progress: crate::freeze::FreezeProgress::new(),
+                    cancel: Arc::new(AtomicBool::new(false)),
+                },
+                "FreezeStart",
+                true,
             ),
         ];
         for (cmd, name, reliable) in &cases {

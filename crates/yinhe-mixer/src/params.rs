@@ -503,6 +503,29 @@ impl MixerParams {
         }
     }
 
+    /// 去掉 revision 已不匹配的冻结（只用于推给音频引擎的副本）。
+    ///
+    /// 持久化层保留失效冻结，UI 可以显示“已失效”并允许重新冻结；
+    /// 引擎拿到的副本不含失效冻结，播放回退到实时输出。
+    pub fn strip_stale_freezes(&mut self, revision: u64) {
+        for node in self
+            .channels
+            .iter_mut()
+            .chain(self.audio_channels.iter_mut())
+            .chain(self.track_channels.iter_mut())
+            .chain(self.buses.iter_mut())
+            .chain(std::iter::once(&mut self.master))
+        {
+            let stale = node
+                .freeze
+                .as_ref()
+                .is_some_and(|freeze| freeze.source_revision != revision);
+            if stale {
+                node.freeze = None;
+            }
+        }
+    }
+
     /// 某 Rack 的乐器链（越界返回空切片）。
     pub fn rack_instruments(&self, rack: RackId) -> &[InsertRef] {
         self.racks

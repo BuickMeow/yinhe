@@ -69,7 +69,9 @@ impl MixerNodeId {
         match self {
             Self::LogicalChannel(id) => {
                 let raw = id.0;
-                if raw < crate::MIDI_CHANNEL_COUNT as u32 {
+                if raw >= crate::TRACK_LC_BASE {
+                    Some(MixerChannelId::TrackLc(id))
+                } else if raw < crate::MIDI_CHANNEL_COUNT as u32 {
                     Some(MixerChannelId::Midi(raw as u8))
                 } else {
                     let audio = raw - crate::MIDI_CHANNEL_COUNT as u32;
@@ -111,6 +113,8 @@ mod tests {
             let id = MixerChannelId::Audio(ch);
             assert_eq!(id.node_id().channel_id(), Some(id));
         }
+        let lc = MixerChannelId::TrackLc(LogicalChannelId(crate::TRACK_LC_BASE));
+        assert_eq!(lc.node_id().channel_id(), Some(lc));
         let bus = MixerChannelId::Bus(BusId(7));
         assert_eq!(bus.node_id().channel_id(), Some(bus));
         assert_eq!(
