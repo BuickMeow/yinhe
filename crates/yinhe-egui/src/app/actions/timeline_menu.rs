@@ -48,6 +48,12 @@ impl App {
                         doc.edit.chan_ar_sel.clear();
                         doc.edit.selected_audio_clips.clear();
                         doc.edit.sel_rect.clear();
+                        for panel in &mut doc.edit.controller_panels {
+                            panel.anchor_sel_rects.clear();
+                        }
+                        for view in doc.edit.arr_am_views.values_mut() {
+                            view.anchor_sel_rects.clear();
+                        }
                     }
                 }
             }
