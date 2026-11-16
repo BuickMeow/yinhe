@@ -313,13 +313,15 @@ impl App {
                     self.push_mixer_state_to_engine(idx);
                 }
             }
-            if mixer_changed && !changed {
+            if mixer_changed {
                 // 通道属性面板：推子/声像/M/S/主输出等只改混音参数，
                 // 不需要重建音频模型（与混音台 apply_strip 同一 undo 合并路径）。
                 if let Some(idx) = self.workspace.active_doc {
                     self.note_mixer_edit(t!("undo.mix_param").as_ref());
                     self.workspace.documents[idx].mark_mixer_dirty();
-                    self.push_mixer_state_to_engine(idx);
+                    if !changed {
+                        self.push_mixer_state_to_engine(idx);
+                    }
                 }
             }
             if width_drag_ended {

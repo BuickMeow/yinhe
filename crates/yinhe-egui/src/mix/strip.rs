@@ -319,7 +319,7 @@ pub(crate) fn master_strip(
     let params = app.workspace.documents[idx].mixer.master;
     let title = t!("mix.master").to_string();
 
-    strip_frame(
+    let rect = strip_frame(
         ui,
         "mix_strip_master",
         crate::theme::accent_active(),
@@ -333,7 +333,7 @@ pub(crate) fn master_strip(
             }
         },
     );
-    header_double_click_opens_master_dock(app, ui, idx, ui.max_rect(), actions);
+    header_double_click_opens_master_dock(app, ui, idx, rect, actions);
 }
 
 /// Master 条双击色带：打开设备链并切到主输出效果链（选中 Conductor 轨，
