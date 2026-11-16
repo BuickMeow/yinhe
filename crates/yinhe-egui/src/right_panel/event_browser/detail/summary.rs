@@ -45,7 +45,8 @@ impl TargetSummary {
             AutomationTarget::Tempo => {}
             AutomationTarget::BusGain { .. }
             | AutomationTarget::MixerGain { .. }
-            | AutomationTarget::MixerPan { .. } => self.param_total += n,
+            | AutomationTarget::MixerPan { .. }
+            | AutomationTarget::MixerSend { .. } => self.param_total += n,
         }
     }
 

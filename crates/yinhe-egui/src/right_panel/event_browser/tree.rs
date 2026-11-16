@@ -343,7 +343,8 @@ fn automation_icon(target: &AutomationTarget) -> egui_material_icons::MaterialIc
         AutomationTarget::Tempo => ICON_SPEED,
         AutomationTarget::BusGain { .. }
         | AutomationTarget::MixerGain { .. }
-        | AutomationTarget::MixerPan { .. } => ICON_TUNE,
+        | AutomationTarget::MixerPan { .. }
+        | AutomationTarget::MixerSend { .. } => ICON_TUNE,
     }
 }
 

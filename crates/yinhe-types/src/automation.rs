@@ -652,6 +652,11 @@ pub enum AutomationTarget {
     MixerGain { channel: crate::MixerChannelId },
     /// 任意混音节点的声像（归一化 0..1，0.5 = 居中）。
     MixerPan { channel: crate::MixerChannelId },
+    /// 任意混音节点到某条 Bus 的发送量（归一化 0..1，1.0 = 满发送）。
+    MixerSend {
+        node: crate::MixerChannelId,
+        bus: crate::BusId,
+    },
 }
 
 impl AutomationTarget {
@@ -677,7 +682,8 @@ impl AutomationTarget {
             AutomationTarget::Tempo
             | AutomationTarget::BusGain { .. }
             | AutomationTarget::MixerGain { .. }
-            | AutomationTarget::MixerPan { .. } => None,
+            | AutomationTarget::MixerPan { .. }
+            | AutomationTarget::MixerSend { .. } => None,
         }
     }
 
@@ -696,6 +702,7 @@ impl AutomationTarget {
             AutomationTarget::Tempo => 120.0,
             AutomationTarget::BusGain { .. } | AutomationTarget::MixerGain { .. } => 1.0,
             AutomationTarget::MixerPan { .. } => 0.5,
+            AutomationTarget::MixerSend { .. } => 0.0,
         }
     }
 
@@ -754,6 +761,7 @@ impl AutomationTarget {
         match self {
             AutomationTarget::PitchBend => 0.5,
             AutomationTarget::MixerPan { .. } => 0.5,
+            AutomationTarget::MixerSend { .. } => 0.0,
             AutomationTarget::CC { controller: 10 } => 0.5,
             // 标准 RPN 0/1/2 = PB Sensitivity / Fine Tune / Coarse Tune（对称量）。
             AutomationTarget::Rpn { parameter } if *parameter <= 2 => 0.5,
@@ -788,16 +796,16 @@ impl AutomationTarget {
             | AutomationTarget::Nrpn { .. } => crate::AutomationOwner::Track(track),
             AutomationTarget::Tempo => crate::AutomationOwner::Conductor,
             AutomationTarget::BusGain { bus } => crate::AutomationOwner::Bus(*bus),
-            AutomationTarget::MixerGain { channel } | AutomationTarget::MixerPan { channel } => {
-                channel
-                    .logical_channel_id()
-                    .map(crate::AutomationOwner::LogicalChannel)
-                    .unwrap_or(match channel {
-                        crate::MixerChannelId::Bus(bus) => crate::AutomationOwner::Bus(*bus),
-                        crate::MixerChannelId::Master => crate::AutomationOwner::Master,
-                        _ => crate::AutomationOwner::Master,
-                    })
-            }
+            AutomationTarget::MixerGain { channel }
+            | AutomationTarget::MixerPan { channel }
+            | AutomationTarget::MixerSend { node: channel, .. } => channel
+                .logical_channel_id()
+                .map(crate::AutomationOwner::LogicalChannel)
+                .unwrap_or(match channel {
+                    crate::MixerChannelId::Bus(bus) => crate::AutomationOwner::Bus(*bus),
+                    crate::MixerChannelId::Master => crate::AutomationOwner::Master,
+                    _ => crate::AutomationOwner::Master,
+                }),
         }
     }
 
@@ -844,6 +852,9 @@ impl AutomationTarget {
             }
             AutomationTarget::MixerPan { channel } => {
                 format!("Mixer Pan {:?}", channel)
+            }
+            AutomationTarget::MixerSend { node, bus } => {
+                format!("Mixer Send {:?} -> BUS {}", node, bus.index() + 1)
             }
         }
     }

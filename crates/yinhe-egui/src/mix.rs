@@ -216,6 +216,11 @@ pub(crate) enum MixAction {
     AddMixerPanAutomation {
         channel: MixerChannelId,
     },
+    /// 给任意混音节点到某 Bus 的发送量添加自动化 lane。
+    AddMixerSendAutomation {
+        node: MixerChannelId,
+        bus: yinhe_types::BusId,
+    },
     /// 为 MIDI 通道**追加**一个插件乐器到链尾（InsertRef 入持久化层 +
     /// 机架加载 + 安装引擎）。
     AssignInstrument {
@@ -1144,6 +1149,26 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
         MixAction::OpenSends { channel } => {
             app.mix.sends_for = Some(channel);
             crate::chrome::dialog::raise_viewport(ctx, sends_viewport_id());
+        }
+        MixAction::AddMixerSendAutomation { node, bus } => {
+            let amount = app.workspace.documents[idx]
+                .mixer
+                .node_sends(node)
+                .and_then(|sends| sends.iter().find(|s| s.bus == bus))
+                .map(|s| s.amount)
+                .unwrap_or(0.0);
+            let value = (amount / 2.0).clamp(0.0, 1.0);
+            let doc = &mut app.workspace.documents[idx];
+            let before = doc.capture_snapshot();
+            if let Some(action) = doc.add_mixer_automation_lane(
+                node.node_id(),
+                yinhe_types::AutomationTarget::MixerSend { node, bus },
+                value,
+            ) {
+                doc.push_undo(action, t!("undo.create_automation").as_ref(), before);
+                app.workspace.documents[idx].mark_mixer_dirty();
+                app.push_mixer_state_to_engine(idx);
+            }
         }
         MixAction::AssignInstrument { channel, plugin } => {
             assign_instrument_plugin(app, idx, channel, &plugin);

@@ -852,7 +852,8 @@ fn push_lane_event<'a>(
         AutomationTarget::Tempo
         | AutomationTarget::BusGain { .. }
         | AutomationTarget::MixerGain { .. }
-        | AutomationTarget::MixerPan { .. } => {}
+        | AutomationTarget::MixerPan { .. }
+        | AutomationTarget::MixerSend { .. } => {}
     }
 }
 

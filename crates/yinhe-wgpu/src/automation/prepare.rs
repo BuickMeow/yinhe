@@ -54,6 +54,9 @@ fn target_hash(target: &AutomationTarget) -> u64 {
         AutomationTarget::BusGain { bus } => 0x6_0000 + u64::from(bus.0),
         AutomationTarget::MixerGain { channel } => 0x7_0000 + mix_channel_key(*channel),
         AutomationTarget::MixerPan { channel } => 0x8_0000 + mix_channel_key(*channel),
+        AutomationTarget::MixerSend { node, bus } => {
+            0x9_0000 + mix_channel_key(*node) + u64::from(bus.0)
+        }
         AutomationTarget::Param { device, id, .. } => match device {
             // 内置设备：通道级。
             ParamDevice::ChannelInstrument { channel } => {

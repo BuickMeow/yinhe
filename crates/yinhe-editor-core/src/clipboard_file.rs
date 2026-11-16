@@ -284,6 +284,11 @@ fn write_target(w: &mut impl Write, target: &AutomationTarget) -> io::Result<()>
             w.write_all(&[8])?;
             write_mixer_channel(w, *channel)
         }
+        AutomationTarget::MixerSend { node, bus } => {
+            w.write_all(&[9])?;
+            write_mixer_channel(w, *node)?;
+            w.write_all(&bus.0.to_le_bytes())
+        }
     }
 }
 
@@ -383,6 +388,10 @@ fn read_target(r: &mut impl Read) -> io::Result<AutomationTarget> {
         },
         8 => AutomationTarget::MixerPan {
             channel: read_mixer_channel(r)?,
+        },
+        9 => AutomationTarget::MixerSend {
+            node: read_mixer_channel(r)?,
+            bus: yinhe_types::BusId(read_u16(r)?),
         },
         _ => return Err(invalid("unknown automation target")),
     })

@@ -239,19 +239,10 @@ pub fn show(
     let bus_lanes: Vec<Vec<usize>> = bus_ids
         .iter()
         .enumerate()
-        .map(|(i, &bus_id)| {
+        .map(|(i, _bus_id)| {
             bus_automation
                 .get(i)
-                .map(|lanes| {
-                    lanes
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, lane)| {
-                            lane.target == yinhe_types::AutomationTarget::BusGain { bus: bus_id }
-                        })
-                        .map(|(idx, _)| idx)
-                        .collect()
-                })
+                .map(|lanes| (0..lanes.len()).collect())
                 .unwrap_or_default()
         })
         .collect();

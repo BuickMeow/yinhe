@@ -3379,6 +3379,47 @@ fn mixer_gain_pan_automation_reads_lc_nodes() {
     assert!((node.pan - 0.5).abs() < f32::EPSILON);
 }
 
+/// MixerSend 自动化写回节点 sends 的发送量。
+#[test]
+fn mixer_send_automation_updates_node_send_amount() {
+    use yinhe_mixer::{MixerParams, SendParams};
+    use yinhe_types::{
+        AutomationEvent, AutomationLane, AutomationTarget, MixerChannelId, SegmentShape,
+    };
+
+    let layout = ChannelLayout::from_mask(vec![true]);
+    let mut engine = AudioEngine::new(48_000, layout);
+    let mut mixer = MixerParams::default();
+    let bus = mixer.add_bus().expect("bus");
+    let channel = MixerChannelId::Midi(0);
+    let node = mixer.channels.first_mut().expect("midi lc");
+    node.sends.push(SendParams {
+        bus,
+        amount: 0.0,
+        pre_fader: false,
+    });
+    node.automation.push(AutomationLane {
+        target: AutomationTarget::MixerSend { node: channel, bus },
+        track: 0,
+        events: vec![AutomationEvent {
+            id: 1,
+            tick: 0,
+            value: 0.5,
+            shape: SegmentShape::Step,
+        }],
+    });
+    engine.mixer_params = mixer;
+    engine.apply_mixer_automation(1);
+
+    let send = engine
+        .mixer_params
+        .channels
+        .first()
+        .and_then(|node| node.sends.first())
+        .expect("send");
+    assert!((send.amount - 1.0).abs() < f32::EPSILON);
+}
+
 /// BusGain 自动化从 Bus 节点的 automation 求值，不再依赖 Master 轨。
 #[test]
 fn bus_gain_automation_reads_bus_node_lanes() {

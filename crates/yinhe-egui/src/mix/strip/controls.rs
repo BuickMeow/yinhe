@@ -149,6 +149,15 @@ fn pan_automation_action(target: StripAutomationTarget) -> Option<MixAction> {
     })
 }
 
+fn send_source_node(source: SendSource) -> MixerChannelId {
+    match source {
+        SendSource::Channel(ch) => MixerChannelId::Midi(ch),
+        SendSource::Audio(ch) => MixerChannelId::Audio(ch),
+        SendSource::TrackLc(id) => MixerChannelId::TrackLc(id),
+        SendSource::Bus(bus) => MixerChannelId::Bus(bus),
+    }
+}
+
 /// 音量控件的右键菜单：添加自动化 + 重置 0 dB。
 fn volume_context_menu(
     ui: &mut egui::Ui,
@@ -443,6 +452,22 @@ pub(super) fn send_block(
                                 }
                                 ui.close();
                             }
+                        }
+                        ui.separator();
+                        if ui
+                            .add(crate::widgets::menu::menu_item_action(
+                                ui,
+                                false,
+                                t!("mix.add_send_automation").as_ref(),
+                                "",
+                            ))
+                            .clicked()
+                        {
+                            actions.push(MixAction::AddMixerSendAutomation {
+                                node: send_source_node(source),
+                                bus: target,
+                            });
+                            ui.close();
                         }
                         if let SendSource::Channel(channel) = source {
                             ui.separator();

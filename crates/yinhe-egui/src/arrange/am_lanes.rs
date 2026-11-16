@@ -99,19 +99,16 @@ pub(crate) fn visible_am_rows(
                 let Some(bus_id) = bus_ids.get(bus).copied() else {
                     continue;
                 };
-                let Some(lane) = bus_automation.get(bus).and_then(|l| l.get(lane_idx)) else {
+                let Some(_) = bus_automation.get(bus).and_then(|l| l.get(lane_idx)) else {
                     continue;
                 };
-                if matches!(lane.target, AutomationTarget::BusGain { bus: target } if target == bus_id)
-                {
-                    out.push(AmRowRef {
-                        track: master,
-                        sub: Some(lane_idx),
-                        node: Some(yinhe_types::MixerNodeId::Bus(bus_id)),
-                        y_top,
-                        height: lane_height,
-                    });
-                }
+                out.push(AmRowRef {
+                    track: master,
+                    sub: Some(lane_idx),
+                    node: Some(yinhe_types::MixerNodeId::Bus(bus_id)),
+                    y_top,
+                    height: lane_height,
+                });
             }
             _ => {}
         }

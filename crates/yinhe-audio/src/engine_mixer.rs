@@ -239,6 +239,7 @@ impl AudioEngine {
         use yinhe_types::AutomationTarget;
 
         let mut updates: Vec<(MixerChannelId, Option<f32>, Option<f32>)> = Vec::new();
+        let mut send_updates: Vec<(MixerChannelId, BusId, f32)> = Vec::new();
         let mut collect = |node: &yinhe_mixer::MixerNode| {
             let Some(channel) = node.id.channel_id() else {
                 return;
@@ -251,9 +252,6 @@ impl AudioEngine {
                 .automation
                 .iter()
                 .find(|lane| lane.target == AutomationTarget::MixerPan { channel });
-            if gain.is_none() && pan.is_none() {
-                return;
-            }
             let gain = gain.map(|lane| {
                 lane.value_at(tick)
                     .map(|(v, _)| v)
@@ -268,7 +266,23 @@ impl AudioEngine {
                     .clamp(0.0, 1.0);
                 v * 2.0 - 1.0
             });
-            updates.push((channel, gain, pan));
+            if gain.is_some() || pan.is_some() {
+                updates.push((channel, gain, pan));
+            }
+            for lane in &node.automation {
+                let AutomationTarget::MixerSend { node: target, bus } = lane.target else {
+                    continue;
+                };
+                if target != channel {
+                    continue;
+                }
+                let value = lane
+                    .value_at(tick)
+                    .map(|(v, _)| v)
+                    .unwrap_or(0.0)
+                    .clamp(0.0, 1.0);
+                send_updates.push((channel, bus, value * 2.0));
+            }
         };
         for node in &self.mixer_params.channels {
             collect(node);
@@ -293,6 +307,47 @@ impl AudioEngine {
                 params.pan = pan;
             }
             self.set_node_strip(channel, params);
+        }
+        for (channel, bus, amount) in send_updates {
+            let Some(node) = self.mixer_params.node_mut(channel.node_id()) else {
+                continue;
+            };
+            if let Some(send) = node.sends.iter_mut().find(|s| s.bus == bus) {
+                send.amount = amount;
+            }
+            let sends: Vec<SendParams> = node
+                .sends
+                .iter()
+                .filter(|s| s.amount > 0.0)
+                .copied()
+                .collect();
+            let resolved = self.resolve_sends(&sends);
+            match channel {
+                MixerChannelId::Midi(ch) => {
+                    if let Some(dense) = self.dense_of(ch) {
+                        self.mixer.set_sends(dense, resolved);
+                    }
+                }
+                MixerChannelId::Audio(ch) => {
+                    let dense = self.channel_layout.audio_dense_for(ch);
+                    if dense != u32::MAX {
+                        self.mixer.set_sends(dense as usize, resolved);
+                    }
+                }
+                MixerChannelId::TrackLc(id) => {
+                    if let Some((_, dense)) = self.channel_layout.track_lc_dense_for(id)
+                        && dense != u32::MAX
+                    {
+                        self.mixer.set_sends(dense as usize, resolved);
+                    }
+                }
+                MixerChannelId::Bus(bus_id) => {
+                    if let Some(idx) = self.mixer_params.bus_index(bus_id) {
+                        self.mixer.set_bus_sends(idx, resolved);
+                    }
+                }
+                MixerChannelId::Master => {}
+            }
         }
     }
 
