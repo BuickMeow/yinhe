@@ -21,7 +21,7 @@
 | AP 编组 | A01..P16 的 MIDI 源编组：共享 Rack、共享 MIDI 身份；本身不是音频通道 |
 | AP 通道 | AP 编组展开出的音频通道（`MixerNode`）；单输出 1 条，多输出 N 条；与 LC 并列 |
 | AP Rack | 一个 AP 编组里的共享乐器链 |
-| 私有 Rack | 一条独立 Track/LC 自己的乐器链 |
+| LC Rack | 一条独立 Track/LC 自己的乐器链（原“私有 Rack”） |
 | Owner | 自动化/CC 的归属者：TrackLc、ApRack、ApChannel、Bus、Master |
 
 AP 不是“父通道”，LC 不是“子通道”。它们是 Track 音频源的两种并列选择：
@@ -58,7 +58,7 @@ A 和 B 不是用户提出的两套方案，而是旧文档里的历史编号：
 |---|---|---|---|
 | 目标 A | 当时的实现快照 / 产品约束 | Track -> MIDI 通道条（共享乐器/推子/insert/发送）-> Bus/Master | 旧实现 |
 | 目标 B | 上一轮重构的目标模型 | Track -> Rack（按 MIDI 通道共享）-> LC（Rack 输出的一条音频流）-> Bus/Master | 已在 v10..v14 落地 |
-| 方案 C | 用户这次提出的新组织方式 | Track -> 自己的私有 Rack + LC（默认），或 Track -> AP 编组/共享 Rack -> AP 通道 | 本文设计提案 |
+| 方案 C | 用户这次提出的新组织方式 | Track -> 自己的 LC Rack + LC（默认），或 Track -> AP 编组/共享 Rack -> AP 通道 | 本文设计提案 |
 
 三者的关键区别：
 
@@ -66,12 +66,12 @@ A 和 B 不是用户提出的两套方案，而是旧文档里的历史编号：
 |---|---|---|---|
 | 默认混音单位 | MIDI 通道条 | Rack 的输出 LC | 每条 Track 的独立 LC |
 | 同 MIDI 通道的多条轨 | 共享全部混音参数 | 共享 Rack 和 LC | 默认互不影响；只有链接 AP 才共享 |
-| 乐器归谁 | MIDI 通道 | Rack（按 MIDI 通道） | 私有 Rack（Track）/ 共享 Rack（AP） |
+| 乐器归谁 | MIDI 通道 | Rack（按 MIDI 通道） | LC Rack（Track）/ 共享 Rack（AP） |
 | 轨道有独立推子吗 | 没有 | 只有 per-track/multi-output LC 有 | 默认有 |
 | MIDI 通道的角色 | 混音身份 | Rack 的触发源 | 可选的 AP 编组 / 导出通道 |
 | 自动化 owner | MIDI 通道 | Rack / LC | TrackLc / ApRack / ApChannel |
 | 导出 | 轨道 channel 直接写出 | 同左 | 独立 LC 自动分配剩余 MIDI 通道 |
-| 主要取舍 | 省资源，牺牲每轨独立 | 分出音频通道，但默认仍按 MIDI 通道共享 | 默认像普通 DAW，代价是每轨 LC/私有 Rack 成本 |
+| 主要取舍 | 省资源，牺牲每轨独立 | 分出音频通道，但默认仍按 MIDI 通道共享 | 默认像普通 DAW，代价是每轨 LC/LC Rack 成本 |
 
 所以：
 
@@ -113,13 +113,13 @@ Track 3 ─┘
 **方案 C：**
 
 ```text
-Track 1 ──> 私有 Rack + LC 100（默认）
-Track 2 ──> 私有 Rack + LC 101（默认）
+Track 1 ──> LC Rack + LC 100（默认）
+Track 2 ──> LC Rack + LC 101（默认）
 Track 3 ──> AP A01 通道 200（共享 Rack）
 Track 4 ──> AP A01 通道 200
 ```
 
-- 默认每条 Track 有自己的 LC（外部插件时也有自己的私有 Rack）；
+- 默认每条 Track 有自己的 LC（外部插件时也有自己的 LC Rack）；
 - 只有显式链接 A01 时才进入共享 AP；
 - AP 的音频出口就是 AP 通道，它和普通 LC 并列；
 - 不存在 `AP -> LC` 的额外层级；
@@ -142,13 +142,13 @@ MIDI 通道 Rack。
 方案 C 的链路：
 
 ```text
-Track ──> 私有 Rack -> 自己的 LC ──> Bus/Master       （默认）
+Track ──> LC Rack -> 自己的 LC ──> Bus/Master       （默认）
    └────> AP 共享 Rack -> AP 通道 ──> Bus/Master       （手动链接）
 ```
 
 变化只在「Track 的音频源归谁」：
 
-- 默认 Track 有自己的私有 Rack + LC；
+- 默认 Track 有自己的 LC Rack + LC；
 - 只有显式链接到 A01 时，Track 才加入 A01 的共享 Rack 和共享自动化；
 - AP 通道和 LC 都可以直接进 Bus/Master，二者没有父子关系；
 - AP 编组只是共享 Rack 和 MIDI 身份的组织单位，不是音频通道。
@@ -160,7 +160,7 @@ Track ──> 私有 Rack -> 自己的 LC ──> Bus/Master       （默认）
 | DAW | 模型 | 和方案 C 的关系 |
 |---|---|---|
 | Cubase | MIDI Track、Instrument Rack、Audio/Group/FX Channel 分开；多输出乐器展开成多条音频通道；文件夹只做组织 | AP 编组接近 Instrument Rack，AP 通道接近多输出乐器展开出的音频通道 |
-| Studio One | Track 自带乐器/通道条；多乐器可共享；Bus/FX Channel 做汇总 | 默认的 `OwnLc + 私有 Rack` 接近 Studio One 的 Track |
+| Studio One | Track 自带乐器/通道条；多乐器可共享；Bus/FX Channel 做汇总 | 默认的 `OwnLc + LC Rack` 接近 Studio One 的 Track |
 | 方案 C | 默认 Track 独立 LC；需要共享乐器时链接 AP | 默认像 Studio One，链接后像 Cubase 的 Instrument Rack |
 
 所以：
@@ -203,7 +203,7 @@ struct TrackData {
 }
 
 enum TrackAudioTarget {
-    /// 默认：普通 DAW 通道，拥有私有 Rack + 自己的 LC。
+    /// 默认：普通 DAW 通道，拥有LC Rack + 自己的 LC。
     OwnLc {
         lc: LogicalChannelId,
         rack: RackId,
@@ -222,7 +222,7 @@ enum TrackAudioTarget {
 
 - `OwnLc` 是默认值；新建 MIDI 轨/音频轨时创建或复用自己的 LC。
 - `Ap` 不拥有私有 LC；它的音频路径就是 AP 编组里的某条 AP 通道。
-- 从 AP 解链回 `OwnLc` 时保留原来的私有 LC/私有 Rack 状态，
+- 从 AP 解链回 `OwnLc` 时保留原来的私有 LC/LC Rack 状态，
   避免解链后所有设置丢失。
 - 音频轨（Audio Track）通常只用 `OwnLc`，不参与 AP 编组。
 
@@ -256,7 +256,7 @@ struct MixerParams {
     channels: Vec<MixerNode>,
     /// AP 编组；只有用到的通道才创建。
     aps: Vec<ApGroup>,
-    /// 私有 Rack；Track 解链后仍保留。
+    /// LC Rack；Track 解链后仍保留。
     racks: Vec<RackParams>,
     buses: Vec<MixerNode>,
     master: MixerNode,
@@ -286,18 +286,31 @@ enum ChannelSource {
 
 ---
 
+### 4.4 设备链视图不是 Rack
+
+当前代码里有两个容易混淆的东西：
+
+- `RackParams`：持久化数据，存乐器链；
+- 设备链视图：UI 把「乐器链 + LC 的 insert/send」合在一起展示。
+
+设备链视图本身不是 Rack，也不是新的存储层。方案 C 里建议：
+
+- LC 的设备链标题显示「LC 设备链」，内容 = LC Rack 的乐器 + LC 的 insert；
+- AP 的设备链标题显示「AP 设备链」，内容 = 共享 AP Rack 的乐器 + AP 通道的 insert；
+- 不再把 UI 上的设备链直接叫成“Rack”，避免把视图、持久化数据和共享关系混为一谈。
+
 ## 5. AP 与 LC 的职责边界
 
 | 项目 | 普通 LC | AP 通道 | AP Rack / 编组 |
 |---|---|---|---|
 | 默认存在 | 是，每条 Track 一条 | 否，链接/导入 AP 时创建 | 否，按需创建 |
-| 乐器/Rack | 私有 Rack | 共享 AP Rack | 共享乐器链 |
+| 乐器/Rack | LC Rack（每轨自己的） | 共享 AP Rack | 共享乐器链 |
 | MIDI 输入 | 只属于本 Track | 所有链接到该 AP 的 Track | 接收 AP 的 MIDI |
 | gain/pan/M/S | 本 LC | 本 AP 通道 | 不装推子/insert |
 | insert | 本 LC | 本 AP 通道 | 不装推子/insert |
 | send | 本 LC | 本 AP 通道 | 不装推子/insert |
 | CC/PB/RPN | 本 Track 的 LC owner | AP Rack owner | 共享 MIDI 自动化 |
-| 乐器参数自动化 | 私有 Rack owner | AP Rack owner | 共享乐器参数 |
+| 乐器参数自动化 | LC Rack owner | AP Rack owner | 共享乐器参数 |
 | freeze | 本 LC | 本 AP 通道 | 不冻结（冻结在 AP 通道） |
 | 多输出插件 | 可以是一轨一条 LC | 每个输出一条 AP 通道 | 一个 Rack 展开多条通道 |
 | 导出 MIDI | 分配剩余通道 | 按 AP 的 MIDI 通道 | 固定 MIDI 身份 |
@@ -326,6 +339,85 @@ enum ChannelSource {
 普通 Track 的音频通道是 LC；AP 的音频通道是 AP 通道。二者同级。
 
 ---
+
+### 5.2 多输出插件不是方案 C 的必需项
+
+方案 C 的核心是“每条 Track 默认有自己的 LC/LC Rack”，所以最简单的多输出方案是：
+
+```text
+LC 1 -> LC Rack：插件实例 #1
+LC 2 -> LC Rack：插件实例 #2
+LC 3 -> LC Rack：插件实例 #3
+LC 4 -> LC Rack：插件实例 #4
+```
+
+每条 LC 自己挂一个插件实例，各自收自己的 MIDI/音符，各自推子/insert/freeze。
+这样：
+
+- 不需要端口映射；
+- 不需要冻结/自动化按输出拆分；
+- 不需要改宿主对多输出插件的支持；
+- 用户理解成本最低。
+
+代价是插件实例数量增加。对轻量插件没问题；对 Kontakt 这类大采样器，
+重复实例会重复样本内存。这时才需要可选的“单实例多输出”模式：
+
+| 场景 | 推荐 |
+|---|---|
+| 普通合成器/效果器 | 多 LC，多实例 |
+| 鼓机/采样器，样本库很大 | 可选多输出，一个实例拆多条 AP/LC 通道 |
+| 插件本身是多声部但只有单输出 | 只能共享一条通道，或开多个实例 |
+| 插件输出端口很多 | 默认不用；高级用户可手动映射 |
+
+结论：
+
+- **方案 C 的 MVP 不需要专门适配多输出插件**；
+- 当前目标 B 已实现的多输出可以作为**可选高级能力**保留；
+- 默认工作流应该是“多条 LC 手动挂插件 #1/#2/#3/#4”，而不是强迫用户理解
+  output port 映射；
+- 只有大采样器/鼓机确实需要省内存时，才引导用户使用多输出。
+
+### 5.3 LC 能做 Bus 吗？AP 能做 Bus 吗？
+
+可以，但要先把“通道”和“Bus”从两个类型变成两个能力：
+
+```rust
+struct ChannelCapabilities {
+    /// 可以接收其他通道的音频 send。
+    accepts_audio_input: bool,
+    /// 有自己的乐器/MIDI 源。
+    has_instrument: bool,
+    /// 可以作为 send 目标显示旋钮。
+    show_as_send_target: bool,
+}
+```
+
+这样：
+
+- 普通 LC：`has_instrument = true`，`accepts_audio_input = false`（默认）；
+- Bus：`has_instrument = false`，`accepts_audio_input = true`；
+- FL Studio 式混合通道：`has_instrument = true` + `accepts_audio_input = true`，
+  可以既有音符，又接收其他通道的 send；
+- AP 通道：`has_instrument = true`（共享 AP Rack）；是否允许
+  `accepts_audio_input` 作为高级开关，默认关闭。
+
+需要注意：
+
+1. **音符和 Bus 不冲突**：只要通道有自己的乐器源，就可以有音符；同时它还能
+   接收别的通道送来的音频，两者相加。
+2. **AP 做 Bus 语义上要谨慎**：AP 是共享 MIDI 源，若再接收音频 send，
+   它同时是“源”和“汇”，用户很难理解作用范围；建议默认关闭，只作为高级选项。
+3. **反馈检测必须统一**：send 目标从“只能是 Bus”变成“任意可接收输入的通道”，
+   就必须像 Bus 嵌套一样做环检测和延迟处理。
+4. **发送旋钮可以自定义**：每个通道维护 `send_slots: Vec<ChannelId>`，
+   混音台只显示用户 pin 的目标；不再“每条 Bus 都固定占一个旋钮”。
+   默认可以自动显示所有 Bus，用户可增删/排序。
+5. **AP 通道可以做 Bus 的替代品吗**：技术上可以，但不建议把它当默认；
+   音频汇总用 Bus，MIDI 共享用 AP，两者职责清晰。
+
+如果产品目标是 FL Studio 那种“所有 mixer track 都能当 Bus”，
+方案 C 可以自然扩展；如果目标是 Cubase/Studio One 那种“Track/Group/FX 分开”，
+就保持 `Bus` 为独立能力，不默认给 LC 开 `accepts_audio_input`。
 
 ## 6. 自动化与普通 CC 的合并
 
@@ -597,7 +689,7 @@ Bake to AP / Bake to LC
 
 ### 11.2 新工程
 
-- 新建 MIDI 轨：默认 `OwnLc`，私有 Rack（或内置音源）；
+- 新建 MIDI 轨：默认 `OwnLc`，LC Rack（或内置音源）；
 - 新建音频轨：`OwnLc` + 音频输入；
 - 手动链接 AP：共享 Rack；
 - MIDI 导入：自动建立 AP 并链接。
@@ -619,7 +711,7 @@ Bake to AP / Bake to LC
   在 512 帧下约 3.3 MB，可接受；
 - 65536 轨满载时 LC 数量很大，必须懒分配：无音符/无音频/无自动化的空轨
   不创建 LC；
-- 默认私有 Rack 如果每条轨都加载一个外部插件，实例数会爆炸。建议：
+- 默认 LC Rack 如果每条轨都加载一个外部插件，实例数会爆炸。建议：
   - 默认使用内置音源（XSynth/YinheCpu）的 per-track 输出；
   - 只有用户手动选择外部插件时才创建私有插件实例；
   - AP 编组共享一个插件实例，是省资源路径。
@@ -627,6 +719,34 @@ Bake to AP / Bake to LC
 
 这是方案 C 最大的工程风险：**默认独立通道 + 外部插件 = 实例数量增长**。
 需要产品上明确默认音源策略，不能假装所有轨都能无成本挂独立插件。
+
+### 12.1 数量上限
+
+| 对象 | 上限 | 说明 |
+|---|---:|---|
+| TrackData 总数 | 65536 | `Note.track: u16`，索引 0..=65535 |
+| 可用内容轨 | 65535 | Master/Conductor 占 1 个轨道槽；Folder 也占槽 |
+| LC ID 空间 | 65536（设计目标） | `LogicalChannelId(u32)`，ID 本身可更大；这是产品上限 |
+| 同时活跃 LC | 当前受引擎限制 | CpuSynth 的 `MAX_CHANNELS = 256`；超过 256 的 dense 通道不会渲染 |
+| AP 数量 | 256 | 当前 `global_channel: u8`，16 port × 16 channel |
+| AP 的音频通道 | 每个 AP 1..N | 单输出 1 条；多输出插件按输出展开 |
+
+几个容易混的点：
+
+1. **Track 上限 65536 包含 Master/Conductor。** 当前 Master 同时承担 Conductor，
+   所以内容轨最多 65535；如果未来 Master 和 Conductor 分成两条轨，就要减 2。
+   Folder 也占 Track 槽位。
+2. **LC 的 ID 上限和同时活跃上限不是一回事。** 可以有 65536 个稳定 LC ID，
+   但音频引擎不可能同时为 65536 条通道分配 dense 缓冲。目标 C 需要定义
+   “同时活跃 LC 预算”，空轨/静音轨懒分配。
+3. **AP 上限 256 来自当前 `u8` 通道模型，不是 MIDI 文件理论的端口上限。**
+   SMF 可以写 Port meta，但工程和音频引擎当前只定义 16×16；提高到 4096/65536
+   需要改 `global_channel` 类型、事件结构、导出/导入和 Domino 兼容，暂时没必要。
+4. **CpuSynth 的 256 通道限制**是方案 C 必须先解决的工程问题：要么把内置音源
+   改成按活跃轨动态通道，要么接受“同时最多 256 条 LC 发声”。不能只在文档里
+   宣称支持 65536 条独立 LC。
+
+
 
 ---
 
@@ -636,7 +756,7 @@ Bake to AP / Bake to LC
 |---|---|---|
 | `MixerNode` / `StripParams` | 复用 | LC/AP 通道/Bus/Master 共用 |
 | `LogicalChannelId` | 复用 | 每轨/AP 通道都是稳定 ID |
-| `RackParams` | 复用 | AP 共享 Rack、Track 私有 Rack |
+| `RackParams` | 复用 | AP 共享 Rack、Track LC Rack |
 | `FrozenAudio` | 复用 | 普通 LC/AP 通道均可冻结 |
 | `MixerGain/Pan/Send/InsertParam` | 复用 | owner 从 MIDI 通道改为 TrackLc/ApChannel |
 | `ChannelLayout` | 复用 | dense 通道、每轨 LC、多输出已具备 |
@@ -666,14 +786,17 @@ Bake to AP / Bake to LC
 
 ## 15. 需要先确认的问题
 
-1.「AP」是否就是 A01..P16 的 MIDI 源编组？本文按这个理解写。
-2. 默认私有 Rack 用内置音源还是外部插件？外部插件按轨实例化成本很高。
-3. 同 owner 同 target 的冲突，采用「最后编辑优先」还是让用户手动裁决？
+1. 默认 LC Rack 用内置音源还是外部插件？外部插件按轨实例化成本很高。
+2. 多输出插件保留为可选高级能力，还是方案 C 完全不做？
+   本文建议保留但默认不暴露，默认让用户多建几条 LC 各挂一个实例。
+3. LC 默认是否允许作为 Bus（FL Studio 式）？本文建议用
+   `accepts_audio_input` 能力开关，默认关闭；Bus 仍是显式通道。
+4. 同 owner 同 target 的冲突，采用「最后编辑优先」还是让用户手动裁决？
    本文建议最后编辑优先 + UI 标记。
-4. 独立 Track 数超过 16 时，第一阶段是否只支持 Port A 16 通道？
-5. 解链 AP 时，AP 上的自动化是否复制回 Track，还是保持 AP、Track 回到空
-   的私有 LC？本文建议不复制，避免同一条曲线出现两份。
-6. 是否允许一个 AP 编组不对应 MIDI 通道（纯共享 Rack）？本文保留
+5. 独立 Track 数超过 16 时，第一阶段是否只支持 Port A 16 通道？
+6. 解链 AP 时，AP 上的自动化是否复制回 Track，还是保持 AP、Track 回到空
+   的 LC？本文建议不复制，避免同一条曲线出现两份。
+7. 是否允许一个 AP 编组不对应 MIDI 通道（纯共享 Rack）？本文保留
    `midi: Option<...>`，但默认 UI 不暴露。
 
 ---
@@ -685,7 +808,7 @@ Bake to AP / Bake to LC
   真正变的是 **Track 的默认音频源** 和 **AP/LC 的并列关系**。
 - 不建议直接叫「方案 B」：仓库里已有目标 B，建议叫**方案 C（AP/LC 并列）**。
 - 实现上最大的风险不是音频图，而是：
-  1. 默认每轨私有 Rack 的插件实例成本；
+  1. 默认每轨 LC Rack 的插件实例成本；
   2. 同名自动化/CC 的 owner 解析；
   3. 导出时 MIDI 通道耗尽。
   这三点需要在动代码前先定策略。
