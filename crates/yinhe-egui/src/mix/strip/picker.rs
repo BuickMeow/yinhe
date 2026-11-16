@@ -238,7 +238,7 @@ impl PickerKind {
                 })
             }
             Self::Instrument { channel } => actions.push(MixAction::AddInsert {
-                target: InsertTarget::Channel(channel),
+                target: InsertTarget::Midi(channel),
                 plugin: plugin.clone(),
             }),
             _ => {}

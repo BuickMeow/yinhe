@@ -65,14 +65,9 @@ impl CaGroups {
                     )
                     .or_default()
                     .push(i),
-                // 旧工程音频轨未分配 audio_channel 时兜底归入 0。
+                // 音频轨统一由 `audio_target_channel` 兜底到 0。
                 TrackKind::Audio => audio_map
-                    .entry(
-                        track
-                            .audio_target_channel()
-                            .or(track.audio_channel)
-                            .unwrap_or(0),
-                    )
+                    .entry(track.audio_target_channel().unwrap_or(0))
                     .or_default()
                     .push(i),
                 TrackKind::Folder | TrackKind::Master => {}

@@ -3304,7 +3304,7 @@ fn pause_keeps_insert_tail_and_transport_frozen() {
     let mut engine = AudioEngine::new(48000, ChannelLayout::from_mask(vec![true; 16]));
     engine.load_model(&model);
     engine.insert_add(
-        crate::spawn::InsertTarget::Channel(0),
+        crate::spawn::InsertTarget::Midi(0),
         0,
         Box::new(TailInsert { value: 0.5 }),
     );
@@ -3325,7 +3325,7 @@ fn stop_keeps_insert_tail() {
     let mut engine = AudioEngine::new(48000, ChannelLayout::from_mask(vec![true; 16]));
     engine.load_model(&model);
     engine.insert_add(
-        crate::spawn::InsertTarget::Channel(0),
+        crate::spawn::InsertTarget::Midi(0),
         0,
         Box::new(TailInsert { value: 0.5 }),
     );

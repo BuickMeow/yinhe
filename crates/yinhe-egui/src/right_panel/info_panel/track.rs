@@ -204,10 +204,9 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
     let mut routing_changed = false;
     let kind = doc.data.model.tracks[track_idx].kind;
     if kind == yinhe_core::TrackKind::Audio {
-        let default_ch = doc.data.model.tracks[track_idx].audio_channel.unwrap_or(0);
         let current_ch = doc.data.model.tracks[track_idx]
             .audio_target_channel()
-            .unwrap_or(default_ch);
+            .unwrap_or(0);
         let max_ch = current_ch.max(31);
         let options: Vec<(usize, String)> = (0..=max_ch as usize)
             .map(|ch| (ch, crate::mix::audio_label(ch as u16)))

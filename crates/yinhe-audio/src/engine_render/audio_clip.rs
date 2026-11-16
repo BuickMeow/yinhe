@@ -229,11 +229,11 @@ mod tests {
 
         let layout = ChannelLayout::from_model(&model);
         let audio_model = AudioModel {
-            track_channels: vec![0],
+            track_channels: vec![None],
             track_banks: vec![Vec::new()],
             clip_fades: vec![vec![(0.0, 0.0)]],
             bus_gains: Vec::new(),
-            channel_percussion: [None; 16],
+            channel_percussion: vec![None; yinhe_types::MIDI_CHANNEL_COUNT],
         };
         let mut mixer = MixerGraph::new(64);
         mixer.resize(layout.compacted_channels() as usize, 64, &[]);

@@ -14,28 +14,12 @@ use yinhe_mixer::{
 use yinhe_types::Interpolation;
 use yinhe_types::SynthEngine;
 
-/// insert 链的目标位置。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum InsertTarget {
-    /// 源 MIDI 通道（A01..P16）。乐器输出也走该通道的 strip/insert 链。
-    Channel(u8),
-    /// 音频通道（0 起，与 `TrackData::audio_channel` 对齐）。
-    Audio(u16),
-    /// 总线（bus / return）。
-    Bus(u16),
-    /// 主输出。
-    Master,
-}
-
-/// 兼容惯例：`Some(ch)` = 源通道，`None` = 主输出。
-impl From<Option<u8>> for InsertTarget {
-    fn from(channel: Option<u8>) -> Self {
-        match channel {
-            Some(ch) => InsertTarget::Channel(ch),
-            None => InsertTarget::Master,
-        }
-    }
-}
+/// insert 链的目标位置 = 混音通道身份。
+///
+/// 历史上这里有一份与 `MixerChannelId` 完全相同的枚举（`Channel` / `Audio` /
+/// `Bus` / `Master`），两套类型需要来回转换。统一用 `MixerChannelId` 后，
+/// 混音台、设备链、引擎只认一种通道身份。
+pub type InsertTarget = yinhe_types::MixerChannelId;
 
 /// AR 自动化 lane 的 M/S 试听旁通集（跨线程共享，Empty 由 default 提供）。
 pub type AmMsMap =
@@ -1914,7 +1898,7 @@ mod tests {
         );
         assert!(
             AudioCommand::InsertRemove {
-                target: InsertTarget::Channel(0),
+                target: InsertTarget::Midi(0),
                 slot: 0,
             }
             .is_reliable()

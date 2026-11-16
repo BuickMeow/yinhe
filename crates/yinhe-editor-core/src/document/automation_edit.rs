@@ -182,9 +182,7 @@ impl Document {
         let model = Arc::make_mut(&mut self.data.model);
         let track = model.tracks.get_mut(track_idx)?;
         // 权限唯一入口：Folder 不承载任何自动化；Master 只额外承载 BusGain。
-        let master_bus_lane = track.kind == yinhe_core::TrackKind::Master
-            && matches!(target, AutomationTarget::BusGain { .. });
-        if !track.can_hold(yinhe_core::TrackContent::Automation) && !master_bus_lane {
+        if !track.allows_automation_target(&target) {
             return None;
         }
         let track = Arc::make_mut(track);

@@ -763,6 +763,15 @@ impl AutomationTarget {
         }
     }
 
+    /// 是否 Bus 增益 lane。
+    ///
+    /// BusGain 是当前唯一「不挂在内容轨上」的自动化目标：它的宿主是
+    /// Master（Conductor）轨，但作用点是固定 Bus 行。权限判断统一走
+    /// [`TrackData::allows_automation_target`]，不要在各处手写这个特例。
+    pub fn is_bus_gain(&self) -> bool {
+        matches!(self, AutomationTarget::BusGain { .. })
+    }
+
     /// 显示名（下拉/AR/事件浏览器共用）。
     pub fn display_name(&self) -> String {
         match self {

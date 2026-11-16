@@ -213,11 +213,10 @@ impl AudioEngine {
                     continue;
                 };
                 let track = note.track as usize;
-                let ch = self
-                    .model
-                    .as_ref()
-                    .map(|m| m.track_channel(track))
-                    .unwrap_or(0);
+                let Some(ch) = self.model.as_ref().and_then(|m| m.track_channel(track)) else {
+                    bucket.advance(&mut cursor);
+                    continue;
+                };
                 if !self.skip_track.get(track).copied().unwrap_or(false) {
                     let dense = self.channel_layout.dense_for(ch as usize);
                     if dense != u32::MAX {

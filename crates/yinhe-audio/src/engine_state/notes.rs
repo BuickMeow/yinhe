@@ -39,11 +39,13 @@ impl AudioEngine {
     pub(super) fn restart_crossing_instrument_notes(&mut self) {
         let tick = self.current_tick;
         for (key, n, end_tick) in self.crossing_notes(tick) {
-            let ch = self
+            let Some(ch) = self
                 .model
                 .as_ref()
-                .map(|m| m.track_channel(n.track as usize))
-                .unwrap_or(0);
+                .and_then(|m| m.track_channel(n.track as usize))
+            else {
+                continue;
+            };
             if self.channel_plugin_dense(ch).is_some() {
                 self.restart_note(key, &n, end_tick);
             }
@@ -56,11 +58,10 @@ impl AudioEngine {
     /// 同步检查 skip_track（mute 轨跳过不重启）。
     pub(super) fn restart_note(&mut self, key: usize, n: &yinhe_types::Note, end_tick: u32) {
         let track = n.track as usize;
-        let ch = self
-            .model
-            .as_ref()
-            .map(|m| m.track_channel(track) as usize)
-            .unwrap_or(0);
+        let Some(ch) = self.model.as_ref().and_then(|m| m.track_channel(track)) else {
+            return;
+        };
+        let ch = ch as usize;
         if self.skip_track.get(track).copied().unwrap_or(false) {
             return;
         }

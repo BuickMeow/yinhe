@@ -62,6 +62,12 @@ pub use view_base::{PIXELS_PER_TICK_MAX, PIXELS_PER_TICK_MIN, TimelineViewBase};
 /// 仅在导出标准 MIDI / 标准 MIDI 设备发声时受 7 位上限约束。
 pub const KEY_COUNT: usize = 256;
 
+/// 源 MIDI 通道总数：A01..P16（16 port × 16 通道）。
+///
+/// 混音条、默认乐器表、内置音源参数表都按这个全局通道号索引，
+/// 不要另写 `16` 或 `256` 字面量。
+pub const MIDI_CHANNEL_COUNT: usize = 256;
+
 /// 最大合法 key（桶下标上界，含）。
 pub const MAX_KEY: u8 = (KEY_COUNT - 1) as u8;
 

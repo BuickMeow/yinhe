@@ -132,9 +132,10 @@ pub(crate) struct PreparedModel {
 /// events used for percussion-mode detection, so the audio thread holds a few
 /// KB instead of a full deep clone of the model.
 pub(crate) struct AudioModel {
-    /// `track_channels[i]` = global channel `(port<<4)|channel` for track `i`.
+    /// `track_channels[i]` = 音轨 `i` 的源 MIDI 通道 `(port<<4)|channel`；
+    /// 非 MIDI 轨（音频/文件夹/Master）为 `None`，不再回退到 A01。
     /// 轨道音符/CC 的去向由该通道是否挂了插件实例决定（挂 = 插件，未挂 = XSynth）。
-    pub track_channels: Vec<u8>,
+    pub track_channels: Vec<Option<u8>>,
     /// Bank Select MSB declarations per track, for percussion-mode detection.
     /// `(tick, value)` pairs merged from standalone CC0 automation lanes and
     /// CC0 values folded into `PcEvent.bank_msb` (same-tick CC0+PC), sorted by
@@ -147,22 +148,19 @@ pub(crate) struct AudioModel {
     pub clip_fades: Vec<Vec<(f64, f64)>>,
     /// 总线增益自动化 lane（存于 Master 轨；按 bus 索引对齐）。
     pub bus_gains: Vec<(u16, yinhe_types::AutomationLane)>,
-    /// 通道级「默认乐器」的鼓通道声明（源通道 0..16，port A）：
+    /// 通道级「默认乐器」的鼓通道声明（按源 MIDI 通道 0..256）：
     /// `Some(true)` = 鼓组，`Some(false)` = 显式旋律通道，`None` = 未声明。
     /// 这是界面上「鼓通道」开关的唯一去路——没有它，关鼓会被 GM 默认值
     /// 和 `bank == 128` 锁定语义吃掉（鼓通道改为旋律时声音不变）。
-    pub channel_percussion: [Option<bool>; 16],
+    pub channel_percussion: Vec<Option<bool>>,
 }
 
 impl AudioModel {
     pub(crate) fn from_model(model: &YinModel) -> Self {
-        let track_channels: Vec<u8> = model
+        let track_channels: Vec<Option<u8>> = model
             .tracks
             .iter()
-            .map(|t| {
-                t.midi_target_channel()
-                    .unwrap_or_else(|| t.global_channel())
-            })
+            .map(|t| t.midi_target_channel())
             .collect();
         let track_banks: Vec<Vec<(u32, u8)>> = model
             .tracks
@@ -199,14 +197,16 @@ impl AudioModel {
             .collect();
         // 通道级默认乐器里的鼓声明：显式 `is_drum`。
         // 未设置（None）= 不表态，交给 GM 约定（每 port 的 9 通道默认鼓）。
-        let channel_percussion = core::array::from_fn(|ch| {
-            model
-                .channel_instruments
-                .get(ch)
-                .copied()
-                .flatten()
-                .map(|inst| inst.is_drum)
-        });
+        let channel_percussion = (0..yinhe_types::MIDI_CHANNEL_COUNT)
+            .map(|ch| {
+                model
+                    .channel_instruments
+                    .get(ch)
+                    .copied()
+                    .flatten()
+                    .map(|inst| inst.is_drum)
+            })
+            .collect();
         let bus_gains = model
             .tracks
             .iter()
@@ -231,9 +231,9 @@ impl AudioModel {
         }
     }
 
-    /// Global channel for a track index, or 0 if out of range.
-    pub(crate) fn track_channel(&self, track_idx: usize) -> u8 {
-        self.track_channels.get(track_idx).copied().unwrap_or(0)
+    /// 音轨的源 MIDI 通道；非 MIDI 轨返回 `None`。
+    pub(crate) fn track_channel(&self, track_idx: usize) -> Option<u8> {
+        self.track_channels.get(track_idx).copied().flatten()
     }
 
     /// 逐通道鼓组模式声明，按「后写覆盖先写」的顺序展开。
@@ -257,10 +257,13 @@ impl AudioModel {
             }
         }
         for (track_idx, banks) in self.track_banks.iter().enumerate() {
-            if banks.is_empty() || track_idx >= self.track_channels.len() {
+            if banks.is_empty() {
                 continue;
             }
-            let src = u16::from(self.track_channels[track_idx]);
+            let Some(ch) = self.track_channel(track_idx) else {
+                continue;
+            };
+            let src = u16::from(ch);
             for &(_, value) in banks {
                 out.push((src, value >= 120));
             }
@@ -963,6 +966,48 @@ mod tests {
         F: Fn(&AudioEvent) -> bool,
     {
         events.iter().position(|e| pred(&e.event))
+    }
+
+    /// 回归测试：默认乐器表覆盖 A01..P16，B..P 的鼓声明也要生效。
+    #[test]
+    fn channel_instruments_beyond_port_a_affect_percussion() {
+        let mut model = model_with_lanes(vec![]);
+        model.channel_instruments[0xC5] = Some(yinhe_core::ChannelInstrument {
+            bank_msb: 0,
+            bank_lsb: 0,
+            program: 0,
+            is_drum: true,
+        });
+
+        let decl = AudioModel::from_model(&model).percussion_declarations();
+        assert!(decl.contains(&(0xC5, true)));
+    }
+
+    /// 回归测试：非 MIDI 轨不再回退到 A01。音频/文件夹/Master 的
+    /// `port/channel` 默认是 0，旧实现会把它们当成 MIDI 通道 0。
+    #[test]
+    fn non_midi_tracks_have_no_midi_channel() {
+        let mut model = model_with_lanes(vec![]);
+        let mut audio = TrackData::new(0, 0);
+        audio.kind = yinhe_core::TrackKind::Audio;
+        audio.audio_channel = None;
+        let mut folder = TrackData::new(0, 0);
+        folder.kind = yinhe_core::TrackKind::Folder;
+        let mut master = TrackData::new(0, 0);
+        master.kind = yinhe_core::TrackKind::Master;
+        model.tracks = vec![
+            Arc::new(TrackData::new(2, 5)),
+            Arc::new(audio),
+            Arc::new(folder),
+            Arc::new(master),
+        ];
+
+        let audio_model = AudioModel::from_model(&model);
+        assert_eq!(audio_model.track_channel(0), Some(0x25));
+        assert_eq!(audio_model.track_channel(1), None);
+        assert_eq!(audio_model.track_channel(2), None);
+        assert_eq!(audio_model.track_channel(3), None);
+        assert_eq!(audio_model.track_channel(99), None);
     }
 
     /// 回归测试：bank 声明（独立 CC0 自动化 + 被 PC 折叠的 CC0）必须全部进入

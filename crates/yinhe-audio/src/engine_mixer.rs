@@ -203,7 +203,7 @@ impl AudioEngine {
         processor: Box<dyn InsertProcessor>,
     ) {
         match target {
-            InsertTarget::Channel(ch) => match self.dense_of(ch) {
+            InsertTarget::Midi(ch) => match self.dense_of(ch) {
                 Some(dense) => self.mixer.insert_insert(dense, slot, processor),
                 // 通道未激活（模型无音轨用此通道）：处理器无处安放，直接退回。
                 None => self.insert_returns.push(processor),
@@ -223,7 +223,7 @@ impl AudioEngine {
 
     pub(crate) fn insert_remove(&mut self, target: InsertTarget, slot: usize) {
         let removed = match target {
-            InsertTarget::Channel(ch) => self
+            InsertTarget::Midi(ch) => self
                 .dense_of(ch)
                 .and_then(|dense| self.mixer.remove_insert(dense, slot)),
             InsertTarget::Audio(ch) => {
@@ -247,7 +247,7 @@ impl AudioEngine {
         processor: Box<dyn InsertProcessor>,
     ) {
         let old = match target {
-            InsertTarget::Channel(ch) => self
+            InsertTarget::Midi(ch) => self
                 .dense_of(ch)
                 .and_then(|dense| self.mixer.replace_insert(dense, slot, processor)),
             InsertTarget::Audio(ch) => {

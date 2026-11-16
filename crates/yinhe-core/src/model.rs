@@ -469,6 +469,17 @@ impl TrackData {
         self.kind.allows(content)
     }
 
+    /// 该轨是否允许承载某个自动化目标。
+    ///
+    /// 普通内容轨可以承载任意自动化；Master 是唯一例外——它不承载普通
+    /// lane，只承载 BusGain（Bus 自动化的宿主）。Folder 什么都不承载。
+    /// 所有「加 lane / 找 lane」的入口都必须调用本方法，不要各自手写
+    /// `kind == Master && BusGain` 特例。
+    pub fn allows_automation_target(&self, target: &AutomationTarget) -> bool {
+        self.can_hold(TrackContent::Automation)
+            || (self.kind == TrackKind::Master && target.is_bus_gain())
+    }
+
     pub fn new(port: u8, channel: u8) -> Self {
         Self {
             uuid: uuid::Uuid::new_v4().to_string(),
@@ -516,11 +527,10 @@ impl TrackData {
         (self.kind == TrackKind::Midi).then(|| self.global_channel())
     }
 
-    /// 引擎实际使用的音频通道。
+    /// 引擎实际的音频通道。音频轨未显式分配时归入 0（与混音台一致），
+    /// 不返回 `None`，避免「模型里有这条轨、混音台却没有」的幽灵状态。
     pub fn audio_target_channel(&self) -> Option<u16> {
-        (self.kind == TrackKind::Audio)
-            .then_some(self.audio_channel)
-            .flatten()
+        (self.kind == TrackKind::Audio).then(|| self.audio_channel.unwrap_or(0))
     }
 }
 
@@ -795,8 +805,9 @@ pub struct YinModel {
     pub tempo_map: Arc<TempoMap>,
     pub meta: ProjectMeta,
 
-    /// 16 个 MIDI 通道的默认乐器（None = 不覆盖，按 MIDI 内 PC / program 0）。
-    pub channel_instruments: [Option<ChannelInstrument>; 16],
+    /// 每个源 MIDI 通道（A01..P16，0..256）的默认乐器。
+    /// None = 不覆盖，按 MIDI 内 PC / program 0。
+    pub channel_instruments: Vec<Option<ChannelInstrument>>,
 
     /// 内置音源的可调参数（按全局通道 0..256）。默认 = 不改变音色库。
     /// 持久化在 `mapping.json`（自描述 JSON），不进 data 段的 postcard。
@@ -874,8 +885,11 @@ impl Default for YinModel {
             tracks: Vec::new(),
             tempo_map: Arc::new(TempoMap::default()),
             meta: ProjectMeta::default(),
-            channel_instruments: [None; 16],
-            synth_params: vec![yinhe_types::SynthParams::default(); 256],
+            channel_instruments: vec![None; yinhe_types::MIDI_CHANNEL_COUNT],
+            synth_params: vec![
+                yinhe_types::SynthParams::default();
+                yinhe_types::MIDI_CHANNEL_COUNT
+            ],
             notes: Box::new(core::array::from_fn(|_| Arc::new(NoteBucket::default()))),
             note_count: 0,
             tick_length: 0,
@@ -923,7 +937,7 @@ impl YinModel {
 
         // A10（1-based 第 10 通道，索引 9）默认是鼓通道。用显式 `is_drum`
         // 表示鼓，不占用 bank 号。任一 MIDI PC 仍可覆盖。
-        let mut channel_instruments = [None; 16];
+        let mut channel_instruments = vec![None; yinhe_types::MIDI_CHANNEL_COUNT];
         channel_instruments[9] = Some(ChannelInstrument {
             bank_msb: 0,
             bank_lsb: 0,
@@ -2148,6 +2162,24 @@ mod tests {
         let mut folder = TrackData::new(0, 0);
         folder.kind = TrackKind::Folder;
         assert_eq!(folder.mixer_channel(), None);
+    }
+
+    #[test]
+    fn master_only_accepts_bus_gain_automation() {
+        use yinhe_types::AutomationTarget;
+
+        let mut master = TrackData::new(0, 0);
+        master.kind = TrackKind::Master;
+        assert!(!master.allows_automation_target(&AutomationTarget::CC { controller: 7 }));
+        assert!(master.allows_automation_target(&AutomationTarget::BusGain { bus: 0 }));
+
+        let midi = TrackData::new(0, 0);
+        assert!(midi.allows_automation_target(&AutomationTarget::CC { controller: 7 }));
+
+        let mut folder = TrackData::new(0, 0);
+        folder.kind = TrackKind::Folder;
+        assert!(!folder.allows_automation_target(&AutomationTarget::CC { controller: 7 }));
+        assert!(!folder.allows_automation_target(&AutomationTarget::BusGain { bus: 0 }));
     }
 
     #[test]

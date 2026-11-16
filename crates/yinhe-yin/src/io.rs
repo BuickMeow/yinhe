@@ -129,7 +129,7 @@ fn save_yin_bytes_inner(
         None => ProjectFile::from_meta(&model.meta),
     };
     let mut mapping = MappingFile::from_tracks(&model.tracks);
-    mapping.channel_instruments = model.channel_instruments;
+    mapping.channel_instruments = model.channel_instruments.clone();
     mapping.synth_params = model
         .synth_params
         .iter()
@@ -335,10 +335,7 @@ fn load_yin_bytes_inner(
 
     // A10 默认鼓通道：旧存档缺省（None）时补上 Standard Kit。
     // 历史工程用 bank_msb == 128 表示鼓，这里统一迁移成显式 is_drum。
-    let mut channel_instruments = mapping.channel_instruments;
-    for inst in channel_instruments.iter_mut().flatten() {
-        inst.normalize_legacy_bank();
-    }
+    let mut channel_instruments = mapping.normalized_channel_instruments();
     if channel_instruments[9].is_none() {
         channel_instruments[9] = Some(yinhe_core::ChannelInstrument {
             bank_msb: 0,

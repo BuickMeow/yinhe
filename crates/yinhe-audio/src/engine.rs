@@ -359,9 +359,9 @@ impl AudioEngine {
             *slot = if let Some(cs) = self.cpu_synth.as_ref() {
                 cs.track_peak(i)
             } else {
-                let dense = self
-                    .channel_layout
-                    .dense_for(model.track_channel(i) as usize);
+                let dense = model
+                    .track_channel(i)
+                    .map_or(u32::MAX, |ch| self.channel_layout.dense_for(ch as usize));
                 if dense == u32::MAX {
                     (0.0, 0.0)
                 } else {

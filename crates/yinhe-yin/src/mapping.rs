@@ -23,10 +23,11 @@ pub struct MappingFile {
     /// track-creation order; the same order is used in `data.bin` so the
     /// two stay aligned by index.
     pub ports: Vec<PortMap>,
-    /// 通道级默认乐器（16 通道；None = 不设置）。旧存档缺省为空。
+    /// 通道级默认乐器（按源 MIDI 通道 A01..P16 索引，None = 不设置）。
+    /// 旧存档是 16 项数组，serde 仍能读入；加载后统一补齐到 256。
     /// 无 MIDI PC 时生效；任一 PC 事件覆盖它。
     #[serde(default)]
-    pub channel_instruments: [Option<yinhe_core::ChannelInstrument>; 16],
+    pub channel_instruments: Vec<Option<yinhe_core::ChannelInstrument>>,
     /// 内置音源参数覆盖（只存非默认项；旧存档缺省为空）。
     #[serde(default)]
     pub synth_params: Vec<ChannelSynthParams>,
@@ -148,5 +149,43 @@ impl MappingFile {
                 c.tracks.iter().map(move |t| (port, channel, t))
             })
         })
+    }
+
+    /// 返回按源通道补齐到 256 的默认乐器表，并迁移旧工程的鼓表示。
+    ///
+    /// 旧 `mapping.json` 只有 16 项（甚至缺字段）；这里统一补齐，
+    /// 调用方不需要再关心数组长度。
+    pub fn normalized_channel_instruments(&self) -> Vec<Option<yinhe_core::ChannelInstrument>> {
+        let mut out = self.channel_instruments.clone();
+        out.resize(yinhe_types::MIDI_CHANNEL_COUNT, None);
+        for inst in out.iter_mut().flatten() {
+            inst.normalize_legacy_bank();
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_16_channel_instruments_deserialize_and_normalize() {
+        let json = r#"{"version":3,"ports":[],"channel_instruments":[null,null,null,null,null,null,null,null,null,{"bank_msb":128,"bank_lsb":0,"program":0,"is_drum":false},null,null,null,null,null,null]}"#;
+        let mapping: MappingFile = serde_json::from_str(json).expect("legacy mapping");
+        assert_eq!(mapping.channel_instruments.len(), 16);
+
+        let instruments = mapping.normalized_channel_instruments();
+        assert_eq!(instruments.len(), yinhe_types::MIDI_CHANNEL_COUNT);
+        assert_eq!(
+            instruments[9],
+            Some(yinhe_core::ChannelInstrument {
+                bank_msb: 0,
+                bank_lsb: 0,
+                program: 0,
+                is_drum: true,
+            })
+        );
+        assert_eq!(instruments[200], None);
     }
 }

@@ -217,24 +217,17 @@ fn clear_dock_selection_on_outside_click(app: &mut App, ui: &egui::Ui, dock_rect
     app.dock_selected = None;
 }
 
-/// dock 的通道语境（MIDI / 音频两套命名空间独立）。
-/// MIDI 通道同时是乐器（XSynth 或插件）的挂载点。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum DockContext {
-    /// MIDI 源通道（0..255；乐器输出也走该通道）。
-    Midi(u8),
-    /// 音频通道（0 起）。
-    Audio(u16),
-    /// 总线 / Return 通道。
-    Bus(u16),
-    /// 主输出（Conductor/Master 轨的音频侧）。
-    Master,
-}
+/// dock 的通道语境 = 混音通道身份。
+///
+/// MIDI 通道同时是乐器（XSynth 或插件）的挂载点；音频通道、Bus、Master
+/// 各自独立。这里不再维护第三份枚举，避免 `DockContext` ↔ `InsertTarget` ↔
+/// `MixerChannelId` 三套转换。
+pub(crate) type DockContext = yinhe_types::MixerChannelId;
 
 /// 选中轨 → dock 通道语境。Master/Conductor 轨映射到主输出效果链。
 fn track_context(t: &yinhe_core::TrackData) -> Option<DockContext> {
     match t.kind {
-        TrackKind::Audio => Some(DockContext::Audio(t.audio_channel.unwrap_or(0))),
+        TrackKind::Audio => Some(DockContext::Audio(t.audio_target_channel().unwrap_or(0))),
         TrackKind::Midi => Some(DockContext::Midi(t.global_channel())),
         TrackKind::Folder => None,
         TrackKind::Master => Some(DockContext::Master),
@@ -321,12 +314,7 @@ fn collect_dock_state(app: &mut App, idx: usize) -> Option<DockState> {
         DockContext::Midi(ch) => Some(ch),
         _ => None,
     };
-    let insert_target = match context {
-        DockContext::Midi(ch) => yinhe_audio::InsertTarget::Channel(ch),
-        DockContext::Audio(ach) => yinhe_audio::InsertTarget::Audio(ach),
-        DockContext::Bus(bus) => yinhe_audio::InsertTarget::Bus(bus),
-        DockContext::Master => yinhe_audio::InsertTarget::Master,
-    };
+    let insert_target: yinhe_audio::InsertTarget = context;
     // 该 MIDI 通道挂载的插件乐器名（None = 默认内置 XSynth）。
     let instrument_plugin: Option<String> = midi_channel.and_then(|ch| {
         app.workspace.documents[idx]

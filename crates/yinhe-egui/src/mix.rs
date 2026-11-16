@@ -412,7 +412,7 @@ impl App {
         for ch in 0..SOURCE_CHANNELS {
             for r in &mixer.channel_inserts[ch] {
                 let _ = rack.load_plugin(
-                    Some(ch as u8),
+                    InsertTarget::Midi(ch as u8),
                     r.format,
                     &r.plugin_path,
                     &r.plugin_id,
@@ -437,7 +437,7 @@ impl App {
         }
         for r in &mixer.master_inserts {
             let _ = rack.load_plugin(
-                None,
+                InsertTarget::Master,
                 r.format,
                 &r.plugin_path,
                 &r.plugin_id,
@@ -892,7 +892,7 @@ pub(crate) fn insert_refs(
     target: InsertTarget,
 ) -> Option<&mut Vec<yinhe_mixer::InsertRef>> {
     match target {
-        InsertTarget::Channel(ch) => mixer.channel_inserts.get_mut(ch as usize),
+        InsertTarget::Midi(ch) => mixer.channel_inserts.get_mut(ch as usize),
         InsertTarget::Audio(ch) => {
             if mixer.audio_inserts.len() <= ch as usize {
                 mixer.audio_inserts.resize(ch as usize + 1, Vec::new());

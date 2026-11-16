@@ -107,7 +107,7 @@ enum SlotLocation {
 impl MixerRack {
     fn chain_mut(&mut self, target: impl Into<InsertTarget>) -> &mut Vec<SlotRuntime> {
         match target.into() {
-            InsertTarget::Channel(ch) => self.channels.entry(ch).or_default(),
+            InsertTarget::Midi(ch) => self.channels.entry(ch).or_default(),
             InsertTarget::Audio(ch) => self.audios.entry(ch).or_default(),
             InsertTarget::Bus(bus) => self.buses.entry(bus).or_default(),
             InsertTarget::Master => &mut self.master,
@@ -116,7 +116,7 @@ impl MixerRack {
 
     pub(crate) fn chain(&self, target: impl Into<InsertTarget>) -> &[SlotRuntime] {
         match target.into() {
-            InsertTarget::Channel(ch) => self.channels.get(&ch).map(Vec::as_slice).unwrap_or(&[]),
+            InsertTarget::Midi(ch) => self.channels.get(&ch).map(Vec::as_slice).unwrap_or(&[]),
             InsertTarget::Audio(ch) => self.audios.get(&ch).map(Vec::as_slice).unwrap_or(&[]),
             InsertTarget::Bus(bus) => self.buses.get(&bus).map(Vec::as_slice).unwrap_or(&[]),
             InsertTarget::Master => &self.master,
@@ -246,7 +246,7 @@ impl MixerRack {
         for (ch, chain) in &self.channels {
             for (slot, rt) in chain.iter().enumerate() {
                 if !rt.sent && !rt.pending_remove && !rt.activate_failed {
-                    targets.push((InsertTarget::Channel(*ch), slot));
+                    targets.push((InsertTarget::Midi(*ch), slot));
                 }
             }
         }
@@ -500,7 +500,7 @@ impl MixerRack {
         }
         for (ch, chain) in &self.channels {
             if let Some(slot) = chain.iter().position(|rt| rt.owner == owner) {
-                return SlotLocation::Slot(InsertTarget::Channel(*ch), slot);
+                return SlotLocation::Slot(InsertTarget::Midi(*ch), slot);
             }
         }
         for (bus, chain) in &self.buses {
@@ -593,7 +593,7 @@ impl MixerRack {
                     latency_changed = true;
                 }
                 if requests.restart && rt.sent {
-                    restarts.push((InsertTarget::Channel(*ch), slot));
+                    restarts.push((InsertTarget::Midi(*ch), slot));
                 }
             }
         }

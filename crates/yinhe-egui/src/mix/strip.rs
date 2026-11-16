@@ -408,7 +408,7 @@ fn header_double_click_opens_dock(
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.header_double_click"));
     header_context_menu(app, &resp, idx, context, actions);
     if resp.clicked() {
-        focus_channel_info(app, dock_mixer_id(context));
+        focus_channel_info(app, context);
     }
     if !resp.double_clicked() {
         return;
@@ -441,17 +441,6 @@ fn header_double_click_opens_dock(
     app.dock_track = selected_track;
     app.dock_context = Some(context);
     app.dock_selected = None;
-}
-
-/// `DockContext` → 混音通道身份（右键菜单用）。
-fn dock_mixer_id(context: crate::chrome::device_chain::DockContext) -> MixerChannelId {
-    use crate::chrome::device_chain::DockContext;
-    match context {
-        DockContext::Midi(ch) => MixerChannelId::Midi(ch),
-        DockContext::Audio(ch) => MixerChannelId::Audio(ch),
-        DockContext::Bus(bus) => MixerChannelId::Bus(bus),
-        DockContext::Master => MixerChannelId::Master,
-    }
 }
 
 /// 把右侧栏切到该通道的属性面板。
@@ -491,7 +480,7 @@ fn header_context_menu(
     context: crate::chrome::device_chain::DockContext,
     actions: &mut Vec<MixAction>,
 ) {
-    let ch = dock_mixer_id(context);
+    let ch = context;
     crate::widgets::menu::context_menu(resp, 180.0, |ui| {
         if ui
             .add(crate::widgets::menu::menu_item_action(

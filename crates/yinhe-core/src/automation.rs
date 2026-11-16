@@ -24,8 +24,8 @@ impl YinModel {
             return Some((&mut Arc::make_mut(&mut self.conductor).tempo, 0));
         }
         let track = Arc::make_mut(self.tracks.get_mut(track_idx)?);
-        // Master（Conductor）轨只承载 Tempo，不允许其他自动化 lane。
-        if track.kind == crate::model::TrackKind::Master {
+        // 权限唯一入口：Master 只承载 BusGain；Folder 不承载任何 lane。
+        if !track.allows_automation_target(target) {
             return None;
         }
         let idx = track
@@ -51,9 +51,7 @@ impl YinModel {
         // 权限唯一入口：Folder 不承载任何自动化；Master 只额外承载
         // BusGain（Bus 自动化 lane 挂在 Master 上），其他普通 lane 只允许
         // MIDI/音频内容轨。
-        let master_bus_lane = track.kind == crate::model::TrackKind::Master
-            && matches!(target, AutomationTarget::BusGain { .. });
-        if !track.can_hold(crate::model::TrackContent::Automation) && !master_bus_lane {
+        if !track.allows_automation_target(&target) {
             return None;
         }
         let idx = match track
