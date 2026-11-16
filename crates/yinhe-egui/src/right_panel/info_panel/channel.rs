@@ -74,8 +74,10 @@ fn show_midi(ui: &mut egui::Ui, doc: &mut Document, ch: u8) -> ChannelInfoOut {
     header(ui, crate::mix::channel_label(ch), &tracks);
 
     let mut strip = doc.mixer.strip(ch);
-    if strip_controls(ui, &mut strip) {
-        doc.mixer_mut().channels[ch as usize] = strip;
+    if strip_controls(ui, &mut strip)
+        && let Some(slot) = doc.mixer_mut().channels.get_mut(ch as usize)
+    {
+        *slot = strip;
         out.mixer_changed = true;
     }
 
