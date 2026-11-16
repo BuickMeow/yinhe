@@ -64,6 +64,17 @@ impl AudioEngine {
             .and_then(|id| self.mixer_params.bus_index(id));
             self.mixer.set_channel_output(dense, dest);
         }
+        // Bus 主输出（嵌套 Bus）。参数层已做环检测；这里只映射稳定 ID → 下标。
+        for i in 0..self.mixer_params.bus_count() {
+            let Some(id) = self.mixer_params.bus_id_at(i) else {
+                continue;
+            };
+            let dest = self
+                .mixer_params
+                .node_output(MixerChannelId::Bus(id))
+                .and_then(|target| self.mixer_params.bus_index(target));
+            self.mixer.set_bus_output(i, dest);
+        }
     }
 
     /// 把按通道命名空间索引的发送列表映射到 dense 通道并推给混音图；

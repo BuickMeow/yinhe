@@ -300,6 +300,11 @@ fn show_bus(ui: &mut egui::Ui, doc: &mut Document, bus: yinhe_types::BusId) -> C
         out.mixer_changed = true;
     }
 
+    section_header(ui, t!("track.output").as_ref());
+    if output_selector(ui, doc, node) {
+        out.mixer_changed = true;
+    }
+
     let sends = doc
         .mixer
         .node_sends(node)
@@ -405,13 +410,19 @@ fn tracks_on_channel(doc: &Document, ch: MixerChannelId) -> Vec<u16> {
 /// 通道主输出（Master / BUS n）。返回是否改动。
 fn output_selector(ui: &mut egui::Ui, doc: &mut Document, ch: MixerChannelId) -> bool {
     let bus_ids = doc.mixer.bus_ids();
+    let self_bus = match ch {
+        MixerChannelId::Bus(bus) => Some(bus),
+        _ => None,
+    };
     let bus_options: Vec<(usize, String)> = std::iter::once((0, "Master".to_string()))
-        .chain(
-            bus_ids
-                .iter()
-                .enumerate()
-                .map(|(i, id)| (i + 1, format!("BUS {}", id.index() + 1))),
-        )
+        .chain(bus_ids.iter().enumerate().filter_map(|(i, id)| {
+            if let Some(bus) = self_bus
+                && !doc.mixer.can_route_bus_to(bus, *id)
+            {
+                return None;
+            }
+            Some((i + 1, format!("BUS {}", id.index() + 1)))
+        }))
         .collect();
     let mut sel = doc
         .mixer
@@ -432,17 +443,18 @@ fn output_selector(ui: &mut egui::Ui, doc: &mut Document, ch: MixerChannelId) ->
         }
     });
     if changed {
-        doc.mixer_mut().set_node_output(
-            ch,
-            if sel == 0 {
-                None
-            } else {
-                bus_ids.get(sel - 1).copied()
-            },
-        );
-        doc.mark_mixer_dirty();
+        let target = if sel == 0 {
+            None
+        } else {
+            bus_ids.get(sel - 1).copied()
+        };
+        let accepted = doc.mixer_mut().set_node_output(ch, target);
+        if accepted {
+            doc.mark_mixer_dirty();
+        }
+        return accepted;
     }
-    changed
+    false
 }
 
 fn show_instrument_summary(ui: &mut egui::Ui, doc: &Document, ch: u8) {

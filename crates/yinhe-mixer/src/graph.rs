@@ -327,6 +327,8 @@ pub struct MixerGraph {
     buses: Vec<BusChain>,
     /// 每个 dense 通道的主输出总线（None = Master）。
     channel_outputs: Vec<Option<usize>>,
+    /// 每条 Bus 的主输出总线（None = Master）；Bus 可嵌套。
+    bus_outputs: Vec<Option<usize>>,
     frames: usize,
 }
 
@@ -338,6 +340,7 @@ impl MixerGraph {
             channels: Vec::new(),
             buses: Vec::new(),
             channel_outputs: Vec::new(),
+            bus_outputs: Vec::new(),
             frames,
         }
     }
@@ -541,12 +544,21 @@ impl MixerGraph {
                 params.get(i).copied().unwrap_or_default(),
             ));
         }
+        self.bus_outputs.resize(count, None);
+        self.bus_outputs.truncate(count);
     }
 
     /// 设置某通道（dense）的主输出总线；`None` = 直接进 Master。
     pub fn set_channel_output(&mut self, channel: usize, bus: Option<usize>) {
         if let Some(slot) = self.channel_outputs.get_mut(channel) {
             *slot = bus;
+        }
+    }
+
+    /// 设置某 Bus 的主输出总线；`None` = 直接进 Master。
+    pub fn set_bus_output(&mut self, bus: usize, output: Option<usize>) {
+        if let Some(slot) = self.bus_outputs.get_mut(bus) {
+            *slot = output;
         }
     }
 
@@ -779,7 +791,13 @@ impl MixerGraph {
             any_solo,
             active,
         );
-        Self::process_buses(&mut self.buses, &mut self.master, frames, any_solo);
+        Self::process_buses(
+            &mut self.buses,
+            &self.bus_outputs,
+            &mut self.master,
+            frames,
+            any_solo,
+        );
         Self::process_master(&mut self.master, frames);
         (&self.master.l, &self.master.r)
     }
@@ -908,11 +926,29 @@ impl MixerGraph {
     /// 输出快照**（块级延迟），既避免自反馈代数环，也保证任意发送图无顺序依赖。
     fn process_buses(
         buses: &mut [BusChain],
+        bus_outputs: &[Option<usize>],
         master: &mut MasterChain,
         frames: usize,
         any_solo: bool,
     ) {
         let n = buses.len();
+
+        // ⓪ 逆序 Bus 主输出：目标索引更小（已处理过），用上一块输出快照
+        //    汇入，形成一块延迟；UI/参数层已禁止成环。
+        for (i, output) in bus_outputs.iter().enumerate() {
+            let Some(dst) = *output else {
+                continue;
+            };
+            if dst >= i || dst >= n {
+                continue;
+            }
+            let (src_l, src_r) = (buses[i].prev_out_l.clone(), buses[i].prev_out_r.clone());
+            let dst_bus = &mut buses[dst];
+            for f in 0..frames {
+                dst_bus.buffers.left[f] += src_l[f];
+                dst_bus.buffers.right[f] += src_r[f];
+            }
+        }
 
         // ① 延迟发送（自发送 / 逆序目标）：源上一块输出 → 目标本块输入。
         //    先于任何总线处理，保证目标处理时已包含汇入信号。
@@ -978,23 +1014,52 @@ impl MixerGraph {
             }
             let p = buses[i].strip.params;
             let audible = !p.mute && (!any_solo || p.solo);
-            if audible {
-                let src = &buses[i].buffers;
-                for f in 0..frames {
-                    master.l[f] += src.left[f];
-                    master.r[f] += src.right[f];
+            match bus_outputs
+                .get(i)
+                .copied()
+                .flatten()
+                .filter(|&dst| dst < n && dst != i)
+            {
+                Some(dst) if dst > i => {
+                    if audible {
+                        let (before, after) = buses.split_at_mut(dst);
+                        let src = &before[i].buffers;
+                        let target = &mut after[0].buffers;
+                        for f in 0..frames {
+                            target.left[f] += src.left[f];
+                            target.right[f] += src.right[f];
+                        }
+                    }
+                }
+                // 逆序输出在下一块开头用 prev_out 汇入。
+                Some(_) => {}
+                None => {
+                    if audible {
+                        let src = &buses[i].buffers;
+                        for f in 0..frames {
+                            master.l[f] += src.left[f];
+                            master.r[f] += src.right[f];
+                        }
+                    }
                 }
             }
         }
 
         // ④ 更新输出快照（所有发送读取完成后）：本块输出 → 下一块的「上一块」。
+        //    静音/solo 不通过的总线写零，避免静音后逆序输出仍泄漏上一块信号。
         for chain in buses.iter_mut() {
-            chain
-                .prev_out_l
-                .copy_from_slice(&chain.buffers.left[..frames]);
-            chain
-                .prev_out_r
-                .copy_from_slice(&chain.buffers.right[..frames]);
+            let audible = !chain.strip.params.mute && (!any_solo || chain.strip.params.solo);
+            if audible {
+                chain
+                    .prev_out_l
+                    .copy_from_slice(&chain.buffers.left[..frames]);
+                chain
+                    .prev_out_r
+                    .copy_from_slice(&chain.buffers.right[..frames]);
+            } else {
+                chain.prev_out_l.fill(0.0);
+                chain.prev_out_r.fill(0.0);
+            }
         }
     }
 
@@ -1591,6 +1656,25 @@ mod tests {
         let single = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
         let expect = single * core::f32::consts::FRAC_1_SQRT_2 * 0.5;
         assert!((l[3] - expect).abs() < 1e-6, "got {}", l[3]);
+    }
+
+    /// Bus 主输出嵌套（bus0 → bus1）：同一块到达，bus1 再进 master。
+    #[test]
+    fn bus_output_forward_routes_to_target_bus() {
+        let mut g = graph_with(&[StripParams::default()], 4);
+        g.resize_buses(2, 4, &[StripParams::default(), StripParams::default()]);
+        g.set_channel_output(0, Some(0));
+        g.set_bus_output(0, Some(1));
+        fill(&mut g, 0, 0.5);
+        let (l, _r) = g.process();
+        let channel = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
+        let bus0 = channel * core::f32::consts::FRAC_1_SQRT_2;
+        let bus1 = bus0 * core::f32::consts::FRAC_1_SQRT_2;
+        assert!(
+            (l[3] - bus1).abs() < 1e-6,
+            "bus0 → bus1 主输出应在同一块到达 master: {}",
+            l[3]
+        );
     }
 
     /// 总线顺序发送（bus0 → bus1）：同一块到达，汇入信号会经过 bus1 的推子。

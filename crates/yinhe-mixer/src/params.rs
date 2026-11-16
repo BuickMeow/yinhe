@@ -399,6 +399,28 @@ impl MixerParams {
                 node.output = None;
             }
         }
+        // Bus 主输出不能成环；环上的输出清成 Master。
+        let bus_ids: Vec<BusId> = self.bus_ids();
+        for bus in &bus_ids {
+            let mut cur = self.bus_index(*bus).and_then(|i| self.buses[i].output);
+            let mut steps = 0;
+            let mut cycle = false;
+            while let Some(id) = cur {
+                if id == *bus {
+                    cycle = true;
+                    break;
+                }
+                if steps > self.buses.len() {
+                    cycle = true;
+                    break;
+                }
+                steps += 1;
+                cur = self.bus_index(id).and_then(|i| self.buses[i].output);
+            }
+            if cycle && let Some(idx) = self.bus_index(*bus) {
+                self.buses[idx].output = None;
+            }
+        }
     }
 
     /// 分配一个新的乐器实例 uid（恒 ≥1）。
@@ -772,7 +794,7 @@ impl MixerParams {
         }
     }
 
-    /// 统一节点主输出（仅 MIDI / 音频源通道有主输出）。
+    /// 统一节点主输出（MIDI / 音频 / 每轨 LC / Bus；Master 没有）。
     pub fn node_output(&self, node: MixerChannelId) -> Option<BusId> {
         match node {
             MixerChannelId::Midi(ch) => self.channels.get(ch as usize).and_then(|n| n.output),
@@ -780,7 +802,11 @@ impl MixerParams {
                 self.audio_channels.get(ch as usize).and_then(|n| n.output)
             }
             MixerChannelId::TrackLc(id) => self.track_node(id).and_then(|n| n.output),
-            MixerChannelId::Bus(_) | MixerChannelId::Master => None,
+            MixerChannelId::Bus(bus) => self
+                .bus_index(bus)
+                .and_then(|idx| self.buses.get(idx))
+                .and_then(|n| n.output),
+            MixerChannelId::Master => None,
         }
     }
 
@@ -807,8 +833,51 @@ impl MixerParams {
                 }
                 None => false,
             },
-            MixerChannelId::Bus(_) | MixerChannelId::Master => false,
+            MixerChannelId::Bus(bus) => {
+                let Some(target) = output else {
+                    if let Some(idx) = self.bus_index(bus) {
+                        self.buses[idx].output = None;
+                        return true;
+                    }
+                    return false;
+                };
+                if !self.can_route_bus_to(bus, target) {
+                    return false;
+                }
+                match self.bus_index(bus) {
+                    Some(idx) => {
+                        self.buses[idx].output = Some(target);
+                        true
+                    }
+                    None => false,
+                }
+            }
+            MixerChannelId::Master => false,
         }
+    }
+
+    /// 该 Bus 是否可以路由到目标 Bus（存在、非自身、不成环）。
+    pub fn can_route_bus_to(&self, bus: BusId, target: BusId) -> bool {
+        self.bus_index(target).is_some()
+            && target != bus
+            && !self.bus_output_would_cycle(bus, target)
+    }
+
+    /// Bus 主输出改成 `target` 后是否形成环。
+    fn bus_output_would_cycle(&self, bus: BusId, target: BusId) -> bool {
+        let mut cur = Some(target);
+        let mut steps = 0;
+        while let Some(id) = cur {
+            if id == bus {
+                return true;
+            }
+            if steps > self.buses.len() {
+                return true;
+            }
+            steps += 1;
+            cur = self.bus_index(id).and_then(|idx| self.buses[idx].output);
+        }
+        false
     }
 
     /// 把音频通道相关表补齐到 `count` 条（通道数变化时调用，只增不减：
@@ -1050,6 +1119,20 @@ mod tests {
     }
 
     /// 重复 BusId 修复：后面的重复项重新分配，避免两条总线共享自动化。
+    #[test]
+    fn bus_outputs_allow_nesting_and_reject_cycles() {
+        let mut p = MixerParams::default();
+        p.ensure_len();
+        let ids = add_buses(&mut p, 2);
+        assert!(p.set_node_output(MixerChannelId::Bus(ids[0]), Some(ids[1])));
+        assert_eq!(p.node_output(MixerChannelId::Bus(ids[0])), Some(ids[1]));
+        // 反向成环：拒绝。
+        assert!(!p.set_node_output(MixerChannelId::Bus(ids[1]), Some(ids[0])));
+        assert_eq!(p.node_output(MixerChannelId::Bus(ids[1])), None);
+        // 自输出：拒绝。
+        assert!(!p.set_node_output(MixerChannelId::Bus(ids[0]), Some(ids[0])));
+    }
+
     #[test]
     fn duplicate_bus_ids_are_reassigned() {
         let mut p = MixerParams::default();
