@@ -194,13 +194,22 @@ impl CaRowLayout {
     /// 自动化行集中在音符行之后，取最小/最大相关行即包围盒
     /// （框内可能包含未选中轨的行，属矩形选框的正常语义——选中内容
     /// 仍按轨道集合精确）。
-    pub fn rows_covering_tracks(&self, tracks: &[u16]) -> Option<(usize, usize)> {
+    pub fn rows_covering_tracks(
+        &self,
+        groups: &CaGroups,
+        tracks: &[u16],
+    ) -> Option<(usize, usize)> {
         let mut lo = usize::MAX;
         let mut hi = 0usize;
         for (i, row) in self.rows.iter().enumerate() {
             let hit = match row {
                 CaRow::Track(t) | CaRow::Automation { track: t, .. } => tracks.contains(t),
-                _ => false,
+                // 折叠通道只有合并行：选中通道内任意轨道时，选框必须落在
+                // 通道行上，否则松手后 `sel_view_y` 返回 None，选框直接消失。
+                CaRow::Channel(ch) => groups
+                    .group(*ch)
+                    .is_some_and(|g| g.tracks.iter().any(|t| tracks.contains(t))),
+                CaRow::Conductor => false,
             };
             if hit {
                 lo = lo.min(i);
@@ -399,10 +408,11 @@ mod tests {
         // 两段式：t1 音符行在 2、t2 音符行在 3、t1 自动化行在 4/5。
         assert_eq!(map[&1], 2);
         assert_eq!(map[&2], 3);
-        // 覆盖范围取相关行（音符行 + 自动化行）的包围盒。
-        assert_eq!(layout.rows_covering_tracks(&[1]), Some((2, 6)));
-        assert_eq!(layout.rows_covering_tracks(&[1, 2]), Some((2, 6)));
-        assert_eq!(layout.rows_covering_tracks(&[9]), None);
+        // 覆盖范围取相关行（通道合并行 + 音符行 + 自动化行）的包围盒。
+        // 折叠通道只有合并行时也必须能框选，所以通道行 1 要计入。
+        assert_eq!(layout.rows_covering_tracks(&groups, &[1]), Some((1, 6)));
+        assert_eq!(layout.rows_covering_tracks(&groups, &[1, 2]), Some((1, 6)));
+        assert_eq!(layout.rows_covering_tracks(&groups, &[9]), None);
     }
 
     /// 行 → 轨道集合、轨道集合 → 连续段。

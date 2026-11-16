@@ -391,7 +391,7 @@ pub(crate) fn show(
 
     // 已提交选框绘制。
     for s in chan_ar_sel.iter() {
-        let Some((top, bottom)) = sel_view_y(layout, &s.tracks, scroll_y) else {
+        let Some((top, bottom)) = sel_view_y(layout, groups, &s.tracks, scroll_y) else {
             continue;
         };
         let view_sx = view.tick_to_x(s.t_start);
@@ -508,7 +508,8 @@ fn ca_context_menu(
                     .get(t as usize)
                     .is_some_and(|tr| tr.kind == yinhe_core::TrackKind::Midi)
             });
-        let inside_selection = super::types::point_in_sel_rects(chan_ar_sel, layout, view, local);
+        let inside_selection =
+            super::types::point_in_sel_rects(chan_ar_sel, layout, groups, view, local);
         if !inside_selection {
             if !channel_tracks.is_empty() {
                 if !channel_tracks

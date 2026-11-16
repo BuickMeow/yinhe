@@ -14,7 +14,10 @@ pub(crate) fn menu_item_button(
     selected: bool,
     text: impl Into<egui::WidgetText>,
 ) -> MenuItemButton {
-    let width = ui.available_width();
+    // 右键菜单的 popup 在 egui 0.37 不再读取 `spacing.menu_width`，`available_width`
+    // 会是整个屏幕宽，导致菜单被撑到接近全屏。这里统一限制菜单项宽度
+    // （子菜单/普通按钮仍可通过 `set_max_width` 单独放宽到同一上限附近）。
+    let width = ui.available_width().min(180.0);
     let text = text.into();
     MenuItemButton {
         selected,

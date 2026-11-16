@@ -204,7 +204,7 @@ pub(crate) fn sel_drag_frame(
     let inside_sel_rect = pointer.hover_pos().is_some_and(|pos| {
         hit_rect.contains(pos) && {
             let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-            point_in_sel_rects(chan_ar_sel, layout, view, local)
+            point_in_sel_rects(chan_ar_sel, layout, groups, view, local)
         }
     });
     if inside_sel_rect && move_drag.is_none() && drag.is_none() {

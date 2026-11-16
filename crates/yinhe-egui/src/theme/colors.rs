@@ -189,10 +189,6 @@ pub fn apply_to_ctx(ctx: &egui::Context) {
         // 全局关闭 Label 文字选择：历史记录/设置项等点击行时不会误拖选文字。
         // TextEdit 仍可正常选择输入内容（由 TextEdit 自己处理）。
         style.interaction.selectable_labels = false;
-        // egui 0.37 默认菜单宽度 400，右键菜单会被长文案撑得极宽；
-        // 统一限制到 200（约等于旧版菜单宽度），子菜单在 `context_menu` 里
-        // 仍可单独放宽（插入菜单等）。
-        style.spacing.menu_width = 200.0;
     });
 }
 

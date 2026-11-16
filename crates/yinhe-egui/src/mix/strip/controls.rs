@@ -151,6 +151,8 @@ fn volume_context_menu(
     target: StripAutomationTarget,
     actions: &mut Vec<MixAction>,
 ) -> bool {
+    ui.set_min_width(168.0);
+    ui.set_max_width(180.0);
     let mut reset = false;
     if let Some(action) = volume_automation_action(target)
         && ui
@@ -186,6 +188,8 @@ fn pan_context_menu(
     target: StripAutomationTarget,
     actions: &mut Vec<MixAction>,
 ) -> bool {
+    ui.set_min_width(168.0);
+    ui.set_max_width(180.0);
     let mut reset = false;
     if let Some(action) = pan_automation_action(target)
         && ui
@@ -268,6 +272,8 @@ pub(super) fn send_block(
                             t!("hint.mix.send_amount"),
                         );
                         knob_resp.context_menu(|ui| {
+                            ui.set_min_width(168.0);
+                            ui.set_max_width(180.0);
                             let label = if amount > 0.0 {
                                 t!("mix.send_disable")
                             } else {
@@ -335,6 +341,8 @@ pub(super) fn send_block(
                     }
                     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.send_amount"));
                     resp.context_menu(|ui| {
+                        ui.set_min_width(168.0);
+                        ui.set_max_width(180.0);
                         let enable_label = if amount > 0.0 {
                             t!("mix.send_disable")
                         } else {

@@ -83,10 +83,11 @@ pub(crate) fn row_colors(
 /// 轨道集合 → 覆盖的行范围 → 行 y 前缀和；找不到任何行（如全被折叠隐藏）→ None。
 pub(crate) fn sel_view_y(
     layout: &CaRowLayout,
+    groups: &CaGroups,
     tracks: &[u16],
     scroll_y: f32,
 ) -> Option<(f32, f32)> {
-    let (lo, hi) = layout.rows_covering_tracks(tracks)?;
+    let (lo, hi) = layout.rows_covering_tracks(groups, tracks)?;
     let top = layout.y_top(lo) - scroll_y;
     let bottom = layout.y_top(hi - 1) + layout.height(hi - 1) - scroll_y;
     Some((top, bottom))
@@ -96,12 +97,13 @@ pub(crate) fn sel_view_y(
 pub(crate) fn point_in_sel_rects(
     sels: &[yinhe_editor_core::edit_state::ChanSelRect],
     layout: &CaRowLayout,
+    groups: &CaGroups,
     view: &yinhe_types::ArrangementView,
     local: egui::Pos2,
 ) -> bool {
     let scroll_y = view.base.scroll_y;
     sels.iter().any(|s| {
-        let Some((top, bottom)) = sel_view_y(layout, &s.tracks, scroll_y) else {
+        let Some((top, bottom)) = sel_view_y(layout, groups, &s.tracks, scroll_y) else {
             return false;
         };
         let x0 = view.tick_to_x(s.t_start);
@@ -188,14 +190,26 @@ mod tests {
         let model = model_with(vec![midi_track(0, 0), midi_track(0, 0)]);
         let groups = CaGroups::from_model(&model, Some(0));
         let layout = CaRowLayout::build(true, &groups, |_| true, |_| 1, 40.0);
-        // 两段式：行 2=Track1、3=Track2、4=Auto(1,0)、5=Auto(2,0)；
-        // [1,2] 的包围盒 = 行 2..=5 → y 80..240。
-        let (top, bottom) = sel_view_y(&layout, &[1, 2], 0.0).unwrap();
-        assert_eq!((top, bottom), (80.0, 240.0));
-        // 单轨 [1]：相关行 2 与 4 → 包围盒行 2..=4 → y 80..200（scroll 10→70..190）。
-        let (top, bottom) = sel_view_y(&layout, &[1], 10.0).unwrap();
-        assert_eq!((top, bottom), (70.0, 190.0));
-        assert_eq!(sel_view_y(&layout, &[9], 0.0), None);
+        // 行 1=Channel、2=Track1、3=Track2、4=Auto(1,0)、5=Auto(2,0)；
+        // [1,2] 的包围盒 = 行 1..=5 → y 40..240。
+        let (top, bottom) = sel_view_y(&layout, &groups, &[1, 2], 0.0).unwrap();
+        assert_eq!((top, bottom), (40.0, 240.0));
+        // 单轨 [1]：相关行 1、2 与 4 → 包围盒行 1..=4 → y 40..200（scroll 10→30..190）。
+        let (top, bottom) = sel_view_y(&layout, &groups, &[1], 10.0).unwrap();
+        assert_eq!((top, bottom), (30.0, 190.0));
+        assert_eq!(sel_view_y(&layout, &groups, &[9], 0.0), None);
+    }
+
+    /// 回归：折叠通道只有合并行时，框选后 `sel_view_y` 必须返回通道行，
+    /// 否则松手后选框矩形直接消失（普通 AR 没有通道合并行，所以不受影响）。
+    #[test]
+    fn sel_view_y_covers_collapsed_channel_row() {
+        let model = model_with(vec![midi_track(0, 0), midi_track(0, 0)]);
+        let groups = CaGroups::from_model(&model, Some(0));
+        let layout = CaRowLayout::build(true, &groups, |_| false, |_| 0, 40.0);
+        // 0=Conductor, 1=折叠的 A01 通道行。
+        let (top, bottom) = sel_view_y(&layout, &groups, &[1, 2], 0.0).unwrap();
+        assert_eq!((top, bottom), (40.0, 80.0));
     }
 
     /// 点选框命中：tick × 行覆盖范围内为 true。
@@ -216,18 +230,21 @@ mod tests {
         assert!(point_in_sel_rects(
             &sels,
             &layout,
+            &groups,
             &view,
             egui::pos2(150.0, 80.0)
         ));
         assert!(!point_in_sel_rects(
             &sels,
             &layout,
+            &groups,
             &view,
             egui::pos2(150.0, 20.0)
         ));
         assert!(!point_in_sel_rects(
             &sels,
             &layout,
+            &groups,
             &view,
             egui::pos2(50.0, 80.0)
         ));
