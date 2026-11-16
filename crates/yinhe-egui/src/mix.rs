@@ -1256,6 +1256,8 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
                     rack.remove(channel, 0, handle);
                 }
             }
+            app.notify_audio_model_changed();
+            app.push_mixer_state_to_engine(idx);
         }
         MixAction::RescanPlugins => start_plugin_scan(app),
     }
