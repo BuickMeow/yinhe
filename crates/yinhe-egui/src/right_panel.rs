@@ -113,7 +113,7 @@ pub fn show(
     if last_tag != Some(content_tag) {
         match content_tag {
             1 => layout.focus_tab(PanelKind::Channel),
-            2 if is_mix => layout.focus_tab(PanelKind::Track),
+            2 => layout.focus_tab(PanelKind::Track),
             _ => {}
         }
         ui.data_mut(|d| d.insert_temp(content_focus_id, content_tag));

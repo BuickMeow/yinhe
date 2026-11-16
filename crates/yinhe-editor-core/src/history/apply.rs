@@ -108,6 +108,15 @@ impl UndoAction {
                 *instrument_channel,
                 *instrument_after,
             ),
+            UndoAction::ChannelInstrument { channel, after, .. } => {
+                if let Some(slot) = Arc::make_mut(&mut doc.data.model)
+                    .channel_instruments
+                    .get_mut(*channel as usize)
+                {
+                    *slot = *after;
+                }
+                doc.data.bump_revision();
+            }
             UndoAction::Cover { old: _, new } => {
                 doc.data.cover = new.clone();
                 doc.data.bump_revision();

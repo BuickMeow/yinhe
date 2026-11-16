@@ -1085,6 +1085,28 @@ impl Document {
             instrument_after,
         })
     }
+
+    /// 只改通道级默认乐器（MIX 通道属性面板；None = 跟随 MIDI）。
+    /// 无实际变化时返回 None。
+    pub fn set_channel_instrument(
+        &mut self,
+        channel: u8,
+        instrument: Option<yinhe_core::ChannelInstrument>,
+    ) -> Option<UndoAction> {
+        let model = Arc::make_mut(&mut self.data.model);
+        let slot = model.channel_instruments.get_mut(channel as usize)?;
+        let before = *slot;
+        if before == instrument {
+            return None;
+        }
+        *slot = instrument;
+        self.data.bump_revision();
+        Some(UndoAction::ChannelInstrument {
+            channel,
+            before,
+            after: instrument,
+        })
+    }
 }
 
 #[cfg(test)]

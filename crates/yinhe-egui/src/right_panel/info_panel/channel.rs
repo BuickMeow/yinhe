@@ -293,7 +293,6 @@ fn show_instrument_summary(ui: &mut egui::Ui, doc: &Document, ch: u8) {
         .map(Vec::as_slice)
         .unwrap_or(&[]);
     if chain.is_empty() {
-        value_row(ui, String::new(), t!("mix.pick_instrument").to_string());
         return;
     }
     for ins in chain {
@@ -324,7 +323,6 @@ fn show_sends(ui: &mut egui::Ui, sends: Option<&[yinhe_mixer::SendParams]>) {
 fn show_inserts(ui: &mut egui::Ui, inserts: Option<&[yinhe_mixer::InsertRef]>) {
     let inserts = inserts.unwrap_or(&[]);
     if inserts.is_empty() {
-        value_row(ui, String::new(), t!("mix.add_insert").to_string());
         return;
     }
     for ins in inserts {

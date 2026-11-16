@@ -139,6 +139,12 @@ pub enum UndoAction {
         instrument_before: Option<yinhe_core::ChannelInstrument>,
         instrument_after: Option<yinhe_core::ChannelInstrument>,
     },
+    /// 通道级默认乐器变更（MIX 通道属性面板）。
+    ChannelInstrument {
+        channel: u8,
+        before: Option<yinhe_core::ChannelInstrument>,
+        after: Option<yinhe_core::ChannelInstrument>,
+    },
     /// 工程封面变更（只嵌入最终一张图）。
     Cover {
         old: Option<yinhe_core::CoverArt>,
@@ -344,6 +350,18 @@ impl UndoAction {
                     instrument_channel,
                     instrument_before,
                     instrument_after,
+                }
+            }
+            UndoAction::ChannelInstrument {
+                channel,
+                mut before,
+                mut after,
+            } => {
+                std::mem::swap(&mut before, &mut after);
+                UndoAction::ChannelInstrument {
+                    channel,
+                    before,
+                    after,
                 }
             }
             UndoAction::Cover { mut old, mut new } => {

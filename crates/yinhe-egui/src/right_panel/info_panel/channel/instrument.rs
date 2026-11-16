@@ -4,8 +4,6 @@
 //! 三个分量对应 Bank Select + Program Change：`Bank MSB`(CC0) /
 //! `Bank LSB`(CC32) / `Program`。「鼓通道」是独立通道模式开关。
 
-use std::sync::Arc;
-
 use eframe::egui;
 use rust_i18n::t;
 
@@ -120,12 +118,9 @@ fn show_fields(
     if after == current {
         return false;
     }
-    if let Some(slot) = Arc::make_mut(&mut doc.data.model)
-        .channel_instruments
-        .get_mut(channel as usize)
-    {
-        *slot = after;
-        doc.data.bump_revision();
+    let before = doc.capture_snapshot();
+    if let Some(action) = doc.set_channel_instrument(channel, after) {
+        doc.push_undo(action, t!("undo.edit_track_info").as_ref(), before);
         return true;
     }
     false
