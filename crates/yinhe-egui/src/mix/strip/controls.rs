@@ -5,7 +5,7 @@ use rust_i18n::t;
 use yinhe_mixer::{SendParams, StripParams};
 
 use crate::widgets::knob::{knob, knob_centered};
-use crate::widgets::meter::{DB_MAX, DB_MIN, db_frac, db_to_gain, gain_to_db};
+use crate::widgets::meter::{DB_MAX, DB_MIN, db_to_gain, gain_at_frac, gain_frac, gain_to_db};
 
 use super::*;
 
@@ -23,13 +23,13 @@ pub(crate) fn auto_panel_height(bus_count: usize) -> f32 {
 
 /// 电平表：线性增益 → 表内 y 坐标（top = 最大 dB）。
 pub(super) fn gain_y(gain: f32, top: f32, bottom: f32) -> f32 {
-    bottom - db_frac(gain_to_db(gain)) * (bottom - top)
+    bottom - gain_frac(gain) * (bottom - top)
 }
 
 /// 电平表：表内 y 坐标 → 线性增益（超出范围夹到两端）。
 pub(super) fn gain_at_y(y: f32, top: f32, bottom: f32) -> f32 {
     let t = ((bottom - y) / (bottom - top)).clamp(0.0, 1.0);
-    db_to_gain(DB_MIN + t * (DB_MAX - DB_MIN))
+    gain_at_frac(t)
 }
 
 /// 通道条外框：直角矩形 + 单层描边 + 顶部色带（写标题）。
@@ -113,6 +113,108 @@ pub(super) enum SendSource {
     Bus(u16),
 }
 
+/// 当前 strip 对应的自动化宿主：决定右键菜单里能加哪种自动化。
+#[derive(Clone, Copy)]
+pub(super) enum StripAutomationTarget {
+    Midi(u8),
+    Audio,
+    Bus(u16),
+    Master,
+}
+
+/// 音量自动化目标：MIDI 通道用 CC7，总线用 BusGain；音频/Master 暂无。
+fn volume_automation_action(target: StripAutomationTarget) -> Option<MixAction> {
+    match target {
+        StripAutomationTarget::Midi(channel) => Some(MixAction::AddChannelAutomation {
+            channel,
+            controller: 7,
+        }),
+        StripAutomationTarget::Bus(bus) => Some(MixAction::AddBusGainAutomation { bus }),
+        StripAutomationTarget::Audio | StripAutomationTarget::Master => None,
+    }
+}
+
+/// 声像自动化目标：只有 MIDI 通道的 CC10。
+fn pan_automation_action(target: StripAutomationTarget) -> Option<MixAction> {
+    match target {
+        StripAutomationTarget::Midi(channel) => Some(MixAction::AddChannelAutomation {
+            channel,
+            controller: 10,
+        }),
+        _ => None,
+    }
+}
+
+/// 音量控件的右键菜单：添加自动化 + 重置 0 dB。
+fn volume_context_menu(
+    ui: &mut egui::Ui,
+    target: StripAutomationTarget,
+    actions: &mut Vec<MixAction>,
+) -> bool {
+    let mut reset = false;
+    if let Some(action) = volume_automation_action(target)
+        && ui
+            .add(crate::widgets::menu::menu_item_action(
+                ui,
+                false,
+                t!("mix.add_volume_automation").as_ref(),
+                "",
+            ))
+            .clicked()
+    {
+        actions.push(action);
+        ui.close();
+    }
+    if ui
+        .add(crate::widgets::menu::menu_item_action(
+            ui,
+            false,
+            t!("mix.reset_gain").as_ref(),
+            "",
+        ))
+        .clicked()
+    {
+        reset = true;
+        ui.close();
+    }
+    reset
+}
+
+/// 声像控件的右键菜单：添加自动化 + 居中。
+fn pan_context_menu(
+    ui: &mut egui::Ui,
+    target: StripAutomationTarget,
+    actions: &mut Vec<MixAction>,
+) -> bool {
+    let mut reset = false;
+    if let Some(action) = pan_automation_action(target)
+        && ui
+            .add(crate::widgets::menu::menu_item_action(
+                ui,
+                false,
+                t!("mix.add_pan_automation").as_ref(),
+                "",
+            ))
+            .clicked()
+    {
+        actions.push(action);
+        ui.close();
+    }
+    if ui
+        .add(crate::widgets::menu::menu_item_action(
+            ui,
+            false,
+            t!("mix.reset_pan").as_ref(),
+            "",
+        ))
+        .clicked()
+    {
+        reset = true;
+        ui.close();
+    }
+    reset
+}
+
 /// 效果发送区（独占一区，竖向滚动）：**每条总线一行**（旋钮 + 「BUS n」），
 /// 超出显示区（一行高）的部分竖向滚动查看；无总线时保留一个 BUS 1 占位
 /// （首次拖动自动创建第一条总线）。所有通道/总线的发送区共用同一个滚动位置
@@ -165,6 +267,29 @@ pub(super) fn send_block(
                             &knob_resp,
                             t!("hint.mix.send_amount"),
                         );
+                        knob_resp.context_menu(|ui| {
+                            let label = if amount > 0.0 {
+                                t!("mix.send_disable")
+                            } else {
+                                t!("mix.send_enable")
+                            };
+                            if ui
+                                .add(crate::widgets::menu::menu_item_action(
+                                    ui,
+                                    false,
+                                    label.as_ref(),
+                                    "",
+                                ))
+                                .clicked()
+                            {
+                                actions.push(MixAction::SetBusSend {
+                                    bus: target,
+                                    target_bus: target,
+                                    amount: if amount > 0.0 { 0.0 } else { 1.0 },
+                                });
+                                ui.close();
+                            }
+                        });
                         ui.add_space(4.0);
                         let icon_resp = self_send_toggle(ui, amount > 0.0);
                         if icon_resp.clicked() {
@@ -199,13 +324,99 @@ pub(super) fn send_block(
                                     pre_fader,
                                 });
                             }
-                            SendSource::Bus(_) => unreachable!("总线源在上方提前返回"),
+                            SendSource::Bus(src) => {
+                                actions.push(MixAction::SetBusSend {
+                                    bus: src,
+                                    target_bus: target,
+                                    amount: norm * 2.0,
+                                });
+                            }
                         }
                     }
                     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.send_amount"));
-                    // 完整发送面板目前只支持通道源。
-                    if let SendSource::Channel(channel) = source {
-                        resp.context_menu(|ui| {
+                    resp.context_menu(|ui| {
+                        let enable_label = if amount > 0.0 {
+                            t!("mix.send_disable")
+                        } else {
+                            t!("mix.send_enable")
+                        };
+                        if ui
+                            .add(crate::widgets::menu::menu_item_action(
+                                ui,
+                                false,
+                                enable_label.as_ref(),
+                                "",
+                            ))
+                            .clicked()
+                        {
+                            let new_amount = if amount > 0.0 { 0.0 } else { 1.0 };
+                            match source {
+                                SendSource::Channel(channel) => {
+                                    actions.push(MixAction::SetSend {
+                                        channel,
+                                        bus: target,
+                                        amount: new_amount,
+                                        pre_fader,
+                                    });
+                                }
+                                SendSource::Audio(channel) => {
+                                    actions.push(MixAction::SetAudioSend {
+                                        channel,
+                                        bus: target,
+                                        amount: new_amount,
+                                        pre_fader,
+                                    });
+                                }
+                                SendSource::Bus(src) => {
+                                    actions.push(MixAction::SetBusSend {
+                                        bus: src,
+                                        target_bus: target,
+                                        amount: new_amount,
+                                    });
+                                }
+                            }
+                            ui.close();
+                        }
+                        // 总线发送固定推子后；通道/音频可切换推子前/后。
+                        if !matches!(source, SendSource::Bus(_)) {
+                            let (label, next_pre) = if pre_fader {
+                                (t!("mix.send_post_fader"), false)
+                            } else {
+                                (t!("mix.pre_fader"), true)
+                            };
+                            if ui
+                                .add(crate::widgets::menu::menu_item_action(
+                                    ui,
+                                    false,
+                                    label.as_ref(),
+                                    "",
+                                ))
+                                .clicked()
+                            {
+                                match source {
+                                    SendSource::Channel(channel) => {
+                                        actions.push(MixAction::SetSend {
+                                            channel,
+                                            bus: target,
+                                            amount,
+                                            pre_fader: next_pre,
+                                        });
+                                    }
+                                    SendSource::Audio(channel) => {
+                                        actions.push(MixAction::SetAudioSend {
+                                            channel,
+                                            bus: target,
+                                            amount,
+                                            pre_fader: next_pre,
+                                        });
+                                    }
+                                    SendSource::Bus(_) => {}
+                                }
+                                ui.close();
+                            }
+                        }
+                        if let SendSource::Channel(channel) = source {
+                            ui.separator();
                             let item = ui.add(crate::widgets::menu::menu_item_button(
                                 ui,
                                 false,
@@ -216,8 +427,8 @@ pub(super) fn send_block(
                                 actions.push(MixAction::OpenSends { channel });
                                 ui.close();
                             }
-                        });
-                    }
+                        }
+                    });
                     ui.add_space(4.0);
                     ui.label(
                         egui::RichText::new(format!("BUS {}", b + 1))
@@ -290,7 +501,13 @@ fn ms_column(ui: &mut egui::Ui, params: &StripParams, width: f32) -> Option<Stri
 
 /// 声像旋钮（右列）：旋钮居中，左右分别标 L / R。
 /// 返回 `Some(新 pan)` 表示被改动。
-fn pan_knob(ui: &mut egui::Ui, pan: f32, width: f32) -> Option<f32> {
+fn pan_knob(
+    ui: &mut egui::Ui,
+    pan: f32,
+    width: f32,
+    target: StripAutomationTarget,
+    actions: &mut Vec<MixAction>,
+) -> Option<f32> {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, KNOB_D), egui::Sense::hover());
     let painter = ui.painter();
     let font = egui::FontId::proportional((crate::theme::SMALL_FONT - 1.0).max(8.0));
@@ -320,6 +537,13 @@ fn pan_knob(ui: &mut egui::Ui, pan: f32, width: f32) -> Option<f32> {
         )
         .inner;
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.pan"));
+    let mut reset = false;
+    resp.context_menu(|ui| {
+        reset = pan_context_menu(ui, target, actions);
+    });
+    if reset {
+        return Some(0.0);
+    }
     if resp.changed() {
         Some(norm * 2.0 - 1.0)
     } else {
@@ -329,7 +553,13 @@ fn pan_knob(ui: &mut egui::Ui, pan: f32, width: f32) -> Option<f32> {
 
 /// dB 读数（右列顶部）：可点击**直接输入**、也可上下拖动。
 /// 返回 `Some(新增益)` 表示本次被改动。
-fn db_row(ui: &mut egui::Ui, gain: f32, width: f32) -> Option<f32> {
+fn db_row(
+    ui: &mut egui::Ui,
+    gain: f32,
+    width: f32,
+    target: StripAutomationTarget,
+    actions: &mut Vec<MixAction>,
+) -> Option<f32> {
     let mut db = gain_to_db(gain);
     let resp = ui.add_sized(
         [width, DB_ROW_H],
@@ -355,6 +585,13 @@ fn db_row(ui: &mut egui::Ui, gain: f32, width: f32) -> Option<f32> {
             }),
     );
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.fader"));
+    let mut reset = false;
+    resp.context_menu(|ui| {
+        reset = volume_context_menu(ui, target, actions);
+    });
+    if reset {
+        return Some(1.0);
+    }
     if resp.changed() {
         Some(db_to_gain(db))
     } else {
@@ -408,6 +645,8 @@ fn gain_meter(
     level: (f32, f32),
     hold: (f32, f32),
     height: f32,
+    target: StripAutomationTarget,
+    actions: &mut Vec<MixAction>,
 ) -> Option<f32> {
     let meter_w = SCALE_W + METER_W * 2.0 + METER_GAP;
     let (rect, resp) =
@@ -438,6 +677,13 @@ fn gain_meter(
 
     let resp = resp.on_hover_cursor(egui::CursorIcon::ResizeVertical);
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.fader"));
+    let mut reset = false;
+    resp.context_menu(|ui| {
+        reset = volume_context_menu(ui, target, actions);
+    });
+    if reset {
+        return Some(1.0);
+    }
     if resp.dragged()
         && let Some(pos) = resp.interact_pointer_pos()
     {
@@ -453,6 +699,7 @@ fn gain_meter(
 ///
 /// 模块高度取 `METER_MODULE_H` 与剩余高度的较小值；面板更高时用空白把模块
 /// 顶到卡片底部，不再随面板高度拉伸。
+#[allow(clippy::too_many_arguments)] // 通道条渲染上下文透传
 pub(super) fn strip_controls(
     ui: &mut egui::Ui,
     params: &StripParams,
@@ -460,6 +707,8 @@ pub(super) fn strip_controls(
     hold: (f32, f32),
     show_pan: bool,
     show_ms: bool,
+    target: StripAutomationTarget,
+    actions: &mut Vec<MixAction>,
 ) -> Option<StripParams> {
     let avail = ui.available_height();
     let module_h = METER_MODULE_H.min(avail).max(1.0);
@@ -475,7 +724,8 @@ pub(super) fn strip_controls(
                 |ui| {
                     let mut p = *params;
                     let mut changed = false;
-                    if let Some(g) = gain_meter(ui, p.gain, level, hold, module_h) {
+                    if let Some(g) = gain_meter(ui, p.gain, level, hold, module_h, target, actions)
+                    {
                         p.gain = g;
                         changed = true;
                     }
@@ -484,13 +734,14 @@ pub(super) fn strip_controls(
                         egui::vec2(CONTROLS_W, module_h),
                         egui::Layout::top_down(egui::Align::Center),
                         |ui| {
-                            if let Some(g) = db_row(ui, p.gain, CONTROLS_W) {
+                            if let Some(g) = db_row(ui, p.gain, CONTROLS_W, target, actions) {
                                 p.gain = g;
                                 changed = true;
                             }
                             if show_pan {
                                 ui.add_space(GAP);
-                                if let Some(pan) = pan_knob(ui, p.pan, CONTROLS_W) {
+                                if let Some(pan) = pan_knob(ui, p.pan, CONTROLS_W, target, actions)
+                                {
                                     p.pan = pan;
                                     changed = true;
                                 }
@@ -518,6 +769,7 @@ pub(super) fn master_controls(
     gain: f32,
     level: (f32, f32),
     hold: (f32, f32),
+    actions: &mut Vec<MixAction>,
 ) -> Option<f32> {
     let avail = ui.available_height();
     let module_h = METER_MODULE_H.min(avail).max(1.0);
@@ -532,7 +784,15 @@ pub(super) fn master_controls(
                 |ui| {
                     let mut g = gain;
                     let mut changed = false;
-                    if let Some(v) = gain_meter(ui, g, level, hold, module_h) {
+                    if let Some(v) = gain_meter(
+                        ui,
+                        g,
+                        level,
+                        hold,
+                        module_h,
+                        StripAutomationTarget::Master,
+                        actions,
+                    ) {
                         g = v;
                         changed = true;
                     }
@@ -541,7 +801,9 @@ pub(super) fn master_controls(
                         egui::vec2(CONTROLS_W, module_h),
                         egui::Layout::top_down(egui::Align::Center),
                         |ui| {
-                            if let Some(v) = db_row(ui, g, CONTROLS_W) {
+                            if let Some(v) =
+                                db_row(ui, g, CONTROLS_W, StripAutomationTarget::Master, actions)
+                            {
                                 g = v;
                                 changed = true;
                             }

@@ -1007,6 +1007,13 @@ dock.plugin_hint: "参数面板可调整插件参数；在 MIX 视图双击插�
 dock.plugin_unavailable: "插件未加载成功"
 dock.write_at: "旋钮改动会在光标位置（tick %{tick}）写入自动化"
 mix.scanning: "扫描插件中…"
+mix.add_volume_automation: "添加音量自动化"
+mix.add_pan_automation: "添加声像自动化"
+mix.reset_gain: "重置为 0 dB"
+mix.reset_pan: "声像居中"
+mix.send_enable: "启用发送"
+mix.send_disable: "禁用发送"
+mix.send_post_fader: "推子后"
 startup.title: "Yinhe"
 startup.preparing: "正在启动…"
 

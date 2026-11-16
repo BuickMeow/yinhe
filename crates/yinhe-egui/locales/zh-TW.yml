@@ -995,6 +995,13 @@ dock.plugin_hint: "參數面板可調整外掛參數；在 MIX 檢視雙擊外�
 dock.plugin_unavailable: "外掛未載入成功"
 dock.write_at: "旋鈕改動會在游標位置（tick %{tick}）寫入自動化"
 mix.scanning: "掃描外掛中…"
+mix.add_volume_automation: "新增音量自動化"
+mix.add_pan_automation: "新增聲像自動化"
+mix.reset_gain: "重設為 0 dB"
+mix.reset_pan: "聲像置中"
+mix.send_enable: "啟用傳送"
+mix.send_disable: "停用傳送"
+mix.send_post_fader: "推子後"
 startup.title: "Yinhe"
 startup.preparing: "正在啟動…"
 

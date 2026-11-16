@@ -14,11 +14,8 @@ fn approx(a: f32, b: f32) -> bool {
 fn gain_y_boundaries() {
     // 静音（≤ -60dB）= 最底部。
     assert!(approx(gain_y(0.0, TOP, BOTTOM), BOTTOM));
-    // 0dB（gain = 1）位于 DB_MIN..DB_MAX 的 60/66 处。
-    assert!(approx(
-        gain_y(1.0, TOP, BOTTOM),
-        BOTTOM - 60.0 / 66.0 * 100.0
-    ));
+    // 三次方增益曲线：0 dB 位于约 79.4% 高度（不是 dB 线性的 90.9%）。
+    assert!(approx(gain_y(1.0, TOP, BOTTOM), BOTTOM - 79.4328));
     // 超过 DB_MAX 的增益顶格。
     assert!(approx(gain_y(db_to_gain(DB_MAX), TOP, BOTTOM), TOP));
     assert!(approx(gain_y(10.0, TOP, BOTTOM), TOP));

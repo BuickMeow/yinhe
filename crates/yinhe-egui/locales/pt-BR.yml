@@ -990,6 +990,13 @@ dock.plugin_hint: "Use o painel de parâmetros para ajustar o plugin; clique dua
 dock.plugin_unavailable: "Plugin não carregado com sucesso"
 dock.write_at: "Os movimentos do knob gravam automação no cursor (tick %{tick})"
 mix.scanning: "Escaneando plugins…"
+mix.add_volume_automation: "Adicionar automação de volume"
+mix.add_pan_automation: "Adicionar automação de pan"
+mix.reset_gain: "Redefinir para 0 dB"
+mix.reset_pan: "Centralizar pan"
+mix.send_enable: "Ativar envio"
+mix.send_disable: "Desativar envio"
+mix.send_post_fader: "Pós-fader"
 startup.title: "Yinhe"
 startup.preparing: "Iniciando…"
 

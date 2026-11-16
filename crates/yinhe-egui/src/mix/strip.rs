@@ -103,7 +103,16 @@ pub(crate) fn channel_strip(
                 },
             );
             ui.add_space(GAP);
-            if let Some(p) = strip_controls(ui, &params, level, hold, true, true) {
+            if let Some(p) = strip_controls(
+                ui,
+                &params,
+                level,
+                hold,
+                true,
+                true,
+                controls::StripAutomationTarget::Midi(channel),
+                actions,
+            ) {
                 actions.push(MixAction::SetStrip { channel, params: p });
             }
         },
@@ -163,7 +172,16 @@ pub(crate) fn audio_strip(
                 },
             );
             ui.add_space(GAP);
-            if let Some(p) = strip_controls(ui, &params, level, hold, true, true) {
+            if let Some(p) = strip_controls(
+                ui,
+                &params,
+                level,
+                hold,
+                true,
+                true,
+                controls::StripAutomationTarget::Audio,
+                actions,
+            ) {
                 actions.push(MixAction::SetAudioStrip { channel, params: p });
             }
         },
@@ -222,7 +240,16 @@ pub(crate) fn bus_strip(
                 },
             );
             ui.add_space(GAP);
-            if let Some(p) = strip_controls(ui, &params, level, hold, true, true) {
+            if let Some(p) = strip_controls(
+                ui,
+                &params,
+                level,
+                hold,
+                true,
+                true,
+                controls::StripAutomationTarget::Bus(bus),
+                actions,
+            ) {
                 actions.push(MixAction::SetBusStrip { bus, params: p });
             }
         },
@@ -281,7 +308,7 @@ pub(crate) fn master_strip(
         &title,
         height,
         |ui, _| {
-            if let Some(g) = master_controls(ui, params.gain, level, hold) {
+            if let Some(g) = master_controls(ui, params.gain, level, hold, actions) {
                 actions.push(MixAction::SetMaster {
                     params: MasterParams { gain: g },
                 });

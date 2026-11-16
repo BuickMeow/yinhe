@@ -990,6 +990,13 @@ dock.plugin_hint: "Użyj panelu parametrów, aby dostroić wtyczkę; kliknij dwu
 dock.plugin_unavailable: "Wtyczka nie została pomyślnie załadowana"
 dock.write_at: "Ruchy pokrętła zapisują automatyzację na pozycji kursora (tick %{tick})"
 mix.scanning: "Skanowanie wtyczek…"
+mix.add_volume_automation: "Dodaj automatyzację głośności"
+mix.add_pan_automation: "Dodaj automatyzację panoramy"
+mix.reset_gain: "Przywróć 0 dB"
+mix.reset_pan: "Wyśrodkuj panoramę"
+mix.send_enable: "Włącz wysyłkę"
+mix.send_disable: "Wyłącz wysyłkę"
+mix.send_post_fader: "Po suwaku"
 startup.title: "Yinhe"
 startup.preparing: "Uruchamianie…"
 

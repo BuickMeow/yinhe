@@ -990,6 +990,13 @@ dock.plugin_hint: "Usa el panel de parámetros para ajustar el plugin; haz doble
 dock.plugin_unavailable: "El plugin no se cargó correctamente"
 dock.write_at: "Los movimientos de los mandos escriben automatización en el cursor (tick %{tick})"
 mix.scanning: "Escaneando plugins…"
+mix.add_volume_automation: "Añadir automatización de volumen"
+mix.add_pan_automation: "Añadir automatización de panorámica"
+mix.reset_gain: "Restablecer a 0 dB"
+mix.reset_pan: "Centrar panorámica"
+mix.send_enable: "Activar envío"
+mix.send_disable: "Desactivar envío"
+mix.send_post_fader: "Posfader"
 startup.title: "Yinhe"
 startup.preparing: "Iniciando…"
 

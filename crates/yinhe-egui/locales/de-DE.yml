@@ -990,6 +990,13 @@ dock.plugin_hint: "Verwende das Parameter-Panel, um das Plugin anzupassen; doppe
 dock.plugin_unavailable: "Plugin nicht erfolgreich geladen"
 dock.write_at: "Reglerbewegungen schreiben Automation an der Cursorposition (Tick %{tick})"
 mix.scanning: "Plugins werden gescannt…"
+mix.add_volume_automation: "Lautstärke-Automation hinzufügen"
+mix.add_pan_automation: "Panorama-Automation hinzufügen"
+mix.reset_gain: "Auf 0 dB zurücksetzen"
+mix.reset_pan: "Panorama zentrieren"
+mix.send_enable: "Send aktivieren"
+mix.send_disable: "Send deaktivieren"
+mix.send_post_fader: "Nach dem Fader"
 startup.title: "Yinhe"
 startup.preparing: "Startet…"
 

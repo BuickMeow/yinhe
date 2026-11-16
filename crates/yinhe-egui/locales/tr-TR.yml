@@ -990,6 +990,13 @@ dock.plugin_hint: "Eklentiyi ayarlamak için parametre panelini kullan; yerel ar
 dock.plugin_unavailable: "Eklenti başarıyla yüklenmedi"
 dock.write_at: "Topuz hareketleri imleçte otomasyon yazar (tik %{tick})"
 mix.scanning: "Eklentiler taranıyor…"
+mix.add_volume_automation: "Ses otomasyonu ekle"
+mix.add_pan_automation: "Pan otomasyonu ekle"
+mix.reset_gain: "0 dB değerine sıfırla"
+mix.reset_pan: "Panı ortala"
+mix.send_enable: "Gönderimi etkinleştir"
+mix.send_disable: "Gönderimi devre dışı bırak"
+mix.send_post_fader: "Fader sonrası"
 startup.title: "Yinhe"
 startup.preparing: "Başlatılıyor…"
 

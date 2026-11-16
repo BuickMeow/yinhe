@@ -1015,6 +1015,13 @@ dock.plugin_hint: "パラメータパネルでプラグインを調整できま�
 dock.plugin_unavailable: "プラグインの読み込みに失敗しました"
 dock.write_at: "ノブの変更はカーソル位置（tick %{tick}）にオートメーションを書き込みます"
 mix.scanning: "プラグインをスキャン中…"
+mix.add_volume_automation: "音量オートメーションを追加"
+mix.add_pan_automation: "パンオートメーションを追加"
+mix.reset_gain: "0 dB にリセット"
+mix.reset_pan: "パンを中央に"
+mix.send_enable: "センドを有効化"
+mix.send_disable: "センドを無効化"
+mix.send_post_fader: "ポストフェーダー"
 startup.title: "Yinhe"
 startup.preparing: "起動中…"
 

@@ -4,7 +4,7 @@
 //! - [`compact_meter`]：走带栏时间码第四栏、音轨面板每轨用，向上 L/R 双条，
 //!   无数字刻度。
 //!
-//! 两者共用同一套 dB 映射/着色（[`db_frac`] / [`meter_color`]）。
+//! 两者共用同一套增益映射/着色（[`gain_frac`] / [`meter_color`]）。
 
 use eframe::egui;
 
@@ -35,9 +35,23 @@ pub(crate) fn db_to_gain(db: f32) -> f32 {
     }
 }
 
-/// dB 值 → 纵向占比（0 = DB_MIN，1 = DB_MAX）。
-pub(crate) fn db_frac(db: f32) -> f32 {
-    ((db - DB_MIN) / (DB_MAX - DB_MIN)).clamp(0.0, 1.0)
+/// 线性增益 → 推子/电平表纵向占比（0 = 静音，1 = DB_MAX）。
+///
+/// 推子采用三次方增益曲线（不是 dB 线性）：
+/// `position = cbrt(gain / gain(DB_MAX))`。
+/// 0 dB 位于约 79.4% 高度，低电平段有足够行程，底部是真正的 -∞。
+pub(crate) fn gain_frac(gain: f32) -> f32 {
+    if gain <= 0.0 {
+        return 0.0;
+    }
+    let max_gain = db_to_gain(DB_MAX);
+    (gain / max_gain).max(0.0).cbrt().clamp(0.0, 1.0)
+}
+
+/// 推子/电平表纵向占比 → 线性增益（`gain_frac` 的逆）。
+pub(crate) fn gain_at_frac(frac: f32) -> f32 {
+    let t = frac.clamp(0.0, 1.0);
+    db_to_gain(DB_MAX) * t * t * t
 }
 
 /// 电平表刻度：`(dB, 是否标注数字)`。行业惯用标注点。
@@ -75,7 +89,7 @@ pub(crate) fn paint_level_meter(
     // 刻度线 + 数字标注（只显示刻度绝对值：-6 显示 6）。
     let font = egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT);
     for &(db, labeled) in METER_TICKS {
-        let y = bars.max.y - db_frac(db) * bars.height();
+        let y = bars.max.y - gain_frac(db_to_gain(db)) * bars.height();
         painter.hline(
             bars.x_range(),
             y,
@@ -102,7 +116,7 @@ pub(crate) fn paint_level_meter(
             egui::pos2(x0, bars.min.y),
             egui::vec2(METER_W, bars.height()),
         );
-        let frac = db_frac(gain_to_db(p));
+        let frac = gain_frac(p);
         if frac > 0.0 {
             let h = bar.height() * frac;
             let fill = egui::Rect::from_min_max(egui::pos2(bar.min.x, bar.max.y - h), bar.max);
@@ -120,7 +134,7 @@ pub(crate) fn paint_level_meter(
             continue;
         }
         let x0 = bars.min.x + i as f32 * (METER_W + METER_GAP);
-        let y = bars.max.y - db_frac(gain_to_db(h)) * bars.height();
+        let y = bars.max.y - gain_frac(h) * bars.height();
         painter.hline(
             egui::Rangef::new(x0, x0 + METER_W),
             y,
@@ -140,7 +154,7 @@ pub(crate) fn compact_meter(
     let bar_w = (rect.width() - METER_GAP) * 0.5;
     for (i, &p) in [level.0, level.1].iter().enumerate() {
         let x0 = rect.min.x + i as f32 * (bar_w + METER_GAP);
-        let frac = db_frac(gain_to_db(p));
+        let frac = gain_frac(p);
         if frac > 0.0 {
             let h = rect.height() * frac;
             let fill = egui::Rect::from_min_max(
@@ -159,7 +173,7 @@ pub(crate) fn compact_meter(
             continue;
         }
         let x0 = rect.min.x + i as f32 * (bar_w + METER_GAP);
-        let y = rect.max.y - db_frac(gain_to_db(h)) * rect.height();
+        let y = rect.max.y - gain_frac(h) * rect.height();
         painter.hline(
             egui::Rangef::new(x0, x0 + bar_w),
             y,

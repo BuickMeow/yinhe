@@ -990,6 +990,13 @@ dock.plugin_hint: "Usa il pannello parametri per regolare il plugin; fai doppio 
 dock.plugin_unavailable: "Plugin non caricato correttamente"
 dock.write_at: "I movimenti manopola scrivono automazione al cursore (tick %{tick})"
 mix.scanning: "Scansione plugin…"
+mix.add_volume_automation: "Aggiungi automazione del volume"
+mix.add_pan_automation: "Aggiungi automazione del pan"
+mix.reset_gain: "Ripristina a 0 dB"
+mix.reset_pan: "Centra pan"
+mix.send_enable: "Attiva invio"
+mix.send_disable: "Disattiva invio"
+mix.send_post_fader: "Post-fader"
 startup.title: "Yinhe"
 startup.preparing: "Avvio…"
 

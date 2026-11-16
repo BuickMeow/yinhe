@@ -990,6 +990,13 @@ dock.plugin_hint: "Pomocí panelu parametrů upravte plugin; dvojklikem na řád
 dock.plugin_unavailable: "Plugin nebyl úspěšně načten"
 dock.write_at: "Pohyby knoflíku zapisují automatizaci na pozici kurzoru (tick %{tick})"
 mix.scanning: "Prohledávání pluginů…"
+mix.add_volume_automation: "Přidat automatizaci hlasitosti"
+mix.add_pan_automation: "Přidat automatizaci panoramy"
+mix.reset_gain: "Obnovit 0 dB"
+mix.reset_pan: "Vycentrovat panoramu"
+mix.send_enable: "Zapnout send"
+mix.send_disable: "Vypnout send"
+mix.send_post_fader: "Za faderem"
 startup.title: "Yinhe"
 startup.preparing: "Spouštění…"
 

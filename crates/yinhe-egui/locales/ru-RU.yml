@@ -990,6 +990,13 @@ dock.plugin_hint: "Настраивайте плагин на панели па�
 dock.plugin_unavailable: "Плагин не загружен успешно"
 dock.write_at: "Движения ручки записывают автоматизацию в позиции курсора (тик %{tick})"
 mix.scanning: "Сканирование плагинов…"
+mix.add_volume_automation: "Добавить автоматизацию громкости"
+mix.add_pan_automation: "Добавить автоматизацию панорамы"
+mix.reset_gain: "Сбросить на 0 дБ"
+mix.reset_pan: "Центрировать панораму"
+mix.send_enable: "Включить посыл"
+mix.send_disable: "Выключить посыл"
+mix.send_post_fader: "После фейдера"
 startup.title: "Yinhe"
 startup.preparing: "Запуск…"
 
