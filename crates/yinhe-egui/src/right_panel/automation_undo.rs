@@ -4,7 +4,7 @@
 //! 供 `info_panel/anchor`、`event_browser/edit` 与 `app/layout` 复用，消除重复逻辑。
 
 use yinhe_editor_core::document::Document;
-use yinhe_editor_core::history::{AutomationDelta, EditSnapshot, UndoAction};
+use yinhe_editor_core::history::{AutomationDelta, EditSnapshot, MixerAutomationDelta, UndoAction};
 use yinhe_types::{AutomationEvent, AutomationTarget};
 
 /// 按 target 取 lane events 快照。
@@ -27,6 +27,53 @@ pub fn snapshot_lane_events(
             .map(|l| l.events.clone())
             .unwrap_or_default()
     }
+}
+
+/// 按 target 取 MixerNode lane 的事件快照。
+pub fn snapshot_node_lane_events(
+    doc: &Document,
+    node: yinhe_types::MixerNodeId,
+    lane_idx: usize,
+    target: &AutomationTarget,
+) -> Vec<AutomationEvent> {
+    doc.mixer
+        .node(node)
+        .and_then(|n| {
+            n.automation
+                .iter()
+                .find(|l| &l.target == target)
+                .or_else(|| n.automation.get(lane_idx))
+        })
+        .map(|l| l.events.clone())
+        .unwrap_or_default()
+}
+
+/// push 一个 MixerNode 自动化 delta undo entry。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+pub fn push_node_automation_undo(
+    doc: &mut Document,
+    node: yinhe_types::MixerNodeId,
+    lane_idx: usize,
+    target: &AutomationTarget,
+    before: Vec<AutomationEvent>,
+    after: Vec<AutomationEvent>,
+    label: &str,
+    snapshot: EditSnapshot,
+) {
+    if before == after {
+        return;
+    }
+    doc.push_undo(
+        UndoAction::MixerAutomation(MixerAutomationDelta {
+            node,
+            lane_idx,
+            target: target.clone(),
+            before,
+            after,
+        }),
+        label,
+        snapshot,
+    );
 }
 
 /// push 一个 AutomationDelta undo entry。

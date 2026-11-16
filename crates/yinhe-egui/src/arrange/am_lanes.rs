@@ -421,9 +421,16 @@ pub(crate) fn interact_all(
                 suppress_blank,
             );
         if let Some(node) = r.node {
-            // 锚点信息面板目前只按 track/lane 定位；节点 lane 先不打开。
-            if matches!(io.info_content, Some(InfoContent::Anchor { .. })) {
-                *io.info_content = None;
+            match io.info_content {
+                Some(InfoContent::Anchor {
+                    target: anchor_target,
+                    node: anchor_node,
+                    ..
+                }) if *anchor_target == target => {
+                    *anchor_node = Some(node);
+                }
+                Some(InfoContent::Anchor { .. }) => *io.info_content = None,
+                _ => {}
             }
             io.edits
                 .extend(edits.into_iter().map(|edit| to_node_edit(node, edit)));

@@ -368,6 +368,7 @@ pub(crate) fn apply_right_click_anchor(
                 lane_idx: anchor.lane_idx,
                 event_idx,
                 target: anchor.target.clone(),
+                node: None,
             });
             *right_tab = Some(RightTab::Info);
             let edit_tick_id = ui.scope_id().with("auto_right_tick").with(i);

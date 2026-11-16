@@ -44,6 +44,7 @@ pub(crate) fn handle_pencil(
                     lane_idx: lidx,
                     event_idx,
                     target: ctx.target.clone(),
+                    node: None,
                 });
                 *right_tab = Some(RightTab::Info);
             }

@@ -7,12 +7,13 @@ use eframe::egui;
 
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::history::EditSnapshot;
-use yinhe_types::{AutomationEvent, AutomationTarget, SegmentShape};
+use yinhe_types::{AutomationEvent, AutomationTarget, MixerNodeId, SegmentShape};
 
 use rust_i18n::t;
 
 use crate::right_panel::automation_undo::{
-    push_automation_actions, push_automation_undo, snapshot_lane_events,
+    push_automation_actions, push_automation_undo, push_node_automation_undo, snapshot_lane_events,
+    snapshot_node_lane_events,
 };
 
 use super::InfoContent;
@@ -29,6 +30,7 @@ pub(super) fn show_anchor_info(
     value: f32,
     shape: SegmentShape,
     target: &AutomationTarget,
+    node: Option<MixerNodeId>,
     info_content: &mut Option<InfoContent>,
 ) {
     crate::right_panel::region_hint(ui, t!("hint.panel.anchor"));
@@ -42,7 +44,7 @@ pub(super) fn show_anchor_info(
     ui.add_space(4.0);
 
     // ── Tick ──
-    let guard = LaneUndoGuard::new(ui, "tick", track_idx, lane_idx, target);
+    let guard = lane_guard(ui, "tick", node, track_idx, lane_idx, target);
     let mut edit_tick = tick as f64;
     crate::widgets::rows::form_row(ui, t!("anchor.tick").as_ref(), |ui| {
         let resp = ui.add(
@@ -57,14 +59,9 @@ pub(super) fn show_anchor_info(
         if resp.changed() {
             let new_tick = edit_tick as u32;
             if new_tick != tick {
-                doc.apply_automation_edits(vec![yinhe_types::AutomationEdit::Move {
-                    track_idx,
-                    lane_idx,
-                    target: target.clone(),
-                    old_tick: tick,
-                    new_tick,
-                    new_value: value,
-                }]);
+                doc.apply_automation_edits(vec![move_anchor_edit(
+                    node, track_idx, lane_idx, target, tick, new_tick, value,
+                )]);
             }
         }
         if resp.lost_focus() {
@@ -74,7 +71,7 @@ pub(super) fn show_anchor_info(
     ui.add_space(4.0);
 
     // ── Value ──
-    let guard = LaneUndoGuard::new(ui, "val", track_idx, lane_idx, target);
+    let guard = lane_guard(ui, "val", node, track_idx, lane_idx, target);
     let mut edit_value = target.to_display_value(value) as f64;
     crate::widgets::rows::form_row(ui, t!("anchor.value").as_ref(), |ui| {
         let resp = ui.add(
@@ -90,14 +87,9 @@ pub(super) fn show_anchor_info(
             // 显示值 → 归一化值（写入换算唯一入口）。
             let new_value = target.from_display_value(edit_value as f32);
             if new_value != value {
-                doc.apply_automation_edits(vec![yinhe_types::AutomationEdit::Move {
-                    track_idx,
-                    lane_idx,
-                    target: target.clone(),
-                    old_tick: tick,
-                    new_tick: tick,
-                    new_value,
-                }]);
+                doc.apply_automation_edits(vec![move_anchor_edit(
+                    node, track_idx, lane_idx, target, tick, tick, new_value,
+                )]);
             }
         }
         if resp.lost_focus() {
@@ -116,13 +108,9 @@ pub(super) fn show_anchor_info(
         crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.anchor.discrete"));
         if resp.changed() {
             let before = doc.capture_snapshot();
-            let actions =
-                doc.apply_automation_edits(vec![yinhe_types::AutomationEdit::CycleShape {
-                    track_idx,
-                    lane_idx,
-                    target: target.clone(),
-                    tick,
-                }]);
+            let actions = doc.apply_automation_edits(vec![cycle_anchor_edit(
+                node, track_idx, lane_idx, target, tick,
+            )]);
             push_automation_actions(
                 doc,
                 actions,
@@ -139,7 +127,7 @@ pub(super) fn show_anchor_info(
     // 每个分量 ∈ [-0.5, 0.5]，0 = 直线（中性）。直线 = (0, 0, 0, 0)。
     if let SegmentShape::Curve { x1, y1, x2, y2 } = shape {
         // X1
-        let guard = LaneUndoGuard::new(ui, "x1", track_idx, lane_idx, target);
+        let guard = lane_guard(ui, "x1", node, track_idx, lane_idx, target);
         let mut edit = x1;
         crate::widgets::rows::form_row(ui, t!("anchor.x1").as_ref(), |ui| {
             let resp = ui.add(
@@ -153,8 +141,10 @@ pub(super) fn show_anchor_info(
                 guard.gained(ui, doc);
             }
             if resp.changed() && edit != x1 {
-                doc.set_automation_shape(
-                    track_idx as usize,
+                set_anchor_shape(
+                    doc,
+                    node,
+                    track_idx,
                     lane_idx,
                     target,
                     tick,
@@ -173,7 +163,7 @@ pub(super) fn show_anchor_info(
         ui.add_space(2.0);
 
         // Y1
-        let guard = LaneUndoGuard::new(ui, "y1", track_idx, lane_idx, target);
+        let guard = lane_guard(ui, "y1", node, track_idx, lane_idx, target);
         let mut edit = y1;
         crate::widgets::rows::form_row(ui, t!("anchor.y1").as_ref(), |ui| {
             let resp = ui.add(
@@ -187,8 +177,10 @@ pub(super) fn show_anchor_info(
                 guard.gained(ui, doc);
             }
             if resp.changed() && edit != y1 {
-                doc.set_automation_shape(
-                    track_idx as usize,
+                set_anchor_shape(
+                    doc,
+                    node,
+                    track_idx,
                     lane_idx,
                     target,
                     tick,
@@ -207,7 +199,7 @@ pub(super) fn show_anchor_info(
         ui.add_space(2.0);
 
         // X2
-        let guard = LaneUndoGuard::new(ui, "x2", track_idx, lane_idx, target);
+        let guard = lane_guard(ui, "x2", node, track_idx, lane_idx, target);
         let mut edit = x2;
         crate::widgets::rows::form_row(ui, t!("anchor.x2").as_ref(), |ui| {
             let resp = ui.add(
@@ -221,8 +213,10 @@ pub(super) fn show_anchor_info(
                 guard.gained(ui, doc);
             }
             if resp.changed() && edit != x2 {
-                doc.set_automation_shape(
-                    track_idx as usize,
+                set_anchor_shape(
+                    doc,
+                    node,
+                    track_idx,
                     lane_idx,
                     target,
                     tick,
@@ -241,7 +235,7 @@ pub(super) fn show_anchor_info(
         ui.add_space(2.0);
 
         // Y2
-        let guard = LaneUndoGuard::new(ui, "y2", track_idx, lane_idx, target);
+        let guard = lane_guard(ui, "y2", node, track_idx, lane_idx, target);
         let mut edit = y2;
         crate::widgets::rows::form_row(ui, t!("anchor.y2").as_ref(), |ui| {
             let resp = ui.add(
@@ -255,8 +249,10 @@ pub(super) fn show_anchor_info(
                 guard.gained(ui, doc);
             }
             if resp.changed() && edit != y2 {
-                doc.set_automation_shape(
-                    track_idx as usize,
+                set_anchor_shape(
+                    doc,
+                    node,
+                    track_idx,
                     lane_idx,
                     target,
                     tick,
@@ -312,6 +308,88 @@ pub(super) fn show_anchor_info(
 // 工具函数
 // ────────────────────────────────────────────────────────────────
 
+fn lane_guard(
+    ui: &egui::Ui,
+    key: &str,
+    node: Option<MixerNodeId>,
+    track_idx: u16,
+    lane_idx: usize,
+    target: &AutomationTarget,
+) -> LaneUndoGuard {
+    LaneUndoGuard::new(ui, key, node, track_idx, lane_idx, target)
+}
+
+fn move_anchor_edit(
+    node: Option<MixerNodeId>,
+    track_idx: u16,
+    lane_idx: usize,
+    target: &AutomationTarget,
+    old_tick: u32,
+    new_tick: u32,
+    new_value: f32,
+) -> yinhe_types::AutomationEdit {
+    match node {
+        Some(node) => yinhe_types::AutomationEdit::NodeMove {
+            node,
+            lane_idx,
+            target: target.clone(),
+            old_tick,
+            new_tick,
+            new_value,
+        },
+        None => yinhe_types::AutomationEdit::Move {
+            track_idx,
+            lane_idx,
+            target: target.clone(),
+            old_tick,
+            new_tick,
+            new_value,
+        },
+    }
+}
+
+fn cycle_anchor_edit(
+    node: Option<MixerNodeId>,
+    track_idx: u16,
+    lane_idx: usize,
+    target: &AutomationTarget,
+    tick: u32,
+) -> yinhe_types::AutomationEdit {
+    match node {
+        Some(node) => yinhe_types::AutomationEdit::NodeCycleShape {
+            node,
+            lane_idx,
+            target: target.clone(),
+            tick,
+        },
+        None => yinhe_types::AutomationEdit::CycleShape {
+            track_idx,
+            lane_idx,
+            target: target.clone(),
+            tick,
+        },
+    }
+}
+
+fn set_anchor_shape(
+    doc: &mut Document,
+    node: Option<MixerNodeId>,
+    track_idx: u16,
+    lane_idx: usize,
+    target: &AutomationTarget,
+    tick: u32,
+    shape: SegmentShape,
+) {
+    match node {
+        Some(node) => {
+            doc.set_mixer_automation_shape(node, lane_idx, target, tick, shape);
+        }
+        None => {
+            doc.set_automation_shape(track_idx as usize, lane_idx, target, tick, shape);
+        }
+    }
+}
+
 /// DragValue 的 lane undo guard。
 ///
 /// 统一管理自动化锚点编辑器的 focus/before/after undo 模式：
@@ -328,12 +406,14 @@ struct LaneUndoGuard {
     track_idx: u16,
     lane_idx: usize,
     target: AutomationTarget,
+    node: Option<MixerNodeId>,
 }
 
 impl LaneUndoGuard {
     fn new(
         ui: &egui::Ui,
         key: &str,
+        node: Option<MixerNodeId>,
         track_idx: u16,
         lane_idx: usize,
         target: &AutomationTarget,
@@ -345,12 +425,16 @@ impl LaneUndoGuard {
             track_idx,
             lane_idx,
             target: target.clone(),
+            node,
         }
     }
 
     /// 在 DragValue gained_focus 时调用：记录当前 lane events 快照 + 界面状态快照。
     fn gained(&self, ui: &egui::Ui, doc: &Document) {
-        let before = snapshot_lane_events(doc, self.track_idx, self.lane_idx, &self.target);
+        let before = match self.node {
+            Some(node) => snapshot_node_lane_events(doc, node, self.lane_idx, &self.target),
+            None => snapshot_lane_events(doc, self.track_idx, self.lane_idx, &self.target),
+        };
         let snapshot = doc.capture_snapshot();
         ui.ctx().data_mut(|d| {
             d.insert_temp(self.before_id, before);
@@ -369,17 +453,32 @@ impl LaneUndoGuard {
                 .ctx()
                 .data(|d| d.get_temp::<EditSnapshot>(self.snapshot_id));
             if let Some(snapshot) = snapshot {
-                let after = snapshot_lane_events(doc, self.track_idx, self.lane_idx, &self.target);
-                push_automation_undo(
-                    doc,
-                    self.track_idx,
-                    self.lane_idx,
-                    &self.target,
-                    before,
-                    after,
-                    label,
-                    snapshot,
-                );
+                if let Some(node) = self.node {
+                    let after = snapshot_node_lane_events(doc, node, self.lane_idx, &self.target);
+                    push_node_automation_undo(
+                        doc,
+                        node,
+                        self.lane_idx,
+                        &self.target,
+                        before,
+                        after,
+                        label,
+                        snapshot,
+                    );
+                } else {
+                    let after =
+                        snapshot_lane_events(doc, self.track_idx, self.lane_idx, &self.target);
+                    push_automation_undo(
+                        doc,
+                        self.track_idx,
+                        self.lane_idx,
+                        &self.target,
+                        before,
+                        after,
+                        label,
+                        snapshot,
+                    );
+                }
             }
         }
         ui.ctx().data_mut(|d| {

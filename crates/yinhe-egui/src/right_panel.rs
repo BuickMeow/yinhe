@@ -35,6 +35,8 @@ pub enum InfoContent {
         lane_idx: usize,
         event_idx: usize,
         target: AutomationTarget,
+        /// Some = lane 属于 MixerNode.automation（Bus / LC / Master）。
+        node: Option<yinhe_types::MixerNodeId>,
     },
     /// 选中的音轨（由 doc.edit.track_selected 决定哪些音轨）
     Track,

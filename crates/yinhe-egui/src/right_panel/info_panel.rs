@@ -61,18 +61,28 @@ fn render_track(
             lane_idx,
             event_idx,
             target,
+            node,
         }) => {
-            let lane_events: Option<&[AutomationEvent]> =
-                if matches!(target, AutomationTarget::Tempo) {
-                    Some(&doc.data.model.conductor.tempo.events)
-                } else {
-                    doc.data
-                        .model
-                        .tracks
-                        .get(track_idx as usize)
-                        .and_then(|t| t.automation_lanes.get(lane_idx))
-                        .map(|l| l.events.as_slice())
-                };
+            let lane_events: Option<&[AutomationEvent]> = if let Some(node) = node {
+                doc.mixer
+                    .node(node)
+                    .and_then(|n| {
+                        n.automation
+                            .iter()
+                            .find(|l| l.target == target)
+                            .or_else(|| n.automation.get(lane_idx))
+                    })
+                    .map(|l| l.events.as_slice())
+            } else if matches!(target, AutomationTarget::Tempo) {
+                Some(&doc.data.model.conductor.tempo.events)
+            } else {
+                doc.data
+                    .model
+                    .tracks
+                    .get(track_idx as usize)
+                    .and_then(|t| t.automation_lanes.get(lane_idx))
+                    .map(|l| l.events.as_slice())
+            };
             let live_event = lane_events.and_then(|events| events.get(event_idx));
             if let Some(evt) = live_event {
                 let (live_tick, live_value) =
@@ -87,6 +97,7 @@ fn render_track(
                     live_value,
                     evt.shape,
                     &target,
+                    node,
                     info_content,
                 );
             } else {
