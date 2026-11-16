@@ -1375,3 +1375,10 @@ meter.columns: "표시 열 수"
 channel.pan: "팬"
 channel.inserts: "인서트"
 hint.panel.info_channel: "채널: 악기 / 볼륨 / 팬 / 출력 / 센드 / 인서트"
+
+rack.output: "Rack Output"
+rack.output.shared: "Shared"
+rack.output.per_track: "Per Track"
+rack.output.plugin_disabled: "Plugin instruments cannot split per track"
+
+rack.output.requires_yinhe_cpu: "Requires Yinhe CPU synth"

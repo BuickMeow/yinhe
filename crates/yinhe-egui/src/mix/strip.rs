@@ -14,7 +14,7 @@
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_mixer::MasterParams;
-use yinhe_types::{BusId, MixerChannelId};
+use yinhe_types::{BusId, LogicalChannelId, MixerChannelId};
 
 use crate::app::App;
 use crate::widgets::meter::{METER_GAP, METER_W, SCALE_W};
@@ -204,6 +204,85 @@ pub(crate) fn audio_strip(
         rect,
         crate::chrome::device_chain::DockContext::Audio(channel),
         ("mix_header_dock_audio", channel),
+        actions,
+    );
+}
+
+/// 每轨独立 LC 条（Rack per-track 输出）。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn track_lc_strip(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    idx: usize,
+    track: u16,
+    lc: LogicalChannelId,
+    level: (f32, f32),
+    hold: (f32, f32),
+    height: f32,
+    actions: &mut Vec<MixAction>,
+) {
+    let node = MixerChannelId::TrackLc(lc);
+    let mixer = &app.workspace.documents[idx].mixer;
+    let params = mixer.node_strip(node);
+    let sends = mixer
+        .node_sends(node)
+        .map(<[_]>::to_vec)
+        .unwrap_or_default();
+    let bus_ids = mixer.bus_ids();
+    let track_name = app.workspace.documents[idx]
+        .data
+        .model
+        .tracks
+        .get(track as usize)
+        .map(|t| t.name.clone())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("Track {}", track + 1));
+    let color = app.workspace.documents[idx]
+        .edit
+        .track_cache
+        .colors
+        .get(track as usize)
+        .copied()
+        .map(|c| crate::theme::rgba_to_color32((c[0], c[1], c[2], c[3])))
+        .unwrap_or_else(crate::theme::accent_active);
+
+    let rect = strip_frame(
+        ui,
+        ("mix_strip_track_lc", lc.0),
+        color,
+        &track_name,
+        height,
+        |ui, _| {
+            section(
+                ui,
+                send_height(bus_ids.len()),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    send_block(ui, SendSource::TrackLc(lc), &sends, &bus_ids, actions);
+                },
+            );
+            ui.add_space(GAP);
+            if let Some(p) = strip_controls(
+                ui,
+                &params,
+                level,
+                hold,
+                true,
+                true,
+                controls::StripAutomationTarget::TrackLc,
+                actions,
+            ) {
+                actions.push(MixAction::SetNodeStrip { node, params: p });
+            }
+        },
+    );
+    header_double_click_opens_dock(
+        app,
+        ui,
+        idx,
+        rect,
+        crate::chrome::device_chain::DockContext::TrackLc(lc),
+        ("mix_header_dock_track_lc", lc.0),
         actions,
     );
 }
@@ -617,6 +696,14 @@ fn reset_gain_action(app: &App, idx: usize, ch: MixerChannelId) -> MixAction {
                 params,
             }
         }
+        MixerChannelId::TrackLc(id) => {
+            let mut params = mixer.node_strip(MixerChannelId::TrackLc(id));
+            params.gain = 1.0;
+            MixAction::SetNodeStrip {
+                node: MixerChannelId::TrackLc(id),
+                params,
+            }
+        }
         MixerChannelId::Bus(bus) => {
             let mut params = mixer.bus_strip(bus);
             params.gain = 1.0;
@@ -647,6 +734,14 @@ fn reset_pan_action(app: &App, idx: usize, ch: MixerChannelId) -> Option<MixActi
             params.pan = 0.0;
             Some(MixAction::SetNodeStrip {
                 node: MixerChannelId::Audio(channel),
+                params,
+            })
+        }
+        MixerChannelId::TrackLc(id) => {
+            let mut params = mixer.node_strip(MixerChannelId::TrackLc(id));
+            params.pan = 0.0;
+            Some(MixAction::SetNodeStrip {
+                node: MixerChannelId::TrackLc(id),
                 params,
             })
         }

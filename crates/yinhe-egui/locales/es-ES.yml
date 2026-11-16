@@ -1366,3 +1366,10 @@ meter.columns: "Columnas visibles"
 channel.pan: "Panorámica"
 channel.inserts: "Inserciones"
 hint.panel.info_channel: "Canal: instrumento / volumen / panorámica / salida / envíos / inserciones"
+
+rack.output: "Rack Output"
+rack.output.shared: "Shared"
+rack.output.per_track: "Per Track"
+rack.output.plugin_disabled: "Plugin instruments cannot split per track"
+
+rack.output.requires_yinhe_cpu: "Requires Yinhe CPU synth"

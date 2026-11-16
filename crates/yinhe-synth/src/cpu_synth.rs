@@ -112,6 +112,8 @@ pub struct CpuSynth {
     track_count: usize,
     /// track → dense 通道（u8::MAX = 未登记）。
     track_channel: Vec<u8>,
+    /// Track → 目标 dense 通道（每轨 LC）。`u32::MAX`/缺失 = 用共享通道。
+    track_output_dense: Vec<u32>,
     /// track → 本块 slot（u16::MAX = 本块无 voice）。
     track_slot: Vec<u16>,
     /// 本块 slot → track（紧凑编号，scratch 只按活跃轨道分配）。
@@ -158,6 +160,7 @@ impl CpuSynth {
             par_scratch: Vec::new(),
             track_count: 0,
             track_channel: Vec::new(),
+            track_output_dense: Vec::new(),
             track_slot: Vec::new(),
             slot_track: Vec::new(),
             track_peaks: Vec::new(),
@@ -333,6 +336,13 @@ impl CpuSynth {
     /// 清空累积的通道位图（每块读取后调用）。
     pub fn clear_channel_mask(&mut self) {
         self.channel_mask = [0; 4];
+    }
+
+    /// 设置 Track → dense 输出通道。`u32::MAX` = 回退到共享 MIDI 通道。
+    ///
+    /// 只有内置音源支持按轨拆分；外部单输出插件仍走共享通道。
+    pub fn set_track_output_dense(&mut self, map: Vec<u32>) {
+        self.track_output_dense = map;
     }
 
     /// 某轨上一块的峰值 L/R（0 = 无发声）。AR 每轨电平表用。
@@ -687,10 +697,20 @@ impl CpuSynth {
         for slot in 0..k {
             let track = self.slot_track[slot] as usize;
             let ch = self.track_channel[track] as usize;
+            let routed = self
+                .track_output_dense
+                .get(track)
+                .copied()
+                .unwrap_or(u32::MAX);
+            let dest = if routed != u32::MAX {
+                routed as usize
+            } else {
+                ch
+            };
             let base = slot * frames * 2;
             let (mut peak_l, mut peak_r) = (0.0f32, 0.0f32);
-            if ch < n {
-                let buf = buffers[ch].borrow_mut();
+            if dest < n {
+                let buf = buffers[dest].borrow_mut();
                 for i in 0..frames {
                     let l = self.track_mix[base + i * 2];
                     let r = self.track_mix[base + i * 2 + 1];

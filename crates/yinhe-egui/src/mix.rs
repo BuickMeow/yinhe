@@ -195,6 +195,13 @@ pub(crate) enum MixAction {
         amount: f32,
         pre_fader: bool,
     },
+    /// 更新某每轨 LC 对某总线的发送。
+    SetTrackLcSend {
+        lc: yinhe_types::LogicalChannelId,
+        bus: yinhe_types::BusId,
+        amount: f32,
+        pre_fader: bool,
+    },
     /// 更新某总线对某总线的发送（含自发送；总线发送统一推子后）。
     SetBusSend {
         bus: yinhe_types::BusId,
@@ -342,7 +349,7 @@ impl App {
 
     /// 全量同步总线配置（增删总线 / 改发送后推一次）。
     pub(crate) fn sync_bus_config_to_engine(&mut self, idx: usize) {
-        let (buses, sends, bus_sends, audio_sends) = {
+        let (buses, sends, bus_sends, audio_sends, track_sends) = {
             let mixer = self.workspace.documents[idx].mixer_mut();
             mixer.ensure_len();
             (
@@ -350,6 +357,11 @@ impl App {
                 mixer.midi_sends_snapshot(),
                 mixer.bus_sends_snapshot(),
                 mixer.audio_sends_snapshot(),
+                mixer
+                    .track_channels
+                    .iter()
+                    .map(|node| node.sends.clone())
+                    .collect(),
             )
         };
         if let Some(a) = &self.audio_state.handle {
@@ -358,6 +370,7 @@ impl App {
                 sends: Box::new(sends),
                 bus_sends: Box::new(bus_sends),
                 audio_sends: Box::new(audio_sends),
+                track_sends: Box::new(track_sends),
             });
         }
     }
@@ -382,6 +395,22 @@ impl App {
             for r in &node.inserts {
                 let _ = rack.load_plugin(
                     InsertTarget::Midi(ch as u8),
+                    r.format,
+                    &r.plugin_path,
+                    &r.plugin_id,
+                    &r.name,
+                    r.state.as_deref(),
+                    r.bypassed,
+                );
+            }
+        }
+        for node in &mixer.track_channels {
+            let MixerNodeId::LogicalChannel(lc) = node.id else {
+                continue;
+            };
+            for r in &node.inserts {
+                let _ = rack.load_plugin(
+                    InsertTarget::TrackLc(lc),
                     r.format,
                     &r.plugin_path,
                     &r.plugin_id,
@@ -458,6 +487,28 @@ impl App {
                 .resize_with(idx + 1, InstrumentRack::default);
         }
         self.instrument_racks[idx] = rack;
+    }
+
+    /// 同步每轨 LC 的机架链：删除已失效的，补齐新增的。
+    pub(crate) fn sync_track_lc_racks(&mut self, idx: usize) {
+        let Some(doc) = self.workspace.documents.get(idx) else {
+            return;
+        };
+        let valid: std::collections::HashSet<_> = doc
+            .mixer
+            .track_channels
+            .iter()
+            .filter_map(|node| match node.id {
+                MixerNodeId::LogicalChannel(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+        let mixer = doc.mixer.clone();
+        let handle = self.audio_state.handle.as_ref().map(|a| &a.handle);
+        if idx < self.mixer_racks.len() {
+            self.mixer_racks[idx].retain_track_lcs(&valid, handle);
+            self.mixer_racks[idx].ensure_track_lc_chains(&mixer);
+        }
     }
 
     /// 引擎 spawn 完成后：全量同步混音台（参数 + 各 insert 处理器补发 + 乐器安装）。
@@ -753,6 +804,35 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                                         );
                                     }
                                 }
+                                // 每轨独立 LC（Rack per-track 输出）。
+                                let track_lcs = layout.track_lc_channels().to_vec();
+                                if !track_lcs.is_empty() {
+                                    ui.separator();
+                                    for &(track, lc) in &track_lcs {
+                                        let dense = layout.track_lc_dense(track as usize);
+                                        let (level, hold) = if dense != u32::MAX {
+                                            smoothed_peak(
+                                                app.audio_state.handle.as_ref(),
+                                                &mut app.mix.smoothed,
+                                                dense as usize,
+                                                dt,
+                                            )
+                                        } else {
+                                            ((0.0, 0.0), (0.0, 0.0))
+                                        };
+                                        strip::track_lc_strip(
+                                            app,
+                                            ui,
+                                            idx,
+                                            track,
+                                            lc,
+                                            level,
+                                            hold,
+                                            strip_h,
+                                            &mut actions,
+                                        );
+                                    }
+                                }
                                 // 总线条（bus / return）。
                                 let bus_count = app.workspace.documents[idx].mixer.buses.len();
                                 if bus_count > 0 {
@@ -949,6 +1029,31 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
                         });
                     }
                     // 发送量为 0 的条目不再保留（避免持久化层堆积）。
+                    list.retain(|s| s.amount > 0.0);
+                }
+            }
+            app.sync_bus_config_to_engine(idx);
+        }
+        MixAction::SetTrackLcSend {
+            lc,
+            bus,
+            amount,
+            pre_fader,
+        } => {
+            app.note_mixer_edit(t!("undo.mix_send").as_ref());
+            {
+                let mixer = app.workspace.documents[idx].mixer_mut();
+                if let Some(list) = mixer.node_sends_mut(yinhe_types::MixerChannelId::TrackLc(lc)) {
+                    if let Some(send) = list.iter_mut().find(|s| s.bus == bus) {
+                        send.amount = amount;
+                        send.pre_fader = pre_fader;
+                    } else if amount > 0.0 {
+                        list.push(yinhe_mixer::SendParams {
+                            bus,
+                            amount,
+                            pre_fader,
+                        });
+                    }
                     list.retain(|s| s.amount > 0.0);
                 }
             }

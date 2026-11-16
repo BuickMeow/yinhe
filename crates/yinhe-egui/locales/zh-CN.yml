@@ -1369,3 +1369,10 @@ meter.columns: "显示列数"
 channel.pan: "声像"
 channel.inserts: "插入"
 hint.panel.info_channel: "通道属性：乐器 / 音量 / 声像 / 输出 / 发送 / 插入"
+
+rack.output: "Rack 输出"
+rack.output.shared: "共享一条"
+rack.output.per_track: "按轨拆分"
+rack.output.plugin_disabled: "插件乐器不支持按轨拆分"
+
+rack.output.requires_yinhe_cpu: "Requires Yinhe CPU synth"

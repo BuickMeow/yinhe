@@ -106,12 +106,13 @@ pub(crate) fn show_channel(
     ui: &mut egui::Ui,
     doc: Option<&mut Document>,
     info_content: &mut Option<InfoContent>,
+    per_track_supported: bool,
 ) -> channel::ChannelInfoOut {
     let Some(doc) = doc else {
         crate::widgets::hint::empty_hint(ui, t!("common.no_document").as_ref());
         return channel::ChannelInfoOut::default();
     };
-    channel::show_channel_info(ui, doc, info_content)
+    channel::show_channel_info(ui, doc, info_content, per_track_supported)
 }
 
 /// 「图层」选项卡。`is_mix` 时显示 MIX 通道级图层（MIX 图层面板），

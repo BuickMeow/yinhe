@@ -184,6 +184,7 @@ impl UndoAction {
                 };
                 doc.remap_edit_for_track_change(note_remap, insert_idx);
                 doc.sync_track_caches();
+                doc.ensure_rack_track_lcs();
             }
             UndoAction::ImportMidi {
                 tracks_before,

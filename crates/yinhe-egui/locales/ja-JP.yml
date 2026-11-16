@@ -1376,3 +1376,10 @@ meter.columns: "表示列数"
 channel.pan: "パン"
 channel.inserts: "インサート"
 hint.panel.info_channel: "チャンネル：音源 / 音量 / パン / 出力 / センド / インサート"
+
+rack.output: "Rack Output"
+rack.output.shared: "Shared"
+rack.output.per_track: "Per Track"
+rack.output.plugin_disabled: "Plugin instruments cannot split per track"
+
+rack.output.requires_yinhe_cpu: "Requires Yinhe CPU synth"

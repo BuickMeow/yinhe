@@ -45,7 +45,7 @@ impl AudioEngine {
     /// 把持久化的通道主输出路由推到混音图。
     /// 源通道按 dense 映射到 Master 或某条总线。
     fn sync_output_routing(&mut self) {
-        let count = self.channel_set.channel_count();
+        let count = self.channel_layout.compacted_channels() as usize;
         for dense in 0..count {
             let dest = match self.dense_to_namespace(dense) {
                 Some(ChannelNamespace::Midi(src)) => self
@@ -54,6 +54,10 @@ impl AudioEngine {
                 Some(ChannelNamespace::Audio(ach)) => self
                     .mixer_params
                     .node_output(MixerChannelId::Audio(ach as u16)),
+                Some(ChannelNamespace::TrackLc { lc, .. }) => self
+                    .mixer_params
+                    .track_node(lc)
+                    .and_then(|node| node.output),
                 None => None,
             }
             .and_then(|id| self.mixer_params.bus_index(id));
@@ -77,13 +81,16 @@ impl AudioEngine {
             .iter()
             .map(|node| node.sends.clone())
             .collect();
-        let count = self.channel_set.channel_count();
+        let count = self.channel_layout.compacted_channels() as usize;
         for dense in 0..count {
             let list = self
                 .dense_to_namespace(dense)
                 .and_then(|ns| match ns {
                     ChannelNamespace::Midi(src) => sends.get(src),
                     ChannelNamespace::Audio(ach) => audio_sends.get(ach),
+                    ChannelNamespace::TrackLc { lc, .. } => {
+                        self.mixer_params.track_node(lc).map(|node| &node.sends)
+                    }
                 })
                 .map(|list| self.resolve_sends(list))
                 .unwrap_or_default();
@@ -119,8 +126,16 @@ impl AudioEngine {
     /// dense 索引 → 所属通道命名空间（仅结构性操作时调用，O(1)）。
     fn dense_to_namespace(&self, dense: usize) -> Option<ChannelNamespace> {
         let d = dense as u32;
-        if d >= self.channel_layout.midi_compacted() {
-            let idx = (d - self.channel_layout.midi_compacted()) as usize;
+        let audio_base = self.channel_layout.midi_compacted();
+        let track_base = audio_base + self.channel_layout.audio_channels().len() as u32;
+        if d >= track_base {
+            let idx = (d - track_base) as usize;
+            self.channel_layout
+                .track_lc_channels()
+                .get(idx)
+                .map(|&(track, lc)| ChannelNamespace::TrackLc { track, lc })
+        } else if d >= audio_base {
+            let idx = (d - audio_base) as usize;
             self.channel_layout
                 .audio_channels()
                 .get(idx)
@@ -139,6 +154,16 @@ impl AudioEngine {
         match node {
             MixerChannelId::Midi(ch) => self.set_channel_strip(ch, params),
             MixerChannelId::Audio(ch) => self.set_audio_strip(ch, params),
+            MixerChannelId::TrackLc(id) => {
+                if let Some(node) = self.mixer_params.track_node_mut(id) {
+                    node.strip = params;
+                }
+                if let Some((_, dense)) = self.channel_layout.track_lc_dense_for(id)
+                    && dense != u32::MAX
+                {
+                    self.mixer.set_strip(dense as usize, params);
+                }
+            }
             MixerChannelId::Bus(bus) => self.set_bus_strip(bus, params),
             MixerChannelId::Master => {
                 self.mixer_params.master.strip.gain = params.gain;
@@ -163,6 +188,7 @@ impl AudioEngine {
         sends: Vec<Vec<SendParams>>,
         bus_sends: Vec<Vec<SendParams>>,
         audio_sends: Vec<Vec<SendParams>>,
+        track_sends: Vec<Vec<SendParams>>,
     ) {
         // 旧命令仍按「总线条 / 源通道发送 / 音频发送」三张表传递；
         // 这里落到 v10 的节点表，保持命令层不用一次性改完。
@@ -180,6 +206,11 @@ impl AudioEngine {
         self.mixer_params.ensure_channel_tables(audio_sends.len());
         for (i, list) in audio_sends.into_iter().enumerate() {
             if let Some(node) = self.mixer_params.audio_channels.get_mut(i) {
+                node.sends = list;
+            }
+        }
+        for (i, list) in track_sends.into_iter().enumerate() {
+            if let Some(node) = self.mixer_params.track_channels.get_mut(i) {
                 node.sends = list;
             }
         }
@@ -262,10 +293,15 @@ impl AudioEngine {
     /// 各 dense 通道当前的 strip 参数（resize 重建 strip 状态用）。
     /// MIDI 源通道按 channel_map 反查，音频通道按 dense 段位置索引。
     pub(crate) fn dense_strip_params(&self) -> Vec<StripParams> {
-        (0..self.channel_set.channel_count())
+        (0..self.channel_layout.compacted_channels() as usize)
             .map(|dense| match self.dense_to_namespace(dense) {
                 Some(ChannelNamespace::Midi(src)) => self.mixer_params.strip(src as u8),
                 Some(ChannelNamespace::Audio(ach)) => self.mixer_params.audio_strip(ach as u16),
+                Some(ChannelNamespace::TrackLc { lc, .. }) => self
+                    .mixer_params
+                    .track_node(lc)
+                    .map(|node| node.strip)
+                    .unwrap_or_default(),
                 None => StripParams::default(),
             })
             .collect()
@@ -297,6 +333,18 @@ impl AudioEngine {
                     self.insert_returns.push(processor);
                 }
             }
+            InsertTarget::TrackLc(id) => {
+                let dense = self
+                    .channel_layout
+                    .track_lc_dense_for(id)
+                    .map(|(_, dense)| dense)
+                    .unwrap_or(u32::MAX);
+                if dense != u32::MAX {
+                    self.mixer.insert_insert(dense as usize, slot, processor);
+                } else {
+                    self.insert_returns.push(processor);
+                }
+            }
             InsertTarget::Bus(bus) => match self.mixer_params.bus_index(bus) {
                 Some(idx) => self.mixer.insert_bus_insert(idx, slot, processor),
                 None => self.insert_returns.push(processor),
@@ -315,6 +363,15 @@ impl AudioEngine {
                 (dense != u32::MAX)
                     .then(|| self.mixer.remove_insert(dense as usize, slot))
                     .flatten()
+            }
+            InsertTarget::TrackLc(id) => {
+                self.channel_layout
+                    .track_lc_dense_for(id)
+                    .and_then(|(_, dense)| {
+                        (dense != u32::MAX)
+                            .then(|| self.mixer.remove_insert(dense as usize, slot))
+                            .flatten()
+                    })
             }
             InsertTarget::Bus(bus) => self
                 .mixer_params
@@ -342,6 +399,15 @@ impl AudioEngine {
                 (dense != u32::MAX)
                     .then(|| self.mixer.replace_insert(dense as usize, slot, processor))
                     .flatten()
+            }
+            InsertTarget::TrackLc(id) => {
+                self.channel_layout
+                    .track_lc_dense_for(id)
+                    .and_then(|(_, dense)| {
+                        (dense != u32::MAX)
+                            .then(|| self.mixer.replace_insert(dense as usize, slot, processor))
+                            .flatten()
+                    })
             }
             InsertTarget::Bus(bus) => self
                 .mixer_params

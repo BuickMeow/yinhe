@@ -13,7 +13,7 @@
 use std::ops::{Deref, DerefMut};
 
 use serde::{Deserialize, Serialize};
-use yinhe_types::{BusId, LogicalChannelId, MixerNodeId, RackId};
+use yinhe_types::{BusId, LogicalChannelId, MixerNodeId, RackId, RackOutputMode};
 
 use crate::params::{InsertRef, SendParams, StripParams};
 
@@ -27,6 +27,9 @@ pub struct RackParams {
     /// 按序叠加的乐器插件；空 = 该 Rack 使用默认内置 XSynth。
     #[serde(default)]
     pub instruments: Vec<InsertRef>,
+    /// 输出拓扑：共享一条 LC，或内置音源按 Track 拆分。
+    #[serde(default)]
+    pub output_mode: RackOutputMode,
 }
 
 impl RackParams {
@@ -34,6 +37,7 @@ impl RackParams {
         Self {
             id,
             instruments: Vec::new(),
+            output_mode: RackOutputMode::Shared,
         }
     }
 }

@@ -116,11 +116,6 @@ impl ChannelSet {
         }
     }
 
-    /// 通道数（dense）。
-    pub(crate) fn channel_count(&self) -> usize {
-        self.channels.len()
-    }
-
     /// 该 dense 通道当前是否为鼓组模式（bank 128）。
     pub(crate) fn is_percussion(&self, dense: u32) -> bool {
         self.percussion

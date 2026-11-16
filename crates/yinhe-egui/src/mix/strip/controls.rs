@@ -3,7 +3,7 @@
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_mixer::{SendParams, StripParams};
-use yinhe_types::BusId;
+use yinhe_types::{BusId, LogicalChannelId};
 
 use crate::widgets::knob::{knob, knob_centered};
 use crate::widgets::meter::{DB_MAX, DB_MIN, db_to_gain, gain_at_frac, gain_frac, gain_to_db};
@@ -111,6 +111,7 @@ pub(super) fn section<R>(
 pub(super) enum SendSource {
     Channel(u8),
     Audio(u16),
+    TrackLc(LogicalChannelId),
     Bus(BusId),
 }
 
@@ -119,6 +120,7 @@ pub(super) enum SendSource {
 pub(super) enum StripAutomationTarget {
     Midi(u8),
     Audio,
+    TrackLc,
     Bus(BusId),
     Master,
 }
@@ -131,7 +133,9 @@ fn volume_automation_action(target: StripAutomationTarget) -> Option<MixAction> 
             controller: 7,
         }),
         StripAutomationTarget::Bus(bus) => Some(MixAction::AddBusGainAutomation { bus }),
-        StripAutomationTarget::Audio | StripAutomationTarget::Master => None,
+        StripAutomationTarget::Audio
+        | StripAutomationTarget::TrackLc
+        | StripAutomationTarget::Master => None,
     }
 }
 
@@ -326,6 +330,14 @@ pub(super) fn send_block(
                                     pre_fader,
                                 });
                             }
+                            SendSource::TrackLc(lc) => {
+                                actions.push(MixAction::SetTrackLcSend {
+                                    lc,
+                                    bus: target,
+                                    amount: norm * 2.0,
+                                    pre_fader,
+                                });
+                            }
                             SendSource::Bus(src) => {
                                 actions.push(MixAction::SetBusSend {
                                     bus: src,
@@ -369,6 +381,14 @@ pub(super) fn send_block(
                                         pre_fader,
                                     });
                                 }
+                                SendSource::TrackLc(lc) => {
+                                    actions.push(MixAction::SetTrackLcSend {
+                                        lc,
+                                        bus: target,
+                                        amount: new_amount,
+                                        pre_fader,
+                                    });
+                                }
                                 SendSource::Bus(src) => {
                                     actions.push(MixAction::SetBusSend {
                                         bus: src,
@@ -407,6 +427,14 @@ pub(super) fn send_block(
                                     SendSource::Audio(channel) => {
                                         actions.push(MixAction::SetAudioSend {
                                             channel,
+                                            bus: target,
+                                            amount,
+                                            pre_fader: next_pre,
+                                        });
+                                    }
+                                    SendSource::TrackLc(lc) => {
+                                        actions.push(MixAction::SetTrackLcSend {
+                                            lc,
                                             bus: target,
                                             amount,
                                             pre_fader: next_pre,

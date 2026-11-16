@@ -228,7 +228,10 @@ pub(crate) type DockContext = yinhe_types::MixerChannelId;
 fn track_context(t: &yinhe_core::TrackData) -> Option<DockContext> {
     match t.kind {
         TrackKind::Audio => Some(DockContext::Audio(t.audio_target_channel().unwrap_or(0))),
-        TrackKind::Midi => Some(DockContext::Midi(t.global_channel())),
+        TrackKind::Midi => Some(
+            t.lc.map(DockContext::TrackLc)
+                .unwrap_or_else(|| DockContext::Midi(t.global_channel())),
+        ),
         TrackKind::Folder => None,
         TrackKind::Master => Some(DockContext::Master),
     }
@@ -340,6 +343,7 @@ fn collect_dock_state(app: &mut App, idx: usize) -> Option<DockState> {
     let belongs = |t: &std::sync::Arc<yinhe_core::TrackData>| match context {
         DockContext::Midi(ch) => t.global_channel() == ch,
         DockContext::Audio(ach) => t.audio_channel == Some(ach),
+        DockContext::TrackLc(id) => t.lc == Some(id),
         DockContext::Bus(_) | DockContext::Master => false,
     };
     // lane 归属轨：该通道的所有轨（导入的自动化挂在独立 "CC xx" 轨上，
@@ -692,6 +696,7 @@ fn context_label(context: DockContext) -> String {
     match context {
         DockContext::Midi(ch) => crate::mix::channel_label(ch),
         DockContext::Audio(ach) => crate::mix::audio_label(ach),
+        DockContext::TrackLc(id) => format!("LC {}", id.0),
         DockContext::Bus(bus) => format!("BUS {}", bus.index() + 1),
         DockContext::Master => t!("mix.master").to_string(),
     }

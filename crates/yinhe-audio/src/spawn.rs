@@ -198,6 +198,8 @@ pub enum AudioCommand {
         sends: Box<Vec<Vec<SendParams>>>,
         bus_sends: Box<Vec<Vec<SendParams>>>,
         audio_sends: Box<Vec<Vec<SendParams>>>,
+        /// 每轨 LC 的发送表（按 `track_channels` 顺序）。
+        track_sends: Box<Vec<Vec<SendParams>>>,
     },
     /// 安装/替换/移除某**MIDI 通道**（0..256，与 `TrackData::global_channel()` 对齐）
     /// 上的乐器插件实例（CLAP/VST3 等，抽象为 trait）。`Some(processor)` = 安装/替换；
@@ -651,6 +653,8 @@ impl AudioHandle {
 pub struct CpalAudioHandle {
     pub handle: AudioHandle,
     pub sample_rate: u32,
+    /// 当前引擎使用的合成器后端（UI 据此限制 per-track 输出）。
+    pub synth_engine: SynthEngine,
     /// 录音监听缓冲（交错立体声）：输入回调 push、输出回调混入。
     /// 上限见 `MONITOR_MAX_SAMPLES`，超限丢最旧样本（延迟不累积）。
     pub monitor: Arc<Mutex<std::collections::VecDeque<f32>>>,
@@ -1822,6 +1826,7 @@ pub fn spawn_cpal_audio(
     }
 
     Ok(CpalAudioHandle {
+        synth_engine,
         handle: AudioHandle {
             cmd_tx,
             transport_tx,
@@ -2061,6 +2066,7 @@ mod tests {
                     sends: Box::new(Vec::new()),
                     bus_sends: Box::new(Vec::new()),
                     audio_sends: Box::new(Vec::new()),
+                    track_sends: Box::new(Vec::new()),
                 },
                 "SyncBusConfig",
                 true,

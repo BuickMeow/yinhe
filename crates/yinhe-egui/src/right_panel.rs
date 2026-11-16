@@ -167,6 +167,8 @@ pub fn show(
     ui.painter()
         .rect_filled(content_rect, 0.0, crate::theme::app_bg());
 
+    let per_track_supported =
+        audio.is_some_and(|a| a.synth_engine == yinhe_types::SynthEngine::YinheCpu);
     let doc_ref = &mut doc;
     layout_changed |= dock::show(ui, content_rect, layout, |ui, kind, _content| {
         // 右栏所有面板统一紧凑高度（20）：输入框/下拉/按钮/列表行。
@@ -189,8 +191,12 @@ pub fn show(
                     .id_salt("rpanel_channel_scroll")
                     .auto_shrink([false; 2])
                     .show(ui, |ui| {
-                        let out =
-                            info_panel::show_channel(ui, doc_ref.as_deref_mut(), info_content);
+                        let out = info_panel::show_channel(
+                            ui,
+                            doc_ref.as_deref_mut(),
+                            info_content,
+                            per_track_supported,
+                        );
                         port_changed |= out.model_changed;
                         mixer_changed |= out.mixer_changed;
                     });

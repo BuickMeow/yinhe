@@ -310,6 +310,7 @@ impl App {
                 // 通道归属/总线输出变化在通道集合不变时只走 notify，
                 // 这里补一次混音全量推送，保证引擎输出路由同步。
                 if let Some(idx) = self.workspace.active_doc {
+                    self.sync_track_lc_racks(idx);
                     self.push_mixer_state_to_engine(idx);
                 }
             }

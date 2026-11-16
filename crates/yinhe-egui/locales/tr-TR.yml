@@ -1371,3 +1371,10 @@ meter.columns: "Görüntü sütunları"
 channel.pan: "Pan"
 channel.inserts: "Ekler"
 hint.panel.info_channel: "Kanal: enstrüman / ses / pan / çıkış / gönderimler / ekler"
+
+rack.output: "Rack Output"
+rack.output.shared: "Shared"
+rack.output.per_track: "Per Track"
+rack.output.plugin_disabled: "Plugin instruments cannot split per track"
+
+rack.output.requires_yinhe_cpu: "Requires Yinhe CPU synth"

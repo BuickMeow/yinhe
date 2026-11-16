@@ -228,6 +228,7 @@ impl Document {
         self.sync_track_caches();
         self.edit.track_selected.clear();
         self.edit.track_selected.insert(insert_idx as u16);
+        self.ensure_rack_track_lcs();
 
         Some(UndoAction::TrackStructure {
             tracks_before,
@@ -521,6 +522,7 @@ impl Document {
         for i in insert_idx..total_tracks {
             self.edit.track_selected.insert(i as u16);
         }
+        self.ensure_rack_track_lcs();
 
         Some(UndoAction::TrackStructure {
             tracks_before,
@@ -551,6 +553,7 @@ impl Document {
         }
 
         let tracks_before: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
+        let removed_lc = model.tracks[idx].lc;
 
         let model = Arc::make_mut(&mut self.data.model);
         model.tracks.remove(idx);
@@ -583,6 +586,9 @@ impl Document {
         self.data.bump_revision();
 
         // Update edit state
+        if let Some(lc) = removed_lc {
+            self.mixer.remove_track_lc(lc);
+        }
         self.remap_edit_for_track_change(&note_remap, None);
         self.sync_track_caches();
         self.edit.track_selected.clear();

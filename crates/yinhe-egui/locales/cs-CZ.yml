@@ -1371,3 +1371,10 @@ meter.columns: "Zobrazované sloupce"
 channel.pan: "Panorama"
 channel.inserts: "Inserty"
 hint.panel.info_channel: "Kanál: nástroj / hlasitost / panorama / výstup / sendy / inserty"
+
+rack.output: "Rack Output"
+rack.output.shared: "Shared"
+rack.output.per_track: "Per Track"
+rack.output.plugin_disabled: "Plugin instruments cannot split per track"
+
+rack.output.requires_yinhe_cpu: "Requires Yinhe CPU synth"

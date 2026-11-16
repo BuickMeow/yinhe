@@ -16,6 +16,8 @@ pub enum MixerChannelId {
     Midi(u8),
     /// 音频通道（0..u16::MAX）。
     Audio(u16),
+    /// 每轨独立 LC（Rack per-track 输出）。
+    TrackLc(LogicalChannelId),
     /// 总线 / Return 通道。
     Bus(crate::BusId),
     /// Master 总输出。
@@ -40,6 +42,7 @@ impl MixerChannelId {
             Self::Audio(ch) => Some(LogicalChannelId(
                 crate::MIDI_CHANNEL_COUNT as u32 + u32::from(ch),
             )),
+            Self::TrackLc(id) => Some(id),
             Self::Bus(_) | Self::Master => None,
         }
     }
@@ -51,6 +54,7 @@ impl MixerChannelId {
             Self::Audio(ch) => MixerNodeId::LogicalChannel(LogicalChannelId(
                 crate::MIDI_CHANNEL_COUNT as u32 + u32::from(ch),
             )),
+            Self::TrackLc(id) => MixerNodeId::LogicalChannel(id),
             Self::Bus(bus) => MixerNodeId::Bus(bus),
             Self::Master => MixerNodeId::Master,
         }

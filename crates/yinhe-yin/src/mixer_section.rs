@@ -7,7 +7,7 @@ use yinhe_mixer::{
     CHANNEL_COUNT, InsertRef, MasterParams, MixerNode, MixerParams, RackParams, SendParams,
     StripParams,
 };
-use yinhe_types::{BusId, LogicalChannelId, MixerNodeId, RackId};
+use yinhe_types::{BusId, LogicalChannelId, MixerNodeId, RackId, RackOutputMode, TRACK_LC_BASE};
 
 use crate::codec::{deserialize_postcard, encode_versioned_section, serialize_postcard};
 use crate::error::YinError;
@@ -18,8 +18,9 @@ use crate::error::YinError;
 /// 混音设置。当前支持 v8 / v9 / v10：
 /// - v8：总线是 Vec 下标；
 /// - v9：稳定 BusId，但仍是并行分表；
-/// - v10：Rack + MixerNode 节点表。
-const MIXER_SECTION_VERSION: u32 = 10;
+/// - v10：Rack + MixerNode 节点表；
+/// - v11：每轨 LC（track_channels / next_lc_id）与 Rack 输出拓扑。
+const MIXER_SECTION_VERSION: u32 = 11;
 
 /// v8 及更早的发送参数（总线是 Vec 下标，没有稳定 ID）。
 /// postcard 非自描述，字段顺序必须与旧 `MixerParams` 完全一致。
@@ -70,6 +71,83 @@ struct MixerParamsV9 {
     sends: Vec<Vec<SendParams>>,
     midi_outputs: Vec<Option<BusId>>,
     audio_outputs: Vec<Option<BusId>>,
+}
+
+/// v10 的 Rack 快照（还没有 output_mode）。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct RackParamsV10 {
+    id: RackId,
+    instruments: Vec<InsertRef>,
+}
+
+/// v10 的 MixerNode 快照（冻结字段顺序，不能直接用当前结构）。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MixerNodeV10 {
+    id: MixerNodeId,
+    strip: StripParams,
+    inserts: Vec<InsertRef>,
+    sends: Vec<SendParams>,
+    output: Option<BusId>,
+}
+
+impl MixerNodeV10 {
+    fn into_current(self) -> MixerNode {
+        MixerNode {
+            id: self.id,
+            strip: self.strip,
+            inserts: self.inserts,
+            sends: self.sends,
+            output: self.output,
+        }
+    }
+}
+
+/// v10 混音参数快照：Rack + MixerNode 节点表，还没有每轨 LC。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MixerParamsV10 {
+    racks: Vec<RackParamsV10>,
+    channels: Vec<MixerNodeV10>,
+    audio_channels: Vec<MixerNodeV10>,
+    buses: Vec<MixerNodeV10>,
+    master: MixerNodeV10,
+    next_instrument_uid: u64,
+    next_bus_id: BusId,
+}
+
+impl MixerParamsV10 {
+    fn into_current(self) -> MixerParams {
+        MixerParams {
+            racks: self
+                .racks
+                .into_iter()
+                .map(|rack| RackParams {
+                    id: rack.id,
+                    instruments: rack.instruments,
+                    output_mode: RackOutputMode::Shared,
+                })
+                .collect(),
+            channels: self
+                .channels
+                .into_iter()
+                .map(MixerNodeV10::into_current)
+                .collect(),
+            track_channels: Vec::new(),
+            audio_channels: self
+                .audio_channels
+                .into_iter()
+                .map(MixerNodeV10::into_current)
+                .collect(),
+            buses: self
+                .buses
+                .into_iter()
+                .map(MixerNodeV10::into_current)
+                .collect(),
+            master: self.master.into_current(),
+            next_instrument_uid: self.next_instrument_uid,
+            next_bus_id: self.next_bus_id,
+            next_lc_id: LogicalChannelId(TRACK_LC_BASE),
+        }
+    }
 }
 
 impl MixerParamsV8 {
@@ -141,6 +219,7 @@ impl MixerParamsV9 {
             .map(|i| RackParams {
                 id: RackId(i as u16),
                 instruments: self.instruments.get(i).cloned().unwrap_or_default(),
+                output_mode: RackOutputMode::Shared,
             })
             .collect();
         let channels = (0..CHANNEL_COUNT)
@@ -191,11 +270,13 @@ impl MixerParamsV9 {
         MixerParams {
             racks,
             channels,
+            track_channels: Vec::new(),
             audio_channels,
             buses,
             master,
             next_instrument_uid: self.next_instrument_uid.max(1),
             next_bus_id: self.next_bus_id,
+            next_lc_id: LogicalChannelId(TRACK_LC_BASE),
         }
     }
 }
@@ -217,6 +298,11 @@ pub(crate) fn decode_mixer_section(section: &[u8]) -> Option<MixerParams> {
         MIXER_SECTION_VERSION => deserialize_postcard::<MixerParams>(&payload)
             .map_err(|e| tracing::warn!("混音段解析失败，忽略混音设置: {e}"))
             .ok()?,
+        // v10：Rack + MixerNode，还没有每轨 LC。
+        10 => deserialize_postcard::<MixerParamsV10>(&payload)
+            .map_err(|e| tracing::warn!("v10 混音段解析失败，忽略混音设置: {e}"))
+            .ok()?
+            .into_current(),
         // v9：稳定 BusId + 并行分表；转成 Rack + MixerNode。
         9 => deserialize_postcard::<MixerParamsV9>(&payload)
             .map_err(|e| tracing::warn!("v9 混音段解析失败，忽略混音设置: {e}"))
@@ -329,6 +415,58 @@ mod tests {
         assert_eq!(loaded.next_bus_id, BusId(6));
         assert_eq!(loaded.master.gain, 0.8);
         assert_eq!(loaded.next_instrument_uid, 7);
+        assert!(loaded.track_channels.is_empty());
+        assert_eq!(loaded.next_lc_id, LogicalChannelId(TRACK_LC_BASE));
+        assert_eq!(loaded.racks[0].output_mode, RackOutputMode::Shared);
+    }
+
+    #[test]
+    fn v10_nodes_migrate_to_v11_track_lc_support() {
+        let old = MixerParamsV10 {
+            racks: vec![RackParamsV10 {
+                id: RackId(0),
+                instruments: Vec::new(),
+            }],
+            channels: vec![MixerNodeV10 {
+                id: MixerNodeId::LogicalChannel(LogicalChannelId(0)),
+                strip: StripParams::default(),
+                inserts: Vec::new(),
+                sends: Vec::new(),
+                output: None,
+            }],
+            audio_channels: vec![MixerNodeV10 {
+                id: MixerNodeId::LogicalChannel(LogicalChannelId(256)),
+                strip: StripParams::default(),
+                inserts: Vec::new(),
+                sends: Vec::new(),
+                output: None,
+            }],
+            buses: vec![MixerNodeV10 {
+                id: MixerNodeId::Bus(BusId(1)),
+                strip: StripParams::default(),
+                inserts: Vec::new(),
+                sends: Vec::new(),
+                output: None,
+            }],
+            master: MixerNodeV10 {
+                id: MixerNodeId::Master,
+                strip: StripParams::default(),
+                inserts: Vec::new(),
+                sends: Vec::new(),
+                output: None,
+            },
+            next_instrument_uid: 3,
+            next_bus_id: BusId(2),
+        };
+        let payload = serialize_postcard(&old).expect("serialize v10");
+        let section = encode_versioned_section(10, &payload, 0).expect("encode v10");
+        let loaded = decode_mixer_section(&section).expect("decode v10");
+
+        assert_eq!(loaded.racks[0].output_mode, RackOutputMode::Shared);
+        assert!(loaded.track_channels.is_empty());
+        assert_eq!(loaded.next_lc_id, LogicalChannelId(TRACK_LC_BASE));
+        assert_eq!(loaded.bus_id_at(0), Some(BusId(1)));
+        assert_eq!(loaded.next_instrument_uid, 3);
     }
 
     #[test]
@@ -343,6 +481,8 @@ mod tests {
         };
         mixer.set_node_sends(yinhe_types::MixerChannelId::Midi(0), vec![send]);
         mixer.set_node_output(yinhe_types::MixerChannelId::Midi(0), Some(bus));
+        let track_lc = mixer.add_track_lc();
+        mixer.track_node_mut(track_lc).expect("track lc").strip.gain = 0.25;
 
         let section = encode_mixer_section(&mixer, 0).expect("encode");
         let loaded = decode_mixer_section(&section).expect("decode");
@@ -351,5 +491,9 @@ mod tests {
         assert_eq!(loaded.channels[0].sends[0].bus, bus);
         assert_eq!(loaded.channels[0].output, Some(bus));
         assert_eq!(loaded.master.id, MixerNodeId::Master);
+        assert_eq!(
+            loaded.track_node(track_lc).expect("track lc").strip.gain,
+            0.25
+        );
     }
 }

@@ -399,6 +399,23 @@ impl AudioEngine {
         self.cpu_synth.is_some()
     }
 
+    /// 把每轨 LC 的 dense 映射推给 CPU 合成器。
+    /// 没有 `lc` 的 Track 保持 `u32::MAX`，继续走共享 MIDI 通道。
+    pub(crate) fn sync_track_lc_routing(&mut self) {
+        let Some(cs) = self.cpu_synth.as_mut() else {
+            return;
+        };
+        let count = self
+            .yin_model
+            .as_ref()
+            .map(|model| model.tracks.len())
+            .unwrap_or(0);
+        let map = (0..count)
+            .map(|track| self.channel_layout.track_lc_dense(track))
+            .collect();
+        cs.set_track_output_dense(map);
+    }
+
     pub(crate) fn model_loaded(&self) -> bool {
         self.model.is_some()
     }
@@ -526,8 +543,9 @@ impl AudioEngine {
                 sends,
                 bus_sends,
                 audio_sends,
+                track_sends,
             } => {
-                self.sync_bus_config(*buses, *sends, *bus_sends, *audio_sends);
+                self.sync_bus_config(*buses, *sends, *bus_sends, *audio_sends, *track_sends);
             }
             AudioCommand::SetInstrumentSlot {
                 channel,

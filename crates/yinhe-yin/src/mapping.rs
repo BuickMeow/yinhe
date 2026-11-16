@@ -70,6 +70,9 @@ pub struct TrackMap {
     /// 音频通道号（仅音频轨有意义）。
     #[serde(default)]
     pub audio_channel: Option<u16>,
+    /// 每轨独立 LC 的稳定 ID（仅 per-track 输出模式）。
+    #[serde(default)]
+    pub lc: Option<yinhe_types::LogicalChannelId>,
     /// 音频片段（仅音频轨有意义）。放在 mapping.json（自描述 JSON）而非
     /// data 段的 postcard 里：postcard 非自描述，追字段会让旧文件解析失败。
     #[serde(default)]
@@ -125,6 +128,7 @@ impl MappingFile {
                 folder_depth: t.folder_depth,
                 collapsed: t.collapsed,
                 audio_channel: t.audio_channel,
+                lc: t.lc,
                 audio_clips: t.audio_clips.clone(),
                 clips: t.clips.clone(),
             });

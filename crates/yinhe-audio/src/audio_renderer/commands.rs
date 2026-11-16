@@ -367,12 +367,14 @@ impl AudioRenderer {
                 sends,
                 bus_sends,
                 audio_sends,
+                track_sends,
             } => {
                 self.engine.handle_command(AudioCommand::SyncBusConfig {
                     buses,
                     sends,
                     bus_sends,
                     audio_sends,
+                    track_sends,
                 });
                 self.sync_bus_meter_readings();
             }

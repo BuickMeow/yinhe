@@ -31,6 +31,7 @@ pub mod event_list_edit;
 pub mod midi_import;
 pub mod note_edit;
 pub mod note_pencil;
+pub mod rack_edit;
 pub mod selection;
 pub mod track_meta_edit;
 pub mod track_ops;
@@ -295,7 +296,7 @@ impl Document {
                 })
                 .collect();
 
-            let doc = Document {
+            let mut doc = Document {
                 data,
                 edit: EditState {
                     quantize_arrange,
@@ -322,6 +323,7 @@ impl Document {
                 density: Default::default(),
                 density_pr: Default::default(),
             };
+            doc.ensure_rack_track_lcs();
             Ok(doc)
         })
     }

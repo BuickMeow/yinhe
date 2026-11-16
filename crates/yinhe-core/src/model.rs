@@ -377,6 +377,10 @@ pub struct TrackData {
     /// 多条音频轨共享同一音频通道 = 共享同一条混音 strip/insert 链。
     #[serde(default)]
     pub audio_channel: Option<u16>,
+    /// 该轨独立 LC 的稳定 ID。`None` = 使用 Rack/源通道共享的 LC。
+    /// 只有 Rack 输出模式为 PerTrack 的内置音源轨才会有值。
+    #[serde(default)]
+    pub lc: Option<yinhe_types::LogicalChannelId>,
     /// 文件夹嵌套深度（0 = 根层）。Folder 轨本身也占一层。
     #[serde(default)]
     pub folder_depth: u8,
@@ -494,6 +498,7 @@ impl TrackData {
             folder_depth: 0,
             collapsed: false,
             audio_channel: None,
+            lc: None,
             audio_clips: Vec::new(),
             clips: Vec::new(),
             notes: Vec::new(),
@@ -513,7 +518,11 @@ impl TrackData {
     /// MIDI 轨 = 端口/通道，音频轨 = 音频通道，Master = 主输出。
     pub fn mixer_channel(&self) -> Option<yinhe_types::MixerChannelId> {
         match self.kind {
-            TrackKind::Midi => Some(yinhe_types::MixerChannelId::Midi(self.global_channel())),
+            TrackKind::Midi => Some(
+                self.lc
+                    .map(yinhe_types::MixerChannelId::TrackLc)
+                    .unwrap_or_else(|| yinhe_types::MixerChannelId::Midi(self.global_channel())),
+            ),
             TrackKind::Audio => Some(yinhe_types::MixerChannelId::Audio(
                 self.audio_channel.unwrap_or(0),
             )),

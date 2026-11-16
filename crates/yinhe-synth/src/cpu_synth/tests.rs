@@ -699,3 +699,50 @@ fn synth_params_survive_channel_reset() {
     synth.seek(0);
     assert_eq!(synth.channels[0].synth, params);
 }
+
+/// 每轨 LC：两条 Track 的声音必须进入不同 dense 缓冲，而不是共享 MIDI 通道。
+#[test]
+fn per_track_output_routes_to_separate_buffers() {
+    let mut synth = CpuSynth::new(48_000);
+    let mut map = vec![Vec::new(); 128];
+    let mut interleaved = Vec::with_capacity(4_800 * 2);
+    for _ in 0..4_800 {
+        interleaved.push(0.25);
+        interleaved.push(0.25);
+    }
+    for key in [60u8, 62u8] {
+        map[key as usize] = vec![crate::sf_parser::KeyInfo {
+            sample_data: Arc::from(interleaved.clone()),
+            is_stereo: true,
+            offset: 0,
+            lovel: 0,
+            hivel: 127,
+            ..Default::default()
+        }];
+    }
+    synth.port_key_maps[0] = Arc::new(vec![KeyMapEntry::expanded(0, 0, map)]);
+    synth.set_track_output_dense(vec![0, 1]);
+    synth.send_event(SynthEvent::NoteOn {
+        track: 0,
+        sample: 0,
+        channel: 0,
+        key: 60,
+        velocity: 100,
+        end_sample: 48_000,
+    });
+    synth.send_event(SynthEvent::NoteOn {
+        track: 1,
+        sample: 0,
+        channel: 0,
+        key: 62,
+        velocity: 100,
+        end_sample: 48_000,
+    });
+
+    let mut bufs = buffers(512);
+    synth.render_to_mixer(&mut bufs);
+    let sum0: f32 = bufs[0].left.iter().map(|v| v.abs()).sum();
+    let sum1: f32 = bufs[1].left.iter().map(|v| v.abs()).sum();
+    assert!(sum0 > 0.0, "track 0 应写入 buffer 0");
+    assert!(sum1 > 0.0, "track 1 应写入 buffer 1");
+}

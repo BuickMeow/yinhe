@@ -11,6 +11,24 @@ use serde::{Deserialize, Serialize};
 /// Rack 数量上限（0..256）。Rack 是共享乐器资源，不是混音节点。
 pub const RACK_COUNT: usize = 256;
 
+/// 每轨 LC 的 ID 起点。
+///
+/// `0..256` 留给 MIDI 源通道，`256..` 留给音频通道（可能到 65535），
+/// 每轨 LC 从高位开始，避免与现有命名空间碰撞。
+pub const TRACK_LC_BASE: u32 = 1_000_000;
+
+/// Rack 的音频输出拓扑。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RackOutputMode {
+    /// 整个 Rack 一条输出；所有使用该 Rack 的 Track 共享一条 LC。
+    #[default]
+    Shared,
+    /// 内置音源按 Track 拆分音频；每条 Track 有自己的 LC。
+    /// 外部单输出插件不支持该模式。
+    PerTrack,
+}
+
 /// 共享乐器 Rack 的稳定身份。
 ///
 /// 当前与源 MIDI 通道一一对应（A01 = 0，P16 = 255）；目标 B 中 Track 通过

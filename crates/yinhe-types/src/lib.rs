@@ -41,7 +41,10 @@ pub use hash::*;
 pub use hidden_notes::{HiddenFilter, HiddenNotes, HiddenNotesBuilder};
 pub use metadata::{ChordEvent, KeySigEvent, LyricsEvent, MarkerEvent, ScaleType, from_midi_sf_mi};
 pub use mixer_channel::MixerChannelId;
-pub use mixer_node::{AutomationOwner, BusId, LogicalChannelId, MixerNodeId, RACK_COUNT, RackId};
+pub use mixer_node::{
+    AutomationOwner, BusId, LogicalChannelId, MixerNodeId, RACK_COUNT, RackId, RackOutputMode,
+    TRACK_LC_BASE,
+};
 pub use note::{Note, PencilNoteDrag, TimeSigEvent, VelocityEdit};
 pub use note_bitset::{NoteBitset, NoteBitsetBuilder};
 pub use note_bucket::{BUCKET_CHUNK_CAP, NoteBucket, NoteCursor, NoteRangeIter};
