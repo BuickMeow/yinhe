@@ -159,6 +159,13 @@ impl MixerNode {
     }
 }
 
+impl MixerNode {
+    /// 节点的 C 统一身份。
+    pub const fn channel_id(&self) -> yinhe_types::ChannelId {
+        self.id.c_channel_id()
+    }
+}
+
 impl Deref for MixerNode {
     type Target = StripParams;
 

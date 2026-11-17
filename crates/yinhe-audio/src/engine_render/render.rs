@@ -274,10 +274,7 @@ impl AudioEngine {
 
         let frozen: Vec<(usize, String)> = self
             .mixer_params
-            .channels
-            .iter()
-            .chain(self.mixer_params.audio_channels.iter())
-            .chain(self.mixer_params.track_channels.iter())
+            .nodes()
             .filter_map(|node| {
                 let freeze = node.freeze.as_ref()?;
                 if self.freeze_capture.is_some() {

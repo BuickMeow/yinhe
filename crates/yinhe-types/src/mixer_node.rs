@@ -217,6 +217,23 @@ pub enum MixerNodeId {
     Master,
 }
 
+impl MixerNodeId {
+    /// 混音节点的 C 统一身份。
+    pub const fn c_channel_id(self) -> ChannelId {
+        match self {
+            Self::LogicalChannel(id) => ChannelId::Lc(id),
+            Self::Bus(bus) => ChannelId::Bus(bus),
+            Self::Master => ChannelId::Master,
+        }
+    }
+}
+
+impl From<MixerNodeId> for ChannelId {
+    fn from(id: MixerNodeId) -> Self {
+        id.c_channel_id()
+    }
+}
+
 /// 自动化 lane 的归属。
 ///
 /// 自动化不再默认「挂在轨道上」：MIDI 内容轨的 lane 属于 Track，乐器参数
@@ -249,6 +266,15 @@ mod tests {
         assert_eq!(BusId::new(3).index(), 3);
         assert_eq!(BusId::from(9), BusId(9));
         assert_eq!(format!("{:?}", MixerNodeId::Bus(BusId(2))), "Bus(BusId(2))");
+        assert_eq!(
+            MixerNodeId::LogicalChannel(LogicalChannelId(7)).c_channel_id(),
+            ChannelId::Lc(LogicalChannelId(7))
+        );
+        assert_eq!(
+            MixerNodeId::Bus(BusId(2)).c_channel_id(),
+            ChannelId::Bus(BusId(2))
+        );
+        assert_eq!(MixerNodeId::Master.c_channel_id(), ChannelId::Master);
     }
 
     #[test]

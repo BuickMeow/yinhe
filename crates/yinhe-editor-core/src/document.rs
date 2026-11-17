@@ -792,14 +792,7 @@ impl Document {
     /// 清空所有 Channel solo，返回被改动的通道（用于推引擎）。
     pub fn clear_channel_solos(&mut self) -> Vec<MixerChannelId> {
         let mut changed = Vec::new();
-        let nodes = self
-            .mixer
-            .channels
-            .iter_mut()
-            .chain(self.mixer.audio_channels.iter_mut())
-            .chain(self.mixer.track_channels.iter_mut())
-            .chain(self.mixer.buses.iter_mut());
-        for node in nodes {
+        for node in self.mixer.nodes_mut() {
             if node.solo {
                 node.solo = false;
                 if let Some(channel) = node.id.channel_id() {

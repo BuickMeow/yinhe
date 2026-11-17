@@ -271,32 +271,30 @@ impl MixerParams {
     }
 
     fn sanitize_automation(&mut self) {
-        for node in self
-            .channels
-            .iter_mut()
-            .chain(self.audio_channels.iter_mut())
-            .chain(self.track_channels.iter_mut())
-            .chain(self.buses.iter_mut())
-            .chain(std::iter::once(&mut self.master))
-        {
-            let Some(channel) = node.id.channel_id() else {
-                continue;
-            };
-            node.automation.retain(|lane| match &lane.target {
-                yinhe_types::AutomationTarget::MixerGain { channel: c }
-                | yinhe_types::AutomationTarget::MixerPan { channel: c }
-                | yinhe_types::AutomationTarget::MixerSend { node: c, .. }
-                | yinhe_types::AutomationTarget::InsertParam { target: c, .. } => *c == channel,
-                yinhe_types::AutomationTarget::BusGain { .. } => {
-                    node.id
-                        == yinhe_types::MixerNodeId::Bus(match channel {
-                            MixerChannelId::Bus(bus) => bus,
-                            _ => return false,
-                        })
-                }
-                _ => true,
-            });
+        for node in self.nodes_mut() {
+            Self::sanitize_node_automation(node);
         }
+        Self::sanitize_node_automation(&mut self.master);
+    }
+
+    fn sanitize_node_automation(node: &mut MixerNode) {
+        let Some(channel) = node.id.channel_id() else {
+            return;
+        };
+        node.automation.retain(|lane| match &lane.target {
+            yinhe_types::AutomationTarget::MixerGain { channel: c }
+            | yinhe_types::AutomationTarget::MixerPan { channel: c }
+            | yinhe_types::AutomationTarget::MixerSend { node: c, .. }
+            | yinhe_types::AutomationTarget::InsertParam { target: c, .. } => *c == channel,
+            yinhe_types::AutomationTarget::BusGain { .. } => {
+                node.id
+                    == yinhe_types::MixerNodeId::Bus(match channel {
+                        MixerChannelId::Bus(bus) => bus,
+                        _ => return false,
+                    })
+            }
+            _ => true,
+        });
     }
 
     fn ensure_racks(&mut self) {
@@ -331,6 +329,39 @@ impl MixerParams {
         self.aps = keep;
         self.aps.sort_by_key(|ap| ap.id);
         self.aps.dedup_by_key(|ap| ap.id);
+    }
+
+    /// 所有非 Master 混音节点（统一视图；存储仍按旧分表过渡）。
+    pub fn nodes(&self) -> impl Iterator<Item = &MixerNode> {
+        self.channels
+            .iter()
+            .chain(self.audio_channels.iter())
+            .chain(self.track_channels.iter())
+            .chain(self.buses.iter())
+    }
+
+    /// 所有非 Master 混音节点（可变统一视图）。
+    pub fn nodes_mut(&mut self) -> impl Iterator<Item = &mut MixerNode> {
+        self.channels
+            .iter_mut()
+            .chain(self.audio_channels.iter_mut())
+            .chain(self.track_channels.iter_mut())
+            .chain(self.buses.iter_mut())
+    }
+
+    /// 按 C 统一身份查节点；Master 映射到 `master`。
+    pub fn channel_node(&self, id: ChannelId) -> Option<&MixerNode> {
+        if id == ChannelId::Master {
+            return Some(&self.master);
+        }
+        self.nodes().find(|node| node.channel_id() == id)
+    }
+
+    pub fn channel_node_mut(&mut self, id: ChannelId) -> Option<&mut MixerNode> {
+        if id == ChannelId::Master {
+            return Some(&mut self.master);
+        }
+        self.nodes_mut().find(|node| node.channel_id() == id)
     }
 
     pub fn ap(&self, id: ApGroupId) -> Option<&ApGroup> {
@@ -379,13 +410,7 @@ impl MixerParams {
     /// C 的发送范围 0..1（-inf..0 dB）；旧工程的 +6 dB 发送夹到 0 dB，
     /// 0 发送直接删除。
     fn ensure_send_amounts(&mut self) {
-        for node in self
-            .channels
-            .iter_mut()
-            .chain(self.audio_channels.iter_mut())
-            .chain(self.track_channels.iter_mut())
-            .chain(self.buses.iter_mut())
-        {
+        for node in self.nodes_mut() {
             for send in &mut node.sends {
                 send.amount = send.amount.clamp(0.0, 1.0);
             }
@@ -599,10 +624,7 @@ impl MixerParams {
     /// 按 ID 查每轨 LC。
     /// LC 是否存在于任一通道表（MIDI / 音频 / 每轨）。
     pub fn channel_exists(&self, id: LogicalChannelId) -> bool {
-        let target = MixerNodeId::LogicalChannel(id);
-        self.channels.iter().any(|node| node.id == target)
-            || self.audio_channels.iter().any(|node| node.id == target)
-            || self.track_channels.iter().any(|node| node.id == target)
+        self.channel_node(ChannelId::Lc(id)).is_some()
     }
 
     pub fn track_node(&self, id: LogicalChannelId) -> Option<&MixerNode> {
@@ -665,12 +687,7 @@ impl MixerParams {
         if targets.is_empty() {
             return;
         }
-        for node in self
-            .channels
-            .iter_mut()
-            .chain(self.audio_channels.iter_mut())
-            .chain(self.track_channels.iter_mut())
-        {
+        for node in self.nodes_mut() {
             if let MixerNodeId::LogicalChannel(id) = node.id
                 && targets.contains(&id)
             {
@@ -1372,6 +1389,29 @@ mod tests {
         assert_eq!(map.get(&LogicalChannelId(300)), Some(&1));
         assert_eq!(map.get(&a), Some(&2));
         assert_eq!(map.get(&b), Some(&3));
+    }
+
+    #[test]
+    fn unified_node_view_sees_all_tables_by_channel_id() {
+        let mut p = MixerParams::default();
+        p.ensure_len();
+        let lc = p.add_track_lc();
+        let bus = p.add_bus().expect("bus");
+        let audio = LogicalChannelId(300);
+        p.audio_channels.push(MixerNode::logical_channel(audio));
+
+        assert!(p.channel_node(ChannelId::Lc(LogicalChannelId(3))).is_some());
+        assert!(p.channel_node(ChannelId::Lc(lc)).is_some());
+        assert!(p.channel_node(ChannelId::Lc(audio)).is_some());
+        assert!(p.channel_node(ChannelId::Bus(bus)).is_some());
+        assert!(p.channel_node(ChannelId::Master).is_some());
+
+        let ids: HashSet<ChannelId> = p.nodes().map(|node| node.channel_id()).collect();
+        assert_eq!(
+            ids.len(),
+            p.nodes().count(),
+            "统一节点视图不能出现重复 ChannelId"
+        );
     }
 
     #[test]

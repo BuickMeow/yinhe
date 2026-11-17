@@ -13,13 +13,7 @@ use super::Document;
 
 impl Document {
     fn mixer_nodes_mut(&mut self) -> impl Iterator<Item = &mut MixerNode> {
-        self.mixer
-            .channels
-            .iter_mut()
-            .chain(self.mixer.audio_channels.iter_mut())
-            .chain(self.mixer.track_channels.iter_mut())
-            .chain(self.mixer.buses.iter_mut())
-            .chain(std::iter::once(&mut self.mixer.master))
+        self.mixer.nodes_mut()
     }
 
     /// 设置/清除一个节点的冻结音频。
@@ -96,12 +90,7 @@ impl Document {
     pub fn has_stale_freezes(&self) -> bool {
         let revision = self.data.revision;
         self.mixer
-            .channels
-            .iter()
-            .chain(self.mixer.audio_channels.iter())
-            .chain(self.mixer.track_channels.iter())
-            .chain(self.mixer.buses.iter())
-            .chain(std::iter::once(&self.mixer.master))
+            .nodes()
             .filter_map(|node| node.freeze.as_ref())
             .any(|freeze| freeze.source_revision != revision)
     }
