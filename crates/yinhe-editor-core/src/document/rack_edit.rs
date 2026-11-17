@@ -58,7 +58,7 @@ impl Document {
                 RackOutputMode::PerTrack => {
                     if track.lc.is_none() {
                         // 复制共享 LC 的混音参数，避免切换模式后听感突变。
-                        let source = self.mixer.channels[channel as usize].clone();
+                        let source = self.mixer.midi_node(channel).cloned().unwrap_or_else(|| yinhe_mixer::MixerNode::logical_channel(yinhe_types::LogicalChannelId(u32::from(channel))));
                         let id = self.mixer.add_track_lc();
                         if let Some(node) = self.mixer.track_node_mut(id) {
                             node.strip = source.strip;
@@ -127,7 +127,7 @@ impl Document {
             }
         } else {
             self.mixer.racks[channel as usize].output_mode = RackOutputMode::PerOutput;
-            let source = self.mixer.channels[channel as usize].clone();
+            let source = self.mixer.midi_node(channel).cloned().unwrap_or_else(|| yinhe_mixer::MixerNode::logical_channel(yinhe_types::LogicalChannelId(u32::from(channel))));
             let mut lcs = Vec::with_capacity(count);
             for _ in 0..count {
                 let id = self.mixer.add_track_lc();
@@ -302,7 +302,7 @@ impl Document {
         if !rack.instruments.is_empty() {
             return false;
         }
-        let source = self.mixer.channels[channel as usize].clone();
+        let source = self.mixer.midi_node(channel).cloned().unwrap_or_else(|| yinhe_mixer::MixerNode::logical_channel(yinhe_types::LogicalChannelId(u32::from(channel))));
         let id = self.mixer.add_track_lc();
         if let Some(node) = self.mixer.track_node_mut(id) {
             node.strip = source.strip;
@@ -375,7 +375,7 @@ impl Document {
             }
         }
         for (idx, channel) in assigned {
-            let source = self.mixer.channels[channel as usize].clone();
+            let source = self.mixer.midi_node(channel).cloned().unwrap_or_else(|| yinhe_mixer::MixerNode::logical_channel(yinhe_types::LogicalChannelId(u32::from(channel))));
             let id = self.mixer.add_track_lc();
             if let Some(node) = self.mixer.track_node_mut(id) {
                 node.strip = source.strip;

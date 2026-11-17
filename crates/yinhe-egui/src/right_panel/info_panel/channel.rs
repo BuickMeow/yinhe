@@ -210,10 +210,7 @@ fn show_midi(
     section_header(ui, t!("channel.inserts").as_ref());
     show_inserts(
         ui,
-        doc.mixer
-            .channels
-            .get(ch as usize)
-            .map(|node| node.inserts.as_slice()),
+        doc.mixer.midi_node(ch).map(|node| node.inserts.as_slice()),
     );
     out
 }
@@ -243,10 +240,7 @@ fn show_audio(ui: &mut egui::Ui, doc: &mut Document, ch: u16) -> ChannelInfoOut 
     section_header(ui, t!("channel.inserts").as_ref());
     show_inserts(
         ui,
-        doc.mixer
-            .audio_channels
-            .get(ch as usize)
-            .map(|node| node.inserts.as_slice()),
+        doc.mixer.audio_node(ch).map(|node| node.inserts.as_slice()),
     );
     out
 }
@@ -288,9 +282,6 @@ fn show_bus(ui: &mut egui::Ui, doc: &mut Document, bus: yinhe_types::BusId) -> C
         .unwrap_or_else(|| "CH".to_string());
     header(ui, display, &[]);
 
-    let Some(index) = doc.mixer.bus_index(bus) else {
-        return out;
-    };
     let node = MixerChannelId::Bus(bus);
     let mut strip = doc.mixer.node_strip(node);
     if strip_controls(ui, &mut strip) {
@@ -310,8 +301,7 @@ fn show_bus(ui: &mut egui::Ui, doc: &mut Document, bus: yinhe_types::BusId) -> C
         .unwrap_or_default();
     let inserts = doc
         .mixer
-        .buses
-        .get(index)
+        .bus_node(bus)
         .map(|node| node.inserts.clone())
         .unwrap_or_default();
     section_header(ui, t!("mix.sends").as_ref());

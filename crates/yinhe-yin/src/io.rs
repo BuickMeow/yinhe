@@ -432,11 +432,7 @@ fn migrate_bus_gain_lanes(model: &mut YinModel, mixer: &mut yinhe_mixer::MixerPa
             remaining.push(lane);
             continue;
         };
-        if let Some(node) = mixer
-            .buses
-            .iter_mut()
-            .find(|node| node.id == yinhe_types::MixerNodeId::Bus(bus))
-        {
+        if let Some(node) = mixer.bus_node_mut(bus) {
             node.automation.push(lane);
         }
     }
@@ -537,11 +533,7 @@ mod tests {
         migrate_bus_gain_lanes(&mut model, &mut mixer);
 
         assert!(model.tracks[0].automation_lanes.is_empty());
-        let node = mixer
-            .buses
-            .iter()
-            .find(|node| node.id == MixerNodeId::Bus(bus))
-            .expect("bus node");
+        let node = mixer.bus_node(bus).expect("bus node");
         assert_eq!(node.automation.len(), 1);
         assert_eq!(node.automation[0].target, AutomationTarget::BusGain { bus });
     }
@@ -555,6 +547,6 @@ mod tests {
         let mut mixer = MixerParams::default();
         migrate_bus_gain_lanes(&mut model, &mut mixer);
         assert!(model.tracks[0].automation_lanes.is_empty());
-        assert!(mixer.buses.iter().all(|node| node.automation.is_empty()));
+        assert!(mixer.nodes().all(|node| node.automation.is_empty()));
     }
 }

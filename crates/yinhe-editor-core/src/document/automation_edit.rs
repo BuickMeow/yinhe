@@ -917,9 +917,7 @@ impl Document {
                 } => {
                     let lane = self
                         .mixer
-                        .buses
-                        .iter()
-                        .find(|node| node.id == yinhe_types::MixerNodeId::Bus(bus))
+                        .bus_node(bus)
                         .and_then(|node| {
                             node.automation
                                 .iter()
@@ -1640,18 +1638,14 @@ mod tests {
         let action = doc.add_bus_automation_lane(bus).expect("lane");
         assert!(
             doc.mixer
-                .buses
-                .iter()
-                .find(|node| node.id == MixerNodeId::Bus(bus))
+                .bus_node(bus)
                 .is_some_and(|node| node.automation.len() == 1)
         );
 
         action.reversed().redo(&mut doc);
         assert!(
             doc.mixer
-                .buses
-                .iter()
-                .find(|node| node.id == MixerNodeId::Bus(bus))
+                .bus_node(bus)
                 .is_some_and(|node| node.automation.is_empty())
         );
     }
@@ -1673,9 +1667,7 @@ mod tests {
         assert_eq!(actions.len(), 1);
         let lane = doc
             .mixer
-            .buses
-            .iter()
-            .find(|node| node.id == MixerNodeId::Bus(bus))
+            .bus_node(bus)
             .and_then(|node| node.automation.first())
             .expect("bus lane");
         assert_eq!(lane.events[0].tick, 100);
@@ -1683,9 +1675,7 @@ mod tests {
         actions[0].clone().reversed().redo(&mut doc);
         let lane = doc
             .mixer
-            .buses
-            .iter()
-            .find(|node| node.id == MixerNodeId::Bus(bus))
+            .bus_node(bus)
             .and_then(|node| node.automation.first())
             .expect("bus lane");
         assert!(lane.events.is_empty(), "undo 应删除新增事件");
@@ -1707,8 +1697,7 @@ mod tests {
             .expect("lane");
         let lane = doc
             .mixer
-            .channels
-            .first()
+            .midi_node(0)
             .and_then(|n| n.automation.first())
             .expect("lane");
         assert_eq!(lane.events[0].value, 0.75);
@@ -1716,8 +1705,7 @@ mod tests {
         action.reversed().redo(&mut doc);
         assert!(
             doc.mixer
-                .channels
-                .first()
+                .midi_node(0)
                 .is_some_and(|n| n.automation.is_empty())
         );
     }
@@ -1729,7 +1717,7 @@ mod tests {
         assert!(doc.mixer.add_bus().is_some());
         let bus = yinhe_types::BusId(0);
         doc.add_bus_automation_lane(bus).expect("bus lane");
-        let node = doc.mixer.buses.first().expect("bus node");
+        let node = doc.mixer.bus_node(bus).expect("bus node");
         assert!(matches!(
             node.automation[0].target,
             AutomationTarget::BusGain { bus: bus_id } if bus_id == bus
@@ -1746,7 +1734,7 @@ mod tests {
             },
         )
         .expect("event");
-        let lane = &doc.mixer.buses.first().expect("bus node").automation[0];
+        let lane = &doc.mixer.bus_node(bus).expect("bus node").automation[0];
         assert_eq!(lane.events.last().map(|e| e.value), Some(0.5));
     }
 }

@@ -23,9 +23,7 @@ use rust_i18n::t;
 use yinhe_audio::InsertTarget;
 use yinhe_audio::channel_layout::ChannelLayout;
 use yinhe_mixer::{MasterParams, StripParams};
-use yinhe_types::{
-    ApChannelId, ApGroupId, ChannelId, LogicalChannelId, MixerChannelId, MixerNodeId,
-};
+use yinhe_types::{ApChannelId, ApGroupId, ChannelId, LogicalChannelId, MixerChannelId};
 
 use self::plugin_instance::PluginEntry;
 use crate::plugin_scan::ScanProgress;
@@ -452,8 +450,8 @@ impl App {
                 mixer.bus_sends_snapshot(),
                 mixer.audio_sends_snapshot(),
                 mixer
-                    .track_channels
-                    .iter()
+                    .nodes()
+                    .filter(|node| matches!(node.id, ChannelId::Lc(id) if id.0 >= yinhe_types::TRACK_LC_BASE))
                     .map(|node| node.sends.clone())
                     .collect(),
             )
@@ -485,7 +483,10 @@ impl App {
         self.migrate_builtin_inserts(idx);
         let mixer = self.workspace.documents[idx].mixer.clone();
         let mut rack = MixerRack::default();
-        for (ch, node) in mixer.channels.iter().enumerate() {
+        for ch in 0..yinhe_mixer::CHANNEL_COUNT {
+            let Some(node) = mixer.midi_node(ch as u8) else {
+                continue;
+            };
             for r in &node.inserts {
                 let _ = rack.load_plugin(
                     InsertTarget::Midi(ch as u8),
@@ -498,10 +499,13 @@ impl App {
                 );
             }
         }
-        for node in &mixer.track_channels {
-            let MixerNodeId::LogicalChannel(lc) = node.id else {
+        for node in mixer.nodes() {
+            let ChannelId::Lc(lc) = node.id else {
                 continue;
             };
+            if lc.0 < yinhe_types::TRACK_LC_BASE {
+                continue;
+            }
             for r in &node.inserts {
                 let _ = rack.load_plugin(
                     InsertTarget::TrackLc(lc),
@@ -514,8 +518,8 @@ impl App {
                 );
             }
         }
-        for node in &mixer.buses {
-            let MixerNodeId::Bus(bus_id) = node.id else {
+        for node in mixer.nodes() {
+            let ChannelId::Bus(bus_id) = node.id else {
                 continue;
             };
             for r in &node.inserts {
@@ -633,10 +637,9 @@ impl App {
         };
         let valid: std::collections::HashSet<_> = doc
             .mixer
-            .track_channels
-            .iter()
+            .nodes()
             .filter_map(|node| match node.id {
-                MixerNodeId::LogicalChannel(id) => Some(id),
+                ChannelId::Lc(id) if id.0 >= yinhe_types::TRACK_LC_BASE => Some(id),
                 _ => None,
             })
             .collect();
@@ -767,7 +770,7 @@ pub(crate) fn bus_meter_display(app: &mut App, dt: f32) -> Vec<crate::widgets::m
     let count = app
         .workspace
         .active_doc
-        .map(|idx| app.workspace.documents[idx].mixer.buses.len())
+        .map(|idx| app.workspace.documents[idx].mixer.bus_count())
         .unwrap_or(0);
     (0..count)
         .map(|bus| {
@@ -993,7 +996,7 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                                     }
                                 }
                                 // 总线条（bus / return）。
-                                let bus_count = app.workspace.documents[idx].mixer.buses.len();
+                                let bus_count = app.workspace.documents[idx].mixer.bus_count();
                                 if bus_count > 0 {
                                     ui.separator();
                                     for b in 0..bus_count {
@@ -1382,12 +1385,7 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
 fn strip_builtin_inserts(mixer: &mut yinhe_mixer::MixerParams) -> bool {
     use yinhe_mixer::PluginFormat;
     let mut removed = false;
-    for node in mixer
-        .channels
-        .iter_mut()
-        .chain(mixer.audio_channels.iter_mut())
-        .chain(mixer.buses.iter_mut())
-    {
+    for node in mixer.nodes_mut() {
         let before = node.inserts.len();
         node.inserts.retain(|r| r.format != PluginFormat::Builtin);
         removed |= node.inserts.len() != before;
@@ -1545,13 +1543,12 @@ mod tests {
     #[test]
     fn strip_builtin_inserts_removes_builtin_only() {
         let mut mixer = MixerParams::default();
-        mixer.channels[3].inserts = vec![
+        mixer.midi_node_mut(3).expect("midi 3").inserts = vec![
             insert_ref(PluginFormat::Builtin, "channel_gain"),
             insert_ref(PluginFormat::Clap, "clap-fx"),
         ];
         let bus = mixer.add_bus().expect("bus");
-        let bus_index = mixer.bus_index(bus).expect("bus index");
-        mixer.buses[bus_index].inserts = vec![
+        mixer.bus_node_mut(bus).expect("bus node").inserts = vec![
             insert_ref(PluginFormat::Builtin, "channel_pan"),
             insert_ref(PluginFormat::Vst3, "vst-fx"),
         ];
@@ -1561,10 +1558,16 @@ mod tests {
         ];
 
         assert!(strip_builtin_inserts(&mut mixer));
-        assert_eq!(mixer.channels[3].inserts.len(), 1);
-        assert_eq!(mixer.channels[3].inserts[0].plugin_id, "clap-fx");
-        assert_eq!(mixer.buses[bus_index].inserts.len(), 1);
-        assert_eq!(mixer.buses[bus_index].inserts[0].plugin_id, "vst-fx");
+        assert_eq!(mixer.midi_node(3).expect("midi 3").inserts.len(), 1);
+        assert_eq!(
+            mixer.midi_node(3).expect("midi 3").inserts[0].plugin_id,
+            "clap-fx"
+        );
+        assert_eq!(mixer.bus_node(bus).expect("bus").inserts.len(), 1);
+        assert_eq!(
+            mixer.bus_node(bus).expect("bus").inserts[0].plugin_id,
+            "vst-fx"
+        );
         assert_eq!(mixer.master.inserts.len(), 1);
         assert_eq!(mixer.master.inserts[0].plugin_id, "vst-master");
 

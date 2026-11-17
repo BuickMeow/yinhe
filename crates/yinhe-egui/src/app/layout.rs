@@ -91,7 +91,7 @@ impl App {
                         let bus_count = self
                             .workspace
                             .active_doc
-                            .map(|i| self.workspace.documents[i].mixer.buses.len())
+                            .map(|i| self.workspace.documents[i].mixer.bus_count())
                             .unwrap_or(0);
                         self.mix_height = crate::mix::auto_panel_height(bus_count);
                     }

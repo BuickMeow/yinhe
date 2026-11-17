@@ -270,8 +270,6 @@ impl AudioEngine {
         offset: usize,
         frames: usize,
     ) {
-        use yinhe_types::MixerNodeId;
-
         let frozen: Vec<(usize, String)> = self
             .mixer_params
             .nodes()
@@ -280,17 +278,18 @@ impl AudioEngine {
                 if self.freeze_capture.is_some() {
                     return None;
                 }
-                let MixerNodeId::LogicalChannel(id) = node.id else {
-                    return None;
-                };
-                let dense = match node.id.channel_id()? {
-                    yinhe_types::MixerChannelId::Midi(ch) => {
-                        self.channel_layout.dense_for(ch as usize)
+                let dense = match node.id {
+                    yinhe_types::ChannelId::Lc(id)
+                        if id.0 < yinhe_types::MIDI_CHANNEL_COUNT as u32 =>
+                    {
+                        self.channel_layout.dense_for(id.0 as usize)
                     }
-                    yinhe_types::MixerChannelId::Audio(ch) => {
-                        self.channel_layout.audio_dense_for(ch)
+                    yinhe_types::ChannelId::Lc(id) if id.0 < yinhe_types::TRACK_LC_BASE => {
+                        self.channel_layout.audio_dense_for(
+                            (id.0 - yinhe_types::MIDI_CHANNEL_COUNT as u32) as u16,
+                        )
                     }
-                    yinhe_types::MixerChannelId::TrackLc(_) => self
+                    yinhe_types::ChannelId::Lc(id) => self
                         .channel_layout
                         .track_lc_dense_for(id)
                         .map(|(_, dense)| dense)

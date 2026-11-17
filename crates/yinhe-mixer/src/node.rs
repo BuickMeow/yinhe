@@ -14,7 +14,7 @@ use std::ops::{Deref, DerefMut};
 
 use serde::{Deserialize, Serialize};
 use yinhe_types::{
-    ApGroupId, AutomationLane, BusId, LogicalChannelId, MixerNodeId, RackId, RackOutputMode,
+    ApGroupId, AutomationLane, BusId, ChannelId, LogicalChannelId, RackId, RackOutputMode,
     RackOutputTopology,
 };
 
@@ -111,7 +111,7 @@ pub struct FrozenAudio {
 /// `node.gain` 这种自然写法；`inserts` / `sends` / `output` 是节点独有字段。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MixerNode {
-    pub id: MixerNodeId,
+    pub id: ChannelId,
     #[serde(default)]
     pub strip: StripParams,
     #[serde(default)]
@@ -134,7 +134,7 @@ pub struct MixerNode {
 }
 
 impl MixerNode {
-    pub fn new(id: MixerNodeId) -> Self {
+    pub fn new(id: ChannelId) -> Self {
         Self {
             id,
             strip: StripParams::default(),
@@ -147,22 +147,22 @@ impl MixerNode {
     }
 
     pub fn logical_channel(id: LogicalChannelId) -> Self {
-        Self::new(MixerNodeId::LogicalChannel(id))
+        Self::new(ChannelId::Lc(id))
     }
 
     pub fn bus(id: BusId) -> Self {
-        Self::new(MixerNodeId::Bus(id))
+        Self::new(ChannelId::Bus(id))
     }
 
     pub fn master() -> Self {
-        Self::new(MixerNodeId::Master)
+        Self::new(ChannelId::Master)
     }
 }
 
 impl MixerNode {
     /// 节点的 C 统一身份。
-    pub const fn channel_id(&self) -> yinhe_types::ChannelId {
-        self.id.c_channel_id()
+    pub const fn channel_id(&self) -> ChannelId {
+        self.id
     }
 }
 

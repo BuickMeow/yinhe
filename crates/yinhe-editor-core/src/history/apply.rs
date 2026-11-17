@@ -558,12 +558,7 @@ fn apply_bus_automation_delta(
     remove: &[AutomationEvent],
     insert: &[AutomationEvent],
 ) {
-    let Some(node) = doc
-        .mixer
-        .buses
-        .iter_mut()
-        .find(|node| node.id == yinhe_types::MixerNodeId::Bus(bus))
-    else {
+    let Some(node) = doc.mixer.bus_node_mut(bus) else {
         return;
     };
     let idx = node
@@ -583,12 +578,7 @@ fn apply_bus_automation_lane_delta(
     lane_idx: usize,
     after: Option<&yinhe_types::AutomationLane>,
 ) {
-    let Some(node) = doc
-        .mixer
-        .buses
-        .iter_mut()
-        .find(|node| node.id == yinhe_types::MixerNodeId::Bus(bus))
-    else {
+    let Some(node) = doc.mixer.bus_node_mut(bus) else {
         return;
     };
     match after {

@@ -233,8 +233,8 @@ pub fn show(
         .collect();
     let bus_automation: Vec<Vec<yinhe_types::AutomationLane>> = doc
         .mixer
-        .buses
-        .iter()
+        .nodes()
+        .filter(|node| matches!(node.id, yinhe_types::ChannelId::Bus(_)))
         .map(|node| node.automation.clone())
         .collect();
     let track_mixer_lanes: Vec<Vec<(yinhe_types::MixerNodeId, Vec<yinhe_types::AutomationLane>)>> =
@@ -705,9 +705,7 @@ pub fn show(
                 }
                 track_panel::TrackAction::SetBusStrip { bus, params } => {
                     structural = false;
-                    if let Some(index) = doc.mixer.bus_index(*bus)
-                        && let Some(slot) = doc.mixer.buses.get_mut(index)
-                    {
+                    if let Some(slot) = doc.mixer.bus_node_mut(*bus) {
                         slot.strip = *params;
                     }
                     *mixer_dirty = true;

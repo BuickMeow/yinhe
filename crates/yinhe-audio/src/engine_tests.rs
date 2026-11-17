@@ -3345,7 +3345,7 @@ fn mixer_gain_pan_automation_reads_lc_nodes() {
     let mut engine = AudioEngine::new(48_000, layout);
     let mut mixer = MixerParams::default();
     let channel = MixerChannelId::Midi(0);
-    let node = mixer.channels.first_mut().expect("midi lc");
+    let node = mixer.midi_node_mut(0).expect("midi lc");
     node.automation.push(AutomationLane {
         target: AutomationTarget::MixerGain { channel },
         track: 0,
@@ -3370,7 +3370,7 @@ fn mixer_gain_pan_automation_reads_lc_nodes() {
     engine.mixer_params = mixer;
     engine.apply_mixer_automation(1);
 
-    let node = engine.mixer_params.channels.first().expect("midi lc");
+    let node = engine.mixer_params.midi_node(0).expect("midi lc");
     assert!((node.gain - 0.25).abs() < f32::EPSILON);
     assert!((node.pan - 0.5).abs() < f32::EPSILON);
 }
@@ -3388,7 +3388,7 @@ fn mixer_send_automation_updates_node_send_amount() {
     let mut mixer = MixerParams::default();
     let bus = mixer.add_bus().expect("bus");
     let channel = MixerChannelId::Midi(0);
-    let node = mixer.channels.first_mut().expect("midi lc");
+    let node = mixer.midi_node_mut(0).expect("midi lc");
     node.sends.push(SendParams {
         bus,
         amount: 0.0,
@@ -3409,8 +3409,7 @@ fn mixer_send_automation_updates_node_send_amount() {
 
     let send = engine
         .mixer_params
-        .channels
-        .first()
+        .midi_node(0)
         .and_then(|node| node.sends.first())
         .expect("send");
     assert!((send.amount - 1.0).abs() < f32::EPSILON);
@@ -3428,11 +3427,7 @@ fn bus_gain_automation_reads_bus_node_lanes() {
     let mut engine = AudioEngine::new(48_000, layout);
     let mut mixer = MixerParams::default();
     let bus = mixer.add_bus().expect("bus");
-    let node = mixer
-        .buses
-        .iter_mut()
-        .find(|node| node.id == MixerNodeId::Bus(bus))
-        .expect("bus node");
+    let node = mixer.bus_node_mut(bus).expect("bus node");
     node.automation.push(AutomationLane {
         target: AutomationTarget::BusGain { bus },
         track: 0,
@@ -3447,9 +3442,7 @@ fn bus_gain_automation_reads_bus_node_lanes() {
     engine.apply_bus_automation(1);
     let gain = engine
         .mixer_params
-        .buses
-        .iter()
-        .find(|node| node.id == MixerNodeId::Bus(bus))
+        .bus_node(bus)
         .expect("bus node")
         .strip
         .gain;
@@ -3493,7 +3486,7 @@ fn insert_param_automation_writes_processor_param() {
 
     let mut mixer = MixerParams::default();
     let channel = MixerChannelId::Midi(0);
-    mixer.channels[0].automation.push(AutomationLane {
+    mixer.midi_node_mut(0).expect("midi 0").automation.push(AutomationLane {
         target: AutomationTarget::InsertParam {
             target: channel,
             slot: 0,
@@ -3528,7 +3521,7 @@ fn frozen_lc_overwrites_target_channel_buffer() {
     let mut engine = AudioEngine::new(48_000, layout);
     engine.mixer.resize(1, 8, &[]);
     let mut mixer = MixerParams::default();
-    mixer.channels[0].freeze = Some(FrozenAudio {
+    mixer.midi_node_mut(0).expect("midi 0").freeze = Some(FrozenAudio {
         source: "freeze-a".into(),
         source_revision: 1,
         sample_rate: 48_000,
@@ -3566,7 +3559,7 @@ fn frozen_lc_forces_channel_active() {
     engine.mixer.resize(1, 512, &[]);
     engine.cpu_synth = Some(yinhe_synth::CpuSynth::new(48_000));
     let mut mixer = MixerParams::default();
-    mixer.channels[0].freeze = Some(FrozenAudio {
+    mixer.midi_node_mut(0).expect("midi 0").freeze = Some(FrozenAudio {
         source: "freeze".into(),
         source_revision: 0,
         sample_rate: 48_000,

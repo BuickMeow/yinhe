@@ -296,18 +296,19 @@ pub(crate) fn show(
             tracks: &doc.data.model.tracks,
             arr_am_ms: &mut doc.edit.arr_am_ms,
             request_pianoroll,
-            midi_strips: &doc
-                .mixer
-                .channels
-                .iter()
-                .map(|node| node.strip)
+            midi_strips: &(0..yinhe_mixer::CHANNEL_COUNT)
+                .map(|ch| doc.mixer.strip(ch as u8))
                 .collect::<Vec<_>>(),
-            audio_strips: &doc
-                .mixer
-                .audio_channels
-                .iter()
-                .map(|node| node.strip)
-                .collect::<Vec<_>>(),
+            audio_strips: &{
+                let mut out = Vec::new();
+                for ch in 0.. {
+                    let Some(node) = doc.mixer.audio_node(ch) else {
+                        break;
+                    };
+                    out.push(node.strip);
+                }
+                out
+            },
             midi_levels,
             audio_levels,
             cursor_tick: doc.edit.cursor_tick,
@@ -360,8 +361,8 @@ pub(crate) fn show(
         let (def_num, def_den) = model.tempo_map.time_sig_default;
         let bus_automation: Vec<Vec<yinhe_types::AutomationLane>> = doc
             .mixer
-            .buses
-            .iter()
+            .nodes()
+            .filter(|node| matches!(node.id, yinhe_types::ChannelId::Bus(_)))
             .map(|node| node.automation.clone())
             .collect();
         let track_mixer_lanes: Vec<

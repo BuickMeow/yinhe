@@ -131,11 +131,11 @@ fn undo_restores_track_name() {
 fn mixer_params_undo_redo_roundtrip() {
     let mut doc = make_doc("t");
     doc.mixer.ensure_len();
-    doc.mixer.channels[0].gain = 0.25;
+    doc.mixer.midi_node_mut(0).expect("midi 0").gain = 0.25;
     doc.mixer.master.gain = 0.8;
     let before = Box::new(doc.mixer.clone());
     // 模拟一次混音台编辑：通道 0 推子 + master 同时变化。
-    doc.mixer.channels[0].gain = 0.5;
+    doc.mixer.midi_node_mut(0).expect("midi 0").gain = 0.5;
     doc.mixer.master.gain = 0.4;
     let after = Box::new(doc.mixer.clone());
     assert_ne!(*before, *after);
@@ -149,13 +149,13 @@ fn mixer_params_undo_redo_roundtrip() {
 
     // Undo 恢复编辑前参数。
     assert!(doc.undo());
-    assert_eq!(doc.mixer.channels[0].gain, 0.25);
+    assert_eq!(doc.mixer.midi_node_mut(0).expect("midi 0").gain, 0.25);
     assert_eq!(doc.mixer.master.gain, 0.8);
     assert!(doc.mixer_dirty, "undo 后应标脏以便保存");
 
     // Redo 恢复编辑后参数。
     assert!(doc.redo());
-    assert_eq!(doc.mixer.channels[0].gain, 0.5);
+    assert_eq!(doc.mixer.midi_node_mut(0).expect("midi 0").gain, 0.5);
     assert_eq!(doc.mixer.master.gain, 0.4);
 }
 

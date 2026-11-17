@@ -135,7 +135,15 @@ pub(crate) fn track_mixer_lanes(
     node_id
         .and_then(|id| mixer.node(id))
         .filter(|node| !node.automation.is_empty())
-        .map(|node| vec![(node.id, node.automation.clone())])
+        .and_then(|node| {
+            let id = match node.id {
+                yinhe_types::ChannelId::Lc(id) => yinhe_types::MixerNodeId::LogicalChannel(id),
+                yinhe_types::ChannelId::Bus(bus) => yinhe_types::MixerNodeId::Bus(bus),
+                yinhe_types::ChannelId::Master => yinhe_types::MixerNodeId::Master,
+                yinhe_types::ChannelId::Ap(_) => return None,
+            };
+            Some(vec![(id, node.automation.clone())])
+        })
         .unwrap_or_default()
 }
 

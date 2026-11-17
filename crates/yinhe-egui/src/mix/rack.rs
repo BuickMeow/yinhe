@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use yinhe_audio::{AudioCommand, AudioHandle, BuiltinInsert, ClapInsert, InsertTarget};
 use yinhe_clap::{ClapProcessor, HostInfo};
 use yinhe_mixer::{InsertProcessor, MixerParams, PluginFormat};
-use yinhe_types::{BusId, LogicalChannelId, MixerChannelId, MixerNodeId};
+use yinhe_types::{BusId, LogicalChannelId, MixerChannelId};
 use yinhe_vst3::Vst3Insert;
 
 use super::plugin_instance::{PluginEntry, PluginInstance};
@@ -485,10 +485,13 @@ impl MixerRack {
 
     /// 为 MixerParams 里新增的每轨 LC 建机架链并加载持久化 insert。
     pub fn ensure_track_lc_chains(&mut self, mixer: &MixerParams) {
-        for node in &mixer.track_channels {
-            let MixerNodeId::LogicalChannel(lc) = node.id else {
+        for node in mixer.nodes() {
+            let yinhe_types::ChannelId::Lc(lc) = node.id else {
                 continue;
             };
+            if lc.0 < yinhe_types::TRACK_LC_BASE {
+                continue;
+            }
             if self.track_lcs.contains_key(&lc) {
                 continue;
             }

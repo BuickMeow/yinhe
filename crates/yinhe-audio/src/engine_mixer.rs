@@ -27,12 +27,7 @@ impl AudioEngine {
             gain: self.mixer_params.master.gain,
         });
         // 总线与发送：全量同步（数量变化走 resize_buses）。
-        let bus_strips: Vec<StripParams> = self
-            .mixer_params
-            .buses
-            .iter()
-            .map(|node| node.strip)
-            .collect();
+        let bus_strips: Vec<StripParams> = self.mixer_params.bus_strips();
         self.mixer
             .resize_buses(bus_strips.len(), self.mixer.frames(), &bus_strips);
         for (i, p) in bus_strips.into_iter().enumerate() {
@@ -81,18 +76,8 @@ impl AudioEngine {
     /// 总线发送（bus → bus）按总线索引直接推。
     /// 未激活通道的 send 暂存于持久化层，引擎重建/激活后由全量同步补上。
     fn sync_sends_to_graph(&mut self) {
-        let sends: Vec<Vec<SendParams>> = self
-            .mixer_params
-            .channels
-            .iter()
-            .map(|node| node.sends.clone())
-            .collect();
-        let audio_sends: Vec<Vec<SendParams>> = self
-            .mixer_params
-            .audio_channels
-            .iter()
-            .map(|node| node.sends.clone())
-            .collect();
+        let sends: Vec<Vec<SendParams>> = self.mixer_params.midi_sends_snapshot();
+        let audio_sends: Vec<Vec<SendParams>> = self.mixer_params.audio_sends_snapshot();
         let count = self.channel_layout.compacted_channels() as usize;
         for dense in 0..count {
             let list = self
@@ -109,12 +94,7 @@ impl AudioEngine {
                 .unwrap_or_default();
             self.mixer.set_sends(dense, list);
         }
-        let bus_sends: Vec<Vec<SendParams>> = self
-            .mixer_params
-            .buses
-            .iter()
-            .map(|node| node.sends.clone())
-            .collect();
+        let bus_sends: Vec<Vec<SendParams>> = self.mixer_params.bus_sends_snapshot();
         for (i, list) in bus_sends.into_iter().enumerate() {
             let resolved = self.resolve_sends(&list);
             self.mixer.set_bus_sends(i, resolved);
@@ -169,13 +149,14 @@ impl AudioEngine {
         {
             return Some(dense);
         }
-        if let Some(i) =
-            self.mixer_params.audio_channels.iter().position(|node| {
-                node.id.channel_id().and_then(|c| c.logical_channel_id()) == Some(lc)
-            })
-        {
-            let dense = self.channel_layout.audio_dense_for(i as u16);
-            return (dense != u32::MAX).then_some(dense);
+        for i in 0.. {
+            let Some(node) = self.mixer_params.audio_node(i) else {
+                break;
+            };
+            if node.channel_id() == yinhe_types::ChannelId::Lc(lc) {
+                let dense = self.channel_layout.audio_dense_for(i);
+                return (dense != u32::MAX).then_some(dense);
+            }
         }
         if lc.0 < yinhe_types::MIDI_CHANNEL_COUNT as u32 {
             let dense = self.channel_layout.dense_for(lc.0 as usize);
@@ -256,7 +237,9 @@ impl AudioEngine {
         let Some(idx) = self.mixer_params.bus_index(bus) else {
             return;
         };
-        self.mixer_params.buses[idx].strip = params;
+        if let Some(node) = self.mixer_params.bus_node_mut(bus) {
+            node.strip = params;
+        }
         self.mixer.set_bus_strip(idx, params);
     }
 
@@ -272,38 +255,51 @@ impl AudioEngine {
         // 旧命令仍按「总线条 / 源通道发送 / 音频发送」三张表传递；
         // 这里落到 v10 的节点表，保持命令层不用一次性改完。
         for (i, strip) in buses.into_iter().enumerate() {
-            if let Some(node) = self.mixer_params.buses.get_mut(i) {
+            let Some(bus) = self.mixer_params.bus_id_at(i) else {
+                continue;
+            };
+            if let Some(node) = self.mixer_params.bus_node_mut(bus) {
                 node.strip = strip;
             }
         }
         self.mixer_params.ensure_channel_tables(audio_sends.len());
         for (i, list) in sends.into_iter().enumerate() {
-            if let Some(node) = self.mixer_params.channels.get_mut(i) {
+            if let Some(node) = self.mixer_params.midi_node_mut(i as u8) {
                 node.sends = list;
             }
         }
         self.mixer_params.ensure_channel_tables(audio_sends.len());
         for (i, list) in audio_sends.into_iter().enumerate() {
-            if let Some(node) = self.mixer_params.audio_channels.get_mut(i) {
+            if let Some(node) = self.mixer_params.audio_node_mut(i as u16) {
                 node.sends = list;
             }
         }
+        let track_ids: Vec<_> = self
+            .mixer_params
+            .nodes
+            .iter()
+            .filter_map(|node| match node.id {
+                yinhe_types::ChannelId::Lc(id) if id.0 >= yinhe_types::TRACK_LC_BASE => Some(id),
+                _ => None,
+            })
+            .collect();
         for (i, list) in track_sends.into_iter().enumerate() {
-            if let Some(node) = self.mixer_params.track_channels.get_mut(i) {
+            let Some(id) = track_ids.get(i) else {
+                break;
+            };
+            if let Some(node) = self.mixer_params.track_node_mut(*id) {
                 node.sends = list;
             }
         }
         for (i, list) in bus_sends.into_iter().enumerate() {
-            if let Some(node) = self.mixer_params.buses.get_mut(i) {
+            let Some(bus) = self.mixer_params.bus_id_at(i) else {
+                continue;
+            };
+            if let Some(node) = self.mixer_params.bus_node_mut(bus) {
                 node.sends = list;
             }
         }
-        let bus_strips: Vec<StripParams> = self
-            .mixer_params
-            .buses
-            .iter()
-            .map(|node| node.strip)
-            .collect();
+        let bus_strips: Vec<StripParams> = self.mixer_params.bus_strips();
         self.mixer
             .resize_buses(bus_strips.len(), self.mixer.frames(), &bus_strips);
         for (i, p) in bus_strips.into_iter().enumerate() {
@@ -321,7 +317,7 @@ impl AudioEngine {
         let mut send_updates: Vec<(MixerChannelId, BusId, f32)> = Vec::new();
         let mut insert_updates: Vec<(MixerChannelId, usize, u32, f64)> = Vec::new();
         let mut collect = |node: &yinhe_mixer::MixerNode| {
-            let Some(channel) = node.id.channel_id() else {
+            let Some(channel) = mixer_channel_of(node.id) else {
                 return;
             };
             let gain = node
@@ -381,16 +377,7 @@ impl AudioEngine {
                 insert_updates.push((channel, slot, id, value));
             }
         };
-        for node in &self.mixer_params.channels {
-            collect(node);
-        }
-        for node in &self.mixer_params.audio_channels {
-            collect(node);
-        }
-        for node in &self.mixer_params.track_channels {
-            collect(node);
-        }
-        for node in &self.mixer_params.buses {
+        for node in self.mixer_params.nodes() {
             collect(node);
         }
         collect(&self.mixer_params.master);
@@ -483,13 +470,11 @@ impl AudioEngine {
     /// 按 tick 求值 BusGain 自动化并写入总线 strip。
     /// 没有 lane 的总线保持用户推子值；lane 存在但事件尚未开始时用 1.0。
     pub(crate) fn apply_bus_automation(&mut self, tick: u32) {
-        let updates: Vec<(usize, f32)> = self
+        let updates: Vec<(BusId, f32)> = self
             .mixer_params
-            .buses
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, node)| {
-                let yinhe_types::MixerNodeId::Bus(bus_id) = node.id else {
+            .nodes()
+            .filter_map(|node| {
+                let yinhe_types::ChannelId::Bus(bus_id) = node.id else {
                     return None;
                 };
                 let lane = node.automation.iter().find(|lane| {
@@ -500,11 +485,14 @@ impl AudioEngine {
                     .map(|(v, _)| v)
                     .unwrap_or(1.0)
                     .clamp(0.0, 1.0);
-                Some((idx, value))
+                Some((bus_id, value))
             })
             .collect();
-        for (idx, value) in updates {
-            if let Some(node) = self.mixer_params.buses.get_mut(idx)
+        for (bus_id, value) in updates {
+            let Some(idx) = self.mixer_params.bus_index(bus_id) else {
+                continue;
+            };
+            if let Some(node) = self.mixer_params.bus_node_mut(bus_id)
                 && (node.strip.gain - value).abs() > f32::EPSILON
             {
                 node.strip.gain = value;
@@ -515,7 +503,7 @@ impl AudioEngine {
 
     /// 更新某源通道的 strip（推子/声像/M/S 拖动的高频路径，幂等）。
     pub(crate) fn set_channel_strip(&mut self, channel: u8, params: StripParams) {
-        if let Some(slot) = self.mixer_params.channels.get_mut(channel as usize) {
+        if let Some(slot) = self.mixer_params.midi_node_mut(channel) {
             slot.strip = params;
         }
         let dense = self.channel_layout.dense_for(channel as usize);
@@ -533,7 +521,7 @@ impl AudioEngine {
     pub(crate) fn set_audio_strip(&mut self, channel: u16, params: StripParams) {
         self.mixer_params
             .ensure_channel_tables(channel as usize + 1);
-        if let Some(slot) = self.mixer_params.audio_channels.get_mut(channel as usize) {
+        if let Some(slot) = self.mixer_params.audio_node_mut(channel) {
             slot.strip = params;
         }
         let dense = self.channel_layout.audio_dense_for(channel);
@@ -769,5 +757,24 @@ impl AudioEngine {
             }
         }
         self.mixer.refresh_pdc();
+    }
+}
+
+fn mixer_channel_of(id: yinhe_types::ChannelId) -> Option<MixerChannelId> {
+    match id {
+        yinhe_types::ChannelId::Lc(id) => {
+            if id.0 < yinhe_types::MIDI_CHANNEL_COUNT as u32 {
+                Some(MixerChannelId::Midi(id.0 as u8))
+            } else if id.0 < yinhe_types::TRACK_LC_BASE {
+                Some(MixerChannelId::Audio(
+                    (id.0 - yinhe_types::MIDI_CHANNEL_COUNT as u32) as u16,
+                ))
+            } else {
+                Some(MixerChannelId::TrackLc(id))
+            }
+        }
+        yinhe_types::ChannelId::Ap(_) => None,
+        yinhe_types::ChannelId::Bus(bus) => Some(MixerChannelId::Bus(bus)),
+        yinhe_types::ChannelId::Master => Some(MixerChannelId::Master),
     }
 }

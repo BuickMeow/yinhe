@@ -53,24 +53,22 @@ impl AudioEngine {
         }
         // 冻结的 LC 即使没有活跃 voice 也必须参与混音（推子/insert/send），
         // 否则冻结音频会被空通道跳过。
-        for node in self
-            .mixer_params
-            .channels
-            .iter()
-            .chain(self.mixer_params.audio_channels.iter())
-            .chain(self.mixer_params.track_channels.iter())
-        {
+        for node in self.mixer_params.nodes() {
             if node.freeze.is_none() {
                 continue;
             }
-            let dense = match node.id.channel_id() {
-                Some(yinhe_types::MixerChannelId::Midi(ch)) => {
-                    self.channel_layout.dense_for(ch as usize)
+            let dense = match node.id {
+                yinhe_types::ChannelId::Lc(id)
+                    if id.0 < yinhe_types::MIDI_CHANNEL_COUNT as u32 =>
+                {
+                    self.channel_layout.dense_for(id.0 as usize)
                 }
-                Some(yinhe_types::MixerChannelId::Audio(ch)) => {
-                    self.channel_layout.audio_dense_for(ch)
+                yinhe_types::ChannelId::Lc(id) if id.0 < yinhe_types::TRACK_LC_BASE => {
+                    self.channel_layout.audio_dense_for(
+                        (id.0 - yinhe_types::MIDI_CHANNEL_COUNT as u32) as u16,
+                    )
                 }
-                Some(yinhe_types::MixerChannelId::TrackLc(id)) => self
+                yinhe_types::ChannelId::Lc(id) => self
                     .channel_layout
                     .track_lc_dense_for(id)
                     .map(|(_, dense)| dense)

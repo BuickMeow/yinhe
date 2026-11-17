@@ -795,9 +795,23 @@ impl Document {
         for node in self.mixer.nodes_mut() {
             if node.solo {
                 node.solo = false;
-                if let Some(channel) = node.id.channel_id() {
-                    changed.push(channel);
-                }
+                changed.push(match node.id {
+                    yinhe_types::ChannelId::Lc(id)
+                        if id.0 < yinhe_types::MIDI_CHANNEL_COUNT as u32 =>
+                    {
+                        MixerChannelId::Midi(id.0 as u8)
+                    }
+                    yinhe_types::ChannelId::Lc(id) if id.0 < yinhe_types::TRACK_LC_BASE => {
+                        MixerChannelId::Audio(
+                            (id.0 - yinhe_types::MIDI_CHANNEL_COUNT as u32) as u16,
+                        )
+                    }
+                    yinhe_types::ChannelId::Lc(id) => MixerChannelId::TrackLc(id),
+                    yinhe_types::ChannelId::Bus(bus) => MixerChannelId::Bus(bus),
+                    yinhe_types::ChannelId::Ap(_) | yinhe_types::ChannelId::Master => {
+                        MixerChannelId::Master
+                    }
+                });
             }
         }
         if !changed.is_empty() {
