@@ -43,7 +43,8 @@
 ```text
 .yin 容器版本：10（保持）
 混音段版本：  10（合并未发布的 v7..v14）
-保留解码：    v6（已发布）/ v9（最后开发基线）/ v10（C）
+保留解码：    v9（最后开发基线）/ v10（C）
+不保留：      v6（beta 工程需明确警告，或后续单独补 legacy）
 ```
 
 下文为了描述当前代码，仍会提到 v14；涉及迁移/版本号时以本节为准。
@@ -54,6 +55,18 @@
    通道条只显示身份，不写“几条轨共享”之类说明文字。
 7. **ARRANGE 与 MIX 的 AR 不再互斥**：两者可以同时显示，分别服务轨道视图和
    通道视图；选择/自动化状态同步。
+
+8. **默认 LC Rack 使用内置音源**。只有用户显式选择外部插件时才创建 LC Rack
+   插件实例；外部插件按轨实例化的成本不能默认承担。
+9. **独立 Track 暂时都放 Port A**。导出时只在 Port A 的 16 个通道里分配；
+   AP 仍可占用 A01..P16 中已有的 MIDI 通道。Port B..P 的独立通道扩展留到以后。
+10. **解链 AP 不复制自动化**。自动化始终挂在 AP 上；Track 回到 OwnLc 时
+    得到一条空的 LC 自动化，不把 AP 曲线复制回 Track。
+11. **AP 必须对应 MIDI 通道**。不再允许“没有 MIDI 通道的纯共享 Rack AP”。
+12. **版本解码保留 v9/v10**。C 的混音段最终为 v10；不再保留 v6/v7/v8 和
+    v10..v14 中间开发格式（beta v6 兼容风险见版本历史文档）。
+13. **冲突点用 UI 按钮裁决**。默认最后编辑优先；同一 owner/target/tick 有
+    不同值时，在锚点/通道上显示冲突标记和“以哪条为准”的按钮。
 
 ## 1. 术语
 
@@ -302,8 +315,8 @@ LC ID 是**独立命名空间**，不再编码“MIDI 源通道/音频通道号�
 ```rust
 struct ApGroup {
     id: ApGroupId,
-    /// 对应 MIDI 通道；None = 用户手工建的无 MIDI 编组（可选）。
-    midi: Option<(u8 /*port*/, u8 /*channel*/)>,
+    /// 对应 MIDI 通道；AP 必须绑定一个 MIDI 通道。
+    midi: (u8 /*port*/, u8 /*channel*/),
     rack: RackParams,
     /// 方案 C MVP：AP 只有一条音频通道。
     /// 后期如果做多输出，再扩展成 `channels: Vec<ChannelId>`。
@@ -601,6 +614,66 @@ FL 那种 Playlist Track 与 Mixer Track 默认解耦的混乱。
 - LC Rack 里可以加载鼓插件，但那是插件音源，不是 MIDI 鼓通道语义；
 - 不要给 LC 增加 `drum_channel` 字段，否则会把 MIDI 通道概念又塞回音频通道。
 
+### 5.6 AP 和 LC 的本质区别
+
+如果 LC 也能当 Bus、也能接收很多音频，它和 AP 到底差在哪？
+
+答案不是“能不能汇总”，而是**汇总发生在音频链的哪一侧**：
+
+```text
+AP：先分组 MIDI，再合成
+Track 1 ─┐
+Track 2 ─┼─ MIDI/CC ─> 共享 Rack（一个乐器实例）─> AP 通道
+Track 3 ─┘
+
+LC Bus：先各自合成，再汇总音频
+Track 1 -> 私有 LC Rack -> LC 1 ─┐
+Track 2 -> 私有 LC Rack -> LC 2 ─┼─ send ─> LC Bus（纯汇入通道）
+Track 3 -> 私有 LC Rack -> LC 3 ─┘
+```
+
+| 维度 | AP | LC / LC Bus |
+|---|---|---|
+| 分组对象 | MIDI 音符/CC | 音频流 |
+| 共享乐器 | 是，一个 Rack 实例 | 否，各轨自己的 LC Rack |
+| 共享样本/voice | 是 | 否 |
+| MIDI 通道身份 | 有，绑定 A01..P16 | 没有 |
+| 默认每轨独立 | 否，链接才共享 | 是 |
+| 能否当 Bus | 可以接收音频 send，但它首先是 MIDI 源 | 可以，纯汇入通道就是 Bus |
+| freeze 单位 | AP 通道（共享输出） | 源 LC 或 Bus 通道（见 freeze 规则） |
+
+所以 AP 的意义不只是“指定通道”：
+
+- 它指定 MIDI 源身份；
+- 它决定哪些 Track 共享同一个乐器实例；
+- 它共享 CC/乐器参数自动化；
+- 它共享 voice pool、样本内存、乐器内部状态；
+- 它的音频输出才是一条 AP 通道。
+
+LC Bus 只共享音频汇总，不会让多条 Track 共享乐器。两者可以叠加：
+
+```text
+Track -> AP01 -> AP 通道 -> send -> CH10（Bus 角色）-> Master
+```
+
+### 5.7 不建议让 LC 变成“多条通道的容器”
+
+“LC 也可以有多条通道”听起来灵活，但会制造和 AP 重复的层级：
+
+- LC 如果包含多条子通道，它就成了一个 Bus/Group 容器；
+- 再让 LC 做 freeze，就要回答“冻结整组还是单条”；
+- 再让 LC 做 AP 式的 MIDI 共享，它就和 AP 没区别；
+- 层级越深，Track 到底在哪个通道越难理解。
+
+推荐保持**扁平通道图**：
+
+```text
+Track -> Channel（LC 或 AP 通道）-> Channel ... -> Master
+```
+
+需要分组音频就用 send 到一个 Bus 角色的 LC；需要分组 MIDI/乐器就用 AP。
+不要让 LC 再包一层 LC。这样 freeze、自动化、路由都只有一个维度。
+
 ## 6. 自动化与普通 CC 的合并
 
 ### 6.1 两类自动化
@@ -687,15 +760,16 @@ LC Gain
 导出前建立通道表：
 
 1. 已链接 MIDI 的 AP 编组占用其固定通道；
-2. 独立 `OwnLc` Track 按轨道顺序分配剩余 `(port, channel)`；
+2. 独立 `OwnLc` Track 只在 **Port A** 的剩余通道里分配（0..15）；
 3. 每个独立 Track 只拿一个通道；AP 的所有 Track 共用一个通道；
-4. AP 无论以后是否做多输出，都只占一个 MIDI 输入通道（多输出只是音频拆分）。
+4. AP 无论以后是否做多输出，都只占一个 MIDI 输入通道（多输出只是音频拆分）；
+5. Port B..P 的独立通道扩展留到以后，不在 C MVP。
 
 伪代码：
 
 ```text
-used = { ap.midi for ap in aps if ap.midi.is_some() }
-pool = all (port, channel) not in used
+used = { ap.midi for ap in aps }        // AP 固定通道
+pool = Port A 的 16 个通道 - used         // 独立 Track 只用 Port A
 
 for track in tracks:
     if track.audio_target is Ap:
@@ -722,8 +796,10 @@ for track in tracks:
 
 当前导出只写低 4 位通道，没有 `MidiPort` meta。方案 C 第一阶段：
 
-- 只使用 Port A 的 16 个通道；
-- 需要超过 16 条独立通道时，再补 `MidiPort` meta，扩展到 A..P 共 256 个。
+- 独立 Track 只使用 Port A 的 16 个通道；
+- AP 可以使用 A01..P16 中已有的 MIDI 通道（它的 MIDI 身份固定）；
+- 需要超过 16 条独立通道时，按 Fail/ReuseSafe 处理，或以后再补
+  `MidiPort` meta 扩展到 Port B..P。
 
 注意：不是所有 DAW 都保留 MIDI port，扩展端口前要先在导出选项里明确提示。
 
@@ -1002,6 +1078,31 @@ DirectMaster:
 不要把 `DirectMaster` 做成“特殊 LC”，否则又会回到“所有东西都必须有
 channel strip”的旧模型。
 
+### 10.3 Bus/混合 LC 怎么 freeze
+
+因为 LC 可以当 Bus，freeze 必须按“这条通道有没有自己的源/有没有汇入”区分：
+
+| 通道状态 | freeze |
+|---|---|
+| 源 LC：有 LC Rack/音频输入，没有其他通道 send 进来 | 可以，冻结这条 LC 的源 |
+| AP 通道：共享 Rack 的输出 | 可以，冻结整个 AP 通道 |
+| 纯 Bus：`source = None`，只接收 send | 不可以，没有自己的源可冻结 |
+| 混合 LC：有自己的源 + 其他通道 send 进来 | 默认不可以；先移除汇入或改用 Bus |
+| DirectMaster：没有 LC/AP 通道 | 不可以按通道 freeze |
+
+原因：
+
+- 冻结“源 LC”是明确的：把这条 LC 的源渲染成音频，LC 的 insert/send 仍实时；
+- 冻结“纯 Bus”不明确：它的输入来自其他通道，冻结后上游还在跑，是否要同时
+  静音上游 send？这会把一条通道的 freeze 变成整张图的操作；
+- 冻结“混合 LC”更不明确：只冻结自己的源，汇入音频还在，结果不是用户听到的
+  那条通道；
+- 需要整组冻结时，正确做法是**冻结每条源 LC/AP 通道**，或者离线 bounce
+  整组输出；不要给 Bus 发明一个“整组 freeze”语义。
+
+如果以后确实要做 group freeze，再单独设计成“批量冻结上游源通道”，不要
+把它塞进单通道 freeze。
+
 ---
 
 ## 11. 迁移
@@ -1031,9 +1132,10 @@ channel strip”的旧模型。
 
 版本差异：
 
-- v6（已发布）没有 v7 的主输出表，迁移时按源通道默认 Master；
+- v6（已发布 beta）当前不纳入 C 的兼容范围；如果 beta 工程必须可读，
+  要单独补 legacy 解码/警告；
 - v9（最后开发基线）已有稳定 BusId；
-- v7/v8/v10..v14 是未发布开发格式，按版本历史文档决定是否保留 legacy 解码。
+- v7/v8/v10..v14 是未发布开发格式，不保留。
 
 ### 11.2 新工程
 
@@ -1044,7 +1146,7 @@ channel strip”的旧模型。
 
 ### 11.3 兼容
 
-- C v10 加载器支持 v6（已发布）/ v9（最后开发基线）/ v10（C）；
+- C v10 加载器支持 v9（最后开发基线）/ v10（C）；v6 beta 不保留，加载时明确警告；
 - 旧 v10..v14 开发格式不再保留解码器（未发布，按版本历史文档处理）；
 - 旧版本不能打开 C v10，这是破坏性变更，需要在文档和发布说明中写清楚；
 - 回滚方式：发布前备份工程；加载器只保证向后读，不维护双写。
@@ -1140,15 +1242,10 @@ channel strip”的旧模型。
 
 1. 默认 LC Rack 用内置音源还是外部插件？外部插件按轨实例化成本很高。
 2. 多输出插件 C MVP 不做，后期是否重开？本文建议留到明确需求出现时再加。
-3. LC 默认是否允许作为 Bus？已确认：允许，`accepts_audio_input` 默认 true，
-   “Bus”只是 `source = None` 的通道角色。
-4. 同 owner 同 target 的冲突，采用「最后编辑优先」还是让用户手动裁决？
-   本文建议最后编辑优先 + UI 标记。
-5. 独立 Track 数超过 16 时，第一阶段是否只支持 Port A 16 通道？
-6. 解链 AP 时，AP 上的自动化是否复制回 Track，还是保持 AP、Track 回到空
-   的 LC？本文建议不复制，避免同一条曲线出现两份。
-7. 是否允许一个 AP 编组不对应 MIDI 通道（纯共享 Rack）？本文保留
-   `midi: Option<...>`，但默认 UI 不暴露。
+3. 同 owner 同 target 的冲突：默认最后编辑优先，UI 提供按钮裁决。
+4. 独立 Track 暂时只支持 Port A 16 通道；超过时按导出策略报错/复用。
+5. 解链 AP：不复制 AP 自动化，Track 回到空 LC。
+6. AP 必须对应 MIDI 通道，不做纯共享 Rack 的无 MIDI AP。
 
 ---
 
