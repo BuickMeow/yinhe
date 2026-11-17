@@ -12,10 +12,6 @@ pub enum ArRow {
     Track(usize),
     /// 音轨的自动化子行，usize 是该轨 automation_lanes 的下标。
     Automation(usize, usize),
-    /// 固定总线行（MIX 总线投影到 AR）。
-    Bus(usize),
-    /// 固定总线的自动化子行：`(bus, master_lane_idx)`。
-    BusAutomation(usize, usize),
 }
 
 /// 每帧由“各轨展开的 lane 数”构建的行布局。
@@ -65,20 +61,6 @@ impl ArRowLayout {
             rows,
             total_rows: acc,
         }
-    }
-
-    /// 在普通音轨行之后追加固定 Bus 行及其自动化子行。
-    /// `bus_lanes[bus]` = 该总线在 Master 轨上的 lane 索引列表；Master 是
-    /// 唯一 Master 轨本身，不再额外追加固定行。
-    pub fn with_fixed_rows(mut self, bus_lanes: &[Vec<usize>]) -> Self {
-        for (bus, lanes) in bus_lanes.iter().enumerate() {
-            self.rows.push(ArRow::Bus(bus));
-            for &lane in lanes {
-                self.rows.push(ArRow::BusAutomation(bus, lane));
-            }
-        }
-        self.total_rows = self.rows.len() as u32;
-        self
     }
 
     /// 总行数（所有轨的主行 + 展开的自动化子行）。
@@ -196,17 +178,11 @@ impl ArRow {
         self.track_opt().unwrap_or(0)
     }
 
-    /// 普通音轨行返回轨道下标；固定 Bus 行返回 None。
+    /// 音轨行返回轨道下标。
     pub fn track_opt(self) -> Option<usize> {
         match self {
             ArRow::Track(t) | ArRow::Automation(t, _) => Some(t),
-            ArRow::Bus(_) | ArRow::BusAutomation(_, _) => None,
         }
-    }
-
-    /// 是否固定行（Bus 及其自动化子行）。
-    pub fn is_fixed(self) -> bool {
-        matches!(self, ArRow::Bus(_) | ArRow::BusAutomation(_, _))
     }
 }
 
@@ -285,17 +261,6 @@ mod tests {
         // 空布局。
         let empty = ArRowLayout::new([]);
         assert_eq!(empty.visible_track_range(0.0, 100.0, lh), (0, 0));
-    }
-
-    #[test]
-    fn fixed_bus_rows_follow_tracks() {
-        let l = layout().with_fixed_rows(&[vec![2], vec![]]);
-        assert_eq!(l.total_rows(), 9);
-        assert_eq!(l.row_hit(6), Some(ArRow::Bus(0)));
-        assert_eq!(l.row_hit(7), Some(ArRow::BusAutomation(0, 2)));
-        assert_eq!(l.row_hit(8), Some(ArRow::Bus(1)));
-        assert_eq!(ArRow::Bus(0).track_opt(), None);
-        assert!(ArRow::BusAutomation(0, 2).is_fixed());
     }
 
     #[test]

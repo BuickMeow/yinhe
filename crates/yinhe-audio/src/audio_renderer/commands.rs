@@ -359,21 +359,16 @@ impl AudioRenderer {
             AudioCommand::PreviewStopKey { key } => {
                 self.engine.stop_preview_key(key);
             }
-            AudioCommand::SyncBusConfig {
-                buses,
+            AudioCommand::SyncSends {
                 sends,
-                bus_sends,
                 audio_sends,
                 track_sends,
             } => {
-                self.engine.handle_command(AudioCommand::SyncBusConfig {
-                    buses,
+                self.engine.handle_command(AudioCommand::SyncSends {
                     sends,
-                    bus_sends,
                     audio_sends,
                     track_sends,
                 });
-                self.sync_bus_meter_readings();
             }
             AudioCommand::ExportStart {
                 path,

@@ -188,14 +188,11 @@ pub enum AudioCommand {
         slot: usize,
         processor: Box<dyn InsertProcessor>,
     },
-    /// 全量同步总线配置（增删总线 / 改发送后推一次）：
-    /// `buses` 为总线参数、`sends` 为按源通道索引的发送列表、
-    /// `bus_sends` 为按总线索引的发送列表（总线 → 总线）、
-    /// `audio_sends` 为按音频通道索引的发送列表。
-    SyncBusConfig {
-        buses: Box<Vec<StripParams>>,
+    /// 全量同步节点发送（改发送后推一次）：
+    /// `sends` 为按源 MIDI 通道索引的发送列表、`audio_sends` 为按音频通道
+    /// 索引的发送列表、`track_sends` 为按 `track_channels` 顺序的每轨 LC 发送。
+    SyncSends {
         sends: Box<Vec<Vec<SendParams>>>,
-        bus_sends: Box<Vec<Vec<SendParams>>>,
         audio_sends: Box<Vec<Vec<SendParams>>>,
         /// 每轨 LC 的发送表（按 `track_channels` 顺序）。
         track_sends: Box<Vec<Vec<SendParams>>>,
@@ -277,8 +274,6 @@ struct MixerMeters {
     master: MeterReading,
     /// 主输出立体声样本（供电平/频谱分析）。
     master_samples: SampleReading,
-    /// 总线读数端（动态：增删总线由渲染线程更新此槽）。
-    buses: Arc<Mutex<Vec<MeterReading>>>,
     /// 每轨电平读数端（线性峰值，渲染线程写、UI 读）。
     tracks: Arc<Mutex<Vec<(f32, f32)>>>,
 }
@@ -293,18 +288,8 @@ impl MixerMeters {
                 .collect(),
             master: engine.mixer.master_meter_reading(),
             master_samples: engine.mixer.master_sample_reading(),
-            buses: Arc::new(Mutex::new(
-                (0..engine.mixer.bus_count())
-                    .filter_map(|i| engine.mixer.bus_meter_reading(i))
-                    .collect(),
-            )),
             tracks: engine.track_levels(),
         }
-    }
-
-    /// 总线读数端共享句柄（渲染线程在 SyncBusConfig 后刷新此槽）。
-    fn bus_readings(&self) -> Arc<Mutex<Vec<MeterReading>>> {
-        Arc::clone(&self.buses)
     }
 
     /// dense 通道数（= 引擎 compacted 通道数）。
@@ -315,15 +300,6 @@ impl MixerMeters {
     /// 读某 dense 通道的电平（L, R 峰值，0 起）。
     fn channel_read(&self, dense: usize) -> Option<(f32, f32)> {
         self.channels.get(dense).map(|r| r.read())
-    }
-
-    /// 读总线电平（bus 索引；不存在返回静音）。
-    fn bus_read(&self, bus: usize) -> (f32, f32) {
-        self.buses
-            .lock()
-            .ok()
-            .and_then(|r| r.get(bus).map(|m| m.read()))
-            .unwrap_or((0.0, 0.0))
     }
 
     /// 读主输出电平。
@@ -448,7 +424,7 @@ impl AudioCommand {
             AudioCommand::InsertAdd { .. } => ("InsertAdd", true),
             AudioCommand::InsertRemove { .. } => ("InsertRemove", true),
             AudioCommand::InsertReplace { .. } => ("InsertReplace", true),
-            AudioCommand::SyncBusConfig { .. } => ("SyncBusConfig", true),
+            AudioCommand::SyncSends { .. } => ("SyncSends", true),
             AudioCommand::SetInstrumentSlot { .. } => ("SetInstrumentSlot", true),
             AudioCommand::SetAudioSource { .. } => ("SetAudioSource", false),
             AudioCommand::RefreshLatency => ("RefreshLatency", false),
@@ -595,11 +571,6 @@ impl AudioHandle {
     /// 读某 dense 通道的电平（L, R 峰值，0 起）。
     pub fn channel_meter_read(&self, dense: usize) -> Option<(f32, f32)> {
         self.meters.channel_read(dense)
-    }
-
-    /// 读总线电平表读数（bus 索引；不存在返回静音）。
-    pub fn bus_meter_read(&self, bus: usize) -> (f32, f32) {
-        self.meters.bus_read(bus)
     }
 
     /// 读主输出电平。
@@ -1457,13 +1428,11 @@ fn init_renderer(
     callback_frames: usize,
     insert_return_tx: Sender<Vec<Box<dyn InsertProcessor>>>,
     instrument_return_tx: Sender<(u64, Box<dyn InstrumentProcessor>)>,
-    bus_readings: Arc<Mutex<Vec<MeterReading>>>,
     synth_engine: SynthEngine,
     interpolation: Interpolation,
 ) -> Result<RendererStarted, String> {
     let (ring_producer, ring_consumer) = AudioRing::new(RING_CAPACITY).split();
     let mut renderer_state = RendererSharedState::new();
-    renderer_state.bus_readings = bus_readings;
     renderer_state.sf_gen = sf_gen;
     renderer_state.sf_progress = sf_progress;
 
@@ -1772,7 +1741,6 @@ pub fn spawn_cpal_audio(
         callback_frames,
         insert_return_tx,
         instrument_return_tx,
-        meters.bus_readings(),
         synth_engine,
         interpolation,
     )?;
@@ -2038,14 +2006,12 @@ mod tests {
                 true,
             ),
             (
-                AudioCommand::SyncBusConfig {
-                    buses: Box::new(Vec::new()),
+                AudioCommand::SyncSends {
                     sends: Box::new(Vec::new()),
-                    bus_sends: Box::new(Vec::new()),
                     audio_sends: Box::new(Vec::new()),
                     track_sends: Box::new(Vec::new()),
                 },
-                "SyncBusConfig",
+                "SyncSends",
                 true,
             ),
             (

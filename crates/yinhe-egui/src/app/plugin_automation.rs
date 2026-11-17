@@ -306,7 +306,7 @@ impl App {
                 .tracks
                 .iter()
                 .position(|t| t.audio_channel == Some(ch)),
-            yinhe_types::MixerChannelId::Bus(_) | yinhe_types::MixerChannelId::Master => None,
+            yinhe_types::MixerChannelId::Master => None,
         };
         if let Some(track_idx) = track_idx
             && let Some(expanded) = doc.edit.arr_am_expanded.get_mut(track_idx)

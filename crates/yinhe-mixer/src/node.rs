@@ -2,10 +2,10 @@
 //!
 //! 目标 B 的层级：
 //! ```text
-//! Track -> Rack（共享乐器） -> Logical Channel（音频通道条） -> Bus -> Master
+//! Track -> Rack（共享乐器） -> Logical Channel（音频通道条） -> Master
 //! ```
 //!
-//! `MixerNode` 是 LC / Bus / Master 共用的通道条；`RackParams` 只装乐器，
+//! `MixerNode` 是 LC / Master 共用的通道条；`RackParams` 只装乐器，
 //! 不装推子/insert。当前 MIDI 通道和音频通道各对应一条 LC，ID 由
 //! [`MixerChannelId::logical_channel_id`](yinhe_types::MixerChannelId::logical_channel_id)
 //! 确定性生成，方便 v9 工程无损迁移。
@@ -14,8 +14,7 @@ use std::ops::{Deref, DerefMut};
 
 use serde::{Deserialize, Serialize};
 use yinhe_types::{
-    ApGroupId, AutomationLane, BusId, ChannelId, ChannelSource, LogicalChannelId, RackId,
-    RackOutputMode,
+    ApGroupId, AutomationLane, ChannelId, ChannelSource, LogicalChannelId, RackId, RackOutputMode,
 };
 
 use crate::params::{InsertRef, SendParams, StripParams};
@@ -97,7 +96,7 @@ pub struct FrozenAudio {
     pub frames: u64,
 }
 
-/// 一条 LC / Bus / Master 的持久化参数。
+/// 一条 LC / Master 的持久化参数。
 ///
 /// `Deref` 到 [`StripParams`] 让推子/声像/M/S 的读写保持
 /// `node.gain` 这种自然写法；`inserts` / `sends` / `output` 是节点独有字段。
@@ -115,11 +114,11 @@ pub struct MixerNode {
     pub sends: Vec<SendParams>,
     /// 主输出；`None` = 直接进 Master。
     ///
-    /// MIDI / 音频 / 每轨 LC 指向 Bus；Bus 也可以指向另一条 Bus（嵌套），
-    /// 参数层做环检测，渲染图对逆序输出使用一块延迟。
+    /// MIDI / 音频 / 每轨 LC 可指向另一条 LC，参数层做环检测，
+    /// 渲染图对逆序输出使用一块延迟。
     #[serde(default)]
     pub output: Option<ChannelId>,
-    /// 节点自己的自动化 lane。BusGain 等混音自动化按 owner 存在这里，
+    /// 节点自己的自动化 lane。推子/声像等混音自动化按 owner 存在这里，
     /// 不再寄宿 Master 轨。
     #[serde(default)]
     pub automation: Vec<AutomationLane>,
@@ -131,7 +130,6 @@ pub struct MixerNode {
 impl MixerNode {
     pub fn new(id: ChannelId) -> Self {
         let source = match id {
-            ChannelId::Bus(_bus) => ChannelSource::Bus,
             ChannelId::Master => ChannelSource::Master,
             ChannelId::Lc(_) | ChannelId::Ap(_) => ChannelSource::Unspecified,
         };
@@ -149,10 +147,6 @@ impl MixerNode {
 
     pub fn logical_channel(id: LogicalChannelId) -> Self {
         Self::new(ChannelId::Lc(id))
-    }
-
-    pub fn bus(id: BusId) -> Self {
-        Self::new(ChannelId::Bus(id))
     }
 
     pub fn master() -> Self {

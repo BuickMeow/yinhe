@@ -359,12 +359,6 @@ pub(crate) fn show(
     ui.scope_builder(egui::UiBuilder::new().max_rect(gpu_rect), |ui| {
         let model = &*doc.data.model;
         let (def_num, def_den) = model.tempo_map.time_sig_default;
-        let bus_automation: Vec<Vec<yinhe_types::AutomationLane>> = doc
-            .mixer
-            .nodes()
-            .filter(|node| matches!(node.id, yinhe_types::ChannelId::Bus(_)))
-            .map(|node| node.automation.clone())
-            .collect();
         let track_mixer_lanes: Vec<
             Vec<(yinhe_types::MixerNodeId, Vec<yinhe_types::AutomationLane>)>,
         > = doc
@@ -397,8 +391,6 @@ pub(crate) fn show(
             num_tracks: doc.edit.track_visible.len(),
             tracks: &model.tracks,
             tempo_lane: &model.conductor.tempo,
-            bus_ids: &doc.mixer.bus_ids(),
-            bus_automation: &bus_automation,
             track_mixer_lanes: &track_mixer_lanes,
             conductor_track_idx: doc.edit.track_cache.conductor_idx,
             tempo_map: &model.tempo_map,

@@ -2,8 +2,8 @@
 
 use eframe::egui;
 use rust_i18n::t;
-use yinhe_mixer::{SendParams, StripParams};
-use yinhe_types::{Audibility, BusId, ChannelId, LogicalChannelId};
+use yinhe_mixer::StripParams;
+use yinhe_types::{Audibility, ChannelId, LogicalChannelId};
 
 use crate::widgets::knob::{knob, knob_centered};
 use crate::widgets::meter::{DB_MAX, DB_MIN, db_to_gain, gain_at_frac, gain_frac, gain_to_db};
@@ -19,7 +19,7 @@ pub(super) fn send_height(_bus_count: usize) -> f32 {
 /// 混音台的理想面板高度：基础布局 + 发送区按总线数扩展。
 ///
 /// 这是「自动高度」模式下的高度；用户拖拽分割条后转为手动高度。
-pub(crate) fn auto_panel_height(_bus_count: usize) -> f32 {
+pub(crate) fn auto_panel_height() -> f32 {
     HEADER_H + BODY_TOP_PAD + send_height(0) + GAP + METER_MODULE_H + BODY_BOTTOM_PAD
 }
 
@@ -107,26 +107,12 @@ pub(super) fn section<R>(
 
 /// 单条 MIDI 通道条。
 #[allow(clippy::too_many_arguments)] // 通道条渲染上下文透传
-/// 发送区来源：通道 / 音频通道 / 总线。
-///
-/// `Channel/Audio/TrackLc` 只服务旧 Bus 面板的兼容路径；C 的 SEND 聚焦
-/// 走 `focus_send_block`，不再构造这些变体。
-#[allow(dead_code)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum SendSource {
-    Channel(u8),
-    Audio(u16),
-    TrackLc(LogicalChannelId),
-    Bus(BusId),
-}
-
 /// 当前 strip 对应的自动化宿主：决定右键菜单里能加哪种自动化。
 #[derive(Clone, Copy)]
 pub(super) enum StripAutomationTarget {
     Midi(u8),
     Audio(u16),
     TrackLc(LogicalChannelId),
-    Bus(BusId),
     Master,
 }
 
@@ -135,7 +121,6 @@ fn target_channel(target: StripAutomationTarget) -> MixerChannelId {
         StripAutomationTarget::Midi(ch) => MixerChannelId::Midi(ch),
         StripAutomationTarget::Audio(ch) => MixerChannelId::Audio(ch),
         StripAutomationTarget::TrackLc(id) => MixerChannelId::TrackLc(id),
-        StripAutomationTarget::Bus(bus) => MixerChannelId::Bus(bus),
         StripAutomationTarget::Master => MixerChannelId::Master,
     }
 }
@@ -152,15 +137,6 @@ fn pan_automation_action(target: StripAutomationTarget) -> Option<MixAction> {
     (target_channel(target) != MixerChannelId::Master).then_some(MixAction::AddMixerPanAutomation {
         channel: target_channel(target),
     })
-}
-
-fn send_source_node(source: SendSource) -> MixerChannelId {
-    match source {
-        SendSource::Channel(ch) => MixerChannelId::Midi(ch),
-        SendSource::Audio(ch) => MixerChannelId::Audio(ch),
-        SendSource::TrackLc(id) => MixerChannelId::TrackLc(id),
-        SendSource::Bus(bus) => MixerChannelId::Bus(bus),
-    }
 }
 
 /// 音量控件的右键菜单：添加自动化 + 重置 0 dB。
@@ -348,298 +324,6 @@ pub(super) fn focus_send_block(
     });
 }
 
-/// 效果发送区（独占一区，竖向滚动）：**每条总线一行**（旋钮 + 「BUS n」），
-/// 超出显示区（一行高）的部分竖向滚动查看；无总线时保留一个 BUS 1 占位
-/// （首次拖动自动创建第一条总线）。所有通道/总线的发送区共用同一个滚动位置
-/// （`ScrollArea` 用同一 id_salt）——滚动任一通道即整排同步滚动。
-///
-/// 总线源发送到**自己**时显示 ICON_REFRESH 开关（点击启用/禁用自发送）：
-/// 自发送经块级延迟防止反馈环路，提示见 `hint.mix.bus_self_send`。
-/// 通道源右键任一旋钮打开完整发送面板（含推子前/后、多总线）。
-pub(super) fn send_block(
-    ui: &mut egui::Ui,
-    source: SendSource,
-    sends: &[SendParams],
-    bus_ids: &[BusId],
-    actions: &mut Vec<MixAction>,
-) {
-    let knobs = bus_ids.len().max(1);
-    egui::ScrollArea::vertical()
-        // 发送区各自滚动（id 在通道条自己的作用域内唯一）。滚动条 id 派生自
-        // id_salt，若整排共用同一 id 会触发 egui 的 widget ID 冲突；发送区高度
-        // 已按总线数展开（全部行可见），仅窗口过矮时需滚动，故隐藏滚动条。
-        .id_salt("mix_send_scroll")
-        .scroll_bar_visibility(egui::containers::scroll_area::ScrollBarVisibility::AlwaysHidden)
-        // egui 默认 min_scrolled_size=64 会把发送区撑高，这里放开下限，
-        // 让发送区严格等于「总线数 × 一行高」。
-        .min_scrolled_height(0.0)
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-            for b in 0..knobs {
-                // 没有总线时保留一个占位旋钮；用户转动后先 AddBus。
-                let target = bus_ids.get(b).copied().unwrap_or_default();
-                ui.horizontal(|ui| {
-                    let send = sends.iter().find(|s| s.target == ChannelId::Bus(target));
-                    let (amount, pre_fader) = send
-                        .map(|s| (s.amount, s.pre_fader))
-                        .unwrap_or((0.0, false));
-                    // 总线自发送（总线 → 自己）：旋钮照常可调量，行尾图标开关
-                    // 占用「BUS n」标签位置（点击启用/禁用；启用后经块级延迟防反馈环）。
-                    if source == SendSource::Bus(target) {
-                        let mut norm = send_norm(amount);
-                        let knob_resp = knob(ui, &mut norm, KNOB_D);
-                        if knob_resp.changed() {
-                            actions.push(MixAction::SetBusSend {
-                                bus: target,
-                                target_bus: target,
-                                amount: send_amount(norm),
-                            });
-                        }
-                        crate::widgets::hint::hover(
-                            ui.ctx(),
-                            &knob_resp,
-                            t!("hint.mix.send_amount"),
-                        );
-                        crate::widgets::menu::context_menu(&knob_resp, 180.0, |ui| {
-                            let label = if amount > 0.0 {
-                                t!("mix.send_disable")
-                            } else {
-                                t!("mix.send_enable")
-                            };
-                            if ui
-                                .add(crate::widgets::menu::menu_item_action(
-                                    ui,
-                                    false,
-                                    label.as_ref(),
-                                    "",
-                                ))
-                                .clicked()
-                            {
-                                actions.push(MixAction::SetBusSend {
-                                    bus: target,
-                                    target_bus: target,
-                                    amount: if amount > 0.0 { 0.0 } else { 1.0 },
-                                });
-                                ui.close();
-                            }
-                        });
-                        ui.add_space(4.0);
-                        let icon_resp = self_send_toggle(ui, amount > 0.0);
-                        if icon_resp.clicked() {
-                            actions.push(MixAction::SetBusSend {
-                                bus: target,
-                                target_bus: target,
-                                amount: if amount > 0.0 { 0.0 } else { 1.0 },
-                            });
-                        }
-                        return;
-                    }
-                    let mut norm = send_norm(amount);
-                    let resp = knob(ui, &mut norm, KNOB_D);
-                    if resp.changed() {
-                        match source {
-                            SendSource::Channel(channel) => {
-                                if bus_ids.is_empty() {
-                                    actions.push(MixAction::AddBus);
-                                }
-                                actions.push(MixAction::SetSend {
-                                    channel,
-                                    bus: target,
-                                    amount: send_amount(norm),
-                                    pre_fader,
-                                });
-                            }
-                            SendSource::Audio(channel) => {
-                                actions.push(MixAction::SetAudioSend {
-                                    channel,
-                                    bus: target,
-                                    amount: send_amount(norm),
-                                    pre_fader,
-                                });
-                            }
-                            SendSource::TrackLc(lc) => {
-                                actions.push(MixAction::SetTrackLcSend {
-                                    lc,
-                                    bus: target,
-                                    amount: send_amount(norm),
-                                    pre_fader,
-                                });
-                            }
-                            SendSource::Bus(src) => {
-                                actions.push(MixAction::SetBusSend {
-                                    bus: src,
-                                    target_bus: target,
-                                    amount: send_amount(norm),
-                                });
-                            }
-                        }
-                    }
-                    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.send_amount"));
-                    crate::widgets::menu::context_menu(&resp, 180.0, |ui| {
-                        let enable_label = if amount > 0.0 {
-                            t!("mix.send_disable")
-                        } else {
-                            t!("mix.send_enable")
-                        };
-                        if ui
-                            .add(crate::widgets::menu::menu_item_action(
-                                ui,
-                                false,
-                                enable_label.as_ref(),
-                                "",
-                            ))
-                            .clicked()
-                        {
-                            let new_amount = if amount > 0.0 { 0.0 } else { 1.0 };
-                            match source {
-                                SendSource::Channel(channel) => {
-                                    actions.push(MixAction::SetSend {
-                                        channel,
-                                        bus: target,
-                                        amount: new_amount,
-                                        pre_fader,
-                                    });
-                                }
-                                SendSource::Audio(channel) => {
-                                    actions.push(MixAction::SetAudioSend {
-                                        channel,
-                                        bus: target,
-                                        amount: new_amount,
-                                        pre_fader,
-                                    });
-                                }
-                                SendSource::TrackLc(lc) => {
-                                    actions.push(MixAction::SetTrackLcSend {
-                                        lc,
-                                        bus: target,
-                                        amount: new_amount,
-                                        pre_fader,
-                                    });
-                                }
-                                SendSource::Bus(src) => {
-                                    actions.push(MixAction::SetBusSend {
-                                        bus: src,
-                                        target_bus: target,
-                                        amount: new_amount,
-                                    });
-                                }
-                            }
-                            ui.close();
-                        }
-                        // 总线发送固定推子后；通道/音频可切换推子前/后。
-                        if !matches!(source, SendSource::Bus(_)) {
-                            let (label, next_pre) = if pre_fader {
-                                (t!("mix.send_post_fader"), false)
-                            } else {
-                                (t!("mix.pre_fader"), true)
-                            };
-                            if ui
-                                .add(crate::widgets::menu::menu_item_action(
-                                    ui,
-                                    false,
-                                    label.as_ref(),
-                                    "",
-                                ))
-                                .clicked()
-                            {
-                                match source {
-                                    SendSource::Channel(channel) => {
-                                        actions.push(MixAction::SetSend {
-                                            channel,
-                                            bus: target,
-                                            amount,
-                                            pre_fader: next_pre,
-                                        });
-                                    }
-                                    SendSource::Audio(channel) => {
-                                        actions.push(MixAction::SetAudioSend {
-                                            channel,
-                                            bus: target,
-                                            amount,
-                                            pre_fader: next_pre,
-                                        });
-                                    }
-                                    SendSource::TrackLc(lc) => {
-                                        actions.push(MixAction::SetTrackLcSend {
-                                            lc,
-                                            bus: target,
-                                            amount,
-                                            pre_fader: next_pre,
-                                        });
-                                    }
-                                    SendSource::Bus(_) => {}
-                                }
-                                ui.close();
-                            }
-                        }
-                        ui.separator();
-                        if ui
-                            .add(crate::widgets::menu::menu_item_action(
-                                ui,
-                                false,
-                                t!("mix.add_send_automation").as_ref(),
-                                "",
-                            ))
-                            .clicked()
-                        {
-                            actions.push(MixAction::AddMixerSendAutomation {
-                                node: send_source_node(source),
-                                bus: target,
-                            });
-                            ui.close();
-                        }
-                        if let SendSource::Channel(channel) = source {
-                            ui.separator();
-                            let item = ui.add(crate::widgets::menu::menu_item_button(
-                                ui,
-                                false,
-                                t!("mix.sends").as_ref(),
-                            ));
-                            crate::widgets::hint::hover(ui.ctx(), &item, t!("hint.mix.sends"));
-                            if item.clicked() {
-                                actions.push(MixAction::OpenSends { channel });
-                                ui.close();
-                            }
-                        }
-                    });
-                    ui.add_space(4.0);
-                    ui.label(
-                        egui::RichText::new(send_db_label(amount))
-                            .size(crate::theme::SMALL_LABEL_FONT)
-                            .color(crate::theme::text_secondary()),
-                    );
-                });
-            }
-        });
-}
-
-/// 自发送开关图标（ICON_REFRESH，占用行尾「BUS n」标签位置）：
-/// 启用 = 强调色，未启用 = 弱化色；悬停提示「启用后会引入一个缓冲区延迟」。
-fn self_send_toggle(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(16.0, KNOB_D), egui::Sense::click());
-    let color = if enabled {
-        crate::theme::accent_active()
-    } else if resp.hovered() {
-        crate::theme::text_primary()
-    } else {
-        crate::theme::text_muted()
-    };
-    ui.painter().text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        egui_material_icons::icons::ICON_REFRESH.codepoint,
-        egui::FontId::new(
-            crate::theme::ICON_FONT_SM,
-            egui_material_icons::icons::ICON_REFRESH.font_family(),
-        ),
-        color,
-    );
-    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.bus_self_send"));
-    resp
-}
-
-/// M/S 竖向按钮列（右列底部）：M 上、S 下。
 fn ms_column(ui: &mut egui::Ui, params: &StripParams, width: f32) -> Option<StripParams> {
     ui.allocate_ui_with_layout(
         egui::vec2(width, BTN * 2.0 + GAP),

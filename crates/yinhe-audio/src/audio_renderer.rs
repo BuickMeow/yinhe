@@ -113,8 +113,6 @@ pub(crate) struct RendererSharedState {
     /// 初始化 + 采样上传 + 管线预热）。UI 用它 gate"加载完成"提示，
     /// 保证用户看到加载完成时点播放能立即响应。
     pub(crate) audio_ready: Arc<AtomicBool>,
-    /// 总线电平表读数端（增删总线时由渲染线程刷新；UI 读锁取用）。
-    pub(crate) bus_readings: Arc<Mutex<Vec<yinhe_mixer::MeterReading>>>,
     /// 欠载累计样本数（立体声交错）：播放中 cpal 回调从 ring 取不到足够样本
     /// 而补零的总量。非零增长 = 渲染跟不上（音频断续/咔哒的客观指标）。
     pub(crate) underrun_samples: Arc<AtomicU64>,
@@ -148,7 +146,6 @@ impl RendererSharedState {
             clear_ring_write: Arc::new(AtomicUsize::new(0)),
             sf_loaded: Arc::new(AtomicUsize::new(0)),
             audio_ready: Arc::new(AtomicBool::new(false)),
-            bus_readings: Arc::new(Mutex::new(Vec::new())),
             underrun_samples: Arc::new(AtomicU64::new(0)),
             voice_count: Arc::new(AtomicU64::new(0)),
             sf_gen: Arc::new(AtomicU64::new(0)),
@@ -568,16 +565,6 @@ impl AudioRenderer {
     }
 
     // ── 导出模式（渲染线程内，复用实时引擎与插件实例） ──
-
-    /// 刷新总线电平表读数槽（增删总线后调用；UI 侧共享同一 Arc）。
-    fn sync_bus_meter_readings(&self) {
-        let readings: Vec<yinhe_mixer::MeterReading> = (0..self.engine.mixer.bus_count())
-            .filter_map(|i| self.engine.mixer.bus_meter_reading(i))
-            .collect();
-        if let Ok(mut slot) = self.state.bus_readings.lock() {
-            *slot = readings;
-        }
-    }
 
     fn publish_state(&self) {
         self.state

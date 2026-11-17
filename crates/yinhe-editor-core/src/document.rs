@@ -805,10 +805,6 @@ impl Document {
                         yinhe_types::ChannelId::Lc(id) => MixerChannelId::TrackLc(id),
                         _ => MixerChannelId::Master,
                     },
-                    yinhe_types::ChannelSource::Bus => match node.id {
-                        yinhe_types::ChannelId::Bus(bus) => MixerChannelId::Bus(bus),
-                        _ => MixerChannelId::Master,
-                    },
                     yinhe_types::ChannelSource::Ap(_)
                     | yinhe_types::ChannelSource::Master
                     | yinhe_types::ChannelSource::Unspecified => MixerChannelId::Master,
@@ -1232,13 +1228,17 @@ mod tests {
         };
 
         let imported = make(None);
-        assert_eq!(imported.mixer.bus_count(), 0, "导入 MIDI 不再自动创建总线");
+        assert!(imported.mixer.nodes().all(|node| {
+            matches!(
+                node.source,
+                yinhe_types::ChannelSource::Midi(_) | yinhe_types::ChannelSource::Unspecified
+            )
+        }));
 
         let with_saved_mixer = make(Some(MixerParams::default()));
         assert_eq!(
-            with_saved_mixer.mixer.bus_count(),
-            0,
-            "工程自带混音数据（含空总线）不应被改写"
+            with_saved_mixer.mixer.nodes().count(),
+            imported.mixer.nodes().count()
         );
     }
 

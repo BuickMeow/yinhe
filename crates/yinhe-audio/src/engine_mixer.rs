@@ -3,9 +3,9 @@
 
 use yinhe_mixer::{
     ChannelOutput, ChannelSendTarget, InsertProcessor, InstrumentProcessor, MasterParams,
-    MixerParams, ResolvedChannelSend, ResolvedSend, SendParams, StripParams,
+    MixerParams, ResolvedChannelSend, SendParams, StripParams,
 };
-use yinhe_types::{BusId, MixerChannelId};
+use yinhe_types::MixerChannelId;
 
 use crate::channel_layout::ChannelNamespace;
 use crate::engine::AudioEngine;
@@ -26,13 +26,6 @@ impl AudioEngine {
         self.mixer.set_master(MasterParams {
             gain: self.mixer_params.master.gain,
         });
-        // 总线与发送：全量同步（数量变化走 resize_buses）。
-        let bus_strips: Vec<StripParams> = self.mixer_params.bus_strips();
-        self.mixer
-            .resize_buses(bus_strips.len(), self.mixer.frames(), &bus_strips);
-        for (i, p) in bus_strips.into_iter().enumerate() {
-            self.mixer.set_bus_strip(i, p);
-        }
         self.sync_output_routing();
         self.sync_sends_to_graph();
     }
@@ -56,9 +49,6 @@ impl AudioEngine {
                 Some(ChannelNamespace::DirectMaster) | None => None,
             };
             let dest = target.and_then(|id| match id {
-                yinhe_types::ChannelId::Bus(bus) => {
-                    self.mixer_params.bus_index(bus).map(ChannelOutput::Bus)
-                }
                 yinhe_types::ChannelId::Lc(_) | yinhe_types::ChannelId::Ap(_) => self
                     .dense_for_channel_id(id)
                     .map(|target| ChannelOutput::Channel(target as usize)),
@@ -66,51 +56,13 @@ impl AudioEngine {
             });
             self.mixer.set_channel_output(dense, dest);
         }
-        // Bus 主输出（嵌套 Bus）。参数层已做环检测；这里只映射稳定 ID → 下标。
-        for i in 0..self.mixer_params.bus_count() {
-            let Some(id) = self.mixer_params.bus_id_at(i) else {
-                continue;
-            };
-            let dest = self
-                .mixer_params
-                .node_output(MixerChannelId::Bus(id))
-                .and_then(|target| match target {
-                    yinhe_types::ChannelId::Bus(bus) => self.mixer_params.bus_index(bus),
-                    _ => None,
-                });
-            self.mixer.set_bus_output(i, dest);
-        }
     }
 
-    /// 把按通道命名空间索引的发送列表映射到 dense 通道并推给混音图；
-    /// 总线发送（bus → bus）按总线索引直接推。
-    /// 未激活通道的 send 暂存于持久化层，引擎重建/激活后由全量同步补上。
+    /// 把统一的任意通道发送（`MixerParams::channel_sends`）映射到 dense 通道
+    /// 并推给混音图。未激活通道的 send 暂存于持久化层，引擎重建/激活后由
+    /// 全量同步补上。
     fn sync_sends_to_graph(&mut self) {
-        let sends: Vec<Vec<SendParams>> = self.mixer_params.midi_sends_snapshot();
-        let audio_sends: Vec<Vec<SendParams>> = self.mixer_params.audio_sends_snapshot();
         let count = self.channel_layout.compacted_channels() as usize;
-        for dense in 0..count {
-            let list = self
-                .dense_to_namespace(dense)
-                .and_then(|ns| match ns {
-                    ChannelNamespace::Midi(src) => sends.get(src),
-                    ChannelNamespace::Audio(ach) => audio_sends.get(ach),
-                    ChannelNamespace::TrackLc { lc, .. } => {
-                        self.mixer_params.track_node(lc).map(|node| &node.sends)
-                    }
-                    ChannelNamespace::DirectMaster => None,
-                })
-                .map(|list| self.resolve_sends(list))
-                .unwrap_or_default();
-            self.mixer.set_sends(dense, list);
-        }
-        let bus_sends: Vec<Vec<SendParams>> = self.mixer_params.bus_sends_snapshot();
-        for (i, list) in bus_sends.into_iter().enumerate() {
-            let resolved = self.resolve_sends(&list);
-            self.mixer.set_bus_sends(i, resolved);
-        }
-
-        // C 的任意通道发送：按 source 聚到 dense 通道。
         let mut channel_sends: Vec<Vec<ResolvedChannelSend>> = vec![Vec::new(); count];
         for send in &self.mixer_params.channel_sends {
             let Some(src) = self.dense_for_channel_id(send.source) else {
@@ -118,12 +70,6 @@ impl AudioEngine {
             };
             let target = match send.target {
                 yinhe_types::ChannelId::Master => ChannelSendTarget::Master,
-                yinhe_types::ChannelId::Bus(bus) => {
-                    let Some(index) = self.mixer_params.bus_index(bus) else {
-                        continue;
-                    };
-                    ChannelSendTarget::Bus(index)
-                }
                 other => {
                     let Some(dst) = self.dense_for_channel_id(other) else {
                         continue;
@@ -169,28 +115,10 @@ impl AudioEngine {
                 let group = self.mixer_params.ap(ap.group)?;
                 group.channel
             }
-            yinhe_types::ChannelId::Bus(_) | yinhe_types::ChannelId::Master => return None,
+            yinhe_types::ChannelId::Master => return None,
         };
         let dense = self.lc_dense(lc);
         (dense != u32::MAX).then_some(dense)
-    }
-
-    /// 持久化层用稳定 BusId；渲染图只认 `buses` 下标。
-    /// 指向已删除总线的 send 在 `ensure_len` 已清理，这里再防御一次。
-    fn resolve_sends(&self, sends: &[SendParams]) -> Vec<ResolvedSend> {
-        sends
-            .iter()
-            .filter_map(|s| {
-                let yinhe_types::ChannelId::Bus(target) = s.target else {
-                    return None;
-                };
-                self.mixer_params.bus_index(target).map(|bus| ResolvedSend {
-                    bus,
-                    amount: s.amount,
-                    pre_fader: s.pre_fader,
-                })
-            })
-            .collect()
     }
 
     /// dense 索引 → 所属通道命名空间（仅结构性操作时调用，O(1)）。
@@ -237,7 +165,6 @@ impl AudioEngine {
                     self.mixer.set_strip(dense as usize, params);
                 }
             }
-            MixerChannelId::Bus(bus) => self.set_bus_strip(bus, params),
             MixerChannelId::Master => {
                 self.mixer_params.master.strip.gain = params.gain;
                 self.mixer.set_master(MasterParams { gain: params.gain });
@@ -245,36 +172,13 @@ impl AudioEngine {
         }
     }
 
-    /// 更新某总线的 strip 参数（高频路径）。
-    pub(crate) fn set_bus_strip(&mut self, bus: BusId, params: StripParams) {
-        let Some(idx) = self.mixer_params.bus_index(bus) else {
-            return;
-        };
-        if let Some(node) = self.mixer_params.bus_node_mut(bus) {
-            node.strip = params;
-        }
-        self.mixer.set_bus_strip(idx, params);
-    }
-
-    /// 全量同步总线参数与发送（增删总线 / 改 send 后推一次）。
-    pub(crate) fn sync_bus_config(
+    /// 全量同步节点发送（改 send 后推一次）。
+    pub(crate) fn sync_sends_config(
         &mut self,
-        buses: Vec<StripParams>,
         sends: Vec<Vec<SendParams>>,
-        bus_sends: Vec<Vec<SendParams>>,
         audio_sends: Vec<Vec<SendParams>>,
         track_sends: Vec<Vec<SendParams>>,
     ) {
-        // 旧命令仍按「总线条 / 源通道发送 / 音频发送」三张表传递；
-        // 这里落到 v10 的节点表，保持命令层不用一次性改完。
-        for (i, strip) in buses.into_iter().enumerate() {
-            let Some(bus) = self.mixer_params.bus_id_at(i) else {
-                continue;
-            };
-            if let Some(node) = self.mixer_params.bus_node_mut(bus) {
-                node.strip = strip;
-            }
-        }
         self.mixer_params.ensure_channel_tables(audio_sends.len());
         for (i, list) in sends.into_iter().enumerate() {
             if let Some(node) = self.mixer_params.midi_node_mut(i as u8) {
@@ -304,20 +208,6 @@ impl AudioEngine {
                 node.sends = list;
             }
         }
-        for (i, list) in bus_sends.into_iter().enumerate() {
-            let Some(bus) = self.mixer_params.bus_id_at(i) else {
-                continue;
-            };
-            if let Some(node) = self.mixer_params.bus_node_mut(bus) {
-                node.sends = list;
-            }
-        }
-        let bus_strips: Vec<StripParams> = self.mixer_params.bus_strips();
-        self.mixer
-            .resize_buses(bus_strips.len(), self.mixer.frames(), &bus_strips);
-        for (i, p) in bus_strips.into_iter().enumerate() {
-            self.mixer.set_bus_strip(i, p);
-        }
         self.sync_output_routing();
         self.sync_sends_to_graph();
     }
@@ -327,7 +217,7 @@ impl AudioEngine {
         use yinhe_types::AutomationTarget;
 
         let mut updates: Vec<(MixerChannelId, Option<f32>, Option<f32>)> = Vec::new();
-        let mut send_updates: Vec<(MixerChannelId, BusId, f32)> = Vec::new();
+        let mut send_updates: Vec<(MixerChannelId, yinhe_types::ChannelId, f32)> = Vec::new();
         let mut insert_updates: Vec<(MixerChannelId, usize, u32, f64)> = Vec::new();
         let mut collect = |node: &yinhe_mixer::MixerNode| {
             let Some(channel) = mixer_channel_of(node.id, &self.mixer_params) else {
@@ -359,7 +249,11 @@ impl AudioEngine {
                 updates.push((channel, gain, pan));
             }
             for lane in &node.automation {
-                let AutomationTarget::MixerSend { node: target, bus } = lane.target else {
+                let AutomationTarget::MixerSend {
+                    node: target,
+                    target: send_target,
+                } = lane.target
+                else {
                     continue;
                 };
                 if target != channel {
@@ -370,7 +264,7 @@ impl AudioEngine {
                     .map(|(v, _)| v)
                     .unwrap_or(0.0)
                     .clamp(0.0, 1.0);
-                send_updates.push((channel, bus, value * 2.0));
+                send_updates.push((channel, send_target, value * 2.0));
             }
             for lane in &node.automation {
                 let AutomationTarget::InsertParam {
@@ -427,97 +321,24 @@ impl AudioEngine {
                             .set_channel_insert_param(dense as usize, slot, id, value);
                     }
                 }
-                MixerChannelId::Bus(bus) => {
-                    if let Some(idx) = self.mixer_params.bus_index(bus) {
-                        self.mixer.set_bus_insert_param(idx, slot, id, value);
-                    }
-                }
                 MixerChannelId::Master => {
                     self.mixer.set_master_insert_param(slot, id, value);
                 }
             }
         }
-        for (channel, bus, amount) in send_updates {
-            let Some(node) = self
+        let had_send_updates = !send_updates.is_empty();
+        for (channel, target, amount) in send_updates {
+            let source = self.mixer_params.channel_id_for(channel);
+            let pre_fader = self
                 .mixer_params
-                .node_mut(self.mixer_params.node_id_for(channel))
-            else {
-                continue;
-            };
-            if let Some(send) = node
-                .sends
-                .iter_mut()
-                .find(|s| s.target == yinhe_types::ChannelId::Bus(bus))
-            {
-                send.amount = amount;
-            }
-            let sends: Vec<SendParams> = node
-                .sends
-                .iter()
-                .filter(|s| s.amount > 0.0)
-                .copied()
-                .collect();
-            let resolved = self.resolve_sends(&sends);
-            match channel {
-                MixerChannelId::Midi(ch) => {
-                    if let Some(dense) = self.dense_of(ch) {
-                        self.mixer.set_sends(dense, resolved);
-                    }
-                }
-                MixerChannelId::Audio(ch) => {
-                    let dense = self.channel_layout.audio_dense_for(ch);
-                    if dense != u32::MAX {
-                        self.mixer.set_sends(dense as usize, resolved);
-                    }
-                }
-                MixerChannelId::TrackLc(id) => {
-                    if let Some((_, dense)) = self.channel_layout.track_lc_dense_for(id)
-                        && dense != u32::MAX
-                    {
-                        self.mixer.set_sends(dense as usize, resolved);
-                    }
-                }
-                MixerChannelId::Bus(bus_id) => {
-                    if let Some(idx) = self.mixer_params.bus_index(bus_id) {
-                        self.mixer.set_bus_sends(idx, resolved);
-                    }
-                }
-                MixerChannelId::Master => {}
-            }
+                .channel_send(source, target)
+                .map(|s| s.pre_fader)
+                .unwrap_or(false);
+            self.mixer_params
+                .set_channel_send(source, target, amount, pre_fader);
         }
-    }
-
-    /// 按 tick 求值 BusGain 自动化并写入总线 strip。
-    /// 没有 lane 的总线保持用户推子值；lane 存在但事件尚未开始时用 1.0。
-    pub(crate) fn apply_bus_automation(&mut self, tick: u32) {
-        let updates: Vec<(BusId, f32)> = self
-            .mixer_params
-            .nodes()
-            .filter_map(|node| {
-                let yinhe_types::ChannelId::Bus(bus_id) = node.id else {
-                    return None;
-                };
-                let lane = node.automation.iter().find(|lane| {
-                    lane.target == yinhe_types::AutomationTarget::BusGain { bus: bus_id }
-                })?;
-                let value = lane
-                    .value_at(tick)
-                    .map(|(v, _)| v)
-                    .unwrap_or(1.0)
-                    .clamp(0.0, 1.0);
-                Some((bus_id, value))
-            })
-            .collect();
-        for (bus_id, value) in updates {
-            let Some(idx) = self.mixer_params.bus_index(bus_id) else {
-                continue;
-            };
-            if let Some(node) = self.mixer_params.bus_node_mut(bus_id)
-                && (node.strip.gain - value).abs() > f32::EPSILON
-            {
-                node.strip.gain = value;
-                self.mixer.set_bus_gain(idx, value);
-            }
+        if had_send_updates {
+            self.sync_sends_to_graph();
         }
     }
 
@@ -605,10 +426,6 @@ impl AudioEngine {
                     self.insert_returns.push(processor);
                 }
             }
-            InsertTarget::Bus(bus) => match self.mixer_params.bus_index(bus) {
-                Some(idx) => self.mixer.insert_bus_insert(idx, slot, processor),
-                None => self.insert_returns.push(processor),
-            },
             InsertTarget::Master => self.mixer.insert_master_insert(slot, processor),
         }
     }
@@ -633,10 +450,6 @@ impl AudioEngine {
                             .flatten()
                     })
             }
-            InsertTarget::Bus(bus) => self
-                .mixer_params
-                .bus_index(bus)
-                .and_then(|idx| self.mixer.remove_bus_insert(idx, slot)),
             InsertTarget::Master => self.mixer.remove_master_insert(slot),
         };
         if let Some(p) = removed {
@@ -669,10 +482,6 @@ impl AudioEngine {
                             .flatten()
                     })
             }
-            InsertTarget::Bus(bus) => self
-                .mixer_params
-                .bus_index(bus)
-                .and_then(|idx| self.mixer.replace_bus_insert(idx, slot, processor)),
             InsertTarget::Master => self.mixer.replace_master_insert(slot, processor),
         };
         if let Some(p) = old {
@@ -797,7 +606,6 @@ fn mixer_channel_of(
             _ => None,
         },
         ChannelId::Ap(_) => None,
-        ChannelId::Bus(bus) => Some(MixerChannelId::Bus(bus)),
         ChannelId::Master => Some(MixerChannelId::Master),
     }
 }

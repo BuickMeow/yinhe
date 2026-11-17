@@ -649,16 +649,14 @@ pub enum AutomationTarget {
     /// Tempo（BPM）。全局唯一一条 lane，存于 `ConductorData.tempo`。
     /// `value` 直接装 bpm（f32），是唯一不归一化的量。
     Tempo,
-    /// 总线主输出增益（线性 0..1，1.0 = 0 dB）。lane 存于 Bus 节点。
-    BusGain { bus: crate::BusId },
     /// 任意混音节点的推子增益（归一化 0..1，1.0 = 0 dB）。
     MixerGain { channel: crate::MixerChannelId },
     /// 任意混音节点的声像（归一化 0..1，0.5 = 居中）。
     MixerPan { channel: crate::MixerChannelId },
-    /// 任意混音节点到某条 Bus 的发送量（归一化 0..1，1.0 = 满发送）。
+    /// 任意混音节点到某个通道的发送量（归一化 0..1，1.0 = 满发送）。
     MixerSend {
         node: crate::MixerChannelId,
-        bus: crate::BusId,
+        target: crate::ChannelId,
     },
     /// 某个 insert 槽位的插件参数（值归一化 0..1）。
     InsertParam {
@@ -690,7 +688,6 @@ impl AutomationTarget {
             AutomationTarget::Rpn { parameter } => Some(rpn_max(*parameter)),
             AutomationTarget::Nrpn { .. } => Some(16383.0),
             AutomationTarget::Tempo
-            | AutomationTarget::BusGain { .. }
             | AutomationTarget::MixerGain { .. }
             | AutomationTarget::MixerPan { .. }
             | AutomationTarget::MixerSend { .. }
@@ -711,7 +708,7 @@ impl AutomationTarget {
             AutomationTarget::PitchBend => 0.5,
             AutomationTarget::Rpn { .. } | AutomationTarget::Nrpn { .. } => 0.0,
             AutomationTarget::Tempo => 120.0,
-            AutomationTarget::BusGain { .. } | AutomationTarget::MixerGain { .. } => 1.0,
+            AutomationTarget::MixerGain { .. } => 1.0,
             AutomationTarget::MixerPan { .. } => 0.5,
             AutomationTarget::MixerSend { .. } | AutomationTarget::InsertParam { .. } => 0.0,
         }
@@ -828,15 +825,14 @@ impl AutomationTarget {
             }
             AutomationTarget::Nrpn { parameter } => format!("NRPN {:03}", parameter),
             AutomationTarget::Tempo => "Tempo".into(),
-            AutomationTarget::BusGain { bus } => format!("BUS {} Gain", bus.index() + 1),
             AutomationTarget::MixerGain { channel } => {
                 format!("Mixer Gain {:?}", channel)
             }
             AutomationTarget::MixerPan { channel } => {
                 format!("Mixer Pan {:?}", channel)
             }
-            AutomationTarget::MixerSend { node, bus } => {
-                format!("Mixer Send {:?} -> BUS {}", node, bus.index() + 1)
+            AutomationTarget::MixerSend { node, target } => {
+                format!("Mixer Send {:?} -> {:?}", node, target)
             }
             AutomationTarget::InsertParam {
                 target,
@@ -1122,49 +1118,7 @@ pub enum AutomationEdit {
         tick: u32,
     },
 
-    // ── Bus 节点 automation（BusGain 等，owner = MixerNode）──
-    BusAdd {
-        bus: crate::BusId,
-        target: AutomationTarget,
-        tick: u32,
-        value: f32,
-        shape: SegmentShape,
-    },
-    BusMove {
-        bus: crate::BusId,
-        lane_idx: usize,
-        target: AutomationTarget,
-        old_tick: u32,
-        new_tick: u32,
-        new_value: f32,
-    },
-    BusMoveBatch {
-        bus: crate::BusId,
-        lane_idx: usize,
-        target: AutomationTarget,
-        moves: Vec<(u32, u32, f32)>,
-    },
-    BusCycleShape {
-        bus: crate::BusId,
-        lane_idx: usize,
-        target: AutomationTarget,
-        tick: u32,
-    },
-    BusSetShape {
-        bus: crate::BusId,
-        lane_idx: usize,
-        target: AutomationTarget,
-        tick: u32,
-        shape: SegmentShape,
-    },
-    BusDelete {
-        bus: crate::BusId,
-        lane_idx: usize,
-        target: AutomationTarget,
-        tick: u32,
-    },
-
-    // ── 任意 MixerNode automation（LC / Bus / Master）──
+    // ── 任意 MixerNode automation（LC / Master）──
     NodeAdd {
         node: crate::MixerNodeId,
         target: AutomationTarget,

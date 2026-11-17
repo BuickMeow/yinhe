@@ -39,10 +39,6 @@ pub(crate) struct ArrangeData<'a> {
     pub tracks: &'a [std::sync::Arc<yinhe_core::TrackData>],
     /// Conductor 的 Tempo lane（Conductor 主行直显/直编）。
     pub tempo_lane: &'a yinhe_types::AutomationLane,
-    /// 固定 Bus 行的稳定 ID（与 AR 行布局的 bus 下标对应）。
-    pub bus_ids: &'a [yinhe_types::BusId],
-    /// 固定 Bus 行的 automation（与 bus_ids 等长）。
-    pub bus_automation: &'a [Vec<yinhe_types::AutomationLane>],
     /// 每轨 LC / 音频 LC 节点的 automation（与 Track 索引对齐）。
     pub track_mixer_lanes:
         &'a [Vec<(yinhe_types::MixerNodeId, Vec<yinhe_types::AutomationLane>)>],
@@ -140,15 +136,8 @@ pub fn show(
     automation_picker_req: &mut Option<usize>,
     // 每轨电平表显示值 `((L,R), (holdL,holdR))`（仅播放时非零；索引 = 音轨）。
     track_meters: &[crate::widgets::meter::StereoMeter],
-    // 固定总线条参数与电平（索引 = 总线；MIX 的总线投影到 AR）。
-    bus_strips: &[yinhe_mixer::StripParams],
-    bus_meters: &[crate::widgets::meter::StereoMeter],
-    // 固定行 M/S 改混音参数：调用方推送引擎并标记工程脏。
-    mixer_dirty: &mut bool,
     // 双击固定 Bus 行：请求打开设备链（调用方落地）。
     dock_req: &mut Option<crate::chrome::device_chain::DockContext>,
-    // 右键固定 Bus 行：请求删除总线（调用方清理机架并推引擎）。
-    bus_remove_req: &mut Option<yinhe_types::BusId>,
     // 音乐区右键菜单动作（调用方 `App` 落地）。
     menu_actions: &mut Vec<context_menu::TimelineMenuAction>,
 ) {
@@ -221,22 +210,6 @@ pub fn show(
     // Conductor 不展开（主行直显 Tempo）。
     doc.edit.arr_am_expanded.resize(num_tracks, false);
     let conductor_idx = doc.edit.track_cache.conductor_idx;
-    let bus_ids = doc.mixer.bus_ids();
-    let bus_labels: Vec<String> = bus_ids
-        .iter()
-        .map(|id| {
-            doc.mixer
-                .bus_display_number(*id)
-                .map(crate::mix::lc_label)
-                .unwrap_or_default()
-        })
-        .collect();
-    let bus_automation: Vec<Vec<yinhe_types::AutomationLane>> = doc
-        .mixer
-        .nodes()
-        .filter(|node| matches!(node.id, yinhe_types::ChannelId::Bus(_)))
-        .map(|node| node.automation.clone())
-        .collect();
     let track_mixer_lanes: Vec<Vec<(yinhe_types::MixerNodeId, Vec<yinhe_types::AutomationLane>)>> =
         doc.data
             .model
@@ -244,17 +217,6 @@ pub fn show(
             .iter()
             .map(|track| am_lanes::track_mixer_lanes(track, &doc.mixer))
             .collect();
-    // 固定 Bus 行的自动化子行：BusGain lane 存在 Bus 节点上。
-    let bus_lanes: Vec<Vec<usize>> = bus_ids
-        .iter()
-        .enumerate()
-        .map(|(i, _bus_id)| {
-            bus_automation
-                .get(i)
-                .map(|lanes| (0..lanes.len()).collect())
-                .unwrap_or_default()
-        })
-        .collect();
     let build_row_layout = |edit: &yinhe_editor_core::edit_state::EditState,
                             model: &yinhe_core::YinModel| {
         let counts: Vec<u32> = (0..num_tracks)
@@ -279,7 +241,7 @@ pub fn show(
             })
             .collect();
         let visible = model.folder_visible_mask();
-        yinhe_types::ArRowLayout::new_with_visible(&counts, &visible).with_fixed_rows(&bus_lanes)
+        yinhe_types::ArRowLayout::new_with_visible(&counts, &visible)
     };
     let mut row_layout = build_row_layout(&doc.edit, &doc.data.model);
     // 清理已删除 lane 的残留视图状态（undo 删除 lane 后）
@@ -547,12 +509,7 @@ pub fn show(
             &mut doc.edit.arr_am_selected,
             &mut doc.edit.arr_am_ms,
             track_meters,
-            bus_strips,
-            &bus_ids,
-            &bus_labels,
-            &bus_automation,
             &track_mixer_lanes,
-            bus_meters,
             doc.edit.cursor_tick,
             &doc.data.model.conductor.tempo,
         );
@@ -639,14 +596,6 @@ pub fn show(
                         t!("undo.delete_automation_lane").to_string(),
                     )
                 }
-                track_panel::TrackAction::DeleteBusAutomation { bus, lane_idx } => {
-                    structural = false;
-                    *mixer_dirty = true;
-                    (
-                        doc.remove_bus_automation_lane(*bus, *lane_idx),
-                        t!("undo.delete_automation_lane").to_string(),
-                    )
-                }
                 track_panel::TrackAction::AddTrack { after_idx } => {
                     let idx = after_idx.unwrap_or(doc.data.model.tracks.len() - 1);
                     (doc.add_track(idx), t!("undo.add_track").to_string())
@@ -703,36 +652,10 @@ pub fn show(
                         t!("undo.ungroup_folder").to_string(),
                     )
                 }
-                track_panel::TrackAction::SetBusStrip { bus, params } => {
-                    structural = false;
-                    if let Some(slot) = doc.mixer.bus_node_mut(*bus) {
-                        slot.strip = *params;
-                    }
-                    *mixer_dirty = true;
-                    (None, String::new())
-                }
-                track_panel::TrackAction::OpenBusDock { bus } => {
-                    structural = false;
-                    *dock_req = Some(crate::chrome::device_chain::DockContext::Bus(*bus));
-                    (None, String::new())
-                }
-                track_panel::TrackAction::RemoveBus { bus } => {
-                    structural = false;
-                    *bus_remove_req = Some(*bus);
-                    (None, String::new())
-                }
                 track_panel::TrackAction::OpenMasterDock => {
                     structural = false;
                     *dock_req = Some(crate::chrome::device_chain::DockContext::Master);
                     (None, String::new())
-                }
-                track_panel::TrackAction::AddBusAutomation { bus } => {
-                    structural = false;
-                    *mixer_dirty = true;
-                    (
-                        doc.add_bus_automation_lane(*bus),
-                        t!("undo.create_automation").to_string(),
-                    )
                 }
                 track_panel::TrackAction::CommitMuteSolo { before, after } => {
                     structural = false;
@@ -838,8 +761,6 @@ pub fn show(
             num_tracks,
             tracks: &model.tracks,
             tempo_lane: &model.conductor.tempo,
-            bus_ids: &bus_ids,
-            bus_automation: &bus_automation,
             track_mixer_lanes: &track_mixer_lanes,
             conductor_track_idx: doc.edit.track_cache.conductor_idx,
             tempo_map: &model.tempo_map,
@@ -883,15 +804,6 @@ pub fn show(
     if !am_edits.is_empty() {
         let before = doc.capture_snapshot();
         let actions = doc.apply_automation_edits(std::mem::take(&mut am_edits));
-        if actions.iter().any(|action| {
-            matches!(
-                action,
-                yinhe_editor_core::history::UndoAction::BusAutomation(_)
-                    | yinhe_editor_core::history::UndoAction::BusAutomationLane { .. }
-            )
-        }) {
-            *mixer_dirty = true;
-        }
         crate::right_panel::automation_undo::push_automation_actions(
             doc,
             actions,
@@ -1171,29 +1083,7 @@ pub fn show(
                         None => track_str(t),
                     }
                 }
-                Some(yinhe_types::ArRow::BusAutomation(b, sub)) => {
-                    let label = conductor_idx
-                        .and_then(|idx| doc.data.model.tracks.get(idx as usize))
-                        .and_then(|tr| tr.automation_lanes.get(sub))
-                        .map(|lane| am_lanes::lane_label(&lane.target));
-                    let bus_label = doc
-                        .mixer
-                        .bus_id_at(b)
-                        .and_then(|id| doc.mixer.bus_display_number(id))
-                        .map(crate::mix::lc_label)
-                        .unwrap_or_else(|| "CH".to_string());
-                    match label {
-                        Some(label) => format!("{bus_label} · {label}"),
-                        None => bus_label,
-                    }
-                }
                 Some(yinhe_types::ArRow::Track(t)) => track_str(t),
-                Some(yinhe_types::ArRow::Bus(b)) => doc
-                    .mixer
-                    .bus_id_at(b)
-                    .and_then(|id| doc.mixer.bus_display_number(id))
-                    .map(crate::mix::lc_label)
-                    .unwrap_or_else(|| "CH".to_string()),
                 None => track_str(num_tracks.saturating_sub(1)),
             }
         };

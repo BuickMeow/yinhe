@@ -181,7 +181,7 @@ impl Document {
         }
         let model = Arc::make_mut(&mut self.data.model);
         let track = model.tracks.get_mut(track_idx)?;
-        // 权限唯一入口：Folder 不承载任何自动化；Master 只额外承载 BusGain。
+        // 权限唯一入口：Folder 不承载任何自动化。
         if !track.allows_automation_target(&target) {
             return None;
         }
@@ -209,7 +209,7 @@ impl Document {
         ))
     }
 
-    /// 为任意 MixerNode 创建自动化 lane（LC / Bus / Master）。
+    /// 为任意 MixerNode 创建自动化 lane（LC / Master）。
     /// `initial_value` 是归一化值；已存在同 target 时返回 None。
     pub fn add_mixer_automation_lane(
         &mut self,
@@ -241,16 +241,6 @@ impl Document {
             before: None,
             after: Some(lane),
         })
-    }
-
-    /// 为 Bus 节点创建增益自动化 lane（兼容旧调用）。
-    pub fn add_bus_automation_lane(&mut self, bus: yinhe_types::BusId) -> Option<UndoAction> {
-        let gain = self.mixer.bus_strip(bus).gain.clamp(0.0, 1.0);
-        self.add_mixer_automation_lane(
-            yinhe_types::MixerNodeId::Bus(bus),
-            AutomationTarget::BusGain { bus },
-            gain,
-        )
     }
 
     /// 在任意 MixerNode 的 target lane 上添加事件（不存在则懒创建）。
@@ -286,15 +276,6 @@ impl Document {
             before: Vec::new(),
             after: vec![event],
         }))
-    }
-
-    pub fn add_bus_automation_event(
-        &mut self,
-        bus: yinhe_types::BusId,
-        target: yinhe_types::AutomationTarget,
-        event: yinhe_types::AutomationEvent,
-    ) -> Option<UndoAction> {
-        self.add_mixer_automation_event(yinhe_types::MixerNodeId::Bus(bus), target, event)
     }
 
     /// 移动任意 MixerNode lane 上的单个事件。
@@ -340,25 +321,6 @@ impl Document {
         }))
     }
 
-    pub fn move_bus_automation_event(
-        &mut self,
-        bus: yinhe_types::BusId,
-        lane_idx: usize,
-        target: &yinhe_types::AutomationTarget,
-        old_tick: u32,
-        new_tick: u32,
-        new_value: f32,
-    ) -> Option<UndoAction> {
-        self.move_mixer_automation_event(
-            yinhe_types::MixerNodeId::Bus(bus),
-            lane_idx,
-            target,
-            old_tick,
-            new_tick,
-            new_value,
-        )
-    }
-
     /// 批量移动任意 MixerNode lane 上的事件。
     pub fn move_mixer_automation_events_batch(
         &mut self,
@@ -386,21 +348,6 @@ impl Document {
             before,
             after,
         }))
-    }
-
-    pub fn move_bus_automation_events_batch(
-        &mut self,
-        bus: yinhe_types::BusId,
-        lane_idx: usize,
-        target: &yinhe_types::AutomationTarget,
-        moves: &[(u32, u32, f32)],
-    ) -> Option<UndoAction> {
-        self.move_mixer_automation_events_batch(
-            yinhe_types::MixerNodeId::Bus(bus),
-            lane_idx,
-            target,
-            moves,
-        )
     }
 
     /// 删除任意 MixerNode lane 上 tick 处的事件。
@@ -436,21 +383,6 @@ impl Document {
             before,
             after: Vec::new(),
         }))
-    }
-
-    pub fn delete_bus_automation_event(
-        &mut self,
-        bus: yinhe_types::BusId,
-        lane_idx: usize,
-        target: &yinhe_types::AutomationTarget,
-        tick: u32,
-    ) -> Option<UndoAction> {
-        self.delete_mixer_automation_event(
-            yinhe_types::MixerNodeId::Bus(bus),
-            lane_idx,
-            target,
-            tick,
-        )
     }
 
     /// 修改任意 MixerNode lane 上事件的 shape。
@@ -494,23 +426,6 @@ impl Document {
         }))
     }
 
-    pub fn set_bus_automation_shape(
-        &mut self,
-        bus: yinhe_types::BusId,
-        lane_idx: usize,
-        target: &yinhe_types::AutomationTarget,
-        tick: u32,
-        shape: yinhe_types::SegmentShape,
-    ) -> Option<UndoAction> {
-        self.set_mixer_automation_shape(
-            yinhe_types::MixerNodeId::Bus(bus),
-            lane_idx,
-            target,
-            tick,
-            shape,
-        )
-    }
-
     /// 删除任意 MixerNode 上的整条 automation lane。
     pub fn remove_mixer_automation_lane(
         &mut self,
@@ -529,19 +444,6 @@ impl Document {
             before: Some(lane),
             after: None,
         })
-    }
-
-    pub fn remove_bus_automation_lane(
-        &mut self,
-        bus: yinhe_types::BusId,
-        lane_idx: usize,
-    ) -> Option<UndoAction> {
-        self.remove_mixer_automation_lane(yinhe_types::MixerNodeId::Bus(bus), lane_idx)
-    }
-
-    /// 删除总线。BusGain lane 随 Bus 节点一起移除，不再需要清理 Master。
-    pub fn remove_bus(&mut self, bus: yinhe_types::BusId) {
-        self.mixer.remove_bus(bus);
     }
 
     /// 删除整条 automation lane。返回 UndoAction（before 含完整 lane 供 undo 恢复）。
@@ -877,78 +779,6 @@ impl Document {
                     target,
                     tick,
                 } => self.delete_automation_event(track_idx as usize, lane_idx, &target, tick),
-                AutomationEdit::BusAdd {
-                    bus,
-                    target,
-                    tick,
-                    value,
-                    shape,
-                } => self.add_bus_automation_event(
-                    bus,
-                    target,
-                    yinhe_types::AutomationEvent {
-                        id: 0,
-                        tick,
-                        value,
-                        shape,
-                    },
-                ),
-                AutomationEdit::BusMove {
-                    bus,
-                    lane_idx,
-                    target,
-                    old_tick,
-                    new_tick,
-                    new_value,
-                } => self.move_bus_automation_event(
-                    bus, lane_idx, &target, old_tick, new_tick, new_value,
-                ),
-                AutomationEdit::BusMoveBatch {
-                    bus,
-                    lane_idx,
-                    target,
-                    moves,
-                } => self.move_bus_automation_events_batch(bus, lane_idx, &target, &moves),
-                AutomationEdit::BusCycleShape {
-                    bus,
-                    lane_idx,
-                    target,
-                    tick,
-                } => {
-                    let lane = self.mixer.bus_node(bus).and_then(|node| {
-                        node.automation
-                            .iter()
-                            .find(|lane| lane.target == target)
-                            .or_else(|| node.automation.get(lane_idx))
-                    });
-                    let evt = lane.and_then(|l| l.events.iter().find(|e| e.tick == tick));
-                    if let Some(evt) = evt {
-                        let next = match evt.shape {
-                            yinhe_types::SegmentShape::Step => {
-                                yinhe_types::SegmentShape::linear_curve()
-                            }
-                            yinhe_types::SegmentShape::Curve { .. } => {
-                                yinhe_types::SegmentShape::Step
-                            }
-                        };
-                        self.set_bus_automation_shape(bus, lane_idx, &target, tick, next)
-                    } else {
-                        None
-                    }
-                }
-                AutomationEdit::BusSetShape {
-                    bus,
-                    lane_idx,
-                    target,
-                    tick,
-                    shape,
-                } => self.set_bus_automation_shape(bus, lane_idx, &target, tick, shape),
-                AutomationEdit::BusDelete {
-                    bus,
-                    lane_idx,
-                    target,
-                    tick,
-                } => self.delete_bus_automation_event(bus, lane_idx, &target, tick),
                 AutomationEdit::NodeAdd {
                     node,
                     target,
@@ -1628,57 +1458,7 @@ mod tests {
     }
 
     #[test]
-    fn bus_automation_lane_creation_and_undo() {
-        use yinhe_types::MixerNodeId;
-        let mut doc = Document::empty();
-        let bus = doc.mixer.add_bus().expect("bus");
-        let action = doc.add_bus_automation_lane(bus).expect("lane");
-        assert!(
-            doc.mixer
-                .bus_node(bus)
-                .is_some_and(|node| node.automation.len() == 1)
-        );
-
-        action.reversed().redo(&mut doc);
-        assert!(
-            doc.mixer
-                .bus_node(bus)
-                .is_some_and(|node| node.automation.is_empty())
-        );
-    }
-
     #[test]
-    fn bus_automation_edits_apply_and_undo() {
-        use yinhe_types::{AutomationEdit, AutomationTarget, BusId, MixerNodeId, SegmentShape};
-        let mut doc = Document::empty();
-        let bus = doc.mixer.add_bus().expect("bus");
-        let target = AutomationTarget::BusGain { bus };
-
-        let actions = doc.apply_automation_edits(vec![AutomationEdit::BusAdd {
-            bus,
-            target: target.clone(),
-            tick: 100,
-            value: 0.25,
-            shape: SegmentShape::linear_curve(),
-        }]);
-        assert_eq!(actions.len(), 1);
-        let lane = doc
-            .mixer
-            .bus_node(bus)
-            .and_then(|node| node.automation.first())
-            .expect("bus lane");
-        assert_eq!(lane.events[0].tick, 100);
-
-        actions[0].clone().reversed().redo(&mut doc);
-        let lane = doc
-            .mixer
-            .bus_node(bus)
-            .and_then(|node| node.automation.first())
-            .expect("bus lane");
-        assert!(lane.events.is_empty(), "undo 应删除新增事件");
-        let _ = BusId::default();
-    }
-
     #[test]
     fn mixer_gain_lane_lives_on_lc_node_and_undoes() {
         use yinhe_types::{MixerChannelId, MixerNodeId};
@@ -1708,33 +1488,5 @@ mod tests {
                 .midi_node(0)
                 .is_some_and(|n| n.automation.is_empty())
         );
-    }
-
-    #[test]
-    fn bus_gain_lane_lives_on_bus_node_and_accepts_events() {
-        use yinhe_types::{AutomationEvent, AutomationTarget, SegmentShape};
-        let mut doc = Document::empty();
-        assert!(doc.mixer.add_bus().is_some());
-        let bus = yinhe_types::BusId(0);
-        doc.add_bus_automation_lane(bus).expect("bus lane");
-        let node = doc.mixer.bus_node(bus).expect("bus node");
-        assert!(matches!(
-            node.automation[0].target,
-            AutomationTarget::BusGain { bus: bus_id } if bus_id == bus
-        ));
-
-        doc.add_bus_automation_event(
-            bus,
-            AutomationTarget::BusGain { bus },
-            AutomationEvent {
-                id: 0,
-                tick: 480,
-                value: 0.5,
-                shape: SegmentShape::linear_curve(),
-            },
-        )
-        .expect("event");
-        let lane = &doc.mixer.bus_node(bus).expect("bus node").automation[0];
-        assert_eq!(lane.events.last().map(|e| e.value), Some(0.5));
     }
 }

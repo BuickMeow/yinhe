@@ -14,15 +14,14 @@
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_mixer::MasterParams;
-use yinhe_types::{BusId, ChannelId, LogicalChannelId, MixerChannelId};
+use yinhe_types::{ChannelId, LogicalChannelId, MixerChannelId};
 
 use crate::app::App;
 use crate::widgets::meter::{METER_GAP, METER_W, SCALE_W};
 
 use super::MixAction;
 use controls::{
-    SendSource, focus_send_block, master_controls, section, send_block, send_height,
-    strip_controls, strip_frame,
+    focus_send_block, master_controls, section, send_height, strip_controls, strip_frame,
 };
 
 mod controls;
@@ -32,9 +31,7 @@ mod picker;
 mod tests;
 
 pub(crate) use controls::auto_panel_height;
-pub(crate) use picker::{
-    PickerTab, instrument_picker, picker_viewport_id, plugin_picker, send_popup, sends_viewport_id,
-};
+pub(crate) use picker::{PickerTab, instrument_picker, picker_viewport_id, plugin_picker};
 
 /// 通道条宽度（px）。
 pub(crate) const STRIP_WIDTH: f32 = 88.0;
@@ -310,110 +307,6 @@ pub(crate) fn track_lc_strip(
         ("mix_header_dock_track_lc", lc.0),
         actions,
     );
-}
-
-/// 总线条（bus / return）：与通道条同构，额外在色带右侧提供删除入口。
-#[allow(clippy::too_many_arguments)] // 通道条渲染上下文透传
-pub(crate) fn bus_strip(
-    app: &mut App,
-    ui: &mut egui::Ui,
-    idx: usize,
-    bus: BusId,
-    level: (f32, f32),
-    hold: (f32, f32),
-    height: f32,
-    actions: &mut Vec<MixAction>,
-) {
-    let mixer = &app.workspace.documents[idx].mixer;
-    let node = MixerChannelId::Bus(bus);
-    let params = mixer.node_strip(node);
-    let title = crate::mix::channel_id_label(ChannelId::Bus(bus), &app.mix.channel_display);
-    let bus_sends = mixer
-        .node_sends(node)
-        .map(<[_]>::to_vec)
-        .unwrap_or_default();
-    let bus_ids = mixer.bus_ids();
-
-    let rect = strip_frame(
-        ui,
-        ("mix_strip_bus", bus),
-        crate::theme::accent_active(),
-        &title,
-        height,
-        |ui, _| {
-            section(
-                ui,
-                send_height(bus_ids.len()),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    send_block(ui, SendSource::Bus(bus), &bus_sends, &bus_ids, actions);
-                },
-            );
-            ui.add_space(GAP);
-            if let Some(p) = strip_controls(
-                ui,
-                &params,
-                level,
-                hold,
-                true,
-                true,
-                controls::StripAutomationTarget::Bus(bus),
-                actions,
-            ) {
-                actions.push(MixAction::SetNodeStrip {
-                    node: MixerChannelId::Bus(bus),
-                    params: p,
-                });
-            }
-        },
-    );
-
-    // 色带行右侧：删除总线按钮（与标题同一行）。图标取色与色带文字同源
-    // （色带对比色），悬停转危险色。
-    let header = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), HEADER_H));
-    let header_resp = ui.interact(
-        header,
-        ui.scope_id().with(("mix_bus_header", bus)),
-        egui::Sense::click(),
-    );
-    header_context_menu(
-        app,
-        &header_resp,
-        idx,
-        crate::chrome::device_chain::DockContext::Bus(bus),
-        actions,
-    );
-    if header_resp.clicked() {
-        focus_channel_info(app, MixerChannelId::Bus(bus));
-    }
-    let del_rect = egui::Rect::from_center_size(
-        egui::pos2(header.max.x - PAD_X - 6.0, header.center().y),
-        egui::vec2(14.0, 14.0),
-    );
-    let del_resp = ui.interact(
-        del_rect,
-        ui.scope_id().with(("mix_bus_remove", bus)),
-        egui::Sense::click(),
-    );
-    let del_color = if del_resp.hovered() {
-        crate::theme::danger_text_bright()
-    } else {
-        crate::theme::contrast_text(crate::theme::accent_active())
-    };
-    ui.painter().text(
-        del_rect.center(),
-        egui::Align2::CENTER_CENTER,
-        egui_material_icons::icons::ICON_DELETE.codepoint,
-        egui::FontId::new(
-            crate::theme::ICON_FONT_SM,
-            egui_material_icons::icons::ICON_DELETE.font_family(),
-        ),
-        del_color,
-    );
-    crate::widgets::hint::hover(ui.ctx(), &del_resp, t!("hint.mix.remove_bus"));
-    if del_resp.clicked() {
-        actions.push(MixAction::RemoveBus { bus });
-    }
 }
 
 /// 主输出条：固定高度电平表 + dB 读数（无 M/S/声像/发送）。
@@ -724,21 +617,6 @@ fn header_context_menu(
             actions.push(action);
             ui.close();
         }
-        if let MixerChannelId::Bus(bus) = ch {
-            ui.separator();
-            if ui
-                .add(crate::widgets::menu::menu_item_action(
-                    ui,
-                    false,
-                    t!("arrange.remove_bus").as_ref(),
-                    "",
-                ))
-                .clicked()
-            {
-                actions.push(MixAction::RemoveBus { bus });
-                ui.close();
-            }
-        }
     });
 }
 
@@ -777,14 +655,6 @@ fn reset_gain_action(app: &App, idx: usize, ch: MixerChannelId) -> MixAction {
                 params,
             }
         }
-        MixerChannelId::Bus(bus) => {
-            let mut params = mixer.bus_strip(bus);
-            params.gain = 1.0;
-            MixAction::SetNodeStrip {
-                node: MixerChannelId::Bus(bus),
-                params,
-            }
-        }
         MixerChannelId::Master => MixAction::SetMaster {
             params: MasterParams { gain: 1.0 },
         },
@@ -815,14 +685,6 @@ fn reset_pan_action(app: &App, idx: usize, ch: MixerChannelId) -> Option<MixActi
             params.pan = 0.0;
             Some(MixAction::SetNodeStrip {
                 node: MixerChannelId::TrackLc(id),
-                params,
-            })
-        }
-        MixerChannelId::Bus(bus) => {
-            let mut params = mixer.bus_strip(bus);
-            params.pan = 0.0;
-            Some(MixAction::SetNodeStrip {
-                node: MixerChannelId::Bus(bus),
                 params,
             })
         }

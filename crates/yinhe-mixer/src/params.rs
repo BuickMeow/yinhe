@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use yinhe_types::{
-    ApGroupId, Audibility, BusId, ChannelId, ChannelSource, LogicalChannelId, MixerChannelId,
-    MixerNodeId, RackId, TRACK_LC_BASE,
+    ApGroupId, Audibility, ChannelId, ChannelSource, LogicalChannelId, MixerChannelId, MixerNodeId,
+    RackId, TRACK_LC_BASE,
 };
 
 use crate::node::{ApGroup, MixerNode, RackParams};
@@ -123,10 +123,10 @@ pub struct InsertRef {
     pub state: Option<Vec<u8>>,
 }
 
-/// 发送参数：源通道 → 总线（bus / return）。
+/// 节点内嵌的发送条目（源为节点自身）。
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SendParams {
-    /// 目标通道（Bus / LC / AP / Master）。
+    /// 目标通道（LC / AP / Master）。
     pub target: ChannelId,
     /// 发送量（线性增益；0.0 = 关闭）。
     #[serde(default)]
@@ -149,8 +149,8 @@ impl Default for SendParams {
 
 /// 任意音频通道之间的发送（方案 C）。
 ///
-/// 与旧 `SendParams`（只发总线）并存：旧字段服务 v14 工程和旧 Bus UI，
-/// 新字段服务 C 的“任意 Channel 都能接收 send”。
+/// 与节点内嵌的 `SendParams` 并存：`SendParams` 是通道条自己的发送列表，
+/// 本类型是引擎侧按 source/target 解析的统一发送表。
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChannelSend {
     pub source: ChannelId,
@@ -177,9 +177,7 @@ impl ChannelSend {
 ///
 /// 存储已从 v9 的并行分表合并为节点表：
 /// - `racks[i]`：Rack（共享乐器），当前按源 MIDI 通道 0..256 一一对应；
-/// - `channels[i]`：MIDI 源通道 i 的 LC；
-/// - `audio_channels[i]`：音频通道 i 的 LC；
-/// - `buses`：Bus 节点，ID 稳定；
+/// - `nodes[i]`：LC 节点（MIDI / 音频 / 每轨 / AP），ID 独立且稳定；
 /// - `master`：Master 节点。
 ///
 /// v9 及更早工程由 `yinhe-yin` 的混音段迁移器转换成这个结构，
@@ -202,7 +200,7 @@ pub struct MixerParams {
     /// 所有非 Master 音频通道节点，按 `ChannelId` 排序。
     ///
     /// LC ID 是独立 u16 身份；节点的角色由 `MixerNode::source` 显式记录，
-    /// 不再从 ID 数值区间反推。Bus 是 source=None 的普通通道角色。
+    /// 不再从 ID 数值区间反推。
     #[serde(default)]
     pub nodes: Vec<MixerNode>,
     /// 主输出节点。
@@ -211,9 +209,6 @@ pub struct MixerParams {
     /// 下一个乐器实例 uid（工程内唯一、持久化；加载时对齐到已用最大值 +1）。
     #[serde(default = "default_instrument_uid")]
     pub next_instrument_uid: u64,
-    /// 下一个可分配的 BusId（持久化，避免删除后复用导致自动化串线）。
-    #[serde(default)]
-    pub next_bus_id: BusId,
     /// 下一个可分配的 LC ID（独立 u16 身份）。
     #[serde(default = "default_next_lc_id")]
     pub next_lc_id: LogicalChannelId,
@@ -234,7 +229,6 @@ impl Default for MixerParams {
             nodes: Vec::new(),
             master: MixerNode::master(),
             next_instrument_uid: 1,
-            next_bus_id: BusId::default(),
             next_lc_id: LogicalChannelId(TRACK_LC_BASE),
         }
     }
@@ -250,7 +244,6 @@ impl MixerParams {
         self.ensure_send_amounts();
         self.ensure_track_channels();
         self.ensure_audio_channels();
-        self.ensure_buses();
         self.clear_mixed_lc_freezes();
         self.ensure_master();
         self.ensure_instrument_uids();
@@ -273,8 +266,19 @@ impl MixerParams {
                 self.channel_id_for(MixerChannelId::Audio(ch)),
             );
         }
-        for bus in self.bus_ids() {
-            resolved.insert(MixerChannelId::Bus(bus), ChannelId::Bus(bus));
+        // 每轨 LC 的自动化 owner 是 TrackLc，也必须参与解析，否则加载后
+        // 其 MixerGain/MixerPan lane 会被误判为「不属于该节点」而删除。
+        let track_lcs: Vec<LogicalChannelId> = self
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.source, ChannelSource::Track(_)))
+            .filter_map(|node| match node.id {
+                ChannelId::Lc(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+        for lc in track_lcs {
+            resolved.insert(MixerChannelId::TrackLc(lc), ChannelId::Lc(lc));
         }
         resolved.insert(MixerChannelId::Master, ChannelId::Master);
         let valid = |channel: ChannelId, lane: &yinhe_types::AutomationLane| match &lane.target {
@@ -283,9 +287,6 @@ impl MixerParams {
             | yinhe_types::AutomationTarget::MixerSend { node: c, .. }
             | yinhe_types::AutomationTarget::InsertParam { target: c, .. } => {
                 resolved.get(c).copied().unwrap_or(ChannelId::Master) == channel
-            }
-            yinhe_types::AutomationTarget::BusGain { .. } => {
-                matches!(channel, ChannelId::Bus(_))
             }
             _ => true,
         };
@@ -396,7 +397,6 @@ impl MixerParams {
                 .map(|node| node.id)
                 .unwrap_or(ChannelId::Master),
             MixerChannelId::TrackLc(id) => ChannelId::Lc(id),
-            MixerChannelId::Bus(bus) => ChannelId::Bus(bus),
             MixerChannelId::Master => ChannelId::Master,
         }
     }
@@ -405,17 +405,8 @@ impl MixerParams {
         match self.channel_id_for(channel) {
             ChannelId::Lc(id) => MixerNodeId::LogicalChannel(id),
             ChannelId::Ap(_) => MixerNodeId::Master,
-            ChannelId::Bus(bus) => MixerNodeId::Bus(bus),
             ChannelId::Master => MixerNodeId::Master,
         }
-    }
-
-    pub fn bus_node(&self, id: BusId) -> Option<&MixerNode> {
-        self.find_node(ChannelId::Bus(id))
-    }
-
-    pub fn bus_node_mut(&mut self, id: BusId) -> Option<&mut MixerNode> {
-        self.find_node_mut(ChannelId::Bus(id))
     }
 
     /// 按 C 统一身份查节点；Master 映射到 `master`。
@@ -512,11 +503,10 @@ impl MixerParams {
             ChannelId::Master => true,
             ChannelId::Lc(id) => self.channel_exists(id),
             ChannelId::Ap(ap) => self.ap(ap.group).is_some(),
-            ChannelId::Bus(bus) => self.bus_index(bus).is_some(),
         }
     }
 
-    /// 某通道发出的 C 发送（不含旧 Bus 发送）。
+    /// 某通道发出的 C 发送。
     pub fn channel_sends_from(&self, source: ChannelId) -> impl Iterator<Item = &ChannelSend> {
         self.channel_sends
             .iter()
@@ -541,23 +531,12 @@ impl MixerParams {
             .collect()
     }
 
-    /// 所有可显示通道的 CH 编号：LC 先编号，旧 Bus 节点接在后面。
+    /// 所有可显示通道的 LC 编号。
     pub fn channel_display_map(&self) -> HashMap<ChannelId, u32> {
-        let lc = self.lc_display_map();
-        let base = lc.len() as u32;
-        let mut map: HashMap<ChannelId, u32> = lc
+        self.lc_display_map()
             .into_iter()
             .map(|(id, n)| (ChannelId::Lc(id), n))
-            .collect();
-        for (i, bus) in self.bus_ids().into_iter().enumerate() {
-            map.insert(ChannelId::Bus(bus), base + i as u32 + 1);
-        }
-        map
-    }
-
-    pub fn bus_display_number(&self, bus: BusId) -> Option<u32> {
-        let base = self.lc_display_map().len() as u32;
-        self.bus_index(bus).map(|i| base + i as u32 + 1)
+            .collect()
     }
 
     pub fn channel_send(&self, source: ChannelId, target: ChannelId) -> Option<&ChannelSend> {
@@ -580,7 +559,7 @@ impl MixerParams {
         amount: f32,
         pre_fader: bool,
     ) -> bool {
-        if matches!(source, ChannelId::Master | ChannelId::Bus(_)) || source == target {
+        if source == ChannelId::Master || source == target {
             return false;
         }
         if amount <= 0.0 {
@@ -731,26 +710,6 @@ impl MixerParams {
         self.sort_dedup_nodes();
     }
 
-    fn ensure_buses(&mut self) {
-        let mut next = self.next_bus_id;
-        let mut seen: HashSet<BusId> = HashSet::new();
-        for node in &mut self.nodes {
-            if let ChannelId::Bus(id) = node.id {
-                let mut id = id;
-                if !seen.insert(id) {
-                    id = alloc_bus_id(&mut next);
-                    seen.insert(id);
-                }
-                if id.0 >= next.0 {
-                    next = BusId(id.0.saturating_add(1));
-                }
-                node.id = ChannelId::Bus(id);
-            }
-        }
-        self.next_bus_id = next;
-        self.sort_dedup_nodes();
-    }
-
     /// 混合 LC 不冻结：有任意 C 发送汇入的 LC，清除 freeze。
     fn clear_mixed_lc_freezes(&mut self) {
         let targets: HashSet<LogicalChannelId> = self
@@ -759,7 +718,7 @@ impl MixerParams {
             .filter_map(|send| match send.target {
                 ChannelId::Lc(id) => Some(id),
                 ChannelId::Ap(ap) => self.ap(ap.group).map(|group| group.channel),
-                ChannelId::Bus(_) | ChannelId::Master => None,
+                ChannelId::Master => None,
             })
             .collect();
         if targets.is_empty() {
@@ -793,31 +752,6 @@ impl MixerParams {
                 node.output = None;
             }
         }
-        // Bus 主输出不能成环；环上的输出清成 Master。
-        let bus_ids: Vec<BusId> = self.bus_ids();
-        for bus in &bus_ids {
-            let mut cur = self.bus_node(*bus).and_then(|node| node.output);
-            let mut steps = 0;
-            let mut cycle = false;
-            while let Some(id) = cur {
-                if id == ChannelId::Bus(*bus) {
-                    cycle = true;
-                    break;
-                }
-                if steps > self.bus_count() {
-                    cycle = true;
-                    break;
-                }
-                steps += 1;
-                let ChannelId::Bus(next_bus) = id else {
-                    break;
-                };
-                cur = self.bus_node(next_bus).and_then(|node| node.output);
-            }
-            if cycle && let Some(node) = self.bus_node_mut(*bus) {
-                node.output = None;
-            }
-        }
     }
 
     /// 分配一个新的乐器实例 uid（恒 ≥1）。
@@ -839,122 +773,6 @@ impl MixerParams {
                 } else if r.uid >= self.next_instrument_uid {
                     self.next_instrument_uid = r.uid + 1;
                 }
-            }
-        }
-    }
-
-    /// 总线数量。
-    pub fn bus_count(&self) -> usize {
-        self.nodes
-            .iter()
-            .filter(|node| matches!(node.id, ChannelId::Bus(_)))
-            .count()
-    }
-
-    /// 第 `index` 条总线的稳定 ID（越界返回 `None`）。
-    pub fn bus_id_at(&self, index: usize) -> Option<BusId> {
-        self.nodes
-            .iter()
-            .filter_map(|node| match node.id {
-                ChannelId::Bus(id) => Some(id),
-                _ => None,
-            })
-            .nth(index)
-    }
-
-    /// 稳定 BusId → `buses` 下标（不存在返回 `None`）。
-    pub fn bus_index(&self, id: BusId) -> Option<usize> {
-        self.nodes
-            .iter()
-            .filter(|node| matches!(node.id, ChannelId::Bus(_)))
-            .position(|node| node.id == ChannelId::Bus(id))
-    }
-
-    /// 某条总线的 strip 参数（按稳定 ID，越界给默认值）。
-    pub fn bus_strip(&self, id: BusId) -> StripParams {
-        self.bus_node(id).map(|node| node.strip).unwrap_or_default()
-    }
-
-    /// 总线 ID 列表（按 `buses` 顺序）。
-    pub fn bus_ids(&self) -> Vec<BusId> {
-        self.nodes
-            .iter()
-            .filter_map(|node| match node.id {
-                ChannelId::Bus(id) => Some(id),
-                _ => None,
-            })
-            .collect()
-    }
-
-    /// 总线 strip 参数快照（按 `buses` 顺序，给混音图/UI 批量同步用）。
-    pub fn bus_strips(&self) -> Vec<StripParams> {
-        self.nodes
-            .iter()
-            .filter(|node| matches!(node.id, ChannelId::Bus(_)))
-            .map(|node| node.strip)
-            .collect()
-    }
-
-    /// MIDI 源通道发送表快照（按源通道索引）。
-    pub fn midi_sends_snapshot(&self) -> Vec<Vec<SendParams>> {
-        (0..CHANNEL_COUNT)
-            .map(|i| {
-                self.midi_node(i as u8)
-                    .map(|node| node.sends.clone())
-                    .unwrap_or_default()
-            })
-            .collect()
-    }
-
-    /// 音频通道发送表快照（按音频通道索引）。
-    pub fn audio_sends_snapshot(&self) -> Vec<Vec<SendParams>> {
-        let mut out = Vec::new();
-        for ch in 0.. {
-            let Some(node) = self.audio_node(ch) else {
-                break;
-            };
-            out.push(node.sends.clone());
-        }
-        out
-    }
-
-    /// 总线发送表快照（按 `buses` 顺序）。
-    pub fn bus_sends_snapshot(&self) -> Vec<Vec<SendParams>> {
-        self.nodes
-            .iter()
-            .filter(|node| matches!(node.id, ChannelId::Bus(_)))
-            .map(|node| node.sends.clone())
-            .collect()
-    }
-
-    fn alloc_bus_id(&mut self) -> BusId {
-        alloc_bus_id(&mut self.next_bus_id)
-    }
-
-    /// 新增一条总线，返回其稳定 ID；到达 `u16` 上限时返回 `None`。
-    pub fn add_bus(&mut self) -> Option<BusId> {
-        // ID 空间 0..=u16::MAX，共 65_536 条；不静默回绕/复用。
-        if self.bus_count() > usize::from(u16::MAX) {
-            return None;
-        }
-        self.ensure_buses();
-        let id = self.alloc_bus_id();
-        self.nodes.push(MixerNode::bus(id));
-        self.sort_dedup_nodes();
-        Some(id)
-    }
-
-    /// 删除总线 `id`：移除节点，清理指向它的 send 和主输出。
-    ///
-    /// BusId 稳定，删除后不需要重排其他总线。
-    pub fn remove_bus(&mut self, id: BusId) {
-        self.nodes.retain(|node| node.id != ChannelId::Bus(id));
-        self.channel_sends
-            .retain(|send| send.target != ChannelId::Bus(id));
-        for node in self.nodes.iter_mut() {
-            node.sends.retain(|s| s.target != ChannelId::Bus(id));
-            if node.output == Some(ChannelId::Bus(id)) {
-                node.output = None;
             }
         }
     }
@@ -1017,7 +835,7 @@ impl MixerParams {
             .unwrap_or_default()
     }
 
-    /// 统一节点读取：MIDI / 音频 / Bus / Master 走同一入口。
+    /// 统一节点读取：MIDI / 音频 / 每轨 LC / Master 走同一入口。
     pub fn node_strip(&self, node: MixerChannelId) -> StripParams {
         self.channel_node(self.channel_id_for(node))
             .map(|node| node.strip)
@@ -1074,6 +892,29 @@ impl MixerParams {
         self.node_mut_for_ui(node).map(|n| &mut n.inserts)
     }
 
+    /// MIDI 源通道发送表快照（按源通道索引）。
+    pub fn midi_sends_snapshot(&self) -> Vec<Vec<SendParams>> {
+        (0..CHANNEL_COUNT)
+            .map(|i| {
+                self.midi_node(i as u8)
+                    .map(|node| node.sends.clone())
+                    .unwrap_or_default()
+            })
+            .collect()
+    }
+
+    /// 音频通道发送表快照（按音频通道索引）。
+    pub fn audio_sends_snapshot(&self) -> Vec<Vec<SendParams>> {
+        let mut out = Vec::new();
+        for ch in 0.. {
+            let Some(node) = self.audio_node(ch) else {
+                break;
+            };
+            out.push(node.sends.clone());
+        }
+        out
+    }
+
     /// 统一节点发送列表。
     pub fn node_sends(&self, node: MixerChannelId) -> Option<&[SendParams]> {
         if node == MixerChannelId::Master {
@@ -1105,7 +946,7 @@ impl MixerParams {
         }
     }
 
-    /// 统一节点主输出（MIDI / 音频 / 每轨 LC / Bus；Master 没有）。
+    /// 统一节点主输出（MIDI / 音频 / 每轨 LC；Master 没有）。
     pub fn node_output(&self, node: MixerChannelId) -> Option<ChannelId> {
         if node == MixerChannelId::Master {
             return None;
@@ -1117,26 +958,6 @@ impl MixerParams {
     /// 统一节点主输出写入。返回是否支持该节点。
     pub fn set_node_output(&mut self, node: MixerChannelId, output: Option<ChannelId>) -> bool {
         if node == MixerChannelId::Master {
-            return false;
-        }
-        if let MixerChannelId::Bus(bus) = node {
-            let Some(target) = output else {
-                if let Some(slot) = self.bus_node_mut(bus) {
-                    slot.output = None;
-                    return true;
-                }
-                return false;
-            };
-            let ChannelId::Bus(target_bus) = target else {
-                return false;
-            };
-            if !self.can_route_bus_to(bus, target_bus) {
-                return false;
-            }
-            if let Some(slot) = self.bus_node_mut(bus) {
-                slot.output = Some(ChannelId::Bus(target_bus));
-                return true;
-            }
             return false;
         }
         let source = self.channel_id_for(node);
@@ -1159,60 +980,15 @@ impl MixerParams {
         }
     }
 
-    /// 该 Bus 是否可以路由到目标 Bus（存在、非自身、不成环）。
-    pub fn can_route_bus_to(&self, bus: BusId, target: BusId) -> bool {
-        self.bus_index(target).is_some()
-            && target != bus
-            && !self.bus_output_would_cycle(bus, target)
-    }
-
-    /// Bus 主输出改成 `target` 后是否形成环。
-    fn bus_output_would_cycle(&self, bus: BusId, target: BusId) -> bool {
-        let mut cur = Some(ChannelId::Bus(target));
-        let mut steps = 0;
-        while let Some(id) = cur {
-            if id == ChannelId::Bus(bus) {
-                return true;
-            }
-            if steps > self.bus_count() {
-                return true;
-            }
-            steps += 1;
-            let ChannelId::Bus(next_bus) = id else {
-                break;
-            };
-            cur = self.bus_node(next_bus).and_then(|node| node.output);
-        }
-        false
-    }
-
     /// 把音频通道相关表补齐到 `count` 条。
     pub fn ensure_channel_tables(&mut self, audio_count: usize) {
         self.ensure_audio_len(audio_count);
     }
 }
 
-fn alloc_bus_id(next: &mut BusId) -> BusId {
-    let id = *next;
-    *next = BusId(next.0.saturating_add(1));
-    id
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn add_buses(p: &mut MixerParams, n: usize) -> Vec<BusId> {
-        (0..n).filter_map(|_| p.add_bus()).collect()
-    }
-
-    fn send(bus: BusId, amount: f32, pre_fader: bool) -> SendParams {
-        SendParams {
-            target: ChannelId::Bus(bus),
-            amount,
-            pre_fader,
-        }
-    }
 
     #[test]
     fn default_has_256_racks_and_channels() {
@@ -1256,12 +1032,7 @@ mod tests {
     fn ensure_len_backfills_tables_and_fixes_ids() {
         let mut p = MixerParams::default();
         p.racks.clear();
-        p.nodes = vec![
-            MixerNode::logical_channel(LogicalChannelId(999)),
-            MixerNode::bus(BusId(5)),
-            MixerNode::bus(BusId(5)),
-        ];
-        p.master = MixerNode::bus(BusId(0));
+        p.nodes = vec![MixerNode::logical_channel(LogicalChannelId(999))];
         p.ensure_len();
 
         assert_eq!(p.racks.len(), CHANNEL_COUNT);
@@ -1276,115 +1047,32 @@ mod tests {
             p.channel_node(ChannelId::Lc(LogicalChannelId(999)))
                 .is_some()
         );
-        let ids = p.bus_ids();
-        assert_eq!(ids.len(), 2);
-        assert_ne!(ids[0], ids[1], "重复 BusId 必须修复");
         assert_eq!(p.master.id, ChannelId::Master);
     }
 
     /// 删除一条总线不改变其他总线的 ID；指向它的 send/输出被清理。
     #[test]
-    fn remove_bus_keeps_other_ids() {
-        let mut p = MixerParams::default();
-        p.ensure_len();
-        let ids = add_buses(&mut p, 3);
-        p.set_node_sends(
-            MixerChannelId::Midi(0),
-            vec![send(ids[1], 0.5, false), send(ids[2], 0.5, true)],
-        );
-        p.set_node_output(MixerChannelId::Midi(0), Some(ChannelId::Bus(ids[2])));
-
-        p.remove_bus(ids[1]);
-
-        assert_eq!(p.bus_ids(), vec![ids[0], ids[2]]);
-        let sends = p.node_sends(MixerChannelId::Midi(0)).expect("sends");
-        assert_eq!(sends.len(), 1, "指向被删总线的 send 清理");
-        assert_eq!(
-            sends[0].target,
-            ChannelId::Bus(ids[2]),
-            "其他总线 ID 不前移"
-        );
-        assert_eq!(
-            p.node_output(MixerChannelId::Midi(0)),
-            Some(ChannelId::Bus(ids[2])),
-            "主输出保持原 ID"
-        );
-    }
-
     #[test]
-    fn remove_bus_drops_sends_to_it() {
-        let mut p = MixerParams::default();
-        p.ensure_len();
-        let ids = add_buses(&mut p, 2);
-        p.set_node_sends(MixerChannelId::Midi(3), vec![send(ids[0], 1.0, false)]);
-        p.remove_bus(ids[0]);
-        assert!(
-            p.node_sends(MixerChannelId::Midi(3))
-                .expect("sends")
-                .is_empty(),
-            "指向被删 bus 的 send 应清理"
-        );
-    }
-
     /// 删除后新增总线不复用旧 ID，避免自动化/发送串到新总线。
     #[test]
-    fn new_bus_does_not_reuse_deleted_id() {
-        let mut p = MixerParams::default();
-        p.ensure_len();
-        let ids = add_buses(&mut p, 3);
-        p.remove_bus(ids[1]);
-        let new_id = p.add_bus().expect("add bus");
-        assert_ne!(new_id, ids[1]);
-        assert_eq!(p.bus_ids(), vec![ids[0], ids[2], new_id]);
-    }
-
     /// 总线发送表随增删总线维护；音频通道发送表同步清理。
     #[test]
-    fn bus_sends_follow_bus_add_remove() {
-        let mut p = MixerParams::default();
-        p.ensure_len();
-        let ids = add_buses(&mut p, 3);
-        p.set_node_sends(MixerChannelId::Bus(ids[0]), vec![send(ids[2], 1.0, false)]);
-        p.set_node_sends(MixerChannelId::Bus(ids[2]), vec![send(ids[0], 1.0, false)]);
-        p.set_node_sends(MixerChannelId::Audio(0), vec![send(ids[2], 1.0, false)]);
-
-        p.remove_bus(ids[1]);
-        assert_eq!(p.bus_count(), 2);
-        assert_eq!(
-            p.node_sends(MixerChannelId::Bus(ids[0]))
-                .expect("bus sends"),
-            &[send(ids[2], 1.0, false)]
-        );
-        assert_eq!(
-            p.node_sends(MixerChannelId::Audio(0)).expect("audio sends"),
-            &[send(ids[2], 1.0, false)]
-        );
-    }
-
     /// 自发送随其他总线删除保持指向自己。
     #[test]
-    fn bus_self_send_survives_other_bus_removal() {
-        let mut p = MixerParams::default();
-        p.ensure_len();
-        let ids = add_buses(&mut p, 2);
-        p.set_node_sends(MixerChannelId::Bus(ids[1]), vec![send(ids[1], 1.0, false)]);
-        p.remove_bus(ids[0]);
-        assert_eq!(
-            p.node_sends(MixerChannelId::Bus(ids[1]))
-                .expect("bus sends"),
-            &[send(ids[1], 1.0, false)]
-        );
-    }
-
-    /// ensure_len 清理三张发送表里指向不存在总线的条目。
+    /// ensure_len 清理发送表里指向不存在通道的条目。
     #[test]
     fn ensure_len_prunes_dangling_routing() {
         let mut p = MixerParams::default();
         p.ensure_len();
-        let _ = p.add_bus();
-        p.set_node_sends(MixerChannelId::Midi(0), vec![send(BusId(5), 1.0, false)]);
-        p.set_node_sends(MixerChannelId::Audio(0), vec![send(BusId(5), 1.0, false)]);
-        p.set_node_output(MixerChannelId::Midi(0), Some(ChannelId::Bus(BusId(5))));
+        let ghost = ChannelId::Lc(LogicalChannelId(TRACK_LC_BASE + 999));
+        let dangling = SendParams {
+            target: ghost,
+            amount: 1.0,
+            pre_fader: false,
+        };
+        p.set_node_sends(MixerChannelId::Midi(0), vec![dangling]);
+        p.set_node_sends(MixerChannelId::Audio(0), vec![dangling]);
+        p.set_node_output(MixerChannelId::Midi(0), Some(ghost));
         p.ensure_len();
         assert!(p.node_sends(MixerChannelId::Midi(0)).unwrap().is_empty());
         assert!(p.node_sends(MixerChannelId::Audio(0)).unwrap().is_empty());
@@ -1412,12 +1100,10 @@ mod tests {
         let mut p = MixerParams::default();
         p.ensure_len();
         let lc = p.add_track_lc();
-        let bus = p.add_bus().expect("bus");
         let audio = p.ensure_lc_node(ChannelSource::Audio(0));
 
         assert!(p.channel_node(ChannelId::Lc(lc)).is_some());
         assert!(p.channel_node(ChannelId::Lc(audio)).is_some());
-        assert!(p.channel_node(ChannelId::Bus(bus)).is_some());
         assert!(p.channel_node(ChannelId::Master).is_some());
 
         let ids: HashSet<ChannelId> = p.nodes().map(|node| node.channel_id()).collect();
@@ -1429,17 +1115,6 @@ mod tests {
     }
 
     #[test]
-    fn channel_display_map_numbers_buses_after_lcs() {
-        let mut p = MixerParams::default();
-        p.ensure_len();
-        let lc = p.add_track_lc();
-        let bus = p.add_bus().expect("bus");
-        let map = p.channel_display_map();
-        assert_eq!(map.get(&ChannelId::Lc(lc)), Some(&1));
-        assert_eq!(map.get(&ChannelId::Bus(bus)), Some(&2));
-        assert_eq!(p.bus_display_number(bus), Some(2));
-    }
-
     #[test]
     fn mixed_lc_loses_freeze() {
         let mut p = MixerParams::default();
@@ -1464,15 +1139,15 @@ mod tests {
     fn legacy_send_amounts_clamp_to_zero_db_and_zero_is_removed() {
         let mut p = MixerParams::default();
         p.ensure_len();
-        let bus = p.add_bus().expect("bus");
+        let lc = p.add_track_lc();
         p.midi_node_mut(0).expect("midi 0").sends = vec![
             SendParams {
-                target: ChannelId::Bus(bus),
+                target: ChannelId::Lc(lc),
                 amount: 2.0,
                 pre_fader: false,
             },
             SendParams {
-                target: ChannelId::Bus(BusId(99)),
+                target: ChannelId::Lc(LogicalChannelId(TRACK_LC_BASE + 99)),
                 amount: 0.0,
                 pre_fader: false,
             },
@@ -1520,17 +1195,17 @@ mod tests {
         assert!(p.ap_for_midi(3).is_none());
     }
 
-    /// 统一节点入口：MIDI / 音频 / Bus / Master 各走各的存储，但 API 一致。
+    /// 统一节点入口：MIDI / 音频 / 每轨 LC / Master 各走各的存储，但 API 一致。
     #[test]
     fn node_strip_routes_each_namespace() {
         let mut p = MixerParams::default();
         p.ensure_len();
-        let bus = p.add_bus().expect("bus");
+        let lc = p.add_track_lc();
 
         for (node, gain) in [
             (MixerChannelId::Midi(3), 0.3),
             (MixerChannelId::Audio(7), 0.7),
-            (MixerChannelId::Bus(bus), 0.5),
+            (MixerChannelId::TrackLc(lc), 0.5),
             (MixerChannelId::Master, 0.9),
         ] {
             let params = StripParams {
@@ -1541,10 +1216,9 @@ mod tests {
             assert_eq!(p.node_strip(node).gain, gain);
         }
 
-        assert!(!p.set_node_strip(MixerChannelId::Bus(BusId(99)), StripParams::default()));
         assert_eq!(p.strip(3).gain, 0.3);
         assert_eq!(p.audio_strip(7).gain, 0.7);
-        assert_eq!(p.bus_strip(bus).gain, 0.5);
+        assert_eq!(p.node_strip(MixerChannelId::TrackLc(lc)).gain, 0.5);
         assert_eq!(p.master.gain, 0.9);
     }
 
@@ -1552,24 +1226,28 @@ mod tests {
     fn node_inserts_sends_and_output_route_each_namespace() {
         let mut p = MixerParams::default();
         p.ensure_len();
-        let bus = p.add_bus().expect("bus");
+        let lc = p.add_track_lc();
 
         assert!(p.node_inserts_mut(MixerChannelId::Midi(1)).is_some());
         assert!(p.node_inserts_mut(MixerChannelId::Audio(2)).is_some());
-        assert!(p.node_inserts_mut(MixerChannelId::Bus(bus)).is_some());
+        assert!(p.node_inserts_mut(MixerChannelId::TrackLc(lc)).is_some());
         assert!(p.node_inserts_mut(MixerChannelId::Master).is_some());
 
-        let send = send(bus, 0.5, false);
+        let send = SendParams {
+            target: ChannelId::Lc(lc),
+            amount: 0.5,
+            pre_fader: false,
+        };
         assert!(p.set_node_sends(MixerChannelId::Midi(1), vec![send]));
         assert_eq!(p.node_sends(MixerChannelId::Midi(1)), Some(&[send][..]));
         assert!(!p.set_node_sends(MixerChannelId::Master, vec![send]));
 
-        assert!(p.set_node_output(MixerChannelId::Midi(1), Some(ChannelId::Bus(bus))));
+        assert!(p.set_node_output(MixerChannelId::Midi(1), Some(ChannelId::Lc(lc))));
         assert_eq!(
             p.node_output(MixerChannelId::Midi(1)),
-            Some(ChannelId::Bus(bus))
+            Some(ChannelId::Lc(lc))
         );
-        assert!(!p.set_node_output(MixerChannelId::Bus(bus), Some(ChannelId::Bus(bus))));
+        assert!(!p.set_node_output(MixerChannelId::TrackLc(lc), Some(ChannelId::Lc(lc))));
     }
 
     #[test]
@@ -1585,36 +1263,8 @@ mod tests {
         assert_eq!(p.rack_instruments(rack)[0].plugin_id, "test");
     }
 
-    /// 重复 BusId 修复：后面的重复项重新分配，避免两条总线共享自动化。
     #[test]
-    fn bus_outputs_allow_nesting_and_reject_cycles() {
-        let mut p = MixerParams::default();
-        p.ensure_len();
-        let ids = add_buses(&mut p, 2);
-        assert!(p.set_node_output(MixerChannelId::Bus(ids[0]), Some(ChannelId::Bus(ids[1]))));
-        assert_eq!(
-            p.node_output(MixerChannelId::Bus(ids[0])),
-            Some(ChannelId::Bus(ids[1]))
-        );
-        // 反向成环：拒绝。
-        assert!(!p.set_node_output(MixerChannelId::Bus(ids[1]), Some(ChannelId::Bus(ids[0]))));
-        assert_eq!(p.node_output(MixerChannelId::Bus(ids[1])), None);
-        // 自输出：拒绝。
-        assert!(!p.set_node_output(MixerChannelId::Bus(ids[0]), Some(ChannelId::Bus(ids[0]))));
-    }
-
     #[test]
-    fn duplicate_bus_ids_are_reassigned() {
-        let mut p = MixerParams::default();
-        p.ensure_len();
-        p.nodes.push(MixerNode::bus(BusId(7)));
-        p.nodes.push(MixerNode::bus(BusId(7)));
-        p.next_bus_id = BusId(8);
-        p.ensure_len();
-        assert_eq!(p.bus_ids(), vec![BusId(7), BusId(8)]);
-        assert_eq!(p.next_bus_id, BusId(9));
-    }
-
     #[test]
     fn track_lcs_allocate_from_high_namespace_and_are_independent() {
         let mut p = MixerParams::default();

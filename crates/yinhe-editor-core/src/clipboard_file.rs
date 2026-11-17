@@ -272,10 +272,6 @@ fn write_target(w: &mut impl Write, target: &AutomationTarget) -> io::Result<()>
             w.write_all(&parameter.to_le_bytes())
         }
         AutomationTarget::Tempo => w.write_all(&[4]),
-        AutomationTarget::BusGain { bus } => {
-            w.write_all(&[6])?;
-            w.write_all(&bus.0.to_le_bytes())
-        }
         AutomationTarget::MixerGain { channel } => {
             w.write_all(&[7])?;
             write_mixer_channel(w, *channel)
@@ -284,10 +280,10 @@ fn write_target(w: &mut impl Write, target: &AutomationTarget) -> io::Result<()>
             w.write_all(&[8])?;
             write_mixer_channel(w, *channel)
         }
-        AutomationTarget::MixerSend { node, bus } => {
+        AutomationTarget::MixerSend { node, target } => {
             w.write_all(&[9])?;
             write_mixer_channel(w, *node)?;
-            w.write_all(&bus.0.to_le_bytes())
+            write_channel_id(w, *target)
         }
         AutomationTarget::InsertParam {
             target,
@@ -318,16 +314,44 @@ fn write_mixer_channel(w: &mut impl Write, channel: yinhe_types::MixerChannelId)
             w.write_all(&[2])?;
             w.write_all(&id.0.to_le_bytes())
         }
-        MixerChannelId::Bus(bus) => {
-            w.write_all(&[3])?;
-            w.write_all(&bus.0.to_le_bytes())
-        }
         MixerChannelId::Master => w.write_all(&[4]),
     }
 }
 
+/// 写 `ChannelId`（发送目标）：LC / AP / Master 三种。
+fn write_channel_id(w: &mut impl Write, id: yinhe_types::ChannelId) -> io::Result<()> {
+    match id {
+        yinhe_types::ChannelId::Lc(lc) => {
+            w.write_all(&[0])?;
+            w.write_all(&lc.0.to_le_bytes())
+        }
+        yinhe_types::ChannelId::Ap(ap) => {
+            w.write_all(&[1])?;
+            w.write_all(&ap.group.0.to_le_bytes())?;
+            w.write_all(&ap.output.to_le_bytes())
+        }
+        yinhe_types::ChannelId::Master => w.write_all(&[2]),
+    }
+}
+
+/// 读 `ChannelId`（发送目标）。
+fn read_channel_id(r: &mut impl Read) -> io::Result<yinhe_types::ChannelId> {
+    use yinhe_types::{ApChannelId, ApGroupId, ChannelId, LogicalChannelId};
+    let mut tag = [0u8; 1];
+    r.read_exact(&mut tag)?;
+    Ok(match tag[0] {
+        0 => ChannelId::Lc(LogicalChannelId(read_u16(r)?)),
+        1 => ChannelId::Ap(ApChannelId {
+            group: ApGroupId(read_u16(r)?),
+            output: read_u16(r)?,
+        }),
+        2 => ChannelId::Master,
+        _ => return Err(invalid("unknown channel id")),
+    })
+}
+
 fn read_mixer_channel(r: &mut impl Read) -> io::Result<yinhe_types::MixerChannelId> {
-    use yinhe_types::{BusId, LogicalChannelId, MixerChannelId};
+    use yinhe_types::{LogicalChannelId, MixerChannelId};
     let mut tag = [0u8; 1];
     r.read_exact(&mut tag)?;
     Ok(match tag[0] {
@@ -338,7 +362,6 @@ fn read_mixer_channel(r: &mut impl Read) -> io::Result<yinhe_types::MixerChannel
         }
         1 => MixerChannelId::Audio(read_u16(r)?),
         2 => MixerChannelId::TrackLc(LogicalChannelId(read_u16(r)?)),
-        3 => MixerChannelId::Bus(BusId(read_u16(r)?)),
         4 => MixerChannelId::Master,
         _ => return Err(invalid("unknown mixer channel")),
     })
@@ -394,9 +417,6 @@ fn read_target(r: &mut impl Read) -> io::Result<AutomationTarget> {
         },
         4 => AutomationTarget::Tempo,
         5 => AutomationTarget::PitchBend,
-        6 => AutomationTarget::BusGain {
-            bus: yinhe_types::BusId(read_u16(r)?),
-        },
         7 => AutomationTarget::MixerGain {
             channel: read_mixer_channel(r)?,
         },
@@ -405,7 +425,7 @@ fn read_target(r: &mut impl Read) -> io::Result<AutomationTarget> {
         },
         9 => AutomationTarget::MixerSend {
             node: read_mixer_channel(r)?,
-            bus: yinhe_types::BusId(read_u16(r)?),
+            target: read_channel_id(r)?,
         },
         10 => AutomationTarget::InsertParam {
             target: read_mixer_channel(r)?,

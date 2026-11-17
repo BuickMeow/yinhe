@@ -20,7 +20,7 @@ impl App {
                 .error(t!("toast.freeze_failed"), t!("toast.freeze_busy"));
             return;
         }
-        if matches!(channel, MixerChannelId::Bus(_) | MixerChannelId::Master) {
+        if channel == MixerChannelId::Master {
             self.notifications
                 .error(t!("toast.freeze_failed"), t!("toast.freeze_not_lc"));
             return;

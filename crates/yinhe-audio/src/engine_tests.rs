@@ -3230,80 +3230,45 @@ fn mixer_gain_pan_automation_reads_lc_nodes() {
     assert!((node.pan - 0.5).abs() < f32::EPSILON);
 }
 
-/// MixerSend 自动化写回节点 sends 的发送量。
+/// MixerSend 自动化写回统一发送表（`channel_sends`）的发送量。
 #[test]
-fn mixer_send_automation_updates_node_send_amount() {
-    use yinhe_mixer::{MixerParams, SendParams};
+fn mixer_send_automation_updates_channel_send_amount() {
+    use yinhe_mixer::MixerParams;
     use yinhe_types::{
-        AutomationEvent, AutomationLane, AutomationTarget, MixerChannelId, SegmentShape,
+        AutomationEvent, AutomationLane, AutomationTarget, ChannelId, LogicalChannelId,
+        MixerChannelId, SegmentShape, TRACK_LC_BASE,
     };
 
     let layout = ChannelLayout::from_mask(vec![true]);
     let mut engine = AudioEngine::new(48_000, layout);
     let mut mixer = MixerParams::default();
     mixer.ensure_len();
-    let bus = mixer.add_bus().expect("bus");
+    let target = ChannelId::Lc(LogicalChannelId(TRACK_LC_BASE + 1));
     let channel = MixerChannelId::Midi(0);
-    let node = mixer.midi_node_mut(0).expect("midi lc");
-    node.sends.push(SendParams {
-        target: yinhe_types::ChannelId::Bus(bus),
-        amount: 0.0,
-        pre_fader: false,
-    });
-    node.automation.push(AutomationLane {
-        target: AutomationTarget::MixerSend { node: channel, bus },
-        track: 0,
-        events: vec![AutomationEvent {
-            id: 1,
-            tick: 0,
-            value: 0.5,
-            shape: SegmentShape::Step,
-        }],
-    });
+    let source = mixer.channel_id_for(channel);
+    assert!(mixer.set_channel_send(source, target, 0.25, false));
+    mixer
+        .midi_node_mut(0)
+        .expect("midi lc")
+        .automation
+        .push(AutomationLane {
+            target: AutomationTarget::MixerSend {
+                node: channel,
+                target,
+            },
+            track: 0,
+            events: vec![AutomationEvent {
+                id: 1,
+                tick: 0,
+                value: 0.5,
+                shape: SegmentShape::Step,
+            }],
+        });
     engine.mixer_params = mixer;
     engine.apply_mixer_automation(1);
 
-    let send = engine
-        .mixer_params
-        .midi_node(0)
-        .and_then(|node| node.sends.first())
-        .expect("send");
-    assert!((send.amount - 1.0).abs() < f32::EPSILON);
-}
-
-/// BusGain 自动化从 Bus 节点的 automation 求值，不再依赖 Master 轨。
-#[test]
-fn bus_gain_automation_reads_bus_node_lanes() {
-    use yinhe_mixer::MixerParams;
-    use yinhe_types::{
-        AutomationEvent, AutomationLane, AutomationTarget, MixerNodeId, SegmentShape,
-    };
-
-    let layout = ChannelLayout::from_mask(vec![true]);
-    let mut engine = AudioEngine::new(48_000, layout);
-    let mut mixer = MixerParams::default();
-    mixer.ensure_len();
-    let bus = mixer.add_bus().expect("bus");
-    let node = mixer.bus_node_mut(bus).expect("bus node");
-    node.automation.push(AutomationLane {
-        target: AutomationTarget::BusGain { bus },
-        track: 0,
-        events: vec![AutomationEvent {
-            id: 1,
-            tick: 0,
-            value: 0.5,
-            shape: SegmentShape::Step,
-        }],
-    });
-    engine.mixer_params = mixer;
-    engine.apply_bus_automation(1);
-    let gain = engine
-        .mixer_params
-        .bus_node(bus)
-        .expect("bus node")
-        .strip
-        .gain;
-    assert!((gain - 0.5).abs() < f32::EPSILON);
+    let amount = engine.mixer_params.channel_send_amount(source, target);
+    assert!((amount - 1.0).abs() < f32::EPSILON);
 }
 
 /// InsertParam 自动化把归一化值送进对应 insert 处理器。

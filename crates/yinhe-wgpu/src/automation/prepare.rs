@@ -39,8 +39,16 @@ fn mix_channel_key(channel: yinhe_types::MixerChannelId) -> u64 {
         yinhe_types::MixerChannelId::Midi(ch) => u64::from(ch),
         yinhe_types::MixerChannelId::Audio(ch) => 0x100 + u64::from(ch),
         yinhe_types::MixerChannelId::TrackLc(id) => 0x1_0000 + u64::from(id.0),
-        yinhe_types::MixerChannelId::Bus(bus) => 0x2_0000 + u64::from(bus.0),
         yinhe_types::MixerChannelId::Master => 0x3_0000,
+    }
+}
+
+/// 发送目标的缓存键（与 `mix_channel_key` 区间错开）。
+fn channel_id_key(id: yinhe_types::ChannelId) -> u64 {
+    match id {
+        yinhe_types::ChannelId::Lc(lc) => 0x10_0000 + u64::from(lc.0),
+        yinhe_types::ChannelId::Ap(ap) => 0x20_0000 + u64::from(ap.group.0),
+        yinhe_types::ChannelId::Master => 0x30_0000,
     }
 }
 
@@ -51,11 +59,10 @@ fn target_hash(target: &AutomationTarget) -> u64 {
         AutomationTarget::Rpn { parameter } => 0x2_0000 + u64::from(*parameter),
         AutomationTarget::Nrpn { parameter } => 0x3_0000 + u64::from(*parameter),
         AutomationTarget::Tempo => u64::MAX,
-        AutomationTarget::BusGain { bus } => 0x6_0000 + u64::from(bus.0),
         AutomationTarget::MixerGain { channel } => 0x7_0000 + mix_channel_key(*channel),
         AutomationTarget::MixerPan { channel } => 0x8_0000 + mix_channel_key(*channel),
-        AutomationTarget::MixerSend { node, bus } => {
-            0x9_0000 + mix_channel_key(*node) + u64::from(bus.0)
+        AutomationTarget::MixerSend { node, target } => {
+            0x9_0000 + mix_channel_key(*node) + channel_id_key(*target)
         }
         AutomationTarget::InsertParam {
             target, slot, id, ..

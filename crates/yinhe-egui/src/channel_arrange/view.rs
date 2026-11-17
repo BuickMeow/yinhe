@@ -185,8 +185,6 @@ pub(crate) fn show(
         num_tracks: data.num_tracks,
         tracks: data.tracks,
         tempo_lane: data.tempo_lane,
-        bus_ids: data.bus_ids,
-        bus_automation: data.bus_automation,
         track_mixer_lanes: data.track_mixer_lanes,
         conductor_track_idx: data.conductor_track_idx,
         tempo_map: data.tempo_map,
@@ -296,8 +294,6 @@ pub(crate) fn show(
         };
         let mut io = crate::arrange::am_lanes::AmLanesIo {
             tracks: data.tracks,
-            bus_ids: data.bus_ids,
-            bus_automation: data.bus_automation,
             track_mixer_lanes: data.track_mixer_lanes,
             tempo_lane: data.tempo_lane,
             track_colors: &channel_colors,

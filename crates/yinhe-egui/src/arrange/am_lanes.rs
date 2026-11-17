@@ -46,8 +46,6 @@ pub(crate) fn visible_am_rows(
     last_row: usize,
     conductor: Option<u16>,
     tracks: &[Arc<yinhe_core::TrackData>],
-    bus_ids: &[yinhe_types::BusId],
-    bus_automation: &[Vec<AutomationLane>],
     track_mixer_lanes: &[Vec<(yinhe_types::MixerNodeId, Vec<AutomationLane>)>],
     lane_height: f32,
 ) -> Vec<AmRowRef> {
@@ -92,24 +90,6 @@ pub(crate) fn visible_am_rows(
                 y_top,
                 height: lane_height,
             }),
-            Some(ArRow::BusAutomation(bus, lane_idx)) => {
-                let Some(master) = conductor.map(usize::from) else {
-                    continue;
-                };
-                let Some(bus_id) = bus_ids.get(bus).copied() else {
-                    continue;
-                };
-                let Some(_) = bus_automation.get(bus).and_then(|l| l.get(lane_idx)) else {
-                    continue;
-                };
-                out.push(AmRowRef {
-                    track: master,
-                    sub: Some(lane_idx),
-                    node: Some(yinhe_types::MixerNodeId::Bus(bus_id)),
-                    y_top,
-                    height: lane_height,
-                });
-            }
             _ => {}
         }
     }
@@ -139,7 +119,6 @@ pub(crate) fn track_mixer_lanes(
         .and_then(|node| {
             let id = match node.id {
                 yinhe_types::ChannelId::Lc(id) => yinhe_types::MixerNodeId::LogicalChannel(id),
-                yinhe_types::ChannelId::Bus(bus) => yinhe_types::MixerNodeId::Bus(bus),
                 yinhe_types::ChannelId::Master => yinhe_types::MixerNodeId::Master,
                 yinhe_types::ChannelId::Ap(_) => return None,
             };
@@ -304,8 +283,6 @@ pub(crate) fn lane_highlight_ticks(
 /// 交互所需的外部状态（view_ui 每帧组装）。
 pub(crate) struct AmLanesIo<'a> {
     pub tracks: &'a [Arc<yinhe_core::TrackData>],
-    pub bus_ids: &'a [yinhe_types::BusId],
-    pub bus_automation: &'a [Vec<AutomationLane>],
     /// 每轨 LC / 音频 LC 节点的 automation（与 Track 索引对齐）。
     pub track_mixer_lanes: &'a [Vec<(yinhe_types::MixerNodeId, Vec<AutomationLane>)>],
     pub tempo_lane: &'a AutomationLane,
@@ -352,19 +329,12 @@ pub(crate) fn interact_all(
             AutomationTarget,
         ) = match (r.node, r.sub) {
             (Some(node), Some(sub)) => {
-                let lanes = if let yinhe_types::MixerNodeId::Bus(bus) = node {
-                    io.bus_ids
-                        .iter()
-                        .position(|id| *id == bus)
-                        .and_then(|i| io.bus_automation.get(i))
-                        .map(Vec::as_slice)
-                } else {
-                    io.track_mixer_lanes
-                        .iter()
-                        .flat_map(|lanes| lanes.iter())
-                        .find(|(id, _)| *id == node)
-                        .map(|(_, lanes)| lanes.as_slice())
-                };
+                let lanes = io
+                    .track_mixer_lanes
+                    .iter()
+                    .flat_map(|lanes| lanes.iter())
+                    .find(|(id, _)| *id == node)
+                    .map(|(_, lanes)| lanes.as_slice());
                 let Some(lanes) = lanes else {
                     continue;
                 };
@@ -477,19 +447,12 @@ pub(crate) fn interact_all(
             // Move ghost 携带整条 lane，渲染时按 y_offset 重建，无需平移。
             let max_val = match (r.node, r.sub) {
                 (Some(node), Some(sub)) => {
-                    let lanes = if let yinhe_types::MixerNodeId::Bus(bus) = node {
-                        io.bus_ids
-                            .iter()
-                            .position(|id| *id == bus)
-                            .and_then(|i| io.bus_automation.get(i))
-                            .map(Vec::as_slice)
-                    } else {
-                        io.track_mixer_lanes
-                            .iter()
-                            .flat_map(|lanes| lanes.iter())
-                            .find(|(id, _)| *id == node)
-                            .map(|(_, lanes)| lanes.as_slice())
-                    };
+                    let lanes = io
+                        .track_mixer_lanes
+                        .iter()
+                        .flat_map(|lanes| lanes.iter())
+                        .find(|(id, _)| *id == node)
+                        .map(|(_, lanes)| lanes.as_slice());
                     lanes
                         .and_then(|lanes| lanes.get(sub))
                         .map(lane_max_val)

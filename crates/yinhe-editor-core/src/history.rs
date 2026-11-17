@@ -68,16 +68,6 @@ pub struct MixerAutomationDelta {
     pub after: Vec<AutomationEvent>,
 }
 
-/// Bus 节点上的自动化增量（BusGain 等）。
-#[derive(Clone, Debug)]
-pub struct BusAutomationDelta {
-    pub bus: yinhe_types::BusId,
-    pub lane_idx: usize,
-    pub target: yinhe_types::AutomationTarget,
-    pub before: Vec<AutomationEvent>,
-    pub after: Vec<AutomationEvent>,
-}
-
 /// 事件列表的写入目标。一个变体对应 conductor 或某个 track 上的一个事件列表字段。
 ///
 /// 取消了原先 8 个 `UndoAction` 变体（TimeSig/KeySig/Marker/Lyrics/Chord/
@@ -129,15 +119,6 @@ pub enum UndoAction {
     /// before/after 为 None 表示该侧 lane 不存在。
     AutomationLane {
         track_idx: usize,
-        lane_idx: usize,
-        before: Option<yinhe_types::AutomationLane>,
-        after: Option<yinhe_types::AutomationLane>,
-    },
-    /// Bus 节点自动化事件变化。
-    BusAutomation(BusAutomationDelta),
-    /// Bus 节点自动化 lane 结构变化。
-    BusAutomationLane {
-        bus: yinhe_types::BusId,
         lane_idx: usize,
         before: Option<yinhe_types::AutomationLane>,
         after: Option<yinhe_types::AutomationLane>,
@@ -338,24 +319,6 @@ impl UndoAction {
                 std::mem::swap(&mut before, &mut after);
                 UndoAction::AutomationLane {
                     track_idx,
-                    lane_idx,
-                    before,
-                    after,
-                }
-            }
-            UndoAction::BusAutomation(mut delta) => {
-                std::mem::swap(&mut delta.before, &mut delta.after);
-                UndoAction::BusAutomation(delta)
-            }
-            UndoAction::BusAutomationLane {
-                bus,
-                lane_idx,
-                mut before,
-                mut after,
-            } => {
-                std::mem::swap(&mut before, &mut after);
-                UndoAction::BusAutomationLane {
-                    bus,
                     lane_idx,
                     before,
                     after,

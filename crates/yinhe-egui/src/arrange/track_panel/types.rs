@@ -19,11 +19,6 @@ pub(crate) enum TrackAction {
     OpenAutomationPicker { idx: usize },
     /// AM 子行右键「删除自动化」：删除 idx 轨的第 lane_idx 条 lane。
     DeleteAutomation { idx: usize, lane_idx: usize },
-    /// 固定 Bus 自动化子行右键「删除自动化」。
-    DeleteBusAutomation {
-        bus: yinhe_types::BusId,
-        lane_idx: usize,
-    },
     /// 右键「音轨属性」：选中该轨并请求打开属性浮窗（不改动模型）。
     ShowProperties { idx: usize },
     /// 音轨面板内联重命名提交。
@@ -39,17 +34,6 @@ pub(crate) enum TrackAction {
     GroupTracks { indices: Vec<usize> },
     /// 解散文件夹。
     UngroupTrack { idx: usize },
-    /// 固定总线行 M/S：写入总线 strip 参数。
-    SetBusStrip {
-        bus: yinhe_types::BusId,
-        params: yinhe_mixer::StripParams,
-    },
-    /// 双击固定总线行：打开该总线的设备链。
-    OpenBusDock { bus: yinhe_types::BusId },
-    /// 右键固定总线行：删除该总线。
-    RemoveBus { bus: yinhe_types::BusId },
     /// 右键 Master 轨：打开 Master 设备链。
     OpenMasterDock,
-    /// 右键固定 Bus 行：添加总线增益自动化。
-    AddBusAutomation { bus: yinhe_types::BusId },
 }

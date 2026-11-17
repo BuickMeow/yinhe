@@ -35,7 +35,7 @@ impl AudioRenderer {
                 .track_lc_dense_for(id)
                 .map(|(_, dense)| dense)
                 .unwrap_or(u32::MAX),
-            MixerChannelId::Bus(_) | MixerChannelId::Master => u32::MAX,
+            MixerChannelId::Master => u32::MAX,
         };
         if dense == u32::MAX {
             if let Ok(mut p) = progress.lock() {

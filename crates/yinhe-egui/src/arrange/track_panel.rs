@@ -72,18 +72,8 @@ pub(crate) fn show(
     am_ms: &mut std::collections::HashMap<(u16, AutomationTarget), yinhe_types::AmMsState>,
     // 每轨电平表显示值 `((L,R), (holdL,holdR))`（索引 = 音轨；仅播放时非零）。
     track_meters: &[crate::widgets::meter::StereoMeter],
-    // 固定总线条的持久化参数（索引 = 总线行）。
-    bus_strips: &[yinhe_mixer::StripParams],
-    // 固定总线条的稳定 BusId（与 `bus_strips` 等长）。
-    bus_ids: &[yinhe_types::BusId],
-    // 固定总线条的 CH 显示名（与 `bus_ids` 等长）。
-    bus_labels: &[String],
-    // 固定总线条的 automation（与 `bus_ids` 等长）。
-    bus_automation: &[Vec<yinhe_types::AutomationLane>],
     // 每轨 LC / 音频 LC 节点的 automation。
     track_mixer_lanes: &[Vec<(yinhe_types::MixerNodeId, Vec<yinhe_types::AutomationLane>)>],
-    // 固定总线电平表显示值。
-    bus_meters: &[crate::widgets::meter::StereoMeter],
     // 编辑/播放光标 tick（自动化表显示光标处的 lane 值）。
     cursor_tick: Option<f64>,
     // Conductor 的 Tempo lane（Conductor 行自动化表）。
@@ -200,160 +190,6 @@ pub(crate) fn show(
         let Some(row_hit) = row_layout.row_hit(row) else {
             continue;
         };
-        if let ArRow::BusAutomation(bus, sub) = row_hit {
-            let Some(master_idx) = conductor_track_idx.map(usize::from) else {
-                continue;
-            };
-            let Some(lane) = bus_automation.get(bus).and_then(|lanes| lanes.get(sub)) else {
-                continue;
-            };
-            render::draw_row_background(ui, &painter, row_rect, row, false, lane_even);
-            if y > panel_rect.max.y || y + lh < panel_rect.min.y {
-                continue;
-            }
-            let color32 = crate::theme::accent_active();
-            let badge_rect = render::draw_badge(&painter, row_rect, lh, color32);
-            let text_x = badge_rect.max.x + 6.0;
-            let label = super::am_lanes::lane_label(&lane.target);
-            if show_details {
-                let font = render::detail_font(lh);
-                painter.text(
-                    egui::pos2(text_x, badge_rect.min.y + lh * 0.30),
-                    egui::Align2::LEFT_CENTER,
-                    label,
-                    font.clone(),
-                    crate::theme::text_primary(),
-                );
-                painter.text(
-                    egui::pos2(text_x, badge_rect.min.y + lh * 0.70),
-                    egui::Align2::LEFT_CENTER,
-                    bus_labels.get(bus).cloned().unwrap_or_default(),
-                    font,
-                    crate::theme::text_primary(),
-                );
-            } else {
-                painter.text(
-                    egui::pos2(text_x, badge_rect.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    format!(
-                        "{} · {}",
-                        label,
-                        bus_labels.get(bus).cloned().unwrap_or_default()
-                    ),
-                    render::compact_font(lh),
-                    crate::theme::text_primary(),
-                );
-            }
-            // 自动化值表贴右缘（无 M/S：总线 lane 不走 MIDI 试听）。
-            let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
-            let meter_left = meter_right - LEVEL_METER_W;
-            let meter_rect = egui::Rect::from_min_max(
-                egui::pos2(meter_left, row_rect.min.y + LEVEL_METER_MARGIN),
-                egui::pos2(meter_right, row_rect.max.y - LEVEL_METER_MARGIN),
-            );
-            crate::widgets::meter::automation_meter(
-                &painter,
-                meter_rect,
-                super::am_lanes::lane_cursor_value(lane, cursor_tick),
-                lane.target.bar_baseline(),
-                color32,
-            );
-            let key = (master_idx as u16, lane.target.clone());
-            if am_lane_selected.contains(&key) {
-                painter.rect_stroke(
-                    row_rect,
-                    0.0,
-                    egui::Stroke::new(1.0, crate::theme::accent_active()),
-                    egui::StrokeKind::Inside,
-                );
-            }
-            continue;
-        }
-        if row_hit.is_fixed() {
-            render::draw_row_background(ui, &painter, row_rect, row, false, lane_even);
-            if y > panel_rect.max.y || y + lh < panel_rect.min.y {
-                continue;
-            }
-            let ArRow::Bus(bus) = row_hit else {
-                continue;
-            };
-            let level = bus_meters.get(bus).map(|m| m.0).unwrap_or((0.0, 0.0));
-            let hold = bus_meters.get(bus).map(|m| m.1).unwrap_or((0.0, 0.0));
-            let strip = bus_strips.get(bus).copied().unwrap_or_default();
-            let Some(&bus_id) = bus_ids.get(bus) else {
-                continue;
-            };
-            // 固定行使用与普通音轨相同的 14px 色带，不做细线。
-            let accent = crate::theme::accent_active();
-            let badge_rect = render::draw_badge(&painter, row_rect, lh, accent);
-            painter.text(
-                egui::pos2(badge_rect.max.x + 6.0, row_rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                bus_labels.get(bus).cloned().unwrap_or_default(),
-                egui::FontId::proportional(crate::theme::SMALL_FONT),
-                crate::theme::text_primary(),
-            );
-
-            if show_details {
-                let total_btn_w = btn_size.x;
-                let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
-                let meter_left = meter_right - LEVEL_METER_W;
-                let btn_x_start = meter_left - LEVEL_METER_GAP - total_btn_w;
-                let btn_y = row_rect.center().y - btn_size.y * 0.5;
-                let ms_rect = egui::Rect::from_min_size(egui::pos2(btn_x_start, btn_y), btn_size);
-                no_drag_rects.push(ms_rect);
-                let audibility = strip.audibility();
-                let (label, active, color) = if audibility == yinhe_types::Audibility::Soloed {
-                    ("S", true, crate::theme::solo_active())
-                } else {
-                    (
-                        "M",
-                        audibility == yinhe_types::Audibility::Muted,
-                        crate::theme::mute_active(),
-                    )
-                };
-                let resp = draw::draw_inline_button(
-                    ui,
-                    &painter,
-                    ms_rect,
-                    label,
-                    active,
-                    color,
-                    egui::Id::unique(("arr_bus_ms", bus)),
-                );
-                crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.arrange.track_mute"));
-                if resp.clicked() {
-                    let mut params = strip;
-                    params.set_audibility(if audibility == yinhe_types::Audibility::Muted {
-                        yinhe_types::Audibility::Normal
-                    } else {
-                        yinhe_types::Audibility::Muted
-                    });
-                    actions.push(TrackAction::SetBusStrip {
-                        bus: bus_id,
-                        params,
-                    });
-                }
-                if resp.secondary_clicked() {
-                    let mut params = strip;
-                    params.set_audibility(if audibility == yinhe_types::Audibility::Soloed {
-                        yinhe_types::Audibility::Normal
-                    } else {
-                        yinhe_types::Audibility::Soloed
-                    });
-                    actions.push(TrackAction::SetBusStrip {
-                        bus: bus_id,
-                        params,
-                    });
-                }
-                let meter_rect = egui::Rect::from_min_max(
-                    egui::pos2(meter_left, row_rect.min.y + LEVEL_METER_MARGIN),
-                    egui::pos2(meter_right, row_rect.max.y - LEVEL_METER_MARGIN),
-                );
-                crate::widgets::meter::compact_meter(&painter, meter_rect, level, hold);
-            }
-            continue;
-        }
         let idx = row_hit.track();
         if !track_visible.get(idx).copied().unwrap_or(true) {
             continue;
@@ -903,7 +739,6 @@ pub(crate) fn show(
         info_content,
         request_pianoroll,
         tracks,
-        bus_ids,
         &mut actions,
         max_scroll,
     );

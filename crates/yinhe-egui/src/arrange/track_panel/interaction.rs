@@ -4,22 +4,20 @@ use std::sync::Arc;
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_core::TrackInfo;
-use yinhe_types::{ArRow, ArRowLayout, AutomationTarget, BusId};
+use yinhe_types::{ArRow, ArRowLayout, AutomationTarget};
 
 use super::types::TrackAction;
 use yinhe_editor_core::shortcuts;
 
-/// 右键菜单命中的对象：普通音轨（含 AM 子行）或固定总线。
+/// 右键菜单命中的对象：普通音轨（含 AM 子行）。
 #[derive(Clone, Copy)]
 enum RowMenuTarget {
     Track(usize, Option<usize>),
-    Bus(BusId),
-    BusAutomation(BusId, usize),
 }
 
 impl Default for RowMenuTarget {
     fn default() -> Self {
-        Self::Bus(BusId(0))
+        Self::Track(0, None)
     }
 }
 
@@ -293,7 +291,6 @@ pub fn handle_interactions(
     info_content: &mut Option<crate::right_panel::InfoContent>,
     request_pianoroll: &mut bool,
     tracks: &[Arc<yinhe_core::TrackData>],
-    bus_ids: &[BusId],
     actions: &mut Vec<TrackAction>,
     max_scroll: f32,
 ) {
@@ -310,31 +307,26 @@ pub fn handle_interactions(
             .and_then(|h| h.track_opt())
     };
 
-    if resp.double_clicked() && !dragging {
-        if let Some(pos) = resp.interact_pointer_pos()
-            && let Some(row_hit) =
-                row_layout.hit_at_music_y(pos.y - panel_rect.min.y + *scroll_y, lh)
-        {
-            if let ArRow::Bus(bus) = row_hit
-                && let Some(&bus_id) = bus_ids.get(bus)
+    if resp.double_clicked()
+        && !dragging
+        && let Some(pos) = resp.interact_pointer_pos()
+        && let Some(row_hit) = row_layout.hit_at_music_y(pos.y - panel_rect.min.y + *scroll_y, lh)
+    {
+        if let Some(idx) = row_hit.track_opt() {
+            // 双击文件夹 = 折叠/展开，不打开 PR（文件夹没有音符）。
+            if tracks
+                .get(idx)
+                .is_some_and(|t| t.kind == yinhe_core::TrackKind::Folder)
             {
-                actions.push(TrackAction::OpenBusDock { bus: bus_id });
-            } else if let Some(idx) = row_hit.track_opt() {
-                // 双击文件夹 = 折叠/展开，不打开 PR（文件夹没有音符）。
-                if tracks
-                    .get(idx)
-                    .is_some_and(|t| t.kind == yinhe_core::TrackKind::Folder)
-                {
-                    actions.push(TrackAction::ToggleFolder { idx });
-                } else {
-                    // 双击：选中该行（track_selected = {该行}，即成为主音轨）并打开 PR。
-                    let track_idx = track_info[idx].index;
-                    track_selected.clear();
-                    track_selected.insert(track_idx);
-                    *selection_anchor = Some(track_idx);
-                    *request_pianoroll = true;
-                    am_lane_selected.clear();
-                }
+                actions.push(TrackAction::ToggleFolder { idx });
+            } else {
+                // 双击：选中该行（track_selected = {该行}，即成为主音轨）并打开 PR。
+                let track_idx = track_info[idx].index;
+                track_selected.clear();
+                track_selected.insert(track_idx);
+                *selection_anchor = Some(track_idx);
+                *request_pianoroll = true;
+                am_lane_selected.clear();
             }
         }
     } else if resp.clicked()
@@ -347,8 +339,7 @@ pub fn handle_interactions(
 
         let lane_hit = match row_hit {
             ArRow::Automation(t, s) => Some((t, s)),
-            ArRow::BusAutomation(_, s) => conductor_track_idx.map(|m| (m as usize, s)),
-            _ => None,
+            ArRow::Track(_) => None,
         };
         if let Some((t, s)) = lane_hit {
             if let Some(lane) = tracks.get(t).and_then(|tr| tr.automation_lanes.get(s)) {
@@ -413,19 +404,6 @@ pub fn handle_interactions(
                 row_layout.hit_at_music_y(pos.y - panel_rect.min.y + *scroll_y, lh)
         {
             match row_hit {
-                ArRow::Bus(bus) => {
-                    if let Some(&bus_id) = bus_ids.get(bus) {
-                        ui.ctx()
-                            .data_mut(|d| d.insert_temp(ctx_target_id, RowMenuTarget::Bus(bus_id)));
-                    }
-                }
-                ArRow::BusAutomation(bus, lane) => {
-                    if let Some(&bus_id) = bus_ids.get(bus) {
-                        ui.ctx().data_mut(|d| {
-                            d.insert_temp(ctx_target_id, RowMenuTarget::BusAutomation(bus_id, lane))
-                        });
-                    }
-                }
                 ArRow::Track(idx) => {
                     prepare_track_menu(
                         idx,
@@ -472,59 +450,6 @@ pub fn handle_interactions(
                 .ctx()
                 .data(|d| d.get_temp::<RowMenuTarget>(ctx_target_id));
             match target {
-                Some(RowMenuTarget::Bus(bus)) => {
-                    if ui
-                        .add(crate::widgets::menu::menu_item_action(
-                            ui,
-                            false,
-                            t!("arrange.open_device_chain").as_ref(),
-                            "",
-                        ))
-                        .clicked()
-                    {
-                        actions.push(TrackAction::OpenBusDock { bus });
-                        ui.close();
-                    }
-                    if ui
-                        .add(crate::widgets::menu::menu_item_action(
-                            ui,
-                            false,
-                            t!("arrange.add_bus_automation").as_ref(),
-                            "",
-                        ))
-                        .clicked()
-                    {
-                        actions.push(TrackAction::AddBusAutomation { bus });
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui
-                        .add(crate::widgets::menu::menu_item_action(
-                            ui,
-                            false,
-                            t!("arrange.remove_bus").as_ref(),
-                            "",
-                        ))
-                        .clicked()
-                    {
-                        actions.push(TrackAction::RemoveBus { bus });
-                        ui.close();
-                    }
-                }
-                Some(RowMenuTarget::BusAutomation(bus, lane_idx)) => {
-                    if ui
-                        .add(crate::widgets::menu::menu_item_action(
-                            ui,
-                            false,
-                            t!("arrange.delete_automation").as_ref(),
-                            shortcuts::ACTION_DELETE_AUTOMATION,
-                        ))
-                        .clicked()
-                    {
-                        actions.push(TrackAction::DeleteBusAutomation { bus, lane_idx });
-                        ui.close();
-                    }
-                }
                 Some(RowMenuTarget::Track(idx, sub)) => {
                     track_context_menu(
                         ui,

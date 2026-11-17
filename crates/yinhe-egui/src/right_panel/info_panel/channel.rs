@@ -65,7 +65,6 @@ pub(crate) fn show_channel_info(
         MixerChannelId::Midi(ch) => show_midi(ui, doc, ch, per_track_supported),
         MixerChannelId::Audio(ch) => show_audio(ui, doc, ch),
         MixerChannelId::TrackLc(id) => show_track_lc(ui, doc, id),
-        MixerChannelId::Bus(bus) => show_bus(ui, doc, bus),
         MixerChannelId::Master => show_master(ui, doc),
     }
 }
@@ -224,45 +223,6 @@ fn show_track_lc(ui: &mut egui::Ui, doc: &mut Document, id: LogicalChannelId) ->
     out
 }
 
-fn show_bus(ui: &mut egui::Ui, doc: &mut Document, bus: yinhe_types::BusId) -> ChannelInfoOut {
-    let mut out = ChannelInfoOut::default();
-    let display = doc
-        .mixer
-        .bus_display_number(bus)
-        .map(crate::mix::lc_label)
-        .unwrap_or_else(|| "LC".to_string());
-    header(ui, display, &[]);
-
-    let node = MixerChannelId::Bus(bus);
-    let mut strip = doc.mixer.node_strip(node);
-    if strip_controls(ui, &mut strip) {
-        doc.mixer_mut().set_node_strip(node, strip);
-        out.mixer_changed = true;
-    }
-
-    section_header(ui, t!("track.output").as_ref());
-    if output_selector(ui, doc, node) {
-        out.mixer_changed = true;
-    }
-
-    let sends = doc
-        .mixer
-        .node_sends(node)
-        .map(<[_]>::to_vec)
-        .unwrap_or_default();
-    let inserts = doc
-        .mixer
-        .bus_node(bus)
-        .map(|node| node.inserts.clone())
-        .unwrap_or_default();
-    section_header(ui, t!("mix.sends").as_ref());
-    show_bus_sends(ui, Some(&sends));
-
-    section_header(ui, t!("channel.inserts").as_ref());
-    show_inserts(ui, Some(&inserts));
-    out
-}
-
 fn show_master(ui: &mut egui::Ui, doc: &mut Document) -> ChannelInfoOut {
     let mut out = ChannelInfoOut::default();
     header(ui, t!("mix.master").to_string(), &[]);
@@ -340,29 +300,27 @@ fn tracks_on_channel(doc: &Document, ch: MixerChannelId) -> Vec<u16> {
             }
             MixerChannelId::Audio(ch) => tr.audio_channel == Some(ch),
             MixerChannelId::TrackLc(id) => tr.lc == Some(id),
-            MixerChannelId::Bus(_) | MixerChannelId::Master => false,
+            MixerChannelId::Master => false,
         })
         .map(|(i, _)| i as u16)
         .collect()
 }
 
-/// 通道主输出（Master / BUS n）。返回是否改动。
+/// 通道主输出（Master / 另一条 LC）。返回是否改动。
 fn output_selector(ui: &mut egui::Ui, doc: &mut Document, ch: MixerChannelId) -> bool {
     let map = doc.mixer.channel_display_map();
     let source = crate::mix::channel_id_for_ui(&doc.mixer, ch);
     let mut targets: Vec<(yinhe_types::ChannelId, String)> = Vec::new();
-    // 普通 LC（音频 / 每轨 / 非 AP 的 MIDI 目标）+ Bus + AP 通道。
+    // 普通 LC（音频 / 每轨）+ AP 通道。
     for node in doc.mixer.nodes() {
         let id = node.channel_id();
         if Some(id) == source {
             continue;
         }
-        if matches!(id, yinhe_types::ChannelId::Bus(_))
-            || matches!(
-                node.source,
-                yinhe_types::ChannelSource::Audio(_) | yinhe_types::ChannelSource::Track(_)
-            )
-        {
+        if matches!(
+            node.source,
+            yinhe_types::ChannelSource::Audio(_) | yinhe_types::ChannelSource::Track(_)
+        ) {
             targets.push((id, crate::mix::channel_id_label(id, &map)));
         }
     }
@@ -449,30 +407,6 @@ fn show_channel_sends(ui: &mut egui::Ui, doc: &Document, ch: MixerChannelId) {
             ui,
             crate::mix::channel_id_label(send.target, &map),
             format!("{db} dB · {mode}"),
-        );
-    }
-}
-
-fn show_bus_sends(ui: &mut egui::Ui, sends: Option<&[yinhe_mixer::SendParams]>) {
-    let sends = sends.unwrap_or(&[]);
-    if sends.is_empty() {
-        value_row(ui, String::new(), t!("mix.no_sends").to_string());
-        return;
-    }
-    for send in sends {
-        let mode = if send.pre_fader {
-            t!("mix.pre_fader")
-        } else {
-            t!("mix.post_fader")
-        };
-        value_row(
-            ui,
-            "LC".to_string(),
-            format!(
-                "{:.1} dB · {}",
-                crate::widgets::meter::gain_to_db(send.amount),
-                mode
-            ),
         );
     }
 }

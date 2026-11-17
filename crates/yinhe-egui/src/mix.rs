@@ -34,7 +34,7 @@ use crate::widgets::meter::{db_to_gain, gain_to_db};
 pub(crate) use instrument_rack::InstrumentRack;
 pub(crate) use param_panel::ParamPanel;
 pub(crate) use rack::MixerRack;
-pub(crate) use strip::{picker_viewport_id, sends_viewport_id};
+pub(crate) use strip::picker_viewport_id;
 
 /// 源通道总数（16 port × 16 通道）。
 const SOURCE_CHANNELS: usize = yinhe_mixer::CHANNEL_COUNT;
@@ -91,7 +91,7 @@ pub(crate) fn channel_id_label(
     display: &std::collections::HashMap<ChannelId, u32>,
 ) -> String {
     match id {
-        ChannelId::Lc(_) | ChannelId::Bus(_) => display
+        ChannelId::Lc(_) => display
             .get(&id)
             .map(|n| lc_label(*n))
             .unwrap_or_else(|| "LC".to_string()),
@@ -162,8 +162,6 @@ pub(crate) struct MixUiState {
     /// 一次（[`update_master_meter`]），混音台 master 条与走带栏时间码表共用，
     /// 避免同一帧两次衰减。
     pub(crate) master_display: ((f32, f32), (f32, f32)),
-    /// 总线条电平表弹道状态（key = "bus{n}"，增删总线时旧键闲置无害）。
-    smoothed_buses: std::collections::HashMap<String, MeterState>,
     /// 每轨电平表弹道状态（索引 = 音轨；仅播放时有值）。
     smoothed_tracks: Vec<MeterState>,
     /// 本帧每轨电平表显示值 `((L,R), (holdL,holdR))`，main_loop 每帧更新
@@ -184,7 +182,6 @@ pub(crate) struct MixUiState {
     /// 本帧 CH 显示编号（ChannelId -> CH n）。
     pub(crate) channel_display: std::collections::HashMap<ChannelId, u32>,
     /// 发送面板打开目标（None = 关闭）。
-    pub(crate) sends_for: Option<u8>,
     /// XSynth 配置窗口目标（源通道；None = 关闭）。
     pub(crate) synth_config_for: Option<u8>,
     /// 乐器选择器目标：MIDI 通道（挂载点）；None = 未打开。
@@ -228,43 +225,6 @@ pub(crate) enum MixAction {
         amount: f32,
         pre_fader: bool,
     },
-    /// 新增一条总线（追加到末尾）。
-    AddBus,
-    /// 删除总线 `bus`（清理指向它的 send/输出，其他总线不受影响）。
-    RemoveBus {
-        bus: yinhe_types::BusId,
-    },
-    /// 打开某源通道的发送面板。
-    OpenSends {
-        channel: u8,
-    },
-    /// 更新某源通道对某总线的发送。
-    SetSend {
-        channel: u8,
-        bus: yinhe_types::BusId,
-        amount: f32,
-        pre_fader: bool,
-    },
-    /// 更新某音频通道对某总线的发送。
-    SetAudioSend {
-        channel: u16,
-        bus: yinhe_types::BusId,
-        amount: f32,
-        pre_fader: bool,
-    },
-    /// 更新某每轨 LC 对某总线的发送。
-    SetTrackLcSend {
-        lc: yinhe_types::LogicalChannelId,
-        bus: yinhe_types::BusId,
-        amount: f32,
-        pre_fader: bool,
-    },
-    /// 更新某总线对某总线的发送（含自发送；总线发送统一推子后）。
-    SetBusSend {
-        bus: yinhe_types::BusId,
-        target_bus: yinhe_types::BusId,
-        amount: f32,
-    },
     /// 给任意混音节点添加 MixerGain 自动化 lane。
     AddMixerGainAutomation {
         channel: MixerChannelId,
@@ -280,11 +240,6 @@ pub(crate) enum MixAction {
     /// 解除某节点的冻结。
     UnfreezeChannel {
         node: yinhe_types::MixerNodeId,
-    },
-    /// 给任意混音节点到某 Bus 的发送量添加自动化 lane。
-    AddMixerSendAutomation {
-        node: MixerChannelId,
-        bus: yinhe_types::BusId,
     },
     /// 为 MIDI 通道**追加**一个插件乐器到链尾（InsertRef 入持久化层 +
     /// 机架加载 + 安装引擎）。
@@ -427,34 +382,6 @@ impl App {
         }
     }
 
-    /// 全量同步总线配置（增删总线 / 改发送后推一次）。
-    pub(crate) fn sync_bus_config_to_engine(&mut self, idx: usize) {
-        let (buses, sends, bus_sends, audio_sends, track_sends) = {
-            let mixer = self.workspace.documents[idx].mixer_mut();
-            mixer.ensure_len();
-            (
-                mixer.bus_strips(),
-                mixer.midi_sends_snapshot(),
-                mixer.bus_sends_snapshot(),
-                mixer.audio_sends_snapshot(),
-                mixer
-                    .nodes()
-                    .filter(|node| matches!(node.source, yinhe_types::ChannelSource::Track(_)))
-                    .map(|node| node.sends.clone())
-                    .collect(),
-            )
-        };
-        if let Some(a) = &self.audio_state.handle {
-            a.handle.send(yinhe_audio::AudioCommand::SyncBusConfig {
-                buses: Box::new(buses),
-                sends: Box::new(sends),
-                bus_sends: Box::new(bus_sends),
-                audio_sends: Box::new(audio_sends),
-                track_sends: Box::new(track_sends),
-            });
-        }
-    }
-
     pub(crate) fn apply_master(&mut self, idx: usize, params: MasterParams) {
         self.workspace.documents[idx].mixer_mut().master.gain = params.gain;
         if let Some(audio) = &self.audio_state.handle {
@@ -497,22 +424,6 @@ impl App {
             for r in &node.inserts {
                 let _ = rack.load_plugin(
                     InsertTarget::TrackLc(lc),
-                    r.format,
-                    &r.plugin_path,
-                    &r.plugin_id,
-                    &r.name,
-                    r.state.as_deref(),
-                    r.bypassed,
-                );
-            }
-        }
-        for node in mixer.nodes() {
-            let ChannelId::Bus(bus_id) = node.id else {
-                continue;
-            };
-            for r in &node.inserts {
-                let _ = rack.load_plugin(
-                    InsertTarget::Bus(bus_id),
                     r.format,
                     &r.plugin_path,
                     &r.plugin_id,
@@ -710,32 +621,6 @@ pub(crate) fn update_master_meter(app: &mut App, dt: f32) -> ((f32, f32), (f32, 
     app.mix.master_display
 }
 
-/// AR 固定总线条的电平快照（与 MIX 共用同一套平滑峰值）。
-pub(crate) fn bus_meter_display(app: &mut App, dt: f32) -> Vec<crate::widgets::meter::StereoMeter> {
-    let count = app
-        .workspace
-        .active_doc
-        .map(|idx| app.workspace.documents[idx].mixer.bus_count())
-        .unwrap_or(0);
-    (0..count)
-        .map(|bus| {
-            let raw = app
-                .audio_state
-                .handle
-                .as_ref()
-                .map(|a| a.handle.bus_meter_read(bus))
-                .unwrap_or((0.0, 0.0));
-            let slot = app
-                .mix
-                .smoothed_buses
-                .entry(format!("bus{bus}"))
-                .or_default();
-            slot.update(raw, dt);
-            (slot.level(), slot.hold())
-        })
-        .collect()
-}
-
 /// 更新每轨电平表弹道（每帧一次，main_loop 在走带栏/编排视图之前调用）。
 /// 读数来自引擎（仅播放时非零），结果存入 [`MixUiState::track_display`]。
 pub(crate) fn update_track_meters(app: &mut App, dt: f32) {
@@ -762,8 +647,8 @@ pub(crate) fn update_track_meters(app: &mut App, dt: f32) {
 }
 
 /// 混音台自动高度：基础布局 + 发送区按总线数扩展。
-pub(crate) fn auto_panel_height(bus_count: usize) -> f32 {
-    strip::auto_panel_height(bus_count)
+pub(crate) fn auto_panel_height() -> f32 {
+    strip::auto_panel_height()
 }
 
 /// MIX 模式主入口（layout.rs 在 Mix 模式且已打开工程时调用）。
@@ -946,41 +831,6 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                                         );
                                     }
                                 }
-                                // 总线条（bus / return）。
-                                let bus_count = app.workspace.documents[idx].mixer.bus_count();
-                                if bus_count > 0 {
-                                    ui.separator();
-                                    for b in 0..bus_count {
-                                        let Some(bus_id) =
-                                            app.workspace.documents[idx].mixer.bus_id_at(b)
-                                        else {
-                                            continue;
-                                        };
-                                        let raw = app
-                                            .audio_state
-                                            .handle
-                                            .as_ref()
-                                            .map(|a| a.handle.bus_meter_read(b))
-                                            .unwrap_or((0.0, 0.0));
-                                        let (level, hold) = {
-                                            let key = format!("bus{b}");
-                                            let slot =
-                                                app.mix.smoothed_buses.entry(key).or_default();
-                                            slot.update(raw, dt);
-                                            (slot.level(), slot.hold())
-                                        };
-                                        strip::bus_strip(
-                                            app,
-                                            ui,
-                                            idx,
-                                            bus_id,
-                                            level,
-                                            hold,
-                                            strip_h,
-                                            &mut actions,
-                                        );
-                                    }
-                                }
                             });
                         });
                 });
@@ -1046,9 +896,6 @@ pub(crate) fn show_global_overlays(app: &mut App, ctx: &egui::Context) {
     if let Some(ch) = app.mix.instrument_picker_for {
         strip::instrument_picker(app, ctx, ch, &mut actions);
     }
-    if let Some(ch) = app.mix.sends_for {
-        strip::send_popup(app, ctx, ch, &mut actions);
-    }
     for action in actions {
         apply_action(app, ctx, idx, action);
     }
@@ -1064,7 +911,7 @@ pub(crate) fn insert_refs(
     mixer.node_inserts_mut(target)
 }
 
-fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixAction) {
+fn apply_action(app: &mut App, _ctx: &egui::Context, idx: usize, action: MixAction) {
     match action {
         MixAction::SetNodeStrip { node, params } => {
             app.note_mixer_edit(t!("undo.mix_param").as_ref());
@@ -1118,137 +965,6 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
                 app.push_mixer_state_to_engine(idx);
             }
         }
-        MixAction::AddBus => {
-            if app.workspace.documents[idx].mixer.bus_count() > usize::from(u16::MAX) {
-                return;
-            }
-            app.note_mixer_edit(t!("undo.mix_bus").as_ref());
-            let _ = app.workspace.documents[idx].mixer_mut().add_bus();
-            app.sync_bus_config_to_engine(idx);
-        }
-        MixAction::RemoveBus { bus } => {
-            app.note_mixer_edit(t!("undo.mix_bus").as_ref());
-            app.workspace.documents[idx].remove_bus(bus);
-            let handle = app.audio_state.handle.as_ref().map(|a| &a.handle);
-            if idx < app.mixer_racks.len() {
-                app.mixer_racks[idx].remove_bus_chain(bus, handle);
-            }
-            app.sync_bus_config_to_engine(idx);
-        }
-        MixAction::SetSend {
-            channel,
-            bus,
-            amount,
-            pre_fader,
-        } => {
-            app.note_mixer_edit(t!("undo.mix_send").as_ref());
-            {
-                let mixer = app.workspace.documents[idx].mixer_mut();
-                if let Some(list) = mixer.node_sends_mut(yinhe_types::MixerChannelId::Midi(channel))
-                {
-                    if let Some(send) = list
-                        .iter_mut()
-                        .find(|s| s.target == yinhe_types::ChannelId::Bus(bus))
-                    {
-                        send.amount = amount;
-                        send.pre_fader = pre_fader;
-                    } else if amount > 0.0 {
-                        list.push(yinhe_mixer::SendParams {
-                            target: yinhe_types::ChannelId::Bus(bus),
-                            amount,
-                            pre_fader,
-                        });
-                    }
-                    // 发送量为 0 的条目不再保留（避免持久化层堆积）。
-                    list.retain(|s| s.amount > 0.0);
-                }
-            }
-            app.sync_bus_config_to_engine(idx);
-        }
-        MixAction::SetTrackLcSend {
-            lc,
-            bus,
-            amount,
-            pre_fader,
-        } => {
-            app.note_mixer_edit(t!("undo.mix_send").as_ref());
-            {
-                let mixer = app.workspace.documents[idx].mixer_mut();
-                if let Some(list) = mixer.node_sends_mut(yinhe_types::MixerChannelId::TrackLc(lc)) {
-                    if let Some(send) = list
-                        .iter_mut()
-                        .find(|s| s.target == yinhe_types::ChannelId::Bus(bus))
-                    {
-                        send.amount = amount;
-                        send.pre_fader = pre_fader;
-                    } else if amount > 0.0 {
-                        list.push(yinhe_mixer::SendParams {
-                            target: yinhe_types::ChannelId::Bus(bus),
-                            amount,
-                            pre_fader,
-                        });
-                    }
-                    list.retain(|s| s.amount > 0.0);
-                }
-            }
-            app.sync_bus_config_to_engine(idx);
-        }
-        MixAction::SetAudioSend {
-            channel,
-            bus,
-            amount,
-            pre_fader,
-        } => {
-            app.note_mixer_edit(t!("undo.mix_send").as_ref());
-            {
-                let mixer = app.workspace.documents[idx].mixer_mut();
-                if let Some(list) =
-                    mixer.node_sends_mut(yinhe_types::MixerChannelId::Audio(channel))
-                {
-                    if let Some(send) = list
-                        .iter_mut()
-                        .find(|s| s.target == yinhe_types::ChannelId::Bus(bus))
-                    {
-                        send.amount = amount;
-                        send.pre_fader = pre_fader;
-                    } else if amount > 0.0 {
-                        list.push(yinhe_mixer::SendParams {
-                            target: yinhe_types::ChannelId::Bus(bus),
-                            amount,
-                            pre_fader,
-                        });
-                    }
-                    list.retain(|s| s.amount > 0.0);
-                }
-            }
-            app.sync_bus_config_to_engine(idx);
-        }
-        MixAction::SetBusSend {
-            bus,
-            target_bus,
-            amount,
-        } => {
-            app.note_mixer_edit(t!("undo.mix_send").as_ref());
-            {
-                let mixer = app.workspace.documents[idx].mixer_mut();
-                if let Some(list) = mixer.node_sends_mut(yinhe_types::MixerChannelId::Bus(bus)) {
-                    if let Some(send) = list
-                        .iter_mut()
-                        .find(|s| s.target == yinhe_types::ChannelId::Bus(target_bus))
-                    {
-                        send.amount = amount;
-                    } else if amount > 0.0 {
-                        list.push(yinhe_mixer::SendParams {
-                            target: yinhe_types::ChannelId::Bus(target_bus),
-                            amount,
-                            pre_fader: false,
-                        });
-                    }
-                    list.retain(|s| s.amount > 0.0);
-                }
-            }
-            app.sync_bus_config_to_engine(idx);
-        }
         MixAction::FreezeChannel { channel } => {
             app.start_lc_freeze(idx, channel);
         }
@@ -1288,35 +1004,6 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
             if let Some(action) = doc.add_mixer_automation_lane(
                 node_id,
                 yinhe_types::AutomationTarget::MixerPan { channel },
-                value,
-            ) {
-                doc.push_undo(action, t!("undo.create_automation").as_ref(), before);
-                app.workspace.documents[idx].mark_mixer_dirty();
-                app.push_mixer_state_to_engine(idx);
-            }
-        }
-        MixAction::OpenSends { channel } => {
-            app.mix.sends_for = Some(channel);
-            crate::chrome::dialog::raise_viewport(ctx, sends_viewport_id());
-        }
-        MixAction::AddMixerSendAutomation { node, bus } => {
-            let amount = app.workspace.documents[idx]
-                .mixer
-                .node_sends(node)
-                .and_then(|sends| {
-                    sends
-                        .iter()
-                        .find(|s| s.target == yinhe_types::ChannelId::Bus(bus))
-                })
-                .map(|s| s.amount)
-                .unwrap_or(0.0);
-            let value = amount.clamp(0.0, 1.0);
-            let node_id = app.workspace.documents[idx].mixer.node_id_for(node);
-            let doc = &mut app.workspace.documents[idx];
-            let before = doc.capture_snapshot();
-            if let Some(action) = doc.add_mixer_automation_lane(
-                node_id,
-                yinhe_types::AutomationTarget::MixerSend { node, bus },
                 value,
             ) {
                 doc.push_undo(action, t!("undo.create_automation").as_ref(), before);
@@ -1492,10 +1179,6 @@ mod tests {
             channel_id_for_ui(&mixer, MixerChannelId::Master),
             Some(ChannelId::Master)
         );
-        assert_eq!(
-            channel_id_for_ui(&mixer, MixerChannelId::Bus(yinhe_types::BusId(0))),
-            Some(ChannelId::Bus(yinhe_types::BusId(0)))
-        );
     }
 
     #[test]
@@ -1508,7 +1191,7 @@ mod tests {
         assert_eq!(ap_label(0), "AP01");
     }
 
-    /// 迁移只移除内置效果器 insert（channel/bus/master），插件保留；
+    /// 迁移只移除内置效果器 insert（channel/master），插件保留；
     /// 无内置时不报告移除（调用方由此避免把刚打开的工程标脏）。
     #[test]
     fn strip_builtin_inserts_removes_builtin_only() {
@@ -1517,11 +1200,6 @@ mod tests {
         mixer.midi_node_mut(3).expect("midi 3").inserts = vec![
             insert_ref(PluginFormat::Builtin, "channel_gain"),
             insert_ref(PluginFormat::Clap, "clap-fx"),
-        ];
-        let bus = mixer.add_bus().expect("bus");
-        mixer.bus_node_mut(bus).expect("bus node").inserts = vec![
-            insert_ref(PluginFormat::Builtin, "channel_pan"),
-            insert_ref(PluginFormat::Vst3, "vst-fx"),
         ];
         mixer.master.inserts = vec![
             insert_ref(PluginFormat::Vst3, "vst-master"),
@@ -1533,11 +1211,6 @@ mod tests {
         assert_eq!(
             mixer.midi_node(3).expect("midi 3").inserts[0].plugin_id,
             "clap-fx"
-        );
-        assert_eq!(mixer.bus_node(bus).expect("bus").inserts.len(), 1);
-        assert_eq!(
-            mixer.bus_node(bus).expect("bus").inserts[0].plugin_id,
-            "vst-fx"
         );
         assert_eq!(mixer.master.inserts.len(), 1);
         assert_eq!(mixer.master.inserts[0].plugin_id, "vst-master");

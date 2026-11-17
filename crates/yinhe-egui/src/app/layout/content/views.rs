@@ -25,11 +25,6 @@ impl App {
             .map(|a| a.handle.is_playing())
             .unwrap_or(false);
         let sel_hint = Self::compute_sel_hint(&self.workspace.documents[idx]);
-        // AR 固定总线行：参数快照 + 与 MIX 同源的平滑电平。
-        let bus_strips = self.workspace.documents[idx].mixer.bus_strips();
-        let dt = ui.ctx().input(|i| i.stable_dt).min(0.1);
-        let bus_meters = crate::mix::bus_meter_display(self, dt);
-
         let mut request_pianoroll = false;
         let mut arr_drag_delta: Option<crate::arrange::ArrDragDelta> = None;
         let mut arr_eraser_rect: Option<crate::arrange::ArrSelRect> = None;
@@ -43,12 +38,8 @@ impl App {
         let mut needs_audio_rebuild = false;
         // AR 自动化 lane 增删/编辑 → notify_audio_model_changed（不重建引擎）。
         let mut needs_audio_notify = false;
-        // AR 固定 Bus 行 M/S → 推送混音参数。
-        let mut mixer_dirty = false;
         // 双击固定 Bus 行 → 打开设备链。
         let mut dock_req: Option<crate::chrome::device_chain::DockContext> = None;
-        // 右键固定 Bus 行 → 删除总线。
-        let mut bus_remove_req: Option<yinhe_types::BusId> = None;
         // 音乐区右键菜单动作。
         let mut menu_actions: Vec<crate::arrange::context_menu::TimelineMenuAction> = Vec::new();
         {
@@ -97,11 +88,7 @@ impl App {
                 sel_hint.as_ref(),
                 &mut automation_picker_req,
                 &self.mix.track_display,
-                &bus_strips,
-                &bus_meters,
-                &mut mixer_dirty,
                 &mut dock_req,
-                &mut bus_remove_req,
                 &mut menu_actions,
             );
             // guard dropped here
@@ -127,22 +114,6 @@ impl App {
         // 自动化内容变化（AR lane 增删）：通知音频引擎 model 已变。
         if needs_audio_notify {
             self.notify_audio_model_changed();
-        }
-        // 右键固定 Bus 行：删除总线并清理机架（send/输出由 MixerParams 统一重映射）。
-        if let Some(bus) = bus_remove_req {
-            self.note_mixer_edit(t!("undo.mix_bus").as_ref());
-            self.workspace.documents[idx].remove_bus(bus);
-            let handle = self.audio_state.handle.as_ref().map(|a| &a.handle);
-            if idx < self.mixer_racks.len() {
-                self.mixer_racks[idx].remove_bus_chain(bus, handle);
-            }
-            self.push_mixer_state_to_engine(idx);
-        }
-        // AR 固定总线条 M/S：写回参数并推给引擎（推子类参数不进 undo）。
-        if mixer_dirty {
-            self.note_mixer_edit(t!("undo.mix_param").as_ref());
-            self.workspace.documents[idx].mark_mixer_dirty();
-            self.push_mixer_state_to_engine(idx);
         }
         // 双击固定 Bus 行：展开底部设备链并切换语境。
         if let Some(context) = dock_req {

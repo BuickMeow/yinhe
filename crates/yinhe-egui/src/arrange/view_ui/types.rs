@@ -129,7 +129,7 @@ pub(crate) fn is_on_am_row(
                     pos.y - content_rect.min.y + view.base.scroll_y,
                     view.lane_height(),
                 ),
-                Some(ArRow::Automation(..) | ArRow::BusAutomation(..))
+                Some(ArRow::Automation(..))
             )
     })
 }

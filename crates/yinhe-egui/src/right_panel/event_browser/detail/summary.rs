@@ -43,8 +43,7 @@ impl TargetSummary {
             AutomationTarget::Param { .. } => self.param_total += n,
             AutomationTarget::Rpn { .. } | AutomationTarget::Nrpn { .. } => self.rpn_total += n,
             AutomationTarget::Tempo => {}
-            AutomationTarget::BusGain { .. }
-            | AutomationTarget::MixerGain { .. }
+            AutomationTarget::MixerGain { .. }
             | AutomationTarget::MixerPan { .. }
             | AutomationTarget::MixerSend { .. }
             | AutomationTarget::InsertParam { .. } => self.param_total += n,

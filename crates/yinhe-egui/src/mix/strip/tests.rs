@@ -1,4 +1,4 @@
-use super::controls::{SendSource, gain_at_y, gain_y, section, send_block};
+use super::controls::{gain_at_y, gain_y};
 use super::*;
 use crate::widgets::meter::{DB_MAX, db_to_gain};
 
@@ -45,62 +45,6 @@ fn gain_position_round_trip() {
 /// C 的 SEND 聚焦模式固定一行，不再随总线数增长。
 #[test]
 fn auto_height_is_fixed_by_focus_send_row() {
-    let base = auto_panel_height(0);
+    let base = auto_panel_height();
     assert!((base - 200.0).abs() < 1e-3, "基础高度 {base}");
-    assert!((auto_panel_height(1) - base).abs() < 1e-3);
-    assert!((auto_panel_height(4) - base).abs() < 1e-3);
-}
-
-/// 实验：两个通道条共享同一 `mix_send_scroll` 滚动位置时，
-/// 检查 ScrollArea 内部是否产生 ID 冲突（滚动条 / 拖拽捕获区）。
-#[test]
-fn send_blocks_shared_scroll_no_id_clash() {
-    let ctx = egui::Context::default();
-    let mut actions: Vec<MixAction> = Vec::new();
-    // 两帧：滚动条显隐由上一帧内容尺寸决定。
-    for _ in 0..2 {
-        let output = ctx.run_ui(Default::default(), |ui| {
-            ui.horizontal_top(|ui| {
-                // 固定一行高：4 条总线内容溢出 → 滚动条出现（与通道条一致）。
-                section(
-                    ui,
-                    SEND_ROW_H,
-                    egui::Layout::top_down(egui::Align::Center),
-                    |ui| {
-                        send_block(
-                            ui,
-                            SendSource::Channel(0),
-                            &[],
-                            &[yinhe_types::BusId(0); 4],
-                            &mut actions,
-                        )
-                    },
-                );
-                section(
-                    ui,
-                    SEND_ROW_H,
-                    egui::Layout::top_down(egui::Align::Center),
-                    |ui| {
-                        send_block(
-                            ui,
-                            SendSource::Channel(1),
-                            &[],
-                            &[yinhe_types::BusId(0); 4],
-                            &mut actions,
-                        )
-                    },
-                );
-            });
-        });
-        let mut clashes: Vec<String> = Vec::new();
-        for cs in &output.shapes {
-            if let egui::Shape::Text(t) = &cs.shape
-                && t.galley.text().contains("of widget ID")
-            {
-                clashes.push(t.galley.text().to_owned());
-            }
-        }
-        output.drop_without_applying_deltas();
-        assert!(clashes.is_empty(), "send_block ID 冲突: {clashes:?}");
-    }
 }

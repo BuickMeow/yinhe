@@ -797,14 +797,14 @@ fn mixer_section_roundtrips() {
     let m = build_complex_model();
     let mut mixer = MixerParams::default();
     mixer.ensure_len();
-    let bus = mixer.add_bus().expect("bus");
+    let lc = mixer.add_track_lc();
     mixer.set_node_output(
         MixerChannelId::Midi(3),
-        Some(yinhe_types::ChannelId::Bus(bus)),
+        Some(yinhe_types::ChannelId::Lc(lc)),
     );
     mixer.set_node_output(
         MixerChannelId::Audio(1),
-        Some(yinhe_types::ChannelId::Bus(bus)),
+        Some(yinhe_types::ChannelId::Lc(lc)),
     );
     mixer.set_node_strip(
         MixerChannelId::Midi(3),
@@ -862,11 +862,11 @@ fn mixer_section_roundtrips() {
     assert_eq!(mixer2.master.inserts, mixer.master.inserts);
     assert_eq!(
         mixer2.node_output(MixerChannelId::Midi(3)),
-        Some(yinhe_types::ChannelId::Bus(bus))
+        Some(yinhe_types::ChannelId::Lc(lc))
     );
     assert_eq!(
         mixer2.node_output(MixerChannelId::Audio(1)),
-        Some(yinhe_types::ChannelId::Bus(bus))
+        Some(yinhe_types::ChannelId::Lc(lc))
     );
 }
 

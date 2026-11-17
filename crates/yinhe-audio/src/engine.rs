@@ -557,14 +557,12 @@ impl AudioEngine {
                 slot,
                 processor,
             } => self.insert_replace(target, slot, processor),
-            AudioCommand::SyncBusConfig {
-                buses,
+            AudioCommand::SyncSends {
                 sends,
-                bus_sends,
                 audio_sends,
                 track_sends,
             } => {
-                self.sync_bus_config(*buses, *sends, *bus_sends, *audio_sends, *track_sends);
+                self.sync_sends_config(*sends, *audio_sends, *track_sends);
             }
             AudioCommand::SetInstrumentSlot {
                 channel,

@@ -4,11 +4,10 @@ use std::io::Cursor;
 
 use serde::{Deserialize, Serialize};
 use yinhe_mixer::{
-    CHANNEL_COUNT, InsertRef, MasterParams, MixerNode, MixerParams, RackParams, SendParams,
-    StripParams,
+    CHANNEL_COUNT, InsertRef, MasterParams, MixerNode, MixerParams, RackParams, StripParams,
 };
 use yinhe_types::{
-    BusId, ChannelId, ChannelSource, LogicalChannelId, RackId, RackOutputMode, TRACK_LC_BASE,
+    ChannelId, ChannelSource, LogicalChannelId, RackId, RackOutputMode, TRACK_LC_BASE,
 };
 
 use crate::codec::{deserialize_postcard, encode_versioned_section, serialize_postcard};
@@ -23,22 +22,15 @@ use crate::error::YinError;
 /// 开发快照不再兼容，加载时会明确警告。
 const MIXER_SECTION_VERSION: u32 = 10;
 
-/// v9 混音参数快照：稳定 BusId，但仍是并行分表。
+/// v9 混音参数快照：并行分表。
+///
+/// 方案 C 没有 Bus，`bus` 仅保留为裸 u16 以维持 v9 二进制布局；
+/// 解码后这些总线发送直接丢弃。
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 struct SendParamsV9 {
-    bus: BusId,
+    bus: u16,
     amount: f32,
     pre_fader: bool,
-}
-
-impl SendParamsV9 {
-    fn into_current(self) -> SendParams {
-        SendParams {
-            target: ChannelId::Bus(self.bus),
-            amount: self.amount,
-            pre_fader: self.pre_fader,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -52,14 +44,20 @@ struct MixerParamsV9 {
     audio_channels: Vec<StripParams>,
     audio_inserts: Vec<Vec<InsertRef>>,
     audio_sends: Vec<Vec<SendParamsV9>>,
+    /// v9 的 Bus 字段只用于维持反序列化布局，解码后整体丢弃。
+    #[allow(dead_code)]
     buses: Vec<StripParams>,
-    bus_ids: Vec<BusId>,
-    next_bus_id: BusId,
+    #[allow(dead_code)]
+    bus_ids: Vec<u16>,
+    #[allow(dead_code)]
+    next_bus_id: u16,
+    #[allow(dead_code)]
     bus_inserts: Vec<Vec<InsertRef>>,
+    #[allow(dead_code)]
     bus_sends: Vec<Vec<SendParamsV9>>,
     sends: Vec<Vec<SendParamsV9>>,
-    midi_outputs: Vec<Option<BusId>>,
-    audio_outputs: Vec<Option<BusId>>,
+    midi_outputs: Vec<Option<u16>>,
+    audio_outputs: Vec<Option<u16>>,
 }
 
 impl MixerParamsV9 {
@@ -94,22 +92,9 @@ impl MixerParamsV9 {
                 source: ChannelSource::Midi(i as u8),
                 strip: self.channels.get(i).copied().unwrap_or_default(),
                 inserts: self.channel_inserts.get(i).cloned().unwrap_or_default(),
-                sends: self
-                    .sends
-                    .get(i)
-                    .map(|list| {
-                        list.iter()
-                            .copied()
-                            .map(SendParamsV9::into_current)
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                output: self
-                    .midi_outputs
-                    .get(i)
-                    .copied()
-                    .flatten()
-                    .map(ChannelId::Bus),
+                // 方案 C 没有 Bus：v9 的 bus 发送/主输出直接丢弃。
+                sends: Vec::new(),
+                output: None,
                 automation: Vec::new(),
                 freeze: None,
             })
@@ -120,50 +105,7 @@ impl MixerParamsV9 {
                 source: ChannelSource::Audio(i as u16),
                 strip: self.audio_channels.get(i).copied().unwrap_or_default(),
                 inserts: self.audio_inserts.get(i).cloned().unwrap_or_default(),
-                sends: self
-                    .audio_sends
-                    .get(i)
-                    .map(|list| {
-                        list.iter()
-                            .copied()
-                            .map(SendParamsV9::into_current)
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                output: self
-                    .audio_outputs
-                    .get(i)
-                    .copied()
-                    .flatten()
-                    .map(ChannelId::Bus),
-                automation: Vec::new(),
-                freeze: None,
-            })
-            .collect();
-        let buses: Vec<MixerNode> = self
-            .buses
-            .iter()
-            .enumerate()
-            .map(|(i, strip)| MixerNode {
-                id: ChannelId::Bus(
-                    self.bus_ids
-                        .get(i)
-                        .copied()
-                        .unwrap_or(BusId(i.min(u16::MAX as usize) as u16)),
-                ),
-                source: ChannelSource::Bus,
-                strip: *strip,
-                inserts: self.bus_inserts.get(i).cloned().unwrap_or_default(),
-                sends: self
-                    .bus_sends
-                    .get(i)
-                    .map(|list| {
-                        list.iter()
-                            .copied()
-                            .map(SendParamsV9::into_current)
-                            .collect()
-                    })
-                    .unwrap_or_default(),
+                sends: Vec::new(),
                 output: None,
                 automation: Vec::new(),
                 freeze: None,
@@ -182,11 +124,7 @@ impl MixerParamsV9 {
             automation: Vec::new(),
             freeze: None,
         };
-        let nodes: Vec<MixerNode> = channels
-            .into_iter()
-            .chain(audio_channels)
-            .chain(buses)
-            .collect();
+        let nodes: Vec<MixerNode> = channels.into_iter().chain(audio_channels).collect();
         MixerParams {
             aps: Vec::new(),
             channel_sends: Vec::new(),
@@ -194,7 +132,6 @@ impl MixerParamsV9 {
             nodes,
             master,
             next_instrument_uid: self.next_instrument_uid.max(1),
-            next_bus_id: self.next_bus_id,
             next_lc_id: LogicalChannelId(next_lc),
         }
     }
@@ -234,6 +171,7 @@ pub(crate) fn decode_mixer_section(section: &[u8]) -> Option<MixerParams> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use yinhe_mixer::SendParams;
 
     #[test]
     fn v9_tables_migrate_to_v10_nodes() {
@@ -251,8 +189,8 @@ mod tests {
             audio_inserts: vec![Vec::new()],
             audio_sends: vec![Vec::new()],
             buses: vec![StripParams::default()],
-            bus_ids: vec![BusId(5)],
-            next_bus_id: BusId(6),
+            bus_ids: vec![5],
+            next_bus_id: 6,
             bus_inserts: vec![Vec::new()],
             bus_sends: vec![Vec::new()],
             sends: vec![Vec::new(); yinhe_mixer::CHANNEL_COUNT],
@@ -261,11 +199,11 @@ mod tests {
         };
         old.channels[3].gain = 0.25;
         old.sends[3].push(SendParamsV9 {
-            bus: BusId(5),
+            bus: 5,
             amount: 0.5,
             pre_fader: false,
         });
-        old.midi_outputs[3] = Some(BusId(5));
+        old.midi_outputs[3] = Some(5);
 
         let payload = serialize_postcard(&old).expect("serialize v9");
         let section = encode_versioned_section(9, &payload, 0).expect("encode v9");
@@ -281,11 +219,10 @@ mod tests {
         );
         let midi3 = loaded.midi_node(3).expect("midi 3");
         assert_eq!(midi3.gain, 0.25);
-        assert_eq!(midi3.sends[0].target, ChannelId::Bus(BusId(5)));
-        assert_eq!(midi3.output, Some(ChannelId::Bus(BusId(5))));
+        // 方案 C 没有 Bus：v9 的 bus 发送与主输出直接丢弃。
+        assert!(midi3.sends.is_empty());
+        assert!(midi3.output.is_none());
         assert_eq!(loaded.audio_node(0).expect("audio 0").gain, 0.4);
-        assert_eq!(loaded.bus_id_at(0), Some(BusId(5)));
-        assert_eq!(loaded.next_bus_id, BusId(6));
         assert_eq!(loaded.master.gain, 0.8);
         assert_eq!(loaded.next_instrument_uid, 7);
         // v9 没有每轨 LC：不应出现 source=Track 的节点。
@@ -303,20 +240,22 @@ mod tests {
     fn current_version_roundtrips_nodes() {
         let mut mixer = MixerParams::default();
         mixer.ensure_len();
-        let bus = mixer.add_bus().expect("bus");
+        let track_lc = mixer.add_track_lc();
         let send = SendParams {
-            target: ChannelId::Bus(bus),
+            target: ChannelId::Lc(track_lc),
             amount: 0.5,
             pre_fader: false,
         };
         mixer.set_node_sends(yinhe_types::MixerChannelId::Midi(0), vec![send]);
         mixer.set_node_output(
             yinhe_types::MixerChannelId::Midi(0),
-            Some(ChannelId::Bus(bus)),
+            Some(ChannelId::Lc(track_lc)),
         );
-        let bus_node = mixer.bus_node_mut(bus).expect("bus");
-        bus_node.automation.push(yinhe_types::AutomationLane {
-            target: yinhe_types::AutomationTarget::BusGain { bus },
+        let node = mixer.track_node_mut(track_lc).expect("track lc");
+        node.automation.push(yinhe_types::AutomationLane {
+            target: yinhe_types::AutomationTarget::MixerGain {
+                channel: yinhe_types::MixerChannelId::TrackLc(track_lc),
+            },
             track: 0,
             events: vec![yinhe_types::AutomationEvent {
                 id: 1,
@@ -331,25 +270,39 @@ mod tests {
             sample_rate: 48_000,
             frames: 1234,
         });
-        let track_lc = mixer.add_track_lc();
         mixer.track_node_mut(track_lc).expect("track lc").strip.gain = 0.25;
 
         let section = encode_mixer_section(&mixer, 0).expect("encode");
         let loaded = decode_mixer_section(&section).expect("decode");
-        assert_eq!(loaded.bus_count(), 1);
-        assert_eq!(loaded.bus_id_at(0), Some(bus));
         assert_eq!(
             loaded.midi_node(0).expect("midi 0").sends[0].target,
-            ChannelId::Bus(bus)
+            ChannelId::Lc(track_lc)
         );
         assert_eq!(
             loaded.midi_node(0).expect("midi 0").output,
-            Some(ChannelId::Bus(bus))
+            Some(ChannelId::Lc(track_lc))
         );
         assert_eq!(loaded.master.id, ChannelId::Master);
         assert_eq!(
             loaded.track_node(track_lc).expect("track lc").strip.gain,
             0.25
+        );
+        assert_eq!(
+            loaded
+                .track_node(track_lc)
+                .expect("track lc")
+                .automation
+                .len(),
+            1
+        );
+        assert_eq!(
+            loaded
+                .midi_node(0)
+                .expect("midi 0")
+                .freeze
+                .as_ref()
+                .map(|f| f.frames),
+            Some(1234)
         );
     }
 }

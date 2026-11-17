@@ -1,6 +1,6 @@
 //! 混音架构的稳定身份类型。
 //!
-//! 这里只放「身份」，不放参数：轨道、Rack、逻辑通道、Bus、Master 各自有
+//! 这里只放「身份」，不放参数：轨道、Rack、逻辑通道、Master 各自有
 //! 独立的命名空间。稳定 ID 不随插入/删除/重排变化，自动化、发送、撤销和
 //! 工程保存都靠它定位对象。
 //!
@@ -86,39 +86,11 @@ pub enum ChannelSource {
     Track(u16),
     /// AP 编组的通道。
     Ap(ApGroupId),
-    /// Bus / Return（source=None 角色）。
-    Bus,
     /// Master。
     Master,
     /// 旧数据未标注，加载时补齐。
     #[default]
     Unspecified,
-}
-
-/// 总线 / Return 的稳定身份。
-///
-/// 发送和主输出存 BusId，不存 Vec 下标；删除总线不会让后续总线「继承」
-/// 前一条的路由。旧工程加载时按原索引 0..n 生成，行为与旧版一致。
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
-#[serde(transparent)]
-pub struct BusId(pub u16);
-
-impl BusId {
-    pub const fn new(raw: u16) -> Self {
-        Self(raw)
-    }
-
-    pub const fn index(self) -> usize {
-        self.0 as usize
-    }
-}
-
-impl From<u16> for BusId {
-    fn from(raw: u16) -> Self {
-        Self(raw)
-    }
 }
 
 /// 听感三态：正常 / 静音 / 独奏。
@@ -182,15 +154,12 @@ impl ApChannelId {
 
 /// 所有可发送目标的统一身份。
 ///
-/// LC 与 AP 通道都是普通音频通道；Master 是唯一终点。Bus 不是独立类型，
-/// 它是 `ChannelSource::None` 的通道角色，因此也落在这两类里。
+/// LC 与 AP 通道都是普通音频通道；Master 是唯一终点。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelId {
     Lc(LogicalChannelId),
     Ap(ApChannelId),
-    /// 旧 Bus 节点在 C 发送图里的通道身份（过渡；UI 按 CH 处理）。
-    Bus(BusId),
     Master,
 }
 
@@ -214,8 +183,6 @@ impl ChannelId {
 pub enum MixerNodeId {
     /// 一条音频流的通道条。
     LogicalChannel(LogicalChannelId),
-    /// 总线 / Return。
-    Bus(BusId),
     /// 最终总输出。
     Master,
 }
@@ -225,7 +192,6 @@ impl MixerNodeId {
     pub const fn c_channel_id(self) -> ChannelId {
         match self {
             Self::LogicalChannel(id) => ChannelId::Lc(id),
-            Self::Bus(bus) => ChannelId::Bus(bus),
             Self::Master => ChannelId::Master,
         }
     }
@@ -240,14 +206,13 @@ impl From<MixerNodeId> for ChannelId {
 /// 自动化 lane 的归属。
 ///
 /// 自动化不再默认「挂在轨道上」：MIDI 内容轨的 lane 属于 Track，乐器参数
-/// 属于 Rack，推子/声像/发送属于 LC/Bus/Master，Tempo 属于 Conductor。
+/// 属于 Rack，推子/声像/发送属于 LC/Master，Tempo 属于 Conductor。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AutomationOwner {
     Track(u16),
     Rack(RackId),
     LogicalChannel(LogicalChannelId),
-    Bus(BusId),
     Master,
     Conductor,
 }
@@ -266,16 +231,9 @@ mod tests {
     #[test]
     fn ids_are_stable_value_types() {
         assert_eq!(LogicalChannelId::new(7).index(), 7);
-        assert_eq!(BusId::new(3).index(), 3);
-        assert_eq!(BusId::from(9), BusId(9));
-        assert_eq!(format!("{:?}", MixerNodeId::Bus(BusId(2))), "Bus(BusId(2))");
         assert_eq!(
             MixerNodeId::LogicalChannel(LogicalChannelId(7)).c_channel_id(),
             ChannelId::Lc(LogicalChannelId(7))
-        );
-        assert_eq!(
-            MixerNodeId::Bus(BusId(2)).c_channel_id(),
-            ChannelId::Bus(BusId(2))
         );
         assert_eq!(MixerNodeId::Master.c_channel_id(), ChannelId::Master);
     }

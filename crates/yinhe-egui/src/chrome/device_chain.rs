@@ -344,7 +344,7 @@ fn collect_dock_state(app: &mut App, idx: usize) -> Option<DockState> {
         DockContext::Midi(ch) => t.global_channel() == ch,
         DockContext::Audio(ach) => t.audio_channel == Some(ach),
         DockContext::TrackLc(id) => t.lc == Some(id),
-        DockContext::Bus(_) | DockContext::Master => false,
+        DockContext::Master => false,
     };
     // lane 归属轨：该通道的所有轨（导入的自动化挂在独立 "CC xx" 轨上，
     // 不能用"第一条轨"定位）。
@@ -698,7 +698,6 @@ fn context_label(context: DockContext) -> String {
         DockContext::Midi(ch) => crate::mix::channel_label(ch),
         DockContext::Audio(ach) => crate::mix::audio_label(ach),
         DockContext::TrackLc(id) => format!("LC {}", id.0),
-        DockContext::Bus(bus) => format!("BUS {}", bus.index() + 1),
         DockContext::Master => t!("mix.master").to_string(),
     }
 }

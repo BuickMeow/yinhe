@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use yinhe_audio::{AudioCommand, AudioHandle, BuiltinInsert, ClapInsert, InsertTarget};
 use yinhe_clap::{ClapProcessor, HostInfo};
 use yinhe_mixer::{InsertProcessor, MixerParams, PluginFormat};
-use yinhe_types::{BusId, LogicalChannelId, MixerChannelId};
+use yinhe_types::{LogicalChannelId, MixerChannelId};
 use yinhe_vst3::Vst3Insert;
 
 use super::plugin_instance::{PluginEntry, PluginInstance};
@@ -59,8 +59,6 @@ pub(crate) struct SlotRuntime {
 pub(crate) struct MixerRack {
     /// 源通道 → 槽位实例（稀疏：只有挂插件的通道有条目）。
     pub channels: HashMap<u8, Vec<SlotRuntime>>,
-    /// 总线（bus/return）→ 槽位实例（稀疏）。
-    pub buses: HashMap<BusId, Vec<SlotRuntime>>,
     /// 每轨独立 LC 的 insert 链。
     pub track_lcs: HashMap<LogicalChannelId, Vec<SlotRuntime>>,
     /// 音频通道 insert 链（键 = 音频通道号）。
@@ -77,7 +75,6 @@ impl Default for MixerRack {
     fn default() -> Self {
         Self {
             channels: HashMap::new(),
-            buses: HashMap::new(),
             track_lcs: HashMap::new(),
             audios: HashMap::new(),
             master: Vec::new(),
@@ -114,7 +111,6 @@ impl MixerRack {
             InsertTarget::Midi(ch) => self.channels.entry(ch).or_default(),
             InsertTarget::Audio(ch) => self.audios.entry(ch).or_default(),
             InsertTarget::TrackLc(id) => self.track_lcs.entry(id).or_default(),
-            InsertTarget::Bus(bus) => self.buses.entry(bus).or_default(),
             InsertTarget::Master => &mut self.master,
         }
     }
@@ -124,7 +120,6 @@ impl MixerRack {
             InsertTarget::Midi(ch) => self.channels.get(&ch).map(Vec::as_slice).unwrap_or(&[]),
             InsertTarget::Audio(ch) => self.audios.get(&ch).map(Vec::as_slice).unwrap_or(&[]),
             InsertTarget::TrackLc(id) => self.track_lcs.get(&id).map(Vec::as_slice).unwrap_or(&[]),
-            InsertTarget::Bus(bus) => self.buses.get(&bus).map(Vec::as_slice).unwrap_or(&[]),
             InsertTarget::Master => &self.master,
         }
     }
@@ -263,13 +258,6 @@ impl MixerRack {
                 }
             }
         }
-        for (bus, chain) in &self.buses {
-            for (slot, rt) in chain.iter().enumerate() {
-                if !rt.sent && !rt.pending_remove && !rt.activate_failed {
-                    targets.push((InsertTarget::Bus(*bus), slot));
-                }
-            }
-        }
         for (ch, chain) in &self.audios {
             for (slot, rt) in chain.iter().enumerate() {
                 if !rt.sent && !rt.pending_remove && !rt.activate_failed {
@@ -300,7 +288,6 @@ impl MixerRack {
         }
         self.channels.values().all(|v| clean(v))
             && self.track_lcs.values().all(|v| clean(v))
-            && self.buses.values().all(|v| clean(v))
             && self.audios.values().all(|v| clean(v))
             && clean(&self.master)
             && self
@@ -445,27 +432,6 @@ impl MixerRack {
         Err(PluginLoadError("当前平台暂不支持插件界面".into()))
     }
 
-    /// 删除总线的机架侧处理：发 InsertRemove 回收处理器。
-    ///
-    /// BusId 稳定，其他总线的机架链不需要重排。已发送的槽位移入 orphan，
-    /// 等处理器退回后 deactivate（总线已删除，按 owner 匹配）。
-    pub fn remove_bus_chain(&mut self, bus: BusId, handle: Option<&AudioHandle>) {
-        if let Some(chain) = self.buses.remove(&bus) {
-            for (slot, rt) in chain.into_iter().enumerate() {
-                if rt.sent {
-                    if let Some(h) = handle {
-                        h.send(AudioCommand::InsertRemove {
-                            target: InsertTarget::Bus(bus),
-                            slot,
-                        });
-                    }
-                    self.orphan.push(rt);
-                }
-                // 未发送的槽位直接 drop（插件从未进入引擎）。
-            }
-        }
-    }
-
     /// 删除每轨 LC 的机架链（关闭 per-track 模式时）。
     pub fn remove_track_lc_chain(&mut self, lc: LogicalChannelId, handle: Option<&AudioHandle>) {
         if let Some(chain) = self.track_lcs.remove(&lc) {
@@ -570,11 +536,6 @@ impl MixerRack {
         for (lc, chain) in &self.track_lcs {
             if let Some(slot) = chain.iter().position(|rt| rt.owner == owner) {
                 return SlotLocation::Slot(InsertTarget::TrackLc(*lc), slot);
-            }
-        }
-        for (bus, chain) in &self.buses {
-            if let Some(slot) = chain.iter().position(|rt| rt.owner == owner) {
-                return SlotLocation::Slot(InsertTarget::Bus(*bus), slot);
             }
         }
         for (ch, chain) in &self.audios {
@@ -684,24 +645,6 @@ impl MixerRack {
                 }
             }
         }
-        for (bus, chain) in self.buses.iter_mut() {
-            for (slot, rt) in chain.iter_mut().enumerate() {
-                if rt.pending_remove {
-                    continue;
-                }
-                Self::poll_gui(rt);
-                let Some(instance) = rt.instance.as_mut() else {
-                    continue;
-                };
-                let requests = instance.poll_requests();
-                if requests.latency_changed {
-                    latency_changed = true;
-                }
-                if requests.restart && rt.sent {
-                    restarts.push((InsertTarget::Bus(*bus), slot));
-                }
-            }
-        }
         for (slot, rt) in self.master.iter_mut().enumerate() {
             if rt.pending_remove {
                 continue;
@@ -739,12 +682,6 @@ impl MixerRack {
         }
         for (lc, chain) in self.track_lcs.iter_mut() {
             let Some(refs) = mixer.node_inserts_mut(MixerChannelId::TrackLc(*lc)) else {
-                continue;
-            };
-            sync_chain(chain.iter_mut(), refs.iter_mut());
-        }
-        for (bus, chain) in self.buses.iter_mut() {
-            let Some(refs) = mixer.node_inserts_mut(MixerChannelId::Bus(*bus)) else {
                 continue;
             };
             sync_chain(chain.iter_mut(), refs.iter_mut());
