@@ -18,7 +18,7 @@ use yinhe_core::{
     ArtistRef, ConductorData, NoteEvent, NoteLoader, PcEvent, ProjectMeta, TrackData, YinModel,
 };
 use yinhe_types::automation::{
-    MidiBinding, ParamDevice, binding_max, xsynth_param, xsynth_param_id_for_midi,
+    MidiBinding, ParamDevice, binding_max, builtin_synth_param, builtin_synth_param_id_for_midi,
 };
 use yinhe_types::{
     AutomationEvent, AutomationLane, AutomationTarget, KEY_COUNT, SegmentShape, TimeSigEvent,
@@ -652,7 +652,7 @@ fn parse_track(
                         auto_events.push((
                             AutomationTarget::Param {
                                 device: ParamDevice::ChannelInstrument { channel: global_ch },
-                                id: xsynth_param::PITCH_BEND,
+                                id: builtin_synth_param::PITCH_BEND,
                                 name: String::new(),
                             },
                             AutomationEvent {
@@ -876,7 +876,7 @@ fn handle_cc38(
 
 /// RPN 参数 → 目标：0/1/2 绑定到 XSynth 内置参数，其余保留低层 RPN。
 fn rpn_target(global_ch: u8, parameter: u16) -> AutomationTarget {
-    match xsynth_param_id_for_midi(MidiBinding::Rpn(parameter)) {
+    match builtin_synth_param_id_for_midi(MidiBinding::Rpn(parameter)) {
         Some(id) => AutomationTarget::Param {
             device: ParamDevice::ChannelInstrument { channel: global_ch },
             id,

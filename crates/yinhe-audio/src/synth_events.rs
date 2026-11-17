@@ -43,9 +43,10 @@ pub(crate) fn to_backend_control_event(
             }
             Some(yinhe_synth::ControlEvent::Raw(controller, value))
         }
-        AudioEvent::Channel(crate::audio_model::ChannelAudioEvent::Control(
-            ControlEvent::Raw(c, v),
-        )) => {
+        AudioEvent::Channel(crate::audio_model::ChannelAudioEvent::Control(ControlEvent::Raw(
+            c,
+            v,
+        ))) => {
             // 通道级 DSP CC 由 yinhe-dsp 效果器处理，合成器不再接收。
             if yinhe_dsp::cc::DSP_CHANNEL_CCS.contains(&c) {
                 return None;

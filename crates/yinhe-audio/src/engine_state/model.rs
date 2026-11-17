@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-
 use yinhe_core::YinModel;
 use yinhe_types::KEY_COUNT;
 
@@ -275,5 +274,4 @@ impl AudioEngine {
             }
         }
     }
-
 }

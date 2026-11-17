@@ -2,7 +2,7 @@
 
 use eframe::egui;
 use rust_i18n::t;
-use yinhe_types::automation::{CHANNEL_DSP_PARAMS, XSYNTH_PARAMS};
+use yinhe_types::automation::{BUILTIN_SYNTH_PARAMS, CHANNEL_DSP_PARAMS};
 
 use super::knobs::param_knobs;
 use super::*;
@@ -18,7 +18,7 @@ use super::*;
 pub(super) fn instrument_targets(channel: u8) -> Vec<(AutomationTarget, String, f32, bool)> {
     CHANNEL_DSP_PARAMS
         .iter()
-        .chain(XSYNTH_PARAMS)
+        .chain(BUILTIN_SYNTH_PARAMS)
         .map(|p| {
             (
                 crate::piano_view::automation_panel::builtin_target(p, channel),

@@ -1,7 +1,7 @@
 //! Overview / Track 详情与 automation 分类统计。
 
 use yinhe_types::AutomationLane;
-use yinhe_types::automation::{ParamDevice, xsynth_param};
+use yinhe_types::automation::{ParamDevice, builtin_synth_param};
 
 use super::*;
 
@@ -38,7 +38,7 @@ impl TargetSummary {
                 device: ParamDevice::ChannelInstrument { .. },
                 id,
                 ..
-            } if *id == xsynth_param::PITCH_BEND => self.pb_total += n,
+            } if *id == builtin_synth_param::PITCH_BEND => self.pb_total += n,
             AutomationTarget::PitchBend => self.pb_total += n,
             AutomationTarget::Param { .. } => self.param_total += n,
             AutomationTarget::Rpn { .. } | AutomationTarget::Nrpn { .. } => self.rpn_total += n,

@@ -3,7 +3,6 @@ use std::collections::BinaryHeap;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-
 use yinhe_core::YinModel;
 use yinhe_mixer::{InsertProcessor, InstrumentProcessor, MixerGraph, MixerParams};
 use yinhe_types::{Interpolation, KEY_COUNT};
@@ -607,7 +606,6 @@ impl AudioEngine {
             cs.set_interpolation(interpolation.code());
         }
     }
-
 }
 
 #[cfg(test)]

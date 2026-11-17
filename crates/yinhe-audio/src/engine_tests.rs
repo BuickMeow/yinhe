@@ -1,9 +1,9 @@
 use super::*;
-use std::collections::BTreeMap;
 use crate::audio_model::{ChannelAudioEvent, ControlEvent};
+use std::collections::BTreeMap;
 use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_editor_core::document::Document;
-use yinhe_types::automation::{ParamDevice, xsynth_param};
+use yinhe_types::automation::{ParamDevice, builtin_synth_param};
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, KEY_COUNT, SegmentShape};
 
 use crate::audio_model::AudioEvent;
@@ -608,7 +608,7 @@ fn make_model_with_controls(
             })
             .collect();
         lanes.push(AutomationLane {
-            target: xsynth_target(xsynth_param::PITCH_BEND),
+            target: xsynth_target(builtin_synth_param::PITCH_BEND),
             track: 0,
             events,
         });
@@ -617,9 +617,9 @@ fn make_model_with_controls(
     // RPN lanes（入参为原始整数，按绑定上限归一化）。
     for (key, tick, value) in rpn {
         let (target, max) = match key {
-            0 => (xsynth_target(xsynth_param::PB_SENSITIVITY), 127.0),
-            1 => (xsynth_target(xsynth_param::FINE_TUNE), 16383.0),
-            2 => (xsynth_target(xsynth_param::COARSE_TUNE), 127.0),
+            0 => (xsynth_target(builtin_synth_param::PB_SENSITIVITY), 127.0),
+            1 => (xsynth_target(builtin_synth_param::FINE_TUNE), 16383.0),
+            2 => (xsynth_target(builtin_synth_param::COARSE_TUNE), 127.0),
             _ => (AutomationTarget::Rpn { parameter: key }, 16383.0),
         };
         lanes.push(AutomationLane {
@@ -1318,7 +1318,7 @@ fn make_chase_model() -> YinModel {
     t.name = "Chase".into();
     t.automation_lanes = vec![
         AutomationLane {
-            target: xsynth_target(xsynth_param::PB_SENSITIVITY),
+            target: xsynth_target(builtin_synth_param::PB_SENSITIVITY),
             track: 0,
             events: vec![
                 AutomationEvent {
@@ -1336,7 +1336,7 @@ fn make_chase_model() -> YinModel {
             ],
         },
         AutomationLane {
-            target: xsynth_target(xsynth_param::PITCH_BEND),
+            target: xsynth_target(builtin_synth_param::PITCH_BEND),
             track: 0,
             events: vec![
                 AutomationEvent {

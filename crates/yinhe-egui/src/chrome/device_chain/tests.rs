@@ -2,14 +2,17 @@ use super::cards::{instrument_targets, vertical_title_shape};
 use super::knobs::{begin_knob_drag, finish_knob_drag};
 use super::*;
 use yinhe_editor_core::document::Document;
-use yinhe_types::automation::{CHANNEL_DSP_PARAMS, MidiBinding, XSYNTH_PARAMS};
+use yinhe_types::automation::{BUILTIN_SYNTH_PARAMS, CHANNEL_DSP_PARAMS, MidiBinding};
 
 /// 音源面板列表：通道处理参数（前 5）+ XSynth 参数（后 7）；显示名用参数表
 /// 名字（如 "Sustain"），CC 绑定参数走低层 CC lane，PB/RPN 保留设备参数。
 #[test]
 fn instrument_targets_merge_channel_dsp_and_xsynth() {
     let params = instrument_targets(4);
-    assert_eq!(params.len(), CHANNEL_DSP_PARAMS.len() + XSYNTH_PARAMS.len());
+    assert_eq!(
+        params.len(),
+        CHANNEL_DSP_PARAMS.len() + BUILTIN_SYNTH_PARAMS.len()
+    );
     // Pan（下标 2）在参数表里是中心参考参数 → 居中归零。
     assert!(params[2].3, "Pan 应居中归零");
 
@@ -21,7 +24,7 @@ fn instrument_targets_merge_channel_dsp_and_xsynth() {
     let names: Vec<&str> = params.iter().map(|(_, name, _, _)| name.as_str()).collect();
     let expect: Vec<&str> = CHANNEL_DSP_PARAMS
         .iter()
-        .chain(XSYNTH_PARAMS)
+        .chain(BUILTIN_SYNTH_PARAMS)
         .map(|p| p.name)
         .collect();
     assert_eq!(names, expect, "顺序应为通道处理参数在前、XSynth 在后");

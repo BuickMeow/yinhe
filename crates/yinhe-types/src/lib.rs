@@ -30,9 +30,10 @@ pub use arrangement_view::{
     ArrangementView, LANE_HEIGHT_MAX, LANE_HEIGHT_MIN, LANE_HEIGHT_STEP, snap_lane_height,
 };
 pub use automation::{
-    AmMsState, AutomationEdit, AutomationEvent, AutomationLane, AutomationTarget, BuiltinParamInfo,
-    CHANNEL_DSP_PARAMS, MidiBinding, ParamDevice, SegmentShape, XSYNTH_PARAMS, binding_max,
-    builtin_param, channel_dsp_param, xsynth_param, xsynth_param_id_for_midi,
+    AmMsState, AutomationEdit, AutomationEvent, AutomationLane, AutomationTarget,
+    BUILTIN_SYNTH_PARAMS, BuiltinParamInfo, CHANNEL_DSP_PARAMS, MidiBinding, ParamDevice,
+    SegmentShape, binding_max, builtin_param, builtin_synth_param, builtin_synth_param_id_for_midi,
+    channel_dsp_param,
 };
 pub use automation_panel_view::{AnchorSelRect, AutomationPanelView};
 pub use event_rows::{EventRowKind, EventRowState, EventRowsState};

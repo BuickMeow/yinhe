@@ -3031,7 +3031,7 @@ fn cull_bench_vs_cpu_start_mid() {
                     follow_anim_start: 0.0,
                     follow_anim_elapsed: 0.0,
                 },
-                    scope_ticks: None,
+                scope_ticks: None,
                 scope_viewport_w: 0.0,
                 layout: yinhe_types::KeyLayout::default(),
             };

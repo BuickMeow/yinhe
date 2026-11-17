@@ -125,7 +125,6 @@ impl AudioEngine {
             let strips = self.dense_strip_params();
             let count = self.mixer.channel_count();
             self.mixer.resize(count, frames, &strips);
-
         }
     }
 
@@ -254,7 +253,9 @@ impl AudioEngine {
     fn render_cpu_segment(&mut self, offset_frames: usize, frames: usize) {
         // 方案 C：只有 YinheCpu；首次渲染时确保实例存在。
         self.ensure_cpu_synth();
-        let Self { cpu_synth, mixer, .. } = self;
+        let Self {
+            cpu_synth, mixer, ..
+        } = self;
         cpu_synth
             .as_mut()
             .expect("cpu synth just ensured")
@@ -363,7 +364,6 @@ impl AudioEngine {
             let strips = self.dense_strip_params();
             let count = self.mixer.channel_count();
             self.mixer.resize(count, frames, &strips);
-
         }
         self.block_start_sample = self.sample_position;
         self.mixer.clear_channel_buffers();
@@ -385,7 +385,6 @@ impl AudioEngine {
             let strips = self.dense_strip_params();
             let count = self.mixer.channel_count();
             self.mixer.resize(count, frames, &strips);
-
         }
         let block_start = self.sample_position;
         self.block_start_sample = block_start;
@@ -411,7 +410,6 @@ impl AudioEngine {
             let strips = self.dense_strip_params();
             let count = self.mixer.channel_count();
             self.mixer.resize(count, frames, &strips);
-
         }
         self.mixer.clear_channel_buffers();
         self.inject_preview(frames);

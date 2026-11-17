@@ -174,7 +174,6 @@ fn push_data_entry(out: &mut MidiMessages, ch: u8, value: u16) {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,4 +266,5 @@ mod tests {
             msgs,
             vec![[0xB1, 99, 0x24], [0xB1, 98, 0x34], [0xB1, 6, 64]]
         );
-    }}
+    }
+}

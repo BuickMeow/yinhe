@@ -4,9 +4,9 @@
 //! 与播放共用同一条链路（合成器 → 通道 DSP(CC7/10/11/71/74) → insert → 推子 →
 //! master），因此试听反映**当前**的控制状态与混音台设置。
 
-use std::path::PathBuf;
 use crate::engine::AudioEngine;
 use crate::preview_engine::{PreviewEngine, PreviewNoteIn};
+use std::path::PathBuf;
 
 impl AudioEngine {
     /// 注入预览合成器（`init_engine` 创建后调用；测试可不设置）。

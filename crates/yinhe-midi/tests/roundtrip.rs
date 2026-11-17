@@ -8,7 +8,7 @@ use yinhe_midi::{
     write_to_file, write_with_options,
 };
 use yinhe_types::TimeSigEvent;
-use yinhe_types::automation::{ParamDevice, xsynth_param};
+use yinhe_types::automation::{ParamDevice, builtin_synth_param};
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
 
 /// 内置 XSynth 参数的 target（导入后 name 为空）。
@@ -378,7 +378,7 @@ fn build_complex_model() -> YinModel {
             ],
         },
         AutomationLane {
-            target: xsynth_target(0, xsynth_param::PITCH_BEND),
+            target: xsynth_target(0, builtin_synth_param::PITCH_BEND),
             track: 0,
             events: vec![AutomationEvent {
                 id: 0,
@@ -388,7 +388,7 @@ fn build_complex_model() -> YinModel {
             }],
         },
         AutomationLane {
-            target: xsynth_target(0, xsynth_param::PB_SENSITIVITY),
+            target: xsynth_target(0, builtin_synth_param::PB_SENSITIVITY),
             track: 0,
             events: vec![AutomationEvent {
                 id: 0,
@@ -474,10 +474,11 @@ fn roundtrip_complex_model_preserves_everything() {
     assert_eq!(cc7.events.len(), 2);
     assert_eq!(cc7.events[0].value, 100.0 / 127.0);
     assert_eq!(cc7.events[1].value, 80.0 / 127.0);
-    let pb = find_lane(&xsynth_target(0, xsynth_param::PITCH_BEND)).expect("PitchBend lane");
+    let pb = find_lane(&xsynth_target(0, builtin_synth_param::PITCH_BEND)).expect("PitchBend lane");
     assert_eq!(pb.events.len(), 1);
     assert_eq!(pb.events[0].value, 2000.0 / 16383.0);
-    let rpn = find_lane(&xsynth_target(0, xsynth_param::PB_SENSITIVITY)).expect("RPN 0 lane");
+    let rpn =
+        find_lane(&xsynth_target(0, builtin_synth_param::PB_SENSITIVITY)).expect("RPN 0 lane");
     assert_eq!(rpn.events.len(), 1);
     assert_eq!(rpn.events[0].value, 2.0 / 127.0);
     assert_eq!(l2.program_change.len(), 1);
@@ -570,7 +571,7 @@ fn rpn_sequence_decodes_to_rpn_event() {
     let lane = t
         .automation_lanes
         .iter()
-        .find(|l| l.target == xsynth_target(0, xsynth_param::PB_SENSITIVITY))
+        .find(|l| l.target == xsynth_target(0, builtin_synth_param::PB_SENSITIVITY))
         .expect("PB sensitivity lane");
     assert_eq!(lane.events.len(), 1);
     // CC6=2：7-bit RPN 归一化后为 2/127
@@ -631,7 +632,7 @@ fn pb_and_rpn_roundtrip() {
     t.name = "Lane".to_string();
     t.automation_lanes = vec![
         AutomationLane {
-            target: xsynth_target(0, xsynth_param::PITCH_BEND),
+            target: xsynth_target(0, builtin_synth_param::PITCH_BEND),
             track: 0,
             events: vec![AutomationEvent {
                 id: 0,
@@ -641,7 +642,7 @@ fn pb_and_rpn_roundtrip() {
             }],
         },
         AutomationLane {
-            target: xsynth_target(0, xsynth_param::PB_SENSITIVITY),
+            target: xsynth_target(0, builtin_synth_param::PB_SENSITIVITY),
             track: 0,
             events: vec![AutomationEvent {
                 id: 0,
@@ -651,7 +652,7 @@ fn pb_and_rpn_roundtrip() {
             }],
         },
         AutomationLane {
-            target: xsynth_target(0, xsynth_param::FINE_TUNE),
+            target: xsynth_target(0, builtin_synth_param::FINE_TUNE),
             track: 0,
             events: vec![AutomationEvent {
                 id: 0,
@@ -682,11 +683,11 @@ fn pb_and_rpn_roundtrip() {
             .unwrap_or_else(|| panic!("lane missing: {target:?}"))
     };
 
-    let pb = find(&xsynth_target(0, xsynth_param::PITCH_BEND));
+    let pb = find(&xsynth_target(0, builtin_synth_param::PITCH_BEND));
     assert_eq!(pb.events[0].value, 8192.0 / 16383.0);
-    let sens = find(&xsynth_target(0, xsynth_param::PB_SENSITIVITY));
+    let sens = find(&xsynth_target(0, builtin_synth_param::PB_SENSITIVITY));
     assert_eq!(sens.events[0].value, 2.0 / 127.0);
-    let fine = find(&xsynth_target(0, xsynth_param::FINE_TUNE));
+    let fine = find(&xsynth_target(0, builtin_synth_param::FINE_TUNE));
     assert_eq!(fine.events[0].value, 8192.0 / 16383.0);
 }
 

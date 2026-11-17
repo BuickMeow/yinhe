@@ -1,5 +1,7 @@
 use yinhe_types::AutomationTarget;
-use yinhe_types::automation::{BuiltinParamInfo, CHANNEL_DSP_PARAMS, MidiBinding, XSYNTH_PARAMS};
+use yinhe_types::automation::{
+    BUILTIN_SYNTH_PARAMS, BuiltinParamInfo, CHANNEL_DSP_PARAMS, MidiBinding,
+};
 
 use crate::theme;
 
@@ -13,7 +15,11 @@ pub fn automation_targets(channel: Option<u8>) -> Vec<AutomationTarget> {
     let Some(channel) = channel else {
         return out;
     };
-    out.extend(XSYNTH_PARAMS.iter().map(|p| builtin_target(p, channel)));
+    out.extend(
+        BUILTIN_SYNTH_PARAMS
+            .iter()
+            .map(|p| builtin_target(p, channel)),
+    );
     out.extend(
         CHANNEL_DSP_PARAMS
             .iter()
@@ -24,7 +30,7 @@ pub fn automation_targets(channel: Option<u8>) -> Vec<AutomationTarget> {
 
 /// 内置参数 → 自动化目标：统一为**低层 MIDI 目标**（CC / PitchBend / RPN），
 /// 不再生成 `ChannelInstrument` 设备参数（内置音源只吃 MIDI）。
-/// XSYNTH_PARAMS 与 CHANNEL_DSP_PARAMS 共用（dock 旋钮生成 XSynth 目标同样复用）。
+/// BUILTIN_SYNTH_PARAMS 与 CHANNEL_DSP_PARAMS 共用（dock 旋钮生成 XSynth 目标同样复用）。
 pub(crate) fn builtin_target(p: &BuiltinParamInfo, _channel: u8) -> AutomationTarget {
     match p.midi {
         MidiBinding::Cc(cc) => AutomationTarget::CC { controller: cc },
@@ -48,7 +54,7 @@ pub const MARQUEE_THRESHOLD: f32 = 3.0;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yinhe_types::automation::{channel_dsp_param, xsynth_param};
+    use yinhe_types::automation::{builtin_synth_param, channel_dsp_param};
 
     fn find(table: &[BuiltinParamInfo], id: u32) -> &BuiltinParamInfo {
         table.iter().find(|p| p.id == id).expect("参数表应含该 id")
@@ -58,11 +64,14 @@ mod tests {
     #[test]
     fn builtin_target_maps_to_midi_targets() {
         assert_eq!(
-            builtin_target(find(XSYNTH_PARAMS, xsynth_param::SUSTAIN), 5),
+            builtin_target(find(BUILTIN_SYNTH_PARAMS, builtin_synth_param::SUSTAIN), 5),
             AutomationTarget::CC { controller: 64 }
         );
         assert_eq!(
-            builtin_target(find(XSYNTH_PARAMS, xsynth_param::PITCH_BEND), 5),
+            builtin_target(
+                find(BUILTIN_SYNTH_PARAMS, builtin_synth_param::PITCH_BEND),
+                5
+            ),
             AutomationTarget::PitchBend
         );
         assert_eq!(
@@ -76,7 +85,7 @@ mod tests {
     fn automation_targets_lists_builtin_params() {
         let targets = automation_targets(Some(5));
         assert_eq!(targets[0], AutomationTarget::Tempo);
-        let builtin = XSYNTH_PARAMS.len() + CHANNEL_DSP_PARAMS.len();
+        let builtin = BUILTIN_SYNTH_PARAMS.len() + CHANNEL_DSP_PARAMS.len();
         assert_eq!(targets.len(), 1 + builtin);
 
         // XSynth（64/72/73）与通道 DSP（7/11/10）都列低层 CC。

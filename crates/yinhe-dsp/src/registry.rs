@@ -149,7 +149,7 @@ mod tests {
 
     /// 与 `yinhe-types` 内置参数绑定表一致（名称 / cc 绑定 / 默认值）。
     ///
-    /// types 侧是导入/导出/引擎/UI 的权威表（`XSYNTH_PARAMS`/`CHANNEL_DSP_PARAMS`），
+    /// types 侧是导入/导出/引擎/UI 的权威表（`BUILTIN_SYNTH_PARAMS`/`CHANNEL_DSP_PARAMS`），
     /// dsp 侧是处理实现：任何一侧改名字、换 cc、调默认值都会让"存储的参数"与
     /// "实际处理的参数"漂移，必须在编译期抓出来。
     #[test]

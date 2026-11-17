@@ -324,7 +324,6 @@ impl ChannelState {
         out
     }
 
-
     /// 通道级 DSP CC 的当前值（chase 回填给 yinhe-dsp 模块用）。
     pub(crate) fn dsp_cc_value(&self, cc: u8) -> u8 {
         match cc {

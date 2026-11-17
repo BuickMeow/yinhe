@@ -538,13 +538,13 @@ mod tests {
 
     #[test]
     fn automation_roundtrip() {
-        use yinhe_types::automation::xsynth_param;
+        use yinhe_types::automation::builtin_synth_param;
 
         let path = temp_path("automation");
         let targets = [
             AutomationTarget::Param {
                 device: ParamDevice::ChannelInstrument { channel: 3 },
-                id: xsynth_param::PITCH_BEND,
+                id: builtin_synth_param::PITCH_BEND,
                 name: String::new(),
             },
             AutomationTarget::Param {

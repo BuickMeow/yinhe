@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
-use yinhe_types::automation::{ParamDevice, xsynth_param};
+use yinhe_types::automation::{ParamDevice, builtin_synth_param};
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
 use yinhe_yin::{load_yin, load_yin_bytes, save_yin, save_yin_bytes};
 
@@ -123,7 +123,7 @@ fn build_complex_model() -> YinModel {
         AutomationLane {
             target: AutomationTarget::Param {
                 device: ParamDevice::ChannelInstrument { channel: 0 },
-                id: xsynth_param::PITCH_BEND,
+                id: builtin_synth_param::PITCH_BEND,
                 name: String::new(),
             },
             track: 0,
@@ -305,7 +305,7 @@ fn roundtrip_in_memory() {
             l.target
                 == AutomationTarget::Param {
                     device: ParamDevice::ChannelInstrument { channel: 0 },
-                    id: xsynth_param::PITCH_BEND,
+                    id: builtin_synth_param::PITCH_BEND,
                     name: String::new(),
                 }
         })

@@ -953,7 +953,7 @@ impl App {
 fn pitch_bend_target(channel: u8) -> yinhe_types::AutomationTarget {
     yinhe_types::AutomationTarget::Param {
         device: yinhe_types::automation::ParamDevice::ChannelInstrument { channel },
-        id: yinhe_types::automation::xsynth_param::PITCH_BEND,
+        id: yinhe_types::automation::builtin_synth_param::PITCH_BEND,
         name: String::new(),
     }
 }

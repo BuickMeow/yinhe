@@ -1,7 +1,7 @@
 use super::super::table::EVENT_PAGE_SIZE;
 use super::summary::summarize_targets;
 use super::*;
-use yinhe_types::automation::{AutomationEvent, ParamDevice, xsynth_param};
+use yinhe_types::automation::{AutomationEvent, ParamDevice, builtin_synth_param};
 use yinhe_types::{AutomationLane, SegmentShape};
 
 fn lane(target: AutomationTarget, count: usize) -> AutomationLane {
@@ -71,7 +71,7 @@ fn summarize_targets_classifies_and_preserves_cc_order() {
         lane(
             AutomationTarget::Param {
                 device: ParamDevice::ChannelInstrument { channel: 0 },
-                id: xsynth_param::PITCH_BEND,
+                id: builtin_synth_param::PITCH_BEND,
                 name: String::new(),
             },
             5,

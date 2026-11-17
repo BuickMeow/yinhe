@@ -929,7 +929,7 @@ pub fn ensure_automation_lane(track: usize, kind: i32, number: i32) -> i32 {
 /// 自动化类型（与 Flutter/插入自动化编码一致）：1=PB、2=CC、3=RPN。
 /// 注意不是 0/1/2；0 是 Tempo（AM 列表不展示 Tempo）。
 pub(crate) fn lane_kind(target: &yinhe_types::automation::AutomationTarget) -> Option<u8> {
-    use yinhe_types::automation::{AutomationTarget, ParamDevice, xsynth_param};
+    use yinhe_types::automation::{AutomationTarget, ParamDevice, builtin_synth_param};
     match target {
         AutomationTarget::PitchBend => Some(1),
         AutomationTarget::CC { .. } => Some(2),
@@ -939,10 +939,10 @@ pub(crate) fn lane_kind(target: &yinhe_types::automation::AutomationTarget) -> O
             id,
             ..
         } => match *id {
-            xsynth_param::PITCH_BEND => Some(1),
-            xsynth_param::PB_SENSITIVITY | xsynth_param::FINE_TUNE | xsynth_param::COARSE_TUNE => {
-                Some(3)
-            }
+            builtin_synth_param::PITCH_BEND => Some(1),
+            builtin_synth_param::PB_SENSITIVITY
+            | builtin_synth_param::FINE_TUNE
+            | builtin_synth_param::COARSE_TUNE => Some(3),
             _ => None,
         },
         _ => None,

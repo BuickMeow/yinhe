@@ -57,9 +57,9 @@ fn target_hash(target: &AutomationTarget) -> u64 {
         AutomationTarget::MixerSend { node, bus } => {
             0x9_0000 + mix_channel_key(*node) + u64::from(bus.0)
         }
-        AutomationTarget::InsertParam { target, slot, id, .. } => {
-            0xA_0000 + mix_channel_key(*target) + ((*slot as u64) << 32) + u64::from(*id)
-        }
+        AutomationTarget::InsertParam {
+            target, slot, id, ..
+        } => 0xA_0000 + mix_channel_key(*target) + ((*slot as u64) << 32) + u64::from(*id),
         AutomationTarget::Param { device, id, .. } => match device {
             // 内置设备：通道级。
             ParamDevice::ChannelInstrument { channel } => {

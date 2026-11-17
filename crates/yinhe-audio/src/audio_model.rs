@@ -934,7 +934,7 @@ pub(crate) fn effective_fades_all(clips: &[yinhe_core::AudioClip]) -> Vec<(f64, 
 mod tests {
     use super::*;
     use yinhe_core::{ConductorData, ProjectMeta, TrackData, YinModel};
-    use yinhe_types::automation::xsynth_param;
+    use yinhe_types::automation::builtin_synth_param;
     use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
 
     /// 构建 1 轨道模型，给定 automation lanes。
@@ -1266,7 +1266,7 @@ mod tests {
         let pb_lane = AutomationLane {
             target: AutomationTarget::Param {
                 device: ParamDevice::ChannelInstrument { channel: 0 },
-                id: xsynth_param::PITCH_BEND,
+                id: builtin_synth_param::PITCH_BEND,
                 name: String::new(),
             },
             track: 0,
@@ -1288,7 +1288,7 @@ mod tests {
         let pbs_lane = AutomationLane {
             target: AutomationTarget::Param {
                 device: ParamDevice::ChannelInstrument { channel: 0 },
-                id: xsynth_param::PB_SENSITIVITY,
+                id: builtin_synth_param::PB_SENSITIVITY,
                 name: String::new(),
             },
             track: 0,
@@ -1462,7 +1462,7 @@ mod tests {
             AutomationLane {
                 target: AutomationTarget::Param {
                     device: ParamDevice::ChannelInstrument { channel: 0 },
-                    id: xsynth_param::PITCH_BEND,
+                    id: builtin_synth_param::PITCH_BEND,
                     name: String::new(),
                 },
                 track: 0,
@@ -1476,7 +1476,7 @@ mod tests {
             AutomationLane {
                 target: AutomationTarget::Param {
                     device: ParamDevice::ChannelInstrument { channel: 0 },
-                    id: xsynth_param::PB_SENSITIVITY,
+                    id: builtin_synth_param::PB_SENSITIVITY,
                     name: String::new(),
                 },
                 track: 0,
@@ -1576,7 +1576,7 @@ mod tests {
             AutomationLane {
                 target: AutomationTarget::Param {
                     device: ParamDevice::ChannelInstrument { channel: 0 },
-                    id: xsynth_param::PITCH_BEND,
+                    id: builtin_synth_param::PITCH_BEND,
                     name: String::new(),
                 },
                 track: 0,
@@ -1624,7 +1624,7 @@ mod tests {
             AutomationLane {
                 target: AutomationTarget::Param {
                     device: ParamDevice::ChannelInstrument { channel: 0 },
-                    id: xsynth_param::PITCH_BEND,
+                    id: builtin_synth_param::PITCH_BEND,
                     name: String::new(),
                 },
                 track: 0,
@@ -1671,7 +1671,7 @@ mod tests {
             AutomationLane {
                 target: AutomationTarget::Param {
                     device: ParamDevice::ChannelInstrument { channel: 0 },
-                    id: xsynth_param::PITCH_BEND,
+                    id: builtin_synth_param::PITCH_BEND,
                     name: String::new(),
                 },
                 track: 0,
@@ -1685,7 +1685,7 @@ mod tests {
             AutomationLane {
                 target: AutomationTarget::Param {
                     device: ParamDevice::ChannelInstrument { channel: 0 },
-                    id: xsynth_param::FINE_TUNE,
+                    id: builtin_synth_param::FINE_TUNE,
                     name: String::new(),
                 },
                 track: 0,
@@ -1699,7 +1699,7 @@ mod tests {
             AutomationLane {
                 target: AutomationTarget::Param {
                     device: ParamDevice::ChannelInstrument { channel: 0 },
-                    id: xsynth_param::COARSE_TUNE,
+                    id: builtin_synth_param::COARSE_TUNE,
                     name: String::new(),
                 },
                 track: 0,

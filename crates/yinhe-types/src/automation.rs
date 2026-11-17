@@ -413,7 +413,7 @@ fn solve_cubic_bezier_u_for_x(t: f32, x1: f32, x2: f32) -> f32 {
 /// 定义），同一变体内混用会产生歧义。
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum ParamDevice {
-    /// 通道内置 XSynth 参数（id 见 [`XSYNTH_PARAMS`]）。
+    /// 通道内置 Yinhe 音源参数（id 见 [`BUILTIN_SYNTH_PARAMS`]）。
     ChannelInstrument { channel: u8 },
     /// 通道乐器插件（VST3/CLAP）参数（id 为插件原生 id）。
     /// `channel` = 所在 MIDI 通道；`uid` = 该通道链内乐器实例的稳定唯一 id
@@ -453,7 +453,7 @@ pub struct BuiltinParamInfo {
 }
 
 /// XSynth 内置参数 id（`ParamDevice::ChannelInstrument`）。
-pub mod xsynth_param {
+pub mod builtin_synth_param {
     /// Sustain（CC64）。
     pub const SUSTAIN: u32 = 0;
     /// Release（CC72）。
@@ -488,9 +488,9 @@ pub mod channel_dsp_param {
 }
 
 /// XSynth 内置参数表（权威唯一：导入/导出/引擎/UI 共用）。
-pub const XSYNTH_PARAMS: &[BuiltinParamInfo] = &[
+pub const BUILTIN_SYNTH_PARAMS: &[BuiltinParamInfo] = &[
     BuiltinParamInfo {
-        id: xsynth_param::SUSTAIN,
+        id: builtin_synth_param::SUSTAIN,
         name: "Sustain",
         midi: MidiBinding::Cc(64),
         default: 0.0,
@@ -498,7 +498,7 @@ pub const XSYNTH_PARAMS: &[BuiltinParamInfo] = &[
         step: true,
     },
     BuiltinParamInfo {
-        id: xsynth_param::RELEASE,
+        id: builtin_synth_param::RELEASE,
         name: "Release",
         midi: MidiBinding::Cc(72),
         default: 64.0 / 127.0,
@@ -506,7 +506,7 @@ pub const XSYNTH_PARAMS: &[BuiltinParamInfo] = &[
         step: false,
     },
     BuiltinParamInfo {
-        id: xsynth_param::ATTACK,
+        id: builtin_synth_param::ATTACK,
         name: "Attack",
         midi: MidiBinding::Cc(73),
         default: 64.0 / 127.0,
@@ -514,7 +514,7 @@ pub const XSYNTH_PARAMS: &[BuiltinParamInfo] = &[
         step: false,
     },
     BuiltinParamInfo {
-        id: xsynth_param::PITCH_BEND,
+        id: builtin_synth_param::PITCH_BEND,
         name: "Pitch Bend",
         midi: MidiBinding::PitchBend,
         default: 8192.0 / 16383.0,
@@ -522,7 +522,7 @@ pub const XSYNTH_PARAMS: &[BuiltinParamInfo] = &[
         step: false,
     },
     BuiltinParamInfo {
-        id: xsynth_param::PB_SENSITIVITY,
+        id: builtin_synth_param::PB_SENSITIVITY,
         name: "PB Sensitivity",
         midi: MidiBinding::Rpn(0),
         default: 2.0 / 127.0,
@@ -530,7 +530,7 @@ pub const XSYNTH_PARAMS: &[BuiltinParamInfo] = &[
         step: false,
     },
     BuiltinParamInfo {
-        id: xsynth_param::FINE_TUNE,
+        id: builtin_synth_param::FINE_TUNE,
         name: "Fine Tune",
         midi: MidiBinding::Rpn(1),
         default: 8192.0 / 16383.0,
@@ -538,7 +538,7 @@ pub const XSYNTH_PARAMS: &[BuiltinParamInfo] = &[
         step: false,
     },
     BuiltinParamInfo {
-        id: xsynth_param::COARSE_TUNE,
+        id: builtin_synth_param::COARSE_TUNE,
         name: "Coarse Tune",
         midi: MidiBinding::Rpn(2),
         default: 64.0 / 127.0,
@@ -586,7 +586,7 @@ impl ParamDevice {
     /// 设备的内置参数表（第三方插件返回空表，参数由插件定义）。
     pub fn builtin_params(&self) -> &'static [BuiltinParamInfo] {
         match self {
-            ParamDevice::ChannelInstrument { .. } => XSYNTH_PARAMS,
+            ParamDevice::ChannelInstrument { .. } => BUILTIN_SYNTH_PARAMS,
             ParamDevice::PluginInstrument { .. } => &[],
         }
     }
@@ -606,8 +606,11 @@ pub fn builtin_param(device: &ParamDevice, id: u32) -> Option<&'static BuiltinPa
 }
 
 /// MIDI 绑定 → XSynth 参数 id（导入映射）。
-pub fn xsynth_param_id_for_midi(midi: MidiBinding) -> Option<u32> {
-    XSYNTH_PARAMS.iter().find(|p| p.midi == midi).map(|p| p.id)
+pub fn builtin_synth_param_id_for_midi(midi: MidiBinding) -> Option<u32> {
+    BUILTIN_SYNTH_PARAMS
+        .iter()
+        .find(|p| p.midi == midi)
+        .map(|p| p.id)
 }
 
 /// MIDI 绑定的原始值上限（7-bit / 14-bit）。
@@ -630,7 +633,7 @@ pub enum AutomationTarget {
     /// 设备参数（内置 XSynth/DSP 或第三方插件）。`value` 归一化 0..1。
     Param {
         device: ParamDevice,
-        /// 设备内唯一参数 id（内置设备见 [`XSYNTH_PARAMS`]/[`CHANNEL_DSP_PARAMS`]）。
+        /// 设备内唯一参数 id（内置设备见 [`BUILTIN_SYNTH_PARAMS`]/[`CHANNEL_DSP_PARAMS`]）。
         id: u32,
         /// 参数显示名（第三方插件参数必填；内置参数以表为准，可为空）。
         name: String,
@@ -776,10 +779,10 @@ impl AutomationTarget {
             AutomationTarget::Param { id, .. }
                 if matches!(
                     *id,
-                    xsynth_param::PITCH_BEND
-                        | xsynth_param::PB_SENSITIVITY
-                        | xsynth_param::FINE_TUNE
-                        | xsynth_param::COARSE_TUNE
+                    builtin_synth_param::PITCH_BEND
+                        | builtin_synth_param::PB_SENSITIVITY
+                        | builtin_synth_param::FINE_TUNE
+                        | builtin_synth_param::COARSE_TUNE
                 ) =>
             {
                 0.5
@@ -1236,7 +1239,7 @@ mod tests {
         assert_eq!(AutomationTarget::Tempo.bar_baseline(), 0.0);
         let pb = AutomationTarget::Param {
             device: ParamDevice::ChannelInstrument { channel: 0 },
-            id: xsynth_param::PITCH_BEND,
+            id: builtin_synth_param::PITCH_BEND,
             name: String::new(),
         };
         assert_eq!(pb.bar_baseline(), 0.5);
@@ -1263,7 +1266,7 @@ mod tests {
     /// 内置参数表一致性：id 与 MIDI 绑定在表内唯一、默认值在 0..1。
     #[test]
     fn test_builtin_param_tables_are_consistent() {
-        for table in [XSYNTH_PARAMS, CHANNEL_DSP_PARAMS] {
+        for table in [BUILTIN_SYNTH_PARAMS, CHANNEL_DSP_PARAMS] {
             let mut ids: Vec<u32> = table.iter().map(|p| p.id).collect();
             ids.sort_unstable();
             let total = ids.len();
@@ -1290,18 +1293,18 @@ mod tests {
     #[test]
     fn test_midi_reverse_lookup() {
         assert_eq!(
-            xsynth_param_id_for_midi(MidiBinding::Cc(64)),
-            Some(xsynth_param::SUSTAIN)
+            builtin_synth_param_id_for_midi(MidiBinding::Cc(64)),
+            Some(builtin_synth_param::SUSTAIN)
         );
         assert_eq!(
-            xsynth_param_id_for_midi(MidiBinding::PitchBend),
-            Some(xsynth_param::PITCH_BEND)
+            builtin_synth_param_id_for_midi(MidiBinding::PitchBend),
+            Some(builtin_synth_param::PITCH_BEND)
         );
         assert_eq!(
-            xsynth_param_id_for_midi(MidiBinding::Rpn(0)),
-            Some(xsynth_param::PB_SENSITIVITY)
+            builtin_synth_param_id_for_midi(MidiBinding::Rpn(0)),
+            Some(builtin_synth_param::PB_SENSITIVITY)
         );
-        assert_eq!(xsynth_param_id_for_midi(MidiBinding::Cc(7)), None);
+        assert_eq!(builtin_synth_param_id_for_midi(MidiBinding::Cc(7)), None);
     }
 
     fn param(device: &ParamDevice, id: u32) -> AutomationTarget {
@@ -1316,18 +1319,18 @@ mod tests {
     #[test]
     fn test_param_target_methods() {
         let xs = ParamDevice::ChannelInstrument { channel: 0 };
-        let sus = param(&xs, xsynth_param::SUSTAIN);
+        let sus = param(&xs, builtin_synth_param::SUSTAIN);
         assert_eq!(sus.default_shape(), SegmentShape::Step);
         assert_eq!(sus.display_max(), Some(127.0));
         assert!(!sus.has_center_line());
 
-        let pb = param(&xs, xsynth_param::PITCH_BEND);
+        let pb = param(&xs, builtin_synth_param::PITCH_BEND);
         assert_eq!(pb.display_max(), Some(16383.0));
         assert!(pb.has_center_line());
         assert_eq!(pb.display_name(), "Pitch Bend");
 
         // RPN 绑定的内置参数：显示带 "RPN nnn" 前缀。
-        let pbs = param(&xs, xsynth_param::PB_SENSITIVITY);
+        let pbs = param(&xs, builtin_synth_param::PB_SENSITIVITY);
         assert_eq!(pbs.display_name(), "RPN 000 PB Sensitivity");
 
         // 第三方插件参数：无内置表 → 归一化显示（无换算上限），名字用缓存。
