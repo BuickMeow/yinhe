@@ -49,6 +49,20 @@ pub(crate) fn channel_label(ch: u8) -> String {
     midi_label(ch / 16, ch % 16)
 }
 
+/// AP 通道显示标签（global 0 → "AP01"，global 9 → "AP10"）。
+pub(crate) fn ap_label(global: u8) -> String {
+    format!("AP{:02}", u16::from(global) + 1)
+}
+
+/// 混音通道标题：AP 通道显示 APxx，否则显示 MIDI 源 A01。
+pub(crate) fn channel_title(mixer: &yinhe_mixer::MixerParams, ch: u8) -> String {
+    if mixer.ap_for_midi(ch).is_some() {
+        ap_label(ch)
+    } else {
+        channel_label(ch)
+    }
+}
+
 /// 音频通道号 → 显示标签（0 → "Audio-01"）。
 pub(crate) fn audio_label(ch: u16) -> String {
     format!("Audio-{:02}", u32::from(ch) + 1)
@@ -1389,6 +1403,15 @@ mod tests {
             format,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn ap_channels_use_ap_label_and_plain_midi_keeps_a_label() {
+        let mut mixer = MixerParams::default();
+        assert_eq!(channel_title(&mixer, 0), "A01");
+        assert!(mixer.ensure_ap(9));
+        assert_eq!(channel_title(&mixer, 9), "AP10");
+        assert_eq!(ap_label(0), "AP01");
     }
 
     /// 迁移只移除内置效果器 insert（channel/bus/master），插件保留；

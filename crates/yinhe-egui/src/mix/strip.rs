@@ -19,7 +19,7 @@ use yinhe_types::{BusId, LogicalChannelId, MixerChannelId};
 use crate::app::App;
 use crate::widgets::meter::{METER_GAP, METER_W, SCALE_W};
 
-use super::{MixAction, channel_label};
+use super::MixAction;
 use controls::{
     SendSource, master_controls, section, send_block, send_height, strip_controls, strip_frame,
 };
@@ -87,7 +87,7 @@ pub(crate) fn channel_strip(
         .node_sends(MixerChannelId::Midi(channel))
         .map(<[_]>::to_vec)
         .unwrap_or_default();
-    let title = channel_label(channel);
+    let title = crate::mix::channel_title(&app.workspace.documents[idx].mixer, channel);
 
     let rect = strip_frame(
         ui,

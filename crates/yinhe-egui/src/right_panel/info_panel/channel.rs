@@ -78,7 +78,7 @@ fn show_midi(
 ) -> ChannelInfoOut {
     let mut out = ChannelInfoOut::default();
     let tracks = tracks_on_channel(doc, MixerChannelId::Midi(ch));
-    header(ui, crate::mix::channel_label(ch), &tracks);
+    header(ui, crate::mix::channel_title(&doc.mixer, ch), &tracks);
 
     let mut strip = doc.mixer.strip(ch);
     if strip_controls(ui, &mut strip) {
