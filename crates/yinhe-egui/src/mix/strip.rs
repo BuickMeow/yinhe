@@ -78,7 +78,7 @@ fn focus_send_info(
         .send_focus
         .and_then(|focus| crate::mix::channel_id_for_ui(mixer, focus));
     let label = target
-        .map(|target| crate::mix::channel_id_label(target, &app.mix.lc_display))
+        .map(|target| crate::mix::channel_id_label(target, &app.mix.channel_display))
         .unwrap_or_default();
     let (amount, pre_fader) = source
         .zip(target)
@@ -327,7 +327,7 @@ pub(crate) fn bus_strip(
     let mixer = &app.workspace.documents[idx].mixer;
     let node = MixerChannelId::Bus(bus);
     let params = mixer.node_strip(node);
-    let title = format!("BUS {}", bus.index() + 1);
+    let title = crate::mix::channel_id_label(ChannelId::Bus(bus), &app.mix.channel_display);
     let bus_sends = mixer
         .node_sends(node)
         .map(<[_]>::to_vec)

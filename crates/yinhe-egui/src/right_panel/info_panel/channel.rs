@@ -205,7 +205,7 @@ fn show_midi(
     show_instrument_summary(ui, doc, ch);
 
     section_header(ui, t!("mix.sends").as_ref());
-    show_sends(ui, doc.mixer.node_sends(MixerChannelId::Midi(ch)));
+    show_channel_sends(ui, doc, MixerChannelId::Midi(ch));
 
     section_header(ui, t!("channel.inserts").as_ref());
     show_inserts(
@@ -238,7 +238,7 @@ fn show_audio(ui: &mut egui::Ui, doc: &mut Document, ch: u16) -> ChannelInfoOut 
     }
 
     section_header(ui, t!("mix.sends").as_ref());
-    show_sends(ui, doc.mixer.node_sends(MixerChannelId::Audio(ch)));
+    show_channel_sends(ui, doc, MixerChannelId::Audio(ch));
 
     section_header(ui, t!("channel.inserts").as_ref());
     show_inserts(
@@ -269,7 +269,7 @@ fn show_track_lc(ui: &mut egui::Ui, doc: &mut Document, id: LogicalChannelId) ->
     }
 
     section_header(ui, t!("mix.sends").as_ref());
-    show_sends(ui, doc.mixer.node_sends(node));
+    show_channel_sends(ui, doc, node);
 
     section_header(ui, t!("channel.inserts").as_ref());
     show_inserts(
@@ -281,7 +281,12 @@ fn show_track_lc(ui: &mut egui::Ui, doc: &mut Document, id: LogicalChannelId) ->
 
 fn show_bus(ui: &mut egui::Ui, doc: &mut Document, bus: yinhe_types::BusId) -> ChannelInfoOut {
     let mut out = ChannelInfoOut::default();
-    header(ui, format!("BUS {}", bus.index() + 1), &[]);
+    let display = doc
+        .mixer
+        .bus_display_number(bus)
+        .map(crate::mix::lc_label)
+        .unwrap_or_else(|| "CH".to_string());
+    header(ui, display, &[]);
 
     let Some(index) = doc.mixer.bus_index(bus) else {
         return out;
@@ -310,7 +315,7 @@ fn show_bus(ui: &mut egui::Ui, doc: &mut Document, bus: yinhe_types::BusId) -> C
         .map(|node| node.inserts.clone())
         .unwrap_or_default();
     section_header(ui, t!("mix.sends").as_ref());
-    show_sends(ui, Some(&sends));
+    show_bus_sends(ui, Some(&sends));
 
     section_header(ui, t!("channel.inserts").as_ref());
     show_inserts(ui, Some(&inserts));
@@ -414,7 +419,12 @@ fn output_selector(ui: &mut egui::Ui, doc: &mut Document, ch: MixerChannelId) ->
             {
                 return None;
             }
-            Some((i + 1, format!("BUS {}", id.index() + 1)))
+            let label = doc
+                .mixer
+                .bus_display_number(*id)
+                .map(crate::mix::lc_label)
+                .unwrap_or_else(|| "CH".to_string());
+            Some((i + 1, label))
         }))
         .collect();
     let mut sel = doc
@@ -462,7 +472,36 @@ fn show_instrument_summary(ui: &mut egui::Ui, doc: &Document, ch: u8) {
     }
 }
 
-fn show_sends(ui: &mut egui::Ui, sends: Option<&[yinhe_mixer::SendParams]>) {
+fn show_channel_sends(ui: &mut egui::Ui, doc: &Document, ch: MixerChannelId) {
+    let Some(source) = crate::mix::channel_id_for_ui(&doc.mixer, ch) else {
+        return;
+    };
+    let map = doc.mixer.channel_display_map();
+    let sends: Vec<_> = doc.mixer.channel_sends_from(source).collect();
+    if sends.is_empty() {
+        value_row(ui, String::new(), t!("mix.no_sends").to_string());
+        return;
+    }
+    for send in sends {
+        let mode = if send.pre_fader {
+            t!("mix.pre_fader")
+        } else {
+            t!("mix.post_fader")
+        };
+        let db = if send.amount <= 0.0 {
+            "-inf".to_string()
+        } else {
+            format!("{:.1}", crate::widgets::meter::gain_to_db(send.amount))
+        };
+        value_row(
+            ui,
+            crate::mix::channel_id_label(send.target, &map),
+            format!("{db} dB · {mode}"),
+        );
+    }
+}
+
+fn show_bus_sends(ui: &mut egui::Ui, sends: Option<&[yinhe_mixer::SendParams]>) {
     let sends = sends.unwrap_or(&[]);
     if sends.is_empty() {
         value_row(ui, String::new(), t!("mix.no_sends").to_string());
@@ -476,8 +515,12 @@ fn show_sends(ui: &mut egui::Ui, sends: Option<&[yinhe_mixer::SendParams]>) {
         };
         value_row(
             ui,
-            format!("BUS {}", send.bus.index() + 1),
-            format!("{:.0}% · {}", send.amount * 100.0, mode),
+            "CH".to_string(),
+            format!(
+                "{:.1} dB · {}",
+                crate::widgets::meter::gain_to_db(send.amount),
+                mode
+            ),
         );
     }
 }

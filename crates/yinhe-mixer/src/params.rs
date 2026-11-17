@@ -446,6 +446,25 @@ impl MixerParams {
             .collect()
     }
 
+    /// 所有可显示通道的 CH 编号：LC 先编号，旧 Bus 节点接在后面。
+    pub fn channel_display_map(&self) -> HashMap<ChannelId, u32> {
+        let lc = self.lc_display_map();
+        let base = lc.len() as u32;
+        let mut map: HashMap<ChannelId, u32> = lc
+            .into_iter()
+            .map(|(id, n)| (ChannelId::Lc(id), n))
+            .collect();
+        for (i, bus) in self.bus_ids().into_iter().enumerate() {
+            map.insert(ChannelId::Bus(bus), base + i as u32 + 1);
+        }
+        map
+    }
+
+    pub fn bus_display_number(&self, bus: BusId) -> Option<u32> {
+        let base = self.lc_display_map().len() as u32;
+        self.bus_index(bus).map(|i| base + i as u32 + 1)
+    }
+
     pub fn channel_send(&self, source: ChannelId, target: ChannelId) -> Option<&ChannelSend> {
         self.channel_sends
             .iter()
@@ -1353,6 +1372,18 @@ mod tests {
         assert_eq!(map.get(&LogicalChannelId(300)), Some(&1));
         assert_eq!(map.get(&a), Some(&2));
         assert_eq!(map.get(&b), Some(&3));
+    }
+
+    #[test]
+    fn channel_display_map_numbers_buses_after_lcs() {
+        let mut p = MixerParams::default();
+        p.ensure_len();
+        let lc = p.add_track_lc();
+        let bus = p.add_bus().expect("bus");
+        let map = p.channel_display_map();
+        assert_eq!(map.get(&ChannelId::Lc(lc)), Some(&1));
+        assert_eq!(map.get(&ChannelId::Bus(bus)), Some(&2));
+        assert_eq!(p.bus_display_number(bus), Some(2));
     }
 
     #[test]
