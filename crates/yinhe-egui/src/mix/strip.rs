@@ -101,6 +101,7 @@ pub(crate) fn channel_strip(
     let (send_source, send_target, send_amount, send_pre) =
         focus_send_info(app, idx, MixerChannelId::Midi(channel));
     let title = crate::mix::channel_title(&app.workspace.documents[idx].mixer, channel);
+    let selected = strip_selected(app, idx, MixerChannelId::Midi(channel));
 
     let rect = strip_frame(
         ui,
@@ -108,6 +109,7 @@ pub(crate) fn channel_strip(
         color,
         &title,
         height,
+        selected,
         |ui, _| {
             section(
                 ui,
@@ -167,12 +169,14 @@ pub(crate) fn audio_strip(
     let (send_source, send_target, send_amount, send_pre) =
         focus_send_info(app, idx, MixerChannelId::Audio(channel));
 
+    let selected = strip_selected(app, idx, MixerChannelId::Audio(channel));
     let rect = strip_frame(
         ui,
         ("mix_strip_audio", channel),
         crate::theme::accent_active(),
         &title,
         height,
+        selected,
         |ui, _| {
             section(
                 ui,
@@ -239,6 +243,7 @@ pub(crate) fn track_lc_strip(
         .copied()
         .map(|c| crate::theme::rgba_to_color32((c[0], c[1], c[2], c[3])))
         .unwrap_or_else(crate::theme::accent_active);
+    let selected = strip_selected(app, idx, node);
 
     let rect = strip_frame(
         ui,
@@ -246,6 +251,7 @@ pub(crate) fn track_lc_strip(
         color,
         &title,
         height,
+        selected,
         |ui, _| {
             section(
                 ui,
@@ -294,12 +300,14 @@ pub(crate) fn master_strip(
     let params = app.workspace.documents[idx].mixer.master.strip;
     let title = t!("mix.master").to_string();
 
+    let selected = strip_selected(app, idx, MixerChannelId::Master);
     let rect = strip_frame(
         ui,
         "mix_strip_master",
         crate::theme::accent_active(),
         &title,
         height,
+        selected,
         |ui, _| {
             if let Some(g) = master_controls(ui, params.gain, level, hold, actions) {
                 actions.push(MixAction::SetMaster {
@@ -366,6 +374,81 @@ fn header_double_click_opens_master_dock(
     app.dock_selected = None;
 }
 
+/// 该混音通道是否被选中（同一套 `doc.edit.track_selected`，与 AR 行一致）。
+fn strip_selected(app: &App, idx: usize, ch: MixerChannelId) -> bool {
+    strip_selected_doc(&app.workspace.documents[idx], ch)
+}
+
+/// 纯函数版本（测试用）。
+pub(crate) fn strip_selected_doc(
+    doc: &yinhe_editor_core::document::Document,
+    ch: MixerChannelId,
+) -> bool {
+    match ch {
+        MixerChannelId::Midi(c) => doc.data.model.tracks.iter().enumerate().any(|(i, t)| {
+            t.kind == yinhe_core::TrackKind::Midi
+                && t.global_channel() == c
+                && doc.edit.track_selected.contains(&(i as u16))
+        }),
+        MixerChannelId::Audio(c) => doc.data.model.tracks.iter().enumerate().any(|(i, t)| {
+            t.kind == yinhe_core::TrackKind::Audio
+                && t.audio_channel == Some(c)
+                && doc.edit.track_selected.contains(&(i as u16))
+        }),
+        MixerChannelId::TrackLc(lc) => doc
+            .data
+            .model
+            .tracks
+            .iter()
+            .enumerate()
+            .any(|(i, t)| t.lc == Some(lc) && doc.edit.track_selected.contains(&(i as u16))),
+        MixerChannelId::Master => doc
+            .edit
+            .track_cache
+            .conductor_idx
+            .is_some_and(|c| doc.edit.track_selected.contains(&c)),
+    }
+}
+
+/// 点击通道条时把该通道对应的轨道设为选中（让通道条亮起，同时保持
+/// 右栏「音轨属性」与 PR 当前轨一致）。
+fn select_channel_tracks(app: &mut App, idx: usize, ch: MixerChannelId) {
+    let anchor = {
+        let doc = &mut app.workspace.documents[idx];
+        doc.edit.track_selected.clear();
+        match ch {
+            MixerChannelId::Midi(c) => {
+                for (i, t) in doc.data.model.tracks.iter().enumerate() {
+                    if t.kind == yinhe_core::TrackKind::Midi && t.global_channel() == c {
+                        doc.edit.track_selected.insert(i as u16);
+                    }
+                }
+            }
+            MixerChannelId::Audio(c) => {
+                for (i, t) in doc.data.model.tracks.iter().enumerate() {
+                    if t.kind == yinhe_core::TrackKind::Audio && t.audio_channel == Some(c) {
+                        doc.edit.track_selected.insert(i as u16);
+                    }
+                }
+            }
+            MixerChannelId::TrackLc(lc) => {
+                for (i, t) in doc.data.model.tracks.iter().enumerate() {
+                    if t.lc == Some(lc) {
+                        doc.edit.track_selected.insert(i as u16);
+                    }
+                }
+            }
+            MixerChannelId::Master => {
+                if let Some(c) = doc.edit.track_cache.conductor_idx {
+                    doc.edit.track_selected.insert(c);
+                }
+            }
+        }
+        doc.edit.track_selected.iter().min().copied()
+    };
+    app.track_selection_anchor = anchor;
+}
+
 /// 色带双击：打开底部设备链（dock）并选中该通道（通道条 / 音频条共用）。
 /// 同步 `dock_track` 防止下一帧被「跟随选中轨」覆盖；总线/主输出没有 dock
 /// 语境，不调用本函数。
@@ -384,6 +467,7 @@ fn header_double_click_opens_dock(
     header_context_menu(app, &resp, idx, context, actions);
     if resp.clicked() {
         app.mix.send_focus = Some(context);
+        select_channel_tracks(app, idx, context);
         focus_channel_info(app, context);
     }
     if !resp.double_clicked() {

@@ -48,3 +48,27 @@ fn auto_height_is_fixed_by_focus_send_row() {
     let base = auto_panel_height();
     assert!((base - 200.0).abs() < 1e-3, "基础高度 {base}");
 }
+
+/// 方案 C 回归：MIX 通道条的选中态与 AR 共用 `track_selected`。
+#[test]
+fn strip_selected_follows_track_selection() {
+    use yinhe_editor_core::document::Document;
+
+    let mut doc = Document::empty();
+    // 空白工程：track 0 = Master，track 1 = A01（global 0）。
+    assert_eq!(doc.data.model.tracks[1].global_channel(), 0);
+    assert!(!super::strip_selected_doc(
+        &doc,
+        yinhe_types::MixerChannelId::Midi(0)
+    ));
+
+    doc.edit.track_selected.insert(1);
+    assert!(super::strip_selected_doc(
+        &doc,
+        yinhe_types::MixerChannelId::Midi(0)
+    ));
+    assert!(!super::strip_selected_doc(
+        &doc,
+        yinhe_types::MixerChannelId::Midi(1)
+    ));
+}

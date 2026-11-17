@@ -43,12 +43,19 @@ pub(super) fn strip_frame(
     color: egui::Color32,
     title: &str,
     height: f32,
+    selected: bool,
     add_contents: impl FnOnce(&mut egui::Ui, f32),
 ) -> egui::Rect {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(STRIP_WIDTH, height), egui::Sense::hover());
     let painter = ui.painter_at(rect);
-    // 卡片背景用默认背景色（不再用偏灰的 control_bg）。
-    painter.rect_filled(rect, 0.0, crate::theme::app_bg());
+    // 卡片背景：选中时整条用全局 selection.bg_fill（与 AR 轨道行选中同色），
+    // 未选中用默认背景色。
+    let bg = if selected {
+        ui.visuals().selection.bg_fill
+    } else {
+        crate::theme::app_bg()
+    };
+    painter.rect_filled(rect, 0.0, bg);
 
     // 顶部色带（轨道/通道色）。
     let header = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), HEADER_H));
