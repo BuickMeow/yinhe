@@ -28,8 +28,9 @@
    FL Studio 的 freeze 也是按 Mixer Track（音频通道）冻结，不是按 Playlist
    Track/Pattern；这恰好支持“按通道冻结”，但普通 Track 与 LC 是 1:1，
    所以表现上仍是“单轨冻结”。
-5. **多输出插件是可选高级能力**，不是方案 C 的 MVP。默认多条 LC 各自挂一个
-   LC Rack 实例；大采样器/鼓机需要省内存时才用单实例多输出。
+5. **多输出插件暂不做，留作后期进阶功能**。方案 C 的 MVP 里 AP 编组只有
+   一条输出、一条 AP 通道；需要多个独立音色/处理时，建多条 LC，各自挂一个
+   LC Rack 实例。单实例多输出只在以后明确需要大采样器/鼓机省内存时再加。
 
 ## 1. 术语
 
@@ -38,7 +39,7 @@
 | Track | 内容容器：音符、音频片段、轨道级自动化 |
 | LC | Logical Channel，普通 DAW 通道；拥有独立音频路径、推子、insert、send、automation、freeze |
 | AP 编组 | A01..P16 的 MIDI 源编组：共享 Rack、共享 MIDI 身份；本身不是音频通道 |
-| AP 通道 | AP 编组展开出的音频通道（`MixerNode`）；单输出 1 条，多输出 N 条；与 LC 并列 |
+| AP 通道 | AP 编组展开出的音频通道（`MixerNode`）；方案 C MVP 固定 1 条；与 LC 并列 |
 | AP Rack | 一个 AP 编组里的共享乐器链 |
 | LC Rack | 一条独立 Track/LC 自己的乐器链（原“私有 Rack”） |
 | Owner | 自动化/CC 的归属者：TrackLc、ApRack、ApChannel、Channel、Master |
@@ -56,7 +57,7 @@ Track 4 ──> AP A01 通道 200
 
 - **AP 编组**是共享 Rack + MIDI 身份，本身不是通道；
 - **AP 通道**是 AP 的音频输出通道，和普通 LC 一样是 `MixerNode`；
-- 单输出 AP 展开 1 条 AP 通道，多输出 AP 展开 N 条 AP 通道；
+- 方案 C MVP 的 AP 只有 1 条 AP 通道；多输出留到后期；
 - Track 只指向一条音频通道：普通 LC 或某条 AP 通道。
 
 所以链路永远是：
@@ -196,8 +197,8 @@ Track ──> LC Rack -> 自己的 LC ──> Bus/Master       （默认）
 - `MixerNode` / `LogicalChannelId` / `RackParams` / `FrozenAudio`；
 - LC 的 gain/pan/M/S/insert/send/automation/freeze；
 - 通道发送/嵌套、通道自动化、Master；
-- CLAP/VST3 多输出与按输出 LC；
-- `ChannelLayout` 的 dense 通道、每轨 LC、多输出 LC；
+- CLAP/VST3 输出的当前 B 代码（C MVP 不依赖，后期再接）；
+- `ChannelLayout` 的 dense 通道、每轨 LC；
 - 自动化 lane 的编辑、undo、AR 子行、锚点面板。
 
 需要改的是：
@@ -227,20 +228,16 @@ enum TrackAudioTarget {
         lc: LogicalChannelId,
         rack: RackId,
     },
-    /// 手动链接到 AP 编组：MIDI 进共享 Rack，音频走 AP 的某条通道。
-    Ap {
-        ap: ApGroupId,
-        /// 该轨在 AP 多输出里的输出索引（单输出 = 0）。
-        /// 实际音频通道 = ap.channels[output]。
-        output: u16,
-    },
+    /// 手动链接到 AP 编组：MIDI 进共享 Rack，音频走 AP 的唯一通道。
+    /// 后期多输出时再增加 output 字段。
+    Ap { ap: ApGroupId },
 }
 ```
 
 说明：
 
 - `OwnLc` 是默认值；新建 MIDI 轨/音频轨时创建或复用自己的 LC。
-- `Ap` 不拥有私有 LC；它的音频路径就是 AP 编组里的某条 AP 通道。
+- `Ap` 不拥有私有 LC；它的音频路径就是 AP 编组的 AP 通道。
 - 从 AP 解链回 `OwnLc` 时保留原来的 LC/LC Rack 状态，
   避免解链后所有设置丢失。
 - 音频轨（Audio Track）通常只用 `OwnLc`，不参与 AP 编组。
@@ -279,9 +276,9 @@ struct ApGroup {
     /// 对应 MIDI 通道；None = 用户手工建的无 MIDI 编组（可选）。
     midi: Option<(u8 /*port*/, u8 /*channel*/)>,
     rack: RackParams,
-    /// AP 展开出的音频通道：单输出 = 1 条，多输出 = 每个输出一条。
-    /// 这些是并列的 `MixerNode`，不是 AP 的子节点。
-    channels: Vec<ChannelId>,
+    /// 方案 C MVP：AP 只有一条音频通道。
+    /// 后期如果做多输出，再扩展成 `channels: Vec<ChannelId>`。
+    channel: ChannelId,
     /// AP Rack 级自动化（CC / 乐器参数）。
     /// 每条 AP 通道自己的 gain/pan/send/insert 自动化仍在 `MixerNode.automation`。
     rack_automation: Vec<AutomationLane>,
@@ -361,7 +358,7 @@ struct SendParams {
 | CC/PB/RPN | 本 Track 的 LC owner | AP Rack owner | 共享 MIDI 自动化 |
 | 乐器参数自动化 | LC Rack owner | AP Rack owner | 共享乐器参数 |
 | freeze | 本 LC | 本 AP 通道 | 不冻结（冻结在 AP 通道） |
-| 多输出插件 | 可以是一轨一条 LC | 每个输出一条 AP 通道 | 一个 Rack 展开多条通道 |
+| 多输出插件 | 可以是一轨一条 LC | 每个输出一条 AP 通道 | C MVP 一个 Rack 一条 AP 通道；多输出后期再加 |
 | 导出 MIDI | 分配剩余通道 | 按 AP 的 MIDI 通道 | 固定 MIDI 身份 |
 
 关键规则：
@@ -389,9 +386,9 @@ struct SendParams {
 
 ---
 
-### 5.2 多输出插件不是方案 C 的必需项
+### 5.2 多输出插件：C MVP 不做，留作后期进阶
 
-方案 C 的核心是“每条 Track 默认有自己的 LC/LC Rack”，所以最简单的多输出方案是：
+方案 C 的核心是“每条 Track 默认有自己的 LC/LC Rack”，所以最简单的做法是：
 
 ```text
 LC 1 -> LC Rack：插件实例 #1
@@ -408,23 +405,98 @@ LC 4 -> LC Rack：插件实例 #4
 - 不需要改宿主对多输出插件的支持；
 - 用户理解成本最低。
 
-代价是插件实例数量增加。对轻量插件没问题；对 Kontakt 这类大采样器，
-重复实例会重复样本内存。这时才需要可选的“单实例多输出”模式：
+#### 多输出到底是什么
 
-| 场景 | 推荐 |
-|---|---|
-| 普通合成器/效果器 | 多 LC，多实例 |
-| 鼓机/采样器，样本库很大 | 可选多输出，一个实例拆多条 AP/LC 通道 |
-| 插件本身是多声部但只有单输出 | 只能共享一条通道，或开多个实例 |
-| 插件输出端口很多 | 默认不用；高级用户可手动映射 |
+多输出不是“多个 MIDI 通道”，也不是“多个乐器”，而是：
 
-结论：
+> 一个插件实例有多个音频输出插座。
 
-- **方案 C 的 MVP 不需要专门适配多输出插件**；
-- 当前目标 B 已实现的多输出可以作为**可选高级能力**保留；
-- 默认工作流应该是“多条 LC 手动挂插件 #1/#2/#3/#4”，而不是强迫用户理解
-  output port 映射；
-- 只有大采样器/鼓机确实需要省内存时，才引导用户使用多输出。
+普通插件只有一个立体声输出：
+
+```text
+插件实例 -> L/R
+```
+
+多输出插件像一个鼓机：
+
+```text
+插件实例
+├─ Out 1 (L/R) -> LC 1
+├─ Out 2 (L/R) -> LC 2
+├─ Out 3 (L/R) -> LC 3
+└─ Out 4 (L/R) -> LC 4
+```
+
+插件内部把 kick/snare/hat 分别送到不同输出；宿主可以把每个输出接到不同
+混音通道。它省的是**插件实例的 CPU/样本内存**，不是 MIDI 通道。
+
+#### 为什么 C 暂时不做
+
+- 黑乐谱/电子音乐通常是一个大音源一条主输出，多输出收益很低；
+- 它更像 ARA：功能很强，但和主要制作流程关系不大，真正需要的人可以用
+  别的 DAW；
+- 概念成本高：输出拓扑、端口映射、每输出通道、冻结/自动化、VST3 多 bus、
+  导入迁移都要单独处理；
+- 不做它，AP 就永远只有一条通道，模型简单很多。
+
+#### 不做能省多少代码
+
+按当前两次多输出相关提交统计：
+
+```text
+8ff4ae49 外部插件支持按输出 LC   约 1070 insertions / 42 files
+eb443dd9 VST3 接入多输出总线     约 112 insertions / 3 files
+```
+
+合计约 1180 行新增，包含测试、15 个 locale 和 v14 迁移；其中核心运行时代码
+大约 500~700 行。更重要的是省掉这些概念：
+
+```text
+RackOutput / RackOutputTopology
+RackOutputMode::PerOutput
+RackParams.outputs / output_lcs
+TrackData.rack_output
+InstrumentProcessor::process_outputs
+InstrumentSource.output_dense
+render_instruments_multi / multi_scratch
+CLAP audio_outputs / 多端口拷贝
+VST3 多输出 bus 缓冲
+AP 多输出 UI / topology rescan
+```
+
+C MVP 只需要：
+
+```text
+一个 AP 编组 -> 一个 AP 通道
+一个 Track -> 一个 LC 或一个 AP 通道
+InstrumentProcessor 只处理主立体声输出
+```
+
+#### 兼容性代价
+
+如果确定不做，当前 B 的多输出代码可以删；但 v14 工程可能已经保存了
+`PerOutput` / `output_lcs`：
+
+- 删除前必须保留 v14 解码器；
+- 旧多输出工程要么在 v15 里降级为主输出并明确警告，要么保留一条只读的
+  legacy 多输出路径；
+- 不能静默丢输出。如果功能刚上线、没有真实用户工程，可以接受一次性
+  迁移警告；否则 legacy 路径必须保留。
+
+#### 以后要加时
+
+C 的单输出 AP 结构可以扩展：
+
+```rust
+struct ApGroup {
+    // MVP
+    channel: ChannelId,
+    // 以后
+    // channels: Vec<ChannelId>,
+}
+```
+
+但更推荐等需求明确后再加，不要为了“以后可能用”提前把 C 的模型复杂化。
 
 ### 5.3 已确认：取消 Bus 类型，任意通道发送
 
@@ -487,7 +559,7 @@ Channel 级：CC、Pitch Bend、RPN/NRPN、乐器参数、LC gain/pan/send/inser
 Track 级始终属于 Track；Channel 级属于当前音频目标的 owner：
 
 - `OwnLc` -> `TrackLc(lc)`
-- `Ap` -> `ApRack(ap)` + `ApChannel(ap, output)`
+- `Ap` -> `ApRack(ap)` + `ApChannel(ap)`
 - 任意通道（原 Bus 角色）-> `Channel(id)`
 - Master 不变
 
@@ -563,7 +635,7 @@ LC Gain
 1. 已链接 MIDI 的 AP 编组占用其固定通道；
 2. 独立 `OwnLc` Track 按轨道顺序分配剩余 `(port, channel)`；
 3. 每个独立 Track 只拿一个通道；AP 的所有 Track 共用一个通道；
-4. 多输出 AP 仍只占一个 MIDI 通道（MIDI 输入是一个通道，多输出只是音频）。
+4. AP 无论以后是否做多输出，都只占一个 MIDI 输入通道（多输出只是音频拆分）。
 
 伪代码：
 
@@ -642,7 +714,7 @@ Track 3   [AP A01]      ← 已链接
 - 普通 LC 按 Track 顺序显示；
 - AP 通道单独显示为共享通道，条带上标明「A01 · 4 条轨共享」；
 - 链接到 AP 的 Track 不再显示独立 LC 条，只显示它对应的 AP 通道；
-- AP 多输出时每条 AP 通道各一条 strip；
+- 多输出暂不做；C MVP 每个 AP 只有一条 strip；
 - AP 通道的 freeze/mute/solo 明确提示作用范围；
 - 通道面板可以像音轨面板一样选中，选中条用淡强调色，不加边框；
 - 通道选择和音轨选择联动：选中一条 Track 时，它对应的 LC/AP 通道也选中；
@@ -832,8 +904,9 @@ AP / Bus”四套语义。
 2. 旧 `MixerParams.channels[ch]` -> AP 通道；
 3. 旧 `racks[ch]` -> AP 的共享 Rack；
 4. 旧 `TrackData.port/channel` 对应的 Track 全部链接到 AP；
-5. 旧 `TrackData.lc`（per-track / multi-output）-> `OwnLc` 或 AP 多输出通道；
-6. 旧 `rack_output` -> AP 多输出索引；
+5. 旧 `TrackData.lc`（per-track / multi-output）-> `OwnLc`；旧多输出工程
+   如果 C MVP 不做多输出，需要降级为主输出并给明确迁移警告；
+6. 旧 `rack_output` 在 C MVP 中不保留（多输出后期再加）；
 7. 空通道不创建 AP，避免 256 条空编组；
 8. 旧工程的冻结/自动化/insert/发送原样搬到 AP；
 9. 旧 `buses` 全部转成 `source = None` 的普通 Channel，保留原来的
@@ -874,7 +947,7 @@ AP / Bus”四套语义。
   - 默认使用内置音源（XSynth/YinheCpu）的 per-track 输出；
   - 只有用户手动选择外部插件时才创建私有插件实例；
   - AP 编组共享一个插件实例，是省资源路径。
-- 多输出 AP 的每个输出一条 AP 通道，仍然比每轨一个插件实例便宜。
+- C MVP 的 AP 只有一条 AP 通道；多输出后期再加。
 
 这是方案 C 最大的工程风险：**默认独立通道 + 外部插件 = 实例数量增长**。
 需要产品上明确默认音源策略，不能假装所有轨都能无成本挂独立插件。
@@ -888,7 +961,7 @@ AP / Bus”四套语义。
 | LC ID 空间 | 65536 | `LogicalChannelId(u16)`；独立命名空间，不编码源通道号 |
 | 同时活跃 LC | 当前受引擎限制 | CpuSynth 的 `MAX_CHANNELS = 256`；超过 256 的 dense 通道不会渲染 |
 | AP 数量 | 256 | 当前 `global_channel: u8`，16 port × 16 channel |
-| AP 的音频通道 | 每个 AP 1..N | 单输出 1 条；多输出插件按输出展开 |
+| AP 的音频通道 | 每个 AP 1 条（C MVP） | 多输出留到后期；扩展时再变成多条 |
 | Bus 数量 | 无独立上限 | Bus 是 `source = None` 的普通 Channel；“Bus”不再是单独类型 |
 
 几个容易混的点：
@@ -922,8 +995,8 @@ AP / Bus”四套语义。
 | `RackParams` | 复用 | AP 共享 Rack、Track LC Rack |
 | `FrozenAudio` | 复用 | 普通 LC/AP 通道均可冻结 |
 | `MixerGain/Pan/Send/InsertParam` | 复用 | owner 从 MIDI 通道改为 TrackLc/ApChannel |
-| `ChannelLayout` | 复用 | dense 通道、每轨 LC、多输出已具备 |
-| CLAP/VST3 多输出 | 复用 | AP 多输出展开多条 AP 通道 |
+| `ChannelLayout` | 复用 | dense 通道、每轨 LC 已具备；多输出后期再加 |
+| CLAP/VST3 多输出 | C MVP 不用 | 当前 B 代码可删或留作 legacy |
 | 通道发送/嵌套 | 复用并泛化 | AP/LC/纯汇入通道都走同一发送图 |
 | MIDI 导入/导出 | 改造 | 导入建 AP，导出分配剩余通道 |
 | Track `port/channel` | 降级为属性 | 不再是混音路由的唯一依据 |
@@ -939,7 +1012,7 @@ AP / Bus”四套语义。
 4. **自动化 owner 解析**：同名 lane 合并、冲突标记、引擎/导出只写一次。
 5. **MIDI 导入自动编组**。
 6. **MIDI 导出通道分配器**：Fail/ReuseSafe/Force。
-7. **冻结/多输出/多轨共享回归**：确保 AP/LC 的 freeze、multi-output、
+7. **冻结/多轨共享回归**：确保 AP/LC 的 freeze、
    automation、undo 全部覆盖。
 8. **端口扩展**：需要时补 `MidiPort`。
 
@@ -950,8 +1023,7 @@ AP / Bus”四套语义。
 ## 15. 需要先确认的问题
 
 1. 默认 LC Rack 用内置音源还是外部插件？外部插件按轨实例化成本很高。
-2. 多输出插件保留为可选高级能力，还是方案 C 完全不做？
-   本文建议保留但默认不暴露，默认让用户多建几条 LC 各挂一个实例。
+2. 多输出插件 C MVP 不做，后期是否重开？本文建议留到明确需求出现时再加。
 3. LC 默认是否允许作为 Bus？已确认：允许，`accepts_audio_input` 默认 true，
    “Bus”只是 `source = None` 的通道角色。
 4. 同 owner 同 target 的冲突，采用「最后编辑优先」还是让用户手动裁决？
@@ -967,7 +1039,7 @@ AP / Bus”四套语义。
 ## 16. 结论
 
 - 这是一个成立的方案，而且比目标 B 更接近「普通 DAW 默认行为」。
-- 它不是回滚：`MixerNode`、LC、自动化、freeze、通道发送、多输出都能继续用；
+- 它不是回滚：`MixerNode`、LC、自动化、freeze、通道发送都能继续用；多输出后期再接；
   真正变的是 **Track 的默认音频源** 和 **AP/LC 的并列关系**。
 - 不建议直接叫「方案 B」：仓库里已有目标 B，建议叫**方案 C（AP/LC 并列）**。
 - 实现上最大的风险不是音频图，而是：
