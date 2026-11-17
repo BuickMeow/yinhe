@@ -9,7 +9,10 @@ use crate::audio_warp::WarpMap;
 use crate::clip::Clip;
 use crate::events::NoteEvent;
 use crate::tempo_map::{TempoMap, TempoSegment, mpq_from_bpm, recompute_tempo_start_times};
-use yinhe_types::{AutomationLane, AutomationTarget, KEY_COUNT, NoteBucket, PcEvent};
+use yinhe_types::{
+    ApGroupId, AutomationLane, AutomationTarget, KEY_COUNT, LogicalChannelId, NoteBucket, PcEvent,
+    RackId,
+};
 
 // =========================================================
 //  Conductor
@@ -470,6 +473,24 @@ fn resolve_index(
     None
 }
 
+/// 方案 C 的轨道音频目标。
+///
+/// 这是旧字段到 C 模型的适配结果：共享 MIDI 通道 = AP，每轨 LC/音频轨 =
+/// OwnLc，`DirectMaster` 暂时只保留类型。真正落盘后由 `TrackData` 直接持有。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrackAudioTarget {
+    /// Track 自己的 LC；`rack` 为 None 表示音频轨（没有乐器）。
+    OwnLc {
+        lc: LogicalChannelId,
+        rack: Option<RackId>,
+    },
+    /// 链接到 AP 编组：MIDI 进共享 Rack，音频走 AP 通道。
+    Ap { ap: ApGroupId },
+    /// 不经过任何 LC/AP 通道，直接进 Master（UI 显示 `---`）。
+    DirectMaster { rack: Option<RackId> },
+}
+
 impl TrackData {
     /// 该轨是否允许承载某类内容（权限唯一入口）。
     pub fn can_hold(&self, content: TrackContent) -> bool {
@@ -513,6 +534,35 @@ impl TrackData {
     /// Global channel = port * 16 + channel (0..255).
     pub fn global_channel(&self) -> u8 {
         (self.port & 0x0F) << 4 | (self.channel & 0x0F)
+    }
+
+    /// 方案 C 的音频目标：从旧的 `lc` / `audio_channel` / MIDI 通道推导。
+    ///
+    /// 迁移期映射：
+    /// - 有 `lc` 的 MIDI 轨 -> `OwnLc`（Rack 暂指向当前 MIDI 通道的 Rack）；
+    /// - 无 `lc` 的共享 MIDI 轨 -> `Ap`（AP id 暂等于 MIDI 通道）；
+    /// - 音频轨 -> `OwnLc`（audio LC = 256 + audio_channel）；
+    /// - Folder / Master -> None。
+    pub fn audio_target(&self) -> Option<TrackAudioTarget> {
+        match self.kind {
+            TrackKind::Midi => {
+                if let Some(lc) = self.lc {
+                    Some(TrackAudioTarget::OwnLc {
+                        lc,
+                        rack: Some(RackId::new(u16::from(self.global_channel()))),
+                    })
+                } else {
+                    Some(TrackAudioTarget::Ap {
+                        ap: ApGroupId::new(u16::from(self.global_channel())),
+                    })
+                }
+            }
+            TrackKind::Audio => self.audio_channel.map(|ch| TrackAudioTarget::OwnLc {
+                lc: LogicalChannelId(yinhe_types::MIDI_CHANNEL_COUNT as u32 + u32::from(ch)),
+                rack: None,
+            }),
+            TrackKind::Folder | TrackKind::Master => None,
+        }
     }
 
     /// 混音通道：由轨道种类直接推导，不另设覆盖字段。
@@ -2780,6 +2830,45 @@ mod tests {
             (c.start_beat.unwrap() - 8.0).abs() < 1e-6,
             "{:?}",
             c.start_beat
+        );
+    }
+
+    #[test]
+    fn c_audio_target_maps_shared_midi_to_ap() {
+        let track = TrackData::new(0, 3);
+        assert_eq!(
+            track.audio_target(),
+            Some(TrackAudioTarget::Ap {
+                ap: ApGroupId::new(3)
+            })
+        );
+    }
+
+    #[test]
+    fn c_audio_target_maps_per_track_lc_to_own_lc() {
+        let mut track = TrackData::new(0, 3);
+        let lc = LogicalChannelId(1_000_000);
+        track.lc = Some(lc);
+        assert_eq!(
+            track.audio_target(),
+            Some(TrackAudioTarget::OwnLc {
+                lc,
+                rack: Some(RackId::new(3))
+            })
+        );
+    }
+
+    #[test]
+    fn c_audio_target_maps_audio_track_to_own_lc() {
+        let mut track = TrackData::new(0, 0);
+        track.kind = TrackKind::Audio;
+        track.audio_channel = Some(2);
+        assert_eq!(
+            track.audio_target(),
+            Some(TrackAudioTarget::OwnLc {
+                lc: LogicalChannelId(258),
+                rack: None
+            })
         );
     }
 }

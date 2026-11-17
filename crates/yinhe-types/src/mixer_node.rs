@@ -118,6 +118,68 @@ impl From<u16> for BusId {
     }
 }
 
+/// AP 编组的稳定身份。
+///
+/// 当前上限 256（A01..P16），u16 预留扩展；AP 必须绑定一个 MIDI 通道。
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct ApGroupId(pub u16);
+
+impl ApGroupId {
+    pub const fn new(raw: u16) -> Self {
+        Self(raw)
+    }
+
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// AP 展开出的某一条音频通道。
+///
+/// 方案 C MVP 每个 AP 固定一条输出，`output = 0`；后期多输出时再扩展。
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+pub struct ApChannelId {
+    pub group: ApGroupId,
+    pub output: u16,
+}
+
+impl ApChannelId {
+    pub const fn new(group: ApGroupId, output: u16) -> Self {
+        Self { group, output }
+    }
+}
+
+/// 所有可发送目标的统一身份。
+///
+/// LC 与 AP 通道都是普通音频通道；Master 是唯一终点。Bus 不是独立类型，
+/// 它是 `ChannelSource::None` 的通道角色，因此也落在这两类里。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelId {
+    Lc(LogicalChannelId),
+    Ap(ApChannelId),
+    Master,
+}
+
+impl ChannelId {
+    pub const fn lc(id: LogicalChannelId) -> Self {
+        Self::Lc(id)
+    }
+
+    pub const fn ap(group: ApGroupId, output: u16) -> Self {
+        Self::Ap(ApChannelId { group, output })
+    }
+
+    pub const fn master() -> Self {
+        Self::Master
+    }
+}
+
 /// 混音图中一个音频节点的身份。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -162,5 +224,16 @@ mod tests {
         assert_eq!(BusId::new(3).index(), 3);
         assert_eq!(BusId::from(9), BusId(9));
         assert_eq!(format!("{:?}", MixerNodeId::Bus(BusId(2))), "Bus(BusId(2))");
+    }
+
+    #[test]
+    fn c_channel_ids_cover_lc_ap_and_master() {
+        let lc = ChannelId::lc(LogicalChannelId(3));
+        let ap = ChannelId::ap(ApGroupId(2), 0);
+        assert_ne!(lc, ap);
+        assert_ne!(lc, ChannelId::Master);
+        assert_eq!(ap, ChannelId::Ap(ApChannelId::new(ApGroupId(2), 0)));
+        assert_eq!(ChannelId::master(), ChannelId::Master);
+        assert_eq!(ApGroupId::new(9).index(), 9);
     }
 }
