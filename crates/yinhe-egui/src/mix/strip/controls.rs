@@ -380,7 +380,7 @@ pub(super) fn send_block(
                 // 没有总线时保留一个占位旋钮；用户转动后先 AddBus。
                 let target = bus_ids.get(b).copied().unwrap_or_default();
                 ui.horizontal(|ui| {
-                    let send = sends.iter().find(|s| s.bus == target);
+                    let send = sends.iter().find(|s| s.target == ChannelId::Bus(target));
                     let (amount, pre_fader) = send
                         .map(|s| (s.amount, s.pre_fader))
                         .unwrap_or((0.0, false));

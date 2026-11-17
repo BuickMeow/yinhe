@@ -126,8 +126,8 @@ pub struct InsertRef {
 /// 发送参数：源通道 → 总线（bus / return）。
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SendParams {
-    /// 目标总线的稳定 ID（不是 `MixerParams::buses` 下标）。
-    pub bus: BusId,
+    /// 目标通道（Bus / LC / AP / Master）。
+    pub target: ChannelId,
     /// 发送量（线性增益；0.0 = 关闭）。
     #[serde(default)]
     pub amount: f32,
@@ -140,7 +140,7 @@ pub struct SendParams {
 impl Default for SendParams {
     fn default() -> Self {
         Self {
-            bus: BusId::default(),
+            target: ChannelId::Master,
             amount: 0.0,
             pre_fader: false,
         }
@@ -728,9 +728,18 @@ impl MixerParams {
                 _ => None,
             })
             .collect();
+        let known_targets: HashSet<ChannelId> = self
+            .nodes
+            .iter()
+            .map(|node| node.id)
+            .chain(std::iter::once(ChannelId::Master))
+            .collect();
         for node in self.nodes.iter_mut() {
-            node.sends.retain(|s| known.contains(&s.bus));
-            if node.output.is_some_and(|id| !known.contains(&id)) {
+            node.sends.retain(|s| known_targets.contains(&s.target));
+            if node
+                .output
+                .is_some_and(|id| !matches!(id, ChannelId::Bus(bus) if known.contains(&bus)))
+            {
                 node.output = None;
             }
         }
@@ -741,7 +750,7 @@ impl MixerParams {
             let mut steps = 0;
             let mut cycle = false;
             while let Some(id) = cur {
-                if id == *bus {
+                if id == ChannelId::Bus(*bus) {
                     cycle = true;
                     break;
                 }
@@ -750,7 +759,10 @@ impl MixerParams {
                     break;
                 }
                 steps += 1;
-                cur = self.bus_node(id).and_then(|node| node.output);
+                let ChannelId::Bus(next_bus) = id else {
+                    break;
+                };
+                cur = self.bus_node(next_bus).and_then(|node| node.output);
             }
             if cycle && let Some(node) = self.bus_node_mut(*bus) {
                 node.output = None;
@@ -890,8 +902,8 @@ impl MixerParams {
         self.channel_sends
             .retain(|send| send.target != ChannelId::Bus(id));
         for node in self.nodes.iter_mut() {
-            node.sends.retain(|s| s.bus != id);
-            if node.output == Some(id) {
+            node.sends.retain(|s| s.target != ChannelId::Bus(id));
+            if node.output == Some(ChannelId::Bus(id)) {
                 node.output = None;
             }
         }
@@ -1051,7 +1063,7 @@ impl MixerParams {
     }
 
     /// 统一节点主输出（MIDI / 音频 / 每轨 LC / Bus；Master 没有）。
-    pub fn node_output(&self, node: MixerChannelId) -> Option<BusId> {
+    pub fn node_output(&self, node: MixerChannelId) -> Option<ChannelId> {
         if node == MixerChannelId::Master {
             return None;
         }
@@ -1060,7 +1072,7 @@ impl MixerParams {
     }
 
     /// 统一节点主输出写入。返回是否支持该节点。
-    pub fn set_node_output(&mut self, node: MixerChannelId, output: Option<BusId>) -> bool {
+    pub fn set_node_output(&mut self, node: MixerChannelId, output: Option<ChannelId>) -> bool {
         if node == MixerChannelId::Master {
             return false;
         }
@@ -1072,11 +1084,14 @@ impl MixerParams {
                 }
                 return false;
             };
-            if !self.can_route_bus_to(bus, target) {
+            let ChannelId::Bus(target_bus) = target else {
+                return false;
+            };
+            if !self.can_route_bus_to(bus, target_bus) {
                 return false;
             }
             if let Some(slot) = self.bus_node_mut(bus) {
-                slot.output = Some(target);
+                slot.output = Some(ChannelId::Bus(target_bus));
                 return true;
             }
             return false;
@@ -1099,17 +1114,20 @@ impl MixerParams {
 
     /// Bus 主输出改成 `target` 后是否形成环。
     fn bus_output_would_cycle(&self, bus: BusId, target: BusId) -> bool {
-        let mut cur = Some(target);
+        let mut cur = Some(ChannelId::Bus(target));
         let mut steps = 0;
         while let Some(id) = cur {
-            if id == bus {
+            if id == ChannelId::Bus(bus) {
                 return true;
             }
             if steps > self.bus_count() {
                 return true;
             }
             steps += 1;
-            cur = self.bus_node(id).and_then(|node| node.output);
+            let ChannelId::Bus(next_bus) = id else {
+                break;
+            };
+            cur = self.bus_node(next_bus).and_then(|node| node.output);
         }
         false
     }
@@ -1136,7 +1154,7 @@ mod tests {
 
     fn send(bus: BusId, amount: f32, pre_fader: bool) -> SendParams {
         SendParams {
-            bus,
+            target: ChannelId::Bus(bus),
             amount,
             pre_fader,
         }
@@ -1195,17 +1213,17 @@ mod tests {
             MixerChannelId::Midi(0),
             vec![send(ids[1], 0.5, false), send(ids[2], 0.5, true)],
         );
-        p.set_node_output(MixerChannelId::Midi(0), Some(ids[2]));
+        p.set_node_output(MixerChannelId::Midi(0), Some(ChannelId::Bus(ids[2])));
 
         p.remove_bus(ids[1]);
 
         assert_eq!(p.bus_ids(), vec![ids[0], ids[2]]);
         let sends = p.node_sends(MixerChannelId::Midi(0)).expect("sends");
         assert_eq!(sends.len(), 1, "指向被删总线的 send 清理");
-        assert_eq!(sends[0].bus, ids[2], "其他总线 ID 不前移");
+        assert_eq!(sends[0].target, ChannelId::Bus(ids[2]), "其他总线 ID 不前移");
         assert_eq!(
             p.node_output(MixerChannelId::Midi(0)),
-            Some(ids[2]),
+            Some(ChannelId::Bus(ids[2])),
             "主输出保持原 ID"
         );
     }
@@ -1283,7 +1301,7 @@ mod tests {
         let _ = p.add_bus();
         p.set_node_sends(MixerChannelId::Midi(0), vec![send(BusId(5), 1.0, false)]);
         p.set_node_sends(MixerChannelId::Audio(0), vec![send(BusId(5), 1.0, false)]);
-        p.set_node_output(MixerChannelId::Midi(0), Some(BusId(5)));
+        p.set_node_output(MixerChannelId::Midi(0), Some(ChannelId::Bus(BusId(5))));
         p.ensure_len();
         assert!(p.node_sends(MixerChannelId::Midi(0)).unwrap().is_empty());
         assert!(p.node_sends(MixerChannelId::Audio(0)).unwrap().is_empty());
@@ -1366,12 +1384,12 @@ mod tests {
         let bus = p.add_bus().expect("bus");
         p.midi_node_mut(0).expect("midi 0").sends = vec![
             SendParams {
-                bus,
+                target: ChannelId::Bus(bus),
                 amount: 2.0,
                 pre_fader: false,
             },
             SendParams {
-                bus: BusId(99),
+                target: ChannelId::Bus(BusId(99)),
                 amount: 0.0,
                 pre_fader: false,
             },
@@ -1460,9 +1478,9 @@ mod tests {
         assert_eq!(p.node_sends(MixerChannelId::Midi(1)), Some(&[send][..]));
         assert!(!p.set_node_sends(MixerChannelId::Master, vec![send]));
 
-        assert!(p.set_node_output(MixerChannelId::Midi(1), Some(bus)));
-        assert_eq!(p.node_output(MixerChannelId::Midi(1)), Some(bus));
-        assert!(!p.set_node_output(MixerChannelId::Bus(bus), Some(bus)));
+        assert!(p.set_node_output(MixerChannelId::Midi(1), Some(ChannelId::Bus(bus))));
+        assert_eq!(p.node_output(MixerChannelId::Midi(1)), Some(ChannelId::Bus(bus)));
+        assert!(!p.set_node_output(MixerChannelId::Bus(bus), Some(ChannelId::Bus(bus))));
     }
 
     #[test]
@@ -1484,13 +1502,13 @@ mod tests {
         let mut p = MixerParams::default();
         p.ensure_len();
         let ids = add_buses(&mut p, 2);
-        assert!(p.set_node_output(MixerChannelId::Bus(ids[0]), Some(ids[1])));
-        assert_eq!(p.node_output(MixerChannelId::Bus(ids[0])), Some(ids[1]));
+        assert!(p.set_node_output(MixerChannelId::Bus(ids[0]), Some(ChannelId::Bus(ids[1]))));
+        assert_eq!(p.node_output(MixerChannelId::Bus(ids[0])), Some(ChannelId::Bus(ids[1])));
         // 反向成环：拒绝。
-        assert!(!p.set_node_output(MixerChannelId::Bus(ids[1]), Some(ids[0])));
+        assert!(!p.set_node_output(MixerChannelId::Bus(ids[1]), Some(ChannelId::Bus(ids[0]))));
         assert_eq!(p.node_output(MixerChannelId::Bus(ids[1])), None);
         // 自输出：拒绝。
-        assert!(!p.set_node_output(MixerChannelId::Bus(ids[0]), Some(ids[0])));
+        assert!(!p.set_node_output(MixerChannelId::Bus(ids[0]), Some(ChannelId::Bus(ids[0]))));
     }
 
     #[test]

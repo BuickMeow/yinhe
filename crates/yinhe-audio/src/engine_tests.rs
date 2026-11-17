@@ -3390,7 +3390,7 @@ fn mixer_send_automation_updates_node_send_amount() {
     let channel = MixerChannelId::Midi(0);
     let node = mixer.midi_node_mut(0).expect("midi lc");
     node.sends.push(SendParams {
-        bus,
+        target: yinhe_types::ChannelId::Bus(bus),
         amount: 0.0,
         pre_fader: false,
     });

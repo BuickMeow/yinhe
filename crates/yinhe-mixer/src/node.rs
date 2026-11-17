@@ -123,7 +123,7 @@ pub struct MixerNode {
     /// MIDI / 音频 / 每轨 LC 指向 Bus；Bus 也可以指向另一条 Bus（嵌套），
     /// 参数层做环检测，渲染图对逆序输出使用一块延迟。
     #[serde(default)]
-    pub output: Option<BusId>,
+    pub output: Option<ChannelId>,
     /// 节点自己的自动化 lane。BusGain 等混音自动化按 owner 存在这里，
     /// 不再寄宿 Master 轨。
     #[serde(default)]

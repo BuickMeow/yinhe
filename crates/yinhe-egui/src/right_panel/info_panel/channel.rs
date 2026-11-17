@@ -420,7 +420,10 @@ fn output_selector(ui: &mut egui::Ui, doc: &mut Document, ch: MixerChannelId) ->
     let mut sel = doc
         .mixer
         .node_output(ch)
-        .and_then(|id| bus_ids.iter().position(|&x| x == id))
+        .and_then(|id| match id {
+            yinhe_types::ChannelId::Bus(bus) => bus_ids.iter().position(|&x| x == bus),
+            _ => None,
+        })
         .map(|i| i + 1)
         .unwrap_or(0);
     let mut changed = false;
@@ -439,7 +442,10 @@ fn output_selector(ui: &mut egui::Ui, doc: &mut Document, ch: MixerChannelId) ->
         let target = if sel == 0 {
             None
         } else {
-            bus_ids.get(sel - 1).copied()
+            bus_ids
+                .get(sel - 1)
+                .copied()
+                .map(yinhe_types::ChannelId::Bus)
         };
         let accepted = doc.mixer_mut().set_node_output(ch, target);
         if accepted {

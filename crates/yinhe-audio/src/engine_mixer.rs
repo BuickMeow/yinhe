@@ -56,7 +56,10 @@ impl AudioEngine {
                     .and_then(|node| node.output),
                 Some(ChannelNamespace::DirectMaster) | None => None,
             }
-            .and_then(|id| self.mixer_params.bus_index(id));
+            .and_then(|id| match id {
+                yinhe_types::ChannelId::Bus(bus) => self.mixer_params.bus_index(bus),
+                _ => None,
+            });
             self.mixer.set_channel_output(dense, dest);
         }
         // Bus 主输出（嵌套 Bus）。参数层已做环检测；这里只映射稳定 ID → 下标。
@@ -67,7 +70,10 @@ impl AudioEngine {
             let dest = self
                 .mixer_params
                 .node_output(MixerChannelId::Bus(id))
-                .and_then(|target| self.mixer_params.bus_index(target));
+                .and_then(|target| match target {
+                    yinhe_types::ChannelId::Bus(bus) => self.mixer_params.bus_index(bus),
+                    _ => None,
+                });
             self.mixer.set_bus_output(i, dest);
         }
     }
@@ -171,7 +177,10 @@ impl AudioEngine {
         sends
             .iter()
             .filter_map(|s| {
-                self.mixer_params.bus_index(s.bus).map(|bus| ResolvedSend {
+                let yinhe_types::ChannelId::Bus(target) = s.target else {
+                    return None;
+                };
+                self.mixer_params.bus_index(target).map(|bus| ResolvedSend {
                     bus,
                     amount: s.amount,
                     pre_fader: s.pre_fader,
@@ -428,7 +437,7 @@ impl AudioEngine {
             let Some(node) = self.mixer_params.node_mut(channel.node_id()) else {
                 continue;
             };
-            if let Some(send) = node.sends.iter_mut().find(|s| s.bus == bus) {
+            if let Some(send) = node.sends.iter_mut().find(|s| s.target == yinhe_types::ChannelId::Bus(bus)) {
                 send.amount = amount;
             }
             let sends: Vec<SendParams> = node

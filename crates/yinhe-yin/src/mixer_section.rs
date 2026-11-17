@@ -22,6 +22,23 @@ use crate::error::YinError;
 const MIXER_SECTION_VERSION: u32 = 10;
 
 /// v9 混音参数快照：稳定 BusId，但仍是并行分表。
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+struct SendParamsV9 {
+    bus: BusId,
+    amount: f32,
+    pre_fader: bool,
+}
+
+impl SendParamsV9 {
+    fn into_current(self) -> SendParams {
+        SendParams {
+            target: ChannelId::Bus(self.bus),
+            amount: self.amount,
+            pre_fader: self.pre_fader,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct MixerParamsV9 {
     channels: Vec<StripParams>,
@@ -32,13 +49,13 @@ struct MixerParamsV9 {
     next_instrument_uid: u64,
     audio_channels: Vec<StripParams>,
     audio_inserts: Vec<Vec<InsertRef>>,
-    audio_sends: Vec<Vec<SendParams>>,
+    audio_sends: Vec<Vec<SendParamsV9>>,
     buses: Vec<StripParams>,
     bus_ids: Vec<BusId>,
     next_bus_id: BusId,
     bus_inserts: Vec<Vec<InsertRef>>,
-    bus_sends: Vec<Vec<SendParams>>,
-    sends: Vec<Vec<SendParams>>,
+    bus_sends: Vec<Vec<SendParamsV9>>,
+    sends: Vec<Vec<SendParamsV9>>,
     midi_outputs: Vec<Option<BusId>>,
     audio_outputs: Vec<Option<BusId>>,
 }
@@ -69,8 +86,12 @@ impl MixerParamsV9 {
                 id: ChannelId::Lc(LogicalChannelId(i as u32)),
                 strip: self.channels.get(i).copied().unwrap_or_default(),
                 inserts: self.channel_inserts.get(i).cloned().unwrap_or_default(),
-                sends: self.sends.get(i).cloned().unwrap_or_default(),
-                output: self.midi_outputs.get(i).copied().flatten(),
+                sends: self
+                    .sends
+                    .get(i)
+                    .map(|list| list.iter().copied().map(SendParamsV9::into_current).collect())
+                    .unwrap_or_default(),
+                output: self.midi_outputs.get(i).copied().flatten().map(ChannelId::Bus),
                 automation: Vec::new(),
                 freeze: None,
             })
@@ -80,8 +101,12 @@ impl MixerParamsV9 {
                 id: ChannelId::Lc(LogicalChannelId(CHANNEL_COUNT as u32 + i as u32)),
                 strip: self.audio_channels.get(i).copied().unwrap_or_default(),
                 inserts: self.audio_inserts.get(i).cloned().unwrap_or_default(),
-                sends: self.audio_sends.get(i).cloned().unwrap_or_default(),
-                output: self.audio_outputs.get(i).copied().flatten(),
+                sends: self
+                    .audio_sends
+                    .get(i)
+                    .map(|list| list.iter().copied().map(SendParamsV9::into_current).collect())
+                    .unwrap_or_default(),
+                output: self.audio_outputs.get(i).copied().flatten().map(ChannelId::Bus),
                 automation: Vec::new(),
                 freeze: None,
             })
@@ -99,7 +124,11 @@ impl MixerParamsV9 {
                 ),
                 strip: *strip,
                 inserts: self.bus_inserts.get(i).cloned().unwrap_or_default(),
-                sends: self.bus_sends.get(i).cloned().unwrap_or_default(),
+                sends: self
+                    .bus_sends
+                    .get(i)
+                    .map(|list| list.iter().copied().map(SendParamsV9::into_current).collect())
+                    .unwrap_or_default(),
                 output: None,
                 automation: Vec::new(),
                 freeze: None,
@@ -195,7 +224,7 @@ mod tests {
             audio_outputs: vec![None],
         };
         old.channels[3].gain = 0.25;
-        old.sends[3].push(SendParams {
+        old.sends[3].push(SendParamsV9 {
             bus: BusId(5),
             amount: 0.5,
             pre_fader: false,
@@ -216,8 +245,8 @@ mod tests {
         );
         let midi3 = loaded.midi_node(3).expect("midi 3");
         assert_eq!(midi3.gain, 0.25);
-        assert_eq!(midi3.sends[0].bus, BusId(5));
-        assert_eq!(midi3.output, Some(BusId(5)));
+        assert_eq!(midi3.sends[0].target, ChannelId::Bus(BusId(5)));
+        assert_eq!(midi3.output, Some(ChannelId::Bus(BusId(5))));
         assert_eq!(loaded.audio_node(0).expect("audio 0").gain, 0.4);
         assert_eq!(loaded.bus_id_at(0), Some(BusId(5)));
         assert_eq!(loaded.next_bus_id, BusId(6));
@@ -238,12 +267,12 @@ mod tests {
         mixer.ensure_len();
         let bus = mixer.add_bus().expect("bus");
         let send = SendParams {
-            bus,
+            target: ChannelId::Bus(bus),
             amount: 0.5,
             pre_fader: false,
         };
         mixer.set_node_sends(yinhe_types::MixerChannelId::Midi(0), vec![send]);
-        mixer.set_node_output(yinhe_types::MixerChannelId::Midi(0), Some(bus));
+        mixer.set_node_output(yinhe_types::MixerChannelId::Midi(0), Some(ChannelId::Bus(bus)));
         let bus_node = mixer.bus_node_mut(bus).expect("bus");
         bus_node.automation.push(yinhe_types::AutomationLane {
             target: yinhe_types::AutomationTarget::BusGain { bus },
@@ -282,8 +311,8 @@ mod tests {
         let loaded = decode_mixer_section(&section).expect("decode");
         assert_eq!(loaded.bus_count(), 1);
         assert_eq!(loaded.bus_id_at(0), Some(bus));
-        assert_eq!(loaded.midi_node(0).expect("midi 0").sends[0].bus, bus);
-        assert_eq!(loaded.midi_node(0).expect("midi 0").output, Some(bus));
+        assert_eq!(loaded.midi_node(0).expect("midi 0").sends[0].target, ChannelId::Bus(bus));
+        assert_eq!(loaded.midi_node(0).expect("midi 0").output, Some(ChannelId::Bus(bus)));
         assert_eq!(loaded.master.id, ChannelId::Master);
         assert_eq!(
             loaded.track_node(track_lc).expect("track lc").strip.gain,
