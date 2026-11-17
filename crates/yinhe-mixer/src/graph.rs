@@ -780,6 +780,19 @@ impl MixerGraph {
         let any_channel_solo = self.channels.iter().any(|c| c.strip.params.solo);
         let any_bus_solo = self.buses.iter().any(|b| b.strip.params.solo);
         let any_solo = any_channel_solo || any_bus_solo;
+        // 被 solo 的通道/总线往下游经过的 Bus 也要放行；否则通道 solo
+        // 后主输出到 Bus、或 solo 的 Bus 再进另一条 Bus 会被静音。
+        // 没有 solo 时不分配，避免常态下的实时线程分配。
+        let bus_solo_path = if any_solo {
+            bus_solo_paths(
+                &self.channels,
+                &self.channel_outputs,
+                &self.buses,
+                &self.bus_outputs,
+            )
+        } else {
+            Vec::new()
+        };
 
         Self::process_channels(
             &mut self.channels,
@@ -794,6 +807,7 @@ impl MixerGraph {
         Self::process_buses(
             &mut self.buses,
             &self.bus_outputs,
+            &bus_solo_path,
             &mut self.master,
             frames,
             any_solo,
@@ -927,6 +941,7 @@ impl MixerGraph {
     fn process_buses(
         buses: &mut [BusChain],
         bus_outputs: &[Option<usize>],
+        bus_solo_path: &[bool],
         master: &mut MasterChain,
         frames: usize,
         any_solo: bool,
@@ -966,7 +981,14 @@ impl MixerGraph {
                 if dst_i >= n || dst_i > src_i {
                     continue; // 顺序发送在 ② 处理
                 }
-                if !bus_send_allowed(any_solo, &src_params, buses[dst_i].strip.params.solo) {
+                let src_carrying =
+                    src_params.solo || bus_solo_path.get(src_i).copied().unwrap_or(false);
+                if !bus_send_allowed(
+                    any_solo,
+                    &src_params,
+                    buses[dst_i].strip.params.solo,
+                    src_carrying,
+                ) {
                     continue;
                 }
                 route_bus_send(buses, src_i, dst_i, true, send.amount, frames);
@@ -982,7 +1004,8 @@ impl MixerGraph {
                     insert.process(&mut chain.buffers.left, &mut chain.buffers.right);
                 }
                 let p = chain.strip.params;
-                let audible = !p.mute && (!any_solo || p.solo);
+                let carrying = p.solo || bus_solo_path.get(i).copied().unwrap_or(false);
+                let audible = !p.mute && (!any_solo || carrying);
                 if audible {
                     chain.meter.publish(
                         &chain.buffers.left[..frames],
@@ -1006,14 +1029,30 @@ impl MixerGraph {
                     if dst_i >= n || dst_i <= i {
                         continue; // 延迟发送已在 ① 处理
                     }
-                    if !bus_send_allowed(any_solo, &src_params, buses[dst_i].strip.params.solo) {
+                    let src_carrying =
+                        src_params.solo || bus_solo_path.get(i).copied().unwrap_or(false);
+                    if !bus_send_allowed(
+                        any_solo,
+                        &src_params,
+                        buses[dst_i].strip.params.solo,
+                        src_carrying,
+                    ) {
                         continue;
                     }
                     route_bus_send(buses, i, dst_i, false, send.amount, frames);
                 }
             }
             let p = buses[i].strip.params;
-            let audible = !p.mute && (!any_solo || p.solo);
+            let carrying = p.solo || bus_solo_path.get(i).copied().unwrap_or(false);
+            let audible = !p.mute && (!any_solo || carrying);
+            let dst_solo = bus_outputs
+                .get(i)
+                .copied()
+                .flatten()
+                .filter(|&dst| dst < n && dst != i)
+                .is_some_and(|dst| buses[dst].strip.params.solo);
+            // 目标 Bus 自己 solo 时，上游 Bus 的主输出也要放行（solo 拉上游）。
+            let pass_to_bus = !p.mute && (!any_solo || carrying || dst_solo);
             match bus_outputs
                 .get(i)
                 .copied()
@@ -1021,7 +1060,7 @@ impl MixerGraph {
                 .filter(|&dst| dst < n && dst != i)
             {
                 Some(dst) if dst > i => {
-                    if audible {
+                    if pass_to_bus {
                         let (before, after) = buses.split_at_mut(dst);
                         let src = &before[i].buffers;
                         let target = &mut after[0].buffers;
@@ -1047,9 +1086,22 @@ impl MixerGraph {
 
         // ④ 更新输出快照（所有发送读取完成后）：本块输出 → 下一块的「上一块」。
         //    静音/solo 不通过的总线写零，避免静音后逆序输出仍泄漏上一块信号。
-        for chain in buses.iter_mut() {
-            let audible = !chain.strip.params.mute && (!any_solo || chain.strip.params.solo);
-            if audible {
+        let dst_solo: Vec<bool> = bus_outputs
+            .iter()
+            .map(|output| {
+                output
+                    .as_ref()
+                    .copied()
+                    .filter(|&dst| dst < n)
+                    .is_some_and(|dst| buses[dst].strip.params.solo)
+            })
+            .collect();
+        for (i, chain) in buses.iter_mut().enumerate() {
+            let p = chain.strip.params;
+            let carrying = p.solo || bus_solo_path.get(i).copied().unwrap_or(false);
+            let keep =
+                !p.mute && (!any_solo || carrying || dst_solo.get(i).copied().unwrap_or(false));
+            if keep {
                 chain
                     .prev_out_l
                     .copy_from_slice(&chain.buffers.left[..frames]);
@@ -1115,10 +1167,77 @@ fn route_send(
     }
 }
 
-/// 总线发送是否可听：源 mute 不发；有 solo 时要求源或目标 solo
-/// （与通道发送 `route_send` 的判定一致）。
-fn bus_send_allowed(any_solo: bool, src: &StripParams, dst_solo: bool) -> bool {
-    !src.mute && (!any_solo || src.solo || dst_solo)
+/// 标记“被 solo 的信号需要经过”的总线。
+///
+/// 从 solo 的通道/总线出发，沿主输出和 send 向下游传播；遇到环用 visited
+/// 截断。标记的总线即使自身没有 solo，也要把上游 solo 的信号送到 Master。
+fn bus_solo_paths(
+    channels: &[ChannelChain],
+    channel_outputs: &[Option<usize>],
+    buses: &[BusChain],
+    bus_outputs: &[Option<usize>],
+) -> Vec<bool> {
+    fn mark(bus: usize, n: usize, marked: &mut [bool], stack: &mut Vec<usize>) {
+        if bus < n && !marked[bus] {
+            marked[bus] = true;
+            stack.push(bus);
+        }
+    }
+
+    let n = buses.len();
+    let mut marked = vec![false; n];
+    let mut stack = Vec::new();
+
+    // 种子 1：被 solo 的通道，沿主输出和 send 向下游。
+    for (ci, chain) in channels.iter().enumerate() {
+        let p = chain.strip.params;
+        if !p.solo || p.mute {
+            continue;
+        }
+        if let Some(bus) = channel_outputs.get(ci).copied().flatten() {
+            mark(bus, n, &mut marked, &mut stack);
+        }
+        for send in &chain.sends {
+            if send.amount > 0.0 {
+                mark(send.bus, n, &mut marked, &mut stack);
+            }
+        }
+    }
+
+    // 种子 2：被 solo 的总线，沿主输出和 send 向下游。
+    for (i, chain) in buses.iter().enumerate() {
+        let p = chain.strip.params;
+        if !p.solo || p.mute {
+            continue;
+        }
+        if let Some(dst) = bus_outputs.get(i).copied().flatten() {
+            mark(dst, n, &mut marked, &mut stack);
+        }
+        for send in &chain.sends {
+            if send.amount > 0.0 {
+                mark(send.bus, n, &mut marked, &mut stack);
+            }
+        }
+    }
+
+    while let Some(i) = stack.pop() {
+        if let Some(dst) = bus_outputs.get(i).copied().flatten() {
+            mark(dst, n, &mut marked, &mut stack);
+        }
+        for send in &buses[i].sends {
+            if send.amount > 0.0 {
+                mark(send.bus, n, &mut marked, &mut stack);
+            }
+        }
+    }
+
+    marked
+}
+
+/// 总线发送是否可听：源 mute 不发；有 solo 时要求源在 solo 路径上、
+/// 源自己 solo，或目标 solo（与通道发送 `route_send` 的判定一致）。
+fn bus_send_allowed(any_solo: bool, src: &StripParams, dst_solo: bool, src_carrying: bool) -> bool {
+    !src.mute && (!any_solo || src_carrying || dst_solo)
 }
 
 /// 把 `src_i` 总线的输出按 `amount` 累加进 `dst_i` 总线的输入缓冲。
@@ -1641,6 +1760,120 @@ mod tests {
         // 通道声像 → bus0 输入；bus0 声像 → master。直达路径必须消失。
         let single = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
         let expect = single * core::f32::consts::FRAC_1_SQRT_2;
+        assert!((l[3] - expect).abs() < 1e-6, "got {}", l[3]);
+    }
+
+    /// 通道 solo 后主输出到 Bus：Bus 不是 solo，但它是 solo 信号的下游，
+    /// 必须放行，否则用户 solo 的通道会静音。
+    #[test]
+    fn channel_solo_keeps_its_bus_path() {
+        let mut g = graph_with(
+            &[StripParams {
+                solo: true,
+                ..StripParams::default()
+            }],
+            4,
+        );
+        g.resize_buses(1, 4, &[StripParams::default()]);
+        g.set_channel_output(0, Some(0));
+        fill(&mut g, 0, 0.5);
+        let (l, _r) = g.process();
+        let channel = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
+        let expect = channel * core::f32::consts::FRAC_1_SQRT_2;
+        assert!((l[3] - expect).abs() < 1e-6, "got {}", l[3]);
+    }
+
+    /// 通道 solo 后经过两级 Bus：下游每一级都要放行。
+    #[test]
+    fn channel_solo_keeps_nested_bus_path() {
+        let mut g = graph_with(
+            &[StripParams {
+                solo: true,
+                ..StripParams::default()
+            }],
+            4,
+        );
+        g.resize_buses(2, 4, &[StripParams::default(), StripParams::default()]);
+        g.set_channel_output(0, Some(0));
+        g.set_bus_output(0, Some(1));
+        fill(&mut g, 0, 0.5);
+        let (l, _r) = g.process();
+        let single = core::f32::consts::FRAC_1_SQRT_2;
+        let expect = 0.5 * single * single * single;
+        assert!((l[3] - expect).abs() < 1e-6, "got {}", l[3]);
+    }
+
+    /// 通道 solo 的 send 到 Bus：Bus 也要放行 send 路径。
+    #[test]
+    fn channel_solo_keeps_its_send_path() {
+        let mut g = graph_with(
+            &[StripParams {
+                solo: true,
+                gain: 0.0,
+                ..StripParams::default()
+            }],
+            4,
+        );
+        g.resize_buses(1, 4, &[StripParams::default()]);
+        g.set_sends(
+            0,
+            vec![ResolvedSend {
+                bus: 0,
+                amount: 1.0,
+                pre_fader: true,
+            }],
+        );
+        fill(&mut g, 0, 0.5);
+        let (l, _r) = g.process();
+        let expect = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
+        assert!((l[3] - expect).abs() < 1e-6, "got {}", l[3]);
+    }
+
+    /// Bus solo 后主输出到另一条 Bus：下游 Bus 也要放行。
+    #[test]
+    fn bus_solo_keeps_nested_bus_path() {
+        let mut g = graph_with(&[StripParams::default()], 4);
+        g.resize_buses(
+            2,
+            4,
+            &[
+                StripParams {
+                    solo: true,
+                    ..StripParams::default()
+                },
+                StripParams::default(),
+            ],
+        );
+        g.set_channel_output(0, Some(0));
+        g.set_bus_output(0, Some(1));
+        fill(&mut g, 0, 0.5);
+        let (l, _r) = g.process();
+        let single = core::f32::consts::FRAC_1_SQRT_2;
+        let expect = 0.5 * single * single * single;
+        assert!((l[3] - expect).abs() < 1e-6, "got {}", l[3]);
+    }
+
+    /// 通道 solo 时，同 Bus 的其他通道不能被混进来。
+    #[test]
+    fn channel_solo_excludes_other_channel_on_bus() {
+        let mut g = graph_with(
+            &[
+                StripParams {
+                    solo: true,
+                    ..StripParams::default()
+                },
+                StripParams::default(),
+            ],
+            4,
+        );
+        g.resize_buses(1, 4, &[StripParams::default()]);
+        g.set_channel_output(0, Some(0));
+        g.set_channel_output(1, Some(0));
+        fill(&mut g, 0, 0.5);
+        fill(&mut g, 1, 0.5);
+        let (l, _r) = g.process();
+        let channel = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
+        let expect = channel * core::f32::consts::FRAC_1_SQRT_2;
         assert!((l[3] - expect).abs() < 1e-6, "got {}", l[3]);
     }
 
