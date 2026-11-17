@@ -222,10 +222,10 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
             Some(TrackAudioTarget::DirectMaster { .. }) => 2usize,
             None => 0,
         };
-        // DirectMaster 的音频旁路尚未接入；先不暴露不可用的选项。
         let options = vec![
             (0usize, "CH".to_string()),
             (1usize, crate::mix::ap_label(global)),
+            (2usize, "--- (Master)".to_string()),
         ];
         let mut sel = current;
         crate::widgets::rows::panel_row(ui, t!("track.output").as_ref(), |ui| {
@@ -241,6 +241,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
             let changed = match sel {
                 0 => doc.link_track_to_own_lc(track_idx),
                 1 => doc.link_track_to_ap(track_idx, ApGroupId::new(u16::from(global))),
+                2 => doc.link_track_to_direct_master(track_idx),
                 _ => false,
             };
             if changed {

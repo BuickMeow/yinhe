@@ -217,6 +217,33 @@ impl Document {
         true
     }
 
+    /// 把 MIDI 轨设为 DirectMaster（`---`）：不创建 LC/AP 通道，音频直接进 Master。
+    pub fn link_track_to_direct_master(&mut self, track_idx: usize) -> bool {
+        let Some(track) = self.data.model.tracks.get(track_idx) else {
+            return false;
+        };
+        if track.kind != TrackKind::Midi {
+            return false;
+        }
+        let channel = track.global_channel();
+        if track.audio_target
+            == Some(TrackAudioTarget::DirectMaster {
+                rack: Some(RackId::new(u16::from(channel))),
+            })
+        {
+            return false;
+        }
+        let model = Arc::make_mut(&mut self.data.model);
+        let track = Arc::make_mut(&mut model.tracks[track_idx]);
+        track.set_audio_target(TrackAudioTarget::DirectMaster {
+            rack: Some(RackId::new(u16::from(channel))),
+        });
+        self.ensure_rack_track_lcs();
+        self.data.bump_revision();
+        self.mark_mixer_dirty();
+        true
+    }
+
     /// 把 MIDI 轨解链回自己的 LC。外部单输出插件 Rack 不能按轨拆分，返回 false。
     pub fn link_track_to_own_lc(&mut self, track_idx: usize) -> bool {
         let Some(track) = self.data.model.tracks.get(track_idx) else {
@@ -515,6 +542,19 @@ mod tests {
         assert!(!doc.set_rack_output_mode(0, RackOutputMode::PerTrack));
         assert_eq!(doc.rack_output_mode(0), RackOutputMode::Shared);
         assert!(doc.data.model.tracks[1].lc.is_none());
+    }
+
+    #[test]
+    fn midi_track_can_link_to_direct_master() {
+        let mut doc = Document::empty();
+        assert!(doc.link_track_to_direct_master(1));
+        let track = &doc.data.model.tracks[1];
+        assert!(track.lc.is_none());
+        assert!(matches!(
+            track.effective_audio_target(),
+            Some(TrackAudioTarget::DirectMaster { .. })
+        ));
+        assert!(doc.mixer.ap_for_midi(0).is_none());
     }
 
     #[test]

@@ -445,13 +445,27 @@ impl AudioEngine {
         let Some(cs) = self.cpu_synth.as_mut() else {
             return;
         };
-        let count = self
-            .yin_model
-            .as_ref()
-            .map(|model| model.tracks.len())
-            .unwrap_or(0);
+        let Some(model) = self.yin_model.as_ref() else {
+            return;
+        };
+        let count = model.tracks.len();
         let map = (0..count)
-            .map(|track| self.channel_layout.track_lc_dense(track))
+            .map(|track| {
+                let direct = model.tracks.get(track).is_some_and(|t| {
+                    t.kind == yinhe_core::TrackKind::Midi
+                        && matches!(
+                            t.effective_audio_target(),
+                            Some(yinhe_core::TrackAudioTarget::DirectMaster { .. })
+                        )
+                });
+                if direct {
+                    self.channel_layout
+                        .direct_master_dense()
+                        .unwrap_or(u32::MAX)
+                } else {
+                    self.channel_layout.track_lc_dense(track)
+                }
+            })
             .collect();
         cs.set_track_output_dense(map);
         self.sync_rack_outputs();

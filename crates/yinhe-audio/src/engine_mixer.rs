@@ -59,7 +59,7 @@ impl AudioEngine {
                     .mixer_params
                     .track_node(lc)
                     .and_then(|node| node.output),
-                None => None,
+                Some(ChannelNamespace::DirectMaster) | None => None,
             }
             .and_then(|id| self.mixer_params.bus_index(id));
             self.mixer.set_channel_output(dense, dest);
@@ -103,6 +103,7 @@ impl AudioEngine {
                     ChannelNamespace::TrackLc { lc, .. } => {
                         self.mixer_params.track_node(lc).map(|node| &node.sends)
                     }
+                    ChannelNamespace::DirectMaster => None,
                 })
                 .map(|list| self.resolve_sends(list))
                 .unwrap_or_default();
@@ -197,6 +198,9 @@ impl AudioEngine {
         let d = dense as u32;
         let audio_base = self.channel_layout.midi_compacted();
         let track_base = audio_base + self.channel_layout.audio_channels().len() as u32;
+        if Some(d) == self.channel_layout.direct_master_dense() {
+            return Some(ChannelNamespace::DirectMaster);
+        }
         if d >= track_base {
             let idx = (d - track_base) as usize;
             self.channel_layout
@@ -544,7 +548,7 @@ impl AudioEngine {
                     .track_node(lc)
                     .map(|node| node.strip)
                     .unwrap_or_default(),
-                None => StripParams::default(),
+                Some(ChannelNamespace::DirectMaster) | None => StripParams::default(),
             })
             .collect()
     }
