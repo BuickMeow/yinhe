@@ -915,15 +915,12 @@ impl Document {
                     target,
                     tick,
                 } => {
-                    let lane = self
-                        .mixer
-                        .bus_node(bus)
-                        .and_then(|node| {
-                            node.automation
-                                .iter()
-                                .find(|lane| lane.target == target)
-                                .or_else(|| node.automation.get(lane_idx))
-                        });
+                    let lane = self.mixer.bus_node(bus).and_then(|node| {
+                        node.automation
+                            .iter()
+                            .find(|lane| lane.target == target)
+                            .or_else(|| node.automation.get(lane_idx))
+                    });
                     let evt = lane.and_then(|l| l.events.iter().find(|e| e.tick == tick));
                     if let Some(evt) = evt {
                         let next = match evt.shape {
