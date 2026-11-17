@@ -3,7 +3,7 @@
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_mixer::{SendParams, StripParams};
-use yinhe_types::{BusId, LogicalChannelId};
+use yinhe_types::{Audibility, BusId, LogicalChannelId};
 
 use crate::widgets::knob::{knob, knob_centered};
 use crate::widgets::meter::{DB_MAX, DB_MIN, db_to_gain, gain_at_frac, gain_frac, gain_to_db};
@@ -526,34 +526,39 @@ fn ms_column(ui: &mut egui::Ui, params: &StripParams, width: f32) -> Option<Stri
         egui::Layout::top_down(egui::Align::Center),
         |ui| {
             let mut p = *params;
-            let mut changed = false;
-            let m_resp = toggle_button(ui, "M", p.mute, crate::theme::mute_active());
-            crate::widgets::hint::hover(ui.ctx(), &m_resp, t!("hint.mix.mute"));
-            let slide_id = egui::Id::unique("mix_ms_slide");
-            if let Some(target) =
-                crate::widgets::slide_toggle::slide_toggle(ui, slide_id, 0, m_resp.rect, p.mute)
-                && p.mute != target
-            {
-                p.mute = target;
-                changed = true;
+            let audibility = p.audibility();
+            let (label, active, color) = match audibility {
+                Audibility::Normal => ("M", false, crate::theme::mute_active()),
+                Audibility::Muted => ("M", true, crate::theme::mute_active()),
+                Audibility::Soloed => ("S", true, crate::theme::solo_active()),
+            };
+            let resp = toggle_button(ui, label, active, color);
+            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.mute"));
+            if resp.clicked() {
+                let next = if audibility == Audibility::Muted {
+                    Audibility::Normal
+                } else {
+                    Audibility::Muted
+                };
+                p.set_audibility(next);
+                return Some(p);
             }
-            ui.add_space(GAP);
-            let s_resp = toggle_button(ui, "S", p.solo, crate::theme::solo_active());
-            crate::widgets::hint::hover(ui.ctx(), &s_resp, t!("hint.mix.solo"));
-            if let Some(target) =
-                crate::widgets::slide_toggle::slide_toggle(ui, slide_id, 1, s_resp.rect, p.solo)
-                && p.solo != target
-            {
-                p.solo = target;
-                changed = true;
+            if resp.secondary_clicked() {
+                let next = if audibility == Audibility::Soloed {
+                    Audibility::Normal
+                } else {
+                    Audibility::Soloed
+                };
+                p.set_audibility(next);
+                return Some(p);
             }
-            changed.then_some(p)
+            None
         },
     )
     .inner
 }
 
-/// 声像旋钮（右列）：旋钮居中，左右分别标 L / R。
+/// 声像旋钮/// 声像旋钮（右列）：旋钮居中，左右分别标 L / R。
 /// 返回 `Some(新 pan)` 表示被改动。
 fn pan_knob(
     ui: &mut egui::Ui,

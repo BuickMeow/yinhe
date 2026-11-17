@@ -548,6 +548,18 @@ pub fn show(
         );
 
         if audio_dirty {
+            // Track solo 是内容门：进入 Track solo 时清空 Channel solo，
+            // 避免两层 solo 叠加。清空后把受影响的通道参数推给引擎。
+            if doc.edit.track_overrides.iter().any(|o| o.soloed) {
+                for node in doc.clear_channel_solos() {
+                    let params = doc.mixer.node_strip(node);
+                    if let Some(audio) = audio {
+                        audio
+                            .handle
+                            .send(yinhe_audio::AudioCommand::SetNodeStrip { node, params });
+                    }
+                }
+            }
             crate::right_panel::info_panel::send_skip_tracks(doc, audio);
         }
         // AM lane M/S 试听开关：只换动态掩码 + 异步 chase（不重建模型、不 seek），

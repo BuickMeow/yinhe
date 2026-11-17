@@ -118,6 +118,29 @@ impl From<u16> for BusId {
     }
 }
 
+/// 听感三态：正常 / 静音 / 独奏。
+///
+/// 不能用两个 bool：同一对象不能同时 muted + soloed；UI 单按钮也直接映射
+/// 这个枚举。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Audibility {
+    #[default]
+    Normal,
+    Muted,
+    Soloed,
+}
+
+impl Audibility {
+    pub const fn is_muted(self) -> bool {
+        matches!(self, Self::Muted)
+    }
+
+    pub const fn is_soloed(self) -> bool {
+        matches!(self, Self::Soloed)
+    }
+}
+
 /// AP 编组的稳定身份。
 ///
 /// 当前上限 256（A01..P16），u16 预留扩展；AP 必须绑定一个 MIDI 通道。

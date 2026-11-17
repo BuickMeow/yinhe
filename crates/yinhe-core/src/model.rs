@@ -10,8 +10,8 @@ use crate::clip::Clip;
 use crate::events::NoteEvent;
 use crate::tempo_map::{TempoMap, TempoSegment, mpq_from_bpm, recompute_tempo_start_times};
 use yinhe_types::{
-    ApGroupId, AutomationLane, AutomationTarget, KEY_COUNT, LogicalChannelId, NoteBucket, PcEvent,
-    RackId,
+    ApGroupId, Audibility, AutomationLane, AutomationTarget, KEY_COUNT, LogicalChannelId,
+    NoteBucket, PcEvent, RackId,
 };
 
 // =========================================================
@@ -496,6 +496,21 @@ pub enum TrackAudioTarget {
 }
 
 impl TrackData {
+    pub fn audibility(&self) -> Audibility {
+        if self.soloed {
+            Audibility::Soloed
+        } else if self.muted {
+            Audibility::Muted
+        } else {
+            Audibility::Normal
+        }
+    }
+
+    pub fn set_audibility(&mut self, audibility: Audibility) {
+        self.muted = audibility == Audibility::Muted;
+        self.soloed = audibility == Audibility::Soloed;
+    }
+
     /// 该轨是否允许承载某类内容（权限唯一入口）。
     pub fn can_hold(&self, content: TrackContent) -> bool {
         self.kind.allows(content)

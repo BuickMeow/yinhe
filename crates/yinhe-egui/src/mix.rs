@@ -363,13 +363,24 @@ impl App {
         node: MixerChannelId,
         params: StripParams,
     ) {
-        self.workspace.documents[idx]
-            .mixer_mut()
-            .set_node_strip(node, params);
+        let audibility = params.audibility();
+        let mut skip = None;
+        {
+            let doc = &mut self.workspace.documents[idx];
+            if doc.mixer.node_strip(node).audibility() != audibility {
+                // 单按钮三态：Channel solo 会清空 Track solo，需要同步 skip mask。
+                doc.set_channel_audibility(node, audibility);
+                skip = Some(doc.compute_skip_mask());
+            }
+            doc.mixer_mut().set_node_strip(node, params);
+        }
         if let Some(audio) = &self.audio_state.handle {
             audio
                 .handle
                 .send(yinhe_audio::AudioCommand::SetNodeStrip { node, params });
+            if let Some(skip) = skip {
+                audio.handle.set_skip_tracks(skip);
+            }
         }
     }
 

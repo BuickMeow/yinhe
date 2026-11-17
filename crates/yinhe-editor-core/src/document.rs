@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use yinhe_core::{TrackData, YinModel};
 use yinhe_mixer::MixerParams;
-use yinhe_types::TRACK_PALETTE;
+use yinhe_types::{Audibility, MixerChannelId, TRACK_PALETTE};
 use yinhe_yin::{MappingFile, ProjectFile};
 
 use crate::edit_state::{EditState, TrackCache};
@@ -43,6 +43,23 @@ pub mod track_ops;
 pub struct TrackOverride {
     pub muted: bool,
     pub soloed: bool,
+}
+
+impl TrackOverride {
+    pub fn audibility(&self) -> Audibility {
+        if self.soloed {
+            Audibility::Soloed
+        } else if self.muted {
+            Audibility::Muted
+        } else {
+            Audibility::Normal
+        }
+    }
+
+    pub fn set_audibility(&mut self, audibility: Audibility) {
+        self.muted = audibility == Audibility::Muted;
+        self.soloed = audibility == Audibility::Soloed;
+    }
 }
 
 /// Per-document state: persistent data + editing state + undo history.
@@ -739,6 +756,71 @@ impl Document {
         self.ensure_aps();
     }
 
+    /// 设置 Track 的三态听感。Track solo 是内容门；进入 Track solo 时清空
+    /// 所有 Channel solo，避免两层 solo 叠加。
+    pub fn set_track_audibility(&mut self, idx: usize, audibility: Audibility) -> bool {
+        let Some(ov) = self.edit.track_overrides.get_mut(idx) else {
+            return false;
+        };
+        if ov.audibility() == audibility {
+            return false;
+        }
+        ov.set_audibility(audibility);
+        if audibility == Audibility::Soloed {
+            let _ = self.clear_channel_solos();
+        }
+        true
+    }
+
+    /// 设置 Channel 的三态听感。进入 Channel solo 时清空所有 Track solo。
+    pub fn set_channel_audibility(&mut self, node: MixerChannelId, audibility: Audibility) -> bool {
+        if self.mixer.node_strip(node).audibility() == audibility {
+            return false;
+        }
+        let mut strip = self.mixer.node_strip(node);
+        strip.set_audibility(audibility);
+        if !self.mixer.set_node_strip(node, strip) {
+            return false;
+        }
+        if audibility == Audibility::Soloed {
+            self.clear_track_solos();
+        }
+        self.mark_mixer_dirty();
+        true
+    }
+
+    /// 清空所有 Channel solo，返回被改动的通道（用于推引擎）。
+    pub fn clear_channel_solos(&mut self) -> Vec<MixerChannelId> {
+        let mut changed = Vec::new();
+        let nodes = self
+            .mixer
+            .channels
+            .iter_mut()
+            .chain(self.mixer.audio_channels.iter_mut())
+            .chain(self.mixer.track_channels.iter_mut())
+            .chain(self.mixer.buses.iter_mut());
+        for node in nodes {
+            if node.solo {
+                node.solo = false;
+                if let Some(channel) = node.id.channel_id() {
+                    changed.push(channel);
+                }
+            }
+        }
+        if !changed.is_empty() {
+            self.mark_mixer_dirty();
+        }
+        changed
+    }
+
+    fn clear_track_solos(&mut self) {
+        for ov in &mut self.edit.track_overrides {
+            if ov.soloed {
+                ov.soloed = false;
+            }
+        }
+    }
+
     /// 合并 mute/solo 状态为音频引擎用的 skip mask。
     ///
     /// 规则：有任意 solo 时，只有 soloed 轨道不 skip；无 solo 时，muted 轨道 skip。
@@ -957,6 +1039,28 @@ mod tests {
         assert!(!mask[1]);
         assert!(!mask[2]);
         assert!(mask[3]);
+    }
+
+    #[test]
+    fn track_solo_clears_channel_solos_and_vice_versa() {
+        let mut doc = Document::empty();
+        let node = MixerChannelId::Midi(0);
+        assert!(doc.set_channel_audibility(node, Audibility::Soloed));
+        assert_eq!(doc.mixer.node_strip(node).audibility(), Audibility::Soloed);
+
+        assert!(doc.set_track_audibility(1, Audibility::Soloed));
+        assert_eq!(
+            doc.mixer.node_strip(node).audibility(),
+            Audibility::Normal,
+            "Track solo 必须清空 Channel solo"
+        );
+
+        assert!(doc.set_channel_audibility(MixerChannelId::Midi(1), Audibility::Soloed));
+        assert_eq!(
+            doc.edit.track_overrides[1].audibility(),
+            Audibility::Normal,
+            "Channel solo 必须清空 Track solo"
+        );
     }
 
     #[test]

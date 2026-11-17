@@ -770,63 +770,51 @@ pub(crate) fn show(
                 let muted = track_overrides.get(idx).map(|o| o.muted).unwrap_or(false);
                 let soloed = track_overrides.get(idx).map(|o| o.soloed).unwrap_or(false);
 
-                let gap = 2.0;
-                let total_btn_w = 2.0 * btn_size.x + gap;
-                // 电平表贴右缘（上右下等边距），M/S 让位到其左侧。
+                // 单按钮三态：左键正常/静音，右键正常/独奏。
+                let total_btn_w = btn_size.x;
                 let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
                 let meter_left = meter_right - LEVEL_METER_W;
                 let btn_x_start = meter_left - LEVEL_METER_GAP - total_btn_w;
                 let btn_y = badge_rect.center().y - btn_size.y * 0.5;
+                let ms_rect = egui::Rect::from_min_size(egui::pos2(btn_x_start, btn_y), btn_size);
+                no_drag_rects.push(ms_rect);
 
-                let m_rect = egui::Rect::from_min_size(egui::pos2(btn_x_start, btn_y), btn_size);
-                let s_rect = egui::Rect::from_min_size(
-                    egui::pos2(btn_x_start + btn_size.x + gap, btn_y),
-                    btn_size,
-                );
-
-                no_drag_rects.push(m_rect);
-                no_drag_rects.push(s_rect);
-                let m_resp = draw::draw_inline_button(
+                let (label, active, color) = if soloed {
+                    ("S", true, crate::theme::solo_active())
+                } else {
+                    ("M", muted, crate::theme::mute_active())
+                };
+                let resp = draw::draw_inline_button(
                     ui,
                     &painter,
-                    m_rect,
-                    "M",
-                    muted,
-                    crate::theme::mute_active(),
-                    egui::Id::unique(("track_btn_m", idx)),
+                    ms_rect,
+                    label,
+                    active,
+                    color,
+                    egui::Id::unique(("track_btn_ms", idx)),
                 );
-                let s_resp = draw::draw_inline_button(
-                    ui,
-                    &painter,
-                    s_rect,
-                    "S",
-                    soloed,
-                    crate::theme::solo_active(),
-                    egui::Id::unique(("track_btn_s", idx)),
-                );
-
-                crate::widgets::hint::hover(ui.ctx(), &m_resp, t!("hint.arrange.track_mute"));
-                crate::widgets::hint::hover(ui.ctx(), &s_resp, t!("hint.arrange.track_solo"));
-
-                // 按住 M/S 滑过多个轨道：统一套用按下瞬间的目标状态。
-                let slide_id = egui::Id::unique("arr_track_ms_slide");
-                if let Some(target) =
-                    crate::widgets::slide_toggle::slide_toggle(ui, slide_id, 0, m_rect, muted)
-                    && muted != target
-                {
+                crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.arrange.track_mute"));
+                if resp.clicked() || resp.drag_started() {
                     ensure_ms_undo_snapshot(ui, track_overrides);
                     if let Some(ov) = track_overrides.get_mut(idx) {
-                        ov.muted = target;
+                        ov.set_audibility(if soloed {
+                            yinhe_types::Audibility::Muted
+                        } else if muted {
+                            yinhe_types::Audibility::Normal
+                        } else {
+                            yinhe_types::Audibility::Muted
+                        });
                         audio_dirty = true;
                     }
                 }
-                if let Some(target) =
-                    crate::widgets::slide_toggle::slide_toggle(ui, slide_id, 1, s_rect, soloed)
-                    && soloed != target
-                {
+                if resp.secondary_clicked() {
                     ensure_ms_undo_snapshot(ui, track_overrides);
                     if let Some(ov) = track_overrides.get_mut(idx) {
-                        ov.soloed = target;
+                        ov.set_audibility(if soloed {
+                            yinhe_types::Audibility::Normal
+                        } else {
+                            yinhe_types::Audibility::Soloed
+                        });
                         audio_dirty = true;
                     }
                 }

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use yinhe_types::{
-    ApGroupId, BusId, ChannelId, LogicalChannelId, MixerChannelId, MixerNodeId, RackId,
+    ApGroupId, Audibility, BusId, ChannelId, LogicalChannelId, MixerChannelId, MixerNodeId, RackId,
     TRACK_LC_BASE,
 };
 
@@ -39,6 +39,24 @@ const fn default_gain() -> f32 {
 
 const fn default_instrument_uid() -> u64 {
     1
+}
+
+impl StripParams {
+    /// 三态听感：Soloed 优先于 Muted（旧工程两者都为 true 时 solo 生效）。
+    pub fn audibility(&self) -> Audibility {
+        if self.solo {
+            Audibility::Soloed
+        } else if self.mute {
+            Audibility::Muted
+        } else {
+            Audibility::Normal
+        }
+    }
+
+    pub fn set_audibility(&mut self, audibility: Audibility) {
+        self.mute = audibility == Audibility::Muted;
+        self.solo = audibility == Audibility::Soloed;
+    }
 }
 
 impl Default for StripParams {
