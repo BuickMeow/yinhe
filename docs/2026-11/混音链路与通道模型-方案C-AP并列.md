@@ -361,6 +361,7 @@ enum ChannelSource {
 
 struct SendParams {
     target: ChannelId,
+    /// 0..1；0 表示 OFF（-inf dB），不要保留 0 发送条目。
     amount: f32,
     pre_fader: bool,
 }
@@ -673,6 +674,81 @@ Track -> Channel（LC 或 AP 通道）-> Channel ... -> Master
 
 需要分组音频就用 send 到一个 Bus 角色的 LC；需要分组 MIDI/乐器就用 AP。
 不要让 LC 再包一层 LC。这样 freeze、自动化、路由都只有一个维度。
+
+### 5.8 SEND 是音频，不是 MIDI
+
+SEND 只搬运**音频**，不会把音符送到目标通道的乐器。
+
+```text
+Track A（无乐器，只有音符）
+Track B（无乐器，只有音符）
+        │
+        └─ SEND（音频）─> CH10（有乐器）
+```
+
+结果：CH10 的乐器**不会**因为收到 SEND 而播放 A/B 的音符。
+A/B 没有自己的音频源，所以 SEND 送过去的是静音；CH10 仍然只播放它自己的
+MIDI。
+
+要让 A/B 的音符去弹 CH10 的乐器，需要的是 **MIDI 链接到 AP**：
+
+```text
+Track A ─┐
+Track B ─┼─ MIDI ─> AP10（共享 Rack/乐器）─> AP 通道
+```
+
+注意默认值：
+
+- C 的默认 LC Rack 使用内置音源，所以普通 Track 一般是有声的；
+- 只有显式把 LC Rack 清空/禁用、且没有其他源时，才会出现“有音符但无音频”；
+- AP 通道的乐器只处理 MIDI，不处理 SEND 进来的音频；SEND 进来的是音频，
+  会与 AP 通道自己的输出相加，不会触发 AP 乐器。
+
+### 5.9 `-inf dB` 的 SEND 必须是 OFF
+
+`-inf dB` 不是“很小的声音”，而是 **0 发送、OFF 状态**。
+
+规则：
+
+- UI 上 SEND 在 `-inf` 时不创建 `SendParams` 条目；
+- 从 `-inf` 往上拖才创建发送；拖回 `-inf` 删除条目；
+- 引擎只处理 `amount > 0` 的发送，0 发送直接跳过；
+- 因此“显示了很多 SEND 旋钮”不会带来多轨性能开销，只有真正激活的发送
+  才有音频求和成本；
+- 不要用 `f32::MIN_POSITIVE` 之类的极小值表示 OFF，避免每块仍做无意义
+  的乘加和缓冲遍历。
+
+### 5.10 Insert 是串行效果器链
+
+Insert 就是挂在**当前通道**上的效果器链，不是乐器，也不是发送。
+
+```text
+源（LC Rack / 音频输入 / AP Rack）
+  -> insert 1 -> insert 2 -> insert 3
+  -> fader
+  -> pre/post fader send
+  -> output / Master
+```
+
+区别：
+
+| 概念 | 作用 | 位置 |
+|---|---|---|
+| Rack 乐器 | 产生声音 | 通道源 |
+| Insert | 处理当前通道声音，100% 串行 | 源之后、推子之前 |
+| Send | 把当前通道声音并行送到另一个通道 | insert/推子之后（pre/post 可选） |
+| Bus 通道 | 汇总多个通道的音频 | 目标通道 |
+
+Insert 可以是 CLAP/VST3 效果器，也可以是内置效果器；它们都实现
+`InsertProcessor`。AP 通道、普通 LC、纯汇入 Channel、Master 都有自己的
+insert 链。
+
+Freeze 和 insert 的关系：
+
+- freeze 捕获的是 **pre-LC 源**，insert 仍实时处理；
+- 所以冻结后仍可调 insert；
+- Bus 通道没有自己的源，insert 处理的是汇入音频，因此 Bus 不做单通道
+  freeze。
 
 ## 6. 自动化与普通 CC 的合并
 
