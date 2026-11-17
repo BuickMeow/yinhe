@@ -213,6 +213,7 @@ pub fn show(
     show_pianoroll_in_arrange: &mut bool,
     show_bottom_dock: &mut bool,
     show_mixer_panel: &mut bool,
+    show_both_ars: &mut bool,
     show_meter_panel: &mut bool,
     float_pianoroll: &mut bool,
     float_bottom_dock: &mut bool,
@@ -471,6 +472,14 @@ pub fn show(
                             hovered: mixer_resp.hovered(),
                             secondary_clicked: mixer_resp.secondary_clicked(),
                         });
+                    }
+
+                    // ── 轨道 AR / 通道 AR 共存开关（ARRANGE / MIX）──
+                    if matches!(*view_mode, ViewMode::Arrange | ViewMode::Mix) {
+                        let resp = ui.selectable_label(*show_both_ars, "AR+CH");
+                        if resp.clicked() {
+                            *show_both_ars = !*show_both_ars;
+                        }
                     }
 
                     // ── Spacer: push right icons to the right edge ──

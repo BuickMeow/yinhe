@@ -142,6 +142,8 @@ pub struct App {
     pub(crate) bottom_dock_height: f32,
     /// MIX 底部是否显示混音台面板（钢琴卷帘/设备链/混音台三选一之一，持久化）。
     pub(crate) show_mixer_panel: bool,
+    /// 同时显示轨道 AR 与通道 AR（方案 C）。
+    pub(crate) show_both_ars: bool,
     /// MIX 底部混音台面板高度（px，拖拽调整后持久化；自动模式下由总线数决定）。
     pub(crate) mix_height: f32,
     /// 混音台高度自动随总线数扩展；用户拖拽分割条后转为手动。
@@ -408,6 +410,7 @@ impl App {
             show_bottom_dock: audio_settings.layout.show_bottom_dock,
             bottom_dock_height: audio_settings.layout.bottom_dock_height,
             show_mixer_panel: audio_settings.layout.show_mixer_panel,
+            show_both_ars: audio_settings.layout.show_both_ars,
             mix_height: audio_settings.layout.mix_height,
             mix_height_auto: audio_settings.layout.mix_height_auto,
             show_meter_panel: audio_settings.layout.show_meter_panel

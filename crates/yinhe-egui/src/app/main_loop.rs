@@ -811,6 +811,7 @@ impl eframe::App for App {
             &mut self.show_pianoroll_in_arrange,
             &mut self.show_bottom_dock,
             &mut self.show_mixer_panel,
+            &mut self.show_both_ars,
             &mut self.show_meter_panel,
             &mut self.float_pianoroll,
             &mut self.float_bottom_dock,
@@ -832,6 +833,10 @@ impl eframe::App for App {
             self.layout_needs_save = true;
         }
         if self.show_mixer_panel != self.audio_settings.layout.show_mixer_panel {
+            self.layout_needs_save = true;
+        }
+        if self.show_both_ars != self.audio_settings.layout.show_both_ars {
+            self.audio_settings.layout.show_both_ars = self.show_both_ars;
             self.layout_needs_save = true;
         }
         if self.show_meter_panel != self.audio_settings.layout.show_meter_panel {
