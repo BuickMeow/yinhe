@@ -69,7 +69,7 @@ pub(crate) fn audio_label(ch: u16) -> String {
 }
 
 pub(crate) fn lc_label(display: u32) -> String {
-    format!("CH{display:02}")
+    format!("LC{display:02}")
 }
 
 /// UI 的 MixerChannelId → C 的 ChannelId。
@@ -94,7 +94,7 @@ pub(crate) fn channel_id_label(
         ChannelId::Lc(_) | ChannelId::Bus(_) => display
             .get(&id)
             .map(|n| lc_label(*n))
-            .unwrap_or_else(|| "CH".to_string()),
+            .unwrap_or_else(|| "LC".to_string()),
         ChannelId::Ap(ap) => ap_label(ap.group.0 as u8),
         ChannelId::Master => t!("mix.master").to_string(),
     }

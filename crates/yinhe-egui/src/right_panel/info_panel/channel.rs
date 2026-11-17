@@ -230,7 +230,7 @@ fn show_bus(ui: &mut egui::Ui, doc: &mut Document, bus: yinhe_types::BusId) -> C
         .mixer
         .bus_display_number(bus)
         .map(crate::mix::lc_label)
-        .unwrap_or_else(|| "CH".to_string());
+        .unwrap_or_else(|| "LC".to_string());
     header(ui, display, &[]);
 
     let node = MixerChannelId::Bus(bus);
@@ -467,7 +467,7 @@ fn show_bus_sends(ui: &mut egui::Ui, sends: Option<&[yinhe_mixer::SendParams]>) 
         };
         value_row(
             ui,
-            "CH".to_string(),
+            "LC".to_string(),
             format!(
                 "{:.1} dB · {}",
                 crate::widgets::meter::gain_to_db(send.amount),

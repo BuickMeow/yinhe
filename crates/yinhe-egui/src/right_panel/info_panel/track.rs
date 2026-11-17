@@ -223,7 +223,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
             None => 0,
         };
         let options = vec![
-            (0usize, "CH".to_string()),
+            (0usize, "LC".to_string()),
             (1usize, crate::mix::ap_label(global)),
             (2usize, "--- (Master)".to_string()),
         ];
@@ -258,7 +258,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
         );
         let mut target_sel = usize::from(direct);
         let target_options = vec![
-            (0usize, "CH".to_string()),
+            (0usize, "LC".to_string()),
             (1usize, "--- (Master)".to_string()),
         ];
         crate::widgets::rows::panel_row(ui, t!("track.output").as_ref(), |ui| {

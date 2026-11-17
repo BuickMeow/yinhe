@@ -237,6 +237,7 @@ pub fn write_to_writer_with_progress<W: Write>(
     }
     write_chunk(out, conductor.finish())?;
 
+    let export_channels = export_channel_map(model);
     let mut written = 0u64;
     for (i, t) in model.tracks.iter().enumerate() {
         if !included[i] {
@@ -254,6 +255,8 @@ pub fn write_to_writer_with_progress<W: Write>(
             notes_total,
             i,
             total_tracks,
+            export_channels[i].0,
+            export_channels[i].1,
             &mut progress,
         )?;
     }
@@ -377,6 +380,61 @@ fn dedup_note_index(notes: &mut Vec<NoteRef>) {
 /// 内存：本轨紧凑索引（12B/音符）+ NoteOff 顺序表（4B/音符）。旧实现另建
 /// 两份 `(tick, index)`（各 8B/音符）并在同 tick 收 `same_tick` 向量；
 /// 黑乐谱单个 tick 叠几百万音符时会多出几十 MB。
+/// 方案 C 导出通道分配：独立 Track 只占 Port A 的 16 个通道；
+/// AP Track 保留自己的 MIDI 通道（A01..P16）。
+///
+/// 返回每轨 `(port, channel)`，索引与 `model.tracks` 对齐。
+fn export_channel_map(model: &YinModel) -> Vec<(u8, u8)> {
+    use yinhe_core::{TrackAudioTarget, TrackKind};
+
+    let mut out: Vec<(u8, u8)> = model
+        .tracks
+        .iter()
+        .map(|t| (t.port & 0x0F, t.channel & 0x0F))
+        .collect();
+    let mut used_a = [false; 16];
+
+    // AP 轨先占位（保留原通道，含 Port A）。
+    for (i, track) in model.tracks.iter().enumerate() {
+        if track.kind != TrackKind::Midi {
+            continue;
+        }
+        if matches!(
+            track.effective_audio_target(),
+            Some(TrackAudioTarget::Ap { .. })
+        ) {
+            let port = track.port & 0x0F;
+            let ch = track.channel & 0x0F;
+            out[i] = (port, ch);
+            if port == 0 {
+                used_a[ch as usize] = true;
+            }
+        }
+    }
+
+    // 独立轨（OwnLc / DirectMaster）只用 Port A 的空闲通道；满了就复用 A1..。
+    let mut next = 0usize;
+    for (i, track) in model.tracks.iter().enumerate() {
+        if track.kind != TrackKind::Midi {
+            continue;
+        }
+        if matches!(
+            track.effective_audio_target(),
+            Some(TrackAudioTarget::Ap { .. })
+        ) {
+            continue;
+        }
+        let mut tries = 0;
+        while used_a[next] && tries < 16 {
+            next = (next + 1) % 16;
+            tries += 1;
+        }
+        out[i] = (0, next as u8);
+        next = (next + 1) % 16;
+    }
+    out
+}
+
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn write_note_track<W: Write>(
     out: &mut W,
@@ -388,10 +446,12 @@ fn write_note_track<W: Write>(
     notes_total: u64,
     track_index: usize,
     total_tracks: usize,
+    port: u8,
+    channel: u8,
     progress: &mut impl FnMut(MidiExportProgress),
 ) -> Result<(), MidiError> {
-    let ch = u4::new(track.channel & 0x0F);
-    let aux = build_aux_events(track, color_payload, opts);
+    let ch = u4::new(channel & 0x0F);
+    let aux = build_aux_events(track, color_payload, opts, port, channel);
     progress(MidiExportProgress {
         stage: MidiExportStage::Writing,
         notes_done: *written,
@@ -623,8 +683,10 @@ fn build_aux_events<'a>(
     track: &'a TrackData,
     color_payload: Option<&'a [u8]>,
     opts: &MidiExportOptions,
+    port: u8,
+    channel: u8,
 ) -> Vec<(u32, TrackEventKind<'a>)> {
-    let ch = u4::new(track.channel & 0x0F);
+    let ch = u4::new(channel & 0x0F);
     let mut events: Vec<(u32, TrackEventKind<'a>)> = Vec::new();
 
     for lane in &track.automation_lanes {
@@ -689,12 +751,10 @@ fn build_aux_events<'a>(
         ));
     }
 
-    if track.port != 0 {
+    if port != 0 {
         events.push((
             0,
-            TrackEventKind::Meta(MetaMessage::MidiPort(midly::num::u7::new(
-                track.port & 0x7F,
-            ))),
+            TrackEventKind::Meta(MetaMessage::MidiPort(midly::num::u7::new(port & 0x7F))),
         ));
     }
     if let Some(payload) = color_payload {

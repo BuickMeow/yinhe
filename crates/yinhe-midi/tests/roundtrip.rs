@@ -1019,6 +1019,53 @@ fn same_tick_note_off_precedes_next_note_on() {
     ));
 }
 
+/// 方案 C：导出时独立 Track 只占 Port A；AP 轨保留自己的 MIDI 通道。
+#[test]
+fn export_confines_independent_tracks_to_port_a() {
+    use yinhe_types::LogicalChannelId;
+
+    let mut own_a = TrackData::new(1, 5);
+    own_a.name = "OwnA".into();
+    own_a.lc = Some(LogicalChannelId(yinhe_types::TRACK_LC_BASE));
+    let mut own_b = TrackData::new(1, 6);
+    own_b.name = "OwnB".into();
+    own_b.lc = Some(LogicalChannelId(yinhe_types::TRACK_LC_BASE + 1));
+    // AP 轨：lc = None，保留 P16（port 15, channel 15）。
+    let ap = TrackData::new(15, 15);
+
+    let mut model = YinModel {
+        conductor: Arc::new(empty_conductor()),
+        tracks: vec![Arc::new(own_a), Arc::new(own_b), Arc::new(ap)],
+        meta: ProjectMeta {
+            ppq: 480,
+            ..ProjectMeta::default()
+        },
+        ..Default::default()
+    };
+    model.load_track_notes(vec![
+        vec![cut_note(0, 100, 60)],
+        vec![cut_note(0, 100, 61)],
+        vec![cut_note(0, 100, 62)],
+    ]);
+
+    let bytes = write_to_bytes(&model).unwrap();
+    let parsed = parse_bytes(&bytes).unwrap();
+    let find = |name: &str| {
+        parsed
+            .tracks
+            .iter()
+            .find(|t| t.name == name)
+            .map(|t| (t.port, t.channel))
+    };
+    assert_eq!(find("OwnA"), Some((0, 0)), "独立轨应落到 A1");
+    assert_eq!(find("OwnB"), Some((0, 1)), "独立轨应落到 A2");
+    assert_eq!(
+        parsed.tracks.last().map(|t| (t.port, t.channel)),
+        Some((15, 15)),
+        "AP 轨应保留 P16"
+    );
+}
+
 /// 导出把 NoteOff 写成 NoteOn(vel=0)：状态字节一致，running status 才能
 /// 跨 On/Off 连续省略（黑乐谱导出体积差异的主要来源）。
 #[test]
