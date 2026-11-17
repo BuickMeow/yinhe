@@ -1483,7 +1483,7 @@ impl YinModel {
                     changed = true;
                 }
             }
-            // Master 不承载轨道 automation；BusGain 已迁到 Bus 节点。
+            // Master 不承载轨道 automation；混音自动化挂在 MixerNode 上。
             if track.kind == TrackKind::Master && !track.automation_lanes.is_empty() {
                 track.automation_lanes.clear();
                 changed = true;
@@ -2258,11 +2258,9 @@ mod tests {
         let mut master = TrackData::new(0, 0);
         master.kind = TrackKind::Master;
         assert!(!master.allows_automation_target(&AutomationTarget::CC { controller: 7 }));
-        assert!(
-            !master.allows_automation_target(&AutomationTarget::BusGain {
-                bus: yinhe_types::BusId(0)
-            })
-        );
+        assert!(!master.allows_automation_target(&AutomationTarget::MixerGain {
+            channel: yinhe_types::MixerChannelId::Master
+        }));
 
         let midi = TrackData::new(0, 0);
         assert!(midi.allows_automation_target(&AutomationTarget::CC { controller: 7 }));
@@ -2270,11 +2268,9 @@ mod tests {
         let mut folder = TrackData::new(0, 0);
         folder.kind = TrackKind::Folder;
         assert!(!folder.allows_automation_target(&AutomationTarget::CC { controller: 7 }));
-        assert!(
-            !folder.allows_automation_target(&AutomationTarget::BusGain {
-                bus: yinhe_types::BusId(0)
-            })
-        );
+        assert!(!folder.allows_automation_target(&AutomationTarget::MixerGain {
+            channel: yinhe_types::MixerChannelId::Master
+        }));
     }
 
     #[test]
