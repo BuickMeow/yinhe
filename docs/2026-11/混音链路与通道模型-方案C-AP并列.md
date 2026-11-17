@@ -750,7 +750,7 @@ Freeze 和 insert 的关系：
 - Bus 通道没有自己的源，insert 处理的是汇入音频，因此 Bus 不做单通道
   freeze。
 
-### 5.11 SEND 的延迟与 PDC
+### 5.11 SEND 的延迟与 PDC（Plugin Delay Compensation）
 
 SEND 是音频路径，会涉及延迟，但要分成三类：
 
@@ -759,7 +759,7 @@ SEND 是音频路径，会涉及延迟，但要分成三类：
 2. **反向/自环发送**：目标已经处理过，或发送形成环。用上一块输出快照，
    增加**一块延迟**；这是为了打断反馈，不是普通 SEND 的固有延迟。
 3. **插件延迟**：源通道/目标通道的 insert 或乐器有 latency。需要用 PDC
-   对齐，否则并行路径会出现相位偏移。
+   （Plugin Delay Compensation，插件延迟补偿）对齐，否则并行路径会出现相位偏移。
 
 方案 C 的约束：
 
@@ -776,12 +776,19 @@ SEND 是音频路径，会涉及延迟，但要分成三类：
 
 ### 5.12 常见 DAW 的 MIDI SEND 还有意义吗？
 
-有意义，但它和 AP 解决的是相反方向：
+有意义，而且 MIDI 路由本身不限制方向：
 
 ```text
-AP：多条 Track -> 一个共享乐器（多对一）
-MIDI Send：一条 Track -> 多个乐器/目标（一对多）
+一对多：一条 Track -> 多个乐器/目标
+多对一：多条 Track -> 一个乐器/目标（AP 就是这种）
+多对多：多条 Track 各自送到多个目标
 ```
+
+在 C 里：
+
+- **AP** 是“多对一”：多条 Track 共享一个 MIDI 源/Rack；
+- **MIDI Send** 是“一对多”：一条 Track 把 MIDI 复制到额外目标；
+- 两者同时存在时，自然形成多对多。
 
 典型用途：
 
@@ -793,12 +800,53 @@ MIDI Send：一条 Track -> 多个乐器/目标（一对多）
 但 C MVP 不建议做，原因：
 
 - AP 已经覆盖黑乐谱最主要的“多轨共享一个乐器”；
-- MIDI Send 会让一个 Track 同时属于多个 MIDI 目标，和 AP 文件夹约束冲突；
+- MIDI Send 会让一个 Track 同时属于多个 MIDI 目标，Track 的 MIDI 身份
+  不再是单值；
 - CC/自动化 owner 会变复杂：源轨的 CC 是复制给所有目标，还是只给主目标？
 - 复制音符和控制器会放大黑乐谱的性能问题。
 
-如果以后加，建议做成显式的 `midi_sends: Vec<MidiSendTarget>`，只复制音符/
-指定 CC，不改变 Track 的 AP/LC 归属；默认不启用。
+如果以后加，建议做成显式的：
+
+```rust
+struct MidiSendTarget {
+    ap: ApGroupId,
+    /// 可选的通道重映射/移调/力度缩放。
+    // ...
+}
+```
+
+每条 Track 有自己的主 MIDI 目标（LC/AP/DirectMaster），MIDI Send 只是额外
+复制，不改变主归属。默认不启用。
+
+### 5.12.1 一轨多 MIDI 通道
+
+MIDI 文件允许一条 SMF track 内出现多个 channel，但 Yinhe 当前模型是：
+
+```text
+TrackData -> 一个 port/channel
+Note.track -> Track 索引，不带每音符 channel
+```
+
+所以 MVP 建议明确：
+
+- **一条 Track 只对应一个 MIDI 通道**；
+- 一条 SMF track 如果包含多个 channel，导入时拆成多条 Track（每条一个
+  channel），可以放进同一个文件夹做视觉归组；
+- 不支持“一个 TrackData 内的音符各自属于不同 MIDI 通道”；
+- 如果以后真要做，必须给 Note 增加 channel 或增加 per-note 子通道，
+  这是数据量和 UI 的另一个量级，不建议现在做。
+
+“表面一条轨、逻辑上 A01/A02/A03 三个通道”可以用：
+
+```text
+文件夹
+├─ Track A01 -> AP01
+├─ Track A02 -> AP02
+└─ Track A03 -> AP03
+```
+
+文件夹只是视觉归组，不改变每条 Track 的 MIDI 通道。不要把它做成一条
+多通道 Track。
 
 ### 5.13 Insert 不含乐器
 
@@ -1052,48 +1100,41 @@ struct MixerUiState {
 
 ---
 
-### 9.5 文件夹与 AP 通道的绑定
+### 9.5 文件夹保持自由，不绑定 AP
 
-已确认的产品约束：
+已撤销“一个文件夹最多一个 AP”的约束。
+
+原因：MIDI 轨道的排列本来就是自由的，大量工程会出现：
 
 ```text
-一个文件夹子树里，不同 AP 通道的轨道不可共存。
-AP 通道绑定本身体现为一种文件夹；
-同一个 AP 通道内部允许继续嵌套编组。
+A01
+A02
+A03
+A01
 ```
 
-推荐数据结构：
+这种“不按通道顺序”但完全合法的结构。为了文件夹整齐去改写 MIDI 结构，
+是本末倒置。
 
-```rust
-struct FolderBinding {
-    /// 这个文件夹绑定的 AP；None = 普通文件夹。
-    ap: Option<ApGroupId>,
-}
-```
+最终规则：
 
-规则：
+1. 文件夹只做视觉组织、折叠、批量选择/移动，不限层数；
+2. 一个文件夹里可以同时有不同 AP 的轨，也可以有独立 LC/`DirectMaster` 轨；
+3. AP 是 **MIDI 路由身份**，不是文件夹，不要求同 AP 轨聚在一起；
+4. 同一个 AP 的轨可以分散在多个文件夹；不同 AP 的轨可以在同一个文件夹；
+5. 文件夹不产生音频通道，也不决定 send/output；
+6. 需要按 AP 看轨道时，用筛选/分组/通道地图，不改变工程结构。
 
-1. 文件夹里出现第一条 AP 轨时，文件夹自动绑定该 AP；
-2. 同一文件夹子树里的所有 AP 轨必须属于同一个 AP；
-3. 试图把不同 AP 的轨拖进同一文件夹 -> 拒绝，并提示冲突；
-4. 同一 AP 内可以继续建子文件夹，子文件夹继续继承同一个 AP 绑定；
-5. AP 文件夹只装该 AP 的轨；独立 LC / `DirectMaster` 轨使用普通文件夹，
-   不建议混入 AP 文件夹；
-6. 把轨的 AP 改成另一个 AP 时，如果它在文件夹里，先移出或自动移动到新
-   AP 文件夹；
-7. 旧工程如果已经有跨 AP 的文件夹，迁移时按 AP 拆分并给出提示。
-
-Folder、AP、Channel、Send 仍然不是同一个东西：
+Folder、AP、Channel、Send：
 
 | 概念 | 作用 | 是否产生音频通道 |
 |---|---|---|
-| Folder | 组织 + AP 绑定约束；可嵌套 | 否 |
-| AP 编组 | 共享 MIDI 源/乐器/Rack；通常对应一个 AP 文件夹 | 是，一条 AP 通道 |
+| Folder | 视觉组织、折叠、批量操作 | 否 |
+| AP 编组 | 共享 MIDI 源/乐器/Rack | 是，一条 AP 通道 |
 | 纯汇入 Channel（Bus 角色） | 音频汇总、insert、send | 是，普通 Channel |
 | Send | 把音频送到另一个 Channel | 否，是路由 |
 
-这样“不同 AP 不能放一个文件夹”是硬约束，但同 AP 内部仍然可以自由编组；
-文件夹不再是完全无约束的视觉容器，也不会退化成“文件夹 = Bus”。
+文件夹是自由的，AP 是路由身份，两者不要再互相绑定。
 
 ### 9.6 通道分配要像 Domino 一样方便
 
