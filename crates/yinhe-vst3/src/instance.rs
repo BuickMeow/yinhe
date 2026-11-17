@@ -440,11 +440,8 @@ impl Vst3PluginInstance {
             )));
         }
 
-        let out_bus_channels: Vec<u16> = self
-            .audio_outputs()
-            .into_iter()
-            .map(|(_, channels)| channels.max(1))
-            .collect();
+        // 方案 C：乐器只用主立体声输出，不做多输出枚举。
+        let out_bus_channels: Vec<u16> = vec![2];
         let processor = Vst3Processor::new(
             self.component.clone(),
             processor,
@@ -460,32 +457,6 @@ impl Vst3PluginInstance {
         // 编辑器与参数显示依赖它。
         sync_component_state(&self.component, &self.controller);
         Ok(processor)
-    }
-
-    /// 插件声明的音频输出总线（名称 + 声道数）。
-    pub fn audio_outputs(&self) -> Vec<(String, u16)> {
-        let n_out = unsafe { self.component.getBusCount(kAudio as i32, kOutput as i32) };
-        if n_out <= 0 {
-            return vec![("Main".into(), 2)];
-        }
-        let mut out = Vec::with_capacity(n_out as usize);
-        for i in 0..n_out {
-            let mut info = std::mem::MaybeUninit::<vst3::Steinberg::Vst::BusInfo>::uninit();
-            let r = unsafe {
-                self.component
-                    .getBusInfo(kAudio as i32, kOutput as i32, i, info.as_mut_ptr())
-            };
-            if r == kResultOk {
-                let info = unsafe { info.assume_init() };
-                out.push((
-                    utf16_str(&info.name),
-                    info.channelCount.clamp(0, u16::MAX as i32) as u16,
-                ));
-            } else {
-                out.push((format!("Out {}", i + 1), 2));
-            }
-        }
-        out
     }
 
     /// 参数列表（创建时枚举；插件请求重扫后由 [`refresh_params`](Self::refresh_params) 更新）。

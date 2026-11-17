@@ -284,11 +284,9 @@ impl AudioEngine {
                     {
                         self.channel_layout.dense_for(id.0 as usize)
                     }
-                    yinhe_types::ChannelId::Lc(id) if id.0 < yinhe_types::TRACK_LC_BASE => {
-                        self.channel_layout.audio_dense_for(
-                            (id.0 - yinhe_types::MIDI_CHANNEL_COUNT as u32) as u16,
-                        )
-                    }
+                    yinhe_types::ChannelId::Lc(id) if id.0 < yinhe_types::TRACK_LC_BASE => self
+                        .channel_layout
+                        .audio_dense_for((id.0 - yinhe_types::MIDI_CHANNEL_COUNT as u32) as u16),
                     yinhe_types::ChannelId::Lc(id) => self
                         .channel_layout
                         .track_lc_dense_for(id)

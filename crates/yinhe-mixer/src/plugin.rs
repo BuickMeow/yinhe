@@ -61,26 +61,6 @@ pub trait InstrumentProcessor: Send {
         usize::MAX
     }
 
-    /// 多输出乐器：一次 process 把各输出端口写入 `outputs[i]`（覆盖写）。
-    ///
-    /// 默认实现只渲染主输出到 `outputs[0]`，其余输出静音。多输出插件覆盖本方法。
-    /// `outputs` 的长度由引擎按 Rack 输出拓扑预分配；实现必须清空所有输出
-    /// （尤其无端口的输出），避免残留上一块数据。
-    fn process_outputs(
-        &mut self,
-        events: &[PluginEvent],
-        outputs: &mut [crate::ChannelBuffers],
-        position_samples: u64,
-    ) {
-        if let Some(first) = outputs.first_mut() {
-            self.process(events, &mut first.left, &mut first.right, position_samples);
-        }
-        for out in outputs.iter_mut().skip(1) {
-            out.left.fill(0.0);
-            out.right.fill(0.0);
-        }
-    }
-
     /// 清空内部处理状态（envelope、delay 尾音等）。seek 后调用。
     fn reset(&mut self) {}
 

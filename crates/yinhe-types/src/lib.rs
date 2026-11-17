@@ -43,7 +43,7 @@ pub use metadata::{ChordEvent, KeySigEvent, LyricsEvent, MarkerEvent, ScaleType,
 pub use mixer_channel::MixerChannelId;
 pub use mixer_node::{
     ApChannelId, ApGroupId, Audibility, AutomationOwner, BusId, ChannelId, LogicalChannelId,
-    MixerNodeId, RACK_COUNT, RackId, RackOutput, RackOutputMode, RackOutputTopology, TRACK_LC_BASE,
+    MixerNodeId, RACK_COUNT, RackId, RackOutputMode, TRACK_LC_BASE,
 };
 pub use note::{Note, PencilNoteDrag, TimeSigEvent, VelocityEdit};
 pub use note_bitset::{NoteBitset, NoteBitsetBuilder};

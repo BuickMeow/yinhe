@@ -248,7 +248,6 @@ impl MixerParams {
     /// 反序列化后调用：老版本工程可能缺字段/长度不足，补齐到固定通道数。
     pub fn ensure_len(&mut self) {
         self.ensure_racks();
-        self.ensure_rack_outputs();
         self.ensure_channels();
         self.ensure_aps();
         self.ensure_channel_sends();
@@ -548,35 +547,6 @@ impl MixerParams {
         self.channel_sends
             .retain(|s| !(s.source == source && s.target == target));
         self.channel_sends.len() != before
-    }
-
-    fn ensure_rack_outputs(&mut self) {
-        for i in 0..self.racks.len() {
-            let count = self.racks[i].outputs.outputs.len();
-            if count <= 1 {
-                self.racks[i].output_lcs.clear();
-                if self.racks[i].output_mode == yinhe_types::RackOutputMode::PerOutput {
-                    self.racks[i].output_mode = yinhe_types::RackOutputMode::Shared;
-                }
-                continue;
-            }
-            let mut lcs = Vec::with_capacity(count);
-            for id in std::mem::take(&mut self.racks[i].output_lcs) {
-                if lcs.len() >= count {
-                    break;
-                }
-                if id.0 >= TRACK_LC_BASE && self.track_node(id).is_some() {
-                    lcs.push(id);
-                } else {
-                    lcs.push(self.add_track_lc());
-                }
-            }
-            while lcs.len() < count {
-                lcs.push(self.add_track_lc());
-            }
-            self.racks[i].output_lcs = lcs;
-            self.racks[i].output_mode = yinhe_types::RackOutputMode::PerOutput;
-        }
     }
 
     fn find_node(&self, id: ChannelId) -> Option<&MixerNode> {

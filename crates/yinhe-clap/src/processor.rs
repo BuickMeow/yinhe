@@ -300,50 +300,6 @@ impl ClapProcessor {
     }
 }
 
-impl ClapProcessor {
-    /// 多输出：一次 process 后把全部输出端口拷贝到调用方缓冲。
-    ///
-    /// 端口数/声道数以 activate 时冻结的 `PortLayout` 为准；缺失端口写静音。
-    pub fn process_outputs(
-        &mut self,
-        events: &[PluginEvent],
-        outputs: &mut [yinhe_mixer::ChannelBuffers],
-        steady_time: Option<u64>,
-    ) -> Result<(), PluginError> {
-        for port in &mut self.in_bufs {
-            for ch in port {
-                ch.fill(0.0);
-            }
-        }
-        let _ = self.process_inner(events, steady_time)?;
-        let frames = self.frames;
-        for (i, out) in outputs.iter_mut().enumerate() {
-            let n = frames.min(out.left.len()).min(out.right.len());
-            let Some(port) = self.out_bufs.get(i) else {
-                out.left[..n].fill(0.0);
-                out.right[..n].fill(0.0);
-                continue;
-            };
-            if let Some(ch) = port.first() {
-                out.left[..n].copy_from_slice(&ch[..n]);
-            } else {
-                out.left[..n].fill(0.0);
-            }
-            if let Some(ch) = port.get(1) {
-                out.right[..n].copy_from_slice(&ch[..n]);
-            } else {
-                let left = port.first().map(|ch| &ch[..n]).unwrap_or(&[]);
-                if left.len() == n {
-                    out.right[..n].copy_from_slice(left);
-                } else {
-                    out.right[..n].fill(0.0);
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
 impl InstrumentProcessor for ClapProcessor {
     fn max_block_frames(&self) -> usize {
         self.frames
@@ -385,23 +341,6 @@ impl InstrumentProcessor for ClapProcessor {
 
     fn flush_pending_params(&mut self, position_samples: u64) {
         ClapProcessor::flush_pending_params(self, position_samples);
-    }
-
-    fn process_outputs(
-        &mut self,
-        events: &[PluginEvent],
-        outputs: &mut [yinhe_mixer::ChannelBuffers],
-        position_samples: u64,
-    ) {
-        if let Err(e) =
-            ClapProcessor::process_outputs(self, events, outputs, Some(position_samples))
-        {
-            tracing::warn!(target: "clap-instrument", "多输出乐器处理失败，本块静音: {e}");
-            for out in outputs {
-                out.left.fill(0.0);
-                out.right.fill(0.0);
-            }
-        }
     }
 
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any + Send> {

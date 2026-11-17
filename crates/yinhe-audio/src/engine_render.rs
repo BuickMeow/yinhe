@@ -29,16 +29,11 @@ impl AudioEngine {
             }
         }
         for (dense, slot) in self.instruments.iter().enumerate() {
-            if let Some(slot) = slot {
+            if slot.is_some() {
                 // OwnLc 单轨的插件输出落在 home LC，标记该 dense 为活跃。
                 let out = self.channel_layout.instrument_output_dense(dense) as usize;
                 if out < n {
                     active[out] = true;
-                }
-                for &out in &slot.output_dense {
-                    if out != u32::MAX as usize && out < n {
-                        active[out] = true;
-                    }
                 }
             }
         }

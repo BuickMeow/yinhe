@@ -585,49 +585,6 @@ impl App {
                 .resize_with(idx + 1, InstrumentRack::default);
         }
         self.instrument_racks[idx] = rack;
-        // 装载后查询一次输出拓扑（v13 工程没有存，需要补；v14 相同则 no-op）。
-        for channel in 0..256u16 {
-            if self.instrument_racks[idx].slot_count(channel as u8) > 0 {
-                self.sync_rack_topology(idx, channel as u8);
-            }
-        }
-    }
-
-    /// 重查某通道的插件输出拓扑并写入工程；拓扑变化时分配/释放按输出 LC。
-    pub(crate) fn sync_rack_topology(&mut self, idx: usize, channel: u8) {
-        let Some(topology) = self
-            .instrument_racks
-            .get_mut(idx)
-            .and_then(|rack| rack.output_topology(channel))
-        else {
-            return;
-        };
-        let Some(doc) = self.workspace.documents.get_mut(idx) else {
-            return;
-        };
-        if doc.set_rack_outputs(channel, topology) && self.audio_state.active_doc == Some(idx) {
-            self.push_mixer_state_to_engine(idx);
-            // 输出 LC 改变会改变 ChannelLayout（每轨 LC），必须重建引擎。
-            self.notify_audio_model_changed();
-        }
-    }
-
-    /// 轮询所有拓扑变化通道（restart / I/O rescan）。
-    pub(crate) fn poll_rack_topologies(&mut self) {
-        let Some(idx) = self.workspace.active_doc else {
-            return;
-        };
-        let Some(rack) = self.instrument_racks.get_mut(idx) else {
-            return;
-        };
-        let dirty = rack.take_topology_dirty();
-        let channels: Vec<u8> = dirty
-            .into_iter()
-            .filter(|ch| rack.slot_count(*ch) > 0)
-            .collect();
-        for channel in channels {
-            self.sync_rack_topology(idx, channel);
-        }
     }
 
     /// 同步每轨 LC 的机架链：删除已失效的，补齐新增的。
@@ -1379,9 +1336,6 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
                 .instruments
                 .clear();
             app.workspace.documents[idx].data.bump_revision();
-            app.workspace.documents[idx]
-                .set_rack_outputs(channel, yinhe_types::RackOutputTopology::default());
-            app.sync_rack_topology(idx, channel);
             if idx < app.instrument_racks.len() {
                 let handle = app.audio_state.handle.as_ref().map(|a| &a.handle);
                 let rack = &mut app.instrument_racks[idx];
@@ -1455,7 +1409,6 @@ pub(crate) fn assign_instrument_plugin(
         }
     }
     app.workspace.documents[idx].data.bump_revision();
-    app.sync_rack_topology(idx, channel);
     app.push_mixer_state_to_engine(idx);
 }
 

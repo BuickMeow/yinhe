@@ -162,7 +162,6 @@ impl AudioRenderer {
                             cs.set_max_voices(self.engine.max_voices);
                             self.engine.cpu_synth = Some(cs);
                             self.engine.sync_track_lc_routing();
-                            self.engine.sync_rack_outputs();
                             play_log("[play] CpuSynth 初始化（yinhe CPU 后端）");
                         }
                         if !denses.is_empty()

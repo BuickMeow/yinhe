@@ -76,9 +76,6 @@ pub struct TrackMap {
     /// 方案 C 的音频目标（旧工程缺省，加载时由 lc/audio_channel 推导）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio_target: Option<yinhe_core::TrackAudioTarget>,
-    /// 多输出插件：该轨映射到 Rack 的第几个输出。
-    #[serde(default)]
-    pub rack_output: Option<u16>,
     /// 音频片段（仅音频轨有意义）。放在 mapping.json（自描述 JSON）而非
     /// data 段的 postcard 里：postcard 非自描述，追字段会让旧文件解析失败。
     #[serde(default)]
@@ -136,7 +133,6 @@ impl MappingFile {
                 audio_channel: t.audio_channel,
                 lc: t.lc,
                 audio_target: t.audio_target,
-                rack_output: t.rack_output,
                 audio_clips: t.audio_clips.clone(),
                 clips: t.clips.clone(),
             });

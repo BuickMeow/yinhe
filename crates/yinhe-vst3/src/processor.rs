@@ -232,36 +232,13 @@ impl Vst3Processor {
 
     /// 主输出总线（planar 立体声/单声道）。
     pub fn output(&self) -> (&[f32], &[f32]) {
-        self.output_bus(0)
-    }
-
-    /// 第 `bus` 个输出总线（planar）。
-    pub fn output_bus(&self, bus: usize) -> (&[f32], &[f32]) {
         let frames = self.frames;
-        let Some(bus) = self.out_bufs.get(bus) else {
+        let Some(bus) = self.out_bufs.first() else {
             return (&[], &[]);
         };
         let left = bus.first().map(|ch| &ch[..frames]).unwrap_or(&[]);
         let right = bus.get(1).map(|ch| &ch[..frames]).unwrap_or(left);
         (left, right)
-    }
-
-    /// 多输出：一次 process 后把全部输出总线拷贝到调用方缓冲。
-    pub fn write_outputs(&self, outputs: &mut [yinhe_mixer::ChannelBuffers]) {
-        for (i, out) in outputs.iter_mut().enumerate() {
-            let n = self.frames.min(out.left.len()).min(out.right.len());
-            let (left, right) = self.output_bus(i);
-            if left.len() >= n {
-                out.left[..n].copy_from_slice(&left[..n]);
-            } else {
-                out.left[..n].fill(0.0);
-            }
-            if right.len() >= n {
-                out.right[..n].copy_from_slice(&right[..n]);
-            } else {
-                out.right[..n].fill(0.0);
-            }
-        }
     }
 
     /// 取出插件输出事件（当前仅保留，供后续 NoteEnd/CC 回传使用）。
@@ -309,23 +286,6 @@ impl yinhe_mixer::InstrumentProcessor for Vst3Processor {
         out_r[..n].copy_from_slice(&or[..n]);
         out_l[n..].fill(0.0);
         out_r[n..].fill(0.0);
-    }
-
-    fn process_outputs(
-        &mut self,
-        events: &[PluginEvent],
-        outputs: &mut [yinhe_mixer::ChannelBuffers],
-        position_samples: u64,
-    ) {
-        if let Err(e) = self.process_block(events, position_samples, None) {
-            tracing::warn!(target: "vst3-instrument", "多输出乐器处理失败，本块静音: {e}");
-            for out in outputs {
-                out.left.fill(0.0);
-                out.right.fill(0.0);
-            }
-            return;
-        }
-        self.write_outputs(outputs);
     }
 
     fn reset(&mut self) {

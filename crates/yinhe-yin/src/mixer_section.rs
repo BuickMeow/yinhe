@@ -77,8 +77,6 @@ impl MixerParamsV9 {
                 id: RackId(i as u16),
                 instruments: self.instruments.get(i).cloned().unwrap_or_default(),
                 output_mode: RackOutputMode::Shared,
-                outputs: yinhe_types::RackOutputTopology::default(),
-                output_lcs: Vec::new(),
             })
             .collect();
         let channels: Vec<MixerNode> = (0..CHANNEL_COUNT)
@@ -89,9 +87,19 @@ impl MixerParamsV9 {
                 sends: self
                     .sends
                     .get(i)
-                    .map(|list| list.iter().copied().map(SendParamsV9::into_current).collect())
+                    .map(|list| {
+                        list.iter()
+                            .copied()
+                            .map(SendParamsV9::into_current)
+                            .collect()
+                    })
                     .unwrap_or_default(),
-                output: self.midi_outputs.get(i).copied().flatten().map(ChannelId::Bus),
+                output: self
+                    .midi_outputs
+                    .get(i)
+                    .copied()
+                    .flatten()
+                    .map(ChannelId::Bus),
                 automation: Vec::new(),
                 freeze: None,
             })
@@ -104,9 +112,19 @@ impl MixerParamsV9 {
                 sends: self
                     .audio_sends
                     .get(i)
-                    .map(|list| list.iter().copied().map(SendParamsV9::into_current).collect())
+                    .map(|list| {
+                        list.iter()
+                            .copied()
+                            .map(SendParamsV9::into_current)
+                            .collect()
+                    })
                     .unwrap_or_default(),
-                output: self.audio_outputs.get(i).copied().flatten().map(ChannelId::Bus),
+                output: self
+                    .audio_outputs
+                    .get(i)
+                    .copied()
+                    .flatten()
+                    .map(ChannelId::Bus),
                 automation: Vec::new(),
                 freeze: None,
             })
@@ -127,7 +145,12 @@ impl MixerParamsV9 {
                 sends: self
                     .bus_sends
                     .get(i)
-                    .map(|list| list.iter().copied().map(SendParamsV9::into_current).collect())
+                    .map(|list| {
+                        list.iter()
+                            .copied()
+                            .map(SendParamsV9::into_current)
+                            .collect()
+                    })
                     .unwrap_or_default(),
                 output: None,
                 automation: Vec::new(),
@@ -272,7 +295,10 @@ mod tests {
             pre_fader: false,
         };
         mixer.set_node_sends(yinhe_types::MixerChannelId::Midi(0), vec![send]);
-        mixer.set_node_output(yinhe_types::MixerChannelId::Midi(0), Some(ChannelId::Bus(bus)));
+        mixer.set_node_output(
+            yinhe_types::MixerChannelId::Midi(0),
+            Some(ChannelId::Bus(bus)),
+        );
         let bus_node = mixer.bus_node_mut(bus).expect("bus");
         bus_node.automation.push(yinhe_types::AutomationLane {
             target: yinhe_types::AutomationTarget::BusGain { bus },
@@ -290,20 +316,6 @@ mod tests {
             sample_rate: 48_000,
             frames: 1234,
         });
-        let out_a = mixer.add_track_lc();
-        let out_b = mixer.add_track_lc();
-        mixer.racks[0].outputs.outputs = vec![
-            yinhe_types::RackOutput {
-                name: "Out 1".into(),
-                channels: 2,
-            },
-            yinhe_types::RackOutput {
-                name: "Out 2".into(),
-                channels: 2,
-            },
-        ];
-        mixer.racks[0].output_lcs = vec![out_a, out_b];
-        mixer.racks[0].output_mode = RackOutputMode::PerOutput;
         let track_lc = mixer.add_track_lc();
         mixer.track_node_mut(track_lc).expect("track lc").strip.gain = 0.25;
 
@@ -311,8 +323,14 @@ mod tests {
         let loaded = decode_mixer_section(&section).expect("decode");
         assert_eq!(loaded.bus_count(), 1);
         assert_eq!(loaded.bus_id_at(0), Some(bus));
-        assert_eq!(loaded.midi_node(0).expect("midi 0").sends[0].target, ChannelId::Bus(bus));
-        assert_eq!(loaded.midi_node(0).expect("midi 0").output, Some(ChannelId::Bus(bus)));
+        assert_eq!(
+            loaded.midi_node(0).expect("midi 0").sends[0].target,
+            ChannelId::Bus(bus)
+        );
+        assert_eq!(
+            loaded.midi_node(0).expect("midi 0").output,
+            Some(ChannelId::Bus(bus))
+        );
         assert_eq!(loaded.master.id, ChannelId::Master);
         assert_eq!(
             loaded.track_node(track_lc).expect("track lc").strip.gain,
