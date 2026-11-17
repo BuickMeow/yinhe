@@ -15,10 +15,8 @@ use yinhe_types::{AnchorSelRect, NoteSource, VelocityEdit};
 
 use super::{LayoutInfo, sel_hint::SelHintInfo};
 
-mod channel_ar_view;
 mod interaction;
 mod views;
-pub(in crate::app) use channel_ar_view::*;
 
 use interaction::*;
 use views::*;
@@ -60,9 +58,6 @@ impl App {
         // 聚焦视图（指针悬停决定；Ctrl+A 等快捷键按它路由）。
         self.update_view_focus(ui, layout);
 
-        // 方案 C：轨道 AR 与通道 AR 可以共存（左右分栏）。
-        let both_ars = self.show_both_ars && !self.float_arrange;
-
         let is_playing = self
             .audio_state
             .handle
@@ -75,7 +70,7 @@ impl App {
         let sel_hint = Self::compute_sel_hint(&self.workspace.documents[idx]);
 
         // Arrangement view（工程走带；浮动窗口打开时主窗口让位）
-        if !both_ars && self.view_mode.show_transport() {
+        if self.view_mode.show_transport() {
             if self.float_arrange {
                 Self::paint_float_yielded(
                     ui,
@@ -92,25 +87,101 @@ impl App {
             }
         }
 
-        if !both_ars && is_mix {
-            self.show_channel_ar_view(
-                ui,
-                layout.remaining,
-                layout.arr_h,
-                is_playing,
-                &mut follow_mode,
-            );
+        // ── 通道 AR（MIX 主区域）──
+        if is_mix {
+            let mut request_pianoroll = false;
+            let mut ca_drag_delta: Option<crate::channel_arrange::CaArRangeDelta> = None;
+            let mut ca_picker: Option<usize> = None;
+            let mut ca_notify = false;
+            let mut ca_set_strips: Vec<(u8, yinhe_mixer::StripParams)> = Vec::new();
+            let mut ca_set_audio_strips: Vec<(u16, yinhe_mixer::StripParams)> = Vec::new();
+            let mut ca_menu_actions: Vec<crate::arrange::context_menu::TimelineMenuAction> =
+                Vec::new();
+            // 通道电平显示值（独立衰减；见 App::ca_channel_levels）。
+            let ca_dt = ui.ctx().input(|i| i.stable_dt).min(0.1);
+            let (ca_midi_levels, ca_audio_levels) = self.ca_channel_levels(idx, ca_dt);
+            {
+                let mut guard =
+                    crate::app::main_loop::ReplaceGuard::new(&mut self.workspace.documents[idx]);
+                let cfg = crate::channel_arrange::CaArrangeCfg {
+                    is_playing,
+                    follow_mode: &mut follow_mode,
+                    min_border_width: self.audio_settings.min_border_width,
+                    revision: guard.as_ref().data.revision,
+                };
+                crate::channel_arrange::show(
+                    ui,
+                    guard.as_mut(),
+                    crate::channel_arrange::CaArrangeLayout {
+                        remaining: layout.remaining,
+                        arr_h: layout.arr_h,
+                        panel_width: &mut self.transport_panel_width,
+                        drag_ended: &mut self.layout_needs_save,
+                    },
+                    &mut self.arr_renderer,
+                    &mut self.arr_render_ctx,
+                    cfg,
+                    self.audio_state.handle.as_ref(),
+                    &self.audio_library,
+                    &mut request_pianoroll,
+                    &mut self.track_selection_anchor,
+                    &mut ca_drag_delta,
+                    &mut self.info_content,
+                    &mut self.right_tab,
+                    &mut ca_notify,
+                    &mut ca_picker,
+                    &self.mix.track_display,
+                    &ca_midi_levels,
+                    &ca_audio_levels,
+                    &mut ca_set_strips,
+                    &mut ca_set_audio_strips,
+                    &mut ca_menu_actions,
+                );
+                // guard dropped here
+            }
+            self.apply_timeline_menu_actions(ui.ctx(), ca_menu_actions);
+            if ca_notify {
+                self.notify_audio_model_changed();
+            }
+            if let Some(track_idx) = ca_picker {
+                self.open_automation_picker(ui.ctx(), track_idx);
+            }
+            if let Some((dt, dtr, alt)) = ca_drag_delta {
+                self.handle_arr_drag(dt, dtr, alt);
+            }
+            // 通道行 M/S（混音台通道）：与混音台同一 undo 合并路径。
+            for (ch, params) in ca_set_strips {
+                self.note_mixer_edit(t!("undo.mix_param").as_ref());
+                self.apply_node_strip(idx, yinhe_types::MixerChannelId::Midi(ch), params);
+            }
+            for (ach, params) in ca_set_audio_strips {
+                self.note_mixer_edit(t!("undo.mix_param").as_ref());
+                self.apply_node_strip(idx, yinhe_types::MixerChannelId::Audio(ach), params);
+            }
+            // 通道电平动画：播放中或衰减未归零时保持约 30fps 重绘。
+            let ca_any_level = ca_midi_levels
+                .iter()
+                .any(|&((l, r), _)| l > 0.001 || r > 0.001)
+                || ca_audio_levels
+                    .iter()
+                    .any(|&((l, r), _)| l > 0.001 || r > 0.001);
+            if is_playing || ca_any_level {
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(33));
+            }
+            if request_pianoroll {
+                crate::chrome::mode_bar::set_pianoroll_visible(
+                    &mut self.show_pianoroll_in_arrange,
+                    &mut self.show_bottom_dock,
+                    &mut self.show_mixer_panel,
+                    &mut self.show_meter_panel,
+                    true,
+                );
+            }
         }
         // 方案 A：音轨结构变化、AR 橡皮擦、AR 拖动、自动化通知、
         // 参数自动化选择窗口等 AR 事件落地，全部在 `show_arrange_view` 内处理
         // （guard 释放后执行，见该方法）。
-
-        if both_ars {
-            let (track_rect, channel_rect) = super::split_dual_ar_rect(layout.remaining);
-            self.show_arrange_view(ui, track_rect, layout.arr_h, &mut follow_mode, false);
-            self.show_channel_ar_view(ui, channel_rect, layout.arr_h, is_playing, &mut follow_mode);
-            self.workspace.documents[idx].sync_dual_ar_selection();
-        }
 
         // ── 上方主视图与底部面板（钢琴卷帘/混音台）之间的分割条 ──
         // ARRANGE：AR/PR（arr_split）；MIX：通道 AR/底部面板（mix_height）。
@@ -298,7 +369,6 @@ impl App {
         l.show_bottom_dock = self.show_bottom_dock;
         l.bottom_dock_height = self.bottom_dock_height;
         l.show_mixer_panel = self.show_mixer_panel;
-        l.show_both_ars = self.show_both_ars;
         l.mix_height = self.mix_height;
         l.show_meter_panel = self.show_meter_panel;
         l.meter_height = self.meter_height;

@@ -191,15 +191,6 @@ pub(in crate::app) fn resolve_view_focus(
     }
 }
 
-/// ARRANGE 与 MIX AR 共存时的左右分栏：轨道 AR 占 60%，通道 AR 占 40%。
-pub(in crate::app) fn split_dual_ar_rect(remaining: egui::Rect) -> (egui::Rect, egui::Rect) {
-    let split_x = remaining.min.x + remaining.width() * 0.6;
-    (
-        egui::Rect::from_min_max(remaining.min, egui::pos2(split_x, remaining.max.y)),
-        egui::Rect::from_min_max(egui::pos2(split_x, remaining.min.y), remaining.max),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,15 +276,5 @@ mod tests {
             right_rect.height() >= 690.0,
             "右栏应占整条高度（dock 不截断）: right={right_rect:?}"
         );
-    }
-    #[test]
-    fn dual_ar_split_is_adjacent_and_covers_full_rect() {
-        let rect = egui::Rect::from_min_max(egui::pos2(10.0, 20.0), egui::pos2(810.0, 620.0));
-        let (left, right) = split_dual_ar_rect(rect);
-        assert!((left.width() - 480.0).abs() < 0.01);
-        assert!((right.width() - 320.0).abs() < 0.01);
-        assert!((left.max.x - right.min.x).abs() < 0.01);
-        assert_eq!(left.min, rect.min);
-        assert_eq!(right.max, rect.max);
     }
 }

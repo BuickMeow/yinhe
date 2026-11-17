@@ -825,52 +825,6 @@ impl Document {
         }
     }
 
-    /// ARRANGE 与 MIX AR 共存时同步两侧选择。
-    ///
-    /// - 通道 AR 有选择时：把同组轨道同步到轨道选择
-    /// - 否则轨道有选择时：把同通道的轨道同步到通道 AR 选择
-    pub fn sync_dual_ar_selection(&mut self) {
-        let from_channel: Vec<u16> = self
-            .edit
-            .chan_ar_sel
-            .iter()
-            .flat_map(|rect| rect.tracks.iter().copied())
-            .collect();
-        if !from_channel.is_empty() {
-            self.edit.track_selected.clear();
-            for track in from_channel {
-                self.edit.track_selected.insert(track);
-            }
-            return;
-        }
-        if self.edit.track_selected.is_empty() {
-            return;
-        }
-        let mut groups: std::collections::HashMap<MixerChannelId, Vec<u16>> =
-            std::collections::HashMap::new();
-        for (i, track) in self.data.model.tracks.iter().enumerate() {
-            if let Some(channel) = track.mixer_channel() {
-                groups.entry(channel).or_default().push(i as u16);
-            }
-        }
-        let mut selected = Vec::new();
-        for tracks in groups.values() {
-            if tracks
-                .iter()
-                .any(|track| self.edit.track_selected.contains(track))
-            {
-                selected.extend_from_slice(tracks);
-            }
-        }
-        selected.sort_unstable();
-        selected.dedup();
-        self.edit.chan_ar_sel = vec![crate::edit_state::ChanSelRect {
-            t_start: 0.0,
-            t_end: self.data.model.tick_length as f64,
-            tracks: selected,
-        }];
-    }
-
     /// 合并 mute/solo 状态为音频引擎用的 skip mask。
     ///
     /// 规则：有任意 solo 时，只有 soloed 轨道不 skip；无 solo 时，muted 轨道 skip。
@@ -1111,25 +1065,6 @@ mod tests {
             Audibility::Normal,
             "Channel solo 必须清空 Track solo"
         );
-    }
-
-    #[test]
-    fn dual_ar_selection_syncs_same_channel_tracks() {
-        let mut doc = Document::empty();
-        {
-            let model = Arc::make_mut(&mut doc.data.model);
-            let channel = model.tracks[1].channel;
-            Arc::make_mut(&mut model.tracks[1]).lc = None;
-            let track = Arc::make_mut(&mut model.tracks[2]);
-            track.channel = channel;
-            track.lc = None;
-        }
-        doc.edit.track_selected.clear();
-        doc.edit.track_selected.insert(1);
-        doc.sync_dual_ar_selection();
-        let tracks = &doc.edit.chan_ar_sel[0].tracks;
-        assert!(tracks.contains(&1));
-        assert!(tracks.contains(&2), "同通道轨道应一起同步到通道 AR");
     }
 
     #[test]

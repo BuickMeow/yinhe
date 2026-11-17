@@ -85,9 +85,6 @@ pub struct LayoutSettings {
     pub bottom_dock_height: f32,
     /// MIX 视图底部是否显示混音台面板（钢琴卷帘/设备链/混音台三选一之一）。
     pub show_mixer_panel: bool,
-    /// 同时显示轨道 AR 与通道 AR（方案 C：两种 AR 不再互斥）。
-    #[serde(default)]
-    pub show_both_ars: bool,
     /// MIX 视图底部混音台面板高度（px）。仅在 `mix_height_auto == false`
     /// （用户拖拽过分割条）时使用。
     pub mix_height: f32,
@@ -130,7 +127,6 @@ impl Default for LayoutSettings {
             show_bottom_dock: false,
             bottom_dock_height: 200.0,
             show_mixer_panel: true,
-            show_both_ars: false,
             mix_height: 200.0,
             mix_height_auto: true,
             float_pianoroll: FloatPanelState::default(),
