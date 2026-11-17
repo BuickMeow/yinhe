@@ -12,6 +12,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use yinhe_core::{TrackAudioTarget, TrackData};
+use yinhe_types::ChannelSource;
 
 use crate::document::Document;
 
@@ -36,12 +37,39 @@ impl Document {
     ///
     /// 只填充 `None` 的轨；已有目标不覆盖。
     pub fn ensure_audio_targets(&mut self) {
+        // 先收集需要的音频通道（独立 u16 LC 由 mixer 分配，不从编号推导）。
+        let audio_channels: Vec<(usize, u16)> = self
+            .data
+            .model
+            .tracks
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.kind == yinhe_core::TrackKind::Audio && t.audio_target.is_none())
+            .filter_map(|(i, t)| t.audio_channel.map(|ch| (i, ch)))
+            .collect();
+        let mut allocated = std::collections::HashMap::new();
+        for (_, ch) in &audio_channels {
+            allocated.insert(*ch, self.mixer.ensure_lc_node(ChannelSource::Audio(*ch)));
+        }
         let model = std::sync::Arc::make_mut(&mut self.data.model);
-        for track in &mut model.tracks {
+        for (i, track) in model.tracks.iter_mut().enumerate() {
             if track.audio_target.is_some() {
                 continue;
             }
-            if let Some(target) = track.effective_audio_target() {
+            let target = match track.effective_audio_target() {
+                Some(TrackAudioTarget::OwnLc { lc, rack })
+                    if track.kind == yinhe_core::TrackKind::Audio =>
+                {
+                    let real_lc = track
+                        .audio_channel
+                        .and_then(|ch| allocated.get(&ch).copied())
+                        .unwrap_or(lc);
+                    Some(TrackAudioTarget::OwnLc { lc: real_lc, rack })
+                }
+                other => other,
+            };
+            let _ = i;
+            if let Some(target) = target {
                 std::sync::Arc::make_mut(track).set_audio_target(target);
             }
         }
@@ -61,7 +89,7 @@ impl Document {
     pub fn migrate_shared_audio_home_lcs(&mut self) -> bool {
         use std::collections::{HashMap, HashSet};
 
-        use yinhe_types::{ChannelId, LogicalChannelId, MIDI_CHANNEL_COUNT};
+        use yinhe_types::{ChannelId, ChannelSource, LogicalChannelId};
 
         let mut groups: HashMap<u16, Vec<usize>> = HashMap::new();
         for (i, track) in self.data.model.tracks.iter().enumerate() {
@@ -88,8 +116,16 @@ impl Document {
             if tracks.len() <= 1 {
                 continue;
             }
-            let first_lc = LogicalChannelId(MIDI_CHANNEL_COUNT as u32 + u32::from(*ch));
-            self.mixer.ensure_audio_lc_node(*ch);
+            let first_lc = self.mixer.ensure_lc_node(ChannelSource::Audio(*ch));
+            // 第一条轨保留汇总 LC，也要固化显式目标（独立 u16 ID）。
+            {
+                let model = std::sync::Arc::make_mut(&mut self.data.model);
+                let track = std::sync::Arc::make_mut(&mut model.tracks[tracks[0]]);
+                track.set_audio_target(TrackAudioTarget::OwnLc {
+                    lc: first_lc,
+                    rack: None,
+                });
+            }
             for &idx in &tracks[1..] {
                 while used.contains(&next_ch) {
                     next_ch = next_ch.saturating_add(1);
@@ -97,8 +133,7 @@ impl Document {
                 let new_ch = next_ch;
                 used.insert(new_ch);
                 next_ch = next_ch.saturating_add(1);
-                let new_lc = LogicalChannelId(MIDI_CHANNEL_COUNT as u32 + u32::from(new_ch));
-                self.mixer.ensure_audio_lc_node(new_ch);
+                let new_lc = self.mixer.ensure_lc_node(ChannelSource::Audio(new_ch));
 
                 let model = std::sync::Arc::make_mut(&mut self.data.model);
                 let track = std::sync::Arc::make_mut(&mut model.tracks[idx]);
@@ -148,7 +183,7 @@ mod tests {
     fn midi(port: u8, channel: u8, own_lc: bool) -> Arc<TrackData> {
         let mut track = TrackData::new(port, channel);
         if own_lc {
-            track.lc = Some(yinhe_types::LogicalChannelId(1_000_000));
+            track.lc = Some(yinhe_types::LogicalChannelId(yinhe_types::TRACK_LC_BASE));
         }
         Arc::new(track)
     }
@@ -210,9 +245,19 @@ mod tests {
         assert_eq!(audio_channels.len(), 2);
         assert_ne!(audio_channels[0], audio_channels[1], "home LC 必须唯一");
 
-        let first_lc = LogicalChannelId(MIDI_CHANNEL_COUNT as u32);
-        let second_lc =
-            LogicalChannelId(MIDI_CHANNEL_COUNT as u32 + u16::from(audio_channels[1]) as u32);
+        let lc_of = |ch: u16| -> LogicalChannelId {
+            model
+                .tracks
+                .iter()
+                .find(|t| t.audio_channel == Some(ch))
+                .and_then(|t| match t.effective_audio_target() {
+                    Some(TrackAudioTarget::OwnLc { lc, .. }) => Some(lc),
+                    _ => None,
+                })
+                .expect("lc")
+        };
+        let first_lc = lc_of(audio_channels[0]);
+        let second_lc = lc_of(audio_channels[1]);
         let send = doc
             .mixer
             .channel_send(ChannelId::Lc(second_lc), ChannelId::Lc(first_lc));

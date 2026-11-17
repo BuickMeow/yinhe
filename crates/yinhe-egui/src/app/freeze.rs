@@ -31,7 +31,7 @@ impl App {
             return;
         };
         let revision = self.workspace.documents[idx].data.revision;
-        let node = channel.node_id();
+        let node = self.workspace.documents[idx].mixer.node_id_for(channel);
         {
             self.jobs.freeze.node = Some(node);
             self.jobs.freeze.revision = revision;

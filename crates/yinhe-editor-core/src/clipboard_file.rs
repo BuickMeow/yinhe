@@ -337,7 +337,7 @@ fn read_mixer_channel(r: &mut impl Read) -> io::Result<yinhe_types::MixerChannel
             MixerChannelId::Midi(ch[0])
         }
         1 => MixerChannelId::Audio(read_u16(r)?),
-        2 => MixerChannelId::TrackLc(LogicalChannelId(read_u32(r)?)),
+        2 => MixerChannelId::TrackLc(LogicalChannelId(read_u16(r)?)),
         3 => MixerChannelId::Bus(BusId(read_u16(r)?)),
         4 => MixerChannelId::Master,
         _ => return Err(invalid("unknown mixer channel")),

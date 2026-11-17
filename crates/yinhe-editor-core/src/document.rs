@@ -189,7 +189,9 @@ impl Document {
     /// 新工程/导入 MIDI 的默认混音台：不预设任何总线，降低学习曲线；
     /// 需要总线时由用户在 MIX 或 AR 手动添加。
     fn default_mixer() -> MixerParams {
-        MixerParams::default()
+        let mut mixer = MixerParams::default();
+        mixer.ensure_len();
+        mixer
     }
 
     pub fn empty() -> Self {
@@ -796,22 +798,20 @@ impl Document {
         for node in self.mixer.nodes_mut() {
             if node.solo {
                 node.solo = false;
-                changed.push(match node.id {
-                    yinhe_types::ChannelId::Lc(id)
-                        if id.0 < yinhe_types::MIDI_CHANNEL_COUNT as u32 =>
-                    {
-                        MixerChannelId::Midi(id.0 as u8)
-                    }
-                    yinhe_types::ChannelId::Lc(id) if id.0 < yinhe_types::TRACK_LC_BASE => {
-                        MixerChannelId::Audio(
-                            (id.0 - yinhe_types::MIDI_CHANNEL_COUNT as u32) as u16,
-                        )
-                    }
-                    yinhe_types::ChannelId::Lc(id) => MixerChannelId::TrackLc(id),
-                    yinhe_types::ChannelId::Bus(bus) => MixerChannelId::Bus(bus),
-                    yinhe_types::ChannelId::Ap(_) | yinhe_types::ChannelId::Master => {
-                        MixerChannelId::Master
-                    }
+                changed.push(match node.source {
+                    yinhe_types::ChannelSource::Midi(ch) => MixerChannelId::Midi(ch),
+                    yinhe_types::ChannelSource::Audio(ch) => MixerChannelId::Audio(ch),
+                    yinhe_types::ChannelSource::Track(_) => match node.id {
+                        yinhe_types::ChannelId::Lc(id) => MixerChannelId::TrackLc(id),
+                        _ => MixerChannelId::Master,
+                    },
+                    yinhe_types::ChannelSource::Bus => match node.id {
+                        yinhe_types::ChannelId::Bus(bus) => MixerChannelId::Bus(bus),
+                        _ => MixerChannelId::Master,
+                    },
+                    yinhe_types::ChannelSource::Ap(_)
+                    | yinhe_types::ChannelSource::Master
+                    | yinhe_types::ChannelSource::Unspecified => MixerChannelId::Master,
                 });
             }
         }

@@ -3344,6 +3344,7 @@ fn mixer_gain_pan_automation_reads_lc_nodes() {
     let layout = ChannelLayout::from_mask(vec![true]);
     let mut engine = AudioEngine::new(48_000, layout);
     let mut mixer = MixerParams::default();
+    mixer.ensure_len();
     let channel = MixerChannelId::Midi(0);
     let node = mixer.midi_node_mut(0).expect("midi lc");
     node.automation.push(AutomationLane {
@@ -3386,6 +3387,7 @@ fn mixer_send_automation_updates_node_send_amount() {
     let layout = ChannelLayout::from_mask(vec![true]);
     let mut engine = AudioEngine::new(48_000, layout);
     let mut mixer = MixerParams::default();
+    mixer.ensure_len();
     let bus = mixer.add_bus().expect("bus");
     let channel = MixerChannelId::Midi(0);
     let node = mixer.midi_node_mut(0).expect("midi lc");
@@ -3426,6 +3428,7 @@ fn bus_gain_automation_reads_bus_node_lanes() {
     let layout = ChannelLayout::from_mask(vec![true]);
     let mut engine = AudioEngine::new(48_000, layout);
     let mut mixer = MixerParams::default();
+    mixer.ensure_len();
     let bus = mixer.add_bus().expect("bus");
     let node = mixer.bus_node_mut(bus).expect("bus node");
     node.automation.push(AutomationLane {
@@ -3485,6 +3488,7 @@ fn insert_param_automation_writes_processor_param() {
     );
 
     let mut mixer = MixerParams::default();
+    mixer.ensure_len();
     let channel = MixerChannelId::Midi(0);
     mixer
         .midi_node_mut(0)
@@ -3525,6 +3529,7 @@ fn frozen_lc_overwrites_target_channel_buffer() {
     let mut engine = AudioEngine::new(48_000, layout);
     engine.mixer.resize(1, 8, &[]);
     let mut mixer = MixerParams::default();
+    mixer.ensure_len();
     mixer.midi_node_mut(0).expect("midi 0").freeze = Some(FrozenAudio {
         source: "freeze-a".into(),
         source_revision: 1,
@@ -3563,6 +3568,7 @@ fn frozen_lc_forces_channel_active() {
     engine.mixer.resize(1, 512, &[]);
     engine.cpu_synth = Some(yinhe_synth::CpuSynth::new(48_000));
     let mut mixer = MixerParams::default();
+    mixer.ensure_len();
     mixer.midi_node_mut(0).expect("midi 0").freeze = Some(FrozenAudio {
         source: "freeze".into(),
         source_revision: 0,

@@ -162,7 +162,14 @@ fn show_midi(
 fn show_audio(ui: &mut egui::Ui, doc: &mut Document, ch: u16) -> ChannelInfoOut {
     let mut out = ChannelInfoOut::default();
     let tracks = tracks_on_channel(doc, MixerChannelId::Audio(ch));
-    let id = LogicalChannelId(yinhe_types::MIDI_CHANNEL_COUNT as u32 + u32::from(ch));
+    let id = doc
+        .mixer
+        .audio_node(ch)
+        .and_then(|n| match n.id {
+            yinhe_types::ChannelId::Lc(id) => Some(id),
+            _ => None,
+        })
+        .unwrap_or_default();
     let display = doc.mixer.lc_display_map().get(&id).copied().unwrap_or(0);
     header(ui, crate::mix::lc_label(display), &tracks);
 
@@ -351,7 +358,10 @@ fn output_selector(ui: &mut egui::Ui, doc: &mut Document, ch: MixerChannelId) ->
             continue;
         }
         if matches!(id, yinhe_types::ChannelId::Bus(_))
-            || matches!(id, yinhe_types::ChannelId::Lc(lc) if lc.0 >= yinhe_types::MIDI_CHANNEL_COUNT as u32)
+            || matches!(
+                node.source,
+                yinhe_types::ChannelSource::Audio(_) | yinhe_types::ChannelSource::Track(_)
+            )
         {
             targets.push((id, crate::mix::channel_id_label(id, &map)));
         }

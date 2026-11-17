@@ -11,11 +11,11 @@ use serde::{Deserialize, Serialize};
 /// Rack 数量上限（0..256）。Rack 是共享乐器资源，不是混音节点。
 pub const RACK_COUNT: usize = 256;
 
-/// 每轨 LC 的 ID 起点。
+/// 新建 LC 的 ID 分配起点。
 ///
-/// `0..256` 留给 MIDI 源通道，`256..` 留给音频通道（可能到 65535），
-/// 每轨 LC 从高位开始，避免与现有命名空间碰撞。
-pub const TRACK_LC_BASE: u32 = 1_000_000;
+/// 方案 C 的 LC ID 是独立的 u16 身份，不再编码 MIDI/音频源通道号；
+/// 这个常量只是新 ID 的分配起点，避免与工程里已有的小 ID 碰撞。
+pub const TRACK_LC_BASE: u16 = 4096;
 
 /// Rack 的音频输出拓扑。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,24 +54,45 @@ impl RackId {
     }
 }
 
-/// 逻辑通道（LC）的稳定身份。
+/// 逻辑通道（LC）的稳定身份（独立 u16 命名空间）。
 ///
-/// LC 是一条音频流的混音通道条，不是 MIDI 轨道。由 Rack 输出拓扑决定：
-/// per-track 输出时一轨一条，单输出插件时整个 Rack 一条。
+/// LC 是一条音频流的混音通道条，不是 MIDI 轨道。ID 不再编码源通道号，
+/// 而是独立身份；角色由 [`ChannelSource`] 显式记录。
 #[derive(
     Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
 )]
 #[serde(transparent)]
-pub struct LogicalChannelId(pub u32);
+pub struct LogicalChannelId(pub u16);
 
 impl LogicalChannelId {
-    pub const fn new(raw: u32) -> Self {
+    pub const fn new(raw: u16) -> Self {
         Self(raw)
     }
 
     pub const fn index(self) -> usize {
         self.0 as usize
     }
+}
+
+/// LC 的来源角色（显式记录，不再从 ID 数值区间反推）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelSource {
+    /// MIDI 源通道 LC（AP 通道载体）；`ch` = global = port*16+channel。
+    Midi(u8),
+    /// 音频轨 home LC；`ch` = `TrackData::audio_channel`。
+    Audio(u16),
+    /// 每轨 home LC；`track` = `YinModel.tracks` 下标。
+    Track(u16),
+    /// AP 编组的通道。
+    Ap(ApGroupId),
+    /// Bus / Return（source=None 角色）。
+    Bus,
+    /// Master。
+    Master,
+    /// 旧数据未标注，加载时补齐。
+    #[default]
+    Unspecified,
 }
 
 /// 总线 / Return 的稳定身份。

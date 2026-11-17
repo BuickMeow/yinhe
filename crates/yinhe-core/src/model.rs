@@ -577,7 +577,7 @@ impl TrackData {
                 }
             }
             TrackKind::Audio => self.audio_channel.map(|ch| TrackAudioTarget::OwnLc {
-                lc: LogicalChannelId(yinhe_types::MIDI_CHANNEL_COUNT as u32 + u32::from(ch)),
+                lc: LogicalChannelId(ch),
                 rack: None,
             }),
             TrackKind::Folder | TrackKind::Master => None,
@@ -2877,7 +2877,7 @@ mod tests {
     #[test]
     fn c_audio_target_maps_per_track_lc_to_own_lc() {
         let mut track = TrackData::new(0, 3);
-        let lc = LogicalChannelId(1_000_000);
+        let lc = LogicalChannelId(yinhe_types::TRACK_LC_BASE);
         track.lc = Some(lc);
         assert_eq!(
             track.effective_audio_target(),
@@ -2896,7 +2896,7 @@ mod tests {
         assert_eq!(
             track.effective_audio_target(),
             Some(TrackAudioTarget::OwnLc {
-                lc: LogicalChannelId(258),
+                lc: LogicalChannelId(2),
                 rack: None
             })
         );

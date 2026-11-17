@@ -55,17 +55,7 @@ impl AudioEngine {
                 continue;
             }
             let dense = match node.id {
-                yinhe_types::ChannelId::Lc(id) if id.0 < yinhe_types::MIDI_CHANNEL_COUNT as u32 => {
-                    self.channel_layout.dense_for(id.0 as usize)
-                }
-                yinhe_types::ChannelId::Lc(id) if id.0 < yinhe_types::TRACK_LC_BASE => self
-                    .channel_layout
-                    .audio_dense_for((id.0 - yinhe_types::MIDI_CHANNEL_COUNT as u32) as u16),
-                yinhe_types::ChannelId::Lc(id) => self
-                    .channel_layout
-                    .track_lc_dense_for(id)
-                    .map(|(_, dense)| dense)
-                    .unwrap_or(u32::MAX),
+                yinhe_types::ChannelId::Lc(id) => self.lc_dense(id),
                 _ => u32::MAX,
             };
             if dense != u32::MAX && (dense as usize) < n {

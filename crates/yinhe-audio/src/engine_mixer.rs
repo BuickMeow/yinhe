@@ -144,6 +144,23 @@ impl AudioEngine {
         }
     }
 
+    /// LC ID → dense 通道下标（按显式 source 角色，不从 ID 数值反推）。
+    pub(crate) fn lc_dense(&self, id: yinhe_types::LogicalChannelId) -> u32 {
+        use yinhe_types::{ChannelId, ChannelSource};
+        match self.mixer_params.source_of(ChannelId::Lc(id)) {
+            Some(ChannelSource::Midi(ch)) => self.channel_layout.dense_for(ch as usize),
+            Some(ChannelSource::Audio(ch)) => self.channel_layout.audio_dense_for(ch),
+            Some(ChannelSource::Track(track)) if track != u16::MAX => {
+                self.channel_layout.track_lc_dense(track as usize)
+            }
+            _ => self
+                .channel_layout
+                .track_lc_dense_for(id)
+                .map(|(_, dense)| dense)
+                .unwrap_or(u32::MAX),
+        }
+    }
+
     /// 稳定 ChannelId → dense 通道下标。
     fn dense_for_channel_id(&self, id: yinhe_types::ChannelId) -> Option<u32> {
         let lc = match id {
@@ -154,25 +171,8 @@ impl AudioEngine {
             }
             yinhe_types::ChannelId::Bus(_) | yinhe_types::ChannelId::Master => return None,
         };
-        if let Some((_, dense)) = self.channel_layout.track_lc_dense_for(lc)
-            && dense != u32::MAX
-        {
-            return Some(dense);
-        }
-        for i in 0.. {
-            let Some(node) = self.mixer_params.audio_node(i) else {
-                break;
-            };
-            if node.channel_id() == yinhe_types::ChannelId::Lc(lc) {
-                let dense = self.channel_layout.audio_dense_for(i);
-                return (dense != u32::MAX).then_some(dense);
-            }
-        }
-        if lc.0 < yinhe_types::MIDI_CHANNEL_COUNT as u32 {
-            let dense = self.channel_layout.dense_for(lc.0 as usize);
-            return (dense != u32::MAX).then_some(dense);
-        }
-        None
+        let dense = self.lc_dense(lc);
+        (dense != u32::MAX).then_some(dense)
     }
 
     /// 持久化层用稳定 BusId；渲染图只认 `buses` 下标。
@@ -291,8 +291,8 @@ impl AudioEngine {
             .mixer_params
             .nodes
             .iter()
-            .filter_map(|node| match node.id {
-                yinhe_types::ChannelId::Lc(id) if id.0 >= yinhe_types::TRACK_LC_BASE => Some(id),
+            .filter_map(|node| match (node.id, node.source) {
+                (yinhe_types::ChannelId::Lc(id), yinhe_types::ChannelSource::Track(_)) => Some(id),
                 _ => None,
             })
             .collect();
@@ -330,7 +330,7 @@ impl AudioEngine {
         let mut send_updates: Vec<(MixerChannelId, BusId, f32)> = Vec::new();
         let mut insert_updates: Vec<(MixerChannelId, usize, u32, f64)> = Vec::new();
         let mut collect = |node: &yinhe_mixer::MixerNode| {
-            let Some(channel) = mixer_channel_of(node.id) else {
+            let Some(channel) = mixer_channel_of(node.id, &self.mixer_params) else {
                 return;
             };
             let gain = node
@@ -438,7 +438,10 @@ impl AudioEngine {
             }
         }
         for (channel, bus, amount) in send_updates {
-            let Some(node) = self.mixer_params.node_mut(channel.node_id()) else {
+            let Some(node) = self
+                .mixer_params
+                .node_mut(self.mixer_params.node_id_for(channel))
+            else {
                 continue;
             };
             if let Some(send) = node
@@ -781,21 +784,20 @@ impl AudioEngine {
     }
 }
 
-fn mixer_channel_of(id: yinhe_types::ChannelId) -> Option<MixerChannelId> {
+fn mixer_channel_of(
+    id: yinhe_types::ChannelId,
+    mixer: &yinhe_mixer::MixerParams,
+) -> Option<MixerChannelId> {
+    use yinhe_types::{ChannelId, ChannelSource};
     match id {
-        yinhe_types::ChannelId::Lc(id) => {
-            if id.0 < yinhe_types::MIDI_CHANNEL_COUNT as u32 {
-                Some(MixerChannelId::Midi(id.0 as u8))
-            } else if id.0 < yinhe_types::TRACK_LC_BASE {
-                Some(MixerChannelId::Audio(
-                    (id.0 - yinhe_types::MIDI_CHANNEL_COUNT as u32) as u16,
-                ))
-            } else {
-                Some(MixerChannelId::TrackLc(id))
-            }
-        }
-        yinhe_types::ChannelId::Ap(_) => None,
-        yinhe_types::ChannelId::Bus(bus) => Some(MixerChannelId::Bus(bus)),
-        yinhe_types::ChannelId::Master => Some(MixerChannelId::Master),
+        ChannelId::Lc(lc) => match mixer.source_of(id)? {
+            ChannelSource::Midi(ch) => Some(MixerChannelId::Midi(ch)),
+            ChannelSource::Audio(ch) => Some(MixerChannelId::Audio(ch)),
+            ChannelSource::Track(_) => Some(MixerChannelId::TrackLc(lc)),
+            _ => None,
+        },
+        ChannelId::Ap(_) => None,
+        ChannelId::Bus(bus) => Some(MixerChannelId::Bus(bus)),
+        ChannelId::Master => Some(MixerChannelId::Master),
     }
 }

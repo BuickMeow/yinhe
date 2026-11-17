@@ -659,7 +659,7 @@ fn header_context_menu(
                 MixerChannelId::Midi(_) | MixerChannelId::Audio(_) | MixerChannelId::TrackLc(_)
             )
         {
-            let node = ch.node_id();
+            let node = app.workspace.documents[idx].mixer.node_id_for(ch);
             let frozen = app.workspace.documents[idx]
                 .mixer
                 .node(node)

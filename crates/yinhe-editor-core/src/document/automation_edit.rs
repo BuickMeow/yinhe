@@ -1684,7 +1684,10 @@ mod tests {
         use yinhe_types::{MixerChannelId, MixerNodeId};
         let mut doc = Document::empty();
         let channel = MixerChannelId::Midi(0);
-        let node = MixerNodeId::LogicalChannel(yinhe_types::LogicalChannelId(0));
+        let node = MixerNodeId::LogicalChannel(match doc.mixer.midi_node(0).expect("midi 0").id {
+            yinhe_types::ChannelId::Lc(id) => id,
+            _ => unreachable!(),
+        });
         let action = doc
             .add_mixer_automation_lane(
                 node,

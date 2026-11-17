@@ -264,7 +264,7 @@ impl App {
         name: &str,
         value: f32,
     ) {
-        let node = target.node_id();
+        let node = self.workspace.documents[idx].mixer.node_id_for(target);
         let lane_target = AutomationTarget::InsertParam {
             target,
             slot,

@@ -39,7 +39,7 @@ impl Document {
         }
         self.mixer.racks[channel as usize].output_mode = mode;
         let model = Arc::make_mut(&mut self.data.model);
-        for track in model.tracks.iter_mut() {
+        for (track_idx, track) in model.tracks.iter_mut().enumerate() {
             if track.kind != TrackKind::Midi || track.global_channel() != channel {
                 continue;
             }
@@ -48,9 +48,7 @@ impl Document {
                     if track.lc.is_none() {
                         // 复制共享 LC 的混音参数，避免切换模式后听感突变。
                         let source = self.mixer.midi_node(channel).cloned().unwrap_or_else(|| {
-                            yinhe_mixer::MixerNode::logical_channel(yinhe_types::LogicalChannelId(
-                                u32::from(channel),
-                            ))
+                            yinhe_mixer::MixerNode::new(yinhe_types::ChannelId::Master)
                         });
                         let id = self.mixer.add_track_lc();
                         if let Some(node) = self.mixer.track_node_mut(id) {
@@ -59,6 +57,7 @@ impl Document {
                             node.sends = source.sends.clone();
                             node.output = source.output;
                         }
+                        self.mixer.set_track_lc_source(id, track_idx as u16);
                         Arc::make_mut(track).lc = Some(id);
                     }
                     let lc = track.lc.expect("per-track lc");
@@ -162,8 +161,9 @@ impl Document {
             return false;
         }
         let ch = track.audio_channel.unwrap_or(0);
-        let lc =
-            yinhe_types::LogicalChannelId(yinhe_types::MIDI_CHANNEL_COUNT as u32 + u32::from(ch));
+        let lc = self
+            .mixer
+            .ensure_lc_node(yinhe_types::ChannelSource::Audio(ch));
         if track.audio_target == Some(TrackAudioTarget::OwnLc { lc, rack: None }) {
             return false;
         }
@@ -190,11 +190,11 @@ impl Document {
         if !rack.instruments.is_empty() {
             return false;
         }
-        let source = self.mixer.midi_node(channel).cloned().unwrap_or_else(|| {
-            yinhe_mixer::MixerNode::logical_channel(yinhe_types::LogicalChannelId(u32::from(
-                channel,
-            )))
-        });
+        let source = self
+            .mixer
+            .midi_node(channel)
+            .cloned()
+            .unwrap_or_else(|| yinhe_mixer::MixerNode::new(yinhe_types::ChannelId::Master));
         let id = self.mixer.add_track_lc();
         if let Some(node) = self.mixer.track_node_mut(id) {
             node.strip = source.strip;
@@ -266,11 +266,11 @@ impl Document {
             }
         }
         for (idx, channel) in assigned {
-            let source = self.mixer.midi_node(channel).cloned().unwrap_or_else(|| {
-                yinhe_mixer::MixerNode::logical_channel(yinhe_types::LogicalChannelId(u32::from(
-                    channel,
-                )))
-            });
+            let source = self
+                .mixer
+                .midi_node(channel)
+                .cloned()
+                .unwrap_or_else(|| yinhe_mixer::MixerNode::new(yinhe_types::ChannelId::Master));
             let id = self.mixer.add_track_lc();
             if let Some(node) = self.mixer.track_node_mut(id) {
                 node.strip = source.strip;
@@ -311,7 +311,7 @@ impl Document {
         self.ensure_audio_targets();
         let model = Arc::make_mut(&mut self.data.model);
         let mut changed = false;
-        for track in model.tracks.iter_mut() {
+        for (track_idx, track) in model.tracks.iter_mut().enumerate() {
             if track.kind != TrackKind::Midi {
                 continue;
             }
@@ -336,6 +336,7 @@ impl Document {
                         track.lc = Some(id);
                         changed = true;
                     }
+                    self.mixer.set_track_lc_source(id, track_idx as u16);
                     if track.audio_target.is_none() {
                         track.set_audio_target(TrackAudioTarget::OwnLc { lc: id, rack });
                         changed = true;

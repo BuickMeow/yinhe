@@ -124,11 +124,12 @@ pub(crate) fn track_mixer_lanes(
     let node_id = if let Some(lc) = track.lc {
         Some(yinhe_types::MixerNodeId::LogicalChannel(lc))
     } else if track.kind == yinhe_core::TrackKind::Audio {
-        track.audio_channel.map(|ch| {
-            yinhe_types::MixerNodeId::LogicalChannel(yinhe_types::LogicalChannelId(
-                yinhe_types::MIDI_CHANNEL_COUNT as u32 + u32::from(ch),
-            ))
-        })
+        match track.effective_audio_target() {
+            Some(yinhe_core::TrackAudioTarget::OwnLc { lc, .. }) => {
+                Some(yinhe_types::MixerNodeId::LogicalChannel(lc))
+            }
+            _ => None,
+        }
     } else {
         None
     };

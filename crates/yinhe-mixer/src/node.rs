@@ -14,7 +14,8 @@ use std::ops::{Deref, DerefMut};
 
 use serde::{Deserialize, Serialize};
 use yinhe_types::{
-    ApGroupId, AutomationLane, BusId, ChannelId, LogicalChannelId, RackId, RackOutputMode,
+    ApGroupId, AutomationLane, BusId, ChannelId, ChannelSource, LogicalChannelId, RackId,
+    RackOutputMode,
 };
 
 use crate::params::{InsertRef, SendParams, StripParams};
@@ -103,6 +104,9 @@ pub struct FrozenAudio {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MixerNode {
     pub id: ChannelId,
+    /// 该节点的来源角色（显式记录，不从 ID 数值反推）。
+    #[serde(default)]
+    pub source: ChannelSource,
     #[serde(default)]
     pub strip: StripParams,
     #[serde(default)]
@@ -126,8 +130,14 @@ pub struct MixerNode {
 
 impl MixerNode {
     pub fn new(id: ChannelId) -> Self {
+        let source = match id {
+            ChannelId::Bus(_bus) => ChannelSource::Bus,
+            ChannelId::Master => ChannelSource::Master,
+            ChannelId::Lc(_) | ChannelId::Ap(_) => ChannelSource::Unspecified,
+        };
         Self {
             id,
+            source,
             strip: StripParams::default(),
             inserts: Vec::new(),
             sends: Vec::new(),

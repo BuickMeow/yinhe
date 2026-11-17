@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{LogicalChannelId, MixerNodeId};
+use crate::LogicalChannelId;
 
 /// 一条混音通道（Rack 设备）的身份。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -30,56 +30,14 @@ impl MixerChannelId {
         matches!(self, Self::Midi(_) | Self::Audio(_))
     }
 
-    /// 目标 A → 目标 B 的逻辑通道身份映射。
+    /// 显式携带 LC 身份的只有 TrackLc。
     ///
-    /// 当前 MIDI 通道条和音频通道条各自就是一条 LC；迁移期用确定性 ID：
-    /// - MIDI `ch` → `LC(ch)`
-    /// - 音频 `ch` → `LC(256 + ch)`
-    /// - BUS / Master 不是 LC。
+    /// 方案 C 的 LC ID 是独立 u16，Midi/Audio 通道的 LC 由 `MixerParams` 的
+    /// 角色映射（ChannelSource）解析，不再从 ID 数值区间反推。
     pub fn logical_channel_id(self) -> Option<LogicalChannelId> {
         match self {
-            Self::Midi(ch) => Some(LogicalChannelId(u32::from(ch))),
-            Self::Audio(ch) => Some(LogicalChannelId(
-                crate::MIDI_CHANNEL_COUNT as u32 + u32::from(ch),
-            )),
             Self::TrackLc(id) => Some(id),
-            Self::Bus(_) | Self::Master => None,
-        }
-    }
-
-    /// 混音图中的节点身份。
-    pub fn node_id(self) -> MixerNodeId {
-        match self {
-            Self::Midi(ch) => MixerNodeId::LogicalChannel(LogicalChannelId(u32::from(ch))),
-            Self::Audio(ch) => MixerNodeId::LogicalChannel(LogicalChannelId(
-                crate::MIDI_CHANNEL_COUNT as u32 + u32::from(ch),
-            )),
-            Self::TrackLc(id) => MixerNodeId::LogicalChannel(id),
-            Self::Bus(bus) => MixerNodeId::Bus(bus),
-            Self::Master => MixerNodeId::Master,
-        }
-    }
-}
-
-impl MixerNodeId {
-    /// 迁移期反查：LC ID 落在 MIDI/音频区间时还原为源通道。
-    ///
-    /// 目标 B 真正落地后，Track 会直接存 LC ID，这个反查只服务于旧路径。
-    pub fn channel_id(self) -> Option<MixerChannelId> {
-        match self {
-            Self::LogicalChannel(id) => {
-                let raw = id.0;
-                if raw >= crate::TRACK_LC_BASE {
-                    Some(MixerChannelId::TrackLc(id))
-                } else if raw < crate::MIDI_CHANNEL_COUNT as u32 {
-                    Some(MixerChannelId::Midi(raw as u8))
-                } else {
-                    let audio = raw - crate::MIDI_CHANNEL_COUNT as u32;
-                    u16::try_from(audio).ok().map(MixerChannelId::Audio)
-                }
-            }
-            Self::Bus(bus) => Some(MixerChannelId::Bus(bus)),
-            Self::Master => Some(MixerChannelId::Master),
+            _ => None,
         }
     }
 }
@@ -90,36 +48,21 @@ mod tests {
     use crate::BusId;
 
     #[test]
-    fn logical_channel_ids_are_deterministic_for_legacy_sources() {
-        assert_eq!(
-            MixerChannelId::Midi(9).logical_channel_id(),
-            Some(LogicalChannelId(9))
-        );
-        assert_eq!(
-            MixerChannelId::Audio(3).logical_channel_id(),
-            Some(LogicalChannelId(259))
-        );
+    fn only_track_lc_carries_explicit_lc_id() {
+        let lc = LogicalChannelId(4096);
+        assert_eq!(MixerChannelId::TrackLc(lc).logical_channel_id(), Some(lc));
+        assert_eq!(MixerChannelId::Midi(9).logical_channel_id(), None);
+        assert_eq!(MixerChannelId::Audio(3).logical_channel_id(), None);
         assert_eq!(MixerChannelId::Bus(BusId(2)).logical_channel_id(), None);
         assert_eq!(MixerChannelId::Master.logical_channel_id(), None);
     }
 
     #[test]
-    fn node_ids_roundtrip_legacy_sources() {
-        for ch in [0u16, 9, 255] {
-            let id = MixerChannelId::Midi(ch as u8);
-            assert_eq!(id.node_id().channel_id(), Some(id));
-        }
-        for ch in [0u16, 31, u16::MAX] {
-            let id = MixerChannelId::Audio(ch);
-            assert_eq!(id.node_id().channel_id(), Some(id));
-        }
-        let lc = MixerChannelId::TrackLc(LogicalChannelId(crate::TRACK_LC_BASE));
-        assert_eq!(lc.node_id().channel_id(), Some(lc));
-        let bus = MixerChannelId::Bus(BusId(7));
-        assert_eq!(bus.node_id().channel_id(), Some(bus));
-        assert_eq!(
-            MixerChannelId::Master.node_id().channel_id(),
-            Some(MixerChannelId::Master)
-        );
+    fn source_channels_are_recognized() {
+        assert!(MixerChannelId::Midi(0).is_source());
+        assert!(MixerChannelId::Audio(1).is_source());
+        assert!(!MixerChannelId::TrackLc(LogicalChannelId(1)).is_source());
+        assert!(!MixerChannelId::Bus(BusId(0)).is_source());
+        assert!(!MixerChannelId::Master.is_source());
     }
 }

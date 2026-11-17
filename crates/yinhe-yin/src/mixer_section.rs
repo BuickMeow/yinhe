@@ -7,7 +7,9 @@ use yinhe_mixer::{
     CHANNEL_COUNT, InsertRef, MasterParams, MixerNode, MixerParams, RackParams, SendParams,
     StripParams,
 };
-use yinhe_types::{BusId, ChannelId, LogicalChannelId, RackId, RackOutputMode, TRACK_LC_BASE};
+use yinhe_types::{
+    BusId, ChannelId, ChannelSource, LogicalChannelId, RackId, RackOutputMode, TRACK_LC_BASE,
+};
 
 use crate::codec::{deserialize_postcard, encode_versioned_section, serialize_postcard};
 use crate::error::YinError;
@@ -62,6 +64,13 @@ struct MixerParamsV9 {
 
 impl MixerParamsV9 {
     fn into_current(self) -> MixerParams {
+        // 方案 C：LC ID 是独立 u16 身份，按分配顺序发放；角色写入 source 字段。
+        let mut next_lc = TRACK_LC_BASE;
+        let mut alloc = || {
+            let id = next_lc;
+            next_lc = next_lc.saturating_add(1);
+            LogicalChannelId(id)
+        };
         let audio_count = [
             self.audio_channels.len(),
             self.audio_inserts.len(),
@@ -81,7 +90,8 @@ impl MixerParamsV9 {
             .collect();
         let channels: Vec<MixerNode> = (0..CHANNEL_COUNT)
             .map(|i| MixerNode {
-                id: ChannelId::Lc(LogicalChannelId(i as u32)),
+                id: ChannelId::Lc(alloc()),
+                source: ChannelSource::Midi(i as u8),
                 strip: self.channels.get(i).copied().unwrap_or_default(),
                 inserts: self.channel_inserts.get(i).cloned().unwrap_or_default(),
                 sends: self
@@ -106,7 +116,8 @@ impl MixerParamsV9 {
             .collect();
         let audio_channels: Vec<MixerNode> = (0..audio_count)
             .map(|i| MixerNode {
-                id: ChannelId::Lc(LogicalChannelId(CHANNEL_COUNT as u32 + i as u32)),
+                id: ChannelId::Lc(alloc()),
+                source: ChannelSource::Audio(i as u16),
                 strip: self.audio_channels.get(i).copied().unwrap_or_default(),
                 inserts: self.audio_inserts.get(i).cloned().unwrap_or_default(),
                 sends: self
@@ -140,6 +151,7 @@ impl MixerParamsV9 {
                         .copied()
                         .unwrap_or(BusId(i.min(u16::MAX as usize) as u16)),
                 ),
+                source: ChannelSource::Bus,
                 strip: *strip,
                 inserts: self.bus_inserts.get(i).cloned().unwrap_or_default(),
                 sends: self
@@ -159,6 +171,7 @@ impl MixerParamsV9 {
             .collect();
         let master = MixerNode {
             id: ChannelId::Master,
+            source: ChannelSource::Master,
             strip: StripParams {
                 gain: self.master.gain,
                 ..StripParams::default()
@@ -182,7 +195,7 @@ impl MixerParamsV9 {
             master,
             next_instrument_uid: self.next_instrument_uid.max(1),
             next_bus_id: self.next_bus_id,
-            next_lc_id: LogicalChannelId(TRACK_LC_BASE),
+            next_lc_id: LogicalChannelId(next_lc),
         }
     }
 }
@@ -262,7 +275,7 @@ mod tests {
         assert_eq!(
             loaded
                 .nodes()
-                .filter(|node| matches!(node.id, ChannelId::Lc(id) if id.0 < yinhe_mixer::CHANNEL_COUNT as u32))
+                .filter(|node| matches!(node.source, ChannelSource::Midi(_)))
                 .count(),
             yinhe_mixer::CHANNEL_COUNT
         );

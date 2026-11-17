@@ -23,7 +23,7 @@ use rust_i18n::t;
 use yinhe_audio::InsertTarget;
 use yinhe_audio::channel_layout::ChannelLayout;
 use yinhe_mixer::{MasterParams, StripParams};
-use yinhe_types::{ApChannelId, ApGroupId, ChannelId, LogicalChannelId, MixerChannelId};
+use yinhe_types::{ApChannelId, ChannelId, MixerChannelId};
 
 use self::plugin_instance::PluginEntry;
 use crate::plugin_scan::ScanProgress;
@@ -77,24 +77,12 @@ pub(crate) fn channel_id_for_ui(
     mixer: &yinhe_mixer::MixerParams,
     channel: MixerChannelId,
 ) -> Option<ChannelId> {
-    match channel {
-        MixerChannelId::Midi(ch) => {
-            if mixer.ap_for_midi(ch).is_some() {
-                Some(ChannelId::Ap(ApChannelId::new(
-                    ApGroupId::new(u16::from(ch)),
-                    0,
-                )))
-            } else {
-                Some(ChannelId::Lc(LogicalChannelId(u32::from(ch))))
-            }
-        }
-        MixerChannelId::Audio(ch) => Some(ChannelId::Lc(LogicalChannelId(
-            yinhe_types::MIDI_CHANNEL_COUNT as u32 + u32::from(ch),
-        ))),
-        MixerChannelId::TrackLc(id) => Some(ChannelId::Lc(id)),
-        MixerChannelId::Bus(bus) => Some(ChannelId::Bus(bus)),
-        MixerChannelId::Master => Some(ChannelId::Master),
+    if let MixerChannelId::Midi(ch) = channel
+        && let Some(ap) = mixer.ap_for_midi(ch)
+    {
+        return Some(ChannelId::Ap(ApChannelId::new(ap.id, 0)));
     }
+    Some(mixer.channel_id_for(channel))
 }
 
 /// C 的 ChannelId → 聚焦发送标签。
@@ -451,7 +439,7 @@ impl App {
                 mixer.audio_sends_snapshot(),
                 mixer
                     .nodes()
-                    .filter(|node| matches!(node.id, ChannelId::Lc(id) if id.0 >= yinhe_types::TRACK_LC_BASE))
+                    .filter(|node| matches!(node.source, yinhe_types::ChannelSource::Track(_)))
                     .map(|node| node.sends.clone())
                     .collect(),
             )
@@ -503,7 +491,7 @@ impl App {
             let ChannelId::Lc(lc) = node.id else {
                 continue;
             };
-            if lc.0 < yinhe_types::TRACK_LC_BASE {
+            if !matches!(node.source, yinhe_types::ChannelSource::Track(_)) {
                 continue;
             }
             for r in &node.inserts {
@@ -595,8 +583,8 @@ impl App {
         let valid: std::collections::HashSet<_> = doc
             .mixer
             .nodes()
-            .filter_map(|node| match node.id {
-                ChannelId::Lc(id) if id.0 >= yinhe_types::TRACK_LC_BASE => Some(id),
+            .filter_map(|node| match (node.id, node.source) {
+                (ChannelId::Lc(id), yinhe_types::ChannelSource::Track(_)) => Some(id),
                 _ => None,
             })
             .collect();
@@ -897,10 +885,16 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                                         let display = app
                                             .mix
                                             .channel_display
-                                            .get(&ChannelId::Lc(LogicalChannelId(
-                                                yinhe_types::MIDI_CHANNEL_COUNT as u32
-                                                    + u32::from(ach),
-                                            )))
+                                            .get(&ChannelId::Lc(
+                                                app.workspace.documents[idx]
+                                                    .mixer
+                                                    .audio_node(ach)
+                                                    .and_then(|n| match n.id {
+                                                        ChannelId::Lc(id) => Some(id),
+                                                        _ => None,
+                                                    })
+                                                    .unwrap_or_default(),
+                                            ))
                                             .copied()
                                             .unwrap_or(0);
                                         strip::audio_strip(
@@ -1272,10 +1266,11 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
                 .node_strip(channel)
                 .gain
                 .clamp(0.0, 1.0);
+            let node_id = app.workspace.documents[idx].mixer.node_id_for(channel);
             let doc = &mut app.workspace.documents[idx];
             let before = doc.capture_snapshot();
             if let Some(action) = doc.add_mixer_automation_lane(
-                channel.node_id(),
+                node_id,
                 yinhe_types::AutomationTarget::MixerGain { channel },
                 value,
             ) {
@@ -1287,10 +1282,11 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
         MixAction::AddMixerPanAutomation { channel } => {
             let pan = app.workspace.documents[idx].mixer.node_strip(channel).pan;
             let value = (pan.clamp(-1.0, 1.0) + 1.0) * 0.5;
+            let node_id = app.workspace.documents[idx].mixer.node_id_for(channel);
             let doc = &mut app.workspace.documents[idx];
             let before = doc.capture_snapshot();
             if let Some(action) = doc.add_mixer_automation_lane(
-                channel.node_id(),
+                node_id,
                 yinhe_types::AutomationTarget::MixerPan { channel },
                 value,
             ) {
@@ -1315,10 +1311,11 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
                 .map(|s| s.amount)
                 .unwrap_or(0.0);
             let value = amount.clamp(0.0, 1.0);
+            let node_id = app.workspace.documents[idx].mixer.node_id_for(node);
             let doc = &mut app.workspace.documents[idx];
             let before = doc.capture_snapshot();
             if let Some(action) = doc.add_mixer_automation_lane(
-                node.node_id(),
+                node_id,
                 yinhe_types::AutomationTarget::MixerSend { node, bus },
                 value,
             ) {
@@ -1463,6 +1460,7 @@ pub(crate) fn poll_plugin_scan(app: &mut App) {
 mod tests {
     use super::*;
     use yinhe_mixer::{InsertRef, MixerParams, PluginFormat};
+    use yinhe_types::ApGroupId;
 
     fn insert_ref(format: PluginFormat, id: &str) -> InsertRef {
         InsertRef {
@@ -1475,18 +1473,20 @@ mod tests {
     #[test]
     fn c_channel_ids_map_from_mixer_channel_ids() {
         let mut mixer = MixerParams::default();
-        assert_eq!(
+        mixer.ensure_len();
+        assert!(matches!(
             channel_id_for_ui(&mixer, MixerChannelId::Midi(0)),
-            Some(ChannelId::Lc(LogicalChannelId(0)))
-        );
+            Some(ChannelId::Lc(_))
+        ));
         assert!(mixer.ensure_ap(9));
         assert_eq!(
             channel_id_for_ui(&mixer, MixerChannelId::Midi(9)),
             Some(ChannelId::Ap(ApChannelId::new(ApGroupId::new(9), 0)))
         );
+        let audio_lc = mixer.ensure_lc_node(yinhe_types::ChannelSource::Audio(1));
         assert_eq!(
             channel_id_for_ui(&mixer, MixerChannelId::Audio(1)),
-            Some(ChannelId::Lc(LogicalChannelId(257)))
+            Some(ChannelId::Lc(audio_lc))
         );
         assert_eq!(
             channel_id_for_ui(&mixer, MixerChannelId::Master),
@@ -1501,6 +1501,7 @@ mod tests {
     #[test]
     fn ap_channels_use_ap_label_and_plain_midi_keeps_a_label() {
         let mut mixer = MixerParams::default();
+        mixer.ensure_len();
         assert_eq!(channel_title(&mixer, 0), "A01");
         assert!(mixer.ensure_ap(9));
         assert_eq!(channel_title(&mixer, 9), "AP10");
@@ -1512,6 +1513,7 @@ mod tests {
     #[test]
     fn strip_builtin_inserts_removes_builtin_only() {
         let mut mixer = MixerParams::default();
+        mixer.ensure_len();
         mixer.midi_node_mut(3).expect("midi 3").inserts = vec![
             insert_ref(PluginFormat::Builtin, "channel_gain"),
             insert_ref(PluginFormat::Clap, "clap-fx"),

@@ -809,14 +809,11 @@ impl AutomationTarget {
             | AutomationTarget::MixerSend { node: channel, .. }
             | AutomationTarget::InsertParam {
                 target: channel, ..
-            } => channel
-                .logical_channel_id()
-                .map(crate::AutomationOwner::LogicalChannel)
-                .unwrap_or(match channel {
-                    crate::MixerChannelId::Bus(bus) => crate::AutomationOwner::Bus(*bus),
-                    crate::MixerChannelId::Master => crate::AutomationOwner::Master,
-                    _ => crate::AutomationOwner::Master,
-                }),
+            } => match channel {
+                crate::MixerChannelId::TrackLc(id) => crate::AutomationOwner::LogicalChannel(*id),
+                crate::MixerChannelId::Bus(bus) => crate::AutomationOwner::Bus(*bus),
+                _ => crate::AutomationOwner::Master,
+            },
         }
     }
 

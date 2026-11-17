@@ -489,7 +489,7 @@ impl MixerRack {
             let yinhe_types::ChannelId::Lc(lc) = node.id else {
                 continue;
             };
-            if lc.0 < yinhe_types::TRACK_LC_BASE {
+            if !matches!(node.source, yinhe_types::ChannelSource::Track(_)) {
                 continue;
             }
             if self.track_lcs.contains_key(&lc) {

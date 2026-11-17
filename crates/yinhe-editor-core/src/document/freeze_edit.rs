@@ -121,7 +121,10 @@ mod tests {
     #[test]
     fn set_freeze_stamps_revisions_and_invalidates_on_edit() {
         let mut doc = Document::empty();
-        let node = MixerNodeId::LogicalChannel(yinhe_types::LogicalChannelId(0));
+        let node = MixerNodeId::LogicalChannel(match doc.mixer.midi_node(0).expect("midi 0").id {
+            yinhe_types::ChannelId::Lc(id) => id,
+            _ => unreachable!(),
+        });
         let action = doc.set_node_freeze(node, Some(frozen())).expect("freeze");
         assert!(!doc.freeze_is_stale(node));
 
@@ -136,7 +139,10 @@ mod tests {
     #[test]
     fn loaded_freezes_are_reanchored() {
         let mut doc = Document::empty();
-        let node = MixerNodeId::LogicalChannel(yinhe_types::LogicalChannelId(0));
+        let node = MixerNodeId::LogicalChannel(match doc.mixer.midi_node(0).expect("midi 0").id {
+            yinhe_types::ChannelId::Lc(id) => id,
+            _ => unreachable!(),
+        });
         doc.mixer.node_mut(node).expect("node").freeze = Some(FrozenAudio {
             source: "saved".into(),
             source_revision: 1,
@@ -150,7 +156,10 @@ mod tests {
     #[test]
     fn engine_copy_drops_stale_freeze() {
         let mut doc = Document::empty();
-        let node = MixerNodeId::LogicalChannel(yinhe_types::LogicalChannelId(0));
+        let node = MixerNodeId::LogicalChannel(match doc.mixer.midi_node(0).expect("midi 0").id {
+            yinhe_types::ChannelId::Lc(id) => id,
+            _ => unreachable!(),
+        });
         doc.set_node_freeze(node, Some(frozen())).expect("freeze");
         let mut params = doc.mixer.clone();
         params.strip_stale_freezes(doc.data.revision);
