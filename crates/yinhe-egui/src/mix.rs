@@ -1249,7 +1249,7 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
                 .and_then(|sends| sends.iter().find(|s| s.bus == bus))
                 .map(|s| s.amount)
                 .unwrap_or(0.0);
-            let value = (amount / 2.0).clamp(0.0, 1.0);
+            let value = amount.clamp(0.0, 1.0);
             let doc = &mut app.workspace.documents[idx];
             let before = doc.capture_snapshot();
             if let Some(action) = doc.add_mixer_automation_lane(

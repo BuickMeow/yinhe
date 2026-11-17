@@ -228,6 +228,31 @@ fn pan_context_menu(
     reset
 }
 
+/// 发送旋钮的 dB 映射：0 = -inf/OFF，1 = 0 dB。
+fn send_norm(amount: f32) -> f32 {
+    if amount <= 0.0 {
+        0.0
+    } else {
+        ((gain_to_db(amount).clamp(-60.0, 0.0) + 60.0) / 60.0).clamp(0.0, 1.0)
+    }
+}
+
+fn send_amount(norm: f32) -> f32 {
+    if norm <= 0.0 {
+        0.0
+    } else {
+        db_to_gain(norm * 60.0 - 60.0)
+    }
+}
+
+fn send_db_label(amount: f32) -> String {
+    if amount <= 0.0 {
+        "-inf".to_string()
+    } else {
+        format!("{:.1}", gain_to_db(amount))
+    }
+}
+
 /// 效果发送区（独占一区，竖向滚动）：**每条总线一行**（旋钮 + 「BUS n」），
 /// 超出显示区（一行高）的部分竖向滚动查看；无总线时保留一个 BUS 1 占位
 /// （首次拖动自动创建第一条总线）。所有通道/总线的发送区共用同一个滚动位置
@@ -267,13 +292,13 @@ pub(super) fn send_block(
                     // 总线自发送（总线 → 自己）：旋钮照常可调量，行尾图标开关
                     // 占用「BUS n」标签位置（点击启用/禁用；启用后经块级延迟防反馈环）。
                     if source == SendSource::Bus(target) {
-                        let mut norm = (amount / 2.0).clamp(0.0, 1.0);
+                        let mut norm = send_norm(amount);
                         let knob_resp = knob(ui, &mut norm, KNOB_D);
                         if knob_resp.changed() {
                             actions.push(MixAction::SetBusSend {
                                 bus: target,
                                 target_bus: target,
-                                amount: norm * 2.0,
+                                amount: send_amount(norm),
                             });
                         }
                         crate::widgets::hint::hover(
@@ -315,7 +340,7 @@ pub(super) fn send_block(
                         }
                         return;
                     }
-                    let mut norm = (amount / 2.0).clamp(0.0, 1.0);
+                    let mut norm = send_norm(amount);
                     let resp = knob(ui, &mut norm, KNOB_D);
                     if resp.changed() {
                         match source {
@@ -326,7 +351,7 @@ pub(super) fn send_block(
                                 actions.push(MixAction::SetSend {
                                     channel,
                                     bus: target,
-                                    amount: norm * 2.0,
+                                    amount: send_amount(norm),
                                     pre_fader,
                                 });
                             }
@@ -334,7 +359,7 @@ pub(super) fn send_block(
                                 actions.push(MixAction::SetAudioSend {
                                     channel,
                                     bus: target,
-                                    amount: norm * 2.0,
+                                    amount: send_amount(norm),
                                     pre_fader,
                                 });
                             }
@@ -342,7 +367,7 @@ pub(super) fn send_block(
                                 actions.push(MixAction::SetTrackLcSend {
                                     lc,
                                     bus: target,
-                                    amount: norm * 2.0,
+                                    amount: send_amount(norm),
                                     pre_fader,
                                 });
                             }
@@ -350,7 +375,7 @@ pub(super) fn send_block(
                                 actions.push(MixAction::SetBusSend {
                                     bus: src,
                                     target_bus: target,
-                                    amount: norm * 2.0,
+                                    amount: send_amount(norm),
                                 });
                             }
                         }
@@ -485,7 +510,7 @@ pub(super) fn send_block(
                     });
                     ui.add_space(4.0);
                     ui.label(
-                        egui::RichText::new(format!("BUS {}", b + 1))
+                        egui::RichText::new(send_db_label(amount))
                             .size(crate::theme::SMALL_LABEL_FONT)
                             .color(crate::theme::text_secondary()),
                     );

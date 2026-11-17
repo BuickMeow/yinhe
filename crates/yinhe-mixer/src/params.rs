@@ -259,6 +259,7 @@ impl MixerParams {
         self.ensure_channels();
         self.ensure_aps();
         self.ensure_channel_sends();
+        self.ensure_send_amounts();
         self.ensure_track_channels();
         self.ensure_audio_channels();
         self.ensure_buses();
@@ -374,6 +375,23 @@ impl MixerParams {
 
     /// 清理任意通道发送：0 发送删除、同 source/target 去重（先写保留）、
     /// 源不能是 Master，amount 夹到 0..1。
+    /// C 的发送范围 0..1（-inf..0 dB）；旧工程的 +6 dB 发送夹到 0 dB，
+    /// 0 发送直接删除。
+    fn ensure_send_amounts(&mut self) {
+        for node in self
+            .channels
+            .iter_mut()
+            .chain(self.audio_channels.iter_mut())
+            .chain(self.track_channels.iter_mut())
+            .chain(self.buses.iter_mut())
+        {
+            for send in &mut node.sends {
+                send.amount = send.amount.clamp(0.0, 1.0);
+            }
+            node.sends.retain(|send| send.amount > 0.0);
+        }
+    }
+
     fn ensure_channel_sends(&mut self) {
         let sends = std::mem::take(&mut self.channel_sends);
         self.channel_sends = sends
@@ -1268,6 +1286,28 @@ mod tests {
         assert!(p.node_sends(MixerChannelId::Midi(0)).unwrap().is_empty());
         assert!(p.node_sends(MixerChannelId::Audio(0)).unwrap().is_empty());
         assert_eq!(p.node_output(MixerChannelId::Midi(0)), None);
+    }
+
+    #[test]
+    fn legacy_send_amounts_clamp_to_zero_db_and_zero_is_removed() {
+        let mut p = MixerParams::default();
+        p.ensure_len();
+        let bus = p.add_bus().expect("bus");
+        p.channels[0].sends = vec![
+            SendParams {
+                bus,
+                amount: 2.0,
+                pre_fader: false,
+            },
+            SendParams {
+                bus: BusId(99),
+                amount: 0.0,
+                pre_fader: false,
+            },
+        ];
+        p.ensure_len();
+        assert_eq!(p.channels[0].sends.len(), 1);
+        assert!((p.channels[0].sends[0].amount - 1.0).abs() < 1e-6);
     }
 
     #[test]
