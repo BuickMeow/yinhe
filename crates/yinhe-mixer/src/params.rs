@@ -416,6 +416,7 @@ impl MixerParams {
             ChannelId::Master => true,
             ChannelId::Lc(id) => self.channel_exists(id),
             ChannelId::Ap(ap) => self.ap(ap.group).is_some(),
+            ChannelId::Bus(bus) => self.bus_index(bus).is_some(),
         }
     }
 
@@ -465,7 +466,7 @@ impl MixerParams {
         amount: f32,
         pre_fader: bool,
     ) -> bool {
-        if source == ChannelId::Master || source == target {
+        if matches!(source, ChannelId::Master | ChannelId::Bus(_)) || source == target {
             return false;
         }
         if amount <= 0.0 {
@@ -639,7 +640,7 @@ impl MixerParams {
             .filter_map(|send| match send.target {
                 ChannelId::Lc(id) => Some(id),
                 ChannelId::Ap(ap) => self.ap(ap.group).map(|group| group.channel),
-                ChannelId::Master => None,
+                ChannelId::Bus(_) | ChannelId::Master => None,
             })
             .collect();
         if targets.is_empty() {

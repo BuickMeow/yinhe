@@ -128,6 +128,12 @@ impl AudioEngine {
             };
             let target = match send.target {
                 yinhe_types::ChannelId::Master => ChannelSendTarget::Master,
+                yinhe_types::ChannelId::Bus(bus) => {
+                    let Some(index) = self.mixer_params.bus_index(bus) else {
+                        continue;
+                    };
+                    ChannelSendTarget::Bus(index)
+                }
                 other => {
                     let Some(dst) = self.dense_for_channel_id(other) else {
                         continue;
@@ -156,7 +162,7 @@ impl AudioEngine {
                 let group = self.mixer_params.ap(ap.group)?;
                 group.channel
             }
-            yinhe_types::ChannelId::Master => return None,
+            yinhe_types::ChannelId::Bus(_) | yinhe_types::ChannelId::Master => return None,
         };
         if let Some((_, dense)) = self.channel_layout.track_lc_dense_for(lc)
             && dense != u32::MAX

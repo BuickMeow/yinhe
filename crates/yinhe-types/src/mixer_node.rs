@@ -186,6 +186,8 @@ impl ApChannelId {
 pub enum ChannelId {
     Lc(LogicalChannelId),
     Ap(ApChannelId),
+    /// 旧 Bus 节点在 C 发送图里的通道身份（过渡；UI 按 CH 处理）。
+    Bus(BusId),
     Master,
 }
 

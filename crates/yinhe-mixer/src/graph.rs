@@ -74,6 +74,7 @@ pub struct ResolvedSend {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChannelSendTarget {
     Channel(usize),
+    Bus(usize),
     Master,
 }
 
@@ -933,7 +934,9 @@ impl MixerGraph {
             }
             let channel_sends = channels[ci].channel_sends.clone();
             for send in channel_sends.iter().filter(|s| s.pre_fader) {
-                route_channel_send(channels, ci, send, master_l, master_r, any_solo, frames);
+                route_channel_send(
+                    channels, buses, ci, send, master_l, master_r, any_solo, frames,
+                );
             }
 
             // 推子（原地应用；静音/未 solo 时也照常推进斜坡）。
@@ -956,7 +959,9 @@ impl MixerGraph {
                 );
             }
             for send in channel_sends.iter().filter(|s| !s.pre_fader) {
-                route_channel_send(channels, ci, send, master_l, master_r, any_solo, frames);
+                route_channel_send(
+                    channels, buses, ci, send, master_l, master_r, any_solo, frames,
+                );
             }
 
             // 主输出：Bus 或 Master。
@@ -1268,6 +1273,7 @@ impl MixerGraph {
 /// 目标 <= 源 的发送已在 `apply_delayed_channel_sends` 里用上一块快照处理。
 fn route_channel_send(
     channels: &mut [ChannelChain],
+    buses: &mut [BusChain],
     src: usize,
     send: &ResolvedChannelSend,
     master_l: &mut [f32],
@@ -1294,6 +1300,20 @@ fn route_channel_send(
             for f in 0..frames {
                 dst_chain.buffers.left[f] += src_chain.buffers.left[f] * send.amount;
                 dst_chain.buffers.right[f] += src_chain.buffers.right[f] * send.amount;
+            }
+        }
+        ChannelSendTarget::Bus(bus) => {
+            let Some(bus_chain) = buses.get_mut(bus) else {
+                return;
+            };
+            let bus_solo = bus_chain.strip.params.solo;
+            if !channel_send_allowed(any_solo, &src_params, bus_solo) {
+                return;
+            }
+            let src_chain = &channels[src];
+            for f in 0..frames {
+                bus_chain.buffers.left[f] += src_chain.buffers.left[f] * send.amount;
+                bus_chain.buffers.right[f] += src_chain.buffers.right[f] * send.amount;
             }
         }
         ChannelSendTarget::Master => {
@@ -2163,6 +2183,35 @@ mod tests {
         fill(&mut g, 0, 0.5);
         let (l, _r) = g.process();
         let expect = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
+        assert!((l[3] - expect).abs() < 1e-6, "got {}", l[3]);
+    }
+
+    #[test]
+    fn channel_send_to_bus_reaches_bus_output() {
+        let mut g = graph_with(&[StripParams::default()], 4);
+        g.resize_buses(
+            2,
+            4,
+            &[
+                StripParams::default(),
+                StripParams {
+                    mute: true,
+                    ..StripParams::default()
+                },
+            ],
+        );
+        g.set_channel_output(0, Some(1));
+        g.set_channel_sends(
+            0,
+            vec![ResolvedChannelSend {
+                target: ChannelSendTarget::Bus(0),
+                amount: 1.0,
+                pre_fader: false,
+            }],
+        );
+        fill(&mut g, 0, 0.5);
+        let (l, _r) = g.process();
+        let expect = 0.5 * core::f32::consts::FRAC_1_SQRT_2 * core::f32::consts::FRAC_1_SQRT_2;
         assert!((l[3] - expect).abs() < 1e-6, "got {}", l[3]);
     }
 

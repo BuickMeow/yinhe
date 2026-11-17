@@ -94,7 +94,7 @@ pub(crate) fn channel_id_for_ui(
             yinhe_types::MIDI_CHANNEL_COUNT as u32 + u32::from(ch),
         ))),
         MixerChannelId::TrackLc(id) => Some(ChannelId::Lc(id)),
-        MixerChannelId::Bus(_) => None,
+        MixerChannelId::Bus(bus) => Some(ChannelId::Bus(bus)),
         MixerChannelId::Master => Some(ChannelId::Master),
     }
 }
@@ -110,6 +110,7 @@ pub(crate) fn channel_id_label(
             .map(|n| lc_label(*n))
             .unwrap_or_else(|| "CH".to_string()),
         ChannelId::Ap(ap) => ap_label(ap.group.0 as u8),
+        ChannelId::Bus(bus) => format!("CH{}", bus.index() + 1),
         ChannelId::Master => t!("mix.master").to_string(),
     }
 }
@@ -1523,7 +1524,7 @@ mod tests {
         );
         assert_eq!(
             channel_id_for_ui(&mixer, MixerChannelId::Bus(yinhe_types::BusId(0))),
-            None
+            Some(ChannelId::Bus(yinhe_types::BusId(0)))
         );
     }
 
