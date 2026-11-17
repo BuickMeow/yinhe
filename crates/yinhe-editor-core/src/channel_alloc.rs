@@ -32,20 +32,24 @@ pub fn alloc_channels_in_port(port: u8, start_channel: u8, count: usize) -> Vec<
         .collect()
 }
 
-/// MIDI 轨自动分配起点（global channel，0 起）：
-/// 取现有 MIDI 轨的最大 global channel + 1——无论前面是否有空洞都不回填
-/// （已有 A11 就从 A12 开始；A16 已有则从 B1 继续）。没有 MIDI 轨时从 A1 = 0 开始。
-/// 256 通道全满（最大已是 P16）时返回 None，调用方应禁止确认并提示。
-pub fn auto_midi_channel_start(tracks: &[Arc<yinhe_core::TrackData>]) -> Option<u16> {
-    let max = tracks
+/// 方案 C：独立 Track 暂时只分配在 Port A（A1..A16，global 0..=15）。
+/// 满 16 条后回到 A1 复用通道（每条轨仍有自己独立的 LC，互不干扰）。
+/// AP 仍可占用 A01..P16 中已有的 MIDI 通道，不受此规则限制。
+pub const PORT_A_CHANNEL_MAX: u8 = 15;
+
+/// MIDI 轨自动分配起点（global channel，0..=15，只在 Port A）：
+/// 取现有 Port A MIDI 轨的最大通道 + 1；没有 MIDI 轨时从 A1 = 0 开始；
+/// 16 条已满时回到 A1（复用）。
+pub fn auto_midi_channel_start(_tracks: &[Arc<yinhe_core::TrackData>]) -> Option<u16> {
+    let max = _tracks
         .iter()
-        .filter(|t| t.kind == yinhe_core::TrackKind::Midi)
-        .map(|t| u16::from(t.global_channel()))
+        .filter(|t| t.kind == yinhe_core::TrackKind::Midi && t.port == 0)
+        .map(|t| t.channel)
         .max();
     match max {
         None => Some(0),
-        Some(m) if m < GLOBAL_CHANNEL_MAX => Some(m + 1),
-        Some(_) => None,
+        Some(m) if m < PORT_A_CHANNEL_MAX => Some(u16::from(m + 1)),
+        Some(_) => Some(0), // 16 条占满，复用 A1
     }
 }
 
@@ -116,14 +120,24 @@ mod tests {
     fn auto_midi_start_boundaries() {
         assert_eq!(auto_midi_channel_start(&[]), Some(0)); // A1
         let tracks = vec![midi_track(0, 15)]; // A16
-        assert_eq!(auto_midi_channel_start(&tracks), Some(16)); // B1
+        assert_eq!(auto_midi_channel_start(&tracks), Some(0)); // 方案 C：回到 A1
     }
 
     /// 最大已到 P16 = 256 通道全满，返回 None。
     #[test]
     fn auto_midi_start_full_returns_none() {
         let tracks = vec![midi_track(15, 15)]; // P16
-        assert_eq!(auto_midi_channel_start(&tracks), None);
+        // 方案 C：AP 可占 P16，但 Auto 只看 Port A，仍从 A1 开始
+        assert_eq!(auto_midi_channel_start(&tracks), Some(0));
+    }
+
+    /// 方案 C：Auto 只参考 Port A 轨，Port B..P 不影响独立轨分配。
+    #[test]
+    fn auto_midi_start_only_considers_port_a() {
+        let tracks = vec![midi_track(1, 3), midi_track(0, 5)]; // B4 + A6
+        assert_eq!(auto_midi_channel_start(&tracks), Some(6)); // 跟在 A6 后
+        let all_a: Vec<_> = (0..16).map(|c| midi_track(0, c)).collect();
+        assert_eq!(auto_midi_channel_start(&all_a), Some(0)); // A 满则回绕
     }
 
     /// 音频轨不参与 MIDI 自动起点的计算（独立命名空间）。

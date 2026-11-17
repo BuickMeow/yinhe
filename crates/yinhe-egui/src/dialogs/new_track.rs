@@ -162,7 +162,12 @@ fn plan(state: &NewTrackDialogState, tracks: &[Arc<yinhe_core::TrackData>]) -> P
                     error: Some(t!("dialog.new_track.full").to_string()),
                 };
             };
-            let alloc = channel_alloc::alloc_channels_from(start, state.count);
+            // 方案 C：Auto 只在 Port A 内分配/回绕（独立 Track 暂不跨 port）。
+            let alloc = if matches!(state.mode, AssignMode::Auto) {
+                channel_alloc::alloc_channels_in_port(0, start as u8, state.count)
+            } else {
+                channel_alloc::alloc_channels_from(start, state.count)
+            };
             let specs = alloc
                 .iter()
                 .map(|&(port, channel)| NewTrackSpec {
