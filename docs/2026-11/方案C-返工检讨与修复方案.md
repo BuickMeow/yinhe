@@ -20,6 +20,10 @@
 
 **现象**：在 MIX 里点选通道后，看不到「已选中」的视觉反馈。
 
+**用户明确要求（补充）**：选中时**整个通道条背景**要像音轨面板（AR 轨道行）一样
+被点亮，不是只加一圈描边。AR 的 `render::draw_row_background(..., selected, ...)`
+就是背景点亮，MIX 必须使用同一套观感。
+
 **根因**：
 
 - `crates/yinhe-egui/src/mix/strip/controls.rs::strip_frame` 的签名里根本没有
@@ -34,15 +38,17 @@
 
 **修复方案**：
 
-1. `strip_frame` 增加 `selected: bool` 参数；选中时画 1px 强调色描边
-   （`theme::accent_active()`）+ 轻微背景提亮，与 AR 行的选中观感一致。
-2. 调用方按通道类型判断选中：
+1. `strip_frame` 增加 `selected: bool` 参数；选中时**整条背景提亮**（与 AR
+   `draw_row_background` 的 selected 使用同一套 `theme` 颜色，不要另造色值）。
+   顶部色带保持原样（它是通道身份色，不参与选中表达）。
+2. 选中判定抽成纯函数 `strip_selected(doc, MixerChannelId) -> bool`：
    - MIDI 通道：`track_selected` 中存在任一该通道的 MIDI 轨；
    - 音频通道：存在 `audio_channel == ch` 的音轨；
    - 每轨 LC：`track_selected` 包含该轨；
-   - Master：不参与（或 Conductor 选中时高亮）。
-3. 加一个纯函数 `strip_selected(doc, MixerChannelId) -> bool` 便于测试。
-4. 回归测试：构造 2 条轨、选中其中一条，断言对应通道条 `selected == true`。
+   - Master：跟随 Conductor 选中态（或不高亮，按 AR Master 行一致）。
+3. 点击通道条（色带或空白区）时同步 `track_selected`，保证「点了就亮」。
+4. 回归测试：构造 2 条轨、选中其中一条，断言对应通道条 `selected == true`，
+   且背景色与 AR 选中行一致（比较 `Color32` 常量，不比较像素）。
 
 ---
 
@@ -88,14 +94,28 @@
 **涉及 commit**：`60b448a3 feat(ui): ARRANGE 与 MIX 通道 AR 可同时显示`（我加
 的）。
 
+**用户明确要求（补充）**：口径 #7「ARRANGE 与 MIX AR 可同时显示」**完全忽略**，
+这个功能**整体回滚**，不是「换个方式实现」。用户从未要求过「同时显示」的按钮、
+状态或布局。
+
 **修复方案**：
 
-1. 删除 `mode_bar.rs` 里的 `AR+CH` 按钮与 `show_both_ars` 状态。
-2. 实现口径 #7 的正确形态：
-   - ARRANGE 视图里，轨道面板右侧固定显示通道 AR 区域（宽度按可用空间
-     `60/40` 或可拖拽分割），不做「显示/隐藏」开关；
-   - MIX 视图里，通道 AR 就是主区域，不需要「同时」。
-3. 如果确实需要临时收窄，用已有的分割条拖拽，而不是加按钮。
+1. 回滚 `60b448a3` 的全部改动：
+   - 删除 `show_both_ars` 状态字段（`app.rs` / `mix.rs` 的布局结构）；
+   - 删除 `mode_bar.rs` 里的 `AR+CH` 按钮；
+   - 删除 ARRANGE 视图里「左右分栏 60/40 + 选择同步」的共存逻辑；
+   - 恢复 `60b448a3` 之前的单一 AR 布局。
+2. 用 `git show 60b448a3 --stat` 核对完整文件清单，逐文件回滚；不要手工「修补」。
+3. 回归测试：ARRANGE 视图下只有轨道 AR，不再有通道 AR 分栏；MIX 视图仍是
+   通道 AR。删除对应布局测试（如果有）。
+
+---
+
+### 1.3.1 口径 #7 已作废
+
+> 用户 2026-11-18 明确：**#7「ARRANGE 与 MIX AR 可同时显示」完全忽略，所有
+> 功能完全回滚。** 本文档后续所有涉及 #7 的表述一律以本条为准。16 条口径中
+> #7 标记为「作废」。
 
 ---
 
@@ -498,6 +518,301 @@ AudioCommand::SyncSends { ... } => {
 5. **交付前按 16 条口径逐条打勾**，没做到的明确写「未覆盖」，不糊弄。
 
 ---
+
+---
+
+## 8. 代码质量专项列举（过长 / DRY / 内聚耦合 / 层级）
+
+> 数据来自 2026-11-18 的静态扫描（脚本统计顶层函数体行数、文件行数、字段数）。
+> 只列**本轮改动过或直接相关**的代码，按问题类型分组。
+
+### 8.1 过长代码
+
+#### 8.1.1 超长函数（>200 行）
+
+| 函数 | 行数 | 所在文件 | 问题 |
+|---|---:|---|---|
+| `arrange::show` | **1030** | `crates/yinhe-egui/src/arrange.rs` | 布局、行构建、菜单、dock、音频编辑、自动化、选区、按钮绘制全在一个函数 |
+| `track_panel::show` | **710** | `crates/yinhe-egui/src/arrange/track_panel.rs` | 行渲染、M/S、自动化子行、右键、拖拽、加号 |
+| `interaction::handle_interactions` | **313** | `crates/yinhe-egui/src/arrange/track_panel/interaction.rs` | 双击/单击/右键/拖拽/框选/自动化 lane 命中 |
+| `track::show_track_fields` | **281** | `crates/yinhe-egui/src/right_panel/info_panel/track.rs` | 名称/端口/通道/颜色/输出/LC/AP 全在一个函数 |
+| `dispatch_and_find_next` | **279** | `crates/yinhe-audio/src/engine_render/dispatch.rs` | CC/NoteOn/NoteOff 三段 + 边界扫描 + 插件投递 |
+| `mix::show` | **228** | `crates/yinhe-egui/src/mix.rs` | MIX 布局、通道条、Master、工具栏、扫描弹窗 |
+
+#### 8.1.2 长函数（100–200 行）
+
+| 函数 | 行数 | 所在文件 |
+|---|---:|---|
+| `automation_edit::apply_automation_edits` | 166 | `crates/yinhe-editor-core/src/document/automation_edit.rs` |
+| `strip::header_context_menu` | 142 | `crates/yinhe-egui/src/mix/strip.rs` |
+| `device_chain::collect_dock_state` | 140 | `crates/yinhe-egui/src/chrome/device_chain.rs` |
+| `device_chain::apply_dock_actions` | 134 | `crates/yinhe-egui/src/chrome/device_chain.rs` |
+| `engine_mixer::apply_mixer_automation` | 128 | `crates/yinhe-audio/src/engine_mixer.rs` |
+| `device_chain::draw_dock` | 126 | `crates/yinhe-egui/src/chrome/device_chain.rs` |
+| `mix::apply_action` | 122 | `crates/yinhe-egui/src/mix.rs` |
+| `graph::process_channels` | 115 | `crates/yinhe-mixer/src/graph.rs` |
+| `track::show_color_row` | 118 | `crates/yinhe-egui/src/right_panel/info_panel/track.rs` |
+| `graph::refresh_pdc` | 81 | `crates/yinhe-mixer/src/graph.rs` |
+| `plugins::render_instruments` | 86 | `crates/yinhe-audio/src/engine_render/plugins.rs` |
+| `controls::focus_send_block` | 87 | `crates/yinhe-egui/src/mix/strip/controls.rs` |
+| `mixer_section::into_current` | 74 | `crates/yinhe-yin/src/mixer_section.rs` |
+| `automation_edit::make_doc_with_anchor`（测试辅助） | 82 | `crates/yinhe-editor-core/src/document/automation_edit.rs` |
+
+#### 8.1.3 超大文件
+
+| 文件 | 行数 | 备注 |
+|---|---:|---|
+| `crates/yinhe-audio/src/engine_tests.rs` | 3454 | 测试可以大，但应按主题拆成多个 `*_tests.rs` |
+| `crates/yinhe-audio/src/spawn.rs` | 2159 | 命令定义 + worker + 音色加载 + 回调 + 测试 |
+| `crates/yinhe-audio/src/audio_model.rs` | 1998 | 事件枚举 + 排序键 + 聚合 + ActiveNote + PreparedModel + AudioModel + 测试 |
+| `crates/yinhe-editor-core/src/document.rs` | 1844 | Document + 导入导出 + 轨道操作 + 混音同步 + 选区 |
+| `crates/yinhe-mixer/src/graph.rs` | 1657 | PDC + 渲染 + DelayLine + MasterChain + ChannelChain + 测试 |
+| `crates/yinhe-mixer/src/params.rs` | 1292 | MixerParams + 12 个 ensure/sanitize + 测试 |
+| `crates/yinhe-egui/src/mix.rs` | 1288 | MixState + 30+ MixAction + 绘制 + 处理 + 电平表 |
+| `crates/yinhe-egui/src/arrange.rs` | 1282 | 视图编排 + 菜单 + dock + 音频编辑 |
+
+**修复建议**：优先拆 `arrange::show` 与 `track_panel::show`（按「布局 / 行渲染 /
+交互 / 菜单」四段）；`audio_model.rs` 按「事件 / 聚合 / 模型」拆模块；
+`engine_tests.rs` 按功能拆文件。
+
+---
+
+### 8.2 违反 DRY
+
+#### 8.2.1 `mix/strip.rs` 三个通道条函数几乎是复制粘贴
+
+`channel_strip`（70 行）、`audio_strip`（70 行）、`track_lc_strip`（75 行）的
+结构完全一致：
+
+```
+取 params → focus_send_info → strip_frame(title, color) →
+  section(send_height, focus_send_block) →
+  strip_controls(StripAutomationTarget::X) →
+  MixAction::SetNodeStrip { node, params }
+```
+
+只有 `title`、`color`、`MixerChannelId`、`StripAutomationTarget` 四个参数不同。
+**应抽一个 `node_strip(app, ui, idx, node, title, color, target, ...)`**，三个
+包装函数只负责算 title/color。
+
+#### 8.2.2 通道显示标签分散且命名不一致
+
+`crates/yinhe-egui/src/mix.rs` 里同时有：
+
+- `midi_label(port, channel)` / `channel_label(global)` / `ap_label(global)` /
+  `audio_label(ch)` / `lc_label(display)` / `channel_title(mixer, ch)` /
+  `channel_id_label(id, map)`。
+
+`channel_title` 与 `channel_label` 只差「是否查 AP」，命名无法区分；`ap_label`
+和 `channel_id_label` 又各自拼一次 AP 文案。**应合并到一个 `labels` 模块**，
+统一入口 `track_target_label` / `mixer_channel_label`，避免 AP 显示改一处漏一处
+（这正是问题 1.6 的温床）。
+
+#### 8.2.3 乐器宿主解析有两套
+
+- `crates/yinhe-egui/src/mix.rs::App::instrument_hosts`：解析
+  `TrackAudioTarget` → `Vec<Option<LogicalChannelId>>`；
+- `crates/yinhe-editor-core/src/document/rack_edit.rs::ensure_rack_track_lcs`：
+  同样遍历 `TrackAudioTarget`，决定 LC 的创建/删除。
+
+两处对「OwnLc / AP / DirectMaster」的判断必须永远保持一致，否则 UI 装的实例和
+引擎期望的宿主会对不上。**应把宿主解析收进 `yinhe-editor-core`**，返回
+`Vec<InstrumentHost>`，UI 与 rack 共用。
+
+#### 8.2.4 M/S 按钮有两套实现
+
+- `mix/strip/controls.rs::ms_column`：单按钮 + 三态文字 M/S；
+- `arrange/track_panel.rs`：AM 子行 M、S **两个**按钮；普通轨又是另一个
+  inline 按钮分支。
+
+应统一到一个 `audibility_button`（见 1.5）。
+
+#### 8.2.5 右键菜单有两套
+
+`mix/strip.rs::header_context_menu`（142 行）与
+`arrange/track_panel/interaction.rs::track_context_menu`（210 行）都在拼
+「重命名 / 删除 / 自动化 / 设备链」菜单项，文案和快捷键各写一遍。
+
+#### 8.2.6 `sync_output_routing` 与 `sync_sends_to_graph` 重复遍历
+
+`crates/yinhe-audio/src/engine_mixer.rs` 两个函数都对每个 dense 调
+`dense_to_namespace` 做一次映射；可以合并成一次遍历同时收集输出与发送。
+
+#### 8.2.7 v9 迁移与 `ensure_len` 重复补齐
+
+`yinhe-yin::MixerParamsV9::into_current` 手工补齐 Rack/节点/LC，随后
+`decode_mixer_section` 又调 `params.ensure_len()`。前者的补齐逻辑与
+`ensure_*` 系列重复，且容易漏字段。
+
+---
+
+### 8.3 低内聚高耦合
+
+#### 8.3.1 `AudioEngine` 是 53 字段的上帝对象
+
+`crates/yinhe-audio/src/engine.rs` 的 `AudioEngine` 同时持有：
+
+- 混音图（`mixer` / `mixer_params` / `instruments` / `channel_dsp`）；
+- 播放状态（`sample_position` / `current_tick` / `playing` / `active_notes`）；
+- 模型与事件（`yin_model` / `cc_events` / `note_cursor`）；
+- 插件回收（`insert_returns` / `instrument_returns`）；
+- 预览、导出、冻结、电平表、循环偏移……
+
+任何一处改动都要碰这个 struct。**建议按「混音 / 播放 / 插件宿主」拆成三个子
+结构**（`MixerState` / `PlaybackState` / `PluginHostState`），`AudioEngine` 只做
+聚合与命令分派。
+
+#### 8.3.2 `MixerParams::ensure_len` 一次做 12 件事
+
+`crates/yinhe-mixer/src/params.rs`：
+
+```rust
+ensure_len() →
+  ensure_racks / ensure_channels / ensure_aps / ensure_channel_sends /
+  ensure_send_amounts / ensure_track_channels / ensure_audio_channels /
+  clear_mixed_lc_freezes / ensure_master / ensure_instrument_uids /
+  sanitize_routing / sanitize_automation
+```
+
+任何一项改动都可能影响别的项（`sanitize_automation` 漏 TrackLc 就是例子）。
+**应拆成独立 `repair_*` 并按依赖顺序显式调用**，每项可单测。
+
+#### 8.3.3 `arrange::show` 1030 行：视图/数据/交互全耦合
+
+`crates/yinhe-egui/src/arrange.rs::show` 内同时：
+
+- 计算 `bus_ids`（已删）、`track_mixer_lanes`、`row_layout`；
+- 处理 `TrackAction` 的 20+ 分支（含增删轨、文件夹、自动化、混音）;
+- 打开 dock、处理右键菜单、处理音频片段编辑。
+
+**建议拆成**：`build_arrange_data`（数据快照）、`handle_track_actions`（动作
+落地）、`draw_arrange`（纯绘制）。
+
+#### 8.3.4 `mix::show` 228 行 + `mix::apply_action` 122 行
+
+`MixUiState` 18 个字段，`MixAction` 30+ 变体，绘制与动作处理都在 `mix.rs`。
+**建议把 `MixAction` 的定义与处理移到 `mix/actions.rs`**，`show` 只负责布局。
+
+#### 8.3.5 `audio_model.rs` 混合了事件、聚合、模型、测试
+
+1998 行里同时定义 `ControlEvent` / `ChannelAudioEvent` / `AudioEvent` /
+`SortedCC` / `PluginParamEvent` / `ActiveNote` / `PreparedModel` / `AudioModel` /
+`AggKey` 及大量测试。**建议拆成 `audio_model/event.rs` / `aggregate.rs` /
+`model.rs`**。
+
+#### 8.3.6 `RendererSharedState` 是 20+ `Arc<Atomic*>` 的口袋
+
+`crates/yinhe-audio/src/audio_renderer.rs` 的 `RendererSharedState` 把渲染线程
+与 UI 线程共享的所有原子量/锁都塞进一个 struct，没有分组。删除 `bus_readings`
+时就能体会到：每次增删都要改构造、所有使用点。**建议按「播放位置 / 音色库加载 /
+电平表 / 欠载统计」分四个子结构**。
+
+---
+
+### 8.4 所属 crate / 级别有误
+
+#### 8.4.1 `instrument_hosts` 在 UI 层解析持久化模型
+
+`crates/yinhe-egui/src/mix.rs::App::instrument_hosts` 直接读
+`doc.data.model.tracks` 并匹配 `TrackAudioTarget`。这是**文档/模型层职责**，
+应在 `yinhe-editor-core`。UI 只应消费 `Vec<Option<LogicalChannelId>>`。
+
+#### 8.4.2 `channel_id_for_ui` / `channel_id_label` 混淆「模型映射」与「显示」
+
+`crates/yinhe-egui/src/mix.rs`：
+
+- `channel_id_for_ui` 是 `MixerChannelId → ChannelId` 的**模型解析**，
+  `yinhe-mixer` 已经有 `channel_id_for`，重复且可能不一致；
+- `channel_id_label` 是**显示文案**，却与模型映射放在同一文件。
+
+应删除 `channel_id_for_ui`，统一用 `MixerParams::channel_id_for`；显示文案独立
+成 `labels` 模块。
+
+#### 8.4.3 `engine_mixer::mixer_channel_of` 在音频层引入 UI 概念
+
+```rust
+fn mixer_channel_of(id: ChannelId, mixer: &MixerParams) -> Option<MixerChannelId>
+```
+
+`MixerChannelId` 是「UI 查询键」（Midi/Audio/TrackLc/Master），音频引擎只需要
+`ChannelId`。这个函数把 UI 概念带进了 `yinhe-audio`，且与
+`MixerParams::channel_id_for` 反向重复。
+
+#### 8.4.4 `AutomationTarget::display_name` 放在 `yinhe-types`
+
+`crates/yinhe-types/src/automation.rs::display_name` 返回 UI 文案（例如
+`Mixer Gain {:?}`），属于展示层。类型层只应提供 `kind` / `default_value` 等
+语义，文案由 UI 的 `labels` 模块负责（也便于 i18n）。
+
+#### 8.4.5 `SendParams` 被持久化 / 引擎 / UI 三层共享
+
+- 持久化：`MixerNode.sends: Vec<SendParams>`；
+- 引擎：`AudioCommand::SyncSends` 搬运 `Vec<Vec<SendParams>>`；
+- UI：`MixAction::SetSend` 直接改 `node.sends`。
+
+但渲染图实际只用 `MixerParams::channel_sends`。**三层共享一个已不参与渲染的
+struct**，是 1.7「改了不生效」的同类风险。应删除 `SendParams` 与 `SyncSends`
+（见 3.2）。
+
+#### 8.4.6 `ChannelSource::Unspecified` 长期存在于类型层
+
+`ChannelSource` 的 `Unspecified` 是「加载时还没推断出角色」的临时状态，却作为
+公开变体长期存在，导致所有 match 都必须处理它。**应改为 `Option<ChannelSource>`
+或在加载后保证补齐**，而不是留一个永久的「未知」态。
+
+#### 8.4.7 `RackOutputMode` 在 `yinhe-core`、`RackParams` 在 `yinhe-mixer`
+
+`TrackAudioTarget::OwnLc { rack: Option<RackId> }` 在 `yinhe-core`，而
+`RackParams.output_mode: RackOutputMode` 在 `yinhe-mixer`。两边都描述同一个
+「Rack 拓扑」，但类型分属两个 crate，`yinhe-core` 又不能依赖 `yinhe-mixer`
+（否则循环）。**建议把 `RackId` / `RackOutputMode` 留在 `yinhe-types`**，
+`yinhe-core` 与 `yinhe-mixer` 共同依赖。
+
+#### 8.4.8 `TrackAudioTarget` 的 `rack` 字段没有按轨分配
+
+`effective_audio_target()` 对 MIDI OwnLc 返回
+`rack: Some(RackId::new(global_channel))`，即持久化仍按 MIDI 通道共享。这与
+「每轨插件实例」的运行时行为不一致（运行时每轨一个实例，持久化只有一份配置）。
+**要么承认「配置共享、实例每轨」，并在字段注释写清；要么给 RackId 增加按轨
+区间**（`TRACK_RACK_BASE + track_index`）。
+
+---
+
+### 8.5 其他具体问题
+
+1. **`ChannelOutput` 只剩一个变体**（`graph.rs`）——死抽象，删。
+2. **`instrument_output_dense` 恒等函数**（`channel_layout.rs`）——删。
+3. **`ensure_cpu_synth` 用 `expect`**（`engine.rs`）——改 `CpuSynth` 非 Option。
+4. **`MixerRack::orphan` 注释仍写「总线删除」**——过时。
+5. **`strip.rs::focus_send_info` 返回 5 元组**——改成 struct。
+6. **`mix.rs::instrument_hosts` 每次分配 Vec + contains 去重**——轨数少可接受，
+   但应注释复杂度。
+7. **`InstrumentRack::slot_mut` O(n²)**——大工程 slot 多时退化。
+8. **`sync_states_to` 双结构去重**——可合并。
+9. **`ArRow::track()` 的 `unwrap_or(0)`**——删 Bus 后不再有固定行，
+   `track_opt` 恒 `Some`，可以简化。
+10. **`AutomationTarget::MixerSend { node, target }` 命名易混**——`node` 是源
+    节点，`target` 是目标通道，建议改 `source` / `target`。
+
+---
+
+## 9. 修复顺序建议（含本章新增项）
+
+| 优先级 | 项 | 说明 |
+|---|---|---|
+| P0 | 1.5 单按钮 M/S | 用户口径，影响 AR/MIX 全部通道 |
+| P0 | 1.6 AP 显示 A01 | 用户口径 |
+| P0 | 1.2 旋钮只显示 OFF/dB | 用户口径 |
+| P1 | 1.1 MIX 选中背景点亮 | 用户口径 |
+| P1 | 1.3 回滚口径 #7 全部功能 | 用户明确要求整体回滚 |
+| P1 | 1.7 LC 改动 AR 生效 | 功能正确性 |
+| P2 | 1.4 音轨属性输出层级重构 | 需要新增 link-to-existing-LC/AP |
+| P2 | 8.2.2 统一 labels 模块 | 为 1.6 提供单点修复 |
+| P2 | 8.2.1 通道条抽公共函数 | 为 1.1 提供单点实现 |
+| P2 | 8.4.1 乐器宿主解析移入 editor-core | 消除 UI 层模型解析 |
+| P3 | 8.1 长函数拆分 | 持续重构 |
+| P3 | 8.3 AudioEngine 拆分 | 大工程，单独排期 |
+| P3 | 8.4 其余层级问题 | 单独排期 |
 
 ## 7. 附：本轮 commit 清单（供回溯）
 
