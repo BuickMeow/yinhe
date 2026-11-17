@@ -19,8 +19,9 @@
 1. **LC ID 空间改为 `u16`（0..65535）**，不再用 `u32 + TRACK_LC_BASE=1_000_000`。
    LC ID 不再编码“MIDI/音频源通道号”，而是独立的通道身份。v14 旧 ID 在
    C v10 迁移时重新分配，不能保留原数值。
-2. **取消独立 Bus 类型**。所有 LC/AP 通道都可以接收其他通道的发送，
-   “Bus”只是一种使用角色，不是第二种通道。Master 仍是唯一终点的特殊通道。
+2. **没有 Bus 类型，也没有 Bus 角色**。所有 LC/AP 通道都可以自由接收其他
+   通道的发送；需要汇总时就把音频 send 到某条 LC/AP 通道，它同时保留自己的
+   home source。Master 仍是唯一终点的特殊通道。
 3. **直通 Master 是 Track 的第三种音频目标 `DirectMaster`（UI 显示 `---`）**。
    它不创建 LC/AP 通道，音符/音频直接进 Master；它不是一种通道类型，也不是
    “普通 LC 把 output 设成 Master”。普通通道默认 output 仍是 Master，但两者
@@ -50,14 +51,16 @@
 下文为了描述当前代码，仍会提到 v14；涉及迁移/版本号时以本节为准。
 “v14 → v15”应理解为“旧开发格式 → C 的 v10”。
 
-6. **UI 命名**：普通 LC 显示为 `CH01`、`CH02`…，不显示内部 `LogicalChannelId`；
-   AP 通道显示为 `AP01`、`AP10`…；`DirectMaster` 显示为 `--- (Master)`。
+6. **UI 命名**：普通 LC 显示为 `LC01`、`LC02`…（以 LC 命名，便于与 AP 区分），
+   不显示内部 `LogicalChannelId`；AP 通道显示为 `AP01`、`AP10`…；
+   `DirectMaster` 显示为 `--- (Master)`。
    通道条只显示身份，不写“几条轨共享”之类说明文字。
 7. **ARRANGE 与 MIX 的 AR 不再互斥**：两者可以同时显示，分别服务轨道视图和
    通道视图；选择/自动化状态同步。
 
-8. **默认 LC Rack 使用内置音源**。只有用户显式选择外部插件时才创建 LC Rack
-   插件实例；外部插件按轨实例化的成本不能默认承担。
+8. **移除 XSynth，保留 YinheCpu 作为内置音源**。LC Rack / AP Rack 可装外部插件
+   （按轨实例化）；不装插件时由 YinheCpu 提供内置音源。XSynth 已无法满足本项目
+   的 DAW 架构，正在移除。
 9. **独立 Track 暂时都放 Port A**。导出时只在 Port A 的 16 个通道里分配；
    AP 仍可占用 A01..P16 中已有的 MIDI 通道。Port B..P 的独立通道扩展留到以后。
 10. **解链 AP 不复制乐器自动化**。乐器参数自动化留在 AP Rack；CC/PB/RPN
@@ -94,8 +97,8 @@
 AP 不是“父通道”，LC 不是“子通道”。它们是 Track 音频源的两种并列选择：
 
 ```text
-Track 1 ──> CH01（默认，独立）
-Track 2 ──> CH02（默认，独立）
+Track 1 ──> LC01（默认，独立）
+Track 2 ──> LC02（默认，独立）
 Track 3 ──> AP01（共享）
 Track 4 ──> AP01
 ```
@@ -180,8 +183,8 @@ Track 3 ─┘
 **方案 C：**
 
 ```text
-Track 1 ──> LC Rack + CH01（默认）
-Track 2 ──> LC Rack + CH02（默认）
+Track 1 ──> LC Rack + LC01（默认）
+Track 2 ──> LC Rack + LC02（默认）
 Track 3 ──> AP01（共享 Rack）
 Track 4 ──> AP01
 ```
@@ -355,7 +358,7 @@ struct MixerParams {
 
 struct MixerNode {
     id: ChannelId,
-    /// 音频来源；None = 纯汇入通道（Bus 角色）。
+    /// 音频来源；LC/AP 通道的乐器/Rack，无独立汇入类型。
     source: Option<ChannelSource>,
     strip: StripParams,
     inserts: Vec<InsertRef>,
@@ -385,8 +388,8 @@ struct SendParams {
 关键点：
 
 - `channels` 里既有普通 LC，也有 AP 通道；它们都是 `MixerNode`。
-- 没有独立的 `buses: Vec<MixerNode>`；“Bus”是 `source = None` 的通道角色。
-- `accepts_audio_input` 默认 true（已确认 FL 式）；任意通道都能当 Bus。
+- 没有独立的 `buses: Vec<MixerNode>` 汇入通道表；所有通道都是 LC/AP。
+- `accepts_audio_input` 默认 true（已确认 FL 式）；任意通道都能接收 send。
 - `sends`/`output` 的目标是 `ChannelId`，不再限制为 BusId。
 - `master` 不接受音符/乐器，也不能作为 send 源，只作为终点。
 
@@ -449,9 +452,9 @@ struct SendParams {
 方案 C 的核心是“每条 Track 默认有自己的 LC/LC Rack”，所以最简单的做法是：
 
 ```text
-CH01 -> LC Rack：插件实例 #1
-CH02 -> LC Rack：插件实例 #2
-CH03 -> LC Rack：插件实例 #3
+LC01 -> LC Rack：插件实例 #1
+LC02 -> LC Rack：插件实例 #2
+LC03 -> LC Rack：插件实例 #3
 CH04 -> LC Rack：插件实例 #4
 ```
 
@@ -479,9 +482,9 @@ CH04 -> LC Rack：插件实例 #4
 
 ```text
 插件实例
-├─ Out 1 (L/R) -> CH01
-├─ Out 2 (L/R) -> CH02
-├─ Out 3 (L/R) -> CH03
+├─ Out 1 (L/R) -> LC01
+├─ Out 2 (L/R) -> LC02
+├─ Out 3 (L/R) -> LC03
 └─ Out 4 (L/R) -> CH04
 ```
 
@@ -556,24 +559,25 @@ struct ApGroup {
 
 但更推荐等需求明确后再加，不要为了“以后可能用”提前把 C 的模型复杂化。
 
-### 5.3 已确认：取消 Bus 类型，任意通道发送
+### 5.3 已确认：没有 Bus，任意通道发送
 
 这一条是方案 C 的关键决策：
 
 ```text
-不再有独立的 Bus 类型。
-LC、AP 通道、纯汇入通道全部是 Channel。
+没有 Bus 类型，也没有“Bus 角色”。
+LC、AP 通道全部是 Channel。
 任何 Channel 都可以接收其他 Channel 的 send，
 也可以把主输出指向另一个 Channel。
+汇总就是“send 到某条 LC/AP 通道”，那条通道同时有自己的源。
 Master 是唯一终点。
 ```
 
 也就是说：
 
 ```text
-LC 可以当 Bus
-AP 通道可以当 Bus
-没有乐器的纯汇入通道也可以当 Bus
+LC 可以接收 send 做汇总
+AP 通道也可以接收 send 做汇总
+任意通道都能既是源也是汇入点
 ```
 
 统一结构：
@@ -591,12 +595,11 @@ struct MixerNode {
 
 这样带来的效果：
 
-1. **“Bus”只是角色**：`source = None` 的通道就是传统 Bus；有乐器的 LC 接收 send
-   时就是 FL Studio 式混合通道（音符 + 汇入音频相加）。
-2. **AP 也可以接收 send**：因为 AP 通道和 LC 同构，不再有“AP 不能当 Bus”的
-   特殊规则。但 UI 要标明它同时是“共享源”和“汇入点”。
-3. **SEND 用聚焦模式**：选中一个目标通道，其他通道各显示一个 dB 旋钮；
-   不再为每条 Bus 固定显示旋钮。
+1. **没有独立汇入通道**：接收 send 的通道就是普通 LC/AP，音符和汇入音频
+   在它自己的通道条上相加。
+2. **AP 也可以接收 send**：因为 AP 通道和 LC 同构。UI 只需显示通道身份，
+   不写“几条轨共享”之类说明。
+3. **SEND 用聚焦模式**：选中一个目标通道，其他通道各显示一个 dB 旋钮。
 4. **反馈检测统一**：任意通道发送意味着可能出现环；用与通道嵌套相同的
    “顺序发送同块、逆序发送一块延迟”策略，或统一拓扑排序 + 块延迟。
 5. **Master 特殊**：Master 不接收音符/乐器，主输出仍是硬件终点；SEND 聚焦 UI 按需求显示 Master，但 Master 作为发送源默认禁用，避免反馈。
@@ -611,13 +614,13 @@ FL 那种 Playlist Track 与 Mixer Track 默认解耦的混乱。
 时这条 home LC 不参与音频路径：
 
 ```text
-MIDI Track A -> CH01（home）
-Audio Track B -> CH02（home）--send--> CH01
+MIDI Track A -> LC01（home）
+Audio Track B -> LC02（home）--send--> LC01
 ```
 
-- CH01 是 A 的 home LC，B 不能把 home LC 也设成 CH01；
-- B 要参与 CH01 的汇总，只能把音频 send 到 CH01；
-- CH01 只看到“有音频输入”，不记录来源是 MIDI 轨还是音频轨；
+- LC01 是 A 的 home LC，B 不能把 home LC 也设成 LC01；
+- B 要参与 LC01 的汇总，只能把音频 send 到 LC01；
+- LC01 只看到“有音频输入”，不记录来源是 MIDI 轨还是音频轨；
 - 来源类型只存在于 Track，LC 是 source-agnostic 的音频通道。
 
 LC 不存 `source_kind`，也不存 `owner_kind`。来源关系由 Track 的 `target`
@@ -625,7 +628,7 @@ LC 不存 `source_kind`，也不存 `owner_kind`。来源关系由 Track 的 `ta
 
 因此“合并到同一条 LC”只有两种合法方式：
 
-1. **Send 汇总**：B 的 home LC2 `send -> CH01`，音频在 CH01 相加；
+1. **Send 汇总**：B 的 home LC2 `send -> LC01`，音频在 LC01 相加；
 2. **Bounce**：把多条 Audio Track 的片段离线混合成一个新音频文件，
    再放到一条 Audio Track/LC 上。这是显式操作（Bounce / Consolidate），
    不是编辑时的默认行为。
@@ -633,12 +636,11 @@ LC 不存 `source_kind`，也不存 `owner_kind`。来源关系由 Track 的 `ta
 不能把两条 Track 的 home LC 指向同一条。Track 是内容，LC 是通道；能共享的
 是音频汇总，不是 home LC 身份。
 
-`Bus` 不是第四种东西：它是 `source = None` 的普通 Channel，只接收 send，
-没有 home source。home LC 与 Bus 的区别只有“有没有自己的源”。
+没有 Bus：接收 send 的通道就是普通 LC/AP，它同时有自己的 home source。
 
 home LC 也可以接收 send；这时它是混合 LC，按 10.3 不参与单通道 freeze。
 
-UI 只显示 LC 身份（`CH01`/`CH02`），不写“几条轨共享”的说明。
+UI 只显示 LC 身份（`LC01`/`LC02`），不写“几条轨共享”的说明。
 
 ### 5.5 LC 没有鼓通道
 
@@ -652,7 +654,7 @@ UI 只显示 LC 身份（`CH01`/`CH02`），不写“几条轨共享”的说明
 
 ### 5.6 AP 和 LC 的本质区别
 
-如果 LC 也能当 Bus、也能接收很多音频，它和 AP 到底差在哪？
+如果 LC 也能接收很多音频，它和 AP 到底差在哪？
 
 答案不是“能不能汇总”，而是**汇总发生在音频链的哪一侧**：
 
@@ -662,21 +664,21 @@ Track 1 ─┐
 Track 2 ─┼─ MIDI/CC ─> 共享 Rack（一个乐器实例）─> AP 通道
 Track 3 ─┘
 
-LC Bus：先各自合成，再汇总音频
-Track 1 -> 私有 LC Rack -> LC 1 ─┐
-Track 2 -> 私有 LC Rack -> LC 2 ─┼─ send ─> LC Bus（纯汇入通道）
-Track 3 -> 私有 LC Rack -> LC 3 ─┘
+LC 汇总：先各自合成，再 send 到某条 LC
+Track 1 -> LC Rack -> LC 1 ─┐
+Track 2 -> LC Rack -> LC 2 ─┼─ send ─> LC 3（汇总通道）
+Track 3 -> LC Rack -> LC 3 ─┘
 ```
 
-| 维度 | AP | LC / LC Bus |
+| 维度 | AP | LC |
 |---|---|---|
 | 分组对象 | MIDI 音符/CC | 音频流 |
 | 共享乐器 | 是，一个 Rack 实例 | 否，各轨自己的 LC Rack |
 | 共享样本/voice | 是 | 否 |
 | MIDI 通道身份 | 有，绑定 A01..P16 | 没有 |
 | 默认每轨独立 | 否，链接才共享 | 是 |
-| 能否当 Bus | 可以接收音频 send，但它首先是 MIDI 源 | 可以，纯汇入通道就是 Bus |
-| freeze 单位 | AP 通道（共享输出） | 源 LC 或 Bus 通道（见 freeze 规则） |
+| 接收 send | 可以，但它首先是 MIDI 源 | 可以，普通 LC 同时做源与汇入 |
+| freeze 单位 | AP 通道（共享输出） | 源 LC 或汇总 LC（见 freeze 规则） |
 
 所以 AP 的意义不只是“指定通道”：
 
@@ -686,17 +688,17 @@ Track 3 -> 私有 LC Rack -> LC 3 ─┘
 - 它共享 voice pool、样本内存、乐器内部状态；
 - 它的音频输出才是一条 AP 通道。
 
-LC Bus 只共享音频汇总，不会让多条 Track 共享乐器。两者可以叠加：
+LC 汇总只共享音频，不会让多条 Track 共享乐器。两者可以叠加：
 
 ```text
-Track -> AP01 -> AP 通道 -> send -> CH10（Bus 角色）-> Master
+Track -> AP01 -> AP 通道 -> send -> LC10（汇总）-> Master
 ```
 
 ### 5.7 不建议让 LC 变成“多条通道的容器”
 
 “LC 也可以有多条通道”听起来灵活，但会制造和 AP 重复的层级：
 
-- LC 如果包含多条子通道，它就成了一个 Bus/Group 容器；
+- LC 如果包含多条子通道，它就成了一个 Group 容器；
 - 再让 LC 做 freeze，就要回答“冻结整组还是单条”；
 - 再让 LC 做 AP 式的 MIDI 共享，它就和 AP 没区别；
 - 层级越深，Track 到底在哪个通道越难理解。
@@ -707,7 +709,7 @@ Track -> AP01 -> AP 通道 -> send -> CH10（Bus 角色）-> Master
 Track -> Channel（LC 或 AP 通道）-> Channel ... -> Master
 ```
 
-需要分组音频就用 send 到一个 Bus 角色的 LC；需要分组 MIDI/乐器就用 AP。
+需要分组音频就用 send 到一条 LC；需要分组 MIDI/乐器就用 AP。
 不要让 LC 再包一层 LC。这样 freeze、自动化、路由都只有一个维度。
 
 ### 5.8 SEND 是音频，不是 MIDI
@@ -718,14 +720,14 @@ SEND 只搬运**音频**，不会把音符送到目标通道的乐器。
 Track A（无乐器，只有音符）
 Track B（无乐器，只有音符）
         │
-        └─ SEND（音频）─> CH10（有乐器）
+        └─ SEND（音频）─> LC10（有乐器）
 ```
 
-结果：CH10 的乐器**不会**因为收到 SEND 而播放 A/B 的音符。
-A/B 没有自己的音频源，所以 SEND 送过去的是静音；CH10 仍然只播放它自己的
+结果：LC10 的乐器**不会**因为收到 SEND 而播放 A/B 的音符。
+A/B 没有自己的音频源，所以 SEND 送过去的是静音；LC10 仍然只播放它自己的
 MIDI。
 
-要让 A/B 的音符去弹 CH10 的乐器，需要的是 **MIDI 链接到 AP**：
+要让 A/B 的音符去弹 LC10 的乐器，需要的是 **MIDI 链接到 AP**：
 
 ```text
 Track A ─┐
@@ -772,7 +774,7 @@ Insert 就是挂在**当前通道**上的效果器链，不是乐器，也不是
 | Rack 乐器 | 产生声音 | 通道源 |
 | Insert | 处理当前通道声音，100% 串行 | 源之后、推子之前 |
 | Send | 把当前通道声音并行送到另一个通道 | insert/推子之后（pre/post 可选） |
-| Bus 通道 | 汇总多个通道的音频 | 目标通道 |
+| 汇总 LC | 接收多条 send 的 LC | 目标通道 |
 
 Insert 可以是 CLAP/VST3 效果器，也可以是内置效果器；它们都实现
 `InsertProcessor`。AP 通道、普通 LC、纯汇入 Channel、Master 都有自己的
@@ -936,7 +938,7 @@ MixerNode.inserts      = 处理声音的效果器链（Insert）
 - 有些插件既能生成声音又能处理音频，但挂载时必须选一个角色：
   - 放 Rack：当作乐器，接收 MIDI；
   - 放 Insert：当作效果器，处理音频；
-- AP 通道、LC、Bus 角色、Master 的 insert 都是效果器链；
+- AP 通道、LC、Master 的 insert 都是效果器链；
 - Sidechain 是 Insert 的额外音频输入，不是乐器。
 
 ### 5.14 Rack 的内存共享与插件沙盒
@@ -1022,7 +1024,7 @@ Master / Conductor：master 参数、Tempo
   多条 Track 链接到同一 AP 时，在 AP Rack 输入按时间合并。
 - **乐器参数是 Rack 状态**，属于 Rack。`OwnLc` -> LC Rack；
   `Ap` -> AP Rack。AP Rack 的乐器自动化被所有链接轨共享。
-- **音频参数是 Channel 状态**，属于 LC/AP 通道/Bus/Master，不是 Track，
+- **音频参数是 Channel 状态**，属于 LC/AP 通道/Master，不是 Track，
   也不是 Rack。
 - **不要**把同一个参数同时存到 Track 和 Rack；解析时只有一个 owner。
 
@@ -1183,7 +1185,7 @@ for track in tracks:
 每轨显示当前音频目标：
 
 ```text
-Track 1   [CH01]       ← 默认
+Track 1   [LC01]       ← 默认
 Track 2   [AP01]       ← 已链接
 Track 3   [AP01]       ← 已链接
 ```
@@ -1304,7 +1306,7 @@ Folder、AP、Channel、Send：
 |---|---|---|
 | Folder | 视觉组织、折叠、批量操作 | 否 |
 | AP 编组 | 共享 MIDI 源/乐器/Rack | 是，一条 AP 通道 |
-| 纯汇入 Channel（Bus 角色） | 音频汇总、insert、send | 是，普通 Channel |
+| 接收 send 的 LC/AP | 音频汇总、insert、send | 是，普通 Channel |
 | Send | 把音频送到另一个 Channel | 否，是路由 |
 
 文件夹是自由的，AP 是路由身份，两者不要再互相绑定。
@@ -1386,14 +1388,14 @@ Track 和 Channel 是两层，不要把“音频轨/MIDI 轨”做成两种通�
 ```text
 AR（内容）                          MIX（音频）
 MIDI Track A ─ notes ─> Rack ──────┐
-                                    ├─> CH01
+                                    ├─> LC01
 Audio Track B ─ clips ─────────────┘
 ```
 
 结论：
 
 - **Track 是内容容器**：MIDI 音符、音频片段、文件夹；
-- **Channel 是音频节点**：LC、AP 通道、Bus 角色、Master；
+- **Channel 是音频节点**：LC、AP 通道、Master；
 - MIDI 轨的声音路径是 `notes -> LC Rack / AP Rack -> Channel`；
 - Audio 轨的声音路径是 `clips -> Channel`；
 - 两者默认都有自己的 home LC；都可以把音频 send 到别的通道，但 home LC 不共用。
@@ -1465,7 +1467,7 @@ Track 和 Channel 各有一份。这样同一个对象不可能同时 Muted + So
 | 层 | 作用 | solo 单位 |
 |---|---|---|
 | Track | 内容门：音符、CC/PB/RPN、音频 Clip | 单条 Track |
-| Channel | 音频门：整条 LC/AP/Bus 的输出 | 单条 Channel |
+| Channel | 音频门：整条 LC/AP 的输出 | 单条 Channel |
 
 #### Solo 只在一层生效
 
@@ -1480,7 +1482,7 @@ Track solo 和 Channel solo 同时存在会产生歧义。MVP 规则：
 
 - solo 一条 Track：只发这条轨的内容，即使它在 AP 里也能隔离；
 - solo 一条 AP 通道：所有链接到 AP 的 Track 内容放行，只听整条 AP；
-- solo 一条 Bus：它的上游 send 放行，其他通道直达 Master 的路径静音。
+- solo 一条汇总 LC：它的上游 send 放行，其他通道直达 Master 的路径静音。
 
 M 永远优先于 S：目标通道如果是 Muted，Track solo 不会偷偷把它解除。
 要试听就先把通道 M 关掉；UI 用颜色显示 Muted 状态，不写说明小字。
@@ -1583,7 +1585,7 @@ DirectMaster:
 不要把 `DirectMaster` 做成“特殊 LC”，否则又会回到“所有东西都必须有
 channel strip”的旧模型。
 
-### 10.3 Bus/混合 LC 怎么 freeze
+### 10.3 汇总 LC / 混合 LC 怎么 freeze
 
 因为 LC 可以当 Bus，freeze 必须按“这条通道有没有自己的源/有没有汇入”区分：
 
@@ -1667,7 +1669,7 @@ channel strip”的旧模型。
 - 65536 轨满载时 LC 数量很大，必须懒分配：无音符/无音频/无自动化的空轨
   不创建 LC；
 - 默认 LC Rack 如果每条轨都加载一个外部插件，实例数会爆炸。建议：
-  - 默认使用内置音源（XSynth/YinheCpu）的 per-track 输出；
+  - 默认使用 YinheCpu 的 per-track 输出（XSynth 已移除）；
   - 只有用户手动选择外部插件时才创建私有插件实例；
   - AP 编组共享一个插件实例，是省资源路径。
 - C MVP 的 AP 只有一条 AP 通道；多输出后期再加。
