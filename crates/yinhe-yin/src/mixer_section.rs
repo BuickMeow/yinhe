@@ -15,15 +15,19 @@ use crate::error::YinError;
 /// 混音段格式版本（段内前 4 字节）。
 ///
 /// 兼容策略：每次升级都必须保留至少一个旧版本解码器，不能让旧工程静默丢
-/// 混音设置。当前支持 v8 / v9 / v10：
+/// 混音设置。当前支持 v8..v15：
 /// - v8：总线是 Vec 下标；
 /// - v9：稳定 BusId，但仍是并行分表；
 /// - v10：Rack + MixerNode 节点表；
 /// - v11：每轨 LC（track_channels / next_lc_id）与 Rack 输出拓扑；
 /// - v12：MixerNode 拥有自己的 automation（BusGain 不再寄宿 Master）；
 /// - v13：LC freeze 音频引用；
-/// - v14：Rack 插件输出拓扑与按输出 LC。
-const MIXER_SECTION_VERSION: u32 = 14;
+/// - v14：Rack 插件输出拓扑与按输出 LC；
+/// - v15：方案 C 的过渡版本（AP/显式轨道目标等后续字段）。
+///
+/// 最终 C 会收口到 v10；v15 只是开发期版本，避免给 v14 工程加字段后
+/// postcard 无法回读。
+const MIXER_SECTION_VERSION: u32 = 15;
 
 /// v8 及更早的发送参数（总线是 Vec 下标，没有稳定 ID）。
 /// postcard 非自描述，字段顺序必须与旧 `MixerParams` 完全一致。
@@ -568,6 +572,98 @@ impl MixerParamsV9 {
     }
 }
 
+/// v14 的 Rack 快照（字段与当前 v14 完全一致，冻结字段顺序）。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct RackParamsV14 {
+    id: RackId,
+    instruments: Vec<InsertRef>,
+    output_mode: RackOutputMode,
+    outputs: yinhe_types::RackOutputTopology,
+    output_lcs: Vec<LogicalChannelId>,
+}
+
+/// v14 的 MixerNode 快照。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MixerNodeV14 {
+    id: MixerNodeId,
+    strip: StripParams,
+    inserts: Vec<InsertRef>,
+    sends: Vec<SendParams>,
+    output: Option<BusId>,
+    automation: Vec<yinhe_types::AutomationLane>,
+    freeze: Option<yinhe_mixer::FrozenAudio>,
+}
+
+impl MixerNodeV14 {
+    fn into_current(self) -> MixerNode {
+        MixerNode {
+            id: self.id,
+            strip: self.strip,
+            inserts: self.inserts,
+            sends: self.sends,
+            output: self.output,
+            automation: self.automation,
+            freeze: self.freeze,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MixerParamsV14 {
+    racks: Vec<RackParamsV14>,
+    channels: Vec<MixerNodeV14>,
+    track_channels: Vec<MixerNodeV14>,
+    audio_channels: Vec<MixerNodeV14>,
+    buses: Vec<MixerNodeV14>,
+    master: MixerNodeV14,
+    next_instrument_uid: u64,
+    next_bus_id: BusId,
+    next_lc_id: LogicalChannelId,
+}
+
+impl MixerParamsV14 {
+    fn into_current(self) -> MixerParams {
+        MixerParams {
+            aps: Vec::new(),
+            racks: self
+                .racks
+                .into_iter()
+                .map(|rack| RackParams {
+                    id: rack.id,
+                    instruments: rack.instruments,
+                    output_mode: rack.output_mode,
+                    outputs: rack.outputs,
+                    output_lcs: rack.output_lcs,
+                })
+                .collect(),
+            channels: self
+                .channels
+                .into_iter()
+                .map(MixerNodeV14::into_current)
+                .collect(),
+            track_channels: self
+                .track_channels
+                .into_iter()
+                .map(MixerNodeV14::into_current)
+                .collect(),
+            audio_channels: self
+                .audio_channels
+                .into_iter()
+                .map(MixerNodeV14::into_current)
+                .collect(),
+            buses: self
+                .buses
+                .into_iter()
+                .map(MixerNodeV14::into_current)
+                .collect(),
+            master: self.master.into_current(),
+            next_instrument_uid: self.next_instrument_uid,
+            next_bus_id: self.next_bus_id,
+            next_lc_id: self.next_lc_id,
+        }
+    }
+}
+
 /// 编码混音段：version u32 LE + zstd(postcard MixerParams)。
 pub(crate) fn encode_mixer_section(mixer: &MixerParams, level: i32) -> Result<Vec<u8>, YinError> {
     let payload = serialize_postcard(mixer)?;
@@ -585,6 +681,11 @@ pub(crate) fn decode_mixer_section(section: &[u8]) -> Option<MixerParams> {
         MIXER_SECTION_VERSION => deserialize_postcard::<MixerParams>(&payload)
             .map_err(|e| tracing::warn!("混音段解析失败，忽略混音设置: {e}"))
             .ok()?,
+        // v14：Rack 输出拓扑；转成当前结构（AP 表为空，Document 再派生）。
+        14 => deserialize_postcard::<MixerParamsV14>(&payload)
+            .map_err(|e| tracing::warn!("v14 混音段解析失败，忽略混音设置: {e}"))
+            .ok()?
+            .into_current(),
         // v13：已有 freeze，还没有 Rack 输出拓扑。
         13 => deserialize_postcard::<MixerParamsV13>(&payload)
             .map_err(|e| tracing::warn!("v13 混音段解析失败，忽略混音设置: {e}"))
@@ -950,5 +1051,62 @@ mod tests {
             loaded.track_node(track_lc).expect("track lc").strip.gain,
             0.25
         );
+    }
+    #[test]
+    fn v14_migrates_to_v15_with_output_topology() {
+        let old = MixerParamsV14 {
+            racks: vec![RackParamsV14 {
+                id: RackId(0),
+                instruments: Vec::new(),
+                output_mode: RackOutputMode::PerOutput,
+                outputs: yinhe_types::RackOutputTopology {
+                    outputs: vec![
+                        yinhe_types::RackOutput {
+                            name: "Out 1".into(),
+                            channels: 2,
+                        },
+                        yinhe_types::RackOutput {
+                            name: "Out 2".into(),
+                            channels: 2,
+                        },
+                    ],
+                    dynamic: false,
+                },
+                output_lcs: vec![
+                    LogicalChannelId(TRACK_LC_BASE),
+                    LogicalChannelId(TRACK_LC_BASE + 1),
+                ],
+            }],
+            channels: vec![MixerNodeV14 {
+                id: MixerNodeId::LogicalChannel(LogicalChannelId(0)),
+                strip: StripParams::default(),
+                inserts: Vec::new(),
+                sends: Vec::new(),
+                output: None,
+                automation: Vec::new(),
+                freeze: None,
+            }],
+            track_channels: Vec::new(),
+            audio_channels: Vec::new(),
+            buses: Vec::new(),
+            master: MixerNodeV14 {
+                id: MixerNodeId::Master,
+                strip: StripParams::default(),
+                inserts: Vec::new(),
+                sends: Vec::new(),
+                output: None,
+                automation: Vec::new(),
+                freeze: None,
+            },
+            next_instrument_uid: 1,
+            next_bus_id: BusId::default(),
+            next_lc_id: LogicalChannelId(TRACK_LC_BASE),
+        };
+        let payload = serialize_postcard(&old).expect("serialize v14");
+        let section = encode_versioned_section(14, &payload, 0).expect("encode v14");
+        let loaded = decode_mixer_section(&section).expect("decode v14");
+        assert_eq!(loaded.racks[0].output_mode, RackOutputMode::PerOutput);
+        assert_eq!(loaded.racks[0].outputs.outputs.len(), 2);
+        assert!(loaded.aps.is_empty());
     }
 }
