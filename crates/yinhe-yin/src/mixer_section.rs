@@ -288,12 +288,14 @@ mod tests {
         assert_eq!(loaded.next_bus_id, BusId(6));
         assert_eq!(loaded.master.gain, 0.8);
         assert_eq!(loaded.next_instrument_uid, 7);
+        // v9 没有每轨 LC：不应出现 source=Track 的节点。
         assert!(
             !loaded
                 .nodes()
-                .any(|node| matches!(node.id, ChannelId::Lc(id) if id.0 >= TRACK_LC_BASE))
+                .any(|node| matches!(node.source, ChannelSource::Track(_)))
         );
-        assert_eq!(loaded.next_lc_id, LogicalChannelId(TRACK_LC_BASE));
+        // v9 迁移给 256 个 MIDI LC + 音频 LC 分配独立 u16 ID，next_lc_id 已推进。
+        assert!(loaded.next_lc_id.0 > TRACK_LC_BASE);
         assert_eq!(loaded.racks[0].output_mode, RackOutputMode::Shared);
     }
 
