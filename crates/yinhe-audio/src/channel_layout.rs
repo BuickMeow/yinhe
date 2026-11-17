@@ -89,21 +89,24 @@ impl ChannelLayout {
                 if let Some(lc) = track.lc {
                     track_lc_channels.push((i as u16, lc));
                 }
-            } else if let Some(ach) = track.audio_target_channel()
-                && !audio_channels.contains(&ach)
-            {
-                audio_channels.push(ach);
+            } else if let Some(ach) = track.audio_target_channel() {
+                let direct = matches!(
+                    track.effective_audio_target(),
+                    Some(yinhe_core::TrackAudioTarget::DirectMaster { .. })
+                );
+                if !direct && !audio_channels.contains(&ach) {
+                    audio_channels.push(ach);
+                }
             }
         }
         audio_channels.sort_unstable();
         track_lc_channels.sort_unstable_by_key(|(track, _)| *track);
 
         let direct_master = model.tracks.iter().any(|track| {
-            track.kind == yinhe_core::TrackKind::Midi
-                && matches!(
-                    track.effective_audio_target(),
-                    Some(yinhe_core::TrackAudioTarget::DirectMaster { .. })
-                )
+            matches!(
+                track.effective_audio_target(),
+                Some(yinhe_core::TrackAudioTarget::DirectMaster { .. })
+            )
         });
         let max_active_ch = ch_active.iter().rposition(|&c| c).unwrap_or(0);
         let num_channels = (max_active_ch + 1).max(1) as u32;
@@ -296,6 +299,10 @@ impl ChannelLayout {
                     return false;
                 }
             } else if let Some(ach) = track.audio_target_channel()
+                && !matches!(
+                    track.effective_audio_target(),
+                    Some(yinhe_core::TrackAudioTarget::DirectMaster { .. })
+                )
                 && self.audio_dense_for(ach) == u32::MAX
             {
                 return false;
@@ -307,11 +314,10 @@ impl ChannelLayout {
             }
         }
         let wants_direct = model.tracks.iter().any(|track| {
-            track.kind == yinhe_core::TrackKind::Midi
-                && matches!(
-                    track.effective_audio_target(),
-                    Some(yinhe_core::TrackAudioTarget::DirectMaster { .. })
-                )
+            matches!(
+                track.effective_audio_target(),
+                Some(yinhe_core::TrackAudioTarget::DirectMaster { .. })
+            )
         });
         wants_direct == self.direct_master
     }
@@ -859,6 +865,21 @@ mod matches_model_tests {
         let layout = ChannelLayout::from_model(&shared);
         assert!(layout.is_active(0));
         assert!(layout.is_ap_active(0), "共享 MIDI 轨应产生 AP 通道");
+    }
+
+    #[test]
+    fn audio_direct_master_does_not_create_audio_channel() {
+        let mut model = YinModel::new_empty_with_16_tracks();
+        model.tracks.truncate(1);
+        let mut track = TrackData::new(0, 0);
+        track.kind = TrackKind::Audio;
+        track.audio_channel = Some(3);
+        track.set_audio_target(yinhe_core::TrackAudioTarget::DirectMaster { rack: None });
+        model.tracks.push(Arc::new(track));
+        model.rebuild();
+        let layout = ChannelLayout::from_model(&model);
+        assert!(layout.audio_channels().is_empty());
+        assert!(layout.direct_master_dense().is_some());
     }
 
     #[test]

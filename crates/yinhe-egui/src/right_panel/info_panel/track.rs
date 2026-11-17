@@ -252,6 +252,41 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
 
     // ── 音频轨的混音通道（音频轨没有 MIDI 端口/通道，这里是唯一通道号）──
     if kind == yinhe_core::TrackKind::Audio {
+        let direct = matches!(
+            doc.data.model.tracks[track_idx].effective_audio_target(),
+            Some(TrackAudioTarget::DirectMaster { .. })
+        );
+        let mut target_sel = usize::from(direct);
+        let target_options = vec![
+            (0usize, "CH".to_string()),
+            (1usize, "--- (Master)".to_string()),
+        ];
+        crate::widgets::rows::panel_row(ui, t!("track.output").as_ref(), |ui| {
+            crate::widgets::combo::combo_select(
+                ui,
+                "track_audio_direct",
+                &mut target_sel,
+                ui.available_width().max(1.0),
+                &target_options,
+            );
+        });
+        if target_sel != usize::from(direct) {
+            let changed = if target_sel == 1 {
+                doc.link_audio_track_to_direct_master(track_idx)
+            } else {
+                doc.link_audio_track_to_own_lc(track_idx)
+            };
+            if changed {
+                routing_changed = true;
+            }
+        }
+        if target_sel == 1 {
+            // DirectMaster 没有 home LC，通道号不可编辑。
+            if routing_changed {
+                doc.data.bump_revision();
+            }
+            return routing_changed;
+        }
         let current_ch = doc.data.model.tracks[track_idx]
             .audio_target_channel()
             .unwrap_or(0);
