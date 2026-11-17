@@ -796,6 +796,41 @@ struct**，是 1.7「改了不生效」的同类风险。应删除 `SendParams` 
 
 ---
 
+## 8.6 修复进度（2026-11-18）
+
+### 已完成
+
+| 项 | commit | 说明 |
+|---|---|---|
+| 1.5 单按钮 M/S | `d84b5609` | `widgets::audibility` 统一 4 处（AR 轨、AR AM 行、通道 AR AM 行、MIX）；按钮恒显示 M，左键静音右键独奏 |
+| 1.6 AP 显示 A01 | `d84b5609` | `ap_label` 改为端口+通道；测试覆盖 A01/A10/B01 |
+| 1.2 旋钮只显示 OFF/dB | `d84b5609` | 删除通道名行；`send_db_label` 输出 `OFF` 或 `+x.x dB` |
+| 1.3 回滚口径 #7 | `c7762d4c` | `git revert 60b448a3`：删除 AR+CH 开关、左右分栏、选择同步 |
+| 1.1 MIX 选中背景点亮 | `9aede5c6` | `strip_frame` 选中背景用 `selection.bg_fill`；单击通道条同步 `track_selected` |
+| 1.7 LC 改动 AR 生效 | `db27657d` | 拆分 `port_changed`/`routing_changed`；AR 轨道行显示 LCxx/---；强制重建引擎 |
+| 1.4 音轨属性输出层级 | `d689aeb0` | Master/LC/AP 三层；LC 不显示端口通道；新增 `link_track_to_lc` |
+| 8.2.1 通道条抽公共函数 | `a714b047` | `node_strip` 统一三条通道条 |
+| 8.2.2 统一 labels | `5becb5a8` | `mix/labels.rs`；新增 `track_target_label` |
+| 8.4.1 乐器宿主移入 editor-core | 随后提交 | `Document::instrument_hosts` |
+| 3.5/3.6 死抽象 | `4e6c11d0` | 删除 `ChannelOutput` / `instrument_output_dense` |
+| 3.1 CpuSynth 非 Option | `3f5dab7d` | 删除 `ensure_cpu_synth` 的 `expect`、`CpuSynthSlot` |
+| 3.2 SendParams/SyncSends | `c635c41a` | 删除三层共享的死发送链路（-252 行） |
+| 8.5 ArRow/注释 | `61b0c3d2` | `track()` 去 `unwrap_or`；orphan 注释 |
+| 8.3.4 MixAction 拆分 | `a1093c50` | `mix/actions.rs`，mix.rs 1212→1041 |
+
+### 未开始（P3，需单独排期）
+
+| 项 | 原因 |
+|---|---|
+| 8.1 `arrange::show`（1030）/ `track_panel::show`（710）拆分 | 涉及布局/交互/数据快照三块，需要独立回归 |
+| 8.3.1 `AudioEngine` 53 字段拆分 | 混音/播放/插件宿主三块，风险高 |
+| 8.3.2 `ensure_len` 12 项改为 `repair_*` | 纯命名/顺序整理，收益低于风险 |
+| 8.3.3 `arrange::show` 数据/动作/绘制分离 | 同 8.1 |
+| 8.3.6 `RendererSharedState` 分组 | 涉及渲染线程共享状态，需要并发回归 |
+| 8.4.2~8.4.8 其余层级问题 | 需要跨 crate 移动类型，单独排期 |
+
+---
+
 ## 9. 修复顺序建议（含本章新增项）
 
 | 优先级 | 项 | 说明 |
