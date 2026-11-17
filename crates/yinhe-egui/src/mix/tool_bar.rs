@@ -1,4 +1,4 @@
-//! 混音台左侧竖排工具栏（PR 面板工具条同款）：添加总线 / 扫描插件。
+//! 混音台左侧竖排工具栏（PR 面板工具条同款）：扫描插件。
 //!
 //! 取代原混音台顶部条：两个操作按钮移入左侧竖条常驻；「N 个效果器」等扫描状态
 //! 文本不再常驻显示，改为悬停「扫描插件」时在 mode bar 讲解行展示
@@ -6,7 +6,7 @@
 //! 加载/激活错误也改为悬停竖条时展示，避免常驻占位。
 
 use eframe::egui;
-use egui_material_icons::icons::{ICON_ADD_LINK, ICON_TRAVEL_EXPLORE};
+use egui_material_icons::icons::ICON_TRAVEL_EXPLORE;
 use rust_i18n::t;
 
 use super::MixAction;
@@ -27,14 +27,6 @@ pub(crate) fn show(app: &App, ui: &mut egui::Ui, rect: egui::Rect, actions: &mut
         ui.spacing_mut().item_spacing.y = 2.0;
         ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
             ui.add_space(6.0);
-            // 添加总线。
-            let resp = icon_button(ui, "add_bus", ICON_ADD_LINK, btn_size, false);
-            if resp.clicked() {
-                actions.push(MixAction::AddBus);
-            }
-            if resp.hovered() {
-                hovered_hint = Some(t!("hint.mix.add_bus").to_string());
-            }
             // 扫描插件：扫描中图标走强调色，作为进度反馈。
             let resp = icon_button(
                 ui,
