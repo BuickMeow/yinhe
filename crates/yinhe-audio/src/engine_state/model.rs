@@ -320,6 +320,7 @@ impl AudioEngine {
     }
 
     /// 加载某源通道的音色库（同步路径：测试/直连命令用）。
+    #[allow(dead_code)] // Stage 2 随 xsynth 音色路径一起删除
     pub(crate) fn load_soundfont_for_channel(&mut self, channel: u8, paths: &[String]) {
         let dense = self.channel_layout.dense_for(channel as usize);
         if dense == u32::MAX {
@@ -331,6 +332,7 @@ impl AudioEngine {
     }
 
     /// 应用 worker 加载完成的音色库（按源通道索引；dense 由调用方预计算）。
+    #[allow(dead_code)] // Stage 2 随 xsynth 音色路径一起删除
     pub(crate) fn apply_loaded_soundfont_for_channel(
         &mut self,
         channel: u8,

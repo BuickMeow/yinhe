@@ -788,35 +788,6 @@ impl AutomationTarget {
         }
     }
 
-    /// lane 的归属层。
-    ///
-    /// `track` 是 lane 当前所在的轨道索引，只对 MIDI 原生目标有意义；
-    /// 乐器参数归 Rack，推子类归 LC/Bus/Master，Tempo 归 Conductor。
-    /// 目标 B 迁移时，按这个归属把 lane 从轨道里搬到对应 owner。
-    pub fn owner(&self, track: u16) -> crate::AutomationOwner {
-        match self {
-            AutomationTarget::Param { device, .. } => {
-                crate::AutomationOwner::Rack(crate::RackId::from_midi_channel(device.channel()))
-            }
-            AutomationTarget::CC { .. }
-            | AutomationTarget::PitchBend
-            | AutomationTarget::Rpn { .. }
-            | AutomationTarget::Nrpn { .. } => crate::AutomationOwner::Track(track),
-            AutomationTarget::Tempo => crate::AutomationOwner::Conductor,
-            AutomationTarget::BusGain { bus } => crate::AutomationOwner::Bus(*bus),
-            AutomationTarget::MixerGain { channel }
-            | AutomationTarget::MixerPan { channel }
-            | AutomationTarget::MixerSend { node: channel, .. }
-            | AutomationTarget::InsertParam {
-                target: channel, ..
-            } => match channel {
-                crate::MixerChannelId::TrackLc(id) => crate::AutomationOwner::LogicalChannel(*id),
-                crate::MixerChannelId::Bus(bus) => crate::AutomationOwner::Bus(*bus),
-                _ => crate::AutomationOwner::Master,
-            },
-        }
-    }
-
     /// 显示名（下拉/AR/事件浏览器共用）。
     pub fn display_name(&self) -> String {
         match self {
@@ -1689,25 +1660,17 @@ mod easing_presets_tests {
     }
 
     #[test]
-    fn mixer_targets_map_to_node_owners_and_defaults() {
+    fn mixer_targets_have_expected_defaults() {
+        // LC 身份已是独立 u16，owner 需经 MixerParams 解析，不再从 target 反推；
+        // 这里只验证与 owner 无关的默认值/中心线。
         let midi = AutomationTarget::MixerGain {
             channel: crate::MixerChannelId::Midi(3),
         };
-        assert_eq!(
-            midi.owner(9),
-            crate::AutomationOwner::LogicalChannel(crate::LogicalChannelId(3))
-        );
         assert_eq!(midi.default_value(), 1.0);
-
-        let bus = AutomationTarget::MixerGain {
-            channel: crate::MixerChannelId::Bus(crate::BusId(2)),
-        };
-        assert_eq!(bus.owner(0), crate::AutomationOwner::Bus(crate::BusId(2)));
 
         let pan = AutomationTarget::MixerPan {
             channel: crate::MixerChannelId::Master,
         };
-        assert_eq!(pan.owner(0), crate::AutomationOwner::Master);
         assert_eq!(pan.default_value(), 0.5);
         assert!(pan.has_center_line());
     }

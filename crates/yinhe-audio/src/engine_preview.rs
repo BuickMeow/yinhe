@@ -5,10 +5,6 @@
 //! master），因此试听反映**当前**的控制状态与混音台设置。
 
 use std::path::PathBuf;
-use std::sync::Arc;
-
-use xsynth_core::soundfont::SoundfontBase;
-
 use crate::engine::AudioEngine;
 use crate::preview_engine::{PreviewEngine, PreviewNoteIn};
 
@@ -38,17 +34,6 @@ impl AudioEngine {
     pub(crate) fn stop_preview_key(&mut self, key: u8) {
         if let Some(p) = self.preview.as_mut() {
             p.stop_key(key);
-        }
-    }
-
-    /// 预览音色加载（xsynth 后端，按源通道；与主引擎共享 Arc）。
-    pub(crate) fn set_preview_xsynth_soundfonts(
-        &mut self,
-        channel: u8,
-        soundfonts: Vec<Arc<dyn SoundfontBase>>,
-    ) {
-        if let Some(p) = self.preview.as_mut() {
-            p.set_xsynth_soundfonts(channel, soundfonts);
         }
     }
 

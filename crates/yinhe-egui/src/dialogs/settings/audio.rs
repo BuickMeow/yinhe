@@ -1,7 +1,7 @@
 use eframe::egui;
 use rust_i18n::t;
 
-use crate::audio_settings::{AudioSettings, Interpolation, SynthEngine};
+use crate::audio_settings::{AudioSettings, Interpolation};
 use crate::dialogs::settings::{setting_row, setting_row_plain};
 
 pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
@@ -241,33 +241,17 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         },
     );
 
+    // 方案 C：XSynth 已移除，只剩 YinheCpu 一个后端，不再提供选择器。
     setting_row(
         ui,
         t!("settings.audio.synth_engine").as_ref(),
         t!("settings.audio.synth_engine_desc").as_ref(),
         |ui| {
-            let engine_opt = vec![
-                (
-                    SynthEngine::XSynthCpu,
-                    t!("settings.audio.engine_cpu").to_string(),
-                ),
-                (
-                    SynthEngine::YinheCpu,
-                    t!("settings.audio.engine_yinhe_cpu").to_string(),
-                ),
-            ];
-            if crate::widgets::combo::combo_select_auto(
-                ui,
-                "synth_engine",
-                &mut settings.synth_engine,
-                &engine_opt,
-            ) {
-                changed = true;
-            }
+            ui.label(t!("settings.audio.engine_yinhe_cpu").as_ref());
         },
     );
 
-    if settings.synth_engine == SynthEngine::YinheCpu {
+    {
         setting_row(
             ui,
             t!("settings.audio.max_voices").as_ref(),

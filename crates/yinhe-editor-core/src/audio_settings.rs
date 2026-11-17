@@ -342,7 +342,7 @@ mod tests {
             .insert("use_gpu_synth".into(), serde_json::Value::Bool(true));
         let s: AudioSettings =
             serde_json::from_value(v).expect("old save with use_gpu_synth loads");
-        assert_eq!(s.synth_engine, SynthEngine::XSynthCpu);
+        assert_eq!(s.synth_engine, SynthEngine::YinheCpu);
     }
 
     #[test]

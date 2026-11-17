@@ -24,7 +24,7 @@ fn main() {
     let sf_path = &args[2];
     let out = &args[3];
     let engine = match args.get(4).map(|s| s.as_str()) {
-        Some("xsynth") => SynthEngine::XSynthCpu,
+        Some("xsynth") => SynthEngine::YinheCpu,
         _ => SynthEngine::YinheCpu,
     };
 

@@ -75,7 +75,7 @@ fn demo_model() -> Arc<YinModel> {
 fn main() {
     let engine = match std::env::args().nth(1).as_deref() {
         Some("gpu") => SynthEngine::YinheCpu, // 旧参数：GPU 后端已删除，回落到 CPU
-        Some("xsynth") => SynthEngine::XSynthCpu,
+        Some("xsynth") => SynthEngine::YinheCpu,
         _ => SynthEngine::YinheCpu,
     };
     println!("== play_smoke: 后端 {engine:?} ==");

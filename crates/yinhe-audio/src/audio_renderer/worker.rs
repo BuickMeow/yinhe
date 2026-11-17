@@ -112,35 +112,13 @@ impl AudioRenderer {
                     self.state
                         .sf_loaded
                         .fetch_add(channels.len(), Ordering::Relaxed);
-                    // 预览引擎跟随主引擎：xsynth 后端共享 Arc（零拷贝）；yinhe 后端
-                    // 在下方按 key map 路径加载（与主引擎共享同一份，不额外加载
-                    // xsynth 版音色库）。
-                    let use_xsynth_preview = !self.yinhe_cpu_engine();
-                    if use_xsynth_preview {
-                        for channel in &channels {
-                            self.engine
-                                .set_preview_xsynth_soundfonts(*channel, soundfonts.clone());
-                        }
-                    }
+                    // 方案 C：XSynth 已移除，只用 yinhe CPU。音色库按 key map 路径
+                    // 在下方加载（与主引擎/预览共享同一份），不加载 xsynth 版。
+                    let _ = &soundfonts;
                     let dense_list: Vec<(u8, u32)> = channels
                         .iter()
                         .map(|ch| (*ch, self.engine.channel_layout.dense_for(*ch as usize)))
                         .collect();
-                    // yinhe 后端不消费 xsynth 的 channel_set（渲染走 cpu_synth/gpu_synth），
-                    // 跳过 `SetSoundfonts`——它会触发 xsynth 的 `rebuild_matrix`
-                    // （128×128 key/vel 查询 + Box 分配），逐通道是启动卡顿主因。
-                    if self.yinhe_cpu_engine() {
-                        let _ = soundfonts;
-                    } else {
-                        for (channel, dense) in &dense_list {
-                            self.engine.apply_loaded_soundfont_for_channel(
-                                *channel,
-                                *dense,
-                                soundfonts.clone(),
-                                &paths,
-                            );
-                        }
-                    }
                     // yinhe CPU 后端：首次加载音色库时创建 CpuSynth，逐通道登记
                     // key map（无样本上传阶段；引擎 dispatch 增量投递事件）。
                     if self.synth_engine == SynthEngine::YinheCpu {

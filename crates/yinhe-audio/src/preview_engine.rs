@@ -1,18 +1,15 @@
+//! 预览合成器后端（方案 C：XSynth 已移除，只用 yinhe CPU 预览）。
+//!
+//! `chase_channel_states` 计算目标位置的自动化状态，供 PR/MIDI 预览组装音符。
+//! `PreviewEngine` 包裹 `YinhePreview`，与主引擎共享 key map 音色。
+
 use std::borrow::BorrowMut;
-use std::cmp::Reverse;
-use std::sync::Arc;
-use xsynth_core::channel::{
-    ChannelAudioEvent, ChannelConfigEvent, ChannelEvent, ChannelInitOptions,
-};
-use xsynth_core::channel_group::{ChannelGroupConfig, ParallelismOptions, SynthEvent, SynthFormat};
-use xsynth_core::soundfont::SoundfontBase;
-use xsynth_core::{AudioStreamParams, ChannelCount};
+
 use yinhe_mixer::ChannelBuffers;
 
 use crate::audio_model::SortedCC;
-use crate::channel::{ChannelState, ChaseSkip};
+use crate::channel::ChannelState;
 use crate::channel_layout::ChannelLayout;
-use crate::channel_set::ChannelSet;
 
 mod yinhe;
 
@@ -40,7 +37,7 @@ pub(crate) fn chase_channel_states(
             cursor += 1;
         }
         // 同 tick 同通道同目标取 max（与播放 dispatch 的聚合一致）；
-        // 插件参数事件不是 xsynth 通道事件（占位），跳过避免污染预览 chase。
+        // 插件参数事件不是通道事件（占位），跳过避免污染预览 chase。
         let seg = &cc_events[start..cursor];
         for &i in &crate::audio_model::aggregate_max_reps(seg, |cc| {
             cc.plugin_param.is_none() && cc.channel == channel
@@ -50,30 +47,6 @@ pub(crate) fn chase_channel_states(
         states.push(state);
     }
     states
-}
-
-/// 预览合成器：与主引擎完全独立的 ChannelGroup + 音色 + 状态。
-///
-/// - 预览音不占主引擎 voice、不改主引擎通道状态（播放中的自动化零干扰）；
-/// - 音色与主引擎共享 `Arc<dyn SoundfontBase>`（零拷贝）；
-/// - 渲染时钟独立；NoteOff 后按 `voice_count() > 0` 继续渲染，余音自然衰减完才停，
-///   因此余音不会被截断，也不需要"余音时长"阈值。
-pub(crate) struct XsynthPreview {
-    /// 分通道渲染的通道组（与主引擎同源），输出 planar 供混音台/DSP 处理。
-    channel_set: ChannelSet,
-    /// 源通道 → dense 通道映射（与主引擎同一布局，dense 索引一致）。
-    dense_map: [u32; 256],
-    /// 每 port 的音色（与主引擎共享 Arc）。
-    /// 每源通道（0..256）的音色库（与主引擎共享同一批 Arc，零拷贝）。
-    channel_sfs: Box<[Vec<Arc<dyn SoundfontBase>>; 256]>,
-    /// per-dense planar 暂存（每块合成器输出，累加进混音台缓冲）。
-    buffers: Vec<ChannelBuffers>,
-    /// 渲染时钟（预览输出帧数累计，与主引擎 sample_position 独立）。
-    position: u64,
-    /// 活跃预览音。
-    voices: Vec<PreviewVoice>,
-    /// 待触发预览音（按目标位置相对时值错开，最早音符立即触发）。
-    pending: Vec<PendingNote>,
 }
 
 /// 预览组中的一个音符（渲染器组装好后提交）。
@@ -90,363 +63,26 @@ pub(crate) struct PreviewNoteIn {
     pub(crate) target_sample: u64,
 }
 
-/// 待触发预览音。
-struct PendingNote {
-    channel: u8,
-    key: u8,
-    velocity: u8,
-    duration: Option<u64>,
-    state: ChannelState,
-    /// 预览时钟到达该位置时触发（相对组内最早音符的帧数）。
-    trigger_at: u64,
-}
-
-/// 一个活跃预览音。
-struct PreviewVoice {
-    channel: u8,
-    key: u8,
-    /// 渲染帧数上限；`None` = 持续音（等 `PreviewStop`）。
-    duration: Option<u64>,
-    /// NoteOn 时的 position（渲染时钟）。到期检查用相对时长
-    /// `position - start_position`，绝不能用绝对 `position`——
-    /// 预览引擎运行一段时间后 position 已累计很大，直接比较会让
-    /// 所有音符在第一帧就"到期"（四分音符也只响几毫秒）。
-    start_position: u64,
-}
-
-impl XsynthPreview {
-    pub(crate) fn new(layout: &ChannelLayout, sample_rate: u32) -> Self {
-        let compacted_channels = layout.compacted_channels();
-        let config = ChannelGroupConfig {
-            channel_init_options: ChannelInitOptions {
-                fade_out_killing: true,
-            },
-            format: SynthFormat::Custom {
-                channels: compacted_channels,
-            },
-            audio_params: AudioStreamParams {
-                sample_rate,
-                channels: ChannelCount::Stereo,
-            },
-            parallelism: ParallelismOptions::AUTO_PER_CHANNEL,
-        };
-        let buffers = (0..compacted_channels as usize)
-            .map(|_| ChannelBuffers {
-                left: Vec::new(),
-                right: Vec::new(),
-            })
-            .collect();
-        Self {
-            channel_set: ChannelSet::new(config, crate::engine::ENGINE_BLOCK_FRAMES),
-            dense_map: std::array::from_fn(|ch| layout.dense_for(ch)),
-            channel_sfs: Box::new(std::array::from_fn(|_| Vec::new())),
-            buffers,
-            position: 0,
-            voices: Vec::new(),
-            pending: Vec::new(),
-        }
-    }
-
-    /// 同步某源通道的音色（与主引擎共享 Arc，零拷贝）。
-    pub(crate) fn set_channel_soundfonts(
-        &mut self,
-        channel: u8,
-        soundfonts: Vec<Arc<dyn SoundfontBase>>,
-    ) {
-        self.channel_sfs[channel as usize] = soundfonts;
-    }
-
-    /// 预览 NoteOn：设置通道音色 + 目标位置自动化状态（含 Program）+ NoteOn。
-    /// 以 `start_position`（精确触发帧）为 gate 到期基准：块内中间帧触发时
-    /// 若用 self.position（块开头），到期会被算早最多一个块周期。
-    fn note_on_at(
-        &mut self,
-        channel: u8,
-        key: u8,
-        velocity: u8,
-        duration: Option<u64>,
-        state: &ChannelState,
-        start_position: u64,
-    ) {
-        let dense = self.dense_map[channel as usize];
-        if dense == u32::MAX {
-            return;
-        }
-        // 音色与主引擎同源（同一 Arc，零拷贝）。
-        if !self.channel_sfs[channel as usize].is_empty() {
-            let sfs = self.channel_sfs[channel as usize].clone();
-            self.channel_set.send_event(SynthEvent::Channel(
-                dense,
-                ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(sfs)),
-            ));
-        }
-        // 目标位置自动化状态（volume/pan/Program/PBS 等）。
-        state.send_to(dense, &mut self.channel_set, &ChaseSkip::default());
-        self.channel_set.send_event(SynthEvent::Channel(
-            dense,
-            ChannelEvent::Audio(ChannelAudioEvent::NoteOn { key, vel: velocity }),
-        ));
-        self.voices.push(PreviewVoice {
-            channel,
-            key,
-            duration,
-            start_position,
-        });
-    }
-
-    /// 提交整组预览（替换旧组的**待触发音符**）：组内音符按目标位置**相对时值**
-    /// 错开触发——最早音符立即响，其余音符延迟（目标位置差）后响，各自响自己的 gate。
-    /// 例如旋律音符 start 相差 4800 帧（已按目标位置 Tempo/PPQ 换算），
-    /// 预览时就错开 4800 帧依次触发。时值差来自真实乐曲位置，不用固定毫秒封顶。
-    ///
-    /// `exclusive = true`（PR 拖动/铅笔）：先 `stop_all()` 停掉旧组全部预览音，
-    /// 保证同一时刻只听到当前组（拖动时不叠加）；旧音的 NoteOff 走音色包络
-    /// 自然衰减，不会硬切。
-    /// `exclusive = false`（MIDI 直通）：已响音符保留（和弦保持），
-    /// 只清待触发音符（目标位置被新组替换）。
-    pub(crate) fn preview_notes(&mut self, notes: Vec<PreviewNoteIn>, exclusive: bool) {
-        if exclusive {
-            // 拖动替换：旧组所有预览音（含正在响的）统一停止。
-            self.stop_all();
-        }
-        // 旧组未触发的待触发音符已过期（目标位置被新组替换），只清 pending。
-        self.pending.clear();
-        let min = notes.iter().map(|n| n.target_sample).min().unwrap_or(0);
-        // trigger_at 存绝对位置（组开始 + 相对时值差）：position 是累计渲染帧数，
-        // 若只存相对差，预览引擎跑过一段时间后 position 已超过所有 trigger_at，
-        // 整组会在同一帧全部触发 → 时值差听不到。
-        let base = self.position;
-        self.pending = notes
-            .into_iter()
-            .map(|n| PendingNote {
-                channel: n.channel,
-                key: n.key,
-                velocity: n.velocity,
-                duration: n.duration,
-                state: n.state,
-                trigger_at: base + (n.target_sample - min),
-            })
-            .collect();
-        // 降序排序：trigger_at 最小的在末尾，flush_pending 用 pop() O(1) 弹出。
-        // （升序 + remove(0) 是 O(n²) 元素移动，大组预览——选框全选拖动时
-        // 可能上万音符——会在音频渲染线程卡顿。）
-        self.pending.sort_by_key(|p| Reverse(p.trigger_at));
-        self.flush_pending_at(self.position);
-    }
-
-    /// 渲染一个块（帧数 = output/2，不推进主引擎位置）。事件（待触发音符的
-    /// NoteOn、定长音符的 NoteOff）在**精确的 sample 位置**处理：块按最近事件
-    /// 边界切成段，段间触发/释放，因此音符能在块内任意帧开始/结束，不会被量化
-    /// 到块（512 帧 ≈ 10.7ms）边界的第一帧。余音继续渲染，voice 自然衰减完才消失。
-    /// 渲染一块到混音台 planar 通道缓冲（**累加**，每 dense 一个）。
-    ///
-    /// 事件（待触发音符的 NoteOn、定长音符的 NoteOff）在**精确的 sample 位置**
-    /// 处理：块按最近事件边界切成段，段间触发/释放。预览音频叠加在对应 dense
-    /// 通道上，随后由 `AudioEngine::render_channel_dsp` + mixer 统一处理。
-    pub(crate) fn render_add<B: BorrowMut<ChannelBuffers>>(
-        &mut self,
-        targets: &mut [B],
-        frames: usize,
-    ) {
-        if frames == 0 || self.buffers.is_empty() {
-            return;
-        }
-        for b in &mut self.buffers {
-            if b.left.len() < frames {
-                b.left.resize(frames, 0.0);
-                b.right.resize(frames, 0.0);
-            }
-        }
-        self.channel_set.resize_scratches(frames);
-        let block_end = self.position + frames as u64;
-        let mut offset_frames = 0usize;
-        let mut cursor = self.position;
-
-        while cursor < block_end {
-            // 处理 cursor 位置的事件（块开头也可能有到点的 pending）。
-            self.flush_pending_at(cursor);
-            self.expire_voices_at(cursor);
-
-            // 下一事件边界；无事件则直通块末。
-            let next = self.next_event_boundary(block_end);
-            // next 必 > cursor（<= cursor 的事件已在上方处理完）且 <= block_end。
-            debug_assert!(next > cursor || next == block_end);
-            let seg_frames = (next - cursor) as usize;
-            self.channel_set
-                .render_segment(&mut self.buffers, 0, seg_frames);
-            self.accumulate(targets, offset_frames, seg_frames);
-            offset_frames += seg_frames;
-            cursor = next;
-        }
-        // 块末事件（trigger_at / 到期恰好 == block_end）。
-        self.flush_pending_at(block_end);
-        self.expire_voices_at(block_end);
-        self.position = block_end;
-    }
-
-    /// 把内部 planar 缓冲的 `[0, frames)` 累加进目标混音台缓冲的 `[offset, ..)`。
-    fn accumulate<B: BorrowMut<ChannelBuffers>>(
-        &self,
-        targets: &mut [B],
-        offset: usize,
-        frames: usize,
-    ) {
-        let n = self.buffers.len().min(targets.len());
-        for (src, dst) in self.buffers.iter().zip(targets.iter_mut()).take(n) {
-            let dst = dst.borrow_mut();
-            let count = frames
-                .min(src.left.len())
-                .min(dst.left.len().saturating_sub(offset));
-            for k in 0..count {
-                dst.left[offset + k] += src.left[k];
-                dst.right[offset + k] += src.right[k];
-            }
-        }
-    }
-
-    /// 测试辅助：非替换（叠加式）提交，等价于 `preview_notes(notes, false)`。
-    #[cfg(test)]
-    pub(crate) fn preview_notes_append(&mut self, notes: Vec<PreviewNoteIn>) {
-        self.preview_notes(notes, false);
-    }
-
-    /// 是否处于预览状态（有活跃预览音、待触发音符或余音仍在响）——
-    /// 渲染器据此决定是否输出预览。
-    ///
-    /// 不能只看 `voice_count()`：NoteOn 后 voice 是延迟 spawn 的（渲染后才出现），
-    /// 若渲染条件只看 voice 数量，未播放时第一帧就会提前退出、永不渲染 → 预览无声。
-    pub(crate) fn previewing(&self) -> bool {
-        !self.voices.is_empty() || !self.pending.is_empty() || self.channel_set.voice_count() > 0
-    }
-
-    /// 停止全部预览音（NoteOff 与待触发音符；余音继续渲染直到自然衰减完）。
-    pub(crate) fn stop_all(&mut self) {
-        while let Some(v) = self.voices.pop() {
-            self.note_off(v.channel, v.key);
-        }
-        self.pending.clear();
-    }
-
-    /// 停止指定键的预览音（MIDI 直通单键 NoteOff：只停松开的键，和弦保持）。
-    /// 匹配所有通道的该键（多轨同键同时预览极罕见，忽略通道差异）。
-    pub(crate) fn stop_key(&mut self, key: u8) {
-        self.pending.retain(|p| p.key != key);
-        let mut i = 0;
-        while i < self.voices.len() {
-            if self.voices[i].key == key {
-                let v = self.voices.swap_remove(i);
-                self.note_off(v.channel, v.key);
-            } else {
-                i += 1;
-            }
-        }
-    }
-
-    /// 触发所有 trigger_at <= pos 的待触发音符（pending 按 trigger_at 降序，
-    /// 末尾最早触发，pop 即 O(1)）。start_position 用精确触发帧，保证块内
-    /// 中间帧触发的音符 gate 到期不错位。
-    fn flush_pending_at(&mut self, pos: u64) {
-        while self.pending.last().is_some_and(|p| p.trigger_at <= pos) {
-            // last() 刚确认非空，pop 必成功；不用 unwrap（见 AGENTS 约定）。
-            if let Some(p) = self.pending.pop() {
-                self.note_on_at(
-                    p.channel,
-                    p.key,
-                    p.velocity,
-                    p.duration,
-                    &p.state,
-                    p.trigger_at,
-                );
-            }
-        }
-    }
-
-    /// 块内最近的事件边界：待触发音符的 trigger_at、定长音符的到期位置
-    /// （start_position + duration），都没有则返回 `block_end`（无事件段直通块末）。
-    fn next_event_boundary(&self, block_end: u64) -> u64 {
-        let mut next = block_end;
-        // pending 降序排列：trigger_at 最小的在末尾。
-        if let Some(p) = self.pending.last() {
-            next = next.min(p.trigger_at);
-        }
-        for v in &self.voices {
-            if let Some(d) = v.duration {
-                next = next.min(v.start_position.saturating_add(d));
-            }
-        }
-        next
-    }
-
-    /// 到期（start_position + duration <= pos）的定长音符在此 NoteOff。
-    fn expire_voices_at(&mut self, pos: u64) {
-        let mut i = 0;
-        while i < self.voices.len() {
-            let due = self.voices[i]
-                .duration
-                .is_some_and(|d| pos.saturating_sub(self.voices[i].start_position) >= d);
-            if due {
-                let v = self.voices.swap_remove(i);
-                self.note_off(v.channel, v.key);
-            } else {
-                i += 1;
-            }
-        }
-    }
-
-    fn note_off(&mut self, channel: u8, key: u8) {
-        let dense = self.dense_map[channel as usize];
-        if dense != u32::MAX {
-            self.channel_set.send_event(SynthEvent::Channel(
-                dense,
-                ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key }),
-            ));
-        }
-    }
-}
-
-/// 预览合成器后端：跟随主引擎的引擎族。
-///
-/// - 主引擎 `XSynthCpu` → xsynth 预览（与主引擎共享 `Arc<dyn SoundfontBase>`）；
-/// - 主引擎 `YinheCpu` → yinhe CPU 预览（与主引擎共享 key map 音色）。
-///
-/// 预览因此与主引擎用**同一套音色数据**：主引擎是 yinhe 时不再额外加载 xsynth
-/// 版音色库，省掉一份 GB 级内存，也保证试听与播放音色一致。
+/// 预览合成器后端：只用 yinhe CPU（与主引擎同族，共享 key map 音色）。
 pub(crate) enum PreviewEngine {
-    XSynth(Box<XsynthPreview>),
     Yinhe(Box<yinhe::YinhePreview>),
 }
 
 impl PreviewEngine {
     pub(crate) fn new(
-        synth_engine: yinhe_types::SynthEngine,
+        _synth_engine: yinhe_types::SynthEngine,
         layout: &ChannelLayout,
         sample_rate: u32,
         interpolation: u32,
     ) -> Self {
-        if synth_engine != yinhe_types::SynthEngine::XSynthCpu {
-            return PreviewEngine::Yinhe(Box::new(yinhe::YinhePreview::new(
-                layout,
-                sample_rate,
-                interpolation,
-            )));
-        }
-        PreviewEngine::XSynth(Box::new(XsynthPreview::new(layout, sample_rate)))
-    }
-
-    /// xsynth 后端：设置源通道音色（与主引擎共享 Arc）。非 xsynth 后端为 no-op。
-    pub(crate) fn set_xsynth_soundfonts(
-        &mut self,
-        channel: u8,
-        soundfonts: Vec<Arc<dyn SoundfontBase>>,
-    ) {
-        match self {
-            PreviewEngine::XSynth(p) => p.set_channel_soundfonts(channel, soundfonts),
-            PreviewEngine::Yinhe(_) => {}
-        }
+        PreviewEngine::Yinhe(Box::new(yinhe::YinhePreview::new(
+            layout,
+            sample_rate,
+            interpolation,
+        )))
     }
 
     /// yinhe 后端：按 dense 槽位加载 key map（进程级缓存，与主引擎共享）。
-    /// 非 yinhe 后端为 no-op。
     pub(crate) fn load_yinhe_soundfonts(
         &mut self,
         denses: &[u32],
@@ -454,13 +90,11 @@ impl PreviewEngine {
     ) -> Result<(), String> {
         match self {
             PreviewEngine::Yinhe(p) => p.load_soundfonts(denses, paths),
-            PreviewEngine::XSynth(_) => Ok(()),
         }
     }
 
     pub(crate) fn preview_notes(&mut self, notes: Vec<PreviewNoteIn>, exclusive: bool) {
         match self {
-            PreviewEngine::XSynth(p) => p.preview_notes(notes, exclusive),
             PreviewEngine::Yinhe(p) => p.preview_notes(notes, exclusive),
         }
     }
@@ -471,447 +105,25 @@ impl PreviewEngine {
         frames: usize,
     ) {
         match self {
-            PreviewEngine::XSynth(p) => p.render_add(targets, frames),
             PreviewEngine::Yinhe(p) => p.render_add(targets, frames),
         }
     }
 
     pub(crate) fn previewing(&self) -> bool {
         match self {
-            PreviewEngine::XSynth(p) => p.previewing(),
             PreviewEngine::Yinhe(p) => p.previewing(),
         }
     }
 
     pub(crate) fn stop_all(&mut self) {
         match self {
-            PreviewEngine::XSynth(p) => p.stop_all(),
             PreviewEngine::Yinhe(p) => p.stop_all(),
         }
     }
 
     pub(crate) fn stop_key(&mut self, key: u8) {
         match self {
-            PreviewEngine::XSynth(p) => p.stop_key(key),
             PreviewEngine::Yinhe(p) => p.stop_key(key),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 16 通道（与测试 layout 对齐）、512 帧的 planar 混音台缓冲。
-    fn test_buffers() -> Vec<ChannelBuffers> {
-        (0..16)
-            .map(|_| ChannelBuffers {
-                left: vec![0.0; 512],
-                right: vec![0.0; 512],
-            })
-            .collect()
-    }
-
-    fn clear_buffers(bufs: &mut [ChannelBuffers]) {
-        for b in bufs.iter_mut() {
-            b.left.fill(0.0);
-            b.right.fill(0.0);
-        }
-    }
-
-    #[test]
-    fn exclusive_replacement_stops_playing_voices() {
-        // 替换模式（PR 拖动/铅笔）：新组提交时旧组已响音符被 NoteOff，
-        // 同一时刻只有当前组的音（修"拖过十几个键全部叠加"）。
-        let layout = ChannelLayout::from_mask(vec![true; 16]);
-        let mut engine = XsynthPreview::new(&layout, 48000);
-        let note = |key: u8| PreviewNoteIn {
-            channel: 0,
-            key,
-            velocity: 100,
-            duration: None,
-            state: ChannelState::default(),
-            synth_params: Default::default(),
-            target_sample: 0,
-        };
-        engine.preview_notes(vec![note(60)], true);
-        assert_eq!(engine.voices.len(), 1);
-        assert_eq!(engine.voices[0].key, 60);
-
-        // 新组替换：旧的持续音被 NoteOff 移除，voices 只剩新音。
-        engine.preview_notes(vec![note(62)], true);
-        assert_eq!(engine.voices.len(), 1);
-        assert_eq!(engine.voices[0].key, 62);
-
-        // 非替换（MIDI 直通）：旧音保留（和弦保持）。
-        engine.preview_notes_append(vec![note(64)]);
-        assert_eq!(engine.voices.len(), 2);
-    }
-
-    #[test]
-    fn note_on_keeps_whole_group_and_duration_expires() {
-        let layout = ChannelLayout::from_mask(vec![true; 16]);
-        let mut engine = XsynthPreview::new(&layout, 48000);
-
-        // 整组两个音符（不同通道）同时 NoteOn → 都保留（回归：旧实现单音符状态只响最后一个）。
-        engine.note_on_at(0, 60, 100, Some(4800), &ChannelState::default(), 0);
-        engine.note_on_at(1, 64, 90, None, &ChannelState::default(), 0);
-        assert_eq!(engine.voices.len(), 2);
-
-        // 渲染 10 帧（512 帧/次 = 5120 帧）：定长的到期 NoteOff，持续音保留。
-        let mut out = test_buffers();
-        for _ in 0..10 {
-            engine.render_add(&mut out, 512);
-        }
-        assert_eq!(engine.voices.len(), 1, "定长音符到期移除，持续音保留");
-
-        engine.stop_all();
-        assert!(engine.voices.is_empty());
-    }
-
-    #[test]
-    fn stop_all_keeps_rendering_until_voices_decay() {
-        // NoteOff 后 voice 仍活跃（余音），previewing 继续为真 —— 渲染器据此
-        // 持续输出余音，而不是在 NoteOff 瞬间截断。
-        let layout = ChannelLayout::from_mask(vec![true; 16]);
-        let mut engine = XsynthPreview::new(&layout, 48000);
-        engine.note_on_at(0, 60, 100, None, &ChannelState::default(), 0);
-        engine.stop_all();
-        assert!(engine.voices.is_empty());
-        // 无音色库时 NoteOn 不产生 voice，previewing 为 false；有音色时由 voice_count 决定。
-        assert!(!engine.previewing());
-    }
-
-    #[test]
-    fn previewing_true_before_voice_spawns() {
-        // 回归测试：NoteOn 后 voice 延迟 spawn（渲染后才出现），previewing 必须
-        // 在 voices 非空时立即为真，否则未播放时渲染器第一帧就提前退出、预览无声。
-        let layout = ChannelLayout::from_mask(vec![true; 16]);
-        let mut engine = XsynthPreview::new(&layout, 48000);
-        assert!(!engine.previewing());
-        engine.note_on_at(0, 60, 100, None, &ChannelState::default(), 0);
-        assert!(
-            engine.previewing(),
-            "NoteOn 后即使 voice 未 spawn 也必须为真"
-        );
-        // 定长到期 NoteOff 后余音仍在时也为真
-        engine.note_on_at(0, 62, 100, Some(4800), &ChannelState::default(), 0);
-        let mut out = test_buffers();
-        for _ in 0..30 {
-            clear_buffers(&mut out);
-            engine.render_add(&mut out, 512);
-        }
-        assert_eq!(engine.voices.len(), 1, "定长音符到期移除，持续音保留");
-        assert!(engine.previewing(), "持续音还在");
-        engine.stop_all();
-        assert!(!engine.previewing(), "全部停止且无音色库（无 voice）后结束");
-    }
-
-    #[test]
-    fn preview_notes_stagger_by_relative_position() {
-        // 回归测试：移动多个不同起点的音符时，预览按目标位置相对时值错开触发，
-        // 而不是所有音符同时演奏（旧实现忽略音符间的时值关系）。
-        let layout = ChannelLayout::from_mask(vec![true; 16]);
-        let mut engine = XsynthPreview::new(&layout, 48000);
-
-        // 两个音符：B 比 A 晚 4800 帧（目标位置差）
-        engine.preview_notes_append(vec![
-            PreviewNoteIn {
-                channel: 0,
-                key: 60,
-                velocity: 100,
-                duration: None,
-                state: ChannelState::default(),
-                synth_params: Default::default(),
-                target_sample: 1000,
-            },
-            PreviewNoteIn {
-                channel: 0,
-                key: 64,
-                velocity: 90,
-                duration: None,
-                state: ChannelState::default(),
-                synth_params: Default::default(),
-                target_sample: 5800,
-            },
-        ]);
-        assert_eq!(engine.voices.len(), 1, "最早音符立即触发");
-        assert_eq!(engine.pending.len(), 1, "第二个音符延迟等待");
-
-        let mut out = test_buffers();
-        // 渲染 9 帧（4608 帧 < 4800）：第二个音符仍未触发
-        for _ in 0..9 {
-            engine.render_add(&mut out, 512);
-        }
-        assert_eq!(engine.voices.len(), 1, "时值差未到，不触发");
-        assert_eq!(engine.pending.len(), 1);
-        // 第 10 帧（5120 帧 >= 4800）：触发第二个音符
-        engine.render_add(&mut out, 512);
-        assert_eq!(engine.voices.len(), 2, "时值差到达后触发");
-        assert!(engine.pending.is_empty());
-
-        // 全部停止：voices 与 pending 都清空
-        engine.stop_all();
-        assert!(engine.voices.is_empty());
-        assert!(engine.pending.is_empty());
-        assert!(!engine.previewing());
-    }
-
-    #[test]
-    fn preview_notes_stagger_by_real_time_value() {
-        // 用户报告：错开必须按目标位置的真实时值（BPM/tick/PPQ 换算的帧数），
-        // 不能把远音符压到一个固定毫秒点一起触发（听感像同时和弦）。
-        let layout = ChannelLayout::from_mask(vec![true; 16]);
-        let mut engine = XsynthPreview::new(&layout, 48000);
-
-        engine.preview_notes_append(vec![
-            PreviewNoteIn {
-                channel: 0,
-                key: 60,
-                velocity: 100,
-                duration: None,
-                state: ChannelState::default(),
-                synth_params: Default::default(),
-                target_sample: 0,
-            },
-            PreviewNoteIn {
-                channel: 0,
-                key: 64,
-                velocity: 90,
-                duration: None,
-                state: ChannelState::default(),
-                synth_params: Default::default(),
-                target_sample: 100_000, // 真实时值差 100000 帧（> 2 秒）
-            },
-        ]);
-        assert_eq!(engine.voices.len(), 1);
-        assert_eq!(engine.pending.len(), 1);
-
-        let mut out = test_buffers();
-        // 渲染 195 帧（99840 帧 < 100000）：第二音符必须还没触发
-        // （若像旧实现那样封顶 150ms=7200 帧，这里早就全部触发了）。
-        for _ in 0..195 {
-            engine.render_add(&mut out, 512);
-        }
-        assert_eq!(engine.voices.len(), 1, "真实时值差未到，不触发");
-        // 第 196 帧（100352 >= 100000）：到点触发
-        engine.render_add(&mut out, 512);
-        assert_eq!(engine.voices.len(), 2, "真实时值差到点后触发");
-        assert!(engine.pending.is_empty());
-    }
-
-    #[test]
-    fn note_duration_not_truncated_after_long_running() {
-        // 回归测试（用户报告：普通四分音符也被判成很短的音符）：
-        // 预览引擎运行一段时间（position 已累计）后 NoteOn 的定长音符，
-        // 必须响满自己的 duration —— 到期判断用相对时长，而不是绝对 position。
-        let layout = ChannelLayout::from_mask(vec![true; 16]);
-        let mut engine = XsynthPreview::new(&layout, 48000);
-
-        // 先跑 200 帧，position 累计 102400
-        let mut out = test_buffers();
-        for _ in 0..200 {
-            engine.render_add(&mut out, 512);
-        }
-
-        // 四分音符 0.5s = 24000 帧（start_position = 当前时钟位置 102400）
-        engine.note_on_at(
-            0,
-            60,
-            100,
-            Some(24_000),
-            &ChannelState::default(),
-            engine.position,
-        );
-        assert_eq!(engine.voices.len(), 1);
-
-        // 渲染 20 帧（10240 帧 < 24000）：音符必须还在
-        // （旧实现 position 102400 >= 24000，第一帧就把音符 NoteOff 了）。
-        for _ in 0..20 {
-            engine.render_add(&mut out, 512);
-        }
-        assert_eq!(engine.voices.len(), 1, "四分音符响满时长，不能提前截断");
-
-        // 渲染满 24000 帧（相对起点）后到期移除
-        for _ in 0..30 {
-            engine.render_add(&mut out, 512);
-        }
-        assert!(engine.voices.is_empty(), "到时后正常 NoteOff");
-    }
-
-    #[test]
-    fn preview_notes_stagger_after_long_running() {
-        // 回归测试：预览引擎运行一段时间（position 已累计）后提交新组，
-        // 时值差仍然生效（trigger_at 是绝对位置，不能被累计 position 吞掉）。
-        let layout = ChannelLayout::from_mask(vec![true; 16]);
-        let mut engine = XsynthPreview::new(&layout, 48000);
-
-        // 先跑一段：position 累计到 100000 帧
-        let mut out = test_buffers();
-        for _ in 0..200 {
-            engine.render_add(&mut out, 512);
-        }
-
-        engine.preview_notes_append(vec![
-            PreviewNoteIn {
-                channel: 0,
-                key: 60,
-                velocity: 100,
-                duration: None,
-                state: ChannelState::default(),
-                synth_params: Default::default(),
-                target_sample: 5000,
-            },
-            PreviewNoteIn {
-                channel: 0,
-                key: 64,
-                velocity: 90,
-                duration: None,
-                state: ChannelState::default(),
-                synth_params: Default::default(),
-                target_sample: 10000,
-            },
-        ]);
-        assert_eq!(engine.voices.len(), 1, "最早音符立即触发");
-        assert_eq!(engine.pending.len(), 1);
-        // 渲染 9 帧（+4608 < 5000）：第二个仍未触发
-        for _ in 0..9 {
-            engine.render_add(&mut out, 512);
-        }
-        assert_eq!(engine.voices.len(), 1, "绝对位置基准下时值差仍生效");
-        // 第 10 帧（+5120 >= 5000）：触发
-        engine.render_add(&mut out, 512);
-        assert_eq!(engine.voices.len(), 2);
-    }
-
-    #[test]
-    fn rapid_preview_replacement_keeps_all_notes_audible() {
-        // 回归测试（快速拖拽丢音）：渲染线程按 ring 水位门控渲染，两次渲染之间
-        // 可能堆积多条 PreviewNotes 命令。若提交新组即 stop_all，绝大多数音符
-        // 会在被渲染之前就 NoteOff，永远听不到 —— 必须全部保留、响满自己的 gate。
-        let layout = ChannelLayout::from_mask(vec![true; 16]);
-        let mut engine = XsynthPreview::new(&layout, 48000);
-
-        // 模拟 C2→C7 快速拖拽：60 个键，每键一组、渲染器来不及渲染。
-        let mut out = test_buffers();
-        for key in 36..96 {
-            engine.preview_notes_append(vec![PreviewNoteIn {
-                channel: 0,
-                key,
-                velocity: 100,
-                duration: Some(48_000), // 1s gate
-                state: ChannelState::default(),
-                synth_params: Default::default(),
-                target_sample: 0,
-            }]);
-        }
-        // 旧实现只剩最后 1 个音符；新实现 60 个全部保留。
-        assert_eq!(engine.voices.len(), 60, "快速拖拽的所有键都要能出声");
-
-        // gate 到期前不能提前 NoteOff（93 × 512 = 47616 < 48000）
-        for _ in 0..93 {
-            engine.render_add(&mut out, 512);
-        }
-        assert_eq!(engine.voices.len(), 60, "gate 未到期不能提前 NoteOff");
-        // 第 94 次渲染（48128 >= 48000）：全部到期 NoteOff
-        engine.render_add(&mut out, 512);
-        assert!(engine.voices.is_empty(), "gate 到期全部 NoteOff");
-    }
-
-    #[test]
-    fn pending_note_triggers_at_exact_sample_inside_block() {
-        // 回归测试（块内精确帧触发）：待触发音符必须在 trigger_at 的精确 sample
-        // 位置触发，而不是被量化到渲染块（512 帧 ≈ 10.7ms）边界的第一帧；
-        // gate 到期（NoteOff）位置同理。start_position 是精确触发帧的证据。
-        let layout = ChannelLayout::from_mask(vec![true; 16]);
-        let mut engine = XsynthPreview::new(&layout, 48000);
-
-        // A 立即触发（组内最早）；B 的 trigger_at = 1000（落在第二个渲染块
-        // [512, 1024) 的中间帧），gate 300 帧 → 到期于 1300（第三个块中间帧）。
-        engine.preview_notes_append(vec![
-            PreviewNoteIn {
-                channel: 0,
-                key: 60,
-                velocity: 100,
-                duration: None,
-                state: ChannelState::default(),
-                synth_params: Default::default(),
-                target_sample: 0,
-            },
-            PreviewNoteIn {
-                channel: 0,
-                key: 64,
-                velocity: 90,
-                duration: Some(300),
-                state: ChannelState::default(),
-                synth_params: Default::default(),
-                target_sample: 1000,
-            },
-        ]);
-        assert_eq!(engine.voices.len(), 1, "A 立即触发");
-        assert_eq!(engine.pending.len(), 1, "B 还没到触发点");
-
-        let mut out = test_buffers();
-        engine.render_add(&mut out, 512); // [0, 512)：B 不触发
-        assert_eq!(engine.voices.len(), 1, "B 的 trigger_at 未到");
-        assert_eq!(engine.pending.len(), 1);
-
-        engine.render_add(&mut out, 512); // [512, 1024)：帧 1000 处触发 B
-        assert_eq!(engine.voices.len(), 2, "块内中间帧触发");
-        assert_eq!(
-            engine.voices[1].start_position, 1000,
-            "start_position 必须是精确触发帧；若量化到块边界则听感错位"
-        );
-        assert!(engine.pending.is_empty());
-
-        engine.render_add(&mut out, 512); // [1024, 1536)：帧 1300 处 B 到期 NoteOff
-        assert_eq!(engine.voices.len(), 1, "到期位置也精确到帧（只剩持续音 A）");
-    }
-
-    #[test]
-    fn preview_notes_replace_clears_stale_pending_only() {
-        // 新组提交时：旧组尚未触发的待触发音符必须清掉（目标位置已过期），
-        // 已在响的音符必须保留（继续响满 gate）。
-        let layout = ChannelLayout::from_mask(vec![true; 16]);
-        let mut engine = XsynthPreview::new(&layout, 48000);
-
-        engine.preview_notes_append(vec![
-            PreviewNoteIn {
-                channel: 0,
-                key: 60,
-                velocity: 100,
-                duration: Some(48_000),
-                state: ChannelState::default(),
-                synth_params: Default::default(),
-                target_sample: 0,
-            },
-            PreviewNoteIn {
-                channel: 0,
-                key: 64,
-                velocity: 90,
-                duration: Some(48_000),
-                state: ChannelState::default(),
-                synth_params: Default::default(),
-                target_sample: 100_000, // 延迟音符：尚未触发
-            },
-        ]);
-        assert_eq!(engine.voices.len(), 1);
-        assert_eq!(engine.pending.len(), 1, "延迟音符在等待触发");
-
-        // 新组替换：旧组延迟音符过期清掉，已在响的 60 号音符保留。
-        engine.preview_notes_append(vec![PreviewNoteIn {
-            channel: 0,
-            key: 67,
-            velocity: 100,
-            duration: Some(48_000),
-            state: ChannelState::default(),
-            synth_params: Default::default(),
-            target_sample: 0,
-        }]);
-        assert!(engine.pending.is_empty(), "旧组待触发音符被清掉");
-        assert_eq!(engine.voices.len(), 2, "旧组正在响的音符 + 新组音符都保留");
-
-        engine.stop_all();
-        assert!(engine.voices.is_empty());
     }
 }

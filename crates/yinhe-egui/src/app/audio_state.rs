@@ -235,16 +235,9 @@ mod tests {
             "output_device_name 必须纳入 EngineSpawnKey"
         );
 
-        let mut s = mk();
-        s.synth_engine = match s.synth_engine {
-            SynthEngine::XSynthCpu => SynthEngine::YinheCpu,
-            _ => SynthEngine::XSynthCpu,
-        };
-        assert_ne!(
-            EngineSpawnKey::of(&s),
-            k0,
-            "synth_engine 必须纳入 EngineSpawnKey"
-        );
+        // 方案 C：只剩 YinheCpu 一个后端，synth_engine 不再有变化维度；
+        // 该字段仍纳入 EngineSpawnKey（序列化比较），但用 interpolation 验证 key 敏感。
+        // 见下方 interpolation 用例。
 
         let mut s = mk();
         s.interpolation = match s.interpolation {
@@ -283,9 +276,9 @@ mod tests {
         );
 
         let mut changed = settings.clone();
-        changed.synth_engine = match changed.synth_engine {
-            SynthEngine::XSynthCpu => SynthEngine::YinheCpu,
-            _ => SynthEngine::XSynthCpu,
+        changed.interpolation = match changed.interpolation {
+            Interpolation::Nearest => Interpolation::Linear,
+            _ => Interpolation::Nearest,
         };
         assert!(
             state.engine_spawn_key_stale(&changed),
