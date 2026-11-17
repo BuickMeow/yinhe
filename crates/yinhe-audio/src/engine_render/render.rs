@@ -47,9 +47,7 @@ impl AudioEngine {
         // 重建一次。循环拆块只改**输出内偏移**，不改 mixer 块长。
         self.ensure_block_buffers(frames);
         // 每轨峰值按输出块统计（块内按事件分段，段间取最大）。
-        if let Some(cs) = self.cpu_synth.as_mut() {
-            cs.reset_track_peaks();
-        }
+        self.cpu_synth.reset_track_peaks();
         // 音频轨缓冲是覆盖写；整块只清一次，之后各 span 按 offset 写入。
         self.clear_audio_buffers(frames);
         self.loop_wrap_offsets.clear();
@@ -250,15 +248,10 @@ impl AudioEngine {
 
     /// 渲染一个 CPU 段到混音台通道缓冲（`offset_frames` 是输出块内偏移）。
     fn render_cpu_segment(&mut self, offset_frames: usize, frames: usize) {
-        // 方案 C：只有 YinheCpu；首次渲染时确保实例存在。
-        self.ensure_cpu_synth();
         let Self {
             cpu_synth, mixer, ..
         } = self;
-        cpu_synth
-            .as_mut()
-            .expect("cpu synth just ensured")
-            .render_range(mixer.buffers_mut(), offset_frames, frames);
+        cpu_synth.render_range(mixer.buffers_mut(), offset_frames, frames);
     }
 
     /// 冻结 LC：清空目标 dense 通道并用冻结 PCM 覆盖。

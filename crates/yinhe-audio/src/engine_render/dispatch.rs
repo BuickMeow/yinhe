@@ -16,8 +16,9 @@ use crate::engine::AudioEngine;
 /// 事件 sample 取 `segment_start_sample`（每段渲染前由 render 循环更新）。
 macro_rules! route_cpu_event {
     ($engine:ident, $dense:expr, $event:expr) => {{
-        if let Some(cs) = $engine.cpu_synth.as_mut() {
+        {
             let sample = $engine.segment_start_sample;
+            let cs = &mut $engine.cpu_synth;
             let dense = $dense;
             match $event {
                 $crate::audio_model::AudioEvent::Channel(
@@ -64,8 +65,6 @@ impl AudioEngine {
     /// 三个函数的职责，KEY_COUNT 桶只扫描一次。所有比较都在 tick 域，无需转换。
     ///
     pub(crate) fn dispatch_and_find_next(&mut self, tick: u32, block_end_tick: u32) -> Option<u32> {
-        // 方案 C：只有 YinheCpu；进入分派前确保实例存在（避免循环内借用冲突）。
-        self.ensure_cpu_synth();
         let mut next: Option<u32> = None;
 
         // ── CC 事件 ──
@@ -257,27 +256,14 @@ impl AudioEngine {
                             let sample = self.segment_start_sample;
                             let end_sample = self.tick_to_sample(end_tick);
                             let vel = note.velocity;
-                            if let Some(cs) = self.cpu_synth.as_mut() {
-                                cs.send_event(yinhe_synth::SynthEvent::NoteOn {
-                                    track: track as u16,
-                                    sample,
-                                    channel: dense as u8,
-                                    key: key as u8,
-                                    velocity: vel,
-                                    end_sample,
-                                });
-                            } else {
-                                route_cpu_event!(
-                                    self,
-                                    dense,
-                                    crate::audio_model::AudioEvent::Channel(
-                                        ChannelAudioEvent::NoteOn {
-                                            key: key as u8,
-                                            vel,
-                                        }
-                                    )
-                                );
-                            }
+                            self.cpu_synth.send_event(yinhe_synth::SynthEvent::NoteOn {
+                                track: track as u16,
+                                sample,
+                                channel: dense as u8,
+                                key: key as u8,
+                                velocity: vel,
+                                end_sample,
+                            });
                             self.active_notes.push(Reverse(ActiveNote {
                                 key: key as u8,
                                 dense,

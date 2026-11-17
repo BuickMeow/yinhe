@@ -24,9 +24,6 @@ pub(crate) const ENGINE_BLOCK_FRAMES: usize = 512;
 /// 引擎任何路径（实时/导出）的块长都不得超过该值。
 pub const MAX_ENGINE_BLOCK_FRAMES: usize = 4096;
 
-/// yinhe-synth CPU 后端槽位（后端选择由 `SynthEngine` 在 spawn 时决定）。
-pub(crate) type CpuSynthSlot = Option<yinhe_synth::CpuSynth>;
-
 /// Core MIDI synthesis engine.  Owned by the renderer thread.
 pub(crate) struct AudioEngine {
     /// 混音处理图：通道数 = compacted 通道数，dense 索引与 channel_set 对齐。
@@ -141,9 +138,8 @@ pub(crate) struct AudioEngine {
     /// 由 `init_engine` 在创建引擎后按后端注入（测试可不设置）。
     pub(crate) preview: Option<crate::preview_engine::PreviewEngine>,
 
-    /// yinhe-synth CPU 合成器 — 启用后渲染走 CpuSynth 而非 xsynth；
-    /// 未创建时走 xsynth ChannelSet。
-    pub(crate) cpu_synth: CpuSynthSlot,
+    /// yinhe-synth CPU 合成器（方案 C 唯一后端，引擎构造时即创建）。
+    pub(crate) cpu_synth: yinhe_synth::CpuSynth,
     /// 当前 dispatch 段起点的绝对 sample：CpuSynth 的事件按 sample 生效，
     /// dispatch 用它作为事件的 sample 依据（每段渲染前由 render 循环更新）。
     pub(crate) segment_start_sample: u64,
@@ -280,7 +276,13 @@ impl AudioEngine {
                 chase_generation: 0,
                 plugin_previews: Vec::new(),
                 preview: None,
-                cpu_synth: None,
+                cpu_synth: {
+                    let mut cs = yinhe_synth::CpuSynth::new(sample_rate);
+                    cs.set_interpolation(Interpolation::Linear.code());
+                    cs.set_layer_count(Some(4));
+                    cs.set_max_voices(crate::DEFAULT_MAX_VOICES);
+                    cs
+                },
                 segment_start_sample: 0,
                 export_mode: false,
                 freeze_capture: None,
@@ -367,21 +369,7 @@ impl AudioEngine {
                 *slot = (0.0, 0.0);
                 continue;
             }
-            *slot = if let Some(cs) = self.cpu_synth.as_ref() {
-                cs.track_peak(i)
-            } else {
-                let dense = model
-                    .track_channel(i)
-                    .map_or(u32::MAX, |ch| self.channel_layout.dense_for(ch as usize));
-                if dense == u32::MAX {
-                    (0.0, 0.0)
-                } else {
-                    self.mixer
-                        .channel_meter_reading(dense as usize)
-                        .map(|m| m.read())
-                        .unwrap_or((0.0, 0.0))
-                }
-            };
+            *slot = self.cpu_synth.track_peak(i);
         }
     }
 
@@ -392,18 +380,12 @@ impl AudioEngine {
     /// 当前活跃 voice 数（当前合成后端）。
     /// 导出尾音判定用它（`export.rs`）：后端切换后语义保持不变。
     pub(crate) fn voice_count(&self) -> u64 {
-        self.cpu_synth
-            .as_ref()
-            .map(|synth| synth.voice_count() as u64)
-            .unwrap_or(0)
+        self.cpu_synth.voice_count() as u64
     }
 
     /// 把每轨 LC 的 dense 映射推给 CPU 合成器。
     /// 没有 `lc` 的 Track 保持 `u32::MAX`，继续走共享 MIDI 通道。
     pub(crate) fn sync_track_lc_routing(&mut self) {
-        let Some(cs) = self.cpu_synth.as_mut() else {
-            return;
-        };
         let Some(model) = self.yin_model.as_ref() else {
             return;
         };
@@ -426,7 +408,7 @@ impl AudioEngine {
                 }
             })
             .collect();
-        cs.set_track_output_dense(map);
+        self.cpu_synth.set_track_output_dense(map);
     }
 
     pub(crate) fn model_loaded(&self) -> bool {
@@ -440,26 +422,9 @@ impl AudioEngine {
         self.mixer.has_inserts() || self.instruments.iter().any(|i| i.is_some())
     }
 
-    /// 最大复音数：0/None → 系统推荐（`DEFAULT_MAX_VOICES`）。合成器
-    /// 创建晚于命令，worker 创建后会补应用本字段。
-    /// 确保 CpuSynth 存在（方案 C：XSynth 已移除，YinheCpu 是唯一后端）。
-    /// 引擎构造后即可调用；首次创建时应用当前 interpolation/layer/max_voices。
-    pub(crate) fn ensure_cpu_synth(&mut self) -> &mut yinhe_synth::CpuSynth {
-        if self.cpu_synth.is_none() {
-            let mut cs = yinhe_synth::CpuSynth::new(self.sample_rate);
-            cs.set_interpolation(self.interpolation.code());
-            cs.set_layer_count(self.layer_count);
-            cs.set_max_voices(self.max_voices);
-            self.cpu_synth = Some(cs);
-        }
-        self.cpu_synth.as_mut().expect("cpu synth just ensured")
-    }
-
     pub(crate) fn set_max_voices(&mut self, max: Option<usize>) {
         self.max_voices = max.unwrap_or(crate::DEFAULT_MAX_VOICES);
-        if let Some(cs) = self.cpu_synth.as_mut() {
-            cs.set_max_voices(self.max_voices);
-        }
+        self.cpu_synth.set_max_voices(self.max_voices);
     }
 
     pub(crate) fn set_pending_play(&mut self, from_sample: u64) {
@@ -471,10 +436,7 @@ impl AudioEngine {
         // 完成时），创建时刻晚于本命令 → 必须在创建后重新应用（否则设置被
         // 静默丢弃、合成器永远用默认 layer=4；xsynth 因内部立即应用而无此问题）。
         self.layer_count = count;
-        // 方案 C：只有 YinheCpu 的 per-key layer 语义
-        if let Some(cs) = self.cpu_synth.as_mut() {
-            cs.set_layer_count(count);
-        }
+        self.cpu_synth.set_layer_count(count);
     }
 
     pub(crate) fn handle_command(&mut self, cmd: AudioCommand) {
@@ -600,9 +562,7 @@ impl AudioEngine {
     /// 音色库，重建音频/重新加载后生效）。
     pub(crate) fn set_interpolation(&mut self, interpolation: Interpolation) {
         self.interpolation = interpolation;
-        if let Some(cs) = self.cpu_synth.as_mut() {
-            cs.set_interpolation(interpolation.code());
-        }
+        self.cpu_synth.set_interpolation(interpolation.code());
     }
 }
 

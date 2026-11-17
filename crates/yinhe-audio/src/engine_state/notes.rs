@@ -89,17 +89,14 @@ impl AudioEngine {
         }
         let sample = self.sample_position;
         let end_sample = self.tick_to_sample(end_tick);
-        self.ensure_cpu_synth();
-        if let Some(cs) = self.cpu_synth.as_mut() {
-            cs.send_event(yinhe_synth::SynthEvent::NoteOn {
-                track: track as u16,
-                sample,
-                channel: dense as u8,
-                key: key as u8,
-                velocity: n.velocity,
-                end_sample,
-            });
-        }
+        self.cpu_synth.send_event(yinhe_synth::SynthEvent::NoteOn {
+            track: track as u16,
+            sample,
+            channel: dense as u8,
+            key: key as u8,
+            velocity: n.velocity,
+            end_sample,
+        });
         self.active_notes.push(std::cmp::Reverse(ActiveNote {
             key: key as u8,
             dense,
@@ -131,13 +128,11 @@ impl AudioEngine {
                 }
             } else if an.dense != u32::MAX {
                 let sample = self.sample_position;
-                if let Some(cs) = self.cpu_synth.as_mut() {
-                    cs.send_event(yinhe_synth::SynthEvent::NoteOff {
-                        sample,
-                        channel: an.dense as u8,
-                        key: an.key,
-                    });
-                }
+                self.cpu_synth.send_event(yinhe_synth::SynthEvent::NoteOff {
+                    sample,
+                    channel: an.dense as u8,
+                    key: an.key,
+                });
             }
         }
         self.active_notes = remaining;

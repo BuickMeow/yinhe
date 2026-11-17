@@ -142,9 +142,7 @@ impl AudioEngine {
         }
         // yinhe CPU 后端：清 voice/通道状态 + cursor 定位到 seek 点
         {
-            if let Some(cs) = self.cpu_synth.as_mut() {
-                cs.seek(sample);
-            }
+            self.cpu_synth.seek(sample);
             self.segment_start_sample = sample;
         }
         // 先落定新位置，再补鼓组声明：`reapply_percussion` 会往 CpuSynth

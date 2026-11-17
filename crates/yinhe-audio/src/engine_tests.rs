@@ -73,7 +73,7 @@ fn track_level_meter_reads_synth_peak_per_track() {
     synth
         .load_dense_soundfonts(0, &[std::path::PathBuf::from(sfz)])
         .expect("音色库加载");
-    engine.cpu_synth = Some(synth);
+    engine.cpu_synth = synth;
     engine.handle_command(AudioCommand::Play { from_sample: 0 });
 
     let mut out = vec![0.0f32; 512 * 2];
@@ -116,7 +116,7 @@ fn idle_skip_keeps_note_that_ends_inside_block() {
     synth
         .load_dense_soundfonts(0, &[std::path::PathBuf::from(sfz)])
         .expect("音色库加载");
-    engine.cpu_synth = Some(synth);
+    engine.cpu_synth = synth;
     engine.handle_command(AudioCommand::Play { from_sample: 0 });
 
     // 一块 3 秒：音符与 release 都在块内结束（渲染后无存活 voice）。
@@ -499,15 +499,12 @@ fn backward_seek_keeps_synth_event_queue_in_past() {
     let model = Arc::new(make_model_with_notes(vec![(60, 0, 480, 100, 0)]));
     let mut engine = AudioEngine::new(48_000, ChannelLayout::from_mask(vec![true; 16]));
     engine.load_model(&model);
-    engine.cpu_synth = Some(yinhe_synth::CpuSynth::new(48_000));
+    engine.cpu_synth = yinhe_synth::CpuSynth::new(48_000);
 
     engine.seek_to(100_000);
     engine.seek_to(50_000);
 
-    let first = engine
-        .cpu_synth
-        .as_ref()
-        .and_then(|cs| cs.debug_first_event_sample());
+    let first = engine.cpu_synth.debug_first_event_sample();
     assert!(first.is_some(), "seek 后应有鼓组声明事件");
     assert!(
         first.unwrap() <= 50_000,
@@ -2134,7 +2131,7 @@ fn yinhe_cpu_engine_render_smoke() {
     synth
         .load_dense_soundfonts(0, &[std::path::PathBuf::from(sfz)])
         .expect("音色库加载");
-    engine.cpu_synth = Some(synth);
+    engine.cpu_synth = synth;
 
     engine.handle_command(AudioCommand::Play { from_sample: 0 });
     let mut out = vec![0.0f32; 512 * 2];
@@ -2378,7 +2375,7 @@ fn prof_blackmidi_cost_breakdown() {
                     let mut cs = yinhe_synth::CpuSynth::new(sr);
                     cs.load_dense_soundfonts_many(&denses, &[std::path::PathBuf::from(sfz)])
                         .expect("cpu sf");
-                    engine.cpu_synth = Some(cs);
+                    engine.cpu_synth = cs;
                 }
                 _ => {}
             }
@@ -2405,7 +2402,7 @@ fn prof_blackmidi_cost_breakdown() {
         let mut cs = yinhe_synth::CpuSynth::new(sr);
         cs.load_dense_soundfonts_many(&denses, &[std::path::PathBuf::from(sfz)])
             .expect("cpu sf");
-        cs_engine.cpu_synth = Some(cs);
+        cs_engine.cpu_synth = cs;
         for (name, mode) in [("全功能", 0u8), ("无滤波", 1), ("无采样", 2), ("仅包络", 3)]
         {
             yinhe_synth::cpu_synth::CPU_PROFILE_MODE.store(mode, Ordering::Relaxed);
@@ -2693,7 +2690,7 @@ mod compare_tests {
                         cs.load_dense_soundfonts(*c as u32, &[std::path::PathBuf::from(sfz)])
                             .expect("sf");
                     }
-                    e.cpu_synth = Some(cs);
+                    e.cpu_synth = cs;
                 }
             }
             e.handle_command(AudioCommand::Play { from_sample: 0 });
@@ -3073,7 +3070,7 @@ fn prof_tau_voice_caps() {
             cs.set_max_voices(cap);
         }
         cs.set_layer_count(layer);
-        engine.cpu_synth = Some(cs);
+        engine.cpu_synth = cs;
         engine.set_max_voices(cap);
         engine.set_layer_count(layer);
         engine.handle_command(AudioCommand::Play {
@@ -3385,7 +3382,7 @@ fn frozen_lc_forces_channel_active() {
     let layout = ChannelLayout::from_mask(vec![true]);
     let mut engine = AudioEngine::new(48_000, layout);
     engine.mixer.resize(1, 512, &[]);
-    engine.cpu_synth = Some(yinhe_synth::CpuSynth::new(48_000));
+    engine.cpu_synth = yinhe_synth::CpuSynth::new(48_000);
     let mut mixer = MixerParams::default();
     mixer.ensure_len();
     mixer.midi_node_mut(0).expect("midi 0").freeze = Some(FrozenAudio {
@@ -3427,7 +3424,7 @@ fn freeze_job_renders_real_lc_audio() {
     synth
         .load_dense_soundfonts(0, &[sfz_path])
         .expect("load soundfont");
-    engine.cpu_synth = Some(synth);
+    engine.cpu_synth = synth;
     engine.mixer_params = MixerParams::default();
     engine.handle_command(AudioCommand::Play { from_sample: 0 });
 

@@ -52,9 +52,7 @@ impl AudioEngine {
         if dense == u32::MAX {
             return;
         }
-        if let Some(cs) = self.cpu_synth.as_mut() {
-            cs.set_synth_params(dense, params);
-        }
+        self.cpu_synth.set_synth_params(dense, params);
     }
 
     /// 全量应用工程里的音源参数（加载/切歌后调用）。
@@ -221,7 +219,8 @@ impl AudioEngine {
             if dense == u32::MAX {
                 continue;
             }
-            if let Some(cs) = self.cpu_synth.as_mut() {
+            {
+                let cs = &mut self.cpu_synth;
                 if let Some(value) = bank_msb {
                     cs.send_event(yinhe_synth::SynthEvent::Control {
                         sample,
@@ -264,14 +263,12 @@ impl AudioEngine {
                 events.push((dense, on));
             }
         }
-        if let Some(cs) = self.cpu_synth.as_mut() {
-            for (dense, on) in events {
-                cs.send_event(yinhe_synth::SynthEvent::Control {
-                    sample,
-                    channel: dense as u8,
-                    event: yinhe_synth::ControlEvent::PercussionMode(on),
-                });
-            }
+        for (dense, on) in events {
+            self.cpu_synth.send_event(yinhe_synth::SynthEvent::Control {
+                sample,
+                channel: dense as u8,
+                event: yinhe_synth::ControlEvent::PercussionMode(on),
+            });
         }
     }
 }

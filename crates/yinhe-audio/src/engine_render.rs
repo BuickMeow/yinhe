@@ -20,7 +20,8 @@ impl AudioEngine {
         let n = self.mixer.channel_count();
         active.clear();
         active.resize(n, true);
-        if let Some(cs) = self.cpu_synth.as_mut() {
+        {
+            let cs = &mut self.cpu_synth;
             cs.refresh_channel_mask();
             let mask = *cs.channel_mask();
             cs.clear_channel_mask();

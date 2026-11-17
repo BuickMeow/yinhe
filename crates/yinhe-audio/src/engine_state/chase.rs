@@ -40,13 +40,9 @@ impl AudioEngine {
             };
             // yinhe CPU 后端：把同一份快照转成后端控制事件应用
             //（skip 用 CpuSynth 自己的 [chase_base, cursor) 区间统计）。
-            if self.cpu_synth.is_some() {
+            {
                 let skip = {
-                    let backend_skip = self
-                        .cpu_synth
-                        .as_ref()
-                        .map(|c| c.chase_skip())
-                        .unwrap_or_default();
+                    let backend_skip = self.cpu_synth.chase_skip();
                     crate::synth_events::translate_backend_skip(&self.channel_layout, &backend_skip)
                 };
                 let events: Vec<yinhe_synth::ControlEvent> = state
@@ -54,10 +50,8 @@ impl AudioEngine {
                     .iter()
                     .filter_map(crate::synth_events::to_backend_control_event)
                     .collect();
-                if !events.is_empty()
-                    && let Some(cs) = self.cpu_synth.as_mut()
-                {
-                    cs.apply_chase(dense, &events);
+                if !events.is_empty() {
+                    self.cpu_synth.apply_chase(dense, &events);
                 }
             }
             // 内置音源通道处理段回填（与 xsynth 的 skip 语义一致：已被

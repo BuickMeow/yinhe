@@ -288,10 +288,7 @@ impl AudioRenderer {
         if self.state.sf_loading.load(Ordering::Acquire) {
             return;
         }
-        if self.yinhe_cpu_engine()
-            && self.state.sf_total.load(Ordering::Relaxed) > 0
-            && self.engine.cpu_synth.is_none()
-        {
+        if self.yinhe_cpu_engine() && self.state.sf_total.load(Ordering::Relaxed) > 0 {
             return;
         }
         if !self.state.audio_ready.swap(true, Ordering::AcqRel) {

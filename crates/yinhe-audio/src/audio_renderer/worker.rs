@@ -120,7 +120,6 @@ impl AudioRenderer {
                     // yinhe CPU 后端：首次加载音色库时创建 CpuSynth，逐通道登记
                     // key map（无样本上传阶段；引擎 dispatch 增量投递事件）。
                     if self.synth_engine == SynthEngine::YinheCpu {
-                        let sr = self.engine.sample_rate;
                         let cpu_paths: Vec<std::path::PathBuf> =
                             paths.iter().map(std::path::PathBuf::from).collect();
                         // 一次登记全部 dense：多库只合并一次、Arc 共享；逐通道
@@ -130,20 +129,15 @@ impl AudioRenderer {
                             .map(|(_, dense)| *dense)
                             .filter(|d| *d != u32::MAX && (*d as usize) < yinhe_synth::MAX_CHANNELS)
                             .collect();
-                        if self.engine.cpu_synth.is_none() {
-                            let mut cs = yinhe_synth::CpuSynth::new(sr);
-                            cs.set_interpolation(self.interpolation.code());
-                            // 创建晚于 SetLayerCount 命令：补应用当前设置
-                            cs.set_layer_count(self.engine.layer_count);
-                            cs.set_max_voices(self.engine.max_voices);
-                            self.engine.cpu_synth = Some(cs);
-                            self.engine.sync_track_lc_routing();
-                            play_log("[play] CpuSynth 初始化（yinhe CPU 后端）");
-                        }
-                        if !denses.is_empty()
-                            && let Some(cs) = self.engine.cpu_synth.as_mut()
-                        {
-                            match cs.load_dense_soundfonts_many(&denses, &cpu_paths) {
+                        self.engine
+                            .cpu_synth
+                            .set_interpolation(self.interpolation.code());
+                        if !denses.is_empty() {
+                            match self
+                                .engine
+                                .cpu_synth
+                                .load_dense_soundfonts_many(&denses, &cpu_paths)
+                            {
                                 Ok(()) => play_log(&format!(
                                     "[sf] CPU 加载完成 denses={denses:?} paths={cpu_paths:?}"
                                 )),
