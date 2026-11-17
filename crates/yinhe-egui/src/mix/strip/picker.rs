@@ -38,7 +38,10 @@ pub(crate) fn send_popup(
             let (amount, pre_fader) = app.workspace.documents[idx]
                 .mixer
                 .node_sends(yinhe_types::MixerChannelId::Midi(channel))
-                .and_then(|list| list.iter().find(|s| s.target == yinhe_types::ChannelId::Bus(bus_id)))
+                .and_then(|list| {
+                    list.iter()
+                        .find(|s| s.target == yinhe_types::ChannelId::Bus(bus_id))
+                })
                 .map(|s| (s.amount, s.pre_fader))
                 .unwrap_or((0.0, false));
             (bus_id, amount, pre_fader)

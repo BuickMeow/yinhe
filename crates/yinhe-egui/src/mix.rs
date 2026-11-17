@@ -1195,7 +1195,10 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
                 let mixer = app.workspace.documents[idx].mixer_mut();
                 if let Some(list) = mixer.node_sends_mut(yinhe_types::MixerChannelId::Midi(channel))
                 {
-                    if let Some(send) = list.iter_mut().find(|s| s.target == yinhe_types::ChannelId::Bus(bus)) {
+                    if let Some(send) = list
+                        .iter_mut()
+                        .find(|s| s.target == yinhe_types::ChannelId::Bus(bus))
+                    {
                         send.amount = amount;
                         send.pre_fader = pre_fader;
                     } else if amount > 0.0 {
@@ -1221,7 +1224,10 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
             {
                 let mixer = app.workspace.documents[idx].mixer_mut();
                 if let Some(list) = mixer.node_sends_mut(yinhe_types::MixerChannelId::TrackLc(lc)) {
-                    if let Some(send) = list.iter_mut().find(|s| s.target == yinhe_types::ChannelId::Bus(bus)) {
+                    if let Some(send) = list
+                        .iter_mut()
+                        .find(|s| s.target == yinhe_types::ChannelId::Bus(bus))
+                    {
                         send.amount = amount;
                         send.pre_fader = pre_fader;
                     } else if amount > 0.0 {
@@ -1248,7 +1254,10 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
                 if let Some(list) =
                     mixer.node_sends_mut(yinhe_types::MixerChannelId::Audio(channel))
                 {
-                    if let Some(send) = list.iter_mut().find(|s| s.target == yinhe_types::ChannelId::Bus(bus)) {
+                    if let Some(send) = list
+                        .iter_mut()
+                        .find(|s| s.target == yinhe_types::ChannelId::Bus(bus))
+                    {
                         send.amount = amount;
                         send.pre_fader = pre_fader;
                     } else if amount > 0.0 {
@@ -1272,7 +1281,10 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
             {
                 let mixer = app.workspace.documents[idx].mixer_mut();
                 if let Some(list) = mixer.node_sends_mut(yinhe_types::MixerChannelId::Bus(bus)) {
-                    if let Some(send) = list.iter_mut().find(|s| s.target == yinhe_types::ChannelId::Bus(target_bus)) {
+                    if let Some(send) = list
+                        .iter_mut()
+                        .find(|s| s.target == yinhe_types::ChannelId::Bus(target_bus))
+                    {
                         send.amount = amount;
                     } else if amount > 0.0 {
                         list.push(yinhe_mixer::SendParams {
@@ -1338,7 +1350,11 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
             let amount = app.workspace.documents[idx]
                 .mixer
                 .node_sends(node)
-                .and_then(|sends| sends.iter().find(|s| s.target == yinhe_types::ChannelId::Bus(bus)))
+                .and_then(|sends| {
+                    sends
+                        .iter()
+                        .find(|s| s.target == yinhe_types::ChannelId::Bus(bus))
+                })
                 .map(|s| s.amount)
                 .unwrap_or(0.0);
             let value = amount.clamp(0.0, 1.0);
