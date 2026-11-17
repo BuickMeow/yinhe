@@ -38,11 +38,6 @@ impl AudioEngine {
             let Some(state) = &states[ch as usize] else {
                 continue;
             };
-            // GPU/CPU-synth 模式的控制器恢复走各自后端（本函数末尾/下方分支），
-            // ChannelSet 不参与渲染。
-            if self.cpu_synth_active() {
-                state.send_to(dense, &mut self.channel_set, &skip);
-            }
             // yinhe CPU 后端：把同一份快照转成后端控制事件应用
             //（skip 用 CpuSynth 自己的 [chase_base, cursor) 区间统计）。
             if self.cpu_synth.is_some() {

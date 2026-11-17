@@ -3,10 +3,6 @@ use std::collections::BinaryHeap;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use xsynth_core::channel::ChannelInitOptions;
-use xsynth_core::channel_group::{ChannelGroupConfig, ParallelismOptions, SynthFormat};
-use xsynth_core::soundfont::SoundfontBase;
-use xsynth_core::{AudioStreamParams, ChannelCount};
 
 use yinhe_core::YinModel;
 use yinhe_mixer::{InsertProcessor, InstrumentProcessor, MixerGraph, MixerParams};
@@ -15,8 +11,6 @@ use yinhe_types::{Interpolation, KEY_COUNT};
 use crate::audio_model::{ActiveNote, AudioModel, SortedCC};
 use crate::channel::ChaseSkip;
 use crate::channel_layout::ChannelLayout;
-use crate::channel_set::ChannelSet;
-use crate::soundfont::SoundFontManager;
 use crate::spawn::AudioCommand;
 
 /// 引擎渲染块长（帧）。实时渲染块（audio_renderer 的 scratch）与之对齐；
@@ -36,7 +30,6 @@ pub(crate) type CpuSynthSlot = Option<yinhe_synth::CpuSynth>;
 
 /// Core MIDI synthesis engine.  Owned by the renderer thread.
 pub(crate) struct AudioEngine {
-    pub(crate) channel_set: ChannelSet,
     /// 混音处理图：通道数 = compacted 通道数，dense 索引与 channel_set 对齐。
     pub(crate) mixer: MixerGraph,
     /// 混音台持久化参数的引擎侧副本（按源通道索引）：resize 重建 strip 用，
@@ -65,7 +58,6 @@ pub(crate) struct AudioEngine {
     /// 不可变通道布局：active_mask + channel_map + num_channels。
     /// 创建后定型，若 model 结构变化必须 teardown + 重建引擎。
     pub(crate) channel_layout: ChannelLayout,
-    pub(crate) sf_manager: SoundFontManager,
     pub(crate) sample_rate: u32,
     pub(crate) sample_position: u64,
     /// 循环回绕累计的绝对位置偏移：`绝对 sample = 逻辑 sample + offset`。
@@ -75,6 +67,8 @@ pub(crate) struct AudioEngine {
     /// 当前 per-key layer 设置（`SetLayerCount` 保存；worker 创建 yinhe
     /// 合成器后据此应用——创建晚于命令，不能只在线应用）。
     pub(crate) layer_count: Option<usize>,
+    /// 采样插值方式（CpuSynth 创建/更新时应用）。
+    pub(crate) interpolation: Interpolation,
     /// 忽略力度 ≤ 该值的音符（0 = 不忽略）。dispatch 时逐音符实时判断，
     /// 改阈值不需要重建任何缓存。
     pub(crate) ignore_velocity: u8,
@@ -232,36 +226,17 @@ impl AudioEngine {
 
 impl AudioEngine {
     pub(crate) fn new(sample_rate: u32, layout: ChannelLayout) -> Self {
-        Self::with_parallelism(sample_rate, layout, ParallelismOptions::AUTO_PER_CHANNEL)
+        Self::with_parallelism(sample_rate, layout)
     }
 
-    pub(crate) fn with_parallelism(
-        sample_rate: u32,
-        layout: ChannelLayout,
-        parallelism: ParallelismOptions,
-    ) -> Self {
+    /// `with_parallelism` 的并行度参数已废弃（CpuSynth 内部管理并行），
+    /// 保留方法名给测试调用。
+    pub(crate) fn with_parallelism(sample_rate: u32, layout: ChannelLayout) -> Self {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Audio, || {
-            let compacted_channels = layout.compacted_channels();
-
-            let config = ChannelGroupConfig {
-                channel_init_options: ChannelInitOptions {
-                    fade_out_killing: true,
-                },
-                format: SynthFormat::Custom {
-                    channels: compacted_channels,
-                },
-                audio_params: AudioStreamParams {
-                    sample_rate,
-                    channels: ChannelCount::Stereo,
-                },
-                parallelism,
-            };
-
             let compacted = layout.compacted_channels() as usize;
             let mut mixer = MixerGraph::new(ENGINE_BLOCK_FRAMES);
             mixer.resize(compacted, ENGINE_BLOCK_FRAMES, &[]);
             Self {
-                channel_set: ChannelSet::new(config, ENGINE_BLOCK_FRAMES),
                 mixer,
                 mixer_params: MixerParams::default(),
                 insert_returns: Vec::new(),
@@ -275,11 +250,11 @@ impl AudioEngine {
                     .collect(),
                 block_start_sample: 0,
                 channel_layout: layout,
-                sf_manager: SoundFontManager::new(sample_rate),
                 sample_rate,
                 sample_position: 0,
                 loop_wrap_offset: 0,
                 layer_count: Some(4),
+                interpolation: Interpolation::Linear,
                 ignore_velocity: 1,
                 max_voices: crate::DEFAULT_MAX_VOICES,
                 current_tick: 0,
@@ -418,22 +393,10 @@ impl AudioEngine {
     /// 当前活跃 voice 数（当前合成后端）。
     /// 导出尾音判定用它（`export.rs`）：后端切换后语义保持不变。
     pub(crate) fn voice_count(&self) -> u64 {
-        if let Some(synth) = &self.cpu_synth {
-            return synth.voice_count() as u64;
-        }
-        self.channel_set.voice_count()
-    }
-
-    /// xsynth `ChannelSet` 当前是否参与渲染（yinhe CPU 后端启用时不参与）。
-    #[inline]
-    pub(crate) fn cpu_synth_active(&self) -> bool {
-        !self.yinhe_cpu_active()
-    }
-
-    /// yinhe-synth CPU 后端是否启用（`CpuSynth`）。
-    #[inline]
-    pub(crate) fn yinhe_cpu_active(&self) -> bool {
-        self.cpu_synth.is_some()
+        self.cpu_synth
+            .as_ref()
+            .map(|synth| synth.voice_count() as u64)
+            .unwrap_or(0)
     }
 
     /// 把每轨 LC 的 dense 映射推给 CPU 合成器。
@@ -480,6 +443,19 @@ impl AudioEngine {
 
     /// 最大复音数：0/None → 系统推荐（`DEFAULT_MAX_VOICES`）。合成器
     /// 创建晚于命令，worker 创建后会补应用本字段。
+    /// 确保 CpuSynth 存在（方案 C：XSynth 已移除，YinheCpu 是唯一后端）。
+    /// 引擎构造后即可调用；首次创建时应用当前 interpolation/layer/max_voices。
+    pub(crate) fn ensure_cpu_synth(&mut self) -> &mut yinhe_synth::CpuSynth {
+        if self.cpu_synth.is_none() {
+            let mut cs = yinhe_synth::CpuSynth::new(self.sample_rate);
+            cs.set_interpolation(self.interpolation.code());
+            cs.set_layer_count(self.layer_count);
+            cs.set_max_voices(self.max_voices);
+            self.cpu_synth = Some(cs);
+        }
+        self.cpu_synth.as_mut().expect("cpu synth just ensured")
+    }
+
     pub(crate) fn set_max_voices(&mut self, max: Option<usize>) {
         self.max_voices = max.unwrap_or(crate::DEFAULT_MAX_VOICES);
         if let Some(cs) = self.cpu_synth.as_mut() {
@@ -496,13 +472,7 @@ impl AudioEngine {
         // 完成时），创建时刻晚于本命令 → 必须在创建后重新应用（否则设置被
         // 静默丢弃、合成器永远用默认 layer=4；xsynth 因内部立即应用而无此问题）。
         self.layer_count = count;
-        use xsynth_core::channel::{ChannelConfigEvent, ChannelEvent};
-        use xsynth_core::channel_group::SynthEvent;
-        self.channel_set
-            .send_event(SynthEvent::AllChannels(ChannelEvent::Config(
-                ChannelConfigEvent::SetLayerCount(count),
-            )));
-        // yinhe CPU 后端的 per-key layer 语义（对齐 xsynth）
+        // 方案 C：只有 YinheCpu 的 per-key layer 语义
         if let Some(cs) = self.cpu_synth.as_mut() {
             cs.set_layer_count(count);
         }
@@ -545,10 +515,9 @@ impl AudioEngine {
             AudioCommand::SetSynthParams { channel, params } => {
                 self.apply_synth_params(channel, params);
             }
-            AudioCommand::SetSoundFonts { configs } => {
-                for (channel, paths) in configs.iter() {
-                    self.load_soundfont_for_channel(*channel, paths);
-                }
+            AudioCommand::SetSoundFonts { .. } => {
+                // 方案 C：只有 YinheCpu。音色库由 worker 预热 key map 后经
+                // `SetSoundFonts` 的异步结果路径登记；这里不直接加载 xsynth 版。
             }
             AudioCommand::SkipTracks { skip } => {
                 self.skip_track = skip;
@@ -633,18 +602,12 @@ impl AudioEngine {
     /// 采样插值方式（须在加载音色库之前设置；运行中切换不追溯已加载的
     /// 音色库，重建音频/重新加载后生效）。
     pub(crate) fn set_interpolation(&mut self, interpolation: Interpolation) {
-        self.sf_manager.set_interpolation(interpolation);
+        self.interpolation = interpolation;
+        if let Some(cs) = self.cpu_synth.as_mut() {
+            cs.set_interpolation(interpolation.code());
+        }
     }
 
-    pub(crate) fn load_soundfont_paths(
-        sample_rate: u32,
-        paths: &[String],
-        interpolation: Interpolation,
-    ) -> Result<Vec<Arc<dyn SoundfontBase>>, String> {
-        let mut manager = SoundFontManager::new(sample_rate);
-        manager.set_interpolation(interpolation);
-        manager.load_paths(paths)
-    }
 }
 
 #[cfg(test)]

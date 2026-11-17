@@ -1,7 +1,5 @@
 //! 传输与位置：暂停/恢复/seek、轨道掩码切换。
 
-use xsynth_core::channel::{ChannelAudioEvent, ChannelEvent};
-use xsynth_core::channel_group::SynthEvent;
 use yinhe_mixer::PluginEvent;
 use yinhe_types::KEY_COUNT;
 
@@ -141,17 +139,6 @@ impl AudioEngine {
             // 旧位置算出的 chase 结果不得应用到新位置（否则可能带回
             // 旧位置的 CC7/Program 状态，听起来像"没声音/音色不对"）。
             self.chase_generation = self.chase_generation.wrapping_add(1);
-        }
-        // yinhe CPU 后端启用时 ChannelSet 不参与渲染，重置/清音是死路径。
-        if self.cpu_synth_active() {
-            self.channel_set
-                .send_event(SynthEvent::AllChannels(ChannelEvent::Audio(
-                    ChannelAudioEvent::AllNotesOff,
-                )));
-            self.channel_set
-                .send_event(SynthEvent::AllChannels(ChannelEvent::Audio(
-                    ChannelAudioEvent::ResetControl,
-                )));
         }
         // yinhe CPU 后端：清 voice/通道状态 + cursor 定位到 seek 点
         {

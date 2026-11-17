@@ -1,27 +1,6 @@
-use xsynth_core::channel::{ChannelAudioEvent, ChannelEvent, ControlEvent};
-use xsynth_core::channel_group::{ChannelGroup, SynthEvent};
+use xsynth_core::channel::{ChannelAudioEvent, ControlEvent};
 
 use crate::audio_model::AudioEvent;
-
-/// 接收 SynthEvent 的通道组抽象：主引擎用自有 ChannelSet（分通道渲染），
-/// 预览引擎仍用 xsynth ChannelGroup（直接混成立体声），两者共用 chase 回放逻辑。
-pub(crate) trait EventSink {
-    fn send_event(&mut self, event: SynthEvent);
-}
-
-impl EventSink for crate::channel_set::ChannelSet {
-    fn send_event(&mut self, event: SynthEvent) {
-        ChannelSet::send_event(self, event);
-    }
-}
-
-impl EventSink for ChannelGroup {
-    fn send_event(&mut self, event: SynthEvent) {
-        ChannelGroup::send_event(self, event);
-    }
-}
-
-use crate::channel_set::ChannelSet;
 
 /// MIDI channel state for chase (restoring controller values after seek).
 ///
@@ -345,14 +324,6 @@ impl ChannelState {
         out
     }
 
-    pub(crate) fn send_to(&self, ch: u32, cg: &mut impl EventSink, skip: &ChaseSkip) {
-        for event in self.events_to_send(ch as usize, skip) {
-            // xsynth 没有 RPN 事件：0/1/2 → 高层事件，其余拆 CC 序列。
-            for ev in crate::engine_render::xsynth_events(&event).as_slice() {
-                cg.send_event(SynthEvent::Channel(ch, ChannelEvent::Audio(*ev)));
-            }
-        }
-    }
 
     /// 通道级 DSP CC 的当前值（chase 回填给 yinhe-dsp 模块用）。
     pub(crate) fn dsp_cc_value(&self, cc: u8) -> u8 {

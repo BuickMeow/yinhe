@@ -125,7 +125,7 @@ impl AudioEngine {
             let strips = self.dense_strip_params();
             let count = self.mixer.channel_count();
             self.mixer.resize(count, frames, &strips);
-            self.channel_set.resize_scratches(frames);
+
         }
     }
 
@@ -252,12 +252,13 @@ impl AudioEngine {
 
     /// 渲染一个 CPU 段到混音台通道缓冲（`offset_frames` 是输出块内偏移）。
     fn render_cpu_segment(&mut self, offset_frames: usize, frames: usize) {
-        if let Some(cs) = self.cpu_synth.as_mut() {
-            cs.render_range(self.mixer.buffers_mut(), offset_frames, frames);
-            return;
-        }
-        self.channel_set
-            .render_segment(self.mixer.buffers_mut(), offset_frames, frames);
+        // 方案 C：只有 YinheCpu；首次渲染时确保实例存在。
+        self.ensure_cpu_synth();
+        let Self { cpu_synth, mixer, .. } = self;
+        cpu_synth
+            .as_mut()
+            .expect("cpu synth just ensured")
+            .render_range(mixer.buffers_mut(), offset_frames, frames);
     }
 
     /// 冻结 LC：清空目标 dense 通道并用冻结 PCM 覆盖。
@@ -362,7 +363,7 @@ impl AudioEngine {
             let strips = self.dense_strip_params();
             let count = self.mixer.channel_count();
             self.mixer.resize(count, frames, &strips);
-            self.channel_set.resize_scratches(frames);
+
         }
         self.block_start_sample = self.sample_position;
         self.mixer.clear_channel_buffers();
@@ -384,7 +385,7 @@ impl AudioEngine {
             let strips = self.dense_strip_params();
             let count = self.mixer.channel_count();
             self.mixer.resize(count, frames, &strips);
-            self.channel_set.resize_scratches(frames);
+
         }
         let block_start = self.sample_position;
         self.block_start_sample = block_start;
@@ -410,7 +411,7 @@ impl AudioEngine {
             let strips = self.dense_strip_params();
             let count = self.mixer.channel_count();
             self.mixer.resize(count, frames, &strips);
-            self.channel_set.resize_scratches(frames);
+
         }
         self.mixer.clear_channel_buffers();
         self.inject_preview(frames);

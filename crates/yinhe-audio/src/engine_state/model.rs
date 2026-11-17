@@ -2,9 +2,6 @@
 
 use std::sync::Arc;
 
-use xsynth_core::channel::{ChannelConfigEvent, ChannelEvent};
-use xsynth_core::channel_group::SynthEvent;
-use xsynth_core::soundfont::SoundfontBase;
 
 use yinhe_core::YinModel;
 use yinhe_types::KEY_COUNT;
@@ -148,24 +145,8 @@ impl AudioEngine {
     /// `ResetControl` / `CpuSynth::seek` 都会把 bank 打回 0，只靠"模型加载时
     /// 注入一次"会让播放/seek 后鼓组失效（关鼓开关也因此看起来没反应）。
     fn apply_percussion_declarations(&mut self, declarations: &[(u16, bool)]) {
-        // yinhe CPU 后端经 `PercussionMode` 控制事件直接生效。
-        if self.cpu_synth.is_some() {
-            self.setup_percussion_cpu_synth(declarations);
-            return;
-        }
-        if !self.cpu_synth_active() {
-            return;
-        }
-        for &(src_ch, on) in declarations {
-            let dense = self.channel_layout.dense_for(src_ch as usize);
-            if dense == u32::MAX {
-                continue;
-            }
-            self.channel_set.send_event(SynthEvent::Channel(
-                dense,
-                ChannelEvent::Config(ChannelConfigEvent::SetPercussionMode(on)),
-            ));
-        }
+        // 方案 C：只有 YinheCpu，经 `PercussionMode` 控制事件直接生效。
+        self.setup_percussion_cpu_synth(declarations);
     }
 
     /// 同步恢复目标 tick 的 program/bank 状态（seek / play 起点）。
@@ -261,30 +242,6 @@ impl AudioEngine {
                     channel: dense as u8,
                     event: yinhe_synth::ControlEvent::ProgramChange(program),
                 });
-            } else if self.cpu_synth_active() {
-                use xsynth_core::channel::{ChannelAudioEvent, ChannelEvent, ControlEvent};
-                use xsynth_core::channel_group::SynthEvent;
-                let send =
-                    |event: ChannelAudioEvent, channel_set: &mut crate::channel_set::ChannelSet| {
-                        channel_set
-                            .send_event(SynthEvent::Channel(dense, ChannelEvent::Audio(event)));
-                    };
-                if let Some(value) = bank_msb {
-                    send(
-                        ChannelAudioEvent::Control(ControlEvent::Raw(0, value)),
-                        &mut self.channel_set,
-                    );
-                }
-                if let Some(value) = bank_lsb {
-                    send(
-                        ChannelAudioEvent::Control(ControlEvent::Raw(32, value)),
-                        &mut self.channel_set,
-                    );
-                }
-                send(
-                    ChannelAudioEvent::ProgramChange(program),
-                    &mut self.channel_set,
-                );
             }
         }
     }
@@ -319,39 +276,4 @@ impl AudioEngine {
         }
     }
 
-    /// 加载某源通道的音色库（同步路径：测试/直连命令用）。
-    #[allow(dead_code)] // Stage 2 随 xsynth 音色路径一起删除
-    pub(crate) fn load_soundfont_for_channel(&mut self, channel: u8, paths: &[String]) {
-        let dense = self.channel_layout.dense_for(channel as usize);
-        if dense == u32::MAX {
-            return;
-        }
-        let _ = self
-            .sf_manager
-            .load_for_channel(channel, paths, &mut self.channel_set, dense);
-    }
-
-    /// 应用 worker 加载完成的音色库（按源通道索引；dense 由调用方预计算）。
-    #[allow(dead_code)] // Stage 2 随 xsynth 音色路径一起删除
-    pub(crate) fn apply_loaded_soundfont_for_channel(
-        &mut self,
-        channel: u8,
-        dense: u32,
-        soundfonts: Vec<Arc<dyn SoundfontBase>>,
-        paths: &[String],
-    ) {
-        if dense == u32::MAX {
-            return;
-        }
-        let sfz = paths
-            .iter()
-            .any(|p| p.to_ascii_lowercase().ends_with(".sfz"));
-        self.sf_manager.apply_loaded_for_channel(
-            channel,
-            soundfonts,
-            &mut self.channel_set,
-            dense,
-            sfz,
-        );
-    }
 }

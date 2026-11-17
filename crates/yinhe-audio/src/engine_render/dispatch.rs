@@ -53,16 +53,6 @@ macro_rules! route_cpu_event {
                     }
                 }
             }
-        } else {
-            // XSynth 没有 RPN 事件：0/1/2 → 高层事件，其余拆 CC 序列。
-            for ev in $crate::engine_render::xsynth_events(&$event).as_slice() {
-                $engine.channel_set.send_event(
-                    xsynth_core::channel_group::SynthEvent::Channel(
-                        $dense,
-                        xsynth_core::channel::ChannelEvent::Audio(*ev),
-                    ),
-                );
-            }
         }
     }};
 }
@@ -74,6 +64,8 @@ impl AudioEngine {
     /// 三个函数的职责，KEY_COUNT 桶只扫描一次。所有比较都在 tick 域，无需转换。
     ///
     pub(crate) fn dispatch_and_find_next(&mut self, tick: u32, block_end_tick: u32) -> Option<u32> {
+        // 方案 C：只有 YinheCpu；进入分派前确保实例存在（避免循环内借用冲突）。
+        self.ensure_cpu_synth();
         let mut next: Option<u32> = None;
 
         // ── CC 事件 ──

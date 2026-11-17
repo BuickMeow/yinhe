@@ -9,7 +9,6 @@ mod builtin_insert;
 mod channel;
 mod channel_dsp;
 pub mod channel_layout;
-mod channel_set;
 pub mod clap_insert;
 pub mod engine;
 mod engine_mixer;
@@ -21,7 +20,6 @@ pub mod freeze;
 mod instrument;
 mod prepare_model;
 mod preview_engine;
-pub mod soundfont;
 pub mod spawn;
 mod synth_events;
 

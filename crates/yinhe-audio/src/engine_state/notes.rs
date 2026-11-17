@@ -2,8 +2,6 @@
 
 use std::collections::BinaryHeap;
 
-use xsynth_core::channel::{ChannelAudioEvent, ChannelEvent};
-use xsynth_core::channel_group::SynthEvent;
 use yinhe_mixer::PluginEvent;
 use yinhe_types::KEY_COUNT;
 
@@ -91,6 +89,7 @@ impl AudioEngine {
         }
         let sample = self.sample_position;
         let end_sample = self.tick_to_sample(end_tick);
+        self.ensure_cpu_synth();
         if let Some(cs) = self.cpu_synth.as_mut() {
             cs.send_event(yinhe_synth::SynthEvent::NoteOn {
                 track: track as u16,
@@ -100,14 +99,6 @@ impl AudioEngine {
                 velocity: n.velocity,
                 end_sample,
             });
-        } else {
-            self.channel_set.send_event(SynthEvent::Channel(
-                dense,
-                ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
-                    key: key as u8,
-                    vel: n.velocity,
-                }),
-            ));
         }
         self.active_notes.push(std::cmp::Reverse(ActiveNote {
             key: key as u8,
@@ -146,11 +137,6 @@ impl AudioEngine {
                         channel: an.dense as u8,
                         key: an.key,
                     });
-                } else {
-                    self.channel_set.send_event(SynthEvent::Channel(
-                        an.dense,
-                        ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
-                    ));
                 }
             }
         }

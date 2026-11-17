@@ -794,9 +794,6 @@ pub(crate) enum WorkerCmd {
         /// 在 worker 里预热 yinhe-synth 的进程级解析缓存（GPU 与 CPU 后端共用）：
         /// 音频线程随后命中缓存，不在音频线程解析（400MB 级音色库 3-6s）。
         prefetch_keymaps: bool,
-        /// 是否加载 xsynth 版音色库（仅 XSynthCpu 需要）。yinhe 后端为 false：
-        /// 主引擎与预览都用 key map，加载 xsynth 版纯属浪费（实测 ~1.25GB 常驻缓存）。
-        load_xsynth: bool,
         /// 音色库切换代次；worker 开始/回传时对比，旧代次直接跳过。
         generation: u64,
     },
@@ -981,7 +978,6 @@ pub(crate) fn spawn_worker(
                         channels,
                         paths,
                         prefetch_keymaps,
-                        load_xsynth,
                         generation,
                     } => {
                         // 不合并，但把 try_recv 到的命令存到 pending 避免饿死
@@ -1048,37 +1044,15 @@ pub(crate) fn spawn_worker(
                             });
                             continue;
                         }
-                        if load_xsynth {
-                            sf_progress.store(550, Ordering::Relaxed);
-                            let t_load = std::time::Instant::now();
-                            let soundfonts = crate::engine::AudioEngine::load_soundfont_paths(
-                                sample_rate,
-                                &paths,
-                                interpolation,
-                            )
-                            .unwrap_or_default();
-                            crate::audio_renderer::play_log(&format!(
-                                "[sf] worker 解析 xsynth 音色库={:?}",
-                                t_load.elapsed()
-                            ));
-                            sf_progress.store(900, Ordering::Relaxed);
-                            let _ = result_tx.send(WorkerResult::LoadedSoundFont {
-                                channels,
-                                soundfonts,
-                                paths,
-                                generation,
-                            });
-                        } else {
-                            // yinhe 后端：不加载 xsynth 版音色（主引擎与预览都用 key map）。
-                            // 仅回传 paths 供主引擎登记 key map；soundfonts 留空。
-                            sf_progress.store(900, Ordering::Relaxed);
-                            let _ = result_tx.send(WorkerResult::LoadedSoundFont {
-                                channels,
-                                soundfonts: Vec::new(),
-                                paths,
-                                generation,
-                            });
-                        }
+                        // 方案 C：只有 YinheCpu，不加载 xsynth 版音色库；
+                        // 仅回传 paths 供主引擎登记 key map。
+                        sf_progress.store(900, Ordering::Relaxed);
+                        let _ = result_tx.send(WorkerResult::LoadedSoundFont {
+                            channels,
+                            soundfonts: Vec::new(),
+                            paths,
+                            generation,
+                        });
                     }
                 }
             }

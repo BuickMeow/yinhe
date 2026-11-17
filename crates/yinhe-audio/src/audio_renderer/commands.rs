@@ -140,8 +140,7 @@ impl AudioRenderer {
                 // 结果逐个应用时不再清，避免频繁打断输出。
                 let anchor = self.consumer_position.load(Ordering::Acquire);
                 self.clear_buffered_audio(anchor);
-                // yinhe CPU 后端在 worker 预热 key map 解析缓存；
-                // xsynth 后端不需要（自己的 GLOBAL_SF_CACHE 在 worker 里加载）。
+                // worker 预热 yinhe-synth 的 key map 解析缓存（方案 C 只有 YinheCpu）。
                 let prefetch_keymaps = self.yinhe_cpu_engine();
                 // latest-wins：每次切换推进代次，worker 只处理最新代次；
                 // 旧代次在队列里直接跳过，不会被大音色库的加载拖住新请求。
@@ -165,8 +164,6 @@ impl AudioRenderer {
                         channels,
                         paths,
                         prefetch_keymaps,
-                        // yinhe 后端（prefetch_keymaps=true）不需要 xsynth 版音色库。
-                        load_xsynth: !prefetch_keymaps,
                         generation,
                     });
                 }
