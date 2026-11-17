@@ -122,6 +122,7 @@ struct MixerParamsV10 {
 impl MixerParamsV10 {
     fn into_current(self) -> MixerParams {
         MixerParams {
+            aps: Vec::new(),
             racks: self
                 .racks
                 .into_iter()
@@ -206,6 +207,7 @@ struct MixerParamsV11 {
 impl MixerParamsV11 {
     fn into_current(self) -> MixerParams {
         MixerParams {
+            aps: Vec::new(),
             racks: self
                 .racks
                 .into_iter()
@@ -294,6 +296,7 @@ struct MixerParamsV12 {
 impl MixerParamsV12 {
     fn into_current(self) -> MixerParams {
         MixerParams {
+            aps: Vec::new(),
             racks: self
                 .racks
                 .into_iter()
@@ -383,6 +386,7 @@ struct MixerParamsV13 {
 impl MixerParamsV13 {
     fn into_current(self) -> MixerParams {
         MixerParams {
+            aps: Vec::new(),
             racks: self
                 .racks
                 .into_iter()
@@ -550,6 +554,7 @@ impl MixerParamsV9 {
             freeze: None,
         };
         MixerParams {
+            aps: Vec::new(),
             racks,
             channels,
             track_channels: Vec::new(),

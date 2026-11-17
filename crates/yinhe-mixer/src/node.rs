@@ -14,7 +14,7 @@ use std::ops::{Deref, DerefMut};
 
 use serde::{Deserialize, Serialize};
 use yinhe_types::{
-    AutomationLane, BusId, LogicalChannelId, MixerNodeId, RackId, RackOutputMode,
+    ApGroupId, AutomationLane, BusId, LogicalChannelId, MixerNodeId, RackId, RackOutputMode,
     RackOutputTopology,
 };
 
@@ -50,6 +50,46 @@ impl RackParams {
             outputs: RackOutputTopology::default(),
             output_lcs: Vec::new(),
         }
+    }
+}
+
+/// 方案 C 的 AP 编组。
+///
+/// 过渡期说明：`rack` / `channel` 仍指向当前 `racks` / `channels` 表里的
+/// 共享 Rack 和共享 LC；等统一通道表落地后，`channel` 改成
+/// `ChannelId::Ap`，Rack 也可以内联。这里先建立稳定的 AP 身份和 MIDI 绑定，
+/// 让 UI/引擎可以按 AP 而不是按“MIDI 通道”理解共享关系。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApGroup {
+    pub id: ApGroupId,
+    /// AP 绑定的 MIDI 通道（port, channel）。
+    pub midi: (u8, u8),
+    /// AP 的共享 Rack。
+    pub rack: RackId,
+    /// AP 的音频通道；过渡期指向共享 MIDI LC。
+    pub channel: LogicalChannelId,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+impl ApGroup {
+    pub fn new(id: ApGroupId, midi: (u8, u8), rack: RackId, channel: LogicalChannelId) -> Self {
+        Self {
+            id,
+            midi,
+            rack,
+            channel,
+            enabled: true,
+        }
+    }
+
+    /// MIDI global channel = port * 16 + channel。
+    pub fn global_midi(&self) -> u8 {
+        (self.midi.0 & 0x0F) << 4 | (self.midi.1 & 0x0F)
     }
 }
 

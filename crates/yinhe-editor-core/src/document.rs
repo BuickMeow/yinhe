@@ -20,6 +20,7 @@ fn next_doc_id() -> u64 {
     NEXT_DOC_ID.fetch_add(1, Ordering::Relaxed)
 }
 
+pub mod ap_edit;
 pub mod arrange_edit;
 pub mod arrange_move;
 pub mod audio_clip_edit;
@@ -199,7 +200,7 @@ impl Document {
         );
         let track_info_cache = data.track_info();
 
-        Document {
+        let mut doc = Document {
             data,
             edit: EditState {
                 track_visible: vec![true; num_tracks],
@@ -232,7 +233,9 @@ impl Document {
             mixer_revision: 0,
             density: Default::default(),
             density_pr: Default::default(),
-        }
+        };
+        doc.ensure_aps();
+        doc
     }
 
     /// Create a Document from a freshly parsed YinModel.
@@ -730,6 +733,8 @@ impl Document {
         while self.edit.track_overrides.len() > num_tracks {
             self.edit.track_overrides.pop();
         }
+        // 轨道结构/种类变化后同步 AP 表（共享 MIDI 通道 -> AP）。
+        self.ensure_aps();
     }
 
     /// 合并 mute/solo 状态为音频引擎用的 skip mask。

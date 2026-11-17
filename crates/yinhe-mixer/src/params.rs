@@ -5,9 +5,11 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use yinhe_types::{BusId, LogicalChannelId, MixerChannelId, MixerNodeId, RackId, TRACK_LC_BASE};
+use yinhe_types::{
+    ApGroupId, BusId, LogicalChannelId, MixerChannelId, MixerNodeId, RackId, TRACK_LC_BASE,
+};
 
-use crate::node::{MixerNode, RackParams};
+use crate::node::{ApGroup, MixerNode, RackParams};
 
 /// 源 MIDI 通道总数：A01..P16（16 port × 16 通道）。
 pub const CHANNEL_COUNT: usize = 256;
@@ -142,6 +144,13 @@ pub struct MixerParams {
     /// 共享乐器 Rack（固定 256 个槽位）。
     #[serde(default)]
     pub racks: Vec<RackParams>,
+    /// 方案 C 的 AP 编组；只有实际共享 MIDI 通道时才创建。
+    ///
+    /// 过渡期 `ApGroup::rack/channel` 指向 `racks` / `channels` 里的共享
+    /// Rack 和共享 LC，音频行为不变。AP 目前完全由 Track 推导，先不落盘；
+    /// 等 AP 拥有独立设置后再加字段版本迁移，避免破坏现有 v14 工程。
+    #[serde(skip)]
+    pub aps: Vec<ApGroup>,
     /// MIDI 源通道 i 的 LC（固定 CHANNEL_COUNT 长度，索引 = A01..P16）。
     #[serde(default)]
     pub channels: Vec<MixerNode>,
@@ -178,6 +187,7 @@ impl Default for MixerParams {
             racks: (0..CHANNEL_COUNT)
                 .map(|i| RackParams::new(RackId(i as u16)))
                 .collect(),
+            aps: Vec::new(),
             channels: (0..CHANNEL_COUNT)
                 .map(|i| MixerNode::logical_channel(LogicalChannelId(i as u32)))
                 .collect(),
@@ -198,6 +208,7 @@ impl MixerParams {
         self.ensure_racks();
         self.ensure_rack_outputs();
         self.ensure_channels();
+        self.ensure_aps();
         self.ensure_track_channels();
         self.ensure_audio_channels();
         self.ensure_buses();
@@ -246,6 +257,69 @@ impl MixerParams {
         for (i, rack) in self.racks.iter_mut().enumerate() {
             rack.id = RackId(i as u16);
         }
+    }
+
+    /// 清理 AP 表：删除指向不存在 Rack/LC 的 AP，保证 ID 唯一。
+    ///
+    /// AP 的创建/删除由 `Document` 按 Track 的 `lc` 状态驱动；这里只做
+    /// 反序列化后的合法性修复。
+    fn ensure_aps(&mut self) {
+        let keep: Vec<ApGroup> = self
+            .aps
+            .iter()
+            .filter(|ap| {
+                ap.id.index() < CHANNEL_COUNT
+                    && ap.rack.index() < self.racks.len()
+                    && self.channel_exists(ap.channel)
+                    && ap.midi.0 < 16
+                    && ap.midi.1 < 16
+            })
+            .cloned()
+            .collect();
+        self.aps = keep;
+        self.aps.sort_by_key(|ap| ap.id);
+        self.aps.dedup_by_key(|ap| ap.id);
+    }
+
+    pub fn ap(&self, id: ApGroupId) -> Option<&ApGroup> {
+        self.aps.iter().find(|ap| ap.id == id)
+    }
+
+    pub fn ap_mut(&mut self, id: ApGroupId) -> Option<&mut ApGroup> {
+        self.aps.iter_mut().find(|ap| ap.id == id)
+    }
+
+    pub fn ap_for_midi(&self, global: u8) -> Option<&ApGroup> {
+        self.aps.iter().find(|ap| ap.global_midi() == global)
+    }
+
+    /// 为某 MIDI 通道创建 AP（如果还不存在）。过渡期 Rack/LC 复用当前共享表。
+    pub fn ensure_ap(&mut self, global: u8) -> bool {
+        if self.ap_for_midi(global).is_some() {
+            return false;
+        }
+        let Some(rack) = self.racks.get(global as usize) else {
+            return false;
+        };
+        let channel = LogicalChannelId(u32::from(global));
+        if !self.channel_exists(channel) {
+            return false;
+        }
+        self.aps.push(ApGroup::new(
+            ApGroupId(u16::from(global)),
+            (global >> 4, global & 0x0F),
+            rack.id,
+            channel,
+        ));
+        self.aps.sort_by_key(|ap| ap.id);
+        true
+    }
+
+    /// 删除某 MIDI 通道的 AP，返回是否有变化。
+    pub fn remove_ap_for_midi(&mut self, global: u8) -> bool {
+        let before = self.aps.len();
+        self.aps.retain(|ap| ap.global_midi() != global);
+        self.aps.len() != before
     }
 
     fn ensure_rack_outputs(&mut self) {
@@ -329,6 +403,14 @@ impl MixerParams {
     }
 
     /// 按 ID 查每轨 LC。
+    /// LC 是否存在于任一通道表（MIDI / 音频 / 每轨）。
+    pub fn channel_exists(&self, id: LogicalChannelId) -> bool {
+        let target = MixerNodeId::LogicalChannel(id);
+        self.channels.iter().any(|node| node.id == target)
+            || self.audio_channels.iter().any(|node| node.id == target)
+            || self.track_channels.iter().any(|node| node.id == target)
+    }
+
     pub fn track_node(&self, id: LogicalChannelId) -> Option<&MixerNode> {
         self.track_channels
             .iter()
@@ -1054,6 +1136,22 @@ mod tests {
         assert!(p.node_sends(MixerChannelId::Midi(0)).unwrap().is_empty());
         assert!(p.node_sends(MixerChannelId::Audio(0)).unwrap().is_empty());
         assert_eq!(p.node_output(MixerChannelId::Midi(0)), None);
+    }
+
+    #[test]
+    fn ap_groups_follow_midi_channel_and_are_unique() {
+        let mut p = MixerParams::default();
+        p.ensure_len();
+        assert!(p.ensure_ap(3));
+        let ap = p.ap_for_midi(3).expect("ap");
+        assert_eq!(ap.id, ApGroupId(3));
+        assert_eq!(ap.midi, (0, 3));
+        assert_eq!(ap.rack, RackId(3));
+        assert_eq!(ap.channel, LogicalChannelId(3));
+        assert!(!p.ensure_ap(3));
+        assert_eq!(p.aps.len(), 1);
+        assert!(p.remove_ap_for_midi(3));
+        assert!(p.ap_for_midi(3).is_none());
     }
 
     /// 统一节点入口：MIDI / 音频 / Bus / Master 各走各的存储，但 API 一致。

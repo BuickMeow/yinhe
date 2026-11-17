@@ -79,6 +79,7 @@ impl Document {
                 RackOutputMode::PerOutput => {}
             }
         }
+        self.ensure_aps();
         self.data.bump_revision();
         self.mark_mixer_dirty();
         true
@@ -139,6 +140,7 @@ impl Document {
             }
             self.mixer.racks[channel as usize].output_lcs = lcs;
         }
+        self.ensure_aps();
         self.data.bump_revision();
         self.mark_mixer_dirty();
         true
@@ -169,6 +171,7 @@ impl Document {
         }
         track.rack_output = Some(output);
         track.lc = Some(lc);
+        self.ensure_aps();
         self.data.bump_revision();
         self.mark_mixer_dirty();
         true
@@ -242,6 +245,7 @@ impl Document {
                 }
             }
         }
+        self.ensure_aps();
         if changed {
             self.data.bump_revision();
             self.mark_mixer_dirty();
