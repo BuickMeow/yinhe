@@ -327,6 +327,7 @@ impl Document {
                 density: Default::default(),
                 density_pr: Default::default(),
             };
+            doc.ensure_audio_targets();
             doc.ensure_rack_track_lcs();
             doc.adopt_loaded_freezes();
             Ok(doc)
@@ -707,6 +708,7 @@ impl Document {
 
     /// `sync_track_caches` with precise Conductor color (`text_primary` from theme).
     pub fn sync_track_caches_with_conductor_color(&mut self, conductor_color: [f32; 4]) {
+        self.ensure_audio_targets();
         self.edit.track_cache.rebuild(&self.data, conductor_color);
         let num_tracks = self.data.model.tracks.len();
         while self.edit.track_visible.len() < num_tracks {

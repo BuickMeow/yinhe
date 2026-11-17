@@ -11,7 +11,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use yinhe_core::{TrackData, TrackKind};
+use yinhe_core::{TrackAudioTarget, TrackData};
 
 use crate::document::Document;
 
@@ -21,9 +21,31 @@ use crate::document::Document;
 pub(super) fn needed_aps(tracks: &[Arc<TrackData>]) -> BTreeSet<u8> {
     tracks
         .iter()
-        .filter(|track| track.kind == TrackKind::Midi && track.lc.is_none())
-        .map(|track| track.global_channel())
+        .filter_map(|track| match track.effective_audio_target() {
+            Some(TrackAudioTarget::Ap { ap }) => Some(ap.0 as u8),
+            _ => None,
+        })
         .collect()
+}
+
+impl Document {
+    /// 把旧字段（`lc` / `audio_channel`）固定成显式 C 目标。
+    ///
+    /// - 旧 MIDI 轨有 `lc` -> OwnLc，否则 -> Ap；
+    /// - 音频轨 -> OwnLc（audio LC），Folder/Master -> None。
+    ///
+    /// 只填充 `None` 的轨；已有目标不覆盖。
+    pub fn ensure_audio_targets(&mut self) {
+        let model = std::sync::Arc::make_mut(&mut self.data.model);
+        for track in &mut model.tracks {
+            if track.audio_target.is_some() {
+                continue;
+            }
+            if let Some(target) = track.effective_audio_target() {
+                std::sync::Arc::make_mut(track).set_audio_target(target);
+            }
+        }
+    }
 }
 
 impl Document {
@@ -51,6 +73,7 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use yinhe_core::TrackKind;
 
     fn midi(port: u8, channel: u8, own_lc: bool) -> Arc<TrackData> {
         let mut track = TrackData::new(port, channel);
@@ -62,7 +85,7 @@ mod tests {
 
     fn audio() -> Arc<TrackData> {
         let mut track = TrackData::new(0, 0);
-        track.kind = TrackKind::Audio;
+        track.kind = yinhe_core::TrackKind::Audio;
         track.audio_channel = Some(0);
         Arc::new(track)
     }

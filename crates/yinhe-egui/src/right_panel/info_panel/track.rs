@@ -10,7 +10,9 @@ use std::sync::Arc;
 use eframe::egui;
 use egui_material_icons::icons::ICON_FORMAT_COLOR_RESET;
 
+use yinhe_core::TrackAudioTarget;
 use yinhe_editor_core::document::Document;
+use yinhe_types::ApGroupId;
 
 use rust_i18n::t;
 
@@ -183,6 +185,13 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
                 let td = Arc::make_mut(&mut model.tracks[track_idx]);
                 td.port = new_port;
                 td.channel = new_ch;
+                // AP 目标绑定 MIDI 通道：改端口/通道后同步 AP id。
+                if let Some(TrackAudioTarget::Ap { .. }) = td.effective_audio_target() {
+                    let global = ((new_port & 0x0F) << 4) | (new_ch & 0x0F);
+                    td.set_audio_target(TrackAudioTarget::Ap {
+                        ap: ApGroupId::new(u16::from(global)),
+                    });
+                }
             }
             // A10（索引 9）默认鼓通道；显式关鼓会保存 is_drum=false，不会被覆盖。
             if new_ch == 9 && model.channel_instruments[9].is_none() {
@@ -197,12 +206,50 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
         doc.data.rebuild_model();
         doc.edit.track_cache.rebuild_info(&doc.data);
         doc.edit.track_cache.rebuild_pc_map(&doc.data);
+        doc.ensure_rack_track_lcs();
         doc.data.bump_revision();
     }
 
-    // ── 音频轨的混音通道（音频轨没有 MIDI 端口/通道，这里是唯一通道号）──
+    // ── MIDI 轨的 C 音频目标：自己 LC / AP / --- ──
     let mut routing_changed = false;
     let kind = doc.data.model.tracks[track_idx].kind;
+    if kind == yinhe_core::TrackKind::Midi {
+        let track = &doc.data.model.tracks[track_idx];
+        let global = track.global_channel();
+        let current = match track.effective_audio_target() {
+            Some(TrackAudioTarget::OwnLc { .. }) => 0usize,
+            Some(TrackAudioTarget::Ap { .. }) => 1usize,
+            Some(TrackAudioTarget::DirectMaster { .. }) => 2usize,
+            None => 0,
+        };
+        // DirectMaster 的音频旁路尚未接入；先不暴露不可用的选项。
+        let options = vec![
+            (0usize, "CH".to_string()),
+            (1usize, crate::mix::ap_label(global)),
+        ];
+        let mut sel = current;
+        crate::widgets::rows::panel_row(ui, t!("track.output").as_ref(), |ui| {
+            crate::widgets::combo::combo_select(
+                ui,
+                "track_audio_target",
+                &mut sel,
+                ui.available_width().max(1.0),
+                &options,
+            );
+        });
+        if sel != current {
+            let changed = match sel {
+                0 => doc.link_track_to_own_lc(track_idx),
+                1 => doc.link_track_to_ap(track_idx, ApGroupId::new(u16::from(global))),
+                _ => false,
+            };
+            if changed {
+                routing_changed = true;
+            }
+        }
+    }
+
+    // ── 音频轨的混音通道（音频轨没有 MIDI 端口/通道，这里是唯一通道号）──
     if kind == yinhe_core::TrackKind::Audio {
         let current_ch = doc.data.model.tracks[track_idx]
             .audio_target_channel()

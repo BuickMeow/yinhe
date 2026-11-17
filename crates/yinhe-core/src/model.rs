@@ -384,6 +384,10 @@ pub struct TrackData {
     /// 只有 Rack 输出模式为 PerTrack 的内置音源轨才会有值。
     #[serde(default)]
     pub lc: Option<yinhe_types::LogicalChannelId>,
+    /// 方案 C 的音频目标。旧工程为 None，加载时由
+    /// `effective_audio_target` 从 `lc` / `audio_channel` 推导。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_target: Option<TrackAudioTarget>,
     /// 多输出插件：该轨映射到 Rack 的第几个输出（0 起，None = 0）。
     #[serde(default)]
     pub rack_output: Option<u16>,
@@ -520,6 +524,7 @@ impl TrackData {
             collapsed: false,
             audio_channel: None,
             lc: None,
+            audio_target: None,
             rack_output: None,
             audio_clips: Vec::new(),
             clips: Vec::new(),
@@ -543,7 +548,10 @@ impl TrackData {
     /// - 无 `lc` 的共享 MIDI 轨 -> `Ap`（AP id 暂等于 MIDI 通道）；
     /// - 音频轨 -> `OwnLc`（audio LC = 256 + audio_channel）；
     /// - Folder / Master -> None。
-    pub fn audio_target(&self) -> Option<TrackAudioTarget> {
+    pub fn effective_audio_target(&self) -> Option<TrackAudioTarget> {
+        if let Some(target) = self.audio_target {
+            return Some(target);
+        }
         match self.kind {
             TrackKind::Midi => {
                 if let Some(lc) = self.lc {
@@ -563,6 +571,17 @@ impl TrackData {
             }),
             TrackKind::Folder | TrackKind::Master => None,
         }
+    }
+
+    /// 写入 C 目标，并同步旧的 `lc` 字段，保证引擎/UI 迁移期一致。
+    pub fn set_audio_target(&mut self, target: TrackAudioTarget) {
+        if self.kind == TrackKind::Midi {
+            self.lc = match target {
+                TrackAudioTarget::OwnLc { lc, .. } => Some(lc),
+                TrackAudioTarget::Ap { .. } | TrackAudioTarget::DirectMaster { .. } => None,
+            };
+        }
+        self.audio_target = Some(target);
     }
 
     /// 混音通道：由轨道种类直接推导，不另设覆盖字段。
@@ -2837,7 +2856,7 @@ mod tests {
     fn c_audio_target_maps_shared_midi_to_ap() {
         let track = TrackData::new(0, 3);
         assert_eq!(
-            track.audio_target(),
+            track.effective_audio_target(),
             Some(TrackAudioTarget::Ap {
                 ap: ApGroupId::new(3)
             })
@@ -2850,7 +2869,7 @@ mod tests {
         let lc = LogicalChannelId(1_000_000);
         track.lc = Some(lc);
         assert_eq!(
-            track.audio_target(),
+            track.effective_audio_target(),
             Some(TrackAudioTarget::OwnLc {
                 lc,
                 rack: Some(RackId::new(3))
@@ -2864,7 +2883,7 @@ mod tests {
         track.kind = TrackKind::Audio;
         track.audio_channel = Some(2);
         assert_eq!(
-            track.audio_target(),
+            track.effective_audio_target(),
             Some(TrackAudioTarget::OwnLc {
                 lc: LogicalChannelId(258),
                 rack: None

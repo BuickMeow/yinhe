@@ -73,6 +73,9 @@ pub struct TrackMap {
     /// 每轨独立 LC 的稳定 ID（仅 per-track / per-output 输出模式）。
     #[serde(default)]
     pub lc: Option<yinhe_types::LogicalChannelId>,
+    /// 方案 C 的音频目标（旧工程缺省，加载时由 lc/audio_channel 推导）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_target: Option<yinhe_core::TrackAudioTarget>,
     /// 多输出插件：该轨映射到 Rack 的第几个输出。
     #[serde(default)]
     pub rack_output: Option<u16>,
@@ -132,6 +135,7 @@ impl MappingFile {
                 collapsed: t.collapsed,
                 audio_channel: t.audio_channel,
                 lc: t.lc,
+                audio_target: t.audio_target,
                 rack_output: t.rack_output,
                 audio_clips: t.audio_clips.clone(),
                 clips: t.clips.clone(),

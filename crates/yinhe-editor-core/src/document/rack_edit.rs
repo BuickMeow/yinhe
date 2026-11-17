@@ -9,8 +9,8 @@
 
 use std::sync::Arc;
 
-use yinhe_core::TrackKind;
-use yinhe_types::{RackOutputMode, RackOutputTopology};
+use yinhe_core::{TrackAudioTarget, TrackData, TrackKind};
+use yinhe_types::{ApGroupId, RackId, RackOutputMode, RackOutputTopology};
 
 use crate::document::Document;
 
@@ -68,6 +68,11 @@ impl Document {
                         }
                         Arc::make_mut(track).lc = Some(id);
                     }
+                    let lc = track.lc.expect("per-track lc");
+                    Arc::make_mut(track).set_audio_target(TrackAudioTarget::OwnLc {
+                        lc,
+                        rack: Some(RackId::new(u16::from(channel))),
+                    });
                 }
                 RackOutputMode::Shared => {
                     let track = Arc::make_mut(track);
@@ -75,6 +80,9 @@ impl Document {
                     if let Some(id) = track.lc.take() {
                         self.mixer.remove_track_lc(id);
                     }
+                    track.set_audio_target(TrackAudioTarget::Ap {
+                        ap: ApGroupId::new(u16::from(channel)),
+                    });
                 }
                 RackOutputMode::PerOutput => {}
             }
@@ -112,6 +120,9 @@ impl Document {
                     let track = Arc::make_mut(track);
                     track.rack_output = None;
                     track.lc = None;
+                    track.set_audio_target(TrackAudioTarget::Ap {
+                        ap: ApGroupId::new(u16::from(channel)),
+                    });
                 }
             }
         } else {
@@ -137,6 +148,10 @@ impl Document {
                 let track = Arc::make_mut(track);
                 track.rack_output = Some(out);
                 track.lc = Some(lcs[out as usize]);
+                track.set_audio_target(TrackAudioTarget::OwnLc {
+                    lc: lcs[out as usize],
+                    rack: Some(RackId::new(u16::from(channel))),
+                });
             }
             self.mixer.racks[channel as usize].output_lcs = lcs;
         }
@@ -171,7 +186,73 @@ impl Document {
         }
         track.rack_output = Some(output);
         track.lc = Some(lc);
+        track.set_audio_target(TrackAudioTarget::OwnLc {
+            lc,
+            rack: Some(RackId::new(u16::from(channel))),
+        });
         self.ensure_aps();
+        self.data.bump_revision();
+        self.mark_mixer_dirty();
+        true
+    }
+
+    /// 把 MIDI 轨链接到 AP：清除自己的 LC，音频走 AP 通道。
+    /// 同一 MIDI 通道的其他 OwnLc 轨不受影响。
+    pub fn link_track_to_ap(&mut self, track_idx: usize, ap: ApGroupId) -> bool {
+        let Some(track) = self.data.model.tracks.get(track_idx) else {
+            return false;
+        };
+        if track.kind != TrackKind::Midi {
+            return false;
+        }
+        if track.audio_target == Some(TrackAudioTarget::Ap { ap }) {
+            return false;
+        }
+        let model = Arc::make_mut(&mut self.data.model);
+        let track = Arc::make_mut(&mut model.tracks[track_idx]);
+        track.set_audio_target(TrackAudioTarget::Ap { ap });
+        self.ensure_rack_track_lcs();
+        self.data.bump_revision();
+        self.mark_mixer_dirty();
+        true
+    }
+
+    /// 把 MIDI 轨解链回自己的 LC。外部单输出插件 Rack 不能按轨拆分，返回 false。
+    pub fn link_track_to_own_lc(&mut self, track_idx: usize) -> bool {
+        let Some(track) = self.data.model.tracks.get(track_idx) else {
+            return false;
+        };
+        if track.kind != TrackKind::Midi || track.lc.is_some() {
+            return false;
+        }
+        let channel = track.global_channel();
+        let Some(rack) = self.mixer.racks.get(channel as usize) else {
+            return false;
+        };
+        if !rack.instruments.is_empty() {
+            return false;
+        }
+        let source = self.mixer.channels[channel as usize].clone();
+        let id = self.mixer.add_track_lc();
+        if let Some(node) = self.mixer.track_node_mut(id) {
+            node.strip = source.strip;
+            node.inserts = source.inserts.clone();
+            node.sends = source.sends.clone();
+            node.output = source.output;
+        }
+        {
+            let model = Arc::make_mut(&mut self.data.model);
+            let track = Arc::make_mut(&mut model.tracks[track_idx]);
+            track.rack_output = None;
+            track.set_audio_target(TrackAudioTarget::OwnLc {
+                lc: id,
+                rack: Some(RackId::new(u16::from(channel))),
+            });
+        }
+        if let Some(rack) = self.mixer.racks.get_mut(channel as usize) {
+            rack.output_mode = RackOutputMode::PerTrack;
+        }
+        self.ensure_rack_track_lcs();
         self.data.bump_revision();
         self.mark_mixer_dirty();
         true
@@ -185,28 +266,67 @@ impl Document {
     /// 外部插件 Rack 暂不支持自动 OwnLc（单输出插件无法按轨拆音频）。
     pub fn default_own_lc_for_new_midi_tracks(&mut self, first_new: usize) {
         let model = &self.data.model;
-        let mut channels = Vec::new();
-        for (idx, track) in model.tracks.iter().enumerate().skip(first_new) {
+        let mut own_channels = std::collections::BTreeSet::new();
+        for track in model.tracks.iter().skip(first_new) {
             if track.kind != TrackKind::Midi || track.lc.is_some() {
                 continue;
             }
             let channel = track.global_channel();
-            let has_older = model.tracks[..first_new]
+            let older: Vec<&TrackData> = model.tracks[..first_new]
                 .iter()
-                .any(|t| t.kind == TrackKind::Midi && t.global_channel() == channel);
-            if !has_older && !channels.contains(&channel) {
-                channels.push(channel);
+                .filter(|t| t.kind == TrackKind::Midi && t.global_channel() == channel)
+                .map(|t| t.as_ref())
+                .collect();
+            let older_own = older.iter().any(|t| t.lc.is_some());
+            let older_any = !older.is_empty();
+            let rack_has_plugins = self
+                .mixer
+                .racks
+                .get(channel as usize)
+                .is_some_and(|rack| !rack.instruments.is_empty());
+            // 空通道：默认 OwnLc；已有 OwnLc 的通道：新轨继续 OwnLc；
+            // 已有 AP / 外部插件 Rack：加入共享。
+            if !rack_has_plugins && (!older_any || older_own) {
+                own_channels.insert(channel);
             }
-            let _ = idx;
         }
-        for channel in channels {
-            let Some(rack) = self.mixer.racks.get(channel as usize) else {
-                continue;
-            };
-            if !rack.instruments.is_empty() {
-                continue;
+
+        // 为新轨分配 LC，并同步显式 C 目标。
+        let mut assigned = Vec::new();
+        {
+            let model = &self.data.model;
+            for (idx, track) in model.tracks.iter().enumerate().skip(first_new) {
+                if track.kind == TrackKind::Midi
+                    && track.lc.is_none()
+                    && own_channels.contains(&track.global_channel())
+                {
+                    assigned.push((idx, track.global_channel()));
+                }
             }
-            self.mixer.racks[channel as usize].output_mode = RackOutputMode::PerTrack;
+        }
+        for (idx, channel) in assigned {
+            let source = self.mixer.channels[channel as usize].clone();
+            let id = self.mixer.add_track_lc();
+            if let Some(node) = self.mixer.track_node_mut(id) {
+                node.strip = source.strip;
+                node.inserts = source.inserts.clone();
+                node.sends = source.sends.clone();
+                node.output = source.output;
+            }
+            let model = Arc::make_mut(&mut self.data.model);
+            if let Some(track) = model.tracks.get_mut(idx) {
+                let track = Arc::make_mut(track);
+                track.rack_output = None;
+                track.set_audio_target(TrackAudioTarget::OwnLc {
+                    lc: id,
+                    rack: Some(RackId::new(u16::from(channel))),
+                });
+            }
+        }
+        for channel in own_channels {
+            if let Some(rack) = self.mixer.racks.get_mut(channel as usize) {
+                rack.output_mode = RackOutputMode::PerTrack;
+            }
         }
         self.ensure_rack_track_lcs();
     }
@@ -214,26 +334,7 @@ impl Document {
     /// 空白工程默认把每条 MIDI 轨放进自己的 LC（每个通道只有一条轨时）。
     /// 已有工程加载不走这里，保留原来的 AP/共享关系。
     pub fn default_empty_project_own_lc(&mut self) {
-        let model = &self.data.model;
-        let mut counts = [0u8; 256];
-        for track in &model.tracks {
-            if track.kind == TrackKind::Midi {
-                counts[track.global_channel() as usize] =
-                    counts[track.global_channel() as usize].saturating_add(1);
-            }
-        }
-        for (ch, count) in counts.iter().enumerate() {
-            if *count != 1 {
-                continue;
-            }
-            let Some(rack) = self.mixer.racks.get(ch) else {
-                continue;
-            };
-            if rack.instruments.is_empty() {
-                self.mixer.racks[ch].output_mode = RackOutputMode::PerTrack;
-            }
-        }
-        self.ensure_rack_track_lcs();
+        self.default_own_lc_for_new_midi_tracks(0);
     }
 
     /// 加载后修复 per-track Rack 的 LC：
@@ -243,6 +344,7 @@ impl Document {
     ///
     /// 返回是否有修复。
     pub fn ensure_rack_track_lcs(&mut self) -> bool {
+        self.ensure_audio_targets();
         let model = Arc::make_mut(&mut self.data.model);
         let mut changed = false;
         for track in model.tracks.iter_mut() {
@@ -256,51 +358,85 @@ impl Document {
                 .get(channel as usize)
                 .map(|rack| rack.output_mode)
                 .unwrap_or_default();
-            match mode {
-                RackOutputMode::PerOutput => {
-                    let count = self.mixer.racks[channel as usize]
-                        .output_lcs
-                        .len()
-                        .max(self.mixer.racks[channel as usize].outputs.outputs.len());
-                    if count == 0 {
-                        continue;
-                    }
-                    while self.mixer.racks[channel as usize].output_lcs.len() < count {
-                        let id = self.mixer.add_track_lc();
-                        self.mixer.racks[channel as usize].output_lcs.push(id);
+
+            // PerOutput 仍是 Rack 级拓扑：由输出表决定 LC，优先处理。
+            if mode == RackOutputMode::PerOutput {
+                let count = self.mixer.racks[channel as usize]
+                    .output_lcs
+                    .len()
+                    .max(self.mixer.racks[channel as usize].outputs.outputs.len());
+                if count == 0 {
+                    continue;
+                }
+                while self.mixer.racks[channel as usize].output_lcs.len() < count {
+                    let id = self.mixer.add_track_lc();
+                    self.mixer.racks[channel as usize].output_lcs.push(id);
+                    changed = true;
+                }
+                let out = track.rack_output.unwrap_or(0).min(count as u16 - 1) as usize;
+                let id = self.mixer.racks[channel as usize].output_lcs[out];
+                if self.mixer.track_node(id).is_none() {
+                    self.mixer.add_track_lc_with_id(id);
+                    changed = true;
+                }
+                let target = TrackAudioTarget::OwnLc {
+                    lc: id,
+                    rack: Some(RackId::new(u16::from(channel))),
+                };
+                let track = Arc::make_mut(track);
+                if track.lc != Some(id)
+                    || track.rack_output != Some(out as u16)
+                    || track.audio_target != Some(target)
+                {
+                    track.lc = Some(id);
+                    track.rack_output = Some(out as u16);
+                    track.set_audio_target(target);
+                    changed = true;
+                }
+                continue;
+            }
+
+            // 普通 C 目标：Ap/DirectMaster 清掉 LC，OwnLc 保留/修复自己的 LC。
+            match track.effective_audio_target() {
+                Some(TrackAudioTarget::Ap { .. }) | Some(TrackAudioTarget::DirectMaster { .. }) => {
+                    let track = Arc::make_mut(track);
+                    if let Some(id) = track.lc.take() {
+                        self.mixer.remove_track_lc(id);
                         changed = true;
                     }
-                    let out = track.rack_output.unwrap_or(0).min(count as u16 - 1) as usize;
-                    let id = self.mixer.racks[channel as usize].output_lcs[out];
+                    if track.rack_output.take().is_some() {
+                        changed = true;
+                    }
+                }
+                Some(TrackAudioTarget::OwnLc { lc: id, rack }) => {
                     if self.mixer.track_node(id).is_none() {
                         self.mixer.add_track_lc_with_id(id);
                         changed = true;
                     }
-                    if track.lc != Some(id) || track.rack_output != Some(out as u16) {
-                        let track = Arc::make_mut(track);
+                    let track = Arc::make_mut(track);
+                    if track.lc != Some(id) {
                         track.lc = Some(id);
-                        track.rack_output = Some(out as u16);
+                        changed = true;
+                    }
+                    if track.audio_target.is_none() {
+                        track.set_audio_target(TrackAudioTarget::OwnLc { lc: id, rack });
                         changed = true;
                     }
                 }
-                RackOutputMode::PerTrack => match track.lc {
-                    None => {
-                        let id = self.mixer.add_track_lc();
-                        Arc::make_mut(track).lc = Some(id);
-                        changed = true;
-                    }
-                    Some(id) => {
-                        if self.mixer.track_node(id).is_none() {
-                            self.mixer.add_track_lc_with_id(id);
-                            changed = true;
+                None => {
+                    // 防御：MIDI 轨必须有目标。按当前 lc 推导一次并写入。
+                    let target = if let Some(lc) = track.lc {
+                        TrackAudioTarget::OwnLc {
+                            lc,
+                            rack: Some(RackId::new(u16::from(channel))),
                         }
-                    }
-                },
-                RackOutputMode::Shared => {
-                    let track = Arc::make_mut(track);
-                    if track.lc.take().is_some() || track.rack_output.take().is_some() {
-                        changed = true;
-                    }
+                    } else {
+                        TrackAudioTarget::Ap {
+                            ap: ApGroupId::new(u16::from(channel)),
+                        }
+                    };
+                    Arc::make_mut(track).set_audio_target(target);
+                    changed = true;
                 }
             }
         }
@@ -382,15 +518,37 @@ mod tests {
     }
 
     #[test]
+    fn ap_and_own_lc_can_coexist_on_same_midi_channel() {
+        use crate::document::track_ops::NewTrackSpec;
+        let mut doc = Document::empty();
+        let specs = vec![NewTrackSpec {
+            kind: TrackKind::Midi,
+            port: 0,
+            channel: 0,
+            audio_channel: None,
+        }];
+        assert!(doc.add_tracks_batch(&specs).is_some());
+        let idx = doc.data.model.tracks.len() - 1;
+        let own_lc = doc.data.model.tracks[idx].lc.expect("own lc");
+
+        assert!(doc.link_track_to_ap(1, ApGroupId::new(0)));
+        assert!(doc.data.model.tracks[1].lc.is_none());
+        assert!(doc.mixer.ap_for_midi(0).is_some());
+        assert_eq!(
+            doc.data.model.tracks[idx].lc,
+            Some(own_lc),
+            "同通道的另一条 OwnLc 轨不能被 AP 链接影响"
+        );
+
+        assert!(doc.link_track_to_own_lc(1));
+        assert!(doc.data.model.tracks[1].lc.is_some());
+        assert!(doc.mixer.ap_for_midi(0).is_none());
+    }
+
+    #[test]
     fn ensure_repairs_missing_nodes_and_clears_shared_lcs() {
         let mut doc = Document::empty();
-        assert!(doc.set_rack_output_mode(0, RackOutputMode::Shared));
-        assert!(doc.data.model.tracks[1].lc.is_none());
-        doc.mixer.racks[0].output_mode = RackOutputMode::PerTrack;
-        assert!(doc.data.model.tracks[1].lc.is_none());
-
-        assert!(doc.ensure_rack_track_lcs());
-        let lc = doc.data.model.tracks[1].lc.expect("assigned lc");
+        let lc = doc.data.model.tracks[1].lc.expect("empty project own lc");
         assert!(doc.mixer.track_node(lc).is_some());
 
         // 手工删节点，加载修复应重建。
