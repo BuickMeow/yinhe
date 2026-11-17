@@ -23,8 +23,8 @@ mod strip;
 #[doc(hidden)]
 pub use graph::ChannelChain;
 pub use graph::{
-    ChannelBuffers, ChannelSendTarget, InsertProcessor, MixerGraph, ResolvedChannelSend,
-    ResolvedSend,
+    ChannelBuffers, ChannelOutput, ChannelSendTarget, InsertProcessor, MixerGraph,
+    ResolvedChannelSend, ResolvedSend,
 };
 pub use meter::{MeterReading, MeterTap, SampleReading, SampleTap};
 pub use node::{ApGroup, FrozenAudio, MixerNode, RackParams};

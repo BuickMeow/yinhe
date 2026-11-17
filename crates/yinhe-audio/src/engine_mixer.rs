@@ -2,7 +2,7 @@
 //! insert 命令处理与处理器回收。
 
 use yinhe_mixer::{
-    ChannelSendTarget, InsertProcessor, InstrumentProcessor, MasterParams, MixerParams,
+    ChannelOutput, ChannelSendTarget, InsertProcessor, InstrumentProcessor, MasterParams, MixerParams,
     ResolvedChannelSend, ResolvedSend, SendParams, StripParams,
 };
 use yinhe_types::{BusId, MixerChannelId};
@@ -43,7 +43,7 @@ impl AudioEngine {
     fn sync_output_routing(&mut self) {
         let count = self.channel_layout.compacted_channels() as usize;
         for dense in 0..count {
-            let dest = match self.dense_to_namespace(dense) {
+            let target = match self.dense_to_namespace(dense) {
                 Some(ChannelNamespace::Midi(src)) => self
                     .mixer_params
                     .node_output(MixerChannelId::Midi(src as u8)),
@@ -55,10 +55,15 @@ impl AudioEngine {
                     .track_node(lc)
                     .and_then(|node| node.output),
                 Some(ChannelNamespace::DirectMaster) | None => None,
-            }
-            .and_then(|id| match id {
-                yinhe_types::ChannelId::Bus(bus) => self.mixer_params.bus_index(bus),
-                _ => None,
+            };
+            let dest = target.and_then(|id| match id {
+                yinhe_types::ChannelId::Bus(bus) => {
+                    self.mixer_params.bus_index(bus).map(ChannelOutput::Bus)
+                }
+                yinhe_types::ChannelId::Lc(_) | yinhe_types::ChannelId::Ap(_) => self
+                    .dense_for_channel_id(id)
+                    .map(|target| ChannelOutput::Channel(target as usize)),
+                yinhe_types::ChannelId::Master => None,
             });
             self.mixer.set_channel_output(dense, dest);
         }

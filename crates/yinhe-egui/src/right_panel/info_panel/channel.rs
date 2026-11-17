@@ -397,33 +397,38 @@ fn tracks_on_channel(doc: &Document, ch: MixerChannelId) -> Vec<u16> {
 
 /// 通道主输出（Master / BUS n）。返回是否改动。
 fn output_selector(ui: &mut egui::Ui, doc: &mut Document, ch: MixerChannelId) -> bool {
-    let bus_ids = doc.mixer.bus_ids();
-    let self_bus = match ch {
-        MixerChannelId::Bus(bus) => Some(bus),
-        _ => None,
-    };
-    let bus_options: Vec<(usize, String)> = std::iter::once((0, "Master".to_string()))
-        .chain(bus_ids.iter().enumerate().filter_map(|(i, id)| {
-            if let Some(bus) = self_bus
-                && !doc.mixer.can_route_bus_to(bus, *id)
-            {
-                return None;
-            }
-            let label = doc
-                .mixer
-                .bus_display_number(*id)
-                .map(crate::mix::lc_label)
-                .unwrap_or_else(|| "CH".to_string());
-            Some((i + 1, label))
-        }))
+    let map = doc.mixer.channel_display_map();
+    let source = crate::mix::channel_id_for_ui(&doc.mixer, ch);
+    let mut targets: Vec<(yinhe_types::ChannelId, String)> = Vec::new();
+    // 普通 LC（音频 / 每轨 / 非 AP 的 MIDI 目标）+ Bus + AP 通道。
+    for node in doc.mixer.nodes() {
+        let id = node.channel_id();
+        if Some(id) == source {
+            continue;
+        }
+        if matches!(id, yinhe_types::ChannelId::Bus(_))
+            || matches!(id, yinhe_types::ChannelId::Lc(lc) if lc.0 >= yinhe_types::MIDI_CHANNEL_COUNT as u32)
+        {
+            targets.push((id, crate::mix::channel_id_label(id, &map)));
+        }
+    }
+    for ap in &doc.mixer.aps {
+        let id = yinhe_types::ChannelId::Ap(yinhe_types::ApChannelId::new(ap.id, 0));
+        if Some(id) != source {
+            targets.push((id, crate::mix::channel_id_label(id, &map)));
+        }
+    }
+    let options: Vec<(usize, String)> = std::iter::once((0usize, "Master".to_string()))
+        .chain(
+            targets
+                .iter()
+                .enumerate()
+                .map(|(i, (_, label))| (i + 1, label.clone())),
+        )
         .collect();
-    let mut sel = doc
-        .mixer
-        .node_output(ch)
-        .and_then(|id| match id {
-            yinhe_types::ChannelId::Bus(bus) => bus_ids.iter().position(|&x| x == bus),
-            _ => None,
-        })
+    let current = doc.mixer.node_output(ch);
+    let mut sel = current
+        .and_then(|target| targets.iter().position(|(id, _)| *id == target))
         .map(|i| i + 1)
         .unwrap_or(0);
     let mut changed = false;
@@ -433,7 +438,7 @@ fn output_selector(ui: &mut egui::Ui, doc: &mut Document, ch: MixerChannelId) ->
             "channel_main_output",
             &mut sel,
             ui.available_width().max(1.0),
-            &bus_options,
+            &options,
         ) {
             changed = true;
         }
@@ -442,10 +447,7 @@ fn output_selector(ui: &mut egui::Ui, doc: &mut Document, ch: MixerChannelId) ->
         let target = if sel == 0 {
             None
         } else {
-            bus_ids
-                .get(sel - 1)
-                .copied()
-                .map(yinhe_types::ChannelId::Bus)
+            targets.get(sel - 1).map(|(id, _)| *id)
         };
         let accepted = doc.mixer_mut().set_node_output(ch, target);
         if accepted {

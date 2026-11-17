@@ -70,6 +70,13 @@ pub struct ResolvedSend {
     pub pre_fader: bool,
 }
 
+/// 通道主输出目标：Bus、另一条 dense 通道，或 Master（None）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChannelOutput {
+    Bus(usize),
+    Channel(usize),
+}
+
 /// 任意通道发送的目标（方案 C）：另一条 dense 通道，或 Master。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChannelSendTarget {
@@ -201,6 +208,8 @@ pub struct ChannelChain {
     sends: Vec<ResolvedSend>,
     /// 任意通道发送（源通道 → 另一条 dense 通道 / Master）。
     channel_sends: Vec<ResolvedChannelSend>,
+    /// 主输出目标（从图配置同步；用于块首延迟输出）。
+    output: Option<ChannelOutput>,
     /// 上一块输出快照（逆序/自环通道发送使用，打断反馈）。
     prev_out_l: Vec<f32>,
     prev_out_r: Vec<f32>,
@@ -222,6 +231,7 @@ impl ChannelChain {
             reading,
             sends: Vec::new(),
             channel_sends: Vec::new(),
+            output: None,
             prev_out_l: vec![0.0; frames],
             prev_out_r: vec![0.0; frames],
         }
@@ -351,8 +361,8 @@ pub struct MixerGraph {
     master: MasterChain,
     channels: Vec<ChannelChain>,
     buses: Vec<BusChain>,
-    /// 每个 dense 通道的主输出总线（None = Master）。
-    channel_outputs: Vec<Option<usize>>,
+    /// 每个 dense 通道的主输出目标（None = Master）。
+    channel_outputs: Vec<Option<ChannelOutput>>,
     /// 每条 Bus 的主输出总线（None = Master）；Bus 可嵌套。
     bus_outputs: Vec<Option<usize>>,
     frames: usize,
@@ -575,10 +585,18 @@ impl MixerGraph {
     }
 
     /// 设置某通道（dense）的主输出总线；`None` = 直接进 Master。
-    pub fn set_channel_output(&mut self, channel: usize, bus: Option<usize>) {
+    pub fn set_channel_output(&mut self, channel: usize, output: Option<ChannelOutput>) {
         if let Some(slot) = self.channel_outputs.get_mut(channel) {
-            *slot = bus;
+            *slot = output;
         }
+        if let Some(chain) = self.channels.get_mut(channel) {
+            chain.output = output;
+        }
+    }
+
+    /// 兼容旧调用：只设置 Bus 主输出。
+    pub fn set_channel_output_bus(&mut self, channel: usize, bus: Option<usize>) {
+        self.set_channel_output(channel, bus.map(ChannelOutput::Bus));
     }
 
     /// 设置某 Bus 的主输出总线；`None` = 直接进 Master。
@@ -822,6 +840,7 @@ impl MixerGraph {
             frames,
             any_solo,
         );
+        Self::apply_delayed_channel_outputs(&mut self.channels, frames, any_solo);
         // 被 solo 的通道/总线往下游经过的 Bus 也要放行；否则通道 solo
         // 后主输出到 Bus、或 solo 的 Bus 再进另一条 Bus 会被静音。
         // 没有 solo 时不分配，避免常态下的实时线程分配。
@@ -865,7 +884,7 @@ impl MixerGraph {
     fn process_channels(
         channels: &mut [ChannelChain],
         buses: &mut [BusChain],
-        channel_outputs: &[Option<usize>],
+        channel_outputs: &[Option<ChannelOutput>],
         master_l: &mut [f32],
         master_r: &mut [f32],
         frames: usize,
@@ -964,14 +983,9 @@ impl MixerGraph {
                 );
             }
 
-            // 主输出：Bus 或 Master。
-            let dest = channel_outputs
-                .get(ci)
-                .copied()
-                .flatten()
-                .filter(|&b| b < buses.len());
-            match dest {
-                Some(bus) => {
+            // 主输出：Bus / 另一条通道 / Master。
+            match channel_outputs.get(ci).copied().flatten() {
+                Some(ChannelOutput::Bus(bus)) if bus < buses.len() => {
                     let bus_solo = buses[bus].strip.params.solo;
                     if !p.mute && (!any_solo || p.solo || bus_solo) {
                         let src = &channels[ci].buffers;
@@ -982,6 +996,21 @@ impl MixerGraph {
                         }
                     }
                 }
+                Some(ChannelOutput::Channel(dst)) if dst > ci && dst < channels.len() => {
+                    let dst_solo = channels[dst].strip.params.solo;
+                    if !p.mute && (!any_solo || p.solo || dst_solo) {
+                        let (left, right) = channels.split_at_mut(dst);
+                        let src = &left[ci].buffers;
+                        let target = &mut right[0].buffers;
+                        for f in 0..frames {
+                            target.left[f] += src.left[f];
+                            target.right[f] += src.right[f];
+                        }
+                    }
+                }
+                Some(ChannelOutput::Bus(_)) => {}
+                // 逆序/自环通道输出已经在块首用上一块快照汇入。
+                Some(ChannelOutput::Channel(_)) => {}
                 None => {
                     if to_master {
                         let src = &channels[ci].buffers;
@@ -1044,6 +1073,47 @@ impl MixerGraph {
                     }
                     // Master 目标在源处理时直接累加，不走延迟路径。
                     _ => {}
+                }
+            }
+        }
+    }
+
+    /// 逆序/自环通道主输出：源上一块输出 → 目标本块输入。
+    fn apply_delayed_channel_outputs(channels: &mut [ChannelChain], frames: usize, any_solo: bool) {
+        for src in 0..channels.len() {
+            let Some(output) = channels[src].output else {
+                continue;
+            };
+            let ChannelOutput::Channel(dst) = output else {
+                continue;
+            };
+            if dst > src || dst >= channels.len() {
+                continue;
+            }
+            let src_params = channels[src].strip.params;
+            let dst_solo = if dst == src {
+                src_params.solo
+            } else {
+                channels[dst].strip.params.solo
+            };
+            if !channel_send_allowed(any_solo, &src_params, dst_solo) {
+                continue;
+            }
+            if dst == src {
+                let chain = &mut channels[src];
+                for f in 0..frames {
+                    let l = chain.prev_out_l[f];
+                    let r = chain.prev_out_r[f];
+                    chain.buffers.left[f] += l;
+                    chain.buffers.right[f] += r;
+                }
+            } else {
+                let (left, right) = channels.split_at_mut(src);
+                let src_chain = &right[0];
+                let dst_chain = &mut left[dst];
+                for f in 0..frames {
+                    dst_chain.buffers.left[f] += src_chain.prev_out_l[f];
+                    dst_chain.buffers.right[f] += src_chain.prev_out_r[f];
                 }
             }
         }
@@ -1367,7 +1437,7 @@ fn route_send(
 /// 截断。标记的总线即使自身没有 solo，也要把上游 solo 的信号送到 Master。
 fn bus_solo_paths(
     channels: &[ChannelChain],
-    channel_outputs: &[Option<usize>],
+    channel_outputs: &[Option<ChannelOutput>],
     buses: &[BusChain],
     bus_outputs: &[Option<usize>],
 ) -> Vec<bool> {
@@ -1388,7 +1458,7 @@ fn bus_solo_paths(
         if !p.solo || p.mute {
             continue;
         }
-        if let Some(bus) = channel_outputs.get(ci).copied().flatten() {
+        if let Some(ChannelOutput::Bus(bus)) = channel_outputs.get(ci).copied().flatten() {
             mark(bus, n, &mut marked, &mut stack);
         }
         for send in &chain.sends {
@@ -1948,7 +2018,7 @@ mod tests {
     fn channel_main_output_replaces_master_path() {
         let mut g = graph_with(&[StripParams::default()], 4);
         g.resize_buses(1, 4, &[StripParams::default()]);
-        g.set_channel_output(0, Some(0));
+        g.set_channel_output_bus(0, Some(0));
         fill(&mut g, 0, 0.5);
         let (l, _r) = g.process();
         // 通道声像 → bus0 输入；bus0 声像 → master。直达路径必须消失。
@@ -1969,7 +2039,7 @@ mod tests {
             4,
         );
         g.resize_buses(1, 4, &[StripParams::default()]);
-        g.set_channel_output(0, Some(0));
+        g.set_channel_output_bus(0, Some(0));
         fill(&mut g, 0, 0.5);
         let (l, _r) = g.process();
         let channel = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
@@ -1988,7 +2058,7 @@ mod tests {
             4,
         );
         g.resize_buses(2, 4, &[StripParams::default(), StripParams::default()]);
-        g.set_channel_output(0, Some(0));
+        g.set_channel_output_bus(0, Some(0));
         g.set_bus_output(0, Some(1));
         fill(&mut g, 0, 0.5);
         let (l, _r) = g.process();
@@ -2038,7 +2108,7 @@ mod tests {
                 StripParams::default(),
             ],
         );
-        g.set_channel_output(0, Some(0));
+        g.set_channel_output_bus(0, Some(0));
         g.set_bus_output(0, Some(1));
         fill(&mut g, 0, 0.5);
         let (l, _r) = g.process();
@@ -2061,8 +2131,8 @@ mod tests {
             4,
         );
         g.resize_buses(1, 4, &[StripParams::default()]);
-        g.set_channel_output(0, Some(0));
-        g.set_channel_output(1, Some(0));
+        g.set_channel_output_bus(0, Some(0));
+        g.set_channel_output_bus(1, Some(0));
         fill(&mut g, 0, 0.5);
         fill(&mut g, 1, 0.5);
         let (l, _r) = g.process();
@@ -2084,7 +2154,7 @@ mod tests {
                 ..StripParams::default()
             }],
         );
-        g.set_channel_output(0, Some(0));
+        g.set_channel_output_bus(0, Some(0));
         g.set_channel_sends(
             0,
             vec![ResolvedChannelSend {
@@ -2112,7 +2182,7 @@ mod tests {
                 ..StripParams::default()
             }],
         );
-        g.set_channel_output(1, Some(0));
+        g.set_channel_output_bus(1, Some(0));
         g.set_channel_sends(
             1,
             vec![ResolvedChannelSend {
@@ -2145,7 +2215,7 @@ mod tests {
             4,
         );
         g.resize_buses(1, 4, &[StripParams::default()]);
-        g.set_channel_output(0, Some(0));
+        g.set_channel_output_bus(0, Some(0));
         g.set_channel_sends(
             0,
             vec![ResolvedChannelSend {
@@ -2172,7 +2242,7 @@ mod tests {
                 ..StripParams::default()
             }],
         );
-        g.set_channel_output(0, Some(0));
+        g.set_channel_output_bus(0, Some(0));
         g.set_channel_sends(
             0,
             vec![ResolvedChannelSend {
@@ -2201,7 +2271,7 @@ mod tests {
                 },
             ],
         );
-        g.set_channel_output(0, Some(1));
+        g.set_channel_output_bus(0, Some(1));
         g.set_channel_sends(
             0,
             vec![ResolvedChannelSend {
@@ -2216,12 +2286,39 @@ mod tests {
         assert!((l[3] - expect).abs() < 1e-6, "got {}", l[3]);
     }
 
+    /// LC/AP 主输出到另一条通道：替换 Master 路径，前向同块。
+    #[test]
+    fn channel_main_output_to_channel_replaces_master() {
+        let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
+        g.set_channel_output(0, Some(ChannelOutput::Channel(1)));
+        fill(&mut g, 0, 0.5);
+        let (l, _r) = g.process();
+        let single = core::f32::consts::FRAC_1_SQRT_2;
+        let expect = 0.5 * single * single;
+        assert!((l[3] - expect).abs() < 1e-6, "got {}", l[3]);
+    }
+
+    /// 逆序通道主输出用上一块快照，延迟一块。
+    #[test]
+    fn channel_main_output_reverse_is_one_block_delayed() {
+        let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
+        g.set_channel_output(1, Some(ChannelOutput::Channel(0)));
+        fill(&mut g, 1, 0.5);
+        let (l, _r) = g.process();
+        assert!(l[3].abs() < 1e-6, "第一块不应有逆序主输出: {}", l[3]);
+        fill(&mut g, 1, 0.5);
+        let (l, _r) = g.process();
+        let single = core::f32::consts::FRAC_1_SQRT_2;
+        let expect = 0.5 * single * single;
+        assert!((l[3] - expect).abs() < 1e-6, "got {}", l[3]);
+    }
+
     /// 自动化直接写总线增益：只改 gain，不动 mute/solo/pan。
     #[test]
     fn bus_gain_automation_scales_bus_output() {
         let mut g = graph_with(&[StripParams::default()], 4);
         g.resize_buses(1, 4, &[StripParams::default()]);
-        g.set_channel_output(0, Some(0));
+        g.set_channel_output_bus(0, Some(0));
         g.set_bus_gain(0, 0.5);
         fill(&mut g, 0, 0.5);
         let (l, _r) = g.process();
@@ -2235,7 +2332,7 @@ mod tests {
     fn bus_output_forward_routes_to_target_bus() {
         let mut g = graph_with(&[StripParams::default()], 4);
         g.resize_buses(2, 4, &[StripParams::default(), StripParams::default()]);
-        g.set_channel_output(0, Some(0));
+        g.set_channel_output_bus(0, Some(0));
         g.set_bus_output(0, Some(1));
         fill(&mut g, 0, 0.5);
         let (l, _r) = g.process();

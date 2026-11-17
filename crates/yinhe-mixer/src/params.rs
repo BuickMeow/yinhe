@@ -720,14 +720,6 @@ impl MixerParams {
     }
 
     fn sanitize_routing(&mut self) {
-        let known: HashSet<BusId> = self
-            .nodes
-            .iter()
-            .filter_map(|node| match node.id {
-                ChannelId::Bus(id) => Some(id),
-                _ => None,
-            })
-            .collect();
         let known_targets: HashSet<ChannelId> = self
             .nodes
             .iter()
@@ -736,10 +728,9 @@ impl MixerParams {
             .collect();
         for node in self.nodes.iter_mut() {
             node.sends.retain(|s| known_targets.contains(&s.target));
-            if node
-                .output
-                .is_some_and(|id| !matches!(id, ChannelId::Bus(bus) if known.contains(&bus)))
-            {
+            if node.output.is_some_and(|id| {
+                id == ChannelId::Master || id == node.id || !known_targets.contains(&id)
+            }) {
                 node.output = None;
             }
         }
@@ -1096,6 +1087,17 @@ impl MixerParams {
             }
             return false;
         }
+        let source = Self::node_id_for_ui(node);
+        if let Some(target) = output
+            && (target == source || target == ChannelId::Master)
+        {
+            return false;
+        }
+        if let Some(target) = output
+            && !self.channel_target_exists(target)
+        {
+            return false;
+        }
         match self.node_mut_for_ui(node) {
             Some(slot) => {
                 slot.output = output;
@@ -1220,7 +1222,11 @@ mod tests {
         assert_eq!(p.bus_ids(), vec![ids[0], ids[2]]);
         let sends = p.node_sends(MixerChannelId::Midi(0)).expect("sends");
         assert_eq!(sends.len(), 1, "指向被删总线的 send 清理");
-        assert_eq!(sends[0].target, ChannelId::Bus(ids[2]), "其他总线 ID 不前移");
+        assert_eq!(
+            sends[0].target,
+            ChannelId::Bus(ids[2]),
+            "其他总线 ID 不前移"
+        );
         assert_eq!(
             p.node_output(MixerChannelId::Midi(0)),
             Some(ChannelId::Bus(ids[2])),
@@ -1479,7 +1485,10 @@ mod tests {
         assert!(!p.set_node_sends(MixerChannelId::Master, vec![send]));
 
         assert!(p.set_node_output(MixerChannelId::Midi(1), Some(ChannelId::Bus(bus))));
-        assert_eq!(p.node_output(MixerChannelId::Midi(1)), Some(ChannelId::Bus(bus)));
+        assert_eq!(
+            p.node_output(MixerChannelId::Midi(1)),
+            Some(ChannelId::Bus(bus))
+        );
         assert!(!p.set_node_output(MixerChannelId::Bus(bus), Some(ChannelId::Bus(bus))));
     }
 
@@ -1503,7 +1512,10 @@ mod tests {
         p.ensure_len();
         let ids = add_buses(&mut p, 2);
         assert!(p.set_node_output(MixerChannelId::Bus(ids[0]), Some(ChannelId::Bus(ids[1]))));
-        assert_eq!(p.node_output(MixerChannelId::Bus(ids[0])), Some(ChannelId::Bus(ids[1])));
+        assert_eq!(
+            p.node_output(MixerChannelId::Bus(ids[0])),
+            Some(ChannelId::Bus(ids[1]))
+        );
         // 反向成环：拒绝。
         assert!(!p.set_node_output(MixerChannelId::Bus(ids[1]), Some(ChannelId::Bus(ids[0]))));
         assert_eq!(p.node_output(MixerChannelId::Bus(ids[1])), None);
