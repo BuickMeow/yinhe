@@ -280,7 +280,7 @@ enum TrackAudioTarget {
 - 从 AP 解链回 `OwnLc` 时保留原来的 LC/LC Rack 状态，
   避免解链后所有设置丢失。
 - `DirectMaster` 仍可拥有 LC Rack/乐器，但没有 LC 通道条：没有 LC 的
-  gain/pan/insert/send/freeze；只有源级音量/声像和轨道 M/S。
+  gain/pan/insert/send/freeze；只有源级音量/声像和轨道 M。
 - 音频轨（Audio Track）通常只用 `OwnLc`，不参与 AP 编组；也可以选择
   `DirectMaster` 绕过通道直接进 Master。
 
@@ -410,7 +410,7 @@ struct SendParams {
 2. **AP 编组不是通道**，它只持有共享 Rack、MIDI 身份和 AP 通道列表；
 3. **AP 通道是共享音频流**；链接到该 AP 输出的 Track 不能再假装有独立推子；
 4. **M/S/freeze 按通道分配**：AP 通道的 mute/solo/freeze 影响所有链接到该输出的 Track；
-5. **Track M/S 是内容门**：只停该轨后续 MIDI，不等于通道 M/S；
+5. **Track M 是内容门**：只停该轨后续 MIDI，不等于通道 M/S；
 6. **普通 LC 是完整独立通道**；默认行为与成熟 DAW 的普通音轨一致。
 
 ### 5.1 M / S / freeze 的作用单位
@@ -422,7 +422,7 @@ struct SendParams {
 | AP 通道 mute/solo | 该 AP 通道 | 影响链接到该输出的所有 Track |
 | AP 通道 freeze | 该 AP 通道 | 冻结这个共享输出；不按单条 Track 拆 |
 | AP “全部冻结” | AP 的所有通道 | 只是 UI 批量操作，不是新的 owner |
-| Track M/S | Track 内容 | 只停该轨 MIDI，不能抽走已混入 AP 的音频 |
+| Track M | Track 内容 | 只停该轨 MIDI，不能抽走已混入 AP 的音频 |
 
 所以“M/S/freeze 按 LC 分配”更准确的说法是：**按音频通道分配**。
 普通 Track 的音频通道是 LC；AP 的音频通道是 AP 通道。二者同级。
@@ -1244,14 +1244,114 @@ Bake to AP / Bake to LC
 
 而不是以前“切到 MIX 就看不到 ARRANGE，切到 ARRANGE 就看不到通道 AR”。
 
+### 9.8 AR 分内容类型，不分通道类型
+
+Track 和 Channel 是两层，不要把“音频轨/MIDI 轨”做成两种通道：
+
+```text
+AR（内容）                          MIX（音频）
+MIDI Track A ─ notes ─> Rack ──────┐
+                                    ├─> CH01
+Audio Track B ─ clips ─────────────┘
+```
+
+结论：
+
+- **Track 是内容容器**：MIDI 音符、音频片段、文件夹；
+- **Channel 是音频节点**：LC、AP 通道、Bus 角色、Master；
+- MIDI 轨的声音路径是 `notes -> LC Rack / AP Rack -> Channel`；
+- Audio 轨的声音路径是 `clips -> Channel`；
+- 两者默认都有自己的 LC，也都可以共享 LC、都可以把音频 send 到别的通道。
+
+“MIDI 和 Audio 融合”发生在 **Channel**，不发生在 Track：
+
+```text
+MIDI 轨的音符仍然是音符，音频轨的片段仍然是音频；
+到了 LC 之后，它们都只是音频样本。
+```
+
+所以 SEND 的目标永远是 **Channel**，不是 Track。MIDI 轨的 LC 收到音频 send，
+只是音频求和，不会让它的音符变成音频，也不会改变它是 MIDI 轨。
+
+AP 的边界：
+
+- AP 是 MIDI 源分组，只接受 MIDI 轨作为成员；
+- Audio 轨不能加入 AP，但可以把音频 send 到 AP 通道，和 AP 乐器的输出相加；
+- AP 通道的乐器只处理 MIDI，不处理 send 进来的音频。
+
+UI：
+
+- AR 只有一种轨道列表，不分成“MIDI 区/音频区”两个页签；
+- 用图标区分内容类型（音符/波形），不写“MIDI 轨/音频轨”说明小字；
+- 轨道属性里的目标字段统一为 `CHxx / APxx / ---`；
+- 新建命令仍然区分“新建 MIDI 轨 / 新建音频轨”，但创建后是同一类对象；
+- 独奏/静音、选择、编组、颜色、折叠对两种内容一致。
+
+边界：一条 Track 只装一种内容，不做 hybrid track（同一轨同时装 MIDI 和音频）
+进 MVP。以后真要做，也是给 `TrackKind` 增加内容联合，不是把 Track 变成 Channel。
+
+### 9.9 M/S：内容门与音频门分开
+
+建议方案：
+
+```text
+Track：M（内容门）
+Channel：M + S（音频门）
+```
+
+理由：
+
+1. **M 有两层，语义不同**：
+   - Track M 停这条轨的音符/片段，不影响同通道的其他来源；
+   - Channel M 静音整条通道，包括 send 进来的音频。
+2. **S 是路由图操作，只应存在于通道层**：
+   - C 里 Track 与 Channel 不是 1:1（AP 多条轨共享一条通道）；
+   - 如果 Track 有独立 S，就会出现第二套 solo 状态；
+   - 如果 Track S 只是通道 S 的别名，那不如不要重复按钮。
+3. **想从 AR 快速试听时**，用“Solo Channel”命令切换该轨目标通道的 S，
+   状态显示在 MIX 的通道条上，不在轨道行复制一个 S。
+4. **DirectMaster 没有通道**，因此没有 S；M 仍然有效。
+5. **AP 的 solo** 是 solo 整条 AP 通道，即整个共享乐器；要只试听其中一条
+   轨的内容，M 掉同 AP 的其他轨。这是共享乐器的固有语义，不能用 S 假装
+   隔离。
+
+和 FL/Domino 的对应关系：
+
+- FL 的 Channel Rack 是内容层，只有 M；
+- Domino 是纯 MIDI 编辑器，没有混音台，所以只有 M；
+- 主流 DAW 的轨道列表本身就是混音通道列表，所以每条都有 M+S；
+- Yinhe 把 AR（内容）和 MIX（通道）分开，就按两层各自给控制。
+
+Solo 的图语义：
+
+```text
+solo 一个通道：
+  它自己可闻；
+  它到 Master 的下游路径可闻；
+  给它供声的上游可闻；
+  旁支静音。
+```
+
+当前目标 B 的缺口：
+
+- `process_buses` 的 `audible` 只看 Bus 自己的 solo，没有考虑“上游通道被
+  solo 后需要经过这条 Bus”；
+- 结果是：通道 solo + 通道主输出到 Bus 时会静音（已用单元测试复现，
+  `got 0`）；
+- C 改成统一通道图后，solo 必须按图传播，下游 Bus 要放行上游 solo 的信号；
+- 这是目标 B 的既有 bug，不是设计选择。
+
+如果以后确实需要“只试听一条轨的内容”，正确做法是内容级 audition（临时
+只听这条轨的事件），不要把它混进混音 solo；MVP 不做。
+
 ## 10. 冻结、静音和独奏
 
 | 操作 | 普通 LC | AP |
 |---|---|---|
 | 冻结 | 冻结本 LC | 冻结该 AP 通道（该输出组） |
 | mute | 本 LC 静音 | AP 通道静音（链接到该输出的所有轨） |
-| solo | 本 LC solo | AP 通道 solo |
-| Track M/S | 内容门，停止该轨后续 MIDI | 同样只能停该轨 MIDI，不能抽走已混入 AP 的音频 |
+| solo | 本 LC solo | AP 通道 solo（solo 只在通道层，见 9.9） |
+| Track M | 内容门，停该轨音符/片段 | 同样只停该轨内容，不能抽走已混入 AP 的音频 |
 
 这和当前目标 B 的语义一致，只是 LC 的默认归属从“MIDI 通道”变成“Track”。
 
@@ -1293,7 +1393,7 @@ DirectMaster:
 
 - UI 目标选择器显示 `--- (Master)`；
 - 不创建 LC/AP 通道，因此没有 LC/AP 的 M/S/freeze/insert/send；
-- 仍保留 Track 自己的内容门 M/S、源级音量/声像；
+- 仍保留 Track 自己的内容门 M、源级音量/声像；
 - 适合预览、节拍器、简单铺底、临时试听等不需要通道条的内容；
 - 不适合需要独立推子/insert/send/自动化的轨；
 - 如果之后要独立处理，把目标改成 `CHxx`，系统再创建/分配 LC。
