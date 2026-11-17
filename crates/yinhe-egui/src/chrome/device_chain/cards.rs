@@ -369,7 +369,7 @@ pub(super) fn instrument_card(
     let title_text = if has_instrument {
         instrument_plugin
             .map(str::to_string)
-            .unwrap_or_else(|| "XSynth".to_string())
+            .unwrap_or_else(|| "Yinhe".to_string())
     } else {
         context_label(context)
     };

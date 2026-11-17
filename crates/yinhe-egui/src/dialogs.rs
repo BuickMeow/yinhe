@@ -17,7 +17,7 @@ pub mod save_overlay;
 pub mod scale;
 pub mod settings;
 pub mod sf_list;
+pub mod synth_config;
 pub mod system_monitor;
 pub mod tap_tempo;
 pub mod unsaved;
-pub mod xsynth_config;

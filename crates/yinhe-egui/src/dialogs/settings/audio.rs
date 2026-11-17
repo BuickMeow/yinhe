@@ -247,7 +247,7 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         t!("settings.audio.synth_engine").as_ref(),
         t!("settings.audio.synth_engine_desc").as_ref(),
         |ui| {
-            ui.label(t!("settings.audio.engine_yinhe_cpu").as_ref());
+            ui.label("Yinhe");
         },
     );
 

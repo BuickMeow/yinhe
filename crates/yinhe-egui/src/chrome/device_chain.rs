@@ -680,10 +680,10 @@ fn apply_dock_actions(
                         }
                     } else {
                         // 内置 XSynth 的"界面"就是音色库配置窗口。
-                        app.mix.xsynth_config_for = Some(ch);
+                        app.mix.synth_config_for = Some(ch);
                         crate::chrome::dialog::raise_viewport(
                             ctx,
-                            crate::dialogs::xsynth_config::viewport_id(ch),
+                            crate::dialogs::synth_config::viewport_id(ch),
                         );
                     }
                 }

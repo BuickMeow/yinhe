@@ -1,6 +1,6 @@
-//! 内置 XSynth 的配置窗口（虚拟乐器界面）：配置该源通道使用的音色库。
+//! 内置 Yinhe 音源的配置窗口（虚拟乐器界面）：配置该源通道使用的音色库。
 //!
-//! 与 VST 插件"每个实例有自己的界面"对应——XSynth 是内置合成器，此窗口就是
+//! 与 VST 插件"每个实例有自己的界面"对应——Yinhe 是内置合成器，此窗口就是
 //! 它的"界面"：
 //! - 默认使用**全局音色库**（设置 → 音色库）；
 //! - 可为当前通道单独配置一组音色库（随工程保存；同一通道多轨共享）。
@@ -17,12 +17,12 @@ use crate::app::App;
 
 /// 配置窗口 id：每个源通道一个（可同时打开多个通道的配置）。
 pub(crate) fn viewport_id(channel: u8) -> egui::ViewportId {
-    egui::ViewportId::from_hash_of(("xsynth_config_dialog", channel))
+    egui::ViewportId::from_hash_of(("synth_config_dialog", channel))
 }
 
-/// 显示 XSynth 配置窗口；返回 true = 配置有变更（调用方需重载音频）。
+/// 显示 Yinhe 配置窗口；返回 true = 配置有变更（调用方需重载音频）。
 pub(crate) fn show_viewport(app: &mut App, ctx: &egui::Context) -> bool {
-    let Some(channel) = app.mix.xsynth_config_for else {
+    let Some(channel) = app.mix.synth_config_for else {
         return false;
     };
     let Some(idx) = app.workspace.active_doc else {
@@ -41,7 +41,7 @@ pub(crate) fn show_viewport(app: &mut App, ctx: &egui::Context) -> bool {
         .dialog_dir(FileDialogKind::SoundFont)
         .map(str::to_owned);
     let label = crate::mix::channel_label(channel);
-    let title = format!("XSynth · {label}");
+    let title = format!("Yinhe · {label}");
 
     let viewport_id = viewport_id(channel);
     crate::chrome::dialog::raise_on_open(ctx, viewport_id);
@@ -229,7 +229,7 @@ pub(crate) fn show_viewport(app: &mut App, ctx: &egui::Context) -> bool {
         app.workspace.documents[idx].edit.project_sf.overrides = overrides.clone();
     }
     if !*open_rc.borrow() {
-        app.mix.xsynth_config_for = None;
+        app.mix.synth_config_for = None;
     }
     changed
 }

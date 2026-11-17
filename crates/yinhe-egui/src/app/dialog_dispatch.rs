@@ -912,7 +912,7 @@ impl App {
     /// 工程设置只在浮窗显示（无停靠入口），点 X 即关闭。
     fn show_float_panels(&mut self, ctx: &egui::Context) {
         // XSynth 配置窗口（独立于 FloatPanel：按源通道打开）。
-        if crate::dialogs::xsynth_config::show_viewport(self, ctx) {
+        if crate::dialogs::synth_config::show_viewport(self, ctx) {
             self.teardown_audio();
         }
         let Some(panel) = self.float_panel else {

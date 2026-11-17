@@ -186,7 +186,7 @@ pub(crate) struct MixUiState {
     /// 发送面板打开目标（None = 关闭）。
     pub(crate) sends_for: Option<u8>,
     /// XSynth 配置窗口目标（源通道；None = 关闭）。
-    pub(crate) xsynth_config_for: Option<u8>,
+    pub(crate) synth_config_for: Option<u8>,
     /// 乐器选择器目标：MIDI 通道（挂载点）；None = 未打开。
     pub(crate) instrument_picker_for: Option<u8>,
     pub(crate) picker_filter: String,
