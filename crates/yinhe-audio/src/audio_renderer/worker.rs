@@ -92,7 +92,6 @@ impl AudioRenderer {
                 }
                 Ok(WorkerResult::LoadedSoundFont {
                     channels,
-                    soundfonts,
                     paths,
                     generation,
                 }) => {
@@ -114,7 +113,6 @@ impl AudioRenderer {
                         .fetch_add(channels.len(), Ordering::Relaxed);
                     // 方案 C：XSynth 已移除，只用 yinhe CPU。音色库按 key map 路径
                     // 在下方加载（与主引擎/预览共享同一份），不加载 xsynth 版。
-                    let _ = &soundfonts;
                     let dense_list: Vec<(u8, u32)> = channels
                         .iter()
                         .map(|ch| (*ch, self.engine.channel_layout.dense_for(*ch as usize)))

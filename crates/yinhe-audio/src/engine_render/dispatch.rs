@@ -2,7 +2,7 @@
 
 use std::cmp::Reverse;
 
-use xsynth_core::channel::ChannelAudioEvent;
+use crate::audio_model::ChannelAudioEvent;
 use yinhe_mixer::PluginEvent;
 
 use crate::audio_model::ActiveNote;
@@ -21,7 +21,7 @@ macro_rules! route_cpu_event {
             let dense = $dense;
             match $event {
                 $crate::audio_model::AudioEvent::Channel(
-                    xsynth_core::channel::ChannelAudioEvent::NoteOn { key, vel },
+                    ChannelAudioEvent::NoteOn { key, vel },
                 ) => {
                     // CPU 路径沿用显式 NoteOff（与 xsynth 同语义）；end_sample 不自行到期。
                     cs.send_event(yinhe_synth::SynthEvent::NoteOn {
@@ -34,7 +34,7 @@ macro_rules! route_cpu_event {
                     });
                 }
                 $crate::audio_model::AudioEvent::Channel(
-                    xsynth_core::channel::ChannelAudioEvent::NoteOff { .. },
+                    ChannelAudioEvent::NoteOff { .. },
                 ) => {
                     // yinhe CPU：NoteOn 带精确 `end_sample`（音符自身 end_tick）到期
                     // 自释（含 damper 快照），显式 NoteOff 不再投递——它是 FIFO 语义

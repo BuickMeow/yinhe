@@ -1,4 +1,4 @@
-use xsynth_core::channel::{ChannelAudioEvent, ControlEvent};
+use crate::audio_model::{ChannelAudioEvent, ControlEvent};
 
 use crate::audio_model::AudioEvent;
 

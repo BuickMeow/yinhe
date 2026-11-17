@@ -3,7 +3,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crossbeam_channel::{Sender, bounded, unbounded};
-use xsynth_core::soundfont::SoundfontBase;
 
 use crate::audio_out::{self, BufferSize, Device, OutputFormat, Stream, StreamErrorKind};
 use yinhe_core::YinModel;
@@ -819,7 +818,6 @@ pub(crate) enum WorkerResult {
     },
     LoadedSoundFont {
         channels: Vec<u8>,
-        soundfonts: Vec<Arc<dyn SoundfontBase>>,
         /// 原始路径列表 — 供音源/诊断定位音色库
         paths: Vec<String>,
         /// 音色库切换代次（renderer 丢弃过期结果）。
@@ -993,7 +991,6 @@ pub(crate) fn spawn_worker(
                             ));
                             let _ = result_tx.send(WorkerResult::LoadedSoundFont {
                                 channels,
-                                soundfonts: Vec::new(),
                                 paths,
                                 generation,
                             });
@@ -1038,7 +1035,6 @@ pub(crate) fn spawn_worker(
                             ));
                             let _ = result_tx.send(WorkerResult::LoadedSoundFont {
                                 channels,
-                                soundfonts: Vec::new(),
                                 paths,
                                 generation,
                             });
@@ -1049,7 +1045,6 @@ pub(crate) fn spawn_worker(
                         sf_progress.store(900, Ordering::Relaxed);
                         let _ = result_tx.send(WorkerResult::LoadedSoundFont {
                             channels,
-                            soundfonts: Vec::new(),
                             paths,
                             generation,
                         });

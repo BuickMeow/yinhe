@@ -2,7 +2,7 @@
 //!
 //! 原先在 `engine_gpu` 里（GPU 后端已删除），CPU 后端/预览也在用，独立成模块。
 
-use xsynth_core::channel::ControlEvent;
+use crate::audio_model::ControlEvent;
 
 use crate::channel::ChaseSkip;
 
@@ -43,7 +43,7 @@ pub(crate) fn to_backend_control_event(
             }
             Some(yinhe_synth::ControlEvent::Raw(controller, value))
         }
-        AudioEvent::Channel(xsynth_core::channel::ChannelAudioEvent::Control(
+        AudioEvent::Channel(crate::audio_model::ChannelAudioEvent::Control(
             ControlEvent::Raw(c, v),
         )) => {
             // 通道级 DSP CC 由 yinhe-dsp 效果器处理，合成器不再接收。
@@ -52,10 +52,10 @@ pub(crate) fn to_backend_control_event(
             }
             Some(yinhe_synth::ControlEvent::Raw(c, f32::from(v)))
         }
-        AudioEvent::Channel(xsynth_core::channel::ChannelAudioEvent::Control(
+        AudioEvent::Channel(crate::audio_model::ChannelAudioEvent::Control(
             ControlEvent::PitchBendValue(v),
         )) => Some(yinhe_synth::ControlEvent::PitchBend(v)),
-        AudioEvent::Channel(xsynth_core::channel::ChannelAudioEvent::ProgramChange(p)) => {
+        AudioEvent::Channel(crate::audio_model::ChannelAudioEvent::ProgramChange(p)) => {
             Some(yinhe_synth::ControlEvent::ProgramChange(p))
         }
         // 引擎通用 PB / PC（收敛后不再走 xsynth 通道事件）。

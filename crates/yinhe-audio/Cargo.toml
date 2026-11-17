@@ -5,8 +5,6 @@ license.workspace = true
 edition = "2024"
 
 [dependencies]
-xsynth-core = "0.4"
-xsynth-soundfonts = "0.4"
 symphonia = "0.5"
 rubato = "0.15"
 

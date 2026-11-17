@@ -2,7 +2,36 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 
 use std::collections::HashMap;
-use xsynth_core::channel::{ChannelAudioEvent, ControlEvent};
+/// 通道控制事件（原 xsynth `ControlEvent` 的等价词汇；引擎只消费这些）。
+///
+/// 部分变体生产代码不再构造（已用 `AudioEvent::PitchBend/ProgramChange` 一等事件），
+/// 但保留作为 MIDI 导出/聚合路径的兼容词汇，测试仍覆盖。
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum ControlEvent {
+    /// 7-bit CC（号, 值 0..127）。
+    Raw(u8, u8),
+    /// 14-bit Pitch Bend 归一化到 -1..1（xsynth 语义）。
+    PitchBendValue(f32),
+    /// 直接给 -1..1 的 Pitch Bend（兼容旧事件）。
+    PitchBend(f32),
+    /// RPN 0：半音数。
+    PitchBendSensitivity(f32),
+    /// RPN 1：音分。
+    FineTune(f32),
+    /// RPN 2：半音。
+    CoarseTune(f32),
+}
+
+/// 通道音频事件（原 xsynth `ChannelAudioEvent` 的等价词汇）。
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum ChannelAudioEvent {
+    NoteOn { key: u8, vel: u8 },
+    NoteOff { key: u8 },
+    Control(ControlEvent),
+    ProgramChange(u8),
+}
 use yinhe_core::YinModel;
 
 use yinhe_types::automation::{MidiBinding, ParamDevice, binding_max, builtin_param};

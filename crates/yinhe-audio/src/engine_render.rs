@@ -1,4 +1,4 @@
-use xsynth_core::channel::{ChannelAudioEvent, ControlEvent};
+use crate::audio_model::{ChannelAudioEvent, ControlEvent};
 
 use crate::audio_model::AudioEvent;
 use crate::engine::AudioEngine;
@@ -178,7 +178,6 @@ fn push_data_entry(out: &mut MidiMessages, ch: u8, value: u16) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xsynth_core::channel::ControlEvent;
 
     fn midi_of(event: &AudioEvent, channel: u8) -> Vec<[u8; 3]> {
         let mut out = MidiMessages::default();

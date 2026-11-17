@@ -1,7 +1,6 @@
 use super::*;
 use std::collections::BTreeMap;
-use xsynth_core::channel::{ChannelAudioEvent, ControlEvent};
-use xsynth_core::channel_group::ParallelismOptions;
+use crate::audio_model::{ChannelAudioEvent, ControlEvent};
 use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_editor_core::document::Document;
 use yinhe_types::automation::{ParamDevice, xsynth_param};
@@ -1079,7 +1078,7 @@ fn test_remove_track_then_rebuild_deactivates_channel() {
 #[test]
 fn test_muted_track_cc_skipped_in_dispatch() {
     use crate::audio_model::SortedCC;
-    use xsynth_core::channel::{ChannelAudioEvent, ControlEvent};
+    use crate::audio_model::{ChannelAudioEvent, ControlEvent};
 
     let sample_rate = 44100u32;
     let mut doc = Document::empty();
@@ -1134,7 +1133,7 @@ fn test_muted_track_cc_skipped_in_dispatch() {
 #[test]
 fn test_unmute_chase_skip_excludes_events_missed_while_muted() {
     use crate::audio_model::SortedCC;
-    use xsynth_core::channel::{ChannelAudioEvent, ControlEvent};
+    use crate::audio_model::{ChannelAudioEvent, ControlEvent};
 
     let sample_rate = 44100u32;
     let mut doc = Document::empty();
