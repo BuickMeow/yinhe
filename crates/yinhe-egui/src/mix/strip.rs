@@ -82,6 +82,51 @@ fn focus_send_info(
     (source, target, amount, pre_fader)
 }
 
+/// 混音节点通道条主体（MIDI / 音频 / 每轨 LC 共用）。
+///
+/// 三者只有标题、颜色与自动化宿主不同，其余（发送聚焦、推子/声像/M-S、
+/// 节点写入）完全一致，统一在这里实现，避免三份复制粘贴各自漂移。
+#[allow(clippy::too_many_arguments)]
+fn node_strip(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    idx: usize,
+    node: MixerChannelId,
+    color: egui::Color32,
+    title: &str,
+    target: controls::StripAutomationTarget,
+    level: (f32, f32),
+    hold: (f32, f32),
+    height: f32,
+    actions: &mut Vec<MixAction>,
+) -> egui::Rect {
+    let params = app.workspace.documents[idx].mixer.node_strip(node);
+    let (send_source, send_target, send_amount, send_pre) = focus_send_info(app, idx, node);
+    let selected = strip_selected(app, idx, node);
+    strip_frame(
+        ui,
+        ("mix_strip", node),
+        color,
+        title,
+        height,
+        selected,
+        |ui, _| {
+            section(
+                ui,
+                send_height(0),
+                egui::Layout::top_down(egui::Align::Center),
+                |ui| {
+                    focus_send_block(ui, send_source, send_target, send_amount, send_pre, actions);
+                },
+            );
+            ui.add_space(GAP);
+            if let Some(p) = strip_controls(ui, &params, level, hold, true, true, target, actions) {
+                actions.push(MixAction::SetNodeStrip { node, params: p });
+            }
+        },
+    )
+}
+
 /// 单条 MIDI 通道条。
 #[allow(clippy::too_many_arguments)] // 通道条渲染上下文透传
 pub(crate) fn channel_strip(
@@ -95,47 +140,20 @@ pub(crate) fn channel_strip(
     height: f32,
     actions: &mut Vec<MixAction>,
 ) {
-    let params = app.workspace.documents[idx]
-        .mixer
-        .node_strip(MixerChannelId::Midi(channel));
-    let (send_source, send_target, send_amount, send_pre) =
-        focus_send_info(app, idx, MixerChannelId::Midi(channel));
+    let node = MixerChannelId::Midi(channel);
     let title = crate::mix::channel_title(&app.workspace.documents[idx].mixer, channel);
-    let selected = strip_selected(app, idx, MixerChannelId::Midi(channel));
-
-    let rect = strip_frame(
+    let rect = node_strip(
+        app,
         ui,
-        ("mix_strip_midi", channel),
+        idx,
+        node,
         color,
         &title,
+        controls::StripAutomationTarget::Midi(channel),
+        level,
+        hold,
         height,
-        selected,
-        |ui, _| {
-            section(
-                ui,
-                send_height(0),
-                egui::Layout::top_down(egui::Align::Center),
-                |ui| {
-                    focus_send_block(ui, send_source, send_target, send_amount, send_pre, actions);
-                },
-            );
-            ui.add_space(GAP);
-            if let Some(p) = strip_controls(
-                ui,
-                &params,
-                level,
-                hold,
-                true,
-                true,
-                controls::StripAutomationTarget::Midi(channel),
-                actions,
-            ) {
-                actions.push(MixAction::SetNodeStrip {
-                    node: MixerChannelId::Midi(channel),
-                    params: p,
-                });
-            }
-        },
+        actions,
     );
     // 双击色带：打开底部设备链并选中该通道。
     header_double_click_opens_dock(
@@ -162,47 +180,20 @@ pub(crate) fn audio_strip(
     height: f32,
     actions: &mut Vec<MixAction>,
 ) {
-    let params = app.workspace.documents[idx]
-        .mixer
-        .node_strip(MixerChannelId::Audio(channel));
+    let node = MixerChannelId::Audio(channel);
     let title = crate::mix::lc_label(display);
-    let (send_source, send_target, send_amount, send_pre) =
-        focus_send_info(app, idx, MixerChannelId::Audio(channel));
-
-    let selected = strip_selected(app, idx, MixerChannelId::Audio(channel));
-    let rect = strip_frame(
+    let rect = node_strip(
+        app,
         ui,
-        ("mix_strip_audio", channel),
+        idx,
+        node,
         crate::theme::accent_active(),
         &title,
+        controls::StripAutomationTarget::Audio(channel),
+        level,
+        hold,
         height,
-        selected,
-        |ui, _| {
-            section(
-                ui,
-                send_height(0),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    focus_send_block(ui, send_source, send_target, send_amount, send_pre, actions);
-                },
-            );
-            ui.add_space(GAP);
-            if let Some(p) = strip_controls(
-                ui,
-                &params,
-                level,
-                hold,
-                true,
-                true,
-                controls::StripAutomationTarget::Audio(channel),
-                actions,
-            ) {
-                actions.push(MixAction::SetNodeStrip {
-                    node: MixerChannelId::Audio(channel),
-                    params: p,
-                });
-            }
-        },
+        actions,
     );
     // 双击色带：打开底部设备链并选中该音频通道。
     header_double_click_opens_dock(
@@ -231,9 +222,6 @@ pub(crate) fn track_lc_strip(
     actions: &mut Vec<MixAction>,
 ) {
     let node = MixerChannelId::TrackLc(lc);
-    let mixer = &app.workspace.documents[idx].mixer;
-    let params = mixer.node_strip(node);
-    let (send_source, send_target, send_amount, send_pre) = focus_send_info(app, idx, node);
     let title = crate::mix::lc_label(display);
     let color = app.workspace.documents[idx]
         .edit
@@ -243,38 +231,18 @@ pub(crate) fn track_lc_strip(
         .copied()
         .map(|c| crate::theme::rgba_to_color32((c[0], c[1], c[2], c[3])))
         .unwrap_or_else(crate::theme::accent_active);
-    let selected = strip_selected(app, idx, node);
-
-    let rect = strip_frame(
+    let rect = node_strip(
+        app,
         ui,
-        ("mix_strip_track_lc", lc.0),
+        idx,
+        node,
         color,
         &title,
+        controls::StripAutomationTarget::TrackLc(lc),
+        level,
+        hold,
         height,
-        selected,
-        |ui, _| {
-            section(
-                ui,
-                send_height(0),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    focus_send_block(ui, send_source, send_target, send_amount, send_pre, actions);
-                },
-            );
-            ui.add_space(GAP);
-            if let Some(p) = strip_controls(
-                ui,
-                &params,
-                level,
-                hold,
-                true,
-                true,
-                controls::StripAutomationTarget::TrackLc(lc),
-                actions,
-            ) {
-                actions.push(MixAction::SetNodeStrip { node, params: p });
-            }
-        },
+        actions,
     );
     header_double_click_opens_dock(
         app,
