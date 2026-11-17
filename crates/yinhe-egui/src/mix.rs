@@ -23,7 +23,9 @@ use rust_i18n::t;
 use yinhe_audio::InsertTarget;
 use yinhe_audio::channel_layout::ChannelLayout;
 use yinhe_mixer::{MasterParams, StripParams};
-use yinhe_types::{MixerChannelId, MixerNodeId};
+use yinhe_types::{
+    ApChannelId, ApGroupId, ChannelId, LogicalChannelId, MixerChannelId, MixerNodeId,
+};
 
 use self::plugin_instance::PluginEntry;
 use crate::plugin_scan::ScanProgress;
@@ -66,6 +68,40 @@ pub(crate) fn channel_title(mixer: &yinhe_mixer::MixerParams, ch: u8) -> String 
 /// 音频通道号 → 显示标签（0 → "Audio-01"）。
 pub(crate) fn audio_label(ch: u16) -> String {
     format!("Audio-{:02}", u32::from(ch) + 1)
+}
+
+/// UI 的 MixerChannelId → C 的 ChannelId。
+pub(crate) fn channel_id_for_ui(
+    mixer: &yinhe_mixer::MixerParams,
+    channel: MixerChannelId,
+) -> Option<ChannelId> {
+    match channel {
+        MixerChannelId::Midi(ch) => {
+            if mixer.ap_for_midi(ch).is_some() {
+                Some(ChannelId::Ap(ApChannelId::new(
+                    ApGroupId::new(u16::from(ch)),
+                    0,
+                )))
+            } else {
+                Some(ChannelId::Lc(LogicalChannelId(u32::from(ch))))
+            }
+        }
+        MixerChannelId::Audio(ch) => Some(ChannelId::Lc(LogicalChannelId(
+            yinhe_types::MIDI_CHANNEL_COUNT as u32 + u32::from(ch),
+        ))),
+        MixerChannelId::TrackLc(id) => Some(ChannelId::Lc(id)),
+        MixerChannelId::Bus(_) => None,
+        MixerChannelId::Master => Some(ChannelId::Master),
+    }
+}
+
+/// C 的 ChannelId → 聚焦发送标签。
+pub(crate) fn channel_id_label(id: ChannelId) -> String {
+    match id {
+        ChannelId::Lc(_) => "CH".to_string(),
+        ChannelId::Ap(ap) => ap_label(ap.group.0 as u8),
+        ChannelId::Master => t!("mix.master").to_string(),
+    }
 }
 
 /// 电平表回落速度（dB / 秒）：行业惯用约 20 dB/s（PPM 弹道：瞬时起、匀速落）。
@@ -147,6 +183,8 @@ pub(crate) struct MixUiState {
     pub(crate) scan_in_progress: bool,
     /// 插件选择器打开目标（None = 关闭）。
     pub(crate) picker_for: Option<InsertTarget>,
+    /// 当前 SEND 聚焦目标；其他通道显示到该通道的 dB 旋钮。
+    pub(crate) send_focus: Option<MixerChannelId>,
     /// 发送面板打开目标（None = 关闭）。
     pub(crate) sends_for: Option<u8>,
     /// XSynth 配置窗口目标（源通道；None = 关闭）。
@@ -184,6 +222,13 @@ pub(crate) enum MixAction {
     AddInsert {
         target: InsertTarget,
         plugin: PluginEntry,
+    },
+    /// C 的任意通道发送（dB 旋钮）。
+    SetChannelSend {
+        source: ChannelId,
+        target: ChannelId,
+        amount: f32,
+        pre_fader: bool,
     },
     /// 新增一条总线（追加到末尾）。
     AddBus,
@@ -1075,6 +1120,20 @@ fn apply_action(app: &mut App, ctx: &egui::Context, idx: usize, action: MixActio
             app.push_mixer_state_to_engine(idx);
             app.mix.picker_for = None;
         }
+        MixAction::SetChannelSend {
+            source,
+            target,
+            amount,
+            pre_fader,
+        } => {
+            app.note_mixer_edit(t!("undo.mix_send").as_ref());
+            if app.workspace.documents[idx]
+                .mixer_mut()
+                .set_channel_send(source, target, amount, pre_fader)
+            {
+                app.push_mixer_state_to_engine(idx);
+            }
+        }
         MixAction::AddBus => {
             if app.workspace.documents[idx].mixer.bus_count() > usize::from(u16::MAX) {
                 return;
@@ -1414,6 +1473,32 @@ mod tests {
             format,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn c_channel_ids_map_from_mixer_channel_ids() {
+        let mut mixer = MixerParams::default();
+        assert_eq!(
+            channel_id_for_ui(&mixer, MixerChannelId::Midi(0)),
+            Some(ChannelId::Lc(LogicalChannelId(0)))
+        );
+        assert!(mixer.ensure_ap(9));
+        assert_eq!(
+            channel_id_for_ui(&mixer, MixerChannelId::Midi(9)),
+            Some(ChannelId::Ap(ApChannelId::new(ApGroupId::new(9), 0)))
+        );
+        assert_eq!(
+            channel_id_for_ui(&mixer, MixerChannelId::Audio(1)),
+            Some(ChannelId::Lc(LogicalChannelId(257)))
+        );
+        assert_eq!(
+            channel_id_for_ui(&mixer, MixerChannelId::Master),
+            Some(ChannelId::Master)
+        );
+        assert_eq!(
+            channel_id_for_ui(&mixer, MixerChannelId::Bus(yinhe_types::BusId(0))),
+            None
+        );
     }
 
     #[test]

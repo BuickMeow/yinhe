@@ -3,7 +3,7 @@
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_mixer::{SendParams, StripParams};
-use yinhe_types::{Audibility, BusId, LogicalChannelId};
+use yinhe_types::{Audibility, BusId, ChannelId, LogicalChannelId};
 
 use crate::widgets::knob::{knob, knob_centered};
 use crate::widgets::meter::{DB_MAX, DB_MIN, db_to_gain, gain_at_frac, gain_frac, gain_to_db};
@@ -11,15 +11,16 @@ use crate::widgets::meter::{DB_MAX, DB_MIN, db_to_gain, gain_at_frac, gain_frac,
 use super::*;
 
 /// 发送区高度：每条总线一行，全部可见（总线多了面板随之上移）。
-pub(super) fn send_height(bus_count: usize) -> f32 {
-    SEND_ROW_H * bus_count.max(1) as f32
+pub(super) fn send_height(_bus_count: usize) -> f32 {
+    // C 的 SEND 是聚焦模式：每条通道只显示一个目标旋钮，不再按总线数展开。
+    SEND_ROW_H
 }
 
 /// 混音台的理想面板高度：基础布局 + 发送区按总线数扩展。
 ///
 /// 这是「自动高度」模式下的高度；用户拖拽分割条后转为手动高度。
-pub(crate) fn auto_panel_height(bus_count: usize) -> f32 {
-    HEADER_H + BODY_TOP_PAD + send_height(bus_count) + GAP + METER_MODULE_H + BODY_BOTTOM_PAD
+pub(crate) fn auto_panel_height(_bus_count: usize) -> f32 {
+    HEADER_H + BODY_TOP_PAD + send_height(0) + GAP + METER_MODULE_H + BODY_BOTTOM_PAD
 }
 
 /// 电平表：线性增益 → 表内 y 坐标（top = 最大 dB）。
@@ -107,6 +108,10 @@ pub(super) fn section<R>(
 /// 单条 MIDI 通道条。
 #[allow(clippy::too_many_arguments)] // 通道条渲染上下文透传
 /// 发送区来源：通道 / 音频通道 / 总线。
+///
+/// `Channel/Audio/TrackLc` 只服务旧 Bus 面板的兼容路径；C 的 SEND 聚焦
+/// 走 `focus_send_block`，不再构造这些变体。
+#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum SendSource {
     Channel(u8),
@@ -251,6 +256,96 @@ fn send_db_label(amount: f32) -> String {
     } else {
         format!("{:.1}", gain_to_db(amount))
     }
+}
+
+/// C 的聚焦发送：一个目标、一个 dB 旋钮；源 == 目标或目标不可发送时留空。
+#[allow(clippy::too_many_arguments)]
+pub(super) fn focus_send_block(
+    ui: &mut egui::Ui,
+    source: Option<ChannelId>,
+    target: Option<ChannelId>,
+    label: &str,
+    amount: f32,
+    pre_fader: bool,
+    actions: &mut Vec<MixAction>,
+) {
+    let Some((source, target)) = source.zip(target) else {
+        return;
+    };
+    if source == target || source == ChannelId::Master {
+        return;
+    }
+    ui.horizontal(|ui| {
+        let mut norm = send_norm(amount);
+        let resp = knob(ui, &mut norm, KNOB_D);
+        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.send_amount"));
+        if resp.changed() {
+            actions.push(MixAction::SetChannelSend {
+                source,
+                target,
+                amount: send_amount(norm),
+                pre_fader,
+            });
+        }
+        crate::widgets::menu::context_menu(&resp, 180.0, |ui| {
+            let enable_label = if amount > 0.0 {
+                t!("mix.send_disable")
+            } else {
+                t!("mix.send_enable")
+            };
+            if ui
+                .add(crate::widgets::menu::menu_item_action(
+                    ui,
+                    false,
+                    enable_label.as_ref(),
+                    "",
+                ))
+                .clicked()
+            {
+                actions.push(MixAction::SetChannelSend {
+                    source,
+                    target,
+                    amount: if amount > 0.0 { 0.0 } else { 1.0 },
+                    pre_fader,
+                });
+                ui.close();
+            }
+            let (pre_label, next_pre) = if pre_fader {
+                (t!("mix.send_post_fader"), false)
+            } else {
+                (t!("mix.pre_fader"), true)
+            };
+            if ui
+                .add(crate::widgets::menu::menu_item_action(
+                    ui,
+                    false,
+                    pre_label.as_ref(),
+                    "",
+                ))
+                .clicked()
+            {
+                actions.push(MixAction::SetChannelSend {
+                    source,
+                    target,
+                    amount: amount.max(f32::MIN_POSITIVE),
+                    pre_fader: next_pre,
+                });
+                ui.close();
+            }
+        });
+        ui.vertical(|ui| {
+            ui.label(
+                egui::RichText::new(label)
+                    .size(crate::theme::SMALL_LABEL_FONT)
+                    .color(crate::theme::text_secondary()),
+            );
+            ui.label(
+                egui::RichText::new(send_db_label(amount))
+                    .size(crate::theme::SMALL_LABEL_FONT)
+                    .color(crate::theme::text_secondary()),
+            );
+        });
+    });
 }
 
 /// 效果发送区（独占一区，竖向滚动）：**每条总线一行**（旋钮 + 「BUS n」），

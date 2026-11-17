@@ -14,14 +14,15 @@
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_mixer::MasterParams;
-use yinhe_types::{BusId, LogicalChannelId, MixerChannelId};
+use yinhe_types::{BusId, ChannelId, LogicalChannelId, MixerChannelId};
 
 use crate::app::App;
 use crate::widgets::meter::{METER_GAP, METER_W, SCALE_W};
 
 use super::MixAction;
 use controls::{
-    SendSource, master_controls, section, send_block, send_height, strip_controls, strip_frame,
+    SendSource, focus_send_block, master_controls, section, send_block, send_height,
+    strip_controls, strip_frame,
 };
 
 mod controls;
@@ -65,6 +66,26 @@ const CONTROLS_W: f32 = CONTENT_W - (SCALE_W + METER_W * 2.0 + METER_GAP) - GAP;
 const BODY_TOP_PAD: f32 = 4.0;
 const BODY_BOTTOM_PAD: f32 = 6.0;
 
+fn focus_send_info(
+    app: &App,
+    idx: usize,
+    source_channel: MixerChannelId,
+) -> (Option<ChannelId>, Option<ChannelId>, String, f32, bool) {
+    let mixer = &app.workspace.documents[idx].mixer;
+    let source = crate::mix::channel_id_for_ui(mixer, source_channel);
+    let target = app
+        .mix
+        .send_focus
+        .and_then(|focus| crate::mix::channel_id_for_ui(mixer, focus));
+    let label = target.map(crate::mix::channel_id_label).unwrap_or_default();
+    let (amount, pre_fader) = source
+        .zip(target)
+        .and_then(|(source, target)| mixer.channel_send(source, target))
+        .map(|send| (send.amount, send.pre_fader))
+        .unwrap_or((0.0, false));
+    (source, target, label, amount, pre_fader)
+}
+
 /// 单条 MIDI 通道条。
 #[allow(clippy::too_many_arguments)] // 通道条渲染上下文透传
 pub(crate) fn channel_strip(
@@ -81,12 +102,8 @@ pub(crate) fn channel_strip(
     let params = app.workspace.documents[idx]
         .mixer
         .node_strip(MixerChannelId::Midi(channel));
-    let bus_ids = app.workspace.documents[idx].mixer.bus_ids();
-    let sends = app.workspace.documents[idx]
-        .mixer
-        .node_sends(MixerChannelId::Midi(channel))
-        .map(<[_]>::to_vec)
-        .unwrap_or_default();
+    let (send_source, send_target, send_label, send_amount, send_pre) =
+        focus_send_info(app, idx, MixerChannelId::Midi(channel));
     let title = crate::mix::channel_title(&app.workspace.documents[idx].mixer, channel);
 
     let rect = strip_frame(
@@ -98,10 +115,18 @@ pub(crate) fn channel_strip(
         |ui, _| {
             section(
                 ui,
-                send_height(bus_ids.len()),
+                send_height(0),
                 egui::Layout::top_down(egui::Align::Center),
                 |ui| {
-                    send_block(ui, SendSource::Channel(channel), &sends, &bus_ids, actions);
+                    focus_send_block(
+                        ui,
+                        send_source,
+                        send_target,
+                        &send_label,
+                        send_amount,
+                        send_pre,
+                        actions,
+                    );
                 },
             );
             ui.add_space(GAP);
@@ -150,12 +175,8 @@ pub(crate) fn audio_strip(
         .mixer
         .node_strip(MixerChannelId::Audio(channel));
     let title = crate::mix::audio_label(channel);
-    let audio_sends = app.workspace.documents[idx]
-        .mixer
-        .node_sends(MixerChannelId::Audio(channel))
-        .map(<[_]>::to_vec)
-        .unwrap_or_default();
-    let bus_ids = app.workspace.documents[idx].mixer.bus_ids();
+    let (send_source, send_target, send_label, send_amount, send_pre) =
+        focus_send_info(app, idx, MixerChannelId::Audio(channel));
 
     let rect = strip_frame(
         ui,
@@ -166,14 +187,16 @@ pub(crate) fn audio_strip(
         |ui, _| {
             section(
                 ui,
-                send_height(bus_ids.len()),
+                send_height(0),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
-                    send_block(
+                    focus_send_block(
                         ui,
-                        SendSource::Audio(channel),
-                        &audio_sends,
-                        &bus_ids,
+                        send_source,
+                        send_target,
+                        &send_label,
+                        send_amount,
+                        send_pre,
                         actions,
                     );
                 },
@@ -224,11 +247,8 @@ pub(crate) fn track_lc_strip(
     let node = MixerChannelId::TrackLc(lc);
     let mixer = &app.workspace.documents[idx].mixer;
     let params = mixer.node_strip(node);
-    let sends = mixer
-        .node_sends(node)
-        .map(<[_]>::to_vec)
-        .unwrap_or_default();
-    let bus_ids = mixer.bus_ids();
+    let (send_source, send_target, send_label, send_amount, send_pre) =
+        focus_send_info(app, idx, node);
     let track_name = app.workspace.documents[idx]
         .data
         .model
@@ -255,10 +275,18 @@ pub(crate) fn track_lc_strip(
         |ui, _| {
             section(
                 ui,
-                send_height(bus_ids.len()),
+                send_height(0),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
-                    send_block(ui, SendSource::TrackLc(lc), &sends, &bus_ids, actions);
+                    focus_send_block(
+                        ui,
+                        send_source,
+                        send_target,
+                        &send_label,
+                        send_amount,
+                        send_pre,
+                        actions,
+                    );
                 },
             );
             ui.add_space(GAP);
@@ -493,6 +521,7 @@ fn header_double_click_opens_dock(
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.header_double_click"));
     header_context_menu(app, &resp, idx, context, actions);
     if resp.clicked() {
+        app.mix.send_focus = Some(context);
         focus_channel_info(app, context);
     }
     if !resp.double_clicked() {

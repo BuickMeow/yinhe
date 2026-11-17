@@ -42,14 +42,13 @@ fn gain_position_round_trip() {
     }
 }
 
-/// 自动高度：基础布局随总线数按发送区行高线性增长，默认总线数下
-/// 与 `LayoutSettings::default().mix_height` 一致。
+/// C 的 SEND 聚焦模式固定一行，不再随总线数增长。
 #[test]
-fn auto_height_tracks_bus_rows() {
+fn auto_height_is_fixed_by_focus_send_row() {
     let base = auto_panel_height(0);
     assert!((base - 200.0).abs() < 1e-3, "基础高度 {base}");
     assert!((auto_panel_height(1) - base).abs() < 1e-3);
-    assert!((auto_panel_height(4) - (base + 3.0 * SEND_ROW_H)).abs() < 1e-3);
+    assert!((auto_panel_height(4) - base).abs() < 1e-3);
 }
 
 /// 实验：两个通道条共享同一 `mix_send_scroll` 滚动位置时，
