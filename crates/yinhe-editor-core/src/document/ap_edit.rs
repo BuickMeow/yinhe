@@ -49,6 +49,76 @@ impl Document {
 }
 
 impl Document {
+    /// 旧工程迁移：共用 home LC 的音频轨拆成各自唯一的 LC，并用 SEND 汇总回去。
+    ///
+    /// 旧模型允许多条音频轨共用同一 `audio_channel`（共享一条音频通道条）。方案 C
+    /// 要求每条 Track 的 home LC 唯一。加载时按通道分组：
+    /// - 第一条轨保留原 `audio_channel`（原听感的汇总 LC）；
+    /// - 其余轨分配新的空闲音频通道，并加一条 0 dB 的 post-fader SEND 到汇总 LC。
+    ///
+    /// 这样汇总 LC 的推子/insert 仍然作用于所有音轨之和，听感不变。只处理
+    /// `audio_target` 尚未显式设定的旧轨；C 新工程没有重复 home LC，是 no-op。
+    pub fn migrate_shared_audio_home_lcs(&mut self) -> bool {
+        use std::collections::{HashMap, HashSet};
+
+        use yinhe_types::{ChannelId, LogicalChannelId, MIDI_CHANNEL_COUNT};
+
+        let mut groups: HashMap<u16, Vec<usize>> = HashMap::new();
+        for (i, track) in self.data.model.tracks.iter().enumerate() {
+            if track.kind == yinhe_core::TrackKind::Audio
+                && track.audio_target.is_none()
+                && let Some(ch) = track.audio_channel
+            {
+                groups.entry(ch).or_default().push(i);
+            }
+        }
+        if groups.values().all(|tracks| tracks.len() <= 1) {
+            return false;
+        }
+
+        let mut used: HashSet<u16> = groups.keys().copied().collect();
+        let mut next_ch = used
+            .iter()
+            .copied()
+            .max()
+            .map_or(1, |c| c.saturating_add(1));
+        let mut sends: Vec<(LogicalChannelId, LogicalChannelId)> = Vec::new();
+
+        for (ch, tracks) in &groups {
+            if tracks.len() <= 1 {
+                continue;
+            }
+            let first_lc = LogicalChannelId(MIDI_CHANNEL_COUNT as u32 + u32::from(*ch));
+            self.mixer.ensure_audio_lc_node(*ch);
+            for &idx in &tracks[1..] {
+                while used.contains(&next_ch) {
+                    next_ch = next_ch.saturating_add(1);
+                }
+                let new_ch = next_ch;
+                used.insert(new_ch);
+                next_ch = next_ch.saturating_add(1);
+                let new_lc = LogicalChannelId(MIDI_CHANNEL_COUNT as u32 + u32::from(new_ch));
+                self.mixer.ensure_audio_lc_node(new_ch);
+
+                let model = std::sync::Arc::make_mut(&mut self.data.model);
+                let track = std::sync::Arc::make_mut(&mut model.tracks[idx]);
+                track.audio_channel = Some(new_ch);
+                track.set_audio_target(TrackAudioTarget::OwnLc {
+                    lc: new_lc,
+                    rack: None,
+                });
+                sends.push((new_lc, first_lc));
+            }
+        }
+        for (source, target) in sends {
+            self.mixer
+                .set_channel_send(ChannelId::Lc(source), ChannelId::Lc(target), 1.0, false);
+        }
+        self.mixer.ensure_len();
+        self.data.bump_revision();
+        true
+    }
+
     /// 按当前 Track 状态同步 AP 表。返回是否有变化。
     ///
     /// 只做结构同步，不 bump revision / mixer dirty；调用方在用户操作路径上
@@ -111,6 +181,46 @@ mod tests {
                 .all(|t| t.lc.is_some()),
             "C 空白工程的 MIDI 轨应默认拥有自己的 LC"
         );
+    }
+
+    #[test]
+    fn shared_audio_home_lcs_split_into_unique_lcs_with_send() {
+        use crate::document::Document;
+        use yinhe_types::{ChannelId, LogicalChannelId, MIDI_CHANNEL_COUNT};
+
+        let mut doc = Document::empty();
+        // 两条音频轨共用 audio_channel 0（旧工程共享 home LC）。
+        {
+            let model = std::sync::Arc::make_mut(&mut doc.data.model);
+            for _ in 0..2 {
+                let mut t = TrackData::new(0, 0);
+                t.kind = TrackKind::Audio;
+                t.audio_channel = Some(0);
+                model.tracks.push(std::sync::Arc::new(t));
+            }
+        }
+        assert!(doc.migrate_shared_audio_home_lcs());
+        let model = &doc.data.model;
+        let audio_channels: Vec<u16> = model
+            .tracks
+            .iter()
+            .filter(|t| t.kind == TrackKind::Audio)
+            .filter_map(|t| t.audio_channel)
+            .collect();
+        assert_eq!(audio_channels.len(), 2);
+        assert_ne!(audio_channels[0], audio_channels[1], "home LC 必须唯一");
+
+        let first_lc = LogicalChannelId(MIDI_CHANNEL_COUNT as u32);
+        let second_lc =
+            LogicalChannelId(MIDI_CHANNEL_COUNT as u32 + u16::from(audio_channels[1]) as u32);
+        let send = doc
+            .mixer
+            .channel_send(ChannelId::Lc(second_lc), ChannelId::Lc(first_lc));
+        assert!(send.is_some(), "拆出的轨应 SEND 回汇总 LC");
+        assert!((send.expect("send").amount - 1.0).abs() < 1e-6);
+
+        // 再次迁移应为 no-op（已是唯一 home LC）。
+        assert!(!doc.migrate_shared_audio_home_lcs());
     }
 
     #[test]

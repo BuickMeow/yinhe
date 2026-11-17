@@ -977,6 +977,11 @@ impl MixerParams {
         self.sort_dedup_nodes();
     }
 
+    /// 确保某音频通道号对应的 LC 节点存在（迁移/外部构造 audio LC 用）。
+    pub fn ensure_audio_lc_node(&mut self, ch: u16) {
+        self.ensure_audio_len(ch as usize + 1);
+    }
+
     fn node_mut_for_ui(&mut self, node: MixerChannelId) -> Option<&mut MixerNode> {
         if let MixerChannelId::Audio(ch) = node {
             self.ensure_audio_len(ch as usize + 1);

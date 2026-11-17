@@ -344,6 +344,7 @@ impl Document {
                 density: Default::default(),
                 density_pr: Default::default(),
             };
+            doc.migrate_shared_audio_home_lcs();
             doc.ensure_audio_targets();
             doc.ensure_rack_track_lcs();
             doc.adopt_loaded_freezes();
