@@ -212,19 +212,29 @@ impl AudioEngine {
                 if !self.skip_track.get(track).copied().unwrap_or(false) {
                     let dense = self.channel_layout.dense_for(ch as usize);
                     if dense != u32::MAX {
+                        // 方案 C：OwnLc 轨的乐器链落在该轨 home LC 的 dense
+                        // （每轨实例）；AP 轨没有 home LC，共享 MIDI 源 dense。
+                        let own_lc_dense = self.channel_layout.track_lc_dense(track);
+                        let plugin_dense = if own_lc_dense != u32::MAX {
+                            own_lc_dense
+                        } else {
+                            dense
+                        };
                         let has_plugin = self
                             .instruments
-                            .get(dense as usize)
+                            .get(plugin_dense as usize)
                             .is_some_and(|s| s.is_some());
                         if has_plugin {
-                            // 该通道挂了插件乐器：音符喂实例（插件通道 = MIDI 通道低 4 位）。
+                            // 该宿主挂了插件乐器：音符喂实例（插件通道 = MIDI 通道低 4 位）。
                             // 先算 frame offset 与 CLAP 通道（只读），再取可变实例引用。
                             let time = self
                                 .tick_to_sample(note.start_tick)
                                 .saturating_sub(self.block_start_sample)
                                 as u32;
                             let clap_ch = ch & 0x0F;
-                            if let Some(Some(slot)) = self.instruments.get_mut(dense as usize) {
+                            if let Some(Some(slot)) =
+                                self.instruments.get_mut(plugin_dense as usize)
+                            {
                                 slot.events.push(PluginEvent::NoteOn {
                                     time,
                                     channel: clap_ch,
@@ -233,7 +243,7 @@ impl AudioEngine {
                                 });
                                 self.active_notes.push(Reverse(ActiveNote {
                                     key: key as u8,
-                                    dense,
+                                    dense: plugin_dense,
                                     clap_channel: clap_ch,
                                     is_instrument: true,
                                     end_tick,

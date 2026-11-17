@@ -16,6 +16,7 @@ use std::path::Path;
 use yinhe_audio::{AudioCommand, AudioHandle};
 use yinhe_clap::ClapProcessor;
 use yinhe_mixer::{InstrumentProcessor, MixerParams, PluginFormat};
+use yinhe_types::LogicalChannelId;
 use yinhe_vst3::Vst3Processor;
 
 use super::plugin_instance::{PluginEntry, PluginInstance};
@@ -25,6 +26,8 @@ use super::rack::{ACTIVATE_MAX_FRAMES, PluginLoadError};
 pub(crate) struct InstrumentSlot {
     /// 乐器通道号（0 起）。
     pub channel: u8,
+    /// OwnLc 每轨实例的宿主 LC；`None` = AP 共享链（MIDI 源 dense）。
+    pub lc: Option<LogicalChannelId>,
     /// 稳定的 UI 侧槽位 id（引擎回收退回时匹配用）。
     pub slot_id: u64,
     /// None = 加载失败占位（持久化层仍保留 InsertRef，保存不丢引用）。
@@ -66,17 +69,34 @@ impl InstrumentRack {
         self.slots.iter().all(|s| s.instance.is_none() && !s.sent) && self.pending_return.is_empty()
     }
 
-    /// 某通道第 `index` 个槽位（按挂载顺序）。
+    /// 该通道下第 `index` 个**唯一 slot_id** 的代表实例。
+    ///
+    /// 方案 C：一个 Rack 配置（slot_id）在 AP 共享模式下只有一个实例；
+    /// OwnLc 多条轨时同一 slot_id 有多个实例（每轨一个，分别写各自 home LC）。
+    /// UI 列表按配置显示一条，GUI/参数面板取代表实例。
     fn slot_mut(&mut self, channel: u8, index: usize) -> Option<&mut InstrumentSlot> {
-        self.slots
-            .iter_mut()
-            .filter(|s| s.channel == channel)
-            .nth(index)
+        let mut seen: Vec<u64> = Vec::new();
+        for (i, slot) in self.slots.iter().enumerate() {
+            if slot.channel != channel || seen.contains(&slot.slot_id) {
+                continue;
+            }
+            if seen.len() == index {
+                return self.slots.get_mut(i);
+            }
+            seen.push(slot.slot_id);
+        }
+        None
     }
 
-    /// 该通道的槽位数量（UI 列表长度 / 设备链乐器段长度）。
+    /// 该通道的配置数（UI 列表长度 / 设备链乐器段长度）。
     pub(crate) fn slot_count(&self, channel: u8) -> usize {
-        self.slots.iter().filter(|s| s.channel == channel).count()
+        let mut seen: Vec<u64> = Vec::new();
+        for slot in &self.slots {
+            if slot.channel == channel && !seen.contains(&slot.slot_id) {
+                seen.push(slot.slot_id);
+            }
+        }
+        seen.len()
     }
 
     /// 按槽位 id 取变体（引擎退回匹配用）。
@@ -193,6 +213,7 @@ impl InstrumentRack {
     pub fn add(
         &mut self,
         channel: u8,
+        lc: Option<LogicalChannelId>,
         uid: u64,
         format: PluginFormat,
         plugin_path: &Path,
@@ -228,6 +249,7 @@ impl InstrumentRack {
         }
         self.slots.push(InstrumentSlot {
             channel,
+            lc,
             slot_id: uid,
             instance,
             sent: false,
@@ -249,7 +271,11 @@ impl InstrumentRack {
         handle: &AudioHandle,
         sample_rate: u32,
     ) -> Result<(), PluginLoadError> {
-        let (channel, slot_id) = (self.slots[pos].channel, self.slots[pos].slot_id);
+        let (channel, lc, slot_id) = (
+            self.slots[pos].channel,
+            self.slots[pos].lc,
+            self.slots[pos].slot_id,
+        );
         let Some(instance) = self.slots[pos].instance.as_mut() else {
             return Ok(()); // 加载失败占位：跳过激活
         };
@@ -271,7 +297,10 @@ impl InstrumentRack {
             }
         };
         handle.send(AudioCommand::SetInstrumentSlot {
-            channel,
+            target: match lc {
+                Some(id) => yinhe_audio::InsertTarget::TrackLc(id),
+                None => yinhe_audio::InsertTarget::Midi(channel),
+            },
             slot_id,
             processor: Some(processor),
         });
@@ -296,31 +325,42 @@ impl InstrumentRack {
         }
     }
 
-    /// 移除该通道第 `index` 个乐器槽位：已安装的送 SetInstrumentSlot{None}，旧实例
-    /// 移入 pending_return 等旧处理器退回 deactivate；从未进引擎时直接 drop。
+    /// 移除该通道第 `index` 个配置：所有实例（AP 共享 / 各 OwnLc 轨）一起送
+    /// SetInstrumentSlot{None}，旧实例移入 pending_return 等旧处理器退回 deactivate；
+    /// 从未进引擎的实例直接 drop。
     pub fn remove(&mut self, channel: u8, index: usize, handle: Option<&AudioHandle>) {
-        let pos = match self
-            .slots
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| s.channel == channel)
-            .nth(index)
-            .map(|(i, _)| i)
-        {
-            Some(pos) => pos,
-            None => return,
+        let Some(rep) = self.slot_mut(channel, index) else {
+            return;
         };
-        let slot = self.slots.remove(pos);
-        if slot.sent {
-            if let Some(h) = handle {
-                h.send(AudioCommand::SetInstrumentSlot {
-                    channel,
-                    slot_id: slot.slot_id,
-                    processor: None,
-                });
+        let slot_id = rep.slot_id;
+        let removed: Vec<InstrumentSlot> = {
+            let mut kept = Vec::with_capacity(self.slots.len());
+            let mut removed = Vec::new();
+            for slot in std::mem::take(&mut self.slots) {
+                if slot.channel == channel && slot.slot_id == slot_id {
+                    removed.push(slot);
+                } else {
+                    kept.push(slot);
+                }
             }
-            if let Some(inst) = slot.instance {
-                self.pending_return.push((slot.slot_id, inst));
+            self.slots = kept;
+            removed
+        };
+        for slot in removed {
+            if slot.sent {
+                if let Some(h) = handle {
+                    h.send(AudioCommand::SetInstrumentSlot {
+                        target: match slot.lc {
+                            Some(id) => yinhe_audio::InsertTarget::TrackLc(id),
+                            None => yinhe_audio::InsertTarget::Midi(channel),
+                        },
+                        slot_id: slot.slot_id,
+                        processor: None,
+                    });
+                }
+                if let Some(inst) = slot.instance {
+                    self.pending_return.push((slot.slot_id, inst));
+                }
             }
         }
     }
@@ -331,7 +371,7 @@ impl InstrumentRack {
     /// - 参数重扫 → 实例内暂存，参数面板刷新时消费；
     /// - 延迟变化 → CLAP 在此重查共享值，然后通知引擎重算 PDC。
     pub fn poll_requests(&mut self, handle: &AudioHandle) {
-        let mut restarts: Vec<(u8, u64)> = Vec::new();
+        let mut restarts: Vec<(u8, Option<LogicalChannelId>, u64)> = Vec::new();
         let mut latency_changed = false;
         // GUI 改参先收集，循环后再写自身字段（避免与 slots 的借用冲突）。
         let mut param_changes: Vec<(u8, u64, u32, f64)> = Vec::new();
@@ -359,7 +399,7 @@ impl InstrumentRack {
                 latency_changed = true;
             }
             if requests.restart && rt.sent {
-                restarts.push((rt.channel, rt.slot_id));
+                restarts.push((rt.channel, rt.lc, rt.slot_id));
             }
         }
         for (uid, editing) in editing_now {
@@ -370,9 +410,12 @@ impl InstrumentRack {
             }
         }
         self.gui_param_changes.extend(param_changes);
-        for (channel, slot_id) in restarts {
+        for (channel, lc, slot_id) in restarts {
             handle.send(AudioCommand::SetInstrumentSlot {
-                channel,
+                target: match lc {
+                    Some(id) => yinhe_audio::InsertTarget::TrackLc(id),
+                    None => yinhe_audio::InsertTarget::Midi(channel),
+                },
                 slot_id,
                 processor: None,
             });
@@ -439,10 +482,17 @@ impl InstrumentRack {
     /// 保存前把实例状态写回持久化层（mixer.racks[channel].instruments[index].state）。
     /// 槽位顺序与持久化链顺序一致（都是挂载顺序）。
     pub fn sync_states_to(&mut self, mixer: &mut MixerParams) {
-        let mut counter: std::collections::HashMap<u8, usize> = std::collections::HashMap::new();
+        // 同一 slot_id 的多个每轨实例共享一份持久化 InsertRef：只写一次
+        // （取第一个可用实例的 state）。
+        let mut written: std::collections::HashSet<(u8, u64)> = std::collections::HashSet::new();
+        let mut next_index: std::collections::HashMap<u8, usize> = std::collections::HashMap::new();
         for slot in self.slots.iter_mut() {
-            let index = *counter.entry(slot.channel).or_insert(0);
-            *counter.get_mut(&slot.channel).unwrap() += 1;
+            let key = (slot.channel, slot.slot_id);
+            if !written.insert(key) {
+                continue;
+            }
+            let index = *next_index.entry(slot.channel).or_insert(0);
+            *next_index.get_mut(&slot.channel).unwrap() += 1;
             let Some(r) = mixer
                 .rack_instruments_mut(yinhe_types::RackId::from_midi_channel(slot.channel))
                 .and_then(|refs| refs.get_mut(index))
@@ -480,6 +530,7 @@ mod tests {
         let mut rack = InstrumentRack::default();
         rack.slots.push(InstrumentSlot {
             channel: 3,
+            lc: None,
             slot_id: 0,
             instance: None,
             sent: false,
@@ -502,12 +553,40 @@ mod tests {
         assert_eq!(mixer.racks[3].instruments[0].state, Some(vec![1, 2, 3]));
     }
 
+    /// 方案 C：同一 Rack 配置（slot_id）在两条 OwnLc 轨上各有一个实例，
+    /// UI 只按配置显示一条（`slot_count == 1`），`remove` 一次清掉全部实例。
+    #[test]
+    fn own_lc_instances_share_one_config_row() {
+        let mut rack = InstrumentRack::default();
+        for lc in [
+            yinhe_types::LogicalChannelId(4096),
+            yinhe_types::LogicalChannelId(4097),
+        ] {
+            rack.slots.push(InstrumentSlot {
+                channel: 0,
+                lc: Some(lc),
+                slot_id: 7,
+                instance: None,
+                sent: false,
+                activate_failed: false,
+                gui_open: false,
+                #[cfg(target_os = "macos")]
+                gui_window: None,
+            });
+        }
+        assert_eq!(rack.slot_count(0), 1, "同一配置只显示一条");
+        assert_eq!(rack.slots.len(), 2, "引擎侧仍有两个每轨实例");
+        rack.remove(0, 0, None);
+        assert!(rack.slots.is_empty(), "删除配置应清掉全部实例");
+    }
+
     #[test]
     fn remove_unsent_slot_drops_it() {
         // 手工塞一个未安装槽位，remove 直接 drop（无引擎命令）。
         let mut rack = InstrumentRack::default();
         rack.slots.push(InstrumentSlot {
             channel: 2,
+            lc: None,
             slot_id: 0,
             instance: None,
             sent: false,

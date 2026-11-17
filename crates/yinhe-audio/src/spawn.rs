@@ -197,16 +197,19 @@ pub enum AudioCommand {
         /// 每轨 LC 的发送表（按 `track_channels` 顺序）。
         track_sends: Box<Vec<Vec<SendParams>>>,
     },
-    /// 安装/替换/移除某**MIDI 通道**（0..256，与 `TrackData::global_channel()` 对齐）
-    /// 上的乐器插件实例（CLAP/VST3 等，抽象为 trait）。`Some(processor)` = 安装/替换；
-    /// `None` = 移除（回到默认 XSynth）。被替换/移除的旧处理器经乐器 return 通道
-    /// 送回 UI 线程 deactivate。
+    /// 安装/替换/移除某乐器宿主的插件实例（CLAP/VST3 等，抽象为 trait）。
+    ///
+    /// `target`：
+    /// - `Midi(ch)` = AP 共享链（同一 MIDI 通道的所有 AP 轨共享一条插件链）；
+    /// - `TrackLc(id)` = OwnLc 每轨实例（插件链落在该轨 home LC 的 dense）。
+    ///
+    /// `Some(processor)` = 安装/替换；`None` = 移除（空链后回到内置音源）。
+    /// 被替换/移除的旧处理器经乐器 return 通道送回 UI 线程 deactivate。
     SetInstrumentSlot {
-        channel: u8,
-        /// UI 侧分配的单槽位 id（同一通道内唯一）。
+        target: InsertTarget,
+        /// UI 侧分配的单槽位 id（同一宿主内唯一）。
         slot_id: u64,
-        /// `None` = 移除该槽位（空链后该通道回到内置 XSynth）。处理器较大
-        /// （含渲染缓冲），用 Box 避免枚举体积膨胀。
+        /// `None` = 移除该槽位。处理器较大（含渲染缓冲），用 Box 避免枚举体积膨胀。
         processor: Option<Box<dyn InstrumentProcessor>>,
     },
     /// 安装/替换已解码音频素材（uuid → PCM）。UI 后台线程解码后推送；
@@ -1843,7 +1846,7 @@ mod tests {
         );
         assert!(
             AudioCommand::SetInstrumentSlot {
-                channel: 0,
+                target: InsertTarget::Midi(0),
                 slot_id: 0,
                 processor: None,
             }
@@ -2016,7 +2019,7 @@ mod tests {
             ),
             (
                 AudioCommand::SetInstrumentSlot {
-                    channel: 0,
+                    target: InsertTarget::Midi(0),
                     slot_id: 0,
                     processor: None,
                 },

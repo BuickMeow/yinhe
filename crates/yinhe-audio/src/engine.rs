@@ -565,10 +565,10 @@ impl AudioEngine {
                 self.sync_sends_config(*sends, *audio_sends, *track_sends);
             }
             AudioCommand::SetInstrumentSlot {
-                channel,
+                target,
                 slot_id,
                 processor,
-            } => self.set_instrument_slot(channel, slot_id, processor),
+            } => self.set_instrument_slot(target, slot_id, processor),
             AudioCommand::SetAudioSource { uuid, decoded } => {
                 self.audio_sources.insert(uuid, decoded);
             }

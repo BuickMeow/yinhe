@@ -503,11 +503,21 @@ impl AudioEngine {
     /// 送回 UI 线程 deactivate——渲染线程不能 deactivate 插件。
     pub(crate) fn set_instrument_slot(
         &mut self,
-        channel: u8,
+        target: InsertTarget,
         slot_id: u64,
         processor: Option<Box<dyn InstrumentProcessor>>,
     ) {
-        let dense = self.channel_layout.dense_for(channel as usize);
+        // 方案 C：AP 共享链落在 MIDI 源 dense；OwnLc 每轨实例落在该轨
+        // home LC 的 dense。`instruments` 数组按 dense 索引，两者共用同一空间。
+        let dense = match target {
+            InsertTarget::Midi(ch) => self.channel_layout.dense_for(ch as usize),
+            InsertTarget::TrackLc(id) => self
+                .channel_layout
+                .track_lc_dense_for(id)
+                .map(|(_, dense)| dense)
+                .unwrap_or(u32::MAX),
+            InsertTarget::Audio(_) | InsertTarget::Master => u32::MAX,
+        };
         let Some(dense) = (dense != u32::MAX).then_some(dense as usize) else {
             if let Some(p) = processor {
                 self.instrument_returns.push((slot_id, p));

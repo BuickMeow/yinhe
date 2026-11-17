@@ -460,23 +460,56 @@ impl App {
         }
     }
 
+    /// 某 MIDI 通道的乐器宿主列表（方案 C）：
+    ///
+    /// - 通道上存在 AP 轨（或没有 MIDI 轨）→ 一条共享链（`None`）；
+    /// - 全部是 OwnLc 轨 → 每条轨一个实例（`Some(lc)`），各自写 home LC。
+    fn instrument_hosts(
+        doc: &yinhe_editor_core::document::Document,
+        channel: u8,
+    ) -> Vec<Option<yinhe_types::LogicalChannelId>> {
+        use yinhe_core::{TrackAudioTarget, TrackKind};
+        let mut own: Vec<yinhe_types::LogicalChannelId> = Vec::new();
+        let mut has_ap = false;
+        for t in doc.data.model.tracks.iter() {
+            if t.kind != TrackKind::Midi || t.global_channel() != channel {
+                continue;
+            }
+            match t.effective_audio_target() {
+                Some(TrackAudioTarget::OwnLc { lc, .. }) => own.push(lc),
+                Some(TrackAudioTarget::Ap { .. }) => has_ap = true,
+                Some(TrackAudioTarget::DirectMaster { .. }) | None => {}
+            }
+        }
+        if has_ap || own.is_empty() {
+            vec![None]
+        } else {
+            own.into_iter().map(Some).collect()
+        }
+    }
+
     /// 工程加载后：按 MixerParams.instruments 重建乐器机架。
     /// 与 restore_mixer_rack 同理——只加载不激活，引擎重建后由
     /// push_mixer_state_to_engine → ensure_all_sent 统一激活补发。
     pub(crate) fn restore_instrument_rack(&mut self, idx: usize) {
         let mixer = self.workspace.documents[idx].mixer.clone();
         let mut rack = InstrumentRack::default();
+        let doc = &self.workspace.documents[idx];
         for (ch, rack_params) in mixer.racks.iter().enumerate() {
+            let hosts = Self::instrument_hosts(doc, ch as u8);
             for r in &rack_params.instruments {
-                let _ = rack.add(
-                    ch as u8,
-                    r.uid,
-                    r.format,
-                    &r.plugin_path,
-                    &r.plugin_id,
-                    &r.name,
-                    r.state.as_deref(),
-                );
+                for lc in &hosts {
+                    let _ = rack.add(
+                        ch as u8,
+                        *lc,
+                        r.uid,
+                        r.format,
+                        &r.plugin_path,
+                        &r.plugin_id,
+                        &r.name,
+                        r.state.as_deref(),
+                    );
+                }
             }
         }
         if idx >= self.instrument_racks.len() {
@@ -1079,17 +1112,21 @@ pub(crate) fn assign_instrument_plugin(
             });
     }
     if idx < app.instrument_racks.len() {
+        let hosts = App::instrument_hosts(&app.workspace.documents[idx], channel);
         let rack = &mut app.instrument_racks[idx];
-        if let Err(e) = rack.add(
-            channel,
-            uid,
-            plugin.format,
-            &plugin.path,
-            &plugin.id,
-            &plugin.name,
-            None,
-        ) {
-            rack.last_error = Some(e.0);
+        for lc in &hosts {
+            if let Err(e) = rack.add(
+                channel,
+                *lc,
+                uid,
+                plugin.format,
+                &plugin.path,
+                &plugin.id,
+                &plugin.name,
+                None,
+            ) {
+                rack.last_error = Some(e.0);
+            }
         }
     }
     app.workspace.documents[idx].data.bump_revision();
