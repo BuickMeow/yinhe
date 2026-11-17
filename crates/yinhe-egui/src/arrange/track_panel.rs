@@ -549,16 +549,12 @@ pub(crate) fn show(
                         .unwrap_or_else(|| "Audio--".to_string()),
                     // MIDI 轨：OwnLc 显示 LCxx（音频目标），AP 显示端口+通道，
                     // DirectMaster 显示 `---`。改完音频目标后 AR 立即反映。
-                    Some(t) => match t.effective_audio_target() {
-                        Some(yinhe_core::TrackAudioTarget::OwnLc { lc, .. }) => lc_labels
-                            .get(&lc)
-                            .cloned()
-                            .unwrap_or_else(|| "LC".to_string()),
-                        Some(yinhe_core::TrackAudioTarget::DirectMaster { .. }) => {
-                            "---".to_string()
-                        }
-                        _ => crate::mix::midi_label(ti.port, ti.channel),
-                    },
+                    Some(t) => crate::mix::track_target_label(
+                        t.effective_audio_target(),
+                        ti.port,
+                        ti.channel,
+                        lc_labels,
+                    ),
                     None => crate::mix::midi_label(ti.port, ti.channel),
                 }
             };

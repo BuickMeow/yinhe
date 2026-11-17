@@ -12,6 +12,7 @@
 #[cfg(target_os = "macos")]
 pub(crate) mod gui_window;
 pub(crate) mod instrument_rack;
+pub(crate) mod labels;
 pub(crate) mod param_panel;
 pub(crate) mod plugin_instance;
 pub(crate) mod rack;
@@ -32,48 +33,13 @@ use crate::app::App;
 use crate::widgets::meter::{db_to_gain, gain_to_db};
 
 pub(crate) use instrument_rack::InstrumentRack;
+pub(crate) use labels::{
+    audio_label, channel_id_label, channel_label, channel_title, lc_label, midi_label,
+    track_target_label,
+};
 pub(crate) use param_panel::ParamPanel;
 pub(crate) use rack::MixerRack;
 pub(crate) use strip::picker_viewport_id;
-
-/// 源通道总数（16 port × 16 通道）。
-const SOURCE_CHANNELS: usize = yinhe_mixer::CHANNEL_COUNT;
-
-/// MIDI 端口 + 通道 → 显示标签（port 0/channel 0 → "A01"，port 15/channel 15 → "P16"）。
-pub(crate) fn midi_label(port: u8, channel: u8) -> String {
-    format!("{}{:02}", (b'A' + port.min(15)) as char, channel % 16 + 1)
-}
-
-/// 源通道号 → 显示标签（0 → "A01"，255 → "P16"）。
-pub(crate) fn channel_label(ch: u8) -> String {
-    midi_label(ch / 16, ch % 16)
-}
-
-/// AP 通道显示标签：按它对应的 MIDI 端口 + 通道显示。
-///
-/// AP 本质就是一个 MIDI 源通道（A01..P16），显示成 `A01` 才能和导入导出、
-/// 外部设备、MIDI 事件的通道号对上。不要用无意义的 `APxx` 序号。
-pub(crate) fn ap_label(global: u8) -> String {
-    channel_label(global)
-}
-
-/// 混音通道标题：AP 与独立 MIDI 通道都显示端口 + 通道（A01）。
-pub(crate) fn channel_title(mixer: &yinhe_mixer::MixerParams, ch: u8) -> String {
-    if mixer.ap_for_midi(ch).is_some() {
-        ap_label(ch)
-    } else {
-        channel_label(ch)
-    }
-}
-
-/// 音频通道号 → 显示标签（0 → "Audio-01"）。
-pub(crate) fn audio_label(ch: u16) -> String {
-    format!("Audio-{:02}", u32::from(ch) + 1)
-}
-
-pub(crate) fn lc_label(display: u32) -> String {
-    format!("LC{display:02}")
-}
 
 /// UI 的 MixerChannelId → C 的 ChannelId。
 pub(crate) fn channel_id_for_ui(
@@ -88,20 +54,8 @@ pub(crate) fn channel_id_for_ui(
     Some(mixer.channel_id_for(channel))
 }
 
-/// C 的 ChannelId → 聚焦发送标签。
-pub(crate) fn channel_id_label(
-    id: ChannelId,
-    display: &std::collections::HashMap<ChannelId, u32>,
-) -> String {
-    match id {
-        ChannelId::Lc(_) => display
-            .get(&id)
-            .map(|n| lc_label(*n))
-            .unwrap_or_else(|| "LC".to_string()),
-        ChannelId::Ap(ap) => ap_label(ap.group.0 as u8),
-        ChannelId::Master => t!("mix.master").to_string(),
-    }
-}
+/// 源通道总数（16 port × 16 通道）。
+const SOURCE_CHANNELS: usize = yinhe_mixer::CHANNEL_COUNT;
 
 /// 电平表回落速度（dB / 秒）：行业惯用约 20 dB/s（PPM 弹道：瞬时起、匀速落）。
 const METER_DB_PER_SEC: f32 = 20.0;
@@ -1237,9 +1191,9 @@ mod tests {
         assert!(mixer.ensure_ap(9));
         // AP 也按端口 + 通道显示，不再用 APxx 序号。
         assert_eq!(channel_title(&mixer, 9), "A10");
-        assert_eq!(ap_label(0), "A01");
-        assert_eq!(ap_label(9), "A10");
-        assert_eq!(ap_label(16), "B01");
+        assert_eq!(crate::mix::labels::ap_label(0), "A01");
+        assert_eq!(crate::mix::labels::ap_label(9), "A10");
+        assert_eq!(crate::mix::labels::ap_label(16), "B01");
     }
 
     /// 迁移只移除内置效果器 insert（channel/master），插件保留；
