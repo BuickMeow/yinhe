@@ -4,7 +4,8 @@
 //! 内置音源可以切到 `PerTrack`：每条 MIDI Track 分配一个稳定 LC，
 //! 引擎按轨拆分音频后分别进入各自的 LC。
 //!
-//! 外部单输出插件（Rack 里有 `instruments`）不支持按轨拆分；
+//! 外部插件同样可以按轨拆分：每个 OwnLc Track 一个插件实例，
+//! 输出写各自 home LC（方案 C 决策 #12）。
 
 use std::sync::Arc;
 
@@ -25,16 +26,13 @@ impl Document {
 
     /// 切换 Rack 输出模式，并按模式分配/清理每轨 LC。
     ///
-    /// 返回是否有变化。`PerTrack` 只允许内置音源（Rack 无插件乐器）；
-    /// 外部单输出插件无法按轨拆分，直接拒绝。
+    /// 返回是否有变化。外部插件与内置音源都支持 `PerTrack`：
+    /// 前者每轨一个实例、后者按轨拆音频。
     pub fn set_rack_output_mode(&mut self, channel: u8, mode: RackOutputMode) -> bool {
         let Some(rack) = self.mixer.racks.get(channel as usize) else {
             return false;
         };
         if rack.output_mode == mode {
-            return false;
-        }
-        if mode == RackOutputMode::PerTrack && !rack.instruments.is_empty() {
             return false;
         }
         self.mixer.racks[channel as usize].output_mode = mode;
@@ -175,7 +173,7 @@ impl Document {
         true
     }
 
-    /// 把 MIDI 轨解链回自己的 LC。外部单输出插件 Rack 不能按轨拆分，返回 false。
+    /// 把 MIDI 轨解链回自己的 LC。外部插件由每轨实例承接，不复制乐器自动化。
     pub fn link_track_to_own_lc(&mut self, track_idx: usize) -> bool {
         let Some(track) = self.data.model.tracks.get(track_idx) else {
             return false;
@@ -184,10 +182,7 @@ impl Document {
             return false;
         }
         let channel = track.global_channel();
-        let Some(rack) = self.mixer.racks.get(channel as usize) else {
-            return false;
-        };
-        if !rack.instruments.is_empty() {
+        if self.mixer.racks.get(channel as usize).is_none() {
             return false;
         }
         let source = self
@@ -224,7 +219,7 @@ impl Document {
     /// LC（内置音源按轨拆分音频）。
     ///
     /// 已有轨的通道不自动拆分：保持原 AP/共享关系，新轨加入该通道。
-    /// 外部插件 Rack 暂不支持自动 OwnLc（单输出插件无法按轨拆音频）。
+    /// 外部插件 Rack 同样支持自动 OwnLc（每轨一个实例）。
     pub fn default_own_lc_for_new_midi_tracks(&mut self, first_new: usize) {
         let model = &self.data.model;
         let mut own_channels = std::collections::BTreeSet::new();
@@ -240,14 +235,9 @@ impl Document {
                 .collect();
             let older_own = older.iter().any(|t| t.lc.is_some());
             let older_any = !older.is_empty();
-            let rack_has_plugins = self
-                .mixer
-                .racks
-                .get(channel as usize)
-                .is_some_and(|rack| !rack.instruments.is_empty());
             // 空通道：默认 OwnLc；已有 OwnLc 的通道：新轨继续 OwnLc；
-            // 已有 AP / 外部插件 Rack：加入共享。
-            if !rack_has_plugins && (!older_any || older_own) {
+            // 已有 AP 轨的通道：加入共享。
+            if !older_any || older_own {
                 own_channels.insert(channel);
             }
         }
@@ -391,16 +381,17 @@ mod tests {
         assert!(doc.mixer.track_node(lc).is_none());
     }
 
+    /// 方案 C：外部插件同样支持 PerTrack（每轨一个实例，各写 home LC）。
     #[test]
-    fn plugin_rack_rejects_per_track_mode() {
+    fn plugin_rack_supports_per_track_mode() {
         let mut doc = Document::empty();
         assert!(doc.set_rack_output_mode(0, RackOutputMode::Shared));
         doc.mixer.racks[0]
             .instruments
             .push(yinhe_mixer::InsertRef::default());
-        assert!(!doc.set_rack_output_mode(0, RackOutputMode::PerTrack));
-        assert_eq!(doc.rack_output_mode(0), RackOutputMode::Shared);
-        assert!(doc.data.model.tracks[1].lc.is_none());
+        assert!(doc.set_rack_output_mode(0, RackOutputMode::PerTrack));
+        assert_eq!(doc.rack_output_mode(0), RackOutputMode::PerTrack);
+        assert!(doc.data.model.tracks[1].lc.is_some());
     }
 
     #[test]

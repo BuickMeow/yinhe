@@ -469,23 +469,31 @@ impl App {
         channel: u8,
     ) -> Vec<Option<yinhe_types::LogicalChannelId>> {
         use yinhe_core::{TrackAudioTarget, TrackKind};
-        let mut own: Vec<yinhe_types::LogicalChannelId> = Vec::new();
-        let mut has_ap = false;
+        let mut hosts: Vec<Option<yinhe_types::LogicalChannelId>> = Vec::new();
         for t in doc.data.model.tracks.iter() {
             if t.kind != TrackKind::Midi || t.global_channel() != channel {
                 continue;
             }
             match t.effective_audio_target() {
-                Some(TrackAudioTarget::OwnLc { lc, .. }) => own.push(lc),
-                Some(TrackAudioTarget::Ap { .. }) => has_ap = true,
+                // OwnLc 轨各自一个实例。
+                Some(TrackAudioTarget::OwnLc { lc, .. }) => {
+                    if !hosts.contains(&Some(lc)) {
+                        hosts.push(Some(lc));
+                    }
+                }
+                // AP 轨共享一条链（同通道多条 AP 轨只加一次）。
+                Some(TrackAudioTarget::Ap { .. }) => {
+                    if !hosts.contains(&None) {
+                        hosts.push(None);
+                    }
+                }
                 Some(TrackAudioTarget::DirectMaster { .. }) | None => {}
             }
         }
-        if has_ap || own.is_empty() {
-            vec![None]
-        } else {
-            own.into_iter().map(Some).collect()
+        if hosts.is_empty() {
+            hosts.push(None);
         }
+        hosts
     }
 
     /// 工程加载后：按 MixerParams.instruments 重建乐器机架。
