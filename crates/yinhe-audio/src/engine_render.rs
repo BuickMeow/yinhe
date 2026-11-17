@@ -30,8 +30,10 @@ impl AudioEngine {
         }
         for (dense, slot) in self.instruments.iter().enumerate() {
             if let Some(slot) = slot {
-                if dense < n {
-                    active[dense] = true;
+                // OwnLc 单轨的插件输出落在 home LC，标记该 dense 为活跃。
+                let out = self.channel_layout.instrument_output_dense(dense) as usize;
+                if out < n {
+                    active[out] = true;
                 }
                 for &out in &slot.output_dense {
                     if out != u32::MAX as usize && out < n {
@@ -58,16 +60,12 @@ impl AudioEngine {
                 continue;
             }
             let dense = match node.id {
-                yinhe_types::ChannelId::Lc(id)
-                    if id.0 < yinhe_types::MIDI_CHANNEL_COUNT as u32 =>
-                {
+                yinhe_types::ChannelId::Lc(id) if id.0 < yinhe_types::MIDI_CHANNEL_COUNT as u32 => {
                     self.channel_layout.dense_for(id.0 as usize)
                 }
-                yinhe_types::ChannelId::Lc(id) if id.0 < yinhe_types::TRACK_LC_BASE => {
-                    self.channel_layout.audio_dense_for(
-                        (id.0 - yinhe_types::MIDI_CHANNEL_COUNT as u32) as u16,
-                    )
-                }
+                yinhe_types::ChannelId::Lc(id) if id.0 < yinhe_types::TRACK_LC_BASE => self
+                    .channel_layout
+                    .audio_dense_for((id.0 - yinhe_types::MIDI_CHANNEL_COUNT as u32) as u16),
                 yinhe_types::ChannelId::Lc(id) => self
                     .channel_layout
                     .track_lc_dense_for(id)

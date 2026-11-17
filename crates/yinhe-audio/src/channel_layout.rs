@@ -51,6 +51,12 @@ pub struct ChannelLayout {
     track_lc_channels: Vec<(u16, LogicalChannelId)>,
     /// Track 索引 → 每轨 LC 的 dense 索引（`u32::MAX` = 没有独立 LC）。
     track_lc_dense: Vec<u32>,
+    /// 乐器输出 dense：索引 = MIDI 源 dense，值 = 该通道乐器的实际输出 dense。
+    ///
+    /// 方案 C：某 MIDI 通道只有一条轨且该轨 OwnLc 时，外部插件音频输出到该轨的
+    /// home LC（用自己独立的推子/insert/send/freeze）；其余情况（共享/AP/多轨）
+    /// 输出到 MIDI 源通道 dense 本身。长度 = `midi_compacted`。
+    instrument_outputs: Vec<u32>,
     /// MIDI 通道的激活数（= xsynth `ChannelGroup` 的通道数）。
     midi_compacted: u32,
     /// 总激活通道数 = midi + audio + track LC + 可选 DirectMaster。
@@ -114,14 +120,41 @@ impl ChannelLayout {
         let active_mask: Vec<bool> = ch_active[..num_channels as usize].to_vec();
         let ap_mask: Vec<bool> = ap_active[..num_channels as usize].to_vec();
 
-        Self::from_mask_full(
+        let mut layout = Self::from_mask_full(
             active_mask,
             ap_mask,
             audio_channels,
             track_lc_channels,
             model.tracks.len(),
             direct_master,
-        )
+        );
+
+        // 某 MIDI 通道只有一条轨且 OwnLc：插件输出改到该轨 home LC。
+        // 统计每个通道的 MIDI 轨数量，只有恰好一条且带 lc 时才重定向。
+        let mut ch_track_count = [0u16; 256];
+        let mut ch_owner = [u16::MAX; 256];
+        for (i, track) in model.tracks.iter().enumerate() {
+            if let Some(ch) = track.midi_target_channel() {
+                let ch = ch as usize;
+                ch_track_count[ch] += 1;
+                ch_owner[ch] = i as u16;
+            }
+        }
+        for (ch, count) in ch_track_count.iter().enumerate() {
+            if *count != 1 {
+                continue;
+            }
+            let track = ch_owner[ch] as usize;
+            let lc = layout.track_lc_dense(track);
+            if lc == u32::MAX {
+                continue;
+            }
+            let src_dense = layout.dense_for(ch);
+            if src_dense != u32::MAX {
+                layout.instrument_outputs[src_dense as usize] = lc;
+            }
+        }
+        layout
     }
 
     /// 从 `active_mask` 构建压缩后的 `channel_map`（无音频通道）。
@@ -161,6 +194,8 @@ impl ChannelLayout {
                 *slot = track_lc_base + i as u32;
             }
         }
+        // 默认乐器输出 = 自身 dense（从 0 开始连续的 MIDI 源 dense）。
+        let instrument_outputs = (0..midi_compacted).collect();
         let num_channels = active_mask.len() as u32;
         Self {
             active_mask,
@@ -170,6 +205,7 @@ impl ChannelLayout {
             audio_channels,
             track_lc_channels,
             track_lc_dense,
+            instrument_outputs,
             midi_compacted,
             compacted_channels,
             direct_master,
@@ -210,6 +246,17 @@ impl ChannelLayout {
 
     pub fn direct_master_dense(&self) -> Option<u32> {
         self.direct_master_dense
+    }
+
+    /// MIDI 源 dense 上挂载乐器的实际输出 dense。
+    /// OwnLc 单轨返回该轨 home LC 的 dense，否则返回源 dense 自身。
+    /// 非 MIDI 源 dense 或越界一律返回自身（恒等）。
+    #[inline]
+    pub fn instrument_output_dense(&self, source_dense: usize) -> u32 {
+        self.instrument_outputs
+            .get(source_dense)
+            .copied()
+            .unwrap_or(source_dense as u32)
     }
 
     /// Track 的每轨 LC dense 索引；`u32::MAX` = 没有独立 LC。
@@ -897,6 +944,52 @@ mod matches_model_tests {
         assert_eq!(dense as usize, layout.compacted_channels() as usize - 1);
         assert_eq!(layout.track_lc_dense(1), u32::MAX);
         assert!(!layout.is_ap_active(0));
+    }
+
+    #[test]
+    fn own_lc_track_routes_instrument_output_to_home_lc() {
+        let mut model = YinModel::new_empty_with_16_tracks();
+        model.tracks.truncate(2);
+        let lc = yinhe_types::LogicalChannelId(yinhe_types::TRACK_LC_BASE);
+        {
+            let t = Arc::make_mut(&mut model.tracks[1]);
+            t.lc = Some(lc);
+            t.set_audio_target(yinhe_core::TrackAudioTarget::OwnLc {
+                lc,
+                rack: Some(yinhe_types::RackId::new(0)),
+            });
+        }
+        model.rebuild();
+        let layout = ChannelLayout::from_model(&model);
+        let src = layout.dense_for(0) as usize;
+        let home = layout.track_lc_dense(1) as usize;
+        assert_ne!(home, u32::MAX as usize);
+        assert_eq!(
+            layout.instrument_output_dense(src) as usize,
+            home,
+            "OwnLc 单轨的插件输出应落在 home LC"
+        );
+    }
+
+    #[test]
+    fn shared_midi_channel_instrument_output_stays_on_channel() {
+        let mut model = YinModel::new_empty_with_16_tracks();
+        model.tracks.truncate(3);
+        // 两条轨同通道、都无 lc（AP 共享）
+        {
+            let channel = model.tracks[1].channel;
+            let t = Arc::make_mut(&mut model.tracks[2]);
+            t.channel = channel;
+            t.lc = None;
+        }
+        model.rebuild();
+        let layout = ChannelLayout::from_model(&model);
+        let src = layout.dense_for(0) as usize;
+        assert_eq!(
+            layout.instrument_output_dense(src) as usize,
+            src,
+            "共享通道的插件输出仍在通道 dense 本身"
+        );
     }
 
     /// 新增或删除通道都必须判为“不完全匹配”（触发引擎重建/资源回收）。

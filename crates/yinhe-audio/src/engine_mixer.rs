@@ -2,8 +2,8 @@
 //! insert 命令处理与处理器回收。
 
 use yinhe_mixer::{
-    ChannelOutput, ChannelSendTarget, InsertProcessor, InstrumentProcessor, MasterParams, MixerParams,
-    ResolvedChannelSend, ResolvedSend, SendParams, StripParams,
+    ChannelOutput, ChannelSendTarget, InsertProcessor, InstrumentProcessor, MasterParams,
+    MixerParams, ResolvedChannelSend, ResolvedSend, SendParams, StripParams,
 };
 use yinhe_types::{BusId, MixerChannelId};
 
@@ -442,7 +442,11 @@ impl AudioEngine {
             let Some(node) = self.mixer_params.node_mut(channel.node_id()) else {
                 continue;
             };
-            if let Some(send) = node.sends.iter_mut().find(|s| s.target == yinhe_types::ChannelId::Bus(bus)) {
+            if let Some(send) = node
+                .sends
+                .iter_mut()
+                .find(|s| s.target == yinhe_types::ChannelId::Bus(bus))
+            {
                 send.amount = amount;
             }
             let sends: Vec<SendParams> = node
@@ -743,6 +747,7 @@ impl AudioEngine {
     }
 
     /// 重算某 dense 通道的乐器延迟（链内取最大值）并写入混音图。
+    /// OwnLc 单轨的插件输出在 home LC，延迟也写到那条通道以正确 PDC。
     fn refresh_channel_latency(&mut self, dense: usize) {
         let latency = self.instruments[dense]
             .as_ref()
@@ -754,7 +759,11 @@ impl AudioEngine {
                     .unwrap_or(0)
             })
             .unwrap_or(0);
+        let out_dense = self.channel_layout.instrument_output_dense(dense) as usize;
         self.mixer.set_channel_latency(dense, latency);
+        if out_dense != dense {
+            self.mixer.set_channel_latency(out_dense, latency);
+        }
     }
 
     /// 取出待回收的乐器处理器（renderer 每轮命令处理后调用，送回 UI 线程）。

@@ -220,7 +220,10 @@ impl AudioEngine {
                 }
                 continue;
             }
-            if let Some(cb) = self.mixer.channel_buffers_mut(dense) {
+            // 方案 C：OwnLc 单轨的外部插件音频输出到该轨 home LC，
+            // 让它走该轨自己的推子/insert/send/freeze，而不是共享的 MIDI 源条。
+            let out_dense = self.channel_layout.instrument_output_dense(dense) as usize;
+            if let Some(cb) = self.mixer.channel_buffers_mut(out_dense) {
                 let f = frames
                     .min(cb.left.len().saturating_sub(offset_frames))
                     .min(cb.right.len().saturating_sub(offset_frames));
