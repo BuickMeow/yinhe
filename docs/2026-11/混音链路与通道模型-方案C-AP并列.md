@@ -784,7 +784,7 @@ Freeze 和 insert 的关系：
 
 - freeze 捕获的是 **pre-LC 源**，insert 仍实时处理；
 - 所以冻结后仍可调 insert；
-- Bus 通道没有自己的源，insert 处理的是汇入音频，因此 Bus 不做单通道
+- 纯汇入 LC（没有自己的源）insert 处理的是汇入音频，因此不做单通道
   freeze。
 
 ### 5.11 SEND 的延迟与 PDC（Plugin Delay Compensation）
@@ -803,7 +803,7 @@ SEND 是音频路径，会涉及延迟，但要分成三类：
 - 通道图应当按发送关系做拓扑排序；DAG 内前向发送同块完成；
 - 只有真正的环才用一块延迟，不能因为“目标索引小”就随便延迟；
 - PDC 需要从“只对齐通道到 Master”升级为“在任意汇入点对齐”；
-  至少源通道的乐器/insert 延迟要参与，Bus/AP 通道的 insert 延迟也要参与；
+  至少源通道的乐器/insert 延迟要参与，AP/LC 通道的 insert 延迟也要参与；
 - 如果 MVP 暂不做任意发送图的完整 PDC，必须明确写出“复杂并行发送可能
   有相位差”，不能假装没有延迟；
 - Sidechain 发送不进入可听路径，但它的时间对齐同样重要。
@@ -818,8 +818,8 @@ PDC 会做，但不放在 C 的第一步。顺序是：
 1. **路由正确**：统一 Channel 图、拓扑排序、`-inf` OFF、发送求和正确。
    这一步结束时功能可用，但并行路径可能有相位差。
 2. **PDC 对齐**：按图计算每个求和点的输入延迟，短路径补延迟线。
-   覆盖乐器 + insert，包含 Bus/AP 通道的 insert。
-3. **对外表现**：UI 显示延迟总量、导出补偿总线/limiter 延迟。
+   覆盖乐器 + insert，包含 AP/LC 通道的 insert。
+3. **对外表现**：UI 显示延迟总量、导出补偿 Master limiter 延迟。
 
 先把 PDC 做在路由前面会反复重写：延迟对齐依赖稳定的通道图和拓扑顺序。
 
@@ -831,17 +831,15 @@ path_latency(src -> node) = 路径上所有 node_latency 之和
 每个求和点：把所有输入延迟到 max(输入 path_latency)，再相加
 ```
 
-当前目标 B 的现状：
+方案 C 已落地的现状：
 
-- `refresh_pdc` 只按“通道 → Master”对齐：取所有通道
-  `base_latency + 通道 insert` 的最大值，给每条通道补延迟线；
-- Bus insert 的延迟没有进入路径长度，所以“直连 Master”和“经 Bus”的
-  并行路径还没有对齐；
-- Bus 发送按索引顺序处理，逆序/自环用上一块快照；这是打断反馈的块延迟，
+- `refresh_pdc` 已按「每个求和点分别对齐」实现：通道 send / 主输出图
+  收集前向边，逐轮松弛求每个节点的最长输入路径，再给自身源与每条边
+  补延迟线；
+- 没有 Bus 渲染链：发送目标就是另一条 LC/AP dense 通道或 Master，
+  不再有独立的 `process_buses`；
+- 逆序/自环发送用上一块快照（一块延迟），这是打断反馈的块延迟，
   不属于 PDC，也不能被 PDC 补偿。
-
-C 的统一图会把这个特例推广成“每个求和点分别对齐”，`refresh_pdc`、
-`set_channel_latency`、`process_buses` 都要跟着改。
 
 性能边界：
 
