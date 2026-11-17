@@ -21,9 +21,10 @@
    C v10 迁移时重新分配，不能保留原数值。
 2. **取消独立 Bus 类型**。所有 LC/AP 通道都可以接收其他通道的发送，
    “Bus”只是一种使用角色，不是第二种通道。Master 仍是唯一终点的特殊通道。
-3. **默认通道输出就是 Master**。“直通 Master”不是一种特殊音轨类型；
-   任何通道把 `output` 设为 Master 即可。若需要防止误路由，加 `routing_lock`
-   标记，而不是新建“直通轨”。
+3. **直通 Master 是 Track 的第三种音频目标 `DirectMaster`（UI 显示 `---`）**。
+   它不创建 LC/AP 通道，音符/音频直接进 Master；它不是一种通道类型，也不是
+   “普通 LC 把 output 设成 Master”。普通通道默认 output 仍是 Master，但两者
+   语义不同：普通通道有自己的 LC strip，`DirectMaster` 没有。
 4. **freeze 按音频通道分配**：普通 Track 的 LC、AP 的 AP 通道。
    FL Studio 的 freeze 也是按 Mixer Track（音频通道）冻结，不是按 Playlist
    Track/Pattern；这恰好支持“按通道冻结”，但普通 Track 与 LC 是 1:1，
@@ -48,6 +49,12 @@
 下文为了描述当前代码，仍会提到 v14；涉及迁移/版本号时以本节为准。
 “v14 → v15”应理解为“旧开发格式 → C 的 v10”。
 
+6. **UI 命名**：普通 LC 显示为 `CH01`、`CH02`…，不显示内部 `LogicalChannelId`；
+   AP 通道显示为 `AP01`、`AP10`…；`DirectMaster` 显示为 `--- (Master)`。
+   通道条只显示身份，不写“几条轨共享”之类说明文字。
+7. **ARRANGE 与 MIX 的 AR 不再互斥**：两者可以同时显示，分别服务轨道视图和
+   通道视图；选择/自动化状态同步。
+
 ## 1. 术语
 
 | 术语 | 含义 |
@@ -63,10 +70,10 @@
 AP 不是“父通道”，LC 不是“子通道”。它们是 Track 音频源的两种并列选择：
 
 ```text
-Track 1 ──> LC 100（默认，独立）
-Track 2 ──> LC 101（默认，独立）
-Track 3 ──> AP A01 通道 200（共享）
-Track 4 ──> AP A01 通道 200
+Track 1 ──> CH01（默认，独立）
+Track 2 ──> CH02（默认，独立）
+Track 3 ──> AP01（共享）
+Track 4 ──> AP01
 ```
 
 关键区分：
@@ -149,10 +156,10 @@ Track 3 ─┘
 **方案 C：**
 
 ```text
-Track 1 ──> LC Rack + LC 100（默认）
-Track 2 ──> LC Rack + LC 101（默认）
-Track 3 ──> AP A01 通道 200（共享 Rack）
-Track 4 ──> AP A01 通道 200
+Track 1 ──> LC Rack + CH01（默认）
+Track 2 ──> LC Rack + CH02（默认）
+Track 3 ──> AP01（共享 Rack）
+Track 4 ──> AP01
 ```
 
 - 默认每条 Track 有自己的 LC（外部插件时也有自己的 LC Rack）；
@@ -247,6 +254,9 @@ enum TrackAudioTarget {
     /// 手动链接到 AP 编组：MIDI 进共享 Rack，音频走 AP 的唯一通道。
     /// 后期多输出时再增加 output 字段。
     Ap { ap: ApGroupId },
+    /// FL Studio 的 `---`：不经过任何 LC/AP 通道，直接进 Master。
+    /// UI 显示为 `--- (Master)`。
+    DirectMaster { rack: RackId },
 }
 ```
 
@@ -256,7 +266,10 @@ enum TrackAudioTarget {
 - `Ap` 不拥有私有 LC；它的音频路径就是 AP 编组的 AP 通道。
 - 从 AP 解链回 `OwnLc` 时保留原来的 LC/LC Rack 状态，
   避免解链后所有设置丢失。
-- 音频轨（Audio Track）通常只用 `OwnLc`，不参与 AP 编组。
+- `DirectMaster` 仍可拥有 LC Rack/乐器，但没有 LC 通道条：没有 LC 的
+  gain/pan/insert/send/freeze；只有源级音量/声像和轨道 M/S。
+- 音频轨（Audio Track）通常只用 `OwnLc`，不参与 AP 编组；也可以选择
+  `DirectMaster` 绕过通道直接进 Master。
 
 ### 4.2 通道身份
 
@@ -407,10 +420,10 @@ struct SendParams {
 方案 C 的核心是“每条 Track 默认有自己的 LC/LC Rack”，所以最简单的做法是：
 
 ```text
-LC 1 -> LC Rack：插件实例 #1
-LC 2 -> LC Rack：插件实例 #2
-LC 3 -> LC Rack：插件实例 #3
-LC 4 -> LC Rack：插件实例 #4
+CH01 -> LC Rack：插件实例 #1
+CH02 -> LC Rack：插件实例 #2
+CH03 -> LC Rack：插件实例 #3
+CH04 -> LC Rack：插件实例 #4
 ```
 
 每条 LC 自己挂一个插件实例，各自收自己的 MIDI/音符，各自推子/insert/freeze。
@@ -437,10 +450,10 @@ LC 4 -> LC Rack：插件实例 #4
 
 ```text
 插件实例
-├─ Out 1 (L/R) -> LC 1
-├─ Out 2 (L/R) -> LC 2
-├─ Out 3 (L/R) -> LC 3
-└─ Out 4 (L/R) -> LC 4
+├─ Out 1 (L/R) -> CH01
+├─ Out 2 (L/R) -> CH02
+├─ Out 3 (L/R) -> CH03
+└─ Out 4 (L/R) -> CH04
 ```
 
 插件内部把 kick/snare/hat 分别送到不同输出；宿主可以把每个输出接到不同
@@ -562,6 +575,31 @@ struct MixerNode {
 这会让方案 C 更接近 FL Studio 的“所有 Mixer Track 都能当 Bus”，但保留了
 我们自己的 Track/LC 强绑定：Track 始终显式指向 LC 或 AP 通道，不存在
 FL 那种 Playlist Track 与 Mixer Track 默认解耦的混乱。
+
+### 5.4 Audio Track 可以合并到 LC 吗？
+
+可以，但要区分“共用 LC”和“烘焙成一条音频”：
+
+1. **共用 LC**：多条 Audio Track 把音频目标指向同一条 LC，音频相加，
+   共用这条 LC 的 gain/pan/insert/send/freeze。Track 仍然是独立内容轨，
+   只是音频出口相同。
+2. **烘焙成一条音频**：把多条 Audio Track 的片段离线混合成一个新音频文件，
+   再放到一条 Audio Track/LC 上。这是显式操作（Bounce / Consolidate），
+   不是编辑时的默认行为。
+3. **不能把 Track 类型合并成 LC**：Track 是内容，LC 是通道；两者不是同类
+   对象。能共享的是 LC，能烘焙的是音频内容。
+
+共享 LC 时，UI 只显示 LC 身份（`CH01`/`CH02`），不写“几条轨共享”的说明。
+
+### 5.5 LC 没有鼓通道
+
+确认：**LC 不需要鼓通道。**
+
+- LC 是音频通道，不是 MIDI 通道；
+- 鼓通道是 MIDI 语义：A10 / AP10；
+- 需要 GM 鼓/共享鼓通道时，把 Track 链接到 **AP10**；
+- LC Rack 里可以加载鼓插件，但那是插件音源，不是 MIDI 鼓通道语义；
+- 不要给 LC 增加 `drum_channel` 字段，否则会把 MIDI 通道概念又塞回音频通道。
 
 ## 6. 自动化与普通 CC 的合并
 
@@ -707,9 +745,9 @@ for track in tracks:
 每轨显示当前音频目标：
 
 ```text
-Track 1   [LC 1]        ← 默认
-Track 2   [AP A01]      ← 已链接
-Track 3   [AP A01]      ← 已链接
+Track 1   [CH01]       ← 默认
+Track 2   [AP01]       ← 已链接
+Track 3   [AP01]       ← 已链接
 ```
 
 点击目标打开选择器：
@@ -728,7 +766,7 @@ Track 3   [AP A01]      ← 已链接
 ### 9.3 MIX 视图
 
 - 普通 LC 按 Track 顺序显示；
-- AP 通道单独显示为共享通道，条带上标明「A01 · 4 条轨共享」；
+- AP 通道条只显示 `AP01`/`AP10` 身份，不写轨数或“共享”说明；
 - 链接到 AP 的 Track 不再显示独立 LC 条，只显示它对应的 AP 通道；
 - 多输出暂不做；C MVP 每个 AP 只有一条 strip；
 - AP 通道的 freeze/mute/solo 明确提示作用范围；
@@ -794,34 +832,68 @@ struct MixerUiState {
 
 ---
 
-### 9.5 文件夹、AP、Bus 不要混为一谈
+### 9.5 文件夹与 AP 通道的绑定
 
-这四个东西解决的是不同问题：
+已确认的产品约束：
+
+```text
+一个文件夹子树里，不同 AP 通道的轨道不可共存。
+AP 通道绑定本身体现为一种文件夹；
+同一个 AP 通道内部允许继续嵌套编组。
+```
+
+推荐数据结构：
+
+```rust
+struct FolderBinding {
+    /// 这个文件夹绑定的 AP；None = 普通文件夹。
+    ap: Option<ApGroupId>,
+}
+```
+
+规则：
+
+1. 文件夹里出现第一条 AP 轨时，文件夹自动绑定该 AP；
+2. 同一文件夹子树里的所有 AP 轨必须属于同一个 AP；
+3. 试图把不同 AP 的轨拖进同一文件夹 -> 拒绝，并提示冲突；
+4. 同一 AP 内可以继续建子文件夹，子文件夹继续继承同一个 AP 绑定；
+5. AP 文件夹只装该 AP 的轨；独立 LC / `DirectMaster` 轨使用普通文件夹，
+   不建议混入 AP 文件夹；
+6. 把轨的 AP 改成另一个 AP 时，如果它在文件夹里，先移出或自动移动到新
+   AP 文件夹；
+7. 旧工程如果已经有跨 AP 的文件夹，迁移时按 AP 拆分并给出提示。
+
+Folder、AP、Channel、Send 仍然不是同一个东西：
 
 | 概念 | 作用 | 是否产生音频通道 |
 |---|---|---|
-| Folder | 视觉组织、折叠、批量选择/移动 | 否 |
-| AP 编组 | 共享 MIDI 源/乐器/Rack | 是，展开成 AP 通道 |
+| Folder | 组织 + AP 绑定约束；可嵌套 | 否 |
+| AP 编组 | 共享 MIDI 源/乐器/Rack；通常对应一个 AP 文件夹 | 是，一条 AP 通道 |
 | 纯汇入 Channel（Bus 角色） | 音频汇总、insert、send | 是，普通 Channel |
 | Send | 把音频送到另一个 Channel | 否，是路由 |
 
-**不建议让文件夹强制共用通道。** 原因：
+这样“不同 AP 不能放一个文件夹”是硬约束，但同 AP 内部仍然可以自由编组；
+文件夹不再是完全无约束的视觉容器，也不会退化成“文件夹 = Bus”。
 
-1. 文件夹是组织工具，用户放 100 条轨进一个文件夹可能只是为了折叠；
-2. 强制共用通道会把“组织”变成“混音路由”，很难解释；
-3. 发送轨比 AP 更灵活：send 可以把同一份音频送到多个 Bus，而 AP 是
-   MIDI 源的共享身份，两者不能互相替代；
-4. 一旦“文件夹 = 通道”，就会被迫限制文件夹层数，否则层级和通道路由
-   会纠缠不清。
+### 9.6 通道分配要像 Domino 一样方便
 
-推荐策略：
+默认每条 Track 独立 LC 以后，“我的音符到底在哪个通道”必须一眼可见，
+而且改起来要快：
 
-- 文件夹默认只做视觉组织，**不限层数**；
-- 可选「文件夹作为 AP 编组」开关，默认关闭；开启后文件夹头就是 AP 头，
-  子轨链接到该 AP，但文件夹本身不额外产生一条通道；
-- 需要音频分组时，显式把文件夹/多条轨发送到一条纯汇入 Channel（Bus 角色）；
-- 需要共享乐器时，显式链接 AP。
+- 轨道列表增加 `MIDI Out` 列（Port + Channel），支持排序/筛选；
+- 多选轨道后一次改通道，或使用「下一个空闲通道」；
+- 用图标/颜色显示通道占用和冲突，不写说明性小字；
+- 提供「通道地图」面板：16 个通道 × 若干轨，拖拽分配；
+- AP 编组头可以一键把选中轨链接到当前 AP；
+- 导出前显示「独立通道 X / 可用 16」，不足时提前提示。
 
+“烘焙通道”不建议自动做。它应该是显式命令：
+
+```text
+Bake to AP / Bake to LC
+```
+
+作用是把一组轨的共享关系固化、清理未使用 LC、或为导出/冻结做准备；
 ### 9.6 通道分配要像 Domino 一样方便
 
 默认每条 Track 独立 LC 以后，“我的音符到底在哪个通道”必须一眼可见，
@@ -854,6 +926,25 @@ Bake to AP / Bake to LC
 **MIDI 导出身份（port/channel）** 分开。编辑时允许很多独立 LC，
 导出时再按剩余通道自动排列。
 
+### 9.7 ARRANGE 与 MIX 的 AR 可以共存
+
+方案 C 里 Track/LC/AP 是显式关系，所以不再需要让 ARRANGE 和 MIX 互斥：
+
+- ARRANGE 显示轨道行（Track）；
+- MIX 显示通道条与通道 AR（LC/AP）；
+- 两者可以同时显示（分栏/分屏/同一工作区），不再是二选一的模式开关；
+- 选中 Track 时同步选中它对应的 LC/AP 通道；
+- 在 ARRANGE 编辑轨道自动化、在 MIX 编辑通道自动化，写的是同一份数据；
+- 视图只影响呈现，不影响信号流。
+
+这解决的是两个需求同时存在：
+
+```text
+需要按轨看结构/编曲  +  需要按通道看混音/发送
+```
+
+而不是以前“切到 MIX 就看不到 ARRANGE，切到 ARRANGE 就看不到通道 AR”。
+
 ## 10. 冻结、静音和独奏
 
 | 操作 | 普通 LC | AP |
@@ -884,29 +975,32 @@ Tracks)**：
 - 不要为了“每轨 freeze”去复制 AP 的音频流，那会重新引入 FL 那种
   track/channel 解耦问题。
 
-### 10.2 直通 Master 不是特殊轨道
+### 10.2 直通 Master 是 `---` 目标
 
-方案 C 里所有通道默认就是：
+这里要和“普通通道 output = Master”分开：
 
 ```text
-output = Master
+普通 LC:
+  Track -> LC（gain/pan/insert/send/freeze）-> Master
+
+DirectMaster:
+  Track -> ---（无 LC/AP 通道）-> Master
 ```
 
-所以“直通 Master 轨道”不需要新类型，也不需要新字段。普通 LC 默认直通
-Master；AP 通道默认也直通 Master；只有用户显式改 output 或加 send 才进别的
-通道。
+`DirectMaster` 对应 FL Studio 里把 Channel 的 FX 路由设成 `---` 而不是
+`000`：音符直接进 Master，不经过任何 Mixer Track。
 
-如果担心用户误路由，可以加一个 `routing_lock` 标记：
+规则：
 
-```rust
-struct MixerNode {
-    // ...
-    routing_lock: bool, // UI 禁止改 output/send；不改变音频路径
-}
-```
+- UI 目标选择器显示 `--- (Master)`；
+- 不创建 LC/AP 通道，因此没有 LC/AP 的 M/S/freeze/insert/send；
+- 仍保留 Track 自己的内容门 M/S、源级音量/声像；
+- 适合预览、节拍器、简单铺底、临时试听等不需要通道条的内容；
+- 不适合需要独立推子/insert/send/自动化的轨；
+- 如果之后要独立处理，把目标改成 `CHxx`，系统再创建/分配 LC。
 
-但不要把“直通 Master”做成一种轨道类型，否则又会出现“普通 LC / 直通 LC /
-AP / Bus”四套语义。
+不要把 `DirectMaster` 做成“特殊 LC”，否则又会回到“所有东西都必须有
+channel strip”的旧模型。
 
 ---
 
