@@ -127,6 +127,7 @@ impl MixerParamsV10 {
     fn into_current(self) -> MixerParams {
         MixerParams {
             aps: Vec::new(),
+            channel_sends: Vec::new(),
             racks: self
                 .racks
                 .into_iter()
@@ -212,6 +213,7 @@ impl MixerParamsV11 {
     fn into_current(self) -> MixerParams {
         MixerParams {
             aps: Vec::new(),
+            channel_sends: Vec::new(),
             racks: self
                 .racks
                 .into_iter()
@@ -301,6 +303,7 @@ impl MixerParamsV12 {
     fn into_current(self) -> MixerParams {
         MixerParams {
             aps: Vec::new(),
+            channel_sends: Vec::new(),
             racks: self
                 .racks
                 .into_iter()
@@ -391,6 +394,7 @@ impl MixerParamsV13 {
     fn into_current(self) -> MixerParams {
         MixerParams {
             aps: Vec::new(),
+            channel_sends: Vec::new(),
             racks: self
                 .racks
                 .into_iter()
@@ -559,6 +563,7 @@ impl MixerParamsV9 {
         };
         MixerParams {
             aps: Vec::new(),
+            channel_sends: Vec::new(),
             racks,
             channels,
             track_channels: Vec::new(),
@@ -625,6 +630,7 @@ impl MixerParamsV14 {
     fn into_current(self) -> MixerParams {
         MixerParams {
             aps: Vec::new(),
+            channel_sends: Vec::new(),
             racks: self
                 .racks
                 .into_iter()

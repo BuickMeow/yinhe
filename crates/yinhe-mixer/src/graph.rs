@@ -70,6 +70,21 @@ pub struct ResolvedSend {
     pub pre_fader: bool,
 }
 
+/// 任意通道发送的目标（方案 C）：另一条 dense 通道，或 Master。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChannelSendTarget {
+    Channel(usize),
+    Master,
+}
+
+/// 已解析到 dense 下标的任意通道发送。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ResolvedChannelSend {
+    pub target: ChannelSendTarget,
+    pub amount: f32,
+    pub pre_fader: bool,
+}
+
 /// 单通道延迟线（PDC 对齐）：先读后写，`delay` 个样本后输出输入，
 /// 起始输出为静音。`delay == 0` 时直通（不分配缓冲）。
 struct DelayLine {
@@ -183,6 +198,11 @@ pub struct ChannelChain {
     reading: MeterReading,
     /// 该通道（dense）的发送列表（源通道 → 总线）。
     sends: Vec<ResolvedSend>,
+    /// 任意通道发送（源通道 → 另一条 dense 通道 / Master）。
+    channel_sends: Vec<ResolvedChannelSend>,
+    /// 上一块输出快照（逆序/自环通道发送使用，打断反馈）。
+    prev_out_l: Vec<f32>,
+    prev_out_r: Vec<f32>,
 }
 
 impl ChannelChain {
@@ -200,6 +220,9 @@ impl ChannelChain {
             meter,
             reading,
             sends: Vec::new(),
+            channel_sends: Vec::new(),
+            prev_out_l: vec![0.0; frames],
+            prev_out_r: vec![0.0; frames],
         }
     }
 
@@ -207,6 +230,8 @@ impl ChannelChain {
     fn resize_frames(&mut self, frames: usize) {
         self.buffers.left = vec![0.0; frames];
         self.buffers.right = vec![0.0; frames];
+        self.prev_out_l = vec![0.0; frames];
+        self.prev_out_r = vec![0.0; frames];
     }
 }
 
@@ -596,6 +621,13 @@ impl MixerGraph {
     }
 
     /// 设置某总线的发送列表（结构性变化时全量推）。
+    /// 设置某 dense 通道的任意通道发送（C：send 到另一条 Channel 或 Master）。
+    pub fn set_channel_sends(&mut self, channel: usize, sends: Vec<ResolvedChannelSend>) {
+        if let Some(chain) = self.channels.get_mut(channel) {
+            chain.channel_sends = sends;
+        }
+    }
+
     pub fn set_bus_sends(&mut self, bus: usize, sends: Vec<ResolvedSend>) {
         if let Some(chain) = self.buses.get_mut(bus) {
             chain.sends = sends;
@@ -780,6 +812,15 @@ impl MixerGraph {
         let any_channel_solo = self.channels.iter().any(|c| c.strip.params.solo);
         let any_bus_solo = self.buses.iter().any(|b| b.strip.params.solo);
         let any_solo = any_channel_solo || any_bus_solo;
+
+        // 逆序/自环通道发送：用上一块输出快照，先汇入目标输入。
+        Self::apply_delayed_channel_sends(
+            &mut self.channels,
+            &mut self.master.l,
+            &mut self.master.r,
+            frames,
+            any_solo,
+        );
         // 被 solo 的通道/总线往下游经过的 Bus 也要放行；否则通道 solo
         // 后主输出到 Bus、或 solo 的 Bus 再进另一条 Bus 会被静音。
         // 没有 solo 时不分配，避免常态下的实时线程分配。
@@ -804,6 +845,7 @@ impl MixerGraph {
             any_solo,
             active,
         );
+        Self::snapshot_channel_outputs(&mut self.channels, frames);
         Self::process_buses(
             &mut self.buses,
             &self.bus_outputs,
@@ -829,77 +871,95 @@ impl MixerGraph {
         any_solo: bool,
         active: Option<&[bool]>,
     ) {
-        for (ci, chain) in channels.iter_mut().enumerate() {
-            // 空闲通道跳过：没有 insert 时缓冲为全零，insert/推子/send/
-            // master 累加都不会产生输出，只把表清零。
+        for ci in 0..channels.len() {
+            // 空闲通道跳过：没有 insert 时缓冲为全零。
             if active.is_some_and(|a| !a.get(ci).copied().unwrap_or(true))
-                && chain.inserts.is_empty()
+                && channels[ci].inserts.is_empty()
             {
-                chain.meter.publish(&[], &[]);
+                channels[ci].meter.publish(&[], &[]);
                 continue;
             }
-            // insert 链 → PDC 延迟线。
-            for insert in &mut chain.inserts {
-                // 插件能力可能小于引擎块长（按 512 激活的插件遇到 4096 的块）：
-                // 按能力分段调用，等效连续处理（原地、无事件，分段安全）。
-                let max = insert.max_block_frames().max(1);
-                if max >= frames {
-                    insert.process(&mut chain.buffers.left, &mut chain.buffers.right);
-                    continue;
-                }
-                let mut start = 0;
-                while start < frames {
-                    let end = (start + max).min(frames);
-                    insert.process(
-                        &mut chain.buffers.left[start..end],
-                        &mut chain.buffers.right[start..end],
-                    );
-                    start = end;
-                }
-            }
-            chain
-                .delay
-                .process(&mut chain.buffers.left, &mut chain.buffers.right);
 
-            let p = chain.strip.params;
+            // insert 链 → PDC 延迟线。
+            {
+                let chain = &mut channels[ci];
+                for insert in &mut chain.inserts {
+                    let max = insert.max_block_frames().max(1);
+                    if max >= frames {
+                        insert.process(&mut chain.buffers.left, &mut chain.buffers.right);
+                        continue;
+                    }
+                    let mut start = 0;
+                    while start < frames {
+                        let end = (start + max).min(frames);
+                        insert.process(
+                            &mut chain.buffers.left[start..end],
+                            &mut chain.buffers.right[start..end],
+                        );
+                        start = end;
+                    }
+                }
+                chain
+                    .delay
+                    .process(&mut chain.buffers.left, &mut chain.buffers.right);
+            }
+
+            let p = channels[ci].strip.params;
             let to_master = !p.mute && (!any_solo || p.solo);
 
-            // 电平表取 post-insert、pre-fader（推子会原地改缓冲，先发布）。
+            // 电平表取 post-insert、pre-fader。
             if to_master {
+                let chain = &channels[ci];
                 chain.meter.publish(
                     &chain.buffers.left[..frames],
                     &chain.buffers.right[..frames],
                 );
             } else {
-                chain.meter.publish(&[0.0; 0], &[0.0; 0]);
+                channels[ci].meter.publish(&[0.0; 0], &[0.0; 0]);
             }
 
-            // 推子前 send（insert 后、fader 前的信号）。
-            route_send(
-                true,
-                &chain.buffers,
-                &chain.sends,
-                &chain.strip,
-                any_solo,
-                buses,
-                frames,
-            );
+            // 推子前 send：旧总线路径 + C 的任意通道路径。
+            {
+                let chain = &channels[ci];
+                route_send(
+                    true,
+                    &chain.buffers,
+                    &chain.sends,
+                    &chain.strip,
+                    any_solo,
+                    buses,
+                    frames,
+                );
+            }
+            let channel_sends = channels[ci].channel_sends.clone();
+            for send in channel_sends.iter().filter(|s| s.pre_fader) {
+                route_channel_send(channels, ci, send, master_l, master_r, any_solo, frames);
+            }
 
             // 推子（原地应用；静音/未 solo 时也照常推进斜坡）。
-            chain
-                .strip
-                .apply_fader(&mut chain.buffers.left, &mut chain.buffers.right);
-
-            // 推子后 send 与主输出。
-            route_send(
-                false,
-                &chain.buffers,
-                &chain.sends,
-                &chain.strip,
-                any_solo,
-                buses,
-                frames,
+            channels[ci].strip.apply_fader(
+                &mut channels[ci].buffers.left,
+                &mut channels[ci].buffers.right,
             );
+
+            // 推子后 send：旧总线路径 + C 的任意通道路径。
+            {
+                let chain = &channels[ci];
+                route_send(
+                    false,
+                    &chain.buffers,
+                    &chain.sends,
+                    &chain.strip,
+                    any_solo,
+                    buses,
+                    frames,
+                );
+            }
+            for send in channel_sends.iter().filter(|s| !s.pre_fader) {
+                route_channel_send(channels, ci, send, master_l, master_r, any_solo, frames);
+            }
+
+            // 主输出：Bus 或 Master。
             let dest = channel_outputs
                 .get(ci)
                 .copied()
@@ -907,11 +967,9 @@ impl MixerGraph {
                 .filter(|&b| b < buses.len());
             match dest {
                 Some(bus) => {
-                    // 主输出 → 总线：与 master 累加同一可听性规则；
-                    // 目标总线 solo 时也允许汇入（总线 solo 语义）。
                     let bus_solo = buses[bus].strip.params.solo;
                     if !p.mute && (!any_solo || p.solo || bus_solo) {
-                        let src = &chain.buffers;
+                        let src = &channels[ci].buffers;
                         let dst = &mut buses[bus].buffers;
                         for f in 0..frames {
                             dst.left[f] += src.left[f];
@@ -921,7 +979,7 @@ impl MixerGraph {
                 }
                 None => {
                     if to_master {
-                        let src = &chain.buffers;
+                        let src = &channels[ci].buffers;
                         for f in 0..frames {
                             master_l[f] += src.left[f];
                             master_r[f] += src.right[f];
@@ -929,6 +987,72 @@ impl MixerGraph {
                     }
                 }
             }
+        }
+    }
+
+    /// 逆序/自环通道发送：源上一块输出 → 目标本块输入。
+    fn apply_delayed_channel_sends(
+        channels: &mut [ChannelChain],
+        _master_l: &mut [f32],
+        _master_r: &mut [f32],
+        frames: usize,
+        any_solo: bool,
+    ) {
+        for src in 0..channels.len() {
+            let sends = channels[src].channel_sends.clone();
+            if sends.is_empty() {
+                continue;
+            }
+            let src_params = channels[src].strip.params;
+            for send in sends {
+                if send.amount <= 0.0 {
+                    continue;
+                }
+                match send.target {
+                    ChannelSendTarget::Channel(dst) if dst == src => {
+                        if !channel_send_allowed(any_solo, &src_params, false) {
+                            continue;
+                        }
+                        let chain = &mut channels[src];
+                        for f in 0..frames {
+                            let l = chain.prev_out_l[f] * send.amount;
+                            let r = chain.prev_out_r[f] * send.amount;
+                            chain.buffers.left[f] += l;
+                            chain.buffers.right[f] += r;
+                        }
+                    }
+                    ChannelSendTarget::Channel(dst) if dst < channels.len() => {
+                        if dst >= src {
+                            continue;
+                        }
+                        let dst_solo = channels[dst].strip.params.solo;
+                        if !channel_send_allowed(any_solo, &src_params, dst_solo) {
+                            continue;
+                        }
+                        let (left, right) = channels.split_at_mut(src);
+                        let src_chain = &right[0];
+                        let dst_chain = &mut left[dst];
+                        for f in 0..frames {
+                            dst_chain.buffers.left[f] += src_chain.prev_out_l[f] * send.amount;
+                            dst_chain.buffers.right[f] += src_chain.prev_out_r[f] * send.amount;
+                        }
+                    }
+                    // Master 目标在源处理时直接累加，不走延迟路径。
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// 本块通道输出 → 下一块的「上一块」快照。
+    fn snapshot_channel_outputs(channels: &mut [ChannelChain], frames: usize) {
+        for chain in channels {
+            chain
+                .prev_out_l
+                .copy_from_slice(&chain.buffers.left[..frames]);
+            chain
+                .prev_out_r
+                .copy_from_slice(&chain.buffers.right[..frames]);
         }
     }
 
@@ -1140,6 +1264,55 @@ impl MixerGraph {
 ///
 /// 推子前/后两段仅 `send.pre_fader` 的筛选相反，其余（mute/solo 判定、总线
 /// 查找、逐样本累加）完全一致，故以 `pre_fader` 参数合并。
+/// 当前块内前向通道发送：目标索引大于源，目标尚未处理。
+/// 目标 <= 源 的发送已在 `apply_delayed_channel_sends` 里用上一块快照处理。
+fn route_channel_send(
+    channels: &mut [ChannelChain],
+    src: usize,
+    send: &ResolvedChannelSend,
+    master_l: &mut [f32],
+    master_r: &mut [f32],
+    any_solo: bool,
+    frames: usize,
+) {
+    if send.amount <= 0.0 {
+        return;
+    }
+    let src_params = channels[src].strip.params;
+    match send.target {
+        ChannelSendTarget::Channel(dst) => {
+            if dst <= src || dst >= channels.len() {
+                return;
+            }
+            let dst_solo = channels[dst].strip.params.solo;
+            if !channel_send_allowed(any_solo, &src_params, dst_solo) {
+                return;
+            }
+            let (left, right) = channels.split_at_mut(dst);
+            let src_chain = &left[src];
+            let dst_chain = &mut right[0];
+            for f in 0..frames {
+                dst_chain.buffers.left[f] += src_chain.buffers.left[f] * send.amount;
+                dst_chain.buffers.right[f] += src_chain.buffers.right[f] * send.amount;
+            }
+        }
+        ChannelSendTarget::Master => {
+            if !channel_send_allowed(any_solo, &src_params, false) {
+                return;
+            }
+            let src_chain = &channels[src];
+            for f in 0..frames {
+                master_l[f] += src_chain.buffers.left[f] * send.amount;
+                master_r[f] += src_chain.buffers.right[f] * send.amount;
+            }
+        }
+    }
+}
+
+fn channel_send_allowed(any_solo: bool, src: &StripParams, dst_solo: bool) -> bool {
+    !src.mute && (!any_solo || src.solo || dst_solo)
+}
+
 fn route_send(
     pre_fader: bool,
     src: &ChannelBuffers,
@@ -1874,6 +2047,122 @@ mod tests {
         let (l, _r) = g.process();
         let channel = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
         let expect = channel * core::f32::consts::FRAC_1_SQRT_2;
+        assert!((l[3] - expect).abs() < 1e-6, "got {}", l[3]);
+    }
+
+    /// C 的任意通道发送：前向目标同块收到信号。
+    #[test]
+    fn channel_send_forward_is_same_block() {
+        let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
+        // 源主输出进静音 Bus：只观察 send 路径。
+        g.resize_buses(
+            1,
+            4,
+            &[StripParams {
+                mute: true,
+                ..StripParams::default()
+            }],
+        );
+        g.set_channel_output(0, Some(0));
+        g.set_channel_sends(
+            0,
+            vec![ResolvedChannelSend {
+                target: ChannelSendTarget::Channel(1),
+                amount: 1.0,
+                pre_fader: false,
+            }],
+        );
+        fill(&mut g, 0, 0.5);
+        let (l, _r) = g.process();
+        let single = core::f32::consts::FRAC_1_SQRT_2;
+        let expect = 0.5 * single * single;
+        assert!((l[3] - expect).abs() < 1e-6, "got {}", l[3]);
+    }
+
+    /// 逆序通道发送：目标已处理，使用上一块快照，延迟一块。
+    #[test]
+    fn channel_send_reverse_is_one_block_delayed() {
+        let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
+        g.resize_buses(
+            1,
+            4,
+            &[StripParams {
+                mute: true,
+                ..StripParams::default()
+            }],
+        );
+        g.set_channel_output(1, Some(0));
+        g.set_channel_sends(
+            1,
+            vec![ResolvedChannelSend {
+                target: ChannelSendTarget::Channel(0),
+                amount: 1.0,
+                pre_fader: false,
+            }],
+        );
+        fill(&mut g, 1, 0.5);
+        let (l, _r) = g.process();
+        assert!(l[3].abs() < 1e-6, "第一块不应有逆序发送: {}", l[3]);
+        fill(&mut g, 1, 0.5);
+        let (l, _r) = g.process();
+        let single = core::f32::consts::FRAC_1_SQRT_2;
+        let expect = 0.5 * single * single;
+        assert!((l[3] - expect).abs() < 1e-6, "got {}", l[3]);
+    }
+
+    /// 推子前通道发送不受源 gain 影响。
+    #[test]
+    fn channel_send_pre_fader_ignores_source_gain() {
+        let mut g = graph_with(
+            &[
+                StripParams {
+                    gain: 0.0,
+                    ..StripParams::default()
+                },
+                StripParams::default(),
+            ],
+            4,
+        );
+        g.resize_buses(1, 4, &[StripParams::default()]);
+        g.set_channel_output(0, Some(0));
+        g.set_channel_sends(
+            0,
+            vec![ResolvedChannelSend {
+                target: ChannelSendTarget::Channel(1),
+                amount: 1.0,
+                pre_fader: true,
+            }],
+        );
+        fill(&mut g, 0, 0.5);
+        let (l, _r) = g.process();
+        let expect = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
+        assert!((l[3] - expect).abs() < 1e-6, "got {}", l[3]);
+    }
+
+    /// 通道发送到 Master：绕过目标通道，直接进总输出。
+    #[test]
+    fn channel_send_to_master_bypasses_channels() {
+        let mut g = graph_with(&[StripParams::default()], 4);
+        g.resize_buses(
+            1,
+            4,
+            &[StripParams {
+                mute: true,
+                ..StripParams::default()
+            }],
+        );
+        g.set_channel_output(0, Some(0));
+        g.set_channel_sends(
+            0,
+            vec![ResolvedChannelSend {
+                target: ChannelSendTarget::Master,
+                amount: 1.0,
+                pre_fader: false,
+            }],
+        );
+        fill(&mut g, 0, 0.5);
+        let (l, _r) = g.process();
+        let expect = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
         assert!((l[3] - expect).abs() < 1e-6, "got {}", l[3]);
     }
 

@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use yinhe_types::{
-    ApGroupId, BusId, LogicalChannelId, MixerChannelId, MixerNodeId, RackId, TRACK_LC_BASE,
+    ApGroupId, BusId, ChannelId, LogicalChannelId, MixerChannelId, MixerNodeId, RackId,
+    TRACK_LC_BASE,
 };
 
 use crate::node::{ApGroup, MixerNode, RackParams};
@@ -128,6 +129,32 @@ impl Default for SendParams {
     }
 }
 
+/// 任意音频通道之间的发送（方案 C）。
+///
+/// 与旧 `SendParams`（只发总线）并存：旧字段服务 v14 工程和旧 Bus UI，
+/// 新字段服务 C 的“任意 Channel 都能接收 send”。
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ChannelSend {
+    pub source: ChannelId,
+    pub target: ChannelId,
+    /// 0..1；0 = OFF（-inf dB），不要保留 0 发送条目。
+    #[serde(default)]
+    pub amount: f32,
+    #[serde(default)]
+    pub pre_fader: bool,
+}
+
+impl ChannelSend {
+    pub fn new(source: ChannelId, target: ChannelId, amount: f32, pre_fader: bool) -> Self {
+        Self {
+            source,
+            target,
+            amount: amount.clamp(0.0, 1.0),
+            pre_fader,
+        }
+    }
+}
+
 /// 整个混音台的持久化参数。
 ///
 /// 存储已从 v9 的并行分表合并为节点表：
@@ -151,6 +178,9 @@ pub struct MixerParams {
     /// 等 AP 拥有独立设置后再加字段版本迁移，避免破坏现有 v14 工程。
     #[serde(skip)]
     pub aps: Vec<ApGroup>,
+    /// 方案 C 的任意通道发送；source/target 都是 `ChannelId`。
+    #[serde(default)]
+    pub channel_sends: Vec<ChannelSend>,
     /// MIDI 源通道 i 的 LC（固定 CHANNEL_COUNT 长度，索引 = A01..P16）。
     #[serde(default)]
     pub channels: Vec<MixerNode>,
@@ -188,6 +218,7 @@ impl Default for MixerParams {
                 .map(|i| RackParams::new(RackId(i as u16)))
                 .collect(),
             aps: Vec::new(),
+            channel_sends: Vec::new(),
             channels: (0..CHANNEL_COUNT)
                 .map(|i| MixerNode::logical_channel(LogicalChannelId(i as u32)))
                 .collect(),
@@ -209,6 +240,7 @@ impl MixerParams {
         self.ensure_rack_outputs();
         self.ensure_channels();
         self.ensure_aps();
+        self.ensure_channel_sends();
         self.ensure_track_channels();
         self.ensure_audio_channels();
         self.ensure_buses();
@@ -320,6 +352,88 @@ impl MixerParams {
         let before = self.aps.len();
         self.aps.retain(|ap| ap.global_midi() != global);
         self.aps.len() != before
+    }
+
+    /// 清理任意通道发送：0 发送删除、同 source/target 去重（先写保留）、
+    /// 源不能是 Master，amount 夹到 0..1。
+    fn ensure_channel_sends(&mut self) {
+        let sends = std::mem::take(&mut self.channel_sends);
+        self.channel_sends = sends
+            .into_iter()
+            .filter(|send| {
+                send.source != ChannelId::Master
+                    && send.amount > 0.0
+                    && self.channel_target_exists(send.target)
+            })
+            .collect();
+        for send in &mut self.channel_sends {
+            send.amount = send.amount.clamp(0.0, 1.0);
+        }
+        let mut seen = HashSet::new();
+        self.channel_sends
+            .retain(|send| seen.insert((send.source, send.target)));
+    }
+
+    fn channel_target_exists(&self, target: ChannelId) -> bool {
+        match target {
+            ChannelId::Master => true,
+            ChannelId::Lc(id) => self.channel_exists(id),
+            ChannelId::Ap(ap) => self.ap(ap.group).is_some(),
+        }
+    }
+
+    /// 某通道发出的 C 发送（不含旧 Bus 发送）。
+    pub fn channel_sends_from(&self, source: ChannelId) -> impl Iterator<Item = &ChannelSend> {
+        self.channel_sends
+            .iter()
+            .filter(move |s| s.source == source)
+    }
+
+    pub fn channel_send_amount(&self, source: ChannelId, target: ChannelId) -> f32 {
+        self.channel_sends
+            .iter()
+            .find(|s| s.source == source && s.target == target)
+            .map(|s| s.amount)
+            .unwrap_or(0.0)
+    }
+
+    /// 设置一条发送；amount <= 0 等价于删除（-inf = OFF）。
+    pub fn set_channel_send(
+        &mut self,
+        source: ChannelId,
+        target: ChannelId,
+        amount: f32,
+        pre_fader: bool,
+    ) -> bool {
+        if source == ChannelId::Master || source == target {
+            return false;
+        }
+        if amount <= 0.0 {
+            return self.remove_channel_send(source, target);
+        }
+        let amount = amount.clamp(0.0, 1.0);
+        if let Some(send) = self
+            .channel_sends
+            .iter_mut()
+            .find(|s| s.source == source && s.target == target)
+        {
+            if (send.amount - amount).abs() < f32::EPSILON && send.pre_fader == pre_fader {
+                return false;
+            }
+            send.amount = amount;
+            send.pre_fader = pre_fader;
+            return true;
+        }
+        self.channel_sends
+            .push(ChannelSend::new(source, target, amount, pre_fader));
+        true
+    }
+
+    pub fn remove_channel_send(&mut self, source: ChannelId, target: ChannelId) -> bool {
+        let before = self.channel_sends.len();
+        self.channel_sends
+            .retain(|s| !(s.source == source && s.target == target));
+        self.channel_sends.len() != before
     }
 
     fn ensure_rack_outputs(&mut self) {
@@ -1136,6 +1250,24 @@ mod tests {
         assert!(p.node_sends(MixerChannelId::Midi(0)).unwrap().is_empty());
         assert!(p.node_sends(MixerChannelId::Audio(0)).unwrap().is_empty());
         assert_eq!(p.node_output(MixerChannelId::Midi(0)), None);
+    }
+
+    #[test]
+    fn channel_sends_are_any_to_any_and_zero_is_off() {
+        let mut p = MixerParams::default();
+        p.ensure_len();
+        let source = ChannelId::Lc(LogicalChannelId(1_000_000));
+        let target = ChannelId::Lc(LogicalChannelId(1_000_001));
+        assert!(p.set_channel_send(source, target, 0.5, false));
+        assert_eq!(p.channel_send_amount(source, target), 0.5);
+        // 0 = OFF：必须删除条目，而不是保留极小值。
+        assert!(p.set_channel_send(source, target, 0.0, false));
+        assert_eq!(p.channel_send_amount(source, target), 0.0);
+        assert!(p.channel_sends.is_empty());
+        // Master 不能作为发送源；Master 可以作为目标。
+        assert!(!p.set_channel_send(ChannelId::Master, target, 1.0, false));
+        assert!(p.set_channel_send(source, ChannelId::Master, 1.0, false));
+        assert_eq!(p.channel_send_amount(source, ChannelId::Master), 1.0);
     }
 
     #[test]

@@ -2,8 +2,8 @@
 //! insert 命令处理与处理器回收。
 
 use yinhe_mixer::{
-    InsertProcessor, InstrumentProcessor, MasterParams, MixerParams, ResolvedSend, SendParams,
-    StripParams,
+    ChannelSendTarget, InsertProcessor, InstrumentProcessor, MasterParams, MixerParams,
+    ResolvedChannelSend, ResolvedSend, SendParams, StripParams,
 };
 use yinhe_types::{BusId, MixerChannelId};
 
@@ -118,6 +118,63 @@ impl AudioEngine {
             let resolved = self.resolve_sends(&list);
             self.mixer.set_bus_sends(i, resolved);
         }
+
+        // C 的任意通道发送：按 source 聚到 dense 通道。
+        let mut channel_sends: Vec<Vec<ResolvedChannelSend>> = vec![Vec::new(); count];
+        for send in &self.mixer_params.channel_sends {
+            let Some(src) = self.dense_for_channel_id(send.source) else {
+                continue;
+            };
+            let target = match send.target {
+                yinhe_types::ChannelId::Master => ChannelSendTarget::Master,
+                other => {
+                    let Some(dst) = self.dense_for_channel_id(other) else {
+                        continue;
+                    };
+                    ChannelSendTarget::Channel(dst as usize)
+                }
+            };
+            if let Some(list) = channel_sends.get_mut(src as usize) {
+                list.push(ResolvedChannelSend {
+                    target,
+                    amount: send.amount,
+                    pre_fader: send.pre_fader,
+                });
+            }
+        }
+        for (dense, list) in channel_sends.into_iter().enumerate() {
+            self.mixer.set_channel_sends(dense, list);
+        }
+    }
+
+    /// 稳定 ChannelId → dense 通道下标。
+    fn dense_for_channel_id(&self, id: yinhe_types::ChannelId) -> Option<u32> {
+        let lc = match id {
+            yinhe_types::ChannelId::Lc(lc) => lc,
+            yinhe_types::ChannelId::Ap(ap) => {
+                let group = self.mixer_params.ap(ap.group)?;
+                group.channel
+            }
+            yinhe_types::ChannelId::Master => return None,
+        };
+        if let Some((_, dense)) = self.channel_layout.track_lc_dense_for(lc)
+            && dense != u32::MAX
+        {
+            return Some(dense);
+        }
+        if let Some(i) =
+            self.mixer_params.audio_channels.iter().position(|node| {
+                node.id.channel_id().and_then(|c| c.logical_channel_id()) == Some(lc)
+            })
+        {
+            let dense = self.channel_layout.audio_dense_for(i as u16);
+            return (dense != u32::MAX).then_some(dense);
+        }
+        if lc.0 < yinhe_types::MIDI_CHANNEL_COUNT as u32 {
+            let dense = self.channel_layout.dense_for(lc.0 as usize);
+            return (dense != u32::MAX).then_some(dense);
+        }
+        None
     }
 
     /// 持久化层用稳定 BusId；渲染图只认 `buses` 下标。
