@@ -175,14 +175,14 @@ impl ArRow {
     /// 所属音轨索引。
     #[inline]
     pub fn track(self) -> usize {
-        self.track_opt().unwrap_or(0)
+        match self {
+            ArRow::Track(t) | ArRow::Automation(t, _) => t,
+        }
     }
 
-    /// 音轨行返回轨道下标。
+    /// 音轨行返回轨道下标（删 Bus 固定行后恒为 `Some`，保留以兼容调用方）。
     pub fn track_opt(self) -> Option<usize> {
-        match self {
-            ArRow::Track(t) | ArRow::Automation(t, _) => Some(t),
-        }
+        Some(self.track())
     }
 }
 

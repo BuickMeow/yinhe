@@ -64,7 +64,7 @@ pub(crate) struct MixerRack {
     /// 音频通道 insert 链（键 = 音频通道号）。
     pub audios: HashMap<u16, Vec<SlotRuntime>>,
     pub master: Vec<SlotRuntime>,
-    /// 总线删除时的孤儿槽位：Wait 已发 InsertRemove 的处理器退回后 deactivate。
+    /// 已发 InsertRemove、等待处理器退回后 deactivate 的孤儿槽位。
     orphan: Vec<SlotRuntime>,
     next_owner: u64,
     /// 最近一次加载/激活失败信息（MIX 界面状态行展示）。
