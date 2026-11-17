@@ -1178,13 +1178,24 @@ pub fn show(
                         .and_then(|idx| doc.data.model.tracks.get(idx as usize))
                         .and_then(|tr| tr.automation_lanes.get(sub))
                         .map(|lane| am_lanes::lane_label(&lane.target));
+                    let bus_label = doc
+                        .mixer
+                        .bus_id_at(b)
+                        .and_then(|id| doc.mixer.bus_display_number(id))
+                        .map(crate::mix::lc_label)
+                        .unwrap_or_else(|| "CH".to_string());
                     match label {
-                        Some(label) => format!("BUS {} · {}", b + 1, label),
-                        None => format!("BUS {}", b + 1),
+                        Some(label) => format!("{bus_label} · {label}"),
+                        None => bus_label,
                     }
                 }
                 Some(yinhe_types::ArRow::Track(t)) => track_str(t),
-                Some(yinhe_types::ArRow::Bus(b)) => format!("BUS {}", b + 1),
+                Some(yinhe_types::ArRow::Bus(b)) => doc
+                    .mixer
+                    .bus_id_at(b)
+                    .and_then(|id| doc.mixer.bus_display_number(id))
+                    .map(crate::mix::lc_label)
+                    .unwrap_or_else(|| "CH".to_string()),
                 None => track_str(num_tracks.saturating_sub(1)),
             }
         };
