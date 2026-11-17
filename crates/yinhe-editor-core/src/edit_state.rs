@@ -143,6 +143,8 @@ pub struct EditState {
         HashMap<(u16, yinhe_types::AutomationTarget), yinhe_types::AutomationPanelView>,
     pub arr_am_selected: HashSet<(u16, yinhe_types::AutomationTarget)>,
     pub arr_am_ms: HashMap<(u16, yinhe_types::AutomationTarget), yinhe_types::AmMsState>,
+    /// 自动化冲突裁决：用户选中的获胜轨道（会话态，不落盘）；未设置时最后编辑优先。
+    pub am_conflict_choice: HashMap<(yinhe_types::AutomationTarget, u32), u16>,
     /// AR 已选中的音频片段 (轨道索引, 片段 id)。会话态，不落盘。
     pub selected_audio_clips: HashSet<(u16, u32)>,
     /// PR 钢琴卷帘视口（滚动/缩放），每文档独立，不落盘。
@@ -204,6 +206,7 @@ impl Default for EditState {
             arr_am_views: HashMap::new(),
             arr_am_selected: HashSet::new(),
             arr_am_ms: HashMap::new(),
+            am_conflict_choice: HashMap::new(),
             selected_audio_clips: HashSet::new(),
             pianoroll_view: yinhe_types::PianoRollView::default(),
             event_rows_ar: yinhe_types::EventRowsState::default(),

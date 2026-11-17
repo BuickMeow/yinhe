@@ -12,6 +12,79 @@ pub(super) fn show_automation_detail(
     track: u16,
     target: &AutomationTarget,
 ) -> Option<JumpRequest> {
+    // 方案 C #13：同一 target/tick 多条轨写入不同值 → 显示冲突标记与裁决按钮。
+    let conflicts: Vec<_> = yinhe_editor_core::automation_conflict::find_conflicts(&doc.data.model)
+        .into_iter()
+        .filter(|conflict| conflict.target == *target)
+        .filter(|conflict| conflict.candidates.iter().any(|&(t, _, _)| t == track))
+        .collect();
+    if !conflicts.is_empty() {
+        egui::CollapsingHeader::new(
+            egui::RichText::new(format!(
+                "{} {}",
+                t!("automation.conflict.title").as_ref(),
+                conflicts.len()
+            ))
+            .color(crate::theme::solo_active()),
+        )
+        .default_open(true)
+        .show(ui, |ui| {
+            for conflict in &conflicts {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!("tick {}", conflict.tick))
+                            .size(crate::theme::SMALL_LABEL_FONT),
+                    );
+                    let chosen = doc
+                        .edit
+                        .am_conflict_choice
+                        .get(&(target.clone(), conflict.tick))
+                        .copied();
+                    for &(candidate_track, _, value) in &conflict.candidates {
+                        let name = doc
+                            .data
+                            .model
+                            .tracks
+                            .get(candidate_track as usize)
+                            .map(|t| t.name.clone())
+                            .unwrap_or_else(|| format!("Track {}", candidate_track + 1));
+                        let selected = chosen == Some(candidate_track);
+                        let label = if selected {
+                            format!("{name} = {value:.2} [当前]")
+                        } else {
+                            format!("{name} = {value:.2}")
+                        };
+                        if ui.selectable_label(selected, label).clicked()
+                            && chosen != Some(candidate_track)
+                        {
+                            let before = doc.capture_snapshot();
+                            let actions = doc.resolve_automation_conflict(
+                                target,
+                                conflict.tick,
+                                candidate_track,
+                            );
+                            if !actions.is_empty() {
+                                doc.push_undo(
+                                    yinhe_editor_core::history::UndoAction::Composite(actions),
+                                    "undo.resolve_automation_conflict",
+                                    before,
+                                );
+                            }
+                        }
+                    }
+                });
+            }
+            if ui
+                .button(t!("automation.conflict.clear").as_ref())
+                .clicked()
+            {
+                doc.edit
+                    .am_conflict_choice
+                    .retain(|key, _| key.0 != *target);
+            }
+        });
+    }
+
     // Automation：仅跳转不闪烁；Tempo 不切 track（note=None）
     let note = if matches!(target, AutomationTarget::Tempo) {
         None
