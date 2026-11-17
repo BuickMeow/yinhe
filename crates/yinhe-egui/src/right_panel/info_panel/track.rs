@@ -30,13 +30,22 @@ fn field_value(ui: &mut egui::Ui, label: &str, value: impl Into<String>) {
     });
 }
 
-/// 显示音轨属性（「音轨」选项卡）。返回 `true` 表示端口/通道改变。
-pub(crate) fn show_track_info(ui: &mut egui::Ui, doc: &mut Document) -> bool {
+/// 音轨属性面板的改动结果。
+#[derive(Clone, Copy, Default)]
+pub(crate) struct TrackInfoOut {
+    /// 端口/通道改变：需要重建 track cache 与音频模型。
+    pub port_changed: bool,
+    /// 音频目标（LC / AP / ---）改变：需要重建 ChannelLayout。
+    pub routing_changed: bool,
+}
+
+/// 显示音轨属性（「音轨」选项卡）。
+pub(crate) fn show_track_info(ui: &mut egui::Ui, doc: &mut Document) -> TrackInfoOut {
     crate::right_panel::region_hint(ui, t!("hint.panel.info_track"));
     let num_tracks = doc.data.model.tracks.len();
     if num_tracks == 0 {
         crate::widgets::hint::empty_hint(ui, t!("track.no_tracks").as_ref());
-        return false;
+        return TrackInfoOut::default();
     }
 
     // MIX 通道行会一次选中整组轨道；取最小索引保证面板稳定。
@@ -51,12 +60,13 @@ pub(crate) fn show_track_info(ui: &mut egui::Ui, doc: &mut Document) -> bool {
         show_track_fields(ui, doc, track_idx)
     } else {
         crate::widgets::hint::empty_hint(ui, t!("panel.select_track_hint").as_ref());
-        false
+        TrackInfoOut::default()
     }
 }
 
-/// 音轨字段（名称 / 端口 / 通道 / 颜色）。返回端口/通道是否改变。
-fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) -> bool {
+/// 音轨字段（名称 / 端口 / 通道 / 颜色 / 音频目标）。
+fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) -> TrackInfoOut {
+    let mut out = TrackInfoOut::default();
     let num_tracks = doc.data.model.tracks.len();
     let track_idx = track_idx.min(num_tracks - 1);
 
@@ -81,7 +91,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
             t!("track.timesig_count").as_ref(),
             format!("{}", doc.data.model.conductor.time_sig.len()),
         );
-        return false;
+        return out;
     }
 
     // ── 名称 ──
@@ -179,6 +189,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
         });
     });
     if port_changed {
+        out.port_changed = true;
         {
             let model = Arc::make_mut(&mut doc.data.model);
             if track_idx < model.tracks.len() {
@@ -211,7 +222,6 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
     }
 
     // ── MIDI 轨的 C 音频目标：自己 LC / AP / --- ──
-    let mut routing_changed = false;
     let kind = doc.data.model.tracks[track_idx].kind;
     if kind == yinhe_core::TrackKind::Midi {
         let track = &doc.data.model.tracks[track_idx];
@@ -245,7 +255,7 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
                 _ => false,
             };
             if changed {
-                routing_changed = true;
+                out.routing_changed = true;
             }
         }
     }
@@ -277,15 +287,15 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
                 doc.link_audio_track_to_own_lc(track_idx)
             };
             if changed {
-                routing_changed = true;
+                out.routing_changed = true;
             }
         }
         if target_sel == 1 {
             // DirectMaster 没有 home LC，通道号不可编辑。
-            if routing_changed {
+            if out.routing_changed {
                 doc.data.bump_revision();
             }
-            return routing_changed;
+            return out;
         }
         let current_ch = doc.data.model.tracks[track_idx]
             .audio_target_channel()
@@ -323,19 +333,19 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
                 if let Some(td) = Arc::make_mut(&mut doc.data.model).tracks.get_mut(track_idx) {
                     Arc::make_mut(td).audio_channel = Some(sel as u16);
                 }
-                routing_changed = true;
+                out.routing_changed = true;
             }
         });
     }
 
-    if routing_changed {
+    if out.routing_changed {
         doc.data.bump_revision();
     }
 
     // ── 颜色（行高一致的小色块 + 重置）──
     show_color_row(ui, doc, track_idx);
 
-    port_changed || routing_changed
+    out
 }
 
 /// 颜色行：色块（点击直接弹出取色器）+ 重置按钮。

@@ -243,6 +243,12 @@ pub fn show(
         let visible = model.folder_visible_mask();
         yinhe_types::ArRowLayout::new_with_visible(&counts, &visible)
     };
+    let lc_labels: std::collections::HashMap<yinhe_types::LogicalChannelId, String> = doc
+        .mixer
+        .lc_display_map()
+        .into_iter()
+        .map(|(id, n)| (id, crate::mix::lc_label(n)))
+        .collect();
     let mut row_layout = build_row_layout(&doc.edit, &doc.data.model);
     // 清理已删除 lane 的残留视图状态（undo 删除 lane 后）
     let lane_exists = |t: u16, target: &yinhe_types::AutomationTarget| {
@@ -505,6 +511,7 @@ pub fn show(
             info_content,
             &row_layout,
             &doc.data.model.tracks,
+            &lc_labels,
             &mut doc.edit.arr_am_expanded,
             &mut doc.edit.arr_am_selected,
             &mut doc.edit.arr_am_ms,

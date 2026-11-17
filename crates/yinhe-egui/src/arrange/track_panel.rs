@@ -64,6 +64,8 @@ pub(crate) fn show(
     row_layout: &ArRowLayout,
     // 音轨数据（AM 子行画 lane 名 / 右键菜单判断已有 lane）。
     tracks: &[Arc<yinhe_core::TrackData>],
+    // 每轨 LC 的显示标签（LC01..），由调用方按 `mixer.lc_display_map` 算好。
+    lc_labels: &std::collections::HashMap<yinhe_types::LogicalChannelId, String>,
     // 每轨 AM 展开状态（chevron 点击直接翻转，纯视图状态不进 undo）。
     arr_am_expanded: &mut [bool],
     // 被选中的 AM lane（(音轨索引, target)）；点主行清空。
@@ -545,9 +547,19 @@ pub(crate) fn show(
                         .audio_channel
                         .map(crate::mix::audio_label)
                         .unwrap_or_else(|| "Audio--".to_string()),
-                    // MIDI 轨：port 字母（A..P）+ 通道号。乐器（XSynth/插件）
-                    // 挂在该通道上，MIX/dock 里显示。
-                    _ => crate::mix::midi_label(ti.port, ti.channel),
+                    // MIDI 轨：OwnLc 显示 LCxx（音频目标），AP 显示端口+通道，
+                    // DirectMaster 显示 `---`。改完音频目标后 AR 立即反映。
+                    Some(t) => match t.effective_audio_target() {
+                        Some(yinhe_core::TrackAudioTarget::OwnLc { lc, .. }) => lc_labels
+                            .get(&lc)
+                            .cloned()
+                            .unwrap_or_else(|| "LC".to_string()),
+                        Some(yinhe_core::TrackAudioTarget::DirectMaster { .. }) => {
+                            "---".to_string()
+                        }
+                        _ => crate::mix::midi_label(ti.port, ti.channel),
+                    },
+                    None => crate::mix::midi_label(ti.port, ti.channel),
                 }
             };
             painter.text(

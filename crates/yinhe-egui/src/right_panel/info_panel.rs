@@ -30,7 +30,7 @@ use super::InfoContent;
 // re-export：arrange.rs 通过 `crate::right_panel::info_panel::send_skip_tracks` 调用
 pub(crate) use track::send_skip_tracks;
 
-/// 「音轨属性」选项卡。返回 `true` 表示端口/通道改变（需重建音频引擎）。
+/// 「音轨属性」选项卡。返回本帧的改动结果。
 ///
 /// 自动化锚点信息优先于音轨属性。
 pub(crate) fn show_track(
@@ -38,15 +38,12 @@ pub(crate) fn show_track(
     doc: Option<&mut Document>,
     info_content: &mut Option<InfoContent>,
     automation_drag_ghost: Option<(u32, f32)>,
-) -> bool {
+) -> track::TrackInfoOut {
     let Some(doc) = doc else {
         crate::widgets::hint::empty_hint(ui, t!("common.no_document").as_ref());
-        return false;
+        return track::TrackInfoOut::default();
     };
-    let rev_before = doc.data.revision;
-    let port_changed = render_track(ui, doc, info_content, automation_drag_ghost);
-    let _ = rev_before;
-    port_changed
+    render_track(ui, doc, info_content, automation_drag_ghost)
 }
 
 fn render_track(
@@ -54,7 +51,7 @@ fn render_track(
     doc: &mut Document,
     info_content: &mut Option<InfoContent>,
     automation_drag_ghost: Option<(u32, f32)>,
-) -> bool {
+) -> track::TrackInfoOut {
     match info_content.clone() {
         Some(InfoContent::Anchor {
             track_idx,
@@ -103,7 +100,7 @@ fn render_track(
             } else {
                 *info_content = None;
             }
-            false
+            track::TrackInfoOut::default()
         }
         // 通道焦点不影响「音轨属性」选项卡：它仍显示当前选中轨。
         Some(InfoContent::Track) | Some(InfoContent::Channel(_)) | None => {

@@ -289,20 +289,35 @@ impl App {
                 .workspace
                 .active_doc
                 .and_then(|idx| self.workspace.documents.get_mut(idx));
-            let (changed, jump_request, history_jump, width_drag_ended, mixer_changed) =
-                crate::right_panel::show(
-                    ui,
-                    right_rect,
-                    &mut self.right_panel_width,
-                    &mut self.right_tab,
-                    &mut self.right_panel_layout,
-                    self.view_mode == crate::chrome::mode_bar::ViewMode::Mix,
-                    doc,
-                    self.audio_state.handle.as_ref(),
-                    &mut self.event_browser_state,
-                    &mut self.info_content,
-                    self.automation_drag_ghost,
-                );
+            let (
+                changed,
+                jump_request,
+                history_jump,
+                width_drag_ended,
+                mixer_changed,
+                routing_changed,
+            ) = crate::right_panel::show(
+                ui,
+                right_rect,
+                &mut self.right_panel_width,
+                &mut self.right_tab,
+                &mut self.right_panel_layout,
+                self.view_mode == crate::chrome::mode_bar::ViewMode::Mix,
+                doc,
+                self.audio_state.handle.as_ref(),
+                &mut self.event_browser_state,
+                &mut self.info_content,
+                self.automation_drag_ghost,
+            );
+            if routing_changed {
+                // 音频目标（LC / AP / ---）改变：ChannelLayout 可能新增/删除
+                // LC 通道，必须强制重建引擎；随后全量推混音参数。
+                self.teardown_audio();
+                if let Some(idx) = self.workspace.active_doc {
+                    self.sync_track_lc_racks(idx);
+                    self.push_mixer_state_to_engine(idx);
+                }
+            }
             if changed {
                 // 右栏改动（改 port/channel、图层拖动排序）→ 统一走 notify：
                 // 通道集合真的变了才 teardown 重建，重排等只 reload_notes。

@@ -83,9 +83,10 @@ pub fn show(
     Option<usize>,
     bool,
     bool,
+    bool,
 ) {
     let Some(tab) = *right_tab else {
-        return (false, None, None, false, false);
+        return (false, None, None, false, false, false);
     };
     // 旧入口（右键/快捷键 focus Info/EventBrowser）→ 仅在切换的那一帧定位选项卡，
     // 避免每帧重置用户手动选择的选项卡。
@@ -157,6 +158,7 @@ pub fn show(
     );
 
     let mut port_changed = false;
+    let mut routing_changed = false;
     // 通道属性面板的混音参数改动（单独推送，避免重建音频模型）。
     let mut mixer_changed = false;
     // 图层拖动排序等音轨结构变化 → 需 drop 引擎重建（与 port_changed 同路径）。
@@ -180,12 +182,14 @@ pub fn show(
                     .id_salt("rpanel_track_scroll")
                     .auto_shrink([false; 2])
                     .show(ui, |ui| {
-                        port_changed |= info_panel::show_track(
+                        let track_out = info_panel::show_track(
                             ui,
                             doc_ref.as_deref_mut(),
                             info_content,
                             automation_drag_ghost,
                         );
+                        port_changed |= track_out.port_changed;
+                        routing_changed |= track_out.routing_changed;
                     });
             }
             PanelKind::Channel => {
@@ -268,5 +272,6 @@ pub fn show(
         history_jump,
         width_drag_ended || layout_changed,
         mixer_changed,
+        routing_changed,
     )
 }
