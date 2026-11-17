@@ -817,7 +817,7 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
     let model = app.workspace.documents[idx].data.model.clone();
     let layout = ChannelLayout::from_model(&model);
     let active: Vec<u8> = (0..SOURCE_CHANNELS)
-        .filter(|&c| layout.is_active(c))
+        .filter(|&c| layout.is_ap_active(c))
         .map(|c| c as u8)
         .collect();
     // 取该通道首个使用轨道的颜色作为通道条色带（与 AR/PR 轨道色同源，含

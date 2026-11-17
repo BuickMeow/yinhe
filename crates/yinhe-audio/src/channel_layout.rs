@@ -40,6 +40,8 @@ pub struct ChannelLayout {
     channel_map: Box<[u32; 256]>,
     /// `active_mask` 覆盖的源 MIDI 通道数（= `active_mask.len()`）。
     num_channels: u32,
+    /// 哪些 MIDI 通道有 AP 共享轨（MIX 只显示这些 AP 通道）。
+    ap_mask: Vec<bool>,
     /// 用到的音频通道（升序去重，来自音频轨的 `audio_channel`）。
     /// 第 `i` 个的 dense = `midi_compacted + i`。
     audio_channels: Vec<u16>,
@@ -63,6 +65,7 @@ impl ChannelLayout {
     /// 会凭空激活 A01，混音台/音色库 UI 出现幽灵通道）。
     pub fn from_model(model: &YinModel) -> Self {
         let mut ch_active = [false; 256];
+        let mut ap_active = [false; 256];
         let mut audio_channels: Vec<u16> = Vec::new();
         let mut track_lc_channels: Vec<(u16, LogicalChannelId)> = Vec::new();
         for (i, track) in model.tracks.iter().enumerate() {
@@ -70,6 +73,12 @@ impl ChannelLayout {
                 let ch = ch as usize;
                 if ch < 256 {
                     ch_active[ch] = true;
+                    if matches!(
+                        track.effective_audio_target(),
+                        Some(yinhe_core::TrackAudioTarget::Ap { .. })
+                    ) {
+                        ap_active[ch] = true;
+                    }
                 }
                 if let Some(lc) = track.lc {
                     track_lc_channels.push((i as u16, lc));
@@ -87,9 +96,11 @@ impl ChannelLayout {
         let num_channels = (max_active_ch + 1).max(1) as u32;
 
         let active_mask: Vec<bool> = ch_active[..num_channels as usize].to_vec();
+        let ap_mask: Vec<bool> = ap_active[..num_channels as usize].to_vec();
 
         Self::from_mask_full(
             active_mask,
+            ap_mask,
             audio_channels,
             track_lc_channels,
             model.tracks.len(),
@@ -98,12 +109,14 @@ impl ChannelLayout {
 
     /// 从 `active_mask` 构建压缩后的 `channel_map`（无音频通道）。
     pub fn from_mask(active_mask: Vec<bool>) -> Self {
-        Self::from_mask_full(active_mask, Vec::new(), Vec::new(), 0)
+        let ap_mask = active_mask.clone();
+        Self::from_mask_full(active_mask, ap_mask, Vec::new(), Vec::new(), 0)
     }
 
     /// 从 `active_mask` + 音频通道 + 每轨 LC 构建完整布局。
     fn from_mask_full(
         active_mask: Vec<bool>,
+        ap_mask: Vec<bool>,
         audio_channels: Vec<u16>,
         track_lc_channels: Vec<(u16, LogicalChannelId)>,
         track_count: usize,
@@ -128,6 +141,7 @@ impl ChannelLayout {
         let num_channels = active_mask.len() as u32;
         Self {
             active_mask,
+            ap_mask,
             channel_map,
             num_channels,
             audio_channels,
@@ -202,10 +216,16 @@ impl ChannelLayout {
         d >= self.midi_compacted && d < self.midi_compacted + self.audio_channels.len() as u32
     }
 
-    /// 源通道 `ch` 是否激活。
+    /// 源通道 `ch` 是否激活（供合成器/音符路由）。
     #[inline]
     pub fn is_active(&self, ch: usize) -> bool {
         self.active_mask.get(ch).copied().unwrap_or(false)
+    }
+
+    /// 源通道 `ch` 是否有 AP 共享轨（MIX 只显示这些 AP 通道）。
+    #[inline]
+    pub fn is_ap_active(&self, ch: usize) -> bool {
+        self.ap_mask.get(ch).copied().unwrap_or(false)
     }
 
     /// 源通道 `ch` 的 dense 索引，未激活返回 `u32::MAX`。
@@ -786,6 +806,25 @@ mod matches_model_tests {
         assert!(layout.track_lc_dense(1) != u32::MAX);
         assert_eq!(layout.track_lc_channels(), &[(1, lc)]);
         assert!(layout.covers_model(&model));
+    }
+
+    #[test]
+    fn ap_active_only_when_some_track_targets_ap() {
+        let mut own = YinModel::new_empty_with_16_tracks();
+        own.tracks.truncate(2);
+        Arc::make_mut(&mut own.tracks[1]).lc =
+            Some(yinhe_types::LogicalChannelId(yinhe_types::TRACK_LC_BASE));
+        own.rebuild();
+        let layout = ChannelLayout::from_model(&own);
+        assert!(layout.is_active(0), "OwnLc 仍需源 MIDI 通道供合成器路由");
+        assert!(!layout.is_ap_active(0), "OwnLc 不应产生 AP 通道");
+
+        let mut shared = YinModel::new_empty_with_16_tracks();
+        shared.tracks.truncate(2);
+        shared.rebuild();
+        let layout = ChannelLayout::from_model(&shared);
+        assert!(layout.is_active(0));
+        assert!(layout.is_ap_active(0), "共享 MIDI 轨应产生 AP 通道");
     }
 
     /// 新增或删除通道都必须判为“不完全匹配”（触发引擎重建/资源回收）。
