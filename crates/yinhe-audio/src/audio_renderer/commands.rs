@@ -359,17 +359,6 @@ impl AudioRenderer {
             AudioCommand::PreviewStopKey { key } => {
                 self.engine.stop_preview_key(key);
             }
-            AudioCommand::SyncSends {
-                sends,
-                audio_sends,
-                track_sends,
-            } => {
-                self.engine.handle_command(AudioCommand::SyncSends {
-                    sends,
-                    audio_sends,
-                    track_sends,
-                });
-            }
             AudioCommand::ExportStart {
                 path,
                 bit_depth,

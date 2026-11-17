@@ -93,7 +93,6 @@ impl MixerParamsV9 {
                 strip: self.channels.get(i).copied().unwrap_or_default(),
                 inserts: self.channel_inserts.get(i).cloned().unwrap_or_default(),
                 // 方案 C 没有 Bus：v9 的 bus 发送/主输出直接丢弃。
-                sends: Vec::new(),
                 output: None,
                 automation: Vec::new(),
                 freeze: None,
@@ -105,7 +104,6 @@ impl MixerParamsV9 {
                 source: ChannelSource::Audio(i as u16),
                 strip: self.audio_channels.get(i).copied().unwrap_or_default(),
                 inserts: self.audio_inserts.get(i).cloned().unwrap_or_default(),
-                sends: Vec::new(),
                 output: None,
                 automation: Vec::new(),
                 freeze: None,
@@ -119,7 +117,6 @@ impl MixerParamsV9 {
                 ..StripParams::default()
             },
             inserts: self.master_inserts,
-            sends: Vec::new(),
             output: None,
             automation: Vec::new(),
             freeze: None,
@@ -171,7 +168,6 @@ pub(crate) fn decode_mixer_section(section: &[u8]) -> Option<MixerParams> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yinhe_mixer::SendParams;
 
     #[test]
     fn v9_tables_migrate_to_v10_nodes() {
@@ -219,8 +215,7 @@ mod tests {
         );
         let midi3 = loaded.midi_node(3).expect("midi 3");
         assert_eq!(midi3.gain, 0.25);
-        // 方案 C 没有 Bus：v9 的 bus 发送与主输出直接丢弃。
-        assert!(midi3.sends.is_empty());
+        // 方案 C 没有 Bus：v9 的 bus 主输出直接丢弃。
         assert!(midi3.output.is_none());
         assert_eq!(loaded.audio_node(0).expect("audio 0").gain, 0.4);
         assert_eq!(loaded.master.gain, 0.8);
@@ -241,12 +236,6 @@ mod tests {
         let mut mixer = MixerParams::default();
         mixer.ensure_len();
         let track_lc = mixer.add_track_lc();
-        let send = SendParams {
-            target: ChannelId::Lc(track_lc),
-            amount: 0.5,
-            pre_fader: false,
-        };
-        mixer.set_node_sends(yinhe_types::MixerChannelId::Midi(0), vec![send]);
         mixer.set_node_output(
             yinhe_types::MixerChannelId::Midi(0),
             Some(ChannelId::Lc(track_lc)),
@@ -274,10 +263,6 @@ mod tests {
 
         let section = encode_mixer_section(&mixer, 0).expect("encode");
         let loaded = decode_mixer_section(&section).expect("decode");
-        assert_eq!(
-            loaded.midi_node(0).expect("midi 0").sends[0].target,
-            ChannelId::Lc(track_lc)
-        );
         assert_eq!(
             loaded.midi_node(0).expect("midi 0").output,
             Some(ChannelId::Lc(track_lc))

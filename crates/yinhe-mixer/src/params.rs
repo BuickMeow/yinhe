@@ -123,34 +123,9 @@ pub struct InsertRef {
     pub state: Option<Vec<u8>>,
 }
 
-/// 节点内嵌的发送条目（源为节点自身）。
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SendParams {
-    /// 目标通道（LC / AP / Master）。
-    pub target: ChannelId,
-    /// 发送量（线性增益；0.0 = 关闭）。
-    #[serde(default)]
-    pub amount: f32,
-    /// 发送点：true = 推子前（insert 后、fader 前，不受增益/声像影响），
-    /// false = 推子后。
-    #[serde(default)]
-    pub pre_fader: bool,
-}
-
-impl Default for SendParams {
-    fn default() -> Self {
-        Self {
-            target: ChannelId::Master,
-            amount: 0.0,
-            pre_fader: false,
-        }
-    }
-}
-
 /// 任意音频通道之间的发送（方案 C）。
 ///
-/// 与节点内嵌的 `SendParams` 并存：`SendParams` 是通道条自己的发送列表，
-/// 本类型是引擎侧按 source/target 解析的统一发送表。
+/// source/target 都是 `ChannelId`；渲染图按它解析成 dense 下标。
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChannelSend {
     pub source: ChannelId,
@@ -241,7 +216,6 @@ impl MixerParams {
         self.ensure_channels();
         self.ensure_aps();
         self.ensure_channel_sends();
-        self.ensure_send_amounts();
         self.ensure_track_channels();
         self.ensure_audio_channels();
         self.clear_mixed_lc_freezes();
@@ -465,19 +439,6 @@ impl MixerParams {
         let before = self.aps.len();
         self.aps.retain(|ap| ap.global_midi() != global);
         self.aps.len() != before
-    }
-
-    /// 清理任意通道发送：0 发送删除、同 source/target 去重（先写保留）、
-    /// 源不能是 Master，amount 夹到 0..1。
-    /// C 的发送范围 0..1（-inf..0 dB）；旧工程的 +6 dB 发送夹到 0 dB，
-    /// 0 发送直接删除。
-    fn ensure_send_amounts(&mut self) {
-        for node in self.nodes_mut() {
-            for send in &mut node.sends {
-                send.amount = send.amount.clamp(0.0, 1.0);
-            }
-            node.sends.retain(|send| send.amount > 0.0);
-        }
     }
 
     fn ensure_channel_sends(&mut self) {
@@ -745,7 +706,6 @@ impl MixerParams {
             .chain(std::iter::once(ChannelId::Master))
             .collect();
         for node in self.nodes.iter_mut() {
-            node.sends.retain(|s| known_targets.contains(&s.target));
             if node.output.is_some_and(|id| {
                 id == ChannelId::Master || id == node.id || !known_targets.contains(&id)
             }) {
@@ -892,60 +852,6 @@ impl MixerParams {
         self.node_mut_for_ui(node).map(|n| &mut n.inserts)
     }
 
-    /// MIDI 源通道发送表快照（按源通道索引）。
-    pub fn midi_sends_snapshot(&self) -> Vec<Vec<SendParams>> {
-        (0..CHANNEL_COUNT)
-            .map(|i| {
-                self.midi_node(i as u8)
-                    .map(|node| node.sends.clone())
-                    .unwrap_or_default()
-            })
-            .collect()
-    }
-
-    /// 音频通道发送表快照（按音频通道索引）。
-    pub fn audio_sends_snapshot(&self) -> Vec<Vec<SendParams>> {
-        let mut out = Vec::new();
-        for ch in 0.. {
-            let Some(node) = self.audio_node(ch) else {
-                break;
-            };
-            out.push(node.sends.clone());
-        }
-        out
-    }
-
-    /// 统一节点发送列表。
-    pub fn node_sends(&self, node: MixerChannelId) -> Option<&[SendParams]> {
-        if node == MixerChannelId::Master {
-            return None;
-        }
-        self.channel_node(self.channel_id_for(node))
-            .map(|n| n.sends.as_slice())
-    }
-
-    /// 统一节点发送列表（可变；用于就地改发送量）。
-    pub fn node_sends_mut(&mut self, node: MixerChannelId) -> Option<&mut Vec<SendParams>> {
-        if node == MixerChannelId::Master {
-            return None;
-        }
-        self.node_mut_for_ui(node).map(|n| &mut n.sends)
-    }
-
-    /// 统一节点发送列表写入。
-    pub fn set_node_sends(&mut self, node: MixerChannelId, sends: Vec<SendParams>) -> bool {
-        if node == MixerChannelId::Master {
-            return false;
-        }
-        match self.node_mut_for_ui(node) {
-            Some(slot) => {
-                slot.sends = sends;
-                true
-            }
-            None => false,
-        }
-    }
-
     /// 统一节点主输出（MIDI / 音频 / 每轨 LC；Master 没有）。
     pub fn node_output(&self, node: MixerChannelId) -> Option<ChannelId> {
         if node == MixerChannelId::Master {
@@ -1051,31 +957,14 @@ mod tests {
     }
 
     /// 删除一条总线不改变其他总线的 ID；指向它的 send/输出被清理。
-    #[test]
-    #[test]
-    /// 删除后新增总线不复用旧 ID，避免自动化/发送串到新总线。
-    #[test]
-    /// 总线发送表随增删总线维护；音频通道发送表同步清理。
-    #[test]
-    /// 自发送随其他总线删除保持指向自己。
-    #[test]
-    /// ensure_len 清理发送表里指向不存在通道的条目。
+    /// ensure_len 清理指向不存在通道的主输出。
     #[test]
     fn ensure_len_prunes_dangling_routing() {
         let mut p = MixerParams::default();
         p.ensure_len();
         let ghost = ChannelId::Lc(LogicalChannelId(TRACK_LC_BASE + 999));
-        let dangling = SendParams {
-            target: ghost,
-            amount: 1.0,
-            pre_fader: false,
-        };
-        p.set_node_sends(MixerChannelId::Midi(0), vec![dangling]);
-        p.set_node_sends(MixerChannelId::Audio(0), vec![dangling]);
         p.set_node_output(MixerChannelId::Midi(0), Some(ghost));
         p.ensure_len();
-        assert!(p.node_sends(MixerChannelId::Midi(0)).unwrap().is_empty());
-        assert!(p.node_sends(MixerChannelId::Audio(0)).unwrap().is_empty());
         assert_eq!(p.node_output(MixerChannelId::Midi(0)), None);
     }
 
@@ -1133,29 +1022,6 @@ mod tests {
             p.track_node(lc).expect("lc").freeze.is_none(),
             "有 send 汇入的混合 LC 不能冻结"
         );
-    }
-
-    #[test]
-    fn legacy_send_amounts_clamp_to_zero_db_and_zero_is_removed() {
-        let mut p = MixerParams::default();
-        p.ensure_len();
-        let lc = p.add_track_lc();
-        p.midi_node_mut(0).expect("midi 0").sends = vec![
-            SendParams {
-                target: ChannelId::Lc(lc),
-                amount: 2.0,
-                pre_fader: false,
-            },
-            SendParams {
-                target: ChannelId::Lc(LogicalChannelId(TRACK_LC_BASE + 99)),
-                amount: 0.0,
-                pre_fader: false,
-            },
-        ];
-        p.ensure_len();
-        let sends = &p.midi_node(0).expect("midi 0").sends;
-        assert_eq!(sends.len(), 1);
-        assert!((sends[0].amount - 1.0).abs() < 1e-6);
     }
 
     #[test]
@@ -1223,7 +1089,7 @@ mod tests {
     }
 
     #[test]
-    fn node_inserts_sends_and_output_route_each_namespace() {
+    fn node_inserts_and_output_route_each_namespace() {
         let mut p = MixerParams::default();
         p.ensure_len();
         let lc = p.add_track_lc();
@@ -1232,15 +1098,6 @@ mod tests {
         assert!(p.node_inserts_mut(MixerChannelId::Audio(2)).is_some());
         assert!(p.node_inserts_mut(MixerChannelId::TrackLc(lc)).is_some());
         assert!(p.node_inserts_mut(MixerChannelId::Master).is_some());
-
-        let send = SendParams {
-            target: ChannelId::Lc(lc),
-            amount: 0.5,
-            pre_fader: false,
-        };
-        assert!(p.set_node_sends(MixerChannelId::Midi(1), vec![send]));
-        assert_eq!(p.node_sends(MixerChannelId::Midi(1)), Some(&[send][..]));
-        assert!(!p.set_node_sends(MixerChannelId::Master, vec![send]));
 
         assert!(p.set_node_output(MixerChannelId::Midi(1), Some(ChannelId::Lc(lc))));
         assert_eq!(

@@ -17,7 +17,7 @@ use yinhe_types::{
     ApGroupId, AutomationLane, ChannelId, ChannelSource, LogicalChannelId, RackId, RackOutputMode,
 };
 
-use crate::params::{InsertRef, SendParams, StripParams};
+use crate::params::{InsertRef, StripParams};
 
 /// 一个 Rack 的持久化参数。
 ///
@@ -110,8 +110,6 @@ pub struct MixerNode {
     pub strip: StripParams,
     #[serde(default)]
     pub inserts: Vec<InsertRef>,
-    #[serde(default)]
-    pub sends: Vec<SendParams>,
     /// 主输出；`None` = 直接进 Master。
     ///
     /// MIDI / 音频 / 每轨 LC 可指向另一条 LC，参数层做环检测，
@@ -138,7 +136,6 @@ impl MixerNode {
             source,
             strip: StripParams::default(),
             inserts: Vec::new(),
-            sends: Vec::new(),
             output: None,
             automation: Vec::new(),
             freeze: None,

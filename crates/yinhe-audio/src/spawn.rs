@@ -8,7 +8,7 @@ use crate::audio_out::{self, BufferSize, Device, OutputFormat, Stream, StreamErr
 use yinhe_core::YinModel;
 use yinhe_mixer::{
     InsertProcessor, InstrumentProcessor, MasterParams, MeterReading, MixerParams, SampleReading,
-    SendParams, StripParams,
+    StripParams,
 };
 use yinhe_types::{Interpolation, MixerChannelId, SynthEngine};
 
@@ -187,15 +187,6 @@ pub enum AudioCommand {
         target: InsertTarget,
         slot: usize,
         processor: Box<dyn InsertProcessor>,
-    },
-    /// 全量同步节点发送（改发送后推一次）：
-    /// `sends` 为按源 MIDI 通道索引的发送列表、`audio_sends` 为按音频通道
-    /// 索引的发送列表、`track_sends` 为按 `track_channels` 顺序的每轨 LC 发送。
-    SyncSends {
-        sends: Box<Vec<Vec<SendParams>>>,
-        audio_sends: Box<Vec<Vec<SendParams>>>,
-        /// 每轨 LC 的发送表（按 `track_channels` 顺序）。
-        track_sends: Box<Vec<Vec<SendParams>>>,
     },
     /// 安装/替换/移除某乐器宿主的插件实例（CLAP/VST3 等，抽象为 trait）。
     ///
@@ -427,7 +418,6 @@ impl AudioCommand {
             AudioCommand::InsertAdd { .. } => ("InsertAdd", true),
             AudioCommand::InsertRemove { .. } => ("InsertRemove", true),
             AudioCommand::InsertReplace { .. } => ("InsertReplace", true),
-            AudioCommand::SyncSends { .. } => ("SyncSends", true),
             AudioCommand::SetInstrumentSlot { .. } => ("SetInstrumentSlot", true),
             AudioCommand::SetAudioSource { .. } => ("SetAudioSource", false),
             AudioCommand::RefreshLatency => ("RefreshLatency", false),
@@ -2006,15 +1996,6 @@ mod tests {
                     processor: insert(),
                 },
                 "InsertReplace",
-                true,
-            ),
-            (
-                AudioCommand::SyncSends {
-                    sends: Box::new(Vec::new()),
-                    audio_sends: Box::new(Vec::new()),
-                    track_sends: Box::new(Vec::new()),
-                },
-                "SyncSends",
                 true,
             ),
             (

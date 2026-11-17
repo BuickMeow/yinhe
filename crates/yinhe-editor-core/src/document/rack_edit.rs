@@ -52,7 +52,6 @@ impl Document {
                         if let Some(node) = self.mixer.track_node_mut(id) {
                             node.strip = source.strip;
                             node.inserts = source.inserts.clone();
-                            node.sends = source.sends.clone();
                             node.output = source.output;
                         }
                         self.mixer.set_track_lc_source(id, track_idx as u16);
@@ -267,7 +266,6 @@ impl Document {
         if let Some(node) = self.mixer.track_node_mut(id) {
             node.strip = source.strip;
             node.inserts = source.inserts.clone();
-            node.sends = source.sends.clone();
             node.output = source.output;
         }
         {
@@ -338,7 +336,6 @@ impl Document {
             if let Some(node) = self.mixer.track_node_mut(id) {
                 node.strip = source.strip;
                 node.inserts = source.inserts.clone();
-                node.sends = source.sends.clone();
                 node.output = source.output;
             }
             let model = Arc::make_mut(&mut self.data.model);

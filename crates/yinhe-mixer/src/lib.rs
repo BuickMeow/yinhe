@@ -28,7 +28,5 @@ pub use graph::{
 pub use meter::{MeterReading, MeterTap, SampleReading, SampleTap};
 pub use node::{ApGroup, FrozenAudio, MixerNode, RackParams};
 pub use param_queue::ParamQueue;
-pub use params::{
-    CHANNEL_COUNT, InsertRef, MasterParams, MixerParams, PluginFormat, SendParams, StripParams,
-};
+pub use params::{CHANNEL_COUNT, InsertRef, MasterParams, MixerParams, PluginFormat, StripParams};
 pub use plugin::{InstrumentProcessor, PluginEvent};

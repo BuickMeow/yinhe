@@ -3,7 +3,7 @@
 
 use yinhe_mixer::{
     ChannelSendTarget, InsertProcessor, InstrumentProcessor, MasterParams, MixerParams,
-    ResolvedChannelSend, SendParams, StripParams,
+    ResolvedChannelSend, StripParams,
 };
 use yinhe_types::MixerChannelId;
 
@@ -172,47 +172,7 @@ impl AudioEngine {
         }
     }
 
-    /// 全量同步节点发送（改 send 后推一次）。
-    pub(crate) fn sync_sends_config(
-        &mut self,
-        sends: Vec<Vec<SendParams>>,
-        audio_sends: Vec<Vec<SendParams>>,
-        track_sends: Vec<Vec<SendParams>>,
-    ) {
-        self.mixer_params.ensure_channel_tables(audio_sends.len());
-        for (i, list) in sends.into_iter().enumerate() {
-            if let Some(node) = self.mixer_params.midi_node_mut(i as u8) {
-                node.sends = list;
-            }
-        }
-        self.mixer_params.ensure_channel_tables(audio_sends.len());
-        for (i, list) in audio_sends.into_iter().enumerate() {
-            if let Some(node) = self.mixer_params.audio_node_mut(i as u16) {
-                node.sends = list;
-            }
-        }
-        let track_ids: Vec<_> = self
-            .mixer_params
-            .nodes
-            .iter()
-            .filter_map(|node| match (node.id, node.source) {
-                (yinhe_types::ChannelId::Lc(id), yinhe_types::ChannelSource::Track(_)) => Some(id),
-                _ => None,
-            })
-            .collect();
-        for (i, list) in track_sends.into_iter().enumerate() {
-            let Some(id) = track_ids.get(i) else {
-                break;
-            };
-            if let Some(node) = self.mixer_params.track_node_mut(*id) {
-                node.sends = list;
-            }
-        }
-        self.sync_output_routing();
-        self.sync_sends_to_graph();
-    }
-
-    /// 按 tick 求值 LC / Bus / Master 的 MixerGain / MixerPan 自动化。
+    /// 按 tick 求值 LC / Master 的 MixerGain / MixerPan 自动化。
     pub(crate) fn apply_mixer_automation(&mut self, tick: u32) {
         use yinhe_types::AutomationTarget;
 
