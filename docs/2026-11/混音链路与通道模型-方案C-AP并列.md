@@ -12,6 +12,25 @@
 
 ---
 
+## 0. 最新决策（覆盖下文旧描述）
+
+这一节是后来确认的决策，和下文冲突时以本节为准：
+
+1. **LC ID 空间改为 `u16`（0..65535）**，不再用 `u32 + TRACK_LC_BASE=1_000_000`。
+   LC ID 不再编码“MIDI/音频源通道号”，而是独立的通道身份。v14 旧 ID 在
+   v15 迁移时重新分配，不能保留原数值。
+2. **取消独立 Bus 类型**。所有 LC/AP 通道都可以接收其他通道的发送，
+   “Bus”只是一种使用角色，不是第二种通道。Master 仍是唯一终点的特殊通道。
+3. **默认通道输出就是 Master**。“直通 Master”不是一种特殊音轨类型；
+   任何通道把 `output` 设为 Master 即可。若需要防止误路由，加 `routing_lock`
+   标记，而不是新建“直通轨”。
+4. **freeze 按音频通道分配**：普通 Track 的 LC、AP 的 AP 通道。
+   FL Studio 的 freeze 也是按 Mixer Track（音频通道）冻结，不是按 Playlist
+   Track/Pattern；这恰好支持“按通道冻结”，但普通 Track 与 LC 是 1:1，
+   所以表现上仍是“单轨冻结”。
+5. **多输出插件是可选高级能力**，不是方案 C 的 MVP。默认多条 LC 各自挂一个
+   LC Rack 实例；大采样器/鼓机需要省内存时才用单实例多输出。
+
 ## 1. 术语
 
 | 术语 | 含义 |
@@ -22,7 +41,7 @@
 | AP 通道 | AP 编组展开出的音频通道（`MixerNode`）；单输出 1 条，多输出 N 条；与 LC 并列 |
 | AP Rack | 一个 AP 编组里的共享乐器链 |
 | LC Rack | 一条独立 Track/LC 自己的乐器链（原“私有 Rack”） |
-| Owner | 自动化/CC 的归属者：TrackLc、ApRack、ApChannel、Bus、Master |
+| Owner | 自动化/CC 的归属者：TrackLc、ApRack、ApChannel、Channel、Master |
 
 AP 不是“父通道”，LC 不是“子通道”。它们是 Track 音频源的两种并列选择：
 
@@ -43,7 +62,7 @@ Track 4 ──> AP A01 通道 200
 所以链路永远是：
 
 ```text
-Track -> Channel（LC 或 AP 通道）-> (Bus) -> Master
+Track -> Channel（LC 或 AP 通道）-> 任意 Channel ... -> Master
 ```
 
 不存在 `AP -> LC` 的额外上下级。
@@ -150,7 +169,7 @@ Track ──> LC Rack -> 自己的 LC ──> Bus/Master       （默认）
 
 - 默认 Track 有自己的 LC Rack + LC；
 - 只有显式链接到 A01 时，Track 才加入 A01 的共享 Rack 和共享自动化；
-- AP 通道和 LC 都可以直接进 Bus/Master，二者没有父子关系；
+- AP 通道和 LC 都可以直接进 Master 或另一条通道，二者没有父子关系；
 - AP 编组只是共享 Rack 和 MIDI 身份的组织单位，不是音频通道。
 
 ### 3.1 和 Cubase / Studio One 的类比
@@ -176,7 +195,7 @@ Track ──> LC Rack -> 自己的 LC ──> Bus/Master       （默认）
 
 - `MixerNode` / `LogicalChannelId` / `RackParams` / `FrozenAudio`；
 - LC 的 gain/pan/M/S/insert/send/automation/freeze；
-- Bus 嵌套、Bus 自动化、Master；
+- 通道发送/嵌套、通道自动化、Master；
 - CLAP/VST3 多输出与按输出 LC；
 - `ChannelLayout` 的 dense 通道、每轨 LC、多输出 LC；
 - 自动化 lane 的编辑、undo、AR 子行、锚点面板。
@@ -203,7 +222,7 @@ struct TrackData {
 }
 
 enum TrackAudioTarget {
-    /// 默认：普通 DAW 通道，拥有LC Rack + 自己的 LC。
+    /// 默认：普通 DAW 通道，拥有 LC Rack + 自己的 LC。
     OwnLc {
         lc: LogicalChannelId,
         rack: RackId,
@@ -222,11 +241,37 @@ enum TrackAudioTarget {
 
 - `OwnLc` 是默认值；新建 MIDI 轨/音频轨时创建或复用自己的 LC。
 - `Ap` 不拥有私有 LC；它的音频路径就是 AP 编组里的某条 AP 通道。
-- 从 AP 解链回 `OwnLc` 时保留原来的私有 LC/LC Rack 状态，
+- 从 AP 解链回 `OwnLc` 时保留原来的 LC/LC Rack 状态，
   避免解链后所有设置丢失。
 - 音频轨（Audio Track）通常只用 `OwnLc`，不参与 AP 编组。
 
-### 4.2 AP 编组
+### 4.2 通道身份
+
+```rust
+/// LC 的稳定身份；u16 空间 0..=65535。
+struct LogicalChannelId(pub u16);
+
+/// AP 编组的稳定身份；当前上限 256，u16 预留扩展。
+struct ApGroupId(pub u16);
+
+/// AP 展开出的某一条音频通道。
+struct ApChannelId {
+    group: ApGroupId,
+    output: u16,
+}
+
+/// 所有可发送目标的统一身份。
+enum ChannelId {
+    Lc(LogicalChannelId),
+    Ap(ApChannelId),
+    Master,
+}
+```
+
+LC ID 是**独立命名空间**，不再编码“MIDI 源通道/音频通道号”。这和 v14 的
+`LogicalChannelId(u32)` + `TRACK_LC_BASE` 不同，v14 迁移时必须重映射。
+
+### 4.3 AP 编组与统一通道
 
 ```rust
 struct ApGroup {
@@ -236,55 +281,59 @@ struct ApGroup {
     rack: RackParams,
     /// AP 展开出的音频通道：单输出 = 1 条，多输出 = 每个输出一条。
     /// 这些是并列的 `MixerNode`，不是 AP 的子节点。
-    channels: Vec<MixerChannelId>,
+    channels: Vec<ChannelId>,
     /// AP Rack 级自动化（CC / 乐器参数）。
     /// 每条 AP 通道自己的 gain/pan/send/insert 自动化仍在 `MixerNode.automation`。
     rack_automation: Vec<AutomationLane>,
     enabled: bool,
 }
-```
 
-`ApGroupId` 建议用稳定 `u32`，不要直接用 `(port, channel)` 做身份。
-MIDI 通道只是 AP 的一个属性，用户可以把 A01 编组改名、解绑或重建，
-不应导致自动化/路由串线。
-
-### 4.3 MixerParams
-
-```rust
 struct MixerParams {
-    /// 所有音频通道：普通 Track LC + AP 通道 + 每轨 LC。
+    /// 所有音频通道：普通 Track LC + AP 通道。
     channels: Vec<MixerNode>,
     /// AP 编组；只有用到的通道才创建。
     aps: Vec<ApGroup>,
     /// LC Rack；Track 解链后仍保留。
     racks: Vec<RackParams>,
-    buses: Vec<MixerNode>,
+    /// Master 是唯一特殊通道；也可以视作最后一个固定 ChannelId。
     master: MixerNode,
 }
 
 struct MixerNode {
-    id: MixerChannelId,
-    /// LC 的音频来源；AP 通道的来源是共享 AP Rack。
-    source: ChannelSource,
+    id: ChannelId,
+    /// 音频来源；None = 纯汇入通道（Bus 角色）。
+    source: Option<ChannelSource>,
     strip: StripParams,
     inserts: Vec<InsertRef>,
     sends: Vec<SendParams>,
-    output: Option<BusId>,
+    /// None = Master；Some = 送到另一条通道。
+    output: Option<ChannelId>,
+    /// 默认 true：任意通道都可以接收其他通道的 send。
+    accepts_audio_input: bool,
     automation: Vec<AutomationLane>,
     freeze: Option<FrozenAudio>,
 }
 
 enum ChannelSource {
-    PrivateRack(RackId),
+    LcRack(RackId),
     ApRack(ApGroupId),
     AudioInput,
 }
+
+struct SendParams {
+    target: ChannelId,
+    amount: f32,
+    pre_fader: bool,
+}
 ```
 
-和当前 v14 的 `channels[0..256]` 不同：不再保证 256 条 MIDI 通道条常驻。
-`channels` 按需增长，空工程可以只有 Master + Conductor。
+关键点：
 
----
+- `channels` 里既有普通 LC，也有 AP 通道；它们都是 `MixerNode`。
+- 没有独立的 `buses: Vec<MixerNode>`；“Bus”是 `source = None` 的通道角色。
+- `accepts_audio_input` 默认 true（已确认 FL 式）；任意通道都能当 Bus。
+- `sends`/`output` 的目标是 `ChannelId`，不再限制为 BusId。
+- `master` 不接受音符/乐器，也不能作为 send 源，只作为终点。
 
 ### 4.4 设备链视图不是 Rack
 
@@ -377,47 +426,54 @@ LC 4 -> LC Rack：插件实例 #4
   output port 映射；
 - 只有大采样器/鼓机确实需要省内存时，才引导用户使用多输出。
 
-### 5.3 LC 能做 Bus 吗？AP 能做 Bus 吗？
+### 5.3 已确认：取消 Bus 类型，任意通道发送
 
-可以，但要先把“通道”和“Bus”从两个类型变成两个能力：
+这一条是方案 C 的关键决策：
+
+```text
+不再有独立的 Bus 类型。
+LC、AP 通道、纯汇入通道全部是 Channel。
+任何 Channel 都可以接收其他 Channel 的 send，
+也可以把主输出指向另一个 Channel。
+Master 是唯一终点。
+```
+
+也就是说：
+
+```text
+LC 可以当 Bus
+AP 通道可以当 Bus
+没有乐器的纯汇入通道也可以当 Bus
+```
+
+统一结构：
 
 ```rust
-struct ChannelCapabilities {
-    /// 可以接收其他通道的音频 send。
-    accepts_audio_input: bool,
-    /// 有自己的乐器/MIDI 源。
-    has_instrument: bool,
-    /// 可以作为 send 目标显示旋钮。
-    show_as_send_target: bool,
+struct MixerNode {
+    id: ChannelId,
+    source: Option<ChannelSource>, // None = 纯汇入通道
+    accepts_audio_input: bool,     // 默认 true
+    sends: Vec<SendParams>,        // 目标可以是任意 Channel
+    output: Option<ChannelId>,     // None = Master
+    // strip / inserts / automation / freeze...
 }
 ```
 
-这样：
+这样带来的效果：
 
-- 普通 LC：`has_instrument = true`，`accepts_audio_input = false`（默认）；
-- Bus：`has_instrument = false`，`accepts_audio_input = true`；
-- FL Studio 式混合通道：`has_instrument = true` + `accepts_audio_input = true`，
-  可以既有音符，又接收其他通道的 send；
-- AP 通道：`has_instrument = true`（共享 AP Rack）；是否允许
-  `accepts_audio_input` 作为高级开关，默认关闭。
+1. **“Bus”只是角色**：`source = None` 的通道就是传统 Bus；有乐器的 LC 接收 send
+   时就是 FL Studio 式混合通道（音符 + 汇入音频相加）。
+2. **AP 也可以接收 send**：因为 AP 通道和 LC 同构，不再有“AP 不能当 Bus”的
+   特殊规则。但 UI 要标明它同时是“共享源”和“汇入点”。
+3. **发送旋钮可自定义**：每个通道有 `send_slots`（或 pin 列表），混音台只显示
+   用户选择的目标；默认可以显示所有纯汇入通道，用户可增删/排序。
+4. **反馈检测统一**：任意通道发送意味着可能出现环；用与通道嵌套相同的
+   “顺序发送同块、逆序发送一块延迟”策略，或统一拓扑排序 + 块延迟。
+5. **Master 特殊**：Master 不接收音符/乐器，不作为 send 源，只作为终点。
 
-需要注意：
-
-1. **音符和 Bus 不冲突**：只要通道有自己的乐器源，就可以有音符；同时它还能
-   接收别的通道送来的音频，两者相加。
-2. **AP 做 Bus 语义上要谨慎**：AP 是共享 MIDI 源，若再接收音频 send，
-   它同时是“源”和“汇”，用户很难理解作用范围；建议默认关闭，只作为高级选项。
-3. **反馈检测必须统一**：send 目标从“只能是 Bus”变成“任意可接收输入的通道”，
-   就必须像 Bus 嵌套一样做环检测和延迟处理。
-4. **发送旋钮可以自定义**：每个通道维护 `send_slots: Vec<ChannelId>`，
-   混音台只显示用户 pin 的目标；不再“每条 Bus 都固定占一个旋钮”。
-   默认可以自动显示所有 Bus，用户可增删/排序。
-5. **AP 通道可以做 Bus 的替代品吗**：技术上可以，但不建议把它当默认；
-   音频汇总用 Bus，MIDI 共享用 AP，两者职责清晰。
-
-如果产品目标是 FL Studio 那种“所有 mixer track 都能当 Bus”，
-方案 C 可以自然扩展；如果目标是 Cubase/Studio One 那种“Track/Group/FX 分开”，
-就保持 `Bus` 为独立能力，不默认给 LC 开 `accepts_audio_input`。
+这会让方案 C 更接近 FL Studio 的“所有 Mixer Track 都能当 Bus”，但保留了
+我们自己的 Track/LC 强绑定：Track 始终显式指向 LC 或 AP 通道，不存在
+FL 那种 Playlist Track 与 Mixer Track 默认解耦的混乱。
 
 ## 6. 自动化与普通 CC 的合并
 
@@ -432,7 +488,8 @@ Track 级始终属于 Track；Channel 级属于当前音频目标的 owner：
 
 - `OwnLc` -> `TrackLc(lc)`
 - `Ap` -> `ApRack(ap)` + `ApChannel(ap, output)`
-- Bus/Master 不变
+- 任意通道（原 Bus 角色）-> `Channel(id)`
+- Master 不变
 
 ### 6.2 同名自动化允许存在，但渲染只认 owner
 
@@ -604,8 +661,8 @@ Track 3   [AP A01]      ← 已链接
 |---|---|---|
 | Folder | 视觉组织、折叠、批量选择/移动 | 否 |
 | AP 编组 | 共享 MIDI 源/乐器/Rack | 是，展开成 AP 通道 |
-| Bus | 音频汇总、insert、send | 是，Bus 通道 |
-| Send | 把音频送到另一个 Bus | 否，是路由 |
+| 纯汇入 Channel（Bus 角色） | 音频汇总、insert、send | 是，普通 Channel |
+| Send | 把音频送到另一个 Channel | 否，是路由 |
 
 **不建议让文件夹强制共用通道。** 原因：
 
@@ -621,7 +678,7 @@ Track 3   [AP A01]      ← 已链接
 - 文件夹默认只做视觉组织，**不限层数**；
 - 可选「文件夹作为 AP 编组」开关，默认关闭；开启后文件夹头就是 AP 头，
   子轨链接到该 AP，但文件夹本身不额外产生一条通道；
-- 需要音频分组时，显式把文件夹/多条轨发送到 Bus；
+- 需要音频分组时，显式把文件夹/多条轨发送到一条纯汇入 Channel（Bus 角色）；
 - 需要共享乐器时，显式链接 AP。
 
 ### 9.6 通道分配要像 Domino 一样方便
@@ -667,6 +724,49 @@ Bake to AP / Bake to LC
 
 这和当前目标 B 的语义一致，只是 LC 的默认归属从“MIDI 通道”变成“Track”。
 
+### 10.1 FL Studio 的 freeze 是按 Mixer Track
+
+FL Studio 官方手册把这件事叫 **Recording Internal Mixer Audio (Freezing Mixer
+Tracks)**：
+
+- 非实时：Playlist 的 Consolidate / 导出时的 “Split mixer tracks”，每个
+  active Mixer Track 生成一个 wav；
+- 实时：在 Mixer Track 上挂 Edison，或 arm 该 Mixer Track 做 disk recording；
+- 单位始终是 **Mixer Track**，不是 Playlist Track/Pattern，因为 FL 的 Playlist
+  和 Mixer Track 默认是解耦的。
+
+这正好说明方案 C 的 freeze 单位应该是**音频通道**：
+
+- 普通 Track 的 LC 是 1:1，所以看起来就是“冻结这条轨”；
+- AP 是多条 Track 共享一条 AP 通道，所以只能冻结 AP 通道，不能冻结其中
+  一条 Track；
+- 不要为了“每轨 freeze”去复制 AP 的音频流，那会重新引入 FL 那种
+  track/channel 解耦问题。
+
+### 10.2 直通 Master 不是特殊轨道
+
+方案 C 里所有通道默认就是：
+
+```text
+output = Master
+```
+
+所以“直通 Master 轨道”不需要新类型，也不需要新字段。普通 LC 默认直通
+Master；AP 通道默认也直通 Master；只有用户显式改 output 或加 send 才进别的
+通道。
+
+如果担心用户误路由，可以加一个 `routing_lock` 标记：
+
+```rust
+struct MixerNode {
+    // ...
+    routing_lock: bool, // UI 禁止改 output/send；不改变音频路径
+}
+```
+
+但不要把“直通 Master”做成一种轨道类型，否则又会出现“普通 LC / 直通 LC /
+AP / Bus”四套语义。
+
 ---
 
 ## 11. 迁移
@@ -682,7 +782,13 @@ Bake to AP / Bake to LC
 5. 旧 `TrackData.lc`（per-track / multi-output）-> `OwnLc` 或 AP 多输出通道；
 6. 旧 `rack_output` -> AP 多输出索引；
 7. 空通道不创建 AP，避免 256 条空编组；
-8. 旧工程的冻结/自动化/insert/发送原样搬到 AP。
+8. 旧工程的冻结/自动化/insert/发送原样搬到 AP；
+9. 旧 `buses` 全部转成 `source = None` 的普通 Channel，保留原来的
+   strip/insert/send/freeze/meter；`BusId` 只作为迁移期旧 ID 使用；
+10. 旧 `sends`/`output` 的 BusId 目标映射到新 ChannelId；旧 Bus 自动化
+    （`BusGain` 等）迁移到该 Channel 的 `MixerGain`/节点自动化；
+11. 旧 `LogicalChannelId(u32)` 全部重映射到新的 `u16` LC 空间；
+    不能保留 `TRACK_LC_BASE=1_000_000`，也不能假设 LC ID = 源通道号。
 
 这样打开旧工程听到的结果和 v14 一致，只是内部从“固定 MIDI 通道条”
 变成了“AP 编组”。
@@ -726,10 +832,11 @@ Bake to AP / Bake to LC
 |---|---:|---|
 | TrackData 总数 | 65536 | `Note.track: u16`，索引 0..=65535 |
 | 可用内容轨 | 65535 | Master/Conductor 占 1 个轨道槽；Folder 也占槽 |
-| LC ID 空间 | 65536（设计目标） | `LogicalChannelId(u32)`，ID 本身可更大；这是产品上限 |
+| LC ID 空间 | 65536 | `LogicalChannelId(u16)`；独立命名空间，不编码源通道号 |
 | 同时活跃 LC | 当前受引擎限制 | CpuSynth 的 `MAX_CHANNELS = 256`；超过 256 的 dense 通道不会渲染 |
 | AP 数量 | 256 | 当前 `global_channel: u8`，16 port × 16 channel |
 | AP 的音频通道 | 每个 AP 1..N | 单输出 1 条；多输出插件按输出展开 |
+| Bus 数量 | 无独立上限 | Bus 是 `source = None` 的普通 Channel；“Bus”不再是单独类型 |
 
 几个容易混的点：
 
@@ -739,7 +846,10 @@ Bake to AP / Bake to LC
 2. **LC 的 ID 上限和同时活跃上限不是一回事。** 可以有 65536 个稳定 LC ID，
    但音频引擎不可能同时为 65536 条通道分配 dense 缓冲。目标 C 需要定义
    “同时活跃 LC 预算”，空轨/静音轨懒分配。
+   `u16` 只解决身份存储；不解决 65536 条同时发声。
 3. **AP 上限 256 来自当前 `u8` 通道模型，不是 MIDI 文件理论的端口上限。**
+   MIDI 本身是每个 port 16 个 channel，Port meta 也只有很有限的编号空间；
+   65536 不是 MIDI 的标准通道数。
    SMF 可以写 Port meta，但工程和音频引擎当前只定义 16×16；提高到 4096/65536
    需要改 `global_channel` 类型、事件结构、导出/导入和 Domino 兼容，暂时没必要。
 4. **CpuSynth 的 256 通道限制**是方案 C 必须先解决的工程问题：要么把内置音源
@@ -754,14 +864,14 @@ Bake to AP / Bake to LC
 
 | 现有模块 | 方案 C 是否复用 | 说明 |
 |---|---|---|
-| `MixerNode` / `StripParams` | 复用 | LC/AP 通道/Bus/Master 共用 |
+| `MixerNode` / `StripParams` | 复用 | LC/AP 通道/纯汇入通道/Master 共用 |
 | `LogicalChannelId` | 复用 | 每轨/AP 通道都是稳定 ID |
 | `RackParams` | 复用 | AP 共享 Rack、Track LC Rack |
 | `FrozenAudio` | 复用 | 普通 LC/AP 通道均可冻结 |
 | `MixerGain/Pan/Send/InsertParam` | 复用 | owner 从 MIDI 通道改为 TrackLc/ApChannel |
 | `ChannelLayout` | 复用 | dense 通道、每轨 LC、多输出已具备 |
 | CLAP/VST3 多输出 | 复用 | AP 多输出展开多条 AP 通道 |
-| Bus 嵌套 | 复用 | AP/LC 都走同一 Bus |
+| 通道发送/嵌套 | 复用并泛化 | AP/LC/纯汇入通道都走同一发送图 |
 | MIDI 导入/导出 | 改造 | 导入建 AP，导出分配剩余通道 |
 | Track `port/channel` | 降级为属性 | 不再是混音路由的唯一依据 |
 
@@ -789,8 +899,8 @@ Bake to AP / Bake to LC
 1. 默认 LC Rack 用内置音源还是外部插件？外部插件按轨实例化成本很高。
 2. 多输出插件保留为可选高级能力，还是方案 C 完全不做？
    本文建议保留但默认不暴露，默认让用户多建几条 LC 各挂一个实例。
-3. LC 默认是否允许作为 Bus（FL Studio 式）？本文建议用
-   `accepts_audio_input` 能力开关，默认关闭；Bus 仍是显式通道。
+3. LC 默认是否允许作为 Bus？已确认：允许，`accepts_audio_input` 默认 true，
+   “Bus”只是 `source = None` 的通道角色。
 4. 同 owner 同 target 的冲突，采用「最后编辑优先」还是让用户手动裁决？
    本文建议最后编辑优先 + UI 标记。
 5. 独立 Track 数超过 16 时，第一阶段是否只支持 Port A 16 通道？
@@ -804,7 +914,7 @@ Bake to AP / Bake to LC
 ## 16. 结论
 
 - 这是一个成立的方案，而且比目标 B 更接近「普通 DAW 默认行为」。
-- 它不是回滚：`MixerNode`、LC、自动化、freeze、Bus、多输出都能继续用；
+- 它不是回滚：`MixerNode`、LC、自动化、freeze、通道发送、多输出都能继续用；
   真正变的是 **Track 的默认音频源** 和 **AP/LC 的并列关系**。
 - 不建议直接叫「方案 B」：仓库里已有目标 B，建议叫**方案 C（AP/LC 并列）**。
 - 实现上最大的风险不是音频图，而是：
