@@ -137,125 +137,192 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
             yinhe_editor_core::history::commit_track_name(doc, id.value(), track_idx, &name);
         }
     }
-    let ti = doc.edit.track_cache.info[track_idx].clone();
-
-    // ── 端口 / 通道 ──
-    let mut port_changed = false;
-    let mut new_port = ti.port;
-    let mut new_ch = ti.channel;
-    crate::widgets::rows::panel_row(ui, t!("track.port_channel").as_ref(), |ui| {
-        let ch_options: Vec<(usize, String)> =
-            (0..16).map(|c| (c, format!("{:02}", c + 1))).collect();
-        let port_options: Vec<(usize, String)> = (0..16)
-            .map(|p| (p, format!("Port {}", (b'A' + p as u8) as char)))
-            .collect();
-        let channel = ti.channel;
-        let port = ti.port;
-        crate::widgets::grid::two_columns_right(ui, 6.0, 60.0, |cells| {
-            cells.cell(|ui| {
-                let mut port_sel = port as usize;
-                let port_id = ui.scope_id().with("track_port");
-                if crate::widgets::combo::combo_select(
-                    ui,
-                    "track_port",
-                    &mut port_sel,
-                    ui.available_width().max(1.0),
-                    &port_options,
-                ) {
-                    new_port = port_sel as u8;
-                    port_changed = true;
-                }
-                if let Some(resp) = ui.ctx().read_response(port_id) {
-                    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.info.port"));
-                }
-            });
-            cells.cell(|ui| {
-                let mut ch_sel = channel as usize;
-                let ch_id = ui.scope_id().with("track_channel");
-                if crate::widgets::combo::combo_select(
-                    ui,
-                    "track_channel",
-                    &mut ch_sel,
-                    ui.available_width().max(1.0),
-                    &ch_options,
-                ) {
-                    new_ch = ch_sel as u8;
-                    port_changed = true;
-                }
-                if let Some(resp) = ui.ctx().read_response(ch_id) {
-                    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.info.channel"));
-                }
-            });
-        });
-    });
-    if port_changed {
-        out.port_changed = true;
-        {
-            let model = Arc::make_mut(&mut doc.data.model);
-            if track_idx < model.tracks.len() {
-                let td = Arc::make_mut(&mut model.tracks[track_idx]);
-                td.port = new_port;
-                td.channel = new_ch;
-                // AP 目标绑定 MIDI 通道：改端口/通道后同步 AP id。
-                if let Some(TrackAudioTarget::Ap { .. }) = td.effective_audio_target() {
-                    let global = ((new_port & 0x0F) << 4) | (new_ch & 0x0F);
-                    td.set_audio_target(TrackAudioTarget::Ap {
-                        ap: ApGroupId::new(u16::from(global)),
-                    });
-                }
-            }
-            // A10（索引 9）默认鼓通道；显式关鼓会保存 is_drum=false，不会被覆盖。
-            if new_ch == 9 && model.channel_instruments[9].is_none() {
-                model.channel_instruments[9] = Some(yinhe_core::ChannelInstrument {
-                    bank_msb: 0,
-                    bank_lsb: 0,
-                    program: 0,
-                    is_drum: true,
-                });
-            }
-        }
-        doc.data.rebuild_model();
-        doc.edit.track_cache.rebuild_info(&doc.data);
-        doc.edit.track_cache.rebuild_pc_map(&doc.data);
-        doc.ensure_rack_track_lcs();
-        doc.data.bump_revision();
-    }
-
-    // ── MIDI 轨的 C 音频目标：自己 LC / AP / --- ──
+    // ── MIDI 轨的音频输出：Master / LC 通道 / AP 通道 ──
+    //
+    // 用户口径：
+    // - 选 LC 时不再显示端口/通道（LC 是独立音频通道，不需要 MIDI 源）；
+    // - 选 AP 才显示端口 + 通道（AP 本质就是一个 MIDI 源通道）；
+    // - 选 Master 时两者都不显示。
     let kind = doc.data.model.tracks[track_idx].kind;
     if kind == yinhe_core::TrackKind::Midi {
-        let track = &doc.data.model.tracks[track_idx];
-        let global = track.global_channel();
-        let current = match track.effective_audio_target() {
-            Some(TrackAudioTarget::OwnLc { .. }) => 0usize,
-            Some(TrackAudioTarget::Ap { .. }) => 1usize,
-            Some(TrackAudioTarget::DirectMaster { .. }) => 2usize,
-            None => 0,
+        let (target, global, midi_port, midi_channel) = {
+            let track = &doc.data.model.tracks[track_idx];
+            (
+                track.effective_audio_target(),
+                track.global_channel(),
+                track.port,
+                track.channel,
+            )
         };
-        let options = vec![
-            (0usize, "LC".to_string()),
-            (1usize, crate::mix::ap_label(global)),
-            (2usize, "--- (Master)".to_string()),
-        ];
-        let mut sel = current;
+        // 0 = Master，1 = LC，2 = AP
+        let current_kind = match target {
+            Some(TrackAudioTarget::DirectMaster { .. }) => 0usize,
+            Some(TrackAudioTarget::Ap { .. }) => 2usize,
+            _ => 1usize,
+        };
+        let mut kind_sel = current_kind;
         crate::widgets::rows::panel_row(ui, t!("track.output").as_ref(), |ui| {
             crate::widgets::combo::combo_select(
                 ui,
-                "track_audio_target",
-                &mut sel,
+                "track_output_kind",
+                &mut kind_sel,
                 ui.available_width().max(1.0),
-                &options,
+                &[
+                    (0usize, t!("track.output_master").to_string()),
+                    (1usize, t!("track.output_lc").to_string()),
+                    (2usize, t!("track.output_ap").to_string()),
+                ],
             );
         });
-        if sel != current {
-            let changed = match sel {
-                0 => doc.link_track_to_own_lc(track_idx),
-                1 => doc.link_track_to_ap(track_idx, ApGroupId::new(u16::from(global))),
-                2 => doc.link_track_to_direct_master(track_idx),
-                _ => false,
+        if kind_sel != current_kind {
+            let changed = match kind_sel {
+                0 => doc.link_track_to_direct_master(track_idx),
+                2 => doc.link_track_to_ap(track_idx, ApGroupId::new(u16::from(global))),
+                _ => doc.link_track_to_own_lc(track_idx),
             };
             if changed {
                 out.routing_changed = true;
+            }
+        }
+
+        // 当前类型（可能刚切换）→ 决定子选择器。
+        let target = doc.data.model.tracks[track_idx].effective_audio_target();
+        let is_lc = matches!(target, Some(TrackAudioTarget::OwnLc { .. }));
+        let is_ap = matches!(target, Some(TrackAudioTarget::Ap { .. }));
+
+        // LC 通道：列出所有 LC（当前轨自己的排在最前）。
+        if is_lc {
+            let current_lc = match target {
+                Some(TrackAudioTarget::OwnLc { lc, .. }) => Some(lc),
+                _ => None,
+            };
+            let map = doc.mixer.lc_display_map();
+            let mut ids: Vec<yinhe_types::LogicalChannelId> = doc
+                .mixer
+                .nodes()
+                .filter_map(|node| match node.id {
+                    yinhe_types::ChannelId::Lc(id) => Some(id),
+                    _ => None,
+                })
+                .collect();
+            ids.sort_unstable();
+            ids.dedup();
+            // 当前 LC 排最前，便于「保持不动」。
+            if let Some(cur) = current_lc
+                && let Some(pos) = ids.iter().position(|id| *id == cur)
+            {
+                let id = ids.remove(pos);
+                ids.insert(0, id);
+            }
+            let options: Vec<(usize, String)> = ids
+                .iter()
+                .map(|id| {
+                    (
+                        id.0 as usize,
+                        map.get(id)
+                            .map(|n| crate::mix::lc_label(*n))
+                            .unwrap_or_else(|| format!("LC{}", id.0)),
+                    )
+                })
+                .collect();
+            let mut sel = current_lc.map(|id| id.0 as usize).unwrap_or(0);
+            let prev = sel;
+            crate::widgets::rows::panel_row(ui, t!("track.lc_channel").as_ref(), |ui| {
+                crate::widgets::combo::combo_select(
+                    ui,
+                    "track_lc_target",
+                    &mut sel,
+                    ui.available_width().max(1.0),
+                    &options,
+                );
+            });
+            if sel != prev
+                && let Some(id) = ids.iter().find(|id| id.0 as usize == sel).copied()
+                && doc.link_track_to_lc(track_idx, id)
+            {
+                out.routing_changed = true;
+            }
+        }
+
+        // AP 通道：端口 + 通道（改端口/通道即改 AP 的 MIDI 源）。
+        if is_ap {
+            let mut port_changed = false;
+            let mut new_port = midi_port;
+            let mut new_ch = midi_channel;
+            crate::widgets::rows::panel_row(ui, t!("track.port_channel").as_ref(), |ui| {
+                let ch_options: Vec<(usize, String)> =
+                    (0..16).map(|c| (c, format!("{:02}", c + 1))).collect();
+                let port_options: Vec<(usize, String)> = (0..16)
+                    .map(|p| (p, format!("Port {}", (b'A' + p as u8) as char)))
+                    .collect();
+                let channel = midi_channel;
+                let port = midi_port;
+                crate::widgets::grid::two_columns_right(ui, 6.0, 60.0, |cells| {
+                    cells.cell(|ui| {
+                        let mut port_sel = port as usize;
+                        let port_id = ui.scope_id().with("track_port");
+                        if crate::widgets::combo::combo_select(
+                            ui,
+                            "track_port",
+                            &mut port_sel,
+                            ui.available_width().max(1.0),
+                            &port_options,
+                        ) {
+                            new_port = port_sel as u8;
+                            port_changed = true;
+                        }
+                        if let Some(resp) = ui.ctx().read_response(port_id) {
+                            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.info.port"));
+                        }
+                    });
+                    cells.cell(|ui| {
+                        let mut ch_sel = channel as usize;
+                        let ch_id = ui.scope_id().with("track_channel");
+                        if crate::widgets::combo::combo_select(
+                            ui,
+                            "track_channel",
+                            &mut ch_sel,
+                            ui.available_width().max(1.0),
+                            &ch_options,
+                        ) {
+                            new_ch = ch_sel as u8;
+                            port_changed = true;
+                        }
+                        if let Some(resp) = ui.ctx().read_response(ch_id) {
+                            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.info.channel"));
+                        }
+                    });
+                });
+            });
+            if port_changed {
+                out.port_changed = true;
+                {
+                    let model = Arc::make_mut(&mut doc.data.model);
+                    if track_idx < model.tracks.len() {
+                        let td = Arc::make_mut(&mut model.tracks[track_idx]);
+                        td.port = new_port;
+                        td.channel = new_ch;
+                        // AP 目标绑定 MIDI 通道：改端口/通道后同步 AP id。
+                        let global = ((new_port & 0x0F) << 4) | (new_ch & 0x0F);
+                        td.set_audio_target(TrackAudioTarget::Ap {
+                            ap: ApGroupId::new(u16::from(global)),
+                        });
+                    }
+                    // A10（索引 9）默认鼓通道；显式关鼓会保存 is_drum=false，不会被覆盖。
+                    if new_ch == 9 && model.channel_instruments[9].is_none() {
+                        model.channel_instruments[9] = Some(yinhe_core::ChannelInstrument {
+                            bank_msb: 0,
+                            bank_lsb: 0,
+                            program: 0,
+                            is_drum: true,
+                        });
+                    }
+                }
+                doc.data.rebuild_model();
+                doc.edit.track_cache.rebuild_info(&doc.data);
+                doc.edit.track_cache.rebuild_pc_map(&doc.data);
+                doc.ensure_rack_track_lcs();
+                doc.data.bump_revision();
             }
         }
     }
