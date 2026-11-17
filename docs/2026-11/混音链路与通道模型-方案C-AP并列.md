@@ -60,8 +60,8 @@
    插件实例；外部插件按轨实例化的成本不能默认承担。
 9. **独立 Track 暂时都放 Port A**。导出时只在 Port A 的 16 个通道里分配；
    AP 仍可占用 A01..P16 中已有的 MIDI 通道。Port B..P 的独立通道扩展留到以后。
-10. **解链 AP 不复制乐器自动化**。乐器参数自动化留在 AP Rack；CC/PB
-    （RPN 以后实现）始终属于 Track。Track 回到 OwnLc 时恢复自己的 LC/LC Rack，不把 AP
+10. **解链 AP 不复制乐器自动化**。乐器参数自动化留在 AP Rack；CC/PB/RPN
+    始终属于 Track。Track 回到 OwnLc 时恢复自己的 LC/LC Rack，不把 AP
     曲线复制过来。
 11. **AP 必须对应 MIDI 通道**。不再允许“没有 MIDI 通道的纯共享 Rack AP”。
 12. **版本解码保留 v9/v10**。C 的混音段最终为 v10；不再保留 v6/v7/v8 和
@@ -71,7 +71,7 @@
 14. **home LC 唯一且不记录来源**。每条 Track 拥有唯一的 home LC；链接 AP 时
     home LC 不参与音频路径。跨轨汇总用 send，不把两条 Track 的 home LC
     指向同一条。
-15. **Track solo 是内容门**。只发被 solo 的 Track 的音符/CC/音频 Clip；
+15. **Track solo 是内容门**。只发被 solo 的 Track 的音符/CC/PB/RPN/音频 Clip；
     Channel solo 是音频门。Track/Channel 用三态听感状态，AR/MIX 都是单按钮
     （左键静音、右键独奏），solo 只在一层生效。
 16. **插件沙盒提前**。C 期间先抽象 `PluginInstance` 边界；C 路由稳定后
@@ -336,7 +336,7 @@ struct ApGroup {
     /// 方案 C MVP：AP 只有一条音频通道。
     /// 后期如果做多输出，再扩展成 `channels: Vec<ChannelId>`。
     channel: ChannelId,
-    /// AP Rack 级自动化（只含乐器参数；CC/PB 属于 Track）。
+    /// AP Rack 级自动化（只含乐器参数；CC/PB/RPN 属于 Track）。
     /// 每条 AP 通道自己的 gain/pan/send/insert 自动化仍在 `MixerNode.automation`。
     rack_automation: Vec<AutomationLane>,
     enabled: bool,
@@ -413,7 +413,7 @@ struct SendParams {
 | gain/pan/M/S | 本 LC | 本 AP 通道 | 不装推子/insert |
 | insert | 本 LC | 本 AP 通道 | 不装推子/insert |
 | send | 本 LC | 本 AP 通道 | 不装推子/insert |
-| CC/PB（RPN/AT 以后） | 本 Track（MIDI 事件） | 本 Track（MIDI 事件） | 各 Track 的 MIDI 在 AP Rack 输入合并 |
+| CC/PB/RPN（AT/NRPN 以后） | 本 Track（MIDI 事件） | 本 Track（MIDI 事件） | 各 Track 的 MIDI 在 AP Rack 输入合并 |
 | 乐器参数自动化 | LC Rack owner | AP Rack owner | 共享乐器参数 |
 | freeze | 本 LC | 本 AP 通道 | 不冻结（冻结在 AP 通道） |
 | 多输出插件 | 可以是一轨一条 LC | 每个输出一条 AP 通道 | C MVP 一个 Rack 一条 AP 通道；多输出后期再加 |
@@ -951,6 +951,18 @@ Rack 会不会共用已加载的音色库内存？要分三层：
 3. **外部插件**：VST3/CLAP 的样本/内存由插件自己管理，宿主不能保证多个
    实例共享。AP 共享一个实例能省内存/CPU；多个 LC Rack 实例各加载各的。
 
+宿主能做的：
+
+- 自己的采样器：共享样本缓存（已做）；
+- 外部插件：共享插件二进制/代码页；用 AP 复用同一个实例；
+- 给第三方插件提供可选的共享样本 API（需要插件配合）。
+
+宿主不能做的：
+
+- 强制两个第三方实例共享内部堆/sample buffer；VST3/CLAP 没有通用的
+  “共享样本内存”接口；
+- 把一个实例的内部状态复制给另一个实例而不重新加载。
+
 所以：
 
 ```text
@@ -998,7 +1010,7 @@ C 的音频路由内核仍保持单进程、低延迟；沙盒是插件宿主层
 ### 6.1 三类自动化
 
 ```text
-Track 级：CC、Pitch Bend（AT/RPN/NRPN 以后实现，归属不变）、velocity、note expression、clip 参数
+Track 级：CC、Pitch Bend、RPN（AT/NRPN 以后实现，归属不变）、velocity、note expression、clip 参数
 Rack 级：乐器参数（cutoff、resonance、振荡器、插件参数）
 Channel 级：gain、pan、send、insert 参数
 Master / Conductor：master 参数、Tempo
@@ -1006,7 +1018,7 @@ Master / Conductor：master 参数、Tempo
 
 归属规则：
 
-- **CC/PB 是 MIDI 事件（RPN/NRPN/AT 以后实现，归属相同）**，属于 Track。它们跟着 Track 的 MIDI 走；
+- **CC/PB/RPN 是 MIDI 事件（AT/NRPN 以后实现，归属相同）**，属于 Track。它们跟着 Track 的 MIDI 走；
   多条 Track 链接到同一 AP 时，在 AP Rack 输入按时间合并。
 - **乐器参数是 Rack 状态**，属于 Rack。`OwnLc` -> LC Rack；
   `Ap` -> AP Rack。AP Rack 的乐器自动化被所有链接轨共享。
@@ -1016,6 +1028,24 @@ Master / Conductor：master 参数、Tempo
 
 这解决了“LC 不知道来源”的问题：LC 只存音频参数；乐器参数在 Rack；
 CC 在 Track。三者不会混。
+
+#### 6.1.1 成熟 DAW 怎么放自动化
+
+| DAW | 自动化放在哪 | 和 C 的对应 |
+|---|---|---|
+| Ableton Live | Track 同时是内容、通道、设备宿主；automation 在 Track，目标是设备参数或混音参数 | 三层被合成一层，所以看起来都在 Track |
+| FL Studio | Channel Rack 管乐器/CC，Mixer 管推子/发送；automation clip 可链接任意参数 | 自由链接，owner 由链接目标决定 |
+| Studio One | Track 承载乐器/效果，Track 就是 Mixer Channel；设备参数在设备，混音参数在通道 | 类似 Live，Track = Channel |
+| Cubase | MIDI 轨管 CC；Instrument Track / Rack Instrument 管乐器参数；Group/FX 通道管混音参数 | 最接近 C：Track / Rack / Channel 三层 |
+| Bitwig | Track 承载 devices；设备参数在 device，混音参数在 track | 类似 Live，Track = Channel + device host |
+
+共同规律：**自动化跟着“参数所属对象”走**，不是一律挂在 Track 上。
+Live/Studio One/Bitwig 把 Track、Channel、设备合成一层，所以看起来像
+“都在 Track”；Cubase 的 Rack Instrument 则明确把乐器参数放在 Rack 上。
+
+C 只是把被“Track = Channel”隐藏的三层显式化，并没有发明更复杂的规则。
+UI 上按对象分开放：AR 看 Track 的 CC/clip，MIX 看 Channel 的 gain/pan/
+send/insert，设备面板看 Rack 的乐器参数。
 
 ### 6.2 同一 owner 的 lane 冲突解析
 
@@ -1036,7 +1066,7 @@ CC 在 Track。三者不会混。
    - UI 在冲突点显示标记，并允许用户选择「以哪条为准」；
 4. 合并结果只写一次到引擎/导出。
 
-CC/PB 不进入这个 owner 解析（以后实现的 RPN/NRPN/AT 同理）：它们各自属于 Track，多个 Track 在 AP
+CC/PB/RPN 不进入这个 owner 解析（以后实现的 NRPN/AT 同理）：它们各自属于 Track，多个 Track 在 AP
 Rack 输入按时间合并。同一 tick 的不同 CC 值按 Track 顺序稳定排序，并在
 UI 标出冲突；不把两个 Track 的 CC 合成一条 lane。
 
@@ -1138,7 +1168,7 @@ for track in tracks:
 
 导出时对每个 owner 只写一次：
 
-- 每条 Track 的 CC/PB 写到该 Track 的 MIDI 通道（RPN/AT 以后同理）；
+- 每条 Track 的 CC/PB/RPN 写到该 Track 的 MIDI 通道（NRPN/AT 以后同理）；
 - AP 链接轨共享同一个 MIDI 通道，导出时按时间合并；
 - 独立 LC 的 CC 写到分配到的通道；
 - 乐器参数自动化不写成 MIDI（如果插件参数不是 CC），保持为工程内设置；
@@ -1414,8 +1444,8 @@ AP01 共享 Rack
 └─ Track C          -> 音符/CC 跳过
 ```
 
-注意：被 solo 的 Track 不只是“音符”放行，CC/PB 也要跟着放行；非 solo
-轨的 CC 如果继续送进 AP Rack，会把 solo 轨的音量/音色改掉。音频轨同理，
+注意：被 solo 的 Track 不只是“音符”放行，CC/PB/RPN 也要跟着放行；非 solo
+轨的 CC/PB/RPN 如果继续送进 AP Rack，会把 solo 轨的音量/音色改掉。音频轨同理，
 solo 时只发它的 Clip。
 
 #### 三态状态
@@ -1434,7 +1464,7 @@ Track 和 Channel 各有一份。这样同一个对象不可能同时 Muted + So
 
 | 层 | 作用 | solo 单位 |
 |---|---|---|
-| Track | 内容门：音符、CC/PB、音频 Clip | 单条 Track |
+| Track | 内容门：音符、CC/PB/RPN、音频 Clip | 单条 Track |
 | Channel | 音频门：整条 LC/AP/Bus 的输出 | 单条 Channel |
 
 #### Solo 只在一层生效
