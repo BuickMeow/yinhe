@@ -263,6 +263,7 @@ impl MixerParams {
         self.ensure_track_channels();
         self.ensure_audio_channels();
         self.ensure_buses();
+        self.clear_mixed_lc_freezes();
         self.ensure_master();
         self.ensure_instrument_uids();
         self.sanitize_routing();
@@ -425,10 +426,14 @@ impl MixerParams {
             .filter(move |s| s.source == source)
     }
 
-    pub fn channel_send_amount(&self, source: ChannelId, target: ChannelId) -> f32 {
+    pub fn channel_send(&self, source: ChannelId, target: ChannelId) -> Option<&ChannelSend> {
         self.channel_sends
             .iter()
             .find(|s| s.source == source && s.target == target)
+    }
+
+    pub fn channel_send_amount(&self, source: ChannelId, target: ChannelId) -> f32 {
+        self.channel_send(source, target)
             .map(|s| s.amount)
             .unwrap_or(0.0)
     }
@@ -605,6 +610,34 @@ impl MixerParams {
             node.id = MixerNodeId::Bus(id);
         }
         self.next_bus_id = next;
+    }
+
+    /// 混合 LC 不冻结：有任意 C 发送汇入的 LC，清除 freeze。
+    fn clear_mixed_lc_freezes(&mut self) {
+        let targets: HashSet<LogicalChannelId> = self
+            .channel_sends
+            .iter()
+            .filter_map(|send| match send.target {
+                ChannelId::Lc(id) => Some(id),
+                ChannelId::Ap(ap) => self.ap(ap.group).map(|group| group.channel),
+                ChannelId::Master => None,
+            })
+            .collect();
+        if targets.is_empty() {
+            return;
+        }
+        for node in self
+            .channels
+            .iter_mut()
+            .chain(self.audio_channels.iter_mut())
+            .chain(self.track_channels.iter_mut())
+        {
+            if let MixerNodeId::LogicalChannel(id) = node.id
+                && targets.contains(&id)
+            {
+                node.freeze = None;
+            }
+        }
     }
 
     fn ensure_master(&mut self) {
@@ -1286,6 +1319,26 @@ mod tests {
         assert!(p.node_sends(MixerChannelId::Midi(0)).unwrap().is_empty());
         assert!(p.node_sends(MixerChannelId::Audio(0)).unwrap().is_empty());
         assert_eq!(p.node_output(MixerChannelId::Midi(0)), None);
+    }
+
+    #[test]
+    fn mixed_lc_loses_freeze() {
+        let mut p = MixerParams::default();
+        p.ensure_len();
+        let lc = p.add_track_lc();
+        let source = ChannelId::Lc(LogicalChannelId(1_000_001));
+        p.set_channel_send(source, ChannelId::Lc(lc), 0.5, false);
+        p.track_node_mut(lc).expect("lc").freeze = Some(crate::node::FrozenAudio {
+            source: "frozen".into(),
+            source_revision: 1,
+            sample_rate: 48_000,
+            frames: 100,
+        });
+        p.ensure_len();
+        assert!(
+            p.track_node(lc).expect("lc").freeze.is_none(),
+            "有 send 汇入的混合 LC 不能冻结"
+        );
     }
 
     #[test]

@@ -648,10 +648,20 @@ fn header_context_menu(
             actions.push(action);
             ui.close();
         }
-        if matches!(
-            ch,
-            MixerChannelId::Midi(_) | MixerChannelId::Audio(_) | MixerChannelId::TrackLc(_)
-        ) {
+        let mixed_lc = crate::mix::channel_id_for_ui(&app.workspace.documents[idx].mixer, ch)
+            .is_some_and(|target| {
+                app.workspace.documents[idx]
+                    .mixer
+                    .channel_sends
+                    .iter()
+                    .any(|send| send.target == target)
+            });
+        if !mixed_lc
+            && matches!(
+                ch,
+                MixerChannelId::Midi(_) | MixerChannelId::Audio(_) | MixerChannelId::TrackLc(_)
+            )
+        {
             let node = ch.node_id();
             let frozen = app.workspace.documents[idx]
                 .mixer
