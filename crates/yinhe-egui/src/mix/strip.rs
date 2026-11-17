@@ -77,7 +77,9 @@ fn focus_send_info(
         .mix
         .send_focus
         .and_then(|focus| crate::mix::channel_id_for_ui(mixer, focus));
-    let label = target.map(crate::mix::channel_id_label).unwrap_or_default();
+    let label = target
+        .map(|target| crate::mix::channel_id_label(target, &app.mix.lc_display))
+        .unwrap_or_default();
     let (amount, pre_fader) = source
         .zip(target)
         .and_then(|(source, target)| mixer.channel_send(source, target))
@@ -166,6 +168,7 @@ pub(crate) fn audio_strip(
     ui: &mut egui::Ui,
     idx: usize,
     channel: u16,
+    display: u32,
     level: (f32, f32),
     hold: (f32, f32),
     height: f32,
@@ -174,7 +177,7 @@ pub(crate) fn audio_strip(
     let params = app.workspace.documents[idx]
         .mixer
         .node_strip(MixerChannelId::Audio(channel));
-    let title = crate::mix::audio_label(channel);
+    let title = crate::mix::lc_label(display);
     let (send_source, send_target, send_label, send_amount, send_pre) =
         focus_send_info(app, idx, MixerChannelId::Audio(channel));
 
@@ -239,6 +242,7 @@ pub(crate) fn track_lc_strip(
     idx: usize,
     track: u16,
     lc: LogicalChannelId,
+    display: u32,
     level: (f32, f32),
     hold: (f32, f32),
     height: f32,
@@ -249,14 +253,7 @@ pub(crate) fn track_lc_strip(
     let params = mixer.node_strip(node);
     let (send_source, send_target, send_label, send_amount, send_pre) =
         focus_send_info(app, idx, node);
-    let track_name = app.workspace.documents[idx]
-        .data
-        .model
-        .tracks
-        .get(track as usize)
-        .map(|t| t.name.clone())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| format!("Track {}", track + 1));
+    let title = crate::mix::lc_label(display);
     let color = app.workspace.documents[idx]
         .edit
         .track_cache
@@ -270,7 +267,7 @@ pub(crate) fn track_lc_strip(
         ui,
         ("mix_strip_track_lc", lc.0),
         color,
-        &track_name,
+        &title,
         height,
         |ui, _| {
             section(

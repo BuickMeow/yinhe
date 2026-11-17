@@ -70,6 +70,10 @@ pub(crate) fn audio_label(ch: u16) -> String {
     format!("Audio-{:02}", u32::from(ch) + 1)
 }
 
+pub(crate) fn lc_label(display: u32) -> String {
+    format!("CH{display:02}")
+}
+
 /// UI 的 MixerChannelId → C 的 ChannelId。
 pub(crate) fn channel_id_for_ui(
     mixer: &yinhe_mixer::MixerParams,
@@ -96,9 +100,15 @@ pub(crate) fn channel_id_for_ui(
 }
 
 /// C 的 ChannelId → 聚焦发送标签。
-pub(crate) fn channel_id_label(id: ChannelId) -> String {
+pub(crate) fn channel_id_label(
+    id: ChannelId,
+    lc_display: &std::collections::HashMap<LogicalChannelId, u32>,
+) -> String {
     match id {
-        ChannelId::Lc(_) => "CH".to_string(),
+        ChannelId::Lc(id) => lc_display
+            .get(&id)
+            .map(|n| lc_label(*n))
+            .unwrap_or_else(|| "CH".to_string()),
         ChannelId::Ap(ap) => ap_label(ap.group.0 as u8),
         ChannelId::Master => t!("mix.master").to_string(),
     }
@@ -185,6 +195,8 @@ pub(crate) struct MixUiState {
     pub(crate) picker_for: Option<InsertTarget>,
     /// 当前 SEND 聚焦目标；其他通道显示到该通道的 dB 旋钮。
     pub(crate) send_focus: Option<MixerChannelId>,
+    /// 本帧 CH 显示编号（LogicalChannelId -> CH n）。
+    pub(crate) lc_display: std::collections::HashMap<LogicalChannelId, u32>,
     /// 发送面板打开目标（None = 关闭）。
     pub(crate) sends_for: Option<u8>,
     /// XSynth 配置窗口目标（源通道；None = 关闭）。
@@ -815,6 +827,7 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
 
     // 本帧的只读数据快照（Arc 克隆便宜；layout 与引擎同源，dense 映射一致）。
     let model = app.workspace.documents[idx].data.model.clone();
+    app.mix.lc_display = app.workspace.documents[idx].mixer.lc_display_map();
     let layout = ChannelLayout::from_model(&model);
     let active: Vec<u8> = (0..SOURCE_CHANNELS)
         .filter(|&c| layout.is_ap_active(c))
@@ -921,11 +934,21 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                                         } else {
                                             ((0.0, 0.0), (0.0, 0.0))
                                         };
+                                        let display = app
+                                            .mix
+                                            .lc_display
+                                            .get(&LogicalChannelId(
+                                                yinhe_types::MIDI_CHANNEL_COUNT as u32
+                                                    + u32::from(ach),
+                                            ))
+                                            .copied()
+                                            .unwrap_or(0);
                                         strip::audio_strip(
                                             app,
                                             ui,
                                             idx,
                                             ach,
+                                            display,
                                             level,
                                             hold,
                                             strip_h,
@@ -949,12 +972,15 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
                                         } else {
                                             ((0.0, 0.0), (0.0, 0.0))
                                         };
+                                        let display =
+                                            app.mix.lc_display.get(&lc).copied().unwrap_or(0);
                                         strip::track_lc_strip(
                                             app,
                                             ui,
                                             idx,
                                             track,
                                             lc,
+                                            display,
                                             level,
                                             hold,
                                             strip_h,

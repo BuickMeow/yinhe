@@ -221,7 +221,9 @@ fn show_midi(
 fn show_audio(ui: &mut egui::Ui, doc: &mut Document, ch: u16) -> ChannelInfoOut {
     let mut out = ChannelInfoOut::default();
     let tracks = tracks_on_channel(doc, MixerChannelId::Audio(ch));
-    header(ui, crate::mix::audio_label(ch), &tracks);
+    let id = LogicalChannelId(yinhe_types::MIDI_CHANNEL_COUNT as u32 + u32::from(ch));
+    let display = doc.mixer.lc_display_map().get(&id).copied().unwrap_or(0);
+    header(ui, crate::mix::lc_label(display), &tracks);
 
     let mut strip = doc.mixer.audio_strip(ch);
     if strip_controls(ui, &mut strip) {
@@ -251,17 +253,8 @@ fn show_audio(ui: &mut egui::Ui, doc: &mut Document, ch: u16) -> ChannelInfoOut 
 
 fn show_track_lc(ui: &mut egui::Ui, doc: &mut Document, id: LogicalChannelId) -> ChannelInfoOut {
     let mut out = ChannelInfoOut::default();
-    let track_idx = doc
-        .data
-        .model
-        .tracks
-        .iter()
-        .position(|track| track.lc == Some(id));
-    let title = track_idx
-        .and_then(|i| doc.data.model.tracks.get(i))
-        .map(|track| track.name.clone())
-        .unwrap_or_else(|| format!("LC {}", id.0));
-    header(ui, title, &[]);
+    let display = doc.mixer.lc_display_map().get(&id).copied().unwrap_or(0);
+    header(ui, crate::mix::lc_label(display), &[]);
 
     let node = MixerChannelId::TrackLc(id);
     let mut strip = doc.mixer.node_strip(node);

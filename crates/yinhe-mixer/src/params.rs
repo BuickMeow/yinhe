@@ -1,6 +1,6 @@
 //! 混音台持久化参数（serde，进工程文件）。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -424,6 +424,25 @@ impl MixerParams {
         self.channel_sends
             .iter()
             .filter(move |s| s.source == source)
+    }
+
+    /// CH 显示编号：音频 LC + 每轨 LC 按稳定 ID 排序后 1..n。
+    pub fn lc_display_map(&self) -> HashMap<LogicalChannelId, u32> {
+        let mut ids: Vec<LogicalChannelId> = self
+            .audio_channels
+            .iter()
+            .chain(self.track_channels.iter())
+            .filter_map(|node| match node.id {
+                MixerNodeId::LogicalChannel(id) => Some(id),
+                _ => None,
+            })
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids.into_iter()
+            .enumerate()
+            .map(|(i, id)| (id, i as u32 + 1))
+            .collect()
     }
 
     pub fn channel_send(&self, source: ChannelId, target: ChannelId) -> Option<&ChannelSend> {
@@ -1319,6 +1338,20 @@ mod tests {
         assert!(p.node_sends(MixerChannelId::Midi(0)).unwrap().is_empty());
         assert!(p.node_sends(MixerChannelId::Audio(0)).unwrap().is_empty());
         assert_eq!(p.node_output(MixerChannelId::Midi(0)), None);
+    }
+
+    #[test]
+    fn lc_display_numbers_are_stable_and_unique() {
+        let mut p = MixerParams::default();
+        p.ensure_len();
+        let a = p.add_track_lc();
+        let b = p.add_track_lc();
+        p.audio_channels
+            .push(MixerNode::logical_channel(LogicalChannelId(300)));
+        let map = p.lc_display_map();
+        assert_eq!(map.get(&LogicalChannelId(300)), Some(&1));
+        assert_eq!(map.get(&a), Some(&2));
+        assert_eq!(map.get(&b), Some(&3));
     }
 
     #[test]
