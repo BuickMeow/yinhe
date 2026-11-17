@@ -199,6 +199,8 @@ pub struct ChannelChain {
     inserts: Vec<Box<dyn InsertProcessor>>,
     /// PDC 对齐延迟线（补偿到最长路径；长度 0 = 直通）。
     delay: DelayLine,
+    /// Master 输入对齐：补到最长 Bus insert 路径（PDC）。
+    master_delay: DelayLine,
     /// 基础延迟（乐器插件上报的采样数，由引擎设置）。
     base_latency: u32,
     meter: MeterTap,
@@ -226,6 +228,7 @@ impl ChannelChain {
             strip: StripState::new(params),
             inserts: Vec::new(),
             delay: DelayLine::new(),
+            master_delay: DelayLine::new(),
             base_latency: 0,
             meter,
             reading,
@@ -282,6 +285,8 @@ struct BusChain {
     reading: MeterReading,
     /// 总线发送列表（bus → bus）。
     sends: Vec<ResolvedSend>,
+    /// Bus insert 延迟补偿：补到最长 Bus insert 路径（PDC）。
+    pdc_delay: DelayLine,
     /// 上一块 post-fader 输出快照（延迟发送读取）。
     prev_out_l: Vec<f32>,
     prev_out_r: Vec<f32>,
@@ -300,6 +305,7 @@ impl BusChain {
             meter,
             reading,
             sends: Vec::new(),
+            pdc_delay: DelayLine::new(),
             prev_out_l: vec![0.0; frames],
             prev_out_r: vec![0.0; frames],
         }
@@ -313,6 +319,11 @@ impl BusChain {
         self.buffers.right = vec![0.0; frames];
         self.prev_out_l = vec![0.0; frames];
         self.prev_out_r = vec![0.0; frames];
+        self.pdc_delay.clear();
+    }
+
+    fn insert_latency(&self) -> u32 {
+        self.inserts.iter().map(|p| p.latency_samples()).sum()
     }
 }
 
@@ -657,6 +668,7 @@ impl MixerGraph {
     pub fn insert_bus_insert(&mut self, bus: usize, slot: usize, p: Box<dyn InsertProcessor>) {
         if let Some(chain) = self.buses.get_mut(bus) {
             insert_processor(&mut chain.inserts, slot, p);
+            self.refresh_pdc();
         }
     }
 
@@ -666,7 +678,9 @@ impl MixerGraph {
         bus: usize,
         slot: usize,
     ) -> Option<Box<dyn InsertProcessor>> {
-        remove_processor(&mut self.buses.get_mut(bus)?.inserts, slot)
+        let removed = remove_processor(&mut self.buses.get_mut(bus)?.inserts, slot);
+        self.refresh_pdc();
+        removed
     }
 
     /// 替换总线链槽位的处理器，返回旧的。
@@ -676,7 +690,9 @@ impl MixerGraph {
         slot: usize,
         p: Box<dyn InsertProcessor>,
     ) -> Option<Box<dyn InsertProcessor>> {
-        replace_processor(&mut self.buses.get_mut(bus)?.inserts, slot, p)
+        let old = replace_processor(&mut self.buses.get_mut(bus)?.inserts, slot, p);
+        self.refresh_pdc();
+        old
     }
 
     /// 设置某通道的基础延迟（乐器插件上报的采样数；0 = 无延迟）。
@@ -708,6 +724,20 @@ impl MixerGraph {
         let align = total.iter().copied().max().unwrap_or(0);
         for (chain, &t) in self.channels.iter_mut().zip(total.iter()) {
             chain.delay.set_delay(align.saturating_sub(t) as usize);
+        }
+        // Bus insert 路径补偿：通道直达 Master 与经 Bus 的路径在 Master 对齐。
+        let max_bus = self
+            .buses
+            .iter()
+            .map(|bus| bus.insert_latency())
+            .max()
+            .unwrap_or(0);
+        for chain in &mut self.channels {
+            chain.master_delay.set_delay(max_bus as usize);
+        }
+        for bus in &mut self.buses {
+            bus.pdc_delay
+                .set_delay(max_bus.saturating_sub(bus.insert_latency()) as usize);
         }
     }
 
@@ -787,11 +817,13 @@ impl MixerGraph {
         }
         for chain in &mut self.channels {
             chain.delay.clear();
+            chain.master_delay.clear();
         }
         for chain in &mut self.buses {
             chain.buffers.clear();
             chain.prev_out_l.fill(0.0);
             chain.prev_out_r.fill(0.0);
+            chain.pdc_delay.clear();
         }
     }
 
@@ -1013,7 +1045,12 @@ impl MixerGraph {
                 Some(ChannelOutput::Channel(_)) => {}
                 None => {
                     if to_master {
-                        let src = &channels[ci].buffers;
+                        let chain = &mut channels[ci];
+                        // Master 输入 PDC：补到最长 Bus insert 路径。
+                        chain
+                            .master_delay
+                            .process(&mut chain.buffers.left, &mut chain.buffers.right);
+                        let src = &chain.buffers;
                         for f in 0..frames {
                             master_l[f] += src.left[f];
                             master_r[f] += src.right[f];
@@ -1216,6 +1253,10 @@ impl MixerGraph {
                 chain
                     .strip
                     .apply_fader(&mut chain.buffers.left, &mut chain.buffers.right);
+                // Bus insert PDC：把该总线输出补到最长 Bus insert 路径。
+                chain
+                    .pdc_delay
+                    .process(&mut chain.buffers.left, &mut chain.buffers.right);
             }
             let sends = buses[i].sends.clone();
             if !sends.is_empty() {
@@ -1894,6 +1935,45 @@ mod tests {
         let (l, _r) = g.process();
         let expect = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
         assert!((l[0] - expect).abs() < 1e-6);
+    }
+
+    #[test]
+    fn pdc_compensates_bus_insert_latency() {
+        let mut g = graph_with(&[StripParams::default()], 4);
+        g.resize_buses(2, 4, &[StripParams::default(), StripParams::default()]);
+        g.insert_bus_insert(0, 0, Box::new(DelayInsert::new(2)));
+        assert_eq!(g.channels[0].master_delay.delay(), 2);
+        assert_eq!(g.buses[0].pdc_delay.delay(), 0);
+        assert_eq!(g.buses[1].pdc_delay.delay(), 2);
+    }
+
+    #[test]
+    fn pdc_aligns_direct_master_and_bus_insert_paths() {
+        let mut g = graph_with(&[StripParams::default()], 4);
+        g.resize_buses(1, 4, &[StripParams::default()]);
+        g.insert_bus_insert(0, 0, Box::new(DelayInsert::new(2)));
+        g.set_sends(
+            0,
+            vec![ResolvedSend {
+                bus: 0,
+                amount: 1.0,
+                pre_fader: false,
+            }],
+        );
+        {
+            let b = g.channel_buffers_mut(0).unwrap();
+            b.left[0] = 1.0;
+            b.right[0] = 1.0;
+        }
+        let (l, _r) = g.process();
+        let single = core::f32::consts::FRAC_1_SQRT_2;
+        assert!(l[0].abs() < 1e-6);
+        assert!(l[1].abs() < 1e-6);
+        assert!(
+            (l[2] - (single + single * single)).abs() < 1e-6,
+            "直达与经 Bus 的路径应在 sample 2 同相相加: {}",
+            l[2]
+        );
     }
 
     #[test]
