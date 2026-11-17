@@ -75,19 +75,19 @@ mod tests {
     }
 
     #[test]
-    fn empty_document_creates_aps_for_shared_tracks() {
+    fn empty_document_creates_own_lcs_not_aps() {
         use crate::document::Document;
         let doc = Document::empty();
-        assert!(!doc.mixer.aps.is_empty());
-        for ap in &doc.mixer.aps {
-            assert_eq!(ap.rack, yinhe_types::RackId(u16::from(ap.global_midi())));
-            assert_eq!(
-                ap.channel,
-                yinhe_types::LogicalChannelId(u32::from(ap.global_midi()))
-            );
-            assert_eq!(ap.midi.0, ap.global_midi() >> 4);
-            assert_eq!(ap.midi.1, ap.global_midi() & 0x0F);
-        }
+        assert!(doc.mixer.aps.is_empty());
+        assert!(
+            doc.data
+                .model
+                .tracks
+                .iter()
+                .filter(|t| t.kind == TrackKind::Midi)
+                .all(|t| t.lc.is_some()),
+            "C 空白工程的 MIDI 轨应默认拥有自己的 LC"
+        );
     }
 
     #[test]

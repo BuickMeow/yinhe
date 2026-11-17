@@ -234,7 +234,7 @@ impl Document {
             density: Default::default(),
             density_pr: Default::default(),
         };
-        doc.ensure_aps();
+        doc.default_empty_project_own_lc();
         doc
     }
 

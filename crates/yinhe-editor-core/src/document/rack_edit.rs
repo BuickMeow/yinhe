@@ -177,6 +177,65 @@ impl Document {
         true
     }
 
+    /// 新建 MIDI 轨的 C 默认：如果它落在一个全新的 MIDI 通道上，且 Rack
+    /// 没有外部插件乐器，就把该 Rack 切到 `PerTrack`，让这条轨拥有自己的
+    /// LC（内置音源按轨拆分音频）。
+    ///
+    /// 已有轨的通道不自动拆分：保持原 AP/共享关系，新轨加入该通道。
+    /// 外部插件 Rack 暂不支持自动 OwnLc（单输出插件无法按轨拆音频）。
+    pub fn default_own_lc_for_new_midi_tracks(&mut self, first_new: usize) {
+        let model = &self.data.model;
+        let mut channels = Vec::new();
+        for (idx, track) in model.tracks.iter().enumerate().skip(first_new) {
+            if track.kind != TrackKind::Midi || track.lc.is_some() {
+                continue;
+            }
+            let channel = track.global_channel();
+            let has_older = model.tracks[..first_new]
+                .iter()
+                .any(|t| t.kind == TrackKind::Midi && t.global_channel() == channel);
+            if !has_older && !channels.contains(&channel) {
+                channels.push(channel);
+            }
+            let _ = idx;
+        }
+        for channel in channels {
+            let Some(rack) = self.mixer.racks.get(channel as usize) else {
+                continue;
+            };
+            if !rack.instruments.is_empty() {
+                continue;
+            }
+            self.mixer.racks[channel as usize].output_mode = RackOutputMode::PerTrack;
+        }
+        self.ensure_rack_track_lcs();
+    }
+
+    /// 空白工程默认把每条 MIDI 轨放进自己的 LC（每个通道只有一条轨时）。
+    /// 已有工程加载不走这里，保留原来的 AP/共享关系。
+    pub fn default_empty_project_own_lc(&mut self) {
+        let model = &self.data.model;
+        let mut counts = [0u8; 256];
+        for track in &model.tracks {
+            if track.kind == TrackKind::Midi {
+                counts[track.global_channel() as usize] =
+                    counts[track.global_channel() as usize].saturating_add(1);
+            }
+        }
+        for (ch, count) in counts.iter().enumerate() {
+            if *count != 1 {
+                continue;
+            }
+            let Some(rack) = self.mixer.racks.get(ch) else {
+                continue;
+            };
+            if rack.instruments.is_empty() {
+                self.mixer.racks[ch].output_mode = RackOutputMode::PerTrack;
+            }
+        }
+        self.ensure_rack_track_lcs();
+    }
+
     /// 加载后修复 per-track Rack 的 LC：
     /// - `PerTrack` 但 Track 没有 `lc` → 分配；
     /// - Track 有 `lc` 但节点不存在 → 创建；
@@ -261,8 +320,11 @@ mod tests {
     #[test]
     fn per_track_mode_assigns_and_releases_lcs() {
         let mut doc = Document::empty();
-        // Track 1 是 A01（索引 0 是 Master）。
+        // Track 1 是 A01（索引 0 是 Master）。C 空白工程默认已是 PerTrack，
+        // 先切回 Shared 验证再切回 PerTrack 的分配/释放。
         assert_eq!(doc.data.model.tracks[1].global_channel(), 0);
+        assert!(doc.set_rack_output_mode(0, RackOutputMode::Shared));
+        assert!(doc.data.model.tracks[1].lc.is_none());
         assert!(doc.set_rack_output_mode(0, RackOutputMode::PerTrack));
 
         let lc = doc.data.model.tracks[1].lc.expect("per-track lc");
@@ -310,6 +372,7 @@ mod tests {
     #[test]
     fn plugin_rack_rejects_per_track_mode() {
         let mut doc = Document::empty();
+        assert!(doc.set_rack_output_mode(0, RackOutputMode::Shared));
         doc.mixer.racks[0]
             .instruments
             .push(yinhe_mixer::InsertRef::default());
@@ -321,6 +384,8 @@ mod tests {
     #[test]
     fn ensure_repairs_missing_nodes_and_clears_shared_lcs() {
         let mut doc = Document::empty();
+        assert!(doc.set_rack_output_mode(0, RackOutputMode::Shared));
+        assert!(doc.data.model.tracks[1].lc.is_none());
         doc.mixer.racks[0].output_mode = RackOutputMode::PerTrack;
         assert!(doc.data.model.tracks[1].lc.is_none());
 

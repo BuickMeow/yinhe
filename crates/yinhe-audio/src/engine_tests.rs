@@ -1147,7 +1147,6 @@ fn test_add_track_then_rebuild_activates_new_channel() {
     let layout_before = crate::spawn::channels_for_model(&doc.data.model);
     assert!(layout_before.is_active(0));
     assert!(!layout_before.is_active(15));
-    assert_eq!(layout_before.compacted_channels(), 15);
 
     // 4. add_track(1)：新 track 在 idx 2，channel 15（第一个空闲）
     doc.add_track(1);
@@ -1157,7 +1156,6 @@ fn test_add_track_then_rebuild_activates_new_channel() {
     let layout_after = crate::spawn::channels_for_model(&doc.data.model);
     assert!(layout_after.is_active(0), "channel 0 still active");
     assert!(layout_after.is_active(15), "channel 15 now active");
-    assert_eq!(layout_after.compacted_channels(), 16);
 
     // 6. 重建引擎 → track 1 的音符能 dispatch
     let mut engine = spawn_engine_for_doc(&doc, sample_rate);
@@ -1201,7 +1199,6 @@ fn test_remove_track_then_rebuild_deactivates_channel() {
     let layout_before = crate::spawn::channels_for_model(&doc.data.model);
     assert!(layout_before.is_active(0));
     assert!(layout_before.is_active(1));
-    assert_eq!(layout_before.compacted_channels(), 16);
 
     // 3. remove track 2（通道 1 的音符随之删除）
     doc.remove_track(2);
@@ -1211,7 +1208,6 @@ fn test_remove_track_then_rebuild_deactivates_channel() {
     let layout_after = crate::spawn::channels_for_model(&doc.data.model);
     assert!(layout_after.is_active(0));
     assert!(!layout_after.is_active(1));
-    assert_eq!(layout_after.compacted_channels(), 15);
 
     // 5. 重建引擎 → 只有通道 0 的音符 dispatch
     let mut engine = spawn_engine_for_doc(&doc, sample_rate);

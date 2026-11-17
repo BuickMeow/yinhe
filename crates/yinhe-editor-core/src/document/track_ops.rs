@@ -228,7 +228,7 @@ impl Document {
         self.sync_track_caches();
         self.edit.track_selected.clear();
         self.edit.track_selected.insert(insert_idx as u16);
-        self.ensure_rack_track_lcs();
+        self.default_own_lc_for_new_midi_tracks(insert_idx);
 
         Some(UndoAction::TrackStructure {
             tracks_before,
@@ -522,7 +522,7 @@ impl Document {
         for i in insert_idx..total_tracks {
             self.edit.track_selected.insert(i as u16);
         }
-        self.ensure_rack_track_lcs();
+        self.default_own_lc_for_new_midi_tracks(insert_idx);
 
         Some(UndoAction::TrackStructure {
             tracks_before,
@@ -882,6 +882,46 @@ mod tests {
         // 新建的 3 条全部被选中
         assert_eq!(doc.edit.track_selected.len(), 3);
         assert!(doc.edit.track_selected.contains(&19));
+    }
+
+    /// C 默认：新建 MIDI 轨落在空 MIDI 通道时，自动把该通道切到 PerTrack，
+    /// 并给新轨分配自己的 LC。
+    #[test]
+    fn new_midi_track_on_empty_channel_gets_own_lc() {
+        let mut doc = Document::empty();
+        let specs = vec![NewTrackSpec {
+            kind: yinhe_core::TrackKind::Midi,
+            port: 1,
+            channel: 0,
+            audio_channel: None,
+        }];
+        assert!(doc.add_tracks_batch(&specs).is_some());
+        let track = doc.model().tracks.last().expect("new track");
+        assert_eq!(track.global_channel(), 16);
+        assert!(track.lc.is_some(), "新通道的 MIDI 轨应默认 OwnLc");
+        assert_eq!(
+            doc.rack_output_mode(16),
+            yinhe_types::RackOutputMode::PerTrack
+        );
+        assert!(doc.mixer.ap_for_midi(16).is_none());
+    }
+
+    /// 已有 AP 的通道不因新轨自动拆分：新轨加入 AP，保持共享关系。
+    #[test]
+    fn new_midi_track_on_ap_channel_joins_ap() {
+        let mut doc = Document::empty();
+        assert!(doc.set_rack_output_mode(0, yinhe_types::RackOutputMode::Shared));
+        let specs = vec![NewTrackSpec {
+            kind: yinhe_core::TrackKind::Midi,
+            port: 0,
+            channel: 0,
+            audio_channel: None,
+        }];
+        assert!(doc.add_tracks_batch(&specs).is_some());
+        let track = doc.model().tracks.last().expect("new track");
+        assert_eq!(track.global_channel(), 0);
+        assert!(track.lc.is_none(), "已有 AP 的通道应保持共享");
+        assert!(doc.mixer.ap_for_midi(0).is_some());
     }
 
     /// 批量创建只产生一个 UndoAction：undo 一次（reversed + redo，即
