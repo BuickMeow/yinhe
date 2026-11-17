@@ -79,16 +79,6 @@ fn show_midi(
     let mut out = ChannelInfoOut::default();
     let tracks = tracks_on_channel(doc, MixerChannelId::Midi(ch));
     header(ui, crate::mix::channel_label(ch), &tracks);
-    let shared = doc.mixer.racks.get(ch as usize).is_some_and(|rack| {
-        rack.output_lcs.is_empty() && rack.output_mode == RackOutputMode::Shared
-    });
-    if shared && tracks.len() > 1 {
-        value_row(
-            ui,
-            t!("mix.lc_scope").to_string(),
-            t!("mix.shared_track_count", count = tracks.len()).to_string(),
-        );
-    }
 
     let mut strip = doc.mixer.strip(ch);
     if strip_controls(ui, &mut strip) {
