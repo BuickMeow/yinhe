@@ -7827,8 +7827,6 @@ dependencies = [
  "symphonia",
  "tempfile",
  "tracing",
- "xsynth-core",
- "xsynth-soundfonts",
  "yinhe-clap",
  "yinhe-core",
  "yinhe-dsp",
