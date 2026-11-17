@@ -110,7 +110,33 @@ impl DelayLine {
         }
     }
 
-    #[cfg(test)]
+    fn add_delayed_into(
+        &mut self,
+        src_l: &[f32],
+        src_r: &[f32],
+        dst_l: &mut [f32],
+        dst_r: &mut [f32],
+        amount: f32,
+        frames: usize,
+    ) {
+        if self.left.is_empty() {
+            for i in 0..frames {
+                dst_l[i] += src_l[i] * amount;
+                dst_r[i] += src_r[i] * amount;
+            }
+            return;
+        }
+        for i in 0..frames {
+            let idx = (self.write + i) % self.left.len();
+            dst_l[i] += self.left[idx] * amount;
+            dst_r[i] += self.right[idx] * amount;
+            self.left[idx] = src_l[i];
+            self.right[idx] = src_r[i];
+        }
+        self.write = (self.write + frames) % self.left.len();
+    }
+
+    #[allow(dead_code)] // 仅测试/诊断读取
     fn delay(&self) -> usize {
         self.left.len()
     }
@@ -199,7 +225,13 @@ pub struct ChannelChain {
     inserts: Vec<Box<dyn InsertProcessor>>,
     /// PDC 对齐延迟线（补偿到最长路径；长度 0 = 直通）。
     delay: DelayLine,
-    /// Master 输入对齐：补到最长 Bus insert 路径（PDC）。
+    /// 通道自身源的输入延迟：把自身源补到该通道最长输入路径（PDC）。
+    input_delay: DelayLine,
+    /// 任意通道发送逐边 PDC 延迟（与 channel_sends 一一对应）。
+    channel_send_delays: Vec<DelayLine>,
+    /// 主输出 PDC 延迟（目标为另一条通道时）。
+    output_delay: DelayLine,
+    /// Master 输入对齐：补到最长路径（PDC）。
     master_delay: DelayLine,
     /// 基础延迟（乐器插件上报的采样数，由引擎设置）。
     base_latency: u32,
@@ -228,6 +260,9 @@ impl ChannelChain {
             strip: StripState::new(params),
             inserts: Vec::new(),
             delay: DelayLine::new(),
+            input_delay: DelayLine::new(),
+            channel_send_delays: Vec::new(),
+            output_delay: DelayLine::new(),
             master_delay: DelayLine::new(),
             base_latency: 0,
             meter,
@@ -603,6 +638,7 @@ impl MixerGraph {
         if let Some(chain) = self.channels.get_mut(channel) {
             chain.output = output;
         }
+        self.refresh_pdc();
     }
 
     /// 兼容旧调用：只设置 Bus 主输出。
@@ -654,7 +690,10 @@ impl MixerGraph {
     /// 设置某 dense 通道的任意通道发送（C：send 到另一条 Channel 或 Master）。
     pub fn set_channel_sends(&mut self, channel: usize, sends: Vec<ResolvedChannelSend>) {
         if let Some(chain) = self.channels.get_mut(channel) {
+            let count = sends.len();
             chain.channel_sends = sends;
+            chain.channel_send_delays.resize_with(count, DelayLine::new);
+            self.refresh_pdc();
         }
     }
 
@@ -712,28 +751,96 @@ impl MixerGraph {
     /// 路径延迟 = 乐器延迟（base_latency）+ insert 链延迟之和。
     /// master 链的延迟对所有通道相同，不影响通道间对齐，不参与补偿。
     /// 仅命令处理阶段调用（延迟线缓冲重建会分配内存）。
+    /// 逐节点 PDC：按通道 send / 主输出图计算每个求和点的输入路径延迟，
+    /// 把自身源与每条汇入边补到该节点的最长输入路径。
+    ///
+    /// - 通道自身源延迟 = input[ch] - base_latency[ch]
+    /// - 每条前向边延迟 = input[dst] - output[src]
+    /// - 反馈边（逆序/自环）用上一块快照，本身已延迟一块，不再补 PDC
     pub fn refresh_pdc(&mut self) {
-        let total: Vec<u32> = self
+        let n = self.channels.len();
+        let proc: Vec<u32> = self
             .channels
             .iter()
-            .map(|c| {
-                c.base_latency
-                    .saturating_add(c.inserts.iter().map(|p| p.latency_samples()).sum::<u32>())
-            })
+            .map(|c| c.inserts.iter().map(|p| p.latency_samples()).sum())
             .collect();
-        let align = total.iter().copied().max().unwrap_or(0);
-        for (chain, &t) in self.channels.iter_mut().zip(total.iter()) {
-            chain.delay.set_delay(align.saturating_sub(t) as usize);
+        let mut input: Vec<u32> = self.channels.iter().map(|c| c.base_latency).collect();
+
+        // (src, dst, send index; usize::MAX = 主输出)
+        let mut edges: Vec<(usize, usize, usize)> = Vec::new();
+        for src in 0..n {
+            for (k, send) in self.channels[src].channel_sends.iter().enumerate() {
+                if let ChannelSendTarget::Channel(dst) = send.target
+                    && dst > src
+                    && dst < n
+                {
+                    edges.push((src, dst, k));
+                }
+            }
+            if let Some(ChannelOutput::Channel(dst)) =
+                self.channel_outputs.get(src).copied().flatten()
+                && dst > src
+                && dst < n
+            {
+                edges.push((src, dst, usize::MAX));
+            }
         }
-        // Bus insert 路径补偿：通道直达 Master 与经 Bus 的路径在 Master 对齐。
+
+        // 最长路径松弛（只含前向边，天然 DAG）。
+        for _ in 0..n.max(1) {
+            let mut changed = false;
+            for src in 0..n {
+                let out = input[src].saturating_add(proc[src]);
+                for &(s, dst, _) in &edges {
+                    if s == src && out > input[dst] {
+                        input[dst] = out;
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        let out: Vec<u32> = (0..n).map(|i| input[i].saturating_add(proc[i])).collect();
+        let max_out = out.iter().copied().max().unwrap_or(0);
         let max_bus = self
             .buses
             .iter()
             .map(|bus| bus.insert_latency())
             .max()
             .unwrap_or(0);
-        for chain in &mut self.channels {
-            chain.master_delay.set_delay(max_bus as usize);
+        let global = max_out.saturating_add(max_bus);
+
+        for i in 0..n {
+            let chain = &mut self.channels[i];
+            chain.delay.set_delay(0);
+            chain
+                .input_delay
+                .set_delay((input[i].saturating_sub(chain.base_latency)) as usize);
+            chain
+                .master_delay
+                .set_delay(global.saturating_sub(out[i]) as usize);
+            let output_pdc = match self.channel_outputs.get(i).copied().flatten() {
+                Some(ChannelOutput::Channel(dst)) if dst > i && dst < n => {
+                    input[dst].saturating_sub(out[i])
+                }
+                _ => 0,
+            };
+            chain.output_delay.set_delay(output_pdc as usize);
+            for (k, send) in chain.channel_sends.iter().enumerate() {
+                let delay = match send.target {
+                    ChannelSendTarget::Channel(dst) if dst > i && dst < n => {
+                        input[dst].saturating_sub(out[i])
+                    }
+                    ChannelSendTarget::Master => global.saturating_sub(out[i]),
+                    _ => 0,
+                };
+                if let Some(line) = chain.channel_send_delays.get_mut(k) {
+                    line.set_delay(delay as usize);
+                }
+            }
         }
         for bus in &mut self.buses {
             bus.pdc_delay
@@ -817,6 +924,11 @@ impl MixerGraph {
         }
         for chain in &mut self.channels {
             chain.delay.clear();
+            chain.input_delay.clear();
+            chain.output_delay.clear();
+            for line in &mut chain.channel_send_delays {
+                line.clear();
+            }
             chain.master_delay.clear();
         }
         for chain in &mut self.buses {
@@ -837,8 +949,8 @@ impl MixerGraph {
     /// 通道 solo 静音其他通道；总线 solo 静音其它总线与通道直达 master 的路径
     /// （只保留送往该总线的部分）。mute 优先于 solo。
     ///
-    /// PDC：按通道最长路径对齐（乐器/insert 延迟）。总线 insert 的延迟暂不参与
-    /// 对齐（总线通常挂不要求严格相位对齐的效果，如混响）。
+    /// PDC：按通道/总线/发送图的最长输入路径逐节点对齐；乐器、insert、
+    /// Bus insert、并行 send 与通道主输出都参与。反馈环使用一块快照延迟。
     pub fn process(&mut self) -> (&[f32], &[f32]) {
         self.process_with_active(None)
     }
@@ -863,6 +975,13 @@ impl MixerGraph {
         let any_channel_solo = self.channels.iter().any(|c| c.strip.params.solo);
         let any_bus_solo = self.buses.iter().any(|b| b.strip.params.solo);
         let any_solo = any_channel_solo || any_bus_solo;
+
+        // 逐节点 PDC：先把通道自身源补到该通道最长输入路径。
+        for chain in &mut self.channels {
+            chain
+                .input_delay
+                .process(&mut chain.buffers.left, &mut chain.buffers.right);
+        }
 
         // 逆序/自环通道发送：用上一块输出快照，先汇入目标输入。
         Self::apply_delayed_channel_sends(
@@ -951,9 +1070,7 @@ impl MixerGraph {
                         start = end;
                     }
                 }
-                chain
-                    .delay
-                    .process(&mut chain.buffers.left, &mut chain.buffers.right);
+                // PDC 已拆成 input_delay（块首）与 master_delay（Master 累加前）。
             }
 
             let p = channels[ci].strip.params;
@@ -984,9 +1101,13 @@ impl MixerGraph {
                 );
             }
             let channel_sends = channels[ci].channel_sends.clone();
-            for send in channel_sends.iter().filter(|s| s.pre_fader) {
-                route_channel_send(
-                    channels, buses, ci, send, master_l, master_r, any_solo, frames,
+            for (k, _send) in channel_sends
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.pre_fader)
+            {
+                route_channel_send_delayed(
+                    channels, buses, ci, k, master_l, master_r, any_solo, frames,
                 );
             }
 
@@ -1009,9 +1130,13 @@ impl MixerGraph {
                     frames,
                 );
             }
-            for send in channel_sends.iter().filter(|s| !s.pre_fader) {
-                route_channel_send(
-                    channels, buses, ci, send, master_l, master_r, any_solo, frames,
+            for (k, _send) in channel_sends
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| !s.pre_fader)
+            {
+                route_channel_send_delayed(
+                    channels, buses, ci, k, master_l, master_r, any_solo, frames,
                 );
             }
 
@@ -1032,12 +1157,15 @@ impl MixerGraph {
                     let dst_solo = channels[dst].strip.params.solo;
                     if !p.mute && (!any_solo || p.solo || dst_solo) {
                         let (left, right) = channels.split_at_mut(dst);
-                        let src = &left[ci].buffers;
-                        let target = &mut right[0].buffers;
-                        for f in 0..frames {
-                            target.left[f] += src.left[f];
-                            target.right[f] += src.right[f];
-                        }
+                        let src = &mut left[ci];
+                        src.output_delay.add_delayed_into(
+                            &src.buffers.left,
+                            &src.buffers.right,
+                            &mut right[0].buffers.left,
+                            &mut right[0].buffers.right,
+                            1.0,
+                            frames,
+                        );
                     }
                 }
                 Some(ChannelOutput::Bus(_)) => {}
@@ -1380,22 +1508,20 @@ impl MixerGraph {
 ///
 /// 推子前/后两段仅 `send.pre_fader` 的筛选相反，其余（mute/solo 判定、总线
 /// 查找、逐样本累加）完全一致，故以 `pre_fader` 参数合并。
-/// 当前块内前向通道发送：目标索引大于源，目标尚未处理。
-/// 目标 <= 源 的发送已在 `apply_delayed_channel_sends` 里用上一块快照处理。
-#[allow(clippy::too_many_arguments)] // 混音处理上下文透传
-fn route_channel_send(
+#[allow(clippy::too_many_arguments)]
+fn route_channel_send_delayed(
     channels: &mut [ChannelChain],
     buses: &mut [BusChain],
     src: usize,
-    send: &ResolvedChannelSend,
+    send_idx: usize,
     master_l: &mut [f32],
     master_r: &mut [f32],
     any_solo: bool,
     frames: usize,
 ) {
-    if send.amount <= 0.0 {
+    let Some(send) = channels[src].channel_sends.get(send_idx).copied() else {
         return;
-    }
+    };
     let src_params = channels[src].strip.params;
     match send.target {
         ChannelSendTarget::Channel(dst) => {
@@ -1407,12 +1533,16 @@ fn route_channel_send(
                 return;
             }
             let (left, right) = channels.split_at_mut(dst);
-            let src_chain = &left[src];
+            let src_chain = &mut left[src];
             let dst_chain = &mut right[0];
-            for f in 0..frames {
-                dst_chain.buffers.left[f] += src_chain.buffers.left[f] * send.amount;
-                dst_chain.buffers.right[f] += src_chain.buffers.right[f] * send.amount;
-            }
+            src_chain.channel_send_delays[send_idx].add_delayed_into(
+                &src_chain.buffers.left,
+                &src_chain.buffers.right,
+                &mut dst_chain.buffers.left,
+                &mut dst_chain.buffers.right,
+                send.amount,
+                frames,
+            );
         }
         ChannelSendTarget::Bus(bus) => {
             let Some(bus_chain) = buses.get_mut(bus) else {
@@ -1422,21 +1552,29 @@ fn route_channel_send(
             if !channel_send_allowed(any_solo, &src_params, bus_solo) {
                 return;
             }
-            let src_chain = &channels[src];
-            for f in 0..frames {
-                bus_chain.buffers.left[f] += src_chain.buffers.left[f] * send.amount;
-                bus_chain.buffers.right[f] += src_chain.buffers.right[f] * send.amount;
-            }
+            let src_chain = &mut channels[src];
+            src_chain.channel_send_delays[send_idx].add_delayed_into(
+                &src_chain.buffers.left,
+                &src_chain.buffers.right,
+                &mut bus_chain.buffers.left,
+                &mut bus_chain.buffers.right,
+                send.amount,
+                frames,
+            );
         }
         ChannelSendTarget::Master => {
             if !channel_send_allowed(any_solo, &src_params, false) {
                 return;
             }
-            let src_chain = &channels[src];
-            for f in 0..frames {
-                master_l[f] += src_chain.buffers.left[f] * send.amount;
-                master_r[f] += src_chain.buffers.right[f] * send.amount;
-            }
+            let src_chain = &mut channels[src];
+            src_chain.channel_send_delays[send_idx].add_delayed_into(
+                &src_chain.buffers.left,
+                &src_chain.buffers.right,
+                master_l,
+                master_r,
+                send.amount,
+                frames,
+            );
         }
     }
 }
@@ -1977,13 +2115,64 @@ mod tests {
     }
 
     #[test]
+    fn pdc_aligns_channel_send_with_target_own_source() {
+        let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
+        g.set_inserts(0, vec![Box::new(DelayInsert::new(2))]);
+        g.set_channel_sends(
+            0,
+            vec![ResolvedChannelSend {
+                target: ChannelSendTarget::Channel(1),
+                amount: 1.0,
+                pre_fader: false,
+            }],
+        );
+        assert_eq!(g.channels[1].input_delay.delay(), 2);
+        assert_eq!(g.channels[0].channel_send_delays[0].delay(), 0);
+        for ch in [0, 1] {
+            let b = g.channel_buffers_mut(ch).unwrap();
+            b.left[0] = 1.0;
+            b.right[0] = 1.0;
+        }
+        let (l, _r) = g.process();
+        let single = core::f32::consts::FRAC_1_SQRT_2;
+        assert!(l[0].abs() < 1e-6, "目标自身源应与汇入 send 对齐: {}", l[0]);
+        assert!(
+            (l[2] - (2.0 * single + single * single)).abs() < 1e-6,
+            "sample 2 应为目标输出 + 源直达之和: {}",
+            l[2]
+        );
+    }
+
+    #[test]
+    fn pdc_aligns_channel_main_output_with_target_own_source() {
+        let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
+        g.set_inserts(0, vec![Box::new(DelayInsert::new(2))]);
+        g.set_channel_output(0, Some(ChannelOutput::Channel(1)));
+        assert_eq!(g.channels[1].input_delay.delay(), 2);
+        assert_eq!(g.channels[0].output_delay.delay(), 0);
+        for ch in [0, 1] {
+            let b = g.channel_buffers_mut(ch).unwrap();
+            b.left[0] = 1.0;
+            b.right[0] = 1.0;
+        }
+        let (l, _r) = g.process();
+        let single = core::f32::consts::FRAC_1_SQRT_2;
+        assert!(l[0].abs() < 1e-6);
+        assert!(
+            (l[2] - ((1.0 + single) * single)).abs() < 1e-6,
+            "got {}",
+            l[2]
+        );
+    }
+
+    #[test]
     fn pdc_recomputes_on_insert_removal() {
         // 移除延迟 insert 后对齐回退为 0（延迟线长度归零）。
         let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
         g.set_inserts(1, vec![Box::new(DelayInsert::new(3))]);
-        assert_eq!(g.channels[0].delay.delay(), 3);
+        assert_eq!(g.channels[0].master_delay.delay(), 3);
         g.set_inserts(1, Vec::new());
-        assert!(g.channels.iter().all(|c| c.delay.delay() == 0));
+        assert!(g.channels.iter().all(|c| c.master_delay.delay() == 0));
     }
 
     #[test]
