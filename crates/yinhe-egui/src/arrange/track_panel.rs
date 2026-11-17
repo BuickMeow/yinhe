@@ -76,6 +76,8 @@ pub(crate) fn show(
     bus_strips: &[yinhe_mixer::StripParams],
     // 固定总线条的稳定 BusId（与 `bus_strips` 等长）。
     bus_ids: &[yinhe_types::BusId],
+    // 固定总线条的 CH 显示名（与 `bus_ids` 等长）。
+    bus_labels: &[String],
     // 固定总线条的 automation（与 `bus_ids` 等长）。
     bus_automation: &[Vec<yinhe_types::AutomationLane>],
     // 每轨 LC / 音频 LC 节点的 automation。
@@ -225,10 +227,7 @@ pub(crate) fn show(
                 painter.text(
                     egui::pos2(text_x, badge_rect.min.y + lh * 0.70),
                     egui::Align2::LEFT_CENTER,
-                    format!(
-                        "BUS {}",
-                        bus_ids.get(bus).map_or(bus + 1, |id| id.index() + 1)
-                    ),
+                    bus_labels.get(bus).cloned().unwrap_or_default(),
                     font,
                     crate::theme::text_primary(),
                 );
@@ -237,9 +236,9 @@ pub(crate) fn show(
                     egui::pos2(text_x, badge_rect.center().y),
                     egui::Align2::LEFT_CENTER,
                     format!(
-                        "{} · BUS {}",
+                        "{} · {}",
                         label,
-                        bus_ids.get(bus).map_or(bus + 1, |id| id.index() + 1)
+                        bus_labels.get(bus).cloned().unwrap_or_default()
                     ),
                     render::compact_font(lh),
                     crate::theme::text_primary(),
@@ -290,64 +289,61 @@ pub(crate) fn show(
             painter.text(
                 egui::pos2(badge_rect.max.x + 6.0, row_rect.center().y),
                 egui::Align2::LEFT_CENTER,
-                format!(
-                    "BUS {}",
-                    bus_ids.get(bus).map_or(bus + 1, |id| id.index() + 1)
-                ),
+                bus_labels.get(bus).cloned().unwrap_or_default(),
                 egui::FontId::proportional(crate::theme::SMALL_FONT),
                 crate::theme::text_primary(),
             );
 
             if show_details {
-                let gap = 2.0;
-                let total_btn_w = 2.0 * btn_size.x + gap;
+                let total_btn_w = btn_size.x;
                 let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
                 let meter_left = meter_right - LEVEL_METER_W;
                 let btn_x_start = meter_left - LEVEL_METER_GAP - total_btn_w;
                 let btn_y = row_rect.center().y - btn_size.y * 0.5;
-                let m_rect = egui::Rect::from_min_size(egui::pos2(btn_x_start, btn_y), btn_size);
-                let s_rect = egui::Rect::from_min_size(
-                    egui::pos2(btn_x_start + btn_size.x + gap, btn_y),
-                    btn_size,
-                );
-                no_drag_rects.push(m_rect);
-                no_drag_rects.push(s_rect);
-                let m_resp = draw::draw_inline_button(
+                let ms_rect = egui::Rect::from_min_size(egui::pos2(btn_x_start, btn_y), btn_size);
+                no_drag_rects.push(ms_rect);
+                let audibility = strip.audibility();
+                let (label, active, color) = if audibility == yinhe_types::Audibility::Soloed {
+                    ("S", true, crate::theme::solo_active())
+                } else {
+                    (
+                        "M",
+                        audibility == yinhe_types::Audibility::Muted,
+                        crate::theme::mute_active(),
+                    )
+                };
+                let resp = draw::draw_inline_button(
                     ui,
                     &painter,
-                    m_rect,
-                    "M",
-                    strip.mute,
-                    crate::theme::mute_active(),
-                    egui::Id::unique(("arr_bus_m", bus)),
+                    ms_rect,
+                    label,
+                    active,
+                    color,
+                    egui::Id::unique(("arr_bus_ms", bus)),
                 );
-                let s_resp = draw::draw_inline_button(
-                    ui,
-                    &painter,
-                    s_rect,
-                    "S",
-                    strip.solo,
-                    crate::theme::solo_active(),
-                    egui::Id::unique(("arr_bus_s", bus)),
-                );
-                crate::widgets::hint::hover(ui.ctx(), &m_resp, t!("hint.arrange.track_mute"));
-                crate::widgets::hint::hover(ui.ctx(), &s_resp, t!("hint.arrange.track_solo"));
-                if m_resp.clicked() {
+                crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.arrange.track_mute"));
+                if resp.clicked() {
+                    let mut params = strip;
+                    params.set_audibility(if audibility == yinhe_types::Audibility::Muted {
+                        yinhe_types::Audibility::Normal
+                    } else {
+                        yinhe_types::Audibility::Muted
+                    });
                     actions.push(TrackAction::SetBusStrip {
                         bus: bus_id,
-                        params: yinhe_mixer::StripParams {
-                            mute: !strip.mute,
-                            ..strip
-                        },
+                        params,
                     });
                 }
-                if s_resp.clicked() {
+                if resp.secondary_clicked() {
+                    let mut params = strip;
+                    params.set_audibility(if audibility == yinhe_types::Audibility::Soloed {
+                        yinhe_types::Audibility::Normal
+                    } else {
+                        yinhe_types::Audibility::Soloed
+                    });
                     actions.push(TrackAction::SetBusStrip {
                         bus: bus_id,
-                        params: yinhe_mixer::StripParams {
-                            solo: !strip.solo,
-                            ..strip
-                        },
+                        params,
                     });
                 }
                 let meter_rect = egui::Rect::from_min_max(

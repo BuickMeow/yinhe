@@ -222,6 +222,15 @@ pub fn show(
     doc.edit.arr_am_expanded.resize(num_tracks, false);
     let conductor_idx = doc.edit.track_cache.conductor_idx;
     let bus_ids = doc.mixer.bus_ids();
+    let bus_labels: Vec<String> = bus_ids
+        .iter()
+        .map(|id| {
+            doc.mixer
+                .bus_display_number(*id)
+                .map(crate::mix::lc_label)
+                .unwrap_or_default()
+        })
+        .collect();
     let bus_automation: Vec<Vec<yinhe_types::AutomationLane>> = doc
         .mixer
         .buses
@@ -540,6 +549,7 @@ pub fn show(
             track_meters,
             bus_strips,
             &bus_ids,
+            &bus_labels,
             &bus_automation,
             &track_mixer_lanes,
             bus_meters,

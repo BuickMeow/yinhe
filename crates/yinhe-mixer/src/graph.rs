@@ -1271,6 +1271,7 @@ impl MixerGraph {
 /// 查找、逐样本累加）完全一致，故以 `pre_fader` 参数合并。
 /// 当前块内前向通道发送：目标索引大于源，目标尚未处理。
 /// 目标 <= 源 的发送已在 `apply_delayed_channel_sends` 里用上一块快照处理。
+#[allow(clippy::too_many_arguments)] // 混音处理上下文透传
 fn route_channel_send(
     channels: &mut [ChannelChain],
     buses: &mut [BusChain],
