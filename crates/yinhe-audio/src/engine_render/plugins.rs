@@ -202,9 +202,9 @@ impl AudioEngine {
                 }
                 std::mem::take(&mut src.events)
             };
-            // 方案 C：OwnLc 单轨的外部插件音频输出到该轨 home LC，
-            // 让它走该轨自己的推子/insert/send/freeze，而不是共享的 MIDI 源条。
-            let out_dense = self.channel_layout.instrument_output_dense(dense) as usize;
+            // 方案 C：插件链建在宿主 dense 上（OwnLc = home LC，
+            // AP = 共享 MIDI 源），输出直接写链所在 dense。
+            let out_dense = dense;
             if let Some(cb) = self.mixer.channel_buffers_mut(out_dense) {
                 let f = frames
                     .min(cb.left.len().saturating_sub(offset_frames))

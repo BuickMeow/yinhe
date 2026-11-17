@@ -417,42 +417,6 @@ impl App {
         }
     }
 
-    /// 某 MIDI 通道的乐器宿主列表（方案 C）：
-    ///
-    /// - 通道上存在 AP 轨（或没有 MIDI 轨）→ 一条共享链（`None`）；
-    /// - 全部是 OwnLc 轨 → 每条轨一个实例（`Some(lc)`），各自写 home LC。
-    fn instrument_hosts(
-        doc: &yinhe_editor_core::document::Document,
-        channel: u8,
-    ) -> Vec<Option<yinhe_types::LogicalChannelId>> {
-        use yinhe_core::{TrackAudioTarget, TrackKind};
-        let mut hosts: Vec<Option<yinhe_types::LogicalChannelId>> = Vec::new();
-        for t in doc.data.model.tracks.iter() {
-            if t.kind != TrackKind::Midi || t.global_channel() != channel {
-                continue;
-            }
-            match t.effective_audio_target() {
-                // OwnLc 轨各自一个实例。
-                Some(TrackAudioTarget::OwnLc { lc, .. }) => {
-                    if !hosts.contains(&Some(lc)) {
-                        hosts.push(Some(lc));
-                    }
-                }
-                // AP 轨共享一条链（同通道多条 AP 轨只加一次）。
-                Some(TrackAudioTarget::Ap { .. }) => {
-                    if !hosts.contains(&None) {
-                        hosts.push(None);
-                    }
-                }
-                Some(TrackAudioTarget::DirectMaster { .. }) | None => {}
-            }
-        }
-        if hosts.is_empty() {
-            hosts.push(None);
-        }
-        hosts
-    }
-
     /// 工程加载后：按 MixerParams.instruments 重建乐器机架。
     /// 与 restore_mixer_rack 同理——只加载不激活，引擎重建后由
     /// push_mixer_state_to_engine → ensure_all_sent 统一激活补发。
@@ -461,7 +425,7 @@ impl App {
         let mut rack = InstrumentRack::default();
         let doc = &self.workspace.documents[idx];
         for (ch, rack_params) in mixer.racks.iter().enumerate() {
-            let hosts = Self::instrument_hosts(doc, ch as u8);
+            let hosts = doc.instrument_hosts(ch as u8);
             for r in &rack_params.instruments {
                 for lc in &hosts {
                     let _ = rack.add(
@@ -1077,7 +1041,7 @@ pub(crate) fn assign_instrument_plugin(
             });
     }
     if idx < app.instrument_racks.len() {
-        let hosts = App::instrument_hosts(&app.workspace.documents[idx], channel);
+        let hosts = app.workspace.documents[idx].instrument_hosts(channel);
         let rack = &mut app.instrument_racks[idx];
         for lc in &hosts {
             if let Err(e) = rack.add(

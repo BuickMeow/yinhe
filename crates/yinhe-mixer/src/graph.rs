@@ -59,12 +59,6 @@ pub trait InsertProcessor: Send {
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
 }
 
-/// 通道主输出目标：另一条 dense 通道，或 Master（None）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ChannelOutput {
-    Channel(usize),
-}
-
 /// 任意通道发送的目标（方案 C）：另一条 dense 通道，或 Master。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChannelSendTarget {
@@ -228,7 +222,7 @@ pub struct ChannelChain {
     /// 任意通道发送（源通道 → 另一条 dense 通道 / Master）。
     channel_sends: Vec<ResolvedChannelSend>,
     /// 主输出目标（从图配置同步；用于块首延迟输出）。
-    output: Option<ChannelOutput>,
+    output: Option<usize>,
     /// 上一块输出快照（逆序/自环通道发送使用，打断反馈）。
     prev_out_l: Vec<f32>,
     prev_out_r: Vec<f32>,
@@ -339,7 +333,7 @@ pub struct MixerGraph {
     master: MasterChain,
     channels: Vec<ChannelChain>,
     /// 每个 dense 通道的主输出目标（None = Master）。
-    channel_outputs: Vec<Option<ChannelOutput>>,
+    channel_outputs: Vec<Option<usize>>,
     frames: usize,
 }
 
@@ -524,7 +518,7 @@ impl MixerGraph {
     }
 
     /// 设置某通道（dense）的主输出目标；`None` = 直接进 Master。
-    pub fn set_channel_output(&mut self, channel: usize, output: Option<ChannelOutput>) {
+    pub fn set_channel_output(&mut self, channel: usize, output: Option<usize>) {
         if let Some(slot) = self.channel_outputs.get_mut(channel) {
             *slot = output;
         }
@@ -586,8 +580,7 @@ impl MixerGraph {
                     edges.push((ci, dst));
                 }
             }
-            if let Some(ChannelOutput::Channel(dst)) =
-                self.channel_outputs.get(ci).copied().flatten()
+            if let Some(dst) = self.channel_outputs.get(ci).copied().flatten()
                 && dst > ci
                 && dst < nc
             {
@@ -626,9 +619,7 @@ impl MixerGraph {
                 .master_delay
                 .set_delay(global.saturating_sub(out[ci]) as usize);
             let output_pdc = match self.channel_outputs.get(ci).copied().flatten() {
-                Some(ChannelOutput::Channel(dst)) if dst > ci && dst < nc => {
-                    input[dst].saturating_sub(out[ci])
-                }
+                Some(dst) if dst > ci && dst < nc => input[dst].saturating_sub(out[ci]),
                 _ => 0,
             };
             chain.output_delay.set_delay(output_pdc as usize);
@@ -787,7 +778,7 @@ impl MixerGraph {
     #[allow(clippy::too_many_arguments)] // 混音处理上下文透传
     fn process_channels(
         channels: &mut [ChannelChain],
-        channel_outputs: &[Option<ChannelOutput>],
+        channel_outputs: &[Option<usize>],
         master_l: &mut [f32],
         master_r: &mut [f32],
         frames: usize,
@@ -866,7 +857,7 @@ impl MixerGraph {
 
             // 主输出：另一条通道 / Master。
             match channel_outputs.get(ci).copied().flatten() {
-                Some(ChannelOutput::Channel(dst)) if dst > ci && dst < channels.len() => {
+                Some(dst) if dst > ci && dst < channels.len() => {
                     let dst_solo = channels[dst].strip.params.solo;
                     if !p.mute && (!any_solo || p.solo || dst_solo) {
                         let (left, right) = channels.split_at_mut(dst);
@@ -882,7 +873,7 @@ impl MixerGraph {
                     }
                 }
                 // 逆序/自环通道输出已经在块首用上一块快照汇入。
-                Some(ChannelOutput::Channel(_)) => {}
+                Some(_) => {}
                 None => {
                     if to_master {
                         let chain = &mut channels[ci];
@@ -959,7 +950,7 @@ impl MixerGraph {
     /// 逆序/自环通道主输出：源上一块输出 → 目标本块输入。
     fn apply_delayed_channel_outputs(channels: &mut [ChannelChain], frames: usize, any_solo: bool) {
         for src in 0..channels.len() {
-            let Some(ChannelOutput::Channel(dst)) = channels[src].output else {
+            let Some(dst) = channels[src].output else {
                 continue;
             };
             if dst > src || dst >= channels.len() {
@@ -1291,7 +1282,7 @@ mod tests {
     #[test]
     fn channel_main_output_replaces_master_path() {
         let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
-        g.set_channel_output(0, Some(ChannelOutput::Channel(1)));
+        g.set_channel_output(0, Some(1));
         fill(&mut g, 0, 0.5);
         let (l, _r) = g.process();
         // 通道 0 推子/声像 → 通道 1 输入 → 通道 1 推子/声像 → Master。
@@ -1573,7 +1564,7 @@ mod tests {
     fn pdc_aligns_channel_main_output_with_target_own_source() {
         let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
         g.set_inserts(0, vec![Box::new(DelayInsert::new(2))]);
-        g.set_channel_output(0, Some(ChannelOutput::Channel(1)));
+        g.set_channel_output(0, Some(1));
         assert_eq!(g.channels[1].input_delay.delay(), 2);
         assert_eq!(g.channels[0].output_delay.delay(), 0);
         for ch in [0, 1] {
@@ -1618,7 +1609,7 @@ mod tests {
 
     fn channel_main_output_to_channel_replaces_master() {
         let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
-        g.set_channel_output(0, Some(ChannelOutput::Channel(1)));
+        g.set_channel_output(0, Some(1));
         fill(&mut g, 0, 0.5);
         let (l, _r) = g.process();
         let single = core::f32::consts::FRAC_1_SQRT_2;
@@ -1630,7 +1621,7 @@ mod tests {
     #[test]
     fn channel_main_output_reverse_is_one_block_delayed() {
         let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
-        g.set_channel_output(1, Some(ChannelOutput::Channel(0)));
+        g.set_channel_output(1, Some(0));
         fill(&mut g, 1, 0.5);
         let (l, _r) = g.process();
         assert!(l[3].abs() < 1e-6, "第一块不应有逆序主输出: {}", l[3]);

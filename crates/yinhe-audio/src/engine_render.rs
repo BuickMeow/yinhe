@@ -30,8 +30,8 @@ impl AudioEngine {
         }
         for (dense, slot) in self.instruments.iter().enumerate() {
             if slot.is_some() {
-                // OwnLc 单轨的插件输出落在 home LC，标记该 dense 为活跃。
-                let out = self.channel_layout.instrument_output_dense(dense) as usize;
+                // 插件链与其输出同 dense（OwnLc = home LC / AP = 共享源）。
+                let out = dense;
                 if out < n {
                     active[out] = true;
                 }

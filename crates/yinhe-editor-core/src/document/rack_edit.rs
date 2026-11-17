@@ -212,6 +212,40 @@ impl Document {
         true
     }
 
+    /// 某 MIDI 通道的乐器宿主列表（方案 C）：
+    ///
+    /// - 每条 OwnLc 轨一个实例（`Some(lc)`），各自写 home LC；
+    /// - 存在 AP 轨时再加一条共享链（`None`）；
+    /// - 没有 MIDI 轨时返回一条共享链兜底。
+    ///
+    /// UI（`InstrumentRack`）与音频引擎都以此为准，避免两边各自解析
+    /// `TrackAudioTarget` 导致宿主对不上。
+    pub fn instrument_hosts(&self, channel: u8) -> Vec<Option<yinhe_types::LogicalChannelId>> {
+        let mut hosts: Vec<Option<yinhe_types::LogicalChannelId>> = Vec::new();
+        for t in self.data.model.tracks.iter() {
+            if t.kind != TrackKind::Midi || t.global_channel() != channel {
+                continue;
+            }
+            match t.effective_audio_target() {
+                Some(TrackAudioTarget::OwnLc { lc, .. }) => {
+                    if !hosts.contains(&Some(lc)) {
+                        hosts.push(Some(lc));
+                    }
+                }
+                Some(TrackAudioTarget::Ap { .. }) => {
+                    if !hosts.contains(&None) {
+                        hosts.push(None);
+                    }
+                }
+                Some(TrackAudioTarget::DirectMaster { .. }) | None => {}
+            }
+        }
+        if hosts.is_empty() {
+            hosts.push(None);
+        }
+        hosts
+    }
+
     /// 把 MIDI 轨解链回自己的 LC。外部插件由每轨实例承接，不复制乐器自动化。
     pub fn link_track_to_own_lc(&mut self, track_idx: usize) -> bool {
         let Some(track) = self.data.model.tracks.get(track_idx) else {

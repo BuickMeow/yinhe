@@ -2,8 +2,8 @@
 //! insert 命令处理与处理器回收。
 
 use yinhe_mixer::{
-    ChannelOutput, ChannelSendTarget, InsertProcessor, InstrumentProcessor, MasterParams,
-    MixerParams, ResolvedChannelSend, SendParams, StripParams,
+    ChannelSendTarget, InsertProcessor, InstrumentProcessor, MasterParams, MixerParams,
+    ResolvedChannelSend, SendParams, StripParams,
 };
 use yinhe_types::MixerChannelId;
 
@@ -49,9 +49,9 @@ impl AudioEngine {
                 Some(ChannelNamespace::DirectMaster) | None => None,
             };
             let dest = target.and_then(|id| match id {
-                yinhe_types::ChannelId::Lc(_) | yinhe_types::ChannelId::Ap(_) => self
-                    .dense_for_channel_id(id)
-                    .map(|target| ChannelOutput::Channel(target as usize)),
+                yinhe_types::ChannelId::Lc(_) | yinhe_types::ChannelId::Ap(_) => {
+                    self.dense_for_channel_id(id).map(|target| target as usize)
+                }
                 yinhe_types::ChannelId::Master => None,
             });
             self.mixer.set_channel_output(dense, dest);
@@ -579,11 +579,9 @@ impl AudioEngine {
                     .unwrap_or(0)
             })
             .unwrap_or(0);
-        let out_dense = self.channel_layout.instrument_output_dense(dense) as usize;
+        // 方案 C：插件链直接建在其宿主 dense（OwnLc = home LC），
+        // 延迟写到同一个 dense。
         self.mixer.set_channel_latency(dense, latency);
-        if out_dense != dense {
-            self.mixer.set_channel_latency(out_dense, latency);
-        }
     }
 
     /// 取出待回收的乐器处理器（renderer 每轮命令处理后调用，送回 UI 线程）。

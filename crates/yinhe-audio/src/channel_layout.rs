@@ -221,15 +221,6 @@ impl ChannelLayout {
         self.direct_master_dense
     }
 
-    /// 乐器插件的实际输出 dense。
-    ///
-    /// 方案 C 的 OwnLc 轨把插件链直接建在该轨 home LC 的 dense 上，
-    /// AP 轨建在共享 MIDI 源 dense 上，因此输出恒等于链所在 dense。
-    #[inline]
-    pub fn instrument_output_dense(&self, source_dense: usize) -> u32 {
-        source_dense as u32
-    }
-
     /// Track 的每轨 LC dense 索引；`u32::MAX` = 没有独立 LC。
     pub fn track_lc_dense(&self, track: usize) -> u32 {
         self.track_lc_dense.get(track).copied().unwrap_or(u32::MAX)
@@ -915,48 +906,6 @@ mod matches_model_tests {
         assert_eq!(dense as usize, layout.compacted_channels() as usize - 1);
         assert_eq!(layout.track_lc_dense(1), u32::MAX);
         assert!(!layout.is_ap_active(0));
-    }
-
-    #[test]
-    fn own_lc_track_has_its_own_lc_dense_for_instruments() {
-        let mut model = YinModel::new_empty_with_16_tracks();
-        model.tracks.truncate(2);
-        let lc = yinhe_types::LogicalChannelId(yinhe_types::TRACK_LC_BASE);
-        {
-            let t = Arc::make_mut(&mut model.tracks[1]);
-            t.lc = Some(lc);
-            t.set_audio_target(yinhe_core::TrackAudioTarget::OwnLc {
-                lc,
-                rack: Some(yinhe_types::RackId::new(0)),
-            });
-        }
-        model.rebuild();
-        let layout = ChannelLayout::from_model(&model);
-        let home = layout.track_lc_dense(1);
-        assert_ne!(home, u32::MAX);
-        // 插件链建在 home LC dense，输出即该 dense（每轨实例）。
-        assert_eq!(layout.instrument_output_dense(home as usize), home);
-    }
-
-    #[test]
-    fn shared_midi_channel_instrument_output_stays_on_channel() {
-        let mut model = YinModel::new_empty_with_16_tracks();
-        model.tracks.truncate(3);
-        // 两条轨同通道、都无 lc（AP 共享）
-        {
-            let channel = model.tracks[1].channel;
-            let t = Arc::make_mut(&mut model.tracks[2]);
-            t.channel = channel;
-            t.lc = None;
-        }
-        model.rebuild();
-        let layout = ChannelLayout::from_model(&model);
-        let src = layout.dense_for(0) as usize;
-        assert_eq!(
-            layout.instrument_output_dense(src) as usize,
-            src,
-            "共享通道的插件输出仍在通道 dense 本身"
-        );
     }
 
     /// 新增或删除通道都必须判为“不完全匹配”（触发引擎重建/资源回收）。
