@@ -1150,7 +1150,6 @@ hint.arrange.track_row: "Řádek stopy: kliknutím vyberete, dvojklikem otevřet
 hint.arrange.track_mute: "Ztlumit tuto stopu"
 hint.arrange.track_solo: "Sólo této stopy"
 hint.arrange.am_mute: "Ztlumit tuto stopu automatizace pro poslech"
-hint.arrange.am_solo: "Sólo této stopy automatizace pro poslech"
 hint.arrange.am_expand: "Rozbalit/sbalit stopy automatizace"
 hint.arrange.add_automation: "Přidat automatizaci…"
 hint.arrange.add_track: "Přidat stopu"

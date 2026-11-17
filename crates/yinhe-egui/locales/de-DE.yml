@@ -1145,7 +1145,6 @@ hint.arrange.track_row: "Spurzeile: klicken zum Auswählen, Doppelklick zum Öff
 hint.arrange.track_mute: "Diese Spur stummschalten"
 hint.arrange.track_solo: "Diese Spur solo schalten"
 hint.arrange.am_mute: "Diese Automatisierungsspur zum Abhören stummschalten"
-hint.arrange.am_solo: "Diese Automatisierungsspur zum Abhören solo schalten"
 hint.arrange.am_expand: "Automatisierungsspuren ein-/ausklappen"
 hint.arrange.add_automation: "Automatisierung hinzufügen…"
 hint.arrange.add_track: "Spur hinzufügen"

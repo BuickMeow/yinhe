@@ -14,6 +14,25 @@ pub struct AmMsState {
     pub solo: bool,
 }
 
+impl AmMsState {
+    /// 当前听感三态（`solo` 优先，与 `TrackOverride::audibility` 一致）。
+    pub fn audibility(&self) -> crate::Audibility {
+        if self.solo {
+            crate::Audibility::Soloed
+        } else if self.mute {
+            crate::Audibility::Muted
+        } else {
+            crate::Audibility::Normal
+        }
+    }
+
+    /// 从三态写回（互斥：同一时刻不会既 mute 又 solo）。
+    pub fn set_audibility(&mut self, audibility: crate::Audibility) {
+        self.mute = audibility == crate::Audibility::Muted;
+        self.solo = audibility == crate::Audibility::Soloed;
+    }
+}
+
 /// How to interpolate from one automation event to the next.
 ///
 /// Stored per-event on `AutomationEvent::shape`, describing the segment

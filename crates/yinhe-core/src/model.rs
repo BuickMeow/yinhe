@@ -2258,9 +2258,11 @@ mod tests {
         let mut master = TrackData::new(0, 0);
         master.kind = TrackKind::Master;
         assert!(!master.allows_automation_target(&AutomationTarget::CC { controller: 7 }));
-        assert!(!master.allows_automation_target(&AutomationTarget::MixerGain {
-            channel: yinhe_types::MixerChannelId::Master
-        }));
+        assert!(
+            !master.allows_automation_target(&AutomationTarget::MixerGain {
+                channel: yinhe_types::MixerChannelId::Master
+            })
+        );
 
         let midi = TrackData::new(0, 0);
         assert!(midi.allows_automation_target(&AutomationTarget::CC { controller: 7 }));
@@ -2268,9 +2270,11 @@ mod tests {
         let mut folder = TrackData::new(0, 0);
         folder.kind = TrackKind::Folder;
         assert!(!folder.allows_automation_target(&AutomationTarget::CC { controller: 7 }));
-        assert!(!folder.allows_automation_target(&AutomationTarget::MixerGain {
-            channel: yinhe_types::MixerChannelId::Master
-        }));
+        assert!(
+            !folder.allows_automation_target(&AutomationTarget::MixerGain {
+                channel: yinhe_types::MixerChannelId::Master
+            })
+        );
     }
 
     #[test]

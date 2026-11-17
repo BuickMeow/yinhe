@@ -1149,7 +1149,6 @@ hint.arrange.track_row: "Строка дорожки: щёлкните для в
 hint.arrange.track_mute: "Заглушить эту дорожку"
 hint.arrange.track_solo: "Solo этой дорожки"
 hint.arrange.am_mute: "Заглушить дорожку автоматизации для прослушивания"
-hint.arrange.am_solo: "Solo дорожки автоматизации для прослушивания"
 hint.arrange.am_expand: "Развернуть/свернуть дорожки автоматизации"
 hint.arrange.add_automation: "Добавить автоматизацию…"
 hint.arrange.add_track: "Добавить дорожку"

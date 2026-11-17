@@ -1145,7 +1145,6 @@ hint.arrange.track_row: "Ligne de piste : cliquer pour sélectionner, double-cli
 hint.arrange.track_mute: "Mettre cette piste en sourdine"
 hint.arrange.track_solo: "Mettre cette piste en solo"
 hint.arrange.am_mute: "Mettre cette voie d'automatisation en sourdine pour l'écoute"
-hint.arrange.am_solo: "Mettre cette voie d'automatisation en solo pour l'écoute"
 hint.arrange.am_expand: "Développer/réduire les voies d'automatisation"
 hint.arrange.add_automation: "Ajouter une automatisation…"
 hint.arrange.add_track: "Ajouter une piste"

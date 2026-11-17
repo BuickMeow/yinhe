@@ -1174,7 +1174,6 @@ hint.arrange.track_row: "トラック行：クリックで選択、ダブルク�
 hint.arrange.track_mute: "このトラックをミュート"
 hint.arrange.track_solo: "このトラックをソロ"
 hint.arrange.am_mute: "このオートメーションレーンをミュートして試聴"
-hint.arrange.am_solo: "このオートメーションレーンをソロで試聴"
 hint.arrange.am_expand: "オートメーションレーンの展開/折りたたみ"
 hint.arrange.add_automation: "オートメーションを追加…"
 hint.arrange.add_track: "トラックを追加"

@@ -1145,7 +1145,6 @@ hint.arrange.track_row: "Fila de pista: clic para seleccionar, doble clic para a
 hint.arrange.track_mute: "Silenciar esta pista"
 hint.arrange.track_solo: "Solo de esta pista"
 hint.arrange.am_mute: "Silenciar este carril de automatización para la monitorización"
-hint.arrange.am_solo: "Solo de este carril de automatización para la monitorización"
 hint.arrange.am_expand: "Expandir/contraer los carriles de automatización"
 hint.arrange.add_automation: "Añadir automatización…"
 hint.arrange.add_track: "Añadir pista"

@@ -67,22 +67,19 @@ fn focus_send_info(
     app: &App,
     idx: usize,
     source_channel: MixerChannelId,
-) -> (Option<ChannelId>, Option<ChannelId>, String, f32, bool) {
+) -> (Option<ChannelId>, Option<ChannelId>, f32, bool) {
     let mixer = &app.workspace.documents[idx].mixer;
     let source = crate::mix::channel_id_for_ui(mixer, source_channel);
     let target = app
         .mix
         .send_focus
         .and_then(|focus| crate::mix::channel_id_for_ui(mixer, focus));
-    let label = target
-        .map(|target| crate::mix::channel_id_label(target, &app.mix.channel_display))
-        .unwrap_or_default();
     let (amount, pre_fader) = source
         .zip(target)
         .and_then(|(source, target)| mixer.channel_send(source, target))
         .map(|send| (send.amount, send.pre_fader))
         .unwrap_or((0.0, false));
-    (source, target, label, amount, pre_fader)
+    (source, target, amount, pre_fader)
 }
 
 /// 单条 MIDI 通道条。
@@ -101,7 +98,7 @@ pub(crate) fn channel_strip(
     let params = app.workspace.documents[idx]
         .mixer
         .node_strip(MixerChannelId::Midi(channel));
-    let (send_source, send_target, send_label, send_amount, send_pre) =
+    let (send_source, send_target, send_amount, send_pre) =
         focus_send_info(app, idx, MixerChannelId::Midi(channel));
     let title = crate::mix::channel_title(&app.workspace.documents[idx].mixer, channel);
 
@@ -117,15 +114,7 @@ pub(crate) fn channel_strip(
                 send_height(0),
                 egui::Layout::top_down(egui::Align::Center),
                 |ui| {
-                    focus_send_block(
-                        ui,
-                        send_source,
-                        send_target,
-                        &send_label,
-                        send_amount,
-                        send_pre,
-                        actions,
-                    );
+                    focus_send_block(ui, send_source, send_target, send_amount, send_pre, actions);
                 },
             );
             ui.add_space(GAP);
@@ -175,7 +164,7 @@ pub(crate) fn audio_strip(
         .mixer
         .node_strip(MixerChannelId::Audio(channel));
     let title = crate::mix::lc_label(display);
-    let (send_source, send_target, send_label, send_amount, send_pre) =
+    let (send_source, send_target, send_amount, send_pre) =
         focus_send_info(app, idx, MixerChannelId::Audio(channel));
 
     let rect = strip_frame(
@@ -190,15 +179,7 @@ pub(crate) fn audio_strip(
                 send_height(0),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
-                    focus_send_block(
-                        ui,
-                        send_source,
-                        send_target,
-                        &send_label,
-                        send_amount,
-                        send_pre,
-                        actions,
-                    );
+                    focus_send_block(ui, send_source, send_target, send_amount, send_pre, actions);
                 },
             );
             ui.add_space(GAP);
@@ -248,8 +229,7 @@ pub(crate) fn track_lc_strip(
     let node = MixerChannelId::TrackLc(lc);
     let mixer = &app.workspace.documents[idx].mixer;
     let params = mixer.node_strip(node);
-    let (send_source, send_target, send_label, send_amount, send_pre) =
-        focus_send_info(app, idx, node);
+    let (send_source, send_target, send_amount, send_pre) = focus_send_info(app, idx, node);
     let title = crate::mix::lc_label(display);
     let color = app.workspace.documents[idx]
         .edit
@@ -272,15 +252,7 @@ pub(crate) fn track_lc_strip(
                 send_height(0),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
-                    focus_send_block(
-                        ui,
-                        send_source,
-                        send_target,
-                        &send_label,
-                        send_amount,
-                        send_pre,
-                        actions,
-                    );
+                    focus_send_block(ui, send_source, send_target, send_amount, send_pre, actions);
                 },
             );
             ui.add_space(GAP);

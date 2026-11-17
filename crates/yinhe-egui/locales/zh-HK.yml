@@ -1150,7 +1150,6 @@ hint.arrange.track_row: "音軌列：單擊選取，雙擊開啟鋼琴卷簾，�
 hint.arrange.track_mute: "靜音該音軌"
 hint.arrange.track_solo: "獨奏該音軌"
 hint.arrange.am_mute: "自動化 lane 靜音試聽"
-hint.arrange.am_solo: "自動化 lane 獨奏試聽"
 hint.arrange.am_expand: "展開／收起自動化 lane"
 hint.arrange.add_automation: "新增自動化…"
 hint.arrange.add_track: "新增音軌"

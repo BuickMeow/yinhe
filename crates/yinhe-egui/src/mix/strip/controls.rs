@@ -3,7 +3,7 @@
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_mixer::StripParams;
-use yinhe_types::{Audibility, ChannelId, LogicalChannelId};
+use yinhe_types::{ChannelId, LogicalChannelId};
 
 use crate::widgets::knob::{knob, knob_centered};
 use crate::widgets::meter::{DB_MAX, DB_MIN, db_to_gain, gain_at_frac, gain_frac, gain_to_db};
@@ -226,11 +226,12 @@ fn send_amount(norm: f32) -> f32 {
     }
 }
 
+/// 发送量文案：`OFF`（-inf，不保留 0 条目）或实际 dB。
 fn send_db_label(amount: f32) -> String {
     if amount <= 0.0 {
-        "-inf".to_string()
+        "OFF".to_string()
     } else {
-        format!("{:.1}", gain_to_db(amount))
+        format!("{:+.1} dB", gain_to_db(amount))
     }
 }
 
@@ -240,7 +241,6 @@ pub(super) fn focus_send_block(
     ui: &mut egui::Ui,
     source: Option<ChannelId>,
     target: Option<ChannelId>,
-    label: &str,
     amount: f32,
     pre_fader: bool,
     actions: &mut Vec<MixAction>,
@@ -311,11 +311,6 @@ pub(super) fn focus_send_block(
         });
         ui.vertical(|ui| {
             ui.label(
-                egui::RichText::new(label)
-                    .size(crate::theme::SMALL_LABEL_FONT)
-                    .color(crate::theme::text_secondary()),
-            );
-            ui.label(
                 egui::RichText::new(send_db_label(amount))
                     .size(crate::theme::SMALL_LABEL_FONT)
                     .color(crate::theme::text_secondary()),
@@ -331,29 +326,16 @@ fn ms_column(ui: &mut egui::Ui, params: &StripParams, width: f32) -> Option<Stri
         |ui| {
             let mut p = *params;
             let audibility = p.audibility();
-            let (label, active, color) = match audibility {
-                Audibility::Normal => ("M", false, crate::theme::mute_active()),
-                Audibility::Muted => ("M", true, crate::theme::mute_active()),
-                Audibility::Soloed => ("S", true, crate::theme::solo_active()),
-            };
+            // 单按钮：始终显示 M；左键静音、右键独奏，亮色区分。
+            let (label, active, color) = crate::widgets::audibility::visual(audibility);
             let resp = toggle_button(ui, label, active, color);
             crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.mute"));
             if resp.clicked() {
-                let next = if audibility == Audibility::Muted {
-                    Audibility::Normal
-                } else {
-                    Audibility::Muted
-                };
-                p.set_audibility(next);
+                p.set_audibility(crate::widgets::audibility::next_on_primary(audibility));
                 return Some(p);
             }
             if resp.secondary_clicked() {
-                let next = if audibility == Audibility::Soloed {
-                    Audibility::Normal
-                } else {
-                    Audibility::Soloed
-                };
-                p.set_audibility(next);
+                p.set_audibility(crate::widgets::audibility::next_on_secondary(audibility));
                 return Some(p);
             }
             None

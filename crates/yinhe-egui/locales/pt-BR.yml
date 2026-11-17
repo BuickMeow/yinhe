@@ -1149,7 +1149,6 @@ hint.arrange.track_row: "Linha da faixa: clique para selecionar, clique duplo pa
 hint.arrange.track_mute: "Silenciar esta faixa"
 hint.arrange.track_solo: "Solo nesta faixa"
 hint.arrange.am_mute: "Silenciar esta pista de automação para monitoração"
-hint.arrange.am_solo: "Solo nesta pista de automação para monitoração"
 hint.arrange.am_expand: "Expandir/recolher as pistas de automação"
 hint.arrange.add_automation: "Adicionar automação…"
 hint.arrange.add_track: "Adicionar faixa"

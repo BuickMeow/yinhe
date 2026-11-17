@@ -1150,7 +1150,6 @@ hint.arrange.track_row: "Wiersz ścieżki: kliknij, aby wybrać, kliknij dwukrot
 hint.arrange.track_mute: "Wycisz tę ścieżkę"
 hint.arrange.track_solo: "Solo tej ścieżki"
 hint.arrange.am_mute: "Wycisz tę ścieżkę automatyzacji do odsłuchu"
-hint.arrange.am_solo: "Solo tej ścieżki automatyzacji do odsłuchu"
 hint.arrange.am_expand: "Rozwiń/zwiń ścieżki automatyzacji"
 hint.arrange.add_automation: "Dodaj automatyzację…"
 hint.arrange.add_track: "Dodaj ścieżkę"

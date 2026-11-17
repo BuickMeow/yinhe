@@ -49,12 +49,15 @@ pub(crate) fn channel_label(ch: u8) -> String {
     midi_label(ch / 16, ch % 16)
 }
 
-/// AP 通道显示标签（global 0 → "AP01"，global 9 → "AP10"）。
+/// AP 通道显示标签：按它对应的 MIDI 端口 + 通道显示。
+///
+/// AP 本质就是一个 MIDI 源通道（A01..P16），显示成 `A01` 才能和导入导出、
+/// 外部设备、MIDI 事件的通道号对上。不要用无意义的 `APxx` 序号。
 pub(crate) fn ap_label(global: u8) -> String {
-    format!("AP{:02}", u16::from(global) + 1)
+    channel_label(global)
 }
 
-/// 混音通道标题：AP 通道显示 APxx，否则显示 MIDI 源 A01。
+/// 混音通道标题：AP 与独立 MIDI 通道都显示端口 + 通道（A01）。
 pub(crate) fn channel_title(mixer: &yinhe_mixer::MixerParams, ch: u8) -> String {
     if mixer.ap_for_midi(ch).is_some() {
         ap_label(ch)
@@ -1227,13 +1230,16 @@ mod tests {
     }
 
     #[test]
-    fn ap_channels_use_ap_label_and_plain_midi_keeps_a_label() {
+    fn ap_channels_show_midi_port_and_channel() {
         let mut mixer = MixerParams::default();
         mixer.ensure_len();
         assert_eq!(channel_title(&mixer, 0), "A01");
         assert!(mixer.ensure_ap(9));
-        assert_eq!(channel_title(&mixer, 9), "AP10");
-        assert_eq!(ap_label(0), "AP01");
+        // AP 也按端口 + 通道显示，不再用 APxx 序号。
+        assert_eq!(channel_title(&mixer, 9), "A10");
+        assert_eq!(ap_label(0), "A01");
+        assert_eq!(ap_label(9), "A10");
+        assert_eq!(ap_label(16), "B01");
     }
 
     /// 迁移只移除内置效果器 insert（channel/master），插件保留；

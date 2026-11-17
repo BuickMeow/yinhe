@@ -1,5 +1,6 @@
 pub(crate) mod a11y;
 pub mod action_menu;
+pub(crate) mod audibility;
 pub(crate) mod auto_scroll;
 pub(crate) mod checkbox;
 pub(crate) mod color_picker;

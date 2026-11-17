@@ -1150,7 +1150,6 @@ hint.arrange.track_row: "Parça satırı: seçmek için tıkla, piano roll'u aç
 hint.arrange.track_mute: "Bu parçayı sessize al"
 hint.arrange.track_solo: "Bu parçayı solo yap"
 hint.arrange.am_mute: "Dinleme için bu otomasyon şeridini sessize al"
-hint.arrange.am_solo: "Dinleme için bu otomasyon şeridini solo yap"
 hint.arrange.am_expand: "Otomasyon şeritlerini genişlet/daralt"
 hint.arrange.add_automation: "Otomasyon ekle…"
 hint.arrange.add_track: "Parça ekle"

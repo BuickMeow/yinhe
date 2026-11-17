@@ -744,51 +744,42 @@ pub(crate) fn show(
                     // 与轨道行的「电平表 + M/S」布局一致）。
                     let key = (track, lane.target.clone());
                     let st = io.arr_am_ms.get(&key).copied().unwrap_or_default();
-                    let total_btn_w = 2.0 * BTN_SIZE + BTN_GAP;
+                    let audibility = st.audibility();
+                    // 单按钮：始终显示 M；左键静音、右键独奏，亮色区分。
+                    let total_btn_w = BTN_SIZE;
                     let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
                     let meter_left = meter_right - LEVEL_METER_W;
                     let btn_x_start = meter_left - LEVEL_METER_GAP - total_btn_w;
                     let btn_y = badge_rect.center().y - BTN_SIZE * 0.5;
-                    let m_rect = egui::Rect::from_min_size(
+                    let ms_rect = egui::Rect::from_min_size(
                         egui::pos2(btn_x_start, btn_y),
                         egui::vec2(BTN_SIZE, BTN_SIZE),
                     );
-                    let s_rect = egui::Rect::from_min_size(
-                        egui::pos2(btn_x_start + BTN_SIZE + BTN_GAP, btn_y),
-                        egui::vec2(BTN_SIZE, BTN_SIZE),
-                    );
-                    let m_resp = draw_inline_button(
+                    let (label, active, color) = crate::widgets::audibility::visual(audibility);
+                    let resp = draw_inline_button(
                         ui,
                         &painter,
-                        m_rect,
-                        "M",
-                        st.mute,
-                        crate::theme::mute_active(),
-                        egui::Id::unique(("ca_am_m", track, sub)),
+                        ms_rect,
+                        label,
+                        active,
+                        color,
+                        egui::Id::unique(("ca_am_ms", track, sub)),
                     );
-                    let s_resp = draw_inline_button(
-                        ui,
-                        &painter,
-                        s_rect,
-                        "S",
-                        st.solo,
-                        crate::theme::solo_active(),
-                        egui::Id::unique(("ca_am_s", track, sub)),
-                    );
-                    crate::widgets::hint::hover(ui.ctx(), &m_resp, t!("hint.arrange.am_mute"));
-                    crate::widgets::hint::hover(ui.ctx(), &s_resp, t!("hint.arrange.am_solo"));
-                    if m_resp.clicked() || s_resp.clicked() {
-                        let mut next = st;
-                        if m_resp.clicked() {
-                            next.mute = !next.mute;
-                        }
-                        if s_resp.clicked() {
-                            next.solo = !next.solo;
-                        }
-                        if next == AmMsState::default() {
+                    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.arrange.am_mute"));
+                    let next = if resp.clicked() {
+                        Some(crate::widgets::audibility::next_on_primary(audibility))
+                    } else if resp.secondary_clicked() {
+                        Some(crate::widgets::audibility::next_on_secondary(audibility))
+                    } else {
+                        None
+                    };
+                    if let Some(next) = next {
+                        let mut state = st;
+                        state.set_audibility(next);
+                        if state == AmMsState::default() {
                             io.arr_am_ms.remove(&key);
                         } else {
-                            io.arr_am_ms.insert(key, next);
+                            io.arr_am_ms.insert(key, state);
                         }
                         out.am_ms_dirty = true;
                     }

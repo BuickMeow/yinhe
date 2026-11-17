@@ -1173,7 +1173,6 @@ hint.arrange.track_row: "트랙 행: 클릭해 선택, 더블클릭으로 피아
 hint.arrange.track_mute: "이 트랙 음소거"
 hint.arrange.track_solo: "이 트랙 솔로"
 hint.arrange.am_mute: "이 자동화 레인 음소거로 모니터링"
-hint.arrange.am_solo: "이 자동화 레인 솔로로 모니터링"
 hint.arrange.am_expand: "자동화 레인 펼치기/접기"
 hint.arrange.add_automation: "자동화 추가…"
 hint.arrange.add_track: "트랙 추가"

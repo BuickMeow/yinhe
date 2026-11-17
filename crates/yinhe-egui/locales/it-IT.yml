@@ -1149,7 +1149,6 @@ hint.arrange.track_row: "Riga traccia: clic per selezionare, doppio clic per apr
 hint.arrange.track_mute: "Silenzia questa traccia"
 hint.arrange.track_solo: "Solo di questa traccia"
 hint.arrange.am_mute: "Silenzia questa corsia di automazione per il monitoraggio"
-hint.arrange.am_solo: "Solo di questa corsia di automazione per il monitoraggio"
 hint.arrange.am_expand: "Espandi/comprimi le corsie di automazione"
 hint.arrange.add_automation: "Aggiungi automazione…"
 hint.arrange.add_track: "Aggiungi traccia"
