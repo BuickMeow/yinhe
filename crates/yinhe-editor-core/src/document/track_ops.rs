@@ -492,7 +492,23 @@ impl Document {
             let mut new_track = yinhe_core::TrackData::new(spec.port, spec.channel);
             new_track.kind = spec.kind;
             new_track.folder_depth = append_depth;
-            new_track.audio_channel = spec.audio_channel;
+            // C：每条 Audio Track 的 home LC 必须唯一；请求的通道被占用时
+            // 自动取下一个空闲音频通道。合并请用 SEND，而不是共用 home LC。
+            new_track.audio_channel = if spec.kind == yinhe_core::TrackKind::Audio {
+                let requested = spec.audio_channel.unwrap_or(0);
+                let used = |ch: u16| {
+                    model.tracks.iter().any(|t| {
+                        t.kind == yinhe_core::TrackKind::Audio && t.audio_channel == Some(ch)
+                    })
+                };
+                Some(if used(requested) {
+                    (0..u16::MAX).find(|ch| !used(*ch)).unwrap_or(requested)
+                } else {
+                    requested
+                })
+            } else {
+                spec.audio_channel
+            };
             new_track.name = format!("Track {}", num);
             model.tracks.push(Arc::new(new_track));
         }
@@ -882,6 +898,36 @@ mod tests {
         // 新建的 3 条全部被选中
         assert_eq!(doc.edit.track_selected.len(), 3);
         assert!(doc.edit.track_selected.contains(&19));
+    }
+
+    /// C：Audio Track 的 home LC 必须唯一；重复请求自动挪到下一个空闲通道。
+    #[test]
+    fn new_audio_tracks_get_unique_home_channels() {
+        let mut doc = Document::empty();
+        let specs = vec![
+            NewTrackSpec {
+                kind: yinhe_core::TrackKind::Audio,
+                port: 0,
+                channel: 0,
+                audio_channel: Some(0),
+            },
+            NewTrackSpec {
+                kind: yinhe_core::TrackKind::Audio,
+                port: 0,
+                channel: 0,
+                audio_channel: Some(0),
+            },
+        ];
+        assert!(doc.add_tracks_batch(&specs).is_some());
+        let model = doc.model();
+        let channels: Vec<u16> = model
+            .tracks
+            .iter()
+            .filter(|t| t.kind == yinhe_core::TrackKind::Audio)
+            .filter_map(|t| t.audio_channel)
+            .collect();
+        assert_eq!(channels.len(), 2);
+        assert_ne!(channels[0], channels[1], "audio home LC 不能共用");
     }
 
     /// C 默认：新建 MIDI 轨落在空 MIDI 通道时，自动把该通道切到 PerTrack，

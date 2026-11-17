@@ -254,8 +254,25 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
         let current_ch = doc.data.model.tracks[track_idx]
             .audio_target_channel()
             .unwrap_or(0);
-        let max_ch = current_ch.max(31);
+        // C：home LC 唯一；这里只列出空闲音频通道（当前通道始终保留）。
+        let used: Vec<u16> = doc
+            .data
+            .model
+            .tracks
+            .iter()
+            .enumerate()
+            .filter(|(i, t)| {
+                *i != track_idx
+                    && t.kind == yinhe_core::TrackKind::Audio
+                    && t.audio_channel.is_some()
+            })
+            .filter_map(|(_, t)| t.audio_channel)
+            .collect();
+        let max_ch = current_ch
+            .max(used.iter().copied().max().unwrap_or(0).saturating_add(1))
+            .max(31);
         let options: Vec<(usize, String)> = (0..=max_ch as usize)
+            .filter(|ch| *ch as u16 == current_ch || !used.contains(&(*ch as u16)))
             .map(|ch| (ch, crate::mix::audio_label(ch as u16)))
             .collect();
         crate::widgets::rows::panel_row(ui, t!("track.mixer_channel").as_ref(), |ui| {
