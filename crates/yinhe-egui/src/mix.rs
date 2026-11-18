@@ -25,13 +25,16 @@ use rust_i18n::t;
 use yinhe_audio::InsertTarget;
 use yinhe_audio::channel_layout::ChannelLayout;
 use yinhe_mixer::{MasterParams, StripParams};
-use yinhe_types::{ApChannelId, ChannelId, MixerChannelId};
+use yinhe_types::{ChannelId, MixerChannelId};
 
 use self::plugin_instance::PluginEntry;
 use crate::plugin_scan::ScanProgress;
 
 use crate::app::App;
 use crate::widgets::meter::{db_to_gain, gain_to_db};
+
+/// 源通道总数（16 port × 16 通道）。
+const SOURCE_CHANNELS: usize = yinhe_mixer::CHANNEL_COUNT;
 
 pub(crate) use actions::MixAction;
 pub(crate) use instrument_rack::InstrumentRack;
@@ -42,22 +45,6 @@ pub(crate) use labels::{
 pub(crate) use param_panel::ParamPanel;
 pub(crate) use rack::MixerRack;
 pub(crate) use strip::picker_viewport_id;
-
-/// UI 的 MixerChannelId → C 的 ChannelId。
-pub(crate) fn channel_id_for_ui(
-    mixer: &yinhe_mixer::MixerParams,
-    channel: MixerChannelId,
-) -> Option<ChannelId> {
-    if let MixerChannelId::Midi(ch) = channel
-        && let Some(ap) = mixer.ap_for_midi(ch)
-    {
-        return Some(ChannelId::Ap(ApChannelId::new(ap.id, 0)));
-    }
-    Some(mixer.channel_id_for(channel))
-}
-
-/// 源通道总数（16 port × 16 通道）。
-const SOURCE_CHANNELS: usize = yinhe_mixer::CHANNEL_COUNT;
 
 /// 电平表回落速度（dB / 秒）：行业惯用约 20 dB/s（PPM 弹道：瞬时起、匀速落）。
 const METER_DB_PER_SEC: f32 = 20.0;
@@ -957,22 +944,22 @@ mod tests {
         let mut mixer = MixerParams::default();
         mixer.ensure_len();
         assert!(matches!(
-            channel_id_for_ui(&mixer, MixerChannelId::Midi(0)),
-            Some(ChannelId::Lc(_))
+            mixer.channel_id_for_ui(MixerChannelId::Midi(0)),
+            ChannelId::Lc(_)
         ));
         assert!(mixer.ensure_ap(9));
         assert_eq!(
-            channel_id_for_ui(&mixer, MixerChannelId::Midi(9)),
-            Some(ChannelId::Ap(ApChannelId::new(ApGroupId::new(9), 0)))
+            mixer.channel_id_for_ui(MixerChannelId::Midi(9)),
+            ChannelId::Ap(yinhe_types::ApChannelId::new(ApGroupId::new(9), 0))
         );
         let audio_lc = mixer.ensure_lc_node(yinhe_types::ChannelSource::Audio(1));
         assert_eq!(
-            channel_id_for_ui(&mixer, MixerChannelId::Audio(1)),
-            Some(ChannelId::Lc(audio_lc))
+            mixer.channel_id_for_ui(MixerChannelId::Audio(1)),
+            ChannelId::Lc(audio_lc)
         );
         assert_eq!(
-            channel_id_for_ui(&mixer, MixerChannelId::Master),
-            Some(ChannelId::Master)
+            mixer.channel_id_for_ui(MixerChannelId::Master),
+            ChannelId::Master
         );
     }
 

@@ -309,12 +309,12 @@ fn tracks_on_channel(doc: &Document, ch: MixerChannelId) -> Vec<u16> {
 /// 通道主输出（Master / 另一条 LC）。返回是否改动。
 fn output_selector(ui: &mut egui::Ui, doc: &mut Document, ch: MixerChannelId) -> bool {
     let map = doc.mixer.channel_display_map();
-    let source = crate::mix::channel_id_for_ui(&doc.mixer, ch);
+    let source = doc.mixer.channel_id_for_ui(ch);
     let mut targets: Vec<(yinhe_types::ChannelId, String)> = Vec::new();
     // 普通 LC（音频 / 每轨）+ AP 通道。
     for node in doc.mixer.nodes() {
         let id = node.channel_id();
-        if Some(id) == source {
+        if id == source {
             continue;
         }
         if matches!(
@@ -326,7 +326,7 @@ fn output_selector(ui: &mut egui::Ui, doc: &mut Document, ch: MixerChannelId) ->
     }
     for ap in &doc.mixer.aps {
         let id = yinhe_types::ChannelId::Ap(yinhe_types::ApChannelId::new(ap.id, 0));
-        if Some(id) != source {
+        if id != source {
             targets.push((id, crate::mix::channel_id_label(id, &map)));
         }
     }
@@ -383,9 +383,7 @@ fn show_instrument_summary(ui: &mut egui::Ui, doc: &Document, ch: u8) {
 }
 
 fn show_channel_sends(ui: &mut egui::Ui, doc: &Document, ch: MixerChannelId) {
-    let Some(source) = crate::mix::channel_id_for_ui(&doc.mixer, ch) else {
-        return;
-    };
+    let source = doc.mixer.channel_id_for_ui(ch);
     let map = doc.mixer.channel_display_map();
     let sends: Vec<_> = doc.mixer.channel_sends_from(source).collect();
     if sends.is_empty() {

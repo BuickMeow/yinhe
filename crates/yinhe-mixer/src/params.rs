@@ -384,6 +384,20 @@ impl MixerParams {
         }
     }
 
+    /// UI 查询键 → 实际 `ChannelId`（AP 感知）。
+    ///
+    /// 与 [`Self::channel_id_for`] 的区别：`Midi(ch)` 有 AP 编组时返回
+    /// `ChannelId::Ap`（UI 的通道身份），否则返回该通道的 LC。
+    /// 引擎/持久化用 `channel_id_for`，UI 展示与发送面板用本方法。
+    pub fn channel_id_for_ui(&self, channel: MixerChannelId) -> ChannelId {
+        if let MixerChannelId::Midi(ch) = channel
+            && let Some(ap) = self.ap_for_midi(ch)
+        {
+            return ChannelId::Ap(yinhe_types::ApChannelId::new(ap.id, 0));
+        }
+        self.channel_id_for(channel)
+    }
+
     pub fn node_id_for(&self, channel: MixerChannelId) -> MixerNodeId {
         match self.channel_id_for(channel) {
             ChannelId::Lc(id) => MixerNodeId::LogicalChannel(id),

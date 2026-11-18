@@ -69,17 +69,16 @@ fn focus_send_info(
     source_channel: MixerChannelId,
 ) -> (Option<ChannelId>, Option<ChannelId>, f32, bool) {
     let mixer = &app.workspace.documents[idx].mixer;
-    let source = crate::mix::channel_id_for_ui(mixer, source_channel);
+    let source = mixer.channel_id_for_ui(source_channel);
     let target = app
         .mix
         .send_focus
-        .and_then(|focus| crate::mix::channel_id_for_ui(mixer, focus));
-    let (amount, pre_fader) = source
-        .zip(target)
-        .and_then(|(source, target)| mixer.channel_send(source, target))
+        .map(|focus| mixer.channel_id_for_ui(focus));
+    let (amount, pre_fader) = target
+        .and_then(|target| mixer.channel_send(source, target))
         .map(|send| (send.amount, send.pre_fader))
         .unwrap_or((0.0, false));
-    (source, target, amount, pre_fader)
+    (Some(source), target, amount, pre_fader)
 }
 
 /// 混音节点通道条主体（MIDI / 音频 / 每轨 LC 共用）。
@@ -562,14 +561,14 @@ fn header_context_menu(
             actions.push(action);
             ui.close();
         }
-        let mixed_lc = crate::mix::channel_id_for_ui(&app.workspace.documents[idx].mixer, ch)
-            .is_some_and(|target| {
-                app.workspace.documents[idx]
-                    .mixer
-                    .channel_sends
-                    .iter()
-                    .any(|send| send.target == target)
-            });
+        let mixed_lc = {
+            let target = app.workspace.documents[idx].mixer.channel_id_for_ui(ch);
+            app.workspace.documents[idx]
+                .mixer
+                .channel_sends
+                .iter()
+                .any(|send| send.target == target)
+        };
         if !mixed_lc
             && matches!(
                 ch,
