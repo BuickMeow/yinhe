@@ -265,6 +265,21 @@ pub fn show(
 
                     let mix_resp = mode_button(ui, "MIX", *view_mode == ViewMode::Mix, || {
                         *view_mode = ViewMode::Mix;
+                        // 通道 AR 已删除：MIX 没有底部面板时是空白，进入 MIX
+                        // 默认打开混音台，避免"点了 MIX 什么都看不到"。
+                        let has_bottom = *show_pianoroll_in_arrange
+                            || *show_bottom_dock
+                            || *show_mixer_panel
+                            || *show_meter_panel;
+                        if !has_bottom {
+                            set_mixer_visible(
+                                show_pianoroll_in_arrange,
+                                show_bottom_dock,
+                                show_mixer_panel,
+                                show_meter_panel,
+                                true,
+                            );
+                        }
                     });
                     if mix_resp.hovered() {
                         hovered_hint = Some(t!("hint.mode_mix").to_string());
