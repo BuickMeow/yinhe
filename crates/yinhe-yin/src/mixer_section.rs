@@ -207,7 +207,7 @@ mod tests {
     fn current_version_roundtrips_nodes() {
         let mut mixer = MixerParams::default();
         mixer.ensure_len();
-        let track_lc = mixer.add_track_lc();
+        let track_lc = mixer.add_track_lc(0);
         mixer.set_node_output(
             yinhe_types::MixerChannelId::Midi(0),
             Some(ChannelId::Lc(track_lc)),

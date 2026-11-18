@@ -516,43 +516,34 @@ impl MixerParams {
         id
     }
 
-    /// 分配一个每轨 LC ID，并创建对应节点。
-    pub fn add_track_lc(&mut self) -> LogicalChannelId {
+    /// 分配一个每轨 LC ID，并创建绑定到 `track` 的节点。
+    ///
+    /// 创建即归属（一轨一通道），不再有 Track(u16::MAX) 临时哨兵：
+    /// 哨兵曾会让"未绑定的 LC"以 Track(65535) 落盘，引擎侧还要专门防御越界。
+    pub fn add_track_lc(&mut self, track: u16) -> LogicalChannelId {
         self.repair_track_channels();
         let id = self.alloc_lc_id();
-        self.nodes.push(MixerNode::logical_channel(
-            id,
-            ChannelSource::Track(u16::MAX),
-        ));
+        self.nodes
+            .push(MixerNode::logical_channel(id, ChannelSource::Track(track)));
         self.sort_dedup_nodes();
         id
     }
 
-    /// 用指定 ID 创建每轨 LC（加载修复用；ID 已存在则不重复创建）。
-    pub fn add_track_lc_with_id(&mut self, id: LogicalChannelId) -> bool {
-        if self.track_node(id).is_some() {
+    /// 加载修复：用指定 ID 与来源创建每轨 LC（ID 已存在则不重复创建）。
+    pub fn add_track_lc_with_source(
+        &mut self,
+        id: LogicalChannelId,
+        source: ChannelSource,
+    ) -> bool {
+        if self.find_node(ChannelId::Lc(id)).is_some() {
             return false;
         }
-        self.nodes.push(MixerNode::logical_channel(
-            id,
-            ChannelSource::Track(u16::MAX),
-        ));
+        self.nodes.push(MixerNode::logical_channel(id, source));
         if id.0 >= self.next_lc_id.0 {
             self.next_lc_id = LogicalChannelId(id.0.saturating_add(1));
         }
         self.sort_dedup_nodes();
         true
-    }
-
-    /// 标记每轨 LC 归属的 track（方案 C 显式角色）。
-    pub fn set_track_lc_source(&mut self, id: LogicalChannelId, track: u16) -> bool {
-        match self.find_node_mut(ChannelId::Lc(id)) {
-            Some(node) => {
-                node.source = ChannelSource::Track(track);
-                true
-            }
-            None => false,
-        }
     }
 
     /// 按 ID 查每轨 LC。

@@ -106,6 +106,8 @@ impl AudioEngine {
         match self.mix.mixer_params.source_of(ChannelId::Lc(id)) {
             Some(ChannelSource::Midi(ch)) => self.channel_layout.dense_for(ch as usize),
             Some(ChannelSource::Audio(ch)) => self.channel_layout.audio_dense_for(ch),
+            // 哨兵时代的开发格式可能落盘 Track(u16::MAX)（未绑定的 LC）；
+            // 守卫防越界：这类节点按 ID 反查，查不到就静音。
             Some(ChannelSource::Track(track)) if track != u16::MAX => {
                 self.channel_layout.track_lc_dense(track as usize)
             }

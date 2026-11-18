@@ -79,10 +79,8 @@ fn ensure_len_prunes_dangling_routing() {
 fn lc_display_numbers_are_stable_and_unique() {
     let mut p = MixerParams::default();
     p.ensure_len();
-    let a = p.add_track_lc();
-    let b = p.add_track_lc();
-    assert!(p.set_track_lc_source(a, 0));
-    assert!(p.set_track_lc_source(b, 1));
+    let a = p.add_track_lc(0);
+    let b = p.add_track_lc(1);
     let audio = p.ensure_lc_node(ChannelSource::Audio(0));
     let map = p.lc_display_map();
     assert_eq!(map.len(), 3);
@@ -95,7 +93,7 @@ fn lc_display_numbers_are_stable_and_unique() {
 fn unified_node_view_sees_all_tables_by_channel_id() {
     let mut p = MixerParams::default();
     p.ensure_len();
-    let lc = p.add_track_lc();
+    let lc = p.add_track_lc(0);
     let audio = p.ensure_lc_node(ChannelSource::Audio(0));
 
     assert!(p.channel_node(ChannelId::Lc(lc)).is_some());
@@ -114,7 +112,7 @@ fn unified_node_view_sees_all_tables_by_channel_id() {
 fn mixed_lc_loses_freeze() {
     let mut p = MixerParams::default();
     p.ensure_len();
-    let lc = p.add_track_lc();
+    let lc = p.add_track_lc(0);
     let source = ChannelId::Lc(LogicalChannelId(TRACK_LC_BASE + 1));
     p.set_channel_send(source, ChannelId::Lc(lc), 0.5, false);
     p.track_node_mut(lc).expect("lc").freeze = Some(crate::node::FrozenAudio {
@@ -172,7 +170,7 @@ fn ap_groups_follow_midi_channel_and_are_unique() {
 fn node_strip_routes_each_namespace() {
     let mut p = MixerParams::default();
     p.ensure_len();
-    let lc = p.add_track_lc();
+    let lc = p.add_track_lc(0);
 
     for (node, gain) in [
         (MixerChannelId::Midi(3), 0.3),
@@ -198,7 +196,7 @@ fn node_strip_routes_each_namespace() {
 fn node_inserts_and_output_route_each_namespace() {
     let mut p = MixerParams::default();
     p.ensure_len();
-    let lc = p.add_track_lc();
+    let lc = p.add_track_lc(0);
 
     assert!(p.node_inserts_mut(MixerChannelId::Midi(1)).is_some());
     assert!(p.node_inserts_mut(MixerChannelId::Audio(2)).is_some());
@@ -229,8 +227,8 @@ fn rack_instruments_are_shared_by_id() {
 #[test]
 fn track_lcs_allocate_from_high_namespace_and_are_independent() {
     let mut p = MixerParams::default();
-    let a = p.add_track_lc();
-    let b = p.add_track_lc();
+    let a = p.add_track_lc(0);
+    let b = p.add_track_lc(0);
     assert_ne!(a, b);
     assert!(a.0 >= TRACK_LC_BASE);
     assert!(b.0 >= TRACK_LC_BASE);

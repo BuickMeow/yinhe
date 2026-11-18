@@ -50,13 +50,12 @@ impl Document {
                             .midi_node(channel)
                             .cloned()
                             .unwrap_or_else(yinhe_mixer::MixerNode::master);
-                        let id = self.mixer.add_track_lc();
+                        let id = self.mixer.add_track_lc(track_idx as u16);
                         if let Some(node) = self.mixer.track_node_mut(id) {
                             node.strip = source.strip;
                             node.inserts = source.inserts.clone();
                             node.output = source.output;
                         }
-                        self.mixer.set_track_lc_source(id, track_idx as u16);
                         Arc::make_mut(track).lc = Some(id);
                     }
                     if let Some(lc) = track.lc {
@@ -228,7 +227,7 @@ impl Document {
             .midi_node(channel)
             .cloned()
             .unwrap_or_else(yinhe_mixer::MixerNode::master);
-        let id = self.mixer.add_track_lc();
+        let id = self.mixer.add_track_lc(track_idx as u16);
         if let Some(node) = self.mixer.track_node_mut(id) {
             node.strip = source.strip;
             node.inserts = source.inserts.clone();
@@ -298,7 +297,7 @@ impl Document {
                 .midi_node(channel)
                 .cloned()
                 .unwrap_or_else(yinhe_mixer::MixerNode::master);
-            let id = self.mixer.add_track_lc();
+            let id = self.mixer.add_track_lc(idx as u16);
             if let Some(node) = self.mixer.track_node_mut(id) {
                 node.strip = source.strip;
                 node.inserts = source.inserts.clone();
@@ -354,7 +353,10 @@ impl Document {
                 }
                 Some(TrackAudioTarget::OwnLc { lc: id, rack }) => {
                     if self.mixer.track_node(id).is_none() {
-                        self.mixer.add_track_lc_with_id(id);
+                        self.mixer.add_track_lc_with_source(
+                            id,
+                            yinhe_types::ChannelSource::Track(track_idx as u16),
+                        );
                         changed = true;
                     }
                     let track = Arc::make_mut(track);
@@ -362,7 +364,6 @@ impl Document {
                         track.lc = Some(id);
                         changed = true;
                     }
-                    self.mixer.set_track_lc_source(id, track_idx as u16);
                     if track.audio_target.is_none() {
                         track.set_audio_target(TrackAudioTarget::OwnLc { lc: id, rack });
                         changed = true;

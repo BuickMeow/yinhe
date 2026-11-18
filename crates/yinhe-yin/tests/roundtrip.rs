@@ -797,7 +797,7 @@ fn mixer_section_roundtrips() {
     let m = build_complex_model();
     let mut mixer = MixerParams::default();
     mixer.ensure_len();
-    let lc = mixer.add_track_lc();
+    let lc = mixer.add_track_lc(0);
     mixer.set_node_output(
         MixerChannelId::Midi(3),
         Some(yinhe_types::ChannelId::Lc(lc)),

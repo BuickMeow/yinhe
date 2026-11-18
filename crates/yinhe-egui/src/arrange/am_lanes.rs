@@ -528,7 +528,7 @@ mod tests {
         let mut track = yinhe_core::TrackData::new(0, 0);
         track.lc = Some(lc);
         let mut mixer = MixerParams::default();
-        assert!(mixer.add_track_lc_with_id(lc));
+        assert!(mixer.add_track_lc_with_source(lc, yinhe_types::ChannelSource::Track(0),));
         mixer
             .track_node_mut(lc)
             .expect("track lc")
