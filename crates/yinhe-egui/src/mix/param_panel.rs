@@ -332,7 +332,7 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
 
 /// 单行参数：名称（模块/名称）+ 滑块 + 插件格式化值。
 #[allow(clippy::too_many_arguments)] // UI 上下文透传，见 AGENTS 约定
-fn param_row(
+pub(crate) fn param_row(
     ui: &mut egui::Ui,
     row_h: f32,
     p: &PluginParam,

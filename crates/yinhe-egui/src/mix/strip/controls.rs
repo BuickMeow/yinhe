@@ -116,7 +116,7 @@ pub(super) fn section<R>(
 #[allow(clippy::too_many_arguments)] // 通道条渲染上下文透传
 /// 当前 strip 对应的自动化宿主：决定右键菜单里能加哪种自动化。
 #[derive(Clone, Copy)]
-pub(super) enum StripAutomationTarget {
+pub(crate) enum StripAutomationTarget {
     Midi(u8),
     Audio(u16),
     TrackLc(LogicalChannelId),
@@ -243,7 +243,7 @@ fn send_db_label(amount: f32) -> String {
 }
 
 /// 聚焦发送的当前状态（源 → 目标、发送量、推子前/后）。
-pub(super) struct FocusSend {
+pub(crate) struct FocusSend {
     pub source: ChannelId,
     pub target: Option<ChannelId>,
     pub amount: f32,

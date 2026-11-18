@@ -58,7 +58,7 @@ pub(crate) enum MixAction {
     RescanPlugins,
 }
 
-pub(super) fn apply_action(app: &mut App, _ctx: &egui::Context, idx: usize, action: MixAction) {
+pub(crate) fn apply_action(app: &mut App, _ctx: &egui::Context, idx: usize, action: MixAction) {
     match action {
         MixAction::SetNodeStrip { node, params } => {
             app.note_mixer_edit(t!("undo.mix_param").as_ref());
@@ -103,7 +103,12 @@ pub(super) fn apply_action(app: &mut App, _ctx: &egui::Context, idx: usize, acti
 }
 
 /// 追加插件 insert：持久化引用 + 机架加载 + 推引擎。
-fn apply_add_insert(app: &mut App, idx: usize, target: InsertTarget, plugin: PluginEntry) {
+pub(crate) fn apply_add_insert(
+    app: &mut App,
+    idx: usize,
+    target: InsertTarget,
+    plugin: PluginEntry,
+) {
     if let Some(refs) = insert_refs(app.workspace.documents[idx].mixer_mut(), target) {
         refs.push(yinhe_mixer::InsertRef {
             uid: 0,
@@ -135,7 +140,7 @@ fn apply_add_insert(app: &mut App, idx: usize, target: InsertTarget, plugin: Plu
 }
 
 /// 解除节点冻结并推引擎。
-fn apply_unfreeze(app: &mut App, idx: usize, node: yinhe_types::MixerNodeId) {
+pub(crate) fn apply_unfreeze(app: &mut App, idx: usize, node: yinhe_types::MixerNodeId) {
     let doc = &mut app.workspace.documents[idx];
     let before = doc.capture_snapshot();
     if let Some(action) = doc.set_node_freeze(node, None) {
@@ -145,7 +150,12 @@ fn apply_unfreeze(app: &mut App, idx: usize, node: yinhe_types::MixerNodeId) {
 }
 
 /// 新增 MixerGain / MixerPan 自动化 lane。
-fn apply_mixer_automation_lane(app: &mut App, idx: usize, channel: MixerChannelId, pan: bool) {
+pub(crate) fn apply_mixer_automation_lane(
+    app: &mut App,
+    idx: usize,
+    channel: MixerChannelId,
+    pan: bool,
+) {
     let doc = &mut app.workspace.documents[idx];
     let node_id = doc.mixer.node_id_for(channel);
     let (target, value) = if pan {
@@ -169,7 +179,7 @@ fn apply_mixer_automation_lane(app: &mut App, idx: usize, channel: MixerChannelI
 }
 
 /// 清空某通道的乐器链（持久化 + 机架实例）。
-fn apply_clear_instruments(app: &mut App, idx: usize, channel: u8) {
+pub(crate) fn apply_clear_instruments(app: &mut App, idx: usize, channel: u8) {
     app.workspace.documents[idx].mixer_mut().racks[channel as usize]
         .instruments
         .clear();

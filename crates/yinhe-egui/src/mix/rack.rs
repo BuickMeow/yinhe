@@ -690,7 +690,7 @@ impl MixerRack {
 
 /// 关闭槽位当前插件的原生 view（CLAP/VST3 分派）。
 #[cfg(target_os = "macos")]
-fn close_plugin_view(rt: &mut SlotRuntime) {
+pub(crate) fn close_plugin_view(rt: &mut SlotRuntime) {
     match rt.instance.as_mut() {
         Some(PluginInstance::Clap(inst)) => inst.close_gui(),
         Some(PluginInstance::Vst3 { instance, .. }) => instance.close_view(),
@@ -698,7 +698,7 @@ fn close_plugin_view(rt: &mut SlotRuntime) {
     }
 }
 
-fn sync_chain<'a>(
+pub(crate) fn sync_chain<'a>(
     chain: impl Iterator<Item = &'a mut SlotRuntime>,
     refs: impl Iterator<Item = &'a mut yinhe_mixer::InsertRef>,
 ) {

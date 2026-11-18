@@ -94,7 +94,7 @@ pub(crate) fn scan_hint(
 }
 
 /// 图标按钮（PR 工具栏同款：32px 方形幽灵按钮；`accent` = 选中底 + 强调色图标）。
-fn icon_button(
+pub(crate) fn icon_button(
     ui: &mut egui::Ui,
     id_salt: &str,
     icon: egui_material_icons::MaterialIcon,

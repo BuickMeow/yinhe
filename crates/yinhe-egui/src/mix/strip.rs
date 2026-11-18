@@ -38,32 +38,36 @@ pub(crate) const STRIP_WIDTH: f32 = 88.0;
 /// 通道条间距：0——相邻通道由各自的描边分隔，形成网格。
 pub(crate) const STRIP_GAP: f32 = 0.0;
 /// 内容左右边距（px）。
-const PAD_X: f32 = 6.0;
+pub(crate) const PAD_X: f32 = 6.0;
 /// 内容宽度（px）。
-const CONTENT_W: f32 = STRIP_WIDTH - PAD_X * 2.0;
+pub(crate) const CONTENT_W: f32 = STRIP_WIDTH - PAD_X * 2.0;
 /// 顶部色带高度（px）。
-const HEADER_H: f32 = 20.0;
+pub(crate) const HEADER_H: f32 = 20.0;
 /// 通用按钮圆角（px）。
-const RADIUS: f32 = 4.0;
+pub(crate) const RADIUS: f32 = 4.0;
 /// 小按钮边长（px，M/S、图标按钮）。
-const BTN: f32 = 18.0;
+pub(crate) const BTN: f32 = 18.0;
 /// 旋钮直径（px，发送/声像）。
-const KNOB_D: f32 = 26.0;
+pub(crate) const KNOB_D: f32 = 26.0;
 /// 分区之间的竖直间隙（px）。
-const GAP: f32 = 4.0;
+pub(crate) const GAP: f32 = 4.0;
 /// 发送区一行高度（px）。
-const SEND_ROW_H: f32 = KNOB_D;
+pub(crate) const SEND_ROW_H: f32 = KNOB_D;
 /// dB 读数行高（px）。
-const DB_ROW_H: f32 = 18.0;
+pub(crate) const DB_ROW_H: f32 = 18.0;
 /// 电平表 + 右侧按钮的固定模块高度（px）。不再用剩余高度拉伸。
-const METER_MODULE_H: f32 = 140.0;
+pub(crate) const METER_MODULE_H: f32 = 140.0;
 /// 固定模块右侧控制列宽度：dB / 声像 / M / S。
-const CONTROLS_W: f32 = CONTENT_W - (SCALE_W + METER_W * 2.0 + METER_GAP) - GAP;
+pub(crate) const CONTROLS_W: f32 = CONTENT_W - (SCALE_W + METER_W * 2.0 + METER_GAP) - GAP;
 /// 卡片上下内边距（色带下 4px、卡片底 6px）。
-const BODY_TOP_PAD: f32 = 4.0;
-const BODY_BOTTOM_PAD: f32 = 6.0;
+pub(crate) const BODY_TOP_PAD: f32 = 4.0;
+pub(crate) const BODY_BOTTOM_PAD: f32 = 6.0;
 
-fn focus_send_info(app: &App, idx: usize, source_channel: MixerChannelId) -> controls::FocusSend {
+pub(crate) fn focus_send_info(
+    app: &App,
+    idx: usize,
+    source_channel: MixerChannelId,
+) -> controls::FocusSend {
     let mixer = &app.workspace.documents[idx].mixer;
     let source = mixer.channel_id_for_ui(source_channel);
     let target = app
@@ -87,7 +91,7 @@ fn focus_send_info(app: &App, idx: usize, source_channel: MixerChannelId) -> con
 /// 三者只有标题、颜色与自动化宿主不同，其余（发送聚焦、推子/声像/M-S、
 /// 节点写入）完全一致，统一在这里实现，避免三份复制粘贴各自漂移。
 #[allow(clippy::too_many_arguments)]
-fn node_strip(
+pub(crate) fn node_strip(
     app: &mut App,
     ui: &mut egui::Ui,
     idx: usize,
@@ -289,7 +293,7 @@ pub(crate) fn master_strip(
 
 /// Master 条双击色带：打开设备链并切到主输出效果链（选中 Conductor 轨，
 /// 让 dock 的“跟随选中轨”逻辑下一帧不会把语境覆盖回普通通道）。
-fn header_double_click_opens_master_dock(
+pub(crate) fn header_double_click_opens_master_dock(
     app: &mut App,
     ui: &egui::Ui,
     idx: usize,
@@ -343,7 +347,7 @@ fn header_double_click_opens_master_dock(
 }
 
 /// 该混音通道是否被选中（同一套 `doc.edit.track_selected`，与 AR 行一致）。
-fn strip_selected(app: &App, idx: usize, ch: MixerChannelId) -> bool {
+pub(crate) fn strip_selected(app: &App, idx: usize, ch: MixerChannelId) -> bool {
     strip_selected_doc(&app.workspace.documents[idx], ch)
 }
 
@@ -380,7 +384,7 @@ pub(crate) fn strip_selected_doc(
 
 /// 点击通道条时把该通道对应的轨道设为选中（让通道条亮起，同时保持
 /// 右栏「音轨属性」与 PR 当前轨一致）。
-fn select_channel_tracks(app: &mut App, idx: usize, ch: MixerChannelId) {
+pub(crate) fn select_channel_tracks(app: &mut App, idx: usize, ch: MixerChannelId) {
     let anchor = {
         let doc = &mut app.workspace.documents[idx];
         doc.edit.track_selected.clear();
@@ -420,7 +424,7 @@ fn select_channel_tracks(app: &mut App, idx: usize, ch: MixerChannelId) {
 /// 色带双击：打开底部设备链（dock）并选中该通道（通道条 / 音频条共用）。
 /// 同步 `dock_track` 防止下一帧被「跟随选中轨」覆盖；总线/主输出没有 dock
 /// 语境，不调用本函数。
-fn header_double_click_opens_dock(
+pub(crate) fn header_double_click_opens_dock(
     app: &mut App,
     ui: &egui::Ui,
     idx: usize,
@@ -472,7 +476,7 @@ fn header_double_click_opens_dock(
 }
 
 /// 把右侧栏切到该通道的属性面板。
-fn focus_channel_info(app: &mut App, ch: MixerChannelId) {
+pub(crate) fn focus_channel_info(app: &mut App, ch: MixerChannelId) {
     app.info_content = Some(crate::right_panel::InfoContent::Channel(ch));
     app.right_tab = Some(crate::right_panel::RightTab::Info);
     app.right_panel_layout
@@ -480,7 +484,11 @@ fn focus_channel_info(app: &mut App, ch: MixerChannelId) {
 }
 
 /// 展开底部设备链并定位到通道语境（双击/右键共用）。
-fn open_dock_context(app: &mut App, idx: usize, context: crate::chrome::device_chain::DockContext) {
+pub(crate) fn open_dock_context(
+    app: &mut App,
+    idx: usize,
+    context: crate::chrome::device_chain::DockContext,
+) {
     crate::chrome::mode_bar::set_dock_visible(
         &mut app.show_pianoroll_in_arrange,
         &mut app.show_bottom_dock,
@@ -501,7 +509,7 @@ fn open_dock_context(app: &mut App, idx: usize, context: crate::chrome::device_c
 }
 
 /// 通道条色带右键菜单：通道属性 / 设备链 / 自动化 / 重置 / 删除总线。
-fn header_context_menu(
+pub(crate) fn header_context_menu(
     app: &mut App,
     resp: &egui::Response,
     idx: usize,
@@ -581,15 +589,15 @@ fn header_context_menu(
     });
 }
 
-fn volume_automation(ch: MixerChannelId) -> Option<MixAction> {
+pub(crate) fn volume_automation(ch: MixerChannelId) -> Option<MixAction> {
     Some(MixAction::AddMixerGainAutomation { channel: ch })
 }
 
-fn pan_automation(ch: MixerChannelId) -> Option<MixAction> {
+pub(crate) fn pan_automation(ch: MixerChannelId) -> Option<MixAction> {
     (ch != MixerChannelId::Master).then_some(MixAction::AddMixerPanAutomation { channel: ch })
 }
 
-fn reset_gain_action(app: &App, idx: usize, ch: MixerChannelId) -> MixAction {
+pub(crate) fn reset_gain_action(app: &App, idx: usize, ch: MixerChannelId) -> MixAction {
     let mixer = &app.workspace.documents[idx].mixer;
     match ch {
         MixerChannelId::Midi(channel) => {
@@ -622,7 +630,7 @@ fn reset_gain_action(app: &App, idx: usize, ch: MixerChannelId) -> MixAction {
     }
 }
 
-fn reset_pan_action(app: &App, idx: usize, ch: MixerChannelId) -> Option<MixAction> {
+pub(crate) fn reset_pan_action(app: &App, idx: usize, ch: MixerChannelId) -> Option<MixAction> {
     let mixer = &app.workspace.documents[idx].mixer;
     match ch {
         MixerChannelId::Midi(channel) => {

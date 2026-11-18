@@ -49,11 +49,11 @@ unsafe impl Encode for NSRect {
 }
 
 // NSWindowStyleMask
-const STYLE_TITLED: u64 = 1 << 0;
-const STYLE_CLOSABLE: u64 = 1 << 1;
-const STYLE_RESIZABLE: u64 = 1 << 3;
+pub(crate) const STYLE_TITLED: u64 = 1 << 0;
+pub(crate) const STYLE_CLOSABLE: u64 = 1 << 1;
+pub(crate) const STYLE_RESIZABLE: u64 = 1 << 3;
 // NSBackingStoreBuffered
-const BACKING_BUFFERED: u64 = 2;
+pub(crate) const BACKING_BUFFERED: u64 = 2;
 
 pub(crate) struct PluginGuiWindow {
     /// NSWindow（+1 持有，drop 时 release）。
@@ -192,7 +192,7 @@ impl PluginGuiWindow {
 
 /// 给窗口设置 NSAppearance（`NSAppearanceNameDarkAqua` / `NSAppearanceNameAqua`），
 /// 让原生标题栏跟随应用主题，而不依赖系统深色模式。
-fn apply_appearance(win: *mut AnyObject, dark: bool) {
+pub(crate) fn apply_appearance(win: *mut AnyObject, dark: bool) {
     unsafe {
         let Some(appearance_cls) = AnyClass::get(c"NSAppearance") else {
             return;
