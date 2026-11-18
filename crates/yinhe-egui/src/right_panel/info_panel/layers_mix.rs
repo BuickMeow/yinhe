@@ -1,9 +1,13 @@
-//! MIX 图层面板：以**通道**为单位（A01… / Audio-01…）。
+//! MIX 图层面板：按**音频目标**列行（与混音台条一致）。
 //!
-//! 与轨道版（`layers.rs`）的差异：行 = 通道（按通道号排序，不支持拖拽排序）；
-//! - 选中：点击行 = 选中该通道的全部轨道（`track_selected`）；
-//! - 可见：切换 `track_visible`（通道 AR / 轨道 AR 的显隐），作用于通道全部轨道；
-//! - 锁定：切换 `track_locked`，作用于通道全部轨道。
+//! - AP 轨按通道归组（A01…），行 = 通道（不可拖拽排序）；
+//! - OwnLc 轨一轨一通道，独立成行，显示「轨道号 名称」（001 Track1）；
+//! - 音频轨按音频通道归组（Audio-XX…）。
+//!
+//! 与轨道版（`layers.rs`）共用的行为：
+//! - 选中：点击行 = 选中该行全部轨道（`track_selected`）；
+//! - 可见：切换 `track_visible`，作用于该行全部轨道；
+//! - 锁定：切换 `track_locked`，作用于该行全部轨道。
 
 use eframe::egui;
 use egui_material_icons::icons::{ICON_LOCK, ICON_LOCK_OPEN, ICON_VISIBILITY, ICON_VISIBILITY_OFF};
@@ -22,7 +26,7 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) -> bool {
     crate::right_panel::region_hint(ui, t!("hint.panel.layers"));
     let conductor_idx = doc.edit.track_cache.conductor_idx;
     let groups = CaGroups::from_model(&doc.data.model, conductor_idx);
-    let total = groups.midi.len() + groups.audio.len();
+    let total = groups.rows.len();
     if total == 0 {
         crate::widgets::hint::empty_hint(ui, t!("track.no_tracks").as_ref());
         return false;
@@ -65,9 +69,29 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) -> bool {
                 .iter()
                 .all(|&ti| doc.edit.track_selected.contains(&ti));
             let color = group.color(&doc.edit.track_cache.colors);
-            let name = match group.channel {
-                CaChannel::Midi(c) => crate::mix::channel_label(c),
-                CaChannel::Audio(c) => crate::mix::audio_label(c),
+            // 行文本：OwnLc 单轨行显示「轨道号 名称」（001 Track1）；
+            // AP/音频组行显示「通道名 + 轨道数」。
+            let row_text = match group.channel {
+                CaChannel::Midi(c) => format!(
+                    "{}  {}",
+                    crate::mix::channel_label(c),
+                    t!("ca.tracks", n = tracks.len())
+                ),
+                CaChannel::Audio(c) => format!(
+                    "{}  {}",
+                    crate::mix::audio_label(c),
+                    t!("ca.tracks", n = tracks.len())
+                ),
+                CaChannel::Track(ti) => {
+                    let name = doc
+                        .data
+                        .model
+                        .tracks
+                        .get(ti as usize)
+                        .map(|t| t.name.clone())
+                        .unwrap_or_default();
+                    format!("{:03} {}", ti, name)
+                }
             };
 
             let (rect, resp) = ui.allocate_exact_size(
@@ -107,7 +131,7 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) -> bool {
             ui.painter().text(
                 egui::pos2(swatch.max.x + icon_gap, rect.center().y),
                 egui::Align2::LEFT_CENTER,
-                format!("{}  {}", name, t!("ca.tracks", n = tracks.len())),
+                &row_text,
                 egui::FontId::proportional(scaled_font(ui.ctx(), theme::SMALL_FONT)),
                 text_color,
             );
