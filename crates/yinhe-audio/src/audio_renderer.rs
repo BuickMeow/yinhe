@@ -143,6 +143,36 @@ pub(crate) struct SoundfontShared {
     pub(crate) progress: Arc<AtomicU32>,
 }
 
+impl SoundfontShared {
+    pub(crate) fn new() -> Self {
+        Self {
+            loaded: Arc::new(AtomicUsize::new(0)),
+            audio_ready: Arc::new(AtomicBool::new(false)),
+            generation: Arc::new(AtomicU64::new(0)),
+            loading: Arc::new(AtomicBool::new(false)),
+            total: Arc::new(AtomicUsize::new(0)),
+            done: Arc::new(AtomicUsize::new(0)),
+            progress: Arc::new(AtomicU32::new(0)),
+        }
+    }
+
+    /// 尝试把音频标记为就绪；仍在加载音色库时返回 `false`。
+    ///
+    /// 返回值是「本次是否首次置位」，仅用于日志去重。
+    ///
+    /// 注意：**不能**用 `total > 0` 判断还在加载。`total` 是「本轮需要加载
+    /// 几组」的数量统计，加载完成后它仍然是正数（下一轮进度还要用）。
+    /// 曾经的 `yinhe_cpu_engine() && total > 0` 条件会让配了音色库的工程永远
+    /// 不置位 `audio_ready`：音色库已加载完，加载卡却一直停在完成前，
+    /// 播放键也被 `audio_ready` gate 拦住。加载状态只看 `loading`。
+    fn try_mark_audio_ready(&self) -> bool {
+        if self.loading.load(Ordering::Acquire) {
+            return false;
+        }
+        !self.audio_ready.swap(true, Ordering::AcqRel)
+    }
+}
+
 impl RendererSharedState {
     pub(crate) fn new() -> Self {
         Self {
@@ -157,15 +187,7 @@ impl RendererSharedState {
                 clear_ring_write: Arc::new(AtomicUsize::new(0)),
                 voice_count: Arc::new(AtomicU64::new(0)),
             },
-            sf: SoundfontShared {
-                loaded: Arc::new(AtomicUsize::new(0)),
-                audio_ready: Arc::new(AtomicBool::new(false)),
-                generation: Arc::new(AtomicU64::new(0)),
-                loading: Arc::new(AtomicBool::new(false)),
-                total: Arc::new(AtomicUsize::new(0)),
-                done: Arc::new(AtomicUsize::new(0)),
-                progress: Arc::new(AtomicU32::new(0)),
-            },
+            sf: SoundfontShared::new(),
             underrun_samples: Arc::new(AtomicU64::new(0)),
         }
     }
@@ -296,16 +318,10 @@ impl AudioRenderer {
 
     /// 标记音频就绪（幂等）：UI 的"加载完成"提示以此为准。
     fn mark_audio_ready(&self) {
-        // 音色库仍在加载（worker 解析 key map / 上传样本）时不能提前放行：
-        // 此时 yinhe CPU 的 CpuSynth 还没创建，按 Play 会渲染成静音，
-        // 用户听到的是"加载完成后还要再等几秒"。
-        if self.state.sf.loading.load(Ordering::Acquire) {
-            return;
-        }
-        if self.yinhe_cpu_engine() && self.state.sf.total.load(Ordering::Relaxed) > 0 {
-            return;
-        }
-        if !self.state.sf.audio_ready.swap(true, Ordering::AcqRel) {
+        // 音色库仍在加载（worker 解析 key map / 注册 CpuSynth）时不能提前
+        // 放行：此时按 Play 会渲染成静音，用户听到的是"加载完成后还要再等
+        // 几秒"。就绪条件只看 `loading`，见 `SoundfontShared::try_mark_audio_ready`。
+        if self.state.sf.try_mark_audio_ready() {
             play_log("[play] 音频就绪（模型+音色库+采样上传+管线预热完成）");
         }
     }
@@ -745,5 +761,22 @@ mod tests {
     #[test]
     fn merge_transport_empty() {
         assert!(merge_transport_batch(Vec::new()).is_empty());
+    }
+
+    /// 回归：配了音色库（`total > 0`）且加载完成（`loading = false`）时，
+    /// 必须允许置位 `audio_ready`。曾用 `total > 0` 当作"仍在加载"，导致
+    /// 音色库加载完后音频永不就绪、加载卡卡死、播放键提示"还在准备"。
+    #[test]
+    fn audio_ready_waits_for_loading_not_soundfont_count() {
+        let sf = SoundfontShared::new();
+        sf.total.store(1, Ordering::Relaxed);
+        sf.loading.store(true, Ordering::Release);
+        assert!(!sf.try_mark_audio_ready(), "加载中不能就绪");
+        assert!(!sf.audio_ready.load(Ordering::Acquire));
+
+        sf.loading.store(false, Ordering::Release);
+        assert!(sf.try_mark_audio_ready(), "加载完成后必须能就绪");
+        assert!(sf.audio_ready.load(Ordering::Acquire));
+        assert!(!sf.try_mark_audio_ready(), "幂等：重复调用不再上报");
     }
 }

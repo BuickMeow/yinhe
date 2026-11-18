@@ -160,6 +160,11 @@ impl AudioRenderer {
                     .sf
                     .loading
                     .store(!groups.is_empty(), Ordering::Relaxed);
+                // 新一轮音色库加载开始：先关闭就绪，避免用户在加载期间按
+                // Play 得到静音（加载完成时 worker 结果分支会重新置位）。
+                if !groups.is_empty() {
+                    self.state.sf.audio_ready.store(false, Ordering::Release);
+                }
                 for (channels, paths) in groups {
                     let _ = self.worker_tx.send(WorkerCmd::LoadSoundFont {
                         channels,
