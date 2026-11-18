@@ -193,10 +193,10 @@ fn show_midi_output(
     show_output_kind(ui, doc, track_idx, out, target, global);
 
     // 当前类型（可能刚切换）→ 决定子选择器。
+    // OwnLc 的 home LC 唯一（一轨一通道），没有可选的子选择器；
+    // 需要"多轨进同一音频流"时走 send 或 AP，而不是改 home LC。
     let target = doc.data.model.tracks[track_idx].effective_audio_target();
-    if matches!(target, Some(TrackAudioTarget::OwnLc { .. })) {
-        show_lc_picker(ui, doc, track_idx, out, target);
-    } else if matches!(target, Some(TrackAudioTarget::Ap { .. })) {
+    if matches!(target, Some(TrackAudioTarget::Ap { .. })) {
         show_ap_port_channel(ui, doc, track_idx, out, midi_port, midi_channel);
     }
 }
@@ -249,66 +249,6 @@ fn show_output_kind(
         if changed {
             out.routing_changed = true;
         }
-    }
-}
-
-/// LC 通道选择：列出所有 LC，当前轨自己的排最前。
-fn show_lc_picker(
-    ui: &mut egui::Ui,
-    doc: &mut Document,
-    track_idx: usize,
-    out: &mut TrackInfoOut,
-    target: Option<TrackAudioTarget>,
-) {
-    let current_lc = match target {
-        Some(TrackAudioTarget::OwnLc { lc, .. }) => Some(lc),
-        _ => None,
-    };
-    let map = doc.mixer.lc_display_map();
-    let mut ids: Vec<yinhe_types::LogicalChannelId> = doc
-        .mixer
-        .nodes()
-        .filter_map(|node| match node.id {
-            yinhe_types::ChannelId::Lc(id) => Some(id),
-            _ => None,
-        })
-        .collect();
-    ids.sort_unstable();
-    ids.dedup();
-    // 当前 LC 排最前，便于「保持不动」。
-    if let Some(cur) = current_lc
-        && let Some(pos) = ids.iter().position(|id| *id == cur)
-    {
-        let id = ids.remove(pos);
-        ids.insert(0, id);
-    }
-    let options: Vec<(usize, String)> = ids
-        .iter()
-        .map(|id| {
-            (
-                id.0 as usize,
-                map.get(id)
-                    .map(|n| crate::mix::lc_label(*n))
-                    .unwrap_or_else(|| format!("LC{}", id.0)),
-            )
-        })
-        .collect();
-    let mut sel = current_lc.map(|id| id.0 as usize).unwrap_or(0);
-    let prev = sel;
-    crate::widgets::rows::panel_row(ui, t!("track.lc_channel").as_ref(), |ui| {
-        crate::widgets::combo::combo_select(
-            ui,
-            "track_lc_target",
-            &mut sel,
-            ui.available_width().max(1.0),
-            &options,
-        );
-    });
-    if sel != prev
-        && let Some(id) = ids.iter().find(|id| id.0 as usize == sel).copied()
-        && doc.link_track_to_lc(track_idx, id)
-    {
-        out.routing_changed = true;
     }
 }
 

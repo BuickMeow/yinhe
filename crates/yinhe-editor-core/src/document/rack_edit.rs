@@ -175,45 +175,6 @@ impl Document {
         true
     }
 
-    /// 把 MIDI 轨链接到**已有**的 LC（不再新建）。
-    ///
-    /// 与 `link_track_to_own_lc` 的区别：后者总是分配一条新 LC。用户可以在
-    /// 音轨属性里直接把轨道指到另一条 LC（例如汇总到同一音频通道）。
-    pub fn link_track_to_lc(
-        &mut self,
-        track_idx: usize,
-        lc: yinhe_types::LogicalChannelId,
-    ) -> bool {
-        let Some(track) = self.data.model.tracks.get(track_idx) else {
-            return false;
-        };
-        if track.kind != TrackKind::Midi {
-            return false;
-        }
-        if self.mixer.track_node(lc).is_none() {
-            return false;
-        }
-        if track.lc == Some(lc)
-            && matches!(
-                track.effective_audio_target(),
-                Some(TrackAudioTarget::OwnLc { .. })
-            )
-        {
-            return false;
-        }
-        let channel = track.global_channel();
-        let model = Arc::make_mut(&mut self.data.model);
-        let track = Arc::make_mut(&mut model.tracks[track_idx]);
-        track.set_audio_target(TrackAudioTarget::OwnLc {
-            lc,
-            rack: Some(RackId::new(u16::from(channel))),
-        });
-        self.ensure_rack_track_lcs();
-        self.data.bump_revision();
-        self.mark_mixer_dirty();
-        true
-    }
-
     /// 某 MIDI 通道的乐器宿主列表（方案 C）：
     ///
     /// - 每条 OwnLc 轨一个实例（`Some(lc)`），各自写 home LC；
