@@ -499,167 +499,17 @@ pub fn show(
         *needs_audio_notify = true;
     }
 
-    // ── Horizontal scrollbar (right of track panel, below GPU content) ──
-    //    让出右下角 SCROLLBAR_W × SCROLLBAR_H 给垂直滚动条+水平滚动条的交叠区
-    {
-        let sb_rect = egui::Rect::from_min_max(
-            egui::pos2(
-                arr_rect.min.x + tp_w + crate::theme::SPLIT_HANDLE_W,
-                gpu_rect.max.y,
-            ),
-            egui::pos2(gpu_rect.max.x, arr_rect.max.y),
-        );
-
-        // 右下角角落：横纵滚动条交叠区（SCROLLBAR_W × SCROLLBAR_H）——缩放抓手。
-        // 拖动同时缩放横竖两轴；双击横竖一起 fit（对齐 FL）。
-        let corner_rect = egui::Rect::from_min_max(gpu_rect.max, arr_rect.max);
-        {
-            let resp = ui.interact(
-                corner_rect,
-                ui.scope_id().with("arr_corner_zoom"),
-                egui::Sense::click_and_drag(),
-            );
-            let press_on = ui
-                .input(|i| i.pointer.press_origin())
-                .is_some_and(|p| corner_rect.contains(p));
-            let active = press_on && resp.dragged();
-            let base = crate::theme::track_bg();
-            let fill = if active {
-                crate::theme::pressed_color(base)
-            } else if resp.hovered() {
-                crate::theme::hover_color(base)
-            } else {
-                base
-            };
-            ui.painter().rect_filled(corner_rect, 0.0, fill);
-            if resp.hovered() || active {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
-            }
-            if active {
-                let d = resp.drag_delta();
-                let k = 0.005;
-                let anchor_x = corner_rect.center().x - arr_rect.min.x;
-                let anchor_y = corner_rect.center().y - arr_rect.min.y;
-                doc.edit.arrange_view.zoom_around_x(anchor_x, 1.0 + d.x * k);
-                doc.edit
-                    .arrange_view
-                    .zoom_lane_height(anchor_y, 1.0 + d.y * k);
-                ui.ctx().request_repaint();
-            } else if crate::widgets::scrollbar::double_clicked_in(ui, corner_rect) {
-                doc.edit
-                    .arrange_view
-                    .fit_time(music_rect.width(), total_ticks);
-                doc.edit
-                    .arrange_view
-                    .fit_lane_height(gpu_rect.height(), row_layout.total_rows());
-                ui.ctx().request_repaint();
-            }
-            if crate::view_interaction::pointer_hits(ui, corner_rect) {
-                crate::widgets::hint::set(ui.ctx(), t!("hint.arrange.corner_zoom"));
-            }
-        }
-
-        let preview = crate::widgets::scrollbar::DensityPreview {
-            density: doc.density.view(),
-            track_colors: &doc.edit.track_cache.colors,
-        };
-        let sb_drag_dy = crate::widgets::scrollbar::show(
-            ui,
-            sb_rect,
-            music_rect.width(),
-            &mut doc.edit.arrange_view.base.scroll_x,
-            &mut doc.edit.arrange_view.base.pixels_per_tick,
-            total_ticks,
-            Some(&preview),
-            doc.edit.cursor_tick,
-            &mut doc.edit.arrange_view.base.dirty,
-            yinhe_types::Orientation::Horizontal,
-        );
-        if crate::view_interaction::pointer_hits(ui, sb_rect) {
-            crate::widgets::hint::set(ui.ctx(), t!("hint.arrange.hscroll"));
-        }
-        // 水平滚动条：thumb 拖 = 平移（x）+ 垂直位移 → x 轴缩放
-        // 方向：上拖 = 放大，下拖 = 缩小
-        if sb_drag_dy != 0.0 {
-            let factor = 1.0 - sb_drag_dy * 0.005;
-            let anchor_x = sb_rect.center().x - arr_rect.min.x;
-            doc.edit.arrange_view.zoom_around_x(anchor_x, factor);
-            ui.ctx().request_repaint();
-        }
-        if crate::widgets::scrollbar::double_clicked_in(ui, sb_rect) {
-            doc.edit
-                .arrange_view
-                .fit_time(music_rect.width(), total_ticks);
-            ui.ctx().request_repaint();
-        }
-
-        // 滚动条滚轮缩放：水平滚动条上滚轮 = x 轴缩放（锚定滚动条中心 x）
-        // 方向：上滚 = 放大，下滚 = 缩小
-        if crate::view_interaction::pointer_hits(ui, sb_rect) {
-            let scroll_y = ui.input(|i| i.smooth_scroll_delta.y);
-            if scroll_y.abs() > 0.5 {
-                let factor = if scroll_y > 0.0 { 1.0 / 1.1 } else { 1.1 };
-                let anchor_x = sb_rect.center().x - arr_rect.min.x;
-                doc.edit.arrange_view.zoom_around_x(anchor_x, factor);
-                ui.ctx().request_repaint();
-            }
-        }
-    }
-
-    // ── Vertical scrollbar (right of GPU content, full AR height minus ruler) ──
-    //    像素空间：num_cells = num_tracks，cell_size = lane height (track_panel_row_height)
-    {
-        let vsb_rect = egui::Rect::from_min_max(
-            egui::pos2(gpu_rect.max.x, content_top),
-            egui::pos2(arr_rect.max.x, gpu_rect.max.y),
-        );
-        let vsb_drag_dx = ui
-            .push_id("arr_vscroll", |ui| {
-                crate::widgets::scrollbar::show_vertical(
-                    ui,
-                    vsb_rect,
-                    gpu_rect.height(),
-                    &mut doc.edit.arrange_view.base.scroll_y,
-                    &mut doc.edit.arrange_view.base.track_panel_row_height,
-                    row_layout.total_rows() as f32 + 1.0,
-                    yinhe_types::LANE_HEIGHT_MIN,
-                    yinhe_types::LANE_HEIGHT_MAX,
-                    Some(yinhe_types::LANE_HEIGHT_STEP),
-                    &mut doc.edit.arrange_view.base.dirty,
-                    yinhe_types::Orientation::Horizontal,
-                )
-            })
-            .inner;
-        if crate::view_interaction::pointer_hits(ui, vsb_rect) {
-            crate::widgets::hint::set(ui.ctx(), t!("hint.arrange.vscroll"));
-        }
-        // 垂直滚动条：thumb 拖 = 平移（y）+ 水平位移 → y 轴缩放（轨道行高）
-        // 方向：左拖 = 放大，右拖 = 缩小
-        if vsb_drag_dx != 0.0 {
-            let factor = 1.0 - vsb_drag_dx * 0.005;
-            let anchor_y = vsb_rect.center().y - arr_rect.min.y;
-            doc.edit.arrange_view.zoom_lane_height(anchor_y, factor);
-            ui.ctx().request_repaint();
-        }
-        if crate::widgets::scrollbar::double_clicked_in(ui, vsb_rect) {
-            doc.edit
-                .arrange_view
-                .fit_lane_height(gpu_rect.height(), row_layout.total_rows());
-            ui.ctx().request_repaint();
-        }
-
-        // 滚动条滚轮缩放：垂直滚动条上滚轮 = y 轴缩放（锚定滚动条中心 y）
-        // 方向：上滚 = 放大，下滚 = 缩小
-        if crate::view_interaction::pointer_hits(ui, vsb_rect) {
-            let scroll_y = ui.input(|i| i.smooth_scroll_delta.y);
-            if scroll_y.abs() > 0.5 {
-                let factor = if scroll_y > 0.0 { 1.0 / 1.1 } else { 1.1 };
-                let anchor_y = vsb_rect.center().y - arr_rect.min.y;
-                doc.edit.arrange_view.zoom_lane_height(anchor_y, factor);
-                ui.ctx().request_repaint();
-            }
-        }
-    }
+    draw_horizontal_scrollbar(
+        ui,
+        doc,
+        arr_rect,
+        gpu_rect,
+        music_rect,
+        tp_w,
+        total_ticks,
+        &row_layout,
+    );
+    draw_vertical_scrollbar(ui, doc, arr_rect, gpu_rect, content_top, &row_layout);
 
     // ── 左上角角落（音轨面板上方、标尺左侧）：仅铺背景 ──
     // （量化按钮已移至 transport bar 时间码左侧，按聚焦视图显示 AR/PR 量化）
@@ -1187,6 +1037,191 @@ fn handle_blank_double_click(
                 doc.edit.show_controller_panels = false;
                 doc.edit.cursor_tick = Some(clip_start as f64);
                 *request_pianoroll = true;
+            }
+        }
+    }
+}
+
+/// 底部横向滚动条 + 右下角缩放抓手。
+#[allow(clippy::too_many_arguments)] // 视图几何参数透传
+fn draw_horizontal_scrollbar(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    arr_rect: egui::Rect,
+    gpu_rect: egui::Rect,
+    music_rect: egui::Rect,
+    tp_w: f32,
+    total_ticks: f64,
+    row_layout: &yinhe_types::ArRowLayout,
+) {
+    // ── Horizontal scrollbar (right of track panel, below GPU content) ──
+    //    让出右下角 SCROLLBAR_W × SCROLLBAR_H 给垂直滚动条+水平滚动条的交叠区
+    {
+        let sb_rect = egui::Rect::from_min_max(
+            egui::pos2(
+                arr_rect.min.x + tp_w + crate::theme::SPLIT_HANDLE_W,
+                gpu_rect.max.y,
+            ),
+            egui::pos2(gpu_rect.max.x, arr_rect.max.y),
+        );
+
+        // 右下角角落：横纵滚动条交叠区（SCROLLBAR_W × SCROLLBAR_H）——缩放抓手。
+        // 拖动同时缩放横竖两轴；双击横竖一起 fit（对齐 FL）。
+        let corner_rect = egui::Rect::from_min_max(gpu_rect.max, arr_rect.max);
+        {
+            let resp = ui.interact(
+                corner_rect,
+                ui.scope_id().with("arr_corner_zoom"),
+                egui::Sense::click_and_drag(),
+            );
+            let press_on = ui
+                .input(|i| i.pointer.press_origin())
+                .is_some_and(|p| corner_rect.contains(p));
+            let active = press_on && resp.dragged();
+            let base = crate::theme::track_bg();
+            let fill = if active {
+                crate::theme::pressed_color(base)
+            } else if resp.hovered() {
+                crate::theme::hover_color(base)
+            } else {
+                base
+            };
+            ui.painter().rect_filled(corner_rect, 0.0, fill);
+            if resp.hovered() || active {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+            }
+            if active {
+                let d = resp.drag_delta();
+                let k = 0.005;
+                let anchor_x = corner_rect.center().x - arr_rect.min.x;
+                let anchor_y = corner_rect.center().y - arr_rect.min.y;
+                doc.edit.arrange_view.zoom_around_x(anchor_x, 1.0 + d.x * k);
+                doc.edit
+                    .arrange_view
+                    .zoom_lane_height(anchor_y, 1.0 + d.y * k);
+                ui.ctx().request_repaint();
+            } else if crate::widgets::scrollbar::double_clicked_in(ui, corner_rect) {
+                doc.edit
+                    .arrange_view
+                    .fit_time(music_rect.width(), total_ticks);
+                doc.edit
+                    .arrange_view
+                    .fit_lane_height(gpu_rect.height(), row_layout.total_rows());
+                ui.ctx().request_repaint();
+            }
+            if crate::view_interaction::pointer_hits(ui, corner_rect) {
+                crate::widgets::hint::set(ui.ctx(), t!("hint.arrange.corner_zoom"));
+            }
+        }
+
+        let preview = crate::widgets::scrollbar::DensityPreview {
+            density: doc.density.view(),
+            track_colors: &doc.edit.track_cache.colors,
+        };
+        let sb_drag_dy = crate::widgets::scrollbar::show(
+            ui,
+            sb_rect,
+            music_rect.width(),
+            &mut doc.edit.arrange_view.base.scroll_x,
+            &mut doc.edit.arrange_view.base.pixels_per_tick,
+            total_ticks,
+            Some(&preview),
+            doc.edit.cursor_tick,
+            &mut doc.edit.arrange_view.base.dirty,
+            yinhe_types::Orientation::Horizontal,
+        );
+        if crate::view_interaction::pointer_hits(ui, sb_rect) {
+            crate::widgets::hint::set(ui.ctx(), t!("hint.arrange.hscroll"));
+        }
+        // 水平滚动条：thumb 拖 = 平移（x）+ 垂直位移 → x 轴缩放
+        // 方向：上拖 = 放大，下拖 = 缩小
+        if sb_drag_dy != 0.0 {
+            let factor = 1.0 - sb_drag_dy * 0.005;
+            let anchor_x = sb_rect.center().x - arr_rect.min.x;
+            doc.edit.arrange_view.zoom_around_x(anchor_x, factor);
+            ui.ctx().request_repaint();
+        }
+        if crate::widgets::scrollbar::double_clicked_in(ui, sb_rect) {
+            doc.edit
+                .arrange_view
+                .fit_time(music_rect.width(), total_ticks);
+            ui.ctx().request_repaint();
+        }
+
+        // 滚动条滚轮缩放：水平滚动条上滚轮 = x 轴缩放（锚定滚动条中心 x）
+        // 方向：上滚 = 放大，下滚 = 缩小
+        if crate::view_interaction::pointer_hits(ui, sb_rect) {
+            let scroll_y = ui.input(|i| i.smooth_scroll_delta.y);
+            if scroll_y.abs() > 0.5 {
+                let factor = if scroll_y > 0.0 { 1.0 / 1.1 } else { 1.1 };
+                let anchor_x = sb_rect.center().x - arr_rect.min.x;
+                doc.edit.arrange_view.zoom_around_x(anchor_x, factor);
+                ui.ctx().request_repaint();
+            }
+        }
+    }
+}
+
+/// 右侧纵向滚动条（thumb 拖 = 平移 + 横向位移缩放行高）。
+fn draw_vertical_scrollbar(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    arr_rect: egui::Rect,
+    gpu_rect: egui::Rect,
+    content_top: f32,
+    row_layout: &yinhe_types::ArRowLayout,
+) {
+    // ── Vertical scrollbar (right of GPU content, full AR height minus ruler) ──
+    //    像素空间：num_cells = num_tracks，cell_size = lane height (track_panel_row_height)
+    {
+        let vsb_rect = egui::Rect::from_min_max(
+            egui::pos2(gpu_rect.max.x, content_top),
+            egui::pos2(arr_rect.max.x, gpu_rect.max.y),
+        );
+        let vsb_drag_dx = ui
+            .push_id("arr_vscroll", |ui| {
+                crate::widgets::scrollbar::show_vertical(
+                    ui,
+                    vsb_rect,
+                    gpu_rect.height(),
+                    &mut doc.edit.arrange_view.base.scroll_y,
+                    &mut doc.edit.arrange_view.base.track_panel_row_height,
+                    row_layout.total_rows() as f32 + 1.0,
+                    yinhe_types::LANE_HEIGHT_MIN,
+                    yinhe_types::LANE_HEIGHT_MAX,
+                    Some(yinhe_types::LANE_HEIGHT_STEP),
+                    &mut doc.edit.arrange_view.base.dirty,
+                    yinhe_types::Orientation::Horizontal,
+                )
+            })
+            .inner;
+        if crate::view_interaction::pointer_hits(ui, vsb_rect) {
+            crate::widgets::hint::set(ui.ctx(), t!("hint.arrange.vscroll"));
+        }
+        // 垂直滚动条：thumb 拖 = 平移（y）+ 水平位移 → y 轴缩放（轨道行高）
+        // 方向：左拖 = 放大，右拖 = 缩小
+        if vsb_drag_dx != 0.0 {
+            let factor = 1.0 - vsb_drag_dx * 0.005;
+            let anchor_y = vsb_rect.center().y - arr_rect.min.y;
+            doc.edit.arrange_view.zoom_lane_height(anchor_y, factor);
+            ui.ctx().request_repaint();
+        }
+        if crate::widgets::scrollbar::double_clicked_in(ui, vsb_rect) {
+            doc.edit
+                .arrange_view
+                .fit_lane_height(gpu_rect.height(), row_layout.total_rows());
+            ui.ctx().request_repaint();
+        }
+
+        // 滚动条滚轮缩放：垂直滚动条上滚轮 = y 轴缩放（锚定滚动条中心 y）
+        // 方向：上滚 = 放大，下滚 = 缩小
+        if crate::view_interaction::pointer_hits(ui, vsb_rect) {
+            let scroll_y = ui.input(|i| i.smooth_scroll_delta.y);
+            if scroll_y.abs() > 0.5 {
+                let factor = if scroll_y > 0.0 { 1.0 / 1.1 } else { 1.1 };
+                let anchor_y = vsb_rect.center().y - arr_rect.min.y;
+                doc.edit.arrange_view.zoom_lane_height(anchor_y, factor);
+                ui.ctx().request_repaint();
             }
         }
     }
