@@ -861,12 +861,13 @@ struct**，是 1.7「改了不生效」的同类风险。应删除 `SendParams` 
 | 测试 warning 清理 | `9ee42a68` | 重复 #[test]、items-after-test-module、生命周期、未用导入 |
 | yin 测试导入修复 | `5c29871a` | v9 迁移测试补 ChannelId / TRACK_LC_BASE |
 | 依赖锁同步 | `7fbaa3e3` | Cargo.lock 记录 theme/midi 依赖 |
+| 8.1.3 测试段拆文件 | `f323e6ee` | graph/params/document/spawn 的 tests 独立，恢复 1 个漏跑测试 |
 
 ### 未开始（P3，需单独排期）
 
 | 项 | 原因 |
 |---|---|
-| 8.1.3 其余大文件 | `spawn.rs` / `document.rs` / `graph.rs` / `params.rs` 仍单文件：各自职责较多，拆分需要单独回归（引擎命令/文档 API/PDC/持久化） |
+| 8.1.3 其余大文件生产段 | `spawn.rs`(1802)、`document.rs`(1012) 等测试已拆出；生产段仍含多职责，进一步拆分需要单独回归（引擎命令/文档 API/PDC/持久化） |
 | 8.1.2 余下 ~100 行函数 | `apply_anchor_field_edit`(102)、`render_instruments`(84)、`refresh_pdc`(78) 等，已低于 200 行阈值 |
 
 ---
