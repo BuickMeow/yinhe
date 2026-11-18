@@ -3353,7 +3353,7 @@ fn frozen_lc_overwrites_target_channel_buffer() {
         frames: 8,
     });
     engine.mixer_params = mixer;
-    engine.audio_sources.insert(
+    engine.plugins.audio_sources.insert(
         "freeze-a".into(),
         Arc::new(DecodedAudio {
             sample_rate: 48_000,

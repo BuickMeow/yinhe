@@ -364,14 +364,14 @@ impl AudioEngine {
             InsertTarget::Midi(ch) => match self.dense_of(ch) {
                 Some(dense) => self.mixer.insert_insert(dense, slot, processor),
                 // 通道未激活（模型无音轨用此通道）：处理器无处安放，直接退回。
-                None => self.insert_returns.push(processor),
+                None => self.plugins.insert_returns.push(processor),
             },
             InsertTarget::Audio(ch) => {
                 let dense = self.channel_layout.audio_dense_for(ch);
                 if dense != u32::MAX {
                     self.mixer.insert_insert(dense as usize, slot, processor);
                 } else {
-                    self.insert_returns.push(processor);
+                    self.plugins.insert_returns.push(processor);
                 }
             }
             InsertTarget::TrackLc(id) => {
@@ -383,7 +383,7 @@ impl AudioEngine {
                 if dense != u32::MAX {
                     self.mixer.insert_insert(dense as usize, slot, processor);
                 } else {
-                    self.insert_returns.push(processor);
+                    self.plugins.insert_returns.push(processor);
                 }
             }
             InsertTarget::Master => self.mixer.insert_master_insert(slot, processor),
@@ -413,7 +413,7 @@ impl AudioEngine {
             InsertTarget::Master => self.mixer.remove_master_insert(slot),
         };
         if let Some(p) = removed {
-            self.insert_returns.push(p);
+            self.plugins.insert_returns.push(p);
         }
     }
 
@@ -445,13 +445,13 @@ impl AudioEngine {
             InsertTarget::Master => self.mixer.replace_master_insert(slot, processor),
         };
         if let Some(p) = old {
-            self.insert_returns.push(p);
+            self.plugins.insert_returns.push(p);
         }
     }
 
     /// 取出待回收的 insert 处理器（renderer 每轮命令处理后调用，送回 UI 线程）。
     pub(crate) fn drain_insert_returns(&mut self) -> Vec<Box<dyn InsertProcessor>> {
-        std::mem::take(&mut self.insert_returns)
+        std::mem::take(&mut self.plugins.insert_returns)
     }
 
     /// 安装/替换/移除某 MIDI 通道乐器链里的**一个槽位**（按 `slot_id`）。
@@ -480,20 +480,20 @@ impl AudioEngine {
         };
         let Some(dense) = (dense != u32::MAX).then_some(dense as usize) else {
             if let Some(p) = processor {
-                self.instrument_returns.push((slot_id, p));
+                self.plugins.instrument_returns.push((slot_id, p));
             }
             return;
         };
-        if dense >= self.instruments.len() {
+        if dense >= self.plugins.instruments.len() {
             // 命令与模型不同步（dense 越界）：直接退回，不越界写。
             if let Some(p) = processor {
-                self.instrument_returns.push((slot_id, p));
+                self.plugins.instrument_returns.push((slot_id, p));
             }
             return;
         }
         let old: Option<Box<dyn InstrumentProcessor>> = match processor {
             Some(p) => {
-                let src = self.instruments[dense]
+                let src = self.plugins.instruments[dense]
                     .get_or_insert_with(crate::instrument::InstrumentSource::new);
                 match src.chain.iter_mut().find(|c| c.slot_id == slot_id) {
                     Some(slot) => Some(std::mem::replace(&mut slot.processor, p)),
@@ -509,19 +509,19 @@ impl AudioEngine {
             }
             None => {
                 let mut removed = None;
-                if let Some(src) = self.instruments[dense].as_mut()
+                if let Some(src) = self.plugins.instruments[dense].as_mut()
                     && let Some(pos) = src.chain.iter().position(|c| c.slot_id == slot_id)
                 {
                     removed = Some(src.chain.remove(pos).processor);
                     if src.chain.is_empty() {
-                        self.instruments[dense] = None;
+                        self.plugins.instruments[dense] = None;
                     }
                 }
                 removed
             }
         };
         if let Some(old) = old {
-            self.instrument_returns.push((slot_id, old));
+            self.plugins.instrument_returns.push((slot_id, old));
         }
         self.refresh_channel_latency(dense);
     }
@@ -529,7 +529,7 @@ impl AudioEngine {
     /// 重算某 dense 通道的乐器延迟（链内取最大值）并写入混音图。
     /// OwnLc 单轨的插件输出在 home LC，延迟也写到那条通道以正确 PDC。
     fn refresh_channel_latency(&mut self, dense: usize) {
-        let latency = self.instruments[dense]
+        let latency = self.plugins.instruments[dense]
             .as_ref()
             .map(|src| {
                 src.chain
@@ -546,14 +546,14 @@ impl AudioEngine {
 
     /// 取出待回收的乐器处理器（renderer 每轮命令处理后调用，送回 UI 线程）。
     pub(crate) fn drain_instrument_returns(&mut self) -> Vec<(u64, Box<dyn InstrumentProcessor>)> {
-        std::mem::take(&mut self.instrument_returns)
+        std::mem::take(&mut self.plugins.instrument_returns)
     }
 
     /// 插件延迟变化：重新查询乐器延迟并重算 PDC 对齐（insert 链延迟由
     /// `refresh_pdc` 内部向各处理器查询最新值）。
     pub(crate) fn refresh_latency(&mut self) {
-        for dense in 0..self.instruments.len() {
-            if self.instruments[dense].is_some() {
+        for dense in 0..self.plugins.instruments.len() {
+            if self.plugins.instruments[dense].is_some() {
                 self.refresh_channel_latency(dense);
             }
         }

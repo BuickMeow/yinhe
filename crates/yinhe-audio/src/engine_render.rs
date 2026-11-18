@@ -29,7 +29,7 @@ impl AudioEngine {
                 *a = c < yinhe_synth::MAX_CHANNELS && mask[c / 64] & (1u64 << (c % 64)) != 0;
             }
         }
-        for (dense, slot) in self.instruments.iter().enumerate() {
+        for (dense, slot) in self.plugins.instruments.iter().enumerate() {
             if slot.is_some() {
                 // 插件链与其输出同 dense（OwnLc = home LC / AP = 共享源）。
                 let out = dense;

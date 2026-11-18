@@ -16,14 +16,14 @@ impl AudioEngine {
         self.playing = false;
         // 丢掉尚未触发的插件 NoteOn，避免暂停/停止后它们又冒出来；
         // 已经发声的音符在下面补 NoteOff，让 release 尾音正常收尾。
-        for inst in self.instruments.iter_mut().flatten() {
+        for inst in self.plugins.instruments.iter_mut().flatten() {
             inst.events.clear();
         }
         let all = std::mem::take(&mut self.active_notes);
         let mut remaining = std::collections::BinaryHeap::new();
         for std::cmp::Reverse(an) in all.into_iter() {
             if an.is_instrument {
-                if let Some(Some(slot)) = self.instruments.get_mut(an.dense as usize) {
+                if let Some(Some(slot)) = self.plugins.instruments.get_mut(an.dense as usize) {
                     slot.events.push(PluginEvent::NoteOff {
                         time: 0,
                         channel: an.clap_channel,
@@ -165,7 +165,7 @@ impl AudioEngine {
                 chain.reset();
             }
             // 乐器实例随 seek 清空内部状态（尾音/envelope/挂音）与事件累积。
-            for inst in self.instruments.iter_mut().flatten() {
+            for inst in self.plugins.instruments.iter_mut().flatten() {
                 for p in &mut inst.chain {
                     p.processor.reset();
                     p.params.clear();
@@ -173,14 +173,14 @@ impl AudioEngine {
                 inst.events.clear();
             }
             // 插件预览的 NoteOff 调度随 seek 作废（reset 已清插件挂音）。
-            self.plugin_previews.clear();
+            self.plugins.plugin_previews.clear();
         } else if is_loop {
             // Loop wrap：只给插件乐器发 NoteOff，不 reset 处理器（保留尾音），
             // 并丢弃回绕前尚未处理的插件事件。
             let all = std::mem::take(&mut self.active_notes);
             for std::cmp::Reverse(an) in all {
                 if an.is_instrument
-                    && let Some(Some(slot)) = self.instruments.get_mut(an.dense as usize)
+                    && let Some(Some(slot)) = self.plugins.instruments.get_mut(an.dense as usize)
                 {
                     slot.events.push(PluginEvent::NoteOff {
                         time: 0,
@@ -191,9 +191,9 @@ impl AudioEngine {
                 }
             }
             // 插件预览的挂音同样要释放，否则回绕后 NoteOn 被丢、NoteOff 永远不来。
-            for p in &self.plugin_previews {
+            for p in &self.plugins.plugin_previews {
                 if p.triggered
-                    && let Some(Some(slot)) = self.instruments.get_mut(p.dense)
+                    && let Some(Some(slot)) = self.plugins.instruments.get_mut(p.dense)
                 {
                     slot.events.push(PluginEvent::NoteOff {
                         time: 0,
@@ -203,8 +203,8 @@ impl AudioEngine {
                     });
                 }
             }
-            self.plugin_previews.clear();
-            for inst in self.instruments.iter_mut().flatten() {
+            self.plugins.plugin_previews.clear();
+            for inst in self.plugins.instruments.iter_mut().flatten() {
                 inst.events.clear();
                 for p in &mut inst.chain {
                     p.params.clear();

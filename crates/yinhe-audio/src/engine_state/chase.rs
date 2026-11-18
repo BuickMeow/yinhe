@@ -59,6 +59,7 @@ impl AudioEngine {
             // 插件实例自身处理（透传语义），不经处理段。
             if (dense as usize) < self.channel_layout.midi_compacted() as usize
                 && self
+                    .plugins
                     .instruments
                     .get(dense as usize)
                     .is_none_or(|s| s.is_none())
@@ -78,7 +79,7 @@ impl AudioEngine {
             if dense == u32::MAX {
                 continue;
             }
-            if let Some(Some(src)) = self.instruments.get_mut(dense as usize)
+            if let Some(Some(src)) = self.plugins.instruments.get_mut(dense as usize)
                 && let Some(p) = src.chain.iter_mut().find(|p| p.slot_id == uid)
             {
                 p.params.push(PluginEvent::ParamValue {

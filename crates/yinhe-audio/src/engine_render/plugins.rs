@@ -12,7 +12,8 @@ impl AudioEngine {
         if dense == u32::MAX {
             return None;
         }
-        self.instruments
+        self.plugins
+            .instruments
             .get(dense as usize)
             .is_some_and(|s| s.is_some())
             .then_some(dense as usize)
@@ -20,7 +21,7 @@ impl AudioEngine {
 
     /// 是否存在已安装的乐器处理器（渲染器判据：停止状态也需要空闲渲染）。
     pub(crate) fn has_instruments(&self) -> bool {
-        self.instruments.iter().any(|s| s.is_some())
+        self.plugins.instruments.iter().any(|s| s.is_some())
     }
 
     /// 插件预览：登记音符，NoteOn/NoteOff 由 `dispatch_plugin_previews` 按块调度。
@@ -39,7 +40,8 @@ impl AudioEngine {
             // 拖动替换：旧组该通道的全部预览音（含已响）停掉，只保留当前组。
             self.preview_instrument_stop(Some(channel), None);
         }
-        self.plugin_previews
+        self.plugins
+            .plugin_previews
             .retain(|p| !(p.dense == dense && !p.triggered));
         if notes.is_empty() {
             return;
@@ -65,37 +67,43 @@ impl AudioEngine {
             } else {
                 None
             };
-            self.plugin_previews.push(crate::engine::PluginPreviewNote {
-                dense,
-                midi_channel: n.midi_channel,
-                key: n.key,
-                velocity: n.velocity,
-                on_sample,
-                off_sample,
-                triggered: false,
-            });
+            self.plugins
+                .plugin_previews
+                .push(crate::engine::PluginPreviewNote {
+                    dense,
+                    midi_channel: n.midi_channel,
+                    key: n.key,
+                    velocity: n.velocity,
+                    on_sample,
+                    off_sample,
+                    triggered: false,
+                });
         }
     }
 
     /// 停止插件预览：清除匹配的待触发音符 + 对已触发音符发 NoteOff。
     /// `channel` 限定 MIDI 通道（None = 全部），`key` 限定单个键（None = 全部）。
     pub(crate) fn preview_instrument_stop(&mut self, channel: Option<u8>, key: Option<u8>) {
-        if self.plugin_previews.is_empty() {
+        if self.plugins.plugin_previews.is_empty() {
             return;
         }
         let target_dense = channel.and_then(|ch| self.channel_plugin_dense(ch));
         let mut i = 0;
-        while i < self.plugin_previews.len() {
-            let p = &self.plugin_previews[i];
+        while i < self.plugins.plugin_previews.len() {
+            let p = &self.plugins.plugin_previews[i];
             let matches = target_dense.map(|d| d == p.dense).unwrap_or(true)
                 && key.map(|k| k == p.key).unwrap_or(true);
             if !matches {
                 i += 1;
                 continue;
             }
-            let p = self.plugin_previews.swap_remove(i);
+            let p = self.plugins.plugin_previews.swap_remove(i);
             if p.triggered
-                && let Some(slot) = self.instruments.get_mut(p.dense).and_then(|s| s.as_mut())
+                && let Some(slot) = self
+                    .plugins
+                    .instruments
+                    .get_mut(p.dense)
+                    .and_then(|s| s.as_mut())
             {
                 slot.events.push(PluginEvent::NoteOff {
                     time: 0,
@@ -109,14 +117,14 @@ impl AudioEngine {
 
     /// 每块调度插件预览的 NoteOn/NoteOff（在 `render_instruments` 之前调用）。
     pub(super) fn dispatch_plugin_previews(&mut self, block_start: u64, frames: usize) {
-        if self.plugin_previews.is_empty() {
+        if self.plugins.plugin_previews.is_empty() {
             return;
         }
         let block_end = block_start + frames as u64;
         let mut i = 0;
-        while i < self.plugin_previews.len() {
+        while i < self.plugins.plugin_previews.len() {
             let (dense, midi_channel, key, velocity, on_sample, off_sample, triggered) = {
-                let p = &self.plugin_previews[i];
+                let p = &self.plugins.plugin_previews[i];
                 (
                     p.dense,
                     p.midi_channel,
@@ -133,7 +141,12 @@ impl AudioEngine {
                     continue;
                 }
                 let time = on_sample.saturating_sub(block_start).min(frames as u64) as u32;
-                if let Some(slot) = self.instruments.get_mut(dense).and_then(|s| s.as_mut()) {
+                if let Some(slot) = self
+                    .plugins
+                    .instruments
+                    .get_mut(dense)
+                    .and_then(|s| s.as_mut())
+                {
                     slot.events.push(PluginEvent::NoteOn {
                         time,
                         channel: midi_channel,
@@ -141,7 +154,7 @@ impl AudioEngine {
                         velocity: f64::from(velocity.min(127)) / 127.0,
                     });
                 }
-                self.plugin_previews[i].triggered = true;
+                self.plugins.plugin_previews[i].triggered = true;
                 i += 1;
                 continue;
             }
@@ -154,7 +167,12 @@ impl AudioEngine {
                 continue;
             }
             let time = off.saturating_sub(block_start).min(frames as u64) as u32;
-            if let Some(slot) = self.instruments.get_mut(dense).and_then(|s| s.as_mut()) {
+            if let Some(slot) = self
+                .plugins
+                .instruments
+                .get_mut(dense)
+                .and_then(|s| s.as_mut())
+            {
                 slot.events.push(PluginEvent::NoteOff {
                     time,
                     channel: midi_channel,
@@ -162,7 +180,7 @@ impl AudioEngine {
                     velocity: 0.0,
                 });
             }
-            self.plugin_previews.swap_remove(i);
+            self.plugins.plugin_previews.swap_remove(i);
         }
     }
 
@@ -170,7 +188,7 @@ impl AudioEngine {
     /// 无参数变化时开销可忽略（每个处理器一次空队列检查）。
     pub(crate) fn flush_pending_plugin_params(&mut self) {
         let position = self.sample_position;
-        for src in self.instruments.iter_mut().flatten() {
+        for src in self.plugins.instruments.iter_mut().flatten() {
             for p in &mut src.chain {
                 p.processor.flush_pending_params(position);
             }
@@ -191,10 +209,10 @@ impl AudioEngine {
         offset_frames: usize,
         frames: usize,
     ) {
-        let n = self.instruments.len();
+        let n = self.plugins.instruments.len();
         for dense in 0..n {
             let mut events = {
-                let Some(src) = self.instruments[dense].as_mut() else {
+                let Some(src) = self.plugins.instruments[dense].as_mut() else {
                     continue;
                 };
                 if src.chain.is_empty() {
@@ -218,7 +236,7 @@ impl AudioEngine {
                     }
                     // 链在上一段刚确认存在；这里防御性跳过而非 panic
                     // （音频线程任何 panic 都会让整条输出静音）。
-                    let Some(src) = self.instruments[dense].as_mut() else {
+                    let Some(src) = self.plugins.instruments[dense].as_mut() else {
                         continue;
                     };
                     for (idx, proc) in src.chain.iter_mut().enumerate() {
@@ -264,7 +282,7 @@ impl AudioEngine {
                 }
             }
             events.clear();
-            if let Some(src) = self.instruments[dense].as_mut() {
+            if let Some(src) = self.plugins.instruments[dense].as_mut() {
                 src.events = events;
             }
         }

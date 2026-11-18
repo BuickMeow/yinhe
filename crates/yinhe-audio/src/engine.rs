@@ -24,13 +24,8 @@ pub(crate) const ENGINE_BLOCK_FRAMES: usize = 512;
 /// 引擎任何路径（实时/导出）的块长都不得超过该值。
 pub const MAX_ENGINE_BLOCK_FRAMES: usize = 4096;
 
-/// Core MIDI synthesis engine.  Owned by the renderer thread.
-pub(crate) struct AudioEngine {
-    /// 混音处理图：通道数 = compacted 通道数，dense 索引与 channel_set 对齐。
-    pub(crate) mixer: MixerGraph,
-    /// 混音台持久化参数的引擎侧副本（按源通道索引）：resize 重建 strip 用，
-    /// 由 SetMixerParams / SetChannelStrip / SetMasterParams 命令维护。
-    pub(crate) mixer_params: MixerParams,
+/// 插件宿主状态：乐器链、回收队列、音频素材与乐器预览。
+pub(crate) struct PluginHostState {
     /// 被替换/移除的 insert 处理器：渲染线程不能 deactivate 插件，
     /// 攒在这里由 renderer 送回 UI 线程回收。
     pub(crate) insert_returns: Vec<Box<dyn InsertProcessor>>,
@@ -38,8 +33,24 @@ pub(crate) struct AudioEngine {
     /// 这里由 renderer 送回 UI 线程回收（与 insert 同通道回流）。
     pub(crate) instrument_returns: Vec<(u64, Box<dyn InstrumentProcessor>)>,
     /// 乐器实例，长度 = `compacted_channels`，只有乐器 dense 槽位非空。
-    /// 索引 = 全局 dense（= midi_compacted + 乐器通道排序位置）。
     pub(crate) instruments: Vec<Option<crate::instrument::InstrumentSource>>,
+    /// 已解码音频素材（uuid → PCM + 峰值）。由 UI 后台解码后经
+    /// `AudioCommand::SetAudioSource` 推入；素材池只增不减。
+    pub(crate) audio_sources:
+        std::collections::HashMap<String, Arc<crate::audio_source::DecodedAudio>>,
+    /// 插件预览的活动音符：到期/停止时向对应乐器通道发 NoteOff。
+    pub(crate) plugin_previews: Vec<PluginPreviewNote>,
+}
+
+/// Core MIDI synthesis engine.  Owned by the renderer thread.
+pub(crate) struct AudioEngine {
+    /// 混音处理图：通道数 = compacted 通道数，dense 索引与 channel_set 对齐。
+    pub(crate) mixer: MixerGraph,
+    /// 混音台持久化参数的引擎侧副本（按源通道索引）：resize 重建 strip 用，
+    /// 由 SetMixerParams / SetChannelStrip / SetMasterParams 命令维护。
+    pub(crate) mixer_params: MixerParams,
+    /// 插件宿主：乐器链、insert/乐器回收队列、音频素材、乐器预览。
+    pub(crate) plugins: PluginHostState,
     /// 乐器求和用的临时缓冲：链内第 2 个及以后的乐器输出先写这里再累加。按需增长。
     pub(crate) scratch_l: Vec<f32>,
     pub(crate) scratch_r: Vec<f32>,
@@ -106,11 +117,6 @@ pub(crate) struct AudioEngine {
     pub(crate) channel_active: Vec<bool>,
     pub(crate) model: Option<AudioModel>,
     pub(crate) skip_track: Vec<bool>,
-    /// 已解码音频素材（uuid → PCM + 峰值）。由 UI 后台解码后经
-    /// `AudioCommand::SetAudioSource` 推入；素材池只增不减（换工程时随引擎重建清空）。
-    /// 音频轨渲染按片段的 `source` uuid 在此查找。
-    pub(crate) audio_sources:
-        std::collections::HashMap<String, Arc<crate::audio_source::DecodedAudio>>,
     /// AR 自动化 lane 的 M/S 试听旁通集：dispatch 用它预计算 `am_lane_skip`
     ///（chase 计算在 worker 侧直接查本 map）。随 `SetAmMs` 命令更新。
     pub(crate) am_ms: Arc<crate::spawn::AmMsMap>,
@@ -127,10 +133,6 @@ pub(crate) struct AudioEngine {
     /// `ChaseResult` 也带 generation，renderer 据此丢弃过期的 chase 结果
     ///（cc_events 已被新 PrepareModel 替换的旧结果）。
     pub(crate) chase_generation: u64,
-
-    /// 插件预览的活动音符：到期/停止时向对应乐器通道发 NoteOff。
-    /// 与 xsynth 预览（PreviewEngine）并列；`off_sample = None` 表示持续音。
-    pub(crate) plugin_previews: Vec<PluginPreviewNote>,
 
     /// 音符试听预览合成器（独立合成器实例，不经主引擎 voice）。
     /// 预览音频累加进 mixer 通道缓冲，与播放共用同一条通道 DSP + 混音台链路，
@@ -234,9 +236,13 @@ impl AudioEngine {
             Self {
                 mixer,
                 mixer_params: MixerParams::default(),
-                insert_returns: Vec::new(),
-                instrument_returns: Vec::new(),
-                instruments: (0..compacted).map(|_| None).collect(),
+                plugins: PluginHostState {
+                    insert_returns: Vec::new(),
+                    instrument_returns: Vec::new(),
+                    instruments: (0..compacted).map(|_| None).collect(),
+                    audio_sources: std::collections::HashMap::new(),
+                    plugin_previews: Vec::new(),
+                },
                 scratch_l: Vec::new(),
                 scratch_r: Vec::new(),
                 event_scratch: Vec::new(),
@@ -268,13 +274,11 @@ impl AudioEngine {
                 channel_active: Vec::new(),
                 model: None,
                 skip_track: Vec::new(),
-                audio_sources: std::collections::HashMap::new(),
                 am_ms: Arc::new(crate::spawn::AmMsMap::new()),
                 am_lane_skip: Vec::new(),
                 pending_play_from_sample: None,
                 automation_density: 1,
                 chase_generation: 0,
-                plugin_previews: Vec::new(),
                 preview: None,
                 cpu_synth: {
                     let mut cs = yinhe_synth::CpuSynth::new(sample_rate);
@@ -419,7 +423,7 @@ impl AudioEngine {
     /// 插件的尾音无法像 xsynth 那样用 voice_count 探测，导出尾音阶段据此
     /// 决定是否渲染满上限。
     pub(crate) fn has_active_plugins(&self) -> bool {
-        self.mixer.has_inserts() || self.instruments.iter().any(|i| i.is_some())
+        self.mixer.has_inserts() || self.plugins.instruments.iter().any(|i| i.is_some())
     }
 
     pub(crate) fn set_max_voices(&mut self, max: Option<usize>) {
@@ -525,7 +529,7 @@ impl AudioEngine {
                 processor,
             } => self.set_instrument_slot(target, slot_id, processor),
             AudioCommand::SetAudioSource { uuid, decoded } => {
-                self.audio_sources.insert(uuid, decoded);
+                self.plugins.audio_sources.insert(uuid, decoded);
             }
             AudioCommand::RefreshLatency => self.refresh_latency(),
             // 预览命令由渲染器处理（独立预览合成器 + 渲染时钟），引擎层忽略。

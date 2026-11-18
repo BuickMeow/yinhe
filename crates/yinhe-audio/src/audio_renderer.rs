@@ -675,6 +675,7 @@ pub(crate) fn spawn_renderer(
             // 引擎里仍在位的乐器处理器也退回 UI 线程回收。
             let inst_leftovers: Vec<(u64, Box<dyn yinhe_mixer::InstrumentProcessor>)> = renderer
                 .engine
+                .plugins
                 .instruments
                 .iter_mut()
                 .filter_map(|slot| slot.take())

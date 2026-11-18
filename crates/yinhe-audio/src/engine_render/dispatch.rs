@@ -99,7 +99,7 @@ impl AudioEngine {
                             .tick_to_sample(cc.tick)
                             .saturating_sub(self.block_start_sample)
                             as u32;
-                        if let Some(Some(src)) = self.instruments.get_mut(dense as usize)
+                        if let Some(Some(src)) = self.plugins.instruments.get_mut(dense as usize)
                             && let Some(p) = src.chain.iter_mut().find(|p| p.slot_id == pp.uid)
                         {
                             p.params.push(PluginEvent::ParamValue {
@@ -118,6 +118,7 @@ impl AudioEngine {
                         if dense != u32::MAX
                             && (dense as usize) < self.channel_layout.midi_compacted() as usize
                             && self
+                                .plugins
                                 .instruments
                                 .get(dense as usize)
                                 .is_none_or(|s| s.is_none())
@@ -141,7 +142,7 @@ impl AudioEngine {
                         let mut midi = MidiMessages::default();
                         event_to_midi(&cc.event, cc.channel as u8, &mut midi);
                         if !midi.is_empty()
-                            && let Some(Some(slot)) = self.instruments.get_mut(dense)
+                            && let Some(Some(slot)) = self.plugins.instruments.get_mut(dense)
                         {
                             for data in midi.as_slice() {
                                 slot.events.push(PluginEvent::Midi { time, data: *data });
@@ -220,6 +221,7 @@ impl AudioEngine {
                             dense
                         };
                         let has_plugin = self
+                            .plugins
                             .instruments
                             .get(plugin_dense as usize)
                             .is_some_and(|s| s.is_some());
@@ -232,7 +234,7 @@ impl AudioEngine {
                                 as u32;
                             let clap_ch = ch & 0x0F;
                             if let Some(Some(slot)) =
-                                self.instruments.get_mut(plugin_dense as usize)
+                                self.plugins.instruments.get_mut(plugin_dense as usize)
                             {
                                 slot.events.push(PluginEvent::NoteOn {
                                     time,
@@ -304,7 +306,7 @@ impl AudioEngine {
                 let time = self
                     .tick_to_sample(an.end_tick)
                     .saturating_sub(self.block_start_sample) as u32;
-                if let Some(Some(slot)) = self.instruments.get_mut(an.dense as usize) {
+                if let Some(Some(slot)) = self.plugins.instruments.get_mut(an.dense as usize) {
                     slot.events.push(PluginEvent::NoteOff {
                         time,
                         channel: an.clap_channel,

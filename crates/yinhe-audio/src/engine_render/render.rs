@@ -283,7 +283,7 @@ impl AudioEngine {
         for (dense, source_id) in frozen {
             // 素材尚未解码完成时保留实时输出，等 SetAudioSource 到达后再切换，
             // 避免打开工程瞬间冻结通道静音。
-            let Some(source) = self.audio_sources.get(&source_id).cloned() else {
+            let Some(source) = self.plugins.audio_sources.get(&source_id).cloned() else {
                 continue;
             };
             let Some(cb) = self.mixer.channel_buffers_mut(dense) else {
@@ -419,9 +419,10 @@ impl AudioEngine {
         let Self {
             mixer,
             channel_dsp,
-            instruments,
+            plugins,
             ..
         } = self;
+        let instruments = &mut plugins.instruments;
         for (dense, chain) in mixer.buffers_mut().iter_mut().enumerate().take(midi_count) {
             if !active.get(dense).copied().unwrap_or(true) {
                 // 空闲通道：缓冲全零，DSP 无输入可处理（恢复时平滑段会补上）。
@@ -455,7 +456,7 @@ impl AudioEngine {
         let mut renderer = super::audio_clip::AudioClipRenderer {
             model: &yin_model,
             audio_model,
-            sources: &self.audio_sources,
+            sources: &self.plugins.audio_sources,
             mixer: &mut self.mixer,
             layout: &self.channel_layout,
             skip_track: &self.skip_track,

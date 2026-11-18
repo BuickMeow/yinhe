@@ -65,7 +65,7 @@ impl AudioEngine {
         }
         if let Some(dense) = self.channel_plugin_dense(ch as u8) {
             // 插件通道：chase 重启的音符喂乐器实例（time 0 = 下一块开头）。
-            if let Some(Some(slot)) = self.instruments.get_mut(dense) {
+            if let Some(Some(slot)) = self.plugins.instruments.get_mut(dense) {
                 slot.events.push(PluginEvent::NoteOn {
                     time: 0,
                     channel: (ch & 0x0F) as u8,
@@ -118,7 +118,7 @@ impl AudioEngine {
                 continue;
             }
             if an.is_instrument {
-                if let Some(Some(slot)) = self.instruments.get_mut(an.dense as usize) {
+                if let Some(Some(slot)) = self.plugins.instruments.get_mut(an.dense as usize) {
                     slot.events.push(PluginEvent::NoteOff {
                         time: 0,
                         channel: an.clap_channel,
