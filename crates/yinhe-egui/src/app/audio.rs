@@ -192,6 +192,9 @@ impl App {
         progress::set_visible(&self.jobs.load_progress, true);
         progress::set_stage(&self.jobs.load_progress, 1, progress::StageStatus::Active);
         progress::set_stage_progress(&self.jobs.load_progress, 1, 0.0, "初始化音频引擎".into());
+        // 上一轮可能停在音色库阶段的 Active（取消/失败/旧引擎），主动落回
+        // Pending，避免引擎卡片按旧进度显示（例如永久停在 50%）。
+        progress::set_stage(&self.jobs.load_progress, 2, progress::StageStatus::Pending);
 
         // 引擎重建需要时间（spawn + 音色库/key map 加载，可能数秒）：建等待 toast。
         // 文件加载流程已有自己的 toast（同一 SharedProgress），避免重复建卡。
@@ -205,6 +208,7 @@ impl App {
                     cancel: None,
                     pause: None,
                     title: t!("toast.engine_switching").to_string(),
+                    stage: crate::file_loader::StagePick::LastActive,
                 }),
             );
         }

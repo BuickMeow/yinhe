@@ -57,6 +57,7 @@ impl FileLoader {
             cancel: self.cancel_flag(),
             pause: self.core.pause_flag(),
             title: t!("toast.loading").to_string(),
+            stage: StagePick::FirstActive,
         }
     }
 
@@ -173,6 +174,16 @@ impl FileLoader {
     }
 }
 
+/// 进度卡显示哪一阶段。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StagePick {
+    /// 文件加载：第一个活动阶段（解析/解压工程）。
+    FirstActive,
+    /// 引擎切换：最后一个活动阶段（音色库优先于初始化；忽略可能残留的
+    /// 文件加载阶段，否则旧阶段会把引擎卡片的百分比永久钉在旧值上）。
+    LastActive,
+}
+
 /// 加载进度数据源：toast 渲染时 pull，不再每帧拷贝文案。
 pub(crate) struct LoadToastSource {
     pub progress: SharedProgress,
@@ -180,16 +191,18 @@ pub(crate) struct LoadToastSource {
     pub pause: Option<Arc<AtomicBool>>,
     /// 卡片标题（加载流程与引擎切换流程共用同一数据源，标题不同）。
     pub title: String,
+    pub stage: StagePick,
 }
 
 impl LoadToastSource {
     fn active_stage(&self) -> Option<StageInfo> {
         self.progress.lock().ok().and_then(|p| {
-            p.stages
-                .iter()
-                .find(|s| s.status == StageStatus::Active)
-                .or_else(|| p.stages.first())
-                .cloned()
+            let mut active = p.stages.iter().filter(|s| s.status == StageStatus::Active);
+            let picked = match self.stage {
+                StagePick::FirstActive => active.next(),
+                StagePick::LastActive => active.next_back(),
+            };
+            picked.or_else(|| p.stages.first()).cloned()
         })
     }
 }
@@ -206,5 +219,68 @@ impl ProgressSource for LoadToastSource {
     }
     fn pause(&self) -> Option<Arc<AtomicBool>> {
         self.pause.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yinhe_editor_core::progress;
+
+    fn staged(statuses: [(StageStatus, f32); 3]) -> SharedProgress {
+        let p = progress::new_shared();
+        {
+            let mut g = p.lock().unwrap();
+            for (stage, (status, value)) in g.stages.iter_mut().zip(statuses) {
+                stage.status = status;
+                stage.progress = value;
+            }
+        }
+        p
+    }
+
+    fn source(p: SharedProgress, stage: StagePick) -> LoadToastSource {
+        LoadToastSource {
+            progress: p,
+            cancel: None,
+            pause: None,
+            title: String::new(),
+            stage,
+        }
+    }
+
+    /// 引擎切换卡片必须跟随最后一个活动阶段：残留的文件加载阶段（例如
+    /// 上次取消后停在 50%）不能把引擎进度钉死在旧值。
+    #[test]
+    fn engine_toast_prefers_last_active_stage() {
+        let p = staged([
+            (StageStatus::Active, 0.5),
+            (StageStatus::Done, 1.0),
+            (StageStatus::Active, 0.25),
+        ]);
+        assert!((source(p.clone(), StagePick::LastActive).fraction() - 0.25).abs() < 1e-6);
+        assert!((source(p, StagePick::FirstActive).fraction() - 0.5).abs() < 1e-6);
+    }
+
+    /// 文件加载卡片仍取第一个活动阶段（解析/解压工程）。
+    #[test]
+    fn file_toast_uses_first_active_stage() {
+        let p = staged([
+            (StageStatus::Active, 0.5),
+            (StageStatus::Pending, 0.0),
+            (StageStatus::Pending, 0.0),
+        ]);
+        assert!((source(p, StagePick::FirstActive).fraction() - 0.5).abs() < 1e-6);
+    }
+
+    /// 没有活动阶段时回退到第一阶段，保持原行为。
+    #[test]
+    fn toast_falls_back_to_first_stage() {
+        let p = staged([
+            (StageStatus::Pending, 0.0),
+            (StageStatus::Done, 1.0),
+            (StageStatus::Done, 1.0),
+        ]);
+        assert_eq!(source(p, StagePick::LastActive).fraction(), 0.0);
     }
 }
