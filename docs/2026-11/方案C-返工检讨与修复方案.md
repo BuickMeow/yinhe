@@ -826,15 +826,27 @@ struct**，是 1.7「改了不生效」的同类风险。应删除 `SendParams` 
 | 8.1 track_panel AM 行拆分 | `73620ba7` | `render::draw_automation_row`，759→629 |
 | 8.1 track_panel 普通轨行拆分 | `3a14babf` | `render::draw_track_row`，629→474 |
 | 生产路径 panic 源 | `9a0126b6` | 音频乐器链/和弦排序/归档对话框/网格线/仓储等 11 处 unwrap/expect 改为防御性处理 |
+| 8.3.1 AudioEngine 拆分 | `96cbdb09` `61385170` `ce9fd960` `d8bd5066` | PluginHost/Mixer/Synth/Export/Playback/Meter 六组，53 → 9 字段 |
+| 8.3.2 ensure_len repair_* | `79e740cd` | 12 项显式命名与依赖顺序 |
+| 8.4.2 channel_id_for_ui | `32f91a86` | AP 解析进 MixerParams |
+| 8.4.3 mixer_channel_of | `ad3face0` | 逆映射进模型层 |
+| 8.4.4 display_name 移出 types | `6cf6693b` | yinhe-theme::automation_label trait |
+| 8.4.6 Unspecified 删除 | `ed8cf631` | 构造必须给角色，不再有临时态 |
+| 8.2.5 右键菜单统一 | `e63e7b8c` | widgets::menu::action 唯一实现 |
+| 8.2.7 v9 迁移复用 ensure_lc_node | `3ba43798` | 迁移与 ensure_len 同一条路径 |
+| 8.5.5~8.5.10 具体项 | `f0e88037` | FocusSend 结构、O(n²)、MixerSend source |
+| 8.3.3 arrange::show 拆分 | `c9a79ccd` `67d9e472` `da2a35aa` | 标尺/事件行/空白双击/滚动条/面板/GPU 主区，1030 → 399 |
+| 8.1 track_panel::show 拆分 | `e85112ae` | 占位行/色带图标到 render，425 → 290 |
+| 8.1 dispatch 拆分 | `c4f416b2` | CC / NoteOn / NoteOff 三段，289 → 11 |
+| 8.1 音轨属性拆分 | `10ab4462` | 349 → 27，Conductor/名称/输出各自成函数 |
+| 8.1 mix::show 拆分 | `c600a794` | 228 → 63，快照/主体/通道条/Master/重绘 |
 
 ### 未开始（P3，需单独排期）
 
 | 项 | 原因 |
 |---|---|
-| 8.3.1 `AudioEngine` 53 字段拆分 | 混音/播放/插件宿主三块，风险高 |
-| 8.3.3 `arrange::show` 数据/动作/绘制分离 | 同 8.1 |
-| 8.4.4 `display_name` 移出 types | 被 egui/flutter/midi 三处使用，需要先有共享 UI 文案层 |
-| 8.4.6 `ChannelSource::Unspecified` 改 Option | 跨所有 match，收益低于风险 |
+| 8.1.3 超大文件按主题拆分 | `audio_model.rs` / `engine_tests.rs` / `spawn.rs` / `document.rs` / `graph.rs` / `params.rs` 仍是单文件，需要单独排期 |
+| 8.1.2 其余 100~200 行函数 | automation_edit / device_chain / graph / show_color_row 等 |
 
 ---
 
