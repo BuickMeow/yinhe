@@ -57,7 +57,7 @@ fn b1_mixer_idle_channels() {
         rendered += 512;
         let mut n = 0usize;
         for (c, e) in ever.iter_mut().enumerate() {
-            if let Some(m) = engine.mixer.channel_meter_reading(c) {
+            if let Some(m) = engine.mix.mixer.channel_meter_reading(c) {
                 let (l, r) = m.read();
                 if l.max(r) > 0.0 {
                     *e = true;

@@ -277,11 +277,11 @@ impl MixerMeters {
     /// 通道数不变（resize 只重建缓冲不换 meter），读数端整个引擎生命周期有效。
     fn collect(engine: &crate::engine::AudioEngine) -> Self {
         Self {
-            channels: (0..engine.mixer.channel_count())
-                .filter_map(|i| engine.mixer.channel_meter_reading(i))
+            channels: (0..engine.mix.mixer.channel_count())
+                .filter_map(|i| engine.mix.mixer.channel_meter_reading(i))
                 .collect(),
-            master: engine.mixer.master_meter_reading(),
-            master_samples: engine.mixer.master_sample_reading(),
+            master: engine.mix.mixer.master_meter_reading(),
+            master_samples: engine.mix.mixer.master_sample_reading(),
             tracks: engine.track_levels(),
         }
     }

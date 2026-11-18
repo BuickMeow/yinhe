@@ -668,7 +668,7 @@ pub(crate) fn spawn_renderer(
             }
             // 引擎拆除：mixer 里的 insert 处理器全部退回 UI 线程回收
             //（CLAP deactivate 必须在管理线程做，不能在渲染线程 drop）。
-            let leftovers = renderer.engine.mixer.take_all_inserts();
+            let leftovers = renderer.engine.mix.mixer.take_all_inserts();
             if !leftovers.is_empty() {
                 let _ = insert_return_tx.send(leftovers);
             }

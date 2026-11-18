@@ -159,9 +159,9 @@ impl AudioEngine {
         self.apply_program_state_at(self.current_tick);
         if is_seek {
             // insert 效果器（delay 尾音/envelope 等）随用户 seek 清空内部状态。
-            self.mixer.reset_inserts();
+            self.mix.mixer.reset_inserts();
             // 内置音源通道处理段随 seek 清空内部状态（filter 历史等）。
-            for chain in &mut self.channel_dsp {
+            for chain in &mut self.mix.channel_dsp {
                 chain.reset();
             }
             // 乐器实例随 seek 清空内部状态（尾音/envelope/挂音）与事件累积。

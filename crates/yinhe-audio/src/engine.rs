@@ -24,6 +24,21 @@ pub(crate) const ENGINE_BLOCK_FRAMES: usize = 512;
 /// 引擎任何路径（实时/导出）的块长都不得超过该值。
 pub const MAX_ENGINE_BLOCK_FRAMES: usize = 4096;
 
+/// 混音台运行态：处理图、持久化参数副本、乐器求和暂存与内置 DSP。
+pub(crate) struct MixerState {
+    /// 混音处理图：通道数 = compacted 通道数，dense 索引与通道布局对齐。
+    pub(crate) mixer: MixerGraph,
+    /// 混音台持久化参数的引擎侧副本（按源通道索引）。
+    pub(crate) mixer_params: MixerParams,
+    /// 乐器求和用的临时缓冲：链内第 2 个及以后的乐器输出先写这里再累加。
+    pub(crate) scratch_l: Vec<f32>,
+    pub(crate) scratch_r: Vec<f32>,
+    /// 乐器事件合并用的临时缓冲（广播事件 + 定向参数事件）。
+    pub(crate) event_scratch: Vec<yinhe_mixer::PluginEvent>,
+    /// 内置音源通道处理段（CC7/10/11/71/74），索引 = dense 通道。
+    pub(crate) channel_dsp: Vec<crate::channel_dsp::ChannelDspChain>,
+}
+
 /// 插件宿主状态：乐器链、回收队列、音频素材与乐器预览。
 pub(crate) struct PluginHostState {
     /// 被替换/移除的 insert 处理器：渲染线程不能 deactivate 插件，
@@ -44,21 +59,10 @@ pub(crate) struct PluginHostState {
 
 /// Core MIDI synthesis engine.  Owned by the renderer thread.
 pub(crate) struct AudioEngine {
-    /// 混音处理图：通道数 = compacted 通道数，dense 索引与 channel_set 对齐。
-    pub(crate) mixer: MixerGraph,
-    /// 混音台持久化参数的引擎侧副本（按源通道索引）：resize 重建 strip 用，
-    /// 由 SetMixerParams / SetChannelStrip / SetMasterParams 命令维护。
-    pub(crate) mixer_params: MixerParams,
+    /// 混音台运行态（处理图 / 参数 / 暂存 / DSP）。
+    pub(crate) mix: MixerState,
     /// 插件宿主：乐器链、insert/乐器回收队列、音频素材、乐器预览。
     pub(crate) plugins: PluginHostState,
-    /// 乐器求和用的临时缓冲：链内第 2 个及以后的乐器输出先写这里再累加。按需增长。
-    pub(crate) scratch_l: Vec<f32>,
-    pub(crate) scratch_r: Vec<f32>,
-    /// 乐器事件合并用的临时缓冲（广播事件 + 定向参数事件）。每块复用。
-    pub(crate) event_scratch: Vec<yinhe_mixer::PluginEvent>,
-    /// 内置音源通道处理段（CC7/10/11/71/74），索引 = dense 通道。
-    /// 挂插件乐器的通道不处理（CC 透传插件）。见 `channel_dsp` 模块文档。
-    pub(crate) channel_dsp: Vec<crate::channel_dsp::ChannelDspChain>,
     /// 当前渲染块的起始 sample：dispatch 时把 tick 域事件换算成块内 frame offset
     /// 喂乐器插件（`PluginEvent::time`）。render() 每块开头设置。
     pub(crate) block_start_sample: u64,
@@ -234,8 +238,16 @@ impl AudioEngine {
             let mut mixer = MixerGraph::new(ENGINE_BLOCK_FRAMES);
             mixer.resize(compacted, ENGINE_BLOCK_FRAMES, &[]);
             Self {
-                mixer,
-                mixer_params: MixerParams::default(),
+                mix: MixerState {
+                    mixer,
+                    mixer_params: MixerParams::default(),
+                    scratch_l: Vec::new(),
+                    scratch_r: Vec::new(),
+                    event_scratch: Vec::new(),
+                    channel_dsp: (0..compacted)
+                        .map(|_| crate::channel_dsp::ChannelDspChain::new(sample_rate))
+                        .collect(),
+                },
                 plugins: PluginHostState {
                     insert_returns: Vec::new(),
                     instrument_returns: Vec::new(),
@@ -243,12 +255,6 @@ impl AudioEngine {
                     audio_sources: std::collections::HashMap::new(),
                     plugin_previews: Vec::new(),
                 },
-                scratch_l: Vec::new(),
-                scratch_r: Vec::new(),
-                event_scratch: Vec::new(),
-                channel_dsp: (0..compacted)
-                    .map(|_| crate::channel_dsp::ChannelDspChain::new(sample_rate))
-                    .collect(),
                 block_start_sample: 0,
                 channel_layout: layout,
                 sample_rate,
@@ -423,7 +429,7 @@ impl AudioEngine {
     /// 插件的尾音无法像 xsynth 那样用 voice_count 探测，导出尾音阶段据此
     /// 决定是否渲染满上限。
     pub(crate) fn has_active_plugins(&self) -> bool {
-        self.mixer.has_inserts() || self.plugins.instruments.iter().any(|i| i.is_some())
+        self.mix.mixer.has_inserts() || self.plugins.instruments.iter().any(|i| i.is_some())
     }
 
     pub(crate) fn set_max_voices(&mut self, max: Option<usize>) {

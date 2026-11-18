@@ -57,7 +57,7 @@ impl AudioEngine {
             return false;
         };
         if preview.previewing() {
-            preview.render_add(self.mixer.buffers_mut(), frames);
+            preview.render_add(self.mix.mixer.buffers_mut(), frames);
             true
         } else {
             false

@@ -63,7 +63,7 @@ impl AudioEngine {
                     .instruments
                     .get(dense as usize)
                     .is_none_or(|s| s.is_none())
-                && let Some(chain) = self.channel_dsp.get_mut(dense as usize)
+                && let Some(chain) = self.mix.channel_dsp.get_mut(dense as usize)
             {
                 for &cc in yinhe_dsp::cc::DSP_CHANNEL_CCS {
                     if skip.cc_mask[ch as usize] & (1u128 << cc) == 0 {

@@ -123,7 +123,7 @@ impl AudioEngine {
                                 .get(dense as usize)
                                 .is_none_or(|s| s.is_none())
                             && yinhe_dsp::cc::DSP_CHANNEL_CCS.contains(&cc_num)
-                            && let Some(chain) = self.channel_dsp.get_mut(dense as usize)
+                            && let Some(chain) = self.mix.channel_dsp.get_mut(dense as usize)
                         {
                             chain.apply_cc(cc_num, cc_value);
                             // 实际发送 → 打点（chase 应用时跳过，避免旧值覆盖新值）。

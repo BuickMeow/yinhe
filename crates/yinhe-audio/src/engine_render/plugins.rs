@@ -193,8 +193,8 @@ impl AudioEngine {
                 p.processor.flush_pending_params(position);
             }
         }
-        self.mixer.flush_pending_insert_params(position);
-        for chain in &mut self.channel_dsp {
+        self.mix.mixer.flush_pending_insert_params(position);
+        for chain in &mut self.mix.channel_dsp {
             chain.flush_pending_params(position);
         }
     }
@@ -222,17 +222,17 @@ impl AudioEngine {
             };
             // 方案 C：插件链建在宿主 dense 上（OwnLc = home LC，
             // AP = 共享 MIDI 源），输出直接写链所在 dense。
-            if let Some(cb) = self.mixer.channel_buffers_mut(dense) {
+            if let Some(cb) = self.mix.mixer.channel_buffers_mut(dense) {
                 let f = frames
                     .min(cb.left.len().saturating_sub(offset_frames))
                     .min(cb.right.len().saturating_sub(offset_frames));
                 let out = offset_frames;
                 if f > 0 {
-                    if self.scratch_l.len() < f {
-                        self.scratch_l.resize(f, 0.0);
+                    if self.mix.scratch_l.len() < f {
+                        self.mix.scratch_l.resize(f, 0.0);
                     }
-                    if self.scratch_r.len() < f {
-                        self.scratch_r.resize(f, 0.0);
+                    if self.mix.scratch_r.len() < f {
+                        self.mix.scratch_r.resize(f, 0.0);
                     }
                     // 链在上一段刚确认存在；这里防御性跳过而非 panic
                     // （音频线程任何 panic 都会让整条输出静音）。
@@ -251,10 +251,10 @@ impl AudioEngine {
                         let ev: &[PluginEvent] = if proc.params.is_empty() {
                             &events
                         } else {
-                            self.event_scratch.clear();
-                            self.event_scratch.extend_from_slice(&events);
-                            self.event_scratch.extend_from_slice(&proc.params);
-                            &self.event_scratch
+                            self.mix.event_scratch.clear();
+                            self.mix.event_scratch.extend_from_slice(&events);
+                            self.mix.event_scratch.extend_from_slice(&proc.params);
+                            &self.mix.event_scratch
                         };
                         if idx == 0 {
                             proc.processor.process(
@@ -264,17 +264,17 @@ impl AudioEngine {
                                 block_start_sample,
                             );
                         } else {
-                            self.scratch_l[..f].fill(0.0);
-                            self.scratch_r[..f].fill(0.0);
+                            self.mix.scratch_l[..f].fill(0.0);
+                            self.mix.scratch_r[..f].fill(0.0);
                             proc.processor.process(
                                 ev,
-                                &mut self.scratch_l[..f],
-                                &mut self.scratch_r[..f],
+                                &mut self.mix.scratch_l[..f],
+                                &mut self.mix.scratch_r[..f],
                                 block_start_sample,
                             );
                             for i in 0..f {
-                                cb.left[out + i] += self.scratch_l[i];
-                                cb.right[out + i] += self.scratch_r[i];
+                                cb.left[out + i] += self.mix.scratch_l[i];
+                                cb.right[out + i] += self.mix.scratch_r[i];
                             }
                         }
                         proc.params.clear();

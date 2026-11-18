@@ -1,6 +1,6 @@
 //! 渲染主路径：每块从合成后端写 planar 通道缓冲 → 插件/通道处理段/音频轨 → 混音输出。
 
-use crate::engine::AudioEngine;
+use crate::engine::{AudioEngine, MixerState};
 
 use super::STEREO_CHANNELS;
 
@@ -92,7 +92,8 @@ impl AudioEngine {
                 None => (0, false),
             };
             let source = if active_channel {
-                self.mixer
+                self.mix
+                    .mixer
                     .channel_buffers(dense)
                     .map(|cb| (&cb.left, &cb.right))
             } else {
@@ -113,16 +114,16 @@ impl AudioEngine {
             }
         }
 
-        let (master_l, master_r) = self.mixer.process_with_active(Some(&active));
+        let (master_l, master_r) = self.mix.mixer.process_with_active(Some(&active));
         self.channel_active = active;
         write_master(output, master_l, master_r);
     }
 
     fn ensure_block_buffers(&mut self, frames: usize) {
-        if self.mixer.frames() != frames {
+        if self.mix.mixer.frames() != frames {
             let strips = self.dense_strip_params();
-            let count = self.mixer.channel_count();
-            self.mixer.resize(count, frames, &strips);
+            let count = self.mix.mixer.channel_count();
+            self.mix.mixer.resize(count, frames, &strips);
         }
     }
 
@@ -142,7 +143,7 @@ impl AudioEngine {
         if let Some(&last) = offsets.last() {
             self.loop_fade_in_pending = (last + n).saturating_sub(frames);
         }
-        for chain in self.mixer.buffers_mut() {
+        for chain in self.mix.mixer.buffers_mut() {
             let buffers: &mut yinhe_mixer::ChannelBuffers = &mut *chain;
             for buf in [&mut buffers.left, &mut buffers.right] {
                 if pending > 0 {
@@ -248,10 +249,8 @@ impl AudioEngine {
 
     /// 渲染一个 CPU 段到混音台通道缓冲（`offset_frames` 是输出块内偏移）。
     fn render_cpu_segment(&mut self, offset_frames: usize, frames: usize) {
-        let Self {
-            cpu_synth, mixer, ..
-        } = self;
-        cpu_synth.render_range(mixer.buffers_mut(), offset_frames, frames);
+        let Self { cpu_synth, mix, .. } = self;
+        cpu_synth.render_range(mix.mixer.buffers_mut(), offset_frames, frames);
     }
 
     /// 冻结 LC：清空目标 dense 通道并用冻结 PCM 覆盖。
@@ -265,6 +264,7 @@ impl AudioEngine {
         frames: usize,
     ) {
         let frozen: Vec<(usize, String)> = self
+            .mix
             .mixer_params
             .nodes()
             .filter_map(|node| {
@@ -286,7 +286,7 @@ impl AudioEngine {
             let Some(source) = self.plugins.audio_sources.get(&source_id).cloned() else {
                 continue;
             };
-            let Some(cb) = self.mixer.channel_buffers_mut(dense) else {
+            let Some(cb) = self.mix.mixer.channel_buffers_mut(dense) else {
                 continue;
             };
             let n = frames
@@ -310,7 +310,7 @@ impl AudioEngine {
     fn clear_audio_buffers(&mut self, frames: usize) {
         for &ach in self.channel_layout.audio_channels() {
             let dense = self.channel_layout.audio_dense_for(ach) as usize;
-            if let Some(cb) = self.mixer.channel_buffers_mut(dense) {
+            if let Some(cb) = self.mix.mixer.channel_buffers_mut(dense) {
                 let n = frames.min(cb.left.len()).min(cb.right.len());
                 cb.left[..n].fill(0.0);
                 cb.right[..n].fill(0.0);
@@ -325,8 +325,8 @@ impl AudioEngine {
         }
         let total = self.pause_fade_total.max(1) as f32;
         let mut remaining = self.pause_fade_remaining;
-        for ch in 0..self.mixer.channel_count() {
-            let Some(cb) = self.mixer.channel_buffers_mut(ch) else {
+        for ch in 0..self.mix.mixer.channel_count() {
+            let Some(cb) = self.mix.mixer.channel_buffers_mut(ch) else {
                 continue;
             };
             let n = frames.min(cb.left.len()).min(cb.right.len());
@@ -352,16 +352,16 @@ impl AudioEngine {
             output.fill(0.0);
             return;
         }
-        if self.mixer.frames() != frames {
+        if self.mix.mixer.frames() != frames {
             let strips = self.dense_strip_params();
-            let count = self.mixer.channel_count();
-            self.mixer.resize(count, frames, &strips);
+            let count = self.mix.mixer.channel_count();
+            self.mix.mixer.resize(count, frames, &strips);
         }
         self.block_start_sample = self.sample_position;
-        self.mixer.clear_channel_buffers();
+        self.mix.mixer.clear_channel_buffers();
         // 通道 DSP 的滤波历史在空输入下继续衰减；insert/bus/master 尾音同理。
         self.render_channel_dsp(frames, &[]);
-        let (master_l, master_r) = self.mixer.process();
+        let (master_l, master_r) = self.mix.mixer.process();
         write_master(output, master_l, master_r);
         self.publish_track_levels();
     }
@@ -373,18 +373,18 @@ impl AudioEngine {
             return;
         }
         // 块长变化（导出用 1024、实时 512）：与 render 同一逻辑。
-        if self.mixer.frames() != frames {
+        if self.mix.mixer.frames() != frames {
             let strips = self.dense_strip_params();
-            let count = self.mixer.channel_count();
-            self.mixer.resize(count, frames, &strips);
+            let count = self.mix.mixer.channel_count();
+            self.mix.mixer.resize(count, frames, &strips);
         }
         let block_start = self.sample_position;
         self.block_start_sample = block_start;
-        self.mixer.clear_channel_buffers();
+        self.mix.mixer.clear_channel_buffers();
         self.dispatch_plugin_previews(block_start, frames);
         self.render_instruments(block_start, 0, frames);
         self.inject_preview(frames);
-        let (master_l, master_r) = self.mixer.process();
+        let (master_l, master_r) = self.mix.mixer.process();
         write_master(output, master_l, master_r);
     }
 
@@ -398,15 +398,15 @@ impl AudioEngine {
             return;
         }
         // 块长变化（实时 512 / GPU 4096 / 导出 1024）：与播放路径同一逻辑。
-        if self.mixer.frames() != frames {
+        if self.mix.mixer.frames() != frames {
             let strips = self.dense_strip_params();
-            let count = self.mixer.channel_count();
-            self.mixer.resize(count, frames, &strips);
+            let count = self.mix.mixer.channel_count();
+            self.mix.mixer.resize(count, frames, &strips);
         }
-        self.mixer.clear_channel_buffers();
+        self.mix.mixer.clear_channel_buffers();
         self.inject_preview(frames);
         self.render_channel_dsp(frames, &[]);
-        let (master_l, master_r) = self.mixer.process();
+        let (master_l, master_r) = self.mix.mixer.process();
         write_master(output, master_l, master_r);
     }
 
@@ -416,12 +416,10 @@ impl AudioEngine {
     pub(super) fn render_channel_dsp(&mut self, frames: usize, active: &[bool]) {
         let midi_count = self.channel_layout.midi_compacted() as usize;
         // 字段级借用拆分：mixer 缓冲 / 处理段 / 乐器表互不相交。
-        let Self {
-            mixer,
-            channel_dsp,
-            plugins,
-            ..
-        } = self;
+        let Self { mix, plugins, .. } = self;
+        let MixerState {
+            mixer, channel_dsp, ..
+        } = mix;
         let instruments = &mut plugins.instruments;
         for (dense, chain) in mixer.buffers_mut().iter_mut().enumerate().take(midi_count) {
             if !active.get(dense).copied().unwrap_or(true) {
@@ -457,7 +455,7 @@ impl AudioEngine {
             model: &yin_model,
             audio_model,
             sources: &self.plugins.audio_sources,
-            mixer: &mut self.mixer,
+            mixer: &mut self.mix.mixer,
             layout: &self.channel_layout,
             skip_track: &self.skip_track,
             sample_rate: self.sample_rate as f64,

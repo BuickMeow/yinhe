@@ -3219,10 +3219,10 @@ fn mixer_gain_pan_automation_reads_lc_nodes() {
         }],
     });
     let _ = MixerNodeId::LogicalChannel(LogicalChannelId(0));
-    engine.mixer_params = mixer;
+    engine.mix.mixer_params = mixer;
     engine.apply_mixer_automation(1);
 
-    let node = engine.mixer_params.midi_node(0).expect("midi lc");
+    let node = engine.mix.mixer_params.midi_node(0).expect("midi lc");
     assert!((node.gain - 0.25).abs() < f32::EPSILON);
     assert!((node.pan - 0.5).abs() < f32::EPSILON);
 }
@@ -3261,10 +3261,10 @@ fn mixer_send_automation_updates_channel_send_amount() {
                 shape: SegmentShape::Step,
             }],
         });
-    engine.mixer_params = mixer;
+    engine.mix.mixer_params = mixer;
     engine.apply_mixer_automation(1);
 
-    let amount = engine.mixer_params.channel_send_amount(source, target);
+    let amount = engine.mix.mixer_params.channel_send_amount(source, target);
     assert!((amount - 1.0).abs() < f32::EPSILON);
 }
 
@@ -3295,7 +3295,7 @@ fn insert_param_automation_writes_processor_param() {
     let layout = ChannelLayout::from_mask(vec![true]);
     let mut engine = AudioEngine::new(48_000, layout);
     let recorded = Arc::new(Mutex::new(Vec::new()));
-    engine.mixer.insert_insert(
+    engine.mix.mixer.insert_insert(
         0,
         0,
         Box::new(Recorder {
@@ -3325,7 +3325,7 @@ fn insert_param_automation_writes_processor_param() {
                 shape: SegmentShape::Step,
             }],
         });
-    engine.mixer_params = mixer;
+    engine.mix.mixer_params = mixer;
     engine.apply_mixer_automation(1);
 
     let params = recorded.lock().expect("params");
@@ -3343,7 +3343,7 @@ fn frozen_lc_overwrites_target_channel_buffer() {
 
     let layout = ChannelLayout::from_mask(vec![true]);
     let mut engine = AudioEngine::new(48_000, layout);
-    engine.mixer.resize(1, 8, &[]);
+    engine.mix.mixer.resize(1, 8, &[]);
     let mut mixer = MixerParams::default();
     mixer.ensure_len();
     mixer.midi_node_mut(0).expect("midi 0").freeze = Some(FrozenAudio {
@@ -3352,7 +3352,7 @@ fn frozen_lc_overwrites_target_channel_buffer() {
         sample_rate: 48_000,
         frames: 8,
     });
-    engine.mixer_params = mixer;
+    engine.mix.mixer_params = mixer;
     engine.plugins.audio_sources.insert(
         "freeze-a".into(),
         Arc::new(DecodedAudio {
@@ -3364,12 +3364,12 @@ fn frozen_lc_overwrites_target_channel_buffer() {
         }),
     );
     // 先写入合成器残留，确认会被覆盖。
-    if let Some(cb) = engine.mixer.channel_buffers_mut(0) {
+    if let Some(cb) = engine.mix.mixer.channel_buffers_mut(0) {
         cb.left.fill(0.9);
         cb.right.fill(0.9);
     }
     engine.render_frozen_lcs(0, 0, 8);
-    let cb = engine.mixer.channel_buffers_mut(0).expect("channel");
+    let cb = engine.mix.mixer.channel_buffers_mut(0).expect("channel");
     assert!(cb.left.iter().all(|&v| (v - 0.25).abs() < f32::EPSILON));
     assert!(cb.right.iter().all(|&v| (v - 0.5).abs() < f32::EPSILON));
 }
@@ -3381,7 +3381,7 @@ fn frozen_lc_forces_channel_active() {
 
     let layout = ChannelLayout::from_mask(vec![true]);
     let mut engine = AudioEngine::new(48_000, layout);
-    engine.mixer.resize(1, 512, &[]);
+    engine.mix.mixer.resize(1, 512, &[]);
     engine.cpu_synth = yinhe_synth::CpuSynth::new(48_000);
     let mut mixer = MixerParams::default();
     mixer.ensure_len();
@@ -3391,7 +3391,7 @@ fn frozen_lc_forces_channel_active() {
         sample_rate: 48_000,
         frames: 8,
     });
-    engine.mixer_params = mixer;
+    engine.mix.mixer_params = mixer;
     let mut active = Vec::new();
     engine.channel_activity(&mut active);
     assert_eq!(active.first().copied(), Some(true));
@@ -3425,7 +3425,7 @@ fn freeze_job_renders_real_lc_audio() {
         .load_dense_soundfonts(0, &[sfz_path])
         .expect("load soundfont");
     engine.cpu_synth = synth;
-    engine.mixer_params = MixerParams::default();
+    engine.mix.mixer_params = MixerParams::default();
     engine.handle_command(AudioCommand::Play { from_sample: 0 });
 
     engine.begin_freeze_capture(0);

@@ -17,7 +17,7 @@ impl AudioEngine {
     /// yinhe CPU 用合成器的活跃 voice 位图；xsynth 没有可用的通道级信号，
     /// 保守全开（不做跳过）。插件乐器/音频通道一律置活跃（可能带尾音）。
     pub(crate) fn channel_activity(&mut self, active: &mut Vec<bool>) {
-        let n = self.mixer.channel_count();
+        let n = self.mix.mixer.channel_count();
         active.clear();
         active.resize(n, true);
         {
@@ -51,7 +51,7 @@ impl AudioEngine {
         }
         // 冻结的 LC 即使没有活跃 voice 也必须参与混音（推子/insert/send），
         // 否则冻结音频会被空通道跳过。
-        for node in self.mixer_params.nodes() {
+        for node in self.mix.mixer_params.nodes() {
             if node.freeze.is_none() {
                 continue;
             }
