@@ -174,65 +174,92 @@ pub(crate) fn draw_audio_and_track_strips(
     strip_h: f32,
     actions: &mut Vec<MixAction>,
 ) {
+    draw_audio_strips(app, ui, idx, layout, dt, strip_h, actions);
+    draw_track_lc_strips(app, ui, idx, layout, dt, strip_h, actions);
+}
+
+/// 音频通道条：MIDI 条后分隔，每个音频通道一条。
+fn draw_audio_strips(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    idx: usize,
+    layout: &ChannelLayout,
+    dt: f32,
+    strip_h: f32,
+    actions: &mut Vec<MixAction>,
+) {
     let audio_channels: Vec<u16> = layout.audio_channels().to_vec();
-    if !audio_channels.is_empty() {
-        ui.separator();
-        for &ach in audio_channels.iter() {
-            let dense = layout.audio_dense_for(ach);
-            let (level, hold) = if dense != u32::MAX {
-                smoothed_peak(
-                    app.audio_state.handle.as_ref(),
-                    &mut app.mix.smoothed,
-                    dense as usize,
-                    dt,
-                )
-            } else {
-                ((0.0, 0.0), (0.0, 0.0))
-            };
-            let display = app
-                .mix
-                .channel_display
-                .get(&ChannelId::Lc(
-                    app.workspace.documents[idx]
-                        .mixer
-                        .audio_node(ach)
-                        .and_then(|n| match n.id {
-                            ChannelId::Lc(id) => Some(id),
-                            _ => None,
-                        })
-                        .unwrap_or_default(),
-                ))
-                .copied()
-                .unwrap_or(0);
-            strip::audio_strip(app, ui, idx, ach, display, level, hold, strip_h, actions);
-        }
+    if audio_channels.is_empty() {
+        return;
     }
-    // 每轨独立 LC（Rack per-track 输出）。
+    ui.separator();
+    for &ach in audio_channels.iter() {
+        let dense = layout.audio_dense_for(ach);
+        let (level, hold) = if dense != u32::MAX {
+            smoothed_peak(
+                app.audio_state.handle.as_ref(),
+                &mut app.mix.smoothed,
+                dense as usize,
+                dt,
+            )
+        } else {
+            ((0.0, 0.0), (0.0, 0.0))
+        };
+        let display = app
+            .mix
+            .channel_display
+            .get(&ChannelId::Lc(
+                app.workspace.documents[idx]
+                    .mixer
+                    .audio_node(ach)
+                    .and_then(|n| match n.id {
+                        ChannelId::Lc(id) => Some(id),
+                        _ => None,
+                    })
+                    .unwrap_or_default(),
+            ))
+            .copied()
+            .unwrap_or(0);
+        strip::audio_strip(app, ui, idx, ach, display, level, hold, strip_h, actions);
+    }
+}
+
+/// 每轨独立 LC 条（Rack per-track 输出）。
+fn draw_track_lc_strips(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    idx: usize,
+    layout: &ChannelLayout,
+    dt: f32,
+    strip_h: f32,
+    actions: &mut Vec<MixAction>,
+) {
     let track_lcs = layout.track_lc_channels().to_vec();
-    if !track_lcs.is_empty() {
-        ui.separator();
-        for &(track, lc) in &track_lcs {
-            let dense = layout.track_lc_dense(track as usize);
-            let (level, hold) = if dense != u32::MAX {
-                smoothed_peak(
-                    app.audio_state.handle.as_ref(),
-                    &mut app.mix.smoothed,
-                    dense as usize,
-                    dt,
-                )
-            } else {
-                ((0.0, 0.0), (0.0, 0.0))
-            };
-            let display = app
-                .mix
-                .channel_display
-                .get(&ChannelId::Lc(lc))
-                .copied()
-                .unwrap_or(0);
-            strip::track_lc_strip(
-                app, ui, idx, track, lc, display, level, hold, strip_h, actions,
-            );
-        }
+    if track_lcs.is_empty() {
+        return;
+    }
+    ui.separator();
+    for &(track, lc) in &track_lcs {
+        let dense = layout.track_lc_dense(track as usize);
+        let (level, hold) = if dense != u32::MAX {
+            smoothed_peak(
+                app.audio_state.handle.as_ref(),
+                &mut app.mix.smoothed,
+                dense as usize,
+                dt,
+            )
+        } else {
+            ((0.0, 0.0), (0.0, 0.0))
+        };
+        let display = app
+            .mix
+            .channel_display
+            .get(&ChannelId::Lc(lc))
+            .copied()
+            .unwrap_or(0);
+        strip::track_lc_strip(
+            app, ui, idx, track, lc, display, level, hold, strip_h, actions,
+        );
     }
 }
 
