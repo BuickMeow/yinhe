@@ -218,39 +218,19 @@ pub fn show(
             .iter()
             .map(|track| am_lanes::track_mixer_lanes(track, &doc.mixer))
             .collect();
-    let build_row_layout = |edit: &yinhe_editor_core::edit_state::EditState,
-                            model: &yinhe_core::YinModel| {
-        let counts: Vec<u32> = (0..num_tracks)
-            .map(|i| {
-                if edit.arr_am_expanded.get(i).copied().unwrap_or(false)
-                    && Some(i as u16) != conductor_idx
-                {
-                    model
-                        .tracks
-                        .get(i)
-                        .map(|t| {
-                            t.automation_lanes.len()
-                                + track_mixer_lanes
-                                    .get(i)
-                                    .map(|lanes| lanes.iter().map(|(_, l)| l.len()).sum::<usize>())
-                                    .unwrap_or(0)
-                        })
-                        .unwrap_or(0) as u32
-                } else {
-                    0
-                }
-            })
-            .collect();
-        let visible = model.folder_visible_mask();
-        yinhe_types::ArRowLayout::new_with_visible(&counts, &visible)
-    };
     let lc_labels: std::collections::HashMap<yinhe_types::LogicalChannelId, String> = doc
         .mixer
         .lc_display_map()
         .into_iter()
         .map(|(id, n)| (id, crate::mix::lc_label(n)))
         .collect();
-    let mut row_layout = build_row_layout(&doc.edit, &doc.data.model);
+    let mut row_layout = build_row_layout(
+        &doc.edit,
+        &doc.data.model,
+        num_tracks,
+        conductor_idx,
+        &track_mixer_lanes,
+    );
     // 清理已删除 lane 的残留视图状态（undo 删除 lane 后）
     let lane_exists = |t: u16, target: &yinhe_types::AutomationTarget| {
         doc.data
@@ -281,180 +261,19 @@ pub fn show(
         row_layout.total_rows() + 1,
     );
 
-    // ── Ruler: top-right band, drawn with parent painter ──
-    //    ruler 右边界对齐 gpu_rect.max.x，让出垂直滚动条空间
-    {
-        let ruler_rect = egui::Rect::from_min_max(
-            egui::pos2(
-                arr_rect.min.x + tp_w + crate::theme::SPLIT_HANDLE_W,
-                arr_rect.min.y,
-            ),
-            egui::pos2(gpu_rect.max.x, arr_rect.min.y + RULER_H),
-        );
+    draw_ruler_band(ui, doc, arr_rect, gpu_rect, tp_w);
 
-        // 右上角角落：标尺右缘到垂直滚动条之间（SCROLLBAR_W × RULER_H）
-        let corner_rect = egui::Rect::from_min_max(
-            egui::pos2(gpu_rect.max.x, arr_rect.min.y),
-            egui::pos2(arr_rect.max.x, arr_rect.min.y + RULER_H),
-        );
-        ui.painter()
-            .rect_filled(corner_rect, 0.0, crate::theme::track_bg());
+    draw_event_rows_band(ui, doc, arr_rect, gpu_rect, content_top);
 
-        let model = &*doc.data.model;
-        let tpb = model.meta.ppq;
-        let (def_num, def_den) = model.tempo_map.time_sig_default;
-        let sig_events = model.tempo_map.time_sig_events.as_slice();
-        // 量化档位解析：Auto（自适应）按当前 AR 缩放出具体网格。
-        let ar_quantize = doc.edit.quantize_arrange.resolved_with_time_sig(
-            doc.edit.arrange_view.base.pixels_per_tick,
-            tpb,
-            def_num,
-            def_den,
-            false,
-        );
-        let outcome = crate::widgets::time_ruler::interactive_ruler(
-            ui,
-            ruler_rect,
-            &mut doc.edit.arrange_view,
-            tpb,
-            def_num,
-            def_den,
-            sig_events,
-            |tick| {
-                crate::view_interaction::snap_tick(
-                    tick,
-                    ar_quantize,
-                    tpb,
-                    Some((tpb, def_num, def_den, sig_events)),
-                )
-            },
-            "arrange_ruler",
-            &mut doc.edit.cursor_tick,
-        );
-        // 点击/拖动时间标尺跳转位置时，取消已选择的选框（含框选与全选）。
-        if outcome.jumped {
-            doc.edit.selected.clear_rects();
-            doc.edit.arr_sel_rect.clear();
-        }
-    }
-
-    // ── 全局事件行（固定，不随 track scroll_y）──
-    {
-        let event_full = egui::Rect::from_min_max(
-            egui::pos2(arr_rect.min.x, arr_rect.min.y + RULER_H),
-            egui::pos2(gpu_rect.max.x, content_top),
-        );
-        // 右侧滚动条占位（事件行不覆盖滚动条列）
-        let row_corner = egui::Rect::from_min_max(
-            egui::pos2(gpu_rect.max.x, arr_rect.min.y + RULER_H),
-            egui::pos2(arr_rect.max.x, content_top),
-        );
-        ui.painter()
-            .rect_filled(row_corner, 0.0, crate::theme::track_bg());
-
-        let model = &*doc.data.model;
-        let tpb = model.meta.ppq;
-        let (def_num, def_den) = model.tempo_map.time_sig_default;
-        let sig_events = model.tempo_map.time_sig_events.as_slice();
-        let ar_quantize = doc.edit.quantize_arrange.resolved_with_time_sig(
-            doc.edit.arrange_view.base.pixels_per_tick,
-            tpb,
-            def_num,
-            def_den,
-            false,
-        );
-        let rows = crate::widgets::event_rows::show(
-            ui,
-            &mut doc.edit.event_rows_ar,
-            &mut doc.edit.playback,
-            crate::widgets::event_rows::EventRowsData {
-                markers: &model.conductor.markers,
-                time_sig: &model.conductor.time_sig,
-                key_sig: &model.conductor.key_sig,
-                chords: &model.conductor.chord,
-                lyrics: &model.conductor.lyrics,
-            },
-            &mut doc.edit.arrange_view,
-            event_full,
-            tpb,
-            def_num,
-            def_den,
-            sig_events,
-            &|tick| {
-                crate::view_interaction::snap_tick(
-                    tick,
-                    ar_quantize,
-                    tpb,
-                    Some((tpb, def_num, def_den, sig_events)),
-                )
-            },
-            "arrange_event_rows",
-            &mut doc.edit.cursor_tick,
-        );
-        if rows.jumped {
-            doc.edit.selected.clear_rects();
-            doc.edit.arr_sel_rect.clear();
-        }
-        if let Some(edit) = rows.marker_edit {
-            crate::marker_ops::apply_marker_edit(doc, edit);
-        }
-    }
-
-    // ── AR 空白处双击：在点击位置创建 1 小节空 Clip ──
-    if cfg.clip_enabled
-        && ui.input(|i| {
-            i.pointer
-                .button_double_clicked(egui::PointerButton::Primary)
-        })
-        && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
-        && music_rect.contains(pos)
-        && let Some(yinhe_types::ArRow::Track(track_idx)) = row_layout.hit_at_music_y(
-            pos.y - music_rect.min.y + doc.edit.arrange_view.base.scroll_y,
-            doc.edit.arrange_view.lane_height(),
-        )
-    {
-        let tick = doc
-            .edit
-            .arrange_view
-            .x_to_tick(pos.x - gpu_rect.min.x)
-            .max(0.0) as u32;
-        let ppq = doc.data.model.meta.ppq;
-        let (num, den) = doc.data.model.tempo_map.time_sig_at_tick(tick);
-        let bar = yinhe_types::measure_ticks(ppq, num, den).max(1);
-        let start = (tick / bar) * bar;
-        let occupied = doc.data.model.tracks.get(track_idx).is_some_and(|t| {
-            t.clips
-                .iter()
-                .any(|c| c.start_tick <= tick && tick < c.end_tick)
-        });
-        // 只有 Clip 标题栏可以进入 CLIP；主体留给音符选择/框选。
-        let lane_h = doc.edit.arrange_view.lane_height();
-        let music_y = pos.y - music_rect.min.y + doc.edit.arrange_view.base.scroll_y;
-        let track_y = row_layout.track_y(track_idx, lane_h);
-        let header_h = view_ui::render::MIDI_CLIP_HEADER_H
-            .min(lane_h - 2.0)
-            .max(0.0);
-        let on_header = music_y >= track_y && music_y <= track_y + header_h;
-        if !occupied {
-            let before = doc.capture_snapshot();
-            if let Some(action) = doc.create_empty_clip(track_idx as u16, start, bar) {
-                doc.push_undo(action, "undo.move_notes", before);
-            }
-        } else if on_header {
-            // 双击已有 Clip 标题栏：进入 CLIP 模式并切到 PR。
-            let hit = doc.data.model.tracks[track_idx]
-                .clips
-                .iter()
-                .find(|c| c.start_tick <= tick && tick < c.end_tick)
-                .map(|c| c.start_tick);
-            if let Some(clip_start) = hit {
-                doc.edit.pr_clip_mode = true;
-                doc.edit.show_controller_panels = false;
-                doc.edit.cursor_tick = Some(clip_start as f64);
-                *request_pianoroll = true;
-            }
-        }
-    }
+    handle_blank_double_click(
+        ui,
+        doc,
+        &row_layout,
+        music_rect,
+        gpu_rect,
+        cfg.clip_enabled,
+        request_pianoroll,
+    );
 
     // ── Track panel content ──
     ui.scope_builder(egui::UiBuilder::new().max_rect(tp_rect), |ui| {
@@ -557,7 +376,13 @@ pub fn show(
         );
 
         // 展开状态 / lane 数可能刚变：重建行布局并重新 clamp。
-        row_layout = build_row_layout(&doc.edit, &doc.data.model);
+        row_layout = build_row_layout(
+            &doc.edit,
+            &doc.data.model,
+            num_tracks,
+            conductor_idx,
+            &track_mixer_lanes,
+        );
         doc.edit.arrange_view.clamp_scroll(
             gpu_rect.width(),
             gpu_rect.height(),
@@ -1128,4 +953,241 @@ fn clip_params(doc: &Document, track: usize, id: u32) -> Option<(f32, f64, f64)>
         .get(track)
         .and_then(|t| t.audio_clips.iter().find(|c| c.id == id))
         .map(|c| (c.gain, c.fade_in_seconds, c.fade_out_seconds))
+}
+
+/// 构建 AR 行布局（含展开的 AM 子行）。
+fn build_row_layout(
+    edit: &yinhe_editor_core::edit_state::EditState,
+    model: &yinhe_core::YinModel,
+    num_tracks: usize,
+    conductor_idx: Option<u16>,
+    track_mixer_lanes: &[Vec<(yinhe_types::MixerNodeId, Vec<yinhe_types::AutomationLane>)>],
+) -> yinhe_types::ArRowLayout {
+    let counts: Vec<u32> = (0..num_tracks)
+        .map(|i| {
+            if edit.arr_am_expanded.get(i).copied().unwrap_or(false)
+                && Some(i as u16) != conductor_idx
+            {
+                model
+                    .tracks
+                    .get(i)
+                    .map(|t| {
+                        t.automation_lanes.len()
+                            + track_mixer_lanes
+                                .get(i)
+                                .map(|lanes| lanes.iter().map(|(_, l)| l.len()).sum::<usize>())
+                                .unwrap_or(0)
+                    })
+                    .unwrap_or(0) as u32
+            } else {
+                0
+            }
+        })
+        .collect();
+    let visible = model.folder_visible_mask();
+    yinhe_types::ArRowLayout::new_with_visible(&counts, &visible)
+}
+
+/// 顶部时间标尺（右边界对齐 GPU 区，右侧角落补轨道底色）。
+fn draw_ruler_band(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    arr_rect: egui::Rect,
+    gpu_rect: egui::Rect,
+    tp_w: f32,
+) {
+    // ── Ruler: top-right band, drawn with parent painter ──
+    //    ruler 右边界对齐 gpu_rect.max.x，让出垂直滚动条空间
+    {
+        let ruler_rect = egui::Rect::from_min_max(
+            egui::pos2(
+                arr_rect.min.x + tp_w + crate::theme::SPLIT_HANDLE_W,
+                arr_rect.min.y,
+            ),
+            egui::pos2(gpu_rect.max.x, arr_rect.min.y + RULER_H),
+        );
+
+        // 右上角角落：标尺右缘到垂直滚动条之间（SCROLLBAR_W × RULER_H）
+        let corner_rect = egui::Rect::from_min_max(
+            egui::pos2(gpu_rect.max.x, arr_rect.min.y),
+            egui::pos2(arr_rect.max.x, arr_rect.min.y + RULER_H),
+        );
+        ui.painter()
+            .rect_filled(corner_rect, 0.0, crate::theme::track_bg());
+
+        let model = &*doc.data.model;
+        let tpb = model.meta.ppq;
+        let (def_num, def_den) = model.tempo_map.time_sig_default;
+        let sig_events = model.tempo_map.time_sig_events.as_slice();
+        // 量化档位解析：Auto（自适应）按当前 AR 缩放出具体网格。
+        let ar_quantize = doc.edit.quantize_arrange.resolved_with_time_sig(
+            doc.edit.arrange_view.base.pixels_per_tick,
+            tpb,
+            def_num,
+            def_den,
+            false,
+        );
+        let outcome = crate::widgets::time_ruler::interactive_ruler(
+            ui,
+            ruler_rect,
+            &mut doc.edit.arrange_view,
+            tpb,
+            def_num,
+            def_den,
+            sig_events,
+            |tick| {
+                crate::view_interaction::snap_tick(
+                    tick,
+                    ar_quantize,
+                    tpb,
+                    Some((tpb, def_num, def_den, sig_events)),
+                )
+            },
+            "arrange_ruler",
+            &mut doc.edit.cursor_tick,
+        );
+        // 点击/拖动时间标尺跳转位置时，取消已选择的选框（含框选与全选）。
+        if outcome.jumped {
+            doc.edit.selected.clear_rects();
+            doc.edit.arr_sel_rect.clear();
+        }
+    }
+}
+
+/// 标尺下的全局事件行（marker / 拍号 / 调号 / 和弦 / 歌词）。
+fn draw_event_rows_band(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    arr_rect: egui::Rect,
+    gpu_rect: egui::Rect,
+    content_top: f32,
+) {
+    // ── 全局事件行（固定，不随 track scroll_y）──
+    {
+        let event_full = egui::Rect::from_min_max(
+            egui::pos2(arr_rect.min.x, arr_rect.min.y + RULER_H),
+            egui::pos2(gpu_rect.max.x, content_top),
+        );
+        // 右侧滚动条占位（事件行不覆盖滚动条列）
+        let row_corner = egui::Rect::from_min_max(
+            egui::pos2(gpu_rect.max.x, arr_rect.min.y + RULER_H),
+            egui::pos2(arr_rect.max.x, content_top),
+        );
+        ui.painter()
+            .rect_filled(row_corner, 0.0, crate::theme::track_bg());
+
+        let model = &*doc.data.model;
+        let tpb = model.meta.ppq;
+        let (def_num, def_den) = model.tempo_map.time_sig_default;
+        let sig_events = model.tempo_map.time_sig_events.as_slice();
+        let ar_quantize = doc.edit.quantize_arrange.resolved_with_time_sig(
+            doc.edit.arrange_view.base.pixels_per_tick,
+            tpb,
+            def_num,
+            def_den,
+            false,
+        );
+        let rows = crate::widgets::event_rows::show(
+            ui,
+            &mut doc.edit.event_rows_ar,
+            &mut doc.edit.playback,
+            crate::widgets::event_rows::EventRowsData {
+                markers: &model.conductor.markers,
+                time_sig: &model.conductor.time_sig,
+                key_sig: &model.conductor.key_sig,
+                chords: &model.conductor.chord,
+                lyrics: &model.conductor.lyrics,
+            },
+            &mut doc.edit.arrange_view,
+            event_full,
+            tpb,
+            def_num,
+            def_den,
+            sig_events,
+            &|tick| {
+                crate::view_interaction::snap_tick(
+                    tick,
+                    ar_quantize,
+                    tpb,
+                    Some((tpb, def_num, def_den, sig_events)),
+                )
+            },
+            "arrange_event_rows",
+            &mut doc.edit.cursor_tick,
+        );
+        if rows.jumped {
+            doc.edit.selected.clear_rects();
+            doc.edit.arr_sel_rect.clear();
+        }
+        if let Some(edit) = rows.marker_edit {
+            crate::marker_ops::apply_marker_edit(doc, edit);
+        }
+    }
+}
+
+/// AR 空白处双击：创建 1 小节空 Clip；双击 Clip 标题栏进入 CLIP 模式。
+fn handle_blank_double_click(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    row_layout: &yinhe_types::ArRowLayout,
+    music_rect: egui::Rect,
+    gpu_rect: egui::Rect,
+    clip_enabled: bool,
+    request_pianoroll: &mut bool,
+) {
+    // ── AR 空白处双击：在点击位置创建 1 小节空 Clip ──
+    if clip_enabled
+        && ui.input(|i| {
+            i.pointer
+                .button_double_clicked(egui::PointerButton::Primary)
+        })
+        && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
+        && music_rect.contains(pos)
+        && let Some(yinhe_types::ArRow::Track(track_idx)) = row_layout.hit_at_music_y(
+            pos.y - music_rect.min.y + doc.edit.arrange_view.base.scroll_y,
+            doc.edit.arrange_view.lane_height(),
+        )
+    {
+        let tick = doc
+            .edit
+            .arrange_view
+            .x_to_tick(pos.x - gpu_rect.min.x)
+            .max(0.0) as u32;
+        let ppq = doc.data.model.meta.ppq;
+        let (num, den) = doc.data.model.tempo_map.time_sig_at_tick(tick);
+        let bar = yinhe_types::measure_ticks(ppq, num, den).max(1);
+        let start = (tick / bar) * bar;
+        let occupied = doc.data.model.tracks.get(track_idx).is_some_and(|t| {
+            t.clips
+                .iter()
+                .any(|c| c.start_tick <= tick && tick < c.end_tick)
+        });
+        // 只有 Clip 标题栏可以进入 CLIP；主体留给音符选择/框选。
+        let lane_h = doc.edit.arrange_view.lane_height();
+        let music_y = pos.y - music_rect.min.y + doc.edit.arrange_view.base.scroll_y;
+        let track_y = row_layout.track_y(track_idx, lane_h);
+        let header_h = view_ui::render::MIDI_CLIP_HEADER_H
+            .min(lane_h - 2.0)
+            .max(0.0);
+        let on_header = music_y >= track_y && music_y <= track_y + header_h;
+        if !occupied {
+            let before = doc.capture_snapshot();
+            if let Some(action) = doc.create_empty_clip(track_idx as u16, start, bar) {
+                doc.push_undo(action, "undo.move_notes", before);
+            }
+        } else if on_header {
+            // 双击已有 Clip 标题栏：进入 CLIP 模式并切到 PR。
+            let hit = doc.data.model.tracks[track_idx]
+                .clips
+                .iter()
+                .find(|c| c.start_tick <= tick && tick < c.end_tick)
+                .map(|c| c.start_tick);
+            if let Some(clip_start) = hit {
+                doc.edit.pr_clip_mode = true;
+                doc.edit.show_controller_panels = false;
+                doc.edit.cursor_tick = Some(clip_start as f64);
+                *request_pianoroll = true;
+            }
+        }
+    }
 }
