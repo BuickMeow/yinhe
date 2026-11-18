@@ -824,12 +824,13 @@ struct**，是 1.7「改了不生效」的同类风险。应删除 `SendParams` 
 | 8.4.8 Rack 配置/实例边界 | `ad3face0` | `OwnLc.rack` 注释写明共享配置、每轨实例 |
 | 8.3.6 RendererSharedState 分组 | `531fe702` | playback / sf / underrun 三组 |
 | 8.1 track_panel AM 行拆分 | `73620ba7` | `render::draw_automation_row`，759→629 |
+| 8.1 track_panel 普通轨行拆分 | `3a14babf` | `render::draw_track_row`，629→474 |
+| 生产路径 panic 源 | `9a0126b6` | 音频乐器链/和弦排序/归档对话框/网格线/仓储等 11 处 unwrap/expect 改为防御性处理 |
 
 ### 未开始（P3，需单独排期）
 
 | 项 | 原因 |
 |---|---|
-| 8.1 `track_panel::show` 普通轨行拆分 | AM 行与动作已拆出；剩余普通轨行 260 行需要大参数结构体 |
 | 8.3.1 `AudioEngine` 53 字段拆分 | 混音/播放/插件宿主三块，风险高 |
 | 8.3.3 `arrange::show` 数据/动作/绘制分离 | 同 8.1 |
 | 8.4.4 `display_name` 移出 types | 被 egui/flutter/midi 三处使用，需要先有共享 UI 文案层 |
