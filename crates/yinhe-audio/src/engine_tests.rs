@@ -3292,7 +3292,7 @@ fn mixer_send_automation_updates_channel_send_amount() {
         .automation
         .push(AutomationLane {
             target: AutomationTarget::MixerSend {
-                node: channel,
+                source: channel,
                 target,
             },
             track: 0,

@@ -674,7 +674,9 @@ pub enum AutomationTarget {
     MixerPan { channel: crate::MixerChannelId },
     /// 任意混音节点到某个通道的发送量（归一化 0..1，1.0 = 满发送）。
     MixerSend {
-        node: crate::MixerChannelId,
+        /// 发送的源节点。
+        #[serde(rename = "node")]
+        source: crate::MixerChannelId,
         target: crate::ChannelId,
     },
     /// 某个 insert 槽位的插件参数（值归一化 0..1）。
@@ -850,8 +852,8 @@ impl AutomationTarget {
             AutomationTarget::MixerPan { channel } => {
                 format!("Mixer Pan {:?}", channel)
             }
-            AutomationTarget::MixerSend { node, target } => {
-                format!("Mixer Send {:?} -> {:?}", node, target)
+            AutomationTarget::MixerSend { source, target } => {
+                format!("Mixer Send {:?} -> {:?}", source, target)
             }
             AutomationTarget::InsertParam {
                 target,

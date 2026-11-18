@@ -75,28 +75,28 @@ impl InstrumentRack {
     /// OwnLc 多条轨时同一 slot_id 有多个实例（每轨一个，分别写各自 home LC）。
     /// UI 列表按配置显示一条，GUI/参数面板取代表实例。
     fn slot_mut(&mut self, channel: u8, index: usize) -> Option<&mut InstrumentSlot> {
-        let mut seen: Vec<u64> = Vec::new();
+        // slot_id 去重后按出现顺序取第 index 个（HashSet 避免 O(n²)）。
+        let mut seen: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        let mut nth = 0usize;
         for (i, slot) in self.slots.iter().enumerate() {
-            if slot.channel != channel || seen.contains(&slot.slot_id) {
+            if slot.channel != channel || !seen.insert(slot.slot_id) {
                 continue;
             }
-            if seen.len() == index {
+            if nth == index {
                 return self.slots.get_mut(i);
             }
-            seen.push(slot.slot_id);
+            nth += 1;
         }
         None
     }
 
     /// 该通道的配置数（UI 列表长度 / 设备链乐器段长度）。
     pub(crate) fn slot_count(&self, channel: u8) -> usize {
-        let mut seen: Vec<u64> = Vec::new();
-        for slot in &self.slots {
-            if slot.channel == channel && !seen.contains(&slot.slot_id) {
-                seen.push(slot.slot_id);
-            }
-        }
-        seen.len()
+        let mut seen: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        self.slots
+            .iter()
+            .filter(|slot| slot.channel == channel && seen.insert(slot.slot_id))
+            .count()
     }
 
     /// 按槽位 id 取变体（引擎退回匹配用）。
@@ -491,10 +491,12 @@ impl InstrumentRack {
             if !written.insert(key) {
                 continue;
             }
-            let index = *next_index.entry(slot.channel).or_insert(0);
-            if let Some(slot_index) = next_index.get_mut(&slot.channel) {
-                *slot_index += 1;
-            }
+            let index = {
+                let entry = next_index.entry(slot.channel).or_insert(0);
+                let current = *entry;
+                *entry += 1;
+                current
+            };
             let Some(r) = mixer
                 .rack_instruments_mut(yinhe_types::RackId::from_midi_channel(slot.channel))
                 .and_then(|refs| refs.get_mut(index))

@@ -267,7 +267,7 @@ impl MixerParams {
         let valid = |channel: ChannelId, lane: &yinhe_types::AutomationLane| match &lane.target {
             yinhe_types::AutomationTarget::MixerGain { channel: c }
             | yinhe_types::AutomationTarget::MixerPan { channel: c }
-            | yinhe_types::AutomationTarget::MixerSend { node: c, .. }
+            | yinhe_types::AutomationTarget::MixerSend { source: c, .. }
             | yinhe_types::AutomationTarget::InsertParam { target: c, .. } => {
                 resolved.get(c).copied().unwrap_or(ChannelId::Master) == channel
             }

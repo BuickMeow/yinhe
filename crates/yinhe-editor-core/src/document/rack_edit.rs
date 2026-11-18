@@ -220,6 +220,8 @@ impl Document {
     ///
     /// UI（`InstrumentRack`）与音频引擎都以此为准，避免两边各自解析
     /// `TrackAudioTarget` 导致宿主对不上。
+    /// 复杂度 O(轨数 × 已收集宿主数)：宿主数 = 同通道的 LC 数 + AP，
+    /// 实际远小于轨数，无需额外哈希表。
     pub fn instrument_hosts(&self, channel: u8) -> Vec<Option<yinhe_types::LogicalChannelId>> {
         let mut hosts: Vec<Option<yinhe_types::LogicalChannelId>> = Vec::new();
         for t in self.data.model.tracks.iter() {

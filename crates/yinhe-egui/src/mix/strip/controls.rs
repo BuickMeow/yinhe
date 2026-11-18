@@ -242,17 +242,23 @@ fn send_db_label(amount: f32) -> String {
     }
 }
 
+/// 聚焦发送的当前状态（源 → 目标、发送量、推子前/后）。
+pub(super) struct FocusSend {
+    pub source: ChannelId,
+    pub target: Option<ChannelId>,
+    pub amount: f32,
+    pub pre_fader: bool,
+}
+
 /// C 的聚焦发送：一个目标、一个 dB 旋钮；源 == 目标或目标不可发送时留空。
-#[allow(clippy::too_many_arguments)]
-pub(super) fn focus_send_block(
-    ui: &mut egui::Ui,
-    source: Option<ChannelId>,
-    target: Option<ChannelId>,
-    amount: f32,
-    pre_fader: bool,
-    actions: &mut Vec<MixAction>,
-) {
-    let Some((source, target)) = source.zip(target) else {
+pub(super) fn focus_send_block(ui: &mut egui::Ui, send: FocusSend, actions: &mut Vec<MixAction>) {
+    let FocusSend {
+        source,
+        target,
+        amount,
+        pre_fader,
+    } = send;
+    let Some(target) = target else {
         return;
     };
     if source == target || source == ChannelId::Master {

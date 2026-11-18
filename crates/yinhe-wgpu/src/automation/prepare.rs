@@ -61,8 +61,8 @@ fn target_hash(target: &AutomationTarget) -> u64 {
         AutomationTarget::Tempo => u64::MAX,
         AutomationTarget::MixerGain { channel } => 0x7_0000 + mix_channel_key(*channel),
         AutomationTarget::MixerPan { channel } => 0x8_0000 + mix_channel_key(*channel),
-        AutomationTarget::MixerSend { node, target } => {
-            0x9_0000 + mix_channel_key(*node) + channel_id_key(*target)
+        AutomationTarget::MixerSend { source, target } => {
+            0x9_0000 + mix_channel_key(*source) + channel_id_key(*target)
         }
         AutomationTarget::InsertParam {
             target, slot, id, ..

@@ -14,7 +14,7 @@
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_mixer::MasterParams;
-use yinhe_types::{ChannelId, LogicalChannelId, MixerChannelId};
+use yinhe_types::{LogicalChannelId, MixerChannelId};
 
 use crate::app::App;
 use crate::widgets::meter::{METER_GAP, METER_W, SCALE_W};
@@ -63,11 +63,7 @@ const CONTROLS_W: f32 = CONTENT_W - (SCALE_W + METER_W * 2.0 + METER_GAP) - GAP;
 const BODY_TOP_PAD: f32 = 4.0;
 const BODY_BOTTOM_PAD: f32 = 6.0;
 
-fn focus_send_info(
-    app: &App,
-    idx: usize,
-    source_channel: MixerChannelId,
-) -> (Option<ChannelId>, Option<ChannelId>, f32, bool) {
+fn focus_send_info(app: &App, idx: usize, source_channel: MixerChannelId) -> controls::FocusSend {
     let mixer = &app.workspace.documents[idx].mixer;
     let source = mixer.channel_id_for_ui(source_channel);
     let target = app
@@ -78,7 +74,12 @@ fn focus_send_info(
         .and_then(|target| mixer.channel_send(source, target))
         .map(|send| (send.amount, send.pre_fader))
         .unwrap_or((0.0, false));
-    (Some(source), target, amount, pre_fader)
+    controls::FocusSend {
+        source,
+        target,
+        amount,
+        pre_fader,
+    }
 }
 
 /// 混音节点通道条主体（MIDI / 音频 / 每轨 LC 共用）。
@@ -100,7 +101,7 @@ fn node_strip(
     actions: &mut Vec<MixAction>,
 ) -> egui::Rect {
     let params = app.workspace.documents[idx].mixer.node_strip(node);
-    let (send_source, send_target, send_amount, send_pre) = focus_send_info(app, idx, node);
+    let send = focus_send_info(app, idx, node);
     let selected = strip_selected(app, idx, node);
     strip_frame(
         ui,
@@ -115,7 +116,7 @@ fn node_strip(
                 send_height(0),
                 egui::Layout::top_down(egui::Align::Center),
                 |ui| {
-                    focus_send_block(ui, send_source, send_target, send_amount, send_pre, actions);
+                    focus_send_block(ui, send, actions);
                 },
             );
             ui.add_space(GAP);

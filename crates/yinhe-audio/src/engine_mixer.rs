@@ -215,13 +215,13 @@ impl AudioEngine {
             }
             for lane in &node.automation {
                 let AutomationTarget::MixerSend {
-                    node: target,
+                    source,
                     target: send_target,
                 } = lane.target
                 else {
                     continue;
                 };
-                if target != channel {
+                if source != channel {
                     continue;
                 }
                 let value = lane

@@ -280,9 +280,9 @@ fn write_target(w: &mut impl Write, target: &AutomationTarget) -> io::Result<()>
             w.write_all(&[8])?;
             write_mixer_channel(w, *channel)
         }
-        AutomationTarget::MixerSend { node, target } => {
+        AutomationTarget::MixerSend { source, target } => {
             w.write_all(&[9])?;
-            write_mixer_channel(w, *node)?;
+            write_mixer_channel(w, *source)?;
             write_channel_id(w, *target)
         }
         AutomationTarget::InsertParam {
@@ -424,7 +424,7 @@ fn read_target(r: &mut impl Read) -> io::Result<AutomationTarget> {
             channel: read_mixer_channel(r)?,
         },
         9 => AutomationTarget::MixerSend {
-            node: read_mixer_channel(r)?,
+            source: read_mixer_channel(r)?,
             target: read_channel_id(r)?,
         },
         10 => AutomationTarget::InsertParam {
