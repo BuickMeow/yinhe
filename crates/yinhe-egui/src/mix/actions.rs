@@ -10,6 +10,10 @@ use super::{App, PluginEntry, assign_instrument_plugin, insert_refs, start_plugi
 
 /// 一帧内 strip 交互产出的动作（渲染完统一应用，避开借用冲突）。
 pub(crate) enum MixAction {
+    /// 点击通道卡片上被控件占用的区域（如电平表）：仍然选中该通道。
+    SelectChannel {
+        channel: ChannelId,
+    },
     /// 更新任意混音节点（AP 通道 / 音频 / 每轨 LC）的 strip 参数。
     SetNodeStrip {
         node: ChannelId,
@@ -60,6 +64,9 @@ pub(crate) enum MixAction {
 
 pub(crate) fn apply_action(app: &mut App, _ctx: &egui::Context, idx: usize, action: MixAction) {
     match action {
+        MixAction::SelectChannel { channel } => {
+            crate::mix::strip::select_channel(app, idx, channel);
+        }
         MixAction::SetNodeStrip { node, params } => {
             app.note_mixer_edit(t!("undo.mix_param").as_ref());
             app.apply_node_strip(idx, node, params);

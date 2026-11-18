@@ -65,3 +65,126 @@ fn strip_selected_follows_track_selection() {
     let ch2 = doc.track_channel_id(2).expect("track 2 channel");
     assert!(!super::strip_selected_doc(&doc, ch2));
 }
+
+/// 回归：横向 ScrollArea 内点击卡片**内容区空白**（不挪系统鼠标）必须命中
+/// 整卡点击层。色带只有 20px，用户点的是卡片其它位置。
+#[test]
+fn card_body_click_hits_inside_horizontal_scroll_area() {
+    use eframe::egui::{self, pos2, vec2};
+
+    let ctx = egui::Context::default();
+    let mut clicked = 0usize;
+    let mut run = |events: Vec<egui::Event>| {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                pos2(0.0, 0.0),
+                vec2(1000.0, 800.0),
+            )),
+            events,
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            egui::ScrollArea::horizontal()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.horizontal_top(|ui| {
+                        for i in 0..17 {
+                            let (_rect, card) = super::controls::strip_frame(
+                                ui,
+                                i,
+                                egui::Color32::RED,
+                                "A01",
+                                700.0,
+                                false,
+                                |ui, _| {
+                                    ui.label("content");
+                                },
+                            );
+                            if card.clicked() {
+                                clicked += 1;
+                            }
+                        }
+                    });
+                });
+        });
+        output.textures_delta.clear();
+    };
+
+    let pos = pos2(40.0, 120.0);
+    let modifiers = egui::Modifiers::default();
+    run(vec![]);
+    run(vec![egui::Event::PointerMoved(pos)]);
+    run(vec![egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers,
+    }]);
+    run(vec![egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers,
+    }]);
+
+    assert_eq!(clicked, 1, "单击卡片内容区应命中整卡点击层");
+}
+
+/// 回归：电平表自带 click_and_drag（拖推子），会挡住整卡点击层；
+/// 单击电平表必须补发通道选中动作。
+#[test]
+fn meter_click_requests_channel_selection() {
+    use eframe::egui::{self, pos2, vec2};
+
+    let ctx = egui::Context::default();
+    let mut actions = Vec::new();
+    let mut run = |events: Vec<egui::Event>| {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                pos2(0.0, 0.0),
+                vec2(1000.0, 800.0),
+            )),
+            events,
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            super::controls::gain_meter(
+                ui,
+                1.0,
+                (0.0, 0.0),
+                (0.0, 0.0),
+                120.0,
+                ChannelId::Master,
+                &mut actions,
+            );
+        });
+        output.textures_delta.clear();
+    };
+
+    let pos = pos2(10.0, 60.0);
+    let modifiers = egui::Modifiers::default();
+    run(vec![]);
+    run(vec![egui::Event::PointerMoved(pos)]);
+    run(vec![egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers,
+    }]);
+    run(vec![egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers,
+    }]);
+
+    assert!(
+        actions.iter().any(|a| matches!(
+            a,
+            MixAction::SelectChannel {
+                channel: ChannelId::Master
+            }
+        )),
+        "单击电平表应请求选中 Master 通道"
+    );
+}

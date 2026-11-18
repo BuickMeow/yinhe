@@ -92,6 +92,20 @@ impl Document {
         true
     }
 
+    /// 选中某音频目标通道对应的全部轨道（MIX 通道卡片点击）。
+    ///
+    /// AP 通道选中所有链接到该 AP 的轨；每轨 LC / 音频 LC 选中其 source 轨；
+    /// Master 选中 Conductor。返回锚点轨道（最小下标）。
+    pub fn select_channel_tracks(&mut self, ch: yinhe_types::ChannelId) -> Option<u16> {
+        self.edit.track_selected.clear();
+        for i in 0..self.data.model.tracks.len() {
+            if self.track_channel_id(i) == Some(ch) {
+                self.edit.track_selected.insert(i as u16);
+            }
+        }
+        self.edit.track_selected.iter().min().copied()
+    }
+
     /// 设置 Channel 的三态听感。进入 Channel solo 时清空所有 Track solo。
     pub fn set_channel_audibility(
         &mut self,
@@ -180,5 +194,58 @@ impl Document {
                 td.soloed = ov.soloed;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use yinhe_core::TrackAudioTarget;
+    use yinhe_types::{ApChannelId, ApGroupId, ChannelId};
+
+    use super::*;
+
+    /// AP 通道选中所有链接到同一 AP 的轨道（含清除旧选择）。
+    #[test]
+    fn select_channel_tracks_selects_all_ap_tracks() {
+        let mut doc = Document::empty();
+        doc.edit.track_selected.insert(5);
+
+        let model = Arc::make_mut(&mut doc.data.model);
+        for i in [1usize, 2] {
+            Arc::make_mut(&mut model.tracks[i]).audio_target =
+                Some(TrackAudioTarget::Ap { ap: ApGroupId(0) });
+        }
+
+        let ch = ChannelId::Ap(ApChannelId::new(ApGroupId(0), 0));
+        assert_eq!(doc.select_channel_tracks(ch), Some(1));
+        let mut selected: Vec<u16> = doc.edit.track_selected.iter().copied().collect();
+        selected.sort_unstable();
+        assert_eq!(selected, vec![1, 2]);
+    }
+
+    /// 每轨 LC 只选中它自己的 source 轨。
+    #[test]
+    fn select_channel_tracks_selects_own_lc_track() {
+        let mut doc = Document::empty();
+        let ch = doc.track_channel_id(1).expect("track 1 应有 LC");
+        assert!(matches!(ch, ChannelId::Lc(_)));
+        assert_eq!(doc.select_channel_tracks(ch), Some(1));
+        assert_eq!(
+            doc.edit.track_selected.iter().copied().collect::<Vec<_>>(),
+            vec![1]
+        );
+    }
+
+    /// Master 通道选中 Conductor。
+    #[test]
+    fn select_channel_tracks_selects_conductor_for_master() {
+        let mut doc = Document::empty();
+        assert_eq!(doc.select_channel_tracks(ChannelId::Master), Some(0));
+        assert_eq!(
+            doc.edit.track_selected.iter().copied().collect::<Vec<_>>(),
+            vec![0]
+        );
     }
 }

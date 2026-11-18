@@ -45,8 +45,15 @@ pub(super) fn strip_frame(
     height: f32,
     selected: bool,
     add_contents: impl FnOnce(&mut egui::Ui, f32),
-) -> egui::Rect {
+) -> (egui::Rect, egui::Response) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(STRIP_WIDTH, height), egui::Sense::hover());
+    // 整卡片的点击层：注册在内容之前，子控件（旋钮/电平/M/S）后注册仍然优先；
+    // 空白区域点击也能选中通道。单击选中的处理只在这一层，不影响控件。
+    let card = ui.interact(
+        rect,
+        ui.scope_id().with(("mix_strip_card", &id_salt)),
+        egui::Sense::click(),
+    );
     let painter = ui.painter_at(rect);
     // 卡片背景：选中时整条用全局 selection.bg_fill（与 AR 轨道行选中同色），
     // 未选中用默认背景色。
@@ -98,7 +105,7 @@ pub(super) fn strip_frame(
         egui::Stroke::new(1.0, crate::theme::line_fg()),
         egui::StrokeKind::Inside,
     );
-    rect
+    (rect, card)
 }
 
 /// 固定尺寸分区容器（宽度 = 内容宽，高度 = `h`）。
@@ -459,7 +466,7 @@ fn toggle_button(
 
 /// 电平表 + 增益推子：推子贴在 L/R 条**左侧外侧**，是向右（指向音频）
 /// 的实心三角，拖动改增益，双击回 0dB。返回 `Some(新增益)`。
-fn gain_meter(
+pub(super) fn gain_meter(
     ui: &mut egui::Ui,
     gain: f32,
     level: (f32, f32),
@@ -503,6 +510,11 @@ fn gain_meter(
     });
     if reset {
         return Some(1.0);
+    }
+    // 电平表本身占用了 click_and_drag（拖动推子），会挡住整卡点击层；
+    // 单击（不拖动）仍然按「点击通道卡片」处理。
+    if resp.clicked() {
+        actions.push(MixAction::SelectChannel { channel: target });
     }
     if resp.dragged()
         && let Some(pos) = resp.interact_pointer_pos()

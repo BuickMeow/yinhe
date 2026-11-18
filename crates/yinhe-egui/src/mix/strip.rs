@@ -104,7 +104,7 @@ pub(crate) fn node_strip(
     let params = app.workspace.documents[idx].mixer.node_strip(node);
     let send = focus_send_info(app, idx, node);
     let selected = strip_selected(app, idx, node);
-    strip_frame(
+    let (rect, card) = strip_frame(
         ui,
         ("mix_strip", node),
         color,
@@ -125,7 +125,11 @@ pub(crate) fn node_strip(
                 actions.push(MixAction::SetNodeStrip { node, params: p });
             }
         },
-    )
+    );
+    if card.clicked() {
+        select_channel(app, idx, node);
+    }
+    rect
 }
 
 /// 单条 MIDI 通道条。
@@ -248,7 +252,7 @@ pub(crate) fn master_strip(
     let title = t!("mix.master").to_string();
 
     let selected = strip_selected(app, idx, ChannelId::Master);
-    let rect = strip_frame(
+    let (rect, card) = strip_frame(
         ui,
         "mix_strip_master",
         crate::theme::accent_active(),
@@ -263,6 +267,9 @@ pub(crate) fn master_strip(
             }
         },
     );
+    if card.clicked() {
+        select_channel(app, idx, ChannelId::Master);
+    }
     header_double_click_opens_master_dock(app, ui, idx, rect, actions);
 }
 
@@ -290,7 +297,7 @@ pub(crate) fn header_double_click_opens_master_dock(
         actions,
     );
     if resp.clicked() {
-        focus_channel_info(app, ChannelId::Master);
+        select_channel(app, idx, ChannelId::Master);
     }
     if !resp.double_clicked() {
         return;
@@ -339,17 +346,18 @@ pub(crate) fn strip_selected_doc(
 /// 点击通道条时把该通道对应的轨道设为选中（让通道条亮起，同时保持
 /// 右栏「音轨属性」与 PR 当前轨一致）。
 pub(crate) fn select_channel_tracks(app: &mut App, idx: usize, ch: ChannelId) {
-    let anchor = {
-        let doc = &mut app.workspace.documents[idx];
-        doc.edit.track_selected.clear();
-        for i in 0..doc.data.model.tracks.len() {
-            if doc.track_channel_id(i) == Some(ch) {
-                doc.edit.track_selected.insert(i as u16);
-            }
-        }
-        doc.edit.track_selected.iter().min().copied()
-    };
+    let anchor = app.workspace.documents[idx].select_channel_tracks(ch);
     app.track_selection_anchor = anchor;
+}
+
+/// 点击通道卡片（任意非控件区域 / 电平表）：选中通道、切右栏通道属性、
+/// 让 SEND 焦点跟随。选中是**整卡**行为，不要求点中 20px 色带。
+pub(crate) fn select_channel(app: &mut App, idx: usize, ch: ChannelId) {
+    select_channel_tracks(app, idx, ch);
+    focus_channel_info(app, ch);
+    if ch != ChannelId::Master {
+        app.mix.send_focus = Some(ch);
+    }
 }
 
 /// 色带双击：打开底部设备链（dock）并选中该通道（通道条 / 音频条共用）。
@@ -369,9 +377,7 @@ pub(crate) fn header_double_click_opens_dock(
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.header_double_click"));
     header_context_menu(app, &resp, idx, context, actions);
     if resp.clicked() {
-        app.mix.send_focus = Some(context);
-        select_channel_tracks(app, idx, context);
-        focus_channel_info(app, context);
+        select_channel(app, idx, context);
     }
     if !resp.double_clicked() {
         return;
