@@ -100,18 +100,18 @@ C 决策 #5（多输出暂不做）的三个理由：
 
 ---
 
-## 4. AP 仍是 MVP 的实际影响
+## 4. AP MVP 的实际影响（阶段 6 后）
 
 | 影响点 | 表现 | 阻塞吗 |
 |---|---|---|
-| AP 通道不是独立节点 | `ApGroup.channel` 指向共享 MIDI LC；`ChannelId::Ap` 是 UI/发送面板身份，引擎最终解析回那条 LC | 不阻塞，行为正确 |
+| AP 通道是独立节点 | `ChannelId::Ap` 拥有自己的 `MixerNode`，`ApGroup` 不再指向共享 MIDI LC；引擎把 AP 映射到其 MIDI 源 dense | 不阻塞 |
 | 单 AP 单输出 | 多输出插件不能从一个 AP 拆多路 | 不阻塞（§3） |
-| freeze/insert/自动化位置 | 都在那条共享 LC 上，语义对但身份混 | 不阻塞 |
-| 发送面板 | `channel_id_for_ui` 把有 AP 的 MIDI 通道显示成 `AP01` | 不阻塞 |
-| 删除 AP | `remove_ap_for_midi` 只删编组，共享 LC 由 repair 清理 | 不阻塞 |
+| freeze/insert/自动化 | 都挂在 AP 节点上，身份清晰 | 不阻塞 |
+| 发送/主输出 | `ChannelId::Ap` 与 LC 一样参与发送图与 PDC | 不阻塞 |
+| 删除 AP | 编组、节点、指向它的 send 一起清理 | 不阻塞 |
 
-一句话：**用户可见行为已经是 C；内部表示还背着“共享 LC”这个过渡包袱**，
-这是 §9 清理排期的一部分。
+一句话：**AP 已是独立音频通道，剩余差异只有“单输出”和“Rack 配置仍按
+MIDI 通道”**；前者是产品决策，后者见 §2。
 
 ---
 
@@ -152,9 +152,10 @@ send，不把两条 Track 的 home LC 指向同一条。”
    OwnLc 的 LC + 音频 LC；被 OwnLc 取代的源通道不显示。
    现状：通道条早已只列 AP（`9829d8be`）；MIX 图层面板也已按音频目标
    列行（`ea104237`），OwnLc 轨显示「001 Track1」而不是 A11 分组。
-2. **引擎侧（后做）**：某 MIDI 通道上的轨**全部**是 OwnLc 时，不再为该
-   源通道开 dense（省一路静音处理）；chase/预览改走 LC dense。
-   依赖阶段 6（独立 AP/LC 节点），暂不做。
+2. **引擎侧（可选优化，未做）**：某 MIDI 通道上的轨**全部**是 OwnLc 时，
+   理论上可不给该源通道开 dense；但 AP 节点仍映射到 MIDI 源 dense，
+   且 `ChannelLayout` 按活跃通道统一分配，暂不为省一路静音处理增加分支。
+   用户可见的 A11 混乱已由 UI 过滤消除。
 
 ---
 
@@ -187,6 +188,9 @@ send，不把两条 Track 的 home LC 指向同一条。”
 **音轨面板徽标（`d924c8f5`）**：OwnLc 轨不再显示 LC01（普通 DAW 轨道观感），
 AP 轨仍显示 A01；`lc_labels` 传递链删除。
 
+**AP 独立节点（`f104e3cb`）**：`ChannelId::Ap` 拥有自己的 `MixerNode`，
+删除 `MixerChannelId` / `MixerNodeId`，`MixerRack` 改为单一 `ChannelId` 槽位表。
+
 ---
 
 ## 9. 旧类型清理排期（全面革新）
@@ -198,11 +202,16 @@ AP 轨仍显示 A01；`lc_labels` 传递链删除。
 |---|---|---|
 | 1 | MIX 只列音频目标通道 | ✅ `ea104237`（图层面板按音频目标列行；通道条早已只列 AP——`9829d8be`） |
 | 2 | OwnLc 通道不可选 | ✅ `afaa3f61`（删 `link_track_to_lc` + LC 选择器） |
-| 3 | `MixerChannelId` → `ChannelId` 全面替换 | ⏳ 待做：`AutomationTarget` 持久化 `MixerChannelId`（yin 格式），需要格式迁移 + roundtrip 回归，单独一轮做 |
-| 4 | `DirectMaster` 类型删除 | ⏳ 暂停期结束后做（存量轨迁移到 OwnLc/AP） |
-| 5 | `ChannelSource::Track(u16::MAX)` 哨兵 | ✅ `88979687`：改为"创建即绑定轨道"（`add_track_lc(track)`），哨兵不再落盘；注意——**真正的无源汇总通道**（不挂任何源、只接 send）要等阶段 6 才可行，因为 dense 通道按轨道分配 |
-| 6 | AP 通道变独立 `MixerNode` | ⏳ 待做：音频图 + PDC 需要实机音频回归，放在阶段 3 之后单独做 |
+| 3 | `MixerChannelId` → `ChannelId` 全面替换 | ✅ `f104e3cb`（删 `MixerChannelId`/`MixerNodeId`；`AutomationTarget`/`InsertTarget`/`DockContext` 全部 ChannelId；v9 混音段迁移器删除） |
+| 4 | `DirectMaster` 类型删除 | ✅ `2dee7542`（类型、UI、隐藏 dense 全部删除） |
+| 5 | `ChannelSource::Track(u16::MAX)` 哨兵 | ✅ `88979687`：改为"创建即绑定轨道"（`add_track_lc(track)`），哨兵不再落盘 |
+| 6 | AP 通道变独立 `MixerNode` | ✅ `f104e3cb`（`ChannelId::Ap` 自有节点，`ApGroup.channel` 删除；音频仍映射到 MIDI 源 dense） |
 | 7 | v9 Bus 残留文案/注释清理 | ✅ `9a81c19c` |
+
+另两个本轮修复：
+
+- `3705cce5`：创建文件夹后 automation lane 的 `track` 未同步，曲线沿用旧轨道色。
+- `f104e3cb`：SEND 聚焦目标失效时回退首条可发送通道，旋钮不再消失。
 
 顺序理由：先动用户可见的显示（阶段 1–2），再做身份替换（3），最后才动
 音频图（6）；每阶段独立 commit + 回归测试，任何一步都可单独回滚。
