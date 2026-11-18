@@ -8005,6 +8005,7 @@ dependencies = [
  "uuid",
  "yinhe-core",
  "yinhe-memtrace",
+ "yinhe-theme",
  "yinhe-types",
 ]
 
@@ -8074,6 +8075,7 @@ version = "0.1.0"
 dependencies = [
  "egui",
  "serde",
+ "yinhe-types",
 ]
 
 [[package]]
