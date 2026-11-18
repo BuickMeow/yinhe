@@ -695,168 +695,168 @@ impl Document {
     pub fn apply_automation_edits(&mut self, edits: Vec<AutomationEdit>) -> Vec<UndoAction> {
         let mut actions = Vec::new();
         for edit in edits {
-            let action = match edit {
-                AutomationEdit::Add {
-                    track_idx,
-                    target,
-                    tick,
-                    value,
-                    shape,
-                } => {
-                    let event = yinhe_types::AutomationEvent {
-                        id: 0,
-                        tick,
-                        value,
-                        shape,
-                    };
-                    self.add_automation_event(track_idx as usize, target, event)
-                        .map(|(_, _, action)| action)
-                }
-                AutomationEdit::Move {
-                    track_idx,
-                    lane_idx,
-                    target,
-                    old_tick,
-                    new_tick,
-                    new_value,
-                } => self.move_automation_event(
-                    track_idx as usize,
-                    lane_idx,
-                    &target,
-                    old_tick,
-                    new_tick,
-                    new_value,
-                ),
-                AutomationEdit::MoveBatch {
-                    track_idx,
-                    lane_idx,
-                    target,
-                    moves,
-                } => {
-                    self.move_automation_events_batch(track_idx as usize, lane_idx, &target, &moves)
-                }
-                AutomationEdit::CycleShape {
-                    track_idx,
-                    lane_idx,
-                    target,
-                    tick,
-                } => {
-                    // Step ↔ Curve 直线（偏移量 0,0,0,0）
-                    let lane = if matches!(target, yinhe_types::AutomationTarget::Tempo) {
-                        Some(&self.data.model.conductor.tempo)
-                    } else {
-                        self.data
-                            .model
-                            .tracks
-                            .get(track_idx as usize)
-                            .and_then(|t| t.automation_lanes.get(lane_idx))
-                    };
-                    let evt = lane.and_then(|l| l.events.iter().find(|e| e.tick == tick));
-                    if let Some(evt) = evt {
-                        let next = match evt.shape {
-                            yinhe_types::SegmentShape::Step => {
-                                yinhe_types::SegmentShape::linear_curve()
-                            }
-                            yinhe_types::SegmentShape::Curve { .. } => {
-                                yinhe_types::SegmentShape::Step
-                            }
-                        };
-                        self.set_automation_shape(track_idx as usize, lane_idx, &target, tick, next)
-                    } else {
-                        None
-                    }
-                }
-                AutomationEdit::SetShape {
-                    track_idx,
-                    lane_idx,
-                    target,
-                    tick,
-                    shape,
-                } => self.set_automation_shape(track_idx as usize, lane_idx, &target, tick, shape),
-                AutomationEdit::Delete {
-                    track_idx,
-                    lane_idx,
-                    target,
-                    tick,
-                } => self.delete_automation_event(track_idx as usize, lane_idx, &target, tick),
-                AutomationEdit::NodeAdd {
-                    node,
-                    target,
-                    tick,
-                    value,
-                    shape,
-                } => self.add_mixer_automation_event(
-                    node,
-                    target,
-                    yinhe_types::AutomationEvent {
-                        id: 0,
-                        tick,
-                        value,
-                        shape,
-                    },
-                ),
-                AutomationEdit::NodeMove {
-                    node,
-                    lane_idx,
-                    target,
-                    old_tick,
-                    new_tick,
-                    new_value,
-                } => self.move_mixer_automation_event(
-                    node, lane_idx, &target, old_tick, new_tick, new_value,
-                ),
-                AutomationEdit::NodeMoveBatch {
-                    node,
-                    lane_idx,
-                    target,
-                    moves,
-                } => self.move_mixer_automation_events_batch(node, lane_idx, &target, &moves),
-                AutomationEdit::NodeCycleShape {
-                    node,
-                    lane_idx,
-                    target,
-                    tick,
-                } => {
-                    let lane = self.mixer.node(node).and_then(|node| {
-                        node.automation
-                            .iter()
-                            .find(|lane| lane.target == target)
-                            .or_else(|| node.automation.get(lane_idx))
-                    });
-                    let evt = lane.and_then(|l| l.events.iter().find(|e| e.tick == tick));
-                    if let Some(evt) = evt {
-                        let next = match evt.shape {
-                            yinhe_types::SegmentShape::Step => {
-                                yinhe_types::SegmentShape::linear_curve()
-                            }
-                            yinhe_types::SegmentShape::Curve { .. } => {
-                                yinhe_types::SegmentShape::Step
-                            }
-                        };
-                        self.set_mixer_automation_shape(node, lane_idx, &target, tick, next)
-                    } else {
-                        None
-                    }
-                }
-                AutomationEdit::NodeSetShape {
-                    node,
-                    lane_idx,
-                    target,
-                    tick,
-                    shape,
-                } => self.set_mixer_automation_shape(node, lane_idx, &target, tick, shape),
-                AutomationEdit::NodeDelete {
-                    node,
-                    lane_idx,
-                    target,
-                    tick,
-                } => self.delete_mixer_automation_event(node, lane_idx, &target, tick),
+            let action = if matches!(
+                &edit,
+                AutomationEdit::NodeAdd { .. }
+                    | AutomationEdit::NodeMove { .. }
+                    | AutomationEdit::NodeMoveBatch { .. }
+                    | AutomationEdit::NodeCycleShape { .. }
+                    | AutomationEdit::NodeSetShape { .. }
+                    | AutomationEdit::NodeDelete { .. }
+            ) {
+                self.apply_node_automation_edit(edit)
+            } else {
+                self.apply_track_automation_edit(edit)
             };
             if let Some(action) = action {
                 actions.push(action);
             }
         }
         actions
+    }
+
+    /// 轨道/Conductor 自动化编辑（非 Node* 变体）。
+    fn apply_track_automation_edit(&mut self, edit: AutomationEdit) -> Option<UndoAction> {
+        match edit {
+            AutomationEdit::Add {
+                track_idx,
+                target,
+                tick,
+                value,
+                shape,
+            } => {
+                let event = yinhe_types::AutomationEvent {
+                    id: 0,
+                    tick,
+                    value,
+                    shape,
+                };
+                self.add_automation_event(track_idx as usize, target, event)
+                    .map(|(_, _, action)| action)
+            }
+            AutomationEdit::Move {
+                track_idx,
+                lane_idx,
+                target,
+                old_tick,
+                new_tick,
+                new_value,
+            } => self.move_automation_event(
+                track_idx as usize,
+                lane_idx,
+                &target,
+                old_tick,
+                new_tick,
+                new_value,
+            ),
+            AutomationEdit::MoveBatch {
+                track_idx,
+                lane_idx,
+                target,
+                moves,
+            } => self.move_automation_events_batch(track_idx as usize, lane_idx, &target, &moves),
+            AutomationEdit::CycleShape {
+                track_idx,
+                lane_idx,
+                target,
+                tick,
+            } => {
+                let lane = if matches!(target, yinhe_types::AutomationTarget::Tempo) {
+                    Some(&self.data.model.conductor.tempo)
+                } else {
+                    self.data
+                        .model
+                        .tracks
+                        .get(track_idx as usize)
+                        .and_then(|t| t.automation_lanes.get(lane_idx))
+                };
+                let evt = lane.and_then(|l| l.events.iter().find(|e| e.tick == tick));
+                let next = evt.map(|evt| next_step_shape(evt.shape))?;
+                self.set_automation_shape(track_idx as usize, lane_idx, &target, tick, next)
+            }
+            AutomationEdit::SetShape {
+                track_idx,
+                lane_idx,
+                target,
+                tick,
+                shape,
+            } => self.set_automation_shape(track_idx as usize, lane_idx, &target, tick, shape),
+            AutomationEdit::Delete {
+                track_idx,
+                lane_idx,
+                target,
+                tick,
+            } => self.delete_automation_event(track_idx as usize, lane_idx, &target, tick),
+            _ => None,
+        }
+    }
+
+    /// 混音节点自动化编辑（Node* 变体）。
+    fn apply_node_automation_edit(&mut self, edit: AutomationEdit) -> Option<UndoAction> {
+        match edit {
+            AutomationEdit::NodeAdd {
+                node,
+                target,
+                tick,
+                value,
+                shape,
+            } => self.add_mixer_automation_event(
+                node,
+                target,
+                yinhe_types::AutomationEvent {
+                    id: 0,
+                    tick,
+                    value,
+                    shape,
+                },
+            ),
+            AutomationEdit::NodeMove {
+                node,
+                lane_idx,
+                target,
+                old_tick,
+                new_tick,
+                new_value,
+            } => self.move_mixer_automation_event(
+                node, lane_idx, &target, old_tick, new_tick, new_value,
+            ),
+            AutomationEdit::NodeMoveBatch {
+                node,
+                lane_idx,
+                target,
+                moves,
+            } => self.move_mixer_automation_events_batch(node, lane_idx, &target, &moves),
+            AutomationEdit::NodeCycleShape {
+                node,
+                lane_idx,
+                target,
+                tick,
+            } => {
+                let lane = self.mixer.node(node).and_then(|node| {
+                    node.automation
+                        .iter()
+                        .find(|lane| lane.target == target)
+                        .or_else(|| node.automation.get(lane_idx))
+                });
+                let evt = lane.and_then(|l| l.events.iter().find(|e| e.tick == tick));
+                let next = evt.map(|evt| next_step_shape(evt.shape))?;
+                self.set_mixer_automation_shape(node, lane_idx, &target, tick, next)
+            }
+            AutomationEdit::NodeSetShape {
+                node,
+                lane_idx,
+                target,
+                tick,
+                shape,
+            } => self.set_mixer_automation_shape(node, lane_idx, &target, tick, shape),
+            AutomationEdit::NodeDelete {
+                node,
+                lane_idx,
+                target,
+                tick,
+            } => self.delete_mixer_automation_event(node, lane_idx, &target, tick),
+            _ => None,
+        }
     }
 
     /// 对面板选框内的锚点批量应用表达式编辑（Info 面板选框编辑）。
@@ -1488,5 +1488,13 @@ mod tests {
                 .midi_node(0)
                 .is_some_and(|n| n.automation.is_empty())
         );
+    }
+}
+
+/// Step ↔ Curve 直线（偏移量 0,0,0,0）的形状轮换。
+fn next_step_shape(shape: yinhe_types::SegmentShape) -> yinhe_types::SegmentShape {
+    match shape {
+        yinhe_types::SegmentShape::Step => yinhe_types::SegmentShape::linear_curve(),
+        yinhe_types::SegmentShape::Curve { .. } => yinhe_types::SegmentShape::Step,
     }
 }

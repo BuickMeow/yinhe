@@ -69,34 +69,7 @@ pub(super) fn apply_action(app: &mut App, _ctx: &egui::Context, idx: usize, acti
             app.apply_master(idx, params);
         }
         MixAction::AddInsert { target, plugin } => {
-            if let Some(refs) = insert_refs(app.workspace.documents[idx].mixer_mut(), target) {
-                refs.push(yinhe_mixer::InsertRef {
-                    uid: 0,
-                    plugin_path: plugin.path.clone(),
-                    plugin_id: plugin.id.clone(),
-                    name: plugin.name.clone(),
-                    format: plugin.format,
-                    bypassed: false,
-                    state: None,
-                });
-            }
-            app.workspace.documents[idx].data.bump_revision();
-            let rack = app.mixer_rack_mut(idx);
-            if let Err(e) = rack.load_plugin(
-                target,
-                plugin.format,
-                &plugin.path,
-                &plugin.id,
-                &plugin.name,
-                None,
-                false,
-            ) {
-                // 加载失败：引用已入持久化层（保存不丢），但机架无实例；
-                // 状态行提示用户。
-                rack.last_error = Some(e.0);
-            }
-            app.push_mixer_state_to_engine(idx);
-            app.mix.picker_for = None;
+            apply_add_insert(app, idx, target, plugin);
         }
         MixAction::SetChannelSend {
             source,
@@ -112,71 +85,102 @@ pub(super) fn apply_action(app: &mut App, _ctx: &egui::Context, idx: usize, acti
                 app.push_mixer_state_to_engine(idx);
             }
         }
-        MixAction::FreezeChannel { channel } => {
-            app.start_lc_freeze(idx, channel);
-        }
-        MixAction::UnfreezeChannel { node } => {
-            let doc = &mut app.workspace.documents[idx];
-            let before = doc.capture_snapshot();
-            if let Some(action) = doc.set_node_freeze(node, None) {
-                doc.push_undo(action, t!("undo.freeze_lc").as_ref(), before);
-                app.push_mixer_state_to_engine(idx);
-            }
-        }
+        MixAction::FreezeChannel { channel } => app.start_lc_freeze(idx, channel),
+        MixAction::UnfreezeChannel { node } => apply_unfreeze(app, idx, node),
         MixAction::AddMixerGainAutomation { channel } => {
-            let value = app.workspace.documents[idx]
-                .mixer
-                .node_strip(channel)
-                .gain
-                .clamp(0.0, 1.0);
-            let node_id = app.workspace.documents[idx].mixer.node_id_for(channel);
-            let doc = &mut app.workspace.documents[idx];
-            let before = doc.capture_snapshot();
-            if let Some(action) = doc.add_mixer_automation_lane(
-                node_id,
-                yinhe_types::AutomationTarget::MixerGain { channel },
-                value,
-            ) {
-                doc.push_undo(action, t!("undo.create_automation").as_ref(), before);
-                app.workspace.documents[idx].mark_mixer_dirty();
-                app.push_mixer_state_to_engine(idx);
-            }
+            apply_mixer_automation_lane(app, idx, channel, false);
         }
         MixAction::AddMixerPanAutomation { channel } => {
-            let pan = app.workspace.documents[idx].mixer.node_strip(channel).pan;
-            let value = (pan.clamp(-1.0, 1.0) + 1.0) * 0.5;
-            let node_id = app.workspace.documents[idx].mixer.node_id_for(channel);
-            let doc = &mut app.workspace.documents[idx];
-            let before = doc.capture_snapshot();
-            if let Some(action) = doc.add_mixer_automation_lane(
-                node_id,
-                yinhe_types::AutomationTarget::MixerPan { channel },
-                value,
-            ) {
-                doc.push_undo(action, t!("undo.create_automation").as_ref(), before);
-                app.workspace.documents[idx].mark_mixer_dirty();
-                app.push_mixer_state_to_engine(idx);
-            }
+            apply_mixer_automation_lane(app, idx, channel, true);
         }
         MixAction::AssignInstrument { channel, plugin } => {
             assign_instrument_plugin(app, idx, channel, &plugin);
             app.mix.instrument_picker_for = None;
         }
-        MixAction::ClearInstruments { channel } => {
-            app.workspace.documents[idx].mixer_mut().racks[channel as usize]
-                .instruments
-                .clear();
-            app.workspace.documents[idx].data.bump_revision();
-            if idx < app.instrument_racks.len() {
-                let handle = app.audio_state.handle.as_ref().map(|a| &a.handle);
-                let rack = &mut app.instrument_racks[idx];
-                while rack.slot_count(channel) > 0 {
-                    rack.remove(channel, 0, handle);
-                }
-            }
-            app.notify_audio_model_changed();
-            app.push_mixer_state_to_engine(idx);
-        }
+        MixAction::ClearInstruments { channel } => apply_clear_instruments(app, idx, channel),
         MixAction::RescanPlugins => start_plugin_scan(app),
     }
+}
+
+/// 追加插件 insert：持久化引用 + 机架加载 + 推引擎。
+fn apply_add_insert(app: &mut App, idx: usize, target: InsertTarget, plugin: PluginEntry) {
+    if let Some(refs) = insert_refs(app.workspace.documents[idx].mixer_mut(), target) {
+        refs.push(yinhe_mixer::InsertRef {
+            uid: 0,
+            plugin_path: plugin.path.clone(),
+            plugin_id: plugin.id.clone(),
+            name: plugin.name.clone(),
+            format: plugin.format,
+            bypassed: false,
+            state: None,
+        });
+    }
+    app.workspace.documents[idx].data.bump_revision();
+    let rack = app.mixer_rack_mut(idx);
+    if let Err(e) = rack.load_plugin(
+        target,
+        plugin.format,
+        &plugin.path,
+        &plugin.id,
+        &plugin.name,
+        None,
+        false,
+    ) {
+        // 加载失败：引用已入持久化层（保存不丢），但机架无实例；
+        // 状态行提示用户。
+        rack.last_error = Some(e.0);
+    }
+    app.push_mixer_state_to_engine(idx);
+    app.mix.picker_for = None;
+}
+
+/// 解除节点冻结并推引擎。
+fn apply_unfreeze(app: &mut App, idx: usize, node: yinhe_types::MixerNodeId) {
+    let doc = &mut app.workspace.documents[idx];
+    let before = doc.capture_snapshot();
+    if let Some(action) = doc.set_node_freeze(node, None) {
+        doc.push_undo(action, t!("undo.freeze_lc").as_ref(), before);
+        app.push_mixer_state_to_engine(idx);
+    }
+}
+
+/// 新增 MixerGain / MixerPan 自动化 lane。
+fn apply_mixer_automation_lane(app: &mut App, idx: usize, channel: MixerChannelId, pan: bool) {
+    let doc = &mut app.workspace.documents[idx];
+    let node_id = doc.mixer.node_id_for(channel);
+    let (target, value) = if pan {
+        let pan = doc.mixer.node_strip(channel).pan;
+        (
+            yinhe_types::AutomationTarget::MixerPan { channel },
+            (pan.clamp(-1.0, 1.0) + 1.0) * 0.5,
+        )
+    } else {
+        (
+            yinhe_types::AutomationTarget::MixerGain { channel },
+            doc.mixer.node_strip(channel).gain.clamp(0.0, 1.0),
+        )
+    };
+    let before = doc.capture_snapshot();
+    if let Some(action) = doc.add_mixer_automation_lane(node_id, target, value) {
+        doc.push_undo(action, t!("undo.create_automation").as_ref(), before);
+        doc.mark_mixer_dirty();
+        app.push_mixer_state_to_engine(idx);
+    }
+}
+
+/// 清空某通道的乐器链（持久化 + 机架实例）。
+fn apply_clear_instruments(app: &mut App, idx: usize, channel: u8) {
+    app.workspace.documents[idx].mixer_mut().racks[channel as usize]
+        .instruments
+        .clear();
+    app.workspace.documents[idx].data.bump_revision();
+    if idx < app.instrument_racks.len() {
+        let handle = app.audio_state.handle.as_ref().map(|a| &a.handle);
+        let rack = &mut app.instrument_racks[idx];
+        while rack.slot_count(channel) > 0 {
+            rack.remove(channel, 0, handle);
+        }
+    }
+    app.notify_audio_model_changed();
+    app.push_mixer_state_to_engine(idx);
 }
