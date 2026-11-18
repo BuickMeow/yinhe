@@ -219,8 +219,8 @@ fn clear_dock_selection_on_outside_click(app: &mut App, ui: &egui::Ui, dock_rect
 
 /// dock 的通道语境 = 混音通道身份。
 ///
-/// MIDI 通道同时是乐器（XSynth 或插件）的挂载点；音频通道、Bus、Master
-/// 各自独立。这里不再维护第三份枚举，避免 `DockContext` ↔ `InsertTarget` ↔
+/// MIDI 通道同时是乐器（内置音源或插件）的挂载点；音频通道、每轨 LC、
+/// Master 各自独立。这里不再维护第三份枚举，避免 `DockContext` ↔ `InsertTarget` ↔
 /// `MixerChannelId` 三套转换。
 pub(crate) type DockContext = yinhe_types::MixerChannelId;
 

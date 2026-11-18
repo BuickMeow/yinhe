@@ -10,7 +10,7 @@ use super::{App, PluginEntry, assign_instrument_plugin, insert_refs, start_plugi
 
 /// 一帧内 strip 交互产出的动作（渲染完统一应用，避开借用冲突）。
 pub(crate) enum MixAction {
-    /// 更新任意混音节点（MIDI / 音频 / Bus）的 strip 参数。
+    /// 更新任意混音节点（AP 通道 / 音频 / 每轨 LC）的 strip 参数。
     SetNodeStrip {
         node: MixerChannelId,
         params: StripParams,

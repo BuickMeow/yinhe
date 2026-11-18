@@ -58,7 +58,7 @@ pub struct AutomationDelta {
     pub after: Vec<AutomationEvent>,
 }
 
-/// 任意 MixerNode 上的自动化增量（LC / Bus / Master）。
+/// 任意 MixerNode 上的自动化增量（LC / Master）。
 #[derive(Clone, Debug)]
 pub struct MixerAutomationDelta {
     pub node: yinhe_types::MixerNodeId,
@@ -277,7 +277,7 @@ pub enum UndoAction {
         before: Vec<yinhe_core::AudioClip>,
         after: Vec<yinhe_core::AudioClip>,
     },
-    /// 混音台参数整体替换（推子/声像/M-S/master/发送/总线增删）。
+    /// 混音台参数整体替换（推子/声像/M-S/master/发送/通道增删）。
     /// 参数层无细粒度依赖，整份 `MixerParams` 快照比逐字段 delta 更简单可靠；
     /// 由 UI 层合并为一次拖动/一次点击一条 undo。
     MixerParams {

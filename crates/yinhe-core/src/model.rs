@@ -520,8 +520,8 @@ impl TrackData {
 
     /// 该轨是否允许承载某个自动化目标。
     ///
-    /// Master / Folder 不承载轨道 automation；Bus 自动化属于 Bus 节点，
-    /// 不再寄宿 Master。
+    /// Master / Folder 不承载轨道 automation；通道自动化属于 MixerNode
+    /// 自己的 automation，不再寄宿 Master。
     pub fn allows_automation_target(&self, _target: &AutomationTarget) -> bool {
         self.can_hold(TrackContent::Automation)
     }

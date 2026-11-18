@@ -1,8 +1,8 @@
 use super::*;
 
 impl Document {
-    /// 新工程/导入 MIDI 的默认混音台：不预设任何总线，降低学习曲线；
-    /// 需要总线时由用户在 MIX 或 AR 手动添加。
+    /// 新工程/导入 MIDI 的默认混音台：不预设额外通道，降低学习曲线；
+    /// 通道按轨道目标自动生成。
     fn default_mixer() -> MixerParams {
         let mut mixer = MixerParams::default();
         mixer.ensure_len();
@@ -116,7 +116,7 @@ impl Document {
                 .collect();
 
             // 无混音数据的导入（.mid / 压缩包内 MIDI / 老 .yin 无混音段）走新工程
-            // 默认混音台：不预设总线；.yin 工程自带混音数据（Some）时原样保留。
+            // 默认混音台：不预设额外通道；.yin 工程自带混音数据（Some）时原样保留。
             let mut mixer = mixer.unwrap_or_else(Self::default_mixer);
             mixer.ensure_len();
             let mut data = ProjectData::new(Arc::new(model), project_file, mapping_file);

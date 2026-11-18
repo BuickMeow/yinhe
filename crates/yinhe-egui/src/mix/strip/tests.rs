@@ -42,7 +42,7 @@ fn gain_position_round_trip() {
     }
 }
 
-/// C 的 SEND 聚焦模式固定一行，不再随总线数增长。
+/// C 的 SEND 聚焦模式固定一行，不随通道数增长。
 #[test]
 fn auto_height_is_fixed_by_focus_send_row() {
     let base = auto_panel_height();

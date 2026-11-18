@@ -88,7 +88,7 @@ pub struct LayoutSettings {
     /// MIX 视图底部混音台面板高度（px）。仅在 `mix_height_auto == false`
     /// （用户拖拽过分割条）时使用。
     pub mix_height: f32,
-    /// 混音台高度是否随总线数量自动扩展。用户拖拽分割条后转为手动，
+    /// 混音台高度是否随通道数量自动扩展。用户拖拽分割条后转为手动，
     /// 双击分割条恢复自动。
     #[serde(default = "default_mix_height_auto")]
     pub mix_height_auto: bool,

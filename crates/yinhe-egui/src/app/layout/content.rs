@@ -133,7 +133,7 @@ impl App {
             if h_split_resp.double_clicked() {
                 // 双击分割线 → 还原默认分割
                 if has_mixer {
-                    // 混音台恢复「随总线数自动高度」。
+                    // 混音台恢复「随通道数自动高度」。
                     self.mix_height_auto = true;
                 } else {
                     self.arr_split = LayoutSettings::default().arr_split;
@@ -238,7 +238,7 @@ impl App {
                 // 右栏改动（改 port/channel、图层拖动排序）→ 统一走 notify：
                 // 通道集合真的变了才 teardown 重建，重排等只 reload_notes。
                 self.notify_audio_model_changed();
-                // 通道归属/总线输出变化在通道集合不变时只走 notify，
+                // 通道归属/主输出变化在通道集合不变时只走 notify，
                 // 这里补一次混音全量推送，保证引擎输出路由同步。
                 if let Some(idx) = self.workspace.active_doc {
                     self.sync_track_lc_racks(idx);

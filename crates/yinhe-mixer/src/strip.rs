@@ -38,7 +38,7 @@ impl StripState {
 
     /// 块内逐样本处理：增益 × 声像斜坡**原地**应用到缓冲。
     ///
-    /// 调用方负责把结果累加到 master/bus（audible 判定由上层处理）；
+    /// 调用方负责把结果累加到目标通道或 master（audible 判定由上层处理）；
     /// 静音轨道也照常推进斜坡状态，保证 unmute 瞬间参数已是目标值、无爆音。
     pub(crate) fn apply_fader(&mut self, left: &mut [f32], right: &mut [f32]) {
         let frames = left.len();

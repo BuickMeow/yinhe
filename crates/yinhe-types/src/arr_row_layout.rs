@@ -180,7 +180,7 @@ impl ArRow {
         }
     }
 
-    /// 音轨行返回轨道下标（删 Bus 固定行后恒为 `Some`，保留以兼容调用方）。
+    /// 音轨行返回轨道下标（固定行已删，恒为 `Some`，保留 Option 以兼容调用方）。
     pub fn track_opt(self) -> Option<usize> {
         Some(self.track())
     }

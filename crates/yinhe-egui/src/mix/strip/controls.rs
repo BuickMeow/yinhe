@@ -10,17 +10,17 @@ use crate::widgets::meter::{DB_MAX, DB_MIN, db_to_gain, gain_at_frac, gain_frac,
 
 use super::*;
 
-/// 发送区高度：每条总线一行，全部可见（总线多了面板随之上移）。
-pub(super) fn send_height(_bus_count: usize) -> f32 {
-    // C 的 SEND 是聚焦模式：每条通道只显示一个目标旋钮，不再按总线数展开。
+/// 发送区高度：C 的 SEND 是聚焦模式——每条通道只显示一个目标旋钮，
+/// 不再按目标数展开。
+pub(super) fn send_height() -> f32 {
     SEND_ROW_H
 }
 
-/// 混音台的理想面板高度：基础布局 + 发送区按总线数扩展。
+/// 混音台的理想面板高度：基础布局 + 聚焦发送区一行。
 ///
 /// 这是「自动高度」模式下的高度；用户拖拽分割条后转为手动高度。
 pub(crate) fn auto_panel_height() -> f32 {
-    HEADER_H + BODY_TOP_PAD + send_height(0) + GAP + METER_MODULE_H + BODY_BOTTOM_PAD
+    HEADER_H + BODY_TOP_PAD + send_height() + GAP + METER_MODULE_H + BODY_BOTTOM_PAD
 }
 
 /// 电平表：线性增益 → 表内 y 坐标（top = 最大 dB）。
@@ -36,7 +36,7 @@ pub(super) fn gain_at_y(y: f32, top: f32, bottom: f32) -> f32 {
 
 /// 通道条外框：直角矩形 + 单层描边 + 顶部色带（写标题）。
 /// `add_contents` 在色带下方的内容区排布，参数为其可用高度。
-/// 返回整条卡片矩形（调用方可在色带行上叠加交互，如总线删除按钮）。
+/// 返回整条卡片矩形（调用方可在色带行上叠加交互，如右键菜单）。
 pub(super) fn strip_frame(
     ui: &mut egui::Ui,
     id_salt: impl std::hash::Hash + std::fmt::Debug,
@@ -132,14 +132,14 @@ fn target_channel(target: StripAutomationTarget) -> MixerChannelId {
     }
 }
 
-/// 音量自动化目标：LC / Bus / Master 统一走 MixerGain。
+/// 音量自动化目标：LC / Master 统一走 MixerGain。
 fn volume_automation_action(target: StripAutomationTarget) -> Option<MixAction> {
     Some(MixAction::AddMixerGainAutomation {
         channel: target_channel(target),
     })
 }
 
-/// 声像自动化目标：LC / Bus 统一走 MixerPan；Master 暂不支持声像。
+/// 声像自动化目标：LC 走 MixerPan；Master 暂不支持声像。
 fn pan_automation_action(target: StripAutomationTarget) -> Option<MixAction> {
     (target_channel(target) != MixerChannelId::Master).then_some(MixAction::AddMixerPanAutomation {
         channel: target_channel(target),
@@ -547,7 +547,7 @@ fn gain_meter(
     None
 }
 
-/// 通道/音频/总线共用：固定高度的电平表 + 右侧 dB / 声像 / M / S。
+/// 通道/音频/每轨 LC 共用：固定高度的电平表 + 右侧 dB / 声像 / M / S。
 ///
 /// 模块高度取 `METER_MODULE_H` 与剩余高度的较小值；面板更高时用空白把模块
 /// 顶到卡片底部，不再随面板高度拉伸。

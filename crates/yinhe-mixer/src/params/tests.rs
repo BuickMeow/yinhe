@@ -63,7 +63,7 @@ fn ensure_len_backfills_tables_and_fixes_ids() {
     assert_eq!(p.master.id, ChannelId::Master);
 }
 
-/// 删除一条总线不改变其他总线的 ID；指向它的 send/输出被清理。
+/// 删除一条每轨 LC 不改变其他 LC 的 ID；指向它的 send/输出被清理。
 /// ensure_len 清理指向不存在通道的主输出。
 #[test]
 fn ensure_len_prunes_dangling_routing() {

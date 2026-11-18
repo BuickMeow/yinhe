@@ -132,7 +132,7 @@ fn density_pr_follows_pianoroll_visibility_separately() {
     assert_eq!(doc.density_pr.view().rows.iter().sum::<u32>(), 1);
 }
 
-/// 导入无混音数据的 MIDI / 新建工程不预设总线；.yin 工程自带混音数据
+/// 导入无混音数据的 MIDI / 新建工程不预设额外通道；.yin 工程自带混音数据
 /// （Some）时原样保留。
 #[test]
 fn from_model_new_projects_have_no_default_bus() {

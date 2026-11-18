@@ -19,7 +19,7 @@ use crate::app::App;
 /// 参数面板目标槽位。
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ParamTarget {
-    /// insert 链目标（源通道 / 总线 / master）。
+    /// insert 链目标（MIDI 通道 / 音频通道 / LC / master）。
     Insert {
         target: yinhe_audio::InsertTarget,
         slot: usize,

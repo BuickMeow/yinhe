@@ -326,7 +326,7 @@ pub fn handle_interactions(
         }
     }
 
-    // 右键：记录命中的行（普通轨 / 固定总线行）。
+    // 右键：记录命中的行（普通轨 / Master 行）。
     let ctx_target_id = egui::Id::unique("track_ctx_menu_target");
     if resp.secondary_clicked() {
         ui.ctx()

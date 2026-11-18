@@ -57,7 +57,7 @@ pub(crate) fn update_track_meters(app: &mut App, dt: f32) {
     }
 }
 
-/// 混音台自动高度：基础布局 + 发送区按总线数扩展。
+/// 混音台自动高度：基础布局 + 聚焦发送区一行。
 pub(crate) fn auto_panel_height() -> f32 {
     strip::auto_panel_height()
 }

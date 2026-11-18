@@ -34,7 +34,7 @@ pub(crate) struct TimelineMenuCtx {
     pub inside_selection: bool,
     /// 当前是否有选区内容。
     pub has_selection: bool,
-    /// 右键命中轨（Conductor / Bus 行可能为 None）。
+    /// 右键命中轨（Conductor / Master 行可能为 None）。
     pub track: Option<u16>,
     /// 该轨是否允许新建 MIDI Clip。
     pub can_new_clip: bool,

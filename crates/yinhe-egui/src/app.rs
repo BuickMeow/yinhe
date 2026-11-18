@@ -142,9 +142,9 @@ pub struct App {
     pub(crate) bottom_dock_height: f32,
     /// MIX 底部是否显示混音台面板（钢琴卷帘/设备链/混音台三选一之一，持久化）。
     pub(crate) show_mixer_panel: bool,
-    /// MIX 底部混音台面板高度（px，拖拽调整后持久化；自动模式下由总线数决定）。
+    /// MIX 底部混音台面板高度（px，拖拽调整后持久化；自动模式下由通道数决定）。
     pub(crate) mix_height: f32,
-    /// 混音台高度自动随总线数扩展；用户拖拽分割条后转为手动。
+    /// 混音台高度自动随通道数扩展；用户拖拽分割条后转为手动。
     pub(crate) mix_height_auto: bool,
     // ── 三视图通用主输出表 ──
     /// 是否展开（mode_bar 的主输出表按钮切换，持久化）。

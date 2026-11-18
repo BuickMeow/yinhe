@@ -49,7 +49,7 @@ impl YinModel {
         }
         let track = Arc::make_mut(self.tracks.get_mut(track_idx)?);
         // 权限唯一入口：Master / Folder 不承载轨道 automation；
-        // Bus 自动化属于 Bus 节点自己的 automation。
+        // 通道自动化属于 MixerNode 自己的 automation。
         if !track.allows_automation_target(&target) {
             return None;
         }

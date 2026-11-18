@@ -86,7 +86,7 @@ impl App {
         let arr_h = if has_arr {
             if has_bottom {
                 if has_mixer {
-                    // MIX：混音台高度默认随总线数自动扩展（可拖拽转为手动）。
+                    // MIX：混音台高度默认随通道数自动扩展（可拖拽转为手动）。
                     if self.mix_height_auto {
                         self.mix_height = crate::mix::auto_panel_height();
                     }

@@ -38,7 +38,7 @@ impl AudioEngine {
     }
 
     /// 把持久化的通道主输出路由推到混音图。
-    /// 源通道按 dense 映射到 Master 或某条总线。
+    /// 源通道按 dense 映射到 Master 或另一条 dense 通道。
     fn sync_output_routing(&mut self) {
         let count = self.channel_layout.compacted_channels() as usize;
         for dense in 0..count {

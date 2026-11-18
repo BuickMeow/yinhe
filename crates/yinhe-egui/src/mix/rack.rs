@@ -95,7 +95,7 @@ pub(crate) struct PluginLoadError(pub String);
 
 /// `MixerRack::locate_slot` 的定位结果。
 enum SlotLocation {
-    /// 总线删除后等退回的孤儿槽位。
+    /// 通道删除后等退回的孤儿槽位。
     Orphan(usize),
     /// 常规槽位（目标 + 链内下标）。
     Slot(InsertTarget, usize),
@@ -549,7 +549,7 @@ impl MixerRack {
 
     fn return_processor(&mut self, owner: u64, processor: ClapProcessor) {
         match self.locate_slot(owner) {
-            // 孤儿槽位（总线删除后等退回）：deactivate 后释放。
+            // 孤儿槽位（通道删除后等退回）：deactivate 后释放。
             SlotLocation::Orphan(idx) => {
                 let mut rt = self.orphan.remove(idx);
                 if let Some(PluginInstance::Clap(instance)) = rt.instance.as_mut() {

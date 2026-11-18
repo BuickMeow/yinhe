@@ -590,15 +590,14 @@ impl MixerGraph {
     /// 处理一块：返回主输出 (left, right)。
     ///
     /// 信号流：每通道 insert 链 → PDC 对齐 → 推子前 send → 推子（增益/声像
-    /// 原地）→ 推子后 send → master；随后每总线 insert 链 → 总线推子 → master；
-    /// 最后 master insert 链 → master 增益。
+    /// 原地）→ 推子后 send → 主输出/目标通道；最后 master insert 链 → master
+    /// 增益。
     ///
-    /// solo 语义：任一对象（通道或总线）solo 时，只有 solo 对象发声——
-    /// 通道 solo 静音其他通道；总线 solo 静音其它总线与通道直达 master 的路径
-    /// （只保留送往该总线的部分）。mute 优先于 solo。
+    /// solo 语义：任一通道 solo 时只有该通道发声——被 solo 的通道静音其他
+    /// 通道直达 master 的路径（只保留送往它的部分）。mute 优先于 solo。
     ///
-    /// PDC：按通道/总线/发送图的最长输入路径逐节点对齐；乐器、insert、
-    /// Bus insert、并行 send 与通道主输出都参与。反馈环使用一块快照延迟。
+    /// PDC：按通道发送图的最长输入路径逐节点对齐；乐器、insert、并行 send
+    /// 与通道主输出都参与。反馈环使用一块快照延迟。
     pub fn process(&mut self) -> (&[f32], &[f32]) {
         self.process_with_active(None)
     }

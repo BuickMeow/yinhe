@@ -34,7 +34,7 @@ pub fn show(
     automation_picker_req: &mut Option<usize>,
     // 每轨电平表显示值 `((L,R), (holdL,holdR))`（仅播放时非零；索引 = 音轨）。
     track_meters: &[crate::widgets::meter::StereoMeter],
-    // 双击固定 Bus 行：请求打开设备链（调用方落地）。
+    // 双击 Master 行：请求打开设备链（调用方落地）。
     dock_req: &mut Option<crate::chrome::device_chain::DockContext>,
     // 音乐区右键菜单动作（调用方 `App` 落地）。
     menu_actions: &mut Vec<context_menu::TimelineMenuAction>,

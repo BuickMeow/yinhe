@@ -27,7 +27,7 @@ use yinhe_theme::AutomationTargetLabel;
 /// 一条需要交互/渲染的 AM 行。
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AmRowRef {
-    /// 所属音轨索引（Bus lane 时是 Conductor 索引，仅用于视图状态）。
+    /// 所属音轨索引（Master 节点 lane 时是 Conductor 索引，仅用于视图状态）。
     pub track: usize,
     /// 该轨 automation_lanes 的下标；None = Conductor 主行（Tempo 直显）。
     pub sub: Option<usize>,

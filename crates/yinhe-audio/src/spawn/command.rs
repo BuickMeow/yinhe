@@ -115,7 +115,7 @@ pub enum AudioCommand {
         params: Box<MixerParams>,
     },
     /// 更新任意混音节点的 strip 参数（推子拖动高频路径，幂等）。
-    /// MIDI / 音频 / Bus / Master 走同一个入口，引擎内部再映射到 dense 通道。
+    /// MIDI / 音频 / 每轨 LC / Master 走同一个入口，引擎内部再映射到 dense 通道。
     SetNodeStrip {
         node: MixerChannelId,
         params: StripParams,
@@ -215,7 +215,7 @@ pub(crate) struct CmdMeta {
     /// 可靠命令（走独立无界通道，保序、永不丢）。
     ///
     /// - 传输控制：UI 时钟对齐依赖，丢失会造成播放/暂停状态错位。
-    /// - 结构性变更（insert 挂载/移除、乐器挂载、总线结构）：单次命令、无
+    /// - 结构性变更（insert 挂载/移除、乐器挂载、通道结构）：单次命令、无
     ///   重发路径（UI 发完即标记已发送），丢失即永久不一致（曾因此效果器
     ///   在渲染线程阻塞 4-5 秒时被丢，卡片在 UI 上但引擎里根本没挂上）。
     /// - 设置类（层数/复音数/力度忽略/自动化密度）：同属单次命令、无重发路径，

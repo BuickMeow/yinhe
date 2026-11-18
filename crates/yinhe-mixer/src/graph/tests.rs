@@ -555,7 +555,7 @@ fn channel_main_output_reverse_is_one_block_delayed() {
     assert!((l[3] - expect).abs() < 1e-6, "got {}", l[3]);
 }
 
-/// 自动化直接写总线增益：只改 gain，不动 mute/solo/pan。
+/// 自动化直接写通道增益：只改 gain，不动 mute/solo/pan。
 #[test]
 fn set_inserts_returns_old_chain() {
     let mut g = graph_with(&[StripParams::default()], 4);

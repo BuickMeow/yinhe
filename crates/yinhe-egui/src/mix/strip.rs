@@ -3,7 +3,7 @@
 //! 每个通道 = 一个**直角矩形 + 单层描边**（通道框不用圆角，避免卡片出界）。按钮类
 //! 控件用通用圆角矩形。自上而下：
 //! 1. 顶部**色带**（轨道色）+ 通道号；
-//! 2. **效果发送**（BUS 1 旋钮；无总线时首次拖动自动创建）；
+//! 2. **效果发送**（聚焦 SEND 旋钮：每条通道一个目标）；
 //! 3. **固定高度的电平表模块**：
 //!    - 左侧电平表（刻度 + 峰值保持）+ 表内增益菱形（拖动改电平）；
 //!    - 右侧自上而下：dB 读数、声像旋钮、M、S。
@@ -117,7 +117,7 @@ pub(crate) fn node_strip(
         |ui, _| {
             section(
                 ui,
-                send_height(0),
+                send_height(),
                 egui::Layout::top_down(egui::Align::Center),
                 |ui| {
                     focus_send_block(ui, send, actions);
@@ -422,7 +422,7 @@ pub(crate) fn select_channel_tracks(app: &mut App, idx: usize, ch: MixerChannelI
 }
 
 /// 色带双击：打开底部设备链（dock）并选中该通道（通道条 / 音频条共用）。
-/// 同步 `dock_track` 防止下一帧被「跟随选中轨」覆盖；总线/主输出没有 dock
+/// 同步 `dock_track` 防止下一帧被「跟随选中轨」覆盖；Master 没有 dock
 /// 语境，不调用本函数。
 pub(crate) fn header_double_click_opens_dock(
     app: &mut App,
@@ -508,7 +508,7 @@ pub(crate) fn open_dock_context(
     app.dock_selected = None;
 }
 
-/// 通道条色带右键菜单：通道属性 / 设备链 / 自动化 / 重置 / 删除总线。
+/// 通道条色带右键菜单：通道属性 / 设备链 / 自动化 / 重置 / 冻结。
 pub(crate) fn header_context_menu(
     app: &mut App,
     resp: &egui::Response,

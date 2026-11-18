@@ -38,7 +38,7 @@ impl App {
         let mut needs_audio_rebuild = false;
         // AR 自动化 lane 增删/编辑 → notify_audio_model_changed（不重建引擎）。
         let mut needs_audio_notify = false;
-        // 双击固定 Bus 行 → 打开设备链。
+        // 双击 Master 行 → 打开设备链。
         let mut dock_req: Option<crate::chrome::device_chain::DockContext> = None;
         // 音乐区右键菜单动作。
         let mut menu_actions: Vec<crate::arrange::context_menu::TimelineMenuAction> = Vec::new();
@@ -115,7 +115,7 @@ impl App {
         if needs_audio_notify {
             self.notify_audio_model_changed();
         }
-        // 双击固定 Bus 行：展开底部设备链并切换语境。
+        // 双击 Master 行：展开底部设备链并切换语境。
         if let Some(context) = dock_req {
             crate::chrome::mode_bar::set_dock_visible(
                 &mut self.show_pianoroll_in_arrange,

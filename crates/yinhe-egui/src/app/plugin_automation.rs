@@ -289,7 +289,7 @@ impl App {
         let doc = &mut self.workspace.documents[idx];
         doc.push_undo(action, t!("undo.create_automation").as_ref(), snapshot);
         doc.mark_mixer_dirty();
-        // 展开对应轨道（Bus/Master 没有轨道）。
+        // 展开对应轨道（Master 没有轨道）。
         let track_idx = match target {
             yinhe_types::MixerChannelId::TrackLc(id) => {
                 doc.data.model.tracks.iter().position(|t| t.lc == Some(id))
