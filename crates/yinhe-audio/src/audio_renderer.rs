@@ -88,6 +88,15 @@ pub(crate) fn play_log(msg: &str) {
 }
 
 pub(crate) struct RendererSharedState {
+    pub(crate) playback: PlaybackShared,
+    pub(crate) sf: SoundfontShared,
+    /// 欠载累计样本数（立体声交错）：播放中 cpal 回调从 ring 取不到足够样本
+    /// 而补零的总量。非零增长 = 渲染跟不上（音频断续/咔哒的客观指标）。
+    pub(crate) underrun_samples: Arc<AtomicU64>,
+}
+
+/// 播放位置与 ring 重置相关的共享状态。
+pub(crate) struct PlaybackShared {
     pub(crate) producer_sample_position: Arc<AtomicU64>,
     /// 循环回绕累计绝对偏移（`绝对 = 逻辑 + offset`）。cpal 回调用它把
     /// 已消费绝对样本换算成逻辑播放位置。
@@ -106,53 +115,58 @@ pub(crate) struct RendererSharedState {
     /// 清空瞬间 ring 的写入计数。cpal 回调 ack 时丢弃该值之前的全部内容
     /// （旧音频），保留之后推入的新音频 —— 比整体 clear 更竞态安全。
     pub(crate) clear_ring_write: Arc<AtomicUsize>,
-    /// 已加载完成的通道音色库数（每通道一条 `LoadedSoundFont` 结果 +1）。
-    /// UI 据此驱动"加载音色库"stage 的真实进度（完成计数，不预填）。
-    pub(crate) sf_loaded: Arc<AtomicUsize>,
-    /// 音频完全就绪：LoadModel 相关的全部初始化完成（
-    /// 初始化 + 采样上传 + 管线预热）。UI 用它 gate"加载完成"提示，
-    /// 保证用户看到加载完成时点播放能立即响应。
-    pub(crate) audio_ready: Arc<AtomicBool>,
-    /// 欠载累计样本数（立体声交错）：播放中 cpal 回调从 ring 取不到足够样本
-    /// 而补零的总量。非零增长 = 渲染跟不上（音频断续/咔哒的客观指标）。
-    pub(crate) underrun_samples: Arc<AtomicU64>,
     /// 活跃 voice 数（渲染线程每块更新）：播放到末尾后据此判断 release 尾音
     /// 是否已经自然消失，决定何时暂停（不能一到 end_tick 就 Stop）。
     pub(crate) voice_count: Arc<AtomicU64>,
+}
+
+/// 音色库加载与就绪相关的共享状态。
+pub(crate) struct SoundfontShared {
+    /// 已加载完成的通道音色库数（每通道一条 `LoadedSoundFont` 结果 +1）。
+    /// UI 据此驱动"加载音色库"stage 的真实进度（完成计数，不预填）。
+    pub(crate) loaded: Arc<AtomicUsize>,
+    /// 音频完全就绪：LoadModel 相关的全部初始化完成
+    /// （初始化 + 采样上传 + 管线预热）。UI 用它 gate"加载完成"提示，
+    /// 保证用户看到加载完成时点播放能立即响应。
+    pub(crate) audio_ready: Arc<AtomicBool>,
     /// 音色库切换代次：每次 `SetSoundFonts` +1。worker 只处理最新代次，
     /// 旧代次的加载结果直接丢弃（频繁切换时 latest-wins，不被旧库阻塞）。
-    pub(crate) sf_gen: Arc<AtomicU64>,
+    pub(crate) generation: Arc<AtomicU64>,
     /// 当前代次是否仍在加载音色库（UI 小进度条用）。
-    pub(crate) sf_loading: Arc<AtomicBool>,
+    pub(crate) loading: Arc<AtomicBool>,
     /// 当前代次需要加载的组数（按相同 paths 分组的组数）。
-    pub(crate) sf_total: Arc<AtomicUsize>,
+    pub(crate) total: Arc<AtomicUsize>,
     /// 当前代次已完成（或已丢弃）的组数。
-    pub(crate) sf_done: Arc<AtomicUsize>,
+    pub(crate) done: Arc<AtomicUsize>,
     /// 音色库加载的细粒度进度（0..1000）：解析/加载/上传各阶段由 worker 与
     /// 结果应用处更新，UI 不再只有 0 和 100%。
-    pub(crate) sf_progress: Arc<AtomicU32>,
+    pub(crate) progress: Arc<AtomicU32>,
 }
 
 impl RendererSharedState {
     pub(crate) fn new() -> Self {
         Self {
-            producer_sample_position: Arc::new(AtomicU64::new(0)),
-            loop_wrap_offset: Arc::new(AtomicU64::new(0)),
-            playing: Arc::new(AtomicBool::new(false)),
-            duration_samples: Arc::new(AtomicU64::new(0)),
-            initialized: Arc::new(AtomicBool::new(false)),
-            reset_generation: Arc::new(AtomicU64::new(0)),
-            clear_base_sample: Arc::new(AtomicU64::new(0)),
-            clear_ring_write: Arc::new(AtomicUsize::new(0)),
-            sf_loaded: Arc::new(AtomicUsize::new(0)),
-            audio_ready: Arc::new(AtomicBool::new(false)),
+            playback: PlaybackShared {
+                producer_sample_position: Arc::new(AtomicU64::new(0)),
+                loop_wrap_offset: Arc::new(AtomicU64::new(0)),
+                playing: Arc::new(AtomicBool::new(false)),
+                duration_samples: Arc::new(AtomicU64::new(0)),
+                initialized: Arc::new(AtomicBool::new(false)),
+                reset_generation: Arc::new(AtomicU64::new(0)),
+                clear_base_sample: Arc::new(AtomicU64::new(0)),
+                clear_ring_write: Arc::new(AtomicUsize::new(0)),
+                voice_count: Arc::new(AtomicU64::new(0)),
+            },
+            sf: SoundfontShared {
+                loaded: Arc::new(AtomicUsize::new(0)),
+                audio_ready: Arc::new(AtomicBool::new(false)),
+                generation: Arc::new(AtomicU64::new(0)),
+                loading: Arc::new(AtomicBool::new(false)),
+                total: Arc::new(AtomicUsize::new(0)),
+                done: Arc::new(AtomicUsize::new(0)),
+                progress: Arc::new(AtomicU32::new(0)),
+            },
             underrun_samples: Arc::new(AtomicU64::new(0)),
-            voice_count: Arc::new(AtomicU64::new(0)),
-            sf_gen: Arc::new(AtomicU64::new(0)),
-            sf_loading: Arc::new(AtomicBool::new(false)),
-            sf_total: Arc::new(AtomicUsize::new(0)),
-            sf_done: Arc::new(AtomicUsize::new(0)),
-            sf_progress: Arc::new(AtomicU32::new(0)),
         }
     }
 }
@@ -285,13 +299,13 @@ impl AudioRenderer {
         // 音色库仍在加载（worker 解析 key map / 上传样本）时不能提前放行：
         // 此时 yinhe CPU 的 CpuSynth 还没创建，按 Play 会渲染成静音，
         // 用户听到的是"加载完成后还要再等几秒"。
-        if self.state.sf_loading.load(Ordering::Acquire) {
+        if self.state.sf.loading.load(Ordering::Acquire) {
             return;
         }
-        if self.yinhe_cpu_engine() && self.state.sf_total.load(Ordering::Relaxed) > 0 {
+        if self.yinhe_cpu_engine() && self.state.sf.total.load(Ordering::Relaxed) > 0 {
             return;
         }
-        if !self.state.audio_ready.swap(true, Ordering::AcqRel) {
+        if !self.state.sf.audio_ready.swap(true, Ordering::AcqRel) {
             play_log("[play] 音频就绪（模型+音色库+采样上传+管线预热完成）");
         }
     }
@@ -384,7 +398,7 @@ impl AudioRenderer {
     /// 淡出块必须完整排进 ring（排在已预渲染的音频之后），否则暂停仍会
     /// 在某个点硬切；音频线程会持续消费 ring，这里小睡等待空位（有上限）。
     fn render_pause_fade_out(&mut self) {
-        if !self.engine.playing() || !self.state.initialized.load(Ordering::Acquire) {
+        if !self.engine.playing() || !self.state.playback.initialized.load(Ordering::Acquire) {
             return;
         }
         let frames = pause_fade_frames(self.engine.sample_rate);
@@ -414,14 +428,17 @@ impl AudioRenderer {
         // 暂停/停止后的尾音渲染：继续跑混音链，直到 delay/reverb 自然消失。
         let tailing = self.tailing
             && !self.engine.playing()
-            && self.state.initialized.load(Ordering::Acquire);
+            && self.state.playback.initialized.load(Ordering::Acquire);
         if !self.engine.playing() && !previewing && !idle_instruments && !tailing {
             // 暂停时把待发的插件参数送达（否则调参数要等播放才生效）。
             // 不依赖 initialized：空工程挂乐器插件也要能立即调参数。
             self.engine.flush_pending_plugin_params();
             return false;
         }
-        if !self.state.initialized.load(Ordering::Acquire) && !previewing && !idle_instruments {
+        if !self.state.playback.initialized.load(Ordering::Acquire)
+            && !previewing
+            && !idle_instruments
+        {
             return false;
         }
 
@@ -548,32 +565,47 @@ impl AudioRenderer {
         // 边界之后可能已推入新音频（模型已加载时渲染很快，ack 常晚于新音频入队），
         // 整体 clear 会把新播放位置的开头一起丢掉 —— 第二次播放开头缺失的根因。
         self.state
+            .playback
             .producer_sample_position
             .store(base, Ordering::Release);
-        self.state.clear_base_sample.store(base, Ordering::Release);
         self.state
+            .playback
+            .clear_base_sample
+            .store(base, Ordering::Release);
+        self.state
+            .playback
             .clear_ring_write
             .store(self.ring.write_position(), Ordering::Release);
         // 消费位置被重定位到逻辑位置 base：回绕偏移必须归零，否则 cpal 回调
         // 上报的逻辑位置会整体偏移一个循环长度。
         self.engine.loop_wrap_offset = 0;
-        self.state.loop_wrap_offset.store(0, Ordering::Release);
-        self.state.reset_generation.fetch_add(1, Ordering::AcqRel);
+        self.state
+            .playback
+            .loop_wrap_offset
+            .store(0, Ordering::Release);
+        self.state
+            .playback
+            .reset_generation
+            .fetch_add(1, Ordering::AcqRel);
     }
 
     // ── 导出模式（渲染线程内，复用实时引擎与插件实例） ──
 
     fn publish_state(&self) {
         self.state
+            .playback
             .producer_sample_position
             .store(self.engine.sample_position(), Ordering::Release);
         self.state
+            .playback
             .loop_wrap_offset
             .store(self.engine.loop_wrap_offset, Ordering::Release);
         self.state
+            .playback
             .voice_count
             .store(self.engine.voice_count(), Ordering::Relaxed);
         self.state
+            .playback
             .playing
             .store(self.engine.playing(), Ordering::Release);
     }

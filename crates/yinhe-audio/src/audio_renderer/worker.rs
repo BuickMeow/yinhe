@@ -18,13 +18,17 @@ impl AudioRenderer {
                 Ok(WorkerResult::PreparedModel(prepared)) => {
                     let t_prepared = Instant::now();
                     self.state
+                        .playback
                         .duration_samples
                         .store(prepared.duration_samples, Ordering::Relaxed);
                     // 锚定听音位置（非显式 reload 不移动播放位置）。
                     let anchor = self.consumer_position.load(Ordering::Acquire);
                     self.engine.apply_prepared_model(prepared, anchor);
                     self.clear_buffered_audio(anchor);
-                    self.state.initialized.store(true, Ordering::Release);
+                    self.state
+                        .playback
+                        .initialized
+                        .store(true, Ordering::Release);
                     // 方案 B：apply_prepared_model 内部 seek_to 不再 chase，
                     // 这里发 PrepareChase 让 worker 异步算 channel state
                     self.request_chase(self.engine.current_tick());
@@ -40,6 +44,7 @@ impl AudioRenderer {
                     duration_samples,
                 }) => {
                     self.state
+                        .playback
                         .duration_samples
                         .store(duration_samples, Ordering::Relaxed);
                     self.engine
@@ -49,7 +54,10 @@ impl AudioRenderer {
                     // 已渲染的 ring 内容是"过去时"音频（新音符只影响未来 dispatch），
                     // 清空会把正在播放的预览余音/当前音频丢掉 → 松手停顿。
                     // 只有 PreparedModel（cc_events 重建/seek）才需要清。
-                    self.state.initialized.store(true, Ordering::Release);
+                    self.state
+                        .playback
+                        .initialized
+                        .store(true, Ordering::Release);
                     did_work = true;
                 }
                 Ok(WorkerResult::ChaseResult {
@@ -97,11 +105,11 @@ impl AudioRenderer {
                 }) => {
                     // latest-wins：只应用当前代次；旧代次的结果（含 worker 发现
                     // 过期后回传的空结果）直接丢弃，避免旧音色覆盖新选择。
-                    let is_current = generation == self.state.sf_gen.load(Ordering::Acquire);
+                    let is_current = generation == self.state.sf.generation.load(Ordering::Acquire);
                     if is_current {
-                        self.state.sf_done.fetch_add(1, Ordering::Relaxed);
+                        self.state.sf.done.fetch_add(1, Ordering::Relaxed);
                         // 结果已回传但还没应用/上传：先给 85%，真正完成在分支末尾。
-                        self.state.sf_progress.store(920, Ordering::Relaxed);
+                        self.state.sf.progress.store(920, Ordering::Relaxed);
                     } else {
                         did_work = true;
                         continue;
@@ -109,7 +117,8 @@ impl AudioRenderer {
                     // 音色库完成计数：UI 的"加载音色库"stage 进度 = 已完成通道数
                     // （一条命令按组覆盖多个通道）。
                     self.state
-                        .sf_loaded
+                        .sf
+                        .loaded
                         .fetch_add(channels.len(), Ordering::Relaxed);
                     // 方案 C：XSynth 已移除，只用 yinhe CPU。音色库按 key map 路径
                     // 在下方加载（与主引擎/预览共享同一份），不加载 xsynth 版。
@@ -164,12 +173,12 @@ impl AudioRenderer {
                     // 表现为"清空音色库后内存不还"。
                     yinhe_memtrace::purge_free_pages();
                     if is_current
-                        && self.state.sf_done.load(Ordering::Relaxed)
-                            >= self.state.sf_total.load(Ordering::Relaxed)
+                        && self.state.sf.done.load(Ordering::Relaxed)
+                            >= self.state.sf.total.load(Ordering::Relaxed)
                     {
                         // 音色库应用完成才报 100%，避免进度条先满、声音还没准备好。
-                        self.state.sf_progress.store(1000, Ordering::Relaxed);
-                        self.state.sf_loading.store(false, Ordering::Relaxed);
+                        self.state.sf.progress.store(1000, Ordering::Relaxed);
+                        self.state.sf.loading.store(false, Ordering::Relaxed);
                         // 模型可能先于音色库就绪（mark_audio_ready 当时被
                         // sf_loading 挡住）；这里补最后一次放行。
                         self.mark_audio_ready();

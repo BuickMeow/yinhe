@@ -111,7 +111,7 @@ impl AudioRenderer {
             AudioCommand::LoadModel { model } => {
                 // 新的加载流程开始：音频重置为未就绪（音色库/采样/管线
                 // 全部就绪后由 mark_audio_ready 置回）。
-                self.state.audio_ready.store(false, Ordering::Release);
+                self.state.sf.audio_ready.store(false, Ordering::Release);
                 self.engine.stop_preview_all();
                 self.engine.handle_command(AudioCommand::Pause);
                 self.engine.handle_command(AudioCommand::Stop);
@@ -144,7 +144,7 @@ impl AudioRenderer {
                 let prefetch_keymaps = self.yinhe_cpu_engine();
                 // latest-wins：每次切换推进代次，worker 只处理最新代次；
                 // 旧代次在队列里直接跳过，不会被大音色库的加载拖住新请求。
-                let generation = self.state.sf_gen.fetch_add(1, Ordering::AcqRel) + 1;
+                let generation = self.state.sf.generation.fetch_add(1, Ordering::AcqRel) + 1;
                 // 按音色库集合分组：相同 paths 的通道只加载一次（worker 一次往返 +
                 // key map Arc 跨通道共享），避免 20 个通道重复加载同一音色库。
                 let groups = super::group_sf_configs(&configs);
@@ -153,11 +153,12 @@ impl AudioRenderer {
                     groups.len(),
                     groups.iter().map(|(_, p)| p.clone()).collect::<Vec<_>>()
                 ));
-                self.state.sf_total.store(groups.len(), Ordering::Relaxed);
-                self.state.sf_done.store(0, Ordering::Relaxed);
-                self.state.sf_progress.store(0, Ordering::Relaxed);
+                self.state.sf.total.store(groups.len(), Ordering::Relaxed);
+                self.state.sf.done.store(0, Ordering::Relaxed);
+                self.state.sf.progress.store(0, Ordering::Relaxed);
                 self.state
-                    .sf_loading
+                    .sf
+                    .loading
                     .store(!groups.is_empty(), Ordering::Relaxed);
                 for (channels, paths) in groups {
                     let _ = self.worker_tx.send(WorkerCmd::LoadSoundFont {

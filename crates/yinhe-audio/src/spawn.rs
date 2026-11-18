@@ -1426,37 +1426,37 @@ fn init_renderer(
 ) -> Result<RendererStarted, String> {
     let (ring_producer, ring_consumer) = AudioRing::new(RING_CAPACITY).split();
     let mut renderer_state = RendererSharedState::new();
-    renderer_state.sf_gen = sf_gen;
-    renderer_state.sf_progress = sf_progress;
+    renderer_state.sf.generation = sf_gen;
+    renderer_state.sf.progress = sf_progress;
 
-    let producer_sample_position = Arc::clone(&renderer_state.producer_sample_position);
-    let loop_wrap_offset = Arc::clone(&renderer_state.loop_wrap_offset);
-    let reset_generation = Arc::clone(&renderer_state.reset_generation);
-    let sf_loaded = Arc::clone(&renderer_state.sf_loaded);
-    let sf_loading = Arc::clone(&renderer_state.sf_loading);
-    let sf_total = Arc::clone(&renderer_state.sf_total);
-    let sf_done = Arc::clone(&renderer_state.sf_done);
-    let sf_progress = Arc::clone(&renderer_state.sf_progress);
-    let audio_ready = Arc::clone(&renderer_state.audio_ready);
-    let voice_count = Arc::clone(&renderer_state.voice_count);
+    let producer_sample_position = Arc::clone(&renderer_state.playback.producer_sample_position);
+    let loop_wrap_offset = Arc::clone(&renderer_state.playback.loop_wrap_offset);
+    let reset_generation = Arc::clone(&renderer_state.playback.reset_generation);
+    let sf_loaded = Arc::clone(&renderer_state.sf.loaded);
+    let sf_loading = Arc::clone(&renderer_state.sf.loading);
+    let sf_total = Arc::clone(&renderer_state.sf.total);
+    let sf_done = Arc::clone(&renderer_state.sf.done);
+    let sf_progress = Arc::clone(&renderer_state.sf.progress);
+    let audio_ready = Arc::clone(&renderer_state.sf.audio_ready);
+    let voice_count = Arc::clone(&renderer_state.playback.voice_count);
     // 监听缓冲：容量上限由输入侧（yinhe-egui 的录音回调）控制，
     // 保证监听延迟不随录音时长增长。
     let monitor: Arc<Mutex<std::collections::VecDeque<f32>>> =
         Arc::new(Mutex::new(std::collections::VecDeque::new()));
     let stream_callback = StreamCallback {
         ring: ring_consumer,
-        reset_generation: Arc::clone(&renderer_state.reset_generation),
+        reset_generation: Arc::clone(&renderer_state.playback.reset_generation),
         // 清空边界：ack 时丢弃边界前的旧音频、保留新音频（竞态安全清空）。
-        clear_ring_write: Arc::clone(&renderer_state.clear_ring_write),
-        clear_base_sample: Arc::clone(&renderer_state.clear_base_sample),
+        clear_ring_write: Arc::clone(&renderer_state.playback.clear_ring_write),
+        clear_base_sample: Arc::clone(&renderer_state.playback.clear_base_sample),
         // 欠载计数（cpal 回调写；renderer_state 即将 move，先 clone）。
         underrun_samples: Arc::clone(&renderer_state.underrun_samples),
         playing,
-        renderer_playing: Arc::clone(&renderer_state.playing),
+        renderer_playing: Arc::clone(&renderer_state.playback.playing),
         sample_position: Arc::clone(&sample_position),
-        loop_wrap_offset: Arc::clone(&renderer_state.loop_wrap_offset),
+        loop_wrap_offset: Arc::clone(&renderer_state.playback.loop_wrap_offset),
         duration_samples,
-        renderer_duration: Arc::clone(&renderer_state.duration_samples),
+        renderer_duration: Arc::clone(&renderer_state.playback.duration_samples),
         monitor: Arc::clone(&monitor),
     };
 
