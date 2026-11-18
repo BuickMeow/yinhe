@@ -567,25 +567,7 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
         .filter(|&c| layout.is_ap_active(c))
         .map(|c| c as u8)
         .collect();
-    // 取该通道首个使用轨道的颜色作为通道条色带（与 AR/PR 轨道色同源，含
-    // Conductor 主题色）。Conductor 是 Master 轨（AR 里不显示通道号），不归入
-    // 任何通道条。
-    let edit = &app.workspace.documents[idx].edit;
-    let track_colors = &edit.track_cache.colors;
-    let conductor_idx = edit.track_cache.conductor_idx;
-    let colors: Vec<egui::Color32> = active
-        .iter()
-        .map(|&ch| {
-            let first_track = model.tracks.iter().enumerate().find_map(|(ti, t)| {
-                (Some(ti as u16) != conductor_idx && t.midi_target_channel() == Some(ch))
-                    .then_some(ti)
-            });
-            let c = first_track
-                .and_then(|ti| track_colors.get(ti).copied())
-                .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
-            crate::theme::rgba_to_color32((c[0], c[1], c[2], c[3]))
-        })
-        .collect();
+    let colors = channel_strip_colors(app, idx, &model, &active);
 
     let dt = ui.ctx().input(|i| i.stable_dt).min(0.1);
     // 引擎重建后通道数变化 → 重置滑动峰值。
@@ -610,148 +592,17 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
         rect.min,
         egui::pos2(rect.min.x + crate::theme::TOOL_BAR_W, rect.max.y),
     );
-
-    ui.scope_builder(
-        egui::UiBuilder::new()
-            .max_rect(egui::Rect::from_min_max(
-                egui::pos2(tool_rect.max.x, rect.min.y),
-                rect.max,
-            ))
-            .layout(egui::Layout::top_down(egui::Align::LEFT)),
-        |ui| {
-            // 主体：左剩余（横向滚动通道条）+ 右固定 Master（贴面板右缘，无间隙）。
-            crate::widgets::grid::two_columns_right(ui, 0.0, strip::STRIP_WIDTH, |cells| {
-                cells.cell(|ui| {
-                    egui::ScrollArea::horizontal()
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            ui.spacing_mut().item_spacing.x = strip::STRIP_GAP;
-                            let strip_h = ui.available_height();
-                            ui.horizontal_top(|ui| {
-                                for (i, &ch) in active.iter().enumerate() {
-                                    let dense = layout.dense_for(ch as usize);
-                                    let (level, hold) = if dense != u32::MAX {
-                                        smoothed_peak(
-                                            app.audio_state.handle.as_ref(),
-                                            &mut app.mix.smoothed,
-                                            dense as usize,
-                                            dt,
-                                        )
-                                    } else {
-                                        ((0.0, 0.0), (0.0, 0.0))
-                                    };
-                                    strip::channel_strip(
-                                        app,
-                                        ui,
-                                        idx,
-                                        ch,
-                                        colors[i],
-                                        level,
-                                        hold,
-                                        strip_h,
-                                        &mut actions,
-                                    );
-                                }
-                                // 音频条：MIDI 条后分隔 + 每个音频通道一条。
-                                let audio_channels: Vec<u16> = layout.audio_channels().to_vec();
-                                if !audio_channels.is_empty() {
-                                    ui.separator();
-                                    for &ach in audio_channels.iter() {
-                                        let dense = layout.audio_dense_for(ach);
-                                        let (level, hold) = if dense != u32::MAX {
-                                            smoothed_peak(
-                                                app.audio_state.handle.as_ref(),
-                                                &mut app.mix.smoothed,
-                                                dense as usize,
-                                                dt,
-                                            )
-                                        } else {
-                                            ((0.0, 0.0), (0.0, 0.0))
-                                        };
-                                        let display = app
-                                            .mix
-                                            .channel_display
-                                            .get(&ChannelId::Lc(
-                                                app.workspace.documents[idx]
-                                                    .mixer
-                                                    .audio_node(ach)
-                                                    .and_then(|n| match n.id {
-                                                        ChannelId::Lc(id) => Some(id),
-                                                        _ => None,
-                                                    })
-                                                    .unwrap_or_default(),
-                                            ))
-                                            .copied()
-                                            .unwrap_or(0);
-                                        strip::audio_strip(
-                                            app,
-                                            ui,
-                                            idx,
-                                            ach,
-                                            display,
-                                            level,
-                                            hold,
-                                            strip_h,
-                                            &mut actions,
-                                        );
-                                    }
-                                }
-                                // 每轨独立 LC（Rack per-track 输出）。
-                                let track_lcs = layout.track_lc_channels().to_vec();
-                                if !track_lcs.is_empty() {
-                                    ui.separator();
-                                    for &(track, lc) in &track_lcs {
-                                        let dense = layout.track_lc_dense(track as usize);
-                                        let (level, hold) = if dense != u32::MAX {
-                                            smoothed_peak(
-                                                app.audio_state.handle.as_ref(),
-                                                &mut app.mix.smoothed,
-                                                dense as usize,
-                                                dt,
-                                            )
-                                        } else {
-                                            ((0.0, 0.0), (0.0, 0.0))
-                                        };
-                                        let display = app
-                                            .mix
-                                            .channel_display
-                                            .get(&ChannelId::Lc(lc))
-                                            .copied()
-                                            .unwrap_or(0);
-                                        strip::track_lc_strip(
-                                            app,
-                                            ui,
-                                            idx,
-                                            track,
-                                            lc,
-                                            display,
-                                            level,
-                                            hold,
-                                            strip_h,
-                                            &mut actions,
-                                        );
-                                    }
-                                }
-                            });
-                        });
-                });
-                cells.cell(|ui| {
-                    // Master 条（分隔由 master 通道条自身的描边提供）。
-                    let (master_level, master_hold) = app.mix.master_display;
-                    let rect = ui.max_rect();
-                    ui.set_clip_rect(rect.intersect(ui.clip_rect()));
-                    strip::master_strip(
-                        app,
-                        ui,
-                        idx,
-                        master_level,
-                        master_hold,
-                        rect.height(),
-                        &mut actions,
-                    );
-                });
-            });
-        },
+    draw_mixer_body(
+        app,
+        ui,
+        rect,
+        tool_rect,
+        idx,
+        &active,
+        &colors,
+        &layout,
+        dt,
+        &mut actions,
     );
 
     // 左侧工具栏：在主体之后绘制（后注册的 widget 命中优先），层级高于混音台
@@ -763,7 +614,198 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
         actions::apply_action(app, ui.ctx(), idx, action);
     }
 
-    // 电平表动画：播放中或衰减未归零时保持约 30fps 重绘。
+    request_meter_repaint(app, ui);
+}
+
+/// 每个通道条的色带颜色：取该通道首个使用轨的颜色（Conductor 不参与）。
+fn channel_strip_colors(
+    app: &App,
+    idx: usize,
+    model: &yinhe_core::YinModel,
+    active: &[u8],
+) -> Vec<egui::Color32> {
+    let edit = &app.workspace.documents[idx].edit;
+    let track_colors = &edit.track_cache.colors;
+    let conductor_idx = edit.track_cache.conductor_idx;
+    active
+        .iter()
+        .map(|&ch| {
+            let first_track = model.tracks.iter().enumerate().find_map(|(ti, t)| {
+                (Some(ti as u16) != conductor_idx && t.midi_target_channel() == Some(ch))
+                    .then_some(ti)
+            });
+            let c = first_track
+                .and_then(|ti| track_colors.get(ti).copied())
+                .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
+            crate::theme::rgba_to_color32((c[0], c[1], c[2], c[3]))
+        })
+        .collect()
+}
+
+/// 混音主体：左侧通道条滚动区 + 右侧固定 Master。
+#[allow(clippy::too_many_arguments)] // 视图上下文透传
+fn draw_mixer_body(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    tool_rect: egui::Rect,
+    idx: usize,
+    active: &[u8],
+    colors: &[egui::Color32],
+    layout: &ChannelLayout,
+    dt: f32,
+    actions: &mut Vec<MixAction>,
+) {
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(egui::Rect::from_min_max(
+                egui::pos2(tool_rect.max.x, rect.min.y),
+                rect.max,
+            ))
+            .layout(egui::Layout::top_down(egui::Align::LEFT)),
+        |ui| {
+            // 主体：左剩余（横向滚动通道条）+ 右固定 Master（贴面板右缘，无间隙）。
+            crate::widgets::grid::two_columns_right(ui, 0.0, strip::STRIP_WIDTH, |cells| {
+                cells.cell(|ui| {
+                    draw_channel_strips(app, ui, idx, active, colors, layout, dt, actions);
+                });
+                cells.cell(|ui| {
+                    draw_master_strip(app, ui, idx, actions);
+                });
+            });
+        },
+    );
+}
+
+/// 通道条滚动区：MIDI 通道 → 音频通道 → 每轨 LC。
+#[allow(clippy::too_many_arguments)] // 视图上下文透传
+fn draw_channel_strips(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    idx: usize,
+    active: &[u8],
+    colors: &[egui::Color32],
+    layout: &ChannelLayout,
+    dt: f32,
+    actions: &mut Vec<MixAction>,
+) {
+    egui::ScrollArea::horizontal()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = strip::STRIP_GAP;
+            let strip_h = ui.available_height();
+            ui.horizontal_top(|ui| {
+                for (i, &ch) in active.iter().enumerate() {
+                    let dense = layout.dense_for(ch as usize);
+                    let (level, hold) = if dense != u32::MAX {
+                        smoothed_peak(
+                            app.audio_state.handle.as_ref(),
+                            &mut app.mix.smoothed,
+                            dense as usize,
+                            dt,
+                        )
+                    } else {
+                        ((0.0, 0.0), (0.0, 0.0))
+                    };
+                    strip::channel_strip(
+                        app, ui, idx, ch, colors[i], level, hold, strip_h, actions,
+                    );
+                }
+                draw_audio_and_track_strips(app, ui, idx, layout, dt, strip_h, actions);
+            });
+        });
+}
+
+/// 音频通道条与每轨 LC 条。
+fn draw_audio_and_track_strips(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    idx: usize,
+    layout: &ChannelLayout,
+    dt: f32,
+    strip_h: f32,
+    actions: &mut Vec<MixAction>,
+) {
+    let audio_channels: Vec<u16> = layout.audio_channels().to_vec();
+    if !audio_channels.is_empty() {
+        ui.separator();
+        for &ach in audio_channels.iter() {
+            let dense = layout.audio_dense_for(ach);
+            let (level, hold) = if dense != u32::MAX {
+                smoothed_peak(
+                    app.audio_state.handle.as_ref(),
+                    &mut app.mix.smoothed,
+                    dense as usize,
+                    dt,
+                )
+            } else {
+                ((0.0, 0.0), (0.0, 0.0))
+            };
+            let display = app
+                .mix
+                .channel_display
+                .get(&ChannelId::Lc(
+                    app.workspace.documents[idx]
+                        .mixer
+                        .audio_node(ach)
+                        .and_then(|n| match n.id {
+                            ChannelId::Lc(id) => Some(id),
+                            _ => None,
+                        })
+                        .unwrap_or_default(),
+                ))
+                .copied()
+                .unwrap_or(0);
+            strip::audio_strip(app, ui, idx, ach, display, level, hold, strip_h, actions);
+        }
+    }
+    // 每轨独立 LC（Rack per-track 输出）。
+    let track_lcs = layout.track_lc_channels().to_vec();
+    if !track_lcs.is_empty() {
+        ui.separator();
+        for &(track, lc) in &track_lcs {
+            let dense = layout.track_lc_dense(track as usize);
+            let (level, hold) = if dense != u32::MAX {
+                smoothed_peak(
+                    app.audio_state.handle.as_ref(),
+                    &mut app.mix.smoothed,
+                    dense as usize,
+                    dt,
+                )
+            } else {
+                ((0.0, 0.0), (0.0, 0.0))
+            };
+            let display = app
+                .mix
+                .channel_display
+                .get(&ChannelId::Lc(lc))
+                .copied()
+                .unwrap_or(0);
+            strip::track_lc_strip(
+                app, ui, idx, track, lc, display, level, hold, strip_h, actions,
+            );
+        }
+    }
+}
+
+/// Master 通道条（贴面板右缘）。
+fn draw_master_strip(app: &mut App, ui: &mut egui::Ui, idx: usize, actions: &mut Vec<MixAction>) {
+    let (master_level, master_hold) = app.mix.master_display;
+    let rect = ui.max_rect();
+    ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+    strip::master_strip(
+        app,
+        ui,
+        idx,
+        master_level,
+        master_hold,
+        rect.height(),
+        actions,
+    );
+}
+
+/// 电平表动画：播放中或衰减未归零时保持约 30fps 重绘。
+fn request_meter_repaint(app: &App, ui: &egui::Ui) {
     let any_level = app.mix.smoothed.iter().any(|s| {
         let (l, r) = s.level();
         l > 0.001 || r > 0.001
