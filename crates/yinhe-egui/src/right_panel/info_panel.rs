@@ -14,6 +14,7 @@ mod anchor;
 mod channel;
 mod history;
 mod layers;
+mod layers_groups;
 mod layers_mix;
 pub(crate) mod selection;
 mod summary;

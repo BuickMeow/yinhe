@@ -8,13 +8,6 @@ pub mod sel_hint;
 
 pub(crate) use sel_hint::SelHintInfo;
 
-/// MIX 模式的通道 AR 显示开关（暂时禁用，用户决策）。
-///
-/// 轨道 AR 与通道 AR 是两套并行的走带视图，维护成本高；后续会设计统一的
-/// 新方案。禁用期间 MIX 模式只显示底部面板（混音台 / 钢琴卷帘 / 设备链），
-/// `channel_arrange` 代码保留，恢复时改回 `true` 即可。
-pub(crate) const MIX_CHANNEL_AR_ENABLED: bool = false;
-
 /// `Panel::right` 占位：扣出右栏区域并返回其矩形（含左缘分割条）。
 /// 必须在 dock 之前调用，保证右栏占整条、dock 只在左区（见回归测试）。
 pub(in crate::app) fn show_right_panel_placeholder(ui: &mut egui::Ui, total_w: f32) -> egui::Rect {
@@ -77,9 +70,8 @@ impl App {
 
         let is_mix = self.view_mode == crate::chrome::mode_bar::ViewMode::Mix;
         let has_doc = self.workspace.active_doc.is_some();
-        // 上方主视图：轨道 AR（Arrange）；MIX 的通道 AR 已暂时禁用。
-        let has_arr =
-            has_doc && (self.view_mode.show_transport() || (is_mix && MIX_CHANNEL_AR_ENABLED));
+        // 上方主视图：轨道 AR（Arrange）。MIX 的通道 AR 已删除。
+        let has_arr = has_doc && self.view_mode.show_transport();
         // 底部混音台面板（仅 MIX；与 PR/dock 三选一）。
         let has_mixer = has_doc && is_mix && self.show_mixer_panel;
         // MIX 下混音台优先：ARRANGE 遗留的 PR 开关不应与混音台同时占同一块底部区域。
@@ -133,9 +125,7 @@ impl App {
     /// 焦点视图不可见时切到可见的那个。Ctrl+A 等快捷键按 `view_focus` 路由。
     pub(in crate::app) fn update_view_focus(&mut self, ui: &egui::Ui, layout: &LayoutInfo) {
         let has_doc = self.workspace.active_doc.is_some();
-        let is_mix = self.view_mode == crate::chrome::mode_bar::ViewMode::Mix;
-        let has_arr =
-            has_doc && (self.view_mode.show_transport() || (is_mix && MIX_CHANNEL_AR_ENABLED));
+        let has_arr = has_doc && self.view_mode.show_transport();
         let has_piano = has_doc
             && self
                 .view_mode

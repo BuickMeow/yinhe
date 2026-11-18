@@ -57,10 +57,6 @@ pub(crate) struct MixUiState {
     pub(crate) param_panel: Option<ParamPanel>,
     /// 内置音源参数窗口（同一时间至多一个）。
     pub(crate) synth_params_panel: Option<crate::dialogs::instrument_params::InstrumentParamsPanel>,
-    /// 通道 AR（MIX 主区域）面板的通道电平弹道状态（dense 索引）。
-    /// 与混音台 strip 的 `smoothed` **相互独立**：各自读取音频线程原始
-    /// meter 并施加弹道，互不干扰（同源数据、两条 UI 衰减轨迹）。
-    pub(crate) ca_smoothed: Vec<MeterState>,
 }
 
 pub(crate) const SOURCE_CHANNELS: usize = yinhe_mixer::CHANNEL_COUNT;

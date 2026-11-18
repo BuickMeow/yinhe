@@ -55,51 +55,6 @@ impl App {
         doc.mark_mixer_dirty();
     }
 
-    /// 通道 AR 面板的通道电平显示值：`(MIDI 源通道 0..256, 音频通道)` 两组
-    /// `(level, hold)`（L/R）。用独立的 `ca_smoothed` 弹道，与混音台 strip
-    /// 的 `smoothed` 互不影响。
-    pub(crate) fn ca_channel_levels(
-        &mut self,
-        idx: usize,
-        dt: f32,
-    ) -> (
-        Vec<crate::widgets::meter::StereoMeter>,
-        Vec<crate::widgets::meter::StereoMeter>,
-    ) {
-        let model = self.workspace.documents[idx].data.model.clone();
-        let layout = ChannelLayout::from_model(&model);
-        // 引擎重建后通道数变化 → 重置弹道（同 mix.smoothed）。
-        let channel_count = self
-            .audio_state
-            .handle
-            .as_ref()
-            .map(|a| a.handle.mixer_channel_count())
-            .unwrap_or(0);
-        if self.mix.ca_smoothed.len() != channel_count {
-            self.mix.ca_smoothed = vec![MeterState::default(); channel_count];
-        }
-        let handle = self.audio_state.handle.as_ref();
-        let mut midi = vec![((0.0, 0.0), (0.0, 0.0)); SOURCE_CHANNELS];
-        for (c, slot) in midi.iter_mut().enumerate() {
-            if !layout.is_active(c) {
-                continue;
-            }
-            let dense = layout.dense_for(c);
-            if dense != u32::MAX {
-                *slot = smoothed_peak(handle, &mut self.mix.ca_smoothed, dense as usize, dt);
-            }
-        }
-        let audio_channels = layout.audio_channels().to_vec();
-        let mut audio = vec![((0.0, 0.0), (0.0, 0.0)); audio_channels.len()];
-        for (i, &ach) in audio_channels.iter().enumerate() {
-            let dense = layout.audio_dense_for(ach);
-            if dense != u32::MAX {
-                audio[i] = smoothed_peak(handle, &mut self.mix.ca_smoothed, dense as usize, dt);
-            }
-        }
-        (midi, audio)
-    }
-
     /// 更新任意混音节点的 strip：写持久化层 + 推引擎（高频路径）。
     pub(crate) fn apply_node_strip(
         &mut self,

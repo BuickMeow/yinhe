@@ -11,7 +11,7 @@ use rust_i18n::t;
 
 use yinhe_editor_core::document::Document;
 
-use crate::channel_arrange::{CaChannel, CaGroups};
+use super::layers_groups::{CaChannel, CaGroups};
 use crate::scaling::scaled_font;
 use crate::theme;
 
