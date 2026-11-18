@@ -243,7 +243,20 @@ yinhe-flutter                                     ← Android/iOS/OHOS 平台胶
 flutter/lib                                       ← Dart UI、布局、本地化、平台存储
 ```
 
-### 4.5 建议顺序与工作量
+### 4.5 实施进度（2026-11-18）
+
+- ✅ 已新增 `crates/yinhe-mobile-core`（commit `bb460493`）：`scene/*`、
+  `edit/*`、音频会话、`doc_job`、`autosave`、MIDI 导入导出、库、音色库归档、
+  选区物化、惯性、力度缓存、主题派生色、视口尺寸。
+- ✅ `yinhe-flutter` 只保留平台胶水：Android/iOS/OHOS 入口、纹理/surface、
+  `render`、`dart_ffi` 导出层。
+- 当前规模：`yinhe-mobile-core` 12,950 物理行（生产约 11.1k），
+  `yinhe-flutter` 4,074 物理行（生产约 3.2k）。
+- ⏳ 尚未做：`yinhe-audio::session`（桌面/移动共享音频会话）、
+  最近文件/设置持久化移 Dart、autosave/MIDI IO 的进一步共用。
+- Flutter 端测试按用户要求延后。
+
+### 4.6 建议顺序与工作量
 
 | 阶段 | 内容 | 收益 | 工作量 |
 |---|---|---|---:|

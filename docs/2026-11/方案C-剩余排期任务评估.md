@@ -15,6 +15,27 @@
 
 ---
 
+## 0.1 完成情况（2026-11-18）
+
+用户要求「直接都做完」，以下项已全部落地：
+
+| 任务 | commit | 结果 |
+|---|---|---|
+| `document.rs` 拆分 | `5ea4c4df` | 1012 → 父 315 + io 244 + sync 190 + undo 276 |
+| `arrange.rs` 拆分 | `8a22bca4` | 1371 → 父 30 + view 1091 + types 86 + edit_cmds 145 + layout 32 |
+| `mix.rs` 拆分 | `0ccd4d60` | 1070 → 父 161 + state 104 + session 341 + meter 63 + view 278 + plugins 144 |
+| `spawn.rs` 拆分 | `23df9bf5` | 1802 → 父 89 + command 350 + handle 374 + worker 353 + device 105 + stream 474 |
+| `graph.rs` 拆分 | `14a795c7` | 1103 → 父 890 + delay 80 + send 69 + process 68 |
+| `params.rs` 拆分 | `5ff2a6d2` | 937 → 父 735 + repair 207 |
+| `apply_anchor_field_edit` | `24c40063` | 102 → 44 行，抽出 lane 定位与移动量计算 |
+
+剩余未再拆的函数均 **低于 100 行**（`render_instruments` 84、`refresh_pdc` 78、
+`draw_audio_and_track_strips` 70），按本文档 200 行阈值视为完成。
+
+验证：`cargo clippy --tests`（相关 crate）无 warning；`cargo test` 全绿。
+
+---
+
 ## 1. 剩余任务总表
 
 数据来自 2026-11-18 静态扫描；「生产代码」= 非空、非行首注释、排除 `#[cfg(test)]` 块。
