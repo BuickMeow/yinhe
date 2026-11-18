@@ -139,6 +139,7 @@ pub(crate) fn decode_mixer_section(section: &[u8]) -> Option<MixerParams> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use yinhe_types::{ChannelId, TRACK_LC_BASE};
 
     #[test]
     fn v9_tables_migrate_to_v10_nodes() {
