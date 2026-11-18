@@ -794,27 +794,7 @@ impl MixerGraph {
                 continue;
             }
 
-            // insert 链 → PDC 延迟线。
-            {
-                let chain = &mut channels[ci];
-                for insert in &mut chain.inserts {
-                    let max = insert.max_block_frames().max(1);
-                    if max >= frames {
-                        insert.process(&mut chain.buffers.left, &mut chain.buffers.right);
-                        continue;
-                    }
-                    let mut start = 0;
-                    while start < frames {
-                        let end = (start + max).min(frames);
-                        insert.process(
-                            &mut chain.buffers.left[start..end],
-                            &mut chain.buffers.right[start..end],
-                        );
-                        start = end;
-                    }
-                }
-                // PDC 已拆成 input_delay（块首）与 master_delay（Master 累加前）。
-            }
+            process_insert_chain(&mut channels[ci], frames);
 
             let p = channels[ci].strip.params;
             let to_master = !p.mute && (!any_solo || p.solo);
@@ -855,40 +835,15 @@ impl MixerGraph {
                 route_channel_send_delayed(channels, ci, k, master_l, master_r, any_solo, frames);
             }
 
-            // 主输出：另一条通道 / Master。
-            match channel_outputs.get(ci).copied().flatten() {
-                Some(dst) if dst > ci && dst < channels.len() => {
-                    let dst_solo = channels[dst].strip.params.solo;
-                    if !p.mute && (!any_solo || p.solo || dst_solo) {
-                        let (left, right) = channels.split_at_mut(dst);
-                        let src = &mut left[ci];
-                        src.output_delay.add_delayed_into(
-                            &src.buffers.left,
-                            &src.buffers.right,
-                            &mut right[0].buffers.left,
-                            &mut right[0].buffers.right,
-                            1.0,
-                            frames,
-                        );
-                    }
-                }
-                // 逆序/自环通道输出已经在块首用上一块快照汇入。
-                Some(_) => {}
-                None => {
-                    if to_master {
-                        let chain = &mut channels[ci];
-                        // Master 输入 PDC：补到最长通道路径。
-                        chain
-                            .master_delay
-                            .process(&mut chain.buffers.left, &mut chain.buffers.right);
-                        let src = &chain.buffers;
-                        for f in 0..frames {
-                            master_l[f] += src.left[f];
-                            master_r[f] += src.right[f];
-                        }
-                    }
-                }
-            }
+            apply_channel_output(
+                channels,
+                ci,
+                channel_outputs.get(ci).copied().flatten(),
+                to_master,
+                master_l,
+                master_r,
+                frames,
+            );
         }
     }
 
@@ -1644,5 +1599,74 @@ mod tests {
         // 新链为空：无倍增。
         let expect = 0.25 * core::f32::consts::FRAC_1_SQRT_2;
         assert!((l[3] - expect).abs() < 1e-6);
+    }
+}
+
+/// 通道 insert 链：按插件 max_block_frames 分段处理（超块必须拆分）。
+fn process_insert_chain(chain: &mut ChannelChain, frames: usize) {
+    for insert in &mut chain.inserts {
+        let max = insert.max_block_frames().max(1);
+        if max >= frames {
+            insert.process(&mut chain.buffers.left, &mut chain.buffers.right);
+            continue;
+        }
+        let mut start = 0;
+        while start < frames {
+            let end = (start + max).min(frames);
+            insert.process(
+                &mut chain.buffers.left[start..end],
+                &mut chain.buffers.right[start..end],
+            );
+            start = end;
+        }
+    }
+    // PDC 已拆成 input_delay（块首）与 master_delay（Master 累加前）。
+}
+
+/// 通道主输出：另一条通道（后向）或 Master。
+fn apply_channel_output(
+    channels: &mut [ChannelChain],
+    ci: usize,
+    output: Option<usize>,
+    to_master: bool,
+    master_l: &mut [f32],
+    master_r: &mut [f32],
+    frames: usize,
+) {
+    let p = channels[ci].strip.params;
+    match output {
+        Some(dst) if dst > ci && dst < channels.len() => {
+            let dst_solo = channels[dst].strip.params.solo;
+            // 原条件：!mute && (!any_solo || solo || dst_solo)。
+            // to_master 已包含 !mute && (!any_solo || solo)。
+            if to_master || (!p.mute && dst_solo) {
+                let (left, right) = channels.split_at_mut(dst);
+                let src = &mut left[ci];
+                src.output_delay.add_delayed_into(
+                    &src.buffers.left,
+                    &src.buffers.right,
+                    &mut right[0].buffers.left,
+                    &mut right[0].buffers.right,
+                    1.0,
+                    frames,
+                );
+            }
+        }
+        // 逆序/自环通道输出已经在块首用上一块快照汇入。
+        Some(_) => {}
+        None => {
+            if to_master {
+                let chain = &mut channels[ci];
+                // Master 输入 PDC：补到最长通道路径。
+                chain
+                    .master_delay
+                    .process(&mut chain.buffers.left, &mut chain.buffers.right);
+                let src = &chain.buffers;
+                for f in 0..frames {
+                    master_l[f] += src.left[f];
+                    master_r[f] += src.right[f];
+                }
+            }
+        }
     }
 }

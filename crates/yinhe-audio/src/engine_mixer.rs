@@ -11,6 +11,13 @@ use crate::channel_layout::ChannelNamespace;
 use crate::engine::AudioEngine;
 use crate::spawn::InsertTarget;
 
+/// strip 自动化更新：节点、增益、声像。
+type StripAutomationUpdate = (MixerChannelId, Option<f32>, Option<f32>);
+/// 发送量自动化更新：源节点、目标、发送量。
+type SendAutomationUpdate = (MixerChannelId, yinhe_types::ChannelId, f32);
+/// insert 参数自动化更新：节点、槽位、参数 id、归一化值。
+type InsertAutomationUpdate = (MixerChannelId, usize, u32, f64);
+
 impl AudioEngine {
     /// 全量同步混音台参数（引擎 spawn/工程加载后由 UI 推一次）。
     /// 只推 strip/master 参数；insert 处理器走 Insert* 命令单独进。
@@ -179,11 +186,36 @@ impl AudioEngine {
 
     /// 按 tick 求值 LC / Master 的 MixerGain / MixerPan 自动化。
     pub(crate) fn apply_mixer_automation(&mut self, tick: u32) {
+        let (updates, send_updates, insert_updates) = self.collect_mixer_automation(tick);
+
+        for (channel, gain, pan) in updates {
+            let mut params = self.mix.mixer_params.node_strip(channel);
+            if let Some(gain) = gain {
+                params.gain = gain;
+            }
+            if let Some(pan) = pan {
+                params.pan = pan;
+            }
+            self.set_node_strip(channel, params);
+        }
+        self.apply_insert_automation(insert_updates);
+        self.apply_send_automation(send_updates);
+    }
+
+    /// 读取本 tick 的混音自动化：返回 (strip, send, insert) 三组待应用更新。
+    fn collect_mixer_automation(
+        &self,
+        tick: u32,
+    ) -> (
+        Vec<StripAutomationUpdate>,
+        Vec<SendAutomationUpdate>,
+        Vec<InsertAutomationUpdate>,
+    ) {
         use yinhe_types::AutomationTarget;
 
-        let mut updates: Vec<(MixerChannelId, Option<f32>, Option<f32>)> = Vec::new();
-        let mut send_updates: Vec<(MixerChannelId, yinhe_types::ChannelId, f32)> = Vec::new();
-        let mut insert_updates: Vec<(MixerChannelId, usize, u32, f64)> = Vec::new();
+        let mut updates: Vec<StripAutomationUpdate> = Vec::new();
+        let mut send_updates: Vec<SendAutomationUpdate> = Vec::new();
+        let mut insert_updates: Vec<InsertAutomationUpdate> = Vec::new();
         let mut collect = |node: &yinhe_mixer::MixerNode| {
             let Some(channel) = self.mix.mixer_params.mixer_channel_of(node.id) else {
                 return;
@@ -253,18 +285,12 @@ impl AudioEngine {
             collect(node);
         }
         collect(&self.mix.mixer_params.master);
+        (updates, send_updates, insert_updates)
+    }
 
-        for (channel, gain, pan) in updates {
-            let mut params = self.mix.mixer_params.node_strip(channel);
-            if let Some(gain) = gain {
-                params.gain = gain;
-            }
-            if let Some(pan) = pan {
-                params.pan = pan;
-            }
-            self.set_node_strip(channel, params);
-        }
-        for (channel, slot, id, value) in insert_updates {
+    /// 把 insert 参数自动化写到对应 dense 通道 / Master。
+    fn apply_insert_automation(&mut self, updates: Vec<InsertAutomationUpdate>) {
+        for (channel, slot, id, value) in updates {
             match channel {
                 MixerChannelId::Midi(ch) => {
                     if let Some(dense) = self.dense_of(ch) {
@@ -295,8 +321,12 @@ impl AudioEngine {
                 }
             }
         }
-        let had_send_updates = !send_updates.is_empty();
-        for (channel, target, amount) in send_updates {
+    }
+
+    /// 把发送量自动化写回发送表并同步到渲染图。
+    fn apply_send_automation(&mut self, updates: Vec<SendAutomationUpdate>) {
+        let had_updates = !updates.is_empty();
+        for (channel, target, amount) in updates {
             let source = self.mix.mixer_params.channel_id_for(channel);
             let pre_fader = self
                 .mix
@@ -308,7 +338,7 @@ impl AudioEngine {
                 .mixer_params
                 .set_channel_send(source, target, amount, pre_fader);
         }
-        if had_send_updates {
+        if had_updates {
             self.sync_sends_to_graph();
         }
     }

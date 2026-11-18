@@ -457,13 +457,7 @@ fn show_color_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
     let was_editing = ui.data(|d| d.get_temp::<bool>(edit_id)).unwrap_or(false);
 
     crate::widgets::rows::panel_row(ui, t!("track.color").as_ref(), |ui| {
-        let cur = doc
-            .edit
-            .track_cache
-            .colors
-            .get(track_idx)
-            .copied()
-            .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
+        let cur = current_track_color(doc, track_idx);
         let stored_color = doc.data.model.tracks[track_idx].color;
         // right_to_left：先放右侧的重置按钮，再放左侧的色块。
         let reset_btn = ui
@@ -507,48 +501,16 @@ fn show_color_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
                 srgba.b() as f32 / 255.0,
                 srgba.a() as f32 / 255.0,
             ];
-            {
-                let model = Arc::make_mut(&mut doc.data.model);
-                if track_idx < model.tracks.len() {
-                    let td = Arc::make_mut(&mut model.tracks[track_idx]);
-                    td.color = new;
-                }
-            }
-            if let Some(c) = doc.edit.track_cache.colors.get_mut(track_idx) {
-                *c = new;
-            }
-            doc.data.bump_revision();
+            apply_track_color(doc, track_idx, new);
         }
         if reset_btn.clicked() {
-            let old = cur;
-            {
-                let model = Arc::make_mut(&mut doc.data.model);
-                if track_idx < model.tracks.len() {
-                    let td = Arc::make_mut(&mut model.tracks[track_idx]);
-                    td.color = yinhe_core::DEFAULT_TRACK_COLOR;
-                }
-            }
-            if let Some(c) = doc.edit.track_cache.colors.get_mut(track_idx) {
-                *c = yinhe_editor_core::document::track_color(
-                    &doc.data.model.tracks[track_idx],
-                    track_idx,
-                    doc.edit.track_cache.conductor_idx,
-                );
-            }
-            doc.data.bump_revision();
-            undo_color = Some((old, yinhe_core::DEFAULT_TRACK_COLOR));
+            undo_color = Some(reset_track_color(doc, track_idx));
         }
         if !editing && was_editing {
             let old = ui
                 .data(|d| d.get_temp::<[f32; 4]>(edit_id.with("old")))
                 .unwrap_or(cur);
-            let new = doc
-                .edit
-                .track_cache
-                .colors
-                .get(track_idx)
-                .copied()
-                .unwrap_or(cur);
+            let new = current_track_color(doc, track_idx);
             if old != new {
                 undo_color = Some((old, new));
             }
@@ -568,6 +530,52 @@ fn show_color_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
             snapshot,
         );
     }
+}
+
+/// 当前音轨颜色（优先 track_cache，未初始化时用默认色）。
+fn current_track_color(doc: &Document, track_idx: usize) -> [f32; 4] {
+    doc.edit
+        .track_cache
+        .colors
+        .get(track_idx)
+        .copied()
+        .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR)
+}
+
+/// 写入音轨颜色（model + track_cache），并 bump revision。
+fn apply_track_color(doc: &mut Document, track_idx: usize, color: [f32; 4]) {
+    {
+        let model = Arc::make_mut(&mut doc.data.model);
+        if track_idx < model.tracks.len() {
+            let td = Arc::make_mut(&mut model.tracks[track_idx]);
+            td.color = color;
+        }
+    }
+    if let Some(c) = doc.edit.track_cache.colors.get_mut(track_idx) {
+        *c = color;
+    }
+    doc.data.bump_revision();
+}
+
+/// 恢复默认色，返回 `(旧色, 新色)` 供 undo。
+fn reset_track_color(doc: &mut Document, track_idx: usize) -> ([f32; 4], [f32; 4]) {
+    let old = current_track_color(doc, track_idx);
+    {
+        let model = Arc::make_mut(&mut doc.data.model);
+        if track_idx < model.tracks.len() {
+            let td = Arc::make_mut(&mut model.tracks[track_idx]);
+            td.color = yinhe_core::DEFAULT_TRACK_COLOR;
+        }
+    }
+    if let Some(c) = doc.edit.track_cache.colors.get_mut(track_idx) {
+        *c = yinhe_editor_core::document::track_color(
+            &doc.data.model.tracks[track_idx],
+            track_idx,
+            doc.edit.track_cache.conductor_idx,
+        );
+    }
+    doc.data.bump_revision();
+    (old, yinhe_core::DEFAULT_TRACK_COLOR)
 }
 
 /// 计算每轨 skip mask 并发给音频引擎。

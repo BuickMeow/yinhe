@@ -276,58 +276,52 @@ pub(super) fn focus_send_block(ui: &mut egui::Ui, send: FocusSend, actions: &mut
                 pre_fader,
             });
         }
-        crate::widgets::menu::context_menu(&resp, 180.0, |ui| {
-            let enable_label = if amount > 0.0 {
-                t!("mix.send_disable")
-            } else {
-                t!("mix.send_enable")
-            };
-            if ui
-                .add(crate::widgets::menu::menu_item_action(
-                    ui,
-                    false,
-                    enable_label.as_ref(),
-                    "",
-                ))
-                .clicked()
-            {
-                actions.push(MixAction::SetChannelSend {
-                    source,
-                    target,
-                    amount: if amount > 0.0 { 0.0 } else { 1.0 },
-                    pre_fader,
-                });
-                ui.close();
-            }
-            let (pre_label, next_pre) = if pre_fader {
-                (t!("mix.send_post_fader"), false)
-            } else {
-                (t!("mix.pre_fader"), true)
-            };
-            if ui
-                .add(crate::widgets::menu::menu_item_action(
-                    ui,
-                    false,
-                    pre_label.as_ref(),
-                    "",
-                ))
-                .clicked()
-            {
-                actions.push(MixAction::SetChannelSend {
-                    source,
-                    target,
-                    amount: amount.max(f32::MIN_POSITIVE),
-                    pre_fader: next_pre,
-                });
-                ui.close();
-            }
-        });
+        send_context_menu(&resp, source, target, amount, pre_fader, actions);
         ui.vertical(|ui| {
             ui.label(
                 egui::RichText::new(send_db_label(amount))
                     .size(crate::theme::SMALL_LABEL_FONT)
                     .color(crate::theme::text_secondary()),
             );
+        });
+    });
+}
+
+/// 发送旋钮右键菜单：启用/关闭、推子前/后。
+fn send_context_menu(
+    resp: &egui::Response,
+    source: ChannelId,
+    target: ChannelId,
+    amount: f32,
+    pre_fader: bool,
+    actions: &mut Vec<MixAction>,
+) {
+    crate::widgets::menu::context_menu(resp, 180.0, |ui| {
+        let enable_label = if amount > 0.0 {
+            t!("mix.send_disable")
+        } else {
+            t!("mix.send_enable")
+        };
+        crate::widgets::menu::action(ui, enable_label.to_string(), "", |_| {
+            actions.push(MixAction::SetChannelSend {
+                source,
+                target,
+                amount: if amount > 0.0 { 0.0 } else { 1.0 },
+                pre_fader,
+            });
+        });
+        let (pre_label, next_pre) = if pre_fader {
+            (t!("mix.send_post_fader"), false)
+        } else {
+            (t!("mix.pre_fader"), true)
+        };
+        crate::widgets::menu::action(ui, pre_label.to_string(), "", |_| {
+            actions.push(MixAction::SetChannelSend {
+                source,
+                target,
+                amount: amount.max(f32::MIN_POSITIVE),
+                pre_fader: next_pre,
+            });
         });
     });
 }
