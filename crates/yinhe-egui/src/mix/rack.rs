@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use yinhe_audio::{AudioCommand, AudioHandle, BuiltinInsert, ClapInsert, InsertTarget};
 use yinhe_clap::{ClapProcessor, HostInfo};
 use yinhe_mixer::{InsertProcessor, MixerParams, PluginFormat};
-use yinhe_types::{ChannelId, LogicalChannelId};
+use yinhe_types::ChannelId;
 use yinhe_vst3::Vst3Insert;
 
 use super::plugin_instance::{PluginEntry, PluginInstance};
@@ -404,16 +404,13 @@ impl MixerRack {
         Err(PluginLoadError("当前平台暂不支持插件界面".into()))
     }
 
-    /// 删除每轨 LC 的机架链（关闭 per-track 模式时）。
-    pub fn remove_track_lc_chain(&mut self, lc: LogicalChannelId, handle: Option<&AudioHandle>) {
-        if let Some(chain) = self.slots.remove(&ChannelId::Lc(lc)) {
+    /// 删除某通道的机架链（关闭 per-track 模式 / AP 删除时）。
+    fn remove_chain(&mut self, target: ChannelId, handle: Option<&AudioHandle>) {
+        if let Some(chain) = self.slots.remove(&target) {
             for (slot, rt) in chain.into_iter().enumerate() {
                 if rt.sent {
                     if let Some(h) = handle {
-                        h.send(AudioCommand::InsertRemove {
-                            target: ChannelId::Lc(lc),
-                            slot,
-                        });
+                        h.send(AudioCommand::InsertRemove { target, slot });
                     }
                     self.orphan.push(rt);
                 }
@@ -449,23 +446,16 @@ impl MixerRack {
         }
     }
 
-    /// 清理已不存在的每轨 LC 机架链（关闭 per-track / 删除轨道后）。
-    pub fn retain_track_lcs(
-        &mut self,
-        valid: &HashSet<LogicalChannelId>,
-        handle: Option<&AudioHandle>,
-    ) {
-        let stale: Vec<LogicalChannelId> = self
+    /// 清理已不存在的通道机架链（删除轨道 / 关闭 per-track / 删除 AP 后）。
+    pub fn retain_channels(&mut self, valid: &HashSet<ChannelId>, handle: Option<&AudioHandle>) {
+        let stale: Vec<ChannelId> = self
             .slots
             .keys()
-            .filter_map(|id| match id {
-                ChannelId::Lc(lc) => Some(*lc),
-                _ => None,
-            })
+            .copied()
             .filter(|id| !valid.contains(id))
             .collect();
-        for id in stale {
-            self.remove_track_lc_chain(id, handle);
+        for target in stale {
+            self.remove_chain(target, handle);
         }
     }
 

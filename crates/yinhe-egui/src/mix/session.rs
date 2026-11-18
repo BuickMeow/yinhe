@@ -175,18 +175,15 @@ impl App {
         let Some(doc) = self.workspace.documents.get(idx) else {
             return;
         };
-        let valid: std::collections::HashSet<_> = doc
-            .mixer
-            .nodes()
-            .filter_map(|node| match (node.id, node.source) {
-                (ChannelId::Lc(id), yinhe_types::ChannelSource::Track(_)) => Some(id),
-                _ => None,
-            })
-            .collect();
         let mixer = doc.mixer.clone();
         let handle = self.audio_state.handle.as_ref().map(|a| &a.handle);
         if idx < self.mixer_racks.len() {
-            self.mixer_racks[idx].retain_track_lcs(&valid, handle);
+            let valid_nodes: std::collections::HashSet<yinhe_types::ChannelId> = mixer
+                .nodes()
+                .map(|node| node.id)
+                .chain(std::iter::once(yinhe_types::ChannelId::Master))
+                .collect();
+            self.mixer_racks[idx].retain_channels(&valid_nodes, handle);
             self.mixer_racks[idx].ensure_track_lc_chains(&mixer);
         }
     }
