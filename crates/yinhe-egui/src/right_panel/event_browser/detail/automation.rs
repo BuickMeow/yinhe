@@ -2,6 +2,8 @@
 
 use super::*;
 
+use yinhe_theme::AutomationTargetLabel;
+
 // ── Automation（统一 CC/PB/RPN/NRPN/Tempo） ──
 
 pub(super) fn show_automation_detail(

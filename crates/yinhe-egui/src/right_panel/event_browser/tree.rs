@@ -12,6 +12,8 @@ use yinhe_types::AutomationTarget;
 use super::state::{ArchiveKey, EventBrowserState, SelectedItem};
 use super::{group_tracks_by_port_channel, port_letter};
 
+use yinhe_theme::AutomationTargetLabel;
+
 /// 渲染整个树状导航。
 pub(super) fn render_tree(
     ui: &mut egui::Ui,

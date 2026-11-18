@@ -5,6 +5,8 @@ use yinhe_types::automation::{ParamDevice, builtin_synth_param};
 
 use super::*;
 
+use yinhe_theme::AutomationTargetLabel;
+
 // ── Overview / Track detail ──
 
 /// automation lane 分类统计（overview 与 track_detail 共用）。

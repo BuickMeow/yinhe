@@ -1,5 +1,7 @@
 use super::*;
 
+use yinhe_theme::AutomationTargetLabel;
+
 /// PR 自动化栏数据（PB/CC/RPN；Conductor 轨只有 Tempo），JSON：
 /// `[{"kind":0,"max":16383,"name":"Pitch Bend","points":[[tick,value],...]}, ...]`
 ///

@@ -808,67 +808,6 @@ impl AutomationTarget {
             _ => 0.0,
         }
     }
-
-    /// 显示名（下拉/AR/事件浏览器共用）。
-    pub fn display_name(&self) -> String {
-        match self {
-            AutomationTarget::Param { device, id, name } => match builtin_param(device, *id) {
-                // 内置参数按 MIDI 绑定补前缀：RPN 参数显示为 "RPN nnn 名称"
-                //（如 "RPN 000 PB Sensitivity"），CC/PB 直接用参数名。
-                Some(p) => match p.midi {
-                    MidiBinding::Rpn(n) => format!("RPN {:03} {}", n, p.name),
-                    _ => p.name.to_string(),
-                },
-                None if !name.is_empty() => name.clone(),
-                None => match device {
-                    ParamDevice::PluginInstrument { channel, .. } => {
-                        format!("Plugin Param {id} (ch {channel})")
-                    }
-                    _ => format!("Param {id}"),
-                },
-            },
-            AutomationTarget::CC { controller } => {
-                let name = cc_name(*controller);
-                if name.is_empty() {
-                    format!("CC {:03}", controller)
-                } else {
-                    format!("CC {:03} {}", controller, name)
-                }
-            }
-            AutomationTarget::PitchBend => "Pitch Bend".into(),
-            AutomationTarget::Rpn { parameter } => {
-                let name = rpn_name(*parameter);
-                if name.is_empty() {
-                    format!("RPN {:03}", parameter)
-                } else {
-                    format!("RPN {:03} {}", parameter, name)
-                }
-            }
-            AutomationTarget::Nrpn { parameter } => format!("NRPN {:03}", parameter),
-            AutomationTarget::Tempo => "Tempo".into(),
-            AutomationTarget::MixerGain { channel } => {
-                format!("Mixer Gain {:?}", channel)
-            }
-            AutomationTarget::MixerPan { channel } => {
-                format!("Mixer Pan {:?}", channel)
-            }
-            AutomationTarget::MixerSend { source, target } => {
-                format!("Mixer Send {:?} -> {:?}", source, target)
-            }
-            AutomationTarget::InsertParam {
-                target,
-                slot,
-                id,
-                name,
-            } => {
-                if name.is_empty() {
-                    format!("Insert {:?}#{} Param {}", target, slot, id)
-                } else {
-                    format!("Insert {:?}#{} {}", target, slot, name)
-                }
-            }
-        }
-    }
 }
 
 /// RPN 参数号的原始值上限（RPN 0/2 是 7-bit，其余 14-bit）。
@@ -1302,11 +1241,9 @@ mod tests {
         let pb = param(&xs, builtin_synth_param::PITCH_BEND);
         assert_eq!(pb.display_max(), Some(16383.0));
         assert!(pb.has_center_line());
-        assert_eq!(pb.display_name(), "Pitch Bend");
 
         // RPN 绑定的内置参数：显示带 "RPN nnn" 前缀。
         let pbs = param(&xs, builtin_synth_param::PB_SENSITIVITY);
-        assert_eq!(pbs.display_name(), "RPN 000 PB Sensitivity");
 
         // 第三方插件参数：无内置表 → 归一化显示（无换算上限），名字用缓存。
         let plug = AutomationTarget::Param {
@@ -1314,7 +1251,6 @@ mod tests {
             id: 42,
             name: "Cutoff".into(),
         };
-        assert_eq!(plug.display_name(), "Cutoff");
         assert_eq!(plug.display_max(), None);
         assert_eq!(plug.default_value(), 0.0);
         assert!(!plug.has_center_line());
@@ -1324,7 +1260,6 @@ mod tests {
     #[test]
     fn test_low_level_targets() {
         let cc7 = AutomationTarget::CC { controller: 7 };
-        assert_eq!(cc7.display_name(), "CC 007 Volume");
         assert_eq!(cc7.display_max(), Some(127.0));
         assert_eq!(cc7.default_value(), 0.0);
         assert!(!cc7.has_center_line());
@@ -1337,22 +1272,6 @@ mod tests {
             SegmentShape::linear_curve()
         );
 
-        assert_eq!(
-            AutomationTarget::Rpn { parameter: 5 }.display_name(),
-            "RPN 005"
-        );
-        assert_eq!(
-            AutomationTarget::Rpn { parameter: 0 }.display_name(),
-            "RPN 000 PB Sensitivity"
-        );
-        assert_eq!(
-            AutomationTarget::CC { controller: 10 }.display_name(),
-            "CC 010 Pan"
-        );
-        assert_eq!(
-            AutomationTarget::CC { controller: 3 }.display_name(),
-            "CC 003"
-        );
         assert_eq!(
             AutomationTarget::Rpn { parameter: 5 }.display_max(),
             Some(16383.0)

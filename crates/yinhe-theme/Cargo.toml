@@ -10,3 +10,4 @@ egui = ["dep:egui"]
 [dependencies]
 egui = { workspace = true, optional = true }
 serde = { workspace = true }
+yinhe-types = { path = "../yinhe-types" }

@@ -2,6 +2,8 @@
 use std::collections::BTreeMap;
 use yinhe_types::AutomationTarget;
 
+use yinhe_theme::AutomationTargetLabel;
+
 fn main() {
     for path in std::env::args().skip(1) {
         let m = match yinhe_midi::parse_path(&path) {

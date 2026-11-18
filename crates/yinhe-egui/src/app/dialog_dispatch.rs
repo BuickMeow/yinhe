@@ -3,6 +3,8 @@ use rust_i18n::t;
 
 use crate::app::App;
 
+use yinhe_theme::AutomationTargetLabel;
+
 impl App {
     /// Show all overlay dialogs as independent OS windows.
     pub(in crate::app) fn show_dialogs(&mut self, ui: &mut egui::Ui) {

@@ -13,6 +13,8 @@ use rust_i18n::t;
 use yinhe_core::{Selection, SelectionFilter, YinModel};
 use yinhe_types::AutomationTarget;
 
+use yinhe_theme::AutomationTargetLabel;
+
 /// 自动化事件类型条目。
 pub(crate) struct AutomationTargetEntry {
     pub target: AutomationTarget,

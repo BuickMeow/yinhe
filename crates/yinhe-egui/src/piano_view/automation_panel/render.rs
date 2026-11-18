@@ -8,6 +8,8 @@ use yinhe_wgpu::{AutomationGhost, InstanceRenderer, prepare_automation};
 
 use super::value::format_display_value;
 
+use yinhe_theme::AutomationTargetLabel;
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_panel_content(
     ui: &mut egui::Ui,

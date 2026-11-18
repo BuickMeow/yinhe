@@ -14,6 +14,8 @@ use crate::theme;
 use super::constants::automation_targets;
 use super::interaction;
 
+use yinhe_theme::AutomationTargetLabel;
+
 /// 分割条拖拽：调整面板高度。写入下一帧生效，避免帧内布局抖动。
 pub(crate) fn handle_split_drag(
     ui: &mut egui::Ui,

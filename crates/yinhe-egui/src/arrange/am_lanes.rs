@@ -22,6 +22,8 @@ use crate::piano_view::automation_panel::AutomationEditCtx;
 use crate::piano_view::automation_panel::interaction::{self, SelOp};
 use crate::right_panel::{InfoContent, RightTab};
 
+use yinhe_theme::AutomationTargetLabel;
+
 /// 一条需要交互/渲染的 AM 行。
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AmRowRef {

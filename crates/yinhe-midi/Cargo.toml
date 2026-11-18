@@ -22,3 +22,4 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+yinhe-theme = { path = "../yinhe-theme" }
