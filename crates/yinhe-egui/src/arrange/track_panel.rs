@@ -2,7 +2,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use eframe::egui;
-use egui_material_icons::icons::{ICON_ADD, ICON_KEYBOARD_ARROW_DOWN, ICON_KEYBOARD_ARROW_RIGHT};
 use rust_i18n::t;
 
 use yinhe_core::{TrackInfo, TrackKind};
@@ -154,39 +153,7 @@ pub(crate) fn show(
             egui::Rect::from_min_size(egui::pos2(panel_rect.min.x, y), egui::vec2(panel_w, lh));
         // 最后一个轨道之后的占位行：整行都是「添加音轨」按钮。
         if row == total_rows {
-            let color = crate::theme::stripe_bg();
-            render::draw_row_background(ui, &painter, row_rect, row, false, color);
-            let add_id = egui::Id::unique("arr_add_track_row");
-            let add_resp = ui.interact(row_rect, add_id, egui::Sense::click());
-            crate::widgets::hint::hover(ui.ctx(), &add_resp, t!("hint.arrange.add_track"));
-            let plus_center = egui::pos2(row_rect.min.x + 14.0, row_rect.center().y);
-            let icon_color = if add_resp.hovered() {
-                crate::theme::text_primary()
-            } else {
-                crate::theme::text_muted()
-            };
-            ui.painter().text(
-                plus_center,
-                egui::Align2::CENTER_CENTER,
-                ICON_ADD.codepoint,
-                egui::FontId::new(crate::theme::ICON_FONT, ICON_ADD.font_family()),
-                icon_color,
-            );
-            ui.painter().text(
-                egui::pos2(plus_center.x + 14.0, row_rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                t!("hint.arrange.add_track"),
-                egui::FontId::proportional(crate::theme::SMALL_FONT),
-                icon_color,
-            );
-            if add_resp.clicked() {
-                ui.ctx().data_mut(|d| {
-                    d.insert_temp(
-                        egui::Id::unique(crate::dialogs::new_track::OPEN_REQUEST_ID),
-                        true,
-                    )
-                });
-            }
+            render::draw_add_track_row(ui, &painter, row_rect, row);
             continue;
         }
         let Some(row_hit) = row_layout.row_hit(row) else {
@@ -278,133 +245,30 @@ pub(crate) fn show(
         let badge_rect = render::draw_badge(&painter, content_rect, lh, color32);
 
         if !is_conductor {
-            if is_folder {
-                let collapsed = tracks.get(idx).is_some_and(|t| t.collapsed);
-                let icon = if collapsed {
-                    ICON_KEYBOARD_ARROW_RIGHT
-                } else {
-                    ICON_KEYBOARD_ARROW_DOWN
-                };
-                let icon_color = hover::icon_contrast_color(color);
-                // 文件夹图标放色带中上部，折叠箭头固定在底部（与普通轨 chevron 同位）。
-                if lh >= 28.0 {
-                    painter.text(
-                        egui::pos2(badge_rect.center().x, badge_rect.center().y - 4.0),
-                        egui::Align2::CENTER_CENTER,
-                        egui_material_icons::icons::ICON_FOLDER_OPEN.codepoint,
-                        egui::FontId::new(
-                            crate::theme::ICON_FONT_SM,
-                            egui_material_icons::icons::ICON_FOLDER_OPEN.font_family(),
-                        ),
-                        icon_color,
-                    );
-                }
-                let toggle_rect = egui::Rect::from_center_size(
-                    egui::pos2(
-                        badge_rect.center().x,
-                        badge_rect.max.y - BADGE_ICON_BOTTOM_INSET,
-                    ),
-                    egui::vec2(12.0, lh.min(16.0)),
-                );
-                let resp = ui.interact(
-                    toggle_rect,
-                    egui::Id::unique(("folder_toggle", idx)),
-                    egui::Sense::click(),
-                );
-                no_drag_rects.push(toggle_rect);
-                crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.arrange.folder_toggle"));
-                painter.text(
-                    toggle_rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    icon.codepoint,
-                    egui::FontId::new(crate::theme::ICON_FONT, icon.font_family()),
-                    icon_color,
-                );
-                if resp.clicked() {
-                    actions.push(TrackAction::ToggleFolder { idx });
-                }
-            } else {
-                let expanded = arr_am_expanded.get(idx).copied().unwrap_or(false);
-                // 未展开且完全没有任何自动化 → 直接在色带上给「+」，点击弹创建自动化菜单
-                //（无需先展开）；否则照常显示展开/收起 chevron。
-                let has_any_lane = tracks
+            let expanded = arr_am_expanded.get(idx).copied().unwrap_or(false);
+            let has_any_lane = tracks
+                .get(idx)
+                .is_some_and(|t| !t.automation_lanes.is_empty())
+                || track_mixer_lanes
                     .get(idx)
-                    .is_some_and(|t| !t.automation_lanes.is_empty())
-                    || track_mixer_lanes
-                        .get(idx)
-                        .is_some_and(|lanes| !lanes.is_empty());
-                let icon_color = hover::icon_contrast_color(color);
-                // 兄弟轨道联动：本轨任意行（主/自动化）被悬停时，图标一并显示。
-                let family_hovered = hover_track == Some(idx);
-                if !expanded && !has_any_lane {
-                    // 无自动化未展开：色带同一图标位给无边框「+」，点击直接打开
-                    // 「添加自动化」窗口（设备维度）；仅悬浮显示。
-                    let plus_center = egui::pos2(
-                        badge_rect.center().x,
-                        badge_rect.max.y - BADGE_ICON_BOTTOM_INSET,
-                    );
-                    let plus_rect =
-                        egui::Rect::from_center_size(plus_center, egui::vec2(12.0, 16.0));
-                    if family_hovered && pointer_pos.is_some_and(|p| plus_rect.contains(p)) {
-                        crate::widgets::hint::set(ui.ctx(), t!("hint.arrange.add_automation"));
-                    }
-                    if family_hovered {
-                        no_drag_rects.push(plus_rect);
-                        if badge::badge_icon_button(
-                            ui,
-                            plus_center,
-                            ICON_ADD.codepoint,
-                            ICON_ADD.font_family(),
-                            icon_color,
-                            idx,
-                        ) {
-                            actions.push(TrackAction::OpenAutomationPicker { idx });
-                        }
-                    }
-                } else {
-                    let icon = if expanded {
-                        ICON_KEYBOARD_ARROW_DOWN
-                    } else {
-                        ICON_KEYBOARD_ARROW_RIGHT
-                    };
-                    // chevron 仅在该轨家族被悬浮时显示；颜色按音轨颜色亮度选黑/白保证对比度。
-                    let icon_rect = egui::Rect::from_center_size(
-                        egui::pos2(
-                            badge_rect.center().x,
-                            badge_rect.max.y - BADGE_ICON_BOTTOM_INSET,
-                        ),
-                        egui::vec2(12.0, lh.min(16.0)),
-                    );
-                    let chev_resp = ui.interact(
-                        icon_rect,
-                        egui::Id::unique(("am_chevron", idx)),
-                        egui::Sense::click(),
-                    );
-                    crate::widgets::hint::hover(ui.ctx(), &chev_resp, t!("hint.arrange.am_expand"));
-                    if family_hovered {
-                        no_drag_rects.push(icon_rect);
-                        painter.text(
-                            icon_rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            icon.codepoint,
-                            egui::FontId::new(crate::theme::ICON_FONT, icon.font_family()),
-                            icon_color,
-                        );
-                    } else if has_any_lane {
-                        // Bitwig 风格占位：不显示 chevron 时用淡点提示该轨有自动化。
-                        painter.circle_filled(
-                            icon_rect.center(),
-                            2.0,
-                            icon_color.gamma_multiply(0.3),
-                        );
-                    }
-                    if chev_resp.clicked()
-                        && let Some(e) = arr_am_expanded.get_mut(idx)
-                    {
-                        *e = !*e;
-                    }
-                }
-            }
+                    .is_some_and(|lanes| !lanes.is_empty());
+            render::draw_badge_icons(
+                ui,
+                &painter,
+                badge_rect,
+                lh,
+                idx,
+                color,
+                is_folder,
+                tracks.get(idx).is_some_and(|t| t.collapsed),
+                expanded,
+                has_any_lane,
+                hover_track == Some(idx),
+                pointer_pos,
+                &mut no_drag_rects,
+                &mut actions,
+                arr_am_expanded,
+            );
         }
 
         let (track_audio_dirty, track_actions) = render::draw_track_row(
