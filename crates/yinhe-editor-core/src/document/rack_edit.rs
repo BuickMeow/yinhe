@@ -45,9 +45,11 @@ impl Document {
                 RackOutputMode::PerTrack => {
                     if track.lc.is_none() {
                         // 复制共享 LC 的混音参数，避免切换模式后听感突变。
-                        let source = self.mixer.midi_node(channel).cloned().unwrap_or_else(|| {
-                            yinhe_mixer::MixerNode::new(yinhe_types::ChannelId::Master)
-                        });
+                        let source = self
+                            .mixer
+                            .midi_node(channel)
+                            .cloned()
+                            .unwrap_or_else(yinhe_mixer::MixerNode::master);
                         let id = self.mixer.add_track_lc();
                         if let Some(node) = self.mixer.track_node_mut(id) {
                             node.strip = source.strip;
@@ -264,7 +266,7 @@ impl Document {
             .mixer
             .midi_node(channel)
             .cloned()
-            .unwrap_or_else(|| yinhe_mixer::MixerNode::new(yinhe_types::ChannelId::Master));
+            .unwrap_or_else(yinhe_mixer::MixerNode::master);
         let id = self.mixer.add_track_lc();
         if let Some(node) = self.mixer.track_node_mut(id) {
             node.strip = source.strip;
@@ -334,7 +336,7 @@ impl Document {
                 .mixer
                 .midi_node(channel)
                 .cloned()
-                .unwrap_or_else(|| yinhe_mixer::MixerNode::new(yinhe_types::ChannelId::Master));
+                .unwrap_or_else(yinhe_mixer::MixerNode::master);
             let id = self.mixer.add_track_lc();
             if let Some(node) = self.mixer.track_node_mut(id) {
                 node.strip = source.strip;

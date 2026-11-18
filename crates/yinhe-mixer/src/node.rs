@@ -104,7 +104,6 @@ pub struct FrozenAudio {
 pub struct MixerNode {
     pub id: ChannelId,
     /// 该节点的来源角色（显式记录，不从 ID 数值反推）。
-    #[serde(default)]
     pub source: ChannelSource,
     #[serde(default)]
     pub strip: StripParams,
@@ -126,11 +125,8 @@ pub struct MixerNode {
 }
 
 impl MixerNode {
-    pub fn new(id: ChannelId) -> Self {
-        let source = match id {
-            ChannelId::Master => ChannelSource::Master,
-            ChannelId::Lc(_) | ChannelId::Ap(_) => ChannelSource::Unspecified,
-        };
+    /// 构造节点：必须显式给出角色，不再有「未知来源」的中间态。
+    pub fn new(id: ChannelId, source: ChannelSource) -> Self {
         Self {
             id,
             source,
@@ -142,12 +138,12 @@ impl MixerNode {
         }
     }
 
-    pub fn logical_channel(id: LogicalChannelId) -> Self {
-        Self::new(ChannelId::Lc(id))
+    pub fn logical_channel(id: LogicalChannelId, source: ChannelSource) -> Self {
+        Self::new(ChannelId::Lc(id), source)
     }
 
     pub fn master() -> Self {
-        Self::new(ChannelId::Master)
+        Self::new(ChannelId::Master, ChannelSource::Master)
     }
 }
 

@@ -805,9 +805,9 @@ impl Document {
                         yinhe_types::ChannelId::Lc(id) => MixerChannelId::TrackLc(id),
                         _ => MixerChannelId::Master,
                     },
-                    yinhe_types::ChannelSource::Ap(_)
-                    | yinhe_types::ChannelSource::Master
-                    | yinhe_types::ChannelSource::Unspecified => MixerChannelId::Master,
+                    yinhe_types::ChannelSource::Ap(_) | yinhe_types::ChannelSource::Master => {
+                        MixerChannelId::Master
+                    }
                 });
             }
         }
@@ -1163,12 +1163,12 @@ mod tests {
         };
 
         let imported = make(None);
-        assert!(imported.mixer.nodes().all(|node| {
-            matches!(
-                node.source,
-                yinhe_types::ChannelSource::Midi(_) | yinhe_types::ChannelSource::Unspecified
-            )
-        }));
+        assert!(
+            imported
+                .mixer
+                .nodes()
+                .all(|node| { matches!(node.source, yinhe_types::ChannelSource::Midi(_)) })
+        );
 
         let with_saved_mixer = make(Some(MixerParams::default()));
         assert_eq!(

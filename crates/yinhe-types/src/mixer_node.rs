@@ -75,7 +75,7 @@ impl LogicalChannelId {
 }
 
 /// LC 的来源角色（显式记录，不再从 ID 数值区间反推）。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelSource {
     /// MIDI 源通道 LC（AP 通道载体）；`ch` = global = port*16+channel。
@@ -88,9 +88,6 @@ pub enum ChannelSource {
     Ap(ApGroupId),
     /// Master。
     Master,
-    /// 旧数据未标注，加载时补齐。
-    #[default]
-    Unspecified,
 }
 
 /// 听感三态：正常 / 静音 / 独奏。

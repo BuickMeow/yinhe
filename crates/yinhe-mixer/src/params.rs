@@ -620,9 +620,7 @@ impl MixerParams {
             return id;
         }
         let id = self.alloc_lc_id();
-        let mut node = MixerNode::logical_channel(id);
-        node.source = source;
-        self.nodes.push(node);
+        self.nodes.push(MixerNode::logical_channel(id, source));
         self.sort_dedup_nodes();
         id
     }
@@ -663,9 +661,10 @@ impl MixerParams {
     pub fn add_track_lc(&mut self) -> LogicalChannelId {
         self.repair_track_channels();
         let id = self.alloc_lc_id();
-        let mut node = MixerNode::logical_channel(id);
-        node.source = ChannelSource::Track(u16::MAX);
-        self.nodes.push(node);
+        self.nodes.push(MixerNode::logical_channel(
+            id,
+            ChannelSource::Track(u16::MAX),
+        ));
         self.sort_dedup_nodes();
         id
     }
@@ -675,9 +674,10 @@ impl MixerParams {
         if self.track_node(id).is_some() {
             return false;
         }
-        let mut node = MixerNode::logical_channel(id);
-        node.source = ChannelSource::Track(u16::MAX);
-        self.nodes.push(node);
+        self.nodes.push(MixerNode::logical_channel(
+            id,
+            ChannelSource::Track(u16::MAX),
+        ));
         if id.0 >= self.next_lc_id.0 {
             self.next_lc_id = LogicalChannelId(id.0.saturating_add(1));
         }
@@ -978,7 +978,10 @@ mod tests {
     fn ensure_len_backfills_tables_and_fixes_ids() {
         let mut p = MixerParams::default();
         p.racks.clear();
-        p.nodes = vec![MixerNode::logical_channel(LogicalChannelId(999))];
+        p.nodes = vec![MixerNode::logical_channel(
+            LogicalChannelId(999),
+            ChannelSource::Midi(0),
+        )];
         p.ensure_len();
 
         assert_eq!(p.racks.len(), CHANNEL_COUNT);
