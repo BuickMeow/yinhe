@@ -226,7 +226,6 @@ impl AudioEngine {
                 let f = frames
                     .min(cb.left.len().saturating_sub(offset_frames))
                     .min(cb.right.len().saturating_sub(offset_frames));
-                let out = offset_frames;
                 if f > 0 {
                     if self.mix.scratch_l.len() < f {
                         self.mix.scratch_l.resize(f, 0.0);
@@ -236,48 +235,17 @@ impl AudioEngine {
                     }
                     // 链在上一段刚确认存在；这里防御性跳过而非 panic
                     // （音频线程任何 panic 都会让整条输出静音）。
-                    let Some(src) = self.plugins.instruments[dense].as_mut() else {
-                        continue;
-                    };
-                    for (idx, proc) in src.chain.iter_mut().enumerate() {
-                        // 乐器不做隐式分段（携带事件与时间戳）：引擎块长必须 ≤
-                        // 插件激活能力（见 MAX_ENGINE_BLOCK_FRAMES 契约），越界是宿主 bug。
-                        debug_assert!(
-                            f <= proc.processor.max_block_frames(),
-                            "乐器块长 {f} 超过插件能力 {}",
-                            proc.processor.max_block_frames()
+                    if let Some(src) = self.plugins.instruments[dense].as_mut() {
+                        process_instrument_chain(
+                            &mut src.chain,
+                            &events,
+                            &mut cb.left[offset_frames..offset_frames + f],
+                            &mut cb.right[offset_frames..offset_frames + f],
+                            &mut self.mix.scratch_l,
+                            &mut self.mix.scratch_r,
+                            &mut self.mix.event_scratch,
+                            block_start_sample,
                         );
-                        // 广播事件（音符/CC/PB/RPN）+ 本乐器定向参数事件合并。
-                        let ev: &[PluginEvent] = if proc.params.is_empty() {
-                            &events
-                        } else {
-                            self.mix.event_scratch.clear();
-                            self.mix.event_scratch.extend_from_slice(&events);
-                            self.mix.event_scratch.extend_from_slice(&proc.params);
-                            &self.mix.event_scratch
-                        };
-                        if idx == 0 {
-                            proc.processor.process(
-                                ev,
-                                &mut cb.left[out..out + f],
-                                &mut cb.right[out..out + f],
-                                block_start_sample,
-                            );
-                        } else {
-                            self.mix.scratch_l[..f].fill(0.0);
-                            self.mix.scratch_r[..f].fill(0.0);
-                            proc.processor.process(
-                                ev,
-                                &mut self.mix.scratch_l[..f],
-                                &mut self.mix.scratch_r[..f],
-                                block_start_sample,
-                            );
-                            for i in 0..f {
-                                cb.left[out + i] += self.mix.scratch_l[i];
-                                cb.right[out + i] += self.mix.scratch_r[i];
-                            }
-                        }
-                        proc.params.clear();
                     }
                 }
             }
@@ -286,5 +254,56 @@ impl AudioEngine {
                 src.events = events;
             }
         }
+    }
+}
+
+/// 处理一条乐器链：广播事件 + 各乐器定向参数，输出求和写回通道。
+#[allow(clippy::too_many_arguments)] // 音频渲染上下文透传
+fn process_instrument_chain(
+    chain: &mut [crate::instrument::InstrumentProc],
+    broadcast: &[PluginEvent],
+    left: &mut [f32],
+    right: &mut [f32],
+    scratch_l: &mut [f32],
+    scratch_r: &mut [f32],
+    event_scratch: &mut Vec<PluginEvent>,
+    block_start_sample: u64,
+) {
+    let f = left.len().min(right.len());
+    for (idx, proc) in chain.iter_mut().enumerate() {
+        // 乐器不做隐式分段（携带事件与时间戳）：引擎块长必须 ≤
+        // 插件激活能力（见 MAX_ENGINE_BLOCK_FRAMES 契约），越界是宿主 bug。
+        debug_assert!(
+            f <= proc.processor.max_block_frames(),
+            "乐器块长 {f} 超过插件能力 {}",
+            proc.processor.max_block_frames()
+        );
+        // 广播事件（音符/CC/PB/RPN）+ 本乐器定向参数事件合并。
+        let ev: &[PluginEvent] = if proc.params.is_empty() {
+            broadcast
+        } else {
+            event_scratch.clear();
+            event_scratch.extend_from_slice(broadcast);
+            event_scratch.extend_from_slice(&proc.params);
+            event_scratch
+        };
+        if idx == 0 {
+            proc.processor
+                .process(ev, &mut left[..f], &mut right[..f], block_start_sample);
+        } else {
+            scratch_l[..f].fill(0.0);
+            scratch_r[..f].fill(0.0);
+            proc.processor.process(
+                ev,
+                &mut scratch_l[..f],
+                &mut scratch_r[..f],
+                block_start_sample,
+            );
+            for i in 0..f {
+                left[i] += scratch_l[i];
+                right[i] += scratch_r[i];
+            }
+        }
+        proc.params.clear();
     }
 }
