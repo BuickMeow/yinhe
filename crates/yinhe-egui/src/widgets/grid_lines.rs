@@ -189,7 +189,10 @@ pub fn paint_grid_lines(
                         1.0,
                         colors.beat,
                     );
-                } else if show_sub && is_sub_pos {
+                } else if show_sub
+                    && is_sub_pos
+                    && let Some(sub_color) = colors.sub_beat
+                {
                     paint_line(
                         painter,
                         orientation,
@@ -197,9 +200,9 @@ pub fn paint_grid_lines(
                         cross_start,
                         cross_end,
                         1.0,
-                        colors.sub_beat.unwrap(),
+                        sub_color,
                     );
-                } else if show_tick {
+                } else if show_tick && let Some(tick_color) = colors.tick {
                     paint_line(
                         painter,
                         orientation,
@@ -207,7 +210,7 @@ pub fn paint_grid_lines(
                         cross_start,
                         cross_end,
                         1.0,
-                        colors.tick.unwrap(),
+                        tick_color,
                     );
                 } else if show_sub {
                     // 1/16 以下的惯性细分线（1/32、1/64…），用 tick 色。

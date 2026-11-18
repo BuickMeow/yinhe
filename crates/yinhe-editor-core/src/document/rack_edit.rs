@@ -57,11 +57,12 @@ impl Document {
                         self.mixer.set_track_lc_source(id, track_idx as u16);
                         Arc::make_mut(track).lc = Some(id);
                     }
-                    let lc = track.lc.expect("per-track lc");
-                    Arc::make_mut(track).set_audio_target(TrackAudioTarget::OwnLc {
-                        lc,
-                        rack: Some(RackId::new(u16::from(channel))),
-                    });
+                    if let Some(lc) = track.lc {
+                        Arc::make_mut(track).set_audio_target(TrackAudioTarget::OwnLc {
+                            lc,
+                            rack: Some(RackId::new(u16::from(channel))),
+                        });
+                    }
                 }
                 RackOutputMode::Shared => {
                     let track = Arc::make_mut(track);

@@ -85,11 +85,9 @@ impl Default for MixerRack {
     }
 }
 
-pub(crate) fn host_info() -> HostInfo {
-    // HostInfo::new 只在校验失败（非法字符等）时报错；这些字符串是编译期常量，
-    // fallback 也是常量，理论不可达——但生产路径不留 unwrap（AGENTS 17）。
-    HostInfo::new("yinhe", "yinhe", "", crate::version::version())
-        .unwrap_or_else(|_| HostInfo::new("yinhe", "", "", "0").expect("fallback host info"))
+/// CLAP 宿主信息；`None` = 编译器版本字符串意外含 NUL（调用方按加载失败处理）。
+pub(crate) fn host_info() -> Option<HostInfo> {
+    HostInfo::new("yinhe", "yinhe", "", crate::version::version()).ok()
 }
 
 /// 插件加载/激活失败（MIX 界面状态行展示）。

@@ -492,7 +492,9 @@ impl InstrumentRack {
                 continue;
             }
             let index = *next_index.entry(slot.channel).or_insert(0);
-            *next_index.get_mut(&slot.channel).unwrap() += 1;
+            if let Some(slot_index) = next_index.get_mut(&slot.channel) {
+                *slot_index += 1;
+            }
             let Some(r) = mixer
                 .rack_instruments_mut(yinhe_types::RackId::from_midi_channel(slot.channel))
                 .and_then(|refs| refs.get_mut(index))

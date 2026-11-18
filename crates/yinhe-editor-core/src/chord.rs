@@ -163,7 +163,7 @@ pub fn indicator_text(
     }
     // 中位数 *2.5 自适应，至少 60，避免稀疏歌误杀。
     let mut sorted_pb = per_bar_vec.clone();
-    sorted_pb.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted_pb.sort_by(f64::total_cmp);
     let median_pb = if sorted_pb.is_empty() {
         0.0
     } else if sorted_pb.len() % 2 == 1 {

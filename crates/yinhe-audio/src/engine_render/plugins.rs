@@ -204,8 +204,7 @@ impl AudioEngine {
             };
             // 方案 C：插件链建在宿主 dense 上（OwnLc = home LC，
             // AP = 共享 MIDI 源），输出直接写链所在 dense。
-            let out_dense = dense;
-            if let Some(cb) = self.mixer.channel_buffers_mut(out_dense) {
+            if let Some(cb) = self.mixer.channel_buffers_mut(dense) {
                 let f = frames
                     .min(cb.left.len().saturating_sub(offset_frames))
                     .min(cb.right.len().saturating_sub(offset_frames));
@@ -217,13 +216,12 @@ impl AudioEngine {
                     if self.scratch_r.len() < f {
                         self.scratch_r.resize(f, 0.0);
                     }
-                    for (idx, proc) in self.instruments[dense]
-                        .as_mut()
-                        .expect("instrument source")
-                        .chain
-                        .iter_mut()
-                        .enumerate()
-                    {
+                    // 链在上一段刚确认存在；这里防御性跳过而非 panic
+                    // （音频线程任何 panic 都会让整条输出静音）。
+                    let Some(src) = self.instruments[dense].as_mut() else {
+                        continue;
+                    };
+                    for (idx, proc) in src.chain.iter_mut().enumerate() {
                         // 乐器不做隐式分段（携带事件与时间戳）：引擎块长必须 ≤
                         // 插件激活能力（见 MAX_ENGINE_BLOCK_FRAMES 契约），越界是宿主 bug。
                         debug_assert!(

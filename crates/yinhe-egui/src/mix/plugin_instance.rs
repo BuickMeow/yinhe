@@ -114,8 +114,10 @@ impl PluginInstance {
                     version: None,
                     features: Vec::new(),
                 };
+                let host =
+                    host_info().ok_or_else(|| "宿主版本字符串包含非法 NUL 字符".to_string())?;
                 let instance =
-                    ClapPluginInstance::load(&info, &host_info()).map_err(|e| format!("{e}"))?;
+                    ClapPluginInstance::load(&info, &host).map_err(|e| format!("{e}"))?;
                 Ok(Self::Clap(instance))
             }
             PluginFormat::Vst3 => {

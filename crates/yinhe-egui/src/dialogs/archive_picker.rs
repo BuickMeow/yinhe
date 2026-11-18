@@ -308,8 +308,11 @@ pub(crate) fn show_viewport(
     let viewport_id = eframe::egui::ViewportId::from_hash_of("archive_picker_dialog");
     crate::chrome::dialog::raise_on_open(ctx, viewport_id);
 
+    let Some(state_mut) = state.as_mut() else {
+        return ArchivePickerAction::None;
+    };
     let taken_state = std::rc::Rc::new(std::cell::RefCell::new(std::mem::replace(
-        state.as_mut().unwrap(),
+        state_mut,
         ArchivePickerState::Opening {
             path: String::new(),
             rx: std::sync::mpsc::channel().1,
@@ -426,9 +429,10 @@ pub(crate) fn show_password_prompt_viewport(
     let viewport_id = eframe::egui::ViewportId::from_hash_of("archive_password_prompt_dialog");
     crate::chrome::dialog::raise_on_open(ctx, viewport_id);
 
-    let taken_state = std::rc::Rc::new(std::cell::RefCell::new(
-        state.as_mut().unwrap().clone_state(),
-    ));
+    let Some(state_mut) = state.as_mut() else {
+        return PasswordPromptAction::None;
+    };
+    let taken_state = std::rc::Rc::new(std::cell::RefCell::new(state_mut.clone_state()));
     let action = std::rc::Rc::new(std::cell::RefCell::new(PasswordPromptAction::None));
     let ctx_clone = ctx.clone();
     let taken_state_cb = taken_state.clone();

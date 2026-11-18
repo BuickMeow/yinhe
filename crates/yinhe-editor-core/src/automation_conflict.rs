@@ -120,10 +120,12 @@ impl Document {
             let before_event = lane.events[pos];
             let mut after_event = before_event;
             after_event.value = winning_value;
-            let lane = std::sync::Arc::make_mut(&mut model.tracks[track as usize])
+            let Some(lane) = std::sync::Arc::make_mut(&mut model.tracks[track as usize])
                 .automation_lanes
                 .get_mut(lane_idx)
-                .expect("lane");
+            else {
+                continue;
+            };
             lane.events[pos] = after_event;
             out.push(UndoAction::Automation(AutomationDelta {
                 track_idx: track as usize,

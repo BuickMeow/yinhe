@@ -215,9 +215,10 @@ pub(crate) fn show(
 
         // 释放：应用落点。
         if pointer.any_released() {
-            let drop = drag.and_then(|d| d.drop);
-            if let Some(target) = drop {
-                let kind = drag.unwrap().kind;
+            if let Some(d) = drag
+                && let Some(target) = d.drop
+            {
+                let kind = d.kind;
                 match target {
                     DropTarget::Merge { column, insert } => layout.move_tab(kind, column, insert),
                     DropTarget::Split(at) => layout.split_new_column(kind, at),

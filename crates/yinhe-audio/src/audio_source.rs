@@ -73,8 +73,7 @@ impl WavePeaks {
             level0.push((lo, hi));
         }
         let mut levels = vec![level0];
-        loop {
-            let prev = levels.last().expect("levels 至少一层");
+        while let Some(prev) = levels.last() {
             if prev.len() <= 1 {
                 break;
             }
