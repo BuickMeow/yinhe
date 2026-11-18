@@ -1242,9 +1242,6 @@ mod tests {
         assert_eq!(pb.display_max(), Some(16383.0));
         assert!(pb.has_center_line());
 
-        // RPN 绑定的内置参数：显示带 "RPN nnn" 前缀。
-        let pbs = param(&xs, builtin_synth_param::PB_SENSITIVITY);
-
         // 第三方插件参数：无内置表 → 归一化显示（无换算上限），名字用缓存。
         let plug = AutomationTarget::Param {
             device: ParamDevice::PluginInstrument { channel: 2, uid: 1 },
