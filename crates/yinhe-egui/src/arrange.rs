@@ -357,154 +357,22 @@ pub fn show(
     );
     draw_vertical_scrollbar(ui, doc, arr_rect, gpu_rect, content_top, &row_layout);
 
-    // ── 左上角角落（音轨面板上方、标尺左侧）：仅铺背景 ──
-    // （量化按钮已移至 transport bar 时间码左侧，按聚焦视图显示 AR/PR 量化）
-    let events_corner = egui::Rect::from_min_size(
-        egui::pos2(arr_rect.min.x, arr_rect.min.y),
-        egui::vec2(tp_w, RULER_H),
-    );
-    ui.painter()
-        .rect_filled(events_corner, 0.0, crate::theme::track_bg());
-    let tpb = doc.data.model.meta.ppq;
-    let (sig_num, sig_den) = doc.data.model.tempo_map.time_sig_default;
-    let ar_quantize = doc.edit.quantize_arrange.resolved_with_time_sig(
-        doc.edit.arrange_view.base.pixels_per_tick,
-        tpb,
-        sig_num,
-        sig_den,
-        false,
-    );
-    crate::widgets::event_rows::controls(
+    draw_corner_panels(ui, doc, arr_rect, tp_w);
+
+    draw_vertical_splitter(ui, layout, arr_rect, tp_w, arr_total_w);
+
+    draw_hover_hint(
         ui,
-        events_corner,
-        &mut doc.edit.event_rows_ar,
-        &mut doc.edit.playback,
-        tpb,
-        Some(crate::widgets::event_rows::QuantizeControl {
-            current: &mut doc.edit.quantize_arrange,
-            ppq: tpb,
-            auto_resolved: ar_quantize,
-            id_salt: "arr_quantize",
-        }),
+        doc,
+        arr_rect,
+        tp_rect,
+        gpu_rect,
+        music_rect,
+        &row_layout,
+        num_tracks,
+        tp_w,
+        sel_hint,
     );
-
-    // ── 底部角落（音轨面板下方、横向滚动条左侧）：只铺背景 ──
-    // 「添加音轨」入口已移到音轨列表末尾的占位行（与移动端一致）。
-    {
-        let corner_rect = egui::Rect::from_min_max(
-            egui::pos2(
-                arr_rect.min.x,
-                arr_rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H,
-            ),
-            egui::pos2(arr_rect.min.x + tp_w, arr_rect.max.y),
-        );
-        ui.painter()
-            .rect_filled(corner_rect, 0.0, crate::theme::track_bg());
-    }
-
-    // ── Vertical splitter handle (drawn last so it sits on top) ──
-    let v_handle = egui::Rect::from_min_max(
-        egui::pos2(arr_rect.min.x + tp_w, arr_rect.min.y),
-        egui::pos2(
-            arr_rect.min.x + tp_w + crate::theme::SPLIT_HANDLE_W,
-            arr_rect.max.y,
-        ),
-    );
-    let v_resp = crate::widgets::split_handle::vertical(ui, "__v_split__", v_handle);
-    crate::widgets::hint::hover(ui.ctx(), &v_resp, t!("hint.arrange.split_v"));
-    if v_resp.dragged() {
-        *layout.transport_panel_width =
-            (*layout.transport_panel_width + v_resp.drag_delta().x).clamp(60.0, arr_total_w - 60.0);
-    }
-    if v_resp.double_clicked() {
-        // 双击分割线 → 还原走带面板默认宽度
-        *layout.transport_panel_width = LayoutSettings::default().transport_panel_width;
-    }
-    if v_resp.drag_stopped() || v_resp.double_clicked() {
-        *layout.drag_ended = true;
-    }
-
-    // ── 状态栏讲解行：走带悬停提示（位置 + 音轨号；有选框时优先显示选框统计）──
-    if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
-        let model = &*doc.data.model;
-        let tpb = model.meta.ppq;
-        let (def_num, def_den) = model.tempo_map.time_sig_default;
-        let sig_events = model.tempo_map.time_sig_events.as_slice();
-        let lh = doc.edit.arrange_view.lane_height();
-        let scroll_y = doc.edit.arrange_view.base.scroll_y;
-        // hover_pos 是全局坐标，需先减去 tp_rect.min.y（title bar + transport
-        // bar + ruler 的高度），否则音轨号会整体偏大。
-        // 行布局命中：AM 子行附带 target 名（如「CC 007」）。
-        let track_str = |track: usize| t!("hint.track", n = format!("{:03}", track)).to_string();
-        let hover_desc = |y: f32| {
-            let my = y - tp_rect.min.y + scroll_y;
-            match row_layout.hit_at_music_y(my, lh) {
-                Some(yinhe_types::ArRow::Automation(t, sub)) => {
-                    match doc
-                        .data
-                        .model
-                        .tracks
-                        .get(t)
-                        .and_then(|tr| tr.automation_lanes.get(sub))
-                    {
-                        Some(lane) => {
-                            format!("{} · {}", track_str(t), am_lanes::lane_label(&lane.target))
-                        }
-                        None => track_str(t),
-                    }
-                }
-                Some(yinhe_types::ArRow::Track(t)) => track_str(t),
-                None => track_str(num_tracks.saturating_sub(1)),
-            }
-        };
-        // 本视图有选框 → 讲解行显示选框统计（参考 info panel）
-        let sel_text = if !doc.edit.arr_sel_rect.is_empty()
-            && let Some(sh) = sel_hint
-        {
-            Some(t!("hint.sel_notes", n = sh.count, span = &sh.span).to_string())
-        } else {
-            None
-        };
-        let ruler_rect = egui::Rect::from_min_max(
-            egui::pos2(
-                arr_rect.min.x + tp_w + crate::theme::SPLIT_HANDLE_W,
-                arr_rect.min.y,
-            ),
-            egui::pos2(gpu_rect.max.x, arr_rect.min.y + RULER_H),
-        );
-        if music_rect.contains(pos) {
-            let tick = doc
-                .edit
-                .arrange_view
-                .x_to_tick(pos.x - gpu_rect.min.x)
-                .max(0.0);
-            let pos_str =
-                format_tick_bar_beat_with_time_sig(tick, tpb, sig_events, def_num, def_den);
-            let hint = if let Some(s) = sel_text {
-                s
-            } else {
-                let info = format!("{} {}", pos_str, hover_desc(pos.y));
-                format!("{} · {}", t!("hint.panel.arrange_content"), info)
-            };
-            crate::widgets::hint::set_region(ui.ctx(), hint);
-        } else if tp_rect.contains(pos) {
-            let hint = if let Some(s) = sel_text {
-                s
-            } else {
-                format!(
-                    "{} · {}",
-                    t!("hint.panel.arrange_track_panel"),
-                    hover_desc(pos.y)
-                )
-            };
-            crate::widgets::hint::set_region(ui.ctx(), hint);
-        } else if ruler_rect.contains(pos) {
-            crate::widgets::hint::set_region(ui.ctx(), t!("hint.panel.arrange_ruler"));
-        } else if arr_rect.contains(pos) {
-            // 走带视图内但不在内容区（标尺/滚动条）→ 清空区域提示
-            crate::widgets::hint::clear_region(ui.ctx());
-        }
-    }
 }
 
 /// 应用 MIDI Clip 编辑命令：逐条执行 Document 操作并 push undo。
@@ -1324,4 +1192,180 @@ fn draw_arrangement_view<'a>(
         );
     });
     (am_edits, audio_commands, clip_commands)
+}
+
+/// 左上角量化控件与该角落、底部角落的背景。
+fn draw_corner_panels(ui: &mut egui::Ui, doc: &mut Document, arr_rect: egui::Rect, tp_w: f32) {
+    // ── 左上角角落（音轨面板上方、标尺左侧）：仅铺背景 ──
+    // （量化按钮已移至 transport bar 时间码左侧，按聚焦视图显示 AR/PR 量化）
+    let events_corner = egui::Rect::from_min_size(
+        egui::pos2(arr_rect.min.x, arr_rect.min.y),
+        egui::vec2(tp_w, RULER_H),
+    );
+    ui.painter()
+        .rect_filled(events_corner, 0.0, crate::theme::track_bg());
+    let tpb = doc.data.model.meta.ppq;
+    let (sig_num, sig_den) = doc.data.model.tempo_map.time_sig_default;
+    let ar_quantize = doc.edit.quantize_arrange.resolved_with_time_sig(
+        doc.edit.arrange_view.base.pixels_per_tick,
+        tpb,
+        sig_num,
+        sig_den,
+        false,
+    );
+    crate::widgets::event_rows::controls(
+        ui,
+        events_corner,
+        &mut doc.edit.event_rows_ar,
+        &mut doc.edit.playback,
+        tpb,
+        Some(crate::widgets::event_rows::QuantizeControl {
+            current: &mut doc.edit.quantize_arrange,
+            ppq: tpb,
+            auto_resolved: ar_quantize,
+            id_salt: "arr_quantize",
+        }),
+    );
+
+    // ── 底部角落（音轨面板下方、横向滚动条左侧）：只铺背景 ──
+    // 「添加音轨」入口已移到音轨列表末尾的占位行（与移动端一致）。
+    {
+        let corner_rect = egui::Rect::from_min_max(
+            egui::pos2(
+                arr_rect.min.x,
+                arr_rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H,
+            ),
+            egui::pos2(arr_rect.min.x + tp_w, arr_rect.max.y),
+        );
+        ui.painter()
+            .rect_filled(corner_rect, 0.0, crate::theme::track_bg());
+    }
+}
+
+/// 音轨面板与主区之间的竖向分割条。
+fn draw_vertical_splitter(
+    ui: &mut egui::Ui,
+    layout: ArrangeLayout<'_>,
+    arr_rect: egui::Rect,
+    tp_w: f32,
+    arr_total_w: f32,
+) {
+    // ── Vertical splitter handle (drawn last so it sits on top) ──
+    let v_handle = egui::Rect::from_min_max(
+        egui::pos2(arr_rect.min.x + tp_w, arr_rect.min.y),
+        egui::pos2(
+            arr_rect.min.x + tp_w + crate::theme::SPLIT_HANDLE_W,
+            arr_rect.max.y,
+        ),
+    );
+    let v_resp = crate::widgets::split_handle::vertical(ui, "__v_split__", v_handle);
+    crate::widgets::hint::hover(ui.ctx(), &v_resp, t!("hint.arrange.split_v"));
+    if v_resp.dragged() {
+        *layout.transport_panel_width =
+            (*layout.transport_panel_width + v_resp.drag_delta().x).clamp(60.0, arr_total_w - 60.0);
+    }
+    if v_resp.double_clicked() {
+        // 双击分割线 → 还原走带面板默认宽度
+        *layout.transport_panel_width = LayoutSettings::default().transport_panel_width;
+    }
+    if v_resp.drag_stopped() || v_resp.double_clicked() {
+        *layout.drag_ended = true;
+    }
+}
+
+/// 状态栏讲解行：位置 / 音轨号 / 选框统计。
+#[allow(clippy::too_many_arguments)] // 视图几何参数透传
+fn draw_hover_hint(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    arr_rect: egui::Rect,
+    tp_rect: egui::Rect,
+    gpu_rect: egui::Rect,
+    music_rect: egui::Rect,
+    row_layout: &yinhe_types::ArRowLayout,
+    num_tracks: usize,
+    tp_w: f32,
+    sel_hint: Option<&crate::app::layout::SelHintInfo>,
+) {
+    // ── 状态栏讲解行：走带悬停提示（位置 + 音轨号；有选框时优先显示选框统计）──
+    if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
+        let model = &*doc.data.model;
+        let tpb = model.meta.ppq;
+        let (def_num, def_den) = model.tempo_map.time_sig_default;
+        let sig_events = model.tempo_map.time_sig_events.as_slice();
+        let lh = doc.edit.arrange_view.lane_height();
+        let scroll_y = doc.edit.arrange_view.base.scroll_y;
+        // hover_pos 是全局坐标，需先减去 tp_rect.min.y（title bar + transport
+        // bar + ruler 的高度），否则音轨号会整体偏大。
+        // 行布局命中：AM 子行附带 target 名（如「CC 007」）。
+        let track_str = |track: usize| t!("hint.track", n = format!("{:03}", track)).to_string();
+        let hover_desc = |y: f32| {
+            let my = y - tp_rect.min.y + scroll_y;
+            match row_layout.hit_at_music_y(my, lh) {
+                Some(yinhe_types::ArRow::Automation(t, sub)) => {
+                    match doc
+                        .data
+                        .model
+                        .tracks
+                        .get(t)
+                        .and_then(|tr| tr.automation_lanes.get(sub))
+                    {
+                        Some(lane) => {
+                            format!("{} · {}", track_str(t), am_lanes::lane_label(&lane.target))
+                        }
+                        None => track_str(t),
+                    }
+                }
+                Some(yinhe_types::ArRow::Track(t)) => track_str(t),
+                None => track_str(num_tracks.saturating_sub(1)),
+            }
+        };
+        // 本视图有选框 → 讲解行显示选框统计（参考 info panel）
+        let sel_text = if !doc.edit.arr_sel_rect.is_empty()
+            && let Some(sh) = sel_hint
+        {
+            Some(t!("hint.sel_notes", n = sh.count, span = &sh.span).to_string())
+        } else {
+            None
+        };
+        let ruler_rect = egui::Rect::from_min_max(
+            egui::pos2(
+                arr_rect.min.x + tp_w + crate::theme::SPLIT_HANDLE_W,
+                arr_rect.min.y,
+            ),
+            egui::pos2(gpu_rect.max.x, arr_rect.min.y + RULER_H),
+        );
+        if music_rect.contains(pos) {
+            let tick = doc
+                .edit
+                .arrange_view
+                .x_to_tick(pos.x - gpu_rect.min.x)
+                .max(0.0);
+            let pos_str =
+                format_tick_bar_beat_with_time_sig(tick, tpb, sig_events, def_num, def_den);
+            let hint = if let Some(s) = sel_text {
+                s
+            } else {
+                let info = format!("{} {}", pos_str, hover_desc(pos.y));
+                format!("{} · {}", t!("hint.panel.arrange_content"), info)
+            };
+            crate::widgets::hint::set_region(ui.ctx(), hint);
+        } else if tp_rect.contains(pos) {
+            let hint = if let Some(s) = sel_text {
+                s
+            } else {
+                format!(
+                    "{} · {}",
+                    t!("hint.panel.arrange_track_panel"),
+                    hover_desc(pos.y)
+                )
+            };
+            crate::widgets::hint::set_region(ui.ctx(), hint);
+        } else if ruler_rect.contains(pos) {
+            crate::widgets::hint::set_region(ui.ctx(), t!("hint.panel.arrange_ruler"));
+        } else if arr_rect.contains(pos) {
+            // 走带视图内但不在内容区（标尺/滚动条）→ 清空区域提示
+            crate::widgets::hint::clear_region(ui.ctx());
+        }
+    }
 }
