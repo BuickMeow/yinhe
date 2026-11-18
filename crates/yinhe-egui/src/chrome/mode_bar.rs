@@ -72,7 +72,7 @@ pub(crate) fn set_dock_visible(
     }
 }
 
-/// 设置混音台面板可见性（仅 MIX）；展开时与钢琴卷帘/设备链互斥。
+/// 设置混音台面板可见性（ARRANGE/MIX）；展开时与钢琴卷帘/设备链互斥。
 pub(crate) fn set_mixer_visible(
     show_pianoroll_in_arrange: &mut bool,
     show_bottom_dock: &mut bool,
@@ -430,8 +430,8 @@ pub fn show(
                         });
                     }
 
-                    // ── Mixer toggle（仅 MIX：底部三选一之混音台）──
-                    if *view_mode == ViewMode::Mix {
+                    // ── Mixer toggle（ARRANGE/MIX：底部三选一之混音台）──
+                    if matches!(*view_mode, ViewMode::Arrange | ViewMode::Mix) {
                         let mixer_icon = egui_material_icons::icons::ICON_TUNE;
                         // 图标旋转：顺时针 270°（= 逆时针 90°），朝向与实际混音台一致
                         let mixer_resp = crate::widgets::hover::hover_button_rotated(

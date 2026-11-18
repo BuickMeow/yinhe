@@ -68,12 +68,16 @@ impl App {
     ) -> LayoutInfo {
         let remaining = ui.available_rect_before_wrap();
 
-        let is_mix = self.view_mode == crate::chrome::mode_bar::ViewMode::Mix;
         let has_doc = self.workspace.active_doc.is_some();
         // 上方主视图：轨道 AR（Arrange）。MIX 的通道 AR 已删除。
         let has_arr = has_doc && self.view_mode.show_transport();
-        // 底部混音台面板（仅 MIX；与 PR/dock 三选一）。
-        let has_mixer = has_doc && is_mix && self.show_mixer_panel;
+        // 底部混音台面板（ARRANGE/MIX 都可；与 PR/dock 三选一）。
+        let has_mixer = has_doc
+            && self.show_mixer_panel
+            && matches!(
+                self.view_mode,
+                crate::chrome::mode_bar::ViewMode::Arrange | crate::chrome::mode_bar::ViewMode::Mix
+            );
         // MIX 下混音台优先：ARRANGE 遗留的 PR 开关不应与混音台同时占同一块底部区域。
         let has_piano = self
             .view_mode
@@ -86,7 +90,7 @@ impl App {
         let arr_h = if has_arr {
             if has_bottom {
                 if has_mixer {
-                    // MIX：混音台高度默认随通道数自动扩展（可拖拽转为手动）。
+                    // 混音台：高度默认随通道数自动扩展（可拖拽转为手动）。
                     if self.mix_height_auto {
                         self.mix_height = crate::mix::auto_panel_height();
                     }

@@ -26,7 +26,8 @@ impl App {
     pub(in crate::app) fn show_main_content(&mut self, ui: &mut egui::Ui, layout: &LayoutInfo) {
         use crate::chrome::mode_bar::ViewMode;
         let is_mix = self.view_mode == ViewMode::Mix;
-        let has_mixer = is_mix && self.show_mixer_panel;
+        let has_mixer =
+            self.show_mixer_panel && matches!(self.view_mode, ViewMode::Arrange | ViewMode::Mix);
         let has_piano = self
             .view_mode
             .show_pianoroll(self.show_pianoroll_in_arrange)
