@@ -482,6 +482,11 @@ fn resolve_index(
 #[serde(rename_all = "snake_case")]
 pub enum TrackAudioTarget {
     /// Track 自己的 LC；`rack` 为 None 表示音频轨（没有乐器）。
+    ///
+    /// `rack` 是**配置**归属：同一 MIDI 通道的多条 OwnLc 轨共享同一个
+    /// `RackParams`（插件配置一份）；音频引擎运行时仍按每条轨的 home LC
+    /// 各建一个插件实例（`Document::instrument_hosts`）。要支持同通道
+    /// 不同轨装不同插件，需要给 RackId 增加按轨分配区间。
     OwnLc {
         lc: LogicalChannelId,
         rack: Option<RackId>,

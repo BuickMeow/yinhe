@@ -180,7 +180,7 @@ impl AudioEngine {
         let mut send_updates: Vec<(MixerChannelId, yinhe_types::ChannelId, f32)> = Vec::new();
         let mut insert_updates: Vec<(MixerChannelId, usize, u32, f64)> = Vec::new();
         let mut collect = |node: &yinhe_mixer::MixerNode| {
-            let Some(channel) = mixer_channel_of(node.id, &self.mixer_params) else {
+            let Some(channel) = self.mixer_params.mixer_channel_of(node.id) else {
                 return;
             };
             let gain = node
@@ -558,22 +558,5 @@ impl AudioEngine {
             }
         }
         self.mixer.refresh_pdc();
-    }
-}
-
-fn mixer_channel_of(
-    id: yinhe_types::ChannelId,
-    mixer: &yinhe_mixer::MixerParams,
-) -> Option<MixerChannelId> {
-    use yinhe_types::{ChannelId, ChannelSource};
-    match id {
-        ChannelId::Lc(lc) => match mixer.source_of(id)? {
-            ChannelSource::Midi(ch) => Some(MixerChannelId::Midi(ch)),
-            ChannelSource::Audio(ch) => Some(MixerChannelId::Audio(ch)),
-            ChannelSource::Track(_) => Some(MixerChannelId::TrackLc(lc)),
-            _ => None,
-        },
-        ChannelId::Ap(_) => None,
-        ChannelId::Master => Some(MixerChannelId::Master),
     }
 }

@@ -398,6 +398,23 @@ impl MixerParams {
         self.channel_id_for(channel)
     }
 
+    /// 节点的 C 统一身份 → UI 查询键（[`Self::channel_id_for`] 的逆映射）。
+    ///
+    /// 自动化 target 用 `MixerChannelId` 表示 owner，渲染层需要从节点身份
+    /// 反查这个键；放在模型层避免音频引擎引入 UI 概念。
+    pub fn mixer_channel_of(&self, id: ChannelId) -> Option<MixerChannelId> {
+        match id {
+            ChannelId::Lc(lc) => match self.source_of(id)? {
+                ChannelSource::Midi(ch) => Some(MixerChannelId::Midi(ch)),
+                ChannelSource::Audio(ch) => Some(MixerChannelId::Audio(ch)),
+                ChannelSource::Track(_) => Some(MixerChannelId::TrackLc(lc)),
+                _ => None,
+            },
+            ChannelId::Ap(_) => None,
+            ChannelId::Master => Some(MixerChannelId::Master),
+        }
+    }
+
     pub fn node_id_for(&self, channel: MixerChannelId) -> MixerNodeId {
         match self.channel_id_for(channel) {
             ChannelId::Lc(id) => MixerNodeId::LogicalChannel(id),
