@@ -210,22 +210,31 @@ impl Default for MixerParams {
 }
 
 impl MixerParams {
-    /// 反序列化后调用：老版本工程可能缺字段/长度不足，补齐到固定通道数。
+    /// 反序列化后调用：按依赖顺序修复老工程缺失/不一致的混音表。
+    ///
+    /// 顺序不能调换：
+    /// 1. `repair_racks` / `repair_channels` / `repair_aps`：补齐基础表；
+    /// 2. `repair_channel_sends`：依赖 LC/AP 已存在；
+    /// 3. `repair_track_channels` / `repair_audio_channels`：整理每轨节点；
+    /// 4. `repair_mixed_lc_freezes`：依赖发送表；
+    /// 5. `repair_master` / `ensure_instrument_uids`：单点补齐；
+    /// 6. `repair_routing`：清理悬空目标；
+    /// 7. `repair_automation`：最后按节点归属过滤 lane（依赖以上全部完成）。
     pub fn ensure_len(&mut self) {
-        self.ensure_racks();
-        self.ensure_channels();
-        self.ensure_aps();
-        self.ensure_channel_sends();
-        self.ensure_track_channels();
-        self.ensure_audio_channels();
-        self.clear_mixed_lc_freezes();
-        self.ensure_master();
+        self.repair_racks();
+        self.repair_channels();
+        self.repair_aps();
+        self.repair_channel_sends();
+        self.repair_track_channels();
+        self.repair_audio_channels();
+        self.repair_mixed_lc_freezes();
+        self.repair_master();
         self.ensure_instrument_uids();
-        self.sanitize_routing();
-        self.sanitize_automation();
+        self.repair_routing();
+        self.repair_automation();
     }
 
-    fn sanitize_automation(&mut self) {
+    fn repair_automation(&mut self) {
         // 先解析好 UI 查询键 → 实际 ChannelId，避免与节点可变借用冲突。
         let mut resolved: HashMap<MixerChannelId, ChannelId> = HashMap::new();
         for ch in 0..CHANNEL_COUNT as u8 {
@@ -274,7 +283,7 @@ impl MixerParams {
             .retain(|lane| valid(master_channel, lane));
     }
 
-    fn ensure_racks(&mut self) {
+    fn repair_racks(&mut self) {
         self.racks.truncate(CHANNEL_COUNT);
         for i in self.racks.len()..CHANNEL_COUNT {
             self.racks.push(RackParams::new(RackId(i as u16)));
@@ -290,7 +299,7 @@ impl MixerParams {
     ///
     /// AP 的创建/删除由 `Document` 按 Track 的 `lc` 状态驱动；这里只做
     /// 反序列化后的合法性修复。
-    fn ensure_aps(&mut self) {
+    fn repair_aps(&mut self) {
         let keep: Vec<ApGroup> = self
             .aps
             .iter()
@@ -441,7 +450,7 @@ impl MixerParams {
         self.aps.len() != before
     }
 
-    fn ensure_channel_sends(&mut self) {
+    fn repair_channel_sends(&mut self) {
         let sends = std::mem::take(&mut self.channel_sends);
         self.channel_sends = sends
             .into_iter()
@@ -587,14 +596,14 @@ impl MixerParams {
         id
     }
 
-    fn ensure_channels(&mut self) {
+    fn repair_channels(&mut self) {
         for i in 0..CHANNEL_COUNT {
             self.ensure_lc_node(ChannelSource::Midi(i as u8));
         }
     }
 
     /// 修复重复/越界的 LC ID（独立 u16 空间；持有 Track 来源的节点保持原 ID）。
-    fn ensure_track_channels(&mut self) {
+    fn repair_track_channels(&mut self) {
         let mut seen: HashSet<LogicalChannelId> = HashSet::new();
         for node in &mut self.nodes {
             if !matches!(node.source, ChannelSource::Track(_))
@@ -621,7 +630,7 @@ impl MixerParams {
 
     /// 分配一个每轨 LC ID，并创建对应节点。
     pub fn add_track_lc(&mut self) -> LogicalChannelId {
-        self.ensure_track_channels();
+        self.repair_track_channels();
         let id = self.alloc_lc_id();
         let mut node = MixerNode::logical_channel(id);
         node.source = ChannelSource::Track(u16::MAX);
@@ -666,13 +675,13 @@ impl MixerParams {
         self.nodes.retain(|node| node.id != ChannelId::Lc(id));
     }
 
-    fn ensure_audio_channels(&mut self) {
+    fn repair_audio_channels(&mut self) {
         // 音频 LC 的 ID 由 ensure_audio_len 保证连续；这里只去重/排序。
         self.sort_dedup_nodes();
     }
 
     /// 混合 LC 不冻结：有任意 C 发送汇入的 LC，清除 freeze。
-    fn clear_mixed_lc_freezes(&mut self) {
+    fn repair_mixed_lc_freezes(&mut self) {
         let targets: HashSet<LogicalChannelId> = self
             .channel_sends
             .iter()
@@ -694,11 +703,11 @@ impl MixerParams {
         }
     }
 
-    fn ensure_master(&mut self) {
+    fn repair_master(&mut self) {
         self.master.id = ChannelId::Master;
     }
 
-    fn sanitize_routing(&mut self) {
+    fn repair_routing(&mut self) {
         let known_targets: HashSet<ChannelId> = self
             .nodes
             .iter()
