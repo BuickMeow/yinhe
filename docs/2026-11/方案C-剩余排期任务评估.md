@@ -28,9 +28,11 @@
 | `graph.rs` 拆分 | `14a795c7` | 1103 → 父 890 + delay 80 + send 69 + process 68 |
 | `params.rs` 拆分 | `5ff2a6d2` | 937 → 父 735 + repair 207 |
 | `apply_anchor_field_edit` | `24c40063` | 102 → 44 行，抽出 lane 定位与移动量计算 |
+| `draw_audio_and_track_strips` | `3156e16a` | 70 → 12 行，拆音频条/每轨 LC 两段 |
+| `refresh_pdc` | `7fa64c06` | 78 → 44 行，拆 PDC 边收集与最长路径 |
+| `render_instruments` | `2ac4a816` | 84 → 52 行，抽出乐器链处理 helper |
 
-剩余未再拆的函数均 **低于 100 行**（`render_instruments` 84、`refresh_pdc` 78、
-`draw_audio_and_track_strips` 70），按本文档 200 行阈值视为完成。
+至此本文档列出的所有剩余项均已拆分完成。
 
 验证：`cargo clippy --tests`（相关 crate）无 warning；`cargo test` 全绿。
 

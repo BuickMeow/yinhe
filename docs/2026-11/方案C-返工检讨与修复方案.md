@@ -874,9 +874,9 @@ struct**，是 1.7「改了不生效」的同类风险。应删除 `SendParams` 
 | `graph.rs` | `14a795c7` | 拆 delay/send/process |
 | `params.rs` | `5ff2a6d2` | repair 辅助拆到 params/repair.rs |
 | `apply_anchor_field_edit` | `24c40063` | 102 → 44 行 |
-
-剩余函数均低于 100 行（`render_instruments` 84、`refresh_pdc` 78、
-`draw_audio_and_track_strips` 70），按 200 行阈值视为完成。
+| `draw_audio_and_track_strips` | `3156e16a` | 70 → 12 行 |
+| `refresh_pdc` | `7fa64c06` | 78 → 44 行 |
+| `render_instruments` | `2ac4a816` | 84 → 52 行 |
 详见《方案C-剩余排期任务评估.md》与《架构问答-滚动条-框选-音频crate-移动端.md》。
 
 ---
