@@ -65,8 +65,16 @@ impl AudioEngine {
     /// 三个函数的职责，KEY_COUNT 桶只扫描一次。所有比较都在 tick 域，无需转换。
     ///
     pub(crate) fn dispatch_and_find_next(&mut self, tick: u32, block_end_tick: u32) -> Option<u32> {
-        let mut next: Option<u32> = None;
+        let mut next = self.dispatch_cc_until(tick, block_end_tick);
+        if self.dispatch_note_ons(tick, block_end_tick, &mut next) {
+            self.dispatch_note_offs(tick, block_end_tick, &mut next);
+        }
+        next
+    }
 
+    /// CC / 插件参数事件：聚合后按轨道与 lane 旁通过滤，返回下一个 CC 边界。
+    fn dispatch_cc_until(&mut self, tick: u32, block_end_tick: u32) -> Option<u32> {
+        let mut next: Option<u32> = None;
         // ── CC 事件 ──
         // 本段包含全部 tick' <= tick 的待处理事件（cursor 之后的全在此段）。
         // 先过滤（mute 轨 / AM M/S 旁通 lane），再对同 tick 同通道同目标取
@@ -177,11 +185,21 @@ impl AudioEngine {
             }
         }
 
+        next
+    }
+
+    /// NoteOn 派发 + 扫描每 key 桶的下一个可听边界；`false` = 模型未加载。
+    fn dispatch_note_ons(
+        &mut self,
+        tick: u32,
+        block_end_tick: u32,
+        next: &mut Option<u32>,
+    ) -> bool {
         // ── NoteOn + 找下一个 NoteOn 边界（单次 KEY_COUNT 桶扫描）──
         // 直接读模型桶：游标单调前进，整曲每个音符只碰一次；力度阈值与
         // 0 BPM 剪切在这里逐音符现算，不再维护 `audible_notes` 副本。
         let Some(model) = self.playback.yin_model.clone() else {
-            return next;
+            return false;
         };
         for key in 0..yinhe_types::KEY_COUNT {
             let bucket = &model.notes[key];
@@ -205,7 +223,7 @@ impl AudioEngine {
                     }
                     // 该桶下一个待处理**可听**音符 → 记录为边界候选
                     if note.start_tick < block_end_tick {
-                        next = Some(next.map_or(note.start_tick, |t| t.min(note.start_tick)));
+                        *next = Some((*next).map_or(note.start_tick, |t| t.min(note.start_tick)));
                     }
                     break;
                 }
@@ -305,6 +323,11 @@ impl AudioEngine {
             self.playback.note_cursor[key] = cursor;
         }
 
+        true
+    }
+
+    /// NoteOff 派发（min-heap 逐个 pop）+ 下一个 NoteOff 边界。
+    fn dispatch_note_offs(&mut self, tick: u32, block_end_tick: u32, next: &mut Option<u32>) {
         // ── NoteOff + 找下一个 NoteOff 边界（min-heap 逐个 pop）──
         // 堆顶 = end_tick 最小的活跃音符。
         // ended 个音符每个 O(log V) pop，未结束的堆顶 O(1) peek 得下一边界。
@@ -321,7 +344,7 @@ impl AudioEngine {
         if let Some(Reverse(an)) = self.playback.active_notes.peek()
             && an.end_tick < block_end_tick
         {
-            next = Some(next.map_or(an.end_tick, |t| t.min(an.end_tick)));
+            *next = Some((*next).map_or(an.end_tick, |t| t.min(an.end_tick)));
         }
         for an in &self.playback.ended_notes {
             if an.is_instrument {
@@ -350,7 +373,5 @@ impl AudioEngine {
                 }
             }
         }
-
-        next
     }
 }
