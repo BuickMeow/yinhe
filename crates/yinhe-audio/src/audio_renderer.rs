@@ -578,7 +578,7 @@ impl AudioRenderer {
             .store(self.ring.write_position(), Ordering::Release);
         // 消费位置被重定位到逻辑位置 base：回绕偏移必须归零，否则 cpal 回调
         // 上报的逻辑位置会整体偏移一个循环长度。
-        self.engine.loop_wrap_offset = 0;
+        self.engine.playback.loop_wrap_offset = 0;
         self.state
             .playback
             .loop_wrap_offset
@@ -599,7 +599,7 @@ impl AudioRenderer {
         self.state
             .playback
             .loop_wrap_offset
-            .store(self.engine.loop_wrap_offset, Ordering::Release);
+            .store(self.engine.playback.loop_wrap_offset, Ordering::Release);
         self.state
             .playback
             .voice_count

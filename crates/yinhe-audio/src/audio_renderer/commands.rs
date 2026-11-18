@@ -78,13 +78,13 @@ impl AudioRenderer {
         if let Some(model) = pending_reload {
             // 不提前清 ring / 不 seek：已渲染（旧模型）音频继续播到 PreparedModel
             // 应用时，由 apply_prepared_model(consumer) 无缝接新模型——位置不移动。
-            let density = self.engine.automation_density;
+            let density = self.engine.playback.automation_density;
             let _ = self.worker_tx.send(WorkerCmd::PrepareModel(model, density));
             did_work = true;
         } else if pending_density_rebuild {
             // density 改变后用当前模型重建 cc_events。
-            if let Some(model) = self.engine.yin_model.clone() {
-                let density = self.engine.automation_density;
+            if let Some(model) = self.engine.playback.yin_model.clone() {
+                let density = self.engine.playback.automation_density;
                 let _ = self.worker_tx.send(WorkerCmd::PrepareModel(model, density));
                 did_work = true;
             }
@@ -117,7 +117,7 @@ impl AudioRenderer {
                 self.engine.handle_command(AudioCommand::Stop);
                 // 首次加载：消费位置 == 前沿 == 0，锚定无差别。
                 self.clear_buffered_audio(self.engine.sample_position());
-                let density = self.engine.automation_density;
+                let density = self.engine.playback.automation_density;
                 let _ = self.worker_tx.send(WorkerCmd::PrepareModel(model, density));
             }
             AudioCommand::SetIgnoreVelocity { threshold } => {
@@ -221,7 +221,7 @@ impl AudioRenderer {
                     start_tick,
                     end_tick,
                 });
-                self.engine.loop_chase = None;
+                self.engine.playback.loop_chase = None;
                 // set_loop 在播放头落到区间外时会 seek 一次：清 ring + chase。
                 // 区间内拖动不 seek，避免每帧清空音频。
                 if self.engine.sample_position() != before {
@@ -282,9 +282,9 @@ impl AudioRenderer {
                 }
             }
             AudioCommand::SetAutomationDensity { density } => {
-                self.engine.automation_density = density.max(1);
+                self.engine.playback.automation_density = density.max(1);
                 // 若已加载模型，触发 worker 重建 cc_events
-                if self.engine.yin_model.is_some() {
+                if self.engine.playback.yin_model.is_some() {
                     *pending_density_rebuild = true;
                 }
             }
@@ -302,7 +302,7 @@ impl AudioRenderer {
                 }
                 // 按 channel 分组、组内按 target_tick 升序，增量 chase：
                 // 每个通道只扫一遍 cc_events，避免整组预览反复全量扫描。
-                let cc_events = self.engine.cc_events.clone();
+                let cc_events = self.engine.playback.cc_events.clone();
                 let mut groups: Vec<(u32, Vec<&crate::spawn::PreviewNoteParams>)> = Vec::new();
                 for n in &notes {
                     let ch = n.channel as u32;
@@ -335,6 +335,7 @@ impl AudioRenderer {
                         };
                         let synth_params = self
                             .engine
+                            .playback
                             .yin_model
                             .as_ref()
                             .map(|m| m.synth_params_at(n.channel as usize))
@@ -406,12 +407,13 @@ impl AudioRenderer {
     }
 
     pub(super) fn apply_skip_tracks(&mut self, skip: Vec<bool>) {
-        let old = self.engine.skip_track.clone();
+        let old = self.engine.playback.skip_track.clone();
         self.engine.apply_skip_mask(&old, &skip);
         // mute/solo 状态变了：旧 skip mask 的异步 chase 结果必须作废
         //（递增 generation），否则快速连续切换时旧结果可能晚到并
         // 覆盖新状态——GPU 路径的通道状态依赖 chase 恢复，影响更大。
-        self.engine.chase_generation = self.engine.chase_generation.wrapping_add(1);
+        self.engine.playback.chase_generation =
+            self.engine.playback.chase_generation.wrapping_add(1);
         // mute 状态变了，chase 结果需要更新：unmute 的轨道的 CC 需要恢复，
         // mute 的轨道的 CC 不再参与。
         if self.engine.model_loaded() {
@@ -423,13 +425,14 @@ impl AudioRenderer {
     /// 应用 AM lane M/S 试听旁通集：只换动态掩码 + 异步 chase，
     /// 不重建模型、不 seek（与 SkipTracks 同机制）。
     pub(super) fn apply_set_am_ms(&mut self, am_ms: Arc<AmMsMap>) {
-        self.engine.am_ms = am_ms;
-        if let Some(model) = self.engine.yin_model.clone() {
-            self.engine.am_lane_skip =
-                crate::audio_model::build_am_lane_skip(&model, &self.engine.am_ms);
+        self.engine.playback.am_ms = am_ms;
+        if let Some(model) = self.engine.playback.yin_model.clone() {
+            self.engine.playback.am_lane_skip =
+                crate::audio_model::build_am_lane_skip(&model, &self.engine.playback.am_ms);
         }
         // 掩码变了：旧 chase 结果作废，重算 channel state。
-        self.engine.chase_generation = self.engine.chase_generation.wrapping_add(1);
+        self.engine.playback.chase_generation =
+            self.engine.playback.chase_generation.wrapping_add(1);
         if self.engine.model_loaded() {
             self.request_chase(self.engine.current_tick());
             self.request_loop_chase();
@@ -445,21 +448,21 @@ impl AudioRenderer {
 
     /// 请求循环起点的控制状态快照；结果存为 `loop_chase`，回绕时同步应用。
     pub(super) fn request_loop_chase(&self) {
-        if self.engine.loop_enabled {
+        if self.engine.playback.loop_enabled {
             self.request_chase_for(
-                self.engine.loop_start_tick,
+                self.engine.playback.loop_start_tick,
                 crate::spawn::ChasePurpose::Loop,
             );
         }
     }
 
     fn request_chase_for(&self, target_tick: u32, purpose: crate::spawn::ChasePurpose) {
-        let Some(model) = self.engine.yin_model.clone() else {
+        let Some(model) = self.engine.playback.yin_model.clone() else {
             return;
         };
-        let generation = self.engine.chase_generation;
-        let skip_mask = self.engine.skip_track.clone();
-        let am_ms = self.engine.am_ms.clone();
+        let generation = self.engine.playback.chase_generation;
+        let skip_mask = self.engine.playback.skip_track.clone();
+        let am_ms = self.engine.playback.am_ms.clone();
         let _ = self.worker_tx.send(WorkerCmd::PrepareChase {
             model,
             target_tick,

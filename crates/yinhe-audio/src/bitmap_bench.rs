@@ -443,7 +443,7 @@ fn b6_seek_cost() {
     engine.handle_command(crate::spawn::AudioCommand::Seek { sample });
     eprintln!("  engine.seek={:.1}ms", t.elapsed().as_secs_f64() * 1000.0);
     let t = std::time::Instant::now();
-    let skip = engine.skip_track.clone();
+    let skip = engine.playback.skip_track.clone();
     let _ = crate::spawn::compute_chase_states_for_test(&model, tick, &skip);
     eprintln!(
         "  compute_chase_states={:.1}ms",

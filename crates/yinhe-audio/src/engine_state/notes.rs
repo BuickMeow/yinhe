@@ -15,7 +15,7 @@ impl AudioEngine {
     /// 是从曲首开始的 O(N) 全量前缀扫描，seek 越晚越慢。返回
     /// `(key, note, 0 BPM 截断后的 end_tick)`。
     pub(super) fn crossing_notes(&self, tick: u32) -> Vec<(usize, yinhe_types::Note, u32)> {
-        let Some(model) = self.yin_model.as_ref() else {
+        let Some(model) = self.playback.yin_model.as_ref() else {
             return Vec::new();
         };
         let lo = tick.saturating_sub(model.max_note_len);
@@ -35,9 +35,10 @@ impl AudioEngine {
 
     /// 重启当前 tick 处仍有效的乐器跨点音符（pause→resume 用）。
     pub(super) fn restart_crossing_instrument_notes(&mut self) {
-        let tick = self.current_tick;
+        let tick = self.playback.current_tick;
         for (key, n, end_tick) in self.crossing_notes(tick) {
             let Some(ch) = self
+                .playback
                 .model
                 .as_ref()
                 .and_then(|m| m.track_channel(n.track as usize))
@@ -56,11 +57,22 @@ impl AudioEngine {
     /// 同步检查 skip_track（mute 轨跳过不重启）。
     pub(super) fn restart_note(&mut self, key: usize, n: &yinhe_types::Note, end_tick: u32) {
         let track = n.track as usize;
-        let Some(ch) = self.model.as_ref().and_then(|m| m.track_channel(track)) else {
+        let Some(ch) = self
+            .playback
+            .model
+            .as_ref()
+            .and_then(|m| m.track_channel(track))
+        else {
             return;
         };
         let ch = ch as usize;
-        if self.skip_track.get(track).copied().unwrap_or(false) {
+        if self
+            .playback
+            .skip_track
+            .get(track)
+            .copied()
+            .unwrap_or(false)
+        {
             return;
         }
         if let Some(dense) = self.channel_plugin_dense(ch as u8) {
@@ -72,14 +84,16 @@ impl AudioEngine {
                     key: key as u8,
                     velocity: n.velocity as f64 / 127.0,
                 });
-                self.active_notes.push(std::cmp::Reverse(ActiveNote {
-                    key: key as u8,
-                    dense: dense as u32,
-                    clap_channel: (ch & 0x0F) as u8,
-                    is_instrument: true,
-                    end_tick,
-                    track: track as u16,
-                }));
+                self.playback
+                    .active_notes
+                    .push(std::cmp::Reverse(ActiveNote {
+                        key: key as u8,
+                        dense: dense as u32,
+                        clap_channel: (ch & 0x0F) as u8,
+                        is_instrument: true,
+                        end_tick,
+                        track: track as u16,
+                    }));
             }
             return;
         }
@@ -87,7 +101,7 @@ impl AudioEngine {
         if dense == u32::MAX {
             return;
         }
-        let sample = self.sample_position;
+        let sample = self.playback.sample_position;
         let end_sample = self.tick_to_sample(end_tick);
         self.synth
             .cpu_synth
@@ -99,20 +113,22 @@ impl AudioEngine {
                 velocity: n.velocity,
                 end_sample,
             });
-        self.active_notes.push(std::cmp::Reverse(ActiveNote {
-            key: key as u8,
-            dense,
-            clap_channel: 0,
-            is_instrument: false,
-            end_tick,
-            track: track as u16,
-        }));
+        self.playback
+            .active_notes
+            .push(std::cmp::Reverse(ActiveNote {
+                key: key as u8,
+                dense,
+                clap_channel: 0,
+                is_instrument: false,
+                end_tick,
+                track: track as u16,
+            }));
     }
 
     /// 即时 mute：从 active_notes 精确移除该轨在响音符并发 NoteOff
     ///（不误伤同通道其他轨道；即时静音语义）。
     pub(super) fn kill_track_notes(&mut self, track: u16) {
-        let all = std::mem::take(&mut self.active_notes);
+        let all = std::mem::take(&mut self.playback.active_notes);
         let mut remaining = BinaryHeap::new();
         for std::cmp::Reverse(an) in all.into_iter() {
             if an.track != track {
@@ -129,7 +145,7 @@ impl AudioEngine {
                     });
                 }
             } else if an.dense != u32::MAX {
-                let sample = self.sample_position;
+                let sample = self.playback.sample_position;
                 self.synth
                     .cpu_synth
                     .send_event(yinhe_synth::SynthEvent::NoteOff {
@@ -139,13 +155,13 @@ impl AudioEngine {
                     });
             }
         }
-        self.active_notes = remaining;
+        self.playback.active_notes = remaining;
     }
 
     /// 即时 unmute：重启该轨的跨点音符（start < current_tick < end）。
     /// 只扫 `max_note_len` 窗口，并按轨道过滤。
     pub(super) fn restart_track_crossing_notes(&mut self, track: u16) {
-        let tick = self.current_tick;
+        let tick = self.playback.current_tick;
         for (key, n, end_tick) in self.crossing_notes(tick) {
             if n.track == track {
                 self.restart_note(key, &n, end_tick);

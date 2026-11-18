@@ -69,18 +69,19 @@ impl AudioRenderer {
                 }) => {
                     let t_chase_apply = Instant::now();
                     // 丢弃过期结果：cc_events 已被新 PrepareModel 替换
-                    if generation == self.engine.chase_generation {
+                    if generation == self.engine.playback.chase_generation {
                         match purpose {
                             crate::spawn::ChasePurpose::Loop => {
-                                if self.engine.loop_enabled
-                                    && target_tick == self.engine.loop_start_tick
+                                if self.engine.playback.loop_enabled
+                                    && target_tick == self.engine.playback.loop_start_tick
                                 {
-                                    self.engine.loop_chase = Some(crate::engine::LoopChase {
-                                        generation,
-                                        start_tick: target_tick,
-                                        states,
-                                        plugin_params,
-                                    });
+                                    self.engine.playback.loop_chase =
+                                        Some(crate::engine::LoopChase {
+                                            generation,
+                                            start_tick: target_tick,
+                                            states,
+                                            plugin_params,
+                                        });
                                 }
                             }
                             crate::spawn::ChasePurpose::Seek => {

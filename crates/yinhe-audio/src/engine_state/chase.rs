@@ -20,7 +20,7 @@ impl AudioEngine {
     /// 与旧实现（按 `[chase_cc_base, cc_cursor)` 区间扫描）不同，mute 期间
     /// 被越过但未发送的事件不会被误标——unmute 后 chase 能恢复这些控制器。
     pub(crate) fn chase_skip(&self) -> ChaseSkip {
-        self.dispatched_skip
+        self.playback.dispatched_skip
     }
 
     pub(crate) fn apply_chase_result(

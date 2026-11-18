@@ -17,7 +17,7 @@ use crate::engine::AudioEngine;
 macro_rules! route_cpu_event {
     ($engine:ident, $dense:expr, $event:expr) => {{
         {
-            let sample = $engine.segment_start_sample;
+            let sample = $engine.playback.segment_start_sample;
             let cs = &mut $engine.synth.cpu_synth;
             let dense = $dense;
             match $event {
@@ -72,13 +72,16 @@ impl AudioEngine {
         // 先过滤（mute 轨 / AM M/S 旁通 lane），再对同 tick 同通道同目标取
         // max：被过滤的事件不参与取 max 也不发送；整组被过滤则整组不发。
         // 聚合只改变"发送哪条/发多少"，事件流本身保持不变（旁通切换无需重建）。
-        let seg_start = self.cc_cursor;
-        let seg_end = self.cc_events.partition_point(|cc| cc.tick <= tick);
+        let seg_start = self.playback.cc_cursor;
+        let seg_end = self
+            .playback
+            .cc_events
+            .partition_point(|cc| cc.tick <= tick);
         if seg_end > seg_start {
             let reps = {
-                let events = &self.cc_events[seg_start..seg_end];
-                let skip_track = &self.skip_track;
-                let am_lane_skip = &self.am_lane_skip;
+                let events = &self.playback.cc_events[seg_start..seg_end];
+                let skip_track = &self.playback.skip_track;
+                let am_lane_skip = &self.playback.am_lane_skip;
                 crate::audio_model::aggregate_max_reps(events, |cc| {
                     let track_skipped = skip_track.get(cc.track as usize).copied().unwrap_or(false);
                     let lane_skipped = am_lane_skip
@@ -90,7 +93,7 @@ impl AudioEngine {
                 })
             };
             for &i in &reps {
-                let cc = &self.cc_events[seg_start + i];
+                let cc = &self.playback.cc_events[seg_start + i];
                 if let Some(pp) = cc.plugin_param {
                     // 插件参数自动化 → 按 uid 精确投给对应乐器实例（定向，不广播）。
                     let dense = self.channel_layout.dense_for(pp.channel as usize);
@@ -127,7 +130,9 @@ impl AudioEngine {
                         {
                             chain.apply_cc(cc_num, cc_value);
                             // 实际发送 → 打点（chase 应用时跳过，避免旧值覆盖新值）。
-                            self.dispatched_skip.mark(&cc.event, cc.channel as usize);
+                            self.playback
+                                .dispatched_skip
+                                .mark(&cc.event, cc.channel as usize);
                         }
                     }
                     if let Some(dense) = self.channel_plugin_dense(cc.channel as u8) {
@@ -147,22 +152,26 @@ impl AudioEngine {
                             for data in midi.as_slice() {
                                 slot.events.push(PluginEvent::Midi { time, data: *data });
                             }
-                            self.dispatched_skip.mark(&cc.event, cc.channel as usize);
+                            self.playback
+                                .dispatched_skip
+                                .mark(&cc.event, cc.channel as usize);
                         }
                     } else {
                         let dense = self.channel_layout.dense_for(cc.channel as usize);
                         if dense != u32::MAX {
                             // 路由到当前 CPU 后端。
                             route_cpu_event!(self, dense, cc.event);
-                            self.dispatched_skip.mark(&cc.event, cc.channel as usize);
+                            self.playback
+                                .dispatched_skip
+                                .mark(&cc.event, cc.channel as usize);
                         }
                     }
                 }
             }
-            self.cc_cursor = seg_end;
+            self.playback.cc_cursor = seg_end;
         }
-        if self.cc_cursor < self.cc_events.len() {
-            let cc_tick = self.cc_events[self.cc_cursor].tick;
+        if self.playback.cc_cursor < self.playback.cc_events.len() {
+            let cc_tick = self.playback.cc_events[self.playback.cc_cursor].tick;
             if cc_tick < block_end_tick {
                 next = Some(next.map_or(cc_tick, |t| t.min(cc_tick)));
             }
@@ -171,12 +180,12 @@ impl AudioEngine {
         // ── NoteOn + 找下一个 NoteOn 边界（单次 KEY_COUNT 桶扫描）──
         // 直接读模型桶：游标单调前进，整曲每个音符只碰一次；力度阈值与
         // 0 BPM 剪切在这里逐音符现算，不再维护 `audible_notes` 副本。
-        let Some(model) = self.yin_model.clone() else {
+        let Some(model) = self.playback.yin_model.clone() else {
             return next;
         };
         for key in 0..yinhe_types::KEY_COUNT {
             let bucket = &model.notes[key];
-            let mut cursor = self.note_cursor[key];
+            let mut cursor = self.playback.note_cursor[key];
 
             while let Some((nc, note)) = bucket.peek(cursor) {
                 cursor = nc;
@@ -206,11 +215,22 @@ impl AudioEngine {
                     continue;
                 };
                 let track = note.track as usize;
-                let Some(ch) = self.model.as_ref().and_then(|m| m.track_channel(track)) else {
+                let Some(ch) = self
+                    .playback
+                    .model
+                    .as_ref()
+                    .and_then(|m| m.track_channel(track))
+                else {
                     bucket.advance(&mut cursor);
                     continue;
                 };
-                if !self.skip_track.get(track).copied().unwrap_or(false) {
+                if !self
+                    .playback
+                    .skip_track
+                    .get(track)
+                    .copied()
+                    .unwrap_or(false)
+                {
                     let dense = self.channel_layout.dense_for(ch as usize);
                     if dense != u32::MAX {
                         // 方案 C：OwnLc 轨的乐器链落在该轨 home LC 的 dense
@@ -243,7 +263,7 @@ impl AudioEngine {
                                     key: key as u8,
                                     velocity: note.velocity as f64 / 127.0,
                                 });
-                                self.active_notes.push(Reverse(ActiveNote {
+                                self.playback.active_notes.push(Reverse(ActiveNote {
                                     key: key as u8,
                                     dense: plugin_dense,
                                     clap_channel: clap_ch,
@@ -256,7 +276,7 @@ impl AudioEngine {
                             // yinhe CPU：直接投递带精确 `end_sample` 的 NoteOn（该音符
                             // 自身的 end_tick），voice 到期自释 + damper 快照，无需
                             // NoteOff；xsynth 回退路径才走 `route_cpu_event!`。
-                            let sample = self.segment_start_sample;
+                            let sample = self.playback.segment_start_sample;
                             let end_sample = self.tick_to_sample(end_tick);
                             let vel = note.velocity;
                             self.synth
@@ -269,7 +289,7 @@ impl AudioEngine {
                                     velocity: vel,
                                     end_sample,
                                 });
-                            self.active_notes.push(Reverse(ActiveNote {
+                            self.playback.active_notes.push(Reverse(ActiveNote {
                                 key: key as u8,
                                 dense,
                                 clap_channel: 0,
@@ -282,28 +302,28 @@ impl AudioEngine {
                 }
                 bucket.advance(&mut cursor);
             }
-            self.note_cursor[key] = cursor;
+            self.playback.note_cursor[key] = cursor;
         }
 
         // ── NoteOff + 找下一个 NoteOff 边界（min-heap 逐个 pop）──
         // 堆顶 = end_tick 最小的活跃音符。
         // ended 个音符每个 O(log V) pop，未结束的堆顶 O(1) peek 得下一边界。
         // 之前是 Vec::retain 全扫 O(V_active)，高密度段 V 大时被多次调用形成 O(k×V) 正反馈。
-        self.ended_notes.clear();
-        while let Some(Reverse(an)) = self.active_notes.peek() {
+        self.playback.ended_notes.clear();
+        while let Some(Reverse(an)) = self.playback.active_notes.peek() {
             if an.end_tick > tick {
                 break;
             }
-            self.ended_notes.push(*an);
-            self.active_notes.pop();
+            self.playback.ended_notes.push(*an);
+            self.playback.active_notes.pop();
         }
         // peek 堆顶（最早结束的未结束音符）作为下一 NoteOff 边界候选
-        if let Some(Reverse(an)) = self.active_notes.peek()
+        if let Some(Reverse(an)) = self.playback.active_notes.peek()
             && an.end_tick < block_end_tick
         {
             next = Some(next.map_or(an.end_tick, |t| t.min(an.end_tick)));
         }
-        for an in &self.ended_notes {
+        for an in &self.playback.ended_notes {
             if an.is_instrument {
                 // 乐器音符 NoteOff → 喂乐器实例（含挂音恢复）。
                 let time = self

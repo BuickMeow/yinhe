@@ -81,16 +81,17 @@ fn track_level_meter_reads_synth_peak_per_track() {
         engine.render(&mut out);
     }
     engine.publish_track_levels();
-    let levels = engine.track_levels.lock().unwrap().clone();
+    let levels = engine.meter.track_levels.lock().unwrap().clone();
     assert_eq!(levels.len(), 1, "一轨一个电平表槽");
     let (l, r) = levels[0];
     assert!(l > 0.0 || r > 0.0, "发声轨道应有电平（{l}/{r}）");
 
     // 停止播放 → 全部 0。
-    engine.playing = false;
+    engine.playback.playing = false;
     engine.publish_track_levels();
     assert!(
         engine
+            .meter
             .track_levels
             .lock()
             .unwrap()
@@ -170,7 +171,7 @@ fn test_render_dispatches_note_inside_large_buffer_at_exact_sample() {
     let mask = vec![true; 16];
     let mut engine = AudioEngine::new(48000, ChannelLayout::from_mask(mask));
     engine.load_model(&model);
-    engine.playing = true;
+    engine.playback.playing = true;
 
     // Note at key 60, start_tick=960, velocity=100 → should dispatch at tick 960.
     // @48000Hz 1 tick = 50 sample：960 tick = 48000 sample，1200 tick = 60000 sample。
@@ -178,8 +179,8 @@ fn test_render_dispatches_note_inside_large_buffer_at_exact_sample() {
     // NoteOff at tick 1440 > block_end 1200, so no next event in range.
     assert_eq!(next, None);
 
-    assert_eq!(engine.note_cursor[60].idx, 1);
-    assert_eq!(engine.active_notes.len(), 1);
+    assert_eq!(engine.playback.note_cursor[60].idx, 1);
+    assert_eq!(engine.playback.active_notes.len(), 1);
     assert_eq!(engine.sample_position(), 0);
 }
 
@@ -188,11 +189,11 @@ fn transport_loop_wraps_at_exact_sample() {
     let model = Arc::new(make_model_with_notes(vec![]));
     let mut engine = AudioEngine::new(48000, ChannelLayout::from_mask(vec![true; 16]));
     engine.load_model(&model);
-    engine.playing = true;
+    engine.playback.playing = true;
 
     // 120 BPM、PPQ 480：1 tick = 50 samples；480 tick = 24000 samples。
     engine.set_loop(true, 0, 480);
-    assert!(engine.loop_enabled);
+    assert!(engine.playback.loop_enabled);
 
     let mut out = vec![0.0f32; 512 * 2];
     // 46 块 = 23552 samples，尚未到 loop end。
@@ -206,21 +207,21 @@ fn transport_loop_wraps_at_exact_sample() {
     assert_eq!(engine.sample_position(), 64);
     assert_eq!(engine.current_tick(), engine.sample_to_tick(64));
     // 回绕偏移 = 一圈长度：cpal 回调据此把绝对消费位置换算回逻辑位置。
-    assert_eq!(engine.loop_wrap_offset, 24000);
+    assert_eq!(engine.playback.loop_wrap_offset, 24000);
 
     // 再跑一圈：偏移继续累加，绝对位置保持单调。
     for _ in 0..47 {
         engine.render(&mut out);
     }
     assert_eq!(engine.sample_position(), 128);
-    assert_eq!(engine.loop_wrap_offset, 48000);
+    assert_eq!(engine.playback.loop_wrap_offset, 48000);
 }
 
 #[test]
 fn invalid_loop_range_disables_loop() {
     let mut engine = AudioEngine::new(48000, ChannelLayout::from_mask(vec![true; 16]));
     engine.set_loop(true, 480, 480);
-    assert!(!engine.loop_enabled);
+    assert!(!engine.playback.loop_enabled);
 }
 
 #[test]
@@ -300,18 +301,18 @@ fn test_audible_index_filters_vel_and_inactive_channel() {
     let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(mask));
     engine.load_model(&model);
 
-    assert_eq!(engine.note_cursor[60].idx, 0);
+    assert_eq!(engine.playback.note_cursor[60].idx, 0);
     // Note at key 60, start_tick=960, velocity=100 → should dispatch at tick 960
     //（44100 Hz：1 tick = 45.94 sample，960 tick = 44100 sample）。
     let next = engine.dispatch_and_find_next(960, 1306);
     // Next note (other track) starts at tick1440 = 66150 sample > block_end, so no next event.
     assert_eq!(next, None);
     // key 60 桶有 3 个音符：vel 0/1 在 dispatch 时被跳过，vel=100 已派发。
-    assert_eq!(engine.note_cursor[60].idx, 3);
-    assert_eq!(engine.active_notes.len(), 1);
+    assert_eq!(engine.playback.note_cursor[60].idx, 3);
+    assert_eq!(engine.playback.active_notes.len(), 1);
     for key in 0..128usize {
         if key != 60 {
-            assert_eq!(engine.note_cursor[key].idx, 0);
+            assert_eq!(engine.playback.note_cursor[key].idx, 0);
         }
     }
 }
@@ -330,8 +331,8 @@ fn test_audible_index_empty_when_all_filtered() {
     let next = engine.dispatch_and_find_next(0, 60000);
     assert_eq!(next, None);
     // 力度 ≤1 的音符在 dispatch 时被跳过（游标越过它们），不产生事件。
-    assert_eq!(engine.note_cursor[60].idx, 1);
-    assert_eq!(engine.note_cursor[61].idx, 1);
+    assert_eq!(engine.playback.note_cursor[60].idx, 1);
+    assert_eq!(engine.playback.note_cursor[61].idx, 1);
 }
 
 #[test]
@@ -399,26 +400,26 @@ fn test_audible_index_uses_per_key_tempo_cursor() {
     let next = engine.dispatch_and_find_next(480, 2500);
     // NoteOff at end_tick=960 是下一个事件（早于 key 0 的 NoteOn at 2000）。
     assert_eq!(next, Some(960));
-    assert_eq!(engine.note_cursor[60].idx, 1);
-    assert_eq!(engine.active_notes.len(), 1);
+    assert_eq!(engine.playback.note_cursor[60].idx, 1);
+    assert_eq!(engine.playback.active_notes.len(), 1);
 
     let next = engine.dispatch_and_find_next(960, 2500);
     // 处理 NoteOff 960 后，下一个事件是 key 0 的 NoteOn at 2000。
     assert_eq!(next, Some(2000));
     // key 60 ended, so only key 0 is active.
-    assert_eq!(engine.active_notes.len(), 0);
+    assert_eq!(engine.playback.active_notes.len(), 0);
 
     let next = engine.dispatch_and_find_next(2000, 2500);
     // key 0 NoteOn 后，NoteOff at end_tick=2480。
     assert_eq!(next, Some(2480));
-    assert_eq!(engine.note_cursor[0].idx, 1);
+    assert_eq!(engine.playback.note_cursor[0].idx, 1);
     // key 0 is active.
-    assert_eq!(engine.active_notes.len(), 1);
+    assert_eq!(engine.playback.active_notes.len(), 1);
 
     let next = engine.dispatch_and_find_next(2480, 2500);
     // [2480, 2500) 内无更多事件。
     assert_eq!(next, None);
-    assert_eq!(engine.active_notes.len(), 0);
+    assert_eq!(engine.playback.active_notes.len(), 0);
 }
 
 #[test]
@@ -463,21 +464,21 @@ fn test_engine_handle_command_seek() {
 #[test]
 fn seek_invalidates_chase_but_loop_wrap_keeps_it() {
     let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(vec![true; 16]));
-    let before = engine.chase_generation;
+    let before = engine.playback.chase_generation;
     engine.handle_command(AudioCommand::Seek { sample: 44100 });
     assert_eq!(
-        engine.chase_generation,
+        engine.playback.chase_generation,
         before.wrapping_add(1),
         "seek 应推进 chase 代次"
     );
 
-    engine.loop_enabled = true;
-    engine.loop_start_tick = 0;
-    engine.loop_end_tick = 480;
-    let before = engine.chase_generation;
+    engine.playback.loop_enabled = true;
+    engine.playback.loop_start_tick = 0;
+    engine.playback.loop_end_tick = 480;
+    let before = engine.playback.chase_generation;
     engine.rewind_to_loop_start();
     assert_eq!(
-        engine.chase_generation, before,
+        engine.playback.chase_generation, before,
         "loop 回绕不得作废 loop_chase"
     );
 }
@@ -488,7 +489,7 @@ fn test_engine_handle_command_skip_tracks() {
     let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(mask));
     let skip = vec![false, true, false];
     engine.handle_command(AudioCommand::SkipTracks { skip });
-    assert_eq!(engine.skip_track, vec![false, true, false]);
+    assert_eq!(engine.playback.skip_track, vec![false, true, false]);
 }
 
 /// 回归：向后 seek 时鼓组声明必须落在新位置，不能是旧位置。
@@ -687,7 +688,7 @@ fn test_reload_notes_rebuilds_cc_pb_pc_rpn() {
         vec![],
     ));
     engine.handle_command(AudioCommand::LoadModel { model: model_a });
-    let cc_count_a = engine.cc_events.len();
+    let cc_count_a = engine.playback.cc_events.len();
     assert!(cc_count_a > 0, "model A should produce some events");
 
     // Model B: completely different shape — 3 CCs at different ticks,
@@ -703,14 +704,14 @@ fn test_reload_notes_rebuilds_cc_pb_pc_rpn() {
 
     // 3 CC + 2 PB + 2 PC (each with bank_msb=0 + bank_lsb=0 → 2 extra) + 1 RPN (high-level) = 12
     assert_eq!(
-        engine.cc_events.len(),
+        engine.playback.cc_events.len(),
         12,
         "ReloadNotes must rebuild cc_events from the new model (was {} from model A)",
         cc_count_a
     );
 
     // Assert events are sorted (so the schedule loop's monotonic cursor works).
-    for w in engine.cc_events.windows(2) {
+    for w in engine.playback.cc_events.windows(2) {
         assert!(w[0].tick <= w[1].tick, "cc_events must be sorted by tick");
     }
 
@@ -718,7 +719,7 @@ fn test_reload_notes_rebuilds_cc_pb_pc_rpn() {
     let model_c = Arc::new(make_model_with_controls(vec![], vec![], vec![], vec![]));
     engine.load_model(&model_c);
     assert_eq!(
-        engine.cc_events.len(),
+        engine.playback.cc_events.len(),
         0,
         "ReloadNotes with empty model must clear cc_events"
     );
@@ -840,13 +841,13 @@ fn test_track_existence_activates_channel() {
 
     let mut engine = AudioEngine::new(44100, layout);
     engine.load_model(&Arc::new(model));
-    engine.playing = true;
+    engine.playback.playing = true;
 
     // NoteOff at tick 480 = 1 beat @ 120 BPM @ 44100 Hz = 22050 samples.
     let next = engine.dispatch_and_find_next(0, 60000);
     assert_eq!(next, Some(480));
-    assert_eq!(engine.note_cursor[60].idx, 1);
-    assert_eq!(engine.active_notes.len(), 1);
+    assert_eq!(engine.playback.note_cursor[60].idx, 1);
+    assert_eq!(engine.playback.active_notes.len(), 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -872,7 +873,7 @@ fn test_first_note_on_fresh_document_dispatches_without_rebuild() {
 
     // 1. 空 Document spawn 引擎：16 条音轨的通道 0-15 全部激活
     let mut engine = spawn_engine_for_doc(&doc, sample_rate);
-    engine.playing = true;
+    engine.playback.playing = true;
     assert!(engine.channel_layout.is_active(0));
 
     // 2. 加第一个音符（track 1 = channel 0）
@@ -896,8 +897,8 @@ fn test_first_note_on_fresh_document_dispatches_without_rebuild() {
 
     let next = engine.dispatch_and_find_next(0, 60000);
     assert_eq!(next, Some(480));
-    assert_eq!(engine.note_cursor[60].idx, 1);
-    assert_eq!(engine.active_notes.len(), 1);
+    assert_eq!(engine.playback.note_cursor[60].idx, 1);
+    assert_eq!(engine.playback.active_notes.len(), 1);
 }
 
 /// 增量 UpdateNotes 回归：换模型引用 + 按当前 tick 重定位游标后，
@@ -929,13 +930,13 @@ fn test_notes_update_repositions_cursors_without_replaying() {
     doc.data.bump_revision();
 
     let mut engine = spawn_engine_for_doc(&doc, sample_rate);
-    engine.playing = true;
+    engine.playback.playing = true;
 
     // 播放推进一块：两个音符 NoteOn，游标越过它们
     let mut out = vec![0.0f32; 1024];
     engine.render(&mut out);
-    assert_eq!(engine.note_cursor[60].idx, 1);
-    assert_eq!(engine.note_cursor[64].idx, 1);
+    assert_eq!(engine.playback.note_cursor[60].idx, 1);
+    assert_eq!(engine.playback.note_cursor[64].idx, 1);
 
     // 编辑：key 60 桶加一个更晚的音符
     doc.add_note(
@@ -955,20 +956,26 @@ fn test_notes_update_repositions_cursors_without_replaying() {
     engine.apply_notes_only(audio_model, yin_model, duration);
 
     // 两个桶都按当前 tick 重定位：已派发的 0..480 音符不会被重复派发
-    assert_eq!(engine.note_cursor[64].idx, 1, "干净桶游标越过已派发音符");
-    assert_eq!(engine.note_cursor[60].idx, 1, "新音符排在已派发音符之后");
+    assert_eq!(
+        engine.playback.note_cursor[64].idx, 1,
+        "干净桶游标越过已派发音符"
+    );
+    assert_eq!(
+        engine.playback.note_cursor[60].idx, 1,
+        "新音符排在已派发音符之后"
+    );
 
     // 继续 dispatch：480 = 两个 NoteOff，960 = 新音符的 NoteOn
     let next = engine.dispatch_and_find_next(480, 60000);
     assert_eq!(next, Some(960), "新音符 NoteOn 位置");
     assert_eq!(
-        engine.active_notes.len(),
+        engine.playback.active_notes.len(),
         0,
         "两个 NoteOff 已弹，新音符未到"
     );
     let next = engine.dispatch_and_find_next(960, 70000);
     assert_eq!(next, Some(1440), "新音符 NoteOff = 1440 tick");
-    assert_eq!(engine.active_notes.len(), 1, "新音符已 NoteOn");
+    assert_eq!(engine.playback.active_notes.len(), 1, "新音符已 NoteOn");
 }
 
 /// 空 Document 已用满 0-15 通道，所以先 remove_track(16) 释放 channel 15，
@@ -1010,11 +1017,11 @@ fn test_add_track_then_rebuild_activates_new_channel() {
 
     // 6. 重建引擎 → track 1 的音符能 dispatch
     let mut engine = spawn_engine_for_doc(&doc, sample_rate);
-    engine.playing = true;
+    engine.playback.playing = true;
     let next = engine.dispatch_and_find_next(0, 60000);
     assert_eq!(next, Some(480));
-    assert_eq!(engine.note_cursor[60].idx, 1);
-    assert_eq!(engine.active_notes.len(), 1);
+    assert_eq!(engine.playback.note_cursor[60].idx, 1);
+    assert_eq!(engine.playback.active_notes.len(), 1);
 }
 
 /// remove_track 后被移除音轨的通道失活，其音符不再 dispatch。
@@ -1062,12 +1069,12 @@ fn test_remove_track_then_rebuild_deactivates_channel() {
 
     // 5. 重建引擎 → 只有通道 0 的音符 dispatch
     let mut engine = spawn_engine_for_doc(&doc, sample_rate);
-    engine.playing = true;
+    engine.playback.playing = true;
     let next = engine.dispatch_and_find_next(0, 60000);
     assert_eq!(next, Some(480));
-    assert_eq!(engine.note_cursor[60].idx, 1);
-    assert_eq!(engine.note_cursor[64].idx, 0);
-    assert_eq!(engine.active_notes.len(), 1);
+    assert_eq!(engine.playback.note_cursor[60].idx, 1);
+    assert_eq!(engine.playback.note_cursor[64].idx, 0);
+    assert_eq!(engine.playback.active_notes.len(), 1);
 }
 
 /// mute 轨道的自动化事件（CC）在 dispatch 时应被跳过，
@@ -1093,10 +1100,10 @@ fn test_muted_track_cc_skipped_in_dispatch() {
     doc.data.bump_revision();
 
     let mut engine = spawn_engine_for_doc(&doc, sample_rate);
-    engine.playing = true;
+    engine.playback.playing = true;
 
     // 注入两条 CC 事件：track 0（mute）和 track 1（非 mute），同 channel 0
-    engine.cc_events = Arc::new(vec![
+    engine.playback.cc_events = Arc::new(vec![
         SortedCC {
             tick: 0,
             channel: 0,
@@ -1114,14 +1121,14 @@ fn test_muted_track_cc_skipped_in_dispatch() {
             event: AudioEvent::Channel(ChannelAudioEvent::Control(ControlEvent::Raw(7, 100))),
         },
     ]);
-    engine.cc_cursor = 0;
+    engine.playback.cc_cursor = 0;
     // mute track 0
-    engine.skip_track = vec![true, false];
+    engine.playback.skip_track = vec![true, false];
 
     // dispatch 应跳过 track 0 的 CC，只发 track 1 的
     engine.dispatch_and_find_next(0, 60000);
     // cc_cursor 推进到末尾（两条都处理了，但只发了一条）
-    assert_eq!(engine.cc_cursor, 2);
+    assert_eq!(engine.playback.cc_cursor, 2);
 }
 
 /// 回归测试：mute 期间被 cc_cursor 越过但未 dispatch 的自动化事件，
@@ -1146,11 +1153,11 @@ fn test_unmute_chase_skip_excludes_events_missed_while_muted() {
     );
     doc.data.bump_revision();
     let mut engine = spawn_engine_for_doc(&doc, sample_rate);
-    engine.playing = true;
+    engine.playback.playing = true;
 
     // track 0 的两条 CC（用不同控制器以区分位图）：tick 100 = CC7 40，tick 300 = CC1 80。
     // CC1 用于验证"mute 期间越过未 dispatch"；CC7 的 dispatch 不受影响。
-    engine.cc_events = Arc::new(vec![
+    engine.playback.cc_events = Arc::new(vec![
         SortedCC {
             tick: 100,
             channel: 0,
@@ -1172,19 +1179,19 @@ fn test_unmute_chase_skip_excludes_events_missed_while_muted() {
     // 从 0 播放，越过 tick 100：CC7=40 已 dispatch
     engine.seek_to(0);
     engine.dispatch_and_find_next(200, 100000);
-    assert_eq!(engine.cc_cursor, 1, "tick 100 的事件应已 dispatch");
+    assert_eq!(engine.playback.cc_cursor, 1, "tick 100 的事件应已 dispatch");
 
     // mute 轨道 0，继续播放越过 tick 300：CC1=80 被 cursor 越过但未 dispatch
-    engine.skip_track = vec![true];
+    engine.playback.skip_track = vec![true];
     engine.dispatch_and_find_next(400, 100000);
     assert_eq!(
-        engine.cc_cursor, 2,
+        engine.playback.cc_cursor, 2,
         "tick 300 的事件应被越过（未 dispatch）"
     );
 
     // unmute：chase 要恢复 CC1=80，chase_skip 不得标记 CC1
     //（CC7=40 在 mute 前已 dispatch，bit7 置位是预期行为）
-    engine.skip_track = vec![false];
+    engine.playback.skip_track = vec![false];
     let skip = engine.chase_skip();
     assert_eq!(
         skip.cc_mask[0] & (1u128 << 1),
@@ -1217,30 +1224,38 @@ fn test_skip_mask_immediate_kill_and_restart() {
     );
     doc.data.bump_revision();
     let mut engine = spawn_engine_for_doc(&doc, sample_rate);
-    engine.playing = true;
+    engine.playback.playing = true;
     // Document::empty() 的 track_audible_count 在 add_note 后未重建：显式标记全部可听。
-    let all_audible = vec![false; engine.skip_track.len()];
-    engine.skip_track = all_audible.clone();
+    let all_audible = vec![false; engine.playback.skip_track.len()];
+    engine.playback.skip_track = all_audible.clone();
 
     engine.seek_to(0);
     engine.dispatch_and_find_next(500, 100000);
     // 模拟播放推进：手动 dispatch 不会更新 current_tick（由 render 推进）。
-    engine.current_tick = 500;
-    assert_eq!(engine.active_notes.len(), 1, "播放中应有一个活跃音符");
+    engine.playback.current_tick = 500;
+    assert_eq!(
+        engine.playback.active_notes.len(),
+        1,
+        "播放中应有一个活跃音符"
+    );
 
     // mute track 1 → 立即从 active_notes 移除（发 NoteOff）
     let mut muted = all_audible.clone();
     muted[1] = true;
     engine.apply_skip_mask(&all_audible, &muted);
     assert_eq!(
-        engine.active_notes.len(),
+        engine.playback.active_notes.len(),
         0,
         "mute 应立即停掉该轨在响音符，而不是等 gate 结束"
     );
 
     // unmute track 1 → 立即重启跨点音符（回到 active_notes）
     engine.apply_skip_mask(&muted, &all_audible);
-    assert_eq!(engine.active_notes.len(), 1, "unmute 应立即重启跨点音符");
+    assert_eq!(
+        engine.playback.active_notes.len(),
+        1,
+        "unmute 应立即重启跨点音符"
+    );
 }
 
 /// chase 计算时跳过 mute 轨道的 CC：
@@ -1413,7 +1428,8 @@ fn test_chase_after_seek_skips_dispatched_controllers() {
 
     // worker 异步算出的 chase 快照：seek 之前的状态
     // worker 异步算出的 chase 快照：seek 之前的状态（查询式：直接查模型 lane）
-    let states = crate::spawn::compute_chase_states_for_test(&model, 768, &engine.skip_track);
+    let states =
+        crate::spawn::compute_chase_states_for_test(&model, 768, &engine.playback.skip_track);
     assert_eq!(
         states[0].as_ref().unwrap().pitch_bend_sensitivity,
         2.0,
@@ -1668,7 +1684,7 @@ fn test_full_render_all_events_exactly_once() {
     let mask = vec![true; 16];
     let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(mask));
     engine.load_model(&model);
-    engine.playing = true;
+    engine.playback.playing = true;
 
     let total_frames = engine.duration_samples() as usize;
     assert!(total_frames > 0);
@@ -1683,16 +1699,21 @@ fn test_full_render_all_events_exactly_once() {
         let n = (total_frames + chunk - rendered).min(chunk);
         engine.render(&mut out[..n * 2]);
         rendered += n;
-        max_active = max_active.max(engine.active_notes.len());
+        max_active = max_active.max(engine.playback.active_notes.len());
     }
 
     // 全部事件已 dispatch：活跃音符清空、所有桶 cursor 到末尾
-    assert_eq!(engine.active_notes.len(), 0, "所有音符都应 NoteOff");
+    assert_eq!(
+        engine.playback.active_notes.len(),
+        0,
+        "所有音符都应 NoteOff"
+    );
     assert!(max_active >= 2, "渲染过程中应存在叠层音符");
     for key in 0..128usize {
         assert_eq!(
-            engine.note_cursor[key].idx as usize,
+            engine.playback.note_cursor[key].idx as usize,
             engine
+                .playback
                 .yin_model
                 .as_ref()
                 .map(|m| m.notes[key].len())
@@ -1701,7 +1722,7 @@ fn test_full_render_all_events_exactly_once() {
         );
     }
     assert_eq!(
-        engine.sample_position as usize,
+        engine.playback.sample_position as usize,
         total_frames + chunk,
         "渲染到曲尾后一块"
     );
@@ -1726,15 +1747,18 @@ fn test_fast_tempo_zero_length_segments_no_hang() {
     let mask = vec![true; 16];
     let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(mask));
     engine.load_model(&model);
-    engine.playing = true;
+    engine.playback.playing = true;
 
     // 一帧 512 帧：块内 tick 跨度约 1113，覆盖全部事件
     let mut out = vec![0.0f32; 1024];
     engine.render(&mut out);
-    assert_eq!(engine.sample_position, 512, "整块渲染完成，无死循环");
-    assert_eq!(engine.active_notes.len(), 0, "两个音符都 NoteOff");
-    assert_eq!(engine.note_cursor[60].idx, 1);
-    assert_eq!(engine.note_cursor[64].idx, 1);
+    assert_eq!(
+        engine.playback.sample_position, 512,
+        "整块渲染完成，无死循环"
+    );
+    assert_eq!(engine.playback.active_notes.len(), 0, "两个音符都 NoteOff");
+    assert_eq!(engine.playback.note_cursor[60].idx, 1);
+    assert_eq!(engine.playback.note_cursor[64].idx, 1);
 }
 
 /// seek 到任意位置后 dispatch：跨 seek 点的音符不重复 NoteOn
@@ -1745,25 +1769,33 @@ fn test_seek_then_dispatch_no_duplicate_note_on() {
     let mask = vec![true; 16];
     let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(mask));
     engine.load_model(&model);
-    engine.playing = true;
+    engine.playback.playing = true;
 
     // seek 到 30000 sample ≈ tick 653（两个音符都已开始）
     let seek_sample = 30000u64;
     engine.seek_to(seek_sample);
     assert_eq!(engine.current_tick(), 653, "sample_to_tick(30000) = 653");
-    assert_eq!(engine.active_notes.len(), 2, "seek 重启两个跨点音符");
+    assert_eq!(
+        engine.playback.active_notes.len(),
+        2,
+        "seek 重启两个跨点音符"
+    );
 
     // dispatch seek 点：不重复 NoteOn（cursor 已跳过），只处理 NoteOff 边界
     let next = engine.dispatch_and_find_next(653, 3000);
     assert_eq!(next, Some(960), "下一个事件是两个音符的 NoteOff 960");
-    assert_eq!(engine.active_notes.len(), 2, "dispatch 不重复 NoteOn");
+    assert_eq!(
+        engine.playback.active_notes.len(),
+        2,
+        "dispatch 不重复 NoteOn"
+    );
 
     // NoteOff 960 触发一次，active 减 1
     engine.dispatch_and_find_next(960, 3000);
-    assert_eq!(engine.active_notes.len(), 1);
+    assert_eq!(engine.playback.active_notes.len(), 1);
     // 1440 处第二个 NoteOff
     engine.dispatch_and_find_next(1440, 3000);
-    assert_eq!(engine.active_notes.len(), 0);
+    assert_eq!(engine.playback.active_notes.len(), 0);
 }
 
 /// dispatch 直接读模型桶，依赖桶内 start_tick 升序：乱序插入 + rebuild 后
@@ -1798,18 +1830,18 @@ fn test_dispatch_filters_velocity_threshold() {
     ]));
     let mut engine = AudioEngine::new(48000, ChannelLayout::from_mask(vec![true; 16]));
     engine.load_model(&model);
-    engine.playing = true;
+    engine.playback.playing = true;
     engine.synth.ignore_velocity = 1;
 
     // tick 0：vel=1 被过滤 → 没有 NoteOn，下一个边界是 480
     let next = engine.dispatch_and_find_next(0, 2000);
     assert_eq!(next, Some(480), "vel=1 不派发，边界跳到下一个音符");
-    assert_eq!(engine.active_notes.len(), 0);
+    assert_eq!(engine.playback.active_notes.len(), 0);
 
     // tick 480：vel=2 派发
     let next = engine.dispatch_and_find_next(480, 2000);
     assert_eq!(next, Some(960));
-    assert_eq!(engine.active_notes.len(), 1);
+    assert_eq!(engine.playback.active_notes.len(), 1);
 
     // 阈值改为 0 → vel=1 的音符重新可听（不影响已经过去的 0 tick，
     // 但说明阈值只是 dispatch 期的判断，无缓存可失效）
@@ -1817,7 +1849,11 @@ fn test_dispatch_filters_velocity_threshold() {
     let next = engine.dispatch_and_find_next(960, 2000);
     assert_eq!(next, Some(1440));
     // vel=2 在 960 结束（NoteOff），vel=3 同时 NoteOn → 活跃数仍为 1。
-    assert_eq!(engine.active_notes.len(), 1, "vel=3 已派发、vel=2 已结束");
+    assert_eq!(
+        engine.playback.active_notes.len(),
+        1,
+        "vel=3 已派发、vel=2 已结束"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -2069,7 +2105,7 @@ fn low_level_cc_routes_to_channel_dsp() {
     doc.data.bump_revision();
 
     let mut engine = spawn_engine_for_doc(&doc, sample_rate);
-    engine.playing = true;
+    engine.playback.playing = true;
     engine.dispatch_and_find_next(0, 60_000);
 
     // 打点 = 该 CC 已被实际消费（内置音源通道处理段）；外挂 insert 不再收 CC。
@@ -2102,7 +2138,7 @@ fn source_level_cc_not_routed_to_channel_dsp() {
     doc.data.bump_revision();
 
     let mut engine = spawn_engine_for_doc(&doc, sample_rate);
-    engine.playing = true;
+    engine.playback.playing = true;
     engine.dispatch_and_find_next(0, 60_000);
 
     // CC64 走常规路径（xsynth 处理），不被通道处理段接管（处理段只管 DSP_CHANNEL_CCS）。
@@ -2753,14 +2789,16 @@ fn make_two_track_cc_model(controller: u8, tick: u32, v0: u8, v1: u8) -> YinMode
 /// 本块 dispatch 实际会发送的 CC 代表事件（与 dispatch 同一套过滤 + 取 max）。
 /// 返回 `(controller, value)`，按事件表顺序。
 fn cc_reps(engine: &AudioEngine) -> Vec<(u8, f32)> {
-    let events = &engine.cc_events;
+    let events = &engine.playback.cc_events;
     let reps = crate::audio_model::aggregate_max_reps(events, |cc| {
         let track_skipped = engine
+            .playback
             .skip_track
             .get(cc.track as usize)
             .copied()
             .unwrap_or(false);
         let lane_skipped = engine
+            .playback
             .am_lane_skip
             .get(cc.track as usize)
             .and_then(|v| v.get(cc.lane as usize))
@@ -2786,10 +2824,11 @@ fn test_same_tick_same_channel_cc_takes_max() {
         let model = Arc::new(make_two_track_cc_model(1, 100, v0, v1));
         let mut engine = AudioEngine::new(sr, ChannelLayout::from_mask(vec![true; 16]));
         engine.load_model(&model);
-        engine.playing = true;
+        engine.playback.playing = true;
 
         // 模型数据不合并：事件流仍保留两条（导出/编辑不受影响）。
         let cc1_count = engine
+            .playback
             .cc_events
             .iter()
             .filter(|c| matches!(c.event, AudioEvent::Cc { controller: 1, .. }))
@@ -2798,9 +2837,9 @@ fn test_same_tick_same_channel_cc_takes_max() {
 
         // CPU dispatch：两条都被消费（cursor 越过），实际只发一条代表。
         engine.dispatch_and_find_next(100, 100_000);
-        assert_eq!(engine.cc_cursor, 2, "两条都被消费");
+        assert_eq!(engine.playback.cc_cursor, 2, "两条都被消费");
         assert_ne!(
-            engine.dispatched_skip.cc_mask[0] & (1u128 << 1),
+            engine.playback.dispatched_skip.cc_mask[0] & (1u128 << 1),
             0,
             "CC1 应已发送（代表事件）"
         );
@@ -2824,28 +2863,28 @@ fn test_same_tick_cc_max_respects_track_mute_and_am_ms() {
     assert_eq!(cc_reps(&engine), vec![(1, 100.0)]);
 
     // 轨道 mute（skip_track）：取未被 mute 轨道那条的值。
-    engine.skip_track = vec![true, false];
+    engine.playback.skip_track = vec![true, false];
     assert_eq!(cc_reps(&engine), vec![(1, 100.0)]);
-    engine.skip_track = vec![false, true];
+    engine.playback.skip_track = vec![false, true];
     assert_eq!(cc_reps(&engine), vec![(1, 40.0)]);
     // 两条都被 mute → 整组不发。
-    engine.skip_track = vec![true, true];
+    engine.playback.skip_track = vec![true, true];
     assert!(cc_reps(&engine).is_empty());
 
     // CPU dispatch：全旁通时不发送（不打点 chase_skip），但 cursor 仍越过。
-    engine.cc_cursor = 0;
-    engine.dispatched_skip = crate::channel::ChaseSkip::default();
+    engine.playback.cc_cursor = 0;
+    engine.playback.dispatched_skip = crate::channel::ChaseSkip::default();
     engine.dispatch_and_find_next(100, 100_000);
     assert_eq!(
-        engine.dispatched_skip.cc_mask[0] & (1u128 << 1),
+        engine.playback.dispatched_skip.cc_mask[0] & (1u128 << 1),
         0,
         "全被过滤则不发"
     );
-    assert_eq!(engine.cc_cursor, 2, "事件仍被消费越过");
+    assert_eq!(engine.playback.cc_cursor, 2, "事件仍被消费越过");
 
     // AM M/S（am_lane_skip，由模型 + am_ms map 构建）：mute track0 的 lane
     // → 取 track1 = 100。
-    engine.skip_track = vec![false, false];
+    engine.playback.skip_track = vec![false, false];
     let mut am_ms = crate::spawn::AmMsMap::new();
     am_ms.insert(
         (0u16, cc_target(1)),
@@ -2854,7 +2893,7 @@ fn test_same_tick_cc_max_respects_track_mute_and_am_ms() {
             solo: false,
         },
     );
-    engine.am_lane_skip = crate::audio_model::build_am_lane_skip(&model, &am_ms);
+    engine.playback.am_lane_skip = crate::audio_model::build_am_lane_skip(&model, &am_ms);
     assert_eq!(cc_reps(&engine), vec![(1, 100.0)]);
 
     // solo track1 的 lane：同轨只有它 solo，track0 未 solo 被旁通 → 取 100。
@@ -2866,7 +2905,7 @@ fn test_same_tick_cc_max_respects_track_mute_and_am_ms() {
             solo: true,
         },
     );
-    engine.am_lane_skip = crate::audio_model::build_am_lane_skip(&model, &am_ms);
+    engine.playback.am_lane_skip = crate::audio_model::build_am_lane_skip(&model, &am_ms);
     assert_eq!(cc_reps(&engine), vec![(1, 100.0)]);
 
     // 两条都 mute → 整组不发。
@@ -2880,7 +2919,7 @@ fn test_same_tick_cc_max_respects_track_mute_and_am_ms() {
             },
         );
     }
-    engine.am_lane_skip = crate::audio_model::build_am_lane_skip(&model, &am_ms);
+    engine.playback.am_lane_skip = crate::audio_model::build_am_lane_skip(&model, &am_ms);
     assert!(cc_reps(&engine).is_empty());
 }
 
@@ -3109,13 +3148,16 @@ fn zero_sample_loop_does_not_spin() {
     let model = make_model_with_tempo(vec![(0, 12000.0)], vec![]);
     let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(vec![true; 16]));
     engine.load_model(&model);
-    engine.playing = true;
+    engine.playback.playing = true;
 
     // tick 0..1 在 12000 BPM 下都落在 sample 0。
     engine.set_loop(true, 0, 1);
     let mut out = vec![0.0f32; 512 * 2];
     engine.render(&mut out);
-    assert_eq!(engine.sample_position, 512, "零 sample 循环必须照常前进");
+    assert_eq!(
+        engine.playback.sample_position, 512,
+        "零 sample 循环必须照常前进"
+    );
 }
 
 /// 测试用 insert：持续输出一个按样本衰减的"尾音"，忽略输入。

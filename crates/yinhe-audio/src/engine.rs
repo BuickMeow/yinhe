@@ -81,6 +81,66 @@ pub(crate) struct PluginHostState {
     pub(crate) plugin_previews: Vec<PluginPreviewNote>,
 }
 
+/// 播放时间线与模型派发状态（tick/sample 双域、音符游标、循环）。
+pub(crate) struct PlaybackState {
+    pub(crate) sample_position: u64,
+    /// 循环回绕累计的绝对位置偏移：`绝对 sample = 逻辑 sample + offset`。
+    pub(crate) loop_wrap_offset: u64,
+    /// dispatch 基准（tick 域）：与 sample_position 同步推进。
+    pub(crate) current_tick: u32,
+    pub(crate) playing: bool,
+    /// 暂停/停止时的输入侧淡出剩余帧数（0 = 无）。
+    pub(crate) pause_fade_remaining: usize,
+    /// 本次淡出的总帧数。
+    pub(crate) pause_fade_total: usize,
+    pub(crate) duration_samples: u64,
+    /// 每 key 桶的 dispatch 游标。
+    pub(crate) note_cursor: [yinhe_types::NoteCursor; KEY_COUNT],
+    /// 当前模型（dispatch/seek 直接从 `notes[key]` 顺序读）。
+    pub(crate) yin_model: Option<Arc<YinModel>>,
+    /// `Arc` 共享给 worker 线程做 chase 计算。
+    pub(crate) cc_events: Arc<Vec<SortedCC>>,
+    pub(crate) cc_cursor: usize,
+    /// 自最近一次 `seek_to` 以来实际发送的控制器打点。
+    pub(crate) dispatched_skip: ChaseSkip,
+    /// min-heap by end_sample：堆顶是最早结束的音符。
+    pub(crate) active_notes: BinaryHeap<Reverse<ActiveNote>>,
+    pub(crate) ended_notes: Vec<ActiveNote>,
+    /// 采样级聚合模型（音频轨、插件参数事件等）。
+    pub(crate) model: Option<AudioModel>,
+    pub(crate) skip_track: Vec<bool>,
+    /// AR 自动化 lane 的 M/S 试听旁通集。
+    pub(crate) am_ms: Arc<crate::spawn::AmMsMap>,
+    /// 每条音轨的 lane 跳过掩码。
+    pub(crate) am_lane_skip: Vec<Vec<bool>>,
+    /// 模型异步加载期间收到 Play 时暂存的起点。
+    pub(crate) pending_play_from_sample: Option<u64>,
+    /// Linear/Curve 自动化段播放时的中间事件 tick 间隔。
+    pub(crate) automation_density: u32,
+    /// cc_events / 模型的代次（过期 chase 结果据此丢弃）。
+    pub(crate) chase_generation: u64,
+    /// 当前 dispatch 段起点的绝对 sample。
+    pub(crate) segment_start_sample: u64,
+    /// 走带循环开关（tick 域）。
+    pub(crate) loop_enabled: bool,
+    pub(crate) loop_start_tick: u32,
+    pub(crate) loop_end_tick: u32,
+    /// 循环起点 chase 快照。
+    pub(crate) loop_chase: Option<LoopChase>,
+    /// 本块内发生循环回绕的输出帧偏移。
+    pub(crate) loop_wrap_offsets: Vec<usize>,
+    /// 跨块延续的循环回绕淡入剩余帧数。
+    pub(crate) loop_fade_in_pending: usize,
+}
+
+/// 电平表与空闲通道跳过掩码（渲染线程写、UI 读）。
+pub(crate) struct MeterState {
+    /// 每轨电平读数端（L/R 峰值，0..∞）。
+    pub(crate) track_levels: Arc<Mutex<Vec<(f32, f32)>>>,
+    /// 空闲通道跳过的活跃掩码（每块复用，避免音频线程分配）。
+    pub(crate) channel_active: Vec<bool>,
+}
+
 /// Core MIDI synthesis engine.  Owned by the renderer thread.
 pub(crate) struct AudioEngine {
     /// 合成后端与音源参数。
@@ -91,6 +151,10 @@ pub(crate) struct AudioEngine {
     pub(crate) mix: MixerState,
     /// 插件宿主：乐器链、insert/乐器回收队列、音频素材、乐器预览。
     pub(crate) plugins: PluginHostState,
+    /// 播放时间线与模型派发状态。
+    pub(crate) playback: PlaybackState,
+    /// 电平表与通道活跃掩码。
+    pub(crate) meter: MeterState,
     /// 当前渲染块的起始 sample：dispatch 时把 tick 域事件换算成块内 frame offset
     /// 喂乐器插件（`PluginEvent::time`）。render() 每块开头设置。
     pub(crate) block_start_sample: u64,
@@ -98,78 +162,6 @@ pub(crate) struct AudioEngine {
     /// 创建后定型，若 model 结构变化必须 teardown + 重建引擎。
     pub(crate) channel_layout: ChannelLayout,
     pub(crate) sample_rate: u32,
-    pub(crate) sample_position: u64,
-    /// 循环回绕累计的绝对位置偏移：`绝对 sample = 逻辑 sample + offset`。
-    /// UI 侧 cpal 回调用 `consumer_abs - offset` 得到逻辑播放位置，循环回绕
-    /// 后播放头才不会永久领先/落后一个 ring。seek/stop 时归零。
-    pub(crate) loop_wrap_offset: u64,
-    /// dispatch 基准（tick 域）：与 sample_position 同步推进（每块末更新，
-    /// seek/load 时由 sample→tick 初始化）。事件比较全在 tick 域。
-    pub(crate) current_tick: u32,
-    pub(crate) playing: bool,
-    /// 暂停/停止时的**输入侧**淡出：剩余帧数（0 = 无）。
-    /// 淡的是喂给 insert 链之前的干声，效果器尾音不会被一起淡掉。
-    pub(crate) pause_fade_remaining: usize,
-    /// 本次淡出的总帧数（用于计算线性增益）。
-    pub(crate) pause_fade_total: usize,
-    pub(crate) duration_samples: u64,
-
-    /// 每 key 桶的 dispatch 游标（直接读模型音符，不再维护平铺副本）。
-    pub(crate) note_cursor: [yinhe_types::NoteCursor; KEY_COUNT],
-    /// Reference to the full YinModel：dispatch/seek 直接从 `notes[key]` 顺序读，
-    /// 力度过滤与 0 BPM 剪切在派发时逐音符现算。
-    pub(crate) yin_model: Option<Arc<YinModel>>,
-
-    /// `Arc` 共享给 worker 线程做 chase 计算，避免每次 Seek clone 几十万条 CC。
-    pub(crate) cc_events: Arc<Vec<SortedCC>>,
-    pub(crate) cc_cursor: usize,
-    /// 自最近一次 `seek_to` 以来**实际发送**给合成器的控制器打点。
-    /// dispatch 每真实发送一个 CC/PB/RPN/PC 事件就 mark，`seek_to` 清零。
-    /// `apply_chase_result` 据此跳过这些控制器，避免旧 chase 值覆盖已实发的新值。
-    /// 与旧实现（扫描 `[chase_cc_base, cc_cursor)` 区间）的区别：mute 期间被
-    /// cc_cursor 越过但未发送的事件不会被误标，unmute 后 chase 能正确恢复。
-    pub(crate) dispatched_skip: ChaseSkip,
-    /// min-heap by end_sample：堆顶是最早结束的音符。
-    /// NoteOff 检测从 O(V) retain 全扫降到 O(ended × log V) 逐个 pop。
-    pub(crate) active_notes: BinaryHeap<Reverse<ActiveNote>>,
-    pub(crate) ended_notes: Vec<ActiveNote>,
-    /// 每轨电平读数端（L/R 峰值，0..∞）：渲染线程每块写、UI 读。
-    pub(crate) track_levels: Arc<Mutex<Vec<(f32, f32)>>>,
-    /// 空闲通道跳过的活跃掩码（每块复用，避免音频线程分配）。
-    pub(crate) channel_active: Vec<bool>,
-    pub(crate) model: Option<AudioModel>,
-    pub(crate) skip_track: Vec<bool>,
-    /// AR 自动化 lane 的 M/S 试听旁通集：dispatch 用它预计算 `am_lane_skip`
-    ///（chase 计算在 worker 侧直接查本 map）。随 `SetAmMs` 命令更新。
-    pub(crate) am_ms: Arc<crate::spawn::AmMsMap>,
-    /// 每条音轨的 lane 跳过掩码：`mask[track][lane_idx] = true` 表示 dispatch 时
-    /// 跳过该 lane 的自动化事件（AM M/S 动态旁通，与 `skip_track` 并列）。
-    /// 加载模型 / `SetAmMs` 时重建（O(轨道 × lane 数)）。
-    pub(crate) am_lane_skip: Vec<Vec<bool>>,
-    /// Set when Play arrives during async model loading.
-    pub(crate) pending_play_from_sample: Option<u64>,
-    /// Linear/Curve 自动化段播放时的中间事件 tick 间隔（默认 1）。
-    pub(crate) automation_density: u32,
-    /// 每次 `apply_prepared_model` / `load_model` 替换 cc_events 时 `+1`。
-    /// renderer 发 `PrepareChase` 时带上当前 generation，worker 回传的
-    /// `ChaseResult` 也带 generation，renderer 据此丢弃过期的 chase 结果
-    ///（cc_events 已被新 PrepareModel 替换的旧结果）。
-    pub(crate) chase_generation: u64,
-
-    /// 当前 dispatch 段起点的绝对 sample：CpuSynth 的事件按 sample 生效，
-    /// dispatch 用它作为事件的 sample 依据（每段渲染前由 render 循环更新）。
-    pub(crate) segment_start_sample: u64,
-    /// 走带循环开关（tick 域；`loop_end_tick <= loop_start_tick` 视为关闭）。
-    pub(crate) loop_enabled: bool,
-    pub(crate) loop_start_tick: u32,
-    pub(crate) loop_end_tick: u32,
-    /// 循环起点 chase 快照：由 renderer 在 loop 变化/模型变化后异步预计算，
-    /// 回绕时在渲染线程同步应用（音频线程不查询事件流）。
-    pub(crate) loop_chase: Option<LoopChase>,
-    /// 本块内发生循环回绕的输出帧偏移（渲染后统一做去咔哒淡出/淡入）。
-    pub(crate) loop_wrap_offsets: Vec<usize>,
-    /// 跨块延续的循环回绕淡入剩余帧数（回绕点正好落在块尾时用）。
-    pub(crate) loop_fade_in_pending: usize,
 }
 
 /// 循环回绕用的控制状态快照。
@@ -279,55 +271,61 @@ impl AudioEngine {
                     audio_sources: std::collections::HashMap::new(),
                     plugin_previews: Vec::new(),
                 },
+                playback: PlaybackState {
+                    sample_position: 0,
+                    loop_wrap_offset: 0,
+                    current_tick: 0,
+                    playing: false,
+                    pause_fade_remaining: 0,
+                    pause_fade_total: 0,
+                    duration_samples: 0,
+                    note_cursor: [yinhe_types::NoteCursor::default(); KEY_COUNT],
+                    yin_model: None,
+                    cc_events: Arc::new(Vec::new()),
+                    cc_cursor: 0,
+                    dispatched_skip: ChaseSkip::default(),
+                    active_notes: BinaryHeap::new(),
+                    ended_notes: Vec::new(),
+                    model: None,
+                    skip_track: Vec::new(),
+                    am_ms: Arc::new(crate::spawn::AmMsMap::new()),
+                    am_lane_skip: Vec::new(),
+                    pending_play_from_sample: None,
+                    automation_density: 1,
+                    chase_generation: 0,
+                    segment_start_sample: 0,
+                    loop_enabled: false,
+                    loop_start_tick: 0,
+                    loop_end_tick: 0,
+                    loop_chase: None,
+                    loop_wrap_offsets: Vec::new(),
+                    loop_fade_in_pending: 0,
+                },
+                meter: MeterState {
+                    track_levels: Arc::new(Mutex::new(Vec::new())),
+                    channel_active: Vec::new(),
+                },
                 block_start_sample: 0,
                 channel_layout: layout,
                 sample_rate,
-                sample_position: 0,
-                loop_wrap_offset: 0,
-                current_tick: 0,
-                playing: false,
-                pause_fade_remaining: 0,
-                pause_fade_total: 0,
-                duration_samples: 0,
-                note_cursor: [yinhe_types::NoteCursor::default(); KEY_COUNT],
-                yin_model: None,
-                cc_events: Arc::new(Vec::new()),
-                cc_cursor: 0,
-                dispatched_skip: ChaseSkip::default(),
-                active_notes: BinaryHeap::new(),
-                ended_notes: Vec::new(),
-                track_levels: Arc::new(Mutex::new(Vec::new())),
-                channel_active: Vec::new(),
-                model: None,
-                skip_track: Vec::new(),
-                am_ms: Arc::new(crate::spawn::AmMsMap::new()),
-                am_lane_skip: Vec::new(),
-                pending_play_from_sample: None,
-                automation_density: 1,
-                chase_generation: 0,
-                segment_start_sample: 0,
-                loop_enabled: false,
-                loop_start_tick: 0,
-                loop_end_tick: 0,
-                loop_chase: None,
-                loop_wrap_offsets: Vec::new(),
-                loop_fade_in_pending: 0,
             }
         })
     }
 
     pub(crate) fn sample_position(&self) -> u64 {
-        self.sample_position
+        self.playback.sample_position
     }
 
     /// 当前 dispatch 基准 tick（renderer 发 PrepareChase / 预览时使用）。
     pub(crate) fn current_tick(&self) -> u32 {
-        self.current_tick
+        self.playback.current_tick
     }
 
     /// tick→sample（渲染段边界用）。tempo 信息来自 yin_model。
     pub(crate) fn tick_to_sample(&self, tick: u32) -> u64 {
-        let Some(m) = &self.yin_model else { return 0 };
+        let Some(m) = &self.playback.yin_model else {
+            return 0;
+        };
         crate::audio_model::tick_to_sample(
             tick,
             &m.tempo_map.tempo_segments,
@@ -339,7 +337,9 @@ impl AudioEngine {
     /// sample→tick（块边界/seek 基准）。返回满足 `tick_to_sample(t) <= sample`
     /// 的最大 t（浮点误差已校验修正，见 `sample_to_tick`）。
     pub(crate) fn sample_to_tick(&self, sample: u64) -> u32 {
-        let Some(m) = &self.yin_model else { return 0 };
+        let Some(m) = &self.playback.yin_model else {
+            return 0;
+        };
         crate::audio_model::sample_to_tick(
             sample,
             &m.tempo_map.tempo_segments,
@@ -349,18 +349,18 @@ impl AudioEngine {
     }
 
     pub(crate) fn playing(&self) -> bool {
-        self.playing
+        self.playback.playing
     }
 
     /// 设置暂停/停止前的输入侧淡出帧数（由渲染线程在 pause 前调用）。
     pub(crate) fn set_pause_fade_out(&mut self, frames: usize) {
-        self.pause_fade_remaining = frames;
-        self.pause_fade_total = frames.max(1);
+        self.playback.pause_fade_remaining = frames;
+        self.playback.pause_fade_total = frames.max(1);
     }
 
     /// 每轨电平表共享读数端（句柄 clone 用）。
     pub(crate) fn track_levels(&self) -> Arc<Mutex<Vec<(f32, f32)>>> {
-        Arc::clone(&self.track_levels)
+        Arc::clone(&self.meter.track_levels)
     }
 
     /// 发布每轨电平（渲染线程每块调用）。
@@ -369,10 +369,10 @@ impl AudioEngine {
     /// xsynth 回退后端没有轨道级信号，用该轨所属通道的混音台电平近似；
     /// 未播放或被 mute 的轨 → 0。
     pub(crate) fn publish_track_levels(&self) {
-        let Ok(mut g) = self.track_levels.lock() else {
+        let Ok(mut g) = self.meter.track_levels.lock() else {
             return;
         };
-        let Some(model) = self.model.as_ref() else {
+        let Some(model) = self.playback.model.as_ref() else {
             g.clear();
             return;
         };
@@ -380,12 +380,12 @@ impl AudioEngine {
         if g.len() != n {
             g.resize(n, (0.0, 0.0));
         }
-        if !self.playing {
+        if !self.playback.playing {
             g.fill((0.0, 0.0));
             return;
         }
         for (i, slot) in g.iter_mut().enumerate() {
-            if self.skip_track.get(i).copied().unwrap_or(false) {
+            if self.playback.skip_track.get(i).copied().unwrap_or(false) {
                 *slot = (0.0, 0.0);
                 continue;
             }
@@ -394,7 +394,7 @@ impl AudioEngine {
     }
 
     pub(crate) fn duration_samples(&self) -> u64 {
-        self.duration_samples
+        self.playback.duration_samples
     }
 
     /// 当前活跃 voice 数（当前合成后端）。
@@ -406,7 +406,7 @@ impl AudioEngine {
     /// 把每轨 LC 的 dense 映射推给 CPU 合成器。
     /// 没有 `lc` 的 Track 保持 `u32::MAX`，继续走共享 MIDI 通道。
     pub(crate) fn sync_track_lc_routing(&mut self) {
-        let Some(model) = self.yin_model.as_ref() else {
+        let Some(model) = self.playback.yin_model.as_ref() else {
             return;
         };
         let count = model.tracks.len();
@@ -432,7 +432,7 @@ impl AudioEngine {
     }
 
     pub(crate) fn model_loaded(&self) -> bool {
-        self.model.is_some()
+        self.playback.model.is_some()
     }
 
     /// 是否有插件（insert/乐器）参与当前渲染。
@@ -448,7 +448,7 @@ impl AudioEngine {
     }
 
     pub(crate) fn set_pending_play(&mut self, from_sample: u64) {
-        self.pending_play_from_sample = Some(from_sample);
+        self.playback.pending_play_from_sample = Some(from_sample);
     }
 
     pub(crate) fn set_layer_count(&mut self, count: Option<usize>) {
@@ -463,12 +463,12 @@ impl AudioEngine {
         match cmd {
             AudioCommand::Play { from_sample } => {
                 self.seek_to(from_sample);
-                self.playing = true;
+                self.playback.playing = true;
             }
             AudioCommand::Resume => self.resume(),
             AudioCommand::Pause => self.pause(),
             AudioCommand::Stop => {
-                self.playing = false;
+                self.playback.playing = false;
                 self.seek_to(0);
             }
             AudioCommand::StopTransport => self.stop_transport(),
@@ -479,7 +479,7 @@ impl AudioEngine {
                 end_tick,
             } => self.set_loop(enabled, start_tick, end_tick),
             AudioCommand::LoadModel { model } => {
-                self.playing = false;
+                self.playback.playing = false;
                 self.load_model(&model);
             }
             AudioCommand::ReloadNotes { .. } => {
@@ -501,14 +501,15 @@ impl AudioEngine {
                 // `SetSoundFonts` 的异步结果路径登记；这里不直接加载 xsynth 版。
             }
             AudioCommand::SkipTracks { skip } => {
-                self.skip_track = skip;
+                self.playback.skip_track = skip;
             }
             AudioCommand::SetAmMs { am_ms } => {
                 // renderer 在命令层已处理（更新掩码 + 异步 chase）；
                 // 这里兜底同步本字段，保证直接 handle_command（如测试/未来直连）语义一致。
-                self.am_ms = am_ms;
-                if let Some(model) = self.yin_model.clone() {
-                    self.am_lane_skip = crate::audio_model::build_am_lane_skip(&model, &self.am_ms);
+                self.playback.am_ms = am_ms;
+                if let Some(model) = self.playback.yin_model.clone() {
+                    self.playback.am_lane_skip =
+                        crate::audio_model::build_am_lane_skip(&model, &self.playback.am_ms);
                 }
             }
             AudioCommand::SetLayerCount { count } => {
@@ -521,7 +522,7 @@ impl AudioEngine {
                 self.set_max_voices(max);
             }
             AudioCommand::SetAutomationDensity { density } => {
-                self.automation_density = density.max(1);
+                self.playback.automation_density = density.max(1);
             }
             AudioCommand::SetMixerParams { params } => self.set_mixer_params(*params),
             AudioCommand::SetNodeStrip { node, params } => {

@@ -47,10 +47,10 @@ impl AudioEngine {
             return;
         }
         // 位置换算：模型未加载（无 tempo map）时全部立即触发。
-        let has_tempo = self.yin_model.is_some();
+        let has_tempo = self.playback.yin_model.is_some();
         let min_tick = notes.iter().map(|n| n.target_tick).min().unwrap_or(0);
         let base_sample = self.tick_to_sample(min_tick);
-        let base_on = self.sample_position;
+        let base_on = self.playback.sample_position;
         for n in notes {
             let on_sample = if has_tempo {
                 base_on
@@ -187,7 +187,7 @@ impl AudioEngine {
     /// 暂停/停止时把待发插件参数送达（静音块）。renderer 每轮轮询调用；
     /// 无参数变化时开销可忽略（每个处理器一次空队列检查）。
     pub(crate) fn flush_pending_plugin_params(&mut self) {
-        let position = self.sample_position;
+        let position = self.playback.sample_position;
         for src in self.plugins.instruments.iter_mut().flatten() {
             for p in &mut src.chain {
                 p.processor.flush_pending_params(position);

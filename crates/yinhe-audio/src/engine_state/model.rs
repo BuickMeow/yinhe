@@ -14,34 +14,36 @@ impl AudioEngine {
         let audio_model = AudioModel::from_model(model);
         self.setup_percussion(&audio_model);
 
-        self.cc_events = flatten_automation_to_cc_events(model, self.automation_density);
-        self.chase_generation = self.chase_generation.wrapping_add(1);
-        self.loop_chase = None;
-        self.cc_cursor = 0;
-        self.dispatched_skip = ChaseSkip::default();
-        self.active_notes.clear();
+        self.playback.cc_events =
+            flatten_automation_to_cc_events(model, self.playback.automation_density);
+        self.playback.chase_generation = self.playback.chase_generation.wrapping_add(1);
+        self.playback.loop_chase = None;
+        self.playback.cc_cursor = 0;
+        self.playback.dispatched_skip = ChaseSkip::default();
+        self.playback.active_notes.clear();
 
         // 用当前 AM M/S 旁通集重建 lane 跳过掩码（模型已是新结构）。
-        self.am_lane_skip = crate::audio_model::build_am_lane_skip(model, &self.am_ms);
+        self.playback.am_lane_skip =
+            crate::audio_model::build_am_lane_skip(model, &self.playback.am_ms);
 
-        self.duration_samples =
+        self.playback.duration_samples =
             (crate::prepare_model::model_duration_seconds(model) * self.sample_rate as f64) as u64;
 
         // skip 的唯一来源：音频轨没有片段（无可听内容，note_count 恒为 0，
         // 不能按音符数判定）。空轨的音符本来就不会被 dispatch（没有音符），
         // 而自动化（CC/PB/RPN）必须照常发送——此前用 audible_count==0 过滤会
         // 误杀挂在无音符轨上的全部自动化事件（cyber-night 的根因）。
-        self.skip_track = model
+        self.playback.skip_track = model
             .tracks
             .iter()
             .map(|t| t.kind == yinhe_core::TrackKind::Audio && t.audio_clips.is_empty())
             .collect();
 
-        self.note_cursor = [yinhe_types::NoteCursor::default(); KEY_COUNT];
-        self.current_tick = 0;
-        self.loop_wrap_offset = 0;
-        self.yin_model = Some(Arc::clone(model));
-        self.model = Some(audio_model);
+        self.playback.note_cursor = [yinhe_types::NoteCursor::default(); KEY_COUNT];
+        self.playback.current_tick = 0;
+        self.playback.loop_wrap_offset = 0;
+        self.playback.yin_model = Some(Arc::clone(model));
+        self.playback.model = Some(audio_model);
         self.apply_all_synth_params(model);
         self.sync_track_lc_routing();
     }
@@ -70,19 +72,20 @@ impl AudioEngine {
     pub(crate) fn apply_prepared_model(&mut self, prepared: PreparedModel, anchor: u64) {
         self.setup_percussion(&prepared.model);
 
-        self.cc_events = prepared.cc_events;
+        self.playback.cc_events = prepared.cc_events;
         // cc_events 变了，旧 generation 的 chase 结果必须丢弃
-        self.chase_generation = self.chase_generation.wrapping_add(1);
-        self.loop_chase = None;
-        self.duration_samples = prepared.duration_samples;
+        self.playback.chase_generation = self.playback.chase_generation.wrapping_add(1);
+        self.playback.loop_chase = None;
+        self.playback.duration_samples = prepared.duration_samples;
         // Skip is ignored here — we keep whatever the user set via SkipTracks.
         let yin_model = prepared.yin_model;
-        self.model = Some(prepared.model);
+        self.playback.model = Some(prepared.model);
 
         // 用当前 AM M/S 旁通集重建 lane 跳过掩码（模型可能是新结构）。
-        self.am_lane_skip = crate::audio_model::build_am_lane_skip(&yin_model, &self.am_ms);
-        self.yin_model = Some(yin_model);
-        let model = self.yin_model.clone();
+        self.playback.am_lane_skip =
+            crate::audio_model::build_am_lane_skip(&yin_model, &self.playback.am_ms);
+        self.playback.yin_model = Some(yin_model);
+        let model = self.playback.yin_model.clone();
         if let Some(model) = model {
             self.apply_all_synth_params(&model);
         }
@@ -95,10 +98,10 @@ impl AudioEngine {
         self.seek_to(anchor);
 
         // If Play arrived while loading, seek now
-        if let Some(from_sample) = self.pending_play_from_sample.take() {
+        if let Some(from_sample) = self.playback.pending_play_from_sample.take() {
             let t = std::time::Instant::now();
             self.seek_to(from_sample);
-            self.playing = true;
+            self.playback.playing = true;
             crate::audio_renderer::play_log(&format!(
                 "[play] 挂起的 Play 生效（seek={:?}）",
                 t.elapsed()
@@ -118,16 +121,16 @@ impl AudioEngine {
         duration_samples: u64,
     ) {
         self.setup_percussion(&model);
-        self.duration_samples = duration_samples;
-        self.model = Some(model);
+        self.playback.duration_samples = duration_samples;
+        self.playback.model = Some(model);
 
         // 块末重定位：`<= current_tick` 的音符已经派发完，用 cursor_after
         // 跳过同一 tick 上的音符，避免块边界上的音符被重复触发。
-        let tick = self.current_tick;
+        let tick = self.playback.current_tick;
         for key in 0..KEY_COUNT {
-            self.note_cursor[key] = yin_model.notes[key].cursor_after(tick);
+            self.playback.note_cursor[key] = yin_model.notes[key].cursor_after(tick);
         }
-        self.yin_model = Some(yin_model);
+        self.playback.yin_model = Some(yin_model);
         self.sync_track_lc_routing();
     }
 
@@ -153,7 +156,7 @@ impl AudioEngine {
     /// 鼓通道也会暂时变回钢琴。这里在清音/重定位后同步应用最后一次
     /// bank+program，保证第一批音符就是正确音色。完整 CC 仍由异步 chase 补齐。
     pub(crate) fn apply_program_state_at(&mut self, tick: u32) {
-        let Some(model) = self.yin_model.as_ref() else {
+        let Some(model) = self.playback.yin_model.as_ref() else {
             return;
         };
 
@@ -178,7 +181,13 @@ impl AudioEngine {
             }
         }
         for (track_idx, track) in model.tracks.iter().enumerate() {
-            if self.skip_track.get(track_idx).copied().unwrap_or(false) {
+            if self
+                .playback
+                .skip_track
+                .get(track_idx)
+                .copied()
+                .unwrap_or(false)
+            {
                 continue;
             }
             let Some(ch) = track.midi_target_channel() else {
@@ -194,7 +203,7 @@ impl AudioEngine {
             }
         }
 
-        let sample = self.sample_position;
+        let sample = self.playback.sample_position;
         for (ch, list) in events.iter_mut().enumerate() {
             list.sort_by_key(|e| e.tick);
             let mut bank_msb = None;
@@ -246,7 +255,7 @@ impl AudioEngine {
 
     /// 复位后重新声明鼓组模式（seek / stop / loop 回绕调用）。
     pub(crate) fn reapply_percussion(&mut self) {
-        let Some(model) = self.model.as_ref() else {
+        let Some(model) = self.playback.model.as_ref() else {
             return;
         };
         let declarations = model.percussion_declarations();
@@ -255,7 +264,7 @@ impl AudioEngine {
 
     /// yinhe CPU 后端的鼓组/乐器模式注入（与 ChannelSet 路径同一份声明表）。
     fn setup_percussion_cpu_synth(&mut self, declarations: &[(u16, bool)]) {
-        let sample = self.sample_position;
+        let sample = self.playback.sample_position;
         let mut events: Vec<(u32, bool)> = Vec::new();
         for &(src_ch, on) in declarations {
             let dense = self.channel_layout.dense_for(src_ch as usize);

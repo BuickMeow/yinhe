@@ -38,7 +38,7 @@ impl AudioEngine {
             return;
         }
         // 未播放：主引擎不推进走带，只把试听预览混进同一 mixer + 通道 DSP 输出。
-        if !self.playing {
+        if !self.playback.playing {
             self.render_preview_only(output, frames);
             return;
         }
@@ -50,7 +50,7 @@ impl AudioEngine {
         self.synth.cpu_synth.reset_track_peaks();
         // 音频轨缓冲是覆盖写；整块只清一次，之后各 span 按 offset 写入。
         self.clear_audio_buffers(frames);
-        self.loop_wrap_offsets.clear();
+        self.playback.loop_wrap_offsets.clear();
 
         let mut done = 0usize;
         while done < frames {
@@ -62,7 +62,7 @@ impl AudioEngine {
             self.render_span(done, span);
             done += span;
             if wrapped {
-                self.loop_wrap_offsets.push(done);
+                self.playback.loop_wrap_offsets.push(done);
                 self.rewind_to_loop_start();
             }
         }
@@ -73,7 +73,7 @@ impl AudioEngine {
         let preview_active = self.inject_preview(frames);
         // 本块有信号的通道（混音台空闲 strip 跳过）。复用引擎里的掩码
         // 缓冲，避免音频线程每块分配。
-        let mut active = std::mem::take(&mut self.channel_active);
+        let mut active = std::mem::take(&mut self.meter.channel_active);
         self.channel_activity(&mut active);
         if preview_active {
             // 预览可能落在任意通道：保守全开。
@@ -115,7 +115,7 @@ impl AudioEngine {
         }
 
         let (master_l, master_r) = self.mix.mixer.process_with_active(Some(&active));
-        self.channel_active = active;
+        self.meter.channel_active = active;
         write_master(output, master_l, master_r);
     }
 
@@ -133,15 +133,15 @@ impl AudioEngine {
     /// 这里在通道输入侧做极短包络，insert/发送的尾音仍按原样继续。
     fn apply_loop_declick(&mut self, frames: usize) {
         let n = (self.sample_rate as usize / 1000).max(1);
-        let pending = std::mem::take(&mut self.loop_fade_in_pending);
+        let pending = std::mem::take(&mut self.playback.loop_fade_in_pending);
         // 取出并复用 Vec，避免每块在音频线程分配。
-        let mut offsets = std::mem::take(&mut self.loop_wrap_offsets);
+        let mut offsets = std::mem::take(&mut self.playback.loop_wrap_offsets);
         if pending == 0 && offsets.is_empty() {
-            self.loop_wrap_offsets = offsets;
+            self.playback.loop_wrap_offsets = offsets;
             return;
         }
         if let Some(&last) = offsets.last() {
-            self.loop_fade_in_pending = (last + n).saturating_sub(frames);
+            self.playback.loop_fade_in_pending = (last + n).saturating_sub(frames);
         }
         for chain in self.mix.mixer.buffers_mut() {
             let buffers: &mut yinhe_mixer::ChannelBuffers = &mut *chain;
@@ -156,20 +156,21 @@ impl AudioEngine {
             }
         }
         offsets.clear();
-        self.loop_wrap_offsets = offsets;
+        self.playback.loop_wrap_offsets = offsets;
         // 极短块（帧数小于淡入长度）时把未用完的淡入带到下一块。
         if pending > frames {
-            self.loop_fade_in_pending = self.loop_fade_in_pending.max(pending - frames);
+            self.playback.loop_fade_in_pending =
+                self.playback.loop_fade_in_pending.max(pending - frames);
         }
     }
 
     /// 本块还能连续渲染多少帧，以及该 span 是否正好撞到 loop end。
     fn next_loop_span(&self, remaining: usize) -> (usize, bool) {
-        if !self.loop_enabled || self.export.export_mode {
+        if !self.playback.loop_enabled || self.export.export_mode {
             return (remaining, false);
         }
         let end = self.loop_end_sample();
-        let pos = self.sample_position;
+        let pos = self.playback.sample_position;
         // 循环区间映射到零 sample（0 BPM 剪切段或极短区间）时，回绕无法让
         // 位置前进；继续 `rewind → span==0` 会让音频线程死循环。按普通播放处理。
         if end <= self.loop_start_sample() {
@@ -188,18 +189,18 @@ impl AudioEngine {
         if frames == 0 {
             return;
         }
-        let block_start_sample = self.sample_position;
+        let block_start_sample = self.playback.sample_position;
         let block_end_sample = block_start_sample + frames as u64;
         let block_end_tick = self.sample_to_tick(block_end_sample);
         self.block_start_sample = block_start_sample;
         // 混音自动化按本段起始 tick 求值（与 MIDI 事件分段同粒度）。
-        self.apply_mixer_automation(self.current_tick);
+        self.apply_mixer_automation(self.playback.current_tick);
 
         // CPU 路径：xsynth 逐段分发+渲染。事件比较全在 tick 域
         // （dispatch 基准 = current_tick，块边界 = sample→tick 反查），
         // 只有"渲染段边界"才转一次 sample（每块事件数量级）。
         let mut rendered_until_sample = block_start_sample;
-        let mut rendered_until_tick = self.current_tick;
+        let mut rendered_until_tick = self.playback.current_tick;
         let mut offset_frames = offset;
 
         while rendered_until_tick < block_end_tick {
@@ -219,7 +220,7 @@ impl AudioEngine {
             };
             let segment_frames = (next_sample - rendered_until_sample) as usize;
             if segment_frames > 0 {
-                self.segment_start_sample = rendered_until_sample;
+                self.playback.segment_start_sample = rendered_until_sample;
                 self.render_cpu_segment(offset_frames, segment_frames);
                 rendered_until_sample = next_sample;
                 offset_frames += segment_frames;
@@ -231,7 +232,7 @@ impl AudioEngine {
         // block_end_sample，剩余段无事件）。
         let remaining = block_end_sample - rendered_until_sample;
         if remaining > 0 {
-            self.segment_start_sample = rendered_until_sample;
+            self.playback.segment_start_sample = rendered_until_sample;
             self.render_cpu_segment(offset_frames, remaining as usize);
         }
 
@@ -243,8 +244,8 @@ impl AudioEngine {
         // 冻结 LC：用离线渲染音频覆盖该 dense 通道，跳过实时音源输出。
         self.render_frozen_lcs(block_start_sample, offset, frames);
 
-        self.sample_position = block_end_sample;
-        self.current_tick = block_end_tick;
+        self.playback.sample_position = block_end_sample;
+        self.playback.current_tick = block_end_tick;
     }
 
     /// 渲染一个 CPU 段到混音台通道缓冲（`offset_frames` 是输出块内偏移）。
@@ -322,11 +323,11 @@ impl AudioEngine {
 
     /// 暂停/停止前把干声输入线性淡出（效果器状态保留，尾音继续）。
     fn apply_pause_fade_out(&mut self, frames: usize) {
-        if self.pause_fade_remaining == 0 {
+        if self.playback.pause_fade_remaining == 0 {
             return;
         }
-        let total = self.pause_fade_total.max(1) as f32;
-        let mut remaining = self.pause_fade_remaining;
+        let total = self.playback.pause_fade_total.max(1) as f32;
+        let mut remaining = self.playback.pause_fade_remaining;
         for ch in 0..self.mix.mixer.channel_count() {
             let Some(cb) = self.mix.mixer.channel_buffers_mut(ch) else {
                 continue;
@@ -343,7 +344,7 @@ impl AudioEngine {
                 cb.right[f] *= g;
             }
         }
-        self.pause_fade_remaining = remaining;
+        self.playback.pause_fade_remaining = remaining;
     }
 
     /// 停止/暂停后的尾音渲染：不推进走带、不派发音符/音频，只让混音台
@@ -359,7 +360,7 @@ impl AudioEngine {
             let count = self.mix.mixer.channel_count();
             self.mix.mixer.resize(count, frames, &strips);
         }
-        self.block_start_sample = self.sample_position;
+        self.block_start_sample = self.playback.sample_position;
         self.mix.mixer.clear_channel_buffers();
         // 通道 DSP 的滤波历史在空输入下继续衰减；insert/bus/master 尾音同理。
         self.render_channel_dsp(frames, &[]);
@@ -380,7 +381,7 @@ impl AudioEngine {
             let count = self.mix.mixer.channel_count();
             self.mix.mixer.resize(count, frames, &strips);
         }
-        let block_start = self.sample_position;
+        let block_start = self.playback.sample_position;
         self.block_start_sample = block_start;
         self.mix.mixer.clear_channel_buffers();
         self.dispatch_plugin_previews(block_start, frames);
@@ -393,8 +394,8 @@ impl AudioEngine {
     /// 未播放时的纯预览渲染：清空 mixer 通道缓冲后写入预览音频，再走与播放
     /// 完全相同的通道 DSP + 混音台链路输出（推子/master/insert/mute-solo 全生效）。
     fn render_preview_only(&mut self, output: &mut [f32], frames: usize) {
-        self.loop_wrap_offsets.clear();
-        self.loop_fade_in_pending = 0;
+        self.playback.loop_wrap_offsets.clear();
+        self.playback.loop_fade_in_pending = 0;
         if !self.previewing() {
             output.fill(0.0);
             return;
@@ -447,10 +448,10 @@ impl AudioEngine {
         offset_frames: usize,
         frames: usize,
     ) {
-        let Some(yin_model) = self.yin_model.clone() else {
+        let Some(yin_model) = self.playback.yin_model.clone() else {
             return;
         };
-        let Some(audio_model) = self.model.as_ref() else {
+        let Some(audio_model) = self.playback.model.as_ref() else {
             return;
         };
         let mut renderer = super::audio_clip::AudioClipRenderer {
@@ -459,7 +460,7 @@ impl AudioEngine {
             sources: &self.plugins.audio_sources,
             mixer: &mut self.mix.mixer,
             layout: &self.channel_layout,
-            skip_track: &self.skip_track,
+            skip_track: &self.playback.skip_track,
             sample_rate: self.sample_rate as f64,
         };
         renderer.render_block(block_start_sample, offset_frames, frames);
