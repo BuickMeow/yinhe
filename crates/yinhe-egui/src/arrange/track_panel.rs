@@ -64,7 +64,6 @@ pub(crate) fn show(
     // 音轨数据（AM 子行画 lane 名 / 右键菜单判断已有 lane）。
     tracks: &[Arc<yinhe_core::TrackData>],
     // 每轨 LC 的显示标签（LC01..），由调用方按 `mixer.lc_display_map` 算好。
-    lc_labels: &std::collections::HashMap<yinhe_types::LogicalChannelId, String>,
     // 每轨 AM 展开状态（chevron 点击直接翻转，纯视图状态不进 undo）。
     arr_am_expanded: &mut [bool],
     // 被选中的 AM lane（(音轨索引, target)）；点主行清空。
@@ -280,7 +279,6 @@ pub(crate) fn show(
             idx,
             ti,
             tracks,
-            lc_labels,
             is_conductor,
             is_folder,
             show_details,

@@ -115,12 +115,6 @@ pub fn show(
             .iter()
             .map(|track| am_lanes::track_mixer_lanes(track, &doc.mixer))
             .collect();
-    let lc_labels: std::collections::HashMap<yinhe_types::LogicalChannelId, String> = doc
-        .mixer
-        .lc_display_map()
-        .into_iter()
-        .map(|(id, n)| (id, crate::mix::lc_label(n)))
-        .collect();
     let mut row_layout = build_row_layout(
         &doc.edit,
         &doc.data.model,
@@ -182,7 +176,6 @@ pub fn show(
         num_tracks,
         conductor_idx,
         &track_mixer_lanes,
-        &lc_labels,
         track_meters,
         request_pianoroll,
         info_content,
@@ -676,7 +669,6 @@ fn draw_track_panel(
     num_tracks: usize,
     conductor_idx: Option<u16>,
     track_mixer_lanes: &[Vec<(yinhe_types::MixerNodeId, Vec<yinhe_types::AutomationLane>)>],
-    lc_labels: &std::collections::HashMap<yinhe_types::LogicalChannelId, String>,
     track_meters: &[crate::widgets::meter::StereoMeter],
     request_pianoroll: &mut bool,
     info_content: &mut Option<crate::right_panel::InfoContent>,
@@ -749,7 +741,6 @@ fn draw_track_panel(
                 info_content,
                 row_layout,
                 &doc.data.model.tracks,
-                lc_labels,
                 &mut doc.edit.arr_am_expanded,
                 &mut doc.edit.arr_am_selected,
                 &mut doc.edit.arr_am_ms,

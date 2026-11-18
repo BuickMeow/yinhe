@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use rust_i18n::t;
-use yinhe_types::{ChannelId, LogicalChannelId};
+use yinhe_types::ChannelId;
 
 /// MIDI 端口 + 通道 → 显示标签（port 0/channel 0 → "A01"，port 15/channel 15 → "P16"）。
 pub(crate) fn midi_label(port: u8, channel: u8) -> String {
@@ -57,22 +57,18 @@ pub(crate) fn channel_id_label(id: ChannelId, display: &HashMap<ChannelId, u32>)
     }
 }
 
-/// 轨道音频目标 → AR / 音轨属性显示标签。
+/// 轨道音频目标 → 音轨面板徽标。
 ///
-/// - OwnLc → `LCxx`（按 `lc_labels` 的顺序编号）
+/// - OwnLc → 空（一轨一通道：普通 DAW 轨道不显示通道号）
 /// - AP → 端口 + 通道（`A01`）
-/// - DirectMaster → `---`
+/// - DirectMaster → `---`（功能已暂停，仅存量轨显示）
 pub(crate) fn track_target_label(
     target: Option<yinhe_core::TrackAudioTarget>,
     midi_port: u8,
     midi_channel: u8,
-    lc_labels: &HashMap<LogicalChannelId, String>,
 ) -> String {
     match target {
-        Some(yinhe_core::TrackAudioTarget::OwnLc { lc, .. }) => lc_labels
-            .get(&lc)
-            .cloned()
-            .unwrap_or_else(|| "LC".to_string()),
+        Some(yinhe_core::TrackAudioTarget::OwnLc { .. }) => String::new(),
         Some(yinhe_core::TrackAudioTarget::DirectMaster { .. }) => "---".to_string(),
         Some(yinhe_core::TrackAudioTarget::Ap { .. }) | None => midi_label(midi_port, midi_channel),
     }
@@ -94,17 +90,17 @@ mod tests {
 
     #[test]
     fn track_target_label_matches_audio_target() {
-        let lc = LogicalChannelId(4096);
-        let mut labels = HashMap::new();
-        labels.insert(lc, "LC03".to_string());
         assert_eq!(
             track_target_label(
-                Some(yinhe_core::TrackAudioTarget::OwnLc { lc, rack: None }),
+                Some(yinhe_core::TrackAudioTarget::OwnLc {
+                    lc: yinhe_types::LogicalChannelId(4096),
+                    rack: None
+                }),
                 0,
-                0,
-                &labels
+                0
             ),
-            "LC03"
+            "",
+            "OwnLc 是普通 DAW 轨道：不显示通道号"
         );
         assert_eq!(
             track_target_label(
@@ -112,8 +108,7 @@ mod tests {
                     ap: yinhe_types::ApGroupId::new(9)
                 }),
                 0,
-                9,
-                &labels
+                9
             ),
             "A10"
         );
@@ -121,8 +116,7 @@ mod tests {
             track_target_label(
                 Some(yinhe_core::TrackAudioTarget::DirectMaster { rack: None }),
                 0,
-                0,
-                &labels
+                0
             ),
             "---"
         );

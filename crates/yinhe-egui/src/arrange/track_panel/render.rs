@@ -271,7 +271,6 @@ pub(super) fn draw_track_row(
     idx: usize,
     ti: &yinhe_core::TrackInfo,
     tracks: &[std::sync::Arc<yinhe_core::TrackData>],
-    lc_labels: &std::collections::HashMap<yinhe_types::LogicalChannelId, String>,
     is_conductor: bool,
     is_folder: bool,
     show_details: bool,
@@ -308,14 +307,11 @@ pub(super) fn draw_track_row(
                     .audio_channel
                     .map(crate::mix::audio_label)
                     .unwrap_or_else(|| "Audio--".to_string()),
-                // MIDI 轨：OwnLc 显示 LCxx（音频目标），AP 显示端口+通道，
-                // DirectMaster 显示 `---`。改完音频目标后 AR 立即反映。
-                Some(t) => crate::mix::track_target_label(
-                    t.effective_audio_target(),
-                    ti.port,
-                    ti.channel,
-                    lc_labels,
-                ),
+                // MIDI 轨：OwnLc 无徽标（一轨一通道，普通 DAW 轨道），
+                // AP 显示端口+通道，DirectMaster 显示 `---`。
+                Some(t) => {
+                    crate::mix::track_target_label(t.effective_audio_target(), ti.port, ti.channel)
+                }
                 None => crate::mix::midi_label(ti.port, ti.channel),
             }
         };
