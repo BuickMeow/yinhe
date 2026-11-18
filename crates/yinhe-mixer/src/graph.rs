@@ -480,46 +480,12 @@ impl MixerGraph {
             input.push(c.base_latency);
         }
 
-        // 前向边（src < dst）。
-        let mut edges: Vec<(usize, usize)> = Vec::new();
-        for ci in 0..nc {
-            for send in &self.channels[ci].channel_sends {
-                if let ChannelSendTarget::Channel(dst) = send.target
-                    && dst > ci
-                    && dst < nc
-                {
-                    edges.push((ci, dst));
-                }
-            }
-            if let Some(dst) = self.channel_outputs.get(ci).copied().flatten()
-                && dst > ci
-                && dst < nc
-            {
-                edges.push((ci, dst));
-            }
+        let edges = collect_pdc_edges(&self.channels, &self.channel_outputs);
+        let (out, global) = pdc_longest_paths(&proc, &input, &edges);
+        // 最长路径求解会更新每条通道的输入起点；后续延迟计算依赖更新后的值。
+        for (i, slot) in input.iter_mut().enumerate() {
+            *slot = out[i].saturating_sub(proc[i]);
         }
-
-        let nodes = nc;
-        for _ in 0..nodes.max(1) {
-            let mut changed = false;
-            for src in 0..nodes {
-                let out = input[src].saturating_add(proc[src]);
-                for &(s, dst) in &edges {
-                    if s == src && out > input[dst] {
-                        input[dst] = out;
-                        changed = true;
-                    }
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
-
-        let out: Vec<u32> = (0..nodes)
-            .map(|i| input[i].saturating_add(proc[i]))
-            .collect();
-        let global = out.iter().copied().max().unwrap_or(0);
 
         for ci in 0..nc {
             let chain = &mut self.channels[ci];
@@ -884,7 +850,58 @@ impl MixerGraph {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// PDC 前向边（src < dst）：通道发送 + 主输出到另一条通道。
+fn collect_pdc_edges(
+    channels: &[ChannelChain],
+    channel_outputs: &[Option<usize>],
+) -> Vec<(usize, usize)> {
+    let nc = channels.len();
+    let mut edges = Vec::new();
+    for (ci, channel) in channels.iter().enumerate() {
+        for send in &channel.channel_sends {
+            if let ChannelSendTarget::Channel(dst) = send.target
+                && dst > ci
+                && dst < nc
+            {
+                edges.push((ci, dst));
+            }
+        }
+        if let Some(dst) = channel_outputs.get(ci).copied().flatten()
+            && dst > ci
+            && dst < nc
+        {
+            edges.push((ci, dst));
+        }
+    }
+    edges
+}
+
+/// 最长路径 PDC：返回每条通道的输出延迟与全局最大值（迭代到稳定）。
+fn pdc_longest_paths(proc: &[u32], input: &[u32], edges: &[(usize, usize)]) -> (Vec<u32>, u32) {
+    let nodes = proc.len();
+    let mut input: Vec<u32> = input.to_vec();
+    for _ in 0..nodes.max(1) {
+        let mut changed = false;
+        for src in 0..nodes {
+            let out = input[src].saturating_add(proc[src]);
+            for &(s, dst) in edges {
+                if s == src && out > input[dst] {
+                    input[dst] = out;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let out: Vec<u32> = (0..nodes)
+        .map(|i| input[i].saturating_add(proc[i]))
+        .collect();
+    let global = out.iter().copied().max().unwrap_or(0);
+    (out, global)
+}
+
 #[cfg(test)]
 #[path = "graph/tests.rs"]
 mod tests;
