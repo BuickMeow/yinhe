@@ -863,12 +863,21 @@ struct**，是 1.7「改了不生效」的同类风险。应删除 `SendParams` 
 | 依赖锁同步 | `7fbaa3e3` | Cargo.lock 记录 theme/midi 依赖 |
 | 8.1.3 测试段拆文件 | `f323e6ee` | graph/params/document/spawn 的 tests 独立，恢复 1 个漏跑测试 |
 
-### 未开始（P3，需单独排期）
+### 剩余排期任务（已完成，2026-11-18）
 
-| 项 | 原因 |
-|---|---|
-| 8.1.3 其余大文件生产段 | `spawn.rs`(1802)、`document.rs`(1012) 等测试已拆出；生产段仍含多职责，进一步拆分需要单独回归（引擎命令/文档 API/PDC/持久化） |
-| 8.1.2 余下 ~100 行函数 | `apply_anchor_field_edit`(102)、`render_instruments`(84)、`refresh_pdc`(78) 等，已低于 200 行阈值 |
+| 项 | commit | 结果 |
+|---|---|---|
+| `document.rs` | `5ea4c4df` | 拆 io/undo/sync，1012 → 315 + 子模块 |
+| `arrange.rs` | `8a22bca4` | 拆 types/edit_cmds/layout/view，1371 → 30 + 子模块 |
+| `mix.rs` | `0ccd4d60` | 拆 state/session/meter/view/plugins，1070 → 161 + 子模块 |
+| `spawn.rs` | `23df9bf5` | 拆 command/handle/worker/device/stream，1802 → 89 + 子模块 |
+| `graph.rs` | `14a795c7` | 拆 delay/send/process |
+| `params.rs` | `5ff2a6d2` | repair 辅助拆到 params/repair.rs |
+| `apply_anchor_field_edit` | `24c40063` | 102 → 44 行 |
+
+剩余函数均低于 100 行（`render_instruments` 84、`refresh_pdc` 78、
+`draw_audio_and_track_strips` 70），按 200 行阈值视为完成。
+详见《方案C-剩余排期任务评估.md》与《架构问答-滚动条-框选-音频crate-移动端.md》。
 
 ---
 
