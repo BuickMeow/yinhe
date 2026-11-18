@@ -525,6 +525,9 @@ AudioCommand::SyncSends { ... } => {
 
 > 数据来自 2026-11-18 的静态扫描（脚本统计顶层函数体行数、文件行数、字段数）。
 > 只列**本轮改动过或直接相关**的代码，按问题类型分组。
+>
+> **状态（2026-11-18 晚）**：8.1.1 表中函数已全部拆到 270 行以下；
+> 8.1.2、8.1.3 的主要项已完成，剩余项见 8.6「未开始」。
 
 ### 8.1 过长代码
 
@@ -840,13 +843,24 @@ struct**，是 1.7「改了不生效」的同类风险。应删除 `SendParams` 
 | 8.1 dispatch 拆分 | `c4f416b2` | CC / NoteOn / NoteOff 三段，289 → 11 |
 | 8.1 音轨属性拆分 | `10ab4462` | 349 → 27，Conductor/名称/输出各自成函数 |
 | 8.1 mix::show 拆分 | `c600a794` | 228 → 63，快照/主体/通道条/Master/重绘 |
+| 8.1 arrange::show 再拆 | `bc47fbcd` | 角落/分割条/悬停提示，399 → 267 |
+| 8.1 show_color_row | `2c817f88` | 抽出 current/apply/reset 颜色辅助 |
+| 8.1 apply_mixer_automation | `2c817f88` | collect → strip/insert/send 三段 |
+| 8.1 process_channels | `2c817f88` | insert 链与主输出路由抽自由函数 |
+| 8.1 focus_send_block | `2c817f88` | 右键菜单抽 send_context_menu |
+| 8.1 show_midi_output | `7ede71c7` | 输出类型/LC/AP 三段 |
+| 8.1 mix apply_action | `7ede71c7` | 插入/冻结/自动化/乐器各自成函数 |
+| 8.1 apply_automation_edits | `7ede71c7` | 轨道/混音节点两路分派 |
+| 8.1 device_chain | `7ede71c7` | collect/apply/draw 各拆子函数 |
+| 8.1.3 audio_model 拆分 | `c7ff7bea` | event/aggregate/model 三个子模块 |
+| 8.1.3 engine_tests 拆分 | `46e0d678` | lifecycle/dispatch/render 三个文件 |
 
 ### 未开始（P3，需单独排期）
 
 | 项 | 原因 |
 |---|---|
-| 8.1.3 超大文件按主题拆分 | `audio_model.rs` / `engine_tests.rs` / `spawn.rs` / `document.rs` / `graph.rs` / `params.rs` 仍是单文件，需要单独排期 |
-| 8.1.2 其余 100~200 行函数 | automation_edit / device_chain / graph / show_color_row 等 |
+| 8.1.3 其余大文件 | `spawn.rs` / `document.rs` / `graph.rs` / `params.rs` 仍单文件：各自职责较多，拆分需要单独回归（引擎命令/文档 API/PDC/持久化） |
+| 8.1.2 余下 ~100 行函数 | `apply_anchor_field_edit`(102)、`render_instruments`(84)、`refresh_pdc`(78) 等，已低于 200 行阈值 |
 
 ---
 
