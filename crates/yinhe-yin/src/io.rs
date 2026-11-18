@@ -452,8 +452,3 @@ pub fn load_yin_with_sf_progress(
     };
     Ok((model, sf, mapping, mixer, project.cover))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-}
