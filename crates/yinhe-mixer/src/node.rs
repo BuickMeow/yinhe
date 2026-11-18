@@ -1,14 +1,12 @@
 //! 混音节点与 Rack 的持久化结构。
 //!
-//! 目标 B 的层级：
+//! 方案 C 的层级：
 //! ```text
-//! Track -> Rack（共享乐器） -> Logical Channel（音频通道条） -> Master
+//! Track -> Rack（共享乐器） -> Channel（LC / AP 通道条） -> Master
 //! ```
 //!
-//! `MixerNode` 是 LC / Master 共用的通道条；`RackParams` 只装乐器，
-//! 不装推子/insert。当前 MIDI 通道和音频通道各对应一条 LC，ID 由
-//! [`MixerChannelId::logical_channel_id`](yinhe_types::MixerChannelId::logical_channel_id)
-//! 确定性生成，方便 v9 工程无损迁移。
+//! `MixerNode` 是 LC / AP / Master 共用的通道条；`RackParams` 只装乐器，
+//! 不装推子/insert。通道身份统一为 `ChannelId`，每轨 LC 的 ID 独立分配。
 
 use std::ops::{Deref, DerefMut};
 
