@@ -306,6 +306,9 @@ impl Document {
             let track = Arc::make_mut(track);
             track.folder_depth = track.folder_depth.saturating_add(1);
         }
+        // 插入文件夹后所有后续轨道下标 +1：automation lane 的 `track` 字段
+        // 必须同步，否则 AR 自动化曲线继续用旧下标取色（音符色已更新、曲线色不跟）。
+        model.sync_automation_lane_tracks();
         model.normalize_folder_structure();
         let tracks_after: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
         self.data.bump_revision();
@@ -717,6 +720,18 @@ mod tests {
         assert!(doc.add_automation_lane(2, target).is_some());
         assert!(doc.remove_track(1).is_some());
         assert_eq!(doc.data.model.tracks[1].automation_lanes[0].track, 1);
+    }
+
+    /// 创建文件夹后，被下移轨道的 automation lane 必须同步到新下标，
+    /// 否则 AR 自动化曲线继续用旧下标取色（音符色已更新、曲线色不跟）。
+    #[test]
+    fn group_tracks_remaps_automation_lane_track() {
+        let mut doc = Document::empty();
+        let target = yinhe_types::automation::AutomationTarget::CC { controller: 7 };
+        assert!(doc.add_automation_lane(2, target).is_some());
+        assert!(doc.group_tracks(&[1, 2]).is_some());
+        // 文件夹插在 1 号位，原 2 号轨移到 3 号位。
+        assert_eq!(doc.data.model.tracks[3].automation_lanes[0].track, 3);
     }
 
     #[test]
