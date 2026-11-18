@@ -4,7 +4,6 @@
 //! - AP 轨按 MIDI 通道归组（A01…），组内是该通道所有 AP 轨；
 //! - OwnLc 轨一轨一通道，独立成行，显示轨道号（001…）；
 //! - 音频轨按音频通道归组（Audio-XX…），追加在 MIDI 行之后；
-//! - DirectMaster（已暂停）没有通道条，不列行；
 //! - Conductor（Master）轨不归入任何通道。
 //!
 //! 原通道 AR 视图已删除；本分组只服务右侧图层面板。
@@ -83,18 +82,10 @@ impl CaGroups {
                             channel: CaChannel::Track(i),
                             tracks: vec![i],
                         }),
-                        // DirectMaster 已暂停且没有通道条：不列行。
-                        Some(TrackAudioTarget::DirectMaster { .. }) => {}
                     }
                 }
                 // 音频轨统一由 `audio_target_channel` 兜底到 0；直通 Master 不列行。
                 TrackKind::Audio => {
-                    if matches!(
-                        track.effective_audio_target(),
-                        Some(TrackAudioTarget::DirectMaster { .. })
-                    ) {
-                        continue;
-                    }
                     audio_map
                         .entry(track.audio_target_channel().unwrap_or(0))
                         .or_default()

@@ -44,11 +44,6 @@ impl AudioEngine {
                 active[d] = true;
             }
         }
-        if let Some(dense) = self.channel_layout.direct_master_dense()
-            && (dense as usize) < n
-        {
-            active[dense as usize] = true;
-        }
         // 冻结的 LC 即使没有活跃 voice 也必须参与混音（推子/insert/send），
         // 否则冻结音频会被空通道跳过。
         for node in self.mix.mixer_params.nodes() {

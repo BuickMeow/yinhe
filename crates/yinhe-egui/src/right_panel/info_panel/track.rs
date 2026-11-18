@@ -201,21 +201,7 @@ fn show_midi_output(
     }
 }
 
-/// 输出类型下拉的选项（Master 暂时禁用）。
-///
-/// Master 只在存量直通轨上保留显示（否则 combo 的当前值不在选项里会渲染成空）；
-/// 其余轨不提供 Master，禁止把轨道的通道声明为 Master。
-fn output_kind_options(current_kind: usize) -> Vec<(usize, String)> {
-    let mut options = Vec::with_capacity(3);
-    if current_kind == 0 {
-        options.push((0usize, t!("track.output_master").to_string()));
-    }
-    options.push((1usize, t!("track.output_lc").to_string()));
-    options.push((2usize, t!("track.output_ap").to_string()));
-    options
-}
-
-/// 输出类型：LC / AP（Master 暂时禁用，只保留存量轨的显示，不再提供新选择）。
+/// 输出类型：LC / AP。
 fn show_output_kind(
     ui: &mut egui::Ui,
     doc: &mut Document,
@@ -224,14 +210,16 @@ fn show_output_kind(
     target: Option<TrackAudioTarget>,
     global: u8,
 ) {
-    // 0 = Master，1 = LC，2 = AP
+    // 0 = LC，1 = AP
     let current_kind = match target {
-        Some(TrackAudioTarget::DirectMaster { .. }) => 0usize,
-        Some(TrackAudioTarget::Ap { .. }) => 2usize,
-        _ => 1usize,
+        Some(TrackAudioTarget::Ap { .. }) => 1usize,
+        _ => 0usize,
     };
     let mut kind_sel = current_kind;
-    let options = output_kind_options(current_kind);
+    let options = vec![
+        (0usize, t!("track.output_lc").to_string()),
+        (1usize, t!("track.output_ap").to_string()),
+    ];
     crate::widgets::rows::panel_row(ui, t!("track.output").as_ref(), |ui| {
         crate::widgets::combo::combo_select(
             ui,
@@ -243,7 +231,7 @@ fn show_output_kind(
     });
     if kind_sel != current_kind {
         let changed = match kind_sel {
-            2 => doc.link_track_to_ap(track_idx, ApGroupId::new(u16::from(global))),
+            1 => doc.link_track_to_ap(track_idx, ApGroupId::new(u16::from(global))),
             _ => doc.link_track_to_own_lc(track_idx),
         };
         if changed {
@@ -339,53 +327,11 @@ fn show_ap_port_channel(
     }
 }
 
-/// 音频轨输出下拉的选项（Master 暂时禁用，只在存量直通轨上保留显示）。
-fn audio_output_options(direct: bool) -> Vec<(usize, String)> {
-    let mut options = Vec::with_capacity(2);
-    options.push((0usize, "LC".to_string()));
-    if direct {
-        options.push((1usize, "--- (Master)".to_string()));
-    }
-    options
-}
-
-/// 音频轨输出：home LC / Master；返回 routing_changed。
+/// 音频轨输出：home LC（音频通道号）；返回 routing_changed。
 fn show_audio_output(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) -> bool {
     let mut routing_changed = false;
     let kind = doc.data.model.tracks[track_idx].kind;
     if kind == yinhe_core::TrackKind::Audio {
-        let direct = matches!(
-            doc.data.model.tracks[track_idx].effective_audio_target(),
-            Some(TrackAudioTarget::DirectMaster { .. })
-        );
-        let mut target_sel = usize::from(direct);
-        let target_options = audio_output_options(direct);
-        crate::widgets::rows::panel_row(ui, t!("track.output").as_ref(), |ui| {
-            crate::widgets::combo::combo_select(
-                ui,
-                "track_audio_direct",
-                &mut target_sel,
-                ui.available_width().max(1.0),
-                &target_options,
-            );
-        });
-        if target_sel != usize::from(direct) {
-            let changed = if target_sel == 1 {
-                doc.link_audio_track_to_direct_master(track_idx)
-            } else {
-                doc.link_audio_track_to_own_lc(track_idx)
-            };
-            if changed {
-                routing_changed = true;
-            }
-        }
-        if target_sel == 1 {
-            // DirectMaster 没有 home LC，通道号不可编辑。
-            if routing_changed {
-                doc.data.bump_revision();
-            }
-            return routing_changed;
-        }
         let current_ch = doc.data.model.tracks[track_idx]
             .audio_target_channel()
             .unwrap_or(0);
@@ -570,24 +516,14 @@ pub(crate) fn send_skip_tracks(doc: &Document, audio: Option<&yinhe_audio::CpalA
 mod tests {
     use super::*;
 
-    /// 回归：Master（DirectMaster）已暂停——非直通轨不提供 Master 选项。
+    /// 音频轨现在只有 home LC：不再有 "--- (Master)" 选项。
     #[test]
-    fn output_kind_hides_master_unless_legacy_direct() {
-        let ids = |opts: &[(usize, String)]| opts.iter().map(|(v, _)| *v).collect::<Vec<_>>();
-        assert_eq!(ids(&output_kind_options(1)), vec![1, 2], "LC 轨只有 LC/AP");
-        assert_eq!(ids(&output_kind_options(2)), vec![1, 2], "AP 轨只有 LC/AP");
-        assert_eq!(
-            ids(&output_kind_options(0)),
-            vec![0, 1, 2],
-            "存量直通轨保留 Master 以便切回"
-        );
-    }
-
-    /// 回归：音频轨的 --- (Master) 同样只在存量直通轨上保留。
-    #[test]
-    fn audio_output_hides_master_unless_legacy_direct() {
-        let ids = |opts: &[(usize, String)]| opts.iter().map(|(v, _)| *v).collect::<Vec<_>>();
-        assert_eq!(ids(&audio_output_options(false)), vec![0]);
-        assert_eq!(ids(&audio_output_options(true)), vec![0, 1]);
+    fn audio_output_has_no_master_option() {
+        let doc = Document::empty();
+        let track = doc.data.model.tracks[1].as_ref();
+        assert!(matches!(
+            track.effective_audio_target(),
+            Some(TrackAudioTarget::OwnLc { .. }) | Some(TrackAudioTarget::Ap { .. })
+        ));
     }
 }

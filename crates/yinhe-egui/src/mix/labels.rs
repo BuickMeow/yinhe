@@ -61,7 +61,6 @@ pub(crate) fn channel_id_label(id: ChannelId, display: &HashMap<ChannelId, u32>)
 ///
 /// - OwnLc → 空（一轨一通道：普通 DAW 轨道不显示通道号）
 /// - AP → 端口 + 通道（`A01`）
-/// - DirectMaster → `---`（功能已暂停，仅存量轨显示）
 pub(crate) fn track_target_label(
     target: Option<yinhe_core::TrackAudioTarget>,
     midi_port: u8,
@@ -69,7 +68,6 @@ pub(crate) fn track_target_label(
 ) -> String {
     match target {
         Some(yinhe_core::TrackAudioTarget::OwnLc { .. }) => String::new(),
-        Some(yinhe_core::TrackAudioTarget::DirectMaster { .. }) => "---".to_string(),
         Some(yinhe_core::TrackAudioTarget::Ap { .. }) | None => midi_label(midi_port, midi_channel),
     }
 }
@@ -111,14 +109,6 @@ mod tests {
                 9
             ),
             "A10"
-        );
-        assert_eq!(
-            track_target_label(
-                Some(yinhe_core::TrackAudioTarget::DirectMaster { rack: None }),
-                0,
-                0
-            ),
-            "---"
         );
     }
 }

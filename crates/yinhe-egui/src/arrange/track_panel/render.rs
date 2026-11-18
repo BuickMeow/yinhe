@@ -308,7 +308,7 @@ pub(super) fn draw_track_row(
                     .map(crate::mix::audio_label)
                     .unwrap_or_else(|| "Audio--".to_string()),
                 // MIDI 轨：OwnLc 无徽标（一轨一通道，普通 DAW 轨道），
-                // AP 显示端口+通道，DirectMaster 显示 `---`。
+                // AP 显示端口+通道。
                 Some(t) => {
                     crate::mix::track_target_label(t.effective_audio_target(), ti.port, ti.channel)
                 }

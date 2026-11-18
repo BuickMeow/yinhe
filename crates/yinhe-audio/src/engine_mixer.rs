@@ -56,7 +56,7 @@ impl AudioEngine {
                     .mixer_params
                     .track_node(lc)
                     .and_then(|node| node.output),
-                Some(ChannelNamespace::DirectMaster) | None => None,
+                None => None,
             };
             let dest = target.and_then(|id| match id {
                 yinhe_types::ChannelId::Lc(_) | yinhe_types::ChannelId::Ap(_) => {
@@ -138,9 +138,6 @@ impl AudioEngine {
         let d = dense as u32;
         let audio_base = self.channel_layout.midi_compacted();
         let track_base = audio_base + self.channel_layout.audio_channels().len() as u32;
-        if Some(d) == self.channel_layout.direct_master_dense() {
-            return Some(ChannelNamespace::DirectMaster);
-        }
         if d >= track_base {
             let idx = (d - track_base) as usize;
             self.channel_layout
@@ -388,7 +385,7 @@ impl AudioEngine {
                     .track_node(lc)
                     .map(|node| node.strip)
                     .unwrap_or_default(),
-                Some(ChannelNamespace::DirectMaster) | None => StripParams::default(),
+                None => StripParams::default(),
             })
             .collect()
     }

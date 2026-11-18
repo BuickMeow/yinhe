@@ -21,8 +21,6 @@ pub enum ChannelNamespace {
     Audio(usize),
     /// 每轨独立 LC（`TrackData.lc`）。
     TrackLc { track: u16, lc: LogicalChannelId },
-    /// MIDI 轨 DirectMaster：隐藏的 unity 通道，只把音频送 Master。
-    DirectMaster,
 }
 
 /// 不可变的通道布局，`AudioEngine` 创建时定型。
@@ -59,12 +57,8 @@ pub struct ChannelLayout {
     // 方案 C：OwnLc 轨的插件链直接落在 home LC dense，不再需要输出重定向表。
     /// MIDI 通道的激活数（= xsynth `ChannelGroup` 的通道数）。
     midi_compacted: u32,
-    /// 总激活通道数 = midi + audio + track LC + 可选 DirectMaster。
+    /// 总激活通道数 = midi + audio + track LC。
     compacted_channels: u32,
-    /// 是否有 MIDI 轨直通 Master（隐藏 unity 通道）。
-    direct_master: bool,
-    /// DirectMaster 的 dense 索引。
-    direct_master_dense: Option<u32>,
 }
 
 impl ChannelLayout {
@@ -95,25 +89,15 @@ impl ChannelLayout {
                 if let Some(lc) = track.lc {
                     track_lc_channels.push((i as u16, lc));
                 }
-            } else if let Some(ach) = track.audio_target_channel() {
-                let direct = matches!(
-                    track.effective_audio_target(),
-                    Some(yinhe_core::TrackAudioTarget::DirectMaster { .. })
-                );
-                if !direct && !audio_channels.contains(&ach) {
-                    audio_channels.push(ach);
-                }
+            } else if let Some(ach) = track.audio_target_channel()
+                && !audio_channels.contains(&ach)
+            {
+                audio_channels.push(ach);
             }
         }
         audio_channels.sort_unstable();
         track_lc_channels.sort_unstable_by_key(|(track, _)| *track);
 
-        let direct_master = model.tracks.iter().any(|track| {
-            matches!(
-                track.effective_audio_target(),
-                Some(yinhe_core::TrackAudioTarget::DirectMaster { .. })
-            )
-        });
         let max_active_ch = ch_active.iter().rposition(|&c| c).unwrap_or(0);
         let num_channels = (max_active_ch + 1).max(1) as u32;
 
@@ -126,14 +110,13 @@ impl ChannelLayout {
             audio_channels,
             track_lc_channels,
             model.tracks.len(),
-            direct_master,
         )
     }
 
     /// 从 `active_mask` 构建压缩后的 `channel_map`（无音频通道）。
     pub fn from_mask(active_mask: Vec<bool>) -> Self {
         let ap_mask = active_mask.clone();
-        Self::from_mask_full(active_mask, ap_mask, Vec::new(), Vec::new(), 0, false)
+        Self::from_mask_full(active_mask, ap_mask, Vec::new(), Vec::new(), 0)
     }
 
     /// 从 `active_mask` + 音频通道 + 每轨 LC 构建完整布局。
@@ -143,7 +126,6 @@ impl ChannelLayout {
         audio_channels: Vec<u16>,
         track_lc_channels: Vec<(u16, LogicalChannelId)>,
         track_count: usize,
-        direct_master: bool,
     ) -> Self {
         let mut channel_map = Box::new([u32::MAX; 256]);
         let mut next_dense: u32 = 0;
@@ -155,12 +137,7 @@ impl ChannelLayout {
         }
         let midi_compacted = next_dense.max(1);
         let track_lc_base = midi_compacted + audio_channels.len() as u32;
-        let direct_master_dense =
-            direct_master.then_some(track_lc_base + track_lc_channels.len() as u32);
-        let compacted_channels = direct_master_dense
-            .map_or(track_lc_base + track_lc_channels.len() as u32, |dense| {
-                dense + 1
-            });
+        let compacted_channels = track_lc_base + track_lc_channels.len() as u32;
         let mut track_lc_dense = vec![u32::MAX; track_count];
         for (i, (track, _)) in track_lc_channels.iter().enumerate() {
             if let Some(slot) = track_lc_dense.get_mut(*track as usize) {
@@ -181,8 +158,6 @@ impl ChannelLayout {
 
             midi_compacted,
             compacted_channels,
-            direct_master,
-            direct_master_dense,
         }
     }
 
@@ -215,10 +190,6 @@ impl ChannelLayout {
     /// 每轨独立 LC 列表（按 Track 索引升序）。
     pub fn track_lc_channels(&self) -> &[(u16, LogicalChannelId)] {
         &self.track_lc_channels
-    }
-
-    pub fn direct_master_dense(&self) -> Option<u32> {
-        self.direct_master_dense
     }
 
     /// Track 的每轨 LC dense 索引；`u32::MAX` = 没有独立 LC。
@@ -308,10 +279,6 @@ impl ChannelLayout {
                     return false;
                 }
             } else if let Some(ach) = track.audio_target_channel()
-                && !matches!(
-                    track.effective_audio_target(),
-                    Some(yinhe_core::TrackAudioTarget::DirectMaster { .. })
-                )
                 && self.audio_dense_for(ach) == u32::MAX
             {
                 return false;
@@ -322,13 +289,7 @@ impl ChannelLayout {
                 return false;
             }
         }
-        let wants_direct = model.tracks.iter().any(|track| {
-            matches!(
-                track.effective_audio_target(),
-                Some(yinhe_core::TrackAudioTarget::DirectMaster { .. })
-            )
-        });
-        wants_direct == self.direct_master
+        true
     }
 
     /// 与 model 的通道需求**完全一致**（新增或删除通道都返回 false）。
@@ -340,7 +301,7 @@ impl ChannelLayout {
         self.active_mask() == target.active_mask()
             && self.audio_channels() == target.audio_channels()
             && self.track_lc_channels() == target.track_lc_channels()
-            && self.direct_master == target.direct_master
+            && self.compacted_channels == target.compacted_channels
     }
 }
 
@@ -874,38 +835,6 @@ mod matches_model_tests {
         let layout = ChannelLayout::from_model(&shared);
         assert!(layout.is_active(0));
         assert!(layout.is_ap_active(0), "共享 MIDI 轨应产生 AP 通道");
-    }
-
-    #[test]
-    fn audio_direct_master_does_not_create_audio_channel() {
-        let mut model = YinModel::new_empty_with_16_tracks();
-        model.tracks.truncate(1);
-        let mut track = TrackData::new(0, 0);
-        track.kind = TrackKind::Audio;
-        track.audio_channel = Some(3);
-        track.set_audio_target(yinhe_core::TrackAudioTarget::DirectMaster { rack: None });
-        model.tracks.push(Arc::new(track));
-        model.rebuild();
-        let layout = ChannelLayout::from_model(&model);
-        assert!(layout.audio_channels().is_empty());
-        assert!(layout.direct_master_dense().is_some());
-    }
-
-    #[test]
-    fn direct_master_adds_one_hidden_dense_channel() {
-        let mut model = YinModel::new_empty_with_16_tracks();
-        model.tracks.truncate(2);
-        Arc::make_mut(&mut model.tracks[1]).set_audio_target(
-            yinhe_core::TrackAudioTarget::DirectMaster {
-                rack: Some(yinhe_types::RackId::new(0)),
-            },
-        );
-        model.rebuild();
-        let layout = ChannelLayout::from_model(&model);
-        let dense = layout.direct_master_dense().expect("direct master dense");
-        assert_eq!(dense as usize, layout.compacted_channels() as usize - 1);
-        assert_eq!(layout.track_lc_dense(1), u32::MAX);
-        assert!(!layout.is_ap_active(0));
     }
 
     /// 新增或删除通道都必须判为“不完全匹配”（触发引擎重建/资源回收）。

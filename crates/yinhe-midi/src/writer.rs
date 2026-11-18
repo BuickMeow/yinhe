@@ -412,7 +412,7 @@ fn export_channel_map(model: &YinModel) -> Vec<(u8, u8)> {
         }
     }
 
-    // 独立轨（OwnLc / DirectMaster）只用 Port A 的空闲通道；满了就复用 A1..。
+    // 独立轨（OwnLc）只用 Port A 的空闲通道；满了就复用 A1..。
     let mut next = 0usize;
     for (i, track) in model.tracks.iter().enumerate() {
         if track.kind != TrackKind::Midi {

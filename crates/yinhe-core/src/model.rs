@@ -476,8 +476,8 @@ fn resolve_index(
 
 /// 方案 C 的轨道音频目标。
 ///
-/// 这是旧字段到 C 模型的适配结果：共享 MIDI 通道 = AP，每轨 LC/音频轨 =
-/// OwnLc，`DirectMaster` 暂时只保留类型。真正落盘后由 `TrackData` 直接持有。
+/// 共享 MIDI 通道 = AP，每轨 LC/音频轨 = OwnLc；直接进 Master 的
+/// DirectMaster 已删除（无存量工程）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TrackAudioTarget {
@@ -493,8 +493,6 @@ pub enum TrackAudioTarget {
     },
     /// 链接到 AP 编组：MIDI 进共享 Rack，音频走 AP 通道。
     Ap { ap: ApGroupId },
-    /// 不经过任何 LC/AP 通道，直接进 Master（UI 显示 `---`）。
-    DirectMaster { rack: Option<RackId> },
 }
 
 impl TrackData {
@@ -594,7 +592,7 @@ impl TrackData {
         if self.kind == TrackKind::Midi {
             self.lc = match target {
                 TrackAudioTarget::OwnLc { lc, .. } => Some(lc),
-                TrackAudioTarget::Ap { .. } | TrackAudioTarget::DirectMaster { .. } => None,
+                TrackAudioTarget::Ap { .. } => None,
             };
         }
         self.audio_target = Some(target);

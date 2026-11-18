@@ -69,15 +69,7 @@ impl AudioClipRenderer<'_> {
             let Some(ach) = track.audio_target_channel() else {
                 continue;
             };
-            let direct = matches!(
-                track.effective_audio_target(),
-                Some(yinhe_core::TrackAudioTarget::DirectMaster { .. })
-            );
-            let dense = if direct {
-                self.layout.direct_master_dense().unwrap_or(u32::MAX)
-            } else {
-                self.layout.audio_dense_for(ach)
-            };
+            let dense = self.layout.audio_dense_for(ach);
             if dense == u32::MAX {
                 continue;
             }
