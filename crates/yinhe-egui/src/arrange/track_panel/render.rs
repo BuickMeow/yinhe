@@ -256,3 +256,210 @@ pub(super) fn draw_automation_row(
 
     (am_ms_dirty, actions)
 }
+
+/// 普通轨行（含 Conductor / 文件夹 / 音频轨）的文本、M/S 与电平表。
+///
+/// 色带与 chevron 由调用方绘制（依赖行布局与展开状态）；本函数只处理
+/// 行内内容，返回 `(audio_dirty, actions)`。
+#[allow(clippy::too_many_arguments)]
+pub(super) fn draw_track_row(
+    ui: &mut egui::Ui,
+    painter: &egui::Painter,
+    row_rect: egui::Rect,
+    badge_rect: egui::Rect,
+    lh: f32,
+    idx: usize,
+    ti: &yinhe_core::TrackInfo,
+    tracks: &[std::sync::Arc<yinhe_core::TrackData>],
+    lc_labels: &std::collections::HashMap<yinhe_types::LogicalChannelId, String>,
+    is_conductor: bool,
+    is_folder: bool,
+    show_details: bool,
+    track_overrides: &mut [yinhe_editor_core::document::TrackOverride],
+    track_meters: &[crate::widgets::meter::StereoMeter],
+    tempo_lane: &yinhe_types::AutomationLane,
+    cursor_tick: Option<f64>,
+    color32: egui::Color32,
+    btn_size: egui::Vec2,
+    no_drag_rects: &mut Vec<egui::Rect>,
+) -> (bool, Vec<super::types::TrackAction>) {
+    let mut audio_dirty = false;
+    let mut actions = Vec::new();
+    let text_x = badge_rect.max.x + 6.0;
+    let track_num_text = format!("{:03}", ti.index);
+
+    if show_details {
+        let font = detail_font(lh);
+
+        painter.text(
+            egui::pos2(text_x, badge_rect.min.y + lh * 0.30),
+            egui::Align2::LEFT_CENTER,
+            &track_num_text,
+            font.clone(),
+            crate::theme::text_primary(),
+        );
+        let badge_text = if is_conductor {
+            "Master".to_string()
+        } else {
+            match tracks.get(idx) {
+                Some(t) if t.kind == yinhe_core::TrackKind::Folder => "Folder".to_string(),
+                // 音频轨显示音频通道。
+                Some(t) if t.kind == yinhe_core::TrackKind::Audio => t
+                    .audio_channel
+                    .map(crate::mix::audio_label)
+                    .unwrap_or_else(|| "Audio--".to_string()),
+                // MIDI 轨：OwnLc 显示 LCxx（音频目标），AP 显示端口+通道，
+                // DirectMaster 显示 `---`。改完音频目标后 AR 立即反映。
+                Some(t) => crate::mix::track_target_label(
+                    t.effective_audio_target(),
+                    ti.port,
+                    ti.channel,
+                    lc_labels,
+                ),
+                None => crate::mix::midi_label(ti.port, ti.channel),
+            }
+        };
+        painter.text(
+            egui::pos2(text_x + 32.0, badge_rect.min.y + lh * 0.30),
+            egui::Align2::LEFT_CENTER,
+            &badge_text,
+            font.clone(),
+            crate::theme::text_primary(),
+        );
+
+        let name = &ti.name;
+        let name_font = detail_font(lh);
+        let name_y = badge_rect.min.y + lh * 0.70;
+        if crate::widgets::track_rename::active(ui, idx) {
+            let name_rect = egui::Rect::from_min_size(
+                egui::pos2(text_x, name_y - name_font.size * 0.75),
+                egui::vec2(
+                    (row_rect.max.x - text_x - 8.0).max(60.0),
+                    name_font.size * 1.5,
+                ),
+            );
+            if let Some(new_name) =
+                crate::widgets::track_rename::show(ui, idx, name_rect, name_font.size)
+            {
+                actions.push(TrackAction::RenameTrack {
+                    idx,
+                    name: new_name,
+                });
+            }
+        } else {
+            painter.text(
+                egui::pos2(text_x, name_y),
+                egui::Align2::LEFT_CENTER,
+                name,
+                name_font,
+                crate::theme::text_primary(),
+            );
+        }
+
+        if !is_conductor && !is_folder {
+            // 单按钮三态：始终显示 M；左键静音、右键独奏，亮色区分。
+            let audibility = track_overrides
+                .get(idx)
+                .map(|o| o.audibility())
+                .unwrap_or_default();
+
+            let total_btn_w = btn_size.x;
+            let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
+            let meter_left = meter_right - LEVEL_METER_W;
+            let btn_x_start = meter_left - LEVEL_METER_GAP - total_btn_w;
+            let btn_y = badge_rect.center().y - btn_size.y * 0.5;
+            let ms_rect = egui::Rect::from_min_size(egui::pos2(btn_x_start, btn_y), btn_size);
+            no_drag_rects.push(ms_rect);
+
+            let (label, active, color) = crate::widgets::audibility::visual(audibility);
+            let resp = draw::draw_inline_button(
+                ui,
+                painter,
+                ms_rect,
+                label,
+                active,
+                color,
+                egui::Id::unique(("track_btn_ms", idx)),
+            );
+            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.arrange.track_mute"));
+            if resp.clicked() || resp.drag_started() {
+                super::ensure_ms_undo_snapshot(ui, track_overrides);
+                if let Some(ov) = track_overrides.get_mut(idx) {
+                    ov.set_audibility(crate::widgets::audibility::next_on_primary(audibility));
+                    audio_dirty = true;
+                }
+            }
+            if resp.secondary_clicked() {
+                super::ensure_ms_undo_snapshot(ui, track_overrides);
+                if let Some(ov) = track_overrides.get_mut(idx) {
+                    ov.set_audibility(crate::widgets::audibility::next_on_secondary(audibility));
+                    audio_dirty = true;
+                }
+            }
+
+            // 每轨电平表（L/R 双条、向上、dB 刻度；仅播放时非零）。
+            let meter_rect = egui::Rect::from_min_max(
+                egui::pos2(meter_left, row_rect.min.y + LEVEL_METER_MARGIN),
+                egui::pos2(meter_right, row_rect.max.y - LEVEL_METER_MARGIN),
+            );
+            let (level, hold) = track_meters
+                .get(idx)
+                .copied()
+                .unwrap_or(((0.0, 0.0), (0.0, 0.0)));
+            crate::widgets::meter::compact_meter(painter, meter_rect, level, hold);
+        } else if is_conductor {
+            // Conductor 行：Tempo 自动化表（贴右缘；光标处 BPM 按动态上限归一化）。
+            let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
+            let meter_left = meter_right - LEVEL_METER_W;
+            let meter_rect = egui::Rect::from_min_max(
+                egui::pos2(meter_left, row_rect.min.y + LEVEL_METER_MARGIN),
+                egui::pos2(meter_right, row_rect.max.y - LEVEL_METER_MARGIN),
+            );
+            crate::widgets::meter::automation_meter(
+                painter,
+                meter_rect,
+                crate::arrange::am_lanes::lane_cursor_value(tempo_lane, cursor_tick),
+                tempo_lane.target.bar_baseline(),
+                color32,
+            );
+        }
+    } else {
+        let font = compact_font(lh);
+        painter.text(
+            egui::pos2(text_x, badge_rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            &track_num_text,
+            font,
+            crate::theme::text_primary(),
+        );
+
+        let name = &ti.name;
+        let name_font = compact_font(lh);
+        if crate::widgets::track_rename::active(ui, idx) {
+            let name_rect = egui::Rect::from_min_size(
+                egui::pos2(text_x + 40.0, badge_rect.center().y - name_font.size * 0.75),
+                egui::vec2(
+                    (row_rect.max.x - text_x - 48.0).max(60.0),
+                    name_font.size * 1.5,
+                ),
+            );
+            if let Some(new_name) =
+                crate::widgets::track_rename::show(ui, idx, name_rect, name_font.size)
+            {
+                actions.push(TrackAction::RenameTrack {
+                    idx,
+                    name: new_name,
+                });
+            }
+        } else {
+            painter.text(
+                egui::pos2(text_x + 40.0, badge_rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                name,
+                name_font,
+                crate::theme::text_primary(),
+            );
+        }
+    }
+    (audio_dirty, actions)
+}
