@@ -275,204 +275,50 @@ pub fn show(
         request_pianoroll,
     );
 
-    // ── Track panel content ──
-    ui.scope_builder(egui::UiBuilder::new().max_rect(tp_rect), |ui| {
-        ui.set_clip_rect(tp_rect);
-        ui.painter()
-            .rect_filled(ui.max_rect(), 0.0, crate::theme::app_bg());
+    draw_track_panel(
+        ui,
+        doc,
+        tp_rect,
+        gpu_rect,
+        total_ticks,
+        &mut row_layout,
+        num_tracks,
+        conductor_idx,
+        &track_mixer_lanes,
+        &lc_labels,
+        track_meters,
+        request_pianoroll,
+        info_content,
+        selection_anchor,
+        audio,
+        automation_picker_req,
+        right_tab,
+        dock_req,
+        needs_audio_rebuild,
+        needs_audio_notify,
+    );
 
-        doc.edit.arrange_view.base.track_panel_scroll_y = doc.edit.arrange_view.base.scroll_y;
-
-        let zoom_delta = ui.input(|i| i.zoom_delta());
-        if (zoom_delta - 1.0).abs() > 0.001
-            && let Some(hover) = ui.input(|i| i.pointer.hover_pos())
-            && tp_rect.contains(hover)
-        {
-            let pointer_y = hover.y - tp_rect.min.y;
-            let prev_h = doc.edit.arrange_view.lane_height();
-            // 与滚轮/滚动条共用同一套累积器：细微输入不跳档。
-            doc.edit
-                .arrange_view
-                .zoom_lane_height(pointer_y, zoom_delta);
-            if doc.edit.arrange_view.lane_height() != prev_h {
-                // zoom_lane_height 锚定的是 base.scroll_y，写回面板滚动值
-                // （面板 scope 结束处会把 track_panel_scroll_y 同步回 scroll_y）。
-                doc.edit.arrange_view.base.track_panel_scroll_y =
-                    doc.edit.arrange_view.base.scroll_y;
-            }
-        }
-
-        // Ensure parallel arrays are correctly sized (track count may have grown).
-        let n = doc.edit.track_cache.info.len();
-        if doc.edit.track_pianoroll_visible.len() < n {
-            doc.edit.track_pianoroll_visible.resize(n, true);
-        }
-        if doc.edit.track_overrides.len() < n {
-            doc.edit
-                .track_overrides
-                .resize(n, yinhe_editor_core::document::TrackOverride::default());
-        }
-        if doc.edit.track_cache.colors.len() < n {
-            doc.edit.track_cache.ensure_colors_len(&doc.data.model, n);
-        }
-
-        let (audio_dirty, am_ms_dirty, track_actions) = track_panel::show(
-            ui,
-            &doc.edit.track_cache.info,
-            &doc.edit.track_visible,
-            &mut doc.edit.track_overrides,
-            &mut doc.edit.track_selected,
-            selection_anchor,
-            doc.edit.track_cache.conductor_idx,
-            &doc.edit.track_cache.colors,
-            &mut doc.edit.arrange_view.base.track_panel_row_height,
-            &mut doc.edit.arrange_view.base.track_panel_scroll_y,
-            request_pianoroll,
-            info_content,
-            &row_layout,
-            &doc.data.model.tracks,
-            &lc_labels,
-            &mut doc.edit.arr_am_expanded,
-            &mut doc.edit.arr_am_selected,
-            &mut doc.edit.arr_am_ms,
-            track_meters,
-            &track_mixer_lanes,
-            doc.edit.cursor_tick,
-            &doc.data.model.conductor.tempo,
-        );
-
-        if audio_dirty {
-            // Track solo 是内容门：进入 Track solo 时清空 Channel solo，
-            // 避免两层 solo 叠加。清空后把受影响的通道参数推给引擎。
-            if doc.edit.track_overrides.iter().any(|o| o.soloed) {
-                for node in doc.clear_channel_solos() {
-                    let params = doc.mixer.node_strip(node);
-                    if let Some(audio) = audio {
-                        audio
-                            .handle
-                            .send(yinhe_audio::AudioCommand::SetNodeStrip { node, params });
-                    }
-                }
-            }
-            crate::right_panel::info_panel::send_skip_tracks(doc, audio);
-        }
-        // AM lane M/S 试听开关：只换动态掩码 + 异步 chase（不重建模型、不 seek），
-        // 与轨道 M/S 的 SkipTracks 同机制——播放中切换不跳跃、不卡顿。
-        if am_ms_dirty && let Some(audio) = audio {
-            audio.set_am_ms(std::sync::Arc::new(doc.edit.arr_am_ms.clone()));
-        }
-
-        actions::apply_track_actions(
-            doc,
-            track_actions,
-            actions::ActionCtx {
-                automation_picker_req,
-                info_content,
-                right_tab,
-                dock_req,
-                needs_audio_rebuild,
-                needs_audio_notify,
-            },
-        );
-
-        // 展开状态 / lane 数可能刚变：重建行布局并重新 clamp。
-        row_layout = build_row_layout(
-            &doc.edit,
-            &doc.data.model,
-            num_tracks,
-            conductor_idx,
-            &track_mixer_lanes,
-        );
-        doc.edit.arrange_view.clamp_scroll(
-            gpu_rect.width(),
-            gpu_rect.height(),
-            total_ticks,
-            row_layout.total_rows() + 1,
-        );
-
-        doc.edit.arrange_view.base.scroll_y = doc.edit.arrange_view.base.track_panel_scroll_y;
-    });
-
-    // ── Arrangement GPU view (below ruler) ──
-    let gpu_size = gpu_rect.size();
-    // AM lane 交互产生的编辑：GPU scope 内借用 doc.edit/model，出 scope 后统一应用。
-    let mut am_edits: Vec<yinhe_types::AutomationEdit> = Vec::new();
-    // 片段交互命令：同一帧出 scope 后应用（含 undo）。
-    let mut audio_commands: Vec<view_ui::AudioEditCmd> = Vec::new();
-    let mut clip_commands: Vec<view_ui::ClipEditCmd> = Vec::new();
-    // 折叠文件夹的子轨对 GPU/命中测试不可见；与用户手动 eye 显隐合并。
-    let folder_visible = doc.data.model.folder_visible_mask();
-    let effective_visible: Vec<bool> = doc
-        .edit
-        .track_visible
-        .iter()
-        .zip(folder_visible.iter())
-        .map(|(user, folder)| *user && *folder)
-        .collect();
-    ui.scope_builder(egui::UiBuilder::new().max_rect(gpu_rect), |ui| {
-        let model = &*doc.data.model;
-        let (def_num, def_den) = model.tempo_map.time_sig_default;
-        let data = ArrangeData {
-            midi: Some(model as &dyn yinhe_types::NoteSource),
-            track_visible: &effective_visible,
-            track_colors: &doc.edit.track_cache.colors,
-            track_info: &doc.edit.track_cache.info,
-            quantize: doc.edit.quantize_arrange.resolved_with_time_sig(
-                doc.edit.arrange_view.base.pixels_per_tick,
-                model.meta.ppq,
-                def_num,
-                def_den,
-                false,
-            ),
-            ppq: model.meta.ppq,
-            bar_line_data: Some((
-                model.meta.ppq,
-                def_num,
-                def_den,
-                model.tempo_map.time_sig_events.as_slice(),
-            )),
-            total_ticks,
-            num_tracks,
-            tracks: &model.tracks,
-            tempo_lane: &model.conductor.tempo,
-            track_mixer_lanes: &track_mixer_lanes,
-            conductor_track_idx: doc.edit.track_cache.conductor_idx,
-            tempo_map: &model.tempo_map,
-            audio_library,
-            audio_sources: &model.audio_sources,
-            clip_enabled: cfg.clip_enabled,
-        };
-        let mut edit = ArrangeEdit {
-            selected: &mut doc.edit.selected,
-            cursor_tick: &mut doc.edit.cursor_tick,
-            arr_sel_rect: &mut doc.edit.arr_sel_rect,
-            arr_drag_delta,
-            arr_eraser_rect,
-            arr_scale_span,
-            arr_riff_steps,
-            track_selected: &mut doc.edit.track_selected,
-            selection_anchor,
-            info_content,
-            arr_am_views: &mut doc.edit.arr_am_views,
-            am_edits: &mut am_edits,
-            right_tab,
-            selected_audio_clips: &mut doc.edit.selected_audio_clips,
-            audio_commands: &mut audio_commands,
-            clip_commands: &mut clip_commands,
-            menu_actions,
-        };
-        view_ui::show(
-            ui,
-            gpu_size,
-            arr_renderer,
-            arr_render_ctx,
-            &mut doc.edit.arrange_view,
-            &row_layout,
-            data,
-            &mut edit,
-            &mut cfg,
-        );
-    });
+    let (mut am_edits, mut audio_commands, mut clip_commands) = draw_arrangement_view(
+        ui,
+        doc,
+        gpu_rect,
+        &row_layout,
+        arr_renderer,
+        arr_render_ctx,
+        &mut cfg,
+        arr_drag_delta,
+        arr_eraser_rect,
+        arr_scale_span,
+        arr_riff_steps,
+        selection_anchor,
+        info_content,
+        right_tab,
+        menu_actions,
+        &track_mixer_lanes,
+        audio_library,
+        total_ticks,
+        num_tracks,
+    );
 
     // 应用 AR 自动化 lane 的编辑（与 PR 的 handle_automation_edits 同一路径）
     if !am_edits.is_empty() {
@@ -1225,4 +1071,257 @@ fn draw_vertical_scrollbar(
             }
         }
     }
+}
+
+/// AR 音轨面板：缩放、并行数组补齐、行绘制与轨道动作落地。
+///
+/// 行布局可能因展开/删除 lane 变化，函数结束时重建并重新 clamp
+/// （`row_layout` 原地更新）。
+#[allow(clippy::too_many_arguments)] // 视图上下文透传
+fn draw_track_panel(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    tp_rect: egui::Rect,
+    gpu_rect: egui::Rect,
+    total_ticks: f64,
+    row_layout: &mut yinhe_types::ArRowLayout,
+    num_tracks: usize,
+    conductor_idx: Option<u16>,
+    track_mixer_lanes: &[Vec<(yinhe_types::MixerNodeId, Vec<yinhe_types::AutomationLane>)>],
+    lc_labels: &std::collections::HashMap<yinhe_types::LogicalChannelId, String>,
+    track_meters: &[crate::widgets::meter::StereoMeter],
+    request_pianoroll: &mut bool,
+    info_content: &mut Option<crate::right_panel::InfoContent>,
+    selection_anchor: &mut Option<u16>,
+    audio: Option<&yinhe_audio::CpalAudioHandle>,
+    automation_picker_req: &mut Option<usize>,
+    right_tab: &mut Option<crate::right_panel::RightTab>,
+    dock_req: &mut Option<crate::chrome::device_chain::DockContext>,
+    needs_audio_rebuild: &mut bool,
+    needs_audio_notify: &mut bool,
+) {
+    ui.set_clip_rect(tp_rect);
+    ui.painter()
+        .rect_filled(ui.max_rect(), 0.0, crate::theme::app_bg());
+
+    doc.edit.arrange_view.base.track_panel_scroll_y = doc.edit.arrange_view.base.scroll_y;
+
+    let zoom_delta = ui.input(|i| i.zoom_delta());
+    if (zoom_delta - 1.0).abs() > 0.001
+        && let Some(hover) = ui.input(|i| i.pointer.hover_pos())
+        && tp_rect.contains(hover)
+    {
+        let pointer_y = hover.y - tp_rect.min.y;
+        let prev_h = doc.edit.arrange_view.lane_height();
+        // 与滚轮/滚动条共用同一套累积器：细微输入不跳档。
+        doc.edit
+            .arrange_view
+            .zoom_lane_height(pointer_y, zoom_delta);
+        if doc.edit.arrange_view.lane_height() != prev_h {
+            // zoom_lane_height 锚定的是 base.scroll_y，写回面板滚动值
+            // （面板 scope 结束处会把 track_panel_scroll_y 同步回 scroll_y）。
+            doc.edit.arrange_view.base.track_panel_scroll_y = doc.edit.arrange_view.base.scroll_y;
+        }
+    }
+
+    // Ensure parallel arrays are correctly sized (track count may have grown).
+    let n = doc.edit.track_cache.info.len();
+    if doc.edit.track_pianoroll_visible.len() < n {
+        doc.edit.track_pianoroll_visible.resize(n, true);
+    }
+    if doc.edit.track_overrides.len() < n {
+        doc.edit
+            .track_overrides
+            .resize(n, yinhe_editor_core::document::TrackOverride::default());
+    }
+    if doc.edit.track_cache.colors.len() < n {
+        doc.edit.track_cache.ensure_colors_len(&doc.data.model, n);
+    }
+
+    let (audio_dirty, am_ms_dirty, track_actions) = track_panel::show(
+        ui,
+        &doc.edit.track_cache.info,
+        &doc.edit.track_visible,
+        &mut doc.edit.track_overrides,
+        &mut doc.edit.track_selected,
+        selection_anchor,
+        doc.edit.track_cache.conductor_idx,
+        &doc.edit.track_cache.colors,
+        &mut doc.edit.arrange_view.base.track_panel_row_height,
+        &mut doc.edit.arrange_view.base.track_panel_scroll_y,
+        request_pianoroll,
+        info_content,
+        row_layout,
+        &doc.data.model.tracks,
+        lc_labels,
+        &mut doc.edit.arr_am_expanded,
+        &mut doc.edit.arr_am_selected,
+        &mut doc.edit.arr_am_ms,
+        track_meters,
+        track_mixer_lanes,
+        doc.edit.cursor_tick,
+        &doc.data.model.conductor.tempo,
+    );
+
+    if audio_dirty {
+        // Track solo 是内容门：进入 Track solo 时清空 Channel solo，
+        // 避免两层 solo 叠加。清空后把受影响的通道参数推给引擎。
+        if doc.edit.track_overrides.iter().any(|o| o.soloed) {
+            for node in doc.clear_channel_solos() {
+                let params = doc.mixer.node_strip(node);
+                if let Some(audio) = audio {
+                    audio
+                        .handle
+                        .send(yinhe_audio::AudioCommand::SetNodeStrip { node, params });
+                }
+            }
+        }
+        crate::right_panel::info_panel::send_skip_tracks(doc, audio);
+    }
+    // AM lane M/S 试听开关：只换动态掩码 + 异步 chase（不重建模型、不 seek），
+    // 与轨道 M/S 的 SkipTracks 同机制——播放中切换不跳跃、不卡顿。
+    if am_ms_dirty && let Some(audio) = audio {
+        audio.set_am_ms(std::sync::Arc::new(doc.edit.arr_am_ms.clone()));
+    }
+
+    actions::apply_track_actions(
+        doc,
+        track_actions,
+        actions::ActionCtx {
+            automation_picker_req,
+            info_content,
+            right_tab,
+            dock_req,
+            needs_audio_rebuild,
+            needs_audio_notify,
+        },
+    );
+
+    // 展开状态 / lane 数可能刚变：重建行布局并重新 clamp。
+    *row_layout = build_row_layout(
+        &doc.edit,
+        &doc.data.model,
+        num_tracks,
+        conductor_idx,
+        track_mixer_lanes,
+    );
+    doc.edit.arrange_view.clamp_scroll(
+        gpu_rect.width(),
+        gpu_rect.height(),
+        total_ticks,
+        row_layout.total_rows() + 1,
+    );
+
+    doc.edit.arrange_view.base.scroll_y = doc.edit.arrange_view.base.track_panel_scroll_y;
+}
+
+/// AR 主区（GPU 纹理 + 片段/自动化交互），返回出 scope 后要应用的编辑命令。
+#[allow(clippy::too_many_arguments)] // 视图上下文透传
+fn draw_arrangement_view<'a>(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    gpu_rect: egui::Rect,
+    row_layout: &yinhe_types::ArRowLayout,
+    arr_renderer: &mut yinhe_wgpu::InstanceRenderer,
+    arr_render_ctx: &mut RenderContext,
+    cfg: &mut ArrangeViewCfg<'a>,
+    arr_drag_delta: &mut Option<ArrDragDelta>,
+    arr_eraser_rect: &mut Option<ArrSelRect>,
+    arr_scale_span: &mut Option<u64>,
+    arr_riff_steps: &mut Option<(i64, i64)>,
+    selection_anchor: &mut Option<u16>,
+    info_content: &mut Option<crate::right_panel::InfoContent>,
+    right_tab: &mut Option<crate::right_panel::RightTab>,
+    menu_actions: &mut Vec<context_menu::TimelineMenuAction>,
+    track_mixer_lanes: &[Vec<(yinhe_types::MixerNodeId, Vec<yinhe_types::AutomationLane>)>],
+    audio_library: &crate::app::audio_library::AudioLibrary,
+    total_ticks: f64,
+    num_tracks: usize,
+) -> (
+    Vec<yinhe_types::AutomationEdit>,
+    Vec<view_ui::AudioEditCmd>,
+    Vec<view_ui::ClipEditCmd>,
+) {
+    // ── Arrangement GPU view (below ruler) ──
+    let gpu_size = gpu_rect.size();
+    // AM lane 交互产生的编辑：GPU scope 内借用 doc.edit/model，出 scope 后统一应用。
+    let mut am_edits: Vec<yinhe_types::AutomationEdit> = Vec::new();
+    // 片段交互命令：同一帧出 scope 后应用（含 undo）。
+    let mut audio_commands: Vec<view_ui::AudioEditCmd> = Vec::new();
+    let mut clip_commands: Vec<view_ui::ClipEditCmd> = Vec::new();
+    // 折叠文件夹的子轨对 GPU/命中测试不可见；与用户手动 eye 显隐合并。
+    let folder_visible = doc.data.model.folder_visible_mask();
+    let effective_visible: Vec<bool> = doc
+        .edit
+        .track_visible
+        .iter()
+        .zip(folder_visible.iter())
+        .map(|(user, folder)| *user && *folder)
+        .collect();
+
+    ui.scope_builder(egui::UiBuilder::new().max_rect(gpu_rect), |ui| {
+        let model = &*doc.data.model;
+        let (def_num, def_den) = model.tempo_map.time_sig_default;
+        let data = ArrangeData {
+            midi: Some(model as &dyn yinhe_types::NoteSource),
+            track_visible: &effective_visible,
+            track_colors: &doc.edit.track_cache.colors,
+            track_info: &doc.edit.track_cache.info,
+            quantize: doc.edit.quantize_arrange.resolved_with_time_sig(
+                doc.edit.arrange_view.base.pixels_per_tick,
+                model.meta.ppq,
+                def_num,
+                def_den,
+                false,
+            ),
+            ppq: model.meta.ppq,
+            bar_line_data: Some((
+                model.meta.ppq,
+                def_num,
+                def_den,
+                model.tempo_map.time_sig_events.as_slice(),
+            )),
+            total_ticks,
+            num_tracks,
+            tracks: &model.tracks,
+            tempo_lane: &model.conductor.tempo,
+            track_mixer_lanes,
+            conductor_track_idx: doc.edit.track_cache.conductor_idx,
+            tempo_map: &model.tempo_map,
+            audio_library,
+            audio_sources: &model.audio_sources,
+            clip_enabled: cfg.clip_enabled,
+        };
+        let mut edit = ArrangeEdit {
+            selected: &mut doc.edit.selected,
+            cursor_tick: &mut doc.edit.cursor_tick,
+            arr_sel_rect: &mut doc.edit.arr_sel_rect,
+            arr_drag_delta,
+            arr_eraser_rect,
+            arr_scale_span,
+            arr_riff_steps,
+            track_selected: &mut doc.edit.track_selected,
+            selection_anchor,
+            info_content,
+            arr_am_views: &mut doc.edit.arr_am_views,
+            am_edits: &mut am_edits,
+            right_tab,
+            selected_audio_clips: &mut doc.edit.selected_audio_clips,
+            audio_commands: &mut audio_commands,
+            clip_commands: &mut clip_commands,
+            menu_actions,
+        };
+        view_ui::show(
+            ui,
+            gpu_size,
+            arr_renderer,
+            arr_render_ctx,
+            &mut doc.edit.arrange_view,
+            row_layout,
+            data,
+            &mut edit,
+            cfg,
+        );
+    });
+    (am_edits, audio_commands, clip_commands)
 }
