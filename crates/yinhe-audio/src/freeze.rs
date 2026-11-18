@@ -189,7 +189,7 @@ mod tests {
         let progress = FreezeProgress::new();
         engine.begin_freeze_capture(0);
         {
-            let capture = engine.freeze_capture.as_mut().expect("capture");
+            let capture = engine.export.freeze_capture.as_mut().expect("capture");
             capture.left.extend_from_slice(&[0.1, 0.2, 0.3]);
             capture.right.extend_from_slice(&[0.4, 0.5, 0.6]);
         }

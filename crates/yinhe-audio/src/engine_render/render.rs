@@ -47,7 +47,7 @@ impl AudioEngine {
         // 重建一次。循环拆块只改**输出内偏移**，不改 mixer 块长。
         self.ensure_block_buffers(frames);
         // 每轨峰值按输出块统计（块内按事件分段，段间取最大）。
-        self.cpu_synth.reset_track_peaks();
+        self.synth.cpu_synth.reset_track_peaks();
         // 音频轨缓冲是覆盖写；整块只清一次，之后各 span 按 offset 写入。
         self.clear_audio_buffers(frames);
         self.loop_wrap_offsets.clear();
@@ -86,8 +86,8 @@ impl AudioEngine {
         self.apply_pause_fade_out(frames);
 
         // 冻结捕获取 pre-LC 干声（通道 DSP 之后、LC gain/insert/send 之前）。
-        if self.freeze_capture.is_some() {
-            let (dense, active_channel) = match self.freeze_capture.as_ref() {
+        if self.export.freeze_capture.is_some() {
+            let (dense, active_channel) = match self.export.freeze_capture.as_ref() {
                 Some(cap) => (cap.dense, active.get(cap.dense).copied().unwrap_or(false)),
                 None => (0, false),
             };
@@ -99,7 +99,7 @@ impl AudioEngine {
             } else {
                 None
             };
-            if let Some(cap) = self.freeze_capture.as_mut() {
+            if let Some(cap) = self.export.freeze_capture.as_mut() {
                 match source {
                     Some((left, right)) => {
                         let n = frames.min(left.len()).min(right.len());
@@ -165,7 +165,7 @@ impl AudioEngine {
 
     /// 本块还能连续渲染多少帧，以及该 span 是否正好撞到 loop end。
     fn next_loop_span(&self, remaining: usize) -> (usize, bool) {
-        if !self.loop_enabled || self.export_mode {
+        if !self.loop_enabled || self.export.export_mode {
             return (remaining, false);
         }
         let end = self.loop_end_sample();
@@ -249,8 +249,10 @@ impl AudioEngine {
 
     /// 渲染一个 CPU 段到混音台通道缓冲（`offset_frames` 是输出块内偏移）。
     fn render_cpu_segment(&mut self, offset_frames: usize, frames: usize) {
-        let Self { cpu_synth, mix, .. } = self;
-        cpu_synth.render_range(mix.mixer.buffers_mut(), offset_frames, frames);
+        let Self { synth, mix, .. } = self;
+        synth
+            .cpu_synth
+            .render_range(mix.mixer.buffers_mut(), offset_frames, frames);
     }
 
     /// 冻结 LC：清空目标 dense 通道并用冻结 PCM 覆盖。
@@ -269,7 +271,7 @@ impl AudioEngine {
             .nodes()
             .filter_map(|node| {
                 let freeze = node.freeze.as_ref()?;
-                if self.freeze_capture.is_some() {
+                if self.export.freeze_capture.is_some() {
                     return None;
                 }
                 let dense = match node.id {

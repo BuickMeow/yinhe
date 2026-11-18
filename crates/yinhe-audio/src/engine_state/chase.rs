@@ -42,7 +42,7 @@ impl AudioEngine {
             //（skip 用 CpuSynth 自己的 [chase_base, cursor) 区间统计）。
             {
                 let skip = {
-                    let backend_skip = self.cpu_synth.chase_skip();
+                    let backend_skip = self.synth.cpu_synth.chase_skip();
                     crate::synth_events::translate_backend_skip(&self.channel_layout, &backend_skip)
                 };
                 let events: Vec<yinhe_synth::ControlEvent> = state
@@ -51,7 +51,7 @@ impl AudioEngine {
                     .filter_map(crate::synth_events::to_backend_control_event)
                     .collect();
                 if !events.is_empty() {
-                    self.cpu_synth.apply_chase(dense, &events);
+                    self.synth.cpu_synth.apply_chase(dense, &events);
                 }
             }
             // 内置音源通道处理段回填（与 xsynth 的 skip 语义一致：已被

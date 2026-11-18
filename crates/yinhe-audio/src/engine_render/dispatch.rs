@@ -18,7 +18,7 @@ macro_rules! route_cpu_event {
     ($engine:ident, $dense:expr, $event:expr) => {{
         {
             let sample = $engine.segment_start_sample;
-            let cs = &mut $engine.cpu_synth;
+            let cs = &mut $engine.synth.cpu_synth;
             let dense = $dense;
             match $event {
                 $crate::audio_model::AudioEvent::Channel(
@@ -182,7 +182,8 @@ impl AudioEngine {
                 cursor = nc;
                 // 先做可听性判断：被力度阈值过滤的音符不是事件边界，
                 // 否则每个哑音都会多触发一次 dispatch（每次都要扫 256 个 key）。
-                let audible = crate::prepare_model::audible_end(&model, note, self.ignore_velocity);
+                let audible =
+                    crate::prepare_model::audible_end(&model, note, self.synth.ignore_velocity);
                 if note.start_tick > tick {
                     if audible.is_none() {
                         // 哑音不是边界：本块内直接越过；到块尾就停，
@@ -258,14 +259,16 @@ impl AudioEngine {
                             let sample = self.segment_start_sample;
                             let end_sample = self.tick_to_sample(end_tick);
                             let vel = note.velocity;
-                            self.cpu_synth.send_event(yinhe_synth::SynthEvent::NoteOn {
-                                track: track as u16,
-                                sample,
-                                channel: dense as u8,
-                                key: key as u8,
-                                velocity: vel,
-                                end_sample,
-                            });
+                            self.synth
+                                .cpu_synth
+                                .send_event(yinhe_synth::SynthEvent::NoteOn {
+                                    track: track as u16,
+                                    sample,
+                                    channel: dense as u8,
+                                    key: key as u8,
+                                    velocity: vel,
+                                    end_sample,
+                                });
                             self.active_notes.push(Reverse(ActiveNote {
                                 key: key as u8,
                                 dense,

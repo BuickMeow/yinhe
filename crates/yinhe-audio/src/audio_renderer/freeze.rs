@@ -59,7 +59,7 @@ impl AudioRenderer {
         self.engine.begin_freeze_capture(dense as usize);
         self.engine
             .handle_command(AudioCommand::Play { from_sample: 0 });
-        self.engine.export_mode = true;
+        self.engine.export.export_mode = true;
         self.freeze = Some(FreezeJob::new(
             node,
             self.engine.sample_rate,
@@ -109,7 +109,7 @@ impl AudioRenderer {
 
     /// 冻结收尾：恢复导出模式、停止引擎并回到干净停止态。
     fn restore_after_freeze(&mut self) {
-        self.engine.export_mode = false;
+        self.engine.export.export_mode = false;
         self.engine.handle_command(AudioCommand::Stop);
         self.clear_buffered_audio(0);
         self.publish_state();

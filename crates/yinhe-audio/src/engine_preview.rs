@@ -11,28 +11,28 @@ use std::path::PathBuf;
 impl AudioEngine {
     /// 注入预览合成器（`init_engine` 创建后调用；测试可不设置）。
     pub(crate) fn set_preview_engine(&mut self, preview: PreviewEngine) {
-        self.preview = Some(preview);
+        self.synth.preview = Some(preview);
     }
 
     /// 是否有预览音在响（含待触发与余音）。
     pub(crate) fn previewing(&self) -> bool {
-        self.preview.as_ref().is_some_and(|p| p.previewing())
+        self.synth.preview.as_ref().is_some_and(|p| p.previewing())
     }
 
     pub(crate) fn preview_notes(&mut self, notes: Vec<PreviewNoteIn>, exclusive: bool) {
-        if let Some(p) = self.preview.as_mut() {
+        if let Some(p) = self.synth.preview.as_mut() {
             p.preview_notes(notes, exclusive);
         }
     }
 
     pub(crate) fn stop_preview_all(&mut self) {
-        if let Some(p) = self.preview.as_mut() {
+        if let Some(p) = self.synth.preview.as_mut() {
             p.stop_all();
         }
     }
 
     pub(crate) fn stop_preview_key(&mut self, key: u8) {
-        if let Some(p) = self.preview.as_mut() {
+        if let Some(p) = self.synth.preview.as_mut() {
             p.stop_key(key);
         }
     }
@@ -43,7 +43,7 @@ impl AudioEngine {
         denses: &[u32],
         paths: &[PathBuf],
     ) -> Result<(), String> {
-        match self.preview.as_mut() {
+        match self.synth.preview.as_mut() {
             Some(p) => p.load_yinhe_soundfonts(denses, paths),
             None => Ok(()),
         }
@@ -53,7 +53,7 @@ impl AudioEngine {
     /// 混入试听预览；返回 true 表示本块写了预览音频（调用方据此保守地把
     /// 混音台通道置为活跃，避免空闲通道跳过误伤预览）。
     pub(crate) fn inject_preview(&mut self, frames: usize) -> bool {
-        let Some(preview) = self.preview.as_mut() else {
+        let Some(preview) = self.synth.preview.as_mut() else {
             return false;
         };
         if preview.previewing() {

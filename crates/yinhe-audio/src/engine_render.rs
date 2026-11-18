@@ -21,7 +21,7 @@ impl AudioEngine {
         active.clear();
         active.resize(n, true);
         {
-            let cs = &mut self.cpu_synth;
+            let cs = &mut self.synth.cpu_synth;
             cs.refresh_channel_mask();
             let mask = *cs.channel_mask();
             cs.clear_channel_mask();

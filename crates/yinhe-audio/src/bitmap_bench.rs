@@ -40,7 +40,7 @@ fn b1_mixer_idle_channels() {
     synth
         .load_dense_soundfonts_many(&(0..channels as u32).collect::<Vec<_>>(), &[SF2.into()])
         .expect("sf");
-    engine.cpu_synth = synth;
+    engine.synth.cpu_synth = synth;
     let start = (415.38 * 48_000.0) as u64;
     engine.handle_command(crate::spawn::AudioCommand::Play { from_sample: start });
 
@@ -471,7 +471,7 @@ fn b7_pause_seek_play() {
     let mut cs = yinhe_synth::CpuSynth::new(sr);
     cs.load_dense_soundfonts_many(&denses, &[std::path::PathBuf::from(GRAND)])
         .expect("sf");
-    engine.cpu_synth = cs;
+    engine.synth.cpu_synth = cs;
     eprintln!(
         "\n[B7] Echoes 时长={:.1}s 轨道={} 通道={} 音符={}",
         engine.duration_samples() as f64 / sr as f64,
@@ -579,7 +579,7 @@ fn b10_max_note_len_zero() {
     let denses: Vec<u32> = (0..crate::spawn::channels_for_model(&model).num_channels()).collect();
     cs.load_dense_soundfonts_many(&denses, &[std::path::PathBuf::from(GRAND)])
         .expect("sf");
-    engine.cpu_synth = cs;
+    engine.synth.cpu_synth = cs;
     let mut buf = vec![0.0f32; 512 * 2];
     for secs in [1.263f64, 2.842, 3.474, 10.737] {
         let target = (secs * sr as f64) as u64;

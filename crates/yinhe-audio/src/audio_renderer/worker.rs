@@ -139,11 +139,13 @@ impl AudioRenderer {
                             .filter(|d| *d != u32::MAX && (*d as usize) < yinhe_synth::MAX_CHANNELS)
                             .collect();
                         self.engine
+                            .synth
                             .cpu_synth
                             .set_interpolation(self.interpolation.code());
                         if !denses.is_empty() {
                             match self
                                 .engine
+                                .synth
                                 .cpu_synth
                                 .load_dense_soundfonts_many(&denses, &cpu_paths)
                             {

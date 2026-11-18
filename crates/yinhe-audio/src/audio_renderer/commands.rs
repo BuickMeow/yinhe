@@ -122,7 +122,7 @@ impl AudioRenderer {
             }
             AudioCommand::SetIgnoreVelocity { threshold } => {
                 // dispatch 时逐音符实时过滤：改阈值立即生效，不需要重建任何缓存。
-                self.engine.ignore_velocity = threshold;
+                self.engine.synth.ignore_velocity = threshold;
             }
             AudioCommand::ReloadNotes { model } => {
                 // 全量重建优先于只更新音符 —— 丢弃 pending UpdateNotes

@@ -24,6 +24,30 @@ pub(crate) const ENGINE_BLOCK_FRAMES: usize = 512;
 /// 引擎任何路径（实时/导出）的块长都不得超过该值。
 pub const MAX_ENGINE_BLOCK_FRAMES: usize = 4096;
 
+/// 合成后端与音源参数（唯一后端 YinheCpu）。
+pub(crate) struct SynthState {
+    /// yinhe-synth CPU 合成器（引擎构造时即创建）。
+    pub(crate) cpu_synth: yinhe_synth::CpuSynth,
+    /// 当前 per-key layer 设置（`SetLayerCount` 保存）。
+    pub(crate) layer_count: Option<usize>,
+    /// 采样插值方式（CpuSynth 创建/更新时应用）。
+    pub(crate) interpolation: Interpolation,
+    /// 忽略力度 ≤ 该值的音符（0 = 不忽略）。
+    pub(crate) ignore_velocity: u8,
+    /// 最大复音数。
+    pub(crate) max_voices: usize,
+    /// 音符试听预览合成器（独立实例，不经主引擎 voice）。
+    pub(crate) preview: Option<crate::preview_engine::PreviewEngine>,
+}
+
+/// 导出/冻结运行态。
+pub(crate) struct ExportState {
+    /// 导出模式：忽略走带循环（导出必须线性跑完整时间轴）。
+    pub(crate) export_mode: bool,
+    /// 冻结捕获中的目标缓冲。
+    pub(crate) freeze_capture: Option<FreezeCapture>,
+}
+
 /// 混音台运行态：处理图、持久化参数副本、乐器求和暂存与内置 DSP。
 pub(crate) struct MixerState {
     /// 混音处理图：通道数 = compacted 通道数，dense 索引与通道布局对齐。
@@ -59,6 +83,10 @@ pub(crate) struct PluginHostState {
 
 /// Core MIDI synthesis engine.  Owned by the renderer thread.
 pub(crate) struct AudioEngine {
+    /// 合成后端与音源参数。
+    pub(crate) synth: SynthState,
+    /// 导出/冻结运行态。
+    pub(crate) export: ExportState,
     /// 混音台运行态（处理图 / 参数 / 暂存 / DSP）。
     pub(crate) mix: MixerState,
     /// 插件宿主：乐器链、insert/乐器回收队列、音频素材、乐器预览。
@@ -75,16 +103,6 @@ pub(crate) struct AudioEngine {
     /// UI 侧 cpal 回调用 `consumer_abs - offset` 得到逻辑播放位置，循环回绕
     /// 后播放头才不会永久领先/落后一个 ring。seek/stop 时归零。
     pub(crate) loop_wrap_offset: u64,
-    /// 当前 per-key layer 设置（`SetLayerCount` 保存；worker 创建 yinhe
-    /// 合成器后据此应用——创建晚于命令，不能只在线应用）。
-    pub(crate) layer_count: Option<usize>,
-    /// 采样插值方式（CpuSynth 创建/更新时应用）。
-    pub(crate) interpolation: Interpolation,
-    /// 忽略力度 ≤ 该值的音符（0 = 不忽略）。dispatch 时逐音符实时判断，
-    /// 改阈值不需要重建任何缓存。
-    pub(crate) ignore_velocity: u8,
-    /// 最大复音数（`SetMaxVoices` 保存；worker 创建合成器后补应用）。
-    pub(crate) max_voices: usize,
     /// dispatch 基准（tick 域）：与 sample_position 同步推进（每块末更新，
     /// seek/load 时由 sample→tick 初始化）。事件比较全在 tick 域。
     pub(crate) current_tick: u32,
@@ -138,21 +156,9 @@ pub(crate) struct AudioEngine {
     ///（cc_events 已被新 PrepareModel 替换的旧结果）。
     pub(crate) chase_generation: u64,
 
-    /// 音符试听预览合成器（独立合成器实例，不经主引擎 voice）。
-    /// 预览音频累加进 mixer 通道缓冲，与播放共用同一条通道 DSP + 混音台链路，
-    /// 因此试听反映**当前**的 CC7/10/11/71/74 与推子/master/insert 状态。
-    /// 由 `init_engine` 在创建引擎后按后端注入（测试可不设置）。
-    pub(crate) preview: Option<crate::preview_engine::PreviewEngine>,
-
-    /// yinhe-synth CPU 合成器（方案 C 唯一后端，引擎构造时即创建）。
-    pub(crate) cpu_synth: yinhe_synth::CpuSynth,
     /// 当前 dispatch 段起点的绝对 sample：CpuSynth 的事件按 sample 生效，
     /// dispatch 用它作为事件的 sample 依据（每段渲染前由 render 循环更新）。
     pub(crate) segment_start_sample: u64,
-    /// 导出模式：忽略走带循环（导出必须线性跑完整时间轴）。
-    pub(crate) export_mode: bool,
-    /// 冻结离线渲染的捕获状态；Some 时每块复制目标 dense 的干声。
-    pub(crate) freeze_capture: Option<FreezeCapture>,
     /// 走带循环开关（tick 域；`loop_end_tick <= loop_start_tick` 视为关闭）。
     pub(crate) loop_enabled: bool,
     pub(crate) loop_start_tick: u32,
@@ -211,17 +217,17 @@ impl FreezeCapture {
 impl AudioEngine {
     /// 开始捕获某条 LC 的 pre-LC 干声（冻结离线渲染用）。
     pub(crate) fn begin_freeze_capture(&mut self, dense: usize) {
-        self.freeze_capture = Some(FreezeCapture::new(dense));
+        self.export.freeze_capture = Some(FreezeCapture::new(dense));
     }
 
     /// 结束捕获并取回 PCM。未开始捕获返回 None。
     pub(crate) fn finish_freeze_capture(&mut self) -> Option<FreezeCapture> {
-        self.freeze_capture.take()
+        self.export.freeze_capture.take()
     }
 
     /// 放弃捕获（取消冻结）。
     pub(crate) fn cancel_freeze_capture(&mut self) {
-        self.freeze_capture = None;
+        self.export.freeze_capture = None;
     }
 }
 
@@ -238,6 +244,24 @@ impl AudioEngine {
             let mut mixer = MixerGraph::new(ENGINE_BLOCK_FRAMES);
             mixer.resize(compacted, ENGINE_BLOCK_FRAMES, &[]);
             Self {
+                synth: SynthState {
+                    cpu_synth: {
+                        let mut cs = yinhe_synth::CpuSynth::new(sample_rate);
+                        cs.set_interpolation(Interpolation::Linear.code());
+                        cs.set_layer_count(Some(4));
+                        cs.set_max_voices(crate::DEFAULT_MAX_VOICES);
+                        cs
+                    },
+                    layer_count: Some(4),
+                    interpolation: Interpolation::Linear,
+                    ignore_velocity: 1,
+                    max_voices: crate::DEFAULT_MAX_VOICES,
+                    preview: None,
+                },
+                export: ExportState {
+                    export_mode: false,
+                    freeze_capture: None,
+                },
                 mix: MixerState {
                     mixer,
                     mixer_params: MixerParams::default(),
@@ -260,10 +284,6 @@ impl AudioEngine {
                 sample_rate,
                 sample_position: 0,
                 loop_wrap_offset: 0,
-                layer_count: Some(4),
-                interpolation: Interpolation::Linear,
-                ignore_velocity: 1,
-                max_voices: crate::DEFAULT_MAX_VOICES,
                 current_tick: 0,
                 playing: false,
                 pause_fade_remaining: 0,
@@ -285,17 +305,7 @@ impl AudioEngine {
                 pending_play_from_sample: None,
                 automation_density: 1,
                 chase_generation: 0,
-                preview: None,
-                cpu_synth: {
-                    let mut cs = yinhe_synth::CpuSynth::new(sample_rate);
-                    cs.set_interpolation(Interpolation::Linear.code());
-                    cs.set_layer_count(Some(4));
-                    cs.set_max_voices(crate::DEFAULT_MAX_VOICES);
-                    cs
-                },
                 segment_start_sample: 0,
-                export_mode: false,
-                freeze_capture: None,
                 loop_enabled: false,
                 loop_start_tick: 0,
                 loop_end_tick: 0,
@@ -379,7 +389,7 @@ impl AudioEngine {
                 *slot = (0.0, 0.0);
                 continue;
             }
-            *slot = self.cpu_synth.track_peak(i);
+            *slot = self.synth.cpu_synth.track_peak(i);
         }
     }
 
@@ -390,7 +400,7 @@ impl AudioEngine {
     /// 当前活跃 voice 数（当前合成后端）。
     /// 导出尾音判定用它（`export.rs`）：后端切换后语义保持不变。
     pub(crate) fn voice_count(&self) -> u64 {
-        self.cpu_synth.voice_count() as u64
+        self.synth.cpu_synth.voice_count() as u64
     }
 
     /// 把每轨 LC 的 dense 映射推给 CPU 合成器。
@@ -418,7 +428,7 @@ impl AudioEngine {
                 }
             })
             .collect();
-        self.cpu_synth.set_track_output_dense(map);
+        self.synth.cpu_synth.set_track_output_dense(map);
     }
 
     pub(crate) fn model_loaded(&self) -> bool {
@@ -433,8 +443,8 @@ impl AudioEngine {
     }
 
     pub(crate) fn set_max_voices(&mut self, max: Option<usize>) {
-        self.max_voices = max.unwrap_or(crate::DEFAULT_MAX_VOICES);
-        self.cpu_synth.set_max_voices(self.max_voices);
+        self.synth.max_voices = max.unwrap_or(crate::DEFAULT_MAX_VOICES);
+        self.synth.cpu_synth.set_max_voices(self.synth.max_voices);
     }
 
     pub(crate) fn set_pending_play(&mut self, from_sample: u64) {
@@ -445,8 +455,8 @@ impl AudioEngine {
         // 保存设置：yinhe CPU 合成器在 worker 里**异步创建**（音色库加载
         // 完成时），创建时刻晚于本命令 → 必须在创建后重新应用（否则设置被
         // 静默丢弃、合成器永远用默认 layer=4；xsynth 因内部立即应用而无此问题）。
-        self.layer_count = count;
-        self.cpu_synth.set_layer_count(count);
+        self.synth.layer_count = count;
+        self.synth.cpu_synth.set_layer_count(count);
     }
 
     pub(crate) fn handle_command(&mut self, cmd: AudioCommand) {
@@ -505,7 +515,7 @@ impl AudioEngine {
                 self.set_layer_count(count);
             }
             AudioCommand::SetIgnoreVelocity { threshold } => {
-                self.ignore_velocity = threshold;
+                self.synth.ignore_velocity = threshold;
             }
             AudioCommand::SetMaxVoices { max } => {
                 self.set_max_voices(max);
@@ -564,8 +574,8 @@ impl AudioEngine {
     /// 采样插值方式（须在加载音色库之前设置；运行中切换不追溯已加载的
     /// 音色库，重建音频/重新加载后生效）。
     pub(crate) fn set_interpolation(&mut self, interpolation: Interpolation) {
-        self.interpolation = interpolation;
-        self.cpu_synth.set_interpolation(interpolation.code());
+        self.synth.interpolation = interpolation;
+        self.synth.cpu_synth.set_interpolation(interpolation.code());
     }
 }
 
