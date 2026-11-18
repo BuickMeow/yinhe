@@ -3,12 +3,8 @@
 use std::io::Cursor;
 
 use serde::{Deserialize, Serialize};
-use yinhe_mixer::{
-    CHANNEL_COUNT, InsertRef, MasterParams, MixerNode, MixerParams, RackParams, StripParams,
-};
-use yinhe_types::{
-    ChannelId, ChannelSource, LogicalChannelId, RackId, RackOutputMode, TRACK_LC_BASE,
-};
+use yinhe_mixer::{CHANNEL_COUNT, InsertRef, MasterParams, MixerParams, RackParams, StripParams};
+use yinhe_types::{ChannelSource, RackId, RackOutputMode};
 
 use crate::codec::{deserialize_postcard, encode_versioned_section, serialize_postcard};
 use crate::error::YinError;
@@ -62,13 +58,8 @@ struct MixerParamsV9 {
 
 impl MixerParamsV9 {
     fn into_current(self) -> MixerParams {
-        // 方案 C：LC ID 是独立 u16 身份，按分配顺序发放；角色写入 source 字段。
-        let mut next_lc = TRACK_LC_BASE;
-        let mut alloc = || {
-            let id = next_lc;
-            next_lc = next_lc.saturating_add(1);
-            LogicalChannelId(id)
-        };
+        // 方案 C：LC ID 由 `ensure_lc_node` 统一分配（与 ensure_len 同一条路径），
+        // 迁移只负责把 v9 的 strip/insert/instruments 填进去。
         let audio_count = [
             self.audio_channels.len(),
             self.audio_inserts.len(),
@@ -79,58 +70,38 @@ impl MixerParamsV9 {
         .max()
         .unwrap_or(0);
 
-        let racks = (0..CHANNEL_COUNT)
-            .map(|i| RackParams {
-                id: RackId(i as u16),
-                instruments: self.instruments.get(i).cloned().unwrap_or_default(),
-                output_mode: RackOutputMode::Shared,
-            })
-            .collect();
-        let channels: Vec<MixerNode> = (0..CHANNEL_COUNT)
-            .map(|i| MixerNode {
-                id: ChannelId::Lc(alloc()),
-                source: ChannelSource::Midi(i as u8),
-                strip: self.channels.get(i).copied().unwrap_or_default(),
-                inserts: self.channel_inserts.get(i).cloned().unwrap_or_default(),
-                // 方案 C 没有 Bus：v9 的 bus 发送/主输出直接丢弃。
-                output: None,
-                automation: Vec::new(),
-                freeze: None,
-            })
-            .collect();
-        let audio_channels: Vec<MixerNode> = (0..audio_count)
-            .map(|i| MixerNode {
-                id: ChannelId::Lc(alloc()),
-                source: ChannelSource::Audio(i as u16),
-                strip: self.audio_channels.get(i).copied().unwrap_or_default(),
-                inserts: self.audio_inserts.get(i).cloned().unwrap_or_default(),
-                output: None,
-                automation: Vec::new(),
-                freeze: None,
-            })
-            .collect();
-        let master = MixerNode {
-            id: ChannelId::Master,
-            source: ChannelSource::Master,
-            strip: StripParams {
-                gain: self.master.gain,
-                ..StripParams::default()
-            },
-            inserts: self.master_inserts,
-            output: None,
-            automation: Vec::new(),
-            freeze: None,
+        let mut mixer = MixerParams {
+            racks: (0..CHANNEL_COUNT)
+                .map(|i| RackParams {
+                    id: RackId(i as u16),
+                    instruments: self.instruments.get(i).cloned().unwrap_or_default(),
+                    output_mode: RackOutputMode::Shared,
+                })
+                .collect(),
+            ..MixerParams::default()
         };
-        let nodes: Vec<MixerNode> = channels.into_iter().chain(audio_channels).collect();
-        MixerParams {
-            aps: Vec::new(),
-            channel_sends: Vec::new(),
-            racks,
-            nodes,
-            master,
-            next_instrument_uid: self.next_instrument_uid.max(1),
-            next_lc_id: LogicalChannelId(next_lc),
+        for i in 0..CHANNEL_COUNT {
+            mixer.ensure_lc_node(ChannelSource::Midi(i as u8));
+            if let Some(node) = mixer.midi_node_mut(i as u8) {
+                node.strip = self.channels.get(i).copied().unwrap_or_default();
+                node.inserts = self.channel_inserts.get(i).cloned().unwrap_or_default();
+                // 方案 C 没有 Bus：v9 的 bus 发送/主输出直接丢弃。
+            }
         }
+        for i in 0..audio_count {
+            mixer.ensure_lc_node(ChannelSource::Audio(i as u16));
+            if let Some(node) = mixer.audio_node_mut(i as u16) {
+                node.strip = self.audio_channels.get(i).copied().unwrap_or_default();
+                node.inserts = self.audio_inserts.get(i).cloned().unwrap_or_default();
+            }
+        }
+        mixer.master.strip = StripParams {
+            gain: self.master.gain,
+            ..StripParams::default()
+        };
+        mixer.master.inserts = self.master_inserts;
+        mixer.next_instrument_uid = self.next_instrument_uid.max(1);
+        mixer
     }
 }
 
