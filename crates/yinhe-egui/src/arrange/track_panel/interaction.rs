@@ -69,95 +69,62 @@ fn track_context_menu(
     let track_idx = track_info.get(idx).map(|t| t.index).unwrap_or(0);
     let is_conductor = conductor_track_idx == Some(track_idx);
 
-    if !is_conductor
-        && ui
-            .add(crate::widgets::menu::menu_item_action(
-                ui,
-                false,
-                t!("arrange.rename_track").as_ref(),
-                shortcuts::ACTION_TRACK_RENAME,
-            ))
-            .clicked()
-    {
-        if let Some(info) = track_info.get(idx) {
-            crate::widgets::track_rename::begin(ui, idx, &info.name);
-        }
-        ui.close();
-    }
-    if ui
-        .add(crate::widgets::menu::menu_item_action(
+    if !is_conductor {
+        crate::widgets::menu::action(
             ui,
-            false,
-            t!("arrange.track_properties").as_ref(),
-            shortcuts::ACTION_TRACK_PROPERTIES,
-        ))
-        .clicked()
-    {
-        actions.push(TrackAction::ShowProperties { idx });
-        ui.close();
+            t!("arrange.rename_track").to_string(),
+            shortcuts::ACTION_TRACK_RENAME,
+            |ui| {
+                if let Some(info) = track_info.get(idx) {
+                    crate::widgets::track_rename::begin(ui, idx, &info.name);
+                }
+            },
+        );
     }
-    if is_conductor
-        && ui
-            .add(crate::widgets::menu::menu_item_action(
-                ui,
-                false,
-                t!("arrange.open_device_chain").as_ref(),
-                "",
-            ))
-            .clicked()
-    {
-        actions.push(TrackAction::OpenMasterDock);
-        ui.close();
+    crate::widgets::menu::action(
+        ui,
+        t!("arrange.track_properties").to_string(),
+        shortcuts::ACTION_TRACK_PROPERTIES,
+        |_| actions.push(TrackAction::ShowProperties { idx }),
+    );
+    if is_conductor {
+        crate::widgets::menu::action(ui, t!("arrange.open_device_chain").to_string(), "", |_| {
+            actions.push(TrackAction::OpenMasterDock)
+        });
     }
     let track_kind = tracks.get(idx).map(|t| t.kind);
     let is_folder = track_kind == Some(yinhe_core::TrackKind::Folder);
-    if is_folder
-        && ui
-            .add(crate::widgets::menu::menu_item_action(
-                ui,
-                false,
-                t!("arrange.ungroup_folder").as_ref(),
-                "",
-            ))
-            .clicked()
-    {
-        actions.push(TrackAction::UngroupTrack { idx });
-        ui.close();
-    } else if !is_folder && !is_conductor && !track_selected.is_empty() {
+    if is_folder {
+        crate::widgets::menu::action(ui, t!("arrange.ungroup_folder").to_string(), "", |_| {
+            actions.push(TrackAction::UngroupTrack { idx })
+        });
+    } else if !is_conductor && !track_selected.is_empty() {
         let mut indices: Vec<usize> = track_selected.iter().map(|&t| t as usize).collect();
         if !indices.contains(&idx) {
             indices.push(idx);
         }
         indices.sort_unstable();
         indices.dedup();
-        if ui
-            .add(crate::widgets::menu::menu_item_action(
-                ui,
-                false,
-                t!("arrange.group_tracks").as_ref(),
-                shortcuts::ACTION_TRACK_GROUP,
-            ))
-            .clicked()
-        {
-            actions.push(TrackAction::GroupTracks { indices });
-            ui.close();
-        }
+        crate::widgets::menu::action(
+            ui,
+            t!("arrange.group_tracks").to_string(),
+            shortcuts::ACTION_TRACK_GROUP,
+            |_| {
+                actions.push(TrackAction::GroupTracks {
+                    indices: indices.clone(),
+                })
+            },
+        );
     }
     ui.separator();
 
     if let Some(lane_idx) = sub {
-        if ui
-            .add(crate::widgets::menu::menu_item_action(
-                ui,
-                false,
-                t!("arrange.delete_automation"),
-                shortcuts::ACTION_DELETE_AUTOMATION,
-            ))
-            .clicked()
-        {
-            actions.push(TrackAction::DeleteAutomation { idx, lane_idx });
-            ui.close();
-        }
+        crate::widgets::menu::action(
+            ui,
+            t!("arrange.delete_automation").to_string(),
+            shortcuts::ACTION_DELETE_AUTOMATION,
+            |_| actions.push(TrackAction::DeleteAutomation { idx, lane_idx }),
+        );
         return;
     }
 
@@ -165,104 +132,69 @@ fn track_context_menu(
         let folder_blocks_reorder = tracks
             .iter()
             .any(|t| t.kind == yinhe_core::TrackKind::Folder);
-        if ui
-            .add(crate::widgets::menu::menu_item_action(
+        crate::widgets::menu::action(
+            ui,
+            t!("arrange.add_below").to_string(),
+            shortcuts::ACTION_TRACK_ADD_BELOW,
+            |_| {
+                actions.push(TrackAction::AddTrack {
+                    after_idx: Some(idx),
+                })
+            },
+        );
+        crate::widgets::menu::action(
+            ui,
+            t!("arrange.add_above").to_string(),
+            shortcuts::ACTION_TRACK_ADD_ABOVE,
+            |_| {
+                actions.push(TrackAction::AddTrack {
+                    after_idx: Some(idx.saturating_sub(1)),
+                })
+            },
+        );
+        ui.separator();
+        if !folder_blocks_reorder && idx > 0 && conductor_track_idx != Some((idx - 1) as u16) {
+            crate::widgets::menu::action(
                 ui,
-                false,
-                t!("arrange.add_below"),
-                shortcuts::ACTION_TRACK_ADD_BELOW,
-            ))
-            .clicked()
-        {
-            actions.push(TrackAction::AddTrack {
-                after_idx: Some(idx),
-            });
-            ui.close();
+                t!("arrange.move_up").to_string(),
+                shortcuts::ACTION_TRACK_MOVE_UP,
+                |_| actions.push(TrackAction::MoveUp { idx }),
+            );
         }
-        if ui
-            .add(crate::widgets::menu::menu_item_action(
+        if !folder_blocks_reorder && idx < num_tracks.saturating_sub(1) {
+            crate::widgets::menu::action(
                 ui,
-                false,
-                t!("arrange.add_above"),
-                shortcuts::ACTION_TRACK_ADD_ABOVE,
-            ))
-            .clicked()
-        {
-            actions.push(TrackAction::AddTrack {
-                after_idx: Some(idx.saturating_sub(1)),
-            });
-            ui.close();
+                t!("arrange.move_down").to_string(),
+                shortcuts::ACTION_TRACK_MOVE_DOWN,
+                |_| actions.push(TrackAction::MoveDown { idx }),
+            );
         }
         ui.separator();
-        if !folder_blocks_reorder
-            && idx > 0
-            && conductor_track_idx != Some((idx - 1) as u16)
-            && ui
-                .add(crate::widgets::menu::menu_item_action(
-                    ui,
-                    false,
-                    t!("arrange.move_up"),
-                    shortcuts::ACTION_TRACK_MOVE_UP,
-                ))
-                .clicked()
-        {
-            actions.push(TrackAction::MoveUp { idx });
-            ui.close();
-        }
-        if !folder_blocks_reorder
-            && idx < num_tracks - 1
-            && ui
-                .add(crate::widgets::menu::menu_item_action(
-                    ui,
-                    false,
-                    t!("arrange.move_down"),
-                    shortcuts::ACTION_TRACK_MOVE_DOWN,
-                ))
-                .clicked()
-        {
-            actions.push(TrackAction::MoveDown { idx });
-            ui.close();
-        }
-        ui.separator();
-        if ui
-            .add(crate::widgets::menu::menu_item_action(
-                ui,
-                false,
-                t!("arrange.delete_track"),
-                shortcuts::ACTION_TRACK_DELETE,
-            ))
-            .clicked()
-        {
-            actions.push(TrackAction::RemoveTrack { idx });
-            ui.close();
-        }
+        crate::widgets::menu::action(
+            ui,
+            t!("arrange.delete_track").to_string(),
+            shortcuts::ACTION_TRACK_DELETE,
+            |_| actions.push(TrackAction::RemoveTrack { idx }),
+        );
         ui.separator();
         // 「添加自动化」：自动化属于设备（XSynth / 插件），不属于音轨。
-        if ui
-            .add(crate::widgets::menu::menu_item_action(
-                ui,
-                false,
-                t!("arrange.add_automation"),
-                shortcuts::ACTION_ADD_AUTOMATION,
-            ))
-            .clicked()
-        {
-            actions.push(TrackAction::OpenAutomationPicker { idx });
-            ui.close();
-        }
-    } else if ui
-        .add(crate::widgets::menu::menu_item_action(
+        crate::widgets::menu::action(
             ui,
-            false,
-            t!("arrange.add_below"),
+            t!("arrange.add_automation").to_string(),
+            shortcuts::ACTION_ADD_AUTOMATION,
+            |_| actions.push(TrackAction::OpenAutomationPicker { idx }),
+        );
+    } else {
+        crate::widgets::menu::action(
+            ui,
+            t!("arrange.add_below").to_string(),
             shortcuts::ACTION_TRACK_ADD_BELOW,
-        ))
-        .clicked()
-    {
-        actions.push(TrackAction::AddTrack {
-            after_idx: Some(idx),
-        });
-        ui.close();
+            |_| {
+                actions.push(TrackAction::AddTrack {
+                    after_idx: Some(idx),
+                })
+            },
+        );
     }
 }
 

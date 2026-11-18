@@ -510,57 +510,27 @@ fn header_context_menu(
 ) {
     let ch = context;
     crate::widgets::menu::context_menu(resp, 180.0, |ui| {
-        if ui
-            .add(crate::widgets::menu::menu_item_action(
-                ui,
-                false,
-                t!("panel.section.channel").as_ref(),
-                "",
-            ))
-            .clicked()
-        {
-            focus_channel_info(app, ch);
-            ui.close();
-        }
-        if ui
-            .add(crate::widgets::menu::menu_item_action(
-                ui,
-                false,
-                t!("arrange.open_device_chain").as_ref(),
-                "",
-            ))
-            .clicked()
-        {
-            open_dock_context(app, idx, context);
-            ui.close();
-        }
+        crate::widgets::menu::action(ui, t!("panel.section.channel").to_string(), "", |_| {
+            focus_channel_info(app, ch)
+        });
+        crate::widgets::menu::action(ui, t!("arrange.open_device_chain").to_string(), "", |_| {
+            open_dock_context(app, idx, context)
+        });
         ui.separator();
-        if let Some(action) = volume_automation(ch)
-            && ui
-                .add(crate::widgets::menu::menu_item_action(
-                    ui,
-                    false,
-                    t!("mix.add_volume_automation").as_ref(),
-                    "",
-                ))
-                .clicked()
-        {
-            actions.push(action);
-            ui.close();
+        if let Some(action) = volume_automation(ch) {
+            crate::widgets::menu::action(
+                ui,
+                t!("mix.add_volume_automation").to_string(),
+                "",
+                |_| actions.push(action),
+            );
         }
         if ch != MixerChannelId::Master
             && let Some(action) = pan_automation(ch)
-            && ui
-                .add(crate::widgets::menu::menu_item_action(
-                    ui,
-                    false,
-                    t!("mix.add_pan_automation").as_ref(),
-                    "",
-                ))
-                .clicked()
         {
-            actions.push(action);
-            ui.close();
+            crate::widgets::menu::action(ui, t!("mix.add_pan_automation").to_string(), "", |_| {
+                actions.push(action)
+            });
         }
         let mixed_lc = {
             let target = app.workspace.documents[idx].mixer.channel_id_for_ui(ch);
@@ -583,63 +553,30 @@ fn header_context_menu(
                 .is_some_and(|node| node.freeze.is_some());
             let stale = app.workspace.documents[idx].freeze_is_stale(node);
             ui.separator();
-            if frozen
-                && ui
-                    .add(crate::widgets::menu::menu_item_action(
-                        ui,
-                        false,
-                        t!("mix.unfreeze").as_ref(),
-                        "",
-                    ))
-                    .clicked()
-            {
-                actions.push(MixAction::UnfreezeChannel { node });
-                ui.close();
+            if frozen {
+                crate::widgets::menu::action(ui, t!("mix.unfreeze").to_string(), "", |_| {
+                    actions.push(MixAction::UnfreezeChannel { node })
+                });
             }
             let label = if stale {
                 t!("mix.refreeze")
             } else {
                 t!("mix.freeze")
             };
-            if ui
-                .add(crate::widgets::menu::menu_item_action(
-                    ui,
-                    false,
-                    label.as_ref(),
-                    "",
-                ))
-                .clicked()
-            {
-                actions.push(MixAction::FreezeChannel { channel: ch });
-                ui.close();
-            }
+            crate::widgets::menu::action(ui, label.to_string(), "", |_| {
+                actions.push(MixAction::FreezeChannel { channel: ch })
+            });
         }
         ui.separator();
-        if ui
-            .add(crate::widgets::menu::menu_item_action(
-                ui,
-                false,
-                t!("mix.reset_gain").as_ref(),
-                "",
-            ))
-            .clicked()
-        {
-            actions.push(reset_gain_action(app, idx, ch));
-            ui.close();
-        }
-        if ch != MixerChannelId::Master
-            && ui
-                .add(crate::widgets::menu::menu_item_action(
-                    ui,
-                    false,
-                    t!("mix.reset_pan").as_ref(),
-                    "",
-                ))
-                .clicked()
-            && let Some(action) = reset_pan_action(app, idx, ch)
-        {
-            actions.push(action);
-            ui.close();
+        crate::widgets::menu::action(ui, t!("mix.reset_gain").to_string(), "", |_| {
+            actions.push(reset_gain_action(app, idx, ch))
+        });
+        if ch != MixerChannelId::Master {
+            crate::widgets::menu::action(ui, t!("mix.reset_pan").to_string(), "", |_| {
+                if let Some(action) = reset_pan_action(app, idx, ch) {
+                    actions.push(action);
+                }
+            });
         }
     });
 }

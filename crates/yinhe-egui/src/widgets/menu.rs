@@ -44,6 +44,25 @@ pub(crate) fn menu_item_action(
     }
 }
 
+/// 右键菜单项：点击后执行 `on_click` 并关闭菜单。
+///
+/// 统一「加菜单项 → clicked → 执行 → ui.close()」的样板，避免每个菜单
+/// 重复五段式代码，也保证所有右键菜单的关闭语义一致。
+pub(crate) fn action(
+    ui: &mut egui::Ui,
+    text: impl Into<egui::WidgetText>,
+    action_id: &str,
+    on_click: impl FnOnce(&mut egui::Ui),
+) {
+    if ui
+        .add(menu_item_action(ui, false, text, action_id))
+        .clicked()
+    {
+        on_click(ui);
+        ui.close();
+    }
+}
+
 /// 固定宽度的右键菜单。
 ///
 /// egui 0.37 的 `Response::context_menu` 不再读取 `spacing.menu_width`，弹窗内容
