@@ -12,6 +12,15 @@
 
 use crate::meter::{MeterReading, MeterTap, SampleReading, SampleTap};
 use crate::params::{MasterParams, StripParams};
+mod delay;
+mod process;
+mod send;
+
+pub(crate) use delay::DelayLine;
+pub(crate) use process::{apply_channel_output, process_insert_chain};
+pub use send::{ChannelSendTarget, ResolvedChannelSend};
+pub(crate) use send::{channel_send_allowed, route_channel_send_delayed};
+
 use crate::strip::StripState;
 
 /// insert 效果器抽象。由 yinhe-audio 把 CLAP（未来 VST3）处理器适配进来。
@@ -59,104 +68,6 @@ pub trait InsertProcessor: Send {
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
 }
 
-/// 任意通道发送的目标（方案 C）：另一条 dense 通道，或 Master。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ChannelSendTarget {
-    Channel(usize),
-    Master,
-}
-
-/// 已解析到 dense 下标的任意通道发送。
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ResolvedChannelSend {
-    pub target: ChannelSendTarget,
-    pub amount: f32,
-    pub pre_fader: bool,
-}
-
-/// 单通道延迟线（PDC 对齐）：先读后写，`delay` 个样本后输出输入，
-/// 起始输出为静音。`delay == 0` 时直通（不分配缓冲）。
-struct DelayLine {
-    left: Vec<f32>,
-    right: Vec<f32>,
-    write: usize,
-}
-
-impl DelayLine {
-    fn new() -> Self {
-        Self {
-            left: Vec::new(),
-            right: Vec::new(),
-            write: 0,
-        }
-    }
-
-    fn add_delayed_into(
-        &mut self,
-        src_l: &[f32],
-        src_r: &[f32],
-        dst_l: &mut [f32],
-        dst_r: &mut [f32],
-        amount: f32,
-        frames: usize,
-    ) {
-        if self.left.is_empty() {
-            for i in 0..frames {
-                dst_l[i] += src_l[i] * amount;
-                dst_r[i] += src_r[i] * amount;
-            }
-            return;
-        }
-        for i in 0..frames {
-            let idx = (self.write + i) % self.left.len();
-            dst_l[i] += self.left[idx] * amount;
-            dst_r[i] += self.right[idx] * amount;
-            self.left[idx] = src_l[i];
-            self.right[idx] = src_r[i];
-        }
-        self.write = (self.write + frames) % self.left.len();
-    }
-
-    #[allow(dead_code)] // 仅测试/诊断读取
-    fn delay(&self) -> usize {
-        self.left.len()
-    }
-
-    /// 设定延迟样本数（变化时重建缓冲；仅命令处理阶段调用，允许分配）。
-    fn set_delay(&mut self, delay: usize) {
-        if self.left.len() != delay {
-            self.left = vec![0.0; delay];
-            self.right = vec![0.0; delay];
-            self.write = 0;
-        }
-    }
-
-    fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
-        if self.left.is_empty() {
-            return;
-        }
-        let len = self.left.len();
-        for i in 0..left.len() {
-            let out_l = self.left[self.write];
-            let out_r = self.right[self.write];
-            self.left[self.write] = left[i];
-            self.right[self.write] = right[i];
-            left[i] = out_l;
-            right[i] = out_r;
-            self.write += 1;
-            if self.write == len {
-                self.write = 0;
-            }
-        }
-    }
-
-    fn clear(&mut self) {
-        self.left.fill(0.0);
-        self.right.fill(0.0);
-        self.write = 0;
-    }
-}
-
 /// 一条通道的立体声缓冲（planar），供上层音源渲染写入。
 pub struct ChannelBuffers {
     pub left: Vec<f32>,
@@ -201,31 +112,31 @@ fn replace_processor(
 /// 公开仅为让上层渲染器（yinhe-synth）能接收 [`MixerGraph::buffers_mut`]
 /// 借出的连续切片；字段不公开，外部只能把它当 `ChannelBuffers` 用。
 pub struct ChannelChain {
-    buffers: ChannelBuffers,
-    strip: StripState,
-    inserts: Vec<Box<dyn InsertProcessor>>,
+    pub(crate) buffers: ChannelBuffers,
+    pub(crate) strip: StripState,
+    pub(crate) inserts: Vec<Box<dyn InsertProcessor>>,
     /// PDC 对齐延迟线（补偿到最长路径；长度 0 = 直通）。
-    delay: DelayLine,
+    pub(crate) delay: DelayLine,
     /// 通道自身源的输入延迟：把自身源补到该通道最长输入路径（PDC）。
-    input_delay: DelayLine,
+    pub(crate) input_delay: DelayLine,
     /// 任意通道发送逐边 PDC 延迟（与 channel_sends 一一对应）。
-    channel_send_delays: Vec<DelayLine>,
+    pub(crate) channel_send_delays: Vec<DelayLine>,
     /// 主输出 PDC 延迟（目标为另一条通道时）。
-    output_delay: DelayLine,
+    pub(crate) output_delay: DelayLine,
     /// Master 输入对齐：补到最长路径（PDC）。
-    master_delay: DelayLine,
+    pub(crate) master_delay: DelayLine,
     /// 基础延迟（乐器插件上报的采样数，由引擎设置）。
-    base_latency: u32,
-    meter: MeterTap,
+    pub(crate) base_latency: u32,
+    pub(crate) meter: MeterTap,
     /// 与 meter 一一对应的 UI 侧读数端（引擎创建时被上层取走克隆）。
-    reading: MeterReading,
+    pub(crate) reading: MeterReading,
     /// 任意通道发送（源通道 → 另一条 dense 通道 / Master）。
-    channel_sends: Vec<ResolvedChannelSend>,
+    pub(crate) channel_sends: Vec<ResolvedChannelSend>,
     /// 主输出目标（从图配置同步；用于块首延迟输出）。
-    output: Option<usize>,
+    pub(crate) output: Option<usize>,
     /// 上一块输出快照（逆序/自环通道发送使用，打断反馈）。
-    prev_out_l: Vec<f32>,
-    prev_out_r: Vec<f32>,
+    pub(crate) prev_out_l: Vec<f32>,
+    pub(crate) prev_out_r: Vec<f32>,
 }
 
 impl ChannelChain {
@@ -974,130 +885,6 @@ impl MixerGraph {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn route_channel_send_delayed(
-    channels: &mut [ChannelChain],
-    src: usize,
-    send_idx: usize,
-    master_l: &mut [f32],
-    master_r: &mut [f32],
-    any_solo: bool,
-    frames: usize,
-) {
-    let Some(send) = channels[src].channel_sends.get(send_idx).copied() else {
-        return;
-    };
-    let src_params = channels[src].strip.params;
-    match send.target {
-        ChannelSendTarget::Channel(dst) => {
-            if dst <= src || dst >= channels.len() {
-                return;
-            }
-            let dst_solo = channels[dst].strip.params.solo;
-            if !channel_send_allowed(any_solo, &src_params, dst_solo) {
-                return;
-            }
-            let (left, right) = channels.split_at_mut(dst);
-            let src_chain = &mut left[src];
-            let dst_chain = &mut right[0];
-            src_chain.channel_send_delays[send_idx].add_delayed_into(
-                &src_chain.buffers.left,
-                &src_chain.buffers.right,
-                &mut dst_chain.buffers.left,
-                &mut dst_chain.buffers.right,
-                send.amount,
-                frames,
-            );
-        }
-        ChannelSendTarget::Master => {
-            if !channel_send_allowed(any_solo, &src_params, false) {
-                return;
-            }
-            let src_chain = &mut channels[src];
-            src_chain.channel_send_delays[send_idx].add_delayed_into(
-                &src_chain.buffers.left,
-                &src_chain.buffers.right,
-                master_l,
-                master_r,
-                send.amount,
-                frames,
-            );
-        }
-    }
-}
-
-fn channel_send_allowed(any_solo: bool, src: &StripParams, dst_solo: bool) -> bool {
-    !src.mute && (!any_solo || src.solo || dst_solo)
-}
-
 #[cfg(test)]
 #[path = "graph/tests.rs"]
 mod tests;
-
-/// 通道 insert 链：按插件 max_block_frames 分段处理（超块必须拆分）。
-fn process_insert_chain(chain: &mut ChannelChain, frames: usize) {
-    for insert in &mut chain.inserts {
-        let max = insert.max_block_frames().max(1);
-        if max >= frames {
-            insert.process(&mut chain.buffers.left, &mut chain.buffers.right);
-            continue;
-        }
-        let mut start = 0;
-        while start < frames {
-            let end = (start + max).min(frames);
-            insert.process(
-                &mut chain.buffers.left[start..end],
-                &mut chain.buffers.right[start..end],
-            );
-            start = end;
-        }
-    }
-    // PDC 已拆成 input_delay（块首）与 master_delay（Master 累加前）。
-}
-
-/// 通道主输出：另一条通道（后向）或 Master。
-fn apply_channel_output(
-    channels: &mut [ChannelChain],
-    ci: usize,
-    output: Option<usize>,
-    to_master: bool,
-    master_l: &mut [f32],
-    master_r: &mut [f32],
-    frames: usize,
-) {
-    let p = channels[ci].strip.params;
-    match output {
-        Some(dst) if dst > ci && dst < channels.len() => {
-            let dst_solo = channels[dst].strip.params.solo;
-            // 原条件：!mute && (!any_solo || solo || dst_solo)。
-            // to_master 已包含 !mute && (!any_solo || solo)。
-            if to_master || (!p.mute && dst_solo) {
-                let (left, right) = channels.split_at_mut(dst);
-                let src = &mut left[ci];
-                src.output_delay.add_delayed_into(
-                    &src.buffers.left,
-                    &src.buffers.right,
-                    &mut right[0].buffers.left,
-                    &mut right[0].buffers.right,
-                    1.0,
-                    frames,
-                );
-            }
-        }
-        // 逆序/自环通道输出已经在块首用上一块快照汇入。
-        Some(_) => {}
-        None => {
-            if to_master {
-                let chain = &mut channels[ci];
-                // Master 输入 PDC：补到最长通道路径。
-                chain
-                    .master_delay
-                    .process(&mut chain.buffers.left, &mut chain.buffers.right);
-                let src = &chain.buffers;
-                for f in 0..frames {
-                    master_l[f] += src.left[f];
-                    master_r[f] += src.right[f];
-                }
-            }
-        }
-    }
-}
