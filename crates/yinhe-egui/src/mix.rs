@@ -30,7 +30,7 @@ use rust_i18n::t;
 use yinhe_audio::InsertTarget;
 use yinhe_audio::channel_layout::ChannelLayout;
 use yinhe_mixer::{MasterParams, StripParams};
-use yinhe_types::{ChannelId, MixerChannelId};
+use yinhe_types::ChannelId;
 
 use self::plugin_instance::PluginEntry;
 use crate::plugin_scan::ScanProgress;
@@ -62,6 +62,7 @@ pub(crate) use view::show;
 mod tests {
     use super::*;
     use yinhe_mixer::{InsertRef, MixerParams, PluginFormat};
+    use yinhe_types::ApChannelId;
     use yinhe_types::ApGroupId;
 
     fn insert_ref(format: PluginFormat, id: &str) -> InsertRef {
@@ -73,27 +74,20 @@ mod tests {
     }
 
     #[test]
-    fn c_channel_ids_map_from_mixer_channel_ids() {
+    fn ap_and_audio_channels_map_to_channel_ids() {
         let mut mixer = MixerParams::default();
         mixer.ensure_len();
-        assert!(matches!(
-            mixer.channel_id_for_ui(MixerChannelId::Midi(0)),
-            ChannelId::Lc(_)
-        ));
         assert!(mixer.ensure_ap(9));
         assert_eq!(
-            mixer.channel_id_for_ui(MixerChannelId::Midi(9)),
-            ChannelId::Ap(yinhe_types::ApChannelId::new(ApGroupId::new(9), 0))
+            mixer.ap_channel_id(9),
+            Some(ChannelId::Ap(ApChannelId::new(ApGroupId::new(9), 0)))
         );
         let audio_lc = mixer.ensure_lc_node(yinhe_types::ChannelSource::Audio(1));
         assert_eq!(
-            mixer.channel_id_for_ui(MixerChannelId::Audio(1)),
+            mixer.audio_node(1).expect("audio node").id,
             ChannelId::Lc(audio_lc)
         );
-        assert_eq!(
-            mixer.channel_id_for_ui(MixerChannelId::Master),
-            ChannelId::Master
-        );
+        assert_eq!(mixer.master.id, ChannelId::Master);
     }
 
     #[test]
@@ -115,7 +109,9 @@ mod tests {
     fn strip_builtin_inserts_removes_builtin_only() {
         let mut mixer = MixerParams::default();
         mixer.ensure_len();
-        mixer.midi_node_mut(3).expect("midi 3").inserts = vec![
+        mixer.ensure_ap(3);
+        let ap = mixer.ap_channel_id(3).expect("ap 3");
+        mixer.node_mut(ap).expect("ap node").inserts = vec![
             insert_ref(PluginFormat::Builtin, "channel_gain"),
             insert_ref(PluginFormat::Clap, "clap-fx"),
         ];
@@ -125,9 +121,9 @@ mod tests {
         ];
 
         assert!(strip_builtin_inserts(&mut mixer));
-        assert_eq!(mixer.midi_node(3).expect("midi 3").inserts.len(), 1);
+        assert_eq!(mixer.node(ap).expect("ap node").inserts.len(), 1);
         assert_eq!(
-            mixer.midi_node(3).expect("midi 3").inserts[0].plugin_id,
+            mixer.node(ap).expect("ap node").inserts[0].plugin_id,
             "clap-fx"
         );
         assert_eq!(mixer.master.inserts.len(), 1);

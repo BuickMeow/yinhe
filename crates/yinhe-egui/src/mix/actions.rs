@@ -4,7 +4,7 @@ use eframe::egui;
 use rust_i18n::t;
 use yinhe_audio::InsertTarget;
 use yinhe_mixer::{MasterParams, StripParams};
-use yinhe_types::{ChannelId, MixerChannelId};
+use yinhe_types::ChannelId;
 
 use super::{App, PluginEntry, assign_instrument_plugin, insert_refs, start_plugin_scan};
 
@@ -12,7 +12,7 @@ use super::{App, PluginEntry, assign_instrument_plugin, insert_refs, start_plugi
 pub(crate) enum MixAction {
     /// 更新任意混音节点（AP 通道 / 音频 / 每轨 LC）的 strip 参数。
     SetNodeStrip {
-        node: MixerChannelId,
+        node: ChannelId,
         params: StripParams,
     },
     SetMaster {
@@ -31,19 +31,19 @@ pub(crate) enum MixAction {
     },
     /// 给任意混音节点添加 MixerGain 自动化 lane。
     AddMixerGainAutomation {
-        channel: MixerChannelId,
+        channel: ChannelId,
     },
     /// 给任意混音节点添加 MixerPan 自动化 lane。
     AddMixerPanAutomation {
-        channel: MixerChannelId,
+        channel: ChannelId,
     },
     /// 冻结一条 LC（离线渲染整条时间轴）。
     FreezeChannel {
-        channel: MixerChannelId,
+        channel: ChannelId,
     },
     /// 解除某节点的冻结。
     UnfreezeChannel {
-        node: yinhe_types::MixerNodeId,
+        node: yinhe_types::ChannelId,
     },
     /// 为 MIDI 通道**追加**一个插件乐器到链尾（InsertRef 入持久化层 +
     /// 机架加载 + 安装引擎）。
@@ -140,7 +140,7 @@ pub(crate) fn apply_add_insert(
 }
 
 /// 解除节点冻结并推引擎。
-pub(crate) fn apply_unfreeze(app: &mut App, idx: usize, node: yinhe_types::MixerNodeId) {
+pub(crate) fn apply_unfreeze(app: &mut App, idx: usize, node: yinhe_types::ChannelId) {
     let doc = &mut app.workspace.documents[idx];
     let before = doc.capture_snapshot();
     if let Some(action) = doc.set_node_freeze(node, None) {
@@ -153,11 +153,11 @@ pub(crate) fn apply_unfreeze(app: &mut App, idx: usize, node: yinhe_types::Mixer
 pub(crate) fn apply_mixer_automation_lane(
     app: &mut App,
     idx: usize,
-    channel: MixerChannelId,
+    channel: ChannelId,
     pan: bool,
 ) {
     let doc = &mut app.workspace.documents[idx];
-    let node_id = doc.mixer.node_id_for(channel);
+    let node_id = channel;
     let (target, value) = if pan {
         let pan = doc.mixer.node_strip(channel).pan;
         (

@@ -37,7 +37,7 @@ fn skip_mask_is_solo_priority() {
 #[test]
 fn track_solo_clears_channel_solos_and_vice_versa() {
     let mut doc = Document::empty();
-    let node = MixerChannelId::Midi(0);
+    let node = doc.track_channel_id(1).expect("track 1 channel");
     assert!(doc.set_channel_audibility(node, Audibility::Soloed));
     assert_eq!(doc.mixer.node_strip(node).audibility(), Audibility::Soloed);
 
@@ -48,7 +48,8 @@ fn track_solo_clears_channel_solos_and_vice_versa() {
         "Track solo 必须清空 Channel solo"
     );
 
-    assert!(doc.set_channel_audibility(MixerChannelId::Midi(1), Audibility::Soloed));
+    let node2 = doc.track_channel_id(2).expect("track 2 channel");
+    assert!(doc.set_channel_audibility(node2, Audibility::Soloed));
     assert_eq!(
         doc.edit.track_overrides[1].audibility(),
         Audibility::Normal,
@@ -156,7 +157,7 @@ fn from_model_new_projects_have_no_default_bus() {
         imported
             .mixer
             .nodes()
-            .all(|node| { matches!(node.source, yinhe_types::ChannelSource::Midi(_)) })
+            .all(|node| node.id != yinhe_types::ChannelId::Master)
     );
 
     let with_saved_mixer = make(Some(MixerParams::default()));

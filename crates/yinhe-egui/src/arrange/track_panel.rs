@@ -73,7 +73,7 @@ pub(crate) fn show(
     // 每轨电平表显示值 `((L,R), (holdL,holdR))`（索引 = 音轨；仅播放时非零）。
     track_meters: &[crate::widgets::meter::StereoMeter],
     // 每轨 LC / 音频 LC 节点的 automation。
-    track_mixer_lanes: &[Vec<(yinhe_types::MixerNodeId, Vec<yinhe_types::AutomationLane>)>],
+    track_mixer_lanes: &[Vec<(yinhe_types::ChannelId, Vec<yinhe_types::AutomationLane>)>],
     // 编辑/播放光标 tick（自动化表显示光标处的 lane 值）。
     cursor_tick: Option<f64>,
     // Conductor 的 Tempo lane（Conductor 行自动化表）。

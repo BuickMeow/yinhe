@@ -109,7 +109,10 @@ impl PickerKind {
                 })
             }
             Self::Instrument { channel } => actions.push(MixAction::AddInsert {
-                target: InsertTarget::Midi(channel),
+                target: yinhe_types::ChannelId::Ap(yinhe_types::ApChannelId::new(
+                    yinhe_types::ApGroupId(u16::from(channel)),
+                    0,
+                )),
                 plugin: plugin.clone(),
             }),
             _ => {}

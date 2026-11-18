@@ -598,23 +598,6 @@ impl TrackData {
         self.audio_target = Some(target);
     }
 
-    /// 混音通道：由轨道种类直接推导，不另设覆盖字段。
-    /// MIDI 轨 = 端口/通道，音频轨 = 音频通道，Master = 主输出。
-    pub fn mixer_channel(&self) -> Option<yinhe_types::MixerChannelId> {
-        match self.kind {
-            TrackKind::Midi => Some(
-                self.lc
-                    .map(yinhe_types::MixerChannelId::TrackLc)
-                    .unwrap_or_else(|| yinhe_types::MixerChannelId::Midi(self.global_channel())),
-            ),
-            TrackKind::Audio => Some(yinhe_types::MixerChannelId::Audio(
-                self.audio_channel.unwrap_or(0),
-            )),
-            TrackKind::Master => Some(yinhe_types::MixerChannelId::Master),
-            TrackKind::Folder => None,
-        }
-    }
-
     /// 引擎实际使用的 MIDI 通道 = 端口/通道。
     pub fn midi_target_channel(&self) -> Option<u8> {
         (self.kind == TrackKind::Midi).then(|| self.global_channel())
@@ -2234,27 +2217,6 @@ mod tests {
     }
 
     #[test]
-    fn track_mixer_channel_derives_from_source_channel() {
-        use yinhe_types::MixerChannelId;
-
-        let midi = TrackData::new(2, 5);
-        assert_eq!(midi.mixer_channel(), Some(MixerChannelId::Midi(0x25)));
-
-        let mut audio = TrackData::new(0, 0);
-        audio.kind = TrackKind::Audio;
-        audio.audio_channel = Some(9);
-        assert_eq!(audio.mixer_channel(), Some(MixerChannelId::Audio(9)));
-
-        let mut master = TrackData::new(0, 0);
-        master.kind = TrackKind::Master;
-        assert_eq!(master.mixer_channel(), Some(MixerChannelId::Master));
-
-        let mut folder = TrackData::new(0, 0);
-        folder.kind = TrackKind::Folder;
-        assert_eq!(folder.mixer_channel(), None);
-    }
-
-    #[test]
     fn master_and_folder_reject_track_automation() {
         use yinhe_types::AutomationTarget;
 
@@ -2263,7 +2225,7 @@ mod tests {
         assert!(!master.allows_automation_target(&AutomationTarget::CC { controller: 7 }));
         assert!(
             !master.allows_automation_target(&AutomationTarget::MixerGain {
-                channel: yinhe_types::MixerChannelId::Master
+                channel: yinhe_types::ChannelId::Master
             })
         );
 
@@ -2275,7 +2237,7 @@ mod tests {
         assert!(!folder.allows_automation_target(&AutomationTarget::CC { controller: 7 }));
         assert!(
             !folder.allows_automation_target(&AutomationTarget::MixerGain {
-                channel: yinhe_types::MixerChannelId::Master
+                channel: yinhe_types::ChannelId::Master
             })
         );
     }

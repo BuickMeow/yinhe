@@ -139,10 +139,10 @@ mod tests {
         // 保持旧行为：混音节点用 Debug 形式。
         assert_eq!(
             AutomationTarget::MixerGain {
-                channel: yinhe_types::MixerChannelId::Midi(0)
+                channel: yinhe_types::ChannelId::Lc(yinhe_types::LogicalChannelId(0))
             }
             .display_name(),
-            "Mixer Gain Midi(0)"
+            "Mixer Gain Lc(LogicalChannelId(0))"
         );
         assert_eq!(
             AutomationTarget::CC { controller: 7 }.default_shape(),

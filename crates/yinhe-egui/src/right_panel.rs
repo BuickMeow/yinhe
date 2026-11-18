@@ -36,12 +36,12 @@ pub enum InfoContent {
         event_idx: usize,
         target: AutomationTarget,
         /// Some = lane 属于 MixerNode.automation（LC / Master）。
-        node: Option<yinhe_types::MixerNodeId>,
+        node: Option<yinhe_types::ChannelId>,
     },
     /// 选中的音轨（由 doc.edit.track_selected 决定哪些音轨）
     Track,
     /// 选中的混音通道（MIX 通道 AR / 通道条点击）。
-    Channel(yinhe_types::MixerChannelId),
+    Channel(yinhe_types::ChannelId),
 }
 
 /// 面板区低优先级讲解：仅当指针悬停在该面板可见区域（`clip_rect`）时写入。

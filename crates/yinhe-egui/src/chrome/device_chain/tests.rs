@@ -153,6 +153,5 @@ fn vertical_title_is_centered() {
 #[test]
 fn master_track_maps_to_master_dock_context() {
     let doc = Document::empty();
-    let master = &doc.data.model.tracks[0];
-    assert_eq!(track_context(master), Some(DockContext::Master));
+    assert_eq!(track_context(&doc, 0), Some(DockContext::Master));
 }

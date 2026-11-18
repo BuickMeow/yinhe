@@ -160,11 +160,22 @@ impl Document {
     /// 自行标记。加载时由 `ensure_rack_track_lcs` 触发。
     pub fn ensure_aps(&mut self) -> bool {
         let needed = needed_aps(&self.data.model.tracks);
+        let stale: Vec<u8> = self
+            .mixer
+            .aps
+            .iter()
+            .map(|ap| ap.global_midi())
+            .filter(|global| !needed.contains(global))
+            .collect();
         let before = self.mixer.aps.len();
         self.mixer
             .aps
             .retain(|ap| needed.contains(&ap.global_midi()));
         let mut changed = self.mixer.aps.len() != before;
+        for global in stale {
+            // 编组已从表里移除，节点/send 一并清理。
+            self.mixer.remove_ap_for_midi(global);
+        }
 
         for global in needed {
             if self.mixer.ensure_ap(global) {

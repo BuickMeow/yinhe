@@ -5,7 +5,7 @@
 //! 用户改了音符/insert 却仍听到旧冻结音频。
 
 use yinhe_mixer::{FrozenAudio, MixerNode};
-use yinhe_types::MixerNodeId;
+use yinhe_types::ChannelId;
 
 use crate::history::UndoAction;
 
@@ -23,7 +23,7 @@ impl Document {
     /// 推进 `data.revision`（冻结本身不改变工程内容）。
     pub fn set_node_freeze(
         &mut self,
-        node: MixerNodeId,
+        node: ChannelId,
         after: Option<FrozenAudio>,
     ) -> Option<UndoAction> {
         let before = self.mixer.node(node)?.freeze.clone();
@@ -96,7 +96,7 @@ impl Document {
     }
 
     /// 某节点的冻结是否已失效（UI 显示用）。没有冻结返回 false。
-    pub fn freeze_is_stale(&self, node: MixerNodeId) -> bool {
+    pub fn freeze_is_stale(&self, node: ChannelId) -> bool {
         self.mixer
             .node(node)
             .and_then(|n| n.freeze.as_ref())
@@ -121,10 +121,7 @@ mod tests {
     #[test]
     fn set_freeze_stamps_revisions_and_invalidates_on_edit() {
         let mut doc = Document::empty();
-        let node = MixerNodeId::LogicalChannel(match doc.mixer.midi_node(0).expect("midi 0").id {
-            yinhe_types::ChannelId::Lc(id) => id,
-            _ => unreachable!(),
-        });
+        let node = doc.track_channel_id(1).expect("track 1 channel");
         let action = doc.set_node_freeze(node, Some(frozen())).expect("freeze");
         assert!(!doc.freeze_is_stale(node));
 
@@ -139,10 +136,7 @@ mod tests {
     #[test]
     fn loaded_freezes_are_reanchored() {
         let mut doc = Document::empty();
-        let node = MixerNodeId::LogicalChannel(match doc.mixer.midi_node(0).expect("midi 0").id {
-            yinhe_types::ChannelId::Lc(id) => id,
-            _ => unreachable!(),
-        });
+        let node = doc.track_channel_id(1).expect("track 1 channel");
         doc.mixer.node_mut(node).expect("node").freeze = Some(FrozenAudio {
             source: "saved".into(),
             source_revision: 1,
@@ -156,10 +150,7 @@ mod tests {
     #[test]
     fn engine_copy_drops_stale_freeze() {
         let mut doc = Document::empty();
-        let node = MixerNodeId::LogicalChannel(match doc.mixer.midi_node(0).expect("midi 0").id {
-            yinhe_types::ChannelId::Lc(id) => id,
-            _ => unreachable!(),
-        });
+        let node = doc.track_channel_id(1).expect("track 1 channel");
         doc.set_node_freeze(node, Some(frozen())).expect("freeze");
         let mut params = doc.mixer.clone();
         params.strip_stale_freezes(doc.data.revision);

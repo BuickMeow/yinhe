@@ -213,7 +213,7 @@ impl Document {
     /// `initial_value` 是归一化值；已存在同 target 时返回 None。
     pub fn add_mixer_automation_lane(
         &mut self,
-        node_id: yinhe_types::MixerNodeId,
+        node_id: yinhe_types::ChannelId,
         target: yinhe_types::AutomationTarget,
         initial_value: f32,
     ) -> Option<UndoAction> {
@@ -246,7 +246,7 @@ impl Document {
     /// 在任意 MixerNode 的 target lane 上添加事件（不存在则懒创建）。
     pub fn add_mixer_automation_event(
         &mut self,
-        node_id: yinhe_types::MixerNodeId,
+        node_id: yinhe_types::ChannelId,
         target: yinhe_types::AutomationTarget,
         mut event: yinhe_types::AutomationEvent,
     ) -> Option<UndoAction> {
@@ -281,7 +281,7 @@ impl Document {
     /// 移动任意 MixerNode lane 上的单个事件。
     pub fn move_mixer_automation_event(
         &mut self,
-        node_id: yinhe_types::MixerNodeId,
+        node_id: yinhe_types::ChannelId,
         lane_idx: usize,
         target: &yinhe_types::AutomationTarget,
         old_tick: u32,
@@ -324,7 +324,7 @@ impl Document {
     /// 批量移动任意 MixerNode lane 上的事件。
     pub fn move_mixer_automation_events_batch(
         &mut self,
-        node_id: yinhe_types::MixerNodeId,
+        node_id: yinhe_types::ChannelId,
         lane_idx: usize,
         target: &yinhe_types::AutomationTarget,
         moves: &[(u32, u32, f32)],
@@ -353,7 +353,7 @@ impl Document {
     /// 删除任意 MixerNode lane 上 tick 处的事件。
     pub fn delete_mixer_automation_event(
         &mut self,
-        node_id: yinhe_types::MixerNodeId,
+        node_id: yinhe_types::ChannelId,
         lane_idx: usize,
         target: &yinhe_types::AutomationTarget,
         tick: u32,
@@ -388,7 +388,7 @@ impl Document {
     /// 修改任意 MixerNode lane 上事件的 shape。
     pub fn set_mixer_automation_shape(
         &mut self,
-        node_id: yinhe_types::MixerNodeId,
+        node_id: yinhe_types::ChannelId,
         lane_idx: usize,
         target: &yinhe_types::AutomationTarget,
         tick: u32,
@@ -429,7 +429,7 @@ impl Document {
     /// 删除任意 MixerNode 上的整条 automation lane。
     pub fn remove_mixer_automation_lane(
         &mut self,
-        node_id: yinhe_types::MixerNodeId,
+        node_id: yinhe_types::ChannelId,
         lane_idx: usize,
     ) -> Option<UndoAction> {
         let node = self.mixer.node_mut(node_id)?;
@@ -1483,13 +1483,9 @@ mod tests {
 
     #[test]
     fn mixer_gain_lane_lives_on_lc_node_and_undoes() {
-        use yinhe_types::{MixerChannelId, MixerNodeId};
         let mut doc = Document::empty();
-        let channel = MixerChannelId::Midi(0);
-        let node = MixerNodeId::LogicalChannel(match doc.mixer.midi_node(0).expect("midi 0").id {
-            yinhe_types::ChannelId::Lc(id) => id,
-            _ => unreachable!(),
-        });
+        let channel = doc.track_channel_id(1).expect("track 1 channel");
+        let node = channel;
         let action = doc
             .add_mixer_automation_lane(
                 node,
@@ -1499,7 +1495,7 @@ mod tests {
             .expect("lane");
         let lane = doc
             .mixer
-            .midi_node(0)
+            .node(node)
             .and_then(|n| n.automation.first())
             .expect("lane");
         assert_eq!(lane.events[0].value, 0.75);
@@ -1507,7 +1503,7 @@ mod tests {
         action.reversed().redo(&mut doc);
         assert!(
             doc.mixer
-                .midi_node(0)
+                .node(node)
                 .is_some_and(|n| n.automation.is_empty())
         );
     }

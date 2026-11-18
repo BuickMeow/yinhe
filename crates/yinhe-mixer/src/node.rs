@@ -46,10 +46,8 @@ impl RackParams {
 
 /// 方案 C 的 AP 编组。
 ///
-/// 过渡期说明：`rack` / `channel` 仍指向当前 `racks` / `channels` 表里的
-/// 共享 Rack 和共享 LC；等统一通道表落地后，`channel` 改成
-/// `ChannelId::Ap`，Rack 也可以内联。这里先建立稳定的 AP 身份和 MIDI 绑定，
-/// 让 UI/引擎可以按 AP 而不是按“MIDI 通道”理解共享关系。
+/// AP 现在是独立音频通道：节点身份是 `ChannelId::Ap`，不再借用
+/// 共享 MIDI LC；`rack` 仍指向共享的 `RackParams`。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApGroup {
     pub id: ApGroupId,
@@ -57,8 +55,6 @@ pub struct ApGroup {
     pub midi: (u8, u8),
     /// AP 的共享 Rack。
     pub rack: RackId,
-    /// AP 的音频通道；过渡期指向共享 MIDI LC。
-    pub channel: LogicalChannelId,
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
@@ -68,12 +64,11 @@ const fn default_true() -> bool {
 }
 
 impl ApGroup {
-    pub fn new(id: ApGroupId, midi: (u8, u8), rack: RackId, channel: LogicalChannelId) -> Self {
+    pub fn new(id: ApGroupId, midi: (u8, u8), rack: RackId) -> Self {
         Self {
             id,
             midi,
             rack,
-            channel,
             enabled: true,
         }
     }

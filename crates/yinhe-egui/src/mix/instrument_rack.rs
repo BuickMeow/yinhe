@@ -298,8 +298,11 @@ impl InstrumentRack {
         };
         handle.send(AudioCommand::SetInstrumentSlot {
             target: match lc {
-                Some(id) => yinhe_audio::InsertTarget::TrackLc(id),
-                None => yinhe_audio::InsertTarget::Midi(channel),
+                Some(id) => yinhe_types::ChannelId::Lc(id),
+                None => yinhe_types::ChannelId::Ap(yinhe_types::ApChannelId::new(
+                    yinhe_types::ApGroupId(u16::from(channel)),
+                    0,
+                )),
             },
             slot_id,
             processor: Some(processor),
@@ -351,8 +354,11 @@ impl InstrumentRack {
                 if let Some(h) = handle {
                     h.send(AudioCommand::SetInstrumentSlot {
                         target: match slot.lc {
-                            Some(id) => yinhe_audio::InsertTarget::TrackLc(id),
-                            None => yinhe_audio::InsertTarget::Midi(channel),
+                            Some(id) => yinhe_types::ChannelId::Lc(id),
+                            None => yinhe_types::ChannelId::Ap(yinhe_types::ApChannelId::new(
+                                yinhe_types::ApGroupId(u16::from(channel)),
+                                0,
+                            )),
                         },
                         slot_id: slot.slot_id,
                         processor: None,
@@ -413,8 +419,11 @@ impl InstrumentRack {
         for (channel, lc, slot_id) in restarts {
             handle.send(AudioCommand::SetInstrumentSlot {
                 target: match lc {
-                    Some(id) => yinhe_audio::InsertTarget::TrackLc(id),
-                    None => yinhe_audio::InsertTarget::Midi(channel),
+                    Some(id) => yinhe_types::ChannelId::Lc(id),
+                    None => yinhe_types::ChannelId::Ap(yinhe_types::ApChannelId::new(
+                        yinhe_types::ApGroupId(u16::from(channel)),
+                        0,
+                    )),
                 },
                 slot_id,
                 processor: None,

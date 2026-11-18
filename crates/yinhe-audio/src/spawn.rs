@@ -19,7 +19,7 @@ use yinhe_mixer::{
     InsertProcessor, InstrumentProcessor, MasterParams, MeterReading, MixerParams, SampleReading,
     StripParams,
 };
-use yinhe_types::{Interpolation, MixerChannelId, SynthEngine};
+use yinhe_types::{Interpolation, SynthEngine};
 
 use crate::audio_model::{PreparedModel, SortedCC};
 use crate::audio_renderer::{RendererSharedState, spawn_renderer};

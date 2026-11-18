@@ -59,7 +59,7 @@ impl App {
     pub(crate) fn apply_node_strip(
         &mut self,
         idx: usize,
-        node: MixerChannelId,
+        node: yinhe_types::ChannelId,
         params: StripParams,
     ) {
         let audibility = params.audibility();
@@ -99,32 +99,10 @@ impl App {
         self.migrate_builtin_inserts(idx);
         let mixer = self.workspace.documents[idx].mixer.clone();
         let mut rack = MixerRack::default();
-        for ch in 0..yinhe_mixer::CHANNEL_COUNT {
-            let Some(node) = mixer.midi_node(ch as u8) else {
-                continue;
-            };
-            for r in &node.inserts {
-                let _ = rack.load_plugin(
-                    InsertTarget::Midi(ch as u8),
-                    r.format,
-                    &r.plugin_path,
-                    &r.plugin_id,
-                    &r.name,
-                    r.state.as_deref(),
-                    r.bypassed,
-                );
-            }
-        }
         for node in mixer.nodes() {
-            let ChannelId::Lc(lc) = node.id else {
-                continue;
-            };
-            if !matches!(node.source, yinhe_types::ChannelSource::Track(_)) {
-                continue;
-            }
             for r in &node.inserts {
                 let _ = rack.load_plugin(
-                    InsertTarget::TrackLc(lc),
+                    node.id,
                     r.format,
                     &r.plugin_path,
                     &r.plugin_id,

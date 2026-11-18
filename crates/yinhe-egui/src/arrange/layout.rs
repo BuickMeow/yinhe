@@ -4,7 +4,7 @@ pub(super) fn build_row_layout(
     model: &yinhe_core::YinModel,
     num_tracks: usize,
     conductor_idx: Option<u16>,
-    track_mixer_lanes: &[Vec<(yinhe_types::MixerNodeId, Vec<yinhe_types::AutomationLane>)>],
+    track_mixer_lanes: &[Vec<(yinhe_types::ChannelId, Vec<yinhe_types::AutomationLane>)>],
 ) -> yinhe_types::ArRowLayout {
     let counts: Vec<u32> = (0..num_tracks)
         .map(|i| {

@@ -12,7 +12,7 @@
 
 use eframe::egui;
 use rust_i18n::t;
-use yinhe_core::TrackKind;
+use yinhe_types::ChannelId;
 use yinhe_types::{AutomationEvent, AutomationTarget};
 
 use crate::app::App;
@@ -222,19 +222,14 @@ fn clear_dock_selection_on_outside_click(app: &mut App, ui: &egui::Ui, dock_rect
 /// MIDI 通道同时是乐器（内置音源或插件）的挂载点；音频通道、每轨 LC、
 /// Master 各自独立。这里不再维护第三份枚举，避免 `DockContext` ↔ `InsertTarget` ↔
 /// `MixerChannelId` 三套转换。
-pub(crate) type DockContext = yinhe_types::MixerChannelId;
+pub(crate) type DockContext = yinhe_types::ChannelId;
 
 /// 选中轨 → dock 通道语境。Master/Conductor 轨映射到主输出效果链。
-fn track_context(t: &yinhe_core::TrackData) -> Option<DockContext> {
-    match t.kind {
-        TrackKind::Audio => Some(DockContext::Audio(t.audio_target_channel().unwrap_or(0))),
-        TrackKind::Midi => Some(
-            t.lc.map(DockContext::TrackLc)
-                .unwrap_or_else(|| DockContext::Midi(t.global_channel())),
-        ),
-        TrackKind::Folder => None,
-        TrackKind::Master => Some(DockContext::Master),
-    }
+fn track_context(
+    doc: &yinhe_editor_core::document::Document,
+    track_idx: usize,
+) -> Option<DockContext> {
+    doc.track_channel_id(track_idx)
 }
 
 /// dock 单帧快照：收集阶段读出、绘制阶段只读、应用阶段回查的数据。
@@ -267,6 +262,15 @@ enum DockAction {
     RemoveInsert(usize),
 }
 
+/// 语境标签（AP / 音频/每轨 LC / Master）。
+pub(crate) fn context_label(context: DockContext) -> String {
+    match context {
+        ChannelId::Ap(ap) => crate::mix::channel_label(ap.group.0 as u8),
+        ChannelId::Lc(lc) => format!("LC {}", lc.0),
+        ChannelId::Master => t!("mix.master").to_string(),
+    }
+}
+
 /// 设备链 + 参数区（收集 → 绘制 → 应用）。
 fn show_body(app: &mut App, idx: usize, ui: &mut egui::Ui) {
     let Some(state) = collect_dock_state(app, idx) else {
@@ -291,8 +295,20 @@ fn collect_dock_state(app: &mut App, idx: usize) -> Option<DockState> {
     let model = app.workspace.documents[idx].data.model.clone();
     // 语境 → 相关通道（MIDI / 音频两套命名空间各一条链）。
     let midi_channel = match context {
-        DockContext::Midi(ch) => Some(ch),
-        _ => None,
+        ChannelId::Ap(ap) => Some(ap.group.0 as u8),
+        ChannelId::Lc(lc) => match app.workspace.documents[idx]
+            .mixer
+            .source_of(ChannelId::Lc(lc))
+        {
+            Some(yinhe_types::ChannelSource::Track(t)) => app.workspace.documents[idx]
+                .data
+                .model
+                .tracks
+                .get(t as usize)
+                .map(|t| t.global_channel()),
+            _ => None,
+        },
+        ChannelId::Master => None,
     };
     let insert_target: yinhe_audio::InsertTarget = context;
     // 该 MIDI 通道挂载的插件乐器名（None = 默认内置 XSynth）。
@@ -317,23 +333,13 @@ fn collect_dock_state(app: &mut App, idx: usize) -> Option<DockState> {
             })
             .unwrap_or_default();
     // 语境归属轨（该通道上的轨道）。
-    let belongs = |t: &std::sync::Arc<yinhe_core::TrackData>| match context {
-        DockContext::Midi(ch) => t.global_channel() == ch,
-        DockContext::Audio(ach) => t.audio_channel == Some(ach),
-        DockContext::TrackLc(id) => t.lc == Some(id),
-        DockContext::Master => false,
-    };
+    let context_tracks: Vec<usize> = (0..model.tracks.len())
+        .filter(|&ti| app.workspace.documents[idx].track_channel_id(ti) == Some(context))
+        .collect();
     // lane 归属轨：该通道的所有轨（导入的自动化挂在独立 "CC xx" 轨上，
     // 不能用"第一条轨"定位）。
-    let lane_track_ti: usize = model.tracks.iter().position(belongs).unwrap_or(0);
-    // 归属轨索引与旁通状态：该通道所有轨道都 muted 视为旁通（任一未 mute = 开着）。
-    let powered_tracks: Vec<usize> = model
-        .tracks
-        .iter()
-        .enumerate()
-        .filter(|(_, t)| belongs(t))
-        .map(|(ti, _)| ti)
-        .collect();
+    let lane_track_ti: usize = context_tracks.first().copied().unwrap_or(0);
+    let powered_tracks: Vec<usize> = context_tracks;
     let lane_track_tis: Vec<usize> = if powered_tracks.is_empty() {
         vec![lane_track_ti]
     } else {
@@ -398,15 +404,8 @@ fn sync_dock_context(app: &mut App, idx: usize) -> Option<DockContext> {
         // 切换选中轨：dock 跟随该轨所在通道（音频轨→音频通道，乐器轨→乐器通道），
         // 并重置设备选中。
         app.dock_track = selected_track;
-        if let Some(context) = selected_track
-            .and_then(|ti| {
-                app.workspace.documents[idx]
-                    .data
-                    .model
-                    .tracks
-                    .get(ti as usize)
-            })
-            .and_then(|t| track_context(t))
+        if let Some(context) =
+            selected_track.and_then(|ti| track_context(&app.workspace.documents[idx], ti as usize))
         {
             app.dock_context = Some(context);
             app.dock_selected = None;
@@ -755,16 +754,6 @@ fn open_dock_gui(
                 );
             }
         }
-    }
-}
-
-/// 语境标签（A01 / Audio-01）。
-fn context_label(context: DockContext) -> String {
-    match context {
-        DockContext::Midi(ch) => crate::mix::channel_label(ch),
-        DockContext::Audio(ach) => crate::mix::audio_label(ach),
-        DockContext::TrackLc(id) => format!("LC {}", id.0),
-        DockContext::Master => t!("mix.master").to_string(),
     }
 }
 

@@ -274,15 +274,15 @@ fn write_target(w: &mut impl Write, target: &AutomationTarget) -> io::Result<()>
         AutomationTarget::Tempo => w.write_all(&[4]),
         AutomationTarget::MixerGain { channel } => {
             w.write_all(&[7])?;
-            write_mixer_channel(w, *channel)
+            write_channel_id(w, *channel)
         }
         AutomationTarget::MixerPan { channel } => {
             w.write_all(&[8])?;
-            write_mixer_channel(w, *channel)
+            write_channel_id(w, *channel)
         }
         AutomationTarget::MixerSend { source, target } => {
             w.write_all(&[9])?;
-            write_mixer_channel(w, *source)?;
+            write_channel_id(w, *source)?;
             write_channel_id(w, *target)
         }
         AutomationTarget::InsertParam {
@@ -292,29 +292,13 @@ fn write_target(w: &mut impl Write, target: &AutomationTarget) -> io::Result<()>
             name,
         } => {
             w.write_all(&[10])?;
-            write_mixer_channel(w, *target)?;
+            write_channel_id(w, *target)?;
             w.write_all(&(*slot as u32).to_le_bytes())?;
             w.write_all(&id.to_le_bytes())?;
             let bytes = name.as_bytes();
             w.write_all(&(bytes.len() as u32).to_le_bytes())?;
             w.write_all(bytes)
         }
-    }
-}
-
-fn write_mixer_channel(w: &mut impl Write, channel: yinhe_types::MixerChannelId) -> io::Result<()> {
-    use yinhe_types::MixerChannelId;
-    match channel {
-        MixerChannelId::Midi(ch) => w.write_all(&[0, ch]),
-        MixerChannelId::Audio(ch) => {
-            w.write_all(&[1])?;
-            w.write_all(&ch.to_le_bytes())
-        }
-        MixerChannelId::TrackLc(id) => {
-            w.write_all(&[2])?;
-            w.write_all(&id.0.to_le_bytes())
-        }
-        MixerChannelId::Master => w.write_all(&[4]),
     }
 }
 
@@ -347,23 +331,6 @@ fn read_channel_id(r: &mut impl Read) -> io::Result<yinhe_types::ChannelId> {
         }),
         2 => ChannelId::Master,
         _ => return Err(invalid("unknown channel id")),
-    })
-}
-
-fn read_mixer_channel(r: &mut impl Read) -> io::Result<yinhe_types::MixerChannelId> {
-    use yinhe_types::{LogicalChannelId, MixerChannelId};
-    let mut tag = [0u8; 1];
-    r.read_exact(&mut tag)?;
-    Ok(match tag[0] {
-        0 => {
-            let mut ch = [0u8; 1];
-            r.read_exact(&mut ch)?;
-            MixerChannelId::Midi(ch[0])
-        }
-        1 => MixerChannelId::Audio(read_u16(r)?),
-        2 => MixerChannelId::TrackLc(LogicalChannelId(read_u16(r)?)),
-        4 => MixerChannelId::Master,
-        _ => return Err(invalid("unknown mixer channel")),
     })
 }
 
@@ -418,17 +385,17 @@ fn read_target(r: &mut impl Read) -> io::Result<AutomationTarget> {
         4 => AutomationTarget::Tempo,
         5 => AutomationTarget::PitchBend,
         7 => AutomationTarget::MixerGain {
-            channel: read_mixer_channel(r)?,
+            channel: read_channel_id(r)?,
         },
         8 => AutomationTarget::MixerPan {
-            channel: read_mixer_channel(r)?,
+            channel: read_channel_id(r)?,
         },
         9 => AutomationTarget::MixerSend {
-            source: read_mixer_channel(r)?,
+            source: read_channel_id(r)?,
             target: read_channel_id(r)?,
         },
         10 => AutomationTarget::InsertParam {
-            target: read_mixer_channel(r)?,
+            target: read_channel_id(r)?,
             slot: read_u32(r)? as usize,
             id: read_u32(r)?,
             name: read_string(r)?,

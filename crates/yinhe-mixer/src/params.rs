@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use yinhe_types::{
-    ApGroupId, Audibility, ChannelId, ChannelSource, LogicalChannelId, MixerChannelId, MixerNodeId,
-    RackId, TRACK_LC_BASE,
+    ApChannelId, ApGroupId, Audibility, ChannelId, ChannelSource, LogicalChannelId, RackId,
+    TRACK_LC_BASE,
 };
 
 use crate::node::{ApGroup, MixerNode, RackParams};
@@ -164,10 +164,8 @@ pub struct MixerParams {
     pub racks: Vec<RackParams>,
     /// 方案 C 的 AP 编组；只有实际共享 MIDI 通道时才创建。
     ///
-    /// 过渡期 `ApGroup::rack/channel` 指向 `racks` / `channels` 里的共享
-    /// Rack 和共享 LC，音频行为不变。AP 目前完全由 Track 推导，先不落盘；
-    /// 等 AP 拥有独立设置后再加字段版本迁移，避免破坏现有 v14 工程。
-    #[serde(skip)]
+    /// AP 现在是独立音频节点（`ChannelId::Ap`），编组与节点一起持久化。
+    #[serde(default)]
     pub aps: Vec<ApGroup>,
     /// 方案 C 的任意通道发送；source/target 都是 `ChannelId`。
     #[serde(default)]
@@ -224,7 +222,6 @@ impl MixerParams {
     /// 7. `repair_automation`：最后按节点归属过滤 lane（依赖以上全部完成）。
     pub fn ensure_len(&mut self) {
         self.repair_racks();
-        self.repair_channels();
         self.repair_aps();
         self.repair_channel_sends();
         self.repair_track_channels();
@@ -255,12 +252,20 @@ impl MixerParams {
         self.nodes.iter_mut().find(|node| node.source == source)
     }
 
-    pub fn midi_node(&self, ch: u8) -> Option<&MixerNode> {
-        self.node_by_source(ChannelSource::Midi(ch))
+    /// 某 MIDI 通道对应的 AP 通道身份（没有 AP 编组返回 None）。
+    pub fn ap_channel_id(&self, global: u8) -> Option<ChannelId> {
+        self.ap_for_midi(global)
+            .map(|ap| ChannelId::Ap(ApChannelId::new(ap.id, 0)))
     }
 
-    pub fn midi_node_mut(&mut self, ch: u8) -> Option<&mut MixerNode> {
-        self.node_by_source_mut(ChannelSource::Midi(ch))
+    /// 某 MIDI 通道的 AP 节点；没有 AP 返回 None。
+    pub fn ap_node(&self, global: u8) -> Option<&MixerNode> {
+        self.ap_channel_id(global).and_then(|id| self.find_node(id))
+    }
+
+    pub fn ap_node_mut(&mut self, global: u8) -> Option<&mut MixerNode> {
+        let id = self.ap_channel_id(global)?;
+        self.find_node_mut(id)
     }
 
     pub fn audio_node(&self, ch: u16) -> Option<&MixerNode> {
@@ -285,61 +290,6 @@ impl MixerParams {
             return Some(ChannelSource::Master);
         }
         self.find_node(id).map(|node| node.source)
-    }
-
-    /// UI 查询键 → 实际 ChannelId（经来源角色解析）。
-    pub fn channel_id_for(&self, channel: MixerChannelId) -> ChannelId {
-        match channel {
-            MixerChannelId::Midi(ch) => self
-                .midi_node(ch)
-                .map(|node| node.id)
-                .unwrap_or(ChannelId::Master),
-            MixerChannelId::Audio(ch) => self
-                .audio_node(ch)
-                .map(|node| node.id)
-                .unwrap_or(ChannelId::Master),
-            MixerChannelId::TrackLc(id) => ChannelId::Lc(id),
-            MixerChannelId::Master => ChannelId::Master,
-        }
-    }
-
-    /// UI 查询键 → 实际 `ChannelId`（AP 感知）。
-    ///
-    /// 与 [`Self::channel_id_for`] 的区别：`Midi(ch)` 有 AP 编组时返回
-    /// `ChannelId::Ap`（UI 的通道身份），否则返回该通道的 LC。
-    /// 引擎/持久化用 `channel_id_for`，UI 展示与发送面板用本方法。
-    pub fn channel_id_for_ui(&self, channel: MixerChannelId) -> ChannelId {
-        if let MixerChannelId::Midi(ch) = channel
-            && let Some(ap) = self.ap_for_midi(ch)
-        {
-            return ChannelId::Ap(yinhe_types::ApChannelId::new(ap.id, 0));
-        }
-        self.channel_id_for(channel)
-    }
-
-    /// 节点的 C 统一身份 → UI 查询键（[`Self::channel_id_for`] 的逆映射）。
-    ///
-    /// 自动化 target 用 `MixerChannelId` 表示 owner，渲染层需要从节点身份
-    /// 反查这个键；放在模型层避免音频引擎引入 UI 概念。
-    pub fn mixer_channel_of(&self, id: ChannelId) -> Option<MixerChannelId> {
-        match id {
-            ChannelId::Lc(lc) => match self.source_of(id)? {
-                ChannelSource::Midi(ch) => Some(MixerChannelId::Midi(ch)),
-                ChannelSource::Audio(ch) => Some(MixerChannelId::Audio(ch)),
-                ChannelSource::Track(_) => Some(MixerChannelId::TrackLc(lc)),
-                _ => None,
-            },
-            ChannelId::Ap(_) => None,
-            ChannelId::Master => Some(MixerChannelId::Master),
-        }
-    }
-
-    pub fn node_id_for(&self, channel: MixerChannelId) -> MixerNodeId {
-        match self.channel_id_for(channel) {
-            ChannelId::Lc(id) => MixerNodeId::LogicalChannel(id),
-            ChannelId::Ap(_) => MixerNodeId::Master,
-            ChannelId::Master => MixerNodeId::Master,
-        }
     }
 
     /// 按 C 统一身份查节点；Master 映射到 `master`。
@@ -369,7 +319,7 @@ impl MixerParams {
         self.aps.iter().find(|ap| ap.global_midi() == global)
     }
 
-    /// 为某 MIDI 通道创建 AP（如果还不存在）。过渡期 Rack/LC 复用当前共享表。
+    /// 为某 MIDI 通道创建 AP 编组与独立 AP 节点（如果还不存在）。
     pub fn ensure_ap(&mut self, global: u8) -> bool {
         if self.ap_for_midi(global).is_some() {
             return false;
@@ -377,35 +327,39 @@ impl MixerParams {
         let Some(rack) = self.racks.get(global as usize) else {
             return false;
         };
-        let Some(channel) = self.midi_node(global).and_then(|node| match node.id {
-            ChannelId::Lc(id) => Some(id),
-            _ => None,
-        }) else {
-            return false;
-        };
-        self.aps.push(ApGroup::new(
-            ApGroupId(u16::from(global)),
-            (global >> 4, global & 0x0F),
-            rack.id,
-            channel,
-        ));
+        let id = ApGroupId(u16::from(global));
+        self.aps
+            .push(ApGroup::new(id, (global >> 4, global & 0x0F), rack.id));
         self.aps.sort_by_key(|ap| ap.id);
+        self.ensure_ap_node(id);
         true
     }
 
-    /// 删除某 MIDI 通道的 AP，返回是否有变化。
+    /// 确保 AP 编组的独立节点存在（加载/修复用）。
+    pub(super) fn ensure_ap_node(&mut self, id: ApGroupId) {
+        let channel = ChannelId::Ap(ApChannelId::new(id, 0));
+        if self.find_node(channel).is_none() {
+            self.nodes
+                .push(MixerNode::new(channel, ChannelSource::Ap(id)));
+            self.sort_dedup_nodes();
+        }
+    }
+
+    /// 删除某 MIDI 通道的 AP 编组与节点，返回是否有变化。
     pub fn remove_ap_for_midi(&mut self, global: u8) -> bool {
+        let id = ApGroupId(u16::from(global));
+        let ap = ChannelId::Ap(ApChannelId::new(id, 0));
         let before = self.aps.len();
         self.aps.retain(|ap| ap.global_midi() != global);
-        self.aps.len() != before
+        let before_nodes = self.nodes.len();
+        self.nodes.retain(|node| node.id != ap);
+        self.channel_sends
+            .retain(|send| send.target != ap && send.source != ap);
+        self.aps.len() != before || self.nodes.len() != before_nodes
     }
 
     fn channel_target_exists(&self, target: ChannelId) -> bool {
-        match target {
-            ChannelId::Master => true,
-            ChannelId::Lc(id) => self.channel_exists(id),
-            ChannelId::Ap(ap) => self.ap(ap.group).is_some(),
-        }
+        target == ChannelId::Master || self.find_node(target).is_some()
     }
 
     /// 某通道发出的 C 发送。
@@ -614,20 +568,13 @@ impl MixerParams {
     }
 
     /// 按稳定 ID 查任意混音节点。
-    pub fn node(&self, id: MixerNodeId) -> Option<&MixerNode> {
-        self.channel_node(id.c_channel_id())
+    pub fn node(&self, id: ChannelId) -> Option<&MixerNode> {
+        self.channel_node(id)
     }
 
     /// 按稳定 ID 查任意混音节点（可变）。
-    pub fn node_mut(&mut self, id: MixerNodeId) -> Option<&mut MixerNode> {
-        self.channel_node_mut(id.c_channel_id())
-    }
-
-    /// 某源 MIDI 通道的 strip 参数（越界给默认值，防御性）。
-    pub fn strip(&self, channel: u8) -> StripParams {
-        self.midi_node(channel)
-            .map(|node| node.strip)
-            .unwrap_or_default()
+    pub fn node_mut(&mut self, id: ChannelId) -> Option<&mut MixerNode> {
+        self.channel_node_mut(id)
     }
 
     /// 音频通道 `ch` 的 strip 参数（越界给默认值，防御性）。
@@ -637,29 +584,20 @@ impl MixerParams {
             .unwrap_or_default()
     }
 
-    /// 统一节点读取：MIDI / 音频 / 每轨 LC / Master 走同一入口。
-    pub fn node_strip(&self, node: MixerChannelId) -> StripParams {
-        self.channel_node(self.channel_id_for(node))
+    /// 统一节点读取：AP / 音频 / 每轨 LC / Master 走同一入口。
+    pub fn node_strip(&self, node: ChannelId) -> StripParams {
+        self.channel_node(node)
             .map(|node| node.strip)
             .unwrap_or_default()
     }
 
-    /// 统一节点写入。返回是否找到了目标；音频通道会按需扩容。
-    pub fn set_node_strip(&mut self, node: MixerChannelId, params: StripParams) -> bool {
-        if node == MixerChannelId::Master {
+    /// 统一节点写入。返回是否找到了目标。
+    pub fn set_node_strip(&mut self, node: ChannelId, params: StripParams) -> bool {
+        if node == ChannelId::Master {
             self.master.strip = params;
             return true;
         }
-        match node {
-            MixerChannelId::Midi(ch) => {
-                self.ensure_lc_node(ChannelSource::Midi(ch));
-            }
-            MixerChannelId::Audio(ch) => {
-                self.ensure_audio_len(ch as usize + 1);
-            }
-            _ => {}
-        }
-        match self.find_node_mut(self.channel_id_for(node)) {
+        match self.channel_node_mut(node) {
             Some(slot) => {
                 slot.strip = params;
                 true
@@ -674,30 +612,28 @@ impl MixerParams {
     }
 
     /// 统一节点 insert 链（可变）。
-    pub fn node_inserts_mut(&mut self, node: MixerChannelId) -> Option<&mut Vec<InsertRef>> {
-        if node == MixerChannelId::Master {
+    pub fn node_inserts_mut(&mut self, node: ChannelId) -> Option<&mut Vec<InsertRef>> {
+        if node == ChannelId::Master {
             return Some(&mut self.master.inserts);
         }
-        self.node_mut_for_ui(node).map(|n| &mut n.inserts)
+        self.node_mut(node).map(|n| &mut n.inserts)
     }
 
-    /// 统一节点主输出（MIDI / 音频 / 每轨 LC；Master 没有）。
-    pub fn node_output(&self, node: MixerChannelId) -> Option<ChannelId> {
-        if node == MixerChannelId::Master {
+    /// 统一节点主输出（AP / 音频 / 每轨 LC；Master 没有）。
+    pub fn node_output(&self, node: ChannelId) -> Option<ChannelId> {
+        if node == ChannelId::Master {
             return None;
         }
-        self.channel_node(self.channel_id_for(node))
-            .and_then(|n| n.output)
+        self.channel_node(node).and_then(|n| n.output)
     }
 
     /// 统一节点主输出写入。返回是否支持该节点。
-    pub fn set_node_output(&mut self, node: MixerChannelId, output: Option<ChannelId>) -> bool {
-        if node == MixerChannelId::Master {
+    pub fn set_node_output(&mut self, node: ChannelId, output: Option<ChannelId>) -> bool {
+        if node == ChannelId::Master {
             return false;
         }
-        let source = self.channel_id_for(node);
         if let Some(target) = output
-            && (target == source || target == ChannelId::Master)
+            && (target == node || target == ChannelId::Master)
         {
             return false;
         }
@@ -706,7 +642,7 @@ impl MixerParams {
         {
             return false;
         }
-        match self.node_mut_for_ui(node) {
+        match self.node_mut(node) {
             Some(slot) => {
                 slot.output = output;
                 true

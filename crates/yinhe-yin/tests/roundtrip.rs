@@ -792,22 +792,18 @@ fn sf_empty_overrides_roundtrip() {
 #[test]
 fn mixer_section_roundtrips() {
     use yinhe_mixer::{InsertRef, MixerParams, StripParams};
-    use yinhe_types::MixerChannelId;
+    use yinhe_types::{ApChannelId, ApGroupId, ChannelId, ChannelSource};
 
     let m = build_complex_model();
     let mut mixer = MixerParams::default();
     mixer.ensure_len();
-    let lc = mixer.add_track_lc(0);
-    mixer.set_node_output(
-        MixerChannelId::Midi(3),
-        Some(yinhe_types::ChannelId::Lc(lc)),
-    );
-    mixer.set_node_output(
-        MixerChannelId::Audio(1),
-        Some(yinhe_types::ChannelId::Lc(lc)),
-    );
+    mixer.ensure_ap(3);
+    let ap = ChannelId::Ap(ApChannelId::new(ApGroupId(3), 0));
+    let audio_lc = mixer.ensure_lc_node(ChannelSource::Audio(1));
+    let audio = ChannelId::Lc(audio_lc);
+    mixer.set_node_output(ap, Some(audio));
     mixer.set_node_strip(
-        MixerChannelId::Midi(3),
+        ap,
         StripParams {
             gain: 0.7,
             pan: -0.5,
@@ -817,7 +813,7 @@ fn mixer_section_roundtrips() {
     );
     mixer.master.gain = 0.8;
     mixer
-        .node_inserts_mut(MixerChannelId::Midi(3))
+        .node_inserts_mut(ap)
         .expect("channel inserts")
         .push(InsertRef {
             uid: 0,
@@ -846,28 +842,15 @@ fn mixer_section_roundtrips() {
 
     let (_m2, _sf, _mapping, mixer2) = yinhe_yin::load_yin_with_sf(&path).unwrap();
     let mut mixer2 = mixer2.expect("mixer section should round-trip");
-    assert_eq!(
-        mixer2.node_strip(MixerChannelId::Midi(3)),
-        mixer.node_strip(MixerChannelId::Midi(3))
-    );
+    assert_eq!(mixer2.node_strip(ap), mixer.node_strip(ap));
     assert_eq!(mixer2.master.strip, mixer.master.strip);
     assert_eq!(
-        mixer2
-            .node_inserts_mut(MixerChannelId::Midi(3))
-            .expect("channel inserts"),
-        mixer
-            .node_inserts_mut(MixerChannelId::Midi(3))
-            .expect("channel inserts")
+        mixer2.node_inserts_mut(ap).expect("channel inserts"),
+        mixer.node_inserts_mut(ap).expect("channel inserts")
     );
     assert_eq!(mixer2.master.inserts, mixer.master.inserts);
-    assert_eq!(
-        mixer2.node_output(MixerChannelId::Midi(3)),
-        Some(yinhe_types::ChannelId::Lc(lc))
-    );
-    assert_eq!(
-        mixer2.node_output(MixerChannelId::Audio(1)),
-        Some(yinhe_types::ChannelId::Lc(lc))
-    );
+    assert_eq!(mixer2.node_output(ap), Some(audio));
+    assert!(mixer2.node(ap).is_some());
 }
 
 #[test]

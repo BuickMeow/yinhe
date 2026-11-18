@@ -888,11 +888,9 @@ fn pause_keeps_insert_tail_and_transport_frozen() {
     let model = Arc::new(model);
     let mut engine = AudioEngine::new(48000, ChannelLayout::from_mask(vec![true; 16]));
     engine.load_model(&model);
-    engine.insert_add(
-        crate::spawn::InsertTarget::Midi(0),
-        0,
-        Box::new(TailInsert { value: 0.5 }),
-    );
+    engine.mix.mixer_params.ensure_ap(0);
+    let ap0 = engine.mix.mixer_params.ap_channel_id(0).expect("ap 0");
+    engine.insert_add(ap0, 0, Box::new(TailInsert { value: 0.5 }));
 
     let pos = engine.sample_position();
     engine.handle_command(crate::spawn::AudioCommand::Pause);
@@ -909,11 +907,9 @@ fn stop_keeps_insert_tail() {
     let model = Arc::new(model);
     let mut engine = AudioEngine::new(48000, ChannelLayout::from_mask(vec![true; 16]));
     engine.load_model(&model);
-    engine.insert_add(
-        crate::spawn::InsertTarget::Midi(0),
-        0,
-        Box::new(TailInsert { value: 0.5 }),
-    );
+    engine.mix.mixer_params.ensure_ap(0);
+    let ap0 = engine.mix.mixer_params.ap_channel_id(0).expect("ap 0");
+    engine.insert_add(ap0, 0, Box::new(TailInsert { value: 0.5 }));
 
     engine.handle_command(crate::spawn::AudioCommand::StopTransport);
     assert_eq!(engine.sample_position(), 0, "Stop 应回到 0");
@@ -921,21 +917,19 @@ fn stop_keeps_insert_tail() {
     assert!(peak > 0.01, "Stop 后应继续输出 insert 尾音，peak={peak}");
 }
 
-/// MixerGain/MixerPan 从 LC 节点 automation 求值。
+/// MixerGain/MixerPan 从通道节点 automation 求值。
 #[test]
 fn mixer_gain_pan_automation_reads_lc_nodes() {
     use yinhe_mixer::MixerParams;
-    use yinhe_types::{
-        AutomationEvent, AutomationLane, AutomationTarget, LogicalChannelId, MixerChannelId,
-        MixerNodeId, SegmentShape,
-    };
+    use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
 
     let layout = ChannelLayout::from_mask(vec![true]);
     let mut engine = AudioEngine::new(48_000, layout);
     let mut mixer = MixerParams::default();
     mixer.ensure_len();
-    let channel = MixerChannelId::Midi(0);
-    let node = mixer.midi_node_mut(0).expect("midi lc");
+    mixer.ensure_ap(0);
+    let channel = mixer.ap_channel_id(0).expect("ap 0");
+    let node = mixer.node_mut(channel).expect("ap node");
     node.automation.push(AutomationLane {
         target: AutomationTarget::MixerGain { channel },
         track: 0,
@@ -956,11 +950,10 @@ fn mixer_gain_pan_automation_reads_lc_nodes() {
             shape: SegmentShape::Step,
         }],
     });
-    let _ = MixerNodeId::LogicalChannel(LogicalChannelId(0));
     engine.mix.mixer_params = mixer;
     engine.apply_mixer_automation(1);
 
-    let node = engine.mix.mixer_params.midi_node(0).expect("midi lc");
+    let node = engine.mix.mixer_params.node(channel).expect("ap node");
     assert!((node.gain - 0.25).abs() < f32::EPSILON);
     assert!((node.pan - 0.5).abs() < f32::EPSILON);
 }
@@ -971,7 +964,7 @@ fn mixer_send_automation_updates_channel_send_amount() {
     use yinhe_mixer::MixerParams;
     use yinhe_types::{
         AutomationEvent, AutomationLane, AutomationTarget, ChannelId, LogicalChannelId,
-        MixerChannelId, SegmentShape, TRACK_LC_BASE,
+        SegmentShape, TRACK_LC_BASE,
     };
 
     let layout = ChannelLayout::from_mask(vec![true]);
@@ -979,12 +972,13 @@ fn mixer_send_automation_updates_channel_send_amount() {
     let mut mixer = MixerParams::default();
     mixer.ensure_len();
     let target = ChannelId::Lc(LogicalChannelId(TRACK_LC_BASE + 1));
-    let channel = MixerChannelId::Midi(0);
-    let source = mixer.channel_id_for(channel);
+    mixer.ensure_ap(0);
+    let channel = mixer.ap_channel_id(0).expect("ap 0");
+    let source = channel;
     assert!(mixer.set_channel_send(source, target, 0.25, false));
     mixer
-        .midi_node_mut(0)
-        .expect("midi lc")
+        .node_mut(channel)
+        .expect("ap node")
         .automation
         .push(AutomationLane {
             target: AutomationTarget::MixerSend {
@@ -1011,9 +1005,7 @@ fn mixer_send_automation_updates_channel_send_amount() {
 fn insert_param_automation_writes_processor_param() {
     use std::sync::{Arc, Mutex};
     use yinhe_mixer::{InsertProcessor, MixerParams};
-    use yinhe_types::{
-        AutomationEvent, AutomationLane, AutomationTarget, MixerChannelId, SegmentShape,
-    };
+    use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
 
     struct Recorder {
         params: Arc<Mutex<Vec<(u32, f64)>>>,
@@ -1043,10 +1035,11 @@ fn insert_param_automation_writes_processor_param() {
 
     let mut mixer = MixerParams::default();
     mixer.ensure_len();
-    let channel = MixerChannelId::Midi(0);
+    mixer.ensure_ap(0);
+    let channel = mixer.ap_channel_id(0).expect("ap 0");
     mixer
-        .midi_node_mut(0)
-        .expect("midi 0")
+        .node_mut(channel)
+        .expect("ap node")
         .automation
         .push(AutomationLane {
             target: AutomationTarget::InsertParam {
@@ -1084,7 +1077,11 @@ fn frozen_lc_overwrites_target_channel_buffer() {
     engine.mix.mixer.resize(1, 8, &[]);
     let mut mixer = MixerParams::default();
     mixer.ensure_len();
-    mixer.midi_node_mut(0).expect("midi 0").freeze = Some(FrozenAudio {
+    mixer.ensure_ap(0);
+    mixer
+        .node_mut(mixer.ap_channel_id(0).expect("ap 0"))
+        .expect("ap node")
+        .freeze = Some(FrozenAudio {
         source: "freeze-a".into(),
         source_revision: 1,
         sample_rate: 48_000,
@@ -1123,7 +1120,11 @@ fn frozen_lc_forces_channel_active() {
     engine.synth.cpu_synth = yinhe_synth::CpuSynth::new(48_000);
     let mut mixer = MixerParams::default();
     mixer.ensure_len();
-    mixer.midi_node_mut(0).expect("midi 0").freeze = Some(FrozenAudio {
+    mixer.ensure_ap(0);
+    mixer
+        .node_mut(mixer.ap_channel_id(0).expect("ap 0"))
+        .expect("ap node")
+        .freeze = Some(FrozenAudio {
         source: "freeze".into(),
         source_revision: 0,
         sample_rate: 48_000,
@@ -1140,7 +1141,7 @@ fn frozen_lc_forces_channel_active() {
 fn freeze_job_renders_real_lc_audio() {
     use std::sync::Arc;
     use yinhe_mixer::MixerParams;
-    use yinhe_types::MixerChannelId;
+    use yinhe_types::{ApChannelId, ApGroupId, ChannelId};
 
     let dir = tempfile::tempdir().expect("tempdir");
     let wav_path = dir.path().join("tone.wav");
@@ -1169,7 +1170,7 @@ fn freeze_job_renders_real_lc_audio() {
     engine.begin_freeze_capture(0);
     let progress = crate::freeze::FreezeProgress::new();
     let mut job = crate::freeze::FreezeJob::new(
-        MixerChannelId::Midi(0),
+        ChannelId::Ap(ApChannelId::new(ApGroupId(0), 0)),
         sr,
         4_800,
         512,

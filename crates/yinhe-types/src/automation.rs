@@ -669,19 +669,19 @@ pub enum AutomationTarget {
     /// `value` 直接装 bpm（f32），是唯一不归一化的量。
     Tempo,
     /// 任意混音节点的推子增益（归一化 0..1，1.0 = 0 dB）。
-    MixerGain { channel: crate::MixerChannelId },
+    MixerGain { channel: crate::ChannelId },
     /// 任意混音节点的声像（归一化 0..1，0.5 = 居中）。
-    MixerPan { channel: crate::MixerChannelId },
+    MixerPan { channel: crate::ChannelId },
     /// 任意混音节点到某个通道的发送量（归一化 0..1，1.0 = 满发送）。
     MixerSend {
         /// 发送的源节点。
         #[serde(rename = "node")]
-        source: crate::MixerChannelId,
+        source: crate::ChannelId,
         target: crate::ChannelId,
     },
     /// 某个 insert 槽位的插件参数（值归一化 0..1）。
     InsertParam {
-        target: crate::MixerChannelId,
+        target: crate::ChannelId,
         slot: usize,
         id: u32,
         name: String,
@@ -1080,14 +1080,14 @@ pub enum AutomationEdit {
 
     // ── 任意 MixerNode automation（LC / Master）──
     NodeAdd {
-        node: crate::MixerNodeId,
+        node: crate::ChannelId,
         target: AutomationTarget,
         tick: u32,
         value: f32,
         shape: SegmentShape,
     },
     NodeMove {
-        node: crate::MixerNodeId,
+        node: crate::ChannelId,
         lane_idx: usize,
         target: AutomationTarget,
         old_tick: u32,
@@ -1095,26 +1095,26 @@ pub enum AutomationEdit {
         new_value: f32,
     },
     NodeMoveBatch {
-        node: crate::MixerNodeId,
+        node: crate::ChannelId,
         lane_idx: usize,
         target: AutomationTarget,
         moves: Vec<(u32, u32, f32)>,
     },
     NodeCycleShape {
-        node: crate::MixerNodeId,
+        node: crate::ChannelId,
         lane_idx: usize,
         target: AutomationTarget,
         tick: u32,
     },
     NodeSetShape {
-        node: crate::MixerNodeId,
+        node: crate::ChannelId,
         lane_idx: usize,
         target: AutomationTarget,
         tick: u32,
         shape: SegmentShape,
     },
     NodeDelete {
-        node: crate::MixerNodeId,
+        node: crate::ChannelId,
         lane_idx: usize,
         target: AutomationTarget,
         tick: u32,
@@ -1558,12 +1558,12 @@ mod easing_presets_tests {
         // LC 身份已是独立 u16，owner 需经 MixerParams 解析，不再从 target 反推；
         // 这里只验证与 owner 无关的默认值/中心线。
         let midi = AutomationTarget::MixerGain {
-            channel: crate::MixerChannelId::Midi(3),
+            channel: crate::ChannelId::Lc(crate::LogicalChannelId(3)),
         };
         assert_eq!(midi.default_value(), 1.0);
 
         let pan = AutomationTarget::MixerPan {
-            channel: crate::MixerChannelId::Master,
+            channel: crate::ChannelId::Master,
         };
         assert_eq!(pan.default_value(), 0.5);
         assert!(pan.has_center_line());

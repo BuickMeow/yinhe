@@ -61,7 +61,7 @@ pub struct AutomationDelta {
 /// 任意 MixerNode 上的自动化增量（LC / Master）。
 #[derive(Clone, Debug)]
 pub struct MixerAutomationDelta {
-    pub node: yinhe_types::MixerNodeId,
+    pub node: yinhe_types::ChannelId,
     pub lane_idx: usize,
     pub target: yinhe_types::AutomationTarget,
     pub before: Vec<AutomationEvent>,
@@ -127,13 +127,13 @@ pub enum UndoAction {
     MixerAutomation(MixerAutomationDelta),
     /// LC 冻结状态变化。
     Freeze {
-        node: yinhe_types::MixerNodeId,
+        node: yinhe_types::ChannelId,
         before: Option<yinhe_mixer::FrozenAudio>,
         after: Option<yinhe_mixer::FrozenAudio>,
     },
     /// 任意 MixerNode 的自动化 lane 结构变化。
     MixerAutomationLane {
-        node: yinhe_types::MixerNodeId,
+        node: yinhe_types::ChannelId,
         lane_idx: usize,
         before: Option<yinhe_types::AutomationLane>,
         after: Option<yinhe_types::AutomationLane>,

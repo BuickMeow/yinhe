@@ -275,10 +275,7 @@ impl AudioEngine {
                 if self.export.freeze_capture.is_some() {
                     return None;
                 }
-                let dense = match node.id {
-                    yinhe_types::ChannelId::Lc(id) => self.lc_dense(id),
-                    _ => u32::MAX,
-                };
+                let dense = self.dense_for_channel_id(node.id).unwrap_or(u32::MAX);
                 (dense != u32::MAX).then(|| (dense as usize, freeze.source.clone()))
             })
             .collect();

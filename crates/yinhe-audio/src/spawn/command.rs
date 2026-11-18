@@ -1,6 +1,6 @@
 use super::*;
 
-pub type InsertTarget = yinhe_types::MixerChannelId;
+pub type InsertTarget = yinhe_types::ChannelId;
 
 pub type AmMsMap =
     std::collections::HashMap<(u16, yinhe_types::AutomationTarget), yinhe_types::AmMsState>;
@@ -117,7 +117,7 @@ pub enum AudioCommand {
     /// 更新任意混音节点的 strip 参数（推子拖动高频路径，幂等）。
     /// MIDI / 音频 / 每轨 LC / Master 走同一个入口，引擎内部再映射到 dense 通道。
     SetNodeStrip {
-        node: MixerChannelId,
+        node: yinhe_types::ChannelId,
         params: StripParams,
     },
     /// 更新主输出参数。
@@ -182,7 +182,7 @@ pub enum AudioCommand {
     /// 开始冻结一条 LC：离线渲染整条时间轴，只捕获该 LC 的 pre-LC 干声。
     /// 结果经 `progress.result` 交回 UI（UI 负责写入工程并设置节点 freeze）。
     FreezeStart {
-        node: MixerChannelId,
+        node: yinhe_types::ChannelId,
         progress: Arc<Mutex<crate::freeze::FreezeProgress>>,
         cancel: Arc<AtomicBool>,
     },

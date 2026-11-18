@@ -47,7 +47,7 @@ impl Document {
                         // 复制共享 LC 的混音参数，避免切换模式后听感突变。
                         let source = self
                             .mixer
-                            .midi_node(channel)
+                            .ap_node(channel)
                             .cloned()
                             .unwrap_or_else(yinhe_mixer::MixerNode::master);
                         let id = self.mixer.add_track_lc(track_idx as u16);
@@ -158,6 +158,29 @@ impl Document {
         hosts
     }
 
+    /// 某轨的音频通道身份（C 统一身份）。
+    ///
+    /// - MIDI OwnLc → `ChannelId::Lc(lc)`
+    /// - MIDI AP → `ChannelId::Ap`
+    /// - 音频轨 → 对应音频 LC 节点 ID
+    /// - Master → `ChannelId::Master`
+    pub fn track_channel_id(&self, track_idx: usize) -> Option<yinhe_types::ChannelId> {
+        use yinhe_types::{ApChannelId, ChannelId};
+        let track = self.data.model.tracks.get(track_idx)?;
+        match track.kind {
+            TrackKind::Midi => match track.effective_audio_target() {
+                Some(TrackAudioTarget::OwnLc { lc, .. }) => Some(ChannelId::Lc(lc)),
+                Some(TrackAudioTarget::Ap { ap }) => Some(ChannelId::Ap(ApChannelId::new(ap, 0))),
+                None => None,
+            },
+            TrackKind::Audio => track
+                .audio_channel
+                .and_then(|ch| self.mixer.audio_node(ch).map(|node| node.id)),
+            TrackKind::Master => Some(ChannelId::Master),
+            TrackKind::Folder => None,
+        }
+    }
+
     /// 把 MIDI 轨解链回自己的 LC。外部插件由每轨实例承接，不复制乐器自动化。
     pub fn link_track_to_own_lc(&mut self, track_idx: usize) -> bool {
         let Some(track) = self.data.model.tracks.get(track_idx) else {
@@ -172,7 +195,7 @@ impl Document {
         }
         let source = self
             .mixer
-            .midi_node(channel)
+            .ap_node(channel)
             .cloned()
             .unwrap_or_else(yinhe_mixer::MixerNode::master);
         let id = self.mixer.add_track_lc(track_idx as u16);
@@ -242,7 +265,7 @@ impl Document {
         for (idx, channel) in assigned {
             let source = self
                 .mixer
-                .midi_node(channel)
+                .ap_node(channel)
                 .cloned()
                 .unwrap_or_else(yinhe_mixer::MixerNode::master);
             let id = self.mixer.add_track_lc(idx as u16);

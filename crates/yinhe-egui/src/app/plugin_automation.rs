@@ -264,7 +264,7 @@ impl App {
         name: &str,
         value: f32,
     ) {
-        let node = self.workspace.documents[idx].mixer.node_id_for(target);
+        let node = target;
         let lane_target = AutomationTarget::InsertParam {
             target,
             slot,
@@ -290,24 +290,8 @@ impl App {
         doc.push_undo(action, t!("undo.create_automation").as_ref(), snapshot);
         doc.mark_mixer_dirty();
         // 展开对应轨道（Master 没有轨道）。
-        let track_idx = match target {
-            yinhe_types::MixerChannelId::TrackLc(id) => {
-                doc.data.model.tracks.iter().position(|t| t.lc == Some(id))
-            }
-            yinhe_types::MixerChannelId::Midi(ch) => doc
-                .data
-                .model
-                .tracks
-                .iter()
-                .position(|t| t.global_channel() == ch),
-            yinhe_types::MixerChannelId::Audio(ch) => doc
-                .data
-                .model
-                .tracks
-                .iter()
-                .position(|t| t.audio_channel == Some(ch)),
-            yinhe_types::MixerChannelId::Master => None,
-        };
+        let track_idx =
+            (0..doc.data.model.tracks.len()).find(|&i| doc.track_channel_id(i) == Some(target));
         if let Some(track_idx) = track_idx
             && let Some(expanded) = doc.edit.arr_am_expanded.get_mut(track_idx)
         {

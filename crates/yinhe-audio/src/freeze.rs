@@ -9,14 +9,14 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use yinhe_types::MixerChannelId;
+use yinhe_types::ChannelId;
 
 use crate::engine::AudioEngine;
 
 /// 冻结任务的共享进度与结果。UI 轮询 `finished` 后取走 `result`。
 pub struct FreezeProgress {
     pub visible: bool,
-    pub node: Option<MixerChannelId>,
+    pub node: Option<ChannelId>,
     pub progress: f32,
     pub status: String,
     pub finished: bool,
@@ -38,7 +38,7 @@ impl FreezeProgress {
         }))
     }
 
-    fn reset(&mut self, node: MixerChannelId) {
+    fn reset(&mut self, node: ChannelId) {
         self.visible = true;
         self.node = Some(node);
         self.progress = 0.0;
@@ -57,7 +57,7 @@ impl FreezeProgress {
 
 /// 冻结渲染产物：整条时间轴的立体声 PCM。
 pub struct FrozenRender {
-    pub node: MixerChannelId,
+    pub node: ChannelId,
     pub sample_rate: u32,
     pub left: Vec<f32>,
     pub right: Vec<f32>,
@@ -77,7 +77,7 @@ pub(crate) enum FreezeError {
 
 /// 渲染线程的冻结任务。
 pub(crate) struct FreezeJob {
-    node: MixerChannelId,
+    node: ChannelId,
     sample_rate: u32,
     main_duration: u64,
     rendered: u64,
@@ -88,7 +88,7 @@ pub(crate) struct FreezeJob {
 
 impl FreezeJob {
     pub(crate) fn new(
-        node: MixerChannelId,
+        node: ChannelId,
         sample_rate: u32,
         main_duration: u64,
         chunk_frames: usize,
@@ -168,12 +168,16 @@ mod tests {
         AudioEngine::new(48_000, ChannelLayout::from_mask(vec![true]))
     }
 
+    fn test_node() -> ChannelId {
+        ChannelId::Ap(yinhe_types::ApChannelId::new(yinhe_types::ApGroupId(0), 0))
+    }
+
     #[test]
     fn cancelled_job_reports_cancel() {
         let mut engine = engine();
         let cancel = Arc::new(AtomicBool::new(true));
         let mut job = FreezeJob::new(
-            MixerChannelId::Midi(0),
+            test_node(),
             48_000,
             4_800,
             512,
@@ -194,7 +198,7 @@ mod tests {
             capture.right.extend_from_slice(&[0.4, 0.5, 0.6]);
         }
         let job = FreezeJob::new(
-            MixerChannelId::Midi(0),
+            test_node(),
             48_000,
             3,
             512,

@@ -108,7 +108,7 @@ pub fn show(
     // Conductor 不展开（主行直显 Tempo）。
     doc.edit.arr_am_expanded.resize(num_tracks, false);
     let conductor_idx = doc.edit.track_cache.conductor_idx;
-    let track_mixer_lanes: Vec<Vec<(yinhe_types::MixerNodeId, Vec<yinhe_types::AutomationLane>)>> =
+    let track_mixer_lanes: Vec<Vec<(yinhe_types::ChannelId, Vec<yinhe_types::AutomationLane>)>> =
         doc.data
             .model
             .tracks
@@ -668,7 +668,7 @@ fn draw_track_panel(
     row_layout: &mut yinhe_types::ArRowLayout,
     num_tracks: usize,
     conductor_idx: Option<u16>,
-    track_mixer_lanes: &[Vec<(yinhe_types::MixerNodeId, Vec<yinhe_types::AutomationLane>)>],
+    track_mixer_lanes: &[Vec<(yinhe_types::ChannelId, Vec<yinhe_types::AutomationLane>)>],
     track_meters: &[crate::widgets::meter::StereoMeter],
     request_pianoroll: &mut bool,
     info_content: &mut Option<crate::right_panel::InfoContent>,
@@ -823,7 +823,7 @@ fn draw_arrangement_view<'a>(
     info_content: &mut Option<crate::right_panel::InfoContent>,
     right_tab: &mut Option<crate::right_panel::RightTab>,
     menu_actions: &mut Vec<context_menu::TimelineMenuAction>,
-    track_mixer_lanes: &[Vec<(yinhe_types::MixerNodeId, Vec<yinhe_types::AutomationLane>)>],
+    track_mixer_lanes: &[Vec<(yinhe_types::ChannelId, Vec<yinhe_types::AutomationLane>)>],
     audio_library: &crate::app::audio_library::AudioLibrary,
     total_ticks: f64,
     num_tracks: usize,

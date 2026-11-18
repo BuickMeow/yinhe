@@ -2,41 +2,18 @@ use super::*;
 
 impl MixerParams {
     pub(super) fn repair_automation(&mut self) {
-        // 先解析好 UI 查询键 → 实际 ChannelId，避免与节点可变借用冲突。
-        let mut resolved: HashMap<MixerChannelId, ChannelId> = HashMap::new();
-        for ch in 0..CHANNEL_COUNT as u8 {
-            resolved.insert(
-                MixerChannelId::Midi(ch),
-                self.channel_id_for(MixerChannelId::Midi(ch)),
-            );
-        }
-        for ch in 0..CHANNEL_COUNT as u16 {
-            resolved.insert(
-                MixerChannelId::Audio(ch),
-                self.channel_id_for(MixerChannelId::Audio(ch)),
-            );
-        }
-        // 每轨 LC 的自动化 owner 是 TrackLc，也必须参与解析，否则加载后
-        // 其 MixerGain/MixerPan lane 会被误判为「不属于该节点」而删除。
-        let track_lcs: Vec<LogicalChannelId> = self
+        let known: HashSet<ChannelId> = self
             .nodes
             .iter()
-            .filter(|node| matches!(node.source, ChannelSource::Track(_)))
-            .filter_map(|node| match node.id {
-                ChannelId::Lc(id) => Some(id),
-                _ => None,
-            })
+            .map(|node| node.id)
+            .chain(std::iter::once(ChannelId::Master))
             .collect();
-        for lc in track_lcs {
-            resolved.insert(MixerChannelId::TrackLc(lc), ChannelId::Lc(lc));
-        }
-        resolved.insert(MixerChannelId::Master, ChannelId::Master);
         let valid = |channel: ChannelId, lane: &yinhe_types::AutomationLane| match &lane.target {
             yinhe_types::AutomationTarget::MixerGain { channel: c }
             | yinhe_types::AutomationTarget::MixerPan { channel: c }
             | yinhe_types::AutomationTarget::MixerSend { source: c, .. }
             | yinhe_types::AutomationTarget::InsertParam { target: c, .. } => {
-                resolved.get(c).copied().unwrap_or(ChannelId::Master) == channel
+                *c == channel && known.contains(c)
             }
             _ => true,
         };
@@ -73,7 +50,6 @@ impl MixerParams {
             .filter(|ap| {
                 ap.id.index() < CHANNEL_COUNT
                     && ap.rack.index() < self.racks.len()
-                    && self.channel_exists(ap.channel)
                     && ap.midi.0 < 16
                     && ap.midi.1 < 16
             })
@@ -82,6 +58,10 @@ impl MixerParams {
         self.aps = keep;
         self.aps.sort_by_key(|ap| ap.id);
         self.aps.dedup_by_key(|ap| ap.id);
+        let ids: Vec<ApGroupId> = self.aps.iter().map(|ap| ap.id).collect();
+        for id in ids {
+            self.ensure_ap_node(id);
+        }
     }
 
     pub(super) fn repair_channel_sends(&mut self) {
@@ -110,12 +90,6 @@ impl MixerParams {
         let id = self.next_lc_id;
         self.next_lc_id = LogicalChannelId(id.0.saturating_add(1));
         id
-    }
-
-    pub(super) fn repair_channels(&mut self) {
-        for i in 0..CHANNEL_COUNT {
-            self.ensure_lc_node(ChannelSource::Midi(i as u8));
-        }
     }
 
     /// 修复重复/越界的 LC ID（独立 u16 空间；持有 Track 来源的节点保持原 ID）。
@@ -151,12 +125,11 @@ impl MixerParams {
 
     /// 混合 LC 不冻结：有任意 C 发送汇入的 LC，清除 freeze。
     pub(super) fn repair_mixed_lc_freezes(&mut self) {
-        let targets: HashSet<LogicalChannelId> = self
+        let targets: HashSet<ChannelId> = self
             .channel_sends
             .iter()
             .filter_map(|send| match send.target {
-                ChannelId::Lc(id) => Some(id),
-                ChannelId::Ap(ap) => self.ap(ap.group).map(|group| group.channel),
+                ChannelId::Lc(_) | ChannelId::Ap(_) => Some(send.target),
                 ChannelId::Master => None,
             })
             .collect();
@@ -164,9 +137,7 @@ impl MixerParams {
             return;
         }
         for node in self.nodes_mut() {
-            if let ChannelId::Lc(id) = node.id
-                && targets.contains(&id)
-            {
+            if targets.contains(&node.id) {
                 node.freeze = None;
             }
         }
@@ -196,12 +167,5 @@ impl MixerParams {
         for i in 0..len {
             self.ensure_lc_node(ChannelSource::Audio(i as u16));
         }
-    }
-
-    pub(super) fn node_mut_for_ui(&mut self, node: MixerChannelId) -> Option<&mut MixerNode> {
-        if let MixerChannelId::Audio(ch) = node {
-            self.ensure_audio_len(ch as usize + 1);
-        }
-        self.find_node_mut(self.channel_id_for(node))
     }
 }

@@ -7,7 +7,7 @@ use eframe::egui;
 
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::history::EditSnapshot;
-use yinhe_types::{AutomationEvent, AutomationTarget, MixerNodeId, SegmentShape};
+use yinhe_types::{AutomationEvent, AutomationTarget, ChannelId, SegmentShape};
 
 use rust_i18n::t;
 
@@ -32,7 +32,7 @@ pub(super) fn show_anchor_info(
     value: f32,
     shape: SegmentShape,
     target: &AutomationTarget,
-    node: Option<MixerNodeId>,
+    node: Option<ChannelId>,
     info_content: &mut Option<InfoContent>,
 ) {
     crate::right_panel::region_hint(ui, t!("hint.panel.anchor"));
@@ -313,7 +313,7 @@ pub(super) fn show_anchor_info(
 fn lane_guard(
     ui: &egui::Ui,
     key: &str,
-    node: Option<MixerNodeId>,
+    node: Option<ChannelId>,
     track_idx: u16,
     lane_idx: usize,
     target: &AutomationTarget,
@@ -322,7 +322,7 @@ fn lane_guard(
 }
 
 fn move_anchor_edit(
-    node: Option<MixerNodeId>,
+    node: Option<ChannelId>,
     track_idx: u16,
     lane_idx: usize,
     target: &AutomationTarget,
@@ -351,7 +351,7 @@ fn move_anchor_edit(
 }
 
 fn cycle_anchor_edit(
-    node: Option<MixerNodeId>,
+    node: Option<ChannelId>,
     track_idx: u16,
     lane_idx: usize,
     target: &AutomationTarget,
@@ -375,7 +375,7 @@ fn cycle_anchor_edit(
 
 fn set_anchor_shape(
     doc: &mut Document,
-    node: Option<MixerNodeId>,
+    node: Option<ChannelId>,
     track_idx: u16,
     lane_idx: usize,
     target: &AutomationTarget,
@@ -408,14 +408,14 @@ struct LaneUndoGuard {
     track_idx: u16,
     lane_idx: usize,
     target: AutomationTarget,
-    node: Option<MixerNodeId>,
+    node: Option<ChannelId>,
 }
 
 impl LaneUndoGuard {
     fn new(
         ui: &egui::Ui,
         key: &str,
-        node: Option<MixerNodeId>,
+        node: Option<ChannelId>,
         track_idx: u16,
         lane_idx: usize,
         target: &AutomationTarget,

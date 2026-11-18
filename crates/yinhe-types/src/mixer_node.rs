@@ -78,8 +78,6 @@ impl LogicalChannelId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelSource {
-    /// MIDI 源通道 LC（AP 通道载体）；`ch` = global = port*16+channel。
-    Midi(u8),
     /// 音频轨 home LC；`ch` = `TrackData::audio_channel`。
     Audio(u16),
     /// 每轨 home LC；`track` = `YinModel.tracks` 下标。
@@ -174,32 +172,6 @@ impl ChannelId {
     }
 }
 
-/// 混音图中一个音频节点的身份。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MixerNodeId {
-    /// 一条音频流的通道条。
-    LogicalChannel(LogicalChannelId),
-    /// 最终总输出。
-    Master,
-}
-
-impl MixerNodeId {
-    /// 混音节点的 C 统一身份。
-    pub const fn c_channel_id(self) -> ChannelId {
-        match self {
-            Self::LogicalChannel(id) => ChannelId::Lc(id),
-            Self::Master => ChannelId::Master,
-        }
-    }
-}
-
-impl From<MixerNodeId> for ChannelId {
-    fn from(id: MixerNodeId) -> Self {
-        id.c_channel_id()
-    }
-}
-
 /// 自动化 lane 的归属。
 ///
 /// 自动化不再默认「挂在轨道上」：MIDI 内容轨的 lane 属于 Track，乐器参数
@@ -209,8 +181,7 @@ impl From<MixerNodeId> for ChannelId {
 pub enum AutomationOwner {
     Track(u16),
     Rack(RackId),
-    LogicalChannel(LogicalChannelId),
-    Master,
+    Channel(ChannelId),
     Conductor,
 }
 
@@ -223,16 +194,6 @@ mod tests {
         assert_eq!(RackId::from_midi_channel(0), RackId(0));
         assert_eq!(RackId::from_midi_channel(0x25), RackId(0x25));
         assert_eq!(RackId::from_midi_channel(255).index(), 255);
-    }
-
-    #[test]
-    fn ids_are_stable_value_types() {
-        assert_eq!(LogicalChannelId::new(7).index(), 7);
-        assert_eq!(
-            MixerNodeId::LogicalChannel(LogicalChannelId(7)).c_channel_id(),
-            ChannelId::Lc(LogicalChannelId(7))
-        );
-        assert_eq!(MixerNodeId::Master.c_channel_id(), ChannelId::Master);
     }
 
     #[test]

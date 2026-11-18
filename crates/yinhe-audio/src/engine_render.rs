@@ -50,10 +50,7 @@ impl AudioEngine {
             if node.freeze.is_none() {
                 continue;
             }
-            let dense = match node.id {
-                yinhe_types::ChannelId::Lc(id) => self.lc_dense(id),
-                _ => u32::MAX,
-            };
+            let dense = self.dense_for_channel_id(node.id).unwrap_or(u32::MAX);
             if dense != u32::MAX && (dense as usize) < n {
                 active[dense as usize] = true;
             }

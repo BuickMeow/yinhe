@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use yinhe_core::{TrackData, YinModel};
 use yinhe_mixer::MixerParams;
-use yinhe_types::{Audibility, MixerChannelId, TRACK_PALETTE};
+use yinhe_types::{Audibility, TRACK_PALETTE};
 use yinhe_yin::{MappingFile, ProjectFile};
 
 use crate::edit_state::{EditState, TrackCache};

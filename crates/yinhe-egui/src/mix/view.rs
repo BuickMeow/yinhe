@@ -15,6 +15,32 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
         .filter(|&c| layout.is_ap_active(c))
         .map(|c| c as u8)
         .collect();
+    // SEND 聚焦目标：默认选第一条可发送通道，保证旋钮可见；点通道色带可切换。
+    // 目标失效（删轨/切文档）时回退到首条，避免旋钮全部消失。
+    let mut available: Vec<ChannelId> = active
+        .iter()
+        .filter_map(|&ch| app.workspace.documents[idx].mixer.ap_channel_id(ch))
+        .collect();
+    available.extend(
+        layout
+            .track_lc_channels()
+            .iter()
+            .map(|&(_, lc)| ChannelId::Lc(lc)),
+    );
+    available.extend(
+        layout
+            .audio_channels()
+            .iter()
+            .filter_map(|&ach| app.workspace.documents[idx].mixer.audio_node(ach))
+            .map(|node| node.id),
+    );
+    if !app
+        .mix
+        .send_focus
+        .is_some_and(|focus| available.contains(&focus))
+    {
+        app.mix.send_focus = available.first().copied();
+    }
     let colors = channel_strip_colors(app, idx, &model, &active);
 
     let dt = ui.ctx().input(|i| i.stable_dt).min(0.1);
@@ -205,22 +231,15 @@ fn draw_audio_strips(
         } else {
             ((0.0, 0.0), (0.0, 0.0))
         };
-        let display = app
-            .mix
-            .channel_display
-            .get(&ChannelId::Lc(
-                app.workspace.documents[idx]
-                    .mixer
-                    .audio_node(ach)
-                    .and_then(|n| match n.id {
-                        ChannelId::Lc(id) => Some(id),
-                        _ => None,
-                    })
-                    .unwrap_or_default(),
-            ))
-            .copied()
-            .unwrap_or(0);
-        strip::audio_strip(app, ui, idx, ach, display, level, hold, strip_h, actions);
+        let Some(node) = app.workspace.documents[idx]
+            .mixer
+            .audio_node(ach)
+            .map(|n| n.id)
+        else {
+            continue;
+        };
+        let display = app.mix.channel_display.get(&node).copied().unwrap_or(0);
+        strip::audio_strip(app, ui, idx, node, display, level, hold, strip_h, actions);
     }
 }
 
@@ -258,7 +277,16 @@ fn draw_track_lc_strips(
             .copied()
             .unwrap_or(0);
         strip::track_lc_strip(
-            app, ui, idx, track, lc, display, level, hold, strip_h, actions,
+            app,
+            ui,
+            idx,
+            track,
+            ChannelId::Lc(lc),
+            display,
+            level,
+            hold,
+            strip_h,
+            actions,
         );
     }
 }

@@ -93,7 +93,11 @@ impl Document {
     }
 
     /// 设置 Channel 的三态听感。进入 Channel solo 时清空所有 Track solo。
-    pub fn set_channel_audibility(&mut self, node: MixerChannelId, audibility: Audibility) -> bool {
+    pub fn set_channel_audibility(
+        &mut self,
+        node: yinhe_types::ChannelId,
+        audibility: Audibility,
+    ) -> bool {
         if self.mixer.node_strip(node).audibility() == audibility {
             return false;
         }
@@ -110,22 +114,12 @@ impl Document {
     }
 
     /// 清空所有 Channel solo，返回被改动的通道（用于推引擎）。
-    pub fn clear_channel_solos(&mut self) -> Vec<MixerChannelId> {
+    pub fn clear_channel_solos(&mut self) -> Vec<yinhe_types::ChannelId> {
         let mut changed = Vec::new();
         for node in self.mixer.nodes_mut() {
             if node.solo {
                 node.solo = false;
-                changed.push(match node.source {
-                    yinhe_types::ChannelSource::Midi(ch) => MixerChannelId::Midi(ch),
-                    yinhe_types::ChannelSource::Audio(ch) => MixerChannelId::Audio(ch),
-                    yinhe_types::ChannelSource::Track(_) => match node.id {
-                        yinhe_types::ChannelId::Lc(id) => MixerChannelId::TrackLc(id),
-                        _ => MixerChannelId::Master,
-                    },
-                    yinhe_types::ChannelSource::Ap(_) | yinhe_types::ChannelSource::Master => {
-                        MixerChannelId::Master
-                    }
-                });
+                changed.push(node.id);
             }
         }
         if !changed.is_empty() {

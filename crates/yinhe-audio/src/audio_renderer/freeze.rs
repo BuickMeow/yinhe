@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use yinhe_types::MixerChannelId;
+use yinhe_types::ChannelId;
 
 use crate::freeze::{FreezeError, FreezeJob, FreezeProgress};
 use crate::spawn::AudioCommand;
@@ -16,7 +16,7 @@ impl AudioRenderer {
     /// 只捕获目标 dense 通道的 pre-LC 干声。
     pub(super) fn start_freeze(
         &mut self,
-        node: MixerChannelId,
+        node: ChannelId,
         progress: Arc<Mutex<FreezeProgress>>,
         cancel: Arc<AtomicBool>,
     ) {
@@ -26,17 +26,7 @@ impl AudioRenderer {
             }
             return;
         }
-        let dense = match node {
-            MixerChannelId::Midi(ch) => self.engine.channel_layout.dense_for(ch as usize),
-            MixerChannelId::Audio(ch) => self.engine.channel_layout.audio_dense_for(ch),
-            MixerChannelId::TrackLc(id) => self
-                .engine
-                .channel_layout
-                .track_lc_dense_for(id)
-                .map(|(_, dense)| dense)
-                .unwrap_or(u32::MAX),
-            MixerChannelId::Master => u32::MAX,
-        };
+        let dense = self.engine.dense_for_channel_id(node).unwrap_or(u32::MAX);
         if dense == u32::MAX {
             if let Ok(mut p) = progress.lock() {
                 p.failed_before_start("该通道没有可冻结的音频流");

@@ -22,8 +22,7 @@ pub(crate) struct ArrangeData<'a> {
     /// Conductor 的 Tempo lane（Conductor 主行直显/直编）。
     pub tempo_lane: &'a yinhe_types::AutomationLane,
     /// 每轨 LC / 音频 LC 节点的 automation（与 Track 索引对齐）。
-    pub track_mixer_lanes:
-        &'a [Vec<(yinhe_types::MixerNodeId, Vec<yinhe_types::AutomationLane>)>],
+    pub track_mixer_lanes: &'a [Vec<(yinhe_types::ChannelId, Vec<yinhe_types::AutomationLane>)>],
     pub conductor_track_idx: Option<u16>,
     /// Tempo 映射（音频片段秒 ↔ tick 换算）。
     pub tempo_map: &'a yinhe_core::TempoMap,

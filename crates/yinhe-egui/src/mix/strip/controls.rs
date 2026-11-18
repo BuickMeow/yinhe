@@ -3,7 +3,7 @@
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_mixer::StripParams;
-use yinhe_types::{ChannelId, LogicalChannelId};
+use yinhe_types::ChannelId;
 
 use crate::widgets::knob::{knob, knob_centered};
 use crate::widgets::meter::{DB_MAX, DB_MIN, db_to_gain, gain_at_frac, gain_frac, gain_to_db};
@@ -112,46 +112,18 @@ pub(super) fn section<R>(
         .inner
 }
 
-/// 单条 MIDI 通道条。
-#[allow(clippy::too_many_arguments)] // 通道条渲染上下文透传
-/// 当前 strip 对应的自动化宿主：决定右键菜单里能加哪种自动化。
-#[derive(Clone, Copy)]
-pub(crate) enum StripAutomationTarget {
-    Midi(u8),
-    Audio(u16),
-    TrackLc(LogicalChannelId),
-    Master,
+/// 音量自动化目标：LC / AP / Master 统一走 MixerGain。
+fn volume_automation_action(target: ChannelId) -> Option<MixAction> {
+    Some(MixAction::AddMixerGainAutomation { channel: target })
 }
 
-fn target_channel(target: StripAutomationTarget) -> MixerChannelId {
-    match target {
-        StripAutomationTarget::Midi(ch) => MixerChannelId::Midi(ch),
-        StripAutomationTarget::Audio(ch) => MixerChannelId::Audio(ch),
-        StripAutomationTarget::TrackLc(id) => MixerChannelId::TrackLc(id),
-        StripAutomationTarget::Master => MixerChannelId::Master,
-    }
-}
-
-/// 音量自动化目标：LC / Master 统一走 MixerGain。
-fn volume_automation_action(target: StripAutomationTarget) -> Option<MixAction> {
-    Some(MixAction::AddMixerGainAutomation {
-        channel: target_channel(target),
-    })
-}
-
-/// 声像自动化目标：LC 走 MixerPan；Master 暂不支持声像。
-fn pan_automation_action(target: StripAutomationTarget) -> Option<MixAction> {
-    (target_channel(target) != MixerChannelId::Master).then_some(MixAction::AddMixerPanAutomation {
-        channel: target_channel(target),
-    })
+/// 声像自动化目标：LC / AP 走 MixerPan；Master 暂不支持声像。
+fn pan_automation_action(target: ChannelId) -> Option<MixAction> {
+    (target != ChannelId::Master).then_some(MixAction::AddMixerPanAutomation { channel: target })
 }
 
 /// 音量控件的右键菜单：添加自动化 + 重置 0 dB。
-fn volume_context_menu(
-    ui: &mut egui::Ui,
-    target: StripAutomationTarget,
-    actions: &mut Vec<MixAction>,
-) -> bool {
+fn volume_context_menu(ui: &mut egui::Ui, target: ChannelId, actions: &mut Vec<MixAction>) -> bool {
     let mut reset = false;
     if let Some(action) = volume_automation_action(target)
         && ui
@@ -182,11 +154,7 @@ fn volume_context_menu(
 }
 
 /// 声像控件的右键菜单：添加自动化 + 居中。
-fn pan_context_menu(
-    ui: &mut egui::Ui,
-    target: StripAutomationTarget,
-    actions: &mut Vec<MixAction>,
-) -> bool {
+fn pan_context_menu(ui: &mut egui::Ui, target: ChannelId, actions: &mut Vec<MixAction>) -> bool {
     let mut reset = false;
     if let Some(action) = pan_automation_action(target)
         && ui
@@ -357,7 +325,7 @@ fn pan_knob(
     ui: &mut egui::Ui,
     pan: f32,
     width: f32,
-    target: StripAutomationTarget,
+    target: ChannelId,
     actions: &mut Vec<MixAction>,
 ) -> Option<f32> {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, KNOB_D), egui::Sense::hover());
@@ -409,7 +377,7 @@ fn db_row(
     ui: &mut egui::Ui,
     gain: f32,
     width: f32,
-    target: StripAutomationTarget,
+    target: ChannelId,
     actions: &mut Vec<MixAction>,
 ) -> Option<f32> {
     let mut db = gain_to_db(gain);
@@ -497,7 +465,7 @@ fn gain_meter(
     level: (f32, f32),
     hold: (f32, f32),
     height: f32,
-    target: StripAutomationTarget,
+    target: ChannelId,
     actions: &mut Vec<MixAction>,
 ) -> Option<f32> {
     let meter_w = SCALE_W + METER_W * 2.0 + METER_GAP;
@@ -559,7 +527,7 @@ pub(super) fn strip_controls(
     hold: (f32, f32),
     show_pan: bool,
     show_ms: bool,
-    target: StripAutomationTarget,
+    target: ChannelId,
     actions: &mut Vec<MixAction>,
 ) -> Option<StripParams> {
     let avail = ui.available_height();
@@ -636,15 +604,9 @@ pub(super) fn master_controls(
                 |ui| {
                     let mut g = gain;
                     let mut changed = false;
-                    if let Some(v) = gain_meter(
-                        ui,
-                        g,
-                        level,
-                        hold,
-                        module_h,
-                        StripAutomationTarget::Master,
-                        actions,
-                    ) {
+                    if let Some(v) =
+                        gain_meter(ui, g, level, hold, module_h, ChannelId::Master, actions)
+                    {
                         g = v;
                         changed = true;
                     }
@@ -653,9 +615,7 @@ pub(super) fn master_controls(
                         egui::vec2(CONTROLS_W, module_h),
                         egui::Layout::top_down(egui::Align::Center),
                         |ui| {
-                            if let Some(v) =
-                                db_row(ui, g, CONTROLS_W, StripAutomationTarget::Master, actions)
-                            {
+                            if let Some(v) = db_row(ui, g, CONTROLS_W, ChannelId::Master, actions) {
                                 g = v;
                                 changed = true;
                             }

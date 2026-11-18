@@ -538,7 +538,7 @@ fn apply_automation_lane_delta(
 
 fn apply_mixer_automation_delta(
     doc: &mut Document,
-    node: yinhe_types::MixerNodeId,
+    node: yinhe_types::ChannelId,
     lane_idx: usize,
     target: &yinhe_types::AutomationTarget,
     remove: &[AutomationEvent],
@@ -560,7 +560,7 @@ fn apply_mixer_automation_delta(
 
 fn apply_mixer_automation_lane_delta(
     doc: &mut Document,
-    node: yinhe_types::MixerNodeId,
+    node: yinhe_types::ChannelId,
     lane_idx: usize,
     after: Option<&yinhe_types::AutomationLane>,
 ) {

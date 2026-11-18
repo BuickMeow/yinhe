@@ -154,7 +154,7 @@ pub(crate) fn show(app: &mut App, ctx: &egui::Context) {
         Some(ParamLaneTarget::Insert { target, slot }) => {
             let doc = &app.workspace.documents[idx];
             doc.mixer
-                .node(doc.mixer.node_id_for(target))
+                .node(target)
                 .map(|node| {
                     node.automation
                         .iter()

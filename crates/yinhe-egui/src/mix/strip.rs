@@ -14,7 +14,7 @@
 use eframe::egui;
 use rust_i18n::t;
 use yinhe_mixer::MasterParams;
-use yinhe_types::{LogicalChannelId, MixerChannelId};
+use yinhe_types::{ApChannelId, ApGroupId, ChannelId};
 
 use crate::app::App;
 use crate::widgets::meter::{METER_GAP, METER_W, SCALE_W};
@@ -66,14 +66,11 @@ pub(crate) const BODY_BOTTOM_PAD: f32 = 6.0;
 pub(crate) fn focus_send_info(
     app: &App,
     idx: usize,
-    source_channel: MixerChannelId,
+    source_channel: ChannelId,
 ) -> controls::FocusSend {
     let mixer = &app.workspace.documents[idx].mixer;
-    let source = mixer.channel_id_for_ui(source_channel);
-    let target = app
-        .mix
-        .send_focus
-        .map(|focus| mixer.channel_id_for_ui(focus));
+    let source = source_channel;
+    let target = app.mix.send_focus;
     let (amount, pre_fader) = target
         .and_then(|target| mixer.channel_send(source, target))
         .map(|send| (send.amount, send.pre_fader))
@@ -95,10 +92,10 @@ pub(crate) fn node_strip(
     app: &mut App,
     ui: &mut egui::Ui,
     idx: usize,
-    node: MixerChannelId,
+    node: ChannelId,
     color: egui::Color32,
     title: &str,
-    target: controls::StripAutomationTarget,
+    target: ChannelId,
     level: (f32, f32),
     hold: (f32, f32),
     height: f32,
@@ -144,20 +141,10 @@ pub(crate) fn channel_strip(
     height: f32,
     actions: &mut Vec<MixAction>,
 ) {
-    let node = MixerChannelId::Midi(channel);
+    let node = ChannelId::Ap(ApChannelId::new(ApGroupId(u16::from(channel)), 0));
     let title = crate::mix::channel_title(&app.workspace.documents[idx].mixer, channel);
     let rect = node_strip(
-        app,
-        ui,
-        idx,
-        node,
-        color,
-        &title,
-        controls::StripAutomationTarget::Midi(channel),
-        level,
-        hold,
-        height,
-        actions,
+        app, ui, idx, node, color, &title, node, level, hold, height, actions,
     );
     // 双击色带：打开底部设备链并选中该通道。
     header_double_click_opens_dock(
@@ -165,7 +152,7 @@ pub(crate) fn channel_strip(
         ui,
         idx,
         rect,
-        crate::chrome::device_chain::DockContext::Midi(channel),
+        node,
         ("mix_header_dock_midi", channel),
         actions,
     );
@@ -177,14 +164,13 @@ pub(crate) fn audio_strip(
     app: &mut App,
     ui: &mut egui::Ui,
     idx: usize,
-    channel: u16,
+    node: ChannelId,
     display: u32,
     level: (f32, f32),
     hold: (f32, f32),
     height: f32,
     actions: &mut Vec<MixAction>,
 ) {
-    let node = MixerChannelId::Audio(channel);
     let title = crate::mix::lc_label(display);
     let rect = node_strip(
         app,
@@ -193,7 +179,7 @@ pub(crate) fn audio_strip(
         node,
         crate::theme::accent_active(),
         &title,
-        controls::StripAutomationTarget::Audio(channel),
+        node,
         level,
         hold,
         height,
@@ -205,8 +191,8 @@ pub(crate) fn audio_strip(
         ui,
         idx,
         rect,
-        crate::chrome::device_chain::DockContext::Audio(channel),
-        ("mix_header_dock_audio", channel),
+        node,
+        ("mix_header_dock_audio", node),
         actions,
     );
 }
@@ -218,14 +204,13 @@ pub(crate) fn track_lc_strip(
     ui: &mut egui::Ui,
     idx: usize,
     track: u16,
-    lc: LogicalChannelId,
+    node: ChannelId,
     display: u32,
     level: (f32, f32),
     hold: (f32, f32),
     height: f32,
     actions: &mut Vec<MixAction>,
 ) {
-    let node = MixerChannelId::TrackLc(lc);
     let title = crate::mix::lc_label(display);
     let color = app.workspace.documents[idx]
         .edit
@@ -236,25 +221,15 @@ pub(crate) fn track_lc_strip(
         .map(|c| crate::theme::rgba_to_color32((c[0], c[1], c[2], c[3])))
         .unwrap_or_else(crate::theme::accent_active);
     let rect = node_strip(
-        app,
-        ui,
-        idx,
-        node,
-        color,
-        &title,
-        controls::StripAutomationTarget::TrackLc(lc),
-        level,
-        hold,
-        height,
-        actions,
+        app, ui, idx, node, color, &title, node, level, hold, height, actions,
     );
     header_double_click_opens_dock(
         app,
         ui,
         idx,
         rect,
-        crate::chrome::device_chain::DockContext::TrackLc(lc),
-        ("mix_header_dock_track_lc", lc.0),
+        node,
+        ("mix_header_dock_track_lc", node),
         actions,
     );
 }
@@ -272,7 +247,7 @@ pub(crate) fn master_strip(
     let params = app.workspace.documents[idx].mixer.master.strip;
     let title = t!("mix.master").to_string();
 
-    let selected = strip_selected(app, idx, MixerChannelId::Master);
+    let selected = strip_selected(app, idx, ChannelId::Master);
     let rect = strip_frame(
         ui,
         "mix_strip_master",
@@ -315,7 +290,7 @@ pub(crate) fn header_double_click_opens_master_dock(
         actions,
     );
     if resp.clicked() {
-        focus_channel_info(app, MixerChannelId::Master);
+        focus_channel_info(app, ChannelId::Master);
     }
     if !resp.double_clicked() {
         return;
@@ -347,73 +322,29 @@ pub(crate) fn header_double_click_opens_master_dock(
 }
 
 /// 该混音通道是否被选中（同一套 `doc.edit.track_selected`，与 AR 行一致）。
-pub(crate) fn strip_selected(app: &App, idx: usize, ch: MixerChannelId) -> bool {
+pub(crate) fn strip_selected(app: &App, idx: usize, ch: ChannelId) -> bool {
     strip_selected_doc(&app.workspace.documents[idx], ch)
 }
 
 /// 纯函数版本（测试用）。
 pub(crate) fn strip_selected_doc(
     doc: &yinhe_editor_core::document::Document,
-    ch: MixerChannelId,
+    ch: ChannelId,
 ) -> bool {
-    match ch {
-        MixerChannelId::Midi(c) => doc.data.model.tracks.iter().enumerate().any(|(i, t)| {
-            t.kind == yinhe_core::TrackKind::Midi
-                && t.global_channel() == c
-                && doc.edit.track_selected.contains(&(i as u16))
-        }),
-        MixerChannelId::Audio(c) => doc.data.model.tracks.iter().enumerate().any(|(i, t)| {
-            t.kind == yinhe_core::TrackKind::Audio
-                && t.audio_channel == Some(c)
-                && doc.edit.track_selected.contains(&(i as u16))
-        }),
-        MixerChannelId::TrackLc(lc) => doc
-            .data
-            .model
-            .tracks
-            .iter()
-            .enumerate()
-            .any(|(i, t)| t.lc == Some(lc) && doc.edit.track_selected.contains(&(i as u16))),
-        MixerChannelId::Master => doc
-            .edit
-            .track_cache
-            .conductor_idx
-            .is_some_and(|c| doc.edit.track_selected.contains(&c)),
-    }
+    doc.data.model.tracks.iter().enumerate().any(|(i, _)| {
+        doc.track_channel_id(i) == Some(ch) && doc.edit.track_selected.contains(&(i as u16))
+    })
 }
 
 /// 点击通道条时把该通道对应的轨道设为选中（让通道条亮起，同时保持
 /// 右栏「音轨属性」与 PR 当前轨一致）。
-pub(crate) fn select_channel_tracks(app: &mut App, idx: usize, ch: MixerChannelId) {
+pub(crate) fn select_channel_tracks(app: &mut App, idx: usize, ch: ChannelId) {
     let anchor = {
         let doc = &mut app.workspace.documents[idx];
         doc.edit.track_selected.clear();
-        match ch {
-            MixerChannelId::Midi(c) => {
-                for (i, t) in doc.data.model.tracks.iter().enumerate() {
-                    if t.kind == yinhe_core::TrackKind::Midi && t.global_channel() == c {
-                        doc.edit.track_selected.insert(i as u16);
-                    }
-                }
-            }
-            MixerChannelId::Audio(c) => {
-                for (i, t) in doc.data.model.tracks.iter().enumerate() {
-                    if t.kind == yinhe_core::TrackKind::Audio && t.audio_channel == Some(c) {
-                        doc.edit.track_selected.insert(i as u16);
-                    }
-                }
-            }
-            MixerChannelId::TrackLc(lc) => {
-                for (i, t) in doc.data.model.tracks.iter().enumerate() {
-                    if t.lc == Some(lc) {
-                        doc.edit.track_selected.insert(i as u16);
-                    }
-                }
-            }
-            MixerChannelId::Master => {
-                if let Some(c) = doc.edit.track_cache.conductor_idx {
-                    doc.edit.track_selected.insert(c);
-                }
+        for i in 0..doc.data.model.tracks.len() {
+            if doc.track_channel_id(i) == Some(ch) {
+                doc.edit.track_selected.insert(i as u16);
             }
         }
         doc.edit.track_selected.iter().min().copied()
@@ -476,7 +407,7 @@ pub(crate) fn header_double_click_opens_dock(
 }
 
 /// 把右侧栏切到该通道的属性面板。
-pub(crate) fn focus_channel_info(app: &mut App, ch: MixerChannelId) {
+pub(crate) fn focus_channel_info(app: &mut App, ch: ChannelId) {
     app.info_content = Some(crate::right_panel::InfoContent::Channel(ch));
     app.right_tab = Some(crate::right_panel::RightTab::Info);
     app.right_panel_layout
@@ -533,28 +464,20 @@ pub(crate) fn header_context_menu(
                 |_| actions.push(action),
             );
         }
-        if ch != MixerChannelId::Master
+        if ch != ChannelId::Master
             && let Some(action) = pan_automation(ch)
         {
             crate::widgets::menu::action(ui, t!("mix.add_pan_automation").to_string(), "", |_| {
                 actions.push(action)
             });
         }
-        let mixed_lc = {
-            let target = app.workspace.documents[idx].mixer.channel_id_for_ui(ch);
-            app.workspace.documents[idx]
-                .mixer
-                .channel_sends
-                .iter()
-                .any(|send| send.target == target)
-        };
-        if !mixed_lc
-            && matches!(
-                ch,
-                MixerChannelId::Midi(_) | MixerChannelId::Audio(_) | MixerChannelId::TrackLc(_)
-            )
-        {
-            let node = app.workspace.documents[idx].mixer.node_id_for(ch);
+        let mixed_lc = app.workspace.documents[idx]
+            .mixer
+            .channel_sends
+            .iter()
+            .any(|send| send.target == ch);
+        if !mixed_lc && ch != ChannelId::Master {
+            let node = ch;
             let frozen = app.workspace.documents[idx]
                 .mixer
                 .node(node)
@@ -579,7 +502,7 @@ pub(crate) fn header_context_menu(
         crate::widgets::menu::action(ui, t!("mix.reset_gain").to_string(), "", |_| {
             actions.push(reset_gain_action(app, idx, ch))
         });
-        if ch != MixerChannelId::Master {
+        if ch != ChannelId::Master {
             crate::widgets::menu::action(ui, t!("mix.reset_pan").to_string(), "", |_| {
                 if let Some(action) = reset_pan_action(app, idx, ch) {
                     actions.push(action);
@@ -589,74 +512,30 @@ pub(crate) fn header_context_menu(
     });
 }
 
-pub(crate) fn volume_automation(ch: MixerChannelId) -> Option<MixAction> {
+pub(crate) fn volume_automation(ch: ChannelId) -> Option<MixAction> {
     Some(MixAction::AddMixerGainAutomation { channel: ch })
 }
 
-pub(crate) fn pan_automation(ch: MixerChannelId) -> Option<MixAction> {
-    (ch != MixerChannelId::Master).then_some(MixAction::AddMixerPanAutomation { channel: ch })
+pub(crate) fn pan_automation(ch: ChannelId) -> Option<MixAction> {
+    (ch != ChannelId::Master).then_some(MixAction::AddMixerPanAutomation { channel: ch })
 }
 
-pub(crate) fn reset_gain_action(app: &App, idx: usize, ch: MixerChannelId) -> MixAction {
-    let mixer = &app.workspace.documents[idx].mixer;
-    match ch {
-        MixerChannelId::Midi(channel) => {
-            let mut params = mixer.strip(channel);
-            params.gain = 1.0;
-            MixAction::SetNodeStrip {
-                node: MixerChannelId::Midi(channel),
-                params,
-            }
-        }
-        MixerChannelId::Audio(channel) => {
-            let mut params = mixer.audio_strip(channel);
-            params.gain = 1.0;
-            MixAction::SetNodeStrip {
-                node: MixerChannelId::Audio(channel),
-                params,
-            }
-        }
-        MixerChannelId::TrackLc(id) => {
-            let mut params = mixer.node_strip(MixerChannelId::TrackLc(id));
-            params.gain = 1.0;
-            MixAction::SetNodeStrip {
-                node: MixerChannelId::TrackLc(id),
-                params,
-            }
-        }
-        MixerChannelId::Master => MixAction::SetMaster {
+pub(crate) fn reset_gain_action(app: &App, idx: usize, ch: ChannelId) -> MixAction {
+    if ch == ChannelId::Master {
+        return MixAction::SetMaster {
             params: MasterParams { gain: 1.0 },
-        },
+        };
     }
+    let mixer = &app.workspace.documents[idx].mixer;
+    let mut params = mixer.node_strip(ch);
+    params.gain = 1.0;
+    MixAction::SetNodeStrip { node: ch, params }
 }
 
-pub(crate) fn reset_pan_action(app: &App, idx: usize, ch: MixerChannelId) -> Option<MixAction> {
-    let mixer = &app.workspace.documents[idx].mixer;
-    match ch {
-        MixerChannelId::Midi(channel) => {
-            let mut params = mixer.strip(channel);
-            params.pan = 0.0;
-            Some(MixAction::SetNodeStrip {
-                node: MixerChannelId::Midi(channel),
-                params,
-            })
-        }
-        MixerChannelId::Audio(channel) => {
-            let mut params = mixer.audio_strip(channel);
-            params.pan = 0.0;
-            Some(MixAction::SetNodeStrip {
-                node: MixerChannelId::Audio(channel),
-                params,
-            })
-        }
-        MixerChannelId::TrackLc(id) => {
-            let mut params = mixer.node_strip(MixerChannelId::TrackLc(id));
-            params.pan = 0.0;
-            Some(MixAction::SetNodeStrip {
-                node: MixerChannelId::TrackLc(id),
-                params,
-            })
-        }
-        MixerChannelId::Master => None,
-    }
+pub(crate) fn reset_pan_action(app: &App, idx: usize, ch: ChannelId) -> Option<MixAction> {
+    (ch != ChannelId::Master).then(|| {
+        let mut params = app.workspace.documents[idx].mixer.node_strip(ch);
+        params.pan = 0.0;
+        MixAction::SetNodeStrip { node: ch, params }
+    })
 }

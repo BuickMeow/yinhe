@@ -8,19 +8,19 @@ use std::sync::Arc;
 use rust_i18n::t;
 use yinhe_audio::{DecodedAudio, WavePeaks};
 use yinhe_mixer::FrozenAudio;
-use yinhe_types::MixerChannelId;
+use yinhe_types::ChannelId;
 
 use crate::app::App;
 
 impl App {
     /// 发起一条 LC 的冻结。只有 MIDI / 音频 / 每轨 LC 可以冻结。
-    pub(crate) fn start_lc_freeze(&mut self, idx: usize, channel: MixerChannelId) {
+    pub(crate) fn start_lc_freeze(&mut self, idx: usize, channel: ChannelId) {
         if self.jobs.is_exporting() || self.jobs.is_freezing() {
             self.notifications
                 .error(t!("toast.freeze_failed"), t!("toast.freeze_busy"));
             return;
         }
-        if channel == MixerChannelId::Master {
+        if channel == ChannelId::Master {
             self.notifications
                 .error(t!("toast.freeze_failed"), t!("toast.freeze_not_lc"));
             return;
@@ -31,7 +31,7 @@ impl App {
             return;
         };
         let revision = self.workspace.documents[idx].data.revision;
-        let node = self.workspace.documents[idx].mixer.node_id_for(channel);
+        let node = channel;
         {
             self.jobs.freeze.node = Some(node);
             self.jobs.freeze.revision = revision;

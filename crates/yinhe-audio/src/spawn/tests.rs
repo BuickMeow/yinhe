@@ -17,6 +17,10 @@ impl InsertProcessor for TestInsert {
 ///
 /// 设置类命令（层数/复音数/力度忽略/自动化密度）同属"单次、无重发"：
 /// 走普通通道被丢后 UI 的 diff 已归零不再重发，设置永不生效。
+fn test_channel() -> yinhe_types::ChannelId {
+    yinhe_types::ChannelId::Ap(yinhe_types::ApChannelId::new(yinhe_types::ApGroupId(0), 0))
+}
+
 #[test]
 fn structural_commands_use_reliable_channel() {
     assert!(AudioCommand::Play { from_sample: 0 }.is_reliable());
@@ -28,14 +32,14 @@ fn structural_commands_use_reliable_channel() {
     );
     assert!(
         AudioCommand::InsertRemove {
-            target: InsertTarget::Midi(0),
+            target: test_channel(),
             slot: 0,
         }
         .is_reliable()
     );
     assert!(
         AudioCommand::SetInstrumentSlot {
-            target: InsertTarget::Midi(0),
+            target: test_channel(),
             slot_id: 0,
             processor: None,
         }
@@ -158,7 +162,7 @@ fn command_meta_classifies_every_variant() {
         ),
         (
             AudioCommand::SetNodeStrip {
-                node: MixerChannelId::Midi(0),
+                node: test_channel(),
                 params: StripParams::default(),
             },
             "SetNodeStrip",
@@ -199,7 +203,7 @@ fn command_meta_classifies_every_variant() {
         ),
         (
             AudioCommand::SetInstrumentSlot {
-                target: InsertTarget::Midi(0),
+                target: test_channel(),
                 slot_id: 0,
                 processor: None,
             },
@@ -239,7 +243,7 @@ fn command_meta_classifies_every_variant() {
         ),
         (
             AudioCommand::FreezeStart {
-                node: MixerChannelId::Midi(0),
+                node: test_channel(),
                 progress: crate::freeze::FreezeProgress::new(),
                 cancel: Arc::new(AtomicBool::new(false)),
             },

@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use yinhe_audio::{AudioCommand, AudioHandle, BuiltinInsert, ClapInsert, InsertTarget};
 use yinhe_clap::{ClapProcessor, HostInfo};
 use yinhe_mixer::{InsertProcessor, MixerParams, PluginFormat};
-use yinhe_types::{LogicalChannelId, MixerChannelId};
+use yinhe_types::{ChannelId, LogicalChannelId};
 use yinhe_vst3::Vst3Insert;
 
 use super::plugin_instance::{PluginEntry, PluginInstance};
@@ -57,12 +57,8 @@ pub(crate) struct SlotRuntime {
 
 /// 一个文档的混音台插件机架。
 pub(crate) struct MixerRack {
-    /// 源通道 → 槽位实例（稀疏：只有挂插件的通道有条目）。
-    pub channels: HashMap<u8, Vec<SlotRuntime>>,
-    /// 每轨独立 LC 的 insert 链。
-    pub track_lcs: HashMap<LogicalChannelId, Vec<SlotRuntime>>,
-    /// 音频通道 insert 链（键 = 音频通道号）。
-    pub audios: HashMap<u16, Vec<SlotRuntime>>,
+    /// 通道 → 槽位实例（稀疏；Master 单独存）。
+    pub slots: HashMap<ChannelId, Vec<SlotRuntime>>,
     pub master: Vec<SlotRuntime>,
     /// 已发 InsertRemove、等待处理器退回后 deactivate 的孤儿槽位。
     orphan: Vec<SlotRuntime>,
@@ -74,9 +70,7 @@ pub(crate) struct MixerRack {
 impl Default for MixerRack {
     fn default() -> Self {
         Self {
-            channels: HashMap::new(),
-            track_lcs: HashMap::new(),
-            audios: HashMap::new(),
+            slots: HashMap::new(),
             master: Vec::new(),
             orphan: Vec::new(),
             next_owner: 1,
@@ -106,19 +100,15 @@ enum SlotLocation {
 impl MixerRack {
     fn chain_mut(&mut self, target: impl Into<InsertTarget>) -> &mut Vec<SlotRuntime> {
         match target.into() {
-            InsertTarget::Midi(ch) => self.channels.entry(ch).or_default(),
-            InsertTarget::Audio(ch) => self.audios.entry(ch).or_default(),
-            InsertTarget::TrackLc(id) => self.track_lcs.entry(id).or_default(),
-            InsertTarget::Master => &mut self.master,
+            ChannelId::Master => &mut self.master,
+            other => self.slots.entry(other).or_default(),
         }
     }
 
     pub(crate) fn chain(&self, target: impl Into<InsertTarget>) -> &[SlotRuntime] {
         match target.into() {
-            InsertTarget::Midi(ch) => self.channels.get(&ch).map(Vec::as_slice).unwrap_or(&[]),
-            InsertTarget::Audio(ch) => self.audios.get(&ch).map(Vec::as_slice).unwrap_or(&[]),
-            InsertTarget::TrackLc(id) => self.track_lcs.get(&id).map(Vec::as_slice).unwrap_or(&[]),
-            InsertTarget::Master => &self.master,
+            ChannelId::Master => &self.master,
+            other => self.slots.get(&other).map(Vec::as_slice).unwrap_or(&[]),
         }
     }
 
@@ -242,30 +232,16 @@ impl MixerRack {
     /// 引擎（重）spawn / restart 退回后：补发所有「有实例但未在渲染线程」的槽位。
     pub fn ensure_all_sent(&mut self, handle: &AudioHandle, sample_rate: u32) {
         let mut targets: Vec<(InsertTarget, usize)> = Vec::new();
-        for (ch, chain) in &self.channels {
+        for (target, chain) in &self.slots {
             for (slot, rt) in chain.iter().enumerate() {
                 if !rt.sent && !rt.pending_remove && !rt.activate_failed {
-                    targets.push((InsertTarget::Midi(*ch), slot));
-                }
-            }
-        }
-        for (lc, chain) in &self.track_lcs {
-            for (slot, rt) in chain.iter().enumerate() {
-                if !rt.sent && !rt.pending_remove && !rt.activate_failed {
-                    targets.push((InsertTarget::TrackLc(*lc), slot));
-                }
-            }
-        }
-        for (ch, chain) in &self.audios {
-            for (slot, rt) in chain.iter().enumerate() {
-                if !rt.sent && !rt.pending_remove && !rt.activate_failed {
-                    targets.push((InsertTarget::Audio(*ch), slot));
+                    targets.push((*target, slot));
                 }
             }
         }
         for (slot, rt) in self.master.iter().enumerate() {
             if !rt.sent && !rt.pending_remove && !rt.activate_failed {
-                targets.push((InsertTarget::Master, slot));
+                targets.push((ChannelId::Master, slot));
             }
         }
         for (target, slot) in targets {
@@ -284,9 +260,7 @@ impl MixerRack {
         fn clean(chain: &[SlotRuntime]) -> bool {
             chain.iter().all(|rt| rt.instance.is_none() && !rt.sent)
         }
-        self.channels.values().all(|v| clean(v))
-            && self.track_lcs.values().all(|v| clean(v))
-            && self.audios.values().all(|v| clean(v))
+        self.slots.values().all(|v| clean(v))
             && clean(&self.master)
             && self
                 .orphan
@@ -432,12 +406,12 @@ impl MixerRack {
 
     /// 删除每轨 LC 的机架链（关闭 per-track 模式时）。
     pub fn remove_track_lc_chain(&mut self, lc: LogicalChannelId, handle: Option<&AudioHandle>) {
-        if let Some(chain) = self.track_lcs.remove(&lc) {
+        if let Some(chain) = self.slots.remove(&ChannelId::Lc(lc)) {
             for (slot, rt) in chain.into_iter().enumerate() {
                 if rt.sent {
                     if let Some(h) = handle {
                         h.send(AudioCommand::InsertRemove {
-                            target: InsertTarget::TrackLc(lc),
+                            target: ChannelId::Lc(lc),
                             slot,
                         });
                     }
@@ -456,13 +430,14 @@ impl MixerRack {
             if !matches!(node.source, yinhe_types::ChannelSource::Track(_)) {
                 continue;
             }
-            if self.track_lcs.contains_key(&lc) {
+            let target = ChannelId::Lc(lc);
+            if self.slots.contains_key(&target) {
                 continue;
             }
-            self.track_lcs.insert(lc, Vec::new());
+            self.slots.insert(target, Vec::new());
             for r in &node.inserts {
                 let _ = self.load_plugin(
-                    InsertTarget::TrackLc(lc),
+                    target,
                     r.format,
                     &r.plugin_path,
                     &r.plugin_id,
@@ -481,9 +456,12 @@ impl MixerRack {
         handle: Option<&AudioHandle>,
     ) {
         let stale: Vec<LogicalChannelId> = self
-            .track_lcs
+            .slots
             .keys()
-            .copied()
+            .filter_map(|id| match id {
+                ChannelId::Lc(lc) => Some(*lc),
+                _ => None,
+            })
             .filter(|id| !valid.contains(id))
             .collect();
         for id in stale {
@@ -526,23 +504,13 @@ impl MixerRack {
         if let Some(idx) = self.orphan.iter().position(|rt| rt.owner == owner) {
             return SlotLocation::Orphan(idx);
         }
-        for (ch, chain) in &self.channels {
+        for (target, chain) in &self.slots {
             if let Some(slot) = chain.iter().position(|rt| rt.owner == owner) {
-                return SlotLocation::Slot(InsertTarget::Midi(*ch), slot);
-            }
-        }
-        for (lc, chain) in &self.track_lcs {
-            if let Some(slot) = chain.iter().position(|rt| rt.owner == owner) {
-                return SlotLocation::Slot(InsertTarget::TrackLc(*lc), slot);
-            }
-        }
-        for (ch, chain) in &self.audios {
-            if let Some(slot) = chain.iter().position(|rt| rt.owner == owner) {
-                return SlotLocation::Slot(InsertTarget::Audio(*ch), slot);
+                return SlotLocation::Slot(*target, slot);
             }
         }
         if let Some(slot) = self.master.iter().position(|rt| rt.owner == owner) {
-            return SlotLocation::Slot(InsertTarget::Master, slot);
+            return SlotLocation::Slot(ChannelId::Master, slot);
         }
         SlotLocation::NotFound
     }
@@ -607,7 +575,7 @@ impl MixerRack {
     pub fn poll_requests(&mut self, handle: Option<&AudioHandle>) {
         let mut restarts: Vec<(InsertTarget, usize)> = Vec::new();
         let mut latency_changed = false;
-        for (ch, chain) in self.channels.iter_mut() {
+        for (target, chain) in self.slots.iter_mut() {
             for (slot, rt) in chain.iter_mut().enumerate() {
                 if rt.pending_remove {
                     continue;
@@ -621,11 +589,11 @@ impl MixerRack {
                     latency_changed = true;
                 }
                 if requests.restart && rt.sent {
-                    restarts.push((InsertTarget::Midi(*ch), slot));
+                    restarts.push((*target, slot));
                 }
             }
         }
-        for (lc, chain) in self.track_lcs.iter_mut() {
+        for (target, chain) in self.slots.iter_mut() {
             for (slot, rt) in chain.iter_mut().enumerate() {
                 if rt.pending_remove {
                     continue;
@@ -639,7 +607,7 @@ impl MixerRack {
                     latency_changed = true;
                 }
                 if requests.restart && rt.sent {
-                    restarts.push((InsertTarget::TrackLc(*lc), slot));
+                    restarts.push((*target, slot));
                 }
             }
         }
@@ -672,17 +640,10 @@ impl MixerRack {
     /// 保存前把实例状态写回持久化层（InsertRef.state / bypassed）。
     /// pending_remove 槽位跳过（其 InsertRef 已在移除时先删，保持两边顺序对齐）。
     pub fn sync_states_to(&mut self, mixer: &mut MixerParams) {
-        for (ch, chain) in self.channels.iter_mut() {
-            let Some(refs) = mixer.node_inserts_mut(MixerChannelId::Midi(*ch)) else {
-                continue;
-            };
-            sync_chain(chain.iter_mut(), refs.iter_mut());
-        }
-        for (lc, chain) in self.track_lcs.iter_mut() {
-            let Some(refs) = mixer.node_inserts_mut(MixerChannelId::TrackLc(*lc)) else {
-                continue;
-            };
-            sync_chain(chain.iter_mut(), refs.iter_mut());
+        for (target, chain) in self.slots.iter_mut() {
+            if let Some(refs) = mixer.node_inserts_mut(*target) {
+                sync_chain(chain.iter_mut(), refs.iter_mut());
+            }
         }
         sync_chain(self.master.iter_mut(), mixer.master.inserts.iter_mut());
     }

@@ -12,7 +12,7 @@ use rust_i18n::t;
 
 use yinhe_editor_core::document::Document;
 use yinhe_mixer::StripParams;
-use yinhe_types::{LogicalChannelId, MixerChannelId, RackId, RackOutputMode};
+use yinhe_types::{ChannelId, ChannelSource, RackId, RackOutputMode};
 
 use crate::widgets::rows::{panel_row, section_header, value_row};
 
@@ -31,17 +31,15 @@ pub(crate) struct ChannelInfoOut {
 pub(crate) fn resolve_channel(
     doc: &Document,
     info_content: &Option<crate::right_panel::InfoContent>,
-) -> Option<MixerChannelId> {
+) -> Option<ChannelId> {
     if let Some(crate::right_panel::InfoContent::Channel(ch)) = info_content {
         return Some(*ch);
     }
-    let mut channels = doc.edit.track_selected.iter().filter_map(|&t| {
-        doc.data
-            .model
-            .tracks
-            .get(t as usize)
-            .and_then(|tr| tr.mixer_channel())
-    });
+    let mut channels = doc
+        .edit
+        .track_selected
+        .iter()
+        .filter_map(|&t| doc.track_channel_id(t as usize));
     let first = channels.next()?;
     channels.all(|c| c == first).then_some(first)
 }
@@ -61,164 +59,134 @@ pub(crate) fn show_channel_info(
     // 显式固定下来：后续拖动推子时 `track_selected` 变化不会让面板跳通道。
     *info_content = Some(crate::right_panel::InfoContent::Channel(ch));
 
-    match ch {
-        MixerChannelId::Midi(ch) => show_midi(ui, doc, ch, per_track_supported),
-        MixerChannelId::Audio(ch) => show_audio(ui, doc, ch),
-        MixerChannelId::TrackLc(id) => show_track_lc(ui, doc, id),
-        MixerChannelId::Master => show_master(ui, doc),
+    if ch == ChannelId::Master {
+        show_master(ui, doc)
+    } else {
+        show_channel(ui, doc, ch, per_track_supported)
     }
 }
 
-fn show_midi(
+/// 通道标题：AP = A01；音频 LC = Audio-XX；每轨 LC = 轨道号 + 名称。
+fn channel_title(doc: &Document, ch: ChannelId) -> String {
+    match ch {
+        ChannelId::Ap(ap) => crate::mix::channel_label(ap.group.0 as u8),
+        ChannelId::Master => t!("mix.master").to_string(),
+        ChannelId::Lc(lc) => match doc.mixer.source_of(ch) {
+            Some(ChannelSource::Audio(ach)) => crate::mix::audio_label(ach),
+            Some(ChannelSource::Track(t)) => doc
+                .edit
+                .track_cache
+                .info
+                .get(t as usize)
+                .map(|ti| format!("{:03} {}", ti.index, ti.name))
+                .unwrap_or_else(|| format!("{:03}", t)),
+            _ => crate::mix::lc_label(doc.mixer.lc_display_map().get(&lc).copied().unwrap_or(0)),
+        },
+    }
+}
+
+/// 该通道绑定的 MIDI 源通道（AP / OwnLc 轨有；音频轨没有）。
+fn midi_channel_of(doc: &Document, ch: ChannelId) -> Option<u8> {
+    match ch {
+        ChannelId::Ap(ap) => Some(ap.group.0 as u8),
+        ChannelId::Lc(_) => match doc.mixer.source_of(ch) {
+            Some(ChannelSource::Track(t)) => doc
+                .data
+                .model
+                .tracks
+                .get(t as usize)
+                .map(|t| t.global_channel()),
+            _ => None,
+        },
+        ChannelId::Master => None,
+    }
+}
+
+fn show_channel(
     ui: &mut egui::Ui,
     doc: &mut Document,
-    ch: u8,
+    ch: ChannelId,
     per_track_supported: bool,
 ) -> ChannelInfoOut {
     let mut out = ChannelInfoOut::default();
-    let tracks = tracks_on_channel(doc, MixerChannelId::Midi(ch));
-    header(ui, crate::mix::channel_title(&doc.mixer, ch), &tracks);
+    let tracks = tracks_on_channel(doc, ch);
+    header(ui, channel_title(doc, ch), &tracks);
 
-    let mut strip = doc.mixer.strip(ch);
+    let mut strip = doc.mixer.node_strip(ch);
     if strip_controls(ui, &mut strip) {
-        doc.mixer_mut()
-            .set_node_strip(MixerChannelId::Midi(ch), strip);
+        doc.mixer_mut().set_node_strip(ch, strip);
         out.mixer_changed = true;
     }
 
     section_header(ui, t!("track.output").as_ref());
-    if output_selector(ui, doc, MixerChannelId::Midi(ch)) {
+    if output_selector(ui, doc, ch) {
         out.mixer_changed = true;
     }
 
-    section_header(ui, t!("rack.output").as_ref());
-    let rack = RackId::from_midi_channel(ch);
-    let plugin = !doc.mixer.rack_instruments(rack).is_empty();
-    if plugin {
-        // 方案 C：乐器只用主立体声输出，没有多输出拓扑可选。
-        value_row(
-            ui,
-            t!("rack.output.single").to_string(),
-            "Main · 2ch".to_string(),
-        );
-    } else if !per_track_supported {
-        value_row(
-            ui,
-            t!("rack.output.shared").to_string(),
-            t!("rack.output.requires_yinhe_cpu").to_string(),
-        );
-    } else {
-        let current = doc.rack_output_mode(ch);
-        let mut sel = usize::from(current == RackOutputMode::PerTrack);
-        let options = [
-            (0usize, t!("rack.output.shared").to_string()),
-            (1usize, t!("rack.output.per_track").to_string()),
-        ];
-        let mut changed = false;
-        panel_row(ui, "", |ui| {
-            changed = crate::widgets::combo::combo_select(
+    if let Some(global) = midi_channel_of(doc, ch) {
+        section_header(ui, t!("rack.output").as_ref());
+        let rack = RackId::from_midi_channel(global);
+        let plugin = !doc.mixer.rack_instruments(rack).is_empty();
+        if plugin {
+            value_row(
                 ui,
-                "rack_output_mode",
-                &mut sel,
-                ui.available_width().max(1.0),
-                &options,
+                t!("rack.output.single").to_string(),
+                "Main · 2ch".to_string(),
             );
-        });
-        if changed {
-            let mode = if sel == 0 {
-                RackOutputMode::Shared
-            } else {
-                RackOutputMode::PerTrack
-            };
-            if doc.set_rack_output_mode(ch, mode) {
-                out.model_changed = true;
-                out.mixer_changed = true;
+        } else if !per_track_supported {
+            value_row(
+                ui,
+                t!("rack.output.shared").to_string(),
+                t!("rack.output.requires_yinhe_cpu").to_string(),
+            );
+        } else {
+            let current = doc.rack_output_mode(global);
+            let mut sel = usize::from(current == RackOutputMode::PerTrack);
+            let options = [
+                (0usize, t!("rack.output.shared").to_string()),
+                (1usize, t!("rack.output.per_track").to_string()),
+            ];
+            let mut changed = false;
+            panel_row(ui, "", |ui| {
+                changed = crate::widgets::combo::combo_select(
+                    ui,
+                    "rack_output_mode",
+                    &mut sel,
+                    ui.available_width().max(1.0),
+                    &options,
+                );
+            });
+            if changed {
+                let mode = if sel == 0 {
+                    RackOutputMode::Shared
+                } else {
+                    RackOutputMode::PerTrack
+                };
+                if doc.set_rack_output_mode(global, mode) {
+                    out.model_changed = true;
+                    out.mixer_changed = true;
+                }
             }
         }
-    }
 
-    // 默认乐器：数据模型目前只有 Port A 的 16 个槽位；其它端口不显示，
-    // 避免把 B01 的设置误写到 A01。
-    if ch < 16 {
-        section_header(ui, t!("track.default_instrument").as_ref());
-        out.model_changed |= instrument::show(ui, doc, ch);
-    }
+        if global < 16 {
+            section_header(ui, t!("track.default_instrument").as_ref());
+            out.model_changed |= instrument::show(ui, doc, global);
+        }
 
-    section_header(ui, t!("mix.instrument").as_ref());
-    show_instrument_summary(ui, doc, ch);
+        section_header(ui, t!("mix.instrument").as_ref());
+        show_instrument_summary(ui, doc, global);
+    }
 
     section_header(ui, t!("mix.sends").as_ref());
-    show_channel_sends(ui, doc, MixerChannelId::Midi(ch));
+    show_channel_sends(ui, doc, ch);
 
     section_header(ui, t!("channel.inserts").as_ref());
     show_inserts(
         ui,
-        doc.mixer.midi_node(ch).map(|node| node.inserts.as_slice()),
-    );
-    out
-}
-
-fn show_audio(ui: &mut egui::Ui, doc: &mut Document, ch: u16) -> ChannelInfoOut {
-    let mut out = ChannelInfoOut::default();
-    let tracks = tracks_on_channel(doc, MixerChannelId::Audio(ch));
-    let id = doc
-        .mixer
-        .audio_node(ch)
-        .and_then(|n| match n.id {
-            yinhe_types::ChannelId::Lc(id) => Some(id),
-            _ => None,
-        })
-        .unwrap_or_default();
-    let display = doc.mixer.lc_display_map().get(&id).copied().unwrap_or(0);
-    header(ui, crate::mix::lc_label(display), &tracks);
-
-    let mut strip = doc.mixer.audio_strip(ch);
-    if strip_controls(ui, &mut strip) {
-        doc.mixer_mut()
-            .set_node_strip(MixerChannelId::Audio(ch), strip);
-        out.mixer_changed = true;
-    }
-
-    section_header(ui, t!("track.output").as_ref());
-    if output_selector(ui, doc, MixerChannelId::Audio(ch)) {
-        out.mixer_changed = true;
-    }
-
-    section_header(ui, t!("mix.sends").as_ref());
-    show_channel_sends(ui, doc, MixerChannelId::Audio(ch));
-
-    section_header(ui, t!("channel.inserts").as_ref());
-    show_inserts(
-        ui,
-        doc.mixer.audio_node(ch).map(|node| node.inserts.as_slice()),
-    );
-    out
-}
-
-fn show_track_lc(ui: &mut egui::Ui, doc: &mut Document, id: LogicalChannelId) -> ChannelInfoOut {
-    let mut out = ChannelInfoOut::default();
-    let display = doc.mixer.lc_display_map().get(&id).copied().unwrap_or(0);
-    header(ui, crate::mix::lc_label(display), &[]);
-
-    let node = MixerChannelId::TrackLc(id);
-    let mut strip = doc.mixer.node_strip(node);
-    if strip_controls(ui, &mut strip) {
-        doc.mixer_mut().set_node_strip(node, strip);
-        out.mixer_changed = true;
-    }
-
-    section_header(ui, t!("track.output").as_ref());
-    if output_selector(ui, doc, node) {
-        out.mixer_changed = true;
-    }
-
-    section_header(ui, t!("mix.sends").as_ref());
-    show_channel_sends(ui, doc, node);
-
-    section_header(ui, t!("channel.inserts").as_ref());
-    show_inserts(
-        ui,
-        doc.mixer.track_node(id).map(|node| node.inserts.as_slice()),
+        doc.mixer
+            .channel_node(ch)
+            .map(|node| node.inserts.as_slice()),
     );
     out
 }
@@ -288,28 +256,17 @@ fn strip_controls(ui: &mut egui::Ui, strip: &mut StripParams) -> bool {
     *strip != before
 }
 
-fn tracks_on_channel(doc: &Document, ch: MixerChannelId) -> Vec<u16> {
-    doc.data
-        .model
-        .tracks
-        .iter()
-        .enumerate()
-        .filter(|(_, tr)| match ch {
-            MixerChannelId::Midi(ch) => {
-                tr.kind == yinhe_core::TrackKind::Midi && tr.global_channel() == ch
-            }
-            MixerChannelId::Audio(ch) => tr.audio_channel == Some(ch),
-            MixerChannelId::TrackLc(id) => tr.lc == Some(id),
-            MixerChannelId::Master => false,
-        })
-        .map(|(i, _)| i as u16)
+fn tracks_on_channel(doc: &Document, ch: ChannelId) -> Vec<u16> {
+    (0..doc.data.model.tracks.len())
+        .filter(|&i| doc.track_channel_id(i) == Some(ch))
+        .map(|i| i as u16)
         .collect()
 }
 
 /// 通道主输出（Master / 另一条 LC）。返回是否改动。
-fn output_selector(ui: &mut egui::Ui, doc: &mut Document, ch: MixerChannelId) -> bool {
+fn output_selector(ui: &mut egui::Ui, doc: &mut Document, ch: ChannelId) -> bool {
     let map = doc.mixer.channel_display_map();
-    let source = doc.mixer.channel_id_for_ui(ch);
+    let source = ch;
     let mut targets: Vec<(yinhe_types::ChannelId, String)> = Vec::new();
     // 普通 LC（音频 / 每轨）+ AP 通道。
     for node in doc.mixer.nodes() {
@@ -382,8 +339,8 @@ fn show_instrument_summary(ui: &mut egui::Ui, doc: &Document, ch: u8) {
     }
 }
 
-fn show_channel_sends(ui: &mut egui::Ui, doc: &Document, ch: MixerChannelId) {
-    let source = doc.mixer.channel_id_for_ui(ch);
+fn show_channel_sends(ui: &mut egui::Ui, doc: &Document, ch: ChannelId) {
+    let source = ch;
     let map = doc.mixer.channel_display_map();
     let sends: Vec<_> = doc.mixer.channel_sends_from(source).collect();
     if sends.is_empty() {

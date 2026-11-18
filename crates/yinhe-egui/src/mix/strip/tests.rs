@@ -57,18 +57,11 @@ fn strip_selected_follows_track_selection() {
     let mut doc = Document::empty();
     // 空白工程：track 0 = Master，track 1 = A01（global 0）。
     assert_eq!(doc.data.model.tracks[1].global_channel(), 0);
-    assert!(!super::strip_selected_doc(
-        &doc,
-        yinhe_types::MixerChannelId::Midi(0)
-    ));
+    let ch1 = doc.track_channel_id(1).expect("track 1 channel");
+    assert!(!super::strip_selected_doc(&doc, ch1));
 
     doc.edit.track_selected.insert(1);
-    assert!(super::strip_selected_doc(
-        &doc,
-        yinhe_types::MixerChannelId::Midi(0)
-    ));
-    assert!(!super::strip_selected_doc(
-        &doc,
-        yinhe_types::MixerChannelId::Midi(1)
-    ));
+    assert!(super::strip_selected_doc(&doc, ch1));
+    let ch2 = doc.track_channel_id(2).expect("track 2 channel");
+    assert!(!super::strip_selected_doc(&doc, ch2));
 }

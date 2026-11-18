@@ -100,7 +100,7 @@ pub(crate) struct FreezeState {
     pub progress: Arc<Mutex<FreezeProgress>>,
     pub cancel: Arc<std::sync::atomic::AtomicBool>,
     /// 发起冻结的节点（完成时写回）。
-    pub node: Option<yinhe_types::MixerNodeId>,
+    pub node: Option<yinhe_types::ChannelId>,
     /// 发起时的工程 revision（期间有编辑则丢弃本次冻结）。
     pub revision: u64,
 }

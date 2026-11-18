@@ -32,7 +32,7 @@ pub fn snapshot_lane_events(
 /// 按 target 取 MixerNode lane 的事件快照。
 pub fn snapshot_node_lane_events(
     doc: &Document,
-    node: yinhe_types::MixerNodeId,
+    node: yinhe_types::ChannelId,
     lane_idx: usize,
     target: &AutomationTarget,
 ) -> Vec<AutomationEvent> {
@@ -52,7 +52,7 @@ pub fn snapshot_node_lane_events(
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn push_node_automation_undo(
     doc: &mut Document,
-    node: yinhe_types::MixerNodeId,
+    node: yinhe_types::ChannelId,
     lane_idx: usize,
     target: &AutomationTarget,
     before: Vec<AutomationEvent>,
