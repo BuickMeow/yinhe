@@ -817,17 +817,23 @@ struct**，是 1.7「改了不生效」的同类风险。应删除 `SendParams` 
 | 3.2 SendParams/SyncSends | `c635c41a` | 删除三层共享的死发送链路（-252 行） |
 | 8.5 ArRow/注释 | `61b0c3d2` | `track()` 去 `unwrap_or`；orphan 注释 |
 | 8.3.4 MixAction 拆分 | `a1093c50` | `mix/actions.rs`，mix.rs 1212→1041 |
+| 8.3.2 ensure_len 拆 repair_* | `79e740cd` | 12 项统一命名，顶部写明依赖顺序 |
+| 8.4.2 channel_id_for_ui 移入模型层 | `32f91a86` | 删除 UI 重复的 AP 解析 |
+| 8.1 arrange::show 动作拆分 | `072fae1a` | `arrange/actions.rs`，arrange.rs 1289→1131 |
+| 8.4.3 mixer_channel_of 移入模型层 | `ad3face0` | 音频层不再自带 UI key 反查 |
+| 8.4.8 Rack 配置/实例边界 | `ad3face0` | `OwnLc.rack` 注释写明共享配置、每轨实例 |
+| 8.3.6 RendererSharedState 分组 | `531fe702` | playback / sf / underrun 三组 |
+| 8.1 track_panel AM 行拆分 | `73620ba7` | `render::draw_automation_row`，759→629 |
 
 ### 未开始（P3，需单独排期）
 
 | 项 | 原因 |
 |---|---|
-| 8.1 `arrange::show`（1030）/ `track_panel::show`（710）拆分 | 涉及布局/交互/数据快照三块，需要独立回归 |
+| 8.1 `track_panel::show` 普通轨行拆分 | AM 行与动作已拆出；剩余普通轨行 260 行需要大参数结构体 |
 | 8.3.1 `AudioEngine` 53 字段拆分 | 混音/播放/插件宿主三块，风险高 |
-| 8.3.2 `ensure_len` 12 项改为 `repair_*` | 纯命名/顺序整理，收益低于风险 |
 | 8.3.3 `arrange::show` 数据/动作/绘制分离 | 同 8.1 |
-| 8.3.6 `RendererSharedState` 分组 | 涉及渲染线程共享状态，需要并发回归 |
-| 8.4.2~8.4.8 其余层级问题 | 需要跨 crate 移动类型，单独排期 |
+| 8.4.4 `display_name` 移出 types | 被 egui/flutter/midi 三处使用，需要先有共享 UI 文案层 |
+| 8.4.6 `ChannelSource::Unspecified` 改 Option | 跨所有 match，收益低于风险 |
 
 ---
 
