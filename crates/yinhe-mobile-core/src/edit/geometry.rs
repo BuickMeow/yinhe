@@ -7,7 +7,7 @@ use super::*;
 ///
 /// 几何与命中判定统一走 `yinhe_editor_core::selection_handle`，与桌面端同源。
 /// `interval_px` 为 `None` 时（AR）不生成 gate 控制点。
-pub(crate) fn selection_handle_hit(
+pub fn selection_handle_hit(
     x0: f32,
     y0: f32,
     x1: f32,
@@ -28,12 +28,7 @@ pub(crate) fn selection_handle_hit(
     Some(kind.code())
 }
 
-pub(crate) fn pr_selection_handle(
-    s: &RenderScene,
-    geom: &PrGeom,
-    x: f32,
-    y: f32,
-) -> Option<SelHandle> {
+pub fn pr_selection_handle(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option<SelHandle> {
     let doc = s.document.as_ref()?;
     if doc.edit.sel_rect.rects.len() != 1 {
         return None;
@@ -65,12 +60,7 @@ pub(crate) fn pr_selection_handle(
     })
 }
 
-pub(crate) fn ar_selection_handle(
-    s: &RenderScene,
-    geom: &ArGeom,
-    x: f32,
-    y: f32,
-) -> Option<SelHandle> {
+pub fn ar_selection_handle(s: &RenderScene, geom: &ArGeom, x: f32, y: f32) -> Option<SelHandle> {
     let doc = s.document.as_ref()?;
     if doc.edit.arr_sel_rect.len() != 1 {
         return None;
@@ -95,7 +85,7 @@ pub(crate) fn ar_selection_handle(
 }
 
 /// 工具写入目标轨：显示过滤轨 → 当前编辑轨 → 第一条非 conductor 轨。
-pub(crate) fn write_track(s: &RenderScene) -> Option<usize> {
+pub fn write_track(s: &RenderScene) -> Option<usize> {
     let n = s.num_tracks;
     if n == 0 {
         return None;
@@ -125,7 +115,7 @@ pub fn quantize_tick_interval() -> u32 {
 }
 
 /// 当前量化档位（Auto 按视图缩放解析）。
-pub(crate) fn quantize_of(s: &RenderScene) -> QuantizePreset {
+pub fn quantize_of(s: &RenderScene) -> QuantizePreset {
     let raw = s
         .document
         .as_ref()
@@ -157,7 +147,7 @@ pub(crate) fn quantize_of(s: &RenderScene) -> QuantizePreset {
     )
 }
 
-pub(crate) fn bump(s: &mut RenderScene) {
+pub fn bump(s: &mut RenderScene) {
     s.overlay_rev = s.overlay_rev.wrapping_add(1);
 }
 

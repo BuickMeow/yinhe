@@ -20,6 +20,7 @@ yinhe-core = { path = "../yinhe-core" }
 yinhe-editor-core = { path = "../yinhe-editor-core" }
 yinhe-wgpu = { path = "../yinhe-wgpu" }
 yinhe-theme = { path = "../yinhe-theme" }
+yinhe-mobile-core = { path = "../yinhe-mobile-core" }
 yinhe-audio = { path = "../yinhe-audio" }
 yinhe-midi = { path = "../yinhe-midi" }
 yinhe-yin = { path = "../yinhe-yin" }

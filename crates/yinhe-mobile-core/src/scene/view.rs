@@ -674,7 +674,7 @@ pub const GESTURE_AR_LANE: i32 = 4;
 /// 不做“边缘轮询再跳”：目标位置来自播放头，随播放匀速前进，视口用帧率无关的
 /// 指数插值跟随，视觉上是连续匀速移动；用户手动平移/缩放后暂停，播放头连续
 /// 离开视口 `FOLLOW_RESUME_SECS` 秒后自动恢复。
-pub(crate) fn apply_follow(s: &mut RenderScene, w: f32, h: f32, tick: f64) {
+pub fn apply_follow(s: &mut RenderScene, w: f32, h: f32, tick: f64) {
     let _ = h;
     let Some(_doc) = s.document.as_ref() else {
         return;

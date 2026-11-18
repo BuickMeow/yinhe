@@ -7967,6 +7967,7 @@ dependencies = [
  "yinhe-core",
  "yinhe-editor-core",
  "yinhe-midi",
+ "yinhe-mobile-core",
  "yinhe-theme",
  "yinhe-types",
  "yinhe-wgpu",
@@ -8026,6 +8027,25 @@ dependencies = [
  "serde",
  "serde_json",
  "yinhe-types",
+]
+
+[[package]]
+name = "yinhe-mobile-core"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "pollster 1.0.1",
+ "serde_json",
+ "wgpu",
+ "yinhe-archive",
+ "yinhe-audio",
+ "yinhe-core",
+ "yinhe-editor-core",
+ "yinhe-midi",
+ "yinhe-theme",
+ "yinhe-types",
+ "yinhe-wgpu",
+ "yinhe-yin",
 ]
 
 [[package]]

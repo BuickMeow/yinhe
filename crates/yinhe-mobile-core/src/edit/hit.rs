@@ -1,7 +1,7 @@
 use super::*;
 
 /// PR 命中音符：返回 `(track, start_tick, end_tick, key, side)`，side 0=移动 1=左缘 2=右缘。
-pub(crate) fn hit_note(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option<NoteHit> {
+pub fn hit_note(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option<NoteHit> {
     let doc = s.document.as_ref()?;
     let key = geom.y_to_key(y);
     let tick = geom.x_to_tick(x);
@@ -68,7 +68,7 @@ pub(crate) fn hit_note(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option
 }
 
 /// PR 已选框命中（像素坐标，取第一个）。
-pub(crate) fn pr_box_at(s: &RenderScene, x: f32, y: f32) -> Option<(f64, f64, u8, u8)> {
+pub fn pr_box_at(s: &RenderScene, x: f32, y: f32) -> Option<(f64, f64, u8, u8)> {
     let doc = s.document.as_ref()?;
     let view = &s.pr_view;
     for (t0, t1, klo, khi) in doc.edit.sel_rect.effective_rects() {
@@ -86,7 +86,7 @@ pub(crate) fn pr_box_at(s: &RenderScene, x: f32, y: f32) -> Option<(f64, f64, u8
 }
 
 /// AR 已选框命中。
-pub(crate) fn arr_box_at(
+pub fn arr_box_at(
     s: &RenderScene,
     geom: &ArGeom,
     x: f32,

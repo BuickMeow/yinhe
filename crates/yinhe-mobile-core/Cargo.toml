@@ -1,0 +1,21 @@
+[package]
+name = "yinhe-mobile-core"
+version.workspace = true
+license.workspace = true
+edition = "2024"
+description = "Yinhe 移动端平台无关核心：场景投影、触屏编辑、音频会话与工程 IO"
+
+[dependencies]
+wgpu = { workspace = true }
+pollster = { workspace = true }
+log = "0.4"
+serde_json = { workspace = true }
+yinhe-types = { path = "../yinhe-types" }
+yinhe-core = { path = "../yinhe-core" }
+yinhe-editor-core = { path = "../yinhe-editor-core" }
+yinhe-wgpu = { path = "../yinhe-wgpu" }
+yinhe-theme = { path = "../yinhe-theme" }
+yinhe-audio = { path = "../yinhe-audio" }
+yinhe-midi = { path = "../yinhe-midi" }
+yinhe-yin = { path = "../yinhe-yin" }
+yinhe-archive = { path = "../yinhe-archive" }

@@ -13,28 +13,20 @@
 //!   （surface buffer 为物理像素，两者分别用于 view 与交换链）
 
 mod android;
-mod audio;
-mod autosave;
 mod dart_ffi;
-mod doc_job;
-mod edit;
-mod inertia;
 #[cfg(target_os = "ios")]
 mod ios;
 #[cfg(target_os = "ios")]
 mod ios_ffi;
-mod library;
-mod midi_export;
-mod midi_import;
-mod midi_names;
 #[cfg(target_env = "ohos")]
 mod ohos_ffi;
 mod render;
-mod scene;
-mod selection_materializer;
-mod soundfont_archive;
-mod theme_colors;
-mod velocity_cache;
+
+// 平台无关的移动编辑核心；在 crate 根重导出，保持既有 `crate::scene` 等调用不变。
+pub(crate) use yinhe_mobile_core::{
+    audio, autosave, doc_job, edit, inertia, library, midi_export, midi_import, midi_names, scene,
+    soundfont_archive, theme_colors, velocity_cache,
+};
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
@@ -146,19 +138,14 @@ static CMD_TX: OnceLock<Sender<Cmd>> = OnceLock::new();
 
 // ── 画布逻辑尺寸（Flutter 控件逻辑像素）──
 
-static LOGICAL_W_BITS: AtomicU32 = AtomicU32::new(0);
-static LOGICAL_H_BITS: AtomicU32 = AtomicU32::new(0);
 static PIXEL_W: AtomicU32 = AtomicU32::new(0);
 static PIXEL_H: AtomicU32 = AtomicU32::new(0);
 static AM_PIXEL_W: AtomicU32 = AtomicU32::new(0);
 static AM_PIXEL_H: AtomicU32 = AtomicU32::new(0);
 
-/// 画布逻辑尺寸（视图/手势坐标系；未收到 `nativeSetViewport` 前为 0）。
+/// 画布逻辑尺寸（委托 `yinhe-mobile-core`，与场景/手势共用一份状态）。
 pub(crate) fn logical_size() -> (f32, f32) {
-    (
-        f32::from_bits(LOGICAL_W_BITS.load(Ordering::Relaxed)),
-        f32::from_bits(LOGICAL_H_BITS.load(Ordering::Relaxed)),
-    )
+    yinhe_mobile_core::logical_size()
 }
 
 /// surface 像素尺寸（Kotlin `nativeSetSize` 上报）。
@@ -178,8 +165,7 @@ pub(crate) fn automation_pixel_size() -> (u32, u32) {
 }
 
 fn set_logical_size(w: f32, h: f32) {
-    LOGICAL_W_BITS.store(w.max(1.0).to_bits(), Ordering::Relaxed);
-    LOGICAL_H_BITS.store(h.max(1.0).to_bits(), Ordering::Relaxed);
+    yinhe_mobile_core::set_logical_size(w, h);
 }
 
 // ── 日志 ──

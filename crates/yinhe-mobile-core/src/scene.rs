@@ -28,14 +28,14 @@ mod recent;
 mod settings;
 mod view;
 
-pub(crate) use automation::*;
-pub(crate) use edit::*;
-pub(crate) use events::*;
-pub(crate) use file::*;
-pub(crate) use project::*;
-pub(crate) use recent::*;
-pub(crate) use settings::*;
-pub(crate) use view::*;
+pub use automation::*;
+pub use edit::*;
+pub use events::*;
+pub use file::*;
+pub use project::*;
+pub use recent::*;
+pub use settings::*;
+pub use view::*;
 
 /// 视图模式（与 Dart 约定一致：0=AR 走带，1=PR 卷帘）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -335,7 +335,7 @@ pub struct RenderScene {
     /// 未提交的旧矩形，产生「新边 ↔ 旧边」来回抖动。
     pub sel_drag_active: bool,
     /// 上一次动画推进时间（指数衰减用）。
-    pub(crate) anim_last: Option<std::time::Instant>,
+    pub anim_last: Option<std::time::Instant>,
 }
 
 /// 工具（移动端子集：与桌面 `tools_panel::Tool` 的编号对齐）。
@@ -587,12 +587,12 @@ pub fn scene() -> &'static Mutex<RenderScene> {
 }
 
 /// 纯选区变化：只刷新覆盖层，不重建音符层/轨道快照。
-pub(crate) fn selection_changed(s: &mut RenderScene) {
+pub fn selection_changed(s: &mut RenderScene) {
     s.overlay_rev = s.overlay_rev.wrapping_add(1);
 }
 
 /// 从文档重算轨道快照（模型/颜色/显隐/轨道面板信息/ppq）。
-pub(crate) fn refresh_snapshot(s: &mut RenderScene) {
+pub fn refresh_snapshot(s: &mut RenderScene) {
     // 内容已变：选区物化/拖动 ghost 缓存都作废（ghost 里存的是旧位置/旧 id）。
     crate::selection_materializer::invalidate();
     s.doc_generation = s.doc_generation.wrapping_add(1);
@@ -663,7 +663,7 @@ static AUTOMATION_CLIPBOARD: Mutex<Option<AutomationClip>> = Mutex::new(None);
 ///
 /// AM/AR 的 Tempo 曲线都按它归一化：最大值贴着满高，新增更大的 Tempo 后
 /// 所有曲线比例自动重算（读 JSON / 每帧渲染都会重新取）。
-pub(crate) fn tempo_max_bpm(model: &YinModel) -> f32 {
+pub fn tempo_max_bpm(model: &YinModel) -> f32 {
     model
         .conductor
         .tempo
@@ -675,7 +675,7 @@ pub(crate) fn tempo_max_bpm(model: &YinModel) -> f32 {
 }
 
 /// 极简 JSON 字符串转义（双引号/反斜杠/控制字符）。
-pub(crate) fn json_escape(s: &str) -> String {
+pub fn json_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 8);
     for c in s.chars() {
         match c {

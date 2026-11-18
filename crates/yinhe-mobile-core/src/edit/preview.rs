@@ -8,7 +8,7 @@ use super::*;
 ///
 /// 不能用 round：按在半格附近时，指针只动一点就会因为四舍五入跨到下一格，
 /// 在 DAW 里会表现为“刚拖就跳一格”。向右取 floor、向左取 ceil，保持迟滞。
-pub(crate) fn drag_delta_ticks(
+pub fn drag_delta_ticks(
     s: &RenderScene,
     q: QuantizePreset,
     anchor_raw: f64,
@@ -27,7 +27,7 @@ pub(crate) fn drag_delta_ticks(
 ///
 /// 起点不在量化格上时（例如导入 MIDI 落在工程末尾的非整格处），第一次
 /// 拖动把起点吸到拖动方向的下一条量化线；起点已在格上时保持旧的整格移动。
-pub(crate) fn selection_move_delta(
+pub fn selection_move_delta(
     s: &RenderScene,
     q: QuantizePreset,
     sel_start: f64,
@@ -56,12 +56,7 @@ pub(crate) fn selection_move_delta(
 /// 单音符拖动的绝对坐标吸附：按“手指 - 抓取偏移”算出音符新起点，再吸附到
 /// 绝对网格，而不是用相对位移累加。这样重拍/切分音等非整格起点也能跟随
 /// 指针落到它所在的绝对格位。
-pub(crate) fn note_move_start_abs(
-    s: &RenderScene,
-    q: QuantizePreset,
-    d: &DragState,
-    x: f32,
-) -> u32 {
+pub fn note_move_start_abs(s: &RenderScene, q: QuantizePreset, d: &DragState, x: f32) -> u32 {
     let geom = PrGeom::new(&s.pr_view);
     let grab_offset = d.anchor_tick_raw - f64::from(d.start_tick);
     let target = geom.x_to_tick(x) - grab_offset;
@@ -72,12 +67,7 @@ pub(crate) fn note_move_start_abs(
         .round() as u32
 }
 
-pub(crate) fn move_box_delta(
-    s: &RenderScene,
-    d: &DragState,
-    x: f32,
-    y: f32,
-) -> Option<(f64, i32, i32)> {
+pub fn move_box_delta(s: &RenderScene, d: &DragState, x: f32, y: f32) -> Option<(f64, i32, i32)> {
     let q = quantize_of(s);
     match s.view_mode {
         ViewMode::Pianoroll => {
@@ -104,7 +94,7 @@ pub(crate) fn move_box_delta(
 }
 
 /// 橡皮框命中预览：不隐藏原音符，只把将被删除的音符用选中态叠加。
-pub(crate) fn build_erase_preview(s: &mut RenderScene, d: &DragState, x: f32, y: f32) {
+pub fn build_erase_preview(s: &mut RenderScene, d: &DragState, x: f32, y: f32) {
     let q = quantize_of(s);
     let snap = scene::SnapCtx::new(s);
     let Some(doc) = s.document.as_ref() else {
@@ -171,7 +161,7 @@ pub(crate) fn build_erase_preview(s: &mut RenderScene, d: &DragState, x: f32, y:
 }
 
 /// 播放单个音符预览（`duration=0` = 持续到 stop）。
-pub(crate) fn preview_note(
+pub fn preview_note(
     s: &RenderScene,
     track: u16,
     key: u8,
@@ -197,7 +187,7 @@ pub(crate) fn preview_note(
     );
 }
 
-pub(crate) fn note_velocity(s: &RenderScene, track: u16, start_tick: u32, key: u8) -> Option<u8> {
+pub fn note_velocity(s: &RenderScene, track: u16, start_tick: u32, key: u8) -> Option<u8> {
     let doc = s.document.as_ref()?;
     doc.data
         .model
@@ -208,7 +198,7 @@ pub(crate) fn note_velocity(s: &RenderScene, track: u16, start_tick: u32, key: u
 }
 
 /// 精确匹配 `(track, start, end, key)` 的音符。
-pub(crate) fn note_at_bounds(
+pub fn note_at_bounds(
     s: &RenderScene,
     track: u16,
     start_tick: u32,
@@ -226,13 +216,7 @@ pub(crate) fn note_at_bounds(
 
 /// 把单个音符设为唯一选中：选区矩形覆盖该音符，但成员位图只含它的 id，
 /// 避免 gate 内其他起点被矩形顺带选中。
-pub(crate) fn select_note(
-    s: &mut RenderScene,
-    track: u16,
-    start_tick: u32,
-    end_tick: u32,
-    key: u8,
-) {
+pub fn select_note(s: &mut RenderScene, track: u16, start_tick: u32, end_tick: u32, key: u8) {
     let Some(note) = note_at_bounds(s, track, start_tick, end_tick, key) else {
         return;
     };
@@ -252,7 +236,7 @@ pub(crate) fn select_note(
 }
 
 /// 选区整体移动的听觉预览：只取当前视口内目标音符，避免超大选区全量送进音频线程。
-pub(crate) fn preview_group(s: &RenderScene, d: &DragState, dt: i64, dk: i32) {
+pub fn preview_group(s: &RenderScene, d: &DragState, dt: i64, dk: i32) {
     if s.view_mode != ViewMode::Pianoroll {
         return;
     }
@@ -298,7 +282,7 @@ pub(crate) fn preview_group(s: &RenderScene, d: &DragState, dt: i64, dk: i32) {
     crate::audio::preview_notes(notes, true);
 }
 
-pub(crate) fn apply_preview(
+pub fn apply_preview(
     s: &mut RenderScene,
     d: &DragState,
     ghost: Vec<(u32, u32, u8, u16)>,
@@ -312,7 +296,7 @@ pub(crate) fn apply_preview(
     s.preview.set_ghost(ghost, selected);
 }
 
-pub(crate) fn view_tick_at(s: &RenderScene, x: f32) -> f64 {
+pub fn view_tick_at(s: &RenderScene, x: f32) -> f64 {
     let q = quantize_of(s);
     let snap = scene::SnapCtx::new(s);
     match s.view_mode {
@@ -327,7 +311,7 @@ pub(crate) fn view_tick_at(s: &RenderScene, x: f32) -> f64 {
     }
 }
 
-pub(crate) fn riff_extent_x(d: &DragState, s: &RenderScene, x: f32) -> i64 {
+pub fn riff_extent_x(d: &DragState, s: &RenderScene, x: f32) -> i64 {
     let Some((t0, t1, _, _)) = d.box_ticks else {
         return 0;
     };
@@ -345,7 +329,7 @@ pub(crate) fn riff_extent_x(d: &DragState, s: &RenderScene, x: f32) -> i64 {
 /// 纵向步数（轴坐标）：PR 正 = key 增大（屏幕向上），AR 正 = track 增大（屏幕向下）。
 ///
 /// 按 key/轨道边界夹住，避免在完全越界的方向上生成预览/复制步。
-pub(crate) fn riff_extent_y(d: &DragState, s: &RenderScene, y: f32) -> i64 {
+pub fn riff_extent_y(d: &DragState, s: &RenderScene, y: f32) -> i64 {
     match s.view_mode {
         ViewMode::Pianoroll => {
             let Some((_, _, k0, k1)) = d.box_ticks else {
@@ -377,14 +361,14 @@ pub(crate) fn riff_extent_y(d: &DragState, s: &RenderScene, y: f32) -> i64 {
     }
 }
 
-pub(crate) fn riff_steps(d: &DragState, s: &RenderScene, x: f32, y: f32) -> RiffSteps {
+pub fn riff_steps(d: &DragState, s: &RenderScene, x: f32, y: f32) -> RiffSteps {
     RiffSteps {
         extent_x: riff_extent_x(d, s, x),
         extent_y: riff_extent_y(d, s, y),
     }
 }
 
-pub(crate) fn update_riff_fill(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
+pub fn update_riff_fill(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) {
     let steps = riff_steps(d, s, x, y);
     if steps.is_zero() {
         d.drag_hidden = Some(std::sync::Arc::new(yinhe_types::HiddenNotes::default()));
@@ -450,7 +434,7 @@ pub(crate) fn update_riff_fill(d: &mut DragState, s: &mut RenderScene, x: f32, y
 
 /// 按最新指针位置与视图刷新拖拽预览（选框/移动框实时吸附量化网格）。
 /// AR ghost 目标轨道：与 `offset_track_skip_conductor` 同规则。
-pub(crate) fn ghost_track(src: u16, delta: i32, num_tracks: i32, conductor: Option<u16>) -> u16 {
+pub fn ghost_track(src: u16, delta: i32, num_tracks: i32, conductor: Option<u16>) -> u16 {
     if delta == 0 || num_tracks <= 0 {
         return src;
     }
@@ -467,7 +451,7 @@ pub(crate) fn ghost_track(src: u16, delta: i32, num_tracks: i32, conductor: Opti
 }
 
 /// 构建 AR 自动化竖线 ghost：选中锚点按 `(dt, dtr)` 移动后的副本。
-pub(crate) fn build_ar_auto_ghost(s: &RenderScene, dt: i64, dtr: i32) -> Vec<scene::AutoGhostLane> {
+pub fn build_ar_auto_ghost(s: &RenderScene, dt: i64, dtr: i32) -> Vec<scene::AutoGhostLane> {
     let Some(doc) = s.document.as_ref() else {
         return Vec::new();
     };
@@ -559,7 +543,7 @@ pub(crate) fn build_ar_auto_ghost(s: &RenderScene, dt: i64, dtr: i32) -> Vec<sce
 ///
 /// 时间方向每列一个音符（gate = 一个量化间隔），音高沿起止 key 线性插值取整，
 /// 与刷子共用同一套预览/提交路径（`d.cells`）。
-pub(crate) fn line_cells(d: &DragState, s: &RenderScene, x: f32, y: f32) -> Vec<(u32, u8)> {
+pub fn line_cells(d: &DragState, s: &RenderScene, x: f32, y: f32) -> Vec<(u32, u8)> {
     let geom = PrGeom::new(&s.pr_view);
     let q = quantize_of(s);
     let snap = scene::SnapCtx::new(s);
@@ -590,7 +574,7 @@ pub(crate) fn line_cells(d: &DragState, s: &RenderScene, x: f32, y: f32) -> Vec<
 }
 
 /// 把直线格子推给 ghost 层（gate = 一个量化间隔）。
-pub(crate) fn preview_line(s: &mut RenderScene, d: &mut DragState) {
+pub fn preview_line(s: &mut RenderScene, d: &mut DragState) {
     let interval = quantize_of(s).tick_interval(s.ppq).max(1);
     if let Some(track) = write_track(s) {
         let ghost: Vec<(u32, u32, u8, u16)> = d
@@ -607,7 +591,7 @@ pub(crate) fn preview_line(s: &mut RenderScene, d: &mut DragState) {
     }
 }
 
-pub(crate) fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
+pub fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
     // 大选区 ghost 由后台物化：结果到了就补上（按下那一刻可能还没算完）。
     if d.drag.is_none()
         && matches!(d.kind, kind::MOVE_BOX | kind::SEL_GATE | kind::SEL_SCALE)

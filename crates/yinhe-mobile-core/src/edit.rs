@@ -21,12 +21,12 @@ mod lifecycle;
 mod overlay;
 mod preview;
 
-pub(crate) use commit::*;
-pub(crate) use geometry::*;
-pub(crate) use hit::*;
-pub(crate) use lifecycle::*;
-pub(crate) use overlay::*;
-pub(crate) use preview::*;
+pub use commit::*;
+pub use geometry::*;
+pub use hit::*;
+pub use lifecycle::*;
+pub use overlay::*;
+pub use preview::*;
 
 /// 框选/拖动判定阈值（逻辑像素，与桌面一致）。
 const DRAG_THRESHOLD: f32 = 3.0;
@@ -85,14 +85,14 @@ mod kind {
 }
 
 /// 整体拖动音符：`(track, start_tick, end_tick, velocity)`（key 由外层桶给出）。
-pub(crate) type DragNote = (u16, u32, u32, u8);
+pub type DragNote = (u16, u32, u32, u8);
 
 /// 整体拖动音符按 key 分桶。
-pub(crate) type DragByKey = Vec<Vec<DragNote>>;
+pub type DragByKey = Vec<Vec<DragNote>>;
 /// 原位置隐藏键：`(track, start_tick, key)`。
 
 #[derive(Clone)]
-pub(crate) struct DragState {
+pub struct DragState {
     kind: u8,
     x0: f32,
     y0: f32,
@@ -207,7 +207,7 @@ static DRAG: std::sync::Mutex<DragState> = std::sync::Mutex::new(DragState {
 
 // ── 几何 ──
 
-pub(crate) struct PrGeom {
+pub struct PrGeom {
     ppu: f32,
     scroll_x: f32,
     scroll_y: f32,
@@ -241,7 +241,7 @@ impl PrGeom {
     }
 }
 
-pub(crate) struct ArGeom {
+pub struct ArGeom {
     ppu: f32,
     scroll_x: f32,
     scroll_y: f32,
@@ -274,7 +274,7 @@ impl ArGeom {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct SelHandle {
+pub struct SelHandle {
     edge: u8,
     t0: f64,
     t1: f64,
@@ -287,7 +287,7 @@ pub(crate) struct SelHandle {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct RiffSteps {
+pub struct RiffSteps {
     /// 横向延伸 tick（带符号；不是完整选区宽度的步数）。
     extent_x: i64,
     /// 纵向延伸行数/key 数（带符号；不是完整选区高度的步数）。
@@ -300,9 +300,9 @@ impl RiffSteps {
     }
 }
 
-pub(crate) type AutoGhostBucket = (f32, Vec<AutomationEvent>, Vec<u32>);
+pub type AutoGhostBucket = (f32, Vec<AutomationEvent>, Vec<u32>);
 
-pub(crate) type NoteHit = (u16, u32, u32, u8, u8, u32);
+pub type NoteHit = (u16, u32, u32, u8, u8, u32);
 
 #[cfg(test)]
 mod tests;

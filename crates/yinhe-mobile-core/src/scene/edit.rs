@@ -548,7 +548,7 @@ fn note_selection_action(doc: &mut Document, action: i32, view_mode: ViewMode) -
 
 /// 当前力度摘要的键：与渲染线程构建 `VelocitySummary` 时的 `vs_key` 完全一致。
 fn velocity_key(s: &RenderScene) -> u64 {
-    let visible = crate::render::effective_visible(&s.pr_track_visible, s.display_track);
+    let visible = crate::effective_visible(&s.pr_track_visible, s.display_track);
     let tv_hash = yinhe_wgpu::hash_bools(&visible);
     s.model_revision ^ tv_hash.rotate_left(32)
 }
@@ -614,7 +614,7 @@ pub fn velocity_bars() -> Vec<f64> {
             ));
         }
     } else {
-        let visible = crate::render::effective_visible(&s.pr_track_visible, s.display_track);
+        let visible = crate::effective_visible(&s.pr_track_visible, s.display_track);
         for key in 0..=yinhe_types::MAX_KEY {
             for note in model.key_notes_in_range(key, scan_lo_tick, scan_hi_tick) {
                 if note.velocity <= 1 {

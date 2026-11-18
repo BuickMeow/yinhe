@@ -1,6 +1,6 @@
 use super::*;
 
-pub(crate) fn begin_sel_handle(d: &mut DragState, s: &mut RenderScene, h: SelHandle, x: f32) {
+pub fn begin_sel_handle(d: &mut DragState, s: &mut RenderScene, h: SelHandle, x: f32) {
     d.kind = match h.edge {
         4 => kind::RIFF_FILL,
         3 => kind::SEL_SCALE,
@@ -73,7 +73,7 @@ pub fn begin_marquee(x: f32, y: f32) -> i32 {
     begin_with_tool(x, y, Some(Tool::Select))
 }
 
-pub(crate) fn begin_with_tool(x: f32, y: f32, tool_override: Option<Tool>) -> i32 {
+pub fn begin_with_tool(x: f32, y: f32, tool_override: Option<Tool>) -> i32 {
     let Ok(mut d) = DRAG.lock() else {
         return 0;
     };
@@ -257,7 +257,7 @@ pub fn tick_scroll() -> i32 {
 }
 
 /// PASTE_READY 期间按当前指针位置刷新落点（量化吸附）。
-pub(crate) fn update_paste_ready(d: &mut DragState, s: &RenderScene, x: f32, y: f32) {
+pub fn update_paste_ready(d: &mut DragState, s: &RenderScene, x: f32, y: f32) {
     let q = quantize_of(s);
     let snap = scene::SnapCtx::new(s);
     match s.view_mode {
@@ -331,7 +331,7 @@ pub fn long_press_context_json() -> String {
 }
 
 /// 从选框外音符起手时取消旧选框：专心拖这一颗音符。
-pub(crate) fn clear_selection_for_note_drag(s: &mut RenderScene) {
+pub fn clear_selection_for_note_drag(s: &mut RenderScene) {
     if let Some(doc) = s.document.as_mut() {
         doc.edit.selected.clear();
         doc.edit.sel_rect.clear();
@@ -960,7 +960,7 @@ pub fn cancel() {
 
 // ── PR 起始分发 ──
 
-pub(crate) fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: Tool) {
+pub fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: Tool) {
     let geom = PrGeom::new(&s.pr_view);
     if x < geom.kbw {
         return; // 键盘区不响应编辑
@@ -1080,7 +1080,7 @@ pub(crate) fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, t
 }
 
 /// AR 起始分发（面板区交给 Dart：进 PR / 拖动排序）。
-pub(crate) fn begin_arr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: Tool) {
+pub fn begin_arr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: Tool) {
     let geom = ArGeom::new(&s.arr_view);
     if x < geom.panel_w {
         return;

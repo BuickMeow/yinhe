@@ -1,6 +1,6 @@
 use super::*;
 
-pub(crate) fn pencil_box(s: &mut RenderScene, d: &DragState, geom: &PrGeom) {
+pub fn pencil_box(s: &mut RenderScene, d: &DragState, geom: &PrGeom) {
     let x0 = geom.tick_to_x(d.start_f);
     let x1 = geom.tick_to_x(d.cur_end).max(x0 + 2.0);
     let y = geom.key_to_y(d.key);
@@ -8,7 +8,7 @@ pub(crate) fn pencil_box(s: &mut RenderScene, d: &DragState, geom: &PrGeom) {
     bump(s);
 }
 
-pub(crate) fn brush_cells(s: &mut RenderScene, d: &DragState, geom: &PrGeom, interval: u32) {
+pub fn brush_cells(s: &mut RenderScene, d: &DragState, geom: &PrGeom, interval: u32) {
     s.overlay_cells.clear();
     for (idx, key) in &d.cells {
         let t0 = f64::from(idx.saturating_mul(interval));
@@ -22,7 +22,7 @@ pub(crate) fn brush_cells(s: &mut RenderScene, d: &DragState, geom: &PrGeom, int
 }
 
 /// Bresenham 连线（刷子路径补格）。
-pub(crate) fn walk_line(from: (u32, u8), to: (u32, u8), add: &mut impl FnMut(u32, u8)) {
+pub fn walk_line(from: (u32, u8), to: (u32, u8), add: &mut impl FnMut(u32, u8)) {
     let (x0, y0) = (i64::from(from.0), i64::from(from.1));
     let (x1, y1) = (i64::from(to.0), i64::from(to.1));
     let dx = (x1 - x0).abs();
@@ -53,7 +53,7 @@ pub(crate) fn walk_line(from: (u32, u8), to: (u32, u8), add: &mut impl FnMut(u32
 // ── 收尾刷新 ──
 
 /// 纯选择变化：只刷新覆盖层，不重建音符层（无需重载音频）。
-pub(crate) fn after_selection_change(s: &mut RenderScene) {
+pub fn after_selection_change(s: &mut RenderScene) {
     scene::selection_changed(s);
 }
 
@@ -61,7 +61,7 @@ pub(crate) fn after_selection_change(s: &mut RenderScene) {
 ///
 /// 音频首次初始化可能耗时较长，必须避免在持有场景锁时执行（否则渲染线程被卡住，
 /// 编辑结果要等音频初始化完才可见）。
-pub(crate) fn after_edit(s: &mut RenderScene) -> Option<std::sync::Arc<yinhe_core::YinModel>> {
+pub fn after_edit(s: &mut RenderScene) -> Option<std::sync::Arc<yinhe_core::YinModel>> {
     let model = s.document.as_ref().map(|d| d.data.model.clone());
     scene::refresh_snapshot(s);
     model

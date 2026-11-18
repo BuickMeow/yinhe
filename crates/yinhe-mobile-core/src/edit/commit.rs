@@ -4,7 +4,7 @@ use yinhe_editor_core::Document;
 /// PR/AR 框选提交；`moved < 阈值` 视为点击（清空选择）。
 ///
 /// 返回点击位置（tick，需在**解锁后**由调用方设置播放光标——锁内二次加锁会死锁）。
-pub(crate) fn commit_marquee(
+pub fn commit_marquee(
     s: &mut RenderScene,
     d: &DragState,
     x: f32,
@@ -117,7 +117,7 @@ pub(crate) fn commit_marquee(
 }
 
 /// 选框右缘整体变速：新跨度（t0 固定，右端跟随指针并按量化吸附）。
-pub(crate) fn selection_scale_span(s: &RenderScene, d: &DragState, x: f32) -> f64 {
+pub fn selection_scale_span(s: &RenderScene, d: &DragState, x: f32) -> f64 {
     let Some((t0, t1, _, _)) = d.box_ticks else {
         return 1.0;
     };
@@ -133,7 +133,7 @@ pub(crate) fn selection_scale_span(s: &RenderScene, d: &DragState, x: f32) -> f6
 }
 
 /// 整体变速预览：选中音符相对 t0 等比缩放，原位置隐藏。
-pub(crate) fn update_sel_scale(d: &mut DragState, s: &mut RenderScene, x: f32) {
+pub fn update_sel_scale(d: &mut DragState, s: &mut RenderScene, x: f32) {
     let Some((t0, t1, k0, k1)) = d.box_ticks else {
         return;
     };
@@ -230,7 +230,7 @@ pub(crate) fn update_sel_scale(d: &mut DragState, s: &mut RenderScene, x: f32) {
 }
 
 /// 整体变速提交：按新跨度等比缩放选中音符（一步 undo）。
-pub(crate) fn commit_selection_scale(
+pub fn commit_selection_scale(
     s: &mut RenderScene,
     d: &DragState,
     x: f32,
@@ -256,13 +256,13 @@ pub(crate) fn commit_selection_scale(
 
 /// 已选框整体移动提交。
 /// gate 拉伸预览/提交共用的最短长度：长音符至少一个量化格，短音符至少 1 tick。
-pub(crate) fn clamp_gate_end(start: u32, end: u32, dt: i64, min_gate: u32) -> u32 {
+pub fn clamp_gate_end(start: u32, end: u32, dt: i64, min_gate: u32) -> u32 {
     let min = end.saturating_sub(start).min(min_gate).max(1);
     (i64::from(end) + dt).max(i64::from(start) + i64::from(min)) as u32
 }
 
 /// 选框右端整体 gate 拖动：最终 dt（已按量化格对齐并保证选区至少一格）。
-pub(crate) fn selection_gate_dt(s: &RenderScene, d: &DragState, x: f32) -> f64 {
+pub fn selection_gate_dt(s: &RenderScene, d: &DragState, x: f32) -> f64 {
     let Some((t0, t1, _, _)) = d.box_ticks else {
         return 0.0;
     };
@@ -279,7 +279,7 @@ pub(crate) fn selection_gate_dt(s: &RenderScene, d: &DragState, x: f32) -> f64 {
 }
 
 /// 选框右端整体 gate 提交：所有选中音符 end + dt，选区右边界同步。
-pub(crate) fn commit_selection_gate(
+pub fn commit_selection_gate(
     s: &mut RenderScene,
     d: &DragState,
     x: f32,
@@ -315,7 +315,7 @@ pub(crate) fn commit_selection_gate(
     None
 }
 
-pub(crate) fn commit_move(
+pub fn commit_move(
     s: &mut RenderScene,
     d: &DragState,
     x: f32,
@@ -376,7 +376,7 @@ pub(crate) fn commit_move(
 }
 
 /// 铅笔精调选择提交：松手时以最后一次真实命中的音符为准。
-pub(crate) fn commit_pick(s: &mut RenderScene, x: f32, y: f32) -> bool {
+pub fn commit_pick(s: &mut RenderScene, x: f32, y: f32) -> bool {
     let geom = PrGeom::new(&s.pr_view);
     let Some((track, start, end, key, _, _id)) = hit_note(s, &geom, x, y) else {
         return false;
@@ -387,7 +387,7 @@ pub(crate) fn commit_pick(s: &mut RenderScene, x: f32, y: f32) -> bool {
 }
 
 /// 右下角 Riff 方块释放：按选区宽度向左右重复，一步 undo。
-pub(crate) fn commit_riff(
+pub fn commit_riff(
     s: &mut RenderScene,
     d: &DragState,
     x: f32,
@@ -492,7 +492,7 @@ pub(crate) fn commit_riff(
 }
 
 /// 单音符移动提交（铅笔/选框共用入口，桌面 `pencil_drag_note`）。
-pub(crate) fn commit_note_move(
+pub fn commit_note_move(
     s: &mut RenderScene,
     d: &DragState,
     x: f32,
@@ -537,7 +537,7 @@ pub(crate) fn commit_note_move(
 }
 
 /// 单音符边缘伸缩提交。
-pub(crate) fn commit_note_resize(
+pub fn commit_note_resize(
     s: &mut RenderScene,
     d: &DragState,
     x: f32,
@@ -577,7 +577,7 @@ pub(crate) fn commit_note_resize(
 }
 
 /// 铅笔落音符提交。
-pub(crate) fn commit_pencil(
+pub fn commit_pencil(
     s: &mut RenderScene,
     d: &DragState,
 ) -> Option<std::sync::Arc<yinhe_core::YinModel>> {
@@ -604,7 +604,7 @@ pub(crate) fn commit_pencil(
 }
 
 /// 刷子一笔提交（路径格一次批量，1 条 undo）。
-pub(crate) fn commit_brush(
+pub fn commit_brush(
     s: &mut RenderScene,
     d: &DragState,
 ) -> Option<std::sync::Arc<yinhe_core::YinModel>> {
@@ -635,7 +635,7 @@ pub(crate) fn commit_brush(
 }
 
 /// 橡皮框擦提交（≥阈值才删；与桌面一致为矩形框擦）。
-pub(crate) fn commit_erase(
+pub fn commit_erase(
     s: &mut RenderScene,
     d: &DragState,
     x: f32,

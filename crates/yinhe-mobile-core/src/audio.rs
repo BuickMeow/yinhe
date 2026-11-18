@@ -495,7 +495,7 @@ pub fn set_soundfonts(entries: Vec<SoundfontEntry>) {
 ///
 /// SFZ 的采样是相对路径，单独选一个 `.sfz` 找不到采样，所以只有
 /// `soundfonts/` 解压根目录里的 SFZ 才算有效。
-pub(crate) fn is_soundfont_path(path: &str) -> bool {
+pub fn is_soundfont_path(path: &str) -> bool {
     let lower = path.replace('\\', "/").to_ascii_lowercase();
     // SFZ 现在可以从用户目录原地读取（Android 需「所有文件访问」），
     // 不再要求路径里必须出现 /soundfonts/。
