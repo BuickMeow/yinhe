@@ -70,7 +70,33 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
     let num_tracks = doc.data.model.tracks.len();
     let track_idx = track_idx.min(num_tracks - 1);
 
-    // ── Conductor 轨 ──
+    if show_conductor_fields(ui, doc, track_idx) {
+        return out;
+    }
+
+    show_name_row(ui, doc, track_idx);
+
+    let kind = doc.data.model.tracks[track_idx].kind;
+    if kind == yinhe_core::TrackKind::Midi {
+        show_midi_output(ui, doc, track_idx, &mut out);
+    } else if kind == yinhe_core::TrackKind::Audio {
+        out.routing_changed |= show_audio_output(ui, doc, track_idx);
+    }
+
+    if out.routing_changed {
+        doc.data.bump_revision();
+    }
+
+    // ── 颜色（行高一致的小色块 + 重置）──
+    show_color_row(ui, doc, track_idx);
+
+    out
+}
+
+fn show_conductor_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) -> bool {
+    if Some(track_idx as u16) != doc.edit.track_cache.conductor_idx {
+        return false;
+    }
     if Some(track_idx as u16) == doc.edit.track_cache.conductor_idx {
         crate::right_panel::region_hint(ui, t!("hint.panel.info_conductor"));
         crate::widgets::rows::section_header(ui, t!("track.conductor").as_ref());
@@ -91,10 +117,14 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
             t!("track.timesig_count").as_ref(),
             format!("{}", doc.data.model.conductor.time_sig.len()),
         );
-        return out;
+        return true;
     }
 
-    // ── 名称 ──
+    true
+}
+
+/// 名称行：编辑中的改动直接写 model，失焦时提交 undo。
+fn show_name_row(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) {
     let mut name_change: Option<String> = None;
     let mut name_resp_id: Option<egui::Id> = None;
     let mut name_gained_focus = false;
@@ -137,7 +167,15 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
             yinhe_editor_core::history::commit_track_name(doc, id.value(), track_idx, &name);
         }
     }
-    // ── MIDI 轨的音频输出：Master / LC 通道 / AP 通道 ──
+}
+
+/// MIDI 轨输出：Master / LC / AP 三层。
+fn show_midi_output(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    track_idx: usize,
+    out: &mut TrackInfoOut,
+) {
     //
     // 用户口径：
     // - 选 LC 时不再显示端口/通道（LC 是独立音频通道，不需要 MIDI 源）；
@@ -326,8 +364,12 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
             }
         }
     }
+}
 
-    // ── 音频轨的混音通道（音频轨没有 MIDI 端口/通道，这里是唯一通道号）──
+/// 音频轨输出：home LC / Master；返回 routing_changed。
+fn show_audio_output(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) -> bool {
+    let mut routing_changed = false;
+    let kind = doc.data.model.tracks[track_idx].kind;
     if kind == yinhe_core::TrackKind::Audio {
         let direct = matches!(
             doc.data.model.tracks[track_idx].effective_audio_target(),
@@ -354,15 +396,15 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
                 doc.link_audio_track_to_own_lc(track_idx)
             };
             if changed {
-                out.routing_changed = true;
+                routing_changed = true;
             }
         }
         if target_sel == 1 {
             // DirectMaster 没有 home LC，通道号不可编辑。
-            if out.routing_changed {
+            if routing_changed {
                 doc.data.bump_revision();
             }
-            return out;
+            return routing_changed;
         }
         let current_ch = doc.data.model.tracks[track_idx]
             .audio_target_channel()
@@ -400,19 +442,12 @@ fn show_track_fields(ui: &mut egui::Ui, doc: &mut Document, track_idx: usize) ->
                 if let Some(td) = Arc::make_mut(&mut doc.data.model).tracks.get_mut(track_idx) {
                     Arc::make_mut(td).audio_channel = Some(sel as u16);
                 }
-                out.routing_changed = true;
+                routing_changed = true;
             }
         });
     }
 
-    if out.routing_changed {
-        doc.data.bump_revision();
-    }
-
-    // ── 颜色（行高一致的小色块 + 重置）──
-    show_color_row(ui, doc, track_idx);
-
-    out
+    routing_changed
 }
 
 /// 颜色行：色块（点击直接弹出取色器）+ 重置按钮。
