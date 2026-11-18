@@ -221,7 +221,7 @@ mod tests {
     #[test]
     fn shared_audio_home_lcs_split_into_unique_lcs_with_send() {
         use crate::document::Document;
-        use yinhe_types::{ChannelId, LogicalChannelId, MIDI_CHANNEL_COUNT};
+        use yinhe_types::{ChannelId, LogicalChannelId};
 
         let mut doc = Document::empty();
         // 两条音频轨共用 audio_channel 0（旧工程共享 home LC）。

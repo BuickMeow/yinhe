@@ -149,7 +149,7 @@ impl Document {
 mod tests {
     use super::*;
     use std::sync::Arc;
-    use yinhe_core::{TrackData, TrackKind};
+    use yinhe_core::TrackKind;
     use yinhe_types::{AutomationEvent, AutomationLane, SegmentShape};
 
     fn lane(target: AutomationTarget, tick: u32, value: f32) -> AutomationLane {

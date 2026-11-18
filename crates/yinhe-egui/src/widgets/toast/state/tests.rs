@@ -47,7 +47,7 @@ fn src(fraction: f32) -> Arc<dyn ProgressSource> {
     Arc::new(Src::new(fraction))
 }
 
-fn find<'a>(n: &'a Notifications, id: u64) -> &'a Notification {
+fn find(n: &Notifications, id: u64) -> &Notification {
     n.items.iter().find(|x| x.id == id).expect("entry exists")
 }
 

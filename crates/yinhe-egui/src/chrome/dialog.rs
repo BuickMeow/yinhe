@@ -175,27 +175,6 @@ pub(crate) fn paint_close_button(
     );
 }
 
-#[cfg(test)]
-mod raise_tests {
-    use super::was_reopened;
-
-    /// 连续声明 = 窗口仍开着，不能每帧抢焦点。
-    #[test]
-    fn consecutive_frames_do_not_raise() {
-        assert!(!was_reopened(Some(10), 11));
-        assert!(!was_reopened(Some(10), 10));
-    }
-
-    /// 中间断帧 = 原生窗口已销毁；再次声明必须拉回前台。
-    #[test]
-    fn gap_means_reopened() {
-        assert!(was_reopened(Some(10), 12));
-        assert!(was_reopened(None, 12));
-        // 关闭标记
-        assert!(was_reopened(Some(u64::MAX), 12));
-    }
-}
-
 /// Draw a custom title bar for a dialog window.
 ///
 /// - macOS: draws a background colour strip, centered title, and drag
@@ -312,4 +291,25 @@ pub(crate) fn title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool, allow_
 
     // Reserve space
     ui.allocate_space(egui::vec2(0.0, height));
+}
+
+#[cfg(test)]
+mod raise_tests {
+    use super::was_reopened;
+
+    /// 连续声明 = 窗口仍开着，不能每帧抢焦点。
+    #[test]
+    fn consecutive_frames_do_not_raise() {
+        assert!(!was_reopened(Some(10), 11));
+        assert!(!was_reopened(Some(10), 10));
+    }
+
+    /// 中间断帧 = 原生窗口已销毁；再次声明必须拉回前台。
+    #[test]
+    fn gap_means_reopened() {
+        assert!(was_reopened(Some(10), 12));
+        assert!(was_reopened(None, 12));
+        // 关闭标记
+        assert!(was_reopened(Some(u64::MAX), 12));
+    }
 }

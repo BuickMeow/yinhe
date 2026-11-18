@@ -1117,6 +1117,14 @@ fn move_events_in_lane(
     Some((before, after))
 }
 
+/// Step ↔ Curve 直线（偏移量 0,0,0,0）的形状轮换。
+fn next_step_shape(shape: yinhe_types::SegmentShape) -> yinhe_types::SegmentShape {
+    match shape {
+        yinhe_types::SegmentShape::Step => yinhe_types::SegmentShape::linear_curve(),
+        yinhe_types::SegmentShape::Curve { .. } => yinhe_types::SegmentShape::Step,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1458,8 +1466,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
-    #[test]
     fn mixer_gain_lane_lives_on_lc_node_and_undoes() {
         use yinhe_types::{MixerChannelId, MixerNodeId};
         let mut doc = Document::empty();
@@ -1488,13 +1494,5 @@ mod tests {
                 .midi_node(0)
                 .is_some_and(|n| n.automation.is_empty())
         );
-    }
-}
-
-/// Step ↔ Curve 直线（偏移量 0,0,0,0）的形状轮换。
-fn next_step_shape(shape: yinhe_types::SegmentShape) -> yinhe_types::SegmentShape {
-    match shape {
-        yinhe_types::SegmentShape::Step => yinhe_types::SegmentShape::linear_curve(),
-        yinhe_types::SegmentShape::Curve { .. } => yinhe_types::SegmentShape::Step,
     }
 }
