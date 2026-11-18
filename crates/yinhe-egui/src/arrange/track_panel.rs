@@ -204,8 +204,7 @@ pub(crate) fn show(
             crate::widgets::hint::set(ui.ctx(), t!("hint.arrange.track_row"));
         }
 
-        // ── AM 行：复用普通轨的行样式（两条文本：第一行 = 自动化名，第二行 = 所属音轨）。
-        // 色条同宽、M/S 按钮同位置；无 chevron（像 tempo 一样）。
+        // ── AM 行：复用普通轨的行样式（绘制细节见 render::draw_automation_row）。
         if let ArRow::Automation(track, sub) = row_hit {
             let track_data = tracks.get(track);
             let lane = track_data
@@ -227,146 +226,30 @@ pub(crate) fn show(
             let Some(lane) = lane else {
                 continue;
             };
-            let lane_key = (track_info[track].index, lane.target.clone());
-            render::draw_row_background(
+            let (dirty, acts) = render::draw_automation_row(
                 ui,
                 &painter,
                 row_rect,
                 row,
-                am_lane_selected.contains(&lane_key),
+                lh,
+                track,
+                sub,
+                lane,
+                track_info,
+                track_colors,
+                tracks,
+                am_lane_selected,
+                am_ms,
+                show_details,
+                hover_track,
+                pointer_pos,
+                cursor_tick,
+                btn_size,
+                &mut no_drag_rects,
                 lane_even,
             );
-            let color = track_colors
-                .get(track)
-                .copied()
-                .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
-            let color32 = crate::theme::rgba_to_color32((color[0], color[1], color[2], color[3]));
-            let depth = tracks.get(track).map(|t| t.folder_depth).unwrap_or(0);
-            let indent = f32::from(depth) * 14.0;
-            let content_rect = egui::Rect::from_min_size(
-                row_rect.min + egui::vec2(indent, 0.0),
-                egui::vec2((row_rect.width() - indent).max(80.0), row_rect.height()),
-            );
-            let badge_rect = render::draw_badge(&painter, content_rect, lh, color32);
-
-            // 完全复刻普通轨的字号与几何：详情模式两行（×0.25，y 0.30/0.70，均 primary），
-            // 紧凑模式单行（×0.45 居中）；唯一差异是文本内容（自动化名 / 所属音轨）。
-            let text_x = badge_rect.max.x + 6.0;
-            let label = super::am_lanes::lane_label(&lane.target);
-            let owner = track_info[track].name.clone();
-            if show_details {
-                let font = render::detail_font(lh);
-                painter.text(
-                    egui::pos2(text_x, badge_rect.min.y + lh * 0.30),
-                    egui::Align2::LEFT_CENTER,
-                    label,
-                    font.clone(),
-                    crate::theme::text_primary(),
-                );
-                painter.text(
-                    egui::pos2(text_x, badge_rect.min.y + lh * 0.70),
-                    egui::Align2::LEFT_CENTER,
-                    owner,
-                    font.clone(),
-                    crate::theme::text_primary(),
-                );
-            } else {
-                // 紧凑模式：自动化名 + 所属音轨拼成单行（与普通轨单行对齐）。
-                let font = render::compact_font(lh);
-                painter.text(
-                    egui::pos2(text_x, badge_rect.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    format!("{} · {}", label, owner),
-                    font,
-                    crate::theme::text_primary(),
-                );
-            }
-
-            // M/S 试听按钮：位置与普通轨同款（18px 大按钮，右缘对齐）；
-            // 与普通轨一致，紧凑模式（!show_details）不显示。
-            if show_details {
-                let key = (track_info[track].index, lane.target.clone());
-                let st = am_ms.get(&key).copied().unwrap_or_default();
-                let audibility = st.audibility();
-                // 单按钮：始终显示 M；左键静音、右键独奏，亮色区分。
-                // 自动化表贴右缘，按钮让位到其左侧（与普通轨布局一致）。
-                let total_btn_w = btn_size.x;
-                let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
-                let meter_left = meter_right - LEVEL_METER_W;
-                let btn_x_start = meter_left - LEVEL_METER_GAP - total_btn_w;
-                let btn_y = badge_rect.center().y - btn_size.y * 0.5;
-                let ms_rect = egui::Rect::from_min_size(egui::pos2(btn_x_start, btn_y), btn_size);
-                no_drag_rects.push(ms_rect);
-                let (label, active, color) = crate::widgets::audibility::visual(audibility);
-                let resp = draw::draw_inline_button(
-                    ui,
-                    &painter,
-                    ms_rect,
-                    label,
-                    active,
-                    color,
-                    egui::Id::unique(("am_btn_ms", track, sub)),
-                );
-                crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.arrange.am_mute"));
-                let next = if resp.clicked() {
-                    Some(crate::widgets::audibility::next_on_primary(audibility))
-                } else if resp.secondary_clicked() {
-                    Some(crate::widgets::audibility::next_on_secondary(audibility))
-                } else {
-                    None
-                };
-                if let Some(next) = next {
-                    let mut state = st;
-                    state.set_audibility(next);
-                    if state == yinhe_types::AmMsState::default() {
-                        am_ms.remove(&key);
-                    } else {
-                        am_ms.insert(key, state);
-                    }
-                    am_ms_dirty = true;
-                }
-                // 自动化表：编辑/播放光标处该 lane 的值（基线依种类）。
-                let meter_rect = egui::Rect::from_min_max(
-                    egui::pos2(meter_left, row_rect.min.y + LEVEL_METER_MARGIN),
-                    egui::pos2(meter_right, row_rect.max.y - LEVEL_METER_MARGIN),
-                );
-                crate::widgets::meter::automation_meter(
-                    &painter,
-                    meter_rect,
-                    crate::arrange::am_lanes::lane_cursor_value(lane, cursor_tick),
-                    lane.target.bar_baseline(),
-                    color32,
-                );
-            }
-
-            // 最后一条自动化行：在该行右侧（M/S 旁）显示加号，点击再次添加自动化。
-            let is_last_lane = tracks
-                .get(track)
-                .is_some_and(|t| sub + 1 == t.automation_lanes.len());
-            if is_last_lane && hover_track == Some(track) {
-                let plus_color = hover::icon_contrast_color(color);
-                let plus_center = egui::pos2(
-                    badge_rect.center().x,
-                    badge_rect.max.y - BADGE_ICON_BOTTOM_INSET,
-                );
-                let plus_rect = egui::Rect::from_center_size(plus_center, egui::vec2(12.0, 16.0));
-                no_drag_rects.push(plus_rect);
-                if pointer_pos.is_some_and(|p| plus_rect.contains(p)) {
-                    crate::widgets::hint::set(ui.ctx(), t!("hint.arrange.add_automation"));
-                }
-                // 加号放在色带列底部（与主行 chevron 同位置：底边距行底 1px）。
-                // 点击加号：直接打开「添加自动化」窗口（设备维度，不再弹菜单）。
-                if badge::badge_icon_button(
-                    ui,
-                    plus_center,
-                    ICON_ADD.codepoint,
-                    ICON_ADD.font_family(),
-                    plus_color,
-                    track,
-                ) {
-                    actions.push(TrackAction::OpenAutomationPicker { idx: track });
-                }
-            }
+            am_ms_dirty |= dirty;
+            actions.extend(acts);
             continue;
         }
 
