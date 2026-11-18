@@ -765,6 +765,10 @@ struct**，是 1.7「改了不生效」的同类风险。应删除 `SendParams` 
 
 #### 8.4.7 `RackOutputMode` 在 `yinhe-core`、`RackParams` 在 `yinhe-mixer`
 
+> **现状（2026-11-18 核对）**：`RackId` 与 `RackOutputMode` 已在
+> `yinhe-types::mixer_node`，本条建议已满足；`RackParams` 仍留在
+> `yinhe-mixer`（依赖 `InsertRef`/`RackOutputMode`），无需再动。
+
 `TrackAudioTarget::OwnLc { rack: Option<RackId> }` 在 `yinhe-core`，而
 `RackParams.output_mode: RackOutputMode` 在 `yinhe-mixer`。两边都描述同一个
 「Rack 拓扑」，但类型分属两个 crate，`yinhe-core` 又不能依赖 `yinhe-mixer`
@@ -854,6 +858,9 @@ struct**，是 1.7「改了不生效」的同类风险。应删除 `SendParams` 
 | 8.1 device_chain | `7ede71c7` | collect/apply/draw 各拆子函数 |
 | 8.1.3 audio_model 拆分 | `c7ff7bea` | event/aggregate/model 三个子模块 |
 | 8.1.3 engine_tests 拆分 | `46e0d678` | lifecycle/dispatch/render 三个文件 |
+| 测试 warning 清理 | `9ee42a68` | 重复 #[test]、items-after-test-module、生命周期、未用导入 |
+| yin 测试导入修复 | `5c29871a` | v9 迁移测试补 ChannelId / TRACK_LC_BASE |
+| 依赖锁同步 | `7fbaa3e3` | Cargo.lock 记录 theme/midi 依赖 |
 
 ### 未开始（P3，需单独排期）
 
