@@ -148,10 +148,13 @@ send，不把两条 Track 的 home LC 指向同一条。”
 
 **修法（两步走）**：
 
-1. **UI 过滤（先做，零风险）**：MIX 只列“音频目标通道”——AP 正在使用的
-   MIDI 通道 + OwnLc 的 LC + 音频 LC；被 OwnLc 取代的源通道不显示。
+1. **UI 过滤**：MIX 只列“音频目标通道”——AP 正在使用的 MIDI 通道 +
+   OwnLc 的 LC + 音频 LC；被 OwnLc 取代的源通道不显示。
+   现状：通道条早已只列 AP（`9829d8be`）；MIX 图层面板也已按音频目标
+   列行（`ea104237`），OwnLc 轨显示「001 Track1」而不是 A11 分组。
 2. **引擎侧（后做）**：某 MIDI 通道上的轨**全部**是 OwnLc 时，不再为该
    源通道开 dense（省一路静音处理）；chase/预览改走 LC dense。
+   依赖阶段 6（独立 AP/LC 节点），暂不做。
 
 ---
 
@@ -169,17 +172,20 @@ send，不把两条 Track 的 home LC 指向同一条。”
 
 ---
 
-## 8. 本次已落地的暂停项（commit `0dee4f41`）
+## 8. 已落地与暂停项
 
-1. **暂停把轨道输出声明为 Master**：MIDI 轨 / 音频轨的输出下拉不再提供
-   Master；存量 DirectMaster 轨仍显示 Master 以便切回 LC。
-   回归测试：`output_kind_hides_master_unless_legacy_direct`、
-   `audio_output_hides_master_unless_legacy_direct`。
-2. **暂停 MIX 的通道 AR 显示**：`MIX_CHANNEL_AR_ENABLED = false`
-   （`app/layout.rs`）；MIX 主区域交给底部面板占满，`channel_arrange`
-   代码保留，恢复时改回 `true`。
+**暂停（`0dee4f41`）**：把轨道输出声明为 Master——MIDI 轨 / 音频轨的
+输出下拉不再提供 Master；存量 DirectMaster 轨仍显示 Master 以便切回 LC。
+回归测试：`output_kind_hides_master_unless_legacy_direct`、
+`audio_output_hides_master_unless_legacy_direct`。
 
-两项都是“暂停”而不是删除：等后续统一方案出来再决定去留。
+**升级为删除（`042ba014`）**：MIX 的通道 AR 视图整模块删除（约 3.9k 行，
+用户决策：两套走带维护成本太高，后续会补统一的新方案）。通道分组是纯数据，
+迁至 `info_panel/layers_groups` 供 MIX 图层面板继续使用；MIX 主区域交给底部
+面板占满。ARRANGE 的轨道 AR 保留。
+
+**音轨面板徽标（`d924c8f5`）**：OwnLc 轨不再显示 LC01（普通 DAW 轨道观感），
+AP 轨仍显示 A01；`lc_labels` 传递链删除。
 
 ---
 
@@ -188,15 +194,15 @@ send，不把两条 Track 的 home LC 指向同一条。”
 目标：`MixerChannelId`（Midi/Audio/TrackLc/Master）等过渡查询键全部退场，
 只保留 C 的统一身份 `ChannelId::{Lc, Ap, Master}`。
 
-| 阶段 | 内容 | 风险 |
+| 阶段 | 内容 | 状态 |
 |---|---|---|
-| 1 | MIX 只列音频目标通道（§6 的 UI 过滤） | 低：纯显示 |
-| 2 | OwnLc 通道不可选：删 `link_track_to_lc`、属性面板去掉 LC 选择器 | 低：删入口 |
-| 3 | `MixerChannelId` → `ChannelId` 全面替换（自动化 owner、`apply_node_strip`、UI 查询键） | 中：跨 types/editor-core/egui 三层 |
-| 4 | `DirectMaster` 类型删除：存量轨迁移到 OwnLc/AP（暂停期结束） | 中：工程迁移 |
-| 5 | `ChannelSource::Track(u16::MAX)` 哨兵 → 显式“无源汇总”角色 | 低：语义化 |
-| 6 | AP 通道变独立 `MixerNode`（去掉共享 LC 指针） | 中：音频图 + PDC 回归 |
-| 7 | v9 Bus 残留文案/注释清理 | 低 |
+| 1 | MIX 只列音频目标通道 | ✅ `ea104237`（图层面板按音频目标列行；通道条早已只列 AP——`9829d8be`） |
+| 2 | OwnLc 通道不可选 | ✅ `afaa3f61`（删 `link_track_to_lc` + LC 选择器） |
+| 3 | `MixerChannelId` → `ChannelId` 全面替换 | ⏳ 待做：`AutomationTarget` 持久化 `MixerChannelId`（yin 格式），需要格式迁移 + roundtrip 回归，单独一轮做 |
+| 4 | `DirectMaster` 类型删除 | ⏳ 暂停期结束后做（存量轨迁移到 OwnLc/AP） |
+| 5 | `ChannelSource::Track(u16::MAX)` 哨兵 | ✅ `88979687`：改为"创建即绑定轨道"（`add_track_lc(track)`），哨兵不再落盘；注意——**真正的无源汇总通道**（不挂任何源、只接 send）要等阶段 6 才可行，因为 dense 通道按轨道分配 |
+| 6 | AP 通道变独立 `MixerNode` | ⏳ 待做：音频图 + PDC 需要实机音频回归，放在阶段 3 之后单独做 |
+| 7 | v9 Bus 残留文案/注释清理 | ✅ `9a81c19c` |
 
 顺序理由：先动用户可见的显示（阶段 1–2），再做身份替换（3），最后才动
 音频图（6）；每阶段独立 commit + 回归测试，任何一步都可单独回滚。
