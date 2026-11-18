@@ -878,29 +878,8 @@ impl Document {
             return None;
         }
         let target = panel.selected_target.clone();
+        let (track_idx, lane_idx) = self.locate_anchor_lane(&target)?;
 
-        // 定位 lane（与 app 层 collect_anchor_ctx 同规则）：
-        // Tempo → conductor.tempo；其他 → 主音轨的 target 匹配 lane。
-        let (track_idx, lane_idx) = if matches!(target, AutomationTarget::Tempo) {
-            (0u16, 0usize)
-        } else {
-            // 主音轨在 PR 强制可见（layout pr_visible），不要求 track_visible 勾选。
-            let track_idx = self
-                .edit
-                .main_track()
-                .filter(|&t| Some(t) != self.edit.track_cache.conductor_idx)?;
-            let lane_idx = self
-                .data
-                .model
-                .tracks
-                .get(track_idx as usize)?
-                .automation_lanes
-                .iter()
-                .position(|l| l.target == target)?;
-            (track_idx, lane_idx)
-        };
-
-        // 收集选中锚点 + 计算新值 + uniform 判定（只读借用，无需克隆）
         let events = if matches!(target, AutomationTarget::Tempo) {
             &self.data.model.conductor.tempo.events
         } else {
@@ -914,45 +893,8 @@ impl Document {
             None if matches!(target, AutomationTarget::Tempo) => 60_000_000.0,
             None => 1.0,
         };
-        let mut moves: Vec<(u32, u32, f32)> = Vec::new();
-        let mut uniform_tick: Option<i64> = None;
-        let mut uniform_value: Option<f32> = None;
-        for ev in events {
-            // 成员态按 id 判定（落点锚点不纳入）；矩形态回退选框几何。
-            if !panel.accepts_anchor(ev) {
-                continue;
-            }
-            let (new_tick, new_value) = match field {
-                AnchorField::Value => {
-                    let cur = target.to_display_value(ev.value) as f64;
-                    let display = apply_ops(ops, cur).clamp(0.0, display_max as f64) as f32;
-                    (ev.tick, target.from_display_value(display))
-                }
-                AnchorField::Tick => {
-                    let t = apply_ops_round(ops, ev.tick as f64).clamp(0.0, u32::MAX as f64) as u32;
-                    (t, ev.value)
-                }
-            };
-            if new_tick == ev.tick && new_value == ev.value {
-                continue;
-            }
-            moves.push((ev.tick, new_tick, new_value));
-            if field == AnchorField::Tick {
-                let d = new_tick as i64 - ev.tick as i64;
-                match uniform_tick {
-                    None => uniform_tick = Some(d),
-                    Some(u) if u != d => uniform_tick = None,
-                    _ => {}
-                }
-            } else {
-                let d = new_value - ev.value;
-                match uniform_value {
-                    None => uniform_value = Some(d),
-                    Some(u) if (u - d).abs() > 1e-4 => uniform_value = None,
-                    _ => {}
-                }
-            }
-        }
+        let (moves, uniform_tick, uniform_value) =
+            collect_anchor_moves(events, panel, &target, field, ops, display_max);
         if moves.is_empty() {
             return None;
         }
@@ -968,6 +910,27 @@ impl Document {
             self.edit.offset_anchor_values(panel_idx, dv);
         }
         Some(action)
+    }
+
+    /// 定位锚点所属的 (track, lane)；Tempo 固定 conductor（0,0）。
+    fn locate_anchor_lane(&self, target: &AutomationTarget) -> Option<(u16, usize)> {
+        if matches!(target, AutomationTarget::Tempo) {
+            return Some((0, 0));
+        }
+        // 主音轨在 PR 强制可见（layout pr_visible），不要求 track_visible 勾选。
+        let track_idx = self
+            .edit
+            .main_track()
+            .filter(|&t| Some(t) != self.edit.track_cache.conductor_idx)?;
+        let lane_idx = self
+            .data
+            .model
+            .tracks
+            .get(track_idx as usize)?
+            .automation_lanes
+            .iter()
+            .position(|l| l.target == *target)?;
+        Some((track_idx, lane_idx))
     }
 
     /// AM 变速：把面板选框时间跨度缩放为 `new_span`，选中锚点相对起点等比缩放。
@@ -1123,6 +1086,59 @@ fn next_step_shape(shape: yinhe_types::SegmentShape) -> yinhe_types::SegmentShap
         yinhe_types::SegmentShape::Step => yinhe_types::SegmentShape::linear_curve(),
         yinhe_types::SegmentShape::Curve { .. } => yinhe_types::SegmentShape::Step,
     }
+}
+
+/// 计算选框内锚点的移动量；返回 (moves, uniform tick 增量, uniform value 增量)。
+type AnchorMoves = (Vec<(u32, u32, f32)>, Option<i64>, Option<f32>);
+
+fn collect_anchor_moves(
+    events: &[AutomationEvent],
+    panel: &yinhe_types::AutomationPanelView,
+    target: &AutomationTarget,
+    field: AnchorField,
+    ops: &[NumOp],
+    display_max: f32,
+) -> AnchorMoves {
+    let mut moves: Vec<(u32, u32, f32)> = Vec::new();
+    let mut uniform_tick: Option<i64> = None;
+    let mut uniform_value: Option<f32> = None;
+    for ev in events {
+        // 成员态按 id 判定（落点锚点不纳入）；矩形态回退选框几何。
+        if !panel.accepts_anchor(ev) {
+            continue;
+        }
+        let (new_tick, new_value) = match field {
+            AnchorField::Value => {
+                let cur = target.to_display_value(ev.value) as f64;
+                let display = apply_ops(ops, cur).clamp(0.0, display_max as f64) as f32;
+                (ev.tick, target.from_display_value(display))
+            }
+            AnchorField::Tick => {
+                let t = apply_ops_round(ops, ev.tick as f64).clamp(0.0, u32::MAX as f64) as u32;
+                (t, ev.value)
+            }
+        };
+        if new_tick == ev.tick && new_value == ev.value {
+            continue;
+        }
+        moves.push((ev.tick, new_tick, new_value));
+        if field == AnchorField::Tick {
+            let d = new_tick as i64 - ev.tick as i64;
+            match uniform_tick {
+                None => uniform_tick = Some(d),
+                Some(u) if u != d => uniform_tick = None,
+                _ => {}
+            }
+        } else {
+            let d = new_value - ev.value;
+            match uniform_value {
+                None => uniform_value = Some(d),
+                Some(u) if (u - d).abs() > 1e-4 => uniform_value = None,
+                _ => {}
+            }
+        }
+    }
+    (moves, uniform_tick, uniform_value)
 }
 
 #[cfg(test)]
