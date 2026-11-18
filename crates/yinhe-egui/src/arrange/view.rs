@@ -688,9 +688,12 @@ fn draw_track_panel(
     needs_audio_rebuild: &mut bool,
     needs_audio_notify: &mut bool,
 ) {
+    // 只在本面板绘制期间裁剪；返回前恢复，否则后续 GPU 主区继承 tp_rect，
+    // 与 music_rect 求交后变成空矩形，整块编曲区（wgpu 纹理）被裁掉。
+    let prev_clip = ui.clip_rect();
     ui.set_clip_rect(tp_rect);
     ui.painter()
-        .rect_filled(ui.max_rect(), 0.0, crate::theme::app_bg());
+        .rect_filled(tp_rect, 0.0, crate::theme::app_bg());
 
     doc.edit.arrange_view.base.track_panel_scroll_y = doc.edit.arrange_view.base.scroll_y;
 
@@ -726,30 +729,37 @@ fn draw_track_panel(
         doc.edit.track_cache.ensure_colors_len(&doc.data.model, n);
     }
 
-    let (audio_dirty, am_ms_dirty, track_actions) = track_panel::show(
-        ui,
-        &doc.edit.track_cache.info,
-        &doc.edit.track_visible,
-        &mut doc.edit.track_overrides,
-        &mut doc.edit.track_selected,
-        selection_anchor,
-        doc.edit.track_cache.conductor_idx,
-        &doc.edit.track_cache.colors,
-        &mut doc.edit.arrange_view.base.track_panel_row_height,
-        &mut doc.edit.arrange_view.base.track_panel_scroll_y,
-        request_pianoroll,
-        info_content,
-        row_layout,
-        &doc.data.model.tracks,
-        lc_labels,
-        &mut doc.edit.arr_am_expanded,
-        &mut doc.edit.arr_am_selected,
-        &mut doc.edit.arr_am_ms,
-        track_meters,
-        track_mixer_lanes,
-        doc.edit.cursor_tick,
-        &doc.data.model.conductor.tempo,
-    );
+    // 音轨面板的布局宽高由 tp_rect 决定（track_panel::show 读 ui.max_rect()）。
+    // 不套子 UI 时它会拿到整个编曲区的 max_rect，行内右侧按钮/名称被排到面板
+    // 之外，再被 clip 裁掉，看起来就是面板空白、内容跑到左上角。
+    let (audio_dirty, am_ms_dirty, track_actions) = ui
+        .scope_builder(egui::UiBuilder::new().max_rect(tp_rect), |ui| {
+            track_panel::show(
+                ui,
+                &doc.edit.track_cache.info,
+                &doc.edit.track_visible,
+                &mut doc.edit.track_overrides,
+                &mut doc.edit.track_selected,
+                selection_anchor,
+                doc.edit.track_cache.conductor_idx,
+                &doc.edit.track_cache.colors,
+                &mut doc.edit.arrange_view.base.track_panel_row_height,
+                &mut doc.edit.arrange_view.base.track_panel_scroll_y,
+                request_pianoroll,
+                info_content,
+                row_layout,
+                &doc.data.model.tracks,
+                lc_labels,
+                &mut doc.edit.arr_am_expanded,
+                &mut doc.edit.arr_am_selected,
+                &mut doc.edit.arr_am_ms,
+                track_meters,
+                track_mixer_lanes,
+                doc.edit.cursor_tick,
+                &doc.data.model.conductor.tempo,
+            )
+        })
+        .inner;
 
     if audio_dirty {
         // Track solo 是内容门：进入 Track solo 时清空 Channel solo，
@@ -801,6 +811,7 @@ fn draw_track_panel(
     );
 
     doc.edit.arrange_view.base.scroll_y = doc.edit.arrange_view.base.track_panel_scroll_y;
+    ui.set_clip_rect(prev_clip);
 }
 
 /// AR 主区（GPU 纹理 + 片段/自动化交互），返回出 scope 后要应用的编辑命令。
