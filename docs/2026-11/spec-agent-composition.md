@@ -315,7 +315,59 @@ Agent 的动作序列：
 
 ---
 
-## 七、开放问题（需要节能降耗拍板）
+## 七、今天就能跑的最小 Agent 脚本
+
+在控制 socket 落地前，Agent 已经可以做「只读侦察」：
+
+```python
+import json
+import subprocess
+
+YINHE = "/Applications/Yinhe.app/Contents/MacOS/yinhe-egui"
+
+def inspect(path: str) -> dict:
+    out = subprocess.check_output([YINHE, "--inspect", path], text=True)
+    return json.loads(out)
+
+def commands() -> list[dict]:
+    out = subprocess.check_output([YINHE, "--list-commands"], text=True)
+    return json.loads(out)["commands"]
+
+info = inspect("/path/to/song.yin")
+print(info["project"]["name"], info["project"]["ppq"], info["project"]["default_bpm"])
+for track in info["tracks"]:
+    print(track["uuid"], track["name"], track["kind"], track["muted"])
+
+print([c["id"] for c in commands() if c["scope"] == "edit"])
+```
+
+这已经能回答「这个工程有哪些轨道、PPQ 多少、有哪些命令」，且不会因为 1 亿音符而变慢。
+
+控制 socket 落地后的伪代码：
+
+```python
+def session(port=0):
+    # 真实协议会带 token；这里只示意
+    import socket, json
+    s = socket.create_connection(("127.0.0.1", port))
+    f = s.makefile("rwb")
+    def call(op, **kw):
+        f.write((json.dumps({"id": 1, "op": op, **kw}) + "\n").encode())
+        f.flush()
+        return json.loads(f.readline())
+    return call
+
+call = session()
+summary = call("project_summary")
+call("apply_notes", track_uuid=summary["tracks"][0]["uuid"],
+     mode="replace_range", from_tick=0, to_tick=15360,
+     undo_group="Agent: intro", notes=[[0, 36, 120, 100]])
+print(call("state")["revision"])
+```
+
+---
+
+## 八、开放问题（需要节能降耗拍板）
 
 1. YAP 第一版是「本地 socket」还是「CLI 子命令」优先？我建议 CLI 先做只读，socket 再做读写。
 2. 音符数组的 gate 用 tick 还是拍？我建议 tick，和工程内部一致。
