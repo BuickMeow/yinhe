@@ -649,7 +649,7 @@ impl MixerGraph {
         (&self.master.l, &self.master.r)
     }
 
-    /// 通道段：insert 链 → PDC → 电平表 → 推子前 send → 推子 → 推子后
+    /// 通道段：insert 链 → PDC → 推子前 send → 推子 → 电平表 → 推子后
     /// send → master 累加。
     #[allow(clippy::too_many_arguments)] // 混音处理上下文透传
     fn process_channels(
@@ -675,17 +675,6 @@ impl MixerGraph {
             let p = channels[ci].strip.params;
             let to_master = !p.mute && (!any_solo || p.solo);
 
-            // 电平表取 post-insert、pre-fader。
-            if to_master {
-                let chain = &channels[ci];
-                chain.meter.publish(
-                    &chain.buffers.left[..frames],
-                    &chain.buffers.right[..frames],
-                );
-            } else {
-                channels[ci].meter.publish(&[0.0; 0], &[0.0; 0]);
-            }
-
             // 推子前 send（C 的任意通道路径）。
             let channel_sends = channels[ci].channel_sends.clone();
             for (k, _send) in channel_sends
@@ -701,6 +690,17 @@ impl MixerGraph {
                 &mut channels[ci].buffers.left,
                 &mut channels[ci].buffers.right,
             );
+
+            // 电平表取 post-fader/post-pan：推子/声像/静音的变化必须反映在表上。
+            if to_master {
+                let chain = &channels[ci];
+                chain.meter.publish(
+                    &chain.buffers.left[..frames],
+                    &chain.buffers.right[..frames],
+                );
+            } else {
+                channels[ci].meter.publish(&[0.0; 0], &[0.0; 0]);
+            }
 
             // 推子后 send（C 的任意通道路径）。
             for (k, _send) in channel_sends

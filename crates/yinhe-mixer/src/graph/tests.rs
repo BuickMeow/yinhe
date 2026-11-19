@@ -568,3 +568,35 @@ fn set_inserts_returns_old_chain() {
     let expect = 0.25 * core::f32::consts::FRAC_1_SQRT_2;
     assert!((l[3] - expect).abs() < 1e-6);
 }
+
+/// 回归：通道电平表必须取推子/声像之后，推子变化要立刻反映到表上。
+#[test]
+fn channel_meter_is_post_fader() {
+    let mut g = graph_with(
+        &[StripParams {
+            gain: 0.5,
+            ..StripParams::default()
+        }],
+        4,
+    );
+    fill(&mut g, 0, 1.0);
+    let _ = g.process();
+    let single = core::f32::consts::FRAC_1_SQRT_2;
+    let (l, r) = g.channel_meter_reading(0).expect("meter").read();
+    assert!((l - 0.5 * single).abs() < 1e-6, "推子后 L={l}");
+    assert!((r - 0.5 * single).abs() < 1e-6, "推子后 R={r}");
+
+    g.set_strip(
+        0,
+        StripParams {
+            gain: 0.25,
+            ..StripParams::default()
+        },
+    );
+    fill(&mut g, 0, 1.0);
+    let _ = g.process(); // 推子斜坡过渡块
+    fill(&mut g, 0, 1.0);
+    let _ = g.process();
+    let (l, _) = g.channel_meter_reading(0).expect("meter").read();
+    assert!((l - 0.25 * single).abs() < 1e-6, "推子变化后 L={l}");
+}

@@ -365,8 +365,8 @@ impl AudioEngine {
 
     /// 发布每轨电平（渲染线程每块调用）。
     ///
-    /// YinheCpu：直接读合成器的每轨峰值（该轨全部 voice 的实时合值）。
-    /// xsynth 回退后端没有轨道级信号，用该轨所属通道的混音台电平近似；
+    /// 读该轨最终进入的混音通道表（per-track LC，或共享 MIDI 通道）；
+    /// 通道表是 post-fader/post-pan，推子/声像/静音会同步反映到音轨表。
     /// 未播放或被 mute 的轨 → 0。
     pub(crate) fn publish_track_levels(&self) {
         let Ok(mut g) = self.meter.track_levels.lock() else {
@@ -389,7 +389,26 @@ impl AudioEngine {
                 *slot = (0.0, 0.0);
                 continue;
             }
-            *slot = self.synth.cpu_synth.track_peak(i);
+            // 每轨表读该轨最终进入的混音通道（per-track LC，或共享 MIDI 通道）。
+            // 混音台表是 post-fader/post-pan，所以推子/声像/静音会同时反映到音轨表。
+            let dense = {
+                let lc_dense = self.channel_layout.track_lc_dense(i);
+                if lc_dense != u32::MAX {
+                    Some(lc_dense)
+                } else {
+                    model
+                        .track_channels
+                        .get(i)
+                        .copied()
+                        .flatten()
+                        .map(|ch| self.channel_layout.dense_for(ch as usize))
+                        .filter(|&d| d != u32::MAX)
+                }
+            };
+            *slot = dense
+                .and_then(|d| self.mix.mixer.channel_meter_reading(d as usize))
+                .map(|reading| reading.read())
+                .unwrap_or((0.0, 0.0));
         }
     }
 

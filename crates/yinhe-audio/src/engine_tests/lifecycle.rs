@@ -599,3 +599,52 @@ fn test_track_existence_activates_channel() {
     assert_eq!(engine.playback.note_cursor[60].idx, 1);
     assert_eq!(engine.playback.active_notes.len(), 1);
 }
+
+/// 回归：音轨电平表读混音通道的 post-fader 表，推子变小后读数同步变小。
+#[test]
+fn track_meter_reads_post_fader_channel_meter() {
+    let model = make_model_with_notes(vec![(60, 0, 4_800, 100, 0)]);
+    let layout = crate::spawn::channels_for_model(&model);
+    let mut engine = AudioEngine::new(48_000, layout);
+    engine.handle_command(AudioCommand::LoadModel {
+        model: Arc::new(model),
+    });
+    engine.playback.playing = true;
+
+    let count = engine.channel_layout.compacted_channels() as usize;
+    engine.mix.mixer.resize(count, 512, &[]);
+    engine.mix.mixer.set_strip(
+        0,
+        yinhe_mixer::StripParams {
+            gain: 0.5,
+            ..Default::default()
+        },
+    );
+    {
+        let cb = engine.mix.mixer.channel_buffers_mut(0).expect("channel");
+        cb.left.fill(1.0);
+        cb.right.fill(1.0);
+    }
+    let _ = engine.mix.mixer.process(); // 推子斜坡过渡块
+    {
+        let cb = engine.mix.mixer.channel_buffers_mut(0).expect("channel");
+        cb.left.fill(1.0);
+        cb.right.fill(1.0);
+    }
+    let _ = engine.mix.mixer.process();
+    engine.publish_track_levels();
+
+    let levels = engine.meter.track_levels.lock().unwrap().clone();
+    assert_eq!(levels.len(), 1, "一轨一个电平表槽");
+    let single = core::f32::consts::FRAC_1_SQRT_2;
+    assert!(
+        (levels[0].0 - 0.5 * single).abs() < 1e-6,
+        "L={}",
+        levels[0].0
+    );
+    assert!(
+        (levels[0].1 - 0.5 * single).abs() < 1e-6,
+        "R={}",
+        levels[0].1
+    );
+}
