@@ -604,6 +604,8 @@ struct MixerNode {
    “顺序发送同块、逆序发送一块延迟”策略，或统一拓扑排序 + 块延迟。
 5. **Master 特殊**：Master 不接收音符/乐器，主输出仍是硬件终点；Master 不能作为
    发送源，选中 Master 时 SEND 旋钮全部隐藏，避免反馈。
+6. **进 Master 只有 send 一条路**：每条通道默认带一条 0 dB 的 Master send，
+   删除原来的直连 Master 累加，避免「直连 + send」叠成双份。
 
 这会让方案 C 更接近 FL Studio 的“所有 Mixer Track 都能当 Bus”，但保留了
 我们自己的 Track/LC 强绑定：Track 始终显式指向 LC 或 AP 通道，不存在
@@ -1239,7 +1241,15 @@ Track 3   [AP01]       ← 已链接
    仍然可以横向滚动。
 6. 高级多目标发送可以放在通道属性里，不作为混音台默认 UI。
 7. Master 不能作为发送源：选中 Master 时所有 SEND 旋钮隐藏。
-   Master 作为目标时，选中其他源通道即可在 Master 条上调「源 → Master」。
+   Master 作为目标时，选中其他源通道即可在 Master 条上调「源 → Master」；
+   新通道默认 0 dB（完全发送），否则新通道会没有声音。
+8. 旋钮位置：SEND 不再占卡片顶部一整行，统一放在右侧控制列
+   （dB → 声像 → SEND 开关 → 旋钮），旋钮下方写 `-inf` 或实际 dB；
+   SEND 开关是独立文字按钮，开启时强调色。
+9. 听感开关：右侧控制列底部的小圆点，亮 = 可听、灭 = 静音；
+   不再显示 M/S，也不再区分左键静音/右键独奏（独奏保留在属性栏）。
+10. 通道标题：每轨 LC 条直接写 3 位轨号（037），音频 LC 保留 LCxx，
+    Master 直接写 Master。
 
 ### 9.3.2 SEND 聚焦的数据与交互
 
@@ -1254,12 +1264,25 @@ struct MixerUiState {
 
 - `send_source` 只影响 UI 显示，不改变音频；点通道卡片或色带切换；
 - 真正的发送量仍在 `MixerParams::channel_sends` 里（按 `source → target` 存）；
-- 旋钮从 `-inf` 拖起来才创建发送条目，拖回 `-inf` 删除条目；
+- 旋钮从 `-inf` 拖起来才创建发送条目；普通目标拖回 `-inf` 删除条目，
+  Master 目标保留 `amount = 0` 的条目，用作「显式关闭」标记；
 - 切换源时，旋钮值从 `channel_sends` 里读取「源 → 本条通道」的 amount；
 - 源是 Master、源等于本条通道、或没有选中源时，不显示旋钮（`send_row_visible`）；
 - SEND 的 dB 映射：`20 * log10(amount)`，`amount = 0` 显示 `-inf`；
 - 当前 B 的发送量允许 0..2（+6 dB）；C 规范为 0..1（-inf..0 dB），
   旧格式迁移到 C v10 时 >1.0 的值要 clamp 或提示，不能静默改变听感。
+
+### 9.3.3 Master send 是唯一主路径
+
+```text
+通道缓冲 → 推子/声像 → Master send（默认 0 dB）→ Master
+```
+
+- 混音图不再把 `output = None` 的通道直接累加进 Master；
+- `ensure_master_sends` 为所有直连 Master 的节点补默认 0 dB send；
+- SEND 关闭保留 0 条目，重新加载/补表不会把关闭的 SEND 恢复成 0 dB；
+- 主输出改到另一条通道时删除 Master send，改回 Master 时补回；
+- Master send 与其它 send 一样走 PDC 对齐（`global - out[source]`）。
 
 ### 9.4 自动化面板
 
