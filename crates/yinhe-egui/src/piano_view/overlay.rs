@@ -331,7 +331,6 @@ pub(crate) fn draw_overlays(
                     )
                 })
                 .collect();
-            selection_last = persisted_pixel_rects.last().copied();
             let (fill_color, stroke_color) = if grid_preview {
                 (crate::theme::accent_active(), crate::theme::accent_active())
             } else {
@@ -343,6 +342,11 @@ pub(crate) fn draw_overlays(
                 } else {
                     music_rect.min.x - content_rect.min.x
                 };
+                // `music_sel_to_pixel_rect` 的 x 含左侧键盘宽；胶囊位置用
+                // content-local 坐标，必须扣掉这个偏移，否则会离选框远一截。
+                selection_last = persisted_pixel_rects
+                    .last()
+                    .map(|r| r.translate(egui::vec2(-kb_w_shift, 0.0)));
                 let music_rect_local = egui::Rect::from_min_max(
                     egui::pos2(0.0, 0.0),
                     egui::pos2(music_rect.width(), music_rect.height()),
