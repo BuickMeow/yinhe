@@ -11,6 +11,7 @@ mod app;
 mod arrange;
 mod audio_settings;
 mod chrome;
+mod cli;
 mod dialogs;
 mod file_dialog;
 mod file_loader;
@@ -42,6 +43,12 @@ fn main() {
         let path = argv.get(pos + 2).map(std::path::PathBuf::from);
         plugin_scan::run_scan_child(format, path.as_deref());
         return;
+    }
+
+    // 只读 CLI（--help/--version/--inspect/--list-commands）在 GUI 初始化前退出。
+    // 返回 None 表示参数是文件/平台参数，继续走 GUI。
+    if let Some(code) = cli::run(&argv) {
+        std::process::exit(code);
     }
 
     let mut env_filter = tracing_subscriber::EnvFilter::builder()

@@ -62,9 +62,9 @@ mod project_meta;
 pub use error::YinError;
 pub use io::{
     LoadedYin, ProjectSoundFonts, load_yin, load_yin_bytes, load_yin_bytes_with_sf,
-    load_yin_with_sf, load_yin_with_sf_progress, read_project_file, save_yin, save_yin_bytes,
-    save_yin_bytes_with_sf, save_yin_with_files, save_yin_with_files_progress, save_yin_with_sf,
-    write_file_atomic,
+    load_yin_with_sf, load_yin_with_sf_progress, read_mapping_file, read_project_file, save_yin,
+    save_yin_bytes, save_yin_bytes_with_sf, save_yin_with_files, save_yin_with_files_progress,
+    save_yin_with_sf, write_file_atomic,
 };
 pub use mapping::{ChannelMap, ChannelSynthParams, MappingFile, PortMap, TrackMap};
 pub use progress::{YinProgress, YinProgressStage};

@@ -7,7 +7,7 @@
 //! 段编解码分散在同目录子模块：`data_section`（meta + 音符流）、
 //! `mixer_section`（混音台参数）、`audio_section`（内嵌音频素材）。
 
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -54,6 +54,35 @@ pub fn read_project_file(path: impl AsRef<Path>) -> Result<ProjectFile, YinError
     // project.json 正常只有几 KB；限制上限防止损坏文件把内存吃满。
     if len > 64 * 1024 * 1024 {
         return Err(invalid_data("project.json 过大"));
+    }
+    let mut buf = vec![0u8; len];
+    file.read_exact(&mut buf)?;
+    Ok(serde_json::from_slice(&buf)?)
+}
+
+/// 只读 `.yin` 的 `mapping.json`（轨道树、音色库配置、视图状态）。
+///
+/// 与 [`read_project_file`] 一样不解压音符段：跳过 `project.json` 后只读
+/// 第二段 JSON。供 Agent/CLI 在不加载 1 亿音符的情况下列出轨道。
+pub fn read_mapping_file(path: impl AsRef<Path>) -> Result<MappingFile, YinError> {
+    let mut file = std::fs::File::open(path.as_ref())?;
+    let mut head = [0u8; 10];
+    file.read_exact(&mut head)?;
+    if &head[0..4] != crate::MAGIC {
+        return Err(YinError::BadMagic);
+    }
+    let version = u16::from_le_bytes([head[4], head[5]]);
+    if version != crate::VERSION {
+        return Err(YinError::BadVersion(version));
+    }
+    let project_len = u32::from_le_bytes([head[6], head[7], head[8], head[9]]) as u64;
+    file.seek(SeekFrom::Current(project_len as i64))?;
+    let mut len_buf = [0u8; 4];
+    file.read_exact(&mut len_buf)?;
+    let len = u32::from_le_bytes(len_buf) as usize;
+    // mapping.json 正常只有几十 KB；限制上限防止损坏文件把内存吃满。
+    if len > 64 * 1024 * 1024 {
+        return Err(invalid_data("mapping.json 过大"));
     }
     let mut buf = vec![0u8; len];
     file.read_exact(&mut buf)?;
@@ -451,4 +480,41 @@ pub fn load_yin_with_sf_progress(
         overrides: project.sf_channel_overrides,
     };
     Ok((model, sf, mapping, mixer, project.cover))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::container::{Sections, pack};
+
+    /// 只读元数据入口不得解压 data 段：即使 data 是垃圾字节也能读到
+    /// project/mapping。这是 `--inspect` 能安全用于 1 亿音符工程的前提。
+    #[test]
+    fn reads_project_and_mapping_without_touching_data() {
+        let bytes = pack(Sections {
+            project_json: br#"{"version":3,"name":"Demo","artist":"","description":"","ppq":480,"compression_level":3,"default_bpm":120.0,"default_time_sig":[4,2]}"#.to_vec(),
+            mapping_json: br#"{"version":1,"ports":[{"port":0,"channels":[{"channel":0,"tracks":[{"uuid":"u1","name":"Lead"}]}]}]}"#.to_vec(),
+            data: vec![0xFF; 4096],
+            mixer: None,
+            audio: None,
+            cover: None,
+        });
+        let dir = std::env::temp_dir().join(format!(
+            "yinhe-io-meta-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("demo.yin");
+        std::fs::write(&path, bytes).expect("write yin");
+
+        let project = read_project_file(&path).expect("read project.json");
+        assert_eq!(project.name, "Demo");
+        assert_eq!(project.ppq, 480);
+
+        let mapping = read_mapping_file(&path).expect("read mapping.json");
+        assert_eq!(mapping.ports[0].channels[0].tracks[0].name, "Lead");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
