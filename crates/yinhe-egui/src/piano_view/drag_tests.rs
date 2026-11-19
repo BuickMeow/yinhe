@@ -280,24 +280,45 @@ fn release_after_note_move_does_not_move_playhead() {
     assert_eq!(cursor_tick, None, "移动后松开不得把 playhead 跳到释放位置");
 }
 
-/// 回归测试：拖动选框右侧控制点（整体变速 / Riff）时不得再拉起第二个 marquee。
+/// 回归测试：拖动选框右缘（按当前三联模式）时不得再拉起第二个 marquee。
 ///
-/// 曾因 `handle_sel_marquee` 的“拖拽进行中”判断只覆盖了音符移动/伸缩与 gate
-/// 批量缩放，漏掉 `sel_scale_state` / `sel_riff_state`：同一次按下既开始拖控制点，
+/// 控制点已删除；右缘统一入口。曾因 `handle_sel_marquee` 的“拖拽进行中”
+/// 判断漏掉 `sel_scale_state` / `sel_riff_state`：同一次按下既开始拖右缘，
 /// 又开始画新选框，松手后选区里会多出一个框。
 #[test]
-fn selection_handle_drag_does_not_add_second_rect() {
-    // (按下点, 释放点, 期望命中的控制点：true = 变速，false = Riff)
+fn selection_edge_drag_does_not_add_second_rect() {
+    use crate::widgets::selection_actions::{SelectionDragMode, store_drag_mode};
+
+    // (模式, 按下点, 释放点, 期望输出)
     let cases = [
-        (egui::pos2(480.0, 225.0), egui::pos2(600.0, 225.0), true),
-        (egui::pos2(480.0, 280.0), egui::pos2(600.0, 300.0), false),
+        (
+            SelectionDragMode::Gate,
+            egui::pos2(480.0, 225.0),
+            egui::pos2(600.0, 225.0),
+        ),
+        (
+            SelectionDragMode::Scale,
+            egui::pos2(480.0, 225.0),
+            egui::pos2(600.0, 225.0),
+        ),
+        (
+            SelectionDragMode::Riff,
+            egui::pos2(480.0, 270.0),
+            egui::pos2(600.0, 299.0),
+        ),
     ];
-    for (press, release, expect_scale) in cases {
+    for (mode, press, release) in cases {
         let ctx = egui::Context::default();
+        store_drag_mode(&ctx, mode);
+        assert_eq!(
+            crate::widgets::selection_actions::load_drag_mode(&ctx),
+            mode,
+            "拖动模式写入后应立即读回"
+        );
         let mut view = test_view();
         view.viewport_h = 600.0;
         let midi = make_midi(vec![]);
-        // 选框 (0..480, key 100..=110)：右下角 (480,280)、右缘中点 (480,225)。
+        // 选框 (0..480, key 100..=110)，右缘 x=480。
         let mut selected = yinhe_core::Selection::default();
         selected.add_rect_track(0, 480, 100, 110, 0, 0);
         let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
@@ -333,18 +354,26 @@ fn selection_handle_drag_does_not_add_second_rect() {
         assert_eq!(
             sel_rect.rects.len(),
             1,
-            "拖动控制点不得新增选框（press={press:?}）"
+            "拖动右缘不得新增选框（mode={mode:?}, press={press:?}）"
         );
         assert_eq!(
             cursor_tick, None,
-            "拖动控制点后松开不得把 playhead 跳到释放位置"
+            "拖动右缘后松开不得把 playhead 跳到释放位置"
         );
-        if expect_scale {
-            assert!(out.scale_delta.is_some(), "应提交整体变速");
-            assert!(out.riff_repeat.is_none(), "不应提交 Riff");
-        } else {
-            assert!(out.riff_repeat.is_some(), "应提交 Riff");
-            assert!(out.scale_delta.is_none(), "不应提交整体变速");
+        match mode {
+            SelectionDragMode::Gate => {
+                assert!(note_resize_delta.is_some(), "Gate 应提交批量长度");
+                assert!(out.scale_delta.is_none(), "Gate 不应提交整体变速");
+                assert!(out.riff_repeat.is_none(), "Gate 不应提交 Riff");
+            }
+            SelectionDragMode::Scale => {
+                assert!(out.scale_delta.is_some(), "Scale 应提交整体变速");
+                assert!(out.riff_repeat.is_none(), "Scale 不应提交 Riff");
+            }
+            SelectionDragMode::Riff => {
+                assert!(out.riff_repeat.is_some(), "Riff 应提交重复");
+                assert!(out.scale_delta.is_none(), "Riff 不应提交整体变速");
+            }
         }
     }
 }
@@ -353,6 +382,10 @@ fn selection_handle_drag_does_not_add_second_rect() {
 #[test]
 fn riff_drag_previews_expanded_selection_live() {
     let ctx = egui::Context::default();
+    crate::widgets::selection_actions::store_drag_mode(
+        &ctx,
+        crate::widgets::selection_actions::SelectionDragMode::Riff,
+    );
     let mut view = test_view();
     view.viewport_h = 600.0;
     let midi = make_midi(vec![]);
@@ -386,8 +419,8 @@ fn riff_drag_previews_expanded_selection_live() {
         };
     }
 
-    // 选框 (0..480, key 100..110)，右下角 Riff 方块在 (480,280)。
-    let press = egui::pos2(480.0, 280.0);
+    // 选框 (0..480, key 100..110)，右缘 x=480、底部 y=270。
+    let press = egui::pos2(480.0, 270.0);
     // y=299 落在 key 98 的行内；y=300 正好是行边界，`y_to_key` 会归到下一行。
     let drag = egui::pos2(600.0, 299.0);
     let _ = run_frame!(press_event(press));

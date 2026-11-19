@@ -9,9 +9,9 @@ use yinhe_types::TimeSigEvent;
 use super::hit::hit_test_note;
 use super::state::SelDragFrameState;
 use crate::selection::drag::{
-    SelHandleKind, collect_selected_notes, hit_test_sel_handles, main_cross_x_y,
-    main_px_to_tick_dir,
+    collect_selected_notes, main_cross_x_y, main_px_to_tick_dir, selection_main_edge_hit,
 };
+use crate::widgets::selection_actions::{SelectionDragMode, load_drag_mode};
 
 /// Press 帧分发：音符 hit-test → 单音符伸缩/移动；选框边缘 → 选区缩放；
 /// 选框内 → 选区整体移动；选框外（非加选）→ 清空选框与选区。
@@ -119,21 +119,24 @@ pub(crate) fn sel_press(
                 }
             }
 
-            // ── 选框右侧三个方块：重复 / 整体变速 / 批量 gate ──
+            // ── 选框时间终点边缘：按三联选择器当前模式拖动 ──
+            // 控制点已删除；右缘（纵向为顶端）是统一入口。
             // 已命中音符（伸缩/移动）时跳过——单音符操作优先于选框整体操作。
-            let handle_hit = if state.sel_note_resize.is_some() || state.sel_note_move.is_some() {
-                None
+            let edge_mode = if state.sel_note_resize.is_none()
+                && state.sel_note_move.is_none()
+                && eff_rects.len() == 1
+                && selection_main_edge_hit(view, eff_rects[0], local, 6.0)
+            {
+                Some(load_drag_mode(ui.ctx()))
             } else {
-                hit_test_sel_handles(eff_rects, view, local, quantize, ppq)
+                None
             };
 
-            if let Some(h) = handle_hit {
-                match h.kind {
-                    SelHandleKind::Riff => {
-                        state.sel_riff_state = Some((h.t0, h.t1, h.k0, h.k1));
-                    }
-                    SelHandleKind::Scale => {
-                        state.sel_scale_state = Some((h.t0, h.t1));
+            if let Some(mode) = edge_mode {
+                let (t0, t1, k0, k1) = eff_rects[0];
+                match mode {
+                    SelectionDragMode::Gate => {
+                        state.sel_resize_state = Some((ResizeSide::Right, t1, t0));
                         sel_rect.start_resize(ResizeSide::Right);
                         state.drag_notes = Some(std::sync::Arc::new(collect_selected_notes(
                             selected,
@@ -143,8 +146,8 @@ pub(crate) fn sel_press(
                             track_locked,
                         )));
                     }
-                    SelHandleKind::Gate => {
-                        state.sel_resize_state = Some((ResizeSide::Right, h.t1, h.t0));
+                    SelectionDragMode::Scale => {
+                        state.sel_scale_state = Some((t0, t1));
                         sel_rect.start_resize(ResizeSide::Right);
                         state.drag_notes = Some(std::sync::Arc::new(collect_selected_notes(
                             selected,
@@ -153,6 +156,9 @@ pub(crate) fn sel_press(
                             track_selected,
                             track_locked,
                         )));
+                    }
+                    SelectionDragMode::Riff => {
+                        state.sel_riff_state = Some((t0, t1, k0, k1));
                     }
                 }
             } else if state.sel_note_resize.is_none() && state.sel_note_move.is_none() {

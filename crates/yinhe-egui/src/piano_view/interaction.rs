@@ -268,8 +268,6 @@ pub(crate) fn update_hover_cursor(
     write_track: Option<u16>,
     conductor_idx: Option<u16>,
     effective_tool: Tool,
-    quantize: QuantizePreset,
-    ppq: u32,
 ) {
     if (effective_tool == Tool::Select || effective_tool == Tool::SelectVertical)
         && !crate::view_interaction::pointer_over_popup(ui.ctx())
@@ -302,21 +300,21 @@ pub(crate) fn update_hover_cursor(
             hit_note = true;
         }
         if !hit_note {
-            if let Some(h) =
-                crate::selection::drag::hit_test_sel_handles(&eff_rects, view, local, quantize, ppq)
-            {
-                use crate::selection::drag::SelHandleKind;
-                let vertical = view.is_vertical();
-                match h.kind {
-                    SelHandleKind::Riff => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe),
-                    SelHandleKind::Scale | SelHandleKind::Gate => {
-                        if vertical {
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical)
+            let on_main_edge = eff_rects.len() == 1
+                && crate::selection::drag::selection_main_edge_hit(view, eff_rects[0], local, 6.0);
+            if on_main_edge {
+                use crate::widgets::selection_actions::{SelectionDragMode, load_drag_mode};
+                let icon = match load_drag_mode(ui.ctx()) {
+                    SelectionDragMode::Riff => egui::CursorIcon::ResizeNwSe,
+                    SelectionDragMode::Gate | SelectionDragMode::Scale => {
+                        if view.is_vertical() {
+                            egui::CursorIcon::ResizeVertical
                         } else {
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal)
+                            egui::CursorIcon::ResizeHorizontal
                         }
                     }
-                }
+                };
+                ui.ctx().set_cursor_icon(icon);
             } else {
                 let in_sel_rect = eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
                     let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(

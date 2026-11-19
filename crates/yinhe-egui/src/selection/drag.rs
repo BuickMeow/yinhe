@@ -103,6 +103,29 @@ pub fn music_sel_to_pixel_rect(
     }
 }
 
+/// 指针是否命中选区的时间终点边缘（横向 = 右缘，纵向 = 顶端）。
+///
+/// 三联选择器选中 Gate/Scale/Riff 后，不再画三个方块控制点；右缘就是
+/// 统一的拖动入口。`local` 与 `music_sel_to_pixel_rect` 同为 content-local。
+pub fn selection_main_edge_hit(
+    view: &PianoRollView,
+    rect: (f64, f64, u8, u8),
+    local: egui::Pos2,
+    threshold: f32,
+) -> bool {
+    let (t0, t1, k0, k1) = rect;
+    let pixel = music_sel_to_pixel_rect(view, t0, t1, k0, k1);
+    if view.is_vertical() {
+        (local.y - pixel.min.y).abs() <= threshold
+            && local.x >= pixel.min.x - threshold
+            && local.x <= pixel.max.x + threshold
+    } else {
+        (local.x - pixel.max.x).abs() <= threshold
+            && local.y >= pixel.min.y - threshold
+            && local.y <= pixel.max.y + threshold
+    }
+}
+
 /// 预计算选中音符信息（move 和 resize 共用）。
 ///
 /// 使用 `Selection::accepts_note` 做精确的半开 tick 过滤 + 属性筛选，
@@ -225,71 +248,8 @@ pub fn add_pr_selection_rect(
     }
 }
 
-/// 桌面选框控制点命中半径（像素）。
+/// 桌面/AR 选框控制点命中半径（像素）。PR 的三个方块已删除，AR 仍用。
 pub const SEL_HANDLE_R: f32 = 11.0;
-
-/// 选框右侧控制点种类：桌面/Flutter 共用 `yinhe_editor_core` 的几何定义。
-pub use yinhe_editor_core::selection_handle::SelHandleKind;
-
-#[derive(Clone, Copy, Debug)]
-pub struct SelHandleHit {
-    pub kind: SelHandleKind,
-    pub t0: f64,
-    pub t1: f64,
-    pub k0: u8,
-    pub k1: u8,
-}
-
-/// 三个方块中心的屏幕/内容坐标（与 `music_sel_to_pixel_rect` 同一坐标系）。
-pub fn selection_handle_centers(
-    view: &PianoRollView,
-    rect: egui::Rect,
-    interval_px: f32,
-) -> (egui::Pos2, egui::Pos2, Option<egui::Pos2>) {
-    let c = yinhe_editor_core::selection_handle::centers(
-        (rect.min.x, rect.min.y, rect.max.x, rect.max.y),
-        interval_px,
-        view.is_vertical(),
-        true,
-    );
-    (
-        egui::pos2(c.corner.0, c.corner.1),
-        egui::pos2(c.scale.0, c.scale.1),
-        c.gate.map(|(x, y)| egui::pos2(x, y)),
-    )
-}
-
-/// 命中选框右侧三个方块。只对单选框生效，取距离最近者。
-pub fn hit_test_sel_handles(
-    eff_rects: &[(f64, f64, u8, u8)],
-    view: &PianoRollView,
-    local: egui::Pos2,
-    quantize: QuantizePreset,
-    ppq: u32,
-) -> Option<SelHandleHit> {
-    let &(t0, t1, k0, k1) = eff_rects.first()?;
-    if eff_rects.len() != 1 {
-        return None;
-    }
-    let rect = music_sel_to_pixel_rect(view, t0, t1, k0, k1);
-    let interval_px = quantize.tick_interval(ppq).max(1) as f32 * view.base.pixels_per_tick;
-    let kind = yinhe_editor_core::selection_handle::hit_test(
-        (rect.min.x, rect.min.y, rect.max.x, rect.max.y),
-        interval_px,
-        view.is_vertical(),
-        true,
-        local.x,
-        local.y,
-        SEL_HANDLE_R,
-    )?;
-    Some(SelHandleHit {
-        kind,
-        t0,
-        t1,
-        k0,
-        k1,
-    })
-}
 
 /// 计算 resize 的 dt（按量化 snap），并约束最小宽度为一个量化间隔。
 ///
@@ -410,20 +370,6 @@ mod tests {
         assert_eq!(notes.len(), 1, "锁定轨 0 不应被框选中");
         assert_eq!(notes[0].track, 1);
     }
-    #[test]
-    fn selection_handles_hit_corner_scale_and_gate() {
-        let view = yinhe_types::PianoRollView::default();
-        let quantize = QuantizePreset::Fraction(1, 4);
-        let rect = music_sel_to_pixel_rect(&view, 0.0, 1920.0, 60, 72);
-        let interval = quantize.tick_interval(480).max(1) as f32 * view.base.pixels_per_tick;
-        let (corner, scale, gate) = selection_handle_centers(&view, rect, interval);
-        let rects = [(0.0, 1920.0, 60, 72)];
-        let hit = |p| hit_test_sel_handles(&rects, &view, p, quantize, 480).map(|h| h.kind);
-        assert_eq!(hit(corner), Some(SelHandleKind::Riff));
-        assert_eq!(hit(scale), Some(SelHandleKind::Scale));
-        assert_eq!(hit(gate.expect("gate handle")), Some(SelHandleKind::Gate));
-    }
-
     /// 88 键 + SCALE 折叠下，选框的副轴边界必须与 key 行实际位置一致。
     #[test]
     fn selection_rect_respects_fold_and_88_key_start() {

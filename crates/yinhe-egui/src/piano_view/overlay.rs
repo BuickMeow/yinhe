@@ -4,7 +4,7 @@ use egui_material_icons::icons::ICON_CHECK;
 use yinhe_types::{KeySigEvent, PianoRollView, TimeSigEvent};
 
 use super::types::RULER_H;
-use crate::widgets::selection_actions::{BarButton, SELECT_BAR_BUTTONS, SelectionAction};
+use crate::widgets::selection_actions::{BarButton, SelectionAction};
 
 type ClipResizeReq = (u16, u32, u32, u32);
 /// 钢琴键点击/拖动产生的选择请求；由调用方结合当前编辑轨落地到文档。
@@ -311,7 +311,6 @@ pub(crate) fn draw_overlays(
     // 已提交的持久选框：任意工具下均保持可见。
     // 悬停网格按钮时切换为「网格预览」：强调色选框 + 量化网格线，
     // 预览即将按哪个网格切割（与切割用的已解析量化同源；Off 无网格不预览）。
-    let mut selection_last: Option<egui::Rect> = None;
     let grid_interval = quantize.tick_interval(ppq);
     let grid_preview = grid_interval > 0
         && ui.data_mut(|d| {
@@ -342,11 +341,6 @@ pub(crate) fn draw_overlays(
                 } else {
                     music_rect.min.x - content_rect.min.x
                 };
-                // `music_sel_to_pixel_rect` 的 x 含左侧键盘宽；胶囊位置用
-                // content-local 坐标，必须扣掉这个偏移，否则会离选框远一截。
-                selection_last = persisted_pixel_rects
-                    .last()
-                    .map(|r| r.translate(egui::vec2(-kb_w_shift, 0.0)));
                 let music_rect_local = egui::Rect::from_min_max(
                     egui::pos2(0.0, 0.0),
                     egui::pos2(music_rect.width(), music_rect.height()),
@@ -364,33 +358,6 @@ pub(crate) fn draw_overlays(
                             fill_color,
                             stroke_color,
                         );
-                        if persisted_pixel_rects.len() == 1
-                            && !grid_preview
-                            && matches!(
-                                effective_tool,
-                                crate::widgets::tools_panel::Tool::Select
-                                    | crate::widgets::tools_panel::Tool::SelectVertical
-                            )
-                        {
-                            let screen = egui::Rect::from_min_max(
-                                egui::pos2(
-                                    music_rect.min.x + shifted.min.x,
-                                    music_rect.min.y + shifted.min.y,
-                                ),
-                                egui::pos2(
-                                    music_rect.min.x + shifted.max.x,
-                                    music_rect.min.y + shifted.max.y,
-                                ),
-                            );
-                            crate::selection::draw::draw_handles(
-                                ui.painter(),
-                                view,
-                                screen,
-                                quantize,
-                                ppq,
-                                true,
-                            );
-                        }
                     }
                 }
             }
@@ -417,14 +384,12 @@ pub(crate) fn draw_overlays(
         }
     }
 
-    // ── 浮动工具条：选择工具用选框右侧胶囊；直线/剪刀用锚点线 bbox 定位 ──
+    // ── 浮动工具条：直线/剪刀用锚点线 bbox 定位；选择动作已回到 transport bar ──
     let line_buttons = [(ICON_CHECK, SelectionAction::LineConfirm)];
     let scissors_buttons = [(ICON_CHECK, SelectionAction::ScissorsConfirm)];
     let bar_spec: Option<(&[BarButton], Option<egui::Rect>)> = match effective_tool {
         crate::widgets::tools_panel::Tool::Select
-        | crate::widgets::tools_panel::Tool::SelectVertical => {
-            Some((&SELECT_BAR_BUTTONS[..], selection_last))
-        }
+        | crate::widgets::tools_panel::Tool::SelectVertical => None,
         crate::widgets::tools_panel::Tool::Line => pen_path.map(|p| {
             (
                 &line_buttons[..],
