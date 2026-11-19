@@ -5,8 +5,8 @@
 > 而是 LOD、遮挡和八度口径。前两个可以直接做，第三个按“文字放得下才画”的连续
 > 规则做，不要一开始就上 glyph atlas。
 >
-> 2026-11-19 更新：力度填充已实现（`7cacc4c4`）；把手 wgpu/egui 对比见
-> 5.2/5.3；音名标签暂缓。
+> 2026-11-19 更新：三种力度显示方式已实现（`f463f5f7`）；把手 wgpu/egui
+> 对比见 5.2/5.3；音名标签暂缓。
 
 ## 1. 结论
 
@@ -163,7 +163,8 @@
 - 力度 127：填充整个音符内部；
 - 力度 64：填充大约一半高度；
 - 力度 1：只显示极细的一条填充，未填充部分仍然保留可见的暗色轮廓；
-- 选中态不再用整块高对比色覆盖，避免把力度信息盖掉。
+- 选中态暂时保留整块高对比填充；低力度选中音符会变成一条短高亮条，观感待确认，
+  后续可改成 selected outline（见 4.4）。
 
 ### 4.2 为什么几乎免费
 
@@ -171,77 +172,34 @@
 - 还是一个 `NoteInstance`，不需要扩到 16 字节，也不需要额外的 per-note buffer。
 - 填充率完全不变：同一个矩形内的像素数量不变，只是像素颜色由“整块按力度混色”
   变成“按 uv.y 分界取两个颜色”。
-- 唯一新增的是 `VertexOutput` 里 1~2 个 flat varying（`fill_ratio`，选中轮廓
-  再加一个 `selected`；每顶点 4~8 字节），以及 fragment 里几次比较/插值。
-  对 GPU 来说可以忽略。
+- 唯一新增的是 `VertexOutput` 里一个 flat varying（`fill_ratio`；每顶点
+  4 字节），以及 fragment 里几次比较/插值。对 GPU 来说可以忽略。
 
-### 4.3 shader 改法
+### 4.3 shader 改法（当前实现）
 
-`VertexOutput` 增加：
-
-```wgsl
-@location(6) @interpolate(flat) fill_ratio: f32,
-@location(7) @interpolate(flat) selected: u32,
-```
-
-`note_geometry` 里：
-
-```wgsl
-// PR 才做力度填充；AR 保持整块填充。
-out.fill_ratio = select(1.0, f32(vel) / 127.0, u.mode == 1u);
-out.selected = select(0u, 1u, selected);
-```
-
-非音符路径（decor 的 `vs_main`、力度条的 `vs_main_velocity`）写默认值：
-
-```wgsl
-out.fill_ratio = 1.0;
-out.selected = 0u;
-```
-
-`fs_main` 的 fast path 里，把原来的 `fill_a` 再乘一个“填充边界”：
-
-```wgsl
-let inner_half = max(in.half_size - vec2(in.border_width), vec2(0.0));
-var fill_a: f32 = 0.0;
-var border_a: f32 = outer_a;
-
-if inner_half.x > 0.0 && inner_half.y > 0.0 {
-    let d_inner = max(abs(p.x) - inner_half.x, abs(p.y) - inner_half.y);
-    let inner_a = 1.0 - smoothstep(-0.5, 0.5, d_inner);
-
-    let fill_ratio = clamp(in.fill_ratio, 0.0, 1.0);
-    // p.y 从 -half 到 +half；从底部向上填充。
-    let fill_top = inner_half.y - 2.0 * inner_half.y * fill_ratio;
-    let fill_edge = 1.0 - smoothstep(-0.5, 0.5, fill_top - p.y);
-
-    fill_a = inner_a * fill_edge;
-    border_a = outer_a - fill_a;
-}
-```
-
-这样“未填充的内部”和“外圈”共用 `border_color`，正好对应“其他部位都是边框”。
-
-注意 `note_outline=false` 时 `border_width=0`，现在 shader 会把 `border_color`
-退化成 `fill_color`。加力度填充后，未填充体必须有自己独立的颜色，否则关掉
-描边后“填充高度”会完全看不见。也就是把 `border_color` 从
-`select(in.fill_color, base_color * 0.4, border_width > 0)` 改成始终使用
-暗化/混合色；`note_outline` 只决定 `border_width` 是否为 0，不控制未填充体的
-颜色。
+- `VertexOutput` 只增加一个 flat varying：`fill_ratio`。
+- `note_geometry`：
+  - 横向 PR 且模式不是深浅颜色时，`fill_ratio = vel / 127`，填充色用稳定轨道色；
+  - 纵向 PR、AR、深浅颜色模式、decor，`fill_ratio = 1`，走原来的整块逻辑。
+- `fs_main` 用 `note_fill_alpha(inner_a, inner_half, p, fill_ratio, mode)` 切分
+  内部矩形：
+  - 模式 0：`p.y` 从底部向上；
+  - 模式 1：`p.x` 从左向右；
+  - 模式 2：直接返回 `inner_a`，不做几何切分。
+- 几何填充模式下 `border_color` 固定为 `base_color * 0.4`；这样
+  `note_outline=false` 时未填充体仍然可见，不会退化成“整块同色”。
+- 非音符路径（decor、力度条）写 `fill_ratio = 1`，行为不变。
+- 纵向 PR 不套几何填充：纵向音符的长边是时间长度，按长边填充会把力度和 gate
+  混在一起。纵向保持原来的整块颜色淡化。
 
 几个要点：
 
-- `fill_ratio=1.0` 时 `fill_top = -inner_half.y`，整个内部都是填充，decor 和
-  AR 的行为与现在完全一致。
-- `fill_ratio=0.0` 时 `fill_top = +inner_half.y`，内部全是 border color；
-  力度 0 的音符仍然有可见轮廓，不会在暗色背景上消失。
-- `fill_edge` 用 `smoothstep(-0.5, 0.5, ...)` 保留 1px 左右的过渡，避免填充
-  边缘出现硬锯齿。音符外缘仍然是硬边，不改变“相邻音符不漏底”的现有约束。
-- 纵向瀑布流不要直接套 `p.y`。纵向模式下音高在 X 轴，如果也按交叉轴填充，
-  视觉上会变成“从左往右填充”，语义不对。建议第一版只在横向 PR 启用，
-  纵向保持现在的整块颜色；等横向验证后再决定纵向是沿时间轴填充还是继续用颜色。
-  如果纵向要保留旧的颜色淡化，`fill_color` 的公式也要按 `orientation` 分支：
-  纵向继续走旧的 `vel` 淡化，横向改成稳定的轨道色，不能只把 `fill_ratio` 设成 1。
+- 填充按去掉描边后的内部区域计算，所以力度 64 略低于整格的 50%。
+- `fill_ratio=0` 时内部全是未填充体，力度 0 的音符仍有可见轮廓。
+- 填充边缘用 `smoothstep(-0.5, 0.5, ...)` 保留约 1px 过渡；音符外缘仍是硬边，
+  不改变“相邻音符不漏底”的约束。
+- 选中态当前仍用 `SELECTED_CONTRAST` 覆盖填充色；低力度选中音符的观感需要
+  实机确认，后续再决定是否改成 selected outline。
 
 ### 4.4 颜色建议
 
@@ -253,18 +211,16 @@ if inner_half.x > 0.0 && inner_half.y > 0.0 {
   暗色主题向黑混、亮色主题向白混，和现有 `dark_theme` 的方向一致。
 - 外圈和未填充部分共用同一个 `border_color`，第一版不做“外圈更深”的第二层。
   这样 shader 里仍然只有一组 fill/border 颜色，改动最小。
-- 选中态：不要再用 `SELECTED_CONTRAST` 覆盖整个填充色，改为把边框换成高对比色
-  （或边框加粗 1px），填充高度仍然可见。这样“选中”和“力度”不再互相覆盖。
-  选中 outline 要独立于 `note_outline`：用户关掉描边时，选中态仍然应该有
-  至少 1px 的轮廓，否则“选中”和“力度”都会失去视觉锚点。
-
-如果保留旧的 `MAX_FILL_FADE`，就会出现“高度 + 颜色”双重编码，低力度音符既矮
-又暗，反而更难读。建议验证后删掉 PR 的旧颜色淡化路径，只保留一套语义。
+- 选中态当前仍是 `SELECTED_CONTRAST` 整块高对比填充；后续建议改成“填充保留
+  轨道色 + 高对比边框”，这样选中和力度不再互相覆盖。选中 outline 要独立于
+  `note_outline`：用户关掉描边时，选中态仍然应该有至少 1px 的轮廓。
+- `MAX_FILL_FADE` 不能删：模式 2（深浅颜色）还要用它。模式 0/1 只是不再走
+  这条颜色淡化路径，避免“高度 + 颜色”双重编码。
 
 ### 4.5 成本
 
 - 0 额外三角形、0 额外 draw call、0 额外 instance。
-- +1~2 个 flat varying；fragment 多几次比较和一次 smoothstep。
+- +1 个 flat varying；fragment 多几次比较和一次 smoothstep。
 - fill rate 不变，瓶颈仍然是 ROP/带宽，不是这几条 ALU。
 - 风险不是性能，而是像素密度：默认 `key_height=12px` 时，力度 1 和力度 8
   的填充高度差不到 1px，看不出来。这是缩放问题，不是算法问题；放大后自然可读。
@@ -272,9 +228,31 @@ if inner_half.x > 0.0 && inner_half.y > 0.0 {
 ### 4.6 验证
 
 - 同一 MIDI、同一缩放，暗色/亮色主题各截一张图：力度 1、32、64、100、127。
+- 三种模式各看一遍：底部向上、从左向右、深浅颜色。
 - 检查低力度音符在暗色背景下仍然可见；检查相邻音符之间没有漏底细线。
-- 横向 PR、纵向 PR、AR 各看一遍；AR 必须保持原样。
+- 横向 PR、纵向 PR、AR 各看一遍；纵向保持深浅颜色，AR 保持原样。
 - 性能：默认 CPU 路径和 GPU cull 路径各跑一次，记录帧时间；预期没有可见差异。
+
+### 4.7 设置项与三种模式（2026-11-19 落地，`f463f5f7`）
+
+设置 → 外观 → 渲染 → “力度显示”，三选一，存
+`AudioSettings.velocity_fill_mode`，编码进 `Uniforms.velocity_fill_mode`：
+
+| 编码 | 设置项 | 横向 PR | 纵向 PR |
+| --- | --- | --- | --- |
+| 0 | 底部向上填充（默认） | 从底部向上 | 保持深浅颜色 |
+| 1 | 从左向右填充 | 从左侧向右 | 保持深浅颜色 |
+| 2 | 深浅颜色 | 最初的整块颜色淡化 | 同左 |
+
+实现细节：
+
+- `Uniforms` 复用原来的 `fold_pad0` 位置放 `velocity_fill_mode`，总大小仍是
+  144 字节，不增加 uniform 带宽。
+- 模式只改 uniform，不会让音符层缓存失效；切换设置后下一帧直接生效。
+- 旧设置缺字段时按 0（底部向上）加载。
+- Flutter 调用 `build_render_job` 时传 2，移动端保持最初的颜色淡化；本次未改
+  移动端 UI。
+- 模式 0/1 只对横向 PR 生效；纵向 PR 保持模式 2 的行为，原因见 4.3。
 
 ## 5. 方案二：拖动把手 / 交互引导
 
@@ -529,7 +507,7 @@ if galley.rect.width() + 2 * pad <= note_px_width
 
 ## 8. 建议实施顺序
 
-### P0：力度填充（已完成，`7cacc4c4`）
+### P0：力度填充（已完成，`f463f5f7`）
 
 - 只改 `shader.wgsl` 和 `VertexOutput` 的三个构造函数；
 - 横向 PR 启用，AR 和纵向 PR 保持原行为；
