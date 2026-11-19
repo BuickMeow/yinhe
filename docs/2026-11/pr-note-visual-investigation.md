@@ -385,14 +385,17 @@
 
 **本次落地（2026-11-19）**
 
-- 保留原来的多按钮胶囊：选择工具重新使用 `SELECT_BAR_BUTTONS` 全部 12 个按钮；
-  transport bar 不再显示选择动作按钮。
-- 胶囊图标从 18px 增大到 22px；12 个按钮竖排，常见 PR 高度内可以放下。
+- 选择动作 12 按钮回到 transport bar，外加边框分组；胶囊只保留直线/剪刀的
+  确认按钮。
+- transport bar 第二组是 **Gate / Scale / Riff 三联选择器**，选中态用强调色。
+- PR 选框的三个控制点删除；统一拖选框右缘（纵向为时间终点边），按三联选择器
+  当前模式执行 Gate / Scale / Riff；框内拖动仍是整体移动。
+- 拖动模式保存在 egui data；PR 可见时显示选择器。AR 仍保留原有控制点，
+  本次未跟进。
 - `draw_hover_tooltip` 从 `view_interaction.rs` 移到
   `widgets/tooltip.rs`，调用方统一走 `crate::widgets::tooltip`。
-- 单锚点 + 展开/收起动画的方案本次不实现，作为后续候选保留在下面。
 
-**单锚点胶囊方案（后续候选）**
+**单锚点胶囊方案（未采用，保留为后续候选）**
 
 一个锚点放在选框右侧留白，按下展开 Gate / Scale / Riff 三个图标：
 
@@ -417,24 +420,27 @@
 - 胶囊只负责“选工具 + 起手”，拖动过程中的 `±tick / ±key / ±gate / span`
   仍由现有 tooltip 显示，两者不要混成一套状态。
 
-**现有胶囊和拖动 tooltip 分别在哪**
+**现有胶囊、transport 组和拖动 tooltip 分别在哪**
 
-- `crates/yinhe-egui/src/widgets/selection_actions.rs` 就是现有胶囊：竖直圆角条，
-  `bar_rect` 把它放在选框右侧 8px，`show` 负责绘制和命中。
-  - 选择工具现在重新使用 `SELECT_BAR_BUTTONS` 的 12 个按钮；直线/剪刀工具仍
-    使用一个确认按钮，共用同一套胶囊位置计算。
-  - `overlay.rs` 的 `bar_spec` 是当前调用点；选择工具用 `selection_last` 作为
-    锚点矩形。
+- `crates/yinhe-egui/src/widgets/selection_actions.rs`：既有胶囊工具，也有
+  transport bar 的分组控件。
+  - `show_transport_buttons`：12 个选择动作，带边框，常驻 transport bar；
+    无框选时整组灰显。
+  - `show_drag_mode_selector`：Gate/Scale/Riff 三联选择器。
+  - `show` / `bar_rect`：仍服务直线/剪刀的单个确认胶囊，放在锚点线 bbox
+    右侧 8px。
+- `overlay.rs` 不再给选择工具画浮动胶囊，也不再画三个控制点；选择动作走
+  transport bar。
 - 拖动选框时出现的 `±tick / ±key / ±gate / span` **不是 widget**，原先在
   `view_interaction.rs`，现在已移到 `crates/yinhe-egui/src/widgets/tooltip.rs`，
   用 `ctx.debug_painter()` 画出的非交互提示。它和胶囊不是同一套东西。
 
 **三个想法的取舍**
 
-1. **重排**：采纳为胶囊内部的顺序（Gate 中、Scale 下、Riff 上），但不要继续
-   把三个点贴在选框边缘。
-2. **九向自定义**：暂不做。胶囊已经解决重叠和图标可读性；九向只会增加设置、
-   碰撞检测和双端测试。以后真有需求，最多做 2~3 个布局预设。
+1. **重排**：改为 transport bar 的三联选择器 + 选框右缘拖动，不再把三个点
+   贴在选框边缘。
+2. **九向自定义**：暂不做。三联选择器 + 右缘已经解决重叠和图标可读性；
+   九向只会增加设置、碰撞检测和双端测试。以后真有需求，最多做 2~3 个预设。
 3. **看 DAW**：FL Studio 是单个 Stretch Handle + `Alt`/`Right-Shift` 拖音符
    边缘拉伸；复制主要靠 `Ctrl+B`、`Ctrl+D`、`Shift+拖拽`。桌面 DAW 的主流是
    修饰键/工具模式，不是三个常驻方块。你的三把手已经是“移动端简化版”，重点
@@ -442,8 +448,9 @@
 
 **建议优先级**
 
-- 已完成：原多按钮胶囊回归 + 22px 图标 + `widgets/tooltip` 抽取。
-- P1：如果 12 按钮竖排太高，再考虑双列/分组或单锚点展开；先看实机观感。
+- 已完成：选择动作回归 transport bar（带边框）+ Gate/Scale/Riff 三联选择器
+  + 删除 PR 控制点 + 右缘拖动 + `widgets/tooltip` 抽取。
+- P1：AR 的 Riff/Scale 控制点是否跟进同一套选择器；移动端未跟进。
 - P2：如仍有需求，做 2~3 个布局预设，不做每个把手九向。
 
 ## 6. 方案三：音名标签
