@@ -77,7 +77,7 @@ pub(crate) fn single_note_resize_frame(
                 "gate",
                 new_gate - orig_gate,
             )];
-            crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
+            crate::widgets::tooltip::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
             ui.ctx().request_repaint();
         }
         // Release：提交单音符伸缩（复用铅笔的 PencilNoteDrag 通道）

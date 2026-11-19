@@ -112,7 +112,7 @@ pub(crate) fn sel_resize_frame(
                 ResizeSide::Right => dt,
             };
             let lines = vec![crate::view_interaction::format_signed("gate", gate_delta)];
-            crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
+            crate::widgets::tooltip::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
             ui.ctx().request_repaint();
         }
         // Release：提交 dt

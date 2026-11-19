@@ -91,7 +91,7 @@ pub(crate) fn single_note_move_frame(
                 crate::view_interaction::format_signed("tick", dt),
                 crate::view_interaction::format_signed("key", dk as i64),
             ];
-            crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
+            crate::widgets::tooltip::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
             ui.ctx().request_repaint();
         }
         // Release：提交单音符移动（复用铅笔的 PencilNoteDrag 通道）

@@ -166,7 +166,7 @@ pub(crate) fn dispatch_edit_interaction(
                 pos.y,
             ),
         };
-        crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, x, y);
+        crate::widgets::tooltip::draw_hover_tooltip(ui.ctx(), &lines, x, y);
     }
     out
 }

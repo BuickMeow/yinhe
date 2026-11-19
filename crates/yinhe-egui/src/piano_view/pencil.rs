@@ -392,7 +392,7 @@ pub(crate) fn pencil_frame(
                         t!("pencil.gate", n = gate).to_string(),
                     ];
                     if let Some(pos) = hover_pos {
-                        crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
+                        crate::widgets::tooltip::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
                     }
                 }
             }
@@ -471,7 +471,7 @@ pub(crate) fn pencil_frame(
                     crate::view_interaction::format_signed("key", dk as i64),
                 ];
                 if let Some(pos) = hover_pos {
-                    crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
+                    crate::widgets::tooltip::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
                 }
 
                 // Only output drag on release — do NOT modify the model during drag.
@@ -531,7 +531,7 @@ pub(crate) fn pencil_frame(
                     new_gate - orig_gate,
                 )];
                 if let Some(pos) = hover_pos {
-                    crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
+                    crate::widgets::tooltip::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
                 }
 
                 // Only output on release
@@ -588,7 +588,7 @@ pub(crate) fn pencil_frame(
                     crate::view_interaction::format_signed("gate", new_gate - orig_gate),
                 ];
                 if let Some(pos) = hover_pos {
-                    crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
+                    crate::widgets::tooltip::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
                 }
 
                 // Only output on release

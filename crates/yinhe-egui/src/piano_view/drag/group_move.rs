@@ -125,7 +125,7 @@ pub(crate) fn note_drag_frame(
                 crate::view_interaction::format_signed("tick", dt),
                 crate::view_interaction::format_signed("key", dk as i64),
             ];
-            crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
+            crate::widgets::tooltip::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
             ui.ctx().request_repaint();
         }
         if pointer.primary_released() {

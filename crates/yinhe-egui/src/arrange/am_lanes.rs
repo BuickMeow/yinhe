@@ -504,7 +504,7 @@ pub(crate) fn interact_all(
                     pos.y,
                 ),
             };
-            crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, x, y);
+            crate::widgets::tooltip::draw_hover_tooltip(ui.ctx(), &lines, x, y);
         }
     }
 

@@ -87,7 +87,7 @@ pub(crate) fn sel_scale_frame(
                 }
             }
         }
-        crate::view_interaction::draw_hover_tooltip(
+        crate::widgets::tooltip::draw_hover_tooltip(
             ui.ctx(),
             &[format!("span {}", new_span.round() as i64)],
             pos.x,
