@@ -332,7 +332,14 @@ pub fn show_timecode_display(
             egui::Sense::hover(),
         );
         resp.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::Meter, true, t!("hint.timecode.master_meter"))
+            let mut info = egui::WidgetInfo::labeled(
+                egui::Role::Meter,
+                true,
+                t!("hint.timecode.master_meter"),
+            );
+            let level = data.master_meter.0;
+            info.value = Some(f64::from(level.0.max(level.1)));
+            info
         });
         crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.timecode.master_meter"));
     }

@@ -495,6 +495,7 @@ pub(super) fn draw_add_track_row(
     let add_id = egui::Id::unique("arr_add_track_row");
     let add_resp = ui.interact(row_rect, add_id, egui::Sense::click());
     crate::widgets::hint::hover(ui.ctx(), &add_resp, t!("hint.arrange.add_track"));
+    crate::widgets::a11y::name_button(&add_resp, t!("hint.arrange.add_track"));
     let plus_center = egui::pos2(row_rect.min.x + 14.0, row_rect.center().y);
     let icon_color = if add_resp.hovered() {
         crate::theme::text_primary()
