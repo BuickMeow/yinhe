@@ -219,7 +219,8 @@ impl MixerParams {
     /// 4. `repair_mixed_lc_freezes`：依赖发送表；
     /// 5. `repair_master` / `ensure_instrument_uids`：单点补齐；
     /// 6. `repair_routing`：清理悬空目标；
-    /// 7. `repair_automation`：最后按节点归属过滤 lane（依赖以上全部完成）。
+    /// 7. `ensure_master_sends`：为直连 Master 的节点补默认 0 dB 发送（依赖 routing）；
+    /// 8. `repair_automation`：最后按节点归属过滤 lane（依赖以上全部完成）。
     pub fn ensure_len(&mut self) {
         self.repair_racks();
         self.repair_aps();
@@ -230,7 +231,36 @@ impl MixerParams {
         self.repair_master();
         self.ensure_instrument_uids();
         self.repair_routing();
+        self.ensure_master_sends();
         self.repair_automation();
+    }
+
+    /// 为所有「主输出 = Master」且没有显式 Master 发送的节点补 0 dB 发送。
+    ///
+    /// 发送图现在是进 Master 的唯一路径：默认 0 dB 保证新通道能出声。
+    /// SEND 关闭会保留 `amount = 0` 的条目（见 `set_channel_send`），
+    /// 所以本函数不会把用户关掉的 SEND 又补成 0 dB。
+    pub fn ensure_master_sends(&mut self) {
+        let sources: Vec<ChannelId> = self
+            .nodes
+            .iter()
+            .filter(|node| node.output.is_none())
+            .map(|node| node.id)
+            .collect();
+        for source in sources {
+            self.ensure_master_send(source);
+        }
+    }
+
+    fn ensure_master_send(&mut self, source: ChannelId) {
+        let exists = self
+            .channel_sends
+            .iter()
+            .any(|send| send.source == source && send.target == ChannelId::Master);
+        if !exists {
+            self.channel_sends
+                .push(ChannelSend::new(source, ChannelId::Master, 1.0, false));
+        }
     }
 
     /// 所有非 Master 混音节点（统一视图；存储仍按旧分表过渡）。
@@ -342,6 +372,7 @@ impl MixerParams {
             self.nodes
                 .push(MixerNode::new(channel, ChannelSource::Ap(id)));
             self.sort_dedup_nodes();
+            self.ensure_master_send(channel);
         }
     }
 
@@ -418,10 +449,11 @@ impl MixerParams {
         if source == ChannelId::Master || source == target {
             return false;
         }
-        if amount <= 0.0 {
+        let amount = amount.clamp(0.0, 1.0);
+        // Master 的 0 条目是「显式关闭」：必须保留，否则默认发送会被补齐。
+        if amount <= 0.0 && target != ChannelId::Master {
             return self.remove_channel_send(source, target);
         }
-        let amount = amount.clamp(0.0, 1.0);
         if let Some(send) = self
             .channel_sends
             .iter_mut()
@@ -465,8 +497,10 @@ impl MixerParams {
             return id;
         }
         let id = self.alloc_lc_id();
+        let channel = ChannelId::Lc(id);
         self.nodes.push(MixerNode::logical_channel(id, source));
         self.sort_dedup_nodes();
+        self.ensure_master_send(channel);
         id
     }
 
@@ -477,9 +511,11 @@ impl MixerParams {
     pub fn add_track_lc(&mut self, track: u16) -> LogicalChannelId {
         self.repair_track_channels();
         let id = self.alloc_lc_id();
+        let channel = ChannelId::Lc(id);
         self.nodes
             .push(MixerNode::logical_channel(id, ChannelSource::Track(track)));
         self.sort_dedup_nodes();
+        self.ensure_master_send(channel);
         id
     }
 
@@ -497,6 +533,7 @@ impl MixerParams {
             self.next_lc_id = LogicalChannelId(id.0.saturating_add(1));
         }
         self.sort_dedup_nodes();
+        self.ensure_master_send(ChannelId::Lc(id));
         true
     }
 
@@ -507,7 +544,10 @@ impl MixerParams {
 
     /// 删除每轨 LC，并清理所有指向它的路由（当前没有外部引用，保留接口）。
     pub fn remove_track_lc(&mut self, id: LogicalChannelId) {
-        self.nodes.retain(|node| node.id != ChannelId::Lc(id));
+        let ch = ChannelId::Lc(id);
+        self.nodes.retain(|node| node.id != ch);
+        self.channel_sends
+            .retain(|send| send.source != ch && send.target != ch);
     }
 
     /// 分配一个新的乐器实例 uid（恒 ≥1）。
@@ -644,11 +684,21 @@ impl MixerParams {
         }
         match self.node_mut(node) {
             Some(slot) => {
+                if slot.output == output {
+                    return false;
+                }
                 slot.output = output;
-                true
             }
-            None => false,
+            None => return false,
         }
+        // 主输出 = Master 时唯一路径是 Master send；改为另一条通道时
+        // 必须删掉 Master send，否则会同时走两条路。
+        if output.is_some() {
+            self.remove_channel_send(node, ChannelId::Master);
+        } else {
+            self.ensure_master_send(node);
+        }
+        true
     }
 
     /// 把音频通道相关表补齐到 `count` 条。

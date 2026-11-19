@@ -98,6 +98,17 @@ fn insert_without_capability_is_single_call() {
 fn graph_with(channels: &[StripParams], frames: usize) -> MixerGraph {
     let mut g = MixerGraph::new(frames);
     g.resize(channels.len(), frames, channels);
+    // 新路由：Master 只通过 Master send 进入；默认每条通道 0 dB 发送。
+    for i in 0..channels.len() {
+        g.set_channel_sends(
+            i,
+            vec![ResolvedChannelSend {
+                target: ChannelSendTarget::Master,
+                amount: 1.0,
+                pre_fader: false,
+            }],
+        );
+    }
     g
 }
 
@@ -122,8 +133,8 @@ fn channel_send_forward_is_same_block() {
     fill(&mut g, 0, 0.5);
     let (l, _r) = g.process();
     let single = core::f32::consts::FRAC_1_SQRT_2;
-    // 直达 + 经目标通道推子/声像的 send。
-    let expect = 0.5 * single + 0.5 * single * single;
+    // 源没有直连 Master，只有经目标通道（其默认 Master send）的 send。
+    let expect = 0.5 * single * single;
     assert!((l[3] - expect).abs() < 1e-6, "got {} expect {expect}", l[3]);
 }
 
@@ -142,14 +153,10 @@ fn channel_send_reverse_is_one_block_delayed() {
     fill(&mut g, 1, 0.5);
     let (l, _r) = g.process();
     let single = core::f32::consts::FRAC_1_SQRT_2;
-    assert!(
-        (l[3] - 0.5 * single).abs() < 1e-6,
-        "第一块不应有逆序发送: {}",
-        l[3]
-    );
+    assert!(l[3].abs() < 1e-6, "第一块不应有逆序发送: {}", l[3]);
     fill(&mut g, 1, 0.5);
     let (l, _r) = g.process();
-    let expect = 0.5 * single + 0.5 * single * single;
+    let expect = 0.5 * single * single;
     assert!((l[3] - expect).abs() < 1e-6, "got {} expect {expect}", l[3]);
 }
 
@@ -180,9 +187,9 @@ fn channel_send_pre_fader_ignores_source_gain() {
     assert!((l[3] - expect).abs() < 1e-6, "got {}", l[3]);
 }
 
-/// 发送到 Master：直接累加，不经过其它通道。
+/// 发送到 Master：这是进入 Master 的唯一路径，不再叠加直连信号。
 #[test]
-fn channel_send_to_master_bypasses_channels() {
+fn channel_send_to_master_is_only_path() {
     let mut g = graph_with(&[StripParams::default()], 4);
     g.set_channel_sends(
         0,
@@ -195,8 +202,7 @@ fn channel_send_to_master_bypasses_channels() {
     fill(&mut g, 0, 0.5);
     let (l, _r) = g.process();
     let single = core::f32::consts::FRAC_1_SQRT_2;
-    // 直达 + send 各一份。
-    let expect = 0.5 * single * 2.0;
+    let expect = 0.5 * single;
     assert!((l[3] - expect).abs() < 1e-6, "got {} expect {expect}", l[3]);
 }
 
@@ -205,9 +211,11 @@ fn channel_send_to_master_bypasses_channels() {
 fn channel_main_output_replaces_master_path() {
     let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
     g.set_channel_output(0, Some(1));
+    // 主输出改到另一条通道后，默认 Master send 必须删除。
+    g.set_channel_sends(0, Vec::new());
     fill(&mut g, 0, 0.5);
     let (l, _r) = g.process();
-    // 通道 0 推子/声像 → 通道 1 输入 → 通道 1 推子/声像 → Master。
+    // 通道 0 推子/声像 → 通道 1 输入 → 通道 1 推子/声像 → Master send。
     let single = 0.5 * core::f32::consts::FRAC_1_SQRT_2;
     let expect = single * core::f32::consts::FRAC_1_SQRT_2;
     assert!((l[3] - expect).abs() < 1e-6, "got {} expect {expect}", l[3]);
@@ -476,8 +484,8 @@ fn pdc_aligns_channel_send_with_target_own_source() {
     let single = core::f32::consts::FRAC_1_SQRT_2;
     assert!(l[0].abs() < 1e-6, "目标自身源应与汇入 send 对齐: {}", l[0]);
     assert!(
-        (l[2] - (2.0 * single + single * single)).abs() < 1e-6,
-        "sample 2 应为目标输出 + 源直达之和: {}",
+        (l[2] - ((1.0 + single) * single)).abs() < 1e-6,
+        "sample 2 应为目标输出 + 源 send 之和: {}",
         l[2]
     );
 }
@@ -487,6 +495,7 @@ fn pdc_aligns_channel_main_output_with_target_own_source() {
     let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
     g.set_inserts(0, vec![Box::new(DelayInsert::new(2))]);
     g.set_channel_output(0, Some(1));
+    g.set_channel_sends(0, Vec::new());
     assert_eq!(g.channels[1].input_delay.delay(), 2);
     assert_eq!(g.channels[0].output_delay.delay(), 0);
     for ch in [0, 1] {
@@ -509,9 +518,13 @@ fn pdc_recomputes_on_insert_removal() {
     // 移除延迟 insert 后对齐回退为 0（延迟线长度归零）。
     let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
     g.set_inserts(1, vec![Box::new(DelayInsert::new(3))]);
-    assert_eq!(g.channels[0].master_delay.delay(), 3);
+    assert_eq!(g.channels[0].channel_send_delays[0].delay(), 3);
     g.set_inserts(1, Vec::new());
-    assert!(g.channels.iter().all(|c| c.master_delay.delay() == 0));
+    assert!(
+        g.channels
+            .iter()
+            .all(|c| c.channel_send_delays.iter().all(|d| d.delay() == 0))
+    );
 }
 
 #[test]
@@ -533,6 +546,7 @@ fn reset_clears_pdc_delay_lines() {
 fn channel_main_output_to_channel_replaces_master() {
     let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
     g.set_channel_output(0, Some(1));
+    g.set_channel_sends(0, Vec::new());
     fill(&mut g, 0, 0.5);
     let (l, _r) = g.process();
     let single = core::f32::consts::FRAC_1_SQRT_2;
@@ -545,6 +559,7 @@ fn channel_main_output_to_channel_replaces_master() {
 fn channel_main_output_reverse_is_one_block_delayed() {
     let mut g = graph_with(&[StripParams::default(), StripParams::default()], 4);
     g.set_channel_output(1, Some(0));
+    g.set_channel_sends(1, Vec::new());
     fill(&mut g, 1, 0.5);
     let (l, _r) = g.process();
     assert!(l[3].abs() < 1e-6, "第一块不应有逆序主输出: {}", l[3]);
@@ -599,4 +614,15 @@ fn channel_meter_is_post_fader() {
     let _ = g.process();
     let (l, _) = g.channel_meter_reading(0).expect("meter").read();
     assert!((l - 0.25 * single).abs() < 1e-6, "推子变化后 L={l}");
+}
+
+/// 没有 Master send 就没有声音：直接进 Master 的旧路径必须不存在。
+#[test]
+fn channel_without_master_send_is_silent() {
+    let mut g = graph_with(&[StripParams::default()], 4);
+    g.set_channel_sends(0, Vec::new());
+    fill(&mut g, 0, 1.0);
+    let (l, r) = g.process();
+    assert!(l.iter().all(|&v| v == 0.0), "L={l:?}");
+    assert!(r.iter().all(|&v| v == 0.0), "R={r:?}");
 }

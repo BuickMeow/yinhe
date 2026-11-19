@@ -889,6 +889,8 @@ fn pause_keeps_insert_tail_and_transport_frozen() {
     let mut engine = AudioEngine::new(48000, ChannelLayout::from_mask(vec![true; 16]));
     engine.load_model(&model);
     engine.mix.mixer_params.ensure_ap(0);
+    let params = engine.mix.mixer_params.clone();
+    engine.set_mixer_params(params); // 新 AP 的默认 Master send 必须同步进图
     let ap0 = engine.mix.mixer_params.ap_channel_id(0).expect("ap 0");
     engine.insert_add(ap0, 0, Box::new(TailInsert { value: 0.5 }));
 
@@ -908,6 +910,8 @@ fn stop_keeps_insert_tail() {
     let mut engine = AudioEngine::new(48000, ChannelLayout::from_mask(vec![true; 16]));
     engine.load_model(&model);
     engine.mix.mixer_params.ensure_ap(0);
+    let params = engine.mix.mixer_params.clone();
+    engine.set_mixer_params(params); // 新 AP 的默认 Master send 必须同步进图
     let ap0 = engine.mix.mixer_params.ap_channel_id(0).expect("ap 0");
     engine.insert_add(ap0, 0, Box::new(TailInsert { value: 0.5 }));
 

@@ -123,8 +123,6 @@ pub struct ChannelChain {
     pub(crate) channel_send_delays: Vec<DelayLine>,
     /// 主输出 PDC 延迟（目标为另一条通道时）。
     pub(crate) output_delay: DelayLine,
-    /// Master 输入对齐：补到最长路径（PDC）。
-    pub(crate) master_delay: DelayLine,
     /// 基础延迟（乐器插件上报的采样数，由引擎设置）。
     pub(crate) base_latency: u32,
     pub(crate) meter: MeterTap,
@@ -153,7 +151,6 @@ impl ChannelChain {
             input_delay: DelayLine::new(),
             channel_send_delays: Vec::new(),
             output_delay: DelayLine::new(),
-            master_delay: DelayLine::new(),
             base_latency: 0,
             meter,
             reading,
@@ -492,9 +489,6 @@ impl MixerGraph {
             chain.delay.set_delay(0);
             let own = input[ci].saturating_sub(chain.base_latency);
             chain.input_delay.set_delay(own as usize);
-            chain
-                .master_delay
-                .set_delay(global.saturating_sub(out[ci]) as usize);
             let output_pdc = match self.channel_outputs.get(ci).copied().flatten() {
                 Some(dst) if dst > ci && dst < nc => input[dst].saturating_sub(out[ci]),
                 _ => 0,
@@ -583,15 +577,14 @@ impl MixerGraph {
             for line in &mut chain.channel_send_delays {
                 line.clear();
             }
-            chain.master_delay.clear();
         }
     }
 
     /// 处理一块：返回主输出 (left, right)。
     ///
     /// 信号流：每通道 insert 链 → PDC 对齐 → 推子前 send → 推子（增益/声像
-    /// 原地）→ 推子后 send → 主输出/目标通道；最后 master insert 链 → master
-    /// 增益。
+    /// 原地）→ 电平表 → 推子后 send → 目标通道；最后 master insert 链 →
+    /// master 增益。Master 只由 Master send 进入，不再有直连路径。
     ///
     /// solo 语义：任一通道 solo 时只有该通道发声——被 solo 的通道静音其他
     /// 通道直达 master 的路径（只保留送往它的部分）。mute 优先于 solo。
@@ -716,8 +709,6 @@ impl MixerGraph {
                 ci,
                 channel_outputs.get(ci).copied().flatten(),
                 to_master,
-                master_l,
-                master_r,
                 frames,
             );
         }

@@ -70,7 +70,7 @@ impl MixerParams {
             .into_iter()
             .filter(|send| {
                 send.source != ChannelId::Master
-                    && send.amount > 0.0
+                    && (send.amount > 0.0 || send.target == ChannelId::Master)
                     && self.channel_target_exists(send.target)
             })
             .collect();

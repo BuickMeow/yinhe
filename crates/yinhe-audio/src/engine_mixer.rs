@@ -56,6 +56,10 @@ impl AudioEngine {
         let count = self.channel_layout.compacted_channels() as usize;
         let mut channel_sends: Vec<Vec<ResolvedChannelSend>> = vec![Vec::new(); count];
         for send in &self.mix.mixer_params.channel_sends {
+            // 0 dB 关闭用 amount = 0 条目记住；不需要进音频图。
+            if send.amount <= 0.0 {
+                continue;
+            }
             let Some(src) = self.dense_for_channel_id(send.source) else {
                 continue;
             };

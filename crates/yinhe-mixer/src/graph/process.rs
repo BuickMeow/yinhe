@@ -17,7 +17,7 @@ pub(crate) fn process_insert_chain(chain: &mut ChannelChain, frames: usize) {
             start = end;
         }
     }
-    // PDC 已拆成 input_delay（块首）与 master_delay（Master 累加前）。
+    // PDC 已拆成 input_delay（块首）与 channel_send_delays / output_delay。
 }
 
 pub(crate) fn apply_channel_output(
@@ -25,8 +25,6 @@ pub(crate) fn apply_channel_output(
     ci: usize,
     output: Option<usize>,
     to_master: bool,
-    master_l: &mut [f32],
-    master_r: &mut [f32],
     frames: usize,
 ) {
     let p = channels[ci].strip.params;
@@ -50,19 +48,8 @@ pub(crate) fn apply_channel_output(
         }
         // 逆序/自环通道输出已经在块首用上一块快照汇入。
         Some(_) => {}
-        None => {
-            if to_master {
-                let chain = &mut channels[ci];
-                // Master 输入 PDC：补到最长通道路径。
-                chain
-                    .master_delay
-                    .process(&mut chain.buffers.left, &mut chain.buffers.right);
-                let src = &chain.buffers;
-                for f in 0..frames {
-                    master_l[f] += src.left[f];
-                    master_r[f] += src.right[f];
-                }
-            }
-        }
+        // None = 主输出是 Master；音频只走 channel_sends 里的 Master send，
+        // 不再直连累加（否则和 0 dB send 叠加成双份）。
+        None => {}
     }
 }

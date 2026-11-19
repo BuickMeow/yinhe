@@ -118,13 +118,46 @@ fn channel_sends_are_any_to_any_and_zero_is_off() {
     let target = ChannelId::Lc(target);
     assert!(p.set_channel_send(source, target, 0.5, false));
     assert_eq!(p.channel_send_amount(source, target), 0.5);
-    // 0 = OFF：必须删除条目，而不是保留极小值。
+    // 0 = OFF：普通目标删除条目，而不是保留极小值。
     assert!(p.set_channel_send(source, target, 0.0, false));
-    assert_eq!(p.channel_send_amount(source, target), 0.0);
-    assert!(p.channel_sends.is_empty());
+    assert!(p.channel_send(source, target).is_none());
     // Master 不能作为发送源；Master 可以作为目标。
     assert!(!p.set_channel_send(ChannelId::Master, target, 1.0, false));
-    assert!(p.set_channel_send(source, ChannelId::Master, 1.0, false));
+    assert_eq!(p.channel_send_amount(source, ChannelId::Master), 1.0);
+}
+
+/// Master send 是进 Master 的唯一路径：默认 0 dB；显式关闭后不能被补回。
+#[test]
+fn master_send_defaults_to_unity_and_off_is_sticky() {
+    let mut p = MixerParams::default();
+    p.ensure_len();
+    let source = ChannelId::Lc(p.add_track_lc(0));
+    assert_eq!(p.channel_send_amount(source, ChannelId::Master), 1.0);
+
+    assert!(p.set_channel_send(source, ChannelId::Master, 0.0, false));
+    assert_eq!(p.channel_send_amount(source, ChannelId::Master), 0.0);
+    assert!(p.channel_send(source, ChannelId::Master).is_some());
+
+    p.ensure_master_sends();
+    assert_eq!(
+        p.channel_send_amount(source, ChannelId::Master),
+        0.0,
+        "显式 OFF 不能被默认值覆盖"
+    );
+}
+
+/// 主输出改到另一条通道时删除 Master send；改回 Master 时补回 0 dB。
+#[test]
+fn node_output_switches_master_send() {
+    let mut p = MixerParams::default();
+    p.ensure_len();
+    let source = ChannelId::Lc(p.add_track_lc(0));
+    let target = ChannelId::Lc(p.add_track_lc(1));
+
+    assert!(p.set_node_output(source, Some(target)));
+    assert!(p.channel_send(source, ChannelId::Master).is_none());
+
+    assert!(p.set_node_output(source, None));
     assert_eq!(p.channel_send_amount(source, ChannelId::Master), 1.0);
 }
 
