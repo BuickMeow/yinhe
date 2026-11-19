@@ -149,11 +149,11 @@ const BTN_SPACING: f32 = 4.0;
 const TRANSPORT_GAP: f32 = 8.0;
 /// transport bar 选择动作组图标尺寸。
 const TRANSPORT_ICON_SIZE: f32 = 20.0;
-/// 两个 transport bar 分组的内容高度；加 1px 上下边距 + 1px 描边 = 32px，
+/// 两个 transport bar 分组的内容高度；加 2px 上下内边距 + 1px 描边 = 32px，
 /// 与菜单按钮 `TRANSPORT_BTN_SIZE` 对齐。
-const GROUP_H: f32 = 28.0;
-/// transport bar 工具组按钮尺寸。
-const MODE_BTN_SIZE: f32 = 28.0;
+const GROUP_H: f32 = 26.0;
+/// transport bar 工具组按钮尺寸：与内容高度一致，保证三联图标垂直居中。
+const MODE_BTN_SIZE: f32 = 26.0;
 /// transport bar 工具组图标尺寸。
 const MODE_ICON_SIZE: f32 = 20.0;
 
@@ -171,8 +171,8 @@ pub fn show_transport_buttons(
         .inner_margin(egui::Margin {
             left: 2,
             right: 2,
-            top: 1,
-            bottom: 1,
+            top: 2,
+            bottom: 2,
         })
         .stroke(egui::Stroke::new(1.0, crate::theme::line_fg()))
         .corner_radius(egui::CornerRadius::same(6))
@@ -181,9 +181,9 @@ pub fn show_transport_buttons(
                 ui.set_min_height(GROUP_H);
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = TRANSPORT_GAP;
-                    // 图标本身贴边，补 4px 内衬；加上外框 2px，视觉边距与
-                    // 三联选择器（2px 外框 + 按钮内 4px）一致。
-                    ui.add_space(4.0);
+                    // 图标本身贴边，补 3px 内衬；加上外框 2px，视觉边距与
+                    // 三联选择器（2px 外框 + 按钮内 3px）一致。
+                    ui.add_space(3.0);
                     for &(icon, action) in SELECT_BAR_BUTTONS.iter() {
                         let font = egui::FontId::new(TRANSPORT_ICON_SIZE, icon.font_family());
                         let angle = bar_button_rotation(action);
@@ -217,7 +217,7 @@ pub fn show_transport_buttons(
                             }
                         }
                     }
-                    ui.add_space(4.0);
+                    ui.add_space(3.0);
                 });
             });
         });
@@ -237,8 +237,8 @@ pub fn show_drag_mode_selector(ui: &mut egui::Ui) {
         .inner_margin(egui::Margin {
             left: 2,
             right: 2,
-            top: 1,
-            bottom: 1,
+            top: 2,
+            bottom: 2,
         })
         .stroke(egui::Stroke::new(1.0, crate::theme::line_fg()))
         .corner_radius(egui::CornerRadius::same(6))
