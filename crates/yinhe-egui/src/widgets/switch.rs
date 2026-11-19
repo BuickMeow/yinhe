@@ -107,14 +107,9 @@ fn switch_impl(ui: &mut egui::Ui, checked: &mut bool, w: f32, h: f32) -> egui::R
         resp.mark_changed();
         toggled = true;
     }
-    // 键盘：Space/Enter 触发（allocate 的 click 已含部分键盘，但显式处理更稳）
-    if resp.has_focus()
-        && ui.input(|i| i.key_pressed(egui::Key::Space) || i.key_pressed(egui::Key::Enter))
-    {
-        *checked = !*checked;
-        resp.mark_changed();
-        toggled = true;
-    }
+    // Space/Enter 由 egui 对聚焦的可点击控件合成为 `FAKE_PRIMARY_CLICKED`，
+    // 已包含在 `resp.clicked()` 里。这里不能再手动翻转一次，否则两次切换
+    // 会互相抵消，表现为「键盘按空格没反应」。
     resp.widget_info(|| {
         egui::WidgetInfo::selected(egui::Role::CheckBox, ui.is_enabled(), *checked, "")
     });
@@ -250,5 +245,49 @@ mod tests {
         assert_eq!(animate_switch(&ctx, id, false, true), 1.0);
         let mut out = ctx.end_pass();
         out.textures_delta.clear();
+    }
+
+    /// 回归：聚焦开关后按 Space 只能翻转一次。
+    ///
+    /// egui 会把聚焦可点击控件的 Space/Enter 合成为 `FAKE_PRIMARY_CLICKED`，
+    /// `resp.clicked()` 已经包含它；如果组件再手动翻一次，两次切换会抵消。
+    #[test]
+    fn space_toggles_exactly_once() {
+        let ctx = egui::Context::default();
+        let mut checked = false;
+        let mut switch_id = None;
+        let run =
+            |events: Vec<egui::Event>, checked: &mut bool, switch_id: &mut Option<egui::Id>| {
+                let mut input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::pos2(0.0, 0.0),
+                        egui::vec2(200.0, 100.0),
+                    )),
+                    ..Default::default()
+                };
+                input.events = events;
+                ctx.run_ui(input, |ui| {
+                    let resp = switch(ui, checked);
+                    *switch_id = Some(resp.id);
+                })
+                .drop_without_applying_deltas();
+            };
+
+        run(Vec::new(), &mut checked, &mut switch_id);
+        let id = switch_id.expect("switch 应返回 Response");
+        ctx.memory_mut(|m| m.request_focus(id));
+        run(
+            vec![egui::Event::Key {
+                key: egui::Key::Space,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::default(),
+            }],
+            &mut checked,
+            &mut switch_id,
+        );
+
+        assert!(checked, "Space 应只切换一次，不能翻回 false");
     }
 }

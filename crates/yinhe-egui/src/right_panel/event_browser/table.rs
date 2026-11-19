@@ -380,8 +380,10 @@ pub(super) fn empty_state_add_button(ui: &mut egui::Ui, id_salt: &str) -> bool {
 /// 返回 true 表示触发了删除。
 pub(super) fn handle_delete_key(ui: &egui::Ui, id_salt: &str, has_selection: bool) -> bool {
     // 输入框聚焦（编辑 popup 的 DragValue/TextEdit）时按键应作用于文本，
-    // 不应触发表格删除（与全局快捷键的 egui_wants_keyboard_input 保护一致）。
-    if !has_selection || ui.ctx().egui_wants_keyboard_input() {
+    // 不应触发表格删除（与全局快捷键的 text_edit_focused 保护一致）。
+    // 这里不能用 `egui_wants_keyboard_input()`：它在任意控件有焦点时都为
+    // true，会让 Tab 到表格 cell 后 Delete 键失效。
+    if !has_selection || ui.ctx().text_edit_focused() {
         return false;
     }
     let delete_pressed = ui

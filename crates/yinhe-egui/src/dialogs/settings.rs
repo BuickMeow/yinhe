@@ -514,6 +514,7 @@ mod a11y_tests {
             ("language", show_language_tab),
             ("shortcuts", show_shortcuts_tab),
             ("soundfont", show_soundfont_tab),
+            ("files", show_files_tab),
         ];
         for (name, tab) in tabs {
             let settings = AudioSettings::default();
@@ -528,6 +529,9 @@ mod a11y_tests {
                 );
             harness.step();
             harness.step();
+            // `step()` 只渲染，不触发 kittest 的无障碍检查；必须显式检查，
+            // 否则「每个输入控件都有名称」只是注释，不是断言。
+            harness.check_accessibility();
             println!("{name} a11y ok");
         }
     }
@@ -547,6 +551,7 @@ mod a11y_tests {
             );
         harness.step();
         harness.step();
+        harness.check_accessibility();
     }
 
     #[test]
@@ -564,5 +569,6 @@ mod a11y_tests {
             );
         harness.step();
         harness.step();
+        harness.check_accessibility();
     }
 }

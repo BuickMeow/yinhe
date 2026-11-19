@@ -164,10 +164,12 @@ impl eframe::App for App {
         //   不暂停会导致设置页内按 Cmd+S 等组合直接触发菜单动作、录制器收不到按键；
         // - 输入框聚焦：同样会被 AppKit 拦截（TextEdit 收不到 Cmd+A/C/V 等），
         //   必须清空加速键让按键直达 egui，由输入框自身消费（全选/复制/粘贴文本）。
-        let wants_keyboard_input = ui.ctx().egui_wants_keyboard_input();
+        // 只有文本输入框聚焦时才暂停菜单加速键；任意控件焦点都暂停会让
+        // Tab/读屏用户一旦聚焦按钮就失去 Cmd+S/Cmd+Z 等系统快捷键。
+        let text_edit_focused = ui.ctx().text_edit_focused();
         let suspend_menu_accels = self.audio_settings.ui_session.show_settings
             || self.audio_settings.ui_session.shortcut_recording
-            || wants_keyboard_input;
+            || text_edit_focused;
         // 播放菜单触发的播放/暂停/停止（与键盘、transport bar 合并处理）
         let mut menu_toggle_play = false;
         let mut menu_pause_return = false;
@@ -206,9 +208,9 @@ impl eframe::App for App {
         ) {
             use crate::platform::MenuAction;
             // 输入框聚焦时编辑类菜单动作让位给文本编辑（与 handle_keyboard_shortcuts
-            // 的 egui_wants_keyboard_input 保护一致）。双保险：加速键暂停是上一帧
+            // 的 text_edit_focused 保护一致）。双保险：加速键暂停是上一帧
             // 的焦点状态，菜单动作仍可能在本帧到达。
-            if wants_keyboard_input
+            if text_edit_focused
                 && matches!(
                     action,
                     MenuAction::Undo

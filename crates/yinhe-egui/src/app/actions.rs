@@ -49,12 +49,20 @@ impl App {
         // 与成熟 DAW 一致（Backspace/Delete/Cmd+C/V/Z 等作用于文本而非选区）。
         // 设置窗口打开或快捷键录制期间同样让位：设置页里不允许任何快捷键触发动作
         // （Esc 例外：由设置页录制器消费用于取消录制）。
-        if ui.ctx().egui_wants_keyboard_input()
+        //
+        // 注意用 `text_edit_focused()` 而不是 `egui_wants_keyboard_input()`：后者
+        // 在任意控件（按钮/Tab/表格 cell）有焦点时都为 true，会让 Tab 用户
+        // 一旦聚焦就失去全部全局快捷键。
+        if ui.ctx().text_edit_focused()
             || self.audio_settings.ui_session.show_settings
             || self.audio_settings.ui_session.shortcut_recording
         {
             return actions;
         }
+
+        // 开关/按钮等可点击控件获得焦点时，egui 会把 Space/Enter 合成为一次
+        // click；此时不要再触发「空格播放/暂停」，否则一次按键会同时点按钮和播放。
+        let any_widget_focused = ui.ctx().egui_wants_keyboard_input();
 
         let is_playing_any = self
             .audio_state
@@ -112,7 +120,13 @@ impl App {
             }
 
             // ── 播放/停止 ──
-            if matches_app_menu(shortcuts::ACTION_TOGGLE_PLAY, key, modifiers) {
+            // 聚焦按钮/开关时 Space/Enter 已经用于激活控件，不再重复触发播放。
+            let key_activates_focused_widget = any_widget_focused
+                && !modifiers.any()
+                && matches!(key, egui::Key::Space | egui::Key::Enter);
+            if !key_activates_focused_widget
+                && matches_app_menu(shortcuts::ACTION_TOGGLE_PLAY, key, modifiers)
+            {
                 if is_playing_any {
                     actions.pause_return = true;
                 } else {
