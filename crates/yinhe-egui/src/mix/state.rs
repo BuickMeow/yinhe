@@ -36,8 +36,9 @@ pub(crate) struct MixUiState {
     pub(crate) scan_in_progress: bool,
     /// 插件选择器打开目标（None = 关闭）。
     pub(crate) picker_for: Option<InsertTarget>,
-    /// 当前 SEND 聚焦目标；其他通道显示到该通道的 dB 旋钮。
-    pub(crate) send_focus: Option<yinhe_types::ChannelId>,
+    /// 当前 SEND 源通道：各通道条显示「源 → 本通道」的 dB 旋钮。
+    /// None = 未选中源（全部隐藏）；Master = 不可发送，全部隐藏。
+    pub(crate) send_source: Option<yinhe_types::ChannelId>,
     /// 本帧 CH 显示编号（ChannelId -> CH n）。
     pub(crate) channel_display: std::collections::HashMap<ChannelId, u32>,
     /// 发送面板打开目标（None = 关闭）。

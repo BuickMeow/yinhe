@@ -13,7 +13,7 @@
 
 use eframe::egui;
 use rust_i18n::t;
-use yinhe_mixer::MasterParams;
+use yinhe_mixer::{MasterParams, MixerParams};
 use yinhe_types::{ApChannelId, ApGroupId, ChannelId};
 
 use crate::app::App;
@@ -63,16 +63,29 @@ pub(crate) const CONTROLS_W: f32 = CONTENT_W - (SCALE_W + METER_W * 2.0 + METER_
 pub(crate) const BODY_TOP_PAD: f32 = 4.0;
 pub(crate) const BODY_BOTTOM_PAD: f32 = 6.0;
 
+/// SEND 行内容：`source` 是当前选中的发送源，`target_channel` 是正在绘制的
+/// 通道条本身。数据方向始终是 `source → target`；选中哪条通道，其他条就显示
+/// 「该通道 → 本条」的发送量（FL Studio 式：选中的是源）。
 pub(crate) fn focus_send_info(
     app: &App,
     idx: usize,
-    source_channel: ChannelId,
+    target_channel: ChannelId,
 ) -> controls::FocusSend {
-    let mixer = &app.workspace.documents[idx].mixer;
-    let source = source_channel;
-    let target = app.mix.send_focus;
-    let (amount, pre_fader) = target
-        .and_then(|target| mixer.channel_send(source, target))
+    focus_send_for(
+        &app.workspace.documents[idx].mixer,
+        app.mix.send_source,
+        target_channel,
+    )
+}
+
+/// 纯函数版本（测试用）。
+pub(crate) fn focus_send_for(
+    mixer: &MixerParams,
+    source: Option<ChannelId>,
+    target: ChannelId,
+) -> controls::FocusSend {
+    let (amount, pre_fader) = source
+        .and_then(|source| mixer.channel_send(source, target))
         .map(|send| (send.amount, send.pre_fader))
         .unwrap_or((0.0, false));
     controls::FocusSend {
@@ -250,6 +263,7 @@ pub(crate) fn master_strip(
 ) {
     let params = app.workspace.documents[idx].mixer.master.strip;
     let title = t!("mix.master").to_string();
+    let send = focus_send_info(app, idx, ChannelId::Master);
 
     let selected = strip_selected(app, idx, ChannelId::Master);
     let (rect, card) = strip_frame(
@@ -260,6 +274,15 @@ pub(crate) fn master_strip(
         height,
         selected,
         |ui, _| {
+            section(
+                ui,
+                send_height(),
+                egui::Layout::top_down(egui::Align::Center),
+                |ui| {
+                    focus_send_block(ui, send, actions);
+                },
+            );
+            ui.add_space(GAP);
             if let Some(g) = master_controls(ui, params.gain, level, hold, actions) {
                 actions.push(MixAction::SetMaster {
                     params: MasterParams { gain: g },
@@ -350,14 +373,12 @@ pub(crate) fn select_channel_tracks(app: &mut App, idx: usize, ch: ChannelId) {
     app.track_selection_anchor = anchor;
 }
 
-/// 点击通道卡片（任意非控件区域 / 电平表）：选中通道、切右栏通道属性、
-/// 让 SEND 焦点跟随。选中是**整卡**行为，不要求点中 20px 色带。
+/// 点击通道卡片：选中通道、切右栏通道属性，并把它设为 SEND 源。
+/// 选中 Master 时 Master 不能发送，所有 SEND 旋钮隐藏。
 pub(crate) fn select_channel(app: &mut App, idx: usize, ch: ChannelId) {
     select_channel_tracks(app, idx, ch);
     focus_channel_info(app, ch);
-    if ch != ChannelId::Master {
-        app.mix.send_focus = Some(ch);
-    }
+    app.mix.send_source = Some(ch);
 }
 
 /// 色带双击：打开底部设备链（dock）并选中该通道（通道条 / 音频条共用）。

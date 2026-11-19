@@ -188,3 +188,35 @@ fn meter_click_requests_channel_selection() {
         "单击电平表应请求选中 Master 通道"
     );
 }
+
+/// 回归：SEND 选中=源。选中 A01 后，A02 条的旋钮读的是 A01→A02；
+/// A01 自己、Master 源、未选源都不显示旋钮；反向读取不能串。
+#[test]
+fn send_knob_reads_selected_source_to_target() {
+    let a = ChannelId::Ap(ApChannelId::new(ApGroupId(0), 0));
+    let b = ChannelId::Ap(ApChannelId::new(ApGroupId(1), 0));
+    let mut mixer = MixerParams::default();
+    assert!(mixer.set_channel_send(a, b, 0.5, false));
+
+    let send = super::focus_send_for(&mixer, Some(a), b);
+    assert_eq!(send.source, Some(a));
+    assert_eq!(send.target, b);
+    assert!((send.amount - 0.5).abs() < 1e-6);
+    assert!(super::controls::send_row_visible(&send));
+
+    let own = super::focus_send_for(&mixer, Some(a), a);
+    assert!(!super::controls::send_row_visible(&own));
+    let master = super::focus_send_for(&mixer, Some(ChannelId::Master), b);
+    assert!(!super::controls::send_row_visible(&master));
+    let none = super::focus_send_for(&mixer, None, b);
+    assert!(!super::controls::send_row_visible(&none));
+
+    let reverse = super::focus_send_for(&mixer, Some(b), a);
+    assert_eq!(reverse.amount, 0.0, "A01→A02 不能读成 A02→A01");
+
+    // Master 作为目标：选中源 A01 时，Master 条显示 A01 → Master。
+    assert!(mixer.set_channel_send(a, ChannelId::Master, 0.25, false));
+    let to_master = super::focus_send_for(&mixer, Some(a), ChannelId::Master);
+    assert!(super::controls::send_row_visible(&to_master));
+    assert!((to_master.amount - 0.25).abs() < 1e-6);
+}

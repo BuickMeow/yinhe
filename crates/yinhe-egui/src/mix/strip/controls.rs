@@ -219,26 +219,37 @@ fn send_db_label(amount: f32) -> String {
 
 /// 聚焦发送的当前状态（源 → 目标、发送量、推子前/后）。
 pub(crate) struct FocusSend {
-    pub source: ChannelId,
-    pub target: Option<ChannelId>,
+    /// 当前选中的 SEND 源；None = 没有选中源。
+    pub source: Option<ChannelId>,
+    /// 正在绘制的通道条（发送目标）。
+    pub target: ChannelId,
     pub amount: f32,
     pub pre_fader: bool,
 }
 
+/// 该通道条是否显示 SEND 旋钮：没有源、源等于自己、或源是 Master 时不显示。
+/// Master 是硬件终点，不能作为发送源（否则形成反馈）。
+pub(super) fn send_row_visible(send: &FocusSend) -> bool {
+    let Some(source) = send.source else {
+        return false;
+    };
+    source != ChannelId::Master && source != send.target
+}
+
 /// C 的聚焦发送：一个目标、一个 dB 旋钮；源 == 目标或目标不可发送时留空。
 pub(super) fn focus_send_block(ui: &mut egui::Ui, send: FocusSend, actions: &mut Vec<MixAction>) {
+    if !send_row_visible(&send) {
+        return;
+    }
     let FocusSend {
-        source,
+        source: Some(source),
         target,
         amount,
         pre_fader,
-    } = send;
-    let Some(target) = target else {
+    } = send
+    else {
         return;
     };
-    if source == target || source == ChannelId::Master {
-        return;
-    }
     ui.horizontal(|ui| {
         let mut norm = send_norm(amount);
         let resp = knob(ui, &mut norm, KNOB_D);

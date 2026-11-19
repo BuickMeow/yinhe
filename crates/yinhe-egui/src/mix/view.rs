@@ -15,8 +15,8 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
         .filter(|&c| layout.is_ap_active(c))
         .map(|c| c as u8)
         .collect();
-    // SEND 聚焦目标：默认选第一条可发送通道，保证旋钮可见；点通道色带可切换。
-    // 目标失效（删轨/切文档）时回退到首条，避免旋钮全部消失。
+    // SEND 源：默认选第一条可发送通道，保证旋钮可见；点通道卡片可切换。
+    // 源失效（删轨/切文档）时回退到首条；Master 是合法源（表示不可发送）。
     let mut available: Vec<ChannelId> = active
         .iter()
         .filter_map(|&ch| app.workspace.documents[idx].mixer.ap_channel_id(ch))
@@ -36,10 +36,10 @@ pub(crate) fn show(app: &mut App, ui: &mut egui::Ui, rect: egui::Rect) {
     );
     if !app
         .mix
-        .send_focus
-        .is_some_and(|focus| available.contains(&focus))
+        .send_source
+        .is_some_and(|source| source == ChannelId::Master || available.contains(&source))
     {
-        app.mix.send_focus = available.first().copied();
+        app.mix.send_source = available.first().copied();
     }
     let colors = channel_strip_colors(app, idx, &model, &active);
 
