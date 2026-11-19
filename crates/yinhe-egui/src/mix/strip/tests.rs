@@ -42,11 +42,18 @@ fn gain_position_round_trip() {
     }
 }
 
-/// C 的 SEND 聚焦模式固定一行，不随通道数增长。
+/// SEND 移到右侧后不再占一整行，自动高度只含色带 + 电平表模块。
 #[test]
-fn auto_height_is_fixed_by_focus_send_row() {
+fn auto_height_has_no_send_row() {
     let base = auto_panel_height();
-    assert!((base - 200.0).abs() < 1e-3, "基础高度 {base}");
+    assert!((base - 170.0).abs() < 1e-3, "基础高度 {base}");
+}
+
+/// SEND 文案：关闭显示 -inf，开启显示实际 dB。
+#[test]
+fn send_label_uses_minus_inf() {
+    assert_eq!(super::controls::send_db_label(0.0), "-inf");
+    assert_eq!(super::controls::send_db_label(1.0), "0.0 dB");
 }
 
 /// 方案 C 回归：MIX 通道条的选中态与 AR 共用 `track_selected`。

@@ -20,9 +20,7 @@ use crate::app::App;
 use crate::widgets::meter::{METER_GAP, METER_W, SCALE_W};
 
 use super::MixAction;
-use controls::{
-    focus_send_block, master_controls, section, send_height, strip_controls, strip_frame,
-};
+use controls::{master_controls, strip_controls, strip_frame};
 
 mod controls;
 mod picker;
@@ -47,8 +45,6 @@ pub(crate) const HEADER_H: f32 = 20.0;
 pub(crate) const KNOB_D: f32 = 26.0;
 /// 分区之间的竖直间隙（px）。
 pub(crate) const GAP: f32 = 4.0;
-/// 发送区一行高度（px）。
-pub(crate) const SEND_ROW_H: f32 = KNOB_D;
 /// dB 读数行高（px）。
 pub(crate) const DB_ROW_H: f32 = 18.0;
 /// 电平表 + 右侧按钮的固定模块高度（px）。不再用剩余高度拉伸。
@@ -121,16 +117,7 @@ pub(crate) fn node_strip(
         height,
         selected,
         |ui, _| {
-            section(
-                ui,
-                send_height(),
-                egui::Layout::top_down(egui::Align::Center),
-                |ui| {
-                    focus_send_block(ui, send, actions);
-                },
-            );
-            ui.add_space(GAP);
-            if let Some(p) = strip_controls(ui, &params, level, hold, target, actions) {
+            if let Some(p) = strip_controls(ui, &params, level, hold, send, target, actions) {
                 actions.push(MixAction::SetNodeStrip { node, params: p });
             }
         },
@@ -277,16 +264,7 @@ pub(crate) fn master_strip(
         height,
         selected,
         |ui, _| {
-            section(
-                ui,
-                send_height(),
-                egui::Layout::top_down(egui::Align::Center),
-                |ui| {
-                    focus_send_block(ui, send, actions);
-                },
-            );
-            ui.add_space(GAP);
-            if let Some(g) = master_controls(ui, params.gain, level, hold, actions) {
+            if let Some(g) = master_controls(ui, params.gain, level, hold, send, actions) {
                 actions.push(MixAction::SetMaster {
                     params: MasterParams { gain: g },
                 });

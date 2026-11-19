@@ -10,17 +10,11 @@ use crate::widgets::meter::{DB_MAX, DB_MIN, db_to_gain, gain_at_frac, gain_frac,
 
 use super::*;
 
-/// 发送区高度：C 的 SEND 是聚焦模式——每条通道只显示一个目标旋钮，
-/// 不再按目标数展开。
-pub(super) fn send_height() -> f32 {
-    SEND_ROW_H
-}
-
-/// 混音台的理想面板高度：基础布局 + 聚焦发送区一行。
+/// 混音台的理想面板高度：基础布局（SEND 在右侧，不再占一整行）。
 ///
 /// 这是「自动高度」模式下的高度；用户拖拽分割条后转为手动高度。
 pub(crate) fn auto_panel_height() -> f32 {
-    HEADER_H + BODY_TOP_PAD + send_height() + GAP + METER_MODULE_H + BODY_BOTTOM_PAD
+    HEADER_H + BODY_TOP_PAD + METER_MODULE_H + BODY_BOTTOM_PAD
 }
 
 /// 电平表：线性增益 → 表内 y 坐标（top = 最大 dB）。
@@ -208,12 +202,12 @@ fn send_amount(norm: f32) -> f32 {
     }
 }
 
-/// 发送量文案：`OFF`（-inf，不保留 0 条目）或实际 dB。
-fn send_db_label(amount: f32) -> String {
+/// 发送量文案：`-inf`（0，发送关闭）或实际 dB。
+pub(super) fn send_db_label(amount: f32) -> String {
     if amount <= 0.0 {
-        "OFF".to_string()
+        "-inf".to_string()
     } else {
-        format!("{:+.1} dB", gain_to_db(amount))
+        format!("{:.1} dB", gain_to_db(amount))
     }
 }
 
@@ -227,7 +221,7 @@ pub(crate) struct FocusSend {
     pub pre_fader: bool,
 }
 
-/// 该通道条是否显示 SEND 旋钮：没有源、源等于自己、或源是 Master 时不显示。
+/// 该通道条是否显示 SEND：没有源、源等于自己、或源是 Master 时不显示。
 /// Master 是硬件终点，不能作为发送源（否则形成反馈）。
 pub(super) fn send_row_visible(send: &FocusSend) -> bool {
     let Some(source) = send.source else {
@@ -236,8 +230,44 @@ pub(super) fn send_row_visible(send: &FocusSend) -> bool {
     source != ChannelId::Master && source != send.target
 }
 
-/// C 的聚焦发送：一个目标、一个 dB 旋钮；源 == 目标或目标不可发送时留空。
-pub(super) fn focus_send_block(ui: &mut egui::Ui, send: FocusSend, actions: &mut Vec<MixAction>) {
+/// SEND 开关按钮：文字 `SEND`，开启时强调色。
+fn send_toggle(ui: &mut egui::Ui, width: f32, on: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, 18.0), egui::Sense::click());
+    let fill = if on {
+        let base = crate::theme::accent_active();
+        if resp.hovered() {
+            crate::theme::hover_color(base)
+        } else {
+            base
+        }
+    } else if resp.hovered() {
+        crate::theme::hover_color(crate::theme::btn_bg())
+    } else {
+        crate::theme::btn_bg()
+    };
+    let fg = if on {
+        crate::theme::contrast_fg()
+    } else {
+        crate::theme::text_secondary()
+    };
+    ui.painter().rect_filled(rect, 3.0, fill);
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "SEND",
+        egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT),
+        fg,
+    );
+    resp
+}
+
+/// 右侧 SEND 区：开关按钮 + 旋钮 + 旋钮下方的 `-inf`/dB 文案。
+pub(super) fn send_block(
+    ui: &mut egui::Ui,
+    send: FocusSend,
+    width: f32,
+    actions: &mut Vec<MixAction>,
+) {
     if !send_row_visible(&send) {
         return;
     }
@@ -250,27 +280,38 @@ pub(super) fn focus_send_block(ui: &mut egui::Ui, send: FocusSend, actions: &mut
     else {
         return;
     };
-    ui.horizontal(|ui| {
-        let mut norm = send_norm(amount);
-        let resp = knob(ui, &mut norm, KNOB_D);
-        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.send_amount"));
-        if resp.changed() {
-            actions.push(MixAction::SetChannelSend {
-                source,
-                target,
-                amount: send_amount(norm),
-                pre_fader,
-            });
-        }
-        send_context_menu(&resp, source, target, amount, pre_fader, actions);
-        ui.vertical(|ui| {
-            ui.label(
-                egui::RichText::new(send_db_label(amount))
-                    .size(crate::theme::SMALL_LABEL_FONT)
-                    .color(crate::theme::text_secondary()),
-            );
+    let on = amount > 0.0;
+    let resp = send_toggle(ui, width, on);
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.send_toggle"));
+    if resp.clicked() {
+        actions.push(MixAction::SetChannelSend {
+            source,
+            target,
+            amount: if on { 0.0 } else { 1.0 },
+            pre_fader,
         });
-    });
+    }
+    ui.add_space(2.0);
+    let mut norm = send_norm(amount);
+    let resp = knob(ui, &mut norm, KNOB_D);
+    crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.send_amount"));
+    if resp.changed() {
+        actions.push(MixAction::SetChannelSend {
+            source,
+            target,
+            amount: send_amount(norm),
+            pre_fader,
+        });
+    }
+    send_context_menu(&resp, source, target, amount, pre_fader, actions);
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(send_db_label(amount))
+                .size(crate::theme::SMALL_LABEL_FONT)
+                .color(crate::theme::text_secondary()),
+        )
+        .wrap_mode(egui::TextWrapMode::Extend),
+    );
 }
 
 /// 发送旋钮右键菜单：启用/关闭、推子前/后。
@@ -485,6 +526,7 @@ pub(super) fn strip_controls(
     params: &StripParams,
     level: (f32, f32),
     hold: (f32, f32),
+    send: FocusSend,
     target: ChannelId,
     actions: &mut Vec<MixAction>,
 ) -> Option<StripParams> {
@@ -521,6 +563,8 @@ pub(super) fn strip_controls(
                                 p.pan = pan;
                                 changed = true;
                             }
+                            ui.add_space(GAP);
+                            send_block(ui, send, CONTROLS_W, actions);
                             // 听感圆点：右下角（原 M 按钮位置），亮 = 可听，灭 = 静音。
                             let col = ui.max_rect();
                             let dot_rect = egui::Rect::from_center_size(
@@ -562,6 +606,7 @@ pub(super) fn master_controls(
     gain: f32,
     level: (f32, f32),
     hold: (f32, f32),
+    send: FocusSend,
     actions: &mut Vec<MixAction>,
 ) -> Option<f32> {
     let avail = ui.available_height();
@@ -592,6 +637,8 @@ pub(super) fn master_controls(
                                 g = v;
                                 changed = true;
                             }
+                            ui.add_space(GAP);
+                            send_block(ui, send, CONTROLS_W, actions);
                         },
                     );
                     changed.then_some(g)
