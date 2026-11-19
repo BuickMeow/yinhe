@@ -282,6 +282,7 @@ fn paint_header(
             ui.scope_id().with(("rpanel_tab", ci, ti)),
             egui::Sense::click_and_drag(),
         );
+        crate::widgets::a11y::name_tab(&resp, label.clone(), selected);
         let hovered = resp.hovered();
 
         // 无强调色：选中 = 淡色底；hover = 轻微增益底。
@@ -311,6 +312,10 @@ fn paint_header(
             font.clone(),
             color,
         );
+
+        if resp.has_focus() {
+            crate::widgets::a11y::paint_focus_ring(ui, tab_rect, 4.0);
+        }
 
         if resp.clicked() {
             col.active = ti;

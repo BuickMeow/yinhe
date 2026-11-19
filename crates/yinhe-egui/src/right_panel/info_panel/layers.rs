@@ -176,8 +176,13 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) -> bool {
                     egui::pos2(rect.max.x - scaled_font(ui.ctx(), 14.0), rect.center().y),
                     egui::vec2(row_h, row_h),
                 );
-                let lock_hover =
-                    ui.input(|i| i.pointer.hover_pos().is_some_and(|p| lock_rect.contains(p)));
+                // 常驻交互：只在 hover 时创建会让键盘/读屏永远到不了。
+                let lock_resp = ui.interact(
+                    lock_rect,
+                    ui.scope_id().with(("layer_lock", i)),
+                    egui::Sense::click(),
+                );
+                let lock_hover = lock_resp.hovered();
                 let lock_icon = if locked { ICON_LOCK } else { ICON_LOCK_OPEN };
                 let lock_color = if locked {
                     theme::accent_active()
@@ -193,31 +198,29 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) -> bool {
                     icon_font.clone(),
                     lock_color,
                 );
-                if lock_hover {
-                    let lock_resp = ui.interact(
-                        lock_rect,
-                        ui.scope_id().with(("layer_lock", i)),
-                        egui::Sense::click(),
-                    );
-                    crate::widgets::hint::hover(
-                        ui.ctx(),
-                        &lock_resp,
-                        rust_i18n::t!("hint.info.layer_lock"),
-                    );
-                    if lock_resp.clicked() {
-                        doc.edit.track_locked[i] = !locked;
-                        // 锁定后该轨不能再保留在选区里，否则 Delete/拖动仍会
-                        // 通过已有选择作用到它（"锁定"形同虚设）。
-                        if !locked {
-                            let t = i as u16;
-                            let touches = doc.edit.selected.has_explicit_members()
-                                || doc.edit.selected.rects.iter().any(|r| r.4 <= t && t <= r.5);
-                            if touches {
-                                doc.edit.selected.clear_rects();
-                                doc.edit.sel_rect.clear();
-                                doc.edit.arr_sel_rect.clear();
-                                doc.edit.chan_ar_sel.clear();
-                            }
+                crate::widgets::hint::hover(
+                    ui.ctx(),
+                    &lock_resp,
+                    rust_i18n::t!("hint.info.layer_lock"),
+                );
+                crate::widgets::a11y::name_checkbox(
+                    &lock_resp,
+                    rust_i18n::t!("hint.info.layer_lock"),
+                    locked,
+                );
+                if lock_resp.clicked() {
+                    doc.edit.track_locked[i] = !locked;
+                    // 锁定后该轨不能再保留在选区里，否则 Delete/拖动仍会
+                    // 通过已有选择作用到它（"锁定"形同虚设）。
+                    if !locked {
+                        let t = i as u16;
+                        let touches = doc.edit.selected.has_explicit_members()
+                            || doc.edit.selected.rects.iter().any(|r| r.4 <= t && t <= r.5);
+                        if touches {
+                            doc.edit.selected.clear_rects();
+                            doc.edit.sel_rect.clear();
+                            doc.edit.arr_sel_rect.clear();
+                            doc.edit.chan_ar_sel.clear();
                         }
                     }
                 }
@@ -227,8 +230,12 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) -> bool {
                     egui::pos2(rect.max.x - scaled_font(ui.ctx(), 34.0), rect.center().y),
                     egui::vec2(row_h, row_h),
                 );
-                let vis_hover =
-                    ui.input(|i| i.pointer.hover_pos().is_some_and(|p| vis_rect.contains(p)));
+                let vis_resp = ui.interact(
+                    vis_rect,
+                    ui.scope_id().with(("layer_vis", i)),
+                    egui::Sense::click(),
+                );
+                let vis_hover = vis_resp.hovered();
                 let vis_icon = if visible {
                     ICON_VISIBILITY
                 } else {
@@ -251,58 +258,55 @@ pub(crate) fn show(ui: &mut egui::Ui, doc: &mut Document) -> bool {
                     icon_font,
                     vis_color,
                 );
-                if vis_hover {
-                    let vis_resp = ui.interact(
-                        vis_rect,
-                        ui.scope_id().with(("layer_vis", i)),
-                        egui::Sense::click(),
-                    );
-                    crate::widgets::hint::hover(
-                        ui.ctx(),
-                        &vis_resp,
-                        rust_i18n::t!("hint.info.layer_visible"),
-                    );
-                    if vis_resp.clicked() {
-                        doc.edit.track_pianoroll_visible[i] = !visible;
-                        // 手动切换可见性时退出图层独奏，避免残留还原状态。
-                        doc.edit.layer_solo.clear();
-                        doc.edit.layer_solo_prev.clear();
-                        doc.edit.pianoroll_view.base.dirty = true;
-                    }
-                    // 右击眼睛图标 = 图层独奏（可叠加，多轨一起看）。
-                    if vis_resp.secondary_clicked() {
-                        let key = i as u16;
-                        if doc.edit.layer_solo.remove(&key) {
-                            // 取消本轨独奏：全部取消则还原快照，否则本轨隐藏。
-                            if doc.edit.layer_solo.is_empty() {
-                                if doc.edit.layer_solo_prev.len()
-                                    == doc.edit.track_pianoroll_visible.len()
-                                {
-                                    doc.edit.track_pianoroll_visible =
-                                        doc.edit.layer_solo_prev.clone();
-                                } else {
-                                    doc.edit.track_pianoroll_visible.fill(true);
-                                }
-                                doc.edit.layer_solo_prev.clear();
+                crate::widgets::hint::hover(
+                    ui.ctx(),
+                    &vis_resp,
+                    rust_i18n::t!("hint.info.layer_visible"),
+                );
+                crate::widgets::a11y::name_checkbox(
+                    &vis_resp,
+                    rust_i18n::t!("hint.info.layer_visible"),
+                    visible,
+                );
+                if vis_resp.clicked() {
+                    doc.edit.track_pianoroll_visible[i] = !visible;
+                    // 手动切换可见性时退出图层独奏，避免残留还原状态。
+                    doc.edit.layer_solo.clear();
+                    doc.edit.layer_solo_prev.clear();
+                    doc.edit.pianoroll_view.base.dirty = true;
+                }
+                // 右击眼睛图标 = 图层独奏（可叠加，多轨一起看）。
+                if vis_resp.secondary_clicked() {
+                    let key = i as u16;
+                    if doc.edit.layer_solo.remove(&key) {
+                        // 取消本轨独奏：全部取消则还原快照，否则本轨隐藏。
+                        if doc.edit.layer_solo.is_empty() {
+                            if doc.edit.layer_solo_prev.len()
+                                == doc.edit.track_pianoroll_visible.len()
+                            {
+                                doc.edit.track_pianoroll_visible = doc.edit.layer_solo_prev.clone();
                             } else {
-                                doc.edit.track_pianoroll_visible[i] = false;
+                                doc.edit.track_pianoroll_visible.fill(true);
                             }
+                            doc.edit.layer_solo_prev.clear();
                         } else {
-                            // 加入独奏：首次进入保存快照；只显示独奏集合内的轨。
-                            if doc.edit.layer_solo.is_empty() {
-                                doc.edit.layer_solo_prev = doc.edit.track_pianoroll_visible.clone();
-                            }
-                            doc.edit.layer_solo.insert(key);
-                            let solo = doc.edit.layer_solo.clone();
-                            for (t, v) in doc.edit.track_pianoroll_visible.iter_mut().enumerate() {
-                                *v = solo.contains(&(t as u16));
-                            }
-                            // 独奏即自动选中该轨。
-                            doc.edit.track_selected.clear();
-                            doc.edit.track_selected.insert(key);
+                            doc.edit.track_pianoroll_visible[i] = false;
                         }
-                        doc.edit.pianoroll_view.base.dirty = true;
+                    } else {
+                        // 加入独奏：首次进入保存快照；只显示独奏集合内的轨。
+                        if doc.edit.layer_solo.is_empty() {
+                            doc.edit.layer_solo_prev = doc.edit.track_pianoroll_visible.clone();
+                        }
+                        doc.edit.layer_solo.insert(key);
+                        let solo = doc.edit.layer_solo.clone();
+                        for (t, v) in doc.edit.track_pianoroll_visible.iter_mut().enumerate() {
+                            *v = solo.contains(&(t as u16));
+                        }
+                        // 独奏即自动选中该轨。
+                        doc.edit.track_selected.clear();
+                        doc.edit.track_selected.insert(key);
                     }
+                    doc.edit.pianoroll_view.base.dirty = true;
                 }
 
                 // 拖拽排序：从行体（避开图标区）开始拖动。

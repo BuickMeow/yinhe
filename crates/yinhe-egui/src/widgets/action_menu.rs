@@ -278,6 +278,7 @@ pub fn show_action_menu<T: PopupRow>(
                     if main_resp.hovered() || pin_resp.as_ref().is_some_and(|r| r.hovered()) {
                         any_row_hovered = true;
                     }
+                    crate::widgets::a11y::set_command_id(&main_resp, action.action_id());
                     if enabled && main_resp.clicked() {
                         *pending_action = Some(action);
                         ui.close();

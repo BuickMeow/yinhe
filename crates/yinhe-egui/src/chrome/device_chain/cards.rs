@@ -40,6 +40,8 @@ pub(super) fn icon_button(
     color: egui::Color32,
     hover: impl Into<egui::WidgetText>,
 ) -> egui::Response {
+    let hover = hover.into();
+    let hover_text = hover.text().to_owned();
     let resp = ui.add(
         egui::Button::new(
             egui::RichText::new(icon.codepoint)
@@ -49,8 +51,11 @@ pub(super) fn icon_button(
         .frame(false),
     );
     if resp.hovered() {
-        crate::widgets::hint::set(ui.ctx(), hover.into().text().to_owned());
+        crate::widgets::hint::set(ui.ctx(), hover_text.clone());
     }
+    // Button 的默认 label 是 Material 私有码位，读屏会读成无意义字符；
+    // 用 hover 提示覆盖为可读名称。
+    crate::widgets::a11y::name_button(&resp, hover_text);
     resp
 }
 
@@ -88,6 +93,7 @@ pub(super) fn collapsed_power(
                 egui::FontId::new(14.0, icon.font_family()),
                 color,
             );
+            crate::widgets::a11y::name_checkbox(&resp, hint.clone(), powered);
             crate::widgets::hint::hover(ui.ctx(), &resp, hint);
             clicked = resp.clicked();
         },
