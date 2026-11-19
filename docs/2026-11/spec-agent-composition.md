@@ -255,15 +255,24 @@ Agent 的动作序列：
 
 ## 五、分阶段落地
 
-### Phase 1：离线最小闭环（最先做）
+### Phase 1：离线最小闭环（部分已实现 2026-11-19）
 
-- `--version` / `--help` / `--list-commands`
-- `--inspect <file.yin>`：只读 `project.json` + `mapping.json`，输出 JSON
-- `--export-midi <in.yin> <out.mid>`：可选，复用现有导出
-- `--import-midi <in.mid> <out.yin>`：可选，复用现有导入
-- 给关键命令控件加 `author_id`
+已实现：
 
-验收：Agent 不启动 GUI 就能知道工程里有什么、能导出 MIDI。
+- `--version` / `--help`
+- `--list-commands`：输出 67 个稳定 CommandId、作用域、默认快捷键
+- `--inspect <file.yin>`：只读 `project.json` + `mapping.json`，输出 project/轨道摘要
+- 关键命令按钮、菜单行、pinned 动作写 AccessKit `author_id`
+
+暂未实现：
+
+- `--export-midi <in.yin> <out.mid>` / `--import-midi <in.mid> <out.yin>`：
+  需要完整加载工程；1 亿音符会付出全量解压/内存代价。当前先用现有 UI 导出；
+  等流式导出/加载路径可复用后再做。
+- 模式栏 / dock tab 的 `author_id`：本轮只覆盖命令按钮/菜单。
+
+验收：Agent 不启动 GUI 就能知道工程里有什么、能列出命令表。
+实测 `--inspect` 对 4.4KB 合成工程（data 段为垃圾字节）只读元数据，不触碰音符段。
 
 ### Phase 2：本地控制 socket
 

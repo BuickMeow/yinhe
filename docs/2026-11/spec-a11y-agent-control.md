@@ -206,21 +206,88 @@
 
 ---
 
-## 六、本轮实施
-
-> 本节在代码落地后更新，记录实际改动、测试命令和结果。
+## 六、本轮实施（2026-11-19）
 
 ### 6.1 已修复
 
-（待填）
+| 提交 | 范围 | 内容 |
+|---|---|---|
+| `6e8abac8` | 桌面 | a11y 测试改为显式 `check_accessibility()`；补 `files` 分类；全局快捷键改用 `text_edit_focused()`；修复开关 Space 双翻转 |
+| `e289cdd7` | 桌面 | Toast 标题 Polite live、进度 ProgressIndicator + numeric value；错误弹窗 AlertDialog + Assertive live + 焦点送「确定」+ Esc；命令按钮 `author_id`；模式栏 Tab + selected；flat/hover/列表行/步进器/单选/听感圆点焦点环 |
+| `e531734e` | 桌面 | 通道条整卡 ListItem + selected；推子/声像/发送 Slider + 名称；dB 名称；SEND/听感 CheckBox + checked；事件表格 Cell/RowHeader 名称；15 个语言文件补 `mix.gain/pan/send/audible` |
+| `f7fe7959` | 桌面 | 自绘 Slider/旋钮支持方向键、PageUp/Down、Home/End、AccessKit Increment/Decrement；Slider 写入 numeric value |
+| `bca7d4d1` | 桌面 | 轨道行只读 ListItem + 名称/静音/独奏/音符数 + bounds（不新增 interact）；标题栏文档 tab、Yinhe 入口、非 macOS 窗口按钮只读节点 |
+| `a42df966` | 桌面 | popup 菜单行 `author_id`；设备链图标按钮用提示覆盖 Material 码位；电源 CheckBox；右栏 dock tab + 焦点环；图层锁定/可见从 hover-only 改为常驻交互 + CheckBox |
+| `56ad654f` | CLI | `--inspect`（只读 project/mapping）、`--list-commands`（67 条 CommandId）、`--version`、`--help`；`yinhe-yin` 新增 `read_mapping_file` |
+| `3764e3ed` | 移动 | 侧栏「事件列表」入口；画布 `Semantics + ExcludeSemantics`，移除自动 tap/longPress，改为「朗读位置与选区 / 打开事件列表 / 播放或暂停」 |
+| `85ecdd3b` | 移动 | 画布 FocusNode + 外接键盘：Space 播放/暂停、Cmd/Ctrl+Z 撤销、Shift 重做、Cmd/Ctrl+S 保存、PR 下 Esc 返回 AR |
 
 ### 6.2 验证
 
-（待填）
+自动化测试（全部通过）：
 
-### 6.3 暂缓
+```text
+cargo test -p yinhe-egui a11y                                 3 passed
+cargo test -p yinhe-egui widgets::switch::tests               2 passed
+cargo test -p yinhe-egui error_modal                          1 passed
+cargo test -p yinhe-egui mix::strip                          10 passed
+cargo test -p yinhe-egui arrow_key_changes_value              2 passed
+cargo test -p yinhe-egui doc_tab_is_accessible_tab            1 passed
+cargo test -p yinhe-egui cli::tests                           3 passed
+cargo test -p yinhe-yin                                      30 passed
+cargo clippy -p yinhe-egui -p yinhe-yin --all-targets        clean
+flutter analyze                                              No issues
+flutter test                                                 49 passed
+```
 
-（待填）
+CLI 手工验证：
+
+```text
+$ cargo run -p yinhe-egui -- --version
+Yinhe 0.1.0
+yinhe-yin format: 10
+
+$ cargo run -p yinhe-egui -- --list-commands | ...
+yinhe-cli/1 67
+[{'default': ['Cmd+S'], 'id': 'save', 'label_key': 'file.save', 'scope': 'file'}]
+
+$ cargo run -p yinhe-egui -- --inspect /tmp/yinhe-inspect-test.yin
+yinhe-cli/1 {'magic': 'YINH', 'version': 10} Agent Demo 960
+[{'uuid': 'u-drums', 'name': 'Drums', 'channel': 9, 'muted': False, ...},
+ {'uuid': 'u-bass', 'name': 'Bass', 'channel': 9, 'muted': True, ...}]
+```
+
+`--inspect` 的测试工程只有 4.4KB，data 段是 4KB 垃圾字节；读取 project/mapping 不触碰 data，证明该入口不会解压音符。
+
+### 6.3 暂缓项与原因
+
+| 暂缓项 | 原因 | 何时再做 |
+|---|---|---|
+| 画布逐音符 AX 节点 / 移动端逐音符 Semantics | 1 亿音符下节点数和内存不可接受；只建视口内节点也要和 GPU 裁剪/LOD 耦合 | 有真实读屏用户且需要「逐音符浏览」时，单独做可见区语义层 |
+| 事件浏览器键盘网格 | 现在是 100 行 × 9 列、每 cell 一个 Tab 停靠点；要改成「整表一个焦点 + 方向键移动当前 cell」需要新的网格状态机 | 下一轮桌面 a11y |
+| 本地控制 socket / `apply_notes` | 需要协议、并发、权限、undo group、异步 job 设计；直接做容易把 UI 线程写阻塞 | Phase 2，见 `spec-agent-composition.md` |
+| `--export-midi` / `--import-midi` | 需要完整加载工程；1 亿音符会付出全量解压/内存代价。当前先用现有 UI 导出 | 等流式导出/加载路径可复用 |
+| 高对比主题、减少动态效果、最小字号 | 不涉及性能红线，但会横跨主题、全部自绘控件和移动端，改动面大 | 单独主题/a11y 迭代 |
+| 实时 MIDI CC（延音踏板等） | 功能缺口，不是性能问题；需要决定 MIDI learn/remote 的产品边界 | 单独输入链路迭代 |
+| 窗口标题带文档名、单实例转发 | 涉及平台窗口管理和 macOS/Windows 行为 | 与 Agent 控制 socket 一起做 |
+| 轨道行节点挂到面板树 | 当前是根级只读节点（读屏可导航，但树层级不完美）；挂父节点需要 egui `accessibility_parent` 或公开 API | 下一轮 egui 语义整理 |
+| 模式栏 / dock tab 的 `author_id` | 本轮只给命令按钮/菜单/pinned 动作写了 id；Tab 仍靠 label | 下一轮统一 |
+| VoiceOver / TalkBack 真机走查 | 需要人工开读屏、听播报、验证焦点顺序；CI 无法替代 | 每次发布前手工 checklist |
+
+性能证据：
+
+- 轨道行节点只对 `visible_range` 内的行注册，O(可见行数)。
+- 通道条命名只对当前可见的 MIX 通道注册，O(通道数)。
+- 事件表格命名只对当前页 100 行注册，O(页大小)，不遍历全曲音符。
+- `--inspect` 只读两个 JSON 段，O(元数据)，不解压 data。
+- 没有任何「音符变化 → AX 节点增量同步」的实时链路。
+
+### 6.4 下一步建议
+
+1. 桌面事件浏览器做成「整表一个焦点 + 方向键当前 cell + Enter 编辑」的网格，消掉 900 个 Tab 停靠点。
+2. 实现本地 NDJSON 控制 socket 的第一版：`state` / `project_summary` / `query_notes` / `apply_notes` / `screenshot`。
+3. 主题层加高对比模式、对比度校验、系统 reduced motion。
+4. 发布前用 VoiceOver（macOS）、Narrator（Windows）、Orca（Linux）、TalkBack（Android）各走一遍核心链路。
 
 ---
 
