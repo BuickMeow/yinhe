@@ -213,6 +213,9 @@ pub(crate) fn list_row(
         ui.painter()
             .rect_filled(rect, theme::ROW_RADIUS, theme::hover_color(theme::app_bg()));
     }
+    if resp.has_focus() {
+        super::a11y::paint_focus_ring(ui, rect, theme::ROW_RADIUS);
+    }
     let pad = scaled_font(ui.ctx(), theme::PAD_X);
     let inner = egui::Rect::from_min_max(rect.min + egui::vec2(pad, 0.0), rect.max);
     ui.scope_builder(

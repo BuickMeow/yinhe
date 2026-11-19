@@ -119,6 +119,7 @@ fn mode_button(
         is_selected,
         label,
     );
+    crate::widgets::a11y::name_tab(&resp, label, is_selected);
     if resp.clicked() {
         on_click();
     }

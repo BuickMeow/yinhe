@@ -80,9 +80,20 @@ pub(crate) fn btn_zone_h(ctx: &egui::Context) -> f32 {
 ///
 /// 返回本帧被点击按钮在 `buttons` 中的索引。
 pub(crate) fn dialog_button_row(ui: &mut egui::Ui, buttons: &[DialogButton<'_>]) -> Option<usize> {
-    let mut clicked = None;
+    dialog_button_row_responses(ui, buttons)
+        .iter()
+        .position(|resp| resp.clicked())
+}
+
+/// 与 [`dialog_button_row`] 相同的布局，但返回每个按钮的 `Response`（按
+/// `buttons` 的左→右顺序）。需要给某个按钮送焦点/做无障碍标注时使用。
+pub(crate) fn dialog_button_row_responses(
+    ui: &mut egui::Ui,
+    buttons: &[DialogButton<'_>],
+) -> Vec<egui::Response> {
     let gap = crate::scaling::scaled_font(ui.ctx(), BTN_GAP);
     let h = crate::scaling::scaled_font(ui.ctx(), BTN_H);
+    let mut responses = Vec::with_capacity(buttons.len());
     // 行高必须按按钮高分配：`ui.horizontal` 默认按 `interact_size.y`（0.37 为 20）开行，
     // 30 高的按钮会溢出到行下方 12px；在 `bottom_up` 的底部按钮区里就会顶穿框的
     // 内底边，使下边距≈0（而右边距正常）。这里显式按 BTN_H 分配。
@@ -91,16 +102,15 @@ pub(crate) fn dialog_button_row(ui: &mut egui::Ui, buttons: &[DialogButton<'_>])
         egui::Layout::right_to_left(egui::Align::Center),
         |ui| {
             for (idx, spec) in buttons.iter().enumerate().rev() {
-                if dialog_button(ui, spec).clicked() {
-                    clicked = Some(idx);
-                }
+                responses.push((idx, dialog_button(ui, spec)));
                 if idx > 0 {
                     ui.add_space(gap);
                 }
             }
         },
     );
-    clicked
+    responses.sort_by_key(|(idx, _)| *idx);
+    responses.into_iter().map(|(_, resp)| resp).collect()
 }
 
 /// 主按钮配色：完整对齐 transport bar 播放菜单选中项——

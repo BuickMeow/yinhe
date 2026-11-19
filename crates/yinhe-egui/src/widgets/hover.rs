@@ -172,5 +172,9 @@ fn hover_button_impl(
                 .with_angle_and_anchor(angle, egui::Align2::CENTER_CENTER),
         );
     }
+    if resp.has_focus() {
+        let radius = crate::scaling::scaled_font(ui.ctx(), 4.0);
+        super::a11y::paint_focus_ring(ui, rect, radius);
+    }
     resp
 }

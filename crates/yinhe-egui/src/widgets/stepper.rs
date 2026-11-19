@@ -178,6 +178,11 @@ impl<Num: egui::emath::Numeric> Stepper<'_, Num> {
                     stroke,
                 );
             }
+
+            // 焦点框画在整个胶囊外圈：单独画在 -/+ 半块上会与中缝重叠。
+            if minus.has_focus() || plus.has_focus() {
+                super::a11y::paint_focus_ring(ui, rect, radius);
+            }
         }
 
         // 中间数值：无框 DragValue，占满数值区并居中。

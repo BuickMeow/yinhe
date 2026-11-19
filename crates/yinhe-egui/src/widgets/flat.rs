@@ -278,6 +278,9 @@ fn flat_button_ex(
         };
         ui.painter()
             .galley(rect.center() - galley.size() / 2.0, galley, color);
+        if resp.has_focus() {
+            super::a11y::paint_focus_ring(ui, rect, scale(radius));
+        }
     }
     resp
 }

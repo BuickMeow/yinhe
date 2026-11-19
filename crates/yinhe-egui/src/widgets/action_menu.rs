@@ -373,6 +373,7 @@ pub fn pinned_action_buttons<T: PopupRow>(
             })
             .inner;
         crate::widgets::a11y::name_button(&resp, t!(action.label_key()));
+        crate::widgets::a11y::set_command_id(&resp, action.action_id());
         if resp.clicked() {
             *pending = Some(action);
         }

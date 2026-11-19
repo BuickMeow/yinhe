@@ -29,6 +29,9 @@ pub(crate) fn dot(
         crate::theme::text_disabled()
     };
     ui.painter().circle_filled(rect.center(), DOT_R, color);
+    if resp.has_focus() {
+        super::a11y::paint_focus_ring(ui, rect, crate::scaling::scaled_font(ui.ctx(), 4.0));
+    }
     resp
 }
 

@@ -65,6 +65,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
                 let file_btn = menu_button(ui, "file_menu", ICON_DESCRIPTION, btn_size)
                     .accessible_name(t!("hint.file_menu"));
+                crate::widgets::a11y::set_command_id(&file_btn, "menu.file");
                 if file_btn.hovered() {
                     let m = crate::chrome::mode_bar::mod_key();
                     hovered_hint = Some(format!("{} ({}N/{}O/{}S)", t!("hint.file_menu"), m, m, m));
@@ -92,6 +93,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
                 let edit_btn = menu_button(ui, "edit_menu", ICON_EDIT_SQUARE, btn_size)
                     .accessible_name(t!("hint.edit_menu"));
+                crate::widgets::a11y::set_command_id(&edit_btn, "menu.edit");
                 if edit_btn.hovered() {
                     hovered_hint = Some(t!("hint.edit_menu").to_string());
                 }
@@ -118,6 +120,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 // ── 操作菜单：框选后的批量修改动作（从编辑菜单分离） ──
                 let operation_btn = menu_button(ui, "operation_menu", ICON_AUTO_FIX_HIGH, btn_size)
                     .accessible_name(t!("hint.operation_menu"));
+                crate::widgets::a11y::set_command_id(&operation_btn, "menu.operation");
                 if operation_btn.hovered() {
                     hovered_hint = Some(t!("hint.operation_menu").to_string());
                 }
@@ -142,6 +145,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
                 let view_btn = menu_button(ui, "view_menu", ICON_VISIBILITY, btn_size)
                     .accessible_name(t!("hint.view_menu"));
+                crate::widgets::a11y::set_command_id(&view_btn, "menu.view");
                 if view_btn.hovered() {
                     hovered_hint = Some(t!("hint.view_menu").to_string());
                 }
@@ -154,6 +158,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
                 let insert_btn = menu_button(ui, "insert_menu", ICON_ADD_CIRCLE, btn_size)
                     .accessible_name(t!("hint.insert_menu"));
+                crate::widgets::a11y::set_command_id(&insert_btn, "menu.insert");
                 if insert_btn.hovered() {
                     hovered_hint = Some(t!("hint.insert_menu").to_string());
                 }
@@ -178,6 +183,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     .unwrap_or(false);
                 let play_menu_btn = menu_button(ui, "play_menu", ICON_PLAY_CIRCLE, btn_size)
                     .accessible_name(t!("hint.play_menu"));
+                crate::widgets::a11y::set_command_id(&play_menu_btn, "menu.play");
                 if play_menu_btn.hovered() {
                     hovered_hint = Some(t!("hint.play_menu").to_string());
                 }

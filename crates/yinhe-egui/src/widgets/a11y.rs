@@ -14,6 +14,40 @@ pub(crate) fn name_button(resp: &egui::Response, name: impl Into<String>) {
     });
 }
 
+/// 给自绘 Tab 注册 `Role::Tab` + selected 状态。
+///
+/// 模式栏 ARRANGE/MIX/EDIT 这类「单选视图」如果只注册 Button，读屏无法知道
+/// 当前在哪个视图；`Role::Tab` + `selected` 才能让读屏报「已选中」。
+pub(crate) fn name_tab(resp: &egui::Response, name: impl Into<String>, selected: bool) {
+    let name = name.into();
+    resp.widget_info(|| {
+        egui::WidgetInfo::selected(egui::Role::Tab, resp.enabled(), selected, name.clone())
+    });
+}
+
+/// 给命令控件写稳定的 automation id（AccessKit `author_id`）。
+///
+/// macOS 映射到 `AXIdentifier`，Windows UIA 映射到 `AutomationId`。
+/// 读屏和外部 Agent 都应优先按这个 id 定位，而不是按会随语言变化的 label。
+pub(crate) fn set_command_id(resp: &egui::Response, command_id: &str) {
+    if command_id.is_empty() {
+        return;
+    }
+    let command_id = command_id.to_owned();
+    resp.ctx
+        .accesskit_node_builder(resp.id, |node| node.set_author_id(command_id));
+}
+
+/// 统一焦点环：键盘用户 Tab 到自绘控件时必须能看见焦点。
+pub(crate) fn paint_focus_ring(ui: &egui::Ui, rect: egui::Rect, radius: f32) {
+    ui.painter().rect_stroke(
+        rect.expand(1.5),
+        radius + 1.5,
+        egui::Stroke::new(1.5, crate::theme::accent_active().gamma_multiply(0.9)),
+        egui::StrokeKind::Inside,
+    );
+}
+
 /// 给自绘输入控件（旋钮等滑块）注册可读名称。
 pub(crate) fn name_slider(resp: &egui::Response, name: impl Into<String>) {
     let name = name.into();

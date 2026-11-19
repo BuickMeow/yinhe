@@ -35,6 +35,9 @@ pub(crate) fn radio(ui: &mut egui::Ui, selected: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(r * 2.0, r * 2.0), egui::Sense::click());
     super::a11y::unnamed_selected(&resp, egui::Role::RadioButton, selected);
     paint_radio(ui.painter(), rect.center(), r, selected, resp.hovered());
+    if resp.has_focus() {
+        super::a11y::paint_focus_ring(ui, rect, r);
+    }
     resp
 }
 

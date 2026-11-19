@@ -135,6 +135,7 @@ fn draw_button(
     ui.painter()
         .text(rect.center(), egui::Align2::CENTER_CENTER, icon, font, c);
     crate::widgets::hint::hover(ui.ctx(), &resp, hint);
+    crate::widgets::a11y::name_button(&resp, hint);
     resp
 }
 
@@ -231,6 +232,21 @@ impl Notifications {
                 egui::pos2(rect.min.x + bar_pad, rect.center().y - bar_h / 2.0),
                 egui::vec2(PROGRESS_W, bar_h),
             );
+            // 进度必须作为独立的 ProgressIndicator 节点暴露数值；只画百分比
+            // 文本读屏拿不到「现在是 42%」。不要给它设 live：50ms 刷新一次
+            // 会持续打断读屏，用户主动浏览即可。
+            let progress_resp = ui.interact(
+                bar_rect,
+                ui.scope_id().with(("notify_progress", row.id)),
+                egui::Sense::hover(),
+            );
+            let fraction = p.clamp(0.0, 1.0);
+            progress_resp.widget_info(|| {
+                let mut info = egui::WidgetInfo::new(egui::Role::ProgressIndicator);
+                info.label = Some(row.title.clone());
+                info.value = Some(fraction as f64);
+                info
+            });
             let accent = match row.kind {
                 ToastKind::Warning => crate::theme::warning_gold(),
                 ToastKind::Error => crate::theme::danger_text(),
@@ -281,6 +297,11 @@ impl Notifications {
         );
         label_resp
             .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, row.title.clone()));
+        // 标题变化（正在导出 → 导出完成 / 失败）应主动播报；进度本身不设 live，
+        // 避免 50ms 一次的百分比打断读屏。
+        ui.ctx().accesskit_node_builder(label_resp.id, |node| {
+            node.set_live(egui::accesskit::Live::Polite);
+        });
 
         // 右侧按钮：从右到左依次是中止、暂停、操作、+N。
         let mut cursor_x = rect.max.x - PAD_X;
@@ -382,6 +403,13 @@ impl Notifications {
                 ui.ctx(),
                 &resp,
                 rust_i18n::t!("hint.title_bar.notification_tasks"),
+            );
+            crate::widgets::a11y::name_button(
+                &resp,
+                format!(
+                    "{} (+{extra})",
+                    rust_i18n::t!("hint.title_bar.notification_tasks")
+                ),
             );
             if resp.clicked() {
                 toggle_tasks = true;
