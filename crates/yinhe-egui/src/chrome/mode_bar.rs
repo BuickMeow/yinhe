@@ -120,6 +120,13 @@ fn mode_button(
         label,
     );
     crate::widgets::a11y::name_tab(&resp, label, is_selected);
+    let command_id = match label {
+        "ARRANGE" => "view.arrange",
+        "MIX" => "view.mix",
+        "EDIT" => "view.edit",
+        _ => "",
+    };
+    crate::widgets::a11y::set_command_id(&resp, command_id);
     if resp.clicked() {
         on_click();
     }

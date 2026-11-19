@@ -283,6 +283,7 @@ fn paint_header(
             egui::Sense::click_and_drag(),
         );
         crate::widgets::a11y::name_tab(&resp, label.clone(), selected);
+        crate::widgets::a11y::set_command_id(&resp, &format!("panel.{}", kind.label_key()));
         let hovered = resp.hovered();
 
         // 无强调色：选中 = 淡色底；hover = 轻微增益底。
