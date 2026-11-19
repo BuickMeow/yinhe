@@ -383,7 +383,16 @@
   选框宽度不足一个量化格而直接隐藏。
 - 九向自定义位置解决不了“选框本身很矮”的重叠，只是把重叠换个地方。
 
-**胶囊方案（推荐方向）**
+**本次落地（2026-11-19）**
+
+- 保留原来的多按钮胶囊：选择工具重新使用 `SELECT_BAR_BUTTONS` 全部 12 个按钮；
+  transport bar 不再显示选择动作按钮。
+- 胶囊图标从 18px 增大到 22px；12 个按钮竖排，常见 PR 高度内可以放下。
+- `draw_hover_tooltip` 从 `view_interaction.rs` 移到
+  `widgets/tooltip.rs`，调用方统一走 `crate::widgets::tooltip`。
+- 单锚点 + 展开/收起动画的方案本次不实现，作为后续候选保留在下面。
+
+**单锚点胶囊方案（后续候选）**
 
 一个锚点放在选框右侧留白，按下展开 Gate / Scale / Riff 三个图标：
 
@@ -412,13 +421,13 @@
 
 - `crates/yinhe-egui/src/widgets/selection_actions.rs` 就是现有胶囊：竖直圆角条，
   `bar_rect` 把它放在选框右侧 8px，`show` 负责绘制和命中。
-  - 选择工具的动作按钮已经迁到 transport bar；这个胶囊目前只剩直线/剪刀的
-    一个确认按钮，但位置计算和绘制可以直接复用。
-  - `overlay.rs:414-443` 的 `bar_spec` 是当前调用点。
-- 拖动选框时出现的 `±tick / ±key / ±gate / span` **不是 widget**，是
-  `crates/yinhe-egui/src/view_interaction.rs:338-380` 的 `draw_hover_tooltip`，
-  用 `ctx.debug_painter()` 画出的非交互提示。它可以保留，也可以以后把状态
-  读数并进胶囊，但现在不是同一套东西。
+  - 选择工具现在重新使用 `SELECT_BAR_BUTTONS` 的 12 个按钮；直线/剪刀工具仍
+    使用一个确认按钮，共用同一套胶囊位置计算。
+  - `overlay.rs` 的 `bar_spec` 是当前调用点；选择工具用 `selection_last` 作为
+    锚点矩形。
+- 拖动选框时出现的 `±tick / ±key / ±gate / span` **不是 widget**，原先在
+  `view_interaction.rs`，现在已移到 `crates/yinhe-egui/src/widgets/tooltip.rs`，
+  用 `ctx.debug_painter()` 画出的非交互提示。它和胶囊不是同一套东西。
 
 **三个想法的取舍**
 
@@ -433,8 +442,8 @@
 
 **建议优先级**
 
-- P0：胶囊单锚点 + 展开/收起动画 + 上次工具记忆，替代三个方块。
-- P1：选区贴边/密集时的落点 fallback；桌面 hover 展开。
+- 已完成：原多按钮胶囊回归 + 22px 图标 + `widgets/tooltip` 抽取。
+- P1：如果 12 按钮竖排太高，再考虑双列/分组或单锚点展开；先看实机观感。
 - P2：如仍有需求，做 2~3 个布局预设，不做每个把手九向。
 
 ## 6. 方案三：音名标签
