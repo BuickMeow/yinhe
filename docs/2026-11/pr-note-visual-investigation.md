@@ -387,7 +387,9 @@
 
 - 选择动作 12 按钮回到 transport bar，外加边框分组；胶囊只保留直线/剪刀的
   确认按钮。
-- transport bar 第二组是 **Gate / Scale / Riff 三联选择器**，选中态用强调色。
+- 动作组图标 20px、间距 8px；移调/变速/垂直翻转的图标旋转恢复。
+- transport bar 第二组是 **Gate / Scale / Riff 三联选择器**，选中态用强调色；
+  两个外框都是 32px 高，与菜单按钮 `TRANSPORT_BTN_SIZE` 对齐。
 - PR 选框的三个控制点删除；统一拖选框右缘（纵向为时间终点边），按三联选择器
   当前模式执行 Gate / Scale / Riff；框内拖动仍是整体移动。
 - 拖动模式保存在 egui data；PR 可见时显示选择器。AR 仍保留原有控制点，

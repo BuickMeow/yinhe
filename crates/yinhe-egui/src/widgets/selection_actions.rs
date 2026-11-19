@@ -146,11 +146,16 @@ const V_PAD: f32 = 6.0;
 /// Spacing between buttons.
 const BTN_SPACING: f32 = 4.0;
 /// transport bar 选择动作组内按钮间距。
-const TRANSPORT_GAP: f32 = 4.0;
+const TRANSPORT_GAP: f32 = 8.0;
+/// transport bar 选择动作组图标尺寸。
+const TRANSPORT_ICON_SIZE: f32 = 20.0;
+/// 两个 transport bar 分组的内容高度；加 1px 上下边距 + 1px 描边 = 32px，
+/// 与菜单按钮 `TRANSPORT_BTN_SIZE` 对齐。
+const GROUP_H: f32 = 28.0;
 /// transport bar 工具组按钮尺寸。
 const MODE_BTN_SIZE: f32 = 28.0;
 /// transport bar 工具组图标尺寸。
-const MODE_ICON_SIZE: f32 = 18.0;
+const MODE_ICON_SIZE: f32 = 20.0;
 
 /// transport bar 上的选择动作按钮组：带边框的常驻工具组。
 ///
@@ -166,26 +171,39 @@ pub fn show_transport_buttons(
         .inner_margin(egui::Margin {
             left: 4,
             right: 4,
-            top: 7,
-            bottom: 7,
+            top: 1,
+            bottom: 1,
         })
         .stroke(egui::Stroke::new(1.0, crate::theme::line_fg()))
         .corner_radius(egui::CornerRadius::same(6))
         .show(ui, |ui| {
             ui.add_enabled_ui(enabled, |ui| {
-                ui.horizontal(|ui| {
+                ui.set_min_height(GROUP_H);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = TRANSPORT_GAP;
                     for &(icon, action) in SELECT_BAR_BUTTONS.iter() {
-                        let font =
-                            egui::FontId::new(crate::theme::TRANSPORT_BTN_FONT, icon.font_family());
-                        let resp = crate::widgets::hover::hover_button(
-                            ui,
-                            icon.codepoint,
-                            font,
-                            crate::theme::text_label(),
-                            false,
-                            action_hint(action).as_str(),
-                        );
+                        let font = egui::FontId::new(TRANSPORT_ICON_SIZE, icon.font_family());
+                        let angle = bar_button_rotation(action);
+                        let resp = if angle == 0.0 {
+                            crate::widgets::hover::hover_button(
+                                ui,
+                                icon.codepoint,
+                                font,
+                                crate::theme::text_label(),
+                                false,
+                                action_hint(action).as_str(),
+                            )
+                        } else {
+                            crate::widgets::hover::hover_button_rotated(
+                                ui,
+                                icon.codepoint,
+                                font,
+                                crate::theme::text_label(),
+                                false,
+                                angle,
+                                action_hint(action).as_str(),
+                            )
+                        };
                         if resp.clicked() {
                             clicked = Some(action);
                         }
@@ -215,13 +233,14 @@ pub fn show_drag_mode_selector(ui: &mut egui::Ui) {
         .inner_margin(egui::Margin {
             left: 4,
             right: 4,
-            top: 2,
-            bottom: 2,
+            top: 1,
+            bottom: 1,
         })
         .stroke(egui::Stroke::new(1.0, crate::theme::line_fg()))
         .corner_radius(egui::CornerRadius::same(6))
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
+            ui.set_min_height(GROUP_H);
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
                 for m in SelectionDragMode::ALL {
                     let active = m == mode;
