@@ -904,6 +904,10 @@ pr_bar.blocked_delete: "Удалить исходную, оставить цел
 pr_bar.blocked_keep: "Оставить исходную"
 # ── MIX mixer ──
 mix.sends: "Посылы"
+mix.gain: "Громкость"
+mix.pan: "Панорама"
+mix.send: "Отправка"
+mix.audible: "Слышимый"
 mix.pre_fader: "До фейдера"
 mix.pre_fader_hint: "Посылы до фейдера игнорируют фейдер канала"
 mix.scan_errors: "Не удалось просканировать %{count} наборов"

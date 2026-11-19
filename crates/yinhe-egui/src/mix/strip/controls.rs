@@ -48,6 +48,7 @@ pub(super) fn strip_frame(
         ui.scope_id().with(("mix_strip_card", &id_salt)),
         egui::Sense::click(),
     );
+    card.widget_info(|| egui::WidgetInfo::selected(egui::Role::ListItem, true, selected, title));
     let painter = ui.painter_at(rect);
     // 卡片背景：选中时整条用全局 selection.bg_fill（与 AR 轨道行选中同色），
     // 未选中用默认背景色。
@@ -264,6 +265,7 @@ fn send_toggle(ui: &mut egui::Ui, width: f32, on: bool) -> egui::Response {
 /// 右侧 SEND 区：开关按钮 + 旋钮 + 旋钮下方的 `-inf`/dB 文案。
 pub(super) fn send_block(
     ui: &mut egui::Ui,
+    title: &str,
     send: FocusSend,
     width: f32,
     actions: &mut Vec<MixAction>,
@@ -283,6 +285,7 @@ pub(super) fn send_block(
     let on = amount > 0.0;
     let resp = send_toggle(ui, width, on);
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.send_toggle"));
+    crate::widgets::a11y::name_checkbox(&resp, format!("{title} · {}", t!("mix.send")), on);
     if resp.clicked() {
         actions.push(MixAction::SetChannelSend {
             source,
@@ -295,6 +298,7 @@ pub(super) fn send_block(
     let mut norm = send_norm(amount);
     let resp = knob(ui, &mut norm, KNOB_D);
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.send_amount"));
+    crate::widgets::a11y::name_slider(&resp, format!("{title} · {}", t!("mix.send")));
     if resp.changed() {
         actions.push(MixAction::SetChannelSend {
             source,
@@ -357,6 +361,7 @@ fn send_context_menu(
 /// 返回 `Some(新 pan)` 表示被改动。
 fn pan_knob(
     ui: &mut egui::Ui,
+    title: &str,
     pan: f32,
     width: f32,
     target: ChannelId,
@@ -391,6 +396,7 @@ fn pan_knob(
         )
         .inner;
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.pan"));
+    crate::widgets::a11y::name_slider(&resp, format!("{title} · {}", t!("mix.pan")));
     let mut reset = false;
     crate::widgets::menu::context_menu(&resp, 180.0, |ui| {
         reset = pan_context_menu(ui, target, actions);
@@ -409,6 +415,7 @@ fn pan_knob(
 /// 返回 `Some(新增益)` 表示本次被改动。
 fn db_row(
     ui: &mut egui::Ui,
+    title: &str,
     gain: f32,
     width: f32,
     target: ChannelId,
@@ -439,6 +446,7 @@ fn db_row(
             }),
     );
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.fader"));
+    crate::widgets::a11y::name_slider(&resp, format!("{title} · {}", t!("mix.gain")));
     let mut reset = false;
     crate::widgets::menu::context_menu(&resp, 180.0, |ui| {
         reset = volume_context_menu(ui, target, actions);
@@ -455,8 +463,10 @@ fn db_row(
 
 /// 电平表 + 增益推子：推子贴在 L/R 条**左侧外侧**，是向右（指向音频）
 /// 的实心三角，拖动改增益，双击回 0dB。返回 `Some(新增益)`。
+#[allow(clippy::too_many_arguments)] // 通道条渲染上下文透传
 pub(super) fn gain_meter(
     ui: &mut egui::Ui,
+    title: &str,
     gain: f32,
     level: (f32, f32),
     hold: (f32, f32),
@@ -493,6 +503,13 @@ pub(super) fn gain_meter(
 
     let resp = resp.on_hover_cursor(egui::CursorIcon::ResizeVertical);
     crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.fader"));
+    resp.widget_info(|| {
+        egui::WidgetInfo::slider(
+            ui.is_enabled(),
+            gain as f64,
+            format!("{title} · {}", t!("mix.gain")),
+        )
+    });
     let mut reset = false;
     crate::widgets::menu::context_menu(&resp, 180.0, |ui| {
         reset = volume_context_menu(ui, target, actions);
@@ -527,6 +544,7 @@ pub(super) fn strip_controls(
     level: (f32, f32),
     hold: (f32, f32),
     send: FocusSend,
+    title: &str,
     target: ChannelId,
     actions: &mut Vec<MixAction>,
 ) -> Option<StripParams> {
@@ -544,7 +562,8 @@ pub(super) fn strip_controls(
                 |ui| {
                     let mut p = *params;
                     let mut changed = false;
-                    if let Some(g) = gain_meter(ui, p.gain, level, hold, module_h, target, actions)
+                    if let Some(g) =
+                        gain_meter(ui, title, p.gain, level, hold, module_h, target, actions)
                     {
                         p.gain = g;
                         changed = true;
@@ -554,17 +573,20 @@ pub(super) fn strip_controls(
                         egui::vec2(CONTROLS_W, module_h),
                         egui::Layout::top_down(egui::Align::Center),
                         |ui| {
-                            if let Some(g) = db_row(ui, p.gain, CONTROLS_W, target, actions) {
+                            if let Some(g) = db_row(ui, title, p.gain, CONTROLS_W, target, actions)
+                            {
                                 p.gain = g;
                                 changed = true;
                             }
                             ui.add_space(GAP);
-                            if let Some(pan) = pan_knob(ui, p.pan, CONTROLS_W, target, actions) {
+                            if let Some(pan) =
+                                pan_knob(ui, title, p.pan, CONTROLS_W, target, actions)
+                            {
                                 p.pan = pan;
                                 changed = true;
                             }
                             ui.add_space(GAP);
-                            send_block(ui, send, CONTROLS_W, actions);
+                            send_block(ui, title, send, CONTROLS_W, actions);
                             // 听感圆点：右下角（原 M 按钮位置），亮 = 可听，灭 = 静音。
                             let col = ui.max_rect();
                             let dot_rect = egui::Rect::from_center_size(
@@ -582,6 +604,11 @@ pub(super) fn strip_controls(
                                 ui.scope_id().with("mix_audible"),
                             );
                             crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.mute"));
+                            crate::widgets::a11y::name_checkbox(
+                                &resp,
+                                format!("{title} · {}", t!("mix.audible")),
+                                audible,
+                            );
                             if resp.clicked() {
                                 p.set_audibility(if audible {
                                     yinhe_types::Audibility::Muted
@@ -611,6 +638,7 @@ pub(super) fn master_controls(
 ) -> Option<f32> {
     let avail = ui.available_height();
     let module_h = METER_MODULE_H.min(avail).max(1.0);
+    let master_title = t!("mix.master");
     let mut out = None;
     crate::widgets::grid::content_footer(ui, 0.0, module_h, |cells| {
         cells.cell(|_| {});
@@ -622,9 +650,16 @@ pub(super) fn master_controls(
                 |ui| {
                     let mut g = gain;
                     let mut changed = false;
-                    if let Some(v) =
-                        gain_meter(ui, g, level, hold, module_h, ChannelId::Master, actions)
-                    {
+                    if let Some(v) = gain_meter(
+                        ui,
+                        master_title.as_ref(),
+                        g,
+                        level,
+                        hold,
+                        module_h,
+                        ChannelId::Master,
+                        actions,
+                    ) {
                         g = v;
                         changed = true;
                     }
@@ -633,12 +668,19 @@ pub(super) fn master_controls(
                         egui::vec2(CONTROLS_W, module_h),
                         egui::Layout::top_down(egui::Align::Center),
                         |ui| {
-                            if let Some(v) = db_row(ui, g, CONTROLS_W, ChannelId::Master, actions) {
+                            if let Some(v) = db_row(
+                                ui,
+                                master_title.as_ref(),
+                                g,
+                                CONTROLS_W,
+                                ChannelId::Master,
+                                actions,
+                            ) {
                                 g = v;
                                 changed = true;
                             }
                             ui.add_space(GAP);
-                            send_block(ui, send, CONTROLS_W, actions);
+                            send_block(ui, master_title.as_ref(), send, CONTROLS_W, actions);
                         },
                     );
                     changed.then_some(g)

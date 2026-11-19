@@ -157,6 +157,7 @@ fn meter_click_requests_channel_selection() {
         let mut output = ctx.run_ui(input, |ui| {
             super::controls::gain_meter(
                 ui,
+                "Test",
                 1.0,
                 (0.0, 0.0),
                 (0.0, 0.0),
@@ -226,4 +227,43 @@ fn send_knob_reads_selected_source_to_target() {
     let to_master = super::focus_send_for(&mixer, Some(a), ChannelId::Master);
     assert!(super::controls::send_row_visible(&to_master));
     assert!((to_master.amount - 0.25).abs() < 1e-6);
+}
+
+/// 通道条的所有输入控件都必须有可访问名称。
+///
+/// 覆盖推子（Slider）、dB（DragValue）、声像/发送旋钮（Slider）、
+/// SEND 开关与听感圆点（CheckBox）。改名/加控件后这里会先失败。
+#[test]
+fn strip_controls_have_accessible_names() {
+    let mut harness = egui_kittest::Harness::builder()
+        .allow_missing_glyphs()
+        .with_size(egui::vec2(360.0, 600.0))
+        .build_ui_state(
+            |ui, _: &mut ()| {
+                let mut actions = Vec::new();
+                let source = ChannelId::ap(yinhe_types::ApGroupId::new(1), 0);
+                let target = ChannelId::ap(yinhe_types::ApGroupId::new(2), 0);
+                let send = super::controls::FocusSend {
+                    source: Some(source),
+                    target,
+                    amount: 0.5,
+                    pre_fader: false,
+                };
+                let params = yinhe_mixer::StripParams::default();
+                super::controls::strip_controls(
+                    ui,
+                    &params,
+                    (0.0, 0.0),
+                    (0.0, 0.0),
+                    send,
+                    "Drums",
+                    target,
+                    &mut actions,
+                );
+            },
+            (),
+        );
+    harness.step();
+    harness.step();
+    harness.check_accessibility();
 }

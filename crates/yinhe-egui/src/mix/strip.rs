@@ -117,7 +117,8 @@ pub(crate) fn node_strip(
         height,
         selected,
         |ui, _| {
-            if let Some(p) = strip_controls(ui, &params, level, hold, send, target, actions) {
+            if let Some(p) = strip_controls(ui, &params, level, hold, send, title, target, actions)
+            {
                 actions.push(MixAction::SetNodeStrip { node, params: p });
             }
         },

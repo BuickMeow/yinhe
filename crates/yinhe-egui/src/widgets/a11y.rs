@@ -14,6 +14,14 @@ pub(crate) fn name_button(resp: &egui::Response, name: impl Into<String>) {
     });
 }
 
+/// 给自绘复选/开关注册 `Role::CheckBox` + checked 状态。
+pub(crate) fn name_checkbox(resp: &egui::Response, name: impl Into<String>, checked: bool) {
+    let name = name.into();
+    resp.widget_info(|| {
+        egui::WidgetInfo::selected(egui::Role::CheckBox, resp.enabled(), checked, name.clone())
+    });
+}
+
 /// 给自绘 Tab 注册 `Role::Tab` + selected 状态。
 ///
 /// 模式栏 ARRANGE/MIX/EDIT 这类「单选视图」如果只注册 Button，读屏无法知道

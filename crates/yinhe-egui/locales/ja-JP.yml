@@ -972,6 +972,10 @@ pr_bar.blocked_keep: "重複ノートを押し戻す"
 
 # MIX ミキサー
 mix.sends: "センド"
+mix.gain: "ゲイン"
+mix.pan: "パン"
+mix.send: "センド"
+mix.audible: "可聴"
 mix.pre_fader: "プリフェーダー"
 mix.pre_fader_hint: "プリフェーダーセンドはチャンネルフェーダーの影響を受けません"
 mix.scan_errors: "%{count} 個のパッケージのスキャンに失敗"

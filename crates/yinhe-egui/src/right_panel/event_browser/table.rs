@@ -110,7 +110,7 @@ pub(super) fn cell_text(
     row.col(|ui| {
         // 放 Label 消耗 layout 空间
         ui.add(
-            egui::Label::new(egui::RichText::new(s).size(crate::scaling::scaled_font(
+            egui::Label::new(egui::RichText::new(&s).size(crate::scaling::scaled_font(
                 ui.ctx(),
                 crate::theme::SMALL_FONT,
             )))
@@ -120,6 +120,7 @@ pub(super) fn cell_text(
         let cell_rect = ui.max_rect();
         let id = ui.scope_id().with("cell").with(row_idx);
         let resp = ui.interact(cell_rect, id, egui::Sense::click());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Cell, true, s.clone()));
         if resp.clicked() {
             ui.ctx()
                 .memory_mut(|m| m.data.insert_temp(click_key, row_idx));
@@ -142,15 +143,18 @@ pub(super) fn cell_position(
     click_key: egui::Id,
 ) {
     row.col(|ui| {
+        let text = bar_lookup.format(tick);
         ui.add(
-            egui::Label::new(egui::RichText::new(bar_lookup.format(tick)).size(
-                crate::scaling::scaled_font(ui.ctx(), crate::theme::SMALL_FONT),
-            ))
+            egui::Label::new(egui::RichText::new(&text).size(crate::scaling::scaled_font(
+                ui.ctx(),
+                crate::theme::SMALL_FONT,
+            )))
             .selectable(false),
         );
         let cell_rect = ui.max_rect();
         let id = ui.scope_id().with("poscell").with(row_idx);
         let resp = ui.interact(cell_rect, id, egui::Sense::click());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Cell, true, text.clone()));
         crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.eb.cell_position"));
         if resp.clicked() {
             ui.ctx()
@@ -206,6 +210,13 @@ pub(super) fn cell_row_header(
         let cell_rect = ui.max_rect();
         let id = ui.scope_id().with("rowhdr").with(row_idx);
         let resp = ui.interact(cell_rect, id, egui::Sense::click());
+        resp.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::Role::RowHeader,
+                true,
+                format!("#{}", page_start + row_idx + 1),
+            )
+        });
         // 选中行提示 Delete 删除，未选中提示多选/右键编辑。
         let row_hint = if is_selected {
             t!("hint.eb.delete_key")
@@ -415,7 +426,7 @@ pub(super) fn cell_editable(
     let s: String = text.into();
     row.col(|ui| {
         ui.add(
-            egui::Label::new(egui::RichText::new(s).size(crate::scaling::scaled_font(
+            egui::Label::new(egui::RichText::new(&s).size(crate::scaling::scaled_font(
                 ui.ctx(),
                 crate::theme::SMALL_FONT,
             )))
@@ -424,6 +435,7 @@ pub(super) fn cell_editable(
         let cell_rect = ui.max_rect();
         let id = ui.scope_id().with("cell").with(row_idx);
         let resp = ui.interact(cell_rect, id, egui::Sense::click());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Cell, true, s.clone()));
         crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.eb.cell_editable"));
         if resp.clicked() {
             ui.ctx()
