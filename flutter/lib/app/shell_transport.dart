@@ -263,6 +263,7 @@ mixin _ShellTransport on _ShellBase {
   ///
   /// 拍号分段换算统一由 Rust 完成（与桌面 `format_tick_bar_beat_with_time_sig`
   /// 同一实现），Dart 不再自算，避免两边 bar 号漂移。
+  @override
   String _fmtBarBeat(double tick, double ppq) {
     final ptr = rust.barBeatText(tick);
     if (ptr == ffi.nullptr) {

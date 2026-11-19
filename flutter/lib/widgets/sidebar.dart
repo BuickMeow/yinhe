@@ -14,6 +14,7 @@ class Sidebar extends StatelessWidget {
     required this.onNewProject,
     required this.onOpenFile,
     required this.onImportMidi,
+    required this.onEventList,
     required this.onSaveAs,
     required this.onProjectSettings,
     required this.onExportAudio,
@@ -29,6 +30,7 @@ class Sidebar extends StatelessWidget {
   final VoidCallback onNewProject;
   final VoidCallback onOpenFile;
   final VoidCallback onImportMidi;
+  final VoidCallback onEventList;
   final VoidCallback onSaveAs;
   final VoidCallback onProjectSettings;
   final VoidCallback onExportAudio;
@@ -61,6 +63,7 @@ class Sidebar extends StatelessWidget {
                     L10n.isZh ? '导入 MIDI' : 'Import MIDI',
                     onImportMidi,
                   ),
+                  _item(Icons.event_note, l.eventList, onEventList),
                   _item(Icons.history, l.recentFiles, onRecentFiles),
                   _item(Icons.save_as_outlined, l.saveAs, onSaveAs),
                   _item(Icons.tune, l.projectSettings, onProjectSettings),

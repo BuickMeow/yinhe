@@ -233,6 +233,8 @@ mixin _ShellBuild on _ShellBase {
           onOpenFile: () => _runFromSidebar(() => unawaited(_pickMidi())),
           onImportMidi: () =>
               _runFromSidebar(() => unawaited(_pickImportMidi())),
+          onEventList: () =>
+              _runFromSidebar(() => _showEventList(_activeTrack ?? -1)),
           onSaveAs: () =>
               _runFromSidebar(() => unawaited(_saveProject(saveAs: true))),
           onProjectSettings: () => _runFromSidebar(_openProjectSettings),
@@ -402,31 +404,74 @@ mixin _ShellBuild on _ShellBase {
                                             right: 0,
                                             top: contentTop,
                                             bottom: 0,
-                                            child: GestureDetector(
-                                              behavior: HitTestBehavior.opaque,
-                                              onTapUp: _handleTapUp,
-                                              onLongPressStart:
-                                                  _handleLongPressStart,
-                                              onLongPressMoveUpdate:
-                                                  _handleLongPressMove,
-                                              onLongPressEnd:
-                                                  _handleLongPressEnd,
-                                              onScaleStart: _handleScaleStart,
-                                              onScaleUpdate: _handleScaleUpdate,
-                                              onScaleEnd: _handleScaleEnd,
-                                              child: Listener(
-                                                behavior:
-                                                    HitTestBehavior.opaque,
-                                                onPointerDown:
-                                                    _handlePointerDown,
-                                                onPointerMove:
-                                                    _handlePointerMove,
-                                                onPointerUp: _handlePointerUp,
-                                                onPointerCancel:
-                                                    _handlePointerCancel,
-                                                onPointerSignal:
-                                                    _handlePointerSignal,
-                                                child: Texture(textureId: id),
+                                            child: Semantics(
+                                              container: true,
+                                              label: _viewMode == kViewPianoroll
+                                                  ? (L10n.isZh
+                                                        ? '钢琴卷帘画布'
+                                                        : 'Piano roll canvas')
+                                                  : (L10n.isZh
+                                                        ? '编曲画布'
+                                                        : 'Arrangement canvas'),
+                                              // 画布是 GPU 纹理，逐音符语义不可行；给读屏
+                                              // 提供几个安全动作，而不是让它双击画布中心
+                                              // 误建音符。ExcludeSemantics 同时移除
+                                              // GestureDetector 自动生成的 tap/longPress。
+                                              customSemanticsActions:
+                                                  <
+                                                    CustomSemanticsAction,
+                                                    VoidCallback
+                                                  >{
+                                                    CustomSemanticsAction(
+                                                      label: L10n.isZh
+                                                          ? '朗读位置与选区'
+                                                          : 'Read position and selection',
+                                                    ): _announceCanvasState,
+                                                    CustomSemanticsAction(
+                                                      label: l.eventList,
+                                                    ): () => _showEventList(
+                                                      _activeTrack ?? -1,
+                                                    ),
+                                                    CustomSemanticsAction(
+                                                      label: L10n.isZh
+                                                          ? '播放或暂停'
+                                                          : 'Play or pause',
+                                                    ): _togglePlay,
+                                                  },
+                                              child: ExcludeSemantics(
+                                                child: GestureDetector(
+                                                  behavior:
+                                                      HitTestBehavior.opaque,
+                                                  onTapUp: _handleTapUp,
+                                                  onLongPressStart:
+                                                      _handleLongPressStart,
+                                                  onLongPressMoveUpdate:
+                                                      _handleLongPressMove,
+                                                  onLongPressEnd:
+                                                      _handleLongPressEnd,
+                                                  onScaleStart:
+                                                      _handleScaleStart,
+                                                  onScaleUpdate:
+                                                      _handleScaleUpdate,
+                                                  onScaleEnd: _handleScaleEnd,
+                                                  child: Listener(
+                                                    behavior:
+                                                        HitTestBehavior.opaque,
+                                                    onPointerDown:
+                                                        _handlePointerDown,
+                                                    onPointerMove:
+                                                        _handlePointerMove,
+                                                    onPointerUp:
+                                                        _handlePointerUp,
+                                                    onPointerCancel:
+                                                        _handlePointerCancel,
+                                                    onPointerSignal:
+                                                        _handlePointerSignal,
+                                                    child: Texture(
+                                                      textureId: id,
+                                                    ),
+                                                  ),
+                                                ),
                                               ),
                                             ),
                                           ),

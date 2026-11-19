@@ -6,6 +6,7 @@ import 'package:ffi/ffi.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import '../core/ffi.dart' as rust;
@@ -489,6 +490,9 @@ abstract class _ShellBase extends State<StudioShell>
   Future<void> _exportMidi();
   void _flashSaved();
   String _fmtBpm(double v);
+  String _fmtBarBeat(double tick, double ppq);
+  void _announceCanvasState();
+  void _showEventList(int track);
   String _formatEditTick(double tick);
   void _handlePointerDown(PointerDownEvent e);
   void _handlePointerMove(PointerMoveEvent e);

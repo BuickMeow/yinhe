@@ -311,6 +311,7 @@ mixin _ShellMenus on _ShellBase {
   }
 
   /// 打开事件列表（音符/自动化/全局事件穿插）。
+  @override
   void _showEventList(int track) {
     _resetInteraction();
     showEventListDialog(
@@ -319,6 +320,25 @@ mixin _ShellMenus on _ShellBase {
       initialTrack: track,
       onJump: _jumpToEvent,
       onChanged: _refreshDocumentMeta,
+    );
+  }
+
+  /// 读屏自定义动作：朗读播放头与选区。
+  ///
+  /// 画布不暴露逐音符节点；这是读屏用户确认「现在在哪、选了什么」的最低成本路径。
+  @override
+  void _announceCanvasState() {
+    final pos = _fmtBarBeat(_playhead.value, _ppq);
+    final range = rust.selectionRange();
+    final text = range == null
+        ? (L10n.isZh ? '位置 $pos，无选区' : 'Position $pos, no selection')
+        : (L10n.isZh
+              ? '位置 $pos，选区 ${_fmtBarBeat(range.$1, _ppq)} 到 ${_fmtBarBeat(range.$2, _ppq)}'
+              : 'Position $pos, selection ${_fmtBarBeat(range.$1, _ppq)} to ${_fmtBarBeat(range.$2, _ppq)}');
+    SemanticsService.sendAnnouncement(
+      View.of(context),
+      text,
+      Directionality.of(context),
     );
   }
 
