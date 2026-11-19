@@ -54,8 +54,10 @@ impl Document {
                         if let Some(node) = self.mixer.track_node_mut(id) {
                             node.strip = source.strip;
                             node.inserts = source.inserts.clone();
-                            node.output = source.output;
                         }
+                        // 走统一入口：改主输出时同步 Master send 的存在性。
+                        self.mixer
+                            .set_node_output(yinhe_types::ChannelId::Lc(id), source.output);
                         Arc::make_mut(track).lc = Some(id);
                     }
                     if let Some(lc) = track.lc {
@@ -202,8 +204,10 @@ impl Document {
         if let Some(node) = self.mixer.track_node_mut(id) {
             node.strip = source.strip;
             node.inserts = source.inserts.clone();
-            node.output = source.output;
         }
+        // 走统一入口：改主输出时同步 Master send 的存在性。
+        self.mixer
+            .set_node_output(yinhe_types::ChannelId::Lc(id), source.output);
         {
             let model = Arc::make_mut(&mut self.data.model);
             let track = Arc::make_mut(&mut model.tracks[track_idx]);
@@ -272,8 +276,10 @@ impl Document {
             if let Some(node) = self.mixer.track_node_mut(id) {
                 node.strip = source.strip;
                 node.inserts = source.inserts.clone();
-                node.output = source.output;
             }
+            // 走统一入口：改主输出时同步 Master send 的存在性。
+            self.mixer
+                .set_node_output(yinhe_types::ChannelId::Lc(id), source.output);
             let model = Arc::make_mut(&mut self.data.model);
             if let Some(track) = model.tracks.get_mut(idx) {
                 let track = Arc::make_mut(track);
