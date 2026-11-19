@@ -277,6 +277,43 @@ pub(super) fn draw_track_row(
     let text_x = badge_rect.max.x + 6.0;
     let track_num_text = format!("{:03}", ti.index);
 
+    // 轨道行的只读语义节点：不参与命中/焦点，只给读屏和 Agent 一个可导航
+    // 的行级摘要。直接写 AccessKit 节点而不是 `ui.interact`，避免影响现有
+    // 指针拖拽/框选；可见行才注册，仍保持 O(可见行数)。
+    let row_key = tracks
+        .get(idx)
+        .map(|track| track.uuid.as_str())
+        .unwrap_or("conductor");
+    let row_a11y_id = ui.make_persistent_id(("track_row_a11y", row_key));
+    let audibility = track_overrides
+        .get(idx)
+        .map(|o| o.audibility())
+        .unwrap_or_default();
+    let muted = audibility.is_muted();
+    let soloed = audibility.is_soloed();
+    let mut row_label = format!("#{:03} {}", ti.index, ti.name);
+    if muted {
+        row_label.push_str(&format!(" · {}", t!("mix.mute")));
+    }
+    if soloed {
+        row_label.push_str(&format!(" · {}", t!("mix.solo")));
+    }
+    row_label.push_str(&format!(
+        " · {} {}",
+        ti.note_count,
+        t!("event_browser.title.notes")
+    ));
+    ui.ctx().accesskit_node_builder(row_a11y_id, |node| {
+        node.set_role(egui::Role::ListItem);
+        node.set_label(row_label);
+        node.set_bounds(egui::accesskit::Rect {
+            x0: row_rect.min.x.into(),
+            y0: row_rect.min.y.into(),
+            x1: row_rect.max.x.into(),
+            y1: row_rect.max.y.into(),
+        });
+    });
+
     if show_details {
         let font = detail_font(lh);
 

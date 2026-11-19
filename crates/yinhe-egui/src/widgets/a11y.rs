@@ -56,6 +56,57 @@ pub(crate) fn paint_focus_ring(ui: &egui::Ui, rect: egui::Rect, radius: f32) {
     );
 }
 
+/// 注册一个只读语义节点（不参与命中/焦点）。
+///
+/// 用于手绘、无法用 `ui.interact` 的区域：标题栏文档 tab、窗口按钮、
+/// 轨道行摘要。`rect` 用逻辑坐标，读屏可以 hit-test/滚动到它。
+pub(crate) fn node(
+    ui: &egui::Ui,
+    id: egui::Id,
+    role: egui::Role,
+    label: impl Into<String>,
+    rect: egui::Rect,
+) {
+    let label = label.into();
+    ui.ctx().accesskit_node_builder(id, |node| {
+        node.set_role(role);
+        node.set_label(label);
+        node.set_bounds(egui::accesskit::Rect {
+            x0: rect.min.x.into(),
+            y0: rect.min.y.into(),
+            x1: rect.max.x.into(),
+            y1: rect.max.y.into(),
+        });
+    });
+}
+
+/// 带选中状态的只读语义节点（标题栏文档 tab 等）。
+pub(crate) fn node_selected(
+    ui: &egui::Ui,
+    id: egui::Id,
+    role: egui::Role,
+    label: impl Into<String>,
+    rect: egui::Rect,
+    selected: bool,
+) {
+    let label = label.into();
+    ui.ctx().accesskit_node_builder(id, |node| {
+        node.set_role(role);
+        node.set_label(label);
+        node.set_bounds(egui::accesskit::Rect {
+            x0: rect.min.x.into(),
+            y0: rect.min.y.into(),
+            x1: rect.max.x.into(),
+            y1: rect.max.y.into(),
+        });
+        node.set_toggled(if selected {
+            egui::accesskit::Toggled::True
+        } else {
+            egui::accesskit::Toggled::False
+        });
+    });
+}
+
 /// 给自绘输入控件（旋钮等滑块）注册可读名称。
 pub(crate) fn name_slider(resp: &egui::Response, name: impl Into<String>) {
     let name = name.into();

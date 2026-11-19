@@ -107,6 +107,32 @@ pub(crate) fn show(
             // 应用名「Yinhe」可点击矩形（打开欢迎窗口）
             let title_rect = paint::title_rect(&painter, &m);
 
+            // 手绘文档 tab / 应用标题的只读语义节点。标题栏没有 `ui.interact`
+            // 的 tab，读屏/Agent 只能靠这里找到「当前文档」。
+            if n_docs > 0 && active_rect != egui::Rect::NOTHING {
+                let doc = &documents[active_idx];
+                let label = if doc.file_name.is_empty() {
+                    t!("common.no_document").to_string()
+                } else {
+                    doc.file_name.clone()
+                };
+                crate::widgets::a11y::node_selected(
+                    ui,
+                    ui.make_persistent_id(("a11y_doc_tab", doc.doc_id)),
+                    egui::Role::Tab,
+                    label,
+                    active_rect,
+                    true,
+                );
+            }
+            crate::widgets::a11y::node(
+                ui,
+                ui.make_persistent_id("a11y_welcome_button"),
+                egui::Role::Button,
+                "Yinhe",
+                title_rect,
+            );
+
             // ── 歌曲标题右侧的通知条（相对于当前工程的操作反馈）──
             // 右界停在中央应用名左侧，避免盖住「Yinhe」欢迎入口。
             let notif_left = if n_docs > 0 {
@@ -401,6 +427,28 @@ pub(crate) fn show(
             {
                 let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
                 buttons::paint_window_buttons(ui, &win_btn_rects, maximized);
+                // 手绘窗口按钮也要能被读屏找到；macOS 用系统红绿灯，不需要。
+                crate::widgets::a11y::node(
+                    ui,
+                    ui.make_persistent_id("a11y_win_close"),
+                    egui::Role::Button,
+                    t!("hint.title_bar.win_close"),
+                    win_btn_rects.0,
+                );
+                crate::widgets::a11y::node(
+                    ui,
+                    ui.make_persistent_id("a11y_win_max"),
+                    egui::Role::Button,
+                    t!("hint.title_bar.win_max"),
+                    win_btn_rects.1,
+                );
+                crate::widgets::a11y::node(
+                    ui,
+                    ui.make_persistent_id("a11y_win_min"),
+                    egui::Role::Button,
+                    t!("hint.title_bar.win_min"),
+                    win_btn_rects.2,
+                );
             }
 
             // Double-click blank area to toggle maximize/restore
@@ -772,5 +820,16 @@ mod tests {
         // 「Yinhe」居中于标题栏：1200 宽窗口 → 中心 x = 600
         click_at(&mut h, egui::pos2(600.0, 16.0), 2.0);
         assert_eq!(h.state().action, Some("open_welcome"));
+    }
+
+    /// 回归：手绘文档 tab 必须注册为 AccessKit Tab，读屏/Agent 才能找到
+    /// 「当前文档」。标题栏没有真实的 `ui.interact` tab。
+    #[test]
+    fn doc_tab_is_accessible_tab() {
+        let docs = vec![yinhe_test_helpers::make_test_document()];
+        let mut h = make_harness(&docs, &[]);
+        h.step();
+        h.step();
+        h.get_by_role(egui::Role::Tab);
     }
 }
