@@ -32,6 +32,7 @@ pub fn build_render_job(
     track_colors: &[[f32; 4]],
     min_border_width: f32,
     note_outline: bool,
+    velocity_fill_mode: u32,
 ) -> PianorollRenderJob {
     let t = std::time::Instant::now();
 
@@ -115,6 +116,8 @@ pub fn build_render_job(
         fold_root: 0,
         fold_mask: view.layout.fold_mask as u32,
         fold_thin: yinhe_types::THIN_RATIO,
+        // 力度显示方式：0=底部向上，1=从左向右，2=深浅颜色。
+        velocity_fill_mode,
         // ghost 动画偏移由移动端渲染前写入（build_render_job 默认 0）。
         ..Default::default()
     };

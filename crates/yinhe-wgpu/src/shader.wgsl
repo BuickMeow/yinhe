@@ -73,7 +73,7 @@ struct Uniforms {
     fold_root: u32,
     fold_mask: u32,
     fold_thin: f32,
-    fold_pad0: f32,
+    velocity_fill_mode: u32, // 0=bottom-up, 1=left-to-right, 2=color fade
     fold_pad1: f32,
     fold_pad2: f32,
     fold_pad3: f32,
@@ -374,7 +374,14 @@ fn vs_main(
     }
     base_color = to_target_space(base_color);
     out.color = base_color;
-    out.fill_color = base_color.rgb; // 非音符管线不做选中/力度着色
+    let pr_note = u.mode == 1u && vel > 0u;
+    if pr_note && u.velocity_fill_mode == 2u {
+        let fade_target = select(vec3<f32>(1.0), vec3<f32>(0.0), u.dark_theme != 0u);
+        let fade = (1.0 - f32(vel) / 127.0) * MAX_FILL_FADE;
+        out.fill_color = mix(base_color.rgb, fade_target, fade);
+    } else {
+        out.fill_color = base_color.rgb;
+    }
 
     // Unpack props from packed u32 (2x f16), or compute for PR notes
     let props = instance.packed.y;
@@ -389,8 +396,12 @@ fn vs_main(
 
     out.radius = radius;
     out.border_width = border_width;
-    // 旧 32B PR 路径（若仍被调用）也按横向力度填充；其他模式保持整块。
-    out.fill_ratio = select(1.0, clamp(f32(vel) / 127.0, 0.0, 1.0), u.mode == 1u && vel > 0u);
+    // 旧 32B PR 路径（若仍被调用）也按当前力度模式；其他模式保持整块。
+    out.fill_ratio = select(
+        1.0,
+        clamp(f32(vel) / 127.0, 0.0, 1.0),
+        pr_note && u.velocity_fill_mode != 2u,
+    );
 
     out.uv = uv[vertex_index];
     out.half_size = vec2<f32>(pixel_w, pixel_h) * 0.5;
@@ -558,23 +569,30 @@ fn note_geometry(
     out.color = base_color;
 
     // 填充色：仅 PR（mode==1）按选中/力度变化；AR 等其它模式保持原色。
-    // 横向 PR：力度由 fill_ratio 的高度表达，填充色保持稳定；选中仍用高对比色。
-    // 纵向 PR：保留旧的整块颜色淡化（时间轴在 Y，按高度填充语义不成立）。
+    // 几何填充模式：力度由 fill_ratio 表达，填充色保持稳定；
+    // 深浅颜色模式：保留最初的整块颜色淡化。
     let fade_target = select(vec3<f32>(1.0), vec3<f32>(0.0), u.dark_theme != 0u);
     let selected_target = select(vec3<f32>(0.0), vec3<f32>(1.0), u.dark_theme != 0u);
-    if u.mode == 1u && selected {
+    // 纵向 PR 保持原来的整块颜色淡化：纵向音符的长边是时间长度，
+    // 按长边填充会把力度和 gate 混在一起。
+    let geometry_fill = u.mode == 1u && u.orientation == 0u && u.velocity_fill_mode != 2u;
+    if u.mode == 1u && (u.velocity_fill_mode == 2u || u.orientation == 1u) {
+        if selected {
+            out.fill_color = mix(base_color.rgb, selected_target, SELECTED_CONTRAST);
+        } else {
+            let fade = (1.0 - f32(vel) / 127.0) * MAX_FILL_FADE;
+            out.fill_color = mix(base_color.rgb, fade_target, fade);
+        }
+    } else if u.mode == 1u && selected {
         out.fill_color = mix(base_color.rgb, selected_target, SELECTED_CONTRAST);
-    } else if u.mode == 1u && u.orientation == 0u {
-        out.fill_color = base_color.rgb;
     } else if u.mode == 1u {
-        let fade = (1.0 - f32(vel) / 127.0) * MAX_FILL_FADE;
-        out.fill_color = mix(base_color.rgb, fade_target, fade);
+        out.fill_color = base_color.rgb;
     } else {
         out.fill_color = base_color.rgb;
     }
 
-    // 横向 PR：力度 0..127 → 填充高度 0..1；其余路径保持整块填充。
-    if u.mode == 1u && u.orientation == 0u {
+    // 几何填充只用于横向 PR；纵向 PR / 深浅颜色模式保持整块。
+    if geometry_fill {
         out.fill_ratio = clamp(f32(vel) / 127.0, 0.0, 1.0);
     } else {
         out.fill_ratio = 1.0;
@@ -733,13 +751,26 @@ fn composite_border_fill(
     return vec4(rgb, base_alpha * total_a);
 }
 
-/// PR 横向的力度填充：把内部矩形按 `fill_ratio` 从底部往上切分。
-/// `fill_ratio >= 1` 直接返回原 inner_a，保证 AR/decor/纵向 PR 行为不变。
-fn note_fill_alpha(inner_a: f32, inner_half: vec2<f32>, p: vec2<f32>, fill_ratio: f32) -> f32 {
-    if fill_ratio >= 1.0 {
+/// PR 力度的几何填充：0=从底部向上，1=从左向右。
+/// `fill_ratio >= 1` 或 `mode == 2`（深浅颜色）直接返回原 inner_a。
+fn note_fill_alpha(
+    inner_a: f32,
+    inner_half: vec2<f32>,
+    p: vec2<f32>,
+    fill_ratio: f32,
+    velocity_fill_mode: u32,
+) -> f32 {
+    if fill_ratio >= 1.0 || velocity_fill_mode == 2u {
         return inner_a;
     }
     let ratio = clamp(fill_ratio, 0.0, 1.0);
+    if velocity_fill_mode == 1u {
+        // 从左向右：filled 区域是 [-inner_half.x, fill_right]。
+        let fill_right = -inner_half.x + 2.0 * inner_half.x * ratio;
+        let fill_edge = smoothstep(-0.5, 0.5, fill_right - p.x);
+        return inner_a * fill_edge;
+    }
+    // 从底部向上：filled 区域是 [fill_top, inner_half.y]。
     let fill_top = inner_half.y - 2.0 * inner_half.y * ratio;
     let fill_edge = 1.0 - smoothstep(-0.5, 0.5, fill_top - p.y);
     return inner_a * fill_edge;
@@ -755,9 +786,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         base_color.rgb * BORDER_DARKEN_FACTOR,
         in.border_width > 0.0,
     );
-    // 横向 PR：未填充体也是一块可见面积，不能沿用“无描边就用填充色”的退化，
-    // 否则关闭 note_outline 后力度高度会完全看不见。
-    if u.mode == 1u && u.orientation == 0u {
+    // 几何填充模式：未填充体也是一块可见面积，不能沿用“无描边就用填充色”
+    // 的退化，否则关闭 note_outline 后力度高度会完全看不见。
+    if u.mode == 1u && u.orientation == 0u && u.velocity_fill_mode != 2u {
         border_color = base_color.rgb * BORDER_DARKEN_FACTOR;
     }
 
@@ -775,7 +806,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         if inner_half.x > 0.0 && inner_half.y > 0.0 {
             let d_inner = max(abs(p.x) - inner_half.x, abs(p.y) - inner_half.y);
             let inner_a = 1.0 - smoothstep(-0.5, 0.5, d_inner);
-            fill_a = note_fill_alpha(inner_a, inner_half, p, in.fill_ratio);
+            fill_a = note_fill_alpha(inner_a, inner_half, p, in.fill_ratio, u.velocity_fill_mode);
             border_a = outer_a - fill_a;
         }
 
@@ -795,7 +826,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if inner_half.x > 0.0 && inner_half.y > 0.0 {
         let d_inner = sd_rounded_box(p, inner_half, inner_r);
         let inner_a = 1.0 - smoothstep(-0.5, 0.5, d_inner);
-        fill_a = note_fill_alpha(inner_a, inner_half, p, in.fill_ratio);
+        fill_a = note_fill_alpha(inner_a, inner_half, p, in.fill_ratio, u.velocity_fill_mode);
         border_a = outer_a - fill_a;
     }
 

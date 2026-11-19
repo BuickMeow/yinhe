@@ -2066,6 +2066,7 @@ fn cull_render_pixel_check() {
             &track_colors,
             0.0,
             false,
+            0,
         );
         renderer.upload_uniforms(job.uniforms);
         renderer.upload_track_colors(&job.track_colors);
@@ -2555,6 +2556,7 @@ fn cull_draw_c_lo_nonzero_minimal() {
             &track_colors,
             0.0,
             false,
+            0,
         );
         renderer.upload_uniforms(job.uniforms);
         renderer.upload_track_colors(&job.track_colors);
@@ -2816,6 +2818,7 @@ fn note_boundary_no_gap_large_tick() {
             &[[0.2, 0.7, 1.0, 1.0]],
             1.0,
             false,
+            0,
         );
         renderer.upload_uniforms(job.uniforms);
         renderer.upload_track_colors(&job.track_colors);

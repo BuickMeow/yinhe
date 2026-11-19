@@ -69,10 +69,10 @@ fn read_rgba(
     out
 }
 
-/// 力度 64：音符上半部分是暗色未填充体，下半部分是轨道色填充；
-/// 力度 127：整个内部都是轨道色。
+/// 三种力度显示方式都必须真的改变画出来的像素：
+/// 0=底部向上，1=从左向右，2=深浅颜色。
 #[test]
-fn velocity_fill_height_changes_pixels() {
+fn velocity_fill_modes_change_pixels() {
     let Some((device, queue)) = headless_device() else {
         return;
     };
@@ -97,7 +97,7 @@ fn velocity_fill_height_changes_pixels() {
     let target_view = target.create_view(&Default::default());
 
     // key 60 行落在 y∈[100,120)，key 62 行落在 y∈[60,80)。
-    let uniforms = Uniforms {
+    let mut uniforms = Uniforms {
         width: width as f32,
         height: height as f32,
         scroll_x: 0.0,
@@ -111,7 +111,6 @@ fn velocity_fill_height_changes_pixels() {
         ..Default::default()
     };
     let track_color = [0.2, 0.7, 1.0, 1.0];
-    renderer.upload_uniforms(uniforms);
     renderer.upload_track_colors(&[track_color]);
     renderer.upload_selection(&SelectionUniform {
         rects: [[0; 4]; MAX_SEL_RECTS * 2],
@@ -130,27 +129,61 @@ fn velocity_fill_height_changes_pixels() {
         });
     });
 
-    let mut enc = device.create_command_encoder(&Default::default());
-    renderer.draw(&mut enc, &target_view, width, height);
-    queue.submit([enc.finish()]);
+    let mut render_mode = |mode: u32| {
+        uniforms.velocity_fill_mode = mode;
+        renderer.upload_uniforms(uniforms);
+        let mut enc = device.create_command_encoder(&Default::default());
+        renderer.draw(&mut enc, &target_view, width, height);
+        queue.submit([enc.finish()]);
+        read_rgba(&device, &queue, &target, width, height)
+    };
 
-    let pixels = read_rgba(&device, &queue, &target, width, height);
+    // 0 = 底部向上：力度 64 的上半暗、下半亮；力度 127 整个内部都亮。
+    let pixels = render_mode(0);
     let at = |x: u32, y: u32| pixels[(y * width + x) as usize];
-
     let mid_top = at(100, 105);
     let mid_bottom = at(100, 115);
     let full_top = at(100, 65);
-
     assert!(
         mid_bottom[2] > 100,
-        "力度 64 的下半部分应画出来，实际 {mid_bottom:?}"
+        "底部向上：力度 64 的下半部分应画出来，实际 {mid_bottom:?}"
     );
     assert!(
         mid_bottom[0] > mid_top[0] + 10 && mid_bottom[2] > mid_top[2] + 40,
-        "下半部分应明显亮于上半部分：top={mid_top:?} bottom={mid_bottom:?}"
+        "底部向上：下半部分应明显亮于上半部分：top={mid_top:?} bottom={mid_bottom:?}"
     );
     assert!(
         full_top[2] > mid_top[2] + 40,
-        "力度 127 的顶部也应是填充色：mid_top={mid_top:?} full_top={full_top:?}"
+        "底部向上：力度 127 的顶部也应是填充色：mid_top={mid_top:?} full_top={full_top:?}"
+    );
+
+    // 1 = 从左向右：力度 64 的左半亮、右半暗；力度 127 左右都亮。
+    let pixels = render_mode(1);
+    let at = |x: u32, y: u32| pixels[(y * width + x) as usize];
+    let mid_left = at(50, 110);
+    let mid_right = at(150, 110);
+    let full_left = at(50, 70);
+    let full_right = at(150, 70);
+    assert!(
+        mid_left[0] > mid_right[0] + 10 && mid_left[2] > mid_right[2] + 40,
+        "从左向右：左半部分应明显亮于右半部分：left={mid_left:?} right={mid_right:?}"
+    );
+    assert!(
+        full_left[2] > 150 && full_right[2] > 150,
+        "从左向右：力度 127 的左右都应是填充色：left={full_left:?} right={full_right:?}"
+    );
+
+    // 2 = 深浅颜色：力度只改整块颜色，不再有高度分界。
+    let pixels = render_mode(2);
+    let at = |x: u32, y: u32| pixels[(y * width + x) as usize];
+    let mid_top = at(100, 105);
+    let mid_bottom = at(100, 115);
+    assert!(
+        mid_top[2] > 150 && mid_bottom[2] > 150,
+        "深浅颜色：力度 64 的上下都应整体变浅，不能退回暗色未填充体：top={mid_top:?} bottom={mid_bottom:?}"
+    );
+    assert!(
+        mid_top[0].abs_diff(mid_bottom[0]) <= 2,
+        "深浅颜色：力度 64 的上下颜色应基本一致：top={mid_top:?} bottom={mid_bottom:?}"
     );
 }

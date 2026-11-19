@@ -25,7 +25,7 @@ pub(crate) struct GpuOutput {
 /// 参数覆盖任务要求的全集：`pianoroll, render_ctx, render_thread, view, midi,
 /// midi_arc, selected, track_visible, hidden_notes, track_colors, revision,
 /// note_revisions, last_cull_revision..., ghost_notes, w, h,
-/// min_border_width, note_outline, use_gpu_cull, perf_on`。
+/// min_border_width, note_outline, velocity_fill_mode, use_gpu_cull, perf_on`。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn upload_and_prepare(
     pianoroll: &mut yinhe_wgpu::InstanceRenderer,
@@ -62,6 +62,7 @@ pub(crate) fn upload_and_prepare(
     h: u32,
     min_border_width: f32,
     note_outline: bool,
+    velocity_fill_mode: u32,
     use_gpu_cull: bool,
     lod_enabled: bool,
     perf_on: bool,
@@ -136,6 +137,7 @@ pub(crate) fn upload_and_prepare(
             track_colors,
             min_border_width,
             note_outline,
+            velocity_fill_mode,
         );
         job.uniforms.exclude_mask = exclude_mask;
         job.exclude_table = exclude_table.to_vec();
@@ -174,6 +176,7 @@ pub(crate) fn upload_and_prepare(
             track_colors,
             min_border_width,
             note_outline,
+            velocity_fill_mode,
         );
         job.uniforms.exclude_mask = exclude_mask;
         job.exclude_table = exclude_table.to_vec();

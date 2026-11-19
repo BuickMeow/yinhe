@@ -57,7 +57,7 @@ struct Uniforms {
     fold_root: u32,
     fold_mask: u32,
     fold_thin: f32,
-    fold_pad0: f32,
+    velocity_fill_mode: u32, // 0=bottom-up, 1=left-to-right, 2=color fade
     fold_pad1: f32,
     fold_pad2: f32,
     fold_pad3: f32,

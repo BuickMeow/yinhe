@@ -825,6 +825,7 @@ mod tests {
             &track_colors,
             0.0,
             false,
+            0,
         );
         renderer.upload_uniforms(job.uniforms);
         renderer.upload_track_colors(&job.track_colors);

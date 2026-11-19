@@ -86,6 +86,8 @@ pub fn show(
     min_border_width: f32,
     content_opacity: f32,
     note_outline: bool,
+    // 力度显示方式（`VelocityFillMode::shader_code`）。
+    velocity_fill_mode: u32,
     use_gpu_cull: bool,
     lod_enabled: bool,
     tempo_lane: &AutomationLane,
@@ -367,6 +369,7 @@ pub fn show(
         h,
         min_border_width,
         note_outline,
+        velocity_fill_mode,
         use_gpu_cull,
         lod_enabled,
         perf_on,

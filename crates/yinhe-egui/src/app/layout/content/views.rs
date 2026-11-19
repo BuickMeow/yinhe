@@ -490,6 +490,7 @@ impl App {
                     self.audio_settings.min_border_width,
                     crate::theme::CONTENT_OPACITY,
                     self.audio_settings.note_outline,
+                    self.audio_settings.velocity_fill_mode.shader_code(),
                     self.audio_settings.use_gpu_cull,
                     self.audio_settings.lod_enabled,
                     &doc.data.model.conductor.tempo,

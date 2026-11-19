@@ -59,8 +59,10 @@ pub struct Uniforms {
     pub fold_mask: u32,
     /// 调外音行高（相对调内一行的比例，0..1）。
     pub fold_thin: f32,
+    /// PR 力度显示方式：0=底部向上填充，1=从左向右填充，2=深浅颜色。
+    /// 编码见 `yinhe_editor_core::audio_settings::VelocityFillMode::shader_code`。
+    pub velocity_fill_mode: u32,
     /// 保持 uniform 结构 16 字节对齐（WGSL 同名字段）。
-    pub fold_pad0: f32,
     pub fold_pad1: f32,
     pub fold_pad2: f32,
     pub fold_pad3: f32,

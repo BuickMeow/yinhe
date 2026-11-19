@@ -94,6 +94,32 @@ fn default_ignore_velocity() -> u8 {
 
 pub use yinhe_types::{Interpolation, SynthEngine};
 
+/// PR 音符力度显示方式。
+///
+/// 编码会进入 GPU uniform（`velocity_fill_mode`），修改顺序必须同步 shader。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VelocityFillMode {
+    /// 从音符底部向上填充（默认）。
+    #[default]
+    BottomUp,
+    /// 从音符左侧向右填充。
+    LeftToRight,
+    /// 最初的方案：整块颜色按力度从浅到深。
+    ColorFade,
+}
+
+impl VelocityFillMode {
+    /// GPU uniform 编码：0=底部向上，1=从左向右，2=深浅颜色。
+    pub fn shader_code(self) -> u32 {
+        match self {
+            Self::BottomUp => 0,
+            Self::LeftToRight => 1,
+            Self::ColorFade => 2,
+        }
+    }
+}
+
 fn default_clip_enabled() -> bool {
     false
 }
@@ -126,6 +152,8 @@ pub struct AudioSettings {
     pub buffer_size: u32,
     pub automation_event_density: u32,
     pub note_outline: bool,
+    /// PR 音符力度显示方式：底部向上填充 / 从左向右填充 / 深浅颜色。
+    pub velocity_fill_mode: VelocityFillMode,
     pub allow_overlapping_notes: bool,
     pub overlap_blocked_behavior: OverlapBlockedBehavior,
     pub quick_delete_mode: QuickDeleteMode,
@@ -238,6 +266,7 @@ impl Default for AudioSettings {
             midi_export_dedup_overlaps: false,
             automation_event_density: 1,
             note_outline: true,
+            velocity_fill_mode: VelocityFillMode::BottomUp,
             allow_overlapping_notes: true,
             overlap_blocked_behavior: OverlapBlockedBehavior::default(),
             quick_delete_mode: QuickDeleteMode::default(),
@@ -308,6 +337,17 @@ mod tests {
             .remove("clip_enabled");
         let s: AudioSettings = serde_json::from_value(v).expect("old save without flag loads");
         assert!(!s.clip_enabled);
+    }
+
+    #[test]
+    fn velocity_fill_mode_defaults_to_bottom_up_for_old_saves() {
+        // 旧存档缺字段必须能反序列化，且默认 = 底部向上填充。
+        let mut v = serde_json::to_value(AudioSettings::default()).expect("serialize default");
+        v.as_object_mut()
+            .expect("settings serializes to object")
+            .remove("velocity_fill_mode");
+        let s: AudioSettings = serde_json::from_value(v).expect("old save without flag loads");
+        assert_eq!(s.velocity_fill_mode, VelocityFillMode::BottomUp);
     }
 
     #[test]

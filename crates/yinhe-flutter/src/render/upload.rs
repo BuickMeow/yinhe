@@ -132,7 +132,8 @@ pub(super) fn upload_pianoroll(
     // 从顶部栏切轨时它可能为空；这里把 active_track 并入渲染专用集合，
     // 不改文档里的真实选择集。
     let z_selected = z_order_track_set(track_selected, active_track);
-    let mut job = build_render_job(w as u32, h as u32, view, selection, &colors, 0.0, true);
+    // 移动端暂不跟随桌面端的力度显示设置：保持最初的深浅颜色。
+    let mut job = build_render_job(w as u32, h as u32, view, selection, &colors, 0.0, true, 2);
     job.uniforms.ghost_dx = preview_offset.0;
     job.uniforms.ghost_dy = preview_offset.1;
     t.renderer.upload_uniforms(job.uniforms);
