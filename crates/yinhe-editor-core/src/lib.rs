@@ -1,5 +1,4 @@
 pub mod audio_settings;
-pub mod automation_conflict;
 pub mod batch_ops;
 pub mod channel_alloc;
 pub mod chord;
