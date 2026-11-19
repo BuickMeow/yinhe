@@ -41,6 +41,8 @@ mixin _ShellInput on _ShellBase {
   /// 后续的 tap / long press / scale 全部交给 Flutter gesture arena。
   @override
   void _handlePointerDown(PointerDownEvent e) {
+    // 点击/触摸画布时把键盘焦点交给画布，外接键盘才能用 Space/撤销/保存。
+    _canvasFocus.requestFocus();
     final emptyBefore = _activePointers.isEmpty;
     _activePointers.add(e.pointer);
     _pointerPositions[e.pointer] = e.localPosition;

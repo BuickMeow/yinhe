@@ -282,6 +282,10 @@ abstract class _ShellBase extends State<StudioShell>
   late final ffi.Pointer<ffi.Int32> _statePtr;
 
   final ValueNotifier<double> _playhead = ValueNotifier<double>(-1);
+
+  /// 画布键盘焦点：只有画布获得焦点时才接管 Space/撤销/保存，
+  /// 不干扰对话框里的文本输入。
+  final FocusNode _canvasFocus = FocusNode(debugLabel: 'yinhe_canvas');
   final ValueNotifier<List<double>> _snap = ValueNotifier<List<double>>(
     List<double>.filled(SnapField.length, 0.0),
   );
@@ -581,6 +585,38 @@ abstract class _ShellBase extends State<StudioShell>
   void _togglePlay();
   int get _tool;
   void _updateTimecode();
+
+  /// 画布键盘快捷键：只在画布拥有焦点时生效，避免和文本输入/对话框抢键。
+  KeyEventResult _handleCanvasKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) {
+      return KeyEventResult.ignored;
+    }
+    final key = event.logicalKey;
+    final primary =
+        HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isMetaPressed;
+    if (key == LogicalKeyboardKey.space) {
+      _togglePlay();
+      return KeyEventResult.handled;
+    }
+    if (primary && key == LogicalKeyboardKey.keyZ) {
+      if (HardwareKeyboard.instance.isShiftPressed) {
+        _redoFromGesture();
+      } else {
+        _undoFromGesture();
+      }
+      return KeyEventResult.handled;
+    }
+    if (primary && key == LogicalKeyboardKey.keyS) {
+      unawaited(_saveProject(saveAs: false));
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.escape && _viewMode == kViewPianoroll) {
+      _setView(kViewArrangement);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
 }
 
 class _StudioShellState extends _ShellBase
@@ -763,6 +799,7 @@ class _StudioShellState extends _ShellBase
     _ticker.dispose();
     _timecodeText.dispose();
     _playhead.dispose();
+    _canvasFocus.dispose();
     _snap.dispose();
     _tracks.dispose();
     _dragFrom.dispose();
