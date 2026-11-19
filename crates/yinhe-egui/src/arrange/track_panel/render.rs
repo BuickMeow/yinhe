@@ -170,6 +170,7 @@ pub(super) fn draw_automation_row(
     if show_details {
         let key = (track_info[track].index, lane.target.clone());
         let st = am_ms.get(&key).copied().unwrap_or_default();
+        let audibility = st.audibility();
         let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
         let meter_left = meter_right - LEVEL_METER_W;
         // 自动化表：编辑/播放光标处该 lane 的值（基线依种类）。
@@ -195,13 +196,13 @@ pub(super) fn draw_automation_row(
         let resp = crate::widgets::audibility::dot(
             ui,
             dot_rect,
-            !st.mute,
+            audibility != yinhe_types::Audibility::Muted,
             egui::Id::unique(("am_audible", track, sub)),
         );
         crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.arrange.am_mute"));
         if resp.clicked() {
             let mut state = st;
-            state.set_audibility(if st.mute {
+            state.set_audibility(if audibility == yinhe_types::Audibility::Muted {
                 yinhe_types::Audibility::Normal
             } else {
                 yinhe_types::Audibility::Muted
