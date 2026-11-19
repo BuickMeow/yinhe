@@ -3,6 +3,8 @@
 //! 三/两个方块的中心与命中判定必须两边一致，否则同一选框在桌面和移动端
 //! 会出现“看得见但点不中”或“点中角落却触发变速”的偏差。
 
+use yinhe_types::MAX_KEY;
+
 /// gate 方块内缩后距离选框左缘的最小余量（像素），避免方块压住左缘。
 pub const GATE_MIN_MARGIN: f32 = 4.0;
 
@@ -34,6 +36,25 @@ pub struct SelHandleCenters {
     pub corner: (f32, f32),
     pub scale: (f32, f32),
     pub gate: Option<(f32, f32)>,
+}
+
+/// Riff 拖拽后的总选框：原选区 + 延伸范围。
+///
+/// 桌面和移动端共用同一套夹具，避免“预览框”和松手后的提交框各算一套。
+/// 横向延伸裁到 tick 0；纵向延伸按 key 上下界 clamp。
+pub fn riff_expanded_rect(
+    t0: f64,
+    t1: f64,
+    k0: u8,
+    k1: u8,
+    extent_x: i64,
+    extent_y: i64,
+) -> (f64, f64, u8, u8) {
+    let new_t0 = (t0 + extent_x.min(0) as f64).max(0.0);
+    let new_t1 = t1 + extent_x.max(0) as f64;
+    let new_k0 = (i64::from(k0) + extent_y.min(0)).clamp(0, i64::from(MAX_KEY)) as u8;
+    let new_k1 = (i64::from(k1) + extent_y.max(0)).clamp(0, i64::from(MAX_KEY)) as u8;
+    (new_t0, new_t1, new_k0, new_k1)
 }
 
 #[inline]
@@ -124,6 +145,25 @@ mod tests {
         assert_eq!(c.corner, (100.0, 200.0));
         assert_eq!(c.scale, (50.0, 200.0));
         assert_eq!(c.gate, Some((50.0, 160.0)));
+    }
+
+    #[test]
+    fn riff_expands_rect_on_both_axes_and_clamps() {
+        // 右/下延伸。
+        assert_eq!(
+            riff_expanded_rect(100.0, 200.0, 60, 70, 80, -3),
+            (100.0, 280.0, 57, 70)
+        );
+        // 左延伸不能越过 tick 0。
+        assert_eq!(
+            riff_expanded_rect(10.0, 20.0, 60, 70, -50, 4),
+            (0.0, 20.0, 60, 74)
+        );
+        // key 上下界 clamp。
+        assert_eq!(
+            riff_expanded_rect(0.0, 10.0, 0, 255, 0, -10),
+            (0.0, 10.0, 0, 255)
+        );
     }
 
     #[test]

@@ -349,6 +349,74 @@ fn selection_handle_drag_does_not_add_second_rect() {
     }
 }
 
+/// Riff 拖动时选框必须像新建选框一样实时扩大，而不是等松手才更新。
+#[test]
+fn riff_drag_previews_expanded_selection_live() {
+    let ctx = egui::Context::default();
+    let mut view = test_view();
+    view.viewport_h = 600.0;
+    let midi = make_midi(vec![]);
+    let mut selected = yinhe_core::Selection::default();
+    selected.add_rect_track(0, 480, 100, 110, 0, 0);
+    let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+    sel_rect.push_rect((0.0, 480.0, 100, 110), false);
+    let mut cursor_tick: Option<f64> = None;
+    let mut note_drag_delta: Option<(i64, i32, bool)> = None;
+    let mut note_resize_delta: Option<(yinhe_editor_core::ResizeSide, i64)> = None;
+    let mut selection_scale_delta: Option<u64> = None;
+    let mut riff_repeat: Option<(i64, i64)> = None;
+
+    macro_rules! run_frame {
+        ($raw:expr) => {
+            run_sel_frame_full(
+                &ctx,
+                $raw,
+                &mut view,
+                &midi,
+                &mut selected,
+                &mut cursor_tick,
+                &mut note_drag_delta,
+                &mut note_resize_delta,
+                &mut selection_scale_delta,
+                &mut riff_repeat,
+                &mut sel_rect,
+                &std::collections::HashSet::new(),
+                Some(0),
+            )
+        };
+    }
+
+    // 选框 (0..480, key 100..110)，右下角 Riff 方块在 (480,280)。
+    let press = egui::pos2(480.0, 280.0);
+    // y=299 落在 key 98 的行内；y=300 正好是行边界，`y_to_key` 会归到下一行。
+    let drag = egui::pos2(600.0, 299.0);
+    let _ = run_frame!(press_event(press));
+    let _ = run_frame!(drag_event(drag));
+
+    assert_eq!(
+        sel_rect.rects,
+        vec![(0.0, 480.0, 100, 110)],
+        "拖动中不能把预览写进正式选框"
+    );
+    assert_eq!(
+        sel_rect.effective_rects(),
+        vec![(0.0, 600.0, 98, 110)],
+        "拖动中选框应实时覆盖原选区 + 重复范围"
+    );
+
+    let out = run_frame!(release_event(drag));
+    assert_eq!(
+        out.riff_repeat,
+        Some((120, -2)),
+        "松手应提交横向 +120 tick、纵向 -2 key 的 Riff"
+    );
+    assert_eq!(
+        sel_rect.effective_rects(),
+        vec![(0.0, 600.0, 98, 110)],
+        "松手帧仍应显示扩大的选框，供本帧 overlay 绘制"
+    );
+}
+
 /// 回归：选择工具单击未选中音符（不拖动）应选中它。
 #[test]
 fn click_note_selects_it_without_move() {

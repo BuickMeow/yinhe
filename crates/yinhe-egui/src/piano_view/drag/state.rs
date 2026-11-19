@@ -195,6 +195,7 @@ impl SelDragFrameState {
         }
         if self.sel_riff_state.is_some() && !pointer.primary_down() && !pointer.primary_released() {
             self.sel_riff_state = None;
+            sel_rect.clear_preview_rects();
         }
         if self.sel_note_resize.is_some() && !pointer.primary_down() && !pointer.primary_released()
         {

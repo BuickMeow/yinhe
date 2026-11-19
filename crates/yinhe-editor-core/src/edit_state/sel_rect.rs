@@ -20,6 +20,10 @@ pub struct SelRectState {
     resize_origins: Vec<(f64, f64, u8, u8)>,
     resize_side: Option<ResizeSide>,
     resize_dt: Option<i64>,
+    /// 临时预览选框（Riff 拖动中的“原选区 + 重复范围”）。
+    /// 只覆盖 `effective_rects()`，不写 `rects`；松手提交前 `rects` 仍是
+    /// 原始选区，提交后才能把预览范围落成正式选区。
+    preview_rects: Option<Vec<(f64, f64, u8, u8)>>,
     /// 上一次 `end_drag` / `end_resize` 之前的已提交选框。
     /// 组件在松手帧就把 `rects` 更新到目标位置，而 undo 快照需要拖动前的
     /// 位置；暂存一帧供 App 取走修正快照。
@@ -51,9 +55,11 @@ impl SelRectState {
         }
     }
 
-    /// 有效选框：拖拽/缩放时返回 origins+delta，否则返回 rects
+    /// 有效选框：预览 > 拖拽/缩放 origins+delta > 已提交 rects。
     pub fn effective_rects(&self) -> Vec<(f64, f64, u8, u8)> {
-        if let Some((dt, dk)) = self.drag_delta {
+        if let Some(preview) = &self.preview_rects {
+            preview.clone()
+        } else if let Some((dt, dk)) = self.drag_delta {
             self.drag_origins
                 .iter()
                 .map(|&r| Self::offset_rect(r, dt, dk))
@@ -73,17 +79,33 @@ impl SelRectState {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.rects.is_empty()
+        self.rects.is_empty() && self.preview_rects.is_none()
     }
 
     pub fn clear(&mut self) {
         self.rects.clear();
         self.auto_vertical.clear();
+        self.preview_rects = None;
     }
 
     pub fn push_rect(&mut self, rect: (f64, f64, u8, u8), auto_vertical: bool) {
         self.rects.push(rect);
         self.auto_vertical.push(auto_vertical);
+        self.preview_rects = None;
+    }
+
+    /// 临时预览一组选框（不写 `rects`）。Riff 拖动中调用。
+    pub fn set_preview_rects(&mut self, rects: Vec<(f64, f64, u8, u8)>) {
+        self.preview_rects = Some(rects);
+    }
+
+    /// 结束预览，回到已提交 `rects`。
+    pub fn clear_preview_rects(&mut self) {
+        self.preview_rects = None;
+    }
+
+    pub fn has_preview_rects(&self) -> bool {
+        self.preview_rects.is_some()
     }
 
     pub fn has_auto_vertical(&self) -> bool {
@@ -91,6 +113,7 @@ impl SelRectState {
     }
 
     pub fn start_drag(&mut self) {
+        self.preview_rects = None;
         self.drag_origins = self.rects.clone();
         self.drag_delta = None;
         self.before_last_commit = None;
@@ -111,6 +134,7 @@ impl SelRectState {
         }
         self.drag_origins.clear();
         self.drag_delta = None;
+        self.preview_rects = None;
     }
 
     /// 取走上一次拖动/缩放前的选框（undo 快照修正用，一次消费）。
@@ -121,10 +145,12 @@ impl SelRectState {
     pub fn cancel_drag(&mut self) {
         self.drag_origins.clear();
         self.drag_delta = None;
+        self.preview_rects = None;
         self.before_last_commit = None;
     }
 
     pub fn start_resize(&mut self, side: ResizeSide) {
+        self.preview_rects = None;
         self.resize_origins = self.rects.clone();
         self.resize_side = Some(side);
         self.resize_dt = None;
@@ -147,12 +173,14 @@ impl SelRectState {
         self.resize_origins.clear();
         self.resize_side = None;
         self.resize_dt = None;
+        self.preview_rects = None;
     }
 
     pub fn cancel_resize(&mut self) {
         self.resize_origins.clear();
         self.resize_side = None;
         self.resize_dt = None;
+        self.preview_rects = None;
         self.before_last_commit = None;
     }
 }
@@ -160,6 +188,33 @@ impl SelRectState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_rects_override_committed_rects_and_clear() {
+        let mut state = SelRectState::default();
+        state.push_rect((100.0, 200.0, 60, 72), false);
+        state.set_preview_rects(vec![(100.0, 320.0, 54, 72)]);
+        assert!(state.has_preview_rects());
+        assert_eq!(state.effective_rects(), vec![(100.0, 320.0, 54, 72)]);
+        assert_eq!(state.rects, vec![(100.0, 200.0, 60, 72)]);
+
+        state.clear_preview_rects();
+        assert_eq!(state.effective_rects(), vec![(100.0, 200.0, 60, 72)]);
+    }
+
+    #[test]
+    fn preview_rects_cleared_by_commit_and_start_drag() {
+        let mut state = SelRectState::default();
+        state.push_rect((100.0, 200.0, 60, 72), false);
+        state.set_preview_rects(vec![(100.0, 320.0, 54, 72)]);
+        state.push_rect((100.0, 320.0, 54, 72), false);
+        assert!(!state.has_preview_rects());
+        assert_eq!(state.rects.len(), 2);
+
+        state.set_preview_rects(vec![(0.0, 1.0, 0, 1)]);
+        state.start_drag();
+        assert!(!state.has_preview_rects());
+    }
 
     #[test]
     fn drag_exposes_pre_drag_rects_once() {

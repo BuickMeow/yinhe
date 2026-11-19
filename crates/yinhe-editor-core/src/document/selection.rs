@@ -10,6 +10,32 @@ use crate::history::{NoteDelta, UndoAction};
 use super::Document;
 
 impl Document {
+    /// 把 PR 选框落成单个矩形，并同步选中集合。
+    ///
+    /// Riff 重复后使用：选框覆盖“原选区 + 重复范围”，副本和原音符都落在这个
+    /// 范围里；`sel_rect` 和 `selected` 必须一起更新，否则可视框和实际选中集
+    /// 会错位。
+    pub fn set_pr_selection_rect(
+        &mut self,
+        t0: f64,
+        t1: f64,
+        key_lo: u8,
+        key_hi: u8,
+        track_lo: u16,
+        track_hi: u16,
+    ) {
+        let start = t0.round().max(0.0) as u32;
+        let end = t1.round().max(t0 + 1.0) as u32;
+        self.edit.sel_rect.clear();
+        self.edit
+            .sel_rect
+            .push_rect((t0, t1, key_lo, key_hi), false);
+        self.edit.selected.clear_rects();
+        self.edit
+            .selected
+            .add_rect_track(start, end, key_lo, key_hi, track_lo, track_hi);
+    }
+
     /// Select all notes in the currently selected track(s) for Piano Roll.
     /// Range: tick 0 → last note end (global), keys 0–MAX_KEY.
     ///
@@ -354,6 +380,17 @@ mod tests {
     /// 用当前文档模型 + 指定选框构造剪贴板快照。
     fn clipboard_with(doc: &Document, selection: yinhe_core::Selection) -> NotesClipboard {
         NotesClipboard::from_snapshot(doc.data.model.clone(), selection)
+    }
+
+    #[test]
+    fn set_pr_selection_rect_replaces_box_and_members() {
+        let mut doc = make_doc();
+        doc.edit.sel_rect.push_rect((0.0, 100.0, 0, 127), false);
+        doc.edit.selected.add_rect_track(0, 100, 0, 127, 0, 0);
+        doc.set_pr_selection_rect(0.0, 400.0, 50, 70, 0, 0);
+        assert_eq!(doc.edit.sel_rect.rects, vec![(0.0, 400.0, 50, 70)]);
+        assert!(!doc.edit.sel_rect.has_preview_rects());
+        assert_eq!(doc.edit.selected.rects, vec![(0, 400, 50, 70, 0, 0)]);
     }
 
     /// 锁定轨不参与全选（否则锁定后 Ctrl+A + Delete 仍能删掉它）。

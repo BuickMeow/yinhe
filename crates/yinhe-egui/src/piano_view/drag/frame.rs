@@ -145,7 +145,9 @@ pub(crate) fn sel_drag_frame(
         quantize,
         ppq,
         bar_line_data,
+        total_ticks,
         riff_repeat,
+        sel_rect,
         &pointer,
     );
     if can_edit {

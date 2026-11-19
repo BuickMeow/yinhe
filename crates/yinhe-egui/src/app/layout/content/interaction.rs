@@ -313,18 +313,26 @@ impl App {
         let Some((extent, extent_y)) = steps else {
             return;
         };
-        if extent == 0 && extent_y == 0 {
-            return;
-        }
         let Some(idx) = self.workspace.active_doc else {
             return;
         };
         let doc = &mut self.workspace.documents[idx];
+        if extent == 0 && extent_y == 0 {
+            doc.edit.sel_rect.clear_preview_rects();
+            return;
+        }
         let Some(&(t0, t1, k0, k1)) = doc.edit.sel_rect.rects.first() else {
+            doc.edit.sel_rect.clear_preview_rects();
             return;
         };
+        let (new_t0, new_t1, new_k0, new_k1) =
+            yinhe_editor_core::selection_handle::riff_expanded_rect(
+                t0, t1, k0, k1, extent, extent_y,
+            );
         let sel_start = t0.round() as i64;
         let sel_end = t1.round() as i64;
+        // 先清预览再拍快照：撤销要回到原始选框，不能把预览框写进历史。
+        doc.edit.sel_rect.clear_preview_rects();
         let before = doc.capture_snapshot();
         if let Some(action) = doc.repeat_selected_keys_extent(
             sel_start,
@@ -334,6 +342,10 @@ impl App {
             i64::from(k1) + 1,
             extent_y,
         ) {
+            // 副本落在“原选区 + 重复范围”里：松手后选框和选中集合同步扩到
+            // 这个范围，继续拖 Riff 时有正确的起点。
+            let (tr_lo, tr_hi) = crate::selection::drag::pr_track_range(&doc.edit.track_selected);
+            doc.set_pr_selection_rect(new_t0, new_t1, new_k0, new_k1, tr_lo, tr_hi);
             doc.edit.pianoroll_view.base.dirty = true;
             doc.push_undo(action, t!("undo.duplicate_notes").as_ref(), before);
             self.notify_notes_changed();

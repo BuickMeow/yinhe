@@ -110,45 +110,94 @@ pub(crate) fn sel_scale_frame(
     }
 }
 
-/// 右下角 Riff：横向按量化延伸 tick，纵向按 key/轨道数延伸；松手提交。
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn sel_riff_frame(
-    _ui: &mut egui::Ui,
-    state: &mut SelDragFrameState,
-    view: &mut yinhe_types::PianoRollView,
-    content_rect: egui::Rect,
-    _music_rect: egui::Rect,
+/// Riff 的延伸步数：横向 tick、纵向 key。`t0/t1/k0/k1` 是原始选区。
+fn riff_extents_at(
+    view: &yinhe_types::PianoRollView,
+    local: egui::Pos2,
     quantize: QuantizePreset,
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+    rect: (f64, f64, u8, u8),
+) -> (i64, i64) {
+    let (t0, t1, k0, k1) = rect;
+    let (tick, cross_px) = snapped_main_tick(view, local, quantize, ppq, bar_line_data);
+    let extent = if tick > t1 {
+        (tick - t1).round() as i64
+    } else if tick < t0 {
+        -((t0 - tick).round() as i64)
+    } else {
+        0
+    };
+    let key = i64::from(view.cross_px_to_key(cross_px));
+    let extent_y = if key > i64::from(k1) {
+        key - i64::from(k1)
+    } else if key < i64::from(k0) {
+        key - i64::from(k0)
+    } else {
+        0
+    };
+    (extent, extent_y)
+}
+
+/// 右下角 Riff：横向按量化延伸 tick，纵向按 key 延伸；拖动中实时预览
+/// “原选区 + 重复范围”的总框，松手提交。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn sel_riff_frame(
+    ui: &mut egui::Ui,
+    state: &mut SelDragFrameState,
+    view: &mut yinhe_types::PianoRollView,
+    content_rect: egui::Rect,
+    music_rect: egui::Rect,
+    quantize: QuantizePreset,
+    ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+    total_ticks: f64,
     riff_repeat: &mut Option<(i64, i64)>,
+    sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     pointer: &egui::PointerState,
 ) {
     let Some((t0, t1, k0, k1)) = state.sel_riff_state else {
+        // 状态被兜底清理（失焦/指针丢失）时不要留下预览框。
+        sel_rect.clear_preview_rects();
         return;
     };
+
+    if pointer.primary_down()
+        && !pointer.primary_pressed()
+        && let Some(pos) = pointer.hover_pos()
+    {
+        drag_scroll_and_clamp(ui, view, content_rect, music_rect, total_ticks, pos);
+        let (local_x, local_y) = clamped_local(pos, content_rect, music_rect);
+        let local = egui::pos2(local_x, local_y);
+        let (extent, extent_y) =
+            riff_extents_at(view, local, quantize, ppq, bar_line_data, (t0, t1, k0, k1));
+        if extent == 0 && extent_y == 0 {
+            sel_rect.clear_preview_rects();
+        } else {
+            let rect = yinhe_editor_core::selection_handle::riff_expanded_rect(
+                t0, t1, k0, k1, extent, extent_y,
+            );
+            sel_rect.set_preview_rects(vec![rect]);
+        }
+        ui.ctx().request_repaint();
+    }
+
     if pointer.primary_released() {
+        let mut committed = false;
         if let Some(pos) = pointer.hover_pos() {
-            let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-            let (tick, cross_px) = snapped_main_tick(view, local, quantize, ppq, bar_line_data);
-            let extent = if tick > t1 {
-                (tick - t1).round() as i64
-            } else if tick < t0 {
-                -((t0 - tick).round() as i64)
-            } else {
-                0
-            };
-            let key = i64::from(view.cross_px_to_key(cross_px));
-            let extent_y = if key > i64::from(k1) {
-                key - i64::from(k1)
-            } else if key < i64::from(k0) {
-                key - i64::from(k0)
-            } else {
-                0
-            };
+            let (local_x, local_y) = clamped_local(pos, content_rect, music_rect);
+            let local = egui::pos2(local_x, local_y);
+            let (extent, extent_y) =
+                riff_extents_at(view, local, quantize, ppq, bar_line_data, (t0, t1, k0, k1));
             if extent != 0 || extent_y != 0 {
                 *riff_repeat = Some((extent, extent_y));
+                committed = true;
             }
+        }
+        if !committed {
+            // 零步长松手：预览回到原始选框。非零预览保留到本帧 overlay
+            // 绘制之后，由 `handle_riff_repeat` 落成正式选区。
+            sel_rect.clear_preview_rects();
         }
         state.sel_riff_state = None;
     }

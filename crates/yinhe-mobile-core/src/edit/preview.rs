@@ -385,12 +385,15 @@ pub fn update_riff_fill(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32) 
     let rect = match s.view_mode {
         ViewMode::Pianoroll => {
             let geom = PrGeom::new(&s.pr_view);
-            let new_t0 = (t0 + steps.extent_x.min(0) as f64).max(0.0);
-            let new_t1 = t1 + steps.extent_x.max(0) as f64;
-            let new_k0 = (i64::from(k0) + steps.extent_y.min(0))
-                .clamp(0, i64::from(yinhe_types::MAX_KEY)) as u8;
-            let new_k1 = (i64::from(k1) + steps.extent_y.max(0))
-                .clamp(0, i64::from(yinhe_types::MAX_KEY)) as u8;
+            let (new_t0, new_t1, new_k0, new_k1) =
+                yinhe_editor_core::selection_handle::riff_expanded_rect(
+                    t0,
+                    t1,
+                    k0,
+                    k1,
+                    steps.extent_x,
+                    steps.extent_y,
+                );
             [
                 geom.tick_to_x(new_t0),
                 geom.key_to_y(new_k1),

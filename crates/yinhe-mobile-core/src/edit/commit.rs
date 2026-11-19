@@ -407,9 +407,15 @@ pub fn commit_riff(
             return None;
         }
         let before = doc.capture_snapshot();
-        let extent = steps.extent_x;
-        let new_t0 = (t0 + extent.min(0) as f64).max(0.0);
-        let new_t1 = t1 + extent.max(0) as f64;
+        let (new_t0, new_t1, new_k0, new_k1) =
+            yinhe_editor_core::selection_handle::riff_expanded_rect(
+                t0,
+                t1,
+                k0,
+                k1,
+                steps.extent_x,
+                steps.extent_y,
+            );
         match view_mode {
             ViewMode::Pianoroll => {
                 let action = doc.repeat_selected_keys_extent(
@@ -420,26 +426,10 @@ pub fn commit_riff(
                     i64::from(k1) + 1,
                     steps.extent_y,
                 )?;
-                let new_k0 = (i64::from(k0) + steps.extent_y.min(0))
-                    .clamp(0, i64::from(yinhe_types::MAX_KEY)) as u8;
-                let new_k1 = (i64::from(k1) + steps.extent_y.max(0))
-                    .clamp(0, i64::from(yinhe_types::MAX_KEY)) as u8;
 
                 // Riff 完成后把选框扩到“原选区 + 所有重复段”，并将新范围设为
                 // 唯一矩形选区；副本和原音符都会落在这个范围内。
-                doc.edit.sel_rect.clear();
-                doc.edit
-                    .sel_rect
-                    .push_rect((new_t0, new_t1, new_k0, new_k1), false);
-                doc.edit.selected.clear_rects();
-                doc.edit.selected.add_rect_track(
-                    new_t0 as u32,
-                    new_t1.max(new_t0 + 1.0) as u32,
-                    new_k0,
-                    new_k1,
-                    d.sel_tr_lo,
-                    d.sel_tr_hi,
-                );
+                doc.set_pr_selection_rect(new_t0, new_t1, new_k0, new_k1, d.sel_tr_lo, d.sel_tr_hi);
                 doc.push_undo(action, "重复 Riff", before);
             }
             ViewMode::Arrangement => {
