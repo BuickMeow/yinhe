@@ -4,6 +4,9 @@
 > 结论先行：力度填充和 hover 把手几乎不花 GPU 成本；音名标签真正的难点不是画字，
 > 而是 LOD、遮挡和八度口径。前两个可以直接做，第三个按“文字放得下才画”的连续
 > 规则做，不要一开始就上 glyph atlas。
+>
+> 2026-11-19 更新：力度填充已实现（`7cacc4c4`）；把手 wgpu/egui 对比见
+> 5.2/5.3；音名标签暂缓。
 
 ## 1. 结论
 
@@ -279,12 +282,59 @@ if inner_half.x > 0.0 && inner_half.y > 0.0 {
 
 让“哪里能拖、拖了会怎样”可见，但不增加常驻视觉噪音。
 
-### 5.2 推荐分层
+### 5.2 wgpu 和 egui 的三种落点
+
+把手不是一个“必须由某个管线画”的东西，先把它拆成三种实现：
+
+| 方案 | 实现在哪 | 每帧增量 | 与音符对齐 | 遮挡表现 | 实现复杂度 | 适合 |
+| --- | --- | --- | --- | --- | --- | --- |
+| egui overlay | UI 线程，音符纹理之后 | 约 3 个 shape / 30 顶点 / 1 次 egui 批次 | 静态视图完全对齐；滚动/缩放时可能比异步纹理早一帧 | 画在所有音符之上 | 低 | hover 把手首选 |
+| wgpu 音符 shader | 音符 quad 内部 SDF | 每个顶点多 4 次比较（4 顶点/实例，100 万实例约 1600 万次/帧） | 与音符同 pass、同纹理 | 被覆盖时随音符一起被盖住 | 中高：Uniforms 布局、shader/cull 同步、移动端验证 | 选中态常驻 outline 可复用 selected 位；不适合为 hover 单独做 |
+| wgpu 屏幕空间 overlay pass | 音符之后的小 quad 层 | 2 个 quad / 1 次 draw | 与音符同纹理 | 画在所有音符之上，和 egui 一样 | 中：新 LayerKind 或后置 pass，四条 draw path 都要改 | 如果一定要 wgpu 且要画复杂形状 |
+
+说明：这里比较的是三条实现路径的代码成本和对现有渲染链的影响，不是两套已实现
+版本的实测帧时间。egui 的 3 个 shape 与现有选框把手同量级；wgpu 的两条路径的
+增量都远小于音符本身，真正的差别是会改到哪些公共结构。
+
+重点：
+
+- 三种方案的增量都远小于现有音符绘制，差别在架构和维护，不在 GPU 性能。
+- wgpu 音符 shader 看起来最“原生”，但要给 `Uniforms` 加 hover 字段。
+  `Uniforms` 目前 144 字节且和 `cull.wgsl` 共用布局，改一处要同步两套 shader，
+  还要过 Android GLES 校验。为 1 个 hover 音符改公共 uniform，不划算。
+- wgpu 屏幕空间 overlay 看起来只是“2 个 quad”，但 PR 现在没有“音符之后”的
+  layer：`draw_static_layers` 的 decor 在音符之前，而且 decor 的 `vs_main`
+  在 `mode == 1 && vel > 0` 时会把实例当成 PR 音符解释。要干净地画，得新增
+  `LayerKind::Overlay` 或后置 pass，legacy / cull 摘要 / cull 间接 / Adreno
+  四条路径都要照顾。
+- egui 的成本是 3 个 shape。现有的选框把手（`selection/draw.rs`）已经每帧画
+  3 个 9×9 方块和描边，没有性能问题；hover 再多 2 个 grip 属于同一量级。
+- 视觉一致性也是 egui 占优：它可以直接复用选框把手的 `contrast_fg`、`app_bg`
+  和圆角风格；wgpu 音符 pipeline 是硬边、无混合，复刻半透明/圆角要么走 SDF，
+  要么走 decor，而 decor 在 PR 模式又有上面说的语义冲突。
+
+### 5.3 结论：hover 用 egui，选中 outline 才考虑 wgpu
+
+- **hover 把手用 egui**。O(1)、即时响应、复用选框把手的视觉和主题色、不改
+  Uniforms/shader/renderer；这是收益/成本最好的选择。
+- **选中音符的常驻 outline 用 wgpu**。它可能是几千个音符，逐个用 egui 画 shape
+  会变成 O(选中数)；而 `NoteInstance` 已经有 selected 位，shader 里 0 额外几何
+  就能画。
+- **不要为 hover 在音符 shader 里加 per-note 分支**。为 1 个音符让所有可见音符
+  的顶点都做 hover 比较，性价比低，而且会把 hover 状态耦合进共享的
+  AR/移动端 shader。
+- **如果以后确实要 wgpu hover**，选屏幕空间 overlay pass，不要把 hover 塞进
+  音符几何；但先问“这一帧的对齐”是否值得新增四条 draw path。
+- **先修 hit-test 的 z-order**。`hit_test_note` 现在按 `NoteBucket` 的 start_tick
+  顺序返回第一个命中，不是绘制顺序的 topmost；重叠音符上可能把把手套在被盖住
+  的音符上。无论谁画把手，这个问题都要先解决。
+
+### 5.4 推荐分层
 
 | 状态 | 画什么 | 谁画 | 成本 |
 | --- | --- | --- | --- |
 | hover | 1px 对比色 outline + 左右两个 2px 竖向 grip | egui overlay | 每帧约 10~20 顶点，O(1) |
-| 选中 | 1px 对比色 outline，不画 grip | wgpu fragment | 0 额外几何，几 ALU |
+| 选中 | 1px 对比色 outline，不画 grip | wgpu fragment（selected 位） | 0 额外几何，几 ALU |
 | 拖动中 | 现有 ghost + tooltip | 现有路径 | 不变 |
 | 所有音符常驻 | 不做 | - | 视觉噪音，且需要 per-note 状态/LOD |
 
@@ -297,7 +347,7 @@ if inner_half.x > 0.0 && inner_half.y > 0.0 {
 - 常驻把手在 12px 高的音符上会非常密，黑乐谱下会变成一片小方块；主流 DAW
   也更依赖光标形状和边缘热区，而不是每个音符都画把手。
 
-### 5.3 命中区和视觉要一致
+### 5.5 命中区和视觉要一致
 
 现有 `hit_test_note` 的边缘热区是固定 6px。默认 `key_height=12px` 没问题，
 但 1/16 音符在默认缩放下只有约 18px 宽，左右各 6px 之后只剩 6px 可以移动；
@@ -315,14 +365,14 @@ if inner_half.x > 0.0 && inner_half.y > 0.0 {
 `hit_test_note` 用的是原始 tick 宽度。hover outline 和 grip 应该按渲染后的
 `max(2px)` 宽度画，否则极短音符的框会比音符本身窄。
 
-### 5.4 纵向瀑布流
+### 5.6 纵向瀑布流
 
 - 纵向模式下时间轴在 Y，音符的“左右边缘”实际是屏幕上的上下边缘；
 - 光标应该用 `ResizeVertical`，不是现在的 `ResizeWest/ResizeEast`；
 - egui 的 grip 也要旋转 90 度，画成上下两个横条；
 - 输入框选把手已经有 `view.is_vertical()` 的分支，可以复用同样的判断。
 
-### 5.5 成本
+### 5.7 成本
 
 - hover outline + 2 个 grip：约 10~20 个顶点，一次 egui draw call 内合并；
 - 选中 outline：0 额外三角形，fragment 多一个 `selected` 分支；描边关闭时也要
@@ -330,7 +380,7 @@ if inner_half.x > 0.0 && inner_half.y > 0.0 {
 - 不需要 GPU picking，不需要 `map_async` 读回；
 - 命中测试复用现有 `hit_test_note`，不增加新的索引结构。
 
-### 5.6 验证
+### 5.8 验证
 
 - 手工：1/16、1/32、1 tick 音符；音符中部拖动、左右边缘拖动；
 - 纵向 PR：光标方向、grip 方向；
@@ -479,7 +529,7 @@ if galley.rect.width() + 2 * pad <= note_px_width
 
 ## 8. 建议实施顺序
 
-### P0：力度填充
+### P0：力度填充（已完成，`7cacc4c4`）
 
 - 只改 `shader.wgsl` 和 `VertexOutput` 的三个构造函数；
 - 横向 PR 启用，AR 和纵向 PR 保持原行为；
