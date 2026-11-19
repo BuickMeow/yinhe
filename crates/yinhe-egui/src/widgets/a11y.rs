@@ -63,14 +63,6 @@ pub(crate) fn name_slider(resp: &egui::Response, name: impl Into<String>) {
         .accesskit_node_builder(resp.id, |node| node.set_label(name));
 }
 
-/// 注册一个还没有名称的输入控件；外层可用 [`egui::Ui::name_inputs`] 补名称。
-pub(crate) fn unnamed_input(resp: &egui::Response, role: egui::Role) {
-    resp.widget_info(|| egui::WidgetInfo {
-        enabled: resp.enabled(),
-        ..egui::WidgetInfo::new(role)
-    });
-}
-
 /// 注册一个还没有名称的可选中输入控件（单选/复选）。
 pub(crate) fn unnamed_selected(resp: &egui::Response, role: egui::Role, selected: bool) {
     resp.widget_info(|| egui::WidgetInfo {

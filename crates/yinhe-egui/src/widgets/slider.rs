@@ -33,7 +33,6 @@ pub fn control_slider<Num: egui::emath::Numeric>(
         egui::vec2(width, control::h(&ctx)),
         egui::Sense::click_and_drag(),
     );
-    super::a11y::unnamed_input(&resp, egui::Role::Slider);
     let track = egui::Rect::from_min_size(
         egui::pos2(rect.min.x, rect.center().y - track_h * 0.5),
         egui::vec2(width, track_h),
@@ -52,6 +51,42 @@ pub fn control_slider<Num: egui::emath::Numeric>(
         }
         v = nv.clamp(min, max);
     }
+    // 键盘 / 读屏动作：与 egui 原生 Slider 一致（方向键、PageUp/Down、
+    // Home/End、AccessKit Increment/Decrement）。自绘 Slider 不接这些，
+    // 读屏的「增大/减小」手势和键盘用户都完全无效。
+    if resp.has_focus() && !resp.dragged() {
+        let step_size = step.filter(|s| *s > 0.0).unwrap_or(span / 100.0);
+        let mut delta = 0.0;
+        ui.input(|i| {
+            if i.key_pressed(egui::Key::ArrowRight) || i.key_pressed(egui::Key::ArrowUp) {
+                delta += step_size;
+            }
+            if i.key_pressed(egui::Key::ArrowLeft) || i.key_pressed(egui::Key::ArrowDown) {
+                delta -= step_size;
+            }
+            if i.key_pressed(egui::Key::PageUp) {
+                delta += step_size * 10.0;
+            }
+            if i.key_pressed(egui::Key::PageDown) {
+                delta -= step_size * 10.0;
+            }
+            if i.key_pressed(egui::Key::Home) {
+                delta = min - v;
+            }
+            if i.key_pressed(egui::Key::End) {
+                delta = max - v;
+            }
+            delta += i.num_accesskit_action_requests(resp.id, egui::accesskit::Action::Increment)
+                as f64
+                * step_size;
+            delta -= i.num_accesskit_action_requests(resp.id, egui::accesskit::Action::Decrement)
+                as f64
+                * step_size;
+        });
+        if delta != 0.0 {
+            v = (v + delta).clamp(min, max);
+        }
+    }
     // 拖动结束时 `interact_pointer_pos()` 已是 None（指针可能已离开控件），
     // 上面那段拿不到值，`*value` 会保持旧值 → 调用方的 `drag_stopped()` 分支
     // 保存的是「松手前的值」，表现为「拖动完全没用、只有点击才生效」。
@@ -61,6 +96,8 @@ pub fn control_slider<Num: egui::emath::Numeric>(
         *value = Num::from_f64(v);
         resp.mark_changed();
     }
+    let norm = ((value.to_f64() - min) / span).clamp(0.0, 1.0);
+    resp.widget_info(|| egui::WidgetInfo::slider(ui.is_enabled(), norm, ""));
     let t = (((value.to_f64() - min) / span).clamp(0.0, 1.0)) as f32;
 
     if ui.is_rect_visible(rect) {
@@ -135,4 +172,50 @@ pub fn control_slider<Num: egui::emath::Numeric>(
         }
     }
     resp
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 回归：聚焦自绘 Slider 后，方向键必须能改值。
+    #[test]
+    fn arrow_key_changes_value() {
+        let ctx = egui::Context::default();
+        let mut value = 0.5f32;
+        let mut id = None;
+        let run = |events: Vec<egui::Event>, value: &mut f32, id: &mut Option<egui::Id>| {
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::pos2(0.0, 0.0),
+                    egui::vec2(300.0, 100.0),
+                )),
+                ..Default::default()
+            };
+            input.events = events;
+            ctx.run_ui(input, |ui| {
+                let resp = control_slider(ui, value, 0.0..=1.0, 120.0, Some(0.1), true);
+                *id = Some(resp.id);
+            })
+            .drop_without_applying_deltas();
+        };
+
+        run(Vec::new(), &mut value, &mut id);
+        ctx.memory_mut(|m| m.request_focus(id.expect("slider id")));
+        run(
+            vec![egui::Event::Key {
+                key: egui::Key::ArrowRight,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::default(),
+            }],
+            &mut value,
+            &mut id,
+        );
+        assert!(
+            (value - 0.6).abs() < 1e-5,
+            "ArrowRight 应加一个 step: {value}"
+        );
+    }
 }

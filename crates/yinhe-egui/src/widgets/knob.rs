@@ -83,6 +83,40 @@ fn knob_impl(ui: &mut egui::Ui, value: &mut f32, diameter: f32, zero: ZeroMode) 
     if resp.drag_stopped() {
         ui.ctx().data_mut(|d| d.remove::<KnobSession>(id));
     }
+    // 键盘 / 读屏动作：与原生 Slider 一致。旋钮没有可见焦点时也不受影响。
+    if resp.has_focus() && !resp.dragged() {
+        let mut delta = 0.0;
+        ui.input(|i| {
+            if i.key_pressed(egui::Key::ArrowRight) || i.key_pressed(egui::Key::ArrowUp) {
+                delta += 0.01;
+            }
+            if i.key_pressed(egui::Key::ArrowLeft) || i.key_pressed(egui::Key::ArrowDown) {
+                delta -= 0.01;
+            }
+            if i.key_pressed(egui::Key::PageUp) {
+                delta += 0.1;
+            }
+            if i.key_pressed(egui::Key::PageDown) {
+                delta -= 0.1;
+            }
+            if i.key_pressed(egui::Key::Home) {
+                delta = -*value;
+            }
+            if i.key_pressed(egui::Key::End) {
+                delta = 1.0 - *value;
+            }
+            delta += i.num_accesskit_action_requests(resp.id, egui::accesskit::Action::Increment)
+                as f32
+                * 0.02;
+            delta -= i.num_accesskit_action_requests(resp.id, egui::accesskit::Action::Decrement)
+                as f32
+                * 0.02;
+        });
+        if delta != 0.0 {
+            *value = (*value + delta).clamp(0.0, 1.0);
+            resp.mark_changed();
+        }
+    }
     resp.widget_info(|| egui::WidgetInfo::slider(ui.is_enabled(), *value as f64, ""));
 
     if ui.is_rect_visible(rect) {
@@ -190,5 +224,48 @@ mod tests {
         assert_eq!(span(0.25, ZeroMode::Center), Some((0.5, 0.25)));
         assert_eq!(span(0.0, ZeroMode::Center), Some((0.5, 0.0)));
         assert_eq!(span(1.0, ZeroMode::Center), Some((0.5, 1.0)));
+    }
+}
+
+#[cfg(test)]
+mod keyboard_tests {
+    use super::*;
+
+    /// 回归：聚焦旋钮后，方向键必须能改值。
+    #[test]
+    fn arrow_key_changes_value() {
+        let ctx = egui::Context::default();
+        let mut value = 0.5f32;
+        let mut id = None;
+        let run = |events: Vec<egui::Event>, value: &mut f32, id: &mut Option<egui::Id>| {
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::pos2(0.0, 0.0),
+                    egui::vec2(300.0, 100.0),
+                )),
+                ..Default::default()
+            };
+            input.events = events;
+            ctx.run_ui(input, |ui| {
+                let resp = knob(ui, value, 26.0);
+                *id = Some(resp.id);
+            })
+            .drop_without_applying_deltas();
+        };
+
+        run(Vec::new(), &mut value, &mut id);
+        ctx.memory_mut(|m| m.request_focus(id.expect("knob id")));
+        run(
+            vec![egui::Event::Key {
+                key: egui::Key::ArrowUp,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::default(),
+            }],
+            &mut value,
+            &mut id,
+        );
+        assert!((value - 0.51).abs() < 1e-5, "ArrowUp 应加 0.01: {value}");
     }
 }
