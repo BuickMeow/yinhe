@@ -218,13 +218,20 @@ pub(crate) fn track_lc_strip(
     idx: usize,
     track: u16,
     node: ChannelId,
-    display: u32,
     level: (f32, f32),
     hold: (f32, f32),
     height: f32,
     actions: &mut Vec<MixAction>,
 ) {
-    let title = crate::mix::lc_label(display);
+    // 每轨 LC 与音轨一一对应：标题直接写轨号（037），和音轨面板对齐。
+    let track_num = app.workspace.documents[idx]
+        .edit
+        .track_cache
+        .info
+        .get(track as usize)
+        .map(|ti| ti.index)
+        .unwrap_or(track);
+    let title = format!("{track_num:03}");
     let color = app.workspace.documents[idx]
         .edit
         .track_cache
@@ -247,7 +254,7 @@ pub(crate) fn track_lc_strip(
     );
 }
 
-/// 主输出条：固定高度电平表 + dB 读数（无 M/S/声像/发送）。
+/// 主输出条：固定高度电平表 + dB 读数。
 pub(crate) fn master_strip(
     app: &mut App,
     ui: &mut egui::Ui,
@@ -258,7 +265,7 @@ pub(crate) fn master_strip(
     actions: &mut Vec<MixAction>,
 ) {
     let params = app.workspace.documents[idx].mixer.master.strip;
-    let title = t!("mix.master").to_string();
+    let title = "Master".to_string();
     let send = focus_send_info(app, idx, ChannelId::Master);
 
     let selected = strip_selected(app, idx, ChannelId::Master);

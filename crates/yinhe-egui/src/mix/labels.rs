@@ -5,7 +5,6 @@
 
 use std::collections::HashMap;
 
-use rust_i18n::t;
 use yinhe_types::ChannelId;
 
 /// MIDI 端口 + 通道 → 显示标签（port 0/channel 0 → "A01"，port 15/channel 15 → "P16"）。
@@ -53,7 +52,7 @@ pub(crate) fn channel_id_label(id: ChannelId, display: &HashMap<ChannelId, u32>)
             .map(|n| lc_label(*n))
             .unwrap_or_else(|| "LC".to_string()),
         ChannelId::Ap(ap) => ap_label(ap.group.0 as u8),
-        ChannelId::Master => t!("mix.master").to_string(),
+        ChannelId::Master => "Master".to_string(),
     }
 }
 
@@ -84,6 +83,12 @@ mod tests {
         assert_eq!(midi_label(15, 15), "P16");
         assert_eq!(channel_label(16), "B01");
         assert_eq!(ap_label(9), "A10");
+    }
+
+    #[test]
+    fn master_channel_uses_master_label() {
+        let display = std::collections::HashMap::new();
+        assert_eq!(channel_id_label(ChannelId::Master, &display), "Master");
     }
 
     #[test]

@@ -270,19 +270,12 @@ fn draw_track_lc_strips(
         } else {
             ((0.0, 0.0), (0.0, 0.0))
         };
-        let display = app
-            .mix
-            .channel_display
-            .get(&ChannelId::Lc(lc))
-            .copied()
-            .unwrap_or(0);
         strip::track_lc_strip(
             app,
             ui,
             idx,
             track,
             ChannelId::Lc(lc),
-            display,
             level,
             hold,
             strip_h,
