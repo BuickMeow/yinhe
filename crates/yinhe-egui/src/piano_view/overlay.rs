@@ -4,7 +4,7 @@ use egui_material_icons::icons::ICON_CHECK;
 use yinhe_types::{KeySigEvent, PianoRollView, TimeSigEvent};
 
 use super::types::RULER_H;
-use crate::widgets::selection_actions::{BarButton, SelectionAction};
+use crate::widgets::selection_actions::{BarButton, SELECT_BAR_BUTTONS, SelectionAction};
 
 type ClipResizeReq = (u16, u32, u32, u32);
 /// 钢琴键点击/拖动产生的选择请求；由调用方结合当前编辑轨落地到文档。
@@ -309,8 +309,9 @@ pub(crate) fn draw_overlays(
         _ => {}
     }
     // 已提交的持久选框：任意工具下均保持可见。
-    // 悬停 transport bar 网格按钮时切换为「网格预览」：强调色选框 + 量化网格线，
+    // 悬停网格按钮时切换为「网格预览」：强调色选框 + 量化网格线，
     // 预览即将按哪个网格切割（与切割用的已解析量化同源；Off 无网格不预览）。
+    let mut selection_last: Option<egui::Rect> = None;
     let grid_interval = quantize.tick_interval(ppq);
     let grid_preview = grid_interval > 0
         && ui.data_mut(|d| {
@@ -330,6 +331,7 @@ pub(crate) fn draw_overlays(
                     )
                 })
                 .collect();
+            selection_last = persisted_pixel_rects.last().copied();
             let (fill_color, stroke_color) = if grid_preview {
                 (crate::theme::accent_active(), crate::theme::accent_active())
             } else {
@@ -411,14 +413,14 @@ pub(crate) fn draw_overlays(
         }
     }
 
-    // ── 浮动工具条：直线/剪刀用锚点线 bbox 定位 ──
+    // ── 浮动工具条：选择工具用选框右侧胶囊；直线/剪刀用锚点线 bbox 定位 ──
     let line_buttons = [(ICON_CHECK, SelectionAction::LineConfirm)];
     let scissors_buttons = [(ICON_CHECK, SelectionAction::ScissorsConfirm)];
     let bar_spec: Option<(&[BarButton], Option<egui::Rect>)> = match effective_tool {
-        // 选择工具的动作按钮已迁到 transport bar（见 selection_actions::SELECT_BAR_BUTTONS），
-        // 此处不再绘制浮动条。
         crate::widgets::tools_panel::Tool::Select
-        | crate::widgets::tools_panel::Tool::SelectVertical => None,
+        | crate::widgets::tools_panel::Tool::SelectVertical => {
+            Some((&SELECT_BAR_BUTTONS[..], selection_last))
+        }
         crate::widgets::tools_panel::Tool::Line => pen_path.map(|p| {
             (
                 &line_buttons[..],

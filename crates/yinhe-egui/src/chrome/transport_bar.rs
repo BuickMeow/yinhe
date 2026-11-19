@@ -32,7 +32,6 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
     let mut pending_open_path = None;
     let mut set_orientation = None;
     let mut set_automation_panels = None;
-    let mut selection_action = None;
     let mut timecode_events: Vec<crate::widgets::timecode::TimecodeEvent> = Vec::new();
 
     let mut hovered_hint: Option<String> = None;
@@ -274,24 +273,9 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                         timecode_events.extend(tc_events);
                         // timecode 内部用 `ui.put` 渲染各单元格，会把父游标挪到最后一个
                         // 单元格右缘（早于整块右缘）。手动推进到时间码右缘，否则后续
-                        // 左对齐的选择按钮会压到时间码的第 4 列（电平表）上。
+                        // 控件会压到时间码的第 4 列（电平表）上。
                         let restore = (tc_rect.max.x - ui.cursor().min.x).max(0.0);
                         ui.add_space(restore);
-                    }
-
-                    // ── 选择动作按钮（timecode 右侧、左起）：常驻显示，框选后才可用 ──
-                    // 与灰块之间留出保底间距（外框外的边距）。
-                    if has_active {
-                        ui.add_space(crate::widgets::timecode::MIN_SIDE_GAP);
-                        if let Some(action) =
-                            crate::widgets::selection_actions::show_transport_buttons(
-                                ui,
-                                ctx.selection_available,
-                                &mut hovered_hint,
-                            )
-                        {
-                            selection_action = Some(action);
-                        }
                     }
                 }
             });
@@ -391,7 +375,6 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
         timecode_events,
         set_loop: play_actions.set_loop,
         loop_selection: play_actions.loop_selection,
-        selection_action,
         pending_file_action,
         pending_edit_action,
         pending_insert_action,

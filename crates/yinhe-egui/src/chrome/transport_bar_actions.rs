@@ -589,8 +589,6 @@ pub struct TransportResponse {
     pub set_loop: Option<bool>,
     /// 循环区间设为当前选区。
     pub loop_selection: bool,
-    /// transport bar 上选择动作按钮的点击（删除/复制/移调/翻转；None = 未点击）。
-    pub selection_action: Option<crate::widgets::selection_actions::SelectionAction>,
     pub pending_file_action: Option<FileAction>,
     pub pending_edit_action: Option<EditAction>,
     /// 插入菜单点击（None = 未点击）。

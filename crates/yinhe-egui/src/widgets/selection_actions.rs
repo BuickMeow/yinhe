@@ -90,10 +90,9 @@ fn bar_button_rotation(action: SelectionAction) -> f32 {
 
 /// Gap between selection box right edge and the floating bar.
 const GAP: f32 = 8.0;
-/// transport bar 上选择动作按钮之间的间距。
-const TRANSPORT_GAP: f32 = 4.0;
-/// Button icon size.
-const ICON_SIZE: f32 = 18.0;
+/// 胶囊按钮的标准图标尺寸：比 transport bar 的 18px 再大一级，
+/// 12 个按钮竖排时仍能在常见 PR 高度内放下。
+const ICON_SIZE: f32 = 22.0;
 /// Horizontal padding inside the pill.
 const H_PAD: f32 = 8.0;
 /// Vertical padding inside the pill.
@@ -151,66 +150,10 @@ pub fn bar_rect(
 /// 切换成「网格预览」（强调色选框 + 量化网格线）。
 pub const GRID_PREVIEW_HOVER_ID: &str = "pr_grid_preview_hover";
 
-/// 在 transport bar 上横排绘制选择动作按钮
-/// （删除/复制/移调↑/移调↓/变速×2/变速÷2/水平翻转/垂直翻转）。
-///
-/// 常驻显示；`enabled == false`（无框选）时灰显且不可点。
-/// `hovered_hint` 在可用且指针悬停时写入讲解行文案。
-/// 返回本帧被点击的动作。
-pub fn show_transport_buttons(
-    ui: &mut egui::Ui,
-    enabled: bool,
-    hovered_hint: &mut Option<String>,
-) -> Option<SelectionAction> {
-    let mut clicked = None;
-    let mut grid_hovered = false;
-    for (i, &(icon, action)) in SELECT_BAR_BUTTONS.iter().enumerate() {
-        let font = egui::FontId::new(crate::theme::TRANSPORT_BTN_FONT, icon.font_family());
-        let angle = bar_button_rotation(action);
-        let resp = if angle == 0.0 {
-            crate::widgets::hover::hover_button_enabled(
-                ui,
-                icon.codepoint,
-                font,
-                crate::theme::text_label(),
-                false,
-                enabled,
-                action_hint(action).as_str(),
-            )
-        } else {
-            crate::widgets::hover::hover_button_enabled_rotated(
-                ui,
-                icon.codepoint,
-                font,
-                crate::theme::text_label(),
-                false,
-                angle,
-                enabled,
-                action_hint(action).as_str(),
-            )
-        };
-        if enabled && resp.clicked() {
-            clicked = Some(action);
-        }
-        // 悬停即显示讲解（禁用态也提示，便于用户了解按钮用途）。
-        if resp.hovered() {
-            *hovered_hint = Some(action_hint(action));
-        }
-        // 网格按钮悬停：钢琴卷帘把当前选框切换成网格预览（同帧生效）。
-        if enabled && resp.hovered() && action == SelectionAction::GridConfirm {
-            grid_hovered = true;
-        }
-        if i + 1 < SELECT_BAR_BUTTONS.len() {
-            ui.add_space(TRANSPORT_GAP);
-        }
-    }
-    ui.data_mut(|d| d.insert_temp(egui::Id::unique(GRID_PREVIEW_HOVER_ID), grid_hovered));
-    clicked
-}
-
 /// Show a vertical floating action bar to the right of the selection box.
 ///
-/// `buttons` 决定按钮数量与动作（直线/剪刀工具各一个确认按钮）。
+/// `buttons` 决定按钮数量与动作：选择工具是 `SELECT_BAR_BUTTONS`，
+/// 直线/剪刀工具各一个确认按钮。
 /// Returns the action that was clicked, if any.
 pub fn show(
     ui: &mut egui::Ui,
@@ -236,6 +179,7 @@ pub fn show(
     ui.painter().rect_filled(bar, corner_radius, bg_color);
 
     let mut result = None;
+    let mut grid_hovered = false;
     let pointer_pos = ui.input(|i| i.pointer.hover_pos());
     let released = ui.input(|i| i.pointer.primary_released());
     let pressed = ui.input(|i| i.pointer.primary_pressed());
@@ -269,6 +213,9 @@ pub fn show(
         let hovered = pointer_pos.is_some_and(|p| btn_rect.contains(p));
         if hovered {
             crate::widgets::hint::set(ui.ctx(), action_hint(action));
+            if action == SelectionAction::GridConfirm {
+                grid_hovered = true;
+            }
         }
         if hovered {
             let down = pressed && press_btn == Some(i);
@@ -321,6 +268,9 @@ pub fn show(
         ui.data_mut(|d| d.insert_persisted(press_btn_id, Option::<usize>::None));
     }
 
+    // 胶囊在选框绘制之后调用；这里写入标记，下一帧选框切成网格预览。
+    ui.data_mut(|d| d.insert_temp(egui::Id::unique(GRID_PREVIEW_HOVER_ID), grid_hovered));
+
     result
 }
 
@@ -349,6 +299,18 @@ mod tests {
         let sel = egui::Rect::from_min_size(egui::pos2(600.0, 100.0), egui::vec2(180.0, 50.0));
         let bar = bar_rect(content(), sel, 1);
         assert!(bar.is_none(), "bar should be clipped at right edge");
+    }
+
+    /// 选择工具胶囊要能竖排放下全部 12 个按钮，且不超出内容区。
+    #[test]
+    fn selection_capsule_fits_twelve_buttons() {
+        let sel = egui::Rect::from_min_size(egui::pos2(100.0, 100.0), egui::vec2(200.0, 50.0));
+        let bar = bar_rect(content(), sel, SELECT_BAR_BUTTONS.len()).expect("胶囊应可见");
+        assert!(
+            bar.height() >= 300.0,
+            "12 个 22px 按钮的胶囊高度异常: {bar:?}"
+        );
+        assert!(bar.max.y <= content().max.y, "胶囊超出内容区底部: {bar:?}");
     }
 
     #[test]

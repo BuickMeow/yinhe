@@ -23,7 +23,6 @@ pub(crate) fn hover_button(
         inactive_color,
         is_active,
         0.0,
-        true,
         accessible_name,
     )
 }
@@ -46,54 +45,6 @@ pub(crate) fn hover_button_rotated(
         inactive_color,
         is_active,
         angle,
-        true,
-        accessible_name,
-    )
-}
-
-/// 支持禁用态的 `hover_button`：`enabled == false` 时用 `text_disabled` 灰显、
-/// 不响应点击、无 hover 高亮（`Sense::hover`，`hovered()` 仍可读作"指针在上方"）。
-pub(crate) fn hover_button_enabled(
-    ui: &mut egui::Ui,
-    text: &str,
-    font_id: egui::FontId,
-    inactive_color: egui::Color32,
-    is_active: bool,
-    enabled: bool,
-    accessible_name: &str,
-) -> egui::Response {
-    hover_button_impl(
-        ui,
-        text,
-        font_id,
-        inactive_color,
-        is_active,
-        0.0,
-        enabled,
-        accessible_name,
-    )
-}
-
-/// 禁用态 + 旋转（见 [`hover_button_enabled`] / [`hover_button_rotated`]）。
-#[allow(clippy::too_many_arguments)] // 自绘按钮参数透传
-pub(crate) fn hover_button_enabled_rotated(
-    ui: &mut egui::Ui,
-    text: &str,
-    font_id: egui::FontId,
-    inactive_color: egui::Color32,
-    is_active: bool,
-    angle: f32,
-    enabled: bool,
-    accessible_name: &str,
-) -> egui::Response {
-    hover_button_impl(
-        ui,
-        text,
-        font_id,
-        inactive_color,
-        is_active,
-        angle,
-        enabled,
         accessible_name,
     )
 }
@@ -133,7 +84,6 @@ fn hover_button_impl(
     inactive_color: egui::Color32,
     is_active: bool,
     angle: f32,
-    enabled: bool,
     accessible_name: &str,
 ) -> egui::Response {
     // 用 PLACEHOLDER 排版：glyph 不带固定色，绘制时由 TextShape 的 fallback
@@ -141,18 +91,9 @@ fn hover_button_impl(
     let galley =
         ui.painter()
             .layout_no_wrap(text.to_owned(), font_id.clone(), egui::Color32::PLACEHOLDER);
-    let sense = if enabled {
-        egui::Sense::click()
-    } else {
-        egui::Sense::hover()
-    };
-    let (rect, resp) = ui.allocate_exact_size(galley.size(), sense);
+    let (rect, resp) = ui.allocate_exact_size(galley.size(), egui::Sense::click());
     super::a11y::name_button(&resp, accessible_name);
-    let color = if enabled {
-        hover_button_color(&resp, inactive_color, is_active)
-    } else {
-        crate::theme::text_disabled()
-    };
+    let color = hover_button_color(&resp, inactive_color, is_active);
     if angle == 0.0 {
         ui.painter().text(
             rect.center(),

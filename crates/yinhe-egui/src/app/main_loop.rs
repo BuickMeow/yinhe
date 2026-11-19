@@ -765,11 +765,6 @@ impl eframe::App for App {
             self.handle_edit_action(action);
         }
 
-        // ── Handle 选择动作（传输栏选择按钮）──
-        if let Some(action) = transport_response.selection_action {
-            self.handle_selection_action(action);
-        }
-
         // ── Handle 插入菜单（传输栏插入 popup / macOS 原生菜单）──
         if let Some(action) = transport_response.pending_insert_action {
             self.handle_insert_action(action, ui.ctx());
