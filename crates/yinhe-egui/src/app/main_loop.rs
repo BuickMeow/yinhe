@@ -670,6 +670,9 @@ impl eframe::App for App {
                     .is_some_and(|d| d.edit.pianoroll_view.is_vertical()),
                 master_meter,
                 selection_available,
+                pianoroll_active: self
+                    .view_mode
+                    .show_pianoroll(self.show_pianoroll_in_arrange),
             },
         );
 
@@ -763,6 +766,11 @@ impl eframe::App for App {
         // ── Handle edit menu actions（传输栏编辑 popup / 图钉）──
         if let Some(action) = transport_response.pending_edit_action {
             self.handle_edit_action(action);
+        }
+
+        // ── Handle 选择动作（传输栏选择按钮）──
+        if let Some(action) = transport_response.selection_action {
+            self.handle_selection_action(action);
         }
 
         // ── Handle 插入菜单（传输栏插入 popup / macOS 原生菜单）──

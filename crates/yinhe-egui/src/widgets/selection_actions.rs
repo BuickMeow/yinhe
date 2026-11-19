@@ -52,6 +52,52 @@ pub enum SelectionAction {
     MergeNotes,
 }
 
+/// PR 选框右缘拖动的三种模式。Gate/Scale/Riff 不再各画一个控制点，
+/// 由 transport bar 的三联选择器决定当前拖动语义。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SelectionDragMode {
+    #[default]
+    Gate,
+    Scale,
+    Riff,
+}
+
+impl SelectionDragMode {
+    pub const ALL: [Self; 3] = [Self::Gate, Self::Scale, Self::Riff];
+
+    pub const fn icon(self) -> MaterialIcon {
+        match self {
+            Self::Gate => ICON_STRAIGHTEN,
+            Self::Scale => ICON_LINEAR_SCALE,
+            Self::Riff => ICON_CONTENT_COPY,
+        }
+    }
+
+    pub fn hint(self) -> String {
+        match self {
+            Self::Gate => t!("hint.pr.drag_mode_gate").to_string(),
+            Self::Scale => t!("hint.pr.drag_mode_scale").to_string(),
+            Self::Riff => t!("hint.pr.drag_mode_riff").to_string(),
+        }
+    }
+}
+
+const DRAG_MODE_ID: &str = "pr_selection_drag_mode";
+
+/// 读取当前 PR 选框拖动模式（默认 Gate）。
+pub fn load_drag_mode(ctx: &egui::Context) -> SelectionDragMode {
+    ctx.data_mut(|d| {
+        d.get_persisted(egui::Id::unique(DRAG_MODE_ID))
+            .unwrap_or_default()
+    })
+}
+
+pub fn store_drag_mode(ctx: &egui::Context, mode: SelectionDragMode) {
+    ctx.data_mut(|d| {
+        d.insert_persisted(egui::Id::unique(DRAG_MODE_ID), mode);
+    });
+}
+
 /// 浮动工具条按钮：`(icon, action)`。
 pub type BarButton = (MaterialIcon, SelectionAction);
 
@@ -99,6 +145,125 @@ const H_PAD: f32 = 8.0;
 const V_PAD: f32 = 6.0;
 /// Spacing between buttons.
 const BTN_SPACING: f32 = 4.0;
+/// transport bar 选择动作组内按钮间距。
+const TRANSPORT_GAP: f32 = 4.0;
+/// transport bar 工具组按钮尺寸。
+const MODE_BTN_SIZE: f32 = 28.0;
+/// transport bar 工具组图标尺寸。
+const MODE_ICON_SIZE: f32 = 18.0;
+
+/// transport bar 上的选择动作按钮组：带边框的常驻工具组。
+///
+/// `enabled == false`（无框选）时整组灰显且不可点。
+pub fn show_transport_buttons(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    hovered_hint: &mut Option<String>,
+) -> Option<SelectionAction> {
+    let mut clicked = None;
+    let mut grid_hovered = false;
+    egui::Frame::new()
+        .inner_margin(egui::Margin {
+            left: 4,
+            right: 4,
+            top: 7,
+            bottom: 7,
+        })
+        .stroke(egui::Stroke::new(1.0, crate::theme::line_fg()))
+        .corner_radius(egui::CornerRadius::same(6))
+        .show(ui, |ui| {
+            ui.add_enabled_ui(enabled, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = TRANSPORT_GAP;
+                    for &(icon, action) in SELECT_BAR_BUTTONS.iter() {
+                        let font =
+                            egui::FontId::new(crate::theme::TRANSPORT_BTN_FONT, icon.font_family());
+                        let resp = crate::widgets::hover::hover_button(
+                            ui,
+                            icon.codepoint,
+                            font,
+                            crate::theme::text_label(),
+                            false,
+                            action_hint(action).as_str(),
+                        );
+                        if resp.clicked() {
+                            clicked = Some(action);
+                        }
+                        if resp.hovered() {
+                            *hovered_hint = Some(action_hint(action));
+                            if action == SelectionAction::GridConfirm {
+                                grid_hovered = true;
+                            }
+                        }
+                    }
+                });
+            });
+        });
+    ui.data_mut(|d| {
+        d.insert_temp(
+            egui::Id::unique(GRID_PREVIEW_HOVER_ID),
+            enabled && grid_hovered,
+        )
+    });
+    clicked
+}
+
+/// transport bar 上的三联选择器：Gate / Scale / Riff。
+pub fn show_drag_mode_selector(ui: &mut egui::Ui) {
+    let mut mode = load_drag_mode(ui.ctx());
+    egui::Frame::new()
+        .inner_margin(egui::Margin {
+            left: 4,
+            right: 4,
+            top: 2,
+            bottom: 2,
+        })
+        .stroke(egui::Stroke::new(1.0, crate::theme::line_fg()))
+        .corner_radius(egui::CornerRadius::same(6))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                for m in SelectionDragMode::ALL {
+                    let active = m == mode;
+                    let (rect, resp) = ui.allocate_exact_size(
+                        egui::vec2(MODE_BTN_SIZE, MODE_BTN_SIZE),
+                        egui::Sense::click(),
+                    );
+                    crate::widgets::a11y::name_button(&resp, m.hint());
+                    if active {
+                        ui.painter()
+                            .rect_filled(rect, 4.0, crate::theme::control_selected_bg());
+                    } else if resp.hovered() {
+                        ui.painter().rect_filled(
+                            rect,
+                            4.0,
+                            crate::theme::hover_color(crate::theme::app_bg()),
+                        );
+                    }
+                    let color = if active {
+                        crate::theme::accent_active()
+                    } else {
+                        crate::theme::text_primary()
+                    };
+                    let icon = m.icon();
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        icon.codepoint,
+                        egui::FontId::new(MODE_ICON_SIZE, icon.font_family()),
+                        color,
+                    );
+                    if resp.hovered() {
+                        crate::widgets::hint::set(ui.ctx(), m.hint());
+                    }
+                    if resp.clicked() {
+                        mode = m;
+                    }
+                }
+            });
+        });
+    store_drag_mode(ui.ctx(), mode);
+}
 
 /// Compute the screen-space rect of the floating action bar for a given
 /// selection rect, or `None` if the bar would be clipped / off-screen.

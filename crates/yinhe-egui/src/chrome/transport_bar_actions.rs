@@ -570,6 +570,8 @@ pub struct TransportContext<'a> {
     pub master_meter: ((f32, f32), (f32, f32)),
     /// 当前是否存在 PR 框选（决定选择动作按钮是否可用；None 文档 = false）。
     pub selection_available: bool,
+    /// 当前是否以钢琴卷帘为主视图（决定是否显示 Gate/Scale/Riff 三联选择器）。
+    pub pianoroll_active: bool,
 }
 
 pub struct TransportResponse {
@@ -589,6 +591,8 @@ pub struct TransportResponse {
     pub set_loop: Option<bool>,
     /// 循环区间设为当前选区。
     pub loop_selection: bool,
+    /// transport bar 上选择动作按钮的点击（None = 未点击）。
+    pub selection_action: Option<crate::widgets::selection_actions::SelectionAction>,
     pub pending_file_action: Option<FileAction>,
     pub pending_edit_action: Option<EditAction>,
     /// 插入菜单点击（None = 未点击）。

@@ -160,11 +160,46 @@ fn make_transport_harness<'a>(doc: Option<&'a Document>) -> Harness<'a, ()> {
                     orientation_vertical: false,
                     master_meter: ((0.0, 0.0), (0.0, 0.0)),
                     selection_available: false,
+                    pianoroll_active: false,
                 };
                 show(ui, &mut ctx);
             },
             (),
         )
+}
+
+/// 回归测试：transport bar 上的选择动作组不得压到时间码
+/// （尤其第 4 列电平表）。组外框只负责视觉分组，不能改变原有排列约束。
+#[test]
+fn selection_buttons_do_not_overlap_timecode() {
+    let doc = yinhe_test_helpers::make_test_document();
+    let mut h = make_transport_harness(Some(&doc));
+    h.step();
+    h.step();
+
+    let mut tc_right: Option<f32> = None;
+    let mut delete_x: Option<f32> = None;
+    for cs in &h.output().shapes {
+        match &cs.shape {
+            egui::Shape::Rect(r)
+                if (r.rect.width() - crate::widgets::timecode::TIMECODE_WIDTH).abs() < 0.5 =>
+            {
+                tc_right = Some(r.rect.max.x);
+            }
+            egui::Shape::Text(t)
+                if t.galley.text() == egui_material_icons::icons::ICON_DELETE.codepoint =>
+            {
+                delete_x = Some(t.pos.x);
+            }
+            _ => {}
+        }
+    }
+    let tc_right = tc_right.expect("应绘制时间码背景");
+    let delete_x = delete_x.expect("应绘制删除按钮");
+    assert!(
+        delete_x >= tc_right,
+        "删除按钮 x={delete_x} 不得早于时间码右缘 {tc_right}（重叠）"
+    );
 }
 
 /// 同 make_transport_harness，但在 transport bar 最右端空白区放一个
@@ -196,6 +231,7 @@ fn make_harness_with_hidden_button<'a>(doc: Option<&'a Document>) -> Harness<'a,
                     orientation_vertical: false,
                     master_meter: ((0.0, 0.0), (0.0, 0.0)),
                     selection_available: false,
+                    pianoroll_active: false,
                 };
                 show(ui, &mut ctx);
                 // 透明隐藏按钮：位于 x 1150..1174、y 8..32

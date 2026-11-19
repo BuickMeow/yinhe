@@ -91,9 +91,19 @@ fn hover_button_impl(
     let galley =
         ui.painter()
             .layout_no_wrap(text.to_owned(), font_id.clone(), egui::Color32::PLACEHOLDER);
-    let (rect, resp) = ui.allocate_exact_size(galley.size(), egui::Sense::click());
+    let enabled = ui.is_enabled();
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, resp) = ui.allocate_exact_size(galley.size(), sense);
     super::a11y::name_button(&resp, accessible_name);
-    let color = hover_button_color(&resp, inactive_color, is_active);
+    let color = if enabled {
+        hover_button_color(&resp, inactive_color, is_active)
+    } else {
+        crate::theme::text_disabled()
+    };
     if angle == 0.0 {
         ui.painter().text(
             rect.center(),
