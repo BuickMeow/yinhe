@@ -1220,7 +1220,7 @@ hint.mix.scan_result: "Poslední skenování: %{instruments} nástrojů, %{effec
 hint.mix.rack_error: "Chyba racku: %{error}"
 hint.mix.send_amount: "Úroveň odesílání (pre/post-fader určuje přepínač vpravo)"
 hint.mix.header_double_click: "Dvojklik na pruhu otevře řetězec zařízení tohoto kanálu"
-hint.mix.mute: "Ztlumit tento kanál (M)"
+hint.mix.mute: "Kliknutím ztlumíte / zrušíte ztlumení"
 hint.mix.pan: "Panorama: tažením vlevo/vpravo, dvojklikem vycentrujete"
 hint.mix.fader: "Fader zesílení: tažením nahoru/dolů, dvojklikem na 0 dB"
 hint.mix.picker_search: "Filtrovat pluginy podle názvu"

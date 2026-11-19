@@ -1215,7 +1215,7 @@ hint.mix.scan_result: "Último escaneo: %{instruments} instrumentos, %{effects} 
 hint.mix.rack_error: "Error del rack: %{error}"
 hint.mix.send_amount: "Nivel de envío (pre/post-fader definido por el conmutador de la derecha)"
 hint.mix.header_double_click: "Doble clic en la banda para abrir la cadena de dispositivos de este canal"
-hint.mix.mute: "Silenciar este canal (M)"
+hint.mix.mute: "Clic para silenciar / reactivar"
 hint.mix.pan: "Paneo: arrastrar a izquierda/derecha, doble clic para centrar"
 hint.mix.fader: "Fader de ganancia: arrastrar arriba/abajo, doble clic para 0 dB"
 hint.mix.picker_search: "Filtrar plugins por nombre"

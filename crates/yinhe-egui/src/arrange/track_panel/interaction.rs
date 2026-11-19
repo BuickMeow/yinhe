@@ -401,7 +401,7 @@ pub fn handle_interactions(
     }
 
     // ── 拖拽排序 ──
-    // 起点落在 M/S、chevron、加号等按钮上时不排序，只有行内空白区可拖拽。
+    // 起点落在听感圆点、chevron、加号等控件上时不排序，只有行内空白区可拖拽。
     if resp.drag_started()
         && !dragging
         && !tracks

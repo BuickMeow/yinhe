@@ -1220,7 +1220,7 @@ hint.mix.scan_result: "上一次掃描到 %{instruments} 個樂器、%{effects} 
 hint.mix.rack_error: "機架錯誤：%{error}"
 hint.mix.send_amount: "發送量（是否受推桿影響由右側開關決定）"
 hint.mix.header_double_click: "雙擊色帶開啟該通道的裝置鏈"
-hint.mix.mute: "靜音該通道（M）"
+hint.mix.mute: "點擊靜音 / 取消靜音"
 hint.mix.pan: "聲像：左右拖曳調整，雙擊回中"
 hint.mix.fader: "增益推桿：上下拖曳，雙擊回 0 dB"
 hint.mix.picker_search: "按名稱篩選外掛"

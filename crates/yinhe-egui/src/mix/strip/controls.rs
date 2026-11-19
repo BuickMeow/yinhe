@@ -1,4 +1,4 @@
-//! 通道条共享控件：外框、电平表、发送区、声像、M/S、dB 读数。
+//! 通道条共享控件：外框、电平表、发送区、声像、听感圆点、dB 读数。
 
 use eframe::egui;
 use rust_i18n::t;
@@ -47,7 +47,7 @@ pub(super) fn strip_frame(
     add_contents: impl FnOnce(&mut egui::Ui, f32),
 ) -> (egui::Rect, egui::Response) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(STRIP_WIDTH, height), egui::Sense::hover());
-    // 整卡片的点击层：注册在内容之前，子控件（旋钮/电平/M/S）后注册仍然优先；
+    // 整卡片的点击层：注册在内容之前，子控件（旋钮/电平/圆点）后注册仍然优先；
     // 空白区域点击也能选中通道。单击选中的处理只在这一层，不影响控件。
     let card = ui.interact(
         rect,
@@ -84,7 +84,7 @@ pub(super) fn strip_frame(
     // 用 `new_child`（**不**推进父布局游标）排布内容：通道条宽度由上面的
     // `allocate_exact_size(STRIP_WIDTH)` 决定。若用 `scope_builder`，它会按子
     // min_rect（被 PAD_X 内缩、更窄）回退父游标，导致下一张卡覆盖本卡右侧。
-    // 每条通道条必须有独立 id_salt：否则所有条的 M/S、旋钮、dB 等自动 Id
+    // 每条通道条必须有独立 id_salt：否则所有条的圆点、旋钮、dB 等自动 Id
     // 会重复，egui 只让其中一条真正可交互（其余条点击无反应）。
     let mut child = ui.new_child(
         egui::UiBuilder::new()
@@ -312,32 +312,7 @@ fn send_context_menu(
     });
 }
 
-fn ms_column(ui: &mut egui::Ui, params: &StripParams, width: f32) -> Option<StripParams> {
-    ui.allocate_ui_with_layout(
-        egui::vec2(width, BTN * 2.0 + GAP),
-        egui::Layout::top_down(egui::Align::Center),
-        |ui| {
-            let mut p = *params;
-            let audibility = p.audibility();
-            // 单按钮：始终显示 M；左键静音、右键独奏，亮色区分。
-            let (label, active, color) = crate::widgets::audibility::visual(audibility);
-            let resp = toggle_button(ui, label, active, color);
-            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.mute"));
-            if resp.clicked() {
-                p.set_audibility(crate::widgets::audibility::next_on_primary(audibility));
-                return Some(p);
-            }
-            if resp.secondary_clicked() {
-                p.set_audibility(crate::widgets::audibility::next_on_secondary(audibility));
-                return Some(p);
-            }
-            None
-        },
-    )
-    .inner
-}
-
-/// 声像旋钮/// 声像旋钮（右列）：旋钮居中，左右分别标 L / R。
+/// 声像旋钮（右列）：旋钮居中，左右分别标 L / R。
 /// 返回 `Some(新 pan)` 表示被改动。
 fn pan_knob(
     ui: &mut egui::Ui,
@@ -437,44 +412,6 @@ fn db_row(
     }
 }
 
-/// 自绘小开关按钮（M/S），激活时填充激活色；圆角矩形。
-fn toggle_button(
-    ui: &mut egui::Ui,
-    label: &str,
-    active: bool,
-    active_color: egui::Color32,
-) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(BTN, BTN), egui::Sense::click());
-    let bg = if active {
-        active_color
-    } else if resp.hovered() {
-        crate::theme::hover_color(crate::theme::btn_bg())
-    } else {
-        crate::theme::btn_bg()
-    };
-    let fg = if active {
-        crate::theme::contrast_fg()
-    } else {
-        crate::theme::text_secondary()
-    };
-    let painter = ui.painter();
-    painter.rect_filled(rect, RADIUS, bg);
-    painter.rect_stroke(
-        rect,
-        RADIUS,
-        egui::Stroke::new(1.0, crate::theme::grid_sub_beat()),
-        egui::StrokeKind::Inside,
-    );
-    painter.text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        label,
-        egui::FontId::proportional(crate::theme::SMALL_FONT),
-        fg,
-    );
-    resp
-}
-
 /// 电平表 + 增益推子：推子贴在 L/R 条**左侧外侧**，是向右（指向音频）
 /// 的实心三角，拖动改增益，双击回 0dB。返回 `Some(新增益)`。
 pub(super) fn gain_meter(
@@ -548,8 +485,6 @@ pub(super) fn strip_controls(
     params: &StripParams,
     level: (f32, f32),
     hold: (f32, f32),
-    show_pan: bool,
-    show_ms: bool,
     target: ChannelId,
     actions: &mut Vec<MixAction>,
 ) -> Option<StripParams> {
@@ -581,20 +516,35 @@ pub(super) fn strip_controls(
                                 p.gain = g;
                                 changed = true;
                             }
-                            if show_pan {
-                                ui.add_space(GAP);
-                                if let Some(pan) = pan_knob(ui, p.pan, CONTROLS_W, target, actions)
-                                {
-                                    p.pan = pan;
-                                    changed = true;
-                                }
+                            ui.add_space(GAP);
+                            if let Some(pan) = pan_knob(ui, p.pan, CONTROLS_W, target, actions) {
+                                p.pan = pan;
+                                changed = true;
                             }
-                            if show_ms {
-                                ui.add_space(GAP);
-                                if let Some(next) = ms_column(ui, &p, CONTROLS_W) {
-                                    p = next;
-                                    changed = true;
-                                }
+                            // 听感圆点：右下角（原 M 按钮位置），亮 = 可听，灭 = 静音。
+                            let col = ui.max_rect();
+                            let dot_rect = egui::Rect::from_center_size(
+                                egui::pos2(col.max.x - 7.0, col.max.y - 7.0),
+                                egui::vec2(
+                                    crate::widgets::audibility::HIT,
+                                    crate::widgets::audibility::HIT,
+                                ),
+                            );
+                            let audible = p.audibility() != yinhe_types::Audibility::Muted;
+                            let resp = crate::widgets::audibility::dot(
+                                ui,
+                                dot_rect,
+                                audible,
+                                ui.scope_id().with("mix_audible"),
+                            );
+                            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.mute"));
+                            if resp.clicked() {
+                                p.set_audibility(if audible {
+                                    yinhe_types::Audibility::Muted
+                                } else {
+                                    yinhe_types::Audibility::Normal
+                                });
+                                changed = true;
                             }
                         },
                     );

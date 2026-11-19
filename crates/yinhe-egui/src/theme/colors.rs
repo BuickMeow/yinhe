@@ -68,7 +68,6 @@ theme_getters! {
     danger_text_bright => danger_text_bright,
     danger_hover => danger_hover,
     warning_gold => warning_gold,
-    mute_active => mute_active,
     solo_active => solo_active,
     measure_label => measure_label,
     tick_label => tick_label,

@@ -10,7 +10,6 @@ use yinhe_types::{ArRow, ArRowLayout, AutomationLane, AutomationTarget};
 use yinhe_editor_core::document::TrackOverride;
 
 pub(crate) mod badge;
-pub(crate) mod draw;
 pub(crate) mod hover;
 mod interaction;
 pub(crate) mod render;
@@ -21,21 +20,23 @@ pub(crate) use types::TrackAction;
 /// 因此中心距行底 16 / 2 + 1 = 9px。
 const BADGE_ICON_BOTTOM_INSET: f32 = 9.0;
 
-/// 每轨电平表：条宽 / 贴边距（上右下相同）/ 与 M/S 的间隙（px）。
+/// 每轨电平表：条宽 / 贴边距（上右下相同）（px）。
 const LEVEL_METER_W: f32 = 8.0;
 const LEVEL_METER_MARGIN: f32 = 3.0;
-const LEVEL_METER_GAP: f32 = 5.0;
 
-/// AR 轨道头 M/S 手势的 before 快照（egui 临时数据，跨帧保存）。
-fn ms_undo_id() -> egui::Id {
-    egui::Id::unique("arr_track_ms_undo_before")
+/// AR 轨道听感开关的 before 快照（egui 临时数据，跨帧保存）。
+fn audibility_undo_id() -> egui::Id {
+    egui::Id::unique("arr_track_audibility_undo_before")
 }
 
-fn ensure_ms_undo_snapshot(ui: &egui::Ui, overrides: &[TrackOverride]) {
-    if ui.data(|d| d.get_temp::<Vec<TrackOverride>>(ms_undo_id()).is_some()) {
+fn ensure_audibility_undo_snapshot(ui: &egui::Ui, overrides: &[TrackOverride]) {
+    if ui.data(|d| {
+        d.get_temp::<Vec<TrackOverride>>(audibility_undo_id())
+            .is_some()
+    }) {
         return;
     }
-    ui.data_mut(|d| d.insert_temp(ms_undo_id(), overrides.to_vec()));
+    ui.data_mut(|d| d.insert_temp(audibility_undo_id(), overrides.to_vec()));
 }
 
 /// Render the track list using a painter (unified component for both
@@ -68,7 +69,7 @@ pub(crate) fn show(
     arr_am_expanded: &mut [bool],
     // 被选中的 AM lane（(音轨索引, target)）；点主行清空。
     am_lane_selected: &mut HashSet<(u16, AutomationTarget)>,
-    // AR 自动化 lane 的 M/S 试听状态（子行按钮切换，切后需重载音频）。
+    // AR 自动化 lane 的听感状态（子行圆点切换，切后需重载音频）。
     am_ms: &mut std::collections::HashMap<(u16, AutomationTarget), yinhe_types::AmMsState>,
     // 每轨电平表显示值 `((L,R), (holdL,holdR))`（索引 = 音轨；仅播放时非零）。
     track_meters: &[crate::widgets::meter::StereoMeter],
@@ -120,7 +121,7 @@ pub(crate) fn show(
 
     let painter = ui.painter().clone();
     let mut audio_dirty = false;
-    // AM lane M/S 试听状态变化 → 调用方重载音频（带 am_ms 旁通）。
+    // AM lane 听感状态变化 → 调用方重载音频（带 am_ms 旁通）。
     let mut am_ms_dirty = false;
 
     // 交替行条纹：着色行（偶数行号）与 GPU 区同源颜色，不透明；奇数行用 app_bg 打底。
@@ -129,8 +130,6 @@ pub(crate) fn show(
 
     let interact_id = egui::Id::unique("track_panel_area");
     let resp = ui.interact(panel_rect, interact_id, egui::Sense::click_and_drag());
-
-    let btn_size = egui::vec2(18.0, 18.0);
 
     // 主行矩形（含视口外/隐藏行，保证拖拽插入索引全局正确；AM 子行不参与排序）；
     // 仅可视行渲染。
@@ -210,7 +209,6 @@ pub(crate) fn show(
                 hover_track,
                 pointer_pos,
                 cursor_tick,
-                btn_size,
                 &mut no_drag_rects,
                 lane_even,
             );
@@ -287,7 +285,6 @@ pub(crate) fn show(
             tempo_lane,
             cursor_tick,
             color32,
-            btn_size,
             &mut no_drag_rects,
         );
         audio_dirty |= track_audio_dirty;
@@ -320,10 +317,13 @@ pub(crate) fn show(
         max_scroll,
     );
 
-    // M/S 手势结束（松开鼠标）：把整段滑动合并成一条 undo。
-    if ui.data(|d| d.get_temp::<Vec<TrackOverride>>(ms_undo_id()).is_some())
-        && !ui.input(|i| i.pointer.primary_down())
-        && let Some(before) = ui.data_mut(|d| d.remove_temp::<Vec<TrackOverride>>(ms_undo_id()))
+    // 听感开关手势结束（松开鼠标）：把整段点击合并成一条 undo。
+    if ui.data(|d| {
+        d.get_temp::<Vec<TrackOverride>>(audibility_undo_id())
+            .is_some()
+    }) && !ui.input(|i| i.pointer.primary_down())
+        && let Some(before) =
+            ui.data_mut(|d| d.remove_temp::<Vec<TrackOverride>>(audibility_undo_id()))
         && before != track_overrides
     {
         actions.push(TrackAction::CommitMuteSolo {

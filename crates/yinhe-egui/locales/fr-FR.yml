@@ -1215,7 +1215,7 @@ hint.mix.scan_result: "Dernier scan : %{instruments} instruments, %{effects} eff
 hint.mix.rack_error: "Erreur du rack : %{error}"
 hint.mix.send_amount: "Niveau d'envoi (pré/post-fader défini par la bascule à droite)"
 hint.mix.header_double_click: "Double-cliquez sur la bande pour ouvrir la chaîne d'appareils de ce canal"
-hint.mix.mute: "Mettre ce canal en sourdine (M)"
+hint.mix.mute: "Cliquer pour couper / rétablir le son"
 hint.mix.pan: "Panoramique : glisser à gauche/droite, double-clic pour centrer"
 hint.mix.fader: "Fader de gain : glisser vers le haut/bas, double-clic pour 0 dB"
 hint.mix.picker_search: "Filtrer les plugins par nom"

@@ -1220,7 +1220,7 @@ hint.mix.scan_result: "Ostatnie skanowanie: %{instruments} instrumentów, %{effe
 hint.mix.rack_error: "Błąd racka: %{error}"
 hint.mix.send_amount: "Poziom wysyłki (pre/post-fader ustawia przełącznik po prawej)"
 hint.mix.header_double_click: "Dwuklik na pasku otwiera łańcuch urządzeń tego kanału"
-hint.mix.mute: "Wycisz ten kanał (M)"
+hint.mix.mute: "Kliknij, aby wyciszyć / wyłączyć wyciszenie"
 hint.mix.pan: "Panorama: przeciągnij w lewo/w prawo, kliknij dwukrotnie, aby wyśrodkować"
 hint.mix.fader: "Suwak wzmocnienia: przeciągnij w górę/w dół, kliknij dwukrotnie dla 0 dB"
 hint.mix.picker_search: "Filtruj wtyczki według nazwy"

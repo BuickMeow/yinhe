@@ -1,61 +1,84 @@
-//! 听感（M/S）三态按钮的统一视觉与交互。
+//! 听感开关：FL Studio 式小圆点。
 //!
-//! 用户口径：**单按钮**，按钮始终显示 `M`；亮 = 开、灭 = 关。
-//! 左键切换静音（`Normal ↔ Muted`），右键切换独奏（`Normal ↔ Soloed`）。
-//! 两种状态互斥，不会同时亮；颜色区分：静音用 `mute_active`，独奏用
-//! `solo_active`。不再显示 `S` 字符，也不再有第二个按钮。
+//! 亮 = 可听，灭 = 静音。只有一个开关，不再区分 M/S，也不显示文字；
+//! 命中区固定 14px，窄轨道面板也放得下。
 
 use eframe::egui;
-use yinhe_types::Audibility;
 
-/// 三态按钮的视觉：`(label, active, active_color)`。
+/// 圆点半径（px）。
+const DOT_R: f32 = 4.0;
+
+/// 命中区边长（px）。比圆点大，方便点击。
+pub(crate) const HIT: f32 = 14.0;
+
+/// 在 `rect` 中心画听感圆点；`audible = false` 时是灭的。
 ///
-/// label 恒为 `"M"`；`active` 表示当前有任一状态开启。
-pub(crate) fn visual(audibility: Audibility) -> (&'static str, bool, egui::Color32) {
-    match audibility {
-        Audibility::Normal => ("M", false, crate::theme::mute_active()),
-        Audibility::Muted => ("M", true, crate::theme::mute_active()),
-        Audibility::Soloed => ("M", true, crate::theme::solo_active()),
-    }
-}
-
-/// 左键：`Normal ↔ Muted`（从独奏按左键直接切到静音，保持互斥）。
-pub(crate) fn next_on_primary(audibility: Audibility) -> Audibility {
-    match audibility {
-        Audibility::Muted => Audibility::Normal,
-        Audibility::Normal | Audibility::Soloed => Audibility::Muted,
-    }
-}
-
-/// 右键：`Normal ↔ Soloed`（从静音按右键直接切到独奏，保持互斥）。
-pub(crate) fn next_on_secondary(audibility: Audibility) -> Audibility {
-    match audibility {
-        Audibility::Soloed => Audibility::Normal,
-        Audibility::Normal | Audibility::Muted => Audibility::Soloed,
-    }
+/// 只负责绘制与点击命中，切换静音由调用方写数据。
+pub(crate) fn dot(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    audible: bool,
+    id: egui::Id,
+) -> egui::Response {
+    let resp = ui.interact(rect, id, egui::Sense::click());
+    let color = if audible {
+        crate::theme::accent_active()
+    } else if resp.hovered() {
+        crate::theme::text_secondary()
+    } else {
+        crate::theme::text_disabled()
+    };
+    ui.painter().circle_filled(rect.center(), DOT_R, color);
+    resp
 }
 
 #[cfg(test)]
 mod tests {
+    use eframe::egui::{self, pos2, vec2};
+
     use super::*;
 
-    #[test]
-    fn visual_always_shows_m() {
-        for a in [Audibility::Normal, Audibility::Muted, Audibility::Soloed] {
-            assert_eq!(visual(a).0, "M", "按钮文字不应随状态变化");
-        }
-        assert!(!visual(Audibility::Normal).1);
-        assert!(visual(Audibility::Muted).1);
-        assert!(visual(Audibility::Soloed).1);
+    fn click() -> bool {
+        let ctx = egui::Context::default();
+        let mut clicked = false;
+        let mut run = |events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    pos2(0.0, 0.0),
+                    vec2(200.0, 200.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                let rect = egui::Rect::from_center_size(pos2(50.0, 50.0), vec2(HIT, HIT));
+                let resp = dot(ui, rect, true, egui::Id::unique("audibility_dot_test"));
+                clicked |= resp.clicked();
+            });
+            output.textures_delta.clear();
+        };
+        let p = pos2(50.0, 50.0);
+        let modifiers = egui::Modifiers::default();
+        run(vec![]);
+        run(vec![egui::Event::PointerMoved(p)]);
+        run(vec![egui::Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers,
+        }]);
+        run(vec![egui::Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers,
+        }]);
+        clicked
     }
 
+    /// 圆点虽小，命中区必须能接到点击。
     #[test]
-    fn transitions_are_mutually_exclusive() {
-        assert_eq!(next_on_primary(Audibility::Normal), Audibility::Muted);
-        assert_eq!(next_on_primary(Audibility::Muted), Audibility::Normal);
-        assert_eq!(next_on_primary(Audibility::Soloed), Audibility::Muted);
-        assert_eq!(next_on_secondary(Audibility::Normal), Audibility::Soloed);
-        assert_eq!(next_on_secondary(Audibility::Soloed), Audibility::Normal);
-        assert_eq!(next_on_secondary(Audibility::Muted), Audibility::Soloed);
+    fn dot_click_registers() {
+        assert!(click());
     }
 }

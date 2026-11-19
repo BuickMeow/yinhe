@@ -1243,7 +1243,7 @@ hint.mix.scan_result: "지난 스캔에서 악기 %{instruments}개, 효과 %{ef
 hint.mix.rack_error: "랙 오류: %{error}"
 hint.mix.send_amount: "센드 레벨(프리/포스트 페이더는 오른쪽 토글로 설정)"
 hint.mix.header_double_click: "헤더를 더블클릭해 이 채널의 장치 체인 열기"
-hint.mix.mute: "이 채널 음소거(M)"
+hint.mix.mute: "클릭하여 음소거 / 해제"
 hint.mix.pan: "팬: 좌우 드래그, 더블클릭으로 중앙"
 hint.mix.fader: "게인 페이더: 위/아래 드래그, 더블클릭으로 0 dB"
 hint.mix.picker_search: "이름으로 플러그인 필터링"

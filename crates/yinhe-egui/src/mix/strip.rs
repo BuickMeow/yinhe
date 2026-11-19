@@ -43,10 +43,6 @@ pub(crate) const PAD_X: f32 = 6.0;
 pub(crate) const CONTENT_W: f32 = STRIP_WIDTH - PAD_X * 2.0;
 /// 顶部色带高度（px）。
 pub(crate) const HEADER_H: f32 = 20.0;
-/// 通用按钮圆角（px）。
-pub(crate) const RADIUS: f32 = 4.0;
-/// 小按钮边长（px，M/S、图标按钮）。
-pub(crate) const BTN: f32 = 18.0;
 /// 旋钮直径（px，发送/声像）。
 pub(crate) const KNOB_D: f32 = 26.0;
 /// 分区之间的竖直间隙（px）。
@@ -134,7 +130,7 @@ pub(crate) fn node_strip(
                 },
             );
             ui.add_space(GAP);
-            if let Some(p) = strip_controls(ui, &params, level, hold, true, true, target, actions) {
+            if let Some(p) = strip_controls(ui, &params, level, hold, target, actions) {
                 actions.push(MixAction::SetNodeStrip { node, params: p });
             }
         },

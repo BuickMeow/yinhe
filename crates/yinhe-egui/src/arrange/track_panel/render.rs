@@ -6,9 +6,7 @@ use yinhe_types::ArRowLayout;
 use egui_material_icons::icons::{ICON_ADD, ICON_KEYBOARD_ARROW_DOWN, ICON_KEYBOARD_ARROW_RIGHT};
 
 use super::types::TrackAction;
-use super::{
-    BADGE_ICON_BOTTOM_INSET, LEVEL_METER_GAP, LEVEL_METER_MARGIN, LEVEL_METER_W, badge, draw, hover,
-};
+use super::{BADGE_ICON_BOTTOM_INSET, LEVEL_METER_MARGIN, LEVEL_METER_W, badge, hover};
 
 /// 详情/紧凑模式的文字字号，统一 clamp，避免散落魔法数字
 pub fn detail_font(lh: f32) -> egui::FontId {
@@ -81,7 +79,7 @@ pub fn build_item_rects(
     rects
 }
 
-/// 自动化子行（AM lane）的完整绘制与 M/S 交互。
+/// 自动化子行（AM lane）的完整绘制与听感圆点交互。
 ///
 /// 与普通轨行共用色带/条纹/按钮几何，差异只在文本内容与自动化表。
 /// 返回 `(am_ms_dirty, actions)`。
@@ -107,7 +105,6 @@ pub(super) fn draw_automation_row(
     hover_track: Option<usize>,
     pointer_pos: Option<egui::Pos2>,
     cursor_tick: Option<f64>,
-    btn_size: egui::Vec2,
     no_drag_rects: &mut Vec<egui::Rect>,
     lane_even: egui::Color32,
 ) -> (bool, Vec<super::types::TrackAction>) {
@@ -168,49 +165,13 @@ pub(super) fn draw_automation_row(
         );
     }
 
-    // M/S 试听按钮：位置与普通轨同款（18px 大按钮，右缘对齐）；
+    // 听感圆点：右下角，亮 = 可听，灭 = 静音。
     // 与普通轨一致，紧凑模式（!show_details）不显示。
     if show_details {
         let key = (track_info[track].index, lane.target.clone());
         let st = am_ms.get(&key).copied().unwrap_or_default();
-        let audibility = st.audibility();
-        // 单按钮：始终显示 M；左键静音、右键独奏，亮色区分。
-        // 自动化表贴右缘，按钮让位到其左侧（与普通轨布局一致）。
-        let total_btn_w = btn_size.x;
         let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
         let meter_left = meter_right - LEVEL_METER_W;
-        let btn_x_start = meter_left - LEVEL_METER_GAP - total_btn_w;
-        let btn_y = badge_rect.center().y - btn_size.y * 0.5;
-        let ms_rect = egui::Rect::from_min_size(egui::pos2(btn_x_start, btn_y), btn_size);
-        no_drag_rects.push(ms_rect);
-        let (label, active, color) = crate::widgets::audibility::visual(audibility);
-        let resp = draw::draw_inline_button(
-            ui,
-            painter,
-            ms_rect,
-            label,
-            active,
-            color,
-            egui::Id::unique(("am_btn_ms", track, sub)),
-        );
-        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.arrange.am_mute"));
-        let next = if resp.clicked() {
-            Some(crate::widgets::audibility::next_on_primary(audibility))
-        } else if resp.secondary_clicked() {
-            Some(crate::widgets::audibility::next_on_secondary(audibility))
-        } else {
-            None
-        };
-        if let Some(next) = next {
-            let mut state = st;
-            state.set_audibility(next);
-            if state == yinhe_types::AmMsState::default() {
-                am_ms.remove(&key);
-            } else {
-                am_ms.insert(key, state);
-            }
-            am_ms_dirty = true;
-        }
         // 自动化表：编辑/播放光标处该 lane 的值（基线依种类）。
         let meter_rect = egui::Rect::from_min_max(
             egui::pos2(meter_left, row_rect.min.y + LEVEL_METER_MARGIN),
@@ -223,9 +184,38 @@ pub(super) fn draw_automation_row(
             lane.target.bar_baseline(),
             color32,
         );
+        let dot_rect = egui::Rect::from_center_size(
+            egui::pos2(row_rect.max.x - 7.0, row_rect.max.y - 7.0),
+            egui::vec2(
+                crate::widgets::audibility::HIT,
+                crate::widgets::audibility::HIT,
+            ),
+        );
+        no_drag_rects.push(dot_rect);
+        let resp = crate::widgets::audibility::dot(
+            ui,
+            dot_rect,
+            !st.mute,
+            egui::Id::unique(("am_audible", track, sub)),
+        );
+        crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.arrange.am_mute"));
+        if resp.clicked() {
+            let mut state = st;
+            state.set_audibility(if st.mute {
+                yinhe_types::Audibility::Normal
+            } else {
+                yinhe_types::Audibility::Muted
+            });
+            if state == yinhe_types::AmMsState::default() {
+                am_ms.remove(&key);
+            } else {
+                am_ms.insert(key, state);
+            }
+            am_ms_dirty = true;
+        }
     }
 
-    // 最后一条自动化行：在该行右侧（M/S 旁）显示加号，点击再次添加自动化。
+    // 最后一条自动化行：在该行右侧（圆点旁）显示加号，点击再次添加自动化。
     let is_last_lane = tracks
         .get(track)
         .is_some_and(|t| sub + 1 == t.automation_lanes.len());
@@ -257,7 +247,7 @@ pub(super) fn draw_automation_row(
     (am_ms_dirty, actions)
 }
 
-/// 普通轨行（含 Conductor / 文件夹 / 音频轨）的文本、M/S 与电平表。
+/// 普通轨行（含 Conductor / 文件夹 / 音频轨）的文本、听感圆点与电平表。
 ///
 /// 色带与 chevron 由调用方绘制（依赖行布局与展开状态）；本函数只处理
 /// 行内内容，返回 `(audio_dirty, actions)`。
@@ -279,7 +269,6 @@ pub(super) fn draw_track_row(
     tempo_lane: &yinhe_types::AutomationLane,
     cursor_tick: Option<f64>,
     color32: egui::Color32,
-    btn_size: egui::Vec2,
     no_drag_rects: &mut Vec<egui::Rect>,
 ) -> (bool, Vec<super::types::TrackAction>) {
     let mut audio_dirty = false;
@@ -353,45 +342,14 @@ pub(super) fn draw_track_row(
         }
 
         if !is_conductor && !is_folder {
-            // 单按钮三态：始终显示 M；左键静音、右键独奏，亮色区分。
+            // 听感圆点：右下角，亮 = 可听，灭 = 静音。
             let audibility = track_overrides
                 .get(idx)
                 .map(|o| o.audibility())
                 .unwrap_or_default();
 
-            let total_btn_w = btn_size.x;
             let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
             let meter_left = meter_right - LEVEL_METER_W;
-            let btn_x_start = meter_left - LEVEL_METER_GAP - total_btn_w;
-            let btn_y = badge_rect.center().y - btn_size.y * 0.5;
-            let ms_rect = egui::Rect::from_min_size(egui::pos2(btn_x_start, btn_y), btn_size);
-            no_drag_rects.push(ms_rect);
-
-            let (label, active, color) = crate::widgets::audibility::visual(audibility);
-            let resp = draw::draw_inline_button(
-                ui,
-                painter,
-                ms_rect,
-                label,
-                active,
-                color,
-                egui::Id::unique(("track_btn_ms", idx)),
-            );
-            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.arrange.track_mute"));
-            if resp.clicked() || resp.drag_started() {
-                super::ensure_ms_undo_snapshot(ui, track_overrides);
-                if let Some(ov) = track_overrides.get_mut(idx) {
-                    ov.set_audibility(crate::widgets::audibility::next_on_primary(audibility));
-                    audio_dirty = true;
-                }
-            }
-            if resp.secondary_clicked() {
-                super::ensure_ms_undo_snapshot(ui, track_overrides);
-                if let Some(ov) = track_overrides.get_mut(idx) {
-                    ov.set_audibility(crate::widgets::audibility::next_on_secondary(audibility));
-                    audio_dirty = true;
-                }
-            }
 
             // 每轨电平表（L/R 双条、向上、dB 刻度；仅播放时非零）。
             let meter_rect = egui::Rect::from_min_max(
@@ -403,6 +361,33 @@ pub(super) fn draw_track_row(
                 .copied()
                 .unwrap_or(((0.0, 0.0), (0.0, 0.0)));
             crate::widgets::meter::compact_meter(painter, meter_rect, level, hold);
+
+            let dot_rect = egui::Rect::from_center_size(
+                egui::pos2(row_rect.max.x - 7.0, row_rect.max.y - 7.0),
+                egui::vec2(
+                    crate::widgets::audibility::HIT,
+                    crate::widgets::audibility::HIT,
+                ),
+            );
+            no_drag_rects.push(dot_rect);
+            let resp = crate::widgets::audibility::dot(
+                ui,
+                dot_rect,
+                audibility != yinhe_types::Audibility::Muted,
+                egui::Id::unique(("track_audible", idx)),
+            );
+            crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.arrange.track_mute"));
+            if resp.clicked() {
+                super::ensure_audibility_undo_snapshot(ui, track_overrides);
+                if let Some(ov) = track_overrides.get_mut(idx) {
+                    ov.set_audibility(if audibility == yinhe_types::Audibility::Muted {
+                        yinhe_types::Audibility::Normal
+                    } else {
+                        yinhe_types::Audibility::Muted
+                    });
+                    audio_dirty = true;
+                }
+            }
         } else if is_conductor {
             // Conductor 行：Tempo 自动化表（贴右缘；光标处 BPM 按动态上限归一化）。
             let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;

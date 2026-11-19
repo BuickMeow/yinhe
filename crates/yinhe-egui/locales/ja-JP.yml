@@ -1244,7 +1244,7 @@ hint.mix.scan_result: "前回のスキャンは %{instruments} 個の楽器、%{
 hint.mix.rack_error: "ラックエラー：%{error}"
 hint.mix.send_amount: "送り量（プリ/ポストフェーダーは右のトグルで設定）"
 hint.mix.header_double_click: "ヘッダーをダブルクリックでこのチャンネルのデバイスチェーンを開く"
-hint.mix.mute: "このチャンネルをミュート（M）"
+hint.mix.mute: "クリックでミュート / ミュート解除"
 hint.mix.pan: "パン：左右ドラッグ、ダブルクリックでセンター"
 hint.mix.fader: "ゲインフェーダー：上下ドラッグ、ダブルクリックで 0 dB"
 hint.mix.picker_search: "名前でプラグインを絞り込み"

@@ -1220,7 +1220,7 @@ hint.mix.scan_result: "Son tarama: %{instruments} enstrüman, %{effects} efekt (
 hint.mix.rack_error: "Rack hatası: %{error}"
 hint.mix.send_amount: "Gönderim seviyesi (fader öncesi/sonrası sağdaki düğmeyle ayarlanır)"
 hint.mix.header_double_click: "Şeride çift tıklayınca bu kanalın cihaz zinciri açılır"
-hint.mix.mute: "Bu kanalı sessize al (M)"
+hint.mix.mute: "Sessize almak / geri açmak için tıklayın"
 hint.mix.pan: "Panorama: sola/sağa sürükle, ortalamak için çift tıkla"
 hint.mix.fader: "Kazanç fader'ı: yukarı/aşağı sürükle, 0 dB için çift tıkla"
 hint.mix.picker_search: "Eklentileri ada göre filtrele"
