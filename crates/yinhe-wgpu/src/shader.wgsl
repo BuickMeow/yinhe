@@ -2,8 +2,8 @@
 const BORDER_DARKEN_FACTOR: f32 = 0.4;
 const MAX_SEL_RECTS: u32 = 32u;
 // 填充色的力度淡化上限：力度 0 → 向背景方向混合 50%，力度 127 → 原色。
-// 方向随主题翻转（暗色向黑、亮色向白），保留色相。仅用于 PR 音符（mode==1）；
-// ghost 层 vel=127 保持原色。
+// 方向随主题翻转（暗色向黑、亮色向白），保留色相。仅用于纵向 PR（横向 PR
+// 改用填充高度，见 fill_ratio）；ghost 层 vel=127 保持原色。
 const MAX_FILL_FADE: f32 = 0.5;
 // 选中填充：向「与背景对比最强的一极」混合的比例（暗色偏白、亮色偏黑）。
 const SELECTED_CONTRAST: f32 = 0.7;
@@ -271,8 +271,11 @@ struct VertexOutput {
     @location(2) half_size: vec2<f32>,
     @location(3) radius: f32,
     @location(4) border_width: f32,
-    /// 填充色（描边仍用 color）：PR/AR 音符按选中/力度计算，其余等于 color.rgb。
+    /// 填充色（描边仍用 color）：PR/AR 音符按选中计算；横向 PR 的力度改由
+    /// fill_ratio 表达，其余路径等于 color.rgb。
     @location(5) fill_color: vec3<f32>,
+    /// PR 横向的力度填充高度（0..1）；AR、纵向 PR、decor 恒为 1。
+    @location(6) @interpolate(flat) fill_ratio: f32,
 }
 
 @group(0) @binding(0)
@@ -386,6 +389,8 @@ fn vs_main(
 
     out.radius = radius;
     out.border_width = border_width;
+    // 旧 32B PR 路径（若仍被调用）也按横向力度填充；其他模式保持整块。
+    out.fill_ratio = select(1.0, clamp(f32(vel) / 127.0, 0.0, 1.0), u.mode == 1u && vel > 0u);
 
     out.uv = uv[vertex_index];
     out.half_size = vec2<f32>(pixel_w, pixel_h) * 0.5;
@@ -553,17 +558,26 @@ fn note_geometry(
     out.color = base_color;
 
     // 填充色：仅 PR（mode==1）按选中/力度变化；AR 等其它模式保持原色。
-    // 力度 → 向背景方向淡化（暗色偏黑、亮色偏白），保留色相、音符仍不透明；
-    // 选中 → 向与背景对比最强的一极（暗色偏白、亮色偏黑），选中态永远清晰。
+    // 横向 PR：力度由 fill_ratio 的高度表达，填充色保持稳定；选中仍用高对比色。
+    // 纵向 PR：保留旧的整块颜色淡化（时间轴在 Y，按高度填充语义不成立）。
     let fade_target = select(vec3<f32>(1.0), vec3<f32>(0.0), u.dark_theme != 0u);
     let selected_target = select(vec3<f32>(0.0), vec3<f32>(1.0), u.dark_theme != 0u);
     if u.mode == 1u && selected {
         out.fill_color = mix(base_color.rgb, selected_target, SELECTED_CONTRAST);
+    } else if u.mode == 1u && u.orientation == 0u {
+        out.fill_color = base_color.rgb;
     } else if u.mode == 1u {
         let fade = (1.0 - f32(vel) / 127.0) * MAX_FILL_FADE;
         out.fill_color = mix(base_color.rgb, fade_target, fade);
     } else {
         out.fill_color = base_color.rgb;
+    }
+
+    // 横向 PR：力度 0..127 → 填充高度 0..1；其余路径保持整块填充。
+    if u.mode == 1u && u.orientation == 0u {
+        out.fill_ratio = clamp(f32(vel) / 127.0, 0.0, 1.0);
+    } else {
+        out.fill_ratio = 1.0;
     }
 
     // No rounded corners; border based on vertical dimension (key/lane height).
@@ -684,6 +698,7 @@ fn vs_main_velocity(
     // so users can scale freely without border thickness changing.
     out.radius = 0.0;
     out.border_width = 1.0;
+    out.fill_ratio = 1.0;
 
     out.uv = uv[vertex_index];
     out.half_size = vec2<f32>(pixel_w, pixel_h) * 0.5;
@@ -718,16 +733,33 @@ fn composite_border_fill(
     return vec4(rgb, base_alpha * total_a);
 }
 
+/// PR 横向的力度填充：把内部矩形按 `fill_ratio` 从底部往上切分。
+/// `fill_ratio >= 1` 直接返回原 inner_a，保证 AR/decor/纵向 PR 行为不变。
+fn note_fill_alpha(inner_a: f32, inner_half: vec2<f32>, p: vec2<f32>, fill_ratio: f32) -> f32 {
+    if fill_ratio >= 1.0 {
+        return inner_a;
+    }
+    let ratio = clamp(fill_ratio, 0.0, 1.0);
+    let fill_top = inner_half.y - 2.0 * inner_half.y * ratio;
+    let fill_edge = 1.0 - smoothstep(-0.5, 0.5, fill_top - p.y);
+    return inner_a * fill_edge;
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let base_color = in.color;
     // 边框色：有描边时向黑加深；无描边（border_width==0，如 AR）时直接用填充色，
     // 否则抗锯齿边缘仍会混入暗化色（BORDER_DARKEN_FACTOR=0.4），窄音符整体偏暗。
-    let border_color = select(
+    var border_color = select(
         in.fill_color,
         base_color.rgb * BORDER_DARKEN_FACTOR,
         in.border_width > 0.0,
     );
+    // 横向 PR：未填充体也是一块可见面积，不能沿用“无描边就用填充色”的退化，
+    // 否则关闭 note_outline 后力度高度会完全看不见。
+    if u.mode == 1u && u.orientation == 0u {
+        border_color = base_color.rgb * BORDER_DARKEN_FACTOR;
+    }
 
     let p = (in.uv - 0.5) * in.half_size * 2.0;
 
@@ -743,8 +775,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         if inner_half.x > 0.0 && inner_half.y > 0.0 {
             let d_inner = max(abs(p.x) - inner_half.x, abs(p.y) - inner_half.y);
             let inner_a = 1.0 - smoothstep(-0.5, 0.5, d_inner);
-            fill_a = inner_a;
-            border_a = outer_a - inner_a;
+            fill_a = note_fill_alpha(inner_a, inner_half, p, in.fill_ratio);
+            border_a = outer_a - fill_a;
         }
 
         return composite_border_fill(fill_a, border_a, base_color.a, border_color, in.fill_color);
@@ -763,8 +795,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if inner_half.x > 0.0 && inner_half.y > 0.0 {
         let d_inner = sd_rounded_box(p, inner_half, inner_r);
         let inner_a = 1.0 - smoothstep(-0.5, 0.5, d_inner);
-        fill_a = inner_a;
-        border_a = outer_a - inner_a;
+        fill_a = note_fill_alpha(inner_a, inner_half, p, in.fill_ratio);
+        border_a = outer_a - fill_a;
     }
 
     return composite_border_fill(fill_a, border_a, base_color.a, border_color, in.fill_color);

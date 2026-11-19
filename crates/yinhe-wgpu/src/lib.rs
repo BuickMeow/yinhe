@@ -13,6 +13,8 @@ mod util;
 pub mod vertex;
 
 #[cfg(test)]
+mod render_pixel_tests;
+#[cfg(test)]
 mod shader_tests;
 
 pub use layer::{LayerSlot, layer_cache_key};

@@ -131,9 +131,9 @@ pub struct DrawInstance {
 ///
 /// GPU cull 全曲层不带任何标志位，读取前统一掩码。
 ///
-/// 力度 0..=127（`packed` bits 25..32），渲染时向白变浅；127 = 原色。
-/// GPU cull 全曲层的实例不带该位（不随选区重传），由 shader 用
-/// `SelectionUniform` 矩形判定实时补位。
+/// 力度 0..=127（`packed` bits 25..32）。横向 PR 用填充高度表达力度；
+/// 纵向 PR 仍用整块颜色淡化。GPU cull 全曲层的实例不带选中标志位
+/// （不随选区重传），由 shader 用 `SelectionUniform` 矩形判定实时补位。
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct NoteInstance {
