@@ -238,6 +238,23 @@ mod tests {
         );
     }
 
+    /// 新工程每条通道默认 0 dB Master send：进 Master 的唯一路径必须存在。
+    #[test]
+    fn new_document_defaults_each_channel_to_unity_master_send() {
+        let doc = Document::empty();
+        let mut count = 0;
+        for node in doc.mixer.nodes() {
+            assert_eq!(
+                doc.mixer.channel_send_amount(node.id, ChannelId::Master),
+                1.0,
+                "{:?} 缺少默认 Master send",
+                node.id
+            );
+            count += 1;
+        }
+        assert!(count > 0, "空白工程应有每轨 LC 节点");
+    }
+
     /// Master 通道选中 Conductor。
     #[test]
     fn select_channel_tracks_selects_conductor_for_master() {
