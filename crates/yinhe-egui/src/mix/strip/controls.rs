@@ -600,7 +600,7 @@ pub(super) fn strip_controls(
     out
 }
 
-/// 主输出：只有电平表 + dB 读数，固定高度模块。
+/// Master：电平表 + dB + SEND，固定高度模块。
 pub(super) fn master_controls(
     ui: &mut egui::Ui,
     gain: f32,

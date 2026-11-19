@@ -241,7 +241,7 @@ pub(crate) fn track_lc_strip(
     );
 }
 
-/// 主输出条：固定高度电平表 + dB 读数。
+/// Master 条：固定高度电平表 + dB + SEND（无听感圆点/声像）。
 pub(crate) fn master_strip(
     app: &mut App,
     ui: &mut egui::Ui,
