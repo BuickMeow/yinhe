@@ -599,10 +599,11 @@ struct MixerNode {
    在它自己的通道条上相加。
 2. **AP 也可以接收 send**：因为 AP 通道和 LC 同构。UI 只需显示通道身份，
    不写“几条轨共享”之类说明。
-3. **SEND 用聚焦模式**：选中一个目标通道，其他通道各显示一个 dB 旋钮。
+3. **SEND 用聚焦模式**：选中一个源通道，其他通道各显示一个「源 → 本条」的 dB 旋钮。
 4. **反馈检测统一**：任意通道发送意味着可能出现环；用与通道嵌套相同的
    “顺序发送同块、逆序发送一块延迟”策略，或统一拓扑排序 + 块延迟。
-5. **Master 特殊**：Master 不接收音符/乐器，主输出仍是硬件终点；SEND 聚焦 UI 按需求显示 Master，但 Master 作为发送源默认禁用，避免反馈。
+5. **Master 特殊**：Master 不接收音符/乐器，主输出仍是硬件终点；Master 不能作为
+   发送源，选中 Master 时 SEND 旋钮全部隐藏，避免反馈。
 
 这会让方案 C 更接近 FL Studio 的“所有 Mixer Track 都能当 Bus”，但保留了
 我们自己的 Track/LC 强绑定：Track 始终显式指向 LC 或 AP 通道，不存在
@@ -1210,26 +1211,26 @@ Track 3   [AP01]       ← 已链接
 - AP 通道的 freeze/mute/solo 明确提示作用范围；
 - 通道面板可以像音轨面板一样选中，选中条用淡强调色，不加边框；
 - 通道选择和音轨选择联动：选中一条 Track 时，它对应的 LC/AP 通道也选中；
-- 多选时 SEND focus 仍只取一个目标（最后一次点击的通道）。
+- 多选时 SEND 源仍只取一个通道（最后一次点击的通道）。
 
-### 9.3.1 SEND 聚焦模式（按截图确认）
+### 9.3.1 SEND 聚焦模式（选中 = 源）
 
-混音台不再为每条 Bus 显示一个固定旋钮，而是改成“选中目标，其他通道发送给它”：
+混音台不再为每条 Bus 显示一个固定旋钮，而是“选中源通道，其他通道显示发往自己的量”：
 
 ```text
-选中 A01
+选中 A01（源）
 ├─ A01 自己：不显示 SEND
-├─ A02：显示 SEND → A01
-├─ A10：显示 SEND → A01
-└─ Master：显示 SEND → A01（特殊，见下）
+├─ A02：显示 SEND，A01 → A02
+├─ A10：显示 SEND，A01 → A10
+└─ Master：显示 SEND，A01 → Master
 ```
 
 规则：
 
-1. **选中的通道是 SEND 目标**。该通道自己的条上不显示 SEND（不能发给自己）。
-2. 其他所有可发送通道显示一个 SEND 旋钮，目标就是当前选中通道。
-3. 切换选中的通道，所有 SEND 旋钮的目标一起切换；每个旋钮显示的是
-   源通道到新目标的发送量，不是“所有 Bus 的旋钮”。
+1. **选中的通道是 SEND 源**。该通道自己的条上不显示 SEND（不能发给自己）。
+2. 其他所有通道条各显示一个 SEND 旋钮，表示「选中源 → 本条通道」的发送量。
+3. 切换选中的通道，所有 SEND 旋钮的源一起切换；每个旋钮显示的是
+   选中源到本条的发送量，不是“所有 Bus 的旋钮”。
 4. SEND 旋钮标签显示 **dB**，不再显示 `BUS 1`：
    - 最小 `-inf dB`（0 发送）；
    - 最大 `0.0 dB`（unity，1.0）；
@@ -1237,27 +1238,25 @@ Track 3   [AP01]       ← 已链接
 5. 因为不再需要“每个 Bus 一个旋钮”，混音台取消 Bus 横向滚动；通道本身
    仍然可以横向滚动。
 6. 高级多目标发送可以放在通道属性里，不作为混音台默认 UI。
-7. Master 也显示 SEND（按你的要求），但 Master 的发送是特殊 tap：
-   - 默认置灰/禁用，提示“Master 发送会形成反馈”；
-   - 如果以后允许，必须走与自发送相同的反馈检测/一块延迟，并提供安全开关；
-   - Master 作为目标时，其他通道正常显示 SEND → Master。
+7. Master 不能作为发送源：选中 Master 时所有 SEND 旋钮隐藏。
+   Master 作为目标时，选中其他源通道即可在 Master 条上调「源 → Master」。
 
 ### 9.3.2 SEND 聚焦的数据与交互
 
 ```rust
 struct MixerUiState {
-    /// 当前选中的 SEND 目标；不是持久化混音数据。
-    send_focus: Option<ChannelId>,
+    /// 当前选中的 SEND 源；不是持久化混音数据。
+    send_source: Option<ChannelId>,
     /// 多选通道（用于批量 mute/solo/freeze 等）。
     selected_channels: Vec<ChannelId>,
 }
 ```
 
-- `send_focus` 只影响 UI 显示，不改变音频；
-- 真正的发送量仍在每个 `MixerNode.sends` 里（按目标 ChannelId 存）；
+- `send_source` 只影响 UI 显示，不改变音频；点通道卡片或色带切换；
+- 真正的发送量仍在 `MixerParams::channel_sends` 里（按 `source → target` 存）；
 - 旋钮从 `-inf` 拖起来才创建发送条目，拖回 `-inf` 删除条目；
-- 切换 focus 时，旋钮值从各源通道的 `sends` 里读取目标对应的 amount；
-- 目标没有 `accepts_audio_input` 或会形成环时，旋钮禁用并显示原因；
+- 切换源时，旋钮值从 `channel_sends` 里读取「源 → 本条通道」的 amount；
+- 源是 Master、源等于本条通道、或没有选中源时，不显示旋钮（`send_row_visible`）；
 - SEND 的 dB 映射：`20 * log10(amount)`，`amount = 0` 显示 `-inf`；
 - 当前 B 的发送量允许 0..2（+6 dB）；C 规范为 0..1（-inf..0 dB），
   旧格式迁移到 C v10 时 >1.0 的值要 clamp 或提示，不能静默改变听感。
