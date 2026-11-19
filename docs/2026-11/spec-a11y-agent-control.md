@@ -218,6 +218,8 @@
 | `f7fe7959` | 桌面 | 自绘 Slider/旋钮支持方向键、PageUp/Down、Home/End、AccessKit Increment/Decrement；Slider 写入 numeric value |
 | `bca7d4d1` | 桌面 | 轨道行只读 ListItem + 名称/静音/独奏/音符数 + bounds（不新增 interact）；标题栏文档 tab、Yinhe 入口、非 macOS 窗口按钮只读节点 |
 | `a42df966` | 桌面 | popup 菜单行 `author_id`；设备链图标按钮用提示覆盖 Material 码位；电源 CheckBox；右栏 dock tab + 焦点环；图层锁定/可见从 hover-only 改为常驻交互 + CheckBox |
+| `7cbc4f86` | 桌面 | 模式栏 ARRANGE/MIX/EDIT 与右栏 dock tab 写稳定命令 ID |
+| `958a86c0` | 桌面 | 总输出表 Meter 写电平数值；AR「添加音轨」行补名称 |
 | `56ad654f` | CLI | `--inspect`（只读 project/mapping）、`--list-commands`（67 条 CommandId）、`--version`、`--help`；`yinhe-yin` 新增 `read_mapping_file` |
 | `3764e3ed` | 移动 | 侧栏「事件列表」入口；画布 `Semantics + ExcludeSemantics`，移除自动 tap/longPress，改为「朗读位置与选区 / 打开事件列表 / 播放或暂停」 |
 | `85ecdd3b` | 移动 | 画布 FocusNode + 外接键盘：Space 播放/暂停、Cmd/Ctrl+Z 撤销、Shift 重做、Cmd/Ctrl+S 保存、PR 下 Esc 返回 AR |

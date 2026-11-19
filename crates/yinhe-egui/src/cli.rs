@@ -55,7 +55,7 @@ fn print_help() {
          \x20 yinhe --help                   本帮助\n\
          \n\
          说明:\n\
-         \x20 --inspect 只读 project.json 与 mapping.json，1 亿音符工程也是常数时间。\n\
+         \x20 --inspect 只读 project.json 与 mapping.json，耗时不随音符数增长。\n\
          \x20 写操作/实时控制尚未开放；协议草案见 docs/2026-11/spec-agent-composition.md。",
         env!("CARGO_PKG_VERSION")
     );
