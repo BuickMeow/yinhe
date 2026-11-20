@@ -30,7 +30,6 @@ yinhe-clap = { path = "../yinhe-clap" }
 cpal = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-dirs = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
 # svg feature：欢迎页左下角「銀」字徽标水印渲染（egui 官方 SVG 加载器，resvg）。
@@ -48,7 +47,6 @@ fontique = { version = "0.11.1", default-features = false, features = ["system",
 egui_system_font_provider = "0.37"
 chrono = { workspace = true }
 image = { workspace = true }
-bytemuck = { workspace = true }
 rust-i18n = { workspace = true }
 uuid = { workspace = true }
 pinyin = "0.11.0"

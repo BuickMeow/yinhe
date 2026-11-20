@@ -7,7 +7,6 @@ description = "Yinhe 移动端平台无关核心：场景投影、触屏编辑�
 
 [dependencies]
 wgpu = { workspace = true }
-pollster = { workspace = true }
 log = "0.4"
 serde_json = { workspace = true }
 yinhe-types = { path = "../yinhe-types" }

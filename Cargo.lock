@@ -563,12 +563,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
-name = "atomic_refcell"
-version = "0.1.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21e4227379beff4205943696e6c3e0cd809bacdf3f0edd6e3dd153e2269571a4"
-
-[[package]]
 name = "atspi"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5652,15 +5646,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "spin_sleep"
-version = "1.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c07347b7c0301b9adba4350bdcf09c039d0e7160922050db0439b3c6723c8ab"
-dependencies = [
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "spirv"
 version = "0.4.0+sdk-1.4.341.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6121,12 +6106,6 @@ dependencies = [
  "displaydoc",
  "zerovec",
 ]
-
-[[package]]
-name = "to_vec"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e78d504a6bccd4b4f3dcd7006f1674877e329655b1ec34d5fd7a640681a45ad"
 
 [[package]]
 name = "toml"
@@ -7746,27 +7725,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
-name = "xsynth-core"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1dba7af545df823e7813bf8b78d9e0578444cd7aedec6bbc7f0281308d6aac01"
-dependencies = [
- "atomic_refcell",
- "biquad",
- "bytemuck",
- "crossbeam-channel",
- "lazy_static",
- "proc-macro2",
- "rayon",
- "simdeez",
- "spin_sleep",
- "symphonia",
- "thiserror 1.0.69",
- "to_vec",
- "xsynth-soundfonts",
-]
-
-[[package]]
 name = "xsynth-soundfonts"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7821,7 +7779,6 @@ dependencies = [
  "cpal",
  "crossbeam-channel",
  "hound",
- "pollster 1.0.1",
  "rayon",
  "rubato",
  "symphonia",
@@ -7864,7 +7821,6 @@ dependencies = [
 name = "yinhe-dsp"
 version = "0.1.0"
 dependencies = [
- "tracing",
  "yinhe-mixer",
  "yinhe-types",
 ]
@@ -7899,12 +7855,10 @@ name = "yinhe-egui"
 version = "0.1.0"
 dependencies = [
  "arboard",
- "bytemuck",
  "chrono",
  "clipboard-win",
  "cpal",
  "deunicode",
- "dirs",
  "eframe",
  "egui",
  "egui_extras",
@@ -7960,7 +7914,6 @@ dependencies = [
  "objc2 0.6.4",
  "objc2-metal 0.3.2",
  "pollster 1.0.1",
- "serde_json",
  "wgpu",
  "yinhe-archive",
  "yinhe-audio",
@@ -8016,7 +7969,6 @@ version = "0.1.0"
 dependencies = [
  "midir",
  "thiserror 2.0.18",
- "tracing",
 ]
 
 [[package]]
@@ -8034,7 +7986,6 @@ name = "yinhe-mobile-core"
 version = "0.1.0"
 dependencies = [
  "log",
- "pollster 1.0.1",
  "serde_json",
  "wgpu",
  "yinhe-archive",
@@ -8056,7 +8007,6 @@ dependencies = [
  "hound",
  "rayon",
  "tempfile",
- "xsynth-core",
  "xsynth-soundfonts",
  "yinhe-midi",
  "yinhe-mixer",
