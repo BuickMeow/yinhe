@@ -219,13 +219,7 @@ pub(crate) fn draw_marquee_box(
         } else {
             egui::Rect::from_min_max(egui::pos2(x0 - kb_w, y0), egui::pos2(x1 - kb_w, y1))
         };
-        let _ = crate::selection::draw::draw(
-            ui.painter(),
-            music_rect,
-            snapped,
-            fill_color,
-            stroke_color,
-        );
+        crate::selection::draw::draw(ui.painter(), music_rect, snapped, fill_color, stroke_color);
     }
 }
 
