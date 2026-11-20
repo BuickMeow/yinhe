@@ -147,17 +147,17 @@ impl Document {
         }))
     }
 
-    /// 选框时间渐变：保持 `[t0, t1]` 两端固定，按 `x^gamma` 重排内部音符。
+    /// 选框时间渐变：保持 `[t0, t1]` 两端固定，按指数曲线重排内部音符。
     ///
-    /// 上拉 gamma < 1（前疏后密），下拉 gamma > 1（前密后疏）。
+    /// `bend < 0`（上拉）前疏后密，`bend > 0`（下拉）前密后疏。
     /// 选框本身的时间范围不变；每个音符 start/end 都做同一映射，gate 至少 1 tick。
-    pub fn warp_selected_time(&mut self, t0: f64, t1: f64, gamma: f32) -> Option<UndoAction> {
+    pub fn warp_selected_time(&mut self, t0: f64, t1: f64, bend: f32) -> Option<UndoAction> {
         if self.edit.selected.is_empty()
             || t1 <= t0
             || !t0.is_finite()
             || !t1.is_finite()
-            || !gamma.is_finite()
-            || (gamma - 1.0).abs() < 1e-4
+            || !bend.is_finite()
+            || bend.abs() < 1e-4
         {
             return None;
         }
@@ -171,7 +171,7 @@ impl Document {
         let mut changed = false;
         for (note, key) in &originals {
             let (new_start, new_end) =
-                crate::time_warp::warp_note(t0, t1, gamma, note.start_tick, note.end_tick);
+                crate::time_warp::warp_note(t0, t1, bend, note.start_tick, note.end_tick);
             if new_start != note.start_tick || new_end != note.end_tick {
                 changed = true;
             }

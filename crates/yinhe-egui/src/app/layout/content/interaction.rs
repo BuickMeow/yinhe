@@ -308,9 +308,9 @@ impl App {
         }
     }
 
-    /// 选框时间边纵向拖动：保持两端固定，按 `x^gamma` 重排内部音符。
+    /// 选框时间边纵向拖动：保持两端固定，按指数曲线重排内部音符。
     pub(super) fn handle_selection_warp(&mut self, warp: Option<(f64, f64, f32)>) {
-        let Some((t0, t1, gamma)) = warp else {
+        let Some((t0, t1, bend)) = warp else {
             return;
         };
         let Some(idx) = self.workspace.active_doc else {
@@ -318,7 +318,7 @@ impl App {
         };
         let doc = &mut self.workspace.documents[idx];
         let before = doc.capture_snapshot();
-        if let Some(action) = doc.warp_selected_time(t0, t1, gamma) {
+        if let Some(action) = doc.warp_selected_time(t0, t1, bend) {
             doc.edit.pianoroll_view.base.dirty = true;
             doc.push_undo(action, t!("undo.rescale_span").as_ref(), before);
             self.notify_notes_changed();

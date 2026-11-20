@@ -197,7 +197,7 @@ fn warp_selection_keeps_endpoints_and_moves_inner_notes() {
         .map(|n| n.start_tick)
         .collect();
     let action = doc
-        .warp_selected_time(100.0, 400.0, 0.5)
+        .warp_selected_time(100.0, 400.0, -2.0)
         .expect("上拉应产生渐变");
     let starts_after: Vec<u32> = doc.data.model.notes[60]
         .iter()

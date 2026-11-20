@@ -2199,7 +2199,7 @@ fn note_move_free_within_one_quantize_then_latches() {
     assert_eq!(rects, vec![(0.0, 480.0, 100, 110)], "选框应回到网格起点");
 }
 
-/// 时间渐变：左缘上拉 120px → γ=1/64，不提交 Gate/Scale/Riff。
+/// 时间渐变：左缘上拉 120px → bend=-40，不提交 Gate/Scale/Riff。
 #[test]
 fn left_edge_vertical_drag_commits_time_warp() {
     let ctx = egui::Context::default();
@@ -2250,9 +2250,9 @@ fn left_edge_vertical_drag_commits_time_warp() {
     );
     let out = frame(release_event(drag));
 
-    let (t0, t1, gamma) = out.warp.expect("上拉应提交时间渐变");
+    let (t0, t1, bend) = out.warp.expect("上拉应提交时间渐变");
     assert_eq!((t0, t1), (0.0, 600.0));
-    assert!((gamma - 1.0 / 64.0).abs() < 1e-5, "上拉 120px 应到 γ=1/64");
+    assert!((bend + 40.0).abs() < 1e-4, "上拉 120px 应到 bend=-40");
     assert!(out.scale_delta.is_none(), "渐变不得走整体变速");
     assert!(out.riff_repeat.is_none(), "渐变不得提交 Riff");
     assert!(note_resize_delta.is_none(), "渐变不得走 Gate");

@@ -3,7 +3,7 @@
 //! 边缘同时承担原有的时间轴方向拖动（Gate/Scale/Riff），因此第一次超过
 //! 死区后按主轴/副轴锁定本次手势，不再中途切换：
 //! - 时间终点边 + 主轴 → 原有 Gate/Scale；
-//! - 时间边 + 副轴 → `x^γ` 时间渐变；
+//! - 时间边 + 副轴 → 指数曲线时间渐变；
 //! - 力度边 + 副轴 → 相对力度增量。
 //!
 //! Riff 模式在 press 时直接进入原有状态机，不参与轴锁定：Riff 的纵向
@@ -15,7 +15,7 @@ use eframe::egui;
 
 use yinhe_editor_core::ResizeSide;
 use yinhe_editor_core::time_warp::{
-    FULL_DRAG_DEADZONE_PX, gamma_from_dy, velocity_delta_from_dy, warp_note,
+    FULL_DRAG_DEADZONE_PX, bend_from_dy, velocity_delta_from_dy, warp_fraction, warp_note,
 };
 
 use super::state::{EdgeGestureState, GestureAxis, SelDragFrameState};
@@ -71,13 +71,13 @@ fn activate_main_mode(
     state.edge_gesture = None;
 }
 
-/// 时间渐变 ghost：两端固定，内部音符按 `x^γ` 重排。
+/// 时间渐变 ghost：两端固定，内部音符按指数曲线重排。
 fn rebuild_warp_ghost(
     state: &mut SelDragFrameState,
     gesture: EdgeGestureState,
     view: &yinhe_types::PianoRollView,
     content_rect: egui::Rect,
-    gamma: f32,
+    bend: f32,
 ) {
     state.ghost_notes.clear();
     state.hidden_notes.clear();
@@ -92,13 +92,8 @@ fn rebuild_warp_ghost(
         if info.key < key_lo || info.key > key_hi {
             continue;
         }
-        let (new_start, new_end) = warp_note(
-            gesture.t0,
-            gesture.t1,
-            gamma,
-            info.start_tick,
-            info.end_tick,
-        );
+        let (new_start, new_end) =
+            warp_note(gesture.t0, gesture.t1, bend, info.start_tick, info.end_tick);
         if f64::from(new_start) >= tick_hi || f64::from(new_end) <= tick_lo {
             continue;
         }
@@ -203,13 +198,14 @@ pub(crate) fn edge_gesture_frame(
             let (_, cross) = axis_deltas(delta, vertical);
             match gesture.edge {
                 SelectionEdge::TimeStart | SelectionEdge::TimeEnd => {
-                    let gamma = gamma_from_dy(cross);
-                    rebuild_warp_ghost(state, gesture, view, content_rect, gamma);
-                    // 中点归一化位置 = 0.5^γ；直接告诉用户疏密偏向。
-                    let mid = (0.5_f32.powf(gamma) * 100.0).round() as i32;
+                    let bend = bend_from_dy(cross);
+                    rebuild_warp_ghost(state, gesture, view, content_rect, bend);
+                    // 前后各 10% 的跨度：指数曲线满足前后镜像，两个方向读数互补。
+                    let front = (warp_fraction(bend, 0.1) * 100.0).round() as i32;
+                    let back = ((1.0 - warp_fraction(bend, 0.9)) * 100.0).round() as i32;
                     crate::widgets::tooltip::draw_hover_tooltip(
                         ui.ctx(),
-                        &[format!("slope ×{gamma:.2}"), format!("mid {mid}%")],
+                        &[format!("front {front}% · back {back}%")],
                         pos.x,
                         pos.y,
                     );
@@ -250,9 +246,9 @@ pub(crate) fn edge_gesture_frame(
                     let (_, cross) = axis_deltas(pos - gesture.press, vertical);
                     match gesture.edge {
                         SelectionEdge::TimeStart | SelectionEdge::TimeEnd => {
-                            let gamma = gamma_from_dy(cross);
-                            if (gamma - 1.0).abs() > 1e-4 {
-                                *selection_warp = Some((gesture.t0, gesture.t1, gamma));
+                            let bend = bend_from_dy(cross);
+                            if bend.abs() > 1e-4 {
+                                *selection_warp = Some((gesture.t0, gesture.t1, bend));
                             }
                         }
                         SelectionEdge::Velocity => {
