@@ -169,8 +169,8 @@ pub fn show_transport_buttons(
     let mut grid_hovered = false;
     egui::Frame::new()
         .inner_margin(egui::Margin {
-            left: 2,
-            right: 2,
+            left: 6,
+            right: 6,
             top: 2,
             bottom: 2,
         })
@@ -181,8 +181,8 @@ pub fn show_transport_buttons(
                 ui.set_min_height(GROUP_H);
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = TRANSPORT_GAP;
-                    // 图标本身贴边，补 3px 内衬；加上外框 2px，视觉边距与
-                    // 三联选择器（2px 外框 + 按钮内 3px）一致。
+                    // 图标本身贴边，补 3px 内衬；含 1px 描边 + 6px 外框后，
+                    // 左右视觉边距约 10px，与三联选择器（外框 + 按钮内 3px）一致。
                     ui.add_space(3.0);
                     for &(icon, action) in SELECT_BAR_BUTTONS.iter() {
                         let font = egui::FontId::new(TRANSPORT_ICON_SIZE, icon.font_family());
@@ -235,8 +235,8 @@ pub fn show_drag_mode_selector(ui: &mut egui::Ui) {
     let mut mode = load_drag_mode(ui.ctx());
     egui::Frame::new()
         .inner_margin(egui::Margin {
-            left: 2,
-            right: 2,
+            left: 6,
+            right: 6,
             top: 2,
             bottom: 2,
         })
