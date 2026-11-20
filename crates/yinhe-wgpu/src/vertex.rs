@@ -191,10 +191,6 @@ impl NoteInstance {
         }
     }
 
-    pub fn is_ghost(&self) -> bool {
-        self.end_tick & Self::GHOST_BIT != 0
-    }
-
     /// 真实 start tick（去掉标志位）。
     pub fn start_tick(&self) -> u32 {
         self.start_tick & Self::TICK_MASK
@@ -356,43 +352,7 @@ impl CurveInstance {
     }
 }
 
-impl DrawInstance {
-    /// Construct a solid-filled rectangle with no rounded corners, no border.
-    pub fn solid_rect(x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) -> Self {
-        DrawInstance {
-            x,
-            y,
-            w,
-            h,
-            rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
-            props_packed: pack_props(0.0, 0.0),
-            velocity: 0,
-            tag: 0,
-        }
-    }
-
-    /// Construct a rectangle with corner radius and border width.
-    pub fn with_props(
-        x: f32,
-        y: f32,
-        w: f32,
-        h: f32,
-        color: [f32; 4],
-        corner_radius: f32,
-        border_width: f32,
-    ) -> Self {
-        DrawInstance {
-            x,
-            y,
-            w,
-            h,
-            rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
-            props_packed: pack_props(corner_radius, border_width),
-            velocity: 0,
-            tag: 0,
-        }
-    }
-}
+impl DrawInstance {}
 
 /// Pack RGBA floats (0.0-1.0) into a single u32 (UNORM8 x 4).
 pub fn pack_rgba(r: f32, g: f32, b: f32, a: f32) -> u32 {

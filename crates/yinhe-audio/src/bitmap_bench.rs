@@ -645,7 +645,6 @@ fn b11_real_renderer_sequence() {
         layout.clone(),
         crate::BufferSize::Default,
         None,
-        yinhe_types::SynthEngine::YinheCpu,
         yinhe_types::Interpolation::Linear,
     )
     .expect("spawn audio");

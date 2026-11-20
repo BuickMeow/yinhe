@@ -6,7 +6,6 @@ use std::time::Instant;
 use crossbeam_channel::TryRecvError;
 
 use crate::spawn::WorkerResult;
-use yinhe_types::SynthEngine;
 
 use super::{AudioRenderer, play_log};
 
@@ -129,43 +128,41 @@ impl AudioRenderer {
                         .collect();
                     // yinhe CPU 后端：首次加载音色库时创建 CpuSynth，逐通道登记
                     // key map（无样本上传阶段；引擎 dispatch 增量投递事件）。
-                    if self.synth_engine == SynthEngine::YinheCpu {
-                        let cpu_paths: Vec<std::path::PathBuf> =
-                            paths.iter().map(std::path::PathBuf::from).collect();
-                        // 一次登记全部 dense：多库只合并一次、Arc 共享；逐通道
-                        // 调用会重复深拷贝合并整份 key map（每通道 128×力度层）。
-                        let denses: Vec<u32> = dense_list
-                            .iter()
-                            .map(|(_, dense)| *dense)
-                            .filter(|d| *d != u32::MAX && (*d as usize) < yinhe_synth::MAX_CHANNELS)
-                            .collect();
-                        self.engine
+                    let cpu_paths: Vec<std::path::PathBuf> =
+                        paths.iter().map(std::path::PathBuf::from).collect();
+                    // 一次登记全部 dense：多库只合并一次、Arc 共享；逐通道
+                    // 调用会重复深拷贝合并整份 key map（每通道 128×力度层）。
+                    let denses: Vec<u32> = dense_list
+                        .iter()
+                        .map(|(_, dense)| *dense)
+                        .filter(|d| *d != u32::MAX && (*d as usize) < yinhe_synth::MAX_CHANNELS)
+                        .collect();
+                    self.engine
+                        .synth
+                        .cpu_synth
+                        .set_interpolation(self.interpolation.code());
+                    if !denses.is_empty() {
+                        match self
+                            .engine
                             .synth
                             .cpu_synth
-                            .set_interpolation(self.interpolation.code());
-                        if !denses.is_empty() {
-                            match self
-                                .engine
-                                .synth
-                                .cpu_synth
-                                .load_dense_soundfonts_many(&denses, &cpu_paths)
-                            {
-                                Ok(()) => play_log(&format!(
-                                    "[sf] CPU 加载完成 denses={denses:?} paths={cpu_paths:?}"
-                                )),
-                                Err(e) => play_log(&format!(
-                                    "[sf] CPU 加载失败 denses={denses:?} paths={cpu_paths:?}: {e}"
-                                )),
-                            }
-                        }
-                        // 预览也是 yinhe CPU：共享同一份 key map（进程级缓存命中）。
-                        if !denses.is_empty()
-                            && let Err(e) = self
-                                .engine
-                                .load_preview_yinhe_soundfonts(&denses, &cpu_paths)
+                            .load_dense_soundfonts_many(&denses, &cpu_paths)
                         {
-                            eprintln!("[yinhe-cpu] preview 音色加载失败: {e}");
+                            Ok(()) => play_log(&format!(
+                                "[sf] CPU 加载完成 denses={denses:?} paths={cpu_paths:?}"
+                            )),
+                            Err(e) => play_log(&format!(
+                                "[sf] CPU 加载失败 denses={denses:?} paths={cpu_paths:?}: {e}"
+                            )),
                         }
+                    }
+                    // 预览也是 yinhe CPU：共享同一份 key map（进程级缓存命中）。
+                    if !denses.is_empty()
+                        && let Err(e) = self
+                            .engine
+                            .load_preview_yinhe_soundfonts(&denses, &cpu_paths)
+                    {
+                        eprintln!("[yinhe-cpu] preview 音色加载失败: {e}");
                     }
                     // GPU 路径：首次加载音色库时初始化 GpuSynth，逐通道登记；
                     // 样本统一在最后一组完成时上传一次（避免逐通道全量重传）。

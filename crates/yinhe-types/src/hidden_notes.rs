@@ -83,10 +83,6 @@ impl HiddenNotes {
         self.keys[key as usize / 64] |= 1u64 << (key % 64);
     }
 
-    pub fn contains_id(&self, id: u32) -> bool {
-        self.bits.contains(id)
-    }
-
     /// 含隐藏音符的音高桶掩码（GPU 增量上传判定用）。
     pub fn key_mask(&self) -> [u64; KEY_WORDS] {
         self.keys

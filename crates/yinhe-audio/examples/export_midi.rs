@@ -11,23 +11,18 @@ use std::time::{Duration, Instant};
 
 use yinhe_audio::channel_layout::ChannelLayout;
 use yinhe_audio::export::{ExportProgress, WavBitDepth};
-use yinhe_audio::{AudioCommand, SynthEngine, spawn_cpal_audio};
+use yinhe_audio::{AudioCommand, spawn_cpal_audio};
 use yinhe_types::Interpolation;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 4 {
-        eprintln!("usage: export_midi <midi> <soundfont> <out.wav> [yinhe|xsynth]");
+        eprintln!("usage: export_midi <midi> <soundfont> <out.wav>");
         std::process::exit(2);
     }
     let midi_path = &args[1];
     let sf_path = &args[2];
     let out = &args[3];
-    let engine = match args.get(4).map(|s| s.as_str()) {
-        Some("xsynth") => SynthEngine::YinheCpu,
-        _ => SynthEngine::YinheCpu,
-    };
-
     let mut model = yinhe_midi::parse_path(midi_path).expect("解析 MIDI 失败");
     model.rebuild();
     let model = Arc::new(model);
@@ -38,7 +33,6 @@ fn main() {
         layout.clone(),
         yinhe_audio::BufferSize::Default,
         None,
-        engine,
         Interpolation::default(),
     )
     .expect("启动音频系统失败");

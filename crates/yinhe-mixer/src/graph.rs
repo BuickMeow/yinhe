@@ -363,13 +363,6 @@ impl MixerGraph {
         old
     }
 
-    pub fn set_master_inserts(
-        &mut self,
-        inserts: Vec<Box<dyn InsertProcessor>>,
-    ) -> Vec<Box<dyn InsertProcessor>> {
-        std::mem::replace(&mut self.master.inserts, inserts)
-    }
-
     /// 在通道槽位 `slot` 处插入一个处理器（链尾之后则追加）。
     pub fn insert_insert(&mut self, channel: usize, slot: usize, p: Box<dyn InsertProcessor>) {
         if let Some(chain) = self.channels.get_mut(channel) {
@@ -554,11 +547,6 @@ impl MixerGraph {
         for insert in &mut self.master.inserts {
             insert.flush_pending_params(position_samples);
         }
-    }
-
-    /// 通道电平表 tap（用于 UI 端读取）。
-    pub fn channel_meter(&self, channel: usize) -> Option<MeterTap> {
-        self.channels.get(channel).map(|c| c.meter.clone())
     }
 
     pub fn master_meter(&self) -> MeterTap {

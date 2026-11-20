@@ -299,17 +299,8 @@ impl MixerParams {
         self.ap_channel_id(global).and_then(|id| self.find_node(id))
     }
 
-    pub fn ap_node_mut(&mut self, global: u8) -> Option<&mut MixerNode> {
-        let id = self.ap_channel_id(global)?;
-        self.find_node_mut(id)
-    }
-
     pub fn audio_node(&self, ch: u16) -> Option<&MixerNode> {
         self.node_by_source(ChannelSource::Audio(ch))
-    }
-
-    pub fn audio_node_mut(&mut self, ch: u16) -> Option<&mut MixerNode> {
-        self.node_by_source_mut(ChannelSource::Audio(ch))
     }
 
     pub fn track_node(&self, id: LogicalChannelId) -> Option<&MixerNode> {
@@ -345,10 +336,6 @@ impl MixerParams {
 
     pub fn ap(&self, id: ApGroupId) -> Option<&ApGroup> {
         self.aps.iter().find(|ap| ap.id == id)
-    }
-
-    pub fn ap_mut(&mut self, id: ApGroupId) -> Option<&mut ApGroup> {
-        self.aps.iter_mut().find(|ap| ap.id == id)
     }
 
     pub fn ap_for_midi(&self, global: u8) -> Option<&ApGroup> {
@@ -543,11 +530,6 @@ impl MixerParams {
         true
     }
 
-    /// 按 ID 查每轨 LC。
-    pub fn channel_exists(&self, id: LogicalChannelId) -> bool {
-        self.find_node(ChannelId::Lc(id)).is_some()
-    }
-
     /// 删除每轨 LC，并清理所有指向它的路由（当前没有外部引用，保留接口）。
     pub fn remove_track_lc(&mut self, id: LogicalChannelId) {
         let ch = ChannelId::Lc(id);
@@ -650,11 +632,6 @@ impl MixerParams {
             }
             None => false,
         }
-    }
-
-    /// 确保某音频通道号对应的 LC 节点存在（迁移/外部构造 audio LC 用）。
-    pub fn ensure_audio_lc_node(&mut self, ch: u16) {
-        self.ensure_audio_len(ch as usize + 1);
     }
 
     /// 统一节点 insert 链（可变）。

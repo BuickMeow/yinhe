@@ -69,12 +69,7 @@ pub(crate) enum PreviewEngine {
 }
 
 impl PreviewEngine {
-    pub(crate) fn new(
-        _synth_engine: yinhe_types::SynthEngine,
-        layout: &ChannelLayout,
-        sample_rate: u32,
-        interpolation: u32,
-    ) -> Self {
+    pub(crate) fn new(layout: &ChannelLayout, sample_rate: u32, interpolation: u32) -> Self {
         PreviewEngine::Yinhe(Box::new(yinhe::YinhePreview::new(
             layout,
             sample_rate,

@@ -1,26 +1,8 @@
-//! 合成后端选择：设置层（`AudioSettings`）与音频引擎共用的类型。
+//! 采样插值方式：设置层（`AudioSettings`）与音频引擎共用的类型。
 //!
 //! 定义在 types 层而不是 settings 层，避免音频引擎反向依赖 settings crate。
 
 use serde::{Deserialize, Serialize};
-
-/// 合成后端选择（设置/UI 层）。
-///
-/// 方案 C：XSynth 已移除，只用 `YinheCpu`（yinhe-synth 自研 CPU 引擎）。
-/// 旧配置 `"XSynthCpu"` / `"YinheGpu"` 通过 serde alias 落到 `YinheCpu`，不丢设置。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SynthEngine {
-    #[default]
-    #[serde(alias = "XSynthCpu", alias = "YinheGpu")]
-    YinheCpu,
-}
-
-impl SynthEngine {
-    /// 实际可渲染的后端。XSynth 已移除，恒为唯一后端。
-    pub fn resolved(self) -> Self {
-        Self::YinheCpu
-    }
-}
 
 /// 采样插值方式（变调时的音质/性能权衡）。
 ///
@@ -52,21 +34,7 @@ impl Interpolation {
 
 #[cfg(test)]
 mod tests {
-    use super::{Interpolation, SynthEngine};
-
-    #[test]
-    fn resolved_is_yinhe_cpu() {
-        assert_eq!(SynthEngine::YinheCpu.resolved(), SynthEngine::YinheCpu);
-    }
-
-    /// 旧工程的 `"YinheGpu"` 必须还能读，映射到 CPU 后端。
-    #[test]
-    fn legacy_engines_map_to_yinhe_cpu() {
-        for name in ["YinheGpu", "XSynthCpu", "YinheCpu"] {
-            let e: SynthEngine = serde_json::from_str(&format!("\"{name}\"")).unwrap();
-            assert_eq!(e, SynthEngine::YinheCpu);
-        }
-    }
+    use super::Interpolation;
 
     #[test]
     fn interpolation_codes() {

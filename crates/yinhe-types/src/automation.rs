@@ -597,10 +597,6 @@ pub const CHANNEL_DSP_PARAMS: &[BuiltinParamInfo] = &[
     },
 ];
 
-/// CC71/74（共振/亮度）是音源层参数：作为普通 CC 目标存在，但不在
-/// 通道 DSP 参数表内（`channel_dsp_param` 只列 Gain/Pan）。
-pub const FILTER_CCS: [u8; 2] = [71, 74];
-
 impl ParamDevice {
     /// 设备的内置参数表（第三方插件返回空表，参数由插件定义）。
     pub fn builtin_params(&self) -> &'static [BuiltinParamInfo] {

@@ -11,18 +11,6 @@ use yinhe_core::TrackKind;
 use yinhe_core::YinModel;
 use yinhe_types::LogicalChannelId;
 
-/// dense 通道所属的命名空间（strip/insert/send 反查路由用）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ChannelNamespace {
-    /// 源 MIDI 通道（0..256，global = port<<4 | channel）。
-    /// 该通道同时是乐器的挂载点（插件存在则输出插件音源，否则 XSynth）。
-    Midi(usize),
-    /// 音频通道（`TrackData::audio_channel`）。
-    Audio(usize),
-    /// 每轨独立 LC（`TrackData.lc`）。
-    TrackLc { track: u16, lc: LogicalChannelId },
-}
-
 /// 不可变的通道布局，`AudioEngine` 创建时定型。
 ///
 /// dense 通道空间如下（引擎/混音台/预览合成器按 `compacted_channels()` 分配）：

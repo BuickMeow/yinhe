@@ -7,7 +7,6 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender};
 use yinhe_dsp::dsp::limiter::VolumeLimiter;
 use yinhe_types::Interpolation;
-use yinhe_types::SynthEngine;
 
 use crate::export::ExportJob;
 use crate::freeze::FreezeJob;
@@ -228,8 +227,6 @@ struct AudioRenderer {
     insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
     /// 被替换/移除的乐器处理器退回 UI 线程（渲染线程不做 deactivate）。
     instrument_return_tx: Sender<(u64, Box<dyn yinhe_mixer::InstrumentProcessor>)>,
-    /// 合成后端（spawn 时已收敛）。
-    synth_engine: SynthEngine,
     /// 采样插值方式（初始化 CpuSynth 时写入）。
     interpolation: Interpolation,
     /// 播放启动诊断：Play 时刻与目标位置（首块渲染完成后打印一次耗时）。
@@ -269,7 +266,6 @@ impl AudioRenderer {
         callback_frames: usize,
         insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
         instrument_return_tx: Sender<(u64, Box<dyn yinhe_mixer::InstrumentProcessor>)>,
-        synth_engine: SynthEngine,
         interpolation: Interpolation,
     ) -> Self {
         let render_chunk_frames = RENDER_CHUNK_FRAMES;
@@ -298,7 +294,6 @@ impl AudioRenderer {
             preview_target_frames: PREVIEW_TARGET_FRAMES.max(callback_frames),
             insert_return_tx,
             instrument_return_tx,
-            synth_engine,
             interpolation,
             play_timing: None,
             play_probe: 0,
@@ -308,12 +303,6 @@ impl AudioRenderer {
             play_nonzero_chunks: 0,
             play_voices_max: 0,
         }
-    }
-
-    /// 合成后端是否为 yinhe CPU 引擎（key map 预解析等 yinhe 后端共用路径）。
-    #[inline]
-    fn yinhe_cpu_engine(&self) -> bool {
-        self.synth_engine == SynthEngine::YinheCpu
     }
 
     /// 标记音频就绪（幂等）：UI 的"加载完成"提示以此为准。
@@ -645,7 +634,6 @@ pub(crate) fn spawn_renderer(
     callback_frames: usize,
     insert_return_tx: Sender<Vec<Box<dyn yinhe_mixer::InsertProcessor>>>,
     instrument_return_tx: Sender<(u64, Box<dyn yinhe_mixer::InstrumentProcessor>)>,
-    synth_engine: SynthEngine,
     interpolation: Interpolation,
 ) -> Result<JoinHandle<()>, std::io::Error> {
     thread::Builder::new()
@@ -669,7 +657,6 @@ pub(crate) fn spawn_renderer(
                 callback_frames,
                 insert_return_tx.clone(),
                 instrument_return_tx.clone(),
-                synth_engine,
                 interpolation,
             );
             renderer.run();

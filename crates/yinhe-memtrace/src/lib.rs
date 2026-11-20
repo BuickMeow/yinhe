@@ -107,10 +107,6 @@ pub fn gpu_resource_bytes() -> isize {
     GPU_RESOURCE_BYTES.load(Ordering::Relaxed)
 }
 
-pub fn gpu_resource_mb() -> f64 {
-    gpu_resource_bytes() as f64 / 1_048_576.0
-}
-
 // ---------------------------------------------------------------------------
 // purge_free_pages —— 独立于追踪，始终启用。
 // ---------------------------------------------------------------------------

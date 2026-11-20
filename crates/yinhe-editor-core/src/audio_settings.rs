@@ -92,7 +92,7 @@ fn default_ignore_velocity() -> u8 {
     1
 }
 
-pub use yinhe_types::{Interpolation, SynthEngine};
+pub use yinhe_types::Interpolation;
 
 /// PR 音符力度显示方式。
 ///
@@ -168,8 +168,6 @@ pub struct AudioSettings {
     pub midi_export_curve_interpolate: bool,
     pub midi_export_strip_empty_tracks: bool,
     pub midi_export_dedup_overlaps: bool,
-    /// 合成后端选择（见 [`SynthEngine`]）。
-    pub synth_engine: SynthEngine,
     /// 采样插值方式（默认最近邻，与 xsynth 默认一致；见 [`Interpolation`]）。
     #[serde(default)]
     pub interpolation: Interpolation,
@@ -271,7 +269,6 @@ impl Default for AudioSettings {
             overlap_blocked_behavior: OverlapBlockedBehavior::default(),
             quick_delete_mode: QuickDeleteMode::default(),
             clip_enabled: default_clip_enabled(),
-            synth_engine: SynthEngine::default(),
             interpolation: Interpolation::default(),
             use_gpu_cull: false,
             locale: "zh-CN".to_string(),
@@ -373,16 +370,14 @@ mod tests {
         assert!(s.is_velocity_audible(3));
     }
 
-    /// 旧配置（`use_gpu_synth: bool` 字段）加载：未知字段忽略，synth_engine 取默认。
+    /// 旧配置（`use_gpu_synth: bool` 字段）加载：未知字段忽略。
     #[test]
     fn legacy_use_gpu_synth_field_is_ignored() {
         let mut v = serde_json::to_value(AudioSettings::default()).expect("serialize default");
         v.as_object_mut()
             .expect("settings serializes to object")
             .insert("use_gpu_synth".into(), serde_json::Value::Bool(true));
-        let s: AudioSettings =
-            serde_json::from_value(v).expect("old save with use_gpu_synth loads");
-        assert_eq!(s.synth_engine, SynthEngine::YinheCpu);
+        serde_json::from_value::<AudioSettings>(v).expect("old save with use_gpu_synth loads");
     }
 
     #[test]

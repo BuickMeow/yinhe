@@ -66,26 +66,6 @@ impl Document {
         changed
     }
 
-    /// 清除 revision 已不匹配的冻结，返回是否有变化。
-    pub fn prune_stale_freezes(&mut self) -> bool {
-        let revision = self.data.revision;
-        let mut changed = false;
-        for node in self.mixer_nodes_mut() {
-            let stale = node
-                .freeze
-                .as_ref()
-                .is_some_and(|freeze| freeze.source_revision != revision);
-            if stale {
-                node.freeze = None;
-                changed = true;
-            }
-        }
-        if changed {
-            self.mark_mixer_dirty();
-        }
-        changed
-    }
-
     /// 是否存在已失效的冻结（用于音符编辑后决定是否重推混音参数）。
     pub fn has_stale_freezes(&self) -> bool {
         let revision = self.data.revision;

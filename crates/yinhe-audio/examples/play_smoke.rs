@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use yinhe_audio::{AudioCommand, SynthEngine, spawn_cpal_audio};
+use yinhe_audio::{AudioCommand, spawn_cpal_audio};
 use yinhe_core::{ConductorData, NoteEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_types::Interpolation;
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
@@ -73,13 +73,6 @@ fn demo_model() -> Arc<YinModel> {
 }
 
 fn main() {
-    let engine = match std::env::args().nth(1).as_deref() {
-        Some("gpu") => SynthEngine::YinheCpu, // 旧参数：GPU 后端已删除，回落到 CPU
-        Some("xsynth") => SynthEngine::YinheCpu,
-        _ => SynthEngine::YinheCpu,
-    };
-    println!("== play_smoke: 后端 {engine:?} ==");
-
     let model = demo_model();
     let layout = yinhe_audio::channels_for_model(&model);
     let handle = spawn_cpal_audio(
@@ -87,7 +80,6 @@ fn main() {
         layout,
         yinhe_audio::BufferSize::Default,
         None,
-        engine,
         Interpolation::default(),
     )
     .expect("spawn 音频系统失败");

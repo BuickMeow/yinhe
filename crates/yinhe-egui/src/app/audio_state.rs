@@ -1,7 +1,7 @@
 //! Audio subsystem state — fields related to the audio engine and playback.
 
 use yinhe_audio::channel_layout::ChannelLayout;
-use yinhe_types::{Interpolation, SynthEngine};
+use yinhe_types::Interpolation;
 
 /// 影响音频引擎 spawn 的设置字段快照。
 ///
@@ -11,8 +11,8 @@ use yinhe_types::{Interpolation, SynthEngine};
 ///   要求其与当前设置一致；
 /// - spawn 在飞期间设置变化：结果快照与当前设置比对，不一致丢弃重来。
 ///
-/// 覆盖 `spawn_cpal_audio` 的全部设置输入：采样率、缓冲大小、输出设备、
-/// 合成后端、插值。**不含全局音色库**——音色库可在活引擎上在线替换
+/// 覆盖 `spawn_cpal_audio` 的全部设置输入：采样率、缓冲大小、输出设备、插值。
+/// **不含全局音色库**——音色库可在活引擎上在线替换
 /// （`SetSoundFonts`），改库不需要重建引擎。`xsynth_layers` / `max_voices` /
 /// `ignore_velocity` 由命令在线应用，不参与。
 #[derive(Clone, Debug, PartialEq)]
@@ -20,7 +20,6 @@ pub(crate) struct EngineSpawnKey {
     sample_rate: u32,
     buffer_size: u32,
     output_device_name: Option<String>,
-    synth_engine: SynthEngine,
     interpolation: Interpolation,
 }
 
@@ -30,7 +29,6 @@ impl EngineSpawnKey {
             sample_rate: settings.sample_rate,
             buffer_size: settings.buffer_size,
             output_device_name: settings.output_device_name.clone(),
-            synth_engine: settings.synth_engine,
             interpolation: settings.interpolation,
         }
     }
@@ -234,10 +232,6 @@ mod tests {
             k0,
             "output_device_name 必须纳入 EngineSpawnKey"
         );
-
-        // 方案 C：只剩 YinheCpu 一个后端，synth_engine 不再有变化维度；
-        // 该字段仍纳入 EngineSpawnKey（序列化比较），但用 interpolation 验证 key 敏感。
-        // 见下方 interpolation 用例。
 
         let mut s = mk();
         s.interpolation = match s.interpolation {

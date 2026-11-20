@@ -46,7 +46,6 @@ pub static PROF_REBUILD_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 /// note_on 内部细分：key map 查找 / voice 构造（含 biquad 系数）/ push。
 pub static PROF_ON_SELECT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub static PROF_ON_NEW_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-pub static PROF_ON_PUSH_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 // 默认全局 voice 上限 / layer 上限见 `crate::{DEFAULT_MAX_VOICES,
 // DEFAULT_MAX_LAYERS}`。超限在**块末摊销淘汰**（优先
 // 已在 release/kill 中的 voice），淘汰走 1ms 淡出（ENV_KILL）听感无咔哒；
@@ -240,9 +239,6 @@ impl CpuSynth {
         Ok(())
     }
 
-    /// 音色库加载收尾钩子（CPU 无上传，保留以统一调用方流程）。
-    pub fn finish_soundfont_load(&mut self) {}
-
     /// 批量加载事件（**要求按 sample 有序**，调用方负责），重置渲染位置到 0。
     pub fn load_events(&mut self, events: Vec<SynthEvent>) {
         debug_assert!(
@@ -268,21 +264,9 @@ impl CpuSynth {
         self.sample_position
     }
 
-    /// 仅设置渲染位置（不清事件/voice/channels）。
-    /// `load_events` 会把位置重置为 0；需要"载入完整事件表后从中间起播"的
-    /// 调用方（如离线对照渲染）在 load_events 之后调用本方法定位。
-    pub fn set_sample_position(&mut self, sample: u64) {
-        self.sample_position = sample;
-    }
-
     /// 当前活跃 voice 数（未结束）。
     pub fn voice_count(&self) -> usize {
         self.voices.iter().filter(|v| !v.finished()).count()
-    }
-
-    /// 诊断：voices 数组长度（retain 前的槽位数，含正在 release 的）。
-    pub fn debug_voices_len(&self) -> usize {
-        self.voices.len()
     }
 
     /// 每 key layer 上限（`SetLayerCount`；None = 不限制）。

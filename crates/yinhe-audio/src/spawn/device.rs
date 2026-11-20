@@ -92,14 +92,6 @@ pub(crate) fn negotiate_buffer_size(
     BufferSize::Fixed(clamped)
 }
 
-pub(crate) fn resolve_synth_engine(requested: SynthEngine) -> SynthEngine {
-    let resolved = requested.resolved();
-    if resolved != requested {
-        tracing::warn!("合成后端 {requested:?} 当前不可用（未实现），回退 {resolved:?}");
-    }
-    resolved
-}
-
 pub(crate) fn select_output_device(device_name: Option<&str>) -> Result<Device, String> {
     audio_out::find_output_device(device_name)
 }

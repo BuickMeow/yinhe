@@ -179,11 +179,6 @@ impl AutomationPanelView {
         self.value_scroll = self.value_scroll.clamp(0.0, max_scroll);
     }
 
-    /// 是否处于锚点成员态（框选/点选物化后）。
-    pub fn has_anchor_members(&self) -> bool {
-        self.anchor_members.is_some()
-    }
-
     /// 锚点成员数量（矩形态返回 `None`）。
     pub fn anchor_member_count(&self) -> Option<u64> {
         self.anchor_members.as_ref().map(NoteBitset::count)

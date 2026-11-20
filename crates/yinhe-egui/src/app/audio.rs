@@ -232,7 +232,6 @@ impl App {
             yinhe_audio::BufferSize::Fixed(self.audio_settings.buffer_size)
         };
         let device_name = self.audio_settings.output_device_name.clone();
-        let synth_engine = self.audio_settings.synth_engine;
         let interpolation = self.audio_settings.interpolation;
 
         // 后台线程执行 spawn（设备枚举/线程池创建/建流全不在 UI 线程）。
@@ -249,7 +248,6 @@ impl App {
                         layout,
                         buffer_size,
                         device_name.as_deref(),
-                        synth_engine,
                         interpolation,
                     )
                 }));

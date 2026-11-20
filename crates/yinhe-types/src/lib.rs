@@ -51,7 +51,7 @@ pub use palette::TRACK_PALETTE;
 pub use pc_event::PcEvent;
 pub use piano_roll_view::{Orientation, PianoRollView};
 pub use source::NoteSource;
-pub use synth::{Interpolation, SynthEngine};
+pub use synth::Interpolation;
 pub use synth_params::{
     SYNTH_PARAMS, SynthParamCategory, SynthParamId, SynthParamInfo, SynthParams, synth_param_info,
 };
@@ -75,9 +75,6 @@ pub const MIDI_CHANNEL_COUNT: usize = 256;
 /// 最大合法 key（桶下标上界，含）。
 pub const MAX_KEY: u8 = (KEY_COUNT - 1) as u8;
 
-/// 标准 MIDI 的 key 数（0-127）。仅 MIDI 导入/导出/设备发声边界使用。
-pub const STANDARD_MIDI_KEY_COUNT: usize = 128;
-
 /// Returns true if the given key (0–255) is a black key on a piano.
 pub fn is_black_key(key: u8) -> bool {
     matches!(key % 12, 1 | 3 | 6 | 8 | 10)
@@ -87,11 +84,3 @@ pub fn is_black_key(key: u8) -> bool {
 pub const NOTE_NAMES: [&str; 12] = [
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
 ];
-
-/// 把 key（0..=255）格式化为 "C5" 式音名。
-///
-/// 八度约定与 PR 键盘（piano_view/keyboard.rs）一致：octave = key / 12，
-/// 即 key 60 标注为 "C5"。
-pub fn key_name(key: u8) -> String {
-    format!("{}{}", NOTE_NAMES[(key % 12) as usize], key / 12)
-}

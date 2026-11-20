@@ -171,8 +171,7 @@ pub fn show(
     ui.painter()
         .rect_filled(content_rect, 0.0, crate::theme::app_bg());
 
-    let per_track_supported =
-        audio.is_some_and(|a| a.synth_engine == yinhe_types::SynthEngine::YinheCpu);
+    let per_track_supported = audio.is_some();
     let doc_ref = &mut doc;
     layout_changed |= dock::show(ui, content_rect, layout, |ui, kind, _content| {
         // 右栏所有面板统一紧凑高度（20）：输入框/下拉/按钮/列表行。

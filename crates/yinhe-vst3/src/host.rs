@@ -290,8 +290,6 @@ pub mod restart_flags {
     pub const LATENCY_CHANGED: i32 = 1 << 3;
     /// 参数**标题/数量**变化（需重枚举参数）。
     pub const PARAM_TITLES_CHANGED: i32 = 1 << 4;
-    /// 路由信息变化（多输出总线布局）。
-    pub const ROUTING_INFO_CHANGED: i32 = 1 << 9;
     /// 需要重枚举参数的位（值变化/标题变化）。
     pub const NEEDS_PARAM_RESCAN: i32 = PARAM_VALUES_CHANGED | PARAM_TITLES_CHANGED;
     /// 需要重新激活实例的位（I/O 变化/组件重载）。

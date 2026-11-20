@@ -140,8 +140,8 @@ impl AudioRenderer {
                 // 结果逐个应用时不再清，避免频繁打断输出。
                 let anchor = self.consumer_position.load(Ordering::Acquire);
                 self.clear_buffered_audio(anchor);
-                // worker 预热 yinhe-synth 的 key map 解析缓存（方案 C 只有 YinheCpu）。
-                let prefetch_keymaps = self.yinhe_cpu_engine();
+                // worker 预热 yinhe-synth 的 key map 解析缓存。
+                let prefetch_keymaps = true;
                 // latest-wins：每次切换推进代次，worker 只处理最新代次；
                 // 旧代次在队列里直接跳过，不会被大音色库的加载拖住新请求。
                 let generation = self.state.sf.generation.fetch_add(1, Ordering::AcqRel) + 1;

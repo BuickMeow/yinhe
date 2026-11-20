@@ -15,14 +15,11 @@ pub(crate) fn init_engine(
     sample_rate: u32,
     layout: ChannelLayout,
     interpolation: Interpolation,
-    synth_engine: SynthEngine,
 ) -> Result<EngineInit, String> {
     let engine = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut engine = crate::engine::AudioEngine::new(sample_rate, layout);
         engine.set_interpolation(interpolation);
-        // 预览后端跟随主引擎：XSynthCpu → xsynth；YinheCpu → yinhe CPU。
         let preview = crate::preview_engine::PreviewEngine::new(
-            synth_engine,
             &engine.channel_layout,
             engine.sample_rate,
             interpolation.code(),
@@ -116,7 +113,6 @@ pub(crate) fn init_renderer(
     callback_frames: usize,
     insert_return_tx: Sender<Vec<Box<dyn InsertProcessor>>>,
     instrument_return_tx: Sender<(u64, Box<dyn InstrumentProcessor>)>,
-    synth_engine: SynthEngine,
     interpolation: Interpolation,
 ) -> Result<RendererStarted, String> {
     let (ring_producer, ring_consumer) = AudioRing::new(RING_CAPACITY).split();
@@ -171,7 +167,6 @@ pub(crate) fn init_renderer(
         callback_frames,
         insert_return_tx,
         instrument_return_tx,
-        synth_engine,
         interpolation,
     )
     .map_err(|e| format!("Failed to spawn audio renderer thread: {e}"))?;
@@ -316,11 +311,8 @@ pub fn spawn_cpal_audio(
     layout: ChannelLayout,
     buffer_size: BufferSize,
     device_name: Option<&str>,
-    synth_engine: SynthEngine,
     interpolation: Interpolation,
 ) -> Result<CpalAudioHandle, String> {
-    let synth_engine = resolve_synth_engine(synth_engine);
-
     let (cmd_tx, cmd_rx) = bounded::<AudioCommand>(AUDIO_CMD_CHANNEL_CAPACITY);
     let (transport_tx, transport_rx) = unbounded::<AudioCommand>();
     let sample_position = Arc::new(AtomicU64::new(0));
@@ -362,7 +354,7 @@ pub fn spawn_cpal_audio(
         insert_return_rx,
         instrument_return_tx,
         instrument_return_rx,
-    } = init_engine(sample_rate, layout, interpolation, synth_engine)?;
+    } = init_engine(sample_rate, layout, interpolation)?;
 
     let sf_gen: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
     let sf_progress: Arc<AtomicU32> = Arc::new(AtomicU32::new(0));
@@ -410,7 +402,6 @@ pub fn spawn_cpal_audio(
         callback_frames,
         insert_return_tx,
         instrument_return_tx,
-        synth_engine,
         interpolation,
     )?;
 
@@ -440,7 +431,6 @@ pub fn spawn_cpal_audio(
     }
 
     Ok(CpalAudioHandle {
-        synth_engine,
         handle: AudioHandle {
             cmd_tx,
             transport_tx,

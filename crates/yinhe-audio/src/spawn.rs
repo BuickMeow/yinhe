@@ -19,7 +19,7 @@ use yinhe_mixer::{
     InsertProcessor, InstrumentProcessor, MasterParams, MeterReading, MixerParams, SampleReading,
     StripParams,
 };
-use yinhe_types::{Interpolation, SynthEngine};
+use yinhe_types::Interpolation;
 
 use crate::audio_model::{PreparedModel, SortedCC};
 use crate::audio_renderer::{RendererSharedState, spawn_renderer};
@@ -41,9 +41,7 @@ pub use stream::spawn_cpal_audio;
 pub(crate) use command::{AmMsMap, ChasePurpose, WorkerCmd, WorkerResult};
 #[cfg(test)]
 pub(crate) use device::negotiate_sample_rate_in;
-pub(crate) use device::{
-    negotiate_buffer_size, negotiate_sample_rate, resolve_synth_engine, select_output_device,
-};
+pub(crate) use device::{negotiate_buffer_size, negotiate_sample_rate, select_output_device};
 pub(crate) use handle::MixerMeters;
 pub(crate) use worker::spawn_worker;
 #[cfg(test)]

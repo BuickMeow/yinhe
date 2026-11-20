@@ -241,16 +241,6 @@ pub fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         },
     );
 
-    // 方案 C：XSynth 已移除，只剩 YinheCpu 一个后端，不再提供选择器。
-    setting_row(
-        ui,
-        t!("settings.audio.synth_engine").as_ref(),
-        t!("settings.audio.synth_engine_desc").as_ref(),
-        |ui| {
-            ui.label("Yinhe");
-        },
-    );
-
     {
         setting_row(
             ui,

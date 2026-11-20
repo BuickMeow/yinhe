@@ -286,8 +286,6 @@ impl AudioHandle {
 pub struct CpalAudioHandle {
     pub handle: AudioHandle,
     pub sample_rate: u32,
-    /// 当前引擎使用的合成器后端（UI 据此限制 per-track 输出）。
-    pub synth_engine: SynthEngine,
     /// 录音监听缓冲（交错立体声）：输入回调 push、输出回调混入。
     /// 上限见 `MONITOR_MAX_SAMPLES`，超限丢最旧样本（延迟不累积）。
     pub monitor: Arc<Mutex<std::collections::VecDeque<f32>>>,

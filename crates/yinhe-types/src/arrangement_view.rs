@@ -111,11 +111,6 @@ impl ArrangementView {
         (first, last)
     }
 
-    /// Static version of `lane_y` — no view reference needed.
-    pub fn lane_y_static(track_idx: usize, scroll_y: f32, lane_height: f32) -> f32 {
-        track_idx as f32 * lane_height - scroll_y
-    }
-
     /// Clamp scroll so the view doesn't go out of bounds.
     pub fn clamp_scroll(&mut self, width: f32, height: f32, total_ticks: f64, num_tracks: usize) {
         let old_x = self.base.scroll_x;

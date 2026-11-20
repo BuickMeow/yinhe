@@ -1,4 +1,4 @@
-//! 音频播放：CPAL 输出 + `yinhe-synth` CPU 合成（`SynthEngine::YinheCpu`）。
+//! 音频播放：CPAL 输出 + `yinhe-synth` CPU 合成。
 //!
 //! - 音频惰性初始化：首次播放/加载文档时创建，失败只记日志（无音频设备时静默降级）。
 //! - 音色库：`SetSoundFonts`（0..16 源通道共用同一库）。没有音色库时播放无声，
@@ -13,7 +13,7 @@ use std::time::Instant;
 
 use yinhe_audio::channel_layout::ChannelLayout;
 use yinhe_audio::export::{ExportProgress, WavBitDepth};
-use yinhe_audio::{AudioCommand, CpalAudioHandle, SynthEngine};
+use yinhe_audio::{AudioCommand, CpalAudioHandle};
 use yinhe_core::YinModel;
 use yinhe_types::Interpolation;
 
@@ -556,7 +556,6 @@ fn spawn_audio(layout: ChannelLayout, cursor_tick: f64, skip: Vec<bool>) -> Opti
         layout.clone(),
         buffer,
         None,
-        SynthEngine::YinheCpu,
         Interpolation::default(),
     ) {
         Ok(handle) => {

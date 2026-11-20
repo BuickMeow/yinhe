@@ -34,10 +34,6 @@ impl ScopeBuffer {
         }
     }
 
-    pub fn filled_frames(&self) -> usize {
-        self.filled
-    }
-
     /// 复制最近 `frames` 帧（按时间顺序，交错）。返回实际复制帧数。
     pub fn snapshot(&self, frames: usize, out: &mut Vec<f32>) -> usize {
         out.clear();
