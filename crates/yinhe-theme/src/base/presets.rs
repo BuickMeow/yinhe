@@ -214,17 +214,6 @@ impl BaseColors {
         warning: FIXED_WARNING,
     };
 
-    /// Orchid Valley — 兰谷，热门主题移植，花草诗意中性名
-    pub const ORCHID_VALLEY: Self = Self {
-        bg: Rgba::new(253, 246, 227, 255),
-        text: Rgba::new(101, 123, 131, 255),
-        accent: Rgba::new(38, 139, 210, 255),
-        selection: Rgba::new(253, 246, 227, 255),
-        danger: FIXED_DANGER,
-        border: Rgba::new(253, 246, 227, 255),
-        warning: FIXED_WARNING,
-    };
-
     /// Bamboo Fence — 竹篱，热门主题移植，花草诗意中性名
     pub const BAMBOO_FENCE: Self = Self {
         bg: Rgba::new(39, 40, 34, 255),
@@ -258,17 +247,6 @@ impl BaseColors {
         warning: FIXED_WARNING,
     };
 
-    /// Willow Bank — 柳岸，热门主题移植，花草诗意中性名
-    pub const WILLOW_BANK: Self = Self {
-        bg: Rgba::new(250, 250, 250, 255),
-        text: Rgba::new(92, 103, 115, 255),
-        accent: Rgba::new(134, 179, 0, 255),
-        selection: Rgba::new(250, 250, 250, 255),
-        danger: FIXED_DANGER,
-        border: Rgba::new(250, 250, 250, 255),
-        warning: FIXED_WARNING,
-    };
-
     /// Peach Stream — 桃溪，热门主题移植，花草诗意中性名
     pub const PEACH_STREAM: Self = Self {
         bg: Rgba::new(31, 36, 48, 255),
@@ -277,17 +255,6 @@ impl BaseColors {
         selection: Rgba::new(31, 36, 48, 255),
         danger: FIXED_DANGER,
         border: Rgba::new(31, 36, 48, 255),
-        warning: FIXED_WARNING,
-    };
-
-    /// Apricot Cove — 杏坞，热门主题移植，花草诗意中性名
-    pub const APRICOT_COVE: Self = Self {
-        bg: Rgba::new(1, 22, 39, 255),
-        text: Rgba::new(214, 222, 235, 255),
-        accent: Rgba::new(130, 170, 255, 255),
-        selection: Rgba::new(1, 22, 39, 255),
-        danger: FIXED_DANGER,
-        border: Rgba::new(1, 22, 39, 255),
         warning: FIXED_WARNING,
     };
 
@@ -420,17 +387,6 @@ impl BaseColors {
         selection: Rgba::new(29, 31, 33, 255),
         danger: FIXED_DANGER,
         border: Rgba::new(29, 31, 33, 255),
-        warning: FIXED_WARNING,
-    };
-
-    /// Wild Rice Pond — 茭塘，热门主题移植，花草诗意中性名
-    pub const WILD_RICE_POND: Self = Self {
-        bg: Rgba::new(1, 22, 39, 255),
-        text: Rgba::new(214, 222, 235, 255),
-        accent: Rgba::new(126, 87, 194, 255),
-        selection: Rgba::new(1, 22, 39, 255),
-        danger: FIXED_DANGER,
-        border: Rgba::new(1, 22, 39, 255),
         warning: FIXED_WARNING,
     };
 
@@ -676,17 +632,6 @@ impl BaseColors {
         warning: FIXED_WARNING,
     };
 
-    /// Litchi — 荔枝，热门主题移植，花草诗意中性名
-    pub const LITCHI: Self = Self {
-        bg: Rgba::new(245, 247, 246, 255),
-        text: Rgba::new(58, 79, 72, 255),
-        accent: Rgba::new(34, 191, 195, 255),
-        selection: Rgba::new(245, 247, 246, 255),
-        danger: FIXED_DANGER,
-        border: Rgba::new(245, 247, 246, 255),
-        warning: FIXED_WARNING,
-    };
-
     /// Grain Awn — 芒种，热门主题移植，花草诗意中性名
     pub const GRAIN_AWN: Self = Self {
         bg: Rgba::new(71, 45, 76, 255),
@@ -717,17 +662,6 @@ impl BaseColors {
         selection: Rgba::new(30, 39, 45, 255),
         danger: FIXED_DANGER,
         border: Rgba::new(30, 39, 45, 255),
-        warning: FIXED_WARNING,
-    };
-
-    /// Duckweed — 萍蓬，热门主题移植，花草诗意中性名
-    pub const DUCKWEED: Self = Self {
-        bg: Rgba::new(247, 245, 245, 255),
-        text: Rgba::new(79, 58, 62, 255),
-        accent: Rgba::new(195, 64, 34, 255),
-        selection: Rgba::new(247, 245, 245, 255),
-        danger: FIXED_DANGER,
-        border: Rgba::new(247, 245, 245, 255),
         warning: FIXED_WARNING,
     };
 
@@ -805,17 +739,6 @@ impl BaseColors {
         selection: Rgba::new(52, 56, 70, 255),
         danger: FIXED_DANGER,
         border: Rgba::new(52, 56, 70, 255),
-        warning: FIXED_WARNING,
-    };
-
-    /// Asara Waste — 蘅芜，热门主题移植，花草诗意中性名
-    pub const ASARA_WASTE: Self = Self {
-        bg: Rgba::new(247, 245, 245, 255),
-        text: Rgba::new(79, 61, 58, 255),
-        accent: Rgba::new(195, 118, 34, 255),
-        selection: Rgba::new(247, 245, 245, 255),
-        danger: FIXED_DANGER,
-        border: Rgba::new(247, 245, 245, 255),
         warning: FIXED_WARNING,
     };
 
@@ -937,17 +860,6 @@ impl BaseColors {
         selection: Rgba::new(41, 43, 32, 255),
         danger: FIXED_DANGER,
         border: Rgba::new(41, 43, 32, 255),
-        warning: FIXED_WARNING,
-    };
-
-    /// Torreya Wind — 榧风，热门主题移植，花草诗意中性名
-    pub const TORREYA_WIND: Self = Self {
-        bg: Rgba::new(245, 245, 247, 255),
-        text: Rgba::new(58, 65, 79, 255),
-        accent: Rgba::new(37, 34, 195, 255),
-        selection: Rgba::new(245, 245, 247, 255),
-        danger: FIXED_DANGER,
-        border: Rgba::new(245, 245, 247, 255),
         warning: FIXED_WARNING,
     };
 

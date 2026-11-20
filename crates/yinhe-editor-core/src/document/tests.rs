@@ -759,9 +759,9 @@ fn conductor_sync_with_text_primary_changes_cache() {
     assert_eq!(
         doc.edit.track_cache.colors[1],
         [
-            yinhe_theme::palette::TRACK_PALETTE[0][0],
-            yinhe_theme::palette::TRACK_PALETTE[0][1],
-            yinhe_theme::palette::TRACK_PALETTE[0][2],
+            yinhe_types::TRACK_PALETTE[0][0],
+            yinhe_types::TRACK_PALETTE[0][1],
+            yinhe_types::TRACK_PALETTE[0][2],
             1.0
         ]
     );
