@@ -204,6 +204,7 @@ pub fn build_ghost_notes(
         let bucket = ghost_notes[i..j]
             .iter()
             .map(|&(s, e, _, _)| (s, e.max(s), 127u8));
+        let start_len = out.len();
         flush_track_bucket(
             out,
             bucket,
@@ -216,6 +217,10 @@ pub fn build_ghost_notes(
             track_visible,
             merge_gap_ticks,
         );
+        // 标记 ghost 层：shader 据此在 AR 里画半透明预览（PR 保持选中样式）。
+        for inst in &mut out[start_len..] {
+            inst.set_ghost(true);
+        }
         i = j;
     }
 }
@@ -370,14 +375,22 @@ pub fn build_channel_ghost_notes(
                     if s <= me + merge_gap_ticks {
                         state = Some((ms, me.max(e.max(s)), mv));
                     } else {
+                        let start_len = out.len();
                         flush_row_entry(out, ms, me, mv, key, row, tick_start, tick_end);
+                        for inst in &mut out[start_len..] {
+                            inst.set_ghost(true);
+                        }
                         state = Some((s, e.max(s), 127));
                     }
                 }
             }
         }
         if let Some((ms, me, mv)) = state {
+            let start_len = out.len();
             flush_row_entry(out, ms, me, mv, key, row, tick_start, tick_end);
+            for inst in &mut out[start_len..] {
+                inst.set_ghost(true);
+            }
         }
         i = j;
     }
@@ -411,6 +424,21 @@ mod tests {
         let starts: Vec<u32> = out.iter().map(|n| n.start_tick).collect();
         assert!(starts.contains(&0), "range 内第一个音符被吞: {starts:?}");
         assert_eq!(out.len(), 3, "3 个音符都应被构建: {starts:?}");
+    }
+
+    /// AR 拖拽 ghost 必须带 GHOST_BIT，shader 才会把它画成半透明预览。
+    #[test]
+    fn build_ghost_notes_marks_ghost_layer() {
+        let mut ghosts = vec![(0, 100, 60, 0)];
+        let view = ArrangementView::default();
+        let mut out = Vec::new();
+        build_ghost_notes(&mut out, &mut ghosts, 2000.0, &view, (0, 1), &[true]);
+        assert_eq!(out.len(), 1);
+        assert!(
+            out[0].end_tick & NoteInstance::GHOST_BIT != 0,
+            "AR ghost 未标记 GHOST_BIT，shader 不会画半透明"
+        );
+        assert_eq!(out[0].velocity(), 127);
     }
 
     fn packed_track(packed: u32) -> u16 {
@@ -494,5 +522,9 @@ mod tests {
         build_channel_ghost_notes(&mut out, &mut ghosts, 2000.0, &view);
         assert_eq!(out.len(), 1, "同 (key,row) 子像素间隙应合并");
         assert_eq!(packed_track(out[0].packed), 3);
+        assert!(
+            out[0].end_tick & NoteInstance::GHOST_BIT != 0,
+            "通道 AR ghost 也要带 GHOST_BIT 才会画半透明"
+        );
     }
 }

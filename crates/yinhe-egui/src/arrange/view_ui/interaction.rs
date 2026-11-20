@@ -104,14 +104,9 @@ pub(crate) fn sel_drag_frame_arrange(
             None
         };
     if edge_hover.is_some() {
-        let icon = if ar_drag_mode(ui.ctx())
-            == crate::widgets::selection_actions::SelectionDragMode::Riff
-        {
-            egui::CursorIcon::ResizeNwSe
-        } else {
-            egui::CursorIcon::ResizeHorizontal
-        };
-        ui.ctx().set_cursor_icon(icon);
+        // Scale / Riff 都是左右拖动，统一用左右光标；Riff 的纵向是平铺，
+        // 不需要斜向缩放光标。
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     } else if inside_sel_rect && move_drag.is_none() && drag.is_none() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
     }
