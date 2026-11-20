@@ -600,7 +600,7 @@ pub(super) fn strip_controls(
                             let resp = crate::widgets::audibility::dot(
                                 ui,
                                 dot_rect,
-                                audible,
+                                p.audibility(),
                                 ui.scope_id().with("mix_audible"),
                             );
                             crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.mute"));
@@ -615,6 +615,16 @@ pub(super) fn strip_controls(
                                 } else {
                                     yinhe_types::Audibility::Normal
                                 });
+                                changed = true;
+                            }
+                            if resp.secondary_clicked() {
+                                p.set_audibility(
+                                    if p.audibility() == yinhe_types::Audibility::Soloed {
+                                        yinhe_types::Audibility::Normal
+                                    } else {
+                                        yinhe_types::Audibility::Soloed
+                                    },
+                                );
                                 changed = true;
                             }
                         },

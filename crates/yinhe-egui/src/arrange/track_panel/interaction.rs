@@ -328,13 +328,13 @@ pub fn handle_interactions(
 
     // 右键：记录命中的行（普通轨 / Master 行）。
     let ctx_target_id = egui::Id::unique("track_ctx_menu_target");
-    if resp.secondary_clicked() {
+    if resp.secondary_clicked()
+        && let Some(pos) = resp.interact_pointer_pos()
+        && !no_drag_rects.iter().any(|r| r.contains(pos))
+    {
         ui.ctx()
             .data_mut(|d| d.remove_temp::<RowMenuTarget>(ctx_target_id));
-        if let Some(pos) = resp.interact_pointer_pos()
-            && let Some(row_hit) =
-                row_layout.hit_at_music_y(pos.y - panel_rect.min.y + *scroll_y, lh)
-        {
+        if let Some(row_hit) = row_layout.hit_at_music_y(pos.y - panel_rect.min.y + *scroll_y, lh) {
             match row_hit {
                 ArRow::Track(idx) => {
                     prepare_track_menu(

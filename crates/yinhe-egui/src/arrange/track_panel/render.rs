@@ -16,6 +16,29 @@ pub fn compact_font(lh: f32) -> egui::FontId {
     egui::FontId::proportional((lh * 0.45).clamp(8.0, 14.0))
 }
 
+/// 行右侧电平表与听感圆点的矩形。
+///
+/// 圆点放在电平表左侧，留 2px 间隙；旧版把圆点叠在右下角，和电平表重合。
+fn meter_and_dot_rects(row_rect: egui::Rect) -> (egui::Rect, egui::Rect) {
+    let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
+    let meter_left = meter_right - LEVEL_METER_W;
+    let meter = egui::Rect::from_min_max(
+        egui::pos2(meter_left, row_rect.min.y + LEVEL_METER_MARGIN),
+        egui::pos2(meter_right, row_rect.max.y - LEVEL_METER_MARGIN),
+    );
+    let dot = egui::Rect::from_center_size(
+        egui::pos2(
+            meter_left - 2.0 - crate::widgets::audibility::HIT * 0.5,
+            row_rect.max.y - 7.0,
+        ),
+        egui::vec2(
+            crate::widgets::audibility::HIT,
+            crate::widgets::audibility::HIT,
+        ),
+    );
+    (meter, dot)
+}
+
 /// 行背景：条纹 → 选中 → 悬停，三层叠加，复用 `hover::is_row_hovered` 的成熟实现
 pub fn draw_row_background(
     ui: &egui::Ui,
@@ -171,13 +194,8 @@ pub(super) fn draw_automation_row(
         let key = (track_info[track].index, lane.target.clone());
         let st = am_ms.get(&key).copied().unwrap_or_default();
         let audibility = st.audibility();
-        let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
-        let meter_left = meter_right - LEVEL_METER_W;
         // 自动化表：编辑/播放光标处该 lane 的值（基线依种类）。
-        let meter_rect = egui::Rect::from_min_max(
-            egui::pos2(meter_left, row_rect.min.y + LEVEL_METER_MARGIN),
-            egui::pos2(meter_right, row_rect.max.y - LEVEL_METER_MARGIN),
-        );
+        let (meter_rect, dot_rect) = meter_and_dot_rects(row_rect);
         crate::widgets::meter::automation_meter(
             painter,
             meter_rect,
@@ -185,28 +203,32 @@ pub(super) fn draw_automation_row(
             lane.target.bar_baseline(),
             color32,
         );
-        let dot_rect = egui::Rect::from_center_size(
-            egui::pos2(row_rect.max.x - 7.0, row_rect.max.y - 7.0),
-            egui::vec2(
-                crate::widgets::audibility::HIT,
-                crate::widgets::audibility::HIT,
-            ),
-        );
         no_drag_rects.push(dot_rect);
         let resp = crate::widgets::audibility::dot(
             ui,
             dot_rect,
-            audibility != yinhe_types::Audibility::Muted,
+            audibility,
             egui::Id::unique(("am_audible", track, sub)),
         );
         crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.arrange.am_mute"));
-        if resp.clicked() {
-            let mut state = st;
-            state.set_audibility(if audibility == yinhe_types::Audibility::Muted {
+        let next = if resp.clicked() {
+            Some(if audibility == yinhe_types::Audibility::Muted {
                 yinhe_types::Audibility::Normal
             } else {
                 yinhe_types::Audibility::Muted
-            });
+            })
+        } else if resp.secondary_clicked() {
+            Some(if audibility == yinhe_types::Audibility::Soloed {
+                yinhe_types::Audibility::Normal
+            } else {
+                yinhe_types::Audibility::Soloed
+            })
+        } else {
+            None
+        };
+        if let Some(next) = next {
+            let mut state = st;
+            state.set_audibility(next);
             if state == yinhe_types::AmMsState::default() {
                 am_ms.remove(&key);
             } else {
@@ -386,32 +408,19 @@ pub(super) fn draw_track_row(
                 .map(|o| o.audibility())
                 .unwrap_or_default();
 
-            let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
-            let meter_left = meter_right - LEVEL_METER_W;
-
             // 每轨电平表（L/R 双条、向上、dB 刻度；仅播放时非零）。
-            let meter_rect = egui::Rect::from_min_max(
-                egui::pos2(meter_left, row_rect.min.y + LEVEL_METER_MARGIN),
-                egui::pos2(meter_right, row_rect.max.y - LEVEL_METER_MARGIN),
-            );
+            let (meter_rect, dot_rect) = meter_and_dot_rects(row_rect);
             let (level, hold) = track_meters
                 .get(idx)
                 .copied()
                 .unwrap_or(((0.0, 0.0), (0.0, 0.0)));
             crate::widgets::meter::compact_meter(painter, meter_rect, level, hold);
 
-            let dot_rect = egui::Rect::from_center_size(
-                egui::pos2(row_rect.max.x - 7.0, row_rect.max.y - 7.0),
-                egui::vec2(
-                    crate::widgets::audibility::HIT,
-                    crate::widgets::audibility::HIT,
-                ),
-            );
             no_drag_rects.push(dot_rect);
             let resp = crate::widgets::audibility::dot(
                 ui,
                 dot_rect,
-                audibility != yinhe_types::Audibility::Muted,
+                audibility,
                 egui::Id::unique(("track_audible", idx)),
             );
             crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.arrange.track_mute"));
@@ -426,14 +435,20 @@ pub(super) fn draw_track_row(
                     audio_dirty = true;
                 }
             }
+            if resp.secondary_clicked() {
+                super::ensure_audibility_undo_snapshot(ui, track_overrides);
+                if let Some(ov) = track_overrides.get_mut(idx) {
+                    ov.set_audibility(if audibility == yinhe_types::Audibility::Soloed {
+                        yinhe_types::Audibility::Normal
+                    } else {
+                        yinhe_types::Audibility::Soloed
+                    });
+                    audio_dirty = true;
+                }
+            }
         } else if is_conductor {
             // Conductor 行：Tempo 自动化表（贴右缘；光标处 BPM 按动态上限归一化）。
-            let meter_right = row_rect.max.x - LEVEL_METER_MARGIN;
-            let meter_left = meter_right - LEVEL_METER_W;
-            let meter_rect = egui::Rect::from_min_max(
-                egui::pos2(meter_left, row_rect.min.y + LEVEL_METER_MARGIN),
-                egui::pos2(meter_right, row_rect.max.y - LEVEL_METER_MARGIN),
-            );
+            let (meter_rect, _) = meter_and_dot_rects(row_rect);
             crate::widgets::meter::automation_meter(
                 painter,
                 meter_rect,
@@ -656,5 +671,21 @@ pub(super) fn draw_badge_icons(
                 *e = !*e;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn track_meter_and_mute_dot_do_not_overlap() {
+        let row = egui::Rect::from_min_max(egui::pos2(100.0, 50.0), egui::pos2(300.0, 90.0));
+        let (meter, dot) = meter_and_dot_rects(row);
+        assert!(
+            dot.max.x + 2.0 <= meter.min.x + 0.01,
+            "静音圆点应在电平表左侧并留 2px 间隙：dot={dot:?}, meter={meter:?}"
+        );
+        assert!(!meter.intersects(dot), "电平表与静音灯不得重合");
     }
 }
