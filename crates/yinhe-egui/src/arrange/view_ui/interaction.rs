@@ -263,6 +263,18 @@ pub(crate) fn sel_drag_frame_arrange(
                     .max(1.0);
                 let new_span = (snapped - t0).max(min_span);
                 *edit.arr_scale_span = Some(new_span.round().max(1.0) as u64);
+                // 松手帧仍保留最终缩放 ghost，等模型刷新后再撤掉，避免闪回旧位置。
+                if let Some(notes) = scale_notes.as_deref() {
+                    let (g, h) = build_ghosts_for_scale(
+                        t0,
+                        t1,
+                        t0 + new_span,
+                        notes,
+                        view.visible_tick_range(content_rect.width()),
+                    );
+                    ghost_notes.extend(g);
+                    hidden_notes.extend(h);
+                }
             }
             if let Some(r) = edit.arr_sel_rect.first_mut() {
                 *r = (t0, t1, r0, r1);
