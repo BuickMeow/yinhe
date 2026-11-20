@@ -8,8 +8,8 @@ use crate::piano_view::drag::{GhostNote, HiddenNote};
 use crate::selection::drag::rect_main_edge_hit;
 
 use super::types::{
-    arrange_snapped_bounds, auto_scroll_arrange, build_ghosts_for_move, is_inside_sel_rect,
-    is_on_am_row,
+    arrange_snapped_bounds, auto_scroll_arrange, build_ghosts_for_move, build_ghosts_for_scale,
+    is_inside_sel_rect, is_on_am_row,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -58,6 +58,10 @@ pub(crate) fn sel_drag_frame_arrange(
     let mut scale_state: Option<(f64, f64, usize, usize)> = ui
         .data_mut(|d| d.get_persisted(scale_state_id))
         .unwrap_or(None);
+    let scale_notes_id = ui.scope_id().with("arr_scale_notes");
+    let mut scale_notes: Option<ArrMoveNotes> = ui
+        .data_mut(|d| d.get_persisted(scale_notes_id))
+        .unwrap_or(None);
     let riff_state_id = ui.scope_id().with("arr_riff_state");
     let mut riff_state: Option<(f64, f64, usize, usize)> = ui
         .data_mut(|d| d.get_persisted(riff_state_id))
@@ -75,6 +79,13 @@ pub(crate) fn sel_drag_frame_arrange(
         move_notes = None;
         move_min_tick = f64::INFINITY;
     }
+    if scale_state.is_some() && !pointer.primary_down() && !pointer.primary_released() {
+        scale_state = None;
+        scale_notes = None;
+    }
+    if scale_state.is_none() {
+        scale_notes = None;
+    }
     if crate::view_interaction::pointer_over_popup(ui.ctx()) {
         ui.data_mut(|d| d.insert_persisted(sel_id, drag));
         ui.data_mut(|d| d.insert_persisted(move_drag_id, move_drag));
@@ -83,6 +94,7 @@ pub(crate) fn sel_drag_frame_arrange(
         ui.data_mut(|d| d.insert_persisted(move_notes_id, move_notes));
         ui.data_mut(|d| d.insert_persisted(move_min_tick_id, move_min_tick));
         ui.data_mut(|d| d.insert_persisted(scale_state_id, scale_state));
+        ui.data_mut(|d| d.insert_persisted(scale_notes_id, scale_notes));
         ui.data_mut(|d| d.insert_persisted(riff_state_id, riff_state));
         return (ghost_notes, hidden_notes, drag_rect);
     }
@@ -147,6 +159,16 @@ pub(crate) fn sel_drag_frame_arrange(
                 crate::widgets::selection_actions::SelectionDragMode::Gate
                 | crate::widgets::selection_actions::SelectionDragMode::Scale => {
                     scale_state = Some((t0, t1, r0, r1));
+                    // 变速 ghost 只收集一次选中音符；拖动中按 snapped new_t1 重算。
+                    scale_notes = Some(std::sync::Arc::new(
+                        crate::selection::drag::collect_selected_notes(
+                            edit.selected,
+                            data.midi,
+                            data.track_visible,
+                            &HashSet::new(),
+                            &[],
+                        ),
+                    ));
                 }
             }
         } else if inside_sel_rect && !additive {
@@ -213,6 +235,17 @@ pub(crate) fn sel_drag_frame_arrange(
                 r.2 = r0;
                 r.3 = r1;
             }
+            if let Some(notes) = scale_notes.as_deref() {
+                let (g, h) = build_ghosts_for_scale(
+                    t0,
+                    t1,
+                    new_t1,
+                    notes,
+                    view.visible_tick_range(content_rect.width()),
+                );
+                ghost_notes.extend(g);
+                hidden_notes.extend(h);
+            }
             view.base.dirty = true;
         }
         if pointer.primary_released() {
@@ -235,6 +268,7 @@ pub(crate) fn sel_drag_frame_arrange(
                 *r = (t0, t1, r0, r1);
             }
             scale_state = None;
+            scale_notes = None;
             view.base.dirty = true;
         }
     }
@@ -505,6 +539,7 @@ pub(crate) fn sel_drag_frame_arrange(
     ui.data_mut(|d| d.insert_persisted(move_notes_id, move_notes));
     ui.data_mut(|d| d.insert_persisted(move_min_tick_id, move_min_tick));
     ui.data_mut(|d| d.insert_persisted(scale_state_id, scale_state));
+    ui.data_mut(|d| d.insert_persisted(scale_notes_id, scale_notes));
     ui.data_mut(|d| d.insert_persisted(riff_state_id, riff_state));
     (ghost_notes, hidden_notes, drag_rect)
 }

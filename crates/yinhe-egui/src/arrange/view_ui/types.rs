@@ -170,6 +170,42 @@ pub(crate) fn build_ghosts_for_move(
     (ghosts, hidden)
 }
 
+/// 选框整体变速的 ghost：左端 `t0` 固定，`[t0, old_t1]` 按 `new_t1` 拉伸。
+///
+/// 只在 `new_t1` 实际变化时生成；量化 OFF 时每帧的原始 tick 都会让它变化，
+/// 因此同样是连续预览，不需要静态位图。
+pub(crate) fn build_ghosts_for_scale(
+    t0: f64,
+    old_t1: f64,
+    new_t1: f64,
+    notes: &[crate::selection::drag::CollectedNote],
+    tick_range: (f64, f64),
+) -> (Vec<GhostNote>, HashSet<HiddenNote>) {
+    let mut ghosts = Vec::new();
+    let mut hidden = HashSet::new();
+    let old_span = old_t1 - t0;
+    if old_span <= 0.0 || (new_t1 - old_t1).abs() < 1e-9 {
+        return (ghosts, hidden);
+    }
+    let factor = (new_t1 - t0) / old_span;
+    let (tick_lo, tick_hi) = tick_range;
+    for note in notes {
+        let new_start = (t0 + (f64::from(note.start_tick) - t0) * factor)
+            .round()
+            .max(t0) as u32;
+        let new_end = (t0 + (f64::from(note.end_tick) - t0) * factor)
+            .round()
+            .max(f64::from(new_start + 1)) as u32;
+        if f64::from(new_start) < tick_hi && f64::from(new_end) > tick_lo {
+            ghosts.push((new_start, new_end, note.key, note.track));
+        }
+        if f64::from(note.start_tick) < tick_hi && f64::from(note.end_tick) > tick_lo {
+            hidden.insert((note.track, note.start_tick, note.key));
+        }
+    }
+    (ghosts, hidden)
+}
+
 pub(crate) fn auto_scroll_arrange(
     ui: &mut egui::Ui,
     view: &mut ArrangementView,
@@ -290,6 +326,22 @@ mod tests {
         assert!(hidden.is_empty(), "alt 模式不隐藏原音符");
         let (g0, h0) = build_ghosts_for_move(0, 0, false, &notes, (0.0, 1000.0), 4);
         assert!(g0.is_empty() && h0.is_empty(), "零位移无 ghost/hidden");
+    }
+
+    /// 变速 ghost：t0 固定，右端拉伸 factor 倍；零变化不出 ghost。
+    #[test]
+    fn build_ghosts_for_scale_stretches_notes() {
+        let notes = vec![note(0, 100, 200, 60), note(1, 900, 1000, 61)];
+        let (ghosts, hidden) = build_ghosts_for_scale(100.0, 1000.0, 1900.0, &notes, (0.0, 5000.0));
+        assert_eq!(
+            ghosts,
+            vec![(100, 300, 60, 0), (1700, 1900, 61, 1)],
+            "左端固定，内部/右端按 factor=2 拉伸"
+        );
+        assert_eq!(hidden.len(), 2, "原音符应隐藏");
+        let (none, hidden_none) =
+            build_ghosts_for_scale(100.0, 1000.0, 1000.0, &notes, (0.0, 5000.0));
+        assert!(none.is_empty() && hidden_none.is_empty());
     }
 
     /// 轨道位移 clamp 到 [0, num_tracks-1]。
