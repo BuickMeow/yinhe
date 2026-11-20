@@ -566,11 +566,6 @@ fn note_geometry(
         base_color = vec4<f32>(0.5, 0.5, 0.5, 1.0);
     }
     base_color = to_target_space(base_color);
-    // AR 拖拽 ghost：半透明预览，避免和真实音符同色而看起来像音符直接移动。
-    // PR（mode==1）仍用选中样式区分，不改透明度。
-    if is_ghost && u.mode != 1u {
-        base_color.a *= 0.6;
-    }
     out.color = base_color;
 
     // 填充色：仅 PR（mode==1）按选中/力度变化；AR 等其它模式保持原色。
