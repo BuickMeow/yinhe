@@ -48,10 +48,6 @@ pub const FILE_MENU_FONT: f32 = 14.0;
 pub const MIN_ARR_HEIGHT: f32 = 60.0;
 pub const SPLIT_CLAMP_MIN: f32 = 0.1;
 pub const SPLIT_CLAMP_MAX: f32 = 0.7;
-#[allow(dead_code)]
-pub const MIN_KEYBOARD_WIDTH: f32 = 30.0;
-#[allow(dead_code)]
-pub const MAX_KEYBOARD_RATIO: f32 = 0.4;
 
 // ── Cursor / playhead ──
 pub const CURSOR_WIDTH: f32 = 2.0;
@@ -91,7 +87,3 @@ pub const MEM_POPUP_SIZE: [f32; 2] = [280.0, 390.0];
 
 // ── 属性浮动面板（工程设置浮窗）──
 pub const PROJECT_SETTINGS_POPUP_SIZE: [f32; 2] = [520.0, 560.0];
-
-// ── Dialog progress bars ──
-#[allow(dead_code)]
-pub const PROGRESS_BAR_WIDTH: f32 = 280.0;

@@ -1,7 +1,5 @@
-use muda::{MenuId, MenuItem};
+use muda::MenuItem;
 use rust_i18n::t;
-use std::collections::HashMap;
-use std::sync::Mutex;
 
 use super::menu::{NATIVE_MENU, menu_map};
 use yinhe_editor_core::follow::FollowMode;
@@ -85,10 +83,4 @@ pub(super) fn refresh_view_checks(
             native.loop_check.set_enabled(view.has_active_doc);
         }
     });
-}
-
-/// 供 accelerator.rs 或 menu.rs 使用的辅助：检查 map
-#[allow(dead_code)]
-pub(super) fn menu_map_ref() -> Option<&'static Mutex<HashMap<MenuId, super::MenuAction>>> {
-    menu_map().get()
 }

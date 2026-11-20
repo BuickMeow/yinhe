@@ -16,9 +16,6 @@ pub(crate) struct MarqueeDragResult {
     pub t_end: f64,
     pub key_lo: u8,
     pub key_hi: u8,
-    /// view-local pixel rect of the snapped marquee (for drawing).
-    #[allow(dead_code)]
-    pub snapped_view_rect: egui::Rect,
 }
 
 /// Shared marquee drag lifecycle: press → move (with auto-scroll) → release.
@@ -136,21 +133,13 @@ pub(crate) fn marquee_drag_frame(
                 // 3px 阈值用 press_pos（按下时的原始像素位置）
                 if (end - press_pos).length() >= 3.0 {
                     // 选区 bounds 用 start_px（量化后）和 end（当前鼠标）计算
-                    let (x0, x1, y0, y1, t_start, t_end, key_lo, key_hi) =
+                    let (_, _, _, _, t_start, t_end, key_lo, key_hi) =
                         piano_snapped_bounds(start_px, end, view, quantize, ppq, bar_line_data);
-                    let kb_w = music_rect.min.x - content_rect.min.x;
-                    // 横向时 x 是含 kb_w 的 content 坐标，需减 kb_w 转 music 区；
-                    // 纵向时 music == content（kb_w == 0），x 即 key 像素。
-                    let snapped_view_rect = egui::Rect::from_min_max(
-                        egui::pos2(x0 - kb_w, y0),
-                        egui::pos2(x1 - kb_w, y1),
-                    );
                     Some(MarqueeDragResult {
                         t_start,
                         t_end,
                         key_lo,
                         key_hi,
-                        snapped_view_rect,
                     })
                 } else {
                     None

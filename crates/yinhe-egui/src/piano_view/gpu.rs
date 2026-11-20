@@ -12,14 +12,6 @@ use yinhe_types::{KEY_COUNT, PianoRollView};
 
 use super::gpu_upload;
 
-/// GPU 准备输出（供调用方复用 `theme`/`cull_ready`）。
-#[allow(dead_code)]
-pub(crate) struct GpuOutput {
-    pub cull_ready: bool,
-    pub theme: yinhe_theme::GpuTheme,
-    pub ghost_upload_done: bool,
-}
-
 /// 上传并准备 GPU 数据（原 `piano_view.rs` 241-376 段）。
 ///
 /// 参数覆盖任务要求的全集：`pianoroll, render_ctx, render_thread, view, midi,
@@ -126,7 +118,6 @@ pub(crate) fn upload_and_prepare(
         view.base.pixels_per_tick,
         view.key_height,
     );
-    let mut ghost_upload_done = false;
     if cull_ready {
         // GPU cull path: upload ghost layer (GPU cull handles notes)
         let mut job = yinhe_wgpu::build_render_job(
@@ -165,7 +156,6 @@ pub(crate) fn upload_and_prepare(
                 yinhe_wgpu::build_ghost_note(out, start_tick, end_tick, key, track, true, &theme);
             }
         });
-        ghost_upload_done = true;
     } else if let Some(rt) = render_thread {
         // Async path (no cull): build instances on this thread, send to render thread
         let mut job = yinhe_wgpu::build_render_job(
@@ -251,19 +241,10 @@ pub(crate) fn upload_and_prepare(
             exclude_table: job.exclude_table,
             note_layers,
         });
-        ghost_upload_done = true;
     }
 
     // ── Perf probe (only when YIN_PERF=1) ──
     *t_prepare_end = if perf_on { Some(Instant::now()) } else { None };
-
-    // 保留 GpuOutput 构造以满足任务对结构体的字面要求（不影响 tuple 返回）。
-    let _out = GpuOutput {
-        cull_ready,
-        theme: theme.clone(),
-        ghost_upload_done,
-    };
-    let _ = _out.ghost_upload_done;
 
     (cull_ready, theme)
 }

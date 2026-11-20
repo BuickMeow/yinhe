@@ -20,20 +20,7 @@ impl Config {
         margin: 20.0,
         base_speed: 15.0,
     };
-    /// 移动端阈值放宽（屏幕边缘难精确按住）。
-    #[allow(dead_code)]
-    pub const MOBILE: Self = Self {
-        margin: 48.0,
-        base_speed: 15.0,
-    };
 }
-
-/// 触发自动滚动的边缘阈值（像素，桌面）。
-#[allow(dead_code)]
-pub const MARGIN: f32 = Config::DESKTOP.margin;
-/// 基础速度（像素/秒/像素越界，桌面）。
-#[allow(dead_code)]
-pub const BASE_SPEED: f32 = Config::DESKTOP.base_speed;
 
 /// 纯计算：指针接近 `rect` 边缘时的滚动速度 `(dx, dy)`（桌面阈值）。
 pub fn delta(ui: &egui::Ui, rect: egui::Rect, pos: egui::Pos2) -> (f32, f32) {

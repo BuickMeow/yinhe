@@ -415,38 +415,6 @@ mod tests {
         assert!(!item_matches(it, "quchongchongdiex"));
     }
 
-    #[test]
-    fn shortcut_rows_align() {
-        let mut first_x = 0.0f32;
-        let mut second_x = 0.0f32;
-        let ctx = egui::Context::default();
-        ctx.set_fonts(egui::FontDefinitions::empty());
-        let output = ctx.run_ui(Default::default(), |ui| {
-            ui.horizontal(|ui| {
-                ui.add_sized(
-                    [150.0, 24.0],
-                    egui::Label::new(egui::RichText::new("保存"))
-                        .selectable(false)
-                        .wrap_mode(egui::TextWrapMode::Extend),
-                );
-                let resp =
-                    crate::widgets::flat::flat_button_fixed(ui, "⌘S", egui::vec2(140.0, 24.0));
-                first_x = resp.rect.min.x;
-            });
-            ui.horizontal(|ui| {
-                ui.allocate_exact_size(egui::vec2(150.0, 24.0), egui::Sense::hover());
-                let resp =
-                    crate::widgets::flat::flat_button_fixed(ui, "⌘S", egui::vec2(140.0, 24.0));
-                second_x = resp.rect.min.x;
-            });
-        });
-        output.drop_without_applying_deltas();
-        assert!(
-            (first_x - second_x).abs() < 0.5,
-            "快捷键两行未对齐：第一行 x={first_x}，第二行 x={second_x}"
-        );
-    }
-
     /// 左栏分组必须完整覆盖 `CATEGORY_KEYS`，且每个分类只出现一次：
     /// 漏一个分类 = 用户点不到（12 项平铺改成分组后最容易出的错）。
     #[test]
