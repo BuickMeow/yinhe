@@ -259,6 +259,23 @@ impl PianoRollView {
         }
     }
 
+    /// key 闭区间在副轴上的完整像素跨度（包含两端整行）。
+    ///
+    /// 横向高音在上：key_lo 的底缘才是区间下界，key_hi 的顶缘是上界；
+    /// 不能拿 `key_to_cross_px(key_lo)` 直接当底缘，否则 41..=60 会画成
+    /// 42..=59。统一取两个键整行的 min/max，横向/纵向都不会少边界行。
+    pub fn keys_to_cross_span(&self, key_lo: u8, key_hi: u8) -> (f32, f32) {
+        let (k0, k1) = (key_lo.min(key_hi), key_lo.max(key_hi));
+        let row = |key: u8| {
+            let start = self.key_to_cross_px(key);
+            let end = start + self.layout.row_units(u16::from(key)) * self.key_height;
+            (start, end)
+        };
+        let (a0, a1) = row(k0);
+        let (b0, b1) = row(k1);
+        (a0.min(a1).min(b0).min(b1), a0.max(a1).max(b0).max(b1))
+    }
+
     /// key → 副轴像素。
     /// 横向：y（顶部 = 最高键）；纵向：x（左缘 = 起始键）。
     #[inline]
@@ -721,6 +738,30 @@ mod tests {
         assert!((x0 - 0.0).abs() < 0.01);
         assert!((x127 - 127.0 * 12.0).abs() < 0.01);
         assert!(x127 > x0);
+    }
+
+    #[test]
+    fn keys_span_includes_boundary_rows_horizontal() {
+        let mut v = PianoRollView::default();
+        v.key_height = 10.0;
+        let (lo, hi) = v.keys_to_cross_span(41, 60);
+        let top = v.key_to_cross_px(60);
+        let bottom = v.key_to_cross_px(41) + 10.0;
+        assert!((lo - top).abs() < 0.01, "上界应是 key 60 的顶缘");
+        assert!((hi - bottom).abs() < 0.01, "下界应是 key 41 的底缘");
+        assert!((hi - lo - 20.0 * 10.0).abs() < 0.01, "41..=60 应覆盖 20 行");
+    }
+
+    #[test]
+    fn keys_span_includes_boundary_rows_vertical() {
+        let v = make_vertical();
+        let (lo, hi) = v.keys_to_cross_span(41, 60);
+        assert!((lo - v.key_to_cross_px(41)).abs() < 0.01);
+        assert!(
+            (hi - (v.key_to_cross_px(60) + v.key_height)).abs() < 0.01,
+            "纵向右界应是 key 60 整行的右缘"
+        );
+        assert!((hi - lo - 20.0 * v.key_height).abs() < 0.01);
     }
 
     #[test]

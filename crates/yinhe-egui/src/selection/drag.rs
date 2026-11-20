@@ -83,13 +83,9 @@ pub fn music_sel_to_pixel_rect(
         tick_to_main_px_dir(view, t_start),
         tick_to_main_px_dir(view, t_end),
     );
-    // 副轴统一走 key_to_cross_px + row_units：正确处理 88 键起点和 SCALE 折叠。
-    // key_lo 的副轴起点在下/左，key_hi 的终点在上/右；min/max 抹平方向差异。
-    let lo_px = view.key_to_cross_px(key_lo);
-    let hi_px =
-        view.key_to_cross_px(key_hi) + view.layout.row_units(u16::from(key_hi)) * view.key_height;
-    let cross_a = lo_px.min(hi_px);
-    let cross_b = lo_px.max(hi_px);
+    // 副轴统一走 keys_to_cross_span：正确处理 88 键起点、SCALE 折叠，
+    // 并包含 key_lo / key_hi 两端整行（横向高音在上时尤其重要）。
+    let (cross_a, cross_b) = view.keys_to_cross_span(key_lo, key_hi);
     if view.is_vertical() {
         egui::Rect::from_min_max(
             egui::pos2(cross_a, sx.min(ex)),
@@ -370,6 +366,28 @@ mod tests {
         assert_eq!(notes.len(), 1, "锁定轨 0 不应被框选中");
         assert_eq!(notes[0].track, 1);
     }
+    /// 回归：41..=60 的选框必须覆盖 41 和 60 两整行。
+    ///
+    /// 横向高音在上，曾用 key_to_cross_px(key_lo) 当底缘、key_to_cross_px(key_hi)
+    /// 当顶缘，结果画成 42..=59（内容选中仍正确，只有框少两行）。
+    #[test]
+    fn selection_rect_includes_key_range_boundaries() {
+        let view = yinhe_types::PianoRollView {
+            key_height: 10.0,
+            ..Default::default()
+        };
+        let rect = music_sel_to_pixel_rect(&view, 0.0, 480.0, 41, 60);
+        let top = view.key_to_cross_px(60);
+        let bottom = view.key_to_cross_px(41) + view.key_height;
+        assert!((rect.min.y - top).abs() < 0.01, "上界应包含 key 60");
+        assert!((rect.max.y - bottom).abs() < 0.01, "下界应包含 key 41");
+        assert!(
+            (rect.height() - 20.0 * view.key_height).abs() < 0.01,
+            "41..=60 应覆盖 20 行，实际 {}",
+            rect.height()
+        );
+    }
+
     /// 88 键 + SCALE 折叠下，选框的副轴边界必须与 key 行实际位置一致。
     #[test]
     fn selection_rect_respects_fold_and_88_key_start() {
@@ -381,9 +399,9 @@ mod tests {
             ..Default::default()
         };
         let rect = music_sel_to_pixel_rect(&view, 0.0, 100.0, 60, 64);
-        let lo = view.key_to_cross_px(60);
-        let hi = view.key_to_cross_px(64) + view.layout.row_units(64) * view.key_height;
-        assert_eq!(rect.min.y, lo.min(hi));
-        assert_eq!(rect.max.y, lo.max(hi));
+        let top = view.key_to_cross_px(64);
+        let bottom = view.key_to_cross_px(60) + view.layout.row_units(60) * view.key_height;
+        assert_eq!(rect.min.y, top.min(bottom));
+        assert_eq!(rect.max.y, top.max(bottom));
     }
 }
