@@ -432,7 +432,7 @@ fn timecode_inputs_do_not_overflow_rows() {
 fn double_click_blank_area_toggles_maximize() {
     let doc = yinhe_test_helpers::make_test_document();
     let mut h = make_transport_harness(Some(&doc));
-    double_click_at(&mut h, egui::pos2(1100.0, 20.0), 1.0);
+    double_click_at(&mut h, egui::pos2(1160.0, 20.0), 1.0);
     assert!(
         has_command(&h, &egui::ViewportCommand::Maximized(true)),
         "双击空白区应发送 Maximized 命令，实际命令: {:?}",
@@ -485,7 +485,7 @@ fn hidden_button_still_clickable() {
 fn single_click_blank_area_does_not_maximize() {
     let doc = yinhe_test_helpers::make_test_document();
     let mut h = make_transport_harness(Some(&doc));
-    click_at(&mut h, egui::pos2(1100.0, 20.0), 1.0);
+    click_at(&mut h, egui::pos2(1160.0, 20.0), 1.0);
     assert!(!has_command(&h, &egui::ViewportCommand::Maximized(true)));
 }
 
@@ -495,7 +495,7 @@ fn single_click_blank_area_does_not_maximize() {
 fn click_blank_area_does_not_start_drag() {
     let doc = yinhe_test_helpers::make_test_document();
     let mut h = make_transport_harness(Some(&doc));
-    let pos = egui::pos2(1100.0, 20.0);
+    let pos = egui::pos2(1160.0, 20.0);
     press_at(&mut h, pos, 3.0);
     assert!(
         !has_command(&h, &egui::ViewportCommand::StartDrag),
@@ -510,7 +510,7 @@ fn click_blank_area_does_not_start_drag() {
 fn drag_blank_area_starts_window_drag() {
     let doc = yinhe_test_helpers::make_test_document();
     let mut h = make_transport_harness(Some(&doc));
-    let start = egui::pos2(1100.0, 20.0);
+    let start = egui::pos2(1160.0, 20.0);
     press_at(&mut h, start, 2.0);
     assert!(!has_command(&h, &egui::ViewportCommand::StartDrag));
     // 移动 10px（超过 max_click_dist 默认 6px）→ 启动窗口拖动

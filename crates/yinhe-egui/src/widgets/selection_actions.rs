@@ -235,9 +235,19 @@ pub fn show_transport_buttons(
     clicked
 }
 
-/// transport bar 上的三联选择器：Gate / Scale / Riff。
-pub fn show_drag_mode_selector(ui: &mut egui::Ui) {
+/// transport bar 上的选择器：PR 为 Gate / Scale / Riff，AR 为 Scale / Riff。
+pub fn show_drag_mode_selector(ui: &mut egui::Ui, allow_gate: bool) {
     let mut mode = load_drag_mode(ui.ctx());
+    if !allow_gate && mode == SelectionDragMode::Gate {
+        mode = SelectionDragMode::Scale;
+        store_drag_mode(ui.ctx(), mode);
+    }
+    let ar_modes = [SelectionDragMode::Scale, SelectionDragMode::Riff];
+    let modes: &[SelectionDragMode] = if allow_gate {
+        &SelectionDragMode::ALL
+    } else {
+        &ar_modes
+    };
     egui::Frame::new()
         .inner_margin(egui::Margin {
             left: 4,
@@ -251,7 +261,7 @@ pub fn show_drag_mode_selector(ui: &mut egui::Ui) {
             ui.set_min_height(GROUP_H);
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
-                for (idx, m) in SelectionDragMode::ALL.iter().copied().enumerate() {
+                for (idx, m) in modes.iter().copied().enumerate() {
                     let active = m == mode;
                     let (rect, resp) = ui.allocate_exact_size(
                         egui::vec2(MODE_BTN_SIZE, MODE_BTN_SIZE),
@@ -288,7 +298,7 @@ pub fn show_drag_mode_selector(ui: &mut egui::Ui) {
                         mode = m;
                     }
                     // 同上：倒数第二个画完后清零，保留最后一个按钮前的 2px。
-                    if idx + 2 == SelectionDragMode::ALL.len() {
+                    if idx + 2 == modes.len() {
                         ui.spacing_mut().item_spacing.x = 0.0;
                     }
                 }

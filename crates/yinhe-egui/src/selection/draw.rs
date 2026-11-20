@@ -108,19 +108,3 @@ pub fn draw(
         );
     }
 }
-
-/// AR 选框右侧两个方块：右下角重复、右缘中点整体变速（AR 没有 gate）。
-pub fn draw_arrange_handles(painter: &egui::Painter, screen_rect: egui::Rect) {
-    let corner = egui::pos2(screen_rect.max.x, screen_rect.max.y);
-    let scale = egui::pos2(screen_rect.max.x, screen_rect.center().y);
-    let fill = crate::theme::app_bg();
-    let stroke = egui::Stroke::new(
-        1.5,
-        crate::theme::contrast_fg().gamma_multiply(crate::theme::marquee_stroke_alpha()),
-    );
-    for p in [corner, scale] {
-        let r = egui::Rect::from_center_size(p, egui::vec2(9.0, 9.0));
-        painter.rect_filled(r, 0.0, fill);
-        painter.rect_stroke(r, 0.0, stroke, egui::StrokeKind::Inside);
-    }
-}

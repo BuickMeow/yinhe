@@ -291,10 +291,11 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                         {
                             selection_action = Some(action);
                         }
-                        if ctx.pianoroll_active {
-                            ui.add_space(4.0);
-                            crate::widgets::selection_actions::show_drag_mode_selector(ui);
-                        }
+                        ui.add_space(4.0);
+                        crate::widgets::selection_actions::show_drag_mode_selector(
+                            ui,
+                            ctx.pianoroll_active,
+                        );
                     }
                 }
             });

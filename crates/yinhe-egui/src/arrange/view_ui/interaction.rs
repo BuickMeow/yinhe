@@ -5,6 +5,7 @@ use eframe::egui;
 use yinhe_types::{ArRowLayout, ArrangementView};
 
 use crate::piano_view::drag::{GhostNote, HiddenNote};
+use crate::selection::drag::rect_main_edge_hit;
 
 use super::types::{
     arrange_snapped_bounds, auto_scroll_arrange, build_ghosts_for_move, is_inside_sel_rect,
@@ -92,7 +93,26 @@ pub(crate) fn sel_drag_frame_arrange(
         view,
         row_layout,
     );
-    if inside_sel_rect && move_drag.is_none() && drag.is_none() {
+    let edge_hover =
+        if scale_state.is_none() && riff_state.is_none() && move_drag.is_none() && drag.is_none() {
+            pointer.hover_pos().and_then(|pos| {
+                let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+                arr_single_rect(edit.arr_sel_rect, view, row_layout)
+                    .filter(|(rect, ..)| rect_main_edge_hit(*rect, local, false, 6.0))
+            })
+        } else {
+            None
+        };
+    if edge_hover.is_some() {
+        let icon = if ar_drag_mode(ui.ctx())
+            == crate::widgets::selection_actions::SelectionDragMode::Riff
+        {
+            egui::CursorIcon::ResizeNwSe
+        } else {
+            egui::CursorIcon::ResizeHorizontal
+        };
+        ui.ctx().set_cursor_icon(icon);
+    } else if inside_sel_rect && move_drag.is_none() && drag.is_none() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
     }
     let on_am_row = is_on_am_row(
@@ -115,18 +135,24 @@ pub(crate) fn sel_drag_frame_arrange(
             .and_then(|h| h.track_opt())
             .map(|t| t as f32)
             .unwrap_or_else(|| data.num_tracks.saturating_sub(1) as f32);
-        let handle_hit = if scale_state.is_some() || riff_state.is_some() {
+        let edge_hit = if scale_state.is_some() || riff_state.is_some() {
             None
         } else if !additive {
-            arr_handle_hit(edit.arr_sel_rect, view, row_layout, local)
+            arr_single_rect(edit.arr_sel_rect, view, row_layout)
+                .filter(|(rect, ..)| rect_main_edge_hit(*rect, local, false, 6.0))
         } else {
             None
         };
-        if let Some((kind, t0, t1, r0, r1)) = handle_hit {
-            if kind == 4 {
-                riff_state = Some((t0, t1, r0, r1));
-            } else {
-                scale_state = Some((t0, t1, r0, r1));
+        if let Some((_, t0, t1, r0, r1)) = edge_hit {
+            match ar_drag_mode(ui.ctx()) {
+                crate::widgets::selection_actions::SelectionDragMode::Riff => {
+                    riff_state = Some((t0, t1, r0, r1));
+                }
+                // AR 没有 Gate：共享选择器里不会出现；兜底按 Scale。
+                crate::widgets::selection_actions::SelectionDragMode::Gate
+                | crate::widgets::selection_actions::SelectionDragMode::Scale => {
+                    scale_state = Some((t0, t1, r0, r1));
+                }
             }
         } else if inside_sel_rect && !additive {
             // 先按当前选区收集一次（下一行会清空选区）。
@@ -568,12 +594,12 @@ pub(crate) fn eraser_drag_frame_arrange(
     ui.data_mut(|d| d.insert_persisted(drag_id, drag));
 }
 
-fn arr_handle_hit(
+/// 单选 AR 选框的局部像素矩形与 tick/track 范围。
+fn arr_single_rect(
     rects: &[(f64, f64, usize, usize)],
     view: &ArrangementView,
     row_layout: &ArRowLayout,
-    local: egui::Pos2,
-) -> Option<(u8, f64, f64, usize, usize)> {
+) -> Option<(egui::Rect, f64, f64, usize, usize)> {
     let &(t0, t1, r0, r1) = rects.first()?;
     if rects.len() != 1 {
         return None;
@@ -584,14 +610,33 @@ fn arr_handle_hit(
     let x1 = view.tick_to_x(t1);
     let y0 = row_layout.track_y(r0, lh) - scroll_y;
     let y1 = row_layout.track_y(r1, lh) + row_layout.track_height(r1, lh) - scroll_y;
-    let kind = yinhe_editor_core::selection_handle::hit_test(
-        (x0, y0, x1, y1),
-        0.0,
-        false,
-        false,
-        local.x,
-        local.y,
-        crate::selection::drag::SEL_HANDLE_R,
-    )?;
-    Some((kind.code(), t0, t1, r0, r1))
+    let rect = egui::Rect::from_min_max(
+        egui::pos2(x0.min(x1), y0.min(y1)),
+        egui::pos2(x0.max(x1), y0.max(y1)),
+    );
+    Some((rect, t0, t1, r0, r1))
+}
+
+/// AR 没有 Gate；共享选择器里 Gate 已不可见，残留 Gate 时按 Scale 处理。
+fn ar_drag_mode(ctx: &egui::Context) -> crate::widgets::selection_actions::SelectionDragMode {
+    use crate::widgets::selection_actions::SelectionDragMode as M;
+    match crate::widgets::selection_actions::load_drag_mode(ctx) {
+        M::Gate => M::Scale,
+        other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ar_drag_mode_has_no_gate() {
+        use crate::widgets::selection_actions::{SelectionDragMode as M, store_drag_mode};
+        let ctx = egui::Context::default();
+        store_drag_mode(&ctx, M::Gate);
+        assert_eq!(ar_drag_mode(&ctx), M::Scale);
+        store_drag_mode(&ctx, M::Riff);
+        assert_eq!(ar_drag_mode(&ctx), M::Riff);
+    }
 }

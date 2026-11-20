@@ -570,7 +570,7 @@ pub struct TransportContext<'a> {
     pub master_meter: ((f32, f32), (f32, f32)),
     /// 当前是否存在 PR 框选（决定选择动作按钮是否可用；None 文档 = false）。
     pub selection_available: bool,
-    /// 当前是否以钢琴卷帘为主视图（决定是否显示 Gate/Scale/Riff 三联选择器）。
+    /// 当前以 PR 为主视图：选择器提供 Gate/Scale/Riff；AR 只提供 Scale/Riff。
     pub pianoroll_active: bool,
 }
 

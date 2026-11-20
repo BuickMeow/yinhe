@@ -111,14 +111,26 @@ pub fn selection_main_edge_hit(
 ) -> bool {
     let (t0, t1, k0, k1) = rect;
     let pixel = music_sel_to_pixel_rect(view, t0, t1, k0, k1);
-    if view.is_vertical() {
-        (local.y - pixel.min.y).abs() <= threshold
-            && local.x >= pixel.min.x - threshold
-            && local.x <= pixel.max.x + threshold
+    rect_main_edge_hit(pixel, local, view.is_vertical(), threshold)
+}
+
+/// 像素矩形的“时间终点边”命中：横向为右缘，纵向为顶缘。
+///
+/// PR 与 AR 共用；AR 的时间轴恒为横向，直接传 `vertical = false`。
+pub fn rect_main_edge_hit(
+    rect: egui::Rect,
+    local: egui::Pos2,
+    vertical: bool,
+    threshold: f32,
+) -> bool {
+    if vertical {
+        (local.y - rect.min.y).abs() <= threshold
+            && local.x >= rect.min.x - threshold
+            && local.x <= rect.max.x + threshold
     } else {
-        (local.x - pixel.max.x).abs() <= threshold
-            && local.y >= pixel.min.y - threshold
-            && local.y <= pixel.max.y + threshold
+        (local.x - rect.max.x).abs() <= threshold
+            && local.y >= rect.min.y - threshold
+            && local.y <= rect.max.y + threshold
     }
 }
 
@@ -244,9 +256,6 @@ pub fn add_pr_selection_rect(
     }
 }
 
-/// 桌面/AR 选框控制点命中半径（像素）。PR 的三个方块已删除，AR 仍用。
-pub const SEL_HANDLE_R: f32 = 11.0;
-
 /// 计算 resize 的 dt（按量化 snap），并约束最小宽度为一个量化间隔。
 ///
 /// - `origin_boundary_tick`：被拖动边缘的原 tick
@@ -366,6 +375,17 @@ mod tests {
         assert_eq!(notes.len(), 1, "锁定轨 0 不应被框选中");
         assert_eq!(notes[0].track, 1);
     }
+    #[test]
+    fn rect_main_edge_hit_is_shared_by_pr_and_ar() {
+        let r = egui::Rect::from_min_max(egui::pos2(100.0, 50.0), egui::pos2(200.0, 150.0));
+        // 横向：时间终点在右缘。
+        assert!(rect_main_edge_hit(r, egui::pos2(203.0, 100.0), false, 3.0));
+        assert!(!rect_main_edge_hit(r, egui::pos2(196.0, 100.0), false, 3.0));
+        // 纵向：时间终点在顶缘。
+        assert!(rect_main_edge_hit(r, egui::pos2(150.0, 47.0), true, 3.0));
+        assert!(!rect_main_edge_hit(r, egui::pos2(150.0, 60.0), true, 3.0));
+    }
+
     /// 回归：41..=60 的选框必须覆盖 41 和 60 两整行。
     ///
     /// 横向高音在上，曾用 key_to_cross_px(key_lo) 当底缘、key_to_cross_px(key_hi)
