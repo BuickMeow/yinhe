@@ -52,6 +52,7 @@ pub(crate) fn draw_overlays(
     ph: u32,
     playing_keys: &[Option<u16>; yinhe_types::KEY_COUNT],
     track_colors: &[[f32; 4]],
+    velocity_ghost_notes: &[super::types::VelocityGhostNote],
     cursor_tick: &mut Option<f64>,
     effective_tool: crate::widgets::tools_panel::Tool,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
@@ -235,6 +236,51 @@ pub(crate) fn draw_overlays(
                 );
             }
         }
+    }
+
+    // ── 力度拖动 ghost：PR 下缘拖动的实时力度预览 ──
+    // 画在 GPU 内容与选框之上，避免依赖 ghost 层的力度填充路径；
+    // 横向 PR 用底部向上填充，纵向 PR 用整块透明度表达。
+    for &(start, end, key, track, velocity) in velocity_ghost_notes {
+        let local = crate::selection::drag::music_sel_to_pixel_rect(
+            view,
+            f64::from(start),
+            f64::from(end),
+            key,
+            key,
+        );
+        let rect = egui::Rect::from_min_max(
+            local.min + content_rect.min.to_vec2(),
+            local.max + content_rect.min.to_vec2(),
+        )
+        .intersect(music_rect);
+        if !rect.is_positive() {
+            continue;
+        }
+        let color = track_colors
+            .get(track as usize)
+            .copied()
+            .map(|c| crate::theme::rgba_to_color32((c[0], c[1], c[2], c[3])))
+            .unwrap_or_else(crate::theme::accent_active);
+        let frac = f32::from(velocity.clamp(1, 127)) / 127.0;
+        // 先用接近行背景的实色盖住原音符，力度下降时才能看出变短，
+        // 而不是旧音符的满格填充从下方透出来。
+        painter.rect_filled(rect, 0.0, crate::theme::track_bg().gamma_multiply(0.92));
+        if view.is_vertical() {
+            painter.rect_filled(rect, 0.0, color.gamma_multiply(0.25 + 0.55 * frac));
+        } else {
+            let fill = egui::Rect::from_min_max(
+                egui::pos2(rect.min.x, rect.max.y - rect.height() * frac),
+                rect.max,
+            );
+            painter.rect_filled(fill, 0.0, color.gamma_multiply(0.55));
+        }
+        painter.rect_stroke(
+            rect,
+            0.0,
+            egui::Stroke::new(1.0, color.gamma_multiply(0.9)),
+            egui::StrokeKind::Inside,
+        );
     }
 
     // ── Draw selection box on TOP of GPU content ──

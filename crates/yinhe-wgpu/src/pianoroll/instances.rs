@@ -429,30 +429,12 @@ pub fn build_ghost_note(
     // true = 选中态预览（选择工具拖动）：按选中样式加深，与选框同步移动；
     // false = 新建预览（铅笔/刷子）：保持原色。
     selected: bool,
-    theme: &GpuTheme,
-) {
-    build_ghost_note_velocity(out, start_tick, end_tick, key, track, 127, selected, theme);
-}
-
-/// ghost 预览的力度版本：用于选框下缘拖动力度的实时预览。
-///
-/// 与普通 ghost 一样放在 ghost 层，但 `packed` 带真实力度，PR 的力度填充会
-/// 按新力度实时变化；调用方同时隐藏原音符，避免旧力度从下半截露出来。
-#[allow(clippy::too_many_arguments)]
-pub fn build_ghost_note_velocity(
-    out: &mut Vec<NoteInstance>,
-    start_tick: u32,
-    end_tick: u32,
-    key: u8,
-    track: u16,
-    velocity: u8,
-    selected: bool,
     _theme: &GpuTheme,
 ) {
     let mut inst = NoteInstance {
         start_tick,
         end_tick,
-        packed: NoteInstance::pack(key, track, velocity),
+        packed: NoteInstance::pack(key, track, 127),
     };
     inst.set_ghost(true);
     inst.set_selected(selected);
