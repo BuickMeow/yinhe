@@ -2,7 +2,7 @@
 
 use eframe::egui;
 use rust_i18n::t;
-use yinhe_mixer::StripParams;
+use yinhe_mixer::{MasterParams, StripParams};
 use yinhe_types::ChannelId;
 
 use crate::widgets::knob::{knob, knob_centered};
@@ -600,7 +600,7 @@ pub(super) fn strip_controls(
                             let resp = crate::widgets::audibility::dot(
                                 ui,
                                 dot_rect,
-                                p.audibility(),
+                                p.audibility() != yinhe_types::Audibility::Muted,
                                 ui.scope_id().with("mix_audible"),
                             );
                             crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.mix.mute"));
@@ -641,11 +641,12 @@ pub(super) fn strip_controls(
 pub(super) fn master_controls(
     ui: &mut egui::Ui,
     gain: f32,
+    pan: f32,
     level: (f32, f32),
     hold: (f32, f32),
     send: FocusSend,
     actions: &mut Vec<MixAction>,
-) -> Option<f32> {
+) -> Option<MasterParams> {
     let avail = ui.available_height();
     let module_h = METER_MODULE_H.min(avail).max(1.0);
     let master_title = t!("mix.master");
@@ -659,6 +660,7 @@ pub(super) fn master_controls(
                 egui::Layout::left_to_right(egui::Align::TOP),
                 |ui| {
                     let mut g = gain;
+                    let mut p = pan;
                     let mut changed = false;
                     if let Some(v) = gain_meter(
                         ui,
@@ -690,10 +692,22 @@ pub(super) fn master_controls(
                                 changed = true;
                             }
                             ui.add_space(GAP);
+                            if let Some(v) = pan_knob(
+                                ui,
+                                master_title.as_ref(),
+                                p,
+                                CONTROLS_W,
+                                ChannelId::Master,
+                                actions,
+                            ) {
+                                p = v;
+                                changed = true;
+                            }
+                            ui.add_space(GAP);
                             send_block(ui, master_title.as_ref(), send, CONTROLS_W, actions);
                         },
                     );
-                    changed.then_some(g)
+                    changed.then_some(MasterParams { gain: g, pan: p })
                 },
             );
         });

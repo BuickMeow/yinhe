@@ -76,11 +76,17 @@ pub struct MasterParams {
     /// 线性增益（1.0 = 0 dB）。
     #[serde(default = "default_gain")]
     pub gain: f32,
+    /// 声像，-1.0（左）~ 1.0（右），0.0 居中。
+    #[serde(default)]
+    pub pan: f32,
 }
 
 impl Default for MasterParams {
     fn default() -> Self {
-        Self { gain: 1.0 }
+        Self {
+            gain: 1.0,
+            pan: 0.0,
+        }
     }
 }
 

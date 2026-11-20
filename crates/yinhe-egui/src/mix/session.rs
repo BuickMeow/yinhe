@@ -84,7 +84,9 @@ impl App {
     }
 
     pub(crate) fn apply_master(&mut self, idx: usize, params: MasterParams) {
-        self.workspace.documents[idx].mixer_mut().master.gain = params.gain;
+        let master = &mut self.workspace.documents[idx].mixer_mut().master.strip;
+        master.gain = params.gain;
+        master.pan = params.pan;
         if let Some(audio) = &self.audio_state.handle {
             audio
                 .handle

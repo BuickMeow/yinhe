@@ -267,3 +267,38 @@ fn strip_controls_have_accessible_names() {
     harness.step();
     harness.check_accessibility();
 }
+
+/// Master 条必须有声像旋钮，且可访问名称包含 Master · 声像。
+#[test]
+fn master_controls_include_pan() {
+    use egui_kittest::kittest::Queryable;
+    let mut harness = egui_kittest::Harness::builder()
+        .allow_missing_glyphs()
+        .with_size(egui::vec2(360.0, 600.0))
+        .build_ui_state(
+            |ui, _: &mut ()| {
+                let mut actions = Vec::new();
+                let send = super::controls::FocusSend {
+                    source: None,
+                    target: ChannelId::Master,
+                    amount: 0.0,
+                    pre_fader: false,
+                };
+                super::controls::master_controls(
+                    ui,
+                    1.0,
+                    0.0,
+                    (0.0, 0.0),
+                    (0.0, 0.0),
+                    send,
+                    &mut actions,
+                );
+            },
+            (),
+        );
+    harness.step();
+    harness.step();
+    let label = format!("{} · {}", t!("mix.master"), t!("mix.pan"));
+    harness.get_by_label(&label);
+    harness.check_accessibility();
+}

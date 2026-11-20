@@ -265,10 +265,10 @@ pub(crate) fn master_strip(
         height,
         selected,
         |ui, _| {
-            if let Some(g) = master_controls(ui, params.gain, level, hold, send, actions) {
-                actions.push(MixAction::SetMaster {
-                    params: MasterParams { gain: g },
-                });
+            if let Some(params) =
+                master_controls(ui, params.gain, params.pan, level, hold, send, actions)
+            {
+                actions.push(MixAction::SetMaster { params });
             }
         },
     );
@@ -531,8 +531,9 @@ pub(crate) fn pan_automation(ch: ChannelId) -> Option<MixAction> {
 
 pub(crate) fn reset_gain_action(app: &App, idx: usize, ch: ChannelId) -> MixAction {
     if ch == ChannelId::Master {
+        let pan = app.workspace.documents[idx].mixer.master.strip.pan;
         return MixAction::SetMaster {
-            params: MasterParams { gain: 1.0 },
+            params: MasterParams { gain: 1.0, pan },
         };
     }
     let mixer = &app.workspace.documents[idx].mixer;
@@ -542,7 +543,17 @@ pub(crate) fn reset_gain_action(app: &App, idx: usize, ch: ChannelId) -> MixActi
 }
 
 pub(crate) fn reset_pan_action(app: &App, idx: usize, ch: ChannelId) -> Option<MixAction> {
-    (ch != ChannelId::Master).then(|| {
+    if ch == ChannelId::Master {
+        let mut params = app.workspace.documents[idx].mixer.master.strip;
+        params.pan = 0.0;
+        return Some(MixAction::SetMaster {
+            params: MasterParams {
+                gain: params.gain,
+                pan: params.pan,
+            },
+        });
+    }
+    Some({
         let mut params = app.workspace.documents[idx].mixer.node_strip(ch);
         params.pan = 0.0;
         MixAction::SetNodeStrip { node: ch, params }

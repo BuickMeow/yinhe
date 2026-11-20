@@ -2,7 +2,7 @@
 //!
 //! 信号流（每块）：
 //!   每通道：上层把音源渲染进通道缓冲 → insert 链 → 增益/声像斜坡 → 累加进主输出
-//!   主输出：master insert 链 → master 增益 → 电平表
+//!   主输出：master insert 链 → master 增益/声像 → 电平表
 //!
 //! 所有缓冲在 [`MixerGraph::resize`] 时一次性分配，之后处理不再分配。
 //!
@@ -196,12 +196,25 @@ impl std::borrow::BorrowMut<ChannelBuffers> for ChannelChain {
     }
 }
 
-/// master 输出链：立体声缓冲 + insert 链 + 增益斜坡 + 电平表。
+/// Master 是立体声总线，用 balance 而不是等功率 pan：中心不衰减，
+/// 硬左/硬右只关闭另一侧。
+fn master_balance_gains(pan: f32) -> (f32, f32) {
+    let p = pan.clamp(-1.0, 1.0);
+    if p < 0.0 {
+        (1.0, 1.0 + p)
+    } else {
+        (1.0 - p, 1.0)
+    }
+}
+
+/// master 输出链：立体声缓冲 + insert 链 + 增益/平衡斜坡 + 电平表。
 struct MasterChain {
     l: Vec<f32>,
     r: Vec<f32>,
     gain: f32,
     prev_gain: f32,
+    pan: f32,
+    prev_pan: (f32, f32),
     inserts: Vec<Box<dyn InsertProcessor>>,
     meter: MeterTap,
     reading: MeterReading,
@@ -218,6 +231,8 @@ impl MasterChain {
             r: vec![0.0; frames],
             gain: 1.0,
             prev_gain: 1.0,
+            pan: 0.0,
+            prev_pan: master_balance_gains(0.0),
             inserts: Vec::new(),
             meter,
             reading,
@@ -328,6 +343,7 @@ impl MixerGraph {
 
     pub fn set_master(&mut self, params: MasterParams) {
         self.master.gain = params.gain;
+        self.master.pan = params.pan;
     }
 
     /// 替换某通道 insert 链（新链在上层构建好后整体换入），返回旧链。
@@ -825,15 +841,22 @@ impl MixerGraph {
             insert.process(&mut master.l, &mut master.r);
         }
 
-        // master 增益斜坡（复用通道同款逐样本线性插值）。
+        // master 增益/声像斜坡（复用通道同款逐样本线性插值）。
+        let target_pan = master_balance_gains(master.pan);
         let gain_start = master.prev_gain;
         let gain_step = (master.gain - gain_start) / frames as f32;
+        let pan_l_start = master.prev_pan.0;
+        let pan_l_step = (target_pan.0 - pan_l_start) / frames as f32;
+        let pan_r_start = master.prev_pan.1;
+        let pan_r_step = (target_pan.1 - pan_r_start) / frames as f32;
         for i in 0..frames {
-            let g = gain_start + gain_step * (i + 1) as f32;
-            master.l[i] *= g;
-            master.r[i] *= g;
+            let t = (i + 1) as f32;
+            let g = gain_start + gain_step * t;
+            master.l[i] *= g * (pan_l_start + pan_l_step * t);
+            master.r[i] *= g * (pan_r_start + pan_r_step * t);
         }
         master.prev_gain = master.gain;
+        master.prev_pan = target_pan;
 
         master.meter.publish(&master.l, &master.r);
         master.sample_tap.publish(&master.l, &master.r);

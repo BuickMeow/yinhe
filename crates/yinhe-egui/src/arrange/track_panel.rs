@@ -120,6 +120,9 @@ pub(crate) fn show(
     let (first_row, last_row) = render::visible_range(*scroll_y, panel_h, lh, scroll_rows);
 
     let painter = ui.painter().clone();
+    let any_track_solo = track_overrides
+        .iter()
+        .any(|o| o.audibility() == yinhe_types::Audibility::Soloed);
     let mut audio_dirty = false;
     // AM lane 听感状态变化 → 调用方重载音频（带 am_ms 旁通）。
     let mut am_ms_dirty = false;
@@ -211,6 +214,11 @@ pub(crate) fn show(
                 cursor_tick,
                 &mut no_drag_rects,
                 lane_even,
+                any_track_solo,
+                track_overrides
+                    .get(track)
+                    .map(|o| o.audibility())
+                    .unwrap_or_default(),
             );
             am_ms_dirty |= dirty;
             actions.extend(acts);
@@ -286,6 +294,7 @@ pub(crate) fn show(
             cursor_tick,
             color32,
             &mut no_drag_rects,
+            any_track_solo,
         );
         audio_dirty |= track_audio_dirty;
         actions.extend(track_actions);

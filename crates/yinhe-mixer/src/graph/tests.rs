@@ -329,10 +329,27 @@ fn idle_channel_with_insert_is_still_processed() {
 fn master_gain_applies() {
     let mut g = graph_with(&[StripParams::default()], 4);
     fill(&mut g, 0, 1.0);
-    g.set_master(MasterParams { gain: 0.5 });
+    g.set_master(MasterParams {
+        gain: 0.5,
+        ..Default::default()
+    });
     let (l, _r) = g.process();
     let expect = core::f32::consts::FRAC_1_SQRT_2 * 0.5;
     assert!((l[3] - expect).abs() < 1e-6);
+}
+
+#[test]
+fn master_pan_applies() {
+    let mut g = graph_with(&[StripParams::default()], 4);
+    fill(&mut g, 0, 1.0);
+    g.set_master(MasterParams {
+        gain: 1.0,
+        pan: 1.0,
+    });
+    let (l, r) = g.process();
+    let expect = core::f32::consts::FRAC_1_SQRT_2;
+    assert!(l[3].abs() < 1e-6, "硬右声像时 master 左声道应静音");
+    assert!((r[3] - expect).abs() < 1e-6);
 }
 
 #[test]

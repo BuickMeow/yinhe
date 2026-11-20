@@ -1,10 +1,9 @@
 //! 听感开关：FL Studio 式小圆点。
 //!
-//! 亮 = 可听，灭 = 静音，金色 = 独奏。只有一个圆点，不显示文字；
+//! 亮 = 可听，灭 = 静音/被独奏压暗。只有一个圆点，不显示文字；
 //! 命中区固定 14px，窄轨道面板也放得下。
 
 use eframe::egui;
-use yinhe_types::Audibility;
 
 /// 圆点半径（px）。
 const DOT_R: f32 = 4.0;
@@ -12,21 +11,18 @@ const DOT_R: f32 = 4.0;
 /// 命中区边长（px）。比圆点大，方便点击。
 pub(crate) const HIT: f32 = 14.0;
 
-/// 在 `rect` 中心画听感圆点：可听 / 静音 / 独奏三态。
+/// 在 `rect` 中心画听感圆点；`lit = false` 时是灭的。
 ///
-/// 只负责绘制与点击命中，切换听感由调用方写数据。
-pub(crate) fn dot(
-    ui: &mut egui::Ui,
-    rect: egui::Rect,
-    audibility: Audibility,
-    id: egui::Id,
-) -> egui::Response {
+/// 只负责绘制与点击命中，切换听感由调用方写数据；独奏时由调用方
+/// 把所有非独奏轨的 `lit` 传 false，而不是换一种颜色。
+pub(crate) fn dot(ui: &mut egui::Ui, rect: egui::Rect, lit: bool, id: egui::Id) -> egui::Response {
     let resp = ui.interact(rect, id, egui::Sense::click());
-    let color = match audibility {
-        Audibility::Normal => crate::theme::accent_active(),
-        Audibility::Soloed => crate::theme::warning_gold(),
-        Audibility::Muted if resp.hovered() => crate::theme::text_secondary(),
-        Audibility::Muted => crate::theme::text_disabled(),
+    let color = if lit {
+        crate::theme::accent_active()
+    } else if resp.hovered() {
+        crate::theme::text_secondary()
+    } else {
+        crate::theme::text_disabled()
     };
     ui.painter().circle_filled(rect.center(), DOT_R, color);
     if resp.has_focus() {
@@ -55,12 +51,7 @@ mod tests {
             };
             let mut output = ctx.run_ui(input, |ui| {
                 let rect = egui::Rect::from_center_size(pos2(50.0, 50.0), vec2(HIT, HIT));
-                let resp = dot(
-                    ui,
-                    rect,
-                    Audibility::Normal,
-                    egui::Id::unique("audibility_dot_test"),
-                );
+                let resp = dot(ui, rect, true, egui::Id::unique("audibility_dot_test"));
                 clicked |= resp.clicked();
             });
             output.textures_delta.clear();
@@ -105,12 +96,7 @@ mod tests {
             };
             let mut output = ctx.run_ui(input, |ui| {
                 let rect = egui::Rect::from_center_size(pos2(50.0, 50.0), vec2(HIT, HIT));
-                let resp = dot(
-                    ui,
-                    rect,
-                    Audibility::Normal,
-                    egui::Id::unique("audibility_dot_secondary"),
-                );
+                let resp = dot(ui, rect, true, egui::Id::unique("audibility_dot_secondary"));
                 secondary |= resp.secondary_clicked();
             });
             output.textures_delta.clear();

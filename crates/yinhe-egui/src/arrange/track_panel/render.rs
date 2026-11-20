@@ -16,6 +16,12 @@ pub fn compact_font(lh: f32) -> egui::FontId {
     egui::FontId::proportional((lh * 0.45).clamp(8.0, 14.0))
 }
 
+/// 独奏时只让独奏轨的灯亮；没有独奏时按各自静音状态。
+fn track_light_lit(audibility: yinhe_types::Audibility, any_solo: bool) -> bool {
+    audibility != yinhe_types::Audibility::Muted
+        && (!any_solo || audibility == yinhe_types::Audibility::Soloed)
+}
+
 /// 行右侧电平表与听感圆点的矩形。
 ///
 /// 圆点放在电平表左侧，留 2px 间隙；旧版把圆点叠在右下角，和电平表重合。
@@ -130,6 +136,8 @@ pub(super) fn draw_automation_row(
     cursor_tick: Option<f64>,
     no_drag_rects: &mut Vec<egui::Rect>,
     lane_even: egui::Color32,
+    any_track_solo: bool,
+    track_audibility: yinhe_types::Audibility,
 ) -> (bool, Vec<super::types::TrackAction>) {
     let mut am_ms_dirty = false;
     let mut actions = Vec::new();
@@ -204,10 +212,12 @@ pub(super) fn draw_automation_row(
             color32,
         );
         no_drag_rects.push(dot_rect);
+        let lit = audibility != yinhe_types::Audibility::Muted
+            && (!any_track_solo || track_audibility == yinhe_types::Audibility::Soloed);
         let resp = crate::widgets::audibility::dot(
             ui,
             dot_rect,
-            audibility,
+            lit,
             egui::Id::unique(("am_audible", track, sub)),
         );
         crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.arrange.am_mute"));
@@ -293,6 +303,7 @@ pub(super) fn draw_track_row(
     cursor_tick: Option<f64>,
     color32: egui::Color32,
     no_drag_rects: &mut Vec<egui::Rect>,
+    any_track_solo: bool,
 ) -> (bool, Vec<super::types::TrackAction>) {
     let mut audio_dirty = false;
     let mut actions = Vec::new();
@@ -417,10 +428,12 @@ pub(super) fn draw_track_row(
             crate::widgets::meter::compact_meter(painter, meter_rect, level, hold);
 
             no_drag_rects.push(dot_rect);
+            // 独奏时把所有非独奏轨的灯压灭，只留独奏轨亮着。
+            let lit = track_light_lit(audibility, any_track_solo);
             let resp = crate::widgets::audibility::dot(
                 ui,
                 dot_rect,
-                audibility,
+                lit,
                 egui::Id::unique(("track_audible", idx)),
             );
             crate::widgets::hint::hover(ui.ctx(), &resp, t!("hint.arrange.track_mute"));
@@ -687,5 +700,16 @@ mod tests {
             "静音圆点应在电平表左侧并留 2px 间隙：dot={dot:?}, meter={meter:?}"
         );
         assert!(!meter.intersects(dot), "电平表与静音灯不得重合");
+    }
+
+    #[test]
+    fn solo_dims_all_other_track_lights() {
+        use yinhe_types::Audibility::{Muted, Normal, Soloed};
+        assert!(track_light_lit(Normal, false));
+        assert!(!track_light_lit(Muted, false));
+        // 有独奏：只留独奏轨亮，普通轨和静音轨都灭。
+        assert!(track_light_lit(Soloed, true));
+        assert!(!track_light_lit(Normal, true));
+        assert!(!track_light_lit(Muted, true));
     }
 }

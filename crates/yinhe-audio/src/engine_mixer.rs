@@ -30,7 +30,8 @@ impl AudioEngine {
             self.mix.mixer.set_strip(dense, p);
         }
         self.mix.mixer.set_master(MasterParams {
-            gain: self.mix.mixer_params.master.gain,
+            gain: self.mix.mixer_params.master.strip.gain,
+            pan: self.mix.mixer_params.master.strip.pan,
         });
         self.sync_output_routing();
         self.sync_sends_to_graph();
@@ -137,10 +138,11 @@ impl AudioEngine {
     /// 更新任意混音节点的 strip（推子/声像/M/S 高频路径，幂等）。
     pub(crate) fn set_node_strip(&mut self, node: ChannelId, params: StripParams) {
         if node == ChannelId::Master {
-            self.mix.mixer_params.master.strip.gain = params.gain;
-            self.mix
-                .mixer
-                .set_master(MasterParams { gain: params.gain });
+            self.mix.mixer_params.master.strip = params;
+            self.mix.mixer.set_master(MasterParams {
+                gain: params.gain,
+                pan: params.pan,
+            });
             return;
         }
         if let Some(slot) = self.mix.mixer_params.node_mut(node) {
@@ -290,6 +292,7 @@ impl AudioEngine {
 
     pub(crate) fn set_master_params(&mut self, params: MasterParams) {
         self.mix.mixer_params.master.strip.gain = params.gain;
+        self.mix.mixer_params.master.strip.pan = params.pan;
         self.mix.mixer.set_master(params);
     }
 
