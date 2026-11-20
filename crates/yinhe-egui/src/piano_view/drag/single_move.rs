@@ -45,7 +45,15 @@ pub(crate) fn single_note_move_frame(
             let raw_tick = main_px_to_tick_dir(view, main_px);
             let snapped_tick =
                 crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
-            let dt = (snapped_tick - press_tick).round() as i64;
+            let dt = super::free_quant::delta(
+                ui,
+                "free_quant_sel_note",
+                raw_tick,
+                press_tick,
+                snapped_tick,
+                quantize,
+                ppq,
+            );
             // 垂直选框工具：只能水平移动，dk 强制为 0
             let dk = if vertical {
                 0
@@ -86,7 +94,7 @@ pub(crate) fn single_note_move_frame(
                 }
             }
 
-            // ── Tooltip：显示 ±tick / ±key（已按量化 snap）──
+            // ── Tooltip：显示 ±tick / ±key（自由区跟手，越过一格后量化）──
             let lines = vec![
                 crate::view_interaction::format_signed("tick", dt),
                 crate::view_interaction::format_signed("key", dk as i64),
@@ -104,7 +112,15 @@ pub(crate) fn single_note_move_frame(
                 let raw_tick = main_px_to_tick_dir(view, main_px);
                 let snapped_tick =
                     crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
-                dt = (snapped_tick - press_tick).round() as i64;
+                dt = super::free_quant::delta(
+                    ui,
+                    "free_quant_sel_note",
+                    raw_tick,
+                    press_tick,
+                    snapped_tick,
+                    quantize,
+                    ppq,
+                );
                 dk = if vertical {
                     0
                 } else {
@@ -120,6 +136,7 @@ pub(crate) fn single_note_move_frame(
                 selected.clear();
                 selected.add_rect_track(orig_start, orig_end, orig_key, orig_key, trk, trk);
                 state.preview_reqs.push(crate::piano_view::PreviewReq::Stop);
+                super::free_quant::clear(ui, "free_quant_sel_note");
                 state.sel_note_move = None;
                 state.single_note_had_moved = false;
                 return;
@@ -162,6 +179,7 @@ pub(crate) fn single_note_move_frame(
                 state.hidden_notes.push((trk, orig_start, orig_key));
             }
             state.preview_reqs.push(crate::piano_view::PreviewReq::Stop);
+            super::free_quant::clear(ui, "free_quant_sel_note");
             state.sel_note_move = None;
             state.single_note_had_moved = false;
         }

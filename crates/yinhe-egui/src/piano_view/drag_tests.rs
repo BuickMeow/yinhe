@@ -2111,3 +2111,62 @@ fn note_drag_ghost_survives_viewport_cull() {
         "ghost 应随拖动移动，实际 {ghosts:?}"
     );
 }
+
+/// 回归：音符拖动在一格量化内自由跟手；越过一格后即使缩回也保持量化。
+#[test]
+fn note_move_free_within_one_quantize_then_latches() {
+    let run = |moves: &[egui::Pos2]| {
+        let ctx = egui::Context::default();
+        let mut view = test_view();
+        view.viewport_h = 600.0;
+        let midi = make_midi(vec![]);
+        let mut selected = yinhe_core::Selection::default();
+        selected.add_rect_track(0, 480, 100, 110, 0, 0);
+        let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+        sel_rect.push_rect((0.0, 480.0, 100, 110), false);
+        let mut cursor_tick: Option<f64> = None;
+        let mut note_drag_delta: Option<(i64, i32, bool)> = None;
+        let mut note_resize_delta: Option<(yinhe_editor_core::ResizeSide, i64)> = None;
+        let mut selection_scale_delta: Option<u64> = None;
+        let mut riff_repeat: Option<(i64, i64)> = None;
+        let mut frame = |raw| {
+            run_sel_frame_full(
+                &ctx,
+                raw,
+                &mut view,
+                &midi,
+                &mut selected,
+                &mut cursor_tick,
+                &mut note_drag_delta,
+                &mut note_resize_delta,
+                &mut selection_scale_delta,
+                &mut riff_repeat,
+                &mut sel_rect,
+                &std::collections::HashSet::new(),
+                Some(0),
+            )
+        };
+        let _ = frame(press_event(egui::pos2(100.0, 200.0)));
+        for &p in moves {
+            let _ = frame(drag_event(p));
+        }
+        let last = *moves.last().unwrap();
+        let _ = frame(release_event(last));
+        drop(frame);
+        (note_drag_delta, sel_rect.effective_rects())
+    };
+
+    // 60px < 120 tick 一格：自由移动 60 tick。
+    let (delta, rects) = run(&[egui::pos2(160.0, 200.0)]);
+    assert_eq!(delta, Some((60, 0, false)), "一格内应自由跟手");
+    assert_eq!(rects, vec![(60.0, 540.0, 100, 110)], "选框也应自由移动");
+
+    // 先拉出 150px（越过一格），再缩回 160px：锁存量化的 0 tick。
+    let (delta, rects) = run(&[egui::pos2(250.0, 200.0), egui::pos2(160.0, 200.0)]);
+    assert_eq!(
+        delta.map(|(dt, _, _)| dt),
+        Some(0),
+        "越过一格后缩回，仍应量化"
+    );
+    assert_eq!(rects, vec![(0.0, 480.0, 100, 110)], "选框应回到网格起点");
+}

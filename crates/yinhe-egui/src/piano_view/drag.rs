@@ -5,6 +5,7 @@
 #![allow(unused_imports)]
 
 mod frame;
+mod free_quant;
 mod group_move;
 mod group_resize;
 mod group_scale;

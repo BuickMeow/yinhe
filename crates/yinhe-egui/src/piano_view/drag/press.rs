@@ -94,6 +94,7 @@ pub(crate) fn sel_press(
                                 ppq,
                                 bar_line_data,
                             );
+                            super::free_quant::begin(ui, "free_quant_sel_note", raw_tick);
                             // press 时锁定 alt（复制模式），拖拽中切换不影响本次操作。
                             let alt = ui.input(|i| i.modifiers.alt);
                             state.sel_note_move =
@@ -170,6 +171,7 @@ pub(crate) fn sel_press(
                     let key = view.cross_px_to_key(cross_px) as f64;
                     // Alt（Option）按下时进入复制模式：原音符保留，拖出副本。
                     // press 时锁定 alt 状态，拖拽中切换不影响本次操作。
+                    super::free_quant::begin(ui, "free_quant_note_drag", raw_tick);
                     let alt = ui.input(|i| i.modifiers.alt);
                     state.note_drag_origin = Some((tick, key, alt));
                     sel_rect.start_drag();

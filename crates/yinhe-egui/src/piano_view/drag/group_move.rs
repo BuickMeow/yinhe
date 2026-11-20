@@ -43,7 +43,15 @@ pub(crate) fn note_drag_frame(
             let snapped_tick =
                 crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
             let current_key = view.cross_px_to_key(cross_px) as f64;
-            let dt = (snapped_tick - origin_tick).round() as i64;
+            let dt = super::free_quant::delta(
+                ui,
+                "free_quant_note_drag",
+                raw_tick,
+                origin_tick,
+                snapped_tick,
+                quantize,
+                ppq,
+            );
             // 垂直选框（垂直工具或空区域框选自动生成的全键选框）：只能水平移动，dk 强制为 0
             let dk = if vertical || sel_rect.has_auto_vertical() {
                 0
@@ -120,7 +128,7 @@ pub(crate) fn note_drag_frame(
                 });
             }
 
-            // ── Tooltip：显示 ±tick / ±key（已按量化 snap）──
+            // ── Tooltip：显示 ±tick / ±key（自由区跟手，越过一格后量化）──
             let lines = vec![
                 crate::view_interaction::format_signed("tick", dt),
                 crate::view_interaction::format_signed("key", dk as i64),
@@ -138,7 +146,15 @@ pub(crate) fn note_drag_frame(
                 let snapped_tick =
                     crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
                 let current_key = view.cross_px_to_key(cross_px) as f64;
-                dt = (snapped_tick - origin_tick).round() as i64;
+                dt = super::free_quant::delta(
+                    ui,
+                    "free_quant_note_drag",
+                    raw_tick,
+                    origin_tick,
+                    snapped_tick,
+                    quantize,
+                    ppq,
+                );
                 dk = if vertical || sel_rect.has_auto_vertical() {
                     0
                 } else {
@@ -192,6 +208,7 @@ pub(crate) fn note_drag_frame(
                 }
                 sel_rect.end_drag();
             }
+            super::free_quant::clear(ui, "free_quant_note_drag");
             state.note_drag_origin = None;
             state.drag_notes = None;
             state.note_drag_had_moved = false;
