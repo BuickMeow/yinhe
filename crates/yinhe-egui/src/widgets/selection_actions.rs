@@ -184,7 +184,7 @@ pub fn show_transport_buttons(
                     // 图标本身贴边，补 3px 内衬；含 1px 描边 + 4px 外框后，
                     // 左右视觉边距约 8px，与三联选择器（外框 + 按钮内 3px）一致。
                     ui.add_space(3.0);
-                    for &(icon, action) in SELECT_BAR_BUTTONS.iter() {
+                    for (idx, &(icon, action)) in SELECT_BAR_BUTTONS.iter().enumerate() {
                         let font = egui::FontId::new(TRANSPORT_ICON_SIZE, icon.font_family());
                         let angle = bar_button_rotation(action);
                         let resp = if angle == 0.0 {
@@ -216,6 +216,11 @@ pub fn show_transport_buttons(
                                 grid_hovered = true;
                             }
                         }
+                        // 倒数第二个按钮画完后清零：最后一个按钮前面的 8px
+                        // 已经由上一个按钮的 advance 加好，只去掉它后面的自动间距。
+                        if idx + 2 == SELECT_BAR_BUTTONS.len() {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                        }
                     }
                     ui.add_space(3.0);
                 });
@@ -246,7 +251,7 @@ pub fn show_drag_mode_selector(ui: &mut egui::Ui) {
             ui.set_min_height(GROUP_H);
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
-                for m in SelectionDragMode::ALL {
+                for (idx, m) in SelectionDragMode::ALL.iter().copied().enumerate() {
                     let active = m == mode;
                     let (rect, resp) = ui.allocate_exact_size(
                         egui::vec2(MODE_BTN_SIZE, MODE_BTN_SIZE),
@@ -281,6 +286,10 @@ pub fn show_drag_mode_selector(ui: &mut egui::Ui) {
                     }
                     if resp.clicked() {
                         mode = m;
+                    }
+                    // 同上：倒数第二个画完后清零，保留最后一个按钮前的 2px。
+                    if idx + 2 == SelectionDragMode::ALL.len() {
+                        ui.spacing_mut().item_spacing.x = 0.0;
                     }
                 }
             });

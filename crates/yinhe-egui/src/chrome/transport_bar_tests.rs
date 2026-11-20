@@ -544,3 +544,62 @@ fn drag_on_hidden_button_does_not_start_drag() {
     );
     release_at_state(&mut h, start + egui::vec2(10.0, 0.0), 2.15);
 }
+
+/// 回归：选择动作组左右视觉边距必须对称。
+///
+/// egui 在最后一个按钮之后会自动再 advance 一次 `item_spacing`，旧实现又在
+/// 末尾补了 3px，导致右侧比左侧多 8px。这里用实际绘制的图标位置约束。
+#[test]
+fn selection_group_horizontal_padding_is_symmetric() {
+    let doc = yinhe_test_helpers::make_test_document();
+    let mut h = make_transport_harness(Some(&doc));
+    h.step();
+    h.step();
+
+    let mut frame: Option<egui::Rect> = None;
+    let mut first: Option<(f32, f32)> = None;
+    let mut last: Option<(f32, f32)> = None;
+    fn walk(
+        shape: &egui::Shape,
+        frame: &mut Option<egui::Rect>,
+        first: &mut Option<(f32, f32)>,
+        last: &mut Option<(f32, f32)>,
+    ) {
+        match shape {
+            egui::Shape::Rect(r) if r.rect.width() > 250.0 => *frame = Some(r.rect),
+            egui::Shape::Text(t) => {
+                let text = t.galley.text();
+                if text == egui_material_icons::icons::ICON_DELETE.codepoint {
+                    *first = Some((t.pos.x, t.galley.size().x));
+                }
+                if text == egui_material_icons::icons::ICON_GRID_ON.codepoint {
+                    *last = Some((t.pos.x, t.galley.size().x));
+                }
+            }
+            egui::Shape::Vec(v) => {
+                for s in v {
+                    walk(s, frame, first, last);
+                }
+            }
+            _ => {}
+        }
+    }
+    for cs in &h.output().shapes {
+        walk(&cs.shape, &mut frame, &mut first, &mut last);
+    }
+    let frame = frame.expect("应绘制选择动作组外框");
+    let (first_x, _) = first.expect("应绘制首个动作图标");
+    let (last_x, last_w) = last.expect("应绘制最后一个动作图标");
+    let left = first_x - frame.min.x;
+    let right = frame.max.x - (last_x + last_w);
+    assert!(
+        (left - right).abs() <= 1.0,
+        "左右边距应一致：left={left}, right={right}, frame={frame:?}"
+    );
+    // 12 个 20px 图标 + 11 个 8px 间距 + 左右各 8px。
+    assert!(
+        (frame.width() - 344.0).abs() <= 1.0,
+        "组宽应保留 11 个按钮间距、只去掉最后一个之后的多余间距；实际 {}",
+        frame.width()
+    );
+}
