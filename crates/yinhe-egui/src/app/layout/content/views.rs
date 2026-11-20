@@ -264,6 +264,7 @@ impl App {
             let mut riff_repeat: Option<(i64, i64)> = None;
             let mut selection_warp: Option<(f64, f64, f32)> = None;
             let mut selection_velocity_delta: Option<i16> = None;
+            let mut velocity_ghost_notes: Vec<crate::piano_view::VelocityGhostNote> = Vec::new();
             let mut preview_reqs: Vec<crate::piano_view::PreviewReq> = Vec::new();
             // 顶部工具栏（需要文档视图状态：键数 / Scale / 调式选择）。
             let key_sig = crate::widgets::timecode::current_key_sig(doc);
@@ -450,6 +451,7 @@ impl App {
                     riff_repeat: &mut riff_repeat,
                     selection_warp: &mut selection_warp,
                     selection_velocity_delta: &mut selection_velocity_delta,
+                    velocity_ghost_notes: &mut velocity_ghost_notes,
                     velocity_edits: &mut velocity_edits,
                     preview_reqs: &mut preview_reqs,
                 };

@@ -77,7 +77,6 @@ fn rebuild_warp_ghost(
     gesture: EdgeGestureState,
     view: &yinhe_types::PianoRollView,
     content_rect: egui::Rect,
-    music_rect: egui::Rect,
     gamma: f32,
 ) {
     state.ghost_notes.clear();
@@ -85,7 +84,8 @@ fn rebuild_warp_ghost(
     let Some(notes) = state.drag_notes.as_ref() else {
         return;
     };
-    let (tick_lo, tick_hi) = view.visible_tick_range(music_rect.width());
+    let main = view.main_axis_len(content_rect.width(), content_rect.height());
+    let (tick_lo, tick_hi) = view.visible_main_range(main);
     let (key_lo, key_hi) =
         view.visible_cross_range(view.cross_axis_len(content_rect.width(), content_rect.height()));
     for info in notes.iter() {
@@ -113,6 +113,50 @@ fn rebuild_warp_ghost(
     }
 }
 
+/// 力度 ghost：原位置画新力度的音符，并把原音符暂时隐藏。
+///
+/// `drag_notes` 已按可见 tick 范围裁剪过；这里再按可见 key 过滤，避免为视口外
+/// 音符生成 overlay。`delta == 0` 时清空预览，回到原样。
+fn rebuild_velocity_ghost(
+    state: &mut SelDragFrameState,
+    view: &yinhe_types::PianoRollView,
+    content_rect: egui::Rect,
+    delta: i16,
+    out: &mut Vec<crate::piano_view::VelocityGhostNote>,
+) {
+    state.hidden_notes.clear();
+    out.clear();
+    if delta == 0 {
+        return;
+    }
+    let Some(notes) = state.drag_notes.as_ref() else {
+        return;
+    };
+    let main = view.main_axis_len(content_rect.width(), content_rect.height());
+    let (tick_lo, tick_hi) = view.visible_main_range(main);
+    let (key_lo, key_hi) =
+        view.visible_cross_range(view.cross_axis_len(content_rect.width(), content_rect.height()));
+    for info in notes.iter() {
+        if info.key < key_lo || info.key > key_hi {
+            continue;
+        }
+        if f64::from(info.start_tick) >= tick_hi || f64::from(info.end_tick) <= tick_lo {
+            continue;
+        }
+        let velocity = (i16::from(info.velocity) + delta).clamp(1, 127) as u8;
+        out.push((
+            info.start_tick,
+            info.end_tick,
+            info.key,
+            info.track,
+            velocity,
+        ));
+        state
+            .hidden_notes
+            .push((info.track, info.start_tick, info.key));
+    }
+}
+
 /// 边缘手势每帧推进；松手时通过 `selection_warp` / `selection_velocity_delta`
 /// 提交一次操作。
 #[allow(clippy::too_many_arguments)]
@@ -121,10 +165,10 @@ pub(crate) fn edge_gesture_frame(
     state: &mut SelDragFrameState,
     view: &yinhe_types::PianoRollView,
     content_rect: egui::Rect,
-    music_rect: egui::Rect,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     selection_warp: &mut Option<(f64, f64, f32)>,
     selection_velocity_delta: &mut Option<i16>,
+    velocity_ghost_notes: &mut Vec<crate::piano_view::VelocityGhostNote>,
     pointer: &egui::PointerState,
 ) {
     let Some(mut gesture) = state.edge_gesture else {
@@ -160,7 +204,7 @@ pub(crate) fn edge_gesture_frame(
             match gesture.edge {
                 SelectionEdge::TimeStart | SelectionEdge::TimeEnd => {
                     let gamma = gamma_from_dy(cross);
-                    rebuild_warp_ghost(state, gesture, view, content_rect, music_rect, gamma);
+                    rebuild_warp_ghost(state, gesture, view, content_rect, gamma);
                     // 中点归一化位置 = 0.5^γ；直接告诉用户疏密偏向。
                     let mid = (0.5_f32.powf(gamma) * 100.0).round() as i32;
                     crate::widgets::tooltip::draw_hover_tooltip(
@@ -172,6 +216,13 @@ pub(crate) fn edge_gesture_frame(
                 }
                 SelectionEdge::Velocity => {
                     let delta_v = velocity_delta_from_dy(cross);
+                    rebuild_velocity_ghost(
+                        state,
+                        view,
+                        content_rect,
+                        delta_v,
+                        velocity_ghost_notes,
+                    );
                     crate::widgets::tooltip::draw_hover_tooltip(
                         ui.ctx(),
                         &[format!("vel {delta_v:+}")],
@@ -207,6 +258,14 @@ pub(crate) fn edge_gesture_frame(
                         SelectionEdge::Velocity => {
                             let delta_v = velocity_delta_from_dy(cross);
                             if delta_v != 0 {
+                                // 松手帧仍画最终预览，等模型刷新后再撤掉，避免闪回旧力度。
+                                rebuild_velocity_ghost(
+                                    state,
+                                    view,
+                                    content_rect,
+                                    delta_v,
+                                    velocity_ghost_notes,
+                                );
                                 *selection_velocity_delta = Some(delta_v);
                             }
                         }

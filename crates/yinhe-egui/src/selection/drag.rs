@@ -216,9 +216,35 @@ pub fn collect_selected_notes(
     track_selected: &std::collections::HashSet<u16>,
     track_locked: &[bool],
 ) -> Vec<CollectedNote> {
+    collect_selected_notes_in_range(
+        selected,
+        midi,
+        track_visible,
+        track_selected,
+        track_locked,
+        0,
+        u32::MAX,
+    )
+}
+
+/// 只收集 tick 区间内的选中音符，供力度拖动 ghost 等只需要可见范围的场景。
+///
+/// 与 [`collect_selected_notes`] 共用过滤规则；`tick_hi` 为开区间。
+pub fn collect_selected_notes_in_range(
+    selected: &yinhe_core::Selection,
+    midi: Option<&dyn NoteSource>,
+    track_visible: &[bool],
+    track_selected: &std::collections::HashSet<u16>,
+    track_locked: &[bool],
+    tick_lo: u32,
+    tick_hi: u32,
+) -> Vec<CollectedNote> {
     let Some(midi) = midi else {
         return Vec::new();
     };
+    if tick_lo >= tick_hi {
+        return Vec::new();
+    }
     let mut out = Vec::new();
     // 与 batch_ops::for_each_selected 相同的「合并 tick 区间」遍历：重叠选框下
     // 同一音符只收集一次（此前逐 rect 遍历会重复收集，导致 ghost/hidden 与
@@ -227,6 +253,11 @@ pub fn collect_selected_notes(
     for (key, key_ranges) in ranges.iter().enumerate() {
         let key = key as u8;
         for &(ts, te) in key_ranges {
+            let ts = ts.max(tick_lo);
+            let te = te.min(tick_hi);
+            if ts >= te {
+                continue;
+            }
             for n in midi.key_notes_in_range(key, ts, te) {
                 if !selected.accepts_note(n, key) {
                     continue;

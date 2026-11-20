@@ -11,13 +11,24 @@ pub const FULL_DRAG_DEADZONE_PX: f32 = 4.0;
 /// 力度拖动满档的力度范围（1..127 的跨度）。
 pub const VELOCITY_FULL_RANGE: f32 = 126.0;
 
+/// 满档的 log2 指数：2^±6 = 64 / 1/64。
+///
+/// 幂曲线 `x^γ` 在 γ→0 时让最前面的音符铺满选框、后面趋近 0；γ→∞
+/// 时反过来。要真正达到「前面极短、最后一个音符几乎整框」，指数必须
+/// 远大于 2；64 能让选框前 10% 的音符在上拉满档时覆盖约 96% 的跨度。
+pub const FULL_GAMMA_LOG2: f32 = 6.0;
+
 /// 屏幕 dy（向下为正）→ 时间渐变指数。
 ///
-/// 上拉 dy 为负：γ = 2^(dy / 120)，从 1 降到 0.5；
-/// 下拉 dy 为正：从 1 升到 2。
+/// 用二次响应：中心附近 1px 仍然细腻，越接近满档变化越快。
+/// `t = dy / 120`，`γ = 2^(6 · t · |t|)`：
+/// - 0px → γ=1；
+/// - 上拉 120px → γ=1/64（最前面的音符铺满选框，后面极短）；
+/// - 下拉 120px → γ=64（前面极短，最后一个音符几乎铺满选框）。
 pub fn gamma_from_dy(dy: f32) -> f32 {
-    let a = (dy / FULL_DRAG_PX).clamp(-1.0, 1.0);
-    2.0_f32.powf(a)
+    let t = (dy / FULL_DRAG_PX).clamp(-1.0, 1.0);
+    let k = FULL_GAMMA_LOG2 * t * t.abs();
+    2.0_f32.powf(k)
 }
 
 /// 力度拖动 dy → 力度增量；上拉（dy 负）为正向。
@@ -67,11 +78,13 @@ mod tests {
     #[test]
     fn gamma_directions_and_full_range() {
         assert!((gamma_from_dy(0.0) - 1.0).abs() < 1e-6);
-        assert!((gamma_from_dy(-FULL_DRAG_PX) - 0.5).abs() < 1e-6);
-        assert!((gamma_from_dy(FULL_DRAG_PX) - 2.0).abs() < 1e-6);
+        assert!((gamma_from_dy(-FULL_DRAG_PX) - 1.0 / 64.0).abs() < 1e-6);
+        assert!((gamma_from_dy(FULL_DRAG_PX) - 64.0).abs() < 1e-3);
+        // 中心附近保持细腻：半程不满档。
+        assert!((gamma_from_dy(-FULL_DRAG_PX * 0.5) - 2.0_f32.powf(-1.5)).abs() < 1e-5);
         // 超出 120px 夹住。
-        assert!((gamma_from_dy(-500.0) - 0.5).abs() < 1e-6);
-        assert!((gamma_from_dy(500.0) - 2.0).abs() < 1e-6);
+        assert!((gamma_from_dy(-500.0) - 1.0 / 64.0).abs() < 1e-6);
+        assert!((gamma_from_dy(500.0) - 64.0).abs() < 1e-3);
     }
 
     #[test]
@@ -84,6 +97,33 @@ mod tests {
         let mid_down = warp_tick(t0, t1, 2.0, 300);
         assert!(mid > 300, "上拉后中点应右移: {mid}");
         assert!(mid_down < 300, "下拉后中点应左移: {mid_down}");
+    }
+
+    #[test]
+    fn full_drag_collapses_one_side() {
+        // 下拉满档：前 9% 的音符被压到几乎 0，最后 10% 的音符铺满 96%+。
+        let (front_start, front_end) = warp_note(100.0, 900.0, 64.0, 10, 20);
+        assert!(
+            (front_start, front_end) == (0, 0) || front_end - front_start <= 1,
+            "前面音符应几乎为 0 gate: {front_start}..{front_end}"
+        );
+        let (last_start, last_end) = warp_note(0.0, 1000.0, 64.0, 900, 1000);
+        assert!(
+            last_end - last_start >= 960,
+            "最后一个音符应几乎铺满选框: {last_start}..{last_end}"
+        );
+
+        // 上拉满档：最前面的音符铺满选框，后面趋近 0。
+        let (first_start, first_end) = warp_note(0.0, 1000.0, 1.0 / 64.0, 0, 100);
+        assert!(
+            first_end - first_start >= 960,
+            "最前面的音符应几乎铺满选框: {first_start}..{first_end}"
+        );
+        let (tail_start, tail_end) = warp_note(0.0, 1000.0, 1.0 / 64.0, 900, 1000);
+        assert!(
+            tail_end - tail_start <= 2,
+            "最后面的音符应几乎为 0 gate: {tail_start}..{tail_end}"
+        );
     }
 
     #[test]

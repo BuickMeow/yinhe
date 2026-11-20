@@ -9,7 +9,8 @@ use yinhe_types::TimeSigEvent;
 use super::hit::hit_test_note;
 use super::state::{EdgeGestureState, SelDragFrameState};
 use crate::selection::drag::{
-    SelectionEdge, collect_selected_notes, main_cross_x_y, main_px_to_tick_dir, selection_edge_hit,
+    SelectionEdge, collect_selected_notes, collect_selected_notes_in_range, main_cross_x_y,
+    main_px_to_tick_dir, selection_edge_hit,
 };
 use crate::widgets::selection_actions::{SelectionDragMode, load_drag_mode};
 
@@ -150,7 +151,22 @@ pub(crate) fn sel_press(
                             track_locked,
                         )));
                     } else {
-                        state.drag_notes = None;
+                        // 力度 ghost 只需要可见音符：按当前主轴视口裁剪，
+                        // 避免 1 亿音符全选时为了预览把整组物化。
+                        let main = view.main_axis_len(content_rect.width(), content_rect.height());
+                        let (raw_lo, raw_hi) = view.visible_main_range(main);
+                        let tick_lo = raw_lo.max(0.0).floor() as u32;
+                        let tick_hi = raw_hi.max(0.0).ceil() as u32;
+                        state.drag_notes =
+                            Some(std::sync::Arc::new(collect_selected_notes_in_range(
+                                selected,
+                                midi,
+                                track_visible,
+                                track_selected,
+                                track_locked,
+                                tick_lo,
+                                tick_hi,
+                            )));
                     }
                     state.edge_gesture = Some(EdgeGestureState {
                         edge,

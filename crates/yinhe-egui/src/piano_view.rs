@@ -360,6 +360,7 @@ pub fn show(
         cull_rebuild,
         &ghost_notes,
         ghost_selected,
+        feedback.velocity_ghost_notes,
         &erase_preview,
         &exclude_table,
         exclude_mask,

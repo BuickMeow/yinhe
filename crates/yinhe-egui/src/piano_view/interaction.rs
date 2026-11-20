@@ -100,6 +100,7 @@ pub(crate) fn dispatch(
                 feedback.riff_repeat,
                 feedback.selection_warp,
                 feedback.selection_velocity_delta,
+                feedback.velocity_ghost_notes,
                 sel_rect,
                 track_colors,
                 track_visible,
@@ -319,8 +320,9 @@ pub(crate) fn update_hover_cursor(
                     egui::CursorIcon::ResizeVertical
                 };
                 let icon = match edge {
+                    // Riff 也用左右光标：它的纵向只是平铺，不再暗示斜向缩放。
                     SelectionEdge::TimeEnd => match load_drag_mode(ui.ctx()) {
-                        SelectionDragMode::Riff => egui::CursorIcon::ResizeNwSe,
+                        SelectionDragMode::Riff => egui::CursorIcon::ResizeHorizontal,
                         SelectionDragMode::Gate | SelectionDragMode::Scale => main_icon,
                     },
                     // 时间起点只有纵向渐变；力度边只有副轴拖动。

@@ -99,6 +99,9 @@ pub(crate) struct NotePreview {
     pub duration_ticks: u32,
 }
 
+/// 力度拖动实时 ghost：`(start_tick, end_tick, key, track, new_velocity)`。
+pub type VelocityGhostNote = (u32, u32, u8, u16, u8);
+
 /// piano_view 给外部的反馈通道（合并多个 &mut 出参）。
 pub struct PianoViewFeedback<'a> {
     pub auto_edit_events: &'a mut Vec<super::automation_panel::AutomationEdit>,
@@ -117,6 +120,8 @@ pub struct PianoViewFeedback<'a> {
     pub selection_warp: &'a mut Option<(f64, f64, f32)>,
     /// 选框下缘纵向拖动：批量力度增量（相对加法）。
     pub selection_velocity_delta: &'a mut Option<i16>,
+    /// 力度拖动中的实时 ghost（原位置 + 新力度）。
+    pub velocity_ghost_notes: &'a mut Vec<VelocityGhostNote>,
     pub velocity_edits: &'a mut Vec<VelocityEdit>,
     /// 音符听觉预览请求（铅笔新建/拖拽、选框拖拽触发）。
     pub preview_reqs: &'a mut Vec<PreviewReq>,

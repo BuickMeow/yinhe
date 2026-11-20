@@ -38,6 +38,7 @@ pub(crate) fn sel_drag_frame(
     riff_repeat: &mut Option<(i64, i64)>,
     selection_warp: &mut Option<(f64, f64, f32)>,
     selection_velocity_delta: &mut Option<i16>,
+    velocity_ghost_notes: &mut Vec<crate::piano_view::VelocityGhostNote>,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     _track_colors: &[[f32; 4]],
     track_visible: &[bool],
@@ -101,10 +102,10 @@ pub(crate) fn sel_drag_frame(
         &mut state,
         view,
         content_rect,
-        music_rect,
         sel_rect,
         selection_warp,
         selection_velocity_delta,
+        velocity_ghost_notes,
         &pointer,
     );
     note_drag_frame(

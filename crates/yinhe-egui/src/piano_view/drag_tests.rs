@@ -116,6 +116,7 @@ struct SelFrameOutFull {
     velocity_delta: Option<i16>,
     ghost_count: usize,
     hidden_count: usize,
+    velocity_ghosts: Vec<crate::piano_view::VelocityGhostNote>,
 }
 
 /// run_sel_frame 的完整版：额外返回选框整体变速 / Riff 的提交结果。
@@ -145,9 +146,11 @@ fn run_sel_frame_full(
         velocity_delta: None,
         ghost_count: 0,
         hidden_count: 0,
+        velocity_ghosts: Vec::new(),
     };
     let mut selection_warp: Option<(f64, f64, f32)> = None;
     let mut selection_velocity_delta: Option<i16> = None;
+    let mut velocity_ghost_notes: Vec<crate::piano_view::VelocityGhostNote> = Vec::new();
     // run_ui 返回的 FullOutput 含字体纹理 delta，丢弃前必须 clear（epaint 断言）。
     ctx.run_ui(raw, |ui| {
         let (ghosts, hidden, previews, note_event, pencil_drag, _) = sel_drag_frame(
@@ -168,6 +171,7 @@ fn run_sel_frame_full(
             riff_repeat,
             &mut selection_warp,
             &mut selection_velocity_delta,
+            &mut velocity_ghost_notes,
             sel_rect,
             &[[0.5, 0.5, 0.5, 1.0]],
             &[true],
@@ -189,6 +193,7 @@ fn run_sel_frame_full(
             velocity_delta: selection_velocity_delta,
             ghost_count: ghosts.len(),
             hidden_count: hidden.len(),
+            velocity_ghosts: std::mem::take(&mut velocity_ghost_notes),
         };
     })
     .textures_delta
@@ -2047,6 +2052,7 @@ fn note_drag_ghost_survives_viewport_cull() {
     let mut riff_repeat = None;
     let mut selection_warp = None;
     let mut selection_velocity_delta = None;
+    let mut velocity_ghost_notes = Vec::new();
     let track_selected = std::collections::HashSet::new();
 
     // 屏幕坐标：tick 1100 → x = 200 + 1100 = 1300；key 70 → y = (127-70)*10 = 570。
@@ -2074,6 +2080,7 @@ fn note_drag_ghost_survives_viewport_cull() {
                 &mut riff_repeat,
                 &mut selection_warp,
                 &mut selection_velocity_delta,
+                &mut velocity_ghost_notes,
                 &mut sel_rect,
                 &[[0.5, 0.5, 0.5, 1.0]],
                 &[true],
@@ -2192,7 +2199,7 @@ fn note_move_free_within_one_quantize_then_latches() {
     assert_eq!(rects, vec![(0.0, 480.0, 100, 110)], "选框应回到网格起点");
 }
 
-/// 时间渐变：左缘上拉 120px → γ=0.5，不提交 Gate/Scale/Riff。
+/// 时间渐变：左缘上拉 120px → γ=1/64，不提交 Gate/Scale/Riff。
 #[test]
 fn left_edge_vertical_drag_commits_time_warp() {
     let ctx = egui::Context::default();
@@ -2245,7 +2252,7 @@ fn left_edge_vertical_drag_commits_time_warp() {
 
     let (t0, t1, gamma) = out.warp.expect("上拉应提交时间渐变");
     assert_eq!((t0, t1), (0.0, 600.0));
-    assert!((gamma - 0.5).abs() < 1e-4, "上拉 120px 应到 γ=0.5");
+    assert!((gamma - 1.0 / 64.0).abs() < 1e-5, "上拉 120px 应到 γ=1/64");
     assert!(out.scale_delta.is_none(), "渐变不得走整体变速");
     assert!(out.riff_repeat.is_none(), "渐变不得提交 Riff");
     assert!(note_resize_delta.is_none(), "渐变不得走 Gate");
@@ -2292,10 +2299,21 @@ fn bottom_edge_vertical_drag_commits_velocity_delta() {
     let press = egui::pos2(240.0, 279.0);
     let drag = egui::pos2(240.0, 159.0);
     let _ = frame(press_event(press));
-    let _ = frame(drag_event(drag));
+    let drag_out = frame(drag_event(drag));
+    assert_eq!(
+        drag_out.velocity_ghosts,
+        vec![(0, 120, 100, 0, 127)],
+        "拖动中应在原位置生成新力度 ghost"
+    );
+    assert!(drag_out.hidden_count > 0, "拖动中应暂时隐藏原音符");
     let out = frame(release_event(drag));
 
     assert_eq!(out.velocity_delta, Some(126), "上拉 120px 应 +126");
+    assert_eq!(
+        out.velocity_ghosts,
+        vec![(0, 120, 100, 0, 127)],
+        "松手帧仍应保留最终力度预览"
+    );
     assert!(out.warp.is_none(), "力度拖动不得触发渐变");
     assert!(out.scale_delta.is_none(), "力度拖动不得走整体变速");
     assert_eq!(sel_rect.rects, vec![(0.0, 480.0, 100, 110)], "选框范围不变");
